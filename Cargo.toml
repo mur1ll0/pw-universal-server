@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "crates/pw-core",
+    "crates/pw-crypto",
+    "crates/pw-protocol",
+    "crates/pw-data-loader",
+    "crates/pw-storage",
+    "crates/pw-auth",
+    "crates/pw-uniquename",
+    "crates/pw-link",
+    "crates/pw-delivery",
+    "crates/pw-gs",
+    "tools/pw-patch-tool",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["PW Universal Team"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Async Runtime & Networking
+tokio = { version = "1.38", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1.6"
+byteorder = "1.5"
+
+# Database & Caching
+sqlx = { version = "0.7", features = ["runtime-tokio", "tls-rustls", "postgres", "json", "chrono", "uuid"] }
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager", "aio"] }
+
+# Serialization & Parsing
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Cryptography & Hashing
+rc4 = "0.1"
+md-5 = "0.10"
+sha2 = "0.10"
+argon2 = "0.5"
+hmac = "0.12"
+
+# Observability & Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+thiserror = "1.0"
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.8", features = ["v4", "serde"] }

@@ -1,0 +1,45 @@
+# ==============================================================================
+# Dockerfile.core: Multi-stage Rust build for PW-Universal-Server
+# ==============================================================================
+FROM rust:1.80-slim-bookworm AS builder
+
+WORKDIR /build
+
+# Instalar dependências de compilação
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar workspace Cargo
+COPY Cargo.toml Cargo.lock* ./
+COPY crates ./crates
+COPY tools ./tools
+
+# Argumento para definir qual binário compilar
+ARG CRATE_NAME=pw-auth
+
+# Build com otimizações em modo release
+RUN cargo build --release -p ${CRATE_NAME}
+
+# ==============================================================================
+# Runner stage (Imagem leve final)
+# ==============================================================================
+FROM debian:bookworm-slim AS runner
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG CRATE_NAME=pw-auth
+COPY --from=builder /build/target/release/${CRATE_NAME} /app/server_bin
+
+ENV TZ=America/Sao_Paulo
+
+EXPOSE 29000 29001 29200
+
+CMD ["/app/server_bin"]

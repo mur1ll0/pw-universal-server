@@ -1,0 +1,22 @@
+[package]
+name = "pw-link"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+pw-core = { path = "../pw-core" }
+pw-crypto = { path = "../pw-crypto" }
+pw-protocol = { path = "../pw-protocol" }
+pw-storage = { path = "../pw-storage" }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+bytes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+futures = "0.3"

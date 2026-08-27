@@ -1,0 +1,17 @@
+[package]
+name = "pw-protocol"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+pw-core = { path = "../pw-core" }
+pw-crypto = { path = "../pw-crypto" }
+bytes = { workspace = true }
+byteorder = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio-util = { workspace = true }

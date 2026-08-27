@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # 1. CAMADA DE BANCO DE DADOS & CACHE COMPARTILHADA
+  # ============================================================================
+  pw-postgres:
+    image: postgres:16-alpine
+    container_name: pw-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pw_database
+      POSTGRES_USER: pw_admin
+      POSTGRES_PASSWORD: pw_secure_password_2026
+      TZ: America/Sao_Paulo
+    ports:
+      - "5432:5432"
+    volumes:
+      - pw_postgres_data:/var/lib/postgresql/data
+      - ../specs/01_DATABASE_SCHEMA_POSTGRES.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pw_admin -d pw_database"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pw-dragonfly:
+    image: 'docker.dragonflydb.io/dragonflydb/dragonfly:latest'
+    container_name: pw-dragonfly
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - pw_dragonfly_data:/data
+    ulimits:
+      memlock: -1
+
+  # ============================================================================
+  # 2. SERVIÇOS GLOBAIS (Autenticação, Unicidade & Painel Web)
+  # ============================================================================
+  pw-auth:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+      args:
+        CRATE_NAME: pw-auth
+    container_name: pw-auth
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+      LISTEN_PORT: 29200
+    depends_on:
+      pw-postgres:
+        condition: service_healthy
+      pw-dragonfly:
+        condition: service_started
+
+  pw-admin-api:
+    build:
+      context: ../web-admin/backend
+      dockerfile: Dockerfile
+    container_name: pw-admin-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - pw-postgres
+      - pw-dragonfly
+
+  # ============================================================================
+  # 3. REALM 1: PERFECT WORLD CLASSIC (Versão 1.2.6)
+  # ============================================================================
+  pw-realm-126:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+      args:
+        CRATE_NAME: pw-gs
+    container_name: pw-realm-126
+    restart: unless-stopped
+    environment:
+      REALM_ID: realm_126
+      GAME_VERSION: "1.2.6"
+      GATEWAY_PORT: 29000
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+    ports:
+      - "29000:29000" # Porta pública do cliente 1.2.6
+    volumes:
+      - ../../files1.2.6/pwserver/gamed/config:/app/data/config:ro
+    depends_on:
+      - pw-auth
+
+  # ============================================================================
+  # 4. REALM 2: PERFECT WORLD ECLIPSE (Versão 1.5.3)
+  # ============================================================================
+  pw-realm-153:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+      args:
+        CRATE_NAME: pw-gs
+    container_name: pw-realm-153
+    restart: unless-stopped
+    environment:
+      REALM_ID: realm_153
+      GAME_VERSION: "1.5.3"
+      GATEWAY_PORT: 29001
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+    ports:
+      - "29001:29001" # Porta pública do cliente 1.5.3
+    volumes:
+      - ../../pwclient_153v145/element/data:/app/data/config:ro
+    depends_on:
+      - pw-auth
+
+volumes:
+  pw_postgres_data:
+  pw_dragonfly_data:

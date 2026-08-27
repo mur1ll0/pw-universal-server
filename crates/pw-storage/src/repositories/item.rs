@@ -1,0 +1,209 @@
+use crate::error::Result;
+use crate::postgres::PostgresPool;
+use chrono::{DateTime, Utc};
+use pw_core::{ContainerType, ItemRecord, RoleId};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ItemRow {
+    pub id: i64,
+    pub character_id: i32,
+    pub container_type: String,
+    pub slot: i32,
+    pub item_id: i32,
+    pub count: i32,
+    pub max_count: i32,
+    pub refine_level: i16,
+    pub sockets_count: i16,
+    pub sockets: Vec<i32>,
+    pub durability: i32,
+    pub max_durability: i32,
+    pub bind_status: i16,
+    pub custom_attributes: sqlx::types::Json<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<ItemRow> for ItemRecord {
+    fn from(r: ItemRow) -> Self {
+        Self {
+            id: Some(r.id),
+            character_id: r.character_id,
+            container_type: ContainerType::from_str(&r.container_type).unwrap_or(ContainerType::Inventory),
+            slot: r.slot as u16,
+            item_id: r.item_id as u32,
+            count: r.count as u32,
+            max_count: r.max_count as u32,
+            refine_level: r.refine_level as u8,
+            sockets_count: r.sockets_count as u8,
+            sockets: r.sockets.into_iter().map(|s| s as u32).collect(),
+            durability: r.durability as u32,
+            max_durability: r.max_durability as u32,
+            bind_status: r.bind_status as u8,
+            custom_attributes: r.custom_attributes.0,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ItemRepository {
+    pool: PostgresPool,
+}
+
+impl ItemRepository {
+    pub fn new(pool: PostgresPool) -> Self {
+        Self { pool }
+    }
+
+    /// Busca todos os itens de um container específico (ex: 'INVENTORY' ou 'EQUIPMENT')
+    pub async fn list_by_container(
+        &self,
+        character_id: RoleId,
+        container_type: ContainerType,
+    ) -> Result<Vec<ItemRecord>> {
+        let rows = sqlx::query_as::<_, ItemRow>(
+            r#"
+            SELECT * FROM character_items 
+            WHERE character_id = $1 AND container_type = $2 
+            ORDER BY slot ASC
+            "#,
+        )
+        .bind(character_id)
+        .bind(container_type.as_str())
+        .fetch_all(self.pool.get_ref())
+        .await?;
+
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    /// Busca todos os itens do personagem (todos os containers)
+    pub async fn list_all_for_character(&self, character_id: RoleId) -> Result<Vec<ItemRecord>> {
+        let rows = sqlx::query_as::<_, ItemRow>(
+            r#"
+            SELECT * FROM character_items 
+            WHERE character_id = $1 
+            ORDER BY container_type, slot ASC
+            "#,
+        )
+        .bind(character_id)
+        .fetch_all(self.pool.get_ref())
+        .await?;
+
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    /// Insere ou atualiza um item em um slot específico (UPSERT atômico)
+    pub async fn upsert_item(&self, item: &ItemRecord) -> Result<i64> {
+        let sockets_i32: Vec<i32> = item.sockets.iter().map(|&s| s as i32).collect();
+
+        let id = sqlx::query_scalar::<_, i64>(
+            r#"
+            INSERT INTO character_items (
+                character_id, container_type, slot, item_id, count, max_count,
+                refine_level, sockets_count, sockets, durability, max_durability,
+                bind_status, custom_attributes, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP)
+            ON CONFLICT (character_id, container_type, slot) DO UPDATE SET
+                item_id = EXCLUDED.item_id,
+                count = EXCLUDED.count,
+                max_count = EXCLUDED.max_count,
+                refine_level = EXCLUDED.refine_level,
+                sockets_count = EXCLUDED.sockets_count,
+                sockets = EXCLUDED.sockets,
+                durability = EXCLUDED.durability,
+                max_durability = EXCLUDED.max_durability,
+                bind_status = EXCLUDED.bind_status,
+                custom_attributes = EXCLUDED.custom_attributes,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING id
+            "#,
+        )
+        .bind(item.character_id)
+        .bind(item.container_type.as_str())
+        .bind(item.slot as i32)
+        .bind(item.item_id as i32)
+        .bind(item.count as i32)
+        .bind(item.max_count as i32)
+        .bind(item.refine_level as i16)
+        .bind(item.sockets_count as i16)
+        .bind(&sockets_i32)
+        .bind(item.durability as i32)
+        .bind(item.max_durability as i32)
+        .bind(item.bind_status as i16)
+        .bind(sqlx::types::Json(&item.custom_attributes))
+        .fetch_one(self.pool.get_ref())
+        .await?;
+
+        Ok(id)
+    }
+
+    /// Altera o nível de refino de um item específico (ex: via Painel Web)
+    pub async fn update_refine(&self, item_instance_id: i64, refine_level: u8) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE character_items 
+            SET refine_level = $1, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = $2
+            "#,
+        )
+        .bind(refine_level as i16)
+        .bind(item_instance_id)
+        .execute(self.pool.get_ref())
+        .await?;
+
+        Ok(())
+    }
+
+    /// Remove um item de um slot
+    pub async fn delete_item_by_slot(
+        &self,
+        character_id: RoleId,
+        container_type: ContainerType,
+        slot: u16,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            DELETE FROM character_items 
+            WHERE character_id = $1 AND container_type = $2 AND slot = $3
+            "#,
+        )
+        .bind(character_id)
+        .bind(container_type.as_str())
+        .bind(slot as i32)
+        .execute(self.pool.get_ref())
+        .await?;
+
+        Ok(())
+    }
+
+    /// Remove item por ID de instância
+    pub async fn delete_item_by_id(&self, item_instance_id: i64) -> Result<()> {
+        sqlx::query(
+            r#"
+            DELETE FROM character_items WHERE id = $1
+            "#,
+        )
+        .bind(item_instance_id)
+        .execute(self.pool.get_ref())
+        .await?;
+
+        Ok(())
+    }
+
+    /// Localiza todos os personagens que possuem determinado item_id (Auditoria e Economia)
+    pub async fn find_by_item_id(&self, item_id: u32) -> Result<Vec<ItemRecord>> {
+        let rows = sqlx::query_as::<_, ItemRow>(
+            r#"
+            SELECT * FROM character_items 
+            WHERE item_id = $1 
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(item_id as i32)
+        .fetch_all(self.pool.get_ref())
+        .await?;
+
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+}

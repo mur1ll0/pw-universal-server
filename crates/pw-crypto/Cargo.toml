@@ -1,0 +1,18 @@
+[package]
+name = "pw-crypto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+pw-core = { path = "../pw-core" }
+md-5 = { workspace = true }
+sha2 = { workspace = true }
+argon2 = { workspace = true }
+hmac = { workspace = true }
+thiserror = { workspace = true }
+bytes = { workspace = true }
+rand = "0.8"
+subtle = "2.5"
+hex = "0.4"

@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PW-Admin Universal Dashboard</title>
+    <!-- TailwindCSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' },
+                        dark: { 800: '#1e1e2d', 900: '#151521', 950: '#0f0f17' }
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-dark-950 text-gray-200 font-sans antialiased min-h-screen flex flex-col">
+
+    <!-- Header / Navbar -->
+    <header class="bg-dark-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between sticky top-0 z-50">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-400 flex items-center justify-center shadow-lg shadow-brand-500/30">
+                <i class="fa-solid fa-dragon text-white text-lg"></i>
+            </div>
+            <div>
+                <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                    PW-Admin <span class="text-xs px-2 py-0.5 bg-brand-500/20 text-brand-400 rounded-full font-mono font-medium border border-brand-500/30">Universal 2026</span>
+                </h1>
+                <p class="text-xs text-gray-400">Painel de Administração Multi-Realm & Gestão Global</p>
+            </div>
+        </div>
+
+        <!-- Realtime Status Badges -->
+        <div class="flex items-center space-x-4">
+            <div class="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-dark-800 border border-gray-700/50">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span class="text-xs text-gray-300 font-medium">Realm 1.2.6 (Port 29000): <b id="stat-realm-126" class="text-white">Online</b></span>
+            </div>
+            <div class="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-dark-800 border border-gray-700/50">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span class="text-xs text-gray-300 font-medium">Realm 1.5.3 (Port 29001): <b id="stat-realm-153" class="text-white">Online</b></span>
+            </div>
+            <div class="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-dark-800 border border-gray-700/50">
+                <i class="fa-solid fa-users text-brand-400 text-xs"></i>
+                <span class="text-xs text-gray-300 font-medium">Total Online: <b id="stat-total-online" class="text-white">0</b></span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Workspace Layout -->
+    <div class="flex-1 flex overflow-hidden">
+        
+        <!-- Sidebar Navigation -->
+        <aside class="w-64 bg-dark-900 border-r border-gray-800 flex flex-col p-4 space-y-1">
+            <button onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium bg-brand-600 text-white shadow-md transition">
+                <i class="fa-solid fa-chart-pie w-5"></i>
+                <span>Visão Geral</span>
+            </button>
+            <button onclick="switchTab('accounts')" id="nav-accounts" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-dark-800 transition">
+                <i class="fa-solid fa-user-shield w-5"></i>
+                <span>Gestão de Contas</span>
+            </button>
+            <button onclick="switchTab('characters')" id="nav-characters" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-dark-800 transition">
+                <i class="fa-solid fa-khanda w-5"></i>
+                <span>Personagens & Itens</span>
+            </button>
+            <button onclick="switchTab('maps')" id="nav-maps" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-dark-800 transition">
+                <i class="fa-solid fa-map-location-dot w-5"></i>
+                <span>Ligar / Desligar Mapas</span>
+            </button>
+            <button onclick="switchTab('events')" id="nav-events" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-dark-800 transition">
+                <i class="fa-solid fa-bolt w-5"></i>
+                <span>Double Eventos & EXP</span>
+            </button>
+            <button onclick="switchTab('changelog')" id="nav-changelog" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-dark-800 transition">
+                <i class="fa-solid fa-cloud-arrow-down w-5"></i>
+                <span>Changelog & Patches</span>
+            </button>
+            <button onclick="switchTab('broadcast')" id="nav-broadcast" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-dark-800 transition">
+                <i class="fa-solid fa-bullhorn w-5"></i>
+                <span>Anúncios de Sistema</span>
+            </button>
+        </aside>
+
+        <!-- Dynamic Content Canvas -->
+        <main class="flex-1 overflow-y-auto p-8 bg-dark-950">
+
+            <!-- TAB: DASHBOARD -->
+            <section id="tab-dashboard" class="tab-content space-y-6">
+                <h2 class="text-2xl font-bold text-white tracking-tight">Painel de Métricas & Estado Global</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="bg-dark-900 border border-gray-800 p-5 rounded-2xl">
+                        <div class="flex items-center justify-between text-gray-400 text-sm">
+                            <span>Total de Contas</span>
+                            <i class="fa-solid fa-users text-brand-400"></i>
+                        </div>
+                        <p id="metric-accounts" class="text-3xl font-extrabold text-white mt-2">--</p>
+                    </div>
+                    <div class="bg-dark-900 border border-gray-800 p-5 rounded-2xl">
+                        <div class="flex items-center justify-between text-gray-400 text-sm">
+                            <span>Personagens Criados</span>
+                            <i class="fa-solid fa-shield-halved text-indigo-400"></i>
+                        </div>
+                        <p id="metric-characters" class="text-3xl font-extrabold text-white mt-2">--</p>
+                    </div>
+                    <div class="bg-dark-900 border border-gray-800 p-5 rounded-2xl">
+                        <div class="flex items-center justify-between text-gray-400 text-sm">
+                            <span>Online no Classic 1.2.6</span>
+                            <i class="fa-solid fa-gamepad text-emerald-400"></i>
+                        </div>
+                        <p id="metric-online-126" class="text-3xl font-extrabold text-white mt-2">0</p>
+                    </div>
+                    <div class="bg-dark-900 border border-gray-800 p-5 rounded-2xl">
+                        <div class="flex items-center justify-between text-gray-400 text-sm">
+                            <span>Online no Eclipse 1.5.3</span>
+                            <i class="fa-solid fa-wand-magic-sparkles text-cyan-400"></i>
+                        </div>
+                        <p id="metric-online-153" class="text-3xl font-extrabold text-white mt-2">0</p>
+                    </div>
+                </div>
+
+                <!-- Realm Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+                    <div class="bg-dark-900 border border-gray-800 p-6 rounded-2xl">
+                        <div class="flex items-center justify-between border-b border-gray-800 pb-4">
+                            <div>
+                                <h3 class="text-lg font-bold text-white">Realm 1: Classic (v1.2.6)</h3>
+                                <p class="text-xs text-gray-400">Porta Pública: 29000 | 3 Raças / 6 Classes</p>
+                            </div>
+                            <span class="px-3 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold">ATIVO</span>
+                        </div>
+                        <div class="mt-4 text-sm text-gray-300 space-y-2">
+                            <p><b>Multiplicadores:</b> EXP 1.0x | SP 1.0x | Drop 1.0x | Gold 1.0x</p>
+                            <p><b>Database:</b> PostgreSQL 16 (Tabelas normalizadas: character_items, skills)</p>
+                            <p><b>Cache:</b> DragonflyDB In-Memory Sub-milissegundo</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-dark-900 border border-gray-800 p-6 rounded-2xl">
+                        <div class="flex items-center justify-between border-b border-gray-800 pb-4">
+                            <div>
+                                <h3 class="text-lg font-bold text-white">Realm 2: Eclipse (v1.5.3)</h3>
+                                <p class="text-xs text-gray-400">Porta Pública: 29001 | 6 Raças / 12 Classes</p>
+                            </div>
+                            <span class="px-3 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold">ATIVO</span>
+                        </div>
+                        <div class="mt-4 text-sm text-gray-300 space-y-2">
+                            <p><b>Multiplicadores:</b> EXP 1.0x | SP 1.0x | Drop 1.0x | Gold 1.0x</p>
+                            <p><b>Recursos:</b> Sombrios (Moving Cast), Meridianos, Rebirth, Astrolábio</p>
+                            <p><b>Database:</b> PostgreSQL 16 Compartilhado com Contas Globais</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB: ACCOUNTS -->
+            <section id="tab-accounts" class="tab-content hidden space-y-6">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-2xl font-bold text-white tracking-tight">Gestão Global de Contas (pwAdmin)</h2>
+                    <button onclick="openCreateAccountPrompt()" class="px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-semibold flex items-center gap-2 shadow-lg shadow-brand-500/20">
+                        <i class="fa-solid fa-user-plus"></i> Criar Nova Conta
+                    </button>
+                </div>
+
+                <div class="bg-dark-900 border border-gray-800 rounded-2xl overflow-hidden">
+                    <div class="p-4 border-b border-gray-800 flex items-center justify-between gap-4">
+                        <input type="text" id="account-search" placeholder="Pesquisar por nome de usuário..." class="bg-dark-950 border border-gray-700/50 rounded-xl px-4 py-2 text-sm text-gray-200 w-80 focus:outline-none focus:border-brand-500">
+                        <button onclick="loadAccounts()" class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-white rounded-xl text-sm font-medium border border-gray-700">Atualizar</button>
+                    </div>
+                    <table class="w-full text-left text-sm">
+                        <thead class="bg-dark-800/50 text-gray-400 font-medium">
+                            <tr>
+                                <th class="p-4">ID</th>
+                                <th class="p-4">Usuário</th>
+                                <th class="p-4">Saldo Gold</th>
+                                <th class="p-4">Nível GM</th>
+                                <th class="p-4">Status</th>
+                                <th class="p-4 text-right">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="accounts-tbody" class="divide-y divide-gray-800 text-gray-300"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: CHARACTERS & ITEMS -->
+            <section id="tab-characters" class="tab-content hidden space-y-6">
+                <h2 class="text-2xl font-bold text-white tracking-tight">Inspetor e Editor de Personagens & Itens</h2>
+                
+                <div class="bg-dark-900 border border-gray-800 p-6 rounded-2xl space-y-4">
+                    <div class="flex items-center gap-4">
+                        <input type="text" id="char-search-name" placeholder="Nome do Personagem..." class="bg-dark-950 border border-gray-700/50 rounded-xl px-4 py-2 text-sm text-gray-200 w-80">
+                        <select id="char-search-realm" class="bg-dark-950 border border-gray-700/50 rounded-xl px-4 py-2 text-sm text-gray-200">
+                            <option value="">Todos os Realms</option>
+                            <option value="realm_126">Realm 1.2.6 Classic</option>
+                            <option value="realm_153">Realm 1.5.3 Eclipse</option>
+                        </select>
+                        <button onclick="searchCharacters()" class="px-5 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-semibold">Pesquisar</button>
+                    </div>
+
+                    <div id="character-results" class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6"></div>
+                </div>
+            </section>
+
+            <!-- TAB: MAPS (LIGAR / DESLIGAR MAPAS) -->
+            <section id="tab-maps" class="tab-content hidden space-y-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold text-white tracking-tight">Gerenciamento Dinâmico de Mapas & Dungeons</h2>
+                        <p class="text-xs text-gray-400">Ative ou desative instâncias do servidor em tempo real para economizar recursos ou controlar eventos.</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <select id="map-select-realm" onchange="loadMaps()" class="bg-dark-900 border border-gray-700 rounded-xl px-4 py-2 text-sm text-gray-200">
+                            <option value="realm_126">Realm 1.2.6 Classic</option>
+                            <option value="realm_153">Realm 1.5.3 Eclipse</option>
+                        </select>
+                        <button onclick="loadMaps()" class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-white rounded-xl text-sm font-medium border border-gray-700">Recarregar</button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="maps-grid">
+                    <!-- Cards de mapas carregados via JS -->
+                </div>
+            </section>
+
+            <!-- TAB: CHANGELOG & PATCHES -->
+            <section id="tab-changelog" class="tab-content hidden space-y-6">
+                <div>
+                    <h2 class="text-2xl font-bold text-white tracking-tight">Histórico de Versões & Patches CDN (`pw-patch-tool`)</h2>
+                    <p class="text-xs text-gray-400">Catálogo de atualizações geradas automaticamente com notas de versão e hashes SHA-256.</p>
+                </div>
+
+                <div class="space-y-4" id="changelog-container">
+                    <!-- Changelogs carregados via JS -->
+                </div>
+            </section>
+
+            <!-- TAB: EVENTS & MULTIPLIERS -->
+            <section id="tab-events" class="tab-content hidden space-y-6">
+                <h2 class="text-2xl font-bold text-white tracking-tight">Controle Dinâmico de Eventos (Double EXP / SP / Drop)</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-dark-900 border border-gray-800 p-6 rounded-2xl space-y-4">
+                        <h3 class="text-lg font-bold text-white">Configuração de Multiplicadores: Realm 1.2.6</h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="text-xs text-gray-400">Multiplicador de EXP</label>
+                                <input type="number" step="0.5" id="mult-126-exp" value="1.0" class="w-full bg-dark-950 border border-gray-700/50 rounded-xl px-4 py-2 text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-400">Multiplicador de Alma (SP)</label>
+                                <input type="number" step="0.5" id="mult-126-sp" value="1.0" class="w-full bg-dark-950 border border-gray-700/50 rounded-xl px-4 py-2 text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-400">Multiplicador de Drops</label>
+                                <input type="number" step="0.5" id="mult-126-drop" value="1.0" class="w-full bg-dark-950 border border-gray-700/50 rounded-xl px-4 py-2 text-sm">
+                            </div>
+                            <button onclick="saveMultipliers('realm_126')" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm mt-4">Aplicar no Realm 1.2.6</button>
+                        </div>
+                    </div>
+
+                    <div class="bg-dark-900 border border-gray-800 p-6 rounded-2xl space-y-4">
+                        <h3 class="text-lg font-bold text-white">Configuração de Multiplicadores: Realm 1.5.3</h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="text-xs text-gray-400">Multiplicador de EXP</label>
+                                <input type="number" step="0.5" id="mult-153-exp" value="1.0" class="w-full bg-dark-950 border border-gray-700/50 rounded-xl px-4 py-2 text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-400">Multiplicador de Alma (SP)</label>
+                                <input type="number" step="0.5" id="mult-153-sp" value="1.0" class="w-full bg-dark-950 border border-gray-700/50 rounded-xl px-4 py-2 text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-400">Multiplicador de Drops</label>
+                                <input type="number" step="0.5" id="mult-153-drop" value="1.0" class="w-full bg-dark-950 border border-gray-700/50 rounded-xl px-4 py-2 text-sm">
+                            </div>
+                            <button onclick="saveMultipliers('realm_153')" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm mt-4">Aplicar no Realm 1.5.3</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB: BROADCAST -->
+            <section id="tab-broadcast" class="tab-content hidden space-y-6">
+                <h2 class="text-2xl font-bold text-white tracking-tight">Transmissão Global de Anúncios (Mensagem Amarela)</h2>
+                
+                <div class="bg-dark-900 border border-gray-800 p-6 rounded-2xl space-y-4 max-w-2xl">
+                    <div>
+                        <label class="text-xs text-gray-400">Selecionar Realm</label>
+                        <select id="broadcast-realm" class="w-full bg-dark-950 border border-gray-700/50 rounded-xl px-4 py-2 text-sm mt-1">
+                            <option value="realm_126">Realm 1.2.6 Classic</option>
+                            <option value="realm_153">Realm 1.5.3 Eclipse</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-400">Texto do Anúncio</label>
+                        <textarea id="broadcast-text" rows="3" placeholder="Digite a mensagem para todos os jogadores online..." class="w-full bg-dark-950 border border-gray-700/50 rounded-xl p-4 text-sm mt-1"></textarea>
+                    </div>
+                    <button onclick="sendBroadcast()" class="px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-semibold">Transmitir Anúncio</button>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <script>
+        const API_URL = "http://localhost:8000";
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.nav-btn').forEach(el => {
+                el.classList.remove('bg-brand-600', 'text-white');
+                el.classList.add('text-gray-400');
+            });
+
+            document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+            const activeNav = document.getElementById(`nav-${tabId}`);
+            activeNav.classList.add('bg-brand-600', 'text-white');
+            activeNav.classList.remove('text-gray-400');
+
+            if (tabId === 'accounts') loadAccounts();
+            if (tabId === 'dashboard') loadMetrics();
+            if (tabId === 'maps') loadMaps();
+            if (tabId === 'changelog') loadChangelog();
+        }
+
+        async function loadMetrics() {
+            try {
+                const res = await fetch(`${API_URL}/api/metrics`);
+                const data = await res.json();
+                document.getElementById('metric-accounts').innerText = data.total_accounts || 0;
+                document.getElementById('metric-characters').innerText = data.total_characters || 0;
+                document.getElementById('metric-online-126').innerText = data.online_by_realm.realm_126 || 0;
+                document.getElementById('metric-online-153').innerText = data.online_by_realm.realm_153 || 0;
+                document.getElementById('stat-total-online').innerText = data.total_online || 0;
+            } catch (e) {
+                console.log("Erro ao carregar métricas", e);
+            }
+        }
+
+        async function loadAccounts() {
+            try {
+                const search = document.getElementById('account-search').value;
+                const url = search ? `${API_URL}/api/accounts/list?search=${search}` : `${API_URL}/api/accounts/list`;
+                const res = await fetch(url);
+                const data = await res.json();
+                
+                const tbody = document.getElementById('accounts-tbody');
+                tbody.innerHTML = '';
+                
+                data.accounts.forEach(acc => {
+                    tbody.innerHTML += `
+                        <tr class="hover:bg-dark-800/40 transition">
+                            <td class="p-4 font-mono font-bold">${acc.id}</td>
+                            <td class="p-4 font-semibold text-white">${acc.username}</td>
+                            <td class="p-4 text-amber-400 font-bold">${acc.gold_balance} Gold</td>
+                            <td class="p-4"><span class="px-2 py-0.5 bg-indigo-500/20 text-indigo-300 rounded font-mono text-xs">GM ${acc.gm_privileges}</span></td>
+                            <td class="p-4">${acc.is_banned ? '<span class="text-rose-400 font-semibold">Banido</span>' : '<span class="text-emerald-400 font-semibold">Ativo</span>'}</td>
+                            <td class="p-4 text-right space-x-2">
+                                <button onclick="grantGoldPrompt(${acc.id})" class="px-2.5 py-1 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 rounded-lg text-xs font-semibold">+ Gold</button>
+                                <button onclick="resetPasswordPrompt(${acc.id})" class="px-2.5 py-1 bg-dark-800 hover:bg-dark-700 text-gray-200 rounded-lg text-xs font-semibold">Senha</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+            } catch (e) {
+                console.log("Erro ao carregar contas", e);
+            }
+        }
+
+        async function loadMaps() {
+            const realmId = document.getElementById('map-select-realm').value;
+            try {
+                const res = await fetch(`${API_URL}/api/realms/${realmId}/maps`);
+                const data = await res.json();
+                const grid = document.getElementById('maps-grid');
+                grid.innerHTML = '';
+
+                data.maps.forEach(m => {
+                    grid.innerHTML += `
+                        <div class="bg-dark-900 border border-gray-800 p-5 rounded-2xl flex items-center justify-between">
+                            <div>
+                                <span class="text-xs px-2 py-0.5 rounded bg-dark-800 text-gray-400 font-mono">Tag ${m.tag}</span>
+                                <h4 class="font-bold text-white text-base mt-1">${m.name}</h4>
+                                <p class="text-xs text-gray-400">Pasta: <code>config/${m.folder}/</code></p>
+                            </div>
+                            <button onclick="toggleMap('${realmId}', ${m.tag}, ${!m.enabled})" class="px-3 py-1.5 rounded-xl text-xs font-bold transition ${m.enabled ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'}">
+                                ${m.enabled ? '<i class="fa-solid fa-power-off"></i> LIGADO' : '<i class="fa-solid fa-ban"></i> DESLIGADO'}
+                            </button>
+                        </div>
+                    `;
+                });
+            } catch (e) {
+                console.log("Erro ao carregar mapas", e);
+            }
+        }
+
+        async function toggleMap(realmId, mapTag, enableState) {
+            await fetch(`${API_URL}/api/realms/${realmId}/maps/toggle`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ realm_id: realmId, map_tag: mapTag, enabled: enableState })
+            });
+            loadMaps();
+        }
+
+        async function loadChangelog() {
+            try {
+                const res = await fetch(`${API_URL}/api/patches/changelog`);
+                const data = await res.json();
+                const container = document.getElementById('changelog-container');
+                container.innerHTML = '';
+
+                data.patches.forEach(p => {
+                    container.innerHTML += `
+                        <div class="bg-dark-900 border border-gray-800 p-6 rounded-2xl space-y-3">
+                            <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+                                <div class="flex items-center gap-3">
+                                    <span class="px-2.5 py-1 bg-brand-500/20 text-brand-300 rounded-lg font-mono font-bold text-sm">v${p.from_version} → v${p.to_version}</span>
+                                    <span class="text-xs text-gray-400">${new Date(p.release_date).toLocaleString()}</span>
+                                </div>
+                                <span class="text-xs font-mono text-gray-400">${p.package_size_mb} MB • ${p.package_file}</span>
+                            </div>
+                            <p class="text-sm text-gray-200">${p.release_notes}</p>
+                            <div class="pt-2 flex items-center justify-between text-xs text-gray-500 font-mono">
+                                <span>SHA-256: ${p.package_sha256}</span>
+                                <span>${p.changed_files_count} arquivos atualizados</span>
+                            </div>
+                        </div>
+                    `;
+                });
+            } catch (e) {
+                console.log("Erro ao carregar changelog", e);
+            }
+        }
+
+        async function openCreateAccountPrompt() {
+            const user = prompt("Nome de usuário:");
+            if (!user) return;
+            const pass = prompt("Senha:");
+            if (!pass) return;
+            
+            await fetch(`${API_URL}/api/accounts/create`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username: user, password: pass, gm_privileges: 0, initial_gold: 0 })
+            });
+            alert("Conta criada com sucesso!");
+            loadAccounts();
+        }
+
+        async function grantGoldPrompt(accId) {
+            const amount = prompt("Quantidade de Gold/CUBI a adicionar:", "10000");
+            if (amount) {
+                await fetch(`${API_URL}/api/accounts/grant-gold`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ account_id: accId, amount: parseInt(amount) })
+                });
+                alert("Gold adicionado com sucesso!");
+                loadAccounts();
+            }
+        }
+
+        async function resetPasswordPrompt(accId) {
+            const newPass = prompt("Digite a nova senha para a conta:");
+            if (newPass) {
+                await fetch(`${API_URL}/api/accounts/reset-password`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ account_id: accId, new_password: newPass })
+                });
+                alert("Senha resetada com sucesso!");
+            }
+        }
+
+        async function searchCharacters() {
+            const name = document.getElementById('char-search-name').value;
+            const realm_id = document.getElementById('char-search-realm').value;
+            const url = `${API_URL}/api/characters/search?name=${name}&realm_id=${realm_id}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            
+            const results = document.getElementById('character-results');
+            results.innerHTML = '';
+            
+            data.characters.forEach(c => {
+                results.innerHTML += `
+                    <div class="bg-dark-950 border border-gray-800 p-5 rounded-2xl flex items-center justify-between">
+                        <div>
+                            <span class="text-xs px-2 py-0.5 bg-dark-800 text-gray-400 rounded">${c.realm_id}</span>
+                            <h4 class="font-bold text-white text-lg mt-1">${c.name}</h4>
+                            <p class="text-xs text-gray-400">Nível ${c.level} | Cultivo ${c.cultivation} | Moedas: ${c.money}</p>
+                        </div>
+                        <button onclick="teleportCdd(${c.id})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold">Teleportar CDD</button>
+                    </div>
+                `;
+            });
+        }
+
+        async function teleportCdd(charId) {
+            await fetch(`${API_URL}/api/characters/${charId}/teleport-cdd`, { method: 'POST' });
+            alert("Personagem teletransportado para a Cidade do Dragão com sucesso!");
+        }
+
+        async function saveMultipliers(realmId) {
+            const prefix = realmId === 'realm_126' ? '126' : '153';
+            const exp = parseFloat(document.getElementById(`mult-${prefix}-exp`).value);
+            const sp = parseFloat(document.getElementById(`mult-${prefix}-sp`).value);
+            const drop = parseFloat(document.getElementById(`mult-${prefix}-drop`).value);
+
+            await fetch(`${API_URL}/api/realms/set-multipliers`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ realm_id: realmId, exp, sp, drop, gold: 1.0 })
+            });
+            alert(`Multiplicadores do ${realmId} atualizados em tempo real!`);
+        }
+
+        async function sendBroadcast() {
+            const realm_id = document.getElementById('broadcast-realm').value;
+            const message = document.getElementById('broadcast-text').value;
+            if (!message) return alert("Digite uma mensagem");
+
+            await fetch(`${API_URL}/api/realms/broadcast`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ realm_id, message })
+            });
+            alert("Anúncio enviado para todos os jogadores do Realm!");
+            document.getElementById('broadcast-text').value = '';
+        }
+
+        loadMetrics();
+    </script>
+</body>
+</html>
