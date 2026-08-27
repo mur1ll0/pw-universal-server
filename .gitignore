@@ -1,0 +1,74 @@
+# ==============================================================================
+# PW-UNIVERSAL-SERVER: GITIGNORE RECOMENDADO
+# ==============================================================================
+
+# Rust / Cargo
+target/
+**/*.rs.bk
+*.pdb
+
+# Python / FastAPI Backend
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+.pytest_cache/
+
+# Node / Frontend
+node_modules/
+.next/
+dist/
+build/
+.cache/
+
+# Banco de Dados & Armazenamento Local Docker
+pgdata/
+dragonfly_data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Arquivos de Configuração Sensíveis e Variáveis de Ambiente
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.cert
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Arquivos Binários de Jogo e .DATA (Ignora arquivos pesados proprietários)
+data/**/config/*.data
+data/**/config/**/*.data
+data/**/config/**/*.data.empty
+data/**/config/**/*.clt
+data/**/config/**/*.clv
+data/**/config/**/*.sev
+data/**/config/**/*.raw
+data/**/config/**/*.pck
+data/**/config/**/collision.*
+*.data
+*.pck
+*.cup
+client_checksums.json
+patch_manifest.json
+
+# IDEs e Sistema Operacional
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
