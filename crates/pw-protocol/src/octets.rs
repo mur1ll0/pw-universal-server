@@ -1,6 +1,4 @@
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::io::{Cursor, Read, Write};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -14,14 +12,14 @@ pub enum OctetsError {
     #[error("String UTF-16 / UTF-8 inválida")]
     InvalidString,
 
-    #[error("Tamanho compacto de inteiro inválido (prefixo desconhecido)")]
-    InvalidCompactUint,
+    #[error("Tamanho compacto de inteiro inválido (prefixo desconhecido: 0x{0:02X})")]
+    InvalidCompactUint(u8),
 }
 
 pub type Result<T> = std::result::Result<T, OctetsError>;
 
 /// Leitor e Escritor de Streams Binários do Perfect World (OctetsStream)
-/// Suporta o formato oficial de compactação de inteiros do CNet (Wanmei Engine)
+/// Implementação estrita do padrão oficial da Wanmei Engine (CNet / GNet).
 #[derive(Debug, Clone, Default)]
 pub struct OctetsStream {
     buffer: BytesMut,
@@ -57,7 +55,7 @@ impl OctetsStream {
     }
 
     // =========================================================================
-    // ESCRITA DE DADOS (Serialization)
+    // ESCRITA DE DADOS (Serialization - Network Byte Order / Big-Endian)
     // =========================================================================
 
     pub fn write_u8(&mut self, val: u8) {
@@ -67,6 +65,42 @@ impl OctetsStream {
     pub fn write_i8(&mut self, val: i8) {
         self.buffer.put_i8(val);
     }
+
+    pub fn write_u16(&mut self, val: u16) {
+        self.buffer.put_u16(val);
+    }
+
+    pub fn write_i16(&mut self, val: i16) {
+        self.buffer.put_i16(val);
+    }
+
+    pub fn write_u32(&mut self, val: u32) {
+        self.buffer.put_u32(val);
+    }
+
+    pub fn write_i32(&mut self, val: i32) {
+        self.buffer.put_i32(val);
+    }
+
+    pub fn write_u64(&mut self, val: u64) {
+        self.buffer.put_u64(val);
+    }
+
+    pub fn write_i64(&mut self, val: i64) {
+        self.buffer.put_i64(val);
+    }
+
+    pub fn write_f32(&mut self, val: f32) {
+        self.buffer.put_f32(val);
+    }
+
+    pub fn write_f64(&mut self, val: f64) {
+        self.buffer.put_f64(val);
+    }
+
+    // =========================================================================
+    // ESCRITA DE DADOS EM LITTLE-ENDIAN (GameServer In-Game Structs)
+    // =========================================================================
 
     pub fn write_u16_le(&mut self, val: u16) {
         self.buffer.put_u16_le(val);
@@ -84,14 +118,6 @@ impl OctetsStream {
         self.buffer.put_i32_le(val);
     }
 
-    pub fn write_u64_le(&mut self, val: u64) {
-        self.buffer.put_u64_le(val);
-    }
-
-    pub fn write_i64_le(&mut self, val: i64) {
-        self.buffer.put_i64_le(val);
-    }
-
     pub fn write_f32_le(&mut self, val: f32) {
         self.buffer.put_f32_le(val);
     }
@@ -100,25 +126,40 @@ impl OctetsStream {
         self.buffer.put_f64_le(val);
     }
 
-    /// Escreve um inteiro compacto no formato oficial CUint32 do PW
+    pub fn write_u64_le(&mut self, val: u64) {
+        self.buffer.put_u64_le(val);
+    }
+
+    pub fn write_i64_le(&mut self, val: i64) {
+        self.buffer.put_i64_le(val);
+    }
+
+    /// Escreve um inteiro compacto no formato oficial CUint32 do CNet
+    /// < 0x40 (0..63) -> 1 byte (0xxxxxxx)
+    /// < 0x4000 (64..16383) -> 2 bytes (10xxxxxx xxxxxxxx)
+    /// < 0x20000000 (16384..536870911) -> 4 bytes (110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx)
+    /// >= 0x20000000 -> 1 byte 0xE0 + 4 bytes Big-Endian
     pub fn write_compact_uint(&mut self, val: u32) {
-        if val < 0x80 {
+        if val < 0x40 {
             self.buffer.put_u8(val as u8);
         } else if val < 0x4000 {
-            let encoded = ((val | 0x8000) as u16).to_be_bytes();
-            self.buffer.put_slice(&encoded);
+            self.buffer.put_u16((val | 0x8000) as u16);
         } else if val < 0x20000000 {
-            let encoded = (val | 0xC0000000).to_be_bytes();
-            self.buffer.put_slice(&encoded);
+            self.buffer.put_u32(val | 0xC0000000);
         } else {
             self.buffer.put_u8(0xE0);
-            self.buffer.put_slice(&val.to_be_bytes());
+            self.buffer.put_u32(val);
         }
     }
 
     /// Escreve um bloco de bytes prefixado com seu tamanho compacto (Octets)
     pub fn write_octets(&mut self, data: &[u8]) {
         self.write_compact_uint(data.len() as u32);
+        self.buffer.put_slice(data);
+    }
+
+    /// Escreve um bloco de bytes puros (sem prefixo de tamanho)
+    pub fn write_raw_bytes(&mut self, data: &[u8]) {
         self.buffer.put_slice(data);
     }
 
@@ -152,6 +193,62 @@ impl OctetsStream {
             return Err(OctetsError::BufferUnderflow);
         }
         Ok(self.buffer.get_i8())
+    }
+
+    pub fn read_u16(&mut self) -> Result<u16> {
+        if self.buffer.remaining() < 2 {
+            return Err(OctetsError::BufferUnderflow);
+        }
+        Ok(self.buffer.get_u16())
+    }
+
+    pub fn read_i16(&mut self) -> Result<i16> {
+        if self.buffer.remaining() < 2 {
+            return Err(OctetsError::BufferUnderflow);
+        }
+        Ok(self.buffer.get_i16())
+    }
+
+    pub fn read_u32(&mut self) -> Result<u32> {
+        if self.buffer.remaining() < 4 {
+            return Err(OctetsError::BufferUnderflow);
+        }
+        Ok(self.buffer.get_u32())
+    }
+
+    pub fn read_i32(&mut self) -> Result<i32> {
+        if self.buffer.remaining() < 4 {
+            return Err(OctetsError::BufferUnderflow);
+        }
+        Ok(self.buffer.get_i32())
+    }
+
+    pub fn read_u64(&mut self) -> Result<u64> {
+        if self.buffer.remaining() < 8 {
+            return Err(OctetsError::BufferUnderflow);
+        }
+        Ok(self.buffer.get_u64())
+    }
+
+    pub fn read_i64(&mut self) -> Result<i64> {
+        if self.buffer.remaining() < 8 {
+            return Err(OctetsError::BufferUnderflow);
+        }
+        Ok(self.buffer.get_i64())
+    }
+
+    pub fn read_f32(&mut self) -> Result<f32> {
+        if self.buffer.remaining() < 4 {
+            return Err(OctetsError::BufferUnderflow);
+        }
+        Ok(self.buffer.get_f32())
+    }
+
+    pub fn read_f64(&mut self) -> Result<f64> {
+        if self.buffer.remaining() < 8 {
+            return Err(OctetsError::BufferUnderflow);
+        }
+        Ok(self.buffer.get_f64())
     }
 
     pub fn read_u16_le(&mut self) -> Result<u16> {
@@ -203,39 +300,47 @@ impl OctetsStream {
         Ok(self.buffer.get_f32_le())
     }
 
-    /// Lê um inteiro compacto CUint32
+    pub fn read_f64_le(&mut self) -> Result<f64> {
+        if self.buffer.remaining() < 8 {
+            return Err(OctetsError::BufferUnderflow);
+        }
+        Ok(self.buffer.get_f64_le())
+    }
+
+    /// Lê um inteiro compacto CUint32 oficial da Wanmei
     pub fn read_compact_uint(&mut self) -> Result<u32> {
         if self.buffer.remaining() < 1 {
             return Err(OctetsError::BufferUnderflow);
         }
 
         let first = self.buffer.get_u8();
-        match first & 0xE0 {
-            0xE0 => {
-                if self.buffer.remaining() < 4 {
-                    return Err(OctetsError::BufferUnderflow);
-                }
-                Ok(self.buffer.get_u32()) // Big-Endian
+        if (first & 0x80) == 0 {
+            // 0xxxxxxx (0..63)
+            Ok(first as u32)
+        } else if (first & 0xC0) == 0x80 {
+            // 10xxxxxx xxxxxxxx (64..16383)
+            if self.buffer.remaining() < 1 {
+                return Err(OctetsError::BufferUnderflow);
             }
-            0xC0 => {
-                if self.buffer.remaining() < 3 {
-                    return Err(OctetsError::BufferUnderflow);
-                }
-                let b1 = first & 0x3F;
-                let b2 = self.buffer.get_u8();
-                let b3 = self.buffer.get_u8();
-                let b4 = self.buffer.get_u8();
-                Ok(((b1 as u32) << 24) | ((b2 as u32) << 16) | ((b3 as u32) << 8) | (b4 as u32))
+            let b2 = self.buffer.get_u8();
+            Ok((((first as u32) & 0x3F) << 8) | (b2 as u32))
+        } else if (first & 0xE0) == 0xC0 {
+            // 110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx (16384..536870911)
+            if self.buffer.remaining() < 3 {
+                return Err(OctetsError::BufferUnderflow);
             }
-            0x80 | 0xA0 => {
-                if self.buffer.remaining() < 1 {
-                    return Err(OctetsError::BufferUnderflow);
-                }
-                let b1 = first & 0x7F;
-                let b2 = self.buffer.get_u8();
-                Ok(((b1 as u32) << 8) | (b2 as u32))
+            let b2 = self.buffer.get_u8();
+            let b3 = self.buffer.get_u8();
+            let b4 = self.buffer.get_u8();
+            Ok((((first as u32) & 0x1F) << 24) | ((b2 as u32) << 16) | ((b3 as u32) << 8) | (b4 as u32))
+        } else if first == 0xE0 {
+            // 11100000 + 4 bytes Big-Endian
+            if self.buffer.remaining() < 4 {
+                return Err(OctetsError::BufferUnderflow);
             }
-            _ => Ok(first as u32),
+            Ok(self.buffer.get_u32())
+        } else {
+            Err(OctetsError::InvalidCompactUint(first))
         }
     }
 
@@ -277,7 +382,7 @@ mod tests {
 
     #[test]
     fn test_compact_uint_roundtrip() {
-        let test_values = [0u32, 1, 127, 128, 500, 16383, 16384, 100000, 500000000];
+        let test_values = [0u32, 1, 15, 63, 64, 127, 128, 500, 16383, 16384, 100000, 500000000];
 
         for &val in &test_values {
             let mut stream = OctetsStream::new();

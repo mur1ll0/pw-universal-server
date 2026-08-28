@@ -11,6 +11,27 @@ pub enum ContainerType {
 }
 
 impl ContainerType {
+    pub fn to_i16(&self) -> i16 {
+        match self {
+            ContainerType::Inventory => 0,
+            ContainerType::Equipment => 1,
+            ContainerType::Storehouse => 2,
+            ContainerType::Fashion => 3,
+            ContainerType::PetCorral => 4,
+        }
+    }
+
+    pub fn from_i16(val: i16) -> Self {
+        match val {
+            0 => ContainerType::Inventory,
+            1 => ContainerType::Equipment,
+            2 => ContainerType::Storehouse,
+            3 => ContainerType::Fashion,
+            4 => ContainerType::PetCorral,
+            _ => ContainerType::Inventory,
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             ContainerType::Inventory => "INVENTORY",
@@ -23,11 +44,11 @@ impl ContainerType {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "INVENTORY" => Some(ContainerType::Inventory),
-            "EQUIPMENT" => Some(ContainerType::Equipment),
-            "STOREHOUSE" => Some(ContainerType::Storehouse),
-            "FASHION" => Some(ContainerType::Fashion),
-            "PET_CORRAL" => Some(ContainerType::PetCorral),
+            "INVENTORY" | "0" => Some(ContainerType::Inventory),
+            "EQUIPMENT" | "1" => Some(ContainerType::Equipment),
+            "STOREHOUSE" | "2" => Some(ContainerType::Storehouse),
+            "FASHION" | "3" => Some(ContainerType::Fashion),
+            "PET_CORRAL" | "4" => Some(ContainerType::PetCorral),
             _ => None,
         }
     }
@@ -51,6 +72,8 @@ pub struct ItemRecord {
     pub bind_status: u8,           // 0: Livre, 1: Preso à alma
     pub custom_attributes: serde_json::Value, // Atributos adicionais e nome do criador
 }
+
+pub type InventoryItem = ItemRecord;
 
 impl ItemRecord {
     pub fn new(character_id: i32, container_type: ContainerType, slot: u16, item_id: u32, count: u32) -> Self {

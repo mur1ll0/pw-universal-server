@@ -16,3 +16,4 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+hex = { workspace = true }

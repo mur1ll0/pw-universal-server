@@ -62,4 +62,18 @@ impl CacheManager {
         conn.publish::<_, _, ()>(channel, payload).await?;
         Ok(())
     }
+
+    /// Armazena dados de sessão / ticket com TTL
+    pub async fn set_session(&self, key: &str, payload: &str, ttl_seconds: u64) -> Result<()> {
+        let mut conn = self.manager.clone();
+        conn.set_ex::<_, _, ()>(key, payload, ttl_seconds).await?;
+        Ok(())
+    }
+
+    /// Busca dados de sessão / ticket
+    pub async fn get_session(&self, key: &str) -> Result<Option<String>> {
+        let mut conn = self.manager.clone();
+        let val: Option<String> = conn.get(key).await?;
+        Ok(val)
+    }
 }

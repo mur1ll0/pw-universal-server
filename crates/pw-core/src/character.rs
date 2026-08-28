@@ -1,4 +1,4 @@
-use crate::items::{ContainerType, ItemRecord};
+use crate::items::ItemRecord;
 use crate::math::Vector3;
 use crate::types::{AccountId, CharacterClass, Gender, Race, RealmId, RoleId, WorldId};
 use chrono::{DateTime, Utc};

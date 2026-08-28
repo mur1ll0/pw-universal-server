@@ -1,10 +1,10 @@
-use crate::service::{AuthService, LoginResult};
+use crate::service::AuthService;
 use pw_core::AccountId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "action", content = "data")]
@@ -49,7 +49,7 @@ impl AuthServer {
     pub async fn run(&self) -> anyhow::Result<()> {
         let addr = format!("0.0.0.0:{}", self.listen_port);
         let listener = TcpListener::bind(&addr).await?;
-        info!("pw-auth daemon escutando em {}", addr);
+        info!("pw-auth (Serviço de Autenticação) escutando em {}", addr);
 
         loop {
             let (socket, remote_addr) = listener.accept().await?;
@@ -57,7 +57,7 @@ impl AuthServer {
 
             tokio::spawn(async move {
                 if let Err(e) = handle_connection(socket, service).await {
-                    warn!("Erro na conexão com {}: {:?}", remote_addr, e);
+                    warn!("Erro na conexão de {}: {:?}", remote_addr, e);
                 }
             });
         }
@@ -88,21 +88,27 @@ async fn handle_connection(mut socket: TcpStream, service: Arc<AuthService>) -> 
             password,
             client_ip,
             realm_id,
-        } => match service.login(&username, &password, &client_ip, &realm_id).await {
-            Ok(login_res) => AuthResponse::Ok(serde_json::to_value(login_res)?),
+        } => match service.authenticate(&username, &password, &client_ip, &realm_id).await {
+            Ok(login_res) => {
+                AuthResponse::Ok(serde_json::to_value(login_res)?)
+            }
             Err(e) => AuthResponse::Error(e.to_string()),
         },
         AuthRequest::Register {
             username,
             password,
             email,
-        } => match service.register(&username, &password, email.as_deref()).await {
-            Ok(acc_id) => AuthResponse::Ok(serde_json::json!({ "account_id": acc_id })),
+        } => match service.register(&username, &password, email).await {
+            Ok(acc_id) => {
+                AuthResponse::Ok(serde_json::json!({ "account_id": acc_id }))
+            }
             Err(e) => AuthResponse::Error(e.to_string()),
         },
         AuthRequest::AddGold { account_id, amount } => {
             match service.add_gold(account_id, amount).await {
-                Ok(new_bal) => AuthResponse::Ok(serde_json::json!({ "new_gold_balance": new_bal })),
+                Ok(new_balance) => {
+                    AuthResponse::Ok(serde_json::json!({ "new_balance": new_balance }))
+                }
                 Err(e) => AuthResponse::Error(e.to_string()),
             }
         }

@@ -9,6 +9,8 @@ import json
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import asyncpg
 import redis.asyncio as aioredis
@@ -447,16 +449,38 @@ async def get_patch_changelog():
 # ROTAS: MULTI-REALM, EVENTOS E MÉTRICAS
 # ==============================================================================
 
+async def is_realm_active(host: str, port: int) -> bool:
+    hosts = [host, f"pw-{host}", "127.0.0.1", "localhost"]
+    for h in hosts:
+        try:
+            _, writer = await asyncio.wait_for(asyncio.open_connection(h, port), timeout=0.25)
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except Exception:
+            continue
+    return False
+
 @app.get("/api/realms/list")
 async def list_realms(conn: asyncpg.Connection = Depends(get_db)):
     rows = await conn.fetch("SELECT * FROM realms ORDER BY id ASC")
     realms_list = []
     for r in rows:
         d = dict(r)
+        realm_id = d["id"]
+        port = d["port"]
+        active = await is_realm_active(realm_id.replace("_", "-"), port)
+        d["is_online"] = active
+        await conn.execute("UPDATE realms SET is_online = $1 WHERE id = $2", active, realm_id)
+        
         online_count = 0
         if redis_client:
-            online_count = await redis_client.scard(f"online:{d['id']}") or 0
+            online_count = await redis_client.scard(f"online:{realm_id}") or 0
         d["online_players"] = online_count
+        d["double_exp_multiplier"] = float(d["double_exp_multiplier"])
+        d["double_sp_multiplier"] = float(d["double_sp_multiplier"])
+        d["double_drop_multiplier"] = float(d["double_drop_multiplier"])
+        d["double_gold_multiplier"] = float(d["double_gold_multiplier"])
         realms_list.append(d)
     return {"realms": realms_list}
 
@@ -495,18 +519,54 @@ async def get_system_metrics(conn: asyncpg.Connection = Depends(get_db)):
     total_accounts = await conn.fetchval("SELECT COUNT(*) FROM accounts")
     total_chars = await conn.fetchval("SELECT COUNT(*) FROM characters WHERE is_deleted = FALSE")
     
-    online_126 = 0
-    online_153 = 0
-    if redis_client:
-        online_126 = await redis_client.scard("online:realm_126") or 0
-        online_153 = await redis_client.scard("online:realm_153") or 0
+    rows = await conn.fetch("SELECT * FROM realms ORDER BY id ASC")
+    realms_list = []
+    total_online = 0
+    online_by_realm = {}
+    
+    for r in rows:
+        d = dict(r)
+        realm_id = d["id"]
+        port = d["port"]
+        active = await is_realm_active(realm_id.replace("_", "-"), port)
+        d["is_online"] = active
+        await conn.execute("UPDATE realms SET is_online = $1 WHERE id = $2", active, realm_id)
+        
+        count = 0
+        if redis_client:
+            count = await redis_client.scard(f"online:{realm_id}") or 0
+        
+        online_by_realm[realm_id] = count
+        if active:
+            total_online += count
+            
+        d["online_players"] = count
+        d["double_exp_multiplier"] = float(d["double_exp_multiplier"])
+        d["double_sp_multiplier"] = float(d["double_sp_multiplier"])
+        d["double_drop_multiplier"] = float(d["double_drop_multiplier"])
+        d["double_gold_multiplier"] = float(d["double_gold_multiplier"])
+        realms_list.append(d)
         
     return {
         "total_accounts": total_accounts,
         "total_characters": total_chars,
-        "online_by_realm": {
-            "realm_126": online_126,
-            "realm_153": online_153,
-        },
-        "total_online": online_126 + online_153
+        "online_by_realm": online_by_realm,
+        "total_online": total_online,
+        "realms": realms_list
     }
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_index():
+    index_file = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    if os.path.exists(index_file):
+        with open(index_file, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    fallback_file = os.path.join(os.path.dirname(__file__), "..", "frontend", "index.html")
+    if os.path.exists(fallback_file):
+        with open(fallback_file, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse("<h1>PW-Admin Web API está online! Acesse /docs para a documentação interativa.</h1>")
+
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")

@@ -1,13 +1,38 @@
 # ==============================================================================
-# PW-UNIVERSAL-SERVER: GITIGNORE RECOMENDADO
+# PW-UNIVERSAL-SERVER: GITIGNORE DEFINITIVO
 # ==============================================================================
 
-# Rust / Cargo
+# ------------------------------------------------------------------------------
+# 1. Ignora TODO o Conteúdo da Pasta data/ (Mantendo apenas .gitkeep)
+# ------------------------------------------------------------------------------
+data/**/*
+!data/**/.gitkeep
+
+# Arquivos Proprietários do Jogo em qualquer subpasta
+*.data
+*.data.empty
+*.clt
+*.clv
+*.sev
+*.raw
+*.pck
+*.cup
+*.conf
+*.att
+*.ecw
+client_checksums.json
+patch_manifest.json
+
+# ------------------------------------------------------------------------------
+# 2. Rust / Cargo
+# ------------------------------------------------------------------------------
 target/
 **/*.rs.bk
 *.pdb
 
-# Python / FastAPI Backend
+# ------------------------------------------------------------------------------
+# 3. Python / FastAPI Backend
+# ------------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
@@ -20,21 +45,27 @@ ENV/
 *.egg-info/
 .pytest_cache/
 
-# Node / Frontend
+# ------------------------------------------------------------------------------
+# 4. Node / Frontend
+# ------------------------------------------------------------------------------
 node_modules/
 .next/
 dist/
 build/
 .cache/
 
-# Banco de Dados & Armazenamento Local Docker
+# ------------------------------------------------------------------------------
+# 5. Banco de Dados & Armazenamento Local Docker
+# ------------------------------------------------------------------------------
 pgdata/
 dragonfly_data/
 *.sqlite
 *.sqlite3
 *.db
 
-# Arquivos de Configuração Sensíveis e Variáveis de Ambiente
+# ------------------------------------------------------------------------------
+# 6. Arquivos de Configuração Sensíveis e Variáveis de Ambiente
+# ------------------------------------------------------------------------------
 .env
 .env.*
 !.env.example
@@ -42,28 +73,16 @@ dragonfly_data/
 *.pem
 *.cert
 
-# Logs
+# ------------------------------------------------------------------------------
+# 7. Logs
+# ------------------------------------------------------------------------------
 *.log
 logs/
 *.log.*
 
-# Arquivos Binários de Jogo e .DATA (Ignora arquivos pesados proprietários)
-data/**/config/*.data
-data/**/config/**/*.data
-data/**/config/**/*.data.empty
-data/**/config/**/*.clt
-data/**/config/**/*.clv
-data/**/config/**/*.sev
-data/**/config/**/*.raw
-data/**/config/**/*.pck
-data/**/config/**/collision.*
-*.data
-*.pck
-*.cup
-client_checksums.json
-patch_manifest.json
-
-# IDEs e Sistema Operacional
+# ------------------------------------------------------------------------------
+# 8. IDEs e Sistema Operacional
+# ------------------------------------------------------------------------------
 .idea/
 .vscode/
 *.swp

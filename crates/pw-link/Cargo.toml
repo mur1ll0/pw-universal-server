@@ -20,3 +20,4 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 futures = "0.3"
+hex = { workspace = true }

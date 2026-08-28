@@ -13,6 +13,11 @@ impl Vector3 {
         Self { x, y, z }
     }
 
+    /// Vetor nulo (0, 0, 0)
+    pub const fn zero() -> Self {
+        Self::new(0.0, 0.0, 0.0)
+    }
+
     /// Distância euclidiana ao quadrado entre dois pontos
     pub fn distance_squared(&self, other: &Vector3) -> f32 {
         let dx = self.x - other.x;

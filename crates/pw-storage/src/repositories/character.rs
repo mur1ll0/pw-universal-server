@@ -26,19 +26,15 @@ pub struct CharacterRecord {
     pub hp: i32,
     pub mp: i32,
     pub money: i64,
-    pub reputation: i32,
     pub world_id: WorldId,
-    pub pos_x: sqlx::types::BigDecimal,
-    pub pos_y: sqlx::types::BigDecimal,
-    pub pos_z: sqlx::types::BigDecimal,
-    pub inventory_size: i16,
-    pub storehouse_size: i16,
+    pub pos_x: f32,
+    pub pos_y: f32,
+    pub pos_z: f32,
+    pub custom_data: Option<Vec<u8>>,
     pub is_deleted: bool,
-    pub delete_time: Option<DateTime<Utc>>,
-    pub custom_appearance: sqlx::types::Json<serde_json::Value>,
-    pub version_data: sqlx::types::Json<serde_json::Value>,
+    pub deleted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
-    pub last_login_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Clone)]
@@ -71,14 +67,18 @@ impl CharacterRepository {
         race: Race,
         cls: CharacterClass,
         gender: Gender,
-        custom_appearance: serde_json::Value,
+        custom_data: Vec<u8>,
     ) -> Result<RoleId> {
+        let (spawn_x, spawn_y, spawn_z) = cls.default_spawn_position();
+        let (init_hp, init_mp) = cls.default_hp_mp();
+
         let role_id = sqlx::query_scalar::<_, RoleId>(
             r#"
             INSERT INTO characters (
-                account_id, realm_id, name, race, cls, gender, custom_appearance
+                account_id, realm_id, name, race, cls, gender, custom_data,
+                pos_x, pos_y, pos_z, hp, mp
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING id
             "#,
         )
@@ -88,7 +88,12 @@ impl CharacterRepository {
         .bind(race as i32)
         .bind(cls as i32)
         .bind(gender as i16)
-        .bind(sqlx::types::Json(custom_appearance))
+        .bind(custom_data)
+        .bind(spawn_x)
+        .bind(spawn_y)
+        .bind(spawn_z)
+        .bind(init_hp)
+        .bind(init_mp)
         .fetch_one(self.pool.get_ref())
         .await
         .map_err(|e| match e {
@@ -122,11 +127,15 @@ impl CharacterRepository {
         let mut summaries = Vec::with_capacity(recs.len());
 
         for r in recs {
-            // Carrega os itens equipados para exibir visualmente o personagem com suas armaduras e armas
             let equipment = self
                 .item_repo
                 .list_by_container(r.id, ContainerType::Equipment)
                 .await?;
+
+            let appearance_val = match &r.custom_data {
+                Some(bytes) => serde_json::json!({ "raw": hex::encode(bytes) }),
+                None => serde_json::json!({}),
+            };
 
             summaries.push(CharacterSummary {
                 id: r.id,
@@ -139,22 +148,18 @@ impl CharacterRepository {
                 level: r.level,
                 cultivation: r.cultivation,
                 world_id: r.world_id,
-                position: Vector3::new(
-                    r.pos_x.to_string().parse().unwrap_or(550.0),
-                    r.pos_y.to_string().parse().unwrap_or(200.0),
-                    r.pos_z.to_string().parse().unwrap_or(650.0),
-                ),
+                position: Vector3::new(r.pos_x, r.pos_y, r.pos_z),
                 equipment,
-                custom_appearance: r.custom_appearance.0,
+                custom_appearance: appearance_val,
                 is_deleted: r.is_deleted,
-                delete_time: r.delete_time,
+                delete_time: r.deleted_at,
             });
         }
 
         Ok(summaries)
     }
 
-    /// Carrega todos os detalhes do personagem (itens normalizados, skills e quests) para o World Server
+    /// Carrega todos os detalhes do personagem para o World Server
     pub async fn get_details(&self, role_id: RoleId) -> Result<Option<CharacterDetails>> {
         let rec = sqlx::query_as::<_, CharacterRecord>(
             r#"
@@ -170,7 +175,6 @@ impl CharacterRepository {
             None => return Ok(None),
         };
 
-        // Carrega as coleções normalizadas em paralelo ou sequencialmente
         let inventory = self.item_repo.list_by_container(role_id, ContainerType::Inventory).await?;
         let equipment = self.item_repo.list_by_container(role_id, ContainerType::Equipment).await?;
         let storehouse = self.item_repo.list_by_container(role_id, ContainerType::Storehouse).await?;
@@ -192,30 +196,29 @@ impl CharacterRepository {
             hp: r.hp,
             mp: r.mp,
             money: r.money,
-            reputation: r.reputation,
+            reputation: 0,
             world_id: r.world_id,
-            position: Vector3::new(
-                r.pos_x.to_string().parse().unwrap_or(550.0),
-                r.pos_y.to_string().parse().unwrap_or(200.0),
-                r.pos_z.to_string().parse().unwrap_or(650.0),
-            ),
-            inventory_size: r.inventory_size as u16,
-            storehouse_size: r.storehouse_size as u16,
+            position: Vector3::new(r.pos_x, r.pos_y, r.pos_z),
+            inventory_size: 64,
+            storehouse_size: 32,
             inventory,
             equipment,
             storehouse,
             skills,
             quests,
-            custom_appearance: r.custom_appearance.0,
-            version_data: r.version_data.0,
+            custom_appearance: match &r.custom_data {
+                Some(bytes) => serde_json::json!({ "raw": hex::encode(bytes) }),
+                None => serde_json::json!({}),
+            },
+            version_data: serde_json::json!({}),
             created_at: r.created_at,
-            last_login_at: r.last_login_at,
+            last_login_at: Some(r.updated_at),
         };
 
         Ok(Some(details))
     }
 
-    /// Salva o estado básico do personagem (HP, MP, EXP, Posição)
+    /// Salva o estado básico do personagem
     pub async fn save_status(
         &self,
         role_id: RoleId,
@@ -270,6 +273,38 @@ impl CharacterRepository {
         .bind(cdd.x)
         .bind(cdd.y)
         .bind(cdd.z)
+        .bind(role_id)
+        .execute(self.pool.get_ref())
+        .await?;
+
+        Ok(())
+    }
+
+    /// Marca o personagem como excluído (soft delete)
+    pub async fn delete_character(&self, role_id: RoleId) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE characters 
+            SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP 
+            WHERE id = $1
+            "#,
+        )
+        .bind(role_id)
+        .execute(self.pool.get_ref())
+        .await?;
+
+        Ok(())
+    }
+
+    /// Restaura um personagem marcado para exclusão (undo delete)
+    pub async fn restore_character(&self, role_id: RoleId) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE characters 
+            SET is_deleted = FALSE, deleted_at = NULL 
+            WHERE id = $1
+            "#,
+        )
         .bind(role_id)
         .execute(self.pool.get_ref())
         .await?;

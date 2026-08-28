@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ============================================================================
   # 1. CAMADA DE BANCO DE DADOS & CACHE COMPARTILHADA
@@ -80,7 +78,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.core
       args:
-        CRATE_NAME: pw-gs
+        CRATE_NAME: pw-link
     container_name: pw-realm-126
     restart: unless-stopped
     environment:
@@ -92,19 +90,43 @@ services:
     ports:
       - "29000:29000" # Porta pública do cliente 1.2.6
     volumes:
-      - ../../files1.2.6/pwserver/gamed/config:/app/data/config:ro
+      - ../data/realm_126/config:/app/data/config:ro
     depends_on:
       - pw-auth
 
   # ============================================================================
-  # 4. REALM 2: PERFECT WORLD ECLIPSE (Versão 1.5.3)
+  # 4. REALM 2: PERFECT WORLD TIDES / GENESIS (Versão 1.4.8)
+  # ============================================================================
+  pw-realm-148:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+      args:
+        CRATE_NAME: pw-link
+    container_name: pw-realm-148
+    restart: unless-stopped
+    environment:
+      REALM_ID: realm_148
+      GAME_VERSION: "1.4.8"
+      GATEWAY_PORT: 29002
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+    ports:
+      - "29002:29002" # Porta pública do cliente 1.4.8
+    volumes:
+      - ../data/realm_148/config:/app/data/config:ro
+    depends_on:
+      - pw-auth
+
+  # ============================================================================
+  # 5. REALM 3: PERFECT WORLD ECLIPSE (Versão 1.5.3)
   # ============================================================================
   pw-realm-153:
     build:
       context: ..
       dockerfile: docker/Dockerfile.core
       args:
-        CRATE_NAME: pw-gs
+        CRATE_NAME: pw-link
     container_name: pw-realm-153
     restart: unless-stopped
     environment:
@@ -116,7 +138,7 @@ services:
     ports:
       - "29001:29001" # Porta pública do cliente 1.5.3
     volumes:
-      - ../../pwclient_153v145/element/data:/app/data/config:ro
+      - ../data/realm_153/config:/app/data/config:ro
     depends_on:
       - pw-auth
 

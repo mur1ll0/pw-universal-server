@@ -8,18 +8,19 @@ use serde::{Deserialize, Serialize};
 pub struct ItemRow {
     pub id: i64,
     pub character_id: i32,
-    pub container_type: String,
-    pub slot: i32,
+    pub container_type: i16,
+    pub slot: i16,
     pub item_id: i32,
     pub count: i32,
-    pub max_count: i32,
-    pub refine_level: i16,
-    pub sockets_count: i16,
-    pub sockets: Vec<i32>,
     pub durability: i32,
     pub max_durability: i32,
-    pub bind_status: i16,
-    pub custom_attributes: sqlx::types::Json<serde_json::Value>,
+    pub refine_level: i16,
+    pub sockets_count: i16,
+    pub socket_stones: Vec<i32>,
+    pub creator_name: Option<String>,
+    pub bind_status: i32,
+    pub expire_time: Option<DateTime<Utc>>,
+    pub extra_data: Option<Vec<u8>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -29,18 +30,21 @@ impl From<ItemRow> for ItemRecord {
         Self {
             id: Some(r.id),
             character_id: r.character_id,
-            container_type: ContainerType::from_str(&r.container_type).unwrap_or(ContainerType::Inventory),
+            container_type: ContainerType::from_i16(r.container_type),
             slot: r.slot as u16,
             item_id: r.item_id as u32,
             count: r.count as u32,
-            max_count: r.max_count as u32,
+            max_count: 100,
             refine_level: r.refine_level as u8,
             sockets_count: r.sockets_count as u8,
-            sockets: r.sockets.into_iter().map(|s| s as u32).collect(),
+            sockets: r.socket_stones.into_iter().map(|s| s as u32).collect(),
             durability: r.durability as u32,
             max_durability: r.max_durability as u32,
             bind_status: r.bind_status as u8,
-            custom_attributes: r.custom_attributes.0,
+            custom_attributes: serde_json::json!({
+                "creator_name": r.creator_name,
+                "extra_data": r.extra_data.map(|d| hex::encode(d))
+            }),
         }
     }
 }
@@ -55,7 +59,7 @@ impl ItemRepository {
         Self { pool }
     }
 
-    /// Busca todos os itens de um container específico (ex: 'INVENTORY' ou 'EQUIPMENT')
+    /// Busca todos os itens de um container específico (ex: INVENTORY ou EQUIPMENT)
     pub async fn list_by_container(
         &self,
         character_id: RoleId,
@@ -69,7 +73,7 @@ impl ItemRepository {
             "#,
         )
         .bind(character_id)
-        .bind(container_type.as_str())
+        .bind(container_type.to_i16())
         .fetch_all(self.pool.get_ref())
         .await?;
 
@@ -99,39 +103,35 @@ impl ItemRepository {
         let id = sqlx::query_scalar::<_, i64>(
             r#"
             INSERT INTO character_items (
-                character_id, container_type, slot, item_id, count, max_count,
-                refine_level, sockets_count, sockets, durability, max_durability,
-                bind_status, custom_attributes, updated_at
+                character_id, container_type, slot, item_id, count,
+                durability, max_durability, refine_level, sockets_count,
+                socket_stones, bind_status, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP)
             ON CONFLICT (character_id, container_type, slot) DO UPDATE SET
                 item_id = EXCLUDED.item_id,
                 count = EXCLUDED.count,
-                max_count = EXCLUDED.max_count,
-                refine_level = EXCLUDED.refine_level,
-                sockets_count = EXCLUDED.sockets_count,
-                sockets = EXCLUDED.sockets,
                 durability = EXCLUDED.durability,
                 max_durability = EXCLUDED.max_durability,
+                refine_level = EXCLUDED.refine_level,
+                sockets_count = EXCLUDED.sockets_count,
+                socket_stones = EXCLUDED.socket_stones,
                 bind_status = EXCLUDED.bind_status,
-                custom_attributes = EXCLUDED.custom_attributes,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING id
             "#,
         )
         .bind(item.character_id)
-        .bind(item.container_type.as_str())
-        .bind(item.slot as i32)
+        .bind(item.container_type.to_i16())
+        .bind(item.slot as i16)
         .bind(item.item_id as i32)
         .bind(item.count as i32)
-        .bind(item.max_count as i32)
+        .bind(item.durability as i32)
+        .bind(item.max_durability as i32)
         .bind(item.refine_level as i16)
         .bind(item.sockets_count as i16)
         .bind(&sockets_i32)
-        .bind(item.durability as i32)
-        .bind(item.max_durability as i32)
-        .bind(item.bind_status as i16)
-        .bind(sqlx::types::Json(&item.custom_attributes))
+        .bind(item.bind_status as i32)
         .fetch_one(self.pool.get_ref())
         .await?;
 
@@ -169,8 +169,8 @@ impl ItemRepository {
             "#,
         )
         .bind(character_id)
-        .bind(container_type.as_str())
-        .bind(slot as i32)
+        .bind(container_type.to_i16())
+        .bind(slot as i16)
         .execute(self.pool.get_ref())
         .await?;
 

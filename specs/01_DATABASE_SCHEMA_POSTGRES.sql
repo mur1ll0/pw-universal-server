@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS realms (
 INSERT INTO realms (id, name, version, host, port, max_players, config)
 VALUES 
 ('realm_126', 'Perfect World Classic (1.2.6)', '1.2.6', '127.0.0.1', 29000, 3000, '{"enabled_classes": [0,1,2,3,4,5], "max_level": 105}'::jsonb),
+('realm_148', 'Perfect World Tides / Genesis (1.4.8)', '1.4.8', '127.0.0.1', 29002, 3000, '{"enabled_classes": [0,1,2,3,4,5,6,7,8,9], "max_level": 105, "meridians": true, "reincarnation": true}'::jsonb),
 ('realm_153', 'Perfect World Eclipse (1.5.3)', '1.5.3', '127.0.0.1', 29001, 3000, '{"enabled_classes": [0,1,2,3,4,5,6,7,8,9,10,11], "max_level": 105, "meridians": true, "reincarnation": true}'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 

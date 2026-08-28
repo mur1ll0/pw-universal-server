@@ -2,6 +2,7 @@ use pw_core::{AccountId, RoleId};
 use pw_crypto::Rc4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum SessionState {
     Handshaking,       // Enviou Challenge, aguardando resposta
     Authenticated,     // Login aprovado
@@ -10,11 +11,14 @@ pub enum SessionState {
     Disconnected,      // Conexão encerrada
 }
 
+#[allow(dead_code)]
 pub struct ClientSession {
     pub session_id: u64,
     pub state: SessionState,
     pub account_id: Option<AccountId>,
+    pub username: Option<String>,
     pub role_id: Option<RoleId>,
+    pub character_name: Option<String>,
     pub client_ip: String,
     pub realm_id: String,
     pub game_version: String,
@@ -30,7 +34,9 @@ impl ClientSession {
             session_id,
             state: SessionState::Handshaking,
             account_id: None,
+            username: None,
             role_id: None,
+            character_name: None,
             client_ip,
             realm_id,
             game_version,
@@ -39,13 +45,15 @@ impl ClientSession {
         }
     }
 
-    pub fn set_authenticated(&mut self, account_id: AccountId) {
+    pub fn set_authenticated(&mut self, account_id: AccountId, username: String) {
         self.account_id = Some(account_id);
+        self.username = Some(username);
         self.state = SessionState::Authenticated;
     }
 
-    pub fn set_in_world(&mut self, role_id: RoleId) {
+    pub fn set_in_world(&mut self, role_id: RoleId, name: String) {
         self.role_id = Some(role_id);
+        self.character_name = Some(name);
         self.state = SessionState::InWorld;
     }
 }
