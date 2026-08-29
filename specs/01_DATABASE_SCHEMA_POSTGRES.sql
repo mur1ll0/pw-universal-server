@@ -249,3 +249,55 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
 CREATE INDEX IF NOT EXISTS idx_admin_logs_action ON admin_audit_logs(action_type);
 CREATE INDEX IF NOT EXISTS idx_admin_logs_created_at ON admin_audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_admin_logs_target_acc ON admin_audit_logs(target_account_id);
+
+-- -----------------------------------------------------------------------------
+-- 10. TABELAS DE TEMPLATES DE CRIAÇÃO DE PERSONAGENS (pwAdmin / Class Config)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS class_templates (
+    id SERIAL PRIMARY KEY,
+    realm_id VARCHAR(32) NOT NULL REFERENCES realms(id) ON DELETE CASCADE,
+    cls INT NOT NULL, -- 0: Guerreiro, 1: Mago, 3: Bárbaro, 4: Feiticeira, 6: Arqueiro, 7: Sacerdote, etc.
+    name VARCHAR(32) NOT NULL,
+    initial_level INT DEFAULT 1 NOT NULL,
+    initial_cultivation INT DEFAULT 0 NOT NULL,
+    initial_money BIGINT DEFAULT 0 NOT NULL,
+    initial_sp BIGINT DEFAULT 0 NOT NULL,
+    strength INT DEFAULT 10 NOT NULL,
+    agility INT DEFAULT 10 NOT NULL,
+    vitality INT DEFAULT 10 NOT NULL,
+    energy INT DEFAULT 10 NOT NULL,
+    spawn_world_id INT DEFAULT 1 NOT NULL,
+    spawn_x REAL NOT NULL,
+    spawn_y REAL NOT NULL,
+    spawn_z REAL NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT uq_class_template_per_realm UNIQUE(realm_id, cls)
+);
+
+CREATE TABLE IF NOT EXISTS class_template_items (
+    id BIGSERIAL PRIMARY KEY,
+    template_id INT NOT NULL REFERENCES class_templates(id) ON DELETE CASCADE,
+    container_type SMALLINT NOT NULL, -- 1: Equipado no Corpo (Armas/Armaduras), 0: Bolsa/Inventário
+    slot SMALLINT NOT NULL,           -- Slot 0: Arma na mão para Equipamentos, 0..31 para Bolsa
+    item_id INT NOT NULL,             -- ID do Item no elements.data
+    count INT DEFAULT 1 NOT NULL,
+    durability INT DEFAULT 10000 NOT NULL,
+    max_durability INT DEFAULT 10000 NOT NULL,
+    refine_level SMALLINT DEFAULT 0 NOT NULL,
+    sockets_count SMALLINT DEFAULT 0 NOT NULL,
+    socket_stones INT[] DEFAULT '{}' NOT NULL,
+    CONSTRAINT uq_template_item_slot UNIQUE(template_id, container_type, slot)
+);
+
+CREATE TABLE IF NOT EXISTS class_template_skills (
+    template_id INT NOT NULL REFERENCES class_templates(id) ON DELETE CASCADE,
+    skill_id INT NOT NULL,
+    level SMALLINT DEFAULT 1 NOT NULL,
+    PRIMARY KEY (template_id, skill_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_class_templates_realm ON class_templates(realm_id);
+CREATE INDEX IF NOT EXISTS idx_template_items_tpl ON class_template_items(template_id);
+CREATE INDEX IF NOT EXISTS idx_template_skills_tpl ON class_template_skills(template_id);
+

@@ -1,9 +1,5 @@
-mod server;
-mod service;
-
 use pw_storage::{PostgresPool, StorageConfig};
-use server::UniqueNameServer;
-use service::UniqueNameService;
+use pw_uniquename::{UniqueNameServer, UniqueNameService};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -14,19 +10,18 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer().json())
         .init();
 
-    info!("Iniciando microsserviço pw-uniquename (Garantia de Nomes Únicos)...");
+    let listen_port = std::env::var("UNIQUENAME_PORT")
+        .unwrap_or_else(|_| "29500".to_string())
+        .parse::<u16>()
+        .unwrap_or(29500);
+
+    info!("Iniciando pw-uniquename na porta {}...", listen_port);
 
     let storage_config = StorageConfig::default();
     let pg_pool = PostgresPool::new(&storage_config).await?;
+    let service = UniqueNameService::new(pg_pool);
 
-    let unique_service = UniqueNameService::new(pg_pool);
-
-    let listen_port = std::env::var("LISTEN_PORT")
-        .unwrap_or_else(|_| "29300".to_string())
-        .parse::<u16>()
-        .unwrap_or(29300);
-
-    let server = UniqueNameServer::new(unique_service, listen_port);
+    let server = UniqueNameServer::new(service, listen_port);
     server.run().await?;
 
     Ok(())

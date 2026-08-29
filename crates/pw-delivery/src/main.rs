@@ -1,13 +1,5 @@
-mod chat;
-mod friends;
-mod mail;
-mod party;
-mod server;
-mod service;
-
-use pw_storage::{MailRepository, PostgresPool, StorageConfig, CacheManager};
-use server::DeliveryServer;
-use service::DeliveryService;
+use pw_delivery::{DeliveryServer, DeliveryService};
+use pw_storage::{CacheManager, MailRepository, PostgresPool, StorageConfig};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 

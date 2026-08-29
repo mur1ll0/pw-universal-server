@@ -43,3 +43,19 @@ impl Vector3 {
         Self::new(550.0, 200.0, 650.0)
     }
 }
+
+impl std::ops::Add for Vector3 {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::new(self.x + rhs.x, self.y + rhs.y, self.z + rhs.z)
+    }
+}
+
+impl std::ops::Sub for Vector3 {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self::new(self.x - rhs.x, self.y - rhs.y, self.z - rhs.z)
+    }
+}

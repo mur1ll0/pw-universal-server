@@ -134,6 +134,7 @@ Todos os manuais técnicos e especificações detalhadas estão disponíveis no 
 ### 📖 Manuais Técnicos (`docs/`)
 - [📘 Guia de Operação: Como Rodar Servidor Único ou Multi-Realm](docs/HOW_TO_RUN_SINGLE_OR_MULTI_REALM.md)
 - [💻 Manual do Usuário: Painel Web de Administração (pw-admin-web)](docs/WEB_ADMIN_USER_GUIDE.md)
+- [🎨 Guia de Integração e Decodificação de Ícones (Surfaces & Iconset)](docs/SURFACES_ICONSET_GUIDE.md)
 - [📦 Guia do Gerador de Atualizações CDN (pw-patch-tool)](docs/PW_PATCH_TOOL_GUIDE.md)
 - [📜 Manual de Formatos Binários: elements.data, gshop, tasks e colisões](docs/FILE_FORMATS_REFERENCE.md)
 - [⚡ Guia de Arquitetura do Loader e Consumo de Memória RAM](docs/LOADER_ARCHITECTURE_GUIDE.md)

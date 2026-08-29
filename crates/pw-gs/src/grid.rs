@@ -43,12 +43,11 @@ impl SpatialGrid {
 
     /// Atualiza a posição de uma entidade, movendo entre células do grid se necessário
     pub fn update_position(&mut self, id: EntityId, new_pos: Vector3) -> bool {
-        if let Some((old_pos, is_player)) = self.entity_positions.get_mut(&id) {
+        if let Some((old_pos, _)) = self.entity_positions.get_mut(&id) {
             let old_coord = GridCoord::from_vector3(old_pos);
             let new_coord = GridCoord::from_vector3(&new_pos);
 
             *old_pos = new_pos;
-            let is_p = *is_player;
 
             if old_coord != new_coord {
                 if let Some(cell) = self.cells.get_mut(&old_coord) {

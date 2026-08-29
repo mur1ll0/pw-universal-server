@@ -1,9 +1,9 @@
 use crate::entity::{MonsterEntity, PlayerEntity};
-use pw_core::Vector3;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MonsterState {
+    #[default]
     Idle,
     Patrol,
     Chasing,

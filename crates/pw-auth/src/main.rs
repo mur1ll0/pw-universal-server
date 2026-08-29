@@ -1,9 +1,5 @@
-mod server;
-mod service;
-
+use pw_auth::{AuthServer, AuthService};
 use pw_storage::{AccountRepository, CacheManager, PostgresPool, StorageConfig};
-use server::AuthServer;
-use service::AuthService;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 

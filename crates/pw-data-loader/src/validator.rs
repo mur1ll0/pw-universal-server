@@ -1,5 +1,5 @@
 use crate::manager::GameDataManager;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 #[derive(Debug, Clone)]
 pub struct IntegrityIssue {
@@ -19,41 +19,42 @@ impl DataValidator {
 
         // 1. Valida se os monstros e NPCs nos arquivos npcgen.data de cada mapa existem no elements.data
         for (&world_id, spawns) in &data.map_spawns {
-            for area in &spawns.areas {
-                match area.spawn_type {
+            for instance in &spawns.instances {
+                match instance.spawn_type {
                     crate::npcgen::SpawnType::Monster => {
-                        if !data.elements.monsters.contains_key(&area.template_id) {
+                        if !data.elements.monsters.contains_key(&instance.template_id) {
                             issues.push(IntegrityIssue {
                                 category: "NPCGEN_ORPHAN_MONSTER",
                                 source_file: format!("world_id_{}/npcgen.data", world_id),
                                 message: format!(
-                                    "Região '{}' referencia Monstro ID {} que NÃO existe no elements.data!",
-                                    area.area_name, area.template_id
+                                    "Instância {} referencia Monstro ID {} que NÃO existe no elements.data!",
+                                    instance.instance_id, instance.template_id
                                 ),
                                 remediation: format!(
                                     "Adicione o monstro ID {} no elements.data ou corrija a área no npcgen.data.",
-                                    area.template_id
+                                    instance.template_id
                                 ),
                             });
                         }
                     }
                     crate::npcgen::SpawnType::Npc => {
-                        if !data.elements.npcs.contains_key(&area.template_id) {
+                        if !data.elements.npcs.contains_key(&instance.template_id) {
                             issues.push(IntegrityIssue {
                                 category: "NPCGEN_ORPHAN_NPC",
                                 source_file: format!("world_id_{}/npcgen.data", world_id),
                                 message: format!(
-                                    "NPC de diálogo ID {} na região '{}' NÃO existe no elements.data!",
-                                    area.template_id, area.area_name
+                                    "NPC de diálogo ID {} na instância {} NÃO existe no elements.data!",
+                                    instance.template_id, instance.instance_id
                                 ),
                                 remediation: format!(
                                     "Cadastre o NPC {} no elements.data ou remova a entrada em npcgen.data.",
-                                    area.template_id
+                                    instance.template_id
                                 ),
                             });
                         }
                     }
                     crate::npcgen::SpawnType::ResourceMine => {}
+                    crate::npcgen::SpawnType::DynamicObject => {}
                 }
             }
         }

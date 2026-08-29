@@ -1,7 +1,4 @@
-mod gateway;
-mod session;
-
-use gateway::LinkGateway;
+use pw_link::LinkGateway;
 use pw_storage::{AccountRepository, CacheManager, CharacterRepository, PostgresPool, StorageConfig};
 use std::sync::Arc;
 use tracing::info;
@@ -31,7 +28,12 @@ async fn main() -> anyhow::Result<()> {
     let cache_manager = CacheManager::new(&storage_config).await?;
 
     let account_repo = AccountRepository::new(pg_pool.clone());
-    let char_repo = CharacterRepository::new(pg_pool);
+    let char_repo = CharacterRepository::new(pg_pool.clone());
+    let template_repo = pw_storage::TemplateRepository::new(pg_pool.clone());
+
+    if let Err(e) = template_repo.ensure_default_templates(&realm_id).await {
+        tracing::warn!("Aviso ao carregar templates de classes padrão: {:?}", e);
+    }
 
     let gateway = Arc::new(LinkGateway::new(
         realm_id,

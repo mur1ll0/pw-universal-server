@@ -202,10 +202,7 @@ pub trait ProtocolAdapter: Send + Sync {
         auth: &[u8],
     ) {
         stream.write_i32(result);
-        stream.write_compact_uint(auth.len() as u32);
-        for &b in auth {
-            stream.write_u8(b);
-        }
+        stream.write_octets(auth);
     }
 
     /// Encodifica confirmação de entrada no mundo EnterWorld (Opcode 0x45)

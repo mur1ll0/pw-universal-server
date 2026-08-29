@@ -1,4 +1,4 @@
-use pw_core::{CharacterClass, Gender, InventoryItem, Race, RoleId, Vector3, WorldId};
+use pw_core::{CharacterClass, Gender, Race, RoleId, Vector3};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

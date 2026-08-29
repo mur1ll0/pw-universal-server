@@ -1,17 +1,9 @@
-mod ai;
-mod combat;
-mod entity;
-mod grid;
-mod server;
-mod world;
-
 use pw_data_loader::GameDataManager;
+use pw_gs::{GameServer, WorldInstance};
 use pw_storage::{CharacterRepository, PostgresPool, StorageConfig};
-use server::GameServer;
 use std::sync::Arc;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use world::WorldInstance;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

@@ -1,7 +1,7 @@
 use byteorder::{LittleEndian, ReadBytesExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use thiserror::Error;
 use tracing::info;
 

@@ -7,11 +7,11 @@ pub mod npcgen;
 pub mod tasks;
 pub mod validator;
 
-pub use aipolicy::*;
-pub use collision::*;
-pub use elements::*;
-pub use gshop::*;
-pub use manager::*;
-pub use npcgen::*;
-pub use tasks::*;
+pub use aipolicy::AiPolicyData;
+pub use collision::MapCollision;
+pub use elements::ElementsData;
+pub use gshop::GShopData;
+pub use manager::GameDataManager;
+pub use npcgen::{compress_dir_h, NpcGenData, SpatialGrid, SpawnInstance, SpawnType};
+pub use tasks::TasksData;
 pub use validator::*;

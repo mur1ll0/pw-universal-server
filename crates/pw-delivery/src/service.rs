@@ -1,9 +1,8 @@
 use crate::chat::{ChatManager, ChatMessage};
 use crate::mail::MailManager;
-use crate::party::{PartyManager, PartyMember};
-use pw_core::{InventoryItem, RoleId, WorldId};
+use crate::party::PartyManager;
+use pw_core::{RoleId, WorldId};
 use pw_storage::{CacheManager, MailRepository};
-use std::sync::Arc;
 use tracing::info;
 
 #[derive(Clone)]

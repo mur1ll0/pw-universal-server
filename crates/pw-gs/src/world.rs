@@ -1,7 +1,7 @@
 use crate::ai::MonsterAi;
 use crate::entity::{ItemDropEntity, MonsterEntity, NpcEntity, PlayerEntity};
 use crate::grid::SpatialGrid;
-use pw_core::{RoleId, Vector3, WorldId};
+use pw_core::{RoleId, WorldId};
 use pw_data_loader::GameDataManager;
 use pw_storage::CharacterRepository;
 use std::collections::HashMap;
@@ -17,7 +17,7 @@ pub struct WorldInstance {
     pub drops: HashMap<i64, ItemDropEntity>,
     pub data_manager: Arc<GameDataManager>,
     pub char_repo: CharacterRepository,
-    entity_counter: i64,
+    _entity_counter: i64,
     autosave_timer_ms: u32,
 }
 
@@ -36,7 +36,7 @@ impl WorldInstance {
             drops: HashMap::new(),
             data_manager,
             char_repo,
-            entity_counter: 100000,
+            _entity_counter: 100000,
             autosave_timer_ms: 0,
         }
     }
@@ -46,14 +46,13 @@ impl WorldInstance {
         info!("Inicializando monstros e NPCs do World #{} a partir do seu npcgen.data dedicado...", self.world_id);
 
         if let Some(spawns) = self.data_manager.map_spawns.get(&self.world_id) {
-            for area in &spawns.areas {
-                for _ in 0..area.count {
-                    self.entity_counter += 1;
-                    let monster_id = self.entity_counter;
+            for inst in &spawns.instances {
+                if inst.spawn_type == pw_data_loader::SpawnType::Monster {
+                    let monster_id = inst.instance_id as i64;
 
                     let monster = MonsterEntity {
                         id: monster_id,
-                        template_id: area.template_id,
+                        template_id: inst.template_id,
                         name: "Monstro".to_string(),
                         level: 1,
                         hp: 500,
@@ -69,12 +68,12 @@ impl WorldInstance {
                         sp: 20,
                         aipolicy_id: 0,
                         drop_table_id: 0,
-                        position: area.center,
-                        spawn_center: area.center,
+                        position: inst.pos,
+                        spawn_center: inst.pos,
                         move_speed: 3.5,
                         is_dead: false,
                         respawn_timer_ms: 0,
-                        respawn_delay_ms: area.respawn_sec * 1000,
+                        respawn_delay_ms: inst.respawn_sec * 1000,
                         target_id: None,
                         buffs: Vec::new(),
                     };

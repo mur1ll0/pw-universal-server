@@ -184,7 +184,11 @@ impl S2CRoleListResponse {
             stream.write_string_utf16le(&c.name);
 
             // Custom appearance (face/hair/body)
-            let appearance_bytes = serde_json::to_vec(&c.custom_appearance).unwrap_or_default();
+            let appearance_bytes = if let Some(raw_hex) = c.custom_appearance.get("raw").and_then(|v| v.as_str()) {
+                hex::decode(raw_hex).unwrap_or_default()
+            } else {
+                serde_json::to_vec(&c.custom_appearance).unwrap_or_default()
+            };
             stream.write_octets(&appearance_bytes);
 
             // Equipment (GRoleInventoryVector)
@@ -282,7 +286,6 @@ pub struct S2CSelectRoleResponse {
 impl S2CSelectRoleResponse {
     pub fn encode(&self, stream: &mut OctetsStream, _version: &str) {
         stream.write_i32(self.result);
-        stream.write_compact_uint(self.auth.len() as u32);
         stream.write_octets(&self.auth);
     }
 }
@@ -398,10 +401,10 @@ impl S2CGamedataSend {
         }
     }
 
-    /// Cria o comando INST_DATA_CHECKOUT (Comando 4) para sincronizar timestamps do gshop e instâncias
+    /// Cria o comando SERVER_CONFIG_DATA / INST_DATA_CHECKOUT (Comando 206) para sincronizar timestamps do gshop e instâncias
     pub fn inst_data_checkout(id_inst: i32, region_ts: u32, precinct_ts: u32, gshop_ts: u32) -> Self {
         let mut stream = OctetsStream::new();
-        stream.write_u16_le(4);              // CMD_S2C_INST_DATA_CHECKOUT = 4
+        stream.write_u16_le(206);             // CMD_S2C_SERVER_CONFIG_DATA = 206
         stream.write_i32_le(id_inst);        // int idInst (1 = mundo aberto)
         stream.write_u32_le(region_ts);      // unsigned int region_time_stamp
         stream.write_u32_le(precinct_ts);    // unsigned int precinct_time_stamp
@@ -444,16 +447,56 @@ impl S2CGamedataSend {
         }
     }
 
-    /// Cria o comando TASK_DATA (Comando 105) inicializando o buffer de missões vazio oficial do 1.2.6 (3 listas)
+    /// Cria o comando TASK_DATA (Comando 105) inicializando as listas de tarefas oficiais
     pub fn task_data() -> Self {
         let mut stream = OctetsStream::new();
-        stream.write_u16_le(105);           // CMD_S2C_TASK_DATA = 105
-        stream.write_u32_le(0);             // active_list_size = 0
-        stream.write_u32_le(0);             // finished_list_size = 0
-        stream.write_u32_le(0);             // finished_time_list_size = 0
-        Self {
-            data: stream.into_bytes().to_vec(),
-        }
+        stream.write_u16_le(105);             // CMD_S2C_TASK_DATA = 105
+        stream.write_u32_le(0);               // len1 = 0
+        stream.write_u32_le(0);               // len2 = 0
+        stream.write_u32_le(0);               // len3 = 0
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando TASK_VAR_DATA (Comando 106) enviando resposta para o sistema de tarefas dinâmicas do cliente
+    pub fn task_var_data(data: &[u8]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(106);              // CMD_S2C_TASK_VAR_DATA = 106
+        stream.write_u32_le(data.len() as u32);
+        stream.write_raw_bytes(data);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria notificação de nova missão aceita/entregue ao jogador (TASK_SVR_NOTIFY_NEW = 1)
+    pub fn task_notify_new(task_id: u16, timestamp: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u8(1);                    // reason = TASK_SVR_NOTIFY_NEW (1)
+        stream.write_u16_le(task_id);          // task ID (2B)
+        stream.write_u32_le(timestamp);        // cur_time (4B)
+        stream.write_u32_le(0);                // cap_task = 0 (4B)
+        stream.write_u16_le(0);                // sub_task = 0 (2B) - 0 indicates root task in v1.2.6
+        stream.write_u8(0);                    // sz = 0 (1B)
+        Self::task_var_data(&stream.into_bytes())
+    }
+
+    /// Cria notificação de missão concluída com sucesso (TASK_SVR_NOTIFY_COMPLETE = 2)
+    pub fn task_notify_complete(task_id: u16, timestamp: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u8(2);                    // reason = TASK_SVR_NOTIFY_COMPLETE (2)
+        stream.write_u16_le(task_id);          // task ID (2B)
+        stream.write_u32_le(timestamp);        // cur_time (4B)
+        stream.write_u16_le(0);                // sub_task = 0 (2B)
+        stream.write_u8(0);                    // sz = 0 (1B)
+        Self::task_var_data(&stream.into_bytes())
+    }
+
+    /// Cria notificação de monstro abatido para progresso de missão (TASK_SVR_NOTIFY_MONSTER_KILLED = 4)
+    pub fn task_notify_monster_killed(task_id: u16, monster_id: u32, monster_num: u16) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u8(4);                    // reason = TASK_SVR_NOTIFY_MONSTER_KILLED (4)
+        stream.write_u16_le(task_id);          // task ID (2B)
+        stream.write_u32_le(monster_id);       // monster_id (4B)
+        stream.write_u16_le(monster_num);      // monster_num (2B) - Exactly 9 bytes total (1+2+4+2)
+        Self::task_var_data(&stream.into_bytes())
     }
 
     /// Cria o comando OWN_ITEM_INFO (Comando 40) enviando os atributos de durabilidade e requisitos do item
@@ -468,41 +511,57 @@ impl S2CGamedataSend {
         stream.write_u32_le(count);           // count
         stream.write_u16_le(0);               // crc
 
-        // Content: atributos de equipamento (durabilidade, requisitos, essence de arma de 44B, slots)
-        let mut content = OctetsStream::new();
-        content.write_i16_le(1);              // m_iLevelReq = 1
-        content.write_i16_le(-1);             // m_iProfReq = -1 (0xFFFF: Todas as classes sem restrição)
-        content.write_i16_le(0);              // m_iStrengthReq = 0
-        content.write_i16_le(0);              // m_iVitalityReq = 0
-        content.write_i16_le(0);              // m_iAgilityReq = 0
-        content.write_i16_le(0);              // m_iEnergyReq = 0
-        content.write_i32_le(cur_endurance);  // m_iCurEndurance = 10000 (100.00 / 100.00)
-        content.write_i32_le(max_endurance);  // m_iMaxEndurance = 10000
-        content.write_i16_le(44);             // iEssenceSize = 44 (sizeof(IVTR_ESSENCE_WEAPON))
-        content.write_u8(0);                  // m_byMadeFrom = 0
-        content.write_u8(0);                  // iMakerLen = 0
+        // Se for arma (ou equipamento com durabilidade), constrói o bloco de essence
+        let is_weapon = matches!(item_id, 2097 | 2867 | 2258 | 2250 | 4508 | 4532 | 4567 | 4616);
+        let is_equip_package = by_package == 1;
 
-        // IVTR_ESSENCE_WEAPON (44 bytes)
-        content.write_i16_le(1);              // weapon_type = 1
-        content.write_i16_le(0);              // weapon_delay = 0
-        content.write_i32_le(1);              // weapon_class = 1
-        content.write_i32_le(1);              // weapon_level = 1
-        content.write_i32_le(0);              // require_projectile = 0
-        content.write_i32_le(10);             // damage_low = 10
-        content.write_i32_le(20);             // damage_high = 20
-        content.write_i32_le(10);             // magic_damage_low = 10
-        content.write_i32_le(20);             // magic_damage_high = 20
-        content.write_i32_le(10);             // attack_speed = 10
-        content.write_f32_le(3.5);            // attack_range = 3.5
-        content.write_f32_le(0.0);            // attack_short_range = 0.0
+        if is_weapon || is_equip_package {
+            let mut content = OctetsStream::new();
+            content.write_i16_le(1);              // m_iLevelReq = 1
+            content.write_i16_le(-1);             // m_iProfReq = -1 (Todas as classes sem restrição)
 
-        content.write_i16_le(0);              // iNumHole = 0
-        content.write_u16_le(0);              // m_wStoneMask = 0
-        content.write_i32_le(0);              // iNumProp = 0
+            let (req_str, req_agi, req_vit, req_eng, w_type, w_class, req_proj, dmg_l, dmg_h, mdmg_l, mdmg_h, spd, rng) = match item_id {
+                2097 => (5, 5, 0, 0, 1, 1, 0, 3, 5, 0, 0, 16, 3.0f32),       // Espada de Madeira (Guerreiro)
+                2867 => (5, 3, 0, 0, 5, 5, 0, 2, 3, 10, 15, 12, 3.0f32),     // Graveto de Madeira / Varinha Mágica (Mago / Feiticeira / Sacerdote)
+                2258 => (5, 5, 0, 0, 9, 9, 0, 4, 8, 0, 0, 14, 3.5f32),       // Porrete com Espinhos (Bárbaro)
+                2250 => (5, 5, 0, 0, 13, 13, 1, 5, 10, 0, 0, 15, 20.0f32),   // Arco de Madeira (Arqueiro)
+                _ => (0, 0, 0, 0, 1, 1, 0, 3, 5, 0, 0, 10, 3.5f32),
+            };
 
-        let content_bytes = content.into_bytes();
-        stream.write_u16_le(content_bytes.len() as u16);
-        stream.write_raw_bytes(&content_bytes);
+            content.write_i16_le(req_str);        // m_iStrengthReq
+            content.write_i16_le(req_vit);        // m_iVitalityReq
+            content.write_i16_le(req_agi);        // m_iAgilityReq
+            content.write_i16_le(req_eng);        // m_iEnergyReq
+            content.write_i32_le(cur_endurance);  // m_iCurEndurance (2800 = 28.00)
+            content.write_i32_le(max_endurance);  // m_iMaxEndurance (2800 = 28.00)
+            content.write_i16_le(44);             // iEssenceSize = 44 (sizeof(IVTR_ESSENCE_WEAPON))
+            content.write_u8(0);                  // m_byMadeFrom = 0
+            content.write_u8(0);                  // iMakerLen = 0
+
+            // IVTR_ESSENCE_WEAPON (44 bytes)
+            content.write_i16_le(w_type);         // weapon_type
+            content.write_i16_le(0);              // weapon_delay = 0
+            content.write_i32_le(w_class);        // weapon_class
+            content.write_i32_le(1);              // weapon_level = 1
+            content.write_i32_le(req_proj);       // require_projectile (1 para arco)
+            content.write_i32_le(dmg_l);          // damage_low
+            content.write_i32_le(dmg_h);          // damage_high
+            content.write_i32_le(mdmg_l);         // magic_damage_low
+            content.write_i32_le(mdmg_h);         // magic_damage_high
+            content.write_i32_le(spd);            // attack_speed
+            content.write_f32_le(rng);            // attack_range
+            content.write_f32_le(0.0);            // attack_short_range
+
+            content.write_i16_le(0);              // iNumHole = 0
+            content.write_u16_le(0);              // m_wStoneMask = 0
+            content.write_i32_le(0);              // iNumProp = 0
+
+            let content_bytes = content.into_bytes();
+            stream.write_u16_le(content_bytes.len() as u16);
+            stream.write_raw_bytes(&content_bytes);
+        } else {
+            stream.write_u16_le(0);               // Sem essence para consumíveis (poções, pergaminhos)
+        }
 
         Self {
             data: stream.into_bytes().to_vec(),
@@ -518,17 +577,17 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando MOVE_IVTR_ITEM (Comando 45)
-    pub fn move_ivtr_item(src: u8, dest: u8, count: u32) -> Self {
+    /// Cria o comando MOVE_IVTR_ITEM (Comando 45) com struct oficial { u8 src, u8 dest, u16 count }
+    pub fn move_ivtr_item(src: u8, dest: u8, count: u16) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(45);
         stream.write_u8(src);
         stream.write_u8(dest);
-        stream.write_u32_le(count);
+        stream.write_u16_le(count);
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando EXG_EQUIP_ITEM (Comando 47)
+    /// Cria o comando EXG_EQUIP_ITEM (Comando 47) com struct oficial { u8 index1, u8 index2 }
     pub fn exg_equip_item(index1: u8, index2: u8) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(47);
@@ -537,24 +596,24 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando EQUIP_ITEM (Comando 48)
-    pub fn equip_item(idx_ivtr: u8, idx_equip: u8, count_ivtr: u32, count_equip: u32) -> Self {
+    /// Cria o comando EQUIP_ITEM (Comando 48) com struct oficial { u8 idx_ivtr, u8 idx_equip, u16 count_ivtr, u16 count_equip }
+    pub fn equip_item(idx_ivtr: u8, idx_equip: u8, count_ivtr: u16, count_equip: u16) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(48);
         stream.write_u8(idx_ivtr);
         stream.write_u8(idx_equip);
-        stream.write_u32_le(count_ivtr);
-        stream.write_u32_le(count_equip);
+        stream.write_u16_le(count_ivtr);
+        stream.write_u16_le(count_equip);
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando MOVE_ITEM_TO_EQUIP (Comando 49)
-    pub fn move_item_to_equip(idx_ivtr: u8, idx_eq: u8, amount: u32) -> Self {
+    /// Cria o comando MOVE_ITEM_TO_EQUIP (Comando 49) com struct oficial { u8 idx_ivtr, u8 idx_eq, u16 amount }
+    pub fn move_item_to_equip(idx_ivtr: u8, idx_eq: u8, amount: u16) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(49);
         stream.write_u8(idx_ivtr);
         stream.write_u8(idx_eq);
-        stream.write_u32_le(amount);
+        stream.write_u16_le(amount);
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -644,6 +703,53 @@ impl S2CGamedataSend {
         }
     }
 
+    /// Cria o comando SKILL_DATA (Comando 90) a partir de registros do banco de dados (LearnedSkill)
+    pub fn skill_data_from_records(skills: &[pw_core::LearnedSkill]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(90);             // CMD_S2C_SKILL_DATA = 90
+        stream.write_u32_le(skills.len() as u32);
+        for skill in skills {
+            stream.write_i16_le(skill.skill_id as i16);
+            stream.write_u8(skill.level);
+            stream.write_i16_le(0);          // ability
+        }
+        Self {
+            data: stream.into_bytes().to_vec(),
+        }
+    }
+
+    /// Cria o comando OWN_IVTR_DATA (Comando 42) dinamicamente a partir dos itens do banco de dados
+    pub fn own_ivtr_from_items(by_package: u8, bag_size: u8, items: &[pw_core::ItemRecord]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(42);             // CMD_S2C_OWN_IVTR_DATA = 42
+        stream.write_u8(by_package);
+        stream.write_u8(bag_size);
+
+        let mut slot_map = std::collections::HashMap::new();
+        for item in items {
+            slot_map.insert(item.slot as usize, item);
+        }
+
+        let mut content = OctetsStream::new();
+        for s in 0..bag_size as usize {
+            if let Some(item) = slot_map.get(&s) {
+                content.write_i32_le(item.item_id as i32);
+                content.write_i32_le(0);     // expire_date
+                content.write_i32_le(item.count as i32);
+            } else {
+                content.write_i32_le(-1);    // -1 = slot vazio
+            }
+        }
+
+        let content_bytes = content.into_bytes();
+        stream.write_u32_le(content_bytes.len() as u32);
+        stream.write_raw_bytes(&content_bytes);
+
+        Self {
+            data: stream.into_bytes().to_vec(),
+        }
+    }
+
     /// Cria o comando OWN_IVTR_DATA (Comando 42) com inventário inicial (bolsa principal = 0, tamanho = 32 slots)
     pub fn own_ivtr_data(bag_size: u8, weapon_id: i32) -> Self {
         let mut stream = OctetsStream::new();
@@ -651,11 +757,6 @@ impl S2CGamedataSend {
         stream.write_u8(0);            // byPackage = 0 (IVTRTYPE_PACK)
         stream.write_u8(bag_size);     // ivtr_size = 32 slots
         
-        // Slot 0: Arma Inicial da Classe (qtd: 1) -> 12 bytes
-        // Slot 1: Pergaminho de Retorno (ID 2100, qtd: 5) -> 12 bytes
-        // Slot 2: Poção de Vida Pequena (ID 1796, qtd: 10) -> 12 bytes
-        // Slot 3: Poção de Mana Pequena (ID 1801, qtd: 10) -> 12 bytes
-        // Slots 4..31 (28 slots vazios x 4 bytes = 112 bytes)
         let content_len = 12 + 12 + 12 + 12 + ((bag_size - 4) as u32) * 4;
         stream.write_u32_le(content_len);
 
@@ -748,6 +849,168 @@ impl S2CGamedataSend {
         Self {
             data: stream.into_bytes().to_vec(),
         }
+    }
+
+    /// Cria o comando NPC_ENTER_SLICE (Comando 11) com a struct oficial exata de 27 bytes (desmontada do gs v1.2.6)
+    pub fn npc_enter_slice(nid: i32, tid: i32, pos: Vector3, dir: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(11);               // CMD_S2C_NPC_ENTER_SLICE = 11 (2B)
+        stream.write_i32_le(nid);              // nid (4B)
+        stream.write_i32_le(tid);              // tid (4B)
+        stream.write_f32_le(pos.x);            // pos.x (4B)
+        stream.write_f32_le(pos.y);            // pos.y (4B)
+        stream.write_f32_le(pos.z);            // pos.z (4B)
+        stream.write_u16_le(0);                // seed (2B)
+        stream.write_u8(dir);                  // dir (1B)
+        stream.write_u32_le(0);                // state (4B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando NPC_ENTER_WORLD (Comando 16) com a struct oficial exata de 27 bytes (desmontada do gs v1.2.6)
+    pub fn npc_enter_world(nid: i32, tid: i32, pos: Vector3, dir: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(16);               // CMD_S2C_NPC_ENTER_WORLD = 16 (2B)
+        stream.write_i32_le(nid);              // nid (4B)
+        stream.write_i32_le(tid);              // tid (4B)
+        stream.write_f32_le(pos.x);            // pos.x (4B)
+        stream.write_f32_le(pos.y);            // pos.y (4B)
+        stream.write_f32_le(pos.z);            // pos.z (4B)
+        stream.write_u16_le(0);                // seed (2B)
+        stream.write_u8(dir);                  // dir (1B)
+        stream.write_u32_le(0);                // state (4B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando NPC_INFO_00 (Comando 33) enviando HP, MaxHP e Alvo do NPC/Monstro
+    pub fn npc_info_00(nid: i32, hp: i32, max_hp: i32, target_id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(33);               // CMD_S2C_NPC_INFO_00 = 33
+        stream.write_i32_le(nid);
+        stream.write_i32_le(hp);
+        stream.write_i32_le(max_hp);
+        stream.write_i32_le(target_id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando UNSELECT (Comando 39) desmarcando o alvo atual
+    pub fn unselect() -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(39);               // CMD_S2C_UNSELECT = 39
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando OBJECT_CAST_SKILL (Comando 85) disparando a animação e barra de conjuração da magia
+    pub fn object_cast_skill(caster: i32, target: i32, skill_id: i32, cast_time_ms: u16, skill_level: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(85);               // CMD_S2C_OBJECT_CAST_SKILL = 85
+        stream.write_i32_le(caster);
+        stream.write_i32_le(target);
+        stream.write_i32_le(skill_id);
+        stream.write_u16_le(cast_time_ms);
+        stream.write_u8(skill_level);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando SKILL_PERFORM (Comando 88) liberando o jogador do estado de conjuração
+    pub fn skill_perform() -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(88);               // CMD_S2C_SKILL_PERFORM = 88
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando SELF_SKILL_ATTACK_RESULT (Comando 142) aplicando o dano da habilidade do jogador
+    pub fn self_skill_attack_result(target_id: i32, skill_id: i32, damage: i32, attack_flag: i32, speed: u8, section: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(142);              // CMD_S2C_SELF_SKILL_ATTACK_RESULT = 142
+        stream.write_i32_le(target_id);
+        stream.write_i32_le(skill_id);
+        stream.write_i32_le(damage);
+        stream.write_i32_le(attack_flag);
+        stream.write_u8(speed);
+        stream.write_u8(section);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando OBJECT_SKILL_ATTACK_RESULT (Comando 143) aplicando o dano de habilidade entre entidades
+    pub fn object_skill_attack_result(attacker_id: i32, target_id: i32, skill_id: i32, damage: i32, attack_flag: i32, speed: u8, section: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(143);              // CMD_S2C_OBJECT_SKILL_ATTACK_RESULT = 143
+        stream.write_i32_le(attacker_id);
+        stream.write_i32_le(target_id);
+        stream.write_i32_le(skill_id);
+        stream.write_i32_le(damage);
+        stream.write_i32_le(attack_flag);
+        stream.write_u8(speed);
+        stream.write_u8(section);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando SELECT_TARGET (Comando 52)
+    pub fn select_target(target_id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(52);               // CMD_S2C_SELECT_TARGET = 52
+        stream.write_i32_le(target_id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando NPC_GREETING (Comando 70) para abrir diálogo com NPC
+    pub fn npc_greeting(nid: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(70);               // CMD_S2C_NPC_GREETING = 70
+        stream.write_i32_le(nid);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando OBJECT_DISAPPEAR (Comando 21) para remover objeto que saiu de vista ou morreu
+    pub fn object_disappear(id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(21);               // CMD_S2C_OBJECT_DISAPPEAR = 21
+        stream.write_i32_le(id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando HOST_ATTACKRESULT (Comando 24) retornando dano infligido
+    pub fn host_attack_result(target_id: i32, damage: i32, hit_type: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(24);               // CMD_S2C_HOST_ATTACKRESULT = 24
+        stream.write_i32_le(target_id);        // target_id (4B)
+        stream.write_i32_le(damage);           // damage (4B)
+        stream.write_u8(hit_type);             // 0=Normal, 1=Crítico, 2=Esquiva
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando NPC_DIED (Comando 20) informando a morte do monstro
+    pub fn npc_died(nid: i32, killer_id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(20);               // CMD_S2C_NPC_DIED = 20
+        stream.write_i32_le(nid);              // nid (4B)
+        stream.write_i32_le(killer_id);        // killer_id (4B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando RECEIVE_EXP (Comando 36) entregando EXP e Alma
+    pub fn receive_exp(exp: i32, sp: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(36);               // CMD_S2C_RECEIVE_EXP = 36
+        stream.write_i32_le(exp);              // exp (4B)
+        stream.write_i32_le(sp);               // sp (4B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando LEVEL_UP (Comando 37) tocando a animação de subir de nível
+    pub fn level_up(role_id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(37);               // CMD_S2C_LEVEL_UP = 37
+        stream.write_i32_le(role_id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando SEVNPC_HELLO_RE (Comando 70) abrindo a janela de diálogo com o NPC
+    pub fn sevnpc_hello_re(nid: i32, _talk_id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(70);               // CMD_S2C_NPC_GREETING = 70
+        stream.write_i32_le(nid);
+        Self { data: stream.into_bytes().to_vec() }
     }
 
     pub fn encode(&self, stream: &mut OctetsStream, _version: &str) {

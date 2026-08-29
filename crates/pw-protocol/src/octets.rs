@@ -140,7 +140,7 @@ impl OctetsStream {
     /// < 0x20000000 (16384..536870911) -> 4 bytes (110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx)
     /// >= 0x20000000 -> 1 byte 0xE0 + 4 bytes Big-Endian
     pub fn write_compact_uint(&mut self, val: u32) {
-        if val < 0x40 {
+        if val < 0x80 {
             self.buffer.put_u8(val as u8);
         } else if val < 0x4000 {
             self.buffer.put_u16((val | 0x8000) as u16);
@@ -403,5 +403,31 @@ mod tests {
         let mut reader = OctetsStream::from_bytes(stream.as_slice());
         let read_text = reader.read_string_utf16le().expect("Falha ao ler string UTF-16");
         assert_eq!(text, read_text);
+    }
+
+    #[test]
+    fn test_compact_uint_lengths() {
+        // 0..127 should be exactly 1 byte
+        let mut s1 = OctetsStream::new();
+        s1.write_compact_uint(70); // SelectRole opcode
+        assert_eq!(s1.len(), 1);
+        assert_eq!(s1.as_slice(), &[70]);
+
+        let mut s2 = OctetsStream::new();
+        s2.write_compact_uint(82); // RoleList opcode
+        assert_eq!(s2.len(), 1);
+        assert_eq!(s2.as_slice(), &[82]);
+
+        // 128..16383 should be exactly 2 bytes
+        let mut s3 = OctetsStream::new();
+        s3.write_compact_uint(128);
+        assert_eq!(s3.len(), 2);
+        assert_eq!(s3.as_slice(), &[0x80, 0x80]);
+
+        // 16384.. should be 4 bytes
+        let mut s4 = OctetsStream::new();
+        s4.write_compact_uint(16384);
+        assert_eq!(s4.len(), 4);
+        assert_eq!(s4.as_slice(), &[0xC0, 0x00, 0x40, 0x00]);
     }
 }

@@ -56,8 +56,15 @@ impl GameDataManager {
             self.aipolicy = AiPolicyData::load_from_bytes(&data)?;
         }
 
-        // 2. Carrega o npcgen.data específico de cada pasta de mapa (world, a01, a02, etc.)
-        self.load_map_folder(1, &dir.join("world"))?;
+        // 2. Carrega o npcgen.data do mundo principal (world/npcgen.data ou npcgen.data na raiz)
+        let world_dir = dir.join("world");
+        if world_dir.join("npcgen.data").exists() {
+            let _ = self.load_map_folder(1, &world_dir);
+        } else if dir.join("npcgen.data").exists() {
+            let data = std::fs::read(dir.join("npcgen.data"))?;
+            let spawns = NpcGenData::load_from_bytes(&data)?;
+            self.map_spawns.insert(1, spawns);
+        }
         
         // Mapeamento das dungeons clássicas a01..a33 e b01..b35
         for i in 1..=33 {

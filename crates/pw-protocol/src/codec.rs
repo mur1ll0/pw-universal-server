@@ -7,7 +7,7 @@ use crate::version::GameVersion;
 use bytes::{Buf, BytesMut};
 use std::sync::Arc;
 use tokio_util::codec::{Decoder, Encoder};
-use tracing::{debug, warn};
+use tracing::{trace, warn};
 
 /// Enum que encapsula todos os pacotes decodificados vindos do cliente (C2S)
 #[derive(Debug, Clone)]
@@ -120,7 +120,7 @@ impl Decoder for PwPacketCodec {
         let payload = src.split_to(packet_len);
         let mut payload_stream = OctetsStream::from_bytes(&payload);
 
-        debug!(
+        trace!(
             "[{}] Decodificando pacote opcode: 0x{:X} (Tamanho: {} bytes)",
             self.adapter.version(),
             opcode,

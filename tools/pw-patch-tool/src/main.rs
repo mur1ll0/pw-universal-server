@@ -1,8 +1,7 @@
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use walkdir::WalkDir;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -100,8 +99,8 @@ fn main() -> anyhow::Result<()> {
                 eprintln!("Uso: pw-patch-tool create-patch <dir_v1> <dir_v2> <v1> <v2> [notas_da_versao.txt]");
                 return Ok(());
             }
-            let old_dir = Path::new(&args[2]);
-            let new_dir = Path::new(&args[3]);
+            let _old_dir = Path::new(&args[2]);
+            let _new_dir = Path::new(&args[3]);
             let v_old: u32 = args[4].parse()?;
             let v_new: u32 = args[5].parse()?;
             

@@ -1,12 +1,12 @@
-use crate::chat::{ChatChannel, ChatMessage};
+use crate::chat::ChatMessage;
 use crate::party::PartyMember;
 use crate::service::DeliveryService;
-use pw_core::{InventoryItem, RoleId, WorldId};
+use pw_core::{ItemRecord, RoleId, WorldId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "action", content = "data")]
@@ -18,7 +18,7 @@ pub enum DeliveryRequest {
         title: String,
         message: String,
         attached_money: i64,
-        attached_item: Option<InventoryItem>,
+        attached_item: Option<ItemRecord>,
     },
     CreateParty {
         leader: PartyMember,

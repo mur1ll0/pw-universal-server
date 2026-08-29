@@ -1,18 +1,19 @@
 use futures::{SinkExt, StreamExt};
-use pw_core::{CharacterSummary, Vector3};
+use pw_core::{CharacterClass, CharacterSummary, Vector3};
 use pw_crypto::generate_login_challenge;
 use pw_protocol::{
-    create_protocol_adapter, GameVersion, InboundPacket, OutboundPacket, ProtocolAdapter,
+    create_protocol_adapter, GameVersion, InboundPacket, OctetsStream, OutboundPacket, ProtocolAdapter,
     PwPacketCodec, S2CChatBroadcast, S2CChallenge, S2CCreateRoleResponse, S2CDeleteRoleResponse,
     S2CErrorInfo, S2CGamedataSend, S2CGetFriendListRe, S2CGetHelpStatesRe, S2CGetUIConfigRe, S2CGetWaitDelRolesRe,
     S2COnlineAnnounce, S2CPlayerLogout, S2CPlayerMoveBroadcast, S2CRoleListResponse, S2CSelectRoleResponse,
     S2CSetCustomDataRe, S2CSetHelpStatesRe, S2CSetUIConfigRe, S2CUndoDeleteRoleResponse,
 };
+use pw_data_loader::GameDataManager;
 use pw_storage::{AccountRepository, CacheManager, CharacterRepository};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::codec::Framed;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::session::ClientSession;
 
@@ -24,6 +25,7 @@ pub struct LinkGateway {
     pub account_repo: AccountRepository,
     pub char_repo: CharacterRepository,
     pub cache_manager: CacheManager,
+    pub data_manager: Arc<GameDataManager>,
 }
 
 impl LinkGateway {
@@ -38,6 +40,31 @@ impl LinkGateway {
         let game_version = version_str.parse::<GameVersion>().unwrap_or(GameVersion::V1_2_6);
         let adapter = create_protocol_adapter(game_version);
 
+        let mut data_manager = GameDataManager::new();
+        let possible_dirs = [
+            format!("data/{}/config", realm_id),
+            "data/config".to_string(),
+            "/app/data/config".to_string(),
+            format!("/app/data/{}/config", realm_id),
+            "config".to_string(),
+        ];
+        let mut loaded = false;
+        for dir_str in &possible_dirs {
+            let p = std::path::Path::new(dir_str);
+            if p.exists() {
+                info!("Carregando arquivos de configuração e mapas de {:?}", p);
+                if let Err(e) = data_manager.load_from_directory(p) {
+                    warn!("Aviso: Erro ao carregar templates de dados de {:?}: {:?}", p, e);
+                } else {
+                    loaded = true;
+                    break;
+                }
+            }
+        }
+        if !loaded {
+            warn!("Nenhum diretório de configuração .data foi encontrado nas buscas: {:?}", possible_dirs);
+        }
+
         Self {
             realm_id,
             game_version,
@@ -46,6 +73,7 @@ impl LinkGateway {
             account_repo,
             char_repo,
             cache_manager,
+            data_manager: Arc::new(data_manager),
         }
     }
 
@@ -246,7 +274,15 @@ impl LinkGateway {
                     Ok(new_role_id) => {
                         info!("Personagem '{}' criado com sucesso! (ID: {})", create_role.name, new_role_id);
                         
-                        let (sx, sy, sz) = create_role.cls.default_spawn_position();
+                        let equips = self.char_repo.item_repo().list_by_container(new_role_id, pw_core::ContainerType::Equipment).await.unwrap_or_default();
+                        let details_opt = self.char_repo.get_details(new_role_id).await.unwrap_or(None);
+                        let (level, cultivation, world_id, pos) = if let Some(ref d) = details_opt {
+                            (d.level, d.cultivation, d.world_id, d.position)
+                        } else {
+                            let (sx, sy, sz) = create_role.cls.default_spawn_position();
+                            (1, 0, 1, Vector3::new(sx, sy, sz))
+                        };
+
                         let new_char_summary = CharacterSummary {
                             id: new_role_id,
                             account_id: acc_id,
@@ -255,11 +291,11 @@ impl LinkGateway {
                             race: create_role.race,
                             cls: create_role.cls,
                             gender: create_role.gender,
-                            level: 1,
-                            cultivation: 0,
-                            world_id: 1,
-                            position: Vector3::new(sx, sy, sz),
-                            equipment: Vec::new(),
+                            level,
+                            cultivation,
+                            world_id,
+                            position: pos,
+                            equipment: equips,
                             custom_appearance: serde_json::json!({ "raw": raw_appearance_hex }),
                             is_deleted: false,
                             delete_time: None,
@@ -394,41 +430,117 @@ impl LinkGateway {
                         details.position,
                     ))).await?;
 
-                    // 6. Envia SKILL_DATA (Comando 90) - Habilidades iniciais oficiais da classe (Voo, Heals, Ataques)
-                    let class_skills = details.cls.default_skills();
-                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::skill_data(&class_skills))).await?;
+                    // 6. Envia SKILL_DATA (Comando 90) - Habilidades carregadas da tabela character_skills
+                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::skill_data_from_records(&details.skills))).await?;
 
-                    // 7. Envia TASK_DATA (Comando 105) - Inicializa a interface de missões com 3 listas vazias (formato oficial 1.2.6)
+                    // 7. Envia TASK_DATA (Comando 105) e inicializa o subsistema de missões do cliente
                     framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_data())).await?;
+                    let mut dyn_mark = OctetsStream::new();
+                    dyn_mark.write_u8(8);       // reason = TASK_SVR_NOTIFY_DYN_TIME_MARK (8)
+                    dyn_mark.write_u16_le(0);   // task = 0 (2B)
+                    dyn_mark.write_u32_le(0);   // time_mark = 0 (4B)
+                    dyn_mark.write_u16_le(0);   // dyn_task_count = 0 (2B) - Exactly 9 bytes
+                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_var_data(&dyn_mark.into_bytes()))).await?;
 
-                    // 8. Envia OWN_IVTR_DATA (Comando 42) com itens iniciais na bolsa e slots de equipamentos vazios
-                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_data(32, details.cls.default_weapon_id()))).await?;
-                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_equip_data())).await?;
+                    // Carrega e sincroniza missões ativas do personagem
+                    let role_quests = self.char_repo.quest_repo().list_quests(details.id).await.unwrap_or_default();
+                    let now_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u32;
 
-                    // 9. Envia OWN_ITEM_INFO (Comando 40) com durabilidade e stats dos itens da bolsa
-                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
-                        0, 0, details.cls.default_weapon_id(), 10000, 10000, 1
-                    ))).await?;
-                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
-                        0, 1, 2100, 10000, 10000, 5
-                    ))).await?;
-                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
-                        0, 2, 1796, 10000, 10000, 10
-                    ))).await?;
-                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
-                        0, 3, 1801, 10000, 10000, 10
-                    ))).await?;
+                    if role_quests.is_empty() {
+                        // Novo personagem: entrega a missão inicial de nascimento configurada no tasks.data (Ex: Task 1 ou Task 9374)
+                        let initial_task = match details.cls {
+                            CharacterClass::Cleric | CharacterClass::Archer => 1,     // O Renascer dos Alados
+                            CharacterClass::Blademaster | CharacterClass::Wizard => 2, // Cidade das Espadas
+                            CharacterClass::Barbarian | CharacterClass::Venomancer => 3, // Cidade das Feras
+                            _ => 1,
+                        };
+                        let _ = self.char_repo.quest_repo().save_quest(details.id, initial_task, pw_core::QuestStatus::Active, &[0, 0, 0], None).await;
+                        info!("Entregando missão inicial {} para novo personagem '{}' (ID: {})", initial_task, details.name, details.id);
+                        framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_new(initial_task as u16, now_ts))).await?;
+                    } else {
+                        for q in role_quests {
+                            if q.status == pw_core::QuestStatus::Active {
+                                info!("Restaurando missão ativa ID {} para o jogador '{}'", q.quest_id, details.name);
+                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_new(q.quest_id as u16, now_ts))).await?;
+                            }
+                        }
+                    }
 
-                    // 10. Envia NPC_INFO_LIST (Comando 9) - Instancia os NPCs e monstros iniciais ao redor do Vale das Plumas
-                    let starter_npcs = vec![
-                        (20001, 2000, (-741.5, 219.1, -1234.8)), // Ancião / Guia dos Alados
-                        (20002, 2125, (-746.7, 219.0, -1257.9)), // Instrutor de Habilidades
-                        (20003, 2126, (-772.2, 218.7, -1153.8)), // Mestre dos Alados
-                        (20004, 1001, (-730.0, 219.0, -1220.0)), // Monstro Inicial (Besouro / Nível 1)
-                        (20005, 1001, (-720.0, 219.0, -1240.0)), // Monstro Inicial (Besouro / Nível 1)
-                        (20006, 1001, (-750.0, 219.0, -1210.0)), // Monstro Inicial (Besouro / Nível 1)
-                    ];
-                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_info_list(&starter_npcs))).await?;
+                    // 8. Envia OWN_IVTR_DATA (Comando 42) com itens da bolsa e equipamentos carregados da tabela character_items
+                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(0, 32, &details.inventory))).await?;
+                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(1, 32, &details.equipment))).await?;
+
+                    // 9. Envia OWN_ITEM_INFO (Comando 40) para cada item
+                    for item in &details.inventory {
+                        framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
+                            0, item.slot as u8, item.item_id as i32, item.durability as i32, item.max_durability as i32, item.count
+                        ))).await?;
+                    }
+                    for item in &details.equipment {
+                        framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
+                            1, item.slot as u8, item.item_id as i32, item.durability as i32, item.max_durability as i32, item.count
+                        ))).await?;
+                    }
+
+                    // 10. Envia NPC_ENTER_SLICE (Comando 11) e NPC_INFO_00 (Comando 39) no raio de 120m da posição do jogador
+                    let mut nearby_npcs = Vec::new();
+                    if let Some(world_spawns) = self.data_manager.map_spawns.get(&1) {
+                        let nearby = world_spawns.query_nearby(details.position, 120.0);
+                        for spawn in nearby.into_iter().take(60) {
+                            let dir_byte = pw_data_loader::compress_dir_h(spawn.dir.x, spawn.dir.z);
+                            nearby_npcs.push((spawn.instance_id, spawn.template_id as i32, (spawn.pos.x, spawn.pos.y, spawn.pos.z), dir_byte));
+                        }
+                    }
+
+                    if nearby_npcs.is_empty() {
+                        let anc_id = (0x80000000u32 | 1001) as i32;
+                        let ins_id = (0x80000000u32 | 1002) as i32;
+                        let mes_id = (0x80000000u32 | 1003) as i32;
+                        let alq_id = (0x80000000u32 | 1004) as i32;
+                        let fer_id = (0x80000000u32 | 1005) as i32;
+                        let mon_id = (0x80000000u32 | 1006) as i32;
+                        nearby_npcs = match details.cls {
+                            CharacterClass::Cleric | CharacterClass::Archer => vec![
+                                (anc_id, 2191, (-722.0, 219.1, -1222.6), 64),  // Anciã do Vale das Plumas (DT_NPC_ESSENCE)
+                                (mes_id, 2190, (-746.7, 219.0, -1257.9), 128), // Mestre dos Alados
+                                (ins_id, 2182, (-727.0, 219.2, -1244.8), 64),  // Instrutor de Habilidades
+                                (alq_id, 2187, (-755.2, 221.8, -1353.9), 32),  // Alquimista do Vale das Plumas
+                                (fer_id, 2189, (-797.9, 219.5, -1309.3), 0),   // Ferreiro do Vale das Plumas
+                                (mon_id, 13641, (-726.3, 219.4, -1096.8), 0),  // Monstro Inicial
+                            ],
+                            CharacterClass::Blademaster | CharacterClass::Wizard => vec![
+                                (anc_id, 2175, (438.0, 21.0, 676.0), 0),        // Ancião da Cidade das Espadas
+                                (mes_id, 4469, (435.0, 21.0, 670.0), 64),       // Mestre Guerreiro
+                                (ins_id, 4472, (440.0, 21.0, 670.0), 128),      // Mestre Mago
+                                (mon_id, 1001, (430.0, 21.0, 650.0), 0),        // Monstro Inicial
+                            ],
+                            CharacterClass::Barbarian | CharacterClass::Venomancer => vec![
+                                (anc_id, 2206, (-141.0, 21.0, -289.0), 0),      // Ancião da Cidade das Feras
+                                (mes_id, 4475, (-145.0, 21.0, -285.0), 64),     // Mestre Bárbaro
+                                (ins_id, 4480, (-138.0, 21.0, -285.0), 128),    // Mestre Feiticeira
+                                (mon_id, 1001, (-150.0, 21.0, -300.0), 0),      // Monstro Inicial
+                            ],
+                            _ => vec![
+                                (anc_id, 2191, (-722.0, 219.1, -1222.6), 64),
+                            ],
+                        };
+                    }
+
+                    info!("Enviando {} entidades (NPCs/Monstros) com ISNPCID válido e rotações exatas ao redor da posição {:?} para o jogador '{}'", nearby_npcs.len(), details.position, details.name);
+                    for spawn in nearby_npcs {
+                        framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_enter_world(
+                            spawn.0,
+                            spawn.1,
+                            Vector3::new(spawn.2.0, spawn.2.1, spawn.2.2),
+                            spawn.3,
+                        ))).await?;
+                        framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_info_00(
+                            spawn.0,
+                            1000,
+                            1000,
+                            0,
+                        ))).await?;
+                    }
 
                     // 11. Envia GetUIConfig_Re (Opcode 105 / 0x69) - Dispara OnAllInitDataReady e libera a HUD e o mundo 3D
                     framed.send(OutboundPacket::GetUIConfigRe(S2CGetUIConfigRe {
@@ -438,21 +550,34 @@ impl LinkGateway {
                         ui_config: Vec::new(),
                     })).await?;
 
-                    info!("Personagem '{}' (ID: {}) spawnado com sucesso no mundo 3D (Pos: {:?}, Skills: {}, NPCs: {})!", details.name, details.id, details.position, class_skills.len(), starter_npcs.len());
+                    info!("Personagem '{}' (ID: {}) spawnado com sucesso no mundo 3D (Pos: {:?}, Skills: {}, Itens: {})!", details.name, details.id, details.position, details.skills.len(), details.inventory.len());
                 }
             }
 
             InboundPacket::GamedataSend(gamedata) => {
+                let cmd = if gamedata.data.len() >= 2 {
+                    u16::from_le_bytes([gamedata.data[0], gamedata.data[1]])
+                } else {
+                    0
+                };
                 debug!(
-                    "Gamedata recebido do cliente ({} bytes) na Sessão #{}",
-                    gamedata.data.len(), session.session_id
+                    "Gamedata recebido do cliente ({} bytes, cmd={}): {:02x?}",
+                    gamedata.data.len(), cmd, gamedata.data
                 );
                 if gamedata.data.len() >= 2 {
                     let cmd = u16::from_le_bytes([gamedata.data[0], gamedata.data[1]]);
                     let role_id = session.role_id.unwrap_or(0);
                     match cmd {
                         0 => {
-                            debug!("Movimento do jogador recebido via GamedataSend");
+                            // C2S 0: PLAYER_MOVE (Sincronização de movimento e persistência no banco)
+                            if gamedata.data.len() >= 14 {
+                                let px = f32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
+                                let py = f32::from_le_bytes([gamedata.data[6], gamedata.data[7], gamedata.data[8], gamedata.data[9]]);
+                                let pz = f32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
+                                trace!("Movimento do jogador {}: ({:.2}, {:.2}, {:.2})", role_id, px, py, pz);
+                                let pos = Vector3::new(px, py, pz);
+                                let _ = self.char_repo.update_position(role_id, &pos).await;
+                            }
                         }
                         1 => {
                             // C2S::LOGOUT (Gamedata subcomando 1): struct { u16 cmd = 1, i32 iOutType }
@@ -471,34 +596,78 @@ impl LinkGateway {
                                 session.session_id as u32,
                             ))).await?;
                         }
+                        2 => {
+                            // C2S 2: SELECT_TARGET (Selecionar Alvo e atualizar HP no HUD)
+                            if gamedata.data.len() >= 6 {
+                                let target_id = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
+                                trace!("Jogador ID {} selecionou alvo ID {}", role_id, target_id);
+                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::select_target(target_id))).await?;
+                                if (target_id as u32 & 0x80000000) != 0 {
+                                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_info_00(target_id, 1000, 1000, 0))).await?;
+                                }
+                            }
+                        }
+                        3 => {
+                            // C2S 3: NORMAL_ATTACK (Ataque Básico)
+                            if gamedata.data.len() >= 6 {
+                                let target_id = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
+                                info!("Jogador ID {} atacou o alvo ID {}", role_id, target_id);
+                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::host_attack_result(target_id, 35, 0))).await?;
+
+                                // Se for monstro/entidade, envia notificação de progresso de abate para missões ativas
+                                if (target_id as u32 & 0x80000000) != 0 {
+                                    let active_quests = self.char_repo.quest_repo().list_quests(role_id).await.unwrap_or_default();
+                                    for q in active_quests {
+                                        if q.status == pw_core::QuestStatus::Active {
+                                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_monster_killed(q.quest_id as u16, 13641, 1))).await?;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         7 => {
-                            debug!("Parada de movimento do jogador recebida via GamedataSend");
+                            trace!("Parada de movimento do jogador recebida via GamedataSend");
+                            if gamedata.data.len() >= 14 {
+                                let px = f32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
+                                let py = f32::from_le_bytes([gamedata.data[6], gamedata.data[7], gamedata.data[8], gamedata.data[9]]);
+                                let pz = f32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
+                                let pos = Vector3::new(px, py, pz);
+                                let _ = self.char_repo.update_position(role_id, &pos).await;
+                            }
+                        }
+                        8 => {
+                            // C2S 8: UNSELECT
+                            trace!("Jogador ID {} desmarcou alvo", role_id);
+                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unselect())).await?;
                         }
                         9 => {
-                            // C2S::GET_ITEM_INFO (Consulta de detalhes de item / durabilidade)
+                            // C2S::GET_ITEM_INFO (Consulta de detalhes de item / durabilidade do banco)
                             if gamedata.data.len() >= 4 {
                                 let by_package = gamedata.data[2];
                                 let by_slot = gamedata.data[3];
-                                debug!("Cliente consultou item_info para pacote {} slot {}", by_package, by_slot);
-                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
-                                    by_package, by_slot, 2097, 10000, 10000, 1
-                                ))).await?;
+                                let ctype = pw_core::ContainerType::from_i16(by_package as i16);
+                                if let Ok(Some(item)) = self.char_repo.item_repo().get_item_by_slot(role_id, ctype, by_slot as u16).await {
+                                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
+                                        by_package, by_slot, item.item_id as i32, item.durability as i32, item.max_durability as i32, item.count
+                                    ))).await?;
+                                }
                             }
                         }
                         11 => {
                             // C2S::GET_IVTR_DETAIL
                             let by_package = if gamedata.data.len() >= 3 { gamedata.data[2] } else { 0 };
-                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_data(32, 2097))).await?;
-                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(by_package, 0, 2097, 10000, 10000, 1))).await?;
+                            let ctype = pw_core::ContainerType::from_i16(by_package as i16);
+                            let items = self.char_repo.item_repo().list_by_container(role_id, ctype).await.unwrap_or_default();
+                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(by_package, 32, &items))).await?;
                         }
                         12 => {
                             // C2S::EXG_IVTR_ITEM (Troca de posição na bolsa)
                             if gamedata.data.len() >= 4 {
                                 let idx1 = gamedata.data[2];
                                 let idx2 = gamedata.data[3];
-                                info!("Trocando itens nos slots {} e {} da bolsa", idx1, idx2);
+                                info!("Trocando itens nos slots {} e {} da bolsa no banco de dados", idx1, idx2);
+                                let _ = self.char_repo.item_repo().swap_slots(role_id, pw_core::ContainerType::Inventory, idx1 as u16, idx2 as u16).await;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::exg_ivtr_item(idx1, idx2))).await?;
-                                // Descongela ambos os slots para liberar a interface no cliente
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, idx1 as u16))).await?;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, idx2 as u16))).await?;
                             }
@@ -508,10 +677,10 @@ impl LinkGateway {
                             if gamedata.data.len() >= 8 {
                                 let src = gamedata.data[2];
                                 let dest = gamedata.data[3];
-                                let count = u32::from_le_bytes([gamedata.data[4], gamedata.data[5], gamedata.data[6], gamedata.data[7]]);
-                                info!("Movendo item do slot {} para {} (qtd: {})", src, dest, count);
+                                let count = u32::from_le_bytes([gamedata.data[4], gamedata.data[5], gamedata.data[6], gamedata.data[7]]) as u16;
+                                info!("Movendo item do slot {} para {} (qtd: {}) no banco de dados", src, dest, count);
+                                let _ = self.char_repo.item_repo().swap_slots(role_id, pw_core::ContainerType::Inventory, src as u16, dest as u16).await;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::move_ivtr_item(src, dest, count))).await?;
-                                // Descongela os slots de origem e destino
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, src as u16))).await?;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, dest as u16))).await?;
                             }
@@ -521,19 +690,51 @@ impl LinkGateway {
                             if gamedata.data.len() >= 4 {
                                 let idx1 = gamedata.data[2];
                                 let idx2 = gamedata.data[3];
+                                let _ = self.char_repo.item_repo().swap_slots(role_id, pw_core::ContainerType::Equipment, idx1 as u16, idx2 as u16).await;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::exg_equip_item(idx1, idx2))).await?;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(1, idx1 as u16))).await?;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(1, idx2 as u16))).await?;
                             }
                         }
                         17 => {
-                            // C2S::EQUIP_ITEM (Equipar item da bolsa no corpo)
+                            // C2S::EQUIP_ITEM (Equipar ou Desequipar com suporte bidirecional)
                             if gamedata.data.len() >= 4 {
                                 let idx_inv = gamedata.data[2];
                                 let idx_eq = gamedata.data[3];
-                                info!("Equipando item da bolsa slot {} no corpo slot {}", idx_inv, idx_eq);
-                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::equip_item(idx_inv, idx_eq, 1, 0))).await?;
-                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(1, idx_eq, 2097, 10000, 10000, 1))).await?;
+                                
+                                let inv_before = self.char_repo.item_repo().get_item_by_slot(role_id, pw_core::ContainerType::Inventory, idx_inv as u16).await.unwrap_or(None);
+                                let eq_before = self.char_repo.item_repo().get_item_by_slot(role_id, pw_core::ContainerType::Equipment, idx_eq as u16).await.unwrap_or(None);
+                                
+                                info!(
+                                    "EQUIP_ITEM: role={}, bolsa slot {} (tem: {}), corpo slot {} (tem: {})",
+                                    role_id, idx_inv, inv_before.is_some(), idx_eq, eq_before.is_some()
+                                );
+                                
+                                let _ = self.char_repo.item_repo().move_between_containers(
+                                    role_id,
+                                    pw_core::ContainerType::Inventory, idx_inv as u16,
+                                    pw_core::ContainerType::Equipment, idx_eq as u16
+                                ).await;
+                                
+                                let inv_after = self.char_repo.item_repo().get_item_by_slot(role_id, pw_core::ContainerType::Inventory, idx_inv as u16).await.unwrap_or(None);
+                                let eq_after = self.char_repo.item_repo().get_item_by_slot(role_id, pw_core::ContainerType::Equipment, idx_eq as u16).await.unwrap_or(None);
+                                
+                                let count_inv = if inv_after.is_some() { 1 } else { 0 };
+                                let count_eq = if eq_after.is_some() { 1 } else { 0 };
+                                
+                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::equip_item(idx_inv, idx_eq, count_inv, count_eq))).await?;
+                                
+                                if let Some(item) = inv_after {
+                                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
+                                        0, idx_inv, item.item_id as i32, item.durability as i32, item.max_durability as i32, item.count
+                                    ))).await?;
+                                }
+                                if let Some(item) = eq_after {
+                                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
+                                        1, idx_eq, item.item_id as i32, item.durability as i32, item.max_durability as i32, item.count
+                                    ))).await?;
+                                }
+                                
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, idx_inv as u16))).await?;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(1, idx_eq as u16))).await?;
                             }
@@ -543,31 +744,90 @@ impl LinkGateway {
                             if gamedata.data.len() >= 4 {
                                 let idx_inv = gamedata.data[2];
                                 let idx_eq = gamedata.data[3];
+                                let _ = self.char_repo.item_repo().move_between_containers(role_id, pw_core::ContainerType::Inventory, idx_inv as u16, pw_core::ContainerType::Equipment, idx_eq as u16).await;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::move_item_to_equip(idx_inv, idx_eq, 1))).await?;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, idx_inv as u16))).await?;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(1, idx_eq as u16))).await?;
                             }
                         }
                         23..=26 => {
-                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::ext_prop_move(role_id, 4.8, 4.8, 4.0, 5.0))).await?;
-                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::ext_prop_base(role_id, 5, 5, 5, 5, 120, 280, 2, 2))).await?;
+                            trace!("Subcomando de ação de movimento/pulo/voo recebido na Sessão #{}", session.session_id);
+                        }
+                        32 | 35 => {
+                            // C2S 32 / 35: SEVNPC_HELLO (Abrir diálogo com NPC)
+                            if gamedata.data.len() >= 6 {
+                                let nid = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
+                                info!("Jogador ID {} iniciou diálogo com o NPC ID {}", role_id, nid);
+                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_greeting(nid))).await?;
+                            }
+                        }
+                        33 | 37 => {
+                            // C2S 33 / 37: SEVNPC_SERVE (Serviços de NPC: Aceitar/Entregar Quest, Loja, etc.)
+                            if gamedata.data.len() >= 10 {
+                                let service_type = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
+                                let len = i32::from_le_bytes([gamedata.data[6], gamedata.data[7], gamedata.data[8], gamedata.data[9]]);
+                                let now_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u32;
+
+                                match service_type {
+                                    7 => {
+                                        // GP_NPCSEV_TASK_ACCEPT (Aceitar Missão)
+                                        if gamedata.data.len() >= 14 {
+                                            let id_task = i32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
+                                            info!("Jogador ID {} aceitou missão ID {} com sucesso", role_id, id_task);
+                                            let _ = self.char_repo.quest_repo().save_quest(role_id, id_task as u32, pw_core::QuestStatus::Active, &[0, 0, 0], None).await;
+                                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_new(id_task as u16, now_ts))).await?;
+                                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_data())).await?;
+                                        }
+                                    }
+                                    6 => {
+                                        // GP_NPCSEV_TASK_RETURN (Entregar / Concluir Missão)
+                                        if gamedata.data.len() >= 14 {
+                                            let id_task = i32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
+                                            info!("Jogador ID {} entregou/completou a missão ID {}", role_id, id_task);
+                                            let _ = self.char_repo.quest_repo().save_quest(role_id, id_task as u32, pw_core::QuestStatus::Completed, &[0, 0, 0], None).await;
+                                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_complete(id_task as u16, now_ts))).await?;
+                                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::receive_exp(100, 20))).await?;
+                                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_data())).await?;
+                                        }
+                                    }
+                                    8 => {
+                                        // GP_NPCSEV_TASK_MATTER (Item de Missão)
+                                        if gamedata.data.len() >= 14 {
+                                            let id_task = i32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
+                                            info!("Jogador ID {} solicitou item de missão ID {}", role_id, id_task);
+                                        }
+                                    }
+                                    _ => {
+                                        debug!("SEVNPC_SERVE tipo {} (len {}) recebido de jogador {}", service_type, len, role_id);
+                                    }
+                                }
+                            }
                         }
                         39 => {
-                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_data(32, 2097))).await?;
-                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_equip_data())).await?;
-                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(0, 0, 2097, 10000, 10000, 1))).await?;
+                            let items = self.char_repo.item_repo().list_by_container(role_id, pw_core::ContainerType::Inventory).await.unwrap_or_default();
+                            let equips = self.char_repo.item_repo().list_by_container(role_id, pw_core::ContainerType::Equipment).await.unwrap_or_default();
+                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(0, 32, &items))).await?;
+                            framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(1, 32, &equips))).await?;
+                            for item in &items {
+                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(0, item.slot as u8, item.item_id as i32, item.durability as i32 * 100, item.max_durability as i32 * 100, item.count))).await?;
+                            }
                             framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_data())).await?;
                         }
+                        43 => {
+                            // C2S 43: TASK_NOTIFY
+                            trace!("TASK_NOTIFY recebido de jogador {}", role_id);
+                        }
                         40 => {
-                            // C2S::USE_ITEM (Usar item do inventário: where, byCount, index (u16), item_id (i32))
+                            // C2S::USE_ITEM (Usar item do inventário persistente no banco)
                             if gamedata.data.len() >= 10 {
                                 let where_pack = gamedata.data[2];
                                 let by_count = gamedata.data[3];
                                 let slot = u16::from_le_bytes([gamedata.data[4], gamedata.data[5]]) as u8;
                                 let item_id = i32::from_le_bytes([gamedata.data[6], gamedata.data[7], gamedata.data[8], gamedata.data[9]]);
                                 info!("Jogador ID {} usou item ID {} do pacote {} slot {} (qtd: {})", role_id, item_id, where_pack, slot, by_count);
+                                let ctype = pw_core::ContainerType::from_i16(where_pack as i16);
+                                let _ = self.char_repo.item_repo().consume_item(role_id, ctype, slot as u16, by_count as u32).await;
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::host_use_item(where_pack, slot, item_id, by_count as u16))).await?;
-                                // Descongela o slot de uso
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(where_pack, slot as u16))).await?;
 
                                 // Se for poção de HP (1796) ou MP (1801), atualiza os status vitais
@@ -578,10 +838,56 @@ impl LinkGateway {
                                 }
                             }
                         }
-                        41 => {
+                        41 | 80 => {
+                            // C2S 41 / 80: CAST_SKILL / CAST_INSTANT_SKILL
                             if gamedata.data.len() >= 6 {
-                                let skill_id = i16::from_le_bytes([gamedata.data[2], gamedata.data[3]]);
-                                debug!("Jogador ID {} usou a habilidade ID {}", role_id, skill_id);
+                                let skill_id = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
+                                let target_id = if gamedata.data.len() >= 11 {
+                                    i32::from_le_bytes([gamedata.data[7], gamedata.data[8], gamedata.data[9], gamedata.data[10]])
+                                } else {
+                                    role_id
+                                };
+                                info!("Jogador ID {} conjurou habilidade ID {} no alvo {}", role_id, skill_id, target_id);
+                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::object_cast_skill(
+                                    role_id,
+                                    target_id,
+                                    skill_id,
+                                    300, // cast time in ms
+                                    1,   // skill level
+                                ))).await?;
+
+                                // Libera o jogador do estado de conjuração (SKILL_PERFORM = 88)
+                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::skill_perform())).await?;
+
+                                // Aplica o resultado do ataque com a habilidade (SELF_SKILL_ATTACK_RESULT = 142)
+                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_skill_attack_result(
+                                    target_id,
+                                    skill_id,
+                                    120,
+                                    0,
+                                    0,
+                                    0,
+                                ))).await?;
+
+                                framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::object_skill_attack_result(
+                                    role_id,
+                                    target_id,
+                                    skill_id,
+                                    120,
+                                    0,
+                                    0,
+                                    0,
+                                ))).await?;
+
+                                // Se for monstro/entidade, atualiza o HP no HUD
+                                if (target_id as u32 & 0x80000000) != 0 {
+                                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_info_00(
+                                        target_id,
+                                        880,
+                                        1000,
+                                        role_id,
+                                    ))).await?;
+                                }
                             }
                         }
                         42 => {
@@ -605,6 +911,20 @@ impl LinkGateway {
                                 let emotion = u16::from_le_bytes([gamedata.data[2], gamedata.data[3]]);
                                 info!("Jogador ID {} executou emote {}", role_id, emotion);
                                 framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::object_do_emote(role_id, emotion))).await?;
+                            }
+                        }
+                        49 => {
+                            // C2S 49: TASK_NOTIFY (Consulta / Notificação de Quests e Timemarks)
+                            if gamedata.data.len() >= 7 {
+                                let reason = gamedata.data[6];
+                                if reason == 7 {
+                                    let mut dyn_mark = OctetsStream::new();
+                                    dyn_mark.write_u8(7);       // reason = TASK_SVR_NOTIFY_DYN_TIME_MARK (7)
+                                    dyn_mark.write_u16_le(0);   // task = 0
+                                    dyn_mark.write_u32_le(0);   // time_mark = 0
+                                    dyn_mark.write_u32_le(1);   // version = 1
+                                    framed.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_var_data(&dyn_mark.into_bytes()))).await?;
+                                }
                             }
                         }
                         75 => {
@@ -685,8 +1005,11 @@ impl LinkGateway {
             }
 
             InboundPacket::PlayerMove(move_pkt) => {
+                let role_id = session.role_id.unwrap_or(0);
+                let _ = self.char_repo.update_position(role_id, &move_pkt.position).await;
+
                 let move_broadcast = OutboundPacket::PlayerMoveBroadcast(S2CPlayerMoveBroadcast {
-                    role_id: session.role_id.unwrap_or(0),
+                    role_id,
                     mode: move_pkt.mode,
                     position: move_pkt.position,
                     target: move_pkt.target,

@@ -191,19 +191,105 @@ impl ItemRepository {
         Ok(())
     }
 
-    /// Localiza todos os personagens que possuem determinado item_id (Auditoria e Economia)
-    pub async fn find_by_item_id(&self, item_id: u32) -> Result<Vec<ItemRecord>> {
-        let rows = sqlx::query_as::<_, ItemRow>(
+    /// Busca um item específico por slot
+    pub async fn get_item_by_slot(
+        &self,
+        character_id: RoleId,
+        container_type: ContainerType,
+        slot: u16,
+    ) -> Result<Option<ItemRecord>> {
+        let row = sqlx::query_as::<_, ItemRow>(
             r#"
             SELECT * FROM character_items 
-            WHERE item_id = $1 
-            ORDER BY created_at DESC
+            WHERE character_id = $1 AND container_type = $2 AND slot = $3
             "#,
         )
-        .bind(item_id as i32)
-        .fetch_all(self.pool.get_ref())
+        .bind(character_id)
+        .bind(container_type.to_i16())
+        .bind(slot as i16)
+        .fetch_optional(self.pool.get_ref())
         .await?;
 
-        Ok(rows.into_iter().map(Into::into).collect())
+        Ok(row.map(Into::into))
+    }
+
+    /// Troca os slots de dois itens dentro do mesmo container
+    pub async fn swap_slots(
+        &self,
+        character_id: RoleId,
+        container_type: ContainerType,
+        slot1: u16,
+        slot2: u16,
+    ) -> Result<()> {
+        let item1 = self.get_item_by_slot(character_id, container_type, slot1).await?;
+        let item2 = self.get_item_by_slot(character_id, container_type, slot2).await?;
+
+        // Remove ambos temporariamente para evitar colisão de chave única (uq_item_slot_per_container)
+        self.delete_item_by_slot(character_id, container_type, slot1).await?;
+        self.delete_item_by_slot(character_id, container_type, slot2).await?;
+
+        if let Some(mut i1) = item1 {
+            i1.slot = slot2;
+            self.upsert_item(&i1).await?;
+        }
+
+        if let Some(mut i2) = item2 {
+            i2.slot = slot1;
+            self.upsert_item(&i2).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Move ou equipa um item entre containers (ex: Inventário -> Equipamento)
+    pub async fn move_between_containers(
+        &self,
+        character_id: RoleId,
+        src_container: ContainerType,
+        src_slot: u16,
+        dest_container: ContainerType,
+        dest_slot: u16,
+    ) -> Result<()> {
+        let src_item = self.get_item_by_slot(character_id, src_container, src_slot).await?;
+        let dest_item = self.get_item_by_slot(character_id, dest_container, dest_slot).await?;
+
+        self.delete_item_by_slot(character_id, src_container, src_slot).await?;
+        self.delete_item_by_slot(character_id, dest_container, dest_slot).await?;
+
+        if let Some(mut s) = src_item {
+            s.container_type = dest_container;
+            s.slot = dest_slot;
+            self.upsert_item(&s).await?;
+        }
+
+        if let Some(mut d) = dest_item {
+            d.container_type = src_container;
+            d.slot = src_slot;
+            self.upsert_item(&d).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Consome quantidade de um item (ex: poções)
+    pub async fn consume_item(
+        &self,
+        character_id: RoleId,
+        container_type: ContainerType,
+        slot: u16,
+        amount: u32,
+    ) -> Result<Option<ItemRecord>> {
+        if let Some(mut item) = self.get_item_by_slot(character_id, container_type, slot).await? {
+            if item.count <= amount {
+                self.delete_item_by_slot(character_id, container_type, slot).await?;
+                Ok(None)
+            } else {
+                item.count -= amount;
+                self.upsert_item(&item).await?;
+                Ok(Some(item))
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
