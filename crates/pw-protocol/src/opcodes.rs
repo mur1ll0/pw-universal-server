@@ -27,9 +27,12 @@ pub const OP_S2C_UNDO_DELETE_ROLE_RES: u32 = 0x59; // 89
 pub const OP_C2S_ENTER_WORLD: u32 = 0x48;       // 72
 pub const OP_S2C_ENTER_WORLD: u32 = 0x45;       // 69
 
-pub const OP_C2S_GAMEDATASEND: u32 = 0x20;       // 32 (GamedataSend C2S)
+pub const OP_C2S_GAMEDATASEND: u32 = 0x22;       // 34 (GamedataSend C2S)
 pub const OP_S2C_GAMEDATASEND: u32 = 0x22;       // 34 (GamedataSend S2C)
 pub const OP_S2C_PLAYER_MOVE_BROADCAST: u32 = 0x21;
+
+pub const OP_C2S_CHECK_NEW_MAIL: u32 = 0x1068;   // 4200 (AVCheckNewMail)
+pub const OP_S2C_CHECK_NEW_MAIL_RE: u32 = 0x1069;// 4201 (AVCheckNewMail_Re)
 
 // Subcomandos internos transportados pelo GamedataSend (Opcode 0x22 S2C / 0x20 C2S)
 pub const CMD_S2C_PLAYER_INFO_1: u16 = 0;
@@ -64,6 +67,7 @@ pub const OP_S2C_PLAYER_LOGOUT: u32 = 0x45;   // 69 (PROTOCOL_PLAYERLOGOUT)
 pub const OP_C2S_SET_CUSTOM_DATA: u32 = 0x66;     // 102 (PROTOCOL_SETCUSTOMDATA)
 pub const OP_S2C_SET_CUSTOM_DATA_RE: u32 = 0x67;  // 103 (PROTOCOL_SETCUSTOMDATA_RE)
 
+// Protocolos de UI Config (104, 105, 106, 107 idênticos entre 1.2.6 e 1.5.3)
 pub const OP_C2S_GET_UI_CONFIG: u32 = 0x68;       // 104
 pub const OP_S2C_GET_UI_CONFIG_RE: u32 = 0x69;    // 105
 pub const OP_C2S_SET_UI_CONFIG: u32 = 0x6A;       // 106

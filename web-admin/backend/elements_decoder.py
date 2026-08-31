@@ -7,6 +7,7 @@ a partir dos arquivos surfaces.pck / iconset (iconlist_ivtrm.dds e iconlist_skil
 
 import os
 import io
+import json
 import struct
 import unicodedata
 from typing import Dict, List, Any, Optional, Tuple
@@ -99,33 +100,49 @@ class ItemOctetCodec:
         vit_req: int = 0,
         agi_req: int = 0,
         eng_req: int = 0,
-        durability: int = 2800,
-        max_durability: int = 2800,
+        durability: int = 1400,
+        max_durability: int = 1400,
         creator_name: str = "",
         refine_level: int = 0,
         sockets_count: int = 0,
         socket_stones: Optional[List[int]] = None,
-        dmg_low: int = 10,
-        dmg_high: int = 20,
+        dmg_low: int = 3,
+        dmg_high: int = 3,
+        magic_low: int = 0,
+        magic_high: int = 0,
         def_phys: int = 10,
         def_magic: int = 5,
+        dodge: int = 0,
+        hp_enh: int = 0,
+        mp_enh: int = 0,
         color: int = 0x00FFFFFF,
         weapon_type: int = 0,
-        weapon_class: int = 1,
+        weapon_class: int = 292,
+        weapon_level: int = 0,
+        attack_speed: int = 16,
+        attack_range: float = 3.0,
+        short_range: float = 0.0,
+        tag: int = 3
     ) -> bytes:
+        """
+        Constrói octets binários (item_content) de acordo com os structs C++ do cliente e servidor Perfect World.
+        Layout:
+          1. prerequisition (20 bytes): level(h), race(h), str(h), vit(h), agi(h), eng(h), dur(i), max_dur(i)
+          2. essence_size (short) + tag (short) [ou tag_type=1 + len + name]
+          3. essence payload (_weapon_essence, _armor_essence, _decoration_essence)
+          4. sockets: hole_num(short), hole_adj(short), stones(int[])
+          5. addons: addon_num(int), addon_data entries
+        """
         cat = (category or "").lower()
-        if not any(k in cat for k in [
-            "arma", "armadura", "ornamento", "jóia", "joia", "voo", "montaria", "moda", "livro", "tomo", "projétil", "projetil"
-        ]):
-            return b""
-
         socket_stones = socket_stones or []
         buf = bytearray()
 
-        dura = int(durability) if durability is not None and durability > 0 else 2800
+        dura = int(durability) if durability is not None and durability > 0 else 1400
         max_dura = int(max_durability) if max_durability is not None and max_durability > 0 else dura
+
+        # 1. prerequisition (20 bytes)
         buf.extend(struct.pack(
-            "<hhhhhhII",
+            "<hhhhhhii",
             int(level),
             int(race_mask),
             int(str_req),
@@ -136,35 +153,34 @@ class ItemOctetCodec:
             max_dura
         ))
 
+        # 2. Maker Tag e Essence Payload
         c_bytes = (creator_name or "").encode("gbk", errors="ignore")[:31]
-        tag_type = 1 if len(c_bytes) > 0 else 0
-        tag_size = len(c_bytes)
 
         if "arma" in cat:
             ess_size = 44
             ess_bytes = struct.pack(
                 "<hhiiiiiiiiff",
-                int(weapon_type),
-                0,
-                int(weapon_class),
-                int(level),
-                0,
-                int(dmg_low),
-                int(dmg_high),
-                0,
-                0,
-                20,
-                3.5,
-                0.0
+                int(weapon_type),   # short mode (0=melee, 1=ranged, 2=assassin)
+                0,                  # short unused
+                int(weapon_class),  # int major_type (ex: 292 para cajados/espadas mágicas)
+                int(weapon_level),  # int grade/tier (0 para nível inicial)
+                0,                  # int req_projectile
+                int(dmg_low),       # int damage_low
+                int(dmg_high),      # int damage_high
+                int(magic_low),     # int magic_damage_low
+                int(magic_high),    # int magic_damage_high
+                int(attack_speed),  # int attack_speed
+                float(attack_range),# float attack_range
+                float(short_range)  # float attack_short_range
             )
         elif "armadura" in cat:
             ess_size = 36
             ess_bytes = struct.pack(
                 "<iiiiiiiii",
                 int(def_phys),
-                0,
-                0,
-                0,
+                int(dodge),
+                int(mp_enh),
+                int(hp_enh),
                 int(def_magic),
                 int(def_magic),
                 int(def_magic),
@@ -175,10 +191,10 @@ class ItemOctetCodec:
             ess_size = 36
             ess_bytes = struct.pack(
                 "<iiiiiiiii",
-                0,
-                0,
+                int(dmg_low),
+                int(magic_low),
                 int(def_phys),
-                0,
+                int(dodge),
                 int(def_magic),
                 int(def_magic),
                 int(def_magic),
@@ -201,41 +217,50 @@ class ItemOctetCodec:
             ess_size = 8
             ess_bytes = struct.pack("<ii", int(level), 0)
 
-        buf.extend(struct.pack("<HBB", ess_size, tag_type, tag_size))
-        if tag_size > 0:
+        # Header de tamanho da essência + Tag do Criador
+        if len(c_bytes) > 0:
+            # Tag customizado de criador
+            buf.extend(struct.pack("<hhh", ess_size, 1, len(c_bytes)))
             buf.extend(c_bytes)
+        else:
+            # Tag padrão de NPC / Sistema (tag=3)
+            buf.extend(struct.pack("<hh", ess_size, int(tag)))
+
+        # Adiciona bytes da essência
         buf.extend(ess_bytes)
 
+        # 3. Sockets (Slots de Pedras)
         sock_cnt = min(max(0, int(sockets_count)), 4)
-        buf.extend(struct.pack("<HH", sock_cnt, 0))
+        buf.extend(struct.pack("<hh", sock_cnt, 0))
         for i in range(sock_cnt):
             st_id = int(socket_stones[i]) if i < len(socket_stones) else 0
             buf.extend(struct.pack("<I", st_id))
 
+        # 4. Addons e Refino
         addons = []
         if refine_level > 0:
             ref_val = int(refine_level) * (15 if "arma" in cat else 10)
             ref_addon_id = 0x0001 | (1 << 13)
             addons.append((ref_addon_id, [ref_val]))
 
-        buf.extend(struct.pack("<I", len(addons)))
+        buf.extend(struct.pack("<i", len(addons)))
         for a_id, args in addons:
             buf.extend(struct.pack("<I", a_id))
             for arg in args:
-                buf.extend(struct.pack("<I", int(arg)))
+                buf.extend(struct.pack("<i", int(arg)))
 
         return bytes(buf)
 
     @classmethod
     def parse_item_octets(cls, raw_data: Any) -> Dict[str, Any]:
         raw_bytes = cls.hex_to_bytes(raw_data) if isinstance(raw_data, str) else (raw_data or b"")
-        if not raw_bytes or len(raw_bytes) < 24:
+        if not raw_bytes or len(raw_bytes) < 20:
             return {
                 "has_octets": False,
                 "raw_hex": raw_bytes.hex() if raw_bytes else "",
                 "level": 1,
-                "durability": 1000,
-                "max_durability": 1000,
+                "durability": 1400,
+                "max_durability": 1400,
                 "refine_level": 0,
                 "sockets_count": 0,
                 "socket_stones": [],
@@ -244,35 +269,40 @@ class ItemOctetCodec:
             }
 
         try:
-            lvl, race, st, vit, agi, eng, dura, max_dura = struct.unpack("<hhhhhhII", raw_bytes[:20])
+            lvl, race, st, vit, agi, eng, dura, max_dura = struct.unpack("<hhhhhhii", raw_bytes[:20])
             offset = 20
-            ess_size, tag_type, tag_size = struct.unpack("<HBB", raw_bytes[offset:offset+4])
-            offset += 4
+
+            ess_size = struct.unpack_from("<h", raw_bytes, offset)[0]
+            offset += 2
+
+            tag_val = struct.unpack_from("<h", raw_bytes, offset)[0]
+            offset += 2
 
             creator = ""
-            if tag_size > 0 and offset + tag_size <= len(raw_bytes):
-                creator = raw_bytes[offset:offset+tag_size].decode("gbk", errors="ignore").strip()
-                offset += tag_size
+            if tag_val == 1:
+                name_len = struct.unpack_from("<h", raw_bytes, offset)[0]
+                offset += 2
+                creator = raw_bytes[offset:offset+name_len].decode("gbk", errors="ignore").strip()
+                offset += name_len
 
             essence_raw = raw_bytes[offset:offset+ess_size] if offset + ess_size <= len(raw_bytes) else b""
             offset += ess_size
 
             sockets = []
             sock_count = 0
-            mod_mask = 0
             if offset + 4 <= len(raw_bytes):
-                sock_count, mod_mask = struct.unpack("<HH", raw_bytes[offset:offset+4])
+                sock_count, _ = struct.unpack("<hh", raw_bytes[offset:offset+4])
                 offset += 4
                 for _ in range(sock_count):
                     if offset + 4 <= len(raw_bytes):
-                        st_id = struct.unpack("<I", raw_bytes[offset:offset+4])[0]
+                        st_id = struct.unpack("<i", raw_bytes[offset:offset+4])[0]
                         sockets.append(st_id)
                         offset += 4
 
             addons = []
             refine_level = 0
             if offset + 4 <= len(raw_bytes):
-                addon_cnt = struct.unpack("<I", raw_bytes[offset:offset+4])[0]
+                addon_cnt = struct.unpack("<i", raw_bytes[offset:offset+4])[0]
                 offset += 4
                 for _ in range(addon_cnt):
                     if offset + 4 <= len(raw_bytes):
@@ -283,7 +313,7 @@ class ItemOctetCodec:
                         args = []
                         for _ in range(param_num):
                             if offset + 4 <= len(raw_bytes):
-                                arg_val = struct.unpack("<I", raw_bytes[offset:offset+4])[0]
+                                arg_val = struct.unpack("<i", raw_bytes[offset:offset+4])[0]
                                 args.append(arg_val)
                                 offset += 4
                         addons.append({"id": a_id, "pure_id": pure_id, "args": args})
@@ -302,7 +332,7 @@ class ItemOctetCodec:
                 "durability": dura,
                 "max_durability": max_dura,
                 "creator_name": creator,
-                "tag_type": tag_type,
+                "tag": tag_val,
                 "essence_size": ess_size,
                 "sockets_count": sock_count,
                 "socket_stones": sockets,
@@ -382,269 +412,30 @@ class SkillOctetCodec:
         return ItemOctetCodec.hex_to_bytes(hex_str)
 
 
-# Base de Habilidades do Jogo por Classe com mapeamento preciso de IDs, traduções e ícones do atlas DDS
-PW_SKILLS_DATABASE = [
-    # =========================================================================
-    # GUERREIRO (Classe 0 - Blademaster)
-    # =========================================================================
-    {"id": 1, "name": "Golpe do Tigre", "name_en": "Tiger Maw", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque Físico", "icon": "fa-solid fa-hand-back-fist", "icon_file": "虎击.dds", "max_lv": 10, "desc": "Golpe inicial frontal causando dano físico adicional."},
-    {"id": 2, "name": "Corte Sangrento", "name_en": "Draw Blood", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque Físico", "icon": "fa-solid fa-droplet", "icon_file": "断岳.dds", "max_lv": 10, "desc": "Corta pontos vitais causando sangramento contínuo no alvo."},
-    {"id": 3, "name": "Lâmina Eólica", "name_en": "Aeolian Blade", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque Físico", "icon": "fa-solid fa-wind", "icon_file": "霸王断岳.dds", "max_lv": 10, "desc": "Corta o ar lançando uma lâmina cortante que pode atordoar o alvo."},
-    {"id": 4, "name": "Sino Dourado", "name_en": "Aura of the Golden Bell", "class_id": 0, "class_name": "Guerreiro", "type": "Buff em Grupo", "icon": "fa-solid fa-shield-halved", "icon_file": "金钟罩.dds", "max_lv": 10, "desc": "Aumenta a defesa física de todos os membros do grupo."},
-    {"id": 5, "name": "Raio do Dragão", "name_en": "Drake's Ray", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque à Distância", "icon": "fa-solid fa-bolt", "icon_file": "龙击.dds", "max_lv": 10, "desc": "Dispara um raio de energia marcial à distância."},
-    {"id": 6, "name": "Rugido do Leão", "name_en": "Roar of the Pride", "class_id": 0, "class_name": "Guerreiro", "type": "Controle em Área", "icon": "fa-solid fa-bullhorn", "icon_file": "狮子吼.dds", "max_lv": 10, "desc": "Rugido ensurdecedor que atordoa todos os inimigos ao redor."},
-    {"id": 54, "name": "Golpe Fluente", "name_en": "Stream Strike", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque Físico", "icon": "fa-solid fa-water", "icon_file": "流水.dds", "max_lv": 10, "desc": "Golpe contínuo que reduz a velocidade de ataque do adversário."},
-    {"id": 55, "name": "Leque de Chamas", "name_en": "Fan of Flames", "class_id": 0, "class_name": "Guerreiro", "type": "Dano de Fogo", "icon": "fa-solid fa-fire", "icon_file": "火焰扇.dds", "max_lv": 10, "desc": "Ataque cônico de fogo causando dano em área."},
-    {"id": 56, "name": "Varredura do Dragão", "name_en": "Drake Sweep", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque em Área", "icon": "fa-solid fa-dragon", "icon_file": "横扫千军.dds", "max_lv": 10, "desc": "Gira a arma em 360 graus atingindo todos os alvos próximos."},
-    {"id": 57, "name": "Mar Adentro", "name_en": "Ocean's Edge", "class_id": 0, "class_name": "Guerreiro", "type": "Dano de Água", "icon": "fa-solid fa-water", "icon_file": "沧海.dds", "max_lv": 10, "desc": "Imbui a arma com a força das marés causando dano físico e mágico."},
-    {"id": 58, "name": "Salto para Trás", "name_en": "Leap Back", "class_id": 0, "class_name": "Guerreiro", "type": "Mobilidade", "icon": "fa-solid fa-person-walking-arrow-right", "icon_file": "后跳.dds", "max_lv": 1, "desc": "Recua rapidamente para esquivar de golpes inimigos."},
-    {"id": 59, "name": "Salto do Tigre", "name_en": "Tiger Leap", "class_id": 0, "class_name": "Guerreiro", "type": "Mobilidade", "icon": "fa-solid fa-person-running", "icon_file": "虎跃.dds", "max_lv": 1, "desc": "Avança instantaneamente em direção ao inimigo."},
-    {"id": 60, "name": "Palma do Vácuo", "name_en": "Vacuous Palm", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque de Punho", "icon": "fa-solid fa-hand", "icon_file": "空手夺白刃.dds", "max_lv": 10, "desc": "Golpe rápido com as mãos desarmadas que reduz a velocidade do alvo."},
-    {"id": 61, "name": "Chute sem Sombra", "name_en": "Shadowless Kick", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque de Punho", "icon": "fa-solid fa-shoe-prints", "icon_file": "无影脚.dds", "max_lv": 10, "desc": "Sequência veloz de chutes que interrompe a conjuração do alvo."},
-    {"id": 62, "name": "Calcanhar Furacão", "name_en": "Cyclone Heel", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque em Área", "icon": "fa-solid fa-tornado", "icon_file": "旋风腿.dds", "max_lv": 10, "desc": "Chute giratório causando dano físico a todos ao redor."},
-    {"id": 63, "name": "Impacto do Dragão", "name_en": "Drake's Breath Bash", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque de Punho", "icon": "fa-solid fa-hand-fist", "icon_file": "龙息击.dds", "max_lv": 10, "desc": "Golpe marcial concentrado causando alto dano crítico."},
-    {"id": 64, "name": "Ventos Cortantes", "name_en": "Piercing Winds", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque de Lança", "icon": "fa-solid fa-wind", "icon_file": "穿风刺.dds", "max_lv": 10, "desc": "Estocada penetrante de lança com dano contínuo."},
-    {"id": 65, "name": "Golpe Distante", "name_en": "Farstrike", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque de Lança", "icon": "fa-solid fa-location-arrow", "icon_file": "远击.dds", "max_lv": 10, "desc": "Ataque de lança de longo alcance com perfuração de armadura."},
-    {"id": 66, "name": "Meteoro", "name_en": "Meteor Rush", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque de Lança", "icon": "fa-solid fa-meteor", "icon_file": "流星赶月.dds", "max_lv": 10, "desc": "Estocada rápida que empurra e repele o oponente."},
-    {"id": 67, "name": "Lança Glacial", "name_en": "Glacial Spike", "class_id": 0, "class_name": "Guerreiro", "type": "Dano em Linha", "icon": "fa-solid fa-icicles", "icon_file": "冰刺.dds", "max_lv": 10, "desc": "Lança uma onda de choque frontal em linha reta."},
-    {"id": 68, "name": "Golpe Desarmante", "name_en": "Drake Bash", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque de Machado", "icon": "fa-solid fa-gavel", "icon_file": "破甲击.dds", "max_lv": 10, "desc": "Pancada brutal que atordoa o oponente."},
-    {"id": 69, "name": "Dragão Voador (Heaven's Flame)", "name_en": "Heaven's Flame", "class_id": 0, "class_name": "Guerreiro", "type": "Ultimate em Área", "icon": "fa-solid fa-dragon", "icon_file": "天火狂龙.dds", "max_lv": 10, "desc": "Invoca o Dragão Celestial causando dano massivo e dobrando o dano recebido pelos alvos."},
-    {"id": 70, "name": "Corte das Terras Altas", "name_en": "Highland Cleave", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque de Machado", "icon": "fa-solid fa-mountain", "icon_file": "开山斧.dds", "max_lv": 10, "desc": "Golpe pesado de machado causando dano frontal."},
-    {"id": 71, "name": "Fissura", "name_en": "Fissure", "class_id": 0, "class_name": "Guerreiro", "type": "Dano de Fogo em Área", "icon": "fa-solid fa-fire-burner", "icon_file": "裂地击.dds", "max_lv": 10, "desc": "Esmaga o solo liberando magma e reduzindo a defesa de fogo dos inimigos."},
-    {"id": 72, "name": "Corte Fantasma", "name_en": "Mage Bane", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque de Espada", "icon": "fa-solid fa-wand-magic-sparkles", "icon_file": "断魂剑.dds", "max_lv": 10, "desc": "Ataque de espada que queima a mana do adversário."},
-    {"id": 73, "name": "Caçador de Espíritos", "name_en": "Spirit Chaser", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque de Espada", "icon": "fa-solid fa-ghost", "icon_file": "追魂剑.dds", "max_lv": 10, "desc": "Dispara ondas cortantes de espada com velocidade ampliada."},
-    {"id": 74, "name": "Golpe Atmosférico", "name_en": "Atmos Strike", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque de Espada", "icon": "fa-solid fa-burst", "icon_file": "风云破.dds", "max_lv": 10, "desc": "Corta o espaço aéreo causando dano físico explosivo."},
-    {"id": 75, "name": "10 Mil Lâminas (Myriad Swords)", "name_en": "Myriad Sword Stance", "class_id": 0, "class_name": "Guerreiro", "type": "Ultimate em Área", "icon": "fa-solid fa-khanda", "icon_file": "万剑决.dds", "max_lv": 10, "desc": "Faz chover milhares de espadas astrais reduzindo o ataque físico e mágico dos inimigos."},
-    {"id": 147, "name": "Mestria em Punhos", "name_en": "Fist Mastery", "class_id": 0, "class_name": "Guerreiro", "type": "Passiva / Mestria", "icon": "fa-solid fa-hand-fist", "icon_file": "拳套专精.dds", "max_lv": 10, "desc": "Aumenta o dano de armas de punho e garras."},
-    {"id": 148, "name": "Mestria em Lanças", "name_en": "Spear Mastery", "class_id": 0, "class_name": "Guerreiro", "type": "Passiva / Mestria", "icon": "fa-solid fa-pen-nib", "icon_file": "长枪专精.dds", "max_lv": 10, "desc": "Aumenta o dano de armas de haste e lanças."},
-    {"id": 157, "name": "Mestria em Espadas", "name_en": "Blade and Sword Mastery", "class_id": 0, "class_name": "Guerreiro", "type": "Passiva / Mestria", "icon": "fa-solid fa-khanda", "icon_file": "剑术专精.dds", "max_lv": 10, "desc": "Aumenta o dano de espadas e lâminas."},
-    {"id": 162, "name": "Mestria em Machados", "name_en": "Axe and Hammer Mastery", "class_id": 0, "class_name": "Guerreiro", "type": "Passiva / Mestria", "icon": "fa-solid fa-gavel", "icon_file": "斧锤专精.dds", "max_lv": 10, "desc": "Aumenta o dano de machados, martelos e clavas."},
-    {"id": 350, "name": "Sutra Interior (Magia)", "name_en": "Diamond Sutra", "class_id": 0, "class_name": "Guerreiro", "type": "Buff / Postura", "icon": "fa-solid fa-yin-yang", "icon_file": "易筋经.dds", "max_lv": 10, "desc": "Reduz a defesa física para aumentar enormemente a defesa mágica."},
-    {"id": 351, "name": "Sutra Exterior (Física)", "name_en": "Great Diamond Sutra", "class_id": 0, "class_name": "Guerreiro", "type": "Buff / Postura", "icon": "fa-solid fa-shield-heart", "icon_file": "易骨经.dds", "max_lv": 10, "desc": "Reduz a defesa mágica para aumentar enormemente a defesa física."},
+# Base de Habilidades do Jogo Canônica extraída diretamente do código C++ da engine (CElementSkill) e skillstr.txt
+CANON_SKILLS_PATH = os.path.join(os.path.dirname(__file__), "skills_canon.json")
+PW_SKILLS_DATABASE: List[Dict[str, Any]] = []
 
-    # =========================================================================
-    # MAGO (Classe 1 - Wizard)
-    # =========================================================================
-    {"id": 7, "name": "Coroa de Chamas", "name_en": "Crown of Flame", "class_id": 1, "class_name": "Mago", "type": "Magia de Fogo", "icon": "fa-solid fa-crown", "icon_file": "烈焰冠.dds", "max_lv": 10, "desc": "Cobre o alvo com uma coroa de fogo que queima continuamente ao longo do tempo."},
-    {"id": 8, "name": "Tempestade de Chamas", "name_en": "Emberstorm", "class_id": 1, "class_name": "Mago", "type": "Magia de Fogo em Área", "icon": "fa-solid fa-volcano", "icon_file": "火雨.dds", "max_lv": 10, "desc": "Chuva de brasas em área atingindo múltiplos oponentes."},
-    {"id": 9, "name": "Mestria em Água", "name_en": "Aqua Spirit", "class_id": 1, "class_name": "Mago", "type": "Passiva / Mestria", "icon": "fa-solid fa-droplet", "icon_file": "水系专精.dds", "max_lv": 10, "desc": "Aumenta permanentemente todo o dano causado por magias de água."},
-    {"id": 10, "name": "Armadilha de Terra", "name_en": "Pitfall", "class_id": 1, "class_name": "Mago", "type": "Magia de Terra", "icon": "fa-solid fa-mountain", "icon_file": "陷地术.dds", "max_lv": 10, "desc": "Faz o solo afundar sob os pés do alvo causando dano contínuo de terra."},
-    {"id": 53, "name": "Mestria em Fogo", "name_en": "Fire Mastery", "class_id": 1, "class_name": "Mago", "type": "Passiva / Mestria", "icon": "fa-solid fa-fire", "icon_file": "火系专精.dds", "max_lv": 10, "desc": "Aumenta permanentemente todo o dano causado por magias de fogo."},
-    {"id": 81, "name": "Flecha de Chamas", "name_en": "Pyrogram", "class_id": 1, "class_name": "Mago", "type": "Magia de Fogo", "icon": "fa-solid fa-fire-flame-curved", "icon_file": "烈火符.dds", "max_lv": 10, "desc": "Dispara uma esfera flamejante veloz contra o alvo."},
-    {"id": 84, "name": "Vontade da Fênix", "name_en": "Will of the Phoenix", "class_id": 1, "class_name": "Mago", "type": "Magia de Fogo", "icon": "fa-solid fa-dove", "icon_file": "凤翼天翔.dds", "max_lv": 10, "desc": "Invoca a fênix ardente que repele e incinera inimigos frontais."},
-    {"id": 85, "name": "Flecha Divina de Chamas", "name_en": "Divine Pyrogram", "class_id": 1, "class_name": "Mago", "type": "Magia de Fogo", "icon": "fa-solid fa-fire-glow", "icon_file": "神火符.dds", "max_lv": 10, "desc": "Poderoso projétil de fogo concentrado de alto impacto."},
-    {"id": 86, "name": "Sopro do Dragão", "name_en": "The Dragon's Breath", "class_id": 1, "class_name": "Mago", "type": "Magia Contínua em Área", "icon": "fa-solid fa-dragon", "icon_file": "龙息.dds", "max_lv": 10, "desc": "Cria um círculo de labaredas constantes ao redor do mago."},
-    {"id": 87, "name": "Tempestade de Lâminas (Ultimate)", "name_en": "Blade Tempest", "class_id": 1, "class_name": "Mago", "type": "Ultimate de Fogo e Metal", "icon": "fa-solid fa-burst", "icon_file": "火刃风暴.dds", "max_lv": 10, "desc": "Conjura uma tempestade cataclísmica de fogo e espadas em área."},
-    {"id": 88, "name": "Gotejamento d'Água", "name_en": "Gush", "class_id": 1, "class_name": "Mago", "type": "Magia de Água", "icon": "fa-solid fa-water", "icon_file": "涌泉.dds", "max_lv": 10, "desc": "Dispara um jato de água gelada que reduz a velocidade de movimento do alvo."},
-    {"id": 89, "name": "Manancial", "name_en": "Wellspring Quaff", "class_id": 1, "class_name": "Mago", "type": "Buff de Mana", "icon": "fa-solid fa-bottle-droplet", "icon_file": "甘露.dds", "max_lv": 10, "desc": "Aumenta a velocidade de conjuração e fluxo de mana."},
-    {"id": 90, "name": "Orvalho da Manhã", "name_en": "Morning Dew", "class_id": 1, "class_name": "Mago", "type": "Cura", "icon": "fa-solid fa-heart-pulse", "icon_file": "晨露.dds", "max_lv": 10, "desc": "Magia de cura aquática que recupera o HP do mago ou aliado."},
-    {"id": 91, "name": "Lâmina de Gelo", "name_en": "Frostblade", "class_id": 1, "class_name": "Mago", "type": "Buff de Ataque", "icon": "fa-solid fa-icicles", "icon_file": "寒冰刃.dds", "max_lv": 10, "desc": "Encanta a arma do aliado adicionando dano de água a cada ataque físico."},
-    {"id": 92, "name": "Prisão Glacial", "name_en": "Glacial Snare", "class_id": 1, "class_name": "Mago", "type": "Magia de Gelo", "icon": "fa-solid fa-snowflake", "icon_file": "冰封.dds", "max_lv": 10, "desc": "Congela as pernas do oponente impedindo seu movimento."},
-    {"id": 93, "name": "Dragão de Gelo (Black Ice)", "name_en": "Black Ice Dragon Strike", "class_id": 1, "class_name": "Mago", "type": "Ultimate de Gelo", "icon": "fa-solid fa-dragon", "icon_file": "玄冰龙.dds", "max_lv": 10, "desc": "Invoca o dragão de gelo negro causando dano massivo em área."},
-    {"id": 96, "name": "Armadura de Fogo", "name_en": "Pyroshell", "class_id": 1, "class_name": "Mago", "type": "Buff Mágico", "icon": "fa-solid fa-shield", "icon_file": "烈火甲.dds", "max_lv": 10, "desc": "Aumenta a defesa física e regeneração de HP."},
-    {"id": 97, "name": "Chuva de Pedras", "name_en": "Stone Rain", "class_id": 1, "class_name": "Mago", "type": "Magia de Terra", "icon": "fa-solid fa-gem", "icon_file": "落石术.dds", "max_lv": 10, "desc": "Faz chover pedras pesadas esmagando o oponente."},
-    {"id": 98, "name": "Tempestade de Areia", "name_en": "Sandstorm", "class_id": 1, "class_name": "Mago", "type": "Magia de Terra", "icon": "fa-solid fa-wind", "icon_file": "沙尘暴.dds", "max_lv": 10, "desc": "Furação de poeira e rochas que reduz a precisão do alvo."},
-    {"id": 99, "name": "Ira da Montanha (Mountain's Seize)", "name_en": "Mountain's Seize", "class_id": 1, "class_name": "Mago", "type": "Ultimate de Terra", "icon": "fa-solid fa-mountain-sun", "icon_file": "泰山压顶.dds", "max_lv": 10, "desc": "Esmaga os inimigos com o peso de uma montanha atordoando todos em área."},
-    {"id": 100, "name": "Passo no Ar / Teleporte", "name_en": "Distance Shrink", "class_id": 1, "class_name": "Mago", "type": "Teleporte", "icon": "fa-solid fa-person-falling-burst", "icon_file": "缩地术.dds", "max_lv": 1, "desc": "Teleporta instantaneamente o mago para frente."},
-    {"id": 101, "name": "Mestria em Terra", "name_en": "Earthen Spirit", "class_id": 1, "class_name": "Mago", "type": "Passiva / Mestria", "icon": "fa-solid fa-mountain", "icon_file": "土系专精.dds", "max_lv": 10, "desc": "Aumenta permanentemente todo o dano causado por magias de terra."},
-    {"id": 180, "name": "Armadura de Gelo", "name_en": "Glacial Embrace", "class_id": 1, "class_name": "Mago", "type": "Buff Mágico", "icon": "fa-solid fa-snowflake", "icon_file": "寒冰甲.dds", "max_lv": 10, "desc": "Aumenta a defesa de água e a velocidade de regeneração de mana."},
-    {"id": 181, "name": "Barreira de Pedra", "name_en": "Stone Barrier", "class_id": 1, "class_name": "Mago", "type": "Buff Mágico", "icon": "fa-solid fa-cubes", "icon_file": "磐石甲.dds", "max_lv": 10, "desc": "Aumenta expressivamente a defesa física e defesa de terra."},
-    {"id": 182, "name": "Granizo", "name_en": "Hailstorm", "class_id": 1, "class_name": "Mago", "type": "Magia de Água em Área", "icon": "fa-solid fa-cloud-showers-water", "icon_file": "冰雹.dds", "max_lv": 10, "desc": "Tempestade de granizo que congela e lentifica inimigos em área."},
-    {"id": 183, "name": "Sutra de Magia", "name_en": "Essential Sutra", "class_id": 1, "class_name": "Mago", "type": "Buff de Conjuração", "icon": "fa-solid fa-bolt-lightning", "icon_file": "静心经.dds", "max_lv": 1, "desc": "Reduz o tempo de conjuração de todas as magias a zero durante alguns segundos."},
-    {"id": 184, "name": "Força da Vontade (Silêncio)", "name_en": "Force of Will", "class_id": 1, "class_name": "Mago", "type": "Controle", "icon": "fa-solid fa-volume-xmark", "icon_file": "封印术.dds", "max_lv": 10, "desc": "Silencia e impede o inimigo de conjurar habilidades."},
+if os.path.exists(CANON_SKILLS_PATH):
+    try:
+        with open(CANON_SKILLS_PATH, "r", encoding="utf-8") as f:
+            PW_SKILLS_DATABASE = json.load(f)
+    except Exception as e:
+        print(f"Erro ao carregar skills_canon.json: {e}")
 
-    # =========================================================================
-    # ESPIRITUALISTA / PSÍQUICO (Classe 2 - Psychic)
-    # =========================================================================
-    {"id": 1450, "name": "Força da Alma", "name_en": "Soulforce", "class_id": 2, "class_name": "Espiritualista", "type": "Passiva / Mestria", "icon": "fa-solid fa-ghost", "icon_file": "soulforce.dds", "max_lv": 10, "desc": "Amplifica o dano com base na alma do personagem."},
-    {"id": 1451, "name": "Canhão Aquático", "name_en": "Aqua Cannon", "class_id": 2, "class_name": "Espiritualista", "type": "Magia de Água", "icon": "fa-solid fa-water", "icon_file": "aqua_cannon.dds", "max_lv": 10, "desc": "Dispara uma esfera aquática de alto impacto."},
-    {"id": 1452, "name": "Vetor de Terra", "name_en": "Earth Vector", "class_id": 2, "class_name": "Espiritualista", "type": "Magia de Terra", "icon": "fa-solid fa-mountain", "icon_file": "earth_vector.dds", "max_lv": 10, "desc": "Lança estacas de pedra do solo atordoando o alvo."},
-    {"id": 1453, "name": "Vontade Psíquica", "name_en": "Psychic Will", "class_id": 2, "class_name": "Espiritualista", "type": "Buff Defensivo", "icon": "fa-solid fa-shield", "icon_file": "psychic_will.dds", "max_lv": 10, "desc": "Concede imunidade a debuffs e dano físico temporário."},
-    {"id": 1454, "name": "Maldição da Alma", "name_en": "Soul Curse", "class_id": 2, "class_name": "Espiritualista", "type": "Debuff", "icon": "fa-solid fa-skull", "icon_file": "soul_curse.dds", "max_lv": 10, "desc": "Amaldiçoa a alma do oponente causando dano reflexivo."},
-
-    # =========================================================================
-    # BÁRBARO (Classe 3 - Barbarian)
-    # =========================================================================
-    {"id": 12, "name": "Inchaço", "name_en": "Swell", "class_id": 3, "class_name": "Bárbaro", "type": "Buff de HP", "icon": "fa-solid fa-heart", "icon_file": "充血.dds", "max_lv": 10, "desc": "Aumenta a reserva de vitalidade do guerreiro selvagem."},
-    {"id": 13, "name": "Armagedom (Ultimate)", "name_en": "Armageddon", "class_id": 3, "class_name": "Bárbaro", "type": "Ultimate de Sacrifício", "icon": "fa-solid fa-volcano", "icon_file": "毁天灭地.dds", "max_lv": 10, "desc": "Sacrifica metade do HP e MP para causar dano cataclísmico em área."},
-    {"id": 82, "name": "Sangue Feroz / Inspiração", "name_en": "Beast King's Inspiration", "class_id": 3, "class_name": "Bárbaro", "type": "Buff em Grupo", "icon": "fa-solid fa-heart-pulse", "icon_file": "兽王鼓舞.dds", "max_lv": 10, "desc": "Aumenta consideravelmente o HP máximo de todo o grupo."},
-    {"id": 83, "name": "Força dos Titãs", "name_en": "Strength of the Titans", "class_id": 3, "class_name": "Bárbaro", "type": "Buff em Grupo", "icon": "fa-solid fa-hand-fist", "icon_file": "泰坦之力.dds", "max_lv": 10, "desc": "Aumenta o ataque físico de todos os membros do grupo."},
-    {"id": 102, "name": "Golpe do Rei das Feras", "name_en": "Stomp of the Beast King", "class_id": 3, "class_name": "Bárbaro", "type": "Ataque Físico", "icon": "fa-solid fa-paw", "icon_file": "虎击.dds", "max_lv": 10, "desc": "Pancada com a pata do tigre gerando ameaça."},
-    {"id": 103, "name": "Mestria em Natação", "name_en": "Swimming Mastery", "class_id": 3, "class_name": "Bárbaro", "type": "Passiva", "icon": "fa-solid fa-person-swimming", "icon_file": "游泳专精.dds", "max_lv": 1, "desc": "Aumenta a velocidade de nado do tigre."},
-    {"id": 104, "name": "Balanço Poderoso", "name_en": "Mighty Swing", "class_id": 3, "class_name": "Bárbaro", "type": "Ataque Físico", "icon": "fa-solid fa-gavel", "icon_file": "重锤.dds", "max_lv": 10, "desc": "Golpe com força bruta que pode atordoar o inimigo."},
-    {"id": 105, "name": "Tempestade de Fogo", "name_en": "Firestorm", "class_id": 3, "class_name": "Bárbaro", "type": "Dano de Fogo em Área", "icon": "fa-solid fa-fire", "icon_file": "烈火暴.dds", "max_lv": 10, "desc": "Gera uma explosão flamejante ao redor do bárbaro."},
-    {"id": 106, "name": "Desarmar / Penetrar", "name_en": "Penetrate Armor", "class_id": 3, "class_name": "Bárbaro", "type": "Debuff Físico", "icon": "fa-solid fa-shield-virus", "icon_file": "破甲.dds", "max_lv": 10, "desc": "Reduz a armadura física do oponente."},
-    {"id": 107, "name": "Pancada do Urso", "name_en": "Slam", "class_id": 3, "class_name": "Bárbaro", "type": "Ataque Físico", "icon": "fa-solid fa-hammer", "icon_file": "熊击.dds", "max_lv": 10, "desc": "Pancada esmagadora que interrompe conjurações."},
-    {"id": 108, "name": "Investida Bestial", "name_en": "Beastial Onslaught", "class_id": 3, "class_name": "Bárbaro", "type": "Ataque em Área", "icon": "fa-solid fa-bullseye", "icon_file": "兽冲.dds", "max_lv": 10, "desc": "Ataque giratório que atinge múltiplos inimigos e reduz a esquiva deles."},
-    {"id": 109, "name": "Regeneração Feral", "name_en": "Feral Regeneration", "class_id": 3, "class_name": "Bárbaro", "type": "Passiva / Regeneração", "icon": "fa-solid fa-heart-circle-bolt", "icon_file": "野性回复.dds", "max_lv": 10, "desc": "Aumenta a regeneração passiva contínua de HP."},
-    {"id": 111, "name": "Banho de Sangue", "name_en": "Blood Bath", "class_id": 3, "class_name": "Bárbaro", "type": "Buff de Precisão", "icon": "fa-solid fa-droplet", "icon_file": "浴血.dds", "max_lv": 10, "desc": "Sacrifica um pouco de HP para aumentar consideravelmente a precisão."},
-    {"id": 112, "name": "Transformação em Tigre Branco", "name_en": "Change to White Tiger", "class_id": 3, "class_name": "Bárbaro", "type": "Transformação", "icon": "fa-solid fa-cat", "icon_file": "白虎变.dds", "max_lv": 10, "desc": "Transforma o personagem em um Tigre Branco aumentando HP, defesas e velocidade."},
-    {"id": 149, "name": "Corrida da Fera", "name_en": "Alacrity of the Beast", "class_id": 3, "class_name": "Bárbaro", "type": "Mobilidade", "icon": "fa-solid fa-person-running", "icon_file": "兽影奔袭.dds", "max_lv": 10, "desc": "Aumenta a velocidade de movimento na forma de tigre."},
-    {"id": 150, "name": "Mordida Selvagem (Aggro)", "name_en": "Flesh Ream", "class_id": 3, "class_name": "Bárbaro", "type": "Aggro / Sangramento", "icon": "fa-solid fa-paw", "icon_file": "撕咬.dds", "max_lv": 10, "desc": "Morde o alvo gerando enorme ameaça para manter a atenção dos monstros."},
-    {"id": 151, "name": "Devorar", "name_en": "Devour", "class_id": 3, "class_name": "Bárbaro", "type": "Debuff de Armadura", "icon": "fa-solid fa-teeth-open", "icon_file": "吞噬.dds", "max_lv": 10, "desc": "Devora a carne do alvo reduzindo drasticamente a defesa física dele."},
-    {"id": 152, "name": "Impacto da Onda", "name_en": "Surf Impact", "class_id": 3, "class_name": "Bárbaro", "type": "Dano em Área", "icon": "fa-solid fa-water", "icon_file": "浪击.dds", "max_lv": 10, "desc": "Dispara ondas que desaceleram todos os inimigos ao redor."},
-    {"id": 153, "name": "Rachar (Sunder)", "name_en": "Sunder", "class_id": 3, "class_name": "Bárbaro", "type": "Dano em Área", "icon": "fa-solid fa-burst", "icon_file": "地裂.dds", "max_lv": 10, "desc": "Ataque em área que causa sangramento prolongado e regenera HP."},
-    {"id": 154, "name": "Forma Bestial", "name_en": "Shapeshifting Intensity", "class_id": 3, "class_name": "Bárbaro", "type": "Passiva", "icon": "fa-solid fa-shield", "icon_file": "变身强化.dds", "max_lv": 10, "desc": "Aumenta o bônus de defesa da forma de tigre."},
-    {"id": 155, "name": "Presas Venenosas", "name_en": "Poison Fang", "class_id": 3, "class_name": "Bárbaro", "type": "Buff de Madeira", "icon": "fa-solid fa-skull-crossbones", "icon_file": "毒牙.dds", "max_lv": 10, "desc": "Adiciona dano contínuo de madeira aos ataques físicos na forma animal."},
-    {"id": 156, "name": "Aterrorizar", "name_en": "Frighten", "class_id": 3, "class_name": "Bárbaro", "type": "Debuff em Área", "icon": "fa-solid fa-ghost", "icon_file": "恐吓.dds", "max_lv": 10, "desc": "Assusta os inimigos ao redor reduzindo o poder de ataque deles."},
-    {"id": 185, "name": "Rugido de Desafio", "name_en": "Roar", "class_id": 3, "class_name": "Bárbaro", "type": "Aggro em Área", "icon": "fa-solid fa-bullhorn", "icon_file": "咆哮.dds", "max_lv": 1, "desc": "Força todos os inimigos em área a atacarem o bárbaro instantaneamente."},
-    {"id": 186, "name": "Casca de Tartaruga (Invoke)", "name_en": "Invoke the Spirit", "class_id": 3, "class_name": "Bárbaro", "type": "Buff Defensivo Extremo", "icon": "fa-solid fa-shield-cat", "icon_file": "玄武附体.dds", "max_lv": 1, "desc": "Reduz em 90% todo o dano recebido durante 20 segundos."},
-    {"id": 188, "name": "Fúria Bestial", "name_en": "Beastial Rage", "class_id": 3, "class_name": "Bárbaro", "type": "Geração de Chi", "icon": "fa-solid fa-fire", "icon_file": "兽王怒火.dds", "max_lv": 1, "desc": "Gera Chi continuamente a cada golpe sofrido."},
-    {"id": 195, "name": "Garrote / Asfixia", "name_en": "Garrotte", "class_id": 3, "class_name": "Bárbaro", "type": "Ataque Físico", "icon": "fa-solid fa-handcuffs", "icon_file": "绞杀.dds", "max_lv": 10, "desc": "Prende o pescoço do oponente causando dano contínuo de sangramento."},
-
-    # =========================================================================
-    # FEITICEIRA (Classe 4 - Venomancer)
-    # =========================================================================
-    {"id": 299, "name": "Escaravelho Venenoso (Ferrão)", "name_en": "Venomous Scarab", "class_id": 4, "class_name": "Feiticeira", "type": "Magia de Madeira", "icon": "fa-solid fa-bug", "icon_file": "剧毒蛊.dds", "max_lv": 10, "desc": "Dispara insetos venenosos causando dano contínuo de madeira."},
-    {"id": 300, "name": "Escaravelho de Ferro", "name_en": "Ironwood Scarab", "class_id": 4, "class_name": "Feiticeira", "type": "Debuff Físico", "icon": "fa-solid fa-cubes", "icon_file": "铁木蛊.dds", "max_lv": 10, "desc": "Destrói a armadura física do oponente reduzindo sua defesa."},
-    {"id": 301, "name": "Escaravelho Flamejante", "name_en": "Blazing Scarab", "class_id": 4, "class_name": "Feiticeira", "type": "Magia de Fogo", "icon": "fa-solid fa-fire", "icon_file": "烈炎蛊.dds", "max_lv": 10, "desc": "Insetos de fogo que causam dano flamejante ao longo do tempo."},
-    {"id": 302, "name": "Escaravelho Glacial", "name_en": "Frost Scarab", "class_id": 4, "class_name": "Feiticeira", "type": "Magia de Água", "icon": "fa-solid fa-snowflake", "icon_file": "寒冰蛊.dds", "max_lv": 10, "desc": "Reduz a velocidade de movimento do alvo com frio congelante."},
-    {"id": 303, "name": "Gás Nocivo", "name_en": "Noxious Gas", "class_id": 4, "class_name": "Feiticeira", "type": "Dano de Madeira em Área", "icon": "fa-solid fa-smog", "icon_file": "毒雾.dds", "max_lv": 10, "desc": "Nuvem de esporos venenosos atingindo múltiplos inimigos."},
-    {"id": 304, "name": "Escaravelho da Sorte", "name_en": "Lucky Scarab", "class_id": 4, "class_name": "Feiticeira", "type": "Controle", "icon": "fa-solid fa-clover", "icon_file": "吉星蛊.dds", "max_lv": 10, "desc": "Atordoa o oponente com alta chance de crítico."},
-    {"id": 305, "name": "Praga dos Gafanhotos (Ultimate)", "name_en": "Parasitic Nova", "class_id": 4, "class_name": "Feiticeira", "type": "Ultimate em Área", "icon": "fa-solid fa-locust", "icon_file": "万蛊食天.dds", "max_lv": 10, "desc": "Enxame devastador que sela e paralisa todos os inimigos na área."},
-    {"id": 306, "name": "Armadura de Espinhos", "name_en": "Bramble Guard", "class_id": 4, "class_name": "Feiticeira", "type": "Buff Refletor", "icon": "fa-solid fa-shield-virus", "icon_file": "荆棘术.dds", "max_lv": 10, "desc": "Reflete parte do dano físico corpo-a-corpo de volta ao atacante."},
-    {"id": 307, "name": "Transferir Vida", "name_en": "Metabolic Boost", "class_id": 4, "class_name": "Feiticeira", "type": "Suporte / Cura", "icon": "fa-solid fa-heart-pulse", "icon_file": "生命转换.dds", "max_lv": 10, "desc": "Converte mana em pontos de vida instantaneamente."},
-    {"id": 308, "name": "Graça da Natureza", "name_en": "Nature's Grace", "class_id": 4, "class_name": "Feiticeira", "type": "Suporte de Mana", "icon": "fa-solid fa-leaf", "icon_file": "自然之恩.dds", "max_lv": 10, "desc": "Converte pontos de vida em mana."},
-    {"id": 309, "name": "Transferir Chi (Lending Hand)", "name_en": "Lending Hand", "class_id": 4, "class_name": "Feiticeira", "type": "Suporte", "icon": "fa-solid fa-hand-holding-hand", "icon_file": "元气传递.dds", "max_lv": 1, "desc": "Transfere faíscas de Chi para um aliado da equipe."},
-    {"id": 310, "name": "Manto de Espinhos", "name_en": "Bramble Hood", "class_id": 4, "class_name": "Feiticeira", "type": "Buff Defensivo", "icon": "fa-solid fa-shield", "icon_file": "荆棘阵.dds", "max_lv": 1, "desc": "Reduz o dano recebido em 75% e reflete dano físico ampliado."},
-    {"id": 311, "name": "Transfusão de Alma", "name_en": "Soul Transfusion", "class_id": 4, "class_name": "Feiticeira", "type": "Equilíbrio", "icon": "fa-solid fa-scale-balanced", "icon_file": "灵魂转换.dds", "max_lv": 1, "desc": "Iguala as porcentagens de HP e MP da feiticeira."},
-    {"id": 312, "name": "Forma da Raposa", "name_en": "Fox Form", "class_id": 4, "class_name": "Feiticeira", "type": "Transformação", "icon": "fa-solid fa-dog", "icon_file": "灵狐变.dds", "max_lv": 10, "desc": "Assume a forma astral da raposa ganhando velocidade e evasão."},
-    {"id": 313, "name": "Golpe da Raposa", "name_en": "Fox Wallop", "class_id": 4, "class_name": "Feiticeira", "type": "Ataque Físico da Raposa", "icon": "fa-solid fa-paw", "icon_file": "狐击.dds", "max_lv": 10, "desc": "Ataque frontal rápido na forma de raposa."},
-    {"id": 314, "name": "Névoa Desorientadora", "name_en": "Befuddling Mist", "class_id": 4, "class_name": "Feiticeira", "type": "Debuff de Precisão", "icon": "fa-solid fa-smog", "icon_file": "迷雾.dds", "max_lv": 10, "desc": "Reduz a precisão do oponente."},
-    {"id": 315, "name": "Golpe Atordoante", "name_en": "Stunning Blow", "class_id": 4, "class_name": "Feiticeira", "type": "Controle da Raposa", "icon": "fa-solid fa-hand-fist", "icon_file": "击晕.dds", "max_lv": 10, "desc": "Atordoa o alvo com a pata da raposa."},
-    {"id": 316, "name": "Suga-Alma / Dreno", "name_en": "Leech", "class_id": 4, "class_name": "Feiticeira", "type": "Dreno de Vida", "icon": "fa-solid fa-droplet", "icon_file": "吸血.dds", "max_lv": 10, "desc": "Drena a vida do oponente recuperando o HP da feiticeira."},
-    {"id": 317, "name": "Consumir Espírito", "name_en": "Consume Spirit", "class_id": 4, "class_name": "Feiticeira", "type": "Dreno de Mana", "icon": "fa-solid fa-ghost", "icon_file": "吸魔.dds", "max_lv": 10, "desc": "Drena a mana do oponente."},
-    {"id": 318, "name": "Esmagamento Maléfico", "name_en": "Malefic Crush", "class_id": 4, "class_name": "Feiticeira", "type": "Ultimate da Raposa", "icon": "fa-solid fa-volcano", "icon_file": "天狐怒火.dds", "max_lv": 10, "desc": "Ataque devastador em área na forma de raposa queimando a mana dos inimigos."},
-    {"id": 319, "name": "Exílio (Purge)", "name_en": "Purge", "class_id": 4, "class_name": "Feiticeira", "type": "Remoção de Buffs", "icon": "fa-solid fa-eraser", "icon_file": "驱逐.dds", "max_lv": 1, "desc": "Remove instantaneamente todos os buffs e efeitos positivos do alvo."},
-    {"id": 320, "name": "Ferida Cortante (Amplify)", "name_en": "Amplify Damage", "class_id": 4, "class_name": "Feiticeira", "type": "Amplificação de Dano", "icon": "fa-solid fa-heart-crack", "icon_file": "破甲蛊.dds", "max_lv": 10, "desc": "Faz o alvo receber dano aumentado de todas as fontes."},
-    {"id": 321, "name": "Degeneração da Alma", "name_en": "Soul Degeneration", "class_id": 4, "class_name": "Feiticeira", "type": "Debuff de Regeneração", "icon": "fa-solid fa-skull", "icon_file": "阻滞.dds", "max_lv": 10, "desc": "Impede o alvo de regenerar HP naturalmente ou por poções."},
-    {"id": 322, "name": "Esmagar Vigor", "name_en": "Crush Vigor", "class_id": 4, "class_name": "Feiticeira", "type": "Debuff de Chi", "icon": "fa-solid fa-battery-empty", "icon_file": "散元.dds", "max_lv": 10, "desc": "Reduz o Chi do oponente."},
-    {"id": 323, "name": "Mestria em Natação", "name_en": "Swimming Mastery", "class_id": 4, "class_name": "Feiticeira", "type": "Passiva", "icon": "fa-solid fa-person-swimming", "icon_file": "游泳专精.dds", "max_lv": 1, "desc": "Aumenta a velocidade de nado da raposa."},
-    {"id": 324, "name": "Mestria em Luta", "name_en": "Melee Mastery", "class_id": 4, "class_name": "Feiticeira", "type": "Passiva", "icon": "fa-solid fa-hand-back-fist", "icon_file": "近战专精.dds", "max_lv": 10, "desc": "Aumenta o ataque físico corpo-a-corpo na forma de raposa."},
-    {"id": 325, "name": "Mestria em Madeira", "name_en": "Wood Mastery", "class_id": 4, "class_name": "Feiticeira", "type": "Passiva / Mestria", "icon": "fa-solid fa-tree", "icon_file": "木系专精.dds", "max_lv": 10, "desc": "Aumenta todo o dano mágico de madeira."},
-    {"id": 328, "name": "Domesticar Mascote", "name_en": "Tame Beast", "class_id": 4, "class_name": "Feiticeira", "type": "Mascote", "icon": "fa-solid fa-heart", "icon_file": "驯服宠物.dds", "max_lv": 1, "desc": "Permite capturar monstros do mundo para servirem como mascotes de combate."},
-    {"id": 329, "name": "Reviver Mascote", "name_en": "Revive Pet", "class_id": 4, "class_name": "Feiticeira", "type": "Mascote", "icon": "fa-solid fa-cross", "icon_file": "复活宠物.dds", "max_lv": 1, "desc": "Ressuscita uma mascote caída em combate."},
-    {"id": 330, "name": "Curar Mascote", "name_en": "Heal Pet", "class_id": 4, "class_name": "Feiticeira", "type": "Mascote / Cura", "icon": "fa-solid fa-hand-holding-medical", "icon_file": "治疗宠物.dds", "max_lv": 10, "desc": "Recupera o HP da mascote da feiticeira."},
-    {"id": 762, "name": "Passo no Vento (Summer Sprint)", "name_en": "Summer Sprint", "class_id": 4, "class_name": "Feiticeira", "type": "Mobilidade", "icon": "fa-solid fa-person-running", "icon_file": "神行百变.dds", "max_lv": 10, "desc": "Aumenta drasticamente a velocidade de corrida da feiticeira."},
-
-    # =========================================================================
-    # MERCENÁRIO (Classe 5 - Assassin)
-    # =========================================================================
-    {"id": 1400, "name": "Ataque Duplo", "name_en": "Twin Strike", "class_id": 5, "class_name": "Mercenário", "type": "Ataque Físico", "icon": "fa-solid fa-khanda", "icon_file": "twin_strike.dds", "max_lv": 10, "desc": "Golpe rápido duplo com as adagas."},
-    {"id": 1401, "name": "Corte Sangrento", "name_en": "Bloodcut", "class_id": 5, "class_name": "Mercenário", "type": "Ataque Físico", "icon": "fa-solid fa-droplet", "icon_file": "bloodcut.dds", "max_lv": 10, "desc": "Corta pontos vitais gerando sangramento severo."},
-    {"id": 1402, "name": "Picada Profunda", "name_en": "Deep Sting", "class_id": 5, "class_name": "Mercenário", "type": "Controle / Sono", "icon": "fa-solid fa-bed", "icon_file": "deep_sting.dds", "max_lv": 10, "desc": "Aplica sonífero no oponente deixando-o adormecido."},
-    {"id": 1403, "name": "Andar nas Sombras (Furtividade)", "name_en": "Shadow Walk", "class_id": 5, "class_name": "Mercenário", "type": "Furtividade", "icon": "fa-solid fa-ghost", "icon_file": "shadow_walk.dds", "max_lv": 10, "desc": "Torna-se invisível para monstros e jogadores."},
-    {"id": 1404, "name": "Fuga das Sombras", "name_en": "Shadow Escape", "class_id": 5, "class_name": "Mercenário", "type": "Furtividade em Combate", "icon": "fa-solid fa-person-walking-dashed-line-arrow-right", "icon_file": "shadow_escape.dds", "max_lv": 1, "desc": "Entra instantaneamente em furtividade mesmo estando em combate ativo."},
-    {"id": 1405, "name": "Dança das Adagas", "name_en": "Tackling Slash", "class_id": 5, "class_name": "Mercenário", "type": "Imobilização", "icon": "fa-solid fa-shoe-prints", "icon_file": "tackling_slash.dds", "max_lv": 10, "desc": "Avança e imobiliza o oponente no chão."},
-    {"id": 1406, "name": "Dragão Ascendente", "name_en": "Rising Dragon", "class_id": 5, "class_name": "Mercenário", "type": "Geração de Chi", "icon": "fa-solid fa-dragon", "icon_file": "rising_dragon.dds", "max_lv": 10, "desc": "Ataque especial que concede grande quantidade de Chi."},
-    {"id": 1407, "name": "Mestria em Adagas", "name_en": "Dagger Mastery", "class_id": 5, "class_name": "Mercenário", "type": "Passiva / Mestria", "icon": "fa-solid fa-khanda", "icon_file": "dagger_mastery.dds", "max_lv": 10, "desc": "Aumenta o poder de ataque com adagas."},
-    {"id": 1408, "name": "Ataque Submarino", "name_en": "Subsea Strike", "class_id": 5, "class_name": "Mercenário", "type": "Ultimate em Área", "icon": "fa-solid fa-water", "icon_file": "subsea_strike.dds", "max_lv": 10, "desc": "Ataque em área que amplifica o dano recebido por todos os inimigos."},
-
-    # =========================================================================
-    # ARQUEIRO (Classe 6 - Archer)
-    # =========================================================================
-    {"id": 234, "name": "Mira Certeira", "name_en": "Take Aim", "class_id": 6, "class_name": "Arqueiro", "type": "Ataque Carregado", "icon": "fa-solid fa-crosshairs", "icon_file": "百步穿杨.dds", "max_lv": 10, "desc": "Carrega o arco para disparar uma flecha de alta precisão e poder de ataque."},
-    {"id": 235, "name": "Disparo Rápido", "name_en": "Quickshot", "class_id": 6, "class_name": "Arqueiro", "type": "Ataque Físico Veloz", "icon": "fa-solid fa-bolt", "icon_file": "连射.dds", "max_lv": 10, "desc": "Dispara flechas com alta velocidade de repetição."},
-    {"id": 236, "name": "Flecha Repulsora", "name_en": "Knockback Arrow", "class_id": 6, "class_name": "Arqueiro", "type": "Controle / Repulsão", "icon": "fa-solid fa-arrow-right-from-bracket", "icon_file": "击退矢.dds", "max_lv": 10, "desc": "Empurra o alvo para longe mantendo a distância do arqueiro."},
-    {"id": 237, "name": "Mirar Baixo", "name_en": "Aim Low", "class_id": 6, "class_name": "Arqueiro", "type": "Controle / Lenta", "icon": "fa-solid fa-arrow-down", "icon_file": "定身矢.dds", "max_lv": 10, "desc": "Prende as pernas do inimigo imobilizando-o temporariamente."},
-    {"id": 238, "name": "Flecha Atordoante", "name_en": "Stunning Arrow", "class_id": 6, "class_name": "Arqueiro", "type": "Controle / Stun", "icon": "fa-solid fa-star", "icon_file": "击晕矢.dds", "max_lv": 10, "desc": "Atordoa o alvo ao acertar um ponto sensível."},
-    {"id": 239, "name": "Disparo Mortal", "name_en": "Deadly Shot", "class_id": 6, "class_name": "Arqueiro", "type": "Ataque Poderoso", "icon": "fa-solid fa-skull", "icon_file": "致命矢.dds", "max_lv": 10, "desc": "Disparo perfurante que ignora parte da defesa física do alvo."},
-    {"id": 240, "name": "Chuva de Flechas (Ultimate)", "name_en": "Barrage of Arrows", "class_id": 6, "class_name": "Arqueiro", "type": "Ultimate Contínua em Área", "icon": "fa-solid fa-cloud-showers-heavy", "icon_file": "箭阵.dds", "max_lv": 10, "desc": "Cria uma tempestade mortal e contínua de flechas chovendo sobre a área."},
-    {"id": 241, "name": "Golpe do Relâmpago", "name_en": "Lightning Strike", "class_id": 6, "class_name": "Arqueiro", "type": "Dano de Metal", "icon": "fa-solid fa-bolt-lightning", "icon_file": "雷击矢.dds", "max_lv": 10, "desc": "Imbui a flecha com energia elétrica causando dano de metal à distância."},
-    {"id": 242, "name": "Choque de Trovão", "name_en": "Thunder Shock", "class_id": 6, "class_name": "Arqueiro", "type": "Dano de Metal", "icon": "fa-solid fa-cloud-bolt", "icon_file": "惊雷矢.dds", "max_lv": 10, "desc": "Flecha metálica que reduz a defesa mágica de metal do oponente."},
-    {"id": 243, "name": "Explosão Trovejante", "name_en": "Thunderous Blast", "class_id": 6, "class_name": "Arqueiro", "type": "Dano de Metal em Área", "icon": "fa-solid fa-burst", "icon_file": "雷光矢.dds", "max_lv": 10, "desc": "Explosão elétrica de metal atingindo múltiplos oponentes."},
-    {"id": 244, "name": "Águia da Tempestade", "name_en": "Stormrage Eagleon", "class_id": 6, "class_name": "Arqueiro", "type": "Dano de Metal Contínuo", "icon": "fa-solid fa-feather", "icon_file": "风暴之鹰.dds", "max_lv": 10, "desc": "Invoca a águia celestial causando dano de metal contínuo no solo."},
-    {"id": 245, "name": "Flecha Flamejante", "name_en": "Blazing Arrow", "class_id": 6, "class_name": "Arqueiro", "type": "Buff de Fogo", "icon": "fa-solid fa-fire", "icon_file": "烈火矢.dds", "max_lv": 10, "desc": "Adiciona dano de fogo constante a todos os disparos com arco."},
-    {"id": 246, "name": "Flecha Congelante", "name_en": "Frost Arrow", "class_id": 6, "class_name": "Arqueiro", "type": "Dano de Água / Lenta", "icon": "fa-solid fa-snowflake", "icon_file": "寒冰矢.dds", "max_lv": 10, "desc": "Flecha embebida em gelo que reduz a velocidade do alvo."},
-    {"id": 247, "name": "Flecha Venenosa", "name_en": "Vicious Arrow", "class_id": 6, "class_name": "Arqueiro", "type": "Dano de Madeira", "icon": "fa-solid fa-skull-crossbones", "icon_file": "毒矢.dds", "max_lv": 10, "desc": "Dispara flecha envenenada causando dano contínuo de madeira."},
-    {"id": 248, "name": "Flecha Serrilhada", "name_en": "Serrated Arrow", "class_id": 6, "class_name": "Arqueiro", "type": "Sangramento", "icon": "fa-solid fa-droplet", "icon_file": "锯齿矢.dds", "max_lv": 10, "desc": "Causa ferimentos profundos de sangramento no alvo."},
-    {"id": 249, "name": "Escudo Alado / Casulo", "name_en": "Winged Shell", "class_id": 6, "class_name": "Arqueiro", "type": "Escudo Absorvedor", "icon": "fa-solid fa-shield", "icon_file": "羽盾.dds", "max_lv": 10, "desc": "Cria um casulo de penas sagradas que absorve danos e regenera mana."},
-    {"id": 250, "name": "Promessa Alada", "name_en": "Winged Pledge", "class_id": 6, "class_name": "Arqueiro", "type": "Ataque Corpo-a-Corpo", "icon": "fa-solid fa-hand-back-fist", "icon_file": "近身矢.dds", "max_lv": 10, "desc": "Golpe físico corpo-a-corpo para afastar inimigos colados."},
-    {"id": 251, "name": "Envergadura de Asas", "name_en": "Wingspan", "class_id": 6, "class_name": "Arqueiro", "type": "Dano em Área", "icon": "fa-solid fa-feather-pointed", "icon_file": "羽翼伸展.dds", "max_lv": 10, "desc": "Abre as asas aladas atingindo e repelindo todos ao redor."},
-    {"id": 252, "name": "Asas da Graça", "name_en": "Wings of Grace", "class_id": 6, "class_name": "Arqueiro", "type": "Buff de Velocidade", "icon": "fa-solid fa-wind", "icon_file": "神鹰羽翼.dds", "max_lv": 1, "desc": "Concede imunidade a efeitos de lentidão e aumenta a velocidade de corrida."},
-    {"id": 253, "name": "Flecha Dente Afiado", "name_en": "Sharpened Tooth Arrow", "class_id": 6, "class_name": "Arqueiro", "type": "Debuff de HP Máximo", "icon": "fa-solid fa-teeth", "icon_file": "利齿矢.dds", "max_lv": 10, "desc": "Reduz temporariamente o HP máximo do alvo."},
-    {"id": 254, "name": "Asas de Proteção", "name_en": "Wings of Protection", "class_id": 6, "class_name": "Arqueiro", "type": "Buff de Evasão", "icon": "fa-solid fa-shield-halved", "icon_file": "守护之翼.dds", "max_lv": 10, "desc": "Aumenta a esquiva e defesas contra golpes físicos."},
-    {"id": 255, "name": "Benção das Asas", "name_en": "Winged Blessing", "class_id": 6, "class_name": "Arqueiro", "type": "Buff de Alcance", "icon": "fa-solid fa-arrows-to-eye", "icon_file": "神翼祝福.dds", "max_lv": 10, "desc": "Aumenta a distância de tiro e precisão do arqueiro."},
-    {"id": 256, "name": "Mestria em Arcos", "name_en": "Bow Mastery", "class_id": 6, "class_name": "Arqueiro", "type": "Passiva / Mestria", "icon": "fa-solid fa-bow-arrow", "icon_file": "弓弩专精.dds", "max_lv": 10, "desc": "Aumenta todo o dano físico causado por arcos, balestras e fundas."},
-    {"id": 274, "name": "Mestria em Voo Alado", "name_en": "Flight Mastery", "class_id": 6, "class_name": "Arqueiro", "type": "Passiva de Voo", "icon": "fa-solid fa-plane-departure", "icon_file": "飞行专精.dds", "max_lv": 10, "desc": "Aumenta a velocidade de voo das asas naturais dos alados."},
-
-    # =========================================================================
-    # SACERDOTE (Classe 7 - Cleric)
-    # =========================================================================
-    {"id": 11, "name": "Mestria em Metal", "name_en": "Metal Mastery", "class_id": 7, "class_name": "Sacerdote", "type": "Passiva / Mestria", "icon": "fa-solid fa-bolt", "icon_file": "金系专精.dds", "max_lv": 10, "desc": "Aumenta todo o dano mágico de metal do sacerdote."},
-    {"id": 15, "name": "Feixe de Cura Cromático", "name_en": "Chromatic Healing Beam", "class_id": 7, "class_name": "Sacerdote", "type": "Cura em Grupo", "icon": "fa-solid fa-sun", "icon_file": "极光咒.dds", "max_lv": 10, "desc": "Feixe de luz que cura o sacerdote e os aliados em linha reta."},
-    {"id": 16, "name": "Aura de Regeneração (Bolha Azul)", "name_en": "Regeneration Aura", "class_id": 7, "class_name": "Sacerdote", "type": "Ultimate de Cura Contínua", "icon": "fa-solid fa-circle-dot", "icon_file": "神光护体.dds", "max_lv": 10, "desc": "Cria um campo sagrado sustentado que cura e reduz todo o dano recebido pela equipe em 50%."},
-    {"id": 17, "name": "Selo Elemental", "name_en": "Elemental Seal", "class_id": 7, "class_name": "Sacerdote", "type": "Debuff Mágico", "icon": "fa-solid fa-atom", "icon_file": "五行符.dds", "max_lv": 10, "desc": "Reduz as defesas mágicas de todos os cinco elementos no alvo."},
-    {"id": 18, "name": "Ressurreição (Revive)", "name_en": "Revive", "class_id": 7, "class_name": "Sacerdote", "type": "Reviver", "icon": "fa-solid fa-cross", "icon_file": "还魂咒.dds", "max_lv": 10, "desc": "Traz um aliado derrotado de volta à vida restaurando EXP perdida."},
-    {"id": 19, "name": "Escudo de Penas (Plume Shell)", "name_en": "Plume Shell", "class_id": 7, "class_name": "Sacerdote", "type": "Buff Defensivo", "icon": "fa-solid fa-shield-virus", "icon_file": "羽盾.dds", "max_lv": 10, "desc": "Cria barreira sagrada que absorve dano físico convertendo o dano em mana consumida."},
-    {"id": 113, "name": "Benção do Coração Puro", "name_en": "Blessing of the Purehearted", "class_id": 7, "class_name": "Sacerdote", "type": "Cura Rápida", "icon": "fa-solid fa-hand-holding-medical", "icon_file": "清心咒.dds", "max_lv": 10, "desc": "Cura rápida de conjuração veloz para emergências."},
-    {"id": 114, "name": "Prece da Calmaria (Ironheart)", "name_en": "Ironheart Blessing", "class_id": 7, "class_name": "Sacerdote", "type": "Cura Contínua / HoT", "icon": "fa-solid fa-hands-holding", "icon_file": "静心符.dds", "max_lv": 10, "desc": "Aplica bênção regenerativa que cura o aliado continuamente ao longo de 15 segundos (acumulável)."},
-    {"id": 115, "name": "Onda de Vitalidade", "name_en": "Wellspring Surge", "class_id": 7, "class_name": "Sacerdote", "type": "Cura Maior", "icon": "fa-solid fa-heart-circle-plus", "icon_file": "醍醐灌顶.dds", "max_lv": 10, "desc": "Cura instantânea de alto valor de pontos de vida."},
-    {"id": 116, "name": "Corrente de Rejuvenescimento", "name_en": "Stream of Rejuvenation", "class_id": 7, "class_name": "Sacerdote", "type": "Cura Poderosa", "icon": "fa-solid fa-droplet", "icon_file": "醍醐.dds", "max_lv": 10, "desc": "Restaura uma enorme quantidade de vida ao alvo."},
-    {"id": 117, "name": "Selo Dimensional", "name_en": "Dimensional Seal", "class_id": 7, "class_name": "Sacerdote", "type": "Debuff Físico", "icon": "fa-solid fa-shield-halved", "icon_file": "定身符.dds", "max_lv": 10, "desc": "Reduz a defesa física do oponente facilitando o dano de guerreiros e arqueiros."},
-    {"id": 118, "name": "Selo Silencioso", "name_en": "Silent Seal", "class_id": 7, "class_name": "Sacerdote", "type": "Silêncio / Mute", "icon": "fa-solid fa-volume-xmark", "icon_file": "封印符.dds", "max_lv": 10, "desc": "Impede o adversário de usar habilidades ou magias."},
-    {"id": 119, "name": "Selo Cromático (Sono)", "name_en": "Chromatic Seal", "class_id": 7, "class_name": "Sacerdote", "type": "Controle / Sono", "icon": "fa-solid fa-bed", "icon_file": "睡眠符.dds", "max_lv": 10, "desc": "Adormece o alvo impedindo qualquer ação até sofrer dano."},
-    {"id": 120, "name": "Espírito de Vanguarda / Ferro", "name_en": "Vanguard Spirit", "class_id": 7, "class_name": "Sacerdote", "type": "Buff em Grupo", "icon": "fa-solid fa-shield-heart", "icon_file": "坚甲符.dds", "max_lv": 10, "desc": "Aumenta a defesa física de todos os membros do grupo."},
-    {"id": 121, "name": "Espírito Égide", "name_en": "Aegis Spirit", "class_id": 7, "class_name": "Sacerdote", "type": "Buff em Grupo", "icon": "fa-solid fa-shield", "icon_file": "聚神符.dds", "max_lv": 10, "desc": "Aumenta a defesa mágica de todos os membros do grupo."},
-    {"id": 122, "name": "Renovação Exaltada", "name_en": "Exalted Renewal", "class_id": 7, "class_name": "Sacerdote", "type": "Buff em Grupo", "icon": "fa-solid fa-heart-pulse", "icon_file": "神灵符.dds", "max_lv": 10, "desc": "Aumenta a regeneração de HP e MP de todo o grupo."},
-    {"id": 123, "name": "Ira Celestial (Bolha Vermelha)", "name_en": "Heaven's Wrath", "class_id": 7, "class_name": "Sacerdote", "type": "Ultimate de Ataque em Área", "icon": "fa-solid fa-circle-radiation", "icon_file": "狂雷天劫.dds", "max_lv": 10, "desc": "Campo sagrado ofensivo que amplia a velocidade de ataque e conjuração de todos os aliados em 20%."},
-    {"id": 124, "name": "Empoderamento Arcano", "name_en": "Arcane Empowerment", "class_id": 7, "class_name": "Sacerdote", "type": "Buff em Grupo", "icon": "fa-solid fa-wand-magic-sparkles", "icon_file": "灵助符.dds", "max_lv": 10, "desc": "Aumenta o ataque mágico de todos os companheiros do grupo."},
-    {"id": 125, "name": "Flecha de Pluma", "name_en": "Plume Shot", "class_id": 7, "class_name": "Sacerdote", "type": "Dano Mágico / Físico", "icon": "fa-solid fa-feather-pointed", "icon_file": "羽箭.dds", "max_lv": 10, "desc": "Dispara plumas sagradas cortantes causando dano físico à distância."},
-    {"id": 126, "name": "Plumas Cortantes", "name_en": "Razor Feathers", "class_id": 7, "class_name": "Sacerdote", "type": "Dano Físico em Área", "icon": "fa-solid fa-feather", "icon_file": "羽刃.dds", "max_lv": 10, "desc": "Lança lâminas de penas cortando todos os inimigos próximos."},
-    {"id": 127, "name": "Redemoinho", "name_en": "Whirlwind", "class_id": 7, "class_name": "Sacerdote", "type": "Dano de Metal / Lenta", "icon": "fa-solid fa-tornado", "icon_file": "龙卷风.dds", "max_lv": 10, "desc": "Cria um redemoinho elétrico causando dano de metal e desacelerando o alvo."},
-    {"id": 128, "name": "Esfera de Trovão", "name_en": "Thunderball", "class_id": 7, "class_name": "Sacerdote", "type": "Dano de Metal Contínuo", "icon": "fa-solid fa-bolt", "icon_file": "雷球.dds", "max_lv": 10, "desc": "Esfera de eletricidade que eletrocuta continuamente o inimigo."},
-    {"id": 129, "name": "Beijo da Sereia", "name_en": "Siren's Kiss", "class_id": 7, "class_name": "Sacerdote", "type": "Dano de Metal em Área", "icon": "fa-solid fa-kiss-wink-heart", "icon_file": "神雷.dds", "max_lv": 10, "desc": "Explosão de eletricidade sagrada atingindo múltiplos alvos."},
-    {"id": 130, "name": "Tempestade de Raios (Tempest)", "name_en": "Tempest", "class_id": 7, "class_name": "Sacerdote", "type": "Ultimate de Metal em Área", "icon": "fa-solid fa-cloud-bolt", "icon_file": "雷霆万钧.dds", "max_lv": 10, "desc": "Faz cair múltiplos raios do céu desintegrando os inimigos com chance de lentidão."},
-    {"id": 163, "name": "Raio Sagrado (Wield Thunder)", "name_en": "Wield Thunder", "class_id": 7, "class_name": "Sacerdote", "type": "Dano de Metal Pesado", "icon": "fa-solid fa-bolt-lightning", "icon_file": "掌心雷.dds", "max_lv": 10, "desc": "Descarrega um raio de alto impacto causando enorme dano de metal."},
-    {"id": 189, "name": "Purificação (Purify)", "name_en": "Purify", "class_id": 7, "class_name": "Sacerdote", "type": "Remoção de Debuffs", "icon": "fa-solid fa-sparkles", "icon_file": "玄净咒.dds", "max_lv": 10, "desc": "Remove todos os debuffs, maldições, venenos e efeitos negativos do aliado."},
-    {"id": 190, "name": "Mestria em Voo Alado", "name_en": "Flight Mastery", "class_id": 7, "class_name": "Sacerdote", "type": "Passiva de Voo", "icon": "fa-solid fa-plane-departure", "icon_file": "飞行专精.dds", "max_lv": 10, "desc": "Aumenta a velocidade de voo das asas naturais."},
-    {"id": 191, "name": "Concha Mágica", "name_en": "Magic Shell", "class_id": 7, "class_name": "Sacerdote", "type": "Buff em Grupo", "icon": "fa-solid fa-shield", "icon_file": "魔甲符.dds", "max_lv": 10, "desc": "Aumenta a defesa mágica de todos os membros do grupo."},
-    {"id": 192, "name": "Selo do Guardião Celestial", "name_en": "Celestial Guardian's Seal", "class_id": 7, "class_name": "Sacerdote", "type": "Buff em Grupo", "icon": "fa-solid fa-shield-heart", "icon_file": "无极聚神符.dds", "max_lv": 10, "desc": "Aumenta as defesas física e mágica de toda a equipe durante 1 hora."},
-    {"id": 193, "name": "Dádiva Espiritual", "name_en": "Spirit's Gift", "class_id": 7, "class_name": "Sacerdote", "type": "Buff em Grupo", "icon": "fa-solid fa-wand-magic", "icon_file": "无极灵助符.dds", "max_lv": 10, "desc": "Aumenta o ataque mágico de toda a equipe durante 1 hora."},
-    {"id": 194, "name": "Grande Aura Protetora", "name_en": "Greater Protective Aura", "class_id": 7, "class_name": "Sacerdote", "type": "Buff em Grupo", "icon": "fa-solid fa-certificate", "icon_file": "无极神灵符.dds", "max_lv": 10, "desc": "Aumenta a regeneração de HP e MP de toda a equipe durante 1 hora."},
-
-    # =========================================================================
-    # ARCANO (Classe 8 - Seeker)
-    # =========================================================================
-    {"id": 1500, "name": "Busca Corações", "name_en": "Heartseeker", "class_id": 8, "class_name": "Arcano", "type": "Ataque Físico / Metal", "icon": "fa-solid fa-khanda", "icon_file": "heartseeker.dds", "max_lv": 10, "desc": "Lança uma onda de choque de metal com a espada."},
-    {"id": 1501, "name": "Afinidade de Lâmina", "name_en": "Blade Affinity", "class_id": 8, "class_name": "Arcano", "type": "Buff de Conjuração", "icon": "fa-solid fa-bolt", "icon_file": "blade_affinity.dds", "max_lv": 10, "desc": "Aumenta a velocidade de conjuração das técnicas de espada."},
-    {"id": 1502, "name": "Vórtice de Yataghan", "name_en": "Yataghan Vortex", "class_id": 8, "class_name": "Arcano", "type": "Ultimate Contínua em Área", "icon": "fa-solid fa-tornado", "icon_file": "yataghan_vortex.dds", "max_lv": 10, "desc": "Cria um turbilhão constante de lâminas giratórias ao redor do arcano."},
-    {"id": 1503, "name": "Mestria em Sabres", "name_en": "Saber Mastery", "class_id": 8, "class_name": "Arcano", "type": "Passiva / Mestria", "icon": "fa-solid fa-khanda", "icon_file": "saber_mastery.dds", "max_lv": 10, "desc": "Aumenta todo o dano físico com sabres e espadas."},
-
-    # =========================================================================
-    # MÍSTICO (Classe 9 - Mystic)
-    # =========================================================================
-    {"id": 1600, "name": "Vingança da Natureza", "name_en": "Nature's Vengeance", "class_id": 9, "class_name": "Místico", "type": "Magia de Madeira", "icon": "fa-solid fa-seedling", "icon_file": "natures_vengeance.dds", "max_lv": 10, "desc": "Dispara projéteis de energia floral causando dano de madeira."},
-    {"id": 1601, "name": "Névoa Giratória", "name_en": "Swirling Mist", "class_id": 9, "class_name": "Místico", "type": "Dano de Madeira / Lenta", "icon": "fa-solid fa-smog", "icon_file": "swirling_mist.dds", "max_lv": 10, "desc": "Névoa de esporos que desacelera o oponente."},
-    {"id": 1602, "name": "Mestria em Madeira", "name_en": "Wood Mastery", "class_id": 9, "class_name": "Místico", "type": "Passiva / Mestria", "icon": "fa-solid fa-tree", "icon_file": "wood_mastery.dds", "max_lv": 10, "desc": "Aumenta permanentemente o dano de magias de madeira do místico."},
-    {"id": 1603, "name": "Invocar Chihyu", "name_en": "Summon Devil Chihyu", "class_id": 9, "class_name": "Místico", "type": "Invocação de Pet", "icon": "fa-solid fa-dragon", "icon_file": "summon_chihyu.dds", "max_lv": 10, "desc": "Invoca o guerreiro guardião elemental Chihyu para lutar ao seu lado."},
-    {"id": 1604, "name": "Invocar Senhora da Tempestade", "name_en": "Summon Storm Mistress", "class_id": 9, "class_name": "Místico", "type": "Invocação Mágica", "icon": "fa-solid fa-cloud-bolt", "icon_file": "summon_storm.dds", "max_lv": 10, "desc": "Invoca a senhora das tempestades com magias elétricas de metal."},
-    {"id": 1605, "name": "Invocar Fada Curativa", "name_en": "Summon Healing Sprite", "class_id": 9, "class_name": "Místico", "type": "Invocação de Suporte", "icon": "fa-solid fa-wand-magic-sparkles", "icon_file": "summon_sprite.dds", "max_lv": 10, "desc": "Invoca uma fada floral que cura continuamente o grupo."},
-
-    # =========================================================================
-    # RETALHADOR (Classe 10 - Duskblade)
-    # =========================================================================
-    {"id": 1700, "name": "Lâmina Oculta", "name_en": "Hidden Blade", "class_id": 10, "class_name": "Retalhador", "type": "Ataque Físico", "icon": "fa-solid fa-moon", "icon_file": "hidden_blade.dds", "max_lv": 10, "desc": "Golpe rápido lunar com a foice."},
-    {"id": 1701, "name": "Dança da Foice", "name_en": "Scythe Dance", "class_id": 10, "class_name": "Retalhador", "type": "Ataque em Área", "icon": "fa-solid fa-burst", "icon_file": "scythe_dance.dds", "max_lv": 10, "desc": "Gira a foice atingindo todos os alvos ao redor."},
-
-    # =========================================================================
-    # TORMENTADOR (Classe 11 - Stormbringer)
-    # =========================================================================
-    {"id": 1750, "name": "Trovão Trovejante", "name_en": "Thundering Roar", "class_id": 11, "class_name": "Tormentador", "type": "Magia de Metal / Água", "icon": "fa-solid fa-cloud-bolt", "icon_file": "thundering_roar.dds", "max_lv": 10, "desc": "Dispara orbes elementais de tempestade e gelo."},
-
-    # =========================================================================
-    # HABILIDADES COMUNS / PRODUÇÃO / CHI (-1 - Common / Global)
-    # =========================================================================
-    {"id": 158, "name": "Forjador de Armas (Blacksmith)", "name_en": "Blacksmith", "class_id": -1, "class_name": "Comum", "type": "Produção / Forja", "icon": "fa-solid fa-hammer", "icon_file": "铁匠.dds", "max_lv": 10, "desc": "Habilidade de forjar armas de combate."},
-    {"id": 159, "name": "Alfaiate de Armaduras (Tailor)", "name_en": "Tailor", "class_id": -1, "class_name": "Comum", "type": "Produção / Forja", "icon": "fa-solid fa-shirt", "icon_file": "裁缝.dds", "max_lv": 10, "desc": "Habilidade de costurar armaduras e roupas."},
-    {"id": 160, "name": "Artesão de Acessórios (Craftsman)", "name_en": "Craftsman", "class_id": -1, "class_name": "Comum", "type": "Produção / Forja", "icon": "fa-solid fa-gem", "icon_file": "巧匠.dds", "max_lv": 10, "desc": "Habilidade de confeccionar anéis, colares e ornamentos."},
-    {"id": 161, "name": "Boticário de Poções (Apothecary)", "name_en": "Apothecary", "class_id": -1, "class_name": "Comum", "type": "Produção / Alquimia", "icon": "fa-solid fa-flask", "icon_file": "药师.dds", "max_lv": 10, "desc": "Habilidade de criar poções e elixires medicinais."},
-    {"id": 167, "name": "Portal da Cidade (Town Portal)", "name_en": "Town Portal", "class_id": -1, "class_name": "Comum", "type": "Teleporte de Retorno", "icon": "fa-solid fa-archway", "icon_file": "回城术.dds", "max_lv": 1, "desc": "Teleporta o personagem de volta para a cidade mais próxima."},
-    {"id": 232, "name": "Explosão de Chi 1", "name_en": "Spark Eruption 1", "class_id": -1, "class_name": "Comum", "type": "Chi / Cultivo", "icon": "fa-solid fa-sun", "icon_file": "爆气1.dds", "max_lv": 1, "desc": "Consome 1 faísca de Chi para amplificar temporariamente o ataque e conceder invulnerabilidade momentânea."},
-    {"id": 233, "name": "Explosão de Chi 2", "name_en": "Spark Eruption 2", "class_id": -1, "class_name": "Comum", "type": "Chi / Cultivo", "icon": "fa-solid fa-sun", "icon_file": "爆气2.dds", "max_lv": 1, "desc": "Consome 2 faíscas de Chi para amplificar enormemente os atributos marciais."},
-    {"id": 372, "name": "Explosão de Chi Imortal (God)", "name_en": "Celestial Spark Eruption", "class_id": -1, "class_name": "Comum", "type": "Chi / Cultivo God", "icon": "fa-solid fa-certificate", "icon_file": "爆气1.dds", "max_lv": 1, "desc": "Consome 3 faíscas de Chi. Concede imensa amplificação de ataque mágico/físico e regeneração de vida."},
-    {"id": 373, "name": "Explosão de Chi Demoníaco (Evil)", "name_en": "Demonic Spark Eruption", "class_id": -1, "class_name": "Comum", "type": "Chi / Cultivo Evil", "icon": "fa-solid fa-fire", "icon_file": "爆气2.dds", "max_lv": 1, "desc": "Consome 3 faíscas de Chi. Concede extrema velocidade de ataque e poder destrutivo."}
-]
+if not PW_SKILLS_DATABASE:
+    PW_SKILLS_DATABASE = [
+        {"id": 1, "name": "Golpe do Tigre", "name_en": "Tiger Maw", "name_cn": "虎击", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque Físico", "icon": "fa-solid fa-burst", "icon_file": "虎击.dds", "max_lv": 10, "desc": "Golpe inicial frontal causando dano físico adicional."},
+        {"id": 2, "name": "Corte Sangrento", "name_en": "Draw Blood", "name_cn": "寸力", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque Físico", "icon": "fa-solid fa-burst", "icon_file": "寸力.dds", "max_lv": 10, "desc": "Corta pontos vitais causando sangramento contínuo no alvo."},
+        {"id": 3, "name": "Lâmina Eólica", "name_en": "Aeolian Blade", "name_cn": "凌风", "class_id": 0, "class_name": "Guerreiro", "type": "Ataque Físico", "icon": "fa-solid fa-burst", "icon_file": "凌风.dds", "max_lv": 10, "desc": "Corta o ar lançando uma lâmina cortante que pode atordoar o alvo."},
+        {"id": 4, "name": "Rugido do Leão", "name_en": "Roar of the Pride", "name_cn": "狮子吼", "class_id": 0, "class_name": "Guerreiro", "type": "Controle em Área", "icon": "fa-solid fa-burst", "icon_file": "狮子吼.dds", "max_lv": 10, "desc": "Rugido ensurdecedor que atordoa todos os inimigos ao redor."},
+        {"id": 77, "name": "Sino Dourado (Golden Bell)", "name_en": "Aura of the Golden Bell", "name_cn": "金钟罩", "class_id": 0, "class_name": "Guerreiro", "type": "Buff em Grupo", "icon": "fa-solid fa-burst", "icon_file": "金钟罩.dds", "max_lv": 10, "desc": "Aumenta a defesa física de todos os membros do grupo."},
+        {"id": 69, "name": "Dragão Voador (Heaven Flame)", "name_en": "Heavens Flame", "name_cn": "天火狂龙", "class_id": 0, "class_name": "Guerreiro", "type": "Ultimate em Área", "icon": "fa-solid fa-burst", "icon_file": "天火狂龙.dds", "max_lv": 10, "desc": "Invoca o Dragão Celestial causando dano massivo."},
+        {"id": 113, "name": "Coração Puro", "name_en": "Purehearted Blessing", "name_cn": "清心咒", "class_id": 7, "class_name": "Sacerdote", "type": "Cura Básica", "icon": "fa-solid fa-wand-magic-sparkles", "icon_file": "清心咒.dds", "max_lv": 10, "desc": "Cura rápida de alvo único."},
+        {"id": 114, "name": "Prece da Calmaria (Ironheart)", "name_en": "Ironheart Blessing", "name_cn": "静心咒", "class_id": 7, "class_name": "Sacerdote", "type": "Cura Contínua", "icon": "fa-solid fa-wand-magic-sparkles", "icon_file": "静心符.dds", "max_lv": 10, "desc": "Cura contínua empilhável."},
+        {"id": 125, "name": "Flecha de Pluma", "name_en": "Plume Shot", "name_cn": "羽箭", "class_id": 7, "class_name": "Sacerdote", "type": "Ataque Mágico / Metal", "icon": "fa-solid fa-wand-magic-sparkles", "icon_file": "羽箭.dds", "max_lv": 10, "desc": "Dispara penas mágicas afiadas causando dano de metal."},
+        {"id": 167, "name": "Portal da Cidade (Town Portal)", "name_en": "Town Portal", "name_cn": "回城术", "class_id": -1, "class_name": "Comum", "type": "Teleporte de Retorno", "icon": "fa-solid fa-archway", "icon_file": "回城术.dds", "max_lv": 1, "desc": "Teleporta o personagem de volta para a cidade mais próxima."}
+    ]
 
 
 class SurfacesIconManager:
@@ -1072,14 +863,227 @@ class ElementsDecoder:
         max_durability: Optional[int] = None,
         creator_name: str = ""
     ) -> bytes:
-        """Gera automaticamente o payload binário de octets correspondente ao item"""
+        """Gera automaticamente o payload binário de octets correspondente ao item respeitando as tabelas e regras C++ do PW"""
         item_info = self.get_item_info(realm_id, item_id)
         cat = item_info.get("category", "Geral")
+        typ = item_info.get("type", "Item")
         level = item_info.get("level", 1)
 
-        dura = durability if durability is not None and durability > 0 else 2800
-        max_dura = max_durability if max_durability is not None and max_durability > 0 else dura
+        # Regras específicas de itens conhecidos / iniciais
+        if item_id == 2251:  # Varinha Mágica (Arma inicial do Sacerdote)
+            dura = durability if durability is not None and durability > 0 else 1400
+            max_dura = max_durability if max_durability is not None and max_durability > 0 else dura
+            return ItemOctetCodec.build_item_octets(
+                category="Arma",
+                level=1,
+                race_mask=255,
+                str_req=5,
+                vit_req=0,
+                agi_req=0,
+                eng_req=3,
+                durability=dura,
+                max_durability=max_dura,
+                creator_name=creator_name,
+                refine_level=refine_level,
+                sockets_count=sockets_count,
+                socket_stones=socket_stones or [],
+                dmg_low=3,
+                dmg_high=3,
+                magic_low=5,
+                magic_high=6,
+                attack_speed=16,
+                attack_range=3.0,
+                weapon_class=292,
+                tag=3
+            )
+        elif item_id in [2097, 1]:  # Espada Curta de Madeira (Guerreiro inicial)
+            dura = durability if durability is not None and durability > 0 else 1400
+            max_dura = max_durability if max_durability is not None and max_durability > 0 else dura
+            return ItemOctetCodec.build_item_octets(
+                category="Arma",
+                level=1,
+                race_mask=255,
+                str_req=5,
+                vit_req=0,
+                agi_req=3,
+                eng_req=0,
+                durability=dura,
+                max_durability=max_dura,
+                creator_name=creator_name,
+                refine_level=refine_level,
+                sockets_count=sockets_count,
+                socket_stones=socket_stones or [],
+                dmg_low=3,
+                dmg_high=5,
+                magic_low=0,
+                magic_high=0,
+                attack_speed=20,
+                attack_range=3.5,
+                weapon_class=1,
+                tag=3
+            )
+        elif item_id == 2258:  # Machado de Ferro (Bárbaro inicial)
+            dura = durability if durability is not None and durability > 0 else 1400
+            max_dura = max_durability if max_durability is not None and max_durability > 0 else dura
+            return ItemOctetCodec.build_item_octets(
+                category="Arma",
+                level=1,
+                race_mask=255,
+                str_req=6,
+                vit_req=0,
+                agi_req=2,
+                eng_req=0,
+                durability=dura,
+                max_durability=max_dura,
+                creator_name=creator_name,
+                refine_level=refine_level,
+                sockets_count=sockets_count,
+                socket_stones=socket_stones or [],
+                dmg_low=4,
+                dmg_high=7,
+                magic_low=0,
+                magic_high=0,
+                attack_speed=14,
+                attack_range=3.5,
+                weapon_class=2,
+                tag=3
+            )
+        elif item_id == 2250:  # Arco de Madeira (Arqueiro inicial)
+            dura = durability if durability is not None and durability > 0 else 1400
+            max_dura = max_durability if max_durability is not None and max_durability > 0 else dura
+            return ItemOctetCodec.build_item_octets(
+                category="Arma",
+                level=1,
+                race_mask=255,
+                str_req=3,
+                vit_req=0,
+                agi_req=5,
+                eng_req=0,
+                durability=dura,
+                max_durability=max_dura,
+                creator_name=creator_name,
+                refine_level=refine_level,
+                sockets_count=sockets_count,
+                socket_stones=socket_stones or [],
+                dmg_low=3,
+                dmg_high=6,
+                magic_low=0,
+                magic_high=0,
+                attack_speed=17,
+                attack_range=20.0,
+                weapon_type=1,
+                weapon_class=5,
+                tag=3
+            )
+        elif item_id == 2867:  # Cajado de Madeira (Mago/Feiticeira inicial)
+            dura = durability if durability is not None and durability > 0 else 1400
+            max_dura = max_durability if max_durability is not None and max_durability > 0 else dura
+            return ItemOctetCodec.build_item_octets(
+                category="Arma",
+                level=1,
+                race_mask=255,
+                str_req=4,
+                vit_req=0,
+                agi_req=0,
+                eng_req=4,
+                durability=dura,
+                max_durability=max_dura,
+                creator_name=creator_name,
+                refine_level=refine_level,
+                sockets_count=sockets_count,
+                socket_stones=socket_stones or [],
+                dmg_low=3,
+                dmg_high=4,
+                magic_low=5,
+                magic_high=7,
+                attack_speed=16,
+                attack_range=3.0,
+                weapon_class=292,
+                tag=3
+            )
 
+        # Regra genérica para armas
+        if "arma" in cat.lower() or "arma" in typ.lower():
+            dura = durability if durability is not None and durability > 0 else 2800
+            max_dura = max_durability if max_durability is not None and max_durability > 0 else dura
+            return ItemOctetCodec.build_item_octets(
+                category="Arma",
+                level=level,
+                race_mask=255,
+                str_req=level * 2,
+                vit_req=0,
+                agi_req=level * 2,
+                eng_req=0,
+                durability=dura,
+                max_durability=max_dura,
+                creator_name=creator_name,
+                refine_level=refine_level,
+                sockets_count=sockets_count,
+                socket_stones=socket_stones or [],
+                dmg_low=level * 5 + 10,
+                dmg_high=level * 8 + 20,
+                magic_low=level * 5 + 10,
+                magic_high=level * 8 + 20,
+                attack_speed=16,
+                attack_range=3.5,
+                weapon_class=1,
+                tag=3
+            )
+
+        # Regra genérica para armaduras
+        if "armadura" in cat.lower() or "armadura" in typ.lower():
+            dura = durability if durability is not None and durability > 0 else 2800
+            max_dura = max_durability if max_durability is not None and max_durability > 0 else dura
+            return ItemOctetCodec.build_item_octets(
+                category="Armadura",
+                level=level,
+                race_mask=255,
+                str_req=level * 2,
+                vit_req=0,
+                agi_req=0,
+                eng_req=0,
+                durability=dura,
+                max_durability=max_dura,
+                creator_name=creator_name,
+                refine_level=refine_level,
+                sockets_count=sockets_count,
+                socket_stones=socket_stones or [],
+                def_phys=level * 10 + 20,
+                def_magic=level * 8 + 15,
+                dodge=level * 2,
+                hp_enh=0,
+                mp_enh=0,
+                tag=3
+            )
+
+        # Regra genérica para ornamentos / jóias
+        if any(k in cat.lower() for k in ["ornamento", "jóia", "joia"]):
+            dura = durability if durability is not None and durability > 0 else 1800
+            max_dura = max_durability if max_durability is not None and max_durability > 0 else dura
+            return ItemOctetCodec.build_item_octets(
+                category="Ornamento",
+                level=level,
+                race_mask=255,
+                str_req=0,
+                vit_req=0,
+                agi_req=0,
+                eng_req=0,
+                durability=dura,
+                max_durability=max_dura,
+                creator_name=creator_name,
+                refine_level=refine_level,
+                sockets_count=sockets_count,
+                socket_stones=socket_stones or [],
+                dmg_low=0,
+                magic_low=0,
+                def_phys=level * 5 + 10,
+                def_magic=level * 5 + 10,
+                tag=3
+            )
+
+        # Itens consumíveis ou sem octets obrigatórios
+        dura = durability if durability is not None and durability > 0 else 1000
+        max_dura = max_durability if max_durability is not None and max_durability > 0 else dura
         return ItemOctetCodec.build_item_octets(
             category=cat,
             level=level,
@@ -1094,10 +1098,11 @@ class ElementsDecoder:
             refine_level=refine_level,
             sockets_count=sockets_count,
             socket_stones=socket_stones or [],
-            dmg_low=10,
-            dmg_high=20,
-            def_phys=10,
-            def_magic=5
+            dmg_low=0,
+            dmg_high=0,
+            def_phys=0,
+            def_magic=0,
+            tag=3
         )
 
 
@@ -1222,9 +1227,14 @@ class ElementsDecoder:
 
         if query_norm.isdigit():
             id_num = int(query_norm)
-            if not any(r["id"] == id_num for r in results):
-                exact = self.get_item_info(realm_id, id_num)
-                results.insert(0, exact)
+            exact_match = None
+            for idx, r in enumerate(results):
+                if r["id"] == id_num:
+                    exact_match = results.pop(idx)
+                    break
+            if not exact_match:
+                exact_match = self.get_item_info(realm_id, id_num)
+            results.insert(0, exact_match)
 
         return results[:limit]
 
@@ -1288,7 +1298,7 @@ class ElementsDecoder:
         realm_id: str = "realm_126",
         limit: int = 60
     ) -> List[Dict[str, Any]]:
-        """Pesquisa habilidades no catálogo do jogo por ID, nome (PT/EN), tipo ou classe com normalização de acentos"""
+        """Pesquisa habilidades no catálogo do jogo por ID, nome (PT/EN/CN), tipo ou classe com normalização de acentos"""
         skills_db = self.get_realm_skills(realm_id)
         query_norm = normalize_search_string(query)
         results = []
@@ -1314,12 +1324,14 @@ class ElementsDecoder:
             else:
                 name_pt_norm = normalize_search_string(sk.get("name", ""))
                 name_en_norm = normalize_search_string(sk.get("name_en", ""))
+                name_cn_norm = normalize_search_string(sk.get("name_cn", ""))
                 type_name_norm = normalize_search_string(sk.get("type", ""))
                 cls_name_norm = normalize_search_string(sk.get("class_name", ""))
                 sid_str = str(sk["id"])
 
                 if (query_norm in name_pt_norm or 
                     query_norm in name_en_norm or 
+                    query_norm in name_cn_norm or
                     query_norm in type_name_norm or 
                     query_norm in cls_name_norm or 
                     query_norm == sid_str):
@@ -1330,9 +1342,14 @@ class ElementsDecoder:
 
         if query_norm.isdigit():
             sk_id = int(query_norm)
-            if not any(s["id"] == sk_id for s in results):
-                exact = self.get_skill_info(sk_id, realm_id)
-                results.insert(0, exact)
+            exact_match = None
+            for idx, r in enumerate(results):
+                if r["id"] == sk_id:
+                    exact_match = results.pop(idx)
+                    break
+            if not exact_match:
+                exact_match = self.get_skill_info(sk_id, realm_id)
+            results.insert(0, exact_match)
 
         return results[:limit]
 

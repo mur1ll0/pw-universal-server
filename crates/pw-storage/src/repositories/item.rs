@@ -41,6 +41,7 @@ impl From<ItemRow> for ItemRecord {
             durability: r.durability as u32,
             max_durability: r.max_durability as u32,
             bind_status: r.bind_status as u8,
+            octets: r.extra_data.clone().unwrap_or_default(),
             custom_attributes: serde_json::json!({
                 "creator_name": r.creator_name,
                 "extra_data": r.extra_data.map(|d| hex::encode(d))

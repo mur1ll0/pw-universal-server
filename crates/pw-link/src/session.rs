@@ -19,6 +19,8 @@ pub struct ClientSession {
     pub username: Option<String>,
     pub role_id: Option<RoleId>,
     pub character_name: Option<String>,
+    pub target_id: Option<i32>,
+    pub sec_level: u8,
     pub client_ip: String,
     pub realm_id: String,
     pub game_version: String,
@@ -37,6 +39,8 @@ impl ClientSession {
             username: None,
             role_id: None,
             character_name: None,
+            target_id: None,
+            sec_level: 0,
             client_ip,
             realm_id,
             game_version,
@@ -55,5 +59,13 @@ impl ClientSession {
         self.role_id = Some(role_id);
         self.character_name = Some(name);
         self.state = SessionState::InWorld;
+    }
+
+    pub fn set_target(&mut self, target: i32) {
+        self.target_id = Some(target);
+    }
+
+    pub fn clear_target(&mut self) {
+        self.target_id = None;
     }
 }

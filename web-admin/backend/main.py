@@ -104,14 +104,14 @@ async def startup_event():
 
 async def seed_default_class_templates(conn: asyncpg.Connection, realm_id: str):
     all_classes = [
-        (0, "Guerreiro", 15, 10, 20, 5, 976.0, 219.2, 4187.3, 2097, [1, 2, 54, 3, 167]),
-        (1, "Mago", 10, 10, 10, 20, 976.0, 219.2, 4187.3, 2867, [81, 88, 97, 96, 167]),
+        (0, "Guerreiro", 15, 10, 20, 5, 976.0, 219.2, 4187.3, 2097, [1, 2, 3, 4, 77, 69, 167]),
+        (1, "Mago", 10, 10, 10, 20, 976.0, 219.2, 4187.3, 2867, [7, 8, 81, 88, 96, 167]),
         (2, "Espiritualista", 10, 10, 10, 20, 976.0, 219.2, 4187.3, 2867, [1450, 1451, 1453, 167]),
-        (3, "Bárbaro", 15, 5, 25, 5, -1445.6, 219.3, 2642.0, 2258, [102, 150, 82, 112, 167]),
-        (4, "Feiticeira", 15, 5, 15, 15, -1445.6, 219.3, 2642.0, 2867, [299, 300, 312, 328, 167]),
+        (3, "Bárbaro", 15, 5, 25, 5, -1445.6, 219.3, 2642.0, 2258, [102, 104, 112, 150, 167]),
+        (4, "Feiticeira", 15, 5, 15, 15, -1445.6, 219.3, 2642.0, 2867, [299, 300, 306, 312, 167]),
         (5, "Mercenário", 10, 20, 10, 5, 976.0, 219.2, 4187.3, 6, [1400, 1401, 1403, 167]),
         (6, "Arqueiro", 5, 15, 8, 22, -696.3, 219.0, -1178.8, 2250, [234, 235, 236, 245, 167]),
-        (7, "Sacerdote", 10, 10, 15, 15, -696.3, 219.0, -1178.8, 2867, [113, 114, 125, 119, 120, 167]),
+        (7, "Sacerdote", 10, 10, 15, 15, -696.3, 219.0, -1178.8, 2251, [113, 114, 125, 15, 19, 167]),
         (8, "Arcano", 15, 12, 18, 5, 976.0, 219.2, 4187.3, 6, [1500, 1501, 1503, 167]),
         (9, "Místico", 10, 10, 12, 18, 976.0, 219.2, 4187.3, 2867, [1600, 1601, 1603, 167]),
         (10, "Retalhador", 10, 18, 12, 10, 976.0, 219.2, 4187.3, 6, [1700, 1701, 1703, 167]),
@@ -153,8 +153,8 @@ async def seed_default_class_templates(conn: asyncpg.Connection, realm_id: str):
                 template_id, container_type, slot, item_id, count,
                 durability, max_durability, refine_level, sockets_count, socket_stones
             )
-            VALUES ($1, 1, 0, $2, 1, 2800, 2800, 0, 0, '{}')
-            ON CONFLICT (template_id, container_type, slot) DO UPDATE SET item_id = EXCLUDED.item_id
+            VALUES ($1, 1, 0, $2, 1, 1400, 1400, 0, 0, '{}')
+            ON CONFLICT (template_id, container_type, slot) DO UPDATE SET item_id = EXCLUDED.item_id, durability = 1400, max_durability = 1400
             """,
             tpl_id, weapon_id
         )

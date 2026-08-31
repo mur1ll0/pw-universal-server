@@ -312,7 +312,10 @@ def test_elements_data_full_118_tables_parser():
 
 def test_npcgen_and_spatial_grid_parser():
     print("[TEST 12/14] Testando Parser Binário Completo do npcgen.data e SpatialGrid...")
-    path = r'pw-universal-server/data/realm_126/config/npcgen.data'
+    import os
+    path = os.path.join(os.path.dirname(__file__), '..', 'data', 'realm_126', 'config', 'npcgen.data')
+    if not os.path.exists(path):
+        path = r'pw-universal-server/data/realm_126/config/npcgen.data'
     with open(path, 'rb') as f:
         data = f.read()
     version, num_ai_gen, num_res_area, num_dyn_obj, num_npc_ctrl = struct.unpack_from('<5i', data, 0)
@@ -358,6 +361,7 @@ def test_npcgen_and_spatial_grid_parser():
 
 def test_all_config_data_files():
     print("[TEST 13/14] Testando Integridade de Todos os Arquivos .data do Realm 1.2.6...")
+    import os
     files = {
         'domain.data': (30760, 44),
         'task_npc.data': (9192, 50135041),
@@ -366,8 +370,11 @@ def test_all_config_data_files():
         'tasks.data': (20793663, 55),
         'gshop.data': (865672, None),
     }
+    base_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'realm_126', 'config')
     for fname, (expected_size, _) in files.items():
-        path = f'pw-universal-server/data/realm_126/config/{fname}'
+        path = os.path.join(base_dir, fname)
+        if not os.path.exists(path):
+            path = f'pw-universal-server/data/realm_126/config/{fname}'
         assert os.path.exists(path), f"Arquivo ausente: {fname}"
         size = os.path.getsize(path)
         assert size == expected_size, f"{fname}: tamanho {size} != esperado {expected_size}"

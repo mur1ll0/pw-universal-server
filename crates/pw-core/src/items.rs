@@ -70,6 +70,7 @@ pub struct ItemRecord {
     pub durability: u32,           // Durabilidade atual
     pub max_durability: u32,       // Durabilidade máxima
     pub bind_status: u8,           // 0: Livre, 1: Preso à alma
+    pub octets: Vec<u8>,           // Octetos binários brutos oficiais (ex: essência de arma/armadura do banco)
     pub custom_attributes: serde_json::Value, // Atributos adicionais e nome do criador
 }
 
@@ -91,6 +92,7 @@ impl ItemRecord {
             durability: 1000,
             max_durability: 1000,
             bind_status: 0,
+            octets: Vec::new(),
             custom_attributes: serde_json::json!({}),
         }
     }

@@ -7,7 +7,7 @@ use crate::version::GameVersion;
 use bytes::{Buf, BytesMut};
 use std::sync::Arc;
 use tokio_util::codec::{Decoder, Encoder};
-use tracing::{trace, warn};
+use tracing::{debug, trace, warn};
 
 /// Enum que encapsula todos os pacotes decodificados vindos do cliente (C2S)
 #[derive(Debug, Clone)]
@@ -137,7 +137,7 @@ impl Decoder for PwPacketCodec {
             OP_C2S_UNDO_DELETE_ROLE => InboundPacket::UndoDeleteRole(C2SUndoDeleteRole::decode(&mut payload_stream)?),
             OP_C2S_SELECT_ROLE => InboundPacket::SelectRole(C2SSelectRole::decode(&mut payload_stream)?),
             OP_C2S_ENTER_WORLD => InboundPacket::EnterWorld(C2SEnterWorld::decode(&mut payload_stream)?),
-            OP_C2S_GAMEDATASEND | OP_S2C_GAMEDATASEND => InboundPacket::GamedataSend(C2SGamedataSend::decode(&mut payload_stream)?),
+            OP_C2S_GAMEDATASEND => InboundPacket::GamedataSend(C2SGamedataSend::decode(&mut payload_stream)?),
             OP_C2S_GET_UI_CONFIG => InboundPacket::GetUIConfig(C2SGetUIConfig::decode(&mut payload_stream)?),
             OP_C2S_SET_UI_CONFIG => InboundPacket::SetUIConfig(C2SSetUIConfig::decode(&mut payload_stream)?),
             OP_C2S_SET_CUSTOM_DATA => InboundPacket::SetCustomData(C2SSetCustomData::decode(&mut payload_stream)?),
@@ -149,6 +149,10 @@ impl Decoder for PwPacketCodec {
             OP_C2S_ACREPORT => InboundPacket::ACReport(C2SACReport::decode(&mut payload_stream)?),
             OP_C2S_CHAT => InboundPacket::PlayerChat(C2SPlayerChat::decode(&mut payload_stream)?),
             OP_C2S_HEARTBEAT => InboundPacket::Heartbeat(C2SHeartbeat::decode(&mut payload_stream)?),
+            OP_C2S_CHECK_NEW_MAIL => {
+                debug!("Pacote 0x1068 (CheckNewMail) recebido do cliente");
+                InboundPacket::Unknown { opcode, payload: payload.to_vec() }
+            }
             _ => {
                 warn!(
                     "Opcode C2S desconhecido ou não tratado recebido do cliente: 0x{:X} (Dec: {}, Tamanho: {} bytes, Hex: {})",

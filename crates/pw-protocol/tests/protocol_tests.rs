@@ -90,6 +90,7 @@ fn test_role_list_multi_realm_encoding() {
                 durability: 5000,
                 max_durability: 5000,
                 bind_status: 0,
+                octets: Vec::new(),
                 custom_attributes: serde_json::json!({}),
             }
         ],
@@ -151,12 +152,12 @@ fn test_select_role_response_codec() {
 #[test]
 fn test_gamedatasend_s2c_subcommands() {
     // 1. SELF_INFO_00 (CMD 38)
-    let p1 = S2CGamedataSend::self_info_00(10, 500, 500, 300, 300, 1000, 500);
+    let p1 = S2CGamedataSend::self_info_00(10, 32, 500, 500, 300, 300, 1000, 500);
     assert!(!p1.data.is_empty());
     assert_eq!(u16::from_le_bytes([p1.data[0], p1.data[1]]), 38);
 
-    // 2. SELF_INFO_1 (CMD 8)
-    let p2 = S2CGamedataSend::self_info_1(1000, 500, 1024, Vector3::new(10.0, 20.0, 30.0));
+    // 2. SELF_INFO_1 (CMD 8) com GM flag
+    let p2 = S2CGamedataSend::self_info_1(1000, 500, 1024, Vector3::new(10.0, 20.0, 30.0), 32);
     assert_eq!(u16::from_le_bytes([p2.data[0], p2.data[1]]), 8);
 
     // 3. NPC_ENTER_SLICE (CMD 11)
@@ -175,12 +176,31 @@ fn test_gamedatasend_s2c_subcommands() {
     let p6 = S2CGamedataSend::inst_data_checkout(1, 1156141381, 1156141381, 1206433535);
     assert_eq!(u16::from_le_bytes([p6.data[0], p6.data[1]]), 206);
 
-    // 7. SKILL_PERFORM (CMD 88) e SELF_SKILL_ATTACK_RESULT (CMD 142)
+    // 7. MALL_ITEM_PRICE (CMD 197)
+    let p_mall = S2CGamedataSend::mall_item_price();
+    assert_eq!(u16::from_le_bytes([p_mall.data[0], p_mall.data[1]]), 197);
+
+    // 8. SKILL_PERFORM (CMD 88) e SELF_SKILL_ATTACK_RESULT (CMD 142)
     let p7 = S2CGamedataSend::skill_perform();
     assert_eq!(u16::from_le_bytes([p7.data[0], p7.data[1]]), 88);
 
-    let p8 = S2CGamedataSend::self_skill_attack_result(100, 1, 150, 0, 0, 0);
+    let p8 = S2CGamedataSend::self_skill_attack_result(100, 1, 150, 0, 0);
     assert_eq!(u16::from_le_bytes([p8.data[0], p8.data[1]]), 142);
+
+    let p9 = S2CGamedataSend::self_stop_skill();
+    assert_eq!(u16::from_le_bytes([p9.data[0], p9.data[1]]), 123);
+
+    // Valida normalização de durabilidade para armas (ex: 28 -> 1400 = 28*50)
+    let item_weapon = S2CGamedataSend::item_info(1, 0, 2097, 28, 28, 1, &[]);
+    assert_eq!(u16::from_le_bytes([item_weapon.data[0], item_weapon.data[1]]), 40);
+    let cur_dur = i32::from_le_bytes([
+        item_weapon.data[36], item_weapon.data[37], item_weapon.data[38], item_weapon.data[39]
+    ]);
+    let max_dur = i32::from_le_bytes([
+        item_weapon.data[40], item_weapon.data[41], item_weapon.data[42], item_weapon.data[43]
+    ]);
+    assert_eq!(cur_dur, 1400);
+    assert_eq!(max_dur, 1400);
 }
 
 #[test]

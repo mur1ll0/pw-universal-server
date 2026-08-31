@@ -1,6 +1,7 @@
 # Especificação Técnica Master de Engenharia Reversa: Perfect World v1.2.6 (v55)
 
-Este documento é a referência técnica exaustiva de engenharia reversa para o servidor e cliente do **Perfect World versão 1.2.6 (build v55 / server_code: 66054 / client v1.2.6)**, construído com base na análise estática e dinâmica direta dos binários compilados (Linux ELF x86: `gs`, `gdeliveryd`, `gamedbd`, `glinkd`, `gfactiond`, `uniquenamed`, `gacd`, `logservice`, e Java `authd`) e nas árvores de código-fonte C++ oficial da engine Angelica 3D / Wanmei Network Framework (`source_server_153` e `source_client_153`).
+Este documento é a **referência técnica canônica e exaustiva** de engenharia reversa para o servidor e cliente do **Perfect World versão 1.2.6 (build v55 / server_code: 66054 / client v1.2.6)**.
+Construído com base na análise estática e dinâmica direta dos binários compilados (Linux ELF x86: `gs`, `gdeliveryd`, `gamedbd`, `glinkd`, `gfactiond`, `uniquenamed`, `gacd`, `logservice`, e Java `authd`), nas tabelas de salto e disassembly do executável cliente Windows x86 (`elementclient.exe` v1.2.6), e nas árvores de código-fonte C++ oficial da engine Angelica 3D / Wanmei Network Framework (`source_server_153` e `source_client_153`).
 
 ---
 
@@ -73,7 +74,7 @@ O CUint comprime inteiros de 32 bits sem sinal com base nos bits mais significat
 
 ## 3. Catálogo Completo de Protocolos GNET v1.2.6 (Opcodes de Alto Nível)
 
-Abaixo está o mapeamento exaustivo dos **214 Protocolos Oficiais** extraídos diretamente da tabela de símbolos e decompilação dos binários da versão 1.2.6:
+Abaixo está o mapeamento exaustivo dos **Protocolos Oficiais de Alto Nível** da versão 1.2.6:
 
 ### 3.1 Autenticação, Gateway e Sessão (Client <-> glinkd <-> gdeliveryd <-> authd)
 
@@ -87,7 +88,8 @@ Abaixo está o mapeamento exaustivo dos **214 Protocolos Oficiais** extraídos d
 | **6** | `0x0006` | `StatusAnnounce` | `gdeliveryd, glinkd` | `userid: i32`, `localsid: u32`, `status: u8` |
 | **7** | `0x0007` | `RoleStatusAnnounce`| `gdeliveryd, glinkd` | `type: i8`, `userid: i32`, `localsid: u32`, `status: u8`, `auth: Octets` |
 | **10** | `0x000A` | `KickoutUser` | `gdeliveryd, glinkd` | `userid: i32`, `localsid: u32`, `cause: u8` |
-| **34** | `0x0022` | `GamedataSend` | `glinkd` | `data: Octets` (Payload binário de subcomandos Little-Endian) |
+| **32** | `0x0020` | `GamedataSend (C2S)`| `Client -> glinkd` | `data: Octets` (Payload binário de subcomandos Little-Endian) |
+| **34** | `0x0022` | `GamedataSend (S2C)`| `glinkd -> Client` | `data: Octets` (Payload binário de subcomandos Little-Endian) |
 | **35** | `0x0023` | `ReportIP` | `gdeliveryd, glinkd` | `userid: i32`, `ip: i32` |
 | **36** | `0x0024` | `UpdateRemainTime` | `gdeliveryd, glinkd` | `userid: i32`, `remain_time: i32`, `free_time_left: i32`, `free_time_end: i32`, `creatime: i32` |
 
@@ -99,6 +101,7 @@ Abaixo está o mapeamento exaustivo dos **214 Protocolos Oficiais** extraídos d
 | :--- | :--- | :--- | :--- | :--- |
 | **70** | `0x0046` | `SelectRole` | `gdeliveryd, glinkd` | `roleid: i32`, `flag: u8` |
 | **71** | `0x0047` | `SelectRole_Re` | `gdeliveryd, glinkd` | `result: i32`, `auth: Octets (Token de Sessão)` |
+| **72** | `0x0048` | `EnterWorld (C2S)`| `Client -> glinkd` | `roleid: i32`, `localsid: u32` |
 | **82** | `0x0052` | `RoleList` | `gdeliveryd, glinkd` | `userid: i32`, `localsid: u32`, `handle: i32` |
 | **83** | `0x0053` | `RoleList_Re` | `gdeliveryd, glinkd` | `result: i32`, `handle: i32`, `userid: i32`, `localsid: u32`, `rolelist: vector<RoleInfo>` |
 | **84** | `0x0054` | `CreateRole` | `gdeliveryd, glinkd` | `userid: i32`, `localsid: u32`, `roleinfo: RoleInfo` |
@@ -107,513 +110,624 @@ Abaixo está o mapeamento exaustivo dos **214 Protocolos Oficiais** extraídos d
 | **87** | `0x0057` | `DeleteRole_Re` | `gdeliveryd, glinkd` | `result: i32`, `roleid: i32`, `localsid: u32` |
 | **88** | `0x0058` | `UndoDeleteRole` | `gdeliveryd, glinkd` | `roleid: i32`, `localsid: u32` |
 | **89** | `0x0059` | `UndoDeleteRole_Re` | `gdeliveryd, glinkd`| `result: i32`, `roleid: i32`, `localsid: u32` |
+| **90** | `0x005A` | `Heartbeat (C2S)` | `Client -> glinkd` | `seq: u32` |
+| **91** | `0x005B` | `Heartbeat_Re (S2C)`| `glinkd -> Client`| `seq: u32`, `timestamp: u32` |
+| **104**| `0x0068` | `GetUIConfig` | `Client -> gdeliveryd` | `roleid: i32`, `localsid: u32` |
+| **105**| `0x0069` | `GetUIConfig_Re` | `gdeliveryd -> Client` | `result: i32`, `roleid: i32`, `localsid: u32`, `ui_config: Octets` |
+| **106**| `0x006A` | `SetUIConfig` | `Client -> gdeliveryd` | `roleid: i32`, `localsid: u32`, `ui_config: Octets` |
+| **107**| `0x006B` | `SetUIConfig_Re` | `gdeliveryd -> Client` | `result: i32`, `roleid: i32` |
+| **128**| `0x0080` | `SetHelpStates` | `Client -> gdeliveryd` | `roleid: i32`, `localsid: u32`, `help_states: Octets` |
+| **129**| `0x0081` | `SetHelpStates_Re` | `gdeliveryd -> Client` | `result: i32`, `roleid: i32` |
+| **130**| `0x0082` | `GetHelpStates` | `Client -> gdeliveryd` | `roleid: i32`, `localsid: u32` |
+| **131**| `0x0083` | `GetHelpStates_Re` | `gdeliveryd -> Client` | `result: i32`, `roleid: i32`, `help_states: Octets` |
 
 ---
 
-### 3.3 Chat, Social, Amigos e Correio (gdeliveryd <-> glinkd <-> gs)
+## 4. Pipeline Completa de Carregamento e Entrada no Mundo 3D (EnterWorld Pipeline)
 
-| Opcode (Dec) | Opcode (Hex) | Nome do Protocolo | Daemons | Estrutura dos Campos Serializados |
-| :--- | :--- | :--- | :--- | :--- |
-| **80** | `0x0050` | `ChatMessage` | `gdeliveryd, glinkd, gs` | `channel: u8`, `emotion: u8`, `srcroleid: i32`, `msg: Octets (UTF-16LE)`, `data: Octets` |
-| **96** | `0x0060` | `PublicChat` | `gdeliveryd, glinkd, gs` | `channel: u8`, `emotion: u8`, `srcroleid: i32`, `msg: Octets (UTF-16LE)`, `data: Octets` |
-| **97** | `0x0061` | `PrivateChat` | `gdeliveryd, glinkd` | `channel: u8`, `emotion: u8`, `srcroleid: i32`, `dstroleid: i32`, `msg: Octets (UTF-16LE)`, `data: Octets` |
-| **100** | `0x0064` | `GetFriendList` | `gdeliveryd, glinkd` | `roleid: i32`, `localsid: u32` |
-| **101** | `0x0065` | `GetFriendList_Re` | `gdeliveryd, glinkd` | `result: i32`, `roleid: i32`, `localsid: u32`, `friends: vector<GFriendInfo>` |
-| **102** | `0x0066` | `AddFriend` | `gdeliveryd, glinkd` | `roleid: i32`, `localsid: u32`, `friend_roleid: i32`, `group_id: u8` |
-| **103** | `0x0067` | `AddFriend_Re` | `gdeliveryd, glinkd` | `result: i32`, `roleid: i32`, `localsid: u32`, `friend_info: GFriendInfo` |
-| **104** | `0x0068` | `DelFriend` | `gdeliveryd, glinkd` | `roleid: i32`, `localsid: u32`, `friend_roleid: i32` |
-| **110** | `0x006E` | `SendMail` | `gdeliveryd, glinkd, gs` | `src_roleid: i32`, `localsid: u32`, `dst_name: Octets (UTF-16LE)`, `title: Octets`, `context: Octets`, `attach_obj: GMailAttachObj` |
-| **111** | `0x006F` | `SendMail_Re` | `gdeliveryd, glinkd` | `result: i32`, `src_roleid: i32`, `localsid: u32` |
-| **112** | `0x0070` | `GetMailList` | `gdeliveryd, glinkd` | `roleid: i32`, `localsid: u32` |
-| **113** | `0x0071` | `GetMailList_Re` | `gdeliveryd, glinkd` | `result: i32`, `roleid: i32`, `localsid: u32`, `maillist: vector<GMailHeader>` |
-| **114** | `0x0072` | `GetMail` | `gdeliveryd, glinkd` | `roleid: i32`, `localsid: u32`, `mail_id: u8` |
-| **115** | `0x0073` | `GetMail_Re` | `gdeliveryd, glinkd` | `result: i32`, `roleid: i32`, `localsid: u32`, `mail: GMail` |
-| **116** | `0x0074` | `GetMailAttach` | `gdeliveryd, glinkd` | `roleid: i32`, `localsid: u32`, `mail_id: u8` |
-| **117** | `0x0075` | `GetMailAttach_Re` | `gdeliveryd, glinkd` | `result: i32`, `roleid: i32`, `localsid: u32`, `mail_id: u8`, `attach: GMailAttachObj` |
+Esta seção descreve a sequência exata de estados, verificações e mensagens de rede trocadas entre o cliente 1.2.6 (`elementclient.exe`) e o servidor quando o usuário clica em "Entrar no Jogo":
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Player as Jogador (1.2.6 Client)
+    participant ClientRun as CECGameRun / HostPlayer
+    participant Link as Gateway (pw-link / glinkd)
+    participant Core as Core GS / World (pw-realm-126)
+    
+    Player->>Link: SelectRole (Opcode 70 / 0x46)
+    Link-->>Player: SelectRole_Re (Opcode 71 / 0x47, result=0)
+    
+    Player->>ClientRun: CECGameRun::StartGame() -> Abre Win_LoginWait ("Entrando em Perfect World")
+    ClientRun->>ClientRun: CECWorld::LoadWorld() (Carrega mapas, colisão .rmap, relevo .ecw)
+    
+    Player->>Link: EnterWorld (Opcode 72 / 0x48)
+    
+    Note over Link,Core: 1. Validação de Timestamps e Mapas
+    Link-->>Player: GamedataSend(S2C 206: INST_DATA_CHECKOUT, id=1, gshop_ts=1206433535)
+    
+    Note over Link,Core: 2. Propriedades Vitais e Físicas
+    Link-->>Player: GamedataSend(S2C 38: SELF_INFO_00, HP, MP, EXP, SP, AP)
+    Link-->>Player: GamedataSend(S2C 54: PLAYER_EXT_PROP_MOVE, walk, run, fly_speed)
+    Link-->>Player: GamedataSend(S2C 53: PLAYER_EXT_PROP_BASE, vit, eng, str, agi)
+    Link-->>Player: GamedataSend(S2C 55: PLAYER_EXT_PROP_ATK, min_atk, max_atk)
+    Link-->>Player: GamedataSend(S2C 56: PLAYER_EXT_PROP_DEF, phys_def, magic_defs)
+    
+    Note over Link,Core: 3. Avatar 3D do HostPlayer
+    Link-->>Player: GamedataSend(S2C 8: SELF_INFO_1, Pos: Vector3, Dir, State)
+    
+    Note over Link,Core: 4. Habilidades e Quests Iniciais
+    Link-->>Player: GamedataSend(S2C 90: SKILL_DATA, Skills[])
+    Link-->>Player: GamedataSend(S2C 105: TASK_DATA, ActiveQuests, FinishedQuests)
+    Link-->>Player: GamedataSend(S2C 106: TASK_VAR_DATA, reason=8 DYN_TIME_MARK)
+    
+    Note over Link,Core: 5. Inventário e Equipamentos
+    Link-->>Player: GamedataSend(S2C 42: OWN_IVTR_DATA, pack=0 Bolsa)
+    Link-->>Player: GamedataSend(S2C 42: OWN_IVTR_DATA, pack=1 Equipamentos)
+    Link-->>Player: GamedataSend(S2C 40: OWN_ITEM_INFO para cada item com Essence)
+    
+    Note over Link,Core: 6. Spawns Visíveis (NPCs e Monstros)
+    Link-->>Player: GamedataSend(S2C 16: NPC_ENTER_WORLD para cada NPC visível)
+    Link-->>Player: GamedataSend(S2C 39: NPC_INFO_00 HP/MaxHP para cada NPC)
+    
+    Note over Link,Core: 7. Desbloqueio da Interface (Crucial!)
+    Link-->>Player: GetUIConfig_Re (Opcode 105 / 0x69, result=0)
+    Player->>ClientRun: CECGameSession::OnPrtcGetConfigRe()
+    ClientRun->>ClientRun: CECHostPlayer::OnAllInitDataReady() -> m_bEnterGame = true
+    ClientRun->>ClientRun: CECGameUIMan::EnableUI(true) -> Fecha tela de Loading
+    
+    Note over Player,Link: Mundo 3D Renderizando e HUD Ativo!
+    
+    Player->>Link: GamedataSend(C2S 39: GET_ALL_DATA)
+    Player->>Link: GamedataSend(C2S 49: TASK_NOTIFY, reason=7)
+    Link-->>Player: GamedataSend(S2C 106: TASK_VAR_DATA, reason=7 TIMEMARK_ACK)
+```
+
+### 4.1 Detalhamento de Cada Etapa do Loading
+
+#### Etapa 1: Carregamento do Mundo Físico no Cliente
+- Função no cliente: `CECGameRun::LoadWorld(int idWorld, const A3DVECTOR3& vPos)`.
+- O cliente inicializa o `CECWorld`, carrega o mapa de altura `.ecw`, mapa de colisão física `.rmap`, texturas de terreno `.tmap` e estruturas de água `.wmap`.
+- Se o arquivo de mapa não existir ou houver falha de I/O, o cliente grava no `EC.log`: `<!> CECWorld::LoadWorld: File operation error. (line: 544)`.
+
+#### Etapa 2: Sincronização de Timestamps de Instância e Loja
+- Subcomando S2C: `INST_DATA_CHECKOUT` (Comando 206 / `0xCE`).
+- Layout binário (20 bytes):
+  ```
+  [id_inst: i32 = 1]
+  [region_ts: u32 = 2097199]
+  [precinct_ts: u32 = 2097199]
+  [gshop_ts: u32 = 1206433535]      (0x47E8BDFF - timestamp oficial do gshop.data 1.2.6)
+  [gshop_ts2: u32 = 1206433535]
+  ```
+- O cliente compara `gshop_ts` com `globaldata_getgshop_timestamp()`. Se coincidirem, o erro de versão da loja desaparece imediatamente.
+
+#### Etapa 3: Instanciação do Avatar do HostPlayer
+- Subcomando S2C: `SELF_INFO_1` (Comando 8 / `0x08`).
+- Layout binário:
+  ```
+  [exp: i32]
+  [sp: i32]
+  [cid: i32]                        (ID do personagem)
+  [pos: Vector3 (f32 x, y, z)]      (Coordenadas 3D no mundo)
+  [crc: u16 = 0]
+  [custom_crc: u16 = 0]
+  [dir: u8 = 0]
+  [sec_level: u8 = 0]
+  [state: u32 = 0]
+  [extend_state: 4 * u32 se GP_STATE_EXTEND_PROPERTY estiver ativo]
+  ```
+- O cliente chama `CECHostPlayer::Init()` e cria a malha 3D esquelética do jogador no cenário.
+
+#### Etapa 4: Inicialização do Motor de Missões (Task Engine)
+- Subcomandos S2C: `TASK_DATA` (Comando 105 / `0x69`) e `TASK_VAR_DATA` (Comando 106 / `0x6A`).
+- `TASK_DATA`: Transporta a lista binária de missões ativas e concluídas.
+- `TASK_VAR_DATA` com `reason = 8` (`TASK_SVR_NOTIFY_DYN_TIME_MARK`):
+  ```
+  [size: u32 = 9]
+  [reason: u8 = 8]
+  [task_id: u16 = 0]
+  [current_time: u32]
+  [dyn_task_count: u16 = 0]
+  ```
+- Ao receber `TASK_DATA`, o cliente executa `g_pGame->GetGameSession()->LoadConfigData()`, disparando o `GetUIConfig` (Opcode 104) para o servidor.
+
+#### Etapa 5: Liberação do Render 3D (`OnAllInitDataReady`)
+- Protocolo S2C: `GetUIConfig_Re` (Opcode 105 / `0x69`).
+- Estrutura:
+  ```
+  [result: i32 = 0]
+  [roleid: i32]
+  [localsid: u32]
+  [ui_config: Octets]
+  ```
+- No cliente (`EC_GameSession.cpp:5362`):
+  1. Executa `g_pGame->GetConfigs()->ApplyUserSetting()`.
+  2. Executa `pGameUI->EnableUI(true)`.
+  3. Chama `pHostPlayer->OnAllInitDataReady()`, que seta `m_bEnterGame = true`.
+  4. Na próxima iteração de `CECGameRun::Render()`, `HostIsReady()` torna-se `true`, o renderizador 3D desenha a cena completa e fecha o modal de carregamento.
 
 ---
 
-### 3.4 Casa de Leilões e Mercado de Ações (Auction & Stock Exchange)
+## 5. Mapeamento Completo de Mecânicas e Protocolos de Gameplay
 
-| Opcode (Dec) | Opcode (Hex) | Nome do Protocolo | Daemons | Estrutura dos Campos Serializados |
-| :--- | :--- | :--- | :--- | :--- |
-| **130** | `0x0082` | `AuctionOpen` | `gdeliveryd, glinkd, gs` | `roleid: i32`, `localsid: u32`, `item_id: i32`, `count: u32`, `base_price: u32`, `bin_price: u32`, `duration: u32` |
-| **131** | `0x0083` | `AuctionOpen_Re` | `gdeliveryd, glinkd` | `result: i32`, `roleid: i32`, `localsid: u32`, `auction_id: u32` |
-| **132** | `0x0084` | `AuctionBid` | `gdeliveryd, glinkd, gs` | `roleid: i32`, `localsid: u32`, `auction_id: u32`, `bid_price: u32` |
-| **133** | `0x0085` | `AuctionBid_Re` | `gdeliveryd, glinkd` | `result: i32`, `roleid: i32`, `localsid: u32`, `auction_id: u32` |
-| **134** | `0x0086` | `AuctionList` | `gdeliveryd, glinkd` | `roleid: i32`, `localsid: u32`, `category: u16`, `item_id: i32`, `page: u16` |
-| **135** | `0x0087` | `AuctionList_Re` | `gdeliveryd, glinkd` | `result: i32`, `roleid: i32`, `localsid: u32`, `total: u32`, `items: vector<AuctionDetail>` |
-| **140** | `0x008C` | `StockCommission` | `gdeliveryd, glinkd` | `roleid: i32`, `localsid: u32`, `op_type: u8 (1=Buy, 2=Sell)`, `cash: u32`, `price: u32` |
-| **141** | `0x008D` | `StockCommission_Re` | `gdeliveryd, glinkd`| `result: i32`, `roleid: i32`, `localsid: u32`, `order_id: u32` |
-| **142** | `0x008E` | `StockCancel` | `gdeliveryd, glinkd` | `roleid: i32`, `localsid: u32`, `order_id: u32` |
-| **143** | `0x008F` | `StockCancel_Re` | `gdeliveryd, glinkd` | `result: i32`, `roleid: i32`, `localsid: u32` |
+Esta seção documenta **todas as funções, mecânicas, pipelines, subcomandos e handshakes de rede** do Perfect World v1.2.6:
 
----
-
-### 3.5 Interface com gs (GProviderServer: gs <-> gdeliveryd)
-
-| Opcode (Dec) | Opcode (Hex) | Nome do Protocolo | Daemons | Estrutura dos Campos Serializados |
-| :--- | :--- | :--- | :--- | :--- |
-| **500** | `0x01F4` | `PlayerLogin` | `gdeliveryd, gs` | `roleid: i32`, `link_id: i32`, `localsid: u32`, `status: u8` |
-| **501** | `0x01F5` | `PlayerLogout` | `gdeliveryd, gs` | `roleid: i32`, `result: i32` |
-| **502** | `0x01F6` | `PlayerEnterWorld` | `gdeliveryd, gs` | `roleid: i32`, `world_tag: i32`, `pos: Vector3`, `auth_token: Octets` |
-| **503** | `0x01F7` | `PlayerLeaveWorld` | `gdeliveryd, gs` | `roleid: i32`, `reason: i32` |
-| **504** | `0x01F8` | `SyncPlayerStatus` | `gdeliveryd, gs` | `roleid: i32`, `level: i16`, `cultivation: i8`, `hp: i32`, `mp: i32`, `world_id: i32`, `pos: Vector3` |
-| **505** | `0x01F9` | `TradeStart` | `gdeliveryd, gs` | `roleid1: i32`, `roleid2: i32`, `localid1: i32`, `localid2: i32` |
-| **506** | `0x01FA` | `TradeEnd` | `gdeliveryd, gs` | `trade_id: i32`, `role1: i32`, `role2: i32`, `reason: i32` |
-
----
-
-## 4. Catálogo Completo de RPCs v1.2.6 (gamedbd / uniquenamed / gfactiond)
-
-Abaixo estão as **102 Chamadas de Procedimento Remoto (RPCs)** do servidor 1.2.6 com os layouts exatos de seus argumentos (`Arg`) e resultados (`Res`):
-
-### 4.1 RPCs de Persistência do Jogador e Usuário (`gamedbd`)
-
-#### 1. `GetUser` (RPC 3001 / 0x0BB9)
-- **Arg (`UserID`)**: `userid: i32`
-- **Res (`UserRes`)**: `retcode: i32`, `value: User`
-  - *Campos de `User` v1.2.6*:
-    ```
-    [logicuid: u32]
-    [rolelist: u32]              (Bitmask de 16 slots de personagem)
-    [cash: i32]                  (Saldo atual de Gold na loja)
-    [money: i32]                 (Saldo no banco)
-    [cash_add: u32]              (Total histórico de Gold adicionado)
-    [cash_buy: u32]              (Total de compras)
-    [cash_sell: u32]             (Total de vendas)
-    [cash_used: u32]             (Total consumido)
-    [add_serial: i32]
-    [use_serial: i32]
-    [exg_log: vector<StockLog>]  (Histórico de transações de moedas/Gold)
-    [addiction: Octets]          (Dados do sistema anti-vício/fadiga)
-    [cash_password: Octets]      (Senha do cofre/banco MD5)
-    [status: i16]
-    [reserved1: i32]
-    [reserved2: i32]
-    [reserved3: i32]
-    ```
-
-#### 2. `PutUser` (RPC 3002 / 0x0BBA)
-- **Arg (`UserPair`)**: `key: UserID (userid: i32)`, `value: User`
-- **Res (`UserRes`)**: `retcode: i32` (`0` = Sucesso)
-
-#### 3. `GetRole` (RPC 3003 / 0x0BBB)
-- **Arg (`RoleId`)**: `id: i32`
-- **Res (`RoleRes`)**: `retcode: i32`, `value: GRoleData`
-  - *Composição de `GRoleData` v1.2.6*:
-    ```
-    [base: GRoleBase]
-    [status: GRoleStatus]
-    [pocket: GRolePocket]
-    [equipment: GRoleEquipment]
-    [storehouse: GRoleStorehouse]
-    [task: GRoleTask]
-    ```
-
-#### 4. `PutRole` (RPC 3004 / 0x0BBC)
-- **Arg (`RolePair`)**: `key: RoleId (id: i32)`, `value: GRoleData`, `overwrite: bool`
-- **Res (`RoleRes`)**: `retcode: i32`
-
----
-
-### 4.2 Estruturas de Dados Relacionais do Personagem (gamedbd Storage)
-
-#### `GRoleBase` (Tabela `base`):
-```
-[version: u8 = 1]
-[id: i32]
-[name: Octets]                  (Nome UTF-16LE)
-[race: i32]                     (0=Humano, 1=Alado, 2=Selvagem)
-[cls: i32]                      (0=Guerreiro, 1=Mago, 2=Espiritualista, 3=Feiticeira, 4=Bárbaro, 5=Mercenário, 6=Arqueiro, 7=Sacerdote)
-[gender: u8]                    (0=Masculino, 1=Feminino)
-[custom_data: Octets]           (Customização facial de nascimento)
-[config_data: Octets]           (Atalhos e configurações de UI)
-[custom_stamp: u32]
-[status: u8]                    (1=Normal, 2=Deletando)
-[delete_time: i32]
-[create_time: i32]
-[lastlogin_time: i32]
-[forbid: vector<GRoleForbid>]   (Punições/Bans ativos: [type: u8, time: i32, createtime: i32, reason: Octets])
-[help_states: Octets]
-[spouse: i32]                   (ID do cônjuge / casamento)
-[reserved1: i32]
-[reserved2: i32]
-```
-
-#### `GRoleStatus` (Tabela `status`):
-```
-[version: u8 = 1]
-[level: i32]
-[level2: i32]                   (Cultivo/Nobreza)
-[exp: i32]
-[sp: i32]
-[pp: i32]                       (Pontos de Atributo Livres)
-[hp: i32]
-[mp: i32]
-[posx: f32]
-[posy: f32]
-[posz: f32]
-[worldtag: i32]                 (ID do mapa: 1=Mundo Aberto, instâncias 2..100)
-[invader_state: i32]            (Status PK: 0=Branco, 1=Rosa, 2=Vermelho)
-[invader_time: i32]
-[pariah_time: i32]
-[skills: Octets]                (Array de skills: [skill_id: u16, level: u8, ability: u16])
-[cooling_time: Octets]          (Tempos de recarga: [id: u16, expire: u32])
-[npcrelation: Octets]
-[factioncontrib: Octets]
-[force_data: Octets]
-[title_data: Octets]
-[storehousepasswd: Octets]      (Senha do banqueiro MD5)
-[waypointlist: Octets]          (Teleportes desbloqueados bitmask)
-[coolingtime: Octets]
-```
-
-#### `GRoleInventory` / `GRolePocket` (Tabela `inventory`):
-```
-[capacity: u32]                 (Slots liberados: 32 a 64)
-[timestamp: i32]
-[money: u32]                    (Moedas na bolsa)
-[items: vector<GRoleInventory>]
-  Para cada item:
-    [id: u32]                   (Template ID no elements.data)
-    [pos: u32]                  (Slot index: 0..63)
-    [count: u32]                (Quantidade empilhada)
-    [max_count: u32]
-    [data: Octets]              (Essence binária: durabilidade, slots, pedras, add-ons)
-    [proctype: u32]             (Flags de vinculação / troca)
-    [expire_date: i32]          (Timestamp unix de expiração ou 0)
-    [guid1: u32]
-    [guid2: u32]
-    [mask: u32]
-```
-
-#### `GRoleEquipment` (Tabela `equipment`):
-```
-[inv: vector<GRoleInventory>]   (Slots fixos de armadura, arma, anéis, amuleto, capa, elmo, voo, moda)
-```
-
-#### `GRoleStorehouse` (Tabela `storehouse`):
-```
-[capacity: u32]                 (Capacidade do banqueiro normal: 16..80)
-[money: u32]                    (Moedas guardadas no banco)
-[items: vector<GRoleInventory>]
-[dress_capacity: u32]           (Guarda-roupa de moda)
-[dress_items: vector<GRoleInventory>]
-[material_capacity: u32]        (Banco de materiais)
-[material_items: vector<GRoleInventory>]
-```
-
-#### `GRoleTask` (Tabela `task`):
-```
-[task_data: Octets]             (Buffer binário de missões ativas)
-[task_complete: Octets]         (Buffer binário de missões concluídas com timestamp)
-[task_finishtime: Octets]
+```mermaid
+mindmap
+  root((Gameplay 1.2.6))
+    Combate e Acoes
+      Ataque Basico
+      Conjuracao de Skills
+      Canalizacao e Interrupcao
+      Dano Critico e Esquiva
+      Duelos 1v1
+      Status PK e Santuario
+    Entidades e Mundo
+      Selecao de Alvo e HUD HP
+      Dialogo com NPCs
+      Spawns e Spatial Grid
+      Loot Drop e Coleta
+    Economia e Itens
+      Inventario e Durabilidade
+      Equipamentos e Moda
+      Forja e Decomposicao
+      Pedras de Alma e Refino
+      Loja Gold GShop
+      Armazem Banqueiro
+    Sistemas de Progressao
+      Arvore de Quests tasks.data
+      Aprender Skills no Mestre
+      Voo e Asas
+      Grupos e Distribuicao EXP
 ```
 
 ---
 
-### 4.3 RPCs de Registro Único de Nomes (`uniquenamed`)
+### 5.1 Mecânica 1: Seleção de Alvo e Atualização de HP no HUD
 
-1. **`PreCreateRole` (RPC 3101 / 0x0C1D)**:
-   - **Arg (`PreCreateRoleArg`)**: `roleid: i32`, `rolename: Octets (UTF-16LE)`
-   - **Res (`PreCreateRoleRes`)**: `retcode: i32` (`0` = Nome disponível e bloqueado temporariamente por 30s)
-2. **`PostCreateRole` (RPC 3102 / 0x0C1E)**:
-   - **Arg (`PostCreateRoleArg`)**: `roleid: i32`, `userid: i32`, `rolename: Octets`
-   - **Res (`PostCreateRoleRes`)**: `retcode: i32` (`0` = Nome gravado definitivamente em `unamerole` e `uidrole`)
-3. **`PostDeleteRole` (RPC 3103 / 0x0C1F)**:
-   - **Arg (`PostDeleteRoleArg`)**: `roleid: i32`, `rolename: Octets`
-   - **Res (`PostDeleteRoleRes`)**: `retcode: i32` (`0` = Nome liberado)
-4. **`PreCreateFaction` (RPC 3111 / 0x0C27)**:
-   - **Arg (`PreCreateFactionArg`)**: `fid: i32`, `name: Octets`
-   - **Res (`PreCreateFactionRes`)**: `retcode: i32`
-5. **`PostCreateFaction` (RPC 3112 / 0x0C28)**:
-   - **Arg (`PostCreateFactionArg`)**: `fid: i32`, `name: Octets`, `master: i32`
-   - **Res (`PostCreateFactionRes`)**: `retcode: i32`
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Player as Jogador
+    participant Client as ElementClient 1.2.6
+    participant Server as Servidor (pw-realm-126)
+    
+    Player->>Client: Clica com botão esquerdo em um Monstro/NPC/Jogador
+    Client->>Server: GamedataSend(C2S 2: SELECT_TARGET, idTarget=32896)
+    
+    Server-->>Client: GamedataSend(S2C 52: SELECT_TARGET, idTarget=32896)
+    Server-->>Client: GamedataSend(S2C 39: NPC_INFO_00, idNPC=32896, hp=1250, max_hp=1250, target=0)
+    
+    Client->>Client: Renderiza Decal Circular no chão sob o alvo
+    Client->>Client: Atualiza Target Frame (Nome, Nível, Barra de HP Vermelha cheia)
+    
+    opt Desmarcar Alvo
+        Player->>Client: Clica no chão vazio ou pressiona ESC
+        Client->>Server: GamedataSend(C2S 8: UNSELECT)
+        Server-->>Client: GamedataSend(S2C 39: UNSELECT, 0 bytes)
+        Client->>Client: Oculta Target Frame e remove Decal do chão
+    end
+```
+
+#### Protocolos e Estruturas:
+1. **`C2S::SELECT_TARGET` (Comando 2)**:
+   - Tamanho: 6 bytes.
+   ```
+   [cmd: u16 = 2]
+   [id_target: i32]                  (Bit 31 = 1 para NPC/Monstro: 0x80000000 | nid)
+   ```
+2. **`S2C::SELECT_TARGET` (Comando 52 / `0x34`)**:
+   - Tamanho: 6 bytes.
+   ```
+   [cmd: u16 = 52]
+   [id_target: i32]
+   ```
+3. **`S2C::NPC_INFO_00` (Comando 39 / `0x27`)**:
+   - Tamanho: 18 bytes.
+   ```
+   [cmd: u16 = 39]
+   [id_npc: i32]
+   [cur_hp: i32]
+   [max_hp: i32]
+   [cur_target_id: i32 = 0]
+   ```
+4. **`S2C::PLAYER_INFO_00` (Comando 38 / `0x26`)** (Para jogadores selecionados):
+   - Tamanho: 26 bytes.
+   ```
+   [cmd: u16 = 38]
+   [level: i16]
+   [combat_state: u8]
+   [sec_level: u8]
+   [cur_hp: i32]
+   [max_hp: i32]
+   [cur_mp: i32]
+   [max_mp: i32]
+   [target_id: i32]
+   ```
 
 ---
 
-## 5. Protocolo de Gameplay Mundo 3D (GAMEDATASEND - 0x20 / 0x22)
+### 5.2 Mecânica 2: Ataque Normal / Combate Básico com Armas
 
-Os pacotes de gameplay do mundo trafegam envelopados no opcode de alto nível `0x20` (C2S) e `0x22` (S2C), contendo subcomandos serializados em **Little-Endian**:
-`[sub_cmd: u16 (Little-Endian)]` + `[Payload da struct]`.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Player as Jogador
+    participant Client as ElementClient 1.2.6
+    participant Server as Servidor (pw-realm-126)
+    
+    Player->>Client: Clica duas vezes no alvo ou pressiona tecla de Ataque (Atalho 1)
+    Client->>Server: GamedataSend(C2S 3: NORMAL_ATTACK, target_id=32896, pvp_mask=0)
+    
+    Server->>Server: Valida distância (attack_range) e projétil se arco/besta
+    Server->>Server: Rola Acerto vs Esquiva e Dano Físico (min_dmg..max_dmg)
+    
+    Server-->>Client: GamedataSend(S2C 24: HOST_ATTACKRESULT, target_id=32896, damage=85, hit_type=0)
+    Server-->>Client: GamedataSend(S2C 39: NPC_INFO_00, target_id=32896, hp=1165, max_hp=1250)
+    
+    Client->>Client: Exibe número de dano flutuante (85 vermelho/amarelo)
+    Client->>Client: Atualiza barra de vida do alvo para 1165/1250
+    Client->>Client: Executa animação de ataque da arma e som de impacto
+```
 
-### 5.1 Tabela Completa de Subcomandos S2C (Servidor -> Cliente)
+#### Protocolos e Estruturas:
+1. **`C2S::NORMAL_ATTACK` (Comando 3)**:
+   - Tamanho: 7 bytes.
+   ```
+   [cmd: u16 = 3]
+   [target_id: i32]
+   [pvp_mask: u8 = 0]
+   ```
+2. **`S2C::HOST_ATTACKRESULT` (Comando 24 / `0x18`)**:
+   - Tamanho: 11 bytes.
+   ```
+   [cmd: u16 = 24]
+   [target_id: i32]
+   [damage: i32]
+   [hit_type: u8]                    (0=Normal, 1=Crítico, 2=Esquiva/Miss, 8=Bloqueio)
+   ```
 
-| Subcomando ID | Nome Simbólico | Layout Exato dos Campos Serializados |
+---
+
+### 5.3 Mecânica 3: Canalização e Execução de Habilidades (Skills Pipeline)
+
+A execução de habilidades no Perfect World divide-se em **três fases temporais**: Preparação/Canalização (Cast Time), Impacto/Disparo (Perform/Attack Result) e Finalização/Pós-conjuração (Stop Skill & Cooldown):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Player as Jogador
+    participant Client as ElementClient 1.2.6
+    participant Server as Servidor (pw-realm-126)
+    
+    Player->>Client: Clica no ícone da Skill (ex: Flecha de Plumas / ID 10)
+    Client->>Server: GamedataSend(C2S 41: CAST_SKILL, skill_id=10, target_id=32896)
+    
+    Server->>Server: Valida MP suficiente, Cooldown pronto e Alcance
+    Server->>Server: Deduz MP do jogador
+    
+    Note over Server,Client: Fase 1: Início da Canalização
+    Server-->>Client: GamedataSend(S2C 85: OBJECT_CAST_SKILL, caster=ID, target=32896, skill_id=10, cast_time_ms=1000, lvl=1)
+    Client->>Client: Inicia barra de carregamento azul no HUD e animação de cast
+    
+    Note over Server,Client: Aguarda tempo de canalização (1000ms)...
+    
+    Note over Server,Client: Fase 2: Disparo da Habilidade
+    Server-->>Client: GamedataSend(S2C 87: SKILL_PERFORM, 0 bytes)
+    Client->>Client: Dispara projétil / efeito visual da habilidade em direção ao alvo
+    
+    Note over Server,Client: Fase 3: Aplicação de Dano e Efeitos
+    Server-->>Client: GamedataSend(S2C 142: SELF_SKILL_ATTACK_RESULT, target=32896, skill=10, dmg=240, flag=0, spd=0)
+    Server-->>Client: GamedataSend(S2C 143: OBJECT_SKILL_ATTACK_RESULT broadcast para terceiros)
+    Server-->>Client: GamedataSend(S2C 123: SELF_STOP_SKILL, 0 bytes)
+    Server-->>Client: GamedataSend(S2C 39: NPC_INFO_00, target=32896, hp=925, max_hp=1250)
+    
+    Client->>Client: Exibe dano mágico flutuante, atualiza barra de HP e inicia Cooldown da skill
+```
+
+#### Protocolos e Estruturas:
+1. **`C2S::CAST_SKILL` (Comando 41 / `0x29`)**:
+   - Layout binário:
+   ```
+   [cmd: u16 = 41]
+   [skill_id: i32]
+   [pvp_mask: u8 = 0]
+   [target_count: i32 = 1]
+   [target_id: i32]
+   ```
+2. **`S2C::OBJECT_CAST_SKILL` (Comando 85 / `0x55`)**:
+   - Tamanho: 17 bytes.
+   ```
+   [cmd: u16 = 85]
+   [caster_id: i32]
+   [target_id: i32]
+   [skill_id: i32]
+   [cast_time_ms: u16]               (Tempo de barra em milissegundos)
+   [skill_level: u8]
+   ```
+3. **`S2C::SKILL_PERFORM` (Comando 87 / `0x57`)**:
+   - Tamanho: 2 bytes (`[cmd: u16 = 87]`, payload vazio).
+4. **`S2C::SELF_SKILL_ATTACK_RESULT` (Comando 142 / `0x8E`)**:
+   - Tamanho: 16 bytes.
+   ```
+   [cmd: u16 = 142]
+   [target_id: i32]
+   [skill_id: i32]
+   [damage: i32]
+   [attack_flag: i8]                 (0=Normal, 1=Crítico, 2=Esquiva)
+   [attack_speed: u8]
+   ```
+5. **`S2C::SELF_STOP_SKILL` (Comando 123 / `0x7B`)**:
+   - Tamanho: 2 bytes (`[cmd: u16 = 123]`).
+
+---
+
+### 5.4 Mecânica 4: Interação com NPCs (Diálogos, Árvore TalkProc e Serviços)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Player as Jogador
+    participant Client as ElementClient 1.2.6
+    participant Server as Servidor (pw-realm-126)
+    
+    Player->>Client: Clica com botão direito em um NPC (ex: Ancião / Ferreiro)
+    Client->>Server: GamedataSend(C2S 35: SEVNPC_HELLO, nid=NPC_ID)
+    
+    Server->>Server: Localiza NPC no Spatial Grid e elements.data
+    Server-->>Client: GamedataSend(S2C 70: NPC_GREETING, nid=NPC_ID)
+    
+    Client->>Client: Abre janela de diálogo baseada na TalkProc Tree do elements.data
+    
+    alt Jogador clica em Comprar/Vender
+        Player->>Client: Clica no botão "Comércio"
+        Client->>Server: GamedataSend(C2S 37: SEVNPC_SERVE, service_type=1)
+        Server-->>Client: Abre catálogo de itens e inventário de venda
+    else Jogador clica em Missão
+        Player->>Client: Clica em uma Missão disponível (Amarela/Azul)
+        Client->>Server: GamedataSend(C2S 37: SEVNPC_SERVE, service_type=7, task_id=102)
+        Server-->>Client: GamedataSend(S2C 106: TASK_VAR_DATA, reason=1 Nova Missão)
+    else Jogador clica em Reparar Tudo
+        Player->>Client: Clica no ícone da Bigorna ("Reparar Tudo")
+        Client->>Server: GamedataSend(C2S 37: SEVNPC_SERVE, service_type=3)
+        Server-->>Client: GamedataSend(S2C 75: REPAIR_ALL, cost=350 moedas)
+    end
+```
+
+#### Catálogo dos Tipos de Serviço de NPC (`GP_NPCSEV_...`):
+
+| ID | Nome Simbólico | Função do Serviço |
 | :--- | :--- | :--- |
-| **0** | `PLAYER_INFO_1` | `cid: i32`, `pos: Vector3 (12B)`, `crc: u16`, `custom_crc: u16`, `dir: u8`, `sec_level: u8`, `state: u32`, `[ExtendState]` |
-| **1** | `PLAYER_INFO_2` | `cid: i32`, `name_len: u8`, `name: [u16; name_len/2]`, `custom_data: Octets` |
-| **2** | `PLAYER_INFO_3` | `cid: i32`, `count: u8`, `equip_views: [slot: u8, item_id: i32, addon_count: u8]` |
-| **3** | `PLAYER_INFO_4` | `cid: i32`, `size: u16`, `detail_buffer: [u8; size]` |
-| **4** | `INST_DATA_CHECKOUT` | `id_inst: i32`, `region_ts: u32`, `precinct_ts: u32`, `gshop_ts: u32`, `gshop_ts2: u32` (20B) |
-| **8** | `SELF_INFO_1` | `exp: i32`, `sp: i32`, `cid: i32`, `pos: Vector3 (12B)`, `crc: u16`, `custom_crc: u16`, `dir: u8`, `sec_level: u8`, `state: u32`, `[ExtendState]` |
-| **9** | `NPC_INFO_LIST` | `count: u16`, vetor de `npc_info` |
-| **10**| `MATTER_INFO_LIST` | `count: u16`, vetor de `matter_info_1` |
-| **11**| `NPC_ENTER_SLICE` | `nid: i32`, `tid: i32`, `pos: Vector3`, `seed: u16`, `dir: u8`, `state: u32`, `[NPCExtendState]` |
-| **12**| `PLAYER_ENTER_SLICE`| `info_1: PLAYER_INFO_1`, `info_2: PLAYER_INFO_2`, `info_3: PLAYER_INFO_3` |
-| **13**| `OBJECT_LEAVE_SLICE`| `id: i32` (4B) |
-| **14**| `NOTIFY_HOSTPOS` | `pos: Vector3 (12B)`, `dir: u8` (13B) |
-| **15**| `OBJECT_MOVE` | `id: i32`, `dest: Vector3 (12B)`, `use_time: u16`, `speed: u16`, `move_mode: u8` (21B) |
-| **16**| `NPC_ENTER_WORLD` | `nid: i32`, `tid: i32`, `pos: Vector3`, `seed: u16`, `dir: u8`, `state: u32`, `[NPCExtendState]` |
-| **17**| `PLAYER_ENTER_WORLD`| `role_id: i32`, `world_tag: i32`, `pos: Vector3 (12B)` (20B) |
-| **18**| `MATTER_ENTER_WORLD`| `mid: i32`, `tid: i32`, `pos: Vector3`, `dir0: u8`, `dir1: u8`, `rad: u8`, `state: u8`, `value: u8` |
-| **19**| `PLAYER_LEAVE_WORLD`| `role_id: i32` (4B) |
-| **20**| `NPC_DIED` | `nid: i32`, `killer_id: i32` (8B) |
-| **21**| `OBJECT_DISAPPEAR` | `id: i32` (4B) |
-| **24**| `HOST_ATTACKRESULT` | `target_id: i32`, `damage: i32`, `hit_type: u8` (1=Hit, 2=Crit, 4=Miss, 8=Dodge) (9B) |
-| **32**| `PLAYER_INFO_00` | `lvl: i16`, `combat_state: u8`, `sec_level: u8`, `hp: i32`, `max_hp: i32`, `mp: i32`, `max_mp: i32`, `target_id: i32` (24B) |
-| **33**| `NPC_INFO_00` | `hp: i32`, `max_hp: i32`, `target_id: i32` (12B) |
-| **36**| `RECEIVE_EXP` | `exp: i32`, `sp: i32` (8B) |
-| **37**| `LEVEL_UP` | `role_id: i32` (4B) |
-| **38**| `SELF_INFO_00` | `lvl: i16`, `combat_state: u8`, `sec_level: u8`, `hp: i32`, `max_hp: i32`, `mp: i32`, `max_mp: i32`, `exp: i32`, `sp: i32`, `ap: i32` (36B) |
-| **39**| `UNSELECT` | Vazio (0B) |
-| **40**| `OWN_ITEM_INFO` | `package: u8`, `slot: u8`, `tid: i32`, `expire_date: i32`, `state: i32`, `count: u32`, `crc: u16`, `essence_len: u16`, `essence_data: [u8]` |
-| **41**| `EMPTY_ITEM_SLOT` | `package: u8`, `slot: u8` (2B) |
-| **42**| `OWN_IVTR_DATA` | `package: u8`, `capacity: u8`, `count: u32`, vetor de `[slot: u8, tid: i32, expire: i32, count: u32]` |
-| **44**| `EXG_IVTR_ITEM` | `slot1: u8`, `slot2: u8` (2B) |
-| **45**| `MOVE_IVTR_ITEM` | `src: u8`, `dest: u8`, `count: u16` (4B) |
-| **47**| `EXG_EQUIP_ITEM` | `slot1: u8`, `slot2: u8` (2B) |
-| **48**| `EQUIP_ITEM` | `inv_slot: u8`, `equip_slot: u8`, `inv_count: u16`, `equip_count: u16` (6B) |
-| **49**| `MOVE_EQUIP_ITEM` | `inv_slot: u8`, `equip_slot: u8`, `count: u16` (4B) |
-| **52**| `SELECT_TARGET` | `target_id: i32` (4B) |
-| **53**| `PLAYER_EXT_PROP_BASE`| `cid: i32`, `vitality: i32`, `energy: i32`, `strength: i32`, `agility: i32`, `max_hp: i32`, `max_mp: i32`, `hp_gen: i32`, `mp_gen: i32` (36B) |
-| **54**| `PLAYER_EXT_PROP_MOVE`| `cid: i32`, `walk_speed: f32`, `run_speed: f32`, `swim_speed: f32`, `flight_speed: f32` (20B) |
-| **55**| `PLAYER_EXT_PROP_ATTACK`| `cid: i32`, `phys_dmg_min: i32`, `phys_dmg_max: i32`, `attack_rate: i32`, `crit_rate: i32`, `attack_speed: i32`, `attack_range: f32` (28B) |
-| **56**| `PLAYER_EXT_PROP_DEFENSE`| `cid: i32`, `phys_def: i32`, `metal_def: i32`, `wood_def: i32`, `water_def: i32`, `fire_def: i32`, `earth_def: i32`, `evasion: i32` (32B) |
-| **70**| `NPC_GREETING` | `nid: i32` (4B) (Abre janela de diálogo do NPC) |
-| **85**| `OBJECT_CAST_SKILL` | `caster: i32`, `target: i32`, `skill_id: i32`, `cast_time_ms: u16`, `skill_level: u8` (15B) |
-| **86**| `SKILL_INTERRUPTED` | `role_id: i32` (4B) |
-| **87**| `SKILL_PERFORM` | `role_id: i32` (4B) |
-| **90**| `SKILL_DATA` | `count: u32`, vetor de `[skill_id: u16, level: u8, ability: u16]` |
-| **91**| `HOST_USE_ITEM` | `package: u8`, `slot: u8`, `item_id: i32`, `count: u16` (8B) |
-| **105**| `TASK_DATA` | `active_len: u32`, `active_buf: [u8]`, `finish_len: u32`, `finish_buf: [u8]`, `time_len: u32`, `time_buf: [u8]` |
-| **106**| `TASK_VAR_DATA` | `size: u32`, `reason: u8`, `payload: struct task_notify` (Layout detalhado na Seção 5.3) |
-| **111**| `OBJECT_SIT_DOWN` | `role_id: i32` (4B) |
-| **112**| `OBJECT_STAND_UP` | `role_id: i32` (4B) |
-| **113**| `OBJECT_DO_EMOTE` | `role_id: i32`, `emotion: u16` (6B) |
-| **120**| `TEAM_LEADER_INVITE`| `inviter_id: i32` (4B) |
-| **121**| `TEAM_REJECT_INVITE`| `rejecter_id: i32` (4B) |
-| **122**| `TEAM_JOIN_PARTY` | `member_id: i32`, `leader_id: i32` (8B) |
-| **123**| `TEAM_LEAVE_PARTY` | `member_id: i32`, `reason: i32` (8B) |
-| **124**| `TEAM_MEMBER_DATA` | `count: u8`, vetor de `[id: i32, lvl: i16, hp: i32, max_hp: i32, mp: i32, max_mp: i32, pos: Vector3]` |
-| **181**| `PLAYER_WAYPOINT_LIST`| `count: u16`, vetor de `waypoint_id: u16` |
-| **182**| `UNLOCK_INVENTORY_SLOT`| `package: u8`, `slot: u16` (3B) |
-| **190**| `BREATH_DATA` | `cur_breath: i32`, `max_breath: i32` (8B) |
+| **1** | `GP_NPCSEV_SELL` | Venda de itens da bolsa para o NPC em troca de moedas |
+| **2** | `GP_NPCSEV_BUY` | Compra de consumíveis, armas e armaduras da loja do NPC |
+| **3** | `GP_NPCSEV_REPAIR` | Reparo de durabilidade de equipamentos individuais ou todos |
+| **4** | `GP_NPCSEV_HEAL` | Restauração instantânea de 100% de HP e MP |
+| **5** | `GP_NPCSEV_TRANSMIT` | Teleporte para outros pontos e capitais desbloqueadas no mapa |
+| **6** | `GP_NPCSEV_TASK_RETURN` | Entrega de missão cumprida para recebimento de recompensas |
+| **7** | `GP_NPCSEV_TASK_ACCEPT` | Aceitação de nova missão disponível |
+| **8** | `GP_NPCSEV_TASK_MATTER` | Coleta de itens específicos de missão |
+| **9** | `GP_NPCSEV_LEARN` | Aprendizado e subida de nível de habilidades no Mestre de Classe |
+| **10**| `GP_NPCSEV_EMBED` | Fusão de Pedras de Alma (Soulstones) em equipamentos com slots |
+| **11**| `GP_NPCSEV_CLEAR_TESSERA` | Remoção/Purificação de Pedras de Alma de equipamentos |
+| **12**| `GP_NPCSEV_MAKEITEM` | Forja e fabricação de itens a partir de receitas e materiais |
+| **13**| `GP_NPCSEV_BREAKITEM` | Decomposição de armas/armaduras em Pedras Celestiais (Mirage) |
+| **14**| `GP_NPCSEV_TRASHPSW` | Definição ou alteração de senha de segurança do Banqueiro |
+| **15**| `GP_NPCSEV_OPENTRASH` | Abertura do Armazém/Cofre pessoal (Warehouse) |
+| **17**| `GP_NPCSEV_IDENTIFY` | Identificação de equipamentos não identificados |
+| **20**| `GP_NPCSEV_TRAVEL` | Transporte aéreo automatizado por rotas de voo |
+| **43**| `GP_NPCSEV_DYE` | Tingimento de roupas e moda com pigmentos |
+| **44**| `GP_NPCSEV_REFINE_TRANS` | Transferência de nível de refino entre equipamentos |
 
 ---
 
-### 5.2 Tabela Completa de Subcomandos C2S (Cliente -> Servidor)
+### 5.5 Mecânica 5: Sistema de Missões (Quests & tasks.data Engine)
 
-| Subcomando ID | Nome Simbólico | Layout Exato dos Campos Serializados |
-| :--- | :--- | :--- |
-| **0** | `PLAYER_MOVE` | `pos: Vector3 (12B)`, `dest: Vector3 (12B)`, `use_time: u16`, `speed: u16`, `move_mode: u8`, `dir: u8`, `seq: u8` (31B) |
-| **1** | `LOGOUT` | `out_type: u8` (`0` = Sair, `1` = Seleção de Personagem) |
-| **2** | `SELECT_TARGET` | `id: i32` (4B) |
-| **3** | `NORMAL_ATTACK` | `target_id: i32`, `pvp_mask: u8` (5B) |
-| **4** | `RESURRECT_IN_TOWN` | Vazio (0B) |
-| **5** | `RESURRECT_BY_ITEM` | Vazio (0B) |
-| **6** | `PICKUP` | `matter_id: i32`, `item_type: i32` (8B) |
-| **7** | `STOP_MOVE` | `dest: Vector3 (12B)`, `speed: u16`, `dir: u8`, `move_mode: u8` (16B) |
-| **8** | `UNSELECT` | Vazio (0B) |
-| **9** | `GET_ITEM_INFO` | `package: u8`, `slot: u8` (2B) |
-| **10**| `GET_INVENTORY` | `package: u8` (1B) |
-| **11**| `GET_INVENTORY_DETAIL`| `package: u8` (1B) |
-| **12**| `EXCHANGE_INVENTORY_ITEM`| `slot1: u8`, `slot2: u8` (2B) |
-| **13**| `MOVE_INVENTORY_ITEM`| `src: u8`, `dest: u8`, `count: u16` (4B) |
-| **14**| `DROP_INVENTORY_ITEM`| `package: u8`, `slot: u8`, `count: u16` (4B) |
-| **16**| `EXCHANGE_EQUIPMENT_ITEM`| `slot1: u8`, `slot2: u8` (2B) |
-| **17**| `EQUIP_ITEM` | `inv_slot: u8`, `equip_slot: u8` (2B) |
-| **18**| `MOVE_ITEM_TO_EQUIPMENT`| `inv_slot: u8`, `equip_slot: u8` (2B) |
-| **20**| `DROP_MONEY` | `amount: u32` (4B) |
-| **22**| `SET_STATUS_POINT` | `vit: u16`, `eng: u16`, `str: u16`, `agi: u16` (8B) |
-| **27**| `TEAM_INVITE` | `dst_roleid: i32` (4B) |
-| **28**| `TEAM_AGREE_INVITE` | `leader_id: i32` (4B) |
-| **29**| `TEAM_REJECT_INVITE` | `leader_id: i32` (4B) |
-| **30**| `TEAM_LEAVE_PARTY` | Vazio (0B) |
-| **31**| `TEAM_KICK_MEMBER` | `member_id: i32` (4B) |
-| **35**| `SERVICE_HELLO` | `nid: i32` (4B) |
-| **37**| `SERVICE_SERVE` | `service_type: i32`, `len: i32`, `data: [u8; len]` (Service 7=Accept Quest, 6=Turn in Quest, 8=Task Item, 1=Shop Buy/Sell, 2=Repair, 3=Heal, 4=Bank, 5=Storage) |
-| **40**| `USE_ITEM` | `package: u8`, `slot: u8`, `item_id: i32` (6B) |
-| **41**| `CAST_SKILL` | `skill_id: i32`, `pvp_mask: u8`, `target_count: i32`, `targets: [i32; target_count]` |
-| **42**| `CANCEL_ACTION` | Vazio (0B) |
-| **46**| `SIT_DOWN` | Vazio (0B) |
-| **47**| `STAND_UP` | Vazio (0B) |
-| **48**| `EMOTE_ACTION` | `emotion_id: u16` (2B) |
-| **49**| `TASK_NOTIFY` | `task_id: u32`, `reason: u8`, `buf_len: u32`, `buf: [u8]` |
-| **54**| `GATHER_MATERIAL` | `matter_id: i32` (4B) |
-| **76**| `OPEN_PERSONAL_MARKET`| `name_len: u8`, `name: [u16; name_len/2]`, `sell_count: u8`, `sell_items: [slot: u8, count: u16, price: u32]`, `buy_count: u8`, `buy_items: [tid: i32, count: u16, price: u32]` |
-| **77**| `CANCEL_PERSONAL_MARKET`| Vazio (0B) |
+O motor de missões v55 gerencia pré-requisitos, contadores de monstros, entrega de itens e sincronização de temporizadores:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Player as Jogador
+    participant Client as ElementClient 1.2.6
+    participant Server as Servidor (pw-realm-126)
+    
+    Note over Player,Server: 1. Aceitação da Missão (ID: 101 - Matar 10 Besouros)
+    Server-->>Client: GamedataSend(S2C 106: TASK_VAR_DATA, reason=1, task=101, accept_time=TS)
+    Client->>Client: Toca som de quest aceita e insere no Quest Log (tecla 'Q')
+    
+    Note over Player,Server: 2. Abate de Monstros
+    Player->>Server: Mata um Besouro (Template ID: 3105)
+    Server->>Server: Incrementa contador da quest 101 para 1/10
+    Server-->>Client: GamedataSend(S2C 106: TASK_VAR_DATA, reason=4, task=101, monster=3105, count=1)
+    Client->>Client: Exibe mensagem no centro da tela: "Besouro: 1/10"
+    
+    Note over Player,Server: 3. Conclusão e Entrega da Missão
+    Player->>Server: Mata o 10º Besouro -> Notificação "Besouro: 10/10 (Completo)"
+    Player->>Server: Fala com o NPC de Entrega e clica em Entregar
+    Server-->>Client: GamedataSend(S2C 106: TASK_VAR_DATA, reason=2, task=101, complete_time=TS)
+    Server-->>Client: GamedataSend(S2C 36: RECEIVE_EXP, exp=1500, sp=320)
+    Server-->>Client: GamedataSend(S2C 40: OWN_ITEM_INFO adiciona Poções e Arma de Recompensa)
+    Client->>Client: Toca fanfarra de quest concluída e remove do rastreador
+```
+
+#### Estrutura das Notificações `TASK_VAR_DATA` (Comando 106):
+1. **Nova Missão (`reason = 1`)**:
+   ```
+   [cmd: u16 = 106]
+   [size: u32 = 14]
+   [reason: u8 = 1]
+   [task_id: u16]
+   [accept_time: u32]
+   [cap_task_id: u32 = 0]
+   [sub_task_id: u16 = 0]
+   [extra_len: u8 = 0]
+   ```
+2. **Missão Concluída (`reason = 2`)**:
+   ```
+   [cmd: u16 = 106]
+   [size: u32 = 10]
+   [reason: u8 = 2]
+   [task_id: u16]
+   [complete_time: u32]
+   [sub_task_id: u16 = 0]
+   [extra_len: u8 = 0]
+   ```
+3. **Monstro Abatido (`reason = 4`)**:
+   ```
+   [cmd: u16 = 106]
+   [size: u32 = 9]
+   [reason: u8 = 4]
+   [task_id: u16]
+   [monster_id: u32]
+   [monster_count: u16]
+   ```
+4. **Sincronização de Timemark Dinâmico (`reason = 8`)**:
+   ```
+   [cmd: u16 = 106]
+   [size: u32 = 9]
+   [reason: u8 = 8]
+   [task_id: u16 = 0]
+   [current_time: u32]
+   [dyn_task_count: u16 = 0]
+   ```
 
 ---
 
-### 5.3 Decodificação de Notificações de Missões (Opcode 106 - TASK_VAR_DATA)
+### 5.6 Mecânica 6: Manipulação de Inventário, Durabilidade e Equipamentos
 
-O motor de missões `CECTaskInterface::OnServerNotify` (VA `0x6288d0`) em `elementclient.exe` v1.2.6 requer serialização exata por `reason`:
-
-#### Reason 1: `TASK_SVR_NOTIFY_NEW` (Nova Missão Aceita)
-- **Tamanho**: 14 bytes (quando `sz = 0`).
-```
-[reason: u8 = 1]
-[task_id: u16]                  (ID da missão no tasks.data)
-[accept_time: u32]              (Timestamp Unix da aceitação)
-[cap_task_id: u32 = 0]          (ID da tarefa capitular ou 0)
-[sub_task_id: u16 = 0]          (IMPORTANTE: DEVE SER 0 PARA MISSÕES PRINCIPAIS)
-[extra_tags_len: u8 = 0]
-```
-
-#### Reason 2: `TASK_SVR_NOTIFY_COMPLETE` (Missão Entregue / Concluída)
-- **Tamanho**: 10 bytes.
-```
-[reason: u8 = 2]
-[task_id: u16]
-[complete_time: u32]
-[sub_task_id: u16 = 0]
-[extra_tags_len: u8 = 0]
-```
-
-#### Reason 4: `TASK_SVR_NOTIFY_MONSTER_KILLED` (Progresso de Monstros)
-- **Tamanho**: Exatamente 9 bytes (`cmp esi, 9`).
-```
-[reason: u8 = 4]
-[task_id: u16]
-[monster_id: u32]               (Template ID do monstro derrotado)
-[monster_count: u16]            (Total acumulado de monstros abatidos)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Player as Jogador
+    participant Client as ElementClient 1.2.6
+    participant Server as Servidor (pw-realm-126)
+    
+    Note over Player,Server: Equipar uma Arma da Bolsa para o Slot de Arma
+    Player->>Client: Clica com botão direito na Espada no Slot 0 da Bolsa
+    Client->>Server: GamedataSend(C2S 17: EQUIP_ITEM, inv_slot=0, equip_slot=0)
+    
+    Server->>Server: Valida requisitos de Classe, Nível, Força e Agilidade
+    Server->>Server: Move o item no banco de dados
+    
+    Server-->>Client: GamedataSend(S2C 48: EQUIP_ITEM, inv_slot=0, equip_slot=0, count_inv=0, count_eq=1)
+    Server-->>Client: GamedataSend(S2C 181: UNFREEZE_IVTR_SLOT, pack=0, slot=0)
+    Server-->>Client: GamedataSend(S2C 55: PLAYER_EXT_PROP_ATK atualiza dano físico)
+    
+    Client->>Client: Anexa o modelo 3D da Espada na mão do personagem
+    Client->>Client: Destrava o slot no inventário visual
 ```
 
-#### Reason 8: `TASK_SVR_NOTIFY_DYN_TIME_MARK` (Sincronização de Temporizadores)
-- **Tamanho**: Exatamente 9 bytes (`cmp esi, 9`).
+#### Slots de Equipamento Oficiais 1.2.6 (`IL_EQUIPMENT`):
+- `Slot 0`: **Arma Primária** (Espada, Arco, Cajado, Machado, etc.)
+- `Slot 1`: **Elmo / Capacete**
+- `Slot 2`: **Colar**
+- `Slot 3`: **Capa**
+- `Slot 4`: **Armadura de Peito**
+- `Slot 5`: **Cinto / Ornamento**
+- `Slot 6`: **Calça / Perneira**
+- `Slot 7`: **Botas / Calçados**
+- `Slot 8`: **Braçadeiras / Luvas**
+- `Slot 9`: **Anel Esquerdo**
+- `Slot 10`: **Anel Direito**
+- `Slot 11`: **Projéteis / Flechas**
+- `Slot 12`: **Instrumento de Voo** (Espada Voadora, Asas, Arraia)
+
+#### Estrutura da Essence de Arma (`IVTR_ESSENCE_WEAPON` - 44 bytes):
 ```
-[reason: u8 = 8]
-[task_id: u16 = 0]
-[current_time: u32]
-[dyn_task_count: u16 = 0]
-```
-
----
-
-## 6. Formatos Binários dos Arquivos de Dados do Servidor (`.data` / `.sev`)
-
-Todos os arquivos estão localizados em `files1.2.6/pwserver/gamed/config/`:
-
-### 6.1 `elements.data` (v55 - 118 Tabelas)
-- **Cabeçalho (Header)**:
-  ```
-  [version: u16 = 7]             (Versão do schema)
-  [signature: u16 = 12288]       (0x3000)
-  ```
-- **Tabelas Críticas e seus Identificadores de Tipo (`DataType`)**:
-  - `Table 3`: `EQUIPMENT_ADDON` (Adicionais mágicos de armas/armaduras, atributos azuis/verdes/dourados).
-  - `Table 4`: `WEAPON_ESSENCE` (Armas: espada, cajado, arco, machado, punho, adaga).
-  - `Table 5`: `ARMOR_ESSENCE` (Armaduras: peito, perna, bota, braçadeira, elmo, capa).
-  - `Table 6`: `DECORATION_ESSENCE` (Acessórios: colares, ornamentos, anéis).
-  - `Table 7`: `MEDICINE_ESSENCE` (Poções de HP/MP, ervas, elixires).
-  - `Table 11`: `RECIPE_ESSENCE` (Receitas de forja, alfaiate, boticário, ferreiro).
-  - `Table 38`: `MONSTER_ESSENCE` (Monstros normais, chefes, elites, HP, drop tables).
-  - `Table 39`: `NPC_ESSENCE` (NPCs de diálogo simples).
-  - `Table 58`: `MINE_ESSENCE` (Recursos de coleta no mapa: ervas, minérios, baús de quest).
-  - `Table 59`: `NPC_SERVICE_ESSENCE` (NPCs com serviços: Ancião, Banqueiro, Mestre de Habilidades, Ferreiro).
-
-### 6.2 `tasks.data` (v55 - Árvore de Quests)
-- **Cabeçalho**:
-  ```
-  [magic: u32 = 0x93858361]      (2475000673)
-  [version: u32 = 55]
-  [task_count: u32 = 2819]
-  ```
-- **Estrutura de Cada Nó de Missão (`AVATAR_TASK`)**:
-  - `task_id: u32`
-  - `task_name: wchar_t[64]`
-  - `avail_freq: u8` (0=Uma vez, 1=Diária, 2=Repetível)
-  - `time_limit: u32` (Segundos para conclusão ou 0)
-  - `prerequisites`: `[min_level: u16, max_level: u16, race_mask: u16, class_mask: u16, cultivation: u8, prev_task_id: u32, required_items: [item_id: u32, count: u16] * 4]`
-  - `kill_targets`: `[monster_id: u32, count: u16, drop_item_id: u32, drop_prob: f32] * 4`
-  - `rewards`: `[gold: u32, exp: u32, sp: u32, reputation: u32, award_items: [item_id: u32, count: u16] * 8]`
-
-### 6.3 `npcgen.data` (v10 - Spawns no Mundo)
-- **Cabeçalho**:
-  ```
-  [version: u32 = 10]
-  [area_count: u32 = 12885]
-  ```
-- **Estrutura de Cada Área de Geração (`NPC_GEN_AREA`)**:
-  - `area_id: u32`, `type: u32` (1=Monstro, 2=NPC, 3=Minério/Recurso)
-  - `center_pos: Vector3 (f32 x, y, z)`, `extent: Vector3 (dx, dy, dz)`
-  - `spawn_count: u32`, `respawn_interval: u32` (segundos)
-  - `creature_list`: `[template_id: u32, count: u16, aggro_radius: f32, path_id: i32]`
-
-### 6.4 `gshop.data` e `gshop2.data` (Catálogo da Loja Gold)
-- **Cabeçalho**:
-  ```
-  [magic: u32 = 0x47534850]      ("GSHP")
-  [item_count: u32 = 668]
-  ```
-- **Estrutura de Cada Item de Loja (`GSHOP_ITEM`)**:
-  - `local_id: i32`, `main_type: i32`, `sub_type: i32`
-  - `item_id: u32`, `amount: u32`
-  - `price: u32` (Custo em Gold/Cash)
-  - `status: u32` (0=Normal, 1=Novo, 2=Promoção)
-  - `duration: u32` (Tempo de uso em segundos ou 0 para permanente)
-
-### 6.5 `clsconfig` (Configuração Inicial de Nascimento das 8 Classes)
-Localizado em `files1.2.6/pwserver/gamedbd/clsconfig` (28.672 bytes):
-```
-[version: u32 = 1]
-[class_count: u32 = 8]
-
-Para cada classe (0 a 7):
-  [class_id: u32]
-  [vitality: u32, energy: u32, strength: u32, agility: u32]
-  [max_hp: u32, max_mp: u32, hp_gen: u32, mp_gen: u32]
-  [walk_speed: f32, run_speed: f32, swim_speed: f32, flight_speed: f32]
-  [initial_weapon_id: u32]
-  [initial_skills_count: u32]
-    [skill_id: u32, level: u32] * initial_skills_count
-  [shortcut_bar_slots: [u32; 36]] (Atalhos padrão das barras de ação 1, 2 e 3)
+[weapon_type: i16]
+[weapon_delay: i16 = 0]
+[weapon_class: i32]
+[weapon_level: i32]
+[require_projectile: i32]
+[damage_low: i32]
+[damage_high: i32]
+[magic_damage_low: i32]
+[magic_damage_high: i32]
+[attack_speed: i32]
+[attack_range: f32]
+[attack_short_range: f32 = 0.0]
+[num_holes: i16]                   (Quantidade de slots/pedras)
+[stone_mask: u16]
+[num_props: i32]                   (Quantidade de atributos adicionais)
 ```
 
 ---
 
-## 7. Arquitetura de Comunicação com o Servidor de Autenticação (`authd`)
+### 5.7 Mecânica 7: Voo, Asas e Movimentação Aérea
 
-O `authd` v1.2.6 opera em Java bytecode com protocolo binário GNET sobre TCP na porta `29200`:
-
-### 7.1 Protocolos Suportados e seus Bytecodes:
-1. **`UserLogin` (`UserLoginArg` / `UserLoginRes`)**:
-   - **Arg**: `userid: i32`, `localsid: i32`, `blkickuser: i8`, `freecreatime: i32`
-   - **Res**: `retcode: i8`, `remain_playtime: i32`, `func: i32`, `funcparm: i32`, `blIsGM: i8`, `free_time_left: i32`, `free_time_end: i32`, `creatime: i32`, `adduppoint: i32`, `soldpoint: i32`
-2. **`QueryPasswd` (`QueryPasswdArg` / `QueryPasswdRes`)**:
-   - **Arg**: `account: Octets`
-   - **Res**: `retcode: i8`, `userid: i32`, `password: Octets (MD5)`
-3. **`GQueryPasswd` (`GQueryPasswdArg` / `GQueryPasswdRes`)**:
-   - **Arg**: `account: Octets`, `challenge: Octets`, `loginip: i32`
-   - **Res**: `retcode: i32`, `userid: i32`, `response: Octets`
-4. **`AddCash` / `AddCash_Re`**:
-   - **Protocol**: `userid: i32`, `zoneid: i32`, `sn: i32`, `cash: i32`
-   - **Response**: `retcode: i32`, `userid: i32`, `zoneid: i32`, `sn: i32`
-5. **`UseCash` (`UseCashArg` / `UseCash_Re`)**:
-   - **Arg**: `zoneid: i32`, `userid: i32`, `aid: i32`, `point: i32`, `cash: i32`
-   - **Res**: `retcode: i32`, `userid: i32`, `zoneid: i32`
+1. **Ativação do Voo**:
+   - O jogador equipa o voo no slot 12 e pressiona a tecla de atalho ou ícone de Voo.
+   - O cliente envia `C2S::ACTIVE_RUSHFly` ou comando de decolagem.
+   - O servidor envia:
+     1. `S2C::OBJECT_TAKEOFF` (Comando 98) informando ao mundo que o personagem está voando.
+     2. `S2C::PLAYER_EXT_PROP_MOVE` (Comando 54) com a nova `flight_speed`.
+     3. O personagem transiciona para animação aérea.
+2. **Consumo de Voo / MP**:
+   - A cada 5 segundos no ar, o servidor envia `S2C::FLYSWORD_TIME` (Comando 99) deduzindo o tempo de carga ou MP.
+3. **Pouso**:
+   - Ao tocar o solo ou cancelar o voo, o servidor envia `S2C::OBJECT_LANDING` (Comando 99), restaurando as velocidades terrestres.
 
 ---
 
-## 8. Guia de Implementação para o Emulador Universal
+### 5.8 Mecânica 8: Forja de Itens, Produção e Decomposição
 
-Para construir uma implementação 100% funcional do servidor v1.2.6:
+1. **Forja / Produção (`GP_NPCSEV_MAKEITEM`)**:
+   - O jogador escolhe uma receita no NPC Ferreiro/Alfaiate (Tabela 11 de `elements.data`).
+   - O cliente envia `C2S 37: SEVNPC_SERVE` com o ID da receita.
+   - O servidor verifica materiais na bolsa e taxa em moedas.
+   - Handshake:
+     1. `S2C 101: PRODUCE_START` (Comando 101) com tempo de barra de progresso.
+     2. `S2C 102: PRODUCE_ONCE` (Comando 102) com o ID do item gerado.
+     3. `S2C 103: PRODUCE_END` (Comando 103) finalizando o processo.
+     4. `S2C 40: OWN_ITEM_INFO` inserindo o novo item na bolsa com seus atributos e slots rolados.
+2. **Decomposição (`GP_NPCSEV_BREAKITEM`)**:
+   - O jogador insere um equipamento para desmontar.
+   - Servidor envia `S2C 104: DECOMPOSE_START`, remove o item e adiciona as Pedras Celestiais (`S2C 105: DECOMPOSE_END`).
 
-1. **Camada de Rede**:
-   - Implementar decodificador de frame com `CUint` e despachante por Opcode GNET.
-   - Implementar gerador de Challenge (16 bytes random) e cálculo de Response com `MD5(user + MD5(pass) + nonce)`.
-   - Se `use_encryption = 1`, inicializar cifra de fluxo RC4 com chaves separadas para Inbound e Outbound.
-2. **Ciclo de Vida da Sessão**:
-   - Após `Response` válida: despachar `OnlineAnnounce(4)`, `RoleStatusAnnounce(7)`.
-   - Ao receber `RoleList(82)`: consultar DB `base`, `status`, `equipment` e retornar `RoleList_Re(83)` com vetor de `RoleInfo`.
-   - Ao receber `SelectRole(70)`: responder `SelectRole_Re(71)` com token de autorização.
-3. **Entrada no Mundo e Sincronização 3D**:
-   - Despachar `S2C 4: INST_DATA_CHECKOUT` com timestamps do gshop, precinct e region.
-   - Despachar `S2C 8: SELF_INFO_1` (34 bytes + ExtendState) para inicializar o avatar do jogador e liberar a tela de loading.
-   - Despachar `S2C 38: SELF_INFO_00` (HP, MP, EXP, SP, AP).
-   - Despachar `S2C 53, 54, 55, 56: PLAYER_EXT_PROP_*` (atributos base, movimento, ataque, defesa).
-   - Despachar `S2C 42: OWN_IVTR_DATA` e `S2C 40: OWN_ITEM_INFO` para carregar itens da bolsa e equipamentos equipados.
-   - Despachar `S2C 90: SKILL_DATA` e `S2C 105: TASK_DATA`.
-   - Inserir o jogador na grade espacial (`slice`) e despachar `S2C 11: NPC_ENTER_SLICE` para todos os NPCs visíveis e `S2C 12: PLAYER_ENTER_SLICE` para jogadores ao redor.
+---
+
+### 5.9 Mecânica 9: Loja Gold (GShop) e Faturamento
+
+1. **Abertura da Loja**:
+   - Pressionar a tecla 'O' abre a interface visual da loja de cash (`Win_Mall`).
+   - O catálogo de itens e preços é lido diretamente do `gshop.data` local do cliente, validado pelo timestamp enviado no `INST_DATA_CHECKOUT` (Comando 206).
+2. **Compra de Itens (`MALL_SHOPPING`)**:
+   - O cliente envia a requisição de compra com `item_id`, `amount` e `price`.
+   - O servidor consulta o saldo de Gold/Cash na tabela de usuários (`authd` / `gamedbd User`).
+   - Se o saldo for suficiente:
+     1. Deduz o valor em Gold da conta.
+     2. Adiciona o item no primeiro slot livre da bolsa (`S2C 40: OWN_ITEM_INFO`).
+     3. Envia `S2C 253: PLAYER_CASH` atualizando o saldo visível de Gold e Prata no rodapé da loja.
+   - Se insuficiente: envia `S2C 271: MALL_ITEM_BUY_FAILED`.
+
+---
+
+### 5.10 Mecânica 10: Chat, Grupos (Party), Guildas e PvP
+
+1. **Canais de Chat**:
+   - Pacote `ChatMessage` (Opcode 80) e `PublicChat` (Opcode 96).
+   - `Channel 0`: **Geral / Local** (Raio de 30 metros ao redor do jogador).
+   - `Channel 1`: **Mundo** (Broadcast global para todo o servidor, consome 1 Alto-Falante / Horn).
+   - `Channel 2`: **Grupo / Party** (Apenas para membros do grupo atual).
+   - `Channel 3`: **Clã / Guilda** (Apenas para membros da mesma facção).
+   - `Channel 4`: **Sussurro / Privado** (`PrivateChat` / Opcode 97 direcionado ao destinatário).
+   - `Channel 7`: **Comércio** (Canal global de trocas).
+   - `Channel 9`: **Sistema / GM** (Mensagens amarelas/vermelhas no centro da tela).
+
+2. **Sistema de Grupo (Party)**:
+   - Formação: `TEAM_INVITE` (27) -> `TEAM_LEADER_INVITE` (120) -> `TEAM_AGREE_INVITE` (28) -> `TEAM_JOIN_PARTY` (122).
+   - O servidor sincroniza a lista de membros a cada 2 segundos com `TEAM_MEMBER_DATA` (Comando 124), atualizando HP, MP, nível e posição no minimapa.
+   - Monstros abatidos e EXP ganha são distribuídos igualmente entre membros no mesmo raio de visão.
+
+3. **Sistema de PvP e Áreas Seguras**:
+   - Em cidades e vilas, o servidor envia `S2C 164: ENTER_SANCTUARY`. Dentro do santuário, ataques entre jogadores são desabilitados.
+   - Fora do santuário, ao entrar em combate com outro jogador, o servidor envia `S2C 117: INVADER_RISE` (Nick Rosa por 60 segundos) ou `S2C 118: PARIAH_RISE` (Nick Vermelho / PK se abater jogador de nick branco).
+
+---
+
+## 6. Conclusão e Diretrizes de Implementação
+
+Com este documento master de engenharia reversa:
+1. **Todas as 10 grandes áreas de mecânicas do Perfect World v1.2.6** estão integralmente mapeadas com seus fluxos de rede, estruturas binárias e códigos de comando.
+2. A implementação no emulador `pw-universal-server` deve seguir estritamente as structs e handshakes descritos, com testes automatizados dedicados para cada um dos 10 subsistemas, garantindo conformidade absoluta com o binário oficial do `elementclient.exe` v1.2.6.

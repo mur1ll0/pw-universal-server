@@ -165,6 +165,7 @@ impl CharacterRepository {
                     durability: item.durability as u32,
                     max_durability: item.max_durability as u32,
                     bind_status: 0,
+                    octets: Vec::new(),
                     custom_attributes: serde_json::json!({}),
                 };
                 let _ = self.item_repo.upsert_item(&record).await;
@@ -191,6 +192,7 @@ impl CharacterRepository {
                 durability: 10000,
                 max_durability: 10000,
                 bind_status: 0,
+                octets: Vec::new(),
                 custom_attributes: serde_json::json!({}),
             };
             let _ = self.item_repo.upsert_item(&equip_weapon).await;
@@ -306,6 +308,7 @@ impl CharacterRepository {
                     durability: 10000,
                     max_durability: 10000,
                     bind_status: 0,
+                    octets: Vec::new(),
                     custom_attributes: serde_json::json!({}),
                 },
                 pw_core::ItemRecord {
@@ -322,6 +325,7 @@ impl CharacterRepository {
                     durability: 10000,
                     max_durability: 10000,
                     bind_status: 0,
+                    octets: Vec::new(),
                     custom_attributes: serde_json::json!({}),
                 },
                 pw_core::ItemRecord {
@@ -338,6 +342,7 @@ impl CharacterRepository {
                     durability: 10000,
                     max_durability: 10000,
                     bind_status: 0,
+                    octets: Vec::new(),
                     custom_attributes: serde_json::json!({}),
                 },
                 pw_core::ItemRecord {
@@ -354,6 +359,7 @@ impl CharacterRepository {
                     durability: 10000,
                     max_durability: 10000,
                     bind_status: 0,
+                    octets: Vec::new(),
                     custom_attributes: serde_json::json!({}),
                 },
             ];
@@ -512,5 +518,72 @@ impl CharacterRepository {
         .await?;
 
         Ok(())
+    }
+
+    /// Adiciona moedas (Coins) ao personagem
+    pub async fn add_money(&self, role_id: RoleId, amount: i64) -> Result<i64> {
+        let new_balance = sqlx::query_scalar::<_, i64>(
+            r#"
+            UPDATE characters 
+            SET money = money + $1, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = $2
+            RETURNING money
+            "#,
+        )
+        .bind(amount)
+        .bind(role_id)
+        .fetch_one(self.pool.get_ref())
+        .await?;
+
+        Ok(new_balance)
+    }
+
+    /// Deduz moedas (Coins) com verificação de saldo
+    pub async fn deduct_money(&self, role_id: RoleId, amount: i64) -> Result<bool> {
+        let rows = sqlx::query(
+            r#"
+            UPDATE characters 
+            SET money = money - $1, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = $2 AND money >= $1
+            "#,
+        )
+        .bind(amount)
+        .bind(role_id)
+        .execute(self.pool.get_ref())
+        .await?;
+
+        Ok(rows.rows_affected() > 0)
+    }
+
+    /// Adiciona EXP e Alma (SP) ao personagem
+    pub async fn add_exp_sp(&self, role_id: RoleId, exp_gain: i64, sp_gain: i64) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE characters 
+            SET exp = exp + $1, sp = sp + $2, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = $3
+            "#,
+        )
+        .bind(exp_gain)
+        .bind(sp_gain)
+        .bind(role_id)
+        .execute(self.pool.get_ref())
+        .await?;
+
+        Ok(())
+    }
+
+    /// Consulta saldo de moedas do personagem
+    pub async fn get_money(&self, role_id: RoleId) -> Result<i64> {
+        let m = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT money FROM characters WHERE id = $1
+            "#,
+        )
+        .bind(role_id)
+        .fetch_one(self.pool.get_ref())
+        .await?;
+
+        Ok(m)
     }
 }
