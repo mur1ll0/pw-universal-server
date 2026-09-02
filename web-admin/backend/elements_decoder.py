@@ -801,6 +801,7 @@ class ElementsDecoder:
         candidates = [
             os.path.join(os.path.dirname(__file__), "specs", f"elements_{suffix}", f"realm_{suffix}_overrides.json"),
             os.path.join(os.path.dirname(__file__), "..", "..", "specs", f"elements_{suffix}", f"realm_{suffix}_overrides.json"),
+            f"/app/specs/elements_{suffix}/realm_{suffix}_overrides.json",
         ]
         for p in candidates:
             if os.path.exists(p):

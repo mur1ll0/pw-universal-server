@@ -74,6 +74,14 @@ services:
       - "8000:8000"
     volumes:
       - ../data:/app/data:ro
+      # Catálogo de layouts de elements.data (specs/elements_layouts/*.json) e as
+      # correções conhecidas por realm (specs/elements_155/realm_155_overrides.json) --
+      # o `elements_decoder.py` carrega isso em tempo de execução (ver
+      # `_load_realm_elements_generic`/`HAS_GENERIC_READER`). Mesmo padrão de volume
+      # read-only já usado pro `data/` acima; sem isto o decodificador cai de volta pro
+      # comportamento antigo (só v7/1.2.6), sem quebrar, mas sem decodificar builds novas.
+      - ../specs/elements_layouts:/app/specs/elements_layouts:ro
+      - ../specs/elements_155:/app/specs/elements_155:ro
     depends_on:
       - pw-postgres
       - pw-dragonfly

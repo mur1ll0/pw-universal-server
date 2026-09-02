@@ -97,28 +97,35 @@ Cada versão nova precisa de um script próprio (`generate_v<N>.py`) porque apon
 e o número de versão. Considerar generalizar num único script parametrizado se/quando
 tivermos 3+ versões convertidas.
 
-## Pendência de empacotamento: `specs/` não está disponível na imagem Docker do web-admin
+## Empacotamento: RESOLVIDO (2026-09-02) — os dois lados precisavam, não só o web-admin
 
-`web-admin/backend/elements_decoder.py` procura esta pasta em alguns caminhos candidatos
-(mesmo padrão de `_get_elements_path_for_realm`) e cai de volta pro decodificador antigo
-(só v7) se não achar. **Em dev local (repo clonado) funciona direto.** Em produção, o
-`docker-compose.yml` builda o `pw-admin-api` com `context: ../web-admin/backend` — o
-Docker não enxerga `specs/` fora desse contexto de jeito nenhum, então a imagem hoje **não
-tem acesso ao catálogo de layouts**. Três jeitos de resolver, nenhum escolhido ainda
-(decisão do Murillo, é mudança de infra):
+**Achado ao investigar**: o lado Rust *também* tinha um problema de empacotamento, mais
+sério que o do Python — `docker build` de verdade pro `pw-gs` **falhava** (`couldn't read
+.../specs/elements_layouts/v156.json`). O `docker/Dockerfile.core` (compartilhado por
+`pw-auth`/`pw-link`/`pw-gs`) builda com `context: ..` (raiz do repo), mas só copia
+`crates/`/`tools/` pro container de build — nunca `specs/`. Como `pw-data-loader` embute o
+JSON via `include_str!` em **tempo de compilação**, e `pw-gs`/`pw-link` dependem dele, todo
+build de realm quebrava. Ou seja: **não é só o web-admin que precisa deste catálogo — o
+próprio jogo (via `pw-gs`/`pw-link`) precisa dele também**, só que em momentos diferentes
+(Rust na hora de compilar, Python na hora de rodar).
 
-1. Alargar o `context` do `pw-admin-api` pra raiz do repo (`context: ..`, igual os outros
-   serviços já fazem) e adicionar `COPY specs/elements_layouts specs/elements_155` no
-   `Dockerfile` — mas sem um `.dockerignore` isso manda `target/` (Rust, GBs) e `data/`
-   junto no contexto de build, deixando o build bem mais lento. Precisa de um
-   `.dockerignore` na raiz do repo (ainda não existe) pra ser viável.
-2. "Vendorizar" uma cópia de `specs/elements_layouts` + `specs/elements_155` dentro de
-   `web-admin/backend/` (versionada ali, sincronizada manualmente quando o layout mudar) —
-   simples, mas duplica arquivo.
-3. Montar `specs/` como volume no `docker-compose.yml` (igual `data/` provavelmente já é) —
-   funciona sem mudar o Dockerfile, mas aí o comportamento em produção depende do volume
-   estar montado certo, não só da imagem.
+Corrigido dos dois lados, cada um com a técnica mais adequada ao seu momento de uso:
 
-O lado Rust (`pw-data-loader::generic_elements`) **não tem esse problema** — embute o JSON
-no binário em tempo de compilação (`include_str!`), então funciona igual em dev e em
-produção sem depender de nada externo em tempo de execução.
+- **Rust** (`docker/Dockerfile.core`): `COPY specs/elements_layouts` +
+  `COPY specs/elements_155/realm_155_overrides.json` no estágio de build, antes do
+  `cargo build`. Testado com `docker build -f docker/Dockerfile.core --build-arg
+  CRATE_NAME=pw-gs .` (e `pw-link`) — compila limpo.
+- **Python** (`docker/docker-compose.yml`, serviço `pw-admin-api`): volume read-only, no
+  mesmo padrão que `../data:/app/data:ro` já usava:
+  ```yaml
+  volumes:
+    - ../data:/app/data:ro
+    - ../specs/elements_layouts:/app/specs/elements_layouts:ro
+    - ../specs/elements_155:/app/specs/elements_155:ro
+  ```
+  Testado rodando a imagem com esses volumes montados: `HAS_GENERIC_READER=True`,
+  `realm_155` decodifica os mesmos 14.264 itens de antes.
+
+Nenhuma das duas mudanças toca no `context` de build nem precisou de `.dockerignore` novo —
+o `Dockerfile.core` já tinha `context: ..`, só faltava copiar mais uma pasta; o
+`pw-admin-api` ganhou volume, não mudou de `context`/`Dockerfile`.

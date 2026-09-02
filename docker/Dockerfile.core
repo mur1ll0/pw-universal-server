@@ -16,6 +16,16 @@ COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
 COPY tools ./tools
 
+# Catálogo de layouts de elements.data (specs/elements_layouts/*.json) e as correções
+# conhecidas do realm 155 (specs/elements_155/realm_155_overrides.json) -- embutidos no
+# binário do pw-data-loader via `include_str!` em tempo de compilação (ver
+# crates/pw-data-loader/src/generic_elements.rs), então precisam existir aqui mesmo que
+# o CRATE_NAME sendo compilado não seja o pw-data-loader diretamente (pw-gs e pw-link
+# dependem dele). Copiar só essas duas pastas, não a specs/ inteira (ela tem coisas como
+# protocol/*.json e docs que não fazem parte do build).
+COPY specs/elements_layouts ./specs/elements_layouts
+COPY specs/elements_155/realm_155_overrides.json ./specs/elements_155/realm_155_overrides.json
+
 # Argumento para definir qual binário compilar
 ARG CRATE_NAME=pw-auth
 
