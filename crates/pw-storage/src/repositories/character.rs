@@ -48,6 +48,15 @@ pub struct CharacterRepository {
 }
 
 impl CharacterRepository {
+    /// O pool por baixo deste repositório.
+    ///
+    /// Existe para que testes possam conferir uma coluna sem que o repositório ganhe um
+    /// método de leitura por asserção — a API de produção não deve crescer por causa de
+    /// teste.
+    pub fn pool(&self) -> &PostgresPool {
+        &self.pool
+    }
+
     pub fn new(pool: PostgresPool) -> Self {
         let item_repo = ItemRepository::new(pool.clone());
         let skill_repo = SkillRepository::new(pool.clone());
@@ -258,14 +267,37 @@ impl CharacterRepository {
         Ok(summaries)
     }
 
-    /// Carrega todos os detalhes do personagem para o World Server a partir das tabelas normalizadas
-    pub async fn get_details(&self, role_id: RoleId) -> Result<Option<CharacterDetails>> {
+    /// Carrega todos os detalhes do personagem, **conferindo que ele é desta conta neste
+    /// realm**.
+    ///
+    /// # Por que a conta e o realm são obrigatórios
+    ///
+    /// O `role_id` chega num pacote do cliente (`SelectRole`, `EnterWorld`) e é um
+    /// inteiro sequencial — trivial de adivinhar. Enquanto esta consulta era
+    /// `WHERE id = $1`, um cliente autenticado entrava no mundo como **qualquer
+    /// personagem do servidor**, bastando mandar outro número.
+    ///
+    /// O realm entra junto porque um banco só atende todos os realms: sem ele, dois
+    /// realms da mesma versão vazariam um no outro para quem tem personagem nos dois.
+    ///
+    /// Nenhuma variante sem escopo existe de propósito. Se um dia o servidor de mundo
+    /// precisar carregar um personagem sem ter a conta em mãos, o certo é passar a
+    /// identidade adiante pelo barramento, e não reabrir esta porta.
+    pub async fn get_details(
+        &self,
+        role_id: RoleId,
+        account_id: AccountId,
+        realm_id: &str,
+    ) -> Result<Option<CharacterDetails>> {
         let rec = sqlx::query_as::<_, CharacterRecord>(
             r#"
-            SELECT * FROM characters WHERE id = $1
+            SELECT * FROM characters
+            WHERE id = $1 AND account_id = $2 AND realm_id = $3
             "#,
         )
         .bind(role_id)
+        .bind(account_id)
+        .bind(realm_id)
         .fetch_optional(self.pool.get_ref())
         .await?;
 
@@ -488,36 +520,63 @@ impl CharacterRepository {
         Ok(())
     }
 
-    /// Marca o personagem como excluído (soft delete)
-    pub async fn delete_character(&self, role_id: RoleId) -> Result<()> {
-        sqlx::query(
+    /// Marca o personagem como excluído (soft delete).
+    ///
+    /// Exige a conta **e** o realm: o `role_id` vem de um pacote do cliente, que pode
+    /// dizer qualquer número. Sem o escopo na cláusula `WHERE`, isto apagava o
+    /// personagem de qualquer jogador do servidor — ver [`Self::get_details`].
+    ///
+    /// Devolve `false` quando nada foi apagado, o que quer dizer: não existe, já estava
+    /// apagado, ou **não é desta conta neste realm**. O chamador não deve distinguir os
+    /// três casos para o cliente, senão a resposta vira um oráculo que diz quais
+    /// `role_id` existem.
+    pub async fn delete_character(
+        &self,
+        role_id: RoleId,
+        account_id: AccountId,
+        realm_id: &str,
+    ) -> Result<bool> {
+        let r = sqlx::query(
             r#"
-            UPDATE characters 
-            SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP 
-            WHERE id = $1
+            UPDATE characters
+            SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP
+            WHERE id = $1 AND account_id = $2 AND realm_id = $3 AND is_deleted = FALSE
             "#,
         )
         .bind(role_id)
+        .bind(account_id)
+        .bind(realm_id)
         .execute(self.pool.get_ref())
         .await?;
 
-        Ok(())
+        Ok(r.rows_affected() > 0)
     }
 
-    /// Restaura um personagem marcado para exclusão (undo delete)
-    pub async fn restore_character(&self, role_id: RoleId) -> Result<()> {
-        sqlx::query(
+    /// Restaura um personagem marcado para exclusão (undo delete).
+    ///
+    /// Mesmo escopo obrigatório do [`Self::delete_character`]. Aqui a linha procurada
+    /// está com `is_deleted = TRUE`, que é o estado oposto — restaurar o que não estava
+    /// apagado não é operação válida.
+    pub async fn restore_character(
+        &self,
+        role_id: RoleId,
+        account_id: AccountId,
+        realm_id: &str,
+    ) -> Result<bool> {
+        let r = sqlx::query(
             r#"
-            UPDATE characters 
-            SET is_deleted = FALSE, deleted_at = NULL 
-            WHERE id = $1
+            UPDATE characters
+            SET is_deleted = FALSE, deleted_at = NULL
+            WHERE id = $1 AND account_id = $2 AND realm_id = $3 AND is_deleted = TRUE
             "#,
         )
         .bind(role_id)
+        .bind(account_id)
+        .bind(realm_id)
         .execute(self.pool.get_ref())
         .await?;
 
-        Ok(())
+        Ok(r.rows_affected() > 0)
     }
 
     /// Adiciona moedas (Coins) ao personagem

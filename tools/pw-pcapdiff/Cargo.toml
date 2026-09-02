@@ -1,0 +1,24 @@
+[package]
+name = "pw-pcapdiff"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Lê uma captura de rede de um servidor real e mede o tamanho de cada comando do mundo 3D, comparando com o IR"
+
+# Sem dependências externas, pela mesma razão do `pw-rpcgen`: esta ferramenta é usada para
+# **decidir** o que é verdade sobre o protocolo, e não deve depender de nada que a gente
+# não possa auditar. O `pw-wire` é do próprio workspace, e é de propósito: o
+# `compact_uint` dele já foi conferido contra 620 estruturas, e escrever um segundo aqui
+# seria criar a divergência que o projeto passa o tempo caçando.
+[dependencies]
+pw-wire = { path = "../../crates/pw-wire" }
+
+# Só para os testes: montar a captura sintética com os codificadores de verdade é o que
+# torna o teste ponta a ponta uma prova, e não uma repetição das minhas próprias suposições.
+[dev-dependencies]
+pw-protocol = { path = "../../crates/pw-protocol" }
+
+[[bin]]
+name = "pw-pcapdiff"
+path = "src/main.rs"

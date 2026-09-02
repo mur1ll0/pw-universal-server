@@ -1,0 +1,15 @@
+[package]
+name = "pw-rpcgen"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Extrai o esquema canônico do protocolo GNET dos fontes C++ originais para um IR JSON"
+
+# Sem dependências externas por decisão de projeto: esta ferramenta precisa poder rodar
+# em qualquer ambiente, inclusive offline, e seu único trabalho é ler texto e escrever JSON.
+[dependencies]
+
+[[bin]]
+name = "pw-rpcgen"
+path = "src/main.rs"

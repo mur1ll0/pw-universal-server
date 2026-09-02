@@ -81,15 +81,16 @@ Abaixo está o mapeamento exaustivo dos **Protocolos Oficiais de Alto Nível** d
 | Opcode (Dec) | Opcode (Hex) | Nome do Protocolo | Daemons | Estrutura dos Campos Serializados |
 | :--- | :--- | :--- | :--- | :--- |
 | **1** | `0x0001` | `Challenge` | `glinkd` | `nonce: Octets (16B)`, `version: u32`, `algo: i8` |
-| **2** | `0x0002` | `Response` | `glinkd` | `identity: Octets (username UTF-8)`, `response: Octets (MD5 16B)`, `use_encryption: u8` |
-| **3** | `0x0003` | `KeyExchange` | `gdeliveryd, glinkd` | `nonce: Octets (16B RC4 key)`, `force_flag: i8` |
+| **2** | `0x0002` | `KeyExchange` | `gdeliveryd, glinkd` | `nonce: Octets (16B chave RC4)`, `blkickuser: i8` |
+| **3** | `0x0003` | `Response` | `glinkd` | `identity: Octets`, `response: Octets (MD5 16B)`, `use_token: i8`, `cli_fingerprint: Octets` |
 | **4** | `0x0004` | `OnlineAnnounce` | `gdeliveryd, glinkd` | `userid: i32`, `localsid: u32`, `remain_time: i32`, `zoneid: i8`, `free_time_left: i32`, `free_time_end: i32`, `creatime: i32` |
 | **5** | `0x0005` | `ErrorInfo` | `glinkd` | `errcode: u8`, `info: Octets` |
 | **6** | `0x0006` | `StatusAnnounce` | `gdeliveryd, glinkd` | `userid: i32`, `localsid: u32`, `status: u8` |
 | **7** | `0x0007` | `RoleStatusAnnounce`| `gdeliveryd, glinkd` | `type: i8`, `userid: i32`, `localsid: u32`, `status: u8`, `auth: Octets` |
 | **10** | `0x000A` | `KickoutUser` | `gdeliveryd, glinkd` | `userid: i32`, `localsid: u32`, `cause: u8` |
-| **32** | `0x0020` | `GamedataSend (C2S)`| `Client -> glinkd` | `data: Octets` (Payload binário de subcomandos Little-Endian) |
-| **34** | `0x0022` | `GamedataSend (S2C)`| `glinkd -> Client` | `data: Octets` (Payload binário de subcomandos Little-Endian) |
+| **34** | `0x0022` | `GamedataSend` | `Client <-> glinkd` | `data: Octets` (payload binário de subcomandos, Little-Endian). **Mesmo opcode nos dois sentidos.** |
+| **74** | `0x004A` | `S2CGamedataSend` | `gdeliveryd -> glinkd` | `roleid: i32`, `localsid: u32`, `data: Octets` |
+| **75** | `0x004B` | `C2SGamedataSend` | `glinkd -> gdeliveryd` | `roleid: i32`, `localsid: u32`, `data: Octets` |
 | **35** | `0x0023` | `ReportIP` | `gdeliveryd, glinkd` | `userid: i32`, `ip: i32` |
 | **36** | `0x0024` | `UpdateRemainTime` | `gdeliveryd, glinkd` | `userid: i32`, `remain_time: i32`, `free_time_left: i32`, `free_time_end: i32`, `creatime: i32` |
 
@@ -114,8 +115,8 @@ Abaixo está o mapeamento exaustivo dos **Protocolos Oficiais de Alto Nível** d
 | **91** | `0x005B` | `Heartbeat_Re (S2C)`| `glinkd -> Client`| `seq: u32`, `timestamp: u32` |
 | **104**| `0x0068` | `GetUIConfig` | `Client -> gdeliveryd` | `roleid: i32`, `localsid: u32` |
 | **105**| `0x0069` | `GetUIConfig_Re` | `gdeliveryd -> Client` | `result: i32`, `roleid: i32`, `localsid: u32`, `ui_config: Octets` |
-| **106**| `0x006A` | `SetUIConfig` | `Client -> gdeliveryd` | `roleid: i32`, `localsid: u32`, `ui_config: Octets` |
-| **107**| `0x006B` | `SetUIConfig_Re` | `gdeliveryd -> Client` | `result: i32`, `roleid: i32` |
+| **102**| `0x0066` | `SetUIConfig` | `Client -> gdeliveryd` | `roleid: i32`, `localsid: u32`, `ui_config: Octets` |
+| **103**| `0x0067` | `SetUIConfig_Re` | `gdeliveryd -> Client` | `result: i32`, `roleid: i32` |
 | **128**| `0x0080` | `SetHelpStates` | `Client -> gdeliveryd` | `roleid: i32`, `localsid: u32`, `help_states: Octets` |
 | **129**| `0x0081` | `SetHelpStates_Re` | `gdeliveryd -> Client` | `result: i32`, `roleid: i32` |
 | **130**| `0x0082` | `GetHelpStates` | `Client -> gdeliveryd` | `roleid: i32`, `localsid: u32` |
@@ -731,3 +732,127 @@ sequenceDiagram
 Com este documento master de engenharia reversa:
 1. **Todas as 10 grandes áreas de mecânicas do Perfect World v1.2.6** estão integralmente mapeadas com seus fluxos de rede, estruturas binárias e códigos de comando.
 2. A implementação no emulador `pw-universal-server` deve seguir estritamente as structs e handshakes descritos, com testes automatizados dedicados para cada um dos 10 subsistemas, garantindo conformidade absoluta com o binário oficial do `elementclient.exe` v1.2.6.
+
+---
+
+## 12. Fonte canônica do protocolo e correções verificadas
+
+### 12.1 De onde vem a autoridade
+
+Até aqui este documento foi construído por análise dos binários. A partir desta seção,
+o que está escrito é **verificado contra os fontes C++ originais** — não deduzido.
+
+Os fontes 1.5.3 contêm o código de marshalling já gerado pelo `rpcgen.pl` original:
+
+| Artefato | Onde | O que dá |
+| :--- | :--- | :--- |
+| `inl/*` (935 arquivos) | `source_server_153/inl/` | Campos e corpo de `marshal`/`unmarshal` de cada protocolo — **a ordem exata do fio** |
+| `rpcdata/*` (617 arquivos) | `source_server_153/rpcdata/` | Structs de dados (`RoleInfo`, `GRoleInventory`, `GRoleBase`, …) |
+| `<daemon>/callid.hxx` | por daemon | Identificadores numéricos `PROTOCOL_*` e `RPC_*` |
+| `rpcalls.xml` (12.000 linhas) | raiz | Assinaturas de RPC, limites de tamanho, prioridades, valores padrão |
+| `share/rpc/rpcdefs.h` | | `RpcRetcode`, `IntOctets`, `OctetsTree`, apelidos `*Vector` |
+| `share/common/marshal_i386.h` | | Regras primitivas de codificação |
+| `CElementClient/Network/EC_GPDataType.h` | fontes do cliente | Subcomandos `GamedataSend` do mundo 3D |
+
+A ferramenta `tools/pw-rpcgen` extrai tudo isso para `specs/protocol/gnet_153.json`:
+**620 estruturas, 698 protocolos (todos com identificador numérico) e 237 RPCs, sem
+nenhum item por resolver.** Esse arquivo é a referência dos testes de conformidade do
+`pw-protocol`.
+
+### 12.2 Regras primitivas (confirmadas em `marshal_i386.h` + `byteorder_i386.h`)
+
+- Escalares do protocolo GNET vão para o fio em **big-endian**. Em host little-endian,
+  `byteorder_32` é literalmente `bswap`. `float` também: bitcast para `int` e então
+  `bswap`.
+- `Octets` = `CompactUINT(len)` + bytes crus. `std::string` idem, sem terminador nulo.
+- Contêineres (`std::vector`, `set`, `list`, `deque`, `map` e `GNET::RpcDataVector`) =
+  `CompactUINT(count)` + elementos. `std::pair` = os dois elementos, sem contagem.
+- `size_t` e `time_t` têm **32 bits** (alvo i386), assim como `long`.
+- Frame TCP = `CompactUINT(type)` + `Octets(payload)` (`share/io/protocol.h`, `Encode`).
+- `CompactUINT`: `<0x80` → 1 byte; `<0x4000` → 2 bytes com `|0x8000`; `<0x20000000` →
+  4 bytes com `|0xC0000000`; caso contrário `0xE0` seguido de 4 bytes.
+
+### 12.3 Correções aplicadas à seção 3.1
+
+Quatro identificadores estavam trocados neste documento (e no
+`crates/pw-protocol/src/opcodes.rs`). Os valores abaixo vêm de `glinkd/callid.hxx` e
+`gdeliveryd/callid.hxx`:
+
+| Protocolo | Estava documentado | Valor real | Efeito do erro |
+| :--- | ---: | ---: | :--- |
+| `KeyExchange` | 3 | **2** | Troca de chave RC4 enviada com o opcode do `Response` |
+| `Response` | 2 | **3** | Cliente responde ao desafio com opcode que o servidor não reconhece |
+| `SetUIConfig` | 106 | **102** | Configuração de interface nunca persiste |
+| `SetUIConfig_Re` | 107 | **103** | Cliente não recebe a confirmação |
+
+Também estava incorreta a descrição do `GamedataSend`: não existem opcodes distintos
+32/34 por sentido. Entre cliente e `glinkd` há **um** `GamedataSend` (34) usado nos dois
+sentidos; `S2CGamedataSend` (74) e `C2SGamedataSend` (75) são os protocolos internos
+entre `glinkd` e `gdeliveryd`, e carregam `roleid` e `localsid` antes do payload.
+
+### 12.4 Handshake de login — estrutura real
+
+```
+Challenge   (1, glinkd → cliente)   nonce: Octets, version: u32, algo: i8,
+                                     edition: Octets, exp_rate: u8
+KeyExchange (2)                      nonce: Octets, blkickuser: i8
+Response    (3, cliente → glinkd)    identity: Octets, response: Octets,
+                                     use_token: i8, cli_fingerprint: Octets
+```
+
+**`Challenge.nonce` não é aleatório puro.** O cliente lê estrutura nos seus primeiros
+8 bytes (`EC_GameSession.cpp:4062`):
+
+```cpp
+memcpy(&m_SevAttr, p->nonce.begin(), sizeof(GNET::Attr));
+m_dwNewbieTime = *((unsigned int*)p->nonce.begin()+1);
+```
+
+O layout é `[Attr: u32][newbie_time: u32][restante aleatório]`, e `Attr` é uma união de
+32 bits (`cnet/gdeliveryd/serverattr.h`):
+
+| Byte | Campo | Uso |
+| :--- | :--- | :--- |
+| 0 | `load` | Carga do servidor — a barra colorida na lista de servidores |
+| 1 | `lambda` | Fator de população |
+| 2 | `anything` | Reservado |
+| 3 | bits 0..7 | `doubleExp`, `doubleMoney`, `doubleObject`, `doubleSP`, `freeZone`, `bSellpoint`, `bBattle`, `pvp` |
+
+Somado ao campo `exp_rate` do próprio `Challenge`, é aqui que os **rates de EXP, SP,
+Gold e Drop** do realm chegam ao cliente. O gerenciamento de rates no painel admin deve
+modelar exatamente esses campos, não um esquema paralelo.
+
+### 12.5 Causa da falha de login do realm 1.5.3
+
+`CECGameSession::OnPrtcChallenge` (`EC_GameSession.cpp:4003`) encerra a conexão se
+qualquer uma das duas verificações falhar:
+
+```cpp
+AString str((const char *)p->edition.begin(), p->edition.size());
+if (p->version != g_pGame->GetGameVersion() || stricmp(g_pGame->GetVersionString(), str))
+{
+    ...  ShowErrorMsg(FIXMSG_WRONGVERSION);  Close();  return;
+}
+```
+
+1. **`version`** precisa ser idêntico ao `GAME_VERSION` compilado no cliente.
+   Nos fontes (`EC_Game.cpp:115`): `((0<<24)|(1<<16)|(5<<8)|2)` = `0x00010502`.
+   O servidor envia hoje `0x00010503`, um valor inventado.
+
+2. **`edition`** precisa ser idêntico à *version string* do cliente, que é
+   (`EC_Game.cpp:646`):
+
+   ```cpp
+   m_strAllVersion.Format("%x%x%x%x",
+       ELEMENTDATA_VERSION, _task_templ_cur_version,
+       globaldata_getgshop_timestamp(), globaldata_getgshop_timestamp2());
+   ```
+
+   Isto é: a concatenação hexadecimal da versão do `elements.data`, da versão do
+   `tasks.data` e dos dois timestamps do `gshop.data`. O servidor envia hoje um
+   `Octets` vazio, então `stricmp` falha e o login é rejeitado antes de qualquer
+   verificação de senha.
+
+Consequência de projeto: essa string precisa ser **derivada dos `.data` do realm** pelo
+`pw-data-loader`. A identidade de versão do realm passa a ser responsabilidade do
+loader, não um valor fixo no código.

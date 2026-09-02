@@ -16,6 +16,12 @@ services:
     volumes:
       - pw_postgres_data:/var/lib/postgresql/data
       - ../specs/01_DATABASE_SCHEMA_POSTGRES.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      # A migração roda logo depois do esquema, **em banco novo**: o
+      # `docker-entrypoint-initdb.d` só é executado quando o volume está vazio. Num banco
+      # que já existe, aplicar à mão:
+      #   docker compose exec -T pw-postgres psql -U pw_admin -d pw_database \
+      #     < ../specs/02_MIGRACAO_COMPATIBILIDADE_MULTI_REALM.sql
+      - ../specs/02_MIGRACAO_COMPATIBILIDADE_MULTI_REALM.sql:/docker-entrypoint-initdb.d/02_migracao.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pw_admin -d pw_database"]
       interval: 5s
@@ -89,12 +95,48 @@ services:
       GATEWAY_PORT: 29000
       DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
       REDIS_URL: redis://pw-dragonfly:6379
+      # Onde fica o servidor de mundo deste realm. O `pw-link` conecta aqui para
+      # entregar os subcomandos do mundo 3D (`C2SGamedataSend`, opcode 75) e receber
+      # de volta o que o mundo manda ao jogador (`S2CGamedataSend`, 74).
+      GS_BUS: pw-world-126:29100
     ports:
       - "29000:29000" # Porta pública do cliente 1.2.6
     volumes:
       - ../data/realm_126/config:/app/data/config:ro
     depends_on:
       - pw-auth
+      - pw-world-126
+
+  # O servidor de mundo do realm 1.2.6 (`gamed`). Note que ele **não tem `ports:`**:
+  # o barramento entre daemons não é autenticado e não pode ser exposto ao jogador.
+  # Ele só é alcançável pela rede interna do compose, pelo nome do serviço.
+  pw-world-126:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+      args:
+        CRATE_NAME: pw-gs
+    container_name: pw-world-126
+    restart: unless-stopped
+    environment:
+      REALM_ID: realm_126
+      GAME_VERSION: "1.2.6"
+      WORLD_TAG: "1"
+      BUS_LISTEN: 0.0.0.0:29100
+      CONFIG_DIR: /app/data/config
+      # `pw_gs=debug` liga a linha "mundo: subcomando N de <roleid>", que é a prova de
+      # que o caminho cliente → pw-link → barramento → pw-gs está fechado. Enquanto os
+      # subcomandos não forem tratados aqui, é o único sinal de que eles chegam.
+      RUST_LOG: info,pw_gs=debug
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+    volumes:
+      - ../data/realm_126/config:/app/data/config:ro
+    depends_on:
+      pw-postgres:
+        condition: service_healthy
+      pw-dragonfly:
+        condition: service_started
 
   # ============================================================================
   # 4. REALM 2: PERFECT WORLD TIDES / GENESIS (Versão 1.4.8)
@@ -113,12 +155,43 @@ services:
       GATEWAY_PORT: 29002
       DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
       REDIS_URL: redis://pw-dragonfly:6379
+      GS_BUS: pw-world-148:29100
     ports:
       - "29002:29002" # Porta pública do cliente 1.4.8
     volumes:
       - ../data/realm_148/config:/app/data/config:ro
     depends_on:
       - pw-auth
+      - pw-world-148
+
+  # Servidor de mundo do realm 1.4.8. Sem `ports:` — barramento interno (ver 1.2.6).
+  pw-world-148:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+      args:
+        CRATE_NAME: pw-gs
+    container_name: pw-world-148
+    restart: unless-stopped
+    environment:
+      REALM_ID: realm_148
+      GAME_VERSION: "1.4.8"
+      WORLD_TAG: "1"
+      BUS_LISTEN: 0.0.0.0:29100
+      CONFIG_DIR: /app/data/config
+      # `pw_gs=debug` liga a linha "mundo: subcomando N de <roleid>", que é a prova de
+      # que o caminho cliente → pw-link → barramento → pw-gs está fechado. Enquanto os
+      # subcomandos não forem tratados aqui, é o único sinal de que eles chegam.
+      RUST_LOG: info,pw_gs=debug
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+    volumes:
+      - ../data/realm_148/config:/app/data/config:ro
+    depends_on:
+      pw-postgres:
+        condition: service_healthy
+      pw-dragonfly:
+        condition: service_started
 
   # ============================================================================
   # 5. REALM 3: PERFECT WORLD ECLIPSE (Versão 1.5.3)
@@ -137,12 +210,43 @@ services:
       GATEWAY_PORT: 29001
       DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
       REDIS_URL: redis://pw-dragonfly:6379
+      GS_BUS: pw-world-153:29100
     ports:
       - "29001:29001" # Porta pública do cliente 1.5.3
     volumes:
       - ../data/realm_153/config:/app/data/config:ro
     depends_on:
       - pw-auth
+      - pw-world-153
+
+  # Servidor de mundo do realm 1.5.3. Sem `ports:` — barramento interno (ver 1.2.6).
+  pw-world-153:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+      args:
+        CRATE_NAME: pw-gs
+    container_name: pw-world-153
+    restart: unless-stopped
+    environment:
+      REALM_ID: realm_153
+      GAME_VERSION: "1.5.3"
+      WORLD_TAG: "1"
+      BUS_LISTEN: 0.0.0.0:29100
+      CONFIG_DIR: /app/data/config
+      # `pw_gs=debug` liga a linha "mundo: subcomando N de <roleid>", que é a prova de
+      # que o caminho cliente → pw-link → barramento → pw-gs está fechado. Enquanto os
+      # subcomandos não forem tratados aqui, é o único sinal de que eles chegam.
+      RUST_LOG: info,pw_gs=debug
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+    volumes:
+      - ../data/realm_153/config:/app/data/config:ro
+    depends_on:
+      pw-postgres:
+        condition: service_healthy
+      pw-dragonfly:
+        condition: service_started
 
 volumes:
   pw_postgres_data:

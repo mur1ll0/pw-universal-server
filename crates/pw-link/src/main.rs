@@ -35,16 +35,32 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Aviso ao carregar templates de classes padrão: {:?}", e);
     }
 
-    let gateway = Arc::new(LinkGateway::new(
+    let mut gateway = LinkGateway::new(
         realm_id,
         &game_version,
         listen_port,
         account_repo,
         char_repo,
         cache_manager,
-    ));
+    );
 
-    gateway.run().await?;
+    // `GS_BUS` é o endereço do servidor de mundo deste realm (`host:porta`). Sem ele o
+    // link roda sozinho, como antes — o que é o modo de desenvolvimento, e não o de
+    // produção. O aviso existe porque um `GS_BUS` esquecido no `docker-compose` daria um
+    // servidor que sobe inteiro e não simula nada, sem um único erro no log.
+    match std::env::var("GS_BUS") {
+        Ok(endereco) if !endereco.trim().is_empty() => {
+            gateway = gateway.com_barramento(endereco.trim());
+        }
+        _ => {
+            tracing::warn!(
+                "GS_BUS não definido: este link não está ligado a nenhum servidor de \
+                 mundo. O cliente entra, mas o mundo 3D não é simulado."
+            );
+        }
+    }
+
+    Arc::new(gateway).run().await?;
 
     Ok(())
 }

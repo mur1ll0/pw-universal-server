@@ -1077,6 +1077,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pw-bus"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "pw-wire",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "pw-core"
 version = "0.1.0"
 dependencies = [
@@ -1146,14 +1160,17 @@ dependencies = [
  "bytes",
  "chrono",
  "futures",
+ "pw-bus",
  "pw-core",
  "pw-crypto",
  "pw-data-loader",
  "pw-protocol",
  "pw-storage",
+ "pw-wire",
  "rand 0.8.8",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror",
  "tokio",
  "tracing",
@@ -1168,6 +1185,7 @@ dependencies = [
  "bytes",
  "futures",
  "hex",
+ "pw-bus",
  "pw-core",
  "pw-crypto",
  "pw-data-loader",
@@ -1199,6 +1217,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pw-pcapdiff"
+version = "0.1.0"
+dependencies = [
+ "pw-protocol",
+ "pw-wire",
+]
+
+[[package]]
 name = "pw-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1207,12 +1233,17 @@ dependencies = [
  "hex",
  "pw-core",
  "pw-crypto",
+ "pw-wire",
  "serde",
  "serde_json",
  "thiserror",
  "tokio-util",
  "tracing",
 ]
+
+[[package]]
+name = "pw-rpcgen"
+version = "0.1.0"
 
 [[package]]
 name = "pw-storage"
@@ -1246,6 +1277,14 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "pw-wire"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

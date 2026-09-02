@@ -9,6 +9,7 @@ license.workspace = true
 pw-core = { path = "../pw-core" }
 pw-crypto = { path = "../pw-crypto" }
 pw-protocol = { path = "../pw-protocol" }
+pw-bus = { path = "../pw-bus" }
 pw-storage = { path = "../pw-storage" }
 pw-data-loader = { path = "../pw-data-loader" }
 tokio = { workspace = true }

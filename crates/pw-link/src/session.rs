@@ -19,6 +19,11 @@ pub struct ClientSession {
     pub username: Option<String>,
     pub role_id: Option<RoleId>,
     pub character_name: Option<String>,
+    /// O `localsid` que veio no `EnterWorld` do cliente.
+    ///
+    /// Guardado porque o servidor de mundo endereça a resposta por ele, e no logout já
+    /// não há pacote de onde tirá-lo — o que o link tem naquele momento é só esta sessão.
+    pub localsid: u32,
     pub target_id: Option<i32>,
     pub sec_level: u8,
     pub client_ip: String,
@@ -39,6 +44,7 @@ impl ClientSession {
             username: None,
             role_id: None,
             character_name: None,
+            localsid: 0,
             target_id: None,
             sec_level: 0,
             client_ip,

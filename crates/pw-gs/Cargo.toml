@@ -10,6 +10,8 @@ pw-core = { path = "../pw-core" }
 pw-crypto = { path = "../pw-crypto" }
 pw-protocol = { path = "../pw-protocol" }
 pw-data-loader = { path = "../pw-data-loader" }
+pw-bus = { path = "../pw-bus" }
+pw-wire = { path = "../pw-wire" }
 pw-storage = { path = "../pw-storage" }
 tokio = { workspace = true }
 bytes = { workspace = true }
@@ -22,3 +24,8 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 rand = "0.8"
 futures = "0.3"
+
+[dev-dependencies]
+# O teste ponta a ponta monta um personagem de verdade no banco: a notificação de abate
+# consulta `character_quests`, que tem chave estrangeira para `characters`.
+sqlx = { workspace = true }

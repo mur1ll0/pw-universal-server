@@ -16,3 +16,10 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio-util = { workspace = true }
 hex = { workspace = true }
+
+[dev-dependencies]
+# Enquanto `octets.rs` não migra, o teste cruzado prova que as duas implementações
+# do formato GNET produzem os mesmos bytes.
+pw-wire = { path = "../pw-wire" }
+# Só nos testes que conferem os opcodes contra os IRs de `specs/protocol/`.
+serde_json = { workspace = true }

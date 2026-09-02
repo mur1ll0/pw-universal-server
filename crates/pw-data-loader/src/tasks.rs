@@ -39,21 +39,61 @@ pub struct TaskTemplate {
     pub rewards: TaskReward,
 }
 
+/// Assinatura do `tasks.data` (`TASK_PACK_MAGIC`, `Task/TaskTempl.h:222`).
+pub const MAGICO_DO_TASKS: u32 = 0x9385_8361;
+
 #[derive(Debug, Clone, Default)]
 pub struct TasksData {
+    /// O `_task_templ_cur_version` deste arquivo — a **segunda** palavra do cabeçalho.
     pub version: u32,
+    /// Quantas missões o arquivo declara (`item_count` do cabeçalho).
+    pub quantidade_declarada: u32,
     pub tasks: HashMap<u32, TaskTemplate>,
 }
 
 impl TasksData {
-    pub fn load_from_bytes(data: &[u8]) -> Result<Self> {
+    /// Lê o cabeçalho: `(version, item_count)`.
+    ///
+    /// # Formato (autoridade)
+    ///
+    /// `CElementClient/Task/TaskTempl.h:224`:
+    ///
+    /// ```cpp
+    /// #define TASK_PACK_MAGIC 0x93858361
+    /// struct TASK_PACK_HEADER { unsigned long magic; unsigned long version; unsigned long item_count; };
+    /// ```
+    ///
+    /// E `TaskTemplMan.cpp:1599`: o cliente recusa o arquivo se
+    /// `tph.version != _task_templ_cur_version`. Ou seja — como no `elements.data` — a
+    /// `version` deste arquivo **é** a constante do cliente que consegue abri-lo, e é ela
+    /// que tem que ir para a string `edition` do handshake.
+    ///
+    /// Isto era lido como "a primeira palavra é a versão", o que devolvia o mágico
+    /// `0x93858361` como se fosse número de versão.
+    pub fn ler_cabecalho(data: &[u8]) -> Result<(u32, u32)> {
         let mut cursor = Cursor::new(data);
-        let version = cursor.read_u32::<LittleEndian>().unwrap_or(12);
+        let magico = cursor.read_u32::<LittleEndian>()?;
+        if magico != MAGICO_DO_TASKS {
+            return Err(TasksError::InvalidFormat);
+        }
+        let versao = cursor.read_u32::<LittleEndian>()?;
+        let quantidade = cursor.read_u32::<LittleEndian>()?;
+        Ok((versao, quantidade))
+    }
 
-        info!("Carregando tasks.data: Versão identificada = {}", version);
+    pub fn load_from_bytes(data: &[u8]) -> Result<Self> {
+        let (version, quantidade_declarada) = Self::ler_cabecalho(data)?;
+        let mut cursor = Cursor::new(data);
+        cursor.set_position(12);
+
+        info!(
+            "Carregando tasks.data: _task_templ_cur_version = {}, {} missões declaradas",
+            version, quantidade_declarada
+        );
 
         let mut tasks_data = Self {
             version,
+            quantidade_declarada,
             tasks: HashMap::new(),
         };
 

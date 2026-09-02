@@ -97,18 +97,47 @@ impl ItemRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    /// Insere ou atualiza um item em um slot específico (UPSERT atômico)
+    /// Insere ou atualiza um item em um slot específico (UPSERT atômico).
+    ///
+    /// # `extra_data` não pode ficar de fora
+    ///
+    /// A coluna `extra_data` guarda os octetos do item — a essência de arma, os atributos
+    /// de armadura, tudo que o cliente recebe no `item_info`. Ela **não** era escrita
+    /// aqui, e o `creator_name` também não.
+    ///
+    /// Isso não era só um campo faltando: como [`Self::swap_slots`] e
+    /// [`Self::move_between_containers`] fazem o item dar a volta por
+    /// `get` → `delete` → `upsert`, **cada troca de posição na bolsa apagava os octetos**.
+    /// O jogador arrastava uma arma de um slot para outro e ela voltava sem os atributos,
+    /// em silêncio, sem erro nenhum no log.
     pub async fn upsert_item(&self, item: &ItemRecord) -> Result<i64> {
+        self.upsert_com(self.pool.get_ref(), item).await
+    }
+
+    /// O mesmo `upsert`, dentro de um executor qualquer — conexão solta ou transação.
+    ///
+    /// Existe para que as operações compostas possam ser atômicas sem duplicar o SQL:
+    /// duas escritas do mesmo layout é como as listas de campos saem de sincronia.
+    async fn upsert_com<'e, E>(&self, exec: E, item: &ItemRecord) -> Result<i64>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         let sockets_i32: Vec<i32> = item.sockets.iter().map(|&s| s as i32).collect();
+        let creator = item
+            .custom_attributes
+            .get("creator_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let octetos: Option<&[u8]> = (!item.octets.is_empty()).then_some(&item.octets);
 
         let id = sqlx::query_scalar::<_, i64>(
             r#"
             INSERT INTO character_items (
                 character_id, container_type, slot, item_id, count,
                 durability, max_durability, refine_level, sockets_count,
-                socket_stones, bind_status, updated_at
+                socket_stones, bind_status, creator_name, extra_data, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP)
             ON CONFLICT (character_id, container_type, slot) DO UPDATE SET
                 item_id = EXCLUDED.item_id,
                 count = EXCLUDED.count,
@@ -118,6 +147,8 @@ impl ItemRepository {
                 sockets_count = EXCLUDED.sockets_count,
                 socket_stones = EXCLUDED.socket_stones,
                 bind_status = EXCLUDED.bind_status,
+                creator_name = EXCLUDED.creator_name,
+                extra_data = EXCLUDED.extra_data,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING id
             "#,
@@ -133,7 +164,9 @@ impl ItemRepository {
         .bind(item.sockets_count as i16)
         .bind(&sockets_i32)
         .bind(item.bind_status as i32)
-        .fetch_one(self.pool.get_ref())
+        .bind(creator)
+        .bind(octetos)
+        .fetch_one(exec)
         .await?;
 
         Ok(id)
@@ -215,6 +248,17 @@ impl ItemRepository {
     }
 
     /// Troca os slots de dois itens dentro do mesmo container
+    /// Troca os slots de dois itens dentro do mesmo container.
+    ///
+    /// # Por que uma transação
+    ///
+    /// A troca precisa apagar os dois itens antes de reinseri-los, senão a restrição
+    /// `uq_item_slot_per_container` recusa o primeiro `upsert`. Isso abre uma janela em
+    /// que **os dois itens não existem**: um erro de rede, uma queda do processo ou um
+    /// erro de banco ali no meio, e o jogador perde os dois para sempre.
+    ///
+    /// Sem transação isso não era hipótese remota — era só uma questão de quando. Com
+    /// ela, ou os quatro passos acontecem, ou nenhum.
     pub async fn swap_slots(
         &self,
         character_id: RoleId,
@@ -222,27 +266,34 @@ impl ItemRepository {
         slot1: u16,
         slot2: u16,
     ) -> Result<()> {
+        if slot1 == slot2 {
+            return Ok(());
+        }
+
         let item1 = self.get_item_by_slot(character_id, container_type, slot1).await?;
         let item2 = self.get_item_by_slot(character_id, container_type, slot2).await?;
 
-        // Remove ambos temporariamente para evitar colisão de chave única (uq_item_slot_per_container)
-        self.delete_item_by_slot(character_id, container_type, slot1).await?;
-        self.delete_item_by_slot(character_id, container_type, slot2).await?;
+        let mut tx = self.pool.get_ref().begin().await?;
+
+        Self::apagar_em(&mut tx, character_id, container_type, slot1).await?;
+        Self::apagar_em(&mut tx, character_id, container_type, slot2).await?;
 
         if let Some(mut i1) = item1 {
             i1.slot = slot2;
-            self.upsert_item(&i1).await?;
+            self.upsert_com(&mut *tx, &i1).await?;
         }
-
         if let Some(mut i2) = item2 {
             i2.slot = slot1;
-            self.upsert_item(&i2).await?;
+            self.upsert_com(&mut *tx, &i2).await?;
         }
 
+        tx.commit().await?;
         Ok(())
     }
 
-    /// Move ou equipa um item entre containers (ex: Inventário -> Equipamento)
+    /// Move ou equipa um item entre containers (ex: Inventário -> Equipamento).
+    ///
+    /// Mesma transação, pelo mesmo motivo do [`Self::swap_slots`].
     pub async fn move_between_containers(
         &self,
         character_id: RoleId,
@@ -251,24 +302,51 @@ impl ItemRepository {
         dest_container: ContainerType,
         dest_slot: u16,
     ) -> Result<()> {
+        if src_container == dest_container && src_slot == dest_slot {
+            return Ok(());
+        }
+
         let src_item = self.get_item_by_slot(character_id, src_container, src_slot).await?;
         let dest_item = self.get_item_by_slot(character_id, dest_container, dest_slot).await?;
 
-        self.delete_item_by_slot(character_id, src_container, src_slot).await?;
-        self.delete_item_by_slot(character_id, dest_container, dest_slot).await?;
+        let mut tx = self.pool.get_ref().begin().await?;
+
+        Self::apagar_em(&mut tx, character_id, src_container, src_slot).await?;
+        Self::apagar_em(&mut tx, character_id, dest_container, dest_slot).await?;
 
         if let Some(mut s) = src_item {
             s.container_type = dest_container;
             s.slot = dest_slot;
-            self.upsert_item(&s).await?;
+            self.upsert_com(&mut *tx, &s).await?;
         }
-
         if let Some(mut d) = dest_item {
             d.container_type = src_container;
             d.slot = src_slot;
-            self.upsert_item(&d).await?;
+            self.upsert_com(&mut *tx, &d).await?;
         }
 
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Apaga um slot dentro de uma transação em andamento.
+    async fn apagar_em(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        character_id: RoleId,
+        container_type: ContainerType,
+        slot: u16,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            DELETE FROM character_items
+            WHERE character_id = $1 AND container_type = $2 AND slot = $3
+            "#,
+        )
+        .bind(character_id)
+        .bind(container_type.to_i16())
+        .bind(slot as i16)
+        .execute(&mut **tx)
+        .await?;
         Ok(())
     }
 

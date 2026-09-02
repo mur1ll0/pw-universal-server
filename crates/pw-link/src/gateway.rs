@@ -5,10 +5,11 @@ use pw_protocol::{
     create_protocol_adapter, GameVersion, InboundPacket, OctetsStream, OutboundPacket, ProtocolAdapter,
     PwPacketCodec, S2CChatBroadcast, S2CChallenge, S2CCreateRoleResponse, S2CDeleteRoleResponse,
     S2CErrorInfo, S2CGamedataSend, S2CGetFriendListRe, S2CGetHelpStatesRe, S2CGetUIConfigRe, S2CGetWaitDelRolesRe,
-    S2COnlineAnnounce, S2CPlayerLogout, S2CPlayerMoveBroadcast, S2CRoleListResponse, S2CSelectRoleResponse,
+    S2COnlineAnnounce, S2CPlayerMoveBroadcast, S2CRoleListResponse, S2CSelectRoleResponse,
     S2CSetCustomDataRe, S2CSetHelpStatesRe, S2CSetUIConfigRe, S2CUndoDeleteRoleResponse,
 };
 use pw_data_loader::GameDataManager;
+use pw_protocol::{Edition, VersaoDoCliente};
 use pw_storage::{AccountRepository, CacheManager, CharacterRepository};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
@@ -16,6 +17,8 @@ use tokio_util::codec::Framed;
 use tracing::{debug, info, trace, warn};
 
 use crate::session::ClientSession;
+use crate::uplink::BusUplink;
+use pw_bus::BusMessage;
 
 pub struct LinkGateway {
     pub realm_id: String,
@@ -26,6 +29,20 @@ pub struct LinkGateway {
     pub char_repo: CharacterRepository,
     pub cache_manager: CacheManager,
     pub data_manager: Arc<GameDataManager>,
+    /// As constantes de compilação do **cliente** que este realm serve.
+    ///
+    /// Vêm do padrão da versão e podem ser sobrescritas por realm no ambiente
+    /// (`ELEMENTDATA_VERSION` e `TASK_TEMPL_VERSION`) — ver [`pw_protocol::edition`]:
+    /// dois realms "1.5.3" podem servir builds diferentes do cliente, e cada build tem o
+    /// seu par.
+    pub versao_do_cliente: VersaoDoCliente,
+    /// A ligação com o servidor de mundo deste realm, quando há uma.
+    ///
+    /// `None` faz o link rodar sozinho, exatamente como antes desta fase. É o que
+    /// mantém o desenvolvimento e os testes possíveis sem subir o `pw-gs` junto — e o
+    /// que garante que ligar o barramento não muda o que o jogador vê enquanto os
+    /// subcomandos ainda são tratados aqui.
+    pub uplink: Option<Arc<BusUplink>>,
 }
 
 impl LinkGateway {
@@ -37,7 +54,17 @@ impl LinkGateway {
         char_repo: CharacterRepository,
         cache_manager: CacheManager,
     ) -> Self {
-        let game_version = version_str.parse::<GameVersion>().unwrap_or(GameVersion::V1_2_6);
+        // Um `GAME_VERSION` que não parseia é erro de configuração, não motivo para
+        // adivinhar. Antes isto caía em 1.2.6 em silêncio: um realm 1.5.3 com um erro de
+        // digitação subia falando o protocolo errado, e o sintoma aparecia lá adiante
+        // como "o cliente conecta e recusa o login", sem nada no log apontando a causa.
+        // Com vários realms no mesmo `docker-compose`, isso vira questão de tempo.
+        let game_version = version_str.parse::<GameVersion>().unwrap_or_else(|_| {
+            panic!(
+                "GAME_VERSION inválido para o realm '{realm_id}': {version_str:?}. \
+                 Valores aceitos: 1.2.6, 1.4.8, 1.5.3."
+            )
+        });
         let adapter = create_protocol_adapter(game_version);
 
         let mut data_manager = GameDataManager::new();
@@ -48,22 +75,55 @@ impl LinkGateway {
             format!("/app/data/{}/config", realm_id),
             "config".to_string(),
         ];
+        // A primeira pasta que **existe** é a pasta deste realm, dê certo ou não a carga.
+        //
+        // Antes, um erro em qualquer arquivo fazia o laço seguir para o próximo caminho da
+        // lista — que não existe — e terminar com "nenhum diretório encontrado", escondendo
+        // que a pasta certa estava lá e um arquivo dentro dela é que estava ruim. Hoje a
+        // carga não aborta mais no primeiro erro (ver `RelatorioDeCarga`), então o que sobra
+        // é relatar arquivo por arquivo.
         let mut loaded = false;
         for dir_str in &possible_dirs {
             let p = std::path::Path::new(dir_str);
             if p.exists() {
                 info!("Carregando arquivos de configuração e mapas de {:?}", p);
-                if let Err(e) = data_manager.load_from_directory(p) {
-                    warn!("Aviso: Erro ao carregar templates de dados de {:?}: {:?}", p, e);
-                } else {
-                    loaded = true;
-                    break;
+                let relatorio = data_manager.load_from_directory(p);
+                for falha in &relatorio.falhas {
+                    warn!(
+                        arquivo = %falha.arquivo,
+                        motivo = %falha.motivo,
+                        "pw-link: arquivo de dados não carregado"
+                    );
                 }
+                loaded = true;
+                break;
             }
         }
         if !loaded {
             warn!("Nenhum diretório de configuração .data foi encontrado nas buscas: {:?}", possible_dirs);
         }
+
+        // As duas constantes do `edition` saem dos `.data` deste realm — o cliente não
+        // carrega dados de outra versão, então o número dentro do arquivo é o número dele.
+        // O ambiente ainda sobrescreve; um valor ilegível ali é erro de configuração, como
+        // o `GAME_VERSION`: seguir com o padrão produziria um `edition` que o cliente
+        // recusa, e a mensagem que ele mostra não fala em variável de ambiente nenhuma.
+        let versao_do_cliente = VersaoDoCliente::resolver(
+            game_version,
+            data_manager.versao_do_elements,
+            data_manager.versao_das_tasks,
+            |k| std::env::var(k).ok(),
+        )
+        .unwrap_or_else(|e| panic!("Realm '{realm_id}': {e}"));
+        info!(
+            "Realm {}: constantes do cliente — ELEMENTDATA_VERSION={:#x}, task_templ={} \
+             (elements.data={:?}, tasks.data={:?})",
+            realm_id,
+            versao_do_cliente.elements_data,
+            versao_do_cliente.task_templ,
+            data_manager.versao_do_elements.map(|v| format!("{v:#x}")),
+            data_manager.versao_das_tasks,
+        );
 
         Self {
             realm_id,
@@ -74,7 +134,19 @@ impl LinkGateway {
             char_repo,
             cache_manager,
             data_manager: Arc::new(data_manager),
+            versao_do_cliente,
+            uplink: None,
         }
+    }
+
+    /// Liga este daemon de link ao servidor de mundo em `endereco` (`host:porta`).
+    ///
+    /// A conexão é feita em segundo plano e reconecta sozinha, então chamar isto não
+    /// exige que o `pw-gs` já esteja no ar.
+    pub fn com_barramento(mut self, endereco: &str) -> Self {
+        info!("pw-link: barramento apontado para o servidor de mundo em {endereco}");
+        self.uplink = Some(BusUplink::iniciar(endereco.to_string()));
+        self
     }
 
     pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
@@ -123,7 +195,45 @@ impl LinkGateway {
 
         // 1. Envia Challenge de Login inicial para o cliente
         let server_nonce = generate_login_challenge();
-        let challenge_packet = OutboundPacket::Challenge(S2CChallenge::new(server_nonce.to_vec()));
+        // Os dois timestamps saem dos `.data` do realm — `gshop.data` e `gshop1.data`,
+        // arquivos diferentes. Se algum não estiver presente, o timestamp fica zero e o
+        // cliente vai recusar o login; o aviso abaixo diz exatamente isso, porque a
+        // mensagem que o cliente mostra é genérica ("versão errada") e não ajuda.
+        let gshop3_timestamp = self
+            .game_version
+            .challenge_edition_tem_terceiro_gshop()
+            .then_some(self.data_manager.gshop3.timestamp);
+        let edition = Edition::com_versao_do_cliente(
+            self.versao_do_cliente,
+            self.data_manager.gshop.timestamp,
+            self.data_manager.gshop2.timestamp,
+            gshop3_timestamp,
+        );
+        if self.game_version.challenge_has_edition()
+            && (edition.gshop_timestamp == 0 || edition.gshop2_timestamp == 0)
+        {
+            warn!(
+                "Realm {}: timestamps de gshop = {} e {} — um zerado faz o cliente \
+                 recusar o login no Challenge, com mensagem de versão errada. A pasta de \
+                 configuração precisa do par `gshop.data`+`gshop1.data` (empacotamento do \
+                 cliente) ou `gshopsev.data`+`gshopsev1.data` (do servidor).",
+                self.realm_id, edition.gshop_timestamp, edition.gshop2_timestamp
+            );
+        }
+        if gshop3_timestamp == Some(0) {
+            warn!(
+                "Realm {}: esta versão espera um terceiro timestamp de gshop \
+                 (`gshop2.data`/`gshopsev2.data`) e ele está zerado — o `edition` vai sair \
+                 errado e o cliente recusa o login.",
+                self.realm_id
+            );
+        }
+
+        let challenge_packet = OutboundPacket::Challenge(S2CChallenge::new(
+            server_nonce.to_vec(),
+            self.game_version,
+            edition,
+        ));
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<OutboundPacket>(256);
         tx.send(challenge_packet).await?;
@@ -158,8 +268,39 @@ impl LinkGateway {
             }
         }
 
+        // A sessão acabou — por logout, por queda ou por erro, dá no mesmo para o mundo:
+        // aquele jogador não é mais alcançável por este link. Avisar aqui, e não só no
+        // caminho de logout limpo, é o que impede um personagem de ficar "preso" no
+        // mundo depois de uma queda de conexão.
+        if let (Some(uplink), Some(roleid)) = (self.uplink.as_ref(), session.role_id) {
+            uplink.enviar(BusMessage::PlayerLogout {
+                result: 0,
+                roleid,
+                provider_link_id: 0,
+                localsid: session.localsid,
+            });
+            uplink.desregistrar(roleid).await;
+        }
+
         info!("Sessão #{} ({}) finalizada.", session_id, client_ip);
         Ok(())
+    }
+
+    /// Este pacote só faz sentido depois do login?
+    ///
+    /// A lista é por inclusão — um pacote novo é tratado como **exigindo** login até
+    /// alguém dizer o contrário. O contrário (lista de bloqueados) deixaria cada pacote
+    /// novo aberto por omissão, que é o tipo de falha que ninguém percebe ao adicionar
+    /// um comando.
+    fn exige_autenticacao(packet: &InboundPacket) -> bool {
+        !matches!(
+            packet,
+            InboundPacket::Response(_)          // é o próprio login
+                | InboundPacket::KeyExchange(_) // negociação de cifra, antes do login
+                | InboundPacket::Heartbeat(_)
+                | InboundPacket::QueryServerTime(_)
+                | InboundPacket::Unknown { .. } // já é registrado e descartado
+        )
     }
 
     async fn dispatch_packet(
@@ -168,6 +309,20 @@ impl LinkGateway {
         session: &mut ClientSession,
         packet: InboundPacket,
     ) -> anyhow::Result<()> {
+        // Barreira única: sem conta na sessão, nada que toque dados de personagem passa.
+        //
+        // Cada tratador confere conta e realm por conta própria, mas todos partiam de
+        // `session.account_id.unwrap_or(0)` — o que faria a checagem depender de nunca
+        // existir uma conta de id 0. Isso é uma suposição sobre a sequência do banco, e
+        // não uma garantia. Aqui a suposição deixa de ser necessária.
+        if Self::exige_autenticacao(&packet) && session.account_id.is_none() {
+            warn!(
+                "Sessão #{} mandou um pacote que exige login antes de autenticar — ignorado",
+                session.session_id
+            );
+            return Ok(());
+        }
+
         match packet {
             InboundPacket::Response(login) => {
                 debug!(
@@ -291,7 +446,10 @@ impl LinkGateway {
                         info!("Personagem '{}' criado com sucesso! (ID: {})", create_role.name, new_role_id);
                         
                         let equips = self.char_repo.item_repo().list_by_container(new_role_id, pw_core::ContainerType::Equipment).await.unwrap_or_default();
-                        let details_opt = self.char_repo.get_details(new_role_id).await.unwrap_or(None);
+                        let details_opt = self.char_repo
+                            .get_details(new_role_id, acc_id, &self.realm_id)
+                            .await
+                            .unwrap_or(None);
                         let (level, cultivation, world_id, pos) = if let Some(ref d) = details_opt {
                             (d.level, d.cultivation, d.world_id, d.position)
                         } else {
@@ -344,13 +502,33 @@ impl LinkGateway {
                     delete_role.role_id, acc_id, self.realm_id
                 );
 
-                if let Err(e) = self.char_repo.delete_character(delete_role.role_id).await {
-                    warn!("Falha ao excluir personagem ID {}: {:?}", delete_role.role_id, e);
+                // O `role_id` veio do cliente: o repositório só apaga se ele for desta
+                // conta **neste** realm. Enquanto essa checagem não existia, qualquer
+                // jogador autenticado apagava o personagem de qualquer outro, bastando
+                // adivinhar o número — e ele é sequencial.
+                let apagado = self
+                    .char_repo
+                    .delete_character(delete_role.role_id, acc_id, &self.realm_id)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Falha ao excluir personagem ID {}: {:?}", delete_role.role_id, e);
+                        false
+                    });
+
+                if !apagado {
+                    // Recusa sem dizer por quê: "não é seu" e "não existe" têm que ser a
+                    // mesma resposta, senão ela vira um oráculo de quais ids existem.
+                    warn!(
+                        "Exclusão recusada: personagem {} não é da conta {} no realm '{}'",
+                        delete_role.role_id, acc_id, self.realm_id
+                    );
                 }
 
                 // 1. Envia confirmação DeleteRole_Re (Opcode 0x57)
                 tx.send(OutboundPacket::DeleteRoleResponse(S2CDeleteRoleResponse {
-                    result: 0,
+                    // TODO: o código de erro não foi conferido contra o C++ original; o
+                    // que importa aqui é não responder sucesso a uma operação recusada.
+                    result: if apagado { 0 } else { 1 },
                     role_id: delete_role.role_id,
                     localsid: delete_role.localsid,
                 })).await?;
@@ -363,13 +541,25 @@ impl LinkGateway {
                     undo_delete.role_id, acc_id, self.realm_id
                 );
 
-                if let Err(e) = self.char_repo.restore_character(undo_delete.role_id).await {
-                    warn!("Falha ao restaurar personagem ID {}: {:?}", undo_delete.role_id, e);
+                let restaurado = self
+                    .char_repo
+                    .restore_character(undo_delete.role_id, acc_id, &self.realm_id)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Falha ao restaurar personagem ID {}: {:?}", undo_delete.role_id, e);
+                        false
+                    });
+
+                if !restaurado {
+                    warn!(
+                        "Restauração recusada: personagem {} não é da conta {} no realm '{}'",
+                        undo_delete.role_id, acc_id, self.realm_id
+                    );
                 }
 
                 // 1. Envia confirmação UndoDeleteRole_Re (Opcode 0x59)
                 tx.send(OutboundPacket::UndoDeleteRoleResponse(S2CUndoDeleteRoleResponse {
-                    result: 0,
+                    result: if restaurado { 0 } else { 1 },
                     role_id: undo_delete.role_id,
                     localsid: undo_delete.localsid,
                 })).await?;
@@ -381,7 +571,14 @@ impl LinkGateway {
                     select_role.role_id, self.realm_id
                 );
 
-                let char_details_opt = self.char_repo.get_details(select_role.role_id).await?;
+                // Sem a conta e o realm na consulta, este era o caminho para entrar no
+                // mundo como **qualquer** personagem do servidor: basta mandar outro
+                // `role_id`, que é sequencial.
+                let acc_id = session.account_id.unwrap_or(0);
+                let char_details_opt = self
+                    .char_repo
+                    .get_details(select_role.role_id, acc_id, &self.realm_id)
+                    .await?;
 
                 if let Some(details) = char_details_opt {
                     session.set_in_world(details.id, details.name.clone());
@@ -412,13 +609,44 @@ impl LinkGateway {
                     enter_world.role_id, self.realm_id
                 );
 
-                let char_details_opt = self.char_repo.get_details(enter_world.role_id).await?;
+                let acc_id = session.account_id.unwrap_or(0);
+                let char_details_opt = self
+                    .char_repo
+                    .get_details(enter_world.role_id, acc_id, &self.realm_id)
+                    .await?;
                 if let Some(details) = char_details_opt {
                     info!("Personagem '{}' (ID: {}) entrando no mundo 3D...", details.name, details.id);
 
-                    // 1. Envia INST_DATA_CHECKOUT / SERVER_CONFIG_DATA (Comando 206) - Sincroniza timestamps do mundo (1, 2097199, 2097199, 1206433535)
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::inst_data_checkout(
-                        1, 2097199, 2097199, 1206433535
+                    // Anuncia o jogador ao servidor de mundo antes de qualquer coisa: a
+                    // partir daqui ele pode receber do mundo, e o registro precisa
+                    // existir quando a primeira resposta voltar.
+                    //
+                    // Os campos do `EnterWorld` do barramento são os mesmos que o cliente
+                    // mandou — é o mesmo protocolo GNET (opcode 72), repassado.
+                    session.localsid = enter_world.localsid;
+                    if let Some(uplink) = self.uplink.as_ref() {
+                        uplink.registrar(details.id, tx.clone()).await;
+                        uplink.enviar(BusMessage::EnterWorld {
+                            roleid: details.id,
+                            provider_link_id: enter_world.provider_link_id,
+                            locktime: enter_world.locktime,
+                            timeout: enter_world.timeout,
+                            settime: enter_world.settime,
+                            localsid: enter_world.localsid,
+                        });
+                    }
+
+                    // 1. INST_DATA_CHECKOUT (206) — os carimbos de tempo dos dados do
+                    //    servidor. **O layout depende da versão**: o 1.2.6 tem quatro
+                    //    campos e o 1.5.3 tem cinco (item 56), e mandar o tamanho errado
+                    //    faz o cliente descartar o comando sem avisar (item 46).
+                    let sub = pw_protocol::PorVersao::new(self.game_version);
+                    let gshop3 = self
+                        .game_version
+                        .challenge_edition_tem_terceiro_gshop()
+                        .then_some(self.data_manager.gshop3.timestamp);
+                    tx.send(OutboundPacket::GamedataSend(sub.inst_data_checkout(
+                        1, 2097199, 2097199, 1206433535, gshop3
                     ))).await?;
 
                     // 2. Envia SELF_INFO_00 (Comando 38) - Status vitais, nível e permissão de GM
@@ -557,8 +785,12 @@ impl LinkGateway {
                         ))).await?;
                     }
 
-                    // 10.5 Envia saldo inicial de Gold/Cash (500.00 Gold = 50000 centavos)
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_cash(50000, 0))).await?;
+                    // 10.5 Saldo inicial. Era `50000` escrito no código — o mesmo saldo
+                    //      para todo personagem de todo realm. O valor de verdade já
+                    //      estava carregado aqui, em `details.money`, e nunca era lido.
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_cash(
+                        details.money.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+                    ))).await?;
 
                     // 11. Envia GetUIConfig_Re (Opcode 105 / 0x69) - Desperta OnPrtcGetConfigRe, ativa OnAllInitDataReady e destrava a tela de Loading
                     tx.send(OutboundPacket::GetUIConfigRe(S2CGetUIConfigRe::new(
@@ -581,201 +813,73 @@ impl LinkGateway {
                     "Gamedata recebido do cliente ({} bytes, cmd={}): {:02x?}",
                     gamedata.data.len(), cmd, gamedata.data
                 );
+
+                // Repassa ao servidor de mundo. Hoje o `pw-gs` apenas registra o que
+                // chega — o tratamento continua logo abaixo, neste arquivo — mas é por
+                // esta linha que cada comando vai migrar: quando um passar a ser tratado
+                // no `pw-gs`, o braço correspondente sai daqui, e nada mais muda.
+                //
+                // O `data` vai como veio, sem interpretação: o envelope do barramento é
+                // GNET, e o conteúdo é o formato do mundo 3D.
+                if let (Some(uplink), Some(roleid)) = (self.uplink.as_ref(), session.role_id) {
+                    uplink.enviar(BusMessage::ClientToGame {
+                        roleid,
+                        localsid: session.localsid,
+                        data: gamedata.data.clone(),
+                    });
+                }
+
                 if gamedata.data.len() >= 2 {
                     let cmd = u16::from_le_bytes([gamedata.data[0], gamedata.data[1]]);
                     let role_id = session.role_id.unwrap_or(0);
                     match cmd {
-                        0 => {
-                            // C2S 0: PLAYER_MOVE (Sincronização de movimento e persistência no banco)
-                            if gamedata.data.len() >= 14 {
-                                let px = f32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
-                                let py = f32::from_le_bytes([gamedata.data[6], gamedata.data[7], gamedata.data[8], gamedata.data[9]]);
-                                let pz = f32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
-                                trace!("Movimento do jogador {}: ({:.2}, {:.2}, {:.2})", role_id, px, py, pz);
-                                let pos = Vector3::new(px, py, pz);
-                                let _ = self.char_repo.update_position(role_id, &pos).await;
-                            }
-                        }
-                        1 => {
-                            // C2S::LOGOUT (Gamedata subcomando 1): struct { u16 cmd = 1, i32 iOutType }
-                            // iOutType: 0 = _PLAYER_LOGOUT_FULL (Sair do Jogo), 1 = _PLAYER_LOGOUT_HALF (Seleção de Personagem)
-                            let out_type = if gamedata.data.len() >= 6 {
-                                i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]])
-                            } else if gamedata.data.len() >= 3 {
-                                gamedata.data[2] as i32
-                            } else {
-                                1
-                            };
-                            info!("Jogador ID {} solicitou Logout com out_type: {} (0=Sair do Jogo, 1=Seleção de Personagens)", role_id, out_type);
-                            tx.send(OutboundPacket::PlayerLogout(S2CPlayerLogout::new(
-                                out_type,
-                                role_id,
-                                session.session_id as u32,
-                            ))).await?;
-                        }
-                        2 => {
-                            // C2S 2: SELECT_TARGET (Selecionar Alvo e atualizar HP no HUD)
-                            if gamedata.data.len() >= 6 {
-                                let target_id = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
-                                session.set_target(target_id);
-                                trace!("Jogador ID {} selecionou alvo ID {}", role_id, target_id);
-                                if target_id == 0 {
-                                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unselect())).await?;
-                                } else {
-                                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::select_target(target_id))).await?;
-                                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_info_00(target_id, 1000, 1000))).await?;
-                                }
-                            }
-                        }
-                        3 => {
-                            // C2S 3: NORMAL_ATTACK (Ataque Básico)
-                            let target_id = if gamedata.data.len() >= 6 {
-                                i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]])
-                            } else {
-                                session.target_id.unwrap_or(0)
-                            };
-                            if target_id != 0 {
-                                info!("Jogador ID {} atacou o alvo ID {}", role_id, target_id);
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::host_attack_result(target_id, 35, 0))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_info_00(target_id, 965, 1000))).await?;
-
-                                // Se for monstro/entidade, envia notificação de progresso de abate para missões ativas
-                                if (target_id as u32 & 0x80000000) != 0 {
-                                    let active_quests = self.char_repo.quest_repo().list_quests(role_id).await.unwrap_or_default();
-                                    for q in active_quests {
-                                        if q.status == pw_core::QuestStatus::Active {
-                                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_monster_killed(q.quest_id as u16, 13641, 1))).await?;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        7 => {
-                            trace!("Parada de movimento do jogador recebida via GamedataSend");
-                            if gamedata.data.len() >= 14 {
-                                let px = f32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
-                                let py = f32::from_le_bytes([gamedata.data[6], gamedata.data[7], gamedata.data[8], gamedata.data[9]]);
-                                let pz = f32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
-                                let pos = Vector3::new(px, py, pz);
-                                let _ = self.char_repo.update_position(role_id, &pos).await;
-                            }
-                        }
-                        8 => {
-                            // C2S 8: UNSELECT
-                            session.clear_target();
-                            trace!("Jogador ID {} desmarcou alvo", role_id);
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unselect())).await?;
-                        }
-                        9 => {
-                            // C2S::GET_ITEM_INFO (Consulta de detalhes de item / durabilidade do banco)
-                            if gamedata.data.len() >= 4 {
-                                let by_package = gamedata.data[2];
-                                let by_slot = gamedata.data[3];
-                                let ctype = pw_core::ContainerType::from_i16(by_package as i16);
-                                if let Ok(Some(item)) = self.char_repo.item_repo().get_item_by_slot(role_id, ctype, by_slot as u16).await {
-                                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
-                                        by_package, by_slot, item.item_id as i32, item.durability as i32 * 100, item.max_durability as i32 * 100, item.count, &item.octets
-                                    ))).await?;
-                                }
-                            }
-                        }
-                        11 => {
-                            // C2S::GET_IVTR_DETAIL
-                            let by_package = if gamedata.data.len() >= 3 { gamedata.data[2] } else { 0 };
-                            let ctype = pw_core::ContainerType::from_i16(by_package as i16);
-                            let items = self.char_repo.item_repo().list_by_container(role_id, ctype).await.unwrap_or_default();
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(by_package, 32, &items))).await?;
-                        }
-                        12 => {
-                            // C2S::EXG_IVTR_ITEM (Troca de posição na bolsa)
-                            if gamedata.data.len() >= 4 {
-                                let idx1 = gamedata.data[2];
-                                let idx2 = gamedata.data[3];
-                                info!("Trocando itens nos slots {} e {} da bolsa no banco de dados", idx1, idx2);
-                                let _ = self.char_repo.item_repo().swap_slots(role_id, pw_core::ContainerType::Inventory, idx1 as u16, idx2 as u16).await;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::exg_ivtr_item(idx1, idx2))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, idx1 as u16))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, idx2 as u16))).await?;
-                            }
-                        }
-                        13 => {
-                            // C2S::MOVE_IVTR_ITEM (Mover item na bolsa)
-                            if gamedata.data.len() >= 8 {
-                                let src = gamedata.data[2];
-                                let dest = gamedata.data[3];
-                                let count = u32::from_le_bytes([gamedata.data[4], gamedata.data[5], gamedata.data[6], gamedata.data[7]]) as u16;
-                                info!("Movendo item do slot {} para {} (qtd: {}) no banco de dados", src, dest, count);
-                                let _ = self.char_repo.item_repo().swap_slots(role_id, pw_core::ContainerType::Inventory, src as u16, dest as u16).await;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::move_ivtr_item(src, dest, count))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, src as u16))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, dest as u16))).await?;
-                            }
-                        }
-                        16 => {
-                            // C2S::EXG_EQUIP_ITEM (Troca de equipamentos)
-                            if gamedata.data.len() >= 4 {
-                                let idx1 = gamedata.data[2];
-                                let idx2 = gamedata.data[3];
-                                let _ = self.char_repo.item_repo().swap_slots(role_id, pw_core::ContainerType::Equipment, idx1 as u16, idx2 as u16).await;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::exg_equip_item(idx1, idx2))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(1, idx1 as u16))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(1, idx2 as u16))).await?;
-                            }
-                        }
-                        17 => {
-                            // C2S::EQUIP_ITEM (Equipar ou Desequipar com suporte bidirecional)
-                            if gamedata.data.len() >= 4 {
-                                let idx_inv = gamedata.data[2];
-                                let idx_eq = gamedata.data[3];
-                                
-                                let inv_before = self.char_repo.item_repo().get_item_by_slot(role_id, pw_core::ContainerType::Inventory, idx_inv as u16).await.unwrap_or(None);
-                                let eq_before = self.char_repo.item_repo().get_item_by_slot(role_id, pw_core::ContainerType::Equipment, idx_eq as u16).await.unwrap_or(None);
-                                
-                                info!(
-                                    "EQUIP_ITEM: role={}, bolsa slot {} (tem: {}), corpo slot {} (tem: {})",
-                                    role_id, idx_inv, inv_before.is_some(), idx_eq, eq_before.is_some()
-                                );
-                                
-                                let _ = self.char_repo.item_repo().move_between_containers(
-                                    role_id,
-                                    pw_core::ContainerType::Inventory, idx_inv as u16,
-                                    pw_core::ContainerType::Equipment, idx_eq as u16
-                                ).await;
-                                
-                                let inv_after = self.char_repo.item_repo().get_item_by_slot(role_id, pw_core::ContainerType::Inventory, idx_inv as u16).await.unwrap_or(None);
-                                let eq_after = self.char_repo.item_repo().get_item_by_slot(role_id, pw_core::ContainerType::Equipment, idx_eq as u16).await.unwrap_or(None);
-                                
-                                let count_inv = if inv_after.is_some() { 1 } else { 0 };
-                                let count_eq = if eq_after.is_some() { 1 } else { 0 };
-                                
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::equip_item(idx_inv, idx_eq, count_inv, count_eq))).await?;
-                                
-                                if let Some(item) = inv_after {
-                                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
-                                        0, idx_inv, item.item_id as i32, item.durability as i32 * 100, item.max_durability as i32 * 100, item.count, &item.octets
-                                    ))).await?;
-                                }
-                                if let Some(item) = eq_after {
-                                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
-                                        1, idx_eq, item.item_id as i32, item.durability as i32 * 100, item.max_durability as i32 * 100, item.count, &item.octets
-                                    ))).await?;
-                                }
-                                
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, idx_inv as u16))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(1, idx_eq as u16))).await?;
-                            }
-                        }
-                        18 => {
-                            // C2S::MOVE_ITEM_TO_EQUIP
-                            if gamedata.data.len() >= 4 {
-                                let idx_inv = gamedata.data[2];
-                                let idx_eq = gamedata.data[3];
-                                let _ = self.char_repo.item_repo().move_between_containers(role_id, pw_core::ContainerType::Inventory, idx_inv as u16, pw_core::ContainerType::Equipment, idx_eq as u16).await;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::move_item_to_equip(idx_inv, idx_eq, 1))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, idx_inv as u16))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(1, idx_eq as u16))).await?;
-                            }
-                        }
+                        // MIGRADOS PARA O `pw-gs` (`bus_server::tratar_subcomando`):
+                        //
+                        //   0  PLAYER_MOVE  — agora atualiza o mundo em memória, e o
+                        //                     autosave grava. Antes era um `UPDATE` no
+                        //                     PostgreSQL **por pacote de movimento**.
+                        //   1  LOGOUT       — o mundo tira o jogador da simulação e
+                        //                     devolve um `PlayerLogout` (69) pelo
+                        //                     barramento; o `uplink.rs` traduz aquilo no
+                        //                     pacote que o cliente espera.
+                        //   2  SELECT_TARGET— e agora com o HP **real** do alvo: aqui o
+                        //                     link mandava 1000/1000 fixo, porque não
+                        //                     sabe o estado das criaturas.
+                        //   3  NORMAL_ATTACK— dano do `CombatEngine` com os atributos dos
+                        //                     dois lados, HP debitado de verdade, monstro
+                        //                     que morre. Aqui era dano 35 fixo, HP
+                        //                     965/1000 fixo, e abate de missão notificado
+                        //                     a cada golpe com a criatura `13641` fixa.
+                        //   7  STOP_MOVE    — atualiza mundo e grade, sem `UPDATE` por
+                        //                     parada.
+                        //   8  UNSELECT     — desmarca no mundo, que é quem guarda o alvo
+                        //                     desde que o comando 2 migrou.
+                        //   4  REVIVE_VILLAGE — não existia; quem zerava a vida ficava
+                        //                     preso até reconectar.
+                        //   9, 11, 12, 13, 16, 17, 18  — itens: consulta, troca de slot,
+                        //                     mover e equipar. Todos passam pelo mesmo
+                        //                     repositório, agora transacionado e sem
+                        //                     apagar os octetos do item.
+                        //   42, 46, 47, 48, 75 — postura, emote e zona segura.
+                        //   37  SEVNPC_SERVE — os treze serviços de NPC. A compra e a
+                        //                     venda estavam **invertidas**: os nomes do
+                        //                     enum são do ponto de vista do NPC.
+                        //   40  USE_ITEM     — poção cura pelo `elements.data`, e não
+                        //                     por dois ids escritos no código com
+                        //                     HP/MP 120/280 fixos.
+                        //   41, 80 CAST_SKILL — dano do `CombatEngine` no alvo lido do
+                        //                     deslocamento certo; era 150 fixo e o alvo
+                        //                     saía de `data[7..11]`, que pega o
+                        //                     `target_count` junto.
+                        //   27, 28, 29, 30 — grupo, agora com **estado**. Aqui o convite
+                        //                     era mandado de volta a quem convidou, a
+                        //                     lista de membros vinha com vida e posição
+                        //                     escritas no código, e sair era um eco só
+                        //                     para o próprio jogador.
+                        //
+                        // Sem `GS_BUS` configurado, estes dois deixam de ter tratamento —
+                        // é o preço declarado da separação, e o `main.rs` avisa no log ao
+                        // subir sem barramento.
                         23..=26 => {
                             // Subcomandos de ação de movimento / pulo / voo (Takeoff / Landing)
                             if gamedata.data.len() >= 3 {
@@ -789,215 +893,23 @@ impl LinkGateway {
                                 }
                             }
                         }
-                        27 => {
-                            // C2S 27: TEAM_INVITE (Convidar jogador para grupo)
-                            if gamedata.data.len() >= 6 {
-                                let dst_roleid = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
-                                info!("Jogador ID {} convidou jogador ID {} para grupo", role_id, dst_roleid);
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::team_leader_invite(role_id))).await?;
-                            }
-                        }
-                        28 => {
-                            // C2S 28: TEAM_AGREE_INVITE (Aceitar convite de grupo)
-                            if gamedata.data.len() >= 6 {
-                                let leader_id = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
-                                info!("Jogador ID {} aceitou entrar no grupo do líder {}", role_id, leader_id);
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::team_join_party(role_id, leader_id))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::team_member_data(&[
-                                    (leader_id, 1, 120, 120, 280, 280, (-718.0, 218.0, -1217.0)),
-                                    (role_id, 1, 120, 120, 280, 280, (-718.4, 218.9, -1217.0)),
-                                ]))).await?;
-                            }
-                        }
-                        30 => {
-                            // C2S 30: TEAM_LEAVE_PARTY (Sair do grupo)
-                            info!("Jogador ID {} saiu do grupo", role_id);
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::team_leave_party(role_id, 0))).await?;
-                        }
-                        32 | 35 => {
-                            // C2S 32 / 35: SEVNPC_HELLO (Abrir diálogo com NPC)
+                        35 => {
+                            // C2S 35: SEVNPC_HELLO (abrir diálogo com NPC).
+                            //
+                            // Era `32 | 35`. O 32 é `TEAM_MEMBER_POS` no IR — uma consulta
+                            // de posição de companheiro de grupo, que passava a receber um
+                            // diálogo de NPC como resposta.
                             if gamedata.data.len() >= 6 {
                                 let nid = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
                                 info!("Jogador ID {} iniciou diálogo com o NPC ID {}", role_id, nid);
                                 tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_greeting(nid))).await?;
                             }
                         }
-                        33 | 37 => {
-                            // C2S 33 / 37: SEVNPC_SERVE (Serviços de NPC: Quests, Loja, Reparo, Forja, Skills, etc.)
-                            if gamedata.data.len() >= 6 {
-                                let service_type = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
-                                let now_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u32;
-
-                                match service_type {
-                                    1 => {
-                                        // GP_NPCSEV_SELL (Vender item para NPC)
-                                        if gamedata.data.len() >= 12 {
-                                            let slot = gamedata.data[10];
-                                            let count = if gamedata.data.len() >= 12 { u16::from_le_bytes([gamedata.data[10], gamedata.data[11]]) } else { 1 };
-                                            info!("Jogador ID {} vendeu item no slot {} (qtd: {}) para NPC", role_id, slot, count);
-                                            let _ = self.char_repo.item_repo().delete_item_by_slot(role_id, pw_core::ContainerType::Inventory, slot as u16).await;
-                                            let _ = self.char_repo.add_money(role_id, 50).await;
-                                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, slot as u16))).await?;
-                                        }
-                                    }
-                                    2 => {
-                                        // GP_NPCSEV_BUY (Comprar item da loja do NPC)
-                                        if gamedata.data.len() >= 14 {
-                                            let item_id = i32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
-                                            info!("Jogador ID {} comprou item ID {} do NPC", role_id, item_id);
-                                            let _ = self.char_repo.deduct_money(role_id, 100).await;
-                                            let _ = self.char_repo.item_repo().upsert_item(&pw_core::ItemRecord {
-                                                id: None,
-                                                character_id: role_id,
-                                                container_type: pw_core::ContainerType::Inventory,
-                                                slot: 10,
-                                                item_id: item_id as u32,
-                                                count: 1,
-                                                max_count: 100,
-                                                refine_level: 0,
-                                                sockets_count: 0,
-                                                sockets: vec![],
-                                                durability: 10000,
-                                                max_durability: 10000,
-                                                bind_status: 0,
-                                                octets: vec![],
-                                                custom_attributes: serde_json::json!({}),
-                                            }).await;
-                                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(0, 10, item_id, 10000, 10000, 1, &[]))).await?;
-                                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, 10))).await?;
-                                        }
-                                    }
-                                    3 => {
-                                        // GP_NPCSEV_REPAIR (Reparo de equipamentos)
-                                        info!("Jogador ID {} reparou todos os equipamentos no Ferreiro", role_id);
-                                        let _ = self.char_repo.deduct_money(role_id, 150).await;
-                                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::repair_all(150))).await?;
-                                    }
-                                    4 => {
-                                        // GP_NPCSEV_HEAL (Cura e restauração completa de HP/MP)
-                                        info!("Jogador ID {} curou HP/MP no NPC", role_id);
-                                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_info_00(
-                                            1, session.sec_level, 120, 120, 280, 280, 0, 0
-                                        ))).await?;
-                                    }
-                                    5 => {
-                                        // GP_NPCSEV_TRANSMIT (Teleporte de mapa)
-                                        info!("Jogador ID {} utilizou teleporte do NPC", role_id);
-                                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::notify_hostpos(
-                                            Vector3::new(-718.4, 218.9, -1217.0), 0
-                                        ))).await?;
-                                    }
-                                    6 => {
-                                        // GP_NPCSEV_TASK_RETURN (Entregar / Concluir Missão)
-                                        if gamedata.data.len() >= 14 {
-                                            let id_task = i32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
-                                            info!("Jogador ID {} entregou/completou a missão ID {}", role_id, id_task);
-                                            let _ = self.char_repo.quest_repo().save_quest(role_id, id_task as u32, pw_core::QuestStatus::Completed, &[0, 0, 0], None).await;
-                                            let _ = self.char_repo.add_exp_sp(role_id, 1500, 320).await;
-                                            let _ = self.char_repo.add_money(role_id, 500).await;
-                                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_complete(id_task as u16, now_ts))).await?;
-                                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::receive_exp(1500, 320))).await?;
-                                        }
-                                    }
-                                    7 => {
-                                        // GP_NPCSEV_TASK_ACCEPT (Aceitar Missão)
-                                        if gamedata.data.len() >= 14 {
-                                            let id_task = i32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
-                                            info!("Jogador ID {} aceitou missão ID {} com sucesso", role_id, id_task);
-                                            let _ = self.char_repo.quest_repo().save_quest(role_id, id_task as u32, pw_core::QuestStatus::Active, &[0, 0, 0], None).await;
-                                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_new(id_task as u16, now_ts))).await?;
-                                        }
-                                    }
-                                    8 => {
-                                        // GP_NPCSEV_TASK_MATTER (Item de Missão)
-                                        if gamedata.data.len() >= 14 {
-                                            let id_task = i32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
-                                            info!("Jogador ID {} solicitou item de missão ID {}", role_id, id_task);
-                                        }
-                                    }
-                                    9 => {
-                                        // GP_NPCSEV_LEARN (Aprender Habilidade no Mestre)
-                                        if gamedata.data.len() >= 14 {
-                                            let skill_id = i32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
-                                            info!("Jogador ID {} aprendeu/subiu de nível a habilidade ID {}", role_id, skill_id);
-                                            let _ = self.char_repo.skill_repo().learn_or_upgrade(role_id, skill_id as u32, 2).await;
-                                            let _ = self.char_repo.deduct_money(role_id, 200).await;
-                                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::learn_skill(skill_id, 2))).await?;
-                                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::cost_skill_point(150))).await?;
-                                            if let Ok(skills) = self.char_repo.skill_repo().list_skills(role_id).await {
-                                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::skill_data_from_records(&skills))).await?;
-                                            }
-                                        }
-                                    }
-                                    10 => {
-                                        // GP_NPCSEV_EMBED (Fusão de Pedra de Alma)
-                                        if gamedata.data.len() >= 14 {
-                                            let stone_id = i32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
-                                            info!("Jogador ID {} fundiu pedra de alma ID {} no equipamento", role_id, stone_id);
-                                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::embed_item(0, stone_id))).await?;
-                                        }
-                                    }
-                                    11 => {
-                                        // GP_NPCSEV_CLEAR_TESSERA (Limpeza de Pedras de Alma)
-                                        info!("Jogador ID {} limpou pedras de alma do equipamento", role_id);
-                                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::clear_tessera(0))).await?;
-                                    }
-                                    12 => {
-                                        // GP_NPCSEV_MAKEITEM (Forjar Item / Produção)
-                                        if gamedata.data.len() >= 14 {
-                                            let recipe_id = i32::from_le_bytes([gamedata.data[10], gamedata.data[11], gamedata.data[12], gamedata.data[13]]);
-                                            info!("Jogador ID {} forjou item usando a receita ID {}", role_id, recipe_id);
-                                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::produce_start(recipe_id, 2000))).await?;
-                                            let tx_c = tx.clone();
-                                            tokio::spawn(async move {
-                                                tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-                                                let _ = tx_c.send(OutboundPacket::GamedataSend(S2CGamedataSend::produce_once(recipe_id))).await;
-                                                let _ = tx_c.send(OutboundPacket::GamedataSend(S2CGamedataSend::produce_end())).await;
-                                            });
-                                        }
-                                    }
-                                    13 => {
-                                        // GP_NPCSEV_BREAKITEM (Decomposição de Item em Pedras Celestiais)
-                                        info!("Jogador ID {} decompôs equipamento", role_id);
-                                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::decompose_start(1))).await?;
-                                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::decompose_end())).await?;
-                                    }
-                                    15 => {
-                                        // GP_NPCSEV_OPENTRASH (Abrir Armazém / Banqueiro)
-                                        info!("Jogador ID {} abriu o Armazém/Banqueiro", role_id);
-                                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::trashbox_open(32))).await?;
-                                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::trashbox_wealth(0))).await?;
-                                    }
-                                    _ => {
-                                        debug!("SEVNPC_SERVE tipo {} recebido de jogador {}", service_type, role_id);
-                                    }
-                                }
-                            }
-                        }
-                        21 => {
-                            // C2S 21: SELF_GET_PROPERTY (Consulta de atributos e saldo da conta)
-                            debug!("Jogador ID {} solicitou SELF_GET_PROPERTY (C2S 21)", role_id);
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_cash(50000, 0))).await?;
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_info_00(
-                                1, session.sec_level, 120, 120, 280, 280, 0, 0
-                            ))).await?;
-                        }
-                        39 => {
-                            // C2S::GET_ALL_DATA (Comando 39) - Solicitação de inventário, equipamentos, saldo e missões
-                            let items = self.char_repo.item_repo().list_by_container(role_id, pw_core::ContainerType::Inventory).await.unwrap_or_default();
-                            let equips = self.char_repo.item_repo().list_by_container(role_id, pw_core::ContainerType::Equipment).await.unwrap_or_default();
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(0, 32, &items))).await?;
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(1, 32, &equips))).await?;
-                            for item in &items {
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(0, item.slot as u8, item.item_id as i32, item.durability as i32 * 100, item.max_durability as i32 * 100, item.count, &item.octets))).await?;
-                            }
-                            for item in &equips {
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(1, item.slot as u8, item.item_id as i32, item.durability as i32 * 100, item.max_durability as i32 * 100, item.count, &item.octets))).await?;
-                            }
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_cash(50000, 0))).await?;
-                            // S2C::TASK_DATA (cmd 105) é o marcador oficial de término do GET_ALL_DATA que dispara o LoadConfigData no cliente (EC_HostMsg.cpp:3841)
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_data())).await?;
-                        }
+                        // C2S 21 (`GET_EXT_PROP`) e 39 (`GET_ALL_DATA`) migraram para o
+                        // `pw-gs`. Os dois respondiam com números escritos no código —
+                        // `120/120/280/280` de vida e mana e `50000` de dinheiro, iguais
+                        // para qualquer personagem — porque o daemon de link não tem a
+                        // simulação de onde tirar os valores de verdade.
                         49 => {
                             // C2S 49: TASK_NOTIFY (Notificações e verificação de missões do cliente)
                             trace!("TASK_NOTIFY recebido de jogador {}", role_id);
@@ -1019,196 +931,54 @@ impl LinkGateway {
                                 tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_data())).await?;
                             }
                         }
-                        40 => {
-                            // C2S::USE_ITEM (Usar item do inventário persistente no banco)
-                            if gamedata.data.len() >= 10 {
-                                let where_pack = gamedata.data[2];
-                                let by_count = gamedata.data[3];
-                                let slot = u16::from_le_bytes([gamedata.data[4], gamedata.data[5]]) as u8;
-                                let item_id = i32::from_le_bytes([gamedata.data[6], gamedata.data[7], gamedata.data[8], gamedata.data[9]]);
-                                info!("Jogador ID {} usou item ID {} do pacote {} slot {} (qtd: {})", role_id, item_id, where_pack, slot, by_count);
-                                let ctype = pw_core::ContainerType::from_i16(where_pack as i16);
-                                let _ = self.char_repo.item_repo().consume_item(role_id, ctype, slot as u16, by_count as u32).await;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::host_use_item(where_pack, slot, item_id, by_count as u16))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(where_pack, slot as u16))).await?;
-
-                                // Se for poção de HP (1796) ou MP (1801), atualiza os status vitais
-                                if item_id == 1796 || item_id == 1801 {
-                                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_info_00(
-                                        1, session.sec_level, 120, 120, 280, 280, 0, 0
-                                    ))).await?;
-                                }
-                            }
-                        }
-                        41 | 80 => {
-                            // C2S 41 / 80: CAST_SKILL / CAST_INSTANT_SKILL
-                            if gamedata.data.len() >= 6 {
-                                let skill_id = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
-                                let target_id = if gamedata.data.len() >= 11 {
-                                    i32::from_le_bytes([gamedata.data[7], gamedata.data[8], gamedata.data[9], gamedata.data[10]])
-                                } else if let Some(t) = session.target_id {
-                                    t
-                                } else {
-                                    role_id
-                                };
-                                info!("Jogador ID {} conjurou habilidade ID {} no alvo {} (iniciando canalização)", role_id, skill_id, target_id);
-                                
-                                // Envia OBJECT_CAST_SKILL com 1000ms de canalização
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::object_cast_skill(
-                                    role_id,
-                                    target_id,
-                                    skill_id,
-                                    1000,   // cast time in ms = 1000ms
-                                    1,      // skill level
-                                ))).await?;
-
-                                let tx_clone = tx.clone();
-                                tokio::spawn(async move {
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-                                    
-                                    // 1. Libera o jogador do estado de conjuração (SKILL_PERFORM = 88)
-                                    let _ = tx_clone.send(OutboundPacket::GamedataSend(S2CGamedataSend::skill_perform())).await;
-
-                                    // 2. Aplica o resultado do ataque com a habilidade (SELF_SKILL_ATTACK_RESULT = 142)
-                                    let _ = tx_clone.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_skill_attack_result(
-                                        target_id,
-                                        skill_id,
-                                        150,
-                                        0,
-                                        0,
-                                    ))).await;
-
-                                    // 3. Informa a terceiros (OBJECT_SKILL_ATTACK_RESULT = 143)
-                                    let _ = tx_clone.send(OutboundPacket::GamedataSend(S2CGamedataSend::object_skill_attack_result(
-                                        role_id,
-                                        target_id,
-                                        skill_id,
-                                        150,
-                                        0,
-                                        0,
-                                    ))).await;
-
-                                    // 4. Finaliza o feitiço no cliente (SELF_STOP_SKILL = 123)
-                                    let _ = tx_clone.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_stop_skill())).await;
-
-                                    // 5. Se for monstro/entidade, atualiza o HP no HUD
-                                    if (target_id as u32 & 0x80000000) != 0 {
-                                        let _ = tx_clone.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_info_00(
-                                            target_id,
-                                            850,
-                                            1000,
-                                        ))).await;
-                                    }
-                                });
-                            }
-                        }
-                        42 => {
-                            // C2S::CANCEL_ACTION (Cancelar ação / Parar / Levantar)
-                            info!("Jogador ID {} cancelou ação / levantou", role_id);
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::object_stand_up(role_id))).await?;
-                        }
-                        46 => {
-                            // C2S::SIT_DOWN (Meditar / Sentar)
-                            info!("Jogador ID {} sentou / iniciou meditação", role_id);
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::object_sit_down(role_id))).await?;
-                        }
-                        47 => {
-                            // C2S::STAND_UP (Levantar)
-                            info!("Jogador ID {} levantou da meditação", role_id);
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::object_stand_up(role_id))).await?;
-                        }
-                        48 => {
-                            // C2S::EMOTE_ACTION (Ações / Emotes)
-                            if gamedata.data.len() >= 4 {
-                                let emotion = u16::from_le_bytes([gamedata.data[2], gamedata.data[3]]);
-                                info!("Jogador ID {} executou emote {}", role_id, emotion);
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::object_do_emote(role_id, emotion))).await?;
-                            }
-                        }
-                        67 => {
-                            // C2S 67: QUERY_PLAYER_INFO_1
-                            if gamedata.data.len() >= 4 {
-                                let count = u16::from_le_bytes([gamedata.data[2], gamedata.data[3]]) as usize;
-                                trace!("QUERY_PLAYER_INFO_1 recebido com {} players", count);
-                            }
-                        }
-                        68 => {
-                            // C2S 68: QUERY_NPC_INFO_1 (Consulta periódica de HP e propriedades de monstros/NPCs)
-                            if gamedata.data.len() >= 4 {
-                                let count = u16::from_le_bytes([gamedata.data[2], gamedata.data[3]]) as usize;
-                                let mut offset = 4;
-                                for _ in 0..count {
-                                    if offset + 4 <= gamedata.data.len() {
-                                        let nid = i32::from_le_bytes([
-                                            gamedata.data[offset],
-                                            gamedata.data[offset + 1],
-                                            gamedata.data[offset + 2],
-                                            gamedata.data[offset + 3],
-                                        ]);
-                                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_info_00(
-                                            nid, 1000, 1000
-                                        ))).await?;
-                                        offset += 4;
-                                    }
-                                }
-                            }
-                        }
-                        75 => {
-                            // C2S::ENTER_SANCTUARY (Zona Segura)
-                            debug!("Jogador ID {} entrou em santuário / zona segura", role_id);
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::enter_sanctuary())).await?;
-                        }
-                        76 => {
-                            // C2S::LEAVE_SANCTUARY (Sair da Zona Segura)
-                            debug!("Jogador ID {} saiu do santuário", role_id);
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::leave_sanctuary())).await?;
-                        }
-                        106 | 110 => {
-                            // C2S 106 / 110: Consulta de saldo de Cash da Loja
-                            debug!("Jogador ID {} consultou saldo de Cash", role_id);
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_cash(50000, 0))).await?;
-                        }
+                        // C2S 67 (`QUERY_PLAYER_INFO_1`) e 68 (`QUERY_NPC_INFO_1`)
+                        // migraram para o `pw-gs`. O 67 **não respondia nada** — lia a
+                        // contagem, escrevia uma linha de log e devolvia. O 68 respondia
+                        // `1000/1000` de vida para qualquer criatura, e como é uma consulta
+                        // periódica, redesenhava a barra cheia logo depois de cada golpe.
+                        // C2S 76 **não** é `LEAVE_SANCTUARY`: é `OPEN_BOOTH`, abrir uma
+                        // barraca de venda pessoal. Não existe `LEAVE_SANCTUARY` na tabela
+                        // C2S do IR. O braço foi removido em vez de corrigido porque não
+                        // sabemos o que responder a uma barraca — e responder "você saiu da
+                        // zona segura" é pior do que não responder.
+                        // C2S 110 (`QUERY_CASH_INFO`) migrou para o `pw-gs`: respondia
+                        // `50000` escrito no código, porque o daemon de link não tem o
+                        // personagem carregado de onde tirar o saldo.
                         118 => {
                             // C2S 118: GET_MALL_ITEM_PRICE
                             debug!("Cliente solicitou tabela de preços do Mall (C2S 118)");
                             tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::mall_item_price())).await?;
                         }
-                        107 | 120 => {
-                            // C2S 107 / 120: MALL_SHOPPING (Comprar item na Loja Gold/Cash)
-                            if gamedata.data.len() >= 10 {
-                                let item_id = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
-                                let count = if gamedata.data.len() >= 8 { u16::from_le_bytes([gamedata.data[6], gamedata.data[7]]) } else { 1 };
-                                info!("Jogador ID {} comprou item ID {} (qtd: {}) na Loja Gold", role_id, item_id, count);
-                                let _ = self.char_repo.item_repo().upsert_item(&pw_core::ItemRecord {
-                                    id: None,
-                                    character_id: role_id,
-                                    container_type: pw_core::ContainerType::Inventory,
-                                    slot: 12,
-                                    item_id: item_id as u32,
-                                    count: count as u32,
-                                    max_count: 100,
-                                    refine_level: 0,
-                                    sockets_count: 0,
-                                    sockets: vec![],
-                                    durability: 10000,
-                                    max_durability: 10000,
-                                    bind_status: 0,
-                                    octets: vec![],
-                                    custom_attributes: serde_json::json!({}),
-                                }).await;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(0, 12, item_id, 10000, 10000, count as u32, &[]))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::unfreeze_ivtr_slot(0, 12))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_cash(49000, 0))).await?;
-                            }
-                        }
-                        85 | 192 => {
-                            // C2S 85 / 192: Alternar entre Armadura e Visual de Moda (Fashion Mode)
+                        // C2S 106 (`MALL_SHOPPING`) foi **removido**, e não migrado.
+                        //
+                        // O que havia aqui não era uma compra: gravava o item comprado
+                        // sempre no **slot 12**, escrito no código, apagando o que
+                        // estivesse lá — a mesma classe de perda de item que os itens 38 e
+                        // 39 já tinham custado —, com durabilidade 10000 fixa, e depois
+                        // mandava `player_cash(49000)`, de modo que qualquer compra
+                        // deixava o jogador com exatamente esse saldo, comprasse o que
+                        // comprasse.
+                        //
+                        // Uma compra de verdade precisa de saldo, preço e slot livre, que
+                        // são três coisas que só o mundo tem. Enquanto ela não existe,
+                        // não responder é melhor do que destruir um item e inventar um
+                        // saldo. Está anotado como dívida em `docs/ESTADO_E_RETOMADA.md`.
+                        85 => {
+                            // C2S 85: SWITCH_FASHION_MODE.
+                            //
+                            // Era `85 | 192`. O 192 **não existe** na tabela C2S do IR.
                             let enable = if gamedata.data.len() >= 3 { gamedata.data[2] == 1 } else { true };
                             info!("Jogador ID {} alternou modo de moda para: {}", role_id, enable);
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_enable_fashion(enable))).await?;
+                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_enable_fashion(role_id, enable))).await?;
                         }
-                        214..=220 => {
-                            // Subcomandos de Duelo (Duel Prepare, Start, Result)
+                        92 => {
+                            // C2S 92: DUEL_REQUEST — 6 bytes, `target` no deslocamento 2,
+                            // que é exatamente o que a leitura abaixo faz.
+                            //
+                            // Era `214..=220`. Naquela faixa, 214 a 217 **não existem** no
+                            // IR e 218 a 220 são comandos de **GM**
+                            // (`GM_QUERY_SPEC_ITEM`, `GM_REMOVE_SPEC_ITEM`,
+                            // `GM_OPEN_ACTIVITY`) — que este braço engolia.
                             if gamedata.data.len() >= 6 {
                                 let opponent_id = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
                                 info!("Duelo entre jogador {} e oponente {}", role_id, opponent_id);
@@ -1248,9 +1018,13 @@ impl LinkGateway {
             }
 
             InboundPacket::GetFriendList(req) => {
+                // Listas vazias por enquanto — o que importa aqui é a forma do pacote
+                // estar certa; a lista de amigos ainda não vem do armazenamento.
                 tx.send(OutboundPacket::GetFriendListRe(S2CGetFriendListRe {
-                    result: 0,
                     role_id: req.role_id,
+                    groups: Vec::new(),
+                    friends: Vec::new(),
+                    status: Vec::new(),
                     localsid: req.localsid,
                 })).await?;
             }
@@ -1313,17 +1087,21 @@ impl LinkGateway {
                     chat_pkt.channel, session.session_id, chat_pkt.message
                 );
 
+                // O `ChatBroadCast` não carrega o nome do remetente: o cliente o
+                // resolve a partir do `srcroleid`. O nome abaixo é só para o log.
                 let sender_name = session
                     .character_name
                     .clone()
                     .or_else(|| session.username.clone())
                     .unwrap_or_else(|| "Jogador".to_string());
+                debug!("Chat de {sender_name} (canal {})", chat_pkt.channel);
 
                 let broadcast_pkt = OutboundPacket::ChatBroadcast(S2CChatBroadcast {
                     channel: chat_pkt.channel,
-                    sender_id: session.role_id.unwrap_or(0),
-                    sender_name,
+                    emotion: chat_pkt.emotion,
+                    src_role_id: session.role_id.unwrap_or(0),
                     message: chat_pkt.message,
+                    data: chat_pkt.data,
                 });
 
                 tx.send(broadcast_pkt).await?;
@@ -1334,7 +1112,7 @@ impl LinkGateway {
             }
 
             InboundPacket::ACReport(ac) => {
-                debug!("Relatório Anti-Cheat ({} bytes) recebido na Sessão #{}", ac.data.len(), session.session_id);
+                debug!("Relatório Anti-Cheat ({} bytes) recebido na Sessão #{}", ac.report.len(), session.session_id);
             }
 
             InboundPacket::Unknown { opcode, payload } => {
@@ -1343,5 +1121,77 @@ impl LinkGateway {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod testes_da_barreira_de_login {
+    use super::*;
+    use pw_protocol::{
+        C2SChallengeResponse, C2SDeleteRole, C2SEnterWorld, C2SGamedataSend, C2SHeartbeat,
+        C2SPlayerChat, C2SSelectRole, C2SUndoDeleteRole,
+    };
+
+    /// Os pacotes que tocam dados de personagem **têm** que exigir login.
+    ///
+    /// Esta lista é o resumo do que a falha permitia: sem conta na sessão, cada um destes
+    /// chegava ao banco com um `role_id` escolhido pelo cliente.
+    #[test]
+    fn os_pacotes_de_personagem_exigem_login() {
+        let perigosos = [
+            InboundPacket::SelectRole(C2SSelectRole { role_id: 1, flag: 0 }),
+            InboundPacket::EnterWorld(C2SEnterWorld {
+                role_id: 1,
+                provider_link_id: 0,
+                locktime: 0,
+                timeout: 0,
+                settime: 0,
+                localsid: 0,
+            }),
+            InboundPacket::DeleteRole(C2SDeleteRole { role_id: 1, localsid: 0 }),
+            InboundPacket::UndoDeleteRole(C2SUndoDeleteRole { role_id: 1, localsid: 0 }),
+            InboundPacket::GamedataSend(C2SGamedataSend { data: vec![0, 0] }),
+        ];
+        for p in perigosos {
+            assert!(
+                LinkGateway::exige_autenticacao(&p),
+                "{p:?} passou sem exigir login"
+            );
+        }
+    }
+
+    /// E o punhado que precisa passar antes do login continua passando — senão ninguém
+    /// consegue se autenticar.
+    #[test]
+    fn o_proprio_login_e_o_heartbeat_passam_sem_conta() {
+        let login = InboundPacket::Response(C2SChallengeResponse {
+            username: "x".into(),
+            password_response: Vec::new(),
+            use_token: false,
+            cli_fingerprint: Vec::new(),
+        });
+        assert!(!LinkGateway::exige_autenticacao(&login));
+
+        let hb = InboundPacket::Heartbeat(C2SHeartbeat {
+            role_id: 0,
+            link_id: 0,
+            localsid: 0,
+        });
+        assert!(!LinkGateway::exige_autenticacao(&hb));
+    }
+
+    /// A lista é por inclusão: o que for acrescentado ao `InboundPacket` amanhã já nasce
+    /// exigindo login, em vez de nascer aberto.
+    #[test]
+    fn o_padrao_e_exigir_login() {
+        let chat = InboundPacket::PlayerChat(C2SPlayerChat {
+            channel: 0,
+            emotion: 0,
+            src_role_id: 0,
+            message: String::new(),
+            data: Vec::new(),
+            src_level: 0,
+        });
+        assert!(LinkGateway::exige_autenticacao(&chat));
     }
 }

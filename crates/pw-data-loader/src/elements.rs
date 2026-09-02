@@ -162,8 +162,13 @@ pub struct SuiteTemplate {
 /// Contêiner completo de dados de todas as 118 tabelas de `elements.data`
 #[derive(Debug, Clone, Default)]
 pub struct ElementsData {
-    pub version: i16,
-    pub signature: i16,
+    /// O `ELEMENTDATA_VERSION` deste arquivo — ver [`ElementsData::ler_cabecalho`].
+    pub version: u32,
+    /// O `time_t` de quando o arquivo foi gerado (segundo campo do cabeçalho).
+    ///
+    /// Não entra em conta nenhuma; existe para aparecer no log e ajudar a identificar de
+    /// qual empacotamento a pasta veio.
+    pub timestamp: u32,
     pub class_configs: HashMap<u32, ClassConfig>,
     pub exp_curves: HashMap<u32, LevelExpConfig>,
     pub addons: HashMap<u32, AddonTemplate>,
@@ -196,18 +201,53 @@ const TABLE_SIZES_V7: [usize; 118] = [
 ];
 
 impl ElementsData {
+    /// Lê **só o cabeçalho**: `(ELEMENTDATA_VERSION, time_t)`.
+    ///
+    /// # Por que separado do resto
+    ///
+    /// O `ELEMENTDATA_VERSION` é a primeira parcela da string `edition` do handshake, e o
+    /// cliente recusa o login se ela não bater. Ele **não** pode depender de o arquivo
+    /// inteiro ser compreendido: o `elements.data` do 1.5.3 tem 51 MB e 118 tabelas que o
+    /// nosso parser ainda não lê até o fim, mas os quatro primeiros bytes são exatos.
+    ///
+    /// # Formato (autoridade)
+    ///
+    /// `CCommon/elementdataman.cpp:3611` (`load_data`), do cliente 1.5.3:
+    ///
+    /// ```cpp
+    /// unsigned int version = 0;
+    /// fread(&version, sizeof(unsigned int), 1, file);
+    /// if( version != ELEMENTDATA_VERSION ) return -1;
+    /// time_t t;
+    /// fread(&t, sizeof(time_t), 1, file);
+    /// ```
+    ///
+    /// Duas consequências valem mais que o formato:
+    ///
+    /// 1. o `version` do arquivo **é** o `ELEMENTDATA_VERSION` do cliente que consegue
+    ///    abri-lo — um arquivo com outro número aquele cliente nem carrega. Então o valor
+    ///    para o `edition` do realm está no próprio `elements.data` do realm, e não numa
+    ///    constante de compilação nossa;
+    /// 2. era lido aqui como dois `i16` (`version` + `signature`), o que partia
+    ///    `0x30000091` em `145` e `12288` — dois números que não são nada.
+    pub fn ler_cabecalho(data: &[u8]) -> Result<(u32, u32)> {
+        let mut cursor = Cursor::new(data);
+        let versao = cursor.read_u32::<LittleEndian>()?;
+        let timestamp = cursor.read_u32::<LittleEndian>()?;
+        Ok((versao, timestamp))
+    }
+
     /// Carrega o `elements.data` de qualquer versão a partir de um buffer de bytes
     pub fn load_from_bytes(data: &[u8]) -> Result<Self> {
+        let (version, timestamp) = Self::ler_cabecalho(data)?;
         let mut cursor = Cursor::new(data);
+        cursor.set_position(8);
 
-        let version = cursor.read_i16::<LittleEndian>()?;
-        let signature = cursor.read_i16::<LittleEndian>()?;
-
-        info!("Carregando elements.data: Versão identificada = {}, Assinatura = {}", version, signature);
+        info!("Carregando elements.data: ELEMENTDATA_VERSION = {:#x}, gerado em {}", version, timestamp);
 
         let mut elements = Self {
             version,
-            signature,
+            timestamp,
             class_configs: HashMap::new(),
             exp_curves: HashMap::new(),
             addons: HashMap::new(),

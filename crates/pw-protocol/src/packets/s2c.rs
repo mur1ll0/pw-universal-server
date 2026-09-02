@@ -13,12 +13,26 @@ pub struct S2CChallenge {
 }
 
 impl S2CChallenge {
-    pub fn new(nonce: Vec<u8>) -> Self {
+    /// Monta o `Challenge` com o código de versão que **aquele** cliente espera.
+    ///
+    /// O valor era `804` fixo, que não corresponde a versão nenhuma. O cliente compara
+    /// este campo com o `GAME_VERSION` compilado dentro dele e encerra a conexão antes
+    /// mesmo de olhar a senha, então um número inventado aqui vira uma falha de login
+    /// que não dá pista nenhuma de onde veio.
+    ///
+    /// O `edition` é a segunda porta do login, e o cliente reprova nele com a mesma
+    /// mensagem genérica de versão errada. Ver [`crate::edition`] para a fórmula e para
+    /// a origem de cada um dos quatro valores.
+    pub fn new(
+        nonce: Vec<u8>,
+        version: crate::version::GameVersion,
+        edition: crate::edition::Edition,
+    ) -> Self {
         Self {
             nonce,
-            server_version: 804,
+            server_version: version.server_version_code(),
             algo: 0,
-            edition: Vec::new(),
+            edition: edition.to_wire(),
             exp_rate: 1,
         }
     }
@@ -175,6 +189,33 @@ impl S2CRoleListResponse {
         stream.write_compact_uint(self.characters.len() as u32);
 
         for c in &self.characters {
+            write_role_info(stream, Some(c), version);
+        }
+    }
+}
+
+/// Escreve um `RoleInfo` — os 23 campos na ordem exata do IR.
+///
+/// Existe como função própria porque **três** protocolos carregam um `RoleInfo`
+/// (`RoleList_Re`, `CreateRole_Re` e `CreateRole`), e ter o layout escrito três vezes é
+/// como o `CreateRole_Re` acabou mandando só 3 campos dos 27 que devia.
+///
+/// Os quatro últimos campos (`referrer_role`, `cash_add`, `reincarnation_data`,
+/// `realm_data`) não existem no 1.2.6 — daí o corte por versão no fim.
+pub fn write_role_info(stream: &mut OctetsStream, c: Option<&CharacterSummary>, version: &str) {
+    // Sem personagem (criação que falhou), o `RoleInfo` vai zerado: o protocolo não tem
+    // campo opcional, e é o `result` que carrega o erro. Um único caminho de escrita
+    // evita duas listas de 23 campos que precisariam ser mantidas em sincronia.
+    let vazio;
+    let c = match c {
+        Some(c) => c,
+        None => {
+            vazio = CharacterSummary::vazio();
+            &vazio
+        }
+    };
+    {
+        {
             stream.write_i32(c.id);
             stream.write_u8(c.gender as u8);
             stream.write_u8(c.race as u8);
@@ -237,10 +278,22 @@ pub struct S2CCreateRoleResponse {
 }
 
 impl S2CCreateRoleResponse {
-    pub fn encode(&self, stream: &mut OctetsStream, _version: &str) {
+    /// Campos e ordem conforme `CreateRole_Re` (id 85) no IR: `result`, `roleid`,
+    /// `localsid`, **um `RoleInfo` inteiro** e `refretcode`.
+    ///
+    /// A versão anterior parava no `localsid` e mandava 3 campos dos 27 — o
+    /// `character` já estava na struct, só não era escrito. O cliente lia um pacote
+    /// truncado.
+    ///
+    /// O protocolo não tem `RoleInfo` opcional: quando a criação falha e não há
+    /// personagem, o campo vai zerado, e é o `result` que carrega o erro.
+    pub fn encode(&self, stream: &mut OctetsStream, version: &str) {
         stream.write_i32(self.result);
         stream.write_i32(self.role_id);
         stream.write_u32(self.localsid);
+
+        write_role_info(stream, self.character.as_ref(), version);
+        stream.write_i32(0); // refretcode
     }
 }
 
@@ -350,20 +403,54 @@ impl S2CPlayerMoveBroadcast {
 
 /// S2C: Transmissão de mensagem de Chat (Opcode 0x71)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Campos e ordem conforme `ChatBroadCast` (id 120) no IR.
+///
+/// A versão anterior escrevia um `sender_name` que **não existe no protocolo** e
+/// omitia `emotion` e `data`. O cliente resolve o nome a partir do `srcroleid`; mandar
+/// a string no meio do pacote deslocava tudo a partir do segundo campo.
 pub struct S2CChatBroadcast {
     pub channel: u8,
-    pub sender_id: RoleId,
-    pub sender_name: String,
+    pub emotion: u8,
+    pub src_role_id: RoleId,
     pub message: String,
+    pub data: Vec<u8>,
 }
 
 impl S2CChatBroadcast {
     pub fn encode(&self, stream: &mut OctetsStream, _version: &str) {
         stream.write_u8(self.channel);
-        stream.write_i32(self.sender_id);
-        stream.write_string_utf16le(&self.sender_name);
+        stream.write_u8(self.emotion);
+        stream.write_i32(self.src_role_id);
         stream.write_string_utf16le(&self.message);
+        stream.write_octets(&self.data);
     }
+}
+
+/// Um membro do grupo, como o cliente o espera no `TEAM_MEMBER_DATA` (64).
+///
+/// Os nomes e a ordem são os do `struct MEMBER` dentro de `cmd_team_member_data`, em
+/// `EC_GPDataType.h`. **É de propósito que isto seja uma struct e não uma tupla**: a
+/// versão anterior passava sete valores posicionais e trocava `max_hp` com `mp` sem que
+/// nada reclamasse — nem o compilador, que via seis `i32` iguais, nem o teste, que lia de
+/// volta no mesmo deslocamento errado em que escrevia.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MembroDoGrupo {
+    pub role_id: i32,
+    pub level: i16,
+    /// Bits de estado (montado, voando, morto...). Zero é "nada de especial".
+    pub state: u8,
+    /// Segundo nível — cultivo/despertar, conforme a versão.
+    pub level2: u8,
+    pub reencarnacoes: u8,
+    /// Nível de "wallow" (fadiga anti-vício). `char` no cliente, e por isso com sinal.
+    pub wallow_level: i8,
+    pub hp: i32,
+    pub mp: i32,
+    pub max_hp: i32,
+    pub max_mp: i32,
+    /// Facção. Zero = sem facção.
+    pub force_id: i32,
+    pub profit_level: i32,
 }
 
 /// S2C: Pacote de Dados de Jogo / Mundo 3D (Opcode 0x20 / PROTOCOL_GAMEDATASEND)
@@ -413,10 +500,20 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando MALL_ITEM_PRICE (Comando 197) para resposta de consulta de preços do gshop
+    /// Cria o comando `MALL_ITEM_PRICE` (270), resposta à consulta de preços do gshop.
+    ///
+    /// # O id era 197, e 197 é outro comando
+    ///
+    /// `197` é `REVIVAL_INQUIRE` no IR — o cliente recebia um convite de ressurreição
+    /// onde devia vir uma tabela de preços. O certo é `270`.
+    ///
+    /// A dúvida legítima seria "e se o 1.2.6 numerasse diferente?". Não é o caso: o
+    /// pedido correspondente, tratado no `gateway.rs` como `C2S 118 GET_MALL_ITEM_PRICE`,
+    /// **bate exatamente** com o IR do 1.5.3. A numeração desta área do protocolo é a
+    /// mesma nas duas versões, então o 197 era engano e não diferença de versão.
     pub fn mall_item_price() -> Self {
         let mut stream = OctetsStream::new();
-        stream.write_u16_le(197);              // CMD_S2C_MALL_ITEM_PRICE = 197
+        stream.write_u16_le(270);              // MALL_ITEM_PRICE (IR: commands.s2c)
         stream.write_i16_le(0);                // start_index = 0
         stream.write_i16_le(0);                // end_index = 0
         stream.write_i16_le(0);                // count = 0
@@ -622,13 +719,17 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando MOVE_IVTR_ITEM (Comando 45) com struct oficial { u8 src, u8 dest, u16 count }
-    pub fn move_ivtr_item(src: u8, dest: u8, count: u16) -> Self {
+    /// `struct cmd_move_ivtr_item { unsigned char src; unsigned char dest; unsigned int count; }`.
+    ///
+    /// O `count` é `unsigned int` (4 bytes), e escrevíamos `u16`. O comentário anterior
+    /// dizia "struct oficial { ... u16 count }" — não era: o cabeçalho do cliente diz
+    /// `unsigned int`, e o comando saía 2 bytes curto, portanto descartado (item 46).
+    pub fn move_ivtr_item(src: u8, dest: u8, count: u32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(45);
-        stream.write_u8(src);
-        stream.write_u8(dest);
-        stream.write_u16_le(count);
+        stream.write_u8(src);                  // src (1B)
+        stream.write_u8(dest);                 // dest (1B)
+        stream.write_u32_le(count);            // count (4B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -641,24 +742,30 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando EQUIP_ITEM (Comando 48) com struct oficial { u8 idx_ivtr, u8 idx_equip, u16 count_ivtr, u16 count_equip }
-    pub fn equip_item(idx_ivtr: u8, idx_equip: u8, count_ivtr: u16, count_equip: u16) -> Self {
+    /// `struct cmd_equip_item { unsigned char index_inv; unsigned char index_equip;
+    /// unsigned int count_inv; unsigned int count_equip; }`.
+    ///
+    /// As duas contagens são `unsigned int`, e escrevíamos `u16` — 4 bytes curto (item 46).
+    pub fn equip_item(idx_ivtr: u8, idx_equip: u8, count_ivtr: u32, count_equip: u32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(48);
-        stream.write_u8(idx_ivtr);
-        stream.write_u8(idx_equip);
-        stream.write_u16_le(count_ivtr);
-        stream.write_u16_le(count_equip);
+        stream.write_u8(idx_ivtr);             // index_inv (1B)
+        stream.write_u8(idx_equip);            // index_equip (1B)
+        stream.write_u32_le(count_ivtr);       // count_inv (4B)
+        stream.write_u32_le(count_equip);      // count_equip (4B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando MOVE_ITEM_TO_EQUIP (Comando 49) com struct oficial { u8 idx_ivtr, u8 idx_eq, u16 amount }
-    pub fn move_item_to_equip(idx_ivtr: u8, idx_eq: u8, amount: u16) -> Self {
+    /// `struct cmd_move_equip_item { unsigned char index_inv; unsigned char index_equip;
+    /// unsigned int amount; }`.
+    ///
+    /// O `amount` é `unsigned int`, e escrevíamos `u16` — 2 bytes curto (item 46).
+    pub fn move_item_to_equip(idx_ivtr: u8, idx_eq: u8, amount: u32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(49);
-        stream.write_u8(idx_ivtr);
-        stream.write_u8(idx_eq);
-        stream.write_u16_le(amount);
+        stream.write_u8(idx_ivtr);             // index_inv (1B)
+        stream.write_u8(idx_eq);               // index_equip (1B)
+        stream.write_u32_le(amount);           // amount (4B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -793,61 +900,6 @@ impl S2CGamedataSend {
         }
     }
 
-    /// Cria o comando OWN_IVTR_DATA (Comando 42) com inventário inicial (bolsa principal = 0, tamanho = 32 slots)
-    pub fn own_ivtr_data(bag_size: u8, weapon_id: i32) -> Self {
-        let mut stream = OctetsStream::new();
-        stream.write_u16_le(42);       // CMD_S2C_OWN_IVTR_DATA = 42
-        stream.write_u8(0);            // byPackage = 0 (IVTRTYPE_PACK)
-        stream.write_u8(bag_size);     // ivtr_size = 32 slots
-        
-        let content_len = 12 + 12 + 12 + 12 + ((bag_size - 4) as u32) * 4;
-        stream.write_u32_le(content_len);
-
-        // Slot 0: Arma Inicial da Classe
-        stream.write_i32_le(weapon_id);
-        stream.write_i32_le(0);
-        stream.write_i32_le(1);
-
-        // Slot 1: 5x Pergaminho de Retorno
-        stream.write_i32_le(2100);
-        stream.write_i32_le(0);
-        stream.write_i32_le(5);
-
-        // Slot 2: 10x Poção de Vida
-        stream.write_i32_le(1796);
-        stream.write_i32_le(0);
-        stream.write_i32_le(10);
-
-        // Slot 3: 10x Poção de Mana
-        stream.write_i32_le(1801);
-        stream.write_i32_le(0);
-        stream.write_i32_le(10);
-
-        for _ in 4..bag_size {
-            stream.write_i32_le(-1);   // -1 = slot vazio (tidItem < 0)
-        }
-        Self {
-            data: stream.into_bytes().to_vec(),
-        }
-    }
-
-    /// Cria o comando OWN_IVTR_DATA (Comando 42) para os slots de equipamentos (byPackage = 1)
-    pub fn own_equip_data() -> Self {
-        let mut stream = OctetsStream::new();
-        stream.write_u16_le(42);       // CMD_S2C_OWN_IVTR_DATA = 42 (Equipment usa byPackage = 1)
-        stream.write_u8(1);            // byPackage = 1 (IVTRTYPE_EQUIPPACK)
-        stream.write_u8(32);           // ivtr_size = 32 slots
-
-        let content_len = 32 * 4;
-        stream.write_u32_le(content_len);
-        for _ in 0..32 {
-            stream.write_i32_le(-1);   // -1 = slot vazio
-        }
-        Self {
-            data: stream.into_bytes().to_vec(),
-        }
-    }
-
     /// Cria o comando PLAYER_ENTER_WORLD (Comando 17) para instanciar o avatar
     pub fn player_enter_world(role_id: RoleId, world_tag: i32, pos: Vector3) -> Self {
         let mut stream = OctetsStream::new();
@@ -926,12 +978,59 @@ impl S2CGamedataSend {
     }
 
     /// Cria o comando NPC_INFO_00 (Comando 33) enviando HP e MaxHP no formato oficial 1.2.6 (12 bytes de payload)
-    pub fn npc_info_00(nid: i32, hp: i32, max_hp: i32) -> Self {
+    /// `PLAYER_INFO_00` (32) — vida, mana e alvo de **outro** jogador.
+    ///
+    /// ```text
+    /// struct cmd_player_info_00 {
+    ///     int idPlayer; short sLevel; unsigned char State; unsigned char Level2;
+    ///     int iHP; int iMaxHP; int iMP; int iMaxMP; int iTargetID;
+    /// }
+    /// ```
+    ///
+    /// **Novo.** Não existia codificador nenhum para este comando, e por isso o
+    /// `QUERY_PLAYER_INFO_1` (67) não tinha o que responder — o `gateway.rs` lia o pacote
+    /// e devolvia sem mandar nada.
+    ///
+    /// Escrito a partir do IR e conferido no `EC_GPDataType.h`, e por isso **não** entra
+    /// na lista de divergências: se este divergir, é bug de quem escreveu.
+    #[allow(clippy::too_many_arguments)]
+    pub fn player_info_00(
+        player_id: i32,
+        level: i16,
+        level2: u8,
+        hp: i32,
+        max_hp: i32,
+        mp: i32,
+        max_mp: i32,
+        alvo: i32,
+    ) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(32);               // CMD_S2C_PLAYER_INFO_00 = 32
+        stream.write_i32_le(player_id);        // idPlayer (4B)
+        stream.write_i16_le(level);            // sLevel (2B)
+        stream.write_u8(0);                    // State (1B)
+        stream.write_u8(level2);               // Level2 (1B)
+        stream.write_i32_le(hp);               // iHP (4B)
+        stream.write_i32_le(max_hp);           // iMaxHP (4B)
+        stream.write_i32_le(mp);               // iMP (4B)
+        stream.write_i32_le(max_mp);           // iMaxMP (4B)
+        stream.write_i32_le(alvo);             // iTargetID (4B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `struct cmd_npc_info_00 { int idNPC; int iHP; int iMaxHP; int iTargetID; }`.
+    ///
+    /// O `iTargetID` faltava — 12 bytes onde o cliente conta 16 — e por isso **todo**
+    /// `NPC_INFO_00` era descartado antes de ser lido (item 46). Era o único comando que
+    /// atualizava barra de vida de monstro: o dano do combate era calculado, debitado e
+    /// enviado corretamente, e nunca aparecia na tela.
+    pub fn npc_info_00(nid: i32, hp: i32, max_hp: i32, alvo: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(33);               // CMD_S2C_NPC_INFO_00 = 33 (2B)
         stream.write_i32_le(nid);              // idNPC (4B)
         stream.write_i32_le(hp);               // iHP (4B)
         stream.write_i32_le(max_hp);           // iMaxHP (4B)
+        stream.write_i32_le(alvo);             // iTargetID (4B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -961,15 +1060,30 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando SELF_SKILL_ATTACK_RESULT (Comando 142) aplicando o dano da habilidade do jogador no formato oficial 1.2.6
-    pub fn self_skill_attack_result(target_id: i32, skill_id: i32, damage: i32, attack_flag: i8, speed: u8) -> Self {
+    /// `struct cmd_host_skill_attack_result { int idTarget; int idSkill; int iDamage;
+    /// int attack_flag; unsigned char attack_speed; byte section; }`.
+    ///
+    /// Duas diferenças, 4 bytes ao todo: o `attack_flag` é `int` e escrevíamos `i8`, e
+    /// faltava o `section`. Comando descartado pelo cliente (item 46).
+    ///
+    /// O comentário anterior dizia "no formato oficial 1.2.6". Não havia nada por trás
+    /// dessa afirmação: nenhum cabeçalho do 1.2.6 está entre as fontes do projeto.
+    pub fn self_skill_attack_result(
+        target_id: i32,
+        skill_id: i32,
+        damage: i32,
+        attack_flag: i32,
+        speed: u8,
+        section: u8,
+    ) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(142);              // CMD_S2C_SELF_SKILL_ATTACK_RESULT = 142
         stream.write_i32_le(target_id);        // idTarget (4B)
         stream.write_i32_le(skill_id);         // idSkill (4B)
         stream.write_i32_le(damage);           // iDamage (4B)
-        stream.write_i8(attack_flag);          // attack_flag (1B)
+        stream.write_i32_le(attack_flag);      // attack_flag (4B)
         stream.write_u8(speed);                // attack_speed (1B)
+        stream.write_u8(section);              // section (1B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -1018,12 +1132,85 @@ impl S2CGamedataSend {
     }
 
     /// Cria o comando HOST_ATTACKRESULT (Comando 24) retornando dano infligido
-    pub fn host_attack_result(target_id: i32, damage: i32, hit_type: u8) -> Self {
+    /// `struct cmd_host_attack_result { int idTarget; int iDamage; int attack_flag;
+    /// unsigned char attack_speed; }`.
+    ///
+    /// Faltava o `attack_flag` (`int`, 4 bytes), e o `u8` final era chamado de `hit_type`
+    /// quando o cliente o lê como `attack_speed`. Comando descartado (item 46) — é o que
+    /// mostra o número de dano ao acertar.
+    ///
+    /// O `attack_flag` marca crítico e os símbolos de ataque/defesa; a velocidade de
+    /// ataque é outra coisa. Trocar um pelo outro fazia "crítico" virar "velocidade 1".
+    pub fn host_attack_result(target_id: i32, damage: i32, attack_flag: i32, speed: u8) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(24);               // CMD_S2C_HOST_ATTACKRESULT = 24
-        stream.write_i32_le(target_id);        // target_id (4B)
-        stream.write_i32_le(damage);           // damage (4B)
-        stream.write_u8(hit_type);             // 0=Normal, 1=Crítico, 2=Esquiva
+        stream.write_i32_le(target_id);        // idTarget (4B)
+        stream.write_i32_le(damage);           // iDamage (4B)
+        stream.write_i32_le(attack_flag);      // attack_flag (4B)
+        stream.write_u8(speed);                // attack_speed (1B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `HOST_ATTACKED` (26) — o jogador **levou** um golpe.
+    ///
+    /// Sem isto, um monstro batendo no jogador é invisível: o servidor já debitava o HP
+    /// no tick, e o cliente nunca ficava sabendo. O jogador via a vida cheia até morrer
+    /// do nada.
+    ///
+    /// # Layout escrito a partir do IR
+    ///
+    /// `S2C::cmd_host_attacked`, 14 bytes:
+    ///
+    /// | Campo | Deslocamento | Tipo |
+    /// | :--- | ---: | :--- |
+    /// | `idAttacker` | 0 | `int` |
+    /// | `iDamage` | 4 | `int` |
+    /// | `cEquipment` | 8 | `char` |
+    /// | `attack_flag` | 9 | `int` |
+    /// | `speed` | 13 | `char` |
+    ///
+    /// Diferente da maioria dos vizinhos deste arquivo, este codificador **não** vem de
+    /// engenharia reversa do 1.2.6: não havia nada aqui para preservar, então ele segue o
+    /// IR do 1.5.3, que é a única informação verificada que temos. Se o 1.2.6 divergir,
+    /// vai aparecer como campo deslocado no cliente — e o conserto será com uma captura
+    /// na mão, não com um palpite.
+    pub fn host_attacked(attacker_id: i32, damage: i32, attack_flag: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(26);
+        stream.write_i32_le(attacker_id);
+        stream.write_i32_le(damage);
+        stream.write_i8(0); // cEquipment: qual peça sofreu desgaste; 0 = nenhuma
+        stream.write_i32_le(attack_flag); // 0 normal, 1 crítico
+        stream.write_i8(0); // speed
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `HOST_DIED` (28) — **o próprio jogador** morreu.
+    ///
+    /// `S2C::cmd_host_died`, 16 bytes: `idKiller` (int) e `pos` (A3DVECTOR). Ver a nota
+    /// de procedência em [`Self::host_attacked`].
+    pub fn host_died(killer_id: i32, pos: Vector3) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(28);
+        stream.write_i32_le(killer_id);
+        stream.write_f32_le(pos.x);
+        stream.write_f32_le(pos.y);
+        stream.write_f32_le(pos.z);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_REVIVE` (29) — o jogador voltou a viver, e onde.
+    ///
+    /// `S2C::cmd_player_revive`, 18 bytes: `idPlayer` (int), `sReviveType` (short) e
+    /// `pos` (A3DVECTOR). Ver a nota de procedência em [`Self::host_attacked`].
+    pub fn player_revive(role_id: i32, revive_type: i16, pos: Vector3) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(29);
+        stream.write_i32_le(role_id);
+        stream.write_i16_le(revive_type);
+        stream.write_f32_le(pos.x);
+        stream.write_f32_le(pos.y);
+        stream.write_f32_le(pos.z);
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -1184,47 +1371,120 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando TEAM_LEADER_INVITE (Comando 57) recebendo convite de grupo
-    pub fn team_leader_invite(inviter_id: i32) -> Self {
+    /// Cria o comando TEAM_LEADER_INVITE (Comando 57) — o convite chegando ao convidado.
+    ///
+    /// `struct cmd_team_leader_invite { int idLeader; int seq; unsigned short wPickFlag; }`
+    /// — `EC_GPDataType.h`. Escrevia só o `idLeader`, 6 bytes a menos, e o cliente
+    /// descartava o comando inteiro (item 46).
+    ///
+    /// `seq` é o número do convite, que o cliente devolve ao aceitar; `wPickFlag` é a
+    /// regra de divisão de despojos do grupo.
+    pub fn team_leader_invite(inviter_id: i32, seq: i32, pick_flag: u16) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(57);               // CMD_S2C_TEAM_LEADER_INVITE = 57
-        stream.write_i32_le(inviter_id);
+        stream.write_i32_le(inviter_id);       // idLeader (4B)
+        stream.write_i32_le(seq);              // seq (4B)
+        stream.write_u16_le(pick_flag);        // wPickFlag (2B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando TEAM_JOIN_PARTY (Comando 59) entrando no grupo
-    pub fn team_join_party(member_id: i32, leader_id: i32) -> Self {
+    /// Cria o comando TEAM_JOIN_TEAM (Comando 59) — o jogador entrou no grupo.
+    ///
+    /// `struct cmd_team_join_team { int idLeader; unsigned short wPickFlag; }`.
+    ///
+    /// Escrevia `member_id` seguido de `leader_id`: **o campo errado no lugar certo**. O
+    /// cliente lia o id do membro como se fosse o do líder — e, como o tamanho também não
+    /// batia (8 contra 6), descartava tudo antes de chegar a usar o valor.
+    pub fn team_join_party(leader_id: i32, pick_flag: u16) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(59);               // CMD_S2C_TEAM_JOIN_TEAM = 59
-        stream.write_i32_le(member_id);
-        stream.write_i32_le(leader_id);
+        stream.write_i32_le(leader_id);        // idLeader (4B)
+        stream.write_u16_le(pick_flag);        // wPickFlag (2B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando TEAM_LEAVE_PARTY (Comando 61) saindo do grupo
-    pub fn team_leave_party(member_id: i32, reason: i32) -> Self {
+    /// Cria o comando TEAM_LEAVE_PARTY (Comando 61) — o grupo acabou para quem recebe.
+    ///
+    /// `struct cmd_team_leave_party { int idLeader; short reason; }`. O `reason` é
+    /// `short`, e escrevíamos `int`.
+    ///
+    /// **Não é o comando de "fulano saiu"** — esse é o `team_member_leave` (60), que leva
+    /// `idLeader`, `idMember` e `reason`. Mandar o 61 a quem fica diz "seu grupo acabou".
+    pub fn team_leave_party(leader_id: i32, reason: i16) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(61);               // CMD_S2C_TEAM_LEAVE_PARTY = 61
-        stream.write_i32_le(member_id);
-        stream.write_i32_le(reason);
+        stream.write_i32_le(leader_id);        // idLeader (4B)
+        stream.write_i16_le(reason);           // reason (2B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando TEAM_MEMBER_DATA (Comando 64) sincronizando o status dos membros no HUD
-    pub fn team_member_data(members: &[(i32, i16, i32, i32, i32, i32, (f32, f32, f32))]) -> Self {
+    /// Cria o comando TEAM_MEMBER_LEAVE (Comando 60) — um companheiro saiu do grupo.
+    ///
+    /// `struct cmd_team_member_leave { int idLeader; int idMember; short reason; }`.
+    ///
+    /// **Novo.** Não existia: quem ficava no grupo recebia o 61, que significa "o grupo
+    /// acabou", em vez de "o fulano saiu".
+    pub fn team_member_leave(leader_id: i32, member_id: i32, reason: i16) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(60);               // CMD_S2C_TEAM_MEMBER_LEAVE = 60
+        stream.write_i32_le(leader_id);        // idLeader (4B)
+        stream.write_i32_le(member_id);        // idMember (4B)
+        stream.write_i16_le(reason);           // reason (2B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando TEAM_MEMBER_DATA (Comando 64) — a lista de membros do HUD.
+    ///
+    /// # O layout de verdade
+    ///
+    /// ```text
+    /// unsigned char member_count;   // quantos membros o grupo tem
+    /// unsigned char data_count;     // quantos vêm neste pacote
+    /// int           idLeader;
+    /// struct MEMBER {               // 34 bytes cada
+    ///     int  idMember;  short level;  unsigned char state;  unsigned char level2;
+    ///     unsigned char reincarnation_times;  char wallow_level;
+    ///     int  hp;  int mp;  int max_hp;  int max_mp;
+    ///     int  force_id;  int profit_level;
+    /// } data[1];
+    /// ```
+    ///
+    /// O `CheckValid` do cliente calcula o tamanho como
+    /// `sizeof(*this) - sizeof(data) + data_count * sizeof(MEMBER)`, então `data_count`
+    /// **tem** que ser o número de membros escritos.
+    ///
+    /// # O que estava errado
+    ///
+    /// Tudo menos o id do comando. O cabeçalho tinha só `member_count` — faltavam
+    /// `data_count` e `idLeader`, 5 bytes. E cada membro levava a **posição** (12 bytes de
+    /// `A3DVECTOR3`), que não existe nesta estrutura, com `hp, max_hp, mp, max_mp` na
+    /// ordem trocada — o cliente lê `hp, mp, max_hp, max_mp`. Por coincidência os dois
+    /// davam 34 bytes por membro, então o erro sobreviveu ao único teste que havia.
+    ///
+    /// Como o comando é de tamanho variável, ele ficava **de fora** da conferência de
+    /// layout contra o IR: era o único caminho pelo qual um erro destes podia passar.
+    pub fn team_member_data(
+        leader_id: i32,
+        membros: &[MembroDoGrupo],
+    ) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(64);               // CMD_S2C_TEAM_MEMBER_DATA = 64
-        stream.write_u8(members.len() as u8);
-        for &(id, lvl, hp, max_hp, mp, max_mp, (x, y, z)) in members {
-            stream.write_i32_le(id);
-            stream.write_i16_le(lvl);
-            stream.write_i32_le(hp);
-            stream.write_i32_le(max_hp);
-            stream.write_i32_le(mp);
-            stream.write_i32_le(max_mp);
-            stream.write_f32_le(x);
-            stream.write_f32_le(y);
-            stream.write_f32_le(z);
+        stream.write_u8(membros.len() as u8);  // member_count (1B)
+        stream.write_u8(membros.len() as u8);  // data_count (1B)
+        stream.write_i32_le(leader_id);        // idLeader (4B)
+        for m in membros {
+            stream.write_i32_le(m.role_id);          // idMember (4B)
+            stream.write_i16_le(m.level);            // level (2B)
+            stream.write_u8(m.state);                // state (1B)
+            stream.write_u8(m.level2);               // level2 (1B)
+            stream.write_u8(m.reencarnacoes);        // reincarnation_times (1B)
+            stream.write_i8(m.wallow_level);         // wallow_level (1B)
+            stream.write_i32_le(m.hp);               // hp (4B)
+            stream.write_i32_le(m.mp);               // mp (4B)
+            stream.write_i32_le(m.max_hp);           // max_hp (4B)
+            stream.write_i32_le(m.max_mp);           // max_mp (4B)
+            stream.write_i32_le(m.force_id);         // force_id (4B)
+            stream.write_i32_le(m.profit_level);     // profit_level (4B)
         }
         Self { data: stream.into_bytes().to_vec() }
     }
@@ -1245,34 +1505,47 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando ENTER_SANCTUARY (Comando 164) entrando em zona segura
-    pub fn enter_sanctuary() -> Self {
+    /// `struct cmd_object_enter_sanctuary { int id; }` — "self id or pet id".
+    ///
+    /// Não escrevia campo nenhum: 4 bytes curto, comando descartado (item 46). Sem o id o
+    /// cliente também não teria como saber *quem* entrou na zona segura.
+    pub fn enter_sanctuary(id: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(164);              // CMD_S2C_ENTER_SANCTUARY = 164
+        stream.write_i32_le(id);               // id (4B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando LEAVE_SANCTUARY (Comando 165) saindo da zona segura
-    pub fn leave_sanctuary() -> Self {
+    /// `struct cmd_object_leave_sanctuary { int id; }` — o par do anterior.
+    pub fn leave_sanctuary(id: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(165);              // CMD_S2C_LEAVE_SANCTUARY = 165
+        stream.write_i32_le(id);               // id (4B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando PLAYER_ENABLE_FASHION (Comando 192) alternando entre visual de armadura e roupas de moda
-    pub fn player_enable_fashion(enable: bool) -> Self {
+    /// `struct cmd_player_enable_fashion { int idPlayer; unsigned char is_enabble; }`.
+    ///
+    /// Faltava o `idPlayer`. Além do tamanho (item 46), sem ele o comando não diz de quem
+    /// é a roupa — e é justamente um comando sobre o que os **outros** veem.
+    pub fn player_enable_fashion(player_id: i32, enable: bool) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(192);              // CMD_S2C_PLAYER_ENABLE_FASHION = 192
-        stream.write_u8(if enable { 1 } else { 0 });
+        stream.write_i32_le(player_id);        // idPlayer (4B)
+        stream.write_u8(u8::from(enable));     // is_enabble (1B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
     /// Cria o comando PLAYER_CASH (Comando 253) atualizando o saldo de Gold/Cash da loja
-    pub fn player_cash(cash_cents: i32, silver_cents: i32) -> Self {
+    /// `struct player_cash { int cash_amount; }` — **um** campo.
+    ///
+    /// Escrevia dois: um `silver_cents` que não existe na estrutura e que todos os
+    /// chamadores passavam como `0`. Quatro bytes a mais, e o cliente descartava o
+    /// comando (item 46) — o saldo nunca aparecia.
+    pub fn player_cash(cash_amount: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(253);              // CMD_S2C_PLAYER_CASH = 253
-        stream.write_i32_le(cash_cents);
-        stream.write_i32_le(silver_cents);
+        stream.write_i32_le(cash_amount);      // cash_amount (4B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -1380,18 +1653,61 @@ impl S2CGetUIConfigRe {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Campos e ordem conforme `GetFriends_Re` (id 207) no IR:
+/// `roleid`, `groups`, `friends`, `status`, `localsid`.
+///
+/// A versão anterior escrevia um campo `result` que **não existe no protocolo**, punha
+/// o `localsid` em terceiro lugar em vez de por último, e mandava uma única lista onde
+/// o protocolo tem três. Tudo depois do primeiro campo saía deslocado.
 pub struct S2CGetFriendListRe {
-    pub result: i32,
     pub role_id: i32,
+    pub groups: Vec<FriendGroup>,
+    pub friends: Vec<FriendEntry>,
+    /// Estado de presença, **um por amigo e na mesma ordem** da lista acima.
+    pub status: Vec<i8>,
     pub localsid: u32,
+}
+
+/// Um grupo da lista de amigos (`GGroupInfo` no IR).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FriendGroup {
+    pub gid: i8,
+    pub name: String,
+}
+
+/// Uma entrada da lista de amigos (`GFriendInfo` no IR).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FriendEntry {
+    pub rid: i32,
+    pub cls: i8,
+    pub gid: i8,
+    pub name: String,
 }
 
 impl S2CGetFriendListRe {
     pub fn encode(&self, stream: &mut OctetsStream, _version: &str) {
-        stream.write_i32(self.result);
         stream.write_i32(self.role_id);
+
+        stream.write_compact_uint(self.groups.len() as u32);
+        for g in &self.groups {
+            stream.write_i8(g.gid);
+            stream.write_string_utf16le(&g.name);
+        }
+
+        stream.write_compact_uint(self.friends.len() as u32);
+        for f in &self.friends {
+            stream.write_i32(f.rid);
+            stream.write_i8(f.cls);
+            stream.write_i8(f.gid);
+            stream.write_string_utf16le(&f.name);
+        }
+
+        stream.write_compact_uint(self.status.len() as u32);
+        for s in &self.status {
+            stream.write_i8(*s);
+        }
+
         stream.write_u32(self.localsid);
-        stream.write_compact_uint(0); // lista de amigos vazia
     }
 }
 

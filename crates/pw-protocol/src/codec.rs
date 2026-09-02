@@ -128,9 +128,23 @@ impl Decoder for PwPacketCodec {
         );
 
         // 2. Decodifica o payload conforme o opcode
+        //
+        // O `Response` e o `KeyExchange` **trocam de número entre as versões** (2 e 3 no
+        // 1.2.6; 3 e 2 do 1.4.8 em diante), então saem do `match` de constantes: quem
+        // decide é a versão do realm. Ver `GameVersion::opcode_response`.
+        let versao = self.adapter.version();
+        if opcode == versao.opcode_response() {
+            return Ok(Some(InboundPacket::Response(C2SChallengeResponse::decode(
+                &mut payload_stream,
+            )?)));
+        }
+        if opcode == versao.opcode_key_exchange() {
+            return Ok(Some(InboundPacket::KeyExchange(C2SKeyExchange::decode(
+                &mut payload_stream,
+            )?)));
+        }
+
         let packet = match opcode {
-            OP_C2S_RESPONSE => InboundPacket::Response(C2SChallengeResponse::decode(&mut payload_stream)?),
-            OP_C2S_KEYEXCHANGE => InboundPacket::KeyExchange(C2SKeyExchange::decode(&mut payload_stream)?),
             OP_C2S_ROLE_LIST => InboundPacket::RoleList(C2SRoleList::decode(&mut payload_stream)?),
             OP_C2S_CREATE_ROLE => InboundPacket::CreateRole(C2SCreateRole::decode(&mut payload_stream)?),
             OP_C2S_DELETE_ROLE => InboundPacket::DeleteRole(C2SDeleteRole::decode(&mut payload_stream)?),
@@ -188,14 +202,18 @@ impl Encoder<OutboundPacket> for PwPacketCodec {
     fn encode(&mut self, item: OutboundPacket, dst: &mut BytesMut) -> Result<()> {
         let (opcode, payload) = match item {
             OutboundPacket::Challenge(p) => {
+                // Usa o `encode` da própria struct, e não o do adapter. Havia duas
+                // implementações deste layout, e a do adapter escrevia o `edition`
+                // sempre vazio — ela ignorava o campo da struct, então preencher o
+                // `edition` não teria efeito nenhum enquanto o codec passasse por ela.
                 let mut ps = OctetsStream::new();
-                self.adapter.encode_challenge(&mut ps, &p.nonce);
+                p.encode(&mut ps, self.adapter.version().as_str());
                 (OP_S2C_CHALLENGE, ps.into_bytes())
             }
             OutboundPacket::KeyExchange(p) => {
                 let mut ps = OctetsStream::new();
                 self.adapter.encode_key_exchange(&mut ps, &p.nonce, p.blkickuser);
-                (OP_S2C_KEYEXCHANGE, ps.into_bytes())
+                (self.adapter.version().opcode_key_exchange(), ps.into_bytes())
             }
             OutboundPacket::OnlineAnnounce(p) => {
                 let mut ps = OctetsStream::new();

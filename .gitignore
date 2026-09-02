@@ -91,3 +91,10 @@ logs/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Área de transferência entre a máquina local e o ambiente de build
+_sync/
+_sync_out.tar.gz
+
+# Capturas de pacote locais (tcpdump), geradas sob demanda para diagnóstico
+_captura_local/

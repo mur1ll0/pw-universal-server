@@ -1,0 +1,13 @@
+[package]
+name = "pw-wire"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Só nos testes de conformidade, que leem os IRs de `specs/protocol/`.
+serde_json = { workspace = true }

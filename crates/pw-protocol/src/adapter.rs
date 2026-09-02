@@ -8,20 +8,6 @@ use std::sync::Arc;
 pub trait ProtocolAdapter: Send + Sync {
     fn version(&self) -> GameVersion;
 
-    /// Encodifica o pacote Challenge (Opcode 1)
-    fn encode_challenge(&self, stream: &mut OctetsStream, nonce: &[u8]) {
-        let version_code = self.version().server_version_code();
-        stream.write_octets(nonce);
-        stream.write_u32(version_code);
-        stream.write_i8(0); // algo = 0
-
-        // Versões 1.4.8 e 1.5.3 enviam os campos edition (Octets) e exp_rate (u8)
-        if self.version() != GameVersion::V1_2_6 {
-            stream.write_octets(&[]);
-            stream.write_u8(1);
-        }
-    }
-
     /// Encodifica o pacote KeyExchange (Opcode 3)
     fn encode_key_exchange(&self, stream: &mut OctetsStream, nonce: &[u8], blkickuser: i8) {
         stream.write_octets(nonce);
@@ -139,28 +125,18 @@ pub trait ProtocolAdapter: Send + Sync {
         stream.write_i32(role_id);
         stream.write_u32(localsid);
 
-        if let Some(c) = character {
-            self.encode_role_info(stream, c);
-        } else {
-            let default_summary = CharacterSummary {
-                id: role_id,
-                account_id: 0,
-                realm_id: String::new(),
-                name: String::new(),
-                race: pw_core::Race::Human,
-                cls: pw_core::CharacterClass::Blademaster,
-                gender: pw_core::Gender::Male,
-                level: 1,
-                cultivation: 0,
-                world_id: 1,
-                position: pw_core::Vector3::zero(),
-                equipment: Vec::new(),
-                custom_appearance: serde_json::json!({}),
-                is_deleted: false,
-                delete_time: None,
-            };
-            self.encode_role_info(stream, &default_summary);
-        }
+        // Um caminho de escrita só: sem personagem, vai um `RoleInfo` zerado. Dois
+        // ramos escrevendo a mesma estrutura é como duas listas de campos acabam
+        // saindo de sincronia — e o teste de conformidade cobra isso.
+        let vazio;
+        let c = match character {
+            Some(c) => c,
+            None => {
+                vazio = CharacterSummary::vazio();
+                &vazio
+            }
+        };
+        self.encode_role_info(stream, c);
 
         // Versões 1.4.8 e 1.5.3 possuem refretcode no final
         if self.version() != GameVersion::V1_2_6 {
@@ -251,11 +227,20 @@ impl ProtocolAdapter for Protocol153Adapter {
     }
 }
 
+/// Adaptador para o Realm 1.5.5 (fontes EvolvedPW, base do projeto desde 2026-09-02)
+pub struct Protocol155Adapter;
+impl ProtocolAdapter for Protocol155Adapter {
+    fn version(&self) -> GameVersion {
+        GameVersion::V1_5_5
+    }
+}
+
 /// Factory para obter o adaptador correspondente à versão solicitada
 pub fn create_protocol_adapter(version: GameVersion) -> Arc<dyn ProtocolAdapter> {
     match version {
         GameVersion::V1_2_6 => Arc::new(Protocol126Adapter),
         GameVersion::V1_4_8 => Arc::new(Protocol148Adapter),
         GameVersion::V1_5_3 => Arc::new(Protocol153Adapter),
+        GameVersion::V1_5_5 => Arc::new(Protocol155Adapter),
     }
 }

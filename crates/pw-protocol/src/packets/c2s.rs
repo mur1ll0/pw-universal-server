@@ -99,15 +99,51 @@ impl C2SCreateRole {
         let userid = stream.read_i32()?;
         let localsid = stream.read_u32()?;
         
-        // Estrutura RoleInfo encapsulada no CreateRole oficial
-        let _role_id = stream.read_i32().unwrap_or(0);
+        // `CreateRole` (id 84) carrega um `RoleInfo` inteiro — 23 campos — e depois um
+        // `referid`. A versão anterior parava no oitavo campo, deixando o resto do
+        // pacote por ler: o `referid` nunca era consumido, e qualquer campo lido depois
+        // viria do lugar errado.
+        let _role_id = stream.read_i32()?;
         let gender_raw = stream.read_u8()?;
         let race_raw = stream.read_u8()?;
         let cls_raw = stream.read_u8()?;
-        let _level = stream.read_i32().unwrap_or(1);
-        let _level2 = stream.read_i32().unwrap_or(0);
+        let _level = stream.read_i32()?;
+        let _level2 = stream.read_i32()?;
         let name = stream.read_string_utf16le()?;
         let custom_appearance = stream.read_octets()?;
+
+        // O restante do `RoleInfo`. O servidor não usa estes valores na criação — quem
+        // decide posição inicial, nível e inventário é ele —, mas precisam ser lidos
+        // para o fluxo continuar alinhado.
+        let equipamentos = stream.read_compact_uint()? as usize;
+        for _ in 0..equipamentos {
+            let _id = stream.read_u32()?;
+            let _pos = stream.read_i32()?;
+            let _count = stream.read_i32()?;
+            let _max_count = stream.read_i32()?;
+            let _data = stream.read_octets()?;
+            let _proctype = stream.read_i32()?;
+            let _expire_date = stream.read_i32()?;
+            let _guid1 = stream.read_i32()?;
+            let _guid2 = stream.read_i32()?;
+            let _mask = stream.read_i32()?;
+        }
+        let _status = stream.read_i8()?;
+        let _delete_time = stream.read_i32()?;
+        let _create_time = stream.read_i32()?;
+        let _lastlogin_time = stream.read_i32()?;
+        let _posx = stream.read_f32()?;
+        let _posy = stream.read_f32()?;
+        let _posz = stream.read_f32()?;
+        let _worldtag = stream.read_i32()?;
+        let _custom_status = stream.read_octets()?;
+        let _charactermode = stream.read_octets()?;
+        let _referrer_role = stream.read_i32()?;
+        let _cash_add = stream.read_i32()?;
+        let _reincarnation_data = stream.read_octets()?;
+        let _realm_data = stream.read_octets()?;
+
+        let _referid = stream.read_octets()?;
 
         Ok(Self {
             userid,
@@ -230,40 +266,62 @@ impl C2SPlayerMove {
 
 /// C2S: Envio de mensagem de Chat (Opcode 0x70)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Campos e ordem conforme `ChatMessage` (id 80) no IR.
+///
+/// A versão anterior lia `channel` e depois, **só quando o canal era 4**, um nome de
+/// destinatário — campo que não existe no protocolo. A partir do segundo campo tudo
+/// saía deslocado, e o `emotion` era lido de dentro do `srcroleid`.
 pub struct C2SPlayerChat {
     pub channel: u8,
-    pub target_name: Option<String>,
+    pub emotion: u8,
+    pub src_role_id: i32,
     pub message: String,
+    pub data: Vec<u8>,
+    pub src_level: i32,
 }
 
 impl C2SPlayerChat {
     pub fn decode(stream: &mut OctetsStream) -> Result<Self> {
         let channel = stream.read_u8()?;
-        let target_name = if channel == 4 {
-            Some(stream.read_string_utf16le()?)
-        } else {
-            None
-        };
+        let emotion = stream.read_u8()?;
+        let src_role_id = stream.read_i32()?;
         let message = stream.read_string_utf16le()?;
+        let data = stream.read_octets()?;
+        let src_level = stream.read_i32()?;
 
         Ok(Self {
             channel,
-            target_name,
+            emotion,
+            src_role_id,
             message,
+            data,
+            src_level,
         })
     }
 }
 
 /// C2S: Heartbeat / Keep-Alive (Opcode 0x5A / PROTOCOL_KEEPALIVE)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Campos e ordem conforme `PlayerHeartBeat` (id 93) no IR.
+///
+/// Lia um único `i8` — o protocolo tem três campos de 4 bytes. Ver também o opcode: o
+/// heartbeat do jogador é 93, e não o `KeepAlive` (90), que é entre daemons.
 pub struct C2SHeartbeat {
-    pub code: i8,
+    pub role_id: i32,
+    pub link_id: i32,
+    pub localsid: u32,
 }
 
 impl C2SHeartbeat {
     pub fn decode(stream: &mut OctetsStream) -> Result<Self> {
-        let code = stream.read_i8().unwrap_or(0);
-        Ok(Self { code })
+        let role_id = stream.read_i32()?;
+        let link_id = stream.read_i32()?;
+        let localsid = stream.read_u32()?;
+        Ok(Self {
+            role_id,
+            link_id,
+            localsid,
+        })
     }
 }
 
@@ -372,45 +430,69 @@ impl C2SSetHelpStates {
 
 /// C2S: SetUIConfig (Opcode 0x6A / 106)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Campos e ordem conforme `SetUIConfig` (id 102) no IR.
+///
+/// Faltava o `localsid` entre o `roleid` e a configuração, então o `ui_config` era lido
+/// a partir dos bytes do `localsid`.
 pub struct C2SSetUIConfig {
     pub role_id: i32,
+    pub localsid: u32,
     pub ui_config: Vec<u8>,
 }
 
 impl C2SSetUIConfig {
     pub fn decode(stream: &mut OctetsStream) -> Result<Self> {
-        let role_id = stream.read_i32().unwrap_or(0);
-        let ui_config = stream.read_octets().unwrap_or_default();
-        Ok(Self { role_id, ui_config })
+        let role_id = stream.read_i32()?;
+        let localsid = stream.read_u32()?;
+        let ui_config = stream.read_octets()?;
+        Ok(Self {
+            role_id,
+            localsid,
+            ui_config,
+        })
     }
 }
 
 /// C2S: ACReport (Opcode 0x1389 / 5001)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Campos e ordem conforme `ACReport` (id 5001) no IR.
+///
+/// Engolia o payload inteiro como um bloco cru, sem ler o `roleid` nem o prefixo de
+/// tamanho do relatório.
 pub struct C2SACReport {
-    pub data: Vec<u8>,
+    pub role_id: i32,
+    pub report: Vec<u8>,
 }
 
 impl C2SACReport {
     pub fn decode(stream: &mut OctetsStream) -> Result<Self> {
-        Ok(Self {
-            data: stream.as_slice().to_vec(),
-        })
+        let role_id = stream.read_i32()?;
+        let report = stream.read_octets()?;
+        Ok(Self { role_id, report })
     }
 }
 
 /// C2S: SetCustomData (Opcode 0x66 / 102)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Campos e ordem conforme `SetCustomData` (id 100) no IR.
+///
+/// Mesmo caso do `SetUIConfig`: faltava o `localsid`.
 pub struct C2SSetCustomData {
     pub role_id: i32,
+    pub localsid: u32,
     pub data: Vec<u8>,
 }
 
 impl C2SSetCustomData {
     pub fn decode(stream: &mut OctetsStream) -> Result<Self> {
-        let role_id = stream.read_i32().unwrap_or(0);
-        let data = stream.read_octets().unwrap_or_default();
-        Ok(Self { role_id, data })
+        let role_id = stream.read_i32()?;
+        let localsid = stream.read_u32()?;
+        let data = stream.read_octets()?;
+        Ok(Self {
+            role_id,
+            localsid,
+            data,
+        })
     }
 }
 

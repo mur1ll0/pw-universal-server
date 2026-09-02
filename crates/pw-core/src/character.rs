@@ -24,6 +24,32 @@ pub struct CharacterSummary {
     pub delete_time: Option<DateTime<Utc>>,
 }
 
+impl CharacterSummary {
+    /// Um `CharacterSummary` zerado, para quando o protocolo exige um `RoleInfo` mas
+    /// não há personagem a informar — o `CreateRole_Re` de uma criação que falhou, por
+    /// exemplo. O protocolo não tem campo opcional: o erro vai no `result`, e a
+    /// estrutura vai vazia.
+    pub fn vazio() -> Self {
+        Self {
+            id: 0,
+            account_id: 0,
+            realm_id: String::new(),
+            name: String::new(),
+            race: Race::Human,
+            cls: CharacterClass::Blademaster,
+            gender: Gender::Male,
+            level: 0,
+            cultivation: 0,
+            world_id: 0,
+            position: Vector3::default(),
+            equipment: Vec::new(),
+            custom_appearance: serde_json::Value::Null,
+            is_deleted: false,
+            delete_time: None,
+        }
+    }
+}
+
 /// Dados completos do Personagem para o Game Engine (`pw-gs`)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CharacterDetails {

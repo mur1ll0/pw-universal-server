@@ -4,7 +4,9 @@ resolver = "2"
 members = [
     "crates/pw-core",
     "crates/pw-crypto",
+    "crates/pw-wire",
     "crates/pw-protocol",
+    "crates/pw-bus",
     "crates/pw-data-loader",
     "crates/pw-storage",
     "crates/pw-auth",
@@ -13,6 +15,8 @@ members = [
     "crates/pw-delivery",
     "crates/pw-gs",
     "tools/pw-patch-tool",
+    "tools/pw-rpcgen",
+    "tools/pw-pcapdiff",
 ]
 
 [workspace.package]

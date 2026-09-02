@@ -17,3 +17,9 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 hex = { workspace = true }
+
+[dev-dependencies]
+# O teste de autorização roda contra um PostgreSQL de verdade: a correção mora numa
+# cláusula WHERE, e só o banco pode dizer se ela vale.
+sqlx = { workspace = true }
+tokio = { workspace = true }

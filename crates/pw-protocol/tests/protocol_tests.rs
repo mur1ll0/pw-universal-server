@@ -1,7 +1,8 @@
 use pw_core::{CharacterClass, CharacterSummary, Gender, ItemRecord, Race, Vector3};
 use pw_protocol::{
-    create_protocol_adapter, GameVersion, InboundPacket, OctetsStream, OutboundPacket,
-    PwPacketCodec, S2CChallenge, S2CGamedataSend, S2CRoleListResponse, S2CSelectRoleResponse,
+    create_protocol_adapter, Edition, GameVersion, InboundPacket, OctetsStream, OutboundPacket,
+    PorVersao, PwPacketCodec, S2CChallenge, S2CGamedataSend, S2CRoleListResponse,
+    S2CSelectRoleResponse,
 };
 use bytes::BytesMut;
 use tokio_util::codec::{Decoder, Encoder};
@@ -12,7 +13,14 @@ fn test_challenge_and_response_126() {
     let mut codec_126 = PwPacketCodec::from_adapter(adapter_126);
 
     let nonce = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-    let challenge = OutboundPacket::Challenge(S2CChallenge::new(nonce.clone()));
+    // Construído com a versão do realm, e não com uma fixa: o código de versão agora
+    // sai do pacote, e não mais do adapter. Este teste montava um Challenge de 1.5.3 e
+    // o mandava por um codec de 1.2.6 — passava porque o adapter ignorava o campo.
+    let challenge = OutboundPacket::Challenge(S2CChallenge::new(
+        nonce.clone(),
+        GameVersion::V1_2_6,
+        Edition::new(GameVersion::V1_2_6, 0x4A2B_1C3D, 0x4A2B_1C40, None),
+    ));
 
     let mut encoded = BytesMut::new();
     codec_126.encode(challenge, &mut encoded).expect("Falha ao encodificar Challenge 1.2.6");
@@ -40,7 +48,11 @@ fn test_challenge_153_has_edition_and_exp_rate() {
     let mut codec_153 = PwPacketCodec::from_adapter(adapter_153);
 
     let nonce = vec![0xAA; 16];
-    let challenge = OutboundPacket::Challenge(S2CChallenge::new(nonce.clone()));
+    let challenge = OutboundPacket::Challenge(S2CChallenge::new(
+        nonce.clone(),
+        GameVersion::V1_5_3,
+        Edition::new(GameVersion::V1_5_3, 0x4A2B_1C3D, 0x4A2B_1C40, None),
+    ));
 
     let mut encoded = BytesMut::new();
     codec_153.encode(challenge, &mut encoded).expect("Falha ao encodificar Challenge 1.5.3");
@@ -53,10 +65,18 @@ fn test_challenge_153_has_edition_and_exp_rate() {
     let read_nonce = stream.read_octets().unwrap();
     assert_eq!(read_nonce, nonce);
     let version = stream.read_u32().unwrap();
-    assert_eq!(version, 0x00010503);
+    // `0x00010502`, e não `0x00010503`: o valor vem de `EC_Game.cpp:115` dos fontes do
+    // cliente (`GAME_VERSION = (0<<24)|(1<<16)|(5<<8)|2`). Este teste afirmava 0x...503,
+    // deduzido do nome "1.5.3" — e travava o bug em vez de pegá-lo. O cliente compara
+    // este campo e derruba a conexão antes de olhar a senha.
+    assert_eq!(version, 0x0001_0502);
     let _algo = stream.read_i8().unwrap();
     let edition = stream.read_octets().unwrap();
-    assert!(edition.is_empty());
+    // Era `assert!(edition.is_empty())` — e o `edition` vazio é justamente a segunda
+    // causa de o cliente recusar o login. Agora vai a string do `%x%x%x%x`.
+    // `30000091` + `7c` (124) são as constantes medidas no cliente 1.5.3 do realm (build
+    // 2552, via `EC.log`), seguidas dos dois timestamps de gshop passados acima.
+    assert_eq!(edition, b"300000917c4a2b1c3d4a2b1c40");
     let exp_rate = stream.read_u8().unwrap();
     assert_eq!(exp_rate, 1);
 }
@@ -176,15 +196,19 @@ fn test_gamedatasend_s2c_subcommands() {
     let p6 = S2CGamedataSend::inst_data_checkout(1, 1156141381, 1156141381, 1206433535);
     assert_eq!(u16::from_le_bytes([p6.data[0], p6.data[1]]), 206);
 
-    // 7. MALL_ITEM_PRICE (CMD 197)
+    // 7. MALL_ITEM_PRICE (CMD 270)
+    //
+    // Este teste afirmava 197 e, com isso, **prendia o bug**: 197 é `REVIVAL_INQUIRE`.
+    // Um teste escrito a partir do código só confirma o que o código faz; quem decide é
+    // o IR, e é o que `subcomandos_s2c_contra_o_ir.rs` passou a cobrar.
     let p_mall = S2CGamedataSend::mall_item_price();
-    assert_eq!(u16::from_le_bytes([p_mall.data[0], p_mall.data[1]]), 197);
+    assert_eq!(u16::from_le_bytes([p_mall.data[0], p_mall.data[1]]), 270);
 
     // 8. SKILL_PERFORM (CMD 88) e SELF_SKILL_ATTACK_RESULT (CMD 142)
     let p7 = S2CGamedataSend::skill_perform();
     assert_eq!(u16::from_le_bytes([p7.data[0], p7.data[1]]), 88);
 
-    let p8 = S2CGamedataSend::self_skill_attack_result(100, 1, 150, 0, 0);
+    let p8 = S2CGamedataSend::self_skill_attack_result(100, 1, 150, 0, 0, 0);
     assert_eq!(u16::from_le_bytes([p8.data[0], p8.data[1]]), 142);
 
     let p9 = S2CGamedataSend::self_stop_skill();
@@ -229,4 +253,29 @@ fn test_inbound_c2s_packet_decoding() {
         }
         other => panic!("Esperava InboundPacket::RoleList, obteve: {:?}", other),
     }
+}
+
+#[test]
+fn test_inst_data_checkout_155_ganha_o_sexto_campo_gshop3() {
+    // Achado comparando o IR do 1.5.5 com o do 1.5.3 (2026-09-02): o 1.5.3 já tem cinco
+    // campos (`idInst`, `region`, `precinct`, `gshop`, `gshop2` — ver `layouts_do_126.rs`
+    // para a diferença medida contra o 1.2.6, que só tem quatro); o 1.5.5 acrescenta um
+    // sexto, `gshop_time_stamp3`.
+    let sub_155 = PorVersao::new(GameVersion::V1_5_5);
+    let com_terceiro = sub_155.inst_data_checkout(1, 10, 20, 30, Some(40));
+    // 2 (cabeçalho) + 4 (idInst) + 4 + 4 + 4 (gshop) + 4 (gshop2, igual ao gshop — questão
+    // em aberto, não desta mudança) + 4 (gshop3) = 26 bytes.
+    assert_eq!(com_terceiro.data.len(), 26);
+    let gshop3_no_fio = u32::from_le_bytes(com_terceiro.data[22..26].try_into().unwrap());
+    assert_eq!(gshop3_no_fio, 40);
+
+    // Sem `Some`, o 1.5.5 continua no layout de cinco campos — ninguém é forçado a
+    // fornecer um terceiro timestamp que não tem.
+    let sem_terceiro = sub_155.inst_data_checkout(1, 10, 20, 30, None);
+    assert_eq!(sem_terceiro.data.len(), 22);
+
+    // E o 1.5.3 ignora `Some` — o sexto campo é só para quem mediu precisar dele.
+    let sub_153 = PorVersao::new(GameVersion::V1_5_3);
+    let v153_com_some = sub_153.inst_data_checkout(1, 10, 20, 30, Some(40));
+    assert_eq!(v153_com_some.data.len(), 22, "1.5.3 não ganha o sexto campo só por receber Some");
 }
