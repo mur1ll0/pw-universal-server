@@ -185,63 +185,70 @@ pub struct ElementsData {
     pub table_counts: Vec<u32>,
 }
 
-/// Tamanho, em bytes, de cada registro das primeiras 118 das **214** tabelas reais que
-/// `elements.data` do 1.5.5 (EvolvedPW) tem. Refeito em 2026-09-02 a partir da fonte da
-/// verdade, não de contagem manual — ver a nota abaixo do array para o método e o que
-/// ainda falta.
+/// Tamanho, em bytes, de cada registro das primeiras 118 das **231** tabelas reais que
+/// `elements.data` do 1.5.5 build **v156** (EvolvedPW/comunidade russa) tem. Refeito em
+/// 2026-09-02 a partir de duas fontes independentes, não de contagem manual — ver a nota
+/// abaixo do array para o método completo e o que ainda falta.
 ///
-/// # Dois bugs que este array tinha, achados nesta rodada
+/// # Três bugs que este array tinha, achados nesta rodada
 ///
-/// 1. **Índice deslocado em 1 a partir da tabela 58.** `elementdataman.h` (EvolvedPW)
-///    declara `talk_proc_array` como a 59ª tabela (`array<talk_proc*>`), mas ela **nunca**
-///    é lida pelo `array<T>::load()` genérico — o carregador original lê a lista de
-///    diálogos com um laço manual à parte, exatamente como este parser já fazia (o passo
-///    2 de `parse_all_tables`, entre as duas metades). O array antigo não tinha essa
-///    entrada pulada, e por isso **todo tamanho a partir do índice 58 estava contando a
-///    tabela errada** — o padrão chocante de deltas alternando `+132`/`-140`/`+132` entre
-///    tabelas de rosto (`FACE_*`) sumiu por completo assim que a contagem pulou o slot do
-///    `talk_proc`.
-/// 2. **12 tamanhos errados nas primeiras 58 tabelas** (`weapon_essence`, `armor_essence`,
+/// 1. **Índice deslocado em 1 a partir da tabela 58**, por causa do `talk_proc_array` —
+///    ele ocupa um slot na lista de tabelas mas nunca é lido pelo carregador genérico (tem
+///    laço manual próprio, igual este parser já faz). Afetava tudo a partir dali.
+/// 2. **`weapon_essence` (tabela 3) errado por duas vezes**: primeiro `1404`, depois eu
+///    mesmo troquei para `1424` (calculado compilando `exptypes.h` do EvolvedPW) — e
+///    **os dois estavam errados**. O valor certo é **`1556`**, confirmado pelo
+///    `PW_1.5.5_v156.cfg` (ver seção seguinte) e pelo fato de que só com ele as 16 tabelas
+///    seguintes (`armor_major_type`, `armor_essence`, `decoration_*`, `medicine_*`,
+///    `material_*`, `damagerune_*`, `armorrune_*`) passam a ler contagens plausíveis em vez
+///    de zero.
+/// 3. Os outros 11 tamanhos já corrigidos na rodada anterior (`armor_essence`,
 ///    `decoration_essence`, `flysword_essence`, `stone_essence`, `monster_essence`,
 ///    `npc_sell_service`, `npc_task_in_service`, `npc_task_out_service`,
-///    `npc_skill_service`, `npc_make_service`, `npc_essence`) — todos **maiores** no
-///    1.5.5 do que o array antigo previa, o mesmo padrão de "campo novo no fim" que já
-///    apareceu no protocolo de rede. `weapon_essence` (1404 → **1424**) é o que travava o
-///    carregamento logo na tabela 4 — confirmado batendo com o `count` real do arquivo
-///    (`data/realm_155/config/elements.data`: 2741 registros, e a tabela seguinte volta a
-///    fazer sentido).
+///    `npc_skill_service`, `npc_make_service`, `npc_essence`) continuam batendo com o
+///    `v156.cfg` — não precisaram de nova correção.
 ///
-/// # Como foi obtido (não é contagem de campo por campo à mão)
+/// # Como foi obtido — duas fontes cruzadas, não contagem manual
 ///
-/// `cgame/gs/template/elementdataman.h` (EvolvedPW, `F:\PW\1.5.5\EvolvedPWServer`) declara
-/// as 214 tabelas **na ordem exata**, por nome (`array<WEAPON_ESSENCE> weapon_essence_array;`
-/// etc.) — é a mesma fonte que `elementdataman.cpp::load_data` usa para carregar, na mesma
-/// ordem. `cgame/gs/template/exptypes.h` declara cada struct, sob
-/// `#pragma pack(push, EXP_TYPES_INC, 4)`. O tamanho de cada uma foi obtido **compilando**
-/// (`g++`, sem `-m32` — nenhuma dessas structs usa `size_t`/ponteiro, então o alvo de 32 ou
-/// 64 bits dá o mesmo resultado) um programa que inclui `exptypes.h` e imprime
-/// `sizeof(TIPO)` para cada uma, na mesma técnica que
-/// `tools/pw-rpcgen/verify/check_sizes.py` já usa para o protocolo de rede — não contar
-/// campo por campo à mão, que é exatamente o tipo de erro que produziu o bug nº 1 acima.
+/// 1. `cgame/gs/template/elementdataman.h`/`exptypes.h` (EvolvedPW,
+///    `F:\PW\1.5.5\EvolvedPWServer`) — structs compiladas de verdade (`g++`), mesma
+///    técnica de `tools/pw-rpcgen/verify/check_sizes.py`. Boa para a ordem/nomes das
+///    tabelas, mas é de uma build **diferente** da que gerou o `elements.data` que temos
+///    (achado nesta rodada: essa árvore erra `weapon_essence` por 132 bytes).
+/// 2. **`PW_1.5.5_v156.cfg`**, de uma ferramenta da comunidade
+///    (`D:\PROJETOS\PWPRIVATE\Tools\EDITOR DE ELEMENTS 1.5.5 ADMVAL`) — o nome do arquivo
+///    bate literalmente com a build dos nossos dados (`data/realm_155` veio de
+///    `pwserver_155v156`). Lista as 231 tabelas por nome de campo e tipo
+///    (`int32`/`float`/`wstring:N`/`string:N`), testada pela comunidade por anos. Cópia
+///    em `specs/elements_155/PW_1.5.5_v156.cfg`, com o parser em
+///    `specs/elements_155/parse_seledit_cfg.py`. **Achado de calibração**: `wstring:N`
+///    neste formato é `N` **bytes** (não caracteres) — bate com `namechar name[32]` (64
+///    bytes) do `exptypes.h` quando o campo é anotado `wstring:64`.
 ///
 /// # O que ficou confirmado, e o que ainda não
 ///
-/// As tabelas 0–98 (nesta contagem, já com o índice do `talk_proc` pulado) foram
-/// caminhadas contra o `elements.data` real: os `count` lidos em sequência batem com
-/// valores plausíveis (armas, NPCs, etc.), e o padrão de diferença contra o array antigo é
-/// **sempre um campo novo no fim** — o mesmo padrão já visto no protocolo de rede, e não o
-/// ruído de índice errado do bug nº 1. **Dali em diante (índice ~99 até 117, e as 96
-/// tabelas depois da 118ª que este parser ainda nem tenta ler) o padrão de diferença volta
-/// a ficar inconsistente** — sinal de que pode haver mais um deslocamento de índice
-/// escondido, ou de que os fontes do EvolvedPW que temos são de uma build diferente da que
-/// gerou este `elements.data` específico (a pasta chama-se `pwserver_155v156` — pode não
-/// ser exatamente esta árvore de fontes). Os valores aqui são os melhores disponíveis
-/// (vêm do compilador, não de palpite), mas **não foram caminhados byte a byte** além da
-/// tabela ~98. Ver `docs/ESTADO_E_RETOMADA.md` e a memória de sessão do Claude
-/// (`pw_ctx_a_155_funcional`) para o script de caminhada e o `sizeof` completo das 214
-/// tabelas.
+/// **Tabelas 0–19**: confirmadas não só por contagem plausível, mas por **conteúdo real
+/// legível** — os registros de `armorrune_sub_type`/`armorrune_essence` decodificam como
+/// texto russo coerente (`"Улучшение защиты"`, `"Знак кожаных доспехов"`, com os
+/// `id_sub_type` batendo entre as duas tabelas). É o mesmo padrão de evidência que o
+/// protocolo de rede já usa (bytes capturados, não só posição).
+///
+/// **Tabela 20 (`skilltome_sub_type`) tem um problema que não entendi ainda**: logo depois
+/// do fim de `armorrune_essence`, o `count` esperado (**7**, confirmado por texto legível
+/// nos 4 bytes seguintes) está **4 bytes adiante** de onde a soma dos tamanhos manda —
+/// como se houvesse um campo de 4 bytes a mais em algum lugar entre as tabelas 0–19 que
+/// nenhuma das duas fontes documenta, ou um separador entre tabelas que não é parte de
+/// nenhum registro. Aplicando esse ajuste de +4 na mão, as tabelas 20–23 também validam
+/// (contagens plausíveis, `0` em várias — coerente com feature não usada neste servidor),
+/// mas a tabela 24 volta a quebrar — sinal de que **não é um problema isolado**, e sim
+/// mais um (ou mais) do mesmo tipo adiante. Não apliquei o ajuste de +4 aqui por ainda não
+/// saber a causa; é a pista mais concreta pra continuar.
+///
+/// **Dali em diante (tabela ~24 até a 117, mais as 113 tabelas — 118 a 230 — que este
+/// parser nem tenta ler)**: não caminhado. Ver `docs/ESTADO_E_RETOMADA.md` e a memória de
+/// sessão do Claude (`pw_ctx_a_155_funcional`) para o relato completo desta investigação.
 const TABLE_SIZES_V7: [usize; 118] = [
-    84, 68, 356, 1424, 68, 72, 1132, 68, 72, 1172,
+    84, 68, 356, 1556, 68, 72, 1132, 68, 72, 1172,
     68, 68, 376, 68, 68, 368, 68, 364, 68, 624,
     68, 348, 776, 488, 348, 348, 352, 348, 208, 888,
     68, 892, 68, 340, 68, 476, 84, 196, 1664, 72,
