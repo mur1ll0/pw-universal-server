@@ -14,14 +14,14 @@
       "evidence": "count do arquivo diz 1, real e 428. Confirmado por prefixo de caminho esperado (file_hair_skin comeca com facedata\\, file_icon com Surfaces\\) ate o registro 427; a tabela seguinte (FACE_MOUSTACHE_ESSENCE) emenda com seu proprio count=16 correto."
     },
     "70": {
-      "skip": 142,
+      "skip": 0,
       "count": 1,
-      "evidence": "skip e count achados por busca em janela (106/28672) estavam errados. skip=142/count=1 confirmado porque o count da tabela seguinte (CHARRACTER_CLASS_CONFIG) cai exatamente em 0."
+      "evidence": "CORRIGIDO apos cruzar com o elements.data do CLIENT 1.5.5 original (build v159): a entrada anterior aqui (skip=142/count=1) estava ERRADA -- eu tinha confirmado so que a tabela seguinte parecia 'vazia' (count pequeno), sem checar o CONTEUDO dela. skip=0/count=1 da ID=1/Name='Список противников 1' (traducao literal de 'Opponent list 1', que e exatamente o que a tabela equivalente do client mostra em skip=0). A tabela seguinte (CHARRACTER_CLASS_CONFIG) resolve sozinha, SEM override, com count=12 = as 12 classes do jogo (Воин/Маг/Шаман/Друид/Оборотень/Убийца/Лучник/Жрец/Страж/Дух демона/Призрак/Жнец) -- o skip=142 antigo comia bytes que pertenciam a essa tabela real."
     },
     "72": {
-      "skip": 2354,
+      "abs_count_off": 44335619,
       "count": 1,
-      "evidence": "Confirmado por fingerprint binario contra export do ADMVAL do elements.data do client 1.5.5 original -- 153/153 campos numericos batendo (so o campo Name difere, traduzido)."
+      "evidence": "Na verdade nao precisa de override -- confirmado que _try_table() sozinho acha a mesma posicao (44335619) depois que a tabela 70 foi corrigida (o problema anterior era so efeito colateral do bug da tabela 70). Mantido como ancora absoluta (nao skip relativo, que se provou fragil) por seguranca. Confirmado tambem por fingerprint binario contra export do ADMVAL do elements.data do client 1.5.5 original -- 153/153 campos numericos batendo (so o campo Name difere, traduzido)."
     },
     "77": {
       "abs_count_off": 48163839,

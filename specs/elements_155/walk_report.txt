@@ -68,9 +68,9 @@
 [ 67] 068 - RECIPE_MAJOR_TYPE             off=40803671 skip=0 count=39 size=68 score=3.5 consumed=2656 sample='Оружие'
 [ 68] 069 - RECIPE_SUB_TYPE               off=40806327 skip=0 count=212 size=68 score=3.5 consumed=14420 sample='Мечи'
 [ 69] 070 - RECIPE_ESSENCE                off=40820747 skip=0 count=8206 size=428 score=91.0 consumed=3512172 sample='Клинок сотни битв'
-[ 70] 071 - ENEMY_FACTION_CONFIG          off=44332919 skip=142 count=1 size=196 score=29.2 consumed=200 sample='' [skip/count com OVERRIDE manual -- ver README]
-[ 71] 072 - CHARRACTER_CLASS_CONFIG       off=44333261 skip=0 count=0 size=208 score=0.1 consumed=4 sample=''
-[ 72] 073 - PARAM_ADJUST_CONFIG           off=44333265 skip=2354 count=1 size=676 score=144.5 consumed=680 sample='Таблица проверки данных 1' [skip/count com OVERRIDE manual -- ver README]
+[ 70] 071 - ENEMY_FACTION_CONFIG          off=44332919 skip=0 count=1 size=196 score=-6.5 consumed=200 sample='Список противников 1' [skip/count com OVERRIDE manual -- ver README]
+[ 71] 072 - CHARRACTER_CLASS_CONFIG       off=44333119 skip=0 count=12 size=208 score=34.0 consumed=2500 sample='Воин'
+[ 72] 073 - PARAM_ADJUST_CONFIG           off=44335619 skip=0 count=1 size=676 score=144.5 consumed=680 sample='Таблица проверки данных 1' [skip/count com OVERRIDE manual -- ver README]
 [ 73] 074 - PLAYER_ACTION_INFO_CONFIG     off=44336299 skip=695 count=162 size=616 score=2.7 consumed=99796 sample=''
 [ 74] 075 - TASKDICE_ESSENCE              off=44436790 skip=0 count=0 size=512 score=0.1 consumed=4 sample=''
 [ 75] 076 - TASKNORMALMATTER_ESSENCE      off=44436794 skip=0 count=0 size=344 score=0.1 consumed=4 sample=''

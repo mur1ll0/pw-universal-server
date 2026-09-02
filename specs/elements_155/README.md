@@ -411,6 +411,89 @@ Total de correções manuais registradas em `TABLE_OVERRIDES`: **10** (tabelas 2
 77, 86, 93, 150, 204, 209) — cada uma com a evidência e o raciocínio no código-fonte de
 `walk_tables.py`. As outras 221 tabelas resolvem só com a busca gulosa padrão.
 
+## Resolvendo a dúvida pendente: as 10 correções são do formato v156 ou só deste arquivo?
+
+Pedido do Murillo antes de propor uma abordagem nova: fechar essa dúvida primeiro. Testei
+cruzando contra uma **segunda fonte real**: `F:\PW\1.5.5\1.5.5.EN\...\elements.data`, o
+`elements.data` do **client** original — build **v159**, não v156 (arquivo diferente,
+`raw_version` `0x3000009f`), mas próxima o suficiente pra comparar tabela a tabela por
+nome. O layout dos campos bate quase idêntico entre as duas builds (já sabíamos disso).
+
+**Achado 1 — tabela 20 (`SKILLTOME_SUB_TYPE`): CONFIRMADO formato-largo.** No client v159,
+o `count` certo (**22**, as mesmas 22 categorias, em inglês: `Blade./Wizard/Monk/Barb./
+Veno./Archer/Cleric/...`) está **20 bytes** depois da posição ingênua — não 19 como no
+nosso v156. Ou seja: o "espaço extra não documentado" antes desta tabela existe nas duas
+builds, só que o tamanho exato varia 1 byte entre elas (provavelmente ligado a como cada
+build específica compilou a struct correspondente). **É uma característica real do
+formato**, não uma corrupção do nosso arquivo — mas o valor exato (`19` vs `20`) é
+por-build, não universal.
+
+**Achado 2 — tabela 63 (`FACE_HAIR_ESSENCE`): CONFIRMADO específico deste arquivo.** No
+client v159, a tabela equivalente resolve **perfeitamente pela busca gulosa padrão**,
+`skip=0`, com o `count` gravado **certo** (`435`, todos os penteados legíveis em inglês,
+ex. `"Softfeather Lace Haircut"`) — nenhuma mentira no `count`, nenhum ajuste necessário.
+**Isso prova que o `count` errado (`1` em vez de `428`) é uma peculiaridade específica de
+`data/realm_155/config/elements.data`** — provavelmente uma corrupção introduzida em algum
+momento da extração/distribuição desse pacote específico (`pwserver_155v156`), não um bug
+do formato v156 nem do motor do jogo.
+
+**Achado 3, o mais importante — tabela 70 (`ENEMY_FACTION_CONFIG`): eu tinha ERRADO.** Ao
+cruzar com o client, descobri que a correção registrada antes (`skip=142`/`count=1`)
+estava **errada** — eu tinha "confirmado" isso na sessão anterior só porque a tabela
+seguinte parecia razoável (`count` pequeno), sem checar o **conteúdo** dela. A tabela
+equivalente no client resolve em `skip=0`/`count=1` com `ID=1`/`Name="Opponent list 1"`.
+Voltando pro nosso arquivo com `skip=0`: `ID=1`/`Name="Список противников 1"` — **tradução
+literal** do inglês do client. E a tabela seguinte (`CHARRACTER_CLASS_CONFIG`), que eu
+achava que fechava vazia, na verdade tem **12 registros** — as 12 classes do jogo, todas
+legíveis (`Воин/Маг/Шаман/Друид/Оборотень/Убийца/Лучник/Жрец/Страж/Дух демона/Призрак/
+Жнец`). O `skip=142` antigo lia só 1 registro plausível por sorte e **comia bytes que
+pertenciam à tabela 71 de verdade** — 12 classes do jogo que nunca apareciam em nenhuma
+consulta. **Corrigido** em `TABLE_OVERRIDES`/`realm_155_overrides.json` — o total de
+registros do arquivo subiu de 69.626 para **69.638** (+12). Lição registrada no código:
+"a tabela seguinte parece plausível" não é evidência forte o bastante — precisa decodificar
+o **conteúdo**, não só olhar se o número é pequeno.
+
+**Achado 4 — tabela 72 (`PARAM_ADJUST_CONFIG`): nunca precisou de override.** Rodando
+`_try_table()` sem nenhuma correção manual, **depois** de consertar a tabela 70, ela acha
+sozinha a posição certa. O "problema" que motivou o override original era só efeito
+colateral do bug da tabela 70 (o offset que chegava até a 72 vinha errado). Mantive a
+entrada mesmo assim, mas trocada por uma âncora absoluta (não `skip` relativo — foi
+exatamente um `skip` relativo que quebrou essa entrada em silêncio quando a tabela 70 foi
+corrigida da primeira vez, sem nenhum erro aparecer, só o `sample` virou vazio).
+
+**Achado 5, sobre o padrão geral — tabelas 77/86/93 (`PLAYER_LEVELEXP_CONFIG`/
+`FACETICKET_ESSENCE`/`PET_TYPE`)**: testando a mesma região no client v159, `PLAYER_LEVELEXP_CONFIG`
+**também não resolve pela busca gulosa sozinha** lá (o candidato de maior pontuação também
+é um resultado deslocado/ilegível, `"t level upgrade chart"` em vez do texto completo) —
+mesma dificuldade que tivemos aqui. Isso sugere que a **causa** de precisar de override
+nessas tabelas (grandes, com só 1-6 registros reais no meio de muito espaço reservado) é
+uma **fraqueza genérica da heurística de pontuação** com esse formato de tabela — não uma
+corrupção específica do nosso arquivo. Mas o **valor exato** do offset (`abs_count_off`)
+é, por natureza, específico de cada arquivo (depende de quanto conteúdo real vem antes
+dele) — não dá pra copiar o número de um arquivo pro outro, só o "aviso" de que a tabela
+provavelmente vai precisar de ajuda de novo.
+
+### Conclusão prática, por tabela
+
+| Tabela | Classificação | Reaproveitável noutro arquivo v156? |
+| :--- | :--- | :--- |
+| 20 (`SKILLTOME_SUB_TYPE`) | Estrutural, formato-largo | O **fenômeno** sim (sempre vai ter uns bytes extras aqui); o **valor exato** (19) não necessariamente — testar. |
+| 63 (`FACE_HAIR_ESSENCE`) | Corrupção específica deste arquivo | Não — outro arquivo v156 bem formado provavelmente não precisa deste override. |
+| 70 (`ENEMY_FACTION_CONFIG`) | Fraqueza do algoritmo (não do arquivo) | O **risco** sim (mesma classe de tabela, 1 registro real cercado de dados esparsos); o valor exato não. |
+| 72 (`PARAM_ADJUST_CONFIG`) | Não precisa de override (era colateral da 70) | N/A — remover a dependência quando outro arquivo for testado. |
+| 77/86/93 (`PLAYER_LEVELEXP_CONFIG`/`FACETICKET_ESSENCE`/`PET_TYPE`) | Provável fraqueza do algoritmo, não confirmado se corrupção | O risco de precisar de ajuste sim; o valor exato não. |
+| 150/204/209 | Não testado contra o client ainda (mesmo risco provável dos anteriores) | — |
+
+**Conclusão geral, respondendo a pergunta original**: nenhuma das 10 correções é "do
+formato" no sentido de precisar ser copiada como está pra outro arquivo v156 — os
+**valores exatos** (`skip`, `abs_count_off`) são sempre específicos de um arquivo
+(dependem de quanto conteúdo real precede aquele ponto). O que **é** reaproveitável é o
+*conhecimento de quais tabelas são propensas a precisar de ajuste* (a 20 por um motivo
+estrutural real; a 70/72/77/86/93/provavelmente 150/204/209 por uma fraqueza conhecida da
+heurística de pontuação com tabelas grandes/esparsas) — isso deveria virar uma lista de
+"preste atenção nestas tabelas" pra investigar em qualquer arquivo novo, não uma lista de
+valores fixos pra colar.
+
 ## Pergunta do Murillo: detecção automática de versão (o ADMVAL disse "v159" pro client)
 
 Ao carregar o `elements.data` do client 1.5.5 original

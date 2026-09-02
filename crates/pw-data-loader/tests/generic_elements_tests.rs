@@ -3,8 +3,10 @@ use std::path::Path;
 
 /// Confere o leitor genérico (dirigido por `specs/elements_layouts/v156.json`) contra o
 /// `elements.data` real do realm 155 -- deve bater com o resultado independente já obtido
-/// em Python (`specs/elements_layouts/pw_elements_reader.py`): 231 tabelas, 69.626
-/// registros no total, terminando exatamente no fim do arquivo.
+/// em Python (`specs/elements_layouts/pw_elements_reader.py`): 231 tabelas, 69.638
+/// registros no total, terminando exatamente no fim do arquivo. (Eram 69.626 antes de
+/// corrigir um bug real no override da tabela 70, achado cruzando com o `elements.data`
+/// do client 1.5.5 original -- ver `specs/elements_155/realm_155_overrides.json`.)
 #[test]
 fn test_generic_elements_realm_155_if_present() {
     let path = Path::new(concat!(
@@ -24,8 +26,15 @@ fn test_generic_elements_realm_155_if_present() {
 
     let total_records: usize = data.tables.values().map(|v| v.len()).sum();
     assert_eq!(
-        total_records, 69_626,
+        total_records, 69_638,
         "total de registros deve bater com o já confirmado em Python"
+    );
+
+    let class_configs = data.get("CHARRACTER_CLASS_CONFIG");
+    assert_eq!(
+        class_configs.len(),
+        12,
+        "as 12 classes do jogo -- só passa a resolver depois da correção da tabela 70"
     );
 
     let equipment_addon = data.get("EQUIPMENT_ADDON");
@@ -60,7 +69,7 @@ fn test_generic_elements_sem_overrides_da_resultado_diferente_nao_erro() {
 
     let total_records: usize = data.tables.values().map(|v| v.len()).sum();
     assert_ne!(
-        total_records, 69_626,
+        total_records, 69_638,
         "sem overrides o total NÃO deveria bater por acidente -- se bateu, os overrides pararam de ser necessários (bom sinal, mas confira antes de remover algum)"
     );
 }

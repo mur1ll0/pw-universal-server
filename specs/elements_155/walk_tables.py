@@ -62,20 +62,34 @@ TABLE_OVERRIDES = {
     # seguinte (FACE_MOUSTACHE_ESSENCE, "Мужская борода 01..16") comeca exatamente em
     # seguida com seu proprio count=16 correto, sem precisar de ajuste.
     63: {"skip": 944, "count": 428},
-    # ENEMY_FACTION_CONFIG: try_table() achou skip=106/count=28672 por busca em janela (so
-    # o registro 0 e plausivel ali). Testando manualmente skip=142 (que da um primeiro
-    # registro plausivel, ID=2/enemy_factions_1=1085) com count=1, o proximo `count` (de
-    # CHARRACTER_CLASS_CONFIG) cai exatamente em 0 -- bate com a tabela seguinte ja
-    # resolvendo como vazia de forma natural, sem mais ajustes.
-    70: {"skip": 142, "count": 1},
-    # PARAM_ADJUST_CONFIG: confirmado com fonte externa -- o Murillo exportou esta tabela do
-    # `elements.data` do CLIENT 1.5.5 original (build vizinha, via
-    # "EDITOR DE ELEMENTS 1.5.5 ADMVAL") em formato texto (`tabela@linha@campo@valor`).
-    # Construindo uma "impressao digital" binaria dos 152 campos numericos daquele export
-    # (ignorando o campo `Name`, que pode estar traduzido) e procurando por ela no NOSSO
-    # arquivo, achei uma unica ocorrencia -- os 153 campos numericos batem 100% (so o `Name`
-    # difere, esperado). O `count` la e la aqui: 1.
-    72: {"skip": 2354, "count": 1},
+    # ENEMY_FACTION_CONFIG: CORRIGIDO nesta rodada -- a entrada anterior aqui
+    # (skip=142/count=1) estava ERRADA. Motivo do erro original: em skip=142 o registro
+    # decodifica com um ID pequeno e pontuacao ok, e a tabela seguinte parecia "resolver
+    # como vazia" -- mas eu nunca conferi o CONTEUDO da tabela seguinte, so que o numero
+    # era pequeno. Cruzando contra o `elements.data` do CLIENT 1.5.5 original (build v159,
+    # `F:\PW\1.5.5\1.5.5.EN\...`), a tabela equivalente resolve limpo em skip=0/count=1 com
+    # ID=1 e Name="Opponent list 1" -- voltando pro NOSSO arquivo, skip=0/count=1 da
+    # exatamente ID=1/Name="Список противников 1" (traducao literal do ingles do client!),
+    # e a tabela seguinte (CHARRACTER_CLASS_CONFIG) resolve sozinha (sem override) com
+    # count=12 = as 12 classes do jogo, todas legiveis (Воин/Маг/Шаман/Друид/Оборотень/
+    # Убийца/Лучник/Жрец/Страж/Дух демона/Призрак/Жнец). O `skip=142` antigo lia so 1
+    # registro plausivel por sorte e comia bytes que pertenciam a essa tabela 71 real.
+    # Licao: "a proxima tabela parece plausivel" nao e evidencia forte o bastante sozinha --
+    # precisa decodificar o CONTEUDO da proxima tabela, nao so olhar se o numero e pequeno.
+    70: {"skip": 0, "count": 1},
+    # PARAM_ADJUST_CONFIG: na verdade **nao precisa mais de override nenhum** -- confirmado
+    # rodando `_try_table()` sem override depois de corrigir a tabela 70: acha sozinho
+    # `(44335619, 1, 680)`, a mesma posicao. O motivo de eu ter "precisado" de um override
+    # aqui antes era colateral do bug da tabela 70 (o `off` que chegava aqui vinha errado);
+    # depois de consertar a 70, a 72 nunca teve problema proprio. Mantive a entrada mesmo
+    # assim, agora ancorada por posicao ABSOLUTA (nao por `skip`, que se mostrou fragil a
+    # mudanca de offset acumulado -- foi exatamente isso que quebrou esta entrada em
+    # silencio quando a tabela 70 foi corrigida da primeira vez) -- serve de checagem de
+    # regressao barata, nao porque a tabela seja dificil. Confirmado por fonte externa
+    # tambem: export do `elements.data` do CLIENT 1.5.5 original via ADMVAL
+    # (`tabela@linha@campo@valor`), impressao digital binaria dos 152 campos numericos
+    # batendo 100% (so `Name`, traduzido, difere).
+    72: {"abs_count_off": 44335619, "count": 1},
     # As 3 seguintes vieram da mesma tecnica (fingerprint binario contra o export do
     # cliente), mas ancoradas por posicao ABSOLUTA (`abs_count_off`), nao por `skip` a
     # partir do offset acumulado -- as tabelas entre 72 e cada uma destas (73-76, 78-85,
