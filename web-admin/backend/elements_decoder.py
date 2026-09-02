@@ -9,8 +9,34 @@ import os
 import io
 import json
 import struct
+import sys
 import unicodedata
 from typing import Dict, List, Any, Optional, Tuple
+
+# Leitor genérico de `elements.data` (build v156 em diante), dirigido pelo catálogo de
+# layouts em `specs/elements_layouts/` -- ver o README lá para a arquitetura completa
+# (detecção de versão pelo cabeçalho, catálogo de JSON por build, overrides por realm).
+# Import best-effort: em produção (imagem Docker do pw-admin-api), o build context hoje é
+# só `web-admin/backend/`, então `specs/` pode não estar disponível -- nesse caso o
+# decodificador cai de volta pro comportamento antigo (só v7/1.2.6) em vez de quebrar o
+# módulo inteiro. Ver a seção "Empacotamento" no relatório desta sessão para a decisão
+# pendente de como levar `specs/elements_layouts` pra dentro da imagem.
+_ELEMENTS_LAYOUTS_CANDIDATES = [
+    os.path.join(os.path.dirname(__file__), "specs", "elements_layouts"),
+    os.path.join(os.path.dirname(__file__), "..", "..", "specs", "elements_layouts"),
+    "/app/specs/elements_layouts",
+]
+HAS_GENERIC_READER = False
+pw_elements_reader = None
+for _candidate in _ELEMENTS_LAYOUTS_CANDIDATES:
+    if os.path.isdir(_candidate):
+        sys.path.insert(0, _candidate)
+        try:
+            import pw_elements_reader  # type: ignore
+            HAS_GENERIC_READER = True
+        except Exception as _e:
+            print(f"[ElementsDecoder] achei {_candidate} mas falhei ao importar pw_elements_reader: {_e}")
+        break
 
 def normalize_search_string(text: str) -> str:
     """Normaliza texto removendo acentos e convertendo para minúsculas"""
@@ -56,6 +82,31 @@ TABLE_CATEGORIES = {
     31: "Pedra da Alma / Gema",
     34: "Hierograma / Amuleto",
     35: "Livro Sagrado / Tomo",
+}
+
+# Mesma ideia de TABLE_CATEGORIES, mas por NOME de tabela -- usado pelo caminho novo
+# (build v156 em diante, via `pw_elements_reader`), que le por nome em vez de índice
+# posicional (o índice de tabela deixou de ser estável entre builds a partir do momento em
+# que passamos a usar o catálogo `specs/elements_layouts/vNNN.json`).
+TABLE_CATEGORIES_POR_NOME = {
+    "WEAPON_ESSENCE": "Arma",
+    "ARMOR_ESSENCE": "Armadura",
+    "DECORATION_ESSENCE": "Ornamento / Jóia",
+    "MEDICINE_ESSENCE": "Poção / Medicamento",
+    "MATERIAL_ESSENCE": "Material de Forja",
+    "TASKMATTER_ESSENCE": "Item de Missão",
+    "TOSSMATTER_ESSENCE": "Item de Missão",
+    "TOWNSCROLL_ESSENCE": "Pergaminho / Retorno",
+    "UNIONSCROLL_ESSENCE": "Pergaminho / Retorno",
+    "REVIVESCROLL_ESSENCE": "Pergaminho / Retorno",
+    "FLYSWORD_ESSENCE": "Voo / Montaria Alada",
+    "WINGMANWING_ESSENCE": "Voo / Montaria Alada",
+    "FASHION_ESSENCE": "Moda / Roupas",
+    "PROJECTILE_ESSENCE": "Projétil / Flecha",
+    "STONE_ESSENCE": "Pedra da Alma / Gema",
+    "SKILLTOME_ESSENCE": "Livro Sagrado / Tomo",
+    "DAMAGERUNE_ESSENCE": "Hierograma / Amuleto",
+    "ARMORRUNE_ESSENCE": "Hierograma / Amuleto",
 }
 
 # ==============================================================================
@@ -739,6 +790,72 @@ class ElementsDecoder:
                 return p
         return None
 
+    def _get_overrides_path_for_realm(self, realm_id: str) -> Optional[str]:
+        """Acha um `*_overrides.json` pro realm (ver specs/elements_layouts/README.md pro
+        porque as correções de skip/count ficam separadas do layout de formato). Hoje só
+        `realm_155` tem um verificado -- outros realms carregam sem overrides, o que é
+        seguro (a busca gulosa padrão resolve a maioria das tabelas sozinha; as que
+        precisarem de ajuste vão falhar alto em vez de dar dado errado silenciosamente, ver
+        `ElementsFormatError` em `pw_elements_reader.load_elements_data`)."""
+        suffix = realm_id.replace("realm_", "", 1) if realm_id.startswith("realm_") else realm_id
+        candidates = [
+            os.path.join(os.path.dirname(__file__), "specs", f"elements_{suffix}", f"realm_{suffix}_overrides.json"),
+            os.path.join(os.path.dirname(__file__), "..", "..", "specs", f"elements_{suffix}", f"realm_{suffix}_overrides.json"),
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                return p
+        return None
+
+    def _load_realm_elements_generic(self, elements_file: str, realm_id: str, iconset_data: Optional[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+        """Carrega `elements.data` (build v156 em diante) via `pw_elements_reader`, e achata
+        as tabelas de item (`TABLE_CATEGORIES_POR_NOME`) num único dict por ID, no mesmo
+        formato que o resto do backend já espera (compatível com o que o caminho antigo v7
+        produzia)."""
+        overrides_path = self._get_overrides_path_for_realm(realm_id)
+        tables = pw_elements_reader.load_elements_data(elements_file, overrides_path=overrides_path)
+
+        items_db: Dict[int, Dict[str, Any]] = {}
+        for table_name, category in TABLE_CATEGORIES_POR_NOME.items():
+            for rec in tables.get(table_name, []):
+                item_id = rec.get("ID")
+                name_raw = str(rec.get("Name", "")).strip()
+                if not item_id or item_id in items_db or not name_raw:
+                    continue
+
+                icon_file = ""
+                for value in rec.values():
+                    if isinstance(value, (bytes, bytearray)) and b".dds" in value:
+                        decoded = value.decode("gbk", errors="ignore").strip()
+                        icon_file = decoded.replace("/", "\\").split("\\")[-1]
+                        break
+
+                quality = "normal"
+                if "☆☆☆" in name_raw:
+                    quality = "legendary"
+                elif "☆☆" in name_raw:
+                    quality = "rare"
+                elif "☆" in name_raw:
+                    quality = "magic"
+
+                icon_img = None
+                if icon_file and iconset_data and icon_file in iconset_data.get("items_map", {}):
+                    icon_img = f"/api/elements/icon/{realm_id}/{item_id}.png"
+
+                items_db[item_id] = {
+                    "id": item_id,
+                    "name": name_raw,
+                    "type": category,
+                    "category": category,
+                    "level": 1,
+                    "quality": quality,
+                    "icon": "fa-solid fa-box",
+                    "icon_file": icon_file,
+                    "icon_img": icon_img,
+                    "desc": f"Item {name_raw} registrado no elements.data do servidor (ID {item_id}).",
+                }
+        return items_db
+
     def load_realm_elements(self, realm_id: str) -> Dict[int, Dict[str, Any]]:
         """Carrega e decodifica todos os itens de elements.data de um Realm com cache em memória"""
         if realm_id in self.realms_cache:
@@ -750,13 +867,24 @@ class ElementsDecoder:
         # Pré-carrega iconset do realm se disponível
         iconset_data = self.icon_manager.load_realm_iconset(realm_id)
 
+        if elements_file and os.path.exists(elements_file) and HAS_GENERIC_READER:
+            try:
+                generic_items = self._load_realm_elements_generic(elements_file, realm_id, iconset_data)
+                items_db.update(generic_items)
+                self.realms_cache[realm_id] = items_db
+                return items_db
+            except pw_elements_reader.UnsupportedVersionError as e:
+                print(f"[ElementsDecoder] {realm_id}: {e} -- caindo pro decodificador antigo (só v7)")
+            except Exception as e:
+                print(f"[ElementsDecoder] {realm_id}: falha no leitor genérico ({e}) -- caindo pro decodificador antigo")
+
         if elements_file and os.path.exists(elements_file):
             try:
                 with open(elements_file, "rb") as f:
                     header = f.read(4)
                     if len(header) == 4:
                         version, signature = struct.unpack("<hh", header)
-                        
+
                         # Parser para v7 (1.2.6)
                         if version == 7:
                             for t_idx in range(min(len(TABLE_SIZES_V7), 58)):

@@ -1,0 +1,57 @@
+{
+  "_comment": "Correcoes de skip/count achadas ao decodificar data/realm_155/config/elements.data (build v156). NAO sao garantidas validas para outro arquivo v156 qualquer -- ver specs/elements_layouts/README.md para o porque disso fica separado do layout de formato. Extraido de TABLE_OVERRIDES em specs/elements_155/walk_tables.py; mantenha os dois em sincronia se editar um dos dois.",
+  "verified_against": "data/realm_155/config/elements.data",
+  "version": 156,
+  "overrides": {
+    "20": {
+      "skip": 19,
+      "count": 22,
+      "evidence": "count do arquivo (7, por coincidencia) estava errado; 19 bytes de folga nao identificados antes do count real. Confirmado por conteudo: 22 sub-tipos de livro de habilidade, incluindo as 7 classes do jogo (Воин/Маг/Монах/Оборотень/Друид/Лучник/Жрец)."
+    },
+    "63": {
+      "skip": 944,
+      "count": 428,
+      "evidence": "count do arquivo diz 1, real e 428. Confirmado por prefixo de caminho esperado (file_hair_skin comeca com facedata\\, file_icon com Surfaces\\) ate o registro 427; a tabela seguinte (FACE_MOUSTACHE_ESSENCE) emenda com seu proprio count=16 correto."
+    },
+    "70": {
+      "skip": 142,
+      "count": 1,
+      "evidence": "skip e count achados por busca em janela (106/28672) estavam errados. skip=142/count=1 confirmado porque o count da tabela seguinte (CHARRACTER_CLASS_CONFIG) cai exatamente em 0."
+    },
+    "72": {
+      "skip": 2354,
+      "count": 1,
+      "evidence": "Confirmado por fingerprint binario contra export do ADMVAL do elements.data do client 1.5.5 original -- 153/153 campos numericos batendo (so o campo Name difere, traduzido)."
+    },
+    "77": {
+      "abs_count_off": 48163839,
+      "count": 2,
+      "evidence": "Confirmado por fingerprint binario contra export do ADMVAL -- 151/151 campos batendo, stride do registro 1 verificado."
+    },
+    "86": {
+      "abs_count_off": 51261899,
+      "count": 4,
+      "evidence": "Confirmado por fingerprint binario contra export do ADMVAL -- 10/10 campos batendo, stride do registro 1 verificado."
+    },
+    "93": {
+      "abs_count_off": 51335459,
+      "count": 6,
+      "evidence": "Sem campo numerico suficiente pra fingerprint; confirmado pela sequencia exata dos 6 IDs (8781,8782,8783,28752,28913,37698), unica no arquivo. Nomes em russo conferem (Питомец=Pet, etc.)."
+    },
+    "150": {
+      "skip": 0,
+      "count": 3,
+      "evidence": "Candidato de maior pontuacao (skip=732) era ilegivel; skip=0/count=3 decodifica as 3 faccoes de guerra territorial do PW: Орден Солнца / Орден Мрака / Армия Зари, com descricoes completas e coerentes."
+    },
+    "204": {
+      "skip": 0,
+      "count": 1,
+      "evidence": "Confirmado por fingerprint binario contra export do ADMVAL -- 22/22 campos batendo, incluindo os 10 caminhos gfx\\...\\星盘N.gfx."
+    },
+    "209": {
+      "skip": 0,
+      "count": 1,
+      "evidence": "Score baixo (tabela grande e esparsa) fez a busca gulosa rejeitar a posicao certa. Conteudo perfeito: 单人爬塔副本积分消耗配置表 (tabela de consumo de pontos da masmorra de escalada solo)."
+    }
+  }
+}

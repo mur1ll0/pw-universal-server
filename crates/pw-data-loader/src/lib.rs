@@ -1,6 +1,7 @@
 pub mod aipolicy;
 pub mod collision;
 pub mod elements;
+pub mod generic_elements;
 pub mod gshop;
 pub mod manager;
 pub mod npcgen;
@@ -11,6 +12,7 @@ pub use aipolicy::AiPolicyData;
 pub use collision::MapCollision;
 pub use elements::MedicineTemplate;
 pub use elements::ElementsData;
+pub use generic_elements::{GenericElementsData, load_elements_data as load_generic_elements_data};
 pub use gshop::GShopData;
 pub use manager::{FalhaDeCarga, GameDataManager, RelatorioDeCarga};
 pub use npcgen::{compress_dir_h, NpcGenData, SpatialGrid, SpawnInstance, SpawnType};
