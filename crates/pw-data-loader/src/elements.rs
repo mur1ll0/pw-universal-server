@@ -185,19 +185,74 @@ pub struct ElementsData {
     pub table_counts: Vec<u32>,
 }
 
+/// Tamanho, em bytes, de cada registro das primeiras 118 das **214** tabelas reais que
+/// `elements.data` do 1.5.5 (EvolvedPW) tem. Refeito em 2026-09-02 a partir da fonte da
+/// verdade, não de contagem manual — ver a nota abaixo do array para o método e o que
+/// ainda falta.
+///
+/// # Dois bugs que este array tinha, achados nesta rodada
+///
+/// 1. **Índice deslocado em 1 a partir da tabela 58.** `elementdataman.h` (EvolvedPW)
+///    declara `talk_proc_array` como a 59ª tabela (`array<talk_proc*>`), mas ela **nunca**
+///    é lida pelo `array<T>::load()` genérico — o carregador original lê a lista de
+///    diálogos com um laço manual à parte, exatamente como este parser já fazia (o passo
+///    2 de `parse_all_tables`, entre as duas metades). O array antigo não tinha essa
+///    entrada pulada, e por isso **todo tamanho a partir do índice 58 estava contando a
+///    tabela errada** — o padrão chocante de deltas alternando `+132`/`-140`/`+132` entre
+///    tabelas de rosto (`FACE_*`) sumiu por completo assim que a contagem pulou o slot do
+///    `talk_proc`.
+/// 2. **12 tamanhos errados nas primeiras 58 tabelas** (`weapon_essence`, `armor_essence`,
+///    `decoration_essence`, `flysword_essence`, `stone_essence`, `monster_essence`,
+///    `npc_sell_service`, `npc_task_in_service`, `npc_task_out_service`,
+///    `npc_skill_service`, `npc_make_service`, `npc_essence`) — todos **maiores** no
+///    1.5.5 do que o array antigo previa, o mesmo padrão de "campo novo no fim" que já
+///    apareceu no protocolo de rede. `weapon_essence` (1404 → **1424**) é o que travava o
+///    carregamento logo na tabela 4 — confirmado batendo com o `count` real do arquivo
+///    (`data/realm_155/config/elements.data`: 2741 registros, e a tabela seguinte volta a
+///    fazer sentido).
+///
+/// # Como foi obtido (não é contagem de campo por campo à mão)
+///
+/// `cgame/gs/template/elementdataman.h` (EvolvedPW, `F:\PW\1.5.5\EvolvedPWServer`) declara
+/// as 214 tabelas **na ordem exata**, por nome (`array<WEAPON_ESSENCE> weapon_essence_array;`
+/// etc.) — é a mesma fonte que `elementdataman.cpp::load_data` usa para carregar, na mesma
+/// ordem. `cgame/gs/template/exptypes.h` declara cada struct, sob
+/// `#pragma pack(push, EXP_TYPES_INC, 4)`. O tamanho de cada uma foi obtido **compilando**
+/// (`g++`, sem `-m32` — nenhuma dessas structs usa `size_t`/ponteiro, então o alvo de 32 ou
+/// 64 bits dá o mesmo resultado) um programa que inclui `exptypes.h` e imprime
+/// `sizeof(TIPO)` para cada uma, na mesma técnica que
+/// `tools/pw-rpcgen/verify/check_sizes.py` já usa para o protocolo de rede — não contar
+/// campo por campo à mão, que é exatamente o tipo de erro que produziu o bug nº 1 acima.
+///
+/// # O que ficou confirmado, e o que ainda não
+///
+/// As tabelas 0–98 (nesta contagem, já com o índice do `talk_proc` pulado) foram
+/// caminhadas contra o `elements.data` real: os `count` lidos em sequência batem com
+/// valores plausíveis (armas, NPCs, etc.), e o padrão de diferença contra o array antigo é
+/// **sempre um campo novo no fim** — o mesmo padrão já visto no protocolo de rede, e não o
+/// ruído de índice errado do bug nº 1. **Dali em diante (índice ~99 até 117, e as 96
+/// tabelas depois da 118ª que este parser ainda nem tenta ler) o padrão de diferença volta
+/// a ficar inconsistente** — sinal de que pode haver mais um deslocamento de índice
+/// escondido, ou de que os fontes do EvolvedPW que temos são de uma build diferente da que
+/// gerou este `elements.data` específico (a pasta chama-se `pwserver_155v156` — pode não
+/// ser exatamente esta árvore de fontes). Os valores aqui são os melhores disponíveis
+/// (vêm do compilador, não de palpite), mas **não foram caminhados byte a byte** além da
+/// tabela ~98. Ver `docs/ESTADO_E_RETOMADA.md` e a memória de sessão do Claude
+/// (`pw_ctx_a_155_funcional`) para o script de caminhada e o `sizeof` completo das 214
+/// tabelas.
 const TABLE_SIZES_V7: [usize; 118] = [
-    84, 68, 356, 1404, 68, 72, 1104, 68, 72, 1156,
+    84, 68, 356, 1424, 68, 72, 1132, 68, 72, 1172,
     68, 68, 376, 68, 68, 368, 68, 364, 68, 624,
-    68, 348, 516, 488, 348, 348, 352, 348, 208, 888,
-    68, 892, 68, 340, 68, 436, 84, 196, 1500, 72,
-    1224, 72, 72, 200, 200, 196, 196, 644, 584, 72,
-    460, 328, 72, 68, 1224, 72, 68, 848, 476, 348,
-    196, 336, 468, 340, 208, 204, 68, 68, 400, 196,
-    160, 612, 488, 404, 344, 340, 668, 68, 452, 72,
-    68, 72, 404, 68, 68, 488, 68, 68, 2412, 292,
-    68, 344, 68, 476, 628, 360, 344, 480, 344, 148,
-    1092, 368, 76, 584, 76, 356, 436, 344, 76, 76,
-    76, 384, 348, 356, 356, 348, 344, 368,
+    68, 348, 776, 488, 348, 348, 352, 348, 208, 888,
+    68, 892, 68, 340, 68, 476, 84, 196, 1664, 72,
+    4392, 72, 72, 200, 200, 1092, 1124, 644, 1096, 72,
+    460, 328, 72, 68, 1228, 72, 68, 880, 480, 348,
+    196, 336, 472, 340, 208, 332, 68, 68, 428, 196,
+    208, 676, 616, 504, 344, 340, 668, 68, 560, 72,
+    68, 72, 736, 68, 68, 488, 68, 68, 3436, 292,
+    68, 344, 68, 684, 628, 360, 344, 480, 1416, 348,
+    344, 148, 1092, 368, 76, 584, 76, 356, 444, 344,
+    92, 76, 76, 392, 348, 356, 356, 348,
 ];
 
 impl ElementsData {
