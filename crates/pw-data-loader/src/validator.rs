@@ -22,7 +22,17 @@ impl DataValidator {
             for instance in &spawns.instances {
                 match instance.spawn_type {
                     crate::npcgen::SpawnType::Monster => {
-                        if !data.elements.monsters.contains_key(&instance.template_id) {
+                        // Os monstros vêm de `data.monstros` (MONSTER_ESSENCE) quando o
+                        // leitor genérico cobre a versão do `elements.data`, e da tabela
+                        // tipada antiga quando não cobre (1.2.6/v7). Consultar só a
+                        // segunda dava **todo** monstro do 1.5.5 como órfão, porque lá ela
+                        // fica vazia.
+                        let existe = if data.monstros.is_empty() {
+                            data.elements.monsters.contains_key(&instance.template_id)
+                        } else {
+                            data.monstros.get(instance.template_id).is_some()
+                        };
+                        if !existe {
                             issues.push(IntegrityIssue {
                                 category: "NPCGEN_ORPHAN_MONSTER",
                                 source_file: format!("world_id_{}/npcgen.data", world_id),
@@ -77,21 +87,43 @@ impl DataValidator {
             }
         }
 
-        // 3. Valida se os monstros apontam para IA Policies válidas no aipolicy.data
-        for (&monster_id, monster) in &data.elements.monsters {
-            if monster.aipolicy_id > 0 && !data.aipolicy.policies.contains_key(&monster.aipolicy_id) {
+        // 3. Valida se os monstros apontam para IA Policies válidas no aipolicy.data.
+        //
+        // Quando `data.monstros` está populado, a checagem já foi feita na carga
+        // (`monstros::carregar` zera o campo e registra o par, como o `npcgenerator.cpp`
+        // faz) — aqui é só relatar. O laço sobre a tabela tipada antiga fica para o
+        // 1.2.6, onde `data.monstros` é vazio; note que lá o `aipolicy_id` nunca é lido do
+        // arquivo, então ele não acusa nada — é uma checagem que só ganha sentido quando o
+        // leitor genérico cobrir a v7.
+        if !data.monstros.is_empty() {
+            for &(monster_id, policy_id) in &data.monstros.politicas_orfas {
                 issues.push(IntegrityIssue {
                     category: "ELEMENTS_ORPHAN_AIPOLICY",
                     source_file: "elements.data".to_string(),
                     message: format!(
-                        "Monstro '{}' (ID {}) referencia a IA Policy ID {} que NÃO existe no aipolicy.data!",
-                        monster.name, monster_id, monster.aipolicy_id
+                        "Monstro ID {monster_id} referencia a IA Policy ID {policy_id} que NÃO existe no aipolicy.data!"
                     ),
                     remediation: format!(
-                        "Crie a árvore de IA ID {} no aipolicy.data ou aponte o monstro para a IA padrão (0).",
-                        monster.aipolicy_id
+                        "Crie a árvore de IA ID {policy_id} no aipolicy.data ou aponte o monstro para a IA padrão (0)."
                     ),
                 });
+            }
+        } else {
+            for (&monster_id, monster) in &data.elements.monsters {
+                if monster.aipolicy_id > 0 && !data.aipolicy.policies.contains_key(&monster.aipolicy_id) {
+                    issues.push(IntegrityIssue {
+                        category: "ELEMENTS_ORPHAN_AIPOLICY",
+                        source_file: "elements.data".to_string(),
+                        message: format!(
+                            "Monstro '{}' (ID {}) referencia a IA Policy ID {} que NÃO existe no aipolicy.data!",
+                            monster.name, monster_id, monster.aipolicy_id
+                        ),
+                        remediation: format!(
+                            "Crie a árvore de IA ID {} no aipolicy.data ou aponte o monstro para a IA padrão (0).",
+                            monster.aipolicy_id
+                        ),
+                    });
+                }
             }
         }
 

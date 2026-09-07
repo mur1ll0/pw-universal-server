@@ -201,18 +201,27 @@ fn o_conteudo_faz_sentido_como_ia_de_monstro() {
                     // Nas operações "_2" cada valor vem com um `enumPolicyVarType` ao lado
                     // (`policytype.h`): 0 = id de variável global, 1 = id de variável
                     // local, 2 = constante, 3 = aleatório 0..99. Só o caso 2 é um nível.
-                    ParametroDeOperacao::Skill2 { nivel, tipo_do_nivel, .. }
-                    | ParametroDeOperacao::SkillComFala { nivel, tipo_do_nivel, .. } => {
+                    ParametroDeOperacao::Skill2 { nivel, tipo_do_nivel, .. } => {
                         if *tipo_do_nivel == 2 {
                             niveis_de_skill.push(*nivel);
                         }
                     }
+                    // `o_skill_with_talk` é as duas coisas ao mesmo tempo — habilidade e
+                    // fala — então entra nas duas contagens, e por isso não pode dividir
+                    // braço de `match` com nenhuma das outras: dividindo, a fala dele
+                    // nunca era contada (o compilador avisava "unreachable pattern").
+                    ParametroDeOperacao::SkillComFala { nivel, tipo_do_nivel, texto, .. } => {
+                        if *tipo_do_nivel == 2 {
+                            niveis_de_skill.push(*nivel);
+                        }
+                        assert!(!texto.contains(' '), "fala com NUL embutido: {texto:?}");
+                        falas += 1;
+                    }
                     ParametroDeOperacao::Fala { texto, .. }
-                    | ParametroDeOperacao::Fala2 { texto, .. }
-                    | ParametroDeOperacao::SkillComFala { texto, .. } => {
+                    | ParametroDeOperacao::Fala2 { texto, .. } => {
                         // Texto UTF-16 decodificado: nenhuma fala pode ter vindo com o
                         // terminador dentro, nem ser gigante.
-                        assert!(!texto.contains(' '), "fala com NUL embutido: {texto:?}");
+                        assert!(!texto.contains('\0'), "fala com NUL embutido: {texto:?}");
                         assert!(texto.chars().count() < 1024, "fala absurdamente longa");
                         falas += 1;
                     }

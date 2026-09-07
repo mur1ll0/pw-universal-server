@@ -3,6 +3,7 @@ use crate::collision::MapCollision;
 use crate::elements::ElementsData;
 use crate::generic_elements::{self, GenericElementsData};
 use crate::gshop::GShopData;
+use crate::monstros::TabelaDeMonstros;
 use crate::npcgen::NpcGenData;
 use crate::tasks::TasksData;
 use std::collections::HashMap;
@@ -129,6 +130,14 @@ pub struct GameDataManager {
     pub gshop3: GShopData,
     pub tasks: TasksData,
     pub aipolicy: AiPolicyData,
+    /// Os templates de monstro de verdade, montados da tabela `MONSTER_ESSENCE` — ver
+    /// [`crate::monstros`]. Só é populada quando [`Self::elements_generic`] cobre a versão
+    /// do `elements.data` (hoje, v156/1.5.5); no 1.2.6/v7 fica vazia, e quem consulta
+    /// precisa saber lidar com a ausência do template.
+    ///
+    /// É montada **depois** do `aipolicy.data`, porque reproduz a checagem do original:
+    /// monstro que aponta para política inexistente tem o campo zerado, com aviso.
+    pub monstros: TabelaDeMonstros,
     
     /// `ELEMENTDATA_VERSION` lido do cabeçalho do `elements.data` **deste realm**, quando
     /// o arquivo existe.
@@ -294,6 +303,13 @@ impl GameDataManager {
                 }
                 Err(e) => rel.falhou("aipolicy.data", e),
             }
+        }
+
+        // A tabela de monstros vem dos dois arquivos acima: os atributos do `elements.data`
+        // e a validação da política do `aipolicy.data`. Por isso é montada aqui, e não
+        // dentro da carga de nenhum dos dois.
+        if let Some(g) = &self.elements_generic {
+            self.monstros = crate::monstros::carregar(g, Some(&self.aipolicy));
         }
 
         // 2. Carrega o npcgen.data do mundo principal (world/npcgen.data ou npcgen.data na raiz)

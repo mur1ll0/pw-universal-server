@@ -1,3 +1,4 @@
+use pw_data_loader::TemplateDeMonstro;
 use pw_core::{CharacterClass, Gender, Race, RoleId, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -82,6 +83,98 @@ pub struct MonsterEntity {
     
     pub target_id: Option<i64>,
     pub buffs: Vec<ActiveBuff>,
+}
+
+impl MonsterEntity {
+    /// Instancia um monstro a partir do template do `elements.data`
+    /// (`MONSTER_ESSENCE`), como `npcgenerator.cpp` faz no servidor original.
+    ///
+    /// Só os campos que este `MonsterEntity` tem são preenchidos; o template carrega
+    /// bastante coisa a mais (as cinco resistências, dano mágico por classe, habilidades,
+    /// raio de ódio, grau de ataque e defesa) que entra quando o combate e a IA reais
+    /// forem portados — ver `pw_data_loader::monstros`.
+    pub fn do_template(
+        id: i64,
+        modelo: &TemplateDeMonstro,
+        posicao: Vector3,
+        respawn_delay_ms: u32,
+    ) -> Self {
+        Self {
+            id,
+            template_id: modelo.id,
+            name: modelo.nome.clone(),
+            level: modelo.nivel,
+            hp: modelo.vida as i64,
+            max_hp: modelo.vida as i64,
+            // O original fixa mana em 1 para monstro (`nt.bp.mp = 1`, `nt.ep.max_mp = 1`):
+            // o custo de habilidade de monstro não sai de mana.
+            mp: 1,
+            max_mp: 1,
+            def_phys: modelo.defesa,
+            // Uma só resistência mágica aqui, contra as cinco que o template carrega,
+            // porque o `combat.rs` atual não tem classe mágica nenhuma. Fica a de metal,
+            // a primeira — ver o item 27e do ESTADO_E_RETOMADA.
+            def_magic: modelo.resistencias[0],
+            attack_min: modelo.dano_fisico.minimo,
+            attack_max: modelo.dano_fisico.maximo,
+            attack_range: modelo.alcance_de_ataque,
+            exp: modelo.exp as i64,
+            sp: modelo.pontos_de_skill as i64,
+            aipolicy_id: modelo.politica_de_ia,
+            // `MONSTER_ESSENCE` não tem "id de tabela de drop": tem 20 pares
+            // item/probabilidade. Fica zero até o sistema de drop existir.
+            drop_table_id: 0,
+            position: posicao,
+            spawn_center: posicao,
+            move_speed: modelo.velocidade_correndo,
+            is_dead: false,
+            respawn_timer_ms: 0,
+            respawn_delay_ms,
+            target_id: None,
+            buffs: Vec::new(),
+        }
+    }
+
+    /// O monstro genérico de antes do `elements.data` entrar no caminho.
+    ///
+    /// Continua existindo para dois casos honestos: o realm 1.2.6, cujo `elements.data`
+    /// (v7) o leitor genérico ainda não cobre, e o `npcgen.data` que cita um monstro que o
+    /// `elements.data` não tem. Some da tela sem explicação seria pior do que aparecer com
+    /// atributo genérico e um aviso no log.
+    pub fn placeholder(
+        id: i64,
+        template_id: u32,
+        posicao: Vector3,
+        respawn_delay_ms: u32,
+    ) -> Self {
+        Self {
+            id,
+            template_id,
+            name: "Monstro".to_string(),
+            level: 1,
+            hp: 500,
+            max_hp: 500,
+            mp: 100,
+            max_mp: 100,
+            def_phys: 50,
+            def_magic: 50,
+            attack_min: 20,
+            attack_max: 35,
+            attack_range: 2.5,
+            exp: 100,
+            sp: 20,
+            aipolicy_id: 0,
+            drop_table_id: 0,
+            position: posicao,
+            spawn_center: posicao,
+            move_speed: 3.5,
+            is_dead: false,
+            respawn_timer_ms: 0,
+            respawn_delay_ms,
+            target_id: None,
+            buffs: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

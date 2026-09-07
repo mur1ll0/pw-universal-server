@@ -94,5 +94,42 @@ fn test_game_data_manager_directory_load_155() {
             manager.gshop3.timestamp != 0,
             "gshopsev2.data devia ter sido lido — é o terceiro gshop que só o 1.5.5 usa"
         );
+
+        // A tabela de monstros é montada pelo caminho de produção, dos dois arquivos:
+        // atributos do `elements.data` e validação da política do `aipolicy.data`. Antes
+        // deste passo o `pw-gs` spawnava todo monstro com nível 1 e 500 de vida escritos
+        // no código.
+        assert!(
+            manager.monstros.len() > 8000,
+            "MONSTER_ESSENCE devia ter virado template: {} monstros",
+            manager.monstros.len()
+        );
+        let com_ia = manager
+            .monstros
+            .templates
+            .values()
+            .filter(|m| m.politica_de_ia != 0)
+            .count();
+        assert!(com_ia > 4000, "poucos monstros com política de IA resolvida: {com_ia}");
+
+        // E os spawns do mundo principal acham o template deles — é a ligação
+        // `npcgen.data` → `elements.data` que o `init_spawns` faz.
+        let spawns = &manager.map_spawns[&1];
+        let monstros_no_mapa: Vec<u32> = spawns
+            .instances
+            .iter()
+            .filter(|i| i.spawn_type == pw_data_loader::SpawnType::Monster)
+            .map(|i| i.template_id)
+            .collect();
+        assert!(!monstros_no_mapa.is_empty(), "o mundo 1 devia ter monstros no npcgen.data");
+        let achados = monstros_no_mapa
+            .iter()
+            .filter(|id| manager.monstros.get(**id).is_some())
+            .count();
+        assert!(
+            achados * 10 > monstros_no_mapa.len() * 9,
+            "só {achados} de {} monstros do npcgen.data têm template no elements.data",
+            monstros_no_mapa.len()
+        );
     }
 }

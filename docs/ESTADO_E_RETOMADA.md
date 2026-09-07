@@ -3671,6 +3671,128 @@ Ordem combinada com o Murillo:
        `GNET::ElementSkill::GetExecuteTime()`/`GetType()` para animar — os tempos que o
        servidor usar têm que ser exatamente esses, não há margem para aproximar.
 
+28. **Sessão 2026-09-07 (continuação): o monstro deixou de ser inventado. `MONSTER_ESSENCE`
+    ligado ponta a ponta, do `elements.data` até a entidade que entra no mundo.**
+
+    É o passo 2 do item 27g. O `world.rs::init_spawns` escrevia os atributos de **todo**
+    monstro de **todo** mapa no próprio código:
+
+    ```rust
+    name: "Monstro".to_string(), level: 1, hp: 500, max_hp: 500, mp: 100,
+    def_phys: 50, attack_min: 20, attack_max: 35, attack_range: 2.5, move_speed: 3.5,
+    ```
+
+    E o `elements::MonsterTemplate` (leitor tipado antigo) não ajudava: declara `level`,
+    `hp`, `def_phys`, `exp`, `aggro_range`, `aipolicy_id` e **preenche todos com
+    constantes** — só `id` e `name` saem do arquivo. Ninguém o consultava.
+
+    ### a. O módulo novo: `crates/pw-data-loader/src/monstros.rs`
+
+    Porte de `npcgenerator.cpp::npc_generator::Init` (o laço sobre `DT_MONSTER_ESSENCE`).
+    Cada campo do `TemplateDeMonstro` nomeia, no comentário, a linha do original que o
+    preenche. As armadilhas que o porte tinha de acertar, e que estão documentadas no
+    código:
+
+    - **`hp` não é um campo.** Vem de `mob.life` (`nt.bp.hp` e `nt.ep.max_hp`).
+    - **`attack` não é dano.** É o `attack_rate` da fórmula de acerto
+      (`attack_rate / (attack_rate + armor/2)`, piso 0,05). O dano é
+      `damage_min`/`damage_max`. Tem teste só para isso.
+    - **Mana de monstro é 1**, fixo no original (`nt.bp.mp = 1`, `nt.ep.max_mp = 1`) — o
+      custo de habilidade de monstro não sai de mana. Os 100 de antes eram invenção.
+    - **Unidades**: `attack_speed` e `damage_delay` estão em segundos no arquivo e viram
+      *ticks* de 50 ms — `(int)(x*20 + 0.5)` para o primeiro (arredonda) e `(int)(x*20)`
+      para o segundo (trunca). A diferença é do original.
+    - **`short_range_mode` é derivado, não lido**: o original ignora o campo homônimo do
+      arquivo e usa `attack_range > 6.0`.
+    - **`aggro_time` tem piso de 1 segundo**, forçado pelo original.
+    - **As três recusas** do original são reproduzidas — `attack_speed <= 0 ||
+      damage_min <= 0 || attack <= 0`, `attack_speed > 256`, `damage_delay > 256` fazem o
+      monstro **não entrar na tabela**. No realm 155 isso recusa 25 de 8.067.
+
+    Fica de fora, de propósito e documentado: os drops (não há "id de tabela de drop" —
+    são 20 pares item/probabilidade mais `drop_times`), o sorteio de `MONSTER_ADDON`, e o
+    ajuste de facção por `role_in_war`.
+
+    ### b. Ligado no caminho de produção
+
+    `GameDataManager` ganhou `monstros: TabelaDeMonstros`, montada **depois** do
+    `elements.data` e do `aipolicy.data` — porque reproduz a checagem do original:
+    monstro que aponta para política inexistente tem o campo zerado, com aviso
+    (`npcgenerator.cpp` imprime "a política %d do monstro %d não foi achada").
+
+    `MonsterEntity` ganhou dois construtores em `entity.rs`, `do_template` e
+    `placeholder`, e o `init_spawns` virou um `match` de dez linhas. O `placeholder`
+    continua existindo para dois casos honestos — o realm 1.2.6, cujo `elements.data` (v7)
+    o leitor genérico ainda não cobre, e o `npcgen.data` que cite um monstro ausente — e
+    agora o log diz quantos foram, em vez de o monstro sumir ou mentir em silêncio.
+
+    ### c. O que o realm 155 produz
+
+    | | |
+    | :--- | :--- |
+    | Registros em `MONSTER_ESSENCE` | 8.067 |
+    | Templates | 8.042 |
+    | Recusados pelas regras do original | 25 (24 modelo de ataque inválido, 1 ataque > 256 ticks) |
+    | Com política de IA resolvida | 4.452 |
+    | Com habilidade configurada | 3.688 |
+    | Com habilidade por limiar de vida | 361 |
+    | Política órfã | 1 (monstro 40773 → política 22796, zerado como o original faz) |
+
+    Exemplos: `Tauroc Valorian` nível 47, 6.701 de vida, defesa 468, dano 311–356;
+    `Rattus Marksmen` nível 48, alcance 13,2 (à distância). Antes, os dois eram
+    "Monstro" nível 1 com 500 de vida.
+
+    ### d. Duas coisas que pareciam bug e são dado
+
+    1. **1.512 monstros sem nome (19%).** São as **entidades controladoras invisíveis**:
+       vida em números redondos (999999999, 10000000), dano 1..2, facção `0x40000000`, e
+       87% delas com política de IA — contra 48% das nomeadas. Existem só para rodar uma
+       árvore de IA. O teste afirma essa separação em vez de exigir nome em todas.
+    2. **Nível 150 em 4.256 monstros.** É o teto do 1.5.5, com o resto distribuído por
+       todas as dezenas. Desalinhamento de coluna daria ruído, não um pico exato no teto.
+
+       Consequência prática para quem for escrever teste sobre esses dados: **média não
+       serve**, porque as controladoras a dominam (há uma de nível 1 com 9.999.999 de
+       vida). O teste de "vida cresce com o nível" usa **mediana** e só monstros nomeados.
+
+    ### e. Efeito colateral consertado no `validator.rs`
+
+    A checagem "monstro do `npcgen.data` existe no `elements.data`" consultava só a tabela
+    tipada antiga, que é **vazia no 1.5.5** — ou seja, daria *todo* monstro do realm como
+    órfão se alguém a chamasse. E a checagem de política de IA nunca disparava, pelo mesmo
+    motivo. As duas agora usam a tabela nova quando ela está populada. (O `validate_all`
+    não tem chamador nenhum hoje; foi consertado porque a causa era a mesma, não porque
+    algo dependesse dele.)
+
+    ### f. Provas
+
+    - `crates/pw-data-loader/tests/monstros_tests.rs`, 13 testes: as três recusas e as
+      conversões de unidade com registros sintéticos (determinístico, sem arquivo), e o
+      `elements.data` real do realm 155 para o que só um arquivo de verdade pega — nome de
+      campo errado, coluna deslocada.
+    - `crates/pw-gs/tests/monstro_do_template.rs`, 4 testes: o mapeamento template →
+      entidade, campo a campo, com um template cujos valores são todos distintos para
+      troca de campo aparecer.
+    - `loader_tests.rs::test_game_data_manager_directory_load_155` passou a exigir a
+      tabela populada **pelo caminho de produção**, com mais de 90% dos spawns do mundo 1
+      achando o template deles.
+
+    ### g. O que resta, atualizando o item 27g
+
+    O passo 2 está feito. Restam:
+
+    1. O teste do alvo selecionado no cliente (passo 1 do item 27g), que não depende de
+       código nosso.
+    2. **Trocar `combat.rs` pelas fórmulas reais** — agora com dado de verdade para
+       alimentá-las. O template já carrega o que falta ao `MonsterEntity`: as cinco
+       resistências (hoje só a de metal chega à entidade), o dano mágico por classe, o
+       grau de ataque e defesa, o raio de ódio e o de visão.
+    3. **O intérprete de `aipolicy` no `pw-gs`** — `ai.rs` inteiro continua sendo máquina
+       de estados inventada, com `35.0` de distância de perseguição e 1500 ms de cooldown
+       escritos no código, enquanto o template já traz `raio_de_odio`, `raio_de_visao`,
+       `tempo_de_odio` e `ataque_em_ticks` reais.
+    4. `act_session` + skills, o item grande.
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver

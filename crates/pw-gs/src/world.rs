@@ -122,37 +122,33 @@ impl WorldInstance {
     pub fn init_spawns(&mut self) {
         info!("Inicializando monstros e NPCs do World #{} a partir do seu npcgen.data dedicado...", self.world_id);
 
+        let mut sem_template = 0usize;
+
         if let Some(spawns) = self.data_manager.map_spawns.get(&self.world_id) {
             for inst in &spawns.instances {
                 if inst.spawn_type == pw_data_loader::SpawnType::Monster {
                     let monster_id = inst.instance_id as i64;
 
-                    let monster = MonsterEntity {
-                        id: monster_id,
-                        template_id: inst.template_id,
-                        name: "Monstro".to_string(),
-                        level: 1,
-                        hp: 500,
-                        max_hp: 500,
-                        mp: 100,
-                        max_mp: 100,
-                        def_phys: 50,
-                        def_magic: 50,
-                        attack_min: 20,
-                        attack_max: 35,
-                        attack_range: 2.5,
-                        exp: 100,
-                        sp: 20,
-                        aipolicy_id: 0,
-                        drop_table_id: 0,
-                        position: inst.pos,
-                        spawn_center: inst.pos,
-                        move_speed: 3.5,
-                        is_dead: false,
-                        respawn_timer_ms: 0,
-                        respawn_delay_ms: inst.respawn_sec * 1000,
-                        target_id: None,
-                        buffs: Vec::new(),
+                    // Os atributos vêm do `MONSTER_ESSENCE` do `elements.data`
+                    // (`pw_data_loader::monstros`), que é o que o `npcgenerator.cpp` do
+                    // servidor original usa. Antes eram todos escritos aqui — nível 1,
+                    // 500 de vida, dano 20 a 35 — para todo monstro de todo mapa.
+                    let monster = match self.data_manager.monstros.get(inst.template_id) {
+                        Some(modelo) => MonsterEntity::do_template(
+                            monster_id,
+                            modelo,
+                            inst.pos,
+                            inst.respawn_sec * 1000,
+                        ),
+                        None => {
+                            sem_template += 1;
+                            MonsterEntity::placeholder(
+                                monster_id,
+                                inst.template_id,
+                                inst.pos,
+                                inst.respawn_sec * 1000,
+                            )
+                        }
                     };
 
                     self.grid.add_entity(monster_id, monster.position, false);
@@ -186,6 +182,12 @@ impl WorldInstance {
             self.monsters.len(),
             self.npcs.len()
         );
+        if sem_template > 0 {
+            warn!(
+                "World #{}: {} monstro(s) sem template no elements.data — entraram com                  atributos de placeholder. No realm 1.2.6 isso é esperado (o leitor                  genérico ainda não cobre a v7); no 1.5.5 significa npcgen.data citando                  monstro que o elements.data não tem, ou que o original recusaria.",
+                self.world_id, sem_template
+            );
+        }
     }
 
     /// Adiciona um jogador que entrou neste mapa
