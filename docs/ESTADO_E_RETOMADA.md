@@ -3486,6 +3486,191 @@ Ordem combinada com o Murillo:
     4. Auditoria das outras pastas de zona (item 25f.4) continua pendente, não
        urgente — o achado foi isolado à zona `world`.
 
+27. **Sessão 2026-09-07: a lógica de jogo do servidor original nunca tinha sido usada, e
+    ela está toda na mão. Três achados novos sobre o modelo 3D, o `aipolicy.data`
+    implementado de verdade, e a descoberta de que o pacote de dados do realm é mais
+    novo que o fonte 1.5.5.**
+
+    ### a. O que estava sendo deixado de lado
+
+    `F:\PW\1.5.5\EvolvedPWServer` vinha sendo usado só como fonte de **layout de
+    protocolo** — dele saíram `specs/protocol/gamedata_155.json` e `gnet_155.json`,
+    extraídos de `cgame/common/protocol.h` e `protocol_imp.h`. Só que ali dentro também
+    está o **gamed inteiro**: `cgame/gs/` tem 507 arquivos e ~230.000 linhas de
+    *comportamento* — combate, IA, sessões de ação, missões, instâncias — mais o
+    `cskill/` (3.332 classes de habilidade geradas) e o `cnet/` (todos os daemons). Nada
+    disso tinha sido lido.
+
+    A distância, medida:
+
+    | | Original 1.5.5 | Nosso `pw-gs` |
+    | :--- | :--- | :--- |
+    | `case C2S::` tratados | 679 (`cgame/gs/playercmd.cpp`, 9.329 linhas) | 33 (`bus_server.rs`) |
+    | Fórmula de dano | `actobject.cpp::AttackJudgement` + `playertemplate.h` | `combat.rs`, 42 linhas, fórmula inventada |
+    | IA de monstro | `aipolicy.cpp` (2.104) + `ai/policy.cpp` (1.062) + `ainpc.cpp` (420) | `ai.rs`, 106 linhas, máquina de estados inventada |
+    | `aipolicy.data` | `CPolicyData::Load` | `aipolicy.rs` — `parse_policies` era `Ok(())`, **não lia nada** |
+    | Skills | `cskill/` + `act_session` (`actsession.cpp`, 2.759) | inexistente |
+
+    ### b. O portão exato do modelo 3D — e ele tem três chaves do lado do CLIENTE
+
+    O modelo de outro jogador é criado num único lugar,
+    `CECElsePlayer::TickBeforeAnimate` (`EC_ElsePlayer.cpp:671`):
+
+    ```cpp
+    if (!m_pPlayerModel && !m_bLoadingModel && IsBaseInfoReady() && IsCustomDataReady() && IsEquipDataReady())
+    {
+        if ((!m_bUseHintModel && m_iBoothState != 2) || bSelected)   // <-- 2 condições de cliente
+        {
+            memcpy(m_aEquips, m_aNewEquips, sizeof(m_aEquips));
+            if (ShouldUseModel())                                    // <-- 3ª condição de cliente
+                LoadPlayerSkeleton(false);
+            m_bLoadingModel = true;                                  // <-- trava de uma vez só
+        }
+    }
+    ```
+
+    Três coisas saem daí, e **nenhuma é protocolo** — o que explica por que nenhuma
+    sessão anterior achou nada no protocolo:
+
+    1. **`m_bUseHintModel`** é a opção de vídeo `Chk_ModelLimit`
+       (`DlgSettingVideo.cpp:66`, `EC_Configs.h:161`, padrão `false`). Ligada, só o
+       **alvo selecionado** ganha modelo.
+    2. **`ShouldUseModel()`** (`EC_Player.cpp:11822`) devolve `false` quando o
+       `CECMemSimplify` está em `MEMUSAGE_NOMODEL`; nesse estado só sobrevive quem é
+       `IsMostImportant()` — o alvo selecionado, o par de duelo ou o cônjuge
+       (`EC_MemSimplify.cpp`). É um sistema de economia de memória, ligado por
+       `bEnableOptimize` nas opções.
+    3. **`m_bLoadingModel` é trava de uma vez só**: só volta a `false` em
+       `CECElsePlayer::Release()` (`EC_ElsePlayer.cpp:572`), isto é, quando o objeto
+       morre. E é marcado **mesmo quando `ShouldUseModel()` é falso** — o
+       `LoadPlayerSkeleton` é pulado e o jogador fica marcado como "carregando" para
+       sempre.
+
+    **Teste de 30 segundos que nunca foi feito**: selecionar o outro jogador como alvo.
+    Se o modelo aparecer, o problema nunca esteve no servidor.
+
+    ### c. O que foi verificado e passou (elimina hipóteses, não deve ser refeito)
+
+    - **`GRoleBase` do cliente 1.5.5** (`ElementClient/Network/rpcdata/grolebase`) bate
+      campo a campo, na mesma ordem, com o nosso `encode()`
+      (`crates/pw-protocol/src/packets/s2c.rs`, `S2CPlayerBaseInfoRe`). Antes isso só
+      tinha sido conferido contra uma captura do 1.2.6 (item 24c) — agora está conferido
+      contra o cliente que estava falhando. `PlayerBaseInfo_Re` também tem
+      `SizePolicy(size) { return size <= 1536; }`, e o nosso pacote fica muito abaixo.
+    - **`cmd_equip_data` do 1.5.5** está sob `#pragma pack(1)` (`EC_GPDataType.h:563`),
+      logo o prefixo é 18 bytes com `color_name` — exatamente o que
+      `PorVersao::equip_data` escreve.
+    - **`custom_data`**: `PLAYER_CUSTOMIZEDATA::From(ptr, size)` (`EC_Player.h`) aceita
+      **só dois tamanhos exatos**; qualquer outro vira `memset(0)` silencioso, `bodyID`
+      zero, e a thread de carregamento descarta sem log nenhum. Calculei os dois com o
+      alinhamento natural (não há `pragma pack` em `EC_Player.h`/`EC_Face.h`): **176**
+      (`PLAYER_CUSTOMIZEDATA`, 1.5.x) e **172** (`PLAYER_CUSTOMIZEDATA_1`, 1.2.6).
+      Conferido no Postgres: todos os 9 personagens têm 176 (realms 155/155BR) ou 172
+      (realm 126). **Hipótese eliminada** — mas vira invariante: um `custom_data` NULL cai
+      em `unwrap_or_default()` (`repositories/character.rs`) e produz exatamente esse
+      sintoma mudo.
+
+    ### d. Um defeito de dado achado de passagem: `race` é 0 em todos os personagens
+
+    A mesma consulta mostrou `race = 0` nos 9 personagens, inclusive nas classes 6/7
+    (Alados), 2/5 (Abissais) e 10/11 (Sombrios). **Não afeta o modelo** — o cliente deriva
+    a raça da profissão (`CECProfConfig::GetRaceByProfession`, e `OnMsgPlayerBaseInfo` só
+    passa `cls` e `gender` para `SetPlayerBriefInfo`) — mas está errado no banco e vai
+    morder algum sistema que dependa de raça.
+
+    ### e. As fórmulas reais de combate (a nossa está errada, não aproximada)
+
+    `gactive_imp::AttackJudgement` (`actobject.cpp:481`) e `playertemplate.h:436`:
+
+    ```text
+    acerto:  p = attack_rate / (attack_rate + armor/2),  piso 0.05
+    redução: r = def / (def + 40*nível_do_atacante - 25),  teto 0.95
+    dano:    dano * (1 - r)
+    ```
+
+    A nossa é `1/(1 + def/(100*nível))` — inventada, sem relação com essa. Também não
+    existe do nosso lado: as 5 classes de dano mágico (`MAGIC_CLASS`), `attack_attr`,
+    máscaras de imunidade, penalidade de curta distância (`physic_damage /= 2` em ataque
+    normal), atenuação por distância e `anti_defense_degree`. Tudo em `attack.h`
+    (135 linhas), portável direto.
+
+    ### f. `aipolicy.data` implementado — e a descoberta que veio junto
+
+    `crates/pw-data-loader/src/aipolicy.rs` foi reescrito do zero como porte fiel de
+    `CPolicyData::Load` / `CTriggerData::Load` / `ReadConditonTree` /
+    `ReadOperationParam` / `ReadOperationTarget`. Antes era um esqueleto: os enums
+    (`OnAggro`, `OnHPPercent`, `SummonMinions`…) eram invenção, e `parse_policies` era
+    literalmente `Ok(())` — o arquivo nunca era lido.
+
+    **O achado**: o `aipolicy.data` do realm 1.5.5 **não é legível pelo fonte 1.5.5**. A
+    política de id 1858 usa a operação **36**, que no
+    `EvolvedPWServer/cgame/gs/ai/policy.h` é `o_num` — o terminador do enum, não uma
+    operação. Ela existe no fonte **1.7.2** (`F:\PW\1.7.2\172Source`, achado nesta
+    sessão) e se chama `o_skill_with_talk`: `O_USE_SKILL_2` seguido de um texto de
+    tamanho variável, que é exatamente o que os bytes contêm. Segunda prova independente:
+    os triggers deste arquivo são gravados na **versão 24**, e o 1.5.5 declara
+    `F_TRIGGER_VERSION 23` — na 24 o `O_SUMMON_MINE` ganhou um campo (28 → 32 bytes).
+
+    **Conclusão que muda decisões futuras: o pacote de dados do realm é mais novo que o
+    fonte do servidor que temos.** O enum do 1.7.2 é superconjunto exato do 1.5.5 (os 36
+    primeiros valores idênticos, na mesma ordem), então adotá-lo não muda nada do que já
+    funcionava. **Vale reconferir outros `.data` contra o 1.7.2 antes de assumir que o
+    fonte 1.5.5 os descreve** — o mesmo pode valer para `tasks.data` e `npcgen.data`.
+
+    Como o leitor se defende de erro meu:
+
+    - Os parâmetros de *operação* não trazem tamanho no arquivo (o original faz `sizeof`
+      na struct C++). A tabela de tamanhos foi **gerada** a partir de
+      `GetOperationParamSize` do 1.7.2 + as structs de `policytype.h`, medidas com
+      alinhamento natural de 32 bits. Onde o leitor decodifica campo a campo, ele
+      **confere** quantos bytes consumiu contra essa tabela e erra alto se divergir.
+    - Os parâmetros de *condição* trazem o tamanho no fio, então tipo desconhecido ali é
+      seguro (vira `Bruto`).
+    - As operações de 37 a 102, que o 1.7.2 só nomeia por número, são lidas pelo tamanho e
+      guardadas cruas — nada desalinha, só falta dar nome aos campos quando alguma virar
+      prioridade.
+
+    Provas, em `crates/pw-data-loader/tests/aipolicy_tests.rs` (7 testes, todos contra os
+    arquivos reais, sem fixture inventada):
+
+    - **realm_155** lido inteiro: versão 1, 3.144 políticas, 15.224 triggers, 5.996 falas,
+      zero byte sobrando no fim.
+    - **realm_126** lido inteiro: versão 0 (o 1.5.5 recusaria — o nosso aceita as duas de
+      propósito), 293 políticas, triggers na versão 1, o que exercita os ramos antigos de
+      `ReadOperationParam`.
+    - **Prova cruzada, a mais forte**: `MONSTER_ESSENCE.common_strategy` do
+      `elements.data` é o id da política do monstro — é o vínculo que
+      `npcgenerator.cpp:218` faz (`nt.trigger_policy = mob.common_strategy`). **4.455 de
+      4.456** monstros resolvem para uma política existente. Os dois arquivos são
+      decodificados por caminhos completamente separados; baterem quatro mil vezes não
+      acontece por acaso. O único órfão (monstro 40773 → política 22796) é inconsistência
+      do próprio pacote, e o original a trata com aviso e zerando o `trigger_policy`.
+
+    Ferramentas de diagnóstico:
+    `cargo run -p pw-data-loader --example dump_aipolicy -- <arquivo>` (estatísticas por
+    tipo) e `--example cruza_monstro_aipolicy -- <pasta config>`.
+
+    ### g. O que resta, na ordem
+
+    1. **Fechar a sincronização por eliminação, não por mais protocolo**: o teste de
+       selecionar o outro jogador como alvo, e conferir `Chk_ModelLimit` e
+       `bEnableOptimize` nas opções de vídeo do cliente. Separa "bug nosso" de "chave do
+       cliente"; nenhuma das duas tinha sido levantada.
+    2. **Ligar o `aipolicy.data` ao mundo.** O leitor entrega as árvores; falta o
+       intérprete no `pw-gs` (`ai.rs` inteiro é substituível) e preencher
+       `MonsterTemplate` de verdade — hoje `elements.rs` grava valores fixos
+       (`level: 1, hp: 100, aipolicy_id: 0`), enquanto `MONSTER_ESSENCE` tem 287 campos
+       reais (`level`, `defence`, `magic_defences_1..5`, `attack`, `attack_range`,
+       `aggro_range`, `aggro_time`, `common_strategy`, …) já decodificados pelo
+       `generic_elements`.
+    3. **Trocar `combat.rs` pelas fórmulas do item (e).** Escopo pequeno, e conserta
+       números que hoje estão errados em jogo.
+    4. **`act_session` + skills**, o item grande, que depende de 2 e 3. Note que o cliente
+       1.5.5 embarca as **mesmas** classes de habilidade geradas
+       (`EvolvedPWClient/ElementSkill/skill*.h`) e chama
+       `GNET::ElementSkill::GetExecuteTime()`/`GetType()` para animar — os tempos que o
+       servidor usar têm que ser exatamente esses, não há margem para aproximar.
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver
@@ -3580,6 +3765,7 @@ GNET e o `check_sizes.py` com os dois lados para o gamedata.
 | `F:\Python_C_Projects\PWSource1.5.3\pw-universal-server` | Fonte canônico do projeto |
 | `F:\PW\1.5.5\EvolvedPWServer` | **Fontes C++ do servidor 1.5.5** (projeto EvolvedPW) — mesma estrutura de `source_server_153` (`cgame/`, `cnet/{inl,rpcdata,rpcalls.xml,<daemon>/callid.hxx}`, `share/rpc/`), mas `cgame/`/`share/` são irmãs de `cnet/`, não filhas — precisa das junções de diretório descritas em `pw_ctx_a_155_funcional` (memória) antes de rodar `pw-rpcgen` |
 | `F:\PW\1.5.5\EvolvedPWClient` | **Fontes C++ do cliente 1.5.5** — `ElementClient/Network/` (equivalente ao `CElementClient` do 1.5.3, mesmos arquivos, só sem o `C` no nome da pasta) |
+| `F:\PW\1.7.2\172Source` | **Fontes C++ do servidor 1.7.2** — mesma estrutura do 1.5.5. É a autoridade para os `.data` do realm 155, que são mais novos que o fonte 1.5.5 (ver item 27f): o `aipolicy.data` usa operações que só existem aqui. Conferir contra este fonte antes de assumir que o 1.5.5 descreve um formato de dados |
 | `F:\PW\1.5.5\pwserver_155v156` | Build Linux do servidor 1.5.5 já compilado (build v156) + `authd` em Java + configs de exemplo |
 | `F:\PW\1.5.5\bin`, `F:\PW\1.5.5\1.5.5.EN` | Client 1.5.5 em inglês, pronto pra testar |
 | `data\realm_155\config` | `.data`/mapas do realm 1.5.5 já extraídos (elements.data build v156, npcgen.data por zona, tasks.data, gshop*.data — mesmo padrão de pasta que `realm_126`/`realm_153`) |
