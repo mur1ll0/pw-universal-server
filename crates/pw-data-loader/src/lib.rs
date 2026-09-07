@@ -1,4 +1,5 @@
 pub mod aipolicy;
+pub mod classes;
 pub mod collision;
 pub mod elements;
 pub mod generic_elements;
@@ -10,6 +11,7 @@ pub mod tasks;
 pub mod validator;
 
 pub use aipolicy::AiPolicyData;
+pub use classes::{ConfigDeClasse, TabelaDeClasses};
 pub use collision::MapCollision;
 pub use elements::MedicineTemplate;
 pub use elements::ElementsData;

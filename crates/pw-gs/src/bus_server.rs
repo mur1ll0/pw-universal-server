@@ -668,7 +668,11 @@ impl BusServer {
             return;
         }
 
-        let (dano, critico) = CombatEngine::calculate_player_to_monster_damage(&atacante, monstro);
+        // A distância entra no cálculo (atenuação por perto/longe do original); o alvo já
+        // foi validado como selecionado, então usar a distância real é o certo.
+        let distancia = atacante.position.distance(&monstro.position);
+        let resultado = CombatEngine::jogador_ataca_monstro(&atacante, monstro, distancia);
+        let (dano, critico) = (resultado.dano() as i64, resultado.foi_critico());
 
         // Aplica e lê o resultado numa única tomada do lock, para que dois golpes
         // simultâneos não leiam o mesmo HP e matem o monstro duas vezes.
@@ -1090,7 +1094,8 @@ impl BusServer {
             return;
         }
 
-        let (dano, _) = CombatEngine::calculate_player_to_monster_damage(&atacante, monstro);
+        let distancia = atacante.position.distance(&monstro.position);
+        let dano = CombatEngine::jogador_ataca_monstro(&atacante, monstro, distancia).dano() as i64;
         let (hp, max_hp, morreu, template, exp, sp) = {
             let (m, ai) = mundo.monsters.get_mut(&alvo).expect("conferido acima");
             ai.add_threat(roleid as i64, dano);

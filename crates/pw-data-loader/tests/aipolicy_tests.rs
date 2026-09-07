@@ -214,7 +214,7 @@ fn o_conteudo_faz_sentido_como_ia_de_monstro() {
                         if *tipo_do_nivel == 2 {
                             niveis_de_skill.push(*nivel);
                         }
-                        assert!(!texto.contains(' '), "fala com NUL embutido: {texto:?}");
+                        assert!(!texto.contains('\0'), "fala com NUL embutido: {texto:?}");
                         falas += 1;
                     }
                     ParametroDeOperacao::Fala { texto, .. }

@@ -1,4 +1,4 @@
-use pw_data_loader::TemplateDeMonstro;
+use pw_data_loader::{TabelaDeClasses, TemplateDeMonstro};
 use pw_core::{CharacterClass, Gender, Race, RoleId, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +45,18 @@ pub struct PlayerEntity {
     pub attack_max: i32,
     pub magic_attack_min: i32,
     pub magic_attack_max: i32,
+    /// `_cur_prop.armor` — a evasão. No original vem de
+    /// `GetBasicArmor(classe, agilidade) = agi_armor[classe] * agilidade`, mais
+    /// equipamento; ver [`crate::entity::PlayerEntity::armadura_base`].
+    pub armor: i32,
+    /// `_cur_prop.attack` — a precisão. Mesma origem, com `agi_attack`.
+    pub attack_rate: i32,
+    /// `attack_degree` / `_defend_degree`. No original vêm de equipamento e habilidade
+    /// passiva; sem esses sistemas ficam em zero, que é o valor neutro do cálculo.
+    pub attack_degree: i32,
+    pub defend_degree: i32,
+    /// `crit_damage_bonus`, em pontos percentuais somados ao dobro base do crítico.
+    pub crit_damage_bonus: i32,
     pub attack_speed: f32,
     pub move_speed: f32,
     pub crit_rate: f32,
@@ -64,10 +76,25 @@ pub struct MonsterEntity {
     pub max_hp: i64,
     pub mp: i32,
     pub max_mp: i32,
+    /// `_cur_prop.defense` — reduz o dano físico recebido.
     pub def_phys: i32,
-    pub def_magic: i32,
+    /// `_cur_prop.armor` — a evasão, que entra na chance de o golpe acertar
+    /// (`taxa / (taxa + armadura/2)`). Sem isto o acerto não pode ser calculado.
+    pub armor: i32,
+    /// `_cur_prop.attack` — a **precisão** do monstro, não o dano dele.
+    pub attack_rate: i32,
+    /// `_cur_prop.resistance[0..4]`: metal, madeira, água, fogo, terra. Substituiu o
+    /// `def_magic` de valor único, que não tinha correspondente no original.
+    pub resistances: [i32; 5],
+    /// `attack_degree` / `_defend_degree`, que ajustam o dano no fim do cálculo.
+    pub attack_degree: i32,
+    pub defend_degree: i32,
+    /// `_cur_prop.damage_low`/`damage_high` — a faixa de dano físico.
     pub attack_min: i32,
     pub attack_max: i32,
+    /// `_cur_prop.addon_damage[0..4]`, na mesma ordem de `resistances`: as parcelas de
+    /// dano elemental que o golpe normal do monstro carrega.
+    pub magic_attack: [(i32, i32); 5],
     pub attack_range: f32,
     pub exp: i64,
     pub sp: i64,
@@ -83,6 +110,41 @@ pub struct MonsterEntity {
     
     pub target_id: Option<i64>,
     pub buffs: Vec<ActiveBuff>,
+}
+
+impl PlayerEntity {
+    /// A precisão e a evasão base do jogador, do `CHARRACTER_CLASS_CONFIG` do
+    /// `elements.data`: `agi_attack * agilidade` e `agi_armor * agilidade`
+    /// (`player_template::GetBasicAttackRate` / `GetBasicArmor`).
+    ///
+    /// É **base**: o original soma equipamento, pontos de encantamento e percentuais por
+    /// cima (`UpdateAttack` / `UpdateDefense`), e nada disso existe do nosso lado. Sem
+    /// esta função, porém, os dois campos não teriam origem nenhuma — que era o estado
+    /// anterior, com a fórmula de dano inventando o número.
+    ///
+    /// `None` quando o realm não tem a tabela (1.2.6/v7) ou a classe não está nela.
+    pub fn precisao_e_evasao_base(
+        classes: &TabelaDeClasses,
+        classe: CharacterClass,
+        agilidade: i32,
+    ) -> Option<(i32, i32)> {
+        let c = classes.get(classe as i32)?;
+        Some((c.precisao_base(agilidade), c.evasao_base(agilidade)))
+    }
+
+    /// Preenche `attack_rate` e `armor` a partir da tabela de classes, quando ela existir.
+    /// Deixa os valores como estavam quando não existir — o chamador decide se isso é
+    /// aceitável para o realm dele.
+    pub fn aplicar_atributos_de_classe(&mut self, classes: &TabelaDeClasses) -> bool {
+        match Self::precisao_e_evasao_base(classes, self.cls, self.agility) {
+            Some((precisao, evasao)) => {
+                self.attack_rate = precisao;
+                self.armor = evasao;
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 impl MonsterEntity {
@@ -111,12 +173,16 @@ impl MonsterEntity {
             mp: 1,
             max_mp: 1,
             def_phys: modelo.defesa,
-            // Uma só resistência mágica aqui, contra as cinco que o template carrega,
-            // porque o `combat.rs` atual não tem classe mágica nenhuma. Fica a de metal,
-            // a primeira — ver o item 27e do ESTADO_E_RETOMADA.
-            def_magic: modelo.resistencias[0],
+            armor: modelo.armadura,
+            attack_rate: modelo.taxa_de_ataque,
+            resistances: modelo.resistencias,
+            attack_degree: modelo.grau_de_ataque,
+            defend_degree: modelo.grau_de_defesa,
             attack_min: modelo.dano_fisico.minimo,
             attack_max: modelo.dano_fisico.maximo,
+            magic_attack: modelo
+                .dano_magico_por_classe
+                .map(|f| (f.minimo, f.maximo)),
             attack_range: modelo.alcance_de_ataque,
             exp: modelo.exp as i64,
             sp: modelo.pontos_de_skill as i64,
@@ -157,9 +223,14 @@ impl MonsterEntity {
             mp: 100,
             max_mp: 100,
             def_phys: 50,
-            def_magic: 50,
+            armor: 50,
+            attack_rate: 100,
+            resistances: [50; 5],
+            attack_degree: 0,
+            defend_degree: 0,
             attack_min: 20,
             attack_max: 35,
+            magic_attack: [(0, 0); 5],
             attack_range: 2.5,
             exp: 100,
             sp: 20,

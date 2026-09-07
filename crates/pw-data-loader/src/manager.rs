@@ -1,4 +1,5 @@
 use crate::aipolicy::AiPolicyData;
+use crate::classes::TabelaDeClasses;
 use crate::collision::MapCollision;
 use crate::elements::ElementsData;
 use crate::generic_elements::{self, GenericElementsData};
@@ -138,6 +139,10 @@ pub struct GameDataManager {
     /// É montada **depois** do `aipolicy.data`, porque reproduz a checagem do original:
     /// monstro que aponta para política inexistente tem o campo zerado, com aviso.
     pub monstros: TabelaDeMonstros,
+    /// Os atributos por classe de personagem (`CHARRACTER_CLASS_CONFIG`) — ver
+    /// [`crate::classes`]. É de onde saem a precisão e a evasão base do jogador. Vazia
+    /// no 1.2.6/v7, pelo mesmo motivo de [`Self::monstros`].
+    pub classes: TabelaDeClasses,
     
     /// `ELEMENTDATA_VERSION` lido do cabeçalho do `elements.data` **deste realm**, quando
     /// o arquivo existe.
@@ -310,6 +315,7 @@ impl GameDataManager {
         // dentro da carga de nenhum dos dois.
         if let Some(g) = &self.elements_generic {
             self.monstros = crate::monstros::carregar(g, Some(&self.aipolicy));
+            self.classes = crate::classes::carregar(g);
         }
 
         // 2. Carrega o npcgen.data do mundo principal (world/npcgen.data ou npcgen.data na raiz)

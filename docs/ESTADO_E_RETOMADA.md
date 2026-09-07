@@ -3793,6 +3793,145 @@ Ordem combinada com o Murillo:
        `tempo_de_odio` e `ataque_em_ticks` reais.
     4. `act_session` + skills, o item grande.
 
+29. **Sessão 2026-09-07 (continuação 2): as fórmulas de combate deixaram de ser invenção.
+    `AttackJudgement` portado inteiro, com a tabela de classes alimentando o lado do
+    jogador.**
+
+    É o passo 3 do item 27g. O que havia em `combat.rs` eram duas funções de 20 linhas:
+
+    ```text
+    def_factor = 1 / (1 + def / (100 * nível_do_atacante))
+    dano = uniforme(attack_min, attack_max) * def_factor * (crítico ? 2 : 1)
+    ```
+
+    Sem rolagem de acerto, sem classe mágica, sem imunidade, sem grau de ataque e defesa.
+    E a redução por defesa não tem relação nenhuma com a do original.
+
+    ### a. A ordem exata, de `actobject.cpp`
+
+    `gactive_imp::AttackJudgement` mais o trecho de `HandleAttackMsg` que vem depois dele:
+
+    1. **Acerto** (só ataque físico): `taxa / (taxa + (armadura >> 1))`, piso de 0,05.
+       O deslocamento é inteiro, e **não há teto** — a linha do teto de 0,95 está
+       comentada no fonte.
+    2. **Curta distância**: golpe de habilidade multiplica pelo fator próprio; golpe
+       normal tem o dano **físico** dividido por 2, e só o físico.
+    3. **Atenuação por distância**, só quando quem ataca é jogador ou pet.
+    4. **Defesa, por classe**: físico contra `defense`, e cada uma das cinco classes
+       mágicas contra a sua `resistance`. `reduce = def / (def + 40*nível − 25)`, teto
+       0,95 — e o **nível é o do atacante**, não o do alvo. Imunidade zera a classe.
+    5. **Crítico**: `× (2,0 + bônus% − redução%)`. A chance é `crit_rate − crit_resistance`,
+       e a rolagem `Rand(0,99)` é crítico quando **menor**.
+    6. **Grau de ataque menos grau de defesa**, com curvas **assimétricas**:
+       vantagem `× (1 + g*0,01)`, desvantagem `÷ (1 − g*0,012)`.
+    7. **Piso de 1**: golpe que acertou nunca faz zero.
+
+    Detalhes que só aparecem lendo o fonte, e que o porte respeita:
+
+    - **`attack` não é dano, é precisão** — já era a armadilha do item 28, e aqui é onde
+      importa: é o numerador da chance de acerto.
+    - **O dano físico é `Rand` uniforme; o elemental é `RandNormal`**, que é a média de
+      dois uniformes (distribuição triangular). Trocar um pelo outro muda a forma da
+      distribuição, não só o valor.
+    - **Penetração** (`CalcAntiDef`): `def × (1 − anti/(anti+10000))`, com a razão
+      limitada a 0,35.
+    - **Golpe mágico não rola acerto** — `AttackJudgement` só testa quando
+      `attack_attr == PHYSIC_ATTACK`.
+    - **"Sem dano nenhum" não é acerto**: se toda classe estava zerada ou imune,
+      `AttackJudgement` devolve false e o original manda o pacote de esquiva.
+
+    ### b. Sem sorteio dentro do cálculo
+
+    `resolver()` **recebe** as rolagens prontas (`Rolagens { acerto, critico }`) em vez de
+    sortear. É o que permite testar cada passo contra número fechado, em vez de "roda mil
+    vezes e vê se a média parece certa". Quem sorteia é `Rolagens::sortear()`, num lugar
+    só.
+
+    ### c. `CHARRACTER_CLASS_CONFIG`: o lado do jogador ganhou origem
+
+    Duas linhas do cálculo dependiam de dados que não existiam do nosso lado:
+
+    ```text
+    GetBasicAttackRate(cls, agi) = agi_attack[cls] * agi   // precisão
+    GetBasicArmor(cls, agi)      = agi_armor[cls]  * agi   // evasão
+    ```
+
+    `agi_attack` e `agi_armor` vêm da tabela `CHARRACTER_CLASS_CONFIG` do **elements.data**
+    (não do `ptemplate.conf`, que é só um exemplo no fonte) — `player_template::
+    __LoadDataFromDataMan`. Novo módulo `crates/pw-data-loader/src/classes.rs`, com as 12
+    classes do realm 155 lidas e conferidas: Guerreiro 10/10, Mago 5/2, Bárbaro 8/8.
+
+    **Isto é a base, não o atributo final.** No original, `UpdateAttack`/`UpdateDefense`
+    somam equipamento (`_cur_item`), pontos de encantamento (`_en_point`) e percentuais
+    (`_en_percent`) por cima. Nada disso existe do nosso lado, e o módulo não finge que
+    existe: `aplicar_atributos_de_classe` **devolve `false`** quando não consegue, em vez
+    de escrever um número inventado.
+
+    ### d. O que não entra, e por quê
+
+    O original também passa por `AdjustDamage` (virtual por tipo), pelos *filters*
+    (`EF_AdjustDamage`/`EF_DoDamage`), pelo vigor (`GetVigourEnhance`), pela esquiva de
+    dano e de *debuff* (`_damage_dodge_rate`, `_debuff_dodge_rate`) e pelo roubo de vida.
+    Nenhum desses sistemas existe aqui — não há filter, não há vigor, não há buff que
+    altere dano. Deixar um lugar reservado para eles seria fingir que já fazem alguma
+    coisa.
+
+    ### e. Entidades: os campos que faltavam
+
+    `MonsterEntity` ganhou `armor`, `attack_rate`, `attack_degree`, `defend_degree`,
+    `magic_attack[5]`, e o `def_magic` de valor único **virou `resistances[5]`** — o
+    campo antigo não tinha correspondente no original. Todos preenchidos do template
+    (item 28). `PlayerEntity` ganhou `armor`, `attack_rate`, `attack_degree`,
+    `defend_degree` e `crit_damage_bonus`.
+
+    ### f. Conferência com dado real
+
+    Um guerreiro nível 50 com 40 de agilidade (precisão 400) e 350 de dano, contra
+    monstros do `elements.data` do realm 155:
+
+    | monstro | nv | vida | defesa | armadura | acerto | dano | golpes |
+    | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+    | Emerald Qingfu | 20 | 1.342 | 83 | 19 | 97,8% | 336 | 4 |
+    | Tauroc Sentinel | 31 | 2.676 | 202 | 30 | 96,4% | 318 | 9 |
+    | Tauroc Valorian | 47 | 6.701 | 468 | 46 | 94,6% | 283 | 24 |
+    | Feligar Warrior | 48 | 10.234 | 1.020 | 190 | 80,8% | 231 | 45 |
+
+    A defesa corta de 4% a 34%, e a chance de acerto cai de 98% para 81% conforme a
+    evasão do alvo — o Feligar Warrior, com 190 de armadura, é sensivelmente mais difícil
+    de acertar que os outros. É progressão de MMO, não ruído.
+
+    `cargo run -p pw-gs --example simula_golpe -- data/realm_155/config` reproduz a tabela.
+
+    ### g. **O combate não está vivo em produção, e não é por causa disto**
+
+    Vale ser explícito para quem retomar: **nada em produção constrói um `PlayerEntity`**.
+    Ele só é criado em teste, `world.players` nunca é populado, e o `NORMAL_ATTACK` do
+    `bus_server.rs` sai cedo no `mundo.players.get(&roleid)`. Ou seja, este trabalho deixa
+    as fórmulas certas num caminho que ainda não roda — e a próxima coisa que **de fato**
+    liga o combate é popular `world.players` quando o jogador entra no mundo, não mais
+    matemática.
+
+    ### h. Provas
+
+    `crates/pw-gs/tests/combate_real.rs`, 22 testes. Os valores esperados foram
+    **calculados à mão a partir do C++**, não observados da nossa implementação — um
+    teste que só registra o que o código faz hoje não pega porte errado. Cobrem os
+    auxiliares isolados (chance de acerto com o deslocamento inteiro, redução por defesa
+    com o nível do atacante, teto de 35% da penetração, limiares de 8 m e 40 m da
+    atenuação), cada passo do golpe inteiro, e a ponte com as entidades.
+
+    `crates/pw-data-loader/tests/classes_tests.rs`, 5 testes contra o `elements.data` real.
+
+    ### i. O que resta, atualizando o item 27g
+
+    1. Teste do alvo selecionado no cliente (não depende de código nosso).
+    2. **Popular `world.players`** — é o que falta para o combate existir em jogo.
+    3. **O intérprete de `aipolicy` no `pw-gs`**: o `ai.rs` continua sendo máquina de
+       estados inventada, com `35.0` de distância de perseguição e 1500 ms de recarga
+       escritos no código, enquanto o template já traz `raio_de_odio`, `raio_de_visao`,
+       `tempo_de_odio` e `ataque_em_ticks` reais.
+    4. `act_session` + skills, o item grande.
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver

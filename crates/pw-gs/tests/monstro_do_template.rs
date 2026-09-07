@@ -75,8 +75,12 @@ fn o_monstro_sai_com_os_atributos_do_elements_data() {
     assert_eq!(m.hp, 6701);
     assert_eq!(m.max_hp, 6701);
     assert_eq!(m.def_phys, 468);
-    // A primeira das cinco resistências (metal) — ver o comentário em `do_template`.
-    assert_eq!(m.def_magic, 11);
+    assert_eq!(m.armor, 46);
+    assert_eq!(m.attack_rate, 2423);
+    // As cinco resistências chegam inteiras à entidade agora — antes só a de metal
+    // cabia, porque o cálculo de dano não tinha classe mágica nenhuma.
+    assert_eq!(m.resistances, [11, 22, 33, 44, 55]);
+    assert_eq!((m.attack_degree, m.defend_degree), (3, 4));
     assert_eq!(m.attack_min, 311);
     assert_eq!(m.attack_max, 356);
     assert_eq!(m.attack_range, 13.2);

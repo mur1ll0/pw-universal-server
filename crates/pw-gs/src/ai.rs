@@ -82,7 +82,15 @@ impl MonsterAi {
             self.state = MonsterState::Attacking;
             if self.attack_cooldown_ms == 0 {
                 self.attack_cooldown_ms = 1500; // Cooldown de 1.5s entre ataques básicos
-                let damage = crate::combat::CombatEngine::calculate_monster_to_player_damage(monster, target_player);
+                // Golpe que erra é resultado legítimo, e o `dano()` devolve zero nele —
+                // quem recebe decide o que mostrar. Antes o dano nunca podia ser zero
+                // porque não havia rolagem de acerto nenhuma.
+                let damage = crate::combat::CombatEngine::monstro_ataca_jogador(
+                    monster,
+                    target_player,
+                    distance,
+                )
+                .dano();
                 return Some((target_id, damage));
             }
         } else if distance < 35.0 {

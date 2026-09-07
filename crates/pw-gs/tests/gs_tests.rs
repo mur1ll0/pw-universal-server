@@ -66,6 +66,11 @@ fn test_combat_engine_damage_calculation() {
         attack_max: 250,
         magic_attack_min: 0,
         magic_attack_max: 0,
+        armor: 300,
+        attack_rate: 500,
+        attack_degree: 0,
+        defend_degree: 0,
+        crit_damage_bonus: 0,
         attack_speed: 1.2,
         move_speed: 4.8,
         crit_rate: 0.1,
@@ -84,9 +89,14 @@ fn test_combat_engine_damage_calculation() {
         mp: 100,
         max_mp: 100,
         def_phys: 120,
-        def_magic: 50,
+        armor: 60,
+        attack_rate: 400,
+        resistances: [50; 5],
+        attack_degree: 0,
+        defend_degree: 0,
         attack_min: 50,
         attack_max: 90,
+        magic_attack: [(0, 0); 5],
         attack_range: 2.5,
         exp: 300,
         sp: 60,
@@ -102,14 +112,20 @@ fn test_combat_engine_damage_calculation() {
         buffs: Vec::new(),
     };
 
-    let (dmg, is_crit) = CombatEngine::calculate_player_to_monster_damage(&player, &monster);
-    assert!(dmg > 0, "Dano deve ser maior que 0");
-    if is_crit {
-        assert!(dmg >= 50, "Crítico deve causar dano amplificado");
+    // O golpe pode errar agora — há rolagem de acerto, que a fórmula antiga não tinha.
+    // Então o que se afirma é a faixa do que sai, não que sempre saia dano.
+    let r = CombatEngine::jogador_ataca_monstro(&player, &monster, 2.0);
+    match r {
+        pw_gs::combat::Resultado::Acertou { dano, .. } => assert!(dano > 0),
+        pw_gs::combat::Resultado::Errou => {}
+        outro => panic!("resultado inesperado: {outro:?}"),
     }
 
-    let m_dmg = CombatEngine::calculate_monster_to_player_damage(&monster, &player);
-    assert!(m_dmg > 0);
+    let r = CombatEngine::monstro_ataca_jogador(&monster, &player, 2.0);
+    assert!(matches!(
+        r,
+        pw_gs::combat::Resultado::Acertou { .. } | pw_gs::combat::Resultado::Errou
+    ));
 }
 
 #[test]
