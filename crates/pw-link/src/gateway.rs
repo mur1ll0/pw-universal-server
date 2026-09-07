@@ -4,21 +4,32 @@ use pw_crypto::generate_login_challenge;
 use pw_protocol::{
     create_protocol_adapter, GameVersion, InboundPacket, OctetsStream, OutboundPacket, ProtocolAdapter,
     PwPacketCodec, S2CChatBroadcast, S2CChallenge, S2CCreateRoleResponse, S2CDeleteRoleResponse,
-    S2CErrorInfo, S2CGamedataSend, S2CGetFriendListRe, S2CGetHelpStatesRe, S2CGetUIConfigRe, S2CGetWaitDelRolesRe,
-    S2COnlineAnnounce, S2CPlayerMoveBroadcast, S2CRoleListResponse, S2CSelectRoleResponse,
-    S2CSetCustomDataRe, S2CSetHelpStatesRe, S2CSetUIConfigRe, S2CUndoDeleteRoleResponse,
+    S2CErrorInfo, S2CGamedataSend, S2CGetCustomDataRe, S2CGetFriendListRe, S2CGetHelpStatesRe, S2CGetUIConfigRe,
+    S2CGetWaitDelRolesRe, S2COnlineAnnounce, S2CPlayerBaseInfoRe, S2CPlayerMoveBroadcast, S2CRoleListResponse,
+    S2CSelectRoleResponse, S2CSetCustomDataRe, S2CSetHelpStatesRe, S2CSetUIConfigRe, S2CUndoDeleteRoleResponse,
 };
 use pw_data_loader::GameDataManager;
 use pw_protocol::{Edition, VersaoDoCliente};
 use pw_storage::{AccountRepository, CacheManager, CharacterRepository};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::RwLock;
 use tokio_util::codec::Framed;
 use tracing::{debug, info, trace, warn};
 
 use crate::session::ClientSession;
-use crate::uplink::BusUplink;
+use crate::uplink::{BusUplink, EnvioAoCliente};
 use pw_bus::BusMessage;
+
+/// Um jogador com sessão aberta neste link, visível pra `PLAYER_ENTER_WORLD`/
+/// `PLAYER_LEAVE_WORLD` — ver `LinkGateway::jogadores_visiveis`.
+struct JogadorVisivel {
+    pos: Vector3,
+    dir: u8,
+    sec_level: u8,
+    envio: EnvioAoCliente,
+}
 
 pub struct LinkGateway {
     pub realm_id: String,
@@ -43,6 +54,29 @@ pub struct LinkGateway {
     /// que garante que ligar o barramento não muda o que o jogador vê enquanto os
     /// subcomandos ainda são tratados aqui.
     pub uplink: Option<Arc<BusUplink>>,
+    /// Jogadores online neste link, pra `PLAYER_ENTER_WORLD`/`PLAYER_LEAVE_WORLD`
+    /// entre eles.
+    ///
+    /// Existe aqui, e não no `pw-gs` (que já tem uma grade espacial de verdade,
+    /// `WorldInstance::grid`), porque construir isto exigiria ou estender o
+    /// `BusMessage::EnterWorld` — que hoje espelha byte a byte o pacote GNET que o
+    /// cliente manda, opcode 72, de propósito — ou fazer o mundo carregar o personagem
+    /// sozinho sem `account_id` (o `EnterWorld` do barramento não carrega isso). Aqui
+    /// o `pw-link` já tem os dados completos do personagem (`details`, carregado com
+    /// `account_id` da sessão) no exato momento em que ele entra no mundo, e todas as
+    /// sessões do mesmo realm compartilham este processo — então "mandar pra outro
+    /// jogador" é só achar o `envio` dele aqui e escrever no canal, sem round-trip
+    /// pelo barramento.
+    ///
+    /// **Limitação sabida, documentada em vez de escondida**: sem grade espacial,
+    /// todo jogador vê todos os outros deste link, não só os próximos (só existe um
+    /// mundo por realm hoje — `ID_INST_MUNDO_ABERTO` — então não é errado, só não
+    /// escala). E a posição aqui só atualiza quando alguém ENTRA depois; um jogador já
+    /// visível não se move na tela de quem já o viu (isso é o `PlayerMoveBroadcast`,
+    /// que hoje só ecoa pro remetente — ver `InboundPacket::PlayerMove`). Migrar isto
+    /// pra dentro do `pw-gs`, reaproveitando a grade espacial que já existe pra
+    /// NPC/monstro, é o passo natural quando a população justificar o custo.
+    jogadores_visiveis: RwLock<HashMap<i32, JogadorVisivel>>,
 }
 
 impl LinkGateway {
@@ -136,6 +170,28 @@ impl LinkGateway {
             data_manager: Arc::new(data_manager),
             versao_do_cliente,
             uplink: None,
+            jogadores_visiveis: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Manda o mesmo pacote pra todo jogador visível deste link (`jogadores_visiveis`) —
+    /// mesmo canal direto por processo que `PLAYER_ENTER_WORLD`/`PLAYER_LEAVE_WORLD` já
+    /// usam, sem round-trip pelo barramento. `try_send`, porque uma falha na entrega de
+    /// um jogador é problema da sessão dele, não motivo pra derrubar quem mandou (nem
+    /// quem está mandando pra si mesmo, já que o remetente também está nesta lista).
+    ///
+    /// Corrige o bug documentado em `docs/ESTADO_E_RETOMADA.md` (itens 16/20): antes,
+    /// `PlayerChat`/`PlayerMove` só ecoavam pro `tx` da própria sessão, então ninguém
+    /// nunca via a fala ou o movimento de outro jogador.
+    ///
+    /// Mesma limitação sabida de `jogadores_visiveis`: sem grade espacial, todo mundo
+    /// deste link recebe, não só quem está perto — aceitável pro canal de grito/mundo
+    /// (global mesmo no jogo real), mas o canal normal/local devia ter alcance quando a
+    /// grade existir.
+    async fn broadcast_para_todos(&self, pacote: OutboundPacket) {
+        let visiveis = self.jogadores_visiveis.read().await;
+        for jogador in visiveis.values() {
+            let _ = jogador.envio.try_send(pacote.clone());
         }
     }
 
@@ -280,6 +336,20 @@ impl LinkGateway {
                 localsid: session.localsid,
             });
             uplink.desregistrar(roleid).await;
+        }
+
+        // Espelho da entrada: some da lista de quem os outros veem, e avisa quem ainda
+        // está online (`PLAYER_LEAVE_WORLD`, 19) pra tirar o avatar dele da tela deles.
+        // Independe do `uplink` — a visibilidade entre jogadores é local a este link,
+        // não passa pelo barramento (ver `LinkGateway::jogadores_visiveis`).
+        if let Some(roleid) = session.role_id {
+            let mut visiveis = self.jogadores_visiveis.write().await;
+            if visiveis.remove(&roleid).is_some() {
+                let pacote = OutboundPacket::GamedataSend(S2CGamedataSend::player_leave_world(roleid));
+                for outro in visiveis.values() {
+                    let _ = outro.envio.try_send(pacote.clone());
+                }
+            }
         }
 
         info!("Sessão #{} ({}) finalizada.", session_id, client_ip);
@@ -640,13 +710,53 @@ impl LinkGateway {
                     //    servidor. **O layout depende da versão**: o 1.2.6 tem quatro
                     //    campos e o 1.5.3 tem cinco (item 56), e mandar o tamanho errado
                     //    faz o cliente descartar o comando sem avisar (item 46).
+                    //
+                    //    `region`/`precinct` vêm de `<mapa>/region.sev`/`precinct.sev`
+                    //    (achado em 2026-09-03: valores fixos aqui faziam o cliente
+                    //    recusar a instância com "regionset timestamp error" e travar a
+                    //    entrada no mundo, mesmo depois do handshake de login passar —
+                    //    ver `docs/ESTADO_E_RETOMADA.md`). `id_inst = 1` é sempre o mundo
+                    //    aberto por ora — nenhum subcomando ainda envia outro valor.
+                    const ID_INST_MUNDO_ABERTO: i32 = 1;
                     let sub = pw_protocol::PorVersao::new(self.game_version);
+                    let region = self
+                        .data_manager
+                        .region_timestamps
+                        .get(&ID_INST_MUNDO_ABERTO)
+                        .copied()
+                        .unwrap_or_else(|| {
+                            warn!(
+                                "Realm {}: sem region_timestamp pro world_id={ID_INST_MUNDO_ABERTO} — \
+                                 o cliente vai recusar a instância (\"regionset timestamp error\") e \
+                                 travar a entrada no mundo. Falta world/region.sev na pasta do realm.",
+                                self.realm_id
+                            );
+                            0
+                        });
+                    let precinct = self
+                        .data_manager
+                        .precinct_timestamps
+                        .get(&ID_INST_MUNDO_ABERTO)
+                        .copied()
+                        .unwrap_or_else(|| {
+                            warn!(
+                                "Realm {}: sem precinct_timestamp pro world_id={ID_INST_MUNDO_ABERTO} — \
+                                 mesmo problema do region_timestamp acima, com world/precinct.sev.",
+                                self.realm_id
+                            );
+                            0
+                        });
                     let gshop3 = self
                         .game_version
                         .challenge_edition_tem_terceiro_gshop()
                         .then_some(self.data_manager.gshop3.timestamp);
                     tx.send(OutboundPacket::GamedataSend(sub.inst_data_checkout(
-                        1, 2097199, 2097199, 1206433535, gshop3
+                        ID_INST_MUNDO_ABERTO,
+                        region,
+                        precinct,
+                        self.data_manager.gshop.timestamp,
+                        self.data_manager.gshop2.timestamp,
+                        gshop3,
                     ))).await?;
 
                     // 2. Envia SELF_INFO_00 (Comando 38) - Status vitais, nível e permissão de GM
@@ -672,7 +782,9 @@ impl LinkGateway {
                     ))).await?;
 
                     // 5. Envia SELF_INFO_1 (Comando 8) - Instancia a entidade local do jogador
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_info_1(
+                    // e cancela o timeout OT_ENTERGAME do client (30s -> "EnterWorld Overtime"
+                    // se o tamanho do pacote não bater com o que o client espera).
+                    tx.send(OutboundPacket::GamedataSend(sub.self_info_1(
                         details.exp as i32,
                         details.sp as i32,
                         details.id,
@@ -683,8 +795,18 @@ impl LinkGateway {
                     // 6. Envia SKILL_DATA (Comando 90) - Habilidades carregadas da tabela character_skills
                     tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::skill_data_from_records(&details.skills))).await?;
 
-                    // 7. Envia TASK_DATA (Comando 105) e inicializa o subsistema de missões do cliente
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_data())).await?;
+                    // 7. Envia TASK_DATA (Comando 105) e inicializa o subsistema de missões do cliente.
+                    // No client, `OnMsgHstTaskData` (EC_HostMsg.cpp) trata esse comando como o
+                    // "fim" do GET_ALL_DATA e chama `LoadConfigData()` — que manda o pedido de
+                    // GetUIConfig (opcode 104) pro servidor. Logo abaixo. Log aqui pra dar pra
+                    // cruzar com o log de `InboundPacket::GetUIConfig` e confirmar se o pedido
+                    // do client realmente chega depois disso.
+                    // O número de blocos depende da versão (3 no 1.2.6, 5 do 1.5.3 em
+                    // diante) — ver `PorVersao::task_data`, que traz a desmontagem dos dois
+                    // clients reais. Mandar 3 pro 1.5.5 deixava o cliente lendo 8 bytes de
+                    // lixo depois do fim do buffer.
+                    info!("TASK_DATA enviado pro personagem ID {}", details.id);
+                    tx.send(OutboundPacket::GamedataSend(sub.task_data())).await?;
                     let mut dyn_mark = OctetsStream::new();
                     dyn_mark.write_u8(8);       // reason = TASK_SVR_NOTIFY_DYN_TIME_MARK (8)
                     dyn_mark.write_u16_le(0);   // task = 0 (2B)
@@ -732,8 +854,14 @@ impl LinkGateway {
                     }
 
                     // 10. Envia NPC_ENTER_SLICE / NPC_ENTER_WORLD e NPC_INFO_00 no raio de 120m
+                    //
+                    // O diagnóstico de 2026-09-03 que desligava este envio (`false &&`) foi revertido:
+                    // os NPCs/monstros NÃO são a causa do crash de render — os três minidumps
+                    // (client BR, client novo intocado e client EN) crasham no mesmo ponto com e
+                    // sem NPC no raio. Ver docs/ESTADO_E_RETOMADA.md, itens 9-10.
                     let mut nearby_npcs = Vec::new();
-                    if let Some(world_spawns) = self.data_manager.map_spawns.get(&1) {
+                    if self.data_manager.map_spawns.get(&1).is_some() {
+                        let world_spawns = self.data_manager.map_spawns.get(&1).unwrap();
                         let nearby = world_spawns.query_nearby(details.position, 120.0);
                         for spawn in nearby.into_iter().take(60) {
                             let dir_byte = pw_data_loader::compress_dir_h(spawn.dir.x, spawn.dir.z);
@@ -777,7 +905,10 @@ impl LinkGateway {
 
                     info!("Enviando {} entidades (NPCs/Monstros) com HP e dados exatos ao redor da posição {:?} para o jogador '{}'", nearby_npcs.len(), details.position, details.name);
                     for spawn in nearby_npcs {
-                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_enter_world(
+                        // Via `sub` porque a struct `info_npc` ganhou `vis_tid` e `state2`
+                        // no 1.5.x — ver `PorVersao::npc_enter_world`. Com os 27 bytes do
+                        // 1.2.6, o client 1.5.5 recebia os NPCs e não desenhava nenhum.
+                        tx.send(OutboundPacket::GamedataSend(sub.npc_enter_world(
                             spawn.0,
                             spawn.1,
                             Vector3::new(spawn.2.0, spawn.2.1, spawn.2.2),
@@ -785,19 +916,115 @@ impl LinkGateway {
                         ))).await?;
                     }
 
-                    // 10.5 Saldo inicial. Era `50000` escrito no código — o mesmo saldo
-                    //      para todo personagem de todo realm. O valor de verdade já
-                    //      estava carregado aqui, em `details.money`, e nunca era lido.
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_cash(
-                        details.money.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+                    // 10.5 Dinheiro (prata/ouro) do personagem — GET_OWN_MONEY (82), não
+                    //      PLAYER_CASH (253). Achado em 2026-09-03 lendo `SendAllData`
+                    //      (EvolvedPWServer, player.cpp): `player_cash` manda
+                    //      `GetMallCash()` (saldo da loja de cash, sistema que este
+                    //      servidor ainda não tem) e `get_own_money` manda `GetMoney()` (o
+                    //      saldo normal, mostrado na HUD). O código antigo mandava
+                    //      `details.money` pelo comando errado (253/cash), deixando o saldo
+                    //      normal do jogador sempre em zero no client. `MONEY_CAPACITY_BASE`
+                    //      é o teto de 2 bilhões do servidor real (`cgame/gs/config.h`).
+                    const MONEY_CAPACITY_BASE: u32 = 2_000_000_000;
+                    tx.send(OutboundPacket::GamedataSend(sub.get_own_money(
+                        details.money.clamp(0, MONEY_CAPACITY_BASE as i64) as u32,
+                        MONEY_CAPACITY_BASE,
+                        0, // color_name: máscara de cor do nome, ninguém usa isso ainda
                     ))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_cash(0))).await?;
 
-                    // 11. Envia GetUIConfig_Re (Opcode 105 / 0x69) - Desperta OnPrtcGetConfigRe, ativa OnAllInitDataReady e destrava a tela de Loading
-                    tx.send(OutboundPacket::GetUIConfigRe(S2CGetUIConfigRe::new(
-                        details.id,
-                        session.session_id as u32,
-                        &[],
-                    ))).await?;
+                    // 10.6 Notificações "de status" que o `SendAllData` real manda no
+                    // world-entry — achadas em 2026-09-03 lendo o source do 1.5.5 (sem
+                    // captura disponível para essa versão). Valores neutros/zerados pra
+                    // sistemas que este servidor ainda não implementa (facção, realeza,
+                    // exp em dobro, pária) — mandar o comando com zero é o que o `SendAllData`
+                    // real também faz pra quem não tem o dado; não mandar nada é o que
+                    // fazia o client nunca inicializar esses painéis de UI.
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::host_reputation(details.reputation))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::pvp_mode(0))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_country_notify(0))).await?;
+                    let agora = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i32;
+                    // lua_version = 102: primeira linha de `global_api.lua` (ver o
+                    // comentário em `S2CGamedataSend::server_time` — um valor errado aqui
+                    // derruba o client, não é cosmético).
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::server_time(agora, 0, 102))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::trashbox_pwd_state(false))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::pet_room_capacity(0))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_king_notify(false, 0))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::faction_contrib_notify(0, 0, 0))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_leadership(0, 0))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_world_contribution(0, 0, 0))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_dividend(0))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::available_double_exp_time(0))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::double_exp_time(0, 0))).await?;
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::pariah_time(0))).await?;
+
+                    // 10.7 Outros jogadores online (visibilidade mútua) — PLAYER_ENTER_WORLD
+                    // (17) pros dois lados. Sem isto, `QUERY_PLAYER_INFO_1` (67) nunca tinha o
+                    // que responder: o cliente só pergunta a barra de vida de quem ele já VÊ
+                    // na tela, e nada nunca mandava o comando que faz um avatar aparecer —
+                    // achado em 2026-09-04 junto com o layout errado de `player_enter_world`
+                    // (ver `docs/ESTADO_E_RETOMADA.md`, item 15, e o comentário de
+                    // `LinkGateway::jogadores_visiveis` pras limitações sabidas).
+                    let dir_jogador = 0u8; // direção não é rastreada por personagem ainda
+                    {
+                        let mut visiveis = self.jogadores_visiveis.write().await;
+                        info!(
+                            "visibilidade: personagem {} entrando — {} outro(s) já em jogadores_visiveis: {:?}",
+                            details.id, visiveis.len(), visiveis.keys().collect::<Vec<_>>()
+                        );
+                        for (outro_id, outro) in visiveis.iter() {
+                            // Eu vejo quem já estava no mundo.
+                            tx.send(OutboundPacket::GamedataSend(sub.player_enter_world(
+                                *outro_id, outro.pos, outro.dir, outro.sec_level,
+                            ))).await?;
+                            // Quem já estava me vê — canal direto pro `tx` da sessão dele,
+                            // sem passar pelo barramento (as duas sessões estão neste mesmo
+                            // processo). `try_send` porque uma falha aqui é problema da
+                            // sessão dele, não motivo pra derrubar a minha.
+                            let _ = outro.envio.try_send(OutboundPacket::GamedataSend(
+                                sub.player_enter_world(details.id, details.position, dir_jogador, session.sec_level),
+                            ));
+                        }
+                        visiveis.insert(details.id, JogadorVisivel {
+                            pos: details.position,
+                            dir: dir_jogador,
+                            sec_level: session.sec_level,
+                            envio: tx.clone(),
+                        });
+                    }
+
+                    // GetUIConfig_Re — envio proativo, protegido por `session.ui_config_enviado`.
+                    //
+                    // Histórico: a teoria original era que o client sempre pede sozinho
+                    // (opcode 104) ao processar o TASK_DATA do passo 7 — `LoadConfigData()`,
+                    // chamado de `CECHostPlayer::OnMsgHstTaskData` no client — e mandar aqui
+                    // TAMBÉM, sem esperar, fazia o client receber dois `GetUIConfig_Re` e
+                    // rodar `OnPrtcGetConfigRe` (que ativa `OnAllInitDataReady()` e o hook do
+                    // LogicCheck.dll) duas vezes, derrubando o processo. Então tirei o envio
+                    // proativo daqui.
+                    //
+                    // Só que, testando com log em cada ponta (2026-09-03): o `TASK_DATA
+                    // enviado` aparece, mas o pedido `GetUIConfig` do client **nunca chega**
+                    // no servidor — o client fica preso pra sempre em "Entrando em Perfect
+                    // World" (`Win_EnterWait`, que só fecha quando `EnableUI(true)` roda
+                    // dentro de `OnPrtcGetConfigRe`, e isso só roda ao receber
+                    // `GetUIConfig_Re`). Então o pedido do client não é confiável — mas o
+                    // double-send continua sendo um crash real se os dois casos colidirem.
+                    //
+                    // A flag resolve os dois: manda aqui se ainda não mandou (cobre o caso
+                    // — que parece ser o de sempre — do client nunca pedir sozinho), e o
+                    // handler de `InboundPacket::GetUIConfig` abaixo checa a mesma flag antes
+                    // de responder ao pedido do client, caso ele chegue depois de tudo.
+                    if !session.ui_config_enviado {
+                        session.ui_config_enviado = true;
+                        tx.send(OutboundPacket::GetUIConfigRe(S2CGetUIConfigRe::new(
+                            details.id,
+                            session.session_id as u32,
+                            &[],
+                        ))).await?;
+                        info!("GetUIConfig_Re enviado proativamente pro personagem ID {} (localsid {})", details.id, session.session_id);
+                    }
 
                     info!("Personagem '{}' (ID: {}) spawnado com sucesso no mundo 3D (Pos: {:?}, Skills: {}, Itens: {})!", details.name, details.id, details.position, details.skills.len(), details.inventory.len());
                 }
@@ -928,7 +1155,8 @@ impl LinkGateway {
                                         tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_new(q.quest_id as u16, now_ts))).await?;
                                     }
                                 }
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_data())).await?;
+                                let sub_versao = pw_protocol::PorVersao::new(self.game_version);
+                                tx.send(OutboundPacket::GamedataSend(sub_versao.task_data())).await?;
                             }
                         }
                         // C2S 67 (`QUERY_PLAYER_INFO_1`) e 68 (`QUERY_NPC_INFO_1`)
@@ -986,6 +1214,33 @@ impl LinkGateway {
                                 tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::host_duel_start(opponent_id))).await?;
                             }
                         }
+                        178 => {
+                            // C2S 178: ACTIVATE_REGION_WAYPOINTS — struct real (EvolvedPWServer
+                            // protocol.h): cmd_header(2) + num(1, unsigned char) + num * int(4,
+                            // não short). O client manda isso sozinho, sem pedido nosso, toda
+                            // vez que acha um waypoint da região atual que não está na lista que
+                            // `WAYPOINT_LIST` (S2C 180) já confirmou — e como nunca
+                            // respondíamos, ele repetia isso a cada quadro (~166/s medido) e a
+                            // tela de entrada no mundo nunca destravava. Devolver os mesmos IDs
+                            // via `player_waypoint_list` fecha o ciclo (ver o comentário em
+                            // `S2CGamedataSend::player_waypoint_list`).
+                            if gamedata.data.len() >= 3 {
+                                let num = gamedata.data[2] as usize;
+                                let mut waypoints = Vec::with_capacity(num);
+                                for i in 0..num {
+                                    let off = 3 + i * 4;
+                                    if gamedata.data.len() < off + 4 {
+                                        break;
+                                    }
+                                    let id = i32::from_le_bytes(gamedata.data[off..off + 4].try_into().unwrap());
+                                    waypoints.push(id.clamp(0, u16::MAX as i32) as u16);
+                                }
+                                if !waypoints.is_empty() {
+                                    debug!("Jogador {} ativou {} waypoint(s) da região: {:?}", role_id, waypoints.len(), waypoints);
+                                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_waypoint_list(&waypoints))).await?;
+                                }
+                            }
+                        }
                         _ => {
                             debug!("Gamedata subcomando {} recebido do cliente", cmd);
                         }
@@ -994,18 +1249,37 @@ impl LinkGateway {
             }
 
             InboundPacket::GetUIConfig(req) => {
-                tx.send(OutboundPacket::GetUIConfigRe(S2CGetUIConfigRe::new(
-                    req.role_id,
-                    req.localsid,
-                    &[],
-                ))).await?;
+                // Achado em 2026-09-03: testando com log nos dois lados, esse pedido do
+                // client nunca chegou a aparecer aqui — o `EnterWorld` agora manda
+                // `GetUIConfig_Re` proativamente (ver o bloco logo depois do passo 10.6),
+                // guardado por `session.ui_config_enviado`. Esse handler continua existindo
+                // pro caso do pedido chegar (client real, versão diferente, etc.) — a mesma
+                // flag evita mandar duas respostas e derrubar o client de novo (ver o
+                // comentário lá no `EnterWorld` pra o histórico completo do bug).
+                info!("GetUIConfig pedido pelo personagem ID {} (localsid {})", req.role_id, req.localsid);
+                if session.ui_config_enviado {
+                    info!("GetUIConfig_Re já tinha sido mandado proativamente — ignorando o pedido do personagem ID {} pra não repetir o crash do double-send", req.role_id);
+                } else {
+                    session.ui_config_enviado = true;
+                    tx.send(OutboundPacket::GetUIConfigRe(S2CGetUIConfigRe::new(
+                        req.role_id,
+                        req.localsid,
+                        &[],
+                    ))).await?;
+                    info!("GetUIConfig_Re enviado pro personagem ID {} (localsid {})", req.role_id, req.localsid);
+                }
             }
 
             InboundPacket::SetUIConfig(req) => {
                 debug!("Salvando UIConfig ({} bytes) para o personagem ID {}", req.ui_config.len(), req.role_id);
+                // O `localsid` é obrigatório aqui — ver o comentário de
+                // `S2CSetUIConfigRe`: sem ele o cliente lê o resto do fluxo deslocado e
+                // derruba a conexão com "Decode error 103" (item 18 do
+                // docs/ESTADO_E_RETOMADA.md).
                 tx.send(OutboundPacket::SetUIConfigRe(S2CSetUIConfigRe {
                     result: 0,
                     role_id: req.role_id,
+                    localsid: req.localsid,
                 })).await?;
             }
 
@@ -1013,8 +1287,95 @@ impl LinkGateway {
                 debug!("Salvando CustomData ({} bytes) para o personagem ID {}", req.data.len(), req.role_id);
                 tx.send(OutboundPacket::SetCustomDataRe(S2CSetCustomDataRe {
                     result: 0,
+                    crc: 0,
                     role_id: req.role_id,
+                    localsid: req.localsid,
                 })).await?;
+            }
+
+            InboundPacket::PlayerBaseInfo(req) => {
+                // Visibilidade entre jogadores (docs/ESTADO_E_RETOMADA.md, itens 17/19):
+                // o cliente manda isto sozinho, logo depois de receber PLAYER_ENTER_WORLD
+                // de outro jogador (`EC_ManPlayer.cpp::OnMsgPlayerInfo`) — sem esta
+                // resposta o avatar dele nunca materializa na tela, porque o cliente não
+                // sabe que raça/classe/gênero desenhar (`info_player_1` não carrega
+                // isso). Confirmado lendo `CECElsePlayer::OnMsgPlayerBaseInfo`: um
+                // `name` vazio faz a função sair sem marcar `IsBaseInfoReady()`, e o
+                // avatar fica pra sempre incompleto — então o nome tem que vir certo,
+                // mesmo quando o personagem não é achado.
+                info!("PlayerBaseInfo pedido pelo personagem ID {} pra {:?}", req.role_id, req.playerlist);
+                for outro_id in &req.playerlist {
+                    let info = self.char_repo.get_public_info(*outro_id, &self.realm_id).await?;
+                    let resposta = match info {
+                        Some(p) => S2CPlayerBaseInfoRe {
+                            retcode: 0,
+                            role_id: req.role_id,
+                            localsid: req.localsid,
+                            other_role_id: p.id,
+                            name: p.name,
+                            race: p.race,
+                            cls: p.cls,
+                            gender: p.gender,
+                            // Achado em 2026-09-05, testando com dois clients reais: vazio
+                            // é um caminho "válido" no sentido de não travar
+                            // (`OnMsgPlayerBaseInfo` marca `IsCustomDataReady()` mesmo
+                            // assim), mas sem os bytes reais `m_CustomizeData` nunca é
+                            // preenchido por `ChangeCustomizeData` — e
+                            // `LoadPlayerSkeleton` enfileira o carregamento do modelo com
+                            // um `bodyID` de lixo, que a thread de carregamento descarta
+                            // em silêncio. Resultado: nome aparece (base info funciona),
+                            // mas o modelo nunca é criado — só a colisão. A captura real
+                            // do 1.2.6 confirma: todo `PlayerBaseInfo_Re` de um jogador de
+                            // verdade tem a aparência preenchida (172 bytes na amostra),
+                            // nunca vazia. `custom_data` já vem carregado em `p` (a mesma
+                            // coluna que `write_role_info` usa pro próprio personagem) —
+                            // só faltava não descartar.
+                            custom_data: p.custom_data,
+                            status: 0,
+                            create_time: p.created_at.timestamp() as i32,
+                            lastlogin_time: p.updated_at.timestamp() as i32,
+                            forbid: Vec::new(),
+                        },
+                        None => S2CPlayerBaseInfoRe {
+                            retcode: 1,
+                            role_id: req.role_id,
+                            localsid: req.localsid,
+                            other_role_id: *outro_id,
+                            name: String::new(),
+                            race: 0,
+                            cls: 0,
+                            gender: 0,
+                            custom_data: Vec::new(),
+                            status: 0,
+                            create_time: 0,
+                            lastlogin_time: 0,
+                            forbid: Vec::new(),
+                        },
+                    };
+                    tx.send(OutboundPacket::PlayerBaseInfoRe(resposta)).await?;
+                }
+            }
+
+            InboundPacket::GetCustomData(req) => {
+                // Só chega se o cliente pedir depois de já ter a base — ver o
+                // comentário em `PlayerBaseInfo` acima sobre por que isto costuma nem
+                // ser necessário.
+                info!("GetCustomData pedido pelo personagem ID {} pra {:?}", req.role_id, req.playerlist);
+                for outro_id in &req.playerlist {
+                    let dados = self
+                        .char_repo
+                        .get_public_info(*outro_id, &self.realm_id)
+                        .await?
+                        .map(|p| p.custom_data)
+                        .unwrap_or_default();
+                    tx.send(OutboundPacket::GetCustomDataRe(S2CGetCustomDataRe {
+                        retcode: 0,
+                        role_id: req.role_id,
+                        localsid: req.localsid,
+                        cus_role_id: *outro_id as u32,
+                        custom_data: dados,
+                    })).await?;
+                }
             }
 
             InboundPacket::GetFriendList(req) => {
@@ -1063,6 +1424,16 @@ impl LinkGateway {
                 let role_id = session.role_id.unwrap_or(0);
                 let _ = self.char_repo.update_position(role_id, &move_pkt.position).await;
 
+                // Atualiza a posição guardada em `jogadores_visiveis` — sem isto, quem
+                // entra depois via `PLAYER_ENTER_WORLD` via um jogador parado na posição
+                // de quando ele entrou no mundo, não na posição atual.
+                {
+                    let mut visiveis = self.jogadores_visiveis.write().await;
+                    if let Some(jogador) = visiveis.get_mut(&role_id) {
+                        jogador.pos = move_pkt.position;
+                    }
+                }
+
                 let move_broadcast = OutboundPacket::PlayerMoveBroadcast(S2CPlayerMoveBroadcast {
                     role_id,
                     mode: move_pkt.mode,
@@ -1078,7 +1449,7 @@ impl LinkGateway {
                     .publish_event(&format!("grid:{}:move", self.realm_id), &payload)
                     .await;
 
-                tx.send(move_broadcast).await?;
+                self.broadcast_para_todos(move_broadcast).await;
             }
 
             InboundPacket::PlayerChat(chat_pkt) => {
@@ -1104,7 +1475,7 @@ impl LinkGateway {
                     data: chat_pkt.data,
                 });
 
-                tx.send(broadcast_pkt).await?;
+                self.broadcast_para_todos(broadcast_pkt).await;
             }
 
             InboundPacket::Heartbeat(_hb) => {

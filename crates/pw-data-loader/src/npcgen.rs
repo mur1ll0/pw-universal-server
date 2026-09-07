@@ -95,10 +95,32 @@ impl NpcGenData {
         info!("Carregando npcgen.data (Spawns oficiais de Monstros e NPCs do Perfect World)...");
 
         let version = cursor.read_u32::<LittleEndian>()?;
+        // O cabeçalho tem 2, 3 ou 4 inteiros conforme a versão
+        // (`NPCGENFILEHEADER`/`HEADER6`/`HEADER7`, `cgame/gs/template/npcgendata.h`,
+        // EvolvedPW) — `iNumDynObj` só existe a partir de `version >= 6`, `iNumNPCCtrl` só a
+        // partir de `version >= 7`. Confirmado contra dois arquivos reais e vazios do 1.5.5
+        // (`a03`/`a04`, `version = 5`, 12 bytes exatos: `[version][num_ai_gen][num_res_area]`,
+        // nada mais).
         let num_ai_gen = cursor.read_i32::<LittleEndian>()? as usize;
         let num_res_area = cursor.read_i32::<LittleEndian>()? as usize;
-        let num_dyn_obj = cursor.read_i32::<LittleEndian>()? as usize;
-        let num_npc_ctrl = cursor.read_i32::<LittleEndian>()? as usize;
+        let num_dyn_obj = if version >= 6 {
+            cursor.read_i32::<LittleEndian>()? as usize
+        } else {
+            0
+        };
+        let num_npc_ctrl = if version >= 7 {
+            cursor.read_i32::<LittleEndian>()? as usize
+        } else {
+            0
+        };
+        // A struct de área (`NPCGENFILEAREA7`, 71 bytes) só é a certa pra `version >= 7` —
+        // versões mais antigas usam `NPCGENFILEAREA`, sem `idCtrl`/`iLifeTime`/`iMaxNum` (59
+        // bytes), formato que este parser ainda não implementa por falta de um arquivo real
+        // pra confirmar contra. Só é seguro pular essa checagem quando não há nenhuma área
+        // pra ler (caso real conhecido: `a03`/`a04`) — recusar em vez de arriscar ler errado.
+        if version < 7 && (num_ai_gen > 0 || num_res_area > 0) {
+            return Err(NpcGenError::InvalidVersion(version));
+        }
 
         info!(
             "npcgen.data v{}: {} áreas de IA, {} áreas de recursos, {} objetos dinâmicos, {} controladores",
@@ -108,6 +130,37 @@ impl NpcGenData {
         let mut instances = Vec::with_capacity(36000);
         let mut grid = SpatialGrid::new(64.0);
         let mut instance_counter: u32 = 1000;
+
+        // A decisão "esta área liga sozinha no boot?" não pode ser tomada aqui: ela
+        // depende do estado (`ativado`) do controlador referido por `id_ctrl`, e os
+        // controladores só vêm na SEÇÃO 4, no fim do arquivo. Em vez de reler o arquivo
+        // duas vezes, as seções 1-3 só **armazenam** o que vão precisar (posição,
+        // `id_ctrl`, geradores) e a decisão real — e a criação das `SpawnInstance` — só
+        // acontece depois da seção 4, quando o mapa de controladores já existe. Ver o
+        // comentário da seção 4 para o porquê disto ser necessário (achado em
+        // 2026-09-04: `id_ctrl != 0` não quer dizer "inativo", quer dizer "controlado" —
+        // e a maioria dos controladores referenciados já nasce `ativado`).
+        struct AreaPendente {
+            id_ctrl: i32,
+            b_init_gen: bool,
+            pos: Vector3,
+            dir: Vector3,
+            geradores: Vec<(u32, u32, i32, u32)>, // tid, count, refresh, aggressive
+        }
+        struct ResAreaPendente {
+            id_ctrl: i32,
+            b_init_gen: bool,
+            pos: Vector3,
+            geradores: Vec<(u32, u32, u32)>, // template_id, refresh, count
+        }
+        struct DynObjPendente {
+            id: u32,
+            id_ctrl: i32,
+            pos: Vector3,
+        }
+        let mut areas_pendentes = Vec::with_capacity(num_ai_gen);
+        let mut res_areas_pendentes = Vec::with_capacity(num_res_area);
+        let mut dynobjs_pendentes = Vec::with_capacity(num_dyn_obj);
 
         // 1. Áreas de IA (Monstros e NPCs de Cidade) - Estrutura NPCGENFILEAREA7 (71 bytes)
         for _ in 0..num_ai_gen {
@@ -132,10 +185,7 @@ impl NpcGenData {
             let _life_time = cursor.read_i32::<LittleEndian>()?;
             let _max_num = cursor.read_i32::<LittleEndian>()?;
 
-            let is_active_at_boot = b_init_gen && id_ctrl == 0;
-            let area_pos = Vector3::new(pos_x, pos_y, pos_z);
-            let area_dir = Vector3::new(dir_x, dir_y, dir_z);
-
+            let mut geradores = Vec::with_capacity(num_gen);
             for _ in 0..num_gen {
                 let tid = cursor.read_u32::<LittleEndian>()?;
                 let count = cursor.read_u32::<LittleEndian>()?;
@@ -143,30 +193,31 @@ impl NpcGenData {
                 let _died_times = cursor.read_u32::<LittleEndian>()?;
                 let aggressive = cursor.read_u32::<LittleEndian>()?;
 
-                // Pula os 40 bytes restantes do registro NPCGENFILEAIGEN10 (60 bytes total - 20 lidos)
-                cursor.seek(SeekFrom::Current(40))?;
+                // O registro de gerador tem tamanho **diferente** conforme a versão: 60
+                // bytes (`NPCGENFILEAIGEN10`) pra `version < 11`, 64 (`NPCGENFILEAIGEN`,
+                // ganhou o campo `iRefreshLower` no fim) pra `version >= 11` — 20 já lidos
+                // acima, faltam 40 ou 44. **Esse é o bug que travava o `npcgen.data` do
+                // 1.5.5** (`version = 11`): o parser lia sempre 60 bytes, e cada gerador
+                // deslocava 4 bytes a mais a partir daí — cascata que arrebentava o arquivo
+                // inteiro (`failed to fill whole buffer`). Confirmado batendo os 4.273.236
+                // bytes exatos de `data/realm_155/config/world/npcgen.data` com esta conta
+                // (zero sobra) e por conteúdo real dos controladores no fim do arquivo
+                // (nomes de evento legíveis em chinês, ex. "年兽刷新-改圣诞老人触发怪") — ver
+                // `docs/ESTADO_E_RETOMADA.md`.
+                let bytes_restantes = if version < 11 { 40 } else { 44 };
+                cursor.seek(SeekFrom::Current(bytes_restantes))?;
 
-                if is_active_at_boot && tid > 0 {
-                    for c in 0..count.min(10) {
-                        instance_counter += 1;
-                        // No Perfect World oficial, IDs de NPCs/Monstros possuem o bit 31 ativo (ISNPCID: (id & 0x80000000) && !(id & 0x40000000))
-                        let npc_nid = (0x80000000u32 | (instance_counter & 0x3FFFFFFF)) as i32;
-                        let offset_x = if c == 0 { 0.0 } else { ((c as f32) * 1.5) - 3.0 };
-                        let offset_z = if c == 0 { 0.0 } else { ((c as f32) * 1.2) - 2.5 };
-                        let spawn = SpawnInstance {
-                            instance_id: npc_nid,
-                            template_id: tid,
-                            spawn_type: if tid >= 10000 { SpawnType::Npc } else { SpawnType::Monster },
-                            pos: Vector3::new(area_pos.x + offset_x, area_pos.y, area_pos.z + offset_z),
-                            dir: area_dir,
-                            respawn_sec: refresh.max(1) as u32,
-                            aggressive,
-                        };
-                        grid.insert(spawn.clone());
-                        instances.push(spawn);
-                    }
+                if tid > 0 {
+                    geradores.push((tid, count, refresh, aggressive));
                 }
             }
+            areas_pendentes.push(AreaPendente {
+                id_ctrl,
+                b_init_gen,
+                pos: Vector3::new(pos_x, pos_y, pos_z),
+                dir: Vector3::new(dir_x, dir_y, dir_z),
+                geradores,
+            });
         }
 
         // 2. Áreas de Recursos / Minérios - Estrutura NPCGENFILERESAREA7 (42 bytes)
@@ -186,8 +237,7 @@ impl NpcGenData {
             let id_ctrl = cursor.read_i32::<LittleEndian>()?;
             let _max_num = cursor.read_i32::<LittleEndian>()?;
 
-            let is_active_at_boot = b_init_gen && id_ctrl == 0;
-            let res_pos = Vector3::new(pos_x, pos_y, pos_z);
+            let mut geradores = Vec::with_capacity(num_res);
             for _ in 0..num_res {
                 let _res_type = cursor.read_i32::<LittleEndian>()?;
                 let template_id = cursor.read_u32::<LittleEndian>()?;
@@ -195,24 +245,151 @@ impl NpcGenData {
                 let count = cursor.read_u32::<LittleEndian>()?;
                 let _hei_off = cursor.read_f32::<LittleEndian>()?;
 
-                if is_active_at_boot && template_id > 0 {
-                    for _ in 0..count.min(5) {
-                        instance_counter += 1;
-                        let matter_id = (0xC0000000u32 | (instance_counter & 0x3FFFFFFF)) as i32;
-                        let spawn = SpawnInstance {
-                            instance_id: matter_id,
-                            template_id,
-                            spawn_type: SpawnType::ResourceMine,
-                            pos: res_pos,
-                            dir: Vector3::new(0.0, 0.0, 1.0),
-                            respawn_sec: refresh.max(5),
-                            aggressive: 0,
-                        };
-                        grid.insert(spawn.clone());
-                        instances.push(spawn);
-                    }
+                if template_id > 0 {
+                    geradores.push((template_id, refresh, count));
                 }
             }
+            res_areas_pendentes.push(ResAreaPendente {
+                id_ctrl,
+                b_init_gen,
+                pos: Vector3::new(pos_x, pos_y, pos_z),
+                geradores,
+            });
+        }
+
+        // 3. Objetos dinâmicos (decorações/interativos do mapa) — `NPCGENFILEDYNOBJ10` (24
+        // bytes: id u32, pos 3×f32, dir[2] u8, rad u8, id_controller u32, scale u8).
+        // `version >= 10` sempre usa este formato (nossos dois arquivos reais, 10 e 11,
+        // qualificam); `dir`/`rad` são uma direção comprimida que ainda não decodifiquei —
+        // fica `Vector3::new(0.0, 0.0, 1.0)` de propósito, mesmo placeholder que os spawns
+        // de recurso já usam, em vez de inventar um valor. Confirmado por amostra real:
+        // posições plausíveis (ex. id=92, pos=(-2688.65, 220.13, 4645.19), coerente com as
+        // coordenadas de mapa já vistas em outros testes deste projeto).
+        for _ in 0..num_dyn_obj {
+            let dyn_obj_id = cursor.read_u32::<LittleEndian>()?;
+            let pos_x = cursor.read_f32::<LittleEndian>()?;
+            let pos_y = cursor.read_f32::<LittleEndian>()?;
+            let pos_z = cursor.read_f32::<LittleEndian>()?;
+            cursor.seek(SeekFrom::Current(2))?; // dir[2], comprimido -- não decodificado ainda
+            let _rad = cursor.read_u8()?;
+            let id_ctrl = cursor.read_i32::<LittleEndian>()?;
+            let _scale = cursor.read_u8()?;
+
+            if dyn_obj_id > 0 {
+                dynobjs_pendentes.push(DynObjPendente {
+                    id: dyn_obj_id,
+                    id_ctrl,
+                    pos: Vector3::new(pos_x, pos_y, pos_z),
+                });
+            }
+        }
+
+        // 4. Controladores de gatilho (`NPCGENFILECTRL8`, 199 bytes: id u32, controller_id
+        // i32, nome char[128], ativado bool, tempos de espera/parada i32×2, flags de
+        // validade de horário bool×2, ActiveTime/StopTime `NPCCTRLTIME` (6 i32 cada, 24
+        // bytes), faixa de horário i32).
+        //
+        // **Achado em 2026-09-04, com evidência de hex, não suposição**: `id_ctrl != 0`
+        // NÃO significa "esta área começa desligada". Inspecionando o controlador que
+        // guarda a área do NPC "Ancião" que faltava no mundo (`id_ctrl=2077` na área,
+        // `data/realm_155BR/config/world/npcgen.data`): o registro do controlador 2077
+        // tem `ativado=1` e o nome (GBK) decodifica como "大地图默认长老" — "Ancião
+        // Padrão do Mapa Aberto". Ou seja, a maioria das áreas com `id_ctrl != 0` está
+        // ligada a um controlador **já ativado por padrão** (o mecanismo normal de
+        // respawn/registro de NPCs permanentes), e só uma minoria de fato representa
+        // evento sazonal desligado (`ativado=0` — dois exemplos reais no mesmo arquivo,
+        // nomes que remetem a eventos e fluxo de missão). Tratar `id_ctrl != 0` como
+        // sinônimo de "inativo" (o comportamento até esta sessão) deixava de fora
+        // qualquer NPC/monstro/recurso permanente cuja área usa um controlador — inclusive
+        // NPCs-âncora de cidade inicial, o que bastava pra sumir com uma cidade inteira
+        // de NPCs "normais". Corrigido: cada `id_ctrl` só desativa a área se apontar pra
+        // um controlador que existe **e** está com `ativado=0`; um `id_ctrl` que não bate
+        // com nenhum controlador do arquivo (não deveria acontecer, mas por segurança)
+        // continua contando como ativo — a suposição seguraa é "existe", não "sumiu".
+        const NPCGENFILECTRL8_SIZE: i64 = 4 + 4 + 128 + 1 + 4 + 4 + 1 + 1 + 24 + 24 + 4;
+        let mut controladores_ativados: HashMap<u32, bool> = HashMap::with_capacity(num_npc_ctrl);
+        for _ in 0..num_npc_ctrl {
+            let id = cursor.read_u32::<LittleEndian>()?;
+            let _controller_id = cursor.read_i32::<LittleEndian>()?;
+            cursor.seek(SeekFrom::Current(128))?; // nome, char[128]
+            let ativado = cursor.read_u8()? != 0;
+            // resto do registro: espera/parar (2×i32), 2 bools de horário, ActiveTime/
+            // StopTime (24B cada), faixa de horário (i32) — nada mais precisa ser lido.
+            let resto = NPCGENFILECTRL8_SIZE - 4 - 4 - 128 - 1;
+            cursor.seek(SeekFrom::Current(resto))?;
+            controladores_ativados.insert(id, ativado);
+        }
+        let esta_ativa = |id_ctrl: i32| -> bool {
+            id_ctrl == 0 || controladores_ativados.get(&(id_ctrl as u32)).copied().unwrap_or(true)
+        };
+
+        // Agora que os controladores são conhecidos, cada seção vira `SpawnInstance` de
+        // verdade — mesma lógica de antes, só que a decisão de "ativa no boot" usa
+        // `esta_ativa` em vez do antigo `id_ctrl == 0`.
+        for area in &areas_pendentes {
+            if !area.b_init_gen || !esta_ativa(area.id_ctrl) {
+                continue;
+            }
+            for &(tid, count, refresh, aggressive) in &area.geradores {
+                for c in 0..count.min(10) {
+                    instance_counter += 1;
+                    // No Perfect World oficial, IDs de NPCs/Monstros possuem o bit 31 ativo (ISNPCID: (id & 0x80000000) && !(id & 0x40000000))
+                    let npc_nid = (0x80000000u32 | (instance_counter & 0x3FFFFFFF)) as i32;
+                    let offset_x = if c == 0 { 0.0 } else { ((c as f32) * 1.5) - 3.0 };
+                    let offset_z = if c == 0 { 0.0 } else { ((c as f32) * 1.2) - 2.5 };
+                    let spawn = SpawnInstance {
+                        instance_id: npc_nid,
+                        template_id: tid,
+                        spawn_type: if tid >= 10000 { SpawnType::Npc } else { SpawnType::Monster },
+                        pos: Vector3::new(area.pos.x + offset_x, area.pos.y, area.pos.z + offset_z),
+                        dir: area.dir,
+                        respawn_sec: refresh.max(1) as u32,
+                        aggressive,
+                    };
+                    grid.insert(spawn.clone());
+                    instances.push(spawn);
+                }
+            }
+        }
+        for area in &res_areas_pendentes {
+            if !area.b_init_gen || !esta_ativa(area.id_ctrl) {
+                continue;
+            }
+            for &(template_id, refresh, count) in &area.geradores {
+                for _ in 0..count.min(5) {
+                    instance_counter += 1;
+                    let matter_id = (0xC0000000u32 | (instance_counter & 0x3FFFFFFF)) as i32;
+                    let spawn = SpawnInstance {
+                        instance_id: matter_id,
+                        template_id,
+                        spawn_type: SpawnType::ResourceMine,
+                        pos: area.pos,
+                        dir: Vector3::new(0.0, 0.0, 1.0),
+                        respawn_sec: refresh.max(5),
+                        aggressive: 0,
+                    };
+                    grid.insert(spawn.clone());
+                    instances.push(spawn);
+                }
+            }
+        }
+        for obj in &dynobjs_pendentes {
+            if !esta_ativa(obj.id_ctrl) {
+                continue;
+            }
+            instance_counter += 1;
+            let dynobj_nid = (0xA0000000u32 | (instance_counter & 0x3FFFFFFF)) as i32;
+            let spawn = SpawnInstance {
+                instance_id: dynobj_nid,
+                template_id: obj.id,
+                spawn_type: SpawnType::DynamicObject,
+                pos: obj.pos,
+                dir: Vector3::new(0.0, 0.0, 1.0),
+                respawn_sec: 0,
+                aggressive: 0,
+            };
+            grid.insert(spawn.clone());
+            instances.push(spawn);
         }
 
         info!(
@@ -245,5 +422,108 @@ pub fn compress_dir_h(x: f32, z: f32) -> u8 {
         let deg = z.atan2(x).to_degrees();
         let deg_norm = if deg < 0.0 { deg + 360.0 } else { deg };
         (deg_norm * INV_INTER) as u8
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Monta um `npcgen.data` sintético em memória: cabeçalho v10 + N áreas de IA (uma
+    /// só gerador cada) + M controladores, byte a byte, do jeito que
+    /// `NpcGenData::load_from_bytes` espera. `id_ctrl == 0` faz a área ignorar o mapa de
+    /// controladores; um `id_ctrl != 0` procura o controlador daquele id.
+    fn area_de_ia(pos: (f32, f32, f32), id_ctrl: i32, tid: u32) -> Vec<u8> {
+        let mut b = Vec::with_capacity(71 + 60);
+        b.extend((1i32).to_le_bytes()); // area_type
+        b.extend((1i32).to_le_bytes()); // num_gen
+        b.extend(pos.0.to_le_bytes());
+        b.extend(pos.1.to_le_bytes());
+        b.extend(pos.2.to_le_bytes());
+        b.extend(0f32.to_le_bytes()); // dir_x
+        b.extend(0f32.to_le_bytes()); // dir_y
+        b.extend(1f32.to_le_bytes()); // dir_z
+        b.extend([0u8; 12]); // ext x/y/z
+        b.extend((0i32).to_le_bytes()); // npc_type
+        b.extend((0i32).to_le_bytes()); // grp_type
+        b.push(1); // b_init_gen = true
+        b.push(0); // b_auto_revive
+        b.push(0); // b_valid_once
+        b.extend((0u32).to_le_bytes()); // dw_gen_id
+        b.extend(id_ctrl.to_le_bytes());
+        b.extend((0i32).to_le_bytes()); // life_time
+        b.extend((0i32).to_le_bytes()); // max_num
+        assert_eq!(b.len(), 71);
+        // gerador (NPCGENFILEAIGEN10, versão < 11: 60 bytes)
+        b.extend(tid.to_le_bytes());
+        b.extend((1u32).to_le_bytes()); // count
+        b.extend((60i32).to_le_bytes()); // refresh
+        b.extend((0u32).to_le_bytes()); // died_times
+        b.extend((0u32).to_le_bytes()); // aggressive
+        b.extend([0u8; 40]); // resto do registro (v < 11)
+        b
+    }
+
+    fn controlador(id: u32, ativado: bool) -> Vec<u8> {
+        let mut b = Vec::with_capacity(199);
+        b.extend(id.to_le_bytes());
+        b.extend((0i32).to_le_bytes()); // controller_id
+        b.extend([0u8; 128]); // nome
+        b.push(if ativado { 1 } else { 0 });
+        b.extend([0u8; 62]); // espera/parar/flags/ActiveTime/StopTime/faixa
+        assert_eq!(b.len(), 199);
+        b
+    }
+
+    /// Achado em 2026-09-04: uma área com `id_ctrl != 0` cujo controlador está
+    /// `ativado=1` DEVE spawnar — era tratada como "sempre inativa" antes deste
+    /// conserto, o que sumia com NPCs permanentes (o "Ancião" da cidade inicial,
+    /// achado batendo com `data/realm_155BR/config/world/npcgen.data` real).
+    #[test]
+    fn area_com_controlador_ativado_spawna() {
+        let mut buf = Vec::new();
+        buf.extend((10u32).to_le_bytes()); // version
+        buf.extend((1i32).to_le_bytes()); // num_ai_gen
+        buf.extend((0i32).to_le_bytes()); // num_res_area
+        buf.extend((0i32).to_le_bytes()); // num_dyn_obj
+        buf.extend((1i32).to_le_bytes()); // num_npc_ctrl
+        buf.extend(area_de_ia((10.0, 0.0, 20.0), 2077, 5001));
+        buf.extend(controlador(2077, true));
+
+        let dados = NpcGenData::load_from_bytes(&buf).expect("deveria parsear sem sobra");
+        assert_eq!(dados.instances.len(), 1, "controlador ativado deveria deixar a área spawnar");
+        assert_eq!(dados.instances[0].template_id, 5001);
+    }
+
+    /// Espelho do teste acima: controlador `ativado=0` mantém a área desligada — não é
+    /// que `id_ctrl` deixou de importar, é que agora ele é checado de verdade.
+    #[test]
+    fn area_com_controlador_desativado_nao_spawna() {
+        let mut buf = Vec::new();
+        buf.extend((10u32).to_le_bytes());
+        buf.extend((1i32).to_le_bytes());
+        buf.extend((0i32).to_le_bytes());
+        buf.extend((0i32).to_le_bytes());
+        buf.extend((1i32).to_le_bytes());
+        buf.extend(area_de_ia((10.0, 0.0, 20.0), 2007, 5001));
+        buf.extend(controlador(2007, false));
+
+        let dados = NpcGenData::load_from_bytes(&buf).expect("deveria parsear sem sobra");
+        assert!(dados.instances.is_empty(), "controlador desativado deveria manter a área desligada");
+    }
+
+    /// `id_ctrl == 0` nunca dependeu de controlador nenhum — continua igual.
+    #[test]
+    fn area_sem_controlador_sempre_spawna() {
+        let mut buf = Vec::new();
+        buf.extend((10u32).to_le_bytes());
+        buf.extend((1i32).to_le_bytes());
+        buf.extend((0i32).to_le_bytes());
+        buf.extend((0i32).to_le_bytes());
+        buf.extend((0i32).to_le_bytes()); // num_npc_ctrl = 0
+        buf.extend(area_de_ia((10.0, 0.0, 20.0), 0, 5001));
+
+        let dados = NpcGenData::load_from_bytes(&buf).expect("deveria parsear sem sobra");
+        assert_eq!(dados.instances.len(), 1);
     }
 }

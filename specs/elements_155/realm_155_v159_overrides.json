@@ -1,0 +1,63 @@
+{
+  "_comment": "Correcoes de skip/count achadas ao decodificar o elements.data do CLIENT 1.5.5 original (F:\\PW\\1.5.5\\1.5.5.EN\\Perfect World 1.5.5 EN\\element\\Data\\elements.data, build v159), agora tambem usado como o elements.data do realm_155 (o client rejeita qualquer servidor cujo elements.data/tasks.data nao bata exatamente com o dele -- ver docs/ESTADO_E_RETOMADA.md, 'decodificar a build v159'). Extraidas com o mesmo metodo do v156 (specs/elements_155/realm_155_overrides.json): conteudo real legivel, e onde faltava campo de texto, fingerprint binario contra os exports do ADMVAL ja salvos em specs/elements_155/admval_exports/ (esses exports SAO deste mesmo arquivo -- nao precisou abrir o editor de novo).",
+  "verified_against": "F:\\PW\\1.5.5\\1.5.5.EN\\Perfect World 1.5.5 EN\\element\\Data\\elements.data (copiado para data/realm_155/config/elements.data)",
+  "version": 159,
+  "overrides": {
+    "20": {
+      "skip": 20,
+      "count": 22,
+      "evidence": "Mesmo fenomeno 'formato-largo' ja documentado pro v156 (skip=19 la), so que aqui o espaco extra e de 20 bytes -- achado ja registrado numa sessao anterior comparando os dois arquivos. Confirmado por conteudo: 22 sub-tipos de livro de habilidade em ingles, comecando por 'Blade.'/'Wizard'/'Monk'/'Barb.'/'Veno.'/'Archer'/'Cleric' (as 7 classes base do jogo)."
+    },
+    "70": {
+      "skip": 0,
+      "count": 1,
+      "evidence": "Score baixo (so 1 registro) faz a busca gulosa rejeitar a posicao certa. skip=0/count=1 da ID=1/Name='Opponent list 1' -- exatamente o achado ja registrado contra este mesmo arquivo numa sessao anterior."
+    },
+    "72": {
+      "abs_count_off": 44280288,
+      "count": 1,
+      "evidence": "Fingerprint binario contra specs/elements_155/admval_exports/PARAM_ADJUST_CONFIG.txt (export deste mesmo arquivo) -- 153/153 campos numericos batendo."
+    },
+    "77": {
+      "abs_count_off": 48139516,
+      "count": 2,
+      "evidence": "Fingerprint binario contra admval_exports/PLAYER_LEVELEXP_CONFIG.txt -- 151/151 campos batendo, stride do registro 1 verificado."
+    },
+    "86": {
+      "abs_count_off": 51277452,
+      "count": 4,
+      "evidence": "Fingerprint binario contra admval_exports/FACETICKET_ESSENCE.txt -- 10/10 campos batendo, stride do registro 1 verificado."
+    },
+    "93": {
+      "abs_count_off": 51351012,
+      "count": 6,
+      "evidence": "Sem campo numerico contiguo suficiente pra fingerprint classico; resolvido pela sequencia exata dos 6 IDs (8781,8782,8783,28752,28913,37698) respeitando o stride de 68 bytes entre registros -- unica ocorrencia no arquivo. Nomes em ingles conferem exatamente com admval_exports/PET_TYPE.txt (Mount/Battle Pet/Synthesize pet/Summon Monster/Plant/Evolving Pet)."
+    },
+    "150": {
+      "skip": 0,
+      "count": 3,
+      "evidence": "skip=0/count=3 decodifica 3 faccoes com nomes legiveis em ingles (ex. 'Corona'), mesma contagem que o v156 achou pra este indice (Ordem do Sol/Trevas/Amanhecer)."
+    },
+    "204": {
+      "abs_count_off": 54231319,
+      "count": 1,
+      "evidence": "Fingerprint manual (campo ID=2016 + Name vazio, ja que os campos numericos nao sao contiguos o bastante pro fingerprint automatico) confirmado contra admval_exports/ASTROLABE_APPEARANCE_CONFIG.txt -- ID bate exatamente."
+    },
+    "205": {
+      "abs_count_off": 54232711,
+      "count": 1,
+      "evidence": "Fingerprint binario contra admval_exports/EQUIP_MAKE_HOLE_CONFIG.txt -- 240/240 campos numericos (10 niveis x 4 furos x 3 campos) batendo exatamente, incluindo o ID=2013. Emenda exatamente ao fim do registro de ASTROLABE_APPEARANCE_CONFIG (204) -- as duas tabelas sao cabeca-a-cauda neste arquivo, sem padding entre elas."
+    },
+    "209": {
+      "skip": 0,
+      "count": 1,
+      "evidence": "Score baixo (tabela grande e esparsa) faz a busca gulosa rejeitar a posicao certa. Conteudo perfeito: '单人爬塔副本积分消耗配置表' (tabela de consumo de pontos da masmorra de escalada solo) -- mesmo texto que o v156 tem pra este indice."
+    },
+    "215": {
+      "skip": 0,
+      "count": 1,
+      "evidence": "skip=0/count=1 decodifica '跨服帮战战场配置表' (tabela de configuracao de campo de batalha de guerra de facção entre servidores) -- nome coerente com HOME_PRODUCTS_CONFIG's vizinhanca (NPC_CROSS_SERVER_SERVICE logo depois tambem fala de guerra entre servidores)."
+    }
+  },
+  "_pendente": "Tabelas 216 (HOME_RESOURCE_PRODUCE_CONFIG) em diante, ate ~230 (RED_PACKET_PAPER_ESSENCE), ainda NAO resolvidas -- sistema de 'lar/mansao' (HOME_*) e bilhetes de loteria (LOTTORY_*), features tardias e obscuras. O arquivo consome ate offset 54397023 de 55170911 (sobra 773888 bytes, ~1.4%) com os overrides acima. Nao bloqueia login/mundo/combate basico -- ver docs/ESTADO_E_RETOMADA.md."
+}

@@ -61,7 +61,17 @@ INSERT INTO realms (id, name, version, host, port, max_players, config)
 VALUES 
 ('realm_126', 'Perfect World Classic (1.2.6)', '1.2.6', '127.0.0.1', 29000, 3000, '{"enabled_classes": [0,1,2,3,4,5], "max_level": 105}'::jsonb),
 ('realm_148', 'Perfect World Tides / Genesis (1.4.8)', '1.4.8', '127.0.0.1', 29002, 3000, '{"enabled_classes": [0,1,2,3,4,5,6,7,8,9], "max_level": 105, "meridians": true, "reincarnation": true}'::jsonb),
-('realm_153', 'Perfect World Eclipse (1.5.3)', '1.5.3', '127.0.0.1', 29001, 3000, '{"enabled_classes": [0,1,2,3,4,5,6,7,8,9,10,11], "max_level": 105, "meridians": true, "reincarnation": true}'::jsonb)
+('realm_153', 'Perfect World Eclipse (1.5.3)', '1.5.3', '127.0.0.1', 29001, 3000, '{"enabled_classes": [0,1,2,3,4,5,6,7,8,9,10,11], "max_level": 105, "meridians": true, "reincarnation": true}'::jsonb),
+-- 1.5.5 (EvolvedPW, build v156) é a base atual do projeto desde 2026-09-02 -- ver
+-- "MUDANÇA DE BASE" em docs/ESTADO_E_RETOMADA.md. `enabled_classes` repete o do 1.5.3: o
+-- CHARACTER_CLASS_CONFIG do elements.data do 1.5.5 tem as mesmas 12 classes (confirmado
+-- decodificando o arquivo real, não suposto -- ver specs/elements_155/README.md).
+('realm_155', 'Perfect World Evolved (1.5.5)', '1.5.5', '127.0.0.1', 29003, 3000, '{"enabled_classes": [0,1,2,3,4,5,6,7,8,9,10,11], "max_level": 105, "meridians": true, "reincarnation": true}'::jsonb),
+-- Realm gêmeo do 155, mesma build 1.5.5, mas com elements.data/tasks.data/gshop* do
+-- client "1.5.5 BR" do Murillo (build v156 -- diferente do EN, que é v159) -- criado
+-- 2026-09-03 pra comparar client EN×BR lado a lado e isolar se um crash é do client
+-- ou do servidor (ver docs/ESTADO_E_RETOMADA.md).
+('realm_155BR', 'Perfect World Evolved BR (1.5.5)', '1.5.5', '127.0.0.1', 29004, 3000, '{"enabled_classes": [0,1,2,3,4,5,6,7,8,9,10,11], "max_level": 105, "meridians": true, "reincarnation": true}'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
 -- -----------------------------------------------------------------------------

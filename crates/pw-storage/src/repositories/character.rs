@@ -38,6 +38,20 @@ pub struct CharacterRecord {
     pub updated_at: DateTime<Utc>,
 }
 
+/// O suficiente pra descrever um personagem a OUTRO jogador — ver
+/// `CharacterRepository::get_public_info`.
+#[derive(Debug, Clone)]
+pub struct CharacterPublicInfo {
+    pub id: RoleId,
+    pub name: String,
+    pub race: i32,
+    pub cls: i32,
+    pub gender: u8,
+    pub custom_data: Vec<u8>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[derive(Clone)]
 pub struct CharacterRepository {
     pool: PostgresPool,
@@ -436,6 +450,44 @@ impl CharacterRepository {
         };
 
         Ok(Some(details))
+    }
+
+    /// O que basta pra outro jogador saber quem é este personagem, pra
+    /// `PlayerBaseInfo`/`GetCustomData` (visibilidade entre jogadores — ver
+    /// `docs/ESTADO_E_RETOMADA.md`, item 17/19).
+    ///
+    /// De propósito **não** é `get_details`: aquele filtra por `account_id` (é sempre o
+    /// próprio dono olhando o próprio personagem) e carrega inventário, equipamento,
+    /// skills e missões, criando os padrões de personagem novo se faltarem — coisas que
+    /// fazem sentido pra "eu entrando no jogo", não pra "alguém pediu pra ver o avatar
+    /// de outro jogador que passou por perto". Uma consulta direta, sem efeito
+    /// colateral nenhum.
+    pub async fn get_public_info(
+        &self,
+        role_id: RoleId,
+        realm_id: &str,
+    ) -> Result<Option<CharacterPublicInfo>> {
+        let rec = sqlx::query_as::<_, CharacterRecord>(
+            r#"
+            SELECT * FROM characters
+            WHERE id = $1 AND realm_id = $2 AND is_deleted = false
+            "#,
+        )
+        .bind(role_id)
+        .bind(realm_id)
+        .fetch_optional(self.pool.get_ref())
+        .await?;
+
+        Ok(rec.map(|r| CharacterPublicInfo {
+            id: r.id,
+            name: r.name,
+            race: r.race,
+            cls: r.cls,
+            gender: r.gender as u8,
+            custom_data: r.custom_data.unwrap_or_default(),
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        }))
     }
 
     /// Salva o estado básico do personagem

@@ -193,7 +193,7 @@ fn test_gamedatasend_s2c_subcommands() {
     assert_eq!(u16::from_le_bytes([p5.data[0], p5.data[1]]), 106);
 
     // 6. SERVER_CONFIG_DATA / INST_DATA_CHECKOUT (CMD 206)
-    let p6 = S2CGamedataSend::inst_data_checkout(1, 1156141381, 1156141381, 1206433535);
+    let p6 = S2CGamedataSend::inst_data_checkout(1, 1156141381, 1156141381, 1206433535, 1206433535);
     assert_eq!(u16::from_le_bytes([p6.data[0], p6.data[1]]), 206);
 
     // 7. MALL_ITEM_PRICE (CMD 270)
@@ -262,20 +262,98 @@ fn test_inst_data_checkout_155_ganha_o_sexto_campo_gshop3() {
     // para a diferença medida contra o 1.2.6, que só tem quatro); o 1.5.5 acrescenta um
     // sexto, `gshop_time_stamp3`.
     let sub_155 = PorVersao::new(GameVersion::V1_5_5);
-    let com_terceiro = sub_155.inst_data_checkout(1, 10, 20, 30, Some(40));
-    // 2 (cabeçalho) + 4 (idInst) + 4 + 4 + 4 (gshop) + 4 (gshop2, igual ao gshop — questão
-    // em aberto, não desta mudança) + 4 (gshop3) = 26 bytes.
+    let com_terceiro = sub_155.inst_data_checkout(1, 10, 20, 30, 35, Some(40));
+    // 2 (cabeçalho) + 4 (idInst) + 4 + 4 + 4 (gshop) + 4 (gshop2) + 4 (gshop3) = 26 bytes.
     assert_eq!(com_terceiro.data.len(), 26);
     let gshop3_no_fio = u32::from_le_bytes(com_terceiro.data[22..26].try_into().unwrap());
     assert_eq!(gshop3_no_fio, 40);
 
     // Sem `Some`, o 1.5.5 continua no layout de cinco campos — ninguém é forçado a
     // fornecer um terceiro timestamp que não tem.
-    let sem_terceiro = sub_155.inst_data_checkout(1, 10, 20, 30, None);
+    let sem_terceiro = sub_155.inst_data_checkout(1, 10, 20, 30, 35, None);
     assert_eq!(sem_terceiro.data.len(), 22);
 
     // E o 1.5.3 ignora `Some` — o sexto campo é só para quem mediu precisar dele.
     let sub_153 = PorVersao::new(GameVersion::V1_5_3);
-    let v153_com_some = sub_153.inst_data_checkout(1, 10, 20, 30, Some(40));
+    let v153_com_some = sub_153.inst_data_checkout(1, 10, 20, 30, 35, Some(40));
     assert_eq!(v153_com_some.data.len(), 22, "1.5.3 não ganha o sexto campo só por receber Some");
+}
+
+#[test]
+fn test_self_info_1_155_ganha_o_state2() {
+    // Achado em 2026-09-03 lendo `cmd_self_info_1::CheckValid` em EC_GPDataType.h (source
+    // do client 1.5.5, F:\PW\1.5.5\EvolvedPWClient — sem captura disponível para essa
+    // versão): faltando o `state2` (int) depois do `state`, `CalcS2CCmdDataSize` recusa o
+    // pacote como "unknown command" (CHECK_VALID falha), o `case SELF_INFO_1` que cancela
+    // o timeout `OT_ENTERGAME` nunca roda, e o cliente trava 30s na tela de login e
+    // desconecta com "EnterWorld Overtime".
+    let pos = Vector3::new(10.0, 20.0, 30.0);
+
+    let sub_126 = PorVersao::new(GameVersion::V1_2_6);
+    let pacote_126 = sub_126.self_info_1(1000, 500, 1024, pos, 32);
+    // 2 (cabeçalho) + 34 (cmd_self_info_1 do 1.2.6, sem state2) = 36 bytes.
+    assert_eq!(pacote_126.data.len(), 36, "1.2.6 continua nos 34 bytes de sempre");
+
+    let sub_155 = PorVersao::new(GameVersion::V1_5_5);
+    let pacote_155 = sub_155.self_info_1(1000, 500, 1024, pos, 32);
+    // 2 (cabeçalho) + 34 + 4 (state2) = 40 bytes.
+    assert_eq!(pacote_155.data.len(), 40, "1.5.5 precisa do state2 de 4 bytes no fim");
+}
+
+#[test]
+fn test_player_waypoint_list_devolve_os_ids_recebidos() {
+    // Achado em 2026-09-03: sem essa resposta, o client (EC_World.cpp, checagem que roda a
+    // cada quadro) nunca considera um waypoint "conhecido" e reenvia ACTIVATE_REGION_WAYPOINTS
+    // (C2S 178) pra sempre — media de ~166 vezes por segundo num teste real, com a tela de
+    // entrada no mundo travada. `count` é `size_t` no engine (32 bits) = 4 bytes, não 2.
+    let pacote = S2CGamedataSend::player_waypoint_list(&[5201, 100]);
+    assert_eq!(u16::from_le_bytes([pacote.data[0], pacote.data[1]]), 180);
+    let count = u32::from_le_bytes(pacote.data[2..6].try_into().unwrap());
+    assert_eq!(count, 2);
+    assert_eq!(u16::from_le_bytes([pacote.data[6], pacote.data[7]]), 5201);
+    assert_eq!(u16::from_le_bytes([pacote.data[8], pacote.data[9]]), 100);
+    assert_eq!(pacote.data.len(), 10);
+}
+
+#[test]
+fn test_get_own_money_155_ganha_o_color_name() {
+    // O IR do 1.5.3 (structs["S2C::cmd_get_own_money"]) mede 8 bytes: amount + max_amount,
+    // sem `color_name`. O 1.5.5 acrescenta esse terceiro campo — achado em 2026-09-03 em
+    // `EvolvedPWServer/cgame/common/protocol.h` (sem captura disponível pro 1.5.5).
+    let sub_153 = PorVersao::new(GameVersion::V1_5_3);
+    let pacote_153 = sub_153.get_own_money(1000, 2_000_000_000, 7);
+    assert_eq!(pacote_153.data.len(), 10, "2 (cabeçalho) + 8 = 10 bytes, sem color_name");
+
+    let sub_155 = PorVersao::new(GameVersion::V1_5_5);
+    let pacote_155 = sub_155.get_own_money(1000, 2_000_000_000, 7);
+    assert_eq!(pacote_155.data.len(), 14, "2 (cabeçalho) + 8 + 4 (color_name) = 14 bytes");
+    let color_name = u32::from_le_bytes(pacote_155.data[10..14].try_into().unwrap());
+    assert_eq!(color_name, 7);
+}
+
+#[test]
+fn test_server_time_leva_o_lua_version_certo() {
+    // Regressão do bug achado em 2026-09-03: `lua_version = 0` faz o client comparar contra
+    // a primeira linha do seu `global_api.lua` local (`--102`), não bater, setar
+    // `FATAL_ERROR_WRONG_CONFIGDATA` e fechar o processo — "exit process because wrong
+    // config data" nos dois clients de teste, ~1.3s depois do SetServerTime.
+    let pacote = S2CGamedataSend::server_time(1_700_000_000, 0, 102);
+    assert_eq!(u16::from_le_bytes([pacote.data[0], pacote.data[1]]), 114);
+    let lua_version = i32::from_le_bytes(pacote.data[10..14].try_into().unwrap());
+    assert_eq!(lua_version, 102, "lua_version errado derruba o client, não é cosmético");
+}
+
+#[test]
+fn test_inst_data_checkout_gshop_e_gshop2_sao_valores_diferentes() {
+    // Regressão do bug achado em 2026-09-03: `S2CGamedataSend::inst_data_checkout`
+    // escrevia o mesmo `gshop_ts` duas vezes no fio, então o cliente sempre via
+    // `gshop_time_stamp2` errado (igual ao primeiro, nunca o valor real de
+    // `gshop2.data`/`gshop1.data`) — um cliente 1.5.5 real recusava a instância com
+    // "gshop1 timestamp error" mesmo depois do handshake de login já ter passado.
+    let sub = PorVersao::new(GameVersion::V1_5_3);
+    let pacote = sub.inst_data_checkout(1, 10, 20, 0x1111_1111, 0x2222_2222, None);
+    let gshop_no_fio = u32::from_le_bytes(pacote.data[14..18].try_into().unwrap());
+    let gshop2_no_fio = u32::from_le_bytes(pacote.data[18..22].try_into().unwrap());
+    assert_eq!(gshop_no_fio, 0x1111_1111);
+    assert_eq!(gshop2_no_fio, 0x2222_2222, "gshop_time_stamp2 tem que ser o valor de gshop2, não uma cópia do gshop");
 }

@@ -1,6 +1,7 @@
 use crate::aipolicy::AiPolicyData;
 use crate::collision::MapCollision;
 use crate::elements::ElementsData;
+use crate::generic_elements::{self, GenericElementsData};
 use crate::gshop::GShopData;
 use crate::npcgen::NpcGenData;
 use crate::tasks::TasksData;
@@ -105,7 +106,15 @@ impl fmt::Display for RelatorioDeCarga {
 /// Gerenciador Central de Dados de Jogo (Carregado na inicialização do World Server)
 #[derive(Debug, Clone, Default)]
 pub struct GameDataManager {
+    /// Leitor **tipado** antigo (`TABLE_SIZES_V7`, 118 tabelas) — só populado quando
+    /// [`Self::elements_generic`] não cobre a versão do arquivo (hoje, 1.2.6/v7). Ver
+    /// `crates/pw-data-loader/src/generic_elements.rs` para o porquê da migração.
     pub elements: ElementsData,
+    /// Leitor **genérico**, dirigido pelo catálogo de `specs/elements_layouts/` — 231
+    /// tabelas, validado byte a byte. Populado quando a versão do `elements.data` deste
+    /// realm está no catálogo (hoje, v156/1.5.5). `None` quando a pasta não tem
+    /// `elements.data`, ou quando a versão só o leitor tipado acima cobre.
+    pub elements_generic: Option<GenericElementsData>,
     pub gshop: GShopData,
     /// O **segundo** shop. Existe separado porque o `edition` do handshake carrega os
     /// dois timestamps, e eles vêm de arquivos diferentes.
@@ -134,6 +143,15 @@ pub struct GameDataManager {
     // Spawns indexados por ID do Mapa/Instância (ex: 1 -> world/npcgen.data, 101 -> a01/npcgen.data)
     pub map_spawns: HashMap<i32, NpcGenData>,
     pub collisions: HashMap<i32, MapCollision>,
+
+    /// `dwTimeStamp` de `<mapa>/region.sev`, indexado por ID de mapa/instância (mesma
+    /// chave de [`Self::map_spawns`]). É um dos valores que `INST_DATA_CHECKOUT` (comando
+    /// 206) manda ao cliente ao entrar no mundo — se não bater com o que o `region.clt`
+    /// local do cliente tem, ele rejeita a instância e o mundo nunca termina de carregar
+    /// (achado em 2026-09-03, cliente 1.5.5 real: "regionset timestamp error").
+    pub region_timestamps: HashMap<i32, u32>,
+    /// `dwTimeStamp` de `<mapa>/precinct.sev`, mesma história do campo acima.
+    pub precinct_timestamps: HashMap<i32, u32>,
 }
 
 impl GameDataManager {
@@ -155,17 +173,36 @@ impl GameDataManager {
         if let Some(data) = rel.ler(dir, "elements.data") {
             // O cabeçalho primeiro, e **em separado**: são 8 bytes exatos, documentados em
             // `ElementsData::ler_cabecalho`, e deles sai o `ELEMENTDATA_VERSION` que vai
-            // para o `edition` do handshake. Ler as 118 tabelas é outra história — a do
-            // 1.5.3 o nosso parser ainda não termina — e o login não pode depender dela.
+            // para o `edition` do handshake. Ler as tabelas é outra história, e o login não
+            // pode depender dela.
             match ElementsData::ler_cabecalho(&data) {
                 Ok((versao, _t)) => self.versao_do_elements = Some(versao),
                 Err(e) => rel.falhou("elements.data (cabeçalho)", e),
             }
 
-            match ElementsData::load_from_bytes(&data) {
+            // Duas leituras possíveis, escolhidas pela versão do próprio arquivo (nunca
+            // pelo nome/pasta do realm — ver `pw_universal_overview` na memória, princípio
+            // central do projeto). O catálogo genérico (`specs/elements_layouts/vNNN.json`)
+            // é a fonte de verdade quando cobre a versão — validado byte a byte contra as
+            // tabelas reais de v156 e v159, diferente do leitor tipado abaixo, que nunca
+            // terminou de carregar nenhum dos dois. `load_elements_data_auto` detecta a
+            // versão sozinho e escolhe os overrides certos pra ela (nunca aplica o override
+            // de uma build a um arquivo de outra — ver `load_overrides_for_version`). O
+            // leitor tipado só entra como fallback para versões que o catálogo ainda não
+            // tem (1.2.6/v7 hoje).
+            match generic_elements::load_elements_data_auto(&data) {
                 Ok(d) => {
-                    self.elements = d;
+                    self.elements_generic = Some(d);
                     rel.lidos.push("elements.data".into());
+                }
+                Err(generic_elements::GenericElementsError::UnsupportedVersion(_)) => {
+                    match ElementsData::load_from_bytes(&data) {
+                        Ok(d) => {
+                            self.elements = d;
+                            rel.lidos.push("elements.data".into());
+                        }
+                        Err(e) => rel.falhou("elements.data", e),
+                    }
                 }
                 Err(e) => rel.falhou("elements.data", e),
             }
@@ -291,6 +328,27 @@ impl GameDataManager {
         rel
     }
 
+    /// Quanto um item de cura restaura de HP/MP, segundo o `elements.data` deste realm —
+    /// `None` quando o item não é remédio (é a resposta certa para uma arma, não um zero
+    /// disfarçado de cura).
+    ///
+    /// Funciona nos dois formatos: quando [`Self::elements_generic`] está populado (builds
+    /// cobertas pelo catálogo, ex. v156/1.5.5), consulta a tabela `MEDICINE_ESSENCE` por lá;
+    /// senão cai para o leitor tipado (`Self::elements.medicines`, 1.2.6/v7).
+    pub fn quanto_o_remedio_restaura(&self, item_id: u32) -> Option<(i32, i32)> {
+        if let Some(g) = &self.elements_generic {
+            let rec = g
+                .get("MEDICINE_ESSENCE")
+                .iter()
+                .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?;
+            let hp = rec.get("hp_add_total").and_then(|v| v.as_i32()).unwrap_or(0);
+            let mp = rec.get("mp_add_total").and_then(|v| v.as_i32()).unwrap_or(0);
+            return Some((hp, mp));
+        }
+        let m = self.elements.medicines.get(&item_id)?;
+        Some((m.hp_restore, m.mp_restore))
+    }
+
     /// Carrega os dados específicos de uma pasta de mapa (`npcgen.data` e colisão).
     ///
     /// `rotulo` é o nome da pasta como ela aparece no relatório; sem ele, uma falha em
@@ -325,7 +383,73 @@ impl GameDataManager {
                 Err(e) => rel.falhou(&nome, e),
             }
         }
+
+        let region_nome = format!("{rotulo}/region.sev");
+        if let Some(data) = rel.ler_como(map_dir, "region.sev", &region_nome) {
+            match ler_timestamp_region_sev(&data) {
+                Ok(ts) => {
+                    self.region_timestamps.insert(world_id, ts);
+                    rel.lidos.push(region_nome);
+                }
+                Err(e) => rel.falhou(&region_nome, e),
+            }
+        }
+
+        let precinct_nome = format!("{rotulo}/precinct.sev");
+        if let Some(data) = rel.ler_como(map_dir, "precinct.sev", &precinct_nome) {
+            match ler_timestamp_precinct_sev(&data) {
+                Ok(ts) => {
+                    self.precinct_timestamps.insert(world_id, ts);
+                    rel.lidos.push(precinct_nome);
+                }
+                Err(e) => rel.falhou(&precinct_nome, e),
+            }
+        }
     }
+}
+
+/// Lê `dwTimeStamp` de um `region.sev` — formato confirmado em
+/// `cgame/gs/template/el_region.h`/`.cpp` (EvolvedPWServer), lado servidor (`#else
+/// _ELEMENTCLIENT`) de `CELRegionSet::Load(const char*)`: `REGIONFILEHEADER4`
+/// (`dwVersion:u32, iNumRegion:i32, iNumTrans:i32, dwTimeStamp:u32`), válido pra
+/// `dwVersion >= 4` (`ELRGNFILE_VERSION = 5` na árvore que temos — é a única versão real
+/// medida, `data/realm_155/config/world/region.sev`). Versões mais antigas (< 4) não têm
+/// este campo (o carregador original usa `dwTimeStamp = 0`) — não implementadas aqui por
+/// falta de um arquivo real pra confirmar o layout, mesmo princípio do resto do projeto:
+/// recusar em vez de adivinhar.
+fn ler_timestamp_region_sev(data: &[u8]) -> std::io::Result<u32> {
+    use byteorder::{LittleEndian, ReadBytesExt};
+    use std::io::Cursor;
+    let mut c = Cursor::new(data);
+    let versao = c.read_u32::<LittleEndian>()?;
+    if versao < 4 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("region.sev versão {versao} < 4 não tem dwTimeStamp — formato não implementado, sem arquivo real pra confirmar"),
+        ));
+    }
+    c.set_position(12); // dwVersion(4) + iNumRegion(4) + iNumTrans(4)
+    Ok(c.read_u32::<LittleEndian>()?)
+}
+
+/// Lê `dwTimeStamp` de um `precinct.sev` — formato confirmado em
+/// `cgame/gs/template/el_precinct.h` (EvolvedPWServer): `PRECINCTFILEHEADER5`
+/// (`dwVersion:u32, iNumPrecinct:i32, dwTimeStamp:u32`), válido pra `dwVersion >= 5`
+/// (única versão real medida: 7, `data/realm_155/config/world/precinct.sev`). Mesma
+/// ressalva do `region.sev` acima para versões mais antigas.
+fn ler_timestamp_precinct_sev(data: &[u8]) -> std::io::Result<u32> {
+    use byteorder::{LittleEndian, ReadBytesExt};
+    use std::io::Cursor;
+    let mut c = Cursor::new(data);
+    let versao = c.read_u32::<LittleEndian>()?;
+    if versao < 5 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("precinct.sev versão {versao} < 5 não tem dwTimeStamp — formato não implementado, sem arquivo real pra confirmar"),
+        ));
+    }
+    c.set_position(8); // dwVersion(4) + iNumPrecinct(4)
+    Ok(c.read_u32::<LittleEndian>()?)
 }
 
 #[cfg(test)]

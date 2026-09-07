@@ -24,6 +24,8 @@ pub enum InboundPacket {
     GetUIConfig(C2SGetUIConfig),
     SetUIConfig(C2SSetUIConfig),
     SetCustomData(C2SSetCustomData),
+    PlayerBaseInfo(C2SPlayerBaseInfo),
+    GetCustomData(C2SGetCustomData),
     GetFriendList(C2SGetFriendList),
     GetWaitDelRoles(C2SGetWaitDelRoles),
     QueryServerTime(C2SQueryServerTime),
@@ -54,6 +56,8 @@ pub enum OutboundPacket {
     GetUIConfigRe(S2CGetUIConfigRe),
     SetUIConfigRe(S2CSetUIConfigRe),
     SetCustomDataRe(S2CSetCustomDataRe),
+    PlayerBaseInfoRe(S2CPlayerBaseInfoRe),
+    GetCustomDataRe(S2CGetCustomDataRe),
     PlayerLogout(S2CPlayerLogout),
     GetFriendListRe(S2CGetFriendListRe),
     GetWaitDelRolesRe(S2CGetWaitDelRolesRe),
@@ -155,6 +159,10 @@ impl Decoder for PwPacketCodec {
             OP_C2S_GET_UI_CONFIG => InboundPacket::GetUIConfig(C2SGetUIConfig::decode(&mut payload_stream)?),
             OP_C2S_SET_UI_CONFIG => InboundPacket::SetUIConfig(C2SSetUIConfig::decode(&mut payload_stream)?),
             OP_C2S_SET_CUSTOM_DATA => InboundPacket::SetCustomData(C2SSetCustomData::decode(&mut payload_stream)?),
+            OP_C2S_PLAYER_BASE_INFO => {
+                InboundPacket::PlayerBaseInfo(C2SPlayerBaseInfo::decode(&mut payload_stream)?)
+            }
+            OP_C2S_GET_CUSTOM_DATA => InboundPacket::GetCustomData(C2SGetCustomData::decode(&mut payload_stream)?),
             OP_C2S_GET_FRIEND_LIST => InboundPacket::GetFriendList(C2SGetFriendList::decode(&mut payload_stream)?),
             OP_C2S_GET_WAIT_DEL_ROLES => InboundPacket::GetWaitDelRoles(C2SGetWaitDelRoles::decode(&mut payload_stream)?),
             OP_C2S_QUERY_SERVER_TIME => InboundPacket::QueryServerTime(C2SQueryServerTime::decode(&mut payload_stream)?),
@@ -280,6 +288,16 @@ impl Encoder<OutboundPacket> for PwPacketCodec {
                 p.encode(&mut ps, self.adapter.version().as_str());
                 (OP_S2C_SET_CUSTOM_DATA_RE, ps.into_bytes())
             }
+            OutboundPacket::PlayerBaseInfoRe(p) => {
+                let mut ps = OctetsStream::new();
+                p.encode(&mut ps, self.adapter.version().as_str());
+                (OP_S2C_PLAYER_BASE_INFO_RE, ps.into_bytes())
+            }
+            OutboundPacket::GetCustomDataRe(p) => {
+                let mut ps = OctetsStream::new();
+                p.encode(&mut ps, self.adapter.version().as_str());
+                (OP_S2C_GET_CUSTOM_DATA_RE, ps.into_bytes())
+            }
             OutboundPacket::PlayerLogout(p) => {
                 let mut ps = OctetsStream::new();
                 p.encode(&mut ps, self.adapter.version().as_str());
@@ -322,6 +340,31 @@ impl Encoder<OutboundPacket> for PwPacketCodec {
             }
             OutboundPacket::Raw { opcode, payload } => (opcode, bytes::Bytes::from(payload)),
         };
+
+        // Instrumentação temporária (2026-09-05, investigação de visibilidade/sincronismo
+        // entre jogadores — ver docs/ESTADO_E_RETOMADA.md, item 22/23/24): mostra o payload
+        // TEXTUAL (antes de qualquer criptografia de fio) de `GamedataSend` — com o id do
+        // subcomando, no mesmo formato do log já existente pro sentido cliente→servidor
+        // ("Gamedata recebido do cliente") — e de `PlayerBaseInfoRe`, os dois pacotes no
+        // centro da investigação atual. Remover quando o diagnóstico terminar.
+        //
+        // `payload` aqui já passou por `encode_gamedata_send` (`write_octets`), que
+        // prefixa o `CompactUINT` do tamanho **antes** do id do subcomando — achado
+        // depurando por que este log nunca mostrava `cmd=66`/`cmd=15` mesmo quando o
+        // `EQUIP_DATA`/`OBJECT_MOVE` chegavam certos no cliente: a primeira versão deste
+        // log lia `payload[0..2]` direto, pegando o prefixo de tamanho em vez do id.
+        if opcode == OP_S2C_GAMEDATASEND {
+            if let Some((cmd, corpo)) = payload.first().copied().and_then(|b0| {
+                let prefixo = if b0 & 0x80 == 0 { 1 } else if b0 & 0xC0 == 0x80 { 2 } else { 4 };
+                let corpo = payload.get(prefixo..)?;
+                let cmd = u16::from_le_bytes([*corpo.first()?, *corpo.get(1)?]);
+                Some((cmd, corpo))
+            }) {
+                debug!("Gamedata enviado ao cliente ({} bytes, cmd={}): {:02x?}", payload.len(), cmd, corpo);
+            }
+        } else if opcode == OP_S2C_PLAYER_BASE_INFO_RE {
+            debug!("PlayerBaseInfoRe enviado ({} bytes): {:02x?}", payload.len(), &payload[..]);
+        }
 
         // Wanmei Network Framing: [CompactUINT(opcode)] [CompactUINT(payload_len)] [payload_bytes]
         let mut frame_header = OctetsStream::new();

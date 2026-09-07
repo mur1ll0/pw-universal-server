@@ -42,6 +42,22 @@ const OPCODES: &str = include_str!("../src/opcodes.rs");
 /// o comando, não a grafia.
 const INTENCAO: &[(&str, &str)] = &[
     ("self_info_1", "SELF_INFO_1"),
+    ("player_waypoint_list", "WAYPOINT_LIST"),
+    ("get_own_money", "GET_OWN_MONEY"),
+    ("host_reputation", "HOST_REPUTATION"),
+    ("pvp_mode", "PVP_MODE"),
+    ("self_country_notify", "SELF_COUNTRY_NOTIFY"),
+    ("server_time", "SERVER_TIME"),
+    ("trashbox_pwd_state", "TRASHBOX_PWD_STATE"),
+    ("pet_room_capacity", "PET_ROOM_CAPACITY"),
+    ("self_king_notify", "SELF_KING_NOTIFY"),
+    ("faction_contrib_notify", "FACTION_CONTRIB_NOTIFY"),
+    ("player_leadership", "PLAYER_LEADERSHIP"),
+    ("player_world_contribution", "PLAYER_WORLD_CONTRIBUTION"),
+    ("player_dividend", "PLAYER_DIVIDEND"),
+    ("available_double_exp_time", "AVAILABLE_DOUBLE_EXP_TIME"),
+    ("double_exp_time", "DOUBLE_EXP_TIME"),
+    ("pariah_time", "PARIAH_TIME"),
     ("self_info_00", "SELF_INFO_00"),
     ("notify_hostpos", "NOTIFY_HOSTPOS"),
     ("mall_item_price", "MALL_ITEM_PRICE"),
@@ -70,6 +86,9 @@ const INTENCAO: &[(&str, &str)] = &[
     ("npc_enter_slice", "NPC_ENTER_SLICE"),
     ("npc_enter_world", "NPC_ENTER_WORLD"),
     ("npc_info_00", "NPC_INFO_00"),
+    ("equip_data", "EQUIP_DATA"),
+    ("object_move", "OBJECT_MOVE"),
+    ("object_stop_move", "OBJECT_STOP_MOVE"),
     ("unselect", "UNSELECT"),
     ("object_cast_skill", "OBJECT_CAST_SKILL"),
     ("skill_perform", "SKILL_PERFORM"),
@@ -115,6 +134,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("trashbox_wealth", "TRASHBOX_WEALTH"),
     ("enter_sanctuary", "ENTER_SANCTUARY"),
     ("leave_sanctuary", "LEAVE_SANCTUARY"),
+    ("player_leave_world", "PLAYER_LEAVE_WORLD"),
     ("player_enable_fashion", "PLAYER_ENABLE_FASHION"),
     ("player_cash", "PLAYER_CASH"),
     ("mall_item_buy_failed", "MALL_ITEM_BUY_FAILED"),
@@ -164,7 +184,6 @@ const DELEGAM: &[&str] = &[
 /// **Esta lista só encolhe.** Quem resolver um caso tira o nome daqui.
 const LAYOUT_DIVERGE: &[&str] = &[
     "notify_hostpos",
-    "object_skill_attack_result",
     "repair",
     "produce_start",
     "produce_once",
@@ -177,6 +196,17 @@ const LAYOUT_DIVERGE: &[&str] = &[
     "mall_item_buy_failed",
     "pariah_rise",
     "duel_result",
+    // Estes quatro passaram a divergir em 2026-09-04, quando `bytes_do_comando` parou
+    // de pular structs "de tamanho variável" que só têm um rabo condicional (ver o
+    // comentário da função). São divergências REAIS e MEDIDAS — cada um tem o layout
+    // certo em `PorVersao` (1.2.6 menor, 1.5.3+ com o(s) campo(s) extra do IR), e o
+    // que aparece aqui é só a base `S2CGamedataSend::*` (o layout do 1.2.6), que nunca
+    // teve por que mudar. Ver `docs/ESTADO_E_RETOMADA.md`, itens 14 e 15.
+    "task_data",             // TASK_DATA: 3 blocos no 1.2.6, 5 do 1.5.3 em diante
+    "npc_enter_world",       // NPC_ENTER_WORLD: sem vis_tid/state2 no 1.2.6
+    "npc_enter_slice",       // NPC_ENTER_SLICE: mesma struct de NPC_ENTER_WORLD
+    "self_info_1",           // SELF_INFO_1: sem state2 no 1.2.6/1.5.3 (só o 1.5.5 tem
+                              // evidência de fonte pra esse campo — ver `PorVersao`)
 ];
 
 fn ir() -> Value {
@@ -548,13 +578,39 @@ fn variavel(corpo: &str) -> bool {
 
 /// Tamanho, em bytes, do payload que o IR dá ao comando (sem o cabeçalho: as structs do
 /// **cliente** não o incluem, ao contrário das do servidor).
+///
+/// **Achado em 2026-09-04**: quando a struct não tem `bytes` fixo no IR (o `pw-rpcgen`
+/// marca como "variável" toda struct com campos condicionais no fim, mesmo que o começo
+/// seja fixo), esta função devolvia `None` e o chamador simplesmente pulava a
+/// comparação — sem contar como divergência nem como confirmação. Foi assim que
+/// `TASK_DATA` (3 blocos escritos contra 5 do IR) e `NPC_ENTER_WORLD`/`NPC_ENTER_SLICE`
+/// (27 bytes contra 35, faltando `vis_tid`/`state2`) atravessaram este teste sem
+/// acusar nada — os dois derrubaram o crash de render e a visibilidade de NPC no
+/// 1.5.5 (ver `docs/ESTADO_E_RETOMADA.md`, itens 14 e 15). Agora cai pro
+/// **tamanho-base**: a soma dos campos que TÊM tamanho fixo, que é o mínimo que
+/// qualquer registro real desse comando ocupa (os campos condicionais só aumentam,
+/// nunca diminuem esse piso). Só continua devolvendo `None` quando algum campo em si
+/// não tem tamanho fixo — aí a struct é variável de verdade, não só "tem um rabo
+/// condicional", e a comparação não se aplica.
 fn bytes_do_comando(ir: &Value, comando: &str) -> Option<usize> {
     let c = ir["commands"]["s2c"]
         .as_array()?
         .iter()
         .find(|c| c["name"] == comando)?;
     let nome = c["struct"].as_str()?;
-    ir["structs"][nome]["bytes"].as_u64().map(|b| b as usize)
+    let s = &ir["structs"][nome];
+    if let Some(b) = s["bytes"].as_u64() {
+        return Some(b as usize);
+    }
+    let campos = s["fields"].as_array()?;
+    if campos.is_empty() {
+        return None;
+    }
+    let mut total = 0usize;
+    for campo in campos {
+        total += campo["bytes"].as_u64()? as usize;
+    }
+    Some(total)
 }
 
 /// Quantos bytes a função escreve **no fluxo de saída**, depois do cabeçalho.

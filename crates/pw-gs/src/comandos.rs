@@ -97,6 +97,9 @@ pub mod ids {
     pub const GET_ALL_DATA: u16 = 39;
     /// `SRV::C2S::CMD::query_player_info_1` — `count` (2) e a lista de ids a partir do 4.
     pub const QUERY_PLAYER_INFO_1: u16 = 67;
+    /// `SRV::C2S::CMD::get_others_equipment` — mesmo formato do 67: `size` (2) e a lista
+    /// de ids a partir do 4 (`cmd_get_other_equip`, `EC_SendC2SCmds.cpp:2393` no client).
+    pub const GET_OTHER_EQUIP: u16 = 33;
     /// `SRV::C2S::CMD::query_npc_info_1` — mesmo formato do 67.
     pub const QUERY_NPC_INFO_1: u16 = 68;
     /// `QUERY_CASH_INFO` — só cabeçalho. O cliente pergunta o saldo.

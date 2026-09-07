@@ -52,6 +52,7 @@ const INTENCAO: &[(u16, &str)] = &[
     (85, "SWITCH_FASHION_MODE"),
     (92, "DUEL_REQUEST"),
     (118, "GET_MALL_ITEM_PRICE"),
+    (178, "ACTIVATE_REGION_WAYPOINTS"),
 ];
 
 fn ir() -> Value {

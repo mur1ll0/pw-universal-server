@@ -60,7 +60,7 @@ fn escrever(p: &PorVersao, id: u16) -> Vec<u8> {
         142 => p.self_skill_attack_result(103, 102, 17, 0, 6, 0).data,
         164 => p.enter_sanctuary(48).data,
         165 => p.leave_sanctuary(48).data,
-        206 => p.inst_data_checkout(1, 0x46b1_a9ac, 0x46b1_a9ac, 0x47e8_b6ff, None).data,
+        206 => p.inst_data_checkout(1, 0x46b1_a9ac, 0x46b1_a9ac, 0x47e8_b6ff, 0x47e8_b6ff, None).data,
         outro => panic!("o comando {outro} está na tabela e não tem chamada aqui"),
     };
     d
@@ -161,4 +161,62 @@ fn o_hp_do_npc_info_00_do_126_fica_onde_a_captura_mostrou() {
     assert_eq!(i32::from_le_bytes([d[2], d[3], d[4], d[5]]), 900_001, "idNPC");
     assert_eq!(i32::from_le_bytes([d[6], d[7], d[8], d[9]]), 11, "iHP fora do lugar");
     assert_eq!(i32::from_le_bytes([d[10], d[11], d[12], d[13]]), 29, "iMaxHP fora do lugar");
+}
+
+/// `TASK_DATA` (105): três blocos de tamanho no 1.2.6, cinco do 1.5.3 em diante.
+///
+/// Medido por desmontagem de `CECHostPlayer::OnMsgHstTaskData` nos dois clients reais
+/// (ver `PorVersao::task_data` para os endereços e o raciocínio). Mandar três blocos pro
+/// 1.5.5 fazia o cliente ler 8 bytes depois do fim do buffer e deixava
+/// `CECHostPlayer[+0x1508]` nulo — o mesmo campo que aparece nulo no minidump do crash.
+#[test]
+fn task_data_tem_tres_blocos_no_126_e_cinco_do_153_em_diante() {
+    let cabecalho = 2; // u16 com o id do subcomando (105)
+
+    let p126 = PorVersao::new(GameVersion::V1_2_6);
+    let b126 = p126.task_data().data;
+    assert_eq!(&b126[..2], &105u16.to_le_bytes());
+    assert_eq!(b126.len(), cabecalho + 3 * 4, "1.2.6 espera exatamente 3 blocos");
+    assert!(b126[2..].iter().all(|&b| b == 0), "todos os tamanhos são zero");
+
+    for versao in [GameVersion::V1_5_3, GameVersion::V1_5_5] {
+        let b = PorVersao::new(versao).task_data().data;
+        assert_eq!(&b[..2], &105u16.to_le_bytes());
+        assert_eq!(b.len(), cabecalho + 5 * 4, "{versao:?} espera exatamente 5 blocos");
+        assert!(b[2..].iter().all(|&x| x == 0), "todos os tamanhos são zero");
+    }
+}
+
+/// `NPC_ENTER_WORLD`/`NPC_ENTER_SLICE`: 27 bytes de payload no 1.2.6, 35 do 1.5.3 em diante.
+///
+/// A struct `S2C::info_npc` do IR (idêntica em `gamedata_153.json` e `gamedata_155.json`)
+/// tem `vis_tid` no meio e `state2` no fim; o layout que este projeto sempre escreveu era o
+/// do 1.2.6, sem os dois. Com 27 bytes o client 1.5.5 recebia os NPCs e não desenhava
+/// nenhum — ver `PorVersao::npc_enter_world`.
+#[test]
+fn info_npc_ganha_vis_tid_e_state2_do_153_em_diante() {
+    use pw_core::Vector3;
+    let pos = Vector3::new(1.0, 2.0, 3.0);
+    let cabecalho = 2;
+
+    let b126 = PorVersao::new(GameVersion::V1_2_6).npc_enter_world(7, 2191, pos, 64).data;
+    assert_eq!(&b126[..2], &16u16.to_le_bytes());
+    assert_eq!(b126.len(), cabecalho + 27, "1.2.6: nid+tid+pos+seed+dir+state");
+
+    for versao in [GameVersion::V1_5_3, GameVersion::V1_5_5] {
+        let b = PorVersao::new(versao).npc_enter_world(7, 2191, pos, 64).data;
+        assert_eq!(b.len(), cabecalho + 35, "{versao:?}: com vis_tid e state2");
+        // vis_tid vem logo depois do tid e vai igual a ele
+        let tid = i32::from_le_bytes(b[6..10].try_into().unwrap());
+        let vis_tid = i32::from_le_bytes(b[10..14].try_into().unwrap());
+        assert_eq!(tid, 2191);
+        assert_eq!(vis_tid, tid, "vis_tid espelha o tid enquanto nada troca a aparência");
+        // state2, os 4 últimos bytes, zerado
+        assert_eq!(&b[b.len() - 4..], &0i32.to_le_bytes());
+    }
+
+    // O ENTER_SLICE carrega a mesma struct, só muda o id do comando.
+    let slice = PorVersao::new(GameVersion::V1_5_5).npc_enter_slice(7, 2191, pos, 64).data;
+    assert_eq!(&slice[..2], &11u16.to_le_bytes());
+    assert_eq!(slice.len(), cabecalho + 35);
 }

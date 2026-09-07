@@ -353,6 +353,54 @@ impl C2SGetUIConfig {
     }
 }
 
+/// C2S: `PlayerBaseInfo` (opcode 91) — o cliente pede raça/classe/gênero/nome de uma
+/// lista de OUTROS jogadores. Chega logo depois de `PLAYER_ENTER_WORLD`
+/// (`CECPlayerMan::OnMsgPlayerInfo`, `EC_ManPlayer.cpp`), porque `info_player_1` não
+/// carrega nada disso — só o `cid`. Campos e ordem conforme o IR (`PlayerBaseInfo`,
+/// id 91): `roleid, localsid, playerlist` (`IntVector`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct C2SPlayerBaseInfo {
+    pub role_id: i32,
+    pub localsid: u32,
+    pub playerlist: Vec<i32>,
+}
+
+impl C2SPlayerBaseInfo {
+    pub fn decode(stream: &mut OctetsStream) -> Result<Self> {
+        let role_id = stream.read_i32()?;
+        let localsid = stream.read_u32()?;
+        let n = stream.read_compact_uint()? as usize;
+        let mut playerlist = Vec::with_capacity(n);
+        for _ in 0..n {
+            playerlist.push(stream.read_i32()?);
+        }
+        Ok(Self { role_id, localsid, playerlist })
+    }
+}
+
+/// C2S: `GetCustomData` (opcode 116) — a aparência customizada de uma lista de OUTROS
+/// jogadores. Mesma forma de `PlayerBaseInfo`, mesmo motivo (`OnMsgPlayerInfo` pede em
+/// seguida, se a base já estava pronta mas a aparência não).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct C2SGetCustomData {
+    pub role_id: i32,
+    pub localsid: u32,
+    pub playerlist: Vec<i32>,
+}
+
+impl C2SGetCustomData {
+    pub fn decode(stream: &mut OctetsStream) -> Result<Self> {
+        let role_id = stream.read_i32()?;
+        let localsid = stream.read_u32()?;
+        let n = stream.read_compact_uint()? as usize;
+        let mut playerlist = Vec::with_capacity(n);
+        for _ in 0..n {
+            playerlist.push(stream.read_i32()?);
+        }
+        Ok(Self { role_id, localsid, playerlist })
+    }
+}
+
 /// C2S: GetFriendList (Opcode 0xCE / 206)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct C2SGetFriendList {

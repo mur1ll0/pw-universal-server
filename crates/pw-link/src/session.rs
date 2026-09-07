@@ -26,6 +26,25 @@ pub struct ClientSession {
     pub localsid: u32,
     pub target_id: Option<i32>,
     pub sec_level: u8,
+    /// Se já mandamos `GetUIConfig_Re` pro personagem atual nesta sessão.
+    ///
+    /// Achado em 2026-09-03: o client real manda um pedido `GetUIConfig` (opcode 104)
+    /// sozinho, disparado por `LoadConfigData()` quando processa o `TASK_DATA` do
+    /// `EnterWorld` — só que, testando ponta a ponta, esse pedido **nunca chegou** no
+    /// nosso servidor (log de `TASK_DATA enviado` aparece, log de `GetUIConfig pedido`
+    /// nunca aparece), e sem essa resposta o client fica preso na tela "Entrando em
+    /// Perfect World" pra sempre (`OnPrtcGetConfigRe` — que chama `EnableUI(true)` e
+    /// fecha essa tela — só roda ao receber `GetUIConfig_Re`).
+    ///
+    /// A correção anterior a este achado (2026-09-03, mais cedo) tinha um envio
+    /// proativo de `GetUIConfig_Re` no fim do `EnterWorld`, sem esperar o pedido do
+    /// client — e foi removida porque, quando o client TAMBÉM pedia sozinho, o
+    /// servidor respondia duas vezes, e a segunda passada por `OnPrtcGetConfigRe`
+    /// derrubava o client (o hook do `LogicCheck.dll` não é seguro rodar duas vezes).
+    /// Essa flag traz o envio proativo de volta, mas manda **no máximo uma vez** por
+    /// personagem/sessão — cobre os dois casos (client pede sozinho, ou não pede nunca)
+    /// sem repetir o crash antigo.
+    pub ui_config_enviado: bool,
     pub client_ip: String,
     pub realm_id: String,
     pub game_version: String,
@@ -47,6 +66,7 @@ impl ClientSession {
             localsid: 0,
             target_id: None,
             sec_level: 0,
+            ui_config_enviado: false,
             client_ip,
             realm_id,
             game_version,
@@ -65,6 +85,17 @@ impl ClientSession {
         self.role_id = Some(role_id);
         self.character_name = Some(name);
         self.state = SessionState::InWorld;
+        // Achado em 2026-09-04: `ui_config_enviado` nunca era resetada ao trocar de
+        // personagem na MESMA conexão (voltar à seleção — "meia saída" — e entrar com
+        // outro). A flag ficava `true` do personagem anterior, então o `GetUIConfig_Re`
+        // proativo do novo personagem era pulado (achando que "já tinha sido mandado"),
+        // e o pedido que o client manda sozinho também era ignorado pelo mesmo motivo —
+        // sem nenhum `GetUIConfig_Re` chegar, o client preso pra sempre em "Entrando em
+        // Perfect World" (ver o comentário do campo, mais abaixo). Resetar aqui, no
+        // início de cada personagem, é a correção: o campo já documenta a intenção
+        // "por personagem/sessão", só faltava isto pra valer de verdade quando os dois
+        // coincidem mas mudam no meio da mesma conexão.
+        self.ui_config_enviado = false;
     }
 
     pub fn set_target(&mut self, target: i32) {

@@ -430,6 +430,7 @@ impl BusServer {
             ids::GET_ALL_DATA => self.todos_os_dados(roleid, &cmd.payload, envio).await,
             ids::QUERY_PLAYER_INFO_1 => self.consultar_jogadores(roleid, &cmd.payload, envio).await,
             ids::QUERY_NPC_INFO_1 => self.consultar_npcs(roleid, &cmd.payload, envio).await,
+            ids::GET_OTHER_EQUIP => self.equipamento_de_outro(roleid, &cmd.payload, envio).await,
             outro => {
                 debug!("mundo: subcomando {outro} de {roleid} ainda não tratado aqui");
             }
@@ -437,6 +438,23 @@ impl BusServer {
     }
 
     /// `C2S::PLAYER_MOVE` (0) — o jogador reporta onde está.
+    ///
+    /// # A causa raiz de "movimento não sincroniza entre jogadores"
+    ///
+    /// Isto só atualizava o mundo em memória — nunca avisava mais ninguém. O
+    /// `pw-link` tinha um mecanismo próprio (`InboundPacket::PlayerMove`/
+    /// `OutboundPacket::PlayerMoveBroadcast`, opcode GNET 33) que parecia cobrir isto,
+    /// mas **opcode 33 não existe na tabela de protocolos GNET real**
+    /// (`specs/protocol/gnet_155.json`) — nunca existiu, e o próprio decodificador do
+    /// cliente nunca produz `InboundPacket::PlayerMove` (todo `PLAYER_MOVE` chega como
+    /// `GamedataSend`, tratado aqui). Achado e confirmado em 2026-09-05
+    /// (`docs/ESTADO_E_RETOMADA.md`, item 23) depois de o Murillo testar em jogo com
+    /// dois clients e nada se mover na tela um do outro.
+    ///
+    /// Corrigido usando o comando real do protocolo, `OBJECT_MOVE` (S2C 15) — 21 bytes,
+    /// idêntico no 1.2.6 e no 1.5.3+ (`docs/MEDIDAS_DO_126.md`, o comando mais frequente
+    /// da captura inteira, 17294 ocorrências) — mandado pra todo outro jogador conectado
+    /// a este mundo (`transmitir_a_outros`).
     async fn mover(&self, roleid: i32, payload: &[u8]) {
         let Some(m) = PlayerMove::ler(payload) else {
             warn!(
@@ -460,6 +478,13 @@ impl BusServer {
         if !self.world.write().await.mover_jogador(roleid, pos) {
             trace!("mundo: movimento de {roleid}, que ainda não tem entidade neste mundo");
         }
+
+        let dest = Vector3::new(m.next_pos.x, m.next_pos.y, m.next_pos.z);
+        let pacote = self
+            .sub
+            .object_move(roleid, dest, m.use_time, m.speed as i16, m.move_mode)
+            .data;
+        self.transmitir_a_outros(roleid, pacote).await;
     }
 
     /// `C2S::LOGOUT` (1) — o jogador pediu para sair.
@@ -583,7 +608,8 @@ impl BusServer {
     /// `C2S::STOP_MOVE` (7) — o jogador parou.
     ///
     /// Mesma atualização do movimento: entidade e grade. O `gateway.rs` gravava no banco
-    /// aqui também, um `UPDATE` por parada.
+    /// aqui também, um `UPDATE` por parada. Mesma causa raiz e mesma correção do
+    /// `mover` acima — `OBJECT_STOP_MOVE` (S2C 35) pra quem mais está neste mundo.
     async fn parar(&self, roleid: i32, payload: &[u8]) {
         let Some(m) = StopMove::ler(payload) else {
             warn!("mundo: stop_move de {roleid} com payload curto");
@@ -591,6 +617,12 @@ impl BusServer {
         };
         let pos = Vector3::new(m.pos.x, m.pos.y, m.pos.z);
         self.world.write().await.mover_jogador(roleid, pos);
+
+        let pacote = self
+            .sub
+            .object_stop_move(roleid, pos, m.speed as i16, m.dir, m.move_mode)
+            .data;
+        self.transmitir_a_outros(roleid, pacote).await;
     }
 
     /// `C2S::NORMAL_ATTACK` (3) — ataque básico no alvo já selecionado.
@@ -1028,15 +1060,23 @@ impl BusServer {
         };
 
         // A animação sai antes do resultado — é o que o cliente espera ver.
+        //
+        // `OBJECT_CAST_SKILL` (85) é o comando real que faz OUTROS jogadores verem a
+        // animação de conjuração (`docs/MEDIDAS_DO_126.md`, comando 85, idêntico no
+        // 1.2.6 e no 1.5.3+) — mas só era mandado de volta a quem conjurou
+        // (`self.responder`), nunca a quem está por perto. Mesma causa raiz do
+        // `object_move`/`object_stop_move` (ver o comentário de `mover`, acima): a
+        // animação em si não depende do alvo ser monstro, então quem vê a tela pode ver
+        // a conjuração mesmo que o efeito (mais abaixo) só funcione contra monstro por
+        // ora.
         drop(mundo);
-        self.responder(
-            roleid,
-            S2CGamedataSend::object_cast_skill(roleid, alvo as i32, c.skill_id, 1000, 1).data,
-            envio,
-        )
-        .await;
-        self.responder(roleid, S2CGamedataSend::skill_perform().data, envio)
-            .await;
+        let cast_pkt = S2CGamedataSend::object_cast_skill(roleid, alvo as i32, c.skill_id, 1000, 1).data;
+        self.responder(roleid, cast_pkt.clone(), envio).await;
+        self.transmitir_a_outros(roleid, cast_pkt).await;
+
+        let perform_pkt = S2CGamedataSend::skill_perform().data;
+        self.responder(roleid, perform_pkt.clone(), envio).await;
+        self.transmitir_a_outros(roleid, perform_pkt).await;
 
         let mut mundo = self.world.write().await;
         let Some(atacante) = mundo.players.get(&(roleid as i64)).cloned() else {
@@ -1540,6 +1580,44 @@ impl BusServer {
         }
     }
 
+    /// `C2S::GET_OTHERS_EQUIPMENT` (33) — o cliente pede o equipamento visível de outro
+    /// jogador logo depois de receber `PLAYER_ENTER_WORLD` dele
+    /// (`EC_ManPlayer.cpp::OnMsgPlayerInfo`, `if (!pPlayer->IsEquipDataReady())
+    /// pSession->c2s_CmdGetOtherEquip(...)`).
+    ///
+    /// # A causa confirmada de "só aparece a caixa de colisão, o modelo nunca carrega"
+    ///
+    /// Este comando nunca tinha resposta nenhuma — caía no `outro =>` genérico deste
+    /// `match` e ficava mudo pra sempre. Sem uma resposta, `CECElsePlayer::
+    /// IsEquipDataReady()` nunca vira `true` (só `ChangeEquipments`, chamado ao processar
+    /// `EQUIP_DATA`/`EQUIP_DATA_CHANGED`, muda essa flag — `EC_ElsePlayer.cpp:1669-1675`),
+    /// e o modelo 3D só é criado quando `IsBaseInfoReady() && IsCustomDataReady() &&
+    /// IsEquipDataReady()` são true ao mesmo tempo (`EC_ElsePlayer.cpp:671`). Confirmado
+    /// em teste real com dois clientes (2026-09-04/05): o servidor mandava
+    /// `PLAYER_ENTER_WORLD` e respondia `PlayerBaseInfo` certo nos dois sentidos, os dois
+    /// clientes pediam `GetOtherEquip` (visto no log do realm, `cmd=33`), e nenhum dos
+    /// dois via o modelo do outro — só a caixa de colisão.
+    ///
+    /// `mask=0` (nenhum item) já é suficiente: ver o comentário de
+    /// `PorVersao::equip_data`/`S2CGamedataSend::equip_data` — o avatar aparece, sem
+    /// arma/armadura visível ainda (equipamento visual entre jogadores fica pra quando
+    /// alguém notar falta disso em jogo, mesmo espírito do que o item 19d já documentava
+    /// pra `CmdGetOtherEquip`).
+    async fn equipamento_de_outro(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
+        info!("mundo: get_other_equip pedido por {roleid}, payload bruto: {:02x?}", payload);
+        let Some(consulta) = ConsultaDeIds::ler(payload) else {
+            warn!("mundo: get_others_equipment de {roleid} com payload curto");
+            return;
+        };
+        info!("mundo: get_other_equip de {roleid} decodificado, ids: {:?}", consulta.ids);
+
+        for id in consulta.ids {
+            let pacote = self.sub.equip_data(id, 0, 0, 0, &[]).data;
+            info!("mundo: equip_data pra {roleid} sobre {id}, {} bytes: {:02x?}", pacote.len(), pacote);
+            self.responder(roleid, pacote, envio).await;
+        }
+    }
+
     /// `C2S::GET_ALL_DATA` (39) — a carga inicial ao entrar no mundo.
     ///
     /// Bolsa, equipamento, dinheiro e missões, **conforme os três sinalizadores** que o
@@ -1617,7 +1695,9 @@ impl BusServer {
         }
 
         // Sempre, mesmo sem missões: é o marcador de fim da carga.
-        self.responder(roleid, S2CGamedataSend::task_data().data, envio)
+        // Via `self.sub` porque o número de blocos depende da versão (3 no 1.2.6, 5 do
+        // 1.5.3 em diante) — ver `PorVersao::task_data`.
+        self.responder(roleid, self.sub.task_data().data, envio)
             .await;
     }
 
@@ -1937,6 +2017,30 @@ impl BusServer {
                 data,
             })
             .is_ok()
+    }
+
+    /// Manda o mesmo pacote pra todo jogador conectado a este servidor de mundo, **menos**
+    /// quem originou a ação (`exceto`) — o padrão de toda notificação de movimento/ação
+    /// visível a terceiros (`object_move`, `object_stop_move`, e o que vier depois na
+    /// mesma família).
+    ///
+    /// Mesma limitação sabida do `LinkGateway::jogadores_visiveis` (`pw-link`): sem
+    /// grade espacial, todo mundo deste servidor recebe, não só quem está perto.
+    /// `self.sessoes` é por realm/mundo (populado no `EnterWorld`, independente de
+    /// `WorldInstance::players`), então isto funciona mesmo sem o mundo saber quem é
+    /// vizinho de quem.
+    async fn transmitir_a_outros(&self, exceto: i32, data: Vec<u8>) {
+        let sessoes = self.sessoes.read().await;
+        for (id, s) in sessoes.iter() {
+            if *id == exceto {
+                continue;
+            }
+            let _ = s.envio.try_send(BusMessage::GameToClient {
+                roleid: *id,
+                localsid: s.localsid,
+                data: data.clone(),
+            });
+        }
     }
 
     /// Quantos jogadores este servidor de mundo está atendendo.

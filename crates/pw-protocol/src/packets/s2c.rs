@@ -500,6 +500,32 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// Cria o comando `WAYPOINT_LIST` (180) — a lista de pontos de teleporte que o
+    /// personagem já tem liberados.
+    ///
+    /// Achado em 2026-09-03 lendo o source real do 1.5.5 (`F:\PW\1.5.5\EvolvedPWServer` e
+    /// `EvolvedPWClient`, sem captura disponível para essa versão — instrução explícita do
+    /// Murillo para ir pelos fontes desta vez): `EC_World.cpp` (`CECWorld::...`, a checagem
+    /// que roda a cada quadro pra saber se os waypoints da região atual já foram avisados
+    /// pro servidor) só considera um waypoint "conhecido" se ele estiver na lista que
+    /// `WAYPOINT_LIST` mandou (`CECHostMsg::...`, `case WAYPOINT_LIST:
+    /// m_aWayPoints.SetSize(...)`). Como nosso servidor nunca mandava esse comando, a lista
+    /// do client ficava sempre vazia, TODO waypoint da região parecia "novo" em TODO quadro,
+    /// e o client vivia mandando `ACTIVATE_REGION_WAYPOINTS` (C2S 178) de novo — a ~166
+    /// vezes por segundo num teste real, sem nunca sair da tela "Entrando em Perfect World".
+    /// Devolver aqui os mesmos IDs que o client acabou de ativar (`SetSize` troca a lista
+    /// inteira, não soma — replicar exatamente o que o `player_waypoint_list` real do
+    /// `gplayer_imp::SendAllData` faz) quebra o ciclo.
+    pub fn player_waypoint_list(waypoints: &[u16]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(180); // CMD_S2C_WAYPOINT_LIST = 180
+        stream.write_u32_le(waypoints.len() as u32); // size_t count (4B neste engine de 32 bits)
+        for &wp in waypoints {
+            stream.write_u16_le(wp);
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// Cria o comando `MALL_ITEM_PRICE` (270), resposta à consulta de preços do gshop.
     ///
     /// # O id era 197, e 197 é outro comando
@@ -523,14 +549,20 @@ impl S2CGamedataSend {
     }
 
     /// Cria o comando SERVER_CONFIG_DATA / INST_DATA_CHECKOUT (Comando 206) para sincronizar timestamps do gshop e instâncias
-    pub fn inst_data_checkout(id_inst: i32, region_ts: u32, precinct_ts: u32, gshop_ts: u32) -> Self {
+    ///
+    /// `gshop_ts` e `gshop_ts2` são **dois valores diferentes**, de dois arquivos
+    /// diferentes (`gshop.data`/`gshop1.data`, ver `GameDataManager`) — antes desta
+    /// correção (2026-09-03) o segundo campo repetia o primeiro, achado batendo um
+    /// cliente 1.5.5 real contra o log ("gshop timestamp error" e "gshop1 timestamp
+    /// error" mostrando o mesmo valor errado nos dois).
+    pub fn inst_data_checkout(id_inst: i32, region_ts: u32, precinct_ts: u32, gshop_ts: u32, gshop_ts2: u32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(206);             // CMD_S2C_SERVER_CONFIG_DATA = 206
         stream.write_i32_le(id_inst);        // int idInst (1 = mundo aberto)
         stream.write_u32_le(region_ts);      // unsigned int region_time_stamp
         stream.write_u32_le(precinct_ts);    // unsigned int precinct_time_stamp
-        stream.write_u32_le(gshop_ts);       // unsigned int gshop_time_stamp (1206433535 / 0x47e8b6ff)
-        stream.write_u32_le(gshop_ts);       // unsigned int gshop_time_stamp2 / mall_timestamp (1206433535)
+        stream.write_u32_le(gshop_ts);       // unsigned int gshop_time_stamp
+        stream.write_u32_le(gshop_ts2);      // unsigned int gshop_time_stamp2 / mall_timestamp
         Self {
             data: stream.into_bytes().to_vec(),
         }
@@ -900,15 +932,49 @@ impl S2CGamedataSend {
         }
     }
 
-    /// Cria o comando PLAYER_ENTER_WORLD (Comando 17) para instanciar o avatar
-    pub fn player_enter_world(role_id: RoleId, world_tag: i32, pos: Vector3) -> Self {
+    /// `PLAYER_ENTER_WORLD` (17) — instancia o avatar de OUTRO jogador na tela de
+    /// quem recebe. Mesma struct de `PLAYER_INFO_1` (id 0):
+    /// `S2C::info_player_1` (`EC_GPDataType.h:603`, `F:\PW\1.5.5\EvolvedPWClient`) —
+    /// `cid, pos, crc_e, crc_c, dir, level2, state, state2`, 30 bytes. Layout do 1.5.3
+    /// em diante; o 1.2.6 (sem `state2`) tem versão própria em
+    /// `PorVersao::player_enter_world`, mesmo padrão de `player_info_00`/`self_info_1`
+    /// (campo final que o 1.5.x acrescenta).
+    ///
+    /// Substitui o codificador antigo (`role_id, world_tag, pos`, 20 bytes): não batia
+    /// com struct real nenhuma (`world_tag` não existe em `info_player_1`) e não tinha
+    /// chamador em produção — achado em 2026-09-04 inventariando o tamanho de todo
+    /// codificador S2C contra o IR (`docs/ESTADO_E_RETOMADA.md`, item 15).
+    ///
+    /// `crc_e`/`crc_c` (checksums de aparência/fashion) vão zerados — mesma escolha já
+    /// feita em `self_info_1`, nenhum sistema de aparência customizada implementado
+    /// ainda. `state` carrega só o bit de GM (`STATE_GAMEMASTER = 0x4000`), igual ao
+    /// `self_info_00`/`self_info_1`.
+    pub fn player_enter_world(role_id: RoleId, pos: Vector3, dir: u8, sec_level: u8) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(crate::opcodes::CMD_S2C_PLAYER_ENTER_WORLD);
-        stream.write_i32_le(role_id);
-        stream.write_i32_le(world_tag);
-        stream.write_f32_le(pos.x);
+        stream.write_i32_le(role_id);          // int cid (4B)
+        stream.write_f32_le(pos.x);            // A3DVECTOR3 pos (12B)
         stream.write_f32_le(pos.y);
         stream.write_f32_le(pos.z);
+        stream.write_u16_le(0);                // unsigned short crc_e (2B)
+        stream.write_u16_le(0);                // unsigned short crc_c (2B)
+        stream.write_u8(dir);                  // unsigned char dir (1B)
+        stream.write_u8(sec_level);             // unsigned char level2 (1B)
+        let state = if sec_level > 0 { 0x0000_4000 } else { 0 }; // STATE_GAMEMASTER
+        stream.write_i32_le(state);            // int state (4B)
+        stream.write_i32_le(0);                // int state2 (4B) — nenhum bit em uso hoje
+        Self {
+            data: stream.into_bytes().to_vec(),
+        }
+    }
+
+    /// `PLAYER_LEAVE_WORLD` (19) — remove o avatar de outro jogador da tela de quem
+    /// recebe. Struct real, `S2C::cmd_player_leave_world` (`EC_GPDataType.h:1493`): só
+    /// o `id` do personagem, 4 bytes — sem divergência entre versões no IR.
+    pub fn player_leave_world(role_id: RoleId) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(crate::opcodes::CMD_S2C_PLAYER_LEAVE_WORLD);
+        stream.write_i32_le(role_id);
         Self {
             data: stream.into_bytes().to_vec(),
         }
@@ -1034,6 +1100,98 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `EQUIP_DATA` (66) — resposta a `GET_OTHER_EQUIP` (33): o equipamento visível de
+    /// outro jogador (arma/armadura no modelo). Layout do **1.2.6/1.5.3**: `crc(u16),
+    /// idPlayer(i32), mask(i64), data[n](i32)` — 14 bytes de prefixo, confirmado por duas
+    /// fontes independentes: o IR do 1.5.3 (`specs/protocol/gamedata_153.json`,
+    /// `S2C::cmd_equip_data`, `data` no deslocamento 14) **e** a captura real do 1.2.6
+    /// (`docs/MEDIDAS_DO_126.md`, comando 66, tamanhos `14×2, 18×1, 22×2, 62×1, 66×2` —
+    /// exatamente `14 + n×4`). O 1.5.5 ganha um campo a mais na frente
+    /// (`color_name`) — ver `PorVersao::equip_data`.
+    ///
+    /// # Por que `mask=0` é uma resposta válida, não um atalho escondido
+    ///
+    /// Sem isto implementado, o cliente nunca marca `IsEquipDataReady()` — e
+    /// `CECElsePlayer` só cria o modelo 3D quando `IsBaseInfoReady() &&
+    /// IsCustomDataReady() && IsEquipDataReady()` são true ao mesmo tempo
+    /// (`EC_ElsePlayer.cpp:671`, `F:\PW\1.5.5\EvolvedPWClient`). Isto é a causa confirmada
+    /// (lendo o fonte, não suposição) de "só aparece a caixa de colisão, o modelo nunca
+    /// carrega" — o cliente pede `GetOtherEquip` (`EC_ManPlayer.cpp:358`, confirmado no
+    /// log do realm) e nunca recebia resposta. `ChangeEquipments`
+    /// (`EC_ElsePlayer.cpp:1671`) marca `m_bEquipReady = true` **incondicionalmente**
+    /// quando `bReset` é true — que é sempre o caso para `EQUIP_DATA`
+    /// (`EC_ElsePlayer.cpp:1942`) — então `mask=0` (nenhum item) desbloqueia o modelo sem
+    /// exigir que o formato de item por slot esteja implementado ainda.
+    ///
+    /// **Limitação sabida**: com `mask=0`, o avatar aparece sem arma/armadura visível.
+    /// Equipar de verdade os slots pede decodificar como cada `data[i]` empacota
+    /// item/modelo/refino por slot (visto em `EC_ElsePlayer.cpp:1723-1725` só para o slot
+    /// `EQUIPIVTR_GOBLIN`) — não confirmado para os demais slots, fica para quando o
+    /// visual de equipamento entre jogadores for a prioridade.
+    pub fn equip_data(player_id: i32, crc: u16, mask: u64, items: &[i32]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(66);                // CMD_S2C_EQUIP_DATA = 66
+        stream.write_u16_le(crc);               // unsigned short crc (2B)
+        stream.write_i32_le(player_id);         // int idPlayer (4B)
+        stream.write_u64_le(mask);              // __int64 mask (8B)
+        for item in items {
+            stream.write_i32_le(*item);         // int data[n]
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `OBJECT_MOVE` (15) — avisa quem está por perto que outro jogador (ou NPC/monstro)
+    /// está andando pra `dest`. Struct real, `S2C::cmd_object_move`
+    /// (`gamedata_155.json`, `S2C::cmd_object_move`), 21 bytes, **idêntica no 1.2.6 e no
+    /// 1.5.3+** — confirmado por duas fontes independentes: o IR (`bytes: 21`) e a
+    /// captura real do 1.2.6 (`docs/MEDIDAS_DO_126.md`, comando 15: `21×17294`, o
+    /// comando mais frequente da sessão inteira).
+    ///
+    /// # Por que isto precisava existir
+    ///
+    /// `PLAYER_MOVE` (C2S 0) migrou pro `pw-gs` (`docs/ESTADO_E_RETOMADA.md`, seção "Os
+    /// primeiros subcomandos já mudaram de lado") — o mundo atualiza a posição em
+    /// memória, mas **nunca avisava mais ninguém**. O `pw-link` tinha um
+    /// `InboundPacket::PlayerMove`/`OutboundPacket::PlayerMoveBroadcast` próprio (opcode
+    /// GNET **33**), só que **opcode 33 não existe na tabela de protocolos GNET real**
+    /// (`specs/protocol/gnet_155.json`, `protocols` — conferido, não tem `id: 33`) — e
+    /// pior, `InboundPacket::PlayerMove` nunca é produzido pelo decodificador de verdade,
+    /// que sempre entrega `PLAYER_MOVE` como `InboundPacket::GamedataSend` (opcode GNET
+    /// 34, sempre). Ou seja, aquele caminho era morto dos dois lados — a causa raiz real
+    /// de "movimento não sincroniza", achada depois de o Murillo confirmar em jogo que
+    /// nem o chat (que usa um opcode GNET de verdade, separado) nem o movimento (que não
+    /// usa) se comportavam igual.
+    pub fn object_move(id: i32, dest: Vector3, use_time: u16, speed: i16, move_mode: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(15);                // CMD_S2C_OBJECT_MOVE = 15
+        stream.write_i32_le(id);                // int id (4B)
+        stream.write_f32_le(dest.x);            // A3DVECTOR3 dest (12B)
+        stream.write_f32_le(dest.y);
+        stream.write_f32_le(dest.z);
+        stream.write_u16_le(use_time);          // unsigned short use_time (2B)
+        stream.write_i16_le(speed);             // short sSpeed (2B)
+        stream.write_u8(move_mode);             // unsigned char move_mode (1B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `OBJECT_STOP_MOVE` (35) — mesma família do `OBJECT_MOVE`, pra quando o jogador
+    /// para. Struct real, `S2C::cmd_object_stop_move`, 20 bytes, também idêntica no
+    /// 1.2.6 e no 1.5.3+ (`docs/MEDIDAS_DO_126.md`, comando 35: `20×2986, igual ao
+    /// 1.5.3`). Mesma causa raiz do `object_move` acima — `STOP_MOVE` (C2S 7) já migrou
+    /// pro `pw-gs`, mas nunca avisava ninguém.
+    pub fn object_stop_move(id: i32, dest: Vector3, speed: i16, dir: u8, move_mode: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(35);                // CMD_S2C_OBJECT_STOP_MOVE = 35
+        stream.write_i32_le(id);                // int id (4B)
+        stream.write_f32_le(dest.x);            // A3DVECTOR3 dest (12B)
+        stream.write_f32_le(dest.y);
+        stream.write_f32_le(dest.z);
+        stream.write_i16_le(speed);             // short sSpeed (2B)
+        stream.write_u8(dir);                   // unsigned char dir (1B)
+        stream.write_u8(move_mode);             // unsigned char move_mode (1B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// Cria o comando UNSELECT (Comando 39) desmarcando o alvo atual
     pub fn unselect() -> Self {
         let mut stream = OctetsStream::new();
@@ -1087,16 +1245,29 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando OBJECT_SKILL_ATTACK_RESULT (Comando 143) aplicando o dano de habilidade entre entidades no formato oficial 1.2.6
-    pub fn object_skill_attack_result(attacker_id: i32, target_id: i32, skill_id: i32, damage: i32, speed: u8, attack_flag: i8) -> Self {
+    /// `OBJECT_SKILL_ATTACK_RESULT` (143) — dano de habilidade entre duas entidades
+    /// que não são o próprio jogador (ex.: um pet, ou o alvo de outro jogador visto de
+    /// fora). Mesma família de `SELF_SKILL_ATTACK_RESULT` (142) — `attack_flag` de 4
+    /// bytes e o campo `section` no fim, confirmados pelo IR (`S2C::
+    /// cmd_object_skill_attack_result`, 22 bytes, idêntico em 1.5.3 e 1.5.5).
+    ///
+    /// Escrevia `attacker_id, target_id, skill_id, damage, speed, attack_flag` (18
+    /// bytes: `attack_flag` de 1 byte, na ordem errada, e sem `section`) — a mesma
+    /// omissão de `self_skill_attack_result` antes do item 54 fixar aquele, só que
+    /// este nunca teve chamador em produção pra expor o bug. O 1.2.6 (sem `section`,
+    /// `attack_flag` em 1 byte) tem sua versão em
+    /// `PorVersao::object_skill_attack_result` — achado em 2026-09-04 no mesmo
+    /// inventário que achou `player_enter_world` (`docs/ESTADO_E_RETOMADA.md`, item 16).
+    pub fn object_skill_attack_result(attacker_id: i32, target_id: i32, skill_id: i32, damage: i32, attack_flag: i32, speed: u8, section: u8) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(143);              // CMD_S2C_OBJECT_SKILL_ATTACK_RESULT = 143
         stream.write_i32_le(attacker_id);      // attacker_id (4B)
         stream.write_i32_le(target_id);        // target_id (4B)
         stream.write_i32_le(skill_id);         // skill_id (4B)
         stream.write_i32_le(damage);           // damage (4B)
+        stream.write_i32_le(attack_flag);      // attack_flag (4B)
         stream.write_u8(speed);                // speed (1B)
-        stream.write_i8(attack_flag);          // attack_flag (1B)
+        stream.write_u8(section);              // section (1B)
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -1607,6 +1778,175 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    // ---- Lote de comandos do `gplayer_imp::SendAllData` (EvolvedPWServer, player.cpp)
+    // achados em 2026-09-03 lendo o source real do 1.5.5 (sem captura disponível pra essa
+    // versão — instrução explícita do Murillo pra ir pelos fontes desta vez). São as
+    // notificações "de status" que o servidor de verdade manda pro client logo depois do
+    // `EnterWorld`, uma por linha de `SendAllData`; os structs vêm de
+    // `EC_GPDataType.h` (client) e `protocol.h` (server), que concordam. Deixei de fora as
+    // que dependem de sistemas que este servidor ainda não tem (astrolábio, cartas gerais,
+    // meridianos, tomo de reencarnação, desafio solo, transmissão de posição fixa,
+    // assinatura diária, fatering) — um personagem novo não tem dado nenhum pra elas, e
+    // mandar zero arriscaria mais que não mandar nada.
+
+    /// `GET_OWN_MONEY` (82) — dinheiro do jogador e o teto da carteira.
+    ///
+    /// 8 bytes: `amount` + `max_amount`, os dois `size_t` (4B neste engine de 32 bits) —
+    /// confere com `structs["S2C::cmd_get_own_money"]` do IR do 1.5.3. O 1.5.5 acrescenta um
+    /// terceiro campo (`color_name`); ver `PorVersao::get_own_money`.
+    pub fn get_own_money(amount: u32, capacity: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(82);
+        stream.write_u32_le(amount);   // size_t amount
+        stream.write_u32_le(capacity); // size_t max_amount
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `HOST_REPUTATION` (161) — reputação/carma do jogador.
+    pub fn host_reputation(reputation: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(161);
+        stream.write_i32_le(reputation);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PVP_MODE` (256) — modo de PVP atual (0 = pacífico na maioria dos servidores).
+    pub fn pvp_mode(mode: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(256);
+        stream.write_u8(mode);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `SELF_COUNTRY_NOTIFY` (333) — país/nação do jogador (0 = nenhum).
+    pub fn self_country_notify(country_id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(333);
+        stream.write_i32_le(country_id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `SERVER_TIME` (114) — hora do servidor (`cmd_server_time`: time, timebias,
+    /// lua_version).
+    ///
+    /// # `lua_version` não é cosmético — é uma trava que derruba o client
+    ///
+    /// Achado em 2026-09-03: mandar `lua_version = 0` (o palpite anterior, "não temos
+    /// evidência do que o client faz com um valor errado aqui") faz os dois clients de
+    /// teste travarem em `EC_GameDataPrtc.cpp`, `case SERVER_TIME`: o client lê a primeira
+    /// linha do seu `interfaces\script\config\global_api.lua` local (formato `--<N>`),
+    /// compara com `pCmd->lua_version`, e se **não bater**, seta
+    /// `g_dwFatalErrorFlag = FATAL_ERROR_WRONG_CONFIGDATA` — o loop principal
+    /// (`ElementClient.cpp`) fecha o processo (`ExitProcess(-3)`) no próximo tick, com a
+    /// mensagem de log "exit process because wrong config data" (exatamente o que os dois
+    /// clients mostraram, ~1.3s depois do `SetServerTime`).
+    ///
+    /// O valor certo é **102** — primeira linha (`--102`) de três cópias independentes de
+    /// `global_api.lua` que concordam entre si: `data/realm_155/config/global_api.lua`
+    /// (já no nosso próprio realm), `F:\PW\1.5.5\home155\gamed\config\global_api.lua` e
+    /// `F:\PW\1.5.5\pwserver_155v156\home\pwserver\gamed\config\global_api.lua`.
+    pub fn server_time(unix_time: i32, timezone_bias_minutes: i32, lua_version: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(114);
+        stream.write_i32_le(unix_time);
+        stream.write_i32_le(timezone_bias_minutes);
+        stream.write_i32_le(lua_version);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `TRASHBOX_PWD_STATE` (129) — se o baú (trashbox) tem senha configurada.
+    pub fn trashbox_pwd_state(has_passwd: bool) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(129);
+        stream.write_u8(has_passwd as u8);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PET_ROOM_CAPACITY` (240) — vagas disponíveis pra pets.
+    pub fn pet_room_capacity(capacity: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(240);
+        stream.write_u32_le(capacity); // size_t capacity
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `SELF_KING_NOTIFY` (355) — se o jogador é rei de alguma facção/país, e quando isso
+    /// expira (0 = não expira / não é rei).
+    pub fn self_king_notify(is_king: bool, expire_time: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(355);
+        stream.write_u8(is_king as u8);
+        stream.write_i32_le(expire_time);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `FACTION_CONTRIB_NOTIFY` (297) — contribuição do jogador pra facção (consumível, de
+    /// exp e acumulada). Zero pra quem não tem facção.
+    pub fn faction_contrib_notify(consume_contrib: i32, exp_contrib: i32, cumulate_contrib: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(297);
+        stream.write_i32_le(consume_contrib);
+        stream.write_i32_le(exp_contrib);
+        stream.write_i32_le(cumulate_contrib);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_LEADERSHIP` (378) — pontos de liderança do jogador (sistema de facção) e a
+    /// variação desde o último aviso.
+    pub fn player_leadership(leadership: i32, inc_leadership: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(378);
+        stream.write_i32_le(leadership);
+        stream.write_i32_le(inc_leadership);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_WORLD_CONTRIBUTION` (388) — contribuição do jogador pro "mundo" (sistema de
+    /// nação/território), a variação e o custo total já gasto.
+    pub fn player_world_contribution(contrib: i32, change: i32, total_cost: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(388);
+        stream.write_i32_le(contrib);
+        stream.write_i32_le(change);
+        stream.write_i32_le(total_cost);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_DIVIDEND` (280) — saldo de dividendos (loja de dividendos/cash shop).
+    pub fn player_dividend(dividend: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(280);
+        stream.write_i32_le(dividend);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `AVAILABLE_DOUBLE_EXP_TIME` (213) — tempo restante de exp em dobro disponível pra
+    /// ativar (0 = nenhum).
+    pub fn available_double_exp_time(available_time: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(213);
+        stream.write_i32_le(available_time);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `DOUBLE_EXP_TIME` (212) — se o modo de exp em dobro está ativo agora, e até quando.
+    pub fn double_exp_time(mode: i32, end_time: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(212);
+        stream.write_i32_le(mode);
+        stream.write_i32_le(end_time);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PARIAH_TIME` (230) — tempo restante como pária (PK sem punição normal). 0 = não é
+    /// pária.
+    pub fn pariah_time(pariah_time: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(230);
+        stream.write_i32_le(pariah_time);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     pub fn encode(&self, stream: &mut OctetsStream, _version: &str) {
         stream.write_octets(&self.data);
     }
@@ -1621,26 +1961,48 @@ pub struct S2CGetUIConfigRe {
 }
 
 impl S2CGetUIConfigRe {
+    /// **Achado em 2026-09-03, com cliente 1.5.5 real**: mandar o cabeçalho de 16 bytes
+    /// (`idInst`/`precinct_ts`/`domain_ts`/`gshop_ts`, validados contra
+    /// `0x00435cf6` do `elementclient.exe` 1.2.6) **sem nenhum dado real depois** — que é
+    /// o único jeito que este projeto já chamou esta função até agora, `base_ui_config`
+    /// sempre `&[]` — faz `CECGameRun::LoadConfigsFromServer` no cliente ler os 4
+    /// primeiros bytes desse cabeçalho (`idInst = 1`) como se fossem o tamanho da
+    /// próxima seção de dados, tentar ler 1 byte de "configuração" dali, e lançar uma
+    /// exceção (`data read error (2)`) que derruba o processo de renderização
+    /// (`glb_HandleException`, mini dump). Isso acontecia bem depois do login/edition
+    /// já terem passado, então ficava escondido atrás de outros bloqueios anteriores.
+    ///
+    /// O próprio cliente já tem um caminho limpo, sem exceção nenhuma, pra "não tenho
+    /// configuração de verdade ainda": `ui_config` **totalmente vazio**
+    /// (`if (!pDataBuf || !iDataSize) { log("configs data is empty"); return false; }`,
+    /// e quem chama cai pra `ApplyUserSetting()`). Por isso o cabeçalho só é escrito
+    /// quando `base_ui_config` não é vazio — nenhum chamador desta função manda dado
+    /// real hoje, então isto não muda nada pra quem já funcionava, só evita sintetizar
+    /// um cabeçalho pela metade.
     pub fn new(role_id: i32, localsid: u32, base_ui_config: &[u8]) -> Self {
-        let mut config_data = OctetsStream::new();
-        // Os primeiros 16 bytes de ui_config validados em 0x00435cf6 do elementclient.exe 1.2.6:
-        // [m_idInst (4B = 1), precinct_ts (4B = 2097199), domain_ts (4B = 2097199), gshop_ts (4B = 1206433535)]
-        config_data.write_u32_le(1);
-        config_data.write_u32_le(2097199);
-        config_data.write_u32_le(2097199);
-        config_data.write_u32_le(1206433535);
+        let ui_config = if base_ui_config.is_empty() {
+            Vec::new()
+        } else {
+            let mut config_data = OctetsStream::new();
+            // [m_idInst (4B = 1), precinct_ts (4B = 2097199), domain_ts (4B = 2097199), gshop_ts (4B = 1206433535)]
+            config_data.write_u32_le(1);
+            config_data.write_u32_le(2097199);
+            config_data.write_u32_le(2097199);
+            config_data.write_u32_le(1206433535);
 
-        if base_ui_config.len() > 16 {
-            config_data.write_raw_bytes(&base_ui_config[16..]);
-        } else if !base_ui_config.is_empty() && base_ui_config.len() <= 16 {
-            config_data.write_raw_bytes(base_ui_config);
-        }
+            if base_ui_config.len() > 16 {
+                config_data.write_raw_bytes(&base_ui_config[16..]);
+            } else {
+                config_data.write_raw_bytes(base_ui_config);
+            }
+            config_data.into_bytes().to_vec()
+        };
 
         Self {
             result: 0,
             role_id,
             localsid,
-            ui_config: config_data.into_bytes().to_vec(),
+            ui_config,
         }
     }
 
@@ -1649,6 +2011,107 @@ impl S2CGetUIConfigRe {
         stream.write_i32(self.role_id);
         stream.write_u32(self.localsid);
         stream.write_octets(&self.ui_config);
+    }
+}
+
+/// `PlayerBaseInfo_Re` (92) — responde a `PlayerBaseInfo`: raça/classe/gênero/nome de
+/// OUTRO jogador, o dado que faltava em `PLAYER_ENTER_WORLD` pro cliente saber que
+/// modelo desenhar (`docs/ESTADO_E_RETOMADA.md`, item 17).
+///
+/// A struct real (`GRoleBase`, IR) tem 20 campos; a maioria (`forbid`, `help_states`,
+/// `spouse`, `userid`, `cross_data`, `config_data`, os três `reserved*`) não tem
+/// sistema nenhum implementado ainda que os preencha de verdade — vão vazios/zerados
+/// no `encode()`, mesma escolha já feita em outras respostas desta fase do projeto
+/// (0 é o valor que o `SendAllData` real manda pra quem não tem o dado). O que
+/// **importa** pro avatar aparecer — `id`, `name`, `race`, `cls`, `gender`,
+/// `custom_data` — vem do personagem de verdade.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct S2CPlayerBaseInfoRe {
+    pub retcode: i32,
+    pub role_id: i32,
+    pub localsid: u32,
+    pub other_role_id: i32,
+    pub name: String,
+    pub race: i32,
+    pub cls: i32,
+    pub gender: u8,
+    /// Bytes crus da aparência customizada — mesma extração que `write_role_info` já
+    /// faz de `custom_appearance` (hex de `raw`, ou o JSON cru como fallback).
+    pub custom_data: Vec<u8>,
+    pub status: u8,
+    pub create_time: i32,
+    pub lastlogin_time: i32,
+    /// Punições (ban/mute) do personagem — `GRoleForbid` no IR. Nenhum sistema de
+    /// punição implementado ainda, então sempre vazio; o campo existe (em vez de um
+    /// `write_compact_uint(0)` isolado no `encode`) pra o formato do item ficar
+    /// documentado no código, não só no IR.
+    pub forbid: Vec<GRoleForbid>,
+}
+
+/// Uma punição de `GRoleBase::forbid` — `GRoleForbid` no IR (`type, time, createtime,
+/// reason`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GRoleForbid {
+    pub tipo: u8,
+    pub time: i32,
+    pub createtime: i32,
+    pub reason: Vec<u8>,
+}
+
+impl S2CPlayerBaseInfoRe {
+    pub fn encode(&self, stream: &mut OctetsStream, _version: &str) {
+        stream.write_i32(self.retcode);
+        stream.write_i32(self.role_id);
+        stream.write_u32(self.localsid);
+        // GRoleBase
+        stream.write_i8(1); // _literal: marcador de "objeto presente" no RPC marshalling
+        stream.write_u32(self.other_role_id as u32); // id
+        stream.write_string_utf16le(&self.name);
+        stream.write_i32(self.race);
+        stream.write_i32(self.cls);
+        stream.write_u8(self.gender);
+        stream.write_octets(&self.custom_data);
+        stream.write_octets(&[]); // config_data — nenhum sistema de UI/facção preenche isto ainda
+        stream.write_u32(0); // custom_stamp
+        stream.write_u8(self.status);
+        stream.write_i32(0); // delete_time — 0 enquanto não existe exclusão/restauração visível aqui
+        stream.write_i32(self.create_time);
+        stream.write_i32(self.lastlogin_time);
+        stream.write_compact_uint(self.forbid.len() as u32);
+        for f in &self.forbid {
+            stream.write_u8(f.tipo);
+            stream.write_i32(f.time);
+            stream.write_i32(f.createtime);
+            stream.write_octets(&f.reason);
+        }
+        stream.write_octets(&[]); // help_states
+        stream.write_u32(0); // spouse
+        stream.write_u32(0); // userid
+        stream.write_octets(&[]); // cross_data
+        stream.write_u8(0); // reserved2
+        stream.write_u8(0); // reserved3
+        stream.write_u8(0); // reserved4
+    }
+}
+
+/// `GetCustomData_Re` (117) — a aparência customizada de OUTRO jogador, pedida depois
+/// do `PlayerBaseInfo` quando a base já chegou mas a aparência não.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct S2CGetCustomDataRe {
+    pub retcode: i32,
+    pub role_id: i32,
+    pub localsid: u32,
+    pub cus_role_id: u32,
+    pub custom_data: Vec<u8>,
+}
+
+impl S2CGetCustomDataRe {
+    pub fn encode(&self, stream: &mut OctetsStream, _version: &str) {
+        stream.write_i32(self.retcode);
+        stream.write_i32(self.role_id);
+        stream.write_u32(self.localsid);
+        stream.write_u32(self.cus_role_id);
+        stream.write_octets(&self.custom_data);
     }
 }
 
@@ -1772,29 +2235,53 @@ impl S2CSetHelpStatesRe {
     }
 }
 
+/// `SetUIConfig_Re` (103) — confirma que o servidor salvou a configuração de UI.
+///
+/// **Achado em 2026-09-04**: faltava o `localsid` (IR: `result, roleid, localsid`, 12
+/// bytes — este codificador só escrevia 8). O cliente descarta um pacote de tamanho
+/// errado sem avisar ninguém no jogo, mas AQUI o efeito colateral é bem pior que um
+/// campo de UI que não atualiza: o próximo pacote do fluxo é lido a partir do byte
+/// errado, e o decodificador GNET do cliente lança "Decode error 103" — que ele trata
+/// como link quebrado (`OnLinkBroken`) e derruba a sessão inteira. É a causa provável de
+/// "aparece desconectado" ao sair para a seleção de personagem ou fechar o jogo — esse é
+/// o momento em que o cliente salva o layout de UI antes de encerrar. Ver
+/// `docs/ESTADO_E_RETOMADA.md`, item 18.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct S2CSetUIConfigRe {
     pub result: i32,
     pub role_id: i32,
+    pub localsid: u32,
 }
 
 impl S2CSetUIConfigRe {
     pub fn encode(&self, stream: &mut OctetsStream, _version: &str) {
         stream.write_i32(self.result);
         stream.write_i32(self.role_id);
+        stream.write_u32(self.localsid);
     }
 }
 
+/// `SetCustomData_Re` (101) — confirma que o servidor salvou a aparência customizada.
+///
+/// Mesmo achado do `SetUIConfig_Re` acima, só que faltavam **dois** campos: o IR
+/// (`result, CRC, roleid, localsid`, 16 bytes) tem um `CRC` entre `result` e `roleid`
+/// que este codificador nunca escrevia. `CRC` não é lido pelo cliente em
+/// `OnPrtcSetCustomDataRe` (confirmado em `EC_GameSession.cpp`) — só precisa **existir**
+/// no pacote pros campos seguintes caírem no deslocamento certo, então `0` é seguro.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct S2CSetCustomDataRe {
     pub result: i32,
+    pub crc: u32,
     pub role_id: i32,
+    pub localsid: u32,
 }
 
 impl S2CSetCustomDataRe {
     pub fn encode(&self, stream: &mut OctetsStream, _version: &str) {
         stream.write_i32(self.result);
+        stream.write_u32(self.crc);
         stream.write_i32(self.role_id);
+        stream.write_u32(self.localsid);
     }
 }
 

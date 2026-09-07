@@ -40,6 +40,7 @@
 use crate::octets::OctetsStream;
 use crate::packets::s2c::S2CGamedataSend;
 use crate::version::GameVersion;
+use pw_core::Vector3;
 
 /// Escreve subcomandos no layout da versão de um realm.
 ///
@@ -68,6 +69,109 @@ impl PorVersao {
 
     pub fn versao(&self) -> GameVersion {
         self.versao
+    }
+
+    /// `TASK_DATA` (105) — o pacote que inicializa o subsistema de missões do cliente.
+    ///
+    /// **O número de blocos `[u32 tamanho][dados]` muda com a versão**, e mandar de menos
+    /// deixa o cliente lendo lixo depois do fim do nosso buffer.
+    ///
+    /// | | 1.2.6 | 1.5.3 / 1.5.5 |
+    /// | :--- | ---: | ---: |
+    /// | `active_list` | ✓ | ✓ |
+    /// | `finished_list` | ✓ | ✓ |
+    /// | `finished_time_list` | ✓ | ✓ |
+    /// | `finished_count` | — | ✓ |
+    /// | `storage_task` | — | ✓ |
+    /// | blocos | **3** | **5** |
+    ///
+    /// Medido por **desmontagem dos dois clients reais** (2026-09-04,
+    /// `tools/pw-crash-re/`), não por dedução — `CECHostPlayer::OnMsgHstTaskData` lê os
+    /// tamanhos em sequência e o número de leituras é visível no código:
+    ///
+    /// * 1.2.6 (`elementclient.exe` de `F:\Games\perfectworld_126`, função em `+0x508D0`):
+    ///   confere `[msg+0x10] == 0x69`, lê **três** tamanhos, e guarda o objeto que cria em
+    ///   `[this+0xBB0]` (`new` de 0x14 bytes).
+    /// * 1.5.5 (client BR build 2569, função em `+0xA6B80`): mesma checagem de id, lê
+    ///   **cinco** tamanhos, e guarda o objeto em `[this+0x1508]` (`new` de 0x58 bytes).
+    ///
+    /// O IR concorda com a desmontagem: `S2C::cmd_task_data` tem cinco campos `_size` tanto
+    /// em `gamedata_153.json` quanto em `gamedata_155.json`.
+    ///
+    /// **Por que isto importa muito**: `[this+0x1508]` é exatamente o campo que aparece
+    /// **nulo** no minidump do crash de render do 1.5.5 (`mov eax,[eax+0x1508]` seguido de
+    /// `mov edx,[eax]` em `+0x576661`). Enquanto mandávamos só três blocos, o cliente 1.5.5
+    /// lia dois tamanhos de lixo depois do fim do buffer. O 1.2.6 nunca sofreu com isso
+    /// porque três blocos é *exatamente* o que ele espera — é por isso que aquele realm
+    /// sempre funcionou com o mesmo código. Ver `docs/ESTADO_E_RETOMADA.md`, item 14.
+    pub fn task_data(&self) -> S2CGamedataSend {
+        let blocos = if e_126(self.versao) { 3 } else { 5 };
+        let mut s = OctetsStream::new();
+        s.write_u16_le(105);
+        for _ in 0..blocos {
+            s.write_u32_le(0);
+        }
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    /// `NPC_ENTER_WORLD` (16) e `NPC_ENTER_SLICE` (11) — o pacote que faz um NPC/monstro
+    /// existir no cliente. Os dois carregam a **mesma** struct, `S2C::info_npc`.
+    ///
+    /// | | 1.2.6 | 1.5.3 / 1.5.5 |
+    /// | :--- | ---: | ---: |
+    /// | `nid` | 4 | 4 |
+    /// | `tid` | 4 | 4 |
+    /// | `vis_tid` | **—** | **4** |
+    /// | `pos` | 12 | 12 |
+    /// | `seed` | 2 | 2 |
+    /// | `dir` | 1 | 1 |
+    /// | `state` | 4 | 4 |
+    /// | `state2` | **—** | **4** |
+    /// | | **27** | **35** |
+    ///
+    /// **De onde vem cada coluna.** A do 1.5.x é o IR: `S2C::info_npc` tem os oito campos,
+    /// 35 bytes, **idêntica** em `gamedata_153.json` e `gamedata_155.json` (o IR do 155 sai
+    /// dos fontes do `EvolvedPWClient`). A do 1.2.6 é medição em jogo: o realm 1.2.6 mostra
+    /// NPC e deixa falar com eles usando exatamente os 27 bytes que este projeto sempre
+    /// escreveu.
+    ///
+    /// **O sintoma que isto conserta**: no 1.5.5, com 27 bytes, o servidor mandava os NPCs
+    /// (o log conta "Enviando 28 entidades") e **nenhum aparecia** — faltavam 8 bytes no
+    /// meio e no fim da struct, então o cliente lia `pos` de onde estava o `vis_tid` e por
+    /// aí em diante. Mesma família do `TASK_DATA` do item 14 e do `state2` que faltava no
+    /// `SELF_INFO_1` (item 9a): campo novo que o 1.5.x acrescentou e que o código, escrito
+    /// para o 1.2.6, nunca escreveu.
+    ///
+    /// `vis_tid` é o template **visível** (o modelo que o cliente desenha); vai igual ao
+    /// `tid` porque nada neste servidor troca a aparência de um NPC ainda. `state2` vai
+    /// zerado — nenhum bit `GP_STATE2_*` em uso, mesma escolha já feita no `self_info_1`.
+    pub fn npc_enter_world(&self, nid: i32, tid: i32, pos: Vector3, dir: u8) -> S2CGamedataSend {
+        self.info_npc(16, nid, tid, pos, dir)
+    }
+
+    /// `NPC_ENTER_SLICE` (11) — ver [`PorVersao::npc_enter_world`], mesma struct.
+    pub fn npc_enter_slice(&self, nid: i32, tid: i32, pos: Vector3, dir: u8) -> S2CGamedataSend {
+        self.info_npc(11, nid, tid, pos, dir)
+    }
+
+    fn info_npc(&self, comando: u16, nid: i32, tid: i32, pos: Vector3, dir: u8) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u16_le(comando);
+        s.write_i32_le(nid);
+        s.write_i32_le(tid);
+        if !e_126(self.versao) {
+            s.write_i32_le(tid); // vis_tid
+        }
+        s.write_f32_le(pos.x);
+        s.write_f32_le(pos.y);
+        s.write_f32_le(pos.z);
+        s.write_u16_le(0); // seed
+        s.write_u8(dir);
+        s.write_i32_le(0); // state
+        if !e_126(self.versao) {
+            s.write_i32_le(0); // state2
+        }
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
     /// `HOST_ATTACKRESULT` (24) — o resultado do golpe do próprio jogador.
@@ -152,6 +256,37 @@ impl PorVersao {
         }
         let mut s = OctetsStream::new();
         s.write_u16_le(142);
+        s.write_i32_le(target_id);
+        s.write_i32_le(skill_id);
+        s.write_i32_le(damage);
+        s.write_i8(estreitar(attack_flag));
+        s.write_u8(speed);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    /// `OBJECT_SKILL_ATTACK_RESULT` (143) — mesma família de `self_skill_attack_result`,
+    /// com `attacker_id` na frente. Sem captura própria (nunca teve chamador em
+    /// produção); o `attack_flag`/`section` seguem o mesmo padrão medido nos outros
+    /// quatro comandos de resultado de ataque — ver `S2CGamedataSend::
+    /// object_skill_attack_result`.
+    pub fn object_skill_attack_result(
+        &self,
+        attacker_id: i32,
+        target_id: i32,
+        skill_id: i32,
+        damage: i32,
+        attack_flag: i32,
+        speed: u8,
+        section: u8,
+    ) -> S2CGamedataSend {
+        if !e_126(self.versao) {
+            return S2CGamedataSend::object_skill_attack_result(
+                attacker_id, target_id, skill_id, damage, attack_flag, speed, section,
+            );
+        }
+        let mut s = OctetsStream::new();
+        s.write_u16_le(143);
+        s.write_i32_le(attacker_id);
         s.write_i32_le(target_id);
         s.write_i32_le(skill_id);
         s.write_i32_le(damage);
@@ -251,6 +386,40 @@ impl PorVersao {
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
+    /// `EQUIP_DATA` (66) — equipamento visível de outro jogador, ver
+    /// `S2CGamedataSend::equip_data` pro porquê de `mask=0` já bastar pra destravar o
+    /// modelo. O 1.5.5 ganha um `color_name` (`unsigned int`) na frente dos outros campos
+    /// — `EC_GPDataType.h:2016`, `F:\PW\1.5.5\EvolvedPWClient` — que nem o IR do 1.5.3
+    /// (`gamedata_153.json`) nem a captura do 1.2.6 (`docs/MEDIDAS_DO_126.md`) têm.
+    pub fn equip_data(&self, player_id: i32, color_name: u32, crc: u16, mask: u64, items: &[i32]) -> S2CGamedataSend {
+        if self.versao != GameVersion::V1_5_5 {
+            return S2CGamedataSend::equip_data(player_id, crc, mask, items);
+        }
+        let mut s = OctetsStream::new();
+        s.write_u16_le(66);
+        s.write_u32_le(color_name);
+        s.write_u16_le(crc);
+        s.write_i32_le(player_id);
+        s.write_u64_le(mask);
+        for item in items {
+            s.write_i32_le(*item);
+        }
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    /// `OBJECT_MOVE` (15) — mesmo layout no 1.2.6 e no 1.5.3+ (`docs/MEDIDAS_DO_126.md`,
+    /// comando 15). Sem divergência conhecida; existe pelo mesmo motivo dos outros
+    /// métodos deste `impl` — todo envio passa por `self.sub`, nunca direto pelo
+    /// `S2CGamedataSend`, então uma divergência futura tem um único lugar pra entrar.
+    pub fn object_move(&self, id: i32, dest: Vector3, use_time: u16, speed: i16, move_mode: u8) -> S2CGamedataSend {
+        S2CGamedataSend::object_move(id, dest, use_time, speed, move_mode)
+    }
+
+    /// `OBJECT_STOP_MOVE` (35) — mesma história do `object_move` acima.
+    pub fn object_stop_move(&self, id: i32, dest: Vector3, speed: i16, dir: u8, move_mode: u8) -> S2CGamedataSend {
+        S2CGamedataSend::object_stop_move(id, dest, speed, dir, move_mode)
+    }
+
     /// `ENTER_SANCTUARY` (164) — entrou na zona segura.
     ///
     /// **Sem payload no 1.2.6.** Medido em 11 ocorrências, todas com zero bytes. O `id`
@@ -277,9 +446,10 @@ impl PorVersao {
     /// `region`/`precinct`/`gshop`.
     ///
     /// **26 bytes no 1.5.5: um sexto campo, `gshop_time_stamp3`**, achado comparando o
-    /// IR do 1.5.5 com o do 1.5.3 (2026-09-02) — o 1.5.3 já tinha cinco campos (o quarto e
-    /// quinto são o `gshop`/`gshop2` que o `S2CGamedataSend::inst_data_checkout` de baixo
-    /// escreve, hoje com o mesmo valor nos dois — questão em aberto, não desta mudança).
+    /// IR do 1.5.5 com o do 1.5.3 (2026-09-02) — o 1.5.3 já tinha cinco campos, o quarto e
+    /// quinto sendo `gshop`/`gshop2` (**dois valores diferentes** — corrigido em
+    /// 2026-09-03; até então `S2CGamedataSend::inst_data_checkout` escrevia o mesmo valor
+    /// nos dois campos, achado batendo um cliente 1.5.5 real contra o log de erro).
     /// `gshop3` só entra quando a versão é 1.5.5 **e** o chamador passa `Some`; do
     /// contrário sai o layout de cinco campos de sempre.
     pub fn inst_data_checkout(
@@ -288,6 +458,7 @@ impl PorVersao {
         region: u32,
         precinct: u32,
         gshop: u32,
+        gshop2: u32,
         gshop3: Option<u32>,
     ) -> S2CGamedataSend {
         if e_126(self.versao) {
@@ -300,7 +471,7 @@ impl PorVersao {
             return S2CGamedataSend { data: s.into_bytes().to_vec() };
         }
 
-        let base = S2CGamedataSend::inst_data_checkout(id_inst, region, precinct, gshop);
+        let base = S2CGamedataSend::inst_data_checkout(id_inst, region, precinct, gshop, gshop2);
         match gshop3 {
             Some(g3) if self.versao == GameVersion::V1_5_5 => {
                 let mut bytes = base.data;
@@ -309,6 +480,77 @@ impl PorVersao {
             }
             _ => base,
         }
+    }
+
+    /// `SELF_INFO_1` (8) — instancia a entidade local do jogador. É o pacote que cancela o
+    /// timeout `OT_ENTERGAME` do client (`EC_GameDataPrtc.cpp`, `case SELF_INFO_1:
+    /// DoOvertimeCheck(false, OT_ENTERGAME, 0)`), então um layout errado aqui não dá erro
+    /// visível — dá 30s de "efetuando login" e depois "EnterWorld Overtime" (achado em
+    /// 2026-09-03, cruzando dump de client com log de realm).
+    ///
+    /// **38 bytes no 1.5.5: ganha um `state2` (int) depois do `state`.** Sem captura
+    /// disponível para o 1.5.5 (diferente do 1.2.6, medido por tcpdump), a evidência aqui é
+    /// o `cmd_self_info_1::CheckValid` de `EC_GPDataType.h`, no source do client 1.5.5
+    /// (`F:\PW\1.5.5\EvolvedPWClient`) — `CalcS2CCmdDataSize` chama esse `CheckValid`, e se
+    /// `dwDataSize != sz` o comando cai no ramo "unknown", o pacote é descartado em
+    /// silêncio e o `case SELF_INFO_1` que cancela o timeout nunca roda.
+    ///
+    /// Sem evidência equivalente para o 1.5.3, essa versão continua com os 34 bytes de
+    /// sempre — o `state2` só entra quando a versão é exatamente 1.5.5.
+    pub fn self_info_1(
+        &self,
+        exp: i32,
+        sp: i32,
+        world_id: i32,
+        pos: Vector3,
+        sec_level: u8,
+    ) -> S2CGamedataSend {
+        let base = S2CGamedataSend::self_info_1(exp, sp, world_id, pos, sec_level);
+        if self.versao != GameVersion::V1_5_5 {
+            return base;
+        }
+        let mut bytes = base.data;
+        bytes.extend_from_slice(&0i32.to_le_bytes()); // state2 — nenhum bit GP_STATE2_* em uso hoje
+        S2CGamedataSend { data: bytes }
+    }
+
+    /// `GET_OWN_MONEY` (82) — dinheiro do jogador. O 1.5.3 tem só `amount`/`max_amount` (8
+    /// bytes, medido no IR). O 1.5.5 acrescenta um terceiro campo, `color_name` (a máscara
+    /// de cor do nome do jogador na tela), achado em 2026-09-03 em
+    /// `F:\PW\1.5.5\EvolvedPWServer\cgame\common\protocol.h` (`struct get_own_money { ...
+    /// unsigned int color_name; }`) — sem captura disponível para o 1.5.5, então a evidência
+    /// aqui é o source, não um tcpdump.
+    pub fn get_own_money(&self, amount: u32, capacity: u32, color_name: u32) -> S2CGamedataSend {
+        let base = S2CGamedataSend::get_own_money(amount, capacity);
+        if self.versao != GameVersion::V1_5_5 {
+            return base;
+        }
+        let mut bytes = base.data;
+        bytes.extend_from_slice(&color_name.to_le_bytes());
+        S2CGamedataSend { data: bytes }
+    }
+
+    /// `PLAYER_ENTER_WORLD` (17) — mesma struct de `PLAYER_INFO_1`
+    /// (`S2C::info_player_1`). Mesmo padrão de `player_info_00`/`self_info_1`: o
+    /// 1.2.6 não tem `state2` (28 bytes de payload); 1.5.3 em diante usa a struct
+    /// cheia do IR, 30 bytes — ver `S2CGamedataSend::player_enter_world`.
+    pub fn player_enter_world(&self, role_id: i32, pos: Vector3, dir: u8, sec_level: u8) -> S2CGamedataSend {
+        if !e_126(self.versao) {
+            return S2CGamedataSend::player_enter_world(role_id, pos, dir, sec_level);
+        }
+        let mut s = OctetsStream::new();
+        s.write_u16_le(17);
+        s.write_i32_le(role_id);
+        s.write_f32_le(pos.x);
+        s.write_f32_le(pos.y);
+        s.write_f32_le(pos.z);
+        s.write_u16_le(0); // crc_e
+        s.write_u16_le(0); // crc_c
+        s.write_u8(dir);
+        s.write_u8(sec_level); // level2
+        let state = if sec_level > 0 { 0x0000_4000 } else { 0 }; // STATE_GAMEMASTER
+        s.write_i32_le(state);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 }
 

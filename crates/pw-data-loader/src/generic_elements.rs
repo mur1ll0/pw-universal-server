@@ -4,14 +4,14 @@
 //! algoritmo (ver o README daquela pasta para a arquitetura completa: detecção de versão
 //! pelo cabeçalho, catálogo de JSON por build, overrides por realm).
 //!
-//! Este módulo é **aditivo**: não substitui [`crate::elements::ElementsData`] (usado hoje
-//! por `pw-gs`), que continua funcionando como está. `GenericElementsData` existe pra
-//! consumidores que precisam de TODAS as 231 tabelas (não só as poucas que `ElementsData`
-//! tipa manualmente) sem reescrever a tabela de tamanhos uma terceira vez — o candidato
-//! natural é uma futura API administrativa em Rust, ou uma futura migração do `pw-gs` pra
-//! este leitor, que ainda não foi feita (ver `specs/elements_155/README.md`, seção
-//! "Próximo passo", item sobre decidir se os overrides são do formato ou do arquivo antes
-//! de generalizar mais).
+//! `GameDataManager::load_from_directory` (`crates/pw-data-loader/src/manager.rs`) usa este
+//! leitor para qualquer `elements.data` cuja versão o catálogo cobre (hoje, só v156) — é o
+//! caminho real que o `pw-gs` percorre ao subir um realm. [`crate::elements::ElementsData`]
+//! (o leitor tipado antigo, `TABLE_SIZES_V7`, 118 tabelas) continua existindo só como
+//! **fallback para versões que o catálogo ainda não cobre** (1.2.6, v7) — não porque seja
+//! preferido. Ver `docs/ESTADO_E_RETOMADA.md`, seção "Prioridade atual", para o porquê da
+//! migração (o leitor tipado nunca tinha terminado de carregar o `elements.data` real do
+//! 1.5.5; este aqui já foi validado byte a byte contra as 231 tabelas).
 //!
 //! O layout de v156 e os overrides do realm 155 são embutidos no binário em tempo de
 //! compilação (`include_str!`), então carregar um `elements.data` não depende de
@@ -24,8 +24,11 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 const V156_LAYOUT_JSON: &str = include_str!("../../../specs/elements_layouts/v156.json");
-const REALM_155_OVERRIDES_JSON: &str =
+const V159_LAYOUT_JSON: &str = include_str!("../../../specs/elements_layouts/v159.json");
+const REALM_155_V156_OVERRIDES_JSON: &str =
     include_str!("../../../specs/elements_155/realm_155_overrides.json");
+const REALM_155_V159_OVERRIDES_JSON: &str =
+    include_str!("../../../specs/elements_155/realm_155_v159_overrides.json");
 
 #[derive(Error, Debug)]
 pub enum GenericElementsError {
@@ -175,13 +178,35 @@ pub fn detect_header(buf: &[u8]) -> Result<HeaderInfo> {
 pub fn load_layout(version: u32) -> Result<LayoutCatalog> {
     match version {
         156 => Ok(serde_json::from_str(V156_LAYOUT_JSON)?),
+        159 => Ok(serde_json::from_str(V159_LAYOUT_JSON)?),
         v => Err(GenericElementsError::UnsupportedVersion(v)),
     }
 }
 
+/// Overrides de `skip`/`count` conhecidos, escolhidos pela **versão detectada do arquivo**
+/// -- nunca aplicar os overrides de uma build a um arquivo de outra build, mesmo que os
+/// nomes de tabela sejam idênticos (achado documentado em `specs/elements_155/README.md`:
+/// as correções são específicas de cada arquivo, não do formato). `None` para uma versão
+/// sem overrides conhecidos ainda -- o leitor cai pra busca gulosa/janela sozinho nesse
+/// caso, sem quebrar.
+pub fn load_overrides_for_version(version: u32) -> Option<RealmOverrides> {
+    match version {
+        156 => Some(
+            serde_json::from_str(REALM_155_V156_OVERRIDES_JSON)
+                .expect("realm_155_overrides.json embutido no binário deve ser válido"),
+        ),
+        159 => Some(
+            serde_json::from_str(REALM_155_V159_OVERRIDES_JSON)
+                .expect("realm_155_v159_overrides.json embutido no binário deve ser válido"),
+        ),
+        _ => None,
+    }
+}
+
+/// Mantido pelo nome antigo por compatibilidade com quem já chamava isto assumindo v156
+/// (ex.: `web-admin`). Preferir [`load_overrides_for_version`] em código novo.
 pub fn load_realm_155_overrides() -> RealmOverrides {
-    serde_json::from_str(REALM_155_OVERRIDES_JSON)
-        .expect("realm_155_overrides.json embutido no binário deve ser válido")
+    load_overrides_for_version(156).expect("overrides do v156 sempre existem")
 }
 
 // =============================================================================
@@ -385,7 +410,7 @@ fn read_talk_proc_table(buf: &[u8], off: usize) -> Result<(Vec<Record>, usize)> 
 // Orquestrador de topo
 // =============================================================================
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericElementsData {
     pub version: u32,
     pub tables: HashMap<String, Vec<Record>>,
@@ -454,4 +479,15 @@ pub fn load_elements_data(buf: &[u8], overrides: Option<&RealmOverrides>) -> Res
         version: header.version,
         tables: result,
     })
+}
+
+/// Como [`load_elements_data`], mas escolhe os overrides sozinho pela versão detectada do
+/// cabeçalho (via [`load_overrides_for_version`]) -- é o que `GameDataManager` de fato usa.
+/// Sem overrides hardcoded pra uma build só: um arquivo v156 usa overrides de v156, um v159
+/// usa os de v159, e uma versão sem overrides conhecidos cai pra busca gulosa/janela sem
+/// erro nenhum (overrides são uma dica opcional, nunca uma dependência obrigatória).
+pub fn load_elements_data_auto(buf: &[u8]) -> Result<GenericElementsData> {
+    let header = detect_header(buf)?;
+    let overrides = load_overrides_for_version(header.version);
+    load_elements_data(buf, overrides.as_ref())
 }

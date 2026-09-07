@@ -190,6 +190,18 @@ inl/*, rpcdata/*, callid.hxx, rpcalls.xml
 
 ## 3. Faseamento
 
+> **Nota de prioridade atualizada (2026-09-02)**: o 1.5.3 foi abandonado como alvo (o client
+> disponível nunca logou de fato, sem fonte confiável) e substituído pelo **1.5.5** (fontes
+> completos, projeto EvolvedPW) como versão de referência — ver "MUDANÇA DE BASE" no topo de
+> `docs/ESTADO_E_RETOMADA.md`. A Fase 4 abaixo ("Realm 1.5.3") vira **"Realm 1.5.5"** na
+> prática, e a ordem de execução combinada com o Murillo é: **1.5.5 totalmente funcional
+> primeiro** (o que a Fase 3 descreve — spawns reais, AI, combate, skills, quests,
+> inventário —, mas para os dados do 1.5.5), **depois 1.2.6 totalmente funcional**, **só
+> depois** a Fase 5 (painel admin) e os demais ajustes de infraestrutura (banco,
+> atualizador/launcher). O conteúdo técnico de cada fase abaixo continua válido — protocolo
+> 1.5.3×1.5.5 provado compatível (`pw_ctx_a_155_funcional` na memória) — só a ordem e o
+> "1.5.3"/"1.5.5" nos rótulos mudou.
+
 ### Fase 1 — Fundação de protocolo
 1. `tools/pw-rpcgen`: parser dos `inl/`, `rpcdata/`, `callid.hxx`, `rpcalls.xml` → IR JSON.
 2. Parser do `EC_GPDataType.h` → IR dos subcomandos `GamedataSend`.

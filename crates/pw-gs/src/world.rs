@@ -508,11 +508,12 @@ impl WorldInstance {
     ///
     /// Antes disto o `gateway.rs` reconhecia poção comparando o id com **1796 e 1801**,
     /// escritos no código, e respondia HP/MP `120/280` fixos para qualquer personagem. Os
-    /// valores de verdade já estavam carregados em `elements.medicines` e nunca eram
-    /// consultados.
+    /// valores de verdade já estavam carregados no `elements.data` e nunca eram
+    /// consultados. A busca em si (tipada vs. catálogo genérico, conforme a versão do
+    /// realm) vive em `GameDataManager::quanto_o_remedio_restaura` — `pw-gs` não precisa
+    /// saber qual dos dois formatos este realm usa.
     pub fn quanto_o_remedio_restaura(&self, item_id: u32) -> Option<(i32, i32)> {
-        let m = self.data_manager.elements.medicines.get(&item_id)?;
-        Some((m.hp_restore, m.mp_restore))
+        self.data_manager.quanto_o_remedio_restaura(item_id)
     }
 
     /// Ciclo de Simulação em Tempo Real (Loop de 50ms / 20 TPS)

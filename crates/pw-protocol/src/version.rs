@@ -10,7 +10,10 @@ pub enum GameVersion {
     V1_5_3,
     /// Fontes EvolvedPW (`F:\PW\1.5.5`), a versão base do projeto a partir de 2026-09-02.
     /// "1.5.5" é o nome do pacote da comunidade — o `GAME_VERSION` que o cliente de fato
-    /// carrega é `0x00010503` (ver [`Self::server_version_code`]), não deduzido do nome.
+    /// carrega é `0x00010505`, medido direto do binário instalado do Murillo (ver
+    /// [`Self::server_version_code`] para a evidência completa — a árvore de fontes que
+    /// temos é de uma build mais antiga que esse binário, então não dava pra confiar nela
+    /// sozinha desta vez).
     V1_5_5,
 }
 
@@ -49,16 +52,29 @@ impl GameVersion {
     /// O de **1.4.8 continua não conferido**: não temos cliente nem servidor dessa versão.
     /// Ao obtê-lo, conferir `GAME_VERSION` em `EC_Game.cpp` antes de confiar.
     ///
-    /// O do **1.5.5** está em `EvolvedPWClient/ElementClient/EC_Game.cpp:116`:
-    /// `((0 << 24) | (1 << 16) | (5 << 8) | 3)` = `0x00010503` — que é, sem ironia
-    /// nenhuma, o número que o item acima já tinha descartado como errado para "1.5.3".
-    /// A lição de não deduzir da string do nome se prova de novo, numa versão diferente.
+    /// O do **1.5.5** tinha uma pegadinha nova, achada em 2026-09-03: o fonte
+    /// `EvolvedPWClient/ElementClient/EC_Game.cpp:116-117` diz
+    /// `GAME_VERSION = ((0<<24)|(1<<16)|(5<<8)|3) = 0x00010503` e `GAME_BUILD = 2457` — mas
+    /// o `EC.log` do client instalado do Murillo (`F:\PW\1.5.5\1.5.5.EN\...`) mostra **"Build
+    /// version 2575"**, não 2457. A árvore de fontes que temos é de uma build **mais antiga**
+    /// que o binário real: `0x00010503` levava o login até o fim do handshake de versão
+    /// (`edition` batendo) e só então o cliente mostrava "Server maintenance in progress"
+    /// (na real, `FIXMSG_SERVERUPDATE` — o `GAME_VERSION` do servidor ficou **menor** que o
+    /// do cliente) e fechava a conexão antes até de mandar usuário/senha.
+    ///
+    /// Resolvido por **inspeção direta do `elementclient.exe`** (não dedução): `0x00010503`
+    /// não ocorre nenhuma vez no binário. `0x00010505` ocorre 4 vezes — e uma dessas
+    /// ocorrências fica logo depois da string de formato `"(0x%x) != local(0x%x)"` (a
+    /// mensagem de comparação de versão) e é imediatamente seguida, no mesmo bloco de
+    /// dados, pelo DWORD `2575` (`0x00000a0f`) — o **mesmo número exato** do `EC.log`. Duas
+    /// evidências independentes (o `GAME_BUILD` batendo e o vizinho na memória ser
+    /// literalmente a mensagem de erro de versão) apontando pro mesmo valor.
     pub fn server_version_code(&self) -> u32 {
         match self {
             GameVersion::V1_2_6 => 0x0001_0206, // medido na captura de 2026-09-01
             GameVersion::V1_4_8 => 0x0001_0408, // não conferido
             GameVersion::V1_5_3 => 0x0001_0502, // EC_Game.cpp:115
-            GameVersion::V1_5_5 => 0x0001_0503, // EvolvedPWClient/EC_Game.cpp:116
+            GameVersion::V1_5_5 => 0x0001_0505, // medido no elementclient.exe (build 2575), 2026-09-03
         }
     }
 

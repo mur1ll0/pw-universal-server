@@ -95,6 +95,12 @@ pub const OP_S2C_DELETE_ROLE_RES: u32 = 87; // PROTOCOL_DELETEROLE_RE
 pub const OP_C2S_UNDO_DELETE_ROLE: u32 = 88; // PROTOCOL_UNDODELETEROLE
 pub const OP_S2C_UNDO_DELETE_ROLE_RES: u32 = 89; // PROTOCOL_UNDODELETEROLE_RE
 
+/// `PlayerBaseInfo`/`Re` — o cliente pede raça/classe/gênero/nome de OUTRO jogador
+/// depois de receber `PLAYER_ENTER_WORLD` (ver `docs/ESTADO_E_RETOMADA.md`, item 17):
+/// sem essa resposta o avatar dele nunca materializa na tela de quem já o vê.
+pub const OP_C2S_PLAYER_BASE_INFO: u32 = 91; // PROTOCOL_PLAYERBASEINFO
+pub const OP_S2C_PLAYER_BASE_INFO_RE: u32 = 92; // PROTOCOL_PLAYERBASEINFO_RE
+
 /// O heartbeat **do jogador**. Não confundir com `KeepAlive` (90), que é entre daemons.
 pub const OP_C2S_HEARTBEAT: u32 = 93; // PROTOCOL_PLAYERHEARTBEAT
 
@@ -109,6 +115,12 @@ pub const OP_C2S_SET_HELP_STATES: u32 = 128; // PROTOCOL_SETHELPSTATES
 pub const OP_S2C_SET_HELP_STATES_RE: u32 = 129; // PROTOCOL_SETHELPSTATES_RE
 pub const OP_C2S_GET_HELP_STATES: u32 = 130; // PROTOCOL_GETHELPSTATES
 pub const OP_S2C_GET_HELP_STATES_RE: u32 = 131; // PROTOCOL_GETHELPSTATES_RE
+/// `GetCustomData`/`Re` — a aparência customizada (rosto/cabelo/corpo) de OUTRO
+/// jogador. Segundo pedido que o cliente faz depois do `PlayerBaseInfo`, se a base já
+/// estava pronta mas a aparência não.
+pub const OP_C2S_GET_CUSTOM_DATA: u32 = 116; // PROTOCOL_GETCUSTOMDATA
+pub const OP_S2C_GET_CUSTOM_DATA_RE: u32 = 117; // PROTOCOL_GETCUSTOMDATA_RE
+
 pub const OP_C2S_GET_FRIEND_LIST: u32 = 206; // PROTOCOL_GETFRIENDS
 pub const OP_S2C_GET_FRIEND_LIST_RE: u32 = 207; // PROTOCOL_GETFRIENDS_RE
 pub const OP_C2S_CHECK_NEW_MAIL: u32 = 4200; // PROTOCOL_CHECKNEWMAIL
@@ -157,6 +169,16 @@ pub const CONFERIDOS: &[(&str, &str, u32)] = &[
         "PROTOCOL_UNDODELETEROLE_RE",
         OP_S2C_UNDO_DELETE_ROLE_RES,
     ),
+    (
+        "OP_C2S_PLAYER_BASE_INFO",
+        "PROTOCOL_PLAYERBASEINFO",
+        OP_C2S_PLAYER_BASE_INFO,
+    ),
+    (
+        "OP_S2C_PLAYER_BASE_INFO_RE",
+        "PROTOCOL_PLAYERBASEINFO_RE",
+        OP_S2C_PLAYER_BASE_INFO_RE,
+    ),
     ("OP_C2S_HEARTBEAT", "PROTOCOL_PLAYERHEARTBEAT", OP_C2S_HEARTBEAT),
     ("OP_C2S_SET_CUSTOM_DATA", "PROTOCOL_SETCUSTOMDATA", OP_C2S_SET_CUSTOM_DATA),
     (
@@ -188,6 +210,16 @@ pub const CONFERIDOS: &[(&str, &str, u32)] = &[
         "OP_S2C_GET_HELP_STATES_RE",
         "PROTOCOL_GETHELPSTATES_RE",
         OP_S2C_GET_HELP_STATES_RE,
+    ),
+    (
+        "OP_C2S_GET_CUSTOM_DATA",
+        "PROTOCOL_GETCUSTOMDATA",
+        OP_C2S_GET_CUSTOM_DATA,
+    ),
+    (
+        "OP_S2C_GET_CUSTOM_DATA_RE",
+        "PROTOCOL_GETCUSTOMDATA_RE",
+        OP_S2C_GET_CUSTOM_DATA_RE,
     ),
     ("OP_C2S_GET_FRIEND_LIST", "PROTOCOL_GETFRIENDS", OP_C2S_GET_FRIEND_LIST),
     (

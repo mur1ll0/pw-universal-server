@@ -50,6 +50,15 @@ const MAPA: &[(&str, &str)] = &[
     ("S2CGetUIConfigRe", "GetUIConfig_Re"),
     ("S2CGetFriendListRe", "GetFriends_Re"),
     ("S2CGetHelpStatesRe", "GetHelpStates_Re"),
+    ("S2CPlayerBaseInfoRe", "PlayerBaseInfo_Re"),
+    ("S2CGetCustomDataRe", "GetCustomData_Re"),
+    // Os três achados em 2026-09-04: `S2CSetUIConfigRe` e `S2CSetCustomDataRe` estavam
+    // faltando campo (o segundo, dois) porque nunca tinham entrado nesta lista — o
+    // framework existia, só não olhava pra eles. `S2CSetHelpStatesRe` já estava certo,
+    // adicionado aqui só pra não sofrer o mesmo destino em silêncio.
+    ("S2CSetUIConfigRe", "SetUIConfig_Re"),
+    ("S2CSetCustomDataRe", "SetCustomData_Re"),
+    ("S2CSetHelpStatesRe", "SetHelpStates_Re"),
     ("C2SChallengeResponse", "Response"),
     ("C2SKeyExchange", "KeyExchange"),
     ("C2SRoleList", "RoleList"),

@@ -256,6 +256,116 @@ services:
       pw-dragonfly:
         condition: service_started
 
+  # ============================================================================
+  # 6. REALM 4: PERFECT WORLD EVOLVED (Versão 1.5.5, build v156 — base atual do projeto,
+  #    ver "MUDANÇA DE BASE" em docs/ESTADO_E_RETOMADA.md)
+  # ============================================================================
+  pw-realm-155:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+      args:
+        CRATE_NAME: pw-link
+    container_name: pw-realm-155
+    restart: unless-stopped
+    environment:
+      REALM_ID: realm_155
+      GAME_VERSION: "1.5.5"
+      GATEWAY_PORT: 29003
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+      GS_BUS: pw-world-155:29100
+    ports:
+      - "29003:29003" # Porta pública do cliente 1.5.5
+    volumes:
+      - ../data/realm_155/config:/app/data/config:ro
+    depends_on:
+      - pw-auth
+      - pw-world-155
+
+  # Servidor de mundo do realm 1.5.5. Sem `ports:` — barramento interno (ver 1.2.6).
+  pw-world-155:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+      args:
+        CRATE_NAME: pw-gs
+    container_name: pw-world-155
+    restart: unless-stopped
+    environment:
+      REALM_ID: realm_155
+      GAME_VERSION: "1.5.5"
+      WORLD_TAG: "1"
+      BUS_LISTEN: 0.0.0.0:29100
+      CONFIG_DIR: /app/data/config
+      # `pw_gs=debug` liga a linha "mundo: subcomando N de <roleid>", que é a prova de
+      # que o caminho cliente → pw-link → barramento → pw-gs está fechado. Enquanto os
+      # subcomandos não forem tratados aqui, é o único sinal de que eles chegam.
+      RUST_LOG: info,pw_gs=debug
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+    volumes:
+      - ../data/realm_155/config:/app/data/config:ro
+    depends_on:
+      pw-postgres:
+        condition: service_healthy
+      pw-dragonfly:
+        condition: service_started
+
+  # ============================================================================
+  # 7. REALM 5: PERFECT WORLD EVOLVED BR (mesma build 1.5.5, dados do client
+  #    "1.5.5 BR" do Murillo — realm gêmeo do 155 pra comparar client EN×BR e isolar se
+  #    um crash é do client ou do servidor. Ver docs/ESTADO_E_RETOMADA.md.)
+  # ============================================================================
+  pw-realm-155br:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+      args:
+        CRATE_NAME: pw-link
+    container_name: pw-realm-155br
+    restart: unless-stopped
+    environment:
+      REALM_ID: realm_155BR
+      GAME_VERSION: "1.5.5"
+      GATEWAY_PORT: 29004
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+      GS_BUS: pw-world-155br:29100
+    ports:
+      - "29004:29004" # Porta pública do client 1.5.5 BR
+    volumes:
+      - ../data/realm_155BR/config:/app/data/config:ro
+    depends_on:
+      - pw-auth
+      - pw-world-155br
+
+  # Servidor de mundo do realm 1.5.5 BR. Sem `ports:` — barramento interno (ver 1.2.6).
+  pw-world-155br:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.core
+      args:
+        CRATE_NAME: pw-gs
+    container_name: pw-world-155br
+    restart: unless-stopped
+    environment:
+      REALM_ID: realm_155BR
+      GAME_VERSION: "1.5.5"
+      WORLD_TAG: "1"
+      BUS_LISTEN: 0.0.0.0:29100
+      CONFIG_DIR: /app/data/config
+      RUST_LOG: info,pw_gs=debug
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      REDIS_URL: redis://pw-dragonfly:6379
+    volumes:
+      - ../data/realm_155BR/config:/app/data/config:ro
+    depends_on:
+      pw-postgres:
+        condition: service_healthy
+      pw-dragonfly:
+        condition: service_started
+
 volumes:
   pw_postgres_data:
   pw_dragonfly_data:
