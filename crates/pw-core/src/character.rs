@@ -18,6 +18,7 @@ pub struct CharacterSummary {
     pub cultivation: i32,
     pub world_id: WorldId,
     pub position: Vector3,
+
     pub equipment: Vec<ItemRecord>,
     pub custom_appearance: serde_json::Value,
     pub is_deleted: bool,
@@ -70,6 +71,14 @@ pub struct CharacterDetails {
     pub reputation: i32,
     pub world_id: WorldId,
     pub position: Vector3,
+
+    /// Os quatro atributos distribuíveis, do banco. Ver a nota em
+    /// `pw_storage::repositories::character::CharacterRecord`: as colunas existem desde
+    /// o começo e nunca eram lidas.
+    pub strength: i32,
+    pub agility: i32,
+    pub vitality: i32,
+    pub energy: i32,
     
     pub inventory_size: u16,
     pub storehouse_size: u16,

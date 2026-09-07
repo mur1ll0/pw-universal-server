@@ -24,7 +24,7 @@ use pw_core::{CharacterClass, Gender, Race, Vector3};
 use pw_data_loader::GameDataManager;
 use pw_gs::comandos::ids;
 use pw_gs::ai::MonsterAi;
-use pw_gs::entity::{MonsterEntity, PlayerEntity};
+use pw_gs::entity::MonsterEntity;
 use pw_gs::{BusServer, WorldInstance};
 use pw_storage::{CharacterRepository, PostgresPool, StorageConfig};
 use std::sync::Arc;
@@ -76,52 +76,6 @@ fn monstro() -> MonsterEntity {
     }
 }
 
-/// Monta um jogador no mundo, com o mínimo que o teste precisa.
-fn jogador(role_id: i32, pos: Vector3) -> PlayerEntity {
-    PlayerEntity {
-        role_id,
-        name: "Testador".to_string(),
-        race: Race::Human,
-        cls: CharacterClass::Blademaster,
-        gender: Gender::Male,
-        level: 1,
-        cultivation: 0,
-        hp: 100,
-        max_hp: 100,
-        mp: 50,
-        max_mp: 50,
-        exp: 0,
-        sp: 0,
-        money: 0,
-        strength: 5,
-        agility: 5,
-        vitality: 5,
-        energy: 5,
-        def_phys: 10,
-        def_metal: 10,
-        def_wood: 10,
-        def_water: 10,
-        def_fire: 10,
-        def_earth: 10,
-        attack_min: 10,
-        attack_max: 15,
-        magic_attack_min: 0,
-        magic_attack_max: 0,
-        // Precisão alta e nenhuma armadura no alvo: a rolagem de acerto do combate real
-        // sempre passa, então os testes de subcomando continuam determinísticos.
-        armor: 0,
-        attack_rate: 100_000,
-        attack_degree: 0,
-        defend_degree: 0,
-        crit_damage_bonus: 0,
-        attack_speed: 1.0,
-        move_speed: 4.8,
-        crit_rate: 0.0,
-        position: pos,
-        target_id: None,
-        buffs: Vec::new(),
-    }
-}
 
 /// Abre um pool **por teste**, pequeno.
 ///
@@ -147,9 +101,19 @@ async fn pool_do_teste(url: String) -> PostgresPool {
 /// O `role_id` não é inventado: a notificação de abate consulta `character_quests`, que
 /// tem chave estrangeira para `characters`. Com um id fictício a consulta voltaria vazia
 /// e o teste do abate passaria sem testar nada — que era o caso antes.
-async fn personagem_com_missao(pool: &PostgresPool) -> i32 {
+async fn personagem_com_missao(pool: &PostgresPool) -> (i32, i32) {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
-    let m = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() % 1_000_000_000;
+    // Só o relógio não basta: dois testes que começam no mesmo nanossegundo geram o mesmo
+    // id e o segundo morre em `duplicate key`. Aconteceu ao subir de 30 para 32 testes em
+    // paralelo. O contador desempata dentro do processo, e o relógio entre execuções.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let agora = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+    let m = format!(
+        "{}_{}",
+        agora % 1_000_000_000,
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    );
 
     let realm = format!("t_gs_{m}");
     sqlx::query(
@@ -188,11 +152,28 @@ async fn personagem_com_missao(pool: &PostgresPool) -> i32 {
         .await
         .expect("criar missão ativa");
 
-    role_id
+    // O segundo personagem existe para os testes de grupo. Antes eles usavam
+    // `anfitriao + 1`, um id inventado, e funcionava porque o teste inseria o jogador à
+    // mão. Agora quem põe jogador no mundo é a carga do banco, e um id que não existe é
+    // corretamente recusado — então o convidado precisa ser um personagem de verdade.
+    let convidado = repo
+        .create_character(
+            conta,
+            &realm,
+            &format!("Convi{m}"),
+            Race::Human,
+            CharacterClass::Blademaster,
+            Gender::Female,
+            Vec::new(),
+        )
+        .await
+        .expect("criar personagem convidado");
+
+    (role_id, convidado)
 }
 
 /// Monta mundo + servidor de barramento, ou `None` sem banco configurado.
-async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i32)> {
+async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i32, i32)> {
     let url = match std::env::var("TEST_DATABASE_URL") {
         Ok(u) if !u.trim().is_empty() => u,
         _ => {
@@ -205,14 +186,16 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
     // Pool pequeno de propósito: cada teste abre o seu, e o padrão (50) multiplicado
     // pelos testes em paralelo estoura o `max_connections` do servidor.
     let pool = pool_do_teste(url).await;
-    let roleid = personagem_com_missao(&pool).await;
+    let (roleid, convidado) = personagem_com_missao(&pool).await;
 
     let mut mundo = WorldInstance::new(
         1,
         Arc::new(GameDataManager::new()),
         CharacterRepository::new(pool),
     );
-    mundo.add_player(jogador(roleid, Vector3::new(0.0, 0.0, 0.0)));
+    // O jogador **não** é inserido aqui: quem o põe no mundo é o `EnterWorld`, que carrega
+    // o personagem do banco (`BusServer::colocar_no_mundo`). Fabricar um aqui esconderia
+    // justamente o caminho que interessa — e escondeu, até 2026-09-07.
     mundo
         .monsters
         .insert(MONSTRO, (monstro(), MonsterAi::new()));
@@ -227,7 +210,7 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
     servidor.ligar_eventos_do_mundo().await;
     tokio::spawn(Arc::clone(&servidor).executar(escuta));
 
-    Some((mundo, addr, roleid))
+    Some((mundo, addr, roleid, convidado))
 }
 
 macro_rules! cenario {
@@ -270,7 +253,7 @@ where
 
 #[tokio::test]
 async fn um_player_move_do_cliente_move_o_jogador_no_mundo() {
-    let (mundo, addr, roleid) = cenario!();
+    let (mundo, addr, roleid, _convidado) = cenario!();
     let mut link = BusClient::conectar(addr).await.unwrap();
 
     link.enviar(BusMessage::EnterWorld {
@@ -334,7 +317,7 @@ async fn um_player_move_do_cliente_move_o_jogador_no_mundo() {
 
 #[tokio::test]
 async fn um_logout_tira_o_jogador_do_mundo_e_avisa_o_link() {
-    let (mundo, addr, roleid) = cenario!();
+    let (mundo, addr, roleid, _convidado) = cenario!();
     let mut link = BusClient::conectar(addr).await.unwrap();
 
     link.enviar(BusMessage::EnterWorld {
@@ -398,7 +381,7 @@ async fn selecionar_alvo_devolve_o_hp_de_verdade_do_monstro() {
     // No `gateway.rs` este comando respondia HP **1000/1000 fixo**, porque o daemon de
     // link não sabe o estado das criaturas. É a razão de o tratamento pertencer ao mundo,
     // e é o que este teste cobra.
-    let (_mundo, addr, roleid) = cenario!();
+    let (_mundo, addr, roleid, _convidado) = cenario!();
     let mut link = BusClient::conectar(addr).await.unwrap();
 
     link.enviar(BusMessage::EnterWorld {
@@ -454,7 +437,7 @@ async fn selecionar_alvo_devolve_o_hp_de_verdade_do_monstro() {
 
 #[tokio::test]
 async fn desmarcar_o_alvo_manda_unselect() {
-    let (mundo, addr, roleid) = cenario!();
+    let (mundo, addr, roleid, _convidado) = cenario!();
     let mut link = BusClient::conectar(addr).await.unwrap();
 
     link.enviar(BusMessage::EnterWorld {
@@ -499,7 +482,68 @@ async fn desmarcar_o_alvo_manda_unselect() {
 }
 
 /// Manda `EnterWorld` e devolve o link pronto para os comandos seguintes.
-async fn entrar(addr: std::net::SocketAddr, roleid: i32) -> pw_bus::transport::BusConnection {
+/// Entra no mundo e **espera** o jogador aparecer nele.
+///
+/// A espera é o ponto: `colocar_no_mundo` roda na tarefa do barramento, então mandar o
+/// `EnterWorld` e seguir em frente é uma corrida — o teste alterava um jogador que a carga
+/// do banco sobrescrevia logo depois.
+///
+/// Depois de entrar, os atributos de combate são ajustados para o que estes testes
+/// assumem. O personagem que o `montar()` cria é de nível 1, e o `GameDataManager` do
+/// teste está vazio (sem `CHARRACTER_CLASS_CONFIG`, sem `ptemplate.conf`), então ele entra
+/// com dano 1 e precisão 0 — correto, e inútil para testar subcomando de combate. O que se
+/// ajusta aqui é só o que **não** é objeto destes testes; nível, vida e dinheiro cada teste
+/// define por conta.
+async fn entrar(
+    mundo: &Arc<RwLock<WorldInstance>>,
+    addr: std::net::SocketAddr,
+    roleid: i32,
+) -> pw_bus::transport::BusConnection {
+    let link = entrar_sem_ajustar(addr, roleid).await;
+
+    let presente = {
+        let m = Arc::clone(mundo);
+        let id = roleid as i64;
+        ate_async(move || {
+            let m = Arc::clone(&m);
+            async move { m.read().await.players.contains_key(&id) }
+        })
+        .await
+    };
+    assert!(presente, "o jogador não entrou no mundo depois do EnterWorld");
+
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).expect("conferido acima");
+        p.position = Vector3::new(0.0, 0.0, 0.0);
+        p.attack_min = 10;
+        p.attack_max = 15;
+        // Precisão alta e nenhuma armadura no alvo: a rolagem de acerto do combate real
+        // sempre passa, então os testes de subcomando continuam determinísticos.
+        p.attack_rate = 100_000;
+        p.def_phys = 10;
+        p.hp = 100;
+        p.max_hp = 100;
+        p.mp = 50;
+        p.max_mp = 50;
+        p.move_speed = 4.8;
+    }
+    m_grade(mundo, roleid).await;
+    link
+}
+
+/// A grade espacial guarda a posição de quando o jogador entrou; mexer na entidade sem
+/// avisá-la deixaria as duas em desacordo.
+async fn m_grade(mundo: &Arc<RwLock<WorldInstance>>, roleid: i32) {
+    let mut m = mundo.write().await;
+    m.grid.update_position(roleid as i64, Vector3::new(0.0, 0.0, 0.0));
+}
+
+/// `entrar` sem o ajuste — para o teste que confere o que a carga do banco produz.
+async fn entrar_sem_ajustar(
+    addr: std::net::SocketAddr,
+    roleid: i32,
+) -> pw_bus::transport::BusConnection {
     let mut link = BusClient::conectar(addr).await.unwrap();
     link.enviar(BusMessage::EnterWorld {
         roleid,
@@ -512,6 +556,21 @@ async fn entrar(addr: std::net::SocketAddr, roleid: i32) -> pw_bus::transport::B
     .await
     .unwrap();
     link
+}
+
+/// Como `ate`, mas para condição que precisa de `await`.
+async fn ate_async<F, Fut>(mut cond: F) -> bool
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    for _ in 0..200 {
+        if cond().await {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    false
 }
 
 /// Recebe `n` subcomandos do mundo, ou falha com prazo.
@@ -543,8 +602,8 @@ fn i32_em(v: &[u8], off: usize) -> i32 {
 async fn atacar_debita_o_hp_de_verdade_do_monstro() {
     // No `gateway.rs` o dano era 35 fixo e o HP respondido era 965/1000 fixo — o monstro
     // nunca perdia vida de verdade e nunca morria. Aqui o HP tem que cair.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     link.enviar(BusMessage::ClientToGame {
         roleid,
@@ -594,8 +653,8 @@ async fn o_monstro_morre_e_o_abate_leva_o_template_certo() {
     // O `gateway.rs` notificava abate **a cada golpe**, com a criatura `13641` escrita no
     // código — qualquer missão de caça completava batendo em qualquer coisa. Aqui a
     // notificação só sai na morte, e com o template real.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     link.enviar(BusMessage::ClientToGame {
         roleid,
@@ -669,8 +728,8 @@ async fn o_monstro_morre_e_o_abate_leva_o_template_certo() {
 async fn atacar_sem_alvo_nao_faz_nada() {
     // Sem `SELECT_TARGET` antes, não há o que atacar — e o servidor não pode inventar um
     // alvo nem responder um golpe no vazio.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     link.enviar(BusMessage::ClientToGame {
         roleid,
@@ -694,8 +753,8 @@ async fn stop_move_tambem_move_o_jogador_no_mundo() {
     // A ordem dos campos do STOP_MOVE difere da do PLAYER_MOVE (`use_time` é o último).
     // Aqui interessa que a posição chegue ao mundo; o teste de ordem está em
     // `comandos_contra_o_ir.rs`.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     let mut corpo = vec3(-3.0, 4.0, -5.0);
     corpo.extend_from_slice(&48u16.to_le_bytes()); // speed
@@ -755,8 +814,8 @@ async fn o_monstro_revida_e_o_cliente_fica_sabendo() {
     // `calculate_monster_to_player_damage` eram código morto e o monstro nunca revidava.
     // Segunda: mesmo que revidasse, o dano era aplicado **em silêncio**; o cliente via a
     // vida cheia até morrer do nada.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     // Encosta no monstro: a IA só ataca dentro do alcance.
     {
@@ -824,8 +883,8 @@ async fn o_monstro_revida_e_o_cliente_fica_sabendo() {
 
 #[tokio::test]
 async fn morrer_avisa_o_cliente_e_reviver_devolve_a_vida() {
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     // Deixa o jogador a um golpe da morte, encostado no monstro.
     {
@@ -895,8 +954,8 @@ async fn morrer_avisa_o_cliente_e_reviver_devolve_a_vida() {
 async fn quem_esta_vivo_nao_revive() {
     // Ressuscitar quem não morreu seria um teleporte grátis para a cidade sempre que o
     // jogador quisesse.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     let antes = mundo.read().await.players[&(roleid as i64)].position;
 
@@ -924,8 +983,8 @@ async fn equipar_pelo_barramento_move_o_item_e_avisa_o_cliente() {
     // O caminho inteiro de um comando de item: chega pelo barramento, mexe no banco, e o
     // cliente recebe o estado novo. E o item continua com os octetos — que é a falha que
     // `pw-storage/tests/itens_sobrevivem.rs` tranca do lado do repositório.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     const OCTETOS: &[u8] = &[0x11, 0x22, 0x33, 0x44];
     let itens = mundo.read().await.char_repo.item_repo().clone();
@@ -1004,8 +1063,8 @@ async fn equipar_pelo_barramento_move_o_item_e_avisa_o_cliente() {
 
 #[tokio::test]
 async fn trocar_slots_da_bolsa_pelo_barramento_preserva_o_item() {
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     const OCTETOS: &[u8] = &[0xA1, 0xA2];
     let itens = mundo.read().await.char_repo.item_repo().clone();
@@ -1079,8 +1138,8 @@ async fn comprar_do_npc_tira_dinheiro_e_da_o_item() {
     // `GP_NPCSEV_SELL` é o **NPC vendendo**, ou seja, o jogador comprando. O `gateway.rs`
     // lia o nome do enum do ponto de vista do jogador e fazia o contrário: apagava um item
     // e pagava por ele.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     let repo = mundo.read().await.char_repo.clone();
     let itens = repo.item_repo().clone();
@@ -1122,8 +1181,8 @@ async fn comprar_do_npc_tira_dinheiro_e_da_o_item() {
 
 #[tokio::test]
 async fn vender_ao_npc_tira_o_item_e_da_dinheiro() {
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     let repo = mundo.read().await.char_repo.clone();
     let itens = repo.item_repo().clone();
@@ -1188,8 +1247,8 @@ async fn vender_ao_npc_tira_o_item_e_da_dinheiro() {
 #[tokio::test]
 async fn nao_da_para_vender_um_slot_vazio() {
     // Sem conferir o slot, o jogador ganha dinheiro por vender nada.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     let antes = dinheiro(&mundo, roleid).await;
 
@@ -1218,8 +1277,8 @@ async fn nao_da_para_vender_um_slot_vazio() {
 
 #[tokio::test]
 async fn aceitar_missao_pelo_npc_grava_no_banco() {
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     const NOVA: u32 = 5150;
     link.enviar(BusMessage::ClientToGame {
@@ -1248,8 +1307,8 @@ async fn aceitar_missao_pelo_npc_grava_no_banco() {
 async fn conjurar_habilidade_causa_dano_real_no_alvo_selecionado() {
     // No `gateway.rs` o dano era **150 fixo**, mandado por uma tarefa que dormia um
     // segundo e respondia sem olhar para nada — o monstro não perdia vida.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     link.enviar(BusMessage::ClientToGame {
         roleid,
@@ -1295,8 +1354,8 @@ async fn conjurar_habilidade_causa_dano_real_no_alvo_selecionado() {
 async fn conjurar_no_alvo_da_lista_e_nao_no_selecionado() {
     // Quando o cliente manda a lista, ela manda. Este teste pega quem lê o alvo do
     // deslocamento errado: com `target_count` no meio, ler `data[7..11]` daria outro id.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     let mut corpo = 4321i32.to_le_bytes().to_vec();
     corpo.push(0); // force_attack
@@ -1328,8 +1387,8 @@ async fn conjurar_no_alvo_da_lista_e_nao_no_selecionado() {
 async fn usar_pocao_cura_pelo_valor_do_elements_data() {
     // O `gateway.rs` reconhecia poção por dois ids escritos no código e respondia
     // HP/MP 120/280 fixos, sem curar nada. Aqui o quanto vem do `elements.data`.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     const POCAO: u32 = 7777;
     const CURA_HP: i32 = 37;
@@ -1414,8 +1473,8 @@ async fn usar_pocao_cura_pelo_valor_do_elements_data() {
 #[tokio::test]
 async fn nao_da_para_usar_item_que_nao_esta_no_slot() {
     // Sem conferir, o cliente escolhe o que usar — inclusive o que não tem.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     let hp_antes = mundo.read().await.players[&(roleid as i64)].hp;
 
@@ -1456,11 +1515,18 @@ async fn segundo_jogador(
     addr: std::net::SocketAddr,
     roleid: i32,
 ) -> pw_bus::transport::BusConnection {
-    mundo
-        .write()
-        .await
-        .add_player(jogador(roleid, Vector3::new(2.0, 0.0, 2.0)));
-    let mut link = entrar(addr, roleid).await;
+    // Nada de inserir à mão: o `entrar` manda o `EnterWorld` e espera a carga do banco,
+    // igual ao primeiro jogador. Inserir antes só criava um jogador que a carga
+    // sobrescreveria logo depois.
+    let mut link = entrar(&mundo, addr, roleid).await;
+    {
+        // O segundo fica a dois metros do primeiro, que é o que os testes de grupo
+        // assumem — os dois entram na mesma posição por padrão.
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).expect("acabou de entrar");
+        p.position = Vector3::new(2.0, 0.0, 2.0);
+        m.grid.update_position(roleid as i64, Vector3::new(2.0, 0.0, 2.0));
+    }
 
     link.enviar(BusMessage::ClientToGame {
         roleid,
@@ -1479,10 +1545,9 @@ async fn o_convite_de_grupo_chega_a_quem_foi_convidado() {
     // No `gateway.rs` o convite era mandado **de volta a quem convidou**: o convidado
     // nunca ficava sabendo, e o grupo — que não existia em lugar nenhum — jamais se
     // formava.
-    let (mundo, addr, anfitriao) = cenario!();
-    let mut link_a = entrar(addr, anfitriao).await;
+    let (mundo, addr, anfitriao, convidado) = cenario!();
+    let mut link_a = entrar(&mundo, addr, anfitriao).await;
 
-    let convidado = anfitriao + 1;
     let mut link_b = segundo_jogador(&mundo, addr, convidado).await;
 
     link_a
@@ -1512,9 +1577,8 @@ async fn o_convite_de_grupo_chega_a_quem_foi_convidado() {
 
 #[tokio::test]
 async fn aceitar_forma_o_grupo_e_avisa_os_dois_com_dados_reais() {
-    let (mundo, addr, anfitriao) = cenario!();
-    let mut link_a = entrar(addr, anfitriao).await;
-    let convidado = anfitriao + 1;
+    let (mundo, addr, anfitriao, convidado) = cenario!();
+    let mut link_a = entrar(&mundo, addr, anfitriao).await;
     let mut link_b = segundo_jogador(&mundo, addr, convidado).await;
 
     // Quatro valores **distintos entre si**, e diferentes do padrão.
@@ -1600,9 +1664,11 @@ async fn aceitar_forma_o_grupo_e_avisa_os_dois_com_dados_reais() {
 async fn nao_da_para_entrar_num_grupo_sem_convite() {
     // Sem conferir o convite pendente, bastaria mandar o comando com o id de um estranho
     // para entrar no grupo dele.
-    let (mundo, addr, intruso) = cenario!();
-    let mut link = entrar(addr, intruso).await;
-    let outro = intruso + 1;
+    let (mundo, addr, intruso, convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, intruso).await;
+    // O convidado vem do `montar()`, não de `intruso + 1`: os dois personagens saem com
+    // ids consecutivos hoje, mas depender disso é aceitar que o teste passe por acaso.
+    let outro = convidado;
     let _link_b = segundo_jogador(&mundo, addr, outro).await;
 
     link.enviar(BusMessage::ClientToGame {
@@ -1625,9 +1691,8 @@ async fn nao_da_para_entrar_num_grupo_sem_convite() {
 async fn sair_do_grupo_avisa_quem_ficou() {
     // No `gateway.rs` a saída era um eco para o próprio jogador: os companheiros
     // continuavam vendo alguém que já tinha ido embora.
-    let (mundo, addr, anfitriao) = cenario!();
-    let mut link_a = entrar(addr, anfitriao).await;
-    let convidado = anfitriao + 1;
+    let (mundo, addr, anfitriao, convidado) = cenario!();
+    let mut link_a = entrar(&mundo, addr, anfitriao).await;
     let mut link_b = segundo_jogador(&mundo, addr, convidado).await;
 
     link_a
@@ -1694,9 +1759,8 @@ async fn sair_do_grupo_avisa_quem_ficou() {
 async fn sair_do_mundo_tambem_sai_do_grupo() {
     // Sem isto o grupo guardaria um membro que não existe mais, e a lista mostraria um
     // fantasma que ninguém consegue expulsar.
-    let (mundo, addr, anfitriao) = cenario!();
-    let mut link_a = entrar(addr, anfitriao).await;
-    let convidado = anfitriao + 1;
+    let (mundo, addr, anfitriao, convidado) = cenario!();
+    let mut link_a = entrar(&mundo, addr, anfitriao).await;
     let mut link_b = segundo_jogador(&mundo, addr, convidado).await;
 
     link_a
@@ -1753,8 +1817,8 @@ async fn a_consulta_periodica_devolve_o_hp_real_do_monstro() {
     // O `gateway.rs` respondia `1000/1000` fixo. Como esta consulta é **periódica**, ela
     // desfazia o combate: o golpe tirava vida no mundo e a consulta seguinte redesenhava
     // a barra cheia.
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     // Um dano qualquer, para que o HP consultado seja diferente do inicial.
     mundo.write().await.monsters.get_mut(&MONSTRO).unwrap().0.hp = 55;
@@ -1788,9 +1852,9 @@ async fn a_consulta_periodica_devolve_o_hp_real_do_monstro() {
 async fn a_consulta_de_jogador_devolve_alguma_coisa() {
     // O `gateway.rs` lia a contagem, escrevia uma linha de log e **devolvia sem
     // responder**. Nenhum outro jogador tinha barra de vida na tela.
-    let (mundo, addr, anfitriao) = cenario!();
-    let mut link = entrar(addr, anfitriao).await;
-    let outro = anfitriao + 1;
+    let (mundo, addr, anfitriao, convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, anfitriao).await;
+    let outro = convidado;
     let _link_b = segundo_jogador(&mundo, addr, outro).await;
 
     mundo.write().await.players.get_mut(&(outro as i64)).unwrap().hp = 77;
@@ -1821,8 +1885,8 @@ async fn a_consulta_de_jogador_devolve_alguma_coisa() {
 #[tokio::test]
 async fn o_proprio_estado_sai_do_personagem_e_nao_de_120_280() {
     // Terceira aparição do `120/120/280/280` escrito no código (itens 37 e 45).
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
 
     {
         let mut m = mundo.write().await;
@@ -1864,8 +1928,8 @@ async fn o_proprio_estado_sai_do_personagem_e_nao_de_120_280() {
 async fn get_all_data_respeita_os_sinalizadores_do_cliente() {
     // O `gateway.rs` não lia `detail_inv`/`detail_equip`/`detail_task`: mandava sempre
     // tudo. O servidor original passa os três adiante (`playercmd.cpp:1863`).
-    let (mundo, addr, roleid) = cenario!();
-    let mut link = entrar(addr, roleid).await;
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
     mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().money = 999;
 
     // Só o dinheiro e o marcador de fim: nada de bolsa, equipamento ou missões.
@@ -1904,5 +1968,74 @@ async fn get_all_data_respeita_os_sinalizadores_do_cliente() {
     assert!(
         r.iter().any(|v| cmd_de(v) == 42),
         "não mandou a bolsa (42) nem com detail_inv = 1"
+    );
+}
+
+#[tokio::test]
+async fn o_enter_world_poe_o_jogador_no_mundo_com_os_dados_do_banco() {
+    // O buraco que este arquivo escondia: `world.players` nunca era populado em produção
+    // — `PlayerEntity` só existia em teste, e era o próprio `montar()` que o fabricava.
+    // Tudo que começa com "olhe o jogador" saía cedo sem fazer nada.
+    //
+    // Aqui não há maquiagem: manda o `EnterWorld` e confere o que a carga do banco pôs no
+    // mundo.
+    let (mundo, addr, roleid, _convidado) = cenario!();
+
+    assert!(
+        mundo.read().await.players.is_empty(),
+        "antes do EnterWorld o mundo não pode ter jogador nenhum"
+    );
+
+    let _link = entrar_sem_ajustar(addr, roleid).await;
+
+    let m2 = Arc::clone(&mundo);
+    let presente = ate_async(move || {
+        let m = Arc::clone(&m2);
+        async move { m.read().await.players.contains_key(&(roleid as i64)) }
+    })
+    .await;
+    assert!(presente, "o EnterWorld não pôs o jogador no mundo");
+
+    let m = mundo.read().await;
+    let p = &m.players[&(roleid as i64)];
+
+    // Identidade vinda do banco, não de constante.
+    assert_eq!(p.role_id, roleid);
+    assert!(p.name.starts_with("Caca"), "nome veio errado: {}", p.name);
+    assert_eq!(p.cls, CharacterClass::Blademaster);
+    assert_eq!(p.level, 1, "o personagem de teste é criado no nível 1");
+
+    // E a grade espacial conhece o jogador — sem isso ele não é visto por ninguém.
+    let perto = m.grid.get_players_in_range(&p.position, 5.0);
+    assert!(perto.contains(&(roleid as i64)), "o jogador não entrou na grade espacial");
+}
+
+#[tokio::test]
+async fn sair_tira_o_jogador_do_mundo() {
+    // O `remove_player` já era chamado antes de existir quem adicionasse; agora dá para
+    // conferir o par inteiro.
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    assert!(mundo.read().await.players.contains_key(&(roleid as i64)));
+
+    link.enviar(BusMessage::PlayerLogout {
+        result: 0,
+        roleid,
+        provider_link_id: 1,
+        localsid: LOCALSID,
+    })
+    .await
+    .unwrap();
+
+    let m2 = Arc::clone(&mundo);
+    let saiu = ate_async(move || {
+        let m = Arc::clone(&m2);
+        async move { !m.read().await.players.contains_key(&(roleid as i64)) }
+    })
+    .await;
+    assert!(saiu, "o PlayerLogout não tirou o jogador do mundo");
+    assert!(
+        mundo.read().await.grid.get_players_in_range(&Vector3::new(0.0, 0.0, 0.0), 50.0).is_empty(),
+        "o jogador ficou na grade espacial depois de sair"
     );
 }

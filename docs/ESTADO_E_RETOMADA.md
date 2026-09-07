@@ -3932,6 +3932,138 @@ Ordem combinada com o Murillo:
        `tempo_de_odio` e `ataque_em_ticks` reais.
     4. `act_session` + skills, o item grande.
 
+30. **Sessão 2026-09-07 (continuação 3): `world.players` passou a existir. O jogador entra
+    no mundo simulado com os números do personagem, e o combate saiu do papel.**
+
+    É o passo 2 do item 29i, e o que faltava para tudo dos itens 28 e 29 ter efeito. O
+    diagnóstico do item 29g estava certo: **nada em produção construía um
+    `PlayerEntity`**. Ele só existia em teste, `world.players` ficava vazio para sempre, e
+    por isso `NORMAL_ATTACK` e `CAST_SKILL` saíam cedo no `mundo.players.get()`, a tabela
+    de ameaça nunca recebia nada e o `MonsterAi` inteiro era código morto.
+
+    O curioso é que a **saída** já existia: `remove_player` era chamado no `PlayerLogout`
+    e no `LOGOUT` desde antes. Faltava só a entrada.
+
+    ### a. Onde o jogador entra
+
+    `BusServer::colocar_no_mundo`, disparado pelo `BusMessage::EnterWorld` — que é o mesmo
+    ponto em que a sessão já era registrada. Carrega o personagem do banco, monta a
+    entidade e chama `world.add_player`.
+
+    O `EnterWorld` do barramento carrega `roleid` e mais nada — nem conta, nem realm
+    (espelha o pacote GNET real). Daí o `CharacterRepository::get_details_por_role`, que
+    busca sem checar dono. **Isso é correto aqui e errado em qualquer caminho que fale com
+    o cliente**: a autorização já aconteceu no `pw-link`, no `SelectRole`/`EnterWorld`
+    (item 29 da seção 2). O método diz isso no doc, para ninguém o usar por engano.
+
+    Nenhuma falha derruba a sessão: personagem inexistente, banco fora do ar ou mapa
+    trocado só registram no log e não põem a entidade. Cair aqui e desconectar trocaria
+    "combate não funciona" por "não dá para jogar".
+
+    ### b. De onde vem cada número
+
+    `PlayerEntity::do_personagem` junta **três** fontes, e nenhuma delas sozinha basta:
+
+    | fonte | o que dá |
+    | :--- | :--- |
+    | banco (`characters`) | identidade, nível, exp, dinheiro, posição, os quatro atributos |
+    | `ptemplate.conf` | o ponto de partida do nível 1: vida, mana, velocidades |
+    | `CHARRACTER_CLASS_CONFIG` (elements.data) | o que escala: por nível, por vitalidade, por agilidade |
+
+    As fórmulas, de `player_template::__LoadData` e `__LevelUp`:
+
+    ```text
+    max_hp = base.hp + lvl_hp*(nível-1) + vit_hp*vitalidade
+    max_mp = base.mp + lvl_mp*(nível-1) + eng_mp*energia
+    dano   = 1 + (int)(nível*lvlup_dmg)     - (int)(lvlup_dmg)
+    defesa =     (int)(nível*lvlup_defense) - (int)(lvlup_defense)
+    ```
+
+    O `- (int)(x)` do fim não é enfeite: `__LevelUp` soma
+    `(int)((l+1)*d) - (int)(l*d)` a cada nível, e a soma telescópica de 1 até N é
+    `(int)(N*d) - (int)(1*d)`. O dano parte de 1 porque é o que o original grava em
+    `damage_low`/`damage_high` antes de qualquer nível.
+
+    ### c. Duas descobertas de dado
+
+    1. **O banco já tinha `strength`, `agility`, `vitality` e `energy`** — estão no
+       `specs/01_DATABASE_SCHEMA_POSTGRES.sql` desde o começo e **nunca eram lidos**: o
+       `SELECT *` trazia as colunas e o `FromRow` as descartava porque não existiam no
+       `CharacterRecord`. São eles que alimentam vida máxima, precisão e evasão.
+    2. **O `ptemplate.conf` não é um `.data`** e não estava na pasta do realm: no pacote
+       original mora em `gamed/ptemplate.conf`, fora de `config/`. Foi copiado para
+       `data/realm_155/config/` e `data/realm_155BR/config/` (a pasta `data/` é ignorada
+       pelo git, então **um ambiente novo precisa repetir essa cópia** — sem ela o
+       carregamento avisa e a vida máxima vira a que estiver gravada no banco).
+
+    Novo módulo `crates/pw-data-loader/src/ptemplate.rs`: um leitor de `.conf` por seção,
+    com as doze seções na ordem literal de `player_template::__LoadData`
+    (`SWORDSMAN`=0 … `FAIRY`=11). Seção ou campo ausente é **erro**, como no original — um
+    realm com onze classes carregaria em silêncio e a décima segunda ficaria sem atributo
+    nenhum.
+
+    ### d. O que este jogador não tem
+
+    **Equipamento.** No original, `UpdateAttack`/`UpdateDefense` somam `_cur_item`,
+    `_en_point` e `_en_percent` por cima de tudo isto — arma, armadura, encantamento,
+    refino. Nada disso existe do nosso lado, então o que entra no mundo é um personagem
+    **pelado**: os números estão certos para nível, classe e atributos, e nada mais.
+    Grau de ataque, grau de defesa e bônus de dano crítico ficam em zero, que é o valor
+    neutro do cálculo, não um palpite.
+
+    ### e. O teste que estava escondendo o buraco
+
+    `subcomandos_no_mundo.rs` **fabricava** o jogador: `montar()` chamava
+    `add_player(jogador(...))` com uma entidade escrita à mão. É por isso que 30 testes
+    passavam sobre um caminho que não existia em produção.
+
+    Ao ligar a entrada de verdade, 12 dos 30 quebraram — e a causa não foi o cálculo, foi
+    **corrida**: `colocar_no_mundo` roda na tarefa do barramento, então mandar o
+    `EnterWorld` e seguir em frente deixava o teste alterando um jogador que a carga do
+    banco sobrescrevia logo depois. O `entrar()` agora **espera** o jogador aparecer antes
+    de devolver.
+
+    Três coisas foram consertadas de passagem, todas do mesmo tipo — teste que passava por
+    acaso:
+
+    - `segundo_jogador` inseria o convidado à mão e usava `anfitriao + 1` como id, que
+      não existe no banco. Agora o `montar()` cria **dois** personagens de verdade e o
+      convidado é um deles. (Funcionava porque os dois ids saem consecutivos — depender
+      disso é aceitar que o teste passe por acaso.)
+    - O id de realm dos testes vinha só do relógio; dois testes que começam no mesmo
+      nanossegundo colidiam em `duplicate key`. Apareceu ao subir de 30 para 32 testes em
+      paralelo. Um contador atômico desempata dentro do processo. O mesmo padrão estava
+      em `pw-storage/tests/autorizacao_de_personagem.rs` e foi corrigido junto.
+
+    ### f. Provas
+
+    - `crates/pw-gs/tests/jogador_do_banco.rs`, 9 testes do construtor (puro): as
+      fórmulas de vida/mana/dano/defesa conferidas à mão, o limite da vida corrente ao
+      máximo, e os dois casos de ausência — sem `ptemplate.conf` e sem
+      `CHARRACTER_CLASS_CONFIG` — onde ele **não** inventa número.
+    - `crates/pw-data-loader/tests/ptemplate_tests.rs`, 6 testes: o formato, as recusas, e
+      o arquivo real do realm 155.
+    - `subcomandos_no_mundo.rs` ganhou dois testes sem maquiagem nenhuma: o `EnterWorld`
+      põe o jogador no mundo **e na grade espacial** com os dados do banco, e o
+      `PlayerLogout` tira dos dois.
+
+    Com banco: 32/32 em `subcomandos_no_mundo`, estável em três rodadas seguidas. Sem
+    banco: 64 suítes, e continuam apenas as duas falhas pré-existentes do `elements.data`
+    v55 e do `npcgen.data` v5/v6 do 1.2.6.
+
+    ### g. O que resta
+
+    1. Teste do alvo selecionado no cliente (item 27g, não depende de código nosso).
+    2. **Confirmar o combate em jogo** — agora há um jogador no mundo, um monstro com
+       atributos reais e uma fórmula portada. É a primeira vez que os três existem ao
+       mesmo tempo.
+    3. **O intérprete de `aipolicy`**: o `ai.rs` continua com `35.0` de distância de
+       perseguição e 1500 ms de recarga escritos no código, enquanto o template já traz
+       `raio_de_odio`, `raio_de_visao`, `tempo_de_odio` e `ataque_em_ticks` reais.
+    4. **Equipamento**, que é o que falta para o jogador deixar de estar pelado — e é
+       pré-requisito para qualquer comparação de dano com o servidor original.
+    5. `act_session` + skills, o item grande.
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver

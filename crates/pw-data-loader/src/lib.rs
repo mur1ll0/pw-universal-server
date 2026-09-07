@@ -7,6 +7,7 @@ pub mod gshop;
 pub mod manager;
 pub mod monstros;
 pub mod npcgen;
+pub mod ptemplate;
 pub mod tasks;
 pub mod validator;
 
@@ -20,5 +21,6 @@ pub use gshop::GShopData;
 pub use manager::{FalhaDeCarga, GameDataManager, RelatorioDeCarga};
 pub use monstros::{TabelaDeMonstros, TemplateDeMonstro};
 pub use npcgen::{compress_dir_h, NpcGenData, SpatialGrid, SpawnInstance, SpawnType};
+pub use ptemplate::{BaseDaClasse, TabelaDeBase};
 pub use tasks::TasksData;
 pub use validator::*;

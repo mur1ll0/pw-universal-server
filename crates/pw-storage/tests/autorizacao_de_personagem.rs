@@ -39,14 +39,20 @@ use pw_storage::{CharacterRepository, PostgresPool, StorageConfig};
 /// Sufixo único por execução, para que rodar o teste duas vezes não esbarre nas
 /// restrições de unicidade (`uq_character_name_per_realm`, `accounts.username`).
 fn marca() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    // Só o relógio não basta: dois testes que começam no mesmo nanossegundo geram a mesma
+    // marca e o segundo morre em `duplicate key`. O contador desempata dentro do
+    // processo, e o relógio entre execuções.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     format!(
-        "{}",
+        "{}_{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos()
-            % 1_000_000_000
+            % 1_000_000_000,
+        SEQ.fetch_add(1, Ordering::Relaxed)
     )
 }
 

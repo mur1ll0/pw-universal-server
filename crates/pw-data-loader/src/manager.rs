@@ -6,6 +6,7 @@ use crate::generic_elements::{self, GenericElementsData};
 use crate::gshop::GShopData;
 use crate::monstros::TabelaDeMonstros;
 use crate::npcgen::NpcGenData;
+use crate::ptemplate::TabelaDeBase;
 use crate::tasks::TasksData;
 use std::collections::HashMap;
 use std::fmt;
@@ -143,6 +144,11 @@ pub struct GameDataManager {
     /// [`crate::classes`]. É de onde saem a precisão e a evasão base do jogador. Vazia
     /// no 1.2.6/v7, pelo mesmo motivo de [`Self::monstros`].
     pub classes: TabelaDeClasses,
+    /// Os atributos **base** por classe, do `ptemplate.conf` — ver [`crate::ptemplate`].
+    /// Fonte diferente da de [`Self::classes`]: aquela traz o que escala por nível e por
+    /// ponto de atributo, esta traz o ponto de partida do nível 1. Vazia quando o pacote
+    /// do realm não trouxe o arquivo.
+    pub base_das_classes: TabelaDeBase,
     
     /// `ELEMENTDATA_VERSION` lido do cabeçalho do `elements.data` **deste realm**, quando
     /// o arquivo existe.
@@ -316,6 +322,14 @@ impl GameDataManager {
         if let Some(g) = &self.elements_generic {
             self.monstros = crate::monstros::carregar(g, Some(&self.aipolicy));
             self.classes = crate::classes::carregar(g);
+        }
+
+        // O `ptemplate.conf` não é um `.data`: é um arquivo de configuração do `gamed`, e
+        // no pacote original mora fora da pasta de `config`. Aqui ele é procurado junto
+        // com os outros; ausência não é falha de carga (ver `ptemplate::ler_da_pasta`).
+        if let Some(t) = crate::ptemplate::ler_da_pasta(dir) {
+            self.base_das_classes = t;
+            rel.lidos.push("ptemplate.conf".into());
         }
 
         // 2. Carrega o npcgen.data do mundo principal (world/npcgen.data ou npcgen.data na raiz)

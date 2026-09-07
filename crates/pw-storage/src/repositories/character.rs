@@ -31,6 +31,14 @@ pub struct CharacterRecord {
     pub pos_x: f32,
     pub pos_y: f32,
     pub pos_z: f32,
+    /// Os quatro atributos distribuíveis. Estão no schema desde o começo
+    /// (`specs/01_DATABASE_SCHEMA_POSTGRES.sql`) e **nunca eram lidos**: o `SELECT *`
+    /// trazia as colunas e o `FromRow` as descartava por não existirem aqui. São eles que
+    /// alimentam vida/mana máxima, precisão e evasão do jogador no mundo.
+    pub strength: i32,
+    pub agility: i32,
+    pub vitality: i32,
+    pub energy: i32,
     pub custom_data: Option<Vec<u8>>,
     pub is_deleted: bool,
     pub deleted_at: Option<DateTime<Utc>>,
@@ -297,6 +305,31 @@ impl CharacterRepository {
     /// Nenhuma variante sem escopo existe de propósito. Se um dia o servidor de mundo
     /// precisar carregar um personagem sem ter a conta em mãos, o certo é passar a
     /// identidade adiante pelo barramento, e não reabrir esta porta.
+    /// O personagem, **sem** checar dono nem realm.
+    ///
+    /// Existe para o servidor de mundo, que recebe um `EnterWorld` do barramento com
+    /// `roleid` e nada mais — nem conta, nem realm — e precisa montar a entidade do
+    /// jogador. A autorização já aconteceu antes, no `pw-link`: `SelectRole` e
+    /// `EnterWorld` conferem que o personagem é da conta autenticada
+    /// (`docs/ESTADO_E_RETOMADA.md`, item 29). Repetir a checagem aqui exigiria carregar
+    /// a conta pelo barramento só para reprovar o que já foi aprovado.
+    ///
+    /// **Não use isto num caminho que fale direto com o cliente** — ali a checagem de
+    /// dono é obrigatória, e é para isso que existe [`Self::get_details`].
+    pub async fn get_details_por_role(&self, role_id: RoleId) -> Result<Option<CharacterDetails>> {
+        let dono: Option<(i32, String)> = sqlx::query_as(
+            "SELECT account_id, realm_id FROM characters WHERE id = $1 AND is_deleted = false",
+        )
+        .bind(role_id)
+        .fetch_optional(self.pool.get_ref())
+        .await?;
+
+        let Some((account_id, realm_id)) = dono else {
+            return Ok(None);
+        };
+        self.get_details(role_id, account_id, &realm_id).await
+    }
+
     pub async fn get_details(
         &self,
         role_id: RoleId,
@@ -433,6 +466,10 @@ impl CharacterRepository {
             reputation: 0,
             world_id: r.world_id,
             position: Vector3::new(r.pos_x, r.pos_y, r.pos_z),
+            strength: r.strength,
+            agility: r.agility,
+            vitality: r.vitality,
+            energy: r.energy,
             inventory_size: 64,
             storehouse_size: 32,
             inventory,

@@ -1,4 +1,5 @@
-use pw_data_loader::{TabelaDeClasses, TemplateDeMonstro};
+use pw_core::CharacterDetails;
+use pw_data_loader::{TabelaDeBase, TabelaDeClasses, TemplateDeMonstro};
 use pw_core::{CharacterClass, Gender, Race, RoleId, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -113,6 +114,118 @@ pub struct MonsterEntity {
 }
 
 impl PlayerEntity {
+    /// Monta o jogador que entra no mundo, a partir do personagem do banco mais as duas
+    /// tabelas de classe.
+    ///
+    /// # As fórmulas, e de onde vêm
+    ///
+    /// O `ptemplate.conf` dá o ponto de partida do nível 1 e o `CHARRACTER_CLASS_CONFIG`
+    /// dá o que escala (`player_template::__LoadData` e `__LevelUp`):
+    ///
+    /// ```text
+    /// max_hp  = base.hp  + lvl_hp * (nível-1) + vit_hp * vitalidade
+    /// max_mp  = base.mp  + lvl_mp * (nível-1) + eng_mp * energia
+    /// dano    = 1 + (int)(nível * lvlup_dmg)      - (int)(lvlup_dmg)
+    /// defesa  =     (int)(nível * lvlup_defense) - (int)(lvlup_defense)
+    /// precisão = agi_attack * agilidade
+    /// evasão   = agi_armor  * agilidade
+    /// ```
+    ///
+    /// O `- (int)(x)` no fim das duas do meio não é enfeite: `__LevelUp` soma
+    /// `(int)((l+1)*d) - (int)(l*d)` a cada nível, e a soma telescópica de 1 até N é
+    /// `(int)(N*d) - (int)(1*d)`. O dano parte de 1 porque é o que
+    /// `player_template::__LoadData` grava em `damage_low`/`damage_high` antes de
+    /// qualquer nível.
+    ///
+    /// # O que este jogador **não** tem
+    ///
+    /// Equipamento. No original, `UpdateAttack`/`UpdateDefense` somam `_cur_item`,
+    /// `_en_point` e `_en_percent` por cima de tudo isto — arma, armadura, encantamento,
+    /// refino. Nada disso existe do nosso lado, então o que sai daqui é um personagem
+    /// **pelado**: os números são os certos para nível, classe e atributos, e nada mais.
+    /// É a diferença entre "aproximado" e "incompleto de um jeito conhecido".
+    ///
+    /// `base` é `None` quando o realm não trouxe o `ptemplate.conf`; nesse caso vida e
+    /// mana máximas ficam iguais às que estão gravadas no banco, e o log de quem chamou
+    /// deve dizer isso.
+    pub fn do_personagem(
+        p: &CharacterDetails,
+        classes: &TabelaDeClasses,
+        base: Option<&TabelaDeBase>,
+    ) -> Self {
+        let cls = p.cls as i32;
+        let cfg = classes.get(cls);
+        let base = base.and_then(|b| b.get(cls));
+        // `__LevelUp` roda uma vez por nível ganho, ou seja `nível - 1` vezes.
+        let niveis = (p.level - 1).max(0);
+
+        let telescopica = |por_nivel: f32| -> i32 {
+            (p.level as f32 * por_nivel) as i32 - por_nivel as i32
+        };
+
+        let (max_hp, max_mp) = match (base, cfg) {
+            (Some(b), Some(c)) => (
+                b.vida + c.vida_por_nivel as i32 * niveis + c.vida_por_vitalidade * p.vitality,
+                b.mana + c.mana_por_nivel as i32 * niveis + c.mana_por_energia * p.energy,
+            ),
+            // Sem o `ptemplate.conf` não há ponto de partida: fica o que o banco guardou,
+            // que ao menos não é inventado.
+            _ => (p.hp, p.mp),
+        };
+
+        let dano = cfg.map(|c| 1 + telescopica(c.dano_por_nivel)).unwrap_or(1);
+        let dano_magico = cfg.map(|c| 1 + telescopica(c.dano_magico_por_nivel)).unwrap_or(1);
+        let defesa = cfg.map(|c| telescopica(c.defesa_por_nivel)).unwrap_or(0);
+        let resistencia = cfg.map(|c| telescopica(c.resistencia_por_nivel)).unwrap_or(0);
+
+        Self {
+            role_id: p.id,
+            name: p.name.clone(),
+            race: p.race,
+            cls: p.cls,
+            gender: p.gender,
+            level: p.level,
+            cultivation: p.cultivation,
+            // O banco guarda a vida corrente; ela não pode passar do máximo recém-calculado
+            // (um personagem que subiu de nível offline, ou um `ptemplate.conf` trocado).
+            hp: p.hp.min(max_hp).max(0),
+            max_hp,
+            mp: p.mp.min(max_mp).max(0),
+            max_mp,
+            exp: p.exp,
+            sp: p.sp,
+            money: p.money,
+            strength: p.strength,
+            agility: p.agility,
+            vitality: p.vitality,
+            energy: p.energy,
+            def_phys: defesa,
+            def_metal: resistencia,
+            def_wood: resistencia,
+            def_water: resistencia,
+            def_fire: resistencia,
+            def_earth: resistencia,
+            attack_min: dano,
+            attack_max: dano,
+            magic_attack_min: dano_magico,
+            magic_attack_max: dano_magico,
+            armor: cfg.map(|c| c.evasao_base(p.agility)).unwrap_or(0),
+            attack_rate: cfg.map(|c| c.precisao_base(p.agility)).unwrap_or(0),
+            // Grau de ataque/defesa e bônus de dano crítico vêm de equipamento e passiva
+            // no original. Zero é o valor neutro do cálculo, não um palpite.
+            attack_degree: 0,
+            defend_degree: 0,
+            crit_damage_bonus: 0,
+            attack_speed: base.map(|b| b.ataque_em_ticks as f32 / 20.0).unwrap_or(1.0),
+            move_speed: base.map(|b| b.velocidade_correndo).unwrap_or(3.0),
+            // `crit_rate` está em pontos percentuais na tabela e em fração na entidade.
+            crit_rate: cfg.map(|c| c.chance_de_critico as f32 / 100.0).unwrap_or(0.0),
+            position: p.position,
+            target_id: None,
+            buffs: Vec::new(),
+        }
+    }
+
     /// A precisão e a evasão base do jogador, do `CHARRACTER_CLASS_CONFIG` do
     /// `elements.data`: `agi_attack * agilidade` e `agi_armor * agilidade`
     /// (`player_template::GetBasicAttackRate` / `GetBasicArmor`).

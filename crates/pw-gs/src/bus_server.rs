@@ -39,6 +39,7 @@
 //! O que fica no `gateway.rs` é sobretudo consulta (`GET_ALL_DATA`, `GET_EXT_PROP`,
 //! `QUERY_*_INFO`), `TASK_NOTIFY`, moda, duelo e Mall.
 
+use crate::entity::PlayerEntity;
 use crate::combat::CombatEngine;
 use crate::comandos::{
     ids, CastSkill, ConsultaDeIds, EmoteAction, GetAllData, GetIvtrDetail, Logout, MoveIvtrItem,
@@ -357,6 +358,7 @@ impl BusServer {
                     },
                 );
                 info!("mundo: jogador {roleid} entrou (localsid {localsid})");
+                self.colocar_no_mundo(roleid).await;
             }
 
             BusMessage::PlayerLogout { roleid, .. } => {
@@ -379,6 +381,81 @@ impl BusServer {
                 warn!("mundo: recebi um GameToClient (74) de {roleid} — sentido invertido");
             }
         }
+    }
+
+    /// Carrega o personagem e o põe no mundo simulado.
+    ///
+    /// # Por que isto não existia
+    ///
+    /// `world.players` **nunca era populado**: `PlayerEntity` só era construído em teste.
+    /// A consequência é que tudo que começa com "olhe o jogador" saía cedo sem fazer
+    /// nada — `NORMAL_ATTACK` e `CAST_SKILL` retornam no `mundo.players.get()`, a tabela
+    /// de ameaça nunca recebia nada, e o `MonsterAi` inteiro era código morto. O
+    /// `remove_player` já era chamado nos dois caminhos de saída desde antes; faltava só
+    /// a entrada.
+    ///
+    /// # O que acontece quando dá errado
+    ///
+    /// Personagem que não existe, banco fora do ar ou mapa trocado **não** derrubam a
+    /// sessão: o jogador continua conectado e recebendo pacotes pelo caminho antigo, e o
+    /// log diz o que faltou. Cair aqui e desconectar seria trocar "combate não funciona"
+    /// por "não dá para jogar".
+    async fn colocar_no_mundo(&self, roleid: i32) {
+        let (repo, world_id, dados) = {
+            let mundo = self.world.read().await;
+            (
+                mundo.char_repo.clone(),
+                mundo.world_id,
+                Arc::clone(&mundo.data_manager),
+            )
+        };
+
+        let detalhes = match repo.get_details_por_role(roleid).await {
+            Ok(Some(d)) => d,
+            Ok(None) => {
+                warn!("mundo: jogador {roleid} entrou mas não existe no banco — sem entidade");
+                return;
+            }
+            Err(e) => {
+                warn!("mundo: não consegui carregar o jogador {roleid} do banco: {e}");
+                return;
+            }
+        };
+
+        if detalhes.world_id != world_id {
+            // O `pw-link` roteia por realm, não por mapa: um personagem gravado noutro
+            // mapa chega aqui do mesmo jeito. Entrar no mundo errado poria o jogador num
+            // lugar onde ninguém o vê, então é melhor recusar e dizer.
+            warn!(
+                "mundo: jogador {roleid} é do mapa {} e este é o {world_id} — não entrou",
+                detalhes.world_id
+            );
+            return;
+        }
+
+        let jogador = PlayerEntity::do_personagem(
+            &detalhes,
+            &dados.classes,
+            Some(&dados.base_das_classes).filter(|b| !b.is_empty()),
+        );
+
+        if dados.classes.is_empty() {
+            warn!(
+                "mundo: o realm não tem CHARRACTER_CLASS_CONFIG — o jogador {roleid} entrou                  sem precisão, evasão nem dano por nível"
+            );
+        }
+        if dados.base_das_classes.is_empty() {
+            warn!(
+                "mundo: o realm não tem ptemplate.conf — a vida máxima do jogador {roleid}                  é a que estava gravada no banco, não a calculada"
+            );
+        }
+
+        info!(
+            "mundo: {} (#{roleid}) nível {} entrou no mapa {world_id} — {}/{} de vida,              dano {}, defesa {}, precisão {}, evasão {}",
+            jogador.name, jogador.level, jogador.hp, jogador.max_hp, jogador.attack_min,
+            jogador.def_phys, jogador.attack_rate, jogador.armor
+        );
+        self.world.write().await.add_player(jogador);
     }
 
     /// Ponto de entrada dos subcomandos do mundo 3D.
