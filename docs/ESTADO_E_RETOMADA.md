@@ -4220,6 +4220,170 @@ Ordem combinada com o Murillo:
 
     Com banco: 64 suítes, e continuam apenas as duas falhas pré-existentes do 1.2.6.
 
+32. **Sessão 2026-09-08: por que nenhuma habilidade funcionava. A resposta não estava nas
+    habilidades — estava na arma.**
+
+    Três pedidos do Murillo depois do segundo teste em jogo: como abrir o console do
+    cliente, o modelo 3D que continua invisível mesmo clicando no outro jogador, e
+    "arruma as skills no banco e faz funcionar em jogo".
+
+    ### a. O console: `##debug` no chat, não uma tecla
+
+    Não é uma tecla solta, são **duas travas independentes**, e nenhuma delas está no
+    `.cfg` que o instalador entrega:
+
+    | Trava | Quem lê | O que ela libera |
+    | :--- | :--- | :--- |
+    | `glb_IsConsoleEnable()` (`ElementClient.cpp:160`) | `l_CmdParams.iConsole`, da **linha de comando** | a tecla que **mostra** a janela (`EC_GameUIMan.cpp:1264`) |
+    | `GetConfigs()->HasConsole()` (`EC_Configs.h:622`) | `[Settings] console` do `Configs\element_client.cfg` | a **execução** de qualquer comando (`EC_DlgCmdConsole.cpp:235`) |
+
+    Ligar só o `.cfg` mostra nada; ligar só a linha de comando abre uma janela que ignora
+    o que você digitar. **Digitar `##debug` no chat liga as duas de uma vez**
+    (`DlgChat.cpp:454-461`) — é a única forma que não pede mexer em arquivo do cliente.
+
+    A tecla é `Shift + VK_OEM_3` (`EC_HostInputFilter.cpp:303`). `VK_OEM_3` é a tecla à
+    **esquerda do "1"**; em teclado ABNT2 ela imprime aspa simples e aspas, não til — que
+    é a razão provável de "Shift+~" não ter feito nada.
+
+    O `configs\console_cmd.txt` do cliente lista o que existe: 69 comandos `d_*` e 14
+    `gm_*`. Os que interessam a este projeto: `d_showid`, `d_c2scmd`/`d_gscmd` (manda
+    comando cru), `d_querymodel`, `d_queryskill`, `d_relogin`, `d_playerradius`,
+    `d_viewradius`, `d_showpos`, `d_task`.
+
+    ### b. As habilidades: o cliente recusa pela arma, antes de olhar a habilidade
+
+    `ElementSkill::Condition` (`ElementSkill.cpp:191`) abre assim:
+
+    ```cpp
+    if (info.arrow < GetArrowCost()) return 9;
+    if (!ValidWeapon(info.weapon))   return 1;   // <- aqui
+    if (info.mp < GetMpCost())       return 2;
+    ```
+
+    `ValidWeapon` (`skill.h:179`) é **lista branca**: o `restrict_weapons` do stub da
+    habilidade. E `info.weapon` é o `GetDBMajorType()->id` da arma equipada
+    (`EC_HostPlayer.cpp:6146-6153`), ou 0 se não houver arma.
+
+    Toda habilidade de Sacerdote aceita **292 (Magia)** ou **0 (desarmado)**. Os
+    sacerdotes de teste estavam com o **"Graveto de Madeira" (2867)**, que o
+    `elements.data` do realm diz ser **tipo maior 5 (Acha)**. Resultado: o cliente
+    recusava **todas** as habilidades da classe antes mesmo de olhar MP, nível ou
+    cooldown. É a mesma causa da "arma não funcional" relatada — e, de quebra, o modelo
+    do graveto é o único dos quatro que **não existe** na instalação dos dois clients (a
+    Varinha, a Espada e o Arco estão lá).
+
+    ### c. E as habilidades gravadas também estavam erradas
+
+    Os stubs gerados do `ElementSkill` (`skillNNN.h`, 3.317 arquivos) declaram `cls`,
+    `type`, `rank`, `max_level`, `restrict_weapons` e uma tabela `GetRequiredLevel`. Lidos
+    todos, o que os sacerdotes tinham no banco era:
+
+    | id | classe | tipo | nível exigido | veredito no nível 1 |
+    | ---: | ---: | :--- | ---: | :--- |
+    | 11 | 7 | passiva | 29 | nem aparece na barra (`m_aPsSkills`) |
+    | 117 | 7 | maldição | 29 | aparece e recusa |
+    | 118 | 7 | maldição | 39 | aparece e recusa |
+    | 119 | 7 | maldição | 49 | aparece e recusa |
+    | 167 | 255 | bênção | 1 | ok |
+
+    Zero habilidade de ataque utilizável. O `default_skills()` era um chute rotulado de
+    "v1.2.6"; dos ids que ele usava, `27`, `60`, `61`, `90`, `190` e `274` eram de outra
+    classe, passivos, ou de nível 9 a 39.
+
+    O critério que separa a árvore da classe do resto, aplicado ao catálogo inteiro:
+    `cls` igual à classe, `rank == 0`, `max_level == 10`, `GetRequiredLevel[0] == 0` e uma
+    tabela de SP em que o nível 2 já custa pontos (as inerentes e as de transformação
+    custam 0 SP em todos os níveis). O que sai bate com o Perfect World conhecido —
+    Guerreiro 1, Mago 81, Bárbaro 102, Feiticeira 299, Arqueiro 234/235, Sacerdote
+    113/125 — o que é uma conferência independente do critério.
+
+    | cls | classe | habilidades de nível 1 | tipo maior da arma | arma |
+    | ---: | :--- | :--- | ---: | :--- |
+    | 0 | Guerreiro | 1 | 1 Espada | 2097 Espada de Madeira |
+    | 1 | Mago | 81 | 292 Magia | 2251 Varinha |
+    | 2 | Espiritualista | 1125, 1126 | 25333 Orbe | 26332 Pequena Esfera |
+    | 3 | Feiticeira | 299 | 292 Magia | 2251 Varinha |
+    | 4 | Bárbaro | 102 | 9 Machado/Martelo | 2258 Porrete com Espinhos |
+    | 5 | Mercenário | 1111 | 23749 Adagas | 26331 Faca de Limpar Osso |
+    | 6 | Arqueiro | 234, 235 | 13 Longo Alcance | 2250 Arco de Madeira |
+    | 7 | Sacerdote | 125, 113 | 292 Magia | **2251 Varinha** |
+    | 8 | Arcano | 1350 | 1 Espada | 2097 Espada de Madeira |
+    | 9 | Místico | 1374, 1381 | 292 Magia | 2251 Varinha |
+    | 10 | Retalhador | 2547 | 44878 Sabre | 44937 Sabre de Bronze |
+    | 11 | Tormentador | 2571 | 44879 Foice | 45020 Foice de Ferro |
+
+    Mais a 167 (Portal da Cidade), `cls = 255`, que vale para todas.
+
+    **No código**: `default_skills()` e `default_weapon_id()` reescritos, e um
+    `weapon_major_type()` novo. **No banco**: `scripts/corrige_skills_e_armas_155.sql`
+    aplica isso aos personagens de `realm_155` e `realm_155BR` (o `realm_126` fica de
+    fora, é outra versão).
+
+    ### d. O equipamento do outro jogador ia como "pelado"
+
+    O `EQUIP_DATA` (66) respondia com `mask = 0`. Isso destrava o `IsEquipDataReady()` —
+    era o objetivo quando foi escrito — mas descreve o outro jogador como se não vestisse
+    nada: `ChangeEquipments` faz `memset(m_aNewEquips, 0, ...)` e sem bit ligado nada
+    volta a ser preenchido (`EC_ElsePlayer.cpp:1700-1712`).
+
+    O formato saiu do próprio cliente: `mask` é um bit por slot de `EQUIPIVTR_*`
+    (0 arma até 39, `SIZE_ALL_EQUIPIVTR = 40`), `data[]` traz **um inteiro por bit, em
+    ordem crescente de slot**, e cada inteiro é o id do item no `elements.data` **nos 16
+    bits baixos** — `GetRealElementID` faz `& 0x0000ffff` porque os altos guardam cor de
+    moda (`EC_Player.cpp:9635-9644`). Agora vai o equipamento de verdade, lido do banco.
+
+    ### e. O modelo 3D: mais duas hipóteses eliminadas, e onde parou
+
+    Eliminadas nesta sessão, com prova:
+
+    - **`CECMemSimplify` / `ShouldUseModel()`** — o `uiconfig.ini` do cliente diz
+      `MemoryBufferStage = 1600, 1700`, e o `EC.log` registra o processo em **122 MB**.
+      Longe do limiar; `m_iMemUsage` fica em `MEMUSAGE_NORMAL` e `ShouldUseModel()`
+      devolve `true`.
+    - **O `GetBornStamp()` de `EC_World.h:189`**, que a sessão anterior tinha marcado como
+      suspeito por pós-incrementar. Ele é o **alocador** do mundo (distribui carimbos
+      únicos); o do jogador, `pPlayer->GetBornStamp()`, é um getter simples. Não há bug
+      ali — a suspeita anterior estava errada.
+
+    O que passou a ser conhecido e não era: as três flags do portão
+    (`EC_ElsePlayer.cpp:671`) são preenchidas por **pedidos que o cliente faz**, não pelo
+    que mandamos no login. Ao ver outro jogador ele dispara `GetRoleBaseInfo`,
+    `GetRoleCustomizeData` e `c2s_CmdGetOtherEquip` (`EC_ManPlayer.cpp:347-358`). Os três
+    são respondidos — confirmado no log do realm — e cada resposta liga a sua flag:
+    `PlayerBaseInfo_Re` liga base **e** custom (`EC_ElsePlayer.cpp:1882`), `EQUIP_DATA`
+    liga equip incondicionalmente (`bReset` é sempre `true`, `EC_ElsePlayer.cpp:1942`).
+
+    Sobra uma hipótese, ainda não provada: `m_bLoadingModel` é uma **trava de uma vez só**
+    (posta em `EC_ElsePlayer.cpp:678`, limpa só em `Release()`). Se o carregamento
+    assíncrono é enfileirado e depois descartado, o modelo nunca mais é pedido — e o
+    descarte é **silencioso** (`DeliverLoadedPlayerModels` chama `ReleasePlayerModel` sem
+    log, `EC_ManPlayer.cpp:2502`). Isso explicaria por que clicar no jogador não ajuda: o
+    `bSelected` está no `if` de dentro, e o de fora já está fechado pela trava.
+
+    **Dois experimentos baratos para a próxima sessão**, os dois sem mexer em código:
+    1. Afastar-se até o outro jogador sumir e voltar. Isso força `Release()`, que zera a
+       trava. Se o modelo aparecer na segunda aproximação, a trava é a causa.
+    2. Com o console aberto (`##debug`), `d_relogin` num dos clientes com o outro parado
+       ao lado.
+
+    ### f. Provas
+
+    - `crates/pw-core/tests/core_tests.rs`: a tabela de habilidades iniciais das 12
+      classes fixada id a id, sem repetição e tudo no nível 1; e o par arma/tipo maior,
+      com o 2867 barrado explicitamente.
+    - `crates/pw-data-loader/tests/armas_iniciais.rs`, 2 testes: cruza
+      `default_weapon_id()` com o `WEAPON_ESSENCE` do `elements.data` do realm — tipo
+      maior, nível e atributos exigidos — e registra que o Graveto é do tipo 5 e a Varinha
+      do 292.
+    - `crates/pw-gs/src/bus_server.rs`, 4 testes: a máscara de equipamento em ordem de
+      slot, os 16 bits baixos do id, o slot fora do array do cliente, e o caso sem
+      equipamento.
+    - Corrigido de passagem um defeito **meu** da sessão anterior: o codificador
+      `security_passwd_checked` (277) tinha sido escrito sem entrar na tabela `INTENCAO`
+      do `subcomandos_s2c_contra_o_ir`, e a suíte estava vermelha por isso desde então. A
+      sessão anterior disse que só as duas falhas do 1.2.6 restavam; eram três.
+
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver

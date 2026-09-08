@@ -90,48 +90,100 @@ impl CharacterClass {
         }
     }
 
-    /// Retorna as habilidades iniciais oficiais de nível 1 por classe (CElementSkill v1.2.6)
+    /// Habilidades que a classe pode usar **no nível 1**, com o nível de cada uma.
+    ///
+    /// Fonte: os stubs gerados do `ElementSkill` do client 1.5.5
+    /// (`EvolvedPWClient/ElementSkill/skillNNN.h`). Cada stub declara `cls` (a classe
+    /// dona), `type` (1 ataque, 2 bênção, 3 maldição, 5 passiva…), `rank`, `max_level` e
+    /// uma tabela `GetRequiredLevel` — o primeiro valor dela é o nível exigido para
+    /// aprender a habilidade no nível 1. O critério usado aqui, aplicado às 3.317
+    /// habilidades do catálogo, é o que separa a árvore da classe do resto:
+    /// `cls` igual à classe, `rank == 0`, `max_level == 10`, `GetRequiredLevel[0] == 0`
+    /// e uma tabela de SP em que o nível 2 já custa pontos (as inerentes e as de
+    /// transformação custam 0 SP em todos os níveis).
+    ///
+    /// **Achado em 2026-09-07, em jogo**: a lista anterior era um chute e cobrava caro.
+    /// Os sacerdotes de teste tinham 11 (passiva, nível 29), 117 (nível 29), 118 (39) e
+    /// 119 (49) — o cliente monta a barra com elas e recusa todas, que foi exatamente o
+    /// "não é possível usar nenhum skill" relatado. Da lista de antes, só `125`, `113`,
+    /// `234`, `235`, `1` e `167` sobreviveram à conferência; `27`, `60`, `61`, `90`,
+    /// `190` e `274` eram de outra classe, passivas, ou de nível 9 a 39.
+    ///
+    /// A 167 (回城术, Portal da Cidade) é `cls = 255` — vale para todas as classes — e
+    /// exige nível 1.
     pub fn default_skills(&self) -> Vec<(i16, u8, i16)> {
+        let mut skills: Vec<(i16, u8, i16)> = match self {
+            // 流水诀 — golpe básico; aceita espada, acha, machado, punhos, magia e mão vazia
+            CharacterClass::Blademaster => vec![(1, 1, 0)],
+            // 烈火符 — piromancia
+            CharacterClass::Wizard => vec![(81, 1, 0)],
+            // dupla de ataque de orbe do Espiritualista
+            CharacterClass::Psychomancer => vec![(1125, 1, 0), (1126, 1, 0)],
+            // 剧毒蛊 — veneno da Feiticeira
+            CharacterClass::Venomancer => vec![(299, 1, 0)],
+            // 重击 — golpe de martelo do Bárbaro
+            CharacterClass::Barbarian => vec![(102, 1, 0)],
+            // ataque de adaga do Mercenário
+            CharacterClass::Assassin => vec![(1111, 1, 0)],
+            // 引而不发 / 连射 — os dois tiros iniciais do Arqueiro
+            CharacterClass::Archer => vec![(234, 1, 0), (235, 1, 0)],
+            // 羽箭 (ataque) e 清心咒 (cura) — a dupla inicial do Sacerdote
+            CharacterClass::Cleric => vec![(125, 1, 0), (113, 1, 0)],
+            CharacterClass::Seeker => vec![(1350, 1, 0)],
+            CharacterClass::Mystic => vec![(1374, 1, 0), (1381, 1, 0)],
+            CharacterClass::Duskblade => vec![(2547, 1, 0)],
+            CharacterClass::Stormbringer => vec![(2571, 1, 0)],
+        };
+        skills.push((167, 1, 0)); // 回城术 (Portal da Cidade) — cls 255, todas as classes
+        skills
+    }
+
+    /// Tipo maior de arma (`WEAPON_MAJOR_TYPE` do `elements.data`) que as habilidades
+    /// iniciais da classe aceitam.
+    ///
+    /// Não é decoração: `ElementSkill::Condition` (`ElementSkill.cpp:195`) recusa a
+    /// conjuração com `if (!ValidWeapon(info.weapon)) return 1;`, e `ValidWeapon` é uma
+    /// **lista branca** — o `restrict_weapons` do stub. O cliente passa em `info.weapon`
+    /// o `GetDBMajorType()->id` da arma equipada (`EC_HostPlayer.cpp:6146-6153`), ou 0
+    /// quando não há arma. Equipar a arma do tipo errado bloqueia **todas** as
+    /// habilidades da classe, e foi o que aconteceu em jogo: os sacerdotes estavam com o
+    /// "Graveto de Madeira" (2867), tipo maior 5 (Acha), enquanto as habilidades 113 e
+    /// 125 só aceitam 292 (Magia) ou 0 (desarmado).
+    pub fn weapon_major_type(&self) -> i32 {
         match self {
-            CharacterClass::Cleric => vec![
-                (125, 1, 0), // 羽箭 (Pluma Espiritual / Feather Arrow - dano mágico de metal de Sacerdote)
-                (113, 1, 0), // 清心咒 (Prece da Clareza / Heal básico de Sacerdote)
-                (190, 1, 0), // 飞行精通 (Maestria em Voo dos Alados)
-                (167, 1, 0), // 回城术 (Portal da Cidade)
-            ],
-            CharacterClass::Archer => vec![
-                (234, 1, 0), // 引而不发 (Tiro Certeiro / Aimed Shot - ataque básico de Arqueiro)
-                (235, 1, 0), // 连射 (Tiro Duplo / Quick Shot)
-                (274, 1, 0), // 飞行精通 (Maestria em Voo dos Alados)
-                (167, 1, 0), // 回城术 (Portal da Cidade)
-            ],
-            CharacterClass::Blademaster => vec![
-                (1, 1, 0),   // 流水诀 (Golpe de Onda - cls 0)
-                (167, 1, 0), // 回城术 (Portal da Cidade)
-            ],
-            CharacterClass::Wizard => vec![
-                (27, 1, 0),  // 烈火符 (Piromancia - cls 1)
-                (167, 1, 0), // 回城术 (Portal da Cidade)
-            ],
-            CharacterClass::Barbarian => vec![
-                (90, 1, 0),  // 重击 (Golpe Violento - cls 4)
-                (167, 1, 0), // 回城术 (Portal da Cidade)
-            ],
-            CharacterClass::Venomancer => vec![
-                (60, 1, 0),  // 剧毒蛊 (Enxame de Ferroadas - cls 3)
-                (61, 1, 0),  // 驯服宠物 (Adestrar Criatura - cls 3)
-                (167, 1, 0), // 回城术 (Portal da Cidade)
-            ],
-            _ => vec![(167, 1, 0)],
+            CharacterClass::Blademaster | CharacterClass::Seeker => 1, // Espada
+            CharacterClass::Barbarian => 9,                            // Machado/Martelo
+            CharacterClass::Archer => 13,                              // Longo Alcance
+            CharacterClass::Psychomancer => 25333,                     // Orbe
+            CharacterClass::Assassin => 23749,                         // Adagas
+            CharacterClass::Duskblade => 44878,                        // Sabre
+            CharacterClass::Stormbringer => 44879,                     // Foice
+            // Magia: Mago, Feiticeira, Sacerdote e Místico
+            CharacterClass::Wizard
+            | CharacterClass::Venomancer
+            | CharacterClass::Cleric
+            | CharacterClass::Mystic => 292,
         }
     }
 
-    /// Retorna o ID da arma inicial no elements.data
+    /// Arma inicial da classe (`WEAPON_ESSENCE.ID` do `elements.data`).
+    ///
+    /// Cada uma é a arma de `require_level = 1` do [`Self::weapon_major_type`] da classe,
+    /// conferida no `elements.data` do realm 155BR — ver o teste
+    /// `armas_iniciais_batem_com_o_elements` no `pw-data-loader`.
     pub fn default_weapon_id(&self) -> i32 {
         match self {
-            CharacterClass::Archer => 2250,     // Arco de Madeira (TID 2250 do elements.data v1.2.6)
-            CharacterClass::Barbarian => 2258,  // Porrete de Madeira (TID 2258 do elements.data v1.2.6)
-            _ => 2097,                          // Espada de Madeira (TID 2097 do elements.data v1.2.6)
+            CharacterClass::Blademaster | CharacterClass::Seeker => 2097, // Espada de Madeira
+            CharacterClass::Barbarian => 2258,                            // Porrete com Espinhos
+            CharacterClass::Archer => 2250,                               // Arco de Madeira
+            CharacterClass::Psychomancer => 26332,                        // Pequena Esfera
+            CharacterClass::Assassin => 26331,                            // Faca de Limpar Osso
+            CharacterClass::Duskblade => 44937,                           // Sabre de Bronze
+            CharacterClass::Stormbringer => 45020,                        // Foice de Ferro
+            CharacterClass::Wizard
+            | CharacterClass::Venomancer
+            | CharacterClass::Cleric
+            | CharacterClass::Mystic => 2251, // Varinha
         }
     }
 

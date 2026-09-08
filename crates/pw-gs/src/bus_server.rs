@@ -1713,24 +1713,79 @@ impl BusServer {
     /// clientes pediam `GetOtherEquip` (visto no log do realm, `cmd=33`), e nenhum dos
     /// dois via o modelo do outro — só a caixa de colisão.
     ///
-    /// `mask=0` (nenhum item) já é suficiente: ver o comentário de
-    /// `PorVersao::equip_data`/`S2CGamedataSend::equip_data` — o avatar aparece, sem
-    /// arma/armadura visível ainda (equipamento visual entre jogadores fica pra quando
-    /// alguém notar falta disso em jogo, mesmo espírito do que o item 19d já documentava
-    /// pra `CmdGetOtherEquip`).
+    /// # O que vai em `mask` e em `data[]`
+    ///
+    /// Até 2026-09-07 a resposta ia com `mask = 0` — "nenhum item" — sob o argumento de
+    /// que isso já bastava para destravar o modelo. Destrava, mas descreve o outro
+    /// jogador como se estivesse **pelado**: `ChangeEquipments` faz
+    /// `memset(m_aNewEquips, 0, ...)` e, sem bit ligado nenhum, nada volta a ser
+    /// preenchido (`EC_ElsePlayer.cpp:1700-1712`). Em jogo o relato foi "não é possível
+    /// ver o modelo 3D **e equipamentos** do outro jogador".
+    ///
+    /// Agora vai o equipamento de verdade. O formato veio do próprio cliente:
+    ///
+    ///   * `mask` é um `__int64` com **um bit por slot** de `EQUIPIVTR_*`
+    ///     (`EC_IvtrTypes.h:56-96`): 0 arma, 1 cabeça, … 11 munição, … até 39
+    ///     (`SIZE_ALL_EQUIPIVTR`).
+    ///   * `data[]` traz **um inteiro por bit ligado, em ordem crescente de slot** — é
+    ///     assim que o cliente lê (`m_aNewEquips[i] = aAddedEquip[iCount++]` dentro de um
+    ///     laço de `i` crescente).
+    ///   * cada inteiro é o **id do item no `elements.data` nos 16 bits baixos**:
+    ///     `CECPlayer::GetRealElementID` faz `dwEquipID & 0x0000ffff` porque os 16 bits
+    ///     altos guardam cor, usada só pelos slots de moda (`EC_Player.cpp:9635-9644`).
+    ///     Como ainda não temos cor de moda no banco, a parte alta vai zerada.
+    ///
+    /// Slot fora de 0..40 é descartado: o cliente indexa `m_aNewEquips` direto pelo bit,
+    /// e um bit acima de `SIZE_ALL_EQUIPIVTR` escreveria fora do array dele.
     async fn equipamento_de_outro(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
-        info!("mundo: get_other_equip pedido por {roleid}, payload bruto: {:02x?}", payload);
         let Some(consulta) = ConsultaDeIds::ler(payload) else {
             warn!("mundo: get_others_equipment de {roleid} com payload curto");
             return;
         };
-        info!("mundo: get_other_equip de {roleid} decodificado, ids: {:?}", consulta.ids);
+        debug!("mundo: get_other_equip de {roleid}, ids: {:?}", consulta.ids);
 
+        let itens = self.repo().await.item_repo().clone();
         for id in consulta.ids {
-            let pacote = self.sub.equip_data(id, 0, 0, 0, &[]).data;
-            info!("mundo: equip_data pra {roleid} sobre {id}, {} bytes: {:02x?}", pacote.len(), pacote);
+            let equipado = itens
+                .list_by_container(id, ContainerType::Equipment)
+                .await
+                .unwrap_or_default();
+            let (mascara, ids) = Self::mascara_de_equipamento(&equipado);
+            let pacote = self.sub.equip_data(id, 0, 0, mascara, &ids).data;
+            debug!(
+                "mundo: equip_data pra {roleid} sobre {id} — máscara {mascara:#x}, {} item(ns)",
+                ids.len()
+            );
             self.responder(roleid, pacote, envio).await;
         }
+    }
+
+    /// Monta o par `(mask, data[])` do `EQUIP_DATA` a partir das linhas de equipamento.
+    ///
+    /// Devolve os ids **ordenados por slot**, que é a ordem em que o cliente os consome.
+    /// Ver a documentação de [`Self::equipamento_de_outro`] para as fontes no cliente.
+    fn mascara_de_equipamento(equipado: &[pw_core::ItemRecord]) -> (u64, Vec<i32>) {
+        /// `SIZE_ALL_EQUIPIVTR` do `EC_IvtrTypes.h` — o tamanho do array `m_aNewEquips`.
+        const TOTAL_DE_SLOTS: u16 = 40;
+
+        let mut por_slot: std::collections::BTreeMap<u16, i32> = std::collections::BTreeMap::new();
+        for item in equipado {
+            if item.slot >= TOTAL_DE_SLOTS {
+                warn!(
+                    "mundo: equipamento no slot {} está fora de 0..{TOTAL_DE_SLOTS}, ignorado",
+                    item.slot
+                );
+                continue;
+            }
+            // 16 bits baixos: o id do item. Os altos são cor de moda, que ainda não temos.
+            por_slot.insert(item.slot, (item.item_id as i32) & 0xffff);
+        }
+
+        let mut mascara = 0u64;
+        for slot in por_slot.keys() {
+            mascara |= 1u64 << slot;
+        }
+        (mascara, por_slot.into_values().collect())
     }
 
     /// `C2S::CHECK_SECURITY_PASSWD` (120) — a senha do guarda-roupa.
@@ -2248,5 +2303,71 @@ mod tests {
     fn payload_curto_demais_nao_vira_subcomando() {
         assert_eq!(SubComando::ler(&[]), None);
         assert_eq!(SubComando::ler(&[0x0F]), None);
+    }
+
+    /// Ajuda a montar linhas de equipamento sem repetir o struct inteiro.
+    fn equipado(slot: u16, item_id: u32) -> pw_core::ItemRecord {
+        pw_core::ItemRecord {
+            id: None,
+            character_id: 1,
+            container_type: ContainerType::Equipment,
+            slot,
+            item_id,
+            count: 1,
+            max_count: 1,
+            refine_level: 0,
+            sockets_count: 0,
+            sockets: vec![],
+            durability: 2800,
+            max_durability: 2800,
+            bind_status: 0,
+            octets: Vec::new(),
+            custom_attributes: serde_json::json!({}),
+        }
+    }
+
+    /// O cliente lê `data[]` com um `iCount++` dentro de um laço de slot **crescente**
+    /// (`ChangeEquipments`, `EC_ElsePlayer.cpp:1700-1712`). Se os ids saírem em outra
+    /// ordem, a arma vai parar no slot da bota.
+    #[test]
+    fn a_mascara_de_equipamento_sai_em_ordem_de_slot() {
+        // De propósito fora de ordem na entrada.
+        let itens = vec![equipado(4, 1234), equipado(0, 2251), equipado(11, 2271)];
+        let (mascara, ids) = BusServer::mascara_de_equipamento(&itens);
+
+        assert_eq!(mascara, (1 << 0) | (1 << 4) | (1 << 11));
+        assert_eq!(ids, vec![2251, 1234, 2271], "arma, corpo, munição — nessa ordem");
+        assert_eq!(
+            ids.len(),
+            mascara.count_ones() as usize,
+            "um inteiro por bit ligado, senão o cliente lê fora do array"
+        );
+    }
+
+    /// `GetRealElementID` faz `dwEquipID & 0x0000ffff` (`EC_Player.cpp:9641`): os 16 bits
+    /// altos são cor de moda, não fazem parte do id.
+    #[test]
+    fn a_mascara_de_equipamento_manda_so_os_16_bits_baixos_do_id() {
+        let (_, ids) = BusServer::mascara_de_equipamento(&[equipado(0, 0x0004_08D3)]);
+        assert_eq!(ids, vec![0x08D3]);
+    }
+
+    /// `m_aNewEquips` tem `SIZE_ALL_EQUIPIVTR` (40) posições e é indexado direto pelo bit.
+    /// Um slot acima disso faria o cliente escrever fora do array.
+    #[test]
+    fn slot_fora_do_array_do_cliente_e_descartado() {
+        let itens = vec![equipado(0, 2251), equipado(40, 999), equipado(64, 999)];
+        let (mascara, ids) = BusServer::mascara_de_equipamento(&itens);
+        assert_eq!(mascara, 1 << 0);
+        assert_eq!(ids, vec![2251]);
+    }
+
+    /// Sem nada equipado a resposta continua válida — e é ela que destrava
+    /// `IsEquipDataReady()` no cliente.
+    #[test]
+    fn sem_equipamento_a_mascara_e_zero() {
+        let (mascara, ids) = BusServer::mascara_de_equipamento(&[]);
+        assert_eq!(mascara, 0);
+        assert!(ids.is_empty());
     }
 }
