@@ -432,3 +432,26 @@ fn test_own_ext_prop_tem_196_bytes_e_os_atributos_no_lugar() {
     assert_eq!(i32_em(BS + 116 + 24), 29, "armor");
     assert_eq!(i32_em(BS + 144), 0, "max_ap");
 }
+
+/// `HOST_SKILL_ATTACKED` (144) tem 19 bytes de corpo — o IR e o cabeçalho do cliente
+/// concordam (`S2C::cmd_host_skill_attacked`, `EC_GPDataType.h:2763`).
+///
+/// O `cEquipment` vai em `0x7f`, que é o valor que o cliente lê como "nenhuma peça se
+/// desgastou": `(pCmd->cEquipment & 0x7f) != 0x7f` é a condição para gastar durabilidade
+/// (`EC_HostMsg.cpp:1030`). Qualquer outro valor comeria a durabilidade de uma peça a cada
+/// golpe recebido.
+#[test]
+fn test_host_skill_attacked_tem_19_bytes_e_nao_gasta_equipamento() {
+    let p = S2CGamedataSend::host_skill_attacked(40, 125, 234, 0, 30, 0);
+    assert_eq!(p.data.len(), 2 + 19);
+    assert_eq!(u16::from_le_bytes(p.data[0..2].try_into().unwrap()), 144);
+
+    let i32_em = |off: usize| i32::from_le_bytes(p.data[off..off + 4].try_into().unwrap());
+    assert_eq!(i32_em(2), 40, "idAttacker");
+    assert_eq!(i32_em(6), 125, "idSkill");
+    assert_eq!(i32_em(10), 234, "iDamage");
+    assert_eq!(p.data[14], 0x7f, "cEquipment: nenhuma peça desgastada");
+    assert_eq!(i32_em(15), 0, "attack_flag");
+    assert_eq!(p.data[19], 30, "speed");
+    assert_eq!(p.data[20], 0, "section");
+}

@@ -2139,3 +2139,132 @@ async fn o_botao_de_roupa_alterna_e_avisa_os_dois_lados() {
     let pacote = volta.iter().find(|v| cmd_de(v) == 192).expect("sem resposta na volta");
     assert_eq!(pacote[6], 0, "clicar de novo tem de voltar para a armadura");
 }
+
+/// Uma cura em si mesmo tem de **subir a vida** e mandar o número para a tela.
+///
+/// Em jogo, 2026-09-08: a Prece da Clareza fechava a barra e não fazia nada. A conta é a
+/// do stub (`skill113.h`): `ataque_mágico * 4 * nível / 100 - 35 + 70 * nível`.
+#[tokio::test]
+async fn a_cura_em_si_mesmo_devolve_vida() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // Machuca o jogador para haver o que curar.
+    let (antes, max_hp) = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).expect("jogador no mundo");
+        p.hp = 10;
+        (p.hp, p.max_hp)
+    };
+    assert!(max_hp > antes, "o cenário precisa de vida faltando");
+
+    let mut corpo = 113i32.to_le_bytes().to_vec(); // Prece da Clareza
+    corpo.push(0); // force_attack
+    corpo.push(1); // target_count
+    corpo.extend_from_slice(&(roleid as i32).to_le_bytes());
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::CAST_SKILL, &corpo),
+    })
+    .await
+    .unwrap();
+
+    let r = receber(&mut link, 5).await;
+    assert!(r.iter().any(|v| cmd_de(v) == 123), "a conjuração não fechou");
+    let res = r
+        .iter()
+        .find(|v| cmd_de(v) == 142)
+        .expect("sem HOST_SKILL_ATTACK_RESULT: o número não apareceria na tela");
+    let curado = i32_em(res, 10);
+    assert!(curado > 0, "a cura veio {curado}");
+
+    let depois = mundo.read().await.players[&(roleid as i64)].hp;
+    assert_eq!(depois, antes + curado, "a vida no mundo não subiu o que foi anunciado");
+    assert!(
+        r.iter().any(|v| cmd_de(v) == 8 || cmd_de(v) == 9),
+        "sem a sincronia da própria vida, a barra do cliente não mexe"
+    );
+}
+
+/// Dano de habilidade num **outro jogador**: tira vida dele, e ele precisa saber.
+///
+/// Sem o `HOST_SKILL_ATTACKED` (144) o alvo não toca efeito nenhum nem entra em combate
+/// (`EC_HostMsg.cpp:1023-1068`).
+#[tokio::test]
+async fn uma_habilidade_de_ataque_machuca_o_outro_jogador() {
+    let (mundo, addr, roleid, convidado) = cenario!();
+    let mut atacante = entrar(&mundo, addr, roleid).await;
+    let mut vitima = entrar(&mundo, addr, convidado).await;
+
+    // Garante ataque mágico para a conta não depender do que o banco trouxe.
+    let antes = {
+        let mut m = mundo.write().await;
+        let a = m.players.get_mut(&(roleid as i64)).unwrap();
+        a.magic_attack_min = 200;
+        a.magic_attack_max = 200;
+        let v = m.players.get_mut(&(convidado as i64)).unwrap();
+        v.def_phys = 0;
+        v.hp
+    };
+
+    let mut corpo = 125i32.to_le_bytes().to_vec(); // Pluma Espiritual
+    corpo.push(0);
+    corpo.push(1);
+    corpo.extend_from_slice(&(convidado as i32).to_le_bytes());
+
+    atacante
+        .enviar(BusMessage::ClientToGame {
+            roleid,
+            localsid: LOCALSID,
+            data: subcomando(ids::CAST_SKILL, &corpo),
+        })
+        .await
+        .unwrap();
+
+    let r = receber(&mut atacante, 4).await;
+    let res = r.iter().find(|v| cmd_de(v) == 142).expect("sem o resultado (142)");
+    let dano = i32_em(res, 10);
+    assert!(dano > 0, "o dano veio {dano}");
+
+    let depois = mundo.read().await.players[&(convidado as i64)].hp;
+    assert_eq!(depois, antes - dano, "a vida do alvo não caiu o dano anunciado");
+
+    let dele = receber(&mut vitima, 2).await;
+    assert!(
+        dele.iter().any(|v| cmd_de(v) == 144),
+        "o alvo não recebeu HOST_SKILL_ATTACKED e não reagiria ao golpe"
+    );
+}
+
+/// Habilidade sem conta portada não inventa efeito.
+#[tokio::test]
+async fn habilidade_desconhecida_nao_mexe_na_vida_de_ninguem() {
+    let (mundo, addr, roleid, convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let _ = entrar(&mundo, addr, convidado).await;
+
+    let antes = mundo.read().await.players[&(convidado as i64)].hp;
+
+    let mut corpo = 4321i32.to_le_bytes().to_vec(); // não está na tabela
+    corpo.push(0);
+    corpo.push(1);
+    corpo.extend_from_slice(&(convidado as i32).to_le_bytes());
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::CAST_SKILL, &corpo),
+    })
+    .await
+    .unwrap();
+
+    let r = receber(&mut link, 3).await;
+    assert!(r.iter().any(|v| cmd_de(v) == 123), "a conjuração tem de fechar mesmo assim");
+    assert_eq!(
+        mundo.read().await.players[&(convidado as i64)].hp,
+        antes,
+        "uma habilidade sem fórmula não pode machucar ninguém"
+    );
+}

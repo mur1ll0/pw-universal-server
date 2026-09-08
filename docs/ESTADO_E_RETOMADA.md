@@ -4609,6 +4609,103 @@ Ordem combinada com o Murillo:
       conjuração.
 
 
+35. **Sessão 2026-09-08 (continuação 3): as habilidades passaram a fazer alguma coisa —
+    cura e dano entre jogadores, com a conta do cliente.**
+
+    Até aqui a conjuração animava, fechava a barra e não mudava nada. Faltava o efeito.
+
+    ### a. De onde vieram os números
+
+    Do cliente, e não de aproximação. Cada habilidade tem um stub gerado em
+    `EvolvedPWClient\ElementSkill\skillNNN.h`, e o motor original escreve a conta lá, num
+    `Calculate` por fase da conjuração:
+
+    ```cpp
+    // skill125.h — a Pluma Espiritual do Sacerdote
+    skill->SetPlus  (4.5 * L * L + 90 * L + 29.6);
+    skill->SetRatio (0.5 + 0.05 * L);
+    skill->SetDamage(skill->GetMagicattack ());
+    ```
+
+    Ou seja **`dano = base × ratio + plus`**. A base é o ataque físico quando o stub usa
+    `SetDamage(GetAttack())`, e o mágico quando usa um dos `Set<elemento>damage`
+    (`SetFiredamage`, `SetWooddamage`, `SetGolddamage`…, todos alimentados por
+    `GetMagicattack()`); o elemento em si é o campo `attr` do stub.
+
+    Cura é outro caminho, no `StateAttack`:
+
+    ```cpp
+    // skill113.h — a Prece da Clareza
+    skill->GetVictim ()->SetValue (skill->GetMagicdamage () * 4 * L / 100 - 35 + 70 * L);
+    skill->GetVictim ()->SetHeal (1);
+    ```
+
+    O módulo novo `crates/pw-gs/src/habilidades.rs` tem essas contas para as **dezesseis**
+    habilidades do kit inicial das doze classes, portadas uma a uma, com o stub de origem
+    no comentário de cada linha.
+
+    ### b. O que a tabela não é
+
+    Não é o motor de habilidades. As outras 3.301 do catálogo **não estão lá**, e a
+    resposta para elas é `Habilidade::conhecida` devolver `None` — não um número
+    inventado. Em jogo isso significa: a habilidade conjura, anima, fecha a barra e não
+    faz efeito, que é honesto e visível.
+
+    Também não há estado: nada de veneno, lentidão, atordoamento ou bênção com duração.
+    Duas habilidades da própria tabela têm efeito de estado no original (a 1126 tem
+    lentidão, a 1374 tem duas) e aqui aplicam só a parte de dano.
+
+    Três simplificações que estão escritas no código, para não virarem surpresa:
+
+    | O quê | Como está | Por quê |
+    | :--- | :--- | :--- |
+    | Nível da habilidade | fixo em 1 | o `character_skills` guarda o nível e o `CastSkill` não o manda; ler do banco é o passo que falta |
+    | `GetMagicdamage` da cura | usa o ataque mágico | o `PlayerEntity` não separa os dois; a parte fixa da cura, que domina nos níveis baixos, está certa |
+    | Carga do Tiro Certeiro (234) | assume carga cheia | o servidor não recebe o tempo de carga do cliente |
+
+    ### c. Os comandos que faltavam
+
+    O `HOST_SKILL_ATTACKED` (144) não existia. É o par do 142 do outro lado: o 142 diz a
+    quem conjurou quanto ele fez, o 144 diz a quem levou quem foi e quanto doeu. Sem ele o
+    alvo não toca efeito nenhum nem entra em estado de combate
+    (`CECHostPlayer::OnMsgHstSkillAttacked`, `EC_HostMsg.cpp:1023-1068`).
+
+    Detalhe que economiza um defeito futuro: o campo `cEquipment` diz qual peça de
+    armadura se desgastou, e `0x7f` é o valor que o cliente lê como "nenhuma"
+    (`(pCmd->cEquipment & 0x7f) != 0x7f` é a condição para gastar durabilidade). Vai
+    `0x7f` porque desgaste não existe no servidor — qualquer outro valor comeria a
+    durabilidade de uma peça a cada golpe recebido.
+
+    A vida nova do alvo vai no `SELF_INFO_00`, que é o mesmo comando que a poção já usava.
+
+    ### d. **Não há trava de PvP**
+
+    Um jogador pode machucar outro em qualquer lugar. O original só permite isso em duelo,
+    facção em guerra ou mapa de PK (`pvp_mode`, comando 79); nada disso existe aqui. Está
+    documentado no código e dito aqui porque é o tipo de coisa que ninguém deve descobrir
+    em produção.
+
+    ### e. Contra monstro também melhorou
+
+    O tratamento de conjuração batia como um golpe básico para **toda** habilidade — o
+    comentário de então dizia isso com todas as letras. Agora, quando a habilidade tem
+    conta portada, é a conta dela que vale (menos a redução por defesa do alvo); as outras
+    continuam no golpe básico.
+
+    ### f. Provas
+
+    - 7 testes em `habilidades.rs`, conferindo as contas **contra o stub, na mão**: a
+      Prece da Clareza curando 43 com 200 de ataque mágico no nível 1 e 121 no nível 2, a
+      Pluma Espiritual fazendo 234, o Guerreiro com `ratio 0` ignorando o ataque, os
+      custos de mana arredondados como o cliente faz, e o kit das doze classes inteiro
+      presente.
+    - 3 testes de integração: a cura em si mesmo subindo a vida no mundo exatamente o que
+      foi anunciado na tela, o dano em outro jogador com o `HOST_SKILL_ATTACKED` chegando
+      ao alvo, e a habilidade fora da tabela **não** mexendo na vida de ninguém.
+    - 1 teste de layout do 144 (19 bytes, `cEquipment` em `0x7f`).
+
+
+
 
 
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a

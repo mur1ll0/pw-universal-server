@@ -51,6 +51,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("trashbox_pwd_state", "TRASHBOX_PWD_STATE"),
     ("security_passwd_checked", "SECURITY_PASSWD_CHECKED"),
     ("own_ext_prop", "OWN_EXT_PROP"),
+    ("host_skill_attacked", "HOST_SKILL_ATTACKED"),
     ("pet_room_capacity", "PET_ROOM_CAPACITY"),
     ("self_king_notify", "SELF_KING_NOTIFY"),
     ("faction_contrib_notify", "FACTION_CONTRIB_NOTIFY"),

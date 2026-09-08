@@ -40,7 +40,8 @@
 //! `QUERY_*_INFO`), `TASK_NOTIFY`, moda, duelo e Mall.
 
 use crate::entity::PlayerEntity;
-use crate::combat::CombatEngine;
+use crate::combat::{self, CombatEngine};
+use crate::habilidades::Habilidade;
 use crate::comandos::{
     ids, CastSkill, ConsultaDeIds, EmoteAction, GetAllData, GetIvtrDetail, Logout, MoveIvtrItem,
     NormalAttack, ParDeSlots, PlayerMove, SelectTarget, SevnpcHello, StopMove, TaskNotify,
@@ -147,6 +148,14 @@ const MODO_DE_MOVIMENTO_ANDANDO: u8 = 0;
 /// `GetExecutetime`/`GetCoolingtime` (a Prece da Clareza, por exemplo, executa em 1000 ms).
 /// O servidor ainda não lê a tabela de habilidades — quando ler, este número sai daqui.
 const TEMPO_DE_CONJURACAO_MS: u16 = 1000;
+
+/// Em que nível uma habilidade é conjurada.
+///
+/// **Fixo em 1**, e é uma simplificação: o `character_skills` guarda o nível de cada
+/// habilidade, e o `CastSkill` do cliente não o manda (o servidor é que deveria saber). Ler
+/// o nível do banco aqui é o passo que falta para uma habilidade subir de nível valer
+/// alguma coisa.
+const NIVEL_DA_HABILIDADE: i32 = 1;
 
 /// Canal por onde o mundo devolve mensagens àquele jogador.
 pub type EnvioAoCliente = mpsc::Sender<BusMessage>;
@@ -1261,19 +1270,51 @@ impl BusServer {
         let Some(atacante) = mundo.players.get(&(roleid as i64)).cloned() else {
             return;
         };
-        let Some((monstro, _)) = mundo.monsters.get(&alvo) else {
-            // Alvo que não é monstro: o próprio conjurador (cura, bênção) ou outro
-            // jogador. A conjuração já foi fechada acima; o **efeito** ainda não existe —
-            // ver a lacuna do motor de habilidades no item 32 do `ESTADO_E_RETOMADA.md`.
-            debug!("mundo: {roleid} conjurou {} em {alvo}, que não é monstro — sem efeito ainda", skill_id);
+        let habilidade = Habilidade::conhecida(skill_id);
+
+        // Custo de mana. O cliente já confere antes de mandar (`ElementSkill::Condition`
+        // devolve 2 quando falta), então chegar aqui sem mana é raro — mas o servidor não
+        // pode acreditar no cliente, e sem cobrar a mana nunca acabaria.
+        if let Some(h) = habilidade {
+            let custo = h.custo_de_mp(NIVEL_DA_HABILIDADE);
+            let tem = mundo.players.get(&(roleid as i64)).map(|p| p.mp).unwrap_or(0);
+            if tem < custo {
+                debug!("mundo: {roleid} conjurou {skill_id} com {tem} de mana, precisa de {custo}");
+                return;
+            }
+            if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
+                p.mp -= custo;
+            }
+        }
+
+        if !mundo.monsters.contains_key(&alvo) {
+            // Alvo que não é monstro: o próprio conjurador, ou outro jogador.
+            drop(mundo);
+            self.efeito_em_jogador(roleid, skill_id, alvo, habilidade, envio)
+                .await;
             return;
-        };
+        }
+        let monstro = &mundo.monsters[&alvo].0;
         if monstro.is_dead {
             return;
         }
 
+        // Contra monstro, a habilidade com conta portada usa a conta dela; as outras
+        // batem como um golpe básico, que é o que este tratamento fazia para todas.
         let distancia = atacante.position.distance(&monstro.position);
-        let dano = CombatEngine::jogador_ataca_monstro(&atacante, monstro, distancia).dano() as i64;
+        let dano = match habilidade.and_then(|h| {
+            h.dano(
+                NIVEL_DA_HABILIDADE,
+                (atacante.attack_min + atacante.attack_max) / 2,
+                (atacante.magic_attack_min + atacante.magic_attack_max) / 2,
+            )
+        }) {
+            Some(d) => {
+                let reducao = combat::reducao_por_defesa(monstro.def_phys, atacante.level);
+                (((d as f32) * (1.0 - reducao)).round() as i64).max(1)
+            }
+            None => CombatEngine::jogador_ataca_monstro(&atacante, monstro, distancia).dano() as i64,
+        };
         let (hp, max_hp, morreu, template, exp, sp) = {
             let (m, ai) = mundo.monsters.get_mut(&alvo).expect("conferido acima");
             ai.add_threat(roleid as i64, dano);
@@ -1365,6 +1406,163 @@ impl BusServer {
         let pacote = S2CGamedataSend::player_enable_fashion(roleid, ativo).data;
         self.responder(roleid, pacote.clone(), envio).await;
         self.transmitir_a_outros(roleid, pacote).await;
+    }
+
+    /// O efeito de uma habilidade cujo alvo é um jogador — o próprio conjurador ou outro.
+    ///
+    /// # Cura
+    ///
+    /// A conta é a do stub (ver [`crate::habilidades`]). O alvo recebe `SELF_INFO_00`,
+    /// que é o comando que sincroniza a própria vida (o mesmo que a poção usa), e o
+    /// conjurador recebe `HOST_SKILL_ATTACK_RESULT` (142) com o valor curado — é assim
+    /// que o número aparece na tela.
+    ///
+    /// # Dano entre jogadores
+    ///
+    /// Funciona, e **não há trava de PvP**. O original só deixa um jogador machucar o
+    /// outro em modo de duelo, facção em guerra ou mapa de PK (`pvp_mode`, o comando 79);
+    /// nada disso existe aqui ainda, então qualquer um pode acertar qualquer um. Está
+    /// escrito para ninguém descobrir isso em produção.
+    ///
+    /// O alvo recebe `HOST_SKILL_ATTACKED` (144), sem o qual ele não toca efeito nenhum
+    /// nem entra em combate, mais o `SELF_INFO_00` com a vida nova. Quem está por perto
+    /// recebe `OBJECT_SKILL_ATTACK_RESULT` (143).
+    async fn efeito_em_jogador(
+        &self,
+        roleid: i32,
+        skill_id: i32,
+        alvo: i64,
+        habilidade: Option<&'static Habilidade>,
+        envio: &EnvioAoCliente,
+    ) {
+        let Some(h) = habilidade else {
+            debug!("mundo: {roleid} conjurou {skill_id}, que não tem conta portada — sem efeito");
+            return;
+        };
+
+        let (valor, alvo_vivo) = {
+            let mundo = self.world.read().await;
+            let Some(conjurador) = mundo.players.get(&(roleid as i64)) else {
+                return;
+            };
+            let Some(vitima) = mundo.players.get(&alvo) else {
+                debug!("mundo: {roleid} conjurou {skill_id} em {alvo}, que não é jogador deste mundo");
+                return;
+            };
+            if vitima.hp <= 0 {
+                return;
+            }
+            let magico = (conjurador.magic_attack_min + conjurador.magic_attack_max) / 2;
+            let fisico = (conjurador.attack_min + conjurador.attack_max) / 2;
+            let valor = if h.e_cura() {
+                h.cura(NIVEL_DA_HABILIDADE, magico).unwrap_or(0)
+            } else {
+                let bruto = h.dano(NIVEL_DA_HABILIDADE, fisico, magico).unwrap_or(0);
+                let reducao = combat::reducao_por_defesa(vitima.def_phys, conjurador.level);
+                (((bruto as f32) * (1.0 - reducao)).round() as i32).max(1)
+            };
+            (valor, true)
+        };
+        if !alvo_vivo {
+            return;
+        }
+
+        // Aplica no mundo e devolve a vida nova do alvo.
+        let estado = {
+            let mut mundo = self.world.write().await;
+            let Some(vitima) = mundo.players.get_mut(&alvo) else {
+                return;
+            };
+            if h.e_cura() {
+                vitima.hp = (vitima.hp + valor).min(vitima.max_hp);
+            } else {
+                vitima.hp = (vitima.hp - valor).max(0);
+            }
+            (
+                vitima.hp,
+                vitima.max_hp,
+                vitima.mp,
+                vitima.max_mp,
+                vitima.level,
+                vitima.exp,
+                vitima.sp,
+            )
+        };
+        let (hp, max_hp, mp, max_mp, nivel, exp, sp) = estado;
+
+        info!(
+            "mundo: {roleid} conjurou {skill_id} em {alvo} — {} de {}, alvo com {hp}/{max_hp}",
+            valor,
+            if h.e_cura() { "cura" } else { "dano" }
+        );
+
+        // O número na tela de quem conjurou.
+        self.responder(
+            roleid,
+            self.sub
+                .self_skill_attack_result(
+                    alvo as i32,
+                    skill_id,
+                    saturar(valor as i64),
+                    SEM_MARCACAO,
+                    VELOCIDADE_PADRAO,
+                    SECAO_UNICA,
+                )
+                .data,
+            envio,
+        )
+        .await;
+
+        // A vida nova do alvo, e — se doeu — o efeito de ter sido acertado.
+        let alvo_id = alvo as i32;
+        if alvo_id != roleid && !h.e_cura() {
+            let _ = self.enviar_ao_jogador(
+                alvo_id,
+                S2CGamedataSend::host_skill_attacked(
+                    roleid,
+                    skill_id,
+                    saturar(valor as i64),
+                    SEM_MARCACAO,
+                    VELOCIDADE_PADRAO,
+                    SECAO_UNICA,
+                )
+                .data,
+            )
+            .await;
+        }
+        let vida = S2CGamedataSend::self_info_00(
+            nivel as i16,
+            0,
+            hp,
+            max_hp,
+            mp,
+            max_mp,
+            exp as i32,
+            sp as i32,
+        )
+        .data;
+        if alvo_id == roleid {
+            self.responder(roleid, vida, envio).await;
+        } else {
+            let _ = self.enviar_ao_jogador(alvo_id, vida).await;
+        }
+
+        // Quem está por perto vê o número entre os dois.
+        self.transmitir_a_outros(
+            roleid,
+            self.sub
+                .object_skill_attack_result(
+                    roleid,
+                    alvo_id,
+                    skill_id,
+                    saturar(valor as i64),
+                    SEM_MARCACAO,
+                    VELOCIDADE_PADRAO,
+                    SECAO_UNICA,
+                )
+                .data,
+        )
+        .await;
     }
 
     /// `C2S::SEVNPC_HELLO` (35) — o jogador abriu diálogo com um NPC.

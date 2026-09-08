@@ -1374,6 +1374,46 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `HOST_SKILL_ATTACKED` (144) — "uma habilidade acertou **você**".
+    ///
+    /// É o par do 142 do outro lado: o 142 diz a quem conjurou quanto ele fez, e o 144
+    /// diz a quem levou quem foi e quanto doeu. Sem ele o alvo não toca o efeito visual
+    /// nem entra em estado de combate — `CECHostPlayer::OnMsgHstSkillAttacked`
+    /// (`EC_HostMsg.cpp:1023-1068`) vira o atacante de frente, chama `PlayAttackEffect` e
+    /// `EnterFightState`.
+    ///
+    /// `struct cmd_host_skill_attacked { int idAttacker; int idSkill; int iDamage;
+    /// char cEquipment; int attack_flag; char speed; unsigned char section; }` — 19 bytes
+    /// sob `#pragma pack(1)` (`EC_GPDataType.h:2763`).
+    ///
+    /// O `cEquipment` diz qual peça de armadura se desgastou com o golpe; `0x7f` é o
+    /// valor que o cliente lê como "nenhuma" (`(pCmd->cEquipment & 0x7f) != 0x7f` é a
+    /// condição para gastar durabilidade). Mandamos `0x7f` porque desgaste de equipamento
+    /// ainda não existe no servidor — e um valor qualquer ali comeria a durabilidade de
+    /// uma peça a cada golpe.
+    pub fn host_skill_attacked(
+        attacker_id: i32,
+        skill_id: i32,
+        damage: i32,
+        attack_flag: i32,
+        speed: u8,
+        section: u8,
+    ) -> Self {
+        /// O `cEquipment` que o cliente lê como "nenhuma peça se desgastou".
+        const SEM_DESGASTE: u8 = 0x7f;
+
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(144);              // CMD_S2C_HOST_SKILL_ATTACKED = 144
+        stream.write_i32_le(attacker_id);      // idAttacker (4B)
+        stream.write_i32_le(skill_id);         // idSkill (4B)
+        stream.write_i32_le(damage);           // iDamage (4B)
+        stream.write_u8(SEM_DESGASTE);         // cEquipment (1B)
+        stream.write_i32_le(attack_flag);      // attack_flag (4B)
+        stream.write_u8(speed);                // speed (1B)
+        stream.write_u8(section);              // section (1B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `OBJECT_SKILL_ATTACK_RESULT` (143) — dano de habilidade entre duas entidades
     /// que não são o próprio jogador (ex.: um pet, ou o alvo de outro jogador visto de
     /// fora). Mesma família de `SELF_SKILL_ATTACK_RESULT` (142) — `attack_flag` de 4

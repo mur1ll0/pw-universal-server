@@ -4,6 +4,7 @@ pub mod comandos;
 pub mod combat;
 pub mod entity;
 pub mod grid;
+pub mod habilidades;
 pub mod npc;
 pub mod server;
 pub mod world;
