@@ -217,15 +217,36 @@ impl TemplateRepository {
             .execute(self.pool.get_ref())
             .await?;
 
-            // Se for Arqueiro (cls == 6), equipa flechas de madeira no slot de munição (slot 12)
+            // Equipamento inicial que depende da classe, por slot de `EQUIPIVTR_*`
+            // (`EC_IvtrTypes.h:56-96` do client 1.5.5):
+            //
+            //   * 11 `EQUIPIVTR_PROJECTILE` — a munição do Arqueiro. **Estava no 12**, que
+            //     é o slot de voo: as flechas ocupavam o lugar das asas.
+            //   * 12 `EQUIPIVTR_FLYSWORD` — o item de voo. Para Arqueiro (6) e Sacerdote
+            //     (7), que são Alados, é a "Asa" (2096) — a única linha da tabela
+            //     `WINGMANWING_ESSENCE` do `elements.data`, nível 1. O cliente confere a
+            //     classe por conta própria: `CanUseEquipment` recusa `ICID_WING` para
+            //     quem não for `PROF_ARCHOR` nem `PROF_ANGEL` (`EC_HostPlayer.cpp:4927`).
+            //
+            // As outras raças voam com item de `FLYSWORD_ESSENCE`, que tem 1.098 linhas e
+            // nenhum campo de classe — sem uma forma medida de escolher, elas ficam sem
+            // item de voo inicial em vez de ganhar um chute.
+            let mut equipamento_da_classe: Vec<(i16, i32, i32)> = Vec::new();
             if cls == 6 {
+                equipamento_da_classe.push((11, 2271, 1000)); // Flecha de Madeira
+            }
+            if cls == 6 || cls == 7 {
+                equipamento_da_classe.push((12, 2096, 1)); // Asa
+            }
+
+            for (slot, item_id, count) in equipamento_da_classe {
                 sqlx::query(
                     r#"
                     INSERT INTO class_template_items (
                         template_id, container_type, slot, item_id, count,
                         durability, max_durability, refine_level, sockets_count, socket_stones
                     )
-                    VALUES ($1, 1, 12, 2271, 1000, 0, 0, 0, 0, '{}')
+                    VALUES ($1, 1, $2, $3, $4, 0, 0, 0, 0, '{}')
                     ON CONFLICT (template_id, container_type, slot) DO UPDATE SET
                         item_id = EXCLUDED.item_id,
                         count = EXCLUDED.count,
@@ -234,6 +255,9 @@ impl TemplateRepository {
                     "#,
                 )
                 .bind(id)
+                .bind(slot)
+                .bind(item_id)
+                .bind(count)
                 .execute(self.pool.get_ref())
                 .await?;
             }

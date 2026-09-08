@@ -384,15 +384,17 @@ fn test_inst_data_checkout_gshop_e_gshop2_sao_valores_diferentes() {
     assert_eq!(gshop2_no_fio, 0x2222_2222, "gshop_time_stamp2 tem que ser o valor de gshop2, não uma cópia do gshop");
 }
 
-/// O `OWN_EXT_PROP` (50) tem 188 bytes de corpo, medida do IR do 1.5.3
-/// (`S2C::cmd_own_ext_prop`) — dez inteiros de cabeçalho e o `ROLEEXTPROP` de 148
-/// (`bs` 32 + `mv` 16 + `ak` 68 + `df` 28 + `max_ap` 4).
+/// O `OWN_EXT_PROP` (50) tem **196** bytes de corpo — medido em jogo, não deduzido:
+/// `SERVER - Invalid GAMEDATA_50 size(Network:188, Client:196)`.
 ///
-/// O fonte do `EvolvedPWClient` traz dez campos a mais no cabeçalho, quatro deles
-/// marcados `// NEW`. Ir pelo fonte daria 228 e o cliente descartaria o comando inteiro —
-/// e com ele os atributos, que é o que faz o equipamento aparecer vermelho.
+/// São doze inteiros de cabeçalho e o `ROLEEXTPROP` de 148 (`bs` 32 + `mv` 16 + `ak` 68 +
+/// `df` 28 + `max_ap` 4). O IR do 1.5.3 diz dez inteiros (188) e o fonte do
+/// `EvolvedPWClient` diz vinte (228): o binário fica **entre os dois**, com
+/// `anti_defense_degree` e `anti_resistance_degree` mas sem os quatro campos que o fonte
+/// marca `// NEW`. Errar isso derruba o comando inteiro, e com ele os atributos que fazem
+/// o equipamento sair do vermelho.
 #[test]
-fn test_own_ext_prop_tem_188_bytes_e_os_atributos_no_lugar() {
+fn test_own_ext_prop_tem_196_bytes_e_os_atributos_no_lugar() {
     let p = S2CGamedataSend::own_ext_prop(
         3,
         (10, 20, 15, 12), // vitalidade, energia, força, agilidade
@@ -403,7 +405,7 @@ fn test_own_ext_prop_tem_188_bytes_e_os_atributos_no_lugar() {
         (7, 11, 19, 30, 1.4),
         (23, 29),
     );
-    assert_eq!(p.data.len(), 2 + 188, "cabeçalho de 2 + os 188 bytes do IR");
+    assert_eq!(p.data.len(), 2 + 196, "cabeçalho de 2 + os 196 bytes medidos no cliente");
     assert_eq!(u16::from_le_bytes(p.data[0..2].try_into().unwrap()), 50);
 
     let i32_em = |off: usize| i32::from_le_bytes(p.data[off..off + 4].try_into().unwrap());
@@ -413,7 +415,7 @@ fn test_own_ext_prop_tem_188_bytes_e_os_atributos_no_lugar() {
 
     // ROLEEXTPROP começa em 40 (mais os 2 do cabeçalho). É a força, em 40+8, que decide
     // se `CanUseEquipment` aceita a arma.
-    const BS: usize = 2 + 40;
+    const BS: usize = 2 + 48;
     assert_eq!(i32_em(BS), 10, "vitalidade");
     assert_eq!(i32_em(BS + 4), 20, "energia");
     assert_eq!(i32_em(BS + 8), 15, "força — é este campo que solta o equipamento");

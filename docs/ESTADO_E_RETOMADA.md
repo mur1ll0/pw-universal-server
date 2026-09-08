@@ -4493,6 +4493,123 @@ Ordem combinada com o Murillo:
     que o denuncia, e diz o número exato que o binário espera.
 
 
+34. **Sessão 2026-09-08 (continuação 2): os modelos 3D apareceram. Quatro defeitos que só
+    apareceram depois, e uma medida que desmentiu tanto o fonte quanto o IR.**
+
+    Primeiro teste com o overlay ligado o tempo todo. Deu certo: **os modelos 3D dos dois
+    jogadores apareceram** — o `color_name` do item 33 era mesmo a causa. O que o teste
+    trouxe de novo:
+
+    ### a. `OWN_EXT_PROP`: nem 188 nem 228, mas 196
+
+    ```text
+    SERVER - Invalid GAMEDATA_50 size(Network:188, Client:196)
+    ```
+
+    O item 33 tinha estabelecido "onde o fonte e o IR discordarem, o IR está certo". Esta
+    medida mostra que a regra é boa mas incompleta:
+
+    | Fonte | Inteiros de cabeçalho | Corpo |
+    | :--- | ---: | ---: |
+    | IR do 1.5.3 | 10 | 188 |
+    | **binário, medido** | **12** | **196** |
+    | fonte `EvolvedPWClient` | 20 | 228 |
+
+    O binário fica **entre os dois**. A diferença de oito bytes são dois inteiros, e a
+    ordem do fonte diz quais: depois de `vigour` vêm `anti_defense_degree` e
+    `anti_resistance_degree`, e só então os quatro campos que o próprio fonte marca
+    `// NEW`, que este binário não tem.
+
+    A regra final, então, é mais simples e mais honesta: **nenhuma das duas referências é
+    autoridade; o overlay é.** As duas servem para propor um palpite; o número que o
+    cliente imprime é o que decide.
+
+    ### b. A conjuração terminava antes de começar
+
+    "Apareceu o Cast Skill mas o cliente que cliquei não fez nada, nem a animação — porém
+    o outro jogador me viu castando."
+
+    Essa assimetria é a pista inteira. O item 33 passou a mandar o `HOST_STOP_SKILL` (123)
+    — necessário — mas **junto** com o `OBJECT_CAST_SKILL` (85). No dono da tela, o 85
+    monta um `CECHPWorkSpell`, chama `PlaySkillCastAction` e arma o contador da barra
+    (`EC_HostMsg.cpp:6000-6055`); o 123 chegando no mesmo quadro cancela tudo isso antes
+    do primeiro desenho. Os outros jogadores **não recebem o 123** — por isso eles viam a
+    animação inteira.
+
+    O fim da conjuração passou a rodar numa tarefa própria, depois de
+    `TEMPO_DE_CONJURACAO_MS`. Esperar na própria mensagem não serve: uma conexão de
+    barramento carrega vários jogadores, e dormir nela travaria todo mundo por um segundo.
+    O `BusServer` ganhou `#[derive(Clone)]` para isso — todos os campos são `Arc` ou
+    `Copy`, então clonar compartilha o mesmo mundo.
+
+    O tempo é fixo em 1000 ms e **isso está errado no detalhe**: cada stub do
+    `ElementSkill` tem seu `GetExecutetime`. Quando o servidor ler a tabela de
+    habilidades, o número sai daquele lugar.
+
+    ### c. O botão de armadura/roupa não existia do lado do servidor
+
+    "Mudei para modo roupa, não sincronizou para o outro jogador, e ao clicar de novo não
+    voltou — no debug não loga nada."
+
+    Os três sintomas são um só: o `SWITCH_FASHION_MODE` (C2S **85**, sem corpo —
+    `_SendNakeCommand`, `EC_SendC2SCmds.cpp:1368`) caía no ramo silencioso do `match`. O
+    cliente **não alterna sozinho**: ele pede a troca e espera o servidor dizer qual é o
+    estado novo, pelo `PLAYER_ENABLE_FASHION` (S2C **192**, 5 bytes), que precisa chegar a
+    quem apertou **e** a quem está por perto — o cliente acha o dono pelo `idPlayer` do
+    corpo (`EC_ManPlayer.cpp:1355-1358`). Sem resposta o botão fica preso.
+
+    O estado vive no mundo (`PlayerEntity::modo_roupa`) e volta ao padrão a cada login:
+    não há coluna para ele no banco, e criar uma é mudança de esquema.
+
+    ### d. A arma vermelha era o `OWN_EXT_PROP` que não chegava
+
+    Mesmo defeito do item 33e, só que ele nunca chegou a funcionar porque o comando era
+    recusado por tamanho. Com os 196 bytes certos, os atributos chegam e
+    `CanUseEquipment` para de recusar.
+
+    ### e. As flechas estavam no slot de voo
+
+    Achado ao procurar onde pôr as asas. `ClassTemplateRepository` gravava a munição do
+    Arqueiro no slot **12**, com o comentário "slot de munição (slot 12)". O 12 é
+    `EQUIPIVTR_FLYSWORD`; munição é o **11** (`EQUIPIVTR_PROJECTILE`,
+    `EC_IvtrTypes.h:67`). As flechas ocupavam o lugar das asas.
+
+    ### f. As asas
+
+    A tabela `WINGMANWING_ESSENCE` do `elements.data` tem **exatamente uma linha**: id
+    2096, "Asa", nível mínimo 1, 2 de mana por segundo. É a asa nata do Alado, e o cliente
+    confere a classe sozinho — `CanUseEquipment` recusa `ICID_WING` para quem não for
+    `PROF_ARCHOR` nem `PROF_ANGEL` (`EC_HostPlayer.cpp:4927`). Arqueiro (6) e Sacerdote
+    (7) passaram a nascer com ela no slot 12, no código e no banco
+    (`scripts/asas_e_slot_de_municao_155.sql`).
+
+    As outras raças voam com item de `FLYSWORD_ESSENCE`, que tem 1.098 linhas e **nenhum
+    campo de classe**. Sem uma forma medida de escolher, elas ficam sem item de voo
+    inicial em vez de ganhar um chute.
+
+    ### g. Uma armadilha do leitor de `elements.data`, achada de passagem
+
+    `load_elements_data(path)` em Python **sem** `overrides_path` devolve 198 das 231
+    tabelas vazias — incluindo `MONSTER_ESSENCE`, que sabidamente tem 8.054 linhas. As
+    tabelas são lidas em sequência, então uma tabela com tamanho errado derruba todas as
+    seguintes em silêncio, sem erro.
+
+    Com `specs/elements_155/realm_155_overrides.json`, caem para 132 vazias e as três
+    tabelas que importavam aqui aparecem. O lado Rust não tem esse risco porque
+    `load_elements_data_auto` já carrega os overrides. **Em Python, nunca chamar
+    `load_elements_data` sem `overrides_path`** — o sintoma de errar é uma tabela vazia
+    que parece uma resposta legítima.
+
+    ### h. Provas
+
+    - `test_own_ext_prop_tem_196_bytes_e_os_atributos_no_lugar`, atualizado da medida.
+    - `o_botao_de_roupa_alterna_e_avisa_os_dois_lados`: liga, confere que os dois lados
+      recebem o 192 com o `idPlayer` certo, e que clicar de novo volta para a armadura.
+    - Os testes de conjuração continuam exigindo o 123, agora depois do tempo de
+      conjuração.
+
+
+
 
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),

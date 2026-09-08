@@ -81,6 +81,13 @@ pub mod ids {
     pub const CAST_SKILL: u16 = 41;
     /// `SRV::C2S::CMD::cast_instant_skill` — mesmo layout do 41.
     pub const CAST_INSTANT_SKILL: u16 = 80;
+
+    /// `SWITCH_FASHION_MODE` — o botão que troca a exibição entre armadura e roupa.
+    ///
+    /// Comando **sem corpo** (`_SendNakeCommand`, `EC_SendC2SCmds.cpp:1368`): quem guarda
+    /// o estado é o servidor, e o cliente só pede a troca. Sem tratamento, o botão não
+    /// fazia nada e nem aparecia no log — era o `outro =>` silencioso do `match`.
+    pub const SWITCH_FASHION_MODE: u16 = 85;
     /// `SRV::C2S::CMD::team_invite` — 6 bytes, `id` no deslocamento 2.
     pub const TEAM_INVITE: u16 = 27;
     /// `SRV::C2S::CMD::team_agree_invite`

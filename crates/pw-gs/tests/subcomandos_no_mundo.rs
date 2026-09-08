@@ -2085,3 +2085,57 @@ async fn conjurar_em_si_mesmo_ainda_fecha_a_conjuracao() {
         "o cliente exige corpo vazio no HOST_STOP_SKILL (dwSize == 0) e descarta o resto"
     );
 }
+
+/// O botão de armadura/roupa é um comando **sem corpo** que só o servidor resolve.
+///
+/// Em jogo, 2026-09-08: "mudei para modo roupa, não sincronizou para o outro jogador, e
+/// ao clicar de novo não voltou — no debug não loga nada". Os três sintomas são o mesmo
+/// defeito: o `SWITCH_FASHION_MODE` (85) caía no ramo silencioso do `match`.
+///
+/// O cliente não alterna sozinho; ele descobre o estado pelo `PLAYER_ENABLE_FASHION`
+/// (192), que precisa chegar a quem apertou **e** a quem está por perto.
+#[tokio::test]
+async fn o_botao_de_roupa_alterna_e_avisa_os_dois_lados() {
+    let (mundo, addr, roleid, convidado) = cenario!();
+    let mut anfitriao = entrar(&mundo, addr, roleid).await;
+    let mut outro = entrar(&mundo, addr, convidado).await;
+
+    // Primeira vez: liga a roupa.
+    anfitriao
+        .enviar(BusMessage::ClientToGame {
+            roleid,
+            localsid: LOCALSID,
+            data: subcomando(ids::SWITCH_FASHION_MODE, &[]),
+        })
+        .await
+        .unwrap();
+
+    let meu = receber(&mut anfitriao, 1).await;
+    let pacote = meu
+        .iter()
+        .find(|v| cmd_de(v) == 192)
+        .expect("quem apertou não recebeu PLAYER_ENABLE_FASHION");
+    assert_eq!(pacote.len(), 2 + 5, "cmd_player_enable_fashion tem 5 bytes");
+    assert_eq!(i32_em(pacote, 2), roleid, "o comando tem de dizer de quem é a roupa");
+    assert_eq!(pacote[6], 1, "a primeira troca liga o modo roupa");
+
+    let dele = receber(&mut outro, 1).await;
+    assert!(
+        dele.iter().any(|v| cmd_de(v) == 192),
+        "o outro jogador não foi avisado da troca"
+    );
+
+    // Segunda vez: volta para a armadura.
+    anfitriao
+        .enviar(BusMessage::ClientToGame {
+            roleid,
+            localsid: LOCALSID,
+            data: subcomando(ids::SWITCH_FASHION_MODE, &[]),
+        })
+        .await
+        .unwrap();
+
+    let volta = receber(&mut anfitriao, 1).await;
+    let pacote = volta.iter().find(|v| cmd_de(v) == 192).expect("sem resposta na volta");
+    assert_eq!(pacote[6], 0, "clicar de novo tem de voltar para a armadura");
+}

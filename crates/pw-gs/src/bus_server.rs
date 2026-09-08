@@ -137,6 +137,17 @@ const SAIDA_VOLUNTARIA: i16 = 0;
 /// manda no `PLAYER_MOVE` de um jogador a pé.
 const MODO_DE_MOVIMENTO_ANDANDO: u8 = 0;
 
+/// Quanto dura uma conjuração, em milissegundos.
+///
+/// Um valor só para os dois lados: é ele que vai no `time` do `OBJECT_CAST_SKILL` (com o
+/// qual o cliente arma o contador da barra) e é ele que a tarefa do fim espera. Se os dois
+/// se separassem, a barra fecharia antes ou depois do efeito.
+///
+/// **É um valor fixo, e o certo viria da habilidade**: cada stub do `ElementSkill` tem seu
+/// `GetExecutetime`/`GetCoolingtime` (a Prece da Clareza, por exemplo, executa em 1000 ms).
+/// O servidor ainda não lê a tabela de habilidades — quando ler, este número sai daqui.
+const TEMPO_DE_CONJURACAO_MS: u16 = 1000;
+
 /// Canal por onde o mundo devolve mensagens àquele jogador.
 pub type EnvioAoCliente = mpsc::Sender<BusMessage>;
 
@@ -147,6 +158,11 @@ struct Sessao {
 }
 
 /// A ponta de rede do servidor de mundo.
+///
+/// Clonar é barato e **compartilha o mesmo mundo**: `world` e `sessoes` são `Arc`, e
+/// `sub` é um `Copy` de um byte. Serve para tarefas que precisam terminar depois de a
+/// mensagem já ter sido respondida — ver [`Self::conjurar`].
+#[derive(Clone)]
 pub struct BusServer {
     world: Arc<RwLock<WorldInstance>>,
     /// Os subcomandos cujo layout depende da versão do realm.
@@ -527,6 +543,7 @@ impl BusServer {
             ids::TEAM_AGREE_INVITE => self.aceitar_grupo(roleid, &cmd.payload).await,
             ids::TEAM_REJECT_INVITE => self.recusar_grupo(roleid).await,
             ids::TEAM_LEAVE_PARTY => self.deixar_grupo(roleid).await,
+            ids::SWITCH_FASHION_MODE => self.trocar_modo_roupa(roleid, envio).await,
             ids::CAST_SKILL | ids::CAST_INSTANT_SKILL => {
                 self.conjurar(roleid, &cmd.payload, envio).await
             }
@@ -1173,40 +1190,70 @@ impl BusServer {
             return;
         };
 
-        // A animação sai antes do resultado — é o que o cliente espera ver.
+        // A conjuração tem começo e fim, separados pelo tempo de conjuração.
         //
-        // `OBJECT_CAST_SKILL` (85) é o comando real que faz OUTROS jogadores verem a
-        // animação de conjuração (`docs/MEDIDAS_DO_126.md`, comando 85, idêntico no
-        // 1.2.6 e no 1.5.3+) — mas só era mandado de volta a quem conjurou
-        // (`self.responder`), nunca a quem está por perto. Mesma causa raiz do
-        // `object_move`/`object_stop_move` (ver o comentário de `mover`, acima): a
-        // animação em si não depende do alvo ser monstro, então quem vê a tela pode ver
-        // a conjuração mesmo que o efeito (mais abaixo) só funcione contra monstro por
-        // ora.
+        // `OBJECT_CAST_SKILL` (85) é o começo, e vai para todo mundo: quem conjura monta
+        // com ele um `CECHPWorkSpell`, chama `PlaySkillCastAction` e arma um contador com
+        // o `time` que mandamos (`EC_HostMsg.cpp:6000-6055`); quem está por perto vê a
+        // animação pelo gerente dos outros jogadores.
         drop(mundo);
-        let cast_pkt = S2CGamedataSend::object_cast_skill(roleid, alvo as i32, c.skill_id, 1000, 1).data;
+        let cast_pkt =
+            S2CGamedataSend::object_cast_skill(roleid, alvo as i32, c.skill_id, TEMPO_DE_CONJURACAO_MS, 1)
+                .data;
         self.responder(roleid, cast_pkt.clone(), envio).await;
         self.transmitir_a_outros(roleid, cast_pkt).await;
+
+        // O fim vai numa tarefa própria, depois do tempo de conjuração.
+        //
+        // Em jogo, 2026-09-08: mandando o fim junto com o começo, quem conjurava não via
+        // animação nenhuma (o `HOST_STOP_SKILL` cancelava o trabalho de feitiço no mesmo
+        // quadro em que ele nascia) enquanto o outro jogador via a conjuração inteira —
+        // porque o 123 não é transmitido aos outros. Esperar aqui na própria mensagem não
+        // serve: uma conexão de barramento carrega **vários** jogadores, e dormir nela
+        // travaria todo mundo por um segundo.
+        let este = self.clone();
+        let envio = envio.clone();
+        let skill_id = c.skill_id;
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                TEMPO_DE_CONJURACAO_MS as u64,
+            ))
+            .await;
+            este.concluir_conjuracao(roleid, skill_id, alvo, &envio).await;
+        });
+    }
+
+    /// O fim de uma conjuração: solta o conjurador e aplica o efeito.
+    ///
+    /// Roda depois do tempo de conjuração — ver [`Self::conjurar`].
+    async fn concluir_conjuracao(
+        &self,
+        roleid: i32,
+        skill_id: i32,
+        alvo: i64,
+        envio: &EnvioAoCliente,
+    ) {
+        // Se o jogador saiu no meio da conjuração, não há a quem responder.
+        if !self.sessoes.read().await.contains_key(&roleid) {
+            return;
+        }
 
         let perform_pkt = S2CGamedataSend::skill_perform().data;
         self.responder(roleid, perform_pkt.clone(), envio).await;
         self.transmitir_a_outros(roleid, perform_pkt).await;
 
-        // `HOST_STOP_SKILL` (123) é o que **fecha a conjuração de quem conjurou**.
+        // `HOST_STOP_SKILL` (123) é o que **fecha a conjuração de quem conjurou**, e é
+        // sem corpo (o cliente exige `dwSize == 0`, `EC_GameDataPrtc.cpp:305`).
         //
-        // Em jogo, 2026-09-08: "as skills castam mas nunca terminam". O comando anterior,
-        // `SKILL_PERFORM` (88), é roteado para `MAN_PLAYER`
-        // (`EC_GameDataPrtc.cpp:1385-1388`) — ele anima os **outros** jogadores. Quem
-        // conjurou continua preso: `CECHostPlayer::m_pCurSkill` só é zerado numa
-        // conjuração bem-sucedida pelo `case HOST_STOP_SKILL`
-        // (`EC_HostMsg.cpp:6065-6096`), que além de soltar a barra chama
-        // `EndCharging()`, `StopSkillAttackAction()` e `FinishWork` do trabalho de
-        // feitiço. Sem ele o cliente fica em estado de conjuração para sempre e recusa a
-        // próxima habilidade.
+        // O `SKILL_PERFORM` (88) acima não serve para isso: ele é roteado para
+        // `MAN_PLAYER` (`EC_GameDataPrtc.cpp:1385-1388`), o gerente dos **outros**
+        // jogadores. Quem conjurou só é solto pelo `case HOST_STOP_SKILL`
+        // (`EC_HostMsg.cpp:6065-6096`), que zera `m_pCurSkill`, chama `EndCharging()`,
+        // `StopSkillAttackAction()` e encerra o trabalho de feitiço. Sem ele o cliente
+        // fica em estado de conjuração para sempre e recusa a próxima habilidade.
         //
-        // Vai **antes** de qualquer coisa depender do alvo, e sem corpo (o cliente exige
-        // `dwSize == 0`, `EC_GameDataPrtc.cpp:305`): uma cura em si mesmo, uma bênção num
-        // companheiro e um ataque num monstro terminam todos aqui.
+        // Vai **antes** de qualquer coisa depender do alvo: uma cura em si mesmo, uma
+        // bênção num companheiro e um ataque num monstro terminam todos aqui.
         self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio)
             .await;
 
@@ -1218,7 +1265,7 @@ impl BusServer {
             // Alvo que não é monstro: o próprio conjurador (cura, bênção) ou outro
             // jogador. A conjuração já foi fechada acima; o **efeito** ainda não existe —
             // ver a lacuna do motor de habilidades no item 32 do `ESTADO_E_RETOMADA.md`.
-            debug!("mundo: {roleid} conjurou {} em {alvo}, que não é monstro — sem efeito ainda", c.skill_id);
+            debug!("mundo: {roleid} conjurou {} em {alvo}, que não é monstro — sem efeito ainda", skill_id);
             return;
         };
         if monstro.is_dead {
@@ -1247,7 +1294,7 @@ impl BusServer {
             roleid,
             self.sub.self_skill_attack_result(
                 alvo as i32,
-                c.skill_id,
+                skill_id,
                 saturar(dano),
                 SEM_MARCACAO,
                 VELOCIDADE_PADRAO,
@@ -1273,7 +1320,7 @@ impl BusServer {
         .await;
 
         if morreu {
-            info!("mundo: {roleid} matou {alvo} com a habilidade {}", c.skill_id);
+            info!("mundo: {roleid} matou {alvo} com a habilidade {}", skill_id);
             self.responder(
                 roleid,
                 S2CGamedataSend::npc_died(alvo as i32, roleid).data,
@@ -1288,6 +1335,36 @@ impl BusServer {
             .await;
             self.notificar_abate(roleid, template, envio).await;
         }
+    }
+
+    /// `C2S::SWITCH_FASHION_MODE` (85) — o botão que alterna entre mostrar a armadura e
+    /// mostrar a roupa.
+    ///
+    /// O comando vem **sem corpo**: o cliente não decide nada sozinho, ele pede a troca e
+    /// espera o servidor dizer qual é o estado novo. Quem guarda o estado é o mundo, e a
+    /// resposta é o `PLAYER_ENABLE_FASHION` (192) — que vai para todo mundo, inclusive
+    /// para quem apertou o botão, porque é assim que o cliente descobre o resultado
+    /// (`EC_ManPlayer.cpp:1355-1358` acha o jogador pelo `idPlayer` do corpo).
+    ///
+    /// Em jogo, 2026-09-08: "mudei para modo roupa, não sincronizou para o outro jogador,
+    /// e ao clicar de novo não voltou". Os dois sintomas são o mesmo defeito — o comando
+    /// caía no `outro =>` silencioso deste `match` e nada acontecia, nem no log.
+    async fn trocar_modo_roupa(&self, roleid: i32, envio: &EnvioAoCliente) {
+        let ativo = {
+            let mut mundo = self.world.write().await;
+            let Some(jogador) = mundo.players.get_mut(&(roleid as i64)) else {
+                warn!("mundo: {roleid} pediu modo roupa mas não está no mundo");
+                return;
+            };
+            jogador.modo_roupa = !jogador.modo_roupa;
+            jogador.modo_roupa
+        };
+
+        debug!("mundo: {roleid} passou para o modo {}", if ativo { "roupa" } else { "armadura" });
+
+        let pacote = S2CGamedataSend::player_enable_fashion(roleid, ativo).data;
+        self.responder(roleid, pacote.clone(), envio).await;
+        self.transmitir_a_outros(roleid, pacote).await;
     }
 
     /// `C2S::SEVNPC_HELLO` (35) — o jogador abriu diálogo com um NPC.

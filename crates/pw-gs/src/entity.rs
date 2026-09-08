@@ -65,6 +65,12 @@ pub struct PlayerEntity {
     pub position: Vector3,
     pub target_id: Option<i64>,
     pub buffs: Vec<ActiveBuff>,
+    /// O jogador está mostrando a roupa (moda) no lugar da armadura.
+    ///
+    /// É estado de aparência, e o cliente alterna com o `SWITCH_FASHION_MODE` (C2S 85).
+    /// Vive só no mundo: não há coluna para ele no banco, então volta ao padrão a cada
+    /// login. Trocar isso é mudança de esquema, não de código.
+    pub modo_roupa: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -229,6 +235,8 @@ impl PlayerEntity {
             position: p.position,
             target_id: None,
             buffs: Vec::new(),
+            // Todo mundo entra mostrando a armadura; o banco não guarda esta escolha.
+            modo_roupa: false,
         }
     }
 

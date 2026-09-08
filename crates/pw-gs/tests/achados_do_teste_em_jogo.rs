@@ -50,6 +50,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         position: pos,
         target_id: None,
         buffs: Vec::new(),
+        modo_roupa: false,
     };
     p.hp = p.max_hp;
     p

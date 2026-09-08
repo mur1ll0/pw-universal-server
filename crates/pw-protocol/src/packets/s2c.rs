@@ -605,14 +605,25 @@ impl S2CGamedataSend {
     /// O `PLAYER_EXT_PROP_BASE` (53), que já mandávamos, **não** serve: ele é roteado
     /// para o gerente dos **outros** jogadores (`EC_GameDataPrtc.cpp:1180-1186`).
     ///
-    /// # O layout é o do IR, não o do fonte do cliente
+    /// # O layout: 196 bytes, medido — não são nem os 188 do IR nem os 228 do fonte
     ///
-    /// O `cmd_own_ext_prop` do `EvolvedPWClient` tem dez campos a mais no cabeçalho
-    /// (`anti_defense_degree`, `p_damage_reduce`, `task_count`, os contadores de
-    /// mortes…), quatro deles marcados `// NEW` no próprio fonte. O IR do 1.5.3 mede
-    /// **188** bytes: dez inteiros e o `ROLEEXTPROP` de 148. É essa a medida que vale
-    /// aqui — ver `PorVersao::equip_data` para a regra geral e para as duas medições em
-    /// jogo que mostraram o fonte estar à frente do binário distribuído.
+    /// Este comando é o exemplo mais claro de por que a medição ganha da leitura. Três
+    /// respostas plausíveis para o mesmo campo:
+    ///
+    /// | Fonte | Inteiros de cabeçalho | Corpo |
+    /// | :--- | ---: | ---: |
+    /// | IR do 1.5.3 (`S2C::cmd_own_ext_prop`) | 10 | 188 |
+    /// | **binário, medido em jogo** | **12** | **196** |
+    /// | fonte `EvolvedPWClient` | 20 | 228 |
+    ///
+    /// A primeira tentativa foi pelo IR, e o overlay do `d_rtdebug` respondeu na hora:
+    /// `SERVER - Invalid GAMEDATA_50 size(Network:188, Client:196)`. A diferença de oito
+    /// bytes são dois inteiros, e a ordem do fonte diz exatamente quais: logo depois de
+    /// `vigour` vêm `anti_defense_degree` e `anti_resistance_degree`, e só então os quatro
+    /// campos que o próprio fonte marca `// NEW` — que este binário não tem.
+    ///
+    /// Ou seja, o binário está **entre** as duas referências. Nem "o IR sempre vale" nem
+    /// "o fonte sempre vale" resolvem; o overlay resolve. Ver `PorVersao::equip_data`.
     ///
     /// `ROLEEXTPROP` = `bs`(32) + `mv`(16) + `ak`(68) + `df`(28) + `max_ap`(4).
     #[allow(clippy::too_many_arguments)]
@@ -644,6 +655,8 @@ impl S2CGamedataSend {
         s.write_i32_le(0);                  // penetration
         s.write_i32_le(0);                  // resilience
         s.write_i32_le(0);                  // vigour
+        s.write_i32_le(0);                  // anti_defense_degree
+        s.write_i32_le(0);                  // anti_resistance_degree
 
         // ROLEEXTPROP_BASE
         s.write_i32_le(vitality);
@@ -1811,10 +1824,20 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// `struct cmd_player_enable_fashion { int idPlayer; unsigned char is_enabble; }`.
+    /// `PLAYER_ENABLE_FASHION` (192) — o jogador passou a mostrar a roupa no lugar da
+    /// armadura, ou voltou.
+    ///
+    /// `struct cmd_player_enable_fashion { int idPlayer; unsigned char is_enabble; }` —
+    /// 5 bytes, conferido nas duas fontes: `EC_GPDataType.h:3208` e o IR
+    /// (`S2C::cmd_player_enable_fashion`, `bytes: 5`).
     ///
     /// Faltava o `idPlayer`. Além do tamanho (item 46), sem ele o comando não diz de quem
     /// é a roupa — e é justamente um comando sobre o que os **outros** veem.
+    ///
+    /// Vai para todos que enxergam o jogador, **inclusive ele mesmo**: o cliente acha o
+    /// dono pelo `idPlayer` do corpo (`EC_ManPlayer.cpp:1355-1358`). É por isso que o
+    /// botão precisa da resposta do servidor para mudar de estado — ele não alterna
+    /// sozinho. Ver `BusServer::trocar_modo_roupa`.
     pub fn player_enable_fashion(player_id: i32, enable: bool) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(192);              // CMD_S2C_PLAYER_ENABLE_FASHION = 192
