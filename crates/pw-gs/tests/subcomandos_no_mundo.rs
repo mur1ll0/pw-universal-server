@@ -613,6 +613,30 @@ async fn esperar_comando(link: &mut pw_bus::transport::BusConnection, cmd: u16) 
     panic!("o comando {cmd} não chegou em 20 pacotes");
 }
 
+/// Junta tudo o que o mundo manda até o `TASK_DATA` (105), o marcador de fim da carga.
+///
+/// Contar pacotes exatos aqui é frágil: cada comando novo que a carga passa a mandar
+/// (aconteceu com o `SKILL_DATA` e com o `OWN_EXT_PROP`) quebraria o teste sem que nada
+/// estivesse errado no servidor. Este helper existe para o teste dizer **o que** espera.
+async fn receber_ate_o_fim_da_carga(link: &mut pw_bus::transport::BusConnection) -> Vec<Vec<u8>> {
+    let mut v = Vec::new();
+    for _ in 0..40 {
+        let m = tokio::time::timeout(Duration::from_secs(5), link.receber())
+            .await
+            .expect("a carga não terminou: o TASK_DATA (105) nunca chegou")
+            .unwrap()
+            .expect("conexão fechou");
+        if let BusMessage::GameToClient { data, .. } = m {
+            let fim = cmd_de(&data) == 105;
+            v.push(data);
+            if fim {
+                return v;
+            }
+        }
+    }
+    panic!("o TASK_DATA (105) não chegou em 40 pacotes");
+}
+
 fn cmd_de(v: &[u8]) -> u16 {
     u16::from_le_bytes([v[0], v[1]])
 }
@@ -1970,7 +1994,7 @@ async fn get_all_data_respeita_os_sinalizadores_do_cliente() {
     .await
     .unwrap();
 
-    let r = receber(&mut link, 2).await;
+    let r = receber_ate_o_fim_da_carga(&mut link).await;
     assert!(
         !r.iter().any(|v| cmd_de(v) == 42),
         "mandou a bolsa (42) com detail_inv = 0"
@@ -1978,6 +2002,12 @@ async fn get_all_data_respeita_os_sinalizadores_do_cliente() {
     assert!(
         r.iter().any(|v| cmd_de(v) == 105),
         "faltou o TASK_DATA (105) — é o marcador que destrava o cliente, e vai sempre"
+    );
+    // A ficha do jogador vai sempre: é ela que dá os atributos que o cliente confere antes
+    // de deixar usar equipamento.
+    assert!(
+        r.iter().any(|v| cmd_de(v) == 50),
+        "faltou o OWN_EXT_PROP (50) — sem ele todo equipamento aparece vermelho"
     );
     let saldo = r
         .iter()
@@ -1993,7 +2023,7 @@ async fn get_all_data_respeita_os_sinalizadores_do_cliente() {
     })
     .await
     .unwrap();
-    let r = receber(&mut link, 3).await;
+    let r = receber_ate_o_fim_da_carga(&mut link).await;
     assert!(
         r.iter().any(|v| cmd_de(v) == 42),
         "não mandou a bolsa (42) nem com detail_inv = 1"
@@ -2196,20 +2226,27 @@ async fn a_cura_em_si_mesmo_devolve_vida() {
     .await
     .unwrap();
 
-    let r = receber(&mut link, 5).await;
+    let r = receber(&mut link, 6).await;
     assert!(r.iter().any(|v| cmd_de(v) == 123), "a conjuração não fechou");
-    // Cura sai pelo `PLAYER_HP_STEAL` (279), o número **verde**. O 142 só sabe desenhar
-    // vermelho (ver o comentário em `efeito_em_jogador`).
-    assert!(
-        !r.iter().any(|v| cmd_de(v) == 142),
-        "cura não pode sair pelo 142: o cliente pinta de vermelho"
-    );
     let res = r
         .iter()
         .find(|v| cmd_de(v) == 279)
         .expect("sem PLAYER_HP_STEAL: o número verde não apareceria");
     let curado = i32_em(res, 2);
     assert!(curado > 0, "a cura veio {curado}");
+
+    // O efeito visual (a luz sobre o alvo) precisa do 142 com dano **-2**, que o cliente
+    // trata como "habilidade de ajuda": nada de número, nada de animação de ferido
+    // (`EC_Player.cpp:3435-3443`). Sem isto a cura funciona e não aparece nada.
+    let efeito = r
+        .iter()
+        .find(|v| cmd_de(v) == 142)
+        .expect("sem o 142 de ajuda, o efeito visual da cura não roda");
+    assert_eq!(
+        i32_em(efeito, 10),
+        -2,
+        "o 142 da cura tem de levar dano -2, senão o número sai vermelho"
+    );
 
     let depois = mundo.read().await.players[&(roleid as i64)].hp;
     assert_eq!(depois, antes + curado, "a vida no mundo não subiu o que foi anunciado");
@@ -2334,11 +2371,10 @@ async fn usar_um_equipamento_nao_o_consome() {
     };
     itens.upsert_item(&asa).await.unwrap();
 
-    // `UseItem`: onde(1) + slot(2) + item_id(4) + quantos(4)
-    let mut corpo = vec![1u8];
+    // `UseItem`: onde(u8), quantos(u8), slot(u16), item_id(i32) — ver `comandos::UseItem`.
+    let mut corpo = vec![1u8, 1u8];
     corpo.extend_from_slice(&12u16.to_le_bytes());
-    corpo.extend_from_slice(&2096u32.to_le_bytes());
-    corpo.extend_from_slice(&1u32.to_le_bytes());
+    corpo.extend_from_slice(&2096i32.to_le_bytes());
 
     link.enviar(BusMessage::ClientToGame {
         roleid,
@@ -2357,6 +2393,56 @@ async fn usar_um_equipamento_nao_o_consome() {
         ainda_la.is_some(),
         "a asa foi consumida ao ser usada — foi assim que ela sumiu do banco em jogo"
     );
+}
+
+/// Usar o item do slot de voo é **decolar**, e o cliente precisa saber disso pelo
+/// `OBJECT_TAKEOFF` (96) — não pelo `HOST_USE_ITEM` (91), que significa "o item foi gasto"
+/// e faz o cliente apagar a asa da tela.
+#[tokio::test]
+async fn usar_a_asa_decola_em_vez_de_gastar() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    let asa = pw_core::ItemRecord {
+        id: None,
+        character_id: roleid,
+        container_type: pw_core::ContainerType::Equipment,
+        slot: 12,
+        item_id: 2096,
+        count: 1,
+        max_count: 1,
+        refine_level: 0,
+        sockets_count: 0,
+        sockets: vec![],
+        durability: 0,
+        max_durability: 0,
+        bind_status: 0,
+        octets: Vec::new(),
+        custom_attributes: serde_json::json!({}),
+    };
+    itens.upsert_item(&asa).await.unwrap();
+
+    let mut corpo = vec![1u8, 1u8];
+    corpo.extend_from_slice(&12u16.to_le_bytes());
+    corpo.extend_from_slice(&2096i32.to_le_bytes());
+    let usar = BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::USE_ITEM, &corpo),
+    };
+
+    link.enviar(usar.clone()).await.unwrap();
+    let r = receber(&mut link, 1).await;
+    assert_eq!(cmd_de(&r[0]), 96, "usar a asa tem de decolar (OBJECT_TAKEOFF)");
+    assert_eq!(i32_em(&r[0], 2), roleid);
+    assert!(mundo.read().await.players[&(roleid as i64)].voando, "o mundo não marcou o voo");
+
+    // Usar de novo pousa.
+    link.enviar(usar).await.unwrap();
+    let r = receber(&mut link, 1).await;
+    assert_eq!(cmd_de(&r[0]), 97, "usar a asa voando tem de pousar (OBJECT_LANDING)");
+    assert!(!mundo.read().await.players[&(roleid as i64)].voando);
 }
 
 /// Sentar tem de ser visto por quem está por perto.
@@ -2418,4 +2504,55 @@ async fn o_goto_do_gm_teleporta_e_o_de_jogador_comum_nao() {
         (antes.x, antes.z),
         "jogador comum não pode se teleportar"
     );
+}
+
+/// O teleporte de GM mantém a **altura atual** do jogador, e não o `y` que o cliente manda.
+///
+/// Os cliques de mapa mandam `y = 1.0` como marcador (`c2s_CmdGoto(fX, 1.0f, fZ)`), e o
+/// servidor original substitui o campo pela altura do terreno
+/// (`playercmd.cpp:4926`). Obedecer ao `y` recebido enterrava o personagem no chão — foi o
+/// que se viu em jogo em 2026-09-08.
+#[tokio::test]
+async fn o_teleporte_ignora_o_y_do_cliente() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // Dá privilégio de GM à conta deste personagem.
+    let repo = mundo.read().await.char_repo.clone();
+    let conta = repo
+        .get_details_por_role(roleid)
+        .await
+        .unwrap()
+        .expect("personagem existe")
+        .account_id;
+    sqlx::query("UPDATE accounts SET gm_privileges = 32 WHERE id = $1")
+        .bind(conta)
+        .execute(repo.pool().get_ref())
+        .await
+        .unwrap();
+
+    let antes = mundo.read().await.players[&(roleid as i64)].position;
+    let mut corpo = Vec::new();
+    // `y = 1.0`, exatamente o marcador que os cliques de mapa mandam.
+    for v in [antes.x + 80.0, 1.0f32, antes.z + 80.0] {
+        corpo.extend_from_slice(&v.to_le_bytes());
+    }
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::GOTO, &corpo),
+    })
+    .await
+    .unwrap();
+    let r = receber(&mut link, 1).await;
+    assert_eq!(cmd_de(&r[0]), 177, "sem HOST_CORRECT_POS o cliente não se move");
+
+    let depois = mundo.read().await.players[&(roleid as i64)].position;
+    assert_eq!(depois.x, antes.x + 80.0, "não andou em x");
+    assert_eq!(depois.z, antes.z + 80.0, "não andou em z");
+    assert_eq!(depois.y, antes.y, "o y do cliente (1.0) enterraria o personagem");
+
+    let y_no_pacote = f32::from_le_bytes(r[0][6..10].try_into().unwrap());
+    assert_eq!(y_no_pacote, antes.y, "o pacote levou o y errado");
 }

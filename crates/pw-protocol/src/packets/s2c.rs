@@ -1724,7 +1724,17 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando OBJECT_TAKEOFF (Comando 96) decolando para voo
+    /// `OBJECT_TAKEOFF` (96) — o jogador decolou.
+    ///
+    /// `struct cmd_object_takeoff { int object_id; }`, 4 bytes (`EC_GPDataType.h:2271`).
+    /// É este comando que faz o dono da tela voar: `CECHostPlayer::OnMsgPlayerFly` liga
+    /// `GP_STATE_FLY` e começa o trabalho de voo (`EC_HostMsg.cpp:5936-5960`). Vai também
+    /// para quem está por perto, que é como eles veem as asas abertas.
+    ///
+    /// **Não existe comando C2S de decolar**: o cliente pede voo "usando" o item de voo
+    /// (`USE_ITEM` no slot 12, `EQUIPIVTR_FLYSWORD`), e a resposta é isto. Responder
+    /// `HOST_USE_ITEM` ali é dizer "o item foi gasto", e o cliente apaga a asa da tela —
+    /// foi o que aconteceu em jogo em 2026-09-08.
     pub fn object_takeoff(id_player: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(96);               // CMD_S2C_OBJECT_TAKEOFF = 96
@@ -1732,7 +1742,8 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando OBJECT_LANDING (Comando 97) pousando do voo
+    /// `OBJECT_LANDING` (97) — o jogador pousou. Mesmo layout do `object_takeoff`
+    /// (`EC_GPDataType.h:2276`).
     pub fn object_landing(id_player: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(97);               // CMD_S2C_OBJECT_LANDING = 97

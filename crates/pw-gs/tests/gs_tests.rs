@@ -77,6 +77,7 @@ fn test_combat_engine_damage_calculation() {
         position: Vector3::new(0.0, 0.0, 0.0),
         target_id: None,
         buffs: Vec::new(),
+        voando: false,
         modo_roupa: false,
     };
 

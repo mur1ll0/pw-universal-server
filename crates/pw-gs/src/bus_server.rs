@@ -157,6 +157,10 @@ const TEMPO_DE_CONJURACAO_MS: u16 = 1000;
 /// alguma coisa.
 const NIVEL_DA_HABILIDADE: i32 = 1;
 
+/// `EQUIPIVTR_FLYSWORD` do `EC_IvtrTypes.h`: o slot do item de voo (espada voadora para os
+/// humanos, asa para os Alados).
+const SLOT_DE_VOO: u16 = 12;
+
 /// Canal por onde o mundo devolve mensagens àquele jogador.
 pub type EnvioAoCliente = mpsc::Sender<BusMessage>;
 
@@ -1139,23 +1143,38 @@ impl BusServer {
             let mundo = self.world.read().await;
             mundo.quanto_o_remedio_restaura(u.item_id as u32).is_some()
         };
+
+        // Usar o item do slot de voo é **decolar**, não gastar o item.
+        //
+        // Não existe comando C2S de decolar: o cliente manda `USE_ITEM` apontando para o
+        // slot 12 (`EQUIPIVTR_FLYSWORD`) e espera o `OBJECT_TAKEOFF` (96). Ver
+        // `S2CGamedataSend::object_takeoff`.
+        if ct == ContainerType::Equipment && u.slot == SLOT_DE_VOO {
+            self.alternar_voo(roleid, envio).await;
+            return;
+        }
+
         if ct == ContainerType::Equipment || !e_consumivel {
+            // Nada é gasto, e — o que importa tanto quanto — **nada de `HOST_USE_ITEM`**.
+            // Aquele comando é a confirmação de que o item foi consumido, e o cliente
+            // apaga o item da tela ao recebê-lo. Em jogo, 2026-09-08, foi assim que a asa
+            // "desapareceu" mesmo continuando no banco.
             debug!(
                 "mundo: {roleid} usou o item {} do container {:?}, que não se gasta",
                 u.item_id, ct
             );
-        } else {
-            let quantos = u.quantos.max(1) as u32;
-            if itens
-                .consume_item(roleid, ct, u.slot, quantos)
-                .await
-                .is_err()
-            {
-                debug!("mundo: {roleid} não tinha {quantos} do item {}", u.item_id);
-                return;
-            }
+            return;
         }
+
         let quantos = u.quantos.max(1) as u32;
+        if itens
+            .consume_item(roleid, ct, u.slot, quantos)
+            .await
+            .is_err()
+        {
+            debug!("mundo: {roleid} não tinha {quantos} do item {}", u.item_id);
+            return;
+        }
 
         self.responder(
             roleid,
@@ -1553,12 +1572,57 @@ impl BusServer {
         // `BubbleText(BUBBLE_ADD, hp)` (`EC_HostMsg.cpp:5772-5781`). Ele vai para **quem
         // recebeu** a cura, que é quem vê o número subir.
         if h.e_cura() {
+            // Duas coisas, e cada uma resolve metade do problema.
+            //
+            // O número verde é o `PLAYER_HP_STEAL` (279), que vira
+            // `BubbleText(BUBBLE_ADD, hp)` (`EC_HostMsg.cpp:5772-5781`).
             let verde = S2CGamedataSend::player_hp_steal(valor).data;
             if alvo as i32 == roleid {
                 self.responder(roleid, verde, envio).await;
             } else {
                 let _ = self.enviar_ao_jogador(alvo as i32, verde).await;
             }
+
+            // O **efeito visual** (a luz sobre o alvo) é a máquina de ataque de
+            // habilidade do cliente, e ela só roda com o `HOST_SKILL_ATTACK_RESULT`
+            // (142). Mandá-lo com o dano de verdade pintava o número em vermelho; o
+            // valor certo é **-2**, que `CECPlayer::Damaged` trata como "isto veio de uma
+            // habilidade de ajuda": não desenha número, não toca animação de ferido, e
+            // deixa o efeito da habilidade acontecer (`EC_Player.cpp:3435-3443`).
+            //
+            // Sem isto a cura funcionava e não aparecia nada — relatado em jogo em
+            // 2026-09-08 ("casta mas o efeito não ativa no final").
+            const DANO_DE_HABILIDADE_DE_AJUDA: i32 = -2;
+            self.responder(
+                roleid,
+                self.sub
+                    .self_skill_attack_result(
+                        alvo as i32,
+                        skill_id,
+                        DANO_DE_HABILIDADE_DE_AJUDA,
+                        SEM_MARCACAO,
+                        VELOCIDADE_PADRAO,
+                        SECAO_UNICA,
+                    )
+                    .data,
+                envio,
+            )
+            .await;
+            self.transmitir_a_outros(
+                roleid,
+                self.sub
+                    .object_skill_attack_result(
+                        roleid,
+                        alvo as i32,
+                        skill_id,
+                        DANO_DE_HABILIDADE_DE_AJUDA,
+                        SEM_MARCACAO,
+                        VELOCIDADE_PADRAO,
+                        SECAO_UNICA,
+                    )
+                    .data,
+            )
+            .await;
         } else {
             self.responder(
                 roleid,
@@ -1611,8 +1675,8 @@ impl BusServer {
             let _ = self.enviar_ao_jogador(alvo_id, vida).await;
         }
 
-        // Quem está por perto vê o número entre os dois. Só para dano, pelo mesmo motivo
-        // do bloco acima: o 143 desemboca no mesmo `Damaged` vermelho.
+        // Quem está por perto vê o número entre os dois. A cura já mandou o seu 143 com
+        // dano -2 no bloco acima.
         if h.e_cura() {
             return;
         }
@@ -1658,14 +1722,30 @@ impl BusServer {
             return;
         }
 
-        {
+        // **O `y` do cliente não é a altura do chão.**
+        //
+        // Os cliques de mapa mandam `y = 1.0` como marcador (`c2s_CmdGoto(fX, 1.0f, fZ)`
+        // em `DlgWorldMap.cpp:1174`, `DlgRandomMap.cpp:262`, `DlgCountryWarMap.cpp:330`), e
+        // o servidor original **substitui** o campo pela altura do terreno:
+        // `pos.y = pImp->_plane->GetHeightAt(pos.x, pos.z)`
+        // (`EvolvedPWServer/cgame/gs/playercmd.cpp:4926`). Obedecer ao `y` recebido punha o
+        // personagem dentro do chão, e foi o que se viu em jogo (2026-09-08).
+        //
+        // Não temos o mapa para consultar a altura — é a mesma lacuna documentada nos
+        // spawns de monstro. A melhor aproximação disponível é **manter a altura atual do
+        // jogador**: ele está de pé no chão agora, e as zonas deste mapa são planas em
+        // torno de y=219. Em teleporte de encosta a encosta o personagem sai um pouco
+        // acima ou abaixo do chão; nunca enterrado num plano.
+        let destino = {
             let mut mundo = self.world.write().await;
             let Some(jogador) = mundo.players.get_mut(&(roleid as i64)) else {
                 return;
             };
+            let destino = pw_core::Vector3::new(destino.x, jogador.position.y, destino.z);
             jogador.position = destino;
             mundo.grid.update_position(roleid as i64, destino);
-        }
+            destino
+        };
         // O `stamp` é o contador de correções que o cliente usa para descartar correção
         // fora de ordem. Zero enquanto só há uma correção em voo por vez.
         let stamp = 0;
@@ -1685,6 +1765,39 @@ impl BusServer {
                 .data,
         )
         .await;
+    }
+
+    /// Decola ou pousa o jogador.
+    ///
+    /// Chamado quando o cliente "usa" o item do slot de voo. O estado vive no mundo
+    /// (`PlayerEntity::voando`) porque é o servidor que manda: o cliente só liga
+    /// `GP_STATE_FLY` ao receber o `OBJECT_TAKEOFF` (`EC_HostMsg.cpp:5936-5960`).
+    ///
+    /// O comando vai para quem pediu **e** para quem está por perto — é assim que os
+    /// outros veem as asas abrirem.
+    ///
+    /// **Sabidamente incompleto**: o voo não custa mana nem tem altura máxima, e o
+    /// `GP_STATE_FLY` não entra no `state` dos pacotes de visão, então quem chegar depois
+    /// vê o jogador andando no ar em vez de voando.
+    async fn alternar_voo(&self, roleid: i32, envio: &EnvioAoCliente) {
+        let voando = {
+            let mut mundo = self.world.write().await;
+            let Some(jogador) = mundo.players.get_mut(&(roleid as i64)) else {
+                warn!("mundo: {roleid} pediu voo sem estar no mundo");
+                return;
+            };
+            jogador.voando = !jogador.voando;
+            jogador.voando
+        };
+
+        let pacote = if voando {
+            S2CGamedataSend::object_takeoff(roleid).data
+        } else {
+            S2CGamedataSend::object_landing(roleid).data
+        };
+        debug!("mundo: {roleid} {}", if voando { "decolou" } else { "pousou" });
+        self.responder(roleid, pacote.clone(), envio).await;
+        self.transmitir_a_outros(roleid, pacote).await;
     }
 
     /// `C2S::SEVNPC_HELLO` (35) — o jogador abriu diálogo com um NPC.
@@ -2339,6 +2452,45 @@ impl BusServer {
             envio,
         )
         .await;
+
+        // A ficha do jogador: `OWN_EXT_PROP` (50).
+        //
+        // É o **único** comando que preenche `CECHostPlayer::m_ExtProps`
+        // (`EC_HostMsg.cpp:1583`), e é de lá que `CanUseEquipment`
+        // (`EC_HostPlayer.cpp:4907-4916`) lê força, agilidade, vitalidade e energia. Sem
+        // ele os quatro ficam em zero e **todo** equipamento com exigência de atributo é
+        // desenhado em `A3DCOLORRGB(192, 0, 0)` — a "arma vermelha" relatada em jogo.
+        //
+        // Sai daqui, e não do login no `pw-link`, por dois motivos que se somam: aqui o
+        // dono da tela já existe (o cliente é que pediu os dados), e aqui os números são
+        // os **calculados** — precisão, evasão, defesa e dano do `PlayerEntity`, em vez
+        // dos zeros que o link tinha para oferecer.
+        if let Some(p) = self.world.read().await.players.get(&(roleid as i64)).cloned() {
+            self.responder(
+                roleid,
+                S2CGamedataSend::own_ext_prop(
+                    0, // pontos livres de atributo: não há coluna para eles ainda
+                    (p.vitality, p.energy, p.strength, p.agility),
+                    p.max_hp,
+                    p.max_mp,
+                    (2, 2),
+                    (1.5, p.move_speed, 2.0, 4.0),
+                    (
+                        p.attack_rate,
+                        p.attack_min,
+                        p.attack_max,
+                        p.attack_speed as i32,
+                        1.4,
+                    ),
+                    (p.def_phys, p.armor),
+                )
+                .data,
+                envio,
+            )
+            .await;
+        } else {
+            warn!("mundo: {roleid} pediu todos os dados sem estar no mundo — sem OWN_EXT_PROP");
+        }
 
         // Sempre, mesmo sem missões: é o marcador de fim da carga.
         // Via `self.sub` porque o número de blocos depende da versão (3 no 1.2.6, 5 do

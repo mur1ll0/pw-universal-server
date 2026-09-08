@@ -4820,6 +4820,100 @@ Ordem combinada com o Murillo:
       `o_goto_do_gm_teleporta_e_o_de_jogador_comum_nao`.
 
 
+37. **Sessão 2026-09-08 (continuação 5): voo, altura do teleporte, o efeito visual da cura
+    — e a suíte finalmente verde de verdade.**
+
+    Meditar e acenar passaram a sincronizar, o Ctrl+clique do GM passou a teleportar. O que
+    o teste trouxe:
+
+    ### a. A asa não era consumida — o **cliente** é que a apagava
+
+    O log dizia `42 usou o item 2096 do container Equipment, que não se gasta`, e a asa
+    continuava no banco. O guarda do item 36 funcionou. Mas o tratamento ainda respondia
+    `HOST_USE_ITEM` (91), que é a confirmação de que **o item foi consumido** — e o cliente
+    apaga o item da tela ao receber isso. Do lado do jogador é indistinguível de perder a
+    asa.
+
+    ### b. Como se voa, de verdade
+
+    **Não existe comando C2S de decolar.** O cliente pede voo "usando" o item de voo:
+    `USE_ITEM` apontando para o slot 12 (`EQUIPIVTR_FLYSWORD`), e espera o
+    `OBJECT_TAKEOFF` (96) — é ele que liga `GP_STATE_FLY` e começa o trabalho de voo
+    (`CECHostPlayer::OnMsgPlayerFly`, `EC_HostMsg.cpp:5936-5960`). Usar de novo pousa, com
+    o `OBJECT_LANDING` (97). Os dois vão para quem está por perto também, que é como eles
+    veem as asas abrirem.
+
+    Os dois codificadores **já existiam** no `pw-protocol`, sem chamador — mesma história
+    do `SKILL_DATA` e do `HOST_STOP_SKILL`.
+
+    Incompleto e dito no código: o voo não custa mana, não tem altura máxima, e o
+    `GP_STATE_FLY` não entra no `state` dos pacotes de visão — quem chegar depois vê o
+    jogador andando no ar.
+
+    ### c. O teleporte enterrava o personagem: o `y` do cliente é um marcador
+
+    Os cliques de mapa mandam **`y = 1.0`** — literalmente, `c2s_CmdGoto(fX, 1.0f, fZ)` em
+    `DlgWorldMap.cpp:1174`, `DlgRandomMap.cpp:262` e `DlgCountryWarMap.cpp:330`. O servidor
+    original nunca confia nesse campo:
+
+    ```cpp
+    pos.y = pImp->_plane->GetHeightAt(pos.x, pos.z);   // playercmd.cpp:4926
+    ```
+
+    Não temos o mapa para consultar altura — a mesma lacuna dos spawns de monstro. A
+    aproximação escolhida é **manter a altura atual do jogador**: ele está de pé no chão
+    agora, e as zonas deste mapa são planas em torno de y=219. Em teleporte de encosta a
+    encosta ele sai um pouco acima ou abaixo do chão; nunca enterrado num plano.
+
+    ### d. A cura curava e não aparecia nada
+
+    O item 36 trocou o `HOST_SKILL_ATTACK_RESULT` (142) pelo `PLAYER_HP_STEAL` (279) para
+    tirar o número do vermelho. Funcionou — e junto foi embora o **efeito visual**, porque
+    a máquina de efeito de habilidade do cliente só roda a partir do 142.
+
+    A resposta certa era mandar os dois. O 142 (e o 143 para os de fora) vai com dano
+    **-2**, que `CECPlayer::Damaged` trata como "isto veio de uma habilidade de ajuda":
+    não desenha número, não toca animação de ferido, e deixa o efeito rodar
+    (`EC_Player.cpp:3435-3443`). O 279 leva o valor curado, e é ele que faz o número verde.
+
+    ### e. A arma vermelha: o `OWN_EXT_PROP` estava no daemon errado
+
+    Terceira tentativa, e a que faltava. O tamanho já estava certo (196, item 34) e a ordem
+    já estava certa (depois do `SELF_INFO_1`, item 36) — mas o comando saía do `pw-link`, e
+    lá os números **não existem**: precisão, evasão, defesa e dano são calculados pelo
+    `pw-gs`. O link mandava zeros nos derivados e, pior, mandava num momento em que a
+    entidade local do cliente podia ainda não estar pronta.
+
+    Agora ele sai do **mundo**, dentro do `GET_ALL_DATA` — que é o cliente pedindo os
+    próprios dados, portanto com o dono da tela garantidamente existindo — e com os valores
+    do `PlayerEntity`. Um caminho de escrita só, no daemon que tem o dado.
+
+    ### f. A suíte verde de verdade, e três testes meus que estavam errados
+
+    Com `TEST_DATABASE_URL` ligada (ver o item 36a), o `get_all_data_respeita_os_
+    sinalizadores_do_cliente` estava vermelho — e a causa era **minha**, de uma sessão
+    anterior: o teste esperava um número exato de pacotes (`receber(2)`), e eu acrescentei o
+    `SKILL_DATA` e depois o `OWN_EXT_PROP` à carga. Não havia nada errado no servidor.
+
+    Dois helpers novos consertam a classe do problema: `esperar_comando`, que lê até achar o
+    comando pedido, e `receber_ate_o_fim_da_carga`, que junta tudo até o `TASK_DATA` (105).
+    Teste que diz **o que** espera, em vez de **quantos** pacotes vêm antes.
+
+    Estado agora, medido com banco: **67 suítes verdes**, e as únicas falhas são as duas do
+    1.2.6 no `loader_tests` — as primeiras desta sequência de sessões que não são minhas.
+
+    ### g. Provas
+
+    - `usar_a_asa_decola_em_vez_de_gastar`: usar a asa manda `OBJECT_TAKEOFF` (96) e marca
+      o voo no mundo; usar de novo manda `OBJECT_LANDING` (97).
+    - `o_teleporte_ignora_o_y_do_cliente`: manda `y = 1.0` (o marcador de verdade), e exige
+      que a altura no mundo **e no pacote** seja a de antes.
+    - `a_cura_em_si_mesmo_devolve_vida` ganhou a exigência do 142 com dano exatamente -2.
+    - `get_all_data_respeita_os_sinalizadores_do_cliente` passou a exigir o
+      `OWN_EXT_PROP` (50) na carga.
+
+
+
 
 
 

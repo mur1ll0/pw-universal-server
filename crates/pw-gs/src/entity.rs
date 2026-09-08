@@ -65,6 +65,11 @@ pub struct PlayerEntity {
     pub position: Vector3,
     pub target_id: Option<i64>,
     pub buffs: Vec<ActiveBuff>,
+    /// O jogador está voando.
+    ///
+    /// Não há coluna no banco para isso, e nem deveria: quem relogar entra no chão, que é
+    /// o que o cliente também assume.
+    pub voando: bool,
     /// O jogador está mostrando a roupa (moda) no lugar da armadura.
     ///
     /// É estado de aparência, e o cliente alterna com o `SWITCH_FASHION_MODE` (C2S 85).
@@ -235,6 +240,7 @@ impl PlayerEntity {
             position: p.position,
             target_id: None,
             buffs: Vec::new(),
+            voando: false,
             // Todo mundo entra mostrando a armadura; o banco não guarda esta escolha.
             modo_roupa: false,
         }
