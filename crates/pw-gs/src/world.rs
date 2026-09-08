@@ -613,8 +613,9 @@ impl WorldInstance {
         self.autosave_timer_ms += delta_ms;
         if self.autosave_timer_ms >= 60_000 {
             self.autosave_timer_ms = 0;
+            let mut falhas = 0usize;
             for player in self.players.values() {
-                let _ = self
+                let r = self
                     .char_repo
                     .save_status(
                         player.role_id,
@@ -629,8 +630,31 @@ impl WorldInstance {
                         &player.position,
                     )
                     .await;
+                if let Err(e) = r {
+                    falhas += 1;
+                    warn!(
+                        "autosave: não consegui gravar o personagem {}: {e}",
+                        player.role_id
+                    );
+                }
             }
-            debug!("Autosave periódico de {} jogadores executado com sucesso no World #{}", self.players.len(), self.world_id);
+            // O `let _ =` que havia aqui engolia o erro, e a linha abaixo dizia "com
+            // sucesso" de qualquer jeito. O `UPDATE` vinha falhando havia semanas porque
+            // escrevia numa coluna `last_login_at` que a tabela `characters` não tem —
+            // ninguém viu, e nada de posição, experiência, dinheiro ou nível era salvo.
+            if falhas == 0 {
+                debug!(
+                    "autosave: {} jogadores gravados no mundo {}",
+                    self.players.len(),
+                    self.world_id
+                );
+            } else {
+                warn!(
+                    "autosave: {falhas} de {} jogadores não foram gravados no mundo {}",
+                    self.players.len(),
+                    self.world_id
+                );
+            }
         }
     }
 }

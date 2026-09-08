@@ -4705,6 +4705,122 @@ Ordem combinada com o Murillo:
     - 1 teste de layout do 144 (19 bytes, `cEquipment` em `0x7f`).
 
 
+36. **Sessão 2026-09-08 (continuação 4): oito defeitos do teste em jogo — e a descoberta
+    de que a suíte de integração estava se auto-anulando.**
+
+    ### a. O achado mais grave não estava na lista do Murillo
+
+    Os testes de integração que precisam de banco começam com uma guarda: sem
+    `TEST_DATABASE_URL` no ambiente, eles **imprimem um aviso e passam**.
+
+    ```text
+    AVISO: TEST_DATABASE_URL não definida — este teste NÃO verificou nada.
+    ```
+
+    Rodei a suíte a sessão inteira sem essa variável. Todo "40 passed" que anunciei para
+    `subcomandos_no_mundo` — incluindo os testes de cura e de dano entre jogadores do item
+    35 — **não verificou nada**. Com a variável, três daqueles testes falhavam na hora:
+    dois por defeito meu no teste, um por mudança de comportamento.
+
+    Pior: o `cargo test` também estava reaproveitando binário de teste velho em algumas
+    execuções (um `eprintln!` novo não aparecia). `touch` no arquivo resolve.
+
+    **Como rodar de verdade, daqui para a frente:**
+
+    ```bash
+    TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw_database" \\
+      cargo test --workspace
+    ```
+
+    Estado real medido assim: **65 suítes verdes, 2 vermelhas** — as duas do 1.2.6 no
+    `loader_tests`, e `get_all_data_respeita_os_sinalizadores_do_cliente`, que também
+    falha sem nenhuma mudança minha (conferido com `git stash`).
+
+    ### b. A asa sumia do banco porque o servidor a comia
+
+    `usar_item` obedecia ao cliente em tudo: o container e o slot vinham do pacote, e
+    `consume_item` apaga a linha quando a quantidade chega a zero. O jogador clicou na asa
+    para voar, o cliente mandou `USE_ITEM` apontando para o **container de equipamento**, e
+    o servidor consumiu o item. Sem log nenhum — aquele caminho só registrava falha.
+
+    Agora só consumível é consumido, e o container de equipamento nunca é tocado. As asas
+    foram recolocadas no banco.
+
+    ### c. A cura aparecia como dano vermelho
+
+    O servidor curava certo — o log dizia `42 conjurou 113 em 42 — 35 de cura, alvo com
+    130/130`. O problema era o comando escolhido: o `HOST_SKILL_ATTACK_RESULT` (142)
+    termina em `CECPlayer::Damaged`, que só sabe desenhar `BUBBLE_DAMAGE` (vermelho) ou
+    "errou" (`EC_Player.cpp:3459-3489`). Não existe bit de cura no `attack_flag`.
+
+    O número verde é **outro comando**: `PLAYER_HP_STEAL` (279), 4 bytes, que o cliente
+    traduz em `BubbleText(BUBBLE_ADD, hp)` (`EC_HostMsg.cpp:5772-5781`). Vai para quem
+    recebeu a cura. O 143 também não sai em cura, pelo mesmo motivo.
+
+    ### d. A conjuração era rápida demais
+
+    O tempo era fixo em 1.000 ms para todas. É o `GetTime` do primeiro estado do stub, e
+    varia de **67 ms** (golpe do Retalhador) a **3.000 ms** (Prece da Clareza) — a cura do
+    Sacerdote saía três vezes mais rápida. Agora cada habilidade tem o seu
+    (`Habilidade::conjuracao_ms`).
+
+    ### e. A arma continuava vermelha: ordem de envio
+
+    O `OWN_EXT_PROP` (50) já ia com os 196 bytes certos, mas ia no **passo 4b**, antes do
+    `SELF_INFO_1` do passo 5 — e é o `SELF_INFO_1` que cria a entidade local do jogador. O
+    comando é roteado para o dono da tela (`EC_GameDataPrtc.cpp:1175-1178`); chegando antes
+    de o dono existir, ele se perde **sem erro nenhum**. Passou para depois do passo 5.
+
+    ### f. Nada era salvo, e o log dizia que sim
+
+    O `save_status` escrevia `last_login_at = CURRENT_TIMESTAMP` numa tabela `characters`
+    que **não tinha essa coluna**. O `UPDATE` falhava inteiro, o erro era engolido por um
+    `let _ =`, e a linha seguinte dizia "Autosave periódico executado com sucesso". Posição,
+    experiência, alma, dinheiro e nível nunca eram gravados — o `updated_at` dos
+    personagens de teste era de 3 de setembro.
+
+    A coluna foi criada (`scripts/2026_09_08_last_login_at.sql`, e no
+    `01_DATABASE_SCHEMA_POSTGRES.sql`), o erro passou a ser registrado, e o log passou a
+    dizer quantos falharam em vez de mentir.
+
+    ### g. O último personagem jogado
+
+    Não precisa de recurso novo no cliente: ele **já** varre a lista e seleciona o de maior
+    `lastlogin_time` (`EC_LoginUIMan.cpp:809-818`). Nós mandávamos zero para todos, então
+    caía sempre no primeiro. O campo existe no `RoleInfo` desde sempre; agora ele leva o
+    `characters.last_login_at`, carimbado na entrada no mundo.
+
+    ### h. O Ctrl+clique do GM
+
+    `GOTO` é o C2S **19**, `{ A3DVECTOR3 vDest; }`, e aparecia no log como "subcomando 19
+    ainda não tratado" — quatro vezes no teste. O cliente não se move sozinho: espera o
+    `HOST_CORRECT_POS` (177). Implementado, com o nível de GM lido da conta
+    (`accounts.gm_privileges`, via `CharacterRepository::nivel_de_gm`) porque o
+    `BusMessage::EnterWorld` não carrega o `sec_level`.
+
+    ### i. Meditar não aparecia para o outro
+
+    `postura` e `emote` respondiam **só a quem agiu**. Os dois comandos carregam o id do
+    jogador justamente porque são sobre o que os outros veem. Passaram a ser transmitidos.
+
+    Efeito colateral que só apareceu com o banco ligado: o helper `segundo_jogador` dos
+    testes usava `SIT_DOWN` como ida-e-volta de sincronização, e com a transmissão isso
+    punha um `OBJECT_SIT_DOWN` na fila do outro jogador, quebrando todo teste que exige
+    "nada chega". Trocado por `UNSELECT`, que só responde a quem manda.
+
+    ### j. Provas
+
+    - `usar_um_equipamento_nao_o_consome`: põe a asa no slot de voo, manda `USE_ITEM` nela
+      e exige que continue lá.
+    - `a_cura_em_si_mesmo_devolve_vida`: exige o `PLAYER_HP_STEAL` (279), **proíbe** o 142,
+      e confere que a vida no mundo subiu o que foi anunciado.
+    - `uma_habilidade_de_ataque_machuca_o_outro_jogador`: agora espera o comando 144 por
+      nome (`esperar_comando`) em vez de contar pacotes.
+    - `sentar_aparece_para_o_outro_jogador` e
+      `o_goto_do_gm_teleporta_e_o_de_jogador_comum_nao`.
+
+
+
 
 
 

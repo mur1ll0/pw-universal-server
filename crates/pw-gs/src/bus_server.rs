@@ -467,6 +467,22 @@ impl BusServer {
             )
         };
 
+        // Carimba a entrada numa tarefa à parte.
+        //
+        // É este carimbo que faz o cliente vir com o último personagem jogado selecionado
+        // na próxima vez — mas é um dado de conveniência, e **não pode atrasar a entrada
+        // no mundo**. Esperar a ida ao banco aqui acrescentava uma viagem de rede no meio
+        // da sequência de entrada, o suficiente para deslocar a ordem dos pacotes que o
+        // cliente recebe logo depois.
+        {
+            let repo = repo.clone();
+            tokio::spawn(async move {
+                if let Err(e) = repo.marcar_entrada_no_mundo(roleid).await {
+                    warn!("mundo: não consegui marcar a entrada de {roleid}: {e}");
+                }
+            });
+        }
+
         let detalhes = match repo.get_details_por_role(roleid).await {
             Ok(Some(d)) => d,
             Ok(None) => {
@@ -553,6 +569,7 @@ impl BusServer {
             ids::TEAM_REJECT_INVITE => self.recusar_grupo(roleid).await,
             ids::TEAM_LEAVE_PARTY => self.deixar_grupo(roleid).await,
             ids::SWITCH_FASHION_MODE => self.trocar_modo_roupa(roleid, envio).await,
+            ids::GOTO => self.teleportar(roleid, &cmd.payload, envio).await,
             ids::CAST_SKILL | ids::CAST_INSTANT_SKILL => {
                 self.conjurar(roleid, &cmd.payload, envio).await
             }
@@ -938,7 +955,11 @@ impl BusServer {
         } else {
             S2CGamedataSend::object_stand_up(roleid)
         };
-        self.responder(roleid, cmd.data, envio).await;
+        // Os dois comandos carregam o id do jogador justamente porque são sobre o que os
+        // **outros** veem. Iam só de volta para quem sentou, e em jogo (2026-09-08) a
+        // meditação não aparecia para o outro jogador.
+        self.responder(roleid, cmd.data.clone(), envio).await;
+        self.transmitir_a_outros(roleid, cmd.data).await;
     }
 
     /// `EMOTE_ACTION` (48) — o jogador executou um gesto.
@@ -947,12 +968,10 @@ impl BusServer {
             warn!("mundo: emote de {roleid} com payload curto");
             return;
         };
-        self.responder(
-            roleid,
-            S2CGamedataSend::object_do_emote(roleid, e.action).data,
-            envio,
-        )
-        .await;
+        // Mesma história da postura: um gesto que só quem gesticulou vê não é um gesto.
+        let pacote = S2CGamedataSend::object_do_emote(roleid, e.action).data;
+        self.responder(roleid, pacote.clone(), envio).await;
+        self.transmitir_a_outros(roleid, pacote).await;
     }
 
     /// `C2S::TEAM_INVITE` (27) — convidar alguém para o grupo.
@@ -1104,15 +1123,39 @@ impl BusServer {
             return;
         }
 
-        let quantos = u.quantos.max(1) as u32;
-        if itens
-            .consume_item(roleid, ct, u.slot, quantos)
-            .await
-            .is_err()
-        {
-            debug!("mundo: {roleid} não tinha {quantos} do item {}", u.item_id);
-            return;
+        // **Só consumível é consumido.**
+        //
+        // Este tratamento obedecia ao cliente em tudo: o container e o slot vinham do
+        // pacote, e `consume_item` apaga a linha quando a quantidade chega a zero. Em
+        // jogo, 2026-09-08, isso **apagou a asa do Sacerdote**: o jogador clicou nela para
+        // voar, o cliente mandou `USE_ITEM` apontando para o container de equipamento, e o
+        // servidor comeu o item. Não havia log nenhum, porque este caminho só registra
+        // falha.
+        //
+        // Usar um equipamento não é gastá-lo. A regra aqui é a do `elements.data`: se o
+        // item não é remédio, nada é consumido — e nunca se mexe no container de
+        // equipamento, aconteça o que acontecer.
+        let e_consumivel = {
+            let mundo = self.world.read().await;
+            mundo.quanto_o_remedio_restaura(u.item_id as u32).is_some()
+        };
+        if ct == ContainerType::Equipment || !e_consumivel {
+            debug!(
+                "mundo: {roleid} usou o item {} do container {:?}, que não se gasta",
+                u.item_id, ct
+            );
+        } else {
+            let quantos = u.quantos.max(1) as u32;
+            if itens
+                .consume_item(roleid, ct, u.slot, quantos)
+                .await
+                .is_err()
+            {
+                debug!("mundo: {roleid} não tinha {quantos} do item {}", u.item_id);
+                return;
+            }
         }
+        let quantos = u.quantos.max(1) as u32;
 
         self.responder(
             roleid,
@@ -1206,8 +1249,14 @@ impl BusServer {
         // o `time` que mandamos (`EC_HostMsg.cpp:6000-6055`); quem está por perto vê a
         // animação pelo gerente dos outros jogadores.
         drop(mundo);
+        // O tempo de conjuração é o da **habilidade**, não um número fixo. Ver
+        // `Habilidade::conjuracao_ms`: vai de 67 ms a 3.000 ms, e mandar 1.000 para todas
+        // fazia a cura do Sacerdote sair três vezes mais rápida do que devia.
+        let conjuracao_ms = Habilidade::conhecida(c.skill_id)
+            .map(|h| h.conjuracao_ms)
+            .unwrap_or(TEMPO_DE_CONJURACAO_MS);
         let cast_pkt =
-            S2CGamedataSend::object_cast_skill(roleid, alvo as i32, c.skill_id, TEMPO_DE_CONJURACAO_MS, 1)
+            S2CGamedataSend::object_cast_skill(roleid, alvo as i32, c.skill_id, conjuracao_ms, 1)
                 .data;
         self.responder(roleid, cast_pkt.clone(), envio).await;
         self.transmitir_a_outros(roleid, cast_pkt).await;
@@ -1224,10 +1273,7 @@ impl BusServer {
         let envio = envio.clone();
         let skill_id = c.skill_id;
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(
-                TEMPO_DE_CONJURACAO_MS as u64,
-            ))
-            .await;
+            tokio::time::sleep(std::time::Duration::from_millis(conjuracao_ms as u64)).await;
             este.concluir_conjuracao(roleid, skill_id, alvo, &envio).await;
         });
     }
@@ -1496,22 +1542,40 @@ impl BusServer {
             if h.e_cura() { "cura" } else { "dano" }
         );
 
-        // O número na tela de quem conjurou.
-        self.responder(
-            roleid,
-            self.sub
-                .self_skill_attack_result(
-                    alvo as i32,
-                    skill_id,
-                    saturar(valor as i64),
-                    SEM_MARCACAO,
-                    VELOCIDADE_PADRAO,
-                    SECAO_UNICA,
-                )
-                .data,
-            envio,
-        )
-        .await;
+        // O número na tela.
+        //
+        // Cura **não** vai pelo `HOST_SKILL_ATTACK_RESULT` (142): aquele caminho termina
+        // em `CECPlayer::Damaged`, que só sabe desenhar `BUBBLE_DAMAGE` — vermelho — ou
+        // "errou" (`EC_Player.cpp:3459-3489`). Em jogo, 2026-09-08, a Prece da Clareza
+        // curava de verdade no servidor e aparecia como 35 de dano na tela.
+        //
+        // O número verde é outro comando: `PLAYER_HP_STEAL` (279), que o cliente traduz em
+        // `BubbleText(BUBBLE_ADD, hp)` (`EC_HostMsg.cpp:5772-5781`). Ele vai para **quem
+        // recebeu** a cura, que é quem vê o número subir.
+        if h.e_cura() {
+            let verde = S2CGamedataSend::player_hp_steal(valor).data;
+            if alvo as i32 == roleid {
+                self.responder(roleid, verde, envio).await;
+            } else {
+                let _ = self.enviar_ao_jogador(alvo as i32, verde).await;
+            }
+        } else {
+            self.responder(
+                roleid,
+                self.sub
+                    .self_skill_attack_result(
+                        alvo as i32,
+                        skill_id,
+                        saturar(valor as i64),
+                        SEM_MARCACAO,
+                        VELOCIDADE_PADRAO,
+                        SECAO_UNICA,
+                    )
+                    .data,
+                envio,
+            )
+            .await;
+        }
 
         // A vida nova do alvo, e — se doeu — o efeito de ter sido acertado.
         let alvo_id = alvo as i32;
@@ -1547,7 +1611,11 @@ impl BusServer {
             let _ = self.enviar_ao_jogador(alvo_id, vida).await;
         }
 
-        // Quem está por perto vê o número entre os dois.
+        // Quem está por perto vê o número entre os dois. Só para dano, pelo mesmo motivo
+        // do bloco acima: o 143 desemboca no mesmo `Damaged` vermelho.
+        if h.e_cura() {
+            return;
+        }
         self.transmitir_a_outros(
             roleid,
             self.sub
@@ -1560,6 +1628,60 @@ impl BusServer {
                     VELOCIDADE_PADRAO,
                     SECAO_UNICA,
                 )
+                .data,
+        )
+        .await;
+    }
+
+    /// `C2S::GOTO` (19) — o Ctrl+clique do GM: "me ponha nesse ponto do mapa".
+    ///
+    /// `struct cmd_goto { A3DVECTOR3 vDest; }` — 12 bytes, só o destino. O cliente **não**
+    /// se move sozinho: ele pede e espera o servidor confirmar com `HOST_CORRECT_POS`
+    /// (177). Sem resposta, nada acontece — que é o que se via em jogo, com o comando
+    /// aparecendo no log como "subcomando 19 ainda não tratado".
+    ///
+    /// # Por que é só para GM
+    ///
+    /// Porque é teleporte livre. `is_gm` vem do banco (a coluna que o `sec_level` do login
+    /// já usa); um jogador comum que mande este comando à mão é recusado e fica no log.
+    async fn teleportar(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
+        if payload.len() < 12 {
+            warn!("mundo: goto de {roleid} com payload curto ({} bytes)", payload.len());
+            return;
+        }
+        let f = |i: usize| f32::from_le_bytes([payload[i], payload[i + 1], payload[i + 2], payload[i + 3]]);
+        let destino = pw_core::Vector3::new(f(0), f(4), f(8));
+
+        let nivel_de_gm = self.repo().await.nivel_de_gm(roleid).await;
+        if nivel_de_gm <= 0 {
+            warn!("mundo: {roleid} pediu teleporte para {destino:?} sem ser GM");
+            return;
+        }
+
+        {
+            let mut mundo = self.world.write().await;
+            let Some(jogador) = mundo.players.get_mut(&(roleid as i64)) else {
+                return;
+            };
+            jogador.position = destino;
+            mundo.grid.update_position(roleid as i64, destino);
+        }
+        // O `stamp` é o contador de correções que o cliente usa para descartar correção
+        // fora de ordem. Zero enquanto só há uma correção em voo por vez.
+        let stamp = 0;
+
+        info!("mundo: GM {roleid} se teleportou para {destino:?}");
+        self.responder(
+            roleid,
+            S2CGamedataSend::host_correct_pos(destino, stamp).data,
+            envio,
+        )
+        .await;
+        // Quem está por perto precisa ver o corpo mudar de lugar.
+        self.transmitir_a_outros(
+            roleid,
+            self.sub
+                .object_stop_move(roleid, destino, 0, 0, MODO_DE_MOVIMENTO_ANDANDO)
                 .data,
         )
         .await;

@@ -117,6 +117,7 @@ fn test_role_list_multi_realm_encoding() {
         custom_appearance: serde_json::json!({ "raw": "01020304" }),
         is_deleted: false,
         delete_time: None,
+        last_login_at: None,
     };
 
     // 1. Testa Realm 1.2.6 (19 campos por RoleInfo)

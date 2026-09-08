@@ -114,6 +114,14 @@ CREATE TABLE IF NOT EXISTS characters (
     deleted_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+
+    -- Quando este personagem entrou no mundo pela última vez.
+    --
+    -- Vai no campo `lastlogin_time` do `RoleInfo` da lista de personagens, e é com ele que
+    -- o cliente decide qual vem selecionado na tela de seleção: ele varre a lista e fica
+    -- com o de maior `lastlogin_time` (`EC_LoginUIMan.cpp:809-818`). Sem a coluna, todos
+    -- iam com zero e a seleção caía sempre no primeiro da lista.
+    last_login_at TIMESTAMP WITH TIME ZONE,
     
     -- Garante unicidade de nome dentro do mesmo Realm (mas permite em Realms diferentes)
     CONSTRAINT uq_character_name_per_realm UNIQUE(realm_id, name)

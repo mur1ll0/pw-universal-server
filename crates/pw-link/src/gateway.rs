@@ -543,6 +543,8 @@ impl LinkGateway {
                             custom_appearance: serde_json::json!({ "raw": raw_appearance_hex }),
                             is_deleted: false,
                             delete_time: None,
+                            // Personagem recém-criado nunca entrou no mundo.
+                            last_login_at: None,
                         };
 
                         // 1. Envia CreateRole_Re (Opcode 0x55) contendo a struct RoleInfo completa
@@ -781,7 +783,18 @@ impl LinkGateway {
                         details.id, 5, 5, 5, 5, details.hp, details.mp, 2, 2
                     ))).await?;
 
-                    // 4b. OWN_EXT_PROP (50) — a ficha do próprio jogador.
+                    // 5. Envia SELF_INFO_1 (Comando 8) - Instancia a entidade local do jogador
+                    // e cancela o timeout OT_ENTERGAME do client (30s -> "EnterWorld Overtime"
+                    // se o tamanho do pacote não bater com o que o client espera).
+                    tx.send(OutboundPacket::GamedataSend(sub.self_info_1(
+                        details.exp as i32,
+                        details.sp as i32,
+                        details.id,
+                        details.position,
+                        session.sec_level,
+                    ))).await?;
+
+                    // 5b. OWN_EXT_PROP (50) — a ficha do próprio jogador.
                     //
                     // O 53 acima é do gerente dos **outros** jogadores
                     // (`EC_GameDataPrtc.cpp:1180`). Quem preenche o `m_ExtProps` do dono
@@ -791,6 +804,14 @@ impl LinkGateway {
                     // aparece em vermelho e não pode ser usado — relatado em jogo em
                     // 2026-09-08 ("a arma equipada está vermelha"), com a Varinha (2251),
                     // que exige força 5.
+                    //
+                    // **Vai depois do SELF_INFO_1 de propósito.** Este comando é
+                    // roteado para o gerente de jogadores com alvo 0, o dono da tela
+                    // (`EC_GameDataPrtc.cpp:1175-1178`), e quem cria essa entidade local é
+                    // o `SELF_INFO_1` do passo 5. Mandado antes, ele chega e se perde sem
+                    // erro nenhum — e foi o que aconteceu na primeira tentativa: a arma do
+                    // Sacerdote continuou vermelha mesmo depois de o tamanho do comando
+                    // estar certo, porque os atributos nunca chegavam a ser aplicados.
                     //
                     // Os atributos são os do banco. Os números derivados de combate
                     // (grau de ataque, crítico, resistências) vão zerados de propósito:
@@ -807,16 +828,6 @@ impl LinkGateway {
                         (0, 0),
                     ))).await?;
 
-                    // 5. Envia SELF_INFO_1 (Comando 8) - Instancia a entidade local do jogador
-                    // e cancela o timeout OT_ENTERGAME do client (30s -> "EnterWorld Overtime"
-                    // se o tamanho do pacote não bater com o que o client espera).
-                    tx.send(OutboundPacket::GamedataSend(sub.self_info_1(
-                        details.exp as i32,
-                        details.sp as i32,
-                        details.id,
-                        details.position,
-                        session.sec_level,
-                    ))).await?;
 
                     // 6. Envia SKILL_DATA (Comando 90) - Habilidades carregadas da tabela character_skills
                     tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::skill_data_from_records(&details.skills))).await?;

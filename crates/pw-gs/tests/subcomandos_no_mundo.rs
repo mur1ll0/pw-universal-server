@@ -592,6 +592,27 @@ async fn receber(link: &mut pw_bus::transport::BusConnection, n: usize) -> Vec<V
     v
 }
 
+/// Lê da conexão até achar o comando pedido.
+///
+/// Contar pacotes exatos é frágil: a mesma conexão carrega broadcast de entrada, de
+/// movimento e o que mais estiver acontecendo. Aqui o teste diz **o que** espera, não
+/// quantos pacotes vêm antes.
+async fn esperar_comando(link: &mut pw_bus::transport::BusConnection, cmd: u16) -> Vec<u8> {
+    for _ in 0..20 {
+        let m = tokio::time::timeout(Duration::from_secs(5), link.receber())
+            .await
+            .unwrap_or_else(|_| panic!("nada chegou enquanto eu esperava o comando {cmd}"))
+            .unwrap()
+            .expect("conexão fechou");
+        if let BusMessage::GameToClient { data, .. } = m {
+            if cmd_de(&data) == cmd {
+                return data;
+            }
+        }
+    }
+    panic!("o comando {cmd} não chegou em 20 pacotes");
+}
+
 fn cmd_de(v: &[u8]) -> u16 {
     u16::from_le_bytes([v[0], v[1]])
 }
@@ -1511,7 +1532,7 @@ async fn nao_da_para_usar_item_que_nao_esta_no_slot() {
 /// do registro, o mundo não sabe para onde mandá-lo — comportamento correto, mas o teste
 /// falharia por motivo errado.
 ///
-/// A espera é uma ida-e-volta de verdade (`SIT_DOWN` e a resposta), e não um `sleep`: o
+/// A espera é uma ida-e-volta de verdade (`UNSELECT` e a resposta), e não um `sleep`: o
 /// que se quer garantir é que o servidor **já processou** o `EnterWorld` daquela conexão,
 /// e só a resposta prova isso.
 async fn segundo_jogador(
@@ -1532,10 +1553,14 @@ async fn segundo_jogador(
         m.grid.update_position(roleid as i64, Vector3::new(2.0, 0.0, 2.0));
     }
 
+    // `UNSELECT` de propósito, e não `SIT_DOWN`: a resposta de sentar é **transmitida a
+    // quem está por perto** (é o comportamento certo, e foi corrigido em 2026-09-08),
+    // então usá-la aqui punha um `OBJECT_SIT_DOWN` na fila do outro jogador e quebrava
+    // todo teste que exige "nada chega". O `UNSELECT` só responde a quem mandou.
     link.enviar(BusMessage::ClientToGame {
         roleid,
         localsid: LOCALSID,
-        data: subcomando(ids::SIT_DOWN, &[]),
+        data: subcomando(ids::UNSELECT, &[]),
     })
     .await
     .unwrap();
@@ -2173,18 +2198,24 @@ async fn a_cura_em_si_mesmo_devolve_vida() {
 
     let r = receber(&mut link, 5).await;
     assert!(r.iter().any(|v| cmd_de(v) == 123), "a conjuração não fechou");
+    // Cura sai pelo `PLAYER_HP_STEAL` (279), o número **verde**. O 142 só sabe desenhar
+    // vermelho (ver o comentário em `efeito_em_jogador`).
+    assert!(
+        !r.iter().any(|v| cmd_de(v) == 142),
+        "cura não pode sair pelo 142: o cliente pinta de vermelho"
+    );
     let res = r
         .iter()
-        .find(|v| cmd_de(v) == 142)
-        .expect("sem HOST_SKILL_ATTACK_RESULT: o número não apareceria na tela");
-    let curado = i32_em(res, 10);
+        .find(|v| cmd_de(v) == 279)
+        .expect("sem PLAYER_HP_STEAL: o número verde não apareceria");
+    let curado = i32_em(res, 2);
     assert!(curado > 0, "a cura veio {curado}");
 
     let depois = mundo.read().await.players[&(roleid as i64)].hp;
     assert_eq!(depois, antes + curado, "a vida no mundo não subiu o que foi anunciado");
     assert!(
-        r.iter().any(|v| cmd_de(v) == 8 || cmd_de(v) == 9),
-        "sem a sincronia da própria vida, a barra do cliente não mexe"
+        r.iter().any(|v| cmd_de(v) == 38),
+        "sem o SELF_INFO_00 (38) a barra de vida do cliente não mexe"
     );
 }
 
@@ -2206,6 +2237,10 @@ async fn uma_habilidade_de_ataque_machuca_o_outro_jogador() {
         a.magic_attack_max = 200;
         let v = m.players.get_mut(&(convidado as i64)).unwrap();
         v.def_phys = 0;
+        // A Pluma Espiritual faz ~234 com 200 de ataque mágico. Sem vida de sobra o HP
+        // bate no piso de zero e a conta "vida - dano" deixa de valer.
+        v.max_hp = 5_000;
+        v.hp = 5_000;
         v.hp
     };
 
@@ -2231,11 +2266,10 @@ async fn uma_habilidade_de_ataque_machuca_o_outro_jogador() {
     let depois = mundo.read().await.players[&(convidado as i64)].hp;
     assert_eq!(depois, antes - dano, "a vida do alvo não caiu o dano anunciado");
 
-    let dele = receber(&mut vitima, 2).await;
-    assert!(
-        dele.iter().any(|v| cmd_de(v) == 144),
-        "o alvo não recebeu HOST_SKILL_ATTACKED e não reagiria ao golpe"
-    );
+    // O alvo precisa saber que levou: sem o 144 ele não toca efeito nenhum nem entra em
+    // combate (`EC_HostMsg.cpp:1023-1068`).
+    let aviso = esperar_comando(&mut vitima, 144).await;
+    assert_eq!(i32_em(&aviso, 2), roleid, "o 144 tem de dizer quem bateu");
 }
 
 /// Habilidade sem conta portada não inventa efeito.
@@ -2266,5 +2300,122 @@ async fn habilidade_desconhecida_nao_mexe_na_vida_de_ninguem() {
         mundo.read().await.players[&(convidado as i64)].hp,
         antes,
         "uma habilidade sem fórmula não pode machucar ninguém"
+    );
+}
+
+/// **Usar um equipamento não pode gastá-lo.**
+///
+/// Em jogo, 2026-09-08, a asa do Sacerdote sumiu do banco: o jogador clicou nela para
+/// voar, o cliente mandou `USE_ITEM` apontando para o container de equipamento, e o
+/// servidor — que obedecia ao container e ao slot que o cliente mandasse — consumiu o
+/// item. Não havia log, porque aquele caminho só registrava falha.
+#[tokio::test]
+async fn usar_um_equipamento_nao_o_consome() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    let asa = pw_core::ItemRecord {
+        id: None,
+        character_id: roleid,
+        container_type: pw_core::ContainerType::Equipment,
+        slot: 12, // EQUIPIVTR_FLYSWORD
+        item_id: 2096,
+        count: 1,
+        max_count: 1,
+        refine_level: 0,
+        sockets_count: 0,
+        sockets: vec![],
+        durability: 0,
+        max_durability: 0,
+        bind_status: 0,
+        octets: Vec::new(),
+        custom_attributes: serde_json::json!({}),
+    };
+    itens.upsert_item(&asa).await.unwrap();
+
+    // `UseItem`: onde(1) + slot(2) + item_id(4) + quantos(4)
+    let mut corpo = vec![1u8];
+    corpo.extend_from_slice(&12u16.to_le_bytes());
+    corpo.extend_from_slice(&2096u32.to_le_bytes());
+    corpo.extend_from_slice(&1u32.to_le_bytes());
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::USE_ITEM, &corpo),
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let ainda_la = itens
+        .get_item_by_slot(roleid, pw_core::ContainerType::Equipment, 12)
+        .await
+        .unwrap();
+    assert!(
+        ainda_la.is_some(),
+        "a asa foi consumida ao ser usada — foi assim que ela sumiu do banco em jogo"
+    );
+}
+
+/// Sentar tem de ser visto por quem está por perto.
+#[tokio::test]
+async fn sentar_aparece_para_o_outro_jogador() {
+    let (mundo, addr, roleid, convidado) = cenario!();
+    let mut anfitriao = entrar(&mundo, addr, roleid).await;
+    let mut outro = entrar(&mundo, addr, convidado).await;
+
+    anfitriao
+        .enviar(BusMessage::ClientToGame {
+            roleid,
+            localsid: LOCALSID,
+            data: subcomando(ids::SIT_DOWN, &[]),
+        })
+        .await
+        .unwrap();
+
+    let meu = receber(&mut anfitriao, 1).await;
+    assert!(meu.iter().any(|v| !v.is_empty()), "quem sentou não recebeu nada");
+
+    let dele = receber(&mut outro, 1).await;
+    assert!(
+        !dele.is_empty(),
+        "a meditação não chegou ao outro jogador — foi o que se viu em jogo"
+    );
+}
+
+/// O Ctrl+clique do GM move o personagem e avisa quem está por perto.
+///
+/// Quem não é GM é recusado: o comando é teleporte livre.
+#[tokio::test]
+async fn o_goto_do_gm_teleporta_e_o_de_jogador_comum_nao() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let antes = mundo.read().await.players[&(roleid as i64)].position;
+    let mut corpo = Vec::new();
+    for v in [antes.x + 50.0, antes.y, antes.z + 50.0] {
+        corpo.extend_from_slice(&v.to_le_bytes());
+    }
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::GOTO, &corpo),
+    })
+    .await
+    .unwrap();
+
+    // Jogador comum é recusado **em silêncio**: não há pacote para esperar, só o efeito
+    // que não pode acontecer. Um respiro para o mundo processar a mensagem.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // O cenário cria conta comum: sem privilégio de GM, nada acontece.
+    let depois = mundo.read().await.players[&(roleid as i64)].position;
+    assert_eq!(
+        (depois.x, depois.z),
+        (antes.x, antes.z),
+        "jogador comum não pode se teleportar"
     );
 }

@@ -65,6 +65,14 @@ pub mod ids {
     pub const MOVE_ITEM_TO_EQUIP: u16 = 18;
     /// `CANCEL_ACTION` — só cabeçalho.
     pub const CANCEL_ACTION: u16 = 42;
+    /// `GOTO` — o Ctrl+clique do GM: "me ponha aqui".
+    ///
+    /// `struct cmd_goto { A3DVECTOR3 vDest; }`, 12 bytes
+    /// (`EC_GPDataType.h:5858`, `c2s_SendCmdGoto` em `EC_SendC2SCmds.cpp:673`). Sem
+    /// tratamento, o comando chegava e sumia no ramo silencioso do `match` — em jogo,
+    /// 2026-09-08, apareceu quatro vezes no log como "subcomando 19 ainda não tratado".
+    pub const GOTO: u16 = 19;
+
     /// `SIT_DOWN` — só cabeçalho.
     pub const SIT_DOWN: u16 = 46;
     /// `STAND_UP` — só cabeçalho.

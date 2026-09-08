@@ -44,6 +44,8 @@ pub struct CharacterRecord {
     pub deleted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Quando entrou no mundo pela última vez. Vira o `lastlogin_time` do `RoleInfo`.
+    pub last_login_at: Option<DateTime<Utc>>,
 }
 
 /// O suficiente pra descrever um personagem a OUTRO jogador — ver
@@ -283,6 +285,7 @@ impl CharacterRepository {
                 custom_appearance: appearance_val,
                 is_deleted: r.is_deleted,
                 delete_time: r.deleted_at,
+                last_login_at: r.last_login_at,
             });
         }
 
@@ -527,6 +530,44 @@ impl CharacterRepository {
         }))
     }
 
+    /// Marca que o personagem acabou de entrar no mundo.
+    ///
+    /// É este carimbo que vira o `lastlogin_time` do `RoleInfo` e faz o cliente vir com o
+    /// último personagem jogado selecionado. Escrito na entrada, e não na saída, porque é
+    /// "quando jogou pela última vez" que interessa — e uma queda de conexão não pode
+    /// apagar o registro.
+    pub async fn marcar_entrada_no_mundo(&self, role_id: RoleId) -> Result<()> {
+        sqlx::query("UPDATE characters SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1")
+            .bind(role_id)
+            .execute(self.pool.get_ref())
+            .await?;
+        Ok(())
+    }
+
+    /// O nível de GM da conta dona do personagem.
+    ///
+    /// O mundo não recebe o `sec_level` da sessão (o `BusMessage::EnterWorld` não o
+    /// carrega), e é ele que decide quem pode usar comando de GM — o teleporte por
+    /// Ctrl+clique, por exemplo. Ler do banco evita mudar o formato da mensagem do
+    /// barramento só para isso.
+    ///
+    /// Zero quando o personagem não existe: negar é a resposta segura.
+    pub async fn nivel_de_gm(&self, role_id: RoleId) -> i32 {
+        sqlx::query_scalar::<_, i32>(
+            r#"
+            SELECT a.gm_privileges
+            FROM characters c JOIN accounts a ON a.id = c.account_id
+            WHERE c.id = $1
+            "#,
+        )
+        .bind(role_id)
+        .fetch_optional(self.pool.get_ref())
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(0)
+    }
+
     /// Salva o estado básico do personagem
     pub async fn save_status(
         &self,
@@ -547,7 +588,7 @@ impl CharacterRepository {
             SET level = $1, cultivation = $2, exp = $3, sp = $4,
                 hp = $5, mp = $6, money = $7, world_id = $8,
                 pos_x = $9, pos_y = $10, pos_z = $11,
-                last_login_at = CURRENT_TIMESTAMP
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = $12
             "#,
         )

@@ -75,7 +75,15 @@ pub trait ProtocolAdapter: Send + Sync {
         stream.write_i8(if c.is_deleted { 2 } else { 1 });  // status (1 = Active, 2 = Deleting)
         stream.write_i32(0);  // delete_time
         stream.write_i32(0);  // create_time
-        stream.write_i32(0);  // lastlogin_time
+        // `lastlogin_time`, em segundos desde a época. É o campo que faz o cliente vir com
+        // o **último personagem jogado** selecionado, em vez do primeiro da lista: ele
+        // varre o `RoleInfo` e fica com o de maior valor (`EC_LoginUIMan.cpp:809-818`).
+        // Zero para quem nunca entrou, que é o que o cliente espera de personagem novo.
+        stream.write_i32(
+            c.last_login_at
+                .map(|t| t.timestamp().clamp(0, i32::MAX as i64) as i32)
+                .unwrap_or(0),
+        );
         stream.write_f32(c.position.x);
         stream.write_f32(c.position.y);
         stream.write_f32(c.position.z);

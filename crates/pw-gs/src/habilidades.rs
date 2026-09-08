@@ -68,6 +68,17 @@ pub struct Habilidade {
     pub id: i32,
     /// `GetMpcost` do stub: `custo_de_mp.0 + custo_de_mp.1 × nível`.
     pub custo_de_mp: (f32, f32),
+    /// Quanto dura a conjuração, em milissegundos.
+    ///
+    /// É o `GetTime` do **primeiro estado** do stub — a fase de canto, aquela em que a
+    /// barra corre. É esse número que vai no `time` do `OBJECT_CAST_SKILL`, com o qual o
+    /// cliente arma o contador (`EC_HostMsg.cpp:6030-6039`), e é ele que o servidor espera
+    /// antes de aplicar o efeito.
+    ///
+    /// Varia muito entre habilidades — 67 ms no golpe do Retalhador, 3000 ms na Prece da
+    /// Clareza. Enquanto era um valor fixo de 1000 para todas, a cura do Sacerdote saía
+    /// três vezes mais rápida do que devia, e foi o que se viu em jogo (2026-09-08).
+    pub conjuracao_ms: u16,
     pub efeito: Efeito,
 }
 
@@ -79,6 +90,7 @@ const TABELA: &[Habilidade] = &[
     // ---- Guerreiro ----------------------------------------------------------------
     Habilidade {
         id: 1, // 流水诀
+        conjuracao_ms: 400,
         custo_de_mp: (-5.0, 7.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Fisico,
@@ -90,6 +102,7 @@ const TABELA: &[Habilidade] = &[
     // ---- Mago ---------------------------------------------------------------------
     Habilidade {
         id: 81, // 烈火符 — attr 5 (fogo), SetFiredamage
+        conjuracao_ms: 1500,
         custo_de_mp: (-9.0, 15.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Magico,
@@ -101,6 +114,7 @@ const TABELA: &[Habilidade] = &[
     // ---- Bárbaro ------------------------------------------------------------------
     Habilidade {
         id: 102, // 重击
+        conjuracao_ms: 200,
         custo_de_mp: (-3.0, 5.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Fisico,
@@ -112,11 +126,13 @@ const TABELA: &[Habilidade] = &[
     // ---- Sacerdote ----------------------------------------------------------------
     Habilidade {
         id: 113, // 清心咒, a Prece da Clareza
+        conjuracao_ms: 3000,
         custo_de_mp: (-20.0, 30.0),
         efeito: Efeito::Cura { k: 4.0, a: 70.0, b: -35.0 },
     },
     Habilidade {
         id: 125, // 羽箭 — attr 2 (metal)
+        conjuracao_ms: 1500,
         custo_de_mp: (-10.0, 15.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Magico,
@@ -128,6 +144,7 @@ const TABELA: &[Habilidade] = &[
     // ---- Arqueiro -----------------------------------------------------------------
     Habilidade {
         id: 234, // 引而不发
+        conjuracao_ms: 600,
         custo_de_mp: (0.0, 10.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Fisico,
@@ -142,6 +159,7 @@ const TABELA: &[Habilidade] = &[
     },
     Habilidade {
         id: 235, // 连射
+        conjuracao_ms: 1000,
         custo_de_mp: (-5.5, 7.5),
         efeito: Efeito::Dano {
             base: BaseDeDano::Fisico,
@@ -153,6 +171,7 @@ const TABELA: &[Habilidade] = &[
     // ---- Feiticeira ---------------------------------------------------------------
     Habilidade {
         id: 299, // 剧毒蛊 — attr 3 (madeira)
+        conjuracao_ms: 1500,
         custo_de_mp: (-3.2, 7.2),
         efeito: Efeito::Dano {
             base: BaseDeDano::Magico,
@@ -164,6 +183,7 @@ const TABELA: &[Habilidade] = &[
     // ---- Mercenário ---------------------------------------------------------------
     Habilidade {
         id: 1111,
+        conjuracao_ms: 100,
         custo_de_mp: (-5.0, 7.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Fisico,
@@ -175,6 +195,7 @@ const TABELA: &[Habilidade] = &[
     // ---- Espiritualista -----------------------------------------------------------
     Habilidade {
         id: 1125, // attr 6 (terra)
+        conjuracao_ms: 600,
         custo_de_mp: (-6.0, 15.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Magico,
@@ -185,6 +206,7 @@ const TABELA: &[Habilidade] = &[
     },
     Habilidade {
         id: 1126, // attr 4 (água) — no original também deixa lentidão, que não portamos
+        conjuracao_ms: 533,
         custo_de_mp: (-9.0, 15.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Magico,
@@ -196,6 +218,7 @@ const TABELA: &[Habilidade] = &[
     // ---- Arcano -------------------------------------------------------------------
     Habilidade {
         id: 1350,
+        conjuracao_ms: 267,
         custo_de_mp: (-5.0, 7.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Fisico,
@@ -207,6 +230,7 @@ const TABELA: &[Habilidade] = &[
     // ---- Místico ------------------------------------------------------------------
     Habilidade {
         id: 1374, // attr 3 — no original também deixa lentidão, que não portamos
+        conjuracao_ms: 1000,
         custo_de_mp: (-8.0, 14.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Magico,
@@ -217,12 +241,14 @@ const TABELA: &[Habilidade] = &[
     },
     Habilidade {
         id: 1381,
+        conjuracao_ms: 500,
         custo_de_mp: (-10.0, 25.0),
         efeito: Efeito::Cura { k: 3.0, a: 30.0, b: 30.0 },
     },
     // ---- Retalhador ---------------------------------------------------------------
     Habilidade {
         id: 2547,
+        conjuracao_ms: 67,
         custo_de_mp: (-5.4, 9.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Fisico,
@@ -235,6 +261,7 @@ const TABELA: &[Habilidade] = &[
     // ---- Tormentador --------------------------------------------------------------
     Habilidade {
         id: 2571, // attr 2
+        conjuracao_ms: 1150,
         custo_de_mp: (-9.0, 15.0),
         efeito: Efeito::Dano {
             base: BaseDeDano::Magico,

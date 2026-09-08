@@ -23,6 +23,12 @@ pub struct CharacterSummary {
     pub custom_appearance: serde_json::Value,
     pub is_deleted: bool,
     pub delete_time: Option<DateTime<Utc>>,
+    /// Quando este personagem entrou no mundo pela última vez.
+    ///
+    /// Vai no `lastlogin_time` do `RoleInfo`, e é com ele que o **cliente** decide qual
+    /// personagem vem selecionado: ele varre a lista e fica com o de maior valor
+    /// (`EC_LoginUIMan.cpp:809-818`). Com zero em todos, caía sempre no primeiro.
+    pub last_login_at: Option<DateTime<Utc>>,
 }
 
 impl CharacterSummary {
@@ -47,6 +53,7 @@ impl CharacterSummary {
             custom_appearance: serde_json::Value::Null,
             is_deleted: false,
             delete_time: None,
+            last_login_at: None,
         }
     }
 }

@@ -1414,6 +1414,43 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `PLAYER_HP_STEAL` (279) — o número **verde** de vida recuperada.
+    ///
+    /// `struct cmd_player_hp_steal { int hp; }` — 4 bytes, conferido no
+    /// `EC_GPDataType.h:3794` e no IR (`S2C::cmd_player_hp_steal`).
+    ///
+    /// É o comando da cura, e não o `HOST_SKILL_ATTACK_RESULT` (142). O 142 termina em
+    /// `CECPlayer::Damaged`, que só sabe desenhar `BUBBLE_DAMAGE` (vermelho) ou "errou"
+    /// (`EC_Player.cpp:3459-3489`); o 279 vira `BubbleText(BUBBLE_ADD, hp)`
+    /// (`EC_HostMsg.cpp:5772-5781`), que é o número verde. Em jogo, 2026-09-08, a Prece da
+    /// Clareza curava certo no servidor e aparecia como dano na tela por causa disso.
+    ///
+    /// Vai para **quem recebeu** a cura — é sobre a vida dele, e é ele que vê o número.
+    pub fn player_hp_steal(hp: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(279);              // CMD_S2C_PLAYER_HP_STEAL = 279
+        stream.write_i32_le(hp);               // int hp (4B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `HOST_CORRECT_POS` (177) — põe o jogador numa posição, à força.
+    ///
+    /// `struct cmd_host_correct_pos { A3DVECTOR3 pos; unsigned short stamp; }` — 14 bytes
+    /// (`EC_GPDataType.h:3099`). O `stamp` é o contador de correções que o cliente usa
+    /// para descartar correção velha que chegue fora de ordem; começamos em 0 e subimos a
+    /// cada teleporte do mesmo jogador.
+    ///
+    /// É com este comando que o servidor responde ao `GOTO` (C2S 19), o Ctrl+clique de GM.
+    pub fn host_correct_pos(pos: Vector3, stamp: u16) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(177);              // CMD_S2C_HOST_CORRECT_POS = 177
+        stream.write_f32_le(pos.x);            // A3DVECTOR3 pos (12B)
+        stream.write_f32_le(pos.y);
+        stream.write_f32_le(pos.z);
+        stream.write_u16_le(stamp);            // unsigned short stamp (2B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `OBJECT_SKILL_ATTACK_RESULT` (143) — dano de habilidade entre duas entidades
     /// que não são o próprio jogador (ex.: um pet, ou o alvo de outro jogador visto de
     /// fora). Mesma família de `SELF_SKILL_ATTACK_RESULT` (142) — `attack_flag` de 4
