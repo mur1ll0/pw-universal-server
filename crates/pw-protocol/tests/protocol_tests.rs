@@ -315,20 +315,46 @@ fn test_player_waypoint_list_devolve_os_ids_recebidos() {
     assert_eq!(pacote.data.len(), 10);
 }
 
+/// O `color_name` do fonte do 1.5.5 **não existe** no binário que serve este projeto.
+///
+/// Medido em jogo com o overlay do `d_rtdebug` em 2026-09-08:
+/// `SERVER - Invalid GAMEDATA_82 size(Network:12, Client:8)` — doze bytes saindo do
+/// servidor, oito esperados pelo `elementclient.exe`. A diferença é exatamente o campo.
+/// O teste anterior fixava os 12 bytes, com um comentário que já avisava que a evidência
+/// era o fonte e não uma captura.
 #[test]
-fn test_get_own_money_155_ganha_o_color_name() {
-    // O IR do 1.5.3 (structs["S2C::cmd_get_own_money"]) mede 8 bytes: amount + max_amount,
-    // sem `color_name`. O 1.5.5 acrescenta esse terceiro campo — achado em 2026-09-03 em
-    // `EvolvedPWServer/cgame/common/protocol.h` (sem captura disponível pro 1.5.5).
-    let sub_153 = PorVersao::new(GameVersion::V1_5_3);
-    let pacote_153 = sub_153.get_own_money(1000, 2_000_000_000, 7);
-    assert_eq!(pacote_153.data.len(), 10, "2 (cabeçalho) + 8 = 10 bytes, sem color_name");
+fn test_get_own_money_tem_oito_bytes_nas_duas_versoes() {
+    for versao in [GameVersion::V1_5_3, GameVersion::V1_5_5] {
+        let pacote = PorVersao::new(versao).get_own_money(1000, 2_000_000_000);
+        assert_eq!(
+            pacote.data.len(),
+            10,
+            "{versao:?}: 2 (cabeçalho) + 8 (amount, max_amount), sem color_name"
+        );
+    }
+}
 
-    let sub_155 = PorVersao::new(GameVersion::V1_5_5);
-    let pacote_155 = sub_155.get_own_money(1000, 2_000_000_000, 7);
-    assert_eq!(pacote_155.data.len(), 14, "2 (cabeçalho) + 8 + 4 (color_name) = 14 bytes");
-    let color_name = u32::from_le_bytes(pacote_155.data[10..14].try_into().unwrap());
-    assert_eq!(color_name, 7);
+/// Mesma história do `get_own_money`, no comando que trava o modelo 3D do outro jogador.
+///
+/// `cmd_equip_data` do binário: `crc(2) + idPlayer(4) + mask(8)` e um `int` por bit ligado
+/// na máscara. Com o `color_name` do fonte na frente, o corpo saía 4 bytes maior e o
+/// cliente descartava o comando inteiro — `SERVER - Unknown GAMEDATA_66` no overlay.
+#[test]
+fn test_equip_data_nao_leva_color_name() {
+    for versao in [GameVersion::V1_5_3, GameVersion::V1_5_5] {
+        let sub = PorVersao::new(versao);
+
+        let vazio = sub.equip_data(40, 0, 0, &[]);
+        assert_eq!(vazio.data.len(), 16, "{versao:?}: 2 + 14 de prefixo, sem item");
+
+        let com_arma = sub.equip_data(40, 0, 1, &[2251]);
+        assert_eq!(com_arma.data.len(), 20, "{versao:?}: 2 + 14 + 4 do único item");
+
+        // O cliente confere `buf_size == 14 + 4 * bits_ligados`; um item a menos do que a
+        // máscara promete faz o comando ser descartado por tamanho.
+        let tres = sub.equip_data(40, 0, 0b1011, &[2251, 1234, 999]);
+        assert_eq!(tres.data.len(), 2 + 14 + 3 * 4, "{versao:?}");
+    }
 }
 
 #[test]
@@ -356,4 +382,51 @@ fn test_inst_data_checkout_gshop_e_gshop2_sao_valores_diferentes() {
     let gshop2_no_fio = u32::from_le_bytes(pacote.data[18..22].try_into().unwrap());
     assert_eq!(gshop_no_fio, 0x1111_1111);
     assert_eq!(gshop2_no_fio, 0x2222_2222, "gshop_time_stamp2 tem que ser o valor de gshop2, não uma cópia do gshop");
+}
+
+/// O `OWN_EXT_PROP` (50) tem 188 bytes de corpo, medida do IR do 1.5.3
+/// (`S2C::cmd_own_ext_prop`) — dez inteiros de cabeçalho e o `ROLEEXTPROP` de 148
+/// (`bs` 32 + `mv` 16 + `ak` 68 + `df` 28 + `max_ap` 4).
+///
+/// O fonte do `EvolvedPWClient` traz dez campos a mais no cabeçalho, quatro deles
+/// marcados `// NEW`. Ir pelo fonte daria 228 e o cliente descartaria o comando inteiro —
+/// e com ele os atributos, que é o que faz o equipamento aparecer vermelho.
+#[test]
+fn test_own_ext_prop_tem_188_bytes_e_os_atributos_no_lugar() {
+    let p = S2CGamedataSend::own_ext_prop(
+        3,
+        (10, 20, 15, 12), // vitalidade, energia, força, agilidade
+        130,
+        280,
+        (2, 3),
+        (1.5, 4.8, 2.2, 5.0),
+        (7, 11, 19, 30, 1.4),
+        (23, 29),
+    );
+    assert_eq!(p.data.len(), 2 + 188, "cabeçalho de 2 + os 188 bytes do IR");
+    assert_eq!(u16::from_le_bytes(p.data[0..2].try_into().unwrap()), 50);
+
+    let i32_em = |off: usize| i32::from_le_bytes(p.data[off..off + 4].try_into().unwrap());
+    let f32_em = |off: usize| f32::from_le_bytes(p.data[off..off + 4].try_into().unwrap());
+
+    assert_eq!(i32_em(2), 3, "status_point");
+
+    // ROLEEXTPROP começa em 40 (mais os 2 do cabeçalho). É a força, em 40+8, que decide
+    // se `CanUseEquipment` aceita a arma.
+    const BS: usize = 2 + 40;
+    assert_eq!(i32_em(BS), 10, "vitalidade");
+    assert_eq!(i32_em(BS + 4), 20, "energia");
+    assert_eq!(i32_em(BS + 8), 15, "força — é este campo que solta o equipamento");
+    assert_eq!(i32_em(BS + 12), 12, "agilidade");
+    assert_eq!(i32_em(BS + 16), 130, "max_hp");
+    assert_eq!(i32_em(BS + 20), 280, "max_mp");
+
+    assert_eq!(f32_em(BS + 32), 1.5, "walk_speed");
+    assert_eq!(i32_em(BS + 48), 7, "attack rate");
+    assert_eq!(f32_em(BS + 64), 1.4, "attack_range");
+
+    // `df` fica em 116 dentro do ROLEEXTPROP, e a defesa em +20 dele.
+    assert_eq!(i32_em(BS + 116 + 20), 23, "defense");
+    assert_eq!(i32_em(BS + 116 + 24), 29, "armor");
+    assert_eq!(i32_em(BS + 144), 0, "max_ap");
 }

@@ -386,25 +386,32 @@ impl PorVersao {
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
-    /// `EQUIP_DATA` (66) — equipamento visível de outro jogador, ver
-    /// `S2CGamedataSend::equip_data` pro porquê de `mask=0` já bastar pra destravar o
-    /// modelo. O 1.5.5 ganha um `color_name` (`unsigned int`) na frente dos outros campos
-    /// — `EC_GPDataType.h:2016`, `F:\PW\1.5.5\EvolvedPWClient` — que nem o IR do 1.5.3
-    /// (`gamedata_153.json`) nem a captura do 1.2.6 (`docs/MEDIDAS_DO_126.md`) têm.
-    pub fn equip_data(&self, player_id: i32, color_name: u32, crc: u16, mask: u64, items: &[i32]) -> S2CGamedataSend {
-        if self.versao != GameVersion::V1_5_5 {
-            return S2CGamedataSend::equip_data(player_id, crc, mask, items);
-        }
-        let mut s = OctetsStream::new();
-        s.write_u16_le(66);
-        s.write_u32_le(color_name);
-        s.write_u16_le(crc);
-        s.write_i32_le(player_id);
-        s.write_u64_le(mask);
-        for item in items {
-            s.write_i32_le(*item);
-        }
-        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    /// `EQUIP_DATA` (66) — equipamento visível de outro jogador.
+    ///
+    /// # O `color_name` que existe no fonte e não existe no binário
+    ///
+    /// O `EC_GPDataType.h:2016` do `EvolvedPWClient` declara `cmd_equip_data` começando
+    /// por um `unsigned int color_name`, e até 2026-09-08 este método escrevia esse campo
+    /// para o 1.5.5. **O cliente que o Murillo roda recusa o comando assim.**
+    ///
+    /// Medido em jogo com o overlay do `d_rtdebug` (ver o item 32 do
+    /// `ESTADO_E_RETOMADA.md` para como ligá-lo): com o campo, o overlay imprimia
+    /// `SERVER - Unknown GAMEDATA_66`. "Unknown" ali não quer dizer id desconhecido — o
+    /// `CHECK_VALID` do `EC_GameDataPrtc.cpp:86` deixa `dwSize` no `-1` inicial quando o
+    /// tamanho não bate **exatamente**, e é esse `-1` que vira "Unknown" na tela. Com o
+    /// `color_name` o corpo saía com 4 bytes a mais do que aquele binário calcula.
+    ///
+    /// A prova cruzada é o `GET_OWN_MONEY` (82), que tem o mesmo campo no mesmo fonte: lá
+    /// o overlay conseguiu imprimir os dois números —
+    /// `Invalid GAMEDATA_82 size(Network:12, Client:8)`. Doze é o que o fonte manda
+    /// escrever, oito é o que o binário espera; a diferença é exatamente o `color_name`.
+    ///
+    /// **Regra que sai daí, e vale para o projeto inteiro**: o fonte `EvolvedPWClient`
+    /// está à frente do `elementclient.exe` build 2569 distribuído. Onde os dois
+    /// discordarem, **o binário manda** — e o overlay do `d_rtdebug` é o instrumento que
+    /// mede isso, comando a comando, sem adivinhação.
+    pub fn equip_data(&self, player_id: i32, crc: u16, mask: u64, items: &[i32]) -> S2CGamedataSend {
+        S2CGamedataSend::equip_data(player_id, crc, mask, items)
     }
 
     /// `OBJECT_MOVE` (15) — mesmo layout no 1.2.6 e no 1.5.3+ (`docs/MEDIDAS_DO_126.md`,
@@ -514,20 +521,22 @@ impl PorVersao {
         S2CGamedataSend { data: bytes }
     }
 
-    /// `GET_OWN_MONEY` (82) — dinheiro do jogador. O 1.5.3 tem só `amount`/`max_amount` (8
-    /// bytes, medido no IR). O 1.5.5 acrescenta um terceiro campo, `color_name` (a máscara
-    /// de cor do nome do jogador na tela), achado em 2026-09-03 em
-    /// `F:\PW\1.5.5\EvolvedPWServer\cgame\common\protocol.h` (`struct get_own_money { ...
-    /// unsigned int color_name; }`) — sem captura disponível para o 1.5.5, então a evidência
-    /// aqui é o source, não um tcpdump.
-    pub fn get_own_money(&self, amount: u32, capacity: u32, color_name: u32) -> S2CGamedataSend {
-        let base = S2CGamedataSend::get_own_money(amount, capacity);
-        if self.versao != GameVersion::V1_5_5 {
-            return base;
-        }
-        let mut bytes = base.data;
-        bytes.extend_from_slice(&color_name.to_le_bytes());
-        S2CGamedataSend { data: bytes }
+    /// `GET_OWN_MONEY` (82) — dinheiro do jogador: `amount` e `max_amount`, 8 bytes.
+    ///
+    /// Até 2026-09-08 este método acrescentava um `color_name` no 1.5.5, tirado do
+    /// `cgame/common/protocol.h` do `EvolvedPWServer`. O comentário de então dizia, com
+    /// todas as letras, que a evidência era o fonte e não uma captura — e a captura,
+    /// quando enfim apareceu, disse o contrário:
+    ///
+    /// ```text
+    /// SERVER - Invalid GAMEDATA_82 size(Network:12, Client:8)
+    /// ```
+    ///
+    /// Doze bytes saindo daqui, oito esperados pelo binário. O `color_name` não existe no
+    /// `elementclient.exe` que serve este realm. Ver [`Self::equip_data`], que caía no
+    /// mesmo engano e foi corrigida junto.
+    pub fn get_own_money(&self, amount: u32, capacity: u32) -> S2CGamedataSend {
+        S2CGamedataSend::get_own_money(amount, capacity)
     }
 
     /// `PLAYER_ENTER_WORLD` (17) — mesma struct de `PLAYER_INFO_1`

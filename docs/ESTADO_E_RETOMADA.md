@@ -4384,6 +4384,116 @@ Ordem combinada com o Murillo:
       sessão anterior disse que só as duas falhas do 1.2.6 restavam; eram três.
 
 
+33. **Sessão 2026-09-08 (continuação): o overlay do `d_rtdebug` mediu o cliente, e o que
+    ele mediu derruba uma premissa do projeto — o fonte `EvolvedPWClient` está à frente
+    do binário que servimos.**
+
+    O Murillo ligou o console, jogou com os dois clientes e trouxe três linhas do overlay.
+    Elas valem mais do que toda a leitura de fonte das sessões anteriores juntas, porque
+    são medidas do **binário**, não do código-fonte vazado.
+
+    ```text
+    SERVER - Invalid GAMEDATA_82 size(Network:12, Client:8)
+    SERVER - Unknown GAMEDATA_66
+    ```
+
+    ### a. "Unknown" não quer dizer id desconhecido
+
+    `CalcS2CCmdDataSize` (`EC_GameDataPrtc.cpp:86-95`) começa com `dwSize = -1` e a macro
+    `CHECK_VALID` só o troca por `-2` quando `CheckValid` passa **e** o tamanho bate
+    exatamente. Quem sai com `-1` é reportado como *Unknown*. Ou seja: para os comandos de
+    tamanho variável, "Unknown" é **tamanho errado**, não id errado. Os comandos de
+    tamanho fixo é que dão o "Invalid … size(Network:N, Client:M)", com os dois números.
+
+    ### b. A premissa que caiu
+
+    O `GET_OWN_MONEY` (82) foi a régua. O `cmd_get_own_money` do fonte tem
+    `amount`, `max_amount` e `color_name` — 12 bytes. O binário diz que espera **8**. A
+    diferença é exatamente o `color_name`, um campo que este projeto adicionou em
+    2026-09-03 com um comentário honesto dizendo que *"a evidência aqui é o source, não um
+    tcpdump"*. A medida chegou e disse o contrário.
+
+    O mesmo campo tinha sido posto no `EQUIP_DATA` (66) — e era ele que fazia o cliente
+    descartar o comando, deixar `IsEquipDataReady()` em falso para sempre e **nunca
+    carregar o modelo 3D do outro jogador**. Duas sessões de leitura de fonte procuraram
+    esse defeito no lugar errado.
+
+    A conferência independente é o IR do 1.5.3 (`specs/protocol/gamedata_153.json`):
+    `cmd_get_own_money` = 8 bytes, `cmd_equip_data` com prefixo de 14. Os dois batem com o
+    binário. **Onde o fonte `EvolvedPWClient` e o IR discordarem, para este cliente o IR
+    está certo** — e o overlay é o árbitro quando nem isso resolve.
+
+    ### c. O modelo 3D
+
+    Causa encontrada: o `color_name` de 4 bytes no `EQUIP_DATA`. Sem `IsEquipDataReady()`
+    o portão de `EC_ElsePlayer.cpp:671` nunca abre, e é por isso que selecionar o jogador
+    não ajudava — o `bSelected` está no `if` de dentro. Todas as hipóteses eliminadas nas
+    sessões anteriores (`Chk_ModelLimit`, `CECMemSimplify`, o born stamp, a trava
+    `m_bLoadingModel`) continuam eliminadas; nenhuma delas era o problema.
+
+    ### d. As habilidades que conjuravam e não terminavam
+
+    Log do mundo: `42 conjurou em 42, que não é um monstro deste mundo`. A Prece da
+    Clareza (113) é cura em si mesmo, e o tratamento saía cedo quando o alvo não era
+    monstro — antes de mandar o comando que solta o conjurador.
+
+    E o comando que solta não era o que mandávamos. O `SKILL_PERFORM` (88) é roteado para
+    `MAN_PLAYER` (`EC_GameDataPrtc.cpp:1385`): ele anima os **outros**. Quem fecha a
+    conjuração de quem conjurou é o **`HOST_STOP_SKILL` (123)**, sem corpo — o único
+    caminho que zera `CECHostPlayer::m_pCurSkill` numa conjuração bem-sucedida
+    (`EC_HostMsg.cpp:6065-6096`), além de chamar `EndCharging()`,
+    `StopSkillAttackAction()` e `FinishWork`. O codificador já existia, com o id certo, e
+    nunca tinha sido chamado.
+
+    Agora ele vai **sempre**, antes de qualquer coisa depender do alvo. O *efeito* de cura
+    e bênção continua não existindo — ver a lacuna do motor de habilidades.
+
+    ### e. A arma vermelha
+
+    `A3DCOLORRGB(192, 0, 0)` é o que o cliente pinta quando `CanUseEquipment` devolve
+    falso (`DlgInventory.cpp:530-532`, `DlgBag.cpp:260-263`). A razão 2 dessa função é
+    atributo insuficiente:
+
+    ```cpp
+    if (GetMaxLevelSofar() < pEquip->GetLevelRequirement() ||
+        m_ExtProps.bs.strength < pEquip->GetStrengthRequirement() || ...) iReason = 2;
+    ```
+
+    `m_ExtProps` é preenchido por **um** comando só, o `OWN_EXT_PROP` (50)
+    (`EC_HostMsg.cpp:1583`), que nunca mandávamos. Os quatro atributos ficavam em zero e a
+    Varinha, que exige força 5, aparecia vermelha — como apareceria qualquer equipamento
+    com exigência. O `PLAYER_EXT_PROP_BASE` (53), que já mandávamos com `5, 5, 5, 5`
+    escritos no código, não serve: vai para o gerente dos **outros** jogadores
+    (`EC_GameDataPrtc.cpp:1180`).
+
+    O 50 foi implementado com o layout do IR — 188 bytes, dez inteiros de cabeçalho mais o
+    `ROLEEXTPROP` de 148 — e não com o do fonte, que tem dez campos a mais (quatro deles
+    marcados `// NEW` no próprio arquivo) e daria 228. Os atributos vão do banco; os
+    números derivados de combate vão zerados de propósito, porque quem os calcula é o
+    `pw-gs` e o link não os tem — repetir o chute dos `5, 5, 5, 5` seria trocar um defeito
+    por outro.
+
+    ### f. Provas
+
+    - `test_get_own_money_tem_oito_bytes_nas_duas_versoes` e
+      `test_equip_data_nao_leva_color_name` substituem o teste que fixava os 12 bytes do
+      `color_name` — aquele passava e estava errado.
+    - `test_own_ext_prop_tem_188_bytes_e_os_atributos_no_lugar` fixa o tamanho e o
+      deslocamento da força, que é o campo que solta o equipamento.
+    - `conjurar_em_si_mesmo_ainda_fecha_a_conjuracao` cobre o caso da cura em si mesmo, e
+      o teste de dano passou a exigir o `HOST_STOP_SKILL` também.
+    - O guarda `todo_codificador_esta_declarado_em_algum_lugar` pegou o `own_ext_prop` sem
+      entrada na tabela `INTENCAO` — mesma rede que pegou o `security_passwd_checked` na
+      sessão anterior. Ela funciona.
+
+    ### g. O que fazer na próxima vez que algo "não acontece na tela"
+
+    Ligar `##debug` e `d_rtdebug 1` **antes** de ler fonte. Um comando com tamanho errado
+    não gera erro em log nenhum, dos dois lados; o overlay é a única coisa neste projeto
+    que o denuncia, e diz o número exato que o binário espera.
+
+
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver

@@ -1334,10 +1334,12 @@ async fn conjurar_habilidade_causa_dano_real_no_alvo_selecionado() {
     .await
     .unwrap();
 
-    // OBJECT_CAST_SKILL (85), SKILL_PERFORM (88), o resultado (142) e a barra (33).
-    let r = receber(&mut link, 4).await;
+    // OBJECT_CAST_SKILL (85), SKILL_PERFORM (88), HOST_STOP_SKILL (123), o resultado
+    // (142) e a barra (33).
+    let r = receber(&mut link, 5).await;
     assert!(r.iter().any(|v| cmd_de(v) == 85), "sem OBJECT_CAST_SKILL");
     assert!(r.iter().any(|v| cmd_de(v) == 88), "sem SKILL_PERFORM");
+    assert!(r.iter().any(|v| cmd_de(v) == 123), "sem HOST_STOP_SKILL");
 
     let res = r.iter().find(|v| cmd_de(v) == 142).expect("sem o resultado (142)");
     let dano = i32_em(res, 10);
@@ -2039,5 +2041,47 @@ async fn sair_tira_o_jogador_do_mundo() {
     assert!(
         mundo.read().await.grid.get_players_in_range(&Vector3::new(0.0, 0.0, 0.0), 50.0).is_empty(),
         "o jogador ficou na grade espacial depois de sair"
+    );
+}
+
+/// Uma cura em si mesmo tem de **fechar a conjuração** igual a um ataque.
+///
+/// Em jogo, 2026-09-08: o Murillo conjurou a Prece da Clareza (113) no próprio sacerdote,
+/// o console mostrou `Cast skill(113)` e a barra nunca fechou. No log do mundo:
+/// `42 conjurou em 42, que não é um monstro deste mundo` — o tratamento saía cedo, antes
+/// de mandar o comando que solta o conjurador.
+///
+/// O que fecha é o `HOST_STOP_SKILL` (123), sem corpo: é o único caminho que zera
+/// `CECHostPlayer::m_pCurSkill` numa conjuração bem-sucedida (`EC_HostMsg.cpp:6065`). O
+/// `SKILL_PERFORM` (88) não serve — vai para o gerente dos **outros** jogadores.
+#[tokio::test]
+async fn conjurar_em_si_mesmo_ainda_fecha_a_conjuracao() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // Alvo explícito: o próprio conjurador.
+    let mut corpo = 113i32.to_le_bytes().to_vec(); // Prece da Clareza
+    corpo.push(0); // force_attack
+    corpo.push(1); // target_count
+    corpo.extend_from_slice(&(roleid as i32).to_le_bytes());
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::CAST_SKILL, &corpo),
+    })
+    .await
+    .unwrap();
+
+    let r = receber(&mut link, 3).await;
+    assert!(r.iter().any(|v| cmd_de(v) == 85), "sem OBJECT_CAST_SKILL");
+    let parada = r
+        .iter()
+        .find(|v| cmd_de(v) == 123)
+        .expect("sem HOST_STOP_SKILL: o cliente ficaria conjurando para sempre");
+    assert_eq!(
+        parada.len(),
+        2,
+        "o cliente exige corpo vazio no HOST_STOP_SKILL (dwSize == 0) e descarta o resto"
     );
 }

@@ -1192,12 +1192,33 @@ impl BusServer {
         self.responder(roleid, perform_pkt.clone(), envio).await;
         self.transmitir_a_outros(roleid, perform_pkt).await;
 
+        // `HOST_STOP_SKILL` (123) é o que **fecha a conjuração de quem conjurou**.
+        //
+        // Em jogo, 2026-09-08: "as skills castam mas nunca terminam". O comando anterior,
+        // `SKILL_PERFORM` (88), é roteado para `MAN_PLAYER`
+        // (`EC_GameDataPrtc.cpp:1385-1388`) — ele anima os **outros** jogadores. Quem
+        // conjurou continua preso: `CECHostPlayer::m_pCurSkill` só é zerado numa
+        // conjuração bem-sucedida pelo `case HOST_STOP_SKILL`
+        // (`EC_HostMsg.cpp:6065-6096`), que além de soltar a barra chama
+        // `EndCharging()`, `StopSkillAttackAction()` e `FinishWork` do trabalho de
+        // feitiço. Sem ele o cliente fica em estado de conjuração para sempre e recusa a
+        // próxima habilidade.
+        //
+        // Vai **antes** de qualquer coisa depender do alvo, e sem corpo (o cliente exige
+        // `dwSize == 0`, `EC_GameDataPrtc.cpp:305`): uma cura em si mesmo, uma bênção num
+        // companheiro e um ataque num monstro terminam todos aqui.
+        self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio)
+            .await;
+
         let mut mundo = self.world.write().await;
         let Some(atacante) = mundo.players.get(&(roleid as i64)).cloned() else {
             return;
         };
         let Some((monstro, _)) = mundo.monsters.get(&alvo) else {
-            debug!("mundo: {roleid} conjurou em {alvo}, que não é um monstro deste mundo");
+            // Alvo que não é monstro: o próprio conjurador (cura, bênção) ou outro
+            // jogador. A conjuração já foi fechada acima; o **efeito** ainda não existe —
+            // ver a lacuna do motor de habilidades no item 32 do `ESTADO_E_RETOMADA.md`.
+            debug!("mundo: {roleid} conjurou {} em {alvo}, que não é monstro — sem efeito ainda", c.skill_id);
             return;
         };
         if monstro.is_dead {
@@ -1751,7 +1772,7 @@ impl BusServer {
                 .await
                 .unwrap_or_default();
             let (mascara, ids) = Self::mascara_de_equipamento(&equipado);
-            let pacote = self.sub.equip_data(id, 0, 0, mascara, &ids).data;
+            let pacote = self.sub.equip_data(id, 0, mascara, &ids).data;
             debug!(
                 "mundo: equip_data pra {roleid} sobre {id} — máscara {mascara:#x}, {} item(ns)",
                 ids.len()

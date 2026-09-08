@@ -582,6 +582,110 @@ impl S2CGamedataSend {
         }
     }
 
+    /// `OWN_EXT_PROP` (50) — a ficha completa do **próprio** jogador: 188 bytes.
+    ///
+    /// # Por que ele importa mais do que parece
+    ///
+    /// É o **único** comando que preenche `CECHostPlayer::m_ExtProps`
+    /// (`EC_HostMsg.cpp:1583`, `m_ExtProps = pCmd->prop`) — e portanto o único que dá ao
+    /// cliente a força, a agilidade, a vitalidade e a energia do jogador. Sem ele os
+    /// quatro ficam em zero, e `CanUseEquipment` (`EC_HostPlayer.cpp:4907-4916`) recusa
+    /// qualquer equipamento que exija atributo:
+    ///
+    /// ```cpp
+    /// if (GetMaxLevelSofar() < pEquip->GetLevelRequirement() ||
+    ///     m_ExtProps.bs.strength < pEquip->GetStrengthRequirement() || ...) iReason = 2;
+    /// ```
+    ///
+    /// O item recusado é desenhado em `A3DCOLORRGB(192, 0, 0)` — vermelho escuro
+    /// (`DlgInventory.cpp:530-532`, `DlgBag.cpp:260-263`). Foi exatamente o relato em
+    /// jogo de 2026-09-08: "a arma equipada no meu personagem está vermelha". A Varinha
+    /// (2251) exige força 5; o cliente lia 0.
+    ///
+    /// O `PLAYER_EXT_PROP_BASE` (53), que já mandávamos, **não** serve: ele é roteado
+    /// para o gerente dos **outros** jogadores (`EC_GameDataPrtc.cpp:1180-1186`).
+    ///
+    /// # O layout é o do IR, não o do fonte do cliente
+    ///
+    /// O `cmd_own_ext_prop` do `EvolvedPWClient` tem dez campos a mais no cabeçalho
+    /// (`anti_defense_degree`, `p_damage_reduce`, `task_count`, os contadores de
+    /// mortes…), quatro deles marcados `// NEW` no próprio fonte. O IR do 1.5.3 mede
+    /// **188** bytes: dez inteiros e o `ROLEEXTPROP` de 148. É essa a medida que vale
+    /// aqui — ver `PorVersao::equip_data` para a regra geral e para as duas medições em
+    /// jogo que mostraram o fonte estar à frente do binário distribuído.
+    ///
+    /// `ROLEEXTPROP` = `bs`(32) + `mv`(16) + `ak`(68) + `df`(28) + `max_ap`(4).
+    #[allow(clippy::too_many_arguments)]
+    pub fn own_ext_prop(
+        status_point: u32,
+        atributos: (i32, i32, i32, i32),
+        max_hp: i32,
+        max_mp: i32,
+        regen: (i32, i32),
+        velocidades: (f32, f32, f32, f32),
+        ataque: (i32, i32, i32, i32, f32),
+        defesa: (i32, i32),
+    ) -> Self {
+        let (vitality, energy, strength, agility) = atributos;
+        let (hp_gen, mp_gen) = regen;
+        let (walk, run, swim, fly) = velocidades;
+        let (attack_rate, damage_low, damage_high, attack_speed, attack_range) = ataque;
+        let (defense, armor) = defesa;
+
+        let mut s = OctetsStream::new();
+        s.write_u16_le(50);                 // CMD_S2C_OWN_EXT_PROP = 50
+        s.write_u32_le(status_point);       // size_t status_point
+        s.write_i32_le(0);                  // attack_degree
+        s.write_i32_le(0);                  // defend_degree
+        s.write_i32_le(0);                  // crit_rate
+        s.write_i32_le(0);                  // crit_damage_bonus
+        s.write_i32_le(0);                  // invisible_degree
+        s.write_i32_le(0);                  // anti_invisible_degree
+        s.write_i32_le(0);                  // penetration
+        s.write_i32_le(0);                  // resilience
+        s.write_i32_le(0);                  // vigour
+
+        // ROLEEXTPROP_BASE
+        s.write_i32_le(vitality);
+        s.write_i32_le(energy);
+        s.write_i32_le(strength);
+        s.write_i32_le(agility);
+        s.write_i32_le(max_hp);
+        s.write_i32_le(max_mp);
+        s.write_i32_le(hp_gen);
+        s.write_i32_le(mp_gen);
+
+        // ROLEEXTPROP_MOVE
+        s.write_f32_le(walk);
+        s.write_f32_le(run);
+        s.write_f32_le(swim);
+        s.write_f32_le(fly);
+
+        // ROLEEXTPROP_ATK
+        s.write_i32_le(attack_rate);
+        s.write_i32_le(damage_low);
+        s.write_i32_le(damage_high);
+        s.write_i32_le(attack_speed);
+        s.write_f32_le(attack_range);
+        for _ in 0..5 {
+            s.write_i32_le(0);              // addon_damage[i].damage_low
+            s.write_i32_le(0);              // addon_damage[i].damage_high
+        }
+        s.write_i32_le(0);                  // damage_magic_low
+        s.write_i32_le(0);                  // damage_magic_high
+
+        // ROLEEXTPROP_DEF
+        for _ in 0..5 {
+            s.write_i32_le(0);              // resistance[i]
+        }
+        s.write_i32_le(defense);
+        s.write_i32_le(armor);
+
+        s.write_i32_le(0);                  // max_ap
+
+        Self { data: s.into_bytes().to_vec() }
+    }
+
     /// Cria o comando PLAYER_EXT_PROP_BASE (Comando 53) definindo atributos vitais base
     pub fn ext_prop_base(id_player: i32, vitality: i32, energy: i32, strength: i32, agility: i32, max_hp: i32, max_mp: i32, hp_gen: i32, mp_gen: i32) -> Self {
         let mut stream = OctetsStream::new();

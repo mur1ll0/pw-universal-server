@@ -50,6 +50,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("server_time", "SERVER_TIME"),
     ("trashbox_pwd_state", "TRASHBOX_PWD_STATE"),
     ("security_passwd_checked", "SECURITY_PASSWD_CHECKED"),
+    ("own_ext_prop", "OWN_EXT_PROP"),
     ("pet_room_capacity", "PET_ROOM_CAPACITY"),
     ("self_king_notify", "SELF_KING_NOTIFY"),
     ("faction_contrib_notify", "FACTION_CONTRIB_NOTIFY"),
