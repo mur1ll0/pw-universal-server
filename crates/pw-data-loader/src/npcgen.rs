@@ -89,6 +89,62 @@ pub struct NpcGenData {
     pub grid: SpatialGrid,
 }
 
+/// Onde um monstro nasce dentro da área que o gera.
+///
+/// # O que o original faz
+///
+/// `base_spawner::SetRegion` monta a caixa da área com `pos ∓ exts/2`, e
+/// `terrain_gen_pos::Generate` sorteia `x` e `z` uniformemente dentro dela
+/// (`abase::Rand(pos_min.x, pos_max.x)`), tentando até cinco vezes achar um ponto válido
+/// pelo *pathfinding*, e por fim assenta `y` na altura do terreno.
+///
+/// # Onde este porte difere, e por quê
+///
+/// - **Determinístico**, não aleatório. O original sorteia a cada nascimento; aqui a
+///   posição é uma função de `(id da instância, índice)`, então o mesmo `npcgen.data`
+///   sempre produz o mesmo mundo. Reiniciar o servidor deixa de teleportar todo monstro,
+///   e o teste passa a poder afirmar posição. A distribuição continua espalhada — é só a
+///   semente que é fixa.
+/// - **Sem altura de terreno.** O leitor não tem o mapa; `y` fica no centro da área. Em
+///   área plana não muda nada; em encosta o monstro pode ficar um pouco acima ou abaixo
+///   do chão, e é isso que falta para fechar com o original.
+///
+/// # Por que isto importa
+///
+/// Antes, `exts` era lido e descartado, e a posição vinha de um deslocamento fixo de até
+/// três metros em diagonal — todo monstro de uma área nascia empilhado no mesmo ponto.
+/// Foi o que o Murillo viu em jogo em 2026-09-07: "estão spawnando todos agrupados".
+fn posicao_na_area(centro: Vector3, exts: Vector3, id: i32, indice: u32) -> Vector3 {
+    // Área sem tamanho é um ponto: um monstro só, no centro. O original trata este caso
+    // à parte (`_pos_min.squared_distance(_pos_max) < 1e-3`).
+    if exts.x.abs() < 1e-3 && exts.z.abs() < 1e-3 {
+        return centro;
+    }
+
+    // Dois valores em 0..1 a partir de `(id, índice)`. É um hash de inteiros barato
+    // (splitmix64), não um gerador de qualidade — o que se quer é espalhar, não simular.
+    let mistura = |mut x: u64| -> f32 {
+        x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = x;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        // 24 bits bastam para posição em metros e evitam o degrau de arredondamento de f32.
+        (z >> 40) as f32 / (1u32 << 24) as f32
+    };
+
+    let semente = ((id as u32 as u64) << 20) | indice as u64;
+    let fx = mistura(semente);
+    let fz = mistura(semente ^ 0xA5A5_A5A5_A5A5_A5A5);
+
+    // `exts` é o **tamanho** da caixa, não o raio: metade para cada lado do centro.
+    Vector3::new(
+        centro.x + (fx - 0.5) * exts.x,
+        centro.y,
+        centro.z + (fz - 0.5) * exts.z,
+    )
+}
+
 impl NpcGenData {
     pub fn load_from_bytes(data: &[u8]) -> Result<Self> {
         let mut cursor = Cursor::new(data);
@@ -144,6 +200,11 @@ impl NpcGenData {
             id_ctrl: i32,
             b_init_gen: bool,
             pos: Vector3,
+            /// `vExts` do `NPCGENFILEAREA`: o **tamanho** da caixa da área, não o raio. O
+            /// original monta a caixa com `pos ∓ exts/2` (`base_spawner::SetRegion`) e
+            /// sorteia cada monstro dentro dela. Ler e descartar isto foi o que fez todos
+            /// os monstros de uma área nascerem empilhados.
+            exts: Vector3,
             dir: Vector3,
             geradores: Vec<(u32, u32, i32, u32)>, // tid, count, refresh, aggressive
         }
@@ -172,9 +233,9 @@ impl NpcGenData {
             let dir_x = cursor.read_f32::<LittleEndian>()?;
             let dir_y = cursor.read_f32::<LittleEndian>()?;
             let dir_z = cursor.read_f32::<LittleEndian>()?;
-            let _ext_x = cursor.read_f32::<LittleEndian>()?;
-            let _ext_y = cursor.read_f32::<LittleEndian>()?;
-            let _ext_z = cursor.read_f32::<LittleEndian>()?;
+            let ext_x = cursor.read_f32::<LittleEndian>()?;
+            let ext_y = cursor.read_f32::<LittleEndian>()?;
+            let ext_z = cursor.read_f32::<LittleEndian>()?;
             let _npc_type = cursor.read_i32::<LittleEndian>()?;
             let _grp_type = cursor.read_i32::<LittleEndian>()?;
             let b_init_gen = cursor.read_u8()? != 0;
@@ -215,6 +276,7 @@ impl NpcGenData {
                 id_ctrl,
                 b_init_gen,
                 pos: Vector3::new(pos_x, pos_y, pos_z),
+                exts: Vector3::new(ext_x, ext_y, ext_z),
                 dir: Vector3::new(dir_x, dir_y, dir_z),
                 geradores,
             });
@@ -335,13 +397,12 @@ impl NpcGenData {
                     instance_counter += 1;
                     // No Perfect World oficial, IDs de NPCs/Monstros possuem o bit 31 ativo (ISNPCID: (id & 0x80000000) && !(id & 0x40000000))
                     let npc_nid = (0x80000000u32 | (instance_counter & 0x3FFFFFFF)) as i32;
-                    let offset_x = if c == 0 { 0.0 } else { ((c as f32) * 1.5) - 3.0 };
-                    let offset_z = if c == 0 { 0.0 } else { ((c as f32) * 1.2) - 2.5 };
+                    let pos = posicao_na_area(area.pos, area.exts, npc_nid, c);
                     let spawn = SpawnInstance {
                         instance_id: npc_nid,
                         template_id: tid,
                         spawn_type: if tid >= 10000 { SpawnType::Npc } else { SpawnType::Monster },
-                        pos: Vector3::new(area.pos.x + offset_x, area.pos.y, area.pos.z + offset_z),
+                        pos,
                         dir: area.dir,
                         respawn_sec: refresh.max(1) as u32,
                         aggressive,

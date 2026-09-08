@@ -97,6 +97,12 @@ pub struct MonsterEntity {
     /// dano elemental que o golpe normal do monstro carrega.
     pub magic_attack: [(i32, i32); 5],
     pub attack_range: f32,
+    /// `aggro_range` do `elements.data`: até onde o monstro persegue. Era `35.0` escrito
+    /// no `ai.rs` para todo monstro do jogo.
+    pub aggro_range: f32,
+    /// `sight_range`: até onde ele enxerga. Ainda não decide nada — entra quando a IA
+    /// deixar de depender só da tabela de ameaça e passar a procurar alvo sozinha.
+    pub sight_range: i32,
     pub exp: i64,
     pub sp: i64,
     pub aipolicy_id: u32,
@@ -297,6 +303,8 @@ impl MonsterEntity {
                 .dano_magico_por_classe
                 .map(|f| (f.minimo, f.maximo)),
             attack_range: modelo.alcance_de_ataque,
+            aggro_range: modelo.raio_de_odio,
+            sight_range: modelo.raio_de_visao,
             exp: modelo.exp as i64,
             sp: modelo.pontos_de_skill as i64,
             aipolicy_id: modelo.politica_de_ia,
@@ -345,6 +353,8 @@ impl MonsterEntity {
             attack_max: 35,
             magic_attack: [(0, 0); 5],
             attack_range: 2.5,
+            aggro_range: 15.0,
+            sight_range: 20,
             exp: 100,
             sp: 20,
             aipolicy_id: 0,

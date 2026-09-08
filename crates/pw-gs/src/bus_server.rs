@@ -133,6 +133,10 @@ const VELOCIDADE_PADRAO: u8 = 0;
 /// que existirem entram aqui como constantes próprias em vez de números soltos.
 const SAIDA_VOLUNTARIA: i16 = 0;
 
+/// `move_mode` do `OBJECT_MOVE` para quem anda no chão. É o mesmo valor que o cliente
+/// manda no `PLAYER_MOVE` de um jogador a pé.
+const MODO_DE_MOVIMENTO_ANDANDO: u8 = 0;
+
 /// Canal por onde o mundo devolve mensagens àquele jogador.
 pub type EnvioAoCliente = mpsc::Sender<BusMessage>;
 
@@ -218,6 +222,34 @@ impl BusServer {
                 .await;
                 let _ = (hp, max_hp);
                 self.avisar_vida_propria(roleid).await;
+            }
+
+            EventoDoMundo::MonstroAndou {
+                id,
+                destino,
+                velocidade,
+            } => {
+                // `OBJECT_MOVE` (15) é o mesmo comando que anuncia jogador andando — o
+                // cliente não distingue por comando, e sim pelo id do objeto.
+                //
+                // `use_time` é quanto o cliente deve levar para percorrer o trecho, em
+                // centésimos de segundo: o passo mínimo da IA dividido pela velocidade.
+                // Errar isto não trava nada, só faz o monstro deslizar rápido demais ou
+                // devagar demais entre um aviso e o outro.
+                let use_time = if velocidade > 0.01 {
+                    ((crate::ai::MonsterAi::PASSO_MINIMO_PARA_AVISAR / velocidade) * 100.0) as u16
+                } else {
+                    50
+                };
+                // `speed` vai na unidade que o cliente espera (centésimos de metro por
+                // segundo), a mesma que o `PLAYER_MOVE` usa.
+                let speed = (velocidade * 100.0) as i16;
+                let pacote = self
+                    .sub
+                    .object_move(id as i32, destino, use_time, speed, MODO_DE_MOVIMENTO_ANDANDO)
+                    .data;
+                // Ninguém a excluir: o monstro não é jogador.
+                self.transmitir_a_outros(0, pacote).await;
             }
 
             EventoDoMundo::JogadorMorreu {
@@ -489,6 +521,7 @@ impl BusServer {
             ids::SEVNPC_SERVE => self.servico_de_npc(roleid, &cmd.payload, envio).await,
             ids::SEVNPC_HELLO => self.dizer_ola_ao_npc(roleid, &cmd.payload, envio).await,
             ids::TASK_NOTIFY => self.notificar_tarefa(roleid, &cmd.payload),
+            ids::CHECK_SECURITY_PASSWD => self.conferir_senha(roleid, &cmd.payload, envio).await,
             ids::USE_ITEM => self.usar_item(roleid, &cmd.payload, envio).await,
             ids::TEAM_INVITE => self.convidar(roleid, &cmd.payload).await,
             ids::TEAM_AGREE_INVITE => self.aceitar_grupo(roleid, &cmd.payload).await,
@@ -1700,6 +1733,37 @@ impl BusServer {
         }
     }
 
+    /// `C2S::CHECK_SECURITY_PASSWD` (120) — a senha do guarda-roupa.
+    ///
+    /// O cliente manda isto com senha **vazia** assim que sabe que a conta não tem senha
+    /// (`EC_HostMsg.cpp`, `case TRASHBOX_PWD_STATE`), e espera `SECURITY_PASSWD_CHECKED`
+    /// (277) para liberar a primeira abertura do guarda-roupa
+    /// (`CECHostPlayer::OnMsgPlayerPasswdChecked` zera `m_bFirstFashionOpen`).
+    ///
+    /// Sem resposta o par nunca fecha, e o jogador vê "protegido por senha" numa conta que
+    /// nunca teve senha — relatado em jogo em 2026-09-07.
+    ///
+    /// # Por que qualquer senha passa, por enquanto
+    ///
+    /// Não existe senha de guarda-roupa no nosso banco: nenhuma coluna a guarda e nenhum
+    /// caminho a define. Recusar seria trancar todo mundo para sempre; aceitar é o mesmo
+    /// que o servidor original faz para conta sem senha configurada. Quando a senha
+    /// existir, é **aqui** que ela é conferida — e o `else` passa a mandar o
+    /// `ERROR_MESSAGE` correspondente.
+    async fn conferir_senha(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
+        // `struct cmd_check_security_passwd { size_t passwd_size; }` mais os bytes da
+        // senha. O tamanho é lido só para o log: o conteúdo não decide nada ainda.
+        let tamanho = payload
+            .get(..4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .unwrap_or(0);
+        if tamanho != 0 {
+            info!("mundo: {roleid} mandou senha de guarda-roupa com {tamanho} bytes —                    ainda não há senha no banco, então passa");
+        }
+        self.responder(roleid, S2CGamedataSend::security_passwd_checked().data, envio)
+            .await;
+    }
+
     /// `C2S::GET_ALL_DATA` (39) — a carga inicial ao entrar no mundo.
     ///
     /// Bolsa, equipamento, dinheiro e missões, **conforme os três sinalizadores** que o
@@ -1775,6 +1839,33 @@ impl BusServer {
                 }
             }
         }
+
+        // As habilidades aprendidas.
+        //
+        // **Isto nunca era enviado.** O `own_ivtr_data`, o equipamento, o dinheiro e as
+        // missões saíam; o `SKILL_DATA` (90), não — e o cliente monta a barra de
+        // habilidades a partir dele, então o jogador ficava sem nenhuma habilidade
+        // utilizável. Em jogo, 2026-09-07: "meus personagens não têm skills que possam ser
+        // usadas". O codificador já existia, sem chamador.
+        //
+        // Vai sempre, como o `TASK_DATA`: o `GET_ALL_DATA` não tem sinalizador para
+        // habilidade, e a barra precisa estar montada antes de o jogador poder agir.
+        let habilidades = self
+            .repo()
+            .await
+            .skill_repo()
+            .list_skills(roleid)
+            .await
+            .unwrap_or_default();
+        if habilidades.is_empty() {
+            warn!("mundo: jogador {roleid} entrou sem habilidade nenhuma no banco");
+        }
+        self.responder(
+            roleid,
+            S2CGamedataSend::skill_data_from_records(&habilidades).data,
+            envio,
+        )
+        .await;
 
         // Sempre, mesmo sem missões: é o marcador de fim da carga.
         // Via `self.sub` porque o número de blocos depende da versão (3 no 1.2.6, 5 do

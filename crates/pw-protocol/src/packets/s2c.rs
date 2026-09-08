@@ -870,6 +870,18 @@ impl S2CGamedataSend {
         }
     }
 
+    /// `SECURITY_PASSWD_CHECKED` (277) — a senha conferida, pode abrir.
+    ///
+    /// **Sem corpo**: o IR marca `payload: empty`, e o cliente
+    /// (`CECHostPlayer::OnMsgPlayerPasswdChecked`) não lê byte nenhum do pacote — só usa a
+    /// chegada dele para liberar a primeira abertura do guarda-roupa. Um corpo a mais aqui
+    /// faria o cliente descartar o comando pelo tamanho.
+    pub fn security_passwd_checked() -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(277);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// Cria o comando SKILL_DATA (Comando 90) para carregar a lista de habilidades do jogador
     pub fn skill_data(skills: &[(i16, u8, i16)]) -> Self {
         let mut stream = OctetsStream::new();

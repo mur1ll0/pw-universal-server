@@ -4064,6 +4064,162 @@ Ordem combinada com o Murillo:
        pré-requisito para qualquer comparação de dano com o servidor original.
     5. `act_session` + skills, o item grande.
 
+31. **Sessão 2026-09-07 (continuação 4): primeiro teste em jogo depois do combate. Cinco
+    defeitos achados e corrigidos, um deles meu; o modelo 3D segue sem explicação, agora
+    com o lado do servidor provado byte a byte.**
+
+    Teste do Murillo no `realm_155BR` com dois clients 1.5.5 reais, contas diferentes.
+    Logs do servidor cruzados com `EC.log`/`AF.log`/`A3D.log` dos dois clients.
+
+    ### a. O que passou a funcionar, confirmado no log
+
+    ```text
+    mundo: testesacer (#42) nível 1 entrou no mapa 1 — 120/120 de vida,
+           dano 1, defesa 0, precisão 50, evasão 20
+    ```
+
+    O item 30 funcionou: **o jogador entra no mundo simulado**. E o item 28 também — os
+    monstros carregaram com nível e vida corretos, como o Murillo relatou.
+
+    ### b. Meu defeito: o `ptemplate.conf` não é UTF-8
+
+    ```text
+    WARN ptemplate.conf de /app/data/config não pôde ser lido:
+         stream did not contain valid UTF-8
+    ```
+
+    O arquivo do pacote original tem comentários em chinês em **GBK**, e o
+    `read_to_string` falha neles. Resultado: `base_das_classes` vazia, e a vida máxima
+    caindo no valor gravado no banco em vez do calculado — exatamente o aviso que o item
+    30 previu e que ninguém esperava ver tão cedo.
+
+    São 60 bytes altos no arquivo do realm 155, **todos em linha de comentário**, que o
+    leitor descarta. Passou a ler em bytes e decodificar de forma tolerante. Um Guerreiro
+    de nível 1 vai de 120 (do banco) para 360 de vida; um Sacerdote, para 130/330.
+
+    ### c. Monstros nascendo empilhados
+
+    O `npcgen.data` define **áreas** com um tamanho (`vExts`) e quantos monstros cada uma
+    gera. O original monta a caixa `pos ∓ exts/2` (`base_spawner::SetRegion`) e sorteia
+    cada monstro dentro dela (`terrain_gen_pos::Generate`).
+
+    O nosso leitor lia `vExts` e **descartava**, colocando os monstros num deslocamento
+    fixo de até três metros em diagonal a partir do centro. Medido no `npcgen.data` do
+    mundo do realm 155BR:
+
+    | | antes | depois |
+    | :--- | ---: | ---: |
+    | células de 10 m ocupadas | 7.281 | 20.469 |
+    | monstros na célula mais cheia | 42 | 7 |
+
+    Duas diferenças conscientes em relação ao original, documentadas no código: a posição
+    é **determinística** (função de `id` e índice, não sorteio — o mesmo `npcgen.data`
+    sempre dá o mesmo mundo, e reiniciar deixa de teleportar todo monstro), e **`y` fica
+    na altura do centro da área**, porque o leitor não tem o mapa para consultar a altura
+    do terreno. Em encosta o monstro pode ficar um pouco acima ou abaixo do chão.
+
+    ### d. Monstros que não se moviam
+
+    A IA mexia em `monster.position` e **não devolvia nada**: nem a grade espacial sabia,
+    nem o cliente. O monstro perseguia em silêncio e na tela ficava parado — que é
+    exatamente o que o Murillo viu ("parece que ele me ataca mas não anda").
+
+    `MonsterAi::tick` passou a devolver `AcaoDoMonstro::{Atacou, Andou}`; o mundo atualiza
+    a grade e emite `EventoDoMundo::MonstroAndou`, que o `BusServer` traduz em
+    `OBJECT_MOVE` (15) para todos. O aviso sai só a cada **2 metros** andados: o cliente
+    interpola entre um `OBJECT_MOVE` e o próximo, e um por tique de 50 ms seriam 20
+    pacotes por segundo por monstro sem ganho nenhum na tela.
+
+    De quebra, a distância de perseguição deixou de ser `35.0` escrito no código e passou
+    a ser o `aggro_range` do `elements.data`, com piso de 15 m.
+
+    ### e. Habilidades que nunca chegavam
+
+    O `GET_ALL_DATA` mandava bolsa, equipamento, dinheiro e missões — e **nunca
+    `SKILL_DATA` (90)**. O cliente monta a barra de habilidades a partir dele, então o
+    jogador ficava sem nenhuma. O codificador já existia, com o layout certo
+    (`skill_count` de 4 bytes e 5 por habilidade, sob `#pragma pack(1)`), e sem chamador.
+
+    **Ressalva honesta**: os sacerdotes de teste têm as habilidades 11, 117, 118, 119 e
+    167 no banco, e o `CharacterClass::Cleric::default_skills()` de hoje devolve
+    125, 113, 190 e 167. Ou seja, os ids gravados vieram de uma lista antiga. Agora eles
+    **chegam** ao cliente; se forem de outra classe, o sintoma muda de "não tenho
+    habilidade" para "tenho habilidade errada", e aí dá para consertar com evidência.
+
+    ### f. "Protegido por senha" numa conta sem senha
+
+    O par é: servidor manda `TRASHBOX_PWD_STATE` (129) dizendo que não há senha → o
+    cliente manda `CHECK_SECURITY_PASSWD` (120) com senha vazia
+    (`c2s_SendCmdOpenFashionTrash`) → servidor responde `SECURITY_PASSWD_CHECKED` (277) →
+    `CECHostPlayer::OnMsgPlayerPasswdChecked` zera `m_bFirstFashionOpen` e o guarda-roupa
+    abre.
+
+    O primeiro já era mandado pelo `gateway.rs`. O último, não: o subcomando 120 caía no
+    "ainda não tratado" e o par nunca fechava. O 277 é **sem corpo** (`payload: empty` no
+    IR, e o cliente não lê byte nenhum dele) — um corpo a mais faria o cliente descartar o
+    comando pelo tamanho e o sintoma continuaria igual.
+
+    Qualquer senha passa por enquanto, e está dito no código: não existe senha de
+    guarda-roupa no nosso banco, nenhuma coluna a guarda. Recusar trancaria todo mundo
+    para sempre.
+
+    ### g. O modelo 3D: o servidor está provado correto, e o sintoma continua
+
+    Decodifiquei o `PlayerBaseInfo_Re` real desta sessão, byte a byte, direto do log:
+
+    ```text
+    retcode 0 | roleid 42 | id 40 | nome "HEal" (UTF-16, 8 bytes)
+    race 0 | cls 7 | gender 1 | custom_data 176 bytes começando em 01 70 00 10
+    ```
+
+    `0x10007001` é `CUSTOMIZE_DATA_VERSION`, e 176 é exatamente
+    `sizeof(PLAYER_CUSTOMIZEDATA)` — um dos dois únicos tamanhos que
+    `PLAYER_CUSTOMIZEDATA::From` aceita. O `EQUIP_DATA` também sai (20 bytes, visto no
+    log). Ou seja, as três condições do cliente
+    (`IsBaseInfoReady() && IsCustomDataReady() && IsEquipDataReady()`) têm tudo o que
+    precisam, com os bytes certos.
+
+    Também **não há erro nenhum** nos `EC.log` dos dois clients no caminho de criar
+    jogador ou carregar modelo.
+
+    Continua valendo o item 27b: sobram as três chaves do lado do cliente
+    (`Chk_ModelLimit`, o `CECMemSimplify`, e a trava de uma vez só do `m_bLoadingModel`),
+    e **o teste de selecionar o outro jogador como alvo ainda não foi feito**. É o próximo
+    passo, e não custa nada.
+
+    ### h. O que os logs do cliente mostram, e não é do servidor
+
+    - `Failed to open ecm file Models\Weapons\...\木剑\木剑.ecm` — o **modelo da arma
+      não está na instalação do cliente**. É a "arma não funcional" do sacerdote: o item
+      2867 existe no banco e é enviado; o cliente não tem o `.ecm` para desenhá-lo.
+    - `A3DGFXMan::Init() Can not open gfxlist.txt`, cinco cursores ausentes,
+      `loddata\Login\olm\1.olm` ausente — conteúdo faltando nos dois clients.
+    - `CECWorld::LoadWorld: File operation error (line: 617)`.
+
+    Nada disso passa pelo servidor. Se o objetivo é um cliente íntegro, o caminho é o
+    instalador mais completo que o item 26e.2 já mencionava.
+
+    ### i. Uma lacuna achada de passagem, não corrigida
+
+    O `create_character` grava os quatro atributos com o padrão do schema (10/10/10/10),
+    mas o `ptemplate.conf` dá valores **por classe** — o Guerreiro começa com vitalidade
+    20, força 15, agilidade 10, energia 5. Personagem novo nasce com atributo errado, e os
+    já existentes teriam de ser migrados. Fica anotado; mexer nisso é mudança de dado, não
+    de código.
+
+    ### j. Provas
+
+    - `crates/pw-data-loader/tests/spawns_espalhados.rs`, 3 testes: dispersão real do
+      `npcgen.data` do realm, estabilidade entre cargas, e o caso da área sem tamanho.
+    - `crates/pw-data-loader/tests/ptemplate_tests.rs` ganhou o teste que **exige** que o
+      arquivo do realm não seja UTF-8 válido e ainda assim seja lido.
+    - `crates/pw-gs/tests/achados_do_teste_em_jogo.rs`, 6 testes: o anúncio de movimento e
+      o limite de um aviso a cada 2 m, o `aggro_range` do arquivo, e os três layouts
+      (`SECURITY_PASSWD_CHECKED` sem corpo, `TRASHBOX_PWD_STATE` de um byte, `SKILL_DATA`
+      com 4 + 5×n).
+
+    Com banco: 64 suítes, e continuam apenas as duas falhas pré-existentes do 1.2.6.
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver

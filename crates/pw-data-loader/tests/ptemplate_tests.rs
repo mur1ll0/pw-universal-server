@@ -108,3 +108,26 @@ fn le_o_arquivo_real_do_realm_155() {
     assert!(mago.vida < guerreiro.vida, "mago {} contra guerreiro {}", mago.vida, guerreiro.vida);
     assert!(mago.mana > guerreiro.mana);
 }
+
+#[test]
+fn le_o_arquivo_do_realm_mesmo_nao_sendo_utf8() {
+    // O arquivo do pacote original tem comentários em chinês em GBK. Um `read_to_string`
+    // falha nele com "stream did not contain valid UTF-8" — e foi exatamente isso que
+    // aconteceu no primeiro teste em jogo (2026-09-07), deixando o realm sem vida máxima
+    // de personagem. Os bytes altos ficam todos em comentário, que o leitor descarta.
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("data/realm_155/config");
+    if !dir.join("ptemplate.conf").exists() {
+        eprintln!("pulado: {} não tem ptemplate.conf", dir.display());
+        return;
+    }
+    let bytes = std::fs::read(dir.join("ptemplate.conf")).unwrap();
+    assert!(
+        String::from_utf8(bytes.clone()).is_err(),
+        "o arquivo virou UTF-8 puro; este teste perdeu o sentido — confira se não foi          reconvertido por engano"
+    );
+    let t = ptemplate::ler_da_pasta(&dir).expect("devia ler apesar do GBK nos comentários");
+    assert_eq!(t.len(), 12);
+    assert_eq!(t.get(0).unwrap().vida, 60);
+}

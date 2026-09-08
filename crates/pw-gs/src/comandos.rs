@@ -110,6 +110,10 @@ pub mod ids {
     /// `SRV::C2S::CMD::task_notify` — o cliente reporta algo ao sistema de missões. O IR
     /// marca este id como só cabeçalho; está errado, ver [`TaskNotify`].
     pub const TASK_NOTIFY: u16 = 49;
+
+    /// `CHECK_SECURITY_PASSWD` — o cliente manda a senha do guarda-roupa (vazia quando não
+    /// há uma) e espera `SECURITY_PASSWD_CHECKED` (277) de volta.
+    pub const CHECK_SECURITY_PASSWD: u16 = 120;
 }
 
 /// Tamanho do cabeçalho de subcomando (`cmd_header { unsigned short cmd; }`).

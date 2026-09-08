@@ -225,8 +225,13 @@ pub fn ler_da_pasta(dir: &std::path::Path) -> Option<TabelaDeBase> {
         );
         return None;
     }
-    match std::fs::read_to_string(&caminho) {
-        Ok(texto) => match ler(&texto) {
+    // **Não** é UTF-8**: o arquivo do pacote original tem comentários em chinês
+    // codificados em GBK, e um `read_to_string` falha com "stream did not contain valid
+    // UTF-8" — foi o que aconteceu no primeiro teste em jogo. Os bytes altos ficam todos
+    // em linhas de comentário (60 deles no arquivo do realm 155), que o leitor descarta,
+    // então decodificar de forma tolerante é seguro: nenhuma chave ou valor é afetado.
+    match std::fs::read(&caminho) {
+        Ok(bytes) => match ler(&String::from_utf8_lossy(&bytes)) {
             Ok(t) => Some(t),
             Err(e) => {
                 warn!("ptemplate.conf de {} ilegível: {e}", dir.display());

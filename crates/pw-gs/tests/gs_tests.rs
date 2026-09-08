@@ -98,6 +98,8 @@ fn test_combat_engine_damage_calculation() {
         attack_max: 90,
         magic_attack: [(0, 0); 5],
         attack_range: 2.5,
+        aggro_range: 30.0,
+        sight_range: 40,
         exp: 300,
         sp: 60,
         aipolicy_id: 0,

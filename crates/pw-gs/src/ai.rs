@@ -1,4 +1,5 @@
 use crate::entity::{MonsterEntity, PlayerEntity};
+use pw_core::Vector3;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -11,19 +12,48 @@ pub enum MonsterState {
     Dead,
 }
 
+/// O que o monstro decidiu fazer neste tique.
+///
+/// Antes o `tick` devolvia só `Option<(alvo, dano)>`, e o **movimento não saía daqui**:
+/// a IA mexia em `monster.position` e nada mais acontecia — nem a grade espacial sabia,
+/// nem o cliente. Em jogo, 2026-09-07: "os monstros não estão se movendo". Ele andava;
+/// ninguém era avisado.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AcaoDoMonstro {
+    /// Bateu em alguém.
+    Atacou { alvo: i64, dano: i32 },
+    /// Andou até `destino`. Só é devolvido quando vale a pena avisar — ver
+    /// [`MonsterAi::PASSO_MINIMO_PARA_AVISAR`].
+    Andou { destino: Vector3, velocidade: f32 },
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MonsterAi {
     pub state: MonsterState,
     pub aggro_table: HashMap<i64, i64>, // (Target EntityId -> Threat Value)
     pub attack_cooldown_ms: u32,
+    /// Onde o monstro estava da última vez que um movimento foi anunciado. O cliente
+    /// interpola entre um `OBJECT_MOVE` e o próximo, então mandar um por tique de 50 ms
+    /// seria desperdício de rede sem ganho nenhum na tela.
+    ultima_posicao_anunciada: Option<Vector3>,
 }
 
 impl MonsterAi {
+    /// Quanto o monstro precisa andar para valer um `OBJECT_MOVE`. Dois metros a 4 m/s
+    /// dão um pacote a cada meio segundo por monstro em perseguição, contra vinte por
+    /// segundo se fosse um por tique.
+    pub const PASSO_MINIMO_PARA_AVISAR: f32 = 2.0;
+
+    /// Piso da distância de perseguição, para monstro cujo `aggro_range` é pequeno demais
+    /// para ele sair do lugar.
+    pub const PERSEGUICAO_MINIMA: f32 = 15.0;
+
     pub fn new() -> Self {
         Self {
             state: MonsterState::Idle,
             aggro_table: HashMap::new(),
             attack_cooldown_ms: 0,
+            ultima_posicao_anunciada: None,
         }
     }
 
@@ -47,7 +77,7 @@ impl MonsterAi {
         monster: &mut MonsterEntity,
         players: &HashMap<i64, PlayerEntity>,
         delta_ms: u32,
-    ) -> Option<(i64, i32)> { // Retorna Some((target_id, dano)) se executou um ataque
+    ) -> Option<AcaoDoMonstro> {
         if monster.is_dead {
             self.state = MonsterState::Dead;
             return None;
@@ -91,10 +121,14 @@ impl MonsterAi {
                     distance,
                 )
                 .dano();
-                return Some((target_id, damage));
+                return Some(AcaoDoMonstro::Atacou { alvo: target_id, dano: damage });
             }
-        } else if distance < 35.0 {
-            // Persegue o jogador em direção à sua coordenada
+        } else if distance < monster.aggro_range.max(Self::PERSEGUICAO_MINIMA) {
+            // Persegue o jogador em direção à sua coordenada.
+            //
+            // O limite era `35.0` escrito no código; agora é o `aggro_range` do
+            // `elements.data`, com um piso para que monstro de raio minúsculo ainda dê
+            // um passo em vez de ficar parado a dois metros do alvo.
             self.state = MonsterState::Chasing;
             let dir_x = target_player.position.x - monster.position.x;
             let dir_z = target_player.position.z - monster.position.z;
@@ -103,10 +137,22 @@ impl MonsterAi {
             let move_dist = monster.move_speed * (delta_ms as f32 / 1000.0);
             monster.position.x += (dir_x / len) * move_dist;
             monster.position.z += (dir_z / len) * move_dist;
+
+            // Só avisa quando andou o bastante para valer um pacote: o cliente interpola
+            // entre um `OBJECT_MOVE` e o próximo.
+            let anterior = self.ultima_posicao_anunciada.unwrap_or(monster.spawn_center);
+            if monster.position.distance(&anterior) >= Self::PASSO_MINIMO_PARA_AVISAR {
+                self.ultima_posicao_anunciada = Some(monster.position);
+                return Some(AcaoDoMonstro::Andou {
+                    destino: monster.position,
+                    velocidade: monster.move_speed,
+                });
+            }
         } else {
             // Alvo muito longe -> perde o aggro e retorna à base
             self.aggro_table.remove(&target_id);
             self.state = MonsterState::Idle;
+            self.ultima_posicao_anunciada = None;
         }
 
         None

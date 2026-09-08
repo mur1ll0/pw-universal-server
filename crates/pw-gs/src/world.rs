@@ -35,6 +35,13 @@ pub enum EventoDoMundo {
         matador: i64,
         pos: pw_core::Vector3,
     },
+    /// Um monstro andou. O cliente interpola até `destino`; sem este aviso o monstro
+    /// perseguia em silêncio, e na tela ficava parado.
+    MonstroAndou {
+        id: i64,
+        destino: pw_core::Vector3,
+        velocidade: f32,
+    },
     /// O jogador voltou a viver, e onde.
     JogadorReviveu {
         roleid: RoleId,
@@ -523,6 +530,8 @@ impl WorldInstance {
         // 1. Atualização da Inteligência Artificial dos Monstros
         let mut attacks_to_process = Vec::new();
 
+        let mut movimentos = Vec::new();
+
         for (monster, ai) in self.monsters.values_mut() {
             if monster.is_dead {
                 if monster.respawn_timer_ms > 0 {
@@ -537,9 +546,28 @@ impl WorldInstance {
                 continue;
             }
 
-            if let Some(attack) = ai.tick(monster, &self.players, delta_ms) {
-                attacks_to_process.push(attack);
+            match ai.tick(monster, &self.players, delta_ms) {
+                Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano }) => {
+                    attacks_to_process.push((alvo, dano));
+                }
+                Some(crate::ai::AcaoDoMonstro::Andou { destino, velocidade }) => {
+                    // A grade espacial tem de acompanhar: quem consulta vizinhos por
+                    // posição usa ela, não o campo da entidade.
+                    movimentos.push((monster.id, destino, velocidade));
+                }
+                None => {}
             }
+        }
+
+        // Fora do laço porque `self.grid` e `self.monsters` não podem ser emprestados ao
+        // mesmo tempo.
+        for &(id, destino, velocidade) in &movimentos {
+            self.grid.update_position(id, destino);
+            self.emitir(EventoDoMundo::MonstroAndou {
+                id,
+                destino,
+                velocidade,
+            });
         }
 
         // 2. Aplica danos causados pelos monstros nos jogadores

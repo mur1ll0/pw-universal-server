@@ -61,6 +61,8 @@ fn monstro() -> MonsterEntity {
         attack_max: 2,
         magic_attack: [(0, 0); 5],
         attack_range: 2.0,
+        aggro_range: 30.0,
+        sight_range: 40,
         exp: 1,
         sp: 1,
         aipolicy_id: 0,
