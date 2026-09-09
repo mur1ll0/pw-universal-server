@@ -5100,6 +5100,111 @@ Ordem combinada com o Murillo:
       `OBJECT_LEAVE_SLICE`. Confere o conjunto `visiveis` do mundo nas duas pontas.
     - `passo_curto_nao_refaz_a_conta_do_que_esta_a_vista`: dois metros não recalculam nada.
 
+40. **Estado em 2026-09-09 e a fila de trabalho — o que está de pé, o que falta, e o que
+    já foi medido para cada coisa que falta.**
+
+    Fecha a sequência de sessões 32–39. O que está escrito aqui é para a próxima sessão não
+    reinvestigar nada: cada item pendente vem com a evidência que já foi levantada.
+
+    ### a. O que funciona em jogo, confirmado pelo Murillo
+
+    Modelo 3D dos outros jogadores; equipamento visível entre jogadores; habilidades
+    conjuram, animam e fecham a barra; cura e dano entre jogadores; monstros com nível,
+    vida e ataque do `elements.data`; monstros perseguem e batem; voo pelas asas; teleporte
+    de GM; meditar e gestos sincronizados; botão armadura/roupa; console do cliente
+    (`##debug` + `d_rtdebug 1`).
+
+    ### b. A fila, em ordem de valor
+
+    **1. A armadura vai aparecer vermelha, e já se sabe por quê.**
+
+    É o mesmo defeito da Varinha (item 38), esperando a primeira peça de armadura. O bloco
+    de dados do item só é montado para **arma** (`WEAPON_ESSENCE`); para armadura vai
+    vazio, e aí o cliente cai no `CECIvtrArmor::DefaultInfo`
+    (`EC_IvtrArmor.cpp:188-196`), que preenche nível, força, reputação e durabilidade — e
+    **não preenche `m_iProfReq`**, que fica no zero do construtor. `CanUseEquipment` faz
+    `!(GetProfessionRequirement() & (1 << profissão))`, e zero recusa todas as classes.
+
+    O caminho está pronto: repetir o que `pw-data-loader/src/armas.rs` faz, para
+    `ARMOR_ESSENCE` (e depois `DECORATION_ESSENCE`), e passar a ficha em
+    `S2CGamedataSend::item_info`. A struct que viaja é `pw_core::FichaDaArma`; armadura
+    precisa da irmã dela, sem os campos de dano e com `id_sub_type` (o cliente usa o
+    subtipo para saber em que slot a peça entra).
+
+    **2. A visibilidade entre jogadores ainda é de uma vez só.**
+
+    O item 39 resolveu isso para NPC e monstro. Para **jogador** continua como estava: o
+    `gateway.rs` manda `PLAYER_ENTER_WORLD` mútuo no login (linha ~941) e
+    `PLAYER_LEAVE_WORLD` no logout (linha ~348) — sem raio, sem streaming. Dois jogadores
+    que se afastam além do raio ativo do cliente somem um para o outro **para sempre**,
+    exatamente o sintoma que os NPCs tinham.
+
+    A correção natural é a mesma: mover para o mundo, dentro de
+    `BusServer::atualizar_visiveis`, que já tem a grade espacial e já roda a cada
+    movimento. Cuidado com o comando: jogador entra com `PLAYER_ENTER_SLICE` (12), não com
+    `NPC_ENTER_SLICE` (11) — o cliente roteia pelo id e mandar o comando errado joga o
+    jogador no gerente de NPCs. O `OBJECT_LEAVE_SLICE` (13) serve para os dois.
+
+    **3. Matéria: minério, ervas, os "recursos do mapa".**
+
+    **Ninguém manda.** Não há `MATTER_ENTER_WORLD` (18) em lugar nenhum do servidor, nem no
+    login nem no streaming. O `npcgen.data` já traz as instâncias (`SpawnType::Matter`, com
+    id próprio em `npcgen.rs:424`) e o `elements.data` tem as tabelas de matéria — falta o
+    comando e a entrada no `atualizar_visiveis`.
+
+    **4. O nível da habilidade é fixo em 1.**
+
+    `NIVEL_DA_HABILIDADE` no `bus_server.rs`. O `character_skills` guarda o nível de cada
+    habilidade e o `CastSkill` do cliente não o manda — quem deveria saber é o servidor.
+    Enquanto for 1, subir uma habilidade de nível não muda nada em jogo.
+
+    **5. Personagem novo nasce com atributo errado.**
+
+    Anotado desde o item 31i e ainda de pé: `create_character` grava 10/10/10/10, mas o
+    `ptemplate.conf` dá valores por classe (o Guerreiro começa com vitalidade 20, força 15,
+    agilidade 10, energia 5). Os personagens já existentes precisariam de migração.
+
+    **6. Não há trava de PvP.** Qualquer jogador machuca qualquer outro, em qualquer lugar.
+    O original exige duelo, guerra de facção ou mapa de PK (`pvp_mode`, comando 79).
+
+    ### c. Lacunas menores, todas documentadas no código
+
+    - Só **16** das 3.317 habilidades têm conta portada; o resto conjura e não faz efeito.
+    - Nenhum **efeito de estado** existe (veneno, lentidão, bênção com duração).
+    - A cura usa o ataque mágico no lugar do `GetMagicdamage`, que o `PlayerEntity` não
+      separa.
+    - O Tiro Certeiro (234) assume carga cheia.
+    - O voo não custa mana, não tem teto de altura, e o `GP_STATE_FLY` não entra no `state`
+      dos pacotes de visão — quem chega depois vê o jogador andando no ar.
+    - O teleporte mantém a altura atual do jogador porque não lemos o mapa (o original usa
+      `GetHeightAt`).
+    - O `dir` dos NPCs vai zerado no streaming: a grade guarda posição, não direção.
+    - `modo_roupa` e `voando` não persistem: não há coluna.
+    - A tabela `realms` tem **637 linhas**, quase todas `t_gs_*` de teste.
+    - As duas falhas do `loader_tests` são do `elements.data` v7 do 1.2.6, que ainda usa o
+      leitor tipado antigo.
+
+    ### d. Como rodar, sem tropeçar de novo
+
+    ```bash
+    # A suíte SÓ testa de verdade com esta variável (item 36a)
+    TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw_database" \
+      cargo test --workspace
+
+    # Publicar no realm de teste
+    cd docker && docker compose build pw-world-155br pw-realm-155br \
+      && docker compose up -d pw-world-155br pw-realm-155br
+    ```
+
+    Referência medida em 2026-09-09: **67 suítes verdes**, e as únicas falhas são as duas do
+    1.2.6.
+
+    No cliente, `##debug` no chat liga o console, `Shift` + a tecla à esquerda do "1" abre a
+    janela, e `d_rtdebug 1` liga o overlay que denuncia todo comando descartado por tamanho
+    — o instrumento que resolveu os itens 33, 34 e 38.
+
+
+
 
 
 
