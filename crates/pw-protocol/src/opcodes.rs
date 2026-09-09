@@ -300,7 +300,12 @@ pub mod gamedata_s2c {
     pub const NOTIFY_HOSTPOS: u16 = 14;
     pub const OBJECT_MOVE: u16 = 15;
     pub const PLAYER_ENTER_WORLD: u16 = 17;
+    /// Um recurso do mapa (minério, erva) entrou no campo de visão.
+    pub const MATTER_ENTER_WORLD: u16 = 18;
     pub const PLAYER_LEAVE_WORLD: u16 = 19;
+    /// A lista do que saiu do campo de visão. O cliente roteia cada id pela família dele
+    /// — é o único caminho de saída que a matéria tem.
+    pub const OUT_OF_SIGHT_LIST: u16 = 34;
     pub const RECEIVE_EXP: u16 = 36;
     pub const LEVEL_UP: u16 = 37;
     pub const SELF_INFO_00: u16 = 38;
@@ -315,7 +320,9 @@ pub mod gamedata_s2c {
         ("NOTIFY_HOSTPOS", NOTIFY_HOSTPOS),
         ("OBJECT_MOVE", OBJECT_MOVE),
         ("PLAYER_ENTER_WORLD", PLAYER_ENTER_WORLD),
+        ("MATTER_ENTER_WORLD", MATTER_ENTER_WORLD),
         ("PLAYER_LEAVE_WORLD", PLAYER_LEAVE_WORLD),
+        ("OUT_OF_SIGHT_LIST", OUT_OF_SIGHT_LIST),
         ("RECEIVE_EXP", RECEIVE_EXP),
         ("LEVEL_UP", LEVEL_UP),
         ("SELF_INFO_00", SELF_INFO_00),
@@ -325,7 +332,8 @@ pub mod gamedata_s2c {
 // Nomes antigos reexportados, para não quebrar o `codec.rs` enquanto os caminhos que os
 // usam não são reescritos.
 pub use gamedata_s2c::{
-    LEVEL_UP as CMD_S2C_LEVEL_UP, NOTIFY_HOSTPOS as CMD_S2C_NOTIFY_HOSTPOS,
+    LEVEL_UP as CMD_S2C_LEVEL_UP, MATTER_ENTER_WORLD as CMD_S2C_MATTER_ENTER_WORLD,
+    NOTIFY_HOSTPOS as CMD_S2C_NOTIFY_HOSTPOS, OUT_OF_SIGHT_LIST as CMD_S2C_OUT_OF_SIGHT_LIST,
     NPC_ENTER_SLICE as CMD_S2C_NPC_ENTER_SLICE, OBJECT_LEAVE_SLICE as CMD_S2C_OBJECT_LEAVE_SLICE,
     OBJECT_MOVE as CMD_S2C_OBJECT_MOVE, PLAYER_ENTER_SLICE as CMD_S2C_PLAYER_ENTER_SLICE,
     PLAYER_ENTER_WORLD as CMD_S2C_PLAYER_ENTER_WORLD, PLAYER_INFO_1 as CMD_S2C_PLAYER_INFO_1,

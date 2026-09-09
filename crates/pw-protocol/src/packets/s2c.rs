@@ -798,10 +798,24 @@ impl S2CGamedataSend {
     /// nenhuma linha de força, nenhuma linha de profissão — e foi ele que fechou o
     /// diagnóstico.
     ///
-    /// Agora, quando `arma` vem preenchida, o bloco sai do `elements.data`. Quando vem
-    /// `None` (item que não é arma, ou realm sem a tabela), vai só o cabeçalho, sem bloco:
-    /// **inventar dado aqui é pior do que não mandar nada**, porque um requisito inventado
-    /// tranca o item.
+    /// Agora, quando `ficha` vem preenchida, o bloco sai do `elements.data`. Quando vem
+    /// `None` (item que não é equipamento, ou realm sem as tabelas), vai só o cabeçalho,
+    /// sem bloco: **inventar dado aqui é pior do que não mandar nada**, porque um
+    /// requisito inventado tranca o item.
+    ///
+    /// # E não mandar nada também tranca — para armadura
+    ///
+    /// Descoberto em 2026-09-09, antes de a primeira peça de armadura chegar em jogo. A
+    /// arma tinha ficha; armadura e acessório iam sem bloco. Sem bloco,
+    /// `CECIvtrEquip::SetItemInfo` retorna na primeira linha (`EC_IvtrEquip.cpp:178-181`)
+    /// e o `m_iProfReq` fica no zero do construtor (`EC_IvtrEquip.cpp:74`) — e
+    /// `CanUseEquipment` recusa `ICID_ARMOR`/`ICID_DECORATION` com máscara zero, para
+    /// **todas** as classes (`EC_HostPlayer.cpp:4953-4959`). Seria a mesma peça vermelha
+    /// da Varinha, pela outra ponta.
+    ///
+    /// `DefaultInfo()` não salva o caso: no cliente 1.5.5 ele não é chamado em lugar
+    /// nenhum para armadura — o único `DefaultInfo()` do `ElementClient` está em
+    /// `EC_IvtrFashion.cpp:83`.
     #[allow(clippy::too_many_arguments)]
     pub fn item_info(
         by_package: u8,
@@ -811,7 +825,7 @@ impl S2CGamedataSend {
         max_endurance: i32,
         count: u32,
         raw_octets: &[u8],
-        arma: Option<pw_core::FichaDaArma>,
+        ficha: Option<pw_core::FichaDoEquipamento>,
     ) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(40);              // CMD_S2C_OWN_ITEM_INFO = 40
@@ -830,37 +844,103 @@ impl S2CGamedataSend {
             return Self { data: stream.into_bytes().to_vec() };
         }
 
-        let Some(a) = arma else {
+        let Some(ficha) = ficha else {
             stream.write_u16_le(0);           // sem bloco de dados
             return Self { data: stream.into_bytes().to_vec() };
         };
 
+        use pw_core::FichaDoEquipamento as F;
+
+        // O cabeçalho é o mesmo para toda família de equipamento: é a `prerequisition` do
+        // servidor original (`gs/item/equip_item.h:230-238`), escrita por
+        // `generate_weapon`/`generate_armor`/`generate_decoration` na mesma ordem
+        // (`generate_item_temp.h:288-311`, `490-513`, `772-793`).
+        //
+        // **Vitalidade vem antes de agilidade.** E a máscara de classes é truncada a 16
+        // bits pelo próprio original (`character_combo_id & 0xFFFF`), não por nós.
+        let (nivel, classes, forca, vitalidade, agilidade, energia) = match &ficha {
+            F::Arma(a) => (
+                a.nivel_exigido, a.classes_permitidas, a.forca_exigida,
+                a.vitalidade_exigida, a.agilidade_exigida, a.energia_exigida,
+            ),
+            F::Armadura(a) => (
+                a.nivel_exigido, a.classes_permitidas, a.forca_exigida,
+                a.vitalidade_exigida, a.agilidade_exigida, a.energia_exigida,
+            ),
+            F::Decoracao(d) => (
+                d.nivel_exigido, d.classes_permitidas, d.forca_exigida,
+                d.vitalidade_exigida, d.agilidade_exigida, d.energia_exigida,
+            ),
+        };
+
         let mut content = OctetsStream::new();
-        content.write_i16_le(a.nivel_exigido);
-        content.write_i16_le(a.classes_permitidas as i16);
-        content.write_i16_le(a.forca_exigida);
-        content.write_i16_le(a.vitalidade_exigida);
-        content.write_i16_le(a.agilidade_exigida);
-        content.write_i16_le(a.energia_exigida);
+        content.write_i16_le(nivel);
+        content.write_i16_le(classes as i16);
+        content.write_i16_le(forca);
+        content.write_i16_le(vitalidade);
+        content.write_i16_le(agilidade);
+        content.write_i16_le(energia);
         content.write_i32_le(cur_endurance);
         content.write_i32_le(max_endurance);
-        content.write_i16_le(44);             // tamanho de IVTR_ESSENCE_WEAPON
-        content.write_u8(0);                  // m_byMadeFrom
-        content.write_u8(0);                  // tamanho do nome do fabricante
 
-        // IVTR_ESSENCE_WEAPON, 44 bytes
-        content.write_i16_le(a.tipo_de_arma);
-        content.write_i16_le(0);              // weapon_delay
-        content.write_i32_le(a.tipo_maior);   // weapon_class
-        content.write_i32_le(1);              // weapon_level
-        content.write_i32_le(a.municao_exigida);
-        content.write_i32_le(a.dano_minimo);
-        content.write_i32_le(a.dano_maximo);
-        content.write_i32_le(a.dano_magico_minimo);
-        content.write_i32_le(a.dano_magico_maximo);
-        content.write_i32_le(a.velocidade_de_ataque);
-        content.write_f32_le(a.alcance);
-        content.write_f32_le(0.0);            // attack_short_range
+        // Tamanho da essência, o nome do fabricante, e a essência da família certa.
+        //
+        // O cliente **não** escolhe o leitor por nada que venha aqui: escolhe pelo tipo
+        // do item no `elements.data` dele (`CECIvtrArmor::SetItemInfo` só existe para
+        // quem já é armadura). Mandar a essência da família errada é mandar lixo, e o
+        // `ASSERT(iEssenceSize == sizeof(...))` de cada leitor é o que sobra de aviso.
+        match &ficha {
+            F::Arma(a) => {
+                content.write_i16_le(44);     // tamanho de IVTR_ESSENCE_WEAPON
+                content.write_u8(0);          // m_byMadeFrom
+                content.write_u8(0);          // tamanho do nome do fabricante
+
+                content.write_i16_le(a.tipo_de_arma);
+                content.write_i16_le(0);      // weapon_delay
+                content.write_i32_le(a.tipo_maior);   // weapon_class
+                content.write_i32_le(1);      // weapon_level
+                content.write_i32_le(a.municao_exigida);
+                content.write_i32_le(a.dano_minimo);
+                content.write_i32_le(a.dano_maximo);
+                content.write_i32_le(a.dano_magico_minimo);
+                content.write_i32_le(a.dano_magico_maximo);
+                content.write_i32_le(a.velocidade_de_ataque);
+                content.write_f32_le(a.alcance);
+                content.write_f32_le(0.0);    // attack_short_range
+            }
+            F::Armadura(a) => {
+                // `IVTR_ESSENCE_ARMOR` (`EC_IvtrTypes.h:253-260`), 36 bytes: idêntica ao
+                // `armor_essence` do servidor original (`equip_item.h:150-157`).
+                content.write_i16_le(36);
+                content.write_u8(0);
+                content.write_u8(0);
+
+                content.write_i32_le(a.defesa);
+                content.write_i32_le(a.evasao);
+                content.write_i32_le(a.mp_extra);
+                content.write_i32_le(a.hp_extra);
+                for r in a.resistencias {
+                    content.write_i32_le(r);
+                }
+            }
+            F::Decoracao(d) => {
+                // `IVTR_ESSENCE_DECORATION` (`EC_IvtrTypes.h:244-251`), também 36 bytes,
+                // mas com dano e dano mágico **antes** da defesa. Mesmo tamanho, ordem
+                // diferente — trocar as duas passa por todo teste de tamanho e mente para
+                // o jogador.
+                content.write_i16_le(36);
+                content.write_u8(0);
+                content.write_u8(0);
+
+                content.write_i32_le(d.dano);
+                content.write_i32_le(d.dano_magico);
+                content.write_i32_le(d.defesa);
+                content.write_i32_le(d.evasao);
+                for r in d.resistencias {
+                    content.write_i32_le(r);
+                }
+            }
+        }
 
         content.write_i16_le(0);              // buracos
         content.write_u16_le(0);              // máscara de cravos
@@ -1095,6 +1175,46 @@ impl S2CGamedataSend {
     pub fn player_enter_world(role_id: RoleId, pos: Vector3, dir: u8, sec_level: u8) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(crate::opcodes::CMD_S2C_PLAYER_ENTER_WORLD);
+        Self::info_player_1(stream, role_id, pos, dir, sec_level)
+    }
+
+    /// `PLAYER_ENTER_SLICE` (12) — outro jogador **entrou no alcance de visão**, andando.
+    ///
+    /// Mesma struct do `PLAYER_ENTER_WORLD` (17): o IR dá `S2C::info_player_1` para os
+    /// dois (`specs/protocol/gamedata_153.json`), e o cliente trata os dois no mesmo
+    /// `case` (`EC_ManPlayer.cpp:336-338`). O que muda é o efeito de aparição:
+    ///
+    /// ```cpp
+    /// int iAppearFlag = (iCmd == S2C::PLAYER_ENTER_WORLD)
+    ///     ? CECElsePlayer::APPEAR_ENTERWORLD : CECElsePlayer::APPEAR_RUNINTOVIEW;
+    /// ```
+    ///
+    /// (`EC_ManPlayer.cpp:1845`.) Ou seja: 17 é para quem **surgiu** — entrou no jogo, se
+    /// teleportou; 12 é para quem **veio andando**. Usar 17 no streaming faria cada
+    /// jogador que se aproximasse aparecer com o efeito de teleporte.
+    ///
+    /// Quem sai usa `OBJECT_LEAVE_SLICE` (13) — o cliente roteia pelo id
+    /// (`ISPLAYERID`/`ISNPCID`, `EC_GameDataPrtc.cpp:891-899`), então o mesmo comando
+    /// serve para jogador e para NPC.
+    pub fn player_enter_slice(role_id: RoleId, pos: Vector3, dir: u8, sec_level: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(crate::opcodes::CMD_S2C_PLAYER_ENTER_SLICE);
+        Self::info_player_1(stream, role_id, pos, dir, sec_level)
+    }
+
+    /// O corpo comum de `PLAYER_ENTER_WORLD` e `PLAYER_ENTER_SLICE`: a `info_player_1`,
+    /// escrita **depois** do cabeçalho que o chamador já pôs no `stream`.
+    ///
+    /// O cabeçalho fica com quem chama, e não aqui, de propósito: é assim que
+    /// `subcomandos_s2c_contra_o_ir` consegue ler, de cada codificador, qual id ele
+    /// escreve — a rede que pega "mandei o comando errado" antes do jogo.
+    fn info_player_1(
+        mut stream: OctetsStream,
+        role_id: RoleId,
+        pos: Vector3,
+        dir: u8,
+        sec_level: u8,
+    ) -> Self {
         stream.write_i32_le(role_id);          // int cid (4B)
         stream.write_f32_le(pos.x);            // A3DVECTOR3 pos (12B)
         stream.write_f32_le(pos.y);
@@ -1168,6 +1288,75 @@ impl S2CGamedataSend {
         stream.write_u16_le(0);                // seed (2B)
         stream.write_u8(dir);                  // dir (1B)
         stream.write_u32_le(0);                // state (4B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `MATTER_ENTER_WORLD` (18) — um recurso do mapa (minério, erva, tronco) entrou no
+    /// campo de visão.
+    ///
+    /// `S2C::cmd_matter_enter_world` é só uma `info_matter` (`EC_GPDataType.h:784-794`),
+    /// e o servidor original monta exatamente os mesmos campos, nesta ordem
+    /// (`INFO::matter_info_1`, `cgame/common/protocol.h:86-96`, escrita em
+    /// `protocol_imp.h:363-373`):
+    ///
+    /// ```text
+    /// int mid, int tid, A3DVECTOR3 pos,
+    /// unsigned char dir0, dir1, rad, state, value
+    /// ```
+    ///
+    /// **25 bytes**, sem alinhamento: o cabeçalho do cliente está inteiro dentro de um
+    /// `#pragma pack(1)` (`EC_GPDataType.h:563`), e é por isso que `sizeof` bate com a
+    /// soma dos campos. Um byte a mais ou a menos e o comando é descartado em silêncio.
+    ///
+    /// # O que vai em cada campo, e por quê
+    ///
+    /// - `dir0`/`dir1` são o eixo de rotação comprimido por `a3d_CompressDir`
+    ///   (`A3DVectorComp.cpp:210-236`), e `rad` é o ângulo em 1/255 de volta. `(0, 0, 0)`
+    ///   devolve o eixo Y com ângulo zero — a peça em pé, sem giro
+    ///   (`a3d_DecompressDir(0,0) = (0,1,0)`), que é o que se quer sem dado de rotação: o
+    ///   `npcgen.data` guarda a direção da **área**, não da instância.
+    /// - `state` é máscara: bit 0 = objeto de modelo dinâmico (prédio, `.ecm`/`.gfx`
+    ///   carregado por caminho), bit 1 = mina de espírito de monstro
+    ///   (`CECMatter::Init`, `EC_Matter.cpp:167-168`). Zero é o recurso comum, que faz o
+    ///   cliente ler o modelo do `elements.data` dele — o caminho certo para minério e
+    ///   erva.
+    /// - `value` só é lido quando o bit 0 de `state` está ligado e o arquivo é `.gfx`
+    ///   (`LoadGFXFromFile(szFile, Info.value)`); para recurso comum é ignorado.
+    ///
+    /// A saída não é este par: matéria sai pelo `OUT_OF_SIGHT_LIST` (34) — ver
+    /// [`Self::out_of_sight_list`].
+    pub fn matter_enter_world(mid: i32, tid: i32, pos: Vector3) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(crate::opcodes::CMD_S2C_MATTER_ENTER_WORLD);
+        stream.write_i32_le(mid);              // int mid (4B)
+        stream.write_i32_le(tid);              // int tid (4B)
+        stream.write_f32_le(pos.x);            // A3DVECTOR3 pos (12B)
+        stream.write_f32_le(pos.y);
+        stream.write_f32_le(pos.z);
+        stream.write_u8(0);                    // dir0 — eixo Y comprimido
+        stream.write_u8(0);                    // dir1
+        stream.write_u8(0);                    // rad — sem giro
+        stream.write_u8(0);                    // state — recurso comum
+        stream.write_u8(0);                    // value — só usado por modelo dinâmico
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `OUT_OF_SIGHT_LIST` (34) — a lista do que saiu do campo de visão.
+    ///
+    /// `S2C::cmd_out_of_sight_list` (`EC_GPDataType.h:1592-1596`) é `unsigned int uCount`
+    /// seguido dos ids. O cliente roteia **cada id** pela família dele — jogador, NPC ou
+    /// matéria (`EC_GameDataPrtc.cpp:1056-1071`).
+    ///
+    /// É o único caminho de saída que a matéria tem: o `OBJECT_LEAVE_SLICE` (13) só trata
+    /// `ISPLAYERID` e `ISNPCID` (`:891-899`), e um id de matéria mandado por ele não faz
+    /// nada — nem erro, nem efeito.
+    pub fn out_of_sight_list(ids: &[i32]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(crate::opcodes::CMD_S2C_OUT_OF_SIGHT_LIST);
+        stream.write_u32_le(ids.len() as u32);
+        for id in ids {
+            stream.write_i32_le(*id);
+        }
         Self { data: stream.into_bytes().to_vec() }
     }
 

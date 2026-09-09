@@ -22,14 +22,16 @@ use crate::session::ClientSession;
 use crate::uplink::{BusUplink, EnvioAoCliente};
 use pw_bus::BusMessage;
 
-/// Um jogador com sessão aberta neste link, visível pra `PLAYER_ENTER_WORLD`/
-/// `PLAYER_LEAVE_WORLD` — ver `LinkGateway::jogadores_visiveis`.
-struct JogadorVisivel {
-    pos: Vector3,
-    dir: u8,
-    sec_level: u8,
-    envio: EnvioAoCliente,
-}
+/// Um jogador com sessão aberta neste link: o canal direto por processo para a sessão
+/// dele.
+///
+/// Já foi a base da visibilidade entre jogadores, e guardava posição, direção e nível de
+/// GM para montar o `PLAYER_ENTER_WORLD` de cada um. Desde 2026-09-09 a visibilidade é do
+/// mundo, com raio e streaming (`BusServer::atualizar_visiveis`), e os três campos foram
+/// embora com ela — o mundo tem a posição de verdade, atualizada a cada movimento.
+///
+/// O que sobrou é o canal da fala, que é global e não depende de distância — ver
+/// `LinkGateway::broadcast_para_todos`.
 
 pub struct LinkGateway {
     pub realm_id: String,
@@ -76,7 +78,7 @@ pub struct LinkGateway {
     /// que hoje só ecoa pro remetente — ver `InboundPacket::PlayerMove`). Migrar isto
     /// pra dentro do `pw-gs`, reaproveitando a grade espacial que já existe pra
     /// NPC/monstro, é o passo natural quando a população justificar o custo.
-    jogadores_visiveis: RwLock<HashMap<i32, JogadorVisivel>>,
+    jogadores_visiveis: RwLock<HashMap<i32, EnvioAoCliente>>,
 }
 
 impl LinkGateway {
@@ -190,8 +192,8 @@ impl LinkGateway {
     /// grade existir.
     async fn broadcast_para_todos(&self, pacote: OutboundPacket) {
         let visiveis = self.jogadores_visiveis.read().await;
-        for jogador in visiveis.values() {
-            let _ = jogador.envio.try_send(pacote.clone());
+        for envio in visiveis.values() {
+            let _ = envio.try_send(pacote.clone());
         }
     }
 
@@ -338,18 +340,12 @@ impl LinkGateway {
             uplink.desregistrar(roleid).await;
         }
 
-        // Espelho da entrada: some da lista de quem os outros veem, e avisa quem ainda
-        // está online (`PLAYER_LEAVE_WORLD`, 19) pra tirar o avatar dele da tela deles.
-        // Independe do `uplink` — a visibilidade entre jogadores é local a este link,
-        // não passa pelo barramento (ver `LinkGateway::jogadores_visiveis`).
+        // Espelho da entrada: some da lista do canal de fala. O `PLAYER_LEAVE_WORLD` (19)
+        // que tira o avatar da tela dos outros **não sai daqui** — sai do mundo, que é
+        // quem sabe para quem este jogador era visível (`BusServer::tirar_da_vista_de_todos`,
+        // no `PlayerLogout` que o `uplink.enviar` acima acabou de mandar).
         if let Some(roleid) = session.role_id {
-            let mut visiveis = self.jogadores_visiveis.write().await;
-            if visiveis.remove(&roleid).is_some() {
-                let pacote = OutboundPacket::GamedataSend(S2CGamedataSend::player_leave_world(roleid));
-                for outro in visiveis.values() {
-                    let _ = outro.envio.try_send(pacote.clone());
-                }
-            }
+            self.jogadores_visiveis.write().await.remove(&roleid);
         }
 
         info!("Sessão #{} ({}) finalizada.", session_id, client_ip);
@@ -508,6 +504,12 @@ impl LinkGateway {
                         create_role.cls,
                         create_role.gender,
                         create_role.custom_appearance,
+                        // Os atributos iniciais da classe, do `ptemplate.conf` do realm.
+                        // Sem o arquivo vai `None`, e o banco usa o padrão da coluna.
+                        self.data_manager
+                            .base_das_classes
+                            .get(create_role.cls as i32)
+                            .map(|b| b.atributos_iniciais()),
                     )
                     .await;
 
@@ -853,12 +855,14 @@ impl LinkGateway {
 
                     // 9. Envia OWN_ITEM_INFO (Comando 40) para cada item
                     //
-                    // A ficha da arma sai do `elements.data` (`data_manager.armas`). Antes
-                    // era montada por uma tabela de quatro ids escrita no codificador, com
-                    // um genérico que declarava toda arma desconhecida como de longo
-                    // alcance — e o cliente recusava a arma por falta de munição. Ver
+                    // A ficha sai do `elements.data` (`data_manager.equipamentos`), seja
+                    // arma, armadura ou acessório. Antes era montada por uma tabela de
+                    // quatro ids escrita no codificador, com um genérico que declarava
+                    // toda arma desconhecida como de longo alcance — e o cliente recusava
+                    // a arma por falta de munição; e armadura ia sem bloco nenhum, o que
+                    // a recusaria pela máscara de classes zerada. Ver
                     // `S2CGamedataSend::item_info`.
-                    let armas = &self.data_manager.armas;
+                    let equipamentos = &self.data_manager.equipamentos;
                     for (onde, lista) in [(0u8, &details.inventory), (1u8, &details.equipment)] {
                         for item in lista {
                             tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
@@ -869,7 +873,7 @@ impl LinkGateway {
                                 item.max_durability as i32 * 100,
                                 item.count,
                                 &item.octets,
-                                armas.get(&item.item_id).map(pw_core::FichaDaArma::from),
+                                equipamentos.ficha(item.item_id),
                             ))).await?;
                         }
                     }
@@ -929,40 +933,28 @@ impl LinkGateway {
                     tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::double_exp_time(0, 0))).await?;
                     tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::pariah_time(0))).await?;
 
-                    // 10.7 Outros jogadores online (visibilidade mútua) — PLAYER_ENTER_WORLD
-                    // (17) pros dois lados. Sem isto, `QUERY_PLAYER_INFO_1` (67) nunca tinha o
-                    // que responder: o cliente só pergunta a barra de vida de quem ele já VÊ
-                    // na tela, e nada nunca mandava o comando que faz um avatar aparecer —
-                    // achado em 2026-09-04 junto com o layout errado de `player_enter_world`
-                    // (ver `docs/ESTADO_E_RETOMADA.md`, item 15, e o comentário de
-                    // `LinkGateway::jogadores_visiveis` pras limitações sabidas).
-                    let dir_jogador = 0u8; // direção não é rastreada por personagem ainda
-                    {
-                        let mut visiveis = self.jogadores_visiveis.write().await;
-                        info!(
-                            "visibilidade: personagem {} entrando — {} outro(s) já em jogadores_visiveis: {:?}",
-                            details.id, visiveis.len(), visiveis.keys().collect::<Vec<_>>()
-                        );
-                        for (outro_id, outro) in visiveis.iter() {
-                            // Eu vejo quem já estava no mundo.
-                            tx.send(OutboundPacket::GamedataSend(sub.player_enter_world(
-                                *outro_id, outro.pos, outro.dir, outro.sec_level,
-                            ))).await?;
-                            // Quem já estava me vê — canal direto pro `tx` da sessão dele,
-                            // sem passar pelo barramento (as duas sessões estão neste mesmo
-                            // processo). `try_send` porque uma falha aqui é problema da
-                            // sessão dele, não motivo pra derrubar a minha.
-                            let _ = outro.envio.try_send(OutboundPacket::GamedataSend(
-                                sub.player_enter_world(details.id, details.position, dir_jogador, session.sec_level),
-                            ));
-                        }
-                        visiveis.insert(details.id, JogadorVisivel {
-                            pos: details.position,
-                            dir: dir_jogador,
-                            sec_level: session.sec_level,
-                            envio: tx.clone(),
-                        });
-                    }
+                    // 10.7 A visibilidade entre jogadores **não sai mais daqui**.
+                    //
+                    // Saía: este passo mandava `PLAYER_ENTER_WORLD` (17) mútuo entre todo
+                    // mundo do link no momento do login, e o encerramento da sessão mandava
+                    // `PLAYER_LEAVE_WORLD` (19). Uma vez só, sem raio e sem streaming —
+                    // exatamente o que os NPCs tinham antes do item 39. Dois jogadores que
+                    // se afastassem além do raio ativo do cliente sumiam um para o outro
+                    // para sempre, porque o cliente descarta o que sai do raio e nada
+                    // reenviava (2026-09-09).
+                    //
+                    // Agora quem manda é o mundo, que tem a grade espacial e recalcula a
+                    // cada movimento — ver `BusServer::atualizar_visiveis`. Ele usa
+                    // `PLAYER_ENTER_SLICE` (12), não o 17: o cliente escolhe o efeito de
+                    // aparição pelo comando (`EC_ManPlayer.cpp:1845`), e quem vem andando
+                    // não deve surgir com efeito de teleporte.
+                    //
+                    // A lista continua existindo para o canal de fala
+                    // (`broadcast_para_todos`), que é global e não depende de distância.
+                    self.jogadores_visiveis
+                        .write()
+                        .await
+                        .insert(details.id, tx.clone());
 
                     // GetUIConfig_Re — envio proativo, protegido por `session.ui_config_enviado`.
                     //
@@ -1394,15 +1386,8 @@ impl LinkGateway {
                 let role_id = session.role_id.unwrap_or(0);
                 let _ = self.char_repo.update_position(role_id, &move_pkt.position).await;
 
-                // Atualiza a posição guardada em `jogadores_visiveis` — sem isto, quem
-                // entra depois via `PLAYER_ENTER_WORLD` via um jogador parado na posição
-                // de quando ele entrou no mundo, não na posição atual.
-                {
-                    let mut visiveis = self.jogadores_visiveis.write().await;
-                    if let Some(jogador) = visiveis.get_mut(&role_id) {
-                        jogador.pos = move_pkt.position;
-                    }
-                }
+                // A posição não é mais guardada aqui: quem apresenta um jogador aos
+                // outros é o mundo, que já tem a posição de verdade na grade espacial.
 
                 let move_broadcast = OutboundPacket::PlayerMoveBroadcast(S2CPlayerMoveBroadcast {
                     role_id,

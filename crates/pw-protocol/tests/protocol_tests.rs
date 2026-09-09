@@ -234,7 +234,10 @@ fn test_gamedatasend_s2c_subcommands() {
         velocidade_de_ataque: 0,
         alcance: 3.0,
     };
-    let arma = S2CGamedataSend::item_info(1, 0, 2251, 2800, 2800, 1, &[], Some(ficha));
+    let arma = S2CGamedataSend::item_info(
+        1, 0, 2251, 2800, 2800, 1, &[],
+        Some(pw_core::FichaDoEquipamento::Arma(ficha)),
+    );
     assert_eq!(u16::from_le_bytes([arma.data[0], arma.data[1]]), 40);
 
     // Cabeçalho do comando: 2 + 1 + 1 + 4 + 4 + 4 + 4 + 2 = 22 bytes, depois o tamanho do
@@ -263,6 +266,104 @@ fn test_gamedatasend_s2c_subcommands() {
     // Sem ficha, o comando vai sem bloco nenhum — melhor do que inventar requisito.
     let sem = S2CGamedataSend::item_info(0, 3, 1796, 0, 0, 10, &[], None);
     assert_eq!(sem.data.len(), 24, "cabeçalho de 22 mais o tamanho do bloco em zero");
+}
+
+/// A armadura e o acessório têm o mesmo cabeçalho da arma e essências próprias — e sem
+/// bloco nenhum o cliente recusa a peça para todas as classes.
+///
+/// Referências: `generate_armor` e `generate_decoration`
+/// (`EvolvedPWServer/cgame/gs/template/generate_item_temp.h:490-556` e `772-830`) do lado
+/// do servidor original; `IVTR_ESSENCE_ARMOR` e `IVTR_ESSENCE_DECORATION`
+/// (`EC_IvtrTypes.h:244-260`) do lado do cliente.
+#[test]
+fn o_bloco_da_armadura_e_o_do_acessorio_saem_com_a_essencia_da_familia_certa() {
+    // Cabeçalho do comando (22) + o tamanho do bloco (2).
+    const BLOCO: usize = 22 + 2;
+    // Dentro do bloco: 6 shorts de requisito (12) + 2 ints de durabilidade (8) + o
+    // tamanho da essência (2) + os 2 bytes da marca do fabricante = 24.
+    const ESSENCIA: usize = BLOCO + 24;
+
+    let ficha = pw_core::FichaDaArmadura {
+        classes_permitidas: 767,
+        nivel_exigido: 3,
+        forca_exigida: 7,
+        vitalidade_exigida: 11,
+        agilidade_exigida: 13,
+        energia_exigida: 17,
+        defesa: 41,
+        evasao: 5,
+        mp_extra: 60,
+        hp_extra: 90,
+        resistencias: [1, 2, 3, 4, 5],
+    };
+    let p = S2CGamedataSend::item_info(
+        1, 4, 10001, 500, 700, 1, &[],
+        Some(pw_core::FichaDoEquipamento::Armadura(ficha)),
+    );
+    let s16 = |d: &[u8], off: usize| i16::from_le_bytes([d[off], d[off + 1]]);
+    let s32 = |d: &[u8], off: usize| {
+        i32::from_le_bytes([d[off], d[off + 1], d[off + 2], d[off + 3]])
+    };
+
+    assert_eq!(u16::from_le_bytes([p.data[0], p.data[1]]), 40);
+    assert_eq!(s16(&p.data, BLOCO), 3, "nível exigido");
+    assert_eq!(
+        s16(&p.data, BLOCO + 2),
+        767,
+        "máscara de classes — é o campo que decide se a peça aparece vermelha"
+    );
+    assert_eq!(s16(&p.data, BLOCO + 4), 7, "força");
+    // A ordem do original: vitalidade **antes** de agilidade.
+    assert_eq!(s16(&p.data, BLOCO + 6), 11, "vitalidade");
+    assert_eq!(s16(&p.data, BLOCO + 8), 13, "agilidade");
+    assert_eq!(s16(&p.data, BLOCO + 10), 17, "energia");
+    assert_eq!(s32(&p.data, BLOCO + 12), 500, "durabilidade atual");
+    assert_eq!(s32(&p.data, BLOCO + 16), 700, "durabilidade máxima");
+    assert_eq!(
+        s16(&p.data, BLOCO + 20),
+        36,
+        "sizeof(IVTR_ESSENCE_ARMOR): o cliente tem um ASSERT em cima disto"
+    );
+
+    assert_eq!(s32(&p.data, ESSENCIA), 41, "defense");
+    assert_eq!(s32(&p.data, ESSENCIA + 4), 5, "armor (evasão)");
+    assert_eq!(s32(&p.data, ESSENCIA + 8), 60, "mp_enhance");
+    assert_eq!(s32(&p.data, ESSENCIA + 12), 90, "hp_enhance");
+    for n in 0..5 {
+        assert_eq!(
+            s32(&p.data, ESSENCIA + 16 + n * 4),
+            n as i32 + 1,
+            "resistance[{n}]"
+        );
+    }
+    // Depois da essência: buracos (2), máscara de cravos (2), propriedades (4).
+    assert_eq!(p.data.len(), ESSENCIA + 36 + 8);
+
+    // O acessório: mesmos 36 bytes, ordem diferente. Trocar as duas essências passaria
+    // por qualquer teste de tamanho.
+    let dec = pw_core::FichaDeDecoracao {
+        classes_permitidas: 1023,
+        nivel_exigido: 20,
+        forca_exigida: 0,
+        vitalidade_exigida: 0,
+        agilidade_exigida: 0,
+        energia_exigida: 0,
+        dano: 7,
+        dano_magico: 9,
+        defesa: 12,
+        evasao: 2,
+        resistencias: [10, 20, 30, 40, 50],
+    };
+    let p = S2CGamedataSend::item_info(
+        1, 6, 20001, 100, 100, 1, &[],
+        Some(pw_core::FichaDoEquipamento::Decoracao(dec)),
+    );
+    assert_eq!(s16(&p.data, BLOCO + 20), 36, "sizeof(IVTR_ESSENCE_DECORATION)");
+    assert_eq!(s32(&p.data, ESSENCIA), 7, "damage vem primeiro no acessório");
+    assert_eq!(s32(&p.data, ESSENCIA + 4), 9, "magic_damage");
+    assert_eq!(s32(&p.data, ESSENCIA + 8), 12, "defense");
+    assert_eq!(s32(&p.data, ESSENCIA + 12), 2, "armor");
+    assert_eq!(s32(&p.data, ESSENCIA + 16), 10, "resistance[0]");
 }
 
 #[test]
@@ -492,4 +593,64 @@ fn test_host_skill_attacked_tem_19_bytes_e_nao_gasta_equipamento() {
     assert_eq!(i32_em(15), 0, "attack_flag");
     assert_eq!(p.data[19], 30, "speed");
     assert_eq!(p.data[20], 0, "section");
+}
+
+/// `MATTER_ENTER_WORLD` (18) tem 25 bytes de payload, e o número não é escolha nossa.
+///
+/// `S2C::cmd_matter_enter_world` é uma `info_matter` (`EC_GPDataType.h:784-794`) dentro de
+/// um `#pragma pack(1)` (`:563`), idêntica à `INFO::matter_info_1` do servidor original
+/// (`cgame/common/protocol.h:86-96`). Um byte a mais ou a menos e o cliente descarta o
+/// comando **em silêncio** — foi o que escondeu quatro defeitos seguidos (item 46).
+#[test]
+fn matter_enter_world_tem_vinte_e_cinco_bytes_e_nasce_em_pe() {
+    let p = S2CGamedataSend::matter_enter_world(
+        0xC000_1234u32 as i32,
+        8582,
+        pw_core::Vector3::new(-2412.94, 246.05, 4347.46),
+    );
+
+    assert_eq!(u16::from_le_bytes([p.data[0], p.data[1]]), 18);
+    assert_eq!(
+        p.data.len(),
+        2 + 25,
+        "cabeçalho de 2 mais os 25 bytes de info_matter: 4 + 4 + 12 + 5"
+    );
+
+    let s32 = |off: usize| i32::from_le_bytes([p.data[off], p.data[off + 1], p.data[off + 2], p.data[off + 3]]);
+    assert_eq!(s32(2), 0xC000_1234u32 as i32, "mid — os dois bits altos são ISMATTERID");
+    assert_eq!(s32(6), 8582, "tid");
+
+    // dir0, dir1, rad, state, value — os cinco últimos bytes.
+    //
+    // `a3d_DecompressDir(0, 0)` devolve o eixo Y (`A3DVectorComp.cpp:238-249`), e `rad`
+    // zero não gira: a peça nasce em pé, sem rotação. `state` zero é recurso comum — o bit
+    // 0 marcaria objeto de modelo dinâmico e o 1, mina de espírito
+    // (`EC_Matter.cpp:167-168`), e nenhum dos dois é minério.
+    assert_eq!(&p.data[22..27], &[0, 0, 0, 0, 0]);
+}
+
+/// `OUT_OF_SIGHT_LIST` (34) é `unsigned int uCount` e os ids.
+///
+/// É o único caminho de saída da matéria: o `OBJECT_LEAVE_SLICE` (13) só trata
+/// `ISPLAYERID` e `ISNPCID` (`EC_GameDataPrtc.cpp:891-899`), e um id de matéria mandado
+/// por ele não faz nada — nem erro, nem efeito.
+#[test]
+fn out_of_sight_list_leva_a_contagem_antes_dos_ids() {
+    let ids = [0xC000_0001u32 as i32, 0xC000_0002u32 as i32, 0xC000_0003u32 as i32];
+    let p = S2CGamedataSend::out_of_sight_list(&ids);
+
+    assert_eq!(u16::from_le_bytes([p.data[0], p.data[1]]), 34);
+    assert_eq!(u32::from_le_bytes([p.data[2], p.data[3], p.data[4], p.data[5]]), 3);
+    assert_eq!(p.data.len(), 2 + 4 + 3 * 4);
+    for (n, esperado) in ids.iter().enumerate() {
+        let off = 6 + n * 4;
+        assert_eq!(
+            i32::from_le_bytes([p.data[off], p.data[off + 1], p.data[off + 2], p.data[off + 3]]),
+            *esperado
+        );
+    }
+
+    // Lista vazia é comando válido, e o servidor não deve mandá-la — mas se mandar, o
+    // cliente lê zero e não faz nada.
+    assert_eq!(S2CGamedataSend::out_of_sight_list(&[]).data.len(), 6);
 }

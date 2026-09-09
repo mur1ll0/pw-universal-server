@@ -5214,6 +5214,260 @@ Ordem combinada com o Murillo:
 
 
 
+41. **Sessão 2026-09-09 (continuação 2): a fila do item 40, do começo ao fim — armadura,
+    jogador, matéria, nível de habilidade e atributos iniciais. E três correções à própria
+    fila.**
+
+    Os cinco itens da fila b do item 40 estão feitos. Três deles se mostraram diferentes do
+    que a fila dizia ao serem investigados, e a diferença está registrada em cada um.
+
+    ### a. A armadura ia aparecer vermelha, e por um motivo pior do que o previsto
+
+    Só **arma** recebia bloco de dados no `OWN_ITEM_INFO` (40); armadura e acessório iam
+    sem bloco. O item 40 previu a consequência certa — máscara de classes zerada, peça
+    recusada para todas as classes — mas errou o caminho:
+
+    > "o cliente cai no `CECIvtrArmor::DefaultInfo` (`EC_IvtrArmor.cpp:188-196`), que
+    > **não** preenche `m_iProfReq`"
+
+    **`DefaultInfo()` não é chamado.** O único `DefaultInfo()` do `ElementClient` inteiro
+    está em `EC_IvtrFashion.cpp:83`; para armadura o método existe e é morto. Sem bloco,
+    `CECIvtrEquip::SetItemInfo` retorna na primeira linha (`EC_IvtrEquip.cpp:178-181`) e
+    **nada** é preenchido — não só a profissão: nível, força, reputação e durabilidade
+    também ficam no zero do construtor (`:74`). E `CanUseEquipment`
+    (`EC_HostPlayer.cpp:4953-4959`) faz, para `ICID_ARMOR` e `ICID_DECORATION`:
+
+    ```cpp
+    if (!(pEquip->GetProfessionRequirement() & (1 << m_iProfession)))
+        iReason = 3;
+    ```
+
+    Zero recusa todas as classes. Era a Varinha de novo, pela outra ponta.
+
+    A segunda correção à fila: ela dizia que o `id_sub_type` precisava viajar, "para o
+    cliente saber em que slot a peça entra". **Não precisa, e não há onde.** O cliente lê o
+    subtipo do `elements.data` dele, pelo id do item, no próprio construtor
+    (`EC_IvtrArmor.cpp:66-73`: `m_pDBSubType = get_data_ptr(m_pDBEssence->id_sub_type)`, e
+    daí `m_i64EquipMask = m_pDBSubType->equip_mask`). A `IVTR_ESSENCE_ARMOR` não tem campo
+    de subtipo, e o `equip_mask` que o servidor original monta em `generate_armor` fica no
+    `item_data`, registro interno que não sai na rede.
+
+    **A correção.** Módulo novo `pw-data-loader/src/armaduras.rs`, irmão do `armas.rs`: lê
+    `ARMOR_ESSENCE` e `DECORATION_ESSENCE`, e `TabelasDeEquipamento` reúne as três famílias
+    com a busca por id (`ficha(item_id)`) — um id vive em uma tabela só, e o teste
+    `as_tres_familias_sao_conjuntos_disjuntos` cobra isso do arquivo do realm.
+
+    O `item_info` passou a receber `pw_core::FichaDoEquipamento`, um enum de três variantes.
+    O cabeçalho é comum às três — é a `prerequisition` do original
+    (`gs/item/equip_item.h:230-238`), com **vitalidade antes de agilidade** e a máscara de
+    classes truncada a 16 bits pelo próprio original (`character_combo_id & 0xFFFF`). O que
+    muda é a essência:
+
+    | família | essência | bytes | campos |
+    | :--- | :--- | ---: | :--- |
+    | arma | `IVTR_ESSENCE_WEAPON` | 44 | tipo, atraso, classe, nível, munição, danos, velocidade, alcances |
+    | armadura | `IVTR_ESSENCE_ARMOR` | 36 | defesa, evasão, +MP, +HP, resistência[5] |
+    | acessório | `IVTR_ESSENCE_DECORATION` | 36 | **dano, dano mágico**, defesa, evasão, resistência[5] |
+
+    As duas últimas têm o mesmo tamanho e ordem diferente: trocá-las passa por qualquer
+    teste de tamanho e só aparece em jogo, como número errado no tooltip. O teste
+    `o_bloco_da_armadura_e_o_do_acessorio_saem_com_a_essencia_da_familia_certa` confere
+    campo a campo, nas duas.
+
+    A autoridade do layout é `generate_armor` e `generate_decoration`
+    (`EvolvedPWServer/cgame/gs/template/generate_item_temp.h:490-556` e `772-830`), que
+    montam byte a byte o que este código reproduz.
+
+    ### b. A visibilidade entre jogadores era de uma vez só, como a dos NPCs
+
+    Confirmado como o item 40 descreveu: o `gateway.rs` mandava `PLAYER_ENTER_WORLD` mútuo
+    no login e `PLAYER_LEAVE_WORLD` no encerramento da sessão, sem raio e sem streaming.
+    Dois jogadores que se afastassem além do raio ativo do cliente sumiam um para o outro
+    para sempre.
+
+    Passou para `BusServer::atualizar_visiveis`, junto com NPC, monstro e — agora — matéria.
+    Três coisas mereceram cuidado:
+
+    **1. O comando de entrada não é o mesmo, e não é o 17.** Jogador entra com
+    `PLAYER_ENTER_SLICE` (12). A struct é idêntica à do `PLAYER_ENTER_WORLD` (17) — o IR dá
+    `S2C::info_player_1` para os dois — mas o cliente escolhe o **efeito de aparição** pelo
+    comando:
+
+    ```cpp
+    int iAppearFlag = (iCmd == S2C::PLAYER_ENTER_WORLD)
+        ? CECElsePlayer::APPEAR_ENTERWORLD : CECElsePlayer::APPEAR_RUNINTOVIEW;
+    ```
+
+    (`EC_ManPlayer.cpp:1845`.) O 17 é para quem **surgiu**; o 12, para quem **veio
+    andando**. Usar 17 no streaming faria cada jogador que se aproximasse aparecer com
+    efeito de teleporte.
+
+    **2. A visibilidade é mútua, e quem se move escreve pelos dois.** Se eu ando na direção
+    de alguém parado, só a minha atualização roda. Então `atualizar_visiveis` manda o
+    comando ao outro jogador **e** mexe no `visiveis` dele (`passou_a_ver` /
+    `deixou_de_ver`), em vez de esperar que a atualização dele chegue à mesma conclusão. A
+    distância é simétrica e o raio é o mesmo, então as duas visões concordam — e por isso
+    jogador **não** entra no teto de `TETO_DE_VISIVEIS`: cortar um jogador por causa de uma
+    multidão de monstros quebraria essa simetria.
+
+    **3. A saída do mundo saiu do link.** `BusServer::tirar_da_vista_de_todos`, chamado no
+    `LOGOUT` e no `PlayerLogout` do barramento, manda `PLAYER_LEAVE_WORLD` (19) — e não
+    `OBJECT_LEAVE_SLICE` (13): quem saiu do jogo não saiu do alcance, e o cliente distingue
+    os dois (`bExit` em `CECPlayerMan::ElsePlayerLeave`).
+
+    O `PlayerEntity` ganhou `sec_level`, lido uma vez no login
+    (`CharacterRepository::nivel_de_gm`): ele viaja no `level2` da `info_player_1` e acende
+    o `STATE_GAMEMASTER` (`0x4000`), que é o que põe a coroa sobre o avatar. O
+    `jogadores_visiveis` do `gateway.rs` encolheu para o que ainda faz: o canal direto por
+    processo que a **fala** usa, que é global e não depende de distância.
+
+    ### c. Matéria: 5.125 recursos que nunca saíram do arquivo
+
+    Ninguém mandava `MATTER_ENTER_WORLD` (18). A terceira correção à fila: o tipo no
+    `npcgen.rs:426` é `SpawnType::ResourceMine`, não `SpawnType::Matter` — e o id já vem
+    montado com `0xC0000000` (`:422`), que é exatamente o que `ISMATTERID` do cliente pede
+    (`EC_GPDataType.h:27`).
+
+    `MatterEntity` nova no mundo, populada de `init_spawns`; o log da subida agora diz
+    **"21846 monstros, 3911 NPCs e 5125 recursos de mapa"**.
+
+    Duas coisas que a matéria não compartilha com NPC:
+
+    - **Sai por outro comando.** O `OBJECT_LEAVE_SLICE` (13) só trata `ISPLAYERID` e
+      `ISNPCID` (`EC_GameDataPrtc.cpp:891-899`) — um id de matéria mandado por ele não faz
+      nada, nem erro nem efeito. Matéria sai pelo `OUT_OF_SIGHT_LIST` (34), a lista que o
+      cliente separa id a id pelas três máscaras (`:1056-1071`).
+    - **Tem orçamento de fila próprio** (`TETO_DE_MATERIA = 40`, contra os 80 de criatura).
+      Num campo de mineração, um teto só faria as pedras expulsarem os NPCs.
+
+    O comando tem **25 bytes** de payload: `int mid, int tid, A3DVECTOR3 pos, unsigned char
+    dir0, dir1, rad, state, value` — a `info_matter` (`EC_GPDataType.h:784-794`), idêntica à
+    `INFO::matter_info_1` do original (`cgame/common/protocol.h:86-96`). Sem alinhamento,
+    porque o cabeçalho do cliente está inteiro dentro de um `#pragma pack(1)` (`:563`).
+
+    `dir0 = dir1 = rad = 0` é a peça em pé sem giro (`a3d_DecompressDir(0,0)` devolve o eixo
+    Y, `A3DVectorComp.cpp:238-249`); `state = 0` é recurso comum, que faz o cliente ler o
+    modelo do `elements.data` dele — o bit 0 marcaria objeto de modelo dinâmico e o bit 1,
+    mina de espírito (`EC_Matter.cpp:167-168`).
+
+    ### d. O nível da habilidade saiu do 1 fixo
+
+    `PlayerEntity` ganhou `habilidades: HashMap<u32, u8>`, preenchido do
+    `character_skills` que o login já carrega. O `CAST_SKILL` do cliente não manda o nível —
+    quem tem de saber é o servidor — e ir ao banco a cada conjuração estava fora de questão.
+
+    `NIVEL_DA_HABILIDADE` virou `NIVEL_MINIMO_DA_HABILIDADE`: agora é só o piso de quem
+    conjura o que não aprendeu, não o nível de todo mundo. Os quatro pontos que o usavam
+    (custo de mana, dano contra monstro, cura e dano entre jogadores) passaram a usar
+    `nivel_da_habilidade(&jogador, skill_id)`.
+
+    ### e. Personagem novo nasce com os atributos da classe
+
+    O `INSERT` do `create_character` **não mencionava** `strength`, `agility`, `vitality` e
+    `energy`: o banco usava o `DEFAULT 10` do esquema
+    (`specs/01_DATABASE_SCHEMA_POSTGRES.sql:103-106`) e toda classe nascia 10/10/10/10. Não
+    era cosmético — os quatro entram na vida e na mana máximas, na precisão e na evasão de
+    `PlayerEntity::do_personagem`.
+
+    O `create_character` recebeu `Option<pw_core::AtributosIniciais>`; o `gateway.rs` passa
+    o que o `ptemplate.conf` do realm diz para a classe. Sem o arquivo vai `None` e continua
+    valendo o padrão da coluna — menos errado do que inventar um número por classe no
+    repositório. Medido no `ptemplate.conf` do 155BR:
+
+    | seção | classe | força | agi | vit | energia |
+    | :--- | :--- | ---: | ---: | ---: | ---: |
+    | `[SWORDSMAN]` | Blademaster | 15 | 10 | 20 | 5 |
+    | `[ORGE]` | Barbarian | 15 | 5 | 25 | 5 |
+    | `[ASN]` | Assassin | 5 | 15 | 8 | 22 |
+    | `[ANGEL]` | Cleric | 10 | 10 | 10 | 20 |
+
+    Os personagens que já existem precisam de migração:
+    `scripts/2026_09_09_atributos_iniciais_por_classe.sql`. Ele só toca em quem **ainda está
+    no ponto de partida** — nível 1, sem pontos livres, e com os quatro exatamente em 10 —
+    porque quem distribuiu pontos pode ter chegado a 10 em algum deles de propósito.
+
+    ### f. Um achado que não estava na fila: o `elements.data` do 155BR decodifica pela
+    metade
+
+    Ao procurar o `MINE_ESSENCE` para a matéria, ele veio **vazio**. Medindo os dois
+    arquivos com `load_elements_data_auto`:
+
+    | realm | versão | tabelas | vazias | `MINE_ESSENCE` | `FASHION_ESSENCE` | `PLAYER_ACTION_INFO_CONFIG` |
+    | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+    | `realm_155` | **159** | 234 | 16 | 1565 | 3064 | 1354 |
+    | `realm_155BR` | **156** | 231 | **132** | 0 | 0 | **7736** |
+
+    O realm que o docker de teste serve é o **155BR**, e ele desalinha no
+    `PLAYER_ACTION_INFO_CONFIG` (índice 73): 7.736 registros onde o `walk_report` do arquivo
+    de referência mostra 162, e daí em diante quase tudo vem zerado ou lixo —
+    `FASHION_ESSENCE`, `PET_ESSENCE`, `MINE_ESSENCE`, `SUITE_ESSENCE`, 132 tabelas ao todo.
+
+    A causa está escrita no próprio arquivo de overrides:
+
+    ```json
+    "verified_against": "data/realm_155/config/elements.data",
+    "72": { "abs_count_off": 44335619, ... },
+    "77": { "abs_count_off": 48163839, ... },
+    ```
+
+    São **deslocamentos absolutos**, verificados contra um arquivo que hoje não está mais
+    naquele caminho — `data/realm_155` é um v159, de 55.170.911 bytes, e o 155BR é um v156
+    de 55.442.775. O cabeçalho do `realm_155_overrides.json` já avisava: "NAO sao garantidas
+    validas para outro arquivo v156 qualquer".
+
+    **Isto corrige a memória `pw_ctx_a_155_funcional`**, que diz "elements.data v156 100%
+    decodificado". O que está 100% decodificado é o **v159** do `realm_155`. O v156 que o
+    realm de teste usa está a 99 tabelas de 231.
+
+    Não foi consertado nesta sessão — derivar as âncoras certas para este arquivo é
+    investigação própria, do mesmo tamanho da que produziu as atuais. Nada do que esta
+    sessão entregou depende delas: a armadura vem do `ARMOR_ESSENCE` (índice 6, muito antes
+    do ponto onde desalinha) e a matéria não precisa de tabela nenhuma do lado do servidor —
+    o cliente lê o modelo do `elements.data` **dele**, pelo `tid`.
+
+    ### g. Provas
+
+    - `pw-data-loader/tests/ficha_da_armadura.rs`, 6 testes contra o `elements.data` do
+      realm: as três famílias são disjuntas, nenhuma peça com nível exigido viaja com
+      máscara zerada (as quatro que viajam com zero têm `require_level = 0` e defesa 0), a
+      busca por id devolve a variante certa, e os campos da primeira armadura do Sacerdote
+      batem um a um.
+    - `protocol_tests`: o bloco da armadura e o do acessório campo a campo, com a essência
+      de 36 bytes e a ordem de cada uma; `MATTER_ENTER_WORLD` com os 25 bytes exatos e os
+      cinco últimos zerados; `OUT_OF_SIGHT_LIST` com a contagem antes dos ids.
+    - `subcomandos_no_mundo`: `dois_jogadores_se_veem_se_perdem_e_se_reencontram` (o ciclo
+      inteiro, com o jogador parado recebendo tudo sem se mexer),
+      `quem_sai_do_mundo_some_da_tela_de_quem_ficou`,
+      `o_minerio_do_mapa_entra_pelo_comando_de_materia_e_sai_pela_lista`.
+    - `pw-storage/tests/atributos_ao_criar.rs`: as três leituras vêm do banco, porque a
+      falha morava na lista de colunas de um `INSERT` — o código Rust nunca dizia "10".
+    - `ptemplate_tests::os_atributos_iniciais_saem_por_classe_e_nao_sao_todos_dez`.
+    - `subcomandos_s2c_contra_o_ir` pegou os três codificadores novos antes de mim: eles
+      não estavam na tabela `INTENCAO`. O `player_enter_world` voltou a escrever o próprio
+      cabeçalho (o corpo comum é que virou função) justamente para continuar sob essa rede.
+
+    Medido em 2026-09-09: **70 suítes verdes, 461 testes**, e as únicas falhas continuam
+    sendo as duas do 1.2.6 no `loader_tests`.
+
+    ### h. O que continua faltando
+
+    - **`MINE_ESSENCE` e as outras 131 tabelas do 155BR** (item f). Enquanto não voltarem, o
+      servidor não sabe o que cada minério dá ao ser colhido — e **colher não existe**:
+      `MATTER_PICKUP` (152) não é tratado. Hoje o minério aparece e é decoração.
+    - **A durabilidade dos itens é escrita no código.** A loja grava 10000 e a criação de
+      personagem também, enquanto o `durability_min` de cada peça está no `elements.data` e
+      já é lido (`RequisitosDoEquipamento::durabilidade`). O tooltip vai mostrar
+      1.000.000/1.000.000 numa armadura comprada.
+    - **`weapon_level` vai fixo em 1** no bloco da arma; o original manda `ess->level`
+      (`generate_item_temp.h:317`). E a `attack_speed` da arma vai zerada, enquanto o
+      original a tira do `WEAPON_SUB_TYPE` (`(int)(subtype->attack_speed*20 + 0.1)`,
+      `:344`) — tabela que já está decodificada e que ninguém lê ainda.
+    - **Não há trava de PvP** (do item 40, e continua de pé).
+    - O `dir` continua zerado no streaming, agora também para jogador: a grade guarda
+      posição, não direção.
+    - As duas instâncias de matéria de cada gerador nascem **na mesma coordenada** — o
+      `npcgen.rs` usa `area.pos` para todas, sem espalhar. Duas pedras uma dentro da outra.
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver

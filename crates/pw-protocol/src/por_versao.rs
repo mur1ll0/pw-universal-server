@@ -547,8 +547,23 @@ impl PorVersao {
         if !e_126(self.versao) {
             return S2CGamedataSend::player_enter_world(role_id, pos, dir, sec_level);
         }
+        self.info_player_1_126(17, role_id, pos, dir, sec_level)
+    }
+
+    /// `PLAYER_ENTER_SLICE` (12) — o mesmo, para quem entrou no alcance andando em vez de
+    /// ter surgido. Ver `S2CGamedataSend::player_enter_slice`: a struct é a mesma, o que
+    /// muda é o efeito de aparição no cliente.
+    pub fn player_enter_slice(&self, role_id: i32, pos: Vector3, dir: u8, sec_level: u8) -> S2CGamedataSend {
+        if !e_126(self.versao) {
+            return S2CGamedataSend::player_enter_slice(role_id, pos, dir, sec_level);
+        }
+        self.info_player_1_126(12, role_id, pos, dir, sec_level)
+    }
+
+    /// A `info_player_1` como o 1.2.6 a quer: 28 bytes de payload, sem o `state2`.
+    fn info_player_1_126(&self, cmd: u16, role_id: i32, pos: Vector3, dir: u8, sec_level: u8) -> S2CGamedataSend {
         let mut s = OctetsStream::new();
-        s.write_u16_le(17);
+        s.write_u16_le(cmd);
         s.write_i32_le(role_id);
         s.write_f32_le(pos.x);
         s.write_f32_le(pos.y);

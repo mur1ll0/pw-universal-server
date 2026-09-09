@@ -24,7 +24,7 @@ use pw_core::{CharacterClass, Gender, Race, Vector3};
 use pw_data_loader::GameDataManager;
 use pw_gs::comandos::ids;
 use pw_gs::ai::MonsterAi;
-use pw_gs::entity::MonsterEntity;
+use pw_gs::entity::{MatterEntity, MonsterEntity};
 use pw_gs::{BusServer, WorldInstance};
 use pw_storage::{CharacterRepository, PostgresPool, StorageConfig};
 use std::sync::Arc;
@@ -145,6 +145,7 @@ async fn personagem_com_missao(pool: &PostgresPool) -> (i32, i32) {
             CharacterClass::Blademaster,
             Gender::Male,
             Vec::new(),
+            None,
         )
         .await
         .expect("criar personagem");
@@ -167,6 +168,7 @@ async fn personagem_com_missao(pool: &PostgresPool) -> (i32, i32) {
             CharacterClass::Blademaster,
             Gender::Female,
             Vec::new(),
+            None,
         )
         .await
         .expect("criar personagem convidado");
@@ -2727,5 +2729,211 @@ async fn passo_curto_nao_refaz_a_conta_do_que_esta_a_vista() {
     assert!(
         !mundo.read().await.players[&(roleid as i64)].visiveis.contains(&MONSTRO),
         "o conjunto visível foi recalculado sem o jogador andar o passo mínimo"
+    );
+}
+
+/// A visibilidade entre jogadores acompanha quem anda, nos dois sentidos.
+///
+/// Até 2026-09-09 ela era do `gateway.rs`: `PLAYER_ENTER_WORLD` mútuo no login,
+/// `PLAYER_LEAVE_WORLD` no logout, e nada entre as duas coisas. Dois jogadores que se
+/// afastassem além do raio ativo do cliente sumiam um para o outro **para sempre** — o
+/// cliente descarta o que sai do raio, e ninguém reenviava.
+///
+/// O ciclo inteiro: entram e se veem, um anda para longe e os dois deixam de se ver, ele
+/// volta e os dois voltam a se ver. O jogador **parado** recebe tudo isso sem se mexer,
+/// que é a parte que uma implementação ingênua erra.
+#[tokio::test]
+async fn dois_jogadores_se_veem_se_perdem_e_se_reencontram() {
+    let (mundo, addr, anfitriao, convidado) = cenario!();
+
+    let mut link_a = entrar_sem_ajustar(addr, anfitriao).await;
+    esperar_no_mundo(&mundo, anfitriao).await;
+    // Os dois nascem no mesmo ponto: um vê o outro assim que o segundo entra.
+    let mut link_b = entrar_sem_ajustar(addr, convidado).await;
+    esperar_no_mundo(&mundo, convidado).await;
+
+    // 12 é `PLAYER_ENTER_SLICE`, não 17 (`PLAYER_ENTER_WORLD`): a struct é a mesma, mas o
+    // cliente escolhe o efeito de aparição pelo comando (`EC_ManPlayer.cpp:1845`).
+    let viu = esperar_comando(&mut link_b, 12).await;
+    assert_eq!(i32_em(&viu, 2), anfitriao, "quem entrou não viu quem já estava");
+
+    let foi_visto = esperar_comando(&mut link_a, 12).await;
+    assert_eq!(
+        i32_em(&foi_visto, 2),
+        convidado,
+        "quem já estava não viu quem entrou — a visibilidade tem de ser mútua"
+    );
+
+    assert!(
+        mundo.read().await.players[&(anfitriao as i64)]
+            .visiveis
+            .contains(&(convidado as i64)),
+        "o mundo não anotou, no jogador parado, que ele passou a ver o outro"
+    );
+
+    // O anfitrião anda para longe. Só a atualização **dele** roda: o convidado está
+    // parado e não recalcula nada sozinho.
+    andar(&mut link_a, anfitriao, Vector3::new(5_000.0, 0.0, 5_000.0)).await;
+
+    let sumiu = esperar_comando(&mut link_a, 13).await;
+    assert_eq!(i32_em(&sumiu, 2), convidado, "quem andou continuou vendo quem ficou");
+
+    let sumiu = esperar_comando(&mut link_b, 13).await;
+    assert_eq!(
+        i32_em(&sumiu, 2),
+        anfitriao,
+        "quem ficou parado continuou vendo o avatar de quem foi embora"
+    );
+    assert!(
+        !mundo.read().await.players[&(convidado as i64)]
+            .visiveis
+            .contains(&(anfitriao as i64)),
+        "o mundo continua achando que o jogador parado vê quem saiu do alcance"
+    );
+
+    // E de volta, para onde o convidado está parado: os dois têm de se ver de novo.
+    let onde_ele_esta = mundo.read().await.players[&(convidado as i64)].position;
+    andar(&mut link_a, anfitriao, onde_ele_esta).await;
+
+    let voltou = esperar_comando(&mut link_b, 12).await;
+    assert_eq!(
+        i32_em(&voltou, 2),
+        anfitriao,
+        "o jogador parado não viu o outro voltar — era este o buraco"
+    );
+}
+
+/// Sair do jogo tira o avatar da tela de quem estava vendo, com `PLAYER_LEAVE_WORLD` (19).
+///
+/// Não é `OBJECT_LEAVE_SLICE` (13): quem saiu do jogo não saiu do alcance, e o cliente
+/// distingue os dois casos (`bExit` em `CECPlayerMan::ElsePlayerLeave`).
+#[tokio::test]
+async fn quem_sai_do_mundo_some_da_tela_de_quem_ficou() {
+    let (mundo, addr, anfitriao, convidado) = cenario!();
+
+    let mut link_a = entrar_sem_ajustar(addr, anfitriao).await;
+    esperar_no_mundo(&mundo, anfitriao).await;
+    let mut link_b = entrar_sem_ajustar(addr, convidado).await;
+    esperar_no_mundo(&mundo, convidado).await;
+
+    // Consome a entrada mútua para não confundir com o que vem depois.
+    let _ = esperar_comando(&mut link_a, 12).await;
+    let _ = esperar_comando(&mut link_b, 12).await;
+
+    // `logout_type = 1` é `_PLAYER_LOGOUT_HALF`: voltar à seleção de personagens.
+    link_b
+        .enviar(BusMessage::ClientToGame {
+            roleid: convidado,
+            localsid: LOCALSID,
+            data: subcomando(ids::LOGOUT, &1i32.to_le_bytes()),
+        })
+        .await
+        .unwrap();
+
+    let saiu = esperar_comando(&mut link_a, 19).await;
+    assert_eq!(
+        i32_em(&saiu, 2),
+        convidado,
+        "o PLAYER_LEAVE_WORLD não é de quem saiu"
+    );
+    assert!(
+        !mundo.read().await.players[&(anfitriao as i64)]
+            .visiveis
+            .contains(&(convidado as i64)),
+        "o mundo continua achando que quem ficou vê quem saiu"
+    );
+}
+
+/// Espera o jogador aparecer no mundo depois do `EnterWorld`.
+async fn esperar_no_mundo(mundo: &Arc<RwLock<WorldInstance>>, roleid: i32) {
+    let m = Arc::clone(mundo);
+    let id = roleid as i64;
+    let presente = ate_async(move || {
+        let m = Arc::clone(&m);
+        async move { m.read().await.players.contains_key(&id) }
+    })
+    .await;
+    assert!(presente, "o jogador {roleid} não entrou no mundo depois do EnterWorld");
+}
+
+/// Um `PLAYER_MOVE` completo para `destino`.
+async fn andar(
+    link: &mut pw_bus::transport::BusConnection,
+    roleid: i32,
+    destino: Vector3,
+) {
+    let mut corpo = vec3(destino.x, destino.y, destino.z);
+    corpo.extend_from_slice(&vec3(destino.x, destino.y, destino.z));
+    corpo.extend_from_slice(&0u16.to_le_bytes()); // use_time
+    corpo.extend_from_slice(&0u16.to_le_bytes()); // speed
+    corpo.push(0); // move_mode
+    corpo.extend_from_slice(&0u16.to_le_bytes()); // cmd_seq
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::PLAYER_MOVE, &corpo),
+    })
+    .await
+    .unwrap();
+}
+
+/// O minério do mapa chega pelo comando dele, e some pelo comando dele.
+///
+/// O `npcgen.data` deste realm tem 5.125 instâncias de matéria, e até 2026-09-09 **nenhum
+/// ponto do servidor** mandava `MATTER_ENTER_WORLD` (18) — nem no login, nem no
+/// streaming. O mapa vinha sem recurso algum.
+///
+/// A saída é o outro lado do achado: `OBJECT_LEAVE_SLICE` (13) não conhece matéria (só
+/// `ISPLAYERID` e `ISNPCID`, `EC_GameDataPrtc.cpp:891-899`); quem a tira da tela é o
+/// `OUT_OF_SIGHT_LIST` (34).
+#[tokio::test]
+async fn o_minerio_do_mapa_entra_pelo_comando_de_materia_e_sai_pela_lista() {
+    // `ISMATTERID` exige os dois bits mais altos ligados (`EC_GPDataType.h:27`) — é assim
+    // que o `npcgen.rs` monta o id, e é por isso que o cliente sabe para qual gerente
+    // mandar o que vem na lista de saída.
+    const MINERIO: i64 = 0xC000_6886u32 as i32 as i64;
+    const TID_DO_MINERIO: u32 = 8582;
+
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let origem = {
+        let mut m = mundo.write().await;
+        let origem = m.players[&(roleid as i64)].position;
+        let perto = Vector3::new(origem.x + 10.0, origem.y, origem.z);
+        m.matters.insert(
+            MINERIO,
+            MatterEntity { id: MINERIO, template_id: TID_DO_MINERIO, position: perto },
+        );
+        m.grid.add_entity(MINERIO, perto, false);
+        origem
+    };
+
+    let passo = Vector3::new(origem.x + 25.0, origem.y, origem.z);
+    andar(&mut link, roleid, passo).await;
+
+    let entrou = esperar_comando(&mut link, 18).await;
+    assert_eq!(
+        entrou.len(),
+        2 + 25,
+        "MATTER_ENTER_WORLD com tamanho errado é descartado em silêncio pelo cliente"
+    );
+    assert_eq!(i32_em(&entrou, 2), MINERIO as i32, "o mid não é o do minério");
+    assert_eq!(i32_em(&entrou, 6), TID_DO_MINERIO as i32, "o tid não é o do minério");
+
+    // Agora para longe: tem de sair — e pela lista, não pelo 13.
+    andar(&mut link, roleid, Vector3::new(origem.x + 5_000.0, origem.y, origem.z)).await;
+
+    let saiu = esperar_comando(&mut link, 34).await;
+    assert_eq!(
+        u32::from_le_bytes([saiu[2], saiu[3], saiu[4], saiu[5]]),
+        1,
+        "a lista de fora de vista devia ter um id só"
+    );
+    assert_eq!(i32_em(&saiu, 6), MINERIO as i32);
+    assert!(
+        !mundo.read().await.players[&(roleid as i64)].visiveis.contains(&MINERIO),
+        "o mundo continua achando que o jogador vê o minério"
     );
 }

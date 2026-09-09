@@ -1,5 +1,5 @@
 use crate::aipolicy::AiPolicyData;
-use crate::armas::TabelaDeArmas;
+use crate::armaduras::TabelasDeEquipamento;
 use crate::classes::TabelaDeClasses;
 use crate::collision::MapCollision;
 use crate::elements::ElementsData;
@@ -146,11 +146,15 @@ pub struct GameDataManager {
     /// no 1.2.6/v7, pelo mesmo motivo de [`Self::monstros`].
     pub classes: TabelaDeClasses,
 
-    /// As armas do `WEAPON_ESSENCE`, por id de item — ver [`crate::armas`].
+    /// As três tabelas de equipamento do realm — armas (`WEAPON_ESSENCE`), armaduras
+    /// (`ARMOR_ESSENCE`) e acessórios (`DECORATION_ESSENCE`) — e a busca que decide qual
+    /// delas responde por um id de item. Ver [`crate::armaduras::TabelasDeEquipamento`].
     ///
-    /// É daqui que sai o bloco de dados que acompanha cada arma no `OWN_ITEM_INFO`, e é
-    /// esse bloco que decide se o cliente aceita a arma equipada. Vazia no 1.2.6/v7.
-    pub armas: TabelaDeArmas,
+    /// É daqui que sai o bloco de dados que acompanha cada peça equipável no
+    /// `OWN_ITEM_INFO`, e é esse bloco que decide se o cliente aceita o que está
+    /// equipado: sem ele, a máscara de classes do item fica zerada no cliente e **toda**
+    /// classe é recusada. Vazias no 1.2.6/v7.
+    pub equipamentos: TabelasDeEquipamento,
     /// Os atributos **base** por classe, do `ptemplate.conf` — ver [`crate::ptemplate`].
     /// Fonte diferente da de [`Self::classes`]: aquela traz o que escala por nível e por
     /// ponto de atributo, esta traz o ponto de partida do nível 1. Vazia quando o pacote
@@ -329,7 +333,7 @@ impl GameDataManager {
         if let Some(g) = &self.elements_generic {
             self.monstros = crate::monstros::carregar(g, Some(&self.aipolicy));
             self.classes = crate::classes::carregar(g);
-            self.armas = crate::armas::carregar(g);
+            self.equipamentos = TabelasDeEquipamento::carregar(g);
         }
 
         // O `ptemplate.conf` não é um `.data`: é um arquivo de configuração do `gamed`, e

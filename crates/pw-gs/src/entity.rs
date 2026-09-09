@@ -88,6 +88,26 @@ pub struct PlayerEntity {
     /// Vive só no mundo: não há coluna para ele no banco, então volta ao padrão a cada
     /// login. Trocar isso é mudança de esquema, não de código.
     pub modo_roupa: bool,
+    /// `sec_level` — o nível de GM da conta dona do personagem.
+    ///
+    /// Viaja no `level2` da `info_player_1` e acende o `STATE_GAMEMASTER` (`0x4000`) no
+    /// `state`, que é o que põe a coroa sobre o avatar. Vive aqui porque quem manda o
+    /// jogador aparecer para os outros passou a ser o mundo
+    /// (`BusServer::atualizar_visiveis`), e o `BusMessage::EnterWorld` não carrega o
+    /// `sec_level` da sessão — ver `CharacterRepository::nivel_de_gm`.
+    ///
+    /// Zero por omissão: negar privilégio é a resposta segura.
+    pub sec_level: u8,
+    /// As habilidades aprendidas, por id, com o **nível de cada uma**.
+    ///
+    /// Vive aqui porque o `CAST_SKILL` do cliente **não manda o nível** — quem tem de
+    /// saber é o servidor, e ele não pode ir ao banco a cada conjuração. Sai do
+    /// `character_skills`, carregado com o resto do personagem no login.
+    ///
+    /// Até 2026-09-09 este dado não existia no mundo e toda habilidade era conjurada no
+    /// nível 1 (`NIVEL_DA_HABILIDADE` em `bus_server.rs`): subir uma habilidade não mudava
+    /// nada em jogo — nem dano, nem cura, nem custo de mana.
+    pub habilidades: std::collections::HashMap<u32, u8>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -257,6 +277,10 @@ impl PlayerEntity {
             voando: false,
             // Todo mundo entra mostrando a armadura; o banco não guarda esta escolha.
             modo_roupa: false,
+            // Quem preenche é `BusServer::colocar_no_mundo`, que tem o repositório à mão;
+            // o `CharacterDetails` não traz o privilégio da conta.
+            sec_level: 0,
+            habilidades: p.skills.iter().map(|h| (h.skill_id, h.level)).collect(),
         }
     }
 
@@ -406,6 +430,34 @@ pub struct NpcEntity {
     pub name: String,
     pub position: Vector3,
     pub dialog_id: u32,
+}
+
+/// Um "recurso do mapa": minério, erva, tronco — o que o cliente chama de *matter*.
+///
+/// Vem do `npcgen.data` (`SpawnType::ResourceMine`) e viaja no `MATTER_ENTER_WORLD` (18),
+/// que é comando próprio: matéria **não** é NPC. O cliente separa as três famílias pelo
+/// id, com máscaras de bit (`EC_GPDataType.h:25-27`):
+///
+/// ```text
+/// ISPLAYERID(id)  (id) && !((id) & 0x80000000)
+/// ISNPCID(id)     ((id) & 0x80000000) && !((id) & 0x40000000)
+/// ISMATTERID(id)  ((id) & 0xC0000000) == 0xC0000000
+/// ```
+///
+/// O `npcgen.rs` já monta o id de matéria com `0xC0000000` (`npcgen.rs:422`), então os
+/// ids que chegam aqui já satisfazem `ISMATTERID`.
+///
+/// Não há atributo nenhum: o cliente lê o modelo, o ícone e o nome do `elements.data`
+/// dele, pelo `tid` (`CECMatter::ReadDataFromDatabase`). O servidor só precisa dizer
+/// **onde** e **qual**.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatterEntity {
+    pub id: i64,
+    /// `tid` do `MINE_ESSENCE`. O cliente o mascara com `0x0000ffff`
+    /// (`EC_Matter.cpp:166`), e o bit 31 é sinalizador (`ITEMFLAG_EXTPROP`), não parte do
+    /// id — os do `npcgen.data` deste realm cabem folgadamente em 16 bits.
+    pub template_id: u32,
+    pub position: Vector3,
 }
 
 #[derive(Debug, Clone, PartialEq)]

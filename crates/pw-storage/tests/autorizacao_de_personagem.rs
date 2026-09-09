@@ -135,6 +135,7 @@ async fn montar() -> Option<Cenario> {
                 CharacterClass::Blademaster,
                 Gender::Male,
                 Vec::new(),
+                None,
             )
             .await
             .expect("criar personagem de teste")

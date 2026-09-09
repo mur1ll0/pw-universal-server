@@ -1,4 +1,5 @@
 pub mod aipolicy;
+pub mod armaduras;
 pub mod armas;
 pub mod classes;
 pub mod collision;
@@ -13,6 +14,10 @@ pub mod tasks;
 pub mod validator;
 
 pub use aipolicy::AiPolicyData;
+pub use armaduras::{
+    TabelaDeArmaduras, TabelaDeDecoracoes, TabelasDeEquipamento, TemplateDeArmadura,
+    TemplateDeDecoracao,
+};
 pub use classes::{ConfigDeClasse, TabelaDeClasses};
 pub use collision::MapCollision;
 pub use elements::MedicineTemplate;

@@ -389,6 +389,8 @@ fn jogador() -> PlayerEntity {
         centro_do_stream: Vector3::new(0.0, 0.0, 0.0),
         voando: false,
         modo_roupa: false,
+        sec_level: 0,
+        habilidades: Default::default(),
     }
 }
 

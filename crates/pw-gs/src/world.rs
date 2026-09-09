@@ -1,5 +1,5 @@
 use crate::ai::MonsterAi;
-use crate::entity::{ItemDropEntity, MonsterEntity, NpcEntity, PlayerEntity};
+use crate::entity::{ItemDropEntity, MatterEntity, MonsterEntity, NpcEntity, PlayerEntity};
 use crate::grid::SpatialGrid;
 use pw_core::{RoleId, WorldId};
 use pw_data_loader::GameDataManager;
@@ -64,6 +64,12 @@ pub struct WorldInstance {
     pub players: HashMap<i64, PlayerEntity>,
     pub monsters: HashMap<i64, (MonsterEntity, MonsterAi)>,
     pub npcs: HashMap<i64, NpcEntity>,
+    /// Os recursos do mapa — minério, erva, tronco. Ver [`MatterEntity`].
+    ///
+    /// Ficam separados dos NPCs porque o comando de entrada é outro
+    /// (`MATTER_ENTER_WORLD`, 18) e o de saída também (`OUT_OF_SIGHT_LIST`, 34, e não o
+    /// `OBJECT_LEAVE_SLICE` que serve a jogador e NPC).
+    pub matters: HashMap<i64, MatterEntity>,
     pub drops: HashMap<i64, ItemDropEntity>,
     pub data_manager: Arc<GameDataManager>,
     pub char_repo: CharacterRepository,
@@ -93,6 +99,7 @@ impl WorldInstance {
             players: HashMap::new(),
             monsters: HashMap::new(),
             npcs: HashMap::new(),
+            matters: HashMap::new(),
             drops: HashMap::new(),
             data_manager,
             char_repo,
@@ -179,15 +186,29 @@ impl WorldInstance {
 
                     self.grid.add_entity(npc_id, npc.position, false);
                     self.npcs.insert(npc_id, npc);
+                } else if inst.spawn_type == pw_data_loader::SpawnType::ResourceMine {
+                    // Minério, erva, tronco. Ninguém os mandava ao cliente: não havia
+                    // entidade nenhuma para eles no mundo, e `MATTER_ENTER_WORLD` (18) não
+                    // saía de lugar nenhum do servidor — o mapa vinha sem recurso algum
+                    // (2026-09-09).
+                    let mid = inst.instance_id as i64;
+                    let matter = MatterEntity {
+                        id: mid,
+                        template_id: inst.template_id,
+                        position: inst.pos,
+                    };
+                    self.grid.add_entity(mid, matter.position, false);
+                    self.matters.insert(mid, matter);
                 }
             }
         }
 
         info!(
-            "World #{} inicializado com {} monstros e {} NPCs ativos a partir do seu npcgen.data!",
+            "World #{} inicializado com {} monstros, {} NPCs e {} recursos de mapa ativos              a partir do seu npcgen.data!",
             self.world_id,
             self.monsters.len(),
-            self.npcs.len()
+            self.npcs.len(),
+            self.matters.len()
         );
         if sem_template > 0 {
             warn!(

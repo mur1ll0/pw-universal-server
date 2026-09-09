@@ -54,6 +54,8 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         centro_do_stream: Vector3::new(0.0, 0.0, 0.0),
         voando: false,
         modo_roupa: false,
+        sec_level: 0,
+        habilidades: Default::default(),
     };
     p.hp = p.max_hp;
     p

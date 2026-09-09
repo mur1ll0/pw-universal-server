@@ -144,6 +144,24 @@ impl QuestStatus {
     }
 }
 
+/// Os quatro atributos com que um personagem nasce.
+///
+/// O original os tira do `ptemplate.conf`, por classe: o Guerreiro começa com vitalidade
+/// 20, força 15, agilidade 10 e energia 5; o Mago, com energia 20 e força 5. Até
+/// 2026-09-09 todo personagem novo nascia com **10/10/10/10** — o `DEFAULT` da coluna no
+/// esquema — e a diferença aparecia em tudo o que depende de atributo: vida e mana
+/// máximas, precisão, evasão.
+///
+/// `None` no ponto de criação significa "o realm não trouxe o `ptemplate.conf`"; aí vale
+/// o padrão da coluna, que ao menos não é inventado. Ver `pw_data_loader::ptemplate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AtributosIniciais {
+    pub forca: i32,
+    pub agilidade: i32,
+    pub vitalidade: i32,
+    pub energia: i32,
+}
+
 /// A ficha de uma arma, como o cliente precisa recebê-la no `OWN_ITEM_INFO`.
 ///
 /// Mora aqui, e não no `pw-protocol` nem no `pw-data-loader`, porque os dois precisam
@@ -179,4 +197,77 @@ pub struct FichaDaArma {
     /// Em *ticks* de 50 ms, como o cliente conta.
     pub velocidade_de_ataque: i32,
     pub alcance: f32,
+}
+
+/// O número de escolas mágicas (`NUM_MAGICCLASS`, `EC_RoleTypes.h:38`; `MAGIC_CLASS` no
+/// servidor original). Metal, Madeira, Água, Fogo e Terra.
+pub const ESCOLAS_MAGICAS: usize = 5;
+
+/// A ficha de uma **armadura**, como o cliente precisa recebê-la no `OWN_ITEM_INFO`.
+///
+/// Irmã de [`FichaDaArma`], e pelo mesmo motivo mora aqui. Todos os campos saem do
+/// `ARMOR_ESSENCE` — ver `pw_data_loader::armaduras`.
+///
+/// A parte que viaja depois do cabeçalho é `IVTR_ESSENCE_ARMOR`
+/// (`EC_IvtrTypes.h:253-260`), 36 bytes, idêntica ao `armor_essence` do servidor original
+/// (`gs/item/equip_item.h:150-157`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FichaDaArmadura {
+    /// Máscara de classes que podem equipar (`character_combo_id`), um bit por classe.
+    ///
+    /// **É o campo que importa.** `CanUseEquipment` (`EC_HostPlayer.cpp:4953-4959`) faz,
+    /// para `ICID_ARMOR` e `ICID_DECORATION`,
+    /// `!(GetProfessionRequirement() & (1 << profissão))` — e sem bloco de dados o
+    /// `m_iProfReq` do cliente fica no zero do construtor (`EC_IvtrEquip.cpp:74`), que
+    /// recusa **todas** as classes.
+    pub classes_permitidas: i32,
+    pub nivel_exigido: i16,
+    pub forca_exigida: i16,
+    pub vitalidade_exigida: i16,
+    pub agilidade_exigida: i16,
+    pub energia_exigida: i16,
+    /// `defense` — a defesa física.
+    pub defesa: i32,
+    /// `armor` — a evasão que a peça acrescenta (o "grau de armadura" do tooltip).
+    pub evasao: i32,
+    pub mp_extra: i32,
+    pub hp_extra: i32,
+    /// `resistance[5]`, na ordem Metal, Madeira, Água, Fogo, Terra.
+    pub resistencias: [i32; ESCOLAS_MAGICAS],
+}
+
+/// A ficha de um **acessório** (anel, colar, cinto, patuá), do `DECORATION_ESSENCE`.
+///
+/// O cabeçalho é o mesmo da armadura; o que muda é a essência: `IVTR_ESSENCE_DECORATION`
+/// (`EC_IvtrTypes.h:244-251`) troca `mp_enhance`/`hp_enhance` por `damage`/`magic_damage`
+/// e os põe **antes** de `defense`. Mesmos 36 bytes, ordem diferente — por isso são dois
+/// tipos, e não um com campo sobrando.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FichaDeDecoracao {
+    pub classes_permitidas: i32,
+    pub nivel_exigido: i16,
+    pub forca_exigida: i16,
+    pub vitalidade_exigida: i16,
+    pub agilidade_exigida: i16,
+    pub energia_exigida: i16,
+    pub dano: i32,
+    pub dano_magico: i32,
+    pub defesa: i32,
+    pub evasao: i32,
+    pub resistencias: [i32; ESCOLAS_MAGICAS],
+}
+
+/// O que acompanha um item equipável no `OWN_ITEM_INFO` (40).
+///
+/// Cada família de equipamento tem a sua própria essência, com tamanho e ordem próprios,
+/// e o cliente escolhe o leitor pelo **tipo do item no `elements.data` dele** — não por
+/// nada que venha na rede. Mandar a essência da família errada é o mesmo que mandar lixo.
+///
+/// `None` (item que não é equipamento, ou realm sem a tabela) faz o comando ir **sem
+/// bloco**, que é o certo: requisito inventado tranca o item no cliente.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FichaDoEquipamento {
+    Arma(FichaDaArma),
+    Armadura(FichaDaArmadura),
+    Decoracao(FichaDeDecoracao),
 }

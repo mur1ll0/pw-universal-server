@@ -149,13 +149,18 @@ const MODO_DE_MOVIMENTO_ANDANDO: u8 = 0;
 /// O servidor ainda não lê a tabela de habilidades — quando ler, este número sai daqui.
 const TEMPO_DE_CONJURACAO_MS: u16 = 1000;
 
-/// Em que nível uma habilidade é conjurada.
+/// Em que nível uma habilidade é conjurada quando o jogador **não a tem** no
+/// `character_skills`.
 ///
-/// **Fixo em 1**, e é uma simplificação: o `character_skills` guarda o nível de cada
-/// habilidade, e o `CastSkill` do cliente não o manda (o servidor é que deveria saber). Ler
-/// o nível do banco aqui é o passo que falta para uma habilidade subir de nível valer
-/// alguma coisa.
-const NIVEL_DA_HABILIDADE: i32 = 1;
+/// Até 2026-09-09 era o nível de toda conjuração, de todo jogador: o `CAST_SKILL` do
+/// cliente não manda o nível — quem tem de saber é o servidor — e o mundo não carregava a
+/// tabela. Subir uma habilidade não mudava nada em jogo. Agora o nível sai de
+/// `PlayerEntity::habilidades`, e este valor é só o piso de quem conjura o que não
+/// aprendeu.
+///
+/// Nível 1 e não zero: as fórmulas do `Habilidade` indexam tabelas por nível a partir de
+/// 1, e o cliente também recusaria o nível zero (`ElementSkill::Condition`).
+const NIVEL_MINIMO_DA_HABILIDADE: i32 = 1;
 
 /// `EQUIPIVTR_FLYSWORD` do `EC_IvtrTypes.h`: o slot do item de voo (espada voadora para os
 /// humanos, asa para os Alados).
@@ -180,6 +185,53 @@ const PASSO_PARA_RECALCULAR: f32 = 20.0;
 /// centenas — e cada uma é um pacote. O teto é orçamento de fila, não regra do jogo: os
 /// mais próximos entram primeiro, e o resto chega na próxima atualização.
 const TETO_DE_VISIVEIS: usize = 80;
+
+/// Quantos recursos de mapa (minério, erva) um jogador acompanha de uma vez.
+///
+/// Orçamento **separado** do de [`TETO_DE_VISIVEIS`], de propósito. O `npcgen.data` deste
+/// mapa tem 5.125 instâncias de matéria, e um campo de mineração as concentra: no mesmo
+/// balde que monstro e NPC, elas comeriam o teto inteiro e fariam os NPCs sumirem perto de
+/// uma mina — trocando um buraco por outro.
+const TETO_DE_MATERIA: usize = 40;
+
+/// O que entrou no campo de visão de um jogador, com o que o comando de entrada precisa.
+///
+/// Existe porque o comando **não é o mesmo** para as duas famílias: `NPC_ENTER_SLICE` (11)
+/// para NPC e monstro, `PLAYER_ENTER_SLICE` (12) para jogador. O cliente roteia pelo
+/// comando (`EC_GameDataPrtc.cpp:832-853`), então um jogador mandado pelo 11 cai no
+/// gerente de NPCs. Ver [`BusServer::atualizar_visiveis`].
+/// Em que nível este jogador tem esta habilidade.
+///
+/// O `CAST_SKILL` do cliente manda o id da habilidade e o alvo, **não o nível**
+/// (`cmd_cast_skill`): quem tem de saber é o servidor. O nível vem do `character_skills`,
+/// carregado com o personagem no login (`PlayerEntity::habilidades`).
+///
+/// Quem conjura o que não aprendeu cai em [`NIVEL_MINIMO_DA_HABILIDADE`]. Isso não é
+/// permissão: é o piso de dano de um caso que o cliente já não deveria produzir, e recusar
+/// a conjuração aqui deixaria o cliente preso em estado de feitiço — a checagem de "pode
+/// conjurar" é outra conversa, e não existe ainda.
+fn nivel_da_habilidade(jogador: &PlayerEntity, skill_id: i32) -> i32 {
+    let id = if skill_id < 0 { return NIVEL_MINIMO_DA_HABILIDADE } else { skill_id as u32 };
+    jogador
+        .habilidades
+        .get(&id)
+        .map(|n| (*n as i32).max(NIVEL_MINIMO_DA_HABILIDADE))
+        .unwrap_or(NIVEL_MINIMO_DA_HABILIDADE)
+}
+
+/// `ISMATTERID` do cliente (`EC_GPDataType.h:27`): os dois bits mais altos ligados.
+///
+/// É por esta máscara que o cliente decide para qual gerente mandar um id numa lista
+/// mista, e é por ela que este servidor decide qual comando de saída usar.
+fn e_materia(id: i64) -> bool {
+    (id as u32) & 0xC000_0000 == 0xC000_0000
+}
+
+enum QuemChegou {
+    Criatura { id: i32, tid: i32, pos: pw_core::Vector3 },
+    Jogador { id: i32, pos: pw_core::Vector3, sec_level: u8 },
+    Materia { id: i32, tid: i32, pos: pw_core::Vector3 },
+}
 
 /// Canal por onde o mundo devolve mensagens àquele jogador.
 pub type EnvioAoCliente = mpsc::Sender<BusMessage>;
@@ -443,6 +495,11 @@ impl BusServer {
             }
 
             BusMessage::PlayerLogout { roleid, .. } => {
+                // Antes de tirar do mundo: quem estava vendo este jogador precisa receber
+                // o `PLAYER_LEAVE_WORLD`, senão o avatar dele fica parado na tela dos
+                // outros. Era o `gateway.rs` que fazia isto; passou para cá junto com o
+                // resto da visibilidade entre jogadores (ver `atualizar_visiveis`).
+                self.tirar_da_vista_de_todos(roleid as i64).await;
                 self.sessoes.write().await.remove(&roleid);
                 self.world.write().await.remove_player(roleid);
                 info!("mundo: jogador {roleid} saiu");
@@ -530,11 +587,15 @@ impl BusServer {
             return;
         }
 
-        let jogador = PlayerEntity::do_personagem(
+        let mut jogador = PlayerEntity::do_personagem(
             &detalhes,
             &dados.classes,
             Some(&dados.base_das_classes).filter(|b| !b.is_empty()),
         );
+        // O privilégio de GM não vem no `EnterWorld` nem no `CharacterDetails`; é uma
+        // leitura por login, e daqui em diante viaja em todo `PLAYER_ENTER_SLICE` que
+        // apresenta este jogador aos outros.
+        jogador.sec_level = repo.nivel_de_gm(roleid).await.clamp(0, 255) as u8;
 
         if dados.classes.is_empty() {
             warn!(
@@ -696,6 +757,10 @@ impl BusServer {
         // Tira do mundo antes de avisar: se a ordem fosse a outra, o link poderia
         // derrubar a conexão e mandar o `PlayerLogout` de volta enquanto o personagem
         // ainda estivesse na simulação.
+        //
+        // Antes disso, porém, quem o via precisa saber que ele foi embora — depois de
+        // `remove_player` não há mais como descobrir quem era.
+        self.tirar_da_vista_de_todos(roleid as i64).await;
         self.world.write().await.remove_player(roleid);
         self.sessoes.write().await.remove(&roleid);
 
@@ -1367,11 +1432,15 @@ impl BusServer {
         };
         let habilidade = Habilidade::conhecida(skill_id);
 
+        // O nível em que **este jogador** tem esta habilidade. Vem do `character_skills`,
+        // carregado no login: o cliente não manda o nível no `CAST_SKILL`.
+        let nivel = nivel_da_habilidade(&atacante, skill_id);
+
         // Custo de mana. O cliente já confere antes de mandar (`ElementSkill::Condition`
         // devolve 2 quando falta), então chegar aqui sem mana é raro — mas o servidor não
         // pode acreditar no cliente, e sem cobrar a mana nunca acabaria.
         if let Some(h) = habilidade {
-            let custo = h.custo_de_mp(NIVEL_DA_HABILIDADE);
+            let custo = h.custo_de_mp(nivel);
             let tem = mundo.players.get(&(roleid as i64)).map(|p| p.mp).unwrap_or(0);
             if tem < custo {
                 debug!("mundo: {roleid} conjurou {skill_id} com {tem} de mana, precisa de {custo}");
@@ -1399,7 +1468,7 @@ impl BusServer {
         let distancia = atacante.position.distance(&monstro.position);
         let dano = match habilidade.and_then(|h| {
             h.dano(
-                NIVEL_DA_HABILIDADE,
+                nivel,
                 (atacante.attack_min + atacante.attack_max) / 2,
                 (atacante.magic_attack_min + atacante.magic_attack_max) / 2,
             )
@@ -1549,10 +1618,13 @@ impl BusServer {
             }
             let magico = (conjurador.magic_attack_min + conjurador.magic_attack_max) / 2;
             let fisico = (conjurador.attack_min + conjurador.attack_max) / 2;
+            // O nível em que o **conjurador** tem esta habilidade — não o do alvo, e não
+            // o 1 fixo que valia para todo mundo até 2026-09-09.
+            let nivel = nivel_da_habilidade(conjurador, skill_id);
             let valor = if h.e_cura() {
-                h.cura(NIVEL_DA_HABILIDADE, magico).unwrap_or(0)
+                h.cura(nivel, magico).unwrap_or(0)
             } else {
-                let bruto = h.dano(NIVEL_DA_HABILIDADE, fisico, magico).unwrap_or(0);
+                let bruto = h.dano(nivel, fisico, magico).unwrap_or(0);
                 let reducao = combat::reducao_por_defesa(vitima.def_phys, conjurador.level);
                 (((bruto as f32) * (1.0 - reducao)).round() as i32).max(1)
             };
@@ -1812,12 +1884,52 @@ impl BusServer {
     /// despercebido porque o raio do login cobria a vila inteira; o teleporte de GM
     /// escancarou — o destino chegava vazio, e a vila de origem também, na volta.
     ///
+    /// O mesmo valia para **jogador**, e sobreviveu à primeira correção: o `gateway.rs`
+    /// mandava `PLAYER_ENTER_WORLD` mútuo no login e `PLAYER_LEAVE_WORLD` na queda da
+    /// conexão, sem raio e sem streaming. Dois jogadores que se afastassem além do raio
+    /// ativo do cliente sumiam um para o outro **para sempre** — o cliente descarta, e
+    /// nada reenviava. Desde 2026-09-09 jogador entra aqui também.
+    ///
     /// # Como funciona
     ///
     /// A grade espacial do mundo (`SpatialGrid`) já indexa monstros, NPCs e jogadores por
     /// posição. Aqui se pergunta a ela quem está dentro de [`RAIO_DE_VISAO`], compara com
     /// o que o jogador já tem (`PlayerEntity::visiveis`) e manda só a diferença:
-    /// `NPC_ENTER_SLICE` (11) para quem entrou, `OBJECT_LEAVE_SLICE` (13) para quem saiu.
+    /// `NPC_ENTER_SLICE` (11), `PLAYER_ENTER_SLICE` (12) ou `MATTER_ENTER_WORLD` (18) para
+    /// quem entrou; `OBJECT_LEAVE_SLICE` (13) ou `OUT_OF_SIGHT_LIST` (34) para quem saiu.
+    ///
+    /// # Três famílias, três comandos de entrada
+    ///
+    /// `NPC_ENTER_SLICE` (11) para NPC e monstro, `PLAYER_ENTER_SLICE` (12) para jogador,
+    /// `MATTER_ENTER_WORLD` (18) para recurso de mapa. O cliente roteia pelo **comando**,
+    /// não pelo id: o 11 vai para `MAN_NPC` (`EC_GameDataPrtc.cpp:851`), o 12 para
+    /// `MAN_PLAYER` (`:832-833`) e o 18 para `MAN_MATTER` (`:902-904`) — mandar o errado
+    /// entrega a entidade ao gerente errado.
+    ///
+    /// A matéria (minério, erva) não saía de lugar nenhum até 2026-09-09: o `npcgen.data`
+    /// tem as 5.125 instâncias deste mapa, e nenhum ponto do servidor mandava o comando —
+    /// o mapa vinha sem recurso algum.
+    ///
+    /// E `PLAYER_ENTER_SLICE` não é `PLAYER_ENTER_WORLD`: a struct é a mesma
+    /// (`S2C::info_player_1` no IR para os dois), mas o cliente usa o comando para
+    /// escolher o efeito de aparição — `APPEAR_ENTERWORLD` para o 17, `APPEAR_RUNINTOVIEW`
+    /// para o 12 (`EC_ManPlayer.cpp:1845`). Quem vem andando não deve surgir com efeito de
+    /// teleporte.
+    ///
+    /// Na saída são dois, e a divisão é outra: o `OBJECT_LEAVE_SLICE` (13) serve a jogador
+    /// **e** NPC, porque esse o cliente roteia pelo id
+    /// (`ISPLAYERID`/`ISNPCID`, `EC_GameDataPrtc.cpp:891-899`) — mas ele não conhece
+    /// matéria. Matéria sai pelo `OUT_OF_SIGHT_LIST` (34), a lista que o cliente separa id
+    /// a id pelas três máscaras (`:1056-1071`).
+    ///
+    /// # A visibilidade entre jogadores é mútua, e por isso escrita nos dois
+    ///
+    /// Se eu ando na direção de alguém parado, **só a minha** atualização roda: quem está
+    /// parado não recalcula nada. Então, quando um jogador entra ou sai do meu alcance,
+    /// este método escreve nos dois lados — manda o comando para ele e mexe no `visiveis`
+    /// dele — em vez de esperar que a atualização dele chegue à mesma conclusão. A
+    /// distância é simétrica e o raio é o mesmo para todos, então as duas visões
+    /// concordam.
     ///
     /// # As três decisões que fazem isto não derrubar o servidor
     ///
@@ -1825,13 +1937,16 @@ impl BusServer {
     ///    [`PASSO_PARA_RECALCULAR`]. O cliente manda movimento 20 vezes por segundo, e
     ///    varrer a grade a cada pacote seria varrer 20 vezes por segundo por jogador para
     ///    achar quase sempre o mesmo conjunto.
-    /// 2. **Teto por atualização**: este mapa tem 21.846 monstros e 3.911 NPCs. Uma região
-    ///    densa pode ter centenas dentro do raio, e mandar tudo de uma vez enche a fila de
-    ///    saída. O teto é [`TETO_DE_VISIVEIS`], pelos mais próximos primeiro; o que sobra
-    ///    entra na próxima atualização, quando o jogador chegar mais perto.
-    /// 3. **Jogador não entra aqui**: a visibilidade entre jogadores é do `gateway.rs`
-    ///    (`PLAYER_ENTER_WORLD` mútuo). Misturar os dois mandaria `NPC_ENTER_SLICE` com id
-    ///    de jogador, que o cliente rotearia para o gerente errado.
+    /// 2. **Teto por atualização, e um por família**: este mapa tem 21.846 monstros, 3.911
+    ///    NPCs e 5.125 recursos. Uma região densa pode ter centenas dentro do raio, e
+    ///    mandar tudo de uma vez enche a fila de saída. Criatura tem
+    ///    [`TETO_DE_VISIVEIS`] e matéria tem [`TETO_DE_MATERIA`], **separados**: num campo
+    ///    de mineração, um teto só faria as pedras expulsarem os NPCs. Nos dois, os mais
+    ///    próximos primeiro; o que sobra entra na próxima atualização.
+    /// 3. **Jogador não entra no teto.** São poucos — o limite é a capacidade do servidor
+    ///    de mundo, não a densidade do mapa — e cortar um jogador por causa de uma
+    ///    multidão de monstros quebraria a simetria do parágrafo acima: eu deixaria de
+    ///    vê-lo sem que ele deixasse de me ver.
     ///
     /// `forcar` pula a histerese. Serve para os dois momentos em que a posição muda sem o
     /// jogador andar: a entrada no mundo e o teleporte.
@@ -1849,37 +1964,61 @@ impl BusServer {
             return;
         }
 
-        // 2. Quem está por perto agora, do mais próximo para o mais distante.
-        let agora: Vec<i64> = {
+        // 2. Quem está por perto agora, em três baldes: criatura (monstro e NPC) e
+        //    matéria com tetos próprios, do mais próximo para o mais distante; jogador sem
+        //    teto, pela simetria (ver a documentação).
+        let (criaturas, materias, jogadores_perto): (Vec<i64>, Vec<i64>, Vec<i64>) = {
             let mundo = self.world.read().await;
-            let mut ids: Vec<(i64, f32)> = mundo
-                .grid
-                .get_entities_in_range(&centro, RAIO_DE_VISAO)
-                .into_iter()
-                .filter(|id| *id != eu && !mundo.players.contains_key(id))
-                .filter_map(|id| {
-                    let pos = match mundo.monsters.get(&id) {
-                        Some((m, _)) if !m.is_dead => m.position,
-                        Some(_) => return None,
-                        None => mundo.npcs.get(&id)?.position,
-                    };
-                    Some((id, centro.distance(&pos)))
-                })
-                .collect();
-            ids.sort_by(|a, b| a.1.total_cmp(&b.1));
-            ids.into_iter().take(TETO_DE_VISIVEIS).map(|(id, _)| id).collect()
+            let perto = mundo.grid.get_entities_in_range(&centro, RAIO_DE_VISAO);
+
+            let mut jogadores = Vec::new();
+            let mut criaturas: Vec<(i64, f32)> = Vec::new();
+            let mut materias: Vec<(i64, f32)> = Vec::new();
+
+            for id in perto {
+                if id == eu {
+                    continue;
+                }
+                if mundo.players.contains_key(&id) {
+                    jogadores.push(id);
+                    continue;
+                }
+                if let Some(m) = mundo.matters.get(&id) {
+                    materias.push((id, centro.distance(&m.position)));
+                    continue;
+                }
+                let pos = match mundo.monsters.get(&id) {
+                    Some((m, _)) if !m.is_dead => m.position,
+                    // Monstro morto não é ausência de dado: é uma criatura que não deve
+                    // ser mandada. Sair aqui evita procurá-la entre os NPCs.
+                    Some(_) => continue,
+                    None => match mundo.npcs.get(&id) {
+                        Some(n) => n.position,
+                        None => continue,
+                    },
+                };
+                criaturas.push((id, centro.distance(&pos)));
+            }
+
+            criaturas.sort_by(|a, b| a.1.total_cmp(&b.1));
+            materias.sort_by(|a, b| a.1.total_cmp(&b.1));
+
+            (
+                criaturas.into_iter().take(TETO_DE_VISIVEIS).map(|(id, _)| id).collect(),
+                materias.into_iter().take(TETO_DE_MATERIA).map(|(id, _)| id).collect(),
+                jogadores,
+            )
         };
 
-        // 3. A diferença, e os dados de quem entrou.
+        // 3. A diferença, sobre o conjunto inteiro — `visiveis` guarda os dois tipos.
         let (entraram, sairam) = {
             let mut mundo = self.world.write().await;
             let Some(jogador) = mundo.players.get_mut(&eu) else {
                 return;
             };
-            let novos: std::collections::HashSet<i64> = agora.iter().copied().collect();
-            let entraram: Vec<i64> = agora
-                .iter()
-                .copied()
+            let tudo = || criaturas.iter().chain(&materias).chain(&jogadores_perto).copied();
+            let novos: std::collections::HashSet<i64> = tudo().collect();
+            let entraram: Vec<i64> = tudo()
                 .filter(|id| !jogador.visiveis.contains(id))
                 .collect();
             let sairam: Vec<i64> = jogador
@@ -1897,18 +2036,43 @@ impl BusServer {
             return;
         }
 
-        let chegando: Vec<(i32, i32, pw_core::Vector3)> = {
+        // 4. Os dados de quem entrou, separados por família — o comando é outro. E o meu
+        //    próprio pacote, para quem passou a me ver.
+        let (chegando, eu_mesmo) = {
             let mundo = self.world.read().await;
-            entraram
+            let chegando: Vec<QuemChegou> = entraram
                 .iter()
-                .filter_map(|id| match mundo.monsters.get(id) {
-                    Some((m, _)) => Some((*id as i32, m.template_id as i32, m.position)),
-                    None => mundo
-                        .npcs
-                        .get(id)
-                        .map(|n| (*id as i32, n.template_id as i32, n.position)),
+                .filter_map(|id| {
+                    if let Some(p) = mundo.players.get(id) {
+                        return Some(QuemChegou::Jogador {
+                            id: *id as i32,
+                            pos: p.position,
+                            sec_level: p.sec_level,
+                        });
+                    }
+                    if let Some(m) = mundo.matters.get(id) {
+                        return Some(QuemChegou::Materia {
+                            id: *id as i32,
+                            tid: m.template_id as i32,
+                            pos: m.position,
+                        });
+                    }
+                    match mundo.monsters.get(id) {
+                        Some((m, _)) => Some(QuemChegou::Criatura {
+                            id: *id as i32,
+                            tid: m.template_id as i32,
+                            pos: m.position,
+                        }),
+                        None => mundo.npcs.get(id).map(|n| QuemChegou::Criatura {
+                            id: *id as i32,
+                            tid: n.template_id as i32,
+                            pos: n.position,
+                        }),
+                    }
                 })
-                .collect()
+                .collect();
+            let eu_mesmo = mundo.players.get(&eu).map(|p| (p.position, p.sec_level));
+            (chegando, eu_mesmo)
         };
 
         debug!(
@@ -1917,21 +2081,123 @@ impl BusServer {
             sairam.len()
         );
 
-        for (nid, tid, pos) in chegando {
+        for c in chegando {
+            let pacote = match c {
+                QuemChegou::Criatura { id, tid, pos } => {
+                    self.sub.npc_enter_slice(id, tid, pos, 0).data
+                }
+                // O `dir` vai zerado: a grade guarda posição, não direção — a mesma lacuna
+                // que os NPCs têm. O cliente vira o avatar no primeiro `OBJECT_MOVE`.
+                QuemChegou::Jogador { id, pos, sec_level } => {
+                    self.sub.player_enter_slice(id, pos, 0, sec_level).data
+                }
+                QuemChegou::Materia { id, tid, pos } => {
+                    S2CGamedataSend::matter_enter_world(id, tid, pos).data
+                }
+            };
+            self.responder(roleid, pacote, envio).await;
+        }
+        // A saída depende da família, e por outro motivo que a entrada: o
+        // `OBJECT_LEAVE_SLICE` (13) só trata `ISPLAYERID` e `ISNPCID`
+        // (`EC_GameDataPrtc.cpp:891-899`). Um id de matéria mandado por ele não faz nada —
+        // nem erro, nem efeito. Matéria sai pelo `OUT_OF_SIGHT_LIST` (34), que o cliente
+        // roteia id a id (`:1056-1071`).
+        let (materia_saiu, resto_saiu): (Vec<i64>, Vec<i64>) =
+            sairam.iter().partition(|id| e_materia(**id));
+        for id in &resto_saiu {
             self.responder(
                 roleid,
-                self.sub.npc_enter_slice(nid, tid, pos, 0).data,
+                S2CGamedataSend::object_leave_slice(*id as i32).data,
                 envio,
             )
             .await;
         }
-        for id in sairam {
-            self.responder(
-                roleid,
-                S2CGamedataSend::object_leave_slice(id as i32).data,
-                envio,
-            )
-            .await;
+        if !materia_saiu.is_empty() {
+            let ids: Vec<i32> = materia_saiu.iter().map(|id| *id as i32).collect();
+            self.responder(roleid, S2CGamedataSend::out_of_sight_list(&ids).data, envio)
+                .await;
+        }
+
+        // 5. O outro lado da visibilidade entre jogadores: quem eu passei a ver precisa
+        //    passar a me ver, e quem eu deixei de ver precisa deixar de me ver — sem
+        //    depender de aquele jogador se mexer.
+        let Some((minha_pos, meu_sec)) = eu_mesmo else {
+            return;
+        };
+        let meu_pacote = self
+            .sub
+            .player_enter_slice(roleid, minha_pos, 0, meu_sec)
+            .data;
+        let minha_saida = S2CGamedataSend::object_leave_slice(roleid).data;
+
+        for outro in entraram {
+            if self.passou_a_ver(outro, eu).await {
+                self.enviar_ao_jogador(outro as i32, meu_pacote.clone()).await;
+            }
+        }
+        for outro in sairam {
+            if self.deixou_de_ver(outro, eu).await {
+                self.enviar_ao_jogador(outro as i32, minha_saida.clone()).await;
+            }
+        }
+    }
+
+    /// Anota, no jogador `outro`, que ele passou a ver `quem`. `false` quando `outro` não
+    /// é um jogador deste mundo, ou já o via.
+    ///
+    /// Existe porque a visibilidade entre jogadores é escrita nos dois lados por quem se
+    /// move (ver [`Self::atualizar_visiveis`]). Sem isto, a atualização de `outro` — se e
+    /// quando ele se mexesse — veria `quem` como novidade e mandaria o comando de novo.
+    async fn passou_a_ver(&self, outro: i64, quem: i64) -> bool {
+        let mut mundo = self.world.write().await;
+        let Some(p) = mundo.players.get_mut(&outro) else {
+            return false;
+        };
+        p.visiveis.insert(quem)
+    }
+
+    /// O espelho: tira `quem` do campo de visão de `outro`. `false` quando `outro` não é
+    /// jogador, ou já não o via.
+    async fn deixou_de_ver(&self, outro: i64, quem: i64) -> bool {
+        let mut mundo = self.world.write().await;
+        let Some(p) = mundo.players.get_mut(&outro) else {
+            return false;
+        };
+        p.visiveis.remove(&quem)
+    }
+
+    /// Tira um jogador da vista de todos os outros, e avisa cada um.
+    ///
+    /// Chamado quando ele sai do mundo — pelo `LOGOUT` ou pela queda da conexão. Sem isto
+    /// o avatar de quem saiu ficaria parado na tela dos outros até que eles andassem para
+    /// longe o bastante para o streaming reparar.
+    ///
+    /// Vai `PLAYER_LEAVE_WORLD` (19), não `OBJECT_LEAVE_SLICE` (13): quem saiu do jogo não
+    /// saiu do alcance, e o cliente distingue os dois (`bExit` em
+    /// `CECPlayerMan::ElsePlayerLeave`).
+    async fn tirar_da_vista_de_todos(&self, quem: i64) {
+        let interessados: Vec<i64> = {
+            let mut mundo = self.world.write().await;
+            let ids: Vec<i64> = mundo
+                .players
+                .iter()
+                .filter(|(id, p)| **id != quem && p.visiveis.contains(&quem))
+                .map(|(id, _)| *id)
+                .collect();
+            for id in &ids {
+                if let Some(p) = mundo.players.get_mut(id) {
+                    p.visiveis.remove(&quem);
+                }
+            }
+            ids
+        };
+
+        if interessados.is_empty() {
+            return;
+        }
+        let pacote = S2CGamedataSend::player_leave_world(quem as i32).data;
+        for id in interessados {
+            self.enviar_ao_jogador(id as i32, pacote.clone()).await;
         }
     }
 
@@ -2529,9 +2795,9 @@ impl BusServer {
     /// `LoadConfigData` no cliente (`EC_HostMsg.cpp:3841`), então ele vai **sempre**,
     /// mesmo quando o cliente não pediu missões — sem ele o cliente fica esperando.
     async fn todos_os_dados(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
-        // A tabela de armas do realm, para o bloco de dados de cada item sair do
-        // `elements.data` em vez de um chute.
-        let armas = self.world.read().await.data_manager.armas.clone();
+        // As tabelas de equipamento do realm, para o bloco de dados de cada item sair do
+        // `elements.data` em vez de um chute — ou de lugar nenhum.
+        let equipamentos = self.world.read().await.data_manager.equipamentos.clone();
 
         let pedido = GetAllData::ler(payload).unwrap_or(GetAllData {
             // Um payload curto vem de cliente de outra versão. Mandar tudo é o
@@ -2555,7 +2821,7 @@ impl BusServer {
             )
             .await;
             for item in &bolsa {
-                self.responder(roleid, Self::info_de(0, item, &armas), envio).await;
+                self.responder(roleid, Self::info_de(0, item, &equipamentos), envio).await;
             }
         }
 
@@ -2571,7 +2837,7 @@ impl BusServer {
             )
             .await;
             for item in &equipado {
-                self.responder(roleid, Self::info_de(1, item, &armas), envio).await;
+                self.responder(roleid, Self::info_de(1, item, &equipamentos), envio).await;
             }
         }
 
@@ -2673,13 +2939,14 @@ impl BusServer {
 
     /// O `item_info` de um item já carregado, para não repetir a conversão em dois lugares.
     ///
-    /// A ficha da arma sai do `elements.data` (`armas`). Quando o item não é arma — ou o
-    /// realm não tem a tabela — vai `None`, e o comando segue **sem** bloco de dados. Ver
-    /// `S2CGamedataSend::item_info`: inventar requisito aqui tranca o item no cliente.
+    /// A ficha sai do `elements.data` (`equipamentos`), da tabela da família certa. Quando
+    /// o item não é equipamento — ou o realm não tem as tabelas — vai `None`, e o comando
+    /// segue **sem** bloco de dados. Ver `S2CGamedataSend::item_info`: inventar requisito
+    /// aqui tranca o item no cliente, e omitir o bloco tranca a armadura.
     fn info_de(
         onde: u8,
         item: &pw_core::ItemRecord,
-        armas: &pw_data_loader::armas::TabelaDeArmas,
+        equipamentos: &pw_data_loader::armaduras::TabelasDeEquipamento,
     ) -> Vec<u8> {
         S2CGamedataSend::item_info(
             onde,
@@ -2689,7 +2956,7 @@ impl BusServer {
             item.max_durability as i32 * 100,
             item.count,
             &item.octets,
-            armas.get(&item.item_id).map(pw_core::FichaDaArma::from),
+            equipamentos.ficha(item.item_id),
         )
         .data
     }
@@ -2715,8 +2982,8 @@ impl BusServer {
         let itens = self.itens().await;
         let ct = ContainerType::from_i16(onde as i16);
         if let Ok(Some(i)) = itens.get_item_by_slot(roleid, ct, slot as u16).await {
-            let armas = self.world.read().await.data_manager.armas.clone();
-            self.responder(roleid, Self::info_de(onde, &i, &armas), envio)
+            let equipamentos = self.world.read().await.data_manager.equipamentos.clone();
+            self.responder(roleid, Self::info_de(onde, &i, &equipamentos), envio)
                 .await;
         }
     }

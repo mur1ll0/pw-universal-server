@@ -131,3 +131,48 @@ fn le_o_arquivo_do_realm_mesmo_nao_sendo_utf8() {
     assert_eq!(t.len(), 12);
     assert_eq!(t.get(0).unwrap().vida, 60);
 }
+
+/// Os quatro atributos com que um personagem nasce saem daqui, e não são 10/10/10/10.
+///
+/// Até 2026-09-09 o `create_character` não mencionava as colunas `strength`, `agility`,
+/// `vitality` e `energy` no `INSERT` e todo personagem nascia com o `DEFAULT 10` do
+/// esquema, qualquer que fosse a classe — o Guerreiro perdia 10 de vitalidade e 5 de
+/// força, e ganhava 5 de energia que não devia ter.
+#[test]
+fn os_atributos_iniciais_saem_por_classe_e_nao_sao_todos_dez() {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("data/realm_155BR/config/ptemplate.conf");
+    let Ok(texto) = std::fs::read_to_string(&p) else {
+        eprintln!("pulado: {} não existe", p.display());
+        return;
+    };
+    let t = ptemplate::ler(&texto).expect("o ptemplate.conf do realm 155BR deveria ser legível");
+
+    // [SWORDSMAN], a seção 0: força 15, agilidade 10, vitalidade 20, energia 5.
+    let guerreiro = t.get(0).unwrap().atributos_iniciais();
+    assert_eq!(
+        (guerreiro.forca, guerreiro.agilidade, guerreiro.vitalidade, guerreiro.energia),
+        (15, 10, 20, 5),
+        "o Guerreiro não nasce 10/10/10/10 — era o que o banco estava dando a ele"
+    );
+
+    // [ANGEL], a seção 7, é o Sacerdote (`CharacterClass::Cleric`). Os nomes das seções são
+    // os do servidor chinês e não batem com os nomes ocidentais; a **ordem** é o que vale.
+    let sacerdote = t.get(7).unwrap().atributos_iniciais();
+    assert_eq!(sacerdote.energia, 20, "o Sacerdote nasce com 20 de energia, não 10");
+
+    // E as doze classes não são todas iguais: se fossem, ler o arquivo não teria efeito
+    // nenhum e o defeito continuaria de pé sem ninguém notar.
+    let distintos: std::collections::BTreeSet<(i32, i32, i32, i32)> = (0..12)
+        .map(|i| {
+            let a = t.get(i).unwrap().atributos_iniciais();
+            (a.forca, a.agilidade, a.vitalidade, a.energia)
+        })
+        .collect();
+    assert!(
+        distintos.len() >= 6,
+        "só {} combinações distintas nas 12 classes — o arquivo não deve ter sido lido por seção",
+        distintos.len()
+    );
+}

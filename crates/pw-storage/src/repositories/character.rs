@@ -121,6 +121,7 @@ impl CharacterRepository {
         cls: CharacterClass,
         gender: Gender,
         custom_data: Vec<u8>,
+        atributos: Option<pw_core::AtributosIniciais>,
     ) -> Result<RoleId> {
         // Busca template da classe no banco de dados
         let tpl_opt = self.template_repo.get_template_for_class(realm_id, cls as i32).await.unwrap_or(None);
@@ -143,14 +144,30 @@ impl CharacterRepository {
 
         let (init_hp, init_mp) = cls.default_hp_mp();
 
+        // Os quatro atributos vêm do `ptemplate.conf`, por classe — o Guerreiro nasce com
+        // vitalidade 20, força 15, agilidade 10, energia 5; o Mago com energia 20 e força
+        // 5. Até 2026-09-09 esta consulta não mencionava as colunas e todo personagem
+        // nascia com o `DEFAULT` do esquema, **10/10/10/10**, qualquer que fosse a classe.
+        //
+        // Sem o arquivo (realm que não o trouxe), continua valendo o padrão da coluna: é
+        // menos errado do que inventar um número por classe aqui.
+        let atr = atributos.unwrap_or(pw_core::AtributosIniciais {
+            forca: 10,
+            agilidade: 10,
+            vitalidade: 10,
+            energia: 10,
+        });
+
         let role_id = sqlx::query_scalar::<_, RoleId>(
             r#"
             INSERT INTO characters (
                 account_id, realm_id, name, race, cls, gender, custom_data,
                 level, cultivation, money, sp, world_id,
-                pos_x, pos_y, pos_z, hp, mp
+                pos_x, pos_y, pos_z, hp, mp,
+                strength, agility, vitality, energy
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+                    $18, $19, $20, $21)
             RETURNING id
             "#,
         )
@@ -171,6 +188,10 @@ impl CharacterRepository {
         .bind(spawn_z)
         .bind(init_hp)
         .bind(init_mp)
+        .bind(atr.forca)
+        .bind(atr.agilidade)
+        .bind(atr.vitalidade)
+        .bind(atr.energia)
         .fetch_one(self.pool.get_ref())
         .await
         .map_err(|e| match e {

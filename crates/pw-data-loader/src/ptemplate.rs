@@ -90,6 +90,19 @@ pub struct TabelaDeBase {
     pub nivel_maximo: Option<i32>,
 }
 
+impl BaseDaClasse {
+    /// Os quatro atributos com que um personagem desta classe nasce, na forma que o
+    /// repositório de personagens grava.
+    pub fn atributos_iniciais(&self) -> pw_core::AtributosIniciais {
+        pw_core::AtributosIniciais {
+            forca: self.forca,
+            agilidade: self.agilidade,
+            vitalidade: self.vitalidade,
+            energia: self.energia,
+        }
+    }
+}
+
 impl TabelaDeBase {
     pub fn get(&self, classe: i32) -> Option<&BaseDaClasse> {
         self.classes.get(&classe)
