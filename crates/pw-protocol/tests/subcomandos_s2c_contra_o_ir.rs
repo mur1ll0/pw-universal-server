@@ -53,6 +53,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("own_ext_prop", "OWN_EXT_PROP"),
     ("host_skill_attacked", "HOST_SKILL_ATTACKED"),
     ("player_hp_steal", "PLAYER_HP_STEAL"),
+    ("object_leave_slice", "OBJECT_LEAVE_SLICE"),
     ("host_correct_pos", "HOST_CORRECT_POS"),
     ("pet_room_capacity", "PET_ROOM_CAPACITY"),
     ("self_king_notify", "SELF_KING_NOTIFY"),

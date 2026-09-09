@@ -518,6 +518,10 @@ async fn entrar(
         let mut m = mundo.write().await;
         let p = m.players.get_mut(&(roleid as i64)).expect("conferido acima");
         p.position = Vector3::new(0.0, 0.0, 0.0);
+        // A âncora do streaming anda junto: mexer na posição sem mexer nela faria o
+        // primeiro passo do jogador parecer um salto de quilômetros, e o mundo em volta
+        // seria recalculado quando não devia.
+        p.centro_do_stream = p.position;
         p.attack_min = 10;
         p.attack_max = 15;
         // Precisão alta e nenhuma armadura no alvo: a rolagem de acerto do combate real
@@ -2598,4 +2602,130 @@ async fn o_teleporte_reenvia_os_npcs_do_destino() {
 
     let r = receber(&mut link, 1).await;
     assert_eq!(cmd_de(&r[0]), 177, "o teleporte tem de confirmar com HOST_CORRECT_POS");
+}
+
+/// O mundo em volta acompanha quem anda.
+///
+/// Até 2026-09-09 os NPCs eram mandados **uma vez só**, no login. O cliente descarta o que
+/// sai do raio ativo dele e ninguém reenviava: andar para longe e voltar deixava o mapa
+/// vazio. Este teste cobre o ciclo inteiro — entrou no alcance, saiu do alcance.
+#[tokio::test]
+async fn andar_traz_o_que_entra_no_alcance_e_tira_o_que_sai() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // O monstro do cenário existe no mapa, mas não na grade espacial — quem consulta a
+    // grade é o streaming. Põe ele a 10 m de onde o jogador está.
+    let origem = {
+        let mut m = mundo.write().await;
+        let origem = m.players[&(roleid as i64)].position;
+        let perto = Vector3::new(origem.x + 10.0, origem.y, origem.z);
+        m.monsters.get_mut(&MONSTRO).unwrap().0.position = perto;
+        m.grid.add_entity(MONSTRO, perto, false);
+        origem
+    };
+
+    // Anda o suficiente para o mundo ser recalculado (o passo mínimo é 20 m).
+    let passo = Vector3::new(origem.x + 25.0, origem.y, origem.z);
+    let mut corpo = vec3(passo.x, passo.y, passo.z);
+    corpo.extend_from_slice(&vec3(passo.x, passo.y, passo.z));
+    corpo.extend_from_slice(&0u16.to_le_bytes()); // use_time
+    corpo.extend_from_slice(&0u16.to_le_bytes()); // speed
+    corpo.push(0); // move_mode
+    corpo.extend_from_slice(&0u16.to_le_bytes()); // cmd_seq
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::PLAYER_MOVE, &corpo),
+    })
+    .await
+    .unwrap();
+
+    let entrou = esperar_comando(&mut link, 11).await;
+    assert_eq!(
+        i32_em(&entrou, 2),
+        MONSTRO as i32,
+        "o NPC_ENTER_SLICE não é do monstro que entrou no alcance"
+    );
+    assert!(
+        mundo.read().await.players[&(roleid as i64)].visiveis.contains(&MONSTRO),
+        "o mundo não anotou que o jogador passou a ver o monstro"
+    );
+
+    // Agora anda para longe: tem de sair.
+    let longe = Vector3::new(origem.x + 500.0, origem.y, origem.z);
+    let mut corpo = vec3(longe.x, longe.y, longe.z);
+    corpo.extend_from_slice(&vec3(longe.x, longe.y, longe.z));
+    corpo.extend_from_slice(&0u16.to_le_bytes());
+    corpo.extend_from_slice(&0u16.to_le_bytes());
+    corpo.push(0);
+    corpo.extend_from_slice(&0u16.to_le_bytes());
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::PLAYER_MOVE, &corpo),
+    })
+    .await
+    .unwrap();
+
+    let saiu = esperar_comando(&mut link, 13).await;
+    assert_eq!(
+        i32_em(&saiu, 2),
+        MONSTRO as i32,
+        "o OBJECT_LEAVE_SLICE não é do monstro que saiu do alcance"
+    );
+    assert!(
+        !mundo.read().await.players[&(roleid as i64)].visiveis.contains(&MONSTRO),
+        "o mundo continua achando que o jogador vê o monstro"
+    );
+}
+
+/// Andar um passo curto **não** refaz a conta: o cliente manda movimento 20 vezes por
+/// segundo, e varrer a grade a cada pacote é o que este limiar evita.
+#[tokio::test]
+async fn passo_curto_nao_refaz_a_conta_do_que_esta_a_vista() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let origem = {
+        let mut m = mundo.write().await;
+        let origem = m.players[&(roleid as i64)].position;
+        let perto = Vector3::new(origem.x + 5.0, origem.y, origem.z);
+        m.monsters.get_mut(&MONSTRO).unwrap().0.position = perto;
+        m.grid.add_entity(MONSTRO, perto, false);
+        origem
+    };
+
+    // Dois metros: bem abaixo do passo mínimo.
+    let perto = Vector3::new(origem.x + 2.0, origem.y, origem.z);
+    let mut corpo = vec3(perto.x, perto.y, perto.z);
+    corpo.extend_from_slice(&vec3(perto.x, perto.y, perto.z));
+    corpo.extend_from_slice(&0u16.to_le_bytes());
+    corpo.extend_from_slice(&0u16.to_le_bytes());
+    corpo.push(0);
+    corpo.extend_from_slice(&0u16.to_le_bytes());
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::PLAYER_MOVE, &corpo),
+    })
+    .await
+    .unwrap();
+
+    // Nada de NPC_ENTER_SLICE deve chegar neste passo.
+    let nada = tokio::time::timeout(Duration::from_millis(400), link.receber()).await;
+    if let Ok(Ok(Some(BusMessage::GameToClient { ref data, .. }))) = nada {
+        assert_ne!(
+            cmd_de(data),
+            11,
+            "recalculou o mundo em volta com dois metros de caminhada"
+        );
+    }
+    assert!(
+        !mundo.read().await.players[&(roleid as i64)].visiveis.contains(&MONSTRO),
+        "o conjunto visível foi recalculado sem o jogador andar o passo mínimo"
+    );
 }

@@ -5024,6 +5024,84 @@ Ordem combinada com o Murillo:
       ficha indo sem bloco.
     - `o_teleporte_reenvia_os_npcs_do_destino`.
 
+39. **Sessão 2026-09-09 (continuação): o streaming de NPCs, e o fim do envio de mundo pelo
+    `gateway.rs`.**
+
+    O item 38 remendou o caso agudo — o teleporte reenviava o que havia em volta do
+    destino. O buraco continuava: **andar 120 m a pé em qualquer direção tinha o mesmo
+    efeito que o teleporte tinha**, porque o mundo era mandado uma vez só, no login.
+
+    ### a. Onde isso estava, e por que sai de lá
+
+    O envio ficava no `gateway.rs`, passo 10: um raio de 120 m em volta da posição de
+    entrada, teto de 60 entidades, e uma lista de reserva escrita no código (a Anciã, o
+    Mestre dos Alados, um monstro) para quando o `npcgen` não respondesse.
+
+    Passou para o mundo, e não é arrumação de gaveta — é onde o dado está:
+
+    - o `pw-gs` tem a **grade espacial**, que já indexa monstro, NPC e jogador por posição;
+    - o `pw-gs` sabe **quais monstros estão vivos** (o link não sabe: ele lê o `npcgen`, que
+      é a lista de nascimento, não o estado);
+    - e é o `pw-gs` que vai continuar mandando conforme o jogador anda.
+
+    Com o envio no link, o mundo não tinha como saber o que o cliente já tinha — e o
+    contrário também: o teto de 60 do link deixava de fora o que o mundo consideraria
+    visível. Dois donos do mesmo estado.
+
+    ### b. Como funciona
+
+    `PlayerEntity` ganhou `visiveis` (o conjunto de ids que aquele cliente tem) e
+    `centro_do_stream` (onde ele estava quando a conta foi feita). A cada movimento,
+    `BusServer::atualizar_visiveis` pergunta à grade quem está no raio, compara com o
+    conjunto e manda **só a diferença**: `NPC_ENTER_SLICE` (11) para quem entrou,
+    `OBJECT_LEAVE_SLICE` (13) para quem saiu.
+
+    O 13 é novo aqui: `struct cmd_leave_slice { int id; }`, 4 bytes, e o cliente roteia
+    pelo id — `ISNPCID` manda para o gerente de NPCs, `ISPLAYERID` para o de jogadores
+    (`EC_GameDataPrtc.cpp:891-899`). Os ids do `npcgen` já nascem com o bit 31 ligado
+    (`npcgen.rs:399`), então o roteamento cai no lado certo.
+
+    ### c. As três decisões que fazem isto não derrubar o servidor
+
+    | | Valor | Por quê |
+    | :--- | ---: | :--- |
+    | Raio | 120 m | o mesmo do login; o cliente descarta o que passa do raio ativo dele |
+    | Passo para recalcular | 20 m | o cliente manda movimento **20 vezes por segundo**; sem histerese seriam 20 varreduras da grade por segundo por jogador para achar quase sempre o mesmo conjunto |
+    | Teto por jogador | 80 | este mapa tem **21.846 monstros e 3.911 NPCs**; numa região densa o raio pega centenas, e cada uma é um pacote |
+
+    O teto é orçamento de fila, não regra do jogo: entram os mais próximos, e o resto chega
+    na atualização seguinte, quando o jogador se aproximar.
+
+    Jogador **não** entra nesta conta. A visibilidade entre jogadores continua no
+    `gateway.rs` (`PLAYER_ENTER_WORLD` mútuo); misturar mandaria `NPC_ENTER_SLICE` com id
+    de jogador, e o cliente rotearia para o gerente errado.
+
+    ### d. Um defeito de teste que este trabalho revelou
+
+    O helper `entrar` dos testes põe o jogador em (0,0,0) escrevendo direto no mundo. Com a
+    âncora do streaming intocada, o primeiro passo de dois metros parecia um salto de
+    4,3 km — e o teste de histerese falhava por artefato dele mesmo, não do servidor. O
+    helper passou a mover a âncora junto.
+
+    ### e. Sabidamente incompleto
+
+    - **Matéria** (minério, ervas, os "recursos do mapa") não entra: nada no servidor
+      manda `MATTER_ENTER_WORLD` (18) ainda, nem no login nem depois.
+    - Um monstro que morre enquanto está à vista sai do conjunto e recebe um
+      `OBJECT_LEAVE_SLICE` na próxima recalculada. O `NPC_DIED` já tratou a morte; o
+      "saiu de vista" é redundante, não errado.
+    - O `dir` dos NPCs vai zerado no streaming: a grade guarda posição, não direção. No
+      login antigo ele vinha do `npcgen`.
+
+    ### f. Provas
+
+    - `andar_traz_o_que_entra_no_alcance_e_tira_o_que_sai`: põe um monstro na grade,
+      anda 25 m e exige o `NPC_ENTER_SLICE` com o id certo; anda 500 m e exige o
+      `OBJECT_LEAVE_SLICE`. Confere o conjunto `visiveis` do mundo nas duas pontas.
+    - `passo_curto_nao_refaz_a_conta_do_que_esta_a_vista`: dois metros não recalculam nada.
+
+
+
 
 
 

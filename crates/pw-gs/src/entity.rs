@@ -65,6 +65,18 @@ pub struct PlayerEntity {
     pub position: Vector3,
     pub target_id: Option<i64>,
     pub buffs: Vec<ActiveBuff>,
+    /// As entidades que este jogador já recebeu — NPCs e monstros, por id.
+    ///
+    /// É a memória do que o **cliente** tem. Sem ela não dá para saber o que mandar
+    /// quando ele anda: `NPC_ENTER_SLICE` para o que entrou no alcance,
+    /// `OBJECT_LEAVE_SLICE` para o que saiu. Ver `BusServer::atualizar_visiveis`.
+    pub visiveis: std::collections::HashSet<i64>,
+    /// Onde o jogador estava quando [`Self::visiveis`] foi calculado pela última vez.
+    ///
+    /// A conta só é refeita depois que ele anda uma distância mínima: o cliente manda
+    /// movimento 20 vezes por segundo, e varrer a grade a cada pacote seria varrer 20
+    /// vezes por segundo por jogador para achar quase sempre o mesmo conjunto.
+    pub centro_do_stream: Vector3,
     /// O jogador está voando.
     ///
     /// Não há coluna no banco para isso, e nem deveria: quem relogar entra no chão, que é
@@ -240,6 +252,8 @@ impl PlayerEntity {
             position: p.position,
             target_id: None,
             buffs: Vec::new(),
+            visiveis: std::collections::HashSet::new(),
+            centro_do_stream: p.position,
             voando: false,
             // Todo mundo entra mostrando a armadura; o banco não guarda esta escolha.
             modo_roupa: false,

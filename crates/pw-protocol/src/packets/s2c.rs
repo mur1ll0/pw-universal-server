@@ -1428,6 +1428,22 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `OBJECT_LEAVE_SLICE` (13) — a entidade saiu do alcance; o cliente pode largá-la.
+    ///
+    /// `struct cmd_leave_slice { int id; }` — 4 bytes (`EC_GPDataType.h:1356`). O cliente
+    /// roteia pelo id: `ISNPCID` manda para o gerente de NPCs como "saiu correndo",
+    /// `ISPLAYERID` para o de jogadores (`EC_GameDataPrtc.cpp:891-899`).
+    ///
+    /// É o par do `NPC_ENTER_SLICE` (11). Sem ele, tudo o que o servidor manda uma vez
+    /// fica na memória do cliente para sempre — e, pior, o cliente descarta sozinho o que
+    /// sai do raio ativo dele, então o servidor perde a conta do que o outro lado tem.
+    pub fn object_leave_slice(id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(13);               // CMD_S2C_OBJECT_LEAVE_SLICE = 13
+        stream.write_i32_le(id);               // int id (4B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `PLAYER_HP_STEAL` (279) — o número **verde** de vida recuperada.
     ///
     /// `struct cmd_player_hp_steal { int hp; }` — 4 bytes, conferido no

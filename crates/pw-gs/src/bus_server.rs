@@ -161,6 +161,26 @@ const NIVEL_DA_HABILIDADE: i32 = 1;
 /// humanos, asa para os Alados).
 const SLOT_DE_VOO: u16 = 12;
 
+/// Até onde o jogador enxerga NPCs e monstros, em metros.
+///
+/// O mesmo raio que o login usava. O cliente tem o raio ativo dele
+/// (`SevActiveRadius`) e descarta o que passa disso; mandar mais do que ele guarda é
+/// desperdício de fila.
+const RAIO_DE_VISAO: f32 = 120.0;
+
+/// Quanto o jogador precisa andar para o mundo em volta ser recalculado, em metros.
+///
+/// O cliente manda movimento 20 vezes por segundo. Sem esta histerese, cada jogador faria
+/// 20 varreduras da grade por segundo para achar quase sempre o mesmo conjunto.
+const PASSO_PARA_RECALCULAR: f32 = 20.0;
+
+/// Quantas entidades no máximo um jogador acompanha de uma vez.
+///
+/// Este mapa tem 21.846 monstros e 3.911 NPCs. Numa região densa, o raio de 120 m pega
+/// centenas — e cada uma é um pacote. O teto é orçamento de fila, não regra do jogo: os
+/// mais próximos entram primeiro, e o resto chega na próxima atualização.
+const TETO_DE_VISIVEIS: usize = 80;
+
 /// Canal por onde o mundo devolve mensagens àquele jogador.
 pub type EnvioAoCliente = mpsc::Sender<BusMessage>;
 
@@ -419,7 +439,7 @@ impl BusServer {
                     },
                 );
                 info!("mundo: jogador {roleid} entrou (localsid {localsid})");
-                self.colocar_no_mundo(roleid).await;
+                self.colocar_no_mundo(roleid, envio).await;
             }
 
             BusMessage::PlayerLogout { roleid, .. } => {
@@ -461,7 +481,7 @@ impl BusServer {
     /// sessão: o jogador continua conectado e recebendo pacotes pelo caminho antigo, e o
     /// log diz o que faltou. Cair aqui e desconectar seria trocar "combate não funciona"
     /// por "não dá para jogar".
-    async fn colocar_no_mundo(&self, roleid: i32) {
+    async fn colocar_no_mundo(&self, roleid: i32, envio: &EnvioAoCliente) {
         let (repo, world_id, dados) = {
             let mundo = self.world.read().await;
             (
@@ -533,6 +553,11 @@ impl BusServer {
             jogador.def_phys, jogador.attack_rate, jogador.armor
         );
         self.world.write().await.add_player(jogador);
+
+        // A carga inicial do mundo em volta. Quem manda os NPCs é o mundo, não o link:
+        // ele tem a grade espacial, sabe quais monstros estão vivos, e é ele que vai
+        // continuar mandando conforme o jogador anda. Ver [`Self::atualizar_visiveis`].
+        self.atualizar_visiveis(roleid, envio, true).await;
     }
 
     /// Ponto de entrada dos subcomandos do mundo 3D.
@@ -546,11 +571,11 @@ impl BusServer {
     /// que tiraria do ar todos os jogadores daquele link por causa de um comando só.
     async fn tratar_subcomando(&self, roleid: i32, cmd: SubComando, envio: &EnvioAoCliente) {
         match cmd.id {
-            ids::PLAYER_MOVE => self.mover(roleid, &cmd.payload).await,
+            ids::PLAYER_MOVE => self.mover(roleid, &cmd.payload, envio).await,
             ids::LOGOUT => self.sair(roleid, &cmd.payload, envio).await,
             ids::SELECT_TARGET => self.selecionar_alvo(roleid, &cmd.payload, envio).await,
             ids::UNSELECT => self.desmarcar(roleid, envio).await,
-            ids::STOP_MOVE => self.parar(roleid, &cmd.payload).await,
+            ids::STOP_MOVE => self.parar(roleid, &cmd.payload, envio).await,
             ids::NORMAL_ATTACK => self.atacar(roleid, &cmd.payload, envio).await,
             ids::REVIVE_VILLAGE => self.reviver(roleid).await,
             ids::GET_ITEM_INFO => self.info_do_item(roleid, &cmd.payload, envio).await,
@@ -612,7 +637,7 @@ impl BusServer {
     /// idêntico no 1.2.6 e no 1.5.3+ (`docs/MEDIDAS_DO_126.md`, o comando mais frequente
     /// da captura inteira, 17294 ocorrências) — mandado pra todo outro jogador conectado
     /// a este mundo (`transmitir_a_outros`).
-    async fn mover(&self, roleid: i32, payload: &[u8]) {
+    async fn mover(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
         let Some(m) = PlayerMove::ler(payload) else {
             warn!(
                 "mundo: movimento de {roleid} com {} bytes — curto até para a posição",
@@ -642,6 +667,9 @@ impl BusServer {
             .object_move(roleid, dest, m.use_time, m.speed as i16, m.move_mode)
             .data;
         self.transmitir_a_outros(roleid, pacote).await;
+
+        // E o mundo em volta acompanha quem anda.
+        self.atualizar_visiveis(roleid, envio, false).await;
     }
 
     /// `C2S::LOGOUT` (1) — o jogador pediu para sair.
@@ -767,7 +795,7 @@ impl BusServer {
     /// Mesma atualização do movimento: entidade e grade. O `gateway.rs` gravava no banco
     /// aqui também, um `UPDATE` por parada. Mesma causa raiz e mesma correção do
     /// `mover` acima — `OBJECT_STOP_MOVE` (S2C 35) pra quem mais está neste mundo.
-    async fn parar(&self, roleid: i32, payload: &[u8]) {
+    async fn parar(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
         let Some(m) = StopMove::ler(payload) else {
             warn!("mundo: stop_move de {roleid} com payload curto");
             return;
@@ -780,6 +808,8 @@ impl BusServer {
             .object_stop_move(roleid, pos, m.speed as i16, m.dir, m.move_mode)
             .data;
         self.transmitir_a_outros(roleid, pacote).await;
+
+        self.atualizar_visiveis(roleid, envio, false).await;
     }
 
     /// `C2S::NORMAL_ATTACK` (3) — ataque básico no alvo já selecionado.
@@ -1766,70 +1796,139 @@ impl BusServer {
         )
         .await;
 
-        // E o jogador precisa ver o que existe onde ele chegou. Ver
-        // [`Self::mandar_npcs_ao_redor`]: sem isto o destino fica vazio, e a vila de onde
-        // ele saiu também — o cliente já tinha descartado tudo.
-        self.mandar_npcs_ao_redor(roleid, destino, envio).await;
+        // E o jogador precisa ver o que existe onde chegou. O teleporte é justamente o
+        // caso em que a histerese de [`Self::atualizar_visiveis`] não atrapalha: a
+        // distância percorrida é sempre maior do que o passo mínimo.
+        self.atualizar_visiveis(roleid, envio, true).await;
     }
 
-    /// Manda os NPCs e monstros que estão em volta de uma posição.
+    /// Manda o que entrou no alcance do jogador e retira o que saiu.
     ///
-    /// # Por que isto precisa existir
+    /// # O problema que isto resolve
     ///
-    /// Os NPCs são mandados **uma vez só**, no login, em volta da posição de entrada
-    /// (`gateway.rs`, passo 10). Não há streaming: andar para longe e voltar não traz
-    /// nada de novo, porque o cliente descarta o que sai do raio ativo e o servidor nunca
-    /// reenvia.
+    /// Até 2026-09-09 os NPCs eram mandados **uma vez só**, no login, num raio em volta da
+    /// posição de entrada. Não havia streaming: o cliente descarta sozinho o que sai do
+    /// raio ativo dele, e o servidor nunca reenviava. Andando a pé isso passava
+    /// despercebido porque o raio do login cobria a vila inteira; o teleporte de GM
+    /// escancarou — o destino chegava vazio, e a vila de origem também, na volta.
     ///
-    /// Enquanto o jogador andava, isso passava despercebido — o raio de 120 m do login
-    /// cobria a vila inteira. O teleporte de GM expôs o problema de uma vez: em jogo,
-    /// 2026-09-09, o Murillo se teleportou e **não havia NPC nenhum** no destino, e ao
-    /// voltar para a vila também não havia mais nada.
+    /// # Como funciona
     ///
-    /// Esta função é o remendo do caso agudo, e **não** é streaming: ela reenvia o que
-    /// está em volta de um ponto, quando alguém pede. O streaming de verdade — mandar
-    /// `NPC_ENTER_SLICE` e `NPC_LEAVE_SLICE` conforme o jogador anda — continua não
-    /// existindo, e é o que fecha o buraco de vez.
-    async fn mandar_npcs_ao_redor(
-        &self,
-        roleid: i32,
-        centro: pw_core::Vector3,
-        envio: &EnvioAoCliente,
-    ) {
-        /// O mesmo raio do login. O cliente descarta o que passa do raio ativo dele.
-        const RAIO: f32 = 120.0;
-        /// O mesmo teto do login: um pacote por NPC, e uma vila inteira de uma vez
-        /// entopoe a fila de saída sem o jogador ver diferença.
-        const TETO: usize = 60;
+    /// A grade espacial do mundo (`SpatialGrid`) já indexa monstros, NPCs e jogadores por
+    /// posição. Aqui se pergunta a ela quem está dentro de [`RAIO_DE_VISAO`], compara com
+    /// o que o jogador já tem (`PlayerEntity::visiveis`) e manda só a diferença:
+    /// `NPC_ENTER_SLICE` (11) para quem entrou, `OBJECT_LEAVE_SLICE` (13) para quem saiu.
+    ///
+    /// # As três decisões que fazem isto não derrubar o servidor
+    ///
+    /// 1. **Histerese**: a conta só é refeita depois que o jogador anda
+    ///    [`PASSO_PARA_RECALCULAR`]. O cliente manda movimento 20 vezes por segundo, e
+    ///    varrer a grade a cada pacote seria varrer 20 vezes por segundo por jogador para
+    ///    achar quase sempre o mesmo conjunto.
+    /// 2. **Teto por atualização**: este mapa tem 21.846 monstros e 3.911 NPCs. Uma região
+    ///    densa pode ter centenas dentro do raio, e mandar tudo de uma vez enche a fila de
+    ///    saída. O teto é [`TETO_DE_VISIVEIS`], pelos mais próximos primeiro; o que sobra
+    ///    entra na próxima atualização, quando o jogador chegar mais perto.
+    /// 3. **Jogador não entra aqui**: a visibilidade entre jogadores é do `gateway.rs`
+    ///    (`PLAYER_ENTER_WORLD` mútuo). Misturar os dois mandaria `NPC_ENTER_SLICE` com id
+    ///    de jogador, que o cliente rotearia para o gerente errado.
+    ///
+    /// `forcar` pula a histerese. Serve para os dois momentos em que a posição muda sem o
+    /// jogador andar: a entrada no mundo e o teleporte.
+    async fn atualizar_visiveis(&self, roleid: i32, envio: &EnvioAoCliente, forcar: bool) {
+        let eu = roleid as i64;
 
-        let (dados, mapa) = {
+        // 1. Vale a pena recalcular?
+        let Some((centro, anterior)) = ({
             let mundo = self.world.read().await;
-            (Arc::clone(&mundo.data_manager), mundo.world_id)
-        };
-        let Some(spawns) = dados.map_spawns.get(&mapa) else {
-            debug!("mundo: mapa {mapa} sem npcgen — nada a reenviar");
+            mundo.players.get(&eu).map(|p| (p.position, p.centro_do_stream))
+        }) else {
             return;
         };
+        if !forcar && centro.distance(&anterior) < PASSO_PARA_RECALCULAR {
+            return;
+        }
 
-        let perto: Vec<_> = spawns
-            .query_nearby(centro, RAIO)
-            .into_iter()
-            .take(TETO)
-            .map(|s| {
-                (
-                    s.instance_id,
-                    s.template_id as i32,
-                    s.pos,
-                    pw_data_loader::compress_dir_h(s.dir.x, s.dir.z),
-                )
-            })
-            .collect();
+        // 2. Quem está por perto agora, do mais próximo para o mais distante.
+        let agora: Vec<i64> = {
+            let mundo = self.world.read().await;
+            let mut ids: Vec<(i64, f32)> = mundo
+                .grid
+                .get_entities_in_range(&centro, RAIO_DE_VISAO)
+                .into_iter()
+                .filter(|id| *id != eu && !mundo.players.contains_key(id))
+                .filter_map(|id| {
+                    let pos = match mundo.monsters.get(&id) {
+                        Some((m, _)) if !m.is_dead => m.position,
+                        Some(_) => return None,
+                        None => mundo.npcs.get(&id)?.position,
+                    };
+                    Some((id, centro.distance(&pos)))
+                })
+                .collect();
+            ids.sort_by(|a, b| a.1.total_cmp(&b.1));
+            ids.into_iter().take(TETO_DE_VISIVEIS).map(|(id, _)| id).collect()
+        };
 
-        debug!("mundo: reenviando {} NPCs em volta de {centro:?} para {roleid}", perto.len());
-        for (nid, tid, pos, dir) in perto {
+        // 3. A diferença, e os dados de quem entrou.
+        let (entraram, sairam) = {
+            let mut mundo = self.world.write().await;
+            let Some(jogador) = mundo.players.get_mut(&eu) else {
+                return;
+            };
+            let novos: std::collections::HashSet<i64> = agora.iter().copied().collect();
+            let entraram: Vec<i64> = agora
+                .iter()
+                .copied()
+                .filter(|id| !jogador.visiveis.contains(id))
+                .collect();
+            let sairam: Vec<i64> = jogador
+                .visiveis
+                .iter()
+                .copied()
+                .filter(|id| !novos.contains(id))
+                .collect();
+            jogador.visiveis = novos;
+            jogador.centro_do_stream = centro;
+            (entraram, sairam)
+        };
+
+        if entraram.is_empty() && sairam.is_empty() {
+            return;
+        }
+
+        let chegando: Vec<(i32, i32, pw_core::Vector3)> = {
+            let mundo = self.world.read().await;
+            entraram
+                .iter()
+                .filter_map(|id| match mundo.monsters.get(id) {
+                    Some((m, _)) => Some((*id as i32, m.template_id as i32, m.position)),
+                    None => mundo
+                        .npcs
+                        .get(id)
+                        .map(|n| (*id as i32, n.template_id as i32, n.position)),
+                })
+                .collect()
+        };
+
+        debug!(
+            "mundo: {roleid} passou a ver {} e deixou de ver {}",
+            chegando.len(),
+            sairam.len()
+        );
+
+        for (nid, tid, pos) in chegando {
             self.responder(
                 roleid,
-                self.sub.npc_enter_world(nid, tid, pos, dir).data,
+                self.sub.npc_enter_slice(nid, tid, pos, 0).data,
+                envio,
+            )
+            .await;
+        }
+        for id in sairam {
+            self.responder(
+                roleid,
+                S2CGamedataSend::object_leave_slice(id as i32).data,
                 envio,
             )
             .await;

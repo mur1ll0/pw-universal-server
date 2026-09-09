@@ -874,69 +874,19 @@ impl LinkGateway {
                         }
                     }
 
-                    // 10. Envia NPC_ENTER_SLICE / NPC_ENTER_WORLD e NPC_INFO_00 no raio de 120m
+                    // Os NPCs e monstros **não saem daqui**.
                     //
-                    // O diagnóstico de 2026-09-03 que desligava este envio (`false &&`) foi revertido:
-                    // os NPCs/monstros NÃO são a causa do crash de render — os três minidumps
-                    // (client BR, client novo intocado e client EN) crasham no mesmo ponto com e
-                    // sem NPC no raio. Ver docs/ESTADO_E_RETOMADA.md, itens 9-10.
-                    let mut nearby_npcs = Vec::new();
-                    if self.data_manager.map_spawns.get(&1).is_some() {
-                        let world_spawns = self.data_manager.map_spawns.get(&1).unwrap();
-                        let nearby = world_spawns.query_nearby(details.position, 120.0);
-                        for spawn in nearby.into_iter().take(60) {
-                            let dir_byte = pw_data_loader::compress_dir_h(spawn.dir.x, spawn.dir.z);
-                            nearby_npcs.push((spawn.instance_id, spawn.template_id as i32, (spawn.pos.x, spawn.pos.y, spawn.pos.z), dir_byte));
-                        }
-                    }
-
-                    if nearby_npcs.is_empty() {
-                        let anc_id = (0x80000000u32 | 1001) as i32;
-                        let ins_id = (0x80000000u32 | 1002) as i32;
-                        let mes_id = (0x80000000u32 | 1003) as i32;
-                        let alq_id = (0x80000000u32 | 1004) as i32;
-                        let fer_id = (0x80000000u32 | 1005) as i32;
-                        let mon_id = (0x80000000u32 | 1006) as i32;
-                        nearby_npcs = match details.cls {
-                            CharacterClass::Cleric | CharacterClass::Archer => vec![
-                                (anc_id, 2191, (-722.0, 219.1, -1222.6), 64),  // Anciã do Vale das Plumas
-                                (mes_id, 2190, (-746.7, 219.0, -1257.9), 128), // Mestre dos Alados
-                                (ins_id, 2182, (-727.0, 219.2, -1244.8), 64),  // Instrutor de Habilidades
-                                (alq_id, 2187, (-755.2, 221.8, -1353.9), 32),  // Alquimista do Vale das Plumas
-                                (fer_id, 2189, (-797.9, 219.5, -1309.3), 0),   // Ferreiro do Vale das Plumas
-                                (mon_id, 13641, (-726.3, 219.4, -1096.8), 0),  // Monstro Inicial
-                            ],
-                            CharacterClass::Blademaster | CharacterClass::Wizard => vec![
-                                (anc_id, 2175, (438.0, 21.0, 676.0), 0),        // Ancião da Cidade das Espadas
-                                (mes_id, 4469, (435.0, 21.0, 670.0), 64),       // Mestre Guerreiro
-                                (ins_id, 4472, (440.0, 21.0, 670.0), 128),      // Mestre Mago
-                                (mon_id, 1001, (430.0, 21.0, 650.0), 0),        // Monstro Inicial
-                            ],
-                            CharacterClass::Barbarian | CharacterClass::Venomancer => vec![
-                                (anc_id, 2206, (-141.0, 21.0, -289.0), 0),      // Ancião da Cidade das Feras
-                                (mes_id, 4475, (-145.0, 21.0, -285.0), 64),     // Mestre Bárbaro
-                                (ins_id, 4480, (-138.0, 21.0, -285.0), 128),    // Mestre Feiticeira
-                                (mon_id, 1001, (-150.0, 21.0, -300.0), 0),      // Monstro Inicial
-                            ],
-                            _ => vec![
-                                (anc_id, 2191, (-722.0, 219.1, -1222.6), 64),
-                            ],
-                        };
-                    }
-
-                    info!("Enviando {} entidades (NPCs/Monstros) com HP e dados exatos ao redor da posição {:?} para o jogador '{}'", nearby_npcs.len(), details.position, details.name);
-                    for spawn in nearby_npcs {
-                        // Via `sub` porque a struct `info_npc` ganhou `vis_tid` e `state2`
-                        // no 1.5.x — ver `PorVersao::npc_enter_world`. Com os 27 bytes do
-                        // 1.2.6, o client 1.5.5 recebia os NPCs e não desenhava nenhum.
-                        tx.send(OutboundPacket::GamedataSend(sub.npc_enter_world(
-                            spawn.0,
-                            spawn.1,
-                            Vector3::new(spawn.2.0, spawn.2.1, spawn.2.2),
-                            spawn.3,
-                        ))).await?;
-                    }
-
+                    // Saíam: este passo mandava, uma vez só, o que estava num raio de 120 m
+                    // da posição de entrada, com um teto de 60 e uma lista de reserva
+                    // escrita no código para quando o `npcgen` não respondesse. Uma vez só
+                    // era o problema — o cliente descarta o que sai do raio ativo dele, e
+                    // ninguém reenviava. Andando a pé passava despercebido porque aquele
+                    // raio cobria a vila inteira; o teleporte de GM mostrou o buraco de uma
+                    // vez, com o destino chegando vazio (2026-09-09).
+                    //
+                    // Agora quem manda é o mundo, que tem a grade espacial, sabe quais
+                    // monstros estão vivos e continua mandando conforme o jogador anda —
+                    // ver `BusServer::atualizar_visiveis`.
                     // 10.5 Dinheiro (prata/ouro) do personagem — GET_OWN_MONEY (82), não
                     //      PLAYER_CASH (253). Achado em 2026-09-03 lendo `SendAllData`
                     //      (EvolvedPWServer, player.cpp): `player_cash` manda
