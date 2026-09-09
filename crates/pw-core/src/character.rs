@@ -143,3 +143,40 @@ impl QuestStatus {
         }
     }
 }
+
+/// A ficha de uma arma, como o cliente precisa recebê-la no `OWN_ITEM_INFO`.
+///
+/// Mora aqui, e não no `pw-protocol` nem no `pw-data-loader`, porque os dois precisam
+/// dela e nenhum dos dois deve depender do outro: o leitor de arquivos não deve conhecer
+/// o formato de rede, e o codificador de rede não deve conhecer o `elements.data`. O
+/// `pw-core` é o crate que os dois já enxergam.
+///
+/// Quem converte é `pw_data_loader::armas::TemplateDeArma`, com um `From`.
+///
+/// Todos os campos saem do `WEAPON_ESSENCE` — ver `pw_data_loader::armas`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FichaDaArma {
+    /// `weapon_type`: 0 corpo a corpo, 1 longo alcance (`EC_IvtrTypes.h:166-167`).
+    ///
+    /// **É o campo mais perigoso desta struct.** Declarar longo alcance faz o cliente
+    /// cobrar munição em `CanUseEquipment`, e sem munição o item vira vermelho e
+    /// inutilizável.
+    pub tipo_de_arma: i16,
+    /// Máscara de classes que podem equipar (`character_combo_id`), um bit por classe.
+    /// **Zero recusa todo mundo.**
+    pub classes_permitidas: i32,
+    pub nivel_exigido: i16,
+    pub forca_exigida: i16,
+    pub vitalidade_exigida: i16,
+    pub agilidade_exigida: i16,
+    pub energia_exigida: i16,
+    pub municao_exigida: i32,
+    pub tipo_maior: i32,
+    pub dano_minimo: i32,
+    pub dano_maximo: i32,
+    pub dano_magico_minimo: i32,
+    pub dano_magico_maximo: i32,
+    /// Em *ticks* de 50 ms, como o cliente conta.
+    pub velocidade_de_ataque: i32,
+    pub alcance: f32,
+}

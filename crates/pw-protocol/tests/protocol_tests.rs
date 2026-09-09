@@ -215,17 +215,54 @@ fn test_gamedatasend_s2c_subcommands() {
     let p9 = S2CGamedataSend::self_stop_skill();
     assert_eq!(u16::from_le_bytes([p9.data[0], p9.data[1]]), 123);
 
-    // Valida normalização de durabilidade para armas (ex: 28 -> 1400 = 28*50)
-    let item_weapon = S2CGamedataSend::item_info(1, 0, 2097, 28, 28, 1, &[]);
-    assert_eq!(u16::from_le_bytes([item_weapon.data[0], item_weapon.data[1]]), 40);
-    let cur_dur = i32::from_le_bytes([
-        item_weapon.data[36], item_weapon.data[37], item_weapon.data[38], item_weapon.data[39]
-    ]);
-    let max_dur = i32::from_le_bytes([
-        item_weapon.data[40], item_weapon.data[41], item_weapon.data[42], item_weapon.data[43]
-    ]);
-    assert_eq!(cur_dur, 1400);
-    assert_eq!(max_dur, 1400);
+    // O bloco de dados da arma sai da ficha que vem do `elements.data`. A durabilidade
+    // passa como chegou: quem converte para a escala do cliente é o chamador.
+    let ficha = pw_core::FichaDaArma {
+        tipo_de_arma: 0, // corpo a corpo
+        classes_permitidas: 767,
+        nivel_exigido: 1,
+        forca_exigida: 5,
+        vitalidade_exigida: 0,
+        agilidade_exigida: 0,
+        energia_exigida: 3,
+        municao_exigida: 0,
+        tipo_maior: 292,
+        dano_minimo: 3,
+        dano_maximo: 3,
+        dano_magico_minimo: 5,
+        dano_magico_maximo: 5,
+        velocidade_de_ataque: 0,
+        alcance: 3.0,
+    };
+    let arma = S2CGamedataSend::item_info(1, 0, 2251, 2800, 2800, 1, &[], Some(ficha));
+    assert_eq!(u16::from_le_bytes([arma.data[0], arma.data[1]]), 40);
+
+    // Cabeçalho do comando: 2 + 1 + 1 + 4 + 4 + 4 + 4 + 2 = 22 bytes, depois o tamanho do
+    // bloco (2) e o bloco. Os requisitos são os seis primeiros `short` do bloco.
+    const BLOCO: usize = 22 + 2;
+    let s16 = |off: usize| i16::from_le_bytes([arma.data[off], arma.data[off + 1]]);
+    let s32 = |off: usize| {
+        i32::from_le_bytes([
+            arma.data[off], arma.data[off + 1], arma.data[off + 2], arma.data[off + 3],
+        ])
+    };
+    assert_eq!(s16(BLOCO), 1, "nível exigido");
+    assert_eq!(s16(BLOCO + 2), 767, "máscara de classes — zero aqui recusa todo mundo");
+    assert_eq!(s16(BLOCO + 4), 5, "força exigida");
+    assert_eq!(s16(BLOCO + 10), 3, "energia exigida");
+    assert_eq!(s32(BLOCO + 12), 2800, "durabilidade passa como chegou");
+    assert_eq!(s32(BLOCO + 16), 2800);
+
+    // O `weapon_type` fica logo depois do cabeçalho da ficha (2 do tamanho + 1 + 1).
+    assert_eq!(
+        s16(BLOCO + 20 + 4),
+        0,
+        "a Varinha não pode viajar como arma de munição: era o que a deixava vermelha"
+    );
+
+    // Sem ficha, o comando vai sem bloco nenhum — melhor do que inventar requisito.
+    let sem = S2CGamedataSend::item_info(0, 3, 1796, 0, 0, 10, &[], None);
+    assert_eq!(sem.data.len(), 24, "cabeçalho de 22 mais o tamanho do bloco em zero");
 }
 
 #[test]

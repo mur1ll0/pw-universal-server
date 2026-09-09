@@ -852,15 +852,26 @@ impl LinkGateway {
                     tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(1, 32, &details.equipment))).await?;
 
                     // 9. Envia OWN_ITEM_INFO (Comando 40) para cada item
-                    for item in &details.inventory {
-                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
-                            0, item.slot as u8, item.item_id as i32, item.durability as i32 * 100, item.max_durability as i32 * 100, item.count, &item.octets
-                        ))).await?;
-                    }
-                    for item in &details.equipment {
-                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
-                            1, item.slot as u8, item.item_id as i32, item.durability as i32 * 100, item.max_durability as i32 * 100, item.count, &item.octets
-                        ))).await?;
+                    //
+                    // A ficha da arma sai do `elements.data` (`data_manager.armas`). Antes
+                    // era montada por uma tabela de quatro ids escrita no codificador, com
+                    // um genérico que declarava toda arma desconhecida como de longo
+                    // alcance — e o cliente recusava a arma por falta de munição. Ver
+                    // `S2CGamedataSend::item_info`.
+                    let armas = &self.data_manager.armas;
+                    for (onde, lista) in [(0u8, &details.inventory), (1u8, &details.equipment)] {
+                        for item in lista {
+                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
+                                onde,
+                                item.slot as u8,
+                                item.item_id as i32,
+                                item.durability as i32 * 100,
+                                item.max_durability as i32 * 100,
+                                item.count,
+                                &item.octets,
+                                armas.get(&item.item_id).map(pw_core::FichaDaArma::from),
+                            ))).await?;
+                        }
                     }
 
                     // 10. Envia NPC_ENTER_SLICE / NPC_ENTER_WORLD e NPC_INFO_00 no raio de 120m

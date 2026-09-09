@@ -1,4 +1,5 @@
 pub mod aipolicy;
+pub mod armas;
 pub mod classes;
 pub mod collision;
 pub mod elements;

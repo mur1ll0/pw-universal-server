@@ -769,8 +769,50 @@ impl S2CGamedataSend {
         Self::task_var_data(&stream.into_bytes())
     }
 
-    /// Cria o comando OWN_ITEM_INFO (Comando 40) enviando os atributos de durabilidade e requisitos do item ou octetos brutos do banco
-    pub fn item_info(by_package: u8, by_slot: u8, item_id: i32, cur_endurance: i32, max_endurance: i32, count: u32, raw_octets: &[u8]) -> Self {
+    /// `OWN_ITEM_INFO` (40) — a ficha de um item na bolsa ou no equipamento.
+    ///
+    /// # O bloco de dados não é enfeite
+    ///
+    /// `CECIvtrEquip::SetItemInfo` (`EC_IvtrEquip.cpp:176-200`) lê deste bloco, nesta
+    /// ordem exata, os requisitos do item:
+    ///
+    /// ```text
+    /// short nivel, short classes, short forca, short vitalidade, short agilidade,
+    /// short energia, int durabilidade, int durabilidade_maxima, short tamanho_da_ficha,
+    /// <marca do fabricante>, <ficha>, short buracos, WORD mascara, ...
+    /// ```
+    ///
+    /// e é com eles que `CanUseEquipment` (`EC_HostPlayer.cpp:4894-4980`) decide se o
+    /// jogador pode usar o que está equipado. Item recusado sai em
+    /// `A3DCOLORRGB(192, 0, 0)` — vermelho.
+    ///
+    /// # O que estava errado até 2026-09-09
+    ///
+    /// Este bloco era montado por uma **tabela chumbada de quatro ids** (2097, 2867, 2258,
+    /// 2250), com um genérico para todo o resto que declarava `weapon_type = 1`
+    /// (`WEAPONTYPE_RANGE`). A Varinha do Sacerdote (2251) caía no genérico: o cliente
+    /// concluía que era arma de munição, não achava flecha, e recusava. Foi a "arma
+    /// vermelha" que sobreviveu a quatro tentativas de conserto em lugares errados.
+    ///
+    /// O tooltip relatado em jogo batia campo a campo com aquele genérico — alcance 3.50,
+    /// nenhuma linha de força, nenhuma linha de profissão — e foi ele que fechou o
+    /// diagnóstico.
+    ///
+    /// Agora, quando `arma` vem preenchida, o bloco sai do `elements.data`. Quando vem
+    /// `None` (item que não é arma, ou realm sem a tabela), vai só o cabeçalho, sem bloco:
+    /// **inventar dado aqui é pior do que não mandar nada**, porque um requisito inventado
+    /// tranca o item.
+    #[allow(clippy::too_many_arguments)]
+    pub fn item_info(
+        by_package: u8,
+        by_slot: u8,
+        item_id: i32,
+        cur_endurance: i32,
+        max_endurance: i32,
+        count: u32,
+        raw_octets: &[u8],
+        arma: Option<pw_core::FichaDaArma>,
+    ) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(40);              // CMD_S2C_OWN_ITEM_INFO = 40
         stream.write_u8(by_package);          // byPackage
@@ -781,82 +823,54 @@ impl S2CGamedataSend {
         stream.write_u32_le(count);           // count
         stream.write_u16_le(0);               // crc
 
+        // Octetos gravados no banco mandam: são o item de verdade, com refino e cravos.
         if !raw_octets.is_empty() {
             stream.write_u16_le(raw_octets.len() as u16);
             stream.write_raw_bytes(raw_octets);
-        } else {
-            // Se for arma (ou equipamento com durabilidade), constrói o bloco de essence
-            let is_weapon = matches!(item_id, 2097 | 2867 | 2258 | 2250 | 4508 | 4532 | 4567 | 4616);
-            let is_equip_package = by_package == 1;
-
-            if is_weapon || is_equip_package {
-                let mut content = OctetsStream::new();
-                content.write_i16_le(1);              // m_iLevelReq = 1
-                content.write_i16_le(-1);             // m_iProfReq = -1 (Todas as classes sem restriçao)
-
-                let (req_str, req_agi, req_vit, req_eng, w_type, w_class, req_proj, dmg_l, dmg_h, mdmg_l, mdmg_h, spd, rng) = match item_id {
-                    2097 => (5, 5, 0, 0, 1, 1, 0, 3, 5, 0, 0, 16, 3.0f32),     // Espada de Madeira (Guerreiro)
-                    2867 => (5, 3, 0, 0, 5, 5, 0, 2, 3, 10, 15, 12, 3.0f32),   // Graveto de Madeira / Varinha Mágica (Mago / Feiticeira / Sacerdote)
-                    2258 => (5, 5, 0, 0, 9, 9, 0, 4, 8, 0, 0, 14, 3.5f32),     // Porrete com Espinhos (Bárbaro)
-                    2250 => (5, 5, 0, 0, 13, 13, 1, 5, 10, 0, 0, 15, 20.0f32), // Arco de Madeira (Arqueiro)
-                    _ => (0, 0, 0, 0, 1, 1, 0, 3, 5, 0, 0, 10, 3.5f32),
-                };
-
-                content.write_i16_le(req_str);        // m_iStrengthReq
-                content.write_i16_le(req_vit);        // m_iVitalityReq
-                content.write_i16_le(req_agi);        // m_iAgilityReq
-                content.write_i16_le(req_eng);        // m_iEnergyReq
-
-                let valid_cur = if cur_endurance <= 100 && cur_endurance > 0 {
-                    cur_endurance * 50
-                } else if cur_endurance <= 0 {
-                    1400
-                } else {
-                    cur_endurance
-                };
-                let valid_max = if max_endurance <= 100 && max_endurance > 0 {
-                    max_endurance * 50
-                } else if max_endurance <= 0 {
-                    1400
-                } else {
-                    max_endurance
-                };
-
-                content.write_i32_le(valid_cur);      // m_iCurEndurance
-                content.write_i32_le(valid_max);      // m_iMaxEndurance
-                content.write_i16_le(44);             // iEssenceSize = 44 (sizeof(IVTR_ESSENCE_WEAPON))
-                content.write_u8(0);                  // m_byMadeFrom = 0
-                content.write_u8(0);                  // iMakerLen = 0
-
-                // IVTR_ESSENCE_WEAPON (44 bytes)
-                content.write_i16_le(w_type);         // weapon_type
-                content.write_i16_le(0);              // weapon_delay = 0
-                content.write_i32_le(w_class);        // weapon_class
-                content.write_i32_le(1);              // weapon_level = 1
-                content.write_i32_le(req_proj);       // require_projectile
-                content.write_i32_le(dmg_l);          // damage_low
-                content.write_i32_le(dmg_h);          // damage_high
-                content.write_i32_le(mdmg_l);         // magic_damage_low
-                content.write_i32_le(mdmg_h);         // magic_damage_high
-                content.write_i32_le(spd);            // attack_speed
-                content.write_f32_le(rng);            // attack_range
-                content.write_f32_le(0.0);            // attack_short_range
-
-                content.write_i16_le(0);              // iNumHole = 0
-                content.write_u16_le(0);              // m_wStoneMask = 0
-                content.write_i32_le(0);              // iNumProp = 0
-
-                let c_bytes = content.into_bytes();
-                stream.write_u16_le(c_bytes.len() as u16);
-                stream.write_raw_bytes(&c_bytes);
-            } else {
-                stream.write_u16_le(0);               // content_length = 0
-            }
+            return Self { data: stream.into_bytes().to_vec() };
         }
 
-        Self {
-            data: stream.into_bytes().to_vec(),
-        }
+        let Some(a) = arma else {
+            stream.write_u16_le(0);           // sem bloco de dados
+            return Self { data: stream.into_bytes().to_vec() };
+        };
+
+        let mut content = OctetsStream::new();
+        content.write_i16_le(a.nivel_exigido);
+        content.write_i16_le(a.classes_permitidas as i16);
+        content.write_i16_le(a.forca_exigida);
+        content.write_i16_le(a.vitalidade_exigida);
+        content.write_i16_le(a.agilidade_exigida);
+        content.write_i16_le(a.energia_exigida);
+        content.write_i32_le(cur_endurance);
+        content.write_i32_le(max_endurance);
+        content.write_i16_le(44);             // tamanho de IVTR_ESSENCE_WEAPON
+        content.write_u8(0);                  // m_byMadeFrom
+        content.write_u8(0);                  // tamanho do nome do fabricante
+
+        // IVTR_ESSENCE_WEAPON, 44 bytes
+        content.write_i16_le(a.tipo_de_arma);
+        content.write_i16_le(0);              // weapon_delay
+        content.write_i32_le(a.tipo_maior);   // weapon_class
+        content.write_i32_le(1);              // weapon_level
+        content.write_i32_le(a.municao_exigida);
+        content.write_i32_le(a.dano_minimo);
+        content.write_i32_le(a.dano_maximo);
+        content.write_i32_le(a.dano_magico_minimo);
+        content.write_i32_le(a.dano_magico_maximo);
+        content.write_i32_le(a.velocidade_de_ataque);
+        content.write_f32_le(a.alcance);
+        content.write_f32_le(0.0);            // attack_short_range
+
+        content.write_i16_le(0);              // buracos
+        content.write_u16_le(0);              // máscara de cravos
+        content.write_i32_le(0);              // propriedades
+
+        let c_bytes = content.into_bytes();
+        stream.write_u16_le(c_bytes.len() as u16);
+        stream.write_raw_bytes(&c_bytes);
+
+        Self { data: stream.into_bytes().to_vec() }
     }
 
     /// Cria o comando EXG_IVTR_ITEM (Comando 44)

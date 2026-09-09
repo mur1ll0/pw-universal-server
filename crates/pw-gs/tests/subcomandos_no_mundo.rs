@@ -2556,3 +2556,46 @@ async fn o_teleporte_ignora_o_y_do_cliente() {
     let y_no_pacote = f32::from_le_bytes(r[0][6..10].try_into().unwrap());
     assert_eq!(y_no_pacote, antes.y, "o pacote levou o y errado");
 }
+
+/// Depois do teleporte, o jogador precisa receber os NPCs do destino.
+///
+/// Os NPCs são mandados uma vez só, no login. Em jogo, 2026-09-09: o GM se teleportou e
+/// não havia NPC nenhum no destino — e ao voltar para a vila também não havia mais nada,
+/// porque o cliente já tinha descartado o que saiu do raio.
+#[tokio::test]
+async fn o_teleporte_reenvia_os_npcs_do_destino() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let repo = mundo.read().await.char_repo.clone();
+    let conta = repo
+        .get_details_por_role(roleid)
+        .await
+        .unwrap()
+        .expect("personagem existe")
+        .account_id;
+    sqlx::query("UPDATE accounts SET gm_privileges = 32 WHERE id = $1")
+        .bind(conta)
+        .execute(repo.pool().get_ref())
+        .await
+        .unwrap();
+
+    // Sem `npcgen` carregado no cenário de teste, o servidor não tem NPC para mandar — o
+    // que este teste garante é que o teleporte **responde** e não trava quando não há
+    // nada por perto, e que o `HOST_CORRECT_POS` continua sendo o primeiro pacote.
+    let antes = mundo.read().await.players[&(roleid as i64)].position;
+    let mut corpo = Vec::new();
+    for v in [antes.x + 40.0, 1.0f32, antes.z + 40.0] {
+        corpo.extend_from_slice(&v.to_le_bytes());
+    }
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::GOTO, &corpo),
+    })
+    .await
+    .unwrap();
+
+    let r = receber(&mut link, 1).await;
+    assert_eq!(cmd_de(&r[0]), 177, "o teleporte tem de confirmar com HOST_CORRECT_POS");
+}

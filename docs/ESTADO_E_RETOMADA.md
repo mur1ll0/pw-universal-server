@@ -4913,6 +4913,119 @@ Ordem combinada com o Murillo:
       `OWN_EXT_PROP` (50) na carga.
 
 
+38. **Sessão 2026-09-09: a arma vermelha, enfim — e o tooltip que resolveu o caso. Mais o
+    buraco que o teleporte de GM escancarou.**
+
+    O voo funcionou. Sobraram duas coisas, e a primeira arrastava quatro sessões.
+
+    ### a. O tooltip como instrumento de medida
+
+    O Murillo colou a descrição da Varinha equipada:
+
+    ```text
+    Varinha / Cetro / Nv. 1
+    Frequência de ataque (vezes/s): 2.00
+    Alcance 3.50
+    Ataque físico 3-5
+    Durabilidade 2800/2800
+    Nv. necessário: 1
+    Preço 5
+    ```
+
+    Três ausências disseram tudo. `CECIvtrWeapon::GetDesc` (`EC_IvtrWeapon.cpp:355-420`)
+    imprime, nesta ordem, durabilidade → munição → **profissão** → nível → **força** →
+    agilidade → vitalidade → **energia**, e cada linha só aparece se o campo for diferente
+    de zero. O `elements.data` do realm diz que a Varinha exige **força 5** e **energia 3**,
+    e permite 9 classes. Nenhuma das três linhas estava lá.
+
+    E o alcance: o arquivo diz **3.0**; o tooltip dizia **3.50**.
+
+    Ou seja, o cliente não estava lendo o `elements.data` para aquele item — estava lendo o
+    que **nós** mandamos.
+
+    ### b. A causa: uma tabela chumbada de quatro itens
+
+    `S2CGamedataSend::item_info` montava o bloco de dados do item com isto:
+
+    ```rust
+    let (req_str, req_agi, /* … */) = match item_id {
+        2097 => (5, 5, /* … */),   // Espada de Madeira
+        2867 => (5, 3, /* … */),   // Graveto de Madeira
+        2258 => (5, 5, /* … */),   // Porrete
+        2250 => (5, 5, /* … */),   // Arco
+        _    => (0, 0, 0, 0, 1, 1, 0, 3, 5, 0, 0, 10, 3.5),
+    };
+    ```
+
+    A Varinha é **2251**, e não estava na lista. Caía no genérico — que explica campo a
+    campo o tooltip: alcance 3.5, zero em força e energia, e o `1` da quinta posição, que é
+    `weapon_type`.
+
+    `WEAPONTYPE_RANGE = 1` (`EC_IvtrTypes.h:167`). O genérico declarava **toda arma
+    desconhecida como arma de munição**. E `CanUseEquipment` (`EC_HostPlayer.cpp:4970-4977`)
+    faz, para a arma equipada:
+
+    ```cpp
+    if (pWeapon->IsRangeWeapon() && !CanUseProjectile((CECIvtrArrow*)pArrow))
+        iReason = 5;
+    ```
+
+    Sacerdote sem flecha → recusa → `A3DCOLORRGB(192, 0, 0)`. Vermelho.
+
+    Este bloco não é enfeite: `CECIvtrEquip::SetItemInfo` (`EC_IvtrEquip.cpp:176-200`) tira
+    dele **os requisitos do item**, e `DefaultInfo()` (que leria o `elements.data`) só vale
+    quando o bloco não vem. Mandar dado inventado ali é pior do que não mandar nada.
+
+    ### c. A correção
+
+    Módulo novo `pw-data-loader/src/armas.rs`: lê `WEAPON_ESSENCE` e entrega a ficha por id
+    de item. `pw_core::FichaDaArma` é o que viaja — mora no `pw-core` porque o leitor de
+    arquivos e o codificador de rede precisam dela e **nenhum dos dois deve depender do
+    outro**.
+
+    O mapeamento que decide `weapon_type` saiu da contagem no arquivo do realm, entre as
+    2.741 armas:
+
+    | `short_range_mode` | exige munição | quantas |
+    | ---: | :--- | ---: |
+    | 1 | não | 2.187 |
+    | 0 | **sim** | 326 |
+    | 2 | não | 222 |
+    | 0 | não | 5 |
+    | 1 | sim | 1 |
+
+    `short_range_mode == 0` é a marca de longo alcance. As seis exceções vão como o arquivo
+    diz.
+
+    Sem ficha (item que não é arma, realm sem a tabela), o comando vai **sem bloco**.
+
+    ### d. O teleporte de GM apagou o mundo
+
+    "Teleportei e não havia NPC nenhum; voltei para a vila e sumiu tudo."
+
+    Os NPCs são mandados **uma vez só**, no login, num raio de 120 m em volta da posição de
+    entrada (`gateway.rs`, passo 10). **Não há streaming**: o cliente descarta o que sai do
+    raio ativo dele, e o servidor nunca reenvia. Andando a pé isso passava despercebido
+    porque o raio do login cobria a vila inteira; o teleporte expôs de uma vez.
+
+    O teleporte passou a reenviar o que está em volta do destino
+    (`BusServer::mandar_npcs_ao_redor`). **Isso é remendo do caso agudo, não streaming**: o
+    `NPC_ENTER_SLICE`/`NPC_LEAVE_SLICE` conforme o jogador anda continua não existindo, e é
+    o que fecha o buraco de vez. Enquanto não existir, andar 120 m a pé em qualquer direção
+    tem o mesmo efeito que o teleporte tinha.
+
+    ### e. Provas
+
+    - `crates/pw-data-loader/tests/ficha_da_arma.rs`, 4 testes contra o `elements.data` do
+      realm: a Varinha **não** é arma de munição, o arco continua sendo, nenhuma arma
+      inicial viaja com máscara de classe zerada, e a correlação
+      munição ⇔ `short_range_mode == 0` vale para mais de 99% das armas do arquivo.
+    - `protocol_tests`: o bloco montado a partir da ficha, campo a campo, e o caso sem
+      ficha indo sem bloco.
+    - `o_teleporte_reenvia_os_npcs_do_destino`.
+
+
+
 
 
 

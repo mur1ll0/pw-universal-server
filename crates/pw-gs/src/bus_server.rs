@@ -1765,6 +1765,75 @@ impl BusServer {
                 .data,
         )
         .await;
+
+        // E o jogador precisa ver o que existe onde ele chegou. Ver
+        // [`Self::mandar_npcs_ao_redor`]: sem isto o destino fica vazio, e a vila de onde
+        // ele saiu também — o cliente já tinha descartado tudo.
+        self.mandar_npcs_ao_redor(roleid, destino, envio).await;
+    }
+
+    /// Manda os NPCs e monstros que estão em volta de uma posição.
+    ///
+    /// # Por que isto precisa existir
+    ///
+    /// Os NPCs são mandados **uma vez só**, no login, em volta da posição de entrada
+    /// (`gateway.rs`, passo 10). Não há streaming: andar para longe e voltar não traz
+    /// nada de novo, porque o cliente descarta o que sai do raio ativo e o servidor nunca
+    /// reenvia.
+    ///
+    /// Enquanto o jogador andava, isso passava despercebido — o raio de 120 m do login
+    /// cobria a vila inteira. O teleporte de GM expôs o problema de uma vez: em jogo,
+    /// 2026-09-09, o Murillo se teleportou e **não havia NPC nenhum** no destino, e ao
+    /// voltar para a vila também não havia mais nada.
+    ///
+    /// Esta função é o remendo do caso agudo, e **não** é streaming: ela reenvia o que
+    /// está em volta de um ponto, quando alguém pede. O streaming de verdade — mandar
+    /// `NPC_ENTER_SLICE` e `NPC_LEAVE_SLICE` conforme o jogador anda — continua não
+    /// existindo, e é o que fecha o buraco de vez.
+    async fn mandar_npcs_ao_redor(
+        &self,
+        roleid: i32,
+        centro: pw_core::Vector3,
+        envio: &EnvioAoCliente,
+    ) {
+        /// O mesmo raio do login. O cliente descarta o que passa do raio ativo dele.
+        const RAIO: f32 = 120.0;
+        /// O mesmo teto do login: um pacote por NPC, e uma vila inteira de uma vez
+        /// entopoe a fila de saída sem o jogador ver diferença.
+        const TETO: usize = 60;
+
+        let (dados, mapa) = {
+            let mundo = self.world.read().await;
+            (Arc::clone(&mundo.data_manager), mundo.world_id)
+        };
+        let Some(spawns) = dados.map_spawns.get(&mapa) else {
+            debug!("mundo: mapa {mapa} sem npcgen — nada a reenviar");
+            return;
+        };
+
+        let perto: Vec<_> = spawns
+            .query_nearby(centro, RAIO)
+            .into_iter()
+            .take(TETO)
+            .map(|s| {
+                (
+                    s.instance_id,
+                    s.template_id as i32,
+                    s.pos,
+                    pw_data_loader::compress_dir_h(s.dir.x, s.dir.z),
+                )
+            })
+            .collect();
+
+        debug!("mundo: reenviando {} NPCs em volta de {centro:?} para {roleid}", perto.len());
+        for (nid, tid, pos, dir) in perto {
+            self.responder(
+                roleid,
+                self.sub.npc_enter_world(nid, tid, pos, dir).data,
+                envio,
+            )
+            .await;
+        }
     }
 
     /// Decola ou pousa o jogador.
@@ -2361,6 +2430,10 @@ impl BusServer {
     /// `LoadConfigData` no cliente (`EC_HostMsg.cpp:3841`), então ele vai **sempre**,
     /// mesmo quando o cliente não pediu missões — sem ele o cliente fica esperando.
     async fn todos_os_dados(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
+        // A tabela de armas do realm, para o bloco de dados de cada item sair do
+        // `elements.data` em vez de um chute.
+        let armas = self.world.read().await.data_manager.armas.clone();
+
         let pedido = GetAllData::ler(payload).unwrap_or(GetAllData {
             // Um payload curto vem de cliente de outra versão. Mandar tudo é o
             // comportamento antigo, e é o seguro: falta de dado trava a entrada no mundo.
@@ -2383,7 +2456,7 @@ impl BusServer {
             )
             .await;
             for item in &bolsa {
-                self.responder(roleid, Self::info_de(0, item), envio).await;
+                self.responder(roleid, Self::info_de(0, item, &armas), envio).await;
             }
         }
 
@@ -2399,7 +2472,7 @@ impl BusServer {
             )
             .await;
             for item in &equipado {
-                self.responder(roleid, Self::info_de(1, item), envio).await;
+                self.responder(roleid, Self::info_de(1, item, &armas), envio).await;
             }
         }
 
@@ -2500,7 +2573,15 @@ impl BusServer {
     }
 
     /// O `item_info` de um item já carregado, para não repetir a conversão em dois lugares.
-    fn info_de(onde: u8, item: &pw_core::ItemRecord) -> Vec<u8> {
+    ///
+    /// A ficha da arma sai do `elements.data` (`armas`). Quando o item não é arma — ou o
+    /// realm não tem a tabela — vai `None`, e o comando segue **sem** bloco de dados. Ver
+    /// `S2CGamedataSend::item_info`: inventar requisito aqui tranca o item no cliente.
+    fn info_de(
+        onde: u8,
+        item: &pw_core::ItemRecord,
+        armas: &pw_data_loader::armas::TabelaDeArmas,
+    ) -> Vec<u8> {
         S2CGamedataSend::item_info(
             onde,
             item.slot as u8,
@@ -2509,6 +2590,7 @@ impl BusServer {
             item.max_durability as i32 * 100,
             item.count,
             &item.octets,
+            armas.get(&item.item_id).map(pw_core::FichaDaArma::from),
         )
         .data
     }
@@ -2534,21 +2616,9 @@ impl BusServer {
         let itens = self.itens().await;
         let ct = ContainerType::from_i16(onde as i16);
         if let Ok(Some(i)) = itens.get_item_by_slot(roleid, ct, slot as u16).await {
-            self.responder(
-                roleid,
-                S2CGamedataSend::item_info(
-                    onde,
-                    slot,
-                    i.item_id as i32,
-                    i.durability as i32 * 100,
-                    i.max_durability as i32 * 100,
-                    i.count,
-                    &i.octets,
-                )
-                .data,
-                envio,
-            )
-            .await;
+            let armas = self.world.read().await.data_manager.armas.clone();
+            self.responder(roleid, Self::info_de(onde, &i, &armas), envio)
+                .await;
         }
     }
 

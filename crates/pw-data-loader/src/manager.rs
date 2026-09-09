@@ -1,4 +1,5 @@
 use crate::aipolicy::AiPolicyData;
+use crate::armas::TabelaDeArmas;
 use crate::classes::TabelaDeClasses;
 use crate::collision::MapCollision;
 use crate::elements::ElementsData;
@@ -144,6 +145,12 @@ pub struct GameDataManager {
     /// [`crate::classes`]. É de onde saem a precisão e a evasão base do jogador. Vazia
     /// no 1.2.6/v7, pelo mesmo motivo de [`Self::monstros`].
     pub classes: TabelaDeClasses,
+
+    /// As armas do `WEAPON_ESSENCE`, por id de item — ver [`crate::armas`].
+    ///
+    /// É daqui que sai o bloco de dados que acompanha cada arma no `OWN_ITEM_INFO`, e é
+    /// esse bloco que decide se o cliente aceita a arma equipada. Vazia no 1.2.6/v7.
+    pub armas: TabelaDeArmas,
     /// Os atributos **base** por classe, do `ptemplate.conf` — ver [`crate::ptemplate`].
     /// Fonte diferente da de [`Self::classes`]: aquela traz o que escala por nível e por
     /// ponto de atributo, esta traz o ponto de partida do nível 1. Vazia quando o pacote
@@ -322,6 +329,7 @@ impl GameDataManager {
         if let Some(g) = &self.elements_generic {
             self.monstros = crate::monstros::carregar(g, Some(&self.aipolicy));
             self.classes = crate::classes::carregar(g);
+            self.armas = crate::armas::carregar(g);
         }
 
         // O `ptemplate.conf` não é um `.data`: é um arquivo de configuração do `gamed`, e
