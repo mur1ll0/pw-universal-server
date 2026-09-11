@@ -34,6 +34,17 @@ pub struct SpawnInstance {
     pub dir: Vector3,
     pub respawn_sec: u32,
     pub aggressive: u32,
+    /// O centro da área geradora, como o arquivo o traz.
+    ///
+    /// Não é enfeite: é o que permite recuperar o **deslocamento em relação ao chão** que
+    /// o original chama de `offset_terrain` (`fOffsetTrn` no arquivo). O `y` do arquivo é
+    /// a altura absoluta do centro da área, e `centro.y - altura_do_chão(centro)` devolve
+    /// aquele deslocamento — quase sempre zero, e grande de propósito em gerador aéreo.
+    ///
+    /// Quem resolve a altura final é `WorldInstance::init_spawns`, que é onde o mapa de
+    /// alturas está carregado. Este leitor continua sem depender do terreno: são 92 MB por
+    /// mapa, e há 68 pastas de mapa no realm.
+    pub centro_da_area: Vector3,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -406,6 +417,7 @@ impl NpcGenData {
                         dir: area.dir,
                         respawn_sec: refresh.max(1) as u32,
                         aggressive,
+                        centro_da_area: area.pos,
                     };
                     grid.insert(spawn.clone());
                     instances.push(spawn);
@@ -428,6 +440,7 @@ impl NpcGenData {
                         dir: Vector3::new(0.0, 0.0, 1.0),
                         respawn_sec: refresh.max(5),
                         aggressive: 0,
+                        centro_da_area: area.pos,
                     };
                     grid.insert(spawn.clone());
                     instances.push(spawn);
@@ -448,6 +461,9 @@ impl NpcGenData {
                 dir: Vector3::new(0.0, 0.0, 1.0),
                 respawn_sec: 0,
                 aggressive: 0,
+                // Objeto dinâmico (prédio, ponte) não é gerado numa área: a posição do
+                // arquivo é a dele, e não há dispersão para reassentar.
+                centro_da_area: obj.pos,
             };
             grid.insert(spawn.clone());
             instances.push(spawn);

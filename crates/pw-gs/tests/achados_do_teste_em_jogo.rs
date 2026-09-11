@@ -56,6 +56,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         modo_roupa: false,
         sec_level: 0,
         habilidades: Default::default(),
+        crc_aparencia: 0,
     };
     p.hp = p.max_hp;
     p

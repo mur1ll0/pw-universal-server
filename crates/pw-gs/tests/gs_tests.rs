@@ -83,6 +83,7 @@ fn test_combat_engine_damage_calculation() {
         modo_roupa: false,
         sec_level: 0,
         habilidades: Default::default(),
+        crc_aparencia: 0,
     };
 
     let monster = MonsterEntity {

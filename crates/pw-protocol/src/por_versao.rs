@@ -543,37 +543,40 @@ impl PorVersao {
     /// (`S2C::info_player_1`). Mesmo padrão de `player_info_00`/`self_info_1`: o
     /// 1.2.6 não tem `state2` (28 bytes de payload); 1.5.3 em diante usa a struct
     /// cheia do IR, 30 bytes — ver `S2CGamedataSend::player_enter_world`.
-    pub fn player_enter_world(&self, role_id: i32, pos: Vector3, dir: u8, sec_level: u8) -> S2CGamedataSend {
+    pub fn player_enter_world(&self, role_id: i32, vista: pw_core::VistaDoJogador) -> S2CGamedataSend {
         if !e_126(self.versao) {
-            return S2CGamedataSend::player_enter_world(role_id, pos, dir, sec_level);
+            return S2CGamedataSend::player_enter_world(role_id, vista);
         }
-        self.info_player_1_126(17, role_id, pos, dir, sec_level)
+        self.info_player_1_126(17, role_id, vista)
     }
 
     /// `PLAYER_ENTER_SLICE` (12) — o mesmo, para quem entrou no alcance andando em vez de
     /// ter surgido. Ver `S2CGamedataSend::player_enter_slice`: a struct é a mesma, o que
     /// muda é o efeito de aparição no cliente.
-    pub fn player_enter_slice(&self, role_id: i32, pos: Vector3, dir: u8, sec_level: u8) -> S2CGamedataSend {
+    pub fn player_enter_slice(&self, role_id: i32, vista: pw_core::VistaDoJogador) -> S2CGamedataSend {
         if !e_126(self.versao) {
-            return S2CGamedataSend::player_enter_slice(role_id, pos, dir, sec_level);
+            return S2CGamedataSend::player_enter_slice(role_id, vista);
         }
-        self.info_player_1_126(12, role_id, pos, dir, sec_level)
+        self.info_player_1_126(12, role_id, vista)
     }
 
     /// A `info_player_1` como o 1.2.6 a quer: 28 bytes de payload, sem o `state2`.
-    fn info_player_1_126(&self, cmd: u16, role_id: i32, pos: Vector3, dir: u8, sec_level: u8) -> S2CGamedataSend {
+    fn info_player_1_126(&self, cmd: u16, role_id: i32, v: pw_core::VistaDoJogador) -> S2CGamedataSend {
         let mut s = OctetsStream::new();
         s.write_u16_le(cmd);
         s.write_i32_le(role_id);
-        s.write_f32_le(pos.x);
-        s.write_f32_le(pos.y);
-        s.write_f32_le(pos.z);
-        s.write_u16_le(0); // crc_e
-        s.write_u16_le(0); // crc_c
-        s.write_u8(dir);
-        s.write_u8(sec_level); // level2
-        let state = if sec_level > 0 { 0x0000_4000 } else { 0 }; // STATE_GAMEMASTER
+        s.write_f32_le(v.pos.x);
+        s.write_f32_le(v.pos.y);
+        s.write_f32_le(v.pos.z);
+        s.write_u16_le(v.crc_equipamento);
+        s.write_u16_le(v.crc_aparencia);
+        s.write_u8(v.dir);
+        s.write_u8(v.sec_level); // level2
+        let state = if v.sec_level > 0 { 0x0000_4000 } else { 0 }; // STATE_GAMEMASTER
         s.write_i32_le(state);
+        // O 1.2.6 não tem `state2`, e é nele que mora o bit do sexo. Lá o cliente só sabe
+        // o sexo de outro jogador pelo `PlayerBaseInfo_Re` — que é o caminho que aquela
+        // versão sempre usou, e por isso ela não tem o defeito do modelo masculino.
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 }

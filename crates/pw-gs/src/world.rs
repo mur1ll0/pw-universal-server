@@ -64,6 +64,11 @@ pub struct WorldInstance {
     pub players: HashMap<i64, PlayerEntity>,
     pub monsters: HashMap<i64, (MonsterEntity, MonsterAi)>,
     pub npcs: HashMap<i64, NpcEntity>,
+    /// A altura do chão deste mapa, dos `.hmap`. Ver [`pw_data_loader::terreno`].
+    ///
+    /// Carregada só para **este** mapa, em [`Self::init_spawns`]: o mundo principal são 92
+    /// MB de vértices, e o realm tem 68 pastas de mapa.
+    pub terreno: pw_data_loader::Terreno,
     /// Os recursos do mapa — minério, erva, tronco. Ver [`MatterEntity`].
     ///
     /// Ficam separados dos NPCs porque o comando de entrada é outro
@@ -100,6 +105,7 @@ impl WorldInstance {
             monsters: HashMap::new(),
             npcs: HashMap::new(),
             matters: HashMap::new(),
+            terreno: pw_data_loader::Terreno::vazio(),
             drops: HashMap::new(),
             data_manager,
             char_repo,
@@ -133,13 +139,79 @@ impl WorldInstance {
     }
 
     /// Inicializa os Spawns de monstros e NPCs a partir do `npcgen.data` do mapa específico
+    ///
+    /// # Por que os monstros estavam no ar
+    ///
+    /// Relatado em jogo em 2026-09-11: "alguns monstros terrestres estão no ar, voando
+    /// longe do chão". A causa **não** é o `npcgen.data` — medindo os 30.898 spawns do
+    /// mundo contra o mapa de alturas, o `y` do arquivo bate com o chão sob o centro da
+    /// área com diferença mediana de 10 cm. Ele é altura absoluta, e está certo.
+    ///
+    /// Quem põe o monstro no ar é a **nossa dispersão**. `posicao_na_area`
+    /// (`npcgen.rs:117`) espalha os monstros de uma área sorteando `x` e `z` dentro da
+    /// caixa — e copia o `y` do centro. Em terreno plano não muda nada; numa encosta o
+    /// monstro fica na altura do centro da área, não na do chão sob ele. Medido: **30% dos
+    /// spawns a mais de 2 m acima do chão** e 15% a mais de 2 m abaixo, com extremos de
+    /// +507 m e −259 m. O próprio `posicao_na_area` já documentava a lacuna.
+    ///
+    /// O original assenta a altura depois de sortear, e tem dois geradores
+    /// (`npcgenerator.cpp:4296-4346`):
+    ///
+    /// ```cpp
+    /// // terrain_gen_pos — spawn de chão
+    /// pos.y = offset;  pos.y += plane->GetHeightAt(pos.x, pos.z);
+    /// // box_gen_pos — spawn de volume; o chão é piso, nunca teto
+    /// float height = plane->GetHeightAt(x,z);  if (y < height) y = height;  return y + offset;
+    /// ```
+    ///
+    /// Os dois somam um `offset_terrain` por gerador (`fOffsetTrn` no arquivo), que este
+    /// leitor ainda não extrai. Mas ele é recuperável do que já temos: o `y` do centro da
+    /// área **é** chão + deslocamento, então
+    ///
+    /// ```text
+    /// deslocamento = centro.y - altura_do_chão(centro.x, centro.z)
+    /// y final      = altura_do_chão(x, z) + deslocamento
+    /// ```
+    ///
+    /// que reproduz `terrain_gen_pos` e preserva de propósito o gerador que nasce alto —
+    /// um monstro voador tem deslocamento grande, e continua grande depois da conta.
+    ///
+    /// Sem mapa de alturas (mapa fora do catálogo, pasta sem `map/`) o `y` do arquivo vale
+    /// como estava: é o comportamento antigo, que ao menos não piora.
     pub fn init_spawns(&mut self) {
         info!("Inicializando monstros e NPCs do World #{} a partir do seu npcgen.data dedicado...", self.world_id);
 
+        // O mapa de alturas deste mapa, se o realm o trouxer.
+        if let Some(dir) = self.data_manager.pastas_de_mapa.get(&self.world_id).cloned() {
+            self.terreno = pw_data_loader::Terreno::ler(self.world_id, &dir);
+        }
+        let com_terreno = self.terreno.tem_dados();
+
         let mut sem_template = 0usize;
+        let mut fora_do_mapa = 0usize;
 
         if let Some(spawns) = self.data_manager.map_spawns.get(&self.world_id) {
             for inst in &spawns.instances {
+                // A altura assenta no chão sob a posição dispersa — ver a nota da função.
+                let pos = if com_terreno {
+                    let sob_o_spawn = self.terreno.altura_em(inst.pos.x, inst.pos.z);
+                    let sob_o_centro = self
+                        .terreno
+                        .altura_em(inst.centro_da_area.x, inst.centro_da_area.z);
+                    match (sob_o_spawn, sob_o_centro) {
+                        (Some(chao), Some(chao_do_centro)) => {
+                            let deslocamento = inst.centro_da_area.y - chao_do_centro;
+                            pw_core::Vector3::new(inst.pos.x, chao + deslocamento, inst.pos.z)
+                        }
+                        _ => {
+                            fora_do_mapa += 1;
+                            inst.pos
+                        }
+                    }
+                } else {
+                    inst.pos
+                };
+
                 if inst.spawn_type == pw_data_loader::SpawnType::Monster {
                     let monster_id = inst.instance_id as i64;
 
@@ -151,7 +223,7 @@ impl WorldInstance {
                         Some(modelo) => MonsterEntity::do_template(
                             monster_id,
                             modelo,
-                            inst.pos,
+                            pos,
                             inst.respawn_sec * 1000,
                         ),
                         None => {
@@ -159,7 +231,7 @@ impl WorldInstance {
                             MonsterEntity::placeholder(
                                 monster_id,
                                 inst.template_id,
-                                inst.pos,
+                                pos,
                                 inst.respawn_sec * 1000,
                             )
                         }
@@ -180,7 +252,7 @@ impl WorldInstance {
                         id: npc_id,
                         template_id: inst.template_id,
                         name: "NPC".to_string(),
-                        position: inst.pos,
+                        position: pos,
                         dialog_id: 0,
                     };
 
@@ -195,7 +267,7 @@ impl WorldInstance {
                     let matter = MatterEntity {
                         id: mid,
                         template_id: inst.template_id,
-                        position: inst.pos,
+                        position: pos,
                     };
                     self.grid.add_entity(mid, matter.position, false);
                     self.matters.insert(mid, matter);
@@ -210,6 +282,12 @@ impl WorldInstance {
             self.npcs.len(),
             self.matters.len()
         );
+        if fora_do_mapa > 0 {
+            warn!(
+                "World #{}: {fora_do_mapa} spawn(s) fora da área coberta pelos .hmap —                  entraram com o y do npcgen.data como altura absoluta.",
+                self.world_id
+            );
+        }
         if sem_template > 0 {
             warn!(
                 "World #{}: {} monstro(s) sem template no elements.data — entraram com                  atributos de placeholder. No realm 1.2.6 isso é esperado (o leitor                  genérico ainda não cobre a v7); no 1.5.5 significa npcgen.data citando                  monstro que o elements.data não tem, ou que o original recusaria.",

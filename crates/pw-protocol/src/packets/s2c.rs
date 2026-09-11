@@ -1172,10 +1172,10 @@ impl S2CGamedataSend {
     /// feita em `self_info_1`, nenhum sistema de aparência customizada implementado
     /// ainda. `state` carrega só o bit de GM (`STATE_GAMEMASTER = 0x4000`), igual ao
     /// `self_info_00`/`self_info_1`.
-    pub fn player_enter_world(role_id: RoleId, pos: Vector3, dir: u8, sec_level: u8) -> Self {
+    pub fn player_enter_world(role_id: RoleId, vista: pw_core::VistaDoJogador) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(crate::opcodes::CMD_S2C_PLAYER_ENTER_WORLD);
-        Self::info_player_1(stream, role_id, pos, dir, sec_level)
+        Self::info_player_1(stream, role_id, vista)
     }
 
     /// `PLAYER_ENTER_SLICE` (12) — outro jogador **entrou no alcance de visão**, andando.
@@ -1196,10 +1196,10 @@ impl S2CGamedataSend {
     /// Quem sai usa `OBJECT_LEAVE_SLICE` (13) — o cliente roteia pelo id
     /// (`ISPLAYERID`/`ISNPCID`, `EC_GameDataPrtc.cpp:891-899`), então o mesmo comando
     /// serve para jogador e para NPC.
-    pub fn player_enter_slice(role_id: RoleId, pos: Vector3, dir: u8, sec_level: u8) -> Self {
+    pub fn player_enter_slice(role_id: RoleId, vista: pw_core::VistaDoJogador) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(crate::opcodes::CMD_S2C_PLAYER_ENTER_SLICE);
-        Self::info_player_1(stream, role_id, pos, dir, sec_level)
+        Self::info_player_1(stream, role_id, vista)
     }
 
     /// O corpo comum de `PLAYER_ENTER_WORLD` e `PLAYER_ENTER_SLICE`: a `info_player_1`,
@@ -1208,24 +1208,31 @@ impl S2CGamedataSend {
     /// O cabeçalho fica com quem chama, e não aqui, de propósito: é assim que
     /// `subcomandos_s2c_contra_o_ir` consegue ler, de cada codificador, qual id ele
     /// escreve — a rede que pega "mandei o comando errado" antes do jogo.
-    fn info_player_1(
-        mut stream: OctetsStream,
-        role_id: RoleId,
-        pos: Vector3,
-        dir: u8,
-        sec_level: u8,
-    ) -> Self {
+    fn info_player_1(mut stream: OctetsStream, role_id: RoleId, v: pw_core::VistaDoJogador) -> Self {
         stream.write_i32_le(role_id);          // int cid (4B)
-        stream.write_f32_le(pos.x);            // A3DVECTOR3 pos (12B)
-        stream.write_f32_le(pos.y);
-        stream.write_f32_le(pos.z);
-        stream.write_u16_le(0);                // unsigned short crc_e (2B)
-        stream.write_u16_le(0);                // unsigned short crc_c (2B)
-        stream.write_u8(dir);                  // unsigned char dir (1B)
-        stream.write_u8(sec_level);             // unsigned char level2 (1B)
-        let state = if sec_level > 0 { 0x0000_4000 } else { 0 }; // STATE_GAMEMASTER
+        stream.write_f32_le(v.pos.x);          // A3DVECTOR3 pos (12B)
+        stream.write_f32_le(v.pos.y);
+        stream.write_f32_le(v.pos.z);
+        // `crc_e`/`crc_c` são os carimbos de equipamento e de aparência — no original,
+        // `pObject->crc` e `pObject->custom_crc` (`protocol_imp.h:197-200`). O cliente os
+        // usa para decidir se o que ele guardou em cache daquele jogador ainda vale
+        // (`EC_ElsePlayer.cpp:176-177`). Zero fixo, como ia até 2026-09-11, faz o cliente
+        // nunca perceber uma troca de visual ou de equipamento.
+        stream.write_u16_le(v.crc_equipamento); // unsigned short crc_e (2B)
+        stream.write_u16_le(v.crc_aparencia);   // unsigned short crc_c (2B)
+        stream.write_u8(v.dir);                // unsigned char dir (1B)
+        stream.write_u8(v.sec_level);          // unsigned char level2 (1B)
+        let state = if v.sec_level > 0 { 0x0000_4000 } else { 0 }; // STATE_GAMEMASTER
         stream.write_i32_le(state);            // int state (4B)
-        stream.write_i32_le(0);                // int state2 (4B) — nenhum bit em uso hoje
+        // `state2`. O único bit que este servidor sabe preencher é o do sexo — e ele não
+        // é enfeite: `info_player_1::GetGender()` (`EC_GPDataType.h:709-711`) lê o sexo de
+        // outro jogador **daqui**, e de mais lugar nenhum no pacote.
+        //
+        // Nenhum dos bits que este servidor liga acrescenta bytes ao comando: os que
+        // acrescentam são TITLE, REINCARNATION, REALM, FACTION_PVP, MNFACTION, VIP e
+        // BODY_SIZE (`CheckValid`, `:689-703`), e nenhum deles é ligado aqui.
+        let state2 = if v.feminino { pw_core::ESTADO2_MULHER } else { 0 };
+        stream.write_i32_le(state2);           // int state2 (4B)
         Self {
             data: stream.into_bytes().to_vec(),
         }
@@ -1288,6 +1295,32 @@ impl S2CGamedataSend {
         stream.write_u16_le(0);                // seed (2B)
         stream.write_u8(dir);                  // dir (1B)
         stream.write_u32_le(0);                // state (4B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `CALC_NETWORK_DELAY_RE` (291) — devolve o `timestamp` que o cliente mandou.
+    ///
+    /// O cliente mede a própria latência mandando `CALC_NETWORK_DELAY` (C2S 128) com o
+    /// relógio dele e cronometrando a volta:
+    ///
+    /// ```cpp
+    /// if (pCmd->timestamp == l_iDelayTimeStamp && GetGameState() == GS_GAME)
+    ///     m_iInGameDelay = timeGetTime() - l_iDelayTimeStamp;
+    /// ```
+    ///
+    /// (`EC_GameRun.cpp:3152-3164`.) O valor só alimenta o indicador de ping da janela de
+    /// sistema (`DlgSystem.cpp:99`) — **não** mexe em movimento nem em combate.
+    ///
+    /// Sem resposta o indicador fica parado e o cliente repete o pedido sem parar: 191
+    /// vezes numa sessão de teste de 2026-09-11, todas caindo no ramo de "subcomando
+    /// ainda não tratado".
+    ///
+    /// O `timestamp` tem de voltar **igual** ao que veio: o cliente compara antes de usar,
+    /// e um valor nosso seria descartado em silêncio.
+    pub fn calc_network_delay_re(timestamp: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(crate::opcodes::CMD_S2C_CALC_NETWORK_DELAY_RE);
+        stream.write_i32_le(timestamp);
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -2518,7 +2551,13 @@ impl S2CPlayerBaseInfoRe {
         stream.write_u8(self.gender);
         stream.write_octets(&self.custom_data);
         stream.write_octets(&[]); // config_data — nenhum sistema de UI/facção preenche isto ainda
-        stream.write_u32(0); // custom_stamp
+        // `custom_stamp` — o carimbo da aparência, e ele **tem de bater** com o `crc_c`
+        // que a `info_player_1` daquele mesmo personagem leva (`VistaDoJogador`). O
+        // cliente guarda este valor (`m_PlayerInfo.crc_c = base.custom_stamp`,
+        // `EC_ElsePlayer.cpp:1881`) e o compara com o do próximo pacote de visão para
+        // decidir se precisa pedir a aparência de novo (`:176`). Zero fixo dos dois lados,
+        // como ia até 2026-09-11, faz o cliente nunca perceber uma troca de visual.
+        stream.write_u32(pw_core::stamp_de_aparencia(&self.custom_data) as u32);
         stream.write_u8(self.status);
         stream.write_i32(0); // delete_time — 0 enquanto não existe exclusão/restauração visível aqui
         stream.write_i32(self.create_time);

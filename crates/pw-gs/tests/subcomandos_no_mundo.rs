@@ -34,6 +34,11 @@ use tokio::sync::RwLock;
 const LOCALSID: u32 = 0xC0FF_EE01;
 /// A missão ativa do personagem de teste, para conferir a notificação de abate.
 const MISSAO: u32 = 4242;
+/// Um item qualquer para o teste de loja, com preço conhecido.
+const ITEM_DE_LOJA: i32 = 4123;
+/// `shop_price` daquele item no cenário — o que a loja tem de cobrar por unidade.
+const PRECO_DO_ITEM_DE_LOJA: i32 = 137;
+
 const MONSTRO: i64 = 900_001;
 /// HP deliberadamente diferente de 1000: era o valor fixo que o `gateway.rs` mandava, e
 /// um teste com 1000 passaria mesmo se nada tivesse mudado de lado.
@@ -192,9 +197,17 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
     let pool = pool_do_teste(url).await;
     let (roleid, convidado) = personagem_com_missao(&pool).await;
 
+    // A loja cobra o preço do `elements.data` desde 2026-09-11, e este cenário não carrega
+    // arquivo nenhum — sem um preço aqui, **toda** compra é recusada, que é o
+    // comportamento certo para um item que o realm não conhece.
+    let mut dados = GameDataManager::new();
+    dados
+        .precos
+        .insert(ITEM_DE_LOJA as u32, (50, PRECO_DO_ITEM_DE_LOJA));
+
     let mut mundo = WorldInstance::new(
         1,
-        Arc::new(GameDataManager::new()),
+        Arc::new(dados),
         CharacterRepository::new(pool),
     );
     // O jogador **não** é inserido aqui: quem o põe no mundo é o `EnterWorld`, que carrega
@@ -1203,7 +1216,7 @@ async fn comprar_do_npc_tira_dinheiro_e_da_o_item() {
     let mut c = Vec::new();
     c.extend_from_slice(&[0u8; 24]); // money + as cinco contribuições
     c.extend_from_slice(&1u32.to_le_bytes()); // item_count
-    c.extend_from_slice(&4123i32.to_le_bytes()); // tid
+    c.extend_from_slice(&ITEM_DE_LOJA.to_le_bytes()); // tid
     c.extend_from_slice(&20u32.to_le_bytes()); // index (slot de destino)
     c.extend_from_slice(&1u32.to_le_bytes()); // count
 
@@ -1222,7 +1235,7 @@ async fn comprar_do_npc_tira_dinheiro_e_da_o_item() {
         .await
         .unwrap()
         .expect("o item comprado não chegou à bolsa");
-    assert_eq!(comprado.item_id, 4123);
+    assert_eq!(comprado.item_id, ITEM_DE_LOJA as u32);
 
     let depois = dinheiro(&mundo, roleid).await;
     assert!(
@@ -1230,6 +1243,58 @@ async fn comprar_do_npc_tira_dinheiro_e_da_o_item() {
         "comprar **aumentou** o dinheiro do jogador ({antes} → {depois}) — a loja voltou \
          a ficar invertida?"
     );
+    // E cobra o preço do arquivo, não os 100 fixos que valiam para qualquer coisa até
+    // 2026-09-11.
+    assert_eq!(
+        antes - depois,
+        PRECO_DO_ITEM_DE_LOJA as i64,
+        "a loja não cobrou o shop_price do elements.data"
+    );
+}
+
+/// Item sem preço no `elements.data` não é vendido — e nem por isso é dado de graça.
+///
+/// Antes, qualquer id saía por 100 moedas fixas. Recusar é a resposta honesta enquanto o
+/// realm não souber quanto a coisa custa; no 1.2.6/v7, cuja tabela de preços ainda é
+/// vazia, é o que acontece com toda compra.
+#[tokio::test]
+async fn item_sem_preco_no_arquivo_nao_e_vendido() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let repo = mundo.read().await.char_repo.clone();
+    let _ = repo.add_money(roleid, 10_000).await;
+    let antes = dinheiro(&mundo, roleid).await;
+
+    let mut c = Vec::new();
+    c.extend_from_slice(&[0u8; 24]);
+    c.extend_from_slice(&1u32.to_le_bytes());
+    c.extend_from_slice(&999_999i32.to_le_bytes()); // tid que o cenário não conhece
+    c.extend_from_slice(&21u32.to_le_bytes());
+    c.extend_from_slice(&1u32.to_le_bytes());
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::NPC_VENDE, &c),
+    })
+    .await
+    .unwrap();
+
+    let itens = repo.item_repo().clone();
+    let entregou = ate_async(move || {
+        let i = itens.clone();
+        async move {
+            i.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 21)
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+        }
+    })
+    .await;
+    assert!(!entregou, "um item sem preço no arquivo foi entregue mesmo assim");
+    assert_eq!(dinheiro(&mundo, roleid).await, antes, "cobrou por um item que não vendeu");
 }
 
 #[tokio::test]
@@ -2936,4 +3001,70 @@ async fn o_minerio_do_mapa_entra_pelo_comando_de_materia_e_sai_pela_lista() {
         !mundo.read().await.players[&(roleid as i64)].visiveis.contains(&MINERIO),
         "o mundo continua achando que o jogador vê o minério"
     );
+}
+
+/// O treinador sobe a habilidade um nível, grava e avisa o cliente.
+///
+/// `GP_NPCSEV_LEARN` (9) caía no ramo de "serviço ainda não tratado" até 2026-09-11:
+/// clicar em aprender não fazia nada. E como o nível de conjuração deixou de ser fixo em 1
+/// na mesma semana, não havia como subir uma habilidade para ver a diferença em jogo.
+///
+/// O pedido é um `int idSkill` e nada mais — o cliente **não** manda o nível
+/// (`c2s_SendCmdNPCSevLearnSkill`, `EC_SendC2SCmds.cpp:3379-3405`). A resposta é
+/// `LEARN_SKILL` (95), com id e nível novo.
+#[tokio::test]
+async fn o_treinador_sobe_a_habilidade_um_nivel_e_grava() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // Uma habilidade que o personagem de teste não tem: começa do zero e vai a 1.
+    const HABILIDADE: i32 = 117;
+    let antes = mundo.read().await.players[&(roleid as i64)]
+        .habilidades
+        .get(&(HABILIDADE as u32))
+        .copied()
+        .unwrap_or(0);
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(
+            pw_gs::npc::servico::APRENDER_HABILIDADE,
+            &HABILIDADE.to_le_bytes(),
+        ),
+    })
+    .await
+    .unwrap();
+
+    let resposta = esperar_comando(&mut link, 95).await;
+    assert_eq!(i32_em(&resposta, 2), HABILIDADE, "o LEARN_SKILL não é da habilidade pedida");
+    assert_eq!(
+        i32_em(&resposta, 6),
+        antes as i32 + 1,
+        "o nível novo tem de ser o anterior mais um"
+    );
+
+    // O mundo sabe — é o que faz a conjuração usar o nível novo.
+    assert_eq!(
+        mundo.read().await.players[&(roleid as i64)]
+            .habilidades
+            .get(&(HABILIDADE as u32))
+            .copied(),
+        Some(antes + 1)
+    );
+
+    // E o banco também, senão o nível se perde no relogin.
+    let gravadas = mundo
+        .read()
+        .await
+        .char_repo
+        .skill_repo()
+        .list_skills(roleid)
+        .await
+        .expect("ler as habilidades do banco");
+    let gravada = gravadas
+        .iter()
+        .find(|h| h.skill_id == HABILIDADE as u32)
+        .expect("a habilidade subida tem de estar no banco");
+    assert_eq!(gravada.level, antes + 1);
 }

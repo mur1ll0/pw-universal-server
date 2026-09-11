@@ -155,6 +155,12 @@ pub struct GameDataManager {
     /// equipado: sem ele, a máscara de classes do item fica zerada no cliente e **toda**
     /// classe é recusada. Vazias no 1.2.6/v7.
     pub equipamentos: TabelasDeEquipamento,
+    /// `(price, shop_price)` de cada item que declara os dois campos, por id.
+    ///
+    /// Varre **todas** as tabelas do `elements.data` em vez de conhecer uma por uma:
+    /// arma, armadura, remédio, material e mais uma dúzia de famílias têm os mesmos dois
+    /// campos, e a loja precisa do preço de qualquer uma delas. Vazio no 1.2.6/v7.
+    pub precos: HashMap<u32, (i32, i32)>,
     /// Os atributos **base** por classe, do `ptemplate.conf` — ver [`crate::ptemplate`].
     /// Fonte diferente da de [`Self::classes`]: aquela traz o que escala por nível e por
     /// ponto de atributo, esta traz o ponto de partida do nível 1. Vazia quando o pacote
@@ -173,6 +179,14 @@ pub struct GameDataManager {
 
     // Spawns indexados por ID do Mapa/Instância (ex: 1 -> world/npcgen.data, 101 -> a01/npcgen.data)
     pub map_spawns: HashMap<i32, NpcGenData>,
+    /// A pasta de cada mapa, pelo mesmo id de [`Self::map_spawns`].
+    ///
+    /// Guardar o caminho, e não o conteúdo, é de propósito: o mapa de alturas do mundo
+    /// principal são 88 blocos de 1 MB, e há 68 pastas de mapa no realm. Carregar todos
+    /// aqui custaria centenas de MB em **todo** daemon que monta um `GameDataManager` —
+    /// inclusive o `pw-link`, que não precisa de altura nenhuma. Quem precisa é o
+    /// servidor de mundo, e só do mapa que ele serve: ver `WorldInstance::init_spawns`.
+    pub pastas_de_mapa: HashMap<i32, std::path::PathBuf>,
     pub collisions: HashMap<i32, MapCollision>,
 
     /// `dwTimeStamp` de `<mapa>/region.sev`, indexado por ID de mapa/instância (mesma
@@ -334,6 +348,7 @@ impl GameDataManager {
             self.monstros = crate::monstros::carregar(g, Some(&self.aipolicy));
             self.classes = crate::classes::carregar(g);
             self.equipamentos = TabelasDeEquipamento::carregar(g);
+            self.precos = crate::precos::carregar(g);
         }
 
         // O `ptemplate.conf` não é um `.data`: é um arquivo de configuração do `gamed`, e
@@ -376,6 +391,50 @@ impl GameDataManager {
         rel
     }
 
+    /// Quanto custa comprar este item de um NPC, em moedas.
+    ///
+    /// O original monta o preço da loja assim (`gs/serviceprovider.cpp:241-252`):
+    ///
+    /// ```cpp
+    /// int shop_price = GetDataMan().get_item_shop_price(tid);
+    /// if (shop_price < (int)data->price) shop_price = data->price;
+    /// float fp = shop_price * _tax_rate * tax_rate + 0.5f;
+    /// int price = (int)fp;  if (price <= 0) price = 1;
+    /// ```
+    ///
+    /// Sem sistema de impostos (`_tax_rate`, que varia por NPC e por facção dona do
+    /// território), o preço base é o próprio `shop_price`, com o piso no `price` — que é
+    /// exatamente o que sobra da fórmula com as taxas em 1.
+    ///
+    /// `None` quando o realm não tem o item nas tabelas: quem chama decide, e recusar a
+    /// venda é melhor do que cobrar um número inventado.
+    pub fn preco_de_compra(&self, item_id: u32) -> Option<i32> {
+        let (price, shop_price) = self.precos.get(&item_id).copied()?;
+        Some(shop_price.max(price).max(1))
+    }
+
+    /// A durabilidade de fábrica de um equipamento, já na escala do cliente.
+    ///
+    /// O `elements.data` guarda `durability_min` na escala dele; o cliente multiplica por
+    /// `ENDURANCE_SCALE` (100) ao montar o item, e é nessa escala que o `OWN_ITEM_INFO`
+    /// viaja. Quem grava o item no banco guarda a escala do arquivo, e o codificador
+    /// multiplica — então o que sai daqui é o número do arquivo.
+    ///
+    /// `None` para item que não é equipamento: poção não tem durabilidade.
+    pub fn durabilidade_de_fabrica(&self, item_id: u32) -> Option<u32> {
+        let e = &self.equipamentos;
+        let d = if let Some(a) = e.armas.get(&item_id) {
+            a.durabilidade
+        } else if let Some(a) = e.armaduras.get(&item_id) {
+            a.requisitos.durabilidade
+        } else if let Some(d) = e.decoracoes.get(&item_id) {
+            d.requisitos.durabilidade
+        } else {
+            return None;
+        };
+        (d > 0).then_some(d as u32)
+    }
+
     /// Quanto um item de cura restaura de HP/MP, segundo o `elements.data` deste realm —
     /// `None` quando o item não é remédio (é a resposta certa para uma arma, não um zero
     /// disfarçado de cura).
@@ -408,6 +467,10 @@ impl GameDataManager {
         rotulo: &str,
         rel: &mut RelatorioDeCarga,
     ) {
+        // O caminho da pasta, para quem precisar ler algo dela depois — hoje o mapa de
+        // alturas, que o servidor de mundo carrega só do mapa que serve.
+        self.pastas_de_mapa.insert(world_id, map_dir.to_path_buf());
+
         let npcgen = format!("{rotulo}/npcgen.data");
         if let Some(data) = rel.ler_como(map_dir, "npcgen.data", &npcgen) {
             let nome = npcgen;

@@ -51,8 +51,19 @@ async fn montar() -> Option<Cenario> {
     };
     let pool = PostgresPool::new(&cfg).await.expect("conexão com o banco");
 
+    // Só o relógio não basta: os quatro testes deste arquivo rodam em paralelo, e dois que
+    // comecem no mesmo nanossegundo geram o mesmo nome de realm — o segundo morre em
+    // `duplicate key` ao criar o realm. Falha intermitente, vista em 2026-09-09 e
+    // 2026-09-11. O contador desempata dentro do processo e o relógio entre execuções, do
+    // mesmo jeito que `subcomandos_no_mundo.rs` já fazia.
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
-    let m = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() % 1_000_000_000;
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let m = format!(
+        "{}_{}",
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() % 1_000_000_000,
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    );
 
     let realm = format!("t_it_{m}");
     sqlx::query(

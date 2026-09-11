@@ -144,6 +144,79 @@ impl QuestStatus {
     }
 }
 
+/// `GP_STATE2_GENDER` (`EC_GPDataType.h:260`) — no servidor original,
+/// `STATE_PLAYER_GENDER` (`gs/object.h:202`). **Ligado quer dizer mulher.**
+///
+/// É por este bit, e só por ele, que o cliente sabe o sexo de outro jogador a partir de um
+/// pacote de visão:
+///
+/// ```cpp
+/// unsigned char GetGender() const {
+///     return (state2 & GP_STATE2_GENDER) ? GENDER_FEMALE : GENDER_MALE;
+/// }
+/// ```
+///
+/// O original o liga em `SetPlayerClass(cls, gender)` (`gs/player_imp.h:1886-1891`).
+///
+/// Mandar `state2 = 0` para todo mundo, como se fazia até 2026-09-11, é afirmar que todo
+/// jogador é homem — e o cliente acredita: duas sacerdotisas voltaram ao campo de visão
+/// como modelo masculino, com cabelo e barba de padrão.
+pub const ESTADO2_MULHER: i32 = 0x0000_0040;
+
+/// O carimbo da aparência de um personagem — o `custom_crc` do original.
+///
+/// Viaja em dois lugares que **precisam concordar**: o `crc_c` da `info_player_1` (o
+/// pacote que apresenta um jogador) e o `custom_stamp` do `PlayerBaseInfo_Re` (a resposta
+/// com a aparência). O cliente compara os dois para decidir se o que ele tem em cache
+/// ainda vale (`m_bCustomReady = (m_PlayerInfo.crc_c == Info.crc_c)`,
+/// `EC_ElsePlayer.cpp:176`); se discordarem para sempre, ele pede a aparência a cada
+/// reaparição, e se forem sempre iguais ele nunca percebe uma troca de visual.
+///
+/// **Não é o CRC do original** — é um carimbo nosso, e só precisa de duas propriedades:
+/// ser estável para os mesmos bytes e mudar quando eles mudam. FNV-1a truncado a 16 bits
+/// dá as duas. Aparência vazia carimba zero, que é o que o cliente já espera de quem não
+/// tem aparência gravada.
+pub fn stamp_de_aparencia(bytes: &[u8]) -> u16 {
+    if bytes.is_empty() {
+        return 0;
+    }
+    let mut h: u32 = 0x811c_9dc5;
+    for b in bytes {
+        h ^= *b as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    // Dobra os 32 bits em 16 para não jogar fora metade da dispersão.
+    let dobrado = ((h >> 16) ^ h) as u16;
+    // Zero é reservado para "sem aparência": um carimbo real nunca deve colidir com ele.
+    if dobrado == 0 { 1 } else { dobrado }
+}
+
+/// Os bytes crus da aparência, do `custom_appearance` gravado no banco.
+///
+/// A coluna guarda ou `{"raw": "<hex>"}` — o caminho normal, os octetos que o cliente
+/// mandou na criação — ou um JSON qualquer, de personagem antigo. A mesma extração que o
+/// `ProtocolAdapter` já fazia para montar o `RoleInfo`; mora aqui porque o mundo também
+/// precisa dela, para carimbar a aparência sem conhecer o formato de rede.
+pub fn bytes_da_aparencia(custom_appearance: &serde_json::Value) -> Vec<u8> {
+    if let Some(hex_cru) = custom_appearance.get("raw").and_then(|v| v.as_str()) {
+        return hex::decode(hex_cru).unwrap_or_default();
+    }
+    // `null` e `{}` são as duas formas de "este personagem não tem aparência gravada" que
+    // o repositório produz: `get_details` escreve `{}` quando a coluna é NULL, e o
+    // `CharacterDetails::default` escreve `null`. As duas têm de carimbar **vazio**, o
+    // mesmo que o `pw-link` carimba ao responder `custom_data` vazio — senão os dois lados
+    // discordam e o cliente pede a aparência a cada reaparição.
+    if custom_appearance.is_null() {
+        return Vec::new();
+    }
+    if let Some(obj) = custom_appearance.as_object() {
+        if obj.is_empty() {
+            return Vec::new();
+        }
+    }
+    serde_json::to_vec(custom_appearance).unwrap_or_default()
+}
+
 /// Os quatro atributos com que um personagem nasce.
 ///
 /// O original os tira do `ptemplate.conf`, por classe: o Guerreiro começa com vitalidade
@@ -270,4 +343,31 @@ pub enum FichaDoEquipamento {
     Arma(FichaDaArma),
     Armadura(FichaDaArmadura),
     Decoracao(FichaDeDecoracao),
+}
+
+/// O que um jogador parece, visto de fora — o que vai na `info_player_1`.
+///
+/// Junta os campos que apresentam um jogador a outro: onde está, para onde olha, se é GM,
+/// **se é mulher**, e os dois carimbos que dizem ao cliente se o que ele guardou daquele
+/// jogador ainda vale.
+///
+/// Existe como struct, e não como sete parâmetros, porque os dois codificadores que a
+/// usam (`PLAYER_ENTER_WORLD` e `PLAYER_ENTER_SLICE`) escrevem exatamente os mesmos
+/// campos na mesma ordem, e um parâmetro trocado de lugar entre eles seria invisível.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VistaDoJogador {
+    pub pos: Vector3,
+    /// Direção horizontal comprimida em 1/256 de volta. Zerada enquanto a grade espacial
+    /// guardar posição e não direção.
+    pub dir: u8,
+    /// Nível de GM. Acende `STATE_GAMEMASTER` no `state` e põe a coroa sobre o avatar.
+    pub sec_level: u8,
+    /// **O sexo do personagem.** Vira o bit [`ESTADO2_MULHER`] do `state2`, e é de lá que
+    /// o cliente o lê (`info_player_1::GetGender()`).
+    pub feminino: bool,
+    /// `crc_e` — carimbo do equipamento visível.
+    pub crc_equipamento: u16,
+    /// `crc_c` — carimbo da aparência. Tem de ser **o mesmo** valor que o `custom_stamp`
+    /// do `PlayerBaseInfo_Re` daquele personagem. Ver [`stamp_de_aparencia`].
+    pub crc_aparencia: u16,
 }

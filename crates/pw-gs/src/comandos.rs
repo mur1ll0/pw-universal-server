@@ -111,6 +111,9 @@ pub mod ids {
     /// `detail_task` (4).
     pub const GET_ALL_DATA: u16 = 39;
     /// `SRV::C2S::CMD::query_player_info_1` — `count` (2) e a lista de ids a partir do 4.
+    /// O cliente mede a latência com isto, repetidamente. Ver
+    /// `S2CGamedataSend::calc_network_delay_re`.
+    pub const CALC_NETWORK_DELAY: u16 = 128;
     pub const QUERY_PLAYER_INFO_1: u16 = 67;
     /// `SRV::C2S::CMD::get_others_equipment` — mesmo formato do 67: `size` (2) e a lista
     /// de ids a partir do 4 (`cmd_get_other_equip`, `EC_SendC2SCmds.cpp:2393` no client).

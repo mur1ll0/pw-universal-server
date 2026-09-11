@@ -29,6 +29,9 @@ COPY tools ./tools
 COPY specs/elements_layouts ./specs/elements_layouts
 COPY specs/elements_155/realm_155_overrides.json ./specs/elements_155/realm_155_overrides.json
 COPY specs/elements_155/realm_155_v159_overrides.json ./specs/elements_155/realm_155_v159_overrides.json
+# O catálogo de terreno de cada mapa, extraído do gs.conf do servidor original —
+# `pw_data_loader::terreno` o embute com include_str!.
+COPY specs/mapas ./specs/mapas
 
 # Argumento para definir qual binário compilar
 ARG CRATE_NAME=pw-auth

@@ -654,3 +654,115 @@ fn out_of_sight_list_leva_a_contagem_antes_dos_ids() {
     // cliente lê zero e não faz nada.
     assert_eq!(S2CGamedataSend::out_of_sight_list(&[]).data.len(), 6);
 }
+
+/// O sexo de outro jogador viaja num bit do `state2`, e mandar zero afirma que todo mundo
+/// é homem.
+///
+/// Medido em jogo em 2026-09-11: duas sacerdotisas se afastaram além do raio de visão e,
+/// ao voltarem, apareceram uma para a outra como **modelo masculino, com barba e cabelo de
+/// padrão**. Os logs do realm mostram por quê — na reentrada o cliente **não** pede
+/// `PlayerBaseInfo` nem `GetCustomData` de novo (2 pedidos na sessão inteira, os dois do
+/// primeiro encontro), porque ele já tem aquele jogador em cache. O único sexo que ele tem
+/// à mão é o do pacote:
+///
+/// ```cpp
+/// unsigned char GetGender() const {
+///     return (state2 & GP_STATE2_GENDER) ? GENDER_FEMALE : GENDER_MALE;
+/// }
+/// ```
+///
+/// (`EC_GPDataType.h:709-711`, usado em `CECElsePlayer::InitFromCache`,
+/// `EC_ElsePlayer.cpp:220`.) O original liga o mesmo bit em `SetPlayerClass`
+/// (`gs/player_imp.h:1886-1891`, `STATE_PLAYER_GENDER = 0x40`).
+#[test]
+fn o_sexo_do_jogador_viaja_no_bit_do_state2() {
+    let mulher = pw_core::VistaDoJogador {
+        pos: pw_core::Vector3::new(1.0, 2.0, 3.0),
+        dir: 0,
+        sec_level: 0,
+        feminino: true,
+        crc_equipamento: 0,
+        crc_aparencia: 0xBEEF,
+    };
+    let p = S2CGamedataSend::player_enter_slice(42, mulher);
+
+    assert_eq!(u16::from_le_bytes([p.data[0], p.data[1]]), 12);
+    // Do fim do cabeçalho: cid 2..6, pos 6..18, crc_e 18..20, crc_c 20..22, dir 22,
+    // level2 23, state 24..28, state2 28..32.
+    let s32 = |off: usize| i32::from_le_bytes([p.data[off], p.data[off + 1], p.data[off + 2], p.data[off + 3]]);
+    assert_eq!(
+        s32(28),
+        0x40,
+        "sem este bit o cliente desenha a personagem como homem"
+    );
+    assert_eq!(
+        u16::from_le_bytes([p.data[20], p.data[21]]),
+        0xBEEF,
+        "crc_c — o carimbo da aparência"
+    );
+
+    // E o tamanho não muda: nenhum dos bits que este servidor liga acrescenta bytes ao
+    // comando (`info_player_1::CheckValid`, `EC_GPDataType.h:625-705`).
+    let homem = pw_core::VistaDoJogador { feminino: false, ..mulher };
+    let q = S2CGamedataSend::player_enter_slice(42, homem);
+    assert_eq!(p.data.len(), q.data.len(), "o bit do sexo não pode mudar o tamanho");
+    assert_eq!(s32_de(&q.data, 28), 0, "homem não liga bit nenhum");
+}
+
+fn s32_de(d: &[u8], off: usize) -> i32 {
+    i32::from_le_bytes([d[off], d[off + 1], d[off + 2], d[off + 3]])
+}
+
+/// O carimbo da aparência tem de ser o **mesmo** nos dois lugares em que viaja, senão o
+/// cliente ou nunca atualiza o visual, ou o repede a cada reaparição.
+///
+/// `crc_c` da `info_player_1` sai de `PlayerEntity::crc_aparencia`, calculado sobre os
+/// bytes que o `custom_appearance` do banco guarda; `custom_stamp` do `PlayerBaseInfo_Re`
+/// sai dos mesmos bytes, pela coluna `custom_data`. As duas formas que o repositório
+/// produz para "sem aparência" — `null` e `{}` — têm de carimbar zero, que é o que o link
+/// carimba para uma lista vazia.
+#[test]
+fn o_carimbo_da_aparencia_concorda_nos_dois_caminhos() {
+    let bytes = [0xDEu8, 0xAD, 0xBE, 0xEF, 0x01, 0x02];
+    let do_json = serde_json::json!({ "raw": hex::encode(bytes) });
+
+    assert_eq!(pw_core::bytes_da_aparencia(&do_json), bytes.to_vec());
+    assert_eq!(
+        pw_core::stamp_de_aparencia(&pw_core::bytes_da_aparencia(&do_json)),
+        pw_core::stamp_de_aparencia(&bytes),
+        "o mundo e o link carimbariam valores diferentes para a mesma aparência"
+    );
+
+    for vazio in [serde_json::Value::Null, serde_json::json!({})] {
+        assert!(pw_core::bytes_da_aparencia(&vazio).is_empty(), "{vazio:?}");
+        assert_eq!(
+            pw_core::stamp_de_aparencia(&pw_core::bytes_da_aparencia(&vazio)),
+            0,
+            "sem aparência tem de carimbar zero, como o link faz"
+        );
+    }
+
+    // E o carimbo muda quando a aparência muda — sem isso o cliente nunca refaria o
+    // modelo de quem trocou de visual.
+    let mut outra = bytes;
+    outra[0] ^= 0xFF;
+    assert_ne!(
+        pw_core::stamp_de_aparencia(&bytes),
+        pw_core::stamp_de_aparencia(&outra)
+    );
+    // Um carimbo real nunca colide com o zero reservado.
+    assert_ne!(pw_core::stamp_de_aparencia(&bytes), 0);
+}
+
+/// `CALC_NETWORK_DELAY_RE` (291) devolve o `timestamp` do cliente sem tocar nele.
+///
+/// O cliente descarta a resposta se o valor não bater com o que ele guardou
+/// (`EC_GameRun.cpp:3155`), então inventar um relógio nosso aqui seria o mesmo que não
+/// responder.
+#[test]
+fn a_resposta_de_latencia_devolve_o_relogio_do_cliente() {
+    let p = S2CGamedataSend::calc_network_delay_re(0x1234_5678);
+    assert_eq!(u16::from_le_bytes([p.data[0], p.data[1]]), 291);
+    assert_eq!(p.data.len(), 2 + 4);
+    assert_eq!(s32_de(&p.data, 2), 0x1234_5678);
+}

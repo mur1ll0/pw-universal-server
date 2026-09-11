@@ -306,6 +306,8 @@ pub mod gamedata_s2c {
     /// A lista do que saiu do campo de visão. O cliente roteia cada id pela família dele
     /// — é o único caminho de saída que a matéria tem.
     pub const OUT_OF_SIGHT_LIST: u16 = 34;
+    /// A resposta do medidor de latência do cliente: devolve o `timestamp` recebido.
+    pub const CALC_NETWORK_DELAY_RE: u16 = 291;
     pub const RECEIVE_EXP: u16 = 36;
     pub const LEVEL_UP: u16 = 37;
     pub const SELF_INFO_00: u16 = 38;
@@ -323,6 +325,7 @@ pub mod gamedata_s2c {
         ("MATTER_ENTER_WORLD", MATTER_ENTER_WORLD),
         ("PLAYER_LEAVE_WORLD", PLAYER_LEAVE_WORLD),
         ("OUT_OF_SIGHT_LIST", OUT_OF_SIGHT_LIST),
+        ("CALC_NETWORK_DELAY_RE", CALC_NETWORK_DELAY_RE),
         ("RECEIVE_EXP", RECEIVE_EXP),
         ("LEVEL_UP", LEVEL_UP),
         ("SELF_INFO_00", SELF_INFO_00),
@@ -333,6 +336,7 @@ pub mod gamedata_s2c {
 // usam não são reescritos.
 pub use gamedata_s2c::{
     LEVEL_UP as CMD_S2C_LEVEL_UP, MATTER_ENTER_WORLD as CMD_S2C_MATTER_ENTER_WORLD,
+    CALC_NETWORK_DELAY_RE as CMD_S2C_CALC_NETWORK_DELAY_RE,
     NOTIFY_HOSTPOS as CMD_S2C_NOTIFY_HOSTPOS, OUT_OF_SIGHT_LIST as CMD_S2C_OUT_OF_SIGHT_LIST,
     NPC_ENTER_SLICE as CMD_S2C_NPC_ENTER_SLICE, OBJECT_LEAVE_SLICE as CMD_S2C_OBJECT_LEAVE_SLICE,
     OBJECT_MOVE as CMD_S2C_OBJECT_MOVE, PLAYER_ENTER_SLICE as CMD_S2C_PLAYER_ENTER_SLICE,

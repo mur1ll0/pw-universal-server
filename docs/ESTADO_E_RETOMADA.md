@@ -5468,6 +5468,287 @@ Ordem combinada com o Murillo:
     - As duas instâncias de matéria de cada gerador nascem **na mesma coordenada** — o
       `npcgen.rs` usa `area.pos` para todas, sem espalhar. Duas pedras uma dentro da outra.
 
+42. **Sessão 2026-09-11: o teste em jogo com dois clientes — o modelo masculino, o
+    teleporte enterrado, os monstros no ar, e o que o overlay não pode mostrar.**
+
+    Sete relatos do Murillo depois do item 41. Cinco viraram correção, um virou resposta
+    (o instrumento funciona diferente do que eu disse) e um continua aberto com o que foi
+    medido.
+
+    ### a. A arma certa, para referência
+
+    Confirmado em jogo: a arma equipada aparece **branca** e o tooltip mostra a restrição de
+    classe. É o estado correto, e fica registrado como referência para comparar quando algo
+    voltar a ficar vermelho:
+
+    - O nome e o tipo saem do `elements.data` **do cliente**, pelo id do item.
+    - A linha de profissão, as de atributo e a de nível saem do **bloco de dados** que o
+      `OWN_ITEM_INFO` (40) carrega — o que o item 38 corrigiu para arma e o 41a para
+      armadura e acessório.
+    - Vermelho (`A3DCOLORRGB(192, 0, 0)`) quer dizer `CanUseEquipment` recusando, e são só
+      cinco motivos (`EC_HostPlayer.cpp:4894-4980`): item nulo, atributo/nível/reputação
+      insuficiente, profissão fora da máscara, sexo errado (moda) e munição ausente (arma
+      de longo alcance). **Peça sem bloco de dados cai no terceiro**, com a máscara em
+      zero.
+
+    ### b. O modelo masculino de barba: o sexo viaja num bit que ia zerado
+
+    Duas sacerdotisas se afastaram além do raio de visão; ao voltarem, **cada uma viu a
+    outra como modelo masculino, com cabelo e barba de padrão**.
+
+    Os logs do realm deram o diagnóstico antes de qualquer leitura de fonte: na sessão
+    inteira houve **dois** `PlayerBaseInfo` (um por jogador, no primeiro encontro) e
+    **zero** `GetCustomData`. Na reentrada o cliente não pede nada — ele já tem aquele
+    jogador em cache. Então o único sexo que ele tem à mão é o do pacote:
+
+    ```cpp
+    unsigned char GetGender() const {
+        return (state2 & GP_STATE2_GENDER) ? GENDER_FEMALE : GENDER_MALE;
+    }
+    ```
+
+    (`EC_GPDataType.h:709-711`, usado em `CECElsePlayer::InitFromCache`,
+    `EC_ElsePlayer.cpp:220`.) E nós mandávamos `state2 = 0` para todo mundo — afirmando que
+    todo jogador é homem. O original liga o mesmo bit em `SetPlayerClass`
+    (`gs/player_imp.h:1886-1891`; `STATE_PLAYER_GENDER = 0x40`, `gs/object.h:202`).
+
+    Junto com ele foram os dois carimbos que iam zerados no mesmo pacote, `crc_e` e `crc_c`
+    — no original, `pObject->crc` e `pObject->custom_crc` (`protocol_imp.h:197-200`). São
+    eles que dizem ao cliente se o que está em cache ainda vale
+    (`m_bCustomReady = (m_PlayerInfo.crc_c == Info.crc_c)`, `EC_ElsePlayer.cpp:176`), e o
+    `crc_c` **tem de ser o mesmo valor** que o `custom_stamp` do `PlayerBaseInfo_Re` daquele
+    personagem (`:1881`). Zero fixo nos dois lados faz o cliente nunca perceber uma troca de
+    visual.
+
+    Os campos viraram `pw_core::VistaDoJogador`, uma struct só, porque os dois codificadores
+    que a usam escrevem os mesmos campos na mesma ordem e um parâmetro trocado entre eles
+    seria invisível.
+
+    **Nota sobre o 1.2.6:** lá o `state2` não existe, e o cliente só sabe o sexo pelo
+    `PlayerBaseInfo_Re`. Aquela versão nunca teve este defeito.
+
+    ### c. O teleporte de GM enterrava de novo — agora há mapa de alturas
+
+    O item 37 tinha resolvido isto mantendo a altura atual do jogador, e escrito por quê:
+    não havia como consultar o chão. O remendo funciona em terreno plano e falha em
+    qualquer encosta, que foi o que voltou a acontecer.
+
+    O mapa existe, e o formato estava a uma leitura de distância: `CTerrain`
+    (`EvolvedPWServer/cgame/gs/terrain.cpp`) monta o terreno de `map/<n>.hmap`, e a
+    configuração de cada mapa está no `gs.conf` do pacote do servidor. Módulo novo
+    `pw-data-loader/src/terreno.rs`:
+
+    | | |
+    | :--- | :--- |
+    | arquivo | `map/<n>.hmap`, `n` de 1 a colunas×linhas |
+    | conteúdo | `(nAreaWidth+1)²` floats little-endian **em 0..1**, sem cabeçalho |
+    | tamanho | 513² × 4 = **1.052.676 bytes**, exatamente o dos arquivos do realm |
+    | altura | `h × (vHeightMax − vHeightMin) + vHeightMin` |
+    | origem | `ox = −(vert×colunas×célula)/2`, `oz = +(vert×linhas×célula)/2` |
+    | busca | `h = (x−ox)/célula`, `v = (oz−z)/célula` — **o `z` é invertido** |
+
+    A conferência de que a fórmula está certa: para o mundo principal ela dá
+    `x ∈ [−4096, 4096]`, `z ∈ [−5632, 5632]`, que é exatamente o `base_region` que o
+    `gs.conf` declara para o `gs01`. Medido no realm: 88/88 blocos, 88 MB, alturas de 15,1
+    a 633,8 m.
+
+    A configuração por mapa **não dá para deduzir da pasta** — 88 arquivos tanto podem ser
+    8×11 quanto 11×8 — então ela foi extraída do `gs.conf` para
+    `specs/mapas/terreno_155.json` (26 mapas). O terreno é carregado **só do mapa que
+    aquele servidor de mundo serve**: são 88 MB, e o realm tem 68 pastas de mapa.
+
+    O teleporte passou a fazer o que o original faz
+    (`playercmd.cpp:4926`), mais meio metro de folga — a nossa altura vem da interpolação
+    do `.hmap`, e o cliente tem a malha real por cima; num telhado ou numa ponte, chegar
+    rente ao terreno é chegar dentro da geometria.
+
+    ### d. Os monstros no ar: o diagnóstico mudou no meio do caminho
+
+    A primeira leitura foi que o `y` do `npcgen.data` seria um **deslocamento** acima do
+    chão — é o que `GenerateY` sugere (`npcgenerator.cpp:4319-4322`). **O teste contra os
+    dados reais derrubou isso na hora**: somar chão + `y` punha tudo a 436 m.
+
+    O que os 30.898 spawns do mundo dizem, medidos contra o mapa de alturas:
+
+    - O `y` do arquivo **é altura absoluta e está certo**: no centro da área ele fica a
+      **0,10 m** do chão, e esse 0,10 é constante nos quartis 25, 50 e 75 — é o
+      `offset_terrain` (`fOffsetTrn`) que o gerador do original soma.
+    - Quem erra é a **nossa dispersão**. `posicao_na_area` (`npcgen.rs:117`) espalha os
+      monstros sorteando `x` e `z` dentro da caixa da área e **copia o `y` do centro**. Em
+      encosta, o monstro fica na altura do centro. O próprio código já documentava a
+      lacuna: *"Sem altura de terreno… é isso que falta para fechar com o original"*.
+    - **Nem toda área é de chão.** 1.083 das 10.172 áreas têm o centro a dezenas ou
+      centenas de metros do terreno, **para os dois lados**: deslocamento negativo é
+      caverna (até −259 m), positivo é gerador aéreo ou cidade de vários níveis (até
+      +366 m). O mapa de alturas não representa nada disso, e o original também não —
+      ele preserva o deslocamento do gerador.
+
+    A correção reproduz `terrain_gen_pos` sem precisar extrair o `fOffsetTrn`, recuperando-o
+    do que já temos:
+
+    ```text
+    deslocamento = centro.y − chão(centro.x, centro.z)
+    y final      = chão(x, z) + deslocamento
+    ```
+
+    Medido: dos 25.465 spawns de área de chão, **34,2% estavam a mais de 2 m do chão e
+    agora são 0%**, e os 5.433 de caverna ou gerador aéreo continuam onde estavam.
+
+    Para isso o `SpawnInstance` ganhou `centro_da_area`. O leitor de `npcgen.data` continua
+    sem depender do terreno — quem resolve a altura é `WorldInstance::init_spawns`, que é
+    onde o mapa está carregado.
+
+    ### e. O jogador que nasce enterrado
+
+    Com o mapa em mãos deu para medir as seis posições de nascimento de
+    `CharacterClass::default_spawn_position`:
+
+    | classes | diferença para o chão |
+    | :--- | ---: |
+    | Guerreiro / Mago | −0,0 m |
+    | Bárbaro / Feiticeira | +0,0 m |
+    | Arqueiro / Sacerdote | +2,4 m |
+    | **Assassino / Psíquico** | **−71,1 m** |
+    | **Guardião / Místico** | **+10,7 m** |
+    | **Ceifador / Tormentador** | **+39,9 m** |
+
+    As três primeiras são coordenadas de cidade de verdade; as três últimas são palpites —
+    e os números `(650,130,130)`, `(380,230,230)`, `(150,250,250)` denunciam isso sozinhos,
+    com os dois últimos componentes repetidos.
+
+    Achar as coordenadas certas é outra investigação (o `[TOWN_REGION]` do `ptemplate.conf`
+    **não** serve: ele é o mapa de ressurreição, `__GetTownPosition`, não o nascimento).
+    O que dá para fazer agora é a regra do próprio original, do gerador de volume
+    (`box_gen_pos::GenerateY`, `npcgenerator.cpp:4340-4345`): **o terreno é piso, nunca
+    teto.** Quem entra no mundo abaixo do chão sobe para a superfície; quem está acima
+    fica, porque altura acima do chão é legítima (voo, prédio, ponte).
+
+    ### f. O overlay não mostra o que eu disse que ele mostraria
+
+    O Murillo reportou que os comandos 12, 18 e 34 não aparecem no `d_rtdebug`. **Não
+    aparecem mesmo, e não é defeito** — a instrução que eu dei no fim do item 41 estava
+    errada.
+
+    O que o overlay imprime de rede são **três** linhas, e só duas delas sempre existem
+    (`EC_GameDataPrtc.cpp:798-816`):
+
+    | linha | quando | compilada? |
+    | :--- | :--- | :--- |
+    | `SERVER - Unknown GAMEDATA_n` | o cliente não conhece o comando | sempre |
+    | `SERVER - Invalid X size(Network:a, Client:b)` | o tamanho não bate | sempre |
+    | `SERVER - X(n)` | todo comando aceito | **`#ifdef LOG_PROTOCOL`** |
+
+    `LOG_PROTOCOL` não é definido em lugar nenhum do fonte do cliente — só testado em
+    `EC_Global.h:116`. No binário que o Murillo roda, o terceiro caso está compilado fora.
+
+    Ou seja: **o overlay só fala de comando que ele recusou.** Um comando que chega e é
+    aceito passa em silêncio, e é por isso que ele resolveu os itens 33, 34, 38 e 46 — todos
+    eram comandos recusados. "12, 18 e 34 não aparecem" é a notícia boa: chegaram e foram
+    aceitos.
+
+    (Há uma opção de linha de comando `rtdebug_hide:<nomes>` que filtra protocolos, e
+    `rtdebug:<nível>`, mas a lista de escondidos nasce **vazia** — não é ela que está
+    calando nada.)
+
+    ### g. A velocidade: o valor no fio está certo, e o que sobrou para medir
+
+    Não achei defeito no servidor, e vale registrar o que foi descartado:
+
+    - `[ANGEL] run_speed = 2.8` no `ptemplate.conf` do realm, e é isso que
+      `PlayerEntity::move_speed` carrega e o `OWN_EXT_PROP` manda. O original manda o mesmo
+      campo, sem multiplicador (`playertemplate.cpp:294`, `:676`; `player.cpp:2249`).
+    - O `OWN_EXT_PROP` **não** está sendo descartado: os 196 bytes foram medidos em jogo no
+      item que criou o comando, com o overlay dizendo `Client:196`. O fonte do
+      `EvolvedPWClient` diz 228 (ele tem quatro campos marcados `// NEW` que este binário
+      não tem) — é o caso clássico de "o binário fica entre o IR e o fonte".
+    - O cliente usa `m_ExtProps.mv.run_speed` para correr e `walk_speed` para andar
+      (`EC_Player.cpp:6599`). **Se o personagem estiver em modo de caminhada, ele anda a
+      1,4 m/s** — metade. É a primeira coisa a conferir.
+
+    O que **estava** errado no mesmo pacote, e foi corrigido: o `attack_speed` ia em
+    segundos (2) onde o cliente espera *ticks* de 50 ms (`EC_RoleTypes.h:228`), ou seja um
+    intervalo declarado de 0,1 s.
+
+    Como medir sem adivinhar: a ficha do personagem imprime `mv.run_speed`
+    (`DlgCharacter.cpp:491`). Se ela mostrar 2.8, o servidor cumpriu a parte dele.
+
+    ### h. O jogo base, peça por peça
+
+    **Comprar.** O bloqueio era duplo. O primeiro: os dois personagens de teste têm
+    `money = 0` no banco — `deduct_money` falha e a compra é recusada em silêncio. O
+    segundo: a loja cobrava **100 moedas fixas por unidade, de qualquer coisa**. Agora o
+    preço sai do `elements.data`, pela fórmula do original
+    (`serviceprovider.cpp:241-252`): `max(shop_price, price)`, com as taxas em 1. A varredura
+    é por **nome de campo** (`price` + `shop_price`), o que cobre as 25 tabelas que os têm de
+    uma vez — 10.724 itens no realm. Item sem preço **não é vendido**, em vez de sair por um
+    número inventado. A durabilidade do item comprado também passou a sair do arquivo, e não
+    dos 10000 fixos que faziam o tooltip mostrar 1.000.000/1.000.000.
+
+    Para testar antes de as missões pagarem:
+
+    ```sql
+    UPDATE characters SET money = 500000 WHERE id IN (40, 42);
+    ```
+
+    **Subir habilidade.** `GP_NPCSEV_LEARN` (9) caía no ramo de "serviço ainda não tratado":
+    clicar em aprender não fazia nada. O pedido é um `int idSkill` e nada mais — o cliente
+    **não** manda o nível (`EC_SendC2SCmds.cpp:3379-3405`) — e a resposta é `LEARN_SKILL`
+    (95) com id e nível novo. Implementado: sobe um nível (teto 10), grava no
+    `character_skills` e avisa o cliente. **Não cobra nada ainda** — SP, moedas e requisitos
+    saem do `NPC_SKILL_SERVICE` e do `SKILLTOME_ESSENCE`, e arbitrar um custo aqui seria
+    repetir o erro das 100 moedas fixas. O cliente confere os requisitos dele antes de
+    mandar.
+
+    **Spawn inicial por classe.** Ver (e): três das seis posições são palpites, e a regra do
+    piso evita o pior caso. As coordenadas certas continuam faltando.
+
+    **Missões.** Não foi tocado nesta sessão. `ACEITAR_MISSAO`/`ENTREGAR_MISSAO`/
+    `ITEM_DE_MISSAO` já têm tratamento (`BusServer::missao`), e o que falta medir é o que o
+    cliente faz com a resposta — próxima sessão, com o realm já de pé.
+
+    ### i. E um que ninguém pediu: 191 pedidos sem resposta
+
+    `CALC_NETWORK_DELAY` (C2S 128) apareceu **191 vezes** no log de uma sessão de teste, todas
+    caindo em "subcomando ainda não tratado". É o medidor de latência do cliente; a resposta
+    é `CALC_NETWORK_DELAY_RE` (291) devolvendo o `timestamp` recebido **sem tocar nele** (o
+    cliente descarta se não bater, `EC_GameRun.cpp:3155`). O valor só alimenta o indicador de
+    ping (`DlgSystem.cpp:99`) — não mexe em movimento nem em combate, o que também **descarta**
+    a hipótese de ele ser a causa da velocidade baixa. Respondido, e o log volta a ser legível.
+
+    ### j. Provas
+
+    - `pw-data-loader/tests/terreno_do_realm.rs`, 4 testes contra os `.hmap` de verdade: os
+      88 blocos com o tamanho que o `gs.conf` promete, alturas dentro de
+      `vHeightMin..vHeightMax` e com relevo real, fora do mapa devolvendo `None` em vez de
+      inventar, e a conta dos spawns (34,2% → 0%, com os 5.433 de caverna/aéreo preservados).
+    - `terreno.rs`, 5 testes de unidade: origem e inversão do `z`, interpolação numa rampa,
+      fora do mapa, sem blocos, e o mundo principal batendo com o `base_region` do `gs.conf`.
+    - `protocol_tests`: o bit do sexo no `state2` (com o tamanho do comando inalterado), o
+      carimbo de aparência concordando nos dois caminhos e zerando nas duas formas de "sem
+      aparência", e a resposta de latência devolvendo o relógio do cliente.
+    - `subcomandos_no_mundo`: a loja cobrando o `shop_price` do arquivo, o item sem preço
+      **não** sendo vendido nem cobrado, e o treinador subindo a habilidade no mundo **e**
+      no banco.
+    - `precos.rs`: só entra tabela que tem os dois campos; id inválido fica de fora.
+
+    Medido em 2026-09-11: **72 suítes verdes**, e as únicas falhas continuam sendo as duas
+    do 1.2.6 no `loader_tests`.
+
+    Corrigido de passagem: `itens_sobrevivem.rs` gerava o nome do realm só com o relógio, e
+    os quatro testes em paralelo colidiam em `duplicate key` de vez em quando — falha
+    intermitente vista nas duas últimas sessões.
+
+    ### k. O que continua faltando
+
+    - **As coordenadas de nascimento** de Abissais, Guardiões e Sombrios.
+    - **O custo de subir habilidade** (SP, moedas, requisitos de nível e cultivo).
+    - **As missões**, que é o que põe dinheiro no bolso do jogador sem `UPDATE` no banco.
+    - **O `crc_e`** (carimbo de equipamento) vai zerado: o cliente repede o equipamento a
+      cada reaparição. Custa um pedido, não desenha ninguém errado.
+    - Tudo o que o item 41k já listava e não foi tocado: `MINE_ESSENCE` e as outras 131
+      tabelas do 155BR, colher matéria (`MATTER_PICKUP`), `weapon_level` fixo em 1, a
+      `attack_speed` da arma vinda do `WEAPON_SUB_TYPE`, e a trava de PvP.
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver

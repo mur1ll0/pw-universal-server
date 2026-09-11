@@ -91,6 +91,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("player_enter_world", "PLAYER_ENTER_WORLD"),
     ("player_enter_slice", "PLAYER_ENTER_SLICE"),
     ("matter_enter_world", "MATTER_ENTER_WORLD"),
+    ("calc_network_delay_re", "CALC_NETWORK_DELAY_RE"),
     ("out_of_sight_list", "OUT_OF_SIGHT_LIST"),
     ("npc_enter_slice", "NPC_ENTER_SLICE"),
     ("npc_enter_world", "NPC_ENTER_WORLD"),

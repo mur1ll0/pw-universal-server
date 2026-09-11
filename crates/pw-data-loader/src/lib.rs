@@ -9,8 +9,10 @@ pub mod gshop;
 pub mod manager;
 pub mod monstros;
 pub mod npcgen;
+pub mod precos;
 pub mod ptemplate;
 pub mod tasks;
+pub mod terreno;
 pub mod validator;
 
 pub use aipolicy::AiPolicyData;
@@ -29,4 +31,5 @@ pub use monstros::{TabelaDeMonstros, TemplateDeMonstro};
 pub use npcgen::{compress_dir_h, NpcGenData, SpatialGrid, SpawnInstance, SpawnType};
 pub use ptemplate::{BaseDaClasse, TabelaDeBase};
 pub use tasks::TasksData;
+pub use terreno::{ConfigDeTerreno, Terreno};
 pub use validator::*;

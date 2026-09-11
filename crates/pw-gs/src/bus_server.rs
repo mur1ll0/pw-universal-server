@@ -149,6 +149,14 @@ const MODO_DE_MOVIMENTO_ANDANDO: u8 = 0;
 /// O servidor ainda não lê a tabela de habilidades — quando ler, este número sai daqui.
 const TEMPO_DE_CONJURACAO_MS: u16 = 1000;
 
+/// O teto de nível de uma habilidade.
+///
+/// Dez é o `max_level` que os stubs do `ElementSkill` declaram para as habilidades de
+/// árvore de classe — o mesmo critério que `CharacterClass::habilidades_iniciais` usa para
+/// separar a árvore da classe do resto (`pw_core::types`). Habilidade de rank maior tem
+/// teto próprio no arquivo, que este servidor ainda não lê.
+const NIVEL_MAXIMO_DA_HABILIDADE: u8 = 10;
+
 /// Em que nível uma habilidade é conjurada quando o jogador **não a tem** no
 /// `character_skills`.
 ///
@@ -178,6 +186,16 @@ const RAIO_DE_VISAO: f32 = 120.0;
 /// O cliente manda movimento 20 vezes por segundo. Sem esta histerese, cada jogador faria
 /// 20 varreduras da grade por segundo para achar quase sempre o mesmo conjunto.
 const PASSO_PARA_RECALCULAR: f32 = 20.0;
+
+/// Quanto acima do chão o teleporte deposita o jogador, em metros.
+///
+/// O original põe o jogador exatamente na altura do terreno
+/// (`playercmd.cpp:4926`) e deixa a física do cliente assentar. Aqui vai uma folga
+/// pequena de propósito: a nossa altura vem da mesma interpolação do `.hmap`, mas o
+/// cliente tem a malha real do mapa por cima (`VertRayTrace`), e um telhado, uma ponte ou
+/// uma escada ficam **acima** do terreno. Chegar rente ao chão nesses lugares põe o
+/// personagem dentro da geometria; chegar meio metro acima deixa a queda resolver.
+const FOLGA_AO_TELEPORTAR: f32 = 0.5;
 
 /// Quantas entidades no máximo um jogador acompanha de uma vez.
 ///
@@ -229,7 +247,7 @@ fn e_materia(id: i64) -> bool {
 
 enum QuemChegou {
     Criatura { id: i32, tid: i32, pos: pw_core::Vector3 },
-    Jogador { id: i32, pos: pw_core::Vector3, sec_level: u8 },
+    Jogador { id: i32, vista: pw_core::VistaDoJogador },
     Materia { id: i32, tid: i32, pos: pw_core::Vector3 },
 }
 
@@ -608,6 +626,43 @@ impl BusServer {
             );
         }
 
+        // **Ninguém entra no mundo por baixo do chão.**
+        //
+        // É a regra do próprio original, do gerador de posição em volume
+        // (`box_gen_pos::GenerateY`, `npcgenerator.cpp:4340-4345`): o terreno é piso,
+        // nunca teto.
+        //
+        // ```cpp
+        // float height = plane->GetHeightAt(x,z);
+        // if (y < height) y = height;
+        // return y + offset;
+        // ```
+        //
+        // Medido em 2026-09-11, com o mapa de alturas já disponível: das seis posições de
+        // nascimento de `CharacterClass::default_spawn_position`, três são coordenadas de
+        // cidade de verdade e caem no chão (diferença de até 2,4 m), e **três são
+        // palpites** — Abissais a 71 m **abaixo** do terreno, Guardiões a 11 m e Sombrios
+        // a 40 m acima. As de cima o cliente resolve caindo; a de baixo prende o
+        // personagem dentro da montanha.
+        //
+        // Levantar só quem está abaixo é de propósito: altura acima do chão é legítima
+        // (voo, andar de cima de prédio, ponte), e forçar todo mundo ao terreno derrubaria
+        // quem estivesse num deles.
+        {
+            let mundo = self.world.read().await;
+            if let Some(chao) = mundo.terreno.altura_em(jogador.position.x, jogador.position.z) {
+                if jogador.position.y < chao {
+                    warn!(
+                        "mundo: {roleid} entraria {:.1} m abaixo do chão em ({:.0}, {:.0}) —                          subido para a superfície",
+                        chao - jogador.position.y,
+                        jogador.position.x,
+                        jogador.position.z
+                    );
+                    jogador.position.y = chao;
+                }
+            }
+        }
+
         info!(
             "mundo: {} (#{roleid}) nível {} entrou no mapa {world_id} — {}/{} de vida,              dano {}, defesa {}, precisão {}, evasão {}",
             jogador.name, jogador.level, jogador.hp, jogador.max_hp, jogador.attack_min,
@@ -674,6 +729,7 @@ impl BusServer {
             ids::QUERY_PLAYER_INFO_1 => self.consultar_jogadores(roleid, &cmd.payload, envio).await,
             ids::QUERY_NPC_INFO_1 => self.consultar_npcs(roleid, &cmd.payload, envio).await,
             ids::GET_OTHER_EQUIP => self.equipamento_de_outro(roleid, &cmd.payload, envio).await,
+            ids::CALC_NETWORK_DELAY => self.medir_latencia(roleid, &cmd.payload, envio).await,
             outro => {
                 debug!("mundo: subcomando {outro} de {roleid} ainda não tratado aqui");
             }
@@ -780,6 +836,29 @@ impl BusServer {
         {
             warn!("mundo: não consegui avisar a saída de {roleid} ao link");
         }
+    }
+
+    /// `C2S::CALC_NETWORK_DELAY` (128) — o cliente quer medir a latência.
+    ///
+    /// Devolve o `timestamp` recebido, sem tocar nele: o cliente compara com o que
+    /// guardou e descarta a resposta se não bater (`EC_GameRun.cpp:3155`).
+    ///
+    /// É o comando mais frequente que o servidor ignorava — 191 pedidos numa sessão de
+    /// teste de 2026-09-11. O efeito de não responder é só o indicador de ping parado,
+    /// mas o custo era um log de "subcomando não tratado" a cada poucos segundos, por
+    /// jogador, enterrando o que importa.
+    async fn medir_latencia(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
+        if payload.len() < 4 {
+            warn!("mundo: calc_network_delay de {roleid} com {} bytes", payload.len());
+            return;
+        }
+        let timestamp = i32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+        self.responder(
+            roleid,
+            S2CGamedataSend::calc_network_delay_re(timestamp).data,
+            envio,
+        )
+        .await;
     }
 
     /// `C2S::SELECT_TARGET` (2) — o jogador clicou num alvo.
@@ -1829,21 +1908,40 @@ impl BusServer {
         // Os cliques de mapa mandam `y = 1.0` como marcador (`c2s_CmdGoto(fX, 1.0f, fZ)`
         // em `DlgWorldMap.cpp:1174`, `DlgRandomMap.cpp:262`, `DlgCountryWarMap.cpp:330`), e
         // o servidor original **substitui** o campo pela altura do terreno:
-        // `pos.y = pImp->_plane->GetHeightAt(pos.x, pos.z)`
-        // (`EvolvedPWServer/cgame/gs/playercmd.cpp:4926`). Obedecer ao `y` recebido punha o
-        // personagem dentro do chão, e foi o que se viu em jogo (2026-09-08).
         //
-        // Não temos o mapa para consultar a altura — é a mesma lacuna documentada nos
-        // spawns de monstro. A melhor aproximação disponível é **manter a altura atual do
-        // jogador**: ele está de pé no chão agora, e as zonas deste mapa são planas em
-        // torno de y=219. Em teleporte de encosta a encosta o personagem sai um pouco
-        // acima ou abaixo do chão; nunca enterrado num plano.
+        // ```cpp
+        // pos.y = pImp->_plane->GetHeightAt(pos.x, pos.z);
+        // pImp->PlayerGoto(pos);
+        // ```
+        //
+        // (`EvolvedPWServer/cgame/gs/playercmd.cpp:4926-4927`.) Obedecer ao `y` recebido
+        // punha o personagem dentro do chão, e foi o que se viu em jogo (2026-09-08).
+        //
+        // O item 37 não tinha o mapa e escolheu **manter a altura atual do jogador** —
+        // remendo que funciona em terreno plano e falha em qualquer encosta. Em 2026-09-11
+        // o Murillo relatou o enterro de volta, e o mapa de alturas passou a existir
+        // (`pw_data_loader::terreno`). Agora a altura sai do `.hmap`, como no original.
+        //
+        // Sem terreno (mapa fora do catálogo, pasta sem `map/`) o remendo antigo continua
+        // valendo: é pior do que a altura de verdade e melhor do que enterrar.
         let destino = {
             let mut mundo = self.world.write().await;
+            let altura_do_chao = mundo.terreno.altura_em(destino.x, destino.z);
             let Some(jogador) = mundo.players.get_mut(&(roleid as i64)) else {
                 return;
             };
-            let destino = pw_core::Vector3::new(destino.x, jogador.position.y, destino.z);
+            let y = match altura_do_chao {
+                Some(chao) => chao + FOLGA_AO_TELEPORTAR,
+                None => {
+                    debug!(
+                        "mundo: sem altura de chão em ({:.0}, {:.0}) — o teleporte de \
+                         {roleid} mantém a altura atual",
+                        destino.x, destino.z
+                    );
+                    jogador.position.y
+                }
+            };
+            let destino = pw_core::Vector3::new(destino.x, y, destino.z);
             jogador.position = destino;
             mundo.grid.update_position(roleid as i64, destino);
             destino
@@ -2044,11 +2142,7 @@ impl BusServer {
                 .iter()
                 .filter_map(|id| {
                     if let Some(p) = mundo.players.get(id) {
-                        return Some(QuemChegou::Jogador {
-                            id: *id as i32,
-                            pos: p.position,
-                            sec_level: p.sec_level,
-                        });
+                        return Some(QuemChegou::Jogador { id: *id as i32, vista: p.vista() });
                     }
                     if let Some(m) = mundo.matters.get(id) {
                         return Some(QuemChegou::Materia {
@@ -2071,7 +2165,7 @@ impl BusServer {
                     }
                 })
                 .collect();
-            let eu_mesmo = mundo.players.get(&eu).map(|p| (p.position, p.sec_level));
+            let eu_mesmo = mundo.players.get(&eu).map(|p| p.vista());
             (chegando, eu_mesmo)
         };
 
@@ -2086,10 +2180,8 @@ impl BusServer {
                 QuemChegou::Criatura { id, tid, pos } => {
                     self.sub.npc_enter_slice(id, tid, pos, 0).data
                 }
-                // O `dir` vai zerado: a grade guarda posição, não direção — a mesma lacuna
-                // que os NPCs têm. O cliente vira o avatar no primeiro `OBJECT_MOVE`.
-                QuemChegou::Jogador { id, pos, sec_level } => {
-                    self.sub.player_enter_slice(id, pos, 0, sec_level).data
+                QuemChegou::Jogador { id, vista } => {
+                    self.sub.player_enter_slice(id, vista).data
                 }
                 QuemChegou::Materia { id, tid, pos } => {
                     S2CGamedataSend::matter_enter_world(id, tid, pos).data
@@ -2121,13 +2213,10 @@ impl BusServer {
         // 5. O outro lado da visibilidade entre jogadores: quem eu passei a ver precisa
         //    passar a me ver, e quem eu deixei de ver precisa deixar de me ver — sem
         //    depender de aquele jogador se mexer.
-        let Some((minha_pos, meu_sec)) = eu_mesmo else {
+        let Some(minha_vista) = eu_mesmo else {
             return;
         };
-        let meu_pacote = self
-            .sub
-            .player_enter_slice(roleid, minha_pos, 0, meu_sec)
-            .data;
+        let meu_pacote = self.sub.player_enter_slice(roleid, minha_vista).data;
         let minha_saida = S2CGamedataSend::object_leave_slice(roleid).data;
 
         for outro in entraram {
@@ -2359,10 +2448,81 @@ impl BusServer {
                 self.missao(roleid, pedido.service_type, c, envio).await
             }
 
+            servico::APRENDER_HABILIDADE => self.aprender_habilidade(roleid, c, envio).await,
+
             outro => {
                 debug!("mundo: {roleid} pediu o serviço de NPC {outro}, ainda não tratado");
             }
         }
+    }
+
+    /// `GP_NPCSEV_LEARN` (9) — o treinador ensina, ou sobe de nível, uma habilidade.
+    ///
+    /// O corpo do pedido é um `int idSkill` e nada mais
+    /// (`c2s_SendCmdNPCSevLearnSkill`, `EC_SendC2SCmds.cpp:3379-3405`) — **o cliente não
+    /// manda o nível**, porque quem tem de saber em que nível a habilidade está é o
+    /// servidor. A resposta é `LEARN_SKILL` (95), `{ int skill_id; int skill_level; }`
+    /// (`EC_GPDataType.h:2265-2269`).
+    ///
+    /// Até 2026-09-11 este serviço caía no ramo de "ainda não tratado": clicar em aprender
+    /// não fazia nada, e como o nível de conjuração acabara de deixar de ser fixo em 1
+    /// (item 41d), não havia como subir uma habilidade para ver a diferença.
+    ///
+    /// # O que ainda não é cobrado
+    ///
+    /// **Nada.** O original cobra SP e moedas, e exige nível de personagem e de cultivo,
+    /// tudo saindo do `NPC_SKILL_SERVICE` e do `SKILLTOME_ESSENCE` do `elements.data`.
+    /// Essas tabelas estão decodificadas, mas a conta do custo por nível é investigação
+    /// própria — e inventar um preço aqui seria o mesmo erro das 100 moedas fixas da loja.
+    /// O cliente já confere os requisitos dele antes de mandar o pedido, então o caminho
+    /// normal não fica aberto; um cliente modificado passaria.
+    async fn aprender_habilidade(&self, roleid: i32, conteudo: &[u8], envio: &EnvioAoCliente) {
+        if conteudo.len() < 4 {
+            warn!("mundo: pedido de aprender habilidade de {roleid} com {} bytes", conteudo.len());
+            return;
+        }
+        let skill_id = i32::from_le_bytes([conteudo[0], conteudo[1], conteudo[2], conteudo[3]]);
+        if skill_id <= 0 {
+            warn!("mundo: {roleid} pediu para aprender a habilidade {skill_id}");
+            return;
+        }
+
+        let novo_nivel = {
+            let mut mundo = self.world.write().await;
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else {
+                warn!("mundo: {roleid} pediu habilidade sem estar no mundo");
+                return;
+            };
+            let atual = p.habilidades.get(&(skill_id as u32)).copied().unwrap_or(0);
+            if atual >= NIVEL_MAXIMO_DA_HABILIDADE {
+                debug!("mundo: {roleid} já tem a habilidade {skill_id} no nível {atual}");
+                return;
+            }
+            let novo = atual + 1;
+            p.habilidades.insert(skill_id as u32, novo);
+            novo
+        };
+
+        // Grava antes de responder: se o processo cair entre as duas coisas, é melhor o
+        // banco estar à frente do cliente do que atrás dele.
+        if let Err(e) = self
+            .repo()
+            .await
+            .skill_repo()
+            .learn_or_upgrade(roleid, skill_id as u32, novo_nivel)
+            .await
+        {
+            warn!("mundo: não consegui gravar a habilidade {skill_id} de {roleid}: {e}");
+            return;
+        }
+
+        info!("mundo: {roleid} subiu a habilidade {skill_id} para o nível {novo_nivel}");
+        self.responder(
+            roleid,
+            S2CGamedataSend::learn_skill(skill_id, novo_nivel as i32).data,
+            envio,
+        )
+        .await;
     }
 
     /// `GP_NPCSEV_SELL` — o NPC vende, o jogador **compra**.
@@ -2376,15 +2536,25 @@ impl BusServer {
             return;
         }
 
-        // TODO: o preço tem que sair do `elements.data`, e não ser fixo. Enquanto isso, o
-        // custo é por unidade e a compra é recusada se o jogador não tiver como pagar —
-        // que já é melhor do que entregar mercadoria de graça.
-        const PRECO_UNITARIO: i64 = 100;
+        // O preço sai do `elements.data` (`GameDataManager::preco_de_compra`). Até
+        // 2026-09-11 eram **100 moedas fixas por unidade**, de qualquer coisa: uma poção
+        // custava o mesmo que uma armadura.
         let repo = self.repo().await;
         let itens_repo = self.itens().await;
+        let dados = self.world.read().await.data_manager.clone();
 
         for i in itens {
-            let total = PRECO_UNITARIO * i64::from(i.count.max(1));
+            let Some(unitario) = dados.preco_de_compra(i.tid as u32) else {
+                // Item que o realm não tem nas tabelas de preço. Recusar é melhor do que
+                // arbitrar um valor: no 1.2.6/v7 a tabela é vazia e **toda** compra cai
+                // aqui, o que é honesto enquanto aquele leitor não cobrir os preços.
+                debug!(
+                    "mundo: {roleid} quis comprar o item {}, que não tem preço no elements.data",
+                    i.tid
+                );
+                continue;
+            };
+            let total = i64::from(unitario) * i64::from(i.count.max(1));
             if !repo.deduct_money(roleid, total).await.unwrap_or(false) {
                 debug!("mundo: {roleid} não tem {total} para comprar o item {}", i.tid);
                 continue;
@@ -2403,8 +2573,11 @@ impl BusServer {
                     refine_level: 0,
                     sockets_count: 0,
                     sockets: vec![],
-                    durability: 10000,
-                    max_durability: 10000,
+                    // A durabilidade de fábrica é do `elements.data`; 10000 fixo fazia o
+                    // tooltip mostrar 1.000.000/1.000.000 em qualquer peça comprada (o
+                    // cliente multiplica por `ENDURANCE_SCALE`, que é 100).
+                    durability: dados.durabilidade_de_fabrica(i.tid as u32).unwrap_or(10000),
+                    max_durability: dados.durabilidade_de_fabrica(i.tid as u32).unwrap_or(10000),
                     bind_status: 0,
                     octets: vec![],
                     custom_attributes: serde_json::json!({}),
@@ -2917,7 +3090,11 @@ impl BusServer {
                         p.attack_rate,
                         p.attack_min,
                         p.attack_max,
-                        p.attack_speed as i32,
+                        // `ROLEEXTPROP_ATK.attack_speed` é o intervalo entre golpes **em
+                        // ticks de 50 ms** (`EC_RoleTypes.h:228`), e a entidade guarda o
+                        // mesmo dado em segundos. Mandar os segundos crus (2, para o
+                        // Sacerdote) declarava um intervalo de 0,1 s.
+                        (p.attack_speed * 20.0).round() as i32,
                         1.4,
                     ),
                     (p.def_phys, p.armor),

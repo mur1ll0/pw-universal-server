@@ -108,6 +108,34 @@ pub struct PlayerEntity {
     /// nível 1 (`NIVEL_DA_HABILIDADE` em `bus_server.rs`): subir uma habilidade não mudava
     /// nada em jogo — nem dano, nem cura, nem custo de mana.
     pub habilidades: std::collections::HashMap<u32, u8>,
+    /// `custom_crc` — o carimbo da aparência gravada deste personagem.
+    ///
+    /// Viaja no `crc_c` de todo pacote que apresenta este jogador a outro, e tem de ser o
+    /// **mesmo** valor que o `custom_stamp` do `PlayerBaseInfo_Re` que o `pw-link`
+    /// responde. Ver [`pw_core::stamp_de_aparencia`].
+    pub crc_aparencia: u16,
+}
+
+impl PlayerEntity {
+    /// Como este jogador aparece para os outros.
+    ///
+    /// O `dir` vai zerado: a grade espacial guarda posição, não direção — a mesma lacuna
+    /// que os NPCs têm. O cliente vira o avatar no primeiro `OBJECT_MOVE` que receber.
+    ///
+    /// O `crc_e` (equipamento) vai zerado porque o servidor ainda não tem carimbo de
+    /// equipamento: quem o calcularia é o mesmo lugar que monta o `GET_OTHER_EQUIP`, e
+    /// esse ainda responde a lista inteira a cada pedido. Zero fixo só custa um pedido
+    /// extra de equipamento por reaparição — não desenha ninguém errado.
+    pub fn vista(&self) -> pw_core::VistaDoJogador {
+        pw_core::VistaDoJogador {
+            pos: self.position,
+            dir: 0,
+            sec_level: self.sec_level,
+            feminino: self.gender == pw_core::Gender::Female,
+            crc_equipamento: 0,
+            crc_aparencia: self.crc_aparencia,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -281,6 +309,9 @@ impl PlayerEntity {
             // o `CharacterDetails` não traz o privilégio da conta.
             sec_level: 0,
             habilidades: p.skills.iter().map(|h| (h.skill_id, h.level)).collect(),
+            crc_aparencia: pw_core::stamp_de_aparencia(&pw_core::bytes_da_aparencia(
+                &p.custom_appearance,
+            )),
         }
     }
 

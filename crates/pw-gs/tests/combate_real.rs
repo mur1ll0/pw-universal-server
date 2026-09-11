@@ -391,6 +391,7 @@ fn jogador() -> PlayerEntity {
         modo_roupa: false,
         sec_level: 0,
         habilidades: Default::default(),
+        crc_aparencia: 0,
     }
 }
 
