@@ -504,12 +504,18 @@ impl LinkGateway {
                         create_role.cls,
                         create_role.gender,
                         create_role.custom_appearance,
-                        // Os atributos iniciais da classe, do `ptemplate.conf` do realm.
-                        // Sem o arquivo vai `None`, e o banco usa o padrão da coluna.
+                        // A ficha inicial da classe: os quatro atributos do
+                        // `ptemplate.conf` e a vida/mana cheias para eles, pela mesma conta
+                        // que o mundo usa. Sem o arquivo vai `None`, e o banco cai no padrão
+                        // da coluna.
                         self.data_manager
                             .base_das_classes
                             .get(create_role.cls as i32)
-                            .map(|b| b.atributos_iniciais()),
+                            .map(|b| {
+                                b.ficha_inicial(
+                                    self.data_manager.classes.get(create_role.cls as i32),
+                                )
+                            }),
                     )
                     .await;
 

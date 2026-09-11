@@ -150,7 +150,7 @@ fn os_atributos_iniciais_saem_por_classe_e_nao_sao_todos_dez() {
     let t = ptemplate::ler(&texto).expect("o ptemplate.conf do realm 155BR deveria ser legível");
 
     // [SWORDSMAN], a seção 0: força 15, agilidade 10, vitalidade 20, energia 5.
-    let guerreiro = t.get(0).unwrap().atributos_iniciais();
+    let guerreiro = t.get(0).unwrap().ficha_inicial(None);
     assert_eq!(
         (guerreiro.forca, guerreiro.agilidade, guerreiro.vitalidade, guerreiro.energia),
         (15, 10, 20, 5),
@@ -159,14 +159,14 @@ fn os_atributos_iniciais_saem_por_classe_e_nao_sao_todos_dez() {
 
     // [ANGEL], a seção 7, é o Sacerdote (`CharacterClass::Cleric`). Os nomes das seções são
     // os do servidor chinês e não batem com os nomes ocidentais; a **ordem** é o que vale.
-    let sacerdote = t.get(7).unwrap().atributos_iniciais();
+    let sacerdote = t.get(7).unwrap().ficha_inicial(None);
     assert_eq!(sacerdote.energia, 20, "o Sacerdote nasce com 20 de energia, não 10");
 
     // E as doze classes não são todas iguais: se fossem, ler o arquivo não teria efeito
     // nenhum e o defeito continuaria de pé sem ninguém notar.
     let distintos: std::collections::BTreeSet<(i32, i32, i32, i32)> = (0..12)
         .map(|i| {
-            let a = t.get(i).unwrap().atributos_iniciais();
+            let a = t.get(i).unwrap().ficha_inicial(None);
             (a.forca, a.agilidade, a.vitalidade, a.energia)
         })
         .collect();

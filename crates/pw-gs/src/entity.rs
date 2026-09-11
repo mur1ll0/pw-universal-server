@@ -233,21 +233,18 @@ impl PlayerEntity {
         let cls = p.cls as i32;
         let cfg = classes.get(cls);
         let base = base.and_then(|b| b.get(cls));
-        // `__LevelUp` roda uma vez por nível ganho, ou seja `nível - 1` vezes.
-        let niveis = (p.level - 1).max(0);
-
         let telescopica = |por_nivel: f32| -> i32 {
             (p.level as f32 * por_nivel) as i32 - por_nivel as i32
         };
 
-        let (max_hp, max_mp) = match (base, cfg) {
-            (Some(b), Some(c)) => (
-                b.vida + c.vida_por_nivel as i32 * niveis + c.vida_por_vitalidade * p.vitality,
-                b.mana + c.mana_por_nivel as i32 * niveis + c.mana_por_energia * p.energy,
-            ),
+        // A mesma conta que a criação de personagem usa, e de propósito num lugar só: as
+        // duas divergiram, e o personagem nascia com metade da vida (ver
+        // `BaseDaClasse::vida_e_mana_maximas`).
+        let (max_hp, max_mp) = match base {
+            Some(b) => b.vida_e_mana_maximas(cfg, p.level, p.vitality, p.energy),
             // Sem o `ptemplate.conf` não há ponto de partida: fica o que o banco guardou,
             // que ao menos não é inventado.
-            _ => (p.hp, p.mp),
+            None => (p.hp, p.mp),
         };
 
         let dano = cfg.map(|c| 1 + telescopica(c.dano_por_nivel)).unwrap_or(1);

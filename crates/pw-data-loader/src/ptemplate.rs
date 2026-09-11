@@ -91,14 +91,62 @@ pub struct TabelaDeBase {
 }
 
 impl BaseDaClasse {
-    /// Os quatro atributos com que um personagem desta classe nasce, na forma que o
-    /// repositório de personagens grava.
-    pub fn atributos_iniciais(&self) -> pw_core::AtributosIniciais {
+    /// A vida e a mana **máximas** de um personagem desta classe.
+    ///
+    /// Duas fontes, e nenhuma sozinha basta (é a nota do cabeçalho deste módulo): o ponto
+    /// de partida de nível 1 sai daqui, e o que escala por nível e por ponto de atributo
+    /// sai do `CHARRACTER_CLASS_CONFIG` do `elements.data` ([`crate::classes`]).
+    ///
+    /// ```text
+    /// max_hp = hp + lvlup_hp × (nível − 1) + vit_hp × vitalidade
+    /// max_mp = mp + lvlup_mp × (nível − 1) + eng_mp × energia
+    /// ```
+    ///
+    /// # Por que isto mora aqui e não no `PlayerEntity`
+    ///
+    /// Porque **dois** lugares precisam da mesma conta e eles divergiram: o mundo calculava
+    /// o máximo ao carregar o personagem, e a criação de personagem gravava uma tabela
+    /// própria, escrita no código (`CharacterClass::default_hp_mp`). Para o Bárbaro isso
+    /// dava 260 gravados contra 490 calculados — o personagem **nascia com metade da
+    /// vida**, e foi o que o Murillo viu em jogo em 2026-09-11 (`HP 260/490`).
+    ///
+    /// Sem o `CHARRACTER_CLASS_CONFIG` (`cfg` em `None`, caso do 1.2.6/v7) sobra o ponto de
+    /// partida puro: errado, mas não inventado.
+    pub fn vida_e_mana_maximas(
+        &self,
+        cfg: Option<&crate::ConfigDeClasse>,
+        nivel: i32,
+        vitalidade: i32,
+        energia: i32,
+    ) -> (i32, i32) {
+        let niveis = (nivel - 1).max(0);
+        let Some(c) = cfg else {
+            return (self.vida, self.mana);
+        };
+        (
+            self.vida + c.vida_por_nivel as i32 * niveis + c.vida_por_vitalidade * vitalidade,
+            self.mana + c.mana_por_nivel as i32 * niveis + c.mana_por_energia * energia,
+        )
+    }
+
+
+    /// A ficha com que um personagem desta classe nasce: os quatro atributos e a vida e a
+    /// mana **cheias** para eles.
+    ///
+    /// `cfg` é o `CHARRACTER_CLASS_CONFIG` da classe; sem ele a vida fica no ponto de
+    /// partida puro — ver [`Self::vida_e_mana_maximas`].
+    pub fn ficha_inicial(
+        &self,
+        cfg: Option<&crate::ConfigDeClasse>,
+    ) -> pw_core::AtributosIniciais {
+        let (vida, mana) = self.vida_e_mana_maximas(cfg, 1, self.vitalidade, self.energia);
         pw_core::AtributosIniciais {
             forca: self.forca,
             agilidade: self.agilidade,
             vitalidade: self.vitalidade,
             energia: self.energia,
+            vida,
+            mana,
         }
     }
 }

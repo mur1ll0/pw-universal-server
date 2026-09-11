@@ -102,6 +102,11 @@ async fn o_guerreiro_nasce_com_os_atributos_da_classe() {
         agilidade: 10,
         vitalidade: 20,
         energia: 5,
+        // 65 de vida base + 4 por vitalidade (o `vit_hp` do [SWORDSMAN]) — os valores
+        // exatos não importam aqui; o que o teste cobra é que o que entra é o que é
+        // gravado.
+        vida: 65 + 4 * 20,
+        mana: 20 + 2 * 5,
     };
 
     let role_id = c
@@ -161,6 +166,8 @@ async fn o_que_foi_gravado_e_o_que_o_mundo_le() {
         agilidade: 10,
         vitalidade: 10,
         energia: 20,
+        vida: 30 + 2 * 10,
+        mana: 50 + 4 * 20,
     };
 
     let role_id = c

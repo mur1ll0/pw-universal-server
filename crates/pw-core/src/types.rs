@@ -79,6 +79,37 @@ impl CharacterClass {
     }
 
     /// Retorna a coordenada 3D oficial de spawn inicial da vila de nascimento por raça/classe (precinct.sev)
+    /// A raça a que esta classe pertence.
+    ///
+    /// **Não se pergunta ao cliente.** O campo `race` do `RoleInfo` que chega no
+    /// `CreateRole` não é a raça: no servidor original, o campo de mesmo nome do
+    /// `GRoleBase` guarda `classe | 0x80000000` quando o personagem é mulher
+    /// (`SetPlayerClass`, `gs/player_imp.h:1884-1895`; `IsPlayerFemale()` é
+    /// `base_info.race < 0`). Acreditar nele deu, em 2026-09-11, um Bárbaro com
+    /// `race = 0` gravado no banco — Humano.
+    ///
+    /// O pareamento é o mesmo do `ptemplate.conf`, duas classes por raça, e é o mesmo que
+    /// [`Self::default_spawn_position`] já usava para agrupar os nascimentos:
+    ///
+    /// | seções do `ptemplate.conf` | classes | raça |
+    /// | :--- | :--- | :--- |
+    /// | `[SWORDSMAN]` `[MAGE]` | Guerreiro, Mago | Humano |
+    /// | `[NEC]` `[ASN]` | Psíquico, Assassino | Abissal |
+    /// | `[HAG]` `[ORGE]` | Feiticeira, Bárbaro | Selvagem |
+    /// | `[ARCHER]` `[ANGEL]` | Arqueiro, Sacerdote | Alado |
+    /// | `[BLADE]` `[GENIE]` | Guardião, Místico | Guardião |
+    /// | `[SHADOW]` `[FAIRY]` | Ceifador, Tormentador | Sombrio |
+    pub fn race(&self) -> Race {
+        match self {
+            CharacterClass::Blademaster | CharacterClass::Wizard => Race::Human,
+            CharacterClass::Psychomancer | CharacterClass::Assassin => Race::Tideborn,
+            CharacterClass::Venomancer | CharacterClass::Barbarian => Race::Untamed,
+            CharacterClass::Archer | CharacterClass::Cleric => Race::WingedElf,
+            CharacterClass::Seeker | CharacterClass::Mystic => Race::Earthguard,
+            CharacterClass::Duskblade | CharacterClass::Stormbringer => Race::Nightshade,
+        }
+    }
+
     pub fn default_spawn_position(&self) -> (f32, f32, f32) {
         match self {
             CharacterClass::Blademaster | CharacterClass::Wizard => (976.0, 219.2, 4187.3),   // Vale das Espadas / 剑仙城 (Humanos) -> Mapa (498, 819)

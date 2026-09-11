@@ -233,6 +233,14 @@ pub struct AtributosIniciais {
     pub agilidade: i32,
     pub vitalidade: i32,
     pub energia: i32,
+    /// A vida **máxima** da classe no nível 1, com estes atributos.
+    ///
+    /// Vem da mesma conta que o mundo usa ao carregar o personagem
+    /// (`BaseDaClasse::vida_e_mana_maximas`). Antes a criação gravava uma tabela escrita
+    /// no código, e as duas divergiam: o Bárbaro nascia com 260 de vida contra 490 de
+    /// máximo — **metade**, e foi o que apareceu em jogo.
+    pub vida: i32,
+    pub mana: i32,
 }
 
 /// A ficha de uma arma, como o cliente precisa recebê-la no `OWN_ITEM_INFO`.

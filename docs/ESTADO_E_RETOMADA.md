@@ -5749,6 +5749,151 @@ Ordem combinada com o Murillo:
       tabelas do 155BR, colher matéria (`MATTER_PICKUP`), `weapon_level` fixo em 1, a
       `attack_speed` da arma vinda do `WEAPON_SUB_TYPE`, e a trava de PvP.
 
+43. **Sessão 2026-09-11 (continuação): a criação de personagem. Onde o original guarda o
+    molde de cada classe, e por que o Bárbaro nasceu com arma de mago.**
+
+    O Murillo criou o PANDAH, Bárbaro, e relatou quatro coisas. As quatro têm a mesma raiz,
+    e ela não estava no código.
+
+    ### a. Onde o original guarda isto — a resposta à pergunta "de que arquivo vem?"
+
+    De arquivo nenhum. O servidor original monta o personagem novo a partir de um
+    **personagem-molde por classe gravado no próprio banco**:
+
+    ```cpp
+    // cnet/gamedbd/dbcreaterole.hrp:51-56
+    GameDBManager::GetInstance()->GetClsDetail(arg->roleinfo.occupation, arg->roleinfo.gender,
+                                               base, status, pocket, equipment, storehouse)
+    ```
+
+    e `GetClsDetail` (`gamedbmanager.cpp:404-460`) lê as tabelas `base`, `status`,
+    `inventory`, `equipment` e `storehouse` na chave `GetDataRoleId(cls)`. Esses moldes
+    entram no banco de um arquivo binário, `gamedbd/clsconfig`, importado para os roleids
+    **16 a 31** (`ImportClsConfig`, `cnet/gamedbd/clsconfig.h:22-86`).
+
+    Ou seja: **posição de nascimento, itens de bolsa e equipamento inicial são dado de
+    realm, não de código** — exatamente o que a nossa tabela `class_templates` já modela. A
+    arquitetura estava certa; o conteúdo é que estava errado.
+
+    O `clsconfig` do pacote 1.5.5 (73.728 bytes) é um banco binário com os valores
+    marshalados no formato GNET. Uma varredura por trios de float plausíveis não achou as
+    posições, então extrair dali continua sendo investigação própria.
+
+    ### b. O Bárbaro com arma de mago: os ids da tabela não batiam com os nomes
+
+    A tabela do realm tinha **seis** das doze classes, e o pareamento estava trocado:
+
+    | `cls` | `name` na tabela | classe de verdade |
+    | ---: | :--- | :--- |
+    | 3 | Bárbaro | Feiticeira (`Venomancer`) |
+    | 4 | Feiticeira | **Bárbaro** (`Barbarian`) |
+
+    `create_character` procura pelo **id**. O Bárbaro (4) recebeu o molde escrito como
+    "Feiticeira": **Graveto de Madeira (2867)**, que é arma de magia — o "graveto com ponto
+    de interrogação" do relato. O certo é o Porrete com Espinhos (2258), e isso o código já
+    sabia: `CharacterClass::default_weapon_id` está conferido contra o `WEAPON_ESSENCE` pelo
+    teste `armas_iniciais_batem_com_o_elements`.
+
+    Nada no código podia perceber: tabela é dado, e dado errado atravessa compilador e tipo
+    sem esbarrar em nada. O que pega é conferir a tabela contra a fonte que **está**
+    conferida — ver (f).
+
+    ### c. O kit de bolsa tinha um item que ninguém de nível 1 pode usar
+
+    Os três itens eram iguais para toda classe, e um deles não serve a personagem novo:
+
+    | id | nome | `require_level` |
+    | ---: | :--- | ---: |
+    | 2100 | Portal da Cidade | — (`TOWNSCROLL_ESSENCE`) |
+    | 1796 | Poção Pequena de Cura | **0** |
+    | 1801 | Poção Perfeita de Cura | **30** |
+
+    O 1801 saiu; entrou o **1804, Poção Pequena do Espírito**, que é o par de mana do 1796 e
+    também tem `require_level = 0`. O critério é esse e está escrito no teste: só item de
+    nível 0 no kit.
+
+    O mesmo kit errado existia num **segundo** lugar — o caminho de reparo de
+    `get_details`, que preenche itens de personagem antigo que não tenha nenhum. Lá a arma
+    ainda ia para a **bolsa** em vez do slot de equipamento. Os dois foram alinhados.
+
+    ### d. O Bárbaro gravado como Humano
+
+    `race = 0` no banco, para um Bárbaro. A raça vinha do campo `race` do `RoleInfo` que o
+    cliente manda — e **aquele campo não é a raça**. No original, o campo de mesmo nome do
+    `GRoleBase` guarda `classe | 0x80000000` quando o personagem é mulher:
+
+    ```cpp
+    inline bool IsPlayerFemale() { return ((gplayer *)_parent)->base_info.race < 0; }
+    inline void SetPlayerClass(int cls, bool gender) {
+        if (gender) { pPlayer->base_info.race = cls | 0x80000000; ... }
+        else        { pPlayer->base_info.race = cls; }
+    }
+    ```
+
+    (`gs/player_imp.h:1883-1895`.) A raça passou a sair da classe
+    (`CharacterClass::race`), com o mesmo pareamento que o `ptemplate.conf` usa e que
+    `default_spawn_position` já usava para agrupar os nascimentos: duas classes por raça.
+
+    ### e. Vida pela metade no nascimento
+
+    `HP 260/490` na tela. O máximo (490) é calculado pelo mundo — `ptemplate.conf` mais o
+    `CHARRACTER_CLASS_CONFIG` — e o atual (260) vinha de `CharacterClass::default_hp_mp`,
+    uma tabela por classe escrita no código. **Duas contas para a mesma coisa, e elas
+    divergiram.**
+
+    A conta virou uma só, `BaseDaClasse::vida_e_mana_maximas`, usada pelo mundo ao carregar
+    o personagem **e** pela criação ao gravá-lo:
+
+    ```text
+    max_hp = hp + lvlup_hp × (nível − 1) + vit_hp × vitalidade
+    max_mp = mp + lvlup_mp × (nível − 1) + eng_mp × energia
+    ```
+
+    Para o Bárbaro no nível 1: `65 + 17×25 = 490`, e é com 490 que ele passa a nascer.
+
+    Os atributos, esses, já estavam certos — o item 42 os ligou ao `ptemplate.conf`, e o
+    PANDAH nasceu com 25/15/5/5, que é exatamente o `[ORGE]` do arquivo.
+
+    ### f. A rede que faltava
+
+    `pw-storage/tests/template_de_classe.rs`, quatro testes contra o banco de verdade:
+
+    - as doze classes existem no molde, e o `cls` de cada linha é uma classe do jogo;
+    - **a arma do molde é a que `default_weapon_id` diz** — é este que teria pego o Bárbaro
+      com 2867;
+    - as duas classes de uma raça nascem no mesmo ponto (vila inicial é da raça, não da
+      classe);
+    - nenhum item do kit exige nível acima de zero.
+
+    O molde do realm foi regravado por `scripts/2026_09_11_template_de_classe_155br.sql`,
+    com as doze classes, a arma certa de cada uma e o kit de nível zero.
+
+    ### g. A velocidade, de novo — e a resposta
+
+    Os **três** `ptemplate.conf` do pacote (o do `pwserver_155v156`, o do `home155` e o do
+    realm) dizem a mesma coisa para o Bárbaro: `run_speed = 2.8`. O original manda esse
+    campo sem multiplicador nenhum (`playertemplate.cpp:294` e `:676`,
+    `player.cpp:2249`).
+
+    Então 2,8 é o que a configuração do 1.5.5 manda, e o servidor está cumprindo. Se o
+    número desejado é outro, isso é **ajuste de realm** — muda-se o `run_speed` da seção da
+    classe no `ptemplate.conf` do realm e reinicia. Não há defeito para corrigir aqui, e
+    inventar um multiplicador seria o oposto do que este projeto faz.
+
+    ### h. O que continua faltando
+
+    - **As coordenadas de nascimento de verdade.** Três das seis (Humanos, Alados, e a dos
+      Selvagens que o Murillo diz cair no "campo da expedição") vêm de palpites antigos; as
+      dos Abissais, Guardiões e Sombrios idem. A fonte é o `clsconfig`, ainda não
+      decodificado. O caminho prático está escrito no cabeçalho do script: andar até o
+      ponto certo, ler `pos_x/y/z` do banco e gravar nas duas classes da raça.
+    - **`tasks.data` decodifica zero tarefas** neste realm — achado ao procurar os itens
+      iniciais na recompensa da missão de nascimento. É o mesmo buraco do item 42h
+      ("missões não foram tocadas"), e agora com um número: zero.
+    - As colunas de atributo de `class_templates` existem e **são ignoradas** — quem manda
+      é o `ptemplate.conf`. Quando o molde passar a ser editável pelo painel, é uma decisão
+      a tomar: ou o molde vence, ou as colunas saem.
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver

@@ -117,7 +117,10 @@ impl CharacterRepository {
         account_id: AccountId,
         realm_id: &str,
         name: &str,
-        race: Race,
+        // `_race`: a raça que o cliente mandou. **Não é usada** — ela sai da classe, ver o
+        // `.bind` mais abaixo. Continua no parâmetro para o chamador não mudar, e para o
+        // dia em que o campo `race` do `RoleInfo` for entendido de verdade.
+        _race: Race,
         cls: CharacterClass,
         gender: Gender,
         custom_data: Vec<u8>,
@@ -142,8 +145,6 @@ impl CharacterRepository {
             (sx, sy, sz, 1, 0, 0, 0, 1)
         };
 
-        let (init_hp, init_mp) = cls.default_hp_mp();
-
         // Os quatro atributos vêm do `ptemplate.conf`, por classe — o Guerreiro nasce com
         // vitalidade 20, força 15, agilidade 10, energia 5; o Mago com energia 20 e força
         // 5. Até 2026-09-09 esta consulta não mencionava as colunas e todo personagem
@@ -151,12 +152,20 @@ impl CharacterRepository {
         //
         // Sem o arquivo (realm que não o trouxe), continua valendo o padrão da coluna: é
         // menos errado do que inventar um número por classe aqui.
-        let atr = atributos.unwrap_or(pw_core::AtributosIniciais {
-            forca: 10,
-            agilidade: 10,
-            vitalidade: 10,
-            energia: 10,
+        let atr = atributos.unwrap_or_else(|| {
+            // Sem o `ptemplate.conf`, o padrão da coluna para os atributos e a tabela por
+            // classe para a vida — o mesmo que valia antes de 2026-09-11.
+            let (vida, mana) = cls.default_hp_mp();
+            pw_core::AtributosIniciais {
+                forca: 10,
+                agilidade: 10,
+                vitalidade: 10,
+                energia: 10,
+                vida,
+                mana,
+            }
         });
+        let (init_hp, init_mp) = (atr.vida, atr.mana);
 
         let role_id = sqlx::query_scalar::<_, RoleId>(
             r#"
@@ -174,7 +183,11 @@ impl CharacterRepository {
         .bind(account_id)
         .bind(realm_id)
         .bind(name)
-        .bind(race as i32)
+        // **A raça sai da classe**, e não do que o cliente mandou. O campo `race` do
+        // `RoleInfo` não é a raça: no original, o campo de mesmo nome do `GRoleBase` guarda
+        // `classe | 0x80000000` para mulher (`gs/player_imp.h:1884-1895`). Acreditar nele
+        // gravou um Bárbaro como Humano em 2026-09-11. Ver `CharacterClass::race`.
+        .bind(cls.race() as i32)
         .bind(cls as i32)
         .bind(gender as i16)
         .bind(custom_data)
@@ -393,14 +406,21 @@ impl CharacterRepository {
             skills = self.skill_repo.list_skills(role_id).await?;
         }
 
-        // Se o personagem já existia no banco sem itens salvos, popula na tabela character_items
+        // Se o personagem já existia no banco sem itens salvos, popula na tabela
+        // character_items.
+        //
+        // É caminho de **reparo**, não de criação: quem cria é `create_character`, com o
+        // molde do realm (`class_templates`). Os dois davam kits diferentes até
+        // 2026-09-11 — aqui a arma ia para a **bolsa** em vez do slot de equipamento, e o
+        // kit tinha a Poção Perfeita de Cura (1801), que exige nível 30 no `elements.data`
+        // e não serve a personagem nenhum recém-criado.
         if inventory.is_empty() && equipment.is_empty() {
             let weapon_id = cls_enum.default_weapon_id() as u32;
             let starter_items = vec![
                 pw_core::ItemRecord {
                     id: None,
                     character_id: role_id,
-                    container_type: ContainerType::Inventory,
+                    container_type: ContainerType::Equipment,
                     slot: 0,
                     item_id: weapon_id,
                     count: 1,
@@ -453,7 +473,9 @@ impl CharacterRepository {
                     character_id: role_id,
                     container_type: ContainerType::Inventory,
                     slot: 3,
-                    item_id: 1801,
+                    // Poção Pequena do Espírito, `require_level = 0`. Era a Poção
+                    // Perfeita de Cura (1801), que exige nível 30.
+                    item_id: 1804,
                     count: 10,
                     max_count: 100,
                     refine_level: 0,
