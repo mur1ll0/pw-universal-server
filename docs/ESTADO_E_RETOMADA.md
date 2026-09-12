@@ -6236,6 +6236,79 @@ Ordem combinada com o Murillo:
     experiência, `MINE_ESSENCE` para a colheita — mas nenhuma delas foi ligada ao jogo
     nesta sessão.
 
+47. **Sessão 2026-09-12 (continuação 3): o `clsconfig` do servidor 1.5.5 original está em
+    disco e responde onde cada classe nasce — com duas respostas.**
+
+    ### a. O que é e onde está
+
+    O `gamedbd` original não inventa personagem novo: copia um dos moldes 16..31 do
+    arquivo `clsconfig` (`cnet/gamedbd/clsconfig.h::ImportClsConfig`, e
+    `GameDBManager::GetClsDetail`, `gamedbmanager.cpp:345`), trocando só `cls` e `gender`.
+    Cada molde é um `GRoleTableClsconfig` = `GRoleBase` + `GRoleStatus` + inventário +
+    equipamento + armazém, gravado sem compressão. **Esse é o gabarito dos pontos 1, 3, 5,
+    15 e 16 do item 44** (lugar de nascimento, atributos, itens iniciais, barra de atalhos)
+    — e não precisa da VM 1.2.6: está em `F:\PW\1.5.5\home155\gamedbd\clsconfig` e em
+    `F:\PW\1.5.5\pwserver_155v156\home\pwserver\gamedbd\clsconfig`.
+
+    Leitor: `specs/clsconfig_155/ler_clsconfig.py` (acha cada molde pelo nome
+    `cls<N>gender<M>` e lê `GRoleBase` e o começo de `GRoleStatus`; Marshal big-endian).
+
+    O molde de cada classe não é `16 + cls×2 + gênero`: é a tabela de `GetDataRoleId`
+    (`gamedbmanager.cpp:208`) — 0→16, 1→19, 2→20, 3→23, 4→24, 5→27, 6→28, 7→31, 8→18,
+    9→17, 10→21, 11→22. Os roles 25, 26, 29 e 30 são restos sem uso (mundo 0, sem
+    `config_data`).
+
+    ### b. Onde cada classe nasce, pelos dois arquivos
+
+    | cls | classe | role | `home155` (2023) | `pwserver_155v156` (2018) | nosso `class_templates` (155BR) |
+    | ---: | :--- | ---: | :--- | :--- | :--- |
+    | 0 | Guerreiro | 16 | mundo 1 (218.0, 218.7, 2838.0) | mundo 161 (-848.3, 40.5, -182.0) | mundo 1 (976, 219.2, 4187.3) |
+    | 1 | Mago | 19 | mundo 1 (218.0, 218.6, 2838.3) | mundo 161 (-847.4, 40.5, -182.4) | mundo 1 (976, 219.2, 4187.3) |
+    | 2 | Espiritualista | 20 | mundo 161 (-651.1, 41.0, -225.2) | igual | mundo 1 (650, 201.1, 130) |
+    | 3 | Feiticeira | 23 | mundo 1 (-1441, 242, 1383) | mundo 161 (-712.8, 35.0, -364.2) | mundo 1 (-1445.6, 219.3, 2642) |
+    | 4 | **Bárbaro** | 24 | **mundo 1 (-1441, 242, 1383)** | mundo 161 (-712.9, 35.0, -364.4) | mundo 1 (-1445.6, 219.3, 2642) |
+    | 5 | Assassino | 27 | mundo 161 (-651.8, 41.0, -225.5) | igual | mundo 1 (650, 201.1, 130) |
+    | 6 | Arqueiro | 28 | mundo 1 (-317, 218, -910) | mundo 161 (-821.7, 44.9, -259.7) | mundo 1 (-741.5, 219.1, -1234.8) |
+    | 7 | Sacerdote | 31 | mundo 1 (-317, 218, -910) | mundo 161 (-821.9, 44.9, -260.2) | mundo 1 (-741.5, 219.1, -1234.8) |
+    | 8 | Guardião | 18 | mundo 161 (-800.5, 44.9, -314.2) | igual | mundo 1 (380, 219.3, 230) |
+    | 9 | Místico | 17 | mundo 161 (-800.7, 44.9, -315.2) | igual | mundo 1 (380, 219.3, 230) |
+    | 10 | Ceifador | 21 | mundo 161 (-760.7, 44.9, -218.3) | igual | mundo 1 (150, 210.1, 250) |
+    | 11 | Tormentador | 22 | mundo 161 (-760.3, 44.9, -218.3) | igual | mundo 1 (150, 210.1, 250) |
+
+    Conferência independente, pelo `npcgen.data` + `tasks.data` do 155BR: os pontos do
+    `home155` no mundo 1 ficam **ao lado do Guia de cada raça** — Guia 3517 em (221, 219,
+    2854) para Humanos, Guia 3518 em (-1445, 241, 1398) para Selvagens, Guia "Jace Johnson"
+    3519 em (-313, 218, -893) para Elfos — e os Guias são os NPCs das primeiras missões
+    ("Exposição de Talento" 1173/1198, "Terra Natal" 9532/9533). O nosso ponto do Bárbaro
+    tem o `x` do Guia e um `z` 1.260 m ao norte: é o "Campo da Expedição" do teste do POTATO.
+
+    **O mundo 161** é o `Instance_is61` do `gs.conf` original (`base_path = a61/`, `limit =
+    allow-root;anti-cheat;home_entrance;`, `parallelworld_server = 1`), e a pasta `a61`
+    existe no `realm_155BR`. No pacote `pwserver_155v156` — **a mesma build v156 do
+    `elements.data` que o 155BR usa** — toda classe nasce lá, o que responde à suspeita do
+    Murillo no item 44 ("o 1.5.5 começa em outro mapa"). No `home155`, as raças antigas
+    foram trazidas de volta às vilas do mundo 1 e só as novas (Espiritualista, Assassino,
+    Guardião, Místico, Ceifador, Tormentador) ficam no 161. A missão auto-entregue
+    "Guarda da Terra" (31033/31038, classes 8 e 9) teleporta para o mundo 1 em (-242.4,
+    239.5, -3201.9) — coerente com o 161 ser o começo e o mundo 1 o destino.
+
+    Vida e mana de nível 1 do molde (ex.: Bárbaro 85/35, Guerreiro 75/45, Mago 50/70)
+    também estão lá, para conferir contra o que o nosso servidor calcula.
+
+    ### c. A decisão que falta, e é do Murillo
+
+    Qual dos dois `clsconfig` é o do realm 155BR: o `pwserver_155v156` (todos no mapa
+    161, a build dos nossos dados) ou o `home155` (raças antigas nas vilas)? Nascer no 161
+    também exige que o mundo 161 suba no `pw-world-155br`, o que hoje não acontece.
+
+    ### d. O que ainda dá para tirar do arquivo
+
+    `config_data` (232 a 385 bytes por molde) é a configuração do cliente guardada no
+    servidor — muito provavelmente a barra de atalhos pré-preenchida que o Murillo viu no
+    1.2.6 (F1 ataque, F2 habilidade, F4 pegar, F5 meditar, F8 portal). Inventário,
+    equipamento e habilidades (`GRoleStatus.skills`) também estão no registro. Nada disso
+    foi decodificado ainda.
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver
