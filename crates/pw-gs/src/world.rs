@@ -140,44 +140,24 @@ impl WorldInstance {
 
     /// Inicializa os Spawns de monstros e NPCs a partir do `npcgen.data` do mapa específico
     ///
-    /// # Por que os monstros estavam no ar
+    /// # A altura de cada entidade
     ///
-    /// Relatado em jogo em 2026-09-11: "alguns monstros terrestres estão no ar, voando
-    /// longe do chão". A causa **não** é o `npcgen.data` — medindo os 30.898 spawns do
-    /// mundo contra o mapa de alturas, o `y` do arquivo bate com o chão sob o centro da
-    /// área com diferença mediana de 10 cm. Ele é altura absoluta, e está certo.
+    /// É a regra do original, por **tipo de área** — ver
+    /// `pw_data_loader::npcgen::SpawnInstance::altura_resolvida`: área de chão nasce no
+    /// terreno, área em caixa nasce onde a caixa manda com o terreno como piso, e o
+    /// `fOffsetTrn`/`fHeiOff` do gerador soma por cima.
     ///
-    /// Quem põe o monstro no ar é a **nossa dispersão**. `posicao_na_area`
-    /// (`npcgen.rs:117`) espalha os monstros de uma área sorteando `x` e `z` dentro da
-    /// caixa — e copia o `y` do centro. Em terreno plano não muda nada; numa encosta o
-    /// monstro fica na altura do centro da área, não na do chão sob ele. Medido: **30% dos
-    /// spawns a mais de 2 m acima do chão** e 15% a mais de 2 m abaixo, com extremos de
-    /// +507 m e −259 m. O próprio `posicao_na_area` já documentava a lacuna.
+    /// A história, que vale guardar: em 2026-09-11 os monstros apareciam no ar porque a
+    /// dispersão sorteava `x`/`z` e copiava o `y` do centro da área (item 42d). A primeira
+    /// correção deduziu um deslocamento por área, `centro.y − chão(centro)`, porque o
+    /// leitor ainda descartava o tipo da área e o `fOffsetTrn`. Em 2026-09-12 os dois
+    /// campos passaram a ser lidos, e a medida derrubou a dedução: o `fOffsetTrn` é zero
+    /// em 18.902 dos 18.903 geradores, e as 3.517 áreas em caixa é que são as que ficam
+    /// fora do chão de propósito. A dedução deixava flutuando qualquer NPC de área de chão
+    /// que o editor tivesse posto um pouco acima do terreno.
     ///
-    /// O original assenta a altura depois de sortear, e tem dois geradores
-    /// (`npcgenerator.cpp:4296-4346`):
-    ///
-    /// ```cpp
-    /// // terrain_gen_pos — spawn de chão
-    /// pos.y = offset;  pos.y += plane->GetHeightAt(pos.x, pos.z);
-    /// // box_gen_pos — spawn de volume; o chão é piso, nunca teto
-    /// float height = plane->GetHeightAt(x,z);  if (y < height) y = height;  return y + offset;
-    /// ```
-    ///
-    /// Os dois somam um `offset_terrain` por gerador (`fOffsetTrn` no arquivo), que este
-    /// leitor ainda não extrai. Mas ele é recuperável do que já temos: o `y` do centro da
-    /// área **é** chão + deslocamento, então
-    ///
-    /// ```text
-    /// deslocamento = centro.y - altura_do_chão(centro.x, centro.z)
-    /// y final      = altura_do_chão(x, z) + deslocamento
-    /// ```
-    ///
-    /// que reproduz `terrain_gen_pos` e preserva de propósito o gerador que nasce alto —
-    /// um monstro voador tem deslocamento grande, e continua grande depois da conta.
-    ///
-    /// Sem mapa de alturas (mapa fora do catálogo, pasta sem `map/`) o `y` do arquivo vale
-    /// como estava: é o comportamento antigo, que ao menos não piora.
+    /// Sem mapa de alturas (mapa fora do catálogo, pasta sem `map/`) vale o `y` que o
+    /// arquivo e a dispersão deram — o comportamento antigo, que ao menos não piora.
     pub fn init_spawns(&mut self) {
         info!("Inicializando monstros e NPCs do World #{} a partir do seu npcgen.data dedicado...", self.world_id);
 
@@ -192,22 +172,13 @@ impl WorldInstance {
 
         if let Some(spawns) = self.data_manager.map_spawns.get(&self.world_id) {
             for inst in &spawns.instances {
-                // A altura assenta no chão sob a posição dispersa — ver a nota da função.
+                // A altura, pela regra do original — ver a nota da função.
                 let pos = if com_terreno {
-                    let sob_o_spawn = self.terreno.altura_em(inst.pos.x, inst.pos.z);
-                    let sob_o_centro = self
-                        .terreno
-                        .altura_em(inst.centro_da_area.x, inst.centro_da_area.z);
-                    match (sob_o_spawn, sob_o_centro) {
-                        (Some(chao), Some(chao_do_centro)) => {
-                            let deslocamento = inst.centro_da_area.y - chao_do_centro;
-                            pw_core::Vector3::new(inst.pos.x, chao + deslocamento, inst.pos.z)
-                        }
-                        _ => {
-                            fora_do_mapa += 1;
-                            inst.pos
-                        }
+                    let chao = self.terreno.altura_em(inst.pos.x, inst.pos.z);
+                    if chao.is_none() {
+                        fora_do_mapa += 1;
                     }
+                    pw_core::Vector3::new(inst.pos.x, inst.altura_resolvida(chao), inst.pos.z)
                 } else {
                     inst.pos
                 };

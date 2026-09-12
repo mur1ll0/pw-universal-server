@@ -105,25 +105,23 @@ fn fora_dos_limites_do_gs_conf_nao_ha_resposta() {
     assert!(t.altura_em(0.0, 0.0).is_some(), "o centro do mapa tem de ter chão");
 }
 
-/// A conta que assenta os monstros no chão, medida contra o mapa e o `npcgen.data` reais.
+/// A altura de cada spawn, pela regra do original, medida contra o mapa real.
 ///
-/// É o teste que sustenta a correção de "monstros terrestres no ar". O que os números do
-/// realm mostram, e que mudou o diagnóstico no meio do caminho:
+/// O que os campos lidos do `npcgen.data` mostram, e que derrubou a dedução do item 42d:
 ///
-/// - O `y` do `npcgen.data` **é altura absoluta e está certo** — no centro da área ele fica
-///   a 0,10 m do chão, em três quartos das áreas. Aquele 0,10 constante é o
-///   `offset_terrain` (`fOffsetTrn`) que o gerador do original soma.
-/// - Quem erra é a **nossa dispersão**: `posicao_na_area` sorteia `x`/`z` dentro da caixa e
-///   copia o `y` do centro. Em encosta, o monstro fica na altura do centro da área.
-/// - **Nem toda área é de chão.** 1.083 das 10.172 áreas do mundo têm o centro a dezenas ou
-///   centenas de metros do terreno, para os dois lados: deslocamento negativo é caverna,
-///   positivo é gerador aéreo ou cidade de vários níveis. O mapa de alturas não representa
-///   nada disso, e o original também não — ele preserva o deslocamento do gerador. Mexer
-///   nessas seria tirar o monstro da caverna e pô-lo no telhado.
+/// - O `fOffsetTrn` é **zero** em quase todos os geradores. Não há deslocamento a
+///   preservar por área.
+/// - O que separa caverna e gerador aéreo do monstro comum é o **tipo da área** (`iType`):
+///   área de chão nasce no terreno; área em caixa nasce onde a caixa manda, com o terreno
+///   como piso (`box_gen_pos`, `npcgenerator.cpp:4340-4345`).
 ///
-/// Então o teste mede a correção onde ela se aplica: nas áreas que **são** de chão.
+/// A dedução antiga (`centro.y − chão(centro)`) deixava no ar toda área de **chão** cujo
+/// centro o editor tivesse posto um pouco acima do terreno — é o candidato natural ao NPC
+/// "Guia" flutuando do teste de 2026-09-12.
 #[test]
-fn assentar_no_chao_tira_os_monstros_do_ar() {
+fn a_altura_segue_o_tipo_da_area() {
+    use pw_data_loader::npcgen::{SpawnType, TipoDeArea};
+
     let Some(t) = mundo_principal() else { return };
     let caminho = realm().join("world/npcgen.data");
     let Ok(bytes) = std::fs::read(&caminho) else {
@@ -133,73 +131,112 @@ fn assentar_no_chao_tira_os_monstros_do_ar() {
     let ng = pw_data_loader::npcgen::NpcGenData::load_from_bytes(&bytes)
         .expect("npcgen.data do mundo deveria ser legível");
 
-    /// Até onde um monstro conta como "no chão".
     const RENTE: f32 = 2.0;
-
     let mut de_chao = 0usize;
-    let mut de_chao_no_ar_antes = 0usize;
-    let mut de_chao_no_ar_depois = 0usize;
-    let mut deliberadamente_fora = 0usize;
-    let mut deslocamentos: Vec<f32> = Vec::new();
+    let mut de_chao_fora = 0usize;
+    let mut em_caixa = 0usize;
+    let mut em_caixa_abaixo_do_chao = 0usize;
+    let mut npc_de_chao_que_a_deducao_deixava_no_ar = 0usize;
 
     for inst in &ng.instances {
-        let (Some(chao), Some(chao_do_centro)) = (
-            t.altura_em(inst.pos.x, inst.pos.z),
-            t.altura_em(inst.centro_da_area.x, inst.centro_da_area.z),
-        ) else {
+        if inst.spawn_type == SpawnType::DynamicObject {
+            continue;
+        }
+        let Some(chao) = t.altura_em(inst.pos.x, inst.pos.z) else {
             continue;
         };
-        let deslocamento = inst.centro_da_area.y - chao_do_centro;
-        deslocamentos.push(deslocamento);
+        let y = inst.altura_resolvida(Some(chao));
 
-        // Área cujo centro está longe do chão é caverna ou gerador aéreo: o deslocamento
-        // é intencional e tem de sobreviver à correção.
-        if deslocamento.abs() > RENTE {
-            deliberadamente_fora += 1;
-            let y_corrigido = chao + deslocamento;
-            assert!(
-                (y_corrigido - chao - deslocamento).abs() < 0.01,
-                "a correção não preservou o deslocamento de uma área aérea/subterrânea"
-            );
-            continue;
-        }
-
-        de_chao += 1;
-        if (inst.pos.y - chao).abs() > RENTE {
-            de_chao_no_ar_antes += 1;
-        }
-        if (chao + deslocamento - chao).abs() > RENTE {
-            de_chao_no_ar_depois += 1;
+        match inst.tipo_de_area {
+            TipoDeArea::NoChao => {
+                de_chao += 1;
+                if (y - chao - inst.acima_do_chao).abs() > 0.01 {
+                    de_chao_fora += 1;
+                }
+                // A dedução antiga, para medir o que ela fazia com este mesmo spawn.
+                if inst.spawn_type == SpawnType::Npc {
+                    if let Some(chao_do_centro) =
+                        t.altura_em(inst.centro_da_area.x, inst.centro_da_area.z)
+                    {
+                        let y_antigo = chao + (inst.centro_da_area.y - chao_do_centro);
+                        if y_antigo - chao > RENTE {
+                            npc_de_chao_que_a_deducao_deixava_no_ar += 1;
+                        }
+                    }
+                }
+            }
+            TipoDeArea::NaCaixa => {
+                em_caixa += 1;
+                if y < chao - 0.01 {
+                    em_caixa_abaixo_do_chao += 1;
+                }
+            }
         }
     }
 
-    assert!(de_chao > 15_000, "só {de_chao} spawns de área de chão");
-    assert!(deliberadamente_fora > 0, "nenhuma área aérea/subterrânea — amostra suspeita");
-
-    // O 0,10 constante é o `offset_terrain` do arquivo. Se a mediana saísse disso, a
-    // leitura de `area.pos` ou a escala do `.hmap` teriam mudado.
-    deslocamentos.sort_by(|a, b| a.total_cmp(b));
-    let mediana = deslocamentos[deslocamentos.len() / 2];
-    assert!(
-        (mediana - 0.10).abs() < 0.5,
-        "deslocamento mediano de {mediana:.2} m — esperava ~0,10 (o offset_terrain do          arquivo). A leitura do npcgen ou a escala do .hmap mudou."
-    );
-
-    let pct = |n: usize| n as f32 * 100.0 / de_chao as f32;
     eprintln!(
-        "áreas de chão: {de_chao} spawns — no ar antes {} ({:.1}%), depois {} ({:.1}%);          {deliberadamente_fora} spawns em área aérea/subterrânea preservados",
-        de_chao_no_ar_antes,
-        pct(de_chao_no_ar_antes),
-        de_chao_no_ar_depois,
-        pct(de_chao_no_ar_depois),
+        "spawns de chão: {de_chao}; em caixa: {em_caixa}; NPCs de área de chão que a          dedução antiga deixava a mais de {RENTE} m do chão:          {npc_de_chao_que_a_deducao_deixava_no_ar}"
     );
-    assert!(
-        pct(de_chao_no_ar_antes) > 10.0,
-        "só {:.1}% dos spawns de chão estavam fora do chão — o defeito relatado não se          reproduz nestes dados, e esta correção precisa ser reexaminada",
-        pct(de_chao_no_ar_antes)
-    );
+
+    assert!(de_chao > 10_000, "só {de_chao} spawns em área de chão");
+    assert!(em_caixa > 0, "nenhuma área em caixa — o iType não deve estar sendo lido");
+    assert_eq!(de_chao_fora, 0, "spawn de área de chão fora do terreno");
     assert_eq!(
-        de_chao_no_ar_depois, 0,
-        "depois da correção nenhum spawn de área de chão pode ficar fora do chão"
+        em_caixa_abaixo_do_chao, 0,
+        "spawn de área em caixa abaixo do chão — o terreno tem de ser piso"
+    );
+}
+
+/// O recurso do mapa se espalha pela área, como no original.
+///
+/// O leitor descartava o `fExtX`/`fExtZ` da área de recurso e punha toda instância na mesma
+/// coordenada — o "Eufórbio todo junto" do teste de 2026-09-12. O original sorteia dentro
+/// da caixa (`mine_spawner` com `SetRegion(0, vPos, {fExtX, 0, fExtZ})`,
+/// `npcgenerator.cpp:3900`).
+#[test]
+fn o_recurso_se_espalha_pela_area() {
+    use pw_data_loader::npcgen::SpawnType;
+    use std::collections::HashMap;
+
+    let caminho = realm().join("world/npcgen.data");
+    let Ok(bytes) = std::fs::read(&caminho) else {
+        eprintln!("pulado: {} não existe", caminho.display());
+        return;
+    };
+    let ng = pw_data_loader::npcgen::NpcGenData::load_from_bytes(&bytes)
+        .expect("npcgen.data do mundo deveria ser legível");
+
+    // Agrupa por área (o centro identifica a área) e conta posições distintas.
+    let mut por_area: HashMap<(i32, i32), (usize, Vec<(i32, i32)>, bool)> = HashMap::new();
+    for inst in ng.instances.iter().filter(|i| i.spawn_type == SpawnType::ResourceMine) {
+        let chave = (
+            (inst.centro_da_area.x * 10.0) as i32,
+            (inst.centro_da_area.z * 10.0) as i32,
+        );
+        let pontual = inst.extensao_da_area.x.abs() < 1e-3 && inst.extensao_da_area.z.abs() < 1e-3;
+        let e = por_area.entry(chave).or_insert((0, Vec::new(), pontual));
+        e.0 += 1;
+        e.1.push(((inst.pos.x * 10.0) as i32, (inst.pos.z * 10.0) as i32));
+    }
+
+    let mut com_varios = 0usize;
+    let mut empilhadas = 0usize;
+    for (_, (n, pontos, pontual)) in &por_area {
+        if *n < 2 || *pontual {
+            continue;
+        }
+        com_varios += 1;
+        let mut distintos = pontos.clone();
+        distintos.sort();
+        distintos.dedup();
+        if distintos.len() == 1 {
+            empilhadas += 1;
+        }
+    }
+
+    assert!(com_varios > 100, "só {com_varios} áreas de recurso com mais de uma instância");
+    assert_eq!(
+        empilhadas, 0,
+        "{empilhadas} áreas de recurso com todas as instâncias no mesmo ponto"
     );
 }
