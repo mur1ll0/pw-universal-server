@@ -6066,7 +6066,7 @@ Ordem combinada com o Murillo:
 
     | arquivo | estado medido | o que falta |
     | :--- | :--- | :--- |
-    | `elements.data` | 99 de 231 tabelas no v156 do 155BR (item 41f) | refazer as âncoras deste arquivo |
+    | `elements.data` | ~~99 de 231 tabelas no v156 do 155BR (item 41f)~~ → **resolvido no item 46**: 231/231, fecha no último byte | — |
     | `tasks.data` | ~~nenhuma missão lida~~ → **resolvido no item 45**: 14.885/14.885 missões de topo fecham byte a byte | — |
     | `npcgen.data` | ~~recurso sem dispersão e com teto inventado (b12)~~ → **resolvido** (commit `931b39d`): tipo de área, `fOffsetTrn`, extensão do recurso, sem tetos | — |
 
@@ -6082,7 +6082,7 @@ Ordem combinada com o Murillo:
 
     1. ~~**`npcgen.data`**~~ — feito (`931b39d`).
     2. ~~**`tasks.data`**~~ — feito (item 45).
-    3. **`elements.data` v156** — as âncoras do 155BR.
+    3. ~~**`elements.data` v156**~~ — feito (item 46), sem âncoras.
     4. **Acesso à VM 1.2.6**, e com ela os roteiros de captura de (c1) para 6, 7, 8, 9, 10
        e 13, e a leitura dos moldes para 1, 3, 5, 15 e 16.
     5. Com os dados e o gabarito na mão: combate, experiência, alma, moedas, recarga,
@@ -6166,6 +6166,75 @@ Ordem combinada com o Murillo:
     (Guerreiro 1173, Mago 1198) e as "<Classe> Eso" (30708-30717, nível 1-1, sem NPC). A
     missão inicial de cada classe no 1.5.5 ainda precisa ser confirmada — pelo
     `task_npc.data`/NPC de entrega no mapa inicial, ou pelo servidor 1.5.5 original.
+
+46. **Sessão 2026-09-12 (continuação 2): o `elements.data` do 155BR lido inteiro — os
+    "overrides" eram dois blocos que o leitor não conhecia.**
+
+    ### a. O resultado
+
+    | realm | versão | tabelas | registros | vazias | antes |
+    | :--- | ---: | ---: | ---: | ---: | :--- |
+    | `realm_155BR` (o do docker) | 156 | **231** | 69.640 | ≤5 | 99 lidas, 132 vazias (item 41f) |
+    | `realm_155` | 159 | **234** | 70.067 | — | lia, com 11 overrides |
+
+    Os dois fecham **no último byte do arquivo, sem nenhum override**, e o leitor agora
+    recusa arquivo que não feche (`GenericElementsError::NaoTerminaNoFim`). Tabelas que
+    voltaram no 155BR: `PLAYER_ACTION_INFO_CONFIG` (1.354, eram 7.736 de lixo),
+    `MINE_ESSENCE` (1.557 — o que cada recurso do mapa dá), `FASHION_ESSENCE` (3.016),
+    `PET_ESSENCE`, `SUITE_ESSENCE`, `PLAYER_LEVELEXP_CONFIG`, `TITLE_CONFIG` e o resto.
+
+    ### b. A causa
+
+    `elementdataman::load_data` do **cliente**
+    (`EvolvedPWClient/ElementClient/CCommon/elementdataman.cpp:3879`) não é só
+    `count + registros` em sequência. Tem dois blocos que não são tabela:
+
+    ```cpp
+    // depois de armorrune_essence_array (linhas 4009-4016)
+    fread(&tag, 4); fread(&len, 4); fread(buffer, len); fread(&t, sizeof(time_t));
+    // depois de war_tankcallin_essence_array (linhas 4122-4124)
+    fread(&tag, 4); fread(&len, 4); fread(buffer, len);
+    ```
+
+    O primeiro é o nome da máquina que exportou o arquivo (o `save_data` do servidor grava
+    `tag = 0xab7689dd`, `gs/template/elementdataman.cpp:3608`); o segundo, `0xee35679f`
+    (linha 3725). No 155BR: 7 bytes de nome + `time_t` = **os 19 bytes "sem explicação"**
+    antes de `SKILLTOME_SUB_TYPE` (item 9 do contexto A, 2026-09-02); no v159, 8 bytes = o
+    `skip: 20` do override dele.
+
+    Sem conhecer os blocos, o leitor antigo tentava a posição ingênua, pontuava o primeiro
+    registro por "plausibilidade" e buscava numa janela quando não gostava — e dez
+    `skip`/`count`/`abs_count_off` por arquivo corrigiam o que a busca errava. As âncoras
+    absolutas eram posições **daquele** arquivo; num v156 diferente (o do 155BR, 270 KB
+    maior) caíam no meio de outra tabela. Conferido: cada âncora antiga do v159
+    (`44280288`, `48139516`, `51277452`, `51351012`, `54231319`) é exatamente onde a leitura
+    estrita cai.
+
+    O mesmo padrão do `tasks.data` (item 45): **o carregador do cliente é o juiz**, e o
+    tamanho do arquivo fecha a conta. Heurística de plausibilidade só adiava o erro.
+
+    ### c. O que mudou
+
+    * `crates/pw-data-loader/src/generic_elements.rs`: leitura estrita; saíram a pontuação,
+      a busca em janela, os `RealmOverrides` e o `include_str!` dos overrides.
+      `load_elements_data(buf)` perdeu o parâmetro de overrides;
+      `load_elements_data_auto` ficou como sinônimo. `TALK_PROC` ganhou checagem de limites
+      (antes fatiava sem conferir).
+    * `specs/elements_layouts/pw_elements_reader.py` (o do web-admin): o mesmo algoritmo;
+      `overrides_path` é aceito e ignorado. Havia um bug latente aí: o web-admin passava os
+      overrides do **v156** para o `realm_155`, cujo arquivo é **v159**.
+    * `tests/generic_elements_tests.rs` reescrito: os dois realms, contagens conferidas por
+      conteúdo, totais iguais aos do leitor Python, e um arquivo com um byte a mais recusado.
+    * Os `specs/elements_155/realm_155*_overrides.json` ficaram no repositório como registro
+      histórico; nada os lê.
+
+    ### d. O que isto não resolve
+
+    O `pw-gs` hoje só consome tabelas até o índice 72 (armas, armaduras, decorações,
+    monstros, NPCs, classes, poções), que já liam certo. As tabelas novas ficam
+    disponíveis para os próximos passos — `PLAYER_LEVELEXP_CONFIG` para a curva de
+    experiência, `MINE_ESSENCE` para a colheita — mas nenhuma delas foi ligada ao jogo
+    nesta sessão.
 
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),

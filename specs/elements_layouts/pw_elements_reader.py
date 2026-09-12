@@ -2,10 +2,20 @@
 Leitor genérico e reaproveitável de `elements.data`, dirigido pelo catálogo de layouts
 desta pasta (`vNNN.json`). É a implementação de referência em Python do algoritmo que
 resolveu as 231 tabelas do v156 (ver `specs/elements_155/README.md` para a arqueologia
-completa) — qualquer outro consumidor (o `pw-data-loader` em Rust, por exemplo) deve seguir
-o mesmo algoritmo: tentar a posição ingênua primeiro (contando `count==0` como resultado
-válido, não uma falha), e só cair para correções manuais quando uma tabela específica
-precisar (ver `specs/elements_155/realm_155_overrides.json`).
+completa) — o `pw-data-loader` em Rust (`crates/pw-data-loader/src/generic_elements.rs`)
+segue exatamente o mesmo algoritmo, que é o do `elementdataman::load_data` do cliente
+(`EvolvedPWClient/ElementClient/CCommon/elementdataman.cpp:3879`):
+
+* cada tabela é `count` + `count * record_size`, sem busca nem pontuação;
+* depois de `ARMORRUNE_ESSENCE` vem `tag` (0xab7689dd), `len`, `len` bytes e um `time_t`;
+* depois de `WAR_TANKCALLIN_ESSENCE` vem `tag` (0xee35679f), `len` e `len` bytes;
+* `TALK_PROC` tem laço próprio;
+* o arquivo tem de terminar exatamente no último byte.
+
+Até 2026-09-12 os dois blocos de `tag` não eram lidos, e uma busca por "registro
+plausível" mais dez overrides por arquivo compensavam — o que só funcionava no arquivo
+em que os overrides tinham sido medidos. Os `*_overrides.json` de `specs/elements_155/`
+ficaram como registro histórico; este leitor não os usa mais.
 
 Uso típico:
 
@@ -21,7 +31,6 @@ chama (ver `web-admin/backend/elements_decoder.py` para um exemplo de integraç�
 from __future__ import annotations
 
 import json
-import math
 import os
 import struct
 from typing import Any, Dict, List, Optional, Tuple
@@ -100,17 +109,6 @@ def load_layout(version: int, layouts_dir: Optional[str] = None) -> Dict[str, An
         return json.load(f)
 
 
-def load_overrides(path: str) -> Dict[str, Any]:
-    """Carrega um `*_overrides.json` (ex. `specs/elements_155/realm_155_overrides.json`).
-    Devolve `{}` se o arquivo não existir -- overrides são opcionais, não uma dependência
-    obrigatória do formato."""
-    if not path or not os.path.exists(path):
-        return {}
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-    return data.get("overrides", {})
-
-
 # =============================================================================
 # Decodificação de um registro, dirigida pelos campos do layout
 # =============================================================================
@@ -142,83 +140,6 @@ def decode_record(buf: bytes, off: int, table_def: Dict[str, Any]) -> Dict[str, 
         val, cur = _decode_field(buf, cur, field)
         record[field["name"]] = val
     return record
-
-
-def _plausibility_score(record: Dict[str, Any], table_def: Dict[str, Any]) -> float:
-    """Reimplementação da pontuação de `decode_record`/`try_table` em
-    `specs/elements_155/walk_tables.py` -- ver lá para a explicação de cada regra e para o
-    achado de metodologia ("não é confiável sozinha pra tabelas sem campo de texto")."""
-    score = 0.0
-    for field in table_def["fields"]:
-        v = record[field["name"]]
-        ftype = field["type"]
-        if ftype == "int32":
-            if -1_000_000 <= v <= 100_000_000:
-                score += 1
-            elif v == 0:
-                score += 0.5
-            else:
-                score -= 2
-        elif ftype == "float":
-            if v == 0.0:
-                score += 0.5
-            elif math.isfinite(v) and abs(v) < 1e7:
-                score += 1
-            else:
-                score -= 2
-        elif ftype == "wstring":
-            if len(v) == 0:
-                score += 0.2
-            elif all(c.isprintable() or ord(c) > 0x3000 for c in v):
-                score += 1.5
-            else:
-                score -= 1.5
-        # "string" (bytes, geralmente caminho de arquivo) nao pontua -- conteudo nao
-        # confiavelmente legivel sem decodificar GBK/latin1 primeiro.
-    return score
-
-
-def _try_table(buf: bytes, off: int, table_def: Dict[str, Any], window: int = 1024) -> Optional[Tuple[int, int, int]]:
-    """Acha `(count_field_offset, count, consumed_bytes)` pra uma tabela de tamanho fixo.
-    Tenta a posição ingênua (`off`) primeiro; só faz busca em janela se isso falhar. Ver
-    `TABLE_OVERRIDES`/`try_table()` em `specs/elements_155/walk_tables.py` para o histórico
-    completo de por que este é o algoritmo que funciona (e o que já tentei que não funcionou)."""
-    size = table_def["record_size"]
-    filesize = len(buf)
-
-    def eval_at(c_off: int) -> Optional[float]:
-        if c_off < 0 or c_off + 4 > filesize:
-            return None
-        count = struct.unpack_from("<I", buf, c_off)[0]
-        if count > 200_000:
-            return None
-        rec_start = c_off + 4
-        if rec_start + size * count > filesize:
-            return None
-        if count == 0:
-            return 0.1
-        rec = decode_record(buf, rec_start, table_def)
-        return _plausibility_score(rec, table_def)
-
-    good_bar = len(table_def["fields"]) * 0.6
-    sc = eval_at(off)
-    count_at_off = struct.unpack_from("<I", buf, off)[0] if off + 4 <= filesize else None
-    if sc is not None and (count_at_off == 0 or sc > good_bar):
-        return off, count_at_off, 4 + count_at_off * size
-
-    best = None
-    for cand in range(-64, window):
-        c_off = off + cand
-        s = eval_at(c_off)
-        if s is None:
-            continue
-        if best is None or s > best[0]:
-            best = (s, c_off)
-    if best is None:
-        return None
-    _, c_off = best
-    count = struct.unpack_from("<I", buf, c_off)[0]
-    return c_off, count, 4 + count * size
 
 
 # =============================================================================
@@ -271,6 +192,10 @@ def read_talk_proc_table(buf: bytes, off: int) -> Tuple[List[Dict[str, Any]], in
 # Orquestrador de topo
 # =============================================================================
 
+TAG_DO_EXPORTADOR = 0xAB7689DD
+TAG_DEPOIS_DOS_TANQUES = 0xEE35679F
+
+
 def load_elements_data(
     path: str,
     layouts_dir: Optional[str] = None,
@@ -278,52 +203,53 @@ def load_elements_data(
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Carrega um `elements.data` inteiro, devolvendo `{nome_da_tabela: [registro, ...]}`.
 
-    Detecta a versão pelo cabeçalho, carrega o layout correspondente do catálogo, e
-    percorre as tabelas na ordem em que o `.cfg`/`elementdataman.cpp` original as declara.
-    Aplica `overrides_path` (se fornecido) para as tabelas que precisarem.
+    `overrides_path` é aceito e ignorado — ver a nota do módulo.
     """
     with open(path, "rb") as f:
         buf = f.read()
 
     header = detect_header(buf)
     layout = load_layout(header["version"], layouts_dir)
-    overrides = load_overrides(overrides_path) if overrides_path else {}
+
+    def u32(o: int) -> int:
+        if o + 4 > len(buf):
+            raise ElementsFormatError(f"offset {o} passa do fim do arquivo ({len(buf)} bytes)")
+        return struct.unpack_from("<I", buf, o)[0]
 
     result: Dict[str, List[Dict[str, Any]]] = {}
     off = header["header_size"]
     for table_def in layout["tables"]:
         idx = table_def["index"]
         name = table_def["name"]
-        override = overrides.get(str(idx))
 
         if table_def.get("variable_size"):
-            if name == "TALK_PROC":
-                records, off = read_talk_proc_table(buf, off)
-                result[name] = records
-                continue
-            raise ElementsFormatError(f"tabela '{name}' (índice {idx}) é de tamanho variável mas não tem leitor implementado")
+            if name != "TALK_PROC":
+                raise ElementsFormatError(f"tabela '{name}' (índice {idx}) é de tamanho variável mas não tem leitor implementado")
+            records, off = read_talk_proc_table(buf, off)
+            result[name] = records
+            continue
 
         size = table_def["record_size"]
+        count = u32(off)
+        inicio = off + 4
+        if inicio + count * size > len(buf):
+            raise ElementsFormatError(f"tabela '{name}' (índice {idx}): count={count} passa do fim do arquivo")
+        result[name] = [decode_record(buf, inicio + i * size, table_def) for i in range(count)]
+        off = inicio + count * size
 
-        if override is not None:
-            if "abs_count_off" in override:
-                c_off = override["abs_count_off"]
-            else:
-                c_off = off + override["skip"]
-            count = override["count"]
-        else:
-            found = _try_table(buf, off, table_def)
-            if found is None:
-                raise ElementsFormatError(
-                    f"não achei alinhamento plausível pra tabela '{name}' (índice {idx}) perto de offset {off} -- "
-                    f"pode precisar de um override em {overrides_path or '(nenhum overrides_path fornecido)'}"
-                )
-            c_off, count, _consumed = found
+        if name in ("ARMORRUNE_ESSENCE", "WAR_TANKCALLIN_ESSENCE"):
+            esperado = TAG_DO_EXPORTADOR if name == "ARMORRUNE_ESSENCE" else TAG_DEPOIS_DOS_TANQUES
+            achado = u32(off)
+            if achado != esperado:
+                raise ElementsFormatError(f"depois de '{name}' devia vir o tag {esperado:#x} no offset {off}, veio {achado:#x}")
+            off += 8 + u32(off + 4)
+            if name == "ARMORRUNE_ESSENCE":
+                off += 4  # time_t
 
-        records = [decode_record(buf, c_off + 4 + i * size, table_def) for i in range(count)]
-        result[name] = records
-        off = c_off + 4 + count * size
-
+    if off != len(buf):
+        raise ElementsFormatError(
+            f"as tabelas terminaram no offset {off}, mas o arquivo tem {len(buf)} bytes -- o layout não é o deste arquivo"
+        )
     return result
 
 
@@ -331,8 +257,7 @@ if __name__ == "__main__":
     import sys
 
     data_path = sys.argv[1]
-    overrides_arg = sys.argv[2] if len(sys.argv) > 2 else None
-    tables = load_elements_data(data_path, overrides_path=overrides_arg)
+    tables = load_elements_data(data_path)
     total_records = sum(len(v) for v in tables.values())
     print(f"{len(tables)} tabelas, {total_records} registros no total")
     for name, records in tables.items():

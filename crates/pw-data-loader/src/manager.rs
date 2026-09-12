@@ -230,9 +230,8 @@ impl GameDataManager {
             // central do projeto). O catálogo genérico (`specs/elements_layouts/vNNN.json`)
             // é a fonte de verdade quando cobre a versão — validado byte a byte contra as
             // tabelas reais de v156 e v159, diferente do leitor tipado abaixo, que nunca
-            // terminou de carregar nenhum dos dois. `load_elements_data_auto` detecta a
-            // versão sozinho e escolhe os overrides certos pra ela (nunca aplica o override
-            // de uma build a um arquivo de outra — ver `load_overrides_for_version`). O
+            // terminou de carregar nenhum dos dois. A leitura segue o `load_data` do
+            // cliente à risca e exige que o arquivo termine no último byte. O
             // leitor tipado só entra como fallback para versões que o catálogo ainda não
             // tem (1.2.6/v7 hoje).
             match generic_elements::load_elements_data_auto(&data) {

@@ -1,84 +1,101 @@
-use pw_data_loader::generic_elements::{load_elements_data, load_overrides_for_version};
-use std::path::Path;
+//! O leitor genérico contra os `elements.data` reais dos dois realms 1.5.5.
+//!
+//! O leitor já recusa um arquivo que não termine exatamente no último byte, então
+//! "carregou" quer dizer "o layout de cada uma das tabelas está certo". O que estes testes
+//! acrescentam: as contagens de tabelas conferidas por conteúdo, e o conteúdo de algumas.
+//!
+//! História que vale guardar: até 2026-09-12 o leitor não conhecia os dois blocos de `tag`
+//! que o `elementdataman::load_data` do cliente pula (depois de `ARMORRUNE_ESSENCE` e de
+//! `WAR_TANKCALLIN_ESSENCE`), e dez remendos de `skip`/`count`/posição absoluta por arquivo
+//! compensavam. O v156 do `realm_155BR`, que é o que o docker serve, lia só 99 das 231
+//! tabelas por causa disso — incluindo `MINE_ESSENCE` (o que cada recurso dá) e
+//! `PLAYER_ACTION_INFO_CONFIG`.
 
-/// Confere o leitor genérico contra o `elements.data` real do realm 155.
-///
-/// **Este arquivo mudou de build durante o desenvolvimento** (decisão do Murillo,
-/// 2026-09-02): era v156 (do pacote `pwserver_155v156` da comunidade), mas o client 1.5.5
-/// exige que o `elements.data`/`tasks.data` do servidor bata *exatamente* com os dele
-/// (comparação de string, não numérica -- `EC_GameSession.cpp::OnPrtcChallenge`), então
-/// `data/realm_155/config/elements.data` agora é uma cópia do `elements.data` do client
-/// original (build **v159**). Ver `docs/ESTADO_E_RETOMADA.md`, seção "decodificar a build
-/// v159", e `specs/elements_155/realm_155_v159_overrides.json` para a arqueologia completa.
-///
-/// **Cobertura conhecida, não 100%**: com os overrides atuais o leitor consome até o
-/// offset 54.397.023 de 55.170.911 bytes (~98,6%) -- as tabelas 216
-/// (`HOME_RESOURCE_PRODUCE_CONFIG`) em diante, até ~230 (sistema de "lar/mansão" e bilhetes
-/// de loteria, features tardias e obscuras), ainda não foram resolvidas. Por isso este
-/// teste confere só as tabelas já verificadas por conteúdo real, não um total agregado de
-/// registros (que incluiria contagens erradas dessa cauda ainda não resolvida).
-#[test]
-fn test_generic_elements_realm_155_if_present() {
-    let path = Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../data/realm_155/config/elements.data"
-    ));
-    if !path.exists() {
-        return;
+use pw_data_loader::generic_elements::load_elements_data;
+use std::path::PathBuf;
+
+fn ler(realm: &str) -> Option<Vec<u8>> {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../data")
+        .join(realm)
+        .join("config/elements.data");
+    match std::fs::read(&p) {
+        Ok(b) => Some(b),
+        Err(_) => {
+            eprintln!("pulado: {} não existe", p.display());
+            None
+        }
     }
-    let bytes = std::fs::read(path).expect("Falha ao ler elements.data do realm 155");
-    let overrides = load_overrides_for_version(159).expect("overrides do v159 devem existir");
-    let data = load_elements_data(&bytes, Some(&overrides))
-        .expect("elements.data do realm 155 deveria carregar com os overrides conhecidos");
-
-    assert_eq!(data.version, 159);
-    assert_eq!(data.tables.len(), 234, "as 234 tabelas do catálogo v159 devem estar presentes");
-
-    let class_configs = data.get("CHARRACTER_CLASS_CONFIG");
-    assert_eq!(class_configs.len(), 12, "as 12 classes do jogo");
-
-    let equipment_addon = data.get("EQUIPMENT_ADDON");
-    assert_eq!(equipment_addon.len(), 2992);
-
-    let talk_proc = data.get("TALK_PROC");
-    assert_eq!(talk_proc.len(), 3391, "TALK_PROC tem tamanho variável, confirmado à parte");
-
-    let pet_type = data.get("PET_TYPE");
-    assert_eq!(pet_type.len(), 6, "os 6 tipos de pet, achados por sequência exata de IDs");
-
-    let astrolabe_appearance = data.get("ASTROLABE_APPEARANCE_CONFIG");
-    assert_eq!(astrolabe_appearance.len(), 1);
-
-    let equip_make_hole = data.get("EQUIP_MAKE_HOLE_CONFIG");
-    assert_eq!(equip_make_hole.len(), 1, "emenda cabeça-a-cauda com ASTROLABE_APPEARANCE_CONFIG");
 }
 
-/// Documenta uma limitação real, não um comportamento desejável: sem os overrides do
-/// realm 155, o leitor **não** dá erro nas tabelas com quirks conhecidos -- a busca em
-/// janela às vezes acha um alinhamento *diferente*, plausível o bastante pra passar a
-/// pontuação, mas errado (o mesmo risco de falso positivo documentado em
-/// `specs/elements_155/README.md`, seção "Achado de metodologia"). Por isso os overrides
-/// não são opcionais na prática pra este arquivo específico -- são só opcionais na API
-/// (`Option<&RealmOverrides>`) pra realms que ainda não passaram por essa investigação.
-#[test]
-fn test_generic_elements_sem_overrides_da_resultado_diferente_nao_erro() {
-    let path = Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../data/realm_155/config/elements.data"
-    ));
-    if !path.exists() {
-        return;
-    }
-    let bytes = std::fs::read(path).expect("Falha ao ler elements.data do realm 155");
-    let com_overrides = load_elements_data(&bytes, load_overrides_for_version(159).as_ref())
-        .expect("com overrides, o leitor deve carregar");
-    let sem_overrides = load_elements_data(&bytes, None)
-        .expect("mesmo sem overrides, o leitor deve conseguir terminar (ainda que com dado errado nalgumas tabelas)");
+fn nome(r: &pw_data_loader::generic_elements::Record) -> String {
+    r.get("Name").and_then(|v| v.as_text()).unwrap_or_default().to_string()
+}
 
-    let total_com: usize = com_overrides.tables.values().map(|v| v.len()).sum();
-    let total_sem: usize = sem_overrides.tables.values().map(|v| v.len()).sum();
-    assert_ne!(
-        total_com, total_sem,
-        "sem overrides o total NÃO deveria bater com o resultado corrigido por acidente -- se bateu, os overrides pararam de ser necessários (bom sinal, mas confira antes de remover algum)"
-    );
+/// O v156 do `realm_155BR`: as 231 tabelas, com as que antes vinham vazias.
+#[test]
+fn o_v156_do_155br_le_as_231_tabelas() {
+    let Some(bytes) = ler("realm_155BR") else { return };
+    let d = load_elements_data(&bytes).expect("v156 do 155BR deve fechar no último byte");
+
+    assert_eq!(d.version, 156);
+    assert_eq!(d.tables.len(), 231);
+    // O mesmo total que `specs/elements_layouts/pw_elements_reader.py` dá neste arquivo.
+    assert_eq!(d.tables.values().map(|v| v.len()).sum::<usize>(), 69_640);
+    let vazias = d.tables.values().filter(|v| v.is_empty()).count();
+    assert!(vazias <= 5, "{vazias} tabelas vazias (eram 132)");
+
+    for (tabela, n) in [
+        ("EQUIPMENT_ADDON", 2977),
+        ("WEAPON_ESSENCE", 2741),
+        ("SKILLTOME_SUB_TYPE", 22),
+        ("MONSTER_ESSENCE", 8054),
+        ("NPC_ESSENCE", 4761),
+        ("TALK_PROC", 3391),
+        ("FACE_HAIR_ESSENCE", 430),
+        ("CHARRACTER_CLASS_CONFIG", 12),
+        ("PLAYER_ACTION_INFO_CONFIG", 1354),
+        ("MINE_ESSENCE", 1557),
+        ("FASHION_ESSENCE", 3016),
+        ("PET_TYPE", 6),
+        ("RED_PACKET_PAPER_ESSENCE", 5),
+    ] {
+        assert_eq!(d.get(tabela).len(), n, "{tabela}");
+    }
+
+    // O primeiro registro depois de cada bloco de tag, lido pelo nome.
+    assert_eq!(nome(&d.get("SKILLTOME_SUB_TYPE")[0]), "Guerreiro");
+    assert!(nome(&d.get("NPC_WAR_TOWERBUILD_SERVICE")[0]).contains("Construir torre"));
+    assert_eq!(nome(&d.get("MINE_TYPE")[0]), "Tronco");
+}
+
+/// O v159 do `realm_155` (cópia do `elements.data` do cliente EN): as 234 tabelas.
+#[test]
+fn o_v159_do_155_le_as_234_tabelas() {
+    let Some(bytes) = ler("realm_155") else { return };
+    let d = load_elements_data(&bytes).expect("v159 do 155 deve fechar no último byte");
+
+    assert_eq!(d.version, 159);
+    assert_eq!(d.tables.len(), 234);
+    assert_eq!(d.tables.values().map(|v| v.len()).sum::<usize>(), 70_067);
+    for (tabela, n) in [
+        ("EQUIPMENT_ADDON", 2992),
+        ("CHARRACTER_CLASS_CONFIG", 12),
+        ("TALK_PROC", 3391),
+        ("PET_TYPE", 6),
+        ("ASTROLABE_APPEARANCE_CONFIG", 1),
+        ("EQUIP_MAKE_HOLE_CONFIG", 1),
+    ] {
+        assert_eq!(d.get(tabela).len(), n, "{tabela}");
+    }
+    assert_eq!(nome(&d.get("SKILLTOME_SUB_TYPE")[0]), "Blade.");
+}
+
+/// Um byte a mais no fim é erro, não uma tabela a mais lida torta.
+#[test]
+fn arquivo_que_nao_fecha_no_ultimo_byte_e_recusado() {
+    let Some(mut bytes) = ler("realm_155BR") else { return };
+    bytes.push(0);
+    let e = load_elements_data(&bytes).unwrap_err().to_string();
+    assert!(e.contains("terminaram no offset"), "{e}");
 }
