@@ -6377,6 +6377,16 @@ Ordem combinada com o Murillo:
        com os carimbos de `region.sev`/`precinct.sev` daquele mapa. É o mesmo `worldtag` com
        que o cliente abre o mapa (`StartGame(ri.worldtag, …)`, `EC_LoginUIMan.cpp:1048`).
 
+    6. **Monstro ou NPC** — ao subir o 161, o log disse "5 monstros, 1.472 NPCs". O
+       `npcgen.rs` decidia pelo número (`tid >= 10000` é NPC), e no 1.5.5 quase todo
+       monstro novo tem id acima disso (Coelho 12407, Cervo Brilhante 46084). O original
+       decide pelo tipo do registro no `elements.data` (`DT_MONSTER_ESSENCE` /
+       `DT_NPC_ESSENCE`, `gs/npcgenerator.cpp:79` e `:415`); agora o mundo também
+       (`GameDataManager::ids_de_npc`), e o chute só vale para id que nenhuma tabela
+       conhece. Resultado medido no deploy: mapa 161 com **1.269 monstros e 208 NPCs**;
+       mundo 1 com 29.620 monstros e 1.380 NPCs, e o aviso de "910 monstros sem template"
+       do mundo 1 sumiu — eram NPCs de id baixo tratados como monstro.
+
     ### d. O que ainda falta, sabido
 
     * **Trocar de mundo** (o teleporte da missão "Guarda da Terra" para o mundo 1, portal,

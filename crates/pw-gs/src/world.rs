@@ -195,7 +195,26 @@ impl WorldInstance {
                     inst.pos
                 };
 
-                if inst.spawn_type == pw_data_loader::SpawnType::Monster {
+                // Monstro ou NPC, pelo tipo do registro no `elements.data` — ver
+                // `GameDataManager::ids_de_npc`. O `npcgen.rs` chuta pelo número
+                // (`tid >= 10000` é NPC), o que no 1.5.5 transformava em NPC todo monstro
+                // novo: no mapa 161 eram 5 monstros e 1.472 "NPCs", com coelhos, cervos e
+                // esquilos entre eles. O chute só fica para id que nenhuma tabela conhece.
+                let tipo = match inst.spawn_type {
+                    pw_data_loader::SpawnType::Monster | pw_data_loader::SpawnType::Npc
+                        if self.data_manager.monstros.get(inst.template_id).is_some() =>
+                    {
+                        pw_data_loader::SpawnType::Monster
+                    }
+                    pw_data_loader::SpawnType::Monster | pw_data_loader::SpawnType::Npc
+                        if self.data_manager.ids_de_npc.contains(&inst.template_id) =>
+                    {
+                        pw_data_loader::SpawnType::Npc
+                    }
+                    outro => outro,
+                };
+
+                if tipo == pw_data_loader::SpawnType::Monster {
                     let monster_id = inst.instance_id as i64;
 
                     // Os atributos vêm do `MONSTER_ESSENCE` do `elements.data`
@@ -222,7 +241,7 @@ impl WorldInstance {
 
                     self.grid.add_entity(monster_id, monster.position, false);
                     self.monsters.insert(monster_id, (monster, MonsterAi::new()));
-                } else if inst.spawn_type == pw_data_loader::SpawnType::Npc {
+                } else if tipo == pw_data_loader::SpawnType::Npc {
                     // NPCs de serviço (treinador, vendedor, dador de missão, guarda) não
                     // existiam como entidade nenhuma no mundo simulado — só monstros eram
                     // spawnados. Sem isso, `SELECT_TARGET` e `SEVNPC_HELLO` não encontram o

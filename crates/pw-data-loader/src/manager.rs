@@ -141,6 +141,11 @@ pub struct GameDataManager {
     /// É montada **depois** do `aipolicy.data`, porque reproduz a checagem do original:
     /// monstro que aponta para política inexistente tem o campo zerado, com aviso.
     pub monstros: TabelaDeMonstros,
+    /// Os ids do `NPC_ESSENCE`. Junto com [`Self::monstros`], é o que diz se um gerador do
+    /// `npcgen.data` cria monstro ou NPC — o original decide pelo tipo do registro no
+    /// `elements.data` (`DT_MONSTER_ESSENCE`/`DT_NPC_ESSENCE`, `gs/npcgenerator.cpp:79` e
+    /// `:415`), não pelo número do id.
+    pub ids_de_npc: std::collections::HashSet<u32>,
     /// Os atributos por classe de personagem (`CHARRACTER_CLASS_CONFIG`) — ver
     /// [`crate::classes`]. É de onde saem a precisão e a evasão base do jogador. Vazia
     /// no 1.2.6/v7, pelo mesmo motivo de [`Self::monstros`].
@@ -345,6 +350,12 @@ impl GameDataManager {
         // dentro da carga de nenhum dos dois.
         if let Some(g) = &self.elements_generic {
             self.monstros = crate::monstros::carregar(g, Some(&self.aipolicy));
+            self.ids_de_npc = g
+                .get("NPC_ESSENCE")
+                .iter()
+                .filter_map(|r| r.get("ID").and_then(|v| v.as_i32()))
+                .map(|id| id as u32)
+                .collect();
             self.classes = crate::classes::carregar(g);
             self.equipamentos = TabelasDeEquipamento::carregar(g);
             self.precos = crate::precos::carregar(g);
