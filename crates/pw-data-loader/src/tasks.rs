@@ -1,9 +1,52 @@
-use byteorder::{LittleEndian, ReadBytesExt};
+//! Leitor do `tasks.data` — as missões.
+//!
+//! # Formato (autoridade: o arquivo, e não o fonte)
+//!
+//! O arquivo é `TASK_PACK_HEADER` (`magic`, `version`, `item_count`), uma tabela de
+//! `item_count` deslocamentos `u32` e, em cada deslocamento, uma missão de topo gravada por
+//! `ATaskTempl::SaveBinary` (`ElementClient/Task/TaskTempl.cpp`): o bloco fixo
+//! `ATaskTemplFixedData` despejado com `fwrite(this)` sob `#pragma pack(1)`, os vetores
+//! variáveis na ordem de `LoadFixedDataFromBinFile`, os dois prêmios, as quatro escalas de
+//! prêmio, os textos, os cinco diálogos e, recursivamente, as submissões.
+//!
+//! **A tabela de deslocamentos é o gabarito.** Cada missão de topo tem que terminar
+//! exatamente onde a seguinte começa; o leitor recusa o arquivo inteiro na primeira que
+//! não termina. Isso não deixa espaço para layout "quase certo".
+//!
+//! # Por que os tamanhos não são os do fonte
+//!
+//! O fonte do 1.5.5 que temos (`EvolvedPWClient` e `EvolvedPWServer`, idênticos aqui) é da
+//! versão **125** (`_task_templ_cur_version = 125`, `TaskTempl.cpp:5`). Os dois realms 1.5.5
+//! (`realm_155BR` e `realm_155`) trazem arquivos da versão **129**. O `ATaskTemplFixedData`
+//! medido com o MSVC x86 contra o `TaskTempl.h` real (macros do `ElementClient.vcxproj`)
+//! tem 1.087 bytes e o `AWARD_DATA`, 269 — e com isso nenhuma missão fechava.
+//!
+//! A diferença é o sistema de **Lar** (casa do jogador), acrescentado entre a 125 e a 129.
+//! Os campos foram localizados nos próprios dados (histograma de bytes das 14.885 missões:
+//! os `m_bShowBy*`, que nascem `true`, e os ponteiros gravados pelo editor denunciam cada
+//! deslocamento), e os nomes vêm do fonte 1.7.2 (`172Source/cgame/gs/task/TaskTempl.h`),
+//! que é da versão 187 e já tem esses membros na mesma ordem:
+//!
+//! | onde | bytes | membros |
+//! | :--- | ---: | :--- |
+//! | depois de `m_bTowerTask` | 3 | `m_bHomeTask`, `m_bDeliverInHostHome`, `m_bFinishInHostHome` |
+//! | depois de `m_bShowByVIPLevel` | 47 | `m_bPremNoHome` e as faixas de nível/recurso/fábrica/prosperidade do Lar |
+//! | depois de `m_ulTMIconStateID` | 20 | `m_ulTMHomeLevelType`, `m_ulTMReachHomeLevel`, `m_ulTMReachHomeFlourish`, `m_ulHomeItemsWanted`, `m_HomeItemsWanted` |
+//! | fim do `AWARD_DATA` | 21 | `m_iHomeResource[5]`, `m_bCreateHome` |
+//!
+//! E um vetor variável novo: `m_ulHomeItemsWanted × HOME_ITEM_WANTED` (8 bytes), lido
+//! depois dos `m_pLeaveSite` — a mesma posição do 1.7.2.
+//!
+//! Resultado: 1.157 bytes de bloco fixo, 290 de prêmio, e **14.885 de 14.885** missões
+//! (`realm_155BR`) e **14.978 de 14.978** (`realm_155`) terminando no deslocamento certo.
+//!
+//! Outras versões (a 55 do 1.2.6, a 124 do 1.5.3) têm só o cabeçalho lido: o layout delas
+//! não foi medido, e um leitor que adivinha é pior que nenhum.
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Cursor;
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Error, Debug)]
 pub enum TasksError {
@@ -12,43 +55,547 @@ pub enum TasksError {
 
     #[error("Formato de tasks.data inválido")]
     InvalidFormat,
+
+    #[error("tasks.data truncado: faltam bytes na posição {0}")]
+    Truncado(usize),
+
+    #[error(
+        "tasks.data desalinhado: a missão de topo #{indice} (id {id}) começa em {inicio} e \
+         terminou em {fim}, mas a próxima começa em {esperado}"
+    )]
+    Desalinhado { indice: usize, id: u32, inicio: usize, fim: usize, esperado: usize },
 }
 
 pub type Result<T> = std::result::Result<T, TasksError>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Assinatura do `tasks.data` (`TASK_PACK_MAGIC`, `Task/TaskTempl.h:223`).
+pub const MAGICO_DO_TASKS: u32 = 0x9385_8361;
+
+/// A única versão cujo layout foi medido e validado contra a tabela de deslocamentos.
+pub const VERSAO_SUPORTADA: u32 = 129;
+
+/// Um item pedido, entregue ou dado como prêmio (`ITEM_WANTED`, 17 bytes).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ItemDeMissao {
+    pub id: u32,
+    /// `m_bCommonItem` — `false` é item de missão (vai para o inventário de missão).
+    pub comum: bool,
+    pub quantidade: u32,
+    /// `m_fProb` — chance de cair, no pedido; peso, no prêmio.
+    pub probabilidade: f32,
+    /// `m_lPeriod` — validade em segundos (0 = permanente).
+    pub validade: i32,
+}
+
+/// Um monstro a matar (`MONSTER_WANTED`, 30 bytes).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MonstroPedido {
+    pub monstro: u32,
+    pub quantidade: u32,
+    /// Item que o monstro solta para a missão (0 = a missão conta mortes, não itens).
+    pub item_que_cai: u32,
+    pub quantidade_do_item: u32,
+    pub item_comum: bool,
+    pub chance_do_item: f32,
+    /// `m_bKillerLev` — só conta se o matador tiver nível compatível com o monstro.
+    pub nivel_do_matador: bool,
+}
+
+/// Um grupo de itens de prêmio (`AWARD_ITEMS_CAND`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GrupoDeItens {
+    /// `m_bRandChoose` — sorteia um item do grupo pelos pesos; senão dá todos.
+    pub sorteia_um: bool,
+    pub itens: Vec<ItemDeMissao>,
+}
+
+/// O que a missão paga (`AWARD_DATA`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TaskReward {
     pub exp: i64,
     pub sp: i64,
+    /// `m_ulGoldNum`.
     pub money: i64,
     pub reputation: i32,
-    pub items: Vec<(u32, u32)>, // (item_id, count)
+    pub realm_exp: u32,
+    /// `m_ulNewTask` — missão entregue ao terminar esta (0 = nenhuma).
+    pub nova_missao: u32,
+    /// `m_ulTransWldId` + `m_TransPt` — teleporte no fim (mundo 0 = sem teleporte).
+    pub teleporte: Option<(u32, [f32; 3])>,
+    pub grupos_de_itens: Vec<GrupoDeItens>,
+}
+
+impl TaskReward {
+    pub fn tem_algo(&self) -> bool {
+        self.exp != 0
+            || self.sp != 0
+            || self.money != 0
+            || self.reputation != 0
+            || self.realm_exp != 0
+            || self.nova_missao != 0
+            || self.teleporte.is_some()
+            || self.grupos_de_itens.iter().any(|g| !g.itens.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskTemplate {
     pub id: u32,
     pub name: String,
-    pub min_level: i32,
-    pub max_level: i32,
-    pub req_cultivation: i32,
-    pub req_classes: Vec<u8>,
+    /// Missão-mãe, para submissões (`m_ulParent`; `None` na de topo).
+    pub parent: Option<u32>,
+    pub sub_tasks: Vec<u32>,
+    /// `m_ulType` — a categoria que o cliente mostra (diária, principal, ...).
+    pub tipo: u32,
+    /// `m_ulTimeLimit`, em segundos (0 = sem limite).
+    pub limite_de_tempo: u32,
+    /// `m_ulPremise_Lev_Min` / `m_ulPremise_Lev_Max` (0 = sem limite).
+    pub min_level: u32,
+    pub max_level: u32,
+    /// `m_Occupations[m_ulOccupations]` — vazio = qualquer classe.
+    pub req_classes: Vec<u32>,
+    /// `m_ulGender` — 0 qualquer, 1 masculino, 2 feminino.
+    pub genero: u32,
+    /// `m_ulPremise_Tasks[m_ulPremise_Task_Count]`.
     pub pre_tasks: Vec<u32>,
-    pub monster_kills: Vec<(u32, u32)>,        // (monster_id, count)
-    pub item_collections: Vec<(u32, u32, f32)>,// (item_id, count, drop_chance)
+    /// `m_ulMutexTasks[m_ulMutexTaskCount]` — não pode estar com estas ativas.
+    pub missoes_exclusivas: Vec<u32>,
+    /// Itens que o jogador precisa ter para receber (`m_PremItems`).
+    pub itens_exigidos: Vec<ItemDeMissao>,
+    /// Itens que a missão entrega ao ser aceita (`m_GivenItems`).
+    pub itens_entregues: Vec<ItemDeMissao>,
+    /// `m_ulDelvNPC` / `m_ulAwardNPC` (0 = sem NPC).
+    pub npc_que_entrega: u32,
+    pub npc_que_premia: u32,
+    /// `m_enumMethod` — como se cumpre (matar, coletar, falar com NPC, chegar a um lugar...).
+    pub metodo: u32,
+    /// `m_enumFinishType` — como se conclui (automático, no NPC, ...).
+    pub tipo_de_conclusao: u32,
+    pub monster_kills: Vec<MonstroPedido>,
+    pub item_collections: Vec<ItemDeMissao>,
+    /// `m_ulGoldWanted`.
+    pub dinheiro_pedido: u32,
+    /// `m_ulReachLevel` — para missões "chegue ao nível N".
+    pub nivel_a_alcancar: u32,
+    /// `m_ulReachSiteId` — mundo do lugar a alcançar.
+    pub mundo_a_alcancar: u32,
+    /// `m_ulWaitTime`, em segundos, para missões de espera.
+    pub espera: u32,
+    pub entrega_automatica: bool,
+    pub pode_desistir: bool,
+    pub pode_repetir: bool,
+    /// `m_bNeedRecord` — fica registrada como concluída (e por isso não se repete).
+    pub precisa_registro: bool,
+    pub escolhe_um_filho: bool,
+    pub sorteia_um_filho: bool,
+    pub filhos_em_ordem: bool,
+    pub oculta: bool,
+    pub missao_chave: bool,
+    pub descricao: String,
     pub rewards: TaskReward,
+    pub premio_de_falha: TaskReward,
 }
-
-/// Assinatura do `tasks.data` (`TASK_PACK_MAGIC`, `Task/TaskTempl.h:222`).
-pub const MAGICO_DO_TASKS: u32 = 0x9385_8361;
 
 #[derive(Debug, Clone, Default)]
 pub struct TasksData {
     /// O `_task_templ_cur_version` deste arquivo — a **segunda** palavra do cabeçalho.
     pub version: u32,
-    /// Quantas missões o arquivo declara (`item_count` do cabeçalho).
+    /// Quantas missões de topo o arquivo declara (`item_count` do cabeçalho).
     pub quantidade_declarada: u32,
+    /// Todas as missões, de topo e submissões, por id.
     pub tasks: HashMap<u32, TaskTemplate>,
+    /// Os ids das missões de topo, na ordem do arquivo.
+    pub de_topo: Vec<u32>,
+}
+
+// ============================================================================ layout v129
+
+/// Tamanhos da v129 — ver a nota do módulo.
+mod v129 {
+    pub const FIXO: usize = 1157;
+    pub const PREMIO: usize = 290;
+
+    pub const TASK_CHAR: usize = 2;
+    pub const MAX_TASK_NAME_LEN: usize = 30;
+    pub const TASK_TM: usize = 24;
+    pub const TASK_REGION: usize = 24;
+    pub const ITEM_WANTED: usize = 17;
+    pub const MONSTER_WANTED: usize = 30;
+    pub const PLAYER_WANTED: usize = 37;
+    pub const TEAM_MEM_WANTED: usize = 36;
+    pub const MONSTERS_CONTRIB: usize = 16;
+    pub const HOME_ITEM_WANTED: usize = 8;
+    pub const CHANGE_KEY: usize = 9; // long + long + bool
+    /// `TASK_AWARD_MAX_DISPLAY_CHAR_LEN`, `sizeof(TASK_EXPRESSION)`.
+    pub const EXP_LEN: usize = 64;
+    pub const EXPRESSION: usize = 8;
+    pub const EXPRESSAO: usize = EXP_LEN + EXPRESSION * EXP_LEN;
+    pub const TITLE_AWARD: usize = 8;
+    pub const MONSTER_SUMMONED: usize = 16;
+    pub const RANKING_AWARD: usize = 21;
+    pub const TALK_OPTION: usize = 136;
+    pub const MAX_AWARD_SCALES: usize = 5;
+
+    /// Deslocamentos dentro do bloco fixo (medidos no MSVC e corrigidos pelos campos do Lar).
+    pub mod f {
+        pub const ID: usize = 0;
+        pub const NOME: usize = 4;
+        pub const TEM_ASSINATURA: usize = 64;
+        pub const TIPO: usize = 69;
+        pub const LIMITE_DE_TEMPO: usize = 73;
+        pub const TIMETABLE: usize = 105;
+        pub const ESCOLHE_UM: usize = 149;
+        pub const SORTEIA_UM: usize = 150;
+        pub const FILHOS_EM_ORDEM: usize = 151;
+        pub const PODE_DESISTIR: usize = 154;
+        pub const PODE_REPETIR: usize = 155;
+        pub const PRECISA_REGISTRO: usize = 158;
+        pub const DELV_REGION_CNT: usize = 169;
+        pub const ENTER_REGION_CNT: usize = 182;
+        pub const LEAVE_REGION_CNT: usize = 195;
+        pub const ENTREGA_AUTOMATICA: usize = 226;
+        pub const MISSAO_CHAVE: usize = 237;
+        pub const NPC_QUE_ENTREGA: usize = 238;
+        pub const NPC_QUE_PREMIA: usize = 242;
+        pub const CHANGE_KEY_CNT: usize = 250;
+        pub const OCULTA: usize = 267;
+        pub const PQ_EXP_CNT: usize = 289;
+        pub const MONSTER_CONTRIB_CNT: usize = 303;
+        pub const NIVEL_MIN: usize = 333;
+        pub const NIVEL_MAX: usize = 337;
+        pub const PREM_ITEMS: usize = 367;
+        pub const GIVEN_ITEMS: usize = 377;
+        pub const PRE_TASK_CNT: usize = 407;
+        pub const PRE_TASKS: usize = 411; // u32 × 20
+        pub const GENERO: usize = 510;
+        pub const OCCUPATIONS_CNT: usize = 515;
+        pub const OCCUPATIONS: usize = 519; // u32 × 12
+        pub const MUTEX_CNT: usize = 629;
+        pub const MUTEX: usize = 633; // u32 × 5
+        pub const TEAMWORK: usize = 674;
+        pub const TEAM_MEMS_WANTED: usize = 704;
+        pub const PREM_TITLE_TOTAL: usize = 793;
+        pub const METODO: usize = 890;
+        pub const TIPO_DE_CONCLUSAO: usize = 894;
+        pub const PLAYER_WANTED: usize = 898;
+        pub const MONSTER_WANTED: usize = 906;
+        pub const ITEMS_WANTED: usize = 914;
+        pub const DINHEIRO_PEDIDO: usize = 922;
+        pub const REACH_SITE_CNT: usize = 954;
+        pub const MUNDO_A_ALCANCAR: usize = 958;
+        pub const ESPERA: usize = 962;
+        pub const LEAVE_SITE_CNT: usize = 985;
+        pub const EXP_CNT: usize = 1038;
+        pub const TASK_CHAR_CNT: usize = 1050;
+        pub const NIVEL_A_ALCANCAR: usize = 1059;
+        pub const HOME_ITEMS_WANTED: usize = 1091;
+        pub const PAI: usize = 1131;
+    }
+
+    /// Deslocamentos dentro do `AWARD_DATA`.
+    pub mod p {
+        pub const DINHEIRO: usize = 0;
+        pub const EXP: usize = 4;
+        pub const REALM_EXP: usize = 8;
+        pub const NOVA_MISSAO: usize = 13;
+        pub const SP: usize = 17;
+        pub const REPUTACAO: usize = 21;
+        pub const MUNDO_DO_TELEPORTE: usize = 61;
+        pub const PONTO_DO_TELEPORTE: usize = 65;
+        pub const CAND_ITEMS: usize = 89;
+        pub const SUMMONED_MONSTERS: usize = 97;
+        pub const PQ_RANKING_CNT: usize = 156;
+        pub const CHANGE_KEY_CNT: usize = 164;
+        pub const HISTORY_CHANGE_CNT: usize = 180;
+        pub const DISPLAY_KEY_CNT: usize = 205;
+        pub const EXP_CNT: usize = 213;
+        pub const TASK_CHAR_CNT: usize = 225;
+        pub const TITLE_NUM: usize = 253;
+    }
+}
+
+/// Um trecho de bytes com posição, que só falha com `Truncado`.
+struct Leitor<'a> {
+    d: &'a [u8],
+    o: usize,
+}
+
+impl<'a> Leitor<'a> {
+    fn bytes(&mut self, n: usize) -> Result<&'a [u8]> {
+        let fim = self.o.checked_add(n).ok_or(TasksError::Truncado(self.o))?;
+        let s = self.d.get(self.o..fim).ok_or(TasksError::Truncado(self.o))?;
+        self.o = fim;
+        Ok(s)
+    }
+    fn pular(&mut self, n: usize) -> Result<()> {
+        self.bytes(n).map(|_| ())
+    }
+    fn u8(&mut self) -> Result<u8> {
+        Ok(self.bytes(1)?[0])
+    }
+    fn u32(&mut self) -> Result<u32> {
+        Ok(u32_em(self.bytes(4)?, 0))
+    }
+    fn i32(&mut self) -> Result<i32> {
+        Ok(self.u32()? as i32)
+    }
+    /// Um contador que multiplica tamanho: absurdo é arquivo corrompido, não alocação.
+    fn contador(&mut self, n: u32, tamanho: usize) -> Result<usize> {
+        let total = (n as usize).checked_mul(tamanho).ok_or(TasksError::Truncado(self.o))?;
+        if self.o + total > self.d.len() {
+            return Err(TasksError::Truncado(self.o));
+        }
+        Ok(n as usize)
+    }
+}
+
+fn u32_em(b: &[u8], o: usize) -> u32 {
+    u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
+}
+fn f32_em(b: &[u8], o: usize) -> f32 {
+    f32::from_bits(u32_em(b, o))
+}
+
+/// `convert_txt` (`TaskTempl.cpp:629`): cada `wchar_t` vem XOR com o id da missão truncado
+/// para `namechar`. Para no primeiro NUL.
+fn texto(bytes: &[u8], id: u32) -> String {
+    let chave = id as u16;
+    let unidades: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]) ^ chave)
+        .take_while(|&u| u != 0)
+        .collect();
+    String::from_utf16_lossy(&unidades)
+}
+
+fn item(b: &[u8]) -> ItemDeMissao {
+    ItemDeMissao {
+        id: u32_em(b, 0),
+        comum: b[4] != 0,
+        quantidade: u32_em(b, 5),
+        probabilidade: f32_em(b, 9),
+        validade: u32_em(b, 13) as i32,
+    }
+}
+
+fn itens(l: &mut Leitor, n: u32) -> Result<Vec<ItemDeMissao>> {
+    let n = l.contador(n, v129::ITEM_WANTED)?;
+    (0..n).map(|_| l.bytes(v129::ITEM_WANTED).map(item)).collect()
+}
+
+fn lista_u32(b: &[u8], o: usize, n: u32, maximo: usize) -> Vec<u32> {
+    (0..(n as usize).min(maximo)).map(|i| u32_em(b, o + 4 * i)).collect()
+}
+
+/// `LoadAwardDataBin` (`TaskTempl.cpp:1359`).
+fn premio(l: &mut Leitor) -> Result<TaskReward> {
+    use v129::p;
+    let a = l.bytes(v129::PREMIO)?;
+
+    let mut grupos = Vec::new();
+    for _ in 0..l.contador(u32_em(a, p::CAND_ITEMS), 5)? {
+        let sorteia_um = l.u8()? != 0;
+        let n = l.u32()?;
+        grupos.push(GrupoDeItens { sorteia_um, itens: itens(l, n)? });
+    }
+    let invocados = u32_em(a, p::SUMMONED_MONSTERS);
+    if invocados != 0 {
+        l.pular(1 + 4 + 1)?;
+        let n = l.contador(invocados, v129::MONSTER_SUMMONED)?;
+        l.pular(n * v129::MONSTER_SUMMONED)?;
+    }
+    let ranking = u32_em(a, p::PQ_RANKING_CNT);
+    if ranking != 0 {
+        l.pular(1)?;
+        let n = l.contador(ranking, v129::RANKING_AWARD)?;
+        l.pular(n * v129::RANKING_AWARD)?;
+    }
+    for (campo, tamanho) in [
+        (p::TITLE_NUM, v129::TITLE_AWARD),
+        (p::CHANGE_KEY_CNT, v129::CHANGE_KEY),
+        (p::HISTORY_CHANGE_CNT, v129::CHANGE_KEY),
+        (p::DISPLAY_KEY_CNT, 4),
+        (p::EXP_CNT, v129::EXPRESSAO),
+        (p::TASK_CHAR_CNT, v129::TASK_CHAR * v129::EXP_LEN),
+    ] {
+        let n = l.contador(u32_em(a, campo), tamanho)?;
+        l.pular(n * tamanho)?;
+    }
+
+    let mundo = u32_em(a, p::MUNDO_DO_TELEPORTE);
+    Ok(TaskReward {
+        exp: u32_em(a, p::EXP) as i64,
+        sp: u32_em(a, p::SP) as i64,
+        money: u32_em(a, p::DINHEIRO) as i64,
+        reputation: u32_em(a, p::REPUTACAO) as i32,
+        realm_exp: u32_em(a, p::REALM_EXP),
+        nova_missao: u32_em(a, p::NOVA_MISSAO),
+        teleporte: (mundo != 0).then(|| {
+            let o = p::PONTO_DO_TELEPORTE;
+            (mundo, [f32_em(a, o), f32_em(a, o + 4), f32_em(a, o + 8)])
+        }),
+        grupos_de_itens: grupos,
+    })
+}
+
+/// `LoadAwardDataRatioScale` / `LoadAwardDataItemsScale`: o cabeçalho da escala e um
+/// prêmio por degrau. Os degraus não são usados ainda; são lidos para manter o passo.
+fn escala(l: &mut Leitor, cabecalho_extra: usize) -> Result<()> {
+    let degraus = l.u32()?;
+    l.pular(cabecalho_extra)?;
+    for _ in 0..l.contador(degraus, v129::PREMIO)? {
+        premio(l)?;
+    }
+    Ok(())
+}
+
+/// `LoadDescriptionBin` / `LoadTributeBin`: `size_t` de caracteres e o texto.
+fn texto_longo(l: &mut Leitor, id: u32) -> Result<String> {
+    let n = l.u32()?;
+    let n = l.contador(n, v129::TASK_CHAR)?;
+    Ok(texto(l.bytes(n * v129::TASK_CHAR)?, id))
+}
+
+/// Um `talk_proc`: `id_talk`, `text[64]`, as janelas e suas opções. Só é atravessado.
+fn dialogo(l: &mut Leitor) -> Result<()> {
+    l.pular(4 + 64 * v129::TASK_CHAR)?;
+    let janelas = l.i32()?.max(0) as u32;
+    for _ in 0..l.contador(janelas, 16)? {
+        l.pular(8)?;
+        let n = l.i32()?.max(0) as u32;
+        let n = l.contador(n, v129::TASK_CHAR)?;
+        l.pular(n * v129::TASK_CHAR)?;
+        let opcoes = l.i32()?.max(0) as u32;
+        let opcoes = l.contador(opcoes, v129::TALK_OPTION)?;
+        l.pular(opcoes * v129::TALK_OPTION)?;
+    }
+    Ok(())
+}
+
+/// `ATaskTempl::LoadBinary`: uma missão e, recursivamente, as submissões. Devolve o id.
+fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplate>) -> Result<u32> {
+    use v129::f;
+    let b = l.bytes(v129::FIXO)?;
+    let id = u32_em(b, f::ID);
+    let flag = |o: usize| b[o] != 0;
+
+    // LoadFixedDataFromBinFile — a ordem é a do fonte (TaskTempl.cpp:3876-4119).
+    if flag(f::TEM_ASSINATURA) {
+        l.pular(v129::MAX_TASK_NAME_LEN * v129::TASK_CHAR)?;
+    }
+    for (campo, tamanho) in [
+        (f::TIMETABLE, 2 * v129::TASK_TM),
+        (f::CHANGE_KEY_CNT, v129::CHANGE_KEY),
+        (f::PQ_EXP_CNT, v129::EXPRESSAO),
+        (f::MONSTER_CONTRIB_CNT, v129::MONSTERS_CONTRIB),
+        (f::DELV_REGION_CNT, v129::TASK_REGION),
+        (f::ENTER_REGION_CNT, v129::TASK_REGION),
+        (f::LEAVE_REGION_CNT, v129::TASK_REGION),
+    ] {
+        let n = l.contador(u32_em(b, campo), tamanho)?;
+        l.pular(n * tamanho)?;
+    }
+    let itens_exigidos = itens(l, u32_em(b, f::PREM_ITEMS))?;
+    let itens_entregues = itens(l, u32_em(b, f::GIVEN_ITEMS))?;
+    if flag(f::TEAMWORK) {
+        let n = l.contador(u32_em(b, f::TEAM_MEMS_WANTED), v129::TEAM_MEM_WANTED)?;
+        l.pular(n * v129::TEAM_MEM_WANTED)?;
+    }
+    let titulos = u32_em(b, f::PREM_TITLE_TOTAL) as i32;
+    if titulos > 0 {
+        let n = l.contador(titulos as u32, 4)?;
+        l.pular(n * 4)?;
+    }
+    let n = l.contador(u32_em(b, f::MONSTER_WANTED), v129::MONSTER_WANTED)?;
+    let mut monstros = Vec::with_capacity(n);
+    for _ in 0..n {
+        let m = l.bytes(v129::MONSTER_WANTED)?;
+        monstros.push(MonstroPedido {
+            monstro: u32_em(m, 0),
+            quantidade: u32_em(m, 4),
+            item_que_cai: u32_em(m, 8),
+            quantidade_do_item: u32_em(m, 12),
+            item_comum: m[16] != 0,
+            chance_do_item: f32_em(m, 17),
+            nivel_do_matador: m[21] != 0,
+        });
+    }
+    let n = l.contador(u32_em(b, f::PLAYER_WANTED), v129::PLAYER_WANTED)?;
+    l.pular(n * v129::PLAYER_WANTED)?;
+    let coleta = itens(l, u32_em(b, f::ITEMS_WANTED))?;
+    for (campo, tamanho) in [
+        (f::EXP_CNT, v129::EXPRESSAO),
+        (f::TASK_CHAR_CNT, v129::TASK_CHAR * v129::EXP_LEN),
+        (f::REACH_SITE_CNT, v129::TASK_REGION),
+        (f::LEAVE_SITE_CNT, v129::TASK_REGION),
+        (f::HOME_ITEMS_WANTED, v129::HOME_ITEM_WANTED),
+    ] {
+        let n = l.contador(u32_em(b, campo), tamanho)?;
+        l.pular(n * tamanho)?;
+    }
+
+    let rewards = premio(l)?;
+    let premio_de_falha = premio(l)?;
+    let degraus_de_razao = 4 * v129::MAX_AWARD_SCALES;
+    escala(l, degraus_de_razao)?;
+    escala(l, degraus_de_razao)?;
+    escala(l, 4 + 4 * v129::MAX_AWARD_SCALES)?;
+    escala(l, 4 + 4 * v129::MAX_AWARD_SCALES)?;
+
+    let descricao = texto_longo(l, id)?;
+    texto_longo(l, id)?; // ok
+    texto_longo(l, id)?; // no
+    texto_longo(l, id)?; // tributo
+    for _ in 0..5 {
+        dialogo(l)?;
+    }
+
+    let mut tarefa = TaskTemplate {
+        id,
+        name: texto(&b[f::NOME..f::NOME + v129::MAX_TASK_NAME_LEN * v129::TASK_CHAR], id),
+        parent: pai.or_else(|| Some(u32_em(b, f::PAI)).filter(|&p| p != 0)),
+        sub_tasks: Vec::new(),
+        tipo: u32_em(b, f::TIPO),
+        limite_de_tempo: u32_em(b, f::LIMITE_DE_TEMPO),
+        min_level: u32_em(b, f::NIVEL_MIN),
+        max_level: u32_em(b, f::NIVEL_MAX),
+        req_classes: lista_u32(b, f::OCCUPATIONS, u32_em(b, f::OCCUPATIONS_CNT), 12),
+        genero: u32_em(b, f::GENERO),
+        pre_tasks: lista_u32(b, f::PRE_TASKS, u32_em(b, f::PRE_TASK_CNT), 20),
+        missoes_exclusivas: lista_u32(b, f::MUTEX, u32_em(b, f::MUTEX_CNT), 5),
+        itens_exigidos,
+        itens_entregues,
+        npc_que_entrega: u32_em(b, f::NPC_QUE_ENTREGA),
+        npc_que_premia: u32_em(b, f::NPC_QUE_PREMIA),
+        metodo: u32_em(b, f::METODO),
+        tipo_de_conclusao: u32_em(b, f::TIPO_DE_CONCLUSAO),
+        monster_kills: monstros,
+        item_collections: coleta,
+        dinheiro_pedido: u32_em(b, f::DINHEIRO_PEDIDO),
+        nivel_a_alcancar: u32_em(b, f::NIVEL_A_ALCANCAR),
+        mundo_a_alcancar: u32_em(b, f::MUNDO_A_ALCANCAR),
+        espera: u32_em(b, f::ESPERA),
+        entrega_automatica: flag(f::ENTREGA_AUTOMATICA),
+        pode_desistir: flag(f::PODE_DESISTIR),
+        pode_repetir: flag(f::PODE_REPETIR),
+        precisa_registro: flag(f::PRECISA_REGISTRO),
+        escolhe_um_filho: flag(f::ESCOLHE_UM),
+        sorteia_um_filho: flag(f::SORTEIA_UM),
+        filhos_em_ordem: flag(f::FILHOS_EM_ORDEM),
+        oculta: flag(f::OCULTA),
+        missao_chave: flag(f::MISSAO_CHAVE),
+        descricao,
+        rewards,
+        premio_de_falha,
+    };
+
+    let filhos = l.i32()?.max(0) as u32;
+    let filhos = l.contador(filhos, v129::FIXO)?;
+    for _ in 0..filhos {
+        tarefa.sub_tasks.push(missao(l, Some(id), saida)?);
+    }
+    saida.insert(id, tarefa);
+    Ok(id)
 }
 
 impl TasksData {
@@ -71,44 +618,95 @@ impl TasksData {
     /// Isto era lido como "a primeira palavra é a versão", o que devolvia o mágico
     /// `0x93858361` como se fosse número de versão.
     pub fn ler_cabecalho(data: &[u8]) -> Result<(u32, u32)> {
-        let mut cursor = Cursor::new(data);
-        let magico = cursor.read_u32::<LittleEndian>()?;
-        if magico != MAGICO_DO_TASKS {
+        if data.len() < 12 {
             return Err(TasksError::InvalidFormat);
         }
-        let versao = cursor.read_u32::<LittleEndian>()?;
-        let quantidade = cursor.read_u32::<LittleEndian>()?;
-        Ok((versao, quantidade))
+        if u32_em(data, 0) != MAGICO_DO_TASKS {
+            return Err(TasksError::InvalidFormat);
+        }
+        Ok((u32_em(data, 4), u32_em(data, 8)))
     }
 
+    /// Lê o arquivo inteiro. Versão sem layout medido devolve só o cabeçalho (com aviso);
+    /// versão suportada que não fecha com a tabela de deslocamentos é erro.
     pub fn load_from_bytes(data: &[u8]) -> Result<Self> {
         let (version, quantidade_declarada) = Self::ler_cabecalho(data)?;
-        let mut cursor = Cursor::new(data);
-        cursor.set_position(12);
-
         info!(
             "Carregando tasks.data: _task_templ_cur_version = {}, {} missões declaradas",
             version, quantidade_declarada
         );
+        let mut tasks_data = Self { version, quantidade_declarada, ..Default::default() };
 
-        let mut tasks_data = Self {
-            version,
-            quantidade_declarada,
-            tasks: HashMap::new(),
-        };
+        if version != VERSAO_SUPORTADA {
+            warn!(
+                "tasks.data v{}: layout não medido (só a v{} é lida); nenhuma missão carregada",
+                version, VERSAO_SUPORTADA
+            );
+            return Ok(tasks_data);
+        }
 
-        tasks_data.parse_tasks(&mut cursor)?;
-        info!("tasks.data carregado com sucesso: {} missões registradas", tasks_data.tasks.len());
+        let n = quantidade_declarada as usize;
+        let tabela = data.get(12..12 + 4 * n).ok_or(TasksError::Truncado(12))?;
+        let inicios: Vec<usize> = (0..n).map(|i| u32_em(tabela, 4 * i) as usize).collect();
 
+        for (indice, &inicio) in inicios.iter().enumerate() {
+            let esperado = inicios.get(indice + 1).copied().unwrap_or(data.len());
+            let mut l = Leitor { d: data, o: inicio };
+            let id = missao(&mut l, None, &mut tasks_data.tasks)?;
+            if l.o != esperado {
+                return Err(TasksError::Desalinhado { indice, id, inicio, fim: l.o, esperado });
+            }
+            tasks_data.de_topo.push(id);
+        }
+
+        info!(
+            "tasks.data carregado: {} missões de topo, {} ao todo com as submissões",
+            tasks_data.de_topo.len(),
+            tasks_data.tasks.len()
+        );
         Ok(tasks_data)
-    }
-
-    fn parse_tasks(&mut self, _cursor: &mut Cursor<&[u8]>) -> Result<()> {
-        // Leitura tolerante de missões
-        Ok(())
     }
 
     pub fn get_task(&self, task_id: u32) -> Option<&TaskTemplate> {
         self.tasks.get(&task_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn o_texto_desfaz_o_xor_pelo_id() {
+        let id = 35860u32;
+        let original = "Olá";
+        let bytes: Vec<u8> = original
+            .encode_utf16()
+            .chain([0u16, 0u16])
+            .flat_map(|u| (u ^ id as u16).to_le_bytes())
+            .collect();
+        assert_eq!(texto(&bytes, id), original);
+    }
+
+    #[test]
+    fn versao_sem_layout_so_le_o_cabecalho() {
+        let mut d = Vec::new();
+        d.extend(MAGICO_DO_TASKS.to_le_bytes());
+        d.extend(55u32.to_le_bytes());
+        d.extend(3u32.to_le_bytes());
+        let t = TasksData::load_from_bytes(&d).unwrap();
+        assert_eq!((t.version, t.quantidade_declarada), (55, 3));
+        assert!(t.tasks.is_empty());
+    }
+
+    #[test]
+    fn arquivo_truncado_e_erro_e_nao_panico() {
+        let mut d = Vec::new();
+        d.extend(MAGICO_DO_TASKS.to_le_bytes());
+        d.extend(VERSAO_SUPORTADA.to_le_bytes());
+        d.extend(1u32.to_le_bytes());
+        d.extend(16u32.to_le_bytes());
+        d.extend([0u8; 100]);
+        assert!(matches!(TasksData::load_from_bytes(&d), Err(TasksError::Truncado(_))));
     }
 }

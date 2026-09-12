@@ -6067,8 +6067,8 @@ Ordem combinada com o Murillo:
     | arquivo | estado medido | o que falta |
     | :--- | :--- | :--- |
     | `elements.data` | 99 de 231 tabelas no v156 do 155BR (item 41f) | refazer as âncoras deste arquivo |
-    | `tasks.data` | **nenhuma missão lida** — `TasksData::parse_tasks` é um esboço vazio (`tasks.rs:112-115`, "Leitura tolerante de missões", `Ok(())`) | escrever o leitor |
-    | `npcgen.data` | posições e contagens das áreas de monstro lidas; recurso sem dispersão e com teto inventado (b12) | ler os campos descartados |
+    | `tasks.data` | ~~nenhuma missão lida~~ → **resolvido no item 45**: 14.885/14.885 missões de topo fecham byte a byte | — |
+    | `npcgen.data` | ~~recurso sem dispersão e com teto inventado (b12)~~ → **resolvido** (commit `931b39d`): tipo de área, `fOffsetTrn`, extensão do recurso, sem tetos | — |
 
     O `tasks.data` é o maior buraco dos três: sem ele não há missão inicial, e as missões são
     o que dá experiência, alma e moedas a um personagem novo. O formato tem autoridade
@@ -6080,13 +6080,92 @@ Ordem combinada com o Murillo:
 
     ### e. A ordem
 
-    1. **`npcgen.data`** — o menor, e resolve (12) e parte de (11).
-    2. **`tasks.data`** — o leitor inteiro, conferido pelos deslocamentos do cabeçalho.
+    1. ~~**`npcgen.data`**~~ — feito (`931b39d`).
+    2. ~~**`tasks.data`**~~ — feito (item 45).
     3. **`elements.data` v156** — as âncoras do 155BR.
     4. **Acesso à VM 1.2.6**, e com ela os roteiros de captura de (c1) para 6, 7, 8, 9, 10
        e 13, e a leitura dos moldes para 1, 3, 5, 15 e 16.
     5. Com os dados e o gabarito na mão: combate, experiência, alma, moedas, recarga,
        regeneração, reviver, missões iniciais.
+
+45. **Sessão 2026-09-12 (continuação): o `tasks.data` lido inteiro — e por que o fonte não
+    bastava.**
+
+    ### a. O resultado
+
+    `crates/pw-data-loader/src/tasks.rs` deixou de ser um esboço (`parse_tasks` devolvia
+    `Ok(())`). O leitor lê cada missão de topo e as submissões, e **recusa o arquivo** se
+    qualquer missão de topo não terminar exatamente no deslocamento que a tabela do
+    cabeçalho dá para a seguinte (`TasksError::Desalinhado`). Medido:
+
+    | realm | versão | missões de topo | com submissões |
+    | :--- | ---: | ---: | ---: |
+    | `realm_155BR` | 129 | **14.885 / 14.885** | 31.837 |
+    | `realm_155` | 129 | **14.978 / 14.978** | 31.979 |
+
+    Os valores conferem com o jogo: a missão 1173 "Exposição de Talento" (Guerreiro,
+    nível 1-20, NPC 3517, prêmio 75 exp / 20 alma / 90 moedas) tem as submissões 1175
+    "Matar Insetos de Jade" — **10 × monstro 16**, o mesmo Inseto Esmeralda do teste de
+    combate — e 1176, cada uma pagando 5 × item 8617. O realm em inglês tem os mesmos
+    números com o texto em inglês ("Emerald Qingfu"). Testes: `tests/tasks_do_realm.rs` e
+    três unitários em `tasks.rs`.
+
+    ### b. Por que o layout do fonte não fechava
+
+    O fonte 1.5.5 que temos (cliente e servidor, idênticos neste ponto) é da versão de
+    missão **125** (`_task_templ_cur_version = 125`, `TaskTempl.cpp:5`). Os arquivos dos
+    dois realms são **129**. Compilei uma sonda com o MSVC x86 e as macros reais do
+    `ElementClient.vcxproj` (`WIN32;_ELEMENTCLIENT;_USE_32BIT_TIME_T;VIP;...`) para medir
+    `ATaskTemplFixedData` sob `#pragma pack(1)`: 1.087 bytes; `AWARD_DATA`: 269. Com eles,
+    zero missões fechavam.
+
+    O que faltava foi achado **nos dados**, não deduzido: um histograma de bytes não-nulos
+    por deslocamento sobre as 14.885 missões. Os `m_bShowBy*` nascem `true` no construtor,
+    e os ponteiros que o editor gravou junto com o `fwrite(this)` têm cara de ponteiro de
+    heap — os dois denunciam onde cada membro de fato está. O deslocamento apareceu em três
+    saltos (+3, +47, +20) e mais 21 bytes no prêmio. Os nomes vieram do fonte **1.7.2**
+    (`F:\PW\1.7.2\172Source\cgame\gs\task\TaskTempl.h`, versão 187), que tem os membros
+    novos na mesma ordem — é o sistema de **Lar** (casa do jogador):
+
+    | onde | bytes | membros (nomes do 1.7.2) |
+    | :--- | ---: | :--- |
+    | depois de `m_bTowerTask` | 3 | `m_bHomeTask`, `m_bDeliverInHostHome`, `m_bFinishInHostHome` |
+    | depois de `m_bShowByVIPLevel` | 47 | `m_bPremNoHome`, faixas de nível/recurso/fábrica/prosperidade do Lar e seus `ShowBy` |
+    | depois de `m_ulTMIconStateID` | 20 | `m_ulTMHomeLevelType`, `m_ulTMReachHomeLevel`, `m_ulTMReachHomeFlourish`, `m_ulHomeItemsWanted`, `m_HomeItemsWanted` |
+    | fim do `AWARD_DATA` | 21 | `m_iHomeResource[5]`, `m_bCreateHome` |
+
+    Mais um vetor variável: `m_ulHomeItemsWanted × HOME_ITEM_WANTED` (8 bytes), depois dos
+    `m_pLeaveSite`. Total: bloco fixo **1.157**, prêmio **290**.
+
+    **A lição vale para o `elements.data` também:** o fonte é o ponto de partida, a
+    tabela de deslocamentos do próprio arquivo é o juiz. O `elements.data` v156 do 155BR
+    (item 41f, 132 tabelas vazias) provavelmente tem a mesma história — campos acrescentados
+    entre a versão do fonte e a do arquivo.
+
+    ### c. O que o leitor extrai, e o que só atravessa
+
+    Extrai: id, nome e descrição (XOR pelo id, `convert_txt`), missão-mãe e submissões,
+    tipo, limite de tempo, faixa de nível, classes, gênero, pré-requisitos, missões
+    exclusivas, itens exigidos e entregues, NPC que entrega e que premia, método e tipo de
+    conclusão, monstros a matar (com o item que cai), itens a coletar, dinheiro pedido,
+    nível/mundo a alcançar, espera, as flags de repetição/desistência/registro/entrega
+    automática/escolha de filho, e os dois prêmios (exp, alma, moedas, reputação, exp de
+    reino, missão seguinte, teleporte, grupos de itens com sorteio).
+
+    Atravessa sem guardar: diálogos, expressões de variável global, regiões, prêmios por
+    escala de tempo/item, requisitos de equipe/título/Lar. Ficam para quando o sistema de
+    missões precisar deles.
+
+    Versões sem layout medido (a 55 do 1.2.6, a 124 do 1.5.3) leem só o cabeçalho, com
+    aviso — não se adivinha layout.
+
+    ### d. O que isto destrava, e o que ainda não
+
+    Nada no mundo usa as missões ainda. O que o leitor já mostrou para o próximo passo
+    ("missões iniciais"): as missões de nível 1 de classe única são "Exposição de Talento"
+    (Guerreiro 1173, Mago 1198) e as "<Classe> Eso" (30708-30717, nível 1-1, sem NPC). A
+    missão inicial de cada classe no 1.5.5 ainda precisa ser confirmada — pelo
+    `task_npc.data`/NPC de entrega no mapa inicial, ou pelo servidor 1.5.5 original.
 
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
