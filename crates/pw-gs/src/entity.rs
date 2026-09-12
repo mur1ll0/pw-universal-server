@@ -59,7 +59,17 @@ pub struct PlayerEntity {
     /// `crit_damage_bonus`, em pontos percentuais somados ao dobro base do crítico.
     pub crit_damage_bonus: i32,
     pub attack_speed: f32,
+    /// `run_speed`, em m/s. Ver [`PlayerEntity::do_personagem`] para a fonte — **não** é
+    /// o `ptemplate.conf`.
     pub move_speed: f32,
+    pub walk_speed: f32,
+    pub swim_speed: f32,
+    pub fly_speed: f32,
+    /// `attack_range`, em metros.
+    pub attack_range: f32,
+    /// `hp_gen` / `mp_gen` — quanto regenera por intervalo fora de combate.
+    pub hp_gen: i32,
+    pub mp_gen: i32,
     pub crit_rate: f32,
     
     pub position: Vector3,
@@ -290,8 +300,55 @@ impl PlayerEntity {
             attack_degree: 0,
             defend_degree: 0,
             crit_damage_bonus: 0,
-            attack_speed: base.map(|b| b.ataque_em_ticks as f32 / 20.0).unwrap_or(1.0),
-            move_speed: base.map(|b| b.velocidade_correndo).unwrap_or(3.0),
+            // # Velocidade, cadência, alcance e regeneração saem do `elements.data`
+            //
+            // **Não** do `ptemplate.conf`. O original lê os dois arquivos, e o segundo
+            // sobrescreve o primeiro: `player_template::__LoadDataFromDataMan`
+            // (`gs/playertemplate.cpp:250-301`) roda depois da leitura do `.conf` e grava,
+            // do `CHARRACTER_CLASS_CONFIG`, `walk_speed`, `run_speed`, `swim_speed`,
+            // `flight_speed`, `attack_speed * 20`, `attack_range`, `hp_gen` e `mp_gen` por
+            // cima do que o `.conf` tinha posto. Os valores de velocidade do `.conf` são
+            // mortos no original.
+            //
+            // Até 2026-09-12 lia-se o `.conf`: 2,8 m/s para o Bárbaro. O `elements.data`
+            // diz **4,9** — o mesmo número que a captura do servidor 1.2.6 funcional traz
+            // no `OWN_EXT_PROP` (`_sync/capturas/full_interno.pcap`, andar 2,0, correr 4,9,
+            // nadar 3,0, voar 5,0) e o mesmo que o Murillo mediu em jogo naquela VM.
+            //
+            // O `.conf` fica como reserva para realm sem o `CHARRACTER_CLASS_CONFIG` (o
+            // 1.2.6/v7, que o leitor genérico ainda não cobre).
+            attack_speed: cfg
+                .map(|c| c.ataque_em_ticks() as f32 / 20.0)
+                .or_else(|| base.map(|b| b.ataque_em_ticks as f32 / 20.0))
+                .unwrap_or(1.0),
+            move_speed: cfg
+                .map(|c| c.velocidade_correndo)
+                .or_else(|| base.map(|b| b.velocidade_correndo))
+                .unwrap_or(3.0),
+            walk_speed: cfg
+                .map(|c| c.velocidade_andando)
+                .or_else(|| base.map(|b| b.velocidade_andando))
+                .unwrap_or(1.5),
+            swim_speed: cfg
+                .map(|c| c.velocidade_nadando)
+                .or_else(|| base.map(|b| b.velocidade_nadando))
+                .unwrap_or(2.0),
+            fly_speed: cfg
+                .map(|c| c.velocidade_voando)
+                .or_else(|| base.map(|b| b.velocidade_voando))
+                .unwrap_or(4.0),
+            attack_range: cfg
+                .map(|c| c.alcance_de_ataque)
+                .or_else(|| base.map(|b| b.alcance_de_ataque))
+                .unwrap_or(1.4),
+            hp_gen: cfg
+                .map(|c| c.regeneracao_de_vida)
+                .or_else(|| base.map(|b| b.regeneracao_de_vida))
+                .unwrap_or(1),
+            mp_gen: cfg
+                .map(|c| c.regeneracao_de_mana)
+                .or_else(|| base.map(|b| b.regeneracao_de_mana))
+                .unwrap_or(1),
             // `crit_rate` está em pontos percentuais na tabela e em fração na entidade.
             crit_rate: cfg.map(|c| c.chance_de_critico as f32 / 100.0).unwrap_or(0.0),
             position: p.position,

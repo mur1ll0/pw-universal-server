@@ -3084,8 +3084,10 @@ impl BusServer {
                     (p.vitality, p.energy, p.strength, p.agility),
                     p.max_hp,
                     p.max_mp,
-                    (2, 2),
-                    (1.5, p.move_speed, 2.0, 4.0),
+                    // Regeneração e as quatro velocidades, do `CHARRACTER_CLASS_CONFIG` —
+                    // eram `(2, 2)` e `(1.5, _, 2.0, 4.0)` escritos aqui, para toda classe.
+                    (p.hp_gen, p.mp_gen),
+                    (p.walk_speed, p.move_speed, p.swim_speed, p.fly_speed),
                     (
                         p.attack_rate,
                         p.attack_min,
@@ -3095,7 +3097,7 @@ impl BusServer {
                         // mesmo dado em segundos. Mandar os segundos crus (2, para o
                         // Sacerdote) declarava um intervalo de 0,1 s.
                         (p.attack_speed * 20.0).round() as i32,
-                        1.4,
+                        p.attack_range,
                     ),
                     (p.def_phys, p.armor),
                 )

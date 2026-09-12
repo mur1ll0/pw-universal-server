@@ -144,6 +144,39 @@ fn main() {
         return;
     }
 
+    // Despeja o corpo de um **subcomando** do mundo 3D — o que está dentro do envelope. É o
+    // modo que faz da captura do 1.2.6 um gabarito campo a campo. `--do-cliente` troca o
+    // sentido (padrão: o que o servidor manda).
+    if let Some(i) = args.iter().position(|a| a == "--subcomando") {
+        let alvo: u16 = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let limite: usize = args
+            .iter()
+            .position(|a| a == "--limite")
+            .and_then(|j| args.get(j + 1))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3);
+        let para_o_cliente = !args.iter().any(|a| a == "--do-cliente");
+        for f in &fluxos {
+            let achados = gnet::subcomandos_de(
+                &f.bytes,
+                envelopes,
+                f.origem.porta == porta,
+                alvo,
+                para_o_cliente,
+                limite,
+            );
+            for (n, p) in achados.iter().enumerate() {
+                println!("## {} → {} — subcomando {alvo} #{n} ({} bytes)", f.origem, f.destino, p.len());
+                for (l, pedaco) in p.chunks(16).enumerate() {
+                    let hex: Vec<String> = pedaco.iter().map(|b| format!("{b:02x}")).collect();
+                    println!("{:04x}  {}", l * 16, hex.join(" "));
+                }
+                println!();
+            }
+        }
+        return;
+    }
+
     // Despeja os payloads crus de um opcode, para leitura à mão dos campos.
     if let Some(i) = args.iter().position(|a| a == "--despejar") {
         let alvo: u32 = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(0);

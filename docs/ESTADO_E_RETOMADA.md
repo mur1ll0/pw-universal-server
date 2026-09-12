@@ -5894,6 +5894,200 @@ Ordem combinada com o Murillo:
       é o `ptemplate.conf`. Quando o molde passar a ser editável pelo painel, é uma decisão
       a tomar: ou o molde vence, ou as colunas saem.
 
+44. **Sessão 2026-09-12: o teste do POTATO, a VM 1.2.6 como gabarito, e o plano para a
+    jogabilidade básica.**
+
+    O Murillo criou o POTATO (Bárbaro, realm 155BR), jogou, e comparou lado a lado com o
+    servidor 1.2.6 funcional que roda na VM `192.168.1.200`. Este item enumera **cada**
+    ponto relatado, com o estado de cada um, responde se aquela VM serve para alguma coisa
+    (serve, e muito), e registra o plano.
+
+    ### a. Os pontos relatados, um por um
+
+    Estado: **corrigido** (com prova), **diagnosticado** (causa conhecida, correção por
+    fazer) ou **a investigar** (causa ainda não medida).
+
+    **No 1.5.5, com o POTATO:**
+
+    | # | Relato | Estado |
+    | ---: | :--- | :--- |
+    | 1 | Nasceu no "Campo da Expedição", que não é área inicial | diagnosticado — (b1) |
+    | 2 | Corre a 2,8 m/s; na VM 1.2.6 são 4,9 | **corrigido** — (b2) |
+    | 3 | Atributos CON 25, FOR 15, INT 5, DES 5 — sem problema | registrado — (b3) |
+    | 4 | Arma inicial e habilidade inicial corretas | confirmado |
+    | 5 | Na "Campo da Passagem Norte" (área inicial dos Selvagens no 1.2.6) os monstros são nível 20; no 1.5.5 a área inicial deve ser outro mapa | a investigar — (b5) |
+    | 6 | A animação de ataque não executa, e o monstro atacado não reage | a investigar |
+    | 7 | O monstro persegue rápido demais e **por baixo da terra** | diagnosticado em parte — (b7) |
+    | 8 | Habilidades sem recarga: dá para conjurar sem parar | a investigar |
+    | 9 | "Reviver na cidade mais próxima" revive no mesmo lugar, na hora | a investigar |
+    | 10 | Vida e mana não regeneram sozinhas | a investigar — (b10) |
+    | 11 | Um NPC (Guia) flutua acima do chão | a investigar |
+    | 12 | O Eufórbio (matéria) nasce todo no mesmo ponto | diagnosticado — (b12) |
+    | 13 | Aparece "+100 de experiência e +23 de alma", mas nada é gravado | a investigar |
+
+    **Na VM 1.2.6, para comparação:**
+
+    | # | Observação | Estado |
+    | ---: | :--- | :--- |
+    | 14 | Os quatro atributos começam em 5; corre a 4,9 m/s | explicado — (b2), (b3) |
+    | 15 | Ao nascer aparece um guia do jogo | a investigar — (b15) |
+    | 16 | A barra de atalhos vem preenchida: F1 ataque, F2 habilidade inicial, F3 segunda habilidade (quando a classe tem duas), F4 pegar item, F5 meditar, F8 Portal da Cidade | a investigar — (b15) |
+
+    **O que foi pedido:** combate básico inteiro, experiência, alma, moedas, animações
+    certas, habilidades com animação, conjuração e recarga certas, mapa inicial e missões
+    iniciais — começando por deixar `elements.data`, `tasks.data` e `npcgen.data` a 100%.
+
+    ### b. O que já se sabe de cada um
+
+    **(b1) O nascimento.** No servidor original a posição de nascimento, os itens e o
+    equipamento vêm de um personagem-molde por classe gravado no banco (item 43a: o
+    `gamedbd/clsconfig`, importado para os roleids 16 a 31). O nosso molde usa coordenadas
+    antigas que ninguém conferiu — e a dos Selvagens é o "Campo da Expedição". **A VM 1.2.6
+    tem esses moldes já importados no `gamedbd` dela** — ver (c).
+
+    **(b2) A velocidade — corrigida, e a causa era leitura errada da hierarquia dos
+    arquivos.** O original lê o `ptemplate.conf` e **depois** sobrescreve oito campos com o
+    `CHARRACTER_CLASS_CONFIG` do `elements.data`:
+
+    ```cpp
+    // gs/playertemplate.cpp:293-301, dentro de __LoadDataFromDataMan
+    _template_list[cls].walk_speed   = config.walk_speed;
+    _template_list[cls].run_speed    = config.run_speed;
+    _template_list[cls].swim_speed   = config.swim_speed;
+    _template_list[cls].flight_speed = config.fly_speed;
+    _template_list[cls].attack_speed = (int)(config.attack_speed*20);
+    _template_list[cls].attack_range = config.attack_range;
+    _template_list[cls].hp_gen       = config.hp_gen;
+    _template_list[cls].mp_gen       = config.mp_gen;
+    ```
+
+    As velocidades do `.conf` são **valores mortos** no original. O item 43g afirmou que 2,8
+    era "o que a configuração do 1.5.5 manda" — estava errado: os três `ptemplate.conf`
+    concordavam entre si, e nenhum deles é o que vale.
+
+    Três fontes independentes fecham o número, sem nenhuma suposição:
+
+    | fonte | andar | correr | nadar | voar |
+    | :--- | ---: | ---: | ---: | ---: |
+    | `CHARRACTER_CLASS_CONFIG` do Bárbaro (155BR **e** 155) | 2,0 | **4,9** | 3,0 | 5,0 |
+    | `OWN_EXT_PROP` capturado na VM 1.2.6 | 2,0 | **4,9** | 3,0 | 5,0 |
+    | o Murillo em jogo, na VM | | **4,9** | | |
+
+    O personagem passou a tirar do `elements.data` as quatro velocidades, a cadência de
+    ataque (0,8 s → 16 ticks, e não os 30 do `.conf`), o alcance (2,5 m) e a regeneração
+    (`hp_gen = 4`, `mp_gen = 1` para o Bárbaro). O `OWN_EXT_PROP` deixou de mandar
+    `(2, 2)` e `(1,5; _; 2,0; 4,0)` escritos no código. Prova:
+    `classes_tests::as_velocidades_do_barbaro_sao_as_do_elements_e_nao_as_do_ptemplate`.
+
+    **(b3) Os atributos.** A captura da VM 1.2.6 mostra um personagem de nível 1 com
+    **5/5/5/5 e 5 pontos livres** (`status_point`), e o fonte do original trata 5 como piso
+    de cada atributo (`player_template::__Rollback`, `gs/playertemplate.cpp:596-640`:
+    `vit = 5 - data.vitality`, com o comentário "3->5, fix bug"). O `ptemplate.conf` do
+    1.5.5 distribui por classe (25/15/5/5 para o Bárbaro). O Murillo aceita a distribuição
+    do 1.5.5, então fica como está — mas **a origem dos atributos iniciais ainda não está
+    provada**: é o molde de (b1) que decide no original, e a VM responde isso.
+
+    **(b5) A área inicial com monstros de nível 20.** Hipótese do Murillo: no 1.5.5 os
+    personagens novos nascem noutro mapa, com área de evolução até o 20. É verificável sem
+    palpite — o molde de (b1) tem o `worldtag` de nascimento, e o `gs.conf` do 1.5.5 lista
+    26 mapas com `base_path` (item 42c).
+
+    **(b7) Monstro rápido e por baixo da terra.** Duas causas prováveis, medíveis: a IA move
+    o monstro em linha reta em 3D sem assentar a altura no terreno — o mapa de alturas
+    existe desde o item 42, mas a IA não o consulta —, e o `speed` do `OBJECT_MOVE` sai como
+    `velocidade × 100`, enquanto o original monta `(unsigned short)(run_speed*256.0f+0.5f)`
+    (`gs/petnpc.cpp:350`).
+
+    **(b10) Regeneração.** Os valores certos agora existem na entidade (`hp_gen`,
+    `mp_gen`); falta saber se há laço de regeneração no tick e com que intervalo.
+
+    **(b12) O Eufórbio amontoado.** Causa lida no código: a área de recurso do `npcgen.data`
+    tem `ext_x`/`ext_z`, e o leitor os **descarta** (`npcgen.rs:301-302`, `_ext_x`/`_ext_z`)
+    e põe toda instância na mesma coordenada. Descarta também o `fHeiOff` de cada gerador,
+    a direção e o ângulo. E há dois tetos inventados: `count.min(5)` para recurso e
+    `count.min(10)` para monstro.
+
+    **(b15) O guia e a barra de atalhos.** A barra é configuração de interface que o
+    servidor guarda por personagem (o `config_data` do `GRoleBase` e o par
+    `GetUIConfig`/`SetUIConfig`). No personagem novo, ela vem de algum lugar — o molde de
+    (b1) é o candidato natural. O guia pode ser missão de nascimento, e aí depende de (d).
+
+    ### c. A VM 1.2.6 serve para alguma coisa?
+
+    **Serve, e é o melhor instrumento que o projeto tem hoje.** A prova está nesta mesma
+    sessão: a dúvida da velocidade, que já tinha consumido duas sessões, foi resolvida em
+    minutos lendo uma captura que aquela VM gerou em 2026-09-01.
+
+    O que ela é, exatamente: um servidor **completo e funcional**, com todos os daemons e o
+    banco, em que o comportamento pode ser observado de dentro. Isso responde o tipo de
+    pergunta que nem o fonte nem o IR respondem sozinhos — *o que um servidor de verdade
+    manda neste momento?*
+
+    Quatro usos, do mais barato ao mais caro:
+
+    1. **Capturas como gabarito campo a campo.** O elo `gs → glinkd` (porta 29301) passa em
+       claro, antes da cifra. O `pw-pcapdiff` ganhou nesta sessão o modo `--subcomando N`,
+       que abre o envelope e despeja o corpo de um comando do mundo 3D:
+
+       ```bash
+       cargo run -p pw-pcapdiff -- _sync/capturas/full_interno.pcap --interno --subcomando 50 --limite 2
+       ```
+
+       Com isso, cada ponto de (a) vira um roteiro de captura: morrer e reviver na cidade
+       (9), matar um monstro e ver `RECEIVE_EXP` (13), conjurar duas vezes seguidas e ver o
+       que o servidor responde à segunda (8), ficar parado e ver a regeneração (10).
+    2. **Os moldes de classe, já importados.** O `gamedbd` da VM tem os roleids 16 a 31 com
+       nascimento, itens, equipamento e — provavelmente — a barra de atalhos (b1, b3, b15,
+       b16). Ler o banco dela resolve de uma vez o que o `clsconfig` binário não deixou.
+    3. **Os arquivos de configuração dela** (`gs.conf`, `ptemplate.conf`, `gamesys.conf`,
+       `tasks.data` e `npcgen.data` do 1.2.6), para comparar versão com versão.
+    4. **A fonte do protocolo 1.2.6**, que já foi o uso original (item 54 e o
+       `docs/MEDIDAS_DO_126.md`).
+
+    **O limite, que precisa ficar escrito:** ela é 1.2.6. **32 comandos** têm layout
+    diferente do 1.5.x (medido no `MEDIDAS_DO_126.md`), e o próprio `OWN_EXT_PROP` desta
+    sessão tem 152 bytes lá contra 196 no binário 1.5.5. As raças e mapas novos não existem
+    nela. Ela é gabarito de **mecânica e de fluxo** — o que acontece, em que ordem, com que
+    valores —, não de bytes do 1.5.5.
+
+    **O que falta para usá-la:** acesso. A sessão desta máquina alcança a VM (o `ping`
+    responde), mas o SSH pede senha e não há chave instalada — e `_sync/credenciais.txt`
+    não existe. Instalar a chave pública de `_sync/ssh/win_key.pub` no
+    `/root/.ssh/authorized_keys` da VM resolve.
+
+    **E um passo maior, que vale mais do que a VM:** o pacote do servidor **1.5.5
+    original** está em disco (`F:\PW\1.5.5\home155` e `pwserver_155v156`, com `gs`,
+    `gamedbd`, `glinkd`, `gdeliveryd` e as configurações). Subir aquele servidor numa VM
+    32-bit daria o gabarito **da versão certa** — os mesmos bytes que o cliente espera, o
+    `clsconfig` já lido pelo `gamedbd` dele, as missões rodando. É o instrumento que
+    fecharia de vez a classe de problema "o fonte diz uma coisa, o binário faz outra".
+
+    ### d. Os três arquivos de dados: onde cada um está de verdade
+
+    | arquivo | estado medido | o que falta |
+    | :--- | :--- | :--- |
+    | `elements.data` | 99 de 231 tabelas no v156 do 155BR (item 41f) | refazer as âncoras deste arquivo |
+    | `tasks.data` | **nenhuma missão lida** — `TasksData::parse_tasks` é um esboço vazio (`tasks.rs:112-115`, "Leitura tolerante de missões", `Ok(())`) | escrever o leitor |
+    | `npcgen.data` | posições e contagens das áreas de monstro lidas; recurso sem dispersão e com teto inventado (b12) | ler os campos descartados |
+
+    O `tasks.data` é o maior buraco dos três: sem ele não há missão inicial, e as missões são
+    o que dá experiência, alma e moedas a um personagem novo. O formato tem autoridade
+    completa no fonte do cliente — `ATaskTempl::LoadBinary` (`Task/TaskTempl.cpp:4723`), que
+    lê a parte fixa, a descrição, o tributo, cinco diálogos e as submissões, recursivamente
+    — e tem uma propriedade que torna o leitor **verificável**: o cabeçalho traz o
+    deslocamento de cada missão de topo, então cada missão lida tem de terminar exatamente
+    onde a próxima começa.
+
+    ### e. A ordem
+
+    1. **`npcgen.data`** — o menor, e resolve (12) e parte de (11).
+    2. **`tasks.data`** — o leitor inteiro, conferido pelos deslocamentos do cabeçalho.
+    3. **`elements.data` v156** — as âncoras do 155BR.
+    4. **Acesso à VM 1.2.6**, e com ela os roteiros de captura de (c1) para 6, 7, 8, 9, 10
+       e 13, e a leitura dos moldes para 1, 3, 5, 15 e 16.
+    5. Com os dados e o gabarito na mão: combate, experiência, alma, moedas, recarga,
+       regeneração, reviver, missões iniciais.
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver

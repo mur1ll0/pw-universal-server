@@ -91,3 +91,37 @@ fn sem_a_tabela_no_arquivo_a_carga_e_vazia() {
     };
     assert!(classes::carregar(&vazio).is_empty());
 }
+
+/// A velocidade de corrida sai daqui, e não do `ptemplate.conf`.
+///
+/// O original lê os dois arquivos e o `elements.data` **sobrescreve** o `.conf`:
+/// `player_template::__LoadDataFromDataMan` (`gs/playertemplate.cpp:250-301`) grava
+/// `walk_speed`, `run_speed`, `swim_speed`, `flight_speed`, `attack_speed`, `attack_range`,
+/// `hp_gen` e `mp_gen` do `CHARRACTER_CLASS_CONFIG` por cima do que o `.conf` pôs.
+///
+/// Até 2026-09-12 o servidor lia o `.conf`, e o Bárbaro corria a 2,8 m/s. Estes números são
+/// os mesmos que a captura do servidor 1.2.6 funcional traz no `OWN_EXT_PROP`
+/// (`_sync/capturas/full_interno.pcap`): andar 2,0, correr 4,9, nadar 3,0, voar 5,0.
+#[test]
+fn as_velocidades_do_barbaro_sao_as_do_elements_e_nao_as_do_ptemplate() {
+    for realm in ["realm_155BR", "realm_155"] {
+        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(format!("data/{realm}/config/elements.data"));
+        let Ok(bytes) = std::fs::read(&p) else {
+            eprintln!("pulado: {} não existe", p.display());
+            continue;
+        };
+        let e = pw_data_loader::generic_elements::load_elements_data_auto(&bytes)
+            .expect("elements.data legível");
+        let t = classes::carregar(&e);
+        let barbaro = t.get(4).expect("o Bárbaro (4) tem de estar no CHARRACTER_CLASS_CONFIG");
+
+        assert_eq!(barbaro.velocidade_correndo, 4.9, "{realm}: run_speed do Bárbaro");
+        assert_eq!(barbaro.velocidade_andando, 2.0, "{realm}: walk_speed");
+        assert_eq!(barbaro.velocidade_nadando, 3.0, "{realm}: swim_speed");
+        assert_eq!(barbaro.velocidade_voando, 5.0, "{realm}: fly_speed");
+        // `attack_speed` 0,8 s vira 16 ticks — e **não** os 30 do `ptemplate.conf`.
+        assert_eq!(barbaro.ataque_em_ticks(), 16, "{realm}: attack_speed em ticks");
+    }
+}

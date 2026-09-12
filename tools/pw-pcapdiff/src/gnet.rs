@@ -175,6 +175,59 @@ pub fn medir(bytes: &[u8], envelopes: &[Envelope], porta_e_do_servidor: bool) ->
     }
 }
 
+/// Os corpos de um **subcomando** do mundo 3D, já sem o `cmd_header` de 2 bytes.
+///
+/// [`payloads_de`] fica na camada do envelope GNET; este abre o envelope e filtra pelo id
+/// do subcomando. É o que faz de uma captura do servidor 1.2.6 um gabarito para campo a
+/// campo — por exemplo, a `run_speed` que um servidor funcional manda no `OWN_EXT_PROP`
+/// (50), ou os atributos com que um personagem novo nasce.
+///
+/// `para_o_cliente` escolhe o sentido: `true` pega o que o servidor manda, `false` o que o
+/// cliente pede. O sentido vem do próprio envelope nos internos (74/77 descem, 75 sobe) e
+/// da porta no externo.
+pub fn subcomandos_de(
+    bytes: &[u8],
+    envelopes: &[Envelope],
+    porta_e_do_servidor: bool,
+    alvo: u16,
+    para_o_cliente: bool,
+    limite: usize,
+) -> Vec<Vec<u8>> {
+    let mut achados = Vec::new();
+    let mut pos = 0usize;
+
+    while pos < bytes.len() && achados.len() < limite {
+        let mut r = Reader::new(&bytes[pos..]);
+        let Ok(opcode) = r.compact_uint() else { break };
+        let Ok(tamanho) = r.compact_uint() else { break };
+        let cabecalho = r.position();
+        let tamanho = tamanho as usize;
+        if pos + cabecalho + tamanho > bytes.len() {
+            break;
+        }
+
+        let payload = &bytes[pos + cabecalho..pos + cabecalho + tamanho];
+        if let Some(env) = envelopes.iter().find(|e| e.opcode == opcode) {
+            let sentido_certo = match env.sentido {
+                Sentido::ParaOCliente => para_o_cliente,
+                Sentido::DoCliente => !para_o_cliente,
+                Sentido::PelaPorta => porta_e_do_servidor == para_o_cliente,
+            };
+            if sentido_certo {
+                if let Some(dados) = desembrulhar(payload, env.antes_do_data) {
+                    if dados.len() >= 2 && u16::from_le_bytes([dados[0], dados[1]]) == alvo {
+                        achados.push(dados[2..].to_vec());
+                    }
+                }
+            }
+        }
+
+        pos += cabecalho + tamanho;
+    }
+
+    achados
+}
+
 /// Pula os campos fixos e devolve o conteúdo do `Octets data`.
 fn desembrulhar(payload: &[u8], antes: usize) -> Option<&[u8]> {
     if payload.len() < antes {
