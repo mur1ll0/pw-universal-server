@@ -26,6 +26,9 @@ pub struct ClientSession {
     pub localsid: u32,
     pub target_id: Option<i32>,
     pub sec_level: u8,
+    /// O mundo (`worldtag`) em que o personagem desta sessão está — decide para qual
+    /// servidor de mundo os comandos dele vão. Ver `LinkGateway::uplink_da_sessao`.
+    pub world_id: Option<i32>,
     /// Se já mandamos `GetUIConfig_Re` pro personagem atual nesta sessão.
     ///
     /// Achado em 2026-09-03: o client real manda um pedido `GetUIConfig` (opcode 104)
@@ -66,6 +69,7 @@ impl ClientSession {
             localsid: 0,
             target_id: None,
             sec_level: 0,
+            world_id: None,
             ui_config_enviado: false,
             client_ip,
             realm_id,

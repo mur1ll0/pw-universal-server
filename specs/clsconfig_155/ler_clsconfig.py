@@ -54,7 +54,7 @@ for m in re.finditer(rb"c\x00l\x00s\x00(\d)\x00(?:(\d)\x00)?g\x00e\x00n\x00d\x00
         sver = r.u8(); level = r.i32(); level2 = r.i32(); exp = r.i32(); sp = r.i32(); pp = r.i32(); hp = r.i32(); mp = r.i32()
         x, y, z = r.f(), r.f(), r.f(); wt = r.i32()
         vistos.add(rid)
-        print(f"role {rid} {nome:14} race {race} cls {cls} gender {gender} | lv {level} hp {hp} mp {mp} pp {pp} | pos ({x:.1f}, {y:.1f}, {z:.1f}) mundo {wt} | custom {len(custom)}b config {len(config)}b")
+        print(f"role {rid} {nome:14} race {race} cls {cls} gender {gender} | lv {level} hp {hp} mp {mp} pp {pp} | pos ({x:.4f}, {y:.4f}, {z:.4f}) mundo {wt} | custom {len(custom)}b config {len(config)}b")
     except Exception as e:
         print("falhou em", ini, e)
 print(len(vistos), "moldes")

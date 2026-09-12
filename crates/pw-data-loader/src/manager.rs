@@ -366,8 +366,11 @@ impl GameDataManager {
             self.load_map_folder(1, dir, ".", &mut rel);
         }
 
-        // Mapeamento das dungeons clássicas a01..a33 e b01..b35
-        for i in 1..=33 {
+        // As pastas `aNN` e `bNN`, pelo `tag` do `gs.conf` original: `aNN` é o mundo
+        // `100 + NN` e `bNN` o `200 + NN` (ver `specs/mapas/gerar_terreno_155.py`). Ia só
+        // até a33; o 1.5.5 tem pastas até a80 — entre elas a `a61`, o mapa 161 onde todo
+        // personagem novo do pacote v156 nasce.
+        for i in 1..=99 {
             let nome = format!("a{i:02}");
             let map_path = dir.join(&nome);
             if map_path.exists() {

@@ -6295,7 +6295,7 @@ Ordem combinada com o Murillo:
     Vida e mana de nível 1 do molde (ex.: Bárbaro 85/35, Guerreiro 75/45, Mago 50/70)
     também estão lá, para conferir contra o que o nosso servidor calcula.
 
-    ### c. A decisão que falta, e é do Murillo
+    ### c. A decisão que faltava — tomada: `pwserver_155v156`, todos no 161 (item 48)
 
     Qual dos dois `clsconfig` é o do realm 155BR: o `pwserver_155v156` (todos no mapa
     161, a build dos nossos dados) ou o `home155` (raças antigas nas vilas)? Nascer no 161
@@ -6308,6 +6308,84 @@ Ordem combinada com o Murillo:
     1.2.6 (F1 ataque, F2 habilidade, F4 pegar, F5 meditar, F8 portal). Inventário,
     equipamento e habilidades (`GRoleStatus.skills`) também estão no registro. Nada disso
     foi decodificado ainda.
+
+48. **Sessão 2026-09-12 (continuação 4): todo personagem nasce no mapa 161, e os monstros
+    andam no chão, na velocidade certa, e passeiam.**
+
+    ### a. O que o Murillo testou e pediu
+
+    Do deploy anterior, **confirmado em jogo**: velocidade 4,9 m/s; Guia não flutua mais;
+    recursos espalhados; monstros nascem no chão. Ainda errado: o monstro em fúria persegue
+    "sem respeitar o terreno", por baixo da terra e no ar, e rápido demais; e monstro ocioso
+    não se move na área. Decisão: **usar o `clsconfig` do `pwserver_155v156`, todos
+    nascendo no mapa 161** (item 47c).
+
+    ### b. O movimento dos monstros — as regras do original
+
+    `crates/pw-gs/src/ai.rs` foi reescrito sobre o servidor original:
+
+    | | original | antes | agora |
+    | :--- | :--- | :--- | :--- |
+    | passo da perseguição | `session_npc_follow_target`: a cada 0,5 s (`NPC_FOLLOW_TARGET_TIME`), `run_speed × 0,5` m | a cada tique de 50 ms, aviso a cada 2 m | igual ao original |
+    | altura do passo | o *agent* do habitat devolve a posição no chão (`pathfinding.cpp:74`) | `y` fixo no do nascimento | chão do `.hmap` para monstro de chão; água/ar seguem o alvo sem descer abaixo do terreno |
+    | `OBJECT_MOVE.use_time` | **milissegundos** (`npcsession.cpp:258`) | centésimos de segundo | ms |
+    | `OBJECT_MOVE.speed` | **× 256** | × 100 | × 256 |
+    | `move_mode` | `RUN`/`WALK` + bit do habitat (`GetMoveModeByInhabitType`) | 0 | igual ao original |
+    | parada | `OBJECT_STOP_MOVE` com a direção `a3dvector_to_dir` | nunca | ao chegar ao alcance, ao chegar em casa, ao fim do passeio |
+    | sem alvo | `ai_returnhome_task`: volta correndo ao nascimento, passo de 1 s | ficava onde estava | igual ao original |
+    | passeio ocioso | `ai_policy::HaveRest` + `ai_rest_task` + `session_npc_cruise` | não existia | ver abaixo |
+
+    **O "rápido demais" era a unidade**: um trecho de 2 m chegava ao cliente como "faça em
+    50 ms" (5 centésimos lidos como milissegundos) — 40 m/s na tela.
+
+    **O passeio**, pelas regras de `gs/aipolicy.cpp:237`, `gs/ainpc.cpp:303` e
+    `gs/npcsession.cpp:590`: só com jogador por perto (`idle_timer`, renovado por 20
+    batimentos de 1 s); monstro com `patroll_mode` no `MONSTER_ESSENCE`, sem ódio e sem outra
+    tarefa; o `cruise_timer` de 32 casas dá uma volta e o monstro sai **andando**
+    (`walk_speed`, um passo por segundo, aviso de 1000 ms) para um ponto sorteado a até
+    **10 m do nascimento**, com no máximo 8 passos; ao chegar, 10% de chance de emendar
+    outro passeio.
+
+    **O que não é igual:** o original anda num mapa de movimento que desvia de obstáculo
+    (`GetMoveMap`). Aqui é linha reta assentada no chão — casa e pedra ainda são
+    atravessadas.
+
+    Testes novos em `crates/pw-gs/tests/achados_do_teste_em_jogo.rs`: persegue assentado
+    numa rampa, unidades do `OBJECT_MOVE` (500 ms, 1024 para 4 m/s, modo correr), passeia
+    só com jogador perto e dentro de 10 m no chão, volta para casa sem alvo.
+
+    ### c. Nascer no mapa 161
+
+    1. **Moldes** — `scripts/2026_09_12_nascimento_no_mapa_161_155br.sql`, aplicado no banco:
+       as 12 linhas do `realm_155BR` com `spawn_world_id = 161` e a posição exata do molde
+       de cada classe (`GetDataRoleId`). Cada ponto fica 1 cm acima do chão do `a61` e a
+       poucos metros do Guia da raça no `a61/npcgen.data` (Guia Selvagem a 4 m do
+       Bárbaro). Personagens já criados continuam onde estão.
+    2. **Catálogo de terreno** — `specs/mapas/terreno_155.json` estava com o **`index`** do
+       `gs.conf` no lugar do **`tag`**: só o mundo 1 saía certo, e o "mundo 31" do catálogo
+       era o `a01`. Agora é gerado por `specs/mapas/gerar_terreno_155.py`: 79 mapas, pelo
+       tag, incluindo o 161 (`a61`, 4×3 blocos).
+    3. **Pastas de mapa** — `GameDataManager` lia só `a01..a33`; agora `a01..a99` (`aNN` =
+       mundo `100 + NN`, conferido contra o `gs.conf`). O `a61` tem 1.665 entidades.
+    4. **Um servidor de mundo por mapa**, como o original (um `gs` por seção do `gs.conf`):
+       serviço `pw-world-155br-161` no compose (`WORLD_TAG: "161"`), e o `pw-link` com
+       `GS_BUS=1=pw-world-155br:29100,161=pw-world-155br-161:29100`. O link manda cada
+       sessão ao servidor do mundo do personagem (`LinkGateway::uplink_da_sessao`); mundo
+       sem entrada cai no primeiro. Os testes de topologia do compose passaram a aceitar a
+       lista e cobram que `161=` aponte para quem tem `WORLD_TAG` 161.
+    5. **`INST_DATA_CHECKOUT`** — o `id_inst` era `1` fixo; agora é o mundo do personagem,
+       com os carimbos de `region.sev`/`precinct.sev` daquele mapa. É o mesmo `worldtag` com
+       que o cliente abre o mapa (`StartGame(ri.worldtag, …)`, `EC_LoginUIMan.cpp:1048`).
+
+    ### d. O que ainda falta, sabido
+
+    * **Trocar de mundo** (o teleporte da missão "Guarda da Terra" para o mundo 1, portal,
+      GM) não existe: o link escolhe o servidor na entrada, e nada muda o mundo da sessão
+      depois.
+    * **Reviver na cidade** usa `CharacterClass::default_spawn_position`, que é do mundo 1 —
+      num personagem do 161 isso é errado (e o reviver já era um problema do item 44).
+    * A lista de "jogadores visíveis" do link é por link, não por mundo: jogadores do 1 e
+      do 161 aparecem uns para os outros.
 
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),

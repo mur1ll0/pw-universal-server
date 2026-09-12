@@ -1,6 +1,6 @@
 {
-  "fonte": "gamed/gs.conf do pacote pwserver_155v156 (seções [World_*] e [Terrain_*])",
-  "como_ler": "Cada mapa é uma grade de blocos_colunas x blocos_linhas arquivos <sub_pasta>/<n>.hmap, n de 1 a blocos. Cada arquivo tem (vertices_por_bloco+1)^2 floats little-endian no intervalo 0..1, que viram altura real por h*(altura_maxima-altura_minima)+altura_minima. Ver crates/pw-data-loader/src/terreno.rs e, do lado do original, cgame/gs/terrain.cpp.",
+  "fonte": "gamed/gs.conf do pacote pwserver_155v156 (seções [World_*]/[Instance_*] e [Terrain_*]); gerado por specs/mapas/gerar_terreno_155.py",
+  "como_ler": "world_id é o `tag` do gs.conf (o worldtag do cliente). Cada mapa é uma grade de blocos_colunas x blocos_linhas arquivos <base_path>/<sub_pasta>/<n>.hmap, n de 1 a blocos. Cada arquivo tem (vertices_por_bloco+1)^2 floats little-endian no intervalo 0..1, que viram altura real por h*(altura_maxima-altura_minima)+altura_minima. Ver crates/pw-data-loader/src/terreno.rs e, do lado do original, cgame/gs/terrain.cpp.",
   "mapas": [
     {
       "world_id": 1,
@@ -15,79 +15,7 @@
       "blocos": 88
     },
     {
-      "world_id": 2,
-      "base_path": "world",
-      "sub_pasta": "map",
-      "blocos_colunas": 8,
-      "blocos_linhas": 11,
-      "vertices_por_bloco": 512,
-      "tamanho_da_celula": 2.0,
-      "altura_minima": 0.0,
-      "altura_maxima": 800.0,
-      "blocos": 88
-    },
-    {
-      "world_id": 11,
-      "base_path": "m01",
-      "sub_pasta": "map",
-      "blocos_colunas": 1,
-      "blocos_linhas": 1,
-      "vertices_por_bloco": 512,
-      "tamanho_da_celula": 2.0,
-      "altura_minima": 0.0,
-      "altura_maxima": 800.0,
-      "blocos": 1
-    },
-    {
-      "world_id": 21,
-      "base_path": "b01",
-      "sub_pasta": "map",
-      "blocos_colunas": 1,
-      "blocos_linhas": 1,
-      "vertices_por_bloco": 512,
-      "tamanho_da_celula": 2.0,
-      "altura_minima": 0.0,
-      "altura_maxima": 800.0,
-      "blocos": 1
-    },
-    {
-      "world_id": 22,
-      "base_path": "b02",
-      "sub_pasta": "map",
-      "blocos_colunas": 1,
-      "blocos_linhas": 1,
-      "vertices_por_bloco": 512,
-      "tamanho_da_celula": 2.0,
-      "altura_minima": 0.0,
-      "altura_maxima": 800.0,
-      "blocos": 1
-    },
-    {
-      "world_id": 23,
-      "base_path": "b03",
-      "sub_pasta": "map",
-      "blocos_colunas": 1,
-      "blocos_linhas": 1,
-      "vertices_por_bloco": 512,
-      "tamanho_da_celula": 2.0,
-      "altura_minima": 0.0,
-      "altura_maxima": 800.0,
-      "blocos": 1
-    },
-    {
-      "world_id": 24,
-      "base_path": "b04",
-      "sub_pasta": "map",
-      "blocos_colunas": 1,
-      "blocos_linhas": 1,
-      "vertices_por_bloco": 512,
-      "tamanho_da_celula": 2.0,
-      "altura_minima": 0.0,
-      "altura_maxima": 800.0,
-      "blocos": 1
-    },
-    {
-      "world_id": 31,
+      "world_id": 101,
       "base_path": "a01",
       "sub_pasta": "map",
       "blocos_colunas": 1,
@@ -99,7 +27,7 @@
       "blocos": 1
     },
     {
-      "world_id": 32,
+      "world_id": 102,
       "base_path": "a02",
       "sub_pasta": "map",
       "blocos_colunas": 1,
@@ -111,7 +39,91 @@
       "blocos": 1
     },
     {
-      "world_id": 42,
+      "world_id": 105,
+      "base_path": "a05",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 106,
+      "base_path": "a06",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 107,
+      "base_path": "a07",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 108,
+      "base_path": "a08",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 109,
+      "base_path": "a09",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 110,
+      "base_path": "a10",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 111,
+      "base_path": "a11",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 112,
       "base_path": "a12",
       "sub_pasta": "map",
       "blocos_colunas": 1,
@@ -123,7 +135,7 @@
       "blocos": 1
     },
     {
-      "world_id": 43,
+      "world_id": 113,
       "base_path": "a13",
       "sub_pasta": "map",
       "blocos_colunas": 1,
@@ -135,7 +147,55 @@
       "blocos": 1
     },
     {
-      "world_id": 48,
+      "world_id": 114,
+      "base_path": "a14",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 115,
+      "base_path": "a15",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 116,
+      "base_path": "a16",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 117,
+      "base_path": "a17",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 118,
       "base_path": "a18",
       "sub_pasta": "map",
       "blocos_colunas": 3,
@@ -147,7 +207,7 @@
       "blocos": 9
     },
     {
-      "world_id": 49,
+      "world_id": 119,
       "base_path": "a19",
       "sub_pasta": "map",
       "blocos_colunas": 3,
@@ -159,7 +219,7 @@
       "blocos": 9
     },
     {
-      "world_id": 50,
+      "world_id": 120,
       "base_path": "a20",
       "sub_pasta": "map",
       "blocos_colunas": 3,
@@ -171,7 +231,7 @@
       "blocos": 9
     },
     {
-      "world_id": 51,
+      "world_id": 121,
       "base_path": "a21",
       "sub_pasta": "map",
       "blocos_colunas": 4,
@@ -183,7 +243,7 @@
       "blocos": 16
     },
     {
-      "world_id": 52,
+      "world_id": 122,
       "base_path": "a22",
       "sub_pasta": "map",
       "blocos_colunas": 4,
@@ -195,7 +255,103 @@
       "blocos": 16
     },
     {
-      "world_id": 72,
+      "world_id": 123,
+      "base_path": "a23",
+      "sub_pasta": "map",
+      "blocos_colunas": 3,
+      "blocos_linhas": 3,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 9
+    },
+    {
+      "world_id": 124,
+      "base_path": "a24",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 125,
+      "base_path": "a25",
+      "sub_pasta": "map",
+      "blocos_colunas": 3,
+      "blocos_linhas": 3,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 9
+    },
+    {
+      "world_id": 126,
+      "base_path": "a26",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 127,
+      "base_path": "a27",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 128,
+      "base_path": "a28",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 129,
+      "base_path": "a29",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 131,
+      "base_path": "a31",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 100.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 132,
       "base_path": "a32",
       "sub_pasta": "map",
       "blocos_colunas": 3,
@@ -207,7 +363,7 @@
       "blocos": 9
     },
     {
-      "world_id": 73,
+      "world_id": 133,
       "base_path": "a33",
       "sub_pasta": "map",
       "blocos_colunas": 2,
@@ -219,7 +375,7 @@
       "blocos": 4
     },
     {
-      "world_id": 74,
+      "world_id": 134,
       "base_path": "a34",
       "sub_pasta": "map",
       "blocos_colunas": 2,
@@ -231,7 +387,19 @@
       "blocos": 4
     },
     {
-      "world_id": 77,
+      "world_id": 135,
+      "base_path": "a35",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 4,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 4
+    },
+    {
+      "world_id": 137,
       "base_path": "a37",
       "sub_pasta": "map",
       "blocos_colunas": 6,
@@ -243,7 +411,31 @@
       "blocos": 18
     },
     {
-      "world_id": 80,
+      "world_id": 138,
+      "base_path": "a38",
+      "sub_pasta": "map",
+      "blocos_colunas": 2,
+      "blocos_linhas": 2,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 4
+    },
+    {
+      "world_id": 139,
+      "base_path": "a39",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 140,
       "base_path": "a40",
       "sub_pasta": "map",
       "blocos_colunas": 2,
@@ -255,7 +447,115 @@
       "blocos": 4
     },
     {
-      "world_id": 90,
+      "world_id": 141,
+      "base_path": "a41",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 142,
+      "base_path": "a42",
+      "sub_pasta": "map",
+      "blocos_colunas": 2,
+      "blocos_linhas": 2,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 4
+    },
+    {
+      "world_id": 143,
+      "base_path": "a43",
+      "sub_pasta": "map",
+      "blocos_colunas": 2,
+      "blocos_linhas": 6,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 12
+    },
+    {
+      "world_id": 144,
+      "base_path": "a44",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 145,
+      "base_path": "a45",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 146,
+      "base_path": "a46",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 147,
+      "base_path": "a47",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 148,
+      "base_path": "a48",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 149,
+      "base_path": "a49",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 150,
       "base_path": "a50",
       "sub_pasta": "map",
       "blocos_colunas": 1,
@@ -267,7 +567,31 @@
       "blocos": 1
     },
     {
-      "world_id": 103,
+      "world_id": 161,
+      "base_path": "a61",
+      "sub_pasta": "map",
+      "blocos_colunas": 4,
+      "blocos_linhas": 3,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 12
+    },
+    {
+      "world_id": 162,
+      "base_path": "a62",
+      "sub_pasta": "map",
+      "blocos_colunas": 4,
+      "blocos_linhas": 3,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 12
+    },
+    {
+      "world_id": 163,
       "base_path": "a63",
       "sub_pasta": "map",
       "blocos_colunas": 4,
@@ -279,7 +603,31 @@
       "blocos": 16
     },
     {
-      "world_id": 108,
+      "world_id": 166,
+      "base_path": "a66",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 167,
+      "base_path": "a67",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 168,
       "base_path": "a68",
       "sub_pasta": "map",
       "blocos_colunas": 4,
@@ -291,7 +639,19 @@
       "blocos": 16
     },
     {
-      "world_id": 110,
+      "world_id": 169,
+      "base_path": "a69",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 170,
       "base_path": "a70",
       "sub_pasta": "map",
       "blocos_colunas": 3,
@@ -303,7 +663,79 @@
       "blocos": 9
     },
     {
-      "world_id": 117,
+      "world_id": 171,
+      "base_path": "a71",
+      "sub_pasta": "map",
+      "blocos_colunas": 3,
+      "blocos_linhas": 4,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 12
+    },
+    {
+      "world_id": 172,
+      "base_path": "a72",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 173,
+      "base_path": "a72",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 174,
+      "base_path": "a72",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 175,
+      "base_path": "a72",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 176,
+      "base_path": "a76",
+      "sub_pasta": "map",
+      "blocos_colunas": 3,
+      "blocos_linhas": 3,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 9
+    },
+    {
+      "world_id": 177,
       "base_path": "a77",
       "sub_pasta": "map",
       "blocos_colunas": 1,
@@ -313,6 +745,210 @@
       "altura_minima": 0.0,
       "altura_maxima": 800.0,
       "blocos": 2
+    },
+    {
+      "world_id": 180,
+      "base_path": "a80",
+      "sub_pasta": "map",
+      "blocos_colunas": 3,
+      "blocos_linhas": 3,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 9
+    },
+    {
+      "world_id": 181,
+      "base_path": "a80",
+      "sub_pasta": "map",
+      "blocos_colunas": 3,
+      "blocos_linhas": 3,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 9
+    },
+    {
+      "world_id": 182,
+      "base_path": "a80",
+      "sub_pasta": "map",
+      "blocos_colunas": 3,
+      "blocos_linhas": 3,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 9
+    },
+    {
+      "world_id": 183,
+      "base_path": "a80",
+      "sub_pasta": "map",
+      "blocos_colunas": 3,
+      "blocos_linhas": 3,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 9
+    },
+    {
+      "world_id": 201,
+      "base_path": "b01",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 202,
+      "base_path": "b02",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 203,
+      "base_path": "b03",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 204,
+      "base_path": "b04",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 211,
+      "base_path": "m01",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 213,
+      "base_path": "random03",
+      "sub_pasta": "map",
+      "blocos_colunas": 8,
+      "blocos_linhas": 8,
+      "vertices_por_bloco": 64,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 64
+    },
+    {
+      "world_id": 214,
+      "base_path": "random04",
+      "sub_pasta": "map",
+      "blocos_colunas": 8,
+      "blocos_linhas": 8,
+      "vertices_por_bloco": 64,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 64
+    },
+    {
+      "world_id": 230,
+      "base_path": "b30",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 231,
+      "base_path": "b31",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 232,
+      "base_path": "b32",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 233,
+      "base_path": "b33",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 234,
+      "base_path": "b34",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
+    },
+    {
+      "world_id": 235,
+      "base_path": "b35",
+      "sub_pasta": "map",
+      "blocos_colunas": 1,
+      "blocos_linhas": 1,
+      "vertices_por_bloco": 512,
+      "tamanho_da_celula": 2.0,
+      "altura_minima": 0.0,
+      "altura_maxima": 800.0,
+      "blocos": 1
     }
   ]
 }

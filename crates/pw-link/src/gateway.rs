@@ -56,6 +56,13 @@ pub struct LinkGateway {
     /// que garante que ligar o barramento não muda o que o jogador vê enquanto os
     /// subcomandos ainda são tratados aqui.
     pub uplink: Option<Arc<BusUplink>>,
+    /// Os servidores de mundo por `worldtag`, quando o realm tem mais de um.
+    ///
+    /// O original roda **um `gs` por mundo ou instância** (`gamed/gs.conf`, uma seção
+    /// `[World_*]`/`[Instance_*]` por processo) e o `gdeliveryd` encaminha cada jogador ao
+    /// do mundo em que ele está. Aqui é o mesmo: `GS_BUS=1=host:porta,161=host:porta`.
+    /// Mundo sem entrada cai em [`Self::uplink`], o padrão.
+    pub uplinks_por_mundo: HashMap<i32, Arc<BusUplink>>,
     /// Jogadores online neste link, pra `PLAYER_ENTER_WORLD`/`PLAYER_LEAVE_WORLD`
     /// entre eles.
     ///
@@ -71,9 +78,9 @@ pub struct LinkGateway {
     /// pelo barramento.
     ///
     /// **Limitação sabida, documentada em vez de escondida**: sem grade espacial,
-    /// todo jogador vê todos os outros deste link, não só os próximos (só existe um
-    /// mundo por realm hoje — `ID_INST_MUNDO_ABERTO` — então não é errado, só não
-    /// escala). E a posição aqui só atualiza quando alguém ENTRA depois; um jogador já
+    /// todo jogador vê todos os outros deste link, não só os próximos — e, desde que um
+    /// realm pode ter mais de um mundo (`uplinks_por_mundo`), também os de outro mapa.
+    /// Não trava nada, mas não escala e não é o que o original faz. E a posição aqui só atualiza quando alguém ENTRA depois; um jogador já
     /// visível não se move na tela de quem já o viu (isso é o `PlayerMoveBroadcast`,
     /// que hoje só ecoa pro remetente — ver `InboundPacket::PlayerMove`). Migrar isto
     /// pra dentro do `pw-gs`, reaproveitando a grade espacial que já existe pra
@@ -172,6 +179,7 @@ impl LinkGateway {
             data_manager: Arc::new(data_manager),
             versao_do_cliente,
             uplink: None,
+            uplinks_por_mundo: HashMap::new(),
             jogadores_visiveis: RwLock::new(HashMap::new()),
         }
     }
@@ -201,10 +209,50 @@ impl LinkGateway {
     ///
     /// A conexão é feita em segundo plano e reconecta sozinha, então chamar isto não
     /// exige que o `pw-gs` já esteja no ar.
+    ///
+    /// `endereco` é um `host:porta` só (um mundo, o padrão) ou uma lista
+    /// `mundo=host:porta` separada por vírgula. Na lista, o primeiro vira também o padrão
+    /// para mundos que não estão nela.
     pub fn com_barramento(mut self, endereco: &str) -> Self {
-        info!("pw-link: barramento apontado para o servidor de mundo em {endereco}");
-        self.uplink = Some(BusUplink::iniciar(endereco.to_string()));
+        for (mundo, alvo) in Self::ler_barramentos(endereco) {
+            let uplink = BusUplink::iniciar(alvo.clone());
+            match mundo {
+                Some(m) => {
+                    info!("pw-link: mundo {m} → servidor de mundo em {alvo}");
+                    if self.uplink.is_none() {
+                        self.uplink = Some(Arc::clone(&uplink));
+                    }
+                    self.uplinks_por_mundo.insert(m, uplink);
+                }
+                None => {
+                    info!("pw-link: barramento apontado para o servidor de mundo em {alvo}");
+                    self.uplink = Some(uplink);
+                }
+            }
+        }
         self
+    }
+
+    /// `"host:porta"` → `[(None, "host:porta")]`; `"1=a:1,161=b:2"` →
+    /// `[(Some(1), "a:1"), (Some(161), "b:2")]`.
+    pub fn ler_barramentos(endereco: &str) -> Vec<(Option<i32>, String)> {
+        endereco
+            .split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(|p| match p.split_once('=') {
+                Some((m, alvo)) => (m.trim().parse().ok(), alvo.trim().to_string()),
+                None => (None, p.to_string()),
+            })
+            .collect()
+    }
+
+    /// O servidor de mundo que atende esta sessão: o do mundo do personagem, ou o padrão.
+    fn uplink_da_sessao(&self, session: &ClientSession) -> Option<&Arc<BusUplink>> {
+        session
+            .world_id
+            .and_then(|m| self.uplinks_por_mundo.get(&m))
+            .or(self.uplink.as_ref())
     }
 
     pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
@@ -330,7 +378,7 @@ impl LinkGateway {
         // aquele jogador não é mais alcançável por este link. Avisar aqui, e não só no
         // caminho de logout limpo, é o que impede um personagem de ficar "preso" no
         // mundo depois de uma queda de conexão.
-        if let (Some(uplink), Some(roleid)) = (self.uplink.as_ref(), session.role_id) {
+        if let (Some(uplink), Some(roleid)) = (self.uplink_da_sessao(&session), session.role_id) {
             uplink.enviar(BusMessage::PlayerLogout {
                 result: 0,
                 roleid,
@@ -704,7 +752,8 @@ impl LinkGateway {
                     // Os campos do `EnterWorld` do barramento são os mesmos que o cliente
                     // mandou — é o mesmo protocolo GNET (opcode 72), repassado.
                     session.localsid = enter_world.localsid;
-                    if let Some(uplink) = self.uplink.as_ref() {
+                    session.world_id = Some(details.world_id);
+                    if let Some(uplink) = self.uplink_da_sessao(session) {
                         uplink.registrar(details.id, tx.clone()).await;
                         uplink.enviar(BusMessage::EnterWorld {
                             roleid: details.id,
@@ -725,18 +774,21 @@ impl LinkGateway {
                     //    (achado em 2026-09-03: valores fixos aqui faziam o cliente
                     //    recusar a instância com "regionset timestamp error" e travar a
                     //    entrada no mundo, mesmo depois do handshake de login passar —
-                    //    ver `docs/ESTADO_E_RETOMADA.md`). `id_inst = 1` é sempre o mundo
-                    //    aberto por ora — nenhum subcomando ainda envia outro valor.
-                    const ID_INST_MUNDO_ABERTO: i32 = 1;
+                    //    ver `docs/ESTADO_E_RETOMADA.md`). `id_inst` é o mundo do
+                    //    personagem, o mesmo `worldtag` com que o cliente abriu o mapa
+                    //    (`StartGame(ri.worldtag, …)`, `EC_LoginUIMan.cpp:1048`). Era `1`
+                    //    fixo; com personagem nascendo no mapa 161, o cliente receberia os
+                    //    carimbos de outro mapa.
+                    let id_inst: i32 = details.world_id;
                     let sub = pw_protocol::PorVersao::new(self.game_version);
                     let region = self
                         .data_manager
                         .region_timestamps
-                        .get(&ID_INST_MUNDO_ABERTO)
+                        .get(&id_inst)
                         .copied()
                         .unwrap_or_else(|| {
                             warn!(
-                                "Realm {}: sem region_timestamp pro world_id={ID_INST_MUNDO_ABERTO} — \
+                                "Realm {}: sem region_timestamp pro world_id={id_inst} — \
                                  o cliente vai recusar a instância (\"regionset timestamp error\") e \
                                  travar a entrada no mundo. Falta world/region.sev na pasta do realm.",
                                 self.realm_id
@@ -746,11 +798,11 @@ impl LinkGateway {
                     let precinct = self
                         .data_manager
                         .precinct_timestamps
-                        .get(&ID_INST_MUNDO_ABERTO)
+                        .get(&id_inst)
                         .copied()
                         .unwrap_or_else(|| {
                             warn!(
-                                "Realm {}: sem precinct_timestamp pro world_id={ID_INST_MUNDO_ABERTO} — \
+                                "Realm {}: sem precinct_timestamp pro world_id={id_inst} — \
                                  mesmo problema do region_timestamp acima, com world/precinct.sev.",
                                 self.realm_id
                             );
@@ -761,7 +813,7 @@ impl LinkGateway {
                         .challenge_edition_tem_terceiro_gshop()
                         .then_some(self.data_manager.gshop3.timestamp);
                     tx.send(OutboundPacket::GamedataSend(sub.inst_data_checkout(
-                        ID_INST_MUNDO_ABERTO,
+                        id_inst,
                         region,
                         precinct,
                         self.data_manager.gshop.timestamp,
@@ -1016,7 +1068,7 @@ impl LinkGateway {
                 //
                 // O `data` vai como veio, sem interpretação: o envelope do barramento é
                 // GNET, e o conteúdo é o formato do mundo 3D.
-                if let (Some(uplink), Some(roleid)) = (self.uplink.as_ref(), session.role_id) {
+                if let (Some(uplink), Some(roleid)) = (self.uplink_da_sessao(session), session.role_id) {
                     uplink.enviar(BusMessage::ClientToGame {
                         roleid,
                         localsid: session.localsid,

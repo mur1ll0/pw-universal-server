@@ -117,18 +117,23 @@ async fn a_arma_do_molde_e_a_da_classe() {
     assert_eq!(armas.len(), 12, "há classe sem arma no molde");
 }
 
-/// Duas classes da mesma raça nascem no mesmo lugar.
+/// Duas classes da mesma raça nascem juntas: no mesmo mundo, a menos de 2 m uma da outra.
 ///
 /// No Perfect World a vila inicial é da **raça**, não da classe — é como o
 /// `ptemplate.conf` pareia as seções e como `CharacterClass::race` as agrupa. Uma linha
 /// fora do par denuncia molde preenchido à mão, linha a linha, que foi como o anterior
 /// ficou torto.
+///
+/// "A menos de 2 m", e não "no mesmo ponto": os moldes do `clsconfig` original foram
+/// gravados um por personagem, e as duas classes de uma raça ficam a até 1,1 m uma da
+/// outra (Abissais: (-651.09, -225.21) e (-651.82, -225.49)). Ver
+/// `scripts/2026_09_12_nascimento_no_mapa_161_155br.sql`.
 #[tokio::test]
 async fn as_duas_classes_de_uma_raca_nascem_juntas() {
     let Some(p) = pool().await else { return };
 
-    let pontos: Vec<(i32, f32, f32, f32)> = sqlx::query_as(
-        "SELECT cls, spawn_x, spawn_y, spawn_z FROM class_templates WHERE realm_id = $1",
+    let pontos: Vec<(i32, i32, f32, f32, f32)> = sqlx::query_as(
+        "SELECT cls, spawn_world_id, spawn_x, spawn_y, spawn_z FROM class_templates WHERE realm_id = $1",
     )
     .bind(REALM)
     .fetch_all(p.get_ref())
@@ -140,7 +145,7 @@ async fn as_duas_classes_de_uma_raca_nascem_juntas() {
         return;
     }
 
-    let mut por_raca: std::collections::HashMap<i32, Vec<(i32, f32, f32, f32)>> =
+    let mut por_raca: std::collections::HashMap<i32, Vec<(i32, i32, f32, f32, f32)>> =
         Default::default();
     for ponto in &pontos {
         let classe = CharacterClass::from_u8(ponto.0 as u8).expect("cls válido");
@@ -149,13 +154,12 @@ async fn as_duas_classes_de_uma_raca_nascem_juntas() {
 
     for (raca, mut classes) in por_raca {
         classes.sort_by_key(|c| c.0);
-        let (_, x, y, z) = classes[0];
-        for (cls, cx, cy, cz) in &classes[1..] {
+        let (c0, mundo, x, y, z) = classes[0];
+        for (cls, cmundo, cx, cy, cz) in &classes[1..] {
+            let d = ((cx - x).powi(2) + (cy - y).powi(2) + (cz - z).powi(2)).sqrt();
             assert!(
-                (cx - x).abs() < 0.01 && (cy - y).abs() < 0.01 && (cz - z).abs() < 0.01,
-                "a raça {raca} nasce em dois lugares: cls {} em ({x}, {y}, {z}) e cls \
-                 {cls} em ({cx}, {cy}, {cz})",
-                classes[0].0
+                *cmundo == mundo && d < 2.0,
+                "a raça {raca} nasce em dois lugares: cls {c0} no mundo {mundo} ({x}, {y}, {z})                  e cls {cls} no mundo {cmundo} ({cx}, {cy}, {cz})"
             );
         }
         assert_eq!(classes.len(), 2, "a raça {raca} tem {} classes no molde", classes.len());

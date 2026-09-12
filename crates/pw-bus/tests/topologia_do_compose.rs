@@ -172,8 +172,28 @@ fn a_porta_do_barramento_nunca_e_publicada() {
     }
 }
 
+/// Os destinos de um `GS_BUS`: `host:porta` só, ou `mundo=host:porta,mundo=host:porta`
+/// (ver `LinkGateway::com_barramento`).
+fn destinos(gs_bus: &str) -> Vec<(Option<i32>, String, String)> {
+    gs_bus
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            let (mundo, alvo) = match p.split_once('=') {
+                Some((m, a)) => (Some(m.trim().parse::<i32>().expect("mundo não numérico em `GS_BUS`")), a.trim()),
+                None => (None, p),
+            };
+            let (host, porta) = alvo
+                .rsplit_once(':')
+                .unwrap_or_else(|| panic!("`GS_BUS` sem porta: {alvo}"));
+            (mundo, host.to_string(), porta.to_string())
+        })
+        .collect()
+}
+
 #[test]
-fn cada_daemon_de_link_aponta_para_um_servidor_de_mundo_que_existe() {
+fn cada_daemon_de_link_aponta_para_servidores_de_mundo_que_existem() {
     // Sem isso, o `pw-link` sobe, o cliente entra, e os subcomandos do mundo 3D não vão
     // a lugar nenhum: exatamente o estado anterior a esta fase, só que silencioso.
     let mapa = servicos();
@@ -186,39 +206,46 @@ fn cada_daemon_de_link_aponta_para_um_servidor_de_mundo_que_existe() {
             .get("GS_BUS")
             .unwrap_or_else(|| panic!("o link `{nome}` não declara `GS_BUS`"));
 
-        let (host, porta) = gs_bus
-            .rsplit_once(':')
-            .unwrap_or_else(|| panic!("`GS_BUS` de `{nome}` não tem porta: {gs_bus}"));
+        for (tag, host, porta) in destinos(gs_bus) {
+            let host = host.as_str();
+            let mundo = mapa
+                .get(host)
+                .unwrap_or_else(|| panic!("`{nome}` aponta para `{host}`, que não é um serviço"));
 
-        let mundo = mapa
-            .get(host)
-            .unwrap_or_else(|| panic!("`{nome}` aponta para `{host}`, que não é um serviço"));
+            assert_eq!(
+                mundo.crate_name.as_deref(),
+                Some("pw-gs"),
+                "`{nome}` aponta para `{host}`, que não roda o servidor de mundo"
+            );
 
-        assert_eq!(
-            mundo.crate_name.as_deref(),
-            Some("pw-gs"),
-            "`{nome}` aponta para `{host}`, que não roda o servidor de mundo"
-        );
+            // `161=host:porta` tem de apontar para quem serve o mundo 161.
+            if let Some(tag) = tag {
+                assert_eq!(
+                    mundo.ambiente.get("WORLD_TAG").map(String::as_str),
+                    Some(tag.to_string().as_str()),
+                    "`{nome}` manda o mundo {tag} para `{host}`, que serve outro mundo"
+                );
+            }
 
-        // O endereço que o link procura tem que ser o que o mundo de fato escuta.
-        let escuta = mundo
-            .ambiente
-            .get("BUS_LISTEN")
-            .unwrap_or_else(|| panic!("o mundo `{host}` não declara `BUS_LISTEN`"));
-        let porta_escutada = escuta.rsplit(':').next().unwrap();
-        assert_eq!(
-            porta, porta_escutada,
-            "`{nome}` procura `{host}:{porta}`, mas `{host}` escuta em `{escuta}`"
-        );
+            // O endereço que o link procura tem que ser o que o mundo de fato escuta.
+            let escuta = mundo
+                .ambiente
+                .get("BUS_LISTEN")
+                .unwrap_or_else(|| panic!("o mundo `{host}` não declara `BUS_LISTEN`"));
+            let porta_escutada = escuta.rsplit(':').next().unwrap();
+            assert_eq!(
+                porta, porta_escutada,
+                "`{nome}` procura `{host}:{porta}`, mas `{host}` escuta em `{escuta}`"
+            );
 
-        // E o mundo tem que escutar em todas as interfaces: `127.0.0.1` funcionaria no
-        // teste local e falharia dentro do compose, onde a conexão vem de outro
-        // contêiner.
-        assert!(
-            escuta.starts_with("0.0.0.0:") || escuta.starts_with("[::]:"),
-            "o mundo `{host}` escuta em `{escuta}` — de dentro do contêiner isso não \
-             aceita conexão do daemon de link"
-        );
+            // E o mundo tem que escutar em todas as interfaces: `127.0.0.1` funcionaria no
+            // teste local e falharia dentro do compose, onde a conexão vem de outro
+            // contêiner.
+            assert!(
+                escuta.starts_with("0.0.0.0:") || escuta.starts_with("[::]:"),
+                "o mundo `{host}` escuta em `{escuta}` — de dentro do contêiner isso não                  aceita conexão do daemon de link"
+            );
+        }
     }
 }
 
@@ -230,27 +257,32 @@ fn link_e_mundo_do_mesmo_realm_combinam_de_realm_e_versao() {
 
     for (nome, s) in rodando(&mapa, "pw-link") {
         let gs_bus = s.ambiente.get("GS_BUS").expect("`GS_BUS` (ver teste acima)");
-        let host = gs_bus.rsplit_once(':').unwrap().0;
-        let mundo = &mapa[host];
-
-        for chave in ["REALM_ID", "GAME_VERSION"] {
-            assert_eq!(
-                s.ambiente.get(chave),
-                mundo.ambiente.get(chave),
-                "`{nome}` e `{host}` discordam em `{chave}`"
-            );
+        for (_, host, _) in destinos(gs_bus) {
+            let mundo = &mapa[host.as_str()];
+            for chave in ["REALM_ID", "GAME_VERSION"] {
+                assert_eq!(
+                    s.ambiente.get(chave),
+                    mundo.ambiente.get(chave),
+                    "`{nome}` e `{host}` discordam em `{chave}`"
+                );
+            }
         }
     }
 }
 
 #[test]
-fn todo_realm_tem_exatamente_um_servidor_de_mundo() {
+fn todo_servidor_de_mundo_e_de_exatamente_um_link() {
+    // Um realm pode ter vários mundos (o original roda um `gs` por mapa), mas cada
+    // servidor de mundo pertence a um link só, e nenhum fica sem link.
     let mapa = servicos();
-    let links = rodando(&mapa, "pw-link").len();
-    let mundos = rodando(&mapa, "pw-gs").len();
-    assert_eq!(
-        links, mundos,
-        "há {links} daemons de link e {mundos} servidores de mundo — algum realm ficou \
-         sem mundo, ou sobrou um mundo sem link"
-    );
+    let mut donos: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (nome, s) in rodando(&mapa, "pw-link") {
+        for (_, host, _) in destinos(s.ambiente.get("GS_BUS").expect("`GS_BUS`")) {
+            donos.entry(host).or_default().push(nome.to_string());
+        }
+    }
+    for (nome, _) in rodando(&mapa, "pw-gs") {
+        let d = donos.get(nome).cloned().unwrap_or_default();
+        assert_eq!(d.len(), 1, "o mundo `{nome}` é usado por {d:?}");
+    }
 }

@@ -240,3 +240,42 @@ fn o_recurso_se_espalha_pela_area() {
         "{empilhadas} áreas de recurso com todas as instâncias no mesmo ponto"
     );
 }
+
+/// O mapa 161 (`a61`), onde todo personagem novo do 155BR nasce: os 12 blocos existem, e
+/// cada ponto de nascimento do `clsconfig` original fica no chão — a 1 cm, que é o que o
+/// molde gravou (`scripts/2026_09_12_nascimento_no_mapa_161_155br.sql`).
+///
+/// Até 2026-09-12 o catálogo de terreno usava o `index` do `gs.conf` como id de mundo, e o
+/// 161 não existia nele; o mesmo número era o `a31`.
+#[test]
+fn o_mapa_161_tem_chao_sob_os_nascimentos() {
+    let dir = realm().join("a61");
+    if !dir.join("map").exists() {
+        eprintln!("pulado: {} não existe", dir.display());
+        return;
+    }
+    let t = Terreno::ler(161, &dir);
+    assert!(t.tem_dados());
+    let (c, sub) = terreno::config_do_mapa(161).expect("161 no catálogo");
+    assert_eq!((c.blocos_colunas, c.blocos_linhas, sub.as_str()), (4, 3, "map"));
+
+    for (cls, x, y, z) in [
+        (0, -848.3218f32, 40.5060f32, -181.9892f32),
+        (2, -651.0889, 41.0100, -225.2057),
+        (4, -712.8714, 35.0153, -364.3938),
+        (6, -821.6534, 44.9115, -259.6685),
+        (8, -800.5193, 44.9111, -314.2396),
+        (10, -760.7382, 44.8697, -218.2820),
+    ] {
+        let chao = t.altura_em(x, z).unwrap_or_else(|| panic!("cls {cls}: fora do mapa"));
+        assert!((y - chao).abs() < 0.05, "cls {cls}: molde em y={y}, chão em {chao}");
+    }
+}
+
+/// Os ids do catálogo são os `tag` do `gs.conf`: a pasta `aNN` é o mundo `100 + NN`.
+#[test]
+fn o_catalogo_usa_o_tag_do_mundo() {
+    assert_eq!(terreno::config_do_mapa(1).map(|(c, _)| c.blocos_colunas), Some(8));
+    assert!(terreno::config_do_mapa(131).is_some(), "a31 é o mundo 131");
+    assert!(terreno::config_do_mapa(31).is_none(), "31 era o index do is01, não um tag");
+}
