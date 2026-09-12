@@ -191,7 +191,14 @@ pub struct MonsterEntity {
     
     pub position: Vector3,
     pub spawn_center: Vector3,
+    /// `run_speed` — perseguir e voltar para casa.
     pub move_speed: f32,
+    /// `walk_speed` — o passeio ocioso.
+    pub walk_speed: f32,
+    /// `inhabit_type`: decide se o passo assenta no chão.
+    pub habitat: crate::ai::Habitat,
+    /// `patroll_mode`: se o monstro passeia quando está ocioso.
+    pub patrulha: bool,
     pub is_dead: bool,
     pub respawn_timer_ms: u32,
     pub respawn_delay_ms: u32,
@@ -451,6 +458,9 @@ impl MonsterEntity {
             position: posicao,
             spawn_center: posicao,
             move_speed: modelo.velocidade_correndo,
+            walk_speed: modelo.velocidade_andando,
+            habitat: crate::ai::Habitat::do_elements(modelo.tipo_de_habitat),
+            patrulha: modelo.patrulha,
             is_dead: false,
             respawn_timer_ms: 0,
             respawn_delay_ms,
@@ -499,6 +509,10 @@ impl MonsterEntity {
             position: posicao,
             spawn_center: posicao,
             move_speed: 3.5,
+            walk_speed: 1.5,
+            habitat: crate::ai::Habitat::Chao,
+            // Sem template não se sabe se ele passeia; parado é o que não inventa.
+            patrulha: false,
             is_dead: false,
             respawn_timer_ms: 0,
             respawn_delay_ms,

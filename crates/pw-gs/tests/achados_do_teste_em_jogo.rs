@@ -68,6 +68,10 @@ fn jogador(pos: Vector3) -> PlayerEntity {
     p
 }
 
+fn sem_mapa(_x: f32, _z: f32) -> Option<f32> {
+    None
+}
+
 fn monstro(pos: Vector3) -> MonsterEntity {
     let mut m = MonsterEntity::placeholder(900_001, 1001, pos, 30_000);
     m.attack_range = 2.0;
@@ -92,9 +96,9 @@ fn o_monstro_que_persegue_anuncia_o_movimento() {
     ai.add_threat(1, 10);
 
     let mut andou = None;
-    // 4 m/s × 50 ms = 0,2 m por tique; o aviso sai ao passar de 2 m, ou seja no 10º.
+    // Um passo a cada 0,5 s (`NPC_FOLLOW_TARGET_TIME`): 4 m/s dão 2 m por passo.
     for _ in 0..40 {
-        if let Some(AcaoDoMonstro::Andou { destino, velocidade }) = ai.tick(&mut m, &players, 50) {
+        if let Some(AcaoDoMonstro::Andou { destino, velocidade, .. }) = ai.tick(&mut m, &players, 50, &sem_mapa) {
             andou = Some((destino, velocidade));
             break;
         }
@@ -120,11 +124,11 @@ fn o_monstro_nao_anuncia_a_cada_tique() {
 
     let mut avisos = 0;
     for _ in 0..200 {
-        if matches!(ai.tick(&mut m, &players, 50), Some(AcaoDoMonstro::Andou { .. })) {
+        if matches!(ai.tick(&mut m, &players, 50, &sem_mapa), Some(AcaoDoMonstro::Andou { .. })) {
             avisos += 1;
         }
     }
-    // 200 tiques × 0,2 m = 40 m percorridos, com aviso a cada 2 m: cerca de 20.
+    // 200 tiques = 10 s, um passo a cada 0,5 s: 20 avisos.
     assert!(avisos > 0, "nenhum aviso em 200 tiques");
     assert!(avisos <= 25, "{avisos} avisos em 200 tiques — está mandando quase por tique");
 }
@@ -141,9 +145,114 @@ fn a_perseguicao_usa_o_aggro_range_do_monstro() {
     players.insert(1i64, jogador(Vector3::new(25.0, 0.0, 0.0)));
     ai.add_threat(1, 10);
 
-    ai.tick(&mut m, &players, 50);
+    ai.tick(&mut m, &players, 50, &sem_mapa);
     assert_eq!(m.position, Vector3::new(0.0, 0.0, 0.0), "perseguiu além do próprio raio de ódio");
     assert!(ai.aggro_table.is_empty(), "devia ter perdido o alvo");
+}
+
+// ---------------------------------------------------------------------------------
+// "quando entram em fúria não andam respeitando o terreno, e se movem rápido demais"
+// (teste de 2026-09-12)
+// ---------------------------------------------------------------------------------
+
+#[test]
+fn o_monstro_de_chao_persegue_assentado_no_terreno() {
+    // Terreno em rampa: sobe 1 m a cada metro em x. O monstro nasceu em y = 0 e o
+    // jogador está no alto; antes o `y` do monstro ficava fixo e ele entrava no morro.
+    let rampa = |x: f32, _z: f32| Some(x);
+    let mut ai = MonsterAi::new();
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    let mut players = std::collections::HashMap::new();
+    players.insert(1i64, jogador(Vector3::new(20.0, 20.0, 0.0)));
+    ai.add_threat(1, 10);
+
+    let mut passos = 0;
+    for _ in 0..60 {
+        if let Some(AcaoDoMonstro::Andou { destino, .. }) = ai.tick(&mut m, &players, 50, &rampa) {
+            assert!((destino.y - destino.x).abs() < 1e-3, "fora do chão: {destino:?}");
+            passos += 1;
+        }
+    }
+    assert!(passos >= 3, "{passos} passos");
+}
+
+#[test]
+fn o_movimento_do_monstro_vai_nas_unidades_do_original() {
+    // `gs/npcsession.cpp:258`: `cost_time` em ms e `speed × 256`. Ia centésimo de segundo
+    // e ×100, e o cliente fazia o trecho de 2 m em 50 ms.
+    let mut ai = MonsterAi::new();
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    let mut players = std::collections::HashMap::new();
+    players.insert(1i64, jogador(Vector3::new(20.0, 0.0, 0.0)));
+    ai.add_threat(1, 10);
+    let Some(AcaoDoMonstro::Andou { tempo_ms, velocidade, modo, .. }) = ai.tick(&mut m, &players, 50, &sem_mapa) else {
+        panic!("o primeiro tique da perseguição dá um passo");
+    };
+    assert_eq!(tempo_ms, 500);
+    assert_eq!(AcaoDoMonstro::velocidade_no_protocolo(velocidade), 1024);
+    assert_eq!(modo, pw_gs::ai::MODO_CORRER);
+}
+
+#[test]
+fn o_monstro_ocioso_passeia_perto_de_onde_nasceu_e_so_com_jogador_perto() {
+    let plano = |_x: f32, _z: f32| Some(5.0);
+    let mut m = monstro(Vector3::new(100.0, 5.0, 100.0));
+    m.patrulha = true;
+    m.walk_speed = 1.5;
+
+    // Sem ninguém por perto, fica parado: o `idle_timer` do original nunca liga.
+    let mut ai = MonsterAi::new();
+    let ninguem = std::collections::HashMap::new();
+    for _ in 0..(40 * 20) {
+        assert!(ai.tick(&mut m, &ninguem, 50, &plano).is_none());
+    }
+
+    // Com jogador a 50 m, o contador de 32 batimentos dá a volta e ele sai andando.
+    let mut perto = std::collections::HashMap::new();
+    perto.insert(1i64, jogador(Vector3::new(150.0, 5.0, 100.0)));
+    let mut andou = 0;
+    for _ in 0..(120 * 20) {
+        match ai.tick(&mut m, &perto, 50, &plano) {
+            Some(AcaoDoMonstro::Andou { destino, tempo_ms, modo, .. }) => {
+                andou += 1;
+                assert_eq!(tempo_ms, 1000);
+                assert_eq!(modo, pw_gs::ai::MODO_ANDAR);
+                assert_eq!(destino.y, 5.0);
+                let dx = destino.x - 100.0;
+                let dz = destino.z - 100.0;
+                assert!(dx.abs() <= 10.01 && dz.abs() <= 10.01, "saiu do raio de 10 m: {destino:?}");
+            }
+            _ => {}
+        }
+    }
+    assert!(andou > 0, "em 2 minutos com jogador perto não passeou nenhuma vez");
+}
+
+#[test]
+fn sem_alvo_o_monstro_volta_para_onde_nasceu() {
+    let mut ai = MonsterAi::new();
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    m.aggro_range = 30.0;
+    let mut players = std::collections::HashMap::new();
+    players.insert(1i64, jogador(Vector3::new(25.0, 0.0, 0.0)));
+    ai.add_threat(1, 10);
+    for _ in 0..40 {
+        ai.tick(&mut m, &players, 50, &sem_mapa);
+    }
+    assert!(m.position.x > 5.0, "não perseguiu: {:?}", m.position);
+
+    // O jogador foge para longe: perde o alvo e corre de volta.
+    players.insert(1i64, jogador(Vector3::new(500.0, 0.0, 0.0)));
+    let mut parou = false;
+    for _ in 0..(30 * 20) {
+        if let Some(AcaoDoMonstro::Parou { posicao, .. }) = ai.tick(&mut m, &players, 50, &sem_mapa) {
+            if posicao.x.abs() < 0.1 {
+                parou = true;
+                break;
+            }
+        }
+    }
+    assert!(parou, "não voltou para casa: {:?}", m.position);
 }
 
 // ---------------------------------------------------------------------------------

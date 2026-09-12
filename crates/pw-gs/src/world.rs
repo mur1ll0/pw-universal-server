@@ -40,7 +40,19 @@ pub enum EventoDoMundo {
     MonstroAndou {
         id: i64,
         destino: pw_core::Vector3,
+        /// Quanto o cliente leva para percorrer o trecho, em milissegundos.
+        tempo_ms: u16,
         velocidade: f32,
+        /// `move_mode`: andar/correr e o bit do habitat.
+        modo: u8,
+    },
+    /// Um monstro parou (`OBJECT_STOP_MOVE`).
+    MonstroParou {
+        id: i64,
+        posicao: pw_core::Vector3,
+        velocidade: f32,
+        direcao: u8,
+        modo: u8,
     },
     /// O jogador voltou a viver, e onde.
     JogadorReviveu {
@@ -611,19 +623,33 @@ impl WorldInstance {
                         monster.is_dead = false;
                         monster.hp = monster.max_hp;
                         monster.position = monster.spawn_center;
+                        *ai = MonsterAi::new();
                     }
                 }
                 continue;
             }
 
-            match ai.tick(monster, &self.players, delta_ms) {
+            let terreno = &self.terreno;
+            let chao = |x: f32, z: f32| terreno.altura_em(x, z);
+            match ai.tick(monster, &self.players, delta_ms, &chao) {
                 Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano }) => {
                     attacks_to_process.push((alvo, dano));
                 }
-                Some(crate::ai::AcaoDoMonstro::Andou { destino, velocidade }) => {
+                Some(crate::ai::AcaoDoMonstro::Andou { destino, tempo_ms, velocidade, modo }) => {
                     // A grade espacial tem de acompanhar: quem consulta vizinhos por
                     // posição usa ela, não o campo da entidade.
-                    movimentos.push((monster.id, destino, velocidade));
+                    movimentos.push((
+                        monster.id,
+                        destino,
+                        EventoDoMundo::MonstroAndou { id: monster.id, destino, tempo_ms, velocidade, modo },
+                    ));
+                }
+                Some(crate::ai::AcaoDoMonstro::Parou { posicao, velocidade, direcao, modo }) => {
+                    movimentos.push((
+                        monster.id,
+                        posicao,
+                        EventoDoMundo::MonstroParou { id: monster.id, posicao, velocidade, direcao, modo },
+                    ));
                 }
                 None => {}
             }
@@ -631,13 +657,9 @@ impl WorldInstance {
 
         // Fora do laço porque `self.grid` e `self.monsters` não podem ser emprestados ao
         // mesmo tempo.
-        for &(id, destino, velocidade) in &movimentos {
+        for (id, destino, evento) in movimentos {
             self.grid.update_position(id, destino);
-            self.emitir(EventoDoMundo::MonstroAndou {
-                id,
-                destino,
-                velocidade,
-            });
+            self.emitir(evento);
         }
 
         // 2. Aplica danos causados pelos monstros nos jogadores

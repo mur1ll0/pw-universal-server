@@ -346,28 +346,35 @@ impl BusServer {
             EventoDoMundo::MonstroAndou {
                 id,
                 destino,
+                tempo_ms,
                 velocidade,
+                modo,
             } => {
                 // `OBJECT_MOVE` (15) é o mesmo comando que anuncia jogador andando — o
-                // cliente não distingue por comando, e sim pelo id do objeto.
-                //
-                // `use_time` é quanto o cliente deve levar para percorrer o trecho, em
-                // centésimos de segundo: o passo mínimo da IA dividido pela velocidade.
-                // Errar isto não trava nada, só faz o monstro deslizar rápido demais ou
-                // devagar demais entre um aviso e o outro.
-                let use_time = if velocidade > 0.01 {
-                    ((crate::ai::MonsterAi::PASSO_MINIMO_PARA_AVISAR / velocidade) * 100.0) as u16
-                } else {
-                    50
-                };
-                // `speed` vai na unidade que o cliente espera (centésimos de metro por
-                // segundo), a mesma que o `PLAYER_MOVE` usa.
-                let speed = (velocidade * 100.0) as i16;
+                // cliente distingue pelo id do objeto. Unidades do original
+                // (`gs/npcsession.cpp:258`): tempo em ms, velocidade em 1/256 de m/s. Ver
+                // a nota de `crate::ai`.
+                let speed = crate::ai::AcaoDoMonstro::velocidade_no_protocolo(velocidade);
                 let pacote = self
                     .sub
-                    .object_move(id as i32, destino, use_time, speed, MODO_DE_MOVIMENTO_ANDANDO)
+                    .object_move(id as i32, destino, tempo_ms, speed, modo)
                     .data;
                 // Ninguém a excluir: o monstro não é jogador.
+                self.transmitir_a_outros(0, pacote).await;
+            }
+
+            EventoDoMundo::MonstroParou {
+                id,
+                posicao,
+                velocidade,
+                direcao,
+                modo,
+            } => {
+                let speed = crate::ai::AcaoDoMonstro::velocidade_no_protocolo(velocidade);
+                let pacote = self
+                    .sub
+                    .object_stop_move(id as i32, posicao, speed, direcao, modo)
+                    .data;
                 self.transmitir_a_outros(0, pacote).await;
             }
 
