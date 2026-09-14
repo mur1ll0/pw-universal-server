@@ -56,9 +56,9 @@ casa, passeio), nascimento no mapa 161 e monstro/NPC decidido pelo `elements.dat
 Nesta máquina (Windows, Docker Desktop) `docker` e `cargo` rodam direto, sem SSH.
 Credenciais na memória `pw_universal_infra_access`.
 
-| realm | versão | porta do cliente | servidores de mundo (`WORLD_TAG`) | dados | situação |
+| realm | versão | porta do cliente | servidor de mundo (mapas) | dados | situação |
 | :--- | :--- | ---: | :--- | :--- | :--- |
-| `realm_155BR` | 1.5.5 | **29004** | `pw-world-155br` (1) e `pw-world-155br-161` (161) | `data/realm_155BR/config` | **o realm de teste** |
+| `realm_155BR` | 1.5.5 | **29004** | `pw-world-155br` (mapas 1 e 161) | `data/realm_155BR/config` | **o realm de teste** |
 | `realm_155` | 1.5.5 | 29003 | `pw-world-155` (1) | `data/realm_155/config` | cliente EN (v159); fora dos testes desde 2026-09-05 |
 | `realm_126` | 1.2.6 | 29000 | `pw-world-126` (1) | `data/realm_126` | loga e entra no mundo; parado |
 | `realm_153` | 1.5.3 | 29001 | `pw-world-153` (1) | — | abandonado |
@@ -68,9 +68,8 @@ Mais `pw-postgres` (5432), `pw-dragonfly` (6379), `pw-auth` e `pw-admin-api` (80
 porta do barramento `pw-link`↔`pw-gs` (29100) **nunca** é publicada — não tem autenticação,
 e `pw-bus/tests/topologia_do_compose.rs` cobra isso.
 
-O `pw-link` do 155BR escolhe o servidor pelo mundo do personagem:
-`GS_BUS=1=pw-world-155br:29100,161=pw-world-155br-161:29100` (mundo sem entrada cai no
-primeiro). Um servidor de mundo por mapa, como o original tem um `gs` por seção do `gs.conf`.
+Um servidor de mundo por realm com todos os mapas dele (`WORLD_TAGS: "1,161"`), dados
+carregados uma vez; o roteador entrega cada jogador ao mapa gravado (spec 02 §2.2).
 
 ### 1.2 O que há em `data/realm_155BR/config`
 
@@ -126,13 +125,13 @@ Pré-requisitos do cliente 1.5.5 que **não** são do servidor, e que custaram s
 TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw_database" \
   cargo test --workspace
 
-# Publicar no realm de teste — são TRÊS serviços desde o B48
-cd docker && docker compose build pw-world-155br pw-world-155br-161 pw-realm-155br \
-  && docker compose up -d pw-world-155br pw-world-155br-161 pw-realm-155br
+# Publicar no realm de teste (um link e um servidor de mundo com os mapas 1 e 161)
+cd docker && docker compose build pw-world-155br pw-realm-155br \
+  && docker compose up -d --remove-orphans pw-world-155br pw-realm-155br
 
 # Logs
 docker logs -f pw-realm-155br        # login, entrada no mundo, o que o link trata
-docker logs -f pw-world-155br-161    # o mundo onde os personagens novos nascem
+docker logs -f pw-world-155br        # os mapas 1 e 161
 ```
 
 **Referência da suíte, medida em 2026-09-14 com o banco:** 76 binários de teste,
@@ -243,7 +242,7 @@ Publicar com o comando da seção 2 (os três serviços do 155BR). Depois, em jo
    `NPC_GREETING`.
 2. **Botão armadura/roupa:** cada clique alterna e fica. Antes o link respondia "roupa
    ligada" a todo clique, antes da resposta certa do mundo.
-3. **Entrar no mundo:** no log do mundo (`docker logs pw-world-155br-161 | grep "marca das
+3. **Entrar no mundo:** no log do mundo (`docker logs pw-world-155br | grep "marca das
    missões"`) deve aparecer `pediu a marca das missões dinâmicas: 0x52776c0d`. Antes o link
    respondia com `reason 7`, que no cliente é "esquecer a habilidade de produção". Se o
    cliente aceitar a marca, ele passa a mandar também os pedidos de prêmio especial (9) e de

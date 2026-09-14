@@ -10,7 +10,8 @@
 
 | peça | o que é |
 | :--- | :--- |
-| `server.rs` | laço de **50 ms**: `world.tick(50)` |
+| `server.rs` | laço de **50 ms**: `world.tick(50)`, um por mapa |
+| `mapas.rs` (`RoteadorDeMapas`) | escuta do barramento; entrega cada `roleid` ao mapa gravado dele |
 | `world.rs` (`WorldInstance`) | um mapa: jogadores, monstros, NPCs, matéria, grade, terreno, autosave; emite `EventoDoMundo` |
 | `bus_server.rs` (`BusServer`) | ponta do barramento: roteia por `roleid`, trata subcomandos (spec 04 §6), traduz eventos em S2C, streaming de visibilidade |
 | `grid.rs` | grade espacial, célula de **50 m** |
@@ -20,7 +21,8 @@
 | `habilidades.rs` | contas das habilidades portadas dos stubs do cliente |
 | `npc.rs` | decodificação dos serviços de NPC |
 
-Um processo `pw-gs` por mapa (`WORLD_TAG`). O jogador entra quando o link manda
+Um processo `pw-gs` por realm, com um `WorldInstance` e um `BusServer` por mapa atrás do
+`RoteadorDeMapas` (`mapas.rs`, spec 02 §2.2). O jogador entra quando o link manda
 `EnterWorld`: o mundo carrega o personagem do banco (`colocar_no_mundo`) — nível, atributos,
 habilidades, itens, `sec_level`.
 

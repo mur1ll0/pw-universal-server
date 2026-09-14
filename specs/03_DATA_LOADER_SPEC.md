@@ -21,7 +21,7 @@
 
 Uma pasta de realm (`CONFIG_DIR`) tem os `.data` na raiz e uma pasta por mapa:
 `world/` = mundo 1, `aNN/` = mundo `100 + NN` (`a01..a99`), `bNN/`. Cada `pw-gs` carrega os
-dados comuns e **o terreno só do mapa que serve** (`WORLD_TAG`). A carga devolve um
+dados comuns uma vez e **o terreno só dos mapas que serve** (`WORLD_TAGS`). A carga devolve um
 `RelatorioDeCarga` com lidos e falhas; falha de um arquivo não derruba o login (A60).
 
 ## 3. Os arquivos

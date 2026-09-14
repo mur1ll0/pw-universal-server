@@ -331,9 +331,10 @@ services:
       GATEWAY_PORT: 29004
       DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
       REDIS_URL: redis://pw-dragonfly:6379
-      # Um servidor de mundo por mapa, como o original (um `gs` por seção do `gs.conf`).
-      # O primeiro é também o padrão para mapa sem servidor próprio.
-      GS_BUS: 1=pw-world-155br:29100,161=pw-world-155br-161:29100
+      # Um só servidor de mundo com todos os mapas do realm (WORLD_TAGS no pw-world-155br):
+      # ele descobre o mapa de cada personagem no banco. Separar um mapa pesado noutro
+      # contêiner é `GS_BUS: 1=a:29100,161=b:29100` — ver crates/pw-gs/src/mapas.rs.
+      GS_BUS: pw-world-155br:29100
     ports:
       - "29004:29004" # Porta pública do client 1.5.5 BR
     volumes:
@@ -341,9 +342,11 @@ services:
     depends_on:
       - pw-auth
       - pw-world-155br
-      - pw-world-155br-161
 
-  # Servidor de mundo do realm 1.5.5 BR. Sem `ports:` — barramento interno (ver 1.2.6).
+  # Servidor de mundo do realm 1.5.5 BR, com os mapas 1 (`world`) e 161 (`a61`, onde todo
+  # personagem novo nasce pelos moldes do `clsconfig` do pwserver_155v156). Um processo
+  # para os dois, com os dados carregados uma vez — o equivalente do `./gs gs01 ... is61`
+  # do original. Sem `ports:` — barramento interno (ver 1.2.6).
   pw-world-155br:
     build:
       context: ..
@@ -355,34 +358,7 @@ services:
     environment:
       REALM_ID: realm_155BR
       GAME_VERSION: "1.5.5"
-      WORLD_TAG: "1"
-      BUS_LISTEN: 0.0.0.0:29100
-      CONFIG_DIR: /app/data/config
-      RUST_LOG: info,pw_gs=debug
-      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
-      REDIS_URL: redis://pw-dragonfly:6379
-    volumes:
-      - ../data/realm_155BR/config:/app/data/config:ro
-    depends_on:
-      pw-postgres:
-        condition: service_healthy
-      pw-dragonfly:
-        condition: service_started
-
-  # O mapa 161 (`a61`) do realm 1.5.5 BR — onde todo personagem novo nasce, pelos moldes
-  # do `clsconfig` do pacote pwserver_155v156 (item 47/48 do ESTADO_E_RETOMADA).
-  pw-world-155br-161:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.core
-      args:
-        CRATE_NAME: pw-gs
-    container_name: pw-world-155br-161
-    restart: unless-stopped
-    environment:
-      REALM_ID: realm_155BR
-      GAME_VERSION: "1.5.5"
-      WORLD_TAG: "161"
+      WORLD_TAGS: "1,161"
       BUS_LISTEN: 0.0.0.0:29100
       CONFIG_DIR: /app/data/config
       RUST_LOG: info,pw_gs=debug

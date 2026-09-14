@@ -290,6 +290,11 @@ impl BusServer {
         }
     }
 
+    /// O mundo que este servidor atende.
+    pub fn mundo(&self) -> &Arc<RwLock<WorldInstance>> {
+        &self.world
+    }
+
     /// A versão que este mundo fala.
     pub fn versao(&self) -> GameVersion {
         self.sub.versao()
@@ -497,13 +502,18 @@ impl BusServer {
 
         // A conexão caiu: os jogadores que vinham por ela não estão mais acessíveis.
         // Deixá-los registrados faria o mundo tentar responder num canal morto.
+        self.esquecer_sessoes(&donos).await;
+    }
+
+    /// Esquece as sessões destes jogadores — a conexão por onde vinham caiu.
+    pub(crate) async fn esquecer_sessoes(&self, roleids: &[i32]) {
         let mut sessoes = self.sessoes.write().await;
-        for roleid in donos {
-            sessoes.remove(&roleid);
+        for roleid in roleids {
+            sessoes.remove(roleid);
         }
     }
 
-    async fn tratar(&self, msg: BusMessage, envio: &EnvioAoCliente) {
+    pub(crate) async fn tratar(&self, msg: BusMessage, envio: &EnvioAoCliente) {
         match msg {
             BusMessage::EnterWorld {
                 roleid, localsid, ..

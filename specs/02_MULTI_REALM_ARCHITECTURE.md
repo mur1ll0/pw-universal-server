@@ -13,7 +13,8 @@ exigência fora do servidor é o que o próprio cliente precisa para rodar, ver
 `docs/ESTADO_E_RETOMADA.md` §1.3).
 
 Variáveis de cada daemon: `REALM_ID`, `GAME_VERSION`, `DATABASE_URL`, `REDIS_URL`; no link
-`GATEWAY_PORT` e `GS_BUS`; no mundo `WORLD_TAG`, `CONFIG_DIR` e `BUS_LISTEN`. No `pw-gs`
+`GATEWAY_PORT` e `GS_BUS`; no mundo `WORLD_TAGS` (lista de mapas; `WORLD_TAG` para um só),
+`CONFIG_DIR` e `BUS_LISTEN`. No `pw-gs`
 uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio (A44). Link sem
 `GS_BUS` sobe e avisa no log: o cliente entra, mas nada é simulado.
 
@@ -28,21 +29,29 @@ uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio
 | `pw-auth` | — (29200 interna) | serviço de autenticação; hoje sem consumidor |
 | `pw-admin-api` | 8000 | painel (`web-admin/backend`), lê `data/` e `specs/elements_*` |
 
-### 2.2 Por realm: um `pw-link` e um `pw-gs` por mapa
+### 2.2 Por realm: um `pw-link` e um `pw-gs` com os mapas do realm
 
-| realm (`REALM_ID`) | `GAME_VERSION` | link (porta pública) | mundos (`WORLD_TAG` → serviço) | dados |
+| realm (`REALM_ID`) | `GAME_VERSION` | link (porta pública) | servidor de mundo (mapas) | dados |
 | :--- | :--- | :--- | :--- | :--- |
-| `realm_155BR` | 1.5.5 | `pw-realm-155br` **29004** | 1 → `pw-world-155br`; **161** → `pw-world-155br-161` | `data/realm_155BR/config` (cliente BR, v156) |
+| `realm_155BR` | 1.5.5 | `pw-realm-155br` **29004** | `pw-world-155br` (mapas **1 e 161**) | `data/realm_155BR/config` (cliente BR, v156) |
 | `realm_155` | 1.5.5 | `pw-realm-155` 29003 | 1 → `pw-world-155` | `data/realm_155/config` (cliente EN, v159) |
 | `realm_126` | 1.2.6 | `pw-realm-126` 29000 | 1 → `pw-world-126` | `data/realm_126` |
 | `realm_153` | 1.5.3 | `pw-realm-153` 29001 | 1 → `pw-world-153` | abandonado |
 | `realm_148` | 1.4.8 | `pw-realm-148` 29002 | 1 → `pw-world-148` | nunca foi alvo |
 
-- **Um servidor de mundo por mapa**, como o original tem um `gs` por seção do `gs.conf`. O
-  link recebe `GS_BUS=<tag>=<host>:29100,...` e manda cada sessão ao servidor do mundo do
-  personagem (`LinkGateway::uplink_da_sessao`); mundo sem entrada cai no primeiro. Um
-  `GS_BUS` sem `<tag>=` (forma antiga) vale para todos os mundos.
-- **Trocar de mundo durante a sessão não existe** (o link escolhe na entrada) — `falta`.
+- **Um servidor de mundo por realm, com vários mapas** (`WORLD_TAGS=1,161`). Os dados são
+  carregados uma vez e cada mapa é um `WorldInstance` com seu próprio tick — o equivalente
+  do `./gs gs01 gs.conf gmserver.conf gsalias.conf is61` do original, que carrega uma vez e
+  faz `fork()` de um processo por mapa (`cgame/gs/start.cpp:185-234`). No `EnterWorld` o
+  roteador (`pw_gs::RoteadorDeMapas`) lê o `world_id` do personagem e passa a entregar a
+  esse mapa tudo daquele `roleid`; mapa gravado que o processo não serve cai no primeiro da
+  lista, com aviso.
+- Separar um mapa pesado noutro contêiner continua possível pelo link:
+  `GS_BUS=<tag>=<host>:29100,...` (`LinkGateway::uplink_da_sessao`); mundo sem entrada cai no
+  primeiro. `GS_BUS` sem `<tag>=` vale para todos os mapas.
+- Medido antes da consolidação (2026-09-14): cada contêiner de mapa ocupava ~1,1 GB, quase
+  todo em dados repetidos; o `gs.conf` do 1.5.5 lista ~80 mapas.
+- **Trocar de mapa durante a sessão não existe** — `falta`.
 - Um segundo realm da mesma versão: receita em `docs/MULTIPLOS_REALMS.md`; cada realm
   precisa de uma linha em `realms` e dos moldes em `class_templates`.
 
@@ -51,7 +60,7 @@ uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio
 - A porta do barramento **nunca** é publicada: ele não autentica, e quem o alcança manda
   `EnterWorld` por qualquer `roleid` (A26).
 - Todo alvo de `GS_BUS` existe, roda `pw-gs`, escuta na porta, é do mesmo realm e versão, e
-  `161=` aponta para quem tem `WORLD_TAG` 161.
+  `161=` aponta para quem serve o mapa 161 (`WORLD_TAG` ou `WORLD_TAGS`).
 
 ## 3. Versão e `Challenge`
 

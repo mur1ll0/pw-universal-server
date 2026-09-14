@@ -1,6 +1,6 @@
 use pw_data_loader::GameDataManager;
 use pw_bus::BusListener;
-use pw_gs::{BusServer, GameServer, WorldInstance};
+use pw_gs::{RoteadorDeMapas, WorldInstance};
 use pw_protocol::GameVersion;
 use pw_storage::{CharacterRepository, PostgresPool, StorageConfig};
 use std::sync::Arc;
@@ -33,18 +33,28 @@ async fn main() -> anyhow::Result<()> {
         )
     });
 
-    let world_tag = std::env::var("WORLD_TAG")
+    // Os mapas deste processo. `WORLD_TAGS=1,161` é o equivalente do `./gs gs01 ... is61`
+    // do original (ver `pw_gs::mapas`); `WORLD_TAG` sozinho continua valendo para um mapa.
+    let mapas: Vec<i32> = std::env::var("WORLD_TAGS")
+        .or_else(|_| std::env::var("WORLD_TAG"))
         .unwrap_or_else(|_| "1".to_string())
-        .parse::<i32>()
-        .unwrap_or(1);
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| {
+            t.parse::<i32>()
+                .unwrap_or_else(|_| panic!("mapa não numérico em WORLD_TAGS: {t:?}"))
+        })
+        .collect();
+    assert!(!mapas.is_empty(), "WORLD_TAGS vazio: o servidor de mundo não teria mapa nenhum");
     let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "./data/config".to_string());
 
     info!(
-        "Iniciando pw-gs (World Server) para o Realm '{}' (v{}), World #{}...",
-        realm_id, game_version, world_tag
+        "Iniciando pw-gs (World Server) para o Realm '{}' (v{}), mapas {:?}...",
+        realm_id, game_version, mapas
     );
 
-    // 1. Carrega dados e templates de jogo
+    // 1. Carrega dados e templates de jogo — **uma vez**, para todos os mapas.
     //
     // O `let _ =` que estava aqui apagava o único aviso que existia sobre uma carga
     // incompleta. Cada arquivo que falha agora vira uma linha de log com nome e motivo —
@@ -65,28 +75,23 @@ async fn main() -> anyhow::Result<()> {
     let pg_pool = PostgresPool::new(&storage_config).await?;
     let char_repo = CharacterRepository::new(pg_pool);
 
-    // 3. Inicializa o Mundo de Jogo e os spawns
-    let mut world = WorldInstance::new(world_tag, data_manager, char_repo);
-    world.init_spawns();
-
-    let server = Arc::new(GameServer::new(world));
+    // 3. Um mundo por mapa, cada um com seu tick, todos sobre os mesmos dados.
+    let mut servidos = Vec::with_capacity(mapas.len());
+    for mapa in &mapas {
+        let mundo = WorldInstance::new(*mapa, Arc::clone(&data_manager), char_repo.clone());
+        servidos.push(RoteadorDeMapas::preparar_mapa(mundo, game_version).await);
+    }
+    let roteador = Arc::new(RoteadorDeMapas::new(servidos, char_repo));
 
     // 4. Sobe a ponta de barramento. É por aqui que o `pw-link` entrega os subcomandos
-    //    do mundo 3D — sem isso o `pw-gs` fica fora do caminho do jogo, que é o estado
-    //    em que ele estava.
+    //    do mundo 3D.
     //
     //    O barramento é entre daemons: a porta não deve ser exposta ao jogador.
     let bus_addr = std::env::var("BUS_LISTEN").unwrap_or_else(|_| "0.0.0.0:29100".to_string());
     let escuta = BusListener::bind(&bus_addr).await?;
     info!("pw-gs: barramento escutando em {bus_addr}");
 
-    let bus = Arc::new(BusServer::new(Arc::clone(&server.world), game_version));
-    // Sem isto, o que o tick decide (dano de monstro, morte) não chega a ninguém.
-    bus.ligar_eventos_do_mundo().await;
-    tokio::spawn(Arc::clone(&bus).executar(escuta));
-
-    // 5. Executa o loop de simulação em tempo real
-    server.run_tick_loop().await;
+    roteador.executar(escuta).await;
 
     Ok(())
 }

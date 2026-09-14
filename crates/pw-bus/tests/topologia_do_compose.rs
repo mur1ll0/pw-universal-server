@@ -218,12 +218,18 @@ fn cada_daemon_de_link_aponta_para_servidores_de_mundo_que_existem() {
                 "`{nome}` aponta para `{host}`, que não roda o servidor de mundo"
             );
 
-            // `161=host:porta` tem de apontar para quem serve o mundo 161.
+            // `161=host:porta` tem de apontar para quem serve o mundo 161 — seja o único mapa
+            // (`WORLD_TAG`), seja um dos mapas do processo (`WORLD_TAGS`).
             if let Some(tag) = tag {
-                assert_eq!(
-                    mundo.ambiente.get("WORLD_TAG").map(String::as_str),
-                    Some(tag.to_string().as_str()),
-                    "`{nome}` manda o mundo {tag} para `{host}`, que serve outro mundo"
+                let servidos: Vec<i32> = mundo
+                    .ambiente
+                    .get("WORLD_TAGS")
+                    .or_else(|| mundo.ambiente.get("WORLD_TAG"))
+                    .map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect())
+                    .unwrap_or_default();
+                assert!(
+                    servidos.contains(&tag),
+                    "`{nome}` manda o mundo {tag} para `{host}`, que serve os mapas {servidos:?}"
                 );
             }
 

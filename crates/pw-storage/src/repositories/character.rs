@@ -611,6 +611,22 @@ impl CharacterRepository {
         .unwrap_or(0)
     }
 
+    /// Em que mapa o personagem está gravado.
+    ///
+    /// É a pergunta que o servidor de mundo faz a cada `EnterWorld` para decidir qual dos
+    /// mapas do processo recebe o jogador (`pw_gs::mapas`) — uma coluna, e não o
+    /// `get_details_por_role` inteiro com itens e habilidades, que o mapa escolhido lê logo
+    /// depois de qualquer jeito.
+    ///
+    /// `None` quando o personagem não existe.
+    pub async fn mundo_do_personagem(&self, role_id: RoleId) -> Result<Option<i32>> {
+        let mundo = sqlx::query_scalar::<_, i32>("SELECT world_id FROM characters WHERE id = $1")
+            .bind(role_id)
+            .fetch_optional(self.pool.get_ref())
+            .await?;
+        Ok(mundo)
+    }
+
     /// Salva o estado básico do personagem
     pub async fn save_status(
         &self,
