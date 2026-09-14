@@ -20,6 +20,8 @@
 //! Sem `TEST_DATABASE_URL` o teste passa sem verificar nada e diz isso na saída.
 
 use pw_core::{AtributosIniciais, CharacterClass, Gender, Race};
+mod comum;
+
 use pw_storage::{CharacterRepository, PostgresPool, StorageConfig};
 
 struct Cenario {
@@ -45,6 +47,7 @@ async fn montar() -> Option<Cenario> {
         ..Default::default()
     };
     let pool = PostgresPool::new(&cfg).await.expect("conexão com o banco");
+    comum::limpar_sobras_de_teste(&pool).await;
 
     // Só o relógio não basta: os três testes deste arquivo rodam em paralelo, e dois que
     // comecem no mesmo nanossegundo geram o mesmo nome de realm e o segundo morre em

@@ -2,6 +2,7 @@ pub mod aipolicy;
 pub mod armaduras;
 pub mod armas;
 pub mod classes;
+pub mod dyn_tasks;
 pub mod collision;
 pub mod elements;
 pub mod generic_elements;
@@ -21,6 +22,7 @@ pub use armaduras::{
     TemplateDeDecoracao,
 };
 pub use classes::{ConfigDeClasse, TabelaDeClasses};
+pub use dyn_tasks::CabecalhoDasMissoesDinamicas;
 pub use collision::MapCollision;
 pub use elements::MedicineTemplate;
 pub use elements::ElementsData;

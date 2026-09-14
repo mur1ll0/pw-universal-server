@@ -2,6 +2,7 @@ use crate::aipolicy::AiPolicyData;
 use crate::armaduras::TabelasDeEquipamento;
 use crate::classes::TabelaDeClasses;
 use crate::collision::MapCollision;
+use crate::dyn_tasks::CabecalhoDasMissoesDinamicas;
 use crate::elements::ElementsData;
 use crate::generic_elements::{self, GenericElementsData};
 use crate::gshop::GShopData;
@@ -181,6 +182,13 @@ pub struct GameDataManager {
     pub versao_do_elements: Option<u32>,
     /// `_task_templ_cur_version` lido do cabeçalho do `tasks.data` deste realm.
     pub versao_das_tasks: Option<u32>,
+    /// A marca de tempo do `dyn_tasks.data` deste realm — o que o servidor responde quando
+    /// o cliente pergunta por ela (`TASK_CLT_NOTIFY_DYN_TIMEMARK`). Ver
+    /// [`crate::dyn_tasks`].
+    ///
+    /// `None` quando a pasta não tem o arquivo, ele é recusado, ou a marca é zero: nos três
+    /// casos o original **não responde** ao pedido (`TaskTemplMan.cpp:301`).
+    pub marca_das_missoes_dinamicas: Option<u32>,
 
     // Spawns indexados por ID do Mapa/Instância (ex: 1 -> world/npcgen.data, 101 -> a01/npcgen.data)
     pub map_spawns: HashMap<i32, NpcGenData>,
@@ -332,6 +340,16 @@ impl GameDataManager {
                     rel.lidos.push("tasks.data".into());
                 }
                 Err(e) => rel.falhou("tasks.data", e),
+            }
+        }
+
+        if let Some(data) = rel.ler(dir, "dyn_tasks.data") {
+            match CabecalhoDasMissoesDinamicas::ler(&data) {
+                Ok(c) => {
+                    self.marca_das_missoes_dinamicas = (c.marca != 0).then_some(c.marca);
+                    rel.lidos.push("dyn_tasks.data (cabeçalho)".into());
+                }
+                Err(e) => rel.falhou("dyn_tasks.data", e),
             }
         }
 

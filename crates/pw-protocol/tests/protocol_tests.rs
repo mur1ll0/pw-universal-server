@@ -766,3 +766,22 @@ fn a_resposta_de_latencia_devolve_o_relogio_do_cliente() {
     assert_eq!(p.data.len(), 2 + 4);
     assert_eq!(s32_de(&p.data, 2), 0x1234_5678);
 }
+
+/// A marca das missões dinâmicas vai no `TASK_VAR_DATA` (106) com o
+/// `svr_task_dyn_time_mark` de 9 bytes: `reason` 8, `task` 0, a marca e a versão 10.
+///
+/// O cliente só aceita esse tamanho exato e essa versão (`TaskClient.cpp:290-296`,
+/// `TaskTemplMan.cpp:168`); e o `reason` 7, que o `gateway.rs` mandava, é
+/// `TASK_SVR_NOTIFY_FORGET_SKILL` — outra ordem, não a marca.
+#[test]
+fn a_marca_das_missoes_dinamicas_vai_com_reason_8_e_nove_bytes() {
+    let p = S2CGamedataSend::task_dyn_time_mark(0x5277_6c0d);
+    let d = &p.data;
+    assert_eq!(u16::from_le_bytes([d[0], d[1]]), 106, "TASK_VAR_DATA");
+    assert_eq!(s32_de(d, 2), 9, "size = sizeof(svr_task_dyn_time_mark)");
+    assert_eq!(d.len(), 2 + 4 + 9);
+    assert_eq!(d[6], 8, "reason = TASK_SVR_NOTIFY_DYN_TIME_MARK");
+    assert_eq!(u16::from_le_bytes([d[7], d[8]]), 0, "task");
+    assert_eq!(s32_de(d, 9) as u32, 0x5277_6c0d, "time_mark");
+    assert_eq!(u16::from_le_bytes([d[13], d[14]]), 10, "version = DYN_TASK_CUR_VERSION");
+}

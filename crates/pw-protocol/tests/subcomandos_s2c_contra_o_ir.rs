@@ -158,6 +158,7 @@ const INTENCAO: &[(&str, &str)] = &[
 
 /// Funções que não escrevem cabeçalho porque **delegam** a outra que escreve.
 const DELEGAM: &[&str] = &[
+    "task_dyn_time_mark",
     "task_notify_new",
     "task_notify_complete",
     "task_notify_monster_killed",

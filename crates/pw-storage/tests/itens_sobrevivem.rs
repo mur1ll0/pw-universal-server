@@ -23,6 +23,8 @@
 //! rodar está no cabeçalho de `autorizacao_de_personagem.rs`.
 
 use pw_core::{CharacterClass, ContainerType, Gender, ItemRecord, Race};
+mod comum;
+
 use pw_storage::{CharacterRepository, PostgresPool, StorageConfig};
 
 /// Os octetos de um item, com bytes distintos para que um truncamento apareça.
@@ -50,6 +52,7 @@ async fn montar() -> Option<Cenario> {
         ..Default::default()
     };
     let pool = PostgresPool::new(&cfg).await.expect("conexão com o banco");
+    comum::limpar_sobras_de_teste(&pool).await;
 
     // Só o relógio não basta: os quatro testes deste arquivo rodam em paralelo, e dois que
     // comecem no mesmo nanossegundo geram o mesmo nome de realm — o segundo morre em

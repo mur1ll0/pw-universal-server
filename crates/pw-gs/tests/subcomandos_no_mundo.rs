@@ -27,6 +27,9 @@ use pw_gs::ai::MonsterAi;
 use pw_gs::entity::{MatterEntity, MonsterEntity};
 use pw_gs::{BusServer, WorldInstance};
 use pw_storage::{CharacterRepository, PostgresPool, StorageConfig};
+
+#[path = "../../pw-storage/tests/comum/mod.rs"]
+mod comum;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -198,6 +201,7 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
     // Pool pequeno de propósito: cada teste abre o seu, e o padrão (50) multiplicado
     // pelos testes em paralelo estoura o `max_connections` do servidor.
     let pool = pool_do_teste(url).await;
+    comum::limpar_sobras_de_teste(&pool).await;
     let (roleid, convidado) = personagem_com_missao(&pool).await;
 
     // A loja cobra o preço do `elements.data` desde 2026-09-11, e este cenário não carrega
@@ -207,6 +211,8 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
     dados
         .precos
         .insert(ITEM_DE_LOJA as u32, (50, PRECO_DO_ITEM_DE_LOJA));
+    // A marca do `dyn_tasks.data` dos realms 1.5.5 (`dyn_tasks_do_realm.rs`).
+    dados.marca_das_missoes_dinamicas = Some(MARCA_DAS_MISSOES_DINAMICAS);
 
     let mut mundo = WorldInstance::new(
         1,
@@ -3070,4 +3076,48 @@ async fn o_treinador_sobe_a_habilidade_um_nivel_e_grava() {
         .find(|h| h.skill_id == HABILIDADE as u32)
         .expect("a habilidade subida tem de estar no banco");
     assert_eq!(gravada.level, antes + 1);
+}
+
+/// A marca do `dyn_tasks.data` que o `montar()` põe no realm de teste.
+const MARCA_DAS_MISSOES_DINAMICAS: u32 = 0x5277_6c0d;
+
+/// Ao entrar no mundo o cliente pede a marca das missões dinâmicas
+/// (`TASK_NOTIFY` com `reason` 7, `TaskProcess.cpp:2185`), e o mundo responde como
+/// `ATaskTemplMan::OnTaskGetDynTasksTimeMark` (`TaskTemplMan.cpp:299-309`): `TASK_VAR_DATA`
+/// com `reason` **8**, a marca do realm e a versão 10.
+///
+/// Até 2026-09-14 quem respondia era o `gateway.rs`, com `reason` 7 — no cliente,
+/// `TASK_SVR_NOTIFY_FORGET_SKILL` — e marca zero.
+#[tokio::test]
+async fn o_pedido_da_marca_das_missoes_dinamicas_recebe_a_marca_do_realm() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // `task_notify { size = 3; buf = task_notify_base { reason = 7, task = 0 } }`
+    let mut corpo = 3u32.to_le_bytes().to_vec();
+    corpo.extend_from_slice(&[7, 0, 0]);
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::TASK_NOTIFY, &corpo),
+    })
+    .await
+    .unwrap();
+
+    // Outras notificações de missão também viajam no 106; a da marca é a de `reason` 8.
+    let mut marca = None;
+    for _ in 0..10 {
+        let p = esperar_comando(&mut link, 106).await;
+        if p.get(6) == Some(&8) {
+            marca = Some(p);
+            break;
+        }
+    }
+    let p = marca.expect("o mundo não respondeu com a marca das missões dinâmicas");
+
+    assert_eq!(i32_em(&p, 2), 9, "size = sizeof(svr_task_dyn_time_mark)");
+    assert_eq!(p.len(), 2 + 4 + 9);
+    assert_eq!(u16::from_le_bytes([p[7], p[8]]), 0, "task");
+    assert_eq!(i32_em(&p, 9) as u32, MARCA_DAS_MISSOES_DINAMICAS, "a marca do realm");
+    assert_eq!(u16::from_le_bytes([p[13], p[14]]), 10, "DYN_TASK_CUR_VERSION");
 }

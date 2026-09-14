@@ -2,7 +2,7 @@ use futures::{SinkExt, StreamExt};
 use pw_core::{CharacterClass, CharacterSummary, Vector3};
 use pw_crypto::generate_login_challenge;
 use pw_protocol::{
-    create_protocol_adapter, GameVersion, InboundPacket, OctetsStream, OutboundPacket, ProtocolAdapter,
+    create_protocol_adapter, GameVersion, InboundPacket, OutboundPacket, ProtocolAdapter,
     PwPacketCodec, S2CChatBroadcast, S2CChallenge, S2CCreateRoleResponse, S2CDeleteRoleResponse,
     S2CErrorInfo, S2CGamedataSend, S2CGetCustomDataRe, S2CGetFriendListRe, S2CGetHelpStatesRe, S2CGetUIConfigRe,
     S2CGetWaitDelRolesRe, S2COnlineAnnounce, S2CPlayerBaseInfoRe, S2CPlayerMoveBroadcast, S2CRoleListResponse,
@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 use tokio_util::codec::Framed;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, warn};
 
 use crate::session::ClientSession;
 use crate::uplink::{BusUplink, EnvioAoCliente};
@@ -877,12 +877,11 @@ impl LinkGateway {
                     // lixo depois do fim do buffer.
                     info!("TASK_DATA enviado pro personagem ID {}", details.id);
                     tx.send(OutboundPacket::GamedataSend(sub.task_data())).await?;
-                    let mut dyn_mark = OctetsStream::new();
-                    dyn_mark.write_u8(8);       // reason = TASK_SVR_NOTIFY_DYN_TIME_MARK (8)
-                    dyn_mark.write_u16_le(0);   // task = 0 (2B)
-                    dyn_mark.write_u32_le(0);   // time_mark = 0 (4B)
-                    dyn_mark.write_u16_le(0);   // dyn_task_count = 0 (2B) - Exactly 9 bytes
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_var_data(&dyn_mark.into_bytes()))).await?;
+                    // A marca das missões dinâmicas **não** vai aqui. Ia, sem ninguém pedir,
+                    // com `version = 0` — e o cliente descarta toda marca cuja versão não é
+                    // `DYN_TASK_CUR_VERSION` (10, `TaskTemplMan.cpp:168`). Quem responde é o
+                    // mundo, quando o cliente pede (`TASK_NOTIFY` com `reason` 7), como o
+                    // original.
 
                     // Carrega e sincroniza missões ativas do personagem
                     let role_quests = self.char_repo.quest_repo().list_quests(details.id).await.unwrap_or_default();
@@ -1123,62 +1122,35 @@ impl LinkGateway {
                         //                     lista de membros vinha com vida e posição
                         //                     escritas no código, e sair era um eco só
                         //                     para o próprio jogador.
+                        //   35  SEVNPC_HELLO, 49 TASK_NOTIFY, 85 SWITCH_FASHION_MODE — tratados
+                        //                     no mundo desde 2026-09 e esquecidos aqui até
+                        //                     2026-09-14: o cliente recebia **duas**
+                        //                     respostas. O 35 abria o diálogo duas vezes
+                        //                     (e para qualquer id, NPC ou não). O 85 lia um
+                        //                     corpo que o comando não tem e respondia
+                        //                     "roupa ligada" a todo clique, antes da
+                        //                     resposta certa do mundo. O 49 respondia o
+                        //                     pedido da marca das missões dinâmicas com
+                        //                     `reason = 7`, que no cliente é
+                        //                     `TASK_SVR_NOTIFY_FORGET_SKILL` — a ordem de
+                        //                     esquecer a habilidade de produção
+                        //                     (`TaskClient.cpp:283`); a marca é o 8.
                         //
-                        // Sem `GS_BUS` configurado, estes dois deixam de ter tratamento —
-                        // é o preço declarado da separação, e o `main.rs` avisa no log ao
-                        // subir sem barramento.
-                        23..=26 => {
-                            // Subcomandos de ação de movimento / pulo / voo (Takeoff / Landing)
-                            if gamedata.data.len() >= 3 {
-                                let flight_act = gamedata.data[2];
-                                if flight_act == 1 {
-                                    info!("Jogador ID {} decolou para voo", role_id);
-                                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::object_takeoff(role_id))).await?;
-                                } else if flight_act == 2 {
-                                    info!("Jogador ID {} pousou do voo", role_id);
-                                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::object_landing(role_id))).await?;
-                                }
-                            }
-                        }
-                        35 => {
-                            // C2S 35: SEVNPC_HELLO (abrir diálogo com NPC).
-                            //
-                            // Era `32 | 35`. O 32 é `TEAM_MEMBER_POS` no IR — uma consulta
-                            // de posição de companheiro de grupo, que passava a receber um
-                            // diálogo de NPC como resposta.
-                            if gamedata.data.len() >= 6 {
-                                let nid = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
-                                info!("Jogador ID {} iniciou diálogo com o NPC ID {}", role_id, nid);
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::npc_greeting(nid))).await?;
-                            }
-                        }
+                        // Sem `GS_BUS` configurado, estes deixam de ter tratamento — é o
+                        // preço declarado da separação, e o `main.rs` avisa no log ao subir
+                        // sem barramento.
+                        //
+                        // C2S 23 a 26 **não** são voo: são `GET_EXT_PROP_BASE`/`_MOVE`/
+                        // `_ATK`/`_DEF`, consultas sem corpo. O braço que havia aqui lia um
+                        // "tipo de voo" no byte 2, que o comando não tem, e por isso nunca
+                        // fazia nada. Removido; decolar e pousar são do mundo, pelo item do
+                        // slot de voo.
+                        //
                         // C2S 21 (`GET_EXT_PROP`) e 39 (`GET_ALL_DATA`) migraram para o
                         // `pw-gs`. Os dois respondiam com números escritos no código —
                         // `120/120/280/280` de vida e mana e `50000` de dinheiro, iguais
                         // para qualquer personagem — porque o daemon de link não tem a
                         // simulação de onde tirar os valores de verdade.
-                        49 => {
-                            // C2S 49: TASK_NOTIFY (Notificações e verificação de missões do cliente)
-                            trace!("TASK_NOTIFY recebido de jogador {}", role_id);
-                            let now_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u32;
-                            if gamedata.data.len() >= 7 && gamedata.data[6] == 7 {
-                                let mut dyn_mark = OctetsStream::new();
-                                dyn_mark.write_u8(7);       // reason = TASK_SVR_NOTIFY_DYN_TIME_MARK (7)
-                                dyn_mark.write_u16_le(0);   // task = 0
-                                dyn_mark.write_u32_le(0);   // time_mark = 0
-                                dyn_mark.write_u32_le(1);   // version = 1
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_var_data(&dyn_mark.into_bytes()))).await?;
-                            } else {
-                                let role_quests = self.char_repo.quest_repo().list_quests(role_id).await.unwrap_or_default();
-                                for q in role_quests {
-                                    if q.status == pw_core::QuestStatus::Active {
-                                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_new(q.quest_id as u16, now_ts))).await?;
-                                    }
-                                }
-                                let sub_versao = pw_protocol::PorVersao::new(self.game_version);
-                                tx.send(OutboundPacket::GamedataSend(sub_versao.task_data())).await?;
-                            }
-                        }
                         // C2S 67 (`QUERY_PLAYER_INFO_1`) e 68 (`QUERY_NPC_INFO_1`)
                         // migraram para o `pw-gs`. O 67 **não respondia nada** — lia a
                         // contagem, escrevia uma linha de log e devolvia. O 68 respondia
@@ -1211,14 +1183,6 @@ impl LinkGateway {
                         // são três coisas que só o mundo tem. Enquanto ela não existe,
                         // não responder é melhor do que destruir um item e inventar um
                         // saldo. Está anotado como dívida em `docs/ESTADO_E_RETOMADA.md`.
-                        85 => {
-                            // C2S 85: SWITCH_FASHION_MODE.
-                            //
-                            // Era `85 | 192`. O 192 **não existe** na tabela C2S do IR.
-                            let enable = if gamedata.data.len() >= 3 { gamedata.data[2] == 1 } else { true };
-                            info!("Jogador ID {} alternou modo de moda para: {}", role_id, enable);
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_enable_fashion(role_id, enable))).await?;
-                        }
                         92 => {
                             // C2S 92: DUEL_REQUEST — 6 bytes, `target` no deslocamento 2,
                             // que é exatamente o que a leitura abaixo faz.

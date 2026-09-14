@@ -43,13 +43,6 @@ const FONTE: &str = include_str!("../src/gateway.rs");
 
 /// Que comando do protocolo cada braço do `match` pretende atender.
 const INTENCAO: &[(u16, &str)] = &[
-    (23, "GET_EXT_PROP_BASE"),
-    (24, "GET_EXT_PROP_MOVE"),
-    (25, "GET_EXT_PROP_ATK"),
-    (26, "GET_EXT_PROP_DEF"),
-    (35, "SEVNPC_HELLO"),
-    (49, "TASK_NOTIFY"),
-    (85, "SWITCH_FASHION_MODE"),
     (92, "DUEL_REQUEST"),
     (118, "GET_MALL_ITEM_PRICE"),
     (178, "ACTIVATE_REGION_WAYPOINTS"),
@@ -186,45 +179,69 @@ fn nenhum_braco_pisa_em_comando_de_gm() {
     );
 }
 
+/// Os ids que o `BusServer::tratar_subcomando` do `pw-gs` trata, lidos do próprio fonte.
+///
+/// Até 2026-09-14 esta lista era escrita à mão aqui, e ficou para trás: `SEVNPC_HELLO`
+/// (35), `TASK_NOTIFY` (49) e `SWITCH_FASHION_MODE` (85) migraram para o mundo sem sair do
+/// `gateway.rs`, e o cliente recebia duas respostas — no 49, uma delas com o `reason`
+/// errado. Lendo do fonte do mundo, um comando que migra entra na conferência sozinho.
+fn ids_tratados_pelo_mundo() -> BTreeMap<u16, String> {
+    const COMANDOS: &str = include_str!("../../pw-gs/src/comandos.rs");
+    const MUNDO: &str = include_str!("../../pw-gs/src/bus_server.rs");
+
+    // `pub const NOME: u16 = N;` do módulo `ids`.
+    let mut valor_de = BTreeMap::new();
+    for linha in COMANDOS.lines() {
+        let Some(resto) = linha.trim().strip_prefix("pub const ") else {
+            continue;
+        };
+        let Some((nome, valor)) = resto.split_once(": u16 = ") else {
+            continue;
+        };
+        if let Ok(v) = valor.trim_end_matches(';').trim().parse::<u16>() {
+            valor_de.insert(nome.to_string(), v);
+        }
+    }
+
+    // Braços `ids::A | ids::B => ...` do `match` de `tratar_subcomando`.
+    let mut tratados = BTreeMap::new();
+    for linha in MUNDO.lines() {
+        let t = linha.trim();
+        let Some((padrao, _)) = t.split_once(" => ") else {
+            continue;
+        };
+        if !padrao.starts_with("ids::") {
+            continue;
+        }
+        for parte in padrao.split('|') {
+            let nome = parte.trim().trim_start_matches("ids::");
+            let id = *valor_de
+                .get(nome)
+                .unwrap_or_else(|| panic!("`ids::{nome}` não está em `comandos.rs`"));
+            tratados.insert(id, nome.to_string());
+        }
+    }
+
+    // Guarda contra extração quebrada, que faria o teste passar por vacuidade. O mundo
+    // trata dezenas de comandos e só cresce.
+    assert!(
+        tratados.len() >= 30,
+        "só {} braços lidos do `tratar_subcomando` — a extração quebrou",
+        tratados.len()
+    );
+    tratados
+}
+
 #[test]
 fn os_comandos_ja_migrados_nao_sobraram_no_gateway() {
-    // Um braço esquecido aqui depois de o comando migrar para o `pw-gs` faria os dois
-    // tratarem o mesmo pedido — dois movimentos, duas respostas, dois débitos de HP.
-    let tratados = ids_tratados();
-    let migrados: &[(u16, &str)] = &[
-        (0, "PLAYER_MOVE"),
-        (1, "LOGOUT"),
-        (2, "SELECT_TARGET"),
-        (3, "NORMAL_ATTACK"),
-        (4, "REVIVE_VILLAGE"),
-        (7, "STOP_MOVE"),
-        (8, "UNSELECT"),
-        (9, "GET_ITEM_INFO"),
-        (11, "GET_IVTR_DETAIL"),
-        (12, "EXG_IVTR_ITEM"),
-        (13, "MOVE_IVTR_ITEM"),
-        (16, "EXG_EQUIP_ITEM"),
-        (17, "EQUIP_ITEM"),
-        (18, "MOVE_ITEM_TO_EQUIP"),
-        (42, "CANCEL_ACTION"),
-        (46, "SIT_DOWN"),
-        (47, "STAND_UP"),
-        (48, "EMOTE_ACTION"),
-        (75, "ENTER_SANCTUARY"),
-        (37, "SEVNPC_SERVE"),
-        (40, "USE_ITEM"),
-        (41, "CAST_SKILL"),
-        (80, "CAST_INSTANT_SKILL"),
-        (27, "TEAM_INVITE"),
-        (28, "TEAM_AGREE_INVITE"),
-        (29, "TEAM_REJECT_INVITE"),
-        (30, "TEAM_LEAVE_PARTY"),
-    ];
-
-    let duplicados: Vec<&str> = migrados
-        .iter()
-        .filter(|(id, _)| tratados.contains(id))
-        .map(|(_, n)| *n)
+    // Um braço esquecido aqui depois de o comando migrar para o `pw-gs` faz os dois
+    // tratarem o mesmo pedido: o `gateway.rs` repassa todo `GamedataSend` ao mundo **e**
+    // executa o próprio braço — duas respostas, dois movimentos, dois débitos.
+    let no_link = ids_tratados();
+    let duplicados: Vec<String> = ids_tratados_pelo_mundo()
+        .into_iter()
+        .filter(|(id, _)| no_link.contains(id))
+        .map(|(id, nome)| format!("{id} ({nome})"))
         .collect();
 
     assert!(

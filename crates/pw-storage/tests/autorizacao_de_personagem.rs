@@ -34,6 +34,8 @@
 //! Quem mexer em autorização de personagem tem que rodar isto com o banco de pé.
 
 use pw_core::{CharacterClass, Gender, Race};
+mod comum;
+
 use pw_storage::{CharacterRepository, PostgresPool, StorageConfig};
 
 /// Sufixo único por execução, para que rodar o teste duas vezes não esbarre nas
@@ -92,6 +94,7 @@ async fn montar() -> Option<Cenario> {
         ..Default::default()
     };
     let pool = PostgresPool::new(&cfg).await.expect("conexão com o banco");
+    comum::limpar_sobras_de_teste(&pool).await;
     let m = marca();
 
     // Dois realms da MESMA versão. É este par que representa a pergunta "quero subir

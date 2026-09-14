@@ -736,6 +736,33 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// A marca de tempo das missões dinâmicas, em resposta ao pedido do cliente
+    /// (`TASK_CLT_NOTIFY_DYN_TIMEMARK`, 7).
+    ///
+    /// `svr_task_dyn_time_mark` (`cgame/gs/task/TaskTempl.h:1866`, dentro do `#pragma pack(1)`
+    /// da linha 221), montado como `ATaskTemplMan::OnTaskGetDynTasksTimeMark`
+    /// (`TaskTemplMan.cpp:299-309`) e entregue pelo `TASK_VAR_DATA` (`taskman.cpp:337`):
+    ///
+    /// | campo | bytes | valor |
+    /// | :--- | ---: | :--- |
+    /// | `reason` | 1 | `TASK_SVR_NOTIFY_DYN_TIME_MARK` = **8** |
+    /// | `task` | 2 | 0 |
+    /// | `time_mark` | 4 | a do `dyn_tasks.data` |
+    /// | `version` | 2 | `DYN_TASK_CUR_VERSION` = 10 |
+    ///
+    /// O cliente só aceita com exatamente estes 9 bytes e a versão 10
+    /// (`TaskClient.cpp:290-296`, `TaskTemplMan.cpp:168`). O `reason` 7, que o `gateway.rs`
+    /// mandava aqui, é `TASK_SVR_NOTIFY_FORGET_SKILL`: o cliente esquecia a habilidade de
+    /// produção.
+    pub fn task_dyn_time_mark(marca: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u8(8);                    // reason = TASK_SVR_NOTIFY_DYN_TIME_MARK
+        stream.write_u16_le(0);                // task
+        stream.write_u32_le(marca);            // time_mark
+        stream.write_u16_le(10);               // version = DYN_TASK_CUR_VERSION
+        Self::task_var_data(&stream.into_bytes())
+    }
+
     /// Cria notificação de nova missão aceita/entregue ao jogador (TASK_SVR_NOTIFY_NEW = 1)
     pub fn task_notify_new(task_id: u16, timestamp: u32) -> Self {
         let mut stream = OctetsStream::new();

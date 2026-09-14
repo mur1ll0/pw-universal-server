@@ -713,7 +713,7 @@ impl BusServer {
             ids::EMOTE_ACTION => self.emote(roleid, &cmd.payload, envio).await,
             ids::SEVNPC_SERVE => self.servico_de_npc(roleid, &cmd.payload, envio).await,
             ids::SEVNPC_HELLO => self.dizer_ola_ao_npc(roleid, &cmd.payload, envio).await,
-            ids::TASK_NOTIFY => self.notificar_tarefa(roleid, &cmd.payload),
+            ids::TASK_NOTIFY => self.notificar_tarefa(roleid, &cmd.payload, envio).await,
             ids::CHECK_SECURITY_PASSWD => self.conferir_senha(roleid, &cmd.payload, envio).await,
             ids::USE_ITEM => self.usar_item(roleid, &cmd.payload, envio).await,
             ids::TEAM_INVITE => self.convidar(roleid, &cmd.payload).await,
@@ -2365,15 +2365,46 @@ impl BusServer {
 
     /// `C2S::TASK_NOTIFY` (49) — o cliente reporta algo ao sistema de missões.
     ///
-    /// Só decodifica e loga por enquanto — não há motor de missões no `pw-gs` ainda (ver
-    /// contexto A do roadmap salvo em memória). Sem isto o comando era descartado em
-    /// silêncio; agora pelo menos fica visível qual `reason`/`task` o cliente mandou,
-    /// para quando o motor existir.
-    fn notificar_tarefa(&self, roleid: i32, payload: &[u8]) {
+    /// O original despacha pelo `reason` em `OnClientNotify` (`task/TaskServer.cpp:330`).
+    /// Um só é respondido aqui, o que o cliente manda ao entrar no mundo:
+    ///
+    /// **`TASK_CLT_NOTIFY_DYN_TIMEMARK` (7)** — a marca do pacote de missões dinâmicas. O
+    /// original responde com a marca do seu `dyn_tasks.data` e **não responde** quando não
+    /// tem marca (`ATaskTemplMan::OnTaskGetDynTasksTimeMark`, `TaskTemplMan.cpp:299-309`).
+    /// Com a marca igual à do arquivo local, o cliente carrega as missões dinâmicas dele e
+    /// só então monta a lista de missões ativas (`OnDynTasksTimeMark`,
+    /// `TaskTemplMan.cpp:166-178`).
+    ///
+    /// Os outros `reason` (concluir, desistir, chegar ao local, prêmio especial, depósito…)
+    /// só são registrados: são o motor de missões, que ainda não existe no `pw-gs`.
+    ///
+    /// Até 2026-09-14 o `gateway.rs` respondia este comando por conta própria, com `reason`
+    /// 7 — que no cliente é `TASK_SVR_NOTIFY_FORGET_SKILL` — e reenviava `TASK_DATA` a
+    /// qualquer outra notificação.
+    async fn notificar_tarefa(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
+        /// `TASK_CLT_NOTIFY_DYN_TIMEMARK` (`task/TaskTempl.h:109`).
+        const PEDIDO_DA_MARCA_DINAMICA: u8 = 7;
+
         let Some(tn) = TaskNotify::ler(payload) else {
             warn!("mundo: task_notify de {roleid} com payload curto ou size inconsistente");
             return;
         };
+
+        if tn.reason == Some(PEDIDO_DA_MARCA_DINAMICA) {
+            let marca = self.world.read().await.data_manager.marca_das_missoes_dinamicas;
+            match marca {
+                Some(marca) => {
+                    debug!("mundo: {roleid} pediu a marca das missões dinâmicas: {marca:#x}");
+                    self.responder(roleid, S2CGamedataSend::task_dyn_time_mark(marca).data, envio)
+                        .await;
+                }
+                None => debug!(
+                    "mundo: {roleid} pediu a marca das missões dinâmicas, e o realm não tem                      dyn_tasks.data — sem resposta, como o original"
+                ),
+            }
+            return;
+        }
+
         debug!(
             "mundo: {roleid} mandou task_notify (reason={:?}, task={:?}, {} bytes) — motor de missões ainda não existe",
             tn.reason,
