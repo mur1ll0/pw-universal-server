@@ -210,6 +210,13 @@ pub struct GameDataManager {
     pub region_timestamps: HashMap<i32, u32>,
     /// `dwTimeStamp` de `<mapa>/precinct.sev`, mesma história do campo acima.
     pub precinct_timestamps: HashMap<i32, u32>,
+    /// Os distritos de cada mapa, com o ponto de cidade onde se renasce — ver
+    /// [`crate::precinct`].
+    pub distritos: HashMap<i32, crate::precinct::Distritos>,
+    /// Curva de experiência, ajuste por diferença de nível e perda na morte — ver
+    /// [`crate::progressao`]. Fica no padrão do original quando o realm não tem as
+    /// tabelas.
+    pub progressao: crate::progressao::TabelaDeProgressao,
 }
 
 impl GameDataManager {
@@ -377,6 +384,7 @@ impl GameDataManager {
             self.classes = crate::classes::carregar(g);
             self.equipamentos = TabelasDeEquipamento::carregar(g);
             self.precos = crate::precos::carregar(g);
+            self.progressao = crate::progressao::TabelaDeProgressao::carregar(g);
         }
 
         // O `ptemplate.conf` não é um `.data`: é um arquivo de configuração do `gamed`, e
@@ -542,9 +550,15 @@ impl GameDataManager {
             match ler_timestamp_precinct_sev(&data) {
                 Ok(ts) => {
                     self.precinct_timestamps.insert(world_id, ts);
-                    rel.lidos.push(precinct_nome);
+                    rel.lidos.push(precinct_nome.clone());
                 }
                 Err(e) => rel.falhou(&precinct_nome, e),
+            }
+            match crate::precinct::Distritos::ler(&data) {
+                Ok(d) => {
+                    self.distritos.insert(world_id, d);
+                }
+                Err(e) => rel.falhou(&format!("{precinct_nome} (distritos)"), e),
             }
         }
     }
