@@ -1,103 +1,147 @@
-# Especificação 02: Arquitetura Multi-Realm & Adaptadores de Protocolo
+# Especificação 02: Realms, daemons, login e barramento
 
-## 1. Decisão Arquitetural: Abordagem de Adaptadores no Servidor Universal
+> Verificada contra o código em 2026-09-14, commit `e6433ae`. Cobre `docker/`,
+> `crates/pw-link/`, `crates/pw-bus/`, `crates/pw-auth/` e
+> `crates/pw-protocol/src/{version,edition,codec,opcodes}.rs`.
 
-Para viabilizar múltiplos servidores em versões distintas (1.2.6, 1.4.8, 1.5.3, etc.) com a máxima fidelidade e facilidade de distribuição para os jogadores, optou-se pela **Abordagem A (Servidor Polimórfico com Adaptadores de Versão)** ao invés de recompilar os clientes:
+## 1. Decisão: servidor polimórfico, cliente intocado
 
-### Por que NÃO recompilar os clientes (`elementclient.exe`)?
-1. **Incompatibilidade Gráfica e de Shaders**: O cliente 1.2.6 foi compilado com a engine Angelica 2.0 (DirectX 8/9 legado), enquanto o 1.5.3 utiliza Angelica 2.2 com múltiplos passes de shaders e modelos 3D avançados.
-2. **Distribuição Transparente para a Comunidade**: Permite que jogadores usem qualquer cliente oficial de sua preferência sem precisar de executáveis modificados.
-3. **Isolamento e Segurança**: Toda a inteligência de tradução de versões reside no servidor Rust em alta performance.
+Um binário `pw-link`/`pw-gs` serve todas as versões; a versão de cada realm vem da variável
+`GAME_VERSION` e decide layouts por `pw_protocol::PorVersao`. **Não se recompila nem se
+modifica o `elementclient.exe`**: o jogador usa o cliente da versão como ele é (a única
+exigência fora do servidor é o que o próprio cliente precisa para rodar, ver
+`docs/ESTADO_E_RETOMADA.md` §1.3).
 
----
+Variáveis de cada daemon: `REALM_ID`, `GAME_VERSION`, `DATABASE_URL`, `REDIS_URL`; no link
+`GATEWAY_PORT` e `GS_BUS`; no mundo `WORLD_TAG`, `CONFIG_DIR` e `BUS_LISTEN`. No `pw-gs`
+uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio (A44). Link sem
+`GS_BUS` sobe e avisa no log: o cliente entra, mas nada é simulado.
 
-## 2. Topologia de Rede e Portas por Realm
+## 2. Topologia (`docker/docker-compose.yml`)
 
-Cada Realm roda em seu próprio container com uma porta pública dedicada no `serverlist.txt`:
+### 2.1 Serviços globais
+
+| serviço | porta no host | papel |
+| :--- | ---: | :--- |
+| `pw-postgres` | 5432 | banco único de todos os realms |
+| `pw-dragonfly` | 6379 | cache |
+| `pw-auth` | — (29200 interna) | serviço de autenticação; hoje sem consumidor |
+| `pw-admin-api` | 8000 | painel (`web-admin/backend`), lê `data/` e `specs/elements_*` |
+
+### 2.2 Por realm: um `pw-link` e um `pw-gs` por mapa
+
+| realm (`REALM_ID`) | `GAME_VERSION` | link (porta pública) | mundos (`WORLD_TAG` → serviço) | dados |
+| :--- | :--- | :--- | :--- | :--- |
+| `realm_155BR` | 1.5.5 | `pw-realm-155br` **29004** | 1 → `pw-world-155br`; **161** → `pw-world-155br-161` | `data/realm_155BR/config` (cliente BR, v156) |
+| `realm_155` | 1.5.5 | `pw-realm-155` 29003 | 1 → `pw-world-155` | `data/realm_155/config` (cliente EN, v159) |
+| `realm_126` | 1.2.6 | `pw-realm-126` 29000 | 1 → `pw-world-126` | `data/realm_126` |
+| `realm_153` | 1.5.3 | `pw-realm-153` 29001 | 1 → `pw-world-153` | abandonado |
+| `realm_148` | 1.4.8 | `pw-realm-148` 29002 | 1 → `pw-world-148` | nunca foi alvo |
+
+- **Um servidor de mundo por mapa**, como o original tem um `gs` por seção do `gs.conf`. O
+  link recebe `GS_BUS=<tag>=<host>:29100,...` e manda cada sessão ao servidor do mundo do
+  personagem (`LinkGateway::uplink_da_sessao`); mundo sem entrada cai no primeiro. Um
+  `GS_BUS` sem `<tag>=` (forma antiga) vale para todos os mundos.
+- **Trocar de mundo durante a sessão não existe** (o link escolhe na entrada) — `falta`.
+- Um segundo realm da mesma versão: receita em `docs/MULTIPLOS_REALMS.md`; cada realm
+  precisa de uma linha em `realms` e dos moldes em `class_templates`.
+
+### 2.3 Regras cobradas por teste (`pw-bus/tests/topologia_do_compose.rs`)
+
+- A porta do barramento **nunca** é publicada: ele não autentica, e quem o alcança manda
+  `EnterWorld` por qualquer `roleid` (A26).
+- Todo alvo de `GS_BUS` existe, roda `pw-gs`, escuta na porta, é do mesmo realm e versão, e
+  `161=` aponta para quem tem `WORLD_TAG` 161.
+
+## 3. Versão e `Challenge`
+
+### 3.1 `GAME_VERSION` no fio (`version.rs`)
+
+| versão | `server_version_code` | origem |
+| :--- | :--- | :--- |
+| 1.2.6 | `0x00010206` | captura da VM, 2026-09-01 |
+| 1.4.8 | `0x00010408` | **não conferido** |
+| 1.5.3 | `0x00010502` | `EC_Game.cpp:115` (não é `...503`) |
+| 1.5.5 | `0x00010505` | lido do `elementclient.exe` build 2575, ao lado do DWORD do build (B5) |
+
+O cliente compara **igualdade exata**: servidor mais novo dá "versão baixa"; mais velho dá
+"manutenção em andamento" (a tradução de `FIXMSG_SERVERUPDATE`).
+
+### 3.2 Opcodes que trocam entre versões
+
+| protocolo | 1.2.6 | 1.4.8 / 1.5.x |
+| :--- | ---: | ---: |
+| `Response` | 2 | 3 |
+| `KeyExchange` | 3 | 2 |
+
+`GamedataSend` é o opcode **34** nos dois sentidos entre cliente e link.
+
+### 3.3 `edition` (só 1.4.8+; `edition.rs`)
+
+String hexadecimal **minúscula, sem separador e sem preenchimento**, comparada com `stricmp`
+pelo cliente contra o que ele calcula dos próprios arquivos (`EC_Game.cpp:646`):
 
 ```
-+-------------------------------------------------------------------------------------------------+
-|                                    MAPEAMENTO DE PORTAS HOST                                    |
-+-------------------------------------------------------------------------------------------------+
-| SERVIÇO GLOBAL (Compartilhado)                                                                  |
-|   • PostgreSQL Database:          localhost:5432                                                |
-|   • DragonflyDB Cache:            localhost:6379                                                |
-|   • pw-auth (Global Auth API):    localhost:29200 (Interno)                                     |
-|   • pw-admin-web (Painel Web):    localhost:3000 (UI) / localhost:8000 (API)                    |
-+-------------------------------------------------------------------------------------------------+
-| REALM 1: Classic (Versão 1.2.6)                                                                 |
-|   • pw-realm-126 (Client Gateway): 0.0.0.0:29000  (serverlist.txt v1.2.6)                      |
-|   • Código de Versão de Rede:     0x00010206 (Decimal: 66054)                                   |
-|   • Classes Suportadas:           6 classes (WR, MG, EA, EP, WB, WF)                            |
-+-------------------------------------------------------------------------------------------------+
-| REALM 2: Tides / Genesis (Versão 1.4.8)                                                         |
-|   • pw-realm-148 (Client Gateway): 0.0.0.0:29002  (serverlist.txt v1.4.8)                      |
-|   • Código de Versão de Rede:     0x00010408 (Decimal: 66568)                                   |
-|   • Classes Suportadas:           10 classes (+ MC, ES, ME, GD)                                 |
-+-------------------------------------------------------------------------------------------------+
-| REALM 3: Eclipse (Versão 1.5.3)                                                                 |
-|   • pw-realm-153 (Client Gateway): 0.0.0.0:29001  (serverlist.txt v1.5.3)                      |
-|   • Código de Versão de Rede:     0x00010503 (Decimal: 66819)                                   |
-|   • Classes Suportadas:           12 classes (+ TM, RT) com meridianos e reencarnação           |
-+-------------------------------------------------------------------------------------------------+
+"%x%x%x%x"   = ELEMENTDATA_VERSION, task_templ_version, gshop_ts, gshop_ts2
+"%x%x%x%x%x" = ... + gshop_ts3     (1.5.5, ramo VIP — inferência, não medição)
 ```
 
----
+- `ELEMENTDATA_VERSION` e `task_templ` são as **constantes do cliente**, lidas do
+  `elements.data`/`tasks.data` do realm (o do servidor é diferente: `0x30000080` contra
+  `0x3000007f` no 1.5.3). 155BR: `0x3000009c` / 129.
+- `gshop_ts` é o primeiro `u32` de `gshop.data`, `gshop_ts2` o de `gshop1.data` —
+  **arquivos diferentes** (A23).
+- Qualquer arquivo de dados do realm diferente do cliente = "versão baixa". Por isso cada
+  realm 1.5.5 usa os `.data` **do seu cliente** (BR v156, EN v159).
 
-## 3. Especificação Binária dos Pacotes por Versão
+### 3.4 `nonce`
 
-### 3.1 Codificação do Código de Versão (`GAME_VERSION`)
-A engine Wanmei calcula a versão a partir dos 4 octetos `(major, minor, release, patch)`:
-$$\text{version\_code} = (\text{major} \ll 24) \mid (\text{minor} \ll 16) \mid (\text{release} \ll 8) \mid \text{patch}$$
+16 bytes: `[Attr u32][newbie_time u32][aleatório 8]`. `Attr` carrega carga e os bits de
+dobro de experiência/moedas/drop/SP, zona livre, PvP — é por onde os rates do realm chegam
+ao cliente (A4). **Hoje os 8 primeiros bytes vão zerados** — `falta`.
 
-| Versão | Octetos | Valor Hex | Valor Decimal |
-| :--- | :---: | :---: | :---: |
-| **1.2.6** | `(0, 1, 2, 6)` | `0x00010206` | **66054** |
-| **1.4.8** | `(0, 1, 4, 8)` | `0x00010408` | **66568** |
-| **1.5.3** | `(0, 1, 5, 3)` | `0x00010503` | **66819** |
+## 4. Fluxo de login e entrada no mundo (no `pw-link`)
 
-### 3.2 Sequência de Handshake de Login Completa
+`Challenge` → `Response` (autenticação direto pelo `AccountRepository`; `pw-auth` não
+participa) → `KeyExchange` (a cifra é opcional na prática, A58) → `OnlineAnnounce` →
+`RoleList`/`RoleList_Re` → `CreateRole`/`DeleteRole`/`UndoDeleteRole` (**checam o dono**,
+A29) → `SelectRole` → `EnterWorld` (72).
 
-1. **S2C: Challenge (Opcode 1)**:
-   - `nonce`: 16 bytes (bytes 0..3: `server_attr`, bytes 4..7: `free_creatime`, bytes 8..15: random)
-   - `version`: `u32` (código de versão exato do Realm)
-   - `algo`: `i8` (`0`)
-   - *(Apenas v1.4.8 e v1.5.3)*: `edition`: Octets vazios, `exp_rate`: `u8` (`1`).
+Na entrada o link manda a carga inicial (ordem importa, B36e/B38): `INST_DATA_CHECKOUT`
+(com `id_inst` = mundo do personagem e os carimbos de `region.sev`/`precinct.sev` desse
+mapa), `SELF_INFO_00`, `OWN_EXT_PROP`, `SELF_INFO_1`, habilidades, `TASK_DATA` (5 blocos no
+1.5.x), bolsa, equipamento com o bloco de dados de cada peça, dinheiro, reputação, modo PvP,
+`SERVER_TIME` com `lua_version = 102` (primeira linha do `global_api.lua`), e
+`GetUIConfig_Re` no máximo uma vez por personagem. Layouts: spec 04.
 
-2. **C2S: Response (Opcode 2)**:
-   - `username`: Octets (UTF-8 ou UTF-16LE)
-   - `password_response`: Octets (MD5 Response Hash)
-   - *(Apenas v1.4.8 e v1.5.3)*: `use_token`, `cli_fingerprint`.
+Personagem novo: posição, kit e equipamento vêm de `class_templates` do realm (espelho do
+`gamedbd/clsconfig` original, B43/B47); atributos iniciais do `ptemplate.conf`; raça pela
+classe; vida e mana cheias pela conta de `BaseDaClasse::vida_e_mana_maximas`.
 
-3. **S2C: OnlineAnnounce (Opcode 4)**:
-   - Enviado diretamente pelo servidor para autenticar e comutar o cliente para o estado `_state_GSelectRoleClient`.
-   - `userid`: `i32`, `localsid`: `u32`, `remain_time`: `i32`, `zoneid`: `i8`, `free_time_left`: `i32`, `free_time_end`: `i32`, `creatime`: `i32`
-   - *(Apenas v1.4.8 e v1.5.3)*: `referrer_flag`, `passwd_flag`, `usbbind`, `accountinfo_flag`.
+Ainda no link: fala (canal global por processo, sem raio), lista de amigos (sempre vazia),
+UI config / help states / custom data, e alguns subcomandos (spec 04 §4).
 
-4. **C2S: RoleList (Opcode 0x52 / 82)**:
-   - Disparado pelo cliente em `state_GSelectRoleClient` solicitando a lista de personagens.
+## 5. Barramento `pw-link` ↔ `pw-gs` (`pw-bus`)
 
-5. **S2C: RoleList_Re (Opcode 0x53 / 83)**:
-   - Resposta com a lista de personagens (`RoleInfo`), fechando o diálogo modal de carregamento e liberando a tela de seleção/criação de personagens.
+Protocolos GNET **reais** do IR, não formato inventado. Quadro:
+`[CompactUINT(opcode)][CompactUINT(tamanho)][corpo]`, limite de 1 MiB.
 
-### 3.3 Pacotes Contínuos de Sessão, Criação, Exclusão e Entrada no Mundo
-- **C2S: KeepAlive / Heartbeat (Opcode 0x5A / 90)**:
-  - Enviado periodicamente pelo cliente para manter o socket TCP vivo.
-  - Payload: `code: char` (1 byte `i8`).
-- **C2S: CreateRole (Opcode 0x54 / 84)** / **S2C: CreateRole_Re (Opcode 0x55 / 85)**:
-  - `userid`: `i32`, `localsid`: `u32`, `roleinfo`: `RoleInfo` estruturado.
-- **C2S: DeleteRole (Opcode 0x56 / 86)** / **S2C: DeleteRole_Re (Opcode 0x57 / 87)**:
-  - C2S: `roleid`: `i32`, `localsid`: `u32`.
-  - S2C: `result`: `i32` (0 = Sucesso), `roleid`: `i32`, `localsid`: `u32`.
-- **C2S: SelectRole (Opcode 0x46 / 70)** / **S2C: SelectRole_Re (Opcode 0x47 / 71)**:
-  - C2S: `roleid`: `i32`, `flag`: `i8`.
-  - S2C: `result`: `i32` (0 = Sucesso), `auth`: `ByteVector` (permissões/GM). Aciona `LaunchLoading()` no cliente.
-- **C2S: EnterWorld (Opcode 0x48 / 72)**:
-  - Disparado pelo cliente após carregar os recursos do mapa e transicionar para `state_GDataExchgClient`.
-  - `roleid`: `i32`, `provider_link_id`: `i32`, `locktime`: `i32`, `timeout`: `i32`, `settime`: `i32`, `localsid`: `u32`.
+| mensagem | opcode | sentido | campos |
+| :--- | ---: | :--- | :--- |
+| `PlayerLogout` | 69 | mundo → link | `result`, `roleid`, `provider_link_id`, `localsid` |
+| `EnterWorld` | 72 | link → mundo | `roleid`, `provider_link_id`, `locktime`, `timeout`, `settime`, `localsid` |
+| `S2CGamedataSend` | 74 | mundo → link | `roleid`, `localsid`, `data` |
+| `C2SGamedataSend` | 75 | link → mundo | `roleid`, `localsid`, `data` |
 
----
+- O link repassa **todo** `GamedataSend` do cliente ao mundo, sem interpretar, e ainda trata
+  alguns no próprio `gateway.rs` (migração incompleta).
+- O mundo carrega o personagem do banco ao receber `EnterWorld` (`colocar_no_mundo`) e
+  responde pelo par `(roleid, localsid)`; o link guarda o `localsid` para o logout e para
+  quedas (A27).
+- Uplink: uma conexão por mundo, fila única de saída, reconexão com espera crescente até
+  30 s; mundo caído não derruba a sessão.
 
-## 4. Isolamento de Personagens e Dados
-- Cada personagem está estritamente vinculado à sua chave composta `(account_id, realm_id)`.
-- Personagens criados no Realm 1.2.6 nunca colidem com dados do 1.4.8 ou 1.5.3 no banco unificado PostgreSQL.
+## 6. Isolamento
+
+Personagem pertence a `(account_id, realm_id)`. Conta é global; personagens, moldes e dados
+são por realm.

@@ -1,39 +1,95 @@
-# Especificação Mestre 00: Arquitetura do PW-Universal-Server
+# Especificação Mestre 00: o pw-universal-server
 
-## 1. Visão Geral do Projeto
-O **PW-Universal-Server** substitui o ecossistema original do Perfect World por uma arquitetura em **Rust**, **PostgreSQL 16** e **DragonflyDB**, projetada para rodar simultaneamente múltiplos Realms (versões de jogo diferentes como 1.2.6 e 1.5.3) a partir de uma base compartilhada de contas e infraestrutura.
+> Verificada contra o código em 2026-09-14, commit `e6433ae`. Índice das specs e regra de
+> manutenção: [`README.md`](README.md).
 
----
+## 1. O que é
 
-## 2. Princípios de Engenharia (Spec-Driven Development)
+Reimplementação em **Rust** do servidor do MMO **Perfect World**, com **PostgreSQL 16** e
+**DragonflyDB**, que serve o **cliente original sem modificação** e roda vários realms de
+versões diferentes sobre a mesma infraestrutura de contas.
 
-1. **Separação Estrita de Responsabilidades**:
-   - **Camada de Borda (Gateway / `pw-link`)**: Escuta conexões públicas de clientes, lida com criptografia RC4 e pacotes binários brutos.
-   - **Camada de Roteamento (Delivery / `pw-delivery`)**: Mantém o estado global dos jogadores, chat, mensagens e distribuição entre servidores de mapa.
-   - **Camada de Simulação (World Server / `pw-gs`)**: Executa o loop espacial 3D em ticks de 50ms, cálculos de combate, IA e física.
-   - **Camada de Dados (Storage / `pw-storage`)**: Centraliza operações com PostgreSQL e DragonflyDB, eliminando dependência do Berkeley DB.
+| versão | situação | referência |
+| :--- | :--- | :--- |
+| **1.5.5** | **alvo atual** (desde 2026-09-02). Realm de teste `realm_155BR` | fontes EvolvedPW (cliente e servidor), binário do cliente BR build 2569 |
+| 1.2.6 | segunda prioridade; loga e entra no mundo | capturas da VM com o servidor original, `docs/MEDIDAS_DO_126.md` |
+| 1.5.3 | abandonado (o cliente disponível nunca logou) | seus fontes geraram o IR do protocolo, que continua válido para o 1.5.5 |
+| 1.4.8 | nunca foi alvo | — |
 
-2. **Multi-Versão por Design**:
-   - O núcleo não possui structs de pacotes codificadas de forma fixa. O formato das mensagens binárias de cada versão é carregado via arquivo de codec de versão (ex: `v126.toml`, `v153.toml`).
-   - O `elements.data` é interpretado por um motor dinâmico com identificação automática de versão de cabeçalho.
+Ordem de trabalho combinada: 1.5.5 funcional → 1.2.6 funcional → banco, painel e launcher.
 
-3. **Multi-Realm em Docker**:
-   - Uma única infraestrutura de banco de dados (`postgres` + `dragonfly`) atende a $N$ realms ao mesmo tempo.
-   - Cada Realm roda seus próprios contêineres de Link, Delivery e World Server em portas distintas.
+## 2. Princípios
 
----
+1. **O cliente original é o juiz.** O servidor se adapta ao que o `elementclient.exe`
+   instalado aceita. Onde o fonte do cliente e o binário discordam, vale o binário (o fonte
+   1.5.5 é de uma build anterior à instalada).
+2. **Evidência, nunca palpite.** Todo layout, número e regra sai de: fonte C++ original
+   (`EvolvedPWServer`/`EvolvedPWClient`, 1.7.2 para campos mais novos), IR gerado desses
+   fontes, captura de tráfego, ou do próprio arquivo de dados. Nada é deduzido do nome da
+   versão.
+3. **Porta das regras do original, não invenção.** Fórmulas, tempos e unidades vêm do
+   `cgame/gs/` original com arquivo e linha citados no código. Onde ainda não foi portado,
+   o código diz isso e não inventa número.
+4. **Dado de realm é dado, não código.** `elements.data`, `tasks.data`, `npcgen.data`,
+   `ptemplate.conf`, `gs.conf`, moldes de classe: lidos do realm, nunca tabelas no código.
+5. **Um caminho de escrita por layout.** Diferença entre versões num lugar só
+   (`pw_protocol::PorVersao`), não em ramos espalhados.
+6. **Teste contra a fonte, não contra si mesmo.** Codificadores são conferidos contra o IR;
+   leitores de arquivo contra o arquivo real do realm, fechando no último byte.
 
-## 3. Matriz de Módulos (Crates)
+## 3. Arquitetura em uma figura
 
-| Crate | Responsabilidade Principal |
+```
+cliente original ──TCP──▶ pw-link (1 por realm, porta pública)
+                           │  login, lista/criação de personagem, entrada no mundo,
+                           │  fala, e parte do gameplay que ainda não migrou (gateway.rs)
+                           │
+                           ├──barramento GNET interno (29100, nunca publicado)──▶ pw-gs (1 por mapa)
+                           │                                                     simulação: tick, spawns,
+                           │                                                     visibilidade, IA, combate,
+                           │                                                     itens, NPCs, autosave
+                           ▼
+                     PostgreSQL 16 + DragonflyDB (compartilhados por todos os realms)
+```
+
+Detalhes: [`02_MULTI_REALM_ARCHITECTURE.md`](02_MULTI_REALM_ARCHITECTURE.md).
+
+Os daemons originais (`glinkd`, `gdeliveryd`, `gamedbd`, `gs`, `uniquenamed`, `authd`) não
+têm correspondência um-para-um: hoje o `pw-link` faz o papel de `glinkd` + `gdeliveryd` +
+parte do `gamedbd`, e o `pw-gs` o de `gs`.
+
+## 4. Crates
+
+| crate | papel | estado |
+| :--- | :--- | :--- |
+| `pw-core` | tipos comuns: classes, raças, vetores, personagem, itens, fichas de equipamento | em uso |
+| `pw-crypto` | RC4 do elo com o cliente, hashes de senha, tickets de sessão | em uso |
+| `pw-wire` | os dois formatos de fio: GNET (big-endian, `CompactUINT`) e gamedata (little-endian, `pack(1)`) | em uso; conformidade contra o IR |
+| `pw-protocol` | opcodes, pacotes GNET, subcomandos S2C, `PorVersao`, `edition`, versão | em uso; ainda com `octets.rs`/`adapter.rs` duplicando o `pw-wire` |
+| `pw-bus` | barramento `pw-link`↔`pw-gs` (4 mensagens GNET reais) | em uso |
+| `pw-storage` | repositórios PostgreSQL (contas, personagens, itens, habilidades, missões, moldes, realms) e cache | em uso |
+| `pw-data-loader` | leitores de `elements`/`tasks`/`npcgen`/`aipolicy`/`gshop`, `ptemplate.conf`, `.hmap`, `.sev` | em uso |
+| `pw-link` | daemon de link por realm (`gateway.rs`, `uplink.rs`) | em uso |
+| `pw-gs` | servidor de mundo (`bus_server.rs`, `world.rs`, `ai.rs`, `combat.rs`, `habilidades.rs`) | em uso |
+| `pw-auth` | serviço de autenticação (porta interna 29200) | sobe no compose; **o `pw-link` não depende dele** — autentica direto pelo `pw-storage` |
+| `pw-delivery` | chat, amigos, correio, grupo | **não usado**: nenhum daemon depende dele; a fala está no `pw-link` e o grupo no `pw-gs` |
+| `pw-uniquename` | unicidade de nomes | **não usado** |
+
+Ferramentas (`tools/`): `pw-rpcgen` (IR do protocolo a partir dos fontes C++),
+`pw-pcapdiff` (capturas), `pw-crash-re` (minidump e desmontagem do cliente),
+`pw-pck-extract` (pacotes `.pck` acima de 2 GB), `pw-ir/consultar_ir.py` (consulta um comando ou struct
+no IR), `pw-patch-tool` (patcher, planejado).
+
+Fora do Rust: `web-admin/` (backend FastAPI `main.py` na porta 8000, frontend estático) —
+ver [`06_ADMIN_PANEL_AND_CPW_SPEC.md`](06_ADMIN_PANEL_AND_CPW_SPEC.md).
+
+## 5. Onde está a verdade de cada coisa
+
+| pergunta | fonte |
 | :--- | :--- |
-| `pw-core` | Tipos fundamentais, vetores 3D, octrees, AABB, enums de raças/classes e constantes globais. |
-| `pw-crypto` | Cifra de fluxo RC4, algoritmos de hash (MD5, Argon2, SHA256) e tabelas de chaves de rede do PW. |
-| `pw-protocol` | Codecs de serialização/deserialização para os pacotes binários do cliente (C2S e S2C). |
-| `pw-data-loader` | Leitor dinâmico de `elements.data`, `tasks.data`, `aipolicy.data` e mapas 3D (`.clv`/`.clt`). |
-| `pw-storage` | Repositórios de acesso a dados no PostgreSQL e camada de cache em memória no DragonflyDB. |
-| `pw-auth` | Serviço de autenticação de contas, geração de tickets de sessão e controle de saldo de Gold. |
-| `pw-uniquename` | Serviço de validação de unicidade de nomes de personagens e facções por Realm. |
-| `pw-link` | Gateway TCP assíncrono de alto throughput que atende as conexões dos clientes de jogo. |
-| `pw-delivery` | Roteador central de mensagens, canais de chat, amigos, correio in-game e instâncias. |
-| `pw-gs` | Motor de simulação do mundo (World Server) com loop de 50ms, IA e fórmulas de combate. |
+| onde o trabalho parou, o que falta | `docs/ESTADO_E_RETOMADA.md` |
+| por que algo é assim (evidência) | `docs/HISTORICO_DE_SESSOES.md`, item citado |
+| layout de subcomando | `specs/protocol/gamedata_155.json` + `EvolvedPWClient/.../EC_GPDataType.h` + overlay do cliente |
+| regra de jogo | `EvolvedPWServer/cgame/gs/*.cpp` |
+| formato de arquivo de dados | o carregador **do cliente** (`elementdataman::load_data`, `ATaskTempl::LoadBinary`) e o tamanho do arquivo |
+| como testar | `docs/COMO_TESTAR.md`, seção 2 do `ESTADO_E_RETOMADA.md` |

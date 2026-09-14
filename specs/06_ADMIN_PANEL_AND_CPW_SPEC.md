@@ -1,80 +1,56 @@
-# Especificação 06: Painel Web de Administração (pwAdmin Moderno) e CPW Patcher
+# Especificação 06: Painel administrativo e patcher
 
-## 1. Painel Web de Administração (`pw-admin-web`)
+> Verificada contra o código em 2026-09-14, commit `e6433ae`. Cobre `web-admin/` e
+> `tools/pw-patch-tool/`. **Frente de prioridade 3** (Contextos G e H do roadmap): nada aqui
+> foi revisado desde a mudança de base para o 1.5.5, exceto o leitor de `elements.data`.
 
-O painel administrativo substitui as ferramentas antigas em PHP/Perl por uma aplicação web responsiva moderna:
-- **Frontend**: Next.js 14 (App Router) + TailwindCSS + Lucide Icons + Shadcn UI (Dark Theme nativo).
-- **Backend API**: FastAPI (Python) ou Actix-web (Rust) com autenticação JWT e controle de permissões por nível (RBAC).
+## 1. Painel (`web-admin/`) — existe, sem revisão
 
-```
-+---------------------------------------------------------------------------------------------------+
-|                                 PW-ADMIN-WEB: MAPA DE FUNCIONALIDADES                             |
-+---------------------------------------------------------------------------------------------------+
-| 1. Dashboard em Tempo Real                                                                        |
-|    • Jogadores online por Realm (Gráficos ao vivo via WebSocket).                                 |
-|    • Ticks por segundo (TPS) e uso de memória RAM/CPU dos mundos.                                 |
-|    • Mapa de calor (Heatmap) de aglomeração de jogadores nas cidades.                             |
-|                                                                                                   |
-| 2. Gestão de Contas e Usuários                                                                    |
-|    • Criar contas, resetar senhas com 1 clique.                                                   |
-|    • Banir/Desbanir contas com motivo e data de expiração.                                        |
-|    • Conceder/Revogar permissões de Game Master (GM níveis 1 a 32).                               |
-|                                                                                                   |
-| 3. Gestão Econômica e Billing                                                                     |
-|    • Injetar CUBI / GOLD / Cash por conta ou em lote (com histórico de auditoria).                |
-|    • Relatórios de circulação de moedas e transações de leilão.                                   |
-|                                                                                                   |
-| 4. Inspetor & Editor de Personagens ao Vivo                                                        |
-|    • Busca de personagem por nome, ID ou conta.                                                   |
-|    • Editor visual de Inventário e Armazém (arrastar/soltar itens, alterar refino +1..+12).       |
-|    • Edição de Cultivo, Nível, HP/MP, Moedas e Reputação.                                         |
-|    • Botão de Teletransporte de Emergência (reseta posição para Cidade do Dragão).                |
-|                                                                                                   |
-| 5. Controle de Eventos de Servidor (Multiplicadores ao Vivo)                                      |
-|    • Toggle dinâmico de Double EXP, Double SP, Double Drop e Double Gold por Realm.               |
-|                                                                                                   |
-| 6. Gerenciador Dinâmico de Mapas e Instâncias                                                     |
-|    • Listagem de todos os mapas e dungeons (World, a01..a33, b01..b35, Morai, etc.).             |
-|    • Ativação/Desativação de instâncias sob demanda com 1 clique para economizar memória.         |
-|                                                                                                   |
-| 7. Transmissão Global e Mensagens de Sistema                                                      |
-|    • Envio de Avisos Globais de Sistema (anúncios amarelos no topo da tela dos jogadores).        |
-|    • Envio de Correio em Massa (SysMail com itens anexados para todos os jogadores online).       |
-+---------------------------------------------------------------------------------------------------+
-```
+| peça | o que é |
+| :--- | :--- |
+| `backend/main.py` | FastAPI (~1.400 linhas), acesso direto ao PostgreSQL; serviço `pw-admin-api`, porta **8000** |
+| `backend/elements_decoder.py` | ícones e busca de itens/habilidades; usa `specs/elements_layouts/pw_elements_reader.py` (montado read-only no contêiner) com fallback para o formato v7 |
+| `frontend/index.html` | página única estática (~3.200 linhas), servida pelo backend em `/` |
+| manual | `docs/WEB_ADMIN_USER_GUIDE.md` (escrito para 1.2.6/1.5.3; desatualizado) |
 
----
+Endpoints existentes (`/api/...`):
 
-## 2. Modernização do CPW (Gerador de Patches e Auto-Updater CDN)
+| grupo | rotas |
+| :--- | :--- |
+| contas | `accounts/create`, `reset-password`, `set-gm`, `grant-gold`, `ban`, `list` |
+| personagens | `characters/search`, `{id}`, `{id}/edit-stats`, `{id}/teleport`, `{id}/teleport-cdd` |
+| itens | `characters/{id}/items/add`, `move`, `unequip`; `items/{inst}/edit`, `DELETE items/{inst}` |
+| habilidades | `characters/{id}/skills/add`, `edit`, `learn-all`, `import-hex`, `DELETE skills/{id}` |
+| elements | `elements/search-items`, `item/{id}`, `search-skills`, ícones; `elements|skills/encode-octets`, `decode-octets` |
+| realms e mapas | `realms/list`, `set-multipliers`, `broadcast`; `realms/{id}/maps`, `maps/toggle`, `toggle-all` |
+| moldes de classe | `templates/list`, `templates/{realm}/{cls}`, `.../save` |
+| outros | `metrics`, `patches/changelog` |
 
-A ferramenta `pw-patch-tool` moderniza o processo arcaico de geração de arquivos `.cup`:
+Limitações conhecidas:
 
-### 2.1 Gerador de Patches Diferenciais
-- Compara a pasta do cliente base com a pasta do cliente atualizado.
-- Descompacta e compara internamente os arquivos `.pck` (`surfaces.pck`, `models.pck`, `configs.pck`).
-- Empacota apenas as diferenças em um arquivo `.cup` comprimido com **Zstandard (zstd)** de alta taxa de compressão e descompressão instantânea.
+- **Sem autenticação** — não expor a porta 8000 fora da máquina.
+- Escreve direto no banco com o servidor rodando: personagem em jogo tem o estado no `pw-gs`
+  e o autosave de 60 s sobrescreve edições de nível/exp/moedas/posição.
+- "Multiplicadores" e "mapas ligados" gravam no banco e **nenhum daemon lê** (o `nonce` do
+  `Challenge` vai zerado, spec 02 §3.4); "broadcast" publica no Redis `chat:<realm>:world`,
+  que só o `pw-delivery` escuta — e ele não roda.
+- Moldes de classe: as colunas de atributo de `class_templates` são ignoradas pelo servidor
+  (quem manda é o `ptemplate.conf`) — decidir antes de expor edição.
 
-### 2.2 Manifesto de Atualização para CDN / HTTP
-Gera um arquivo de manifesto `patch_manifest.json` para ser hospedado em qualquer servidor web ou CDN (Cloudflare, AWS S3, Nginx):
+`planejado` (visão original, não iniciado): dashboard em tempo real por WebSocket (online,
+TPS), RBAC com JWT, correio em massa com anexos, auditoria navegável, frontend em framework.
 
-```json
-{
-  "current_version": 153,
-  "min_supported_version": 145,
-  "patches": [
-    {
-      "from_version": 145,
-      "to_version": 153,
-      "file_name": "ec_patch_145-153.cup",
-      "file_size": 48920150,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "download_url": "https://cdn.meupw.com/patches/ec_patch_145-153.cup"
-    }
-  ]
-}
-```
+## 2. Patcher (`tools/pw-patch-tool/`) — protótipo
 
-### 2.3 Auto-Patcher Inteligente
-- Suporte nativo a *HTTP Range Requests* (download pausável e resumível).
-- Verificação de integridade automática por SHA-256 antes da aplicação.
-- Interface moderna e leve em Rust (`egui`/`tauri`) ou C#.
+CLI Rust de ~140 linhas (`docs/PW_PATCH_TOOL_GUIDE.md`):
+
+| comando | faz |
+| :--- | :--- |
+| `scan <dir_cliente>` | catálogo SHA-256 dos arquivos |
+| `create-patch <dir_v1> <dir_v2> <v1> <v2> [notas]` | pacote `.cup` + `patch_manifest.json` |
+| `list-patches` | histórico |
+
+`planejado`: diferença **dentro** dos `.pck` (atenção: `models.pck`/`litmodels.pck`/`building.pck`
+passam de 2 GB e o motor não os abre — `tools/pw-pck-extract/` lê), compressão zstd,
+download retomável com HTTP Range, verificação por SHA-256 antes de aplicar, launcher
+gráfico, e atualizar `serverlist.txt` (UTF-16LE com BOM) e o `.bat` com `logiccheck:0`.
