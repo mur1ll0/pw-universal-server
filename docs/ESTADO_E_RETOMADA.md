@@ -5,8 +5,7 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-14**, sobre o commit `e6433ae` + alterações não commitadas do B49 (branch
-> `feat/aipolicy-reader`). Reescrito nesta data: o documento tinha 6.500 linhas de diário,
+> **Última atualização: 2026-09-14**, B50 (branch `feat/aipolicy-reader`). Reescrito nesta data: o documento tinha 6.500 linhas de diário,
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -38,14 +37,15 @@ aprende habilidade, bate em monstro e em jogador, cura, e os monstros perseguem,
 passeiam no chão. Os três arquivos de dados do realm são lidos **inteiros**, fechando no
 último byte. Personagem novo nasce no mapa 161, servido por um servidor de mundo próprio.
 
-**O que mais falta:** o laço de progressão — experiência que não entra no personagem,
-sem subida de nível, sem regeneração, sem recarga de habilidade, missões lidas mas não
-ligadas ao mundo, reviver no lugar errado, e não há troca de mundo (seção 5A).
+**O B50 (publicado, esperando o teste em jogo)** ligou o laço de jogo: experiência do abate
+com subida de nível, regeneração, recarga e tempo de conjuração das habilidades, renascer no
+ponto de cidade do distrito, **missões do `tasks.data`** (aceitar e entregar no NPC, contar
+abate, premiar), drop de itens e moedas com coleta, compra/venda com empilhamento e aprender
+habilidade cobrando SP e moedas. O Arqueiro passa a nascer com flechas. Roteiro na seção 3.4.
 
-**O que está publicado e ainda não foi olhado em jogo:** o pacote do B48 — movimento dos
-monstros reescrito (perseguição assentada no chão, unidades do `OBJECT_MOVE`, volta para
-casa, passeio), nascimento no mapa 161 e monstro/NPC decidido pelo `elements.data`.
-**É o primeiro teste a fazer** (seção 3.3).
+**O que mais falta:** troca de mundo (o 161 não leva ao mundo 1), colher recurso, efeitos
+de estado das habilidades, intérprete do `aipolicy.data`, trava de PvP, distribuir pontos
+de atributo e o resto da seção 5A.
 
 ---
 
@@ -134,8 +134,8 @@ docker logs -f pw-realm-155br        # login, entrada no mundo, o que o link tra
 docker logs -f pw-world-155br        # os mapas 1 e 161
 ```
 
-**Referência da suíte, medida em 2026-09-14 com o banco:** 76 binários de teste,
-**512 testes passando e 2 falhando** — as duas falhas conhecidas do 1.2.6 no
+**Referência da suíte, medida em 2026-09-14 (B50) com o banco:** **536 testes passando e
+2 falhando** (`cargo test --workspace --no-fail-fast`) — as duas falhas conhecidas do 1.2.6 no
 `pw-data-loader/tests/loader_tests.rs` (`test_elements_data_real_file_if_present` e
 `test_game_data_manager_directory_load`: o `elements.data` v7 ainda passa pelo leitor
 tipado antigo). Qualquer outra falha é nova.
@@ -151,11 +151,13 @@ banco: `admin` e `testuser`.
 **Scripts de dados do realm** (`scripts/`, aplicados à mão no banco): `asas_e_slot_de_municao_155.sql`,
 `corrige_skills_e_armas_155.sql`, `2026_09_08_last_login_at.sql`,
 `2026_09_09_atributos_iniciais_por_classe.sql`, `2026_09_11_template_de_classe_155br.sql`,
-`2026_09_12_nascimento_no_mapa_161_155br.sql`. Conferido em 2026-09-13: os 12 moldes do
+`2026_09_12_nascimento_no_mapa_161_155br.sql`, `2026_09_14_flechas_do_arqueiro_155br.sql`,
+`2026_09_14_listas_de_missao.sql` (tabela `character_task_lists`, também no
+`02_MIGRACAO…sql` para bancos novos). Conferido em 2026-09-13: os 12 moldes do
 `realm_155BR` estão com `spawn_world_id = 161`.
 
-**Personagens de teste no `realm_155BR` hoje:** só o **POTATO** (id 4515, Bárbaro, nível 1,
-0 de experiência, 0 moedas, ainda no mundo 1). Os sacerdotes `HEal` (40) e `testesacer` (42)
+**Personagens de teste no `realm_155BR` hoje:** **POTATO** (id 4515, Bárbaro, nível 1, mundo
+1) e **eaa** (id 5491, Arqueiro, mapa 161, com as flechas do script de 2026-09-14). Os sacerdotes `HEal` (40) e `testesacer` (42)
 das sessões anteriores não existem mais no banco. Para testar compras:
 `UPDATE characters SET money = 500000 WHERE id = <id>;`. Personagem criado antes do B48
 continua no mundo 1; para testar o nascimento no 161, criar um novo.
@@ -234,20 +236,35 @@ Relatado como defeito:
 
 Não relatado ainda: passeio dos monstros ociosos.
 
-### 3.4 Corrigido e testado, falta publicar e ver em jogo (B49)
+### 3.4 Publicado, falta ver em jogo (B49 + B50)
 
-Publicar com o comando da seção 2 (os três serviços do 155BR). Depois, em jogo:
+Publicado em 2026-09-14 (`pw-world-155br` com os mapas 1 e 161, `pw-realm-155br`). Roteiro:
 
-1. **Falar com um NPC** (o Guia): o diálogo abre **uma vez**. Antes chegavam dois
-   `NPC_GREETING`.
-2. **Botão armadura/roupa:** cada clique alterna e fica. Antes o link respondia "roupa
-   ligada" a todo clique, antes da resposta certa do mundo.
-3. **Entrar no mundo:** no log do mundo (`docker logs pw-world-155br | grep "marca das
-   missões"`) deve aparecer `pediu a marca das missões dinâmicas: 0x52776c0d`. Antes o link
-   respondia com `reason 7`, que no cliente é "esquecer a habilidade de produção". Se o
-   cliente aceitar a marca, ele passa a mandar também os pedidos de prêmio especial (9) e de
-   depósito (12), que aparecem no log como `task_notify (reason=Some(9)…)` — sem resposta
-   ainda, como qualquer notificação de missão além da marca.
+1. **Arqueiro com flechas:** entrar com o **eaa** (ou criar outro Arqueiro): as Flechas de
+   Iniciante (1000) no slot de munição; atacar à distância.
+2. **Missão do Guia dos Alados:** falar com o Guia (o diálogo abre **uma vez**), aceitar
+   "Escolhido do Chi: Elfo Alado" — tem de aparecer na lista de missões. Ir ao NPC que
+   recebe e entregar: +25 exp, +10 SP, +8 moedas. Relogar: a lista tem de voltar igual.
+3. **Missão de caça:** aceitar uma de matar monstros, matar — o contador sobe na janela de
+   missão; completar e entregar.
+4. **Experiência e nível:** matar monstros — o número de experiência aparece e **fica**; ao
+   completar o nível, a animação de subir e a vida cheia. Relogar: nível e experiência
+   continuam.
+5. **Regeneração:** perder vida e parar de lutar — ela volta (mais rápido fora de combate).
+6. **Drop:** monstros deixam moedas e às vezes itens no chão; pegar (clique ou tecla de
+   pegar tudo). Nos primeiros 30 s só quem matou pega.
+7. **Morrer e renascer na cidade:** volta ao ponto de cidade do distrito, com 10 % da vida,
+   perdendo um pouco de experiência.
+8. **Recarga de habilidade:** conjurar duas vezes seguidas — a segunda é recusada até o
+   ícone recarregar.
+9. **Loja:** comprar um item (aparece no slot, o dinheiro desce) e vender (o valor do
+   arquivo, não 50 fixo). **Treinador:** aprender uma habilidade cobra SP e moedas; sem
+   SP, recusa.
+10. Do B49: botão armadura/roupa alterna e fica; no log do mundo,
+    `pediu a marca das missões dinâmicas: 0x52776c0d`.
+
+Onde olhar se algo falhar: `docker logs pw-world-155br | grep -i "missão\|subiu\|aprendeu\|comprou"`
+e o overlay `d_rtdebug` (comando recusado aparece lá).
 
 ---
 
@@ -255,13 +272,14 @@ Publicar com o comando da seção 2 (os três serviços do 155BR). Depois, em jo
 
 | arquivo | leitor | estado | usado pelo mundo? |
 | :--- | :--- | :--- | :--- |
-| `elements.data` | `pw-data-loader/src/generic_elements.rs` (+ `specs/elements_layouts/pw_elements_reader.py`) | **231/231** tabelas no v156 do 155BR, **234/234** no v159; fecha no último byte, sem override (B46) | só até o índice ~72: armas, armaduras, acessórios, monstros, NPCs, classes, poções, preços. **Não ligados:** `PLAYER_LEVELEXP_CONFIG`, `MINE_ESSENCE`, `WEAPON_SUB_TYPE`, `NPC_SKILL_SERVICE`, `SKILLTOME_ESSENCE` |
-| `tasks.data` | `pw-data-loader/src/tasks.rs` | **14.885/14.885** missões de topo (155BR), 14.978 (155), fecha pelos deslocamentos do cabeçalho (B45) | **não** — nenhuma missão é consultada |
+| `elements.data` | `pw-data-loader/src/generic_elements.rs` (+ `specs/elements_layouts/pw_elements_reader.py`) | **231/231** tabelas no v156 do 155BR, **234/234** no v159; fecha no último byte, sem override (B46) | armas, armaduras, acessórios, monstros (com drop), NPCs e seus serviços de missão e habilidade, classes, poções, preços, pilhas, curva de exp, ajuste por nível, perda na morte (spec 03 §3.1). **Não ligados:** `MINE_ESSENCE`, `WEAPON_SUB_TYPE`, `NPC_SELL_SERVICE` |
+| `tasks.data` | `pw-data-loader/src/tasks.rs` | **14.885/14.885** missões de topo (155BR), 14.978 (155), fecha pelos deslocamentos do cabeçalho (B45) | **sim** — motor de missões (`pw-gs/src/missoes.rs`, B50) |
+| habilidades do servidor | `specs/habilidades_155/habilidades.json` (`habilidades.rs`) | 3.316 stubs do `cskill` | recarga, conjuração, custo de aprender (B50) |
 | `npcgen.data` | `pw-data-loader/src/npcgen.rs` | v11 lido inteiro; tipo de área, `fOffsetTrn`, extensão de recurso, sem tetos inventados (commit `931b39d`); `a01..a99` (B48) | sim; controladores (`id_ctrl`) tratados como ativos, sem modelar gatilho de evento (B17a) |
 | `aipolicy.data` | `pw-data-loader/src/aipolicy.rs` | lido, com o fonte 1.7.2 como autoridade (B27f) | **não** — não há intérprete; o `ai.rs` porta só perseguição, volta e passeio |
 | `ptemplate.conf` | `ptemplate.rs` (GBK, não UTF-8) | lido | atributos iniciais por classe; as velocidades dele são valores mortos no original |
 | `gs.conf` → `specs/mapas/terreno_155.json` | `specs/mapas/gerar_terreno_155.py`, `terreno.rs` | 79 mapas, pela `tag` (B48c2) | sim, só o mapa que aquele servidor serve (88 MB no mundo 1) |
-| `region.sev` / `precinct.sev` | `GameDataManager` | carimbos por mundo | `INST_DATA_CHECKOUT` |
+| `region.sev` / `precinct.sev` | `GameDataManager`, `precinct.rs` | carimbos por mundo; distritos do `precinct.sev` lidos inteiros | `INST_DATA_CHECKOUT`; renascer na cidade (B50) |
 | `gshop.data` / `gshop1.data` | só o carimbo | — | `edition` do `Challenge` |
 | `gamedbd/clsconfig` | `specs/clsconfig_155/ler_clsconfig.py` | posição de nascimento e vida/mana por classe lidas (B47) | via SQL no `class_templates`. **Não decodificados:** `config_data` (barra de atalhos), inventário, equipamento, habilidades |
 
@@ -276,53 +294,34 @@ Conferido contra o código em 2026-09-13 — cada linha diz onde está a evidên
 O pedido do Murillo no B44: combate básico inteiro, experiência, alma, moedas, animações,
 habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 
-1. **Experiência e alma do abate não entram no personagem.** O `pw-gs` manda
-   `RECEIVE_EXP` ao cliente (`bus_server.rs`, ramo do abate) mas não soma nada ao
-   `PlayerEntity` — não há `exp +=` em lugar nenhum do crate — e o autosave grava o valor
-   antigo. POTATO no banco: `exp = 0` depois de ver "+100 de experiência" (B44 #13). Sem
-   isso não há **subida de nível**; a curva está no `PLAYER_LEVELEXP_CONFIG`, já lido.
-2. **Regeneração de vida e mana não existe.** `hp_gen`/`mp_gen` estão na entidade desde o
-   B44b2; o `WorldInstance::tick` não tem laço que os aplique (B44 #10). Intervalo e regra
-   de "fora de combate" a tirar do original.
-3. **Habilidade sem recarga.** Não há nenhum controle de cooldown em `habilidades.rs` nem
-   no `bus_server.rs` — conjura-se sem parar (B44 #8). Os tempos têm de ser os de
-   `GNET::ElementSkill` que o cliente usa para animar (B27g).
+1. **Distribuir pontos de atributo** (`SET_STATUS_POINT`): os pontos acumulam desde o B50,
+   mas não há como gastá-los.
+2. **Missões — o que o motor recusa ou ignora** (spec 05 §10): janelas de horário, região de
+   entrega, equipe, facção, casamento, PQ, prêmio por escala, teleporte de prêmio, chegar/sair
+   de lugar, falha por morte, item de missão pelo NPC (serviço 8). Missão com janela de
+   horário é **recusada** com "fora do horário".
+3. **Flechas não são gastas** ao atacar (`DoAttack`, `player.cpp:3066`); a compra na loja não
+   confere a lista de venda do NPC.
 4. **Ataque normal sem animação, e o monstro atacado não reage** (B44 #6). A investigar —
    não medido.
-5. **Reviver na cidade revive no lugar errado.** `WorldInstance::reviver_jogador` usa
-   `CharacterClass::default_spawn_position` (coordenadas antigas do mundo 1, três delas
-   palpites) — errado para qualquer um, e mais ainda para quem está no 161 (B44 #9, B48d).
-   O original usa a região de cidade (`__GetTownPosition`, `[TOWN_REGION]` do
-   `ptemplate.conf`). Perda de experiência ao morrer, que o `REVIVAL_INQUIRE` anuncia,
-   também é sempre zero.
-6. **Missões não usam o `tasks.data`.** `BusServer::missao` aceita e entrega, mas a
-   entrega paga **1500 exp / 320 SP / 500 moedas fixos** (`bus_server.rs`, `TODO`), sem
-   conferir requisitos nem objetivos. Na entrada do mundo o `gateway.rs` ainda grava uma
-   "missão inicial" por uma tabela escrita no código (9374 / 1 / 9375 por raça), sem origem.
-   Das notificações de missão do cliente, só o pedido da marca das missões dinâmicas é
-   respondido (B49). A missão inicial de cada classe no 1.5.5 falta confirmar: as de nível 1 são "Exposição de Talento" (1173, 1198) e "Terra Natal" (9532,
-   9533), dos Guias 3517/3518/3519 (B45d, B47b).
-7. **Troca de mundo não existe.** O link escolhe o servidor de mundo na entrada e nada muda
+5. **Troca de mundo não existe.** O link escolhe o servidor de mundo na entrada e nada muda
    depois: portal, teleporte de missão (a "Guarda da Terra" leva do 161 ao mundo 1), GM
    para outro mapa (B48d). Pré-requisito para o começo de jogo no 161 ter continuação.
-8. **Aprender habilidade não cobra nada** — SP, moedas e requisitos estão no
-   `NPC_SKILL_SERVICE` e no `SKILLTOME_ESSENCE` (B42h).
-9. **Só 16 habilidades têm conta** de 3.317 (`habilidades.rs`, `TABELA`); as outras conjuram
+6. **Só 16 habilidades têm conta** de 3.317 (`habilidades.rs`, `TABELA`); as outras conjuram
    sem efeito. Nenhum efeito de estado (veneno, lentidão, bênção com duração). O **Portal da
    Cidade** (167) não tem efeito (B17c).
-10. **Colher recurso não existe:** `MATTER_PICKUP` (152) sem tratamento; o `MINE_ESSENCE`
-    já é lido (B41h, B46).
-11. **Barra de atalhos e guia do jogo** do personagem novo: a fonte provável é o
+7. **Colher recurso não existe:** nenhuma sessão de coleta; o `MINE_ESSENCE` já é lido
+    (B41h, B46).
+8. **Barra de atalhos e guia do jogo** do personagem novo: a fonte provável é o
     `config_data` do molde no `clsconfig`, ainda não decodificado (B44b15, B47d).
-12. **Sem trava de PvP:** qualquer jogador machuca qualquer outro, em qualquer lugar
+9. **Sem trava de PvP:** qualquer jogador machuca qualquer outro, em qualquer lugar
     (`bus_server.rs`, comentário em `pvp`). O original exige duelo, guerra ou mapa de PK
     (B35d).
 
 ### 5B. Fidelidade — números e sinais que ainda não são os do original
 
-- Valores fixos no `bus_server.rs`: vender a NPC paga **50 por unidade**, reparar custa
-  **150**, toda conjuração dura **1000 ms** (`TEMPO_DE_CONJURACAO_MS`; o certo é o
-  `GetExecutetime` de cada stub).
+- Valor fixo no `bus_server.rs`: reparar custa **150**. A conjuração só usa os 1000 ms fixos
+  quando a habilidade não tem `State1` na tabela do servidor.
 - `crc_e` (carimbo de equipamento) vai zero: o cliente repede o equipamento a cada
   reaparição (B42k).
 - `weapon_level` fixo em 1 e `attack_speed` da arma zerada no bloco do item; o original tira
@@ -416,7 +415,7 @@ Cada uma custou pelo menos uma sessão. A evidência está no item citado.
 | onde | o quê |
 | :--- | :--- |
 | `crates/pw-link` | daemon de link por realm; `gateway.rs` ainda tem login e parte do gameplay |
-| `crates/pw-gs` | servidor de mundo: `bus_server.rs` (subcomandos, visibilidade), `world.rs` (tick, spawns, autosave), `ai.rs`, `combat.rs`, `habilidades.rs` |
+| `crates/pw-gs` | servidor de mundo: `bus_server.rs` (subcomandos, visibilidade) e `bus_server/jogo.rs` (missões, abate, drop, loja, treinador), `world.rs` (tick, spawns, regeneração, autosave), `missoes.rs`, `progressao.rs`, `economia.rs`, `ai.rs`, `combat.rs`, `habilidades.rs` |
 | `crates/pw-protocol` | opcodes e codificadores; `por_versao.rs` para o que difere entre versões |
 | `crates/pw-data-loader` | leitores de `.data`, `.conf`, `.hmap` |
 | `crates/pw-storage` | repositórios PostgreSQL |
@@ -465,3 +464,4 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 47 | 09-12 | `clsconfig`: onde cada classe nasce |
 | 48 | 09-12 | nascimento no mapa 161, um servidor por mundo, movimento dos monstros, monstro × NPC |
 | 49 | 09-14 | respostas duplicadas do link (35, 49, 85), a marca das missões dinâmicas, limpeza do banco de testes |
+| 50 | 09-14 | laço de jogo: missões do `tasks.data` com listas binárias, experiência e nível, regeneração, recarga, renascer no distrito, drop e coleta, loja e treinador cobrando, flechas do Arqueiro |

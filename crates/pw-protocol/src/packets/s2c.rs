@@ -763,37 +763,206 @@ impl S2CGamedataSend {
         Self::task_var_data(&stream.into_bytes())
     }
 
-    /// Cria notificação de nova missão aceita/entregue ao jogador (TASK_SVR_NOTIFY_NEW = 1)
-    pub fn task_notify_new(task_id: u16, timestamp: u32) -> Self {
+    /// `svr_new_task` (`TASK_SVR_NOTIFY_NEW` = 1, `task/TaskTempl.h:1793-1827`, `pack(1)`):
+    /// `reason u8`, `task u16`, `cur_time u32`, `cap_task u32` e o `task_sub_tags` já
+    /// serializado (`sub_task u16`, `sz u8`, `tags[sz]` — `get_size() = sz + 3`).
+    ///
+    /// O cliente só aceita com o tamanho exato (`valid_size`) e **refaz** a entrega na lista
+    /// dele a partir destes campos (`ATaskTempl::OnServerNotify`, `TaskProcess.cpp:2705`).
+    /// Entregue pelo `TASK_VAR_DATA` (`PlayerTaskInterface::NotifyClient`, `taskman.cpp:335`).
+    pub fn task_notify_new(task_id: u16, cur_time: u32, cap_task: u32, sub_tags: &[u8]) -> Self {
         let mut stream = OctetsStream::new();
-        stream.write_u8(1);                    // reason = TASK_SVR_NOTIFY_NEW (1)
-        stream.write_u16_le(task_id);          // task ID (2B)
-        stream.write_u32_le(timestamp);        // cur_time (4B)
-        stream.write_u32_le(0);                // cap_task = 0 (4B)
-        stream.write_u16_le(0);                // sub_task = 0 (2B) - 0 indicates root task in v1.2.6
-        stream.write_u8(0);                    // sz = 0 (1B)
+        stream.write_u8(1);
+        stream.write_u16_le(task_id);
+        stream.write_u32_le(cur_time);
+        stream.write_u32_le(cap_task);
+        stream.write_raw_bytes(sub_tags);
         Self::task_var_data(&stream.into_bytes())
     }
 
-    /// Cria notificação de missão concluída com sucesso (TASK_SVR_NOTIFY_COMPLETE = 2)
-    pub fn task_notify_complete(task_id: u16, timestamp: u32) -> Self {
+    /// `svr_task_complete` (`TASK_SVR_NOTIFY_COMPLETE` = 2, `TaskTempl.h:1829-1859`):
+    /// `reason`, `task`, `cur_time u32` e o `task_sub_tags`, cujo primeiro byte é o **estado**
+    /// da entrada (sucesso, falha, desistência) — o cliente o copia para a lista antes de
+    /// refazer o prêmio (`TaskProcess.cpp:2764`).
+    pub fn task_notify_complete(task_id: u16, cur_time: u32, sub_tags: &[u8]) -> Self {
         let mut stream = OctetsStream::new();
-        stream.write_u8(2);                    // reason = TASK_SVR_NOTIFY_COMPLETE (2)
-        stream.write_u16_le(task_id);          // task ID (2B)
-        stream.write_u32_le(timestamp);        // cur_time (4B)
-        stream.write_u16_le(0);                // sub_task = 0 (2B)
-        stream.write_u8(0);                    // sz = 0 (1B)
+        stream.write_u8(2);
+        stream.write_u16_le(task_id);
+        stream.write_u32_le(cur_time);
+        stream.write_raw_bytes(sub_tags);
         Self::task_var_data(&stream.into_bytes())
     }
 
-    /// Cria notificação de monstro abatido para progresso de missão (TASK_SVR_NOTIFY_MONSTER_KILLED = 4)
-    pub fn task_notify_monster_killed(task_id: u16, monster_id: u32, monster_num: u16) -> Self {
+    /// `svr_monster_killed` (`TASK_SVR_NOTIFY_MONSTER_KILLED` = 4, `TaskTempl.h:1773-1779`):
+    /// 17 bytes — `reason`, `task`, `monster_id u32`, `monster_num u16`, `dps i32`, `dph i32`.
+    /// O cliente recusa qualquer outro tamanho (`TaskProcess.cpp:2683`).
+    pub fn task_notify_monster_killed(task_id: u16, monster_id: u32, monster_num: u16, dps: i32, dph: i32) -> Self {
         let mut stream = OctetsStream::new();
-        stream.write_u8(4);                    // reason = TASK_SVR_NOTIFY_MONSTER_KILLED (4)
-        stream.write_u16_le(task_id);          // task ID (2B)
-        stream.write_u32_le(monster_id);       // monster_id (4B)
-        stream.write_u16_le(monster_num);      // monster_num (2B) - Exactly 9 bytes total (1+2+4+2)
+        stream.write_u8(4);
+        stream.write_u16_le(task_id);
+        stream.write_u32_le(monster_id);
+        stream.write_u16_le(monster_num);
+        stream.write_i32_le(dps);
+        stream.write_i32_le(dph);
         Self::task_var_data(&stream.into_bytes())
+    }
+
+    /// Notificação só com `task_notify_base` (3 bytes): `GIVE_UP` (3), `FINISHED` (5) —
+    /// `ATaskTempl::NotifyClient`, `TaskTempl.inl:2263-2267`.
+    pub fn task_notify_base(reason: u8, task_id: u16) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u8(reason);
+        stream.write_u16_le(task_id);
+        Self::task_var_data(&stream.into_bytes())
+    }
+
+    /// `svr_task_err_code` (`TASK_SVR_NOTIFY_ERROR_CODE` = 6): `reason`, `task`, `err_code u32`.
+    pub fn task_notify_error(task_id: u16, err_code: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u8(6);
+        stream.write_u16_le(task_id);
+        stream.write_u32_le(err_code);
+        Self::task_var_data(&stream.into_bytes())
+    }
+
+    /// `PICKUP_MONEY` (30) — `cmd_pickup_money { int iAmount; }` (`gplayer_imp::OnPickupMoney`,
+    /// `player.cpp:8826`).
+    pub fn pickup_money(amount: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(30);
+        stream.write_i32_le(amount);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PICKUP_ITEM` (31) — `cmd_pickup_item`, 18 bytes. O cliente empilha `amount` na bolsa
+    /// dele e confere se o último slot e a quantidade final batem com `slot`/`slot_amount`
+    /// (`CECHostPlayer::OnMsgHstPickupItem`, `EC_HostMsg.cpp:1203-1218`).
+    pub fn pickup_item(tid: i32, expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(31);
+        stream.write_i32_le(tid);
+        stream.write_i32_le(expire_date);
+        stream.write_u32_le(amount);
+        stream.write_u32_le(slot_amount);
+        stream.write_u8(package);
+        stream.write_u8(slot);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `TASK_DELIVER_ITEM` (156) — item entregue por missão; mesmo layout e mesma conferência
+    /// do [`Self::pickup_item`] (`gplayer_imp::ObtainItem`, `player.cpp:8996`).
+    pub fn task_deliver_item(tid: i32, expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(156);
+        stream.write_i32_le(tid);
+        stream.write_i32_le(expire_date);
+        stream.write_u32_le(amount);
+        stream.write_u32_le(slot_amount);
+        stream.write_u8(package);
+        stream.write_u8(slot);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `TASK_DELIVER_EXP` (158) — `{ int exp; int sp; }` (`ReceiveTaskExp`, `player_imp.h:2452`).
+    pub fn task_deliver_exp(exp: i32, sp: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(158);
+        stream.write_i32_le(exp);
+        stream.write_i32_le(sp);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `TASK_DELIVER_MONEY` (159) — `{ size_t amount; size_t cur_money; }`
+    /// (`PlayerTaskInterface::DeliverGold`, `taskman.cpp:84`).
+    pub fn task_deliver_money(amount: u32, cur_money: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(159);
+        stream.write_u32_le(amount);
+        stream.write_u32_le(cur_money);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `SPEND_MONEY` (77) — `{ size_t cost; }` (`DecMoneyAmount`, `player_imp.h:3673`).
+    pub fn spend_money(cost: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(77);
+        stream.write_u32_le(cost);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_DROP_ITEM` (46) — `{ u8 where; u8 index; u32 count; int tid; u8 drop_type; }`,
+    /// 11 bytes. Missão que tira item usa `DROP_TYPE_TASK` = 3 (`taskman.cpp:195`,
+    /// `common/protocol.h:932`).
+    pub fn player_drop_item(package: u8, slot: u8, count: u32, tid: i32, drop_type: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(46);
+        stream.write_u8(package);
+        stream.write_u8(slot);
+        stream.write_u32_le(count);
+        stream.write_i32_le(tid);
+        stream.write_u8(drop_type);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `SET_COOLDOWN` (198) — `{ int cooldown_index; int cooldown_time; }`. O índice de
+    /// habilidade é `id + COOLINGID_BEGIN` (1024, `playerwrapper.cpp:170`).
+    pub fn set_cooldown(index: i32, time_ms: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(198);
+        stream.write_i32_le(index);
+        stream.write_i32_le(time_ms);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `MATTER_PICKUP` (152) — `{ int matter_id; int who; }`, difundido a quem vê o item
+    /// (`gmatter_dispatcher::matter_pickup`, `matter.cpp:72`).
+    pub fn matter_pickup(matter_id: i32, who: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(152);
+        stream.write_i32_le(matter_id);
+        stream.write_i32_le(who);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PURCHASE_ITEM` (72) — a compra no NPC (`gplayer_imp::PurchaseItem`,
+    /// `player.cpp:8900-8932`): `cost`, `yinpiao` (0 fora de barraca), `flag` (0), a contagem e,
+    /// por item, `item_id`, `expire_date`, `count`, `inv_index u16`, `booth_slot u8`. O cliente
+    /// empilha cada um e confere o `inv_index` (`OnMsgHstPurchaseItems`, `EC_HostMsg.cpp:3334`).
+    pub fn purchase_item(cost: u32, itens: &[(i32, i32, u32, u16)]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(72);
+        stream.write_u32_le(cost);
+        stream.write_u32_le(0);
+        stream.write_u8(0);
+        stream.write_u16_le(itens.len() as u16);
+        for (tid, expira, n, slot) in itens {
+            stream.write_i32_le(*tid);
+            stream.write_i32_le(*expira);
+            stream.write_u32_le(*n);
+            stream.write_u16_le(*slot);
+            stream.write_u8(0);
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `ITEM_TO_MONEY` (73) — a venda ao NPC: `index u16`, `type`, `count`, `money`
+    /// (`gplayer_dispatcher::item_to_money`, `player.cpp:4131`; `ItemToMoney`, `:13995`).
+    pub fn item_to_money(index: u16, tid: i32, count: u32, money: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(73);
+        stream.write_u16_le(index);
+        stream.write_i32_le(tid);
+        stream.write_u32_le(count);
+        stream.write_u32_le(money);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `ERROR_MESSAGE` (25) — `{ int iMessage; }`, com os `ERR_*` de `common/protocol.h:679`.
+    pub fn error_message(code: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(25);
+        stream.write_i32_le(code);
+        Self { data: stream.into_bytes().to_vec() }
     }
 
     /// `OWN_ITEM_INFO` (40) — a ficha de um item na bolsa ou no equipamento.

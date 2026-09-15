@@ -139,7 +139,7 @@ CREATE INDEX IF NOT EXISTS idx_characters_world ON characters(world_id);
 CREATE TABLE IF NOT EXISTS character_items (
     id BIGSERIAL PRIMARY KEY,
     character_id INT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
-    container_type SMALLINT NOT NULL, -- 0: Inventário, 1: Equipados, 2: Banco (Storehouse), 3: Caixa de Moda
+    container_type SMALLINT NOT NULL, -- 0: Inventário, 1: Equipados, 2: Banco (Storehouse), 3: Caixa de Moda, 4: mascotes, 5: bolsa de missão
     slot SMALLINT NOT NULL,           -- Índice da posição no contêiner (0..127)
     
     item_id INT NOT NULL,             -- ID do item no elements.data
@@ -204,6 +204,20 @@ CREATE TABLE IF NOT EXISTS character_quests (
 -- Índices de Busca para Quests
 CREATE INDEX IF NOT EXISTS idx_quests_char_status ON character_quests(character_id, status);
 CREATE INDEX IF NOT EXISTS idx_quests_quest_id ON character_quests(quest_id);
+
+-- As listas de missão do jogador, como o servidor original as guarda: os cinco blocos
+-- binários do `TASK_DATA` (ativa, concluídas, tempos, contagens, depósito). O `pw-gs` é quem
+-- os interpreta (`missoes.rs`); a `character_quests` acima deixou de ser usada (B50).
+-- Ver scripts/2026_09_14_listas_de_missao.sql.
+CREATE TABLE IF NOT EXISTS character_task_lists (
+    character_id INT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+    active BYTEA NOT NULL,
+    finished BYTEA NOT NULL,
+    finish_time BYTEA NOT NULL,
+    finish_count BYTEA NOT NULL,
+    storage BYTEA NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
 
 -- -----------------------------------------------------------------------------
 -- 7. TABELA DE FACÇÕES / CLÃS (Por Realm)

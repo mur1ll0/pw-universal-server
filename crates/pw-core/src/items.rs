@@ -8,6 +8,10 @@ pub enum ContainerType {
     Storehouse,  // Armazém / Banco
     Fashion,     // Roupas e cosméticos equipados
     PetCorral,   // Bolsa de mascotes
+    /// A bolsa de missão (`IL_TASK_INVENTORY` do servidor, `IVTRTYPE_TASKPACK` = pacote 2 do
+    /// cliente, `EC_IvtrTypes.h:39`). No banco é o `container_type` **5**: o 2 já era o
+    /// armazém quando ela entrou.
+    TaskInventory,
 }
 
 impl ContainerType {
@@ -18,6 +22,7 @@ impl ContainerType {
             ContainerType::Storehouse => 2,
             ContainerType::Fashion => 3,
             ContainerType::PetCorral => 4,
+            ContainerType::TaskInventory => 5,
         }
     }
 
@@ -28,6 +33,7 @@ impl ContainerType {
             2 => ContainerType::Storehouse,
             3 => ContainerType::Fashion,
             4 => ContainerType::PetCorral,
+            5 => ContainerType::TaskInventory,
             _ => ContainerType::Inventory,
         }
     }
@@ -39,6 +45,18 @@ impl ContainerType {
             ContainerType::Storehouse => "STOREHOUSE",
             ContainerType::Fashion => "FASHION",
             ContainerType::PetCorral => "PET_CORRAL",
+            ContainerType::TaskInventory => "TASK_INVENTORY",
+        }
+    }
+
+    /// O pacote do cliente (`IVTRTYPE_*`, `EC_IvtrTypes.h:37-39`) que corresponde a este
+    /// contêiner, para os comandos que levam `where`/`byPackage`.
+    pub fn pacote_do_cliente(&self) -> Option<u8> {
+        match self {
+            ContainerType::Inventory => Some(0),
+            ContainerType::Equipment => Some(1),
+            ContainerType::TaskInventory => Some(2),
+            _ => None,
         }
     }
 
@@ -49,6 +67,7 @@ impl ContainerType {
             "STOREHOUSE" | "2" => Some(ContainerType::Storehouse),
             "FASHION" | "3" => Some(ContainerType::Fashion),
             "PET_CORRAL" | "4" => Some(ContainerType::PetCorral),
+            "TASK_INVENTORY" | "5" => Some(ContainerType::TaskInventory),
             _ => None,
         }
     }

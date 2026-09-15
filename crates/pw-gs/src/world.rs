@@ -61,7 +61,23 @@ pub enum EventoDoMundo {
         hp: i32,
         max_hp: i32,
     },
+    /// Vida ou mana do jogador mudaram sozinhas (regeneração): o `SELF_INFO_00` é o que o
+    /// original manda quando o `_refresh_state` liga (`GenHPandMP`, `actobject.h:2167`).
+    EstadoMudou { roleid: RoleId },
+    /// O corpo do monstro some (`GM_MSG_OBJ_ZOMBIE_END`, `_corpse_delay`, `npc.cpp:1446-1459`).
+    MonstroSumiu { id: i64 },
+    /// O monstro renasceu no ponto de origem.
+    MonstroRenasceu { id: i64 },
+    /// Um item ou monte de moedas no chão acabou a vida (`gmatter_item_base_imp`,
+    /// `matter.cpp:133-137`).
+    DropSumiu { id: i64 },
 }
+
+/// `_corpse_delay` do monstro: 20 s (`npc.cpp:803`), vezes 20 ticks no `PostLazyMessage`.
+pub const CORPO_MS: u32 = 20_000;
+/// Primeiro id de item no chão. Os dois bits altos marcam matéria (`ISMATTERID`,
+/// `EC_GPDataType.h:27`); o `npcgen.data` usa os ids baixos para minério e erva.
+const PRIMEIRO_ID_DE_DROP: u32 = 0xC800_0000;
 
 /// Um grupo de jogadores.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +118,11 @@ pub struct WorldInstance {
     eventos: Option<mpsc::Sender<EventoDoMundo>>,
     _entity_counter: i64,
     autosave_timer_ms: u32,
+    /// O batimento de 1 s dos jogadores (regeneração e combate).
+    batimento_ms: u32,
+    proximo_drop: u32,
+    /// Corpos de monstro ainda na tela: id → quanto falta para sumir.
+    corpos: HashMap<i64, u32>,
 }
 
 impl WorldInstance {
@@ -128,6 +149,9 @@ impl WorldInstance {
             eventos: None,
             _entity_counter: 100000,
             autosave_timer_ms: 0,
+            batimento_ms: 0,
+            proximo_drop: PRIMEIRO_ID_DE_DROP,
+            corpos: HashMap::new(),
         }
     }
 
@@ -341,25 +365,32 @@ impl WorldInstance {
         true
     }
 
-    /// Ressuscita o jogador na cidade, com a vida cheia.
+    /// Renasce o jogador na cidade (`gplayer_controller::ResurrectInTown`,
+    /// `playercmd.cpp:112-129`).
     ///
-    /// Devolve a posição de renascimento, ou `None` se o jogador não estiver neste mundo
-    /// ou não estiver morto — ressuscitar quem está vivo é o caminho para um jogador se
-    /// teleportar de graça sempre que quiser.
+    /// O ponto é o de cidade do distrito do `precinct.sev` que contém a posição, quando é
+    /// deste mapa; sem distrito o original renasce no lugar. Vida e mana voltam a 10 % e a
+    /// experiência perde a fração do cultivo — ver [`crate::progressao::renascer`].
+    ///
+    /// Devolve a posição, ou `None` se o jogador não estiver neste mundo ou não estiver
+    /// morto — ressuscitar quem está vivo é o caminho para se teleportar de graça.
     pub fn reviver_jogador(&mut self, role_id: RoleId) -> Option<pw_core::Vector3> {
         let id = role_id as i64;
+        let dados = Arc::clone(&self.data_manager);
+        let mapa = self.world_id;
         let p = self.players.get_mut(&id)?;
         if p.hp > 0 {
             return None;
         }
-
-        // O ponto de nascimento da classe é o mesmo que o `create_character` usa quando
-        // não há template no banco — um lugar só define onde cada classe começa.
-        let (x, y, z) = p.cls.default_spawn_position();
-        let pos = pw_core::Vector3::new(x, y, z);
-
-        p.hp = p.max_hp;
-        p.mp = p.max_mp;
+        let mut pos = p.position;
+        if let Some((ponto, mapa_do_ponto)) = crate::progressao::ponto_de_renascimento(&dados, mapa, p.position.x, p.position.z) {
+            if mapa_do_ponto == mapa {
+                pos = pw_core::Vector3::new(ponto[0], ponto[1], ponto[2]);
+            } else {
+                warn!("renascer: o distrito de #{role_id} manda para o mapa {mapa_do_ponto}, e trocar de mapa não existe — renasce no lugar");
+            }
+        }
+        let perdeu = crate::progressao::renascer(p, &dados, false);
         p.position = pos;
         p.target_id = None;
         let (hp, max_hp) = (p.hp, p.max_hp);
@@ -371,8 +402,60 @@ impl WorldInstance {
             hp,
             max_hp,
         });
-        info!("Jogador #{} reviveu na cidade", role_id);
+        info!("Jogador #{} renasceu em ({:.0}, {:.0}), perdeu {perdeu} de experiência", role_id, pos.x, pos.z);
         Some(pos)
+    }
+
+    /// Põe um item (ou um monte de moedas, `tid` 3044) no chão, a ±2 m do ponto e no
+    /// terreno (`GM_MSG_PRODUCE_MONEY`/`_MONSTER_DROP`, `worldmanager.cpp:512-555`).
+    pub fn criar_drop(&mut self, tid: u32, quantidade: u32, perto_de: pw_core::Vector3, dono: Option<RoleId>) -> ItemDropEntity {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let mut pos = perto_de;
+        pos.x += rng.gen::<f32>() * 4.0 - 2.0;
+        pos.z += rng.gen::<f32>() * 4.0 - 2.0;
+        if let Some(chao) = self.terreno.altura_em(pos.x, pos.z) {
+            if pos.y < chao {
+                pos.y = chao;
+            }
+        }
+        // Id de entidade é `i32` no fio, e o mundo o guarda com sinal: `0xC8...` é negativo,
+        // como os ids de NPC e matéria do `npcgen.data`.
+        let id = self.proximo_drop as i32 as i64;
+        self.proximo_drop = self.proximo_drop.wrapping_add(1) | PRIMEIRO_ID_DE_DROP;
+        let d = ItemDropEntity {
+            id,
+            item_id: tid,
+            count: quantidade,
+            position: pos,
+            owner_role_id: dono,
+            protect_timer_ms: crate::economia::POSSE_S * 1000,
+            despawn_timer_ms: crate::economia::VIDA_NO_CHAO_S * 1000,
+        };
+        self.grid.add_entity(id, pos, false);
+        self.drops.insert(id, d.clone());
+        d
+    }
+
+    /// Tira um item do chão.
+    pub fn remover_drop(&mut self, id: i64) -> Option<ItemDropEntity> {
+        let d = self.drops.remove(&id)?;
+        self.grid.remove_entity(id);
+        for p in self.players.values_mut() {
+            p.visiveis.remove(&id);
+        }
+        Some(d)
+    }
+
+    /// Marca o monstro como morto: corpo por [`CORPO_MS`] e renascimento pelo tempo do
+    /// gerador do `npcgen.data`.
+    pub fn matar_monstro(&mut self, id: i64) {
+        if let Some((m, _)) = self.monsters.get_mut(&id) {
+            m.is_dead = true;
+            m.respawn_timer_ms = m.respawn_delay_ms.max(1);
+            m.target_id = None;
+        }
+        self.corpos.insert(id, CORPO_MS);
     }
 
     // ------------------------------------------------------------------
@@ -632,6 +715,7 @@ impl WorldInstance {
         let mut attacks_to_process = Vec::new();
 
         let mut movimentos = Vec::new();
+        let mut renasceram: Vec<(i64, pw_core::Vector3)> = Vec::new();
 
         for (monster, ai) in self.monsters.values_mut() {
             if monster.is_dead {
@@ -642,7 +726,10 @@ impl WorldInstance {
                         monster.is_dead = false;
                         monster.hp = monster.max_hp;
                         monster.position = monster.spawn_center;
+                        monster.danos.clear();
+                        monster.primeiro_atacante = None;
                         *ai = MonsterAi::new();
+                        renasceram.push((monster.id, monster.position));
                     }
                 }
                 continue;
@@ -674,6 +761,62 @@ impl WorldInstance {
             }
         }
 
+        // Corpos que somem, e os que renasceram antes de o corpo sumir.
+        let mut sumiram = Vec::new();
+        for (id, falta) in self.corpos.iter_mut() {
+            *falta = falta.saturating_sub(delta_ms);
+            if *falta == 0 {
+                sumiram.push(*id);
+            }
+        }
+        for (id, _) in &renasceram {
+            if self.corpos.contains_key(id) && !sumiram.contains(id) {
+                sumiram.push(*id);
+            }
+        }
+        for id in sumiram {
+            self.corpos.remove(&id);
+            for p in self.players.values_mut() {
+                p.visiveis.remove(&id);
+            }
+            self.emitir(EventoDoMundo::MonstroSumiu { id });
+        }
+        for (id, pos) in renasceram {
+            self.grid.add_entity(id, pos, false);
+            self.emitir(EventoDoMundo::MonstroRenasceu { id });
+        }
+
+        // Itens no chão: a posse acaba em 30 s e o item some em 300 s.
+        let mut drops_sumiram = Vec::new();
+        for d in self.drops.values_mut() {
+            d.protect_timer_ms = d.protect_timer_ms.saturating_sub(delta_ms);
+            if d.protect_timer_ms == 0 {
+                d.owner_role_id = None;
+            }
+            d.despawn_timer_ms = d.despawn_timer_ms.saturating_sub(delta_ms);
+            if d.despawn_timer_ms == 0 {
+                drops_sumiram.push(d.id);
+            }
+        }
+        for id in drops_sumiram {
+            self.remover_drop(id);
+            self.emitir(EventoDoMundo::DropSumiu { id });
+        }
+
+        // Batimento de 1 s: combate e regeneração (`gplayer_imp::OnHeartbeat`).
+        self.batimento_ms += delta_ms;
+        if self.batimento_ms >= 1000 {
+            self.batimento_ms -= 1000;
+            let mudaram: Vec<RoleId> = self
+                .players
+                .values_mut()
+                .filter_map(|p| crate::progressao::batimento(p).then_some(p.role_id))
+                .collect();
+            for roleid in mudaram {
+                self.emitir(EventoDoMundo::EstadoMudou { roleid });
+            }
+        }
+
         // Fora do laço porque `self.grid` e `self.monsters` não podem ser emprestados ao
         // mesmo tempo.
         for (id, destino, evento) in movimentos {
@@ -695,6 +838,8 @@ impl WorldInstance {
             }
 
             player.hp = (player.hp - damage).max(0);
+            // Apanhar põe em combate por pelo menos 5 s (`OnAttacked`, `player.cpp:9514`).
+            player.combate_s = player.combate_s.max(crate::progressao::COMBATE_AO_APANHAR_S);
             let (hp, max_hp, pos) = (player.hp, player.max_hp, player.position);
             let role_id = player.role_id;
             debug!("Monstro causou {} de dano no Jogador #{} (HP restante: {})", damage, player_id, hp);
@@ -747,6 +892,12 @@ impl WorldInstance {
                         "autosave: não consegui gravar o personagem {}: {e}",
                         player.role_id
                     );
+                }
+                let _ = self.char_repo.gravar_pontos_de_atributo(player.role_id, player.pontos_de_atributo).await;
+                let [a, b, c, d, e] = player.missoes.blocos();
+                let listas = pw_storage::ListasDeMissaoGravadas { ativa: a, concluidas: b, tempos: c, contagens: d, deposito: e };
+                if let Err(e) = self.char_repo.task_lists().gravar(player.role_id, &listas).await {
+                    warn!("autosave: não consegui gravar as missões de {}: {e}", player.role_id);
                 }
             }
             // O `let _ =` que havia aqui engolia o erro, e a linha abaixo dizia "com

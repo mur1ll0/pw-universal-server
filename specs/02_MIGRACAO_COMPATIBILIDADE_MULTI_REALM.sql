@@ -278,3 +278,17 @@ CREATE INDEX IF NOT EXISTS idx_characters_exclusao_agendada
 CREATE INDEX IF NOT EXISTS idx_mails_expiram
     ON mails(expires_at)
     WHERE is_collected = FALSE;
+
+-- -----------------------------------------------------------------------------
+-- 10. As listas de missão (ver scripts/2026_09_14_listas_de_missao.sql)
+-- -----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS character_task_lists (
+    character_id INT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+    active BYTEA NOT NULL,
+    finished BYTEA NOT NULL,
+    finish_time BYTEA NOT NULL,
+    finish_count BYTEA NOT NULL,
+    storage BYTEA NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);

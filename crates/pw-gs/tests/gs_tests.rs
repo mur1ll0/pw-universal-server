@@ -90,6 +90,14 @@ fn test_combat_engine_damage_calculation() {
         sec_level: 0,
         habilidades: Default::default(),
         crc_aparencia: 0,
+        pontos_de_atributo: 0,
+        reputacao: 0,
+        combate_s: 0,
+        contador_hp: 0,
+        contador_mp: 0,
+        recargas: std::collections::HashMap::new(),
+        npc_em_conversa: None,
+        missoes: Default::default(),
     };
 
     let monster = MonsterEntity {
@@ -128,6 +136,8 @@ fn test_combat_engine_damage_calculation() {
         respawn_delay_ms: 5000,
         target_id: None,
         buffs: Vec::new(),
+        danos: Vec::new(),
+        primeiro_atacante: None,
     };
 
     // O golpe pode errar agora — há rolagem de acerto, que a fórmula antiga não tinha.

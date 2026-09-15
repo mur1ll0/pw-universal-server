@@ -43,6 +43,10 @@ pub mod ids {
     pub const SELECT_TARGET: u16 = 2;
     /// `SRV::C2S::CMD::normal_attack`
     pub const NORMAL_ATTACK: u16 = 3;
+    /// `SRV::C2S::CMD::pickup_matter`
+    pub const PICKUP: u16 = 6;
+    /// `SRV::C2S::CMD::pickup_matter_all`
+    pub const PICKUP_ALL: u16 = 184;
     /// `SRV::C2S::CMD::player_stop_move`
     pub const STOP_MOVE: u16 = 7;
     /// `UNSELECT` — só cabeçalho, sem struct no IR.

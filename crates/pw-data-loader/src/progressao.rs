@@ -139,6 +139,14 @@ impl TabelaDeProgressao {
         t
     }
 
+    /// A tabela padrão com o mesmo ajuste para qualquer diferença de nível. Para testes: o
+    /// padrão do construtor zera o ajuste, e sem ele nenhum abate dá experiência.
+    pub fn com_ajuste_uniforme(a: AjusteDeNivel) -> Self {
+        let mut t = Self::default();
+        t.ajuste = vec![a; MAX_LEVEL_DIFF + 1];
+        t
+    }
+
     /// `player_template::GetLvlupExp` (`playertemplate.cpp:644-651`).
     pub fn exp_para_subir(&self, nivel: i32) -> i64 {
         if (0..=NIVEL_MAXIMO_DO_JOGO).contains(&nivel) {

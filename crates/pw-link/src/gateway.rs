@@ -1,5 +1,5 @@
 use futures::{SinkExt, StreamExt};
-use pw_core::{CharacterClass, CharacterSummary, Vector3};
+use pw_core::{CharacterSummary, Vector3};
 use pw_crypto::generate_login_challenge;
 use pw_protocol::{
     create_protocol_adapter, GameVersion, InboundPacket, OutboundPacket, ProtocolAdapter,
@@ -875,40 +875,46 @@ impl LinkGateway {
                     // diante) — ver `PorVersao::task_data`, que traz a desmontagem dos dois
                     // clients reais. Mandar 3 pro 1.5.5 deixava o cliente lendo 8 bytes de
                     // lixo depois do fim do buffer.
-                    info!("TASK_DATA enviado pro personagem ID {}", details.id);
-                    tx.send(OutboundPacket::GamedataSend(sub.task_data())).await?;
+                    // As listas de missão **de verdade**, do banco (`character_task_lists`),
+                    // que o `pw-gs` mantém e grava a cada mudança. Ia com os blocos vazios, e o
+                    // cliente ficava com a lista ativa na versão 0 — que faz o
+                    // `OnServerNotify` (`TaskClient.cpp:262`) descartar **todo** aviso de missão:
+                    // aceitar no NPC não mostrava nada (teste em jogo de 2026-09-14). Personagem
+                    // sem lista gravada recebe as listas vazias com a versão 1.
+                    let listas = match self.char_repo.task_lists().carregar(details.id).await {
+                        Ok(Some(l)) => [l.ativa, l.concluidas, l.tempos, l.contagens, l.deposito],
+                        Ok(None) => listas_de_missao_vazias(),
+                        Err(e) => {
+                            warn!("não consegui ler as missões de {}: {e}", details.id);
+                            listas_de_missao_vazias()
+                        }
+                    };
+                    let [la, lb, lc, ld, le] = &listas;
+                    info!("TASK_DATA enviado pro personagem ID {} ({} missões ativas)", details.id, la.first().copied().unwrap_or(0));
+                    tx.send(OutboundPacket::GamedataSend(sub.task_data_com_listas([la, lb, lc, ld, le]))).await?;
                     // A marca das missões dinâmicas **não** vai aqui. Ia, sem ninguém pedir,
                     // com `version = 0` — e o cliente descarta toda marca cuja versão não é
                     // `DYN_TASK_CUR_VERSION` (10, `TaskTemplMan.cpp:168`). Quem responde é o
                     // mundo, quando o cliente pede (`TASK_NOTIFY` com `reason` 7), como o
                     // original.
-
-                    // Carrega e sincroniza missões ativas do personagem
-                    let role_quests = self.char_repo.quest_repo().list_quests(details.id).await.unwrap_or_default();
-                    let now_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u32;
-
-                    if role_quests.is_empty() {
-                        // Novo personagem: entrega a missão inicial de nascimento configurada no tasks.data
-                        let initial_task_id = match details.cls {
-                            CharacterClass::Cleric | CharacterClass::Archer => 9374,       // Missão dos Alados
-                            CharacterClass::Blademaster | CharacterClass::Wizard => 1,      // Missão dos Humanos
-                            CharacterClass::Barbarian | CharacterClass::Venomancer => 9375, // Missão dos Selvagens
-                            _ => 1,
-                        };
-                        info!("Registrando missão inicial ID {} para o novo personagem '{}'", initial_task_id, details.name);
-                        let _ = self.char_repo.quest_repo().save_quest(details.id, initial_task_id, pw_core::QuestStatus::Active, &[0, 0, 0], None).await;
-                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_new(initial_task_id as u16, now_ts))).await?;
-                    } else {
-                        for q in role_quests {
-                            if q.status == pw_core::QuestStatus::Active {
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::task_notify_new(q.quest_id as u16, now_ts))).await?;
-                            }
-                        }
-                    }
+                    //
+                    // A "missão inicial" que era gravada e anunciada aqui (9374/1/9375 por
+                    // raça) saiu: era inventada, e um `TASK_SVR_NOTIFY_NEW` sem a missão na
+                    // lista desalinha a cópia do cliente. Missão se pega no NPC.
 
                     // 8. Envia OWN_IVTR_DATA (Comando 42)
                     tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(0, 32, &details.inventory))).await?;
                     tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(1, 32, &details.equipment))).await?;
+                    // A bolsa de missão (pacote 2) — `SendAllData` manda as três
+                    // (`player.cpp:13697-13713`). Sem ela o cliente não tem onde pôr item de
+                    // missão, e o `TASK_DELIVER_ITEM` é descartado.
+                    let bolsa_de_missao = self
+                        .char_repo
+                        .item_repo()
+                        .list_by_container(details.id, pw_core::ContainerType::TaskInventory)
+                        .await
+                        .unwrap_or_default();
+                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(2, 32, &bolsa_de_missao))).await?;
 
                     // 9. Envia OWN_ITEM_INFO (Comando 40) para cada item
                     //
@@ -1542,4 +1548,12 @@ mod testes_da_barreira_de_login {
         });
         assert!(LinkGateway::exige_autenticacao(&chat));
     }
+}
+
+/// As cinco listas de missão de quem nunca teve nenhuma, como `pw_gs::missoes::ListasDeMissao`
+/// as serializa: lista ativa só com o cabeçalho (`m_Version` = 1, tempos absolutos), lista de
+/// concluídas com `m_Version` = 1, as duas de contagem vazias e o depósito zerado
+/// (`sizeof(StorageTaskList)` = 864, `task/TaskProcess.h:379-391`).
+fn listas_de_missao_vazias() -> [Vec<u8>; 5] {
+    [vec![0, 0, 1, 0, 0, 1, 0, 0], vec![0, 0, 1, 0], vec![0, 0], vec![0, 0], vec![0; 864]]
 }

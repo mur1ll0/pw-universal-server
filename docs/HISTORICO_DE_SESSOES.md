@@ -6545,6 +6545,114 @@ Ordem combinada com o Murillo:
       8) não é enviado.
     - A "missão inicial" que o link grava na entrada vem de uma tabela escrita no código.
 
+50. **Sessão 2026-09-14 (continuação): o laço de jogo — missões do `tasks.data`, experiência e
+    nível, regeneração, recarga, renascer, drop, loja e treinador cobrando.**
+
+    ### a. O pedido e o teste que o motivou
+
+    Teste do B48: Arqueiro novo nasce no 161 (confirmado), perseguição dos monstros certa
+    (confirmado), **não dá para aceitar missão** — o Guia dos Alados abre o diálogo, o log do
+    mundo registra `aceitou a missão 32201`, e nada aparece — e **o Arqueiro nasce sem
+    flechas**. Pedido: commitar (72aba65, c6dabb8), consolidar os mapas num `pw-gs` por realm
+    (c07a2de), e implementar o laço de progressão, as missões (pegar e completar) e a economia
+    (drop de itens e moedas, comprar habilidades e itens).
+
+    ### b. Por que a missão não aparecia
+
+    O cliente **não recebe** estado de missão depois do login: recebe as listas no `TASK_DATA`
+    e refaz sozinho cada operação a partir dos avisos (`ATaskTempl::OnServerNotify`,
+    `TaskProcess.cpp:2643-2815` — `DeliverTask`, `RecursiveAward` rodam do lado dele). O
+    `TASK_DATA` ia com os cinco blocos vazios; o cliente zera o buffer
+    (`CECTaskInterface::Init`, `EC_TaskInterface.cpp:140-160`), a lista ativa fica com
+    `m_Version = 0`, e `OnServerNotify` (`TaskClient.cpp:262`) sai na primeira linha quando a
+    versão não é `TASK_ENTRY_DATA_CUR_VER` (1, `TaskProcess.cpp:21`). Todo aviso de missão era
+    descartado. Os avisos ainda tinham tamanho errado: `task_notify_complete` sem o byte de
+    estado útil, `monster_killed` com 9 bytes onde o cliente exige 17.
+
+    Consequência de desenho: o servidor tem de manter **as mesmas estruturas binárias** que
+    o cliente (`ActiveTaskList` de 8 + 32×n, `FinishedTaskList` ordenada, as listas de tempo e
+    contagem, `StorageTaskList` de 864 bytes — `TaskProcess.h:103-392`) e mexê-las com as
+    mesmas funções, índice por índice. `crates/pw-gs/src/missoes.rs` porta `DeliverTask`,
+    `RealignTask`, `RecursiveClearTask`, `CheckPrerequisite` (na ordem do original, com os
+    sistemas ausentes **recusando**), `CheckDeliverTask`, `CheckKillMonster`,
+    `OnTaskCheckAward`/`OnTaskCheckAwardDirect`, `DeliverAward`, `RecursiveCalcAward`,
+    `RecursiveAward`, `DeliverByAwardData` (com `_lev_co`), `GiveUpOneTask`. As listas vão para
+    `character_task_lists` (cinco `BYTEA`, como o `GRoleTask` do gamedbd) e saem do banco no
+    `TASK_DATA` do link e da memória no do mundo. A "missão inicial" inventada do link
+    (9374/1/9375) saiu.
+
+    Quem pode aceitar: o NPC em conversa (`SEVNPC_HELLO`) com a missão no
+    `NPC_TASK_OUT_SERVICE` (`task_out_provider::TryServe`, `serviceprovider.cpp:1088-1116`);
+    entregar, no `NPC_TASK_IN_SERVICE`. Os campos que o motor precisa foram acrescentados ao
+    leitor com os deslocamentos da sonda do B45 (`specs/tasks_155/layout129.tsv`), mais
+    `m_uDepth` (`CheckDepth`).
+
+    ### c. Progressão (`progressao.rs`)
+
+    | regra | fonte |
+    | :--- | :--- |
+    | parte de cada um: `exp × dano / max(total, max_hp)`, ajuste por diferença de nível, `+0,5` | `DispatchExp` `npc.cpp:1515`, `ReceiveExp` `player.cpp:2813` |
+    | dono do abate: maior dano, primeiro golpe vale `max_hp/4` a mais | `npc.cpp:1533-1555` |
+    | subida: `exp -= GetLvlupExp`, +5 pontos, atributos refeitos, vida e mana cheias, teto 105 | `LevelUp` `player.cpp:2627`, `ptemplate.conf` |
+    | tabelas: `PLAYER_LEVELEXP_CONFIG` 202, `PARAM_ADJUST_CONFIG`, `PLAYER_SECONDLEVEL_CONFIG` | `playertemplate.cpp:311-419` |
+    | regeneração 1 s: `hp_gen` em combate, ×4 fora, oitavos acumulados | `player.cpp:9130`, `actobject.h:2143` |
+    | combate: atacar 15 s, apanhar ≥ 5 s | `player.cpp:3062,9514`, `config.h:31-32` |
+    | renascer: ponto de cidade do distrito do `precinct.sev`, 10 %, perda `GetLvlupExp × exp_lost[cultivo]` | `playercmd.cpp:112`, `player.cpp:8716`, `el_precinct.cpp` |
+
+    Achado de passagem: **nenhum monstro renascia** — a morte gravava `respawn_timer_ms = 0` e
+    o tick só conta de um valor positivo. Agora o tempo é o do gerador, e o corpo some em 20 s
+    (`_corpse_delay`, `npc.cpp:803`).
+
+    ### d. Habilidades
+
+    `specs/habilidades_155/extrair_habilidades.py` lê os 3.316 stubs `cskill/skills/skillNNN.h`
+    do servidor. Recarga armada em `id + 1024` com os segundos truncados
+    (`playerwrapper.cpp:170`, `skill.h:577`), conferida antes de conjurar
+    (`skillwrapper.cpp:261`); conjuração = `State1::GetTime`. Aprender segue `LearnCondition`
+    e `Learn` (`skill.cpp:14-93`) e cobra dinheiro (`SPEND_MONEY`) e SP (`COST_SKILL_POINT`).
+
+    ### e. Economia (`economia.rs`, `bus_server/jogo.rs`)
+
+    - Drop por `DropItemFromData`/`generate_item_from_monster` (itens: `drop_times`,
+      `probability_drop_num0..3`, `drop_matters[32]`; moedas: chance 0,7), montes a ±2 m no
+      chão, posse 30 s, vida 300 s, id `0xC8…` (com sinal, como os ids do `npcgen`).
+    - Pegar (C2S 6 e 184): `PICKUP_MONEY`/`PICKUP_ITEM`, `MATTER_PICKUP` difundido.
+    - `Bolsa` empilha como o `CECInventory::MergeItem` — o cliente confere slot e quantidade.
+    - Comprar responde `PURCHASE_ITEM` (72), que não era mandado; vender paga o `price` do
+      arquivo com a durabilidade (`ItemToMoney`) e responde `ITEM_TO_MONEY` (73) — eram 50
+      fixos. O dinheiro passou a viver na entidade: a loja debitava no banco e o autosave
+      gravava a entidade antiga por cima.
+    - Bolsa de missão: `container_type` 5 no banco, pacote 2 no fio, enviada na entrada.
+
+    ### f. Flechas
+
+    O `clsconfig` original dá ao Arqueiro só o Arco de Madeira (conferido: nenhum
+    `PROJECTILE_ESSENCE` no arquivo), e nenhuma missão entrega a Flecha de Iniciante. A pedido
+    do Murillo, o molde ganha 8543 × 1000 no slot 11 — decisão do projeto, documentada em
+    `scripts/2026_09_14_flechas_do_arqueiro_155br.sql`. O 2271 do `ClassTemplateRepository` não
+    existe no v156.
+
+    ### g. Provas
+
+    - `missoes.rs`: aceitar/entregar com o tamanho do aviso, abate que completa, filhos em
+      ordem entregando na mesma posição, listas indo e voltando pelos bytes, listas vazias
+      iguais às do link.
+    - `tests/missoes_do_realm.rs` (tasks.data real): Arqueiro nível 1 aceita e entrega 32201
+      (25 exp, 10 SP, 8 moedas); Bárbaro recusado com `NOT_IN_OCCU` e aviso de 13 bytes; **mais
+      de 1.000 missões de topo** entregam com índices válidos e sobrevivem à gravação.
+    - `subcomandos_no_mundo`: aceitar e entregar pelo barramento com NPC e serviço;
+      experiência na morte; moedas no chão (posse e coleta); compra com `PURCHASE_ITEM`;
+      venda com o preço do arquivo; treinador cobrando SP e moedas; renascer a 10 %.
+    - `economia.rs`, `progressao.rs`, `habilidades.rs`, `progressao_do_realm.rs`: empilhamento,
+      sorteio, regeneração, recarga truncada, curva e ajuste do realm.
+    - Suíte com banco: **536 passando, 2 falhando** (as do 1.2.6).
+
+    ### h. O que continua faltando
+
+    Ver em jogo (estado §3.4). Distribuir pontos de atributo; do motor de missões: horário,
+    região, equipe, facção, PQ, prêmio por escala, teleporte, item de missão pelo NPC; flechas
+    gastas no ataque; lista de venda do NPC; troca de mundo; colher recurso.
+
 **Depois de "1.5.5 funcional" estar de fato provado** (client real, sem gambiarra), a
 prioridade volta para o 1.2.6 (retomar o item 62 — skills/missões/HP de NPC ainda falham lá),
 e só depois disso os ajustes de banco de dados, pw-admin, atualizador/launcher (ver

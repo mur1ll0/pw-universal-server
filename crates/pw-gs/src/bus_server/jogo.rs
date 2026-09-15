@@ -1,0 +1,791 @@
+//! O jogo em si, do lado da rede: missões, experiência dos abates, drop e coleta, loja,
+//! aprender habilidade e renascer.
+//!
+//! As regras vivem em módulos puros — [`crate::missoes`], [`crate::progressao`],
+//! [`crate::economia`] —; aqui elas encontram o banco (bolsas, listas) e o fio (comandos ao
+//! cliente). Todo tratamento segue o mesmo desenho:
+//!
+//! 1. lê do banco o que a regra precisa e o mundo não guarda (as bolsas);
+//! 2. com o mundo travado, roda a regra sobre um [`Contexto`] que junta jogador, bolsas e a
+//!    fila de comandos;
+//! 3. solta o mundo, manda os comandos e grava o que mudou.
+
+use super::*;
+use crate::economia::{self, Bolsa, TAMANHO_DA_BOLSA, TAMANHO_DA_BOLSA_DE_MISSAO, TID_DO_DINHEIRO};
+use crate::missoes::{self, Jogador, ListasDeMissao, Motor};
+use crate::progressao;
+use pw_data_loader::GameDataManager;
+
+/// `money_capacity` padrão (`MONEY_CAPACITY_BASE`, `gs/config.h`).
+const TETO_DE_DINHEIRO: i64 = 2_000_000_000;
+/// `COOLINGID_BEGIN` (`cskill/skill/playerwrapper.cpp:170`).
+const INICIO_DAS_RECARGAS_DE_HABILIDADE: i32 = 1024;
+/// `S2C::ERR_*` (`common/protocol.h:679-750`).
+mod erro_s2c {
+    pub const NAO_PODE_PEGAR: i32 = 6;
+    pub const BOLSA_CHEIA: i32 = 7;
+    pub const SEM_DINHEIRO: i32 = 16;
+    pub const MISSAO_INDISPONIVEL: i32 = 19;
+    pub const HABILIDADE_INDISPONIVEL: i32 = 20;
+    pub const NAO_PODE_APRENDER: i32 = 22;
+    pub const HABILIDADE_EM_RECARGA: i32 = 53;
+    pub const OPERACAO_EM_COMBATE: i32 = 66;
+}
+/// `TASK_CLT_NOTIFY_*` (`task/TaskTempl.h:103-108`).
+mod aviso_do_cliente {
+    pub const CONCLUIR: u8 = 1;
+    pub const DESISTIR: u8 = 2;
+    pub const ENTREGA_AUTOMATICA: u8 = 4;
+    pub const GATILHO_MANUAL: u8 = 5;
+}
+
+fn agora() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as u32)
+        .unwrap_or(0)
+}
+
+/// Jogador, bolsas e a fila de comandos de uma operação — o `PlayerTaskInterface` do
+/// original (`task/taskman.cpp`).
+pub(crate) struct Contexto<'a> {
+    pub p: &'a mut PlayerEntity,
+    pub dados: &'a GameDataManager,
+    pub bolsa: Bolsa,
+    pub bolsa_de_missao: Bolsa,
+    pub para_mim: Vec<Vec<u8>>,
+    pub para_todos: Vec<Vec<u8>>,
+    pub gm: bool,
+    pub subiu_de_nivel: bool,
+    pub mudou: bool,
+}
+
+impl Contexto<'_> {
+    fn bolsa_de(&mut self, comum: bool) -> &mut Bolsa {
+        if comum { &mut self.bolsa } else { &mut self.bolsa_de_missao }
+    }
+
+    /// `ReceiveExp`/`ReceiveTaskExp` + `IncExp`: aplica e anota a subida de nível.
+    pub fn ganhar_exp(&mut self, exp: i64, sp: i64) {
+        let niveis = progressao::receber_exp(self.p, exp, sp, self.dados);
+        self.mudou = true;
+        if niveis > 0 {
+            self.subiu_de_nivel = true;
+            // `gplayer_dispatcher::level_up` difunde a quem vê o jogador, e o próprio recebe.
+            let pacote = S2CGamedataSend::level_up(self.p.role_id).data;
+            self.para_mim.push(pacote.clone());
+            self.para_todos.push(pacote);
+            info!("mundo: {} subiu para o nível {}", self.p.role_id, self.p.level);
+        }
+    }
+
+    pub fn ganhar_dinheiro(&mut self, n: i64) -> i64 {
+        let antes = self.p.money;
+        self.p.money = (self.p.money + n.max(0)).min(TETO_DE_DINHEIRO);
+        self.mudou = true;
+        self.p.money - antes
+    }
+
+    pub fn gastar_dinheiro(&mut self, n: i64) -> bool {
+        if n < 0 || self.p.money < n {
+            return false;
+        }
+        self.p.money -= n;
+        self.mudou = true;
+        true
+    }
+}
+
+impl Jogador for Contexto<'_> {
+    fn agora(&self) -> u32 {
+        agora()
+    }
+    fn nivel(&self) -> u32 {
+        self.p.level.max(0) as u32
+    }
+    fn classe(&self) -> u32 {
+        self.p.cls as u32
+    }
+    fn masculino(&self) -> bool {
+        self.p.gender != pw_core::Gender::Female
+    }
+    fn cultivo(&self) -> u32 {
+        self.p.cultivation.max(0) as u32
+    }
+    fn reputacao(&self) -> i32 {
+        self.p.reputacao
+    }
+    fn dinheiro(&self) -> u32 {
+        self.p.money.clamp(0, u32::MAX as i64) as u32
+    }
+    fn e_gm(&self) -> bool {
+        self.gm
+    }
+    fn contar(&self, tid: u32, comum: bool) -> u32 {
+        if comum { self.bolsa.contar(tid) } else { self.bolsa_de_missao.contar(tid) }
+    }
+    fn slots_livres(&self, comum: bool) -> u32 {
+        if comum { self.bolsa.livres() } else { self.bolsa_de_missao.livres() }
+    }
+    fn dar_item(&mut self, tid: u32, quantidade: u32, comum: bool, validade: i32) {
+        if quantidade == 0 {
+            return;
+        }
+        let dados = self.dados;
+        let tipo = if comum { ContainerType::Inventory } else { ContainerType::TaskInventory };
+        let Some(e) = self.bolsa_de(comum).empilhar(tid, quantidade, dados) else {
+            warn!("mundo: missão quis dar {quantidade} do item {tid} a {}, e a bolsa está cheia", self.p.role_id);
+            return;
+        };
+        let _ = validade;
+        self.para_mim.push(
+            S2CGamedataSend::task_deliver_item(tid as i32, 0, e.entrou, e.no_slot, tipo.pacote_do_cliente().unwrap_or(0), e.slot as u8)
+                .data,
+        );
+    }
+    fn tirar_item(&mut self, tid: u32, quantidade: u32, comum: bool) {
+        let tipo = if comum { ContainerType::Inventory } else { ContainerType::TaskInventory };
+        for (slot, n) in self.bolsa_de(comum).tirar(tid, quantidade) {
+            // `DROP_TYPE_TASK` = 3 (`common/protocol.h:932`).
+            self.para_mim.push(S2CGamedataSend::player_drop_item(tipo.pacote_do_cliente().unwrap_or(0), slot as u8, n, tid as i32, 3).data);
+        }
+    }
+    fn dar_dinheiro(&mut self, n: u32) {
+        let ganho = self.ganhar_dinheiro(n as i64);
+        self.para_mim.push(S2CGamedataSend::task_deliver_money(ganho as u32, self.p.money as u32).data);
+    }
+    fn tirar_dinheiro(&mut self, n: u32) {
+        let n = (n as i64).min(self.p.money);
+        if self.gastar_dinheiro(n) {
+            self.para_mim.push(S2CGamedataSend::spend_money(n as u32).data);
+        }
+    }
+    fn dar_exp(&mut self, exp: u32, sp: u32) {
+        self.ganhar_exp(exp as i64, sp as i64);
+        self.para_mim.push(S2CGamedataSend::task_deliver_exp(exp as i32, sp as i32).data);
+    }
+    fn dar_reputacao(&mut self, r: i32) {
+        self.p.reputacao += r;
+        self.mudou = true;
+    }
+    fn avisar(&mut self, comando: Vec<u8>) {
+        self.para_mim.push(comando);
+    }
+    fn sortear(&mut self) -> f32 {
+        use rand::Rng;
+        rand::thread_rng().gen::<f32>()
+    }
+}
+
+/// O que se grava de um jogador depois de uma operação.
+struct Gravacao {
+    roleid: i32,
+    level: i32,
+    cultivation: i32,
+    exp: i64,
+    sp: i64,
+    hp: i32,
+    mp: i32,
+    money: i64,
+    world_id: i32,
+    pos: pw_core::Vector3,
+    pontos: i32,
+    listas: [Vec<u8>; 5],
+}
+
+impl BusServer {
+    /// Roda `f` sobre o jogador com as bolsas carregadas, manda os comandos e grava.
+    ///
+    /// `None` quando o jogador não está neste mundo.
+    pub(crate) async fn com_contexto<R>(&self, roleid: i32, f: impl FnOnce(&mut Contexto) -> R) -> Option<R> {
+        let (itens_repo, repo) = (self.itens().await, self.repo().await);
+        let bolsa = itens_repo.list_by_container(roleid, ContainerType::Inventory).await.unwrap_or_default();
+        let bolsa_de_missao = itens_repo.list_by_container(roleid, ContainerType::TaskInventory).await.unwrap_or_default();
+
+        let (r, para_mim, para_todos, subiu, mut bolsas, gravacao, ficha) = {
+            let mut guarda = self.world.write().await;
+            let mundo = &mut *guarda;
+            let dados = Arc::clone(&mundo.data_manager);
+            let world_id = mundo.world_id;
+            let p = mundo.players.get_mut(&(roleid as i64))?;
+            let gm = p.sec_level > 0;
+            let mut ctx = Contexto {
+                p,
+                dados: &dados,
+                bolsa: Bolsa::nova(roleid, ContainerType::Inventory, TAMANHO_DA_BOLSA, bolsa),
+                bolsa_de_missao: Bolsa::nova(roleid, ContainerType::TaskInventory, TAMANHO_DA_BOLSA_DE_MISSAO, bolsa_de_missao),
+                para_mim: Vec::new(),
+                para_todos: Vec::new(),
+                gm,
+                subiu_de_nivel: false,
+                mudou: false,
+            };
+            let r = f(&mut ctx);
+            let Contexto { p, bolsa, bolsa_de_missao, para_mim, para_todos, subiu_de_nivel, mudou, .. } = ctx;
+            let gravacao = Gravacao {
+                roleid,
+                level: p.level,
+                cultivation: p.cultivation,
+                exp: p.exp,
+                sp: p.sp,
+                hp: p.hp,
+                mp: p.mp,
+                money: p.money,
+                world_id,
+                pos: p.position,
+                pontos: p.pontos_de_atributo,
+                listas: p.missoes.blocos(),
+            };
+            let ficha = (mudou || subiu_de_nivel).then(|| (Self::ficha_propria(p), Self::estado_proprio_de(p)));
+            (r, para_mim, para_todos, subiu_de_nivel, [bolsa, bolsa_de_missao], gravacao, ficha)
+        };
+
+        for c in para_mim {
+            self.enviar_ao_jogador(roleid, c).await;
+        }
+        for c in para_todos {
+            self.transmitir_a_outros(roleid, c).await;
+        }
+        if let Some((ficha, estado)) = ficha {
+            self.enviar_ao_jogador(roleid, estado).await;
+            if subiu {
+                self.enviar_ao_jogador(roleid, ficha).await;
+            }
+            let dinheiro = gravacao.money.clamp(0, u32::MAX as i64) as u32;
+            self.enviar_ao_jogador(roleid, self.sub.get_own_money(dinheiro, TETO_DE_DINHEIRO as u32).data).await;
+        }
+
+        // Grava: bolsas primeiro (são o que o próximo pedido vai ler), o resto numa tarefa.
+        for b in &mut bolsas {
+            if let Err(e) = b.gravar(&itens_repo).await {
+                warn!("mundo: não consegui gravar a bolsa de {roleid}: {e}");
+            }
+        }
+        tokio::spawn(async move {
+            let g = gravacao;
+            if let Err(e) = repo
+                .save_status(g.roleid, g.level, g.cultivation, g.exp, g.sp, g.hp, g.mp, g.money, g.world_id, &g.pos)
+                .await
+            {
+                warn!("mundo: não consegui gravar o estado de {}: {e}", g.roleid);
+            }
+            let _ = repo.gravar_pontos_de_atributo(g.roleid, g.pontos).await;
+            let [a, b, c, d, e] = g.listas;
+            let listas = pw_storage::ListasDeMissaoGravadas { ativa: a, concluidas: b, tempos: c, contagens: d, deposito: e };
+            if let Err(e) = repo.task_lists().gravar(g.roleid, &listas).await {
+                warn!("mundo: não consegui gravar as missões de {}: {e}", g.roleid);
+            }
+        });
+        Some(r)
+    }
+
+    /// `SELF_INFO_00` do jogador.
+    fn estado_proprio_de(p: &PlayerEntity) -> Vec<u8> {
+        S2CGamedataSend::self_info_00(
+            p.level as i16,
+            p.cultivation.clamp(0, 255) as u8,
+            p.hp,
+            p.max_hp,
+            p.mp,
+            p.max_mp,
+            p.exp.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+            p.sp.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+        )
+        .data
+    }
+
+    /// `OWN_EXT_PROP` (50) com os números calculados — ver `todos_os_dados`.
+    pub(crate) fn ficha_propria(p: &PlayerEntity) -> Vec<u8> {
+        S2CGamedataSend::own_ext_prop(
+            p.pontos_de_atributo.max(0) as u32,
+            (p.vitality, p.energy, p.strength, p.agility),
+            p.max_hp,
+            p.max_mp,
+            (p.hp_gen, p.mp_gen),
+            (p.walk_speed, p.move_speed, p.swim_speed, p.fly_speed),
+            (p.attack_rate, p.attack_min, p.attack_max, (p.attack_speed * 20.0).round() as i32, p.attack_range),
+            (p.def_phys, p.armor),
+        )
+        .data
+    }
+
+    // ------------------------------------------------------------------ missões
+
+    /// O NPC com quem o jogador está falando, e os serviços dele.
+    async fn npc_em_conversa(&self, roleid: i32) -> Option<(u32, pw_data_loader::ServicosDoNpc)> {
+        let mundo = self.world.read().await;
+        let npc = mundo.players.get(&(roleid as i64))?.npc_em_conversa?;
+        let tid = mundo.npcs.get(&npc)?.template_id;
+        let s = mundo.data_manager.servicos_de_npc.get(&tid).cloned()?;
+        Some((tid, s))
+    }
+
+    /// `GP_NPCSEV_TASK_ACCEPT` — `{ int idTask; int idStorage; int idRefreshItem; }`.
+    ///
+    /// `task_out_provider::TryServe` (`serviceprovider.cpp:1088-1116`) só atende missão da
+    /// lista do NPC; `OnTaskCheckDeliver` (`TaskServer.cpp:526-583`) troca uma submissão pela
+    /// missão-mãe, com a submissão como escolha.
+    pub(super) async fn aceitar_missao(&self, roleid: i32, conteudo: &[u8]) {
+        let Some(id) = npc::id_da_missao(conteudo) else { return };
+        let id = id as u32;
+        let Some((npc_tid, servicos)) = self.npc_em_conversa(roleid).await else {
+            warn!("mundo: {roleid} pediu a missão {id} sem NPC em conversa");
+            return;
+        };
+        if servicos.missoes_entregues.binary_search(&id).is_err() {
+            debug!("mundo: o NPC {npc_tid} não entrega a missão {id}");
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::MISSAO_INDISPONIVEL).data).await;
+            return;
+        }
+        let dados = self.world.read().await.data_manager.clone();
+        let r = self
+            .com_contexto(roleid, |ctx| {
+                let Some(t) = dados.tasks.get_task(id) else { return Some(missoes::erro::INDETERMINADO) };
+                let (topo, sub) = match t.parent {
+                    Some(p) => (p, id),
+                    None => (id, 0),
+                };
+                Some(Self::com_motor(ctx, &dados, |m| m.aceitar(topo, sub, true)))
+            })
+            .await
+            .flatten();
+        match r {
+            Some(0) => info!("mundo: {roleid} aceitou a missão {id}"),
+            Some(e) => {
+                info!("mundo: {roleid} não pode aceitar a missão {id} (erro {e})");
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::MISSAO_INDISPONIVEL).data).await;
+            }
+            None => {}
+        }
+    }
+
+    /// `GP_NPCSEV_TASK_RETURN` — `{ int idTask; int iChoice; }` (`task_in_provider`,
+    /// `serviceprovider.cpp:998-1056`, e `OnTaskCheckAward`).
+    pub(super) async fn entregar_missao(&self, roleid: i32, conteudo: &[u8]) {
+        let mut r = Reader::new(conteudo);
+        let (Ok(id), escolha) = (r.i32(), r.i32().unwrap_or(0)) else { return };
+        let id = id as u32;
+        let Some((npc_tid, servicos)) = self.npc_em_conversa(roleid).await else {
+            warn!("mundo: {roleid} quis entregar a missão {id} sem NPC em conversa");
+            return;
+        };
+        if servicos.missoes_recebidas.binary_search(&id).is_err() {
+            debug!("mundo: o NPC {npc_tid} não recebe a missão {id}");
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::MISSAO_INDISPONIVEL).data).await;
+            return;
+        }
+        let dados = self.world.read().await.data_manager.clone();
+        let ok = self
+            .com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.entregar_no_npc(id, escolha)))
+            .await
+            .unwrap_or(false);
+        info!("mundo: {roleid} entregou a missão {id}: {}", if ok { "premiada" } else { "recusada" });
+    }
+
+    /// `TASK_NOTIFY` (49) com os motivos que o motor trata (`OnClientNotify`,
+    /// `TaskServer.cpp:330-401`). Devolve `false` para os que não são daqui.
+    pub(super) async fn aviso_de_missao(&self, roleid: i32, motivo: u8, id: u32) -> bool {
+        let dados = self.world.read().await.data_manager.clone();
+        match motivo {
+            aviso_do_cliente::CONCLUIR => {
+                self.com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.conferir_conclusao(id))).await;
+            }
+            aviso_do_cliente::DESISTIR => {
+                self.com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.desistir(id))).await;
+            }
+            aviso_do_cliente::ENTREGA_AUTOMATICA => {
+                // `OnTaskAutoDelv` (`TaskServer.cpp:452-464`).
+                if dados.tasks.get_task(id).is_some_and(|t| t.parent.is_none() && t.entrega_automatica) {
+                    self.com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.aceitar(id, 0, false))).await;
+                }
+            }
+            aviso_do_cliente::GATILHO_MANUAL => {
+                // `OnTaskManualTrig` (`TaskServer.cpp:585-592`): só missão sem NPC que entrega.
+                if dados.tasks.get_task(id).is_some_and(|t| t.parent.is_none() && t.npc_que_entrega == 0) {
+                    self.com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.aceitar(id, 0, true))).await;
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Roda uma operação do motor sobre as listas do jogador do contexto.
+    fn com_motor<R>(ctx: &mut Contexto, dados: &GameDataManager, op: impl FnOnce(&mut Motor<Contexto>) -> R) -> R {
+        let mut listas: ListasDeMissao = std::mem::take(&mut ctx.p.missoes);
+        let r = {
+            let mut m = Motor { tarefas: &dados.tasks, listas: &mut listas, j: ctx };
+            op(&mut m)
+        };
+        ctx.p.missoes = listas;
+        ctx.mudou = true;
+        r
+    }
+
+    // ------------------------------------------------------------------ abate
+
+    /// Um monstro morreu: experiência para quem bateu, missão do dono e o drop.
+    ///
+    /// `gnpc_imp::OnDeath` (`npc.cpp:1360-1461`): `DispatchExp` reparte a experiência pelo
+    /// dano, o dono (maior dano, com bônus do primeiro golpe) recebe o crédito de missão e o
+    /// drop (`DropItem`).
+    pub(super) async fn monstro_morreu(&self, alvo: i64) {
+        let (tid, nivel_do_monstro, pos, partes, dono, modelo) = {
+            let mut mundo = self.world.write().await;
+            let dados = Arc::clone(&mundo.data_manager);
+            let Some((m, _)) = mundo.monsters.get(&alvo) else { return };
+            let dono = progressao::dono_do_abate(m);
+            let partes: Vec<(i32, i64, i64)> = m
+                .danos
+                .iter()
+                .filter_map(|(quem, _)| {
+                    let nivel = mundo.players.get(quem)?.level;
+                    let (exp, sp) = progressao::parte_do_abate(m, *quem, nivel, &dados.progressao);
+                    Some((*quem as i32, exp, sp))
+                })
+                .collect();
+            let info = (m.template_id, m.level, m.position, partes, dono, dados.monstros.get(m.template_id).cloned());
+            mundo.matar_monstro(alvo);
+            if let Some((m, _)) = mundo.monsters.get_mut(&alvo) {
+                m.danos.clear();
+                m.primeiro_atacante = None;
+            }
+            info
+        };
+
+        for (quem, exp, sp) in partes {
+            if exp + sp <= 0 {
+                continue;
+            }
+            self.com_contexto(quem, |ctx| {
+                let (exp0, sp0) = (ctx.p.exp, ctx.p.sp);
+                ctx.ganhar_exp(exp, sp);
+                // `_runner->receive_exp(exp, sp)` depois do `IncExp` (`player.cpp:2924`).
+                let _ = (exp0, sp0);
+                ctx.para_mim.push(self.sub.receive_exp(exp as i32, sp as i32).data);
+            })
+            .await;
+        }
+
+        let Some(dono) = dono else { return };
+        let dono = dono as i32;
+        let dados = self.world.read().await.data_manager.clone();
+        let nivel_do_dono = self
+            .com_contexto(dono, |ctx| {
+                Self::com_motor(ctx, &dados, |m| m.abateu_monstro(tid, nivel_do_monstro.max(0) as u32));
+                ctx.p.level
+            })
+            .await;
+
+        let (Some(modelo), Some(nivel_do_dono)) = (modelo, nivel_do_dono) else { return };
+        let queda = economia::gerar_queda(&modelo, nivel_do_dono, &dados, &mut rand::thread_rng());
+        let mut criados = Vec::new();
+        {
+            let mut mundo = self.world.write().await;
+            for tid in &queda.itens {
+                criados.push(mundo.criar_drop(*tid, 1, pos, Some(dono)));
+            }
+            for n in &queda.montes_de_dinheiro {
+                criados.push(mundo.criar_drop(TID_DO_DINHEIRO, *n, pos, Some(dono)));
+            }
+        }
+        if !criados.is_empty() {
+            debug!("mundo: {alvo} deixou {} item(ns) e {} monte(s) de moedas", queda.itens.len(), queda.montes_de_dinheiro.len());
+        }
+        for d in criados {
+            self.mostrar_drop(&d).await;
+        }
+    }
+
+    /// `MATTER_ENTER_WORLD` para quem está perto, já anotado como visto.
+    async fn mostrar_drop(&self, d: &crate::entity::ItemDropEntity) {
+        let perto: Vec<i32> = {
+            let mut mundo = self.world.write().await;
+            let ids: Vec<i64> = mundo
+                .players
+                .iter()
+                .filter(|(_, p)| p.position.distance(&d.position) <= RAIO_DE_VISAO)
+                .map(|(id, _)| *id)
+                .collect();
+            for id in &ids {
+                if let Some(p) = mundo.players.get_mut(id) {
+                    p.visiveis.insert(d.id);
+                }
+            }
+            ids.into_iter().map(|i| i as i32).collect()
+        };
+        let pacote = S2CGamedataSend::matter_enter_world(d.id as i32, d.item_id as i32, d.position).data;
+        for id in perto {
+            self.enviar_ao_jogador(id, pacote.clone()).await;
+        }
+    }
+
+    // ------------------------------------------------------------------ coleta
+
+    /// `C2S::PICKUP` (6) — `{ int mid; int type; }` (`playercmd.cpp:1347-1444`).
+    pub(super) async fn pegar(&self, roleid: i32, payload: &[u8]) {
+        let mut r = Reader::new(payload);
+        let (Ok(mid), Ok(tipo)) = (r.i32(), r.i32()) else {
+            warn!("mundo: pickup de {roleid} com payload curto");
+            return;
+        };
+        self.pegar_um(roleid, mid as i64, tipo as u32).await;
+    }
+
+    /// `C2S::PICKUP_ALL` (184) — `{ int count; { int mid; int type; } matter[]; }`
+    /// (`playercmd.cpp:4408-4460`), no máximo 100.
+    pub(super) async fn pegar_todos(&self, roleid: i32, payload: &[u8]) {
+        let mut r = Reader::new(payload);
+        let Ok(n) = r.i32() else { return };
+        if n <= 0 || n > 100 {
+            return;
+        }
+        for _ in 0..n {
+            let (Ok(mid), Ok(tipo)) = (r.i32(), r.i32()) else { break };
+            self.pegar_um(roleid, mid as i64, tipo as u32).await;
+        }
+    }
+
+    async fn pegar_um(&self, roleid: i32, mid: i64, tipo: u32) {
+        // Confere existência, tipo, distância e posse antes de mexer em qualquer coisa.
+        let drop = {
+            let mundo = self.world.read().await;
+            let (Some(d), Some(p)) = (mundo.drops.get(&mid), mundo.players.get(&(roleid as i64))) else {
+                return;
+            };
+            if d.item_id & 0xFFFF != tipo & 0xFFFF {
+                return;
+            }
+            if d.position.distance(&p.position) >= economia::DISTANCIA_PARA_PEGAR {
+                drop(mundo);
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::NAO_PODE_PEGAR).data).await;
+                return;
+            }
+            if d.owner_role_id.is_some_and(|dono| dono != roleid) {
+                drop(mundo);
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::NAO_PODE_PEGAR).data).await;
+                return;
+            }
+            d.clone()
+        };
+
+        let pegou = self
+            .com_contexto(roleid, |ctx| {
+                if drop.item_id == TID_DO_DINHEIRO {
+                    if ctx.p.money >= TETO_DE_DINHEIRO {
+                        ctx.para_mim.push(S2CGamedataSend::error_message(erro_s2c::BOLSA_CHEIA).data);
+                        return false;
+                    }
+                    let ganho = ctx.ganhar_dinheiro(drop.count as i64);
+                    ctx.para_mim.push(S2CGamedataSend::pickup_money(ganho as i32).data);
+                    return true;
+                }
+                let dados = ctx.dados;
+                match ctx.bolsa.empilhar(drop.item_id, drop.count, dados) {
+                    Some(e) => {
+                        ctx.para_mim.push(S2CGamedataSend::pickup_item(drop.item_id as i32, 0, e.entrou, e.no_slot, 0, e.slot as u8).data);
+                        true
+                    }
+                    None => {
+                        ctx.para_mim.push(S2CGamedataSend::error_message(erro_s2c::BOLSA_CHEIA).data);
+                        false
+                    }
+                }
+            })
+            .await
+            .unwrap_or(false);
+        if !pegou {
+            return;
+        }
+        if self.world.write().await.remover_drop(mid).is_none() {
+            return;
+        }
+        let pacote = S2CGamedataSend::matter_pickup(mid as i32, roleid).data;
+        self.enviar_ao_jogador(roleid, pacote.clone()).await;
+        self.transmitir_a_outros(roleid, pacote).await;
+    }
+
+    // ------------------------------------------------------------------ loja e habilidades
+
+    /// `GP_NPCSEV_SELL` — o NPC vende, o jogador **compra** (`gplayer_imp::PurchaseItem`,
+    /// `player.cpp:8900-8932`): empilha na bolsa e responde `PURCHASE_ITEM` (72).
+    pub(super) async fn comprar(&self, roleid: i32, conteudo: &[u8]) {
+        let pedidos = npc::itens_comprados(conteudo);
+        if pedidos.is_empty() {
+            return;
+        }
+        self.com_contexto(roleid, |ctx| {
+            let dados = ctx.dados;
+            let mut total: i64 = 0;
+            for i in &pedidos {
+                let Some(unitario) = dados.preco_de_compra(i.tid as u32) else {
+                    debug!("mundo: o item {} não tem preço no elements.data", i.tid);
+                    return;
+                };
+                total += unitario as i64 * i.count.max(1) as i64;
+            }
+            if ctx.p.money < total {
+                ctx.para_mim.push(S2CGamedataSend::error_message(erro_s2c::SEM_DINHEIRO).data);
+                return;
+            }
+            let livres = ctx.bolsa.livres() as usize;
+            if livres < pedidos.len() {
+                ctx.para_mim.push(S2CGamedataSend::error_message(erro_s2c::BOLSA_CHEIA).data);
+                return;
+            }
+            let mut lista = Vec::new();
+            for i in &pedidos {
+                if let Some(e) = ctx.bolsa.empilhar(i.tid as u32, i.count.max(1), dados) {
+                    lista.push((i.tid, 0, e.entrou, e.slot as u16));
+                }
+            }
+            ctx.gastar_dinheiro(total);
+            info!("mundo: {roleid} comprou {} item(ns) por {total}", lista.len());
+            ctx.para_mim.push(S2CGamedataSend::purchase_item(total as u32, &lista).data);
+        })
+        .await;
+    }
+
+    /// `GP_NPCSEV_BUY` — o NPC compra, o jogador **vende** (`gplayer_imp::ItemToMoney`,
+    /// `player.cpp:13930-13997`): `price × count`, proporcional à durabilidade, e
+    /// `ITEM_TO_MONEY` (73).
+    pub(super) async fn vender(&self, roleid: i32, conteudo: &[u8]) {
+        let pedidos = npc::itens_vendidos(conteudo);
+        if pedidos.is_empty() {
+            return;
+        }
+        self.com_contexto(roleid, |ctx| {
+            let dados = ctx.dados;
+            for i in &pedidos {
+                let slot = i.index as usize;
+                let Some(Some(item)) = ctx.bolsa.slots.get(slot).cloned() else { continue };
+                if item.item_id != i.tid as u32 || i.count == 0 || i.count > item.count {
+                    continue;
+                }
+                let Some(preco) = dados.preco_de_venda(item.item_id) else { continue };
+                let mut valor = preco as f32 * i.count as f32;
+                if item.max_durability > 0 && item.durability < item.max_durability {
+                    valor = valor * item.durability as f32 / item.max_durability as f32;
+                }
+                let valor = (valor.max(0.0) + 0.5) as i64;
+                let _ = ctx.bolsa.tirar_do_slot(slot, i.count);
+                let ganho = ctx.ganhar_dinheiro(valor);
+                ctx.para_mim.push(S2CGamedataSend::item_to_money(slot as u16, i.tid, i.count, ganho as u32).data);
+            }
+        })
+        .await;
+    }
+
+    /// `GP_NPCSEV_LEARN` (9) — `skill_executor::OnServe` (`serviceprovider.cpp:1288-1312`) e
+    /// `SkillStub::LearnCondition`/`Learn` (`cskill/skill/skill.cpp:14-93`): a habilidade tem
+    /// de estar na lista do treinador; fora de combate; próximo nível ≤ máximo; classe;
+    /// pré-requisitos; nível histórico; SP; `rank` × cultivo; dinheiro. Cobra dinheiro
+    /// (`SPEND_MONEY`) e SP (`COST_SKILL_POINT`) e responde `LEARN_SKILL`.
+    pub(super) async fn aprender(&self, roleid: i32, conteudo: &[u8]) {
+        let Ok(skill_id) = Reader::new(conteudo).i32() else { return };
+        if skill_id <= 0 {
+            return;
+        }
+        let id = skill_id as u32;
+        if let Some((npc_tid, s)) = self.npc_em_conversa(roleid).await {
+            if s.habilidades.binary_search(&id).is_err() {
+                debug!("mundo: o NPC {npc_tid} não ensina a habilidade {id}");
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::HABILIDADE_INDISPONIVEL).data).await;
+                return;
+            }
+        }
+        let novo = self
+            .com_contexto(roleid, |ctx| {
+                let dados = ctx.dados;
+                let recusa = |ctx: &mut Contexto, c: i32| {
+                    ctx.para_mim.push(S2CGamedataSend::error_message(c).data);
+                    None
+                };
+                if ctx.p.combate_s > 0 {
+                    return recusa(ctx, erro_s2c::OPERACAO_EM_COMBATE);
+                }
+                let Some(h) = dados.habilidades.get(id) else {
+                    warn!("mundo: a habilidade {id} não está na tabela do servidor");
+                    return recusa(ctx, erro_s2c::NAO_PODE_APRENDER);
+                };
+                let atual = ctx.p.habilidades.get(&id).copied().unwrap_or(0) as i32;
+                let proximo = atual + 1;
+                if proximo > h.max_level {
+                    return recusa(ctx, erro_s2c::NAO_PODE_APRENDER);
+                }
+                if let Some(cls) = h.cls {
+                    if cls != 255 && cls != ctx.p.cls as i32 {
+                        return recusa(ctx, erro_s2c::NAO_PODE_APRENDER);
+                    }
+                }
+                for (pre, nivel) in &h.pre_skills {
+                    if *pre > 0 && (ctx.p.habilidades.get(pre).copied().unwrap_or(0) as i32) < *nivel {
+                        return recusa(ctx, erro_s2c::NAO_PODE_APRENDER);
+                    }
+                }
+                let (Some(nivel), Some(sp), Some(dinheiro)) = (h.nivel_exigido(proximo), h.sp_exigido(proximo), h.dinheiro_exigido(proximo)) else {
+                    warn!("mundo: a habilidade {id} nível {proximo} tem requisito desconhecido na tabela — recusada");
+                    return recusa(ctx, erro_s2c::NAO_PODE_APRENDER);
+                };
+                if ctx.p.level < nivel || ctx.p.sp < sp as i64 {
+                    return recusa(ctx, erro_s2c::NAO_PODE_APRENDER);
+                }
+                let (srank, prank) = (h.rank.unwrap_or(0), ctx.p.cultivation);
+                if srank > prank || (srank / 10 != prank / 10 && srank / 10 != 0) {
+                    return recusa(ctx, erro_s2c::NAO_PODE_APRENDER);
+                }
+                if ctx.p.money < dinheiro as i64 {
+                    return recusa(ctx, erro_s2c::SEM_DINHEIRO);
+                }
+                ctx.gastar_dinheiro(dinheiro as i64);
+                if dinheiro > 0 {
+                    ctx.para_mim.push(S2CGamedataSend::spend_money(dinheiro as u32).data);
+                }
+                if sp > 0 {
+                    ctx.p.sp -= sp as i64;
+                    ctx.para_mim.push(S2CGamedataSend::cost_skill_point(sp).data);
+                }
+                ctx.p.habilidades.insert(id, proximo as u8);
+                ctx.mudou = true;
+                ctx.para_mim.push(S2CGamedataSend::learn_skill(skill_id, proximo).data);
+                Some(proximo)
+            })
+            .await
+            .flatten();
+        if let Some(n) = novo {
+            if let Err(e) = self.repo().await.skill_repo().learn_or_upgrade(roleid, id, n as u8).await {
+                warn!("mundo: não consegui gravar a habilidade {id} de {roleid}: {e}");
+            }
+            info!("mundo: {roleid} aprendeu a habilidade {id} no nível {n}");
+        }
+    }
+
+    /// Confere e arma a recarga de uma habilidade. `false` se ainda está recarregando.
+    ///
+    /// `SkillWrapper::StartSkill` testa a recarga antes (`skillwrapper.cpp:261`), e
+    /// `SetCoolDown(id + 1024, (int)(0.001 × coolingtime) × 1000)` a arma
+    /// (`playerwrapper.cpp:170`, `skill.h:577`), com `SET_COOLDOWN` (198) ao cliente.
+    pub(super) async fn armar_recarga(&self, roleid: i32, skill_id: i32) -> Option<Option<i32>> {
+        let mut mundo = self.world.write().await;
+        let dados = Arc::clone(&mundo.data_manager);
+        let p = mundo.players.get_mut(&(roleid as i64))?;
+        let indice = skill_id + INICIO_DAS_RECARGAS_DE_HABILIDADE;
+        let agora = std::time::Instant::now();
+        if p.recargas.get(&indice).is_some_and(|ate| *ate > agora) {
+            return Some(None);
+        }
+        let nivel = p.habilidades.get(&(skill_id.max(0) as u32)).copied().unwrap_or(1).max(1) as i32;
+        let Some(ms) = dados.habilidades.get(skill_id.max(0) as u32).and_then(|h| h.recarga_armada_ms(nivel)) else {
+            return Some(Some(0));
+        };
+        if ms > 0 {
+            p.recargas.insert(indice, agora + std::time::Duration::from_millis(ms as u64));
+        }
+        Some(Some(ms))
+    }
+
+    pub(super) fn erro_de_recarga() -> Vec<u8> {
+        S2CGamedataSend::error_message(erro_s2c::HABILIDADE_EM_RECARGA).data
+    }
+}
+

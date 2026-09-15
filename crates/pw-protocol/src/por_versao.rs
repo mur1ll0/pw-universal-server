@@ -114,6 +114,22 @@ impl PorVersao {
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
+    /// `TASK_DATA` (105) com as listas de verdade (`gplayer_dispatcher::get_task_data`,
+    /// `player.cpp:4388-4398`): para cada bloco, `size_t` e os bytes. O cliente copia cada um
+    /// para o buffer dele e zera o resto (`CECTaskInterface::Init`,
+    /// `EC_TaskInterface.cpp:140-160`). Quantos blocos, pela versão — ver [`Self::task_data`];
+    /// no 1.2.6 só os três primeiros vão.
+    pub fn task_data_com_listas(&self, blocos: [&[u8]; 5]) -> S2CGamedataSend {
+        let quantos = if e_126(self.versao) { 3 } else { 5 };
+        let mut s = OctetsStream::new();
+        s.write_u16_le(105);
+        for b in blocos.iter().take(quantos) {
+            s.write_u32_le(b.len() as u32);
+            s.write_raw_bytes(b);
+        }
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
     /// `NPC_ENTER_WORLD` (16) e `NPC_ENTER_SLICE` (11) — o pacote que faz um NPC/monstro
     /// existir no cliente. Os dois carregam a **mesma** struct, `S2C::info_npc`.
     ///

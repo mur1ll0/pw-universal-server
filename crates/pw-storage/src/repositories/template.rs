@@ -233,7 +233,7 @@ impl TemplateRepository {
             // item de voo inicial em vez de ganhar um chute.
             let mut equipamento_da_classe: Vec<(i16, i32, i32)> = Vec::new();
             if cls == 6 {
-                equipamento_da_classe.push((11, 2271, 1000)); // Flecha de Madeira
+                equipamento_da_classe.push((11, 8543, 1000)); // Flecha de Iniciante (PROJECTILE_ESSENCE, type 8546 = require_projectile do Arco de Madeira)
             }
             if cls == 6 || cls == 7 {
                 equipamento_da_classe.push((12, 2096, 1)); // Asa
@@ -263,14 +263,11 @@ impl TemplateRepository {
             }
 
             // 2. Itens Iniciais na Bolsa / Inventário (container_type = 0)
-            let mut bag_items = vec![
+            let bag_items = vec![
                 (0, 2100, 5),
                 (1, 1796, 10),
                 (2, 1801, 10),
             ];
-            if cls == 6 {
-                bag_items.push((3, 2271, 1000));
-            }
 
             for (slot, item_id, count) in bag_items {
                 sqlx::query(

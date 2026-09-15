@@ -72,6 +72,18 @@ const INTENCAO: &[(&str, &str)] = &[
     ("ext_prop_base", "PLAYER_EXT_PROP_BASE"),
     ("task_data", "TASK_DATA"),
     ("task_var_data", "TASK_VAR_DATA"),
+    ("pickup_money", "PICKUP_MONEY"),
+    ("pickup_item", "PICKUP_ITEM"),
+    ("task_deliver_item", "TASK_DELIVER_ITEM"),
+    ("task_deliver_exp", "TASK_DELIVER_EXP"),
+    ("task_deliver_money", "TASK_DELIVER_MONEY"),
+    ("spend_money", "SPEND_MONEY"),
+    ("player_drop_item", "PLAYER_DROP_ITEM"),
+    ("set_cooldown", "SET_COOLDOWN"),
+    ("matter_pickup", "MATTER_PICKUP"),
+    ("error_message", "ERROR_MESSAGE"),
+    ("purchase_item", "PURCHASE_ITEM"),
+    ("item_to_money", "ITEM_TO_MONEY"),
     ("item_info", "OWN_ITEM_INFO"),
     ("exg_ivtr_item", "EXG_IVTR_ITEM"),
     ("move_ivtr_item", "MOVE_IVTR_ITEM"),
@@ -162,6 +174,8 @@ const DELEGAM: &[&str] = &[
     "task_notify_new",
     "task_notify_complete",
     "task_notify_monster_killed",
+    "task_notify_base",
+    "task_notify_error",
 ];
 
 /// Codificadores cujo layout diverge do IR do 1.5.3.

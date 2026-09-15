@@ -94,6 +94,16 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | `NORMAL_ATTACK` (C2S 3) | 3 bytes, **sem id de alvo** — o alvo é o selecionado | A33 |
 | `TASK_NOTIFY` (C2S 49) | `size` + `task_notify_base { u8 reason, u16 task }`. Os `reason` do cliente (`TASK_CLT_NOTIFY_*`) e os do servidor (`TASK_SVR_NOTIFY_*`) são **tabelas diferentes**: o 7 do cliente é "me dê a marca dinâmica", o 7 do servidor é "esqueça a habilidade de produção" | `task/TaskTempl.h:81-122` (B49) |
 | marca das missões dinâmicas | resposta ao `reason` 7: `TASK_VAR_DATA` (106) com `svr_task_dyn_time_mark` = `reason 8, task 0, time_mark u32, version u16 = 10` (9 bytes); sem marca, sem resposta | `TaskTemplMan.cpp:299-309`, `TaskClient.cpp:290` |
+| `TASK_DATA` (105) | cinco blocos `size_t` + bytes: listas ativa, concluídas, tempos, contagens e depósito, **com o conteúdo das estruturas** (spec 05 §10). Lista ativa vazia vai com o cabeçalho de 8 bytes e `version = 1`: com `version 0` o cliente descarta todo aviso de missão. Sai do link na entrada (do banco) e do mundo no fim do `GET_ALL_DATA` (da memória) | `player.cpp:4388`, `TaskClient.cpp:262`, `TaskProcess.cpp:2315-2342` (B50) |
+| avisos de missão (`TASK_VAR_DATA` 106) | `task_notify_base` = `reason u8, task u16`, `pack(1)`. `NEW`: + `cur_time u32, cap_task u32, sub_tags` (`sub_task u16, sz u8, tags[sz]`); `COMPLETE`: + `cur_time u32, sub_tags` com o **estado** no lugar do `sub_task`; `MONSTER_KILLED`: + `monster_id u32, num u16, dps i32, dph i32` = **17** bytes; `ERROR_CODE`: + `u32`; `GIVE_UP`/`FINISHED`: só a base. O cliente confere o tamanho exato de cada um | `task/TaskTempl.h:1737-1875`, `TaskTempl.inl:2206-2286` |
+| `GP_NPCSEV_TASK_ACCEPT` / `_RETURN` | `{ int idTask, idStorage, idRefreshItem }` / `{ int idTask, iChoice }`; serviços 7 e 6 | `serviceprovider.cpp:1001-1066` |
+| `PICKUP_ITEM` (31), `TASK_DELIVER_ITEM` (156), `PURCHASE_ITEM` (72) | levam o **último slot e a quantidade final**; o cliente empilha sozinho (`MergeItem`) e descarta se não bater | `EC_HostMsg.cpp:1127-1252,3334` |
+| `PURCHASE_ITEM` (72) | `cost, yinpiao, flag u8, count u16` + itens de 15 bytes (`item_id, expire, count, inv_index u16, booth_slot u8`) | `EC_GPDataType.h:2104` |
+| `ITEM_TO_MONEY` (73) | `index u16, type, count, money` (14) | `player.cpp:4131` |
+| `PICKUP` (C2S 6) / `PICKUP_ALL` (C2S 184) | `{ int mid; int type }` / `{ int count; { mid, type }[] }` (≤ 100) | `common/protocol.h:4979-4996` |
+| `SET_COOLDOWN` (198) | `index = id + 1024`, tempo em ms | `playerwrapper.cpp:170` |
+| `ERROR_MESSAGE` (25) | `ERR_*` de `common/protocol.h:679`: 6 não pode pegar, 7 bolsa cheia, 16 sem dinheiro, 19 missão indisponível, 20 habilidade indisponível, 22 não pode aprender, 53 em recarga, 66 em combate | |
+| ids de entidade | `i32` no fio; o mundo guarda **com sinal** (NPC `0x80…` e matéria `0xC…` são negativos). Item no chão usa `0xC8000000 + n` | `npcgen.rs` |
 | `attack_flag` | bits desconhecidos; vai zero (crítico não sinalizado) | — |
 
 ## 6. Onde cada C2S é tratado
@@ -117,7 +127,7 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | 21 | `GET_EXT_PROP` | 75 | `ENTER_SANCTUARY` |
 | 27, 28, 29 | `TEAM_INVITE`, `_AGREE_`, `_REJECT_` | 85 | `SWITCH_FASHION_MODE` |
 | 110 | `QUERY_CASH_INFO` | 120 | `CHECK_SECURITY_PASSWD` |
-| 128 | `CALC_NETWORK_DELAY` | | |
+| 128 | `CALC_NETWORK_DELAY` | 6, 184 | `PICKUP`, `PICKUP_ALL` |
 
 **Ainda no `gateway.rs` do `pw-link`:** 92 (duelo: só "preparar", sem regra), 118 (preços do
 Mall, tabela vazia), 178 (waypoints). Nenhum id é tratado nos dois lados:
@@ -125,7 +135,7 @@ Mall, tabela vazia), 178 (waypoints). Nenhum id é tratado nos dois lados:
 lê o `match` do mundo e cobra (B49). C2S 23–26 são `GET_EXT_PROP_BASE/MOVE/ATK/DEF`, não voo.
 
 **Sem tratamento:** `OPEN_BOOTH` (76), `MALL_SHOPPING` (106, removido de propósito),
-`MATTER_PICKUP` (152), dividir pilha (`amount` do 13 ignorado), `pvp_mode` (79), e todo o
+dividir pilha (`amount` do 13 ignorado), `pvp_mode` (79), e todo o
 resto do enum (o mundo registra "subcomando ainda não tratado").
 
 Cinco opcodes GNET do `codec.rs` seguem sem correspondência no IR (`opcodes::nao_no_ir`,

@@ -7,6 +7,7 @@ pub mod mail;
 pub mod quest;
 pub mod realm;
 pub mod skill;
+pub mod task_lists;
 pub mod template;
 
 pub use account::*;
@@ -18,5 +19,6 @@ pub use mail::*;
 pub use quest::*;
 pub use realm::*;
 pub use skill::*;
+pub use task_lists::*;
 pub use template::*;
 

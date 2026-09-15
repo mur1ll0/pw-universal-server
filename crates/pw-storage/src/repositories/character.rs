@@ -103,6 +103,30 @@ impl CharacterRepository {
         &self.skill_repo
     }
 
+    /// As listas binárias de missão — ver [`TaskListRepository`].
+    pub fn task_lists(&self) -> super::task_lists::TaskListRepository {
+        super::task_lists::TaskListRepository::new(self.pool.clone())
+    }
+
+    /// `potential_points` — os pontos de atributo por distribuir.
+    pub async fn pontos_de_atributo(&self, role_id: RoleId) -> Result<i32> {
+        let v: Option<(i32,)> = sqlx::query_as("SELECT potential_points FROM characters WHERE id = $1")
+            .bind(role_id)
+            .fetch_optional(self.pool.get_ref())
+            .await?;
+        Ok(v.map(|(p,)| p).unwrap_or(0))
+    }
+
+    /// Grava os pontos de atributo por distribuir (5 por nível, `LevelUp`, `player.cpp:2647`).
+    pub async fn gravar_pontos_de_atributo(&self, role_id: RoleId, pontos: i32) -> Result<()> {
+        sqlx::query("UPDATE characters SET potential_points = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2")
+            .bind(pontos)
+            .bind(role_id)
+            .execute(self.pool.get_ref())
+            .await?;
+        Ok(())
+    }
+
     pub fn quest_repo(&self) -> &QuestRepository {
         &self.quest_repo
     }

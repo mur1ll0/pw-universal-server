@@ -124,9 +124,84 @@ pub struct PlayerEntity {
     /// **mesmo** valor que o `custom_stamp` do `PlayerBaseInfo_Re` que o `pw-link`
     /// responde. Ver [`pw_core::stamp_de_aparencia`].
     pub crc_aparencia: u16,
+    /// `status_point` — pontos de atributo por distribuir (`potential_points` no banco).
+    /// Cinco por nível (`LevelUp`, `gs/player.cpp:2647`).
+    pub pontos_de_atributo: i32,
+    /// `_basic.reputation` (sem sistema de reputação ainda, vem zerada do banco).
+    pub reputacao: i32,
+    /// `_combat_timer`, em segundos: atacar põe 15 (`MAX_COMBAT_TIME`, `DoAttack`,
+    /// `player.cpp:3062`), apanhar garante 5 (`NORMAL_COMBAT_TIME`, `OnAttacked`,
+    /// `player.cpp:9514`); o batimento de 1 s desconta (`player.cpp:9072`).
+    pub combate_s: i32,
+    /// `_hp_gen_counter` / `_mp_gen_counter` — a fração acumulada da regeneração
+    /// (`func::Update`, `actobject.h:2143`).
+    pub contador_hp: i32,
+    pub contador_mp: i32,
+    /// Até quando cada índice de recarga está bloqueado (`SetCoolDown`); o índice da
+    /// habilidade é `id + 1024`.
+    pub recargas: std::collections::HashMap<i32, std::time::Instant>,
+    /// O NPC com quem o jogador falou por último (`SEVNPC_HELLO`). Os pedidos de serviço
+    /// (`SEVNPC_SERVE`) não trazem o NPC: vão ao que está em conversa.
+    pub npc_em_conversa: Option<i64>,
+    /// As listas de missão — ver [`crate::missoes`].
+    pub missoes: crate::missoes::ListasDeMissao,
+}
+
+/// O que depende do nível: vida e mana máximas, dano, dano mágico, defesa e resistência.
+///
+/// É a conta de [`PlayerEntity::do_personagem`], separada para a subida de nível poder
+/// refazê-la (`property_policy::UpdatePlayer` no `LevelUp`, `gs/player.cpp:2671`).
+pub struct AtributosDeNivel {
+    pub max_hp: i32,
+    pub max_mp: i32,
+    pub dano: i32,
+    pub dano_magico: i32,
+    pub defesa: i32,
+    pub resistencia: i32,
+}
+
+pub fn atributos_de_nivel(
+    cls: i32,
+    nivel: i32,
+    vitalidade: i32,
+    energia: i32,
+    classes: &TabelaDeClasses,
+    base: Option<&TabelaDeBase>,
+) -> Option<AtributosDeNivel> {
+    let cfg = classes.get(cls);
+    let base = base.and_then(|b| b.get(cls))?;
+    let telescopica = |por_nivel: f32| -> i32 { (nivel as f32 * por_nivel) as i32 - por_nivel as i32 };
+    let (max_hp, max_mp) = base.vida_e_mana_maximas(cfg, nivel, vitalidade, energia);
+    Some(AtributosDeNivel {
+        max_hp,
+        max_mp,
+        dano: cfg.map(|c| 1 + telescopica(c.dano_por_nivel)).unwrap_or(1),
+        dano_magico: cfg.map(|c| 1 + telescopica(c.dano_magico_por_nivel)).unwrap_or(1),
+        defesa: cfg.map(|c| telescopica(c.defesa_por_nivel)).unwrap_or(0),
+        resistencia: cfg.map(|c| telescopica(c.resistencia_por_nivel)).unwrap_or(0),
+    })
 }
 
 impl PlayerEntity {
+    /// Refaz o que depende do nível, depois de uma subida.
+    pub fn recalcular_por_nivel(&mut self, classes: &TabelaDeClasses, base: Option<&TabelaDeBase>) {
+        let Some(a) = atributos_de_nivel(self.cls as i32, self.level, self.vitality, self.energy, classes, base) else {
+            return;
+        };
+        self.max_hp = a.max_hp;
+        self.max_mp = a.max_mp;
+        self.attack_min = a.dano;
+        self.attack_max = a.dano;
+        self.magic_attack_min = a.dano_magico;
+        self.magic_attack_max = a.dano_magico;
+        self.def_phys = a.defesa;
+        self.def_metal = a.resistencia;
+        self.def_wood = a.resistencia;
+        self.def_water = a.resistencia;
+        self.def_fire = a.resistencia;
+        self.def_earth = a.resistencia;
+    }
+
     /// Como este jogador aparece para os outros.
     ///
     /// O `dir` vai zerado: a grade espacial guarda posição, não direção — a mesma lacuna
@@ -205,6 +280,24 @@ pub struct MonsterEntity {
     
     pub target_id: Option<i64>,
     pub buffs: Vec<ActiveBuff>,
+    /// `_dmg_list` — quanto cada jogador tirou deste monstro, para dividir a experiência e
+    /// decidir o dono do drop (`gnpc_imp::DispatchExp`, `gs/npc.cpp:1515`).
+    pub danos: Vec<(i64, i64)>,
+    /// `_first_attacker` — ganha `max_hp/4` de dano equivalente na disputa pelo drop.
+    pub primeiro_atacante: Option<i64>,
+}
+
+impl MonsterEntity {
+    /// Registra o dano de um jogador (`OnDamage` → `_dmg_list`).
+    pub fn registrar_dano(&mut self, quem: i64, dano: i64) {
+        if self.primeiro_atacante.is_none() {
+            self.primeiro_atacante = Some(quem);
+        }
+        match self.danos.iter_mut().find(|d| d.0 == quem) {
+            Some(d) => d.1 += dano,
+            None => self.danos.push((quem, dano)),
+        }
+    }
 }
 
 impl PlayerEntity {
@@ -373,6 +466,15 @@ impl PlayerEntity {
             crc_aparencia: pw_core::stamp_de_aparencia(&pw_core::bytes_da_aparencia(
                 &p.custom_appearance,
             )),
+            // Quem preenche é `BusServer::colocar_no_mundo`, que tem o repositório.
+            pontos_de_atributo: 0,
+            reputacao: p.reputation,
+            combate_s: 0,
+            contador_hp: 0,
+            contador_mp: 0,
+            recargas: std::collections::HashMap::new(),
+            npc_em_conversa: None,
+            missoes: crate::missoes::ListasDeMissao::default(),
         }
     }
 
@@ -466,6 +568,8 @@ impl MonsterEntity {
             respawn_delay_ms,
             target_id: None,
             buffs: Vec::new(),
+            danos: Vec::new(),
+            primeiro_atacante: None,
         }
     }
 
@@ -518,6 +622,8 @@ impl MonsterEntity {
             respawn_delay_ms,
             target_id: None,
             buffs: Vec::new(),
+            danos: Vec::new(),
+            primeiro_atacante: None,
         }
     }
 }

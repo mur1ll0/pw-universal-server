@@ -186,12 +186,16 @@ fn test_gamedatasend_s2c_subcommands() {
     assert_eq!(u16::from_le_bytes([p3.data[0], p3.data[1]]), 11);
 
     // 4. TASK_NOTIFY_NEW (CMD 106 / Reason 1)
-    let p4 = S2CGamedataSend::task_notify_new(1, 1600000000);
+    // 2 (cabeçalho) + 4 (tamanho) + 3 (base) + 8 (tempo, capitão) + 3 (sub_tags vazio).
+    let p4 = S2CGamedataSend::task_notify_new(1, 1600000000, 0, &[0, 0, 0]);
     assert_eq!(u16::from_le_bytes([p4.data[0], p4.data[1]]), 106);
+    assert_eq!(p4.data.len(), 2 + 4 + 3 + 8 + 3);
 
     // 5. TASK_NOTIFY_MONSTER_KILLED (CMD 106 / Reason 4)
-    let p5 = S2CGamedataSend::task_notify_monster_killed(1, 13641, 5);
+    let p5 = S2CGamedataSend::task_notify_monster_killed(1, 13641, 5, 0, 0);
     assert_eq!(u16::from_le_bytes([p5.data[0], p5.data[1]]), 106);
+    // sizeof(svr_monster_killed) com pack(1) = 3 + 4 + 2 + 4 + 4 = 17; o cliente recusa outro.
+    assert_eq!(p5.data.len(), 2 + 4 + 17);
 
     // 6. SERVER_CONFIG_DATA / INST_DATA_CHECKOUT (CMD 206)
     let p6 = S2CGamedataSend::inst_data_checkout(1, 1156141381, 1156141381, 1206433535, 1206433535);

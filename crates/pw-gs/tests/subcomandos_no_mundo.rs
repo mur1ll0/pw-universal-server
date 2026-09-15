@@ -43,6 +43,12 @@ const ITEM_DE_LOJA: i32 = 4123;
 const PRECO_DO_ITEM_DE_LOJA: i32 = 137;
 
 const MONSTRO: i64 = 900_001;
+/// O NPC de serviço do cenário, que entrega e recebe [`MISSAO_DO_NPC`] e ensina
+/// [`HABILIDADE_DO_TREINADOR`].
+const NPC: i64 = 0x8000_0101u32 as i32 as i64;
+const TEMPLATE_DO_NPC: u32 = 23964;
+const MISSAO_DO_NPC: u32 = 5150;
+const HABILIDADE_DO_TREINADOR: i32 = 117;
 /// HP deliberadamente diferente de 1000: era o valor fixo que o `gateway.rs` mandava, e
 /// um teste com 1000 passaria mesmo se nada tivesse mudado de lado.
 const MONSTRO_HP: i64 = 137;
@@ -71,8 +77,9 @@ fn monstro() -> MonsterEntity {
         attack_range: 2.0,
         aggro_range: 30.0,
         sight_range: 40,
-        exp: 1,
-        sp: 1,
+        // Toda a vida máxima em experiência: quem tira os 137 de vida leva 137.
+        exp: 480,
+        sp: 480,
         aipolicy_id: 0,
         drop_table_id: 0,
         position: Vector3::new(5.0, 0.0, 5.0),
@@ -86,6 +93,8 @@ fn monstro() -> MonsterEntity {
         respawn_delay_ms: 1000,
         target_id: None,
         buffs: Vec::new(),
+        danos: Vec::new(),
+        primeiro_atacante: None,
     }
 }
 
@@ -213,6 +222,43 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
         .insert(ITEM_DE_LOJA as u32, (50, PRECO_DO_ITEM_DE_LOJA));
     // A marca do `dyn_tasks.data` dos realms 1.5.5 (`dyn_tasks_do_realm.rs`).
     dados.marca_das_missoes_dinamicas = Some(MARCA_DAS_MISSOES_DINAMICAS);
+    // O ajuste padrão do construtor é zero (sem `PARAM_ADJUST_CONFIG` nenhum abate daria
+    // experiência): o cenário usa o neutro.
+    dados.progressao = pw_data_loader::TabelaDeProgressao::com_ajuste_uniforme(pw_data_loader::AjusteDeNivel {
+        exp: 1.0,
+        sp: 1.0,
+        dinheiro: 1.0,
+        item: 1.0,
+        ataque: 1.0,
+    });
+    // Uma missão de falar com NPC, que o NPC do cenário entrega e recebe.
+    let mut falar = pw_data_loader::tasks::TaskTemplate::vazia(MISSAO_DO_NPC);
+    falar.metodo = 3; // enumTMTalkToNPC
+    falar.tipo_de_conclusao = 1; // enumTFTNPC
+    falar.rewards.exp = 7;
+    falar.rewards.money = 30;
+    dados.tasks.inserir(falar);
+    dados.servicos_de_npc.insert(
+        TEMPLATE_DO_NPC,
+        pw_data_loader::ServicosDoNpc {
+            missoes_entregues: vec![MISSAO_DO_NPC],
+            missoes_recebidas: vec![MISSAO_DO_NPC],
+            habilidades: vec![HABILIDADE_DO_TREINADOR as u32],
+            deposito: 0,
+        },
+    );
+    dados.habilidades.por_id.insert(
+        HABILIDADE_DO_TREINADOR as u32,
+        serde_json::from_str(
+            r#"{"id": 117, "cls": 255, "max_level": 10, "type": 1, "rank": 0, "pre_skills": [],
+                "mp": null, "execucao_ms": null, "recarga_ms": null,
+                "nivel_exigido": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                "sp_exigido": [100, 100, 100, 100, 100, 100, 100, 100, 100, 100],
+                "dinheiro_exigido": [10, 10, 10, 10, 10, 10, 10, 10, 10, 10],
+                "estados_ms": []}"#,
+        )
+        .expect("habilidade de teste"),
+    );
 
     let mut mundo = WorldInstance::new(
         1,
@@ -225,6 +271,16 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
     mundo
         .monsters
         .insert(MONSTRO, (monstro(), MonsterAi::new()));
+    mundo.npcs.insert(
+        NPC,
+        pw_gs::entity::NpcEntity {
+            id: NPC,
+            template_id: TEMPLATE_DO_NPC,
+            name: "NPC".into(),
+            position: Vector3::new(1.0, 0.0, 1.0),
+            dialog_id: 0,
+        },
+    );
     let mundo = Arc::new(RwLock::new(mundo));
 
     let escuta = BusListener::bind("127.0.0.1:0").await.unwrap();
@@ -760,32 +816,14 @@ async fn o_monstro_morre_e_o_abate_leva_o_template_certo() {
     }
     assert!(morreu, "o monstro não chegou a zero em 500 golpes");
 
-    // Na morte vêm NPC_DIED (20) e RECEIVE_EXP (36).
-    let apos = receber(&mut link, 2).await;
-    let obito = apos.iter().find(|v| cmd_de(v) == 20).expect("sem NPC_DIED (20)");
-    assert_eq!(i32_em(obito, 2), MONSTRO as i32);
-    assert_eq!(i32_em(obito, 6), roleid, "o matador não é o jogador");
-    assert!(
-        apos.iter().any(|v| cmd_de(v) == 36),
-        "sem RECEIVE_EXP (36) na morte"
-    );
+    // Na morte vêm NPC_DIED (20) e, para quem bateu, RECEIVE_EXP (36).
+    let obito = esperar_comando(&mut link, 20).await;
+    assert_eq!(i32_em(&obito, 2), MONSTRO as i32);
+    assert_eq!(i32_em(&obito, 6), roleid, "o matador não é o jogador");
+    let _exp = esperar_comando(&mut link, 36).await;
 
-    // A notificação de abate: `TASK_VAR_DATA` (106) com `reason = 4`, o id da missão e o
-    // **template real** da criatura. O `gateway.rs` mandava `13641` fixo, a cada golpe.
-    let aviso = receber(&mut link, 1).await;
-    let v = &aviso[0];
-    assert_eq!(cmd_de(v), 106, "a notificação de abate vai dentro do TASK_VAR_DATA");
-    // Corpo do task_var_data: [len:u32][reason:u8][task:u16][monster_id:u32][num:u16]
-    let corpo = &v[2..];
-    let reason = corpo[4];
-    assert_eq!(reason, 4, "reason devia ser TASK_SVR_NOTIFY_MONSTER_KILLED (4)");
-    let missao = u16::from_le_bytes([corpo[5], corpo[6]]);
-    assert_eq!(missao as u32, MISSAO, "a missão notificada não é a do personagem");
-    let template = u32::from_le_bytes([corpo[7], corpo[8], corpo[9], corpo[10]]);
-    assert_eq!(
-        template, 1001,
-        "o abate foi notificado com o template errado — voltou a ser o 13641 fixo?"
-    );
+    // A contagem de abate das missões sai do motor (`missoes.rs`), com o template real, e
+    // é coberta lá (`matar_conta_e_finaliza_e_a_lista_volta_a_zero`).
 
     let m = mundo.read().await;
     assert!(m.monsters[&MONSTRO].0.is_dead, "o monstro não ficou morto");
@@ -1021,7 +1059,8 @@ async fn morrer_avisa_o_cliente_e_reviver_devolve_a_vida() {
 
     let m = mundo.read().await;
     let p = &m.players[&(roleid as i64)];
-    assert_eq!(p.hp, p.max_hp, "o jogador reviveu sem a vida cheia");
+    // `DEFAULT_RESURRECT_HP_FACTOR` = 0,1 (`gs/config.h:168`), arredondado.
+    assert_eq!(p.hp, (p.max_hp as f32 * 0.1 + 0.5) as i32, "o renascimento não devolveu 10 % da vida");
     assert_eq!(p.target_id, None, "o alvo antigo sobreviveu à morte");
 }
 
@@ -1192,12 +1231,13 @@ async fn trocar_slots_da_bolsa_pelo_barramento_preserva_o_item() {
 /// Consultar a coluna evita acrescentar um método só-para-teste ao repositório — a API de
 /// produção não deve crescer por causa de asserção.
 async fn dinheiro(mundo: &Arc<RwLock<WorldInstance>>, roleid: i32) -> i64 {
-    let repo = mundo.read().await.char_repo.clone();
-    sqlx::query_scalar::<_, i64>("SELECT money FROM characters WHERE id = $1")
-        .bind(roleid)
-        .fetch_one(repo.pool().get_ref())
-        .await
-        .expect("ler o dinheiro do personagem")
+    // O dinheiro vive na entidade e o banco recebe a gravação depois: é a entidade que o
+    // autosave escreve por cima de tudo, então é ela a fonte.
+    mundo.read().await.players[&(roleid as i64)].money
+}
+
+async fn dar_dinheiro(mundo: &Arc<RwLock<WorldInstance>>, roleid: i32, n: i64) {
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().money += n;
 }
 
 /// Monta o envelope do `SEVNPC_SERVE`: serviço, tamanho e conteúdo.
@@ -1218,7 +1258,7 @@ async fn comprar_do_npc_tira_dinheiro_e_da_o_item() {
 
     let repo = mundo.read().await.char_repo.clone();
     let itens = repo.item_repo().clone();
-    let _ = repo.add_money(roleid, 10_000).await;
+    dar_dinheiro(&mundo, roleid, 10_000).await;
     let antes = dinheiro(&mundo, roleid).await;
 
     // CONTENT da compra: 28 bytes de cabeçalho, depois `npc_trade_item`.
@@ -1237,14 +1277,25 @@ async fn comprar_do_npc_tira_dinheiro_e_da_o_item() {
     .await
     .unwrap();
 
-    receber(&mut link, 2).await; // item_info + unfreeze
+    // `PURCHASE_ITEM` (72): custo, e por item o id, a quantidade e o slot onde entrou.
+    let compra = esperar_comando(&mut link, 72).await;
+    assert_eq!(i32_em(&compra, 2), PRECO_DO_ITEM_DE_LOJA, "cost");
+    assert_eq!(i32_em(&compra, 13), ITEM_DE_LOJA, "item_id");
+    let slot = u16::from_le_bytes([compra[25], compra[26]]);
 
-    let comprado = itens
-        .get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 20)
-        .await
-        .unwrap()
-        .expect("o item comprado não chegou à bolsa");
-    assert_eq!(comprado.item_id, ITEM_DE_LOJA as u32);
+    let itens2 = itens.clone();
+    let chegou = ate_async(move || {
+        let i = itens2.clone();
+        async move {
+            i.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, slot)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|x| x.item_id == ITEM_DE_LOJA as u32)
+        }
+    })
+    .await;
+    assert!(chegou, "o item comprado não chegou ao slot {slot} da bolsa");
 
     let depois = dinheiro(&mundo, roleid).await;
     assert!(
@@ -1272,7 +1323,7 @@ async fn item_sem_preco_no_arquivo_nao_e_vendido() {
     let mut link = entrar(&mundo, addr, roleid).await;
 
     let repo = mundo.read().await.char_repo.clone();
-    let _ = repo.add_money(roleid, 10_000).await;
+    dar_dinheiro(&mundo, roleid, 10_000).await;
     let antes = dinheiro(&mundo, roleid).await;
 
     let mut c = Vec::new();
@@ -1294,11 +1345,11 @@ async fn item_sem_preco_no_arquivo_nao_e_vendido() {
     let entregou = ate_async(move || {
         let i = itens.clone();
         async move {
-            i.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 21)
+            i.list_by_container(roleid, pw_core::ContainerType::Inventory)
                 .await
-                .ok()
-                .flatten()
-                .is_some()
+                .unwrap_or_default()
+                .iter()
+                .any(|x| x.item_id == 999_999)
         }
     })
     .await;
@@ -1319,7 +1370,7 @@ async fn vender_ao_npc_tira_o_item_e_da_dinheiro() {
             character_id: roleid,
             container_type: pw_core::ContainerType::Inventory,
             slot: 21,
-            item_id: 555,
+            item_id: ITEM_DE_LOJA as u32,
             count: 2,
             max_count: 99,
             refine_level: 0,
@@ -1338,7 +1389,7 @@ async fn vender_ao_npc_tira_o_item_e_da_dinheiro() {
 
     // CONTENT da venda: 4 bytes de contagem, depois `npc_sell_item` (com `price`).
     let mut c = 1u32.to_le_bytes().to_vec();
-    c.extend_from_slice(&555i32.to_le_bytes()); // tid
+    c.extend_from_slice(&ITEM_DE_LOJA.to_le_bytes()); // tid
     c.extend_from_slice(&21u32.to_le_bytes()); // index
     c.extend_from_slice(&2u32.to_le_bytes()); // count
     c.extend_from_slice(&999_999i32.to_le_bytes()); // price que o cliente inventou
@@ -1351,16 +1402,25 @@ async fn vender_ao_npc_tira_o_item_e_da_dinheiro() {
     .await
     .unwrap();
 
-    receber(&mut link, 1).await; // unfreeze
+    // `ITEM_TO_MONEY` (73): slot, id, quantidade e quanto rendeu — o `price` do arquivo
+    // (50) vezes 2, e não os 999.999 que o cliente mandou.
+    let venda = esperar_comando(&mut link, 73).await;
+    assert_eq!(u16::from_le_bytes([venda[2], venda[3]]), 21);
+    assert_eq!(i32_em(&venda, 12), 100, "o valor da venda não é price × count");
 
-    assert!(
-        itens
-            .get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 21)
-            .await
-            .unwrap()
-            .is_none(),
-        "o item vendido continuou na bolsa"
-    );
+    let itens2 = itens.clone();
+    let saiu = ate_async(move || {
+        let i = itens2.clone();
+        async move {
+            i.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 21)
+                .await
+                .ok()
+                .flatten()
+                .is_none()
+        }
+    })
+    .await;
+    assert!(saiu, "o item vendido continuou na bolsa");
 
     let depois = dinheiro(&mundo, roleid).await;
     assert!(depois > antes, "vender não pagou nada ({antes} → {depois})");
@@ -1403,31 +1463,78 @@ async fn nao_da_para_vender_um_slot_vazio() {
 }
 
 #[tokio::test]
-async fn aceitar_missao_pelo_npc_grava_no_banco() {
+async fn aceitar_e_entregar_missao_no_npc_mexe_nas_listas_e_premia() {
     let (mundo, addr, roleid, _convidado) = cenario!();
     let mut link = entrar(&mundo, addr, roleid).await;
 
-    const NOVA: u32 = 5150;
+    // Sem falar com o NPC antes, o pedido não tem a quem ir.
     link.enviar(BusMessage::ClientToGame {
         roleid,
         localsid: LOCALSID,
-        data: pedido_ao_npc(
-            pw_gs::npc::servico::ACEITAR_MISSAO,
-            &(NOVA as i32).to_le_bytes(),
-        ),
+        data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    esperar_comando(&mut link, 70).await;
+
+    let mut aceitar = (MISSAO_DO_NPC as i32).to_le_bytes().to_vec();
+    aceitar.extend_from_slice(&[0u8; 8]); // idStorage, idRefreshItem
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::ACEITAR_MISSAO, &aceitar),
     })
     .await
     .unwrap();
 
-    let r = receber(&mut link, 1).await;
-    assert_eq!(cmd_de(&r[0]), 106, "a notificação vai no TASK_VAR_DATA");
-
-    let repo = mundo.read().await.char_repo.clone();
-    let missoes = repo.quest_repo().list_quests(roleid).await.unwrap();
-    assert!(
-        missoes.iter().any(|q| q.quest_id == NOVA),
-        "a missão aceita não foi gravada"
+    // `TASK_VAR_DATA` com `svr_new_task`: reason 1, a missão, e 14 bytes de aviso.
+    let nova = esperar_comando(&mut link, 106).await;
+    assert_eq!(u32::from_le_bytes([nova[2], nova[3], nova[4], nova[5]]), 14);
+    assert_eq!(nova[6], 1, "reason devia ser TASK_SVR_NOTIFY_NEW");
+    assert_eq!(u16::from_le_bytes([nova[7], nova[8]]) as u32, MISSAO_DO_NPC);
+    assert_eq!(
+        mundo.read().await.players[&(roleid as i64)].missoes.ativa.indice(MISSAO_DO_NPC),
+        Some(0),
+        "a missão não entrou na lista ativa"
     );
+
+    let mut entregar = (MISSAO_DO_NPC as i32).to_le_bytes().to_vec();
+    entregar.extend_from_slice(&0i32.to_le_bytes()); // iChoice
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::ENTREGAR_MISSAO, &entregar),
+    })
+    .await
+    .unwrap();
+
+    // O prêmio vem antes do aviso de conclusão, como no `DeliverAward` original.
+    let dinheiro_do_premio = esperar_comando(&mut link, 159).await;
+    assert_eq!(i32_em(&dinheiro_do_premio, 2), 30);
+    let concluida = esperar_comando(&mut link, 106).await;
+    assert_eq!(concluida[6], 2, "reason devia ser TASK_SVR_NOTIFY_COMPLETE");
+
+    let m = mundo.read().await;
+    let p = &m.players[&(roleid as i64)];
+    assert_eq!(p.missoes.ativa.quantidade, 0, "a missão entregue continuou ativa");
+    assert_eq!(p.missoes.procurar_concluida(MISSAO_DO_NPC), 0, "não ficou registrada como concluída");
+    let repo = m.char_repo.clone();
+    drop(m);
+
+    // E as listas vão para o banco, que é de onde o link as manda no próximo login.
+    let gravada = ate_async(move || {
+        let r = repo.clone();
+        async move {
+            r.task_lists()
+                .carregar(roleid)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|l| l.concluidas.len() == 8)
+        }
+    })
+    .await;
+    assert!(gravada, "as listas de missão não foram gravadas");
 }
 
 #[tokio::test]
@@ -3026,8 +3133,15 @@ async fn o_treinador_sobe_a_habilidade_um_nivel_e_grava() {
     let (mundo, addr, roleid, _convidado) = cenario!();
     let mut link = entrar(&mundo, addr, roleid).await;
 
-    // Uma habilidade que o personagem de teste não tem: começa do zero e vai a 1.
-    const HABILIDADE: i32 = 117;
+    // Uma habilidade que o personagem de teste não tem: começa do zero e vai a 1. O
+    // cenário a põe na tabela com 100 de SP e 10 moedas por nível.
+    const HABILIDADE: i32 = HABILIDADE_DO_TREINADOR;
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.sp = 1_000;
+        p.money = 1_000;
+    }
     let antes = mundo.read().await.players[&(roleid as i64)]
         .habilidades
         .get(&(HABILIDADE as u32))
@@ -3047,6 +3161,11 @@ async fn o_treinador_sobe_a_habilidade_um_nivel_e_grava() {
 
     let resposta = esperar_comando(&mut link, 95).await;
     assert_eq!(i32_em(&resposta, 2), HABILIDADE, "o LEARN_SKILL não é da habilidade pedida");
+    {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        assert_eq!((p.sp, p.money), (900, 990), "aprender não cobrou SP e dinheiro da tabela");
+    }
     assert_eq!(
         i32_em(&resposta, 6),
         antes as i32 + 1,
@@ -3076,6 +3195,43 @@ async fn o_treinador_sobe_a_habilidade_um_nivel_e_grava() {
         .find(|h| h.skill_id == HABILIDADE as u32)
         .expect("a habilidade subida tem de estar no banco");
     assert_eq!(gravada.level, antes + 1);
+}
+
+#[tokio::test]
+async fn pegar_moedas_do_chao_da_o_dinheiro_e_some_o_monte() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let antes = dinheiro(&mundo, roleid).await;
+
+    // Um monte de 25 moedas (`MONEY_MATTER_ID` = 3044) ao lado do jogador, de outro dono.
+    let outro = {
+        let mut m = mundo.write().await;
+        m.criar_drop(3044, 25, Vector3::new(1.0, 0.0, 1.0), Some(roleid + 1))
+    };
+    let mut pedido = (outro.id as i32).to_le_bytes().to_vec();
+    pedido.extend_from_slice(&3044i32.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::PICKUP, &pedido) })
+        .await
+        .unwrap();
+    // `ERR_ITEM_CANT_PICKUP` (6): durante os 30 s de posse só o dono pega.
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 6);
+
+    let meu = {
+        let mut m = mundo.write().await;
+        m.criar_drop(3044, 25, Vector3::new(1.0, 0.0, 1.0), Some(roleid))
+    };
+    let mut pedido = (meu.id as i32).to_le_bytes().to_vec();
+    pedido.extend_from_slice(&3044i32.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::PICKUP, &pedido) })
+        .await
+        .unwrap();
+    let moedas = esperar_comando(&mut link, 30).await;
+    assert_eq!(i32_em(&moedas, 2), 25, "PICKUP_MONEY (30) com o valor do monte");
+    let sumiu = esperar_comando(&mut link, 152).await;
+    assert_eq!(i32_em(&sumiu, 2), meu.id as i32, "MATTER_PICKUP (152) com o id do monte");
+    assert_eq!(dinheiro(&mundo, roleid).await, antes + 25);
+    assert!(!mundo.read().await.drops.contains_key(&meu.id), "o monte continuou no chão");
 }
 
 /// A marca do `dyn_tasks.data` que o `montar()` põe no realm de teste.

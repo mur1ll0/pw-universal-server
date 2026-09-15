@@ -1,0 +1,77 @@
+AWARDTOTAL	269
+AWARD	4	4	m_ulExp
+AWARD	8	4	m_ulRealmExp
+AWARD	12	1	m_bExpandRealmLevelMax
+AWARD	13	4	m_ulNewTask
+AWARD	17	4	m_ulSP
+AWARD	21	4	m_lReputation
+AWARD	25	4	m_ulNewPeriod
+AWARD	29	4	m_ulNewRelayStation
+AWARD	33	4	m_ulStorehouseSize
+AWARD	37	4	m_ulStorehouseSize2
+AWARD	41	4	m_ulStorehouseSize3
+AWARD	45	4	m_ulStorehouseSize4
+AWARD	49	4	m_lInventorySize
+AWARD	53	4	m_ulPetInventorySize
+AWARD	57	4	m_ulFuryULimit
+AWARD	61	4	m_ulTransWldId
+AWARD	65	12	m_TransPt
+AWARD	77	4	m_lMonsCtrl
+AWARD	81	1	m_bTrigCtrl
+AWARD	82	1	m_bUseLevCo
+AWARD	83	1	m_bDivorce
+AWARD	84	1	m_bSendMsg
+AWARD	85	4	m_nMsgChannel
+AWARD	89	4	m_ulCandItems
+AWARD	93	4	m_CandItems
+AWARD	97	4	m_ulSummonedMonsters
+AWARD	101	4	m_SummonedMonsters
+AWARD	105	1	m_bAwardDeath
+AWARD	106	1	m_bAwardDeathWithLoss
+AWARD	107	4	m_ulDividend
+AWARD	111	1	m_bAwardSkill
+AWARD	112	4	m_iAwardSkillID
+AWARD	116	4	m_iAwardSkillLevel
+AWARD	120	4	m_iSoloTowerChallengeScore
+AWARD	124	4	m_ulSpecifyContribTaskID
+AWARD	128	4	m_ulSpecifyContribSubTaskID
+AWARD	132	4	m_ulSpecifyContrib
+AWARD	136	4	m_ulContrib
+AWARD	140	4	m_ulRandContrib
+AWARD	144	4	m_ulLowestcontrib
+AWARD	148	4	m_iFactionContrib
+AWARD	152	4	m_iFactionExpContrib
+AWARD	156	4	m_ulPQRankingAwardCnt
+AWARD	160	4	m_PQRankingAward
+AWARD	164	4	m_ulChangeKeyCnt
+AWARD	168	4	m_plChangeKey
+AWARD	172	4	m_plChangeKeyValue
+AWARD	176	4	m_pbChangeType
+AWARD	180	4	m_ulHistoryChangeCnt
+AWARD	184	4	m_plHistoryChangeKey
+AWARD	188	4	m_plHistoryChangeKeyValue
+AWARD	192	4	m_pbHistoryChangeType
+AWARD	196	1	m_bMulti
+AWARD	197	4	m_nNumType
+AWARD	201	4	m_lNum
+AWARD	205	4	m_ulDisplayKeyCnt
+AWARD	209	4	m_plDisplayKey
+AWARD	213	4	m_ulExpCnt
+AWARD	225	4	m_ulTaskCharCnt
+AWARD	233	4	m_iForceContribution
+AWARD	237	4	m_iForceReputation
+AWARD	241	4	m_iForceActivity
+AWARD	245	4	m_iForceSetRepu
+AWARD	249	4	m_iTaskLimit
+AWARD	253	4	m_ulTitleNum
+AWARD	257	4	m_pTitleAward
+AWARD	261	4	m_iLeaderShip
+AWARD	265	4	m_iWorldContribution
+SIZE	8	TITLE_AWARD
+SIZE	16	MONSTERS_SUMMONED
+SIZE	21	RANKING_AWARD
+SIZE	136	talk_proc::option
+SIZE	17	AWARD_ITEMS_CAND
+FIXED	671	m_bTeamwork
+FIXED	790	m_iPremTitleNumTotal
+SIZE	4	ATaskTempl::m_nSubCount

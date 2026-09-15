@@ -60,6 +60,9 @@ fn template() -> TemplateDeMonstro {
         estrategias_de_odio: Vec::new(),
         dinheiro_medio: 900,
         dinheiro_variacao: 100,
+        chance_de_quantos: [1.0, 0.0, 0.0, 0.0],
+        rodadas_de_drop: 1,
+        itens_de_drop: vec![],
     }
 }
 

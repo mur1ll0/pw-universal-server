@@ -5,7 +5,7 @@
 > tocar** — não o código inteiro, não o `docs/HISTORICO_DE_SESSOES.md` (6.500 linhas de
 > diário). O histórico guarda a evidência; a spec guarda a conclusão.
 >
-> Verificadas contra o código em **2026-09-14**, commit `e6433ae`.
+> Verificadas contra o código em **2026-09-14** (B50).
 
 ## Índice e mapa de código
 
@@ -15,18 +15,19 @@ Ao mexer num caminho da coluna do meio, a spec da esquerda é a que precisa ser 
 | spec | cobre (caminhos) | assunto |
 | :--- | :--- | :--- |
 | [`00_MASTER_SPECIFICATION.md`](00_MASTER_SPECIFICATION.md) | `Cargo.toml`, `crates/*/Cargo.toml`, estrutura geral | visão, versões-alvo, princípios, crates e seu estado |
-| [`01_DATABASE_SCHEMA_POSTGRES.sql`](01_DATABASE_SCHEMA_POSTGRES.sql) | `crates/pw-storage/`, `scripts/*.sql` | esquema do banco (confere com o banco em execução: 12 tabelas) |
+| [`01_DATABASE_SCHEMA_POSTGRES.sql`](01_DATABASE_SCHEMA_POSTGRES.sql) | `crates/pw-storage/`, `scripts/*.sql` | esquema do banco (confere com o banco em execução: 13 tabelas, com `character_task_lists`) |
 | [`02_MULTI_REALM_ARCHITECTURE.md`](02_MULTI_REALM_ARCHITECTURE.md) | `docker/`, `crates/pw-link/`, `crates/pw-bus/`, `crates/pw-auth/`, `crates/pw-protocol/src/{version,edition,codec,opcodes}.rs` | topologia de daemons e portas, login, versões, barramento |
 | [`03_DATA_LOADER_SPEC.md`](03_DATA_LOADER_SPEC.md) | `crates/pw-data-loader/`, `specs/elements_*`, `specs/mapas/`, `specs/clsconfig_155/`, `data/realm_*` | formato de cada arquivo de dados e o que já é lido |
 | [`04_PROTOCOLO_MUNDO_3D.md`](04_PROTOCOLO_MUNDO_3D.md) | `crates/pw-protocol/src/{packets,por_versao.rs}`, `crates/pw-wire/`, `crates/pw-gs/src/comandos.rs`, `specs/protocol/`, `tools/pw-rpcgen/`, `tools/pw-ir/` | subcomandos do `GamedataSend`: regras de layout, onde cada um é tratado |
-| [`05_SIMULACAO_DO_MUNDO.md`](05_SIMULACAO_DO_MUNDO.md) | `crates/pw-gs/src/{world,bus_server,ai,combat,habilidades,entity,grid,npc}.rs` | regras de jogo portadas: spawns, visibilidade, IA, combate, economia, persistência |
+| [`05_SIMULACAO_DO_MUNDO.md`](05_SIMULACAO_DO_MUNDO.md) | `crates/pw-gs/src/{world,bus_server,bus_server/jogo,ai,combat,habilidades,entity,grid,npc,missoes,progressao,economia}.rs` | regras de jogo portadas: spawns, visibilidade, IA, combate, progressão, missões, economia, persistência |
 | [`06_ADMIN_PANEL_AND_CPW_SPEC.md`](06_ADMIN_PANEL_AND_CPW_SPEC.md) | `web-admin/`, `tools/pw-patch-tool/` | painel administrativo e patcher (planejado) |
 | `02_MIGRACAO_COMPATIBILIDADE_MULTI_REALM.sql` | — | migração histórica já aplicada; não editar |
 
 Subpastas com dado de referência: `protocol/` (IR gerado pelo `pw-rpcgen`),
 `elements_layouts/` (catálogo de layouts do `elements.data` + leitor Python),
 `elements_155/` (`.cfg` do ADMVAL e a arqueologia do v156/v159), `mapas/` (terreno por
-mapa), `clsconfig_155/` (leitor dos moldes de classe).
+mapa), `clsconfig_155/` (leitor dos moldes de classe), `habilidades_155/` (números das
+habilidades extraídos dos stubs do servidor), `tasks_155/` (deslocamentos do `tasks.data` v129).
 
 ## Regra de manutenção
 

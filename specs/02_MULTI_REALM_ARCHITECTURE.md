@@ -119,7 +119,8 @@ A29) → `SelectRole` → `EnterWorld` (72).
 Na entrada o link manda a carga inicial (ordem importa, B36e/B38): `INST_DATA_CHECKOUT`
 (com `id_inst` = mundo do personagem e os carimbos de `region.sev`/`precinct.sev` desse
 mapa), `SELF_INFO_00`, `OWN_EXT_PROP`, `SELF_INFO_1`, habilidades, `TASK_DATA` (5 blocos no
-1.5.x), bolsa, equipamento com o bloco de dados de cada peça, dinheiro, reputação, modo PvP,
+1.5.x, com as listas de missão de `character_task_lists` — spec 05 §10), bolsa, equipamento,
+bolsa de missão (pacote 2), com o bloco de dados de cada peça, dinheiro, reputação, modo PvP,
 `SERVER_TIME` com `lua_version = 102` (primeira linha do `global_api.lua`), e
 `GetUIConfig_Re` no máximo uma vez por personagem. Layouts: spec 04.
 

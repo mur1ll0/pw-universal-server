@@ -1,7 +1,7 @@
 # Especificação 05: Simulação do mundo (`pw-gs`)
 
-> Verificada contra o código em 2026-09-14, commit `e6433ae` + B49. Cobre
-> `crates/pw-gs/src/{world,bus_server,ai,combat,habilidades,entity,grid,npc,server}.rs`.
+> Verificada contra o código em 2026-09-14, B50. Cobre
+> `crates/pw-gs/src/{world,bus_server,bus_server/jogo,ai,combat,habilidades,entity,grid,npc,server,missoes,progressao,economia}.rs`.
 >
 > Estado de cada regra: `confirmado` (visto em jogo), `testado` (teste automatizado),
 > `parcial`, `falta`. Toda regra portada cita o fonte original no código.
@@ -20,6 +20,10 @@
 | `combat.rs` | `AttackJudgement` portado |
 | `habilidades.rs` | contas das habilidades portadas dos stubs do cliente |
 | `npc.rs` | decodificação dos serviços de NPC |
+| `missoes.rs` | motor de missões: listas binárias do jogador e as regras de aceitar, contar e premiar (§10) |
+| `progressao.rs` | experiência do abate, subida de nível, regeneração, renascimento (§7) |
+| `economia.rs` | drop de monstro e a `Bolsa` (empilhamento como o cliente) (§8) |
+| `bus_server/jogo.rs` | onde as três regras acima encontram banco e fio: `com_contexto` carrega as bolsas, roda a regra com o mundo travado, manda os comandos e grava |
 
 Um processo `pw-gs` por realm, com um `WorldInstance` e um `BusServer` por mapa atrás do
 `RoteadorDeMapas` (`mapas.rs`, spec 02 §2.2). O jogador entra quando o link manda
@@ -34,8 +38,11 @@ habilidades, itens, `sec_level`.
   antigo (`tid >= 10000` = NPC).
 - Altura por tipo de área + `fOffsetTrn`, terreno como piso.
 - Mapa 161: 1.269 monstros, 208 NPCs; mundo 1: 29.620 monstros, 1.380 NPCs (log de subida).
-- Monstro morto renasce no centro de nascimento após `respawn_timer_ms`, com vida cheia e IA
-  zerada.
+- Monstro morto (`WorldInstance::matar_monstro`): o corpo some em **20 s** (`_corpse_delay`,
+  `npc.cpp:803,1446-1459` → `OBJECT_DISAPPEAR`) e ele renasce no centro após o tempo do gerador
+  (`respawn_sec` do `npcgen.data`), vida cheia, IA e lista de dano zeradas, com
+  `NPC_ENTER_SLICE` a quem está a 120 m. `testado`. (Até B50 o tempo ia zero e **nenhum
+  monstro renascia**.)
 
 ## 3. Visibilidade (streaming) — `confirmado`
 
@@ -101,10 +108,15 @@ outro), `PLAYER_DIED` para terceiros, perda de experiência ao morrer.
   teto 10.
 - Custo de mana como o cliente arredonda. Resultado: `SELF_SKILL_ATTACK_RESULT` (142) para
   quem conjura, `HOST_SKILL_ATTACKED` (144) para o alvo (`cEquipment = 0x7f`: sem desgaste).
-- `falta`: tempo de conjuração vem de `TEMPO_DE_CONJURACAO_MS` **1000 fixo** (o certo é o
-  `GetExecutetime` do stub); **nenhuma recarga**; efeitos de estado; cura usa ataque mágico no
-  lugar de `GetMagicdamage`; Tiro Certeiro (234) assume carga cheia; Portal da Cidade (167)
-  sem efeito.
+- **Tabela do servidor** (`pw_data_loader::habilidades`, spec 03 §3.12), para as 3.316:
+  - tempo de conjuração no `OBJECT_CAST_SKILL` = `State1::GetTime` do nível (`skill.cpp:797`);
+    sem valor na tabela, o de `habilidades.rs`, e por fim 1000 ms;
+  - **recarga** conferida antes de conjurar e armada em `id + 1024` com
+    `(int)(0,001 × coolingtime) × 1000` (`skillwrapper.cpp:261`, `playerwrapper.cpp:170`):
+    `SET_COOLDOWN` (198) ao cliente; em recarga, `ERROR_MESSAGE` 53 e `HOST_STOP_SKILL`. `testado`.
+- `falta`: efeitos de estado; recarga comum (`commoncooldown`); cura usa ataque mágico no lugar
+  de `GetMagicdamage`; Tiro Certeiro (234) assume carga cheia; Portal da Cidade (167) sem
+  efeito; flechas não são gastas (`DoAttack`, `player.cpp:3066`).
 
 ## 7. Jogador
 
@@ -112,10 +124,12 @@ outro), `PLAYER_DIED` para terceiros, perda de experiência ao morrer.
 | :--- | :--- | :--- |
 | velocidades, cadência, alcance, `hp_gen`/`mp_gen` | `confirmado` | `CHARRACTER_CLASS_CONFIG` (Bárbaro: correr 4,9 m/s, ataque 0,8 s = 16 ticks, alcance 2,5 m) |
 | vida/mana máximas | `confirmado` | `BaseDaClasse::vida_e_mana_maximas` (spec 03 §3.5), a mesma conta da criação |
-| **regeneração** | `falta` | valores na entidade, nenhum laço no `tick` |
-| **experiência e SP do abate** | `falta` | `RECEIVE_EXP` vai ao cliente, **nada soma na entidade** — o autosave grava o valor antigo |
-| subida de nível | `falta` | curva em `PLAYER_LEVELEXP_CONFIG`, não ligada |
-| reviver na cidade (C2S 4) | `parcial` | vida/mana cheias; posição de `CharacterClass::default_spawn_position` (mundo 1, palpites) — o certo é `[TOWN_REGION]`/`__GetTownPosition` |
+| **combate** | `testado` | `combate_s`: atacar põe 15 s (`DoAttack`, `player.cpp:3062`), apanhar garante 5 s (`OnAttacked`, `:9514`); batimento de 1 s desconta |
+| **regeneração** | `testado` | batimento de 1 s no `tick`: `hp_gen`/`mp_gen` em combate, ×4 fora (`player.cpp:9130-9137`), acumulando oitavos (`func::Update`, `actobject.h:2143`); `SELF_INFO_00` quando muda |
+| **experiência e SP do abate** | `testado` | lista de dano no monstro; cada um recebe `exp × dano / max(total, max_hp)` (`DispatchExp`, `npc.cpp:1515`) com o ajuste da diferença de nível e `+0,5` (`ReceiveExp`, `player.cpp:2813`); `RECEIVE_EXP` (36) depois de somar. Sem grupo: não há divisão de equipe |
+| **subida de nível** | `testado` | `IncExp`/`LevelUp` (`player.cpp:2627-2711,2831-2896`): curva `PLAYER_LEVELEXP_CONFIG` 202, +5 pontos de atributo, atributos refeitos (`recalcular_por_nivel`), vida e mana cheias, experiência zera no teto (`logic_level_limit` 105); `LEVEL_UP` (37) a todos, `SELF_INFO_00` e `OWN_EXT_PROP` ao próprio |
+| reviver na cidade (C2S 4) | `testado` | ponto de cidade do distrito do `precinct.sev` que contém a posição (`ResurrectInTown`, `playercmd.cpp:112`; spec 03 §3.7); sem distrito ou distrito de outro mapa, no lugar. Vida e mana a 10 % e perda de `GetLvlupExp × exp_lost[cultivo]` (`Resurrect`, `player.cpp:8716`) |
+| pontos de atributo | `parcial` | acumulam e vão no `OWN_EXT_PROP`; distribuir (`SET_STATUS_POINT`) `falta` |
 | voo | `confirmado` | pelo item no slot 12 (`EQUIPIVTR_FLYSWORD`); sem custo de mana, sem teto, `GP_STATE_FLY` fora do `state` |
 | teleporte de GM (`GOTO`) | `confirmado` | `y` do cliente é marcador; altura = chão + 0,5 m (`playercmd.cpp:4926`) |
 | sentar, gestos, roupa, zona segura | `confirmado` | `modo_roupa` e `voando` não persistem |
@@ -124,28 +138,71 @@ outro), `PLAYER_DIED` para terceiros, perda de experiência ao morrer.
 
 ## 8. Itens e economia
 
+A bolsa é lida do banco a cada operação e gravada de volta só nos slots que mudaram
+(`economia::Bolsa`). O **dinheiro vive na entidade** (o autosave grava a entidade por cima do
+banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
+
 | regra | estado | detalhe |
 | :--- | :--- | :--- |
 | repositório de itens | `testado` | transacionado; troca de slot preserva os octetos do item (A37) |
 | equipar | `confirmado` | com bloco de dados (spec 04 §5) |
-| comprar de NPC | `confirmado` | preço `max(shop_price, price)` (`serviceprovider.cpp:241-252`); item sem preço não é vendido; durabilidade do arquivo |
-| vender a NPC | `parcial` | **50 moedas fixas por unidade**; o `price` do cliente é ignorado de propósito |
-| reparar | `parcial` | **150 fixo** |
+| empilhar na bolsa | `testado` | `CECInventory::MergeItem` (`EC_Inventory.cpp:179-215`): completa pilhas na ordem dos slots, o resto no primeiro vazio; limite `pile_num_max`. O cliente confere o slot e a quantidade devolvidos |
+| comprar de NPC | `testado` | preço `max(shop_price, price)`; empilha e responde `PURCHASE_ITEM` (72) (`PurchaseItem`, `player.cpp:8900`); sem dinheiro `ERROR_MESSAGE` 16; `falta` conferir a lista de venda do NPC |
+| vender a NPC | `testado` | `price × quantidade`, proporcional à durabilidade (`ItemToMoney`, `player.cpp:13930`); `ITEM_TO_MONEY` (73); o `price` do cliente é ignorado |
+| reparar | `parcial` | **150 fixo** (da entidade) |
 | curar no NPC | `testado` | pelos valores do jogador |
-| aprender habilidade | `confirmado` | +1 nível até 10, grava e responde `LEARN_SKILL`; **não cobra** SP/moedas/requisitos |
+| aprender habilidade | `testado` | `skill_executor::OnServe` + `SkillStub::LearnCondition`/`Learn` (`serviceprovider.cpp:1288`, `cskill/skill/skill.cpp:14-93`): habilidade da lista do treinador (`NPC_SKILL_SERVICE`), fora de combate, nível ≤ máximo, classe, pré-requisitos, nível, SP, `rank` × cultivo, dinheiro; cobra (`SPEND_MONEY` 77, `COST_SKILL_POINT` 94) e responde `LEARN_SKILL` (95). Requisito `null` na tabela recusa |
+| **drop de monstro** | `testado` | dono = maior dano (+`max_hp/4` do primeiro golpe). Itens: `drop_times` rodadas de `probability_drop_num0..3` e `drop_matters[32]` (da 2ª rodada, só índices < 16), com o ajuste de item por nível (`DropItemFromData`, `npc.cpp:2649`; `generate_item_from_monster`, `itemdataman.cpp:1191`). Moedas: `drop_times` vezes, `Rand(médio±variação)`, chance 0,7, × ajuste. Cada monte a ±2 m, no chão (`worldmanager.cpp:512-555`), `tid` 3044 para moedas, id de matéria `0xC8…` |
+| item no chão | `testado` | posse do dono por **30 s**, some em **300 s** (`matter.h:62`, `matter.cpp:133`); `MATTER_ENTER_WORLD` a quem está a 120 m e no streaming; `OBJECT_DISAPPEAR` ao sumir |
+| **pegar** (C2S 6 e 184) | `testado` | tipo confere, distância < 10 m, posse; moedas `PICKUP_MONEY` (30), item `PICKUP_ITEM` (31); `MATTER_PICKUP` (152) a todos; bolsa cheia `ERROR_MESSAGE` 7, fora da posse 6 (`playercmd.cpp:1347-1444`, `matter.h:97-129`) |
 | poção (`USE_ITEM`) | `confirmado` | `MEDICINE_ESSENCE` |
-| missões (aceitar/entregar) | `parcial` | grava em `character_quests`; entrega paga **1500 exp / 320 SP / 500 moedas fixos**; `tasks.data` não consultado; abate notifica missões ativas |
-| notificações de missão do cliente (`TASK_NOTIFY`) | `parcial` | só o pedido da marca das missões dinâmicas é respondido (`testado`, B49); os demais `reason` são registrados |
-| "missão inicial" na entrada | `parcial` | gravada pelo `gateway.rs` por tabela no código (9374 / 1 / 9375), sem origem |
-| colher recurso | `falta` | `MATTER_PICKUP` sem tratamento |
+| colher recurso de mapa | `falta` | |
 | Loja Gold, barraca | `falta` | |
-| demais serviços de NPC (teleporte, pedras, forja, decompor, armazém) | `falta` | |
+| demais serviços de NPC (teleporte, pedras, forja, decompor, armazém, item de missão) | `falta` | |
 
 ## 9. Persistência
 
 - **Autosave a cada 60 s** por mundo: `save_status` com nível, cultivo, exp, SP, vida, mana,
-  moedas, mundo e posição. Falha vira `warn!` com contagem — não "sucesso" (B36f).
+  moedas, mundo e posição, mais `potential_points` e as listas de missão. Falha vira `warn!`
+  com contagem — não "sucesso" (B36f).
 - Movimento **não** grava por pacote.
-- Itens, habilidades aprendidas e missões gravam na hora da ação.
+- Operações de `com_contexto` (missão, abate, coleta, loja, aprender) gravam na hora: bolsas
+  antes de responder, estado e listas numa tarefa.
+- Listas de missão: `character_task_lists` (cinco `BYTEA`, os blocos do `TASK_DATA`,
+  `scripts/2026_09_14_listas_de_missao.sql`); lidas no `EnterWorld` pelo mundo e pelo link.
 - Personagem novo: `class_templates` do realm (posição, kit, arma) + atributos do
   `ptemplate.conf` (spec 02 §4).
+
+## 10. Missões (`missoes.rs`) — `testado` (sem teste em jogo)
+
+**O cliente refaz cada operação na cópia dele** a partir dos avisos (`OnServerNotify`,
+`TaskProcess.cpp:2643-2815`), então as listas do servidor são as estruturas binárias do
+original, mexidas pelas mesmas funções portadas linha a linha: `DeliverTask`, `RealignTask`,
+`RecursiveClearTask`, `RecursiveAward`, `FinishedTaskList::AddOneTask`
+(`task/TaskProcess.cpp`, `TaskProcess.h:103-392`).
+
+| lista | bytes no `TASK_DATA` | notas |
+| :--- | :--- | :--- |
+| ativa | `8 + 32 × n`: `count u8, used u8, version u16 = 1, top_show u8, state u8 (1 = tempos absolutos), top_hide u8, maxsim:1\|title:7`; entrada `id u16, pai, anterior, próximo, filho, estado u8, tempo u32, capitão u16, templ u32, cap u32, buf[11]` (os três `m_wMonsterNum`) | **versão ≠ 1 faz o cliente descartar todo aviso** (`TaskClient.cpp:262`) — a causa de "aceitar não mostra nada" (B50) |
+| concluídas | `4 + 4 × n`, ordenada por id (`id u16, falhou:1, vezes u8`) | |
+| tempos / contagens | `2 + 6 × n` / `2 + 14 × n` | frequência diária/semanal e limites por conta/personagem |
+| depósito | 864 bytes zerados | depósito de missões `falta` |
+
+| operação | origem | estado |
+| :--- | :--- | :--- |
+| aceitar no NPC (`GP_NPCSEV_TASK_ACCEPT`) | NPC em conversa (`SEVNPC_HELLO`) com a missão em `NPC_TASK_OUT_SERVICE` (`serviceprovider.cpp:1088`); submissão vira escolha da mãe (`OnTaskCheckDeliver`); `CheckPrerequisite` na ordem do original; `svr_new_task` (17 bytes + tags) | `testado` |
+| entregar no NPC (`GP_NPCSEV_TASK_RETURN`) | missão em `NPC_TASK_IN_SERVICE`; `OnTaskCheckAward` por método; `DeliverAward` → `RecursiveCheckAward` → `RecursiveAward` → `DeliverByAwardData` (ouro, exp, SP, reputação, itens por grupo/escolha, missão nova, coeficiente de nível `_lev_co`); `svr_task_complete` com o estado | `testado` |
+| abate (`OnTaskKillMonster`) | dono do abate; `CheckKillMonster`: conta (`svr_monster_killed`, 17 bytes) ou sorteia o item de missão; completa → `OnSetFinished` (conclusão direta premia) | `testado` |
+| `TASK_NOTIFY` 1/2/4/5 | concluir (`OnTaskCheckAwardDirect`), desistir, entrega automática, gatilho manual; 7 = marca dinâmica (B49) | `testado` |
+| itens de missão | bolsa de missão (pacote 2, `container_type` 5): `TASK_DELIVER_ITEM` (156), `PLAYER_DROP_ITEM` (46) tipo 3; prêmio `TASK_DELIVER_EXP/MONEY` (158/159), `SPEND_MONEY` | `testado` |
+| erros | `svr_task_err_code` (reason 6) com `TASK_PREREQU_FAIL_*`; NPC sem a missão `ERROR_MESSAGE` 19 | `testado` |
+
+Contra o `tasks.data` real (`tests/missoes_do_realm.rs`): o Arqueiro nível 1 aceita e entrega
+32201 (25 exp, 10 SP, 8 moedas); mais de 1.000 missões de topo entregam sem quebrar os
+índices da lista.
+
+`falta` (recusado ou ignorado, nunca inventado): janelas de horário (`WRONG_TIME`), região de
+entrega (`NOT_IN_ZONE`), equipe (`NOT_CAPTAIN`), facção, casamento, PQ, torre, variáveis
+globais (lidas como 0), prêmio por escala de tempo/itens (vazio), teleporte e invocação de
+prêmio, `FORCE_GIVEUP`, `REACH_SITE`/`LEAVE_SITE`, falha por morte, limite de tempo checado
+só na entrega.

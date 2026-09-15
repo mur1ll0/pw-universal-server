@@ -58,6 +58,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, trace, warn};
 
+mod jogo;
+
 /// Um subcomando do mundo 3D, já com o cabeçalho separado do corpo.
 ///
 /// O cabeçalho é um `unsigned short` **little-endian** (`S2C::cmd_header` /
@@ -148,14 +150,6 @@ const MODO_DE_MOVIMENTO_ANDANDO: u8 = 0;
 /// `GetExecutetime`/`GetCoolingtime` (a Prece da Clareza, por exemplo, executa em 1000 ms).
 /// O servidor ainda não lê a tabela de habilidades — quando ler, este número sai daqui.
 const TEMPO_DE_CONJURACAO_MS: u16 = 1000;
-
-/// O teto de nível de uma habilidade.
-///
-/// Dez é o `max_level` que os stubs do `ElementSkill` declaram para as habilidades de
-/// árvore de classe — o mesmo critério que `CharacterClass::habilidades_iniciais` usa para
-/// separar a árvore da classe do resto (`pw_core::types`). Habilidade de rank maior tem
-/// teto próprio no arquivo, que este servidor ainda não lê.
-const NIVEL_MAXIMO_DA_HABILIDADE: u8 = 10;
 
 /// Em que nível uma habilidade é conjurada quando o jogador **não a tem** no
 /// `character_skills`.
@@ -410,6 +404,37 @@ impl BusServer {
                 let _ = (hp, max_hp);
                 self.avisar_vida_propria(roleid).await;
             }
+
+            EventoDoMundo::EstadoMudou { roleid } => self.avisar_vida_propria(roleid).await,
+
+            EventoDoMundo::MonstroSumiu { id } | EventoDoMundo::DropSumiu { id } => {
+                self.transmitir_a_outros(0, S2CGamedataSend::object_disappear(id as i32).data).await;
+            }
+
+            EventoDoMundo::MonstroRenasceu { id } => {
+                // Quem está perto volta a ver o monstro sem precisar andar: o streaming só
+                // recalcula depois de 20 m (`PASSO_PARA_RECALCULAR`).
+                let (perto, pacote) = {
+                    let mut mundo = self.world.write().await;
+                    let Some((m, _)) = mundo.monsters.get(&id) else { return };
+                    let (pos, tid) = (m.position, m.template_id);
+                    let ids: Vec<i64> = mundo
+                        .players
+                        .iter()
+                        .filter(|(_, p)| p.position.distance(&pos) <= RAIO_DE_VISAO)
+                        .map(|(pid, _)| *pid)
+                        .collect();
+                    for pid in &ids {
+                        if let Some(p) = mundo.players.get_mut(pid) {
+                            p.visiveis.insert(id);
+                        }
+                    }
+                    (ids, self.sub.npc_enter_slice(id as i32, tid as i32, pos, 0).data)
+                };
+                for pid in perto {
+                    self.enviar_ao_jogador(pid as i32, pacote.clone()).await;
+                }
+            }
         }
     }
 
@@ -631,6 +656,17 @@ impl BusServer {
         // leitura por login, e daqui em diante viaja em todo `PLAYER_ENTER_SLICE` que
         // apresenta este jogador aos outros.
         jogador.sec_level = repo.nivel_de_gm(roleid).await.clamp(0, 255) as u8;
+        jogador.pontos_de_atributo = repo.pontos_de_atributo(roleid).await.unwrap_or(0);
+        match repo.task_lists().carregar(roleid).await {
+            Ok(Some(l)) => {
+                jogador.missoes = crate::missoes::ListasDeMissao::de_blocos(
+                    [&l.ativa, &l.concluidas, &l.tempos, &l.contagens, &l.deposito],
+                    &dados.tasks,
+                );
+            }
+            Ok(None) => {}
+            Err(e) => warn!("mundo: não consegui ler as missões de {roleid}: {e}"),
+        }
 
         if dados.classes.is_empty() {
             warn!(
@@ -712,6 +748,8 @@ impl BusServer {
             ids::NORMAL_ATTACK => self.atacar(roleid, &cmd.payload, envio).await,
             ids::REVIVE_VILLAGE => self.reviver(roleid).await,
             ids::GET_ITEM_INFO => self.info_do_item(roleid, &cmd.payload, envio).await,
+            ids::PICKUP => self.pegar(roleid, &cmd.payload).await,
+            ids::PICKUP_ALL => self.pegar_todos(roleid, &cmd.payload).await,
             ids::GET_IVTR_DETAIL => self.detalhe_do_container(roleid, &cmd.payload, envio).await,
             ids::EXG_IVTR_ITEM => self.trocar_slots(roleid, &cmd.payload, ContainerType::Inventory, envio).await,
             ids::EXG_EQUIP_ITEM => self.trocar_slots(roleid, &cmd.payload, ContainerType::Equipment, envio).await,
@@ -1035,11 +1073,12 @@ impl BusServer {
             // outra metade do combate.
             ai.add_threat(roleid as i64, dano);
 
+            let real = dano.min(m.hp);
             m.hp = (m.hp - dano).max(0);
+            m.registrar_dano(roleid as i64, real);
             let morreu = m.hp == 0;
             if morreu {
                 m.is_dead = true;
-                m.respawn_timer_ms = 0;
             }
             (m.hp, m.max_hp, morreu, m.template_id, m.exp, m.sp)
         };
@@ -1047,7 +1086,12 @@ impl BusServer {
         if morreu {
             mundo.grid.remove_entity(alvo);
         }
+        // Atacar põe em combate por 15 s (`DoAttack`, `player.cpp:3062`).
+        if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
+            p.combate_s = crate::progressao::COMBATE_AO_ATACAR_S;
+        }
         drop(mundo);
+        let _ = (template, exp, sp);
 
         // 1. O resultado do golpe.
         //
@@ -1090,43 +1134,10 @@ impl BusServer {
 
         info!("mundo: {roleid} matou {alvo} (template {template})");
 
-        self.responder(
-            roleid,
-            S2CGamedataSend::npc_died(alvo as i32, roleid).data,
-            envio,
-        )
-        .await;
-        self.responder(
-            roleid,
-            self.sub.receive_exp(saturar(exp), saturar(sp)).data,
-            envio,
-        )
-        .await;
-
-        self.notificar_abate(roleid, template, envio).await;
-    }
-
-    /// Avisa as missões ativas de que o jogador abateu uma criatura.
-    ///
-    /// Só é chamado **na morte**, e leva o `template_id` real do que morreu. No
-    /// `gateway.rs` isto disparava a cada golpe, sempre com `13641` — então qualquer
-    /// missão de caça completava atacando qualquer coisa.
-    async fn notificar_abate(&self, roleid: i32, template: u32, envio: &EnvioAoCliente) {
-        let repo = { self.world.read().await.char_repo.clone() };
-        let missoes = repo.quest_repo().list_quests(roleid).await.unwrap_or_default();
-
-        for q in missoes {
-            if q.status != pw_core::QuestStatus::Active {
-                continue;
-            }
-            self.responder(
-                roleid,
-                S2CGamedataSend::task_notify_monster_killed(q.quest_id as u16, template, 1)
-                    .data,
-                envio,
-            )
-            .await;
-        }
+        let morte = S2CGamedataSend::npc_died(alvo as i32, roleid).data;
+        self.responder(roleid, morte.clone(), envio).await;
+        self.transmitir_a_outros(roleid, morte).await;
+        self.monstro_morreu(alvo).await;
     }
 
     /// `C2S::REVIVE_VILLAGE` (4) — o jogador pediu para renascer na cidade.
@@ -1462,8 +1473,40 @@ impl BusServer {
         // O tempo de conjuração é o da **habilidade**, não um número fixo. Ver
         // `Habilidade::conjuracao_ms`: vai de 67 ms a 3.000 ms, e mandar 1.000 para todas
         // fazia a cura do Sacerdote sair três vezes mais rápida do que devia.
-        let conjuracao_ms = Habilidade::conhecida(c.skill_id)
-            .map(|h| h.conjuracao_ms)
+        // A recarga é conferida e armada antes de a conjuração começar
+        // (`SkillWrapper::StartSkill`, `skillwrapper.cpp:261`).
+        match self.armar_recarga(roleid, c.skill_id).await {
+            Some(None) => {
+                debug!("mundo: {roleid} conjurou {} ainda em recarga", c.skill_id);
+                self.responder(roleid, Self::erro_de_recarga(), envio).await;
+                self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio).await;
+                return;
+            }
+            Some(Some(ms)) if ms > 0 => {
+                self.responder(roleid, S2CGamedataSend::set_cooldown(c.skill_id + 1024, ms).data, envio).await;
+            }
+            _ => {}
+        }
+        // `State1::GetTime` do stub, no nível do jogador (`skill.cpp:797`); sem tabela, o
+        // valor do `habilidades.rs`.
+        let nivel_conjurado = {
+            let mundo = self.world.read().await;
+            mundo
+                .players
+                .get(&(roleid as i64))
+                .map(|p| nivel_da_habilidade(p, c.skill_id))
+                .unwrap_or(NIVEL_MINIMO_DA_HABILIDADE)
+        };
+        let conjuracao_ms = self
+            .world
+            .read()
+            .await
+            .data_manager
+            .habilidades
+            .get(c.skill_id.max(0) as u32)
+            .and_then(|h| h.conjuracao_ms(nivel_conjurado))
+            .map(|ms| ms.clamp(0, u16::MAX as i32) as u16)
+            .or_else(|| Habilidade::conhecida(c.skill_id).map(|h| h.conjuracao_ms))
             .unwrap_or(TEMPO_DE_CONJURACAO_MS);
         let cast_pkt =
             S2CGamedataSend::object_cast_skill(roleid, alvo as i32, c.skill_id, conjuracao_ms, 1)
@@ -1578,18 +1621,23 @@ impl BusServer {
         let (hp, max_hp, morreu, template, exp, sp) = {
             let (m, ai) = mundo.monsters.get_mut(&alvo).expect("conferido acima");
             ai.add_threat(roleid as i64, dano);
+            let real = dano.min(m.hp);
             m.hp = (m.hp - dano).max(0);
+            m.registrar_dano(roleid as i64, real);
             let morreu = m.hp == 0;
             if morreu {
                 m.is_dead = true;
-                m.respawn_timer_ms = 0;
             }
             (m.hp, m.max_hp, morreu, m.template_id, m.exp, m.sp)
         };
         if morreu {
             mundo.grid.remove_entity(alvo);
         }
+        if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
+            p.combate_s = crate::progressao::COMBATE_AO_ATACAR_S;
+        }
         drop(mundo);
+        let _ = (template, exp, sp);
 
         self.responder(
             roleid,
@@ -1622,19 +1670,10 @@ impl BusServer {
 
         if morreu {
             info!("mundo: {roleid} matou {alvo} com a habilidade {}", skill_id);
-            self.responder(
-                roleid,
-                S2CGamedataSend::npc_died(alvo as i32, roleid).data,
-                envio,
-            )
-            .await;
-            self.responder(
-                roleid,
-                self.sub.receive_exp(saturar(exp), saturar(sp)).data,
-                envio,
-            )
-            .await;
-            self.notificar_abate(roleid, template, envio).await;
+            let morte = S2CGamedataSend::npc_died(alvo as i32, roleid).data;
+            self.responder(roleid, morte.clone(), envio).await;
+            self.transmitir_a_outros(roleid, morte).await;
+            self.monstro_morreu(alvo).await;
         }
     }
 
@@ -2102,6 +2141,10 @@ impl BusServer {
                     materias.push((id, centro.distance(&m.position)));
                     continue;
                 }
+                if let Some(d) = mundo.drops.get(&id) {
+                    materias.push((id, centro.distance(&d.position)));
+                    continue;
+                }
                 let pos = match mundo.monsters.get(&id) {
                     Some((m, _)) if !m.is_dead => m.position,
                     // Monstro morto não é ausência de dado: é uma criatura que não deve
@@ -2166,6 +2209,13 @@ impl BusServer {
                             id: *id as i32,
                             tid: m.template_id as i32,
                             pos: m.position,
+                        });
+                    }
+                    if let Some(d) = mundo.drops.get(id) {
+                        return Some(QuemChegou::Materia {
+                            id: *id as i32,
+                            tid: d.item_id as i32,
+                            pos: d.position,
                         });
                     }
                     match mundo.monsters.get(id) {
@@ -2353,8 +2403,13 @@ impl BusServer {
             return;
         };
 
-        let mundo = self.world.read().await;
+        let mut mundo = self.world.write().await;
         let existe = mundo.dados_do_npc(pedido.target as i64).is_some();
+        if existe {
+            if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
+                p.npc_em_conversa = Some(pedido.target as i64);
+            }
+        }
         drop(mundo);
 
         if !existe {
@@ -2415,8 +2470,13 @@ impl BusServer {
             return;
         }
 
+        if let (Some(motivo), Some(task)) = (tn.reason, tn.task) {
+            if self.aviso_de_missao(roleid, motivo, task as u32).await {
+                return;
+            }
+        }
         debug!(
-            "mundo: {roleid} mandou task_notify (reason={:?}, task={:?}, {} bytes) — motor de missões ainda não existe",
+            "mundo: {roleid} mandou task_notify (reason={:?}, task={:?}, {} bytes) — motivo não tratado",
             tn.reason,
             tn.task,
             tn.buf.len()
@@ -2444,15 +2504,16 @@ impl BusServer {
         let c = pedido.conteudo;
         match pedido.service_type {
             // O NPC **vende**: o jogador está comprando.
-            servico::NPC_VENDE => self.jogador_compra(roleid, c, envio).await,
+            servico::NPC_VENDE => self.comprar(roleid, c).await,
             // O NPC **compra**: o jogador está vendendo.
-            servico::NPC_COMPRA => self.jogador_vende(roleid, c, envio).await,
+            servico::NPC_COMPRA => self.vender(roleid, c).await,
 
             servico::REPARAR => {
-                // TODO: o custo é fixo enquanto a durabilidade dos itens não for lida.
+                // TODO: o custo é fixo enquanto a durabilidade dos itens não for lida. O
+                // dinheiro sai da entidade (o autosave grava a entidade por cima do banco).
                 const CUSTO: i64 = 150;
-                let repo = self.repo().await;
-                if repo.deduct_money(roleid, CUSTO).await.unwrap_or(false) {
+                let pagou = self.com_contexto(roleid, |ctx| ctx.gastar_dinheiro(CUSTO)).await.unwrap_or(false);
+                if pagou {
                     self.responder(roleid, S2CGamedataSend::repair_all(CUSTO as i32).data, envio)
                         .await;
                 } else {
@@ -2492,279 +2553,16 @@ impl BusServer {
                 .await;
             }
 
-            servico::ACEITAR_MISSAO | servico::ENTREGAR_MISSAO | servico::ITEM_DE_MISSAO => {
-                self.missao(roleid, pedido.service_type, c, envio).await
+            servico::ACEITAR_MISSAO => self.aceitar_missao(roleid, c).await,
+            servico::ENTREGAR_MISSAO => self.entregar_missao(roleid, c).await,
+            servico::ITEM_DE_MISSAO => {
+                debug!("mundo: {roleid} pediu item de missão ao NPC (serviço ainda não tratado)");
             }
 
-            servico::APRENDER_HABILIDADE => self.aprender_habilidade(roleid, c, envio).await,
+            servico::APRENDER_HABILIDADE => self.aprender(roleid, c).await,
 
             outro => {
                 debug!("mundo: {roleid} pediu o serviço de NPC {outro}, ainda não tratado");
-            }
-        }
-    }
-
-    /// `GP_NPCSEV_LEARN` (9) — o treinador ensina, ou sobe de nível, uma habilidade.
-    ///
-    /// O corpo do pedido é um `int idSkill` e nada mais
-    /// (`c2s_SendCmdNPCSevLearnSkill`, `EC_SendC2SCmds.cpp:3379-3405`) — **o cliente não
-    /// manda o nível**, porque quem tem de saber em que nível a habilidade está é o
-    /// servidor. A resposta é `LEARN_SKILL` (95), `{ int skill_id; int skill_level; }`
-    /// (`EC_GPDataType.h:2265-2269`).
-    ///
-    /// Até 2026-09-11 este serviço caía no ramo de "ainda não tratado": clicar em aprender
-    /// não fazia nada, e como o nível de conjuração acabara de deixar de ser fixo em 1
-    /// (item 41d), não havia como subir uma habilidade para ver a diferença.
-    ///
-    /// # O que ainda não é cobrado
-    ///
-    /// **Nada.** O original cobra SP e moedas, e exige nível de personagem e de cultivo,
-    /// tudo saindo do `NPC_SKILL_SERVICE` e do `SKILLTOME_ESSENCE` do `elements.data`.
-    /// Essas tabelas estão decodificadas, mas a conta do custo por nível é investigação
-    /// própria — e inventar um preço aqui seria o mesmo erro das 100 moedas fixas da loja.
-    /// O cliente já confere os requisitos dele antes de mandar o pedido, então o caminho
-    /// normal não fica aberto; um cliente modificado passaria.
-    async fn aprender_habilidade(&self, roleid: i32, conteudo: &[u8], envio: &EnvioAoCliente) {
-        if conteudo.len() < 4 {
-            warn!("mundo: pedido de aprender habilidade de {roleid} com {} bytes", conteudo.len());
-            return;
-        }
-        let skill_id = i32::from_le_bytes([conteudo[0], conteudo[1], conteudo[2], conteudo[3]]);
-        if skill_id <= 0 {
-            warn!("mundo: {roleid} pediu para aprender a habilidade {skill_id}");
-            return;
-        }
-
-        let novo_nivel = {
-            let mut mundo = self.world.write().await;
-            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else {
-                warn!("mundo: {roleid} pediu habilidade sem estar no mundo");
-                return;
-            };
-            let atual = p.habilidades.get(&(skill_id as u32)).copied().unwrap_or(0);
-            if atual >= NIVEL_MAXIMO_DA_HABILIDADE {
-                debug!("mundo: {roleid} já tem a habilidade {skill_id} no nível {atual}");
-                return;
-            }
-            let novo = atual + 1;
-            p.habilidades.insert(skill_id as u32, novo);
-            novo
-        };
-
-        // Grava antes de responder: se o processo cair entre as duas coisas, é melhor o
-        // banco estar à frente do cliente do que atrás dele.
-        if let Err(e) = self
-            .repo()
-            .await
-            .skill_repo()
-            .learn_or_upgrade(roleid, skill_id as u32, novo_nivel)
-            .await
-        {
-            warn!("mundo: não consegui gravar a habilidade {skill_id} de {roleid}: {e}");
-            return;
-        }
-
-        info!("mundo: {roleid} subiu a habilidade {skill_id} para o nível {novo_nivel}");
-        self.responder(
-            roleid,
-            S2CGamedataSend::learn_skill(skill_id, novo_nivel as i32).data,
-            envio,
-        )
-        .await;
-    }
-
-    /// `GP_NPCSEV_SELL` — o NPC vende, o jogador **compra**.
-    ///
-    /// O `gateway.rs` fazia o contrário aqui: apagava um item do jogador e lhe dava
-    /// dinheiro. Ver [`crate::npc`] para a confirmação no fonte do cliente.
-    async fn jogador_compra(&self, roleid: i32, conteudo: &[u8], envio: &EnvioAoCliente) {
-        let itens = npc::itens_comprados(conteudo);
-        if itens.is_empty() {
-            debug!("mundo: {roleid} mandou uma compra sem itens");
-            return;
-        }
-
-        // O preço sai do `elements.data` (`GameDataManager::preco_de_compra`). Até
-        // 2026-09-11 eram **100 moedas fixas por unidade**, de qualquer coisa: uma poção
-        // custava o mesmo que uma armadura.
-        let repo = self.repo().await;
-        let itens_repo = self.itens().await;
-        let dados = self.world.read().await.data_manager.clone();
-
-        for i in itens {
-            let Some(unitario) = dados.preco_de_compra(i.tid as u32) else {
-                // Item que o realm não tem nas tabelas de preço. Recusar é melhor do que
-                // arbitrar um valor: no 1.2.6/v7 a tabela é vazia e **toda** compra cai
-                // aqui, o que é honesto enquanto aquele leitor não cobrir os preços.
-                debug!(
-                    "mundo: {roleid} quis comprar o item {}, que não tem preço no elements.data",
-                    i.tid
-                );
-                continue;
-            };
-            let total = i64::from(unitario) * i64::from(i.count.max(1));
-            if !repo.deduct_money(roleid, total).await.unwrap_or(false) {
-                debug!("mundo: {roleid} não tem {total} para comprar o item {}", i.tid);
-                continue;
-            }
-
-            let slot = i.index as u16;
-            let _ = itens_repo
-                .upsert_item(&pw_core::ItemRecord {
-                    id: None,
-                    character_id: roleid,
-                    container_type: ContainerType::Inventory,
-                    slot,
-                    item_id: i.tid as u32,
-                    count: i.count.max(1),
-                    max_count: 100,
-                    refine_level: 0,
-                    sockets_count: 0,
-                    sockets: vec![],
-                    // A durabilidade de fábrica é do `elements.data`; 10000 fixo fazia o
-                    // tooltip mostrar 1.000.000/1.000.000 em qualquer peça comprada (o
-                    // cliente multiplica por `ENDURANCE_SCALE`, que é 100).
-                    durability: dados.durabilidade_de_fabrica(i.tid as u32).unwrap_or(10000),
-                    max_durability: dados.durabilidade_de_fabrica(i.tid as u32).unwrap_or(10000),
-                    bind_status: 0,
-                    octets: vec![],
-                    custom_attributes: serde_json::json!({}),
-                })
-                .await;
-
-            info!("mundo: {roleid} comprou o item {} por {total}", i.tid);
-            self.mandar_info(roleid, 0, slot as u8, envio).await;
-            self.responder(
-                roleid,
-                S2CGamedataSend::unfreeze_ivtr_slot(0, slot).data,
-                envio,
-            )
-            .await;
-        }
-    }
-
-    /// `GP_NPCSEV_BUY` — o NPC compra, o jogador **vende**.
-    async fn jogador_vende(&self, roleid: i32, conteudo: &[u8], envio: &EnvioAoCliente) {
-        let itens = npc::itens_vendidos(conteudo);
-        if itens.is_empty() {
-            debug!("mundo: {roleid} mandou uma venda sem itens");
-            return;
-        }
-
-        // TODO: mesmo caso da compra — o valor tem que vir do `elements.data`. O `price`
-        // que o cliente manda é **ignorado** de propósito: aceitá-lo deixaria o jogador
-        // escolher quanto ganha.
-        const VALOR_UNITARIO: i64 = 50;
-        let repo = self.repo().await;
-        let itens_repo = self.itens().await;
-
-        for i in itens {
-            let slot = i.index as u16;
-            // Confere que o item existe e é daquele slot antes de pagar — senão o jogador
-            // vende slots vazios.
-            let Ok(Some(guardado)) = itens_repo
-                .get_item_by_slot(roleid, ContainerType::Inventory, slot)
-                .await
-            else {
-                debug!("mundo: {roleid} tentou vender o slot {slot}, que está vazio");
-                continue;
-            };
-            if guardado.item_id != i.tid as u32 {
-                warn!(
-                    "mundo: {roleid} disse vender o item {} do slot {slot}, onde está o {}",
-                    i.tid, guardado.item_id
-                );
-                continue;
-            }
-
-            let _ = itens_repo
-                .delete_item_by_slot(roleid, ContainerType::Inventory, slot)
-                .await;
-            let ganho = VALOR_UNITARIO * i64::from(guardado.count.max(1));
-            let _ = repo.add_money(roleid, ganho).await;
-
-            info!("mundo: {roleid} vendeu o item {} por {ganho}", guardado.item_id);
-            self.responder(
-                roleid,
-                S2CGamedataSend::unfreeze_ivtr_slot(0, slot).data,
-                envio,
-            )
-            .await;
-        }
-    }
-
-    /// Aceitar, entregar ou pedir item de missão.
-    ///
-    /// O `idTask` é o primeiro `int` do conteúdo nos três — confirmado em
-    /// `c2s_SendCmdNPCSevAcceptTask` e `c2s_SendCmdNPCSevReturnTask`.
-    async fn missao(&self, roleid: i32, tipo: i32, conteudo: &[u8], envio: &EnvioAoCliente) {
-        let Some(id_missao) = npc::id_da_missao(conteudo) else {
-            warn!("mundo: pedido de missão de {roleid} sem id");
-            return;
-        };
-        let agora = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as u32)
-            .unwrap_or(0);
-        let repo = self.repo().await;
-
-        match tipo {
-            servico::ACEITAR_MISSAO => {
-                let _ = repo
-                    .quest_repo()
-                    .save_quest(
-                        roleid,
-                        id_missao as u32,
-                        pw_core::QuestStatus::Active,
-                        &[0, 0, 0],
-                        None,
-                    )
-                    .await;
-                info!("mundo: {roleid} aceitou a missão {id_missao}");
-                self.responder(
-                    roleid,
-                    S2CGamedataSend::task_notify_new(id_missao as u16, agora).data,
-                    envio,
-                )
-                .await;
-            }
-
-            servico::ENTREGAR_MISSAO => {
-                // TODO: a recompensa é fixa enquanto o `tasks.data` não for consultado.
-                const EXP: i64 = 1500;
-                const SP: i64 = 320;
-                const MOEDAS: i64 = 500;
-
-                let _ = repo
-                    .quest_repo()
-                    .save_quest(
-                        roleid,
-                        id_missao as u32,
-                        pw_core::QuestStatus::Completed,
-                        &[0, 0, 0],
-                        None,
-                    )
-                    .await;
-                let _ = repo.add_exp_sp(roleid, EXP, SP).await;
-                let _ = repo.add_money(roleid, MOEDAS).await;
-
-                info!("mundo: {roleid} entregou a missão {id_missao}");
-                self.responder(
-                    roleid,
-                    S2CGamedataSend::task_notify_complete(id_missao as u16, agora).data,
-                    envio,
-                )
-                .await;
-                self.responder(
-                    roleid,
-                    self.sub.receive_exp(EXP as i32, SP as i32).data,
-                    envio,
-                )
-                .await;
-            }
-
-            _ => {
-                debug!("mundo: {roleid} pediu o item da missão {id_missao} (ainda sem tratamento)");
             }
         }
     }
@@ -3067,21 +2865,22 @@ impl BusServer {
                 .await;
         }
 
+        // A bolsa de missão (`IL_TASK_INVENTORY`, pacote 2): `SendAllData` manda as três
+        // bolsas (`player.cpp:13697-13713`), e é nela que entram os itens de missão. Segue o
+        // sinalizador de missões do pedido, como as outras duas seguem os delas.
         if pedido.detalhe_missoes != 0 {
-            let repo = self.repo().await;
-            let agora = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as u32)
-                .unwrap_or(0);
-            for q in repo.quest_repo().list_quests(roleid).await.unwrap_or_default() {
-                if q.status == pw_core::QuestStatus::Active {
-                    self.responder(
-                        roleid,
-                        S2CGamedataSend::task_notify_new(q.quest_id as u16, agora).data,
-                        envio,
-                    )
-                    .await;
-                }
+            let bolsa = itens
+                .list_by_container(roleid, ContainerType::TaskInventory)
+                .await
+                .unwrap_or_default();
+            self.responder(
+                roleid,
+                S2CGamedataSend::own_ivtr_from_items(2, crate::economia::TAMANHO_DA_BOLSA_DE_MISSAO as u8, &bolsa).data,
+                envio,
+            )
+            .await;
+            for item in &bolsa {
+                self.responder(roleid, Self::info_de(2, item, &equipamentos), envio).await;
             }
         }
 
@@ -3128,7 +2927,7 @@ impl BusServer {
             self.responder(
                 roleid,
                 S2CGamedataSend::own_ext_prop(
-                    0, // pontos livres de atributo: não há coluna para eles ainda
+                    p.pontos_de_atributo.max(0) as u32,
                     (p.vitality, p.energy, p.strength, p.agility),
                     p.max_hp,
                     p.max_mp,
@@ -3160,7 +2959,16 @@ impl BusServer {
         // Sempre, mesmo sem missões: é o marcador de fim da carga.
         // Via `self.sub` porque o número de blocos depende da versão (3 no 1.2.6, 5 do
         // 1.5.3 em diante) — ver `PorVersao::task_data`.
-        self.responder(roleid, self.sub.task_data().data, envio)
+        let listas = self
+            .world
+            .read()
+            .await
+            .players
+            .get(&(roleid as i64))
+            .map(|p| p.missoes.blocos())
+            .unwrap_or_else(|| crate::missoes::ListasDeMissao::default().blocos());
+        let [a, b, c, d, e] = &listas;
+        self.responder(roleid, self.sub.task_data_com_listas([a, b, c, d, e]).data, envio)
             .await;
     }
 

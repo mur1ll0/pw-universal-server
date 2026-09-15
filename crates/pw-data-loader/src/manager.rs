@@ -217,6 +217,14 @@ pub struct GameDataManager {
     /// [`crate::progressao`]. Fica no padrão do original quando o realm não tem as
     /// tabelas.
     pub progressao: crate::progressao::TabelaDeProgressao,
+    /// O que cada NPC entrega, recebe e ensina, pelo id do `NPC_ESSENCE` — ver
+    /// [`crate::servicos`].
+    pub servicos_de_npc: HashMap<u32, crate::servicos::ServicosDoNpc>,
+    /// `pile_num_max` de cada item.
+    pub pilhas: HashMap<u32, u32>,
+    /// Recarga, conjuração e custo de aprender de cada habilidade — ver
+    /// [`crate::habilidades`]. Só o 1.5.5 tem tabela; nas outras versões fica vazia.
+    pub habilidades: crate::habilidades::TabelaDeHabilidades,
 }
 
 impl GameDataManager {
@@ -385,6 +393,13 @@ impl GameDataManager {
             self.equipamentos = TabelasDeEquipamento::carregar(g);
             self.precos = crate::precos::carregar(g);
             self.progressao = crate::progressao::TabelaDeProgressao::carregar(g);
+            self.servicos_de_npc = crate::servicos::carregar(g);
+            self.pilhas = crate::servicos::pilhas(g);
+            // Os stubs de habilidade são do servidor 1.5.5; as duas versões de
+            // `elements.data` que o catálogo cobre (v156 BR, v159 EN) são desse servidor.
+            if matches!(g.version, 156 | 159) {
+                self.habilidades = crate::habilidades::TabelaDeHabilidades::do_155();
+            }
         }
 
         // O `ptemplate.conf` não é um `.data`: é um arquivo de configuração do `gamed`, e
@@ -447,6 +462,17 @@ impl GameDataManager {
     ///
     /// `None` quando o realm não tem o item nas tabelas: quem chama decide, e recusar a
     /// venda é melhor do que cobrar um número inventado.
+    /// Quantas unidades cabem num slot. Item sem `pile_num_max` conhecido empilha 1.
+    pub fn limite_de_pilha(&self, item_id: u32) -> u32 {
+        self.pilhas.get(&item_id).copied().unwrap_or(1).max(1)
+    }
+
+    /// Quanto o NPC paga por uma unidade: o `price` do `elements.data`
+    /// (`gs/serviceprovider.cpp`, venda ao NPC).
+    pub fn preco_de_venda(&self, item_id: u32) -> Option<i32> {
+        self.precos.get(&item_id).map(|(price, _)| (*price).max(0))
+    }
+
     pub fn preco_de_compra(&self, item_id: u32) -> Option<i32> {
         let (price, shop_price) = self.precos.get(&item_id).copied()?;
         Some(shop_price.max(price).max(1))

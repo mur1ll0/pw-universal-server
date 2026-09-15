@@ -99,6 +99,9 @@ pub struct MonstroPedido {
     pub chance_do_item: f32,
     /// `m_bKillerLev` — só conta se o matador tiver nível compatível com o monstro.
     pub nivel_do_matador: bool,
+    /// `m_iDPS` / `m_iDPH` — metas do boneco de treino; zero nas missões comuns.
+    pub dps: i32,
+    pub dph: i32,
 }
 
 /// Um grupo de itens de prêmio (`AWARD_ITEMS_CAND`).
@@ -107,6 +110,14 @@ pub struct GrupoDeItens {
     /// `m_bRandChoose` — sorteia um item do grupo pelos pesos; senão dá todos.
     pub sorteia_um: bool,
     pub itens: Vec<ItemDeMissao>,
+}
+
+impl GrupoDeItens {
+    /// `m_ulAwardCmnItems` / `m_ulAwardTskItems`, que o original conta ao carregar.
+    pub fn contagens(&self) -> (u32, u32) {
+        let comuns = self.itens.iter().filter(|i| i.comum).count() as u32;
+        (comuns, self.itens.len() as u32 - comuns)
+    }
 }
 
 /// O que a missão paga (`AWARD_DATA`).
@@ -123,6 +134,12 @@ pub struct TaskReward {
     /// `m_ulTransWldId` + `m_TransPt` — teleporte no fim (mundo 0 = sem teleporte).
     pub teleporte: Option<(u32, [f32; 3])>,
     pub grupos_de_itens: Vec<GrupoDeItens>,
+    /// `m_bUseLevCo` — exp e SP multiplicados por `_lev_co[nível-1]` (`TaskProcess.cpp:1260`).
+    pub usa_coeficiente_de_nivel: bool,
+    /// `m_bMulti`, `m_nNumType`, `m_lNum` — multiplicador por variável global.
+    pub multiplica: bool,
+    pub tipo_do_multiplicador: i32,
+    pub multiplicador: i32,
 }
 
 impl TaskReward {
@@ -194,6 +211,61 @@ pub struct TaskTemplate {
     pub descricao: String,
     pub rewards: TaskReward,
     pub premio_de_falha: TaskReward,
+
+    // Campos que o motor de missões do `pw-gs` consulta. Deslocamentos em
+    // `specs/tasks_155/layout129.tsv` (sonda do MSVC, B45).
+    pub item_nao_retirado: bool,
+    pub tempo_absoluto: bool,
+    /// `m_ulTimetable` — quantas janelas de horário a missão tem (0 = sempre).
+    pub janelas_de_horario: u32,
+    /// `m_lAvailFrequency` (`enumTAF*`): 0 normal, 1 dia, 2 semana, 3 mês, 4 ano.
+    pub frequencia: i32,
+    pub limite_por_periodo: i32,
+    pub pai_tambem_falha: bool,
+    pub pai_tambem_sucesso: bool,
+    pub refazer_apos_falha: bool,
+    pub limpa_ao_desistir: bool,
+    pub falha_ao_morrer: bool,
+    pub max_receptores: u32,
+    pub limpa_adquiridos: bool,
+    pub mostra_aviso: bool,
+    pub casamento: bool,
+    pub compara_bolsa: bool,
+    pub slots_de_bolsa: u32,
+    pub torre: bool,
+    pub pq: bool,
+    pub pq_sub: bool,
+    pub limite_de_conta: bool,
+    pub limite_de_personagem: bool,
+    pub nao_conta_falha: bool,
+    pub nao_limpa_item_na_falha: bool,
+    pub na_janela_de_titulo: bool,
+    pub nivel_maximo_historico: bool,
+    pub itens_exigidos_qualquer_um: bool,
+    pub entregues_comuns: u32,
+    pub entregues_de_missao: u32,
+    pub deposito: u32,
+    pub reputacao_minima: i32,
+    pub pre_missoes_minimo: u32,
+    /// `m_ulPremise_Period` — o nível de cultivo exigido.
+    pub periodo: u32,
+    pub so_gm: bool,
+    pub cotask: u32,
+    pub em_equipe: bool,
+    /// `m_bRcvByTeam` — entregue à equipe inteira pelo capitão.
+    pub recebida_pela_equipe: bool,
+    /// `m_bDelvInZone` — só se aceita dentro de uma região.
+    pub entrega_em_zona: bool,
+    /// `m_ulPremise_Faction` — exige facção.
+    pub faccao: u32,
+    /// `m_bPremise_Spouse` — exige casamento.
+    pub conjuge: bool,
+    /// `m_ulAwardType_S` / `_F` (`enumTAT*`): 0 normal, 1 por unidade, 2 por tempo, 3 por itens.
+    pub tipo_de_premio_sucesso: u32,
+    pub tipo_de_premio_falha: u32,
+    /// `m_uDepth` — quantas entradas da lista ativa a missão ocupa
+    /// (`ATaskTempl::CheckDepth`, `TaskTempl.h:2748-2771`). Calculado depois da leitura.
+    pub profundidade: u8,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -243,7 +315,46 @@ mod v129 {
         pub const TEM_ASSINATURA: usize = 64;
         pub const TIPO: usize = 69;
         pub const LIMITE_DE_TEMPO: usize = 73;
+        pub const ITEM_NAO_RETIRADO: usize = 103;
+        pub const TEMPO_ABSOLUTO: usize = 104;
         pub const TIMETABLE: usize = 105;
+        pub const FREQUENCIA: usize = 141;
+        pub const LIMITE_POR_PERIODO: usize = 145;
+        pub const PAI_TAMBEM_FALHA: usize = 152;
+        pub const PAI_TAMBEM_SUCESSO: usize = 153;
+        pub const REFAZER_APOS_FALHA: usize = 156;
+        pub const LIMPA_AO_DESISTIR: usize = 157;
+        pub const FALHA_AO_MORRER: usize = 159;
+        pub const MAX_RECEPTORES: usize = 160;
+        pub const LIMPA_ADQUIRIDOS: usize = 231;
+        pub const MOSTRA_AVISO: usize = 236;
+        pub const CASAMENTO: usize = 249;
+        pub const COMPARA_BOLSA: usize = 279;
+        pub const SLOTS_DE_BOLSA: usize = 280;
+        pub const TORRE: usize = 284;
+        pub const PQ: usize = 288;
+        pub const PQ_SUB: usize = 301;
+        pub const LIMITE_DE_CONTA: usize = 321;
+        pub const LIMITE_DE_PERSONAGEM: usize = 322;
+        pub const NAO_CONTA_FALHA: usize = 328;
+        pub const NAO_LIMPA_ITEM_NA_FALHA: usize = 329;
+        pub const NA_JANELA_DE_TITULO: usize = 330;
+        pub const NIVEL_MAXIMO_HISTORICO: usize = 341;
+        pub const ITENS_QUALQUER_UM: usize = 376;
+        pub const ENTREGUES_COMUNS: usize = 381;
+        pub const ENTREGUES_DE_MISSAO: usize = 385;
+        pub const DEPOSITO: usize = 393;
+        pub const REPUTACAO_MIN: usize = 398;
+        pub const PRE_MISSOES_MINIMO: usize = 492;
+        pub const PERIODO: usize = 496;
+        pub const GM: usize = 572;
+        pub const ENTREGA_EM_ZONA: usize = 164;
+        pub const FACCAO: usize = 501;
+        pub const CONJUGE: usize = 568;
+        pub const RECEBIDA_PELA_EQUIPE: usize = 675;
+        pub const COTASK: usize = 621;
+        pub const TIPO_DE_PREMIO_SUCESSO: usize = 1099;
+        pub const TIPO_DE_PREMIO_FALHA: usize = 1103;
         pub const ESCOLHE_UM: usize = 149;
         pub const SORTEIA_UM: usize = 150;
         pub const FILHOS_EM_ORDEM: usize = 151;
@@ -302,7 +413,11 @@ mod v129 {
         pub const REPUTACAO: usize = 21;
         pub const MUNDO_DO_TELEPORTE: usize = 61;
         pub const PONTO_DO_TELEPORTE: usize = 65;
+        pub const USA_COEF_DE_NIVEL: usize = 82;
         pub const CAND_ITEMS: usize = 89;
+        pub const MULTIPLICA: usize = 196;
+        pub const TIPO_DO_MULTIPLICADOR: usize = 197;
+        pub const MULTIPLICADOR: usize = 201;
         pub const SUMMONED_MONSTERS: usize = 97;
         pub const PQ_RANKING_CNT: usize = 156;
         pub const CHANGE_KEY_CNT: usize = 164;
@@ -435,6 +550,10 @@ fn premio(l: &mut Leitor) -> Result<TaskReward> {
             (mundo, [f32_em(a, o), f32_em(a, o + 4), f32_em(a, o + 8)])
         }),
         grupos_de_itens: grupos,
+        usa_coeficiente_de_nivel: a[p::USA_COEF_DE_NIVEL] != 0,
+        multiplica: a[p::MULTIPLICA] != 0,
+        tipo_do_multiplicador: u32_em(a, p::TIPO_DO_MULTIPLICADOR) as i32,
+        multiplicador: u32_em(a, p::MULTIPLICADOR) as i32,
     })
 }
 
@@ -518,6 +637,8 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
             item_comum: m[16] != 0,
             chance_do_item: f32_em(m, 17),
             nivel_do_matador: m[21] != 0,
+            dps: u32_em(m, 22) as i32,
+            dph: u32_em(m, 26) as i32,
         });
     }
     let n = l.contador(u32_em(b, f::PLAYER_WANTED), v129::PLAYER_WANTED)?;
@@ -587,6 +708,48 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         descricao,
         rewards,
         premio_de_falha,
+        item_nao_retirado: flag(f::ITEM_NAO_RETIRADO),
+        tempo_absoluto: flag(f::TEMPO_ABSOLUTO),
+        janelas_de_horario: u32_em(b, f::TIMETABLE),
+        frequencia: u32_em(b, f::FREQUENCIA) as i32,
+        limite_por_periodo: u32_em(b, f::LIMITE_POR_PERIODO) as i32,
+        pai_tambem_falha: flag(f::PAI_TAMBEM_FALHA),
+        pai_tambem_sucesso: flag(f::PAI_TAMBEM_SUCESSO),
+        refazer_apos_falha: flag(f::REFAZER_APOS_FALHA),
+        limpa_ao_desistir: flag(f::LIMPA_AO_DESISTIR),
+        falha_ao_morrer: flag(f::FALHA_AO_MORRER),
+        max_receptores: u32_em(b, f::MAX_RECEPTORES),
+        limpa_adquiridos: flag(f::LIMPA_ADQUIRIDOS),
+        mostra_aviso: flag(f::MOSTRA_AVISO),
+        casamento: flag(f::CASAMENTO),
+        compara_bolsa: flag(f::COMPARA_BOLSA),
+        slots_de_bolsa: u32_em(b, f::SLOTS_DE_BOLSA),
+        torre: flag(f::TORRE),
+        pq: flag(f::PQ),
+        pq_sub: flag(f::PQ_SUB),
+        limite_de_conta: flag(f::LIMITE_DE_CONTA),
+        limite_de_personagem: flag(f::LIMITE_DE_PERSONAGEM),
+        nao_conta_falha: flag(f::NAO_CONTA_FALHA),
+        nao_limpa_item_na_falha: flag(f::NAO_LIMPA_ITEM_NA_FALHA),
+        na_janela_de_titulo: flag(f::NA_JANELA_DE_TITULO),
+        nivel_maximo_historico: u32_em(b, f::NIVEL_MAXIMO_HISTORICO) != 0,
+        itens_exigidos_qualquer_um: flag(f::ITENS_QUALQUER_UM),
+        entregues_comuns: u32_em(b, f::ENTREGUES_COMUNS),
+        entregues_de_missao: u32_em(b, f::ENTREGUES_DE_MISSAO),
+        deposito: u32_em(b, f::DEPOSITO),
+        reputacao_minima: u32_em(b, f::REPUTACAO_MIN) as i32,
+        pre_missoes_minimo: u32_em(b, f::PRE_MISSOES_MINIMO),
+        periodo: u32_em(b, f::PERIODO),
+        so_gm: flag(f::GM),
+        cotask: u32_em(b, f::COTASK),
+        em_equipe: flag(f::TEAMWORK),
+        recebida_pela_equipe: flag(f::RECEBIDA_PELA_EQUIPE),
+        entrega_em_zona: flag(f::ENTREGA_EM_ZONA),
+        faccao: u32_em(b, f::FACCAO),
+        conjuge: flag(f::CONJUGE),
+        tipo_de_premio_sucesso: u32_em(b, f::TIPO_DE_PREMIO_SUCESSO),
+        tipo_de_premio_falha: u32_em(b, f::TIPO_DE_PREMIO_FALHA),
+        profundidade: 1,
     };
 
     let filhos = l.i32()?.max(0) as u32;
@@ -598,7 +761,125 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
     Ok(id)
 }
 
+/// `ATaskTempl::CheckDepth` (`TaskTempl.h:2748-2771`): folha vale 1; com filhos, soma a
+/// profundidade dos filhos — ou só a maior, quando eles correm em ordem, quando se escolhe um
+/// ou quando se sorteia um. É `unsigned char` no original: a soma dá a volta em 256.
+fn calcular_profundidade(tarefas: &mut HashMap<u32, TaskTemplate>, id: u32) -> u8 {
+    let Some(t) = tarefas.get(&id) else { return 0 };
+    let filhos = t.sub_tasks.clone();
+    let maior = t.filhos_em_ordem || t.escolhe_um_filho || t.sorteia_um_filho;
+    let mut acumulado: u8 = 0;
+    for f in filhos {
+        let d = calcular_profundidade(tarefas, f);
+        if maior {
+            acumulado = acumulado.max(d);
+        } else {
+            acumulado = acumulado.wrapping_add(d);
+        }
+    }
+    let t = tarefas.get_mut(&id).expect("conferido acima");
+    t.profundidade = 1u8.wrapping_add(acumulado);
+    t.profundidade
+}
+
+impl TaskTemplate {
+    /// Uma missão sem nada: sem requisito, sem objetivo, sem prêmio. Os campos do arquivo
+    /// que valem `true` por padrão no editor (`m_bParentAlsoFail`, `m_bCanRedoAfterFailure`,
+    /// `m_bClearAcquired`, `m_bShowPrompt`, `m_bCanGiveUp`) vêm ligados. Para testes e para
+    /// quem monta missão fora do `tasks.data`.
+    pub fn vazia(id: u32) -> Self {
+        Self {
+            id,
+            name: String::new(),
+            parent: None,
+            sub_tasks: Vec::new(),
+            tipo: 0,
+            limite_de_tempo: 0,
+            min_level: 0,
+            max_level: 0,
+            req_classes: Vec::new(),
+            genero: 0,
+            pre_tasks: Vec::new(),
+            missoes_exclusivas: Vec::new(),
+            itens_exigidos: Vec::new(),
+            itens_entregues: Vec::new(),
+            npc_que_entrega: 0,
+            npc_que_premia: 0,
+            metodo: 0,
+            tipo_de_conclusao: 0,
+            monster_kills: Vec::new(),
+            item_collections: Vec::new(),
+            dinheiro_pedido: 0,
+            nivel_a_alcancar: 0,
+            mundo_a_alcancar: 0,
+            espera: 0,
+            entrega_automatica: false,
+            pode_desistir: true,
+            pode_repetir: false,
+            precisa_registro: true,
+            escolhe_um_filho: false,
+            sorteia_um_filho: false,
+            filhos_em_ordem: false,
+            oculta: false,
+            missao_chave: false,
+            descricao: String::new(),
+            rewards: TaskReward::default(),
+            premio_de_falha: TaskReward::default(),
+            item_nao_retirado: false,
+            tempo_absoluto: false,
+            janelas_de_horario: 0,
+            frequencia: 0,
+            limite_por_periodo: 0,
+            pai_tambem_falha: true,
+            pai_tambem_sucesso: false,
+            refazer_apos_falha: true,
+            limpa_ao_desistir: false,
+            falha_ao_morrer: false,
+            max_receptores: 0,
+            limpa_adquiridos: true,
+            mostra_aviso: true,
+            casamento: false,
+            compara_bolsa: false,
+            slots_de_bolsa: 0,
+            torre: false,
+            pq: false,
+            pq_sub: false,
+            limite_de_conta: false,
+            limite_de_personagem: false,
+            nao_conta_falha: false,
+            nao_limpa_item_na_falha: false,
+            na_janela_de_titulo: false,
+            nivel_maximo_historico: false,
+            itens_exigidos_qualquer_um: false,
+            entregues_comuns: 0,
+            entregues_de_missao: 0,
+            deposito: 0,
+            reputacao_minima: 0,
+            pre_missoes_minimo: 0,
+            periodo: 0,
+            so_gm: false,
+            cotask: 0,
+            em_equipe: false,
+            recebida_pela_equipe: false,
+            entrega_em_zona: false,
+            faccao: 0,
+            conjuge: false,
+            tipo_de_premio_sucesso: 0,
+            tipo_de_premio_falha: 0,
+            profundidade: 1,
+        }
+    }
+}
+
 impl TasksData {
+    /// Acrescenta uma missão já montada (e as submissões, se vierem antes). Para testes.
+    pub fn inserir(&mut self, t: TaskTemplate) {
+        if t.parent.is_none() {
+            self.de_topo.push(t.id);
+        }
+        self.tasks.insert(t.id, t);
+    }
+
     /// Lê o cabeçalho: `(version, item_count)`.
     ///
     /// # Formato (autoridade)
@@ -657,6 +938,9 @@ impl TasksData {
                 return Err(TasksError::Desalinhado { indice, id, inicio, fim: l.o, esperado });
             }
             tasks_data.de_topo.push(id);
+        }
+        for id in tasks_data.de_topo.clone() {
+            calcular_profundidade(&mut tasks_data.tasks, id);
         }
 
         info!(

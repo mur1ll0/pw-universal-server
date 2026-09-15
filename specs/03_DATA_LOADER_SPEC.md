@@ -44,12 +44,15 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 | tabela | módulo | uso |
 | :--- | :--- | :--- |
 | `WEAPON_ESSENCE`, `ARMOR_ESSENCE`, `DECORATION_ESSENCE` | `armas.rs`, `armaduras.rs` (`TabelasDeEquipamento`) | bloco de dados do item no `OWN_ITEM_INFO`; famílias disjuntas por id |
-| `MONSTER_ESSENCE` | `monstros.rs` | atributos, resistências, raios de ódio/visão, `patroll_mode`, `aipolicy_id` |
+| `MONSTER_ESSENCE` | `monstros.rs` | atributos, resistências, raios de ódio/visão, `patroll_mode`, `aipolicy_id`, dinheiro e drop (`probability_drop_num0..3`, `drop_times`, `drop_matters[32]`) |
 | `NPC_ESSENCE` | `GameDataManager::ids_de_npc` | decide NPC × monstro de um spawn (como `gs/npcgenerator.cpp:79,415`) |
+| `NPC_ESSENCE` → `NPC_TASK_OUT_SERVICE`, `NPC_TASK_IN_SERVICE`, `NPC_SKILL_SERVICE` | `servicos.rs` (`servicos_de_npc`) | que missões o NPC entrega/recebe e que habilidades ensina, ordenadas para busca binária (`general_id_provider`) |
+| todas as tabelas com `pile_num_max` | `servicos::pilhas` (`limite_de_pilha`) | empilhamento na bolsa |
+| `PLAYER_LEVELEXP_CONFIG` (id 202), `PARAM_ADJUST_CONFIG`, `PLAYER_SECONDLEVEL_CONFIG` | `progressao.rs` | curva de exp, ajuste por diferença de nível (exp, SP, dinheiro, item), perda na morte por cultivo (`playertemplate.cpp:311-419`) |
 | `CHARRACTER_CLASS_CONFIG` | `classes.rs` | velocidades, cadência, alcance, regeneração — **sobrescrevem o `ptemplate.conf`** (`gs/playertemplate.cpp:293-301`) |
 | `MEDICINE_ESSENCE` | `quanto_o_remedio_restaura` | poções |
 | 25 tabelas com `price` + `shop_price` | `precos.rs` | preço de loja `max(shop_price, price)`; durabilidade de fábrica |
-| **não ligadas** | — | `PLAYER_LEVELEXP_CONFIG` (curva de exp), `MINE_ESSENCE` (colheita), `WEAPON_SUB_TYPE` (`attack_speed` da arma), `NPC_SKILL_SERVICE` / `SKILLTOME_ESSENCE` (custo de aprender) |
+| **não ligadas** | — | `MINE_ESSENCE` (colheita), `WEAPON_SUB_TYPE` (`attack_speed` da arma), `NPC_SELL_SERVICE` (lista de venda), `QUIVER_ESSENCE` |
 
 ### 3.2 `tasks.data` — missões (`tasks.rs`)
 
@@ -65,7 +68,13 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
   (monstros com item, itens, dinheiro, nível, mundo, espera), flags e os dois prêmios.
   Atravessado sem guardar: diálogos, expressões, regiões, prêmios por escala, requisitos
   de equipe/título/Lar.
-- **O mundo ainda não consulta nenhuma missão.**
+- Para o motor de missões (spec 05 §10) também: as flags de `CheckPrerequisite`/`RecursiveAward`
+  (`m_bParentAlsoFail/Succ`, `m_bCanRedoAfterFailure`, `m_bClearAsGiveUp`, `m_lAvailFrequency`,
+  `m_bAccountTaskLimit`, `m_bRoleTaskLimit`, `m_bHidden`, `m_bDisplayInTitleTaskUI`,
+  `m_bClearAcquired`, `m_ulGivenCmnCount/TskCount`, `m_ulAwardType_S/F`, …), `dps`/`dph` do
+  monstro pedido e `m_bUseLevCo`/`m_bMulti` do prêmio. Deslocamentos em
+  `specs/tasks_155/layout129.tsv` e `award_layout.tsv` (sonda do MSVC, B45).
+- `profundidade` = `m_uDepth` (`CheckDepth`, `TaskTempl.h:2748-2771`), calculada após a leitura.
 
 ### 3.2b `dyn_tasks.data` — missões dinâmicas (`dyn_tasks.rs`)
 
@@ -132,8 +141,13 @@ A configuração por mapa não se deduz da pasta (88 blocos podem ser 8×11 ou 1
 
 `REGIONFILEHEADER4` (`dwVersion, iNumRegion, iNumTrans, dwTimeStamp`@12) e
 `PRECINCTFILEHEADER5` (`dwVersion, iNumPrecinct, dwTimeStamp`@8) — `el_region.h`,
-`el_precinct.h`. Só o carimbo é lido, por mundo, para o `INST_DATA_CHECKOUT`. Versões < 4
-recusadas. Carimbo que não bate com o `.clt` do cliente naquela zona gera erro visível no
+`el_precinct.h`. O carimbo vai no `INST_DATA_CHECKOUT`. Versões < 4 recusadas.
+
+O `precinct.sev` é lido inteiro (`precinct.rs`, `GameDataManager::distritos`): por distrito,
+`iNumPoint`, prioridade, mapa do ponto, mapa do distrito (v ≥ 4), domínio (v ≥ 6), proteção PK
+(v ≥ 7), ponto de cidade e vértices (`CELPrecinct::Load`, `el_precinct.cpp:219-266`); recusa
+byte a mais. `distrito_em(x, z, mapa)` = menor prioridade que contém o ponto
+(`CELPrecinctSet::IsPointIn`, `:379-394`) — é o renascer na cidade. Carimbo que não bate com o `.clt` do cliente naquela zona gera erro visível no
 cliente (B25).
 
 ### 3.8 `gshop*.data` (`gshop.rs`)
@@ -158,7 +172,19 @@ Molde por classe via `GetDataRoleId` (`gamedbmanager.cpp:208`): 0→16, 1→19, 
   de `GRoleStatus`). Posições aplicadas ao banco por
   `scripts/2026_09_12_nascimento_no_mapa_161_155br.sql` (todos no mapa 161, pacote
   `pwserver_155v156`).
-- `falta`: `config_data` (provável barra de atalhos), inventário, equipamento, habilidades.
+- Inventário e equipamento conferidos byte a byte para o Arqueiro: só o Arco de Madeira
+  (2250), **sem munição**. As flechas do molde (8543 × 1000 no slot 11) são decisão do projeto
+  a pedido do Murillo (`scripts/2026_09_14_flechas_do_arqueiro_155br.sql`).
+- `falta`: `config_data` (provável barra de atalhos), leitor de inventário/equipamento, habilidades.
+
+### 3.10b Habilidades do servidor — `specs/habilidades_155/habilidades.json` (`habilidades.rs`)
+
+Não é arquivo do realm: é extraído dos stubs `cskill/skills/skillNNN.h` do `EvolvedPWServer`
+por `specs/habilidades_155/extrair_habilidades.py` e embutido com `include_str!` (o
+`Dockerfile.core` copia o JSON). 3.316 habilidades; por nível: mana, `GetExecutetime`,
+`GetCoolingtime`, `GetRequiredLevel/Sp/Money`, `GetTime` de cada estado. `null` = expressão
+que depende de mais que o nível ou stub com `TODO fix` — tratado como desconhecido. Carregado
+para `elements.data` v156/v159 (`GameDataManager::habilidades`).
 
 ### 3.11 `global_api.lua`
 

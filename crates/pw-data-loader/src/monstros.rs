@@ -188,6 +188,15 @@ pub struct TemplateDeMonstro {
     /// `mob.money_average` / `mob.money_var`.
     pub dinheiro_medio: i32,
     pub dinheiro_variacao: i32,
+
+    // ---- drop ----
+    /// `probability_drop_num0..3` — chance de cair 0, 1, 2 ou 3 itens por rodada.
+    pub chance_de_quantos: [f32; 4],
+    /// `drop_times` — quantas rodadas de drop o monstro faz.
+    pub rodadas_de_drop: i32,
+    /// `drop_matters[32]` — `(id, probabilidade)`, na ordem do arquivo (a posição importa:
+    /// a partir da 2ª rodada só os 16 primeiros valem, `itemdataman.cpp:1210`).
+    pub itens_de_drop: Vec<(u32, f32)>,
 }
 
 /// Por que um monstro do arquivo não virou template.
@@ -424,6 +433,21 @@ pub fn carregar(
             estrategias_de_odio,
             dinheiro_medio: c.i32("money_average"),
             dinheiro_variacao: c.i32("money_var"),
+            chance_de_quantos: [
+                c.f32("probability_drop_num0"),
+                c.f32("probability_drop_num1"),
+                c.f32("probability_drop_num2"),
+                c.f32("probability_drop_num3"),
+            ],
+            rodadas_de_drop: c.i32("drop_times"),
+            itens_de_drop: (0..32)
+                .map(|i| {
+                    (
+                        c.i32_indexado("drop_matters_", i, "_id").max(0) as u32,
+                        c.f32_indexado("drop_matters_", i, "_probability"),
+                    )
+                })
+                .collect(),
         };
 
         tabela.templates.insert(id, t);

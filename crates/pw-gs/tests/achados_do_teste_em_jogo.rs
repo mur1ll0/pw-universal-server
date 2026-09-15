@@ -63,6 +63,14 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         sec_level: 0,
         habilidades: Default::default(),
         crc_aparencia: 0,
+        pontos_de_atributo: 0,
+        reputacao: 0,
+        combate_s: 0,
+        contador_hp: 0,
+        contador_mp: 0,
+        recargas: std::collections::HashMap::new(),
+        npc_em_conversa: None,
+        missoes: Default::default(),
     };
     p.hp = p.max_hp;
     p
