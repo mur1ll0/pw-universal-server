@@ -260,6 +260,7 @@ pub struct TabelasDeEquipamento {
     pub armas: crate::armas::TabelaDeArmas,
     pub armaduras: TabelaDeArmaduras,
     pub decoracoes: TabelaDeDecoracoes,
+    pub municoes: crate::armas::TabelaDeMunicoes,
 }
 
 impl TabelasDeEquipamento {
@@ -268,6 +269,7 @@ impl TabelasDeEquipamento {
             armas: crate::armas::carregar(elements),
             armaduras: carregar_armaduras(elements),
             decoracoes: carregar_decoracoes(elements),
+            municoes: crate::armas::carregar_municoes(elements),
         }
     }
 
@@ -282,7 +284,10 @@ impl TabelasDeEquipamento {
         if let Some(a) = self.armaduras.get(&item_id) {
             return Some(F::Armadura(a.into()));
         }
-        self.decoracoes.get(&item_id).map(|d| F::Decoracao(d.into()))
+        if let Some(d) = self.decoracoes.get(&item_id) {
+            return Some(F::Decoracao(d.into()));
+        }
+        self.municoes.get(&item_id).map(|m| F::Municao(*m))
     }
 }
 

@@ -35,15 +35,16 @@ dados comuns uma vez e **o terreno só dos mapas que serve** (`WORLD_TAGS`). A c
 | corpo | cada tabela: `u32 count` + `count × sizeof(T)`, na ordem do `elementdataman::load_data` do cliente (`EvolvedPWClient/.../elementdataman.cpp:3879`) |
 | exceções | depois de `ARMORRUNE_ESSENCE`: `tag 0xab7689dd`, `len`, `len` bytes (máquina exportadora), `time_t`; depois de `WAR_TANKCALLIN_ESSENCE`: `tag 0xee35679f`, `len`, `len` bytes; `TALK_PROC` com laço próprio |
 | layouts | `specs/elements_layouts/v156.json`, `v159.json` (gerados de `specs/elements_155/PW_1.5.5_v15x.cfg` do editor ADMVAL), embutidos com `include_str!` |
-| estado | **231/231** tabelas no v156 do 155BR, **234/234** no v159 do 155; fecha no último byte (`NaoTerminaNoFim` se não) |
-| fallback | versão fora do catálogo (1.2.6 = v7) vai para o leitor tipado antigo `elements.rs` — é a causa das 2 falhas do `loader_tests` |
+| estado | **231/231** tabelas no v156 do `realm_155` (cliente BR); o v159 do cliente EN fechou em 234/234 quando ainda estava no projeto (saiu em 2026-09-17, B55; o layout continua no catálogo); fecha no último byte (`NaoTerminaNoFim` se não) |
+| fallback | versão fora do catálogo (1.2.6 = v7) vai para o leitor tipado antigo `elements.rs`. **v7 não tem `time_t`** (os 4 bytes depois da versão já são a contagem da tabela 0); os 118 tamanhos de registro foram deduzidos do próprio arquivo e **fecham no último byte** (16.664.770), conferidos pelo nome do primeiro registro de cada tabela contra o enum `DATA_TYPE` do cliente, menos 103–112 (sem nome, sem leitor) — B51 |
 | sem catálogo | v181 (cliente build 2591): `.cfg` já copiado, falta `generate_v181.py` |
 
 Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 
 | tabela | módulo | uso |
 | :--- | :--- | :--- |
-| `WEAPON_ESSENCE`, `ARMOR_ESSENCE`, `DECORATION_ESSENCE` | `armas.rs`, `armaduras.rs` (`TabelasDeEquipamento`) | bloco de dados do item no `OWN_ITEM_INFO`; famílias disjuntas por id |
+| `WEAPON_ESSENCE`, `ARMOR_ESSENCE`, `DECORATION_ESSENCE`, `PROJECTILE_ESSENCE` | `armas.rs`, `armaduras.rs` (`TabelasDeEquipamento`) | bloco de dados do item no `OWN_ITEM_INFO`; famílias disjuntas por id. `weapon_level` = `level` da arma (B51; era 1 fixo — o Arco de Madeira é 0); munição com `IVTR_ESSENCE_ARROW` (tipo, dano extra, faixa de nível da arma) |
+| `MINE_ESSENCE` | `minas.rs` (`GameDataManager::minas`) | coleta, com as recusas e limites de `npcgenerator.cpp:1280-1365` (distância 4–20, coletores 1–20, probabilidades somando 1) |
 | `MONSTER_ESSENCE` | `monstros.rs` | atributos, resistências, raios de ódio/visão, `patroll_mode`, `aipolicy_id`, dinheiro e drop (`probability_drop_num0..3`, `drop_times`, `drop_matters[32]`) |
 | `NPC_ESSENCE` | `GameDataManager::ids_de_npc` | decide NPC × monstro de um spawn (como `gs/npcgenerator.cpp:79,415`) |
 | `NPC_ESSENCE` → `NPC_TASK_OUT_SERVICE`, `NPC_TASK_IN_SERVICE`, `NPC_SKILL_SERVICE` | `servicos.rs` (`servicos_de_npc`) | que missões o NPC entrega/recebe e que habilidades ensina, ordenadas para busca binária (`general_id_provider`) |
@@ -52,7 +53,14 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 | `CHARRACTER_CLASS_CONFIG` | `classes.rs` | velocidades, cadência, alcance, regeneração — **sobrescrevem o `ptemplate.conf`** (`gs/playertemplate.cpp:293-301`) |
 | `MEDICINE_ESSENCE` | `quanto_o_remedio_restaura` | poções |
 | 25 tabelas com `price` + `shop_price` | `precos.rs` | preço de loja `max(shop_price, price)`; durabilidade de fábrica |
-| **não ligadas** | — | `MINE_ESSENCE` (colheita), `WEAPON_SUB_TYPE` (`attack_speed` da arma), `NPC_SELL_SERVICE` (lista de venda), `QUIVER_ESSENCE` |
+| `WEAPON_SUB_TYPE` | `armas.rs` (`velocidade_em_ticks`) | cadência da arma: `(int)(attack_speed × 20 + 0,1)` (B52) |
+| `QUIVER_ESSENCE` | `armas.rs` (`GameDataManager::aljavas`) | drop de aljava vira munição (B52) |
+| `MONSTER_ESSENCE.size` | `monstros.rs` (`tamanho`) | corpo do alvo no alcance de golpe e habilidade (B52) |
+| `TASKDICE_ESSENCE` | `cartas.rs` (`GameDataManager::cartas`) | Carta da Sorte: 20 missões com probabilidade, `no_use_in_combat` (B53; 2.498 no 155) |
+| `EQUIPMENT_ADDON` + `specs/addons_155/addons.json` | `addons.rs` (`addons`) | parâmetros e tratador de cada addon (B53) |
+| `WEAPON/ARMOR/DECORATION_ESSENCE` (faixas, `addons`/`uniques`, probabilidades de furo e de nº de addons) | `addons.rs` (`geracao`) | sorteio do equipamento no drop (B53) |
+| `STONE_ESSENCE` | `manager.rs` (`pedras`) | addon da pedra na arma/armadura/acessório (B53; sem serviço de incrustar ainda) |
+| **não ligadas** | — | `NPC_SELL_SERVICE` (lista de venda), `NPC_TRANSMIT_SERVICE` (teleporte por NPC) |
 
 ### 3.2 `tasks.data` — missões (`tasks.rs`)
 
@@ -62,12 +70,19 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 - Versão 129 (1.5.5): bloco fixo **1.157** bytes, prêmio **290** — o fonte (versão 125) dá
   1.087/269; a diferença são os campos do sistema de Lar (nomes do 1.7.2), mais o vetor
   `m_ulHomeItemsWanted × 8 bytes` (B45).
-- Estado: **14.885/14.885** (155BR), **14.978/14.978** (155). Versões 55 e 124: só cabeçalho.
+- Estado: **14.885/14.885** (`realm_155`, cliente BR; o EN fechou 14.978/14.978 antes de sair). Versões 55 e 124: só cabeçalho.
 - Extraído: id, nome/descrição (XOR pelo id), mãe/filhas, tipo, prazo, níveis, classes,
   gênero, pré-requisitos, itens pedidos/entregues, NPCs de entrega e prêmio, objetivos
   (monstros com item, itens, dinheiro, nível, mundo, espera), flags e os dois prêmios.
-  Atravessado sem guardar: diálogos, expressões, regiões, prêmios por escala, requisitos
-  de equipe/título/Lar.
+  Atravessado sem guardar: diálogos, expressões, regiões de entrar/sair (falha), prêmios
+  por escala, requisitos de título/Lar.
+- Lidos no B51: janelas de horário (`m_tmStart/End` alternados no trecho variável + `m_tmType`
+  em +109), `m_ulDelvWorld`/`m_pDelvRegion`, `m_pReachSite`, `m_ulLeaveSiteId`/`m_pLeaveSite`,
+  `TEAM_MEM_WANTED` (36 bytes), `m_bRcvChckMem`/`m_fRcvMemDist`/`m_bDistinguishedOcc`/
+  `m_bCoupleOnly`, `m_iPremise_FactionRole`, `m_bTransTo`/`m_ulTransWldId`/`m_TransPt`. No
+  155: 1.058 missões com horário, 1.227 com entrega em zona, 3.136 de chegar a lugar, 444 de
+  equipe, 25 de facção, 227 com teleporte ao receber
+  (`examples/missoes_por_sistema.rs`, `missoes_com_teleporte.rs`).
 - Para o motor de missões (spec 05 §10) também: as flags de `CheckPrerequisite`/`RecursiveAward`
   (`m_bParentAlsoFail/Succ`, `m_bCanRedoAfterFailure`, `m_bClearAsGiveUp`, `m_lAvailFrequency`,
   `m_bAccountTaskLimit`, `m_bRoleTaskLimit`, `m_bHidden`, `m_bDisplayInTitleTaskUI`,
@@ -81,9 +96,12 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 Só o cabeçalho: `DYN_TASK_PACK_HEADER` (`task/TaskTemplMan.cpp:45-51`), 12 bytes —
 `pack_size u32`, `time_mark i32`, `version u16`, `task_count u16`. Recusa como o
 `UnmarshalDynTasks`: `version != 10` ou `pack_size` diferente do tamanho do arquivo. Nos dois
-realms 1.5.5: 12.979 bytes, marca `0x52776c0d`, 28 missões. Uso:
-`GameDataManager::marca_das_missoes_dinamicas`, a resposta ao pedido de marca do cliente
-(spec 04 §5). `falta`: as missões do pacote e o envio do pacote (`TASK_SVR_NOTIFY_DYN_DATA`).
+realm 1.5.5: 12.979 bytes, marca `0x52776c0d`, 28 missões. Usos:
+`GameDataManager::marca_das_missoes_dinamicas` responde ao pedido de marca, e
+`GameDataManager::missoes_dinamicas` guarda o **arquivo inteiro**, que vai ao cliente em
+pedaços quando ele pede os dados (`TASK_CLT_NOTIFY_DYN_DATA`, spec 04 §5; B59) — sem isso o
+cliente não inicializa a lista de missões. `falta`: ler as 28 missões do pacote (o servidor só
+repassa os bytes).
 
 ### 3.3 `npcgen.data` — onde as coisas nascem (`npcgen.rs`)
 
@@ -94,11 +112,13 @@ Autoridade: `cgame/gs/template/npcgendata.h/.cpp`. Um arquivo por pasta de mapa.
 | cabeçalho | `NPCGENFILEHEADER7` (v≥7); `HEADER`/`HEADER6` com 2–3 inteiros em v<7 | — |
 | área de IA | `NPCGENFILEAREA7` (v≥7) / `NPCGENFILEAREA` (v<7, 59) | 71 |
 | gerador de IA | `NPCGENFILEAIGEN` (v≥11, com `iRefreshLower`) / `...AIGEN10` | 64 / 60 |
-| área de recurso | `NPCGENFILERESAREA7` | 42 |
-| objeto dinâmico | `NPCGENFILEDYNOBJ10` | 24 |
-| controlador | `NPCGENFILECTRL8` | 199 |
+| área de recurso | `NPCGENFILERESAREA7` / `RESAREA6` (v6, sem `idCtrl`/`iMaxNum`) / `RESAREA` (v<6, sem `dir`/`rad`) | 42 / 34 / 31 |
+| objeto dinâmico | `NPCGENFILEDYNOBJ10` / `DYNOBJ9` (sem `scale`) / `DYNOBJ` (v<9, sem controlador) | 24 / 23 / 19 |
+| controlador | `NPCGENFILECTRL8` / `CTRL` (v<8, sem `iActiveTimeRange`) | 199 / 195 |
 
-- 1.5.5 é **v11**. Lido inteiro, fechando no fim.
+- 1.5.5 é **v11**. Todas as versões 5–11 (`CNPCGenMan::Load`, `npcgendata.cpp:62-315`); o
+  leitor **recusa sobra** — os arquivos em disco (41 do 1.2.6, 75 do `realm_155`; eram 193 com os 77 do EN, que saiu em B55) fecham no último
+  byte (`examples/conferir_npcgen.rs`, B51).
 - Campos usados: tipo de área (`iType`: no chão / na caixa), `vExts` (**tamanho** da caixa),
   `fOffsetTrn`/`fHeiOff` (zero em 18.902 de 18.903 geradores), `fOffsetWater` (guardado, sem
   mapa de água), `iPathID`, `iSpeedFlag`, contagens sem teto inventado.
@@ -108,7 +128,6 @@ Autoridade: `cgame/gs/template/npcgendata.h/.cpp`. Um arquivo por pasta de mapa.
 - Id de recurso já vem com `0xC0000000` (`ISMATTERID` do cliente).
 - `id_ctrl != 0` **não** desliga a área: a maioria dos controladores é o registro normal de
   NPC permanente e nasce ativa (B17a). Gatilhos de evento não são modelados.
-- `falta`: 9 zonas do 1.2.6 com v5/v6 com conteúdo.
 
 ### 3.4 `aipolicy.data` — IA de criaturas (`aipolicy.rs`)
 
@@ -119,10 +138,12 @@ fonte **1.7.2**. Cabeçalho `F_POLICY_EXP_VERSION` (1.5.5 = 1, 3.144 políticas;
 
 ### 3.5 `ptemplate.conf` (`ptemplate.rs`)
 
-Seções por classe (`[SWORDSMAN]`, `[ORGE]`, `[ASN]`, `[ANGEL]`…), **GBK**. Usado para:
-atributos iniciais por classe e a base de vida/mana
-(`max_hp = hp + lvlup_hp×(nível−1) + vit_hp×vitalidade`, idem mana). As velocidades dele são
-valores mortos no original. `[TOWN_REGION]` é o mapa de ressurreição, não o nascimento.
+Seções por classe (`[SWORDSMAN]`, `[ORGE]`, `[ASN]`, `[ANGEL]`…), **GBK**. Lido, mas quase
+nada dele chega ao jogador: o `gamed` copia a ficha do banco (`userlogin.cpp`), que nasce do
+`clsconfig`. **Não** são usados os atributos (Arqueiro 15/20/5/10 aqui; 5/5/5/5 no molde)
+nem o `hp`/`mp`: `max_hp = lvlup_hp×(nível−1) + vit_hp×vitalidade`, base zero (B51 — antes
+somava o `hp` do `.conf` e o Arqueiro nascia com 20 de energia). As velocidades dele também
+são mortas. `[TOWN_REGION]` é o mapa de ressurreição, não o nascimento.
 
 ### 3.6 Terreno: `gs.conf` → `specs/mapas/terreno_155.json` → `map/<n>.hmap` (`terreno.rs`)
 
@@ -170,11 +191,14 @@ Molde por classe via `GetDataRoleId` (`gamedbmanager.cpp:208`): 0→16, 1→19, 
 
 - Leitor: `specs/clsconfig_155/ler_clsconfig.py` (nome `cls<N>gender<M>`, `GRoleBase` e começo
   de `GRoleStatus`). Posições aplicadas ao banco por
-  `scripts/2026_09_12_nascimento_no_mapa_161_155br.sql` (todos no mapa 161, pacote
+  `scripts/2026_09_12_nascimento_no_mapa_161_155.sql` (todos no mapa 161, pacote
   `pwserver_155v156`).
 - Inventário e equipamento conferidos byte a byte para o Arqueiro: só o Arco de Madeira
-  (2250), **sem munição**. As flechas do molde (8543 × 1000 no slot 11) são decisão do projeto
-  a pedido do Murillo (`scripts/2026_09_14_flechas_do_arqueiro_155br.sql`).
+  (2250), **sem munição**. As flechas do molde são decisão do projeto a pedido do Murillo:
+  **Flecha de Novato (43283) × 1000** no slot 11, porque o arco é arma de nível 0 e a Flecha
+  de Iniciante (8543) pede nível 1–17 (`scripts/2026_09_16_flecha_de_novato_155.sql`).
+- `GRoleStatus.property` (`extend_prop`, `property.h:35`) dos 12 moldes: **5/5/5/5** e vida/mana
+  = `vit_hp×5`/`eng_mp×5` — a evidência dos atributos iniciais (spec 05 §7).
 - `falta`: `config_data` (provável barra de atalhos), leitor de inventário/equipamento, habilidades.
 
 ### 3.10b Habilidades do servidor — `specs/habilidades_155/habilidades.json` (`habilidades.rs`)
@@ -182,9 +206,24 @@ Molde por classe via `GetDataRoleId` (`gamedbmanager.cpp:208`): 0→16, 1→19, 
 Não é arquivo do realm: é extraído dos stubs `cskill/skills/skillNNN.h` do `EvolvedPWServer`
 por `specs/habilidades_155/extrair_habilidades.py` e embutido com `include_str!` (o
 `Dockerfile.core` copia o JSON). 3.316 habilidades; por nível: mana, `GetExecutetime`,
-`GetCoolingtime`, `GetRequiredLevel/Sp/Money`, `GetTime` de cada estado. `null` = expressão
-que depende de mais que o nível ou stub com `TODO fix` — tratado como desconhecido. Carregado
-para `elements.data` v156/v159 (`GameDataManager::habilidades`).
+`GetCoolingtime`, `GetRequiredLevel/Sp/Money`, `GetTime` de cada estado, e desde o B52
+`time_type` (3 = carga), `alcance` (`GetPraydistance` = `arma × GetRange() + fixo`, 3.313) e
+`dano` (o estado com `SetDamage`/`SetXdamage`: base física/mágica, escola, fator, `ratio` e
+`plus` por nível, com `GetCharging()` na carga cheia; 1.123). `null` = expressão
+que depende de mais que o nível ou stub com `TODO fix` — tratado como desconhecido. Desde o B53:
+`arrowcost`, `tipo_de_area` (`range.type`), `doenchant`, `dobless`, `raio`,
+`distancia_de_ataque`, `angulo`, `precisao` (por nível), `distancia_de_efeito` (formato do
+alcance) e os roteiros `no_alvo` (`StateAttack`, 2.304) e `em_si` (`BlessMe`, 266) como
+`[quem, setter, expressão]` — expressão com `L`, `P_X`, `V_X`, `A_X`, `S_X`, `INT(...)`, `?:`,
+avaliada pelo servidor (`pw_gs::efeitos::expr`). Carregado para `elements.data` v156/v159
+(`GameDataManager::habilidades`).
+
+### 3.10c Tratadores de addon — `specs/addons_155/addons.json` (`addons.rs`)
+
+Extraído de `cgame/gs/item/item_addon.cpp` (`INSERT_ADDON(id, tratador)`, fora de comentário)
+por `specs/addons_155/extrair_addons.py`: 2.911 ids, 245 tratadores. O tratador decide o
+sorteio dos parâmetros (`Sorteio`: ponto, entre dois, porcento, refino...) e o efeito
+(`BonusDeAddons`, spec 05 §5.1).
 
 ### 3.11 `global_api.lua`
 
@@ -195,8 +234,7 @@ cliente encerrar ("wrong config data").
 
 | realm | base do servidor | `.data` do cliente | elements | tasks |
 | :--- | :--- | :--- | :--- | :--- |
-| `realm_155BR` | `F:\PW\1.5.5\home155\gamed\config` | cliente BR | v156 (55.442.775 B) | 129 |
-| `realm_155` | pacote anterior ao home155 (com `a61/a63/a76/a77` modificados, B12) | cliente EN | v159 (55.170.911 B) | 129 |
+| `realm_155` | `F:\PW\1.5.5\home155\gamed\config` | cliente BR | v156 (55.442.775 B) | 129 |
 
 O pacote de servidor e os `.data` do cliente precisam ser da mesma família: `npcgen.data`,
 mapas e `.sev` **não vêm do cliente** (B11, B12).

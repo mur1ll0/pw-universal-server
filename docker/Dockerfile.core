@@ -35,6 +35,8 @@ COPY specs/mapas ./specs/mapas
 # Os números de cada habilidade (recarga, conjuração, custo de aprender), extraídos dos
 # stubs do cskill do servidor 1.5.5 — `pw_data_loader::habilidades` os embute.
 COPY specs/habilidades_155/habilidades.json ./specs/habilidades_155/habilidades.json
+# O tratador de cada addon, extraído do item_addon.cpp — `pw_data_loader::addons` o embute.
+COPY specs/addons_155/addons.json ./specs/addons_155/addons.json
 
 # Argumento para definir qual binário compilar
 ARG CRATE_NAME=pw-auth

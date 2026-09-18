@@ -1,4 +1,4 @@
--- Onde cada classe nasce no realm 155BR: o mapa 161 (`a61`), pelos moldes do servidor
+-- Onde cada classe nasce no realm 155: o mapa 161 (`a61`), pelos moldes do servidor
 -- original.
 --
 -- # De onde vem
@@ -45,9 +45,9 @@ UPDATE class_templates AS t
     (10, -760.7382, 44.8697, -218.2820),                    -- Ceifador     (role 21)
     (11, -760.2554, 44.8826, -218.3112)                     -- Tormentador  (role 22)
   ) AS v(cls, x, y, z)
- WHERE t.realm_id = 'realm_155BR' AND t.cls = v.cls;
+ WHERE t.realm_id = 'realm_155' AND t.cls = v.cls;
 
 COMMIT;
 
 SELECT cls, name, spawn_world_id, spawn_x, spawn_y, spawn_z
-  FROM class_templates WHERE realm_id = 'realm_155BR' ORDER BY cls;
+  FROM class_templates WHERE realm_id = 'realm_155' ORDER BY cls;

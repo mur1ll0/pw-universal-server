@@ -200,7 +200,7 @@ impl CharacterClass {
     /// Arma inicial da classe (`WEAPON_ESSENCE.ID` do `elements.data`).
     ///
     /// Cada uma é a arma de `require_level = 1` do [`Self::weapon_major_type`] da classe,
-    /// conferida no `elements.data` do realm 155BR — ver o teste
+    /// conferida no `elements.data` do realm 155 — ver o teste
     /// `armas_iniciais_batem_com_o_elements` no `pw-data-loader`.
     pub fn default_weapon_id(&self) -> i32 {
         match self {

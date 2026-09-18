@@ -69,6 +69,10 @@ pub mod ids {
     pub const MOVE_ITEM_TO_EQUIP: u16 = 18;
     /// `CANCEL_ACTION` — só cabeçalho.
     pub const CANCEL_ACTION: u16 = 42;
+    /// `C2S::CONTINUE_ACTION` — só cabeçalho. O cliente manda ao soltar uma habilidade de
+    /// carga antes do fim (`EC_HostPlayer.cpp:2270-2279`, `DlgHost.cpp:238-245`); o
+    /// servidor faz `PlayerRestartSession` (`playercmd.cpp:2292-2298`).
+    pub const CONTINUE_ACTION: u16 = 51;
     /// `GOTO` — o Ctrl+clique do GM: "me ponha aqui".
     ///
     /// `struct cmd_goto { A3DVECTOR3 vDest; }`, 12 bytes
@@ -108,6 +112,12 @@ pub mod ids {
     pub const TEAM_REJECT_INVITE: u16 = 29;
     /// `TEAM_LEAVE_PARTY` — só cabeçalho.
     pub const TEAM_LEAVE_PARTY: u16 = 30;
+    /// `C2S::CMD::set_status_point` (`common/protocol.h:5099-5106`): `vit, eng, str, agi`,
+    /// quatro `size_t`.
+    pub const SET_STATUS_POINT: u16 = 22;
+    /// `C2S::CMD::gather_material { int mid; short tool_where; short tool_index; int
+    /// tool_type; int task_id; }` (`common/protocol.h:5310-5318`).
+    pub const GATHER_MATERIAL: u16 = 54;
     /// `SRV::C2S::CMD::self_get_property` — só cabeçalho. O cliente pede o próprio bloco
     /// de estado.
     pub const GET_EXT_PROP: u16 = 21;
@@ -124,6 +134,15 @@ pub mod ids {
     pub const GET_OTHER_EQUIP: u16 = 33;
     /// `SRV::C2S::CMD::query_npc_info_1` — mesmo formato do 67.
     pub const QUERY_NPC_INFO_1: u16 = 68;
+    /// `QUERY_TITLE` — o cliente pede os títulos do personagem (`roleid` de 4 bytes).
+    ///
+    /// **Ele trava o sistema de missões enquanto não é respondido.** O cliente só marca
+    /// `m_bTitleDataReady` ao receber `QUERY_TITLE_RE` (`CECHostPlayer::InitTitle`,
+    /// `EC_HostPlayer.cpp:10145-10152`), e `ATaskTemplMan::UpdateStatus`
+    /// (`task/TaskTemplMan.cpp:1342-1350`) sai sem fazer nada enquanto isso — nunca chamando
+    /// `CheckAutoDelv`, que é quem descobre as missões de entrega automática. Sem resposta,
+    /// nenhuma missão automática chega (B60).
+    pub const QUERY_TITLE: u16 = 154;
     /// `QUERY_CASH_INFO` — só cabeçalho. O cliente pergunta o saldo.
     pub const QUERY_CASH_INFO: u16 = 110;
     /// `SRV::C2S::CMD::service_hello` — abrir diálogo com um NPC. O IR marca este id como

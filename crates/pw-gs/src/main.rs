@@ -82,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
         servidos.push(RoteadorDeMapas::preparar_mapa(mundo, game_version).await);
     }
     let roteador = Arc::new(RoteadorDeMapas::new(servidos, char_repo));
+    roteador.ligar_trocas();
 
     // 4. Sobe a ponta de barramento. É por aqui que o `pw-link` entrega os subcomandos
     //    do mundo 3D.

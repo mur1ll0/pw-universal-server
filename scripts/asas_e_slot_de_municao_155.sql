@@ -12,13 +12,13 @@
 --     nível 1. O cliente confere a classe sozinho: `CanUseEquipment` recusa `ICID_WING`
 --     para quem não for `PROF_ARCHOR` nem `PROF_ANGEL` (`EC_HostPlayer.cpp:4927`).
 --
--- Mesmos valores de `ClassTemplateRepository`. Só realm_155 e realm_155BR.
+-- Mesmos valores de `ClassTemplateRepository`. Só o realm_155.
 
 BEGIN;
 
 CREATE TEMP TABLE alados ON COMMIT DROP AS
   SELECT id, cls FROM characters
-   WHERE realm_id IN ('realm_155', 'realm_155BR')
+   WHERE realm_id = 'realm_155'
      AND NOT is_deleted
      AND cls IN (6, 7);
 

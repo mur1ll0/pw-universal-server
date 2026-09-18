@@ -1,6 +1,8 @@
+pub mod addons;
 pub mod aipolicy;
 pub mod armaduras;
 pub mod armas;
+pub mod cartas;
 pub mod classes;
 pub mod dyn_tasks;
 pub mod collision;
@@ -11,6 +13,7 @@ pub mod manager;
 pub mod monstros;
 pub mod npcgen;
 pub mod habilidades;
+pub mod minas;
 pub mod precinct;
 pub mod servicos;
 pub mod precos;

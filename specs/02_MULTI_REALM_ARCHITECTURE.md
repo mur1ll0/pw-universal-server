@@ -33,8 +33,7 @@ uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio
 
 | realm (`REALM_ID`) | `GAME_VERSION` | link (porta pública) | servidor de mundo (mapas) | dados |
 | :--- | :--- | :--- | :--- | :--- |
-| `realm_155BR` | 1.5.5 | `pw-realm-155br` **29004** | `pw-world-155br` (mapas **1 e 161**) | `data/realm_155BR/config` (cliente BR, v156) |
-| `realm_155` | 1.5.5 | `pw-realm-155` 29003 | 1 → `pw-world-155` | `data/realm_155/config` (cliente EN, v159) |
+| `realm_155` | 1.5.5 | `pw-realm-155` **29004** | `pw-world-155` (mapas **1 e 161**) | `data/realm_155/config` (cliente BR, v156) |
 | `realm_126` | 1.2.6 | `pw-realm-126` 29000 | 1 → `pw-world-126` | `data/realm_126` |
 | `realm_153` | 1.5.3 | `pw-realm-153` 29001 | 1 → `pw-world-153` | abandonado |
 | `realm_148` | 1.4.8 | `pw-realm-148` 29002 | 1 → `pw-world-148` | nunca foi alvo |
@@ -51,7 +50,10 @@ uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio
   primeiro. `GS_BUS` sem `<tag>=` vale para todos os mapas.
 - Medido antes da consolidação (2026-09-14): cada contêiner de mapa ocupava ~1,1 GB, quase
   todo em dados repetidos; o `gs.conf` do 1.5.5 lista ~80 mapas.
-- **Trocar de mapa durante a sessão não existe** — `falta`.
+- **Trocar de mapa durante a sessão** (B51): entre mapas do **mesmo processo**, pelo roteador
+  (`RoteadorDeMapas::ligar_trocas`): o mapa de origem solta sessão e entidade, o destino manda
+  `NOTIFY_HOSTPOS` com o `tag` novo e grava mapa e posição antes de mostrar o jogador (spec 05
+  §7). Mapa servido por **outro** contêiner `falta` (o link teria de reencaminhar a sessão).
 - Um segundo realm da mesma versão: receita em `docs/MULTIPLOS_REALMS.md`; cada realm
   precisa de uma linha em `realms` e dos moldes em `class_templates`.
 
@@ -97,11 +99,12 @@ pelo cliente contra o que ele calcula dos próprios arquivos (`EC_Game.cpp:646`)
 
 - `ELEMENTDATA_VERSION` e `task_templ` são as **constantes do cliente**, lidas do
   `elements.data`/`tasks.data` do realm (o do servidor é diferente: `0x30000080` contra
-  `0x3000007f` no 1.5.3). 155BR: `0x3000009c` / 129.
+  `0x3000007f` no 1.5.3). 155: `0x3000009c` / 129.
 - `gshop_ts` é o primeiro `u32` de `gshop.data`, `gshop_ts2` o de `gshop1.data` —
   **arquivos diferentes** (A23).
-- Qualquer arquivo de dados do realm diferente do cliente = "versão baixa". Por isso cada
-  realm 1.5.5 usa os `.data` **do seu cliente** (BR v156, EN v159).
+- Qualquer arquivo de dados do realm diferente do cliente = "versão baixa". Por isso o
+  realm 1.5.5 usa os `.data` **do cliente BR** (v156). Até 2026-09-17 havia também um realm
+  com os do cliente EN (v159); saiu para ficar um realm por versão (B55).
 
 ### 3.4 `nonce`
 
@@ -121,15 +124,36 @@ Na entrada o link manda a carga inicial (ordem importa, B36e/B38): `INST_DATA_CH
 mapa), `SELF_INFO_00`, `OWN_EXT_PROP`, `SELF_INFO_1`, habilidades, `TASK_DATA` (5 blocos no
 1.5.x, com as listas de missão de `character_task_lists` — spec 05 §10), bolsa, equipamento,
 bolsa de missão (pacote 2), com o bloco de dados de cada peça, dinheiro, reputação, modo PvP,
-`SERVER_TIME` com `lua_version = 102` (primeira linha do `global_api.lua`), e
-`GetUIConfig_Re` no máximo uma vez por personagem. Layouts: spec 04.
+`SERVER_TIME` com `lua_version = 102` (primeira linha do `global_api.lua`). Layouts: spec 04.
+
+**`GetUIConfig_Re` (B52):** uma vez por personagem, com o bloco gravado em
+`character_client_config`, e **só em resposta ao `GetUIConfig` que o cliente manda depois do
+`TASK_DATA` do mundo** (`BusUplink::dados_iniciais_entregues`, marcado quando o link repassa o
+S2C 105 vindo do `pw-gs`). O cliente pede a configuração a cada `TASK_DATA` e usa esse comando
+como fim da carga inicial (`EC_HostMsg.cpp:3947-3949`). **Com uplink de mundo o link não manda
+`TASK_DATA` próprio (B53)**: mandava, o primeiro pedido chegava antes das habilidades e da bolsa
+do mundo, era o respondido, e o segundo era recusado — as barras eram montadas vazias e
+gravadas assim ao sair (teste de 2026-09-16: 211 bytes mandados, 172 gravados). Sem uplink, o
+link manda o `TASK_DATA` e responde ao primeiro pedido.
+
+**O bloco vai byte a byte como o cliente o gravou (B54)**: `S2CGetUIConfigRe::new` trocava os
+16 primeiros bytes por um cabeçalho inventado, o cliente lia versão 1, não descomprimia e
+registrava `LoadConfigsFromServer, data read error (2)` em todo login (`element/logs/EC.log`)
+— as barras e o layout **nunca** carregaram, e o cliente gravava a configuração padrão ao sair.
+**Sem configuração gravada**, o link manda a do molde da classe
+(`class_templates.ui_config`, o `config_data` do `GRoleBase` dos moldes do `clsconfig`:
+barra com as habilidades iniciais e o rastreador de missões ligado), como o `gamedbd` faz ao
+criar o personagem.
 
 Personagem novo: posição, kit e equipamento vêm de `class_templates` do realm (espelho do
-`gamedbd/clsconfig` original, B43/B47); atributos iniciais do `ptemplate.conf`; raça pela
-classe; vida e mana cheias pela conta de `BaseDaClasse::vida_e_mana_maximas`.
+`gamedbd/clsconfig` original, B43/B47); atributos **5/5/5/5** para toda classe (os moldes do
+`clsconfig`, B51); raça pela classe; vida e mana cheias pela conta de
+`BaseDaClasse::vida_e_mana_maximas`.
 
 Ainda no link: fala (canal global por processo, sem raio), lista de amigos (sempre vazia),
-UI config / help states / custom data, e alguns subcomandos (spec 04 §4).
+UI config e help states (gravados por personagem e só para o personagem da sessão, até
+64 KiB; antes eram descartados e as barras de atalho voltavam vazias), custom data, e alguns
+subcomandos (spec 04 §4).
 
 ## 5. Barramento `pw-link` ↔ `pw-gs` (`pw-bus`)
 

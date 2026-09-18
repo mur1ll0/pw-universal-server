@@ -1,4 +1,4 @@
-//! As tabelas de progressão e os distritos, lidos dos arquivos do realm 155BR.
+//! As tabelas de progressão e os distritos, lidos dos arquivos do realm 155.
 //!
 //! Os números foram conferidos no `elements.data` pelo leitor Python
 //! (`specs/elements_layouts/pw_elements_reader.py`) e no `a61/precinct.sev` por leitura
@@ -8,7 +8,7 @@ use pw_data_loader::{Distritos, GameDataManager, TabelaDeProgressao};
 use std::path::PathBuf;
 
 fn pasta() -> Option<PathBuf> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_155BR/config");
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_155/config");
     if p.join("elements.data").exists() {
         Some(p)
     } else {

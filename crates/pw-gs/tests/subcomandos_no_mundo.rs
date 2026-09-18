@@ -49,6 +49,8 @@ const NPC: i64 = 0x8000_0101u32 as i32 as i64;
 const TEMPLATE_DO_NPC: u32 = 23964;
 const MISSAO_DO_NPC: u32 = 5150;
 const HABILIDADE_DO_TREINADOR: i32 = 117;
+/// Habilidade de teste em área com efeitos (B53).
+const HABILIDADE_EM_AREA: i32 = 4322;
 /// HP deliberadamente diferente de 1000: era o valor fixo que o `gateway.rs` mandava, e
 /// um teste com 1000 passaria mesmo se nada tivesse mudado de lado.
 const MONSTRO_HP: i64 = 137;
@@ -75,6 +77,10 @@ fn monstro() -> MonsterEntity {
         attack_max: 2,
         magic_attack: [(0, 0); 5],
         attack_range: 2.0,
+        // 1,5 s entre golpes e 0,5 s de atraso do dano, os números que a IA usava fixos
+        // antes de virem do `MONSTER_ESSENCE` (B62).
+        ataque_em_ticks: 30,
+        atraso_do_dano_em_ticks: 10,
         aggro_range: 30.0,
         sight_range: 40,
         // Toda a vida máxima em experiência: quem tira os 137 de vida leva 137.
@@ -92,7 +98,7 @@ fn monstro() -> MonsterEntity {
         respawn_timer_ms: 0,
         respawn_delay_ms: 1000,
         target_id: None,
-        buffs: Vec::new(),
+        efeitos: Default::default(),
         danos: Vec::new(),
         primeiro_atacante: None,
     }
@@ -260,6 +266,22 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
         .expect("habilidade de teste"),
     );
 
+    // B53 — golpe mágico em bola no alvo (raio 6) com `doenchant`: lentidão e atordoamento.
+    dados.habilidades.por_id.insert(
+        HABILIDADE_EM_AREA as u32,
+        serde_json::from_str(
+            r#"{"id": 4322, "cls": 255, "max_level": 1, "type": 1, "rank": 0, "pre_skills": [],
+                "mp": null, "execucao_ms": null, "recarga_ms": null, "nivel_exigido": null,
+                "sp_exigido": null, "dinheiro_exigido": null, "estados_ms": [],
+                "tipo_de_area": 3, "raio": [6.0], "doenchant": true,
+                "dano": {"estado": 0, "base": "magico", "elemento": "Firedamage", "fator": 1.0,
+                         "ratio": [0.0], "plus": [10.0], "carga": false},
+                "no_alvo": [["V","Probability","1.0 * 100"],["V","Time","5000"],["V","Ratio","0.3"],["V","Slow","1"],
+                            ["V","Time","3000"],["V","Dizzy","1"]]}"#,
+        )
+        .expect("habilidade em área de teste"),
+    );
+
     let mut mundo = WorldInstance::new(
         1,
         Arc::new(dados),
@@ -279,6 +301,7 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
             name: "NPC".into(),
             position: Vector3::new(1.0, 0.0, 1.0),
             dialog_id: 0,
+            direcao: 0,
         },
     );
     let mundo = Arc::new(RwLock::new(mundo));
@@ -613,6 +636,9 @@ async fn entrar(
         p.mp = 50;
         p.max_mp = 50;
         p.move_speed = 4.8;
+        // Alcance que cobre o monstro de teste em (5, 0, 5): a sessão de golpe confere o
+        // alcance (`CheckAttack`), e o realm de teste não tem arma nem classe carregadas.
+        p.attack_range = 20.0;
     }
     m_grade(mundo, roleid).await;
     link
@@ -681,20 +707,24 @@ async fn receber(link: &mut pw_bus::transport::BusConnection, n: usize) -> Vec<V
 /// Contar pacotes exatos é frágil: a mesma conexão carrega broadcast de entrada, de
 /// movimento e o que mais estiver acontecendo. Aqui o teste diz **o que** espera, não
 /// quantos pacotes vêm antes.
+/// Lê do link até achar `cmd`. O teto é generoso de propósito: desde o B62 a morte do
+/// monstro chega por evento do tique, atrás do que o combate em curso já enfileirou.
 async fn esperar_comando(link: &mut pw_bus::transport::BusConnection, cmd: u16) -> Vec<u8> {
-    for _ in 0..20 {
+    let mut vistos = Vec::new();
+    for _ in 0..60 {
         let m = tokio::time::timeout(Duration::from_secs(5), link.receber())
             .await
             .unwrap_or_else(|_| panic!("nada chegou enquanto eu esperava o comando {cmd}"))
             .unwrap()
             .expect("conexão fechou");
         if let BusMessage::GameToClient { data, .. } = m {
+            vistos.push(cmd_de(&data));
             if cmd_de(&data) == cmd {
                 return data;
             }
         }
     }
-    panic!("o comando {cmd} não chegou em 20 pacotes");
+    panic!("o comando {cmd} não chegou em 60 pacotes; vieram {vistos:?}");
 }
 
 /// Junta tudo o que o mundo manda até o `TASK_DATA` (105), o marcador de fim da carga.
@@ -754,14 +784,35 @@ async fn atacar_debita_o_hp_de_verdade_do_monstro() {
     .await
     .unwrap();
 
-    let resp = receber(&mut link, 2).await; // HOST_ATTACKRESULT + NPC_INFO_00
+    // HOST_START_ATTACK (84, a sessão), ATTACK_ONCE (83, a munição do golpe,
+    // `FillAttackMsg`) e HOST_ATTACKRESULT. A barra de vida **não** vem junto (B56).
+    let resp = receber(&mut link, 3).await;
+    let inicio = resp.iter().find(|v| cmd_de(v) == 84).expect("sem HOST_START_ATTACK (84)");
+    assert_eq!(inicio.len(), 2 + 7, "cmd_host_start_attack: idTarget, ammo_remain, attack_speed");
+    assert_eq!(i32_em(inicio, 2), MONSTRO as i32);
+    let municao = resp.iter().find(|v| cmd_de(v) == 83).expect("sem ATTACK_ONCE (83)");
+    assert_eq!(municao.len(), 3, "ATTACK_ONCE: cabeçalho + arrow_dec");
+    assert_eq!(municao[2], 0, "sem arma de longo alcance nenhuma flecha sai");
     let golpe = resp.iter().find(|v| cmd_de(v) == 24).expect("sem HOST_ATTACKRESULT (24)");
     let dano = i32_em(golpe, 6);
     assert!(dano > 0, "o golpe não causou dano");
     assert_eq!(i32_em(golpe, 2), MONSTRO as i32, "idTarget");
 
-    let barra = resp.iter().find(|v| cmd_de(v) == 33).expect("sem NPC_INFO_00 (33)");
-    let hp_no_fio = i32_em(barra, 6);
+    assert!(
+        !resp.iter().any(|v| cmd_de(v) == 33),
+        "a barra de vida saiu junto do golpe — o cliente a derruba antes de a flecha sair"
+    );
+
+    // B56 — ela vai no batimento de 1 s, a quem tem o monstro selecionado
+    // (`RefreshSubscibeList`, `actobject.cpp:1346-1353`).
+    // A sessão é fechada antes, para o batimento não dar o golpe seguinte.
+    {
+        let mut m = mundo.write().await;
+        m.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
+        m.tick(1000).await;
+    }
+    let barra = esperar_comando(&mut link, 33).await;
+    let hp_no_fio = i32_em(&barra, 6);
 
     let hp_no_mundo = mundo.read().await.monsters[&MONSTRO].0.hp;
     assert_eq!(
@@ -777,6 +828,53 @@ async fn atacar_debita_o_hp_de_verdade_do_monstro() {
         hp_no_mundo < MONSTRO_HP,
         "o monstro não perdeu vida — voltou a ser resposta fictícia?"
     );
+}
+
+/// B56 — a barra de vida do monstro vai no batimento de 1 s, só a quem o tem selecionado e só
+/// quando mudou (`RefreshSubscibeList` + `_refresh_state`, `actobject.cpp:1296-1353`).
+#[tokio::test]
+async fn a_barra_de_vida_vai_no_batimento_e_so_quando_muda() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // Quantos NPC_INFO_00 do monstro chegam em 300 ms.
+    async fn barras(link: &mut pw_bus::transport::BusConnection) -> Vec<i32> {
+        let mut v = Vec::new();
+        while let Ok(Ok(Some(m))) = tokio::time::timeout(Duration::from_millis(300), link.receber()).await {
+            if let BusMessage::GameToClient { data, .. } = m {
+                if cmd_de(&data) == 33 && i32_em(&data, 2) == MONSTRO as i32 {
+                    v.push(i32_em(&data, 6));
+                }
+            }
+        }
+        v
+    }
+
+    // Sem seleção, dano no monstro não manda nada.
+    mundo.write().await.monsters.get_mut(&MONSTRO).unwrap().0.hp -= 5;
+    mundo.write().await.tick(1000).await;
+    assert!(barras(&mut link).await.is_empty(), "barra para quem não selecionou");
+
+    // Selecionar manda na hora (`query_info00`).
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    assert_eq!(barras(&mut link).await, vec![(MONSTRO_HP - 5) as i32]);
+
+    // Sem mudança, o batimento não repete.
+    mundo.write().await.tick(1000).await;
+    assert!(barras(&mut link).await.is_empty(), "o batimento repetiu a mesma vida");
+
+    // Com mudança, manda uma vez.
+    mundo.write().await.monsters.get_mut(&MONSTRO).unwrap().0.hp -= 7;
+    mundo.write().await.tick(1000).await;
+    assert_eq!(barras(&mut link).await, vec![(MONSTRO_HP - 12) as i32]);
+    mundo.write().await.tick(1000).await;
+    assert!(barras(&mut link).await.is_empty(), "a mesma mudança saiu duas vezes");
 }
 
 #[tokio::test]
@@ -807,12 +905,17 @@ async fn o_monstro_morre_e_o_abate_leva_o_template_certo() {
         .await
         .unwrap();
 
-        let r = receber(&mut link, 2).await;
-        let barra = r.iter().find(|v| cmd_de(v) == 33).expect("sem NPC_INFO_00");
-        if i32_em(barra, 6) == 0 {
+        receber(&mut link, 3).await;
+        // B62 — o golpe é anunciado na hora e a vida cai depois do `attack_delay`
+        // (`InsertDamageEntry`): o tique é que cobra o dano adiado.
+        let vida = mundo.read().await.monsters[&MONSTRO].0.hp;
+        tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.hp < vida).await;
+        if mundo.read().await.monsters[&MONSTRO].0.hp == 0 {
             morreu = true;
             break;
         }
+        // Fecha a sessão para o próximo `NORMAL_ATTACK` abrir outra e golpear na hora.
+        mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
     }
     assert!(morreu, "o monstro não chegou a zero em 500 golpes");
 
@@ -834,6 +937,75 @@ async fn o_monstro_morre_e_o_abate_leva_o_template_certo() {
             .get_entities_in_range(&Vector3::new(5.0, 0.0, 5.0), 3.0)
             .contains(&MONSTRO),
         "o monstro morto continuou na grade espacial"
+    );
+}
+
+/// B62 — o golpe é anunciado na hora e a vida só cai no fim da animação.
+///
+/// `InsertDamageEntry(dano, attack.speed)` (`gs/actobject.cpp:1758-1776`) adia o
+/// `GM_MSG_HURT` em `attack_delay` tiques de 50 ms, enquanto o `HOST_ATTACKRESULT` já saiu.
+/// Aplicar na hora fazia o monstro perder vida no clique, antes de a flecha sair — em jogo
+/// parecia "um golpe a mais" no começo de cada sessão (relato de 2026-09-18).
+#[tokio::test]
+async fn a_vida_do_monstro_so_cai_depois_do_atraso_do_golpe() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    receber(&mut link, 2).await;
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+    })
+    .await
+    .unwrap();
+    // HOST_START_ATTACK + ATTACK_ONCE + HOST_ATTACKRESULT: o cliente já sabe do golpe.
+    let resposta = receber(&mut link, 3).await;
+    let resultado = resposta
+        .iter()
+        .find(|v| cmd_de(v) == 24)
+        .expect("sem HOST_ATTACKRESULT (24)");
+    let dano = i32_em(resultado, 6);
+    assert!(dano > 0, "o golpe saiu sem dano");
+
+    // E a vida ainda está cheia: o dano está na fila, não no monstro.
+    assert_eq!(
+        mundo.read().await.monsters[&MONSTRO].0.hp,
+        MONSTRO_HP,
+        "a vida caiu junto com o aviso do golpe — o dano não foi adiado"
+    );
+
+    // O `attack_delay` é `(attack_speed × 20 × 0,8) − 1` tiques (`playertemplate.h:980`).
+    let ticks = {
+        let m = mundo.read().await;
+        let v = m.players[&(roleid as i64)].attack_speed;
+        ((v * 20.0).round() as i32 as f32 * 0.8) as i32 - 1
+    };
+    assert!(ticks > 1, "o personagem de teste precisa de um atraso mensurável: {ticks}");
+
+    let mut passados = 0;
+    let caiu = tickar_ate(&mundo, |m| {
+        passados += 1;
+        m.monsters[&MONSTRO].0.hp < MONSTRO_HP
+    })
+    .await;
+    assert!(caiu, "o dano adiado nunca chegou ao monstro");
+    assert!(
+        passados >= ticks,
+        "o dano caiu em {passados} tiques; o atraso do golpe é {ticks}"
+    );
+    assert_eq!(
+        mundo.read().await.monsters[&MONSTRO].0.hp,
+        MONSTRO_HP - dano as i64,
+        "o dano aplicado não é o que foi anunciado"
     );
 }
 
@@ -928,6 +1100,35 @@ async fn o_monstro_revida_e_o_cliente_fica_sabendo() {
     // Segunda: mesmo que revidasse, o dano era aplicado **em silêncio**; o cliente via a
     // vida cheia até morrer do nada.
     let (mundo, addr, roleid, _convidado) = cenario!();
+
+    // B61 — veste os dez slots de armadura (`EQUIP_ARMOR_START..EQUIP_ARMOR_END`,
+    // `gs/item.h:194-241`) para que o sorteio de `SelectRandomArmor` sempre ache peça: assim
+    // o índice que chega ao cliente tem de ser um deles, e não `0x7f`.
+    const DURABILIDADE_DA_PECA: u32 = 2500;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    for slot in 1..=10u16 {
+        itens
+            .upsert_item(&pw_core::ItemRecord {
+                id: None,
+                character_id: roleid,
+                container_type: pw_core::ContainerType::Equipment,
+                slot,
+                item_id: 4200 + slot as u32,
+                count: 1,
+                max_count: 1,
+                refine_level: 0,
+                sockets_count: 0,
+                sockets: vec![],
+                durability: DURABILIDADE_DA_PECA,
+                max_durability: DURABILIDADE_DA_PECA,
+                bind_status: 0,
+                octets: vec![],
+                custom_attributes: serde_json::json!({}),
+            })
+            .await
+            .expect("vestir a peça");
+    }
+
     let mut link = entrar(&mundo, addr, roleid).await;
 
     // Encosta no monstro: a IA só ataca dentro do alcance.
@@ -953,7 +1154,9 @@ async fn o_monstro_revida_e_o_cliente_fica_sabendo() {
     })
     .await
     .unwrap();
-    receber(&mut link, 2).await;
+    receber(&mut link, 3).await; // HOST_START_ATTACK + ATTACK_ONCE + HOST_ATTACKRESULT
+    // Sem mais golpes da sessão enquanto o teste espera o revide.
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
 
     let hp_inicial = mundo.read().await.players[&(roleid as i64)].hp;
 
@@ -974,6 +1177,53 @@ async fn o_monstro_revida_e_o_cliente_fica_sabendo() {
         .expect("sem HOST_ATTACKED (26) — o dano chegou em silêncio");
     let dano = i32_em(golpe, 6);
     assert!(dano > 0, "o aviso de dano veio zerado");
+
+    // B59 — e com o **id do monstro** que bateu. Com zero ali, o cliente não acha o
+    // atacante (`ISPLAYERID`/`ISNPCID` são falsos para zero) e não mostra golpe nenhum: em
+    // jogo o jogador perdia vida sem ver o monstro atacar (teste de 2026-09-17).
+    assert_eq!(
+        i32_em(golpe, 2),
+        MONSTRO as i32,
+        "o HOST_ATTACKED foi sem o id de quem bateu"
+    );
+
+    // B60/B61 — e com os dois campos que o original preenche: a peça desgastada e o
+    // `speed`, que é o `_damage_delay` do monstro e dá a duração da animação
+    // (`npc.cpp:2118`, `EC_NPC.cpp:2043-2064`). O `cEquipment` ia **zero**, e o cliente
+    // lia isso como "peça 0" — a arma — e gastava a durabilidade dela a cada golpe
+    // recebido (`EC_HostMsg.cpp:968-976`).
+    //
+    // Agora é o índice que `SelectRandomArmor` sorteou (`player.cpp:9552-9570`): com os dez
+    // slots vestidos, tem de ser um de 1 a 10.
+    let peca = golpe[10] & 0x7f;
+    assert!(
+        (1..=10).contains(&peca),
+        "cEquipment veio {peca}: devia ser a peça sorteada entre 1 e 10"
+    );
+
+    // E ela perdeu `DURABILITY_DEC_PER_HIT` (25, `gs/config.h:60`) — só ela.
+    let vestido = itens
+        .list_by_container(roleid, pw_core::ContainerType::Equipment)
+        .await
+        .expect("ler o equipamento");
+    let gasto: u32 = vestido
+        .iter()
+        .filter(|i| (1..=10).contains(&i.slot))
+        .map(|i| DURABILIDADE_DA_PECA - i.durability)
+        .sum();
+    assert!(
+        gasto >= 25 && gasto % 25 == 0,
+        "o golpe recebido desgastou {gasto} — devia ser 25 por golpe"
+    );
+
+    // E o golpe **dado** gastou a arma em `DURABILITY_DEC_PER_ATTACK` (2, `gs/config.h:61`;
+    // `weapon_item::OnAfterAttack`, `item/equip_item.cpp:978-988`).
+    let arma = vestido.iter().find(|i| i.slot == 0).expect("o personagem nasce com arma");
+    let gasto_da_arma = arma.max_durability - arma.durability;
+    assert!(
+        gasto_da_arma >= 2 && gasto_da_arma % 2 == 0,
+        "a arma gastou {gasto_da_arma} — devia ser 2 por golpe normal"
+    );
 
     // A vida **do próprio jogador** vai no `SELF_INFO_00` (38), e não no `NPC_INFO_00`
     // (33): o cliente entrega o 33 ao gerenciador de NPCs, que não conhece jogador nenhum
@@ -1021,7 +1271,9 @@ async fn morrer_avisa_o_cliente_e_reviver_devolve_a_vida() {
     })
     .await
     .unwrap();
-    receber(&mut link, 2).await;
+    receber(&mut link, 3).await; // HOST_START_ATTACK + ATTACK_ONCE + HOST_ATTACKRESULT
+    // Sem mais golpes da sessão enquanto o teste espera o revide.
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
 
     let morreu = tickar_ate(&mundo, |m| {
         m.players.get(&(roleid as i64)).map(|p| p.hp == 0).unwrap_or(false)
@@ -1029,16 +1281,9 @@ async fn morrer_avisa_o_cliente_e_reviver_devolve_a_vida() {
     .await;
     assert!(morreu, "o jogador não chegou a zero");
 
-    // Chegam o dano, a barra e o HOST_DIED (28).
-    let mut viu_morte = false;
-    for _ in 0..3 {
-        let v = receber(&mut link, 1).await;
-        if cmd_de(&v[0]) == 28 {
-            viu_morte = true;
-            break;
-        }
-    }
-    assert!(viu_morte, "sem HOST_DIED (28) — o jogador morreu em silêncio");
+    // Chegam o dano, a barra e o HOST_DIED (28) — este por último, porque desde o B62 a
+    // vida só cai quando o dano adiado vence, e o aviso do golpe já saiu antes.
+    let _ = esperar_comando(&mut link, 28).await;
 
     // Agora o renascimento, que antes não tinha tratamento nenhum: quem zerava a vida
     // ficava preso até reconectar.
@@ -1537,6 +1782,61 @@ async fn aceitar_e_entregar_missao_no_npc_mexe_nas_listas_e_premia() {
     assert!(gravada, "as listas de missão não foram gravadas");
 }
 
+/// B57 — o `NORMAL_ATTACK` que chega durante a conjuração espera a habilidade acabar.
+///
+/// No original a habilidade é a sessão corrente e o golpe só entra na fila (`AddSession`
+/// devolve `false`, `actobject.cpp:1180-1212`); ele começa quando a habilidade termina. O
+/// cliente manda `NORMAL_ATTACK` assim que vê o fim da conjuração, e sem esta fila os dois
+/// danos caíam no mesmo instante — o monstro morria "instantaneamente" com a habilidade
+/// (teste em jogo de 2026-09-17).
+#[tokio::test]
+async fn o_golpe_que_chega_conjurando_espera_a_habilidade() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    receber(&mut link, 2).await;
+
+    let mut corpo = 4321i32.to_le_bytes().to_vec(); // skill_id
+    corpo.push(0); // force_attack
+    corpo.push(0); // target_count
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CAST_SKILL, &corpo) })
+        .await
+        .unwrap();
+    // O `OBJECT_CAST_SKILL` (85) abre a conjuração.
+    esperar_comando(&mut link, 85).await;
+
+    // O clique no monstro durante a conjuração.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
+        .await
+        .unwrap();
+
+    // A ordem tem de ser: resultado da habilidade (142) e só depois o golpe (84 + 24).
+    let mut ordem = Vec::new();
+    while ordem.iter().all(|c| *c != 24u16) {
+        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_secs(5), link.receber()).await
+        else {
+            panic!("o golpe da fila não saiu: {ordem:?}");
+        };
+        ordem.push(cmd_de(&data));
+    }
+    let pos = |c: u16| ordem.iter().position(|x| *x == c);
+    let resultado = pos(142).expect("sem o resultado da habilidade (142)");
+    let inicio = pos(84).expect("sem HOST_START_ATTACK (84)");
+    let golpe = pos(24).expect("sem HOST_ATTACKRESULT (24)");
+    assert!(
+        resultado < inicio && inicio < golpe,
+        "o golpe saiu antes do dano da habilidade: {ordem:?}"
+    );
+}
+
 #[tokio::test]
 async fn conjurar_habilidade_causa_dano_real_no_alvo_selecionado() {
     // No `gateway.rs` o dano era **150 fixo**, mandado por uma tarefa que dormia um
@@ -1566,9 +1866,9 @@ async fn conjurar_habilidade_causa_dano_real_no_alvo_selecionado() {
     .await
     .unwrap();
 
-    // OBJECT_CAST_SKILL (85), SKILL_PERFORM (88), HOST_STOP_SKILL (123), o resultado
-    // (142) e a barra (33).
-    let r = receber(&mut link, 5).await;
+    // OBJECT_CAST_SKILL (85), SKILL_PERFORM (88), HOST_STOP_SKILL (123) e o resultado
+    // (142). A barra (33) vai no batimento de 1 s (B56).
+    let r = receber(&mut link, 4).await;
     assert!(r.iter().any(|v| cmd_de(v) == 85), "sem OBJECT_CAST_SKILL");
     assert!(r.iter().any(|v| cmd_de(v) == 88), "sem SKILL_PERFORM");
     assert!(r.iter().any(|v| cmd_de(v) == 123), "sem HOST_STOP_SKILL");
@@ -2145,7 +2445,9 @@ async fn o_proprio_estado_sai_do_personagem_e_nao_de_120_280() {
     .await
     .unwrap();
 
-    let r = receber(&mut link, 2).await;
+    // SELF_INFO_00, OWN_EXT_PROP (`PlayerGetProperty`, `player.cpp:8588`) e PLAYER_CASH.
+    let r = receber(&mut link, 3).await;
+    assert!(r.iter().any(|v| cmd_de(v) == 50), "sem OWN_EXT_PROP (50): a janela de atributos não se refaz");
     let info = r
         .iter()
         .find(|v| cmd_de(v) == 38)
@@ -2315,12 +2617,12 @@ async fn conjurar_em_si_mesmo_ainda_fecha_a_conjuracao() {
     .await
     .unwrap();
 
-    let r = receber(&mut link, 3).await;
+    let r = receber(&mut link, 2).await;
     assert!(r.iter().any(|v| cmd_de(v) == 85), "sem OBJECT_CAST_SKILL");
-    let parada = r
-        .iter()
-        .find(|v| cmd_de(v) == 123)
-        .expect("sem HOST_STOP_SKILL: o cliente ficaria conjurando para sempre");
+    // Desde o B57 o efeito da habilidade vai **antes** do fim da sessão, como no original
+    // (`RunSkill` e depois `EndSession`), então o 123 vem depois dos comandos do efeito.
+    let parada = esperar_comando(&mut link, 123).await;
+    let parada = &parada;
     assert_eq!(
         parada.len(),
         2,
@@ -3085,7 +3387,7 @@ async fn o_minerio_do_mapa_entra_pelo_comando_de_materia_e_sai_pela_lista() {
         let perto = Vector3::new(origem.x + 10.0, origem.y, origem.z);
         m.matters.insert(
             MINERIO,
-            MatterEntity { id: MINERIO, template_id: TID_DO_MINERIO, position: perto },
+            MatterEntity { id: MINERIO, template_id: TID_DO_MINERIO, position: perto, renascer_s: 15 },
         );
         m.grid.add_entity(MINERIO, perto, false);
         origem
@@ -3276,4 +3578,185 @@ async fn o_pedido_da_marca_das_missoes_dinamicas_recebe_a_marca_do_realm() {
     assert_eq!(u16::from_le_bytes([p[7], p[8]]), 0, "task");
     assert_eq!(i32_em(&p, 9) as u32, MARCA_DAS_MISSOES_DINAMICAS, "a marca do realm");
     assert_eq!(u16::from_le_bytes([p[13], p[14]]), 10, "DYN_TASK_CUR_VERSION");
+}
+
+/// `session_normal_attack`: com uma sessão aberta, outro `NORMAL_ATTACK` só entra na fila e
+/// não golpeia (`AddSession`, `actobject.cpp:1180-1213`) — o "cada clique é um golpe" do
+/// teste em jogo de 2026-09-16.
+#[tokio::test]
+async fn clicar_de_novo_durante_a_sessao_nao_da_outro_golpe() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) })
+        .await
+        .unwrap();
+    receber(&mut link, 2).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
+        .await
+        .unwrap();
+    receber(&mut link, 3).await;
+    let hp = mundo.read().await.monsters[&MONSTRO].0.hp;
+    for _ in 0..5 {
+        link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
+            .await
+            .unwrap();
+    }
+    let nada = tokio::time::timeout(Duration::from_millis(400), link.receber()).await;
+    assert!(nada.is_err(), "um clique durante a sessão respondeu");
+    assert_eq!(mundo.read().await.monsters[&MONSTRO].0.hp, hp, "os cliques golpearam");
+    assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_some());
+
+    // B53 — o cliente manda CANCEL_ACTION + NORMAL_ATTACK a cada clique. O cancelamento não
+    // fecha a sessão de golpe (`TerminateSession(false)` recusa, `actsession.h:109-115`), e o
+    // novo golpe só entra na fila: nada de dano na hora.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CANCEL_ACTION, &[]) })
+        .await
+        .unwrap();
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    {
+        let m = mundo.read().await;
+        let s = m.players[&(roleid as i64)].ataque.expect("o cancelamento fechou a sessão de golpe");
+        assert_eq!(s.proximo, Some(MONSTRO), "o clique não entrou na fila");
+        assert_eq!(m.monsters[&MONSTRO].0.hp, hp, "cancelar + atacar golpeou na hora");
+    }
+    // No golpe seguinte a sessão da fila substitui a atual: HOST_STOPATTACK (23) e
+    // HOST_START_ATTACK (84), no ritmo da arma.
+    for _ in 0..120 {
+        mundo.write().await.tick(50).await;
+        if mundo.read().await.players[&(roleid as i64)].ataque.is_some_and(|s| s.proximo.is_none()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let fim = esperar_comando(&mut link, 23).await;
+    assert_eq!(fim.len(), 2 + 4);
+    esperar_comando(&mut link, 84).await;
+    assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_some_and(|s| s.proximo.is_none()));
+}
+
+/// `CheckAttack`: além de `attack_range + corpo do alvo` a sessão nem começa.
+#[tokio::test]
+async fn fora_do_alcance_o_golpe_nao_comeca() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().attack_range = 2.8;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) })
+        .await
+        .unwrap();
+    receber(&mut link, 2).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
+        .await
+        .unwrap();
+    let nada = tokio::time::timeout(Duration::from_millis(400), link.receber()).await;
+    assert!(nada.is_err(), "golpeou a 7 m com 2,8 m de alcance");
+    assert_eq!(mundo.read().await.monsters[&MONSTRO].0.hp, MONSTRO_HP);
+}
+
+/// B53 — habilidade em área (`TARGETBALL`) com `doenchant`: acerta o alvo e o vizinho a 2 m,
+/// deixa os dois lentos e atordoados (`StateAttack`), e o cliente recebe o estado visível
+/// (124, 30 bytes) e os ícones (125).
+#[tokio::test]
+async fn habilidade_em_area_acerta_os_vizinhos_e_aplica_os_efeitos() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    const VIZINHO: i64 = 900_002;
+    const LONGE: i64 = 900_003;
+    {
+        let mut m = mundo.write().await;
+        let base = m.monsters[&MONSTRO].0.clone();
+        let mut v = base.clone();
+        v.id = VIZINHO;
+        v.position.x += 2.0;
+        let mut l = base.clone();
+        l.id = LONGE;
+        l.position.x += 30.0;
+        m.monsters.insert(VIZINHO, (v, MonsterAi::new()));
+        m.monsters.insert(LONGE, (l, MonsterAi::new()));
+    }
+    let mut link = entrar(&mundo, addr, roleid).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) })
+        .await
+        .unwrap();
+    receber(&mut link, 2).await;
+    let mut corpo = HABILIDADE_EM_AREA.to_le_bytes().to_vec();
+    corpo.push(0);
+    corpo.push(0);
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CAST_SKILL, &corpo) })
+        .await
+        .unwrap();
+    let estado = esperar_comando(&mut link, 124).await;
+    assert_eq!(estado.len(), 30, "UPDATE_EXT_STATE fora do tamanho do cliente");
+    let icones = esperar_comando(&mut link, 125).await;
+    // id + 2 ícones (Slow 3, Dizzy 1) com 1 parâmetro cada.
+    assert_eq!(icones.len(), 2 + 4 + 2 + 2 * 2 + 2 + 2 * 4);
+
+    let m = mundo.read().await;
+    for id in [MONSTRO, VIZINHO] {
+        let (mo, _) = &m.monsters[&id];
+        assert!(mo.hp < MONSTRO_HP, "{id} não levou dano");
+        assert!(mo.efeitos.sem_acao(), "{id} não ficou atordoado");
+        assert_eq!(mo.efeitos.realce().velocidade, -30, "{id} não ficou lento");
+    }
+    let (longe, _) = &m.monsters[&LONGE];
+    assert_eq!(longe.hp, MONSTRO_HP, "o monstro a 30 m levou dano");
+    assert!(longe.efeitos.filtros.is_empty());
+}
+
+/// B54 — Esc (`CANCEL_ACTION`) e andar encerram o golpe no golpe seguinte (fila do
+/// original, `actobject.cpp:180-189`), e a morte do alvo encerra na hora: o monstro renascia
+/// com o mesmo id antes do disparo seguinte e o ataque não parava (teste de 2026-09-17).
+#[tokio::test]
+async fn esc_andar_e_a_morte_do_alvo_param_o_golpe() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let atacar = || BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) };
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) })
+        .await
+        .unwrap();
+    receber(&mut link, 2).await;
+
+    for comando in [ids::CANCEL_ACTION, ids::STOP_MOVE] {
+        mundo.write().await.monsters.get_mut(&MONSTRO).unwrap().0.hp = MONSTRO_HP_MAX;
+        link.enviar(atacar()).await.unwrap();
+        esperar_comando(&mut link, 84).await;
+        let corpo = if comando == ids::STOP_MOVE { vec![0u8; 20] } else { Vec::new() };
+        link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(comando, &corpo) })
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_some(), "comando {comando} parou na hora");
+        for _ in 0..120 {
+            mundo.write().await.tick(50).await;
+            if mundo.read().await.players[&(roleid as i64)].ataque.is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_none(), "comando {comando} não parou o golpe");
+        esperar_comando(&mut link, 23).await;
+    }
+
+    // A morte do alvo encerra a sessão, e o monstro só renasce depois do corpo sumir.
+    mundo.write().await.monsters.get_mut(&MONSTRO).unwrap().0.hp = 1;
+    link.enviar(atacar()).await.unwrap();
+    // B62 — o golpe sai na hora e a vida cai no tique, quando o dano adiado vence.
+    esperar_comando(&mut link, 24).await;
+    assert!(
+        tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.is_dead).await,
+        "o dano adiado não chegou a matar o monstro"
+    );
+    let fim = esperar_comando(&mut link, 23).await;
+    assert_eq!(i32::from_le_bytes([fim[2], fim[3], fim[4], fim[5]]), 2, "motivo: alvo inválido");
+    assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_none());
+    {
+        let mut m = mundo.write().await;
+        m.monsters.get_mut(&MONSTRO).unwrap().0.respawn_delay_ms = 100;
+        m.monsters.get_mut(&MONSTRO).unwrap().0.respawn_timer_ms = 100;
+        for _ in 0..40 {
+            m.tick(50).await;
+        }
+        assert!(m.monsters[&MONSTRO].0.is_dead, "renasceu com o corpo ainda no chão");
+    }
 }

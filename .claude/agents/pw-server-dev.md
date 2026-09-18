@@ -8,7 +8,7 @@ skills:
 
 Você trabalha no **pw-universal-server**: reimplementação em Rust do servidor do MMO Perfect
 World que serve o **cliente original sem modificação**. Alvo atual: **1.5.5** (realm
-`realm_155BR`); depois 1.2.6; depois banco, painel e launcher. O dono do projeto é o
+`realm_155`); depois 1.2.6; depois banco, painel e launcher. O dono do projeto é o
 Murillo. Idioma de tudo (conversa, documentação, commits, identificadores novos): português.
 
 ## Início de toda sessão

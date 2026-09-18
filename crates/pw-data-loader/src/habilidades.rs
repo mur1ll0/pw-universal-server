@@ -37,6 +37,73 @@ pub struct HabilidadeDoServidor {
     pub sp_exigido: Option<Vec<i32>>,
     pub dinheiro_exigido: Option<Vec<i32>>,
     pub estados_ms: Vec<Option<Vec<i32>>>,
+    /// `time_type` — 3 é conjuração com carga (`Skill::IsWarmup`, `skill.h:571`).
+    #[serde(default)]
+    pub time_type: Option<i32>,
+    /// `GetPraydistance`.
+    #[serde(default)]
+    pub alcance: Option<AlcanceDaHabilidade>,
+    /// A conta de dano do estado que chama `SetDamage`/`SetXdamage`.
+    #[serde(default)]
+    pub dano: Option<DanoDaHabilidade>,
+    /// `arrowcost` — flechas gastas por conjuração (`object.Attack(..., arrowcost)`,
+    /// `playerwrapper.cpp:307`).
+    #[serde(default)]
+    pub arrowcost: Option<i32>,
+    /// `range.type` (`cskill/skill/range.h:18-25`): 0 ponto, 1 linha, 2 bola em si,
+    /// 3 bola no alvo, 4 setor, 5 em si.
+    #[serde(default)]
+    pub tipo_de_area: Option<i32>,
+    /// `doenchant`: o golpe leva a habilidade junto (`attached_skill`) e o alvo roda o
+    /// `StateAttack` (`SkillWrapper::Attack`, `skillwrapper.cpp:449-484`).
+    #[serde(default)]
+    pub doenchant: bool,
+    /// `dobless`: quem conjura roda o `BlessMe` (`playerwrapper.cpp:244-253`).
+    #[serde(default)]
+    pub dobless: bool,
+    /// `GetRadius`, `GetAttackdistance`, `GetAngle`, `GetHitrate` por nível.
+    #[serde(default)]
+    pub raio: Option<Vec<f32>>,
+    #[serde(default)]
+    pub distancia_de_ataque: Option<Vec<f32>>,
+    #[serde(default)]
+    pub angulo: Option<Vec<f32>>,
+    #[serde(default)]
+    pub precisao: Option<Vec<f32>>,
+    /// `GetEffectdistance`, no formato do alcance.
+    #[serde(default)]
+    pub distancia_de_efeito: Option<AlcanceDaHabilidade>,
+    /// `StateAttack` e `BlessMe` como `[quem, setter, expressão]` — ver
+    /// `pw_gs::efeitos::executar_roteiro`. `None` quando o corpo não se deixou ler.
+    #[serde(default)]
+    pub no_alvo: Option<Vec<(String, String, String)>>,
+    #[serde(default)]
+    pub em_si: Option<Vec<(String, String, String)>>,
+}
+
+/// `GetPraydistance` = `arma × attack_range + fixo[nível]` (`GetRange()`,
+/// `playerwrapper.h:95`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlcanceDaHabilidade {
+    pub arma: i32,
+    pub fixo: Vec<f32>,
+}
+
+/// `SetRatio`/`SetPlus` + `SetX(fator × GetAttack|GetMagicattack)` — ver
+/// `extrair_habilidades.py::dano`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DanoDaHabilidade {
+    pub estado: i32,
+    /// `fisico` (`GetAttack`) ou `magico` (`GetMagicattack`).
+    pub base: String,
+    /// `Damage` (físico) ou `Golddamage`, `Wooddamage`, `Waterdamage`, `Firedamage`,
+    /// `Earthdamage` — as cinco escolas.
+    pub elemento: String,
+    pub fator: f32,
+    /// Com a carga cheia quando `carga`.
+    pub ratio: Vec<f32>,
+    pub plus: Vec<f32>,
+    pub carga: bool,
 }
 
 fn no_nivel<T: Copy>(v: &Option<Vec<T>>, nivel: i32) -> Option<T> {
@@ -53,6 +120,50 @@ impl HabilidadeDoServidor {
     /// `State1::GetTime` — o tempo de conjuração enviado ao cliente.
     pub fn conjuracao_ms(&self, nivel: i32) -> Option<i32> {
         no_nivel(self.estados_ms.first()?, nivel)
+    }
+
+    /// Conjuração com carga que o jogador solta antes do fim (`time_type == 3`).
+    pub fn e_de_carga(&self) -> bool {
+        self.time_type == Some(3)
+    }
+
+    /// `GetPraydistance` para quem tem `alcance_do_jogador` de ataque.
+    pub fn alcance(&self, nivel: i32, alcance_do_jogador: f32) -> Option<f32> {
+        let a = self.alcance.as_ref()?;
+        let fixo = *a.fixo.get(usize::try_from(nivel - 1).ok()?)?;
+        Some(a.arma as f32 * alcance_do_jogador + fixo)
+    }
+
+    /// `GetEffectdistance` para quem tem `alcance_do_jogador` de ataque.
+    pub fn distancia_de_efeito(&self, nivel: i32, alcance_do_jogador: f32) -> Option<f32> {
+        let a = self.distancia_de_efeito.as_ref()?;
+        let fixo = *a.fixo.get(usize::try_from(nivel - 1).ok()?)?;
+        Some(a.arma as f32 * alcance_do_jogador + fixo)
+    }
+
+    pub fn raio(&self, nivel: i32) -> f32 {
+        no_nivel(&self.raio, nivel).unwrap_or(0.0)
+    }
+
+    pub fn distancia_de_ataque(&self, nivel: i32) -> f32 {
+        no_nivel(&self.distancia_de_ataque, nivel).unwrap_or(0.0)
+    }
+
+    /// `GetAngle` — o cosseno do meio ângulo do setor (`1 - 0,0111111 × graus`... como o
+    /// stub escreve).
+    pub fn angulo(&self, nivel: i32) -> f32 {
+        no_nivel(&self.angulo, nivel).unwrap_or(1.0)
+    }
+
+    /// `GetHitrate` — multiplica a precisão do golpe (`msg.attack_rate`,
+    /// `playerwrapper.cpp:262`).
+    pub fn precisao(&self, nivel: i32) -> f32 {
+        no_nivel(&self.precisao, nivel).unwrap_or(1.0)
+    }
+
+    /// `GetMpcost`.
+    pub fn mana(&self, nivel: i32) -> Option<f32> {
+        no_nivel(&self.mp, nivel)
     }
 
     pub fn nivel_exigido(&self, nivel: i32) -> Option<i32> {
@@ -123,6 +234,20 @@ mod tests {
             sp_exigido: None,
             dinheiro_exigido: None,
             estados_ms: vec![],
+            time_type: None,
+            alcance: None,
+            dano: None,
+            arrowcost: None,
+            tipo_de_area: None,
+            doenchant: false,
+            dobless: false,
+            raio: None,
+            distancia_de_ataque: None,
+            angulo: None,
+            precisao: None,
+            distancia_de_efeito: None,
+            no_alvo: None,
+            em_si: None,
         };
         assert_eq!(h.recarga_armada_ms(1), Some(2000));
     }

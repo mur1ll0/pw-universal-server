@@ -1,7 +1,7 @@
 //! Os defeitos que o teste em jogo de 2026-09-07 revelou, cada um com o seu teste.
 //!
 //! São problemas de causas independentes que apareceram na mesma sessão, com dois clients
-//! 1.5.5 reais no realm 155BR. O que os une é só a origem.
+//! 1.5.5 reais no realm 155. O que os une é só a origem.
 
 use pw_core::Vector3;
 use pw_gs::ai::{AcaoDoMonstro, MonsterAi};
@@ -55,7 +55,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         crit_rate: 0.0,
         position: pos,
         target_id: None,
-        buffs: Vec::new(),
+        efeitos: Default::default(),
         visiveis: std::collections::HashSet::new(),
         centro_do_stream: Vector3::new(0.0, 0.0, 0.0),
         voando: false,
@@ -71,6 +71,14 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         recargas: std::collections::HashMap::new(),
         npc_em_conversa: None,
         missoes: Default::default(),
+        coleta: None,
+        equipamento: Default::default(),
+        ataque: None,
+        conjuracao: None,
+        dano_bruto: (1, 1),
+        dano_magico_bruto: (1, 1),
+        bonus_de_dano_pct: 0,
+        bonus_magico_pct: 0,
     };
     p.hp = p.max_hp;
     p
@@ -315,4 +323,72 @@ fn a_lista_de_habilidades_tem_o_layout_do_cliente() {
     let vazio = S2CGamedataSend::skill_data_from_records(&[]).data;
     assert_eq!(vazio.len(), 6);
     assert_eq!(u32::from_le_bytes([vazio[2], vazio[3], vazio[4], vazio[5]]), 0);
+}
+
+/// B59 — o monstro do teste em jogo (Lobo Sangrento: alcance 3 m, ódio 35 m) tem de
+/// perseguir um arqueiro a 20 m e **bater** quando chegar.
+///
+/// Relato de 2026-09-17: "quando ele se aproxima de mim não está me atacando".
+#[test]
+fn o_monstro_persegue_o_arqueiro_de_longe_e_bate() {
+    let mut ai = MonsterAi::new();
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    m.attack_range = 3.0;
+    m.aggro_range = 35.0;
+    m.move_speed = 4.0;
+    m.attack_min = 10;
+    m.attack_max = 20;
+    let alvo = jogador(Vector3::new(20.0, 0.0, 0.0));
+    let mut players = std::collections::HashMap::new();
+    players.insert(1i64, alvo);
+    ai.add_threat(1, 100);
+
+    let mut bateu = false;
+    let mut passos = 0;
+    for _ in 0..400 {
+        match ai.tick(&mut m, &players, 50, &sem_mapa) {
+            Some(AcaoDoMonstro::Atacou { alvo, .. }) => {
+                assert_eq!(alvo, 1);
+                bateu = true;
+                break;
+            }
+            Some(AcaoDoMonstro::Andou { destino, .. }) => {
+                m.position = destino;
+                passos += 1;
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        bateu,
+        "o monstro não bateu em 20 s: {passos} passos, distância final {:.1} m",
+        m.position.distance(&Vector3::new(20.0, 0.0, 0.0))
+    );
+}
+
+/// B59 — a direção com que a criatura nasce: `GenDir()` do original
+/// (`npcgenerator.h:747-757`).
+///
+/// Relato de 2026-09-17: "os NPCs estão todos virados para a mesma direção". Mandávamos
+/// zero para todos.
+#[test]
+fn a_direcao_do_gerador_e_a_do_original() {
+    use pw_gs::entity::direcao_do_gerador;
+    let ponto = Vector3::new(0.0, 0.0, 0.0);
+
+    // Área que é um ponto: a direção do gerador, `atan2(z, x) × 128/π`.
+    assert_eq!(direcao_do_gerador(Vector3::new(1.0, 0.0, 0.0), ponto), 0, "leste = 0");
+    assert_eq!(direcao_do_gerador(Vector3::new(0.0, 0.0, 1.0), ponto), 64, "norte = 1/4 de volta");
+    assert_eq!(direcao_do_gerador(Vector3::new(-1.0, 0.0, 0.0), ponto), 128, "oeste = 1/2 volta");
+    // `atan2` negativo vira o complemento pelo `& 0xFF` do original.
+    assert_eq!(direcao_do_gerador(Vector3::new(0.0, 0.0, -1.0), ponto), 192, "sul = 3/4 de volta");
+
+    // Área com extensão: direção sorteada — o que se garante é que ela varia.
+    let caixa = Vector3::new(20.0, 0.0, 20.0);
+    let dir = Vector3::new(1.0, 0.0, 0.0);
+    let mut vistas = std::collections::HashSet::new();
+    for _ in 0..200 {
+        vistas.insert(direcao_do_gerador(dir, caixa));
+    }
+    assert!(vistas.len() > 10, "área com extensão devia sortear a direção: {} valores", vistas.len());
 }

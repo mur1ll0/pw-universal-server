@@ -24,7 +24,7 @@ fn carregar(realm: &str) -> Option<armas::TabelaDeArmas> {
 
 #[test]
 fn a_varinha_do_sacerdote_nao_e_arma_de_municao() {
-    let Some(t) = carregar("realm_155BR") else { return };
+    let Some(t) = carregar("realm_155") else { return };
 
     let varinha = t.get(&2251).expect("a Varinha (2251) tem de estar na tabela");
     assert_eq!(
@@ -44,7 +44,7 @@ fn a_varinha_do_sacerdote_nao_e_arma_de_municao() {
 
 #[test]
 fn o_arco_continua_sendo_arma_de_municao() {
-    let Some(t) = carregar("realm_155BR") else { return };
+    let Some(t) = carregar("realm_155") else { return };
 
     let arco = t.get(&2250).expect("o Arco de Madeira (2250) tem de estar na tabela");
     assert_eq!(
@@ -58,7 +58,7 @@ fn o_arco_continua_sendo_arma_de_municao() {
 /// A ficha que viaja não pode ter zero na máscara de classes: zero recusa todo mundo.
 #[test]
 fn nenhuma_arma_inicial_viaja_com_mascara_de_classe_zerada() {
-    let Some(t) = carregar("realm_155BR") else { return };
+    let Some(t) = carregar("realm_155") else { return };
 
     for id in [2097u32, 2250, 2251, 2258, 26331, 26332, 44937, 45020] {
         let arma = t.get(&id).unwrap_or_else(|| panic!("arma inicial {id} não existe"));
@@ -76,7 +76,7 @@ fn nenhuma_arma_inicial_viaja_com_mascara_de_classe_zerada() {
 /// `short_range_mode == 0`. Se um realm futuro quebrar isso, é aqui que se descobre.
 #[test]
 fn arma_de_municao_e_arma_de_modo_de_alcance_zero() {
-    let Some(t) = carregar("realm_155BR") else { return };
+    let Some(t) = carregar("realm_155") else { return };
 
     let com_municao = t.values().filter(|a| a.municao_exigida != 0).count();
     let concordam = t

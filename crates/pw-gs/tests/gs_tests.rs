@@ -82,7 +82,7 @@ fn test_combat_engine_damage_calculation() {
         crit_rate: 0.1,
         position: Vector3::new(0.0, 0.0, 0.0),
         target_id: None,
-        buffs: Vec::new(),
+        efeitos: Default::default(),
         visiveis: std::collections::HashSet::new(),
         centro_do_stream: Vector3::new(0.0, 0.0, 0.0),
         voando: false,
@@ -98,6 +98,14 @@ fn test_combat_engine_damage_calculation() {
         recargas: std::collections::HashMap::new(),
         npc_em_conversa: None,
         missoes: Default::default(),
+        coleta: None,
+        equipamento: Default::default(),
+        ataque: None,
+        conjuracao: None,
+        dano_bruto: (1, 1),
+        dano_magico_bruto: (1, 1),
+        bonus_de_dano_pct: 0,
+        bonus_magico_pct: 0,
     };
 
     let monster = MonsterEntity {
@@ -119,6 +127,8 @@ fn test_combat_engine_damage_calculation() {
         attack_max: 90,
         magic_attack: [(0, 0); 5],
         attack_range: 2.5,
+        ataque_em_ticks: 30,
+        atraso_do_dano_em_ticks: 10,
         aggro_range: 30.0,
         sight_range: 40,
         exp: 300,
@@ -135,7 +145,7 @@ fn test_combat_engine_damage_calculation() {
         respawn_timer_ms: 0,
         respawn_delay_ms: 5000,
         target_id: None,
-        buffs: Vec::new(),
+        efeitos: Default::default(),
         danos: Vec::new(),
         primeiro_atacante: None,
     };

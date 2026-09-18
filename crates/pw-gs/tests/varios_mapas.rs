@@ -1,6 +1,6 @@
 //! Vários mapas num processo: o roteador entrega cada jogador ao mapa gravado dele.
 //!
-//! O cenário é o do realm 155BR depois do B48 — um personagem antigo no mundo 1 e um novo
+//! O cenário é o do realm 155 depois do B48 — um personagem antigo no mundo 1 e um novo
 //! no 161 —, só que os dois mapas no mesmo processo e atrás de uma única escuta de
 //! barramento, como o `./gs gs01 ... is61` do original (`pw_gs::mapas`).
 //!
@@ -200,4 +200,61 @@ async fn subcomando_e_saida_vao_ao_mapa_do_jogador() {
         .await,
         "o roteador continuou achando que o jogador está num mapa"
     );
+}
+
+/// Teleporte para outro mapa do mesmo processo (`LongJump` → `PlaneSwitch`): o jogador sai
+/// do 161, entra no mundo 1, o roteador passa a entregá-lo ao novo mapa, o banco grava o
+/// mapa, e o cliente recebe `NOTIFY_HOSTPOS` com o `tag` novo — é isso que faz ele carregar o
+/// outro mundo (`JumpToInstance`).
+#[tokio::test]
+async fn teleporte_para_outro_mapa_passa_o_jogador_e_avisa_o_cliente() {
+    let Some(c) = montar().await else { return };
+    c.roteador.ligar_trocas();
+    let mut link = BusClient::conectar(c.addr).await.unwrap();
+    link.enviar(entrar(c.no_161)).await.unwrap();
+    let (m1, m161, b) = (Arc::clone(&c.mundo_1), Arc::clone(&c.mundo_161), c.no_161 as i64);
+    assert!(
+        ate(|| {
+            let m = Arc::clone(&m161);
+            async move { m.read().await.players.contains_key(&b) }
+        })
+        .await,
+        "o jogador não entrou no 161"
+    );
+    // Descarta o que veio na entrada.
+    while tokio::time::timeout(Duration::from_millis(200), link.receber()).await.is_ok() {}
+
+    let destino = pw_core::Vector3::new(-319.667, 220.007, -900.309);
+    c.roteador.transportar(c.no_161, 1, destino).await;
+
+    assert!(
+        ate(|| {
+            let (m1, m161) = (Arc::clone(&m1), Arc::clone(&m161));
+            async move { m1.read().await.players.contains_key(&b) && !m161.read().await.players.contains_key(&b) }
+        })
+        .await,
+        "o jogador não passou do 161 para o mundo 1"
+    );
+    assert_eq!(c.roteador.mapa_de(c.no_161).await, Some(1));
+    assert_eq!(c.mundo_1.read().await.players[&b].position.x, destino.x);
+
+    let mut aviso = None;
+    for _ in 0..50 {
+        match tokio::time::timeout(Duration::from_millis(500), link.receber()).await {
+            Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) if u16::from_le_bytes([data[0], data[1]]) == 14 => {
+                aviso = Some(data);
+                break;
+            }
+            Ok(Ok(Some(_))) => {}
+            _ => break,
+        }
+    }
+    let aviso = aviso.expect("sem NOTIFY_HOSTPOS (14)");
+    assert_eq!(aviso.len(), 2 + 20, "cmd_notify_hostpos: vPos, tag, line");
+    assert_eq!(i32::from_le_bytes(aviso[14..18].try_into().unwrap()), 1, "tag do mapa novo");
+
+    let url = std::env::var("TEST_DATABASE_URL").unwrap();
+    let pool = PostgresPool::new(&StorageConfig { database_url: url, max_connections: 1, min_connections: 1, ..Default::default() }).await.unwrap();
+    let mapa: i32 = sqlx::query_scalar("SELECT world_id FROM characters WHERE id = $1").bind(c.no_161).fetch_one(pool.get_ref()).await.unwrap();
+    assert_eq!(mapa, 1, "o mapa novo não foi gravado — relogar voltaria ao 161");
 }

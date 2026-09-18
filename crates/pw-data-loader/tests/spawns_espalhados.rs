@@ -37,7 +37,7 @@ fn dispersao(d: &NpcGenData) -> (usize, usize, usize) {
 
 #[test]
 fn os_monstros_do_mundo_nao_nascem_empilhados() {
-    let Some(d) = carregar("realm_155BR") else { return };
+    let Some(d) = carregar("realm_155") else { return };
     let (total, celulas, pior) = dispersao(&d);
 
     assert!(total > 10_000, "poucos monstros no mundo: {total}");
@@ -61,7 +61,7 @@ fn a_posicao_e_estavel_entre_cargas() {
     // A posição é função de `(id da instância, índice)`, não sorteio: carregar duas vezes
     // tem de dar exatamente o mesmo mundo. Sem isso, reiniciar o servidor teleportaria
     // todo monstro, e nenhum teste poderia afirmar posição.
-    let (Some(a), Some(b)) = (carregar("realm_155BR"), carregar("realm_155BR")) else {
+    let (Some(a), Some(b)) = (carregar("realm_155"), carregar("realm_155")) else {
         return;
     };
     assert_eq!(a.instances.len(), b.instances.len());
@@ -79,7 +79,7 @@ fn area_sem_tamanho_continua_com_o_monstro_no_centro() {
     // Não dá para escolher a área pelo arquivo real, então o que se confere é a
     // consequência: existem monstros exatamente sobre coordenadas "redondas" de área, e a
     // dispersão não é total.
-    let Some(d) = carregar("realm_155BR") else { return };
+    let Some(d) = carregar("realm_155") else { return };
     let mut por_posicao: BTreeMap<(i32, i32, i32), usize> = BTreeMap::new();
     for i in d.instances.iter().filter(|i| i.spawn_type == SpawnType::Monster) {
         *por_posicao

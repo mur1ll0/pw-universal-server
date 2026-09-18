@@ -30,14 +30,41 @@ mod erro_s2c {
     pub const NAO_PODE_APRENDER: i32 = 22;
     pub const HABILIDADE_EM_RECARGA: i32 = 53;
     pub const OPERACAO_EM_COMBATE: i32 = 66;
+    pub const FORA_DE_ALCANCE: i32 = 2;
+    pub const MINA_OCUPADA: i32 = 30;
+    pub const FERRAMENTA_ERRADA: i32 = 31;
+    pub const NIVEL_NAO_BATE: i32 = 51;
+    pub const NAO_PODE_USAR_ITEM: i32 = 18;
 }
 /// `TASK_CLT_NOTIFY_*` (`task/TaskTempl.h:103-108`).
 mod aviso_do_cliente {
     pub const CONCLUIR: u8 = 1;
     pub const DESISTIR: u8 = 2;
+    pub const CHEGOU_AO_LUGAR: u8 = 3;
     pub const ENTREGA_AUTOMATICA: u8 = 4;
     pub const GATILHO_MANUAL: u8 = 5;
+    pub const SAIU_DO_LUGAR: u8 = 10;
 }
+
+/// `EQUIP_INDEX_WEAPON` e `EQUIP_INDEX_PROJECTILE` (`EC_IvtrTypes.h:56-67`).
+const SLOT_DA_ARMA: u16 = 0;
+const SLOT_DA_MUNICAO: u16 = 11;
+/// `WEAPONTYPE_RANGE` (`EC_IvtrTypes.h:166-167`).
+const ARMA_DE_LONGE: i16 = 1;
+/// `EQUIP_ARMOR_START` (= `EQUIP_INDEX_HEAD`) e `EQUIP_ARMOR_END` (= `EQUIP_INDEX_PROJECTILE`)
+/// do `gs/item.h:194-241`: os slots que `SelectRandomArmor` sorteia são de 1 a 10.
+const PRIMEIRA_PECA: u16 = 1;
+const DEPOIS_DA_ULTIMA_PECA: u16 = 11;
+/// `DURABILITY_DEC_PER_ATTACK` (`gs/config.h:61`): o que a arma perde por golpe normal.
+const DESGASTE_POR_GOLPE: i32 = 2;
+/// `DURABILITY_DEC_PER_HIT` (`gs/config.h:60`): o que a peça sorteada perde por golpe
+/// recebido. O cliente desconta o mesmo por conta própria (`ARMOR_RUIN_SPEED = -25`,
+/// `EC_IvtrTypes.h:32`).
+const DESGASTE_AO_APANHAR: i32 = 25;
+/// `eq_index &= 0x7F` do `Make<be_attacked>` (`cgame/common/protocol_imp.h:580-590`): o -1 de
+/// `SelectRandomArmor` vira isto, e o cliente lê como "nenhuma peça desgastada"
+/// (`EC_HostMsg.cpp:974-981`).
+pub(super) const NENHUMA_PECA: u8 = 0x7f;
 
 fn agora() -> u32 {
     std::time::SystemTime::now()
@@ -58,6 +85,12 @@ pub(crate) struct Contexto<'a> {
     pub gm: bool,
     pub subiu_de_nivel: bool,
     pub mudou: bool,
+    /// O mapa deste servidor de mundo.
+    pub mundo: i32,
+    /// A equipe do jogador (capitão primeiro), com quem está neste mapa preenchido.
+    pub equipe: Vec<missoes::MembroDaEquipe>,
+    /// Teleporte pedido durante a operação — feito depois de gravar.
+    pub teleporte: Option<(u32, [f32; 3])>,
 }
 
 impl Contexto<'_> {
@@ -133,7 +166,9 @@ impl Jogador for Contexto<'_> {
         }
         let dados = self.dados;
         let tipo = if comum { ContainerType::Inventory } else { ContainerType::TaskInventory };
-        let Some(e) = self.bolsa_de(comum).empilhar(tid, quantidade, dados) else {
+        // Prêmio de missão passa pela geração do drop, como o `DeliverCommonItem` do original
+        // (`task/taskman.cpp:281-303`): equipamento sai com essência e propriedades sorteadas.
+        let Some(e) = self.bolsa_de(comum).empilhar_gerado(tid, quantidade, dados) else {
             warn!("mundo: missão quis dar {quantidade} do item {tid} a {}, e a bolsa está cheia", self.p.role_id);
             return;
         };
@@ -171,6 +206,16 @@ impl Jogador for Contexto<'_> {
     fn avisar(&mut self, comando: Vec<u8>) {
         self.para_mim.push(comando);
     }
+    fn posicao(&self) -> (u32, [f32; 3]) {
+        let p = self.p.position;
+        (self.mundo.max(0) as u32, [p.x, p.y, p.z])
+    }
+    fn equipe(&self) -> Vec<missoes::MembroDaEquipe> {
+        self.equipe.clone()
+    }
+    fn teleportar(&mut self, mundo: u32, pos: [f32; 3]) {
+        self.teleporte = Some((mundo, pos));
+    }
     fn sortear(&mut self) -> f32 {
         use rand::Rng;
         rand::thread_rng().gen::<f32>()
@@ -190,6 +235,7 @@ struct Gravacao {
     world_id: i32,
     pos: pw_core::Vector3,
     pontos: i32,
+    atributos: (i32, i32, i32, i32),
     listas: [Vec<u8>; 5],
 }
 
@@ -202,11 +248,28 @@ impl BusServer {
         let bolsa = itens_repo.list_by_container(roleid, ContainerType::Inventory).await.unwrap_or_default();
         let bolsa_de_missao = itens_repo.list_by_container(roleid, ContainerType::TaskInventory).await.unwrap_or_default();
 
-        let (r, para_mim, para_todos, subiu, mut bolsas, gravacao, ficha) = {
+        let (r, para_mim, para_todos, subiu, mut bolsas, gravacao, ficha, teleporte) = {
             let mut guarda = self.world.write().await;
             let mundo = &mut *guarda;
             let dados = Arc::clone(&mundo.data_manager);
             let world_id = mundo.world_id;
+            // `GetTeamMemberInfo` (`taskman.cpp:372-390`): quem não está neste mapa vai com
+            // mundo 0, que nunca é o de ninguém.
+            let equipe: Vec<missoes::MembroDaEquipe> = mundo
+                .membros_do_grupo(roleid)
+                .iter()
+                .map(|&m| match mundo.players.get(&(m as i64)) {
+                    Some(o) => missoes::MembroDaEquipe {
+                        id: m as u32,
+                        nivel: o.level.max(0) as u32,
+                        classe: o.cls as u32,
+                        masculino: o.gender != pw_core::Gender::Female,
+                        mundo: world_id.max(0) as u32,
+                        pos: [o.position.x, o.position.y, o.position.z],
+                    },
+                    None => missoes::MembroDaEquipe { id: m as u32, nivel: 0, classe: u32::MAX, masculino: true, mundo: 0, pos: [0.0; 3] },
+                })
+                .collect();
             let p = mundo.players.get_mut(&(roleid as i64))?;
             let gm = p.sec_level > 0;
             let mut ctx = Contexto {
@@ -219,9 +282,12 @@ impl BusServer {
                 gm,
                 subiu_de_nivel: false,
                 mudou: false,
+                mundo: world_id,
+                equipe,
+                teleporte: None,
             };
             let r = f(&mut ctx);
-            let Contexto { p, bolsa, bolsa_de_missao, para_mim, para_todos, subiu_de_nivel, mudou, .. } = ctx;
+            let Contexto { p, bolsa, bolsa_de_missao, para_mim, para_todos, subiu_de_nivel, mudou, teleporte, .. } = ctx;
             let gravacao = Gravacao {
                 roleid,
                 level: p.level,
@@ -234,10 +300,11 @@ impl BusServer {
                 world_id,
                 pos: p.position,
                 pontos: p.pontos_de_atributo,
+                atributos: (p.strength, p.agility, p.vitality, p.energy),
                 listas: p.missoes.blocos(),
             };
             let ficha = (mudou || subiu_de_nivel).then(|| (Self::ficha_propria(p), Self::estado_proprio_de(p)));
-            (r, para_mim, para_todos, subiu_de_nivel, [bolsa, bolsa_de_missao], gravacao, ficha)
+            (r, para_mim, para_todos, subiu_de_nivel, [bolsa, bolsa_de_missao], gravacao, ficha, teleporte)
         };
 
         for c in para_mim {
@@ -261,7 +328,7 @@ impl BusServer {
                 warn!("mundo: não consegui gravar a bolsa de {roleid}: {e}");
             }
         }
-        tokio::spawn(async move {
+        let gravar = async move {
             let g = gravacao;
             if let Err(e) = repo
                 .save_status(g.roleid, g.level, g.cultivation, g.exp, g.sp, g.hp, g.mp, g.money, g.world_id, &g.pos)
@@ -269,18 +336,31 @@ impl BusServer {
             {
                 warn!("mundo: não consegui gravar o estado de {}: {e}", g.roleid);
             }
-            let _ = repo.gravar_pontos_de_atributo(g.roleid, g.pontos).await;
+            if let Err(e) = repo.gravar_atributos(g.roleid, g.atributos, g.pontos).await {
+                warn!("mundo: não consegui gravar os atributos de {}: {e}", g.roleid);
+            }
             let [a, b, c, d, e] = g.listas;
             let listas = pw_storage::ListasDeMissaoGravadas { ativa: a, concluidas: b, tempos: c, contagens: d, deposito: e };
             if let Err(e) = repo.task_lists().gravar(g.roleid, &listas).await {
                 warn!("mundo: não consegui gravar as missões de {}: {e}", g.roleid);
             }
-        });
+        };
+        // Com teleporte a gravação espera: o mapa de destino grava a posição nova, e uma
+        // gravação atrasada daqui a sobrescreveria com a velha.
+        match teleporte {
+            Some((mundo, pos)) => {
+                gravar.await;
+                self.transportar(roleid, mundo as i32, pw_core::Vector3::new(pos[0], pos[1], pos[2])).await;
+            }
+            None => {
+                tokio::spawn(gravar);
+            }
+        }
         Some(r)
     }
 
     /// `SELF_INFO_00` do jogador.
-    fn estado_proprio_de(p: &PlayerEntity) -> Vec<u8> {
+    pub(super) fn estado_proprio_de(p: &PlayerEntity) -> Vec<u8> {
         S2CGamedataSend::self_info_00(
             p.level as i16,
             p.cultivation.clamp(0, 255) as u8,
@@ -298,7 +378,7 @@ impl BusServer {
     pub(crate) fn ficha_propria(p: &PlayerEntity) -> Vec<u8> {
         S2CGamedataSend::own_ext_prop(
             p.pontos_de_atributo.max(0) as u32,
-            (p.vitality, p.energy, p.strength, p.agility),
+            p.atributos_efetivos(),
             p.max_hp,
             p.max_mp,
             (p.hp_gen, p.mp_gen),
@@ -307,6 +387,348 @@ impl BusServer {
             (p.def_phys, p.armor),
         )
         .data
+    }
+
+    // ------------------------------------------------------------------ coleta
+
+    /// `C2S::GATHER_MATERIAL` (54) — `session_gather_prepare` + `GM_MSG_GATHER_REQUEST` da
+    /// mina (`playercmd.cpp:2324-2386`, `actsession.cpp:1090-1126`, `matter.cpp:265-382`).
+    ///
+    /// Confere, na ordem da mina: coletores no limite ou o próprio já colhendo (30),
+    /// ferramenta (31), nível (51), missão de entrada (31), distância (2). Aceito, sorteia o
+    /// tempo entre `time_min` e `time_max` e difunde `PLAYER_GATHER_START`
+    /// (`session_gather::StartSession`, `actsession.cpp:1150-1172`).
+    pub(super) async fn coletar(&self, roleid: i32, conteudo: &[u8]) {
+        let mut r = Reader::new(conteudo);
+        let (Ok(mid), Ok(_onde), Ok(_indice), Ok(ferramenta), Ok(missao)) = (r.i32(), r.i16(), r.i16(), r.i32(), r.i32()) else {
+            warn!("mundo: GATHER_MATERIAL de {roleid} com {} bytes (esperados 16)", conteudo.len());
+            return;
+        };
+        let mid = mid as i64;
+        let resposta = {
+            let mut guarda = self.world.write().await;
+            let mundo = &mut *guarda;
+            let dados = Arc::clone(&mundo.data_manager);
+            let Some(m) = mundo.matters.get(&mid).cloned() else { return };
+            let Some(mina) = dados.minas.get(&m.template_id).cloned() else {
+                debug!("mundo: {roleid} tentou colher {mid}, template {} sem MINE_ESSENCE válido", m.template_id);
+                return;
+            };
+            let Some(p) = mundo.players.get(&(roleid as i64)) else { return };
+            let (nivel, pos, ja) = (p.level, p.position, p.coleta);
+            let coletores = mundo.coletores.entry(mid).or_default();
+            let erro = if ja.is_some() || coletores.len() as u32 >= mina.coletores || coletores.contains(&roleid) {
+                Some(erro_s2c::MINA_OCUPADA)
+            } else if ferramenta != mina.ferramenta {
+                Some(erro_s2c::FERRAMENTA_ERRADA)
+            } else if nivel < mina.nivel {
+                Some(erro_s2c::NIVEL_NAO_BATE)
+            } else if missao as u32 != mina.missao_de_entrada {
+                Some(erro_s2c::FERRAMENTA_ERRADA)
+            } else if pos.distance(&m.position) >= mina.distancia {
+                Some(erro_s2c::FORA_DE_ALCANCE)
+            } else {
+                None
+            };
+            match erro {
+                Some(e) => Err(e),
+                None => {
+                    coletores.push(roleid);
+                    if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
+                        p.coleta = Some(mid);
+                    }
+                    use rand::Rng;
+                    let t = rand::thread_rng().gen_range(mina.tempo_minimo..=mina.tempo_maximo).min(255);
+                    Ok(t as u8)
+                }
+            }
+        };
+        let segundos = match resposta {
+            Err(e) => {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(e).data).await;
+                return;
+            }
+            Ok(s) => s,
+        };
+        info!("mundo: {roleid} começou a colher {mid} ({segundos} s)");
+        let inicio = S2CGamedataSend::player_gather_start(roleid, mid as i32, segundos).data;
+        self.enviar_ao_jogador(roleid, inicio.clone()).await;
+        self.transmitir_a_outros(roleid, inicio).await;
+        let este = self.clone_arc();
+        tokio::spawn(async move {
+            // `SetTimer(g_timer, _gather_time*20, 1)`: `use_time` em segundos.
+            tokio::time::sleep(std::time::Duration::from_secs(segundos as u64)).await;
+            if let Some(este) = este {
+                este.concluir_coleta(roleid, mid).await;
+            }
+        });
+    }
+
+    /// Movimento no meio da coleta encerra a sessão (`GM_MSG_GATHER_CANCEL`).
+    pub(super) async fn interromper_coleta(&self, roleid: i32) {
+        let parou = {
+            let mut mundo = self.world.write().await;
+            let Some(mid) = mundo.players.get_mut(&(roleid as i64)).and_then(|p| p.coleta.take()) else { return };
+            if let Some(c) = mundo.coletores.get_mut(&mid) {
+                c.retain(|x| *x != roleid);
+            }
+            mid
+        };
+        debug!("mundo: {roleid} interrompeu a coleta de {parou}");
+        let fim = S2CGamedataSend::player_gather_stop(roleid).data;
+        self.enviar_ao_jogador(roleid, fim.clone()).await;
+        self.transmitir_a_outros(roleid, fim).await;
+    }
+
+    /// Fim do tempo: `GM_MSG_GATHER` na mina e `GM_MSG_GATHER_RESULT` no jogador
+    /// (`matter.cpp:402-510`, `player.cpp:1478-1568`).
+    async fn concluir_coleta(&self, roleid: i32, mid: i64) {
+        use rand::Rng;
+        let preparado = {
+            let mut mundo = self.world.write().await;
+            let dados = Arc::clone(&mundo.data_manager);
+            let colhendo = mundo.players.get(&(roleid as i64)).is_some_and(|p| p.coleta == Some(mid));
+            if !colhendo {
+                return;
+            }
+            if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
+                p.coleta = None;
+            }
+            if let Some(c) = mundo.coletores.get_mut(&mid) {
+                c.retain(|x| *x != roleid);
+            }
+            let Some(m) = mundo.matters.get(&mid).cloned() else { return };
+            let Some(mina) = dados.minas.get(&m.template_id).cloned() else { return };
+            let mut rng = rand::thread_rng();
+            if rng.gen::<f32>() >= mina.chance_de_sucesso {
+                None
+            } else {
+                // `RandSelect(id_produce_prop)` e `Rand(0,1) < bonus_prop ? bonus : std`.
+                let mut sorteio = rng.gen::<f32>();
+                let material = mina
+                    .materiais
+                    .iter()
+                    .find(|mat| {
+                        if sorteio < mat.probabilidade {
+                            true
+                        } else {
+                            sorteio -= mat.probabilidade;
+                            false
+                        }
+                    })
+                    .copied()
+                    .unwrap_or(mina.materiais[mina.materiais.len() - 1]);
+                let quantidade = if rng.gen::<f32>() < mina.chance_bonus { mina.quantidade_bonus } else { mina.quantidade };
+                let quantidade = quantidade.min(dados.limite_de_pilha(material.item));
+                if !mina.permanente {
+                    mundo.colher_mina(mid);
+                }
+                Some((mina, material, quantidade, m.position))
+            }
+        };
+        let fim = S2CGamedataSend::player_gather_stop(roleid).data;
+        self.enviar_ao_jogador(roleid, fim.clone()).await;
+        self.transmitir_a_outros(roleid, fim).await;
+        let Some((mina, material, quantidade, pos)) = preparado else {
+            debug!("mundo: {roleid} não conseguiu colher {mid}");
+            return;
+        };
+        if !mina.permanente {
+            // `gmatter_dispatcher::disappear` difunde `OBJECT_DISAPPEAR`.
+            let some = S2CGamedataSend::object_disappear(mid as i32).data;
+            self.enviar_ao_jogador(roleid, some.clone()).await;
+            self.transmitir_a_outros(roleid, some).await;
+        }
+        let sobrou = self
+            .com_contexto(roleid, |ctx| {
+                if mina.gasta_ferramenta && mina.ferramenta > 0 {
+                    for (slot, n) in ctx.bolsa.tirar(mina.ferramenta as u32, 1) {
+                        // `DROP_TYPE_USE` = 10 (`common/protocol.h:931-943`).
+                        ctx.para_mim.push(S2CGamedataSend::player_drop_item(0, slot as u8, n, mina.ferramenta, 10).data);
+                    }
+                }
+                let mut sobra = quantidade;
+                if quantidade > 0 && material.item > 0 {
+                    let dados = ctx.dados;
+                    // O original também cria o que se colhe por `generate_item_for_drop`
+                    // (`player.cpp:1500-1520`).
+                    match ctx.bolsa.empilhar_gerado(material.item, quantidade, dados) {
+                        Some(e) => {
+                            sobra = quantidade - e.entrou;
+                            ctx.para_mim.push(S2CGamedataSend::obtain_item(material.item as i32, 0, e.entrou, e.no_slot, 0, e.slot as u8).data);
+                        }
+                        None => {}
+                    }
+                    if sobra > 0 {
+                        ctx.para_mim.push(S2CGamedataSend::error_message(erro_s2c::BOLSA_CHEIA).data);
+                    }
+                }
+                if mina.exp != 0 || mina.sp != 0 {
+                    ctx.ganhar_exp(mina.exp.max(0) as i64, mina.sp.max(0) as i64);
+                }
+                sobra
+            })
+            .await;
+        info!("mundo: {roleid} colheu {quantidade} do item {} da mina {mid}", material.item);
+        // O que não coube vai ao chão, do jogador (`DropItemData`, `player.cpp:1530-1540`).
+        if let Some(n) = sobrou.filter(|n| *n > 0) {
+            let d = self.world.write().await.criar_drop(material.item, n, pos, Some(roleid));
+            self.mostrar_drop(&d).await;
+        }
+    }
+
+    // ------------------------------------------------------------------ equipamento
+
+    /// `RefreshEquipment`: relê o equipamento vestido e refaz alcance, cadência, dano, defesa,
+    /// evasão, vida e mana. Com `avisar`, manda a ficha (`OWN_EXT_PROP`) e o estado
+    /// (`SELF_INFO_00`) — é por eles que o cliente sabe até onde andar antes de atacar.
+    pub(super) async fn recalcular_equipamento(&self, roleid: i32, avisar: bool) {
+        let itens = self
+            .itens()
+            .await
+            .list_by_container(roleid, ContainerType::Equipment)
+            .await
+            .unwrap_or_default();
+        let pacotes = {
+            let mut mundo = self.world.write().await;
+            let dados = Arc::clone(&mundo.data_manager);
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            let e = crate::entity::Equipamento::dos_itens_com_addons(&itens, &dados.equipamentos, Some(&dados.addons));
+            if !e.addons_sem_porte.is_empty() {
+                debug!("mundo: {roleid} veste addons sem porte: {:?}", e.addons_sem_porte);
+            }
+            let base = Some(&dados.base_das_classes).filter(|b| !b.is_empty());
+            p.vestir(e, &dados.classes, base);
+            debug!(
+                "mundo: {roleid} equipado — dano {}..{}, alcance {:.1}, golpe {:.2} s, defesa {}, evasão {}",
+                p.attack_min, p.attack_max, p.attack_range, p.attack_speed, p.def_phys, p.armor
+            );
+            (Self::ficha_propria(p), Self::estado_proprio_de(p))
+        };
+        if avisar {
+            self.enviar_ao_jogador(roleid, pacotes.1).await;
+            self.enviar_ao_jogador(roleid, pacotes.0).await;
+        }
+    }
+
+    // ------------------------------------------------------------------ munição
+
+    /// A munição do golpe normal: `DoAttack` (`player.cpp:3063-3070`) tira uma do slot 11
+    /// (`EQUIP_INDEX_PROJECTILE`) quando a arma é de longo alcance (`weapon_type == 1`), e
+    /// `FillAttackMsg` manda `ATTACK_ONCE` com quantas saíram (`:3134`) — também para arma
+    /// de perto, com zero.
+    ///
+    /// A arma e a munição são lidas do banco: o mundo ainda não guarda o equipamento em
+    /// memória. O original não recusa o golpe sem munição aqui; sem flecha o arco perde a
+    /// validade pelo lado do equipamento, que ainda não existe (`falta`).
+    pub(super) async fn gastar_municao(&self, roleid: i32) {
+        let repo = self.itens().await;
+        let arma = repo.get_item_by_slot(roleid, ContainerType::Equipment, SLOT_DA_ARMA).await.ok().flatten();
+        let dados = Arc::clone(&self.world.read().await.data_manager);
+        let de_longe = arma.is_some_and(|a| {
+            matches!(dados.equipamentos.ficha(a.item_id), Some(pw_core::FichaDoEquipamento::Arma(f)) if f.tipo_de_arma == ARMA_DE_LONGE)
+        });
+        let mut gasta = 0u8;
+        if de_longe {
+            match repo.consume_item(roleid, ContainerType::Equipment, SLOT_DA_MUNICAO, 1).await {
+                Ok(restante) => {
+                    gasta = 1;
+                    if restante.is_none() {
+                        debug!("mundo: {roleid} gastou a última munição");
+                    }
+                }
+                Err(e) => warn!("mundo: não consegui gastar a munição de {roleid}: {e}"),
+            }
+        }
+        self.enviar_ao_jogador(roleid, S2CGamedataSend::attack_once(gasta).data).await;
+    }
+
+    // -------------------------------------------------------------- durabilidade
+
+    /// A arma perde `DURABILITY_DEC_PER_ATTACK` a cada **golpe normal**.
+    ///
+    /// `gplayer_imp::FillAttackMsg` chama `DoWeaponOperation<0>()` (`player.cpp:3133`), que
+    /// é o `weapon_item::OnAfterAttack` (`item/equip_item.cpp:978-988`). O
+    /// `FillEnchantMsg` **não** chama — habilidade não gasta arma, e o original diz isso em
+    /// comentário (`player.cpp:3174`). O cliente desconta o mesmo sozinho
+    /// (`WEAPON_RUIN_SPEED = -2`, `EC_IvtrTypes.h:30`).
+    pub(super) async fn gastar_arma(&self, roleid: i32) {
+        let repo = self.itens().await;
+        match repo.gastar_durabilidade(roleid, ContainerType::Equipment, SLOT_DA_ARMA, DESGASTE_POR_GOLPE).await {
+            Ok(Some((dur, max, quebrou))) => {
+                if quebrou {
+                    info!("mundo: a arma de {roleid} quebrou (0/{max})");
+                    self.equipamento_quebrou(roleid, SLOT_DA_ARMA as u8).await;
+                } else {
+                    trace!("mundo: arma de {roleid} em {dur}/{max}");
+                }
+            }
+            Ok(None) => {}
+            Err(e) => warn!("mundo: não consegui desgastar a arma de {roleid}: {e}"),
+        }
+    }
+
+    /// Uma peça sorteada perde `DURABILITY_DEC_PER_HIT` a cada golpe recebido, e o índice
+    /// dela é o que vai no `HOST_ATTACKED`.
+    ///
+    /// `gplayer_imp::OnDamage` (`player.cpp:9552-9570`): `SelectRandomArmor` é
+    /// `abase::Rand(EQUIP_ARMOR_START, EQUIP_ARMOR_END - 1)` — slots 1 a 10 — e devolve -1
+    /// quando o slot sorteado está vazio; aí nada é desgastado e o cliente recebe
+    /// [`NENHUMA_PECA`].
+    pub(super) async fn desgastar_peca(&self, roleid: i32) -> u8 {
+        use rand::Rng;
+        let slot = rand::thread_rng().gen_range(PRIMEIRA_PECA..DEPOIS_DA_ULTIMA_PECA);
+        let repo = self.itens().await;
+        match repo.gastar_durabilidade(roleid, ContainerType::Equipment, slot, DESGASTE_AO_APANHAR).await {
+            Ok(Some((_, max, quebrou))) => {
+                if quebrou {
+                    info!("mundo: a peça {slot} de {roleid} quebrou (0/{max})");
+                    self.equipamento_quebrou(roleid, slot as u8).await;
+                }
+                slot as u8
+            }
+            // Slot vazio (ou item sem durabilidade): o original manda -1, que o
+            // `Make<be_attacked>` reduz a 0x7f.
+            Ok(None) => NENHUMA_PECA,
+            Err(e) => {
+                warn!("mundo: não consegui desgastar a peça {slot} de {roleid}: {e}");
+                NENHUMA_PECA
+            }
+        }
+    }
+
+    /// `_runner->equipment_damaged(index, 0)` + `RefreshEquipment` (`player.cpp:9563-9567`):
+    /// avisa o cliente de que a peça acabou e remanda os atributos, que agora vão sem ela —
+    /// `equip_item::VerifyRequirement` exige `durability > 0` (`item/equip_item.cpp:60-80`).
+    async fn equipamento_quebrou(&self, roleid: i32, slot: u8) {
+        self.enviar_ao_jogador(roleid, S2CGamedataSend::equip_damaged(slot, 0).data).await;
+        self.recalcular_equipamento(roleid, true).await;
+    }
+
+    // ------------------------------------------------------------------ atributos
+
+    /// `C2S::SET_STATUS_POINT` (22) — ver [`PlayerEntity::distribuir_pontos`].
+    pub(super) async fn distribuir_pontos(&self, roleid: i32, conteudo: &[u8]) {
+        let mut r = Reader::new(conteudo);
+        let (Ok(vit), Ok(eng), Ok(str_), Ok(agi)) = (r.u32(), r.u32(), r.u32(), r.u32()) else {
+            warn!("mundo: SET_STATUS_POINT de {roleid} com {} bytes (esperados 16)", conteudo.len());
+            return;
+        };
+        self.com_contexto(roleid, |ctx| {
+            let base = Some(&ctx.dados.base_das_classes).filter(|b| !b.is_empty());
+            let aceito = ctx.p.distribuir_pontos((vit, eng, str_, agi), &ctx.dados.classes, base);
+            let restantes = ctx.p.pontos_de_atributo.max(0) as u32;
+            let pacote = if aceito {
+                ctx.mudou = true;
+                info!("mundo: {roleid} distribuiu pontos (vit {vit}, eng {eng}, for {str_}, agi {agi}), sobram {restantes}");
+                S2CGamedataSend::add_status_point(vit, eng, str_, agi, restantes)
+            } else {
+                debug!("mundo: {roleid} tentou gastar {} pontos tendo {restantes}", vit as u64 + eng as u64 + str_ as u64 + agi as u64);
+                S2CGamedataSend::add_status_point(0, 0, 0, 0, restantes)
+            };
+            ctx.para_mim.push(pacote.data);
+        })
+        .await;
     }
 
     // ------------------------------------------------------------------ missões
@@ -350,12 +772,35 @@ impl BusServer {
             .await
             .flatten();
         match r {
-            Some(0) => info!("mundo: {roleid} aceitou a missão {id}"),
+            Some(0) => {
+                info!("mundo: {roleid} aceitou a missão {id}");
+                self.entregar_a_equipe(roleid, id, &dados).await;
+            }
             Some(e) => {
                 info!("mundo: {roleid} não pode aceitar a missão {id} (erro {e})");
                 self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::MISSAO_INDISPONIVEL).data).await;
             }
             None => {}
+        }
+    }
+
+    /// `DeliverTeamMemTask` (`TaskTempl.inl:2304-2321`): missão de equipe aceita pelo capitão
+    /// vai a cada membro (`TASK_PLY_NOTIFY_NEW_MEM_TASK` → `OnDeliverTeamMemTask`). Só alcança
+    /// quem está neste servidor de mundo.
+    async fn entregar_a_equipe(&self, roleid: i32, id: u32, dados: &GameDataManager) {
+        let Some(t) = dados.tasks.get_task(id) else { return };
+        let topo = t.parent.unwrap_or(id);
+        if !dados.tasks.get_task(topo).is_some_and(|t| t.em_equipe && t.recebida_pela_equipe) {
+            return;
+        }
+        let membros = self.world.read().await.membros_do_grupo(roleid);
+        for m in membros.into_iter().filter(|&m| m != roleid) {
+            let r = self.com_contexto(m, |ctx| Self::com_motor(ctx, dados, |mt| mt.aceitar_como_membro(topo))).await;
+            match r {
+                Some(0) => info!("mundo: {m} recebeu a missão {topo} da equipe de {roleid}"),
+                Some(e) => debug!("mundo: {m} não recebeu a missão {topo} da equipe (erro {e})"),
+                None => debug!("mundo: {m}, da equipe de {roleid}, não está neste mapa"),
+            }
         }
     }
 
@@ -393,6 +838,13 @@ impl BusServer {
             aviso_do_cliente::DESISTIR => {
                 self.com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.desistir(id))).await;
             }
+            aviso_do_cliente::CHEGOU_AO_LUGAR | aviso_do_cliente::SAIU_DO_LUGAR => {
+                let saida = motivo == aviso_do_cliente::SAIU_DO_LUGAR;
+                let feito = self.com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.conferir_lugar(id, saida))).await;
+                if feito == Some(true) {
+                    info!("mundo: {roleid} {} o lugar da missão {id}", if saida { "saiu d" } else { "chegou a" });
+                }
+            }
             aviso_do_cliente::ENTREGA_AUTOMATICA => {
                 // `OnTaskAutoDelv` (`TaskServer.cpp:452-464`).
                 if dados.tasks.get_task(id).is_some_and(|t| t.parent.is_none() && t.entrega_automatica) {
@@ -410,11 +862,52 @@ impl BusServer {
         true
     }
 
+    /// `item_taskdice::OnUse` (`gs/item/item_taskdice.cpp:12-42`): em combate a carta com
+    /// `no_use_in_combat` é recusada (`ERR_INVALID_OPERATION_IN_COMBAT`); senão sorteia a
+    /// missão (`generate_task_id`, a mesma do `Load` de um item sem dados) e tenta entregá-la
+    /// (`OnTaskCheckDeliver` → `CheckDeliverTask`). Deu certo: gasta uma (`return 1`). Não
+    /// deu: `ERR_CANNOT_USE_ITEM` e a carta fica.
+    pub(super) async fn usar_carta_de_missao(
+        &self,
+        roleid: i32,
+        u: &crate::comandos::UseItem,
+        carta: &pw_data_loader::cartas::CartaDeMissao,
+        envio: &crate::bus_server::EnvioAoCliente,
+    ) {
+        let em_combate = self.world.read().await.players.get(&(roleid as i64)).is_some_and(|p| p.combate_s > 0);
+        if em_combate && carta.nao_usa_em_combate {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::OPERACAO_EM_COMBATE).data).await;
+            return;
+        }
+        let Some(missao) = carta.sortear(rand::random::<f32>()) else {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::NAO_PODE_USAR_ITEM).data).await;
+            return;
+        };
+        let dados = self.world.read().await.data_manager.clone();
+        let r = self
+            .com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.aceitar(missao, 0, true)))
+            .await
+            .unwrap_or(u32::MAX);
+        if r != 0 {
+            info!("mundo: {roleid} usou a carta {} — missão {missao} recusada ({r})", u.item_id);
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::NAO_PODE_USAR_ITEM).data).await;
+            return;
+        }
+        if self.itens().await.consume_item(roleid, ContainerType::Inventory, u.slot, 1).await.is_err() {
+            warn!("mundo: {roleid} recebeu a missão {missao} mas a carta {} não foi gasta", u.item_id);
+            return;
+        }
+        info!("mundo: {roleid} usou a carta {} e recebeu a missão {missao}", u.item_id);
+        self.responder(roleid, S2CGamedataSend::host_use_item(u.onde, u.slot as u8, u.item_id, 1).data, envio).await;
+        self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(u.onde, u.slot).data, envio).await;
+    }
+
     /// Roda uma operação do motor sobre as listas do jogador do contexto.
     fn com_motor<R>(ctx: &mut Contexto, dados: &GameDataManager, op: impl FnOnce(&mut Motor<Contexto>) -> R) -> R {
         let mut listas: ListasDeMissao = std::mem::take(&mut ctx.p.missoes);
         let r = {
-            let mut m = Motor { tarefas: &dados.tasks, listas: &mut listas, j: ctx };
+            let eu = ctx.p.role_id as u32;
+            let mut m = Motor { tarefas: &dados.tasks, listas: &mut listas, j: ctx, eu };
             op(&mut m)
         };
         ctx.p.missoes = listas;
@@ -430,6 +923,7 @@ impl BusServer {
     /// dano, o dono (maior dano, com bônus do primeiro golpe) recebe o crédito de missão e o
     /// drop (`DropItem`).
     pub(super) async fn monstro_morreu(&self, alvo: i64) {
+        self.encerrar_ataques_ao_alvo(alvo).await;
         let (tid, nivel_do_monstro, pos, partes, dono, modelo) = {
             let mut mundo = self.world.write().await;
             let dados = Arc::clone(&mundo.data_manager);
@@ -483,7 +977,19 @@ impl BusServer {
         {
             let mut mundo = self.world.write().await;
             for tid in &queda.itens {
-                criados.push(mundo.criar_drop(*tid, 1, pos, Some(dono)));
+                // Aljava vira a munição que ela contém (`generate_quiver`,
+                // `generate_item_temp.h:650-667`): o drop do 1955 era o id cru da aljava.
+                let (tid, n) = match mundo.data_manager.aljavas.get(tid) {
+                    Some(&(municao, minimo, maximo)) => {
+                        use rand::Rng;
+                        (municao, if minimo >= maximo { minimo } else { rand::thread_rng().gen_range(minimo..=maximo) })
+                    }
+                    None => (*tid, 1),
+                };
+                // Equipamento sai sorteado: essência, furos e propriedades adicionais
+                // (`generate_weapon/armor/decoration` com `ADDON_LIST_DROP`).
+                let octetos = crate::geracao::gerar_equipamento(&mundo.data_manager, tid).map(|c| c.escrever()).unwrap_or_default();
+                criados.push(mundo.criar_drop_com_octetos(tid, n, pos, Some(dono), octetos));
             }
             for n in &queda.montes_de_dinheiro {
                 criados.push(mundo.criar_drop(TID_DO_DINHEIRO, *n, pos, Some(dono)));
@@ -581,7 +1087,12 @@ impl BusServer {
                     return true;
                 }
                 let dados = ctx.dados;
-                match ctx.bolsa.empilhar(drop.item_id, drop.count, dados) {
+                let guardado = if drop.octetos.is_empty() {
+                    ctx.bolsa.empilhar(drop.item_id, drop.count, dados)
+                } else {
+                    ctx.bolsa.guardar_equipamento(drop.item_id, &drop.octetos, dados)
+                };
+                match guardado {
                     Some(e) => {
                         ctx.para_mim.push(S2CGamedataSend::pickup_item(drop.item_id as i32, 0, e.entrou, e.no_slot, 0, e.slot as u8).data);
                         true

@@ -74,7 +74,8 @@ pub struct PlayerEntity {
     
     pub position: Vector3,
     pub target_id: Option<i64>,
-    pub buffs: Vec<ActiveBuff>,
+    /// Os filtros vivos (efeitos de habilidade) — ver [`crate::efeitos`].
+    pub efeitos: crate::efeitos::Efeitos,
     /// As entidades que este jogador já recebeu — NPCs e monstros, por id.
     ///
     /// É a memória do que o **cliente** tem. Sem ela não dá para saber o que mandar
@@ -124,6 +125,11 @@ pub struct PlayerEntity {
     /// **mesmo** valor que o `custom_stamp` do `PlayerBaseInfo_Re` que o `pw-link`
     /// responde. Ver [`pw_core::stamp_de_aparencia`].
     pub crc_aparencia: u16,
+    /// `_en_percent.base_damage` e `.base_magic`: a porcentagem que força/agilidade e energia
+    /// somam ao dano (`UpdateAttack`/`UpdateMagic`). Entra de novo no dano de habilidade
+    /// (`GeneratePhysicDamage`, `actobject.h:1422-1444`).
+    pub bonus_de_dano_pct: i32,
+    pub bonus_magico_pct: i32,
     /// `status_point` — pontos de atributo por distribuir (`potential_points` no banco).
     /// Cinco por nível (`LevelUp`, `gs/player.cpp:2647`).
     pub pontos_de_atributo: i32,
@@ -145,6 +151,257 @@ pub struct PlayerEntity {
     pub npc_em_conversa: Option<i64>,
     /// As listas de missão — ver [`crate::missoes`].
     pub missoes: crate::missoes::ListasDeMissao,
+    /// A mina que está colhendo (`session_gather`), se alguma.
+    pub coleta: Option<i64>,
+    /// O que o equipamento vestido acrescenta (`_cur_item` e `_en_point`).
+    pub equipamento: Equipamento,
+    /// A sessão de golpe normal em andamento (`session_normal_attack`).
+    pub ataque: Option<SessaoDeAtaque>,
+    /// A conjuração em andamento, com o marcador que a identifica — a tarefa que a conclui
+    /// confere o marcador, e soltar a carga (`CONTINUE_ACTION`) a conclui antes.
+    pub conjuracao: Option<Conjuracao>,
+    /// O dano **antes** das porcentagens: `_base_prop.damage_* + _en_point.damage_* +
+    /// _cur_item.damage_*` (`GeneratePhysicDamage`/`GenerateMaigicDamage2`,
+    /// `actobject.h:1422-1469`). É a base do dano de habilidade.
+    pub dano_bruto: (i32, i32),
+    pub dano_magico_bruto: (i32, i32),
+}
+
+/// Uma conjuração aberta.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Conjuracao {
+    pub skill_id: i32,
+    pub alvo: i64,
+    pub inicio: std::time::Instant,
+    /// O tempo do primeiro estado — a carga cheia, nas de carga.
+    pub duracao_ms: u32,
+    pub marcador: u64,
+}
+
+/// `PLAYER_BODYSIZE` (`gs/config.h:104`).
+pub const CORPO_DO_JOGADOR: f32 = 0.3;
+
+/// `session_normal_attack` (`actsession.cpp:350-418`): o alvo e quanto falta para o próximo
+/// golpe, que sai a cada `attack_speed` *ticks*.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SessaoDeAtaque {
+    pub alvo: i64,
+    pub falta_ms: u32,
+    /// O `NORMAL_ATTACK` que chegou com esta sessão aberta, na fila (`AddSession`,
+    /// `actobject.cpp:1180-1213`). Só começa no próximo golpe (`GM_MSG_OBJ_SESSION_REPEAT`
+    /// com `HasNextSession`, `actobject.cpp:180-189`) — o ritmo não muda com cliques.
+    pub proximo: Option<i64>,
+    /// Um `CANCEL_ACTION` na fila (`session_cancel_action`, `playercmd.cpp:2136-2153`): no
+    /// próximo golpe a sessão termina.
+    pub cancelar: bool,
+    /// Um movimento na fila (`session_move`, `playercmd.cpp:9297-9303`): no próximo golpe a
+    /// sessão termina. `true` com [`Self::proximo`] marcado quer dizer que andou **depois**
+    /// de clicar — o novo golpe abre e termina no seguinte.
+    pub andar: bool,
+}
+
+/// A arma empunhada, como `WeaponItemEnhance` a deixa em `_cur_item` (`actobject.h:1111`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ArmaEmUso {
+    /// `weapon_type` 1 (longo alcance) ou 2 (corpo a corpo de agilidade): o dano da arma
+    /// cresce com a agilidade; 0, com a força (`UpdateAttack`, `playertemplate.h:925-936`).
+    pub dano_pela_agilidade: bool,
+    pub de_longe: bool,
+    pub dano: (i32, i32),
+    pub dano_magico: (i32, i32),
+    pub alcance: f32,
+    pub velocidade_em_ticks: i32,
+}
+
+/// O que as propriedades adicionais do equipamento vestido somam (`Activate`/`UpdateItem`
+/// dos tratadores, `gs/item/item_addon.cpp`). Refino e pedras são addons da mesma lista
+/// (`refine_*`, `SetAddOnEmbedded`, `equip_item.cpp:319-330`, `876-905`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BonusDeAddons {
+    /// `_en_point.str/agi/vit/eng`.
+    pub forca: i32,
+    pub agilidade: i32,
+    pub vitalidade: i32,
+    pub energia: i32,
+    /// `_en_point.max_hp/max_mp`.
+    pub vida: i32,
+    pub mana: i32,
+    /// `_en_point.attack` — precisão.
+    pub precisao: i32,
+    /// `_en_point.defense` e a defesa do item (`EPSA_EQ_addon`).
+    pub defesa: i32,
+    /// `_en_point.armor` e a evasão do item.
+    pub evasao: i32,
+    /// Dano físico e mágico (`template_enhance_damage*`).
+    pub dano: i32,
+    pub dano_magico: i32,
+    /// `EnhanceAllResistance`.
+    pub resistencia: i32,
+    pub grau_de_ataque: i32,
+    pub grau_de_defesa: i32,
+    /// `_crit_rate`, em pontos percentuais.
+    pub critico: i32,
+    /// `_en_percent.damage/magic_dmg` e `EnhanceScaleAllResistance`.
+    pub dano_pct: i32,
+    pub magico_pct: i32,
+    pub resistencia_pct: i32,
+}
+
+impl BonusDeAddons {
+    /// Soma um addon pelo tratador. `false` quando o tratador não tem porte (ou só mexe na
+    /// essência, que já veio sorteada).
+    pub fn somar(&mut self, tratador: &str, args: &[i32]) -> bool {
+        let v = args.first().copied().unwrap_or(0);
+        // Os de essência (`ApplyAtGeneration`) já estão na essência sorteada.
+        if ["IA_EA_ESS<", "IA_ED_ESS<", "item_armor_enhance_resistance<", "item_decoration_enchance_resistance<", "enhance_weapon_", "item_decoration_specific_"]
+            .iter()
+            .any(|p| tratador.starts_with(p))
+        {
+            return true;
+        }
+        let base = tratador.strip_prefix("refine_").map(|t| match t {
+            // `refine_addon_template<X>` (`item_addon.cpp:1505-1511`).
+            "resistance" => "enhance_all_resistance_addon",
+            "armor" => "enhance_armor_addon",
+            "defense" => "enhance_defense_addon_1arg",
+            "max_hp" => "enhance_hp_addon",
+            "damage" => "enhance_damage_addon",
+            "magic_damage" => "refino_magico",
+            "defense_resistance" => "refino_defesa_resistencia",
+            _ => "",
+        });
+        match base.unwrap_or(tratador) {
+            "enhance_str_addon" => self.forca += v,
+            "enhance_agi_addon" => self.agilidade += v,
+            "enhance_vit_addon" => self.vitalidade += v,
+            "enhance_eng_addon" => self.energia += v,
+            "enhance_hp_addon" | "enhance_hp_addon_2" => self.vida += v,
+            "enhance_mp_addon" | "enhance_mp_addon_2" => self.mana += v,
+            "enhance_attack_addon" | "enhance_attack_addon_2" => self.precisao += v,
+            "enhance_defense_addon" | "enhance_defense_addon_1arg" | "enhance_defense_addon_2" => self.defesa += v,
+            "enhance_armor_addon" | "enhance_armor_range_addon" => self.evasao += v,
+            "enhance_damage_addon" | "enhance_damage_addon_2" => self.dano += v,
+            "enhance_magic_damage_addon" | "enhance_magic_damage_addon_2" => self.dano_magico += v,
+            // `refine_addon_template2<enhance_magic_damage_addon, enhance_damage_addon>`.
+            "refino_magico" => {
+                self.dano_magico += v;
+                self.dano += v;
+            }
+            // `refine_addon_template2<enhance_defense_addon_2, enhance_all_resistance_addon>`.
+            "refino_defesa_resistencia" => {
+                self.defesa += v;
+                self.resistencia += v;
+            }
+            "enhance_all_resistance_addon" => self.resistencia += v,
+            "enhance_attack_degree" => self.grau_de_ataque += v,
+            "enhance_defend_degree" => self.grau_de_defesa += v,
+            "enhance_crit_rate" => self.critico += v,
+            "enhance_damage_scale_addon_2" => self.dano_pct += v,
+            "enhance_magic_damage_scale_addon" => self.magico_pct += v,
+            "enhance_all_resistance_scale_addon" => self.resistencia_pct += v,
+            _ => return false,
+        }
+        true
+    }
+}
+
+/// O que o equipamento soma aos atributos: a essência de cada peça (a gravada nos octetos
+/// quando há, senão a do modelo) e as propriedades adicionais ([`BonusDeAddons`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Equipamento {
+    pub arma: Option<ArmaEmUso>,
+    /// `_en_point.defense`, `.armor`, `.max_hp`, `.max_mp`, `.damage_low/high` (acessórios),
+    /// `.magic_dmg_low/high`, `.resistance[5]`.
+    pub defesa: i32,
+    pub evasao: i32,
+    pub vida: i32,
+    pub mana: i32,
+    pub dano: i32,
+    pub dano_magico: i32,
+    pub resistencias: [i32; 5],
+    pub addons: BonusDeAddons,
+    /// Addons vestidos sem porte (ids), para o log.
+    pub addons_sem_porte: Vec<u32>,
+}
+
+/// `Result(base, base2, percent)` (`playertemplate.h:807-812`).
+fn resultado(a: i32, b: i32, porcento: i32) -> i32 {
+    ((((a + b) as f32) * 0.01 * (100 + porcento) as f32 + 0.5) as i32).max(0)
+}
+
+impl Equipamento {
+    /// Monta o bônus a partir dos itens do contêiner de equipamento. Slot 0 é a arma
+    /// (`EQUIP_INDEX_WEAPON`); as fichas de armadura e acessório somam onde estiverem.
+    pub fn dos_itens(itens: &[pw_core::ItemRecord], tabelas: &pw_data_loader::armaduras::TabelasDeEquipamento) -> Self {
+        Self::dos_itens_com_addons(itens, tabelas, None)
+    }
+
+    /// Com a tabela de addons: a essência gravada nos octetos (`ConteudoDeEquipamento::ler`)
+    /// e os addons dela somados. Octetos ilegíveis valem como item sem octetos.
+    pub fn dos_itens_com_addons(
+        itens: &[pw_core::ItemRecord],
+        tabelas: &pw_data_loader::armaduras::TabelasDeEquipamento,
+        addons: Option<&pw_data_loader::addons::TabelaDeAddons>,
+    ) -> Self {
+        use pw_core::FichaDoEquipamento as F;
+        let mut e = Equipamento::default();
+        for item in itens {
+            // Peça acabada não vale nada: `equip_item::VerifyRequirement` só ativa o item
+            // com `_base_limit.durability > 0` (`gs/item/equip_item.cpp:60-80`), e é por
+            // isso que o original refaz os atributos quando uma peça zera (B61).
+            if item.max_durability > 0 && item.durability == 0 {
+                continue;
+            }
+            let mut ficha = tabelas.ficha(item.item_id);
+            if let (Some(f), false) = (ficha, item.octets.is_empty()) {
+                if let Some(c) = pw_core::ConteudoDeEquipamento::ler(&item.octets, &f) {
+                    ficha = Some(c.ficha);
+                    if let Some(t) = addons {
+                        for a in &c.addons {
+                            let ok = t.por_id.get(&a.id()).is_some_and(|d| e.addons.somar(&d.tratador, &a.args));
+                            if !ok {
+                                e.addons_sem_porte.push(a.id());
+                            }
+                        }
+                    }
+                }
+            }
+            match ficha {
+                Some(F::Arma(a)) if item.slot == 0 => {
+                    let modo = tabelas.armas.get(&item.item_id).map(|t| t.modo_de_alcance).unwrap_or(1);
+                    e.arma = Some(ArmaEmUso {
+                        // `short_range_mode` 0 → `weapon_type` 1, 2 → 2 (`generate_item_temp.h:319-324`).
+                        dano_pela_agilidade: modo == 0 || modo == 2,
+                        de_longe: modo == 0,
+                        dano: (a.dano_minimo, a.dano_maximo),
+                        dano_magico: (a.dano_magico_minimo, a.dano_magico_maximo),
+                        alcance: a.alcance,
+                        velocidade_em_ticks: a.velocidade_de_ataque,
+                    });
+                }
+                Some(F::Armadura(a)) => {
+                    e.defesa += a.defesa;
+                    e.evasao += a.evasao;
+                    e.vida += a.hp_extra;
+                    e.mana += a.mp_extra;
+                    for (i, r) in a.resistencias.iter().enumerate() {
+                        e.resistencias[i] += r;
+                    }
+                }
+                Some(F::Decoracao(d)) => {
+                    e.dano += d.dano;
+                    e.dano_magico += d.dano_magico;
+                    e.defesa += d.defesa;
+                    e.evasao += d.evasao;
+                    for (i, r) in d.resistencias.iter().enumerate() {
+                        e.resistencias[i] += r;
+                    }
+                }
+                _ => {}
+            }
+        }
+        e
+    }
 }
 
 /// O que depende do nível: vida e mana máximas, dano, dano mágico, defesa e resistência.
@@ -185,21 +442,127 @@ pub fn atributos_de_nivel(
 impl PlayerEntity {
     /// Refaz o que depende do nível, depois de uma subida.
     pub fn recalcular_por_nivel(&mut self, classes: &TabelaDeClasses, base: Option<&TabelaDeBase>) {
-        let Some(a) = atributos_de_nivel(self.cls as i32, self.level, self.vitality, self.energy, classes, base) else {
+        let Some(a) = atributos_de_nivel(
+            self.cls as i32,
+            self.level,
+            self.vitality + self.equipamento.addons.vitalidade,
+            self.energy + self.equipamento.addons.energia,
+            classes,
+            base,
+        ) else {
             return;
         };
-        self.max_hp = a.max_hp;
-        self.max_mp = a.max_mp;
-        self.attack_min = a.dano;
-        self.attack_max = a.dano;
-        self.magic_attack_min = a.dano_magico;
-        self.magic_attack_max = a.dano_magico;
-        self.def_phys = a.defesa;
-        self.def_metal = a.resistencia;
-        self.def_wood = a.resistencia;
-        self.def_water = a.resistencia;
-        self.def_fire = a.resistencia;
-        self.def_earth = a.resistencia;
+        let e = self.equipamento.clone();
+        let b = e.addons;
+        // `UpdateBasic`: os atributos somam `_en_point.str/agi/vit/eng`.
+        let (vit, eng, forca, agi) = (self.vitality + b.vitalidade, self.energy + b.energia, self.strength + b.forca, self.agility + b.agilidade);
+        // `_en_percent` dos filtros vivos (B53) — ver [`crate::efeitos::Realce`].
+        let r = self.efeitos.realce();
+
+        // `UpdateLife`/`UpdateMana` (`playertemplate.h:1153-1189`): o equipamento entra em
+        // `_en_point.max_hp/max_mp`; a porcentagem (`Inchp`/`Dechp`) só na vida.
+        self.max_hp = resultado(a.max_hp, e.vida + b.vida, r.vida).max(1);
+        self.max_mp = a.max_mp + e.mana + b.mana;
+
+        // `UpdateAttack` (`playertemplate.h:916-990`).
+        let arma = e.arma;
+        let atributo = if arma.is_some_and(|w| w.dano_pela_agilidade) { agi } else { forca };
+        let bonus = (atributo as f32 * (100.0 / 150.0) + 0.5) as i32;
+        let (item_min, item_max) = arma.map(|w| w.dano).unwrap_or((0, 0));
+        // `enh = base_damage + en_percent.damage`.
+        let dano_extra = e.dano + b.dano;
+        self.attack_min = resultado(item_min + dano_extra, a.dano, bonus + r.dano + b.dano_pct);
+        self.attack_max = resultado(item_max + dano_extra, a.dano, bonus + r.dano + b.dano_pct);
+        self.dano_bruto = (item_min + dano_extra + a.dano, item_max + dano_extra + a.dano);
+        self.bonus_de_dano_pct = bonus;
+        let cfg = classes.get(self.cls as i32);
+        let alcance_base = cfg.map(|c| c.alcance_de_ataque).unwrap_or(self.attack_range);
+        self.attack_range = match arma {
+            Some(w) if w.alcance > 0.1 => w.alcance,
+            _ => alcance_base,
+        } + CORPO_DO_JOGADOR;
+        let ticks = match arma {
+            Some(w) => if w.velocidade_em_ticks < 4 { 50 } else { w.velocidade_em_ticks },
+            None => cfg.map(|c| c.ataque_em_ticks()).unwrap_or((self.attack_speed * 20.0).round() as i32),
+        };
+        // `Result(attack_speed, en_point.attack_speed, en_percent.attack_speed)`.
+        let ticks = resultado(ticks, 0, r.velocidade_de_ataque).clamp(4, 300);
+        self.attack_speed = ticks as f32 / 20.0;
+
+        // `UpdateMagic` (`playertemplate.h:1006-1037`): a energia é o bônus.
+        let (magico_min, magico_max) = arma.map(|w| w.dano_magico).unwrap_or((0, 0));
+        let magico_extra = e.dano_magico + b.dano_magico;
+        self.magic_attack_min = resultado(a.dano_magico + magico_extra, magico_min, eng + r.magia + b.magico_pct);
+        self.magic_attack_max = resultado(a.dano_magico + magico_extra, magico_max, eng + r.magia + b.magico_pct);
+        self.dano_magico_bruto = (a.dano_magico + magico_extra + magico_min, a.dano_magico + magico_extra + magico_max);
+        self.bonus_magico_pct = eng;
+        let res_pct = ((vit * 2 + eng * 3) as f32 * (100.0 / 2500.0) + 0.5) as i32;
+        let res_pontos = (vit + eng) >> 2;
+        let res: Vec<i32> = e
+            .resistencias
+            .iter()
+            .map(|x| resultado(a.resistencia, *x + b.resistencia, res_pct + r.resistencia + b.resistencia_pct) + res_pontos)
+            .collect();
+        (self.def_metal, self.def_wood, self.def_water, self.def_fire, self.def_earth) = (res[0], res[1], res[2], res[3], res[4]);
+
+        // `UpdateDefense` (`playertemplate.h:1117-1133`).
+        let def_pct = ((vit * 2 + forca * 3) as f32 * (100.0 / 2500.0) + 0.5) as i32;
+        let def_pontos = (vit + forca) >> 2;
+        self.def_phys = ((((a.defesa + e.defesa + b.defesa) as f32) * 0.01 * (100 + def_pct + r.defesa) as f32 + 0.5) as i32 + def_pontos).max(0);
+        // `_attack_degree`/`_defend_degree` dos addons.
+        self.attack_degree = b.grau_de_ataque;
+        self.defend_degree = b.grau_de_defesa;
+        if let Some(cfg) = cfg {
+            self.armor = resultado(cfg.evasao_base(agi), e.evasao + b.evasao, r.evasao);
+            // `(base.attack + base_attack + en_point.attack) × (100 + en_percent.attack)%`.
+            self.attack_rate = ((((cfg.precisao_base(agi) + b.precisao) as f32) * 0.01 * (100 + r.precisao) as f32 + 0.5) as i32).max(0);
+            // `UpdateSpeed` (`playertemplate.h:1077-1101`): `src × (100 + en_percent)%`.
+            let fator = 0.01 * (100 + r.velocidade) as f32;
+            self.walk_speed = (cfg.velocidade_andando * fator).max(0.1);
+            self.move_speed = (cfg.velocidade_correndo * fator).max(0.1);
+            // `_crit_rate` soma os pontos do `Incsmite` (`EnhanceCrit`).
+            self.crit_rate = (cfg.chance_de_critico + r.critico + b.critico) as f32 / 100.0;
+        }
+    }
+
+    /// Vitalidade, energia, força e agilidade de `_cur_prop`: a base mais os addons vestidos
+    /// (`_en_point.vit/eng/str/agi`, `property_policy::UpdateBasic`). É o que o
+    /// `OWN_EXT_PROP` leva: a janela do personagem mostra esse número, e em verde quando algum
+    /// item soma (`DlgCharacter.cpp:442-470`); os requisitos de equipamento também o conferem
+    /// (`EC_HostPlayer.cpp:4908`). Mandar só a base escondia o bônus (teste de 2026-09-17).
+    pub fn atributos_efetivos(&self) -> (i32, i32, i32, i32) {
+        let b = self.equipamento.addons;
+        (self.vitality + b.vitalidade, self.energy + b.energia, self.strength + b.forca, self.agility + b.agilidade)
+    }
+
+    /// `gplayer_imp::PlayerSetStatusPoint` (`player.cpp:8598-8615`): gasta pontos livres
+    /// nos quatro atributos.
+    ///
+    /// Recusa (e não muda nada) quando qualquer parcela ou a soma passa dos pontos livres —
+    /// a mesma conferência do original, que responde com os quatro em zero. Aceito, soma os
+    /// atributos e refaz o que deles depende: vida e mana máximas (`__UpdateBasic` soma
+    /// `vit_hp`/`eng_mp` por ponto, `playertemplate.cpp:570-582`), evasão e precisão pela
+    /// agilidade.
+    pub fn distribuir_pontos(
+        &mut self,
+        (vit, eng, str_, agi): (u32, u32, u32, u32),
+        classes: &TabelaDeClasses,
+        base: Option<&TabelaDeBase>,
+    ) -> bool {
+        let livres = self.pontos_de_atributo.max(0) as u64;
+        let soma = vit as u64 + eng as u64 + str_ as u64 + agi as u64;
+        if [vit, eng, str_, agi].iter().any(|&v| v as u64 > livres) || soma > livres {
+            return false;
+        }
+        self.vitality += vit as i32;
+        self.energy += eng as i32;
+        self.strength += str_ as i32;
+        self.agility += agi as i32;
+        self.pontos_de_atributo -= soma as i32;
+        self.recalcular_por_nivel(classes, base);
+        self.hp = self.hp.min(self.max_hp);
+        self.mp = self.mp.min(self.max_mp);
+        true
     }
 
     /// Como este jogador aparece para os outros.
@@ -253,6 +616,13 @@ pub struct MonsterEntity {
     /// dano elemental que o golpe normal do monstro carrega.
     pub magic_attack: [(i32, i32); 5],
     pub attack_range: f32,
+    /// `(int)(attack_speed × 20)` do `MONSTER_ESSENCE`, em tiques de 50 ms: o intervalo
+    /// entre golpes da sessão de ataque (`ChangeInterval(_cur_prop.attack_speed)`,
+    /// `gs/npcsession.cpp:60-70`). Era 1,5 s escrito no `ai.rs` para todo monstro (B62).
+    pub ataque_em_ticks: i32,
+    /// `_damage_delay` (`npc.cpp:2118`): quantos tiques o dano deste monstro leva para
+    /// tirar vida, e a duração da animação do golpe no cliente.
+    pub atraso_do_dano_em_ticks: i32,
     /// `aggro_range` do `elements.data`: até onde o monstro persegue. Era `35.0` escrito
     /// no `ai.rs` para todo monstro do jogo.
     pub aggro_range: f32,
@@ -279,7 +649,8 @@ pub struct MonsterEntity {
     pub respawn_delay_ms: u32,
     
     pub target_id: Option<i64>,
-    pub buffs: Vec<ActiveBuff>,
+    /// Os filtros vivos (efeitos de habilidade) — ver [`crate::efeitos`].
+    pub efeitos: crate::efeitos::Efeitos,
     /// `_dmg_list` — quanto cada jogador tirou deste monstro, para dividir a experiência e
     /// decidir o dono do drop (`gnpc_imp::DispatchExp`, `gs/npc.cpp:1515`).
     pub danos: Vec<(i64, i64)>,
@@ -287,7 +658,24 @@ pub struct MonsterEntity {
     pub primeiro_atacante: Option<i64>,
 }
 
+/// `Result(a, 0, p)` para os realces de monstro: NPC passa pelo mesmo `property_policy`
+/// com classe −1, onde força/agilidade/vitalidade são zero e só o `_en_percent` pesa
+/// (`playertemplate.h:916-1133`, `obj_interface.cpp:1614-1627`).
+pub fn com_realce(valor: i32, porcento: i32) -> i32 {
+    resultado(valor, 0, porcento)
+}
+
 impl MonsterEntity {
+    /// `run_speed` com `Slow`/`Speedup` (`UpdateSpeed`, `playertemplate.h:1091-1092`).
+    pub fn corrida(&self) -> f32 {
+        self.move_speed * 0.01 * (100 + self.efeitos.realce().velocidade) as f32
+    }
+
+    /// `walk_speed` com `Slow`/`Speedup`.
+    pub fn andar(&self) -> f32 {
+        self.walk_speed * 0.01 * (100 + self.efeitos.realce().velocidade) as f32
+    }
+
     /// Registra o dano de um jogador (`OnDamage` → `_dmg_list`).
     pub fn registrar_dano(&mut self, quem: i64, dano: i64) {
         if self.primeiro_atacante.is_none() {
@@ -342,6 +730,7 @@ impl PlayerEntity {
     ) -> Self {
         let cls = p.cls as i32;
         let cfg = classes.get(cls);
+        let tabela_de_base = base;
         let base = base.and_then(|b| b.get(cls));
         let telescopica = |por_nivel: f32| -> i32 {
             (p.level as f32 * por_nivel) as i32 - por_nivel as i32
@@ -362,7 +751,7 @@ impl PlayerEntity {
         let defesa = cfg.map(|c| telescopica(c.defesa_por_nivel)).unwrap_or(0);
         let resistencia = cfg.map(|c| telescopica(c.resistencia_por_nivel)).unwrap_or(0);
 
-        Self {
+        let mut j = Self {
             role_id: p.id,
             name: p.name.clone(),
             race: p.race,
@@ -453,7 +842,7 @@ impl PlayerEntity {
             crit_rate: cfg.map(|c| c.chance_de_critico as f32 / 100.0).unwrap_or(0.0),
             position: p.position,
             target_id: None,
-            buffs: Vec::new(),
+            efeitos: Default::default(),
             visiveis: std::collections::HashSet::new(),
             centro_do_stream: p.position,
             voando: false,
@@ -475,7 +864,29 @@ impl PlayerEntity {
             recargas: std::collections::HashMap::new(),
             npc_em_conversa: None,
             missoes: crate::missoes::ListasDeMissao::default(),
-        }
+            coleta: None,
+            equipamento: Equipamento::default(),
+            ataque: None,
+            conjuracao: None,
+            dano_bruto: (1, 1),
+            dano_magico_bruto: (1, 1),
+            bonus_de_dano_pct: 0,
+            bonus_magico_pct: 0,
+        };
+        // Os bônus de atributo (`UpdateAttack`/`UpdateDefense`/`UpdateMagic`) valem também
+        // sem equipamento; quem carrega os itens chama [`Self::vestir`] depois.
+        j.recalcular_por_nivel(classes, tabela_de_base);
+        j.hp = j.hp.min(j.max_hp).max(0);
+        j.mp = j.mp.min(j.max_mp).max(0);
+        j
+    }
+
+    /// Troca o equipamento em uso e refaz os atributos (`RefreshEquipment`).
+    pub fn vestir(&mut self, equipamento: Equipamento, classes: &TabelaDeClasses, base: Option<&TabelaDeBase>) {
+        self.equipamento = equipamento;
+        self.recalcular_por_nivel(classes, base);
+        self.hp = self.hp.min(self.max_hp);
+        self.mp = self.mp.min(self.max_mp);
     }
 
     /// A precisão e a evasão base do jogador, do `CHARRACTER_CLASS_CONFIG` do
@@ -549,6 +960,8 @@ impl MonsterEntity {
                 .dano_magico_por_classe
                 .map(|f| (f.minimo, f.maximo)),
             attack_range: modelo.alcance_de_ataque,
+            ataque_em_ticks: modelo.ataque_em_ticks,
+            atraso_do_dano_em_ticks: modelo.atraso_do_dano_em_ticks,
             aggro_range: modelo.raio_de_odio,
             sight_range: modelo.raio_de_visao,
             exp: modelo.exp as i64,
@@ -567,7 +980,7 @@ impl MonsterEntity {
             respawn_timer_ms: 0,
             respawn_delay_ms,
             target_id: None,
-            buffs: Vec::new(),
+            efeitos: Default::default(),
             danos: Vec::new(),
             primeiro_atacante: None,
         }
@@ -604,6 +1017,10 @@ impl MonsterEntity {
             attack_max: 35,
             magic_attack: [(0, 0); 5],
             attack_range: 2.5,
+            // 1,5 s de cadência e 0,5 s de atraso do dano: os valores que o `ai.rs` usava
+            // fixos antes de os campos virem do `MONSTER_ESSENCE` (B62).
+            ataque_em_ticks: 30,
+            atraso_do_dano_em_ticks: 10,
             aggro_range: 15.0,
             sight_range: 20,
             exp: 100,
@@ -621,7 +1038,7 @@ impl MonsterEntity {
             respawn_timer_ms: 0,
             respawn_delay_ms,
             target_id: None,
-            buffs: Vec::new(),
+            efeitos: Default::default(),
             danos: Vec::new(),
             primeiro_atacante: None,
         }
@@ -635,6 +1052,27 @@ pub struct NpcEntity {
     pub name: String,
     pub position: Vector3,
     pub dialog_id: u32,
+    /// Para onde ele olha, em 1/256 de volta — ver [`direcao_do_gerador`].
+    pub direcao: u8,
+}
+
+/// A direção com que uma criatura nasce, como o `base_spawner` do original a escolhe.
+///
+/// `GenDir()` (`npcgenerator.h:747-757`): área que é um ponto usa a direção do gerador,
+/// `_dir = a3dvector_to_dir(vDir)` (`npcgenerator.cpp:4367`); área com extensão sorteia
+/// `Rand(0,255)`. A conversão é `atan2(z, x) × 128/π`, truncada e mascarada com `0xFF`
+/// (`common/types.h:99-107`) — o byte é 1/256 de volta, como o `dir` do `info_npc`
+/// (`protocol_imp.h:297-306`).
+///
+/// Mandávamos **zero** para todos, e em jogo os NPCs ficavam todos virados para o mesmo
+/// lado (teste de 2026-09-17, B59).
+pub fn direcao_do_gerador(dir: Vector3, extensao: Vector3) -> u8 {
+    let ponto = extensao.x * extensao.x + extensao.y * extensao.y + extensao.z * extensao.z < 1e-3;
+    if ponto {
+        ((dir.z.atan2(dir.x) * (128.0 / std::f32::consts::PI)) as i64 & 0xFF) as u8
+    } else {
+        rand::random::<u8>()
+    }
 }
 
 /// Um "recurso do mapa": minério, erva, tronco — o que o cliente chama de *matter*.
@@ -663,6 +1101,9 @@ pub struct MatterEntity {
     /// id — os do `npcgen.data` deste realm cabem folgadamente em 16 bits.
     pub template_id: u32,
     pub position: Vector3,
+    /// Tempo de renascer depois de colhida, em segundos: `max(BASE_REBORN_TIME +
+    /// dwRefreshTime, 15)` (`npcgenerator.cpp:3920-3922`), já calculado no `npcgen.rs`.
+    pub renascer_s: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -674,4 +1115,7 @@ pub struct ItemDropEntity {
     pub owner_role_id: Option<RoleId>,
     pub protect_timer_ms: u32,
     pub despawn_timer_ms: u32,
+    /// O conteúdo sorteado de um equipamento (`ConteudoDeEquipamento::escrever`), vazio para
+    /// o resto.
+    pub octetos: Vec<u8>,
 }

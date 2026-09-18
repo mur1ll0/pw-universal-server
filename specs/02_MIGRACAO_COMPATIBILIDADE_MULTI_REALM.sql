@@ -292,3 +292,13 @@ CREATE TABLE IF NOT EXISTS character_task_lists (
     storage BYTEA NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
+
+-- A configuração que o cliente guarda no servidor: o bloco do `SetUIConfig` (barras de
+-- atalho, layout, opções — opaco, comprimido pelo cliente) e as marcas de ajuda. Devolvida no
+-- `GetUIConfig_Re`/`GetHelpStates_Re`. Ver scripts/2026_09_16_configuracao_do_cliente.sql.
+CREATE TABLE IF NOT EXISTS character_client_config (
+    character_id INT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+    ui_config BYTEA,
+    help_states BYTEA,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);

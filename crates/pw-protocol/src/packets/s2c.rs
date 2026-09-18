@@ -489,14 +489,24 @@ impl S2CGamedataSend {
         }
     }
 
-    /// Cria o comando NOTIFY_HOSTPOS (Comando 14) para teleporte e reposicionamento instantâneo do jogador
-    pub fn notify_hostpos(pos: Vector3, dir: u8) -> Self {
+    /// `NOTIFY_HOSTPOS` (14): o jogador está em `pos` do mapa `tag`.
+    ///
+    /// `cmd_notify_hostpos { A3DVECTOR3 vPos; int tag; int line; }`
+    /// (`EC_GPDataType.h:1362-1367`) = 2 + 20 bytes; do lado do servidor, `notify_pos`
+    /// (`common/protocol.h:982-988`, `player.cpp:3530-3537`), com `key` = linha do mundo
+    /// paralelo (0 fora dele). Com `tag` diferente do mapa carregado o cliente **descarrega o
+    /// mundo e carrega o novo** (`OnMsgHstGoto` → `JumpToInstance`, `EC_HostMsg.cpp:1346`,
+    /// `EC_GameRun.cpp:2753-2801`); com o mesmo, só reposiciona.
+    ///
+    /// Escrevia `pos` + um `u8` (15 bytes), que o cliente descartaria.
+    pub fn notify_hostpos(pos: Vector3, tag: i32, linha: i32) -> Self {
         let mut stream = OctetsStream::new();
-        stream.write_u16_le(14);               // CMD_S2C_NOTIFY_HOSTPOS = 14
+        stream.write_u16_le(14);
         stream.write_f32_le(pos.x);
         stream.write_f32_le(pos.y);
         stream.write_f32_le(pos.z);
-        stream.write_u8(dir);
+        stream.write_i32_le(tag);
+        stream.write_i32_le(linha);
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -762,6 +772,62 @@ impl S2CGamedataSend {
         stream.write_u16_le(10);               // version = DYN_TASK_CUR_VERSION
         Self::task_var_data(&stream.into_bytes())
     }
+
+    /// `QUERY_TITLE_RE` (363) — os títulos do personagem.
+    ///
+    /// `cmd_query_title_re` (`EC_GPDataType.h:4632-4654`, `pack(1)`), com o tamanho conferido
+    /// pelo `CheckValid` dele: `roleid i32`, `titlescount i32`, `expirecount i32`, e então
+    /// `titlescount` ids de 2 bytes e `expirecount` pares `{ id u16, time i32 }` (6 bytes).
+    /// Sem título nenhum são os **12 bytes** do cabeçalho.
+    ///
+    /// Responder é o que destrava o sistema de missões do cliente: ele só liga
+    /// `m_bTitleDataReady` aqui (`CECHostPlayer::InitTitle`, `EC_HostPlayer.cpp:10145-10152`),
+    /// e `ATaskTemplMan::UpdateStatus` (`task/TaskTemplMan.cpp:1342-1350`) não chama
+    /// `CheckAutoDelv` enquanto o dado não estiver pronto — nenhuma missão de entrega
+    /// automática aparece (B60).
+    pub fn query_title_re(roleid: i32, titulos: &[u16], expiram: &[(u16, i32)]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(363);
+        stream.write_i32_le(roleid);
+        stream.write_i32_le(titulos.len() as i32);
+        stream.write_i32_le(expiram.len() as i32);
+        for t in titulos {
+            stream.write_u16_le(*t);
+        }
+        for (id, tempo) in expiram {
+            stream.write_u16_le(*id);
+            stream.write_i32_le(*tempo);
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Um pedaço do `dyn_tasks.data`, em resposta ao pedido do cliente
+    /// (`TASK_CLT_NOTIFY_DYN_DATA`, 8).
+    ///
+    /// `ATaskTemplMan::OnTaskGetDynTasksData` (`task/TaskTemplMan.cpp:321-353`) manda o
+    /// arquivo em pedaços de `0x1000 - sizeof(task_notify_base)` = **4093** bytes, cada um
+    /// com o cabeçalho `task_notify_base` (`reason u8`, `task u16`, `pack(1)`):
+    ///
+    /// | campo | bytes | valor |
+    /// | :--- | ---: | :--- |
+    /// | `reason` | 1 | `TASK_SVR_NOTIFY_DYN_DATA` = **9** |
+    /// | `task` | 2 | **1** no último pedaço, 0 nos outros |
+    /// | dados | n | o trecho do arquivo |
+    ///
+    /// O cliente junta os pedaços, e no último (`task == 1`) desempacota, grava o pacote
+    /// local e **só então** monta a lista de missões ativas (`OnDynTasksData`,
+    /// `TaskTemplMan.cpp:181-230`). Sem isso ele fica sem inicializar o sistema de missões:
+    /// nenhuma missão nova aparece, nem pelo "Procurar Missão" (B59).
+    pub fn task_dyn_data(pedaco: &[u8], ultimo: bool) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u8(9);                            // reason = TASK_SVR_NOTIFY_DYN_DATA
+        stream.write_u16_le(u16::from(ultimo));        // task: 1 = acabou
+        stream.write_raw_bytes(pedaco);
+        Self::task_var_data(&stream.into_bytes())
+    }
+
+    /// O tamanho de cada pedaço de [`Self::task_dyn_data`]: `0x1000 - sizeof(task_notify_base)`.
+    pub const PEDACO_DAS_MISSOES_DINAMICAS: usize = 0x1000 - 3;
 
     /// `svr_new_task` (`TASK_SVR_NOTIFY_NEW` = 1, `task/TaskTempl.h:1793-1827`, `pack(1)`):
     /// `reason u8`, `task u16`, `cur_time u32`, `cap_task u32` e o `task_sub_tags` já
@@ -1045,104 +1111,9 @@ impl S2CGamedataSend {
             return Self { data: stream.into_bytes().to_vec() };
         };
 
-        use pw_core::FichaDoEquipamento as F;
-
-        // O cabeçalho é o mesmo para toda família de equipamento: é a `prerequisition` do
-        // servidor original (`gs/item/equip_item.h:230-238`), escrita por
-        // `generate_weapon`/`generate_armor`/`generate_decoration` na mesma ordem
-        // (`generate_item_temp.h:288-311`, `490-513`, `772-793`).
-        //
-        // **Vitalidade vem antes de agilidade.** E a máscara de classes é truncada a 16
-        // bits pelo próprio original (`character_combo_id & 0xFFFF`), não por nós.
-        let (nivel, classes, forca, vitalidade, agilidade, energia) = match &ficha {
-            F::Arma(a) => (
-                a.nivel_exigido, a.classes_permitidas, a.forca_exigida,
-                a.vitalidade_exigida, a.agilidade_exigida, a.energia_exigida,
-            ),
-            F::Armadura(a) => (
-                a.nivel_exigido, a.classes_permitidas, a.forca_exigida,
-                a.vitalidade_exigida, a.agilidade_exigida, a.energia_exigida,
-            ),
-            F::Decoracao(d) => (
-                d.nivel_exigido, d.classes_permitidas, d.forca_exigida,
-                d.vitalidade_exigida, d.agilidade_exigida, d.energia_exigida,
-            ),
-        };
-
-        let mut content = OctetsStream::new();
-        content.write_i16_le(nivel);
-        content.write_i16_le(classes as i16);
-        content.write_i16_le(forca);
-        content.write_i16_le(vitalidade);
-        content.write_i16_le(agilidade);
-        content.write_i16_le(energia);
-        content.write_i32_le(cur_endurance);
-        content.write_i32_le(max_endurance);
-
-        // Tamanho da essência, o nome do fabricante, e a essência da família certa.
-        //
-        // O cliente **não** escolhe o leitor por nada que venha aqui: escolhe pelo tipo
-        // do item no `elements.data` dele (`CECIvtrArmor::SetItemInfo` só existe para
-        // quem já é armadura). Mandar a essência da família errada é mandar lixo, e o
-        // `ASSERT(iEssenceSize == sizeof(...))` de cada leitor é o que sobra de aviso.
-        match &ficha {
-            F::Arma(a) => {
-                content.write_i16_le(44);     // tamanho de IVTR_ESSENCE_WEAPON
-                content.write_u8(0);          // m_byMadeFrom
-                content.write_u8(0);          // tamanho do nome do fabricante
-
-                content.write_i16_le(a.tipo_de_arma);
-                content.write_i16_le(0);      // weapon_delay
-                content.write_i32_le(a.tipo_maior);   // weapon_class
-                content.write_i32_le(1);      // weapon_level
-                content.write_i32_le(a.municao_exigida);
-                content.write_i32_le(a.dano_minimo);
-                content.write_i32_le(a.dano_maximo);
-                content.write_i32_le(a.dano_magico_minimo);
-                content.write_i32_le(a.dano_magico_maximo);
-                content.write_i32_le(a.velocidade_de_ataque);
-                content.write_f32_le(a.alcance);
-                content.write_f32_le(0.0);    // attack_short_range
-            }
-            F::Armadura(a) => {
-                // `IVTR_ESSENCE_ARMOR` (`EC_IvtrTypes.h:253-260`), 36 bytes: idêntica ao
-                // `armor_essence` do servidor original (`equip_item.h:150-157`).
-                content.write_i16_le(36);
-                content.write_u8(0);
-                content.write_u8(0);
-
-                content.write_i32_le(a.defesa);
-                content.write_i32_le(a.evasao);
-                content.write_i32_le(a.mp_extra);
-                content.write_i32_le(a.hp_extra);
-                for r in a.resistencias {
-                    content.write_i32_le(r);
-                }
-            }
-            F::Decoracao(d) => {
-                // `IVTR_ESSENCE_DECORATION` (`EC_IvtrTypes.h:244-251`), também 36 bytes,
-                // mas com dano e dano mágico **antes** da defesa. Mesmo tamanho, ordem
-                // diferente — trocar as duas passa por todo teste de tamanho e mente para
-                // o jogador.
-                content.write_i16_le(36);
-                content.write_u8(0);
-                content.write_u8(0);
-
-                content.write_i32_le(d.dano);
-                content.write_i32_le(d.dano_magico);
-                content.write_i32_le(d.defesa);
-                content.write_i32_le(d.evasao);
-                for r in d.resistencias {
-                    content.write_i32_le(r);
-                }
-            }
-        }
-
-        content.write_i16_le(0);              // buracos
-        content.write_u16_le(0);              // máscara de cravos
-        content.write_i32_le(0);              // propriedades
-
-        let c_bytes = content.into_bytes();
+        // O bloco inteiro sai de `pw_core::ConteudoDeEquipamento` — o mesmo caminho dos
+        // octetos gerados no drop (`generate_weapon/armor/decoration/projectile`).
+        let c_bytes = pw_core::ConteudoDeEquipamento::novo(ficha, cur_endurance, max_endurance).escrever();
         stream.write_u16_le(c_bytes.len() as u16);
         stream.write_raw_bytes(&c_bytes);
 
@@ -1169,6 +1140,21 @@ impl S2CGamedataSend {
         stream.write_u8(src);                  // src (1B)
         stream.write_u8(dest);                 // dest (1B)
         stream.write_u32_le(count);            // count (4B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `EQUIP_DAMAGED` (68) — uma peça vestida acabou.
+    ///
+    /// `struct equipment_damaged { single_data_header header; unsigned char index; char reason; }`
+    /// (`cgame/common/protocol.h:1598-1603`), 4 bytes: o índice do slot e o motivo — 0 é
+    /// "sem durabilidade", 1 é "quebrou ao morrer". O original manda em
+    /// `equipment_damaged(index, 0)` logo depois do desgaste que zerou a peça
+    /// (`gs/player.cpp:9563-9567`, `gs/playercmd.cpp:6734-6738`).
+    pub fn equip_damaged(index: u8, reason: i8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(68);
+        stream.write_u8(index);
+        stream.write_u8(reason as u8);
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -1999,14 +1985,22 @@ impl S2CGamedataSend {
     /// IR do 1.5.3, que é a única informação verificada que temos. Se o 1.2.6 divergir,
     /// vai aparecer como campo deslocado no cliente — e o conserto será com uma captura
     /// na mão, não com um palpite.
-    pub fn host_attacked(attacker_id: i32, damage: i32, attack_flag: i32) -> Self {
+    /// `equipamento` é o **índice da peça que sofreu desgaste**, e `0x7f` quer dizer
+    /// "nenhuma": o cliente só gasta durabilidade quando `(cEquipment & 0x7f) != 0x7f`
+    /// (`EC_HostMsg.cpp:968-976`). Mandando zero, todo golpe de monstro gastava a arma.
+    ///
+    /// `speed` é o `attack.speed` do original, que para monstro é o `_damage_delay` do
+    /// `MONSTER_ESSENCE` em tiques de 50 ms (`npc.cpp:2118`); o cliente o usa como duração
+    /// da animação do golpe (`CECNPC::OnMsgAttackHostResult` → `PlayAttackEffect`,
+    /// `EC_NPC.cpp:2043-2064`). (B60.)
+    pub fn host_attacked(attacker_id: i32, damage: i32, equipamento: u8, attack_flag: i32, speed: u8) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(26);
         stream.write_i32_le(attacker_id);
         stream.write_i32_le(damage);
-        stream.write_i8(0); // cEquipment: qual peça sofreu desgaste; 0 = nenhuma
+        stream.write_u8(equipamento);
         stream.write_i32_le(attack_flag); // 0 normal, 1 crítico
-        stream.write_i8(0); // speed
+        stream.write_u8(speed);
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -2057,6 +2051,24 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `ADD_STATUS_POINT` (51): os pontos aplicados a cada atributo e os que sobraram.
+    ///
+    /// `gplayer_dispatcher::set_status_point` (`player.cpp:4367`) com
+    /// `S2C::CMD::set_status_point` (`common/protocol.h:1427-1435`): cinco `size_t` —
+    /// 2 + 20 = **22 bytes**. O cliente soma os quatro aos atributos que já mostra, troca os
+    /// pontos livres por `remain` e pede o `GET_EXT_PROP` (`OnMsgHstAddStatusPt`,
+    /// `EC_HostMsg.cpp:1610-1625`). Recusa vai com os quatro em zero.
+    pub fn add_status_point(vit: u32, eng: u32, str_: u32, agi: u32, restantes: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(51);
+        stream.write_u32_le(vit);
+        stream.write_u32_le(eng);
+        stream.write_u32_le(str_);
+        stream.write_u32_le(agi);
+        stream.write_u32_le(restantes);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// Cria o comando LEVEL_UP (Comando 37) tocando a animação de subir de nível
     pub fn level_up(role_id: i32) -> Self {
         let mut stream = OctetsStream::new();
@@ -2079,6 +2091,141 @@ impl S2CGamedataSend {
         stream.write_u16_le(22);               // CMD_S2C_OBJECT_STARTATTACK = 22
         stream.write_i32_le(attacker_id);
         stream.write_i32_le(target_id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_GATHER_START` (126): `pid` começou a colher `mid` por `segundos`.
+    ///
+    /// `player_gather_start { int pid; int mid; unsigned char use_time; }`
+    /// (`common/protocol.h:1988-1994`; `cmd_player_gather_start`, `EC_GPDataType.h:2628`) —
+    /// 2 + 9 bytes, difundido a quem vê o jogador e a ele (`gather_start`, `player.cpp:4614`).
+    pub fn player_gather_start(pid: i32, mid: i32, segundos: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(126);
+        stream.write_i32_le(pid);
+        stream.write_i32_le(mid);
+        stream.write_u8(segundos);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_GATHER_STOP` (127): `{ int pid; }` — 6 bytes (`protocol.h:1996-2000`).
+    pub fn player_gather_stop(pid: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(127);
+        stream.write_i32_le(pid);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `HOST_OBTAIN_ITEM` (99): item que entrou na bolsa sem vir do chão nem de loja.
+    ///
+    /// `cmd_host_obtain_item { int type; int expire_date; unsigned int amount; unsigned int
+    /// slot_amount; unsigned char where; unsigned char index; }` (`EC_GPDataType.h:2288-2296`)
+    /// = 2 + 18 bytes; `obtain_item` (`player.cpp:4166-4173`). Como no `PICKUP_ITEM`, o
+    /// cliente empilha sozinho e confere slot e quantidade final.
+    pub fn obtain_item(tid: i32, validade: i32, quantidade: u32, no_slot: u32, pacote: u8, slot: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(99);
+        stream.write_i32_le(tid);
+        stream.write_i32_le(validade);
+        stream.write_u32_le(quantidade);
+        stream.write_u32_le(no_slot);
+        stream.write_u8(pacote);
+        stream.write_u8(slot);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `HOST_START_ATTACK` (84): começou a sessão de golpe normal.
+    ///
+    /// `cmd_host_start_attack { int idTarget; unsigned short ammo_remain; unsigned char
+    /// attack_speed; }` (`EC_GPDataType.h:2190-2195`) = 2 + 7 bytes; `start_attack`
+    /// (`player.cpp:3301-3319`), só ao próprio. O cliente acerta a munição mostrada e abre o
+    /// trabalho de golpe (`CECHPWorkMelee`, `EC_HostMsg.cpp:3240-3262`) — é a animação.
+    pub fn host_start_attack(alvo: i32, municao: u16, velocidade_em_ticks: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(84);
+        stream.write_i32_le(alvo);
+        stream.write_u16_le(municao);
+        stream.write_u8(velocidade_em_ticks);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `HOST_STOPATTACK` (23): a sessão de golpe acabou.
+    ///
+    /// `cmd_host_stop_attack { int iReason; }` (`EC_GPDataType.h:1509`) = 2 + 4 bytes;
+    /// `stop_attack` (`player.cpp:3471`) com os bits de `CheckAttack`
+    /// (`actobject.cpp:1254-1292`): 1 não pode atacar, 2 alvo inválido, 4 fora de alcance.
+    pub fn host_stop_attack(motivo: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(23);
+        stream.write_i32_le(motivo);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `UPDATE_EXT_STATE` (124): os seis `DWORD` de estado visível de um objeto (atordoado,
+    /// lento, abençoado...). `cmd_update_ext_state { int id; DWORD states[6]; }`
+    /// (`EC_GPDataType.h:2520-2524`, `OBJECT_EXT_STATE_COUNT = 6` na `:539`), 28 bytes; o
+    /// servidor manda de `gactive_imp::UpdateVisibleState` (`actobject.cpp:1531-1590`).
+    pub fn update_ext_state(id: i32, estados: [u32; 6]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(124);
+        stream.write_i32_le(id);
+        for s in estados {
+            stream.write_u32_le(s);
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `ICON_STATE_NOTIFY` (125): os ícones de estado de um objeto, com parâmetros.
+    ///
+    /// Tamanho variável, lido por `cmd_icon_state_notify::Initialize`
+    /// (`EC_GPDataType.h:2538-2622`): `int id; u16 scount; u16 state[scount]; u16 pcount;
+    /// int param[pcount]`. Os 2 bits altos de cada `state` dizem quantos parâmetros ele
+    /// consome (`(s >> 14) & 3`) — o servidor escreve assim em `InsertTeamVisibleState`
+    /// (`actobject.h:1799-1818`) e manda em `object_state_notify` (`player.cpp:11356-11372`).
+    /// Aqui cada ícone leva um parâmetro, o tempo restante em segundos (`_timeout`).
+    pub fn icon_state_notify(id: i32, icones: &[(u16, i32)]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(125);
+        stream.write_i32_le(id);
+        stream.write_u16_le(icones.len() as u16);
+        for (estado, _) in icones {
+            stream.write_u16_le((estado & 0x3FFF) | (1 << 14));
+        }
+        stream.write_u16_le(icones.len() as u16);
+        for (_, parametro) in icones {
+            stream.write_i32_le(*parametro);
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `ENCHANT_RESULT` (139): efeito de bênção/maldição aplicado a um alvo.
+    /// `cmd_enchant_result { int caster; int target; int skill; char level;
+    /// char orange_name; int attack_flag; byte section; }` (`EC_GPDataType.h:2714-2723`),
+    /// 19 bytes; o servidor manda de `SendClientEnchantResult` (`skillwrapper.cpp:480-484`).
+    pub fn enchant_result(caster: i32, target: i32, skill: i32, level: u8, orange_name: bool, attack_flag: i32, section: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(139);
+        stream.write_i32_le(caster);
+        stream.write_i32_le(target);
+        stream.write_i32_le(skill);
+        stream.write_u8(level);
+        stream.write_u8(orange_name as u8);
+        stream.write_i32_le(attack_flag);
+        stream.write_u8(section);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `ATTACK_ONCE` (83): um golpe normal saiu, e quantas munições ele gastou.
+    ///
+    /// `gplayer_dispatcher::attack_once` (`player.cpp:3321-3327`), mandado a cada golpe por
+    /// `FillAttackMsg` (`:3134`) com `object_attack_once { unsigned char arrow_dec; }`
+    /// (`common/protocol.h:1695-1699`) — 3 bytes. O cliente tira `ammo_num` do slot de
+    /// munição quando a arma é de longo alcance e gasta durabilidade da arma
+    /// (`OnMsgHstAttackOnce`, `EC_HostMsg.cpp:4204-4233`).
+    pub fn attack_once(municao_gasta: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(83);
+        stream.write_u8(municao_gasta);
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -2636,48 +2783,25 @@ pub struct S2CGetUIConfigRe {
 }
 
 impl S2CGetUIConfigRe {
-    /// **Achado em 2026-09-03, com cliente 1.5.5 real**: mandar o cabeçalho de 16 bytes
-    /// (`idInst`/`precinct_ts`/`domain_ts`/`gshop_ts`, validados contra
-    /// `0x00435cf6` do `elementclient.exe` 1.2.6) **sem nenhum dado real depois** — que é
-    /// o único jeito que este projeto já chamou esta função até agora, `base_ui_config`
-    /// sempre `&[]` — faz `CECGameRun::LoadConfigsFromServer` no cliente ler os 4
-    /// primeiros bytes desse cabeçalho (`idInst = 1`) como se fossem o tamanho da
-    /// próxima seção de dados, tentar ler 1 byte de "configuração" dali, e lançar uma
-    /// exceção (`data read error (2)`) que derruba o processo de renderização
-    /// (`glb_HandleException`, mini dump). Isso acontecia bem depois do login/edition
-    /// já terem passado, então ficava escondido atrás de outros bloqueios anteriores.
+    /// O bloco vai **exatamente como o cliente o gravou** no `SetUIConfig`.
     ///
-    /// O próprio cliente já tem um caminho limpo, sem exceção nenhuma, pra "não tenho
-    /// configuração de verdade ainda": `ui_config` **totalmente vazio**
-    /// (`if (!pDataBuf || !iDataSize) { log("configs data is empty"); return false; }`,
-    /// e quem chama cai pra `ApplyUserSetting()`). Por isso o cabeçalho só é escrito
-    /// quando `base_ui_config` não é vazio — nenhum chamador desta função manda dado
-    /// real hoje, então isto não muda nada pra quem já funcionava, só evita sintetizar
-    /// um cabeçalho pela metade.
-    pub fn new(role_id: i32, localsid: u32, base_ui_config: &[u8]) -> Self {
-        let ui_config = if base_ui_config.is_empty() {
-            Vec::new()
-        } else {
-            let mut config_data = OctetsStream::new();
-            // [m_idInst (4B = 1), precinct_ts (4B = 2097199), domain_ts (4B = 2097199), gshop_ts (4B = 1206433535)]
-            config_data.write_u32_le(1);
-            config_data.write_u32_le(2097199);
-            config_data.write_u32_le(2097199);
-            config_data.write_u32_le(1206433535);
-
-            if base_ui_config.len() > 16 {
-                config_data.write_raw_bytes(&base_ui_config[16..]);
-            } else {
-                config_data.write_raw_bytes(base_ui_config);
-            }
-            config_data.into_bytes().to_vec()
-        };
-
+    /// O formato é o de `CECGameRun::SaveConfigsToServer` (`EC_GameRun.cpp:2014-2130`):
+    /// `DWORD USERCFG_VERSION` sem compressão + zlib(host | layout | opções), e é o mesmo que
+    /// `LoadConfigsFromServer` lê (`:2139-2241`). Vazio é o caminho limpo do cliente para
+    /// "sem configuração" (`configs data is empty` → `ApplyUserSetting`).
+    ///
+    /// **Corrigido no B53** (teste de 2026-09-17, `element/logs/EC.log`): este construtor
+    /// sobrescrevia os 16 primeiros bytes do bloco gravado com um "cabeçalho" inventado
+    /// (`1, 2097199, 2097199, 1206433535`). O cliente lia a versão 1 (< 3), não
+    /// descomprimia, lia o fluxo zlib como dado cru e estourava o buffer — o
+    /// `LoadConfigsFromServer, data read error (2)` (`TYPE_OVERBOUND`) de todo login. As
+    /// barras de atalho nunca carregavam e eram gravadas vazias ao sair.
+    pub fn new(role_id: i32, localsid: u32, ui_config: &[u8]) -> Self {
         Self {
             result: 0,
             role_id,
             localsid,
-            ui_config,
+            ui_config: ui_config.to_vec(),
         }
     }
 

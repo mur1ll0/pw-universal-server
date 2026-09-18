@@ -82,7 +82,17 @@ fn test_game_data_manager_directory_load_155() {
     if dir.exists() {
         let mut manager = GameDataManager::new();
         let rel = manager.load_from_directory(dir);
-        assert!(rel.sem_falhas(), "GameDataManager deve carregar a pasta 1.5.5 sem erros: {rel}");
+        // Desde o B55 esta pasta é a do cliente BR (base `F:/PW/1.5.5/home155/gamed/config`).
+        // O próprio pacote traz dois arquivos com **0 bytes** (`a46/npcgen.data` e
+        // `a50/precinct.sev`, datados de 2018) — defeito do pacote, já registrado no B51, e não
+        // do leitor. O teste cobra que as falhas sejam exatamente essas e nenhuma outra.
+        let mut falhas: Vec<&str> = rel.falhas.iter().map(|f| f.arquivo.as_str()).collect();
+        falhas.sort_unstable();
+        assert_eq!(
+            falhas,
+            ["a46/npcgen.data", "a50/precinct.sev", "a50/precinct.sev (distritos)"],
+            "GameDataManager deve carregar a pasta 1.5.5 sem erros além dos arquivos vazios do pacote: {rel}"
+        );
         assert!(manager.map_spawns.contains_key(&1), "World 1 deve ter spawns carregados");
 
         assert!(manager.versao_do_elements.is_some(), "elements.data devia ter cabeçalho lido");

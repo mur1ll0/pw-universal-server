@@ -233,7 +233,7 @@ impl TemplateRepository {
             // item de voo inicial em vez de ganhar um chute.
             let mut equipamento_da_classe: Vec<(i16, i32, i32)> = Vec::new();
             if cls == 6 {
-                equipamento_da_classe.push((11, 8543, 1000)); // Flecha de Iniciante (PROJECTILE_ESSENCE, type 8546 = require_projectile do Arco de Madeira)
+                equipamento_da_classe.push((11, 43283, 1000)); // Flecha de Novato (PROJECTILE_ESSENCE, type 8546 = require_projectile do Arco de Madeira, arma de nível 0-17 — o arco é nível 0)
             }
             if cls == 6 || cls == 7 {
                 equipamento_da_classe.push((12, 2096, 1)); // Asa

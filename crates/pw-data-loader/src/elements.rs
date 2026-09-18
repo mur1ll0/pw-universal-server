@@ -225,41 +225,44 @@ pub struct ElementsData {
 ///    neste formato é `N` **bytes** (não caracteres) — bate com `namechar name[32]` (64
 ///    bytes) do `exptypes.h` quando o campo é anotado `wstring:64`.
 ///
-/// # O que ficou confirmado, e o que ainda não
+/// # Os tamanhos, deduzidos do próprio arquivo (2026-09-16)
 ///
-/// **Tabelas 0–19**: confirmadas não só por contagem plausível, mas por **conteúdo real
-/// legível** — os registros de `armorrune_sub_type`/`armorrune_essence` decodificam como
-/// texto russo coerente (`"Улучшение защиты"`, `"Знак кожаных доспехов"`, com os
-/// `id_sub_type` batendo entre as duas tabelas). É o mesmo padrão de evidência que o
-/// protocolo de rede já usa (bytes capturados, não só posição).
+/// Não há fonte do 1.2.6. A lista anterior, escrita à mão, errava a partir da tabela 3 e
+/// o arquivo nunca carregou. Esta saiu de uma busca com retrocesso sobre o
+/// `files1.2.6/pwserver/gamed/config/elements.data` (16.664.770 bytes) em que cada tabela
+/// tem de: ter ids plausíveis e distintos no primeiro campo; ter nome UTF-16 legível em
+/// +4, +8 ou +12 em pelo menos 90 % dos registros amostrados; e deixar a próxima contagem
+/// e o próximo registro plausíveis — com o `talk_proc` antes da tabela 58 e o arquivo
+/// **fechando no último byte**.
 ///
-/// **Tabela 20 (`skilltome_sub_type`) tem um problema que não entendi ainda**: logo depois
-/// do fim de `armorrune_essence`, o `count` esperado (**7**, confirmado por texto legível
-/// nos 4 bytes seguintes) está **4 bytes adiante** de onde a soma dos tamanhos manda —
-/// como se houvesse um campo de 4 bytes a mais em algum lugar entre as tabelas 0–19 que
-/// nenhuma das duas fontes documenta, ou um separador entre tabelas que não é parte de
-/// nenhum registro. Aplicando esse ajuste de +4 na mão, as tabelas 20–23 também validam
-/// (contagens plausíveis, `0` em várias — coerente com feature não usada neste servidor),
-/// mas a tabela 24 volta a quebrar — sinal de que **não é um problema isolado**, e sim
-/// mais um (ou mais) do mesmo tipo adiante. Não apliquei o ajuste de +4 aqui por ainda não
-/// saber a causa; é a pista mais concreta pra continuar.
+/// Conferência independente: o primeiro registro de cada tabela segue a ordem do enum
+/// `DATA_TYPE` do cliente (`CCommon/ExpTypes.h:5290-5420`) — 1 "Espadas"
+/// (`WEAPON_MAJOR_TYPE`), 57 "Boticário" (`NPC_ESSENCE`), 58 "Nariz Feminino"
+/// (`FACE_TEXTURE`), 70 "Guerreiro"…"Sacerdote" (`CHARRACTER_CLASS_CONFIG`, 8 classes), 71
+/// "Tabela de Revisão de Dados" (`PARAM_ADJUST_CONFIG`), 76 "Curva de Evolução do Jogador"
+/// (`PLAYER_LEVELEXP_CONFIG`), 77 "Tronco" (`MINE_TYPE`), 79 "Avaliar Itens"
+/// (`NPC_IDENTIFY_SERVICE`), 89 "Traje de Teste" (`SUITE_ESSENCE`), 92 "Mascote"
+/// (`PET_TYPE`), 100-102 serviços de mascote, 113-115 amuleto, hierograma e experiência
+/// dupla.
 ///
-/// **Dali em diante (tabela ~24 até a 117, mais as 113 tabelas — 118 a 230 — que este
-/// parser nem tenta ler)**: não caminhado. Ver `docs/ESTADO_E_RETOMADA.md` e a memória de
-/// sessão do Claude (`pw_ctx_a_155_funcional`) para o relato completo desta investigação.
+/// **Não conferido por nome:** 103 a 112 (registros sem nome; a divisão fecha o arquivo,
+/// mas pode não ser a do cliente). Nenhum leitor usa essas tabelas.
+/// `ELEMENTDATA_VERSION` do 1.2.6.
+const VERSAO_V7: u32 = 0x3000_0007;
+
 const TABLE_SIZES_V7: [usize; 118] = [
-    84, 68, 356, 1556, 68, 72, 1132, 68, 72, 1172,
+    84, 68, 356, 1404, 68, 72, 1104, 68, 72, 1156,
     68, 68, 376, 68, 68, 368, 68, 364, 68, 624,
-    68, 348, 776, 488, 348, 348, 352, 348, 208, 888,
-    68, 892, 68, 340, 68, 476, 84, 196, 1664, 72,
-    4392, 72, 72, 200, 200, 1092, 1124, 644, 1096, 72,
-    460, 328, 72, 68, 1228, 72, 68, 880, 480, 348,
-    196, 336, 472, 340, 208, 332, 68, 68, 428, 196,
-    208, 676, 616, 504, 344, 340, 668, 68, 560, 72,
-    68, 72, 736, 68, 68, 488, 68, 68, 3436, 292,
-    68, 344, 68, 684, 628, 360, 344, 480, 1416, 348,
-    344, 148, 1092, 368, 76, 584, 76, 356, 444, 344,
-    92, 76, 76, 392, 348, 356, 356, 348,
+    68, 348, 516, 488, 348, 0, 352, 348, 208, 888,
+    68, 892, 68, 340, 68, 436, 84, 196, 1500, 72,
+    1224, 72, 72, 200, 200, 196, 196, 644, 584, 72,
+    460, 0, 0, 68, 1224, 72, 68, 848, 476, 348,
+    0, 336, 468, 340, 208, 204, 68, 68, 400, 196,
+    160, 612, 488, 404, 344, 340, 668, 68, 452, 72,
+    68, 72, 404, 68, 68, 488, 68, 68, 2412, 292,
+    68, 344, 68, 476, 628, 360, 344, 480, 1740, 368,
+    76, 584, 1124, 1776, 708, 708, 1420, 10684, 0, 0,
+    0, 0, 3848, 356, 356, 348, 344, 368,
 ];
 
 impl ElementsData {
@@ -301,9 +304,17 @@ impl ElementsData {
 
     /// Carrega o `elements.data` de qualquer versão a partir de um buffer de bytes
     pub fn load_from_bytes(data: &[u8]) -> Result<Self> {
-        let (version, timestamp) = Self::ler_cabecalho(data)?;
+        let (version, mut timestamp) = Self::ler_cabecalho(data)?;
         let mut cursor = Cursor::new(data);
-        cursor.set_position(8);
+        // O v7 (1.2.6) **não tem** o `time_t` depois da versão: os quatro bytes seguintes já
+        // são a contagem da tabela 0 (0x671 = 1.649 registros de 84 bytes, ids 216, 217…).
+        // Pular 8 era o que fazia o arquivo nunca carregar.
+        if version == VERSAO_V7 {
+            cursor.set_position(4);
+            timestamp = 0;
+        } else {
+            cursor.set_position(8);
+        }
 
         info!("Carregando elements.data: ELEMENTDATA_VERSION = {:#x}, gerado em {}", version, timestamp);
 
@@ -327,6 +338,15 @@ impl ElementsData {
         };
 
         elements.parse_all_tables(&mut cursor, data)?;
+
+        // O arquivo fecha no último byte: sobra ou falta é tamanho de tabela errado.
+        if version == VERSAO_V7 && cursor.position() != data.len() as u64 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("elements.data v7: tabelas terminam em {} de {} bytes", cursor.position(), data.len()),
+            )
+            .into());
+        }
 
         info!(
             "elements.data v{} carregado com sucesso: {} tabelas processadas, {} classes, {} monstros, {} npcs, {} armas, {} armaduras, {} receitas",

@@ -1,4 +1,4 @@
-//! O motor de missões contra o `tasks.data` real do `realm_155BR`.
+//! O motor de missões contra o `tasks.data` real do `realm_155`.
 //!
 //! O cenário é o do teste em jogo de 2026-09-14: um Arqueiro novo fala com o guia dos Alados
 //! (NPC 44698), aceita "Escolhido do Chi: Elfo Alado" (32201, falar com NPC, conclui no NPC
@@ -39,7 +39,7 @@ impl Jogador for Arqueiro {
 }
 
 fn tarefas() -> Option<TasksData> {
-    let caminho = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/realm_155BR/config/tasks.data");
+    let caminho = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/realm_155/config/tasks.data");
     match std::fs::read(caminho) {
         Ok(b) => Some(TasksData::load_from_bytes(&b).expect("tasks.data do realm")),
         Err(_) => {
@@ -55,12 +55,12 @@ fn o_arqueiro_novo_aceita_e_entrega_a_missao_do_guia_alado() {
     let mut l = ListasDeMissao::default();
     let mut j = Arqueiro::default();
 
-    assert_eq!(Motor { tarefas: &t, listas: &mut l, j: &mut j }.aceitar(32201, 0, true), 0);
+    assert_eq!(Motor { tarefas: &t, listas: &mut l, j: &mut j, eu: 1 }.aceitar(32201, 0, true), 0);
     assert_eq!(l.ativa.indice(32201), Some(0));
     let [ativa, ..] = l.blocos();
     assert_eq!(ativa.len(), missoes::TAM_CABECALHO + missoes::TAM_ENTRADA);
 
-    assert!(Motor { tarefas: &t, listas: &mut l, j: &mut j }.entregar_no_npc(32201, 0));
+    assert!(Motor { tarefas: &t, listas: &mut l, j: &mut j, eu: 1 }.entregar_no_npc(32201, 0));
     assert_eq!(l.ativa.quantidade, 0);
     assert_eq!(l.procurar_concluida(32201), 0);
     // O prêmio do arquivo: 25 de experiência, 10 de SP e 8 moedas.
@@ -93,7 +93,7 @@ fn um_barbaro_nao_pega_a_missao_dos_alados() {
     }
     let mut l = ListasDeMissao::default();
     let mut j = Barbaro(Arqueiro::default());
-    assert_eq!(Motor { tarefas: &t, listas: &mut l, j: &mut j }.aceitar(32201, 0, true), missoes::erro::CLASSE);
+    assert_eq!(Motor { tarefas: &t, listas: &mut l, j: &mut j, eu: 1 }.aceitar(32201, 0, true), missoes::erro::CLASSE);
     // O erro vai ao cliente: `svr_task_err_code`, reason 6, código 13.
     let aviso = j.0.avisos.last().expect("aviso de erro");
     assert_eq!(aviso[6], 6);
@@ -110,7 +110,7 @@ fn todas_as_missoes_de_topo_do_realm_se_entregam_e_se_limpam_sem_quebrar_a_lista
         let mut l = ListasDeMissao::default();
         let mut j = Arqueiro::default();
         let sub = t.get_task(id).and_then(|m| m.sub_tasks.first().copied()).unwrap_or(0);
-        let r = Motor { tarefas: &t, listas: &mut l, j: &mut j }.aceitar(id, sub, false);
+        let r = Motor { tarefas: &t, listas: &mut l, j: &mut j, eu: 1 }.aceitar(id, sub, false);
         if r != 0 {
             continue;
         }

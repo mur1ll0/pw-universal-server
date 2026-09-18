@@ -104,7 +104,7 @@ fn sem_a_tabela_no_arquivo_a_carga_e_vazia() {
 /// (`_sync/capturas/full_interno.pcap`): andar 2,0, correr 4,9, nadar 3,0, voar 5,0.
 #[test]
 fn as_velocidades_do_barbaro_sao_as_do_elements_e_nao_as_do_ptemplate() {
-    for realm in ["realm_155BR", "realm_155"] {
+    for realm in ["realm_155"] {
         let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join(format!("data/{realm}/config/elements.data"));

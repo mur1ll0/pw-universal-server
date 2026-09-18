@@ -21,7 +21,7 @@
 --
 -- # De onde saem os números
 --
--- `data/realm_155BR/config/ptemplate.conf`, um `[SECAO]` por classe, campos `strength`,
+-- `data/realm_155/config/ptemplate.conf`, um `[SECAO]` por classe, campos `strength`,
 -- `agility`, `vitality` e `energy`, lidos em 2026-09-09. A ordem das seções **é** o
 -- `character_class_id` (0 a 11) — é a mesma ordem que o `pw_data_loader::ptemplate` usa
 -- para indexar o arquivo (`SECOES`, `ptemplate.rs:38-41`), e a mesma do `CharacterClass`

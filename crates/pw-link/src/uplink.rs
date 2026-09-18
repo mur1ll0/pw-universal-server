@@ -27,7 +27,7 @@
 
 use pw_bus::{BusClient, BusMessage};
 use pw_protocol::{OutboundPacket, S2CGamedataSend, S2CPlayerLogout};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
@@ -42,6 +42,9 @@ pub type EnvioAoCliente = mpsc::Sender<OutboundPacket>;
 /// memória do processo.
 const CAPACIDADE_DA_FILA: usize = 1024;
 
+/// `TASK_DATA` (S2C 105).
+const TASK_DATA: u16 = 105;
+
 /// Espera máxima entre tentativas de reconexão.
 const ESPERA_MAXIMA: Duration = Duration::from_secs(30);
 
@@ -51,6 +54,13 @@ pub struct BusUplink {
     saida: mpsc::Sender<BusMessage>,
     /// Quem está em jogo por este link, por `roleid`.
     sessoes: Arc<RwLock<HashMap<i32, EnvioAoCliente>>>,
+    /// Quem já recebeu do mundo o `TASK_DATA` (105) — o fim da resposta ao `GET_ALL_DATA`.
+    ///
+    /// O cliente usa esse comando como sinal de que **todos** os dados iniciais chegaram e só
+    /// então pede o `GetUIConfig` (`OnMsgHstTaskData` → `LoadConfigData`,
+    /// `EC_HostMsg.cpp:3947-3949`). Responder antes disso faz o cliente montar as barras de
+    /// atalho sem as habilidades e itens, perder os atalhos e gravar a barra vazia ao sair.
+    prontos: Arc<RwLock<HashSet<i32>>>,
 }
 
 impl BusUplink {
@@ -62,25 +72,34 @@ impl BusUplink {
     pub fn iniciar(endereco: String) -> Arc<Self> {
         let (saida, fila) = mpsc::channel::<BusMessage>(CAPACIDADE_DA_FILA);
         let sessoes = Arc::new(RwLock::new(HashMap::new()));
+        let prontos = Arc::new(RwLock::new(HashSet::new()));
 
         let este = Arc::new(Self {
             saida,
             sessoes: Arc::clone(&sessoes),
+            prontos: Arc::clone(&prontos),
         });
 
-        tokio::spawn(manter_ligacao(endereco, fila, sessoes));
+        tokio::spawn(manter_ligacao(endereco, fila, sessoes, prontos));
         este
     }
 
     /// Anuncia ao mundo que este jogador é atendido por este link.
     pub async fn registrar(&self, roleid: i32, envio: EnvioAoCliente) {
+        self.prontos.write().await.remove(&roleid);
         self.sessoes.write().await.insert(roleid, envio);
+    }
+
+    /// O mundo já mandou a este jogador o fim dos dados iniciais (`TASK_DATA`)?
+    pub async fn dados_iniciais_entregues(&self, roleid: i32) -> bool {
+        self.prontos.read().await.contains(&roleid)
     }
 
     /// Tira o jogador do registro. O que vier do mundo para ele depois disso é
     /// descartado com um aviso, e não entregue à sessão errada.
     pub async fn desregistrar(&self, roleid: i32) {
         self.sessoes.write().await.remove(&roleid);
+        self.prontos.write().await.remove(&roleid);
     }
 
     /// Enfileira uma mensagem para o servidor de mundo.
@@ -113,6 +132,7 @@ async fn manter_ligacao(
     endereco: String,
     mut fila: mpsc::Receiver<BusMessage>,
     sessoes: Arc<RwLock<HashMap<i32, EnvioAoCliente>>>,
+    prontos: Arc<RwLock<HashSet<i32>>>,
 ) {
     let mut espera = Duration::from_millis(500);
 
@@ -137,7 +157,7 @@ async fn manter_ligacao(
                         }
                         entrando = conexao.receber() => {
                             match entrando {
-                                Ok(Some(msg)) => entregar(msg, &sessoes).await,
+                                Ok(Some(msg)) => entregar(msg, &sessoes, &prontos).await,
                                 Ok(None) => {
                                     warn!("barramento: o servidor de mundo fechou a conexão");
                                     break;
@@ -162,9 +182,12 @@ async fn manter_ligacao(
 }
 
 /// Entrega ao jogador certo o que o mundo mandou.
-async fn entregar(msg: BusMessage, sessoes: &RwLock<HashMap<i32, EnvioAoCliente>>) {
+async fn entregar(msg: BusMessage, sessoes: &RwLock<HashMap<i32, EnvioAoCliente>>, prontos: &RwLock<HashSet<i32>>) {
     match msg {
         BusMessage::GameToClient { roleid, data, .. } => {
+            if data.len() >= 2 && u16::from_le_bytes([data[0], data[1]]) == TASK_DATA {
+                prontos.write().await.insert(roleid);
+            }
             let sessoes = sessoes.read().await;
             let Some(envio) = sessoes.get(&roleid) else {
                 // O jogador saiu entre o mundo mandar e a mensagem chegar. Normal numa

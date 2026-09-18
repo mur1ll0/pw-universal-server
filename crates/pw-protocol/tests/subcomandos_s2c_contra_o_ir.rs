@@ -42,6 +42,18 @@ const OPCODES: &str = include_str!("../src/opcodes.rs");
 /// o comando, não a grafia.
 const INTENCAO: &[(&str, &str)] = &[
     ("self_info_1", "SELF_INFO_1"),
+    ("add_status_point", "ADD_STATUS_POINT"),
+    ("attack_once", "ATTACK_ONCE"),
+    ("query_title_re", "QUERY_TITLE_RE"),
+    ("equip_damaged", "EQUIP_DAMAGED"),
+    ("host_start_attack", "HOST_START_ATTACK"),
+    ("host_stop_attack", "HOST_STOPATTACK"),
+    ("update_ext_state", "UPDATE_EXT_STATE"),
+    ("icon_state_notify", "ICON_STATE_NOTIFY"),
+    ("enchant_result", "ENCHANT_RESULT"),
+    ("obtain_item", "HOST_OBTAIN_ITEM"),
+    ("player_gather_start", "PLAYER_GATHER_START"),
+    ("player_gather_stop", "PLAYER_GATHER_STOP"),
     ("player_waypoint_list", "WAYPOINT_LIST"),
     ("get_own_money", "GET_OWN_MONEY"),
     ("host_reputation", "HOST_REPUTATION"),
@@ -171,6 +183,7 @@ const INTENCAO: &[(&str, &str)] = &[
 /// Funções que não escrevem cabeçalho porque **delegam** a outra que escreve.
 const DELEGAM: &[&str] = &[
     "task_dyn_time_mark",
+    "task_dyn_data",
     "task_notify_new",
     "task_notify_complete",
     "task_notify_monster_killed",
@@ -208,7 +221,6 @@ const DELEGAM: &[&str] = &[
 ///
 /// **Esta lista só encolhe.** Quem resolver um caso tira o nome daqui.
 const LAYOUT_DIVERGE: &[&str] = &[
-    "notify_hostpos",
     "repair",
     "produce_start",
     "produce_once",

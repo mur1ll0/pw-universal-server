@@ -129,43 +129,49 @@ fn a_identidade_e_o_estado_vem_do_personagem() {
 
 #[test]
 fn a_vida_maxima_soma_base_mais_nivel_mais_vitalidade() {
-    // max_hp = base.hp + lvl_hp*(nível-1) + vit_hp*vitalidade
-    //        = 60 + 5*9 + 4*20 = 60 + 45 + 80 = 185
+    // max_hp = lvl_hp*(nível-1) + vit_hp*vitalidade — **sem** o `hp` do `ptemplate.conf`
+    // (base zero, como os moldes do `clsconfig`: `__LevelUp`/`__UpdateBasic`).
+    //        = 5*9 + 4*20 = 45 + 80 = 125
     let j = PlayerEntity::do_personagem(&personagem(10, 20, 5, 10), &config(), Some(&base()));
-    assert_eq!(j.max_hp, 185);
-    // max_mp = 20 + 3*9 + 2*5 = 20 + 27 + 10 = 57
-    assert_eq!(j.max_mp, 57);
+    assert_eq!(j.max_hp, 125);
+    // max_mp = 3*9 + 2*5 = 27 + 10 = 37
+    assert_eq!(j.max_mp, 37);
 
-    // Nível 1 é só a base mais os atributos: 60 + 0 + 80 = 140.
+    // Nível 1 são só os atributos: 0 + 80 = 80.
     let j1 = PlayerEntity::do_personagem(&personagem(1, 20, 5, 10), &config(), Some(&base()));
-    assert_eq!(j1.max_hp, 140);
-    assert_eq!(j1.max_mp, 30);
+    assert_eq!(j1.max_hp, 80);
+    assert_eq!(j1.max_mp, 10);
 }
 
 #[test]
 fn a_vida_corrente_nao_passa_da_maxima() {
-    // O banco guarda 100 de vida; num personagem de nível 1 sem vitalidade o máximo é
-    // menor que isso, e a entidade não pode entrar com vida acima do teto.
-    let mut p = personagem(1, 0, 0, 10);
+    // O banco guarda 100 de vida; num personagem de nível 1 com 5 de vitalidade o máximo é
+    // 4*5 = 20, e a entidade não pode entrar com vida acima do teto.
+    let mut p = personagem(1, 5, 0, 10);
     p.hp = 100;
     let j = PlayerEntity::do_personagem(&p, &config(), Some(&base()));
-    assert_eq!(j.max_hp, 60);
-    assert_eq!(j.hp, 60, "a vida corrente devia ter sido limitada ao máximo");
+    assert_eq!(j.max_hp, 20);
+    assert_eq!(j.hp, 20, "a vida corrente devia ter sido limitada ao máximo");
 }
 
 #[test]
 fn o_dano_e_a_defesa_escalam_com_o_nivel() {
     // O `__LevelUp` soma `(int)((l+1)*d) - (int)(l*d)` por nível; a soma de 1 até N é
     // `(int)(N*d) - (int)(1*d)`. Com d = 1,0 e nível 10: 10 - 1 = 9, mais o 1 de base.
+    //
+    // Por cima, os bônus de atributo do `UpdateAttack`/`UpdateDefense`
+    // (`playertemplate.h:916-1133`), sem arma (corpo a corpo, pela força 15):
+    //   dano   = (10) × (100 + (int)(15×100/150 + 0,5) = 10)% + 0,5 → 11
+    //   defesa = (9) × (100 + (int)((20×2 + 15×3)×0,04 + 0,5) = 3)% + 0,5 → 9, + (20+15)>>2 = 8 → 17
     let j = PlayerEntity::do_personagem(&personagem(10, 20, 5, 10), &config(), Some(&base()));
-    assert_eq!(j.attack_min, 10);
-    assert_eq!(j.attack_max, 10);
-    assert_eq!(j.def_phys, 9);
+    assert_eq!(j.attack_min, 11);
+    assert_eq!(j.attack_max, 11);
+    assert_eq!(j.def_phys, 17);
 
-    // Nível 1 não ganhou nada ainda: dano fica no 1 que o original grava de base.
+    // Nível 1: dano de base 1 (× 110% = 1) e só os pontos de defesa dos atributos.
     let j1 = PlayerEntity::do_personagem(&personagem(1, 20, 5, 10), &config(), Some(&base()));
     assert_eq!(j1.attack_min, 1);
-    assert_eq!(j1.def_phys, 0);
+    assert_eq!(j1.def_phys, 8);
 }
 
 #[test]
@@ -216,4 +222,22 @@ fn o_grau_de_ataque_e_defesa_fica_em_zero_de_proposito() {
     // valor neutro do cálculo de dano, não um palpite.
     let j = PlayerEntity::do_personagem(&personagem(50, 40, 20, 40), &config(), Some(&base()));
     assert_eq!((j.attack_degree, j.defend_degree, j.crit_damage_bonus), (0, 0, 0));
+}
+
+/// `PlayerSetStatusPoint` (`player.cpp:8598-8615`): gasta pontos livres, recusa acima deles,
+/// e cada ponto de vitalidade vale `vit_hp` de vida máxima (`__UpdateBasic`).
+#[test]
+fn distribuir_pontos_soma_os_atributos_e_recusa_o_que_passa_dos_livres() {
+    let mut j = PlayerEntity::do_personagem(&personagem(2, 5, 5, 5), &config(), Some(&base()));
+    j.pontos_de_atributo = 5;
+    let (vida, forca) = (j.max_hp, j.strength);
+
+    assert!(!j.distribuir_pontos((3, 0, 3, 0), &config(), Some(&base())), "6 pontos com 5 livres");
+    assert!(!j.distribuir_pontos((6, 0, 0, 0), &config(), Some(&base())));
+    assert_eq!((j.pontos_de_atributo, j.max_hp, j.strength), (5, vida, forca), "recusa não muda nada");
+
+    assert!(j.distribuir_pontos((2, 1, 1, 1), &config(), Some(&base())));
+    assert_eq!(j.pontos_de_atributo, 0);
+    assert_eq!((j.vitality, j.energy, j.strength, j.agility), (7, 6, forca + 1, 6));
+    assert_eq!(j.max_hp, vida + 2 * 4, "vit_hp da configuração de teste é 4");
 }

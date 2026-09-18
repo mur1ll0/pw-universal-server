@@ -189,6 +189,41 @@ impl ItemRepository {
         Ok(())
     }
 
+    /// Desgasta o equipamento de um slot, como o original: tira `quanto` da durabilidade
+    /// interna e para em zero.
+    ///
+    /// É o `ArmorDecDurability` (`gs/item/equip_item.h:300-312`) e o
+    /// `weapon_item::OnAfterAttack` (`gs/item/equip_item.cpp:978-988`). Devolve
+    /// `(durabilidade, máxima, quebrou)`; `quebrou` é o `true` do original — chegou a zero
+    /// agora —, que lá dispara o `equipment_damaged` e o `RefreshEquipment`.
+    ///
+    /// `None` quando não há item no slot, ele não tem durabilidade (`max_durability = 0`) ou
+    /// já estava em zero: aí não há escrita nenhuma.
+    pub async fn gastar_durabilidade(
+        &self,
+        character_id: RoleId,
+        container_type: ContainerType,
+        slot: u16,
+        quanto: i32,
+    ) -> Result<Option<(i32, i32, bool)>> {
+        let linha: Option<(i32, i32)> = sqlx::query_as(
+            r#"
+            UPDATE character_items
+               SET durability = GREATEST(durability - $4, 0), updated_at = CURRENT_TIMESTAMP
+             WHERE character_id = $1 AND container_type = $2 AND slot = $3
+               AND max_durability > 0 AND durability > 0
+            RETURNING durability, max_durability
+            "#,
+        )
+        .bind(character_id)
+        .bind(container_type.to_i16())
+        .bind(slot as i16)
+        .bind(quanto.max(0))
+        .fetch_optional(self.pool.get_ref())
+        .await?;
+        Ok(linha.map(|(dur, max)| (dur, max, dur == 0)))
+    }
+
     /// Remove um item de um slot
     pub async fn delete_item_by_slot(
         &self,

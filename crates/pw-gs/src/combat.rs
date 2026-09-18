@@ -481,10 +481,13 @@ impl CombatEngine {
         for (i, faixa) in monstro.magic_attack.iter().enumerate() {
             dano_magico[i] = sortear_dano_elemental(faixa.0, faixa.1);
         }
+        // Realces dos filtros (`Incattack`/`Decattack`, `Incaccuracy`/`Decaccuracy`).
+        let r = monstro.efeitos.realce();
+        use crate::entity::com_realce;
         Golpe {
             nivel_do_atacante: monstro.level,
-            taxa_de_ataque: monstro.attack_rate,
-            dano_fisico: sortear_dano_fisico(monstro.attack_min, monstro.attack_max),
+            taxa_de_ataque: com_realce(monstro.attack_rate, r.precisao),
+            dano_fisico: sortear_dano_fisico(com_realce(monstro.attack_min, r.dano), com_realce(monstro.attack_max, r.dano)),
             dano_magico,
             e_fisico: true,
             // Monstro comum não tem crítico próprio no original: o `crit_rate` do
@@ -501,10 +504,12 @@ impl CombatEngine {
     }
 
     pub fn defesa_do_monstro(monstro: &MonsterEntity) -> Defesa {
+        use crate::entity::com_realce;
+        let r = monstro.efeitos.realce();
         Defesa::simples(
-            monstro.armor,
-            monstro.def_phys,
-            monstro.resistances,
+            com_realce(monstro.armor, r.evasao),
+            com_realce(monstro.def_phys, r.defesa),
+            monstro.resistances.map(|x| com_realce(x, r.resistencia)),
             monstro.defend_degree,
         )
     }
@@ -537,6 +542,51 @@ impl CombatEngine {
             false,
             Rolagens::sortear(),
         )
+    }
+
+    /// O golpe de uma habilidade de dano (`SetDamage(fator × GetAttack())` e parentes).
+    ///
+    /// `GeneratePhysicDamage((int)ratio, (int)plus)` (`actobject.h:1422-1444`, `skill.cpp:897`,
+    /// `skill.h:634` — `SetRatio` guarda `r × 100`): dano bruto sorteado × (100 + bônus do
+    /// atributo + ratio%)/100 + plus; o mágico igual, com a energia (`GenerateMaigicDamage2`).
+    /// `carga` escala o `ratio` das habilidades de carga (`GetCharging()` / tempo cheio).
+    /// `Damage` vai na parcela física; as escolas, na mágica correspondente.
+    pub fn golpe_de_habilidade(
+        jogador: &PlayerEntity,
+        d: &pw_data_loader::habilidades::DanoDaHabilidade,
+        nivel: i32,
+        carga: f32,
+    ) -> Option<Golpe> {
+        let i = usize::try_from(nivel - 1).ok()?;
+        let ratio = d.ratio.get(i)? * if d.carga { carga.clamp(0.0, 1.0) } else { 1.0 };
+        let plus = *d.plus.get(i)? as i32;
+        let (faixa, bonus) = if d.base == "magico" {
+            (jogador.dano_magico_bruto, jogador.bonus_magico_pct)
+        } else {
+            (jogador.dano_bruto, jogador.bonus_de_dano_pct)
+        };
+        let bruto = sortear_dano_fisico(faixa.0, faixa.1);
+        let pct = 100 + bonus + (ratio * 100.0) as i32;
+        let valor = (((bruto as f32 * 0.01 * pct as f32) as i32 + plus).max(0) as f32 * d.fator) as i32;
+        let mut g = Self::golpe_de_jogador(jogador);
+        g.de_habilidade = true;
+        g.dano_fisico = 0;
+        let escola = match d.elemento.as_str() {
+            "Golddamage" => Some(0),
+            "Wooddamage" => Some(1),
+            "Waterdamage" => Some(2),
+            "Firedamage" => Some(3),
+            "Earthdamage" => Some(4),
+            _ => None,
+        };
+        match escola {
+            Some(e) => {
+                g.dano_magico[e] = valor;
+                g.e_fisico = false;
+            }
+            None => g.dano_fisico = valor,
+        }
+        Some(g)
     }
 
     /// Um golpe de monstro em jogador.

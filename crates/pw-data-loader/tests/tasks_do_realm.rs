@@ -1,4 +1,4 @@
-//! O `tasks.data` dos realms 1.5.5, lido inteiro.
+//! O `tasks.data` do realm 1.5.5, lido inteiro.
 //!
 //! O leitor já recusa o arquivo se qualquer missão de topo não terminar no deslocamento
 //! que a tabela do cabeçalho promete — então "carregou" aqui quer dizer "o layout está
@@ -20,10 +20,10 @@ fn ler(realm: &str) -> Option<TasksData> {
     Some(TasksData::load_from_bytes(&bytes).expect("tasks.data v129 devia fechar inteiro"))
 }
 
-/// Todas as missões de topo, e as submissões delas, dos dois realms 1.5.5.
+/// Todas as missões de topo, e as submissões delas, do realm 1.5.5 (cliente BR).
 #[test]
-fn as_duas_versoes_129_fecham_inteiras() {
-    for (realm, topo, total) in [("realm_155BR", 14_885, 31_837), ("realm_155", 14_978, 31_979)] {
+fn a_versao_129_fecha_inteira() {
+    for (realm, topo, total) in [("realm_155", 14_885, 31_837)] {
         let Some(t) = ler(realm) else { continue };
         assert_eq!(t.version, 129, "{realm}");
         assert_eq!(t.de_topo.len(), topo, "{realm}: missões de topo");
@@ -37,7 +37,7 @@ fn as_duas_versoes_129_fecham_inteiras() {
 /// o mesmo "Inseto Esmeralda" do teste de combate de 2026-09-12).
 #[test]
 fn a_missao_inicial_do_guerreiro() {
-    let Some(t) = ler("realm_155BR") else { return };
+    let Some(t) = ler("realm_155") else { return };
     let m = t.get_task(1173).expect("missão 1173");
     assert!(m.name.contains("Exposição de Talento"), "{:?}", m.name);
     assert!(m.descricao.starts_with("Você será designado guarda"), "{:?}", m.descricao);
@@ -55,14 +55,4 @@ fn a_missao_inicial_do_guerreiro() {
     assert_eq!((caca.npc_que_entrega, caca.npc_que_premia), (3517, 3517));
     let itens: Vec<_> = caca.rewards.grupos_de_itens.iter().flat_map(|g| &g.itens).map(|i| (i.id, i.quantidade)).collect();
     assert_eq!(itens, vec![(8617, 5)]);
-}
-
-/// Os dois arquivos são o mesmo jogo em línguas diferentes: mesma missão, mesmos números.
-#[test]
-fn o_realm_em_ingles_tem_os_mesmos_numeros() {
-    let (Some(br), Some(en)) = (ler("realm_155BR"), ler("realm_155")) else { return };
-    let (a, b) = (&br.tasks[&1175], &en.tasks[&1175]);
-    assert!(b.name.contains("Emerald Qingfu"), "{:?}", b.name);
-    assert_eq!(a.monster_kills, b.monster_kills);
-    assert_eq!(a.rewards, b.rewards);
 }

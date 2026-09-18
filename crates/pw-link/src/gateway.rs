@@ -890,8 +890,18 @@ impl LinkGateway {
                         }
                     };
                     let [la, lb, lc, ld, le] = &listas;
-                    info!("TASK_DATA enviado pro personagem ID {} ({} missões ativas)", details.id, la.first().copied().unwrap_or(0));
-                    tx.send(OutboundPacket::GamedataSend(sub.task_data_com_listas([la, lb, lc, ld, le]))).await?;
+                    // **Com servidor de mundo, o `TASK_DATA` é só dele** (B53). O cliente pede a
+                    // configuração a cada `TASK_DATA`, e este chegava antes das habilidades e
+                    // da bolsa que o mundo manda: o pedido que ele provocava era o respondido
+                    // (o segundo é recusado — responder duas vezes derruba o cliente), as
+                    // barras eram montadas sem nada para apontar e gravadas vazias ao sair
+                    // (teste de 2026-09-16: 211 bytes enviados, 172 gravados). No original o
+                    // `TASK_DATA` só existe no fim da resposta ao `GET_ALL_DATA`
+                    // (`EC_HostMsg.cpp:3945-3949`), que é o que o mundo faz.
+                    if self.uplink_da_sessao(&session).is_none() {
+                        info!("TASK_DATA enviado pro personagem ID {} ({} missões ativas)", details.id, la.first().copied().unwrap_or(0));
+                        tx.send(OutboundPacket::GamedataSend(sub.task_data_com_listas([la, lb, lc, ld, le]))).await?;
+                    }
                     // A marca das missões dinâmicas **não** vai aqui. Ia, sem ninguém pedir,
                     // com `version = 0` — e o cliente descarta toda marca cuja versão não é
                     // `DYN_TASK_CUR_VERSION` (10, `TaskTemplMan.cpp:168`). Quem responde é o
@@ -1041,15 +1051,10 @@ impl LinkGateway {
                     // — que parece ser o de sempre — do client nunca pedir sozinho), e o
                     // handler de `InboundPacket::GetUIConfig` abaixo checa a mesma flag antes
                     // de responder ao pedido do client, caso ele chegue depois de tudo.
-                    if !session.ui_config_enviado {
-                        session.ui_config_enviado = true;
-                        tx.send(OutboundPacket::GetUIConfigRe(S2CGetUIConfigRe::new(
-                            details.id,
-                            session.session_id as u32,
-                            &[],
-                        ))).await?;
-                        info!("GetUIConfig_Re enviado proativamente pro personagem ID {} (localsid {})", details.id, session.session_id);
-                    }
+                    // O `GetUIConfig_Re` **não** sai daqui (B52): sai em resposta ao pedido que o
+                    // cliente faz depois do `TASK_DATA` do mundo — ver `InboundPacket::GetUIConfig`.
+                    // Mandado aqui, chegava antes da bolsa e das habilidades e as barras de
+                    // atalho eram montadas vazias (teste em jogo de 2026-09-16).
 
                     info!("Personagem '{}' (ID: {}) spawnado com sucesso no mundo 3D (Pos: {:?}, Skills: {}, Itens: {})!", details.name, details.id, details.position, details.skills.len(), details.inventory.len());
                 }
@@ -1239,35 +1244,65 @@ impl LinkGateway {
             }
 
             InboundPacket::GetUIConfig(req) => {
-                // Achado em 2026-09-03: testando com log nos dois lados, esse pedido do
-                // client nunca chegou a aparecer aqui — o `EnterWorld` agora manda
-                // `GetUIConfig_Re` proativamente (ver o bloco logo depois do passo 10.6),
-                // guardado por `session.ui_config_enviado`. Esse handler continua existindo
-                // pro caso do pedido chegar (client real, versão diferente, etc.) — a mesma
-                // flag evita mandar duas respostas e derrubar o client de novo (ver o
-                // comentário lá no `EnterWorld` pra o histórico completo do bug).
-                info!("GetUIConfig pedido pelo personagem ID {} (localsid {})", req.role_id, req.localsid);
+                // O cliente pede a configuração a cada `TASK_DATA` (`OnMsgHstTaskData` →
+                // `LoadConfigData`, `EC_HostMsg.cpp:3947-3949`), e o original só manda esse
+                // comando no fim da resposta ao `GET_ALL_DATA`. Com mundo, o link não manda
+                // mais `TASK_DATA` próprio (B53), então o pedido vem uma vez, depois dos dados.
+                // Responde-se **uma vez**; responder duas vezes derruba o cliente
+                // (`OnAllInitDataReady` duas vezes). A espera pelo `TASK_DATA` do mundo fica
+                // como guarda.
+                let pronto = match self.uplink_da_sessao(&session) {
+                    Some(u) => u.dados_iniciais_entregues(req.role_id).await,
+                    None => true,
+                };
                 if session.ui_config_enviado {
-                    info!("GetUIConfig_Re já tinha sido mandado proativamente — ignorando o pedido do personagem ID {} pra não repetir o crash do double-send", req.role_id);
+                    debug!("GetUIConfig de {} repetido — já respondido", req.role_id);
+                } else if !pronto {
+                    info!("GetUIConfig de {} antes dos dados do mundo — espera o pedido depois do TASK_DATA do mundo", req.role_id);
                 } else {
                     session.ui_config_enviado = true;
+                    let ui_config = match session.role_id {
+                        Some(dono) if dono == req.role_id => {
+                            let repo = self.char_repo.client_config();
+                            let gravado = repo.ui_config(dono).await.unwrap_or_default();
+                            if gravado.is_empty() {
+                                // Sem configuração gravada: a do molde da classe, como o
+                                // `gamedbd` faz ao criar o personagem (B53).
+                                repo.ui_config_do_molde(dono).await.unwrap_or_default()
+                            } else {
+                                gravado
+                            }
+                        }
+                        _ => Vec::new(),
+                    };
                     tx.send(OutboundPacket::GetUIConfigRe(S2CGetUIConfigRe::new(
                         req.role_id,
                         req.localsid,
-                        &[],
+                        &ui_config,
                     ))).await?;
-                    info!("GetUIConfig_Re enviado pro personagem ID {} (localsid {})", req.role_id, req.localsid);
+                    info!("GetUIConfig_Re enviado ao personagem {} ({} bytes)", req.role_id, ui_config.len());
                 }
             }
 
             InboundPacket::SetUIConfig(req) => {
                 debug!("Salvando UIConfig ({} bytes) para o personagem ID {}", req.ui_config.len(), req.role_id);
+                // Só grava para o personagem desta sessão: o `roleid` vem do cliente.
+                let mut resultado = 0;
+                if session.role_id != Some(req.role_id)
+                    || req.ui_config.len() > pw_storage::TAMANHO_MAXIMO_DA_CONFIGURACAO
+                {
+                    warn!("SetUIConfig recusado: roleid {} na sessão de {:?}, {} bytes", req.role_id, session.role_id, req.ui_config.len());
+                    resultado = 1;
+                } else if let Err(e) = self.char_repo.client_config().gravar_ui_config(req.role_id, &req.ui_config).await {
+                    warn!("SetUIConfig de {} não gravado: {e}", req.role_id);
+                    resultado = 1;
+                }
                 // O `localsid` é obrigatório aqui — ver o comentário de
                 // `S2CSetUIConfigRe`: sem ele o cliente lê o resto do fluxo deslocado e
                 // derruba a conexão com "Decode error 103" (item 18 do
                 // docs/ESTADO_E_RETOMADA.md).
                 tx.send(OutboundPacket::SetUIConfigRe(S2CSetUIConfigRe {
-                    result: 0,
+                    result: resultado,
                     role_id: req.role_id,
                     localsid: req.localsid,
                 })).await?;
@@ -1389,16 +1424,29 @@ impl LinkGateway {
             }
 
             InboundPacket::GetHelpStates(req) => {
+                let gravadas = match session.role_id {
+                    Some(dono) if dono == req.role_id => {
+                        self.char_repo.client_config().help_states(dono).await.unwrap_or(None)
+                    }
+                    _ => None,
+                };
                 tx.send(OutboundPacket::GetHelpStatesRe(S2CGetHelpStatesRe {
                     result: 0,
                     role_id: req.role_id,
                     localsid: req.localsid,
-                    help_states: vec![0u8; 32],
+                    help_states: gravadas.unwrap_or_else(|| vec![0u8; 32]),
                 })).await?;
             }
 
             InboundPacket::SetHelpStates(req) => {
                 debug!("Salvando HelpStates ({} bytes) para o personagem ID {}", req.help_states.len(), req.role_id);
+                if session.role_id == Some(req.role_id)
+                    && req.help_states.len() <= pw_storage::TAMANHO_MAXIMO_DA_CONFIGURACAO
+                {
+                    if let Err(e) = self.char_repo.client_config().gravar_help_states(req.role_id, &req.help_states).await {
+                        warn!("SetHelpStates de {} não gravado: {e}", req.role_id);
+                    }
+                }
                 tx.send(OutboundPacket::SetHelpStatesRe(S2CSetHelpStatesRe {
                     result: 0,
                     role_id: req.role_id,

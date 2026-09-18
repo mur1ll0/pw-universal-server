@@ -6766,6 +6766,888 @@ locais), a rota antiga (contêiner de nuvem + sincronização por tarball via `_
 qualquer rota SSH. Credenciais e topologia do `docker-compose` (11 serviços, portas por
 realm) estão na memória `pw_universal_infra_access`.
 
+51. **Sessão 2026-09-16: flecha, atributos, barras de atalho, pontos, missões com horário/região/
+    equipe/lugar, troca de mapa, coleta, e o 1.2.6 sem falhas de leitura.**
+
+    ### a. O teste em jogo e o pedido
+
+    Com o Arqueiro eaa: missões aceitas e entregues (32201, 31676–31678), subida de nível, e
+    ao relogar voltam posição, experiência, nível, moedas e missões — **confirmado**. Defeitos:
+    a flecha mostrava "arma de nível 0-0" com o arco vermelho; o Arqueiro tinha 20 de INT; as
+    barras de atalho não ficavam gravadas. Pedido: corrigir, implementar o que faltava (horário,
+    equipe, facção, chegar a lugar, distribuir pontos, flechas gastas, troca de mapa, coleta) e
+    resolver as 2 falhas do 1.2.6.
+
+    ### b. Flecha
+
+    Duas causas. O servidor não mandava bloco de dados para munição: o cliente lê a faixa de
+    nível da arma de `IVTR_ESSENCE_ARROW` (`EC_IvtrArrow.cpp:88-113`), que ficava zerada. E o
+    `weapon_level` da arma ia **1 fixo**, quando o original copia `WEAPON_ESSENCE.level`
+    (`generate_item_temp.h:329`) — o Arco de Madeira (2250) é **nível 0**. `CanUseProjectile`
+    (`EC_HostPlayer.cpp:5009-5016`) compara os dois. A Flecha de Iniciante (8543) pede 1–17; a
+    **Flecha de Novato (43283)** aceita 0–17 — e é justamente a que a missão "Partida Para
+    Perfect World" (31379) entrega ao Arqueiro. Agora: `FichaDaMunicao` do `PROJECTILE_ESSENCE`
+    com o cabeçalho de `generate_projectile` (`:607-626`), o nível real da arma, molde e eaa
+    com 43283 (`scripts/2026_09_16_flecha_de_novato_155br.sql`).
+
+    ### c. Atributos
+
+    O `ptemplate.conf` diz Arqueiro 15/20/5/10, e o projeto usava isso. Mas o `gamed` copia a
+    ficha do banco (`userlogin.cpp`, `memcpy` em `_base_prop`), e ela nasce do molde do
+    `clsconfig`: lendo `GRoleStatus.property` (`extend_prop`, `property.h:35`) dos 12 moldes do
+    `pwserver_155v156`, **todas as classes têm 5/5/5/5**, e a vida/mana de nível 1 é
+    exatamente `vit_hp × 5`/`eng_mp × 5` do `CHARRACTER_CLASS_CONFIG` (Arqueiro 65/55, Bárbaro
+    85/35) — base zero, não o `hp` do `.conf`. `ATRIBUTO_INICIAL = 5`, fórmula sem o `hp` do
+    `.conf`; teste compara as 12 classes com os moldes. Personagens 1.5.5 migrados para 5/5/5/5
+    com `5 × (nível−1)` pontos (`scripts/2026_09_16_atributos_iniciais_5_155.sql`).
+
+    ### d. Barras de atalho
+
+    O cliente junta barras, layout e opções num bloco comprimido (`SaveConfigsToServer`,
+    `EC_GameRun.cpp:2014`) e manda no `SetUIConfig`; na entrada, `GetUIConfig_Re` devolve o
+    bloco e `LoadConfigsFromServer` refaz cada atalho. O link respondia e **descartava**, e
+    mandava sempre vazio. Agora `character_client_config` (`ui_config`, `help_states`,
+    `scripts/2026_09_16_configuracao_do_cliente.sql`), gravado só para o personagem da sessão.
+
+    ### e. Pontos de atributo e `GET_EXT_PROP`
+
+    O log do teste tinha `subcomando 22 ainda não tratado` três vezes: era `SET_STATUS_POINT`.
+    Portado `PlayerSetStatusPoint` (`player.cpp:8598`) com `ADD_STATUS_POINT` (51). O cliente
+    então pede `GET_EXT_PROP` (21), que no original responde `OWN_EXT_PROP`
+    (`PlayerGetProperty`, `:8588`) — o mundo mandava só `SELF_INFO_00` e dinheiro.
+
+    ### f. Flechas gastas
+
+    `DoAttack` (`player.cpp:3063-3070`) e `ATTACK_ONCE` (83) a cada golpe (`:3134`), que é o
+    comando pelo qual o cliente desconta a flecha e a durabilidade.
+
+    ### g. Missões
+
+    Leitor: janelas de horário, regiões de entrega, lugar a alcançar/sair, `TEAM_MEM_WANTED`,
+    cargo de facção, `m_bTransTo`. Motor: `CheckTimetable`/`judge_time_date` (hora local),
+    `CheckInZone`, `CheckFaction` (sem facção no servidor, recusa como o original a quem não
+    tem), `CheckTeamTask`/`HasAllTeamMemsWanted` e `OnDeliverTeamMemTask` aos membros deste
+    mapa, `OnTaskReachSite`/`LeaveSite` pelos avisos 3 e 10 do cliente, teleporte de prêmio e
+    ao receber.
+
+    ### h. Troca de mapa
+
+    `NOTIFY_HOSTPOS` estava com 15 bytes (`pos + u8`); o cliente lê `pos, tag, line`
+    (`EC_GPDataType.h:1362`) e troca de mundo quando o `tag` muda (`JumpToInstance`). Com
+    mapas no mesmo processo (B50), a troca é o roteador tirar o jogador de um mapa e pôr no
+    outro (`RoteadorDeMapas::ligar_trocas`), gravando mapa e posição **antes** de mostrar o
+    jogador — o teste de integração pegou a corrida em que o banco ficava com o mapa velho.
+    No 161, a saída para o mundo 1 do Elfo Alado é "Retornar à Pan Gu" (32340, nível 20+,
+    NPC 44408 ao lado do nascimento); a "Partida Para Perfect World" é do 162.
+
+    ### i. Coleta
+
+    `GATHER_MATERIAL` (54) → conferências da mina (`matter.cpp:265-382`), tempo sorteado,
+    `PLAYER_GATHER_START/STOP` (126/127), resultado (`matter.cpp:402-510`,
+    `player.cpp:1478-1568`) com `HOST_OBTAIN_ITEM` (99), exp/SP, mina some e renasce.
+    `MINE_ESSENCE` montado como o `npc_stubs_manager` (`npcgenerator.cpp:1280-1365`).
+
+    ### j. 1.2.6
+
+    `npcgen.data` v5/v6: o leitor recusava; agora lê as structs antigas de
+    `CNPCGenMan::Load` e exige fechar no último byte — os 193 arquivos em disco fecham (o `a46` do 155BR tem 0 bytes e falha como antes, igual ao `a50/precinct.sev`).
+    `elements.data` v7: **não tem `time_t`** depois da versão (o leitor pulava 8 bytes e lia a
+    contagem da tabela 0 como data). Os 118 tamanhos de registro, escritos à mão e errados a
+    partir da tabela 3, foram deduzidos do arquivo por busca com retrocesso (ids distintos,
+    nomes legíveis, próxima tabela plausível, fechar no último byte) e conferidos pelo nome do
+    primeiro registro contra o enum `DATA_TYPE` (58 = FACE_TEXTURE, 70 = as 8 classes, 76 = a
+    curva de exp…); 103–112 fecham mas sem nome para conferir.
+
+    ### k. Provas
+
+    Suíte com banco: **550 passando, 0 falhando**. Novos: flecha de novato serve no
+    arco e a de iniciante não; bloco da munição; 12 classes contra os moldes; distribuir
+    pontos; tamanhos de `ADD_STATUS_POINT`, `ATTACK_ONCE`, `NOTIFY_HOSTPOS`, `GATHER_*`,
+    `HOST_OBTAIN_ITEM`; motor: horário, zona, facção, equipe, lugar, teleporte; minas do realm;
+    troca de mapa ponta a ponta (`varios_mapas.rs`: sai do 161, entra no 1, `NOTIFY_HOSTPOS`
+    com tag 1, banco com o mapa novo).
+
+    ### l. O que continua faltando
+
+    Ver em jogo (estado §3.4). Teleporte por NPC, troca para mapa de outro contêiner, recarga e
+    interrupção por dano na coleta, bônus da flecha, recusa sem munição, sucesso/falha e abate
+    compartilhados pela equipe, sistema de facção.
+
+52. **Sessão 2026-09-17: atributos do equipamento, sessão de golpe, alcance/dano/carga das
+    habilidades, barras de atalho de verdade, aljava vira munição.**
+
+    ### a. O teste em jogo e o pedido
+
+    Com o eaa: arco e munição, atributos 5/5/5/5 com distribuição gravada, drop, coleta e
+    equipar armadura — **confirmado**. Defeitos: o Arqueiro chegava perto para atirar, sem a
+    animação do arco, e cada clique dava um golpe; as habilidades também de perto; a mira (234)
+    solta antes tirava menos; a 235 tirava mais de 100 no nível 1 (o golpe normal, 3); a barra
+    de atalhos continuava sumindo; "fixar missão" não mostrava o rastreador; um monstro dropou
+    o item 1955.
+
+    ### b. Equipamento não dava atributo
+
+    Causa comum do alcance, do dano 3 e da cadência: o mundo **nunca aplicava o equipamento**.
+    Portado `property_policy` (`playertemplate.h:807-1133`): `UpdateAttack` (dano da arma ×
+    bônus de agilidade para arma de longe, alcance da arma + 0,3 do corpo, cadência pelo
+    `WEAPON_SUB_TYPE.attack_speed × 20`), `UpdateMagic`, `UpdateDefense` com as armaduras,
+    evasão e vida/mana das peças. Refeito ao entrar e a cada troca no equipamento, com
+    `SELF_INFO_00` + `OWN_EXT_PROP` — é o `attack_range` deste que diz ao cliente até onde andar.
+
+    ### c. Sessão de golpe
+
+    `session_normal_attack` (`actsession.cpp:350-418`): `NORMAL_ATTACK` confere o alcance
+    (`CheckAttack`), manda `HOST_START_ATTACK` (84: alvo, munição, cadência — é o que abre a
+    animação no cliente) e golpeia a cada `attack_speed` pelo tick do mundo. Outro clique com a
+    sessão aberta só enfileira no original: aqui é ignorado. Alvo morto/longe →
+    `HOST_STOPATTACK` (23) com o motivo; `CANCEL_ACTION`, conjurar e morrer encerram.
+
+    ### d. Habilidades
+
+    `extrair_habilidades.py` passou a tirar dos stubs do servidor o alcance
+    (`GetPraydistance` = `k × GetRange() + fixo`), o `time_type` e a conta de dano
+    (`SetRatio`/`SetPlus` + `SetDamage`/`Set<escola>damage(k × GetAttack|GetMagicattack)`) —
+    1.123 habilidades com dano, 14 de carga. Dano = `GeneratePhysicDamage((int)ratio%,
+    (int)plus)` (`actobject.h:1422`): bruto × (100 + bônus + ratio%)/100 + plus, depois acerto,
+    defesa e crítico. Conjurar fora do alcance (`CheckTarget`, `playerwrapper.cpp:1751`) recebe
+    `HOST_STOP_SKILL`. Carga: `CONTINUE_ACTION` (51) conclui na hora com a fração carregada
+    (`GetCharging`); a tarefa do fim confere um marcador para não concluir duas vezes.
+    **A 235 com +112 no nível 1 é o original** — plus 2,3 + 63,2 + 46,4 e o tooltip do cliente
+    (`ElementSkill/skill235.h:226`) mostra 112. Faltava o dano da arma, não sobrava plus.
+
+    ### e. Barras de atalho (a causa real)
+
+    O B51 gravava e lia certo, mas o link mandava o `GetUIConfig_Re` proativamente no
+    `EnterWorld`. O cliente só aplica a configuração em `LoadConfigData`, chamado a cada
+    `TASK_DATA` (`EC_HostMsg.cpp:3947-3949`, "fim do GET_ALL_DATA"): recebida antes, era
+    engolida, e a barra ficava a padrão (e o layout, onde mora o rastreador de missões,
+    `DlgTask.cpp:425-455`). Agora o uplink marca o personagem como pronto quando passa o
+    `TASK_DATA` (105) do mundo, e o link só responde o `GetUIConfig` depois disso.
+
+    ### f. Item 1955
+
+    É um `QUIVER_ESSENCE` (aljava), e o drop do Espírito da Estrela está certo: o original o
+    converte ao gerar (`generate_quiver`, `generate_item_temp.h:650-667`) em
+    `id_projectile` × `Rand(num_min, num_max)`. O drop agora converte; o 1955 do eaa virou
+    50 × 410 (`scripts/2026_09_17_aljava_vira_municao.sql`).
+
+    ### g. Provas
+
+    Suíte com banco: **555 passando, 0 falhando**. Novos: `arqueiro_do_realm.rs`
+    contra o `elements.data` (arco: alcance 20,3, 1,5 s, dano; 235 = bruto × 1,07 + 111; 234
+    cheia 272 contra metade 189); sessão de golpe (`HOST_START_ATTACK` de 9 bytes, clique
+    repetido não golpeia, `CANCEL_ACTION` → `HOST_STOPATTACK` de 6 bytes, fora do alcance não
+    começa); tamanhos contra o IR.
+
+    ### h. O que continua faltando
+
+    Ver em jogo (estado §3.4). Efeitos de estado, área, `arrowcost`, talentos, refino/cravos/
+    addons nos atributos, sessão de golpe contra jogador, trava de PvP.
+
+53. **Sessão 2026-09-17: clique repetido, barras e rastreador, Carta da Sorte, efeitos de
+    estado, área, flechas por habilidade, equipamento sorteado com addons.**
+
+    ### a. O teste em jogo e o pedido
+
+    Com o eaa, depois do B52: fixar missão não funcionava; clicar várias vezes no inimigo ainda
+    dava um golpe por clique; a barra de atalhos montada sumiu ao relogar; a Carta da Sorte
+    dropada não fazia nada. Pedido: corrigir e implementar efeitos de estado, habilidades em
+    área, flechas gastas por habilidade, e refino/cravos/propriedades adicionais nos atributos.
+
+    ### b. Clique repetido
+
+    O log mostrou o cliente mandando `CANCEL_ACTION` (42) e `NORMAL_ATTACK` (3) a cada clique. O
+    B52 encerrava a sessão no cancelamento, e o ataque seguinte golpeava na hora. No original o
+    cancelamento limpa a fila e tenta `TerminateSession(false)`, que a sessão de golpe recusa
+    (`playercmd.cpp:2136-2153`, `actsession.h:109-115`); o `NORMAL_ATTACK` com sessão aberta
+    entra na fila e só começa no próximo golpe, quando `HasNextSession` encerra a atual
+    (`actobject.cpp:180-189`). Portado com `SessaoDeAtaque::proximo`.
+
+    ### c. Barras de atalho e rastreador de missões
+
+    Log do realm: `GetUIConfig_Re enviado (211 bytes)`, `GetUIConfig repetido — já respondido`,
+    e ao sair `Salvando UIConfig (172 bytes)`. O link mandava um `TASK_DATA` próprio na entrada;
+    o cliente pede a configuração a cada `TASK_DATA` (`EC_HostMsg.cpp:3947-3949`), o primeiro
+    pedido chegava antes dos dados do mundo, era respondido e aplicado sem habilidades, e o
+    segundo era recusado (responder duas vezes derruba o cliente). Com mundo, o link não manda
+    mais `TASK_DATA`. O rastreador: decodificado o bloco gravado (versão + zlib; layout
+    `USER_LAYOUT` v16), `bTraceAll = 0` no byte 288 e a máscara fixada no 320 — sem
+    `m_bShowTrace` o `RefreshTaskTrace` sai sem desenhar (`DlgTask.cpp:476`). O zero veio do
+    tempo em que a configuração não chegava (o `CDlgTask` nasce com `false`); o original liga
+    para personagem novo (`EC_GameUIMan.cpp:4738-4743`). Script
+    `scripts/2026_09_17_rastreador_de_missoes_ligado.py` aplicado ao eaa.
+
+    ### d. Carta da Sorte
+
+    11092 é `TASKDICE_ESSENCE`. `item_taskdice::OnUse` (`item_taskdice.cpp:12-42`): sorteia por
+    `task_lists` (`RandSelect`) e entrega por `OnTaskCheckDeliver`; aceitou, gasta. `cartas.rs`
+    e `usar_carta_de_missao`.
+
+    ### e. Efeitos de estado
+
+    O extrator passou a ler dos stubs `StateAttack`/`BlessMe` como roteiros `[quem, setter,
+    expressão]` (2.304/266), com as expressões normalizadas; o servidor as avalia
+    (`efeitos::expr`: aritmética, comparações, `?:`, `INT`). `executar_roteiro` segue o
+    `PlayerWrapper`: parâmetros acumulados e o dado que fixa a probabilidade em 100/0
+    (`ThrowDice`, `playerwrapper.h:170-178`). 37 filtros de `skillfilter.h` portados com a
+    convivência de `filter_man::AddFilter` e os números de `statedef.h`; realces como
+    `_en_percent` (`obj_interface.cpp:200-561`) no jogador e no monstro (mesmo
+    `property_policy`, classe −1); dano no tempo de `filter_Wounded` (dano/período, tique de 3
+    em 3). Batida de 1 s no mundo e os comandos `UPDATE_EXT_STATE` (124, 30 bytes) e
+    `ICON_STATE_NOTIFY` (125, variável, parâmetros nos 2 bits altos), mais `ENCHANT_RESULT`
+    (139). Monstro atordoado não age, preso não anda, lento anda devagar; selado não conjura.
+
+    ### f. Área, flechas e precisão
+
+    `bus_server/habilidades.rs` segue `SetPerform` (`playerwrapper.cpp:170-420`): `arrowcost`
+    por `UseArrow` antes do golpe (`skill.cpp:229`), precisão × `GetHitrate`, dano sorteado uma
+    vez, alvos por `range.type` (ponto, cilindro, esfera em si ou no alvo, cone,
+    `obj_interface.cpp:1066-1130`), `attached_skill` só em quem foi atingido.
+
+    ### g. Equipamento sorteado, refino e pedras
+
+    O equipamento do original carrega tudo nos octetos: essência sorteada, furos e a lista de
+    addons — refino é addon (`refine_*`, valor × fator do nível, `equip_item.cpp:319-330`) e
+    pedra é addon com `0x8000` (`equip_item.cpp:876-905`). Portados
+    `generate_weapon/armor/decoration` no drop (`geracao.rs`), o `GenerateParam` e o
+    `ApplyAtGeneration` dos tratadores (`addons.json` de `item_addon.cpp`, 2.911 ids), um formato
+    único do conteúdo (`pw_core::ConteudoDeEquipamento`, que o `item_info` também passou a usar,
+    com os testes de bytes intactos) e a leitura ao vestir (`BonusDeAddons`).
+
+    ### h. Provas
+
+    Suíte com banco: **568 passando, 0 falhando**. Novos: avaliador e roteiro (dado herdado),
+    convivência e tique dos filtros; tamanhos de 124/125/139; habilidade em área no mundo
+    (acerta alvo e vizinho, não o de 30 m, deixa lentos e atordoados, manda 124 e 125); clique
+    repetido na fila (sem golpe na hora, `HOST_STOPATTACK` + `HOST_START_ATTACK` no golpe
+    seguinte); conteúdo de equipamento escrito e relido; contra o `elements.data` real, 9.000
+    sorteios: 5.231 com addon, 3.553 com bônus somado, todos relidos fechando no último byte.
+
+    ### i. O que continua faltando
+
+    Ver em jogo (estado §3.4). Serviços de refinar/furar/incrustar, addons de habilidade e
+    conjunto, ~300 efeitos sem porte, imunidades, talentos, trava de PvP.
+
+54. **Sessão 2026-09-17 (continuação): barras e rastreador de verdade, ataque que para,
+    atributos com bônus, Asa dos Alados.**
+
+    ### a. O teste e o pedido
+
+    Com o eaa depois do B53: o ataque não parava depois de matar (atacava outro sozinho, Esc e
+    andar não paravam); a janela do personagem não somava os atributos do equipamento; as
+    barras (F1 e números) e o "fixar missão" continuavam sem funcionar — "resolva
+    definitivamente"; o Alado nasceu sem asa.
+
+    ### b. Barras e rastreador — a causa medida
+
+    O log do realm mostrou uma única resposta de 212 bytes e, ao sair, 172 gravados. O log do
+    próprio cliente (`element/logs/EC.log`) fechou a questão: `CECGameRun::LoadConfigsFromServer,
+    data read error (2)` em **todo** login. `2` é `TYPE_OVERBOUND` (`EC_RTDebug.h:152-157`).
+    `S2CGetUIConfigRe::new` trocava os 16 primeiros bytes do bloco por um "cabeçalho"
+    (`1, 2097199, 2097199, 1206433535`) escrito numa sessão antiga sem evidência; o cliente lia
+    versão 1 (< 3), não descomprimia e estourava o buffer (`EC_GameRun.cpp:2139-2241`). As
+    correções dos B51–B53 (gravar, ordem, um pedido) estavam certas, mas o bloco chegava
+    corrompido. O "fixar missão" era o mesmo defeito: o layout nunca carregava.
+
+    Para personagem sem configuração, decodificado o `config_data` dos moldes do `clsconfig`
+    (`pwserver_155v156`): versão 3 + zlib, host v11 com a barra inicial (Arqueiro: 235, 234,
+    167), layout v16 com `bTraceAll = 1`. Guardado em `class_templates.ui_config` e mandado a
+    quem não gravou nada — o que o `gamedbd` faz ao copiar o molde.
+
+    ### c. Ataque que não parava
+
+    O log do mundo: `matou -2147482563` a cada 3 s, o mesmo id. O monstro renascia ~1,5 s
+    depois da morte, antes do disparo seguinte, e a sessão nunca o via morto; o cliente mandava
+    Esc (`CANCEL_ACTION`) repetido e nada parava. No original: o gerador só recebe o monstro
+    quando o corpo some (`GM_MSG_OBJ_ZOMBIE_END` → `LifeExhaust` → `Reclaim`, `npc.cpp:904-911`,
+    `npcgenerator.cpp:3312`); cancelar e andar põem sessões na fila que encerram o golpe no
+    disparo seguinte (`StartSession`, `actobject.cpp:1059-1086`; `cmd_user_move`,
+    `playercmd.cpp:9297-9303`). No B53 eu tinha lido o `TerminateSession(false)` e concluído que
+    cancelar não fazia nada — faltou a fila. Agora: renascimento só depois do corpo, fila com
+    golpe/cancelar/andar, e a morte do alvo encerra a sessão de todos que batiam nele.
+
+    ### d. Atributos da janela
+
+    `DlgCharacter.cpp:442-470` mostra `rep.bs.strength` (verde se algum item soma): é o
+    `_cur_prop` do `OWN_EXT_PROP`, base + `_en_point`. Mandávamos a base.
+    `PlayerEntity::atributos_efetivos`.
+
+    ### e. Asa
+
+    Lido o `GRoleInventory` do equipamento dos moldes: Arqueiro com arco (pos 0), 200 flechas
+    (pos 11) e `2096 pos 12 proc 19`; Sacerdote com cajado e a mesma asa. O molde do realm a
+    tinha perdido (o `seed_defaults` a põe, mas o realm foi regravado por script).
+
+    ### f. Provas
+
+    Suíte com banco: **571 passando, 0 falhando**. Novos: `GetUIConfig_Re` devolve o bloco sem
+    mexer; Esc e andar param no golpe seguinte, morte do alvo para na hora e o monstro não
+    renasce com o corpo no chão; molde com configuração (versão 3 + zlib) para as 12 classes e
+    Asa no slot 12 de Arqueiro e Sacerdote.
+
+55. **Sessão 2026-09-17: um realm por versão — o 1.5.5 EN sai, o `realm_155BR` vira `realm_155`.**
+
+    ### a. O pedido
+
+    Murillo: manter só um realm 1.5.5. Havia dois desde 2026-09-03 — `realm_155` (dados do
+    cliente EN, elements v159, porta 29003, fora dos testes desde 2026-09-05) e `realm_155BR`
+    (cliente BR, v156, porta 29004, o realm de teste). Apagar o EN e renomear o BR para
+    `realm_155`. Decisões dele: **manter a porta 29004** (o `serverlist.txt` do cliente BR não
+    muda), **apagar** a pasta de dados do EN, **remover** os testes do v159 e **reescrever** os
+    scripts SQL para o nome novo.
+
+    ### b. O que mudou
+
+    - **Banco:** `scripts/2026_09_17_realm_155_passa_a_ser_o_br.sql`, numa transação. As chaves
+      para `realms(id)` não têm `ON UPDATE CASCADE`, então: apaga o EN (6 moldes, 26 itens e 25
+      habilidades de molde, nenhum personagem), cria `realm_155` com a linha do BR (nome
+      "Perfect World Evolved (1.5.5)", porta 29004), repassa `characters`, `class_templates`,
+      `factions`, `mails` e `admin_audit_logs` e apaga `realm_155BR`. Resultado conferido: 12
+      moldes com `spawn_world_id = 161` e `ui_config`, POTATO (4515) e eaa (5491). Backup antes:
+      `data/_backups/pw_database_2026-09-17_antes_de_renomear_realm_155.sql`. **Não reaplicar.**
+    - **Disco:** `data/realm_155` (EN, 2,1 GB) apagada; `data/realm_155BR` renomeada para
+      `data/realm_155`.
+    - **Compose:** saíram `pw-realm-155br`/`pw-world-155br` e o par EN; ficou `pw-realm-155`
+      (29004) + `pw-world-155` (`WORLD_TAGS: "1,161"`). O Dragonfly não tinha chave do 155.
+    - **Scripts:** os `*_155br.sql` viraram `*_155.sql`, com `realm_id = 'realm_155'`; os que
+      filtravam `IN ('realm_155', 'realm_155BR')` passaram a `= 'realm_155'`.
+    - **Seed** do `specs/01_DATABASE_SCHEMA_POSTGRES.sql`: uma linha 1.5.5, porta 29004.
+    - **Código:** só testes e comentários — nenhum identificador de produção citava o realm.
+
+    ### c. Testes que mediam o arquivo do EN
+
+    Com a pasta BR no lugar de `data/realm_155`, os testes que liam o EN passaram a ler o BR:
+    - `aipolicy_tests`: o cabeçalho do `aipolicy.data` do BR é `u32 1, u32 3137` (o EN tinha
+      3.144), e os triggers estão gravados na **versão 23** (EN: 24). O leitor fecha o arquivo
+      inteiro nas duas versões. Números trocados pelos do arquivo.
+    - `loader_tests` (pasta 1.5.5 inteira): o pacote BR traz `a46/npcgen.data` e
+      `a50/precinct.sev` com **0 bytes** (já anotado no B51). O teste agora cobra exatamente
+      essas falhas e nenhuma outra.
+    - Saíram `o_v159_do_155_le_as_234_tabelas` e `o_realm_em_ingles_tem_os_mesmos_numeros`; os
+      laços `["realm_155BR", "realm_155"]` ficaram com um realm. O layout v159 continua no
+      catálogo (`generic_elements.rs`), sem arquivo para testar.
+
+    ### d. Provas
+
+    Suíte com banco: **569 passando, 0 falhando** (eram 571; saíram os 2 testes do v159). Na
+    primeira rodada, `subcomandos_no_mundo::aceitar_e_entregar_missao_no_npc_mexe_nas_listas_e_premia`
+    falhou uma vez e passou isolado (56/56) e na rodada completa seguinte — concorrência de
+    teste, não a renomeação. Contêineres reconstruídos: `pw-realm-155` escutando na 29004
+    para `realm_155` (`ELEMENTDATA_VERSION=0x3000009c`, `task_templ=129`), `pw-world-155` com o
+    mundo 1 (29.620 monstros, 1.380 NPCs, 5.268 recursos) e o 161 (1.269, 208, 187).
+
+56. **Sessão 2026-09-17: a barra de vida que caía no clique, e os sons de fundo repetindo.**
+
+    ### a. O relato
+
+    Teste do Murillo com o eaa no `realm_155` (depois do B54/B55): a barra de atalhos voltou
+    preenchida (B54 confirmado). Defeitos: alguns sons de fundo começaram a tocar várias vezes;
+    ao clicar num monstro ele já perdia vida antes de o ataque sair.
+
+    ### b. A vida caindo antes do golpe — causa e correção
+
+    O original também golpeia já no `StartSession` (`actsession.cpp:350-378` chama `DoAttack`),
+    e o `DoAttack` do jogador só enfileira `GM_MSG_ATTACK` (`player.cpp:3054-3095`,
+    `PostLazyMessage` sem atraso). A diferença é a **barra de vida**: o original não a manda
+    junto do golpe. Ela sai ao selecionar (`InsertInfoSubscibe` → `query_info00`,
+    `actobject.cpp:1591-1610`) e no heartbeat de 1 s (`obj_manager<gnpc, TICK_PER_SEC>`,
+    `worldmanager.h:262`; `DoHeartbeat` → `RefreshSubscibeList`, `actobject.cpp:1294-1353`),
+    para a lista de inscritos e só se `_refresh_state` ligou (`npc.cpp:2219-2230`). Nós
+    mandávamos `npc_info_00` no mesmo instante do golpe, da habilidade de alvo único, da
+    habilidade em área e do dano no tempo (este a todos em volta). O cliente atualizava a barra
+    antes de a animação soltar a flecha.
+
+    Correção: `WorldInstance::informar_vida_aos_inscritos` no batimento de 1 s — para cada
+    monstro vivo selecionado por alguém, compara `(vida, alvo)` com o último envio
+    (`vida_informada`) e emite `EventoDoMundo::VidaDoMonstro` só a quem o selecionou. O
+    `SELECT_TARGET` continua mandando na hora e registra o envio (`vida_ja_informada`). Os
+    quatro envios imediatos saíram.
+
+    ### c. Os sons — medido, sem causa
+
+    Log do link da sessão (16:15–16:24 UTC, 5 logins): 2.097 `OBJECT_MOVE`, 297
+    `NPC_ENTER_SLICE`, 222 `OWN_ITEM_INFO`, 177 `NPC_INFO_00`. Conferido:
+    - nenhum NPC ou matéria entrou duas vezes sem ter saído (zerando a cada login);
+    - nenhum comando corrige a posição do próprio personagem;
+    - monstros andam 1 passo por segundo (`use_time` 1000), como o original;
+    - `OBJECT_CAST_SKILL`, `OBJECT_TAKEOFF`/`LANDING`, `OBJECT_STAND_UP` e `OBJECT_DO_EMOTE` com
+      o id do próprio jogador chegam a ele — e no original também
+      (`AutoBroadcastCSMsg(..., -1)`, `player.cpp:3997-4057`, `4502-4527`); o cliente os entrega
+      ao `CECHostPlayer` (`EC_ManPlayer.cpp:1486-1487`).
+    No cliente, música e som de ambiente só recomeçam ao trocar de distrito ou de dia/noite
+    (`EC_World.cpp:2178-2268`), e os sons de cenário são dos blocos em volta do personagem
+    (`EC_SceneBlock.cpp:819-1022`). Os logs do cliente (`EC.log`, `AM.log`, `AF.log`) só cobrem o
+    último login e não falam de som.
+
+    Duplicatas reais achadas, **sem ligação provada com som** (anotadas no §5B do estado): 25
+    comandos da carga de inventário/habilidades repetidos por login (o link manda no
+    `EnterWorld`, o mundo de novo no `GET_ALL_DATA`), e `SELF_INFO_00` + `GET_OWN_MONEY` duas
+    vezes por abate. Também anotado: o `QUERY_NPC_INFO_1` (68) responde `NPC_INFO_00`, e o
+    original responde `NPC_INFO_LIST` (`npc.cpp:330-338`). Pergunta aberta: que som, onde e
+    depois de quê.
+
+    ### d. Provas
+
+    Novo `a_barra_de_vida_vai_no_batimento_e_so_quando_muda`: sem seleção nada sai; selecionar
+    manda na hora; batimento sem mudança não repete; uma mudança sai uma vez. Os testes de golpe
+    e habilidade passaram a exigir que a barra **não** venha junto do resultado, e
+    `atacar_debita_o_hp_de_verdade_do_monstro` confere que a do batimento traz a vida do mundo.
+    Suíte com banco: **570 testes**; na rodada completa 569 passaram e
+    `nao_da_para_entrar_num_grupo_sem_convite` falhou por tempo (400 ms de silêncio com o build
+    do Docker em paralelo) — `subcomandos_no_mundo` sozinho passa 57/57. Contêineres
+    reconstruídos: `pw-world-155` com os mapas 1 (29.620 monstros) e 161 (1.269), link religado
+    ao barramento às 16:56:20 UTC.
+
+57. **Sessão 2026-09-17: o golpe que saía junto com a habilidade, e a caça ao som repetido.**
+
+    ### a. O relato
+
+    Com o eaa, depois do B56: (1) a barra de atalhos voltou preenchida — B54 confirmado; (2) ao
+    clicar num monstro já marcado, ele perdia vida antes de o disparo sair, e o mesmo ao usar
+    uma habilidade, "como se um segundo ataque fosse lançado no momento da ação"; um monstro de
+    172 de vida morria com uma habilidade que mostrava menos dano que isso; (3) sons de fundo —
+    "passos ou asas batendo" — repetindo, que somem quando ele se afasta.
+
+    ### b. O segundo golpe: medido no log do link
+
+    `CAST_SKILL` (235) → 1 s de conjuração → `SKILL_PERFORM` (88) + `HOST_STOP_SKILL` (123)
+    **sem resultado nenhum**; o cliente manda `NORMAL_ATTACK` 20 ms depois; e então, no mesmo
+    milissegundo, saem o dano da habilidade (142, **251**) e o do golpe normal (24, **143**)
+    num monstro de 172 de vida. Quatro repetições iguais no log das 17:30–17:31.
+
+    Duas divergências do original explicam isso:
+    - **A habilidade é a sessão corrente enquanto roda.** `AddSession` devolve `!_cur_session`
+      (`actobject.cpp:1180-1212`): o `NORMAL_ATTACK` que chega durante a conjuração **só entra
+      na fila**, e começa quando a habilidade termina (`SafeDeleteCurSession` → `StartSession`,
+      `actobject.cpp:150-190`) — aí o `CheckAttack` recusa alvo morto. Nós abríamos a sessão de
+      golpe na hora, porque `atacar` só olhava `p.ataque`, nunca `p.conjuracao`.
+    - **O dano vem antes do fim da sessão.** No original o efeito sai do `RunSkill`
+      (`session_skill::RepeatSession`, `actsession.cpp:576-600`) e só depois o `EndSession`
+      manda `stop_skill` (`actsession.cpp:558-574`). Nós mandávamos o 123 primeiro, o que fazia
+      o cliente retomar o golpe normal antes de a habilidade ter efeito.
+
+    Correção: `BusServer::golpe_na_fila` (`roleid → alvo`), preenchido quando o
+    `NORMAL_ATTACK` chega com conjuração aberta; a conjuração agora fica aberta até o efeito
+    ser aplicado (a tarefa do fim não a tira mais, só confere o marcador); e
+    `concluir_conjuracao` passou a ser `SKILL_PERFORM` → efeito (`aplicar_conjuracao`) →
+    `HOST_STOP_SKILL` → `fechar_conjuracao_e_soltar_fila`. A fila é esvaziada ao morrer e ao
+    sair do jogo.
+
+    ### c. O som: o que foi medido, o que foi corrigido, o que continua aberto
+
+    Medido no log do link e no fonte, **sem** achar a causa:
+    - o passeio dos monstros é o do original: `CanRest` com `idle_timer > 0` e contador de 32
+      (`ainpc.cpp:303-316`), `ai_rest_task` com 8 passos num raio de 10 m e 10% de emendar
+      (`aipolicy.cpp:1122-1190`), `idle_timer` renovado para as fatias no alcance de visão do
+      jogador (`world.h:778-820`, `player.cpp:9100`), passo de 1 s (`NPC_PATROL_TIME`,
+      `npcsession.cpp:986`);
+    - a velocidade no fio é 8.8 (`cmd_object_move.sSpeed`, `EC_GPDataType.h:1483-1490`) e bate
+      com a distância andada (1,5 m/s);
+    - o cliente só recria o modelo de um NPC num `NPC_ENTER_SLICE` repetido
+      (`EC_ManNPC.cpp:855-875`) — e nenhum id entrou duas vezes sem ter saído;
+    - música e som de ambiente do cliente só recomeçam ao trocar de distrito ou de dia/noite
+      (`EC_World.cpp:2178-2268`); som de cenário é dos blocos em volta (`EC_SceneBlock.cpp`);
+    - um monstro do mapa 161 anda com `move_mode` `0x40` (habitat **ar**): é o candidato ao
+      "asas batendo".
+
+    Corrigido o que estava mesmo errado: `MonstroAndou`/`MonstroParou` iam por
+    `transmitir_a_outros(0, …)` — **todos os jogadores do mapa**. O original difunde na fatia do
+    NPC (`AutoBroadcastCSMsg`, `npc.cpp:85-98`). Consequência medida: 319 comandos sobre 18
+    monstros que aquele cliente nunca viu entrar; cada um o punha na fila de "NPC desconhecido"
+    (`CECNPCMan::SeekOutNPC`, `EC_ManNPC.cpp:967-975`) e ele perguntava por eles a cada 10 s
+    (`UpdateUnknownNPCs`, `EC_ManNPC.cpp:1144-1164`) — para sempre, porque respondemos
+    `NPC_INFO_00` onde o original responde `NPC_INFO_LIST` (`npc.cpp:330-338`; dívida anotada
+    no §5B do estado). Agora existe `transmitir_a_quem_ve`.
+
+    ### d. Provas
+
+    Novo `o_golpe_que_chega_conjurando_espera_a_habilidade`: com o `NORMAL_ATTACK` mandado
+    durante a conjuração, a ordem recebida é 142 (resultado da habilidade) → 84
+    (`HOST_START_ATTACK`) → 24 (golpe). `conjurar_em_si_mesmo_ainda_fecha_a_conjuracao` passou a
+    esperar o 123 depois dos comandos do efeito, que é a ordem nova. Suíte com banco: **571
+    testes, todos passando** (`subcomandos_no_mundo` sozinho, 58/58; na rodada cheia um teste de
+    tempo falha por carga e passa sozinho). Publicado nos contêineres `pw-realm-155` e
+    `pw-world-155`.
+
+58. **Sessão 2026-09-17: o que o log prova sobre o golpe, e o batimento que empilhava som.**
+
+    ### a. O relato
+
+    Depois do B57: "ao atacar um monstro está indo um ataque básico invisível instantâneo, e ao
+    usar skills está acertando 2x". Sobre o som: ao entrar numa zona toca música e som de fundo;
+    num ponto o som de ambiente é de insetos e há "um ruído muito alto, como se estivesse
+    rodando um em cima do outro"; e passos em certas zonas.
+
+    ### b. O combate, medido
+
+    Log do link de 20:39–20:42, com o B57 no ar: **uma ação, um dano**. Habilidade 235 tirou 232
+    de um monstro de 172 de vida e o matou sozinha (sem golpe junto, que era o defeito do B57);
+    golpe normal tirou 101 e, 1,47 s depois — a cadência do arco —, 119. Não há dano duplo.
+
+    O que o Murillo vê tem duas causas, e as duas são do original:
+    - **O dano é aplicado no clique.** `session_normal_attack::StartSession` chama `DoAttack` na
+      hora (`actsession.cpp:350-378`) e a mensagem de golpe vai sem atraso (`PostLazyMessage`
+      sem `delay_tick`, `world.h:452-465`; `MsgQueue2::AddMsg` sem latência,
+      `global_manager.cpp:355-359`). O cliente só anima ao receber o resultado
+      (`PlayAttackEffect`, `EC_HostMsg.cpp:943-955`) e só mostra o número quando a flecha chega
+      (`nTimeFly = 700` ms para arma de longo alcance, `EC_Player.cpp:3507-3545`). A barra de
+      vida sai no batimento de 1 s (B56) — antes do número. Conferido também que **nada no
+      cliente desconta vida localmente**: a barra do alvo só é escrita pelo `NPC_INFO_00`
+      (`EC_ManNPC.cpp:585-597`; nenhuma outra escrita em `iCurHP`).
+    - **O golpe depois da habilidade é pedido pelo cliente.** A `CECHPWorkMelee` segue ativa e o
+      `CECTracedNPC::OnTouched` manda `NORMAL_ATTACK` assim que a conjuração acaba
+      (`EC_HPWorkTrace.cpp:811-818`); no original o servidor abre a sessão na hora, sem nenhuma
+      trava de tempo entre golpes (`AddSession`/`StartSession`; não existe relógio de arma no
+      servidor original — procurado por `_atk_timer`/`last_attack`).
+
+    Corrigido o que divergia de fato: o `HOST_ATTACKRESULT` levava `attack_speed` (30 tiques do
+    arco) onde o original manda `attack_delay = (int)(attack_speed × 0,8) − 1` = 23
+    (`playertemplate.h:980`, mandado em `actobject.cpp:826`). Esse número é a duração da
+    animação no cliente: a nossa saía ~350 ms mais lenta. Em golpe de habilidade o campo vai
+    zero, como no original (só `MakeAttackMsg` o preenche).
+
+    E, para o próximo relato ser contagem e não impressão, cada dano aplicado escreve uma linha
+    em `pw_gs=debug`: `golpe normal de R em A: dano D, vida V/M` e `habilidade S de R em A: …`.
+
+    ### c. O som: o defeito achado
+
+    No log, dez monstros mandavam `OBJECT_MOVE` **no mesmo milissegundo**, de segundo em segundo
+    (20:42:07.777, 08.863, 09.777, 10.777, …). Causa: o nosso batimento de IA é o mesmo limite
+    de 1 s para todos. O original **espalha**: o coletor de batimentos pega
+    `tamanho / TICK_PER_SEC` objetos por tique (`objmanager.h:213-229`, com
+    `obj_manager<gnpc, TICK_PER_SEC>` em `worldmanager.h:262`), e cada NPC nasce com
+    `idle_timer_count = Rand(0, NPC_IDLE_HEARTBEAT)` (`npcgenerator.cpp:2014`). Com todos no
+    mesmo quadro, o cliente tocava dez sons de passo sobrepostos — o "ruído muito alto".
+    Correção: `MonsterAi::new` sorteia a fase do batimento e a do passo de patrulha.
+
+    Descartados, nesta ordem, com medição:
+    - **matéria repetida**: 5 das 26 matérias foram anunciadas 2–3 vezes sem nunca sair da vista
+      (dívida de streaming anotada), mas o cliente ignora id repetido
+      (`CECMatterMan::MatterEnter`, `EC_ManMatter.cpp:372-377`) — não empilha som;
+    - **reentrada de monstro**: zero `NPC_ENTER_SLICE` para monstro que o cliente já via (é o
+      único caminho em que ele recria o modelo, `EC_ManNPC.cpp:855-875`);
+    - **monstros empilhados**: nenhuma coordenada com mais de uma criatura;
+    - **som de ambiente do distrito**: o cliente faz *fade-out* do anterior antes de trocar
+      (`CELBackMusic::PlayBackSFX`, `EL_BackMusic.cpp:436-444`), e a troca só acontece ao mudar
+      de distrito ou de dia/noite (`EC_World.cpp:2178-2268`). O "som de inseto" vem do
+      `precinct.sev` **do cliente** e da posição do personagem, não de comando nosso.
+
+    ### d. Provas
+
+    Suíte com banco: **571 testes, todos passando**. Publicado em `pw-realm-155`/`pw-world-155`.
+
+59. **Sessão 2026-09-17: as missões que pararam, o monstro que batia sem assinar, e os NPCs de
+    costas para o mesmo lado.**
+
+    ### a. O relato
+
+    Teste com o eaa, nível 5: (1) os atributos do equipamento não aparecem na janela C; (2) ao
+    mandar atacar, o monstro leva dano antes da animação; (3) o monstro se aproxima e não
+    ataca; (4) todos os NPCs estão virados para a mesma direção; (5) **nenhuma missão nova
+    aparece**, nem clicando em "Procurar Missão".
+
+    ### b. Missões: o pacote dinâmico que nunca era mandado
+
+    A cadeia da ilha está concluída no banco (31676→31679, 31687→31689, 32201). Nos dados, a
+    continuação é a 31693, que exige a **31690 "Descobertas Acidentais"** — e essa tem
+    `npc_que_entrega = 0` com `entrega_automatica`: quem a dispara é o cliente, que varre as
+    automáticas (`ATaskTemplMan::CheckAutoDelv`, `task/TaskTemplMan.cpp:106-131`) e avisa o
+    servidor (`TASK_CLT_NOTIFY_AUTO_DELV`), que entrega (`OnTaskAutoDelv`,
+    `TaskServer.cpp:452-464`). Nós já tratávamos esse aviso — mas ele nunca chegava.
+
+    A causa está um passo antes. No log do link, o cliente pedia a marca das missões dinâmicas
+    (`TASK_NOTIFY` motivo 7, respondíamos) e **logo depois os dados** (motivo 8,
+    `TASK_CLT_NOTIFY_DYN_DATA`), sem resposta nossa. Em `OnDynTasksTimeMark`
+    (`TaskTemplMan.cpp:166-179`): se a marca bate e o pacote local carrega, ele chama
+    `InitActiveTaskList()`; **senão pede os dados** — e só monta a lista de missões ativas
+    quando o último pedaço chega (`OnDynTasksData`, `:181-230`). Sem isso o sistema de missões
+    do cliente fica sem inicializar: nada novo aparece, nem no "Procurar Missão".
+
+    Correção: `GameDataManager::missoes_dinamicas` guarda o `dyn_tasks.data` inteiro (12.979
+    bytes) e o motivo 8 devolve o arquivo em pedaços de `0x1000 − sizeof(task_notify_base)` =
+    **4.093** bytes, cada um com `reason 9` (`TASK_SVR_NOTIFY_DYN_DATA`) e `task = 1` só no
+    último — o mesmo laço de `OnTaskGetDynTasksData` (`TaskTemplMan.cpp:321-353`).
+
+    ### c. Monstro que batia sem assinar o golpe
+
+    O log tinha 18 `HOST_ATTACKED` (26) — ou seja, o monstro **atacava**. O pacote, porém, saía
+    com o id do atacante **zero**: `[1a 00 | 00 00 00 00 | 01 00 00 00 …]`. O cliente só reage
+    se achar quem bateu (`ISPLAYERID`/`ISNPCID` são falsos para zero, `EC_HostMsg.cpp:968-1006`),
+    então não havia animação nem reação — só a vida caindo. O `world.rs` empilhava
+    `(alvo, dano)` e emitia `atacante: 0`, com um comentário admitindo a dívida. Agora o id do
+    monstro vai junto, e o mesmo id vira o `matador` quando o jogador morre.
+
+    Antes disso, para não trocar palpite por palpite, a IA foi medida no cenário exato do
+    relato (Lobo Sangrento: alcance 3 m, ódio 35 m, jogador a 20 m): ela persegue e bate —
+    teste `o_monstro_persegue_o_arqueiro_de_longe_e_bate`.
+
+    ### d. NPCs virados para o mesmo lado
+
+    Mandávamos `dir = 0` em todo `NPC_ENTER_SLICE`. O original escolhe em `GenDir()`
+    (`npcgenerator.h:747-757`): área que é um ponto usa `_dir = a3dvector_to_dir(vDir)`
+    (`npcgenerator.cpp:4367`), a conversão `atan2(z, x) × 128/π & 0xFF`
+    (`common/types.h:99-107`); área com extensão sorteia `Rand(0,255)`. O `npcgen.data` já nos
+    dava `dir` e a extensão da área — só não estavam sendo usados. Agora cada criatura nasce
+    com a direção e ela vai no comando de entrada.
+
+    ### e. Os dois relatos que a medição não confirmou como defeito
+
+    - **Atributos na janela C**: o `OWN_EXT_PROP` mandado trazia vit 5, ene 5, for 5, agi 15 —
+      exatamente a base do banco. O equipamento vestido não tem addon: a única peça com bloco
+      de dados (item 267) decodifica com **0 addons**, e as outras não têm bloco. O número está
+      certo para esse equipamento; o destaque verde da janela vem do que o cliente lê do bloco
+      do item (`DlgCharacter.cpp:386-416`).
+    - **"Dano antes da animação"**: com o log por dano do B58, é **uma linha por ação** (golpe
+      138 e, 1,47 s depois, 145; habilidade 232 sozinha). O dano é aplicado no clique, como no
+      original; o cliente anima ao receber o resultado e mostra o número quando a flecha chega.
+      Alterar isso é sair do original — decisão do Murillo.
+
+    ### f. Provas
+
+    Novos testes: `as_missoes_dinamicas_vao_em_pedacos_com_reason_9` (framing e o `task = 1` do
+    último), `a_direcao_do_gerador_e_a_do_original` (leste 0, norte 64, oeste 128, sul 192; área
+    sorteia), `o_monstro_persegue_o_arqueiro_de_longe_e_bate`, e o `o_monstro_revida...` passou
+    a exigir o id do monstro no `HOST_ATTACKED`. Suíte com banco: **574 testes, todos
+    passando**. Publicado em `pw-realm-155`/`pw-world-155`.
+
+60. **Sessão 2026-09-18: a segunda trava das missões, o item de missão sem atributo, e os
+    dois campos zerados do golpe do monstro.**
+
+    ### a. O relato
+
+    Teste com o eaa: (1) o set Halo deveria vir com atributos — o peitoral mostra "Destreza
+    +1~2" e não conta; (2) nenhuma missão automática chegou, mesmo depois do B59; (3) os
+    monstros atacam sem executar a animação, e alguns deveriam usar habilidades.
+
+    ### b. Missões: o dado de títulos tranca a varredura
+
+    O B59 tinha resolvido o pacote de missões dinâmicas, e o log prova que ele foi:
+    `5491 pediu as missões dinâmicas (12979 bytes)`. Ainda assim nada chegou. Depois disso o
+    cliente manda os motivos 9 (`SPECIAL_AWARD`) e 12 (`STORAGE`), que não tratamos — mas não
+    é isso que trava.
+
+    A varredura das missões de entrega automática é `ATaskTemplMan::UpdateStatus`
+    (`task/TaskTemplMan.cpp:1342-1350`), e a primeira linha dela é
+    `if (!pTask->IsTitleDataReady()) return;`. Esse sinal só liga em `CECHostPlayer::InitTitle`
+    (`EC_HostPlayer.cpp:10145-10152`), chamado ao receber `QUERY_TITLE_RE` (S2C 363) — a
+    resposta ao `QUERY_TITLE` (C2S 154) que o cliente manda em todo login e que nós
+    ignorávamos. Sem ela, `CheckAutoDelv` nunca roda e **nenhuma** missão automática aparece.
+
+    Correção: respondemos `QUERY_TITLE_RE` com a lista vazia — `roleid`, `titlescount 0`,
+    `expirecount 0`, os 12 bytes que o `CheckValid` do próprio struct calcula
+    (`EC_GPDataType.h:4632-4654`). Não há sistema de títulos no banco; zero títulos é o que
+    temos, e é o que destrava o cliente.
+
+    ### c. Item de missão sem propriedade
+
+    O peitoral Halo (28790) tem no modelo os addons 1130 (`enhance_agi_addon` = Destreza) e
+    652 (defesa), mas a linha no banco estava **sem `extra_data`**. O cliente, sem bloco de
+    dados, mostra a faixa do modelo no tooltip ("Destreza +1~2"), e o servidor não soma nada —
+    o `OWN_EXT_PROP` medido no B59 trazia exatamente a base do personagem.
+
+    Causa: `Bolsa::empilhar` criava o item seco. No original, **todo** item de prêmio de missão
+    passa por `generate_item_for_drop` (`PlayerTaskInterface::DeliverCommonItem`,
+    `task/taskman.cpp:281-303`) — a mesma geração do drop de monstro (`ADDON_LIST_DROP`) —, e o
+    que se colhe também (`player.cpp:1500-1520`). Só a compra em loja usa outra lista
+    (`generate_item_for_shop`, que não sorteia propriedade).
+
+    Correção: `Bolsa::empilhar_gerado`, usado no prêmio de missão e na coleta. E as sete peças
+    que o eaa já usava foram geradas pelo gerador do próprio servidor
+    (`cargo run -p pw-gs --example gerar_octetos`) e gravadas em
+    `scripts/2026_09_18_octetos_do_equipamento_do_eaa.sql`.
+
+    ### d. O golpe do monstro: dois campos zerados
+
+    Desde o B59 o `HOST_ATTACKED` leva o id certo (`0x80000649` no log). Faltavam dois campos
+    que o original preenche:
+    - `cEquipment` deve ser `0x7f`, "nenhuma peça desgastada". Com zero, o cliente entende
+      "peça 0" e desconta durabilidade da **arma** a cada golpe recebido
+      (`EC_HostMsg.cpp:968-976`).
+    - `speed` é o `attack.speed` do original, que para monstro é o `_damage_delay` do
+      `MONSTER_ESSENCE` em tiques de 50 ms (`npc.cpp:2118`); o cliente o passa para
+      `PlayAttackEffect` como duração da animação (`CECNPC::OnMsgAttackHostResult`,
+      `EC_NPC.cpp:2043-2064`).
+
+    O caminho 1.5.5 do `PorVersao::host_attacked` descartava os dois e escrevia zero nos dois.
+    Agora eles vão, com o `damage_delay` lido do template do monstro que bateu.
+
+    **Habilidade de monstro continua não existindo**: 3.688 monstros têm habilidade no
+    `MONSTER_ESSENCE`, mas quem decide usá-la é o `aipolicy.data` (`ai_skill_task`), e o
+    intérprete não foi escrito — anotado na spec 05 §4.
+
+    ### e. Provas
+
+    Novo `o_premio_de_missao_entra_na_bolsa_com_o_equipamento_gerado`: o peitoral Halo entra na
+    bolsa com bloco de dados, o bloco se relê, tem propriedade adicional e ela soma nos
+    atributos. O `o_monstro_revida...` passou a exigir `cEquipment = 0x7f`. O teste-guarda dos
+    codificadores cobrou (e ganhou) a entrada do `query_title_re`, e confirmou que ele escreve
+    o id que o IR dá ao `QUERY_TITLE_RE`. Suíte com banco: **575 testes**; o arquivo de testes
+    de tempo passa 58/58 sozinho (na rodada cheia desta data, dois deles falharam com o build
+    do Docker rodando junto). Publicado em `pw-realm-155`/`pw-world-155`.
+
+61. **Sessão 2026-09-18 (tarde): a durabilidade estava 100 vezes menor, o desgaste não
+    existia, e a missão que "não vinha" é automática por zona.**
+
+    ### a. O relato
+
+    Depois do B60: as missões automáticas passaram a chegar e o set Halo veio com atributo.
+    Mas (1) "estou nível 5 e sem nenhuma missão para progredir — veja se as que completei não
+    disparariam uma próxima" e (2) "o arco que ganhei numa missão tem durabilidade **1/1**;
+    confira a geração e o decremento".
+
+    ### b. A missão: nada quebrado, e a prova está nos dados
+
+    O eaa terminou a cadeia dos Alados em **31689 "Líder Inspirador"** (NPC 44396). Ela não
+    tem filho por pré-requisito nem `rewards.nova_missao` — conferido na ficha. O próximo elo
+    é a **31690 "Descobertas Acidentais"**, `entrega_automatica`, nível 4–8.
+
+    Quem decide pedir uma automática é o **cliente**: `ATaskTemplMan::CheckAutoDelv`
+    (`Task/TaskTemplMan.cpp:106-131`) percorre o `m_AutoDelvMap` a cada tique e só manda o
+    `AUTO_DELV` das que passam no `CheckPrerequisite` **dele**. E ali a zona é conferida com a
+    posição do próprio cliente (`CheckInZone`, `TaskTempl.inl:368-393`: `ulWorldId !=
+    m_ulDelvWorld` ou fora de todas as caixas). A 31690 pede mundo 161 e duas caixas —
+    `x -775..-636, z -113..-28` e `x -609..-414, z -132..-17` —, ao norte dos NPCs 44390
+    (`z -237`) e 44396 (`z -275`). O eaa estava gravado em `x -773,9 / z -160,6`: fora das
+    duas. As três automáticas que **entraram** (19684, 32393, 32411) são todas sem zona.
+
+    Para não repetir o diagnóstico à mão, ficou o exemplo
+    `cargo run -p pw-gs --example missoes_automaticas -- <config> <nível> <classe> <mundo>
+    <x> <y> <z> <concluídas>`: na posição dele a 31690 sai como "fora da zona", e em
+    `-700 40 -70` sai como "PEDE". (O exemplo confere só nível, classe, pré-requisito e zona;
+    o cliente aplica mais critérios, então o total que ele imprime é um teto, não uma lista.)
+
+    De quebra: a 19684 "GM·Não entre" entrou na lista dele porque a conta `admin` tem
+    `gm_privileges = 32` — o `CheckGM` do motor está certo.
+
+    ### c. Durabilidade: faltava a escala
+
+    Uma unidade de durabilidade na tela são **100 pontos internos** (`DURABILITY_UNIT_COUNT`,
+    `gs/config.h:59`; `ENDURANCE_SCALE`, `EC_IvtrTypes.h:26`). O gerador do original termina
+    chamando `update_require_data` (`gs/item/item_addon.h:454-458`), que multiplica
+    `durability` e `max_durability` por 100 — nas quatro famílias
+    (`generate_item_temp.h:367, 552, 644, 831`). Nós gravávamos o número cru do
+    `elements.data`. O cliente divide de volta **arredondando para cima**
+    (`(v + 99) / 100`, `EC_IvtrEquip.cpp:281`), então o ★Arco Real, com `durability_min = 50`,
+    aparecia como **1/1** — e o set Halo inteiro também (9/18 → 1/1, 85/85 → 1/1).
+
+    Corrigido em `geracao.rs` e no `Bolsa::empilhar`; a munição passou a 100 (o original grava
+    1 e multiplica, `:615`). Os itens já criados foram convertidos por
+    `scripts/2026_09_18_durabilidade_na_escala_interna.sql` (9 linhas: tudo com
+    `max_durability < 100`; o que vem de `class_template_items` já estava em 2800).
+
+    O bloco de dados também carrega a durabilidade. Em vez de mantê-lo em sincronia a cada
+    golpe, o `BusServer::info_de` passou a **regravar** a durabilidade do bloco com a da
+    coluna antes de mandar (`pw_core::escrever_durabilidade`, deslocamento fixo 12/16, depois
+    dos seis `short` de requisito) — a coluna é a fonte, o bloco é a cópia que viaja.
+
+    ### d. O desgaste, que não existia
+
+    Portado com os números do original:
+
+    - **Golpe normal dado**: a arma perde `DURABILITY_DEC_PER_ATTACK` = 2 (`gs/config.h:61`),
+      porque `FillAttackMsg` chama `DoWeaponOperation<0>` (`player.cpp:3133`) →
+      `weapon_item::OnAfterAttack` (`item/equip_item.cpp:978-988`). **Habilidade não gasta
+      arma**: `FillEnchantMsg` não chama, e o original explica em comentário (`:3174`).
+    - **Golpe recebido**: `SelectRandomArmor` sorteia um slot de 1 a 10
+      (`EQUIP_ARMOR_START..EQUIP_ARMOR_END-1`, `gs/item.h:194-241`); com peça ali, ela perde
+      `DURABILITY_DEC_PER_HIT` = 25 (`gs/config.h:60`) e **o índice dela vai no
+      `cEquipment`** do `HOST_ATTACKED` — o B60 mandava `0x7f` fixo, que é o que o
+      `Make<be_attacked>` produz do -1 de slot vazio (`eq_index &= 0x7F`,
+      `cgame/common/protocol_imp.h:580-590`). O cliente desconta o mesmo por conta própria
+      (`ARMOR_RUIN_SPEED -25`, `EC_HostMsg.cpp:974-981`).
+    - **Chegou a zero**: para em zero e, **uma vez**, sai `EQUIP_DAMAGED` (68, 4 bytes, motivo
+      0) mais o recálculo do equipamento (`player.cpp:9563-9567`). Peça em zero não conta em
+      nada: `equip_item::VerifyRequirement` exige `durability > 0`
+      (`item/equip_item.cpp:60-80`).
+
+    No banco isso é um `UPDATE ... RETURNING` que prende em zero e não escreve quando já está
+    zerada (`ItemRepository::gastar_durabilidade`), então o aviso de quebra não se repete.
+
+    ### e. Provas
+
+    `a_durabilidade_gerada_vai_na_escala_interna` (o arco 36121 do realm sai 5000/5000 e o
+    cliente mostraria 50), `a_peca_com_durabilidade_zerada_nao_entra_nos_atributos`,
+    `desgastar_para_em_zero_e_avisa_quando_a_peca_quebra` (25 → 25 → quebra → nada), e o
+    `o_monstro_revida_e_o_cliente_fica_sabendo` passou a vestir os dez slots e a exigir que o
+    `cEquipment` seja um deles, que a peça tenha perdido 25 e que a arma tenha perdido 2. O
+    teste-guarda dos codificadores cobrou e confirmou o id 68 do `EQUIP_DAMAGED`. Suíte com
+    banco: **578 testes, todos passando**. Publicado em `pw-realm-155`/`pw-world-155`.
+
+62. **Sessão 2026-09-18 (fim da tarde): o dano não tira vida na hora do golpe.**
+
+    ### a. O relato
+
+    O B61 passou em jogo: durabilidade certa, monstros atacando, e a missão 31690 chegou ao
+    mudar de área. Sobraram dois sintomas, que acabaram sendo **um**: (1) o monstro, ao
+    alcançar o jogador, batia ainda executando a animação de corrida; (2) no golpe do
+    arqueiro, ao abrir a sessão o monstro perdia vida antes de a animação começar — "sempre um
+    ataque extra". Mais uma pergunta: existe aviso de durabilidade baixa?
+
+    ### b. `InsertDamageEntry`: o dano é adiado, o aviso não
+
+    Já sabíamos que `session_normal_attack::StartSession` (`actsession.cpp:350-378`) manda o
+    `start_attack` e chama `DoAttack` **na mesma hora** — igual ao nosso. O que faltava estava
+    depois: `gactive_imp::HandleAttackMsg` termina com
+
+    ```
+    OnDamage(...);                                    // o aviso ao cliente, agora
+    InsertDamageEntry(int_damage, attack->speed, ...); // a vida, depois
+    ```
+
+    e `InsertDamageEntry` (`actobject.cpp:1758-1776`) só chama `DoDamage` quando `delay <= 0`;
+    com `delay > 0` ele posta um `GM_MSG_HURT` **adiado de `delay` tiques de 50 ms**. O
+    `delay` é o `attack.speed`:
+
+    - jogador: `attack.speed = _cur_item.attack_delay` (`MakeAttackMsg`, `actobject.cpp:824`),
+      e `attack_delay = (int)(attack_speed × 0,8) − 1` em tiques (`playertemplate.h:980`) — o
+      mesmo número que o `HOST_ATTACKRESULT` leva desde o B58;
+    - monstro: `attack.speed = _damage_delay` (`gnpc_imp::DoAttack`, `npc.cpp:2118`) — o mesmo
+      do `HOST_ATTACKED` desde o B60;
+    - habilidade: **não é preenchido** (`FillEnchantMsg` não mexe em `speed`,
+      `player.cpp:3174`), então `delay = 0` e o dano é imediato.
+
+    E é o mesmo número que o cliente usa como duração da animação do golpe
+    (`PlayAttackEffect(..., speed × 50)`). Ou seja: no original a vida cai **quando a animação
+    termina**. Nós aplicávamos no instante do clique — daí a vida cair antes da flecha sair, e
+    o monstro tirar vida enquanto o cliente ainda o desenhava correndo (o cliente termina o
+    caminho do `stop_move` por conta própria, `CECNPC::MovingTo`, `EC_NPC.cpp:1209-1225`).
+
+    Portado como `WorldInstance::adiar_dano` + `cobrar_danos_adiados`, cobrado no começo do
+    tique. **Continuam no instante do golpe**, como no original: a ameaça (que está em
+    `OnAttacked`, não em `DoDamage`), o estado de combate e o desgaste da arma. A morte do
+    alvo passou a ser resolvida quando o dano vence, pelo evento `MonstroMorreu` — que virou o
+    caminho único das três origens (golpe normal, habilidade e dano no tempo), no lugar do
+    antigo `MonstroMorreuDeEfeito` mais o tratamento solto dentro do `golpear`.
+
+    ### c. A cadência do monstro vinha escrita no código
+
+    `self.attack_cooldown_ms = 1500` valia para os 29.620 monstros do mapa 1. O original usa
+    `_cur_prop.attack_speed` do `MONSTER_ESSENCE` (`ChangeInterval`, `npcsession.cpp:60-70`).
+    O `MonsterEntity` ganhou `ataque_em_ticks` e `atraso_do_dano_em_ticks` — que o
+    `TemplateDeMonstro` já lia e ninguém usava — e a IA passou a usar o primeiro.
+
+    ### d. O aviso de durabilidade baixa existe, e é do cliente
+
+    `CECGameUIMan::RefreshBrokenList` (`EC_GameUIMan.cpp:5474-5555`) roda a cada quadro: toda
+    peça vestida com `cur <= max / 10` entra na janela `Win_Broken`, com o ícone **amarelo**
+    (192,192,0) enquanto sobra durabilidade e **vermelho** (192,0,0) em zero. A aljava entra
+    quando as flechas caem abaixo de 15%; asa, espada voadora e moda nunca entram. Não há
+    comando de servidor nenhum: basta a durabilidade que mandamos estar certa, o que o B61
+    resolveu. O item 8/18 do relato está em 44% — ainda longe do aviso.
+
+    ### e. Provas
+
+    Novo `a_vida_do_monstro_so_cai_depois_do_atraso_do_golpe`: depois do `HOST_ATTACKRESULT` a
+    vida ainda está cheia, o dano só entra depois de `attack_delay` tiques, e o valor aplicado
+    é exatamente o anunciado. Três testes existentes passaram a esperar o tique para ver a
+    morte (`o_monstro_morre_e_o_abate_leva_o_template_certo`,
+    `morrer_avisa_o_cliente_e_reviver_devolve_a_vida`,
+    `esc_andar_e_a_morte_do_alvo_param_o_golpe`) — o que, por si, é a prova de que o dano
+    deixou de ser instantâneo. O `esperar_comando` dos testes passou de 20 para 60 pacotes:
+    com o dano adiado, o `NPC_DIED` chega atrás do que o combate em curso já enfileirou.
+    Suíte com banco: **579 testes, todos passando**. Publicado em
+    `pw-realm-155`/`pw-world-155`.
+
 Validação disponível e acordada com o usuário: Docker + clientes reais (1.2.6, 1.5.5) com
 envio de logs, captura de tráfego (Wireshark/pcap) e execução dos binários originais para
 comparação lado a lado.

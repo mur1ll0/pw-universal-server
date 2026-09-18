@@ -1,4 +1,4 @@
--- Reescreve o molde de personagem novo do realm 155BR.
+-- Reescreve o molde de personagem novo do realm 155.
 --
 -- # O que estava errado
 --
@@ -41,40 +41,40 @@
 -- e grave-a para as duas classes daquela raça:
 --
 --   UPDATE class_templates SET spawn_x = ?, spawn_y = ?, spawn_z = ?
---    WHERE realm_id = 'realm_155BR' AND cls IN (4, 3);   -- Selvagens
+--    WHERE realm_id = 'realm_155' AND cls IN (4, 3);   -- Selvagens
 --
 -- Idempotente: apaga e regrava as doze linhas do realm.
 
 BEGIN;
 
 DELETE FROM class_template_items
- WHERE template_id IN (SELECT id FROM class_templates WHERE realm_id = 'realm_155BR');
+ WHERE template_id IN (SELECT id FROM class_templates WHERE realm_id = 'realm_155');
 DELETE FROM class_template_skills
- WHERE template_id IN (SELECT id FROM class_templates WHERE realm_id = 'realm_155BR');
-DELETE FROM class_templates WHERE realm_id = 'realm_155BR';
+ WHERE template_id IN (SELECT id FROM class_templates WHERE realm_id = 'realm_155');
+DELETE FROM class_templates WHERE realm_id = 'realm_155';
 
 INSERT INTO class_templates
     (realm_id, cls, name, initial_level, initial_cultivation, initial_money, initial_sp,
      strength, agility, vitality, energy, spawn_world_id, spawn_x, spawn_y, spawn_z)
 VALUES
   -- Humanos — Vale das Espadas
-  ('realm_155BR',  0, 'Guerreiro',    1, 0, 0, 0, 10, 10, 10, 10, 1,   976.0, 219.2,  4187.3),
-  ('realm_155BR',  1, 'Mago',         1, 0, 0, 0, 10, 10, 10, 10, 1,   976.0, 219.2,  4187.3),
+  ('realm_155',  0, 'Guerreiro',    1, 0, 0, 0, 10, 10, 10, 10, 1,   976.0, 219.2,  4187.3),
+  ('realm_155',  1, 'Mago',         1, 0, 0, 0, 10, 10, 10, 10, 1,   976.0, 219.2,  4187.3),
   -- Abissais — coordenada por confirmar
-  ('realm_155BR',  2, 'Psíquico',     1, 0, 0, 0, 10, 10, 10, 10, 1,   650.0, 201.1,   130.0),
-  ('realm_155BR',  5, 'Assassino',    1, 0, 0, 0, 10, 10, 10, 10, 1,   650.0, 201.1,   130.0),
+  ('realm_155',  2, 'Psíquico',     1, 0, 0, 0, 10, 10, 10, 10, 1,   650.0, 201.1,   130.0),
+  ('realm_155',  5, 'Assassino',    1, 0, 0, 0, 10, 10, 10, 10, 1,   650.0, 201.1,   130.0),
   -- Selvagens — coordenada por confirmar (o Murillo caiu no "campo da expedição")
-  ('realm_155BR',  3, 'Feiticeira',   1, 0, 0, 0, 10, 10, 10, 10, 1, -1445.6, 219.3,  2642.0),
-  ('realm_155BR',  4, 'Bárbaro',      1, 0, 0, 0, 10, 10, 10, 10, 1, -1445.6, 219.3,  2642.0),
+  ('realm_155',  3, 'Feiticeira',   1, 0, 0, 0, 10, 10, 10, 10, 1, -1445.6, 219.3,  2642.0),
+  ('realm_155',  4, 'Bárbaro',      1, 0, 0, 0, 10, 10, 10, 10, 1, -1445.6, 219.3,  2642.0),
   -- Alados — Vale das Plumas
-  ('realm_155BR',  6, 'Arqueiro',     1, 0, 0, 0, 10, 10, 10, 10, 1,  -741.5, 219.1, -1234.8),
-  ('realm_155BR',  7, 'Sacerdote',    1, 0, 0, 0, 10, 10, 10, 10, 1,  -741.5, 219.1, -1234.8),
+  ('realm_155',  6, 'Arqueiro',     1, 0, 0, 0, 10, 10, 10, 10, 1,  -741.5, 219.1, -1234.8),
+  ('realm_155',  7, 'Sacerdote',    1, 0, 0, 0, 10, 10, 10, 10, 1,  -741.5, 219.1, -1234.8),
   -- Guardiões — coordenada por confirmar
-  ('realm_155BR',  8, 'Guardião',     1, 0, 0, 0, 10, 10, 10, 10, 1,   380.0, 219.3,   230.0),
-  ('realm_155BR',  9, 'Místico',      1, 0, 0, 0, 10, 10, 10, 10, 1,   380.0, 219.3,   230.0),
+  ('realm_155',  8, 'Guardião',     1, 0, 0, 0, 10, 10, 10, 10, 1,   380.0, 219.3,   230.0),
+  ('realm_155',  9, 'Místico',      1, 0, 0, 0, 10, 10, 10, 10, 1,   380.0, 219.3,   230.0),
   -- Sombrios — coordenada por confirmar
-  ('realm_155BR', 10, 'Ceifador',     1, 0, 0, 0, 10, 10, 10, 10, 1,   150.0, 210.1,   250.0),
-  ('realm_155BR', 11, 'Tormentador',  1, 0, 0, 0, 10, 10, 10, 10, 1,   150.0, 210.1,   250.0);
+  ('realm_155', 10, 'Ceifador',     1, 0, 0, 0, 10, 10, 10, 10, 1,   150.0, 210.1,   250.0),
+  ('realm_155', 11, 'Tormentador',  1, 0, 0, 0, 10, 10, 10, 10, 1,   150.0, 210.1,   250.0);
 
 -- A arma de cada classe, no slot 0 do equipamento.
 --
@@ -97,7 +97,7 @@ SELECT t.id, 1, 0, a.item_id, 1, 2800, 2800
         (10, 44937),   -- Ceifador    Sabre de Bronze
         (11, 45020)    -- Tormentador Foice de Ferro
        ) AS a(cls, item_id) ON a.cls = t.cls
- WHERE t.realm_id = 'realm_155BR';
+ WHERE t.realm_id = 'realm_155';
 
 -- O kit de bolsa, igual para todas as classes.
 --
@@ -111,7 +111,7 @@ SELECT t.id, 0, k.slot, k.item_id, k.count, 0, 0
         (1, 1796, 10),   -- Poção Pequena de Cura      (require_level 0)
         (2, 1804, 10)    -- Poção Pequena do Espírito  (require_level 0)
        ) AS k(slot, item_id, count) ON true
- WHERE t.realm_id = 'realm_155BR';
+ WHERE t.realm_id = 'realm_155';
 
 COMMIT;
 
@@ -119,4 +119,4 @@ COMMIT;
 --
 --   SELECT t.cls, t.name, i.container_type, i.slot, i.item_id, i.count
 --     FROM class_templates t JOIN class_template_items i ON i.template_id = t.id
---    WHERE t.realm_id = 'realm_155BR' ORDER BY t.cls, i.container_type, i.slot;
+--    WHERE t.realm_id = 'realm_155' ORDER BY t.cls, i.container_type, i.slot;

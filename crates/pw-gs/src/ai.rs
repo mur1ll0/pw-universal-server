@@ -125,7 +125,9 @@ pub struct MonsterAi {
     /// `gnpc::cruise_timer`, contador de 32.
     cruise_timer: u8,
     /// `gnpc::dir`, da última direção de passo.
-    direcao: u8,
+    /// Para onde o monstro olha, em 1/256 de volta. Começa com a direção do gerador
+    /// (`direcao_do_gerador`) e passa a ser a do último passo.
+    pub direcao: u8,
     /// Já avisou a parada (o `_stop_flag` do original): um `OBJECT_STOP_MOVE` só.
     parado: bool,
 }
@@ -163,8 +165,16 @@ impl MonsterAi {
             aggro_table: HashMap::new(),
             attack_cooldown_ms: 0,
             sessao: Sessao::Nenhuma,
-            espera_ms: 0,
-            batimento_ms: 0,
+            // A fase do batimento de 1 s, sorteada por monstro. O original **não** bate em
+            // todos ao mesmo tempo: o coletor pega `tamanho / TICK_PER_SEC` objetos por tique
+            // (`obj_manager::CollectHeartbeatObject`, `objmanager.h:213-229`, com
+            // `obj_manager<gnpc, TICK_PER_SEC>` em `worldmanager.h:262`), e cada NPC ainda
+            // começa com `idle_timer_count = Rand(0, NPC_IDLE_HEARTBEAT)`
+            // (`npcgenerator.cpp:2014`). Com todos batendo no mesmo limite de 1 s, dez
+            // monstros davam o passo no mesmo quadro e o cliente tocava dez sons de passo
+            // sobrepostos — o "ruído muito alto" do teste de 2026-09-17 (B58).
+            espera_ms: rand::thread_rng().gen_range(0..Self::PASSO_DE_PATRULHA_MS),
+            batimento_ms: rand::thread_rng().gen_range(0..Self::BATIMENTO_MS),
             idle_timer: 0,
             // O original não sincroniza os monstros: cada um começa num ponto do contador.
             cruise_timer: rand::thread_rng().gen_range(0..32),
@@ -212,6 +222,15 @@ impl MonsterAi {
         self.attack_cooldown_ms = self.attack_cooldown_ms.saturating_sub(delta_ms);
         self.espera_ms = self.espera_ms.saturating_sub(delta_ms);
 
+        // `IncIdleSealMode(MODE_INDEX_STUN/SLEEP)` (`filter_Dizzy`, `filter_Sleep`): parado,
+        // sem golpe nem passo, até o filtro sair.
+        if monster.efeitos.sem_acao() {
+            if !self.parado {
+                return Some(self.parar(monster, monster.corrida(), MODO_CORRER));
+            }
+            return None;
+        }
+
         self.batimento_ms += delta_ms;
         while self.batimento_ms >= Self::BATIMENTO_MS {
             self.batimento_ms -= Self::BATIMENTO_MS;
@@ -233,10 +252,13 @@ impl MonsterAi {
                 self.state = MonsterState::Attacking;
                 self.sessao = Sessao::Perseguindo;
                 if !self.parado {
-                    return Some(self.parar(monster, monster.move_speed, MODO_CORRER));
+                    return Some(self.parar(monster, monster.corrida(), MODO_CORRER));
                 }
                 if self.attack_cooldown_ms == 0 {
-                    self.attack_cooldown_ms = 1500; // Cooldown de 1.5s entre ataques básicos
+                    // O intervalo entre golpes é o `attack_speed` do próprio monstro, em
+                    // tiques de 50 ms (`ChangeInterval(_cur_prop.attack_speed)`,
+                    // `gs/npcsession.cpp:60-70`). Era 1,5 s escrito aqui para todos (B62).
+                    self.attack_cooldown_ms = (monster.ataque_em_ticks.max(4) as u32) * 50;
                     // Golpe que erra é resultado legítimo, e o `dano()` devolve zero nele.
                     let dano = crate::combat::CombatEngine::monstro_ataca_jogador(
                         monster, alvo, distancia,
@@ -253,6 +275,13 @@ impl MonsterAi {
                 return self.sem_alvo(monster, chao);
             }
 
+            // `MODE_INDEX_ROOT` (`filter_Fix`): não anda, mas bate se o alvo vier.
+            if monster.efeitos.preso() {
+                if !self.parado {
+                    return Some(self.parar(monster, monster.corrida(), MODO_CORRER));
+                }
+                return None;
+            }
             self.state = MonsterState::Chasing;
             if !matches!(self.sessao, Sessao::Perseguindo) {
                 self.sessao = Sessao::Perseguindo;
@@ -264,14 +293,14 @@ impl MonsterAi {
             self.espera_ms = Self::PASSO_DE_PERSEGUICAO_MS;
             // Para um pouco antes do alcance, como o `_range_target` do original.
             let parar_a = (monster.attack_range * 0.9).max(0.5);
-            let passo = monster.move_speed * Self::PASSO_DE_PERSEGUICAO_MS as f32 / 1000.0;
+            let passo = monster.corrida() * Self::PASSO_DE_PERSEGUICAO_MS as f32 / 1000.0;
             return self.passo(
                 monster,
                 alvo.position,
                 passo,
                 parar_a,
                 Self::PASSO_DE_PERSEGUICAO_MS,
-                monster.move_speed,
+                monster.corrida(),
                 MODO_CORRER,
                 chao,
             );
@@ -328,14 +357,14 @@ impl MonsterAi {
                     return None;
                 }
                 self.espera_ms = Self::PASSO_DE_PATRULHA_MS;
-                let passo = monster.move_speed * Self::PASSO_DE_PATRULHA_MS as f32 / 1000.0;
+                let passo = monster.corrida() * Self::PASSO_DE_PATRULHA_MS as f32 / 1000.0;
                 let acao = self.passo(
                     monster,
                     monster.spawn_center,
                     passo,
                     0.0,
                     Self::PASSO_DE_PATRULHA_MS,
-                    monster.move_speed,
+                    monster.corrida(),
                     MODO_CORRER,
                     chao,
                 );
@@ -352,17 +381,17 @@ impl MonsterAi {
                 if passos_restantes <= 0 {
                     self.sessao = Sessao::Nenhuma;
                     self.state = MonsterState::Idle;
-                    return (!self.parado).then(|| self.parar(monster, monster.walk_speed, MODO_ANDAR));
+                    return (!self.parado).then(|| self.parar(monster, monster.andar(), MODO_ANDAR));
                 }
                 self.sessao = Sessao::Passeando { destino, passos_restantes: passos_restantes - 1 };
-                let passo = monster.walk_speed * Self::PASSO_DE_PATRULHA_MS as f32 / 1000.0;
+                let passo = monster.andar() * Self::PASSO_DE_PATRULHA_MS as f32 / 1000.0;
                 let acao = self.passo(
                     monster,
                     destino,
                     passo,
                     0.0,
                     Self::PASSO_DE_PATRULHA_MS,
-                    monster.walk_speed,
+                    monster.andar(),
                     MODO_ANDAR,
                     chao,
                 );

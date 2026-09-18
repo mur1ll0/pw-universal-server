@@ -390,7 +390,7 @@ fn jogador() -> PlayerEntity {
         crit_rate: 0.05,
         position: Vector3::new(0.0, 0.0, 0.0),
         target_id: None,
-        buffs: Vec::new(),
+        efeitos: Default::default(),
         visiveis: std::collections::HashSet::new(),
         centro_do_stream: Vector3::new(0.0, 0.0, 0.0),
         voando: false,
@@ -406,6 +406,14 @@ fn jogador() -> PlayerEntity {
         recargas: std::collections::HashMap::new(),
         npc_em_conversa: None,
         missoes: Default::default(),
+        coleta: None,
+        equipamento: Default::default(),
+        ataque: None,
+        conjuracao: None,
+        dano_bruto: (1, 1),
+        dano_magico_bruto: (1, 1),
+        bonus_de_dano_pct: 0,
+        bonus_magico_pct: 0,
     }
 }
 

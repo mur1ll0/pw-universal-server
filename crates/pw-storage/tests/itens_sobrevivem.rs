@@ -295,3 +295,51 @@ async fn trocar_um_slot_por_ele_mesmo_nao_faz_nada() {
     assert!(ainda_la.is_some(), "o item sumiu ao trocar consigo mesmo");
     assert_eq!(ainda_la.unwrap().octets, OCTETOS);
 }
+
+/// B61 — o desgaste para em zero, avisa **uma vez** que quebrou, e não escreve mais nada.
+///
+/// É o `ArmorDecDurability` do original (`gs/item/equip_item.h:300-312`): tira o tanto,
+/// prende em zero e devolve "precisa atualizar o equipamento" no golpe que zerou. Quem
+/// chama usa esse `true` para mandar o `equipment_damaged` e refazer os atributos
+/// (`gs/player.cpp:9563-9567`).
+#[tokio::test]
+async fn desgastar_para_em_zero_e_avisa_quando_a_peca_quebra() {
+    let c = cenario!();
+    let itens = c.repo.item_repo();
+    let mut peca = espada(c.role_id, 4, ContainerType::Equipment);
+    peca.durability = 60;
+    peca.max_durability = 5000;
+    itens.upsert_item(&peca).await.expect("vestir a peça");
+
+    let um = itens
+        .gastar_durabilidade(c.role_id, ContainerType::Equipment, 4, 25)
+        .await
+        .expect("desgastar");
+    assert_eq!(um, Some((35, 5000, false)), "o primeiro golpe devia só tirar 25");
+
+    let dois = itens
+        .gastar_durabilidade(c.role_id, ContainerType::Equipment, 4, 25)
+        .await
+        .expect("desgastar");
+    assert_eq!(dois, Some((10, 5000, false)));
+
+    let quebra = itens
+        .gastar_durabilidade(c.role_id, ContainerType::Equipment, 4, 25)
+        .await
+        .expect("desgastar");
+    assert_eq!(quebra, Some((0, 5000, true)), "a peça devia parar em zero e avisar que quebrou");
+
+    // Já quebrada, não há o que escrever — e o aviso não se repete a cada golpe.
+    let depois = itens
+        .gastar_durabilidade(c.role_id, ContainerType::Equipment, 4, 25)
+        .await
+        .expect("desgastar");
+    assert_eq!(depois, None, "peça em zero não devia ser escrita de novo");
+
+    // Slot vazio: nada acontece (o original devolve -1 em `SelectRandomArmor`).
+    let vazio = itens
+        .gastar_durabilidade(c.role_id, ContainerType::Equipment, 7, 25)
+        .await
+        .expect("desgastar");
+    assert_eq!(vazio, None);
+}

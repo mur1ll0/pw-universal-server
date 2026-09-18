@@ -219,14 +219,14 @@ pub fn bytes_da_aparencia(custom_appearance: &serde_json::Value) -> Vec<u8> {
 
 /// Os quatro atributos com que um personagem nasce.
 ///
-/// O original os tira do `ptemplate.conf`, por classe: o Guerreiro começa com vitalidade
-/// 20, força 15, agilidade 10 e energia 5; o Mago, com energia 20 e força 5. Até
-/// 2026-09-09 todo personagem novo nascia com **10/10/10/10** — o `DEFAULT` da coluna no
-/// esquema — e a diferença aparecia em tudo o que depende de atributo: vida e mana
-/// máximas, precisão, evasão.
+/// No original saem do molde do `clsconfig` do `gamedbd`: **5/5/5/5 para toda classe**, e
+/// a vida e a mana de nível 1 = `vit_hp × 5` e `eng_mp × 5`
+/// (`pw_data_loader::ptemplate::ATRIBUTO_INICIAL`). Entre 2026-09-09 e 2026-09-16 o projeto
+/// os tirava do `ptemplate.conf` (Arqueiro com 20 de energia), que o `gamed` lê mas não
+/// aplica a jogador.
 ///
 /// `None` no ponto de criação significa "o realm não trouxe o `ptemplate.conf`"; aí vale
-/// o padrão da coluna, que ao menos não é inventado. Ver `pw_data_loader::ptemplate`.
+/// o padrão da coluna, que ao menos não é inventado.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AtributosIniciais {
     pub forca: i32,
@@ -271,6 +271,11 @@ pub struct FichaDaArma {
     pub energia_exigida: i16,
     pub municao_exigida: i32,
     pub tipo_maior: i32,
+    /// `level` do `WEAPON_ESSENCE` — o **nível da arma** (`weapon_level`), que o original
+    /// copia direto (`generate_item_temp.h:329`). É contra ele que o cliente confere a faixa
+    /// da munição (`CanUseProjectile`, `EC_HostPlayer.cpp:5014-5016`). O Arco de Madeira
+    /// (2250) é nível **0**.
+    pub nivel_da_arma: i32,
     pub dano_minimo: i32,
     pub dano_maximo: i32,
     pub dano_magico_minimo: i32,
@@ -338,6 +343,24 @@ pub struct FichaDeDecoracao {
     pub resistencias: [i32; ESCOLAS_MAGICAS],
 }
 
+/// A ficha de uma **munição** (flecha, dardo, bala), do `PROJECTILE_ESSENCE`.
+///
+/// A essência é `IVTR_ESSENCE_ARROW` (`EC_IvtrTypes.h:235-242`), 20 bytes, igual ao
+/// `projectile_essence` do servidor (`gs/item/equip_item.h:129-136`) e escrita por
+/// `generate_projectile` (`generate_item_temp.h:560-650`). Sem ela o cliente mostra "arma de
+/// nível 0-0" e o arco fica vermelho: `CanUseProjectile` compara o nível da arma com
+/// `iWeaponReqLow`/`iWeaponReqHigh` desta essência.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FichaDaMunicao {
+    /// `type` — o tipo de munição (`PROJECTILE_TYPE`), o mesmo número do
+    /// `require_projectile` da arma.
+    pub tipo: i32,
+    pub dano_extra: i32,
+    pub dano_extra_percentual: i32,
+    pub nivel_minimo_da_arma: i32,
+    pub nivel_maximo_da_arma: i32,
+}
+
 /// O que acompanha um item equipável no `OWN_ITEM_INFO` (40).
 ///
 /// Cada família de equipamento tem a sua própria essência, com tamanho e ordem próprios,
@@ -351,6 +374,7 @@ pub enum FichaDoEquipamento {
     Arma(FichaDaArma),
     Armadura(FichaDaArmadura),
     Decoracao(FichaDeDecoracao),
+    Municao(FichaDaMunicao),
 }
 
 /// O que um jogador parece, visto de fora — o que vai na `info_player_1`.

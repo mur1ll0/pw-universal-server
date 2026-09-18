@@ -132,47 +132,31 @@ fn le_o_arquivo_do_realm_mesmo_nao_sendo_utf8() {
     assert_eq!(t.get(0).unwrap().vida, 60);
 }
 
-/// Os quatro atributos com que um personagem nasce saem daqui, e não são 10/10/10/10.
+/// Todo personagem nasce com 5/5/5/5, e a vida e a mana de nível 1 são as dos moldes do
+/// `clsconfig` original: `vit_hp × 5` e `eng_mp × 5`, sem o `hp`/`mp` do `.conf`.
 ///
-/// Até 2026-09-09 o `create_character` não mencionava as colunas `strength`, `agility`,
-/// `vitality` e `energy` no `INSERT` e todo personagem nascia com o `DEFAULT 10` do
-/// esquema, qualquer que fosse a classe — o Guerreiro perdia 10 de vitalidade e 5 de
-/// força, e ganhava 5 de energia que não devia ter.
+/// Até 2026-09-16 os atributos saíam do `ptemplate.conf` e o Arqueiro nascia com 20 de
+/// energia e 10 de agilidade (teste em jogo do Murillo). Os valores esperados abaixo são os
+/// do `gamedbd/clsconfig` do `pwserver_155v156` (`GRoleStatus.hp/mp` dos roles 16..31).
 #[test]
-fn os_atributos_iniciais_saem_por_classe_e_nao_sao_todos_dez() {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("data/realm_155BR/config/ptemplate.conf");
-    let Ok(texto) = std::fs::read_to_string(&p) else {
-        eprintln!("pulado: {} não existe", p.display());
+fn todo_personagem_nasce_cinco_cinco_cinco_cinco_com_a_vida_do_clsconfig() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join("data/realm_155/config");
+    let Some(t) = ptemplate::ler_da_pasta(&dir) else {
+        eprintln!("pulado: {} sem ptemplate.conf", dir.display());
         return;
     };
-    let t = ptemplate::ler(&texto).expect("o ptemplate.conf do realm 155BR deveria ser legível");
+    let Ok(bytes) = std::fs::read(dir.join("elements.data")) else { return };
+    let e = pw_data_loader::generic_elements::load_elements_data_auto(&bytes).unwrap();
+    let classes = pw_data_loader::classes::carregar(&e);
 
-    // [SWORDSMAN], a seção 0: força 15, agilidade 10, vitalidade 20, energia 5.
-    let guerreiro = t.get(0).unwrap().ficha_inicial(None);
-    assert_eq!(
-        (guerreiro.forca, guerreiro.agilidade, guerreiro.vitalidade, guerreiro.energia),
-        (15, 10, 20, 5),
-        "o Guerreiro não nasce 10/10/10/10 — era o que o banco estava dando a ele"
-    );
-
-    // [ANGEL], a seção 7, é o Sacerdote (`CharacterClass::Cleric`). Os nomes das seções são
-    // os do servidor chinês e não batem com os nomes ocidentais; a **ordem** é o que vale.
-    let sacerdote = t.get(7).unwrap().ficha_inicial(None);
-    assert_eq!(sacerdote.energia, 20, "o Sacerdote nasce com 20 de energia, não 10");
-
-    // E as doze classes não são todas iguais: se fossem, ler o arquivo não teria efeito
-    // nenhum e o defeito continuaria de pé sem ninguém notar.
-    let distintos: std::collections::BTreeSet<(i32, i32, i32, i32)> = (0..12)
-        .map(|i| {
-            let a = t.get(i).unwrap().ficha_inicial(None);
-            (a.forca, a.agilidade, a.vitalidade, a.energia)
-        })
-        .collect();
-    assert!(
-        distintos.len() >= 6,
-        "só {} combinações distintas nas 12 classes — o arquivo não deve ter sido lido por seção",
-        distintos.len()
-    );
+    // (classe, vida, mana) de nível 1 nos moldes do clsconfig.
+    let moldes = [
+        (0, 75, 45), (1, 50, 70), (2, 50, 70), (3, 60, 60), (4, 85, 35), (5, 65, 50),
+        (6, 65, 55), (7, 50, 70), (8, 75, 45), (9, 50, 70), (10, 65, 55), (11, 50, 70),
+    ];
+    for (cls, vida, mana) in moldes {
+        let a = t.get(cls).unwrap().ficha_inicial(classes.get(cls));
+        assert_eq!((a.forca, a.agilidade, a.vitalidade, a.energia), (5, 5, 5, 5), "classe {cls}");
+        assert_eq!((a.vida, a.mana), (vida, mana), "classe {cls}");
+    }
 }

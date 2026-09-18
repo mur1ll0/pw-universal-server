@@ -5,7 +5,7 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-14**, B50 (branch `feat/aipolicy-reader`). Reescrito nesta data: o documento tinha 6.500 linhas de diário,
+> **Última atualização: 2026-09-18**, B62 (branch `feat/aipolicy-reader`). Reescrito nesta data: o documento tinha 6.500 linhas de diário,
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -20,7 +20,7 @@
 
 ## 0. Em uma tela
 
-**Alvo:** o **1.5.5**, servido pelo realm `realm_155BR` ao cliente 1.5.5 BR
+**Alvo:** o **1.5.5**, servido pelo realm `realm_155` ao cliente 1.5.5 BR
 (`elements.data` v156, `tasks.data` 129, build 2569). Ordem combinada com o Murillo:
 
 1. **1.5.5 totalmente funcional** ← estamos aqui.
@@ -37,15 +37,36 @@ aprende habilidade, bate em monstro e em jogador, cura, e os monstros perseguem,
 passeiam no chão. Os três arquivos de dados do realm são lidos **inteiros**, fechando no
 último byte. Personagem novo nasce no mapa 161, servido por um servidor de mundo próprio.
 
-**O B50 (publicado, esperando o teste em jogo)** ligou o laço de jogo: experiência do abate
-com subida de nível, regeneração, recarga e tempo de conjuração das habilidades, renascer no
-ponto de cidade do distrito, **missões do `tasks.data`** (aceitar e entregar no NPC, contar
-abate, premiar), drop de itens e moedas com coleta, compra/venda com empilhamento e aprender
-habilidade cobrando SP e moedas. O Arqueiro passa a nascer com flechas. Roteiro na seção 3.4.
+**Um realm por versão (B55, 2026-09-17):** o realm 1.5.5 do cliente EN (v159, porta 29003)
+foi apagado — contêineres, pasta de dados e linha no banco — e o antigo `realm_155BR` passou a
+se chamar **`realm_155`**, com contêineres `pw-realm-155`/`pw-world-155`, dados em
+`data/realm_155/config` e a **mesma porta 29004** (o `serverlist.txt` do cliente BR não muda).
+Personagens (POTATO, eaa) e os 12 moldes vieram junto.
 
-**O que mais falta:** troca de mundo (o 161 não leva ao mundo 1), colher recurso, efeitos
-de estado das habilidades, intérprete do `aipolicy.data`, trava de PvP, distribuir pontos
-de atributo e o resto da seção 5A.
+**Último teste em jogo (2026-09-18, fim da tarde, com o eaa, nível 5):** o B61 passou —
+durabilidade certa, monstros atacando, e a missão "Descobertas Acidentais" chegou ao entrar na
+área. Sobrou **um** sintoma, o mesmo de duas sessões atrás visto de dois ângulos: o dano
+aparecia **antes** da animação (no golpe do arqueiro parecia um ataque a mais no começo da
+sessão; no monstro, ele batia ainda correndo).
+
+A causa estava achada no original e nós não a tínhamos portado: o dano **não** tira vida no
+instante do golpe. `InsertDamageEntry` (`gs/actobject.cpp:1758-1776`) adia o `GM_MSG_HURT` em
+`attack.speed` tiques de 50 ms — o mesmo número que vai no comando e que o cliente usa como
+duração da animação. Agora o aviso sai na hora e a vida cai no fim da animação (B62); a
+ameaça, o estado de combate e o desgaste da arma continuam no instante do golpe, como no
+original. Habilidade não tem `speed` no original, então continua instantânea.
+
+De lambuja, o intervalo entre golpes do monstro passou a ser o `attack_speed` dele
+(`MONSTER_ESSENCE`), que estava 1,5 s escrito no código para todos os 29 mil monstros.
+
+**Habilidade de monstro continua não existindo:** 3.688 monstros têm habilidade no
+`elements.data`, mas quem decide quando usá-la é o `aipolicy.data`, e não há intérprete — é
+a maior peça que falta na IA (seção 5A).
+
+Roteiro do próximo teste na seção 3.4.
+
+**O que mais falta:** serviços de refinar/incrustar, os ~300 efeitos sem porte, intérprete do
+`aipolicy.data`, trava de PvP, teleporte por NPC, e o resto da seção 5A.
 
 ---
 
@@ -58,8 +79,7 @@ Credenciais na memória `pw_universal_infra_access`.
 
 | realm | versão | porta do cliente | servidor de mundo (mapas) | dados | situação |
 | :--- | :--- | ---: | :--- | :--- | :--- |
-| `realm_155BR` | 1.5.5 | **29004** | `pw-world-155br` (mapas 1 e 161) | `data/realm_155BR/config` | **o realm de teste** |
-| `realm_155` | 1.5.5 | 29003 | `pw-world-155` (1) | `data/realm_155/config` | cliente EN (v159); fora dos testes desde 2026-09-05 |
+| `realm_155` | 1.5.5 | **29004** | `pw-world-155` (mapas 1 e 161) | `data/realm_155/config` | **o realm de teste** — cliente BR; até 2026-09-17 se chamava `realm_155BR` (B55) |
 | `realm_126` | 1.2.6 | 29000 | `pw-world-126` (1) | `data/realm_126` | loga e entra no mundo; parado |
 | `realm_153` | 1.5.3 | 29001 | `pw-world-153` (1) | — | abandonado |
 | `realm_148` | 1.4.8 | 29002 | `pw-world-148` (1) | — | nunca foi alvo |
@@ -71,21 +91,22 @@ e `pw-bus/tests/topologia_do_compose.rs` cobra isso.
 Um servidor de mundo por realm com todos os mapas dele (`WORLD_TAGS: "1,161"`), dados
 carregados uma vez; o roteador entrega cada jogador ao mapa gravado (spec 02 §2.2).
 
-### 1.2 O que há em `data/realm_155BR/config`
+### 1.2 O que há em `data/realm_155/config`
 
 Base: o pacote de servidor `F:\PW\1.5.5\home155\gamed\config` (76 pastas de mapa,
 `npcgen.data`, `aipolicy.data`, `.sev`, `gs.conf`, `ptemplate.conf`, `global_api.lua` com
 `--102`). Por cima, os 11 `.data` do cliente BR (`elements.data` v156, `tasks.data` 129,
 `gshop*.data` …). Mapas de altura `.hmap` por mapa. (B13, B42c, B48.)
 
-O `data/realm_155/config` é o mesmo esquema com os `.data` do cliente **EN** (v159).
+Não há mais realm com os `.data` do cliente EN (v159): a pasta foi apagada no B55. O layout
+v159 continua no catálogo do leitor, sem arquivo para testar.
 
 ### 1.3 Clientes
 
 | cliente | onde | build | serve para |
 | :--- | :--- | :--- | :--- |
-| **1.5.5 BR** | `F:\PW\1.5.5\1.5.5 BR\` | 2569, elements v156 | **os testes** → 29004 |
-| 1.5.5 EN | `F:\PW\1.5.5\1.5.5.EN\` (e `F:\PW\1.5.5\bin`) | 2575, elements v159 | → 29003 |
+| **1.5.5 BR** | `F:\PW\1.5.5\1.5.5 BR\` | 2569, elements v156 | **os testes** → `realm_155`, 29004 |
+| 1.5.5 EN | `F:\PW\1.5.5\1.5.5.EN\` (e `F:\PW\1.5.5\bin`) | 2575, elements v159 | nenhum desde o B55 (o realm EN foi removido) |
 | 1.5.5 BR novo | `E:\0_GAMES\Perfect World` | **2591**, elements **v181**, tasks 135 | nenhum ainda: não há `v181` no catálogo nem pacote de servidor correspondente (B11) |
 | 1.2.6 | `F:\Games\perfectworld_126\element` | — | → 29000 |
 
@@ -109,7 +130,7 @@ Pré-requisitos do cliente 1.5.5 que **não** são do servidor, e que custaram s
 | `F:\PW\1.5.5\EvolvedPWServer` | fonte do servidor 1.5.5 | as regras de jogo (`cgame/gs/`) e os carregadores de dados; para rodar o `pw-rpcgen` precisa das junções da memória `pw_ctx_a_155_funcional` |
 | `F:\PW\1.7.2\172Source` | fonte do servidor 1.7.2 | nomes de campos que os `.data` do 1.5.5 têm e o fonte 1.5.5 não (`aipolicy.data`, sistema de Lar do `tasks.data`) (B27f, B45) |
 | `F:\PW\1.5.5\pwserver_155v156` | servidor 1.5.5 compilado (Linux), mesma build v156 dos nossos dados | `gamedbd/clsconfig` = moldes de classe (B47); candidato a gabarito rodando numa VM 32-bit |
-| `F:\PW\1.5.5\home155` | outro pacote de servidor 1.5.5 (2023) | base do `realm_155BR`; tem outro `clsconfig` |
+| `F:\PW\1.5.5\home155` | outro pacote de servidor 1.5.5 (2023) | base do `realm_155`; tem outro `clsconfig` |
 | `D:\PROJETOS\PWPRIVATE\Tools\EDITOR DE ELEMENTS 1.5.5 ADMVAL\configs\CFG\` | 39 `.cfg` de `elements.data` (1.5.2 v123 a 1.5.7 v206) | origem de `specs/elements_155/PW_1.5.5_v1*.cfg` |
 | VM `192.168.1.200` | servidor **1.2.6 original** completo | gabarito de mecânica e fluxo (não de bytes do 1.5.5). O `ping` responde; o SSH pede senha — falta instalar `_sync/ssh/win_key.pub` no `authorized_keys` dela (B44c) |
 | `_sync/capturas/` | capturas da VM 1.2.6 (elo `gs`→`glinkd` em claro) | `cargo run -p pw-pcapdiff -- <pcap> --interno --subcomando N` |
@@ -126,19 +147,20 @@ TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw
   cargo test --workspace
 
 # Publicar no realm de teste (um link e um servidor de mundo com os mapas 1 e 161)
-cd docker && docker compose build pw-world-155br pw-realm-155br \
-  && docker compose up -d --remove-orphans pw-world-155br pw-realm-155br
+cd docker && docker compose build pw-world-155 pw-realm-155 \
+  && docker compose up -d --remove-orphans pw-world-155 pw-realm-155
 
 # Logs
-docker logs -f pw-realm-155br        # login, entrada no mundo, o que o link trata
-docker logs -f pw-world-155br        # os mapas 1 e 161
+docker logs -f pw-realm-155        # login, entrada no mundo, o que o link trata
+docker logs -f pw-world-155        # os mapas 1 e 161
 ```
 
-**Referência da suíte, medida em 2026-09-14 (B50) com o banco:** **536 testes passando e
-2 falhando** (`cargo test --workspace --no-fail-fast`) — as duas falhas conhecidas do 1.2.6 no
-`pw-data-loader/tests/loader_tests.rs` (`test_elements_data_real_file_if_present` e
-`test_game_data_manager_directory_load`: o `elements.data` v7 ainda passa pelo leitor
-tipado antigo). Qualquer outra falha é nova.
+**Referência da suíte, medida em 2026-09-18 (B62) com o banco:** **579 testes, todos
+passando** (`cargo test --workspace --no-fail-fast`). Os testes de tempo do
+`pw-gs/tests/subcomandos_no_mundo.rs` podem falhar sob carga (já aconteceu com um build do
+Docker rodando junto); o arquivo sozinho passa 58/58
+(`cargo test -p pw-gs --test subcomandos_no_mundo -- --test-threads=4`).
+Qualquer outra falha é nova.
 
 A suíte cria realms `t_*`, contas e personagens de teste no banco local. **Desde o B49 cada
 arquivo de teste apaga, ao começar, o que execuções anteriores deixaram** com mais de 15
@@ -150,13 +172,18 @@ banco: `admin` e `testuser`.
 
 **Scripts de dados do realm** (`scripts/`, aplicados à mão no banco): `asas_e_slot_de_municao_155.sql`,
 `corrige_skills_e_armas_155.sql`, `2026_09_08_last_login_at.sql`,
-`2026_09_09_atributos_iniciais_por_classe.sql`, `2026_09_11_template_de_classe_155br.sql`,
-`2026_09_12_nascimento_no_mapa_161_155br.sql`, `2026_09_14_flechas_do_arqueiro_155br.sql`,
+`2026_09_09_atributos_iniciais_por_classe.sql`, `2026_09_11_template_de_classe_155.sql`,
+`2026_09_12_nascimento_no_mapa_161_155.sql`, `2026_09_14_flechas_do_arqueiro_155.sql`,
+`2026_09_17_realm_155_passa_a_ser_o_br.sql` (B55, aplicado uma vez — não reaplicar),
+`2026_09_18_octetos_do_equipamento_do_eaa.sql` (B60: o equipamento que já estava sem bloco de
+dados, gerado pelo `cargo run -p pw-gs --example gerar_octetos`),
+`2026_09_18_durabilidade_na_escala_interna.sql` (B61, aplicado uma vez — não reaplicar:
+multiplicaria de novo),
 `2026_09_14_listas_de_missao.sql` (tabela `character_task_lists`, também no
 `02_MIGRACAO…sql` para bancos novos). Conferido em 2026-09-13: os 12 moldes do
-`realm_155BR` estão com `spawn_world_id = 161`.
+`realm_155` estão com `spawn_world_id = 161`.
 
-**Personagens de teste no `realm_155BR` hoje:** **POTATO** (id 4515, Bárbaro, nível 1, mundo
+**Personagens de teste no `realm_155` hoje:** **POTATO** (id 4515, Bárbaro, nível 1, mundo
 1) e **eaa** (id 5491, Arqueiro, mapa 161, com as flechas do script de 2026-09-14). Os sacerdotes `HEal` (40) e `testesacer` (42)
 das sessões anteriores não existem mais no banco. Para testar compras:
 `UPDATE characters SET money = 500000 WHERE id = <id>;`. Personagem criado antes do B48
@@ -221,50 +248,53 @@ continua no mundo 1; para testar o nascimento no 161, criar um novo.
 - Autosave a cada 60 s de nível, experiência, SP, vida, mana, moedas, mundo e posição — o
   `UPDATE` falhava em silêncio até o B36f.
 
-### 3.3 Teste em jogo do B48 (2026-09-14)
+### 3.3 Último teste em jogo (2026-09-18, fim da tarde, com o eaa, nível 5)
 
-Confirmado pelo Murillo:
-- Arqueiro novo nasce no **mapa 161**, no lugar certo.
-- Monstros perseguem no chão, sem atravessar o terreno nem andar no ar, e sem a velocidade
-  absurda de antes.
+Confirmado em jogo: **durabilidade** certa, **monstros atacando** com animação, e a missão
+**"Descobertas Acidentais" chegou** ao mudar de área — os três pontos do B61.
 
-Relatado como defeito:
-- **Não dá para aceitar missão.** O Guia dos Alados mostra que tem missão e o diálogo abre;
-  ao aceitar, nada aparece. O log do mundo registra `aceitou a missão 18918` e
-  `aceitou a missão 32201` — o pedido chega, e a resposta não é aceita pelo cliente.
-- **O arqueiro nasce sem flechas.**
+**O que sobrou: o dano vinha antes da animação.** Dois relatos, uma causa. No arqueiro, ao
+abrir a sessão de golpe o monstro perdia vida antes de a animação começar, parecendo "um
+ataque a mais"; no monstro, ele batia enquanto ainda executava a animação de corrida.
 
-Não relatado ainda: passeio dos monstros ociosos.
+O original **não** tira vida no instante do golpe: `gactive_imp::InsertDamageEntry`
+(`actobject.cpp:1758-1776`) põe o dano num `GM_MSG_HURT` **adiado de `attack.speed` tiques de
+50 ms**, e só aplica na hora quando o `delay` não é positivo. O `attack.speed` é o
+`attack_delay = (attack_speed × 20 × 0,8) − 1` do jogador (`playertemplate.h:980`,
+`MakeAttackMsg` em `actobject.cpp:824`) e o `_damage_delay` do monstro (`npc.cpp:2118`) — o
+mesmo número que já mandávamos no comando e que o cliente usa como duração da animação.
+Habilidade não preenche `speed` (`player.cpp:3174`), então continua instantânea.
 
-### 3.4 Publicado, falta ver em jogo (B49 + B50)
+Portado em `WorldInstance::adiar_dano` + `cobrar_danos_adiados`. **Continuam no instante do
+golpe**, como no original: a ameaça (`OnAttacked`), o estado de combate e o desgaste da arma.
+A morte do alvo passou a ser resolvida quando o dano vence, pelo evento `MonstroMorreu` — que
+agora é o caminho único das três origens (golpe, habilidade, dano no tempo).
 
-Publicado em 2026-09-14 (`pw-world-155br` com os mapas 1 e 161, `pw-realm-155br`). Roteiro:
+**E o intervalo entre golpes do monstro** deixou de ser 1,5 s escrito no código: é o
+`attack_speed` do `MONSTER_ESSENCE` em tiques (`ChangeInterval`, `npcsession.cpp:60-70`). Os
+dois campos (`ataque_em_ticks` e `atraso_do_dano_em_ticks`) passaram a viver no
+`MonsterEntity`.
 
-1. **Arqueiro com flechas:** entrar com o **eaa** (ou criar outro Arqueiro): as Flechas de
-   Iniciante (1000) no slot de munição; atacar à distância.
-2. **Missão do Guia dos Alados:** falar com o Guia (o diálogo abre **uma vez**), aceitar
-   "Escolhido do Chi: Elfo Alado" — tem de aparecer na lista de missões. Ir ao NPC que
-   recebe e entregar: +25 exp, +10 SP, +8 moedas. Relogar: a lista tem de voltar igual.
-3. **Missão de caça:** aceitar uma de matar monstros, matar — o contador sobe na janela de
-   missão; completar e entregar.
-4. **Experiência e nível:** matar monstros — o número de experiência aparece e **fica**; ao
-   completar o nível, a animação de subir e a vida cheia. Relogar: nível e experiência
-   continuam.
-5. **Regeneração:** perder vida e parar de lutar — ela volta (mais rápido fora de combate).
-6. **Drop:** monstros deixam moedas e às vezes itens no chão; pegar (clique ou tecla de
-   pegar tudo). Nos primeiros 30 s só quem matou pega.
-7. **Morrer e renascer na cidade:** volta ao ponto de cidade do distrito, com 10 % da vida,
-   perdendo um pouco de experiência.
-8. **Recarga de habilidade:** conjurar duas vezes seguidas — a segunda é recusada até o
-   ícone recarregar.
-9. **Loja:** comprar um item (aparece no slot, o dinheiro desce) e vender (o valor do
-   arquivo, não 50 fixo). **Treinador:** aprender uma habilidade cobra SP e moedas; sem
-   SP, recusa.
-10. Do B49: botão armadura/roupa alterna e fica; no log do mundo,
-    `pediu a marca das missões dinâmicas: 0x52776c0d`.
+**Pergunta respondida (aviso de durabilidade baixa):** existe, e é só do cliente —
+`CECGameUIMan::RefreshBrokenList` (`EC_GameUIMan.cpp:5474-5555`) roda a cada quadro e põe o
+ícone da peça na janela `Win_Broken` quando `cur <= max / 10`, **amarelo** enquanto sobra
+durabilidade e **vermelho** em zero. O item 8/18 do relato está em 44%, por isso não aparece
+ainda.
 
-Onde olhar se algo falhar: `docker logs pw-world-155br | grep -i "missão\|subiu\|aprendeu\|comprou"`
-e o overlay `d_rtdebug` (comando recusado aparece lá).
+### 3.4 Publicado, falta ver em jogo (B54, B56, B57, B58, B59 e B62)
+
+Publicado em 2026-09-18 (`pw-realm-155` e `pw-world-155`). Roteiro com o **eaa**:
+
+1. **Golpe do arqueiro (B62)**: marcar um monstro e atacar. A vida dele deve cair **no fim**
+   da animação, uma vez por golpe — sem aquele dano extra no primeiro.
+2. **Monstro (B62)**: deixar um vir correndo. Ele deve parar, bater com a animação de ataque,
+   e a vida cair junto do golpe.
+3. **Durabilidade (B61)**: continuar de olho; com uma peça abaixo de 10% o ícone dela deve
+   aparecer em amarelo na janela de itens gastos.
+4. **Sons (B58)** e **NPCs virados para lados diferentes (B59)**: como no roteiro anterior.
+
+Onde olhar: `docker logs pw-world-155 | grep -E "golpe normal|dano de|quebrou"` — cada golpe
+agora imprime em quantos milissegundos a vida vai cair, e a aplicação sai numa linha própria.
 
 ---
 
@@ -272,16 +302,16 @@ e o overlay `d_rtdebug` (comando recusado aparece lá).
 
 | arquivo | leitor | estado | usado pelo mundo? |
 | :--- | :--- | :--- | :--- |
-| `elements.data` | `pw-data-loader/src/generic_elements.rs` (+ `specs/elements_layouts/pw_elements_reader.py`) | **231/231** tabelas no v156 do 155BR, **234/234** no v159; fecha no último byte, sem override (B46) | armas, armaduras, acessórios, monstros (com drop), NPCs e seus serviços de missão e habilidade, classes, poções, preços, pilhas, curva de exp, ajuste por nível, perda na morte (spec 03 §3.1). **Não ligados:** `MINE_ESSENCE`, `WEAPON_SUB_TYPE`, `NPC_SELL_SERVICE` |
-| `tasks.data` | `pw-data-loader/src/tasks.rs` | **14.885/14.885** missões de topo (155BR), 14.978 (155), fecha pelos deslocamentos do cabeçalho (B45) | **sim** — motor de missões (`pw-gs/src/missoes.rs`, B50) |
+| `elements.data` | `pw-data-loader/src/generic_elements.rs` (+ `specs/elements_layouts/pw_elements_reader.py`) | **231/231** tabelas no v156 do `realm_155` (o v159 do EN fechou 234/234 antes de sair, B55); fecha no último byte, sem override (B46) | armas, armaduras, acessórios, monstros (com drop), NPCs e seus serviços de missão e habilidade, classes, poções, preços, pilhas, curva de exp, ajuste por nível, perda na morte (spec 03 §3.1). coleta (`MINE_ESSENCE`, B51), munição. **Não ligados:** `WEAPON_SUB_TYPE`, `NPC_SELL_SERVICE`, `NPC_TRANSMIT_SERVICE` |
+| `tasks.data` | `pw-data-loader/src/tasks.rs` | **14.885/14.885** missões de topo (`realm_155`), fecha pelos deslocamentos do cabeçalho (B45) | **sim** — motor de missões (`pw-gs/src/missoes.rs`, B50) |
 | habilidades do servidor | `specs/habilidades_155/habilidades.json` (`habilidades.rs`) | 3.316 stubs do `cskill` | recarga, conjuração, custo de aprender (B50) |
-| `npcgen.data` | `pw-data-loader/src/npcgen.rs` | v11 lido inteiro; tipo de área, `fOffsetTrn`, extensão de recurso, sem tetos inventados (commit `931b39d`); `a01..a99` (B48) | sim; controladores (`id_ctrl`) tratados como ativos, sem modelar gatilho de evento (B17a) |
+| `npcgen.data` | `pw-data-loader/src/npcgen.rs` | v5 a v11, fechando no último byte (B51); tipo de área, `fOffsetTrn`, extensão de recurso, sem tetos inventados (commit `931b39d`); `a01..a99` (B48) | sim; controladores (`id_ctrl`) tratados como ativos, sem modelar gatilho de evento (B17a) |
 | `aipolicy.data` | `pw-data-loader/src/aipolicy.rs` | lido, com o fonte 1.7.2 como autoridade (B27f) | **não** — não há intérprete; o `ai.rs` porta só perseguição, volta e passeio |
-| `ptemplate.conf` | `ptemplate.rs` (GBK, não UTF-8) | lido | atributos iniciais por classe; as velocidades dele são valores mortos no original |
+| `ptemplate.conf` | `ptemplate.rs` (GBK, não UTF-8) | lido | quase nada: atributos, vida/mana e velocidades dele **não** chegam ao jogador no original (B51) |
 | `gs.conf` → `specs/mapas/terreno_155.json` | `specs/mapas/gerar_terreno_155.py`, `terreno.rs` | 79 mapas, pela `tag` (B48c2) | sim, só o mapa que aquele servidor serve (88 MB no mundo 1) |
 | `region.sev` / `precinct.sev` | `GameDataManager`, `precinct.rs` | carimbos por mundo; distritos do `precinct.sev` lidos inteiros | `INST_DATA_CHECKOUT`; renascer na cidade (B50) |
 | `gshop.data` / `gshop1.data` | só o carimbo | — | `edition` do `Challenge` |
-| `gamedbd/clsconfig` | `specs/clsconfig_155/ler_clsconfig.py` | posição de nascimento e vida/mana por classe lidas (B47) | via SQL no `class_templates`. **Não decodificados:** `config_data` (barra de atalhos), inventário, equipamento, habilidades |
+| `gamedbd/clsconfig` | `specs/clsconfig_155/ler_clsconfig.py` | posição de nascimento e vida/mana por classe lidas (B47) | via SQL no `class_templates`. Atributos 5/5/5/5 lidos de `GRoleStatus.property` (B51). **Não decodificados:** `config_data`, inventário, equipamento, habilidades |
 
 ---
 
@@ -294,27 +324,26 @@ Conferido contra o código em 2026-09-13 — cada linha diz onde está a evidên
 O pedido do Murillo no B44: combate básico inteiro, experiência, alma, moedas, animações,
 habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 
-1. **Distribuir pontos de atributo** (`SET_STATUS_POINT`): os pontos acumulam desde o B50,
-   mas não há como gastá-los.
-2. **Missões — o que o motor recusa ou ignora** (spec 05 §10): janelas de horário, região de
-   entrega, equipe, facção, casamento, PQ, prêmio por escala, teleporte de prêmio, chegar/sair
-   de lugar, falha por morte, item de missão pelo NPC (serviço 8). Missão com janela de
-   horário é **recusada** com "fora do horário".
-3. **Flechas não são gastas** ao atacar (`DoAttack`, `player.cpp:3066`); a compra na loja não
-   confere a lista de venda do NPC.
+1. **Missões — o que o motor ainda recusa ou ignora** (spec 05 §10): casamento, PQ, prêmio
+   por escala, invocação, falha por morte, sucesso/falha compartilhados pela equipe, abate
+   contado para a equipe, item de missão pelo NPC (serviço 8), coleta com missão
+   (`task_in/out`). Facção recusa sempre (não há sistema de facção).
+2. **Munição:** sem flecha o golpe não é recusado e o bônus de dano da flecha não entra;
+   a compra na loja não confere a lista de venda do NPC. **Itens:** sem serviços de refinar,
+   fazer furo e incrustar; addons de habilidade/conjunto sem porte (B53).
+3. **Coleta:** sem recarga de 500 ms, sem interrupção por dano, exp/SP sem ajuste de nível.
 4. **Ataque normal sem animação, e o monstro atacado não reage** (B44 #6). A investigar —
    não medido.
-5. **Troca de mundo não existe.** O link escolhe o servidor de mundo na entrada e nada muda
-   depois: portal, teleporte de missão (a "Guarda da Terra" leva do 161 ao mundo 1), GM
-   para outro mapa (B48d). Pré-requisito para o começo de jogo no 161 ter continuação.
-6. **Só 16 habilidades têm conta** de 3.317 (`habilidades.rs`, `TABELA`); as outras conjuram
-   sem efeito. Nenhum efeito de estado (veneno, lentidão, bênção com duração). O **Portal da
-   Cidade** (167) não tem efeito (B17c).
-7. **Colher recurso não existe:** nenhuma sessão de coleta; o `MINE_ESSENCE` já é lido
-    (B41h, B46).
-8. **Barra de atalhos e guia do jogo** do personagem novo: a fonte provável é o
-    `config_data` do molde no `clsconfig`, ainda não decodificado (B44b15, B47d).
-9. **Sem trava de PvP:** qualquer jogador machuca qualquer outro, em qualquer lugar
+5. **Troca de mapa só dentro do processo** (B51): mapa de outro contêiner exigiria o link
+   reencaminhar a sessão. **Teleporte por NPC** (`NPC_TRANSMIT_SERVICE`, destinos por
+   waypoint) e GM para outro mapa `falta`. O grupo se desfaz na troca.
+6. **Habilidades:** dano (1.123), efeitos no alvo (2.304 roteiros) e em si (266) pelos stubs,
+   37 efeitos portados (B53); os ~300 outros (formas, invocação, escudos, recargas) sem
+   porte; imunidades de monstro; talentos. O **Portal da Cidade** (167) não tem efeito (B17c).
+7. **Guia do jogo** do personagem novo: a barra de atalhos agora é gravada pelo próprio
+    cliente (B51); o `config_data` do molde no `clsconfig` (barra pré-preenchida) segue não
+    decodificado (B44b15, B47d).
+8. **Sem trava de PvP:** qualquer jogador machuca qualquer outro, em qualquer lugar
     (`bus_server.rs`, comentário em `pvp`). O original exige duelo, guerra ou mapa de PK
     (B35d).
 
@@ -328,6 +357,12 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
   o segundo do `WEAPON_SUB_TYPE` (B41h).
 - Bits do `attack_flag` desconhecidos: o crítico é calculado e não sinalizado (A-"Na ordem").
 - `PLAYER_DIED` (27) não é mandado aos outros jogadores.
+- Duplicatas medidas no B56: a carga de inventário e habilidades (`OWN_IVTR_DATA`,
+  `OWN_ITEM_INFO`, `SKILL_DATA`) vai duas vezes por login — o link manda no `EnterWorld` e o
+  mundo de novo no `GET_ALL_DATA` (39); e `SELF_INFO_00` + `GET_OWN_MONEY` vão duas vezes
+  por abate. Falta conferir no original quem manda o quê e tirar a cópia.
+- `QUERY_NPC_INFO_1` (68) responde `NPC_INFO_00`; o original responde `NPC_INFO_LIST` com a
+  ficha do NPC (`gnpc_dispatcher::query_info_1`, `npc.cpp:330-338`) (B56).
 - `dir` zerado no streaming de NPC e jogador — a grade guarda posição, não direção (B39e).
 - Voo sem custo de mana e sem teto; `GP_STATE_FLY` fora do `state` dos pacotes de visão;
   `modo_roupa` e `voando` não persistem (B40c).
@@ -335,9 +370,7 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
   carga cheia (B40c).
 - Monstro atravessa obstáculos: sem mapa de movimento (B48b).
 - `class_templates` tem colunas de atributo que o código ignora (quem manda é o
-  `ptemplate.conf`) — decidir quando o painel for editar moldes (B43h). O `realm_155`
-  (EN) ainda tem só **6** moldes, o mesmo estado que tinha o pareamento de classe trocado
-  no 155BR (B43b).
+  `ptemplate.conf`) — decidir quando o painel for editar moldes (B43h).
 - Senha de segurança (`CHECK_SECURITY_PASSWD`): qualquer uma passa — não há senha no banco.
 
 ### 5C. Arquitetura (Fase 2 do `PLANO_ARQUITETURA_E_EXECUCAO.md`)
@@ -439,10 +472,10 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 
 | item | data | assunto |
 | ---: | :--- | :--- |
-| 1–3 | 09-02 | `GenericElementsData` no `GameDataManager`; `npcgen.data` v11; realms 155 no compose |
+| 1–3 | 09-02 | `GenericElementsData` no `GameDataManager`; `npcgen.data` v11; realm 155 (EN) no compose |
 | 4–5 | 09-02/03 | "versão baixa" (`edition` v159 × v156) e "manutenção" (`GAME_VERSION` `0x00010505` lido do binário) |
 | 6–7 | 09-03 | `models.pck` de 2 GB, 133 arquivos de mapa faltando, `gshop_ts2`, `region`/`precinct`, `GetUIConfig_Re` |
-| 8 | 09-03 | criação do `realm_155BR` |
+| 8 | 09-03 | criação do `realm_155BR` (hoje `realm_155`) |
 | 9 | 09-03 | sete causas de crash: `state2`, waypoints, `lua_version`, `GetUIConfig`, `logiccheck:0`, extração dos `.pck`, o `0x78C4` |
 | 10–12 | 09-03 | terceiro e quarto clientes (v181), `npcgen` do home155, overrides absolutos |
 | 13–15 | 09-03/04 | `tools/pw-crash-re`; o crash era o `TASK_DATA` com 3 blocos; `NPC_ENTER_WORLD` com 35 bytes |
@@ -465,3 +498,15 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 48 | 09-12 | nascimento no mapa 161, um servidor por mundo, movimento dos monstros, monstro × NPC |
 | 49 | 09-14 | respostas duplicadas do link (35, 49, 85), a marca das missões dinâmicas, limpeza do banco de testes |
 | 50 | 09-14 | laço de jogo: missões do `tasks.data` com listas binárias, experiência e nível, regeneração, recarga, renascer no distrito, drop e coleta, loja e treinador cobrando, flechas do Arqueiro |
+| 51 | 09-16 | flecha certa e bloco da munição, atributos 5/5/5/5 do `clsconfig`, barras de atalho gravadas, distribuir pontos, flechas gastas, missões com horário/região/facção/equipe/lugar, teleporte e troca de mapa, coleta de recursos, 1.2.6 sem as duas falhas (`npcgen` v5/v6, `elements` v7) |
+| 52 | 09-17 | atributos do equipamento, sessão de golpe normal, alcance/dano/carga das habilidades pelos stubs, barras de atalho (resposta depois do `TASK_DATA` do mundo), aljava vira munição |
+| 53 | 09-17 | clique repetido na fila do golpe, barras (sem `TASK_DATA` do link), rastreador de missões, Carta da Sorte, efeitos de estado, habilidades em área, flechas por habilidade, equipamento sorteado com addons/refino/pedras nos atributos |
+| 54 | 09-17 | barras e rastreador (bloco de configuração corrompido pelo link; configuração do molde), ataque que não parava (fila de Esc/andar, morte do alvo, renascimento depois do corpo), atributos com bônus no `OWN_EXT_PROP`, Asa dos Alados |
+| 55 | 09-17 | um realm por versão: o 1.5.5 EN sai; `realm_155BR` vira `realm_155` (porta 29004 mantida) |
+| 56 | 09-17 | barra de vida do monstro no batimento de 1 s (caía no clique); sons de fundo repetindo — medido, sem causa |
+| 57 | 09-17 | golpe que chega conjurando vai para a fila; dano da habilidade antes do fim da sessão; movimento de monstro só a quem o vê |
+| 58 | 09-17 | batimento dos monstros espalhado no segundo (sons empilhados); `attack_delay` no resultado do golpe; log por dano aplicado |
+| 59 | 09-17 | pacote das missões dinâmicas (missões pararam); id do monstro no `HOST_ATTACKED`; direção do gerador nos NPCs |
+| 60 | 09-18 | resposta do `QUERY_TITLE` (a trava das missões automáticas); item de missão gerado com propriedades; `cEquipment`/`speed` no golpe do monstro |
+| 61 | 09-18 | durabilidade na escala interna (arco 1/1) e desgaste como o original; a 31690 é automática **por zona** — a linha principal não estava travada |
+| 62 | 09-18 | o dano só tira vida `attack.speed` tiques depois do golpe (`InsertDamageEntry`) — fim do "dano antes da animação"; cadência do monstro vinda do `MONSTER_ESSENCE` |

@@ -103,6 +103,11 @@ impl CharacterRepository {
         &self.skill_repo
     }
 
+    /// Barras de atalho, layout e marcas de ajuda — ver [`ClientConfigRepository`].
+    pub fn client_config(&self) -> super::client_config::ClientConfigRepository {
+        super::client_config::ClientConfigRepository::new(self.pool.clone())
+    }
+
     /// As listas binárias de missão — ver [`TaskListRepository`].
     pub fn task_lists(&self) -> super::task_lists::TaskListRepository {
         super::task_lists::TaskListRepository::new(self.pool.clone())
@@ -124,6 +129,30 @@ impl CharacterRepository {
             .bind(role_id)
             .execute(self.pool.get_ref())
             .await?;
+        Ok(())
+    }
+
+    /// Os quatro atributos e os pontos por distribuir, juntos: gastar ponto muda os dois, e
+    /// gravar um sem o outro deixaria o personagem com ponto gasto e atributo velho.
+    pub async fn gravar_atributos(
+        &self,
+        role_id: RoleId,
+        (forca, agilidade, vitalidade, energia): (i32, i32, i32, i32),
+        pontos: i32,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE characters SET strength = $1, agility = $2, vitality = $3, energy = $4,
+                    potential_points = $5, updated_at = CURRENT_TIMESTAMP
+              WHERE id = $6",
+        )
+        .bind(forca)
+        .bind(agilidade)
+        .bind(vitalidade)
+        .bind(energia)
+        .bind(pontos)
+        .bind(role_id)
+        .execute(self.pool.get_ref())
+        .await?;
         Ok(())
     }
 

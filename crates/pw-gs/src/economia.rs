@@ -154,7 +154,10 @@ impl Bolsa {
         }
         let s = primeiro_vazio?;
         let n = quantidade.min(pilha);
-        let durabilidade = dados.durabilidade_de_fabrica(tid).unwrap_or(0);
+        // Na escala interna, como tudo que guarda durabilidade aqui: o `elements.data` traz
+        // o número da tela e o original multiplica pela escala ao montar o item
+        // (`update_require_data`, `gs/item/item_addon.h:454-458`).
+        let durabilidade = dados.durabilidade_de_fabrica(tid).unwrap_or(0) * pw_core::ESCALA_DA_DURABILIDADE as u32;
         self.slots[s] = Some(ItemRecord {
             id: None,
             character_id: self.dono,
@@ -174,6 +177,60 @@ impl Bolsa {
         });
         self.alterados.insert(s);
         Some(Empilhado { entrou: total - quantidade + n, slot: s, no_slot: n })
+    }
+
+    /// Um equipamento com conteúdo próprio (octetos sorteados): nunca empilha, vai ao
+    /// primeiro slot vazio com a durabilidade do conteúdo.
+    /// Guarda `quantidade` do item, **gerando o equipamento** quando ele é arma, armadura,
+    /// acessório ou munição — como o original, que cria todo item de prêmio de missão e de
+    /// coleta por `generate_item_for_drop` (`task/taskman.cpp:281-303`, `player.cpp:1513`), a
+    /// mesma geração do drop de monstro (`ADDON_LIST_DROP`).
+    ///
+    /// Sem isto o item entrava na bolsa **sem bloco de dados**: o cliente mostrava a faixa do
+    /// modelo no tooltip ("Destreza +1~2") e o servidor não somava nada, porque não havia
+    /// propriedade adicional sorteada nenhuma (relato do set Halo, B60).
+    pub fn empilhar_gerado(&mut self, tid: u32, quantidade: u32, dados: &GameDataManager) -> Option<Empilhado> {
+        let Some(conteudo) = crate::geracao::gerar_equipamento(dados, tid) else {
+            return self.empilhar(tid, quantidade, dados);
+        };
+        let octetos = conteudo.escrever();
+        let mut primeiro = None;
+        for _ in 0..quantidade.max(1) {
+            match self.guardar_equipamento(tid, &octetos, dados) {
+                Some(e) => primeiro = primeiro.or(Some(e)),
+                None => break,
+            }
+        }
+        primeiro
+    }
+
+    pub fn guardar_equipamento(&mut self, tid: u32, octetos: &[u8], dados: &GameDataManager) -> Option<Empilhado> {
+        let s = self.slots.iter().position(|x| x.is_none())?;
+        let (dur, dur_max) = dados
+            .equipamentos
+            .ficha(tid)
+            .and_then(|f| pw_core::ConteudoDeEquipamento::ler(octetos, &f))
+            .map(|c| (c.durabilidade.max(0) as u32, c.durabilidade_maxima.max(0) as u32))
+            .unwrap_or((0, 0));
+        self.slots[s] = Some(ItemRecord {
+            id: None,
+            character_id: self.dono,
+            container_type: self.tipo,
+            slot: s as u16,
+            item_id: tid,
+            count: 1,
+            max_count: 1,
+            refine_level: 0,
+            sockets_count: 0,
+            sockets: vec![],
+            durability: dur,
+            max_durability: dur_max,
+            bind_status: 0,
+            octets: octetos.to_vec(),
+            custom_attributes: serde_json::json!({}),
+        });
+        self.alterados.insert(s);
+        Some(Empilhado { entrou: 1, slot: s, no_slot: 1 })
     }
 
     /// Tira `quantidade` do item, slot a slot na ordem (`TakeAwayCommonItem`,

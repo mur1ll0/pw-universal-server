@@ -16,8 +16,8 @@
 //! # Por que os tamanhos não são os do fonte
 //!
 //! O fonte do 1.5.5 que temos (`EvolvedPWClient` e `EvolvedPWServer`, idênticos aqui) é da
-//! versão **125** (`_task_templ_cur_version = 125`, `TaskTempl.cpp:5`). Os dois realms 1.5.5
-//! (`realm_155BR` e `realm_155`) trazem arquivos da versão **129**. O `ATaskTemplFixedData`
+//! versão **125** (`_task_templ_cur_version = 125`, `TaskTempl.cpp:5`). Os `tasks.data` dos
+//! clientes 1.5.5 BR e EN são da versão **129**. O `ATaskTemplFixedData`
 //! medido com o MSVC x86 contra o `TaskTempl.h` real (macros do `ElementClient.vcxproj`)
 //! tem 1.087 bytes e o `AWARD_DATA`, 269 — e com isso nenhuma missão fechava.
 //!
@@ -38,7 +38,8 @@
 //! depois dos `m_pLeaveSite` — a mesma posição do 1.7.2.
 //!
 //! Resultado: 1.157 bytes de bloco fixo, 290 de prêmio, e **14.885 de 14.885** missões
-//! (`realm_155BR`) e **14.978 de 14.978** (`realm_155`) terminando no deslocamento certo.
+//! (cliente BR, `realm_155`) e **14.978 de 14.978** (cliente EN, medido antes de sair do
+//! projeto em 2026-09-17) terminando no deslocamento certo.
 //!
 //! Outras versões (a 55 do 1.2.6, a 124 do 1.5.3) têm só o cabeçalho lido: o layout delas
 //! não foi medido, e um leitor que adivinha é pior que nenhum.
@@ -155,6 +156,57 @@ impl TaskReward {
     }
 }
 
+/// `Task_Region` (`TaskTempl.h:1891`): uma caixa `zvMin`..`zvMax`, 24 bytes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct RegiaoDeMissao {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+impl RegiaoDeMissao {
+    /// `is_in_zone` (`TaskTempl.h:255-261`): bordas incluídas nos três eixos.
+    pub fn contem(&self, p: [f32; 3]) -> bool {
+        (0..3).all(|i| self.min[i] <= p[i] && self.max[i] >= p[i])
+    }
+}
+
+/// `task_tm` (`TaskTempl.h:1594-1601`): seis `long` de 4 bytes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct MomentoDeMissao {
+    pub ano: i32,
+    pub mes: i32,
+    pub dia: i32,
+    pub hora: i32,
+    pub minuto: i32,
+    /// 1 = segunda … 7 = domingo (`task_week_map`, `TaskTempl.h:1583-1592`).
+    pub dia_da_semana: i32,
+}
+
+/// Uma janela de `m_tmStart[i]`..`m_tmEnd[i]` com o tipo `m_tmType[i]`
+/// (`enumTaskTimeDate`, `Month`, `Week`, `Day`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct JanelaDeHorario {
+    pub tipo: u8,
+    pub inicio: MomentoDeMissao,
+    pub fim: MomentoDeMissao,
+}
+
+/// `TEAM_MEM_WANTED` (`TaskTempl.h:369-379`), 36 bytes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct MembroPedido {
+    pub nivel_minimo: u32,
+    pub nivel_maximo: u32,
+    pub raca: u32,
+    /// `INVALID_VAL` (`0xFFFFFFFF`) = qualquer classe.
+    pub classe: u32,
+    pub genero: u32,
+    pub minimo: u32,
+    pub maximo: u32,
+    /// Missão que o membro recebe no lugar da do capitão (0 = a mesma).
+    pub missao: u32,
+    pub forca: i32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskTemplate {
     pub id: u32,
@@ -258,6 +310,30 @@ pub struct TaskTemplate {
     pub entrega_em_zona: bool,
     /// `m_ulPremise_Faction` — exige facção.
     pub faccao: u32,
+    /// `m_bTransTo`, `m_ulTransWldId`, `m_TransPt` — teleporte ao **receber** a missão.
+    pub teleporte_ao_receber: Option<(u32, [f32; 3])>,
+    /// `m_iPremise_FactionRole` — cargo máximo na facção.
+    pub papel_na_faccao: i32,
+    /// `m_tmStart`/`m_tmEnd`/`m_tmType` — lidos do trecho variável.
+    pub janelas: Vec<JanelaDeHorario>,
+    /// `m_ulDelvWorld` e `m_pDelvRegion`.
+    pub mundo_de_entrega: u32,
+    pub regioes_de_entrega: Vec<RegiaoDeMissao>,
+    /// `m_pReachSite` (o mundo é `mundo_a_alcancar`).
+    pub lugares_a_alcancar: Vec<RegiaoDeMissao>,
+    /// `m_ulLeaveSiteId` e `m_pLeaveSite`.
+    pub mundo_a_sair: u32,
+    pub lugares_a_sair: Vec<RegiaoDeMissao>,
+    /// `m_TeamMemsWanted`.
+    pub membros_pedidos: Vec<MembroPedido>,
+    /// `m_bRcvChckMem` e `m_fRcvMemDist` (já ao quadrado: comparado com a distância ao
+    /// quadrado em `HasAllTeamMemsWanted`, `TaskTempl.inl:182-188`).
+    pub confere_membros: bool,
+    pub distancia_dos_membros: f32,
+    /// `m_bDistinguishedOcc` — sem classe repetida na equipe.
+    pub classes_distintas: bool,
+    /// `m_bCoupleOnly`.
+    pub so_casal: bool,
     /// `m_bPremise_Spouse` — exige casamento.
     pub conjuge: bool,
     /// `m_ulAwardType_S` / `_F` (`enumTAT*`): 0 normal, 1 por unidade, 2 por tempo, 3 por itens.
@@ -350,6 +426,17 @@ mod v129 {
         pub const GM: usize = 572;
         pub const ENTREGA_EM_ZONA: usize = 164;
         pub const FACCAO: usize = 501;
+        pub const PAPEL_NA_FACCAO: usize = 505;
+        pub const TRANS_TO: usize = 204;
+        pub const TRANS_WLD: usize = 205;
+        pub const TRANS_PT: usize = 209;
+        pub const TM_TYPE: usize = 109; // char × 24
+        pub const MUNDO_DE_ENTREGA: usize = 165;
+        pub const MUNDO_A_SAIR: usize = 989;
+        pub const CONFERE_MEMBROS: usize = 691;
+        pub const DISTANCIA_DOS_MEMBROS: usize = 692;
+        pub const SO_CASAL: usize = 702;
+        pub const CLASSES_DISTINTAS: usize = 703;
         pub const CONJUGE: usize = 568;
         pub const RECEBIDA_PELA_EQUIPE: usize = 675;
         pub const COTASK: usize = 621;
@@ -568,6 +655,24 @@ fn escala(l: &mut Leitor, cabecalho_extra: usize) -> Result<()> {
     Ok(())
 }
 
+/// `task_tm`: seis `long` (4 bytes cada no binário de 32 bits).
+fn momento(m: &[u8]) -> MomentoDeMissao {
+    let i = |o: usize| u32_em(m, o) as i32;
+    MomentoDeMissao { ano: i(0), mes: i(4), dia: i(8), hora: i(12), minuto: i(16), dia_da_semana: i(20) }
+}
+
+/// `n` × `Task_Region`.
+fn regioes(l: &mut Leitor, n: u32) -> Result<Vec<RegiaoDeMissao>> {
+    let n = l.contador(n, v129::TASK_REGION)?;
+    let mut v = Vec::with_capacity(n);
+    for _ in 0..n {
+        let r = l.bytes(v129::TASK_REGION)?;
+        let f = |o: usize| f32_em(r, o);
+        v.push(RegiaoDeMissao { min: [f(0), f(4), f(8)], max: [f(12), f(16), f(20)] });
+    }
+    Ok(v)
+}
+
 /// `LoadDescriptionBin` / `LoadTributeBin`: `size_t` de caracteres e o texto.
 fn texto_longo(l: &mut Leitor, id: u32) -> Result<String> {
     let n = l.u32()?;
@@ -602,23 +707,48 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
     if flag(f::TEM_ASSINATURA) {
         l.pular(v129::MAX_TASK_NAME_LEN * v129::TASK_CHAR)?;
     }
+    // `m_tmStart[i]` e `m_tmEnd[i]` alternados (`TaskTempl.cpp:3885-3897`); o tipo de cada
+    // janela está no bloco fixo.
+    let n = l.contador(u32_em(b, f::TIMETABLE), 2 * v129::TASK_TM)?;
+    let mut janelas = Vec::with_capacity(n);
+    for i in 0..n {
+        let inicio = momento(l.bytes(v129::TASK_TM)?);
+        let fim = momento(l.bytes(v129::TASK_TM)?);
+        let tipo = if i < 24 { b[f::TM_TYPE + i] } else { 0 };
+        janelas.push(JanelaDeHorario { tipo, inicio, fim });
+    }
     for (campo, tamanho) in [
-        (f::TIMETABLE, 2 * v129::TASK_TM),
         (f::CHANGE_KEY_CNT, v129::CHANGE_KEY),
         (f::PQ_EXP_CNT, v129::EXPRESSAO),
         (f::MONSTER_CONTRIB_CNT, v129::MONSTERS_CONTRIB),
-        (f::DELV_REGION_CNT, v129::TASK_REGION),
-        (f::ENTER_REGION_CNT, v129::TASK_REGION),
-        (f::LEAVE_REGION_CNT, v129::TASK_REGION),
     ] {
         let n = l.contador(u32_em(b, campo), tamanho)?;
         l.pular(n * tamanho)?;
     }
+    let regioes_de_entrega = regioes(l, u32_em(b, f::DELV_REGION_CNT))?;
+    for campo in [f::ENTER_REGION_CNT, f::LEAVE_REGION_CNT] {
+        let n = l.contador(u32_em(b, campo), v129::TASK_REGION)?;
+        l.pular(n * v129::TASK_REGION)?;
+    }
     let itens_exigidos = itens(l, u32_em(b, f::PREM_ITEMS))?;
     let itens_entregues = itens(l, u32_em(b, f::GIVEN_ITEMS))?;
+    let mut membros_pedidos = Vec::new();
     if flag(f::TEAMWORK) {
         let n = l.contador(u32_em(b, f::TEAM_MEMS_WANTED), v129::TEAM_MEM_WANTED)?;
-        l.pular(n * v129::TEAM_MEM_WANTED)?;
+        for _ in 0..n {
+            let m = l.bytes(v129::TEAM_MEM_WANTED)?;
+            membros_pedidos.push(MembroPedido {
+                nivel_minimo: u32_em(m, 0),
+                nivel_maximo: u32_em(m, 4),
+                raca: u32_em(m, 8),
+                classe: u32_em(m, 12),
+                genero: u32_em(m, 16),
+                minimo: u32_em(m, 20),
+                maximo: u32_em(m, 24),
+                missao: u32_em(m, 28),
+                forca: u32_em(m, 32) as i32,
+            });
+        }
     }
     let titulos = u32_em(b, f::PREM_TITLE_TOTAL) as i32;
     if titulos > 0 {
@@ -647,13 +777,14 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
     for (campo, tamanho) in [
         (f::EXP_CNT, v129::EXPRESSAO),
         (f::TASK_CHAR_CNT, v129::TASK_CHAR * v129::EXP_LEN),
-        (f::REACH_SITE_CNT, v129::TASK_REGION),
-        (f::LEAVE_SITE_CNT, v129::TASK_REGION),
-        (f::HOME_ITEMS_WANTED, v129::HOME_ITEM_WANTED),
     ] {
         let n = l.contador(u32_em(b, campo), tamanho)?;
         l.pular(n * tamanho)?;
     }
+    let lugares_a_alcancar = regioes(l, u32_em(b, f::REACH_SITE_CNT))?;
+    let lugares_a_sair = regioes(l, u32_em(b, f::LEAVE_SITE_CNT))?;
+    let n = l.contador(u32_em(b, f::HOME_ITEMS_WANTED), v129::HOME_ITEM_WANTED)?;
+    l.pular(n * v129::HOME_ITEM_WANTED)?;
 
     let rewards = premio(l)?;
     let premio_de_falha = premio(l)?;
@@ -746,6 +877,21 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         recebida_pela_equipe: flag(f::RECEBIDA_PELA_EQUIPE),
         entrega_em_zona: flag(f::ENTREGA_EM_ZONA),
         faccao: u32_em(b, f::FACCAO),
+        papel_na_faccao: u32_em(b, f::PAPEL_NA_FACCAO) as i32,
+        teleporte_ao_receber: flag(f::TRANS_TO).then(|| {
+            (u32_em(b, f::TRANS_WLD), [f32_em(b, f::TRANS_PT), f32_em(b, f::TRANS_PT + 4), f32_em(b, f::TRANS_PT + 8)])
+        }),
+        janelas,
+        mundo_de_entrega: u32_em(b, f::MUNDO_DE_ENTREGA),
+        regioes_de_entrega,
+        lugares_a_alcancar,
+        mundo_a_sair: u32_em(b, f::MUNDO_A_SAIR),
+        lugares_a_sair,
+        membros_pedidos,
+        confere_membros: flag(f::CONFERE_MEMBROS),
+        distancia_dos_membros: f32_em(b, f::DISTANCIA_DOS_MEMBROS),
+        classes_distintas: flag(f::CLASSES_DISTINTAS),
+        so_casal: flag(f::SO_CASAL),
         conjuge: flag(f::CONJUGE),
         tipo_de_premio_sucesso: u32_em(b, f::TIPO_DE_PREMIO_SUCESSO),
         tipo_de_premio_falha: u32_em(b, f::TIPO_DE_PREMIO_FALHA),
@@ -863,6 +1009,19 @@ impl TaskTemplate {
             recebida_pela_equipe: false,
             entrega_em_zona: false,
             faccao: 0,
+            papel_na_faccao: 0,
+            teleporte_ao_receber: None,
+            janelas: Vec::new(),
+            mundo_de_entrega: 0,
+            regioes_de_entrega: Vec::new(),
+            lugares_a_alcancar: Vec::new(),
+            mundo_a_sair: 0,
+            lugares_a_sair: Vec::new(),
+            membros_pedidos: Vec::new(),
+            confere_membros: false,
+            distancia_dos_membros: 0.0,
+            classes_distintas: false,
+            so_casal: false,
             conjuge: false,
             tipo_de_premio_sucesso: 0,
             tipo_de_premio_falha: 0,

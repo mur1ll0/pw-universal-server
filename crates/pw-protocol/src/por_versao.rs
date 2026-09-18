@@ -235,7 +235,7 @@ impl PorVersao {
         speed: u8,
     ) -> S2CGamedataSend {
         if !e_126(self.versao) {
-            return S2CGamedataSend::host_attacked(atacante, dano, attack_flag);
+            return S2CGamedataSend::host_attacked(atacante, dano, equipamento, attack_flag, speed);
         }
         let mut s = OctetsStream::new();
         s.write_u16_le(26);

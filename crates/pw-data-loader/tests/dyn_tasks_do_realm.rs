@@ -1,9 +1,9 @@
-//! O cabeçalho do `dyn_tasks.data` dos realms 1.5.5, lido como o `UnmarshalDynTasks` do
+//! O cabeçalho do `dyn_tasks.data` do realm 1.5.5, lido como o `UnmarshalDynTasks` do
 //! original lê (`EvolvedPWServer/cgame/gs/task/TaskTemplMan.cpp:1915-1939`).
 //!
 //! Os números abaixo foram conferidos no arquivo: `pack_size` igual ao tamanho do arquivo
 //! (12.979 bytes), `version` igual a `DYN_TASK_CUR_VERSION` (10), marca `0x52776c0d`
-//! (2013-11-04) e 28 missões. Os dois realms 1.5.5 têm o mesmo pacote.
+//! (2013-11-04) e 28 missões.
 
 use pw_data_loader::{CabecalhoDasMissoesDinamicas, GameDataManager};
 use std::path::PathBuf;
@@ -22,8 +22,8 @@ fn pasta(realm: &str) -> Option<PathBuf> {
 }
 
 #[test]
-fn o_cabecalho_dos_dois_realms_155_fecha_com_o_arquivo() {
-    for realm in ["realm_155BR", "realm_155"] {
+fn o_cabecalho_do_realm_155_fecha_com_o_arquivo() {
+    for realm in ["realm_155"] {
         let Some(dir) = pasta(realm) else { continue };
         let dados = std::fs::read(dir.join("dyn_tasks.data")).unwrap();
         let c = CabecalhoDasMissoesDinamicas::ler(&dados)
@@ -37,7 +37,7 @@ fn o_cabecalho_dos_dois_realms_155_fecha_com_o_arquivo() {
 
 #[test]
 fn o_game_data_manager_guarda_a_marca_que_o_mundo_responde() {
-    let Some(dir) = pasta("realm_155BR") else { return };
+    let Some(dir) = pasta("realm_155") else { return };
     let mut dm = GameDataManager::new();
     // Só a raiz interessa aqui; o relatório inteiro é conferido em outros testes.
     let _ = dm.load_from_directory(&dir);
@@ -46,7 +46,7 @@ fn o_game_data_manager_guarda_a_marca_que_o_mundo_responde() {
 
 #[test]
 fn um_byte_a_mais_e_recusado_como_no_original() {
-    let Some(dir) = pasta("realm_155BR") else { return };
+    let Some(dir) = pasta("realm_155") else { return };
     let mut dados = std::fs::read(dir.join("dyn_tasks.data")).unwrap();
     dados.push(0);
     assert!(CabecalhoDasMissoesDinamicas::ler(&dados).is_err());

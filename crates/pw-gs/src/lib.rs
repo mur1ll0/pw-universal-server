@@ -9,6 +9,8 @@ pub mod mapas;
 pub mod missoes;
 pub mod progressao;
 pub mod economia;
+pub mod efeitos;
+pub mod geracao;
 pub mod npc;
 pub mod server;
 pub mod world;

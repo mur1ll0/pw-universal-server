@@ -31,10 +31,11 @@
 //! resto (`specs/elements_155/realm_155*_overrides.json`). O "skip de 19 bytes sem
 //! explicação" antes de `SKILLTOME_SUB_TYPE` era o bloco 1 (`4 + 4 + 7 + 4`); as âncoras
 //! absolutas compensavam o bloco 2. Como as âncoras eram posições de **um** arquivo, o
-//! `elements.data` v156 do `realm_155BR` (outro arquivo) lia só 99 das 231 tabelas.
+//! `elements.data` v156 do realm do cliente BR (outro arquivo) lia só 99 das 231 tabelas.
 //!
-//! Com os dois blocos lidos, o `realm_155BR` (v156, 55.442.775 bytes) e o `realm_155`
-//! (v159, 55.170.911 bytes) fecham **exatamente** no último byte, sem override nenhum —
+//! Com os dois blocos lidos, o v156 do cliente BR (55.442.775 bytes, hoje o `realm_155`) e o
+//! v159 do cliente EN (55.170.911 bytes, fora do projeto desde 2026-09-17) fecharam
+//! **exatamente** no último byte, sem override nenhum —
 //! e cada posição que as âncoras antigas diziam cai no mesmo lugar. Arquivo que não fecha
 //! no último byte é erro ([`GenericElementsError::NaoTerminaNoFim`]), não dado torto.
 //!

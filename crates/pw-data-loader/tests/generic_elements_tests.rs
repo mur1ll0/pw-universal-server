@@ -1,4 +1,6 @@
-//! O leitor genérico contra os `elements.data` reais dos dois realms 1.5.5.
+//! O leitor genérico contra o `elements.data` real do realm 1.5.5 (cliente BR, v156).
+//! O layout v159 (cliente EN) continua no catálogo, mas o arquivo EN saiu do projeto em
+//! 2026-09-17 (B55) e não há mais teste contra ele.
 //!
 //! O leitor já recusa um arquivo que não termine exatamente no último byte, então
 //! "carregou" quer dizer "o layout de cada uma das tabelas está certo". O que estes testes
@@ -7,7 +9,7 @@
 //! História que vale guardar: até 2026-09-12 o leitor não conhecia os dois blocos de `tag`
 //! que o `elementdataman::load_data` do cliente pula (depois de `ARMORRUNE_ESSENCE` e de
 //! `WAR_TANKCALLIN_ESSENCE`), e dez remendos de `skip`/`count`/posição absoluta por arquivo
-//! compensavam. O v156 do `realm_155BR`, que é o que o docker serve, lia só 99 das 231
+//! compensavam. O v156 do realm 1.5.5 (então `realm_155`), que é o que o docker serve, lia só 99 das 231
 //! tabelas por causa disso — incluindo `MINE_ESSENCE` (o que cada recurso dá) e
 //! `PLAYER_ACTION_INFO_CONFIG`.
 
@@ -32,11 +34,11 @@ fn nome(r: &pw_data_loader::generic_elements::Record) -> String {
     r.get("Name").and_then(|v| v.as_text()).unwrap_or_default().to_string()
 }
 
-/// O v156 do `realm_155BR`: as 231 tabelas, com as que antes vinham vazias.
+/// O v156 do `realm_155`: as 231 tabelas, com as que antes vinham vazias.
 #[test]
-fn o_v156_do_155br_le_as_231_tabelas() {
-    let Some(bytes) = ler("realm_155BR") else { return };
-    let d = load_elements_data(&bytes).expect("v156 do 155BR deve fechar no último byte");
+fn o_v156_do_155_le_as_231_tabelas() {
+    let Some(bytes) = ler("realm_155") else { return };
+    let d = load_elements_data(&bytes).expect("v156 do 155 deve fechar no último byte");
 
     assert_eq!(d.version, 156);
     assert_eq!(d.tables.len(), 231);
@@ -69,32 +71,10 @@ fn o_v156_do_155br_le_as_231_tabelas() {
     assert_eq!(nome(&d.get("MINE_TYPE")[0]), "Tronco");
 }
 
-/// O v159 do `realm_155` (cópia do `elements.data` do cliente EN): as 234 tabelas.
-#[test]
-fn o_v159_do_155_le_as_234_tabelas() {
-    let Some(bytes) = ler("realm_155") else { return };
-    let d = load_elements_data(&bytes).expect("v159 do 155 deve fechar no último byte");
-
-    assert_eq!(d.version, 159);
-    assert_eq!(d.tables.len(), 234);
-    assert_eq!(d.tables.values().map(|v| v.len()).sum::<usize>(), 70_067);
-    for (tabela, n) in [
-        ("EQUIPMENT_ADDON", 2992),
-        ("CHARRACTER_CLASS_CONFIG", 12),
-        ("TALK_PROC", 3391),
-        ("PET_TYPE", 6),
-        ("ASTROLABE_APPEARANCE_CONFIG", 1),
-        ("EQUIP_MAKE_HOLE_CONFIG", 1),
-    ] {
-        assert_eq!(d.get(tabela).len(), n, "{tabela}");
-    }
-    assert_eq!(nome(&d.get("SKILLTOME_SUB_TYPE")[0]), "Blade.");
-}
-
 /// Um byte a mais no fim é erro, não uma tabela a mais lida torta.
 #[test]
 fn arquivo_que_nao_fecha_no_ultimo_byte_e_recusado() {
-    let Some(mut bytes) = ler("realm_155BR") else { return };
+    let Some(mut bytes) = ler("realm_155") else { return };
     bytes.push(0);
     let e = load_elements_data(&bytes).unwrap_err().to_string();
     assert!(e.contains("terminaram no offset"), "{e}");

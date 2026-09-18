@@ -1,6 +1,6 @@
 ---
 name: pw-testar-e-publicar
-description: Rodar a suíte de testes do pw-universal-server com o banco, publicar nos contêineres do realm de teste 155BR, ler logs e consultar o banco. Usar antes de dizer que algo funciona, ao publicar para o Murillo testar em jogo, e ao investigar um relato de teste.
+description: Rodar a suíte de testes do pw-universal-server com o banco, publicar nos contêineres do realm de teste 155, ler logs e consultar o banco. Usar antes de dizer que algo funciona, ao publicar para o Murillo testar em jogo, e ao investigar um relato de teste.
 ---
 
 # Testar e publicar
@@ -13,8 +13,9 @@ TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw
 ```
 
 - Sem `TEST_DATABASE_URL` os testes de integração **passam sem verificar nada**.
-- Referência (2026-09-14, B49): **512 passando, 2 falhando** — as duas do 1.2.6 em
-  `pw-data-loader/tests/loader_tests.rs`. Qualquer outra falha é nova.
+- Referência (2026-09-18, B62): **579 testes, todos passando**; os de tempo do
+  `pw-gs/tests/subcomandos_no_mundo.rs` podem falhar sob carga (rodar o arquivo sozinho). As duas antigas do 1.2.6 em
+  `pw-data-loader/tests/loader_tests.rs` foram resolvidas. Qualquer falha é nova.
 - Teste que cria dado no banco começa com `comum::limpar_sobras_de_teste(&pool)`
   (`crates/pw-storage/tests/comum/mod.rs`): apaga sobras de execuções anteriores. Teste novo
   que cria realm ou conta usa esse módulo e os mesmos padrões de nome (`t_*`, e conta com
@@ -27,25 +28,25 @@ TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw
 ## 2. Publicar no realm de teste (só quando o Murillo pediu)
 
 ```bash
-cd docker && docker compose build pw-world-155br pw-realm-155br \
-  && docker compose up -d --remove-orphans pw-world-155br pw-realm-155br
+cd docker && docker compose build pw-world-155 pw-realm-155 \
+  && docker compose up -d --remove-orphans pw-world-155 pw-realm-155
 ```
 
 São dois serviços: o link (29004) e um servidor de mundo com os mapas 1 e 161 (`WORLD_TAGS`). Mudou só dado do realm
-(`data/realm_155BR/config`)? Basta `docker compose restart` dos mundos.
+(`data/realm_155/config`)? Basta `docker compose restart` dos mundos.
 
 Conferir a subida:
 
 ```bash
-docker logs --tail 40 pw-world-155br   # "N monstros, N NPCs e N recursos", terreno carregado
-docker logs --tail 40 pw-realm-155br       # "Gateway pw-link escutando na porta 29004"
+docker logs --tail 40 pw-world-155   # "N monstros, N NPCs e N recursos", terreno carregado
+docker logs --tail 40 pw-realm-155       # "Gateway pw-link escutando na porta 29004"
 ```
 
 ## 3. Ler um teste em jogo
 
 ```bash
-docker logs --since 30m pw-realm-155br 2>&1 | grep -v "Gamedata recebido"
-docker logs --since 30m pw-world-155br 2>&1 | grep -E "mundo:|WARN|ERROR"
+docker logs --since 30m pw-realm-155 2>&1 | grep -v "Gamedata recebido"
+docker logs --since 30m pw-world-155 2>&1 | grep -E "mundo:|WARN|ERROR"
 ```
 
 "subcomando N ainda não tratado" no mundo = comando que o cliente mandou e ninguém trata

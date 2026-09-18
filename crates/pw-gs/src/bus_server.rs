@@ -58,6 +58,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, trace, warn};
 
+mod habilidades;
 mod jogo;
 
 /// Um subcomando do mundo 3D, já com o cabeçalho separado do corpo.
@@ -116,19 +117,23 @@ const SEM_MARCACAO: i32 = 0;
 /// primeira e única etapa.
 const SECAO_UNICA: u8 = 0;
 
-/// O `cEquipment` do `HOST_ATTACKED`, que diz com o que o golpe acertou.
+/// `attack_speed` de um golpe de habilidade.
 ///
-/// A captura do 1.2.6 traz `0x7f` nas 25 ocorrências — todas de monstro batendo em
-/// jogador. A simulação ainda não modela por onde o golpe entrou; `0x7f` é o que aquele
-/// servidor manda, e portanto o que sabemos ser aceito.
-const EQUIPAMENTO_PADRAO: u8 = 0x7f;
-
-/// `attack_speed` de um golpe comum.
-///
-/// A simulação ainda não modela velocidade de ataque por golpe; o `PlayerEntity` tem
-/// `attack_speed` como `f32` de outra escala. Enquanto os dois não se encontrarem, o
-/// valor neutro é este.
+/// O original só preenche `attack_msg.speed` no golpe **normal** (`MakeAttackMsg`,
+/// `actobject.cpp:826`); o golpe de habilidade monta a mensagem no próprio `cskill` e deixa o
+/// campo zerado. Por isso zero aqui não é chute: é o que o original manda.
 const VELOCIDADE_PADRAO: u8 = 0;
+
+/// O `speed` que vai no `HOST_ATTACKRESULT` de um golpe normal: o **atraso do golpe da arma**,
+/// `attack_delay = (int)(attack_speed × 0,8) − 1` em tiques de 50 ms
+/// (`playertemplate.h:980`, mandado em `actobject.cpp:826`). O cliente usa esse número como a
+/// duração da animação do golpe (`PlayAttackEffect(..., attack_speed × 50, …)`,
+/// `EC_HostMsg.cpp:943-955`), e mandar a cadência cheia (30 tiques do arco em vez de 23)
+/// deixava a animação ~350 ms mais lenta que a do original (B58).
+fn atraso_do_golpe(attack_speed_s: f32) -> u8 {
+    let ticks = (attack_speed_s * 20.0).round().clamp(4.0, 300.0);
+    (((ticks * 0.8) as i32) - 1).clamp(1, 255) as u8
+}
 
 /// O `reason` dos comandos de saída de grupo: o jogador pediu para sair.
 ///
@@ -222,6 +227,9 @@ const TETO_DE_MATERIA: usize = 40;
 /// permissão: é o piso de dano de um caso que o cliente já não deveria produzir, e recusar
 /// a conjuração aqui deixaria o cliente preso em estado de feitiço — a checagem de "pode
 /// conjurar" é outra conversa, e não existe ainda.
+/// O marcador de cada conjuração aberta — ver [`crate::entity::Conjuracao`].
+static PROXIMA_CONJURACAO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 fn nivel_da_habilidade(jogador: &PlayerEntity, skill_id: i32) -> i32 {
     let id = if skill_id < 0 { return NIVEL_MINIMO_DA_HABILIDADE } else { skill_id as u32 };
     jogador
@@ -240,7 +248,7 @@ fn e_materia(id: i64) -> bool {
 }
 
 enum QuemChegou {
-    Criatura { id: i32, tid: i32, pos: pw_core::Vector3 },
+    Criatura { id: i32, tid: i32, pos: pw_core::Vector3, dir: u8 },
     Jogador { id: i32, vista: pw_core::VistaDoJogador },
     Materia { id: i32, tid: i32, pos: pw_core::Vector3 },
 }
@@ -272,6 +280,33 @@ pub struct BusServer {
     /// Jogadores atendidos, por `roleid`. É o que permite ao mundo devolver uma
     /// mensagem a um jogador específico sem saber nada sobre conexões.
     sessoes: Arc<RwLock<HashMap<i32, Sessao>>>,
+    /// Para onde mandar o pedido de trocar de mapa — ligado por
+    /// [`crate::mapas::RoteadorDeMapas::ligar_trocas`]. Vazio num mapa avulso.
+    trocas: std::sync::OnceLock<mpsc::UnboundedSender<PedidoDeTroca>>,
+    /// Referência fraca a si mesmo, para tarefas que terminam depois do comando (a coleta).
+    eu: std::sync::OnceLock<std::sync::Weak<BusServer>>,
+    /// Golpe normal que chegou com uma conjuração em curso, esperando a vez: `roleid → alvo`.
+    ///
+    /// No original a habilidade é a **sessão corrente** enquanto roda, e o `NORMAL_ATTACK`
+    /// que chega só entra na fila (`AddSession` devolve `false`, `actobject.cpp:1180-1212`);
+    /// ele começa quando a habilidade termina (`SafeDeleteCurSession` → `StartSession`), e aí
+    /// o `CheckAttack` recusa alvo morto. Sem esta fila os dois danos caíam no mesmo instante
+    /// (B57).
+    golpe_na_fila: Arc<RwLock<HashMap<i32, i64>>>,
+}
+
+/// Um jogador que tem de passar para outro mapa do mesmo processo.
+#[derive(Debug, Clone, Copy)]
+pub struct PedidoDeTroca {
+    pub roleid: i32,
+    pub mundo: i32,
+    pub pos: Vector3,
+}
+
+/// O que sai de um mapa e entra no outro na troca.
+pub struct JogadorEmTroca {
+    sessao: Sessao,
+    jogador: PlayerEntity,
 }
 
 impl BusServer {
@@ -281,7 +316,87 @@ impl BusServer {
             world,
             sub: PorVersao::new(versao),
             sessoes: Arc::new(RwLock::new(HashMap::new())),
+            trocas: std::sync::OnceLock::new(),
+            eu: std::sync::OnceLock::new(),
+            golpe_na_fila: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Este servidor como `Arc`, se ele já foi ligado ([`Self::ligar_eventos_do_mundo`]).
+    pub(crate) fn clone_arc(&self) -> Option<Arc<BusServer>> {
+        self.eu.get().and_then(|w| w.upgrade())
+    }
+
+    /// Liga este mapa ao roteador que executa as trocas de mapa.
+    pub fn ligar_trocas(&self, envio: mpsc::UnboundedSender<PedidoDeTroca>) {
+        let _ = self.trocas.set(envio);
+    }
+
+    /// `gplayer_imp::LongJump` (`player.cpp:8617-8680`): no mesmo mapa, `notify_pos` e
+    /// reposiciona; noutro, `PlaneSwitch` — aqui, o pedido ao roteador.
+    pub(crate) async fn transportar(&self, roleid: i32, mundo: i32, pos: Vector3) {
+        let este = self.world.read().await.world_id;
+        if mundo != este {
+            match self.trocas.get() {
+                Some(t) if t.send(PedidoDeTroca { roleid, mundo, pos }).is_ok() => {
+                    info!("mundo: {roleid} vai do mapa {este} para o {mundo} em {pos:?}");
+                }
+                _ => warn!("mundo: {roleid} devia ir para o mapa {mundo}, que este processo não serve"),
+            }
+            return;
+        }
+        let Some(envio) = self.sessoes.read().await.get(&roleid).map(|s| s.envio.clone()) else {
+            return;
+        };
+        {
+            let mut mundo_ = self.world.write().await;
+            let Some(j) = mundo_.players.get_mut(&(roleid as i64)) else { return };
+            j.position = pos;
+            mundo_.grid.update_position(roleid as i64, pos);
+        }
+        info!("mundo: {roleid} teleportado para {pos:?} no mapa {este}");
+        self.enviar_ao_jogador(roleid, S2CGamedataSend::notify_hostpos(pos, este, 0).data).await;
+        self.transmitir_a_outros(roleid, self.sub.object_stop_move(roleid, pos, 0, 0, MODO_DE_MOVIMENTO_ANDANDO).data).await;
+        self.atualizar_visiveis(roleid, &envio, true).await;
+    }
+
+    /// Tira o jogador deste mapa para outro: some da vista de todos, larga sessão e entidade.
+    pub(crate) async fn retirar_para_troca(&self, roleid: i32) -> Option<JogadorEmTroca> {
+        self.tirar_da_vista_de_todos(roleid as i64).await;
+        let sessao = self.sessoes.write().await.remove(&roleid)?;
+        let jogador = self.world.write().await.remove_player(roleid)?;
+        Some(JogadorEmTroca { sessao, jogador })
+    }
+
+    /// A outra metade da troca: o que o `gs` original faz ao receber um jogador de fora
+    /// (`global_message.cpp:111-117`) — `notify_pos` com o mapa novo, e o mundo em volta.
+    /// Grava mapa e posição na hora, para que um relogar caia aqui.
+    pub(crate) async fn receber_de_outro_mapa(&self, roleid: i32, vindo: JogadorEmTroca, pos: Vector3) {
+        let JogadorEmTroca { sessao, mut jogador } = vindo;
+        let (este, repo, chao) = {
+            let m = self.world.read().await;
+            (m.world_id, m.char_repo.clone(), m.terreno.altura_em(pos.x, pos.z))
+        };
+        let mut pos = pos;
+        // `if (pos.y < height) pos.y = height` (`global_message.cpp:100-101`).
+        if let Some(c) = chao {
+            pos.y = pos.y.max(c);
+        }
+        jogador.position = pos;
+        jogador.centro_do_stream = pos;
+        jogador.visiveis.clear();
+        jogador.target_id = None;
+        let envio = sessao.envio.clone();
+        // Grava antes de o jogador existir no mapa novo: ninguém vê o estado novo sem o banco.
+        let g = (jogador.level, jogador.cultivation, jogador.exp, jogador.sp, jogador.hp, jogador.mp, jogador.money);
+        if let Err(e) = repo.save_status(roleid, g.0, g.1, g.2, g.3, g.4, g.5, g.6, este, &pos).await {
+            warn!("mundo: não consegui gravar {roleid} no mapa {este}: {e}");
+        }
+        self.sessoes.write().await.insert(roleid, sessao);
+        self.enviar_ao_jogador(roleid, S2CGamedataSend::notify_hostpos(pos, este, 0).data).await;
+        self.world.write().await.add_player(jogador);
+        info!("mundo: {roleid} chegou ao mapa {este} em {pos:?}");
+        self.atualizar_visiveis(roleid, &envio, true).await;
     }
 
     /// O mundo que este servidor atende.
@@ -300,6 +415,7 @@ impl BusServer {
     /// morrendo — fica dentro do processo e o cliente nunca sabe. Era literalmente o
     /// estado anterior: o HP caía em silêncio até o jogador morrer sem aviso.
     pub async fn ligar_eventos_do_mundo(self: &Arc<Self>) {
+        let _ = self.eu.set(Arc::downgrade(self));
         let (envio, mut fila) = mpsc::channel::<EventoDoMundo>(1024);
         self.world.write().await.definir_canal_de_eventos(envio);
 
@@ -325,15 +441,32 @@ impl BusServer {
                 max_hp,
             } => {
                 // Dois avisos: o golpe em si, e a vida que sobrou.
+                //
+                // O `speed` é o `_damage_delay` do monstro (`npc.cpp:2118`), em tiques de
+                // 50 ms: o cliente o usa como duração da animação do golpe
+                // (`CECNPC::OnMsgAttackHostResult`, `EC_NPC.cpp:2043-2064`). Ia zero (B60).
+                let atraso = self
+                    .world
+                    .read()
+                    .await
+                    .monsters
+                    .get(&atacante)
+                    .map(|(m, _)| m.atraso_do_dano_em_ticks.clamp(0, 255) as u8)
+                    .unwrap_or(0);
+                // Levar dano desgasta uma peça sorteada, e é o índice dela que vai no
+                // comando (`gplayer_imp::OnDamage` → `be_damaged(..., index, ...)`,
+                // `player.cpp:9552-9570`). Sem peça no slot sorteado vai `0x7f`, e o cliente
+                // não desgasta nada (`EC_HostMsg.cpp:974-981`).
+                let peca = self.desgastar_peca(roleid).await;
                 self.enviar_ao_jogador(
                     roleid,
                     self.sub
                         .host_attacked(
                             atacante as i32,
                             dano,
-                            EQUIPAMENTO_PADRAO,
+                            peca,
                             SEM_MARCACAO,
-                            VELOCIDADE_PADRAO,
+                            atraso,
                         )
                         .data,
                 )
@@ -358,8 +491,7 @@ impl BusServer {
                     .sub
                     .object_move(id as i32, destino, tempo_ms, speed, modo)
                     .data;
-                // Ninguém a excluir: o monstro não é jogador.
-                self.transmitir_a_outros(0, pacote).await;
+                self.transmitir_a_quem_ve(id, pacote).await;
             }
 
             EventoDoMundo::MonstroParou {
@@ -374,7 +506,7 @@ impl BusServer {
                     .sub
                     .object_stop_move(id as i32, posicao, speed, direcao, modo)
                     .data;
-                self.transmitir_a_outros(0, pacote).await;
+                self.transmitir_a_quem_ve(id, pacote).await;
             }
 
             EventoDoMundo::JogadorMorreu {
@@ -382,6 +514,9 @@ impl BusServer {
                 matador,
                 pos,
             } => {
+                // Morrer cancela golpe e conjuração (`world.rs`), e com eles o golpe que
+                // esperava a vez (B57).
+                self.golpe_na_fila.write().await.remove(&roleid);
                 self.enviar_ao_jogador(
                     roleid,
                     S2CGamedataSend::host_died(matador as i32, pos).data,
@@ -407,16 +542,48 @@ impl BusServer {
 
             EventoDoMundo::EstadoMudou { roleid } => self.avisar_vida_propria(roleid).await,
 
+            EventoDoMundo::VidaDoMonstro { id, hp, max_hp, alvo, para } => {
+                let pacote = self.sub.npc_info_00(id as i32, hp, max_hp, alvo).data;
+                for roleid in para {
+                    self.enviar_ao_jogador(roleid, pacote.clone()).await;
+                }
+            }
+
             EventoDoMundo::MonstroSumiu { id } | EventoDoMundo::DropSumiu { id } => {
                 self.transmitir_a_outros(0, S2CGamedataSend::object_disappear(id as i32).data).await;
             }
 
-            EventoDoMundo::MonstroRenasceu { id } => {
-                // Quem está perto volta a ver o monstro sem precisar andar: o streaming só
-                // recalcula depois de 20 m (`PASSO_PARA_RECALCULAR`).
+            EventoDoMundo::EfeitosMudaram { objeto, atributos } => self.avisar_efeitos(objeto, atributos).await,
+            EventoDoMundo::MonstroMorreu { id, matador } => self.anunciar_morte_do_monstro(id, matador).await,
+
+            EventoDoMundo::GolpeDoJogador { roleid } => {
+                let envio = self.sessoes.read().await.get(&roleid).map(|s| s.envio.clone());
+                if let Some(envio) = envio {
+                    // Com um golpe na fila, a sessão atual termina e a da fila começa
+                    // (`EndCurSession` + `StartSession`, `actobject.cpp:185-189`).
+                    let sessao = self.world.read().await.players.get(&(roleid as i64)).and_then(|p| p.ataque);
+                    match sessao {
+                        Some(s) if s.proximo.is_some() || s.cancelar || s.andar => {
+                            self.encerrar_ataque(roleid, 0).await;
+                            if let Some(alvo) = s.proximo {
+                                self.abrir_sessao_de_golpe(roleid, alvo, &envio).await;
+                                if s.andar {
+                                    if let Some(n) = self.world.write().await.players.get_mut(&(roleid as i64)).and_then(|p| p.ataque.as_mut()) {
+                                        n.andar = true;
+                                    }
+                                }
+                            }
+                        }
+                        Some(_) => self.golpear(roleid, &envio).await,
+                        None => {}
+                    }
+                }
+            }
+
+            EventoDoMundo::MinaRenasceu { id } => {
                 let (perto, pacote) = {
                     let mut mundo = self.world.write().await;
-                    let Some((m, _)) = mundo.monsters.get(&id) else { return };
+                    let Some(m) = mundo.matters.get(&id) else { return };
                     let (pos, tid) = (m.position, m.template_id);
                     let ids: Vec<i64> = mundo
                         .players
@@ -429,7 +596,32 @@ impl BusServer {
                             p.visiveis.insert(id);
                         }
                     }
-                    (ids, self.sub.npc_enter_slice(id as i32, tid as i32, pos, 0).data)
+                    (ids, S2CGamedataSend::matter_enter_world(id as i32, tid as i32, pos).data)
+                };
+                for pid in perto {
+                    self.enviar_ao_jogador(pid as i32, pacote.clone()).await;
+                }
+            }
+
+            EventoDoMundo::MonstroRenasceu { id } => {
+                // Quem está perto volta a ver o monstro sem precisar andar: o streaming só
+                // recalcula depois de 20 m (`PASSO_PARA_RECALCULAR`).
+                let (perto, pacote) = {
+                    let mut mundo = self.world.write().await;
+                    let Some((m, ia)) = mundo.monsters.get(&id) else { return };
+                    let (pos, tid, dir) = (m.position, m.template_id, ia.direcao);
+                    let ids: Vec<i64> = mundo
+                        .players
+                        .iter()
+                        .filter(|(_, p)| p.position.distance(&pos) <= RAIO_DE_VISAO)
+                        .map(|(pid, _)| *pid)
+                        .collect();
+                    for pid in &ids {
+                        if let Some(p) = mundo.players.get_mut(pid) {
+                            p.visiveis.insert(id);
+                        }
+                    }
+                    (ids, self.sub.npc_enter_slice(id as i32, tid as i32, pos, dir).data)
                 };
                 for pid in perto {
                     self.enviar_ao_jogador(pid as i32, pacote.clone()).await;
@@ -722,6 +914,7 @@ impl BusServer {
             jogador.def_phys, jogador.attack_rate, jogador.armor
         );
         self.world.write().await.add_player(jogador);
+        self.recalcular_equipamento(roleid, false).await;
 
         // A carga inicial do mundo em volta. Quem manda os NPCs é o mundo, não o link:
         // ele tem a grade espacial, sabe quais monstros estão vivos, e é ele que vai
@@ -740,11 +933,17 @@ impl BusServer {
     /// que tiraria do ar todos os jogadores daquele link por causa de um comando só.
     async fn tratar_subcomando(&self, roleid: i32, cmd: SubComando, envio: &EnvioAoCliente) {
         match cmd.id {
-            ids::PLAYER_MOVE => self.mover(roleid, &cmd.payload, envio).await,
+            ids::PLAYER_MOVE => {
+                self.andar_na_fila(roleid).await;
+                self.mover(roleid, &cmd.payload, envio).await
+            }
             ids::LOGOUT => self.sair(roleid, &cmd.payload, envio).await,
             ids::SELECT_TARGET => self.selecionar_alvo(roleid, &cmd.payload, envio).await,
             ids::UNSELECT => self.desmarcar(roleid, envio).await,
-            ids::STOP_MOVE => self.parar(roleid, &cmd.payload, envio).await,
+            ids::STOP_MOVE => {
+                self.andar_na_fila(roleid).await;
+                self.parar(roleid, &cmd.payload, envio).await
+            }
             ids::NORMAL_ATTACK => self.atacar(roleid, &cmd.payload, envio).await,
             ids::REVIVE_VILLAGE => self.reviver(roleid).await,
             ids::GET_ITEM_INFO => self.info_do_item(roleid, &cmd.payload, envio).await,
@@ -757,7 +956,21 @@ impl BusServer {
             ids::EQUIP_ITEM => self.equipar(roleid, &cmd.payload, envio).await,
             ids::MOVE_ITEM_TO_EQUIP => self.mover_para_equipar(roleid, &cmd.payload, envio).await,
             ids::SIT_DOWN => self.postura(roleid, true, envio).await,
-            ids::STAND_UP | ids::CANCEL_ACTION => self.postura(roleid, false, envio).await,
+            ids::STAND_UP => self.postura(roleid, false, envio).await,
+            ids::CANCEL_ACTION => {
+                // `CANCEL_ACTION` (`playercmd.cpp:2136-2153`) põe `session_cancel_action` na
+                // fila — que tira o golpe que estava na fila (máscara exclusiva) — e tenta
+                // `TerminateSession(false)`, que a sessão de golpe recusa
+                // (`actsession.h:109-115`). A sessão termina no **próximo golpe**, quando
+                // `HasNextSession` a encerra (`actobject.cpp:180-189`). B53 deixava o
+                // cancelamento sem efeito: Esc não parava o ataque (teste de 2026-09-17).
+                if let Some(s) = self.world.write().await.players.get_mut(&(roleid as i64)).and_then(|p| p.ataque.as_mut()) {
+                    s.proximo = None;
+                    s.andar = false;
+                    s.cancelar = true;
+                }
+                self.postura(roleid, false, envio).await
+            }
             ids::EMOTE_ACTION => self.emote(roleid, &cmd.payload, envio).await,
             ids::SEVNPC_SERVE => self.servico_de_npc(roleid, &cmd.payload, envio).await,
             ids::SEVNPC_HELLO => self.dizer_ola_ao_npc(roleid, &cmd.payload, envio).await,
@@ -779,12 +992,20 @@ impl BusServer {
                     .await;
             }
             ids::GET_EXT_PROP => self.estado_proprio(roleid, envio).await,
+            ids::SET_STATUS_POINT => self.distribuir_pontos(roleid, &cmd.payload).await,
+            ids::CONTINUE_ACTION => self.soltar_carga(roleid, envio).await,
+            ids::GATHER_MATERIAL => self.coletar(roleid, &cmd.payload).await,
             ids::QUERY_CASH_INFO => self.saldo(roleid, envio).await,
             ids::GET_ALL_DATA => self.todos_os_dados(roleid, &cmd.payload, envio).await,
             ids::QUERY_PLAYER_INFO_1 => self.consultar_jogadores(roleid, &cmd.payload, envio).await,
             ids::QUERY_NPC_INFO_1 => self.consultar_npcs(roleid, &cmd.payload, envio).await,
             ids::GET_OTHER_EQUIP => self.equipamento_de_outro(roleid, &cmd.payload, envio).await,
             ids::CALC_NETWORK_DELAY => self.medir_latencia(roleid, &cmd.payload, envio).await,
+            ids::QUERY_TITLE => {
+                // Sem título nenhum no banco ainda: a lista vai vazia, que é o que destrava o
+                // sistema de missões do cliente (ver [`ids::QUERY_TITLE`], B60).
+                self.responder(roleid, S2CGamedataSend::query_title_re(roleid, &[], &[]).data, envio).await;
+            }
             outro => {
                 debug!("mundo: subcomando {outro} de {roleid} ainda não tratado aqui");
             }
@@ -829,6 +1050,7 @@ impl BusServer {
         }
 
         let pos = Vector3::new(m.cur_pos.x, m.cur_pos.y, m.cur_pos.z);
+        self.interromper_coleta(roleid).await;
         if !self.world.write().await.mover_jogador(roleid, pos) {
             trace!("mundo: movimento de {roleid}, que ainda não tem entidade neste mundo");
         }
@@ -851,6 +1073,8 @@ impl BusServer {
     /// pacote que o cliente espera. É a mesma divisão do servidor original, e é o que
     /// mantém o formato do cliente fora daqui.
     async fn sair(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
+        // Golpe que esperava o fim de uma conjuração não sobrevive à saída (B57).
+        self.golpe_na_fila.write().await.remove(&roleid);
         let tipo = Logout::ler(payload)
             .map(|l| l.tipo())
             .unwrap_or(TipoDeSaida::SairDoJogo);
@@ -963,6 +1187,9 @@ impl BusServer {
                         .data
                     })
             });
+        // Quem seleciona recebe a vida agora (`query_info00`, `actobject.cpp:1610`); o
+        // batimento só repete quando ela mudar.
+        mundo.vida_ja_informada(sel.id as i64);
         drop(mundo);
 
         self.responder(roleid, S2CGamedataSend::select_target(sel.id).data, envio)
@@ -1024,6 +1251,16 @@ impl BusServer {
     /// Aqui o dano sai do `CombatEngine` com os atributos dos dois lados, o HP é
     /// debitado de verdade, o monstro morre quando chega a zero, e o abate só é
     /// notificado **quando ele morre** — com o `template_id` real da criatura.
+    ///
+    /// # A sessão de golpe (B52)
+    ///
+    /// O comando **não** dá um golpe: abre `session_normal_attack` (`playercmd.cpp:1319-1344`,
+    /// `actsession.cpp:350-418`). Com uma sessão aberta, outro `NORMAL_ATTACK` só entra na
+    /// fila e não golpeia (`AddSession` devolve `false`, `actobject.cpp:1180-1213`) — era o
+    /// "cada clique é um golpe". A sessão confere alvo e alcance (`CheckAttack`,
+    /// `actobject.cpp:1220-1252`: distância ≤ `attack_range` + corpo do alvo), manda
+    /// `HOST_START_ATTACK` (84), golpeia na hora e repete a cada `attack_speed`; quando o
+    /// alvo morre ou sai do alcance, `HOST_STOPATTACK` (23).
     async fn atacar(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
         // O `force_attack` ainda não muda nada; ler é o que garante que o pacote é o que
         // dizemos que é.
@@ -1031,28 +1268,135 @@ impl BusServer {
             warn!("mundo: normal_attack de {roleid} com payload ilegível");
         }
 
-        let mut mundo = self.world.write().await;
+        enum Destino {
+            Abrir(i64),
+            /// Conjurando: o golpe espera a habilidade acabar (B57).
+            Fila(i64),
+            Nada,
+        }
+        let destino = {
+            let mut mundo = self.world.write().await;
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            // O alvo vem do `SELECT_TARGET` anterior, não do pacote — ver [`NormalAttack`].
+            let Some(alvo) = p.target_id else {
+                trace!("mundo: {roleid} atacou sem alvo selecionado");
+                return;
+            };
+            if p.conjuracao.is_some() {
+                Destino::Fila(alvo)
+            } else if let Some(s) = p.ataque.as_mut() {
+                trace!("mundo: {roleid} já está golpeando — o NORMAL_ATTACK entra na fila");
+                // O golpe novo tira da fila o golpe anterior; cancelar e andar que vieram antes
+                // dele são consumidos antes de ele abrir.
+                s.proximo = Some(alvo);
+                s.cancelar = false;
+                s.andar = false;
+                Destino::Nada
+            } else {
+                Destino::Abrir(alvo)
+            }
+        };
+        match destino {
+            Destino::Abrir(alvo) => self.abrir_sessao_de_golpe(roleid, alvo, envio).await,
+            Destino::Fila(alvo) => {
+                trace!("mundo: {roleid} conjura — o NORMAL_ATTACK entra na fila");
+                self.golpe_na_fila.write().await.insert(roleid, alvo);
+            }
+            Destino::Nada => {}
+        }
+    }
 
-        // O alvo vem do `SELECT_TARGET` anterior, não do pacote — ver [`NormalAttack`].
-        let Some(alvo) = mundo
+    /// `session_normal_attack::StartSession` (`actsession.cpp:350-378`).
+    async fn abrir_sessao_de_golpe(&self, roleid: i32, alvo: i64, envio: &EnvioAoCliente) {
+        let inicio = {
+            let mut mundo = self.world.write().await;
+            let Some(p) = mundo.players.get(&(roleid as i64)) else { return };
+            if let Err(motivo) = pode_golpear(&mundo, roleid, alvo) {
+                debug!("mundo: {roleid} não pode golpear {alvo} (motivo {motivo})");
+                return;
+            }
+            let ticks = ((p.attack_speed * 20.0).round() as u32).clamp(4, 300);
+            if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
+                p.ataque = Some(crate::entity::SessaoDeAtaque { alvo, falta_ms: ticks * 50, proximo: None, cancelar: false, andar: false });
+            }
+            (alvo, ticks)
+        };
+        let municao = self
+            .itens()
+            .await
+            .get_item_by_slot(roleid, ContainerType::Equipment, 11)
+            .await
+            .ok()
+            .flatten()
+            .map(|i| i.count.min(u16::MAX as u32) as u16)
+            .unwrap_or(0);
+        self.responder(roleid, S2CGamedataSend::host_start_attack(inicio.0 as i32, municao, inicio.1 as u8).data, envio)
+            .await;
+        self.golpear(roleid, envio).await;
+    }
+
+    /// `cmd_user_move`/`cmd_user_stop_move` põem `session_move` na fila
+    /// (`playercmd.cpp:9297-9303`): com golpe em andamento, ele termina no próximo golpe.
+    async fn andar_na_fila(&self, roleid: i32) {
+        if let Some(s) = self.world.write().await.players.get_mut(&(roleid as i64)).and_then(|p| p.ataque.as_mut()) {
+            s.andar = true;
+        }
+    }
+
+    /// Encerra a sessão de golpe de quem batia num alvo que morreu. O original pega isso no
+    /// golpe seguinte (`CheckAttack` com o alvo morto); aqui é na hora, porque o próximo
+    /// golpe pode achar o monstro já renascido com o mesmo id.
+    pub(crate) async fn encerrar_ataques_ao_alvo(&self, alvo: i64) {
+        let quem: Vec<i32> = self
+            .world
+            .read()
+            .await
             .players
-            .get(&(roleid as i64))
-            .and_then(|p| p.target_id)
-        else {
-            trace!("mundo: {roleid} atacou sem alvo selecionado");
+            .values()
+            .filter(|p| p.ataque.is_some_and(|s| s.alvo == alvo))
+            .map(|p| p.role_id)
+            .collect();
+        for roleid in quem {
+            self.encerrar_ataque(roleid, 2).await;
+        }
+    }
+
+    /// Encerra a sessão de golpe e avisa o cliente (`EndSession` → `stop_attack`).
+    pub(crate) async fn encerrar_ataque(&self, roleid: i32, motivo: i32) {
+        let tinha = self
+            .world
+            .write()
+            .await
+            .players
+            .get_mut(&(roleid as i64))
+            .and_then(|p| p.ataque.take())
+            .is_some();
+        if tinha {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::host_stop_attack(motivo).data).await;
+        }
+    }
+
+    /// Um golpe da sessão (`DoAttack`), depois de `CheckAttack`.
+    async fn golpear(&self, roleid: i32, envio: &EnvioAoCliente) {
+        let mut mundo = self.world.write().await;
+        let Some(alvo) = mundo.players.get(&(roleid as i64)).and_then(|p| p.ataque).map(|s| s.alvo) else {
             return;
         };
-
+        if let Err(motivo) = pode_golpear(&mundo, roleid, alvo) {
+            drop(mundo);
+            self.encerrar_ataque(roleid, motivo).await;
+            return;
+        }
         let Some(atacante) = mundo.players.get(&(roleid as i64)).cloned() else {
             return;
         };
-        let Some((monstro, _)) = mundo.monsters.get(&alvo) else {
-            debug!("mundo: {roleid} atacou {alvo}, que não é um monstro deste mundo");
-            return;
-        };
-        if monstro.is_dead {
+        if atacante.efeitos.sem_acao() {
             return;
         }
+        let Some((monstro, _)) = mundo.monsters.get(&alvo) else {
+            return;
+        };
+        let velocidade = atraso_do_golpe(atacante.attack_speed);
 
         // A distância entra no cálculo (atenuação por perto/longe do original); o alvo já
         // foi validado como selecionado, então usar a distância real é o certo.
@@ -1060,38 +1404,31 @@ impl BusServer {
         let resultado = CombatEngine::jogador_ataca_monstro(&atacante, monstro, distancia);
         let (dano, critico) = (resultado.dano() as i64, resultado.foi_critico());
 
-        // Aplica e lê o resultado numa única tomada do lock, para que dois golpes
-        // simultâneos não leiam o mesmo HP e matem o monstro duas vezes.
-        let (hp, max_hp, morreu, template, exp, sp) = {
-            let (m, ai) = mundo.monsters.get_mut(&alvo).expect("conferido acima");
-
-            // Bater gera ameaça, e ameaça é o que faz o monstro revidar.
-            //
-            // Nada em produção alimentava esta tabela — só um teste de unidade. Ou seja,
-            // o `MonsterAi` inteiro e o `calculate_monster_to_player_damage` eram código
-            // morto: os monstros levavam dano e nunca reagiam. Esta linha é o que liga a
-            // outra metade do combate.
+        // A ameaça é do **golpe**, não do dano: o original registra em `OnAttacked`, que
+        // roda junto com o aviso ao cliente, e só a perda de vida é adiada.
+        //
+        // Nada em produção alimentava esta tabela — só um teste de unidade. Ou seja, o
+        // `MonsterAi` inteiro e o `calculate_monster_to_player_damage` eram código morto:
+        // os monstros levavam dano e nunca reagiam. Esta linha é o que liga a outra metade
+        // do combate.
+        if let Some((_, ai)) = mundo.monsters.get_mut(&alvo) {
             ai.add_threat(roleid as i64, dano);
-
-            let real = dano.min(m.hp);
-            m.hp = (m.hp - dano).max(0);
-            m.registrar_dano(roleid as i64, real);
-            let morreu = m.hp == 0;
-            if morreu {
-                m.is_dead = true;
-            }
-            (m.hp, m.max_hp, morreu, m.template_id, m.exp, m.sp)
-        };
-
-        if morreu {
-            mundo.grid.remove_entity(alvo);
         }
         // Atacar põe em combate por 15 s (`DoAttack`, `player.cpp:3062`).
         if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
             p.combate_s = crate::progressao::COMBATE_AO_ATACAR_S;
         }
+        // A vida só cai depois da animação: `InsertDamageEntry(dano, attack.speed)`
+        // (`actobject.cpp:1758-1776`) adia o `GM_MSG_HURT` em `attack_delay` tiques de 50 ms
+        // — o mesmo número que vai no comando abaixo. Aplicar na hora fazia o monstro perder
+        // vida no clique, antes de a flecha sair, e parecia um golpe a mais (B62).
+        mundo.adiar_dano(alvo, roleid as i64, dano, velocidade as u32 * 50, false);
         drop(mundo);
-        let _ = (template, exp, sp);
+        debug!("mundo: golpe normal de {roleid} em {alvo}: dano {dano} (vida cai em {} ms)", velocidade as u32 * 50);
+        self.gastar_municao(roleid).await;
+        // A arma se gasta no golpe normal, não na habilidade (`DoWeaponOperation<0>` está em
+        // `FillAttackMsg` e não em `FillEnchantMsg`, `player.cpp:3133` e `:3174`).
+        self.gastar_arma(roleid).await;
 
         // 1. O resultado do golpe.
         //
@@ -1105,39 +1442,20 @@ impl BusServer {
                 alvo as i32,
                 saturar(dano),
                 SEM_MARCACAO,
-                VELOCIDADE_PADRAO,
+                velocidade,
             )
             .data,
             envio,
         )
         .await;
 
-        // 2. A barra de vida do alvo, com o HP que sobrou de verdade.
-        let alvo_do_alvo = self
-            .world
-            .read()
-            .await
-            .dados_do_monstro(alvo)
-            .map(|(_, _, a)| a)
-            .unwrap_or(0);
-        self.responder(
-            roleid,
-            self.sub.npc_info_00(alvo as i32, saturar(hp), saturar(max_hp), alvo_do_alvo)
-                .data,
-            envio,
-        )
-        .await;
-
-        if !morreu {
-            return;
-        }
-
-        info!("mundo: {roleid} matou {alvo} (template {template})");
-
-        let morte = S2CGamedataSend::npc_died(alvo as i32, roleid).data;
-        self.responder(roleid, morte.clone(), envio).await;
-        self.transmitir_a_outros(roleid, morte).await;
-        self.monstro_morreu(alvo).await;
+        // 2. A barra de vida do alvo **não** vai aqui: o original a manda no heartbeat de
+        // 1 s a quem tem o monstro selecionado (`RefreshSubscibeList`,
+        // `actobject.cpp:1346-1353`) — ver [`EventoDoMundo::VidaDoMonstro`]. Mandada junto
+        // do golpe, a barra caía no clique, antes de a flecha sair (B56).
+        //
+        // 3. E a morte também não: quem a resolve é o tique, quando o dano adiado vence
+        // (`EventoDoMundo::MonstroMorreu`).
     }
 
     /// `C2S::REVIVE_VILLAGE` (4) — o jogador pediu para renascer na cidade.
@@ -1329,6 +1647,15 @@ impl BusServer {
             return;
         }
 
+        // Carta da Sorte (`TASKDICE_ESSENCE`): entrega uma missão e se gasta.
+        if ct == ContainerType::Inventory {
+            let carta = self.world.read().await.data_manager.cartas.get(&(u.item_id as u32)).cloned();
+            if let Some(carta) = carta {
+                self.usar_carta_de_missao(roleid, &u, &carta, envio).await;
+                return;
+            }
+        }
+
         // **Só consumível é consumido.**
         //
         // Este tratamento obedecia ao cliente em tudo: o container e o slot vinham do
@@ -1452,6 +1779,13 @@ impl BusServer {
         };
 
         let mundo = self.world.write().await;
+        // `MODE_INDEX_SILENT`/`STUN`/`SLEEP` (`filter_Sealed`, `filter_Dizzy`, `filter_Sleep`).
+        if mundo.players.get(&(roleid as i64)).is_some_and(|p| p.efeitos.selado()) {
+            drop(mundo);
+            debug!("mundo: {roleid} conjurou {} selado/atordoado — recusado", c.skill_id);
+            self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio).await;
+            return;
+        }
         let alvo = c
             .alvos
             .first()
@@ -1470,6 +1804,16 @@ impl BusServer {
         // o `time` que mandamos (`EC_HostMsg.cpp:6000-6055`); quem está por perto vê a
         // animação pelo gerente dos outros jogadores.
         drop(mundo);
+        // Conjurar encerra o golpe normal em andamento.
+        self.encerrar_ataque(roleid, 0).await;
+        // `CheckTarget(1.0 + GetPraydistance)` (`skill.cpp:153-157`,
+        // `playerwrapper.cpp:1751-1778`): distância < corpo + 1 + alcance da habilidade +
+        // corpo do alvo. Para o Arqueiro o alcance é o da arma (`GetRange()`).
+        if let Some(longe) = self.alvo_longe_demais(roleid, c.skill_id, alvo).await {
+            debug!("mundo: {roleid} conjurou {} a {longe:.1} m do alvo — fora do alcance", c.skill_id);
+            self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio).await;
+            return;
+        }
         // O tempo de conjuração é o da **habilidade**, não um número fixo. Ver
         // `Habilidade::conjuracao_ms`: vai de 67 ms a 3.000 ms, e mandar 1.000 para todas
         // fazia a cura do Sacerdote sair três vezes mais rápida do que devia.
@@ -1522,13 +1866,108 @@ impl BusServer {
         // porque o 123 não é transmitido aos outros. Esperar aqui na própria mensagem não
         // serve: uma conexão de barramento carrega **vários** jogadores, e dormir nela
         // travaria todo mundo por um segundo.
+        let marcador = PROXIMA_CONJURACAO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if let Some(p) = self.world.write().await.players.get_mut(&(roleid as i64)) {
+            p.conjuracao = Some(crate::entity::Conjuracao {
+                skill_id: c.skill_id,
+                alvo,
+                inicio: std::time::Instant::now(),
+                duracao_ms: conjuracao_ms as u32,
+                marcador,
+            });
+        }
         let este = self.clone();
         let envio = envio.clone();
-        let skill_id = c.skill_id;
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(conjuracao_ms as u64)).await;
-            este.concluir_conjuracao(roleid, skill_id, alvo, &envio).await;
+            // Só conclui se esta ainda for a conjuração aberta: soltar a carga já pode ter
+            // concluído, ou outra conjuração pode ter começado.
+            let minha = {
+                let mut mundo = este.world.write().await;
+                let p = mundo.players.get_mut(&(roleid as i64));
+                // **Não** tira a conjuração aqui: ela fica aberta até o dano ser aplicado,
+                // como a `session_skill` do original, que só é a sessão corrente até o
+                // `RunSkill` (B57). É o que põe na fila o `NORMAL_ATTACK` que o cliente manda
+                // assim que vê a conjuração acabar.
+                match p {
+                    Some(p) if p.conjuracao.is_some_and(|x| x.marcador == marcador) => p.conjuracao,
+                    _ => None,
+                }
+            };
+            if let Some(c) = minha {
+                este.concluir_conjuracao(roleid, c.skill_id, c.alvo, &envio, 1.0).await;
+            }
         });
+    }
+
+    /// `C2S::CONTINUE_ACTION` (51): soltar uma habilidade de carga antes do fim. O tempo
+    /// carregado vira `GetCharging()` (`SkillWrapper::Continue`, `skillwrapper.cpp:310-333`),
+    /// que escala o `ratio` (ex.: `skill234.h`, `ratio × charging / (5200 − 200 × nível)`).
+    async fn soltar_carga(&self, roleid: i32, envio: &EnvioAoCliente) {
+        let solta = {
+            let mut mundo = self.world.write().await;
+            let dados = Arc::clone(&mundo.data_manager);
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            let de_carga = p
+                .conjuracao
+                .and_then(|c| dados.habilidades.get(c.skill_id.max(0) as u32))
+                .is_some_and(|h| h.e_de_carga());
+            if de_carga { p.conjuracao } else { None }
+        };
+        let Some(c) = solta else {
+            trace!("mundo: {roleid} mandou CONTINUE_ACTION sem carga aberta");
+            return;
+        };
+        let carga = if c.duracao_ms == 0 {
+            1.0
+        } else {
+            (c.inicio.elapsed().as_millis() as f32 / c.duracao_ms as f32).min(1.0)
+        };
+        debug!("mundo: {roleid} soltou a {} com {:.0}% de carga", c.skill_id, carga * 100.0);
+        self.concluir_conjuracao(roleid, c.skill_id, c.alvo, envio, carga).await;
+    }
+
+    /// Fecha a conjuração aberta e solta o golpe normal que esperava a vez.
+    ///
+    /// No original é o `SafeDeleteCurSession` → `StartSession` (`actobject.cpp:150-190`): a
+    /// sessão da habilidade sai e a próxima da fila começa — e o `CheckAttack` dela recusa
+    /// alvo morto, que é o que impede o golpe de cair junto com o dano da habilidade (B57).
+    async fn fechar_conjuracao_e_soltar_fila(&self, roleid: i32, envio: &EnvioAoCliente) {
+        if let Some(p) = self.world.write().await.players.get_mut(&(roleid as i64)) {
+            p.conjuracao = None;
+        }
+        let Some(alvo) = self.golpe_na_fila.write().await.remove(&roleid) else { return };
+        let atacando = self
+            .world
+            .read()
+            .await
+            .players
+            .get(&(roleid as i64))
+            .is_some_and(|p| p.ataque.is_some());
+        if !atacando {
+            self.abrir_sessao_de_golpe(roleid, alvo, envio).await;
+        }
+    }
+
+    /// `Some(distância)` quando o alvo está além de `corpo + 1 + GetPraydistance + corpo do
+    /// alvo`; `None` quando está ao alcance, é o próprio jogador, ou não há dado de alcance.
+    async fn alvo_longe_demais(&self, roleid: i32, skill_id: i32, alvo: i64) -> Option<f32> {
+        if alvo == roleid as i64 {
+            return None;
+        }
+        let mundo = self.world.read().await;
+        let p = mundo.players.get(&(roleid as i64))?;
+        let h = mundo.data_manager.habilidades.get(skill_id.max(0) as u32)?;
+        let alcance = h.alcance(nivel_da_habilidade(p, skill_id), p.attack_range)?;
+        let (pos, corpo) = if let Some((m, _)) = mundo.monsters.get(&alvo) {
+            (m.position, mundo.data_manager.monstros.get(m.template_id).map(|t| t.tamanho).unwrap_or(0.0))
+        } else if let Some(o) = mundo.players.get(&alvo) {
+            (o.position, crate::entity::CORPO_DO_JOGADOR)
+        } else {
+            return None;
+        };
+        let d = p.position.distance(&pos);
+        (d >= crate::entity::CORPO_DO_JOGADOR + 1.0 + alcance + corpo).then_some(d)
     }
 
     /// O fim de uma conjuração: solta o conjurador e aplica o efeito.
@@ -1540,6 +1979,7 @@ impl BusServer {
         skill_id: i32,
         alvo: i64,
         envio: &EnvioAoCliente,
+        carga: f32,
     ) {
         // Se o jogador saiu no meio da conjuração, não há a quem responder.
         if !self.sessoes.read().await.contains_key(&roleid) {
@@ -1549,6 +1989,12 @@ impl BusServer {
         let perform_pkt = S2CGamedataSend::skill_perform().data;
         self.responder(roleid, perform_pkt.clone(), envio).await;
         self.transmitir_a_outros(roleid, perform_pkt).await;
+
+        // O efeito da habilidade vem **antes** do fim da sessão, como no original: o dano sai
+        // do `RunSkill` (`session_skill::RepeatSession`, `actsession.cpp:576-600`) e só depois
+        // o `EndSession` manda `stop_skill` (`actsession.cpp:558-574`). Mandando o 123 antes,
+        // o cliente retomava o golpe normal e os dois danos caíam juntos (B57).
+        self.aplicar_conjuracao(roleid, skill_id, alvo, envio, carga).await;
 
         // `HOST_STOP_SKILL` (123) é o que **fecha a conjuração de quem conjurou**, e é
         // sem corpo (o cliente exige `dwSize == 0`, `EC_GameDataPrtc.cpp:305`).
@@ -1564,7 +2010,19 @@ impl BusServer {
         // bênção num companheiro e um ataque num monstro terminam todos aqui.
         self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio)
             .await;
+        self.fechar_conjuracao_e_soltar_fila(roleid, envio).await;
+    }
 
+    /// O efeito da habilidade em si (dano, cura, estados), entre o `SKILL_PERFORM` e o
+    /// `HOST_STOP_SKILL` — ver [`Self::concluir_conjuracao`].
+    async fn aplicar_conjuracao(
+        &self,
+        roleid: i32,
+        skill_id: i32,
+        alvo: i64,
+        envio: &EnvioAoCliente,
+        carga: f32,
+    ) {
         let mut mundo = self.world.write().await;
         let Some(atacante) = mundo.players.get(&(roleid as i64)).cloned() else {
             return;
@@ -1578,8 +2036,13 @@ impl BusServer {
         // Custo de mana. O cliente já confere antes de mandar (`ElementSkill::Condition`
         // devolve 2 quando falta), então chegar aqui sem mana é raro — mas o servidor não
         // pode acreditar no cliente, e sem cobrar a mana nunca acabaria.
-        if let Some(h) = habilidade {
-            let custo = h.custo_de_mp(nivel);
+        let custo_do_stub = mundo
+            .data_manager
+            .habilidades
+            .get(skill_id.max(0) as u32)
+            .and_then(|h| h.mana(nivel))
+            .map(|m| m.round() as i32);
+        if let Some(custo) = custo_do_stub.or_else(|| habilidade.map(|h| h.custo_de_mp(nivel))) {
             let tem = mundo.players.get(&(roleid as i64)).map(|p| p.mp).unwrap_or(0);
             if tem < custo {
                 debug!("mundo: {roleid} conjurou {skill_id} com {tem} de mana, precisa de {custo}");
@@ -1590,6 +2053,13 @@ impl BusServer {
             }
         }
 
+        // B53: a habilidade pelo stub (área, flechas, precisão, efeitos), quando ele tem o que
+        // fazer; senão o caminho antigo.
+        drop(mundo);
+        if self.aplicar_habilidade(roleid, skill_id, alvo, nivel, carga, envio).await {
+            return;
+        }
+        let mut mundo = self.world.write().await;
         if !mundo.monsters.contains_key(&alvo) {
             // Alvo que não é monstro: o próprio conjurador, ou outro jogador.
             drop(mundo);
@@ -1605,7 +2075,17 @@ impl BusServer {
         // Contra monstro, a habilidade com conta portada usa a conta dela; as outras
         // batem como um golpe básico, que é o que este tratamento fazia para todas.
         let distancia = atacante.position.distance(&monstro.position);
-        let dano = match habilidade.and_then(|h| {
+        // A conta do stub do servidor, quando extraída (1.123 habilidades); senão a tabela
+        // antiga; senão um golpe normal.
+        let do_stub = mundo
+            .data_manager
+            .habilidades
+            .get(skill_id.max(0) as u32)
+            .and_then(|h| h.dano.clone())
+            .and_then(|d| CombatEngine::golpe_de_habilidade(&atacante, &d, nivel, carga));
+        let dano = if let Some(g) = do_stub {
+            combat::resolver(&g, &CombatEngine::defesa_do_monstro(monstro), distancia, false, combat::Rolagens::sortear()).dano() as i64
+        } else { match habilidade.and_then(|h| {
             h.dano(
                 nivel,
                 (atacante.attack_min + atacante.attack_max) / 2,
@@ -1617,7 +2097,7 @@ impl BusServer {
                 (((d as f32) * (1.0 - reducao)).round() as i64).max(1)
             }
             None => CombatEngine::jogador_ataca_monstro(&atacante, monstro, distancia).dano() as i64,
-        };
+        } };
         let (hp, max_hp, morreu, template, exp, sp) = {
             let (m, ai) = mundo.monsters.get_mut(&alvo).expect("conferido acima");
             ai.add_threat(roleid as i64, dano);
@@ -1653,20 +2133,9 @@ impl BusServer {
             envio,
         )
         .await;
-        let alvo_do_alvo = self
-            .world
-            .read()
-            .await
-            .dados_do_monstro(alvo)
-            .map(|(_, _, a)| a)
-            .unwrap_or(0);
-        self.responder(
-            roleid,
-            self.sub.npc_info_00(alvo as i32, saturar(hp), saturar(max_hp), alvo_do_alvo)
-                .data,
-            envio,
-        )
-        .await;
+        // A barra de vida vai no batimento de 1 s ([`EventoDoMundo::VidaDoMonstro`]), como o
+        // golpe normal (B56).
+        debug!("mundo: habilidade {skill_id} de {roleid} em {alvo}: dano {dano}, vida {hp}/{max_hp}");
 
         if morreu {
             info!("mundo: {roleid} matou {alvo} com a habilidade {}", skill_id);
@@ -2219,15 +2688,17 @@ impl BusServer {
                         });
                     }
                     match mundo.monsters.get(id) {
-                        Some((m, _)) => Some(QuemChegou::Criatura {
+                        Some((m, ia)) => Some(QuemChegou::Criatura {
                             id: *id as i32,
                             tid: m.template_id as i32,
                             pos: m.position,
+                            dir: ia.direcao,
                         }),
                         None => mundo.npcs.get(id).map(|n| QuemChegou::Criatura {
                             id: *id as i32,
                             tid: n.template_id as i32,
                             pos: n.position,
+                            dir: n.direcao,
                         }),
                     }
                 })
@@ -2244,8 +2715,8 @@ impl BusServer {
 
         for c in chegando {
             let pacote = match c {
-                QuemChegou::Criatura { id, tid, pos } => {
-                    self.sub.npc_enter_slice(id, tid, pos, 0).data
+                QuemChegou::Criatura { id, tid, pos, dir } => {
+                    self.sub.npc_enter_slice(id, tid, pos, dir).data
                 }
                 QuemChegou::Jogador { id, vista } => {
                     self.sub.player_enter_slice(id, vista).data
@@ -2449,6 +2920,9 @@ impl BusServer {
     async fn notificar_tarefa(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
         /// `TASK_CLT_NOTIFY_DYN_TIMEMARK` (`task/TaskTempl.h:109`).
         const PEDIDO_DA_MARCA_DINAMICA: u8 = 7;
+        /// `TASK_CLT_NOTIFY_DYN_DATA` (`task/TaskTempl.h:110`): o cliente não tem (ou tem
+        /// diferente) o pacote de missões dinâmicas e pede o arquivo.
+        const PEDIDO_DOS_DADOS_DINAMICOS: u8 = 8;
 
         let Some(tn) = TaskNotify::ler(payload) else {
             warn!("mundo: task_notify de {roleid} com payload curto ou size inconsistente");
@@ -2466,6 +2940,26 @@ impl BusServer {
                 None => debug!(
                     "mundo: {roleid} pediu a marca das missões dinâmicas, e o realm não tem                      dyn_tasks.data — sem resposta, como o original"
                 ),
+            }
+            return;
+        }
+
+        if tn.reason == Some(PEDIDO_DOS_DADOS_DINAMICOS) {
+            let dados = self.world.read().await.data_manager.missoes_dinamicas.clone();
+            let Some(dados) = dados else {
+                debug!("mundo: {roleid} pediu as missões dinâmicas, e o realm não tem dyn_tasks.data");
+                return;
+            };
+            let passo = S2CGamedataSend::PEDACO_DAS_MISSOES_DINAMICAS;
+            let total = dados.len();
+            debug!("mundo: {roleid} pediu as missões dinâmicas ({total} bytes)");
+            let mut enviados = 0;
+            while enviados < total {
+                let fim = (enviados + passo).min(total);
+                let ultimo = fim == total;
+                self.responder(roleid, S2CGamedataSend::task_dyn_data(&dados[enviados..fim], ultimo).data, envio)
+                    .await;
+                enviados = fim;
             }
             return;
         }
@@ -2592,6 +3086,13 @@ impl BusServer {
             envio,
         )
         .await;
+        // O que o original responde a este pedido é o `OWN_EXT_PROP` (`PlayerGetProperty`,
+        // `player.cpp:8588-8596`) — é por ele que a janela de atributos se refaz depois de
+        // gastar ponto (`OnMsgHstAddStatusPt` pede este comando, `EC_HostMsg.cpp:1624`).
+        let ficha = self.world.read().await.players.get(&(roleid as i64)).map(Self::ficha_propria);
+        if let Some(f) = ficha {
+            self.responder(roleid, f, envio).await;
+        }
         if let Some(d) = dinheiro {
             self.responder(roleid, S2CGamedataSend::player_cash(d).data, envio)
                 .await;
@@ -2928,7 +3429,7 @@ impl BusServer {
                 roleid,
                 S2CGamedataSend::own_ext_prop(
                     p.pontos_de_atributo.max(0) as u32,
-                    (p.vitality, p.energy, p.strength, p.agility),
+                    p.atributos_efetivos(),
                     p.max_hp,
                     p.max_mp,
                     // Regeneração e as quatro velocidades, do `CHARRACTER_CLASS_CONFIG` —
@@ -2978,19 +3479,27 @@ impl BusServer {
     /// o item não é equipamento — ou o realm não tem as tabelas — vai `None`, e o comando
     /// segue **sem** bloco de dados. Ver `S2CGamedataSend::item_info`: inventar requisito
     /// aqui tranca o item no cliente, e omitir o bloco tranca a armadura.
+    /// A durabilidade já está na escala interna no banco (ver
+    /// [`pw_core::ESCALA_DA_DURABILIDADE`]) e vai como está. Quando o item tem bloco
+    /// gravado, a durabilidade **do bloco** é regravada com a da coluna: é a coluna que o
+    /// servidor desgasta a cada golpe, e o bloco é o que o cliente lê (B61).
     fn info_de(
         onde: u8,
         item: &pw_core::ItemRecord,
         equipamentos: &pw_data_loader::armaduras::TabelasDeEquipamento,
     ) -> Vec<u8> {
+        let mut octetos = item.octets.clone();
+        if item.max_durability > 0 {
+            pw_core::escrever_durabilidade(&mut octetos, item.durability as i32, item.max_durability as i32);
+        }
         S2CGamedataSend::item_info(
             onde,
             item.slot as u8,
             item.item_id as i32,
-            item.durability as i32 * 100,
-            item.max_durability as i32 * 100,
+            item.durability as i32,
+            item.max_durability as i32,
             item.count,
-            &item.octets,
+            &octetos,
             equipamentos.ficha(item.item_id),
         )
         .data
@@ -3070,6 +3579,9 @@ impl BusServer {
             return;
         }
 
+        if onde == ContainerType::Equipment {
+            self.recalcular_equipamento(roleid, true).await;
+        }
         let n = onde.to_i16() as u8;
         let confirmacao = match onde {
             ContainerType::Equipment => S2CGamedataSend::exg_equip_item(p.a, p.b),
@@ -3203,6 +3715,7 @@ impl BusServer {
             envio,
         )
         .await;
+        self.recalcular_equipamento(roleid, true).await;
     }
 
     /// `C2S::MOVE_ITEM_TO_EQUIP` (18) — mover da bolsa direto para um slot do corpo.
@@ -3245,6 +3758,7 @@ impl BusServer {
             envio,
         )
         .await;
+        self.recalcular_equipamento(roleid, true).await;
     }
 
     /// Manda um subcomando já codificado ao jogador, pela conexão de onde ele veio.
@@ -3298,6 +3812,36 @@ impl BusServer {
     /// `self.sessoes` é por realm/mundo (populado no `EnterWorld`, independente de
     /// `WorldInstance::players`), então isto funciona mesmo sem o mundo saber quem é
     /// vizinho de quem.
+    /// Manda a quem **vê** aquele objeto, e só a eles.
+    ///
+    /// É o alcance do original: o movimento de um NPC sai por `AutoBroadcastCSMsg` na fatia
+    /// dele (`gnpc_dispatcher::move`, `npc.cpp:85-98`), não para o mapa inteiro. Mandando a
+    /// todos, o cliente recebia comandos de monstros que nunca viu entrar — 319 deles no teste
+    /// de 2026-09-17 — e os punha na fila de "NPC desconhecido", perguntando por eles de 10 em
+    /// 10 s para sempre (`CECNPCMan::SeekOutNPC`/`UpdateUnknownNPCs`, `EC_ManNPC.cpp:967-975`,
+    /// `1144-1164`). (B57.)
+    async fn transmitir_a_quem_ve(&self, objeto: i64, data: Vec<u8>) {
+        let quem: Vec<i32> = {
+            let mundo = self.world.read().await;
+            mundo
+                .players
+                .values()
+                .filter(|p| p.visiveis.contains(&objeto))
+                .map(|p| p.role_id)
+                .collect()
+        };
+        let sessoes = self.sessoes.read().await;
+        for roleid in quem {
+            if let Some(s) = sessoes.get(&roleid) {
+                let _ = s.envio.try_send(BusMessage::GameToClient {
+                    roleid,
+                    localsid: s.localsid,
+                    data: data.clone(),
+                });
+            }
+        }
+    }
+
     async fn transmitir_a_outros(&self, exceto: i32, data: Vec<u8>) {
         let sessoes = self.sessoes.read().await;
         for (id, s) in sessoes.iter() {
@@ -3316,6 +3860,23 @@ impl BusServer {
     pub async fn jogadores_atendidos(&self) -> usize {
         self.sessoes.read().await.len()
     }
+}
+
+
+/// `gactive_imp::CheckAttack(target, &flag, …)` (`actobject.cpp:1254-1292`) para monstro:
+/// vivo e a no máximo `attack_range + body_size` (o `attack_range` do jogador já inclui o
+/// corpo dele, `playertemplate.h:954`). `Err` com o bit do motivo: 2 alvo inválido, 4 longe.
+fn pode_golpear(mundo: &crate::world::WorldInstance, roleid: i32, alvo: i64) -> Result<(), i32> {
+    let Some(p) = mundo.players.get(&(roleid as i64)) else { return Err(1) };
+    let Some((m, _)) = mundo.monsters.get(&alvo) else { return Err(2) };
+    if m.is_dead {
+        return Err(2);
+    }
+    let corpo = mundo.data_manager.monstros.get(m.template_id).map(|t| t.tamanho).unwrap_or(0.0);
+    if p.position.distance(&m.position) > p.attack_range + corpo {
+        return Err(4);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

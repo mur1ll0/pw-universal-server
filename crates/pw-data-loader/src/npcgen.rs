@@ -42,7 +42,7 @@ pub struct SpawnInstance {
     /// ver [`TipoDeArea`].
     pub tipo_de_area: TipoDeArea,
     /// `fOffsetTrn` do gerador (monstro/NPC) ou `fHeiOff` do recurso: quanto acima do chão
-    /// a entidade nasce. **Zero em 18.902 dos 18.903 geradores do mundo** do 155BR.
+    /// a entidade nasce. **Zero em 18.902 dos 18.903 geradores do mundo** do 155.
     pub acima_do_chao: f32,
     /// `fOffsetWater` do gerador: o mesmo, medido da superfície da água. O servidor ainda
     /// não tem mapa de água, então isto só é guardado.
@@ -267,12 +267,24 @@ impl NpcGenData {
         } else {
             0
         };
-        // A struct de área (`NPCGENFILEAREA7`, 71 bytes) só é a certa pra `version >= 7` —
-        // versões mais antigas usam `NPCGENFILEAREA`, sem `idCtrl`/`iLifeTime`/`iMaxNum` (59
-        // bytes), formato que este parser ainda não implementa por falta de um arquivo real
-        // pra confirmar contra. Só é seguro pular essa checagem quando não há nenhuma área
-        // pra ler (caso real conhecido: `a03`/`a04`) — recusar em vez de arriscar ler errado.
-        if version < 7 && (num_ai_gen > 0 || num_res_area > 0) {
+        // # Versões 5 a 11 — `CNPCGenMan::Load` (`gs/template/npcgendata.cpp:62-315`)
+        //
+        // Cada registro é lido com `fread(sizeof)` de uma struct `#pragma pack(1)`
+        // (`npcgendata.h:32-286`), e as versões antigas só **não têm** os campos do fim:
+        //
+        // | registro | < versão | falta |
+        // | :--- | ---: | :--- |
+        // | área de IA (`NPCGENFILEAREA`) | 7 | `idCtrl`, `iLifeTime`, `iMaxNum` (12) |
+        // | gerador (`NPCGENFILEAIGEN10`) | 11 | `iRefreshLower` (4) |
+        // | área de recurso (`NPCGENFILERESAREA`) | 6 | `dir[2]`, `rad`, `idCtrl`, `iMaxNum` (11) |
+        // | área de recurso (`NPCGENFILERESAREA6`) | 7 | `idCtrl`, `iMaxNum` (8) |
+        // | objeto dinâmico (`NPCGENFILEDYNOBJ`) | 9 | `idController`, `scale` (5) |
+        // | objeto dinâmico (`NPCGENFILEDYNOBJ9`) | 10 | `scale` (1) |
+        // | controlador (`NPCGENFILECTRL`) | 8 | `iActiveTimeRange` (4) |
+        //
+        // O original zera o que falta. Até 2026-09-16 este leitor recusava `version < 7` com
+        // área, e nove mapas do 1.2.6 (versões 5 e 6) não carregavam.
+        if version > 11 {
             return Err(NpcGenError::InvalidVersion(version));
         }
 
@@ -354,9 +366,14 @@ impl NpcGenData {
             let _b_auto_revive = cursor.read_u8()? != 0;
             let _b_valid_once = cursor.read_u8()? != 0;
             let _dw_gen_id = cursor.read_u32::<LittleEndian>()?;
-            let id_ctrl = cursor.read_i32::<LittleEndian>()?;
-            let _life_time = cursor.read_i32::<LittleEndian>()?;
-            let _max_num = cursor.read_i32::<LittleEndian>()?;
+            let id_ctrl = if version >= 7 {
+                let id_ctrl = cursor.read_i32::<LittleEndian>()?;
+                let _life_time = cursor.read_i32::<LittleEndian>()?;
+                let _max_num = cursor.read_i32::<LittleEndian>()?;
+                id_ctrl
+            } else {
+                0
+            };
 
             let mut geradores = Vec::with_capacity(num_gen);
             for _ in 0..num_gen {
@@ -430,10 +447,17 @@ impl NpcGenData {
             let _b_auto_revive = cursor.read_u8()? != 0;
             let _b_valid_once = cursor.read_u8()? != 0;
             let _dw_gen_id = cursor.read_u32::<LittleEndian>()?;
-            let _dir = cursor.read_u16::<LittleEndian>()?;
-            let _rad = cursor.read_u8()?;
-            let id_ctrl = cursor.read_i32::<LittleEndian>()?;
-            let _max_num = cursor.read_i32::<LittleEndian>()?;
+            if version >= 6 {
+                let _dir = cursor.read_u16::<LittleEndian>()?;
+                let _rad = cursor.read_u8()?;
+            }
+            let id_ctrl = if version >= 7 {
+                let id_ctrl = cursor.read_i32::<LittleEndian>()?;
+                let _max_num = cursor.read_i32::<LittleEndian>()?;
+                id_ctrl
+            } else {
+                0
+            };
 
             let mut geradores = Vec::with_capacity(num_res);
             for _ in 0..num_res {
@@ -473,8 +497,10 @@ impl NpcGenData {
             let pos_z = cursor.read_f32::<LittleEndian>()?;
             cursor.seek(SeekFrom::Current(2))?; // dir[2], comprimido -- não decodificado ainda
             let _rad = cursor.read_u8()?;
-            let id_ctrl = cursor.read_i32::<LittleEndian>()?;
-            let _scale = cursor.read_u8()?;
+            let id_ctrl = if version >= 9 { cursor.read_i32::<LittleEndian>()? } else { 0 };
+            if version >= 10 {
+                let _scale = cursor.read_u8()?;
+            }
 
             if dyn_obj_id > 0 {
                 dynobjs_pendentes.push(DynObjPendente {
@@ -493,7 +519,7 @@ impl NpcGenData {
         // **Achado em 2026-09-04, com evidência de hex, não suposição**: `id_ctrl != 0`
         // NÃO significa "esta área começa desligada". Inspecionando o controlador que
         // guarda a área do NPC "Ancião" que faltava no mundo (`id_ctrl=2077` na área,
-        // `data/realm_155BR/config/world/npcgen.data`): o registro do controlador 2077
+        // `data/realm_155/config/world/npcgen.data`): o registro do controlador 2077
         // tem `ativado=1` e o nome (GBK) decodifica como "大地图默认长老" — "Ancião
         // Padrão do Mapa Aberto". Ou seja, a maioria das áreas com `id_ctrl != 0` está
         // ligada a um controlador **já ativado por padrão** (o mecanismo normal de
@@ -516,7 +542,7 @@ impl NpcGenData {
             let ativado = cursor.read_u8()? != 0;
             // resto do registro: espera/parar (2×i32), 2 bools de horário, ActiveTime/
             // StopTime (24B cada), faixa de horário (i32) — nada mais precisa ser lido.
-            let resto = NPCGENFILECTRL8_SIZE - 4 - 4 - 128 - 1;
+            let resto = NPCGENFILECTRL8_SIZE - 4 - 4 - 128 - 1 - if version >= 8 { 0 } else { 4 };
             cursor.seek(SeekFrom::Current(resto))?;
             controladores_ativados.insert(id, ativado);
         }
@@ -534,7 +560,7 @@ impl NpcGenData {
             for g in &area.geradores {
                 // **Sem teto.** Isto era `count.min(10)`, e o de recurso `count.min(5)` —
                 // números sem origem no original, que usa `dwNum`/`dwNumber` como veio.
-                // Medido no mundo do 155BR: os dois tetos escondiam 5.811 monstros e NPCs
+                // Medido no mundo do 155: os dois tetos escondiam 5.811 monstros e NPCs
                 // (337 geradores declaram mais de dez) e 271 recursos.
                 for c in 0..g.quantidade {
                     instance_counter += 1;
@@ -623,6 +649,12 @@ impl NpcGenData {
             };
             grid.insert(spawn.clone());
             instances.push(spawn);
+        }
+
+        // O arquivo fecha no último byte: sobra aqui é leitura de versão errada.
+        let sobra = data.len() as u64 - cursor.position();
+        if sobra != 0 {
+            return Err(NpcGenError::InvalidVersion(version));
         }
 
         info!(
@@ -756,7 +788,7 @@ mod tests {
     /// Achado em 2026-09-04: uma área com `id_ctrl != 0` cujo controlador está
     /// `ativado=1` DEVE spawnar — era tratada como "sempre inativa" antes deste
     /// conserto, o que sumia com NPCs permanentes (o "Ancião" da cidade inicial,
-    /// achado batendo com `data/realm_155BR/config/world/npcgen.data` real).
+    /// achado batendo com `data/realm_155/config/world/npcgen.data` real).
     #[test]
     fn area_com_controlador_ativado_spawna() {
         let mut buf = Vec::new();

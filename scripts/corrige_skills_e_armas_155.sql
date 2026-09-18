@@ -17,7 +17,7 @@
 -- `as_habilidades_iniciais_sao_as_da_arvore_da_classe` (pw-core) e
 -- `armas_iniciais_batem_com_o_elements` (pw-data-loader).
 --
--- Só mexe em realm_155 e realm_155BR. O realm_126 é de outra versão e fica de fora.
+-- Só mexe no realm_155. O realm_126 é de outra versão e fica de fora.
 
 BEGIN;
 
@@ -42,7 +42,7 @@ INSERT INTO inicio_por_classe (cls, skill_id, arma_id) VALUES
 
 CREATE TEMP TABLE alvos ON COMMIT DROP AS
   SELECT id, cls FROM characters
-   WHERE realm_id IN ('realm_155', 'realm_155BR') AND NOT is_deleted;
+   WHERE realm_id = 'realm_155' AND NOT is_deleted;
 
 -- 1. Habilidades: apaga o que estava lá e grava a árvore da classe + a 167 (Portal da
 --    Cidade, cls 255, vale para todas).

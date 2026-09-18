@@ -1,6 +1,7 @@
 pub mod account;
 pub mod audit;
 pub mod character;
+pub mod client_config;
 pub mod faction;
 pub mod item;
 pub mod mail;
@@ -13,6 +14,7 @@ pub mod template;
 pub use account::*;
 pub use audit::*;
 pub use character::*;
+pub use client_config::*;
 pub use faction::*;
 pub use item::*;
 pub use mail::*;

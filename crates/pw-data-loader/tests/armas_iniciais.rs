@@ -53,7 +53,7 @@ fn campo(e: &GenericElementsData, tabela: &str, id: i32, nome: &str) -> Option<i
 
 #[test]
 fn armas_iniciais_batem_com_o_elements() {
-    let Some(e) = carregar("realm_155BR") else { return };
+    let Some(e) = carregar("realm_155") else { return };
 
     let tipos_conhecidos: Vec<i32> = e
         .get("WEAPON_MAJOR_TYPE")
@@ -98,7 +98,7 @@ fn armas_iniciais_batem_com_o_elements() {
 fn a_arma_de_antes_do_sacerdote_era_mesmo_do_tipo_errado() {
     // Guarda o achado: se algum dia alguém "voltar" o 2867 para o Sacerdote, este teste
     // explica por que aquilo quebra em jogo.
-    let Some(e) = carregar("realm_155BR") else { return };
+    let Some(e) = carregar("realm_155") else { return };
 
     let graveto = campo(&e, "WEAPON_ESSENCE", 2867, "id_major_type")
         .expect("o Graveto de Madeira (2867) deveria existir");

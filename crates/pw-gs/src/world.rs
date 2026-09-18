@@ -68,9 +68,28 @@ pub enum EventoDoMundo {
     MonstroSumiu { id: i64 },
     /// O monstro renasceu no ponto de origem.
     MonstroRenasceu { id: i64 },
+    /// Uma mina colhida voltou ao chão.
+    MinaRenasceu { id: i64 },
+    /// Chegou a hora do próximo golpe normal do jogador (`session_normal_attack::RepeatSession`).
+    GolpeDoJogador { roleid: RoleId },
     /// Um item ou monte de moedas no chão acabou a vida (`gmatter_item_base_imp`,
     /// `matter.cpp:133-137`).
     DropSumiu { id: i64 },
+    /// Os filtros de um objeto (jogador ou monstro) mudaram: entrou/saiu efeito, ou o
+    /// dano/cura no tempo mexeu na vida. `atributos` quando os realces mudaram e o jogador
+    /// já foi refeito (`recalcular_por_nivel`).
+    EfeitosMudaram { objeto: i64, atributos: bool },
+    /// Um monstro chegou a zero de vida: por golpe adiado que venceu, por habilidade ou
+    /// por dano no tempo (`filter_Wounded` → `BeHurt`).
+    MonstroMorreu { id: i64, matador: i64 },
+    /// A barra de vida de um monstro para quem o tem selecionado (`NPC_INFO_00`).
+    ///
+    /// O original **não** manda a vida junto do golpe: o dano liga o `_refresh_state` e o
+    /// heartbeat de 1 s (`obj_manager<gnpc, TICK_PER_SEC>`, `worldmanager.h:262`) chama
+    /// `RefreshSubscibeList` (`actobject.cpp:1346-1353`), que manda `npc_info_00` à lista de
+    /// inscritos (`gnpc_imp::SendDataToSubscibeList`, `npc.cpp:2219-2230`). Mandar na hora
+    /// fazia a barra cair no clique, antes da flecha sair (teste de 2026-09-17, B56).
+    VidaDoMonstro { id: i64, hp: i32, max_hp: i32, alvo: i32, para: Vec<RoleId> },
 }
 
 /// `_corpse_delay` do monstro: 20 s (`npc.cpp:803`), vezes 20 ticks no `PostLazyMessage`.
@@ -103,6 +122,10 @@ pub struct WorldInstance {
     /// (`MATTER_ENTER_WORLD`, 18) e o de saída também (`OUT_OF_SIGHT_LIST`, 34, e não o
     /// `OBJECT_LEAVE_SLICE` que serve a jogador e NPC).
     pub matters: HashMap<i64, MatterEntity>,
+    /// Minas colhidas esperando renascer, com o que falta em ms (`mine_spawner::Reclaim`).
+    minas_colhidas: Vec<(MatterEntity, u32)>,
+    /// Quem está colhendo cada mina (`_gather_players`).
+    pub coletores: HashMap<i64, Vec<RoleId>>,
     pub drops: HashMap<i64, ItemDropEntity>,
     pub data_manager: Arc<GameDataManager>,
     pub char_repo: CharacterRepository,
@@ -123,6 +146,34 @@ pub struct WorldInstance {
     proximo_drop: u32,
     /// Corpos de monstro ainda na tela: id → quanto falta para sumir.
     corpos: HashMap<i64, u32>,
+    /// A última `(vida, alvo)` de cada monstro que os inscritos receberam — o papel do
+    /// `_refresh_state` (`actobject.h:517`): o batimento só manda `NPC_INFO_00` quando
+    /// mudou. Só tem monstro que alguém tem selecionado.
+    vida_informada: HashMap<i64, (i32, i32)>,
+    /// Golpes já anunciados ao cliente que ainda não tiraram vida (B62).
+    danos_adiados: Vec<DanoAdiado>,
+}
+
+/// Um golpe que já foi anunciado e ainda não tirou vida.
+///
+/// `gactive_imp::InsertDamageEntry` (`actobject.cpp:1758-1776`): com `delay > 0` o dano vira
+/// um `GM_MSG_HURT` **adiado de `delay` tiques de 50 ms**, enquanto o aviso do golpe
+/// (`be_damaged` → `HOST_ATTACKRESULT`/`HOST_ATTACKED`) já saiu. O `delay` é o
+/// `attack.speed`: `attack_delay = (attack_speed × 0,8) − 1` do jogador
+/// (`playertemplate.h:980`) e o `_damage_delay` do monstro (`npc.cpp:2118`). É isso que faz
+/// a vida cair **no fim** da animação do golpe, e não no clique — o relato de "dano antes da
+/// animação, sempre um ataque a mais" (2026-09-18).
+///
+/// Habilidade não passa por aqui: o original não preenche `speed` no golpe de habilidade, e
+/// `delay <= 0` aplica na hora (`DoDamage`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DanoAdiado {
+    pub alvo: i64,
+    pub atacante: i64,
+    pub dano: i64,
+    pub falta_ms: u32,
+    /// O alvo é um jogador; senão é monstro.
+    pub no_jogador: bool,
 }
 
 impl WorldInstance {
@@ -138,6 +189,8 @@ impl WorldInstance {
             monsters: HashMap::new(),
             npcs: HashMap::new(),
             matters: HashMap::new(),
+            minas_colhidas: Vec::new(),
+            coletores: HashMap::new(),
             terreno: pw_data_loader::Terreno::vazio(),
             drops: HashMap::new(),
             data_manager,
@@ -152,6 +205,8 @@ impl WorldInstance {
             batimento_ms: 0,
             proximo_drop: PRIMEIRO_ID_DE_DROP,
             corpos: HashMap::new(),
+            vida_informada: HashMap::new(),
+            danos_adiados: Vec::new(),
         }
     }
 
@@ -238,6 +293,9 @@ impl WorldInstance {
                     outro => outro,
                 };
 
+                // `GenDir()` do original: ponto usa a direção do gerador, área sorteia
+                // (`npcgenerator.h:747-757`).
+                let direcao = crate::entity::direcao_do_gerador(inst.dir, inst.extensao_da_area);
                 if tipo == pw_data_loader::SpawnType::Monster {
                     let monster_id = inst.instance_id as i64;
 
@@ -264,7 +322,9 @@ impl WorldInstance {
                     };
 
                     self.grid.add_entity(monster_id, monster.position, false);
-                    self.monsters.insert(monster_id, (monster, MonsterAi::new()));
+                    let mut ia = MonsterAi::new();
+                    ia.direcao = direcao;
+                    self.monsters.insert(monster_id, (monster, ia));
                 } else if tipo == pw_data_loader::SpawnType::Npc {
                     // NPCs de serviço (treinador, vendedor, dador de missão, guarda) não
                     // existiam como entidade nenhuma no mundo simulado — só monstros eram
@@ -280,6 +340,7 @@ impl WorldInstance {
                         name: "NPC".to_string(),
                         position: pos,
                         dialog_id: 0,
+                        direcao,
                     };
 
                     self.grid.add_entity(npc_id, npc.position, false);
@@ -294,6 +355,7 @@ impl WorldInstance {
                         id: mid,
                         template_id: inst.template_id,
                         position: pos,
+                        renascer_s: inst.respawn_sec,
                     };
                     self.grid.add_entity(mid, matter.position, false);
                     self.matters.insert(mid, matter);
@@ -409,6 +471,11 @@ impl WorldInstance {
     /// Põe um item (ou um monte de moedas, `tid` 3044) no chão, a ±2 m do ponto e no
     /// terreno (`GM_MSG_PRODUCE_MONEY`/`_MONSTER_DROP`, `worldmanager.cpp:512-555`).
     pub fn criar_drop(&mut self, tid: u32, quantidade: u32, perto_de: pw_core::Vector3, dono: Option<RoleId>) -> ItemDropEntity {
+        self.criar_drop_com_octetos(tid, quantidade, perto_de, dono, Vec::new())
+    }
+
+    /// [`Self::criar_drop`] de um equipamento com o conteúdo já sorteado.
+    pub fn criar_drop_com_octetos(&mut self, tid: u32, quantidade: u32, perto_de: pw_core::Vector3, dono: Option<RoleId>, octetos: Vec<u8>) -> ItemDropEntity {
         use rand::Rng;
         let mut rng = rand::thread_rng();
         let mut pos = perto_de;
@@ -431,6 +498,7 @@ impl WorldInstance {
             owner_role_id: dono,
             protect_timer_ms: crate::economia::POSSE_S * 1000,
             despawn_timer_ms: crate::economia::VIDA_NO_CHAO_S * 1000,
+            octetos,
         };
         self.grid.add_entity(id, pos, false);
         self.drops.insert(id, d.clone());
@@ -447,8 +515,138 @@ impl WorldInstance {
         Some(d)
     }
 
+    /// A mina some do mapa e espera o tempo de renascer (`BeMined` → `Reclaim`,
+    /// `matter.cpp:215-229`, `npcgenerator.cpp:4960-5000`).
+    pub fn colher_mina(&mut self, id: i64) -> Option<MatterEntity> {
+        let m = self.matters.remove(&id)?;
+        self.grid.remove_entity(id);
+        self.coletores.remove(&id);
+        for p in self.players.values_mut() {
+            p.visiveis.remove(&id);
+            if p.coleta == Some(id) {
+                p.coleta = None;
+            }
+        }
+        let falta = m.renascer_s.saturating_mul(1000).max(1);
+        self.minas_colhidas.push((m.clone(), falta));
+        Some(m)
+    }
+
     /// Marca o monstro como morto: corpo por [`CORPO_MS`] e renascimento pelo tempo do
     /// gerador do `npcgen.data`.
+    /// Refaz os atributos de um jogador depois de mudar os filtros.
+    pub fn refazer_atributos(&mut self, roleid: i64) {
+        let dados = Arc::clone(&self.data_manager);
+        if let Some(p) = self.players.get_mut(&roleid) {
+            let base = Some(&dados.base_das_classes).filter(|b| !b.is_empty());
+            p.recalcular_por_nivel(&dados.classes, base);
+            p.hp = p.hp.min(p.max_hp);
+            p.mp = p.mp.min(p.max_mp);
+        }
+    }
+
+    /// Um segundo de filtros (`filter_man::Heartbeat`) em jogadores e monstros: dano e cura
+    /// no tempo, e fim dos efeitos.
+    fn batida_dos_efeitos(&mut self) {
+        use crate::efeitos::Tique;
+        let ids: Vec<i64> = self
+            .players
+            .iter()
+            .filter(|(_, p)| !p.efeitos.filtros.is_empty() || p.efeitos.invencivel_s > 0)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let Some(p) = self.players.get_mut(&id) else { continue };
+            if p.hp <= 0 {
+                continue;
+            }
+            let (tiques, acabou) = p.efeitos.batida();
+            let mut vida_mudou = false;
+            let mut morto_por = None;
+            for t in tiques {
+                match t {
+                    Tique::Dano { origem, valor } => {
+                        let v = crate::efeitos::dano_recebido(&mut p.efeitos, valor);
+                        p.hp = (p.hp - v).max(0);
+                        p.combate_s = p.combate_s.max(crate::progressao::COMBATE_AO_APANHAR_S);
+                        vida_mudou = true;
+                        if p.hp == 0 {
+                            morto_por = Some(origem);
+                        }
+                    }
+                    Tique::Cura(v) => {
+                        p.hp = (p.hp + v).min(p.max_hp);
+                        vida_mudou = true;
+                    }
+                    Tique::Mana(v) => {
+                        p.mp = (p.mp + v).min(p.max_mp);
+                        vida_mudou = true;
+                    }
+                }
+            }
+            let (role, pos) = (p.role_id, p.position);
+            if let Some(matador) = morto_por {
+                p.ataque = None;
+                p.conjuracao = None;
+                p.efeitos.ao_morrer();
+                self.refazer_atributos(id);
+                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: true });
+                self.emitir(EventoDoMundo::JogadorMorreu { roleid: role, matador, pos });
+                continue;
+            }
+            if acabou {
+                self.refazer_atributos(id);
+            }
+            if acabou || vida_mudou {
+                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: acabou });
+            }
+        }
+
+        let ids: Vec<i64> = self
+            .monsters
+            .iter()
+            .filter(|(_, (m, _))| !m.is_dead && !m.efeitos.filtros.is_empty())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let Some((m, ai)) = self.monsters.get_mut(&id) else { continue };
+            let (tiques, acabou) = m.efeitos.batida();
+            let mut mudou = acabou;
+            let mut matador = None;
+            for t in tiques {
+                match t {
+                    Tique::Dano { origem, valor } => {
+                        let v = crate::efeitos::dano_recebido(&mut m.efeitos, valor) as i64;
+                        let real = v.min(m.hp);
+                        m.hp = (m.hp - v).max(0);
+                        m.registrar_dano(origem, real);
+                        ai.add_threat(origem, v);
+                        mudou = true;
+                        if m.hp == 0 {
+                            matador = Some(origem);
+                        }
+                    }
+                    Tique::Cura(v) => {
+                        m.hp = (m.hp + v as i64).min(m.max_hp);
+                        mudou = true;
+                    }
+                    Tique::Mana(_) => {}
+                }
+            }
+            if let Some(matador) = matador {
+                m.is_dead = true;
+                m.efeitos.ao_morrer();
+                self.grid.remove_entity(id);
+                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: false });
+                self.emitir(EventoDoMundo::MonstroMorreu { id, matador });
+                continue;
+            }
+            if mudou {
+                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: acabou });
+            }
+        }
+    }
+
     pub fn matar_monstro(&mut self, id: i64) {
         if let Some((m, _)) = self.monsters.get_mut(&id) {
             m.is_dead = true;
@@ -618,6 +816,128 @@ impl WorldInstance {
         ))
     }
 
+    /// Registra que um jogador acabou de receber a vida deste monstro (a resposta do
+    /// `SELECT_TARGET`, `InsertInfoSubscibe` → `query_info00`, `actobject.cpp:1610`), para o
+    /// batimento seguinte não repetir o mesmo número.
+    pub fn vida_ja_informada(&mut self, id: i64) {
+        if let Some((hp, _, alvo)) = self.dados_do_monstro(id) {
+            self.vida_informada.insert(id, (hp, alvo));
+        }
+    }
+
+    /// Anota um golpe para tirar vida daqui a `atraso_ms` — o [`DanoAdiado`].
+    ///
+    /// Com `atraso_ms == 0` aplica agora, como o `InsertDamageEntry` faz quando o `delay`
+    /// não é positivo (`actobject.cpp:1760-1762`). O aviso do golpe ao cliente é
+    /// responsabilidade de quem chama, e sai **antes** disto.
+    pub fn adiar_dano(&mut self, alvo: i64, atacante: i64, dano: i64, atraso_ms: u32, no_jogador: bool) {
+        if atraso_ms == 0 {
+            if no_jogador {
+                self.aplicar_dano_no_jogador(alvo, atacante, dano);
+            } else {
+                self.aplicar_dano_no_monstro(alvo, atacante, dano);
+            }
+            return;
+        }
+        self.danos_adiados.push(DanoAdiado { alvo, atacante, dano, falta_ms: atraso_ms, no_jogador });
+    }
+
+    /// Tira a vida do monstro e resolve a morte. `None` quando o alvo sumiu ou já morreu.
+    fn aplicar_dano_no_monstro(&mut self, alvo: i64, atacante: i64, dano: i64) {
+        let Some((m, _)) = self.monsters.get_mut(&alvo) else { return };
+        if m.is_dead {
+            return;
+        }
+        let real = dano.min(m.hp);
+        m.hp = (m.hp - dano).max(0);
+        m.registrar_dano(atacante, real);
+        let (hp, max_hp) = (m.hp, m.max_hp);
+        let morreu = m.hp == 0;
+        if morreu {
+            m.is_dead = true;
+        }
+        debug!("mundo: dano de {atacante} em {alvo}: {dano}, vida {hp}/{max_hp}");
+        if morreu {
+            self.grid.remove_entity(alvo);
+            self.emitir(EventoDoMundo::MonstroMorreu { id: alvo, matador: atacante });
+        }
+    }
+
+    /// Tira a vida do jogador e resolve a morte, como o laço de golpes de monstro fazia
+    /// quando o dano era imediato.
+    fn aplicar_dano_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64) {
+        let Some(player) = self.players.get_mut(&alvo) else { return };
+        if player.hp <= 0 {
+            return;
+        }
+        let dano = crate::efeitos::dano_recebido(&mut player.efeitos, dano as i32);
+        player.hp = (player.hp - dano).max(0);
+        let (hp, pos, role_id) = (player.hp, player.position, player.role_id);
+        debug!("mundo: dano de {atacante} no jogador {alvo}: {dano}, vida {hp}");
+        self.emitir(EventoDoMundo::EstadoMudou { roleid: role_id });
+        if hp > 0 {
+            return;
+        }
+        info!("Jogador #{alvo} morreu");
+        let mut tinha_efeitos = false;
+        if let Some(p) = self.players.get_mut(&alvo) {
+            p.ataque = None;
+            p.conjuracao = None;
+            tinha_efeitos = !p.efeitos.filtros.is_empty();
+            p.efeitos.ao_morrer();
+        }
+        if tinha_efeitos {
+            self.refazer_atributos(alvo);
+            self.emitir(EventoDoMundo::EfeitosMudaram { objeto: alvo, atributos: true });
+        }
+        self.emitir(EventoDoMundo::JogadorMorreu { roleid: role_id, matador: atacante, pos });
+    }
+
+    /// Os golpes adiados que venceram neste tique.
+    fn cobrar_danos_adiados(&mut self, delta_ms: u32) {
+        let mut vencidos = Vec::new();
+        self.danos_adiados.retain_mut(|d| {
+            if d.falta_ms <= delta_ms {
+                vencidos.push(d.clone());
+                false
+            } else {
+                d.falta_ms -= delta_ms;
+                true
+            }
+        });
+        for d in vencidos {
+            if d.no_jogador {
+                self.aplicar_dano_no_jogador(d.alvo, d.atacante, d.dano);
+            } else {
+                self.aplicar_dano_no_monstro(d.alvo, d.atacante, d.dano);
+            }
+        }
+    }
+
+    /// `RefreshSubscibeList` do batimento de 1 s (`actobject.cpp:1346-1353`): para cada
+    /// monstro selecionado por alguém, manda `NPC_INFO_00` aos inscritos se a vida ou o
+    /// alvo mudaram desde o último envio.
+    fn informar_vida_aos_inscritos(&mut self) {
+        let mut inscritos: HashMap<i64, Vec<RoleId>> = HashMap::new();
+        for p in self.players.values() {
+            if let Some(alvo) = p.target_id {
+                if self.monsters.get(&alvo).is_some_and(|(m, _)| !m.is_dead) {
+                    inscritos.entry(alvo).or_default().push(p.role_id);
+                }
+            }
+        }
+        self.vida_informada.retain(|id, _| inscritos.contains_key(id));
+        for (id, mut para) in inscritos {
+            let Some((hp, max_hp, alvo)) = self.dados_do_monstro(id) else { continue };
+            if self.vida_informada.get(&id) == Some(&(hp, alvo)) {
+                continue;
+            }
+            self.vida_informada.insert(id, (hp, alvo));
+            para.sort_unstable();
+            self.emitir(EventoDoMundo::VidaDoMonstro { id, hp, max_hp, alvo, para });
+        }
+    }
+
     /// O que o `NPC_INFO_00` (33) leva sobre um NPC de serviço (não-monstro).
     ///
     /// NPCs de serviço não têm HP na nossa entidade — não são atacáveis. `1/1` é o valor
@@ -711,6 +1031,9 @@ impl WorldInstance {
 
     /// Ciclo de Simulação em Tempo Real (Loop de 50ms / 20 TPS)
     pub async fn tick(&mut self, delta_ms: u32) {
+        // 0. Os golpes que já foram anunciados e agora tiram vida (`InsertDamageEntry`).
+        self.cobrar_danos_adiados(delta_ms);
+
         // 1. Atualização da Inteligência Artificial dos Monstros
         let mut attacks_to_process = Vec::new();
 
@@ -719,7 +1042,12 @@ impl WorldInstance {
 
         for (monster, ai) in self.monsters.values_mut() {
             if monster.is_dead {
-                if monster.respawn_timer_ms > 0 {
+                // O gerador só recebe o monstro de volta quando o corpo some
+                // (`GM_MSG_OBJ_ZOMBIE_END` → `LifeExhaust` → `mobs_spawner::Reclaim`,
+                // `npc.cpp:904-911`, `npcgenerator.cpp:3312`). Contar o renascimento desde a
+                // morte fazia o monstro voltar com o mesmo id antes do golpe seguinte, e a
+                // sessão de golpe nunca o via morto (teste de 2026-09-17).
+                if monster.respawn_timer_ms > 0 && !self.corpos.contains_key(&monster.id) {
                     monster.respawn_timer_ms = monster.respawn_timer_ms.saturating_sub(delta_ms);
                     if monster.respawn_timer_ms == 0 {
                         // Renascimento do Monstro
@@ -739,7 +1067,11 @@ impl WorldInstance {
             let chao = |x: f32, z: f32| terreno.altura_em(x, z);
             match ai.tick(monster, &self.players, delta_ms, &chao) {
                 Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano }) => {
-                    attacks_to_process.push((alvo, dano));
+                    // Quem bateu vai junto: sem o id, o `HOST_ATTACKED` saía com
+                    // `idAttacker = 0` e o cliente não achava o atacante
+                    // (`ISPLAYERID`/`ISNPCID` são falsos para zero, `EC_HostMsg.cpp:968-1006`)
+                    // — o jogador perdia vida sem ver o monstro bater (B59).
+                    attacks_to_process.push((monster.id, alvo, dano));
                 }
                 Some(crate::ai::AcaoDoMonstro::Andou { destino, tempo_ms, velocidade, modo }) => {
                     // A grade espacial tem de acompanhar: quem consulta vizinhos por
@@ -786,6 +1118,42 @@ impl WorldInstance {
             self.emitir(EventoDoMundo::MonstroRenasceu { id });
         }
 
+        // Golpes normais em sessão: um a cada `attack_speed` *ticks* (`SetTimer(interval)`,
+        // `actsession.cpp:369-378`).
+        let mut golpes = Vec::new();
+        for p in self.players.values_mut() {
+            if let Some(s) = p.ataque.as_mut() {
+                if s.falta_ms <= delta_ms {
+                    let ticks = ((p.attack_speed * 20.0).round() as u32).clamp(4, 300);
+                    s.falta_ms = ticks * 50;
+                    golpes.push(p.role_id);
+                } else {
+                    s.falta_ms -= delta_ms;
+                }
+            }
+        }
+        for roleid in golpes {
+            self.emitir(EventoDoMundo::GolpeDoJogador { roleid });
+        }
+
+        // Minas que voltam.
+        let mut voltaram = Vec::new();
+        self.minas_colhidas.retain_mut(|(m, falta)| {
+            *falta = falta.saturating_sub(delta_ms);
+            if *falta == 0 {
+                voltaram.push(m.clone());
+                false
+            } else {
+                true
+            }
+        });
+        for m in voltaram {
+            self.grid.add_entity(m.id, m.position, false);
+            let id = m.id;
+            self.matters.insert(id, m);
+            self.emitir(EventoDoMundo::MinaRenasceu { id });
+        }
+
         // Itens no chão: a posse acaba em 30 s e o item some em 300 s.
         let mut drops_sumiram = Vec::new();
         for d in self.drops.values_mut() {
@@ -815,6 +1183,8 @@ impl WorldInstance {
             for roleid in mudaram {
                 self.emitir(EventoDoMundo::EstadoMudou { roleid });
             }
+            self.batida_dos_efeitos();
+            self.informar_vida_aos_inscritos();
         }
 
         // Fora do laço porque `self.grid` e `self.monsters` não podem ser emprestados ao
@@ -824,45 +1194,38 @@ impl WorldInstance {
             self.emitir(evento);
         }
 
-        // 2. Aplica danos causados pelos monstros nos jogadores
+        // 2. Os golpes que os monstros deram neste tique.
         //
-        // Até aqui isto acontecia **em silêncio**: o HP caía e o cliente nunca era
-        // avisado. O jogador via a vida cheia e morria do nada. Agora cada golpe vira um
-        // evento, e o `BusServer` o entrega àquele jogador.
-        for (player_id, damage) in attacks_to_process {
+        // O aviso ao cliente (`HOST_ATTACKED`) sai **agora**, e a vida cai depois do
+        // `_damage_delay` do monstro — é o `InsertDamageEntry` do original
+        // (`actobject.cpp:1758-1776`), o mesmo número que o cliente usa como duração da
+        // animação do golpe. Aplicar na hora fazia a vida cair antes de o monstro sequer
+        // parar de correr na tela (relato de 2026-09-18, B62).
+        for (monstro_id, player_id, damage) in attacks_to_process {
+            let atraso = self
+                .monsters
+                .get(&monstro_id)
+                .map(|(m, _)| m.atraso_do_dano_em_ticks.clamp(0, 255) as u32 * 50)
+                .unwrap_or(0);
             let Some(player) = self.players.get_mut(&player_id) else {
                 continue;
             };
             if player.hp <= 0 {
                 continue; // já caído: não se bate em quem está morto
             }
-
-            player.hp = (player.hp - damage).max(0);
-            // Apanhar põe em combate por pelo menos 5 s (`OnAttacked`, `player.cpp:9514`).
+            // Apanhar põe em combate por pelo menos 5 s (`OnAttacked`, `player.cpp:9514`) —
+            // isso é do golpe, não do dano, e vale já.
             player.combate_s = player.combate_s.max(crate::progressao::COMBATE_AO_APANHAR_S);
-            let (hp, max_hp, pos) = (player.hp, player.max_hp, player.position);
-            let role_id = player.role_id;
-            debug!("Monstro causou {} de dano no Jogador #{} (HP restante: {})", damage, player_id, hp);
+            let (hp, max_hp, role_id) = (player.hp, player.max_hp, player.role_id);
 
             self.emitir(EventoDoMundo::DanoRecebido {
                 roleid: role_id,
-                // Sem rastrear qual monstro bateu, o cliente não sabe de onde veio. O
-                // `MonsterAi::tick` ainda não devolve o atacante; até lá vai zero, que o
-                // cliente trata como "origem desconhecida".
-                atacante: 0,
+                atacante: monstro_id,
                 dano: damage,
                 hp,
                 max_hp,
             });
-
-            if hp == 0 {
-                info!("Jogador #{} morreu", player_id);
-                self.emitir(EventoDoMundo::JogadorMorreu {
-                    roleid: role_id,
-                    matador: 0,
-                    pos,
-                });
-            }
+            self.adiar_dano(player_id, monstro_id, damage as i64, atraso, true);
         }
 
         // 3. Autosave Periódico de Personagens para o PostgreSQL (a cada 60s)
@@ -893,7 +1256,10 @@ impl WorldInstance {
                         player.role_id
                     );
                 }
-                let _ = self.char_repo.gravar_pontos_de_atributo(player.role_id, player.pontos_de_atributo).await;
+                let atributos = (player.strength, player.agility, player.vitality, player.energy);
+                if let Err(e) = self.char_repo.gravar_atributos(player.role_id, atributos, player.pontos_de_atributo).await {
+                    warn!("autosave: não consegui gravar os atributos de {}: {e}", player.role_id);
+                }
                 let [a, b, c, d, e] = player.missoes.blocos();
                 let listas = pw_storage::ListasDeMissaoGravadas { ativa: a, concluidas: b, tempos: c, contagens: d, deposito: e };
                 if let Err(e) = self.char_repo.task_lists().gravar(player.role_id, &listas).await {

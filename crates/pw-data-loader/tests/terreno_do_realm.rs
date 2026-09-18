@@ -15,7 +15,7 @@ use std::path::PathBuf;
 fn realm() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("data/realm_155BR/config")
+        .join("data/realm_155/config")
 }
 
 fn mundo_principal() -> Option<Terreno> {
@@ -241,9 +241,9 @@ fn o_recurso_se_espalha_pela_area() {
     );
 }
 
-/// O mapa 161 (`a61`), onde todo personagem novo do 155BR nasce: os 12 blocos existem, e
+/// O mapa 161 (`a61`), onde todo personagem novo do 155 nasce: os 12 blocos existem, e
 /// cada ponto de nascimento do `clsconfig` original fica no chão — a 1 cm, que é o que o
-/// molde gravou (`scripts/2026_09_12_nascimento_no_mapa_161_155br.sql`).
+/// molde gravou (`scripts/2026_09_12_nascimento_no_mapa_161_155.sql`).
 ///
 /// Até 2026-09-12 o catálogo de terreno usava o `index` do `gs.conf` como id de mundo, e o
 /// 161 não existia nele; o mesmo número era o `a31`.

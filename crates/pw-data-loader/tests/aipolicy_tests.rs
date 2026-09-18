@@ -40,9 +40,11 @@ fn carregar(realm: &str) -> Option<AiPolicyData> {
 fn le_o_aipolicy_do_155_inteiro() {
     let Some(dados) = carregar("realm_155") else { return };
 
-    // Cabeçalho medido no arquivo: F_POLICY_EXP_VERSION = 1, 3144 políticas.
+    // Cabeçalho medido no arquivo do cliente BR (`realm_155` desde o B55): F_POLICY_EXP_VERSION = 1,
+    // 3137 políticas (`u32 1, u32 3137` nos 8 primeiros bytes). O do cliente EN, que o
+    // projeto tinha até 2026-09-17, trazia 3144.
     assert_eq!(dados.versao, 1);
-    assert_eq!(dados.policies.len() + dados.ids_repetidos.len(), 3144);
+    assert_eq!(dados.policies.len() + dados.ids_repetidos.len(), 3137);
 
     let triggers: usize = dados.policies.values().map(|p| p.triggers.len()).sum();
     assert!(triggers > 0, "nenhum trigger lido");
@@ -53,7 +55,8 @@ fn le_o_aipolicy_do_155_inteiro() {
     assert_eq!(p1.versao, 1);
     assert_eq!(p1.triggers.len(), 8);
     let t0 = &p1.triggers[0];
-    assert_eq!(t0.versao, 24, "os triggers do 1.5.5 são gravados na versão 24");
+    // O arquivo do cliente BR grava os triggers na versão 23; o do EN (até o B55) gravava 24.
+    assert_eq!(t0.versao, 23, "os triggers do aipolicy do cliente BR são gravados na versão 23");
     assert_eq!(t0.id, 2);
     assert!(!t0.ativo);
     assert!(!t0.rodando);
@@ -319,7 +322,8 @@ fn os_monstros_apontam_para_politicas_que_existem() {
     // Órfão **não** é erro de leitura: é inconsistência do próprio pacote de dados, e o
     // servidor original a trata explicitamente — `npcgenerator.cpp` avisa "a política %d
     // do monstro %d não foi achada no arquivo de políticas" e zera o `trigger_policy`.
-    // No `realm_155` existe exatamente um: o monstro 40773 aponta para a política 22796.
+    // No pacote do cliente EN (fora do projeto desde o B55) havia exatamente um: o monstro
+    // 40773 apontava para a política 22796. O do cliente BR não foi contado.
     // O que o teste garante é que continuem sendo um punhado; se a leitura saísse de
     // sincronia, os ids virariam lixo e milhares deixariam de resolver.
     assert!(

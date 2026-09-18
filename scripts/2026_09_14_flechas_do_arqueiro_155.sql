@@ -1,4 +1,4 @@
--- Flechas para o Arqueiro do realm_155BR — molde e personagens já criados.
+-- Flechas para o Arqueiro do realm_155 — molde e personagens já criados.
 --
 -- # Decisão, não evidência do original
 --
@@ -23,14 +23,14 @@ BEGIN;
 INSERT INTO class_template_items (template_id, container_type, slot, item_id, count, durability, max_durability)
 SELECT t.id, 1, 11, 8543, 1000, 0, 0
   FROM class_templates t
- WHERE t.realm_id = 'realm_155BR' AND t.cls = 6
+ WHERE t.realm_id = 'realm_155' AND t.cls = 6
 ON CONFLICT (template_id, container_type, slot) DO UPDATE
    SET item_id = EXCLUDED.item_id, count = EXCLUDED.count;
 
 INSERT INTO character_items (character_id, container_type, slot, item_id, count, durability, max_durability)
 SELECT c.id, 1, 11, 8543, 1000, 0, 0
   FROM characters c
- WHERE c.realm_id = 'realm_155BR' AND c.cls = 6 AND NOT c.is_deleted
+ WHERE c.realm_id = 'realm_155' AND c.cls = 6 AND NOT c.is_deleted
    AND NOT EXISTS (
      SELECT 1 FROM character_items ci
       WHERE ci.character_id = c.id AND ci.container_type = 1 AND ci.slot = 11);

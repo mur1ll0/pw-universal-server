@@ -2,7 +2,7 @@
 //!
 //! # A falha que este arquivo tranca
 //!
-//! O `class_templates` do realm 155BR tinha **seis** das doze classes, e os ids não batiam
+//! O `class_templates` do realm 155 tinha **seis** das doze classes, e os ids não batiam
 //! com os nomes: a linha `cls = 4` chamava-se "Feiticeira", e 4 é o Bárbaro. Como
 //! `create_character` procura pelo **id**, o Bárbaro criado em 2026-09-11 recebeu o molde
 //! da Feiticeira — uma arma de magia (Graveto de Madeira, 2867) no lugar do Porrete.
@@ -18,7 +18,7 @@ use pw_core::CharacterClass;
 use pw_storage::{PostgresPool, StorageConfig};
 
 /// O realm que o docker de teste serve.
-const REALM: &str = "realm_155BR";
+const REALM: &str = "realm_155";
 
 async fn pool() -> Option<PostgresPool> {
     let url = match std::env::var("TEST_DATABASE_URL") {
@@ -127,7 +127,7 @@ async fn a_arma_do_molde_e_a_da_classe() {
 /// "A menos de 2 m", e não "no mesmo ponto": os moldes do `clsconfig` original foram
 /// gravados um por personagem, e as duas classes de uma raça ficam a até 1,1 m uma da
 /// outra (Abissais: (-651.09, -225.21) e (-651.82, -225.49)). Ver
-/// `scripts/2026_09_12_nascimento_no_mapa_161_155br.sql`.
+/// `scripts/2026_09_12_nascimento_no_mapa_161_155.sql`.
 #[tokio::test]
 async fn as_duas_classes_de_uma_raca_nascem_juntas() {
     let Some(p) = pool().await else { return };
@@ -202,5 +202,37 @@ async fn o_kit_de_bolsa_e_o_de_nivel_zero() {
             "a classe cls={cls} nasce com o item {item_id}, que não é do kit de nível 0 \
              ({KIT:?}). A Poção Perfeita de Cura (1801) exige nível 30."
         );
+    }
+}
+
+/// B54 — cada classe tem a configuração inicial do cliente do molde original (`config_data`
+/// do `clsconfig`): versão 3 sem compressão + zlib, e os Alados nascem com a Asa no slot 12.
+#[tokio::test]
+async fn o_molde_traz_a_configuracao_inicial_e_a_asa_dos_alados() {
+    let Some(pool) = pool().await else { return };
+    let linhas: Vec<(i32, Option<Vec<u8>>)> =
+        sqlx::query_as("SELECT cls, ui_config FROM class_templates WHERE realm_id = $1 ORDER BY cls")
+            .bind(REALM)
+            .fetch_all(pool.get_ref())
+            .await
+            .expect("ler o molde");
+    assert_eq!(linhas.len(), 12);
+    for (cls, cfg) in &linhas {
+        let cfg = cfg.as_ref().unwrap_or_else(|| panic!("classe {cls} sem configuração inicial"));
+        assert!(cfg.len() > 200, "classe {cls}: {} bytes", cfg.len());
+        assert_eq!(u32::from_le_bytes(cfg[..4].try_into().unwrap()), 3, "classe {cls}: USERCFG_VERSION");
+        assert_eq!(cfg[4], 0x78, "classe {cls}: o resto é zlib");
+    }
+    for cls in [6, 7] {
+        let asa: Option<(i32,)> = sqlx::query_as(
+            "SELECT i.item_id FROM class_template_items i JOIN class_templates t ON t.id = i.template_id
+             WHERE t.realm_id = $1 AND t.cls = $2 AND i.container_type = 1 AND i.slot = 12",
+        )
+        .bind(REALM)
+        .bind(cls)
+        .fetch_optional(pool.get_ref())
+        .await
+        .unwrap();
+        assert_eq!(asa, Some((2096,)), "classe {cls} sem a Asa no slot 12");
     }
 }

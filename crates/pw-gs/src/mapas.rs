@@ -2,8 +2,8 @@
 //!
 //! # Por que existe
 //!
-//! Até 2026-09-14 cada mapa era um contêiner (`pw-world-155br` para o mundo 1,
-//! `pw-world-155br-161` para o 161), e cada um carregava sozinho o `GameDataManager`
+//! Até 2026-09-14 cada mapa era um contêiner (`pw-world-155` para o mundo 1,
+//! `pw-world-155-161` para o 161), e cada um carregava sozinho o `GameDataManager`
 //! inteiro: **1,1 GB** o do 161, com 1.269 monstros, quase o mesmo que o do mundo 1 com
 //! 29.620. O `gs.conf` do 1.5.5 lista ~80 mapas; um contêiner por mapa não escala.
 //!
@@ -54,6 +54,47 @@ impl RoteadorDeMapas {
             donos: RwLock::new(HashMap::new()),
             repo,
         }
+    }
+
+    /// Começa a atender os pedidos de troca de mapa dos mapas deste processo.
+    ///
+    /// O original troca o jogador de processo (`SwitchSvr` → `PlaneSwitch`, `player.cpp:3191`);
+    /// aqui os mapas são tarefas do mesmo processo, então a troca é tirar de um e pôr no outro,
+    /// e passar a entregar aquele `roleid` ao novo. Mapa que este processo não serve não tem
+    /// troca (`falta`: seria o link reencaminhar a sessão).
+    pub fn ligar_trocas(self: &Arc<Self>) {
+        let (envio, mut fila) = mpsc::unbounded_channel::<crate::bus_server::PedidoDeTroca>();
+        for mapa in self.mapas.values() {
+            mapa.ligar_trocas(envio.clone());
+        }
+        let este = Arc::clone(self);
+        tokio::spawn(async move {
+            while let Some(p) = fila.recv().await {
+                este.trocar(p).await;
+            }
+        });
+    }
+
+    /// Leva o jogador a `pos` do mapa `mundo` — o mesmo caminho do teleporte de missão.
+    pub async fn transportar(&self, roleid: i32, mundo: i32, pos: pw_core::Vector3) {
+        if let Some(atual) = self.mapa_de(roleid).await.and_then(|m| self.mapas.get(&m)) {
+            atual.transportar(roleid, mundo, pos).await;
+        }
+    }
+
+    async fn trocar(&self, p: crate::bus_server::PedidoDeTroca) {
+        let Some(destino) = self.mapas.get(&p.mundo) else {
+            warn!("mundo: {} pediu o mapa {}, que este processo não serve ({:?})", p.roleid, p.mundo, self.mapas());
+            return;
+        };
+        let Some(origem) = self.mapa_de(p.roleid).await.and_then(|m| self.mapas.get(&m)) else {
+            return;
+        };
+        let Some(vindo) = origem.retirar_para_troca(p.roleid).await else {
+            return;
+        };
+        self.donos.write().await.insert(p.roleid, p.mundo);
+        destino.receber_de_outro_mapa(p.roleid, vindo, p.pos).await;
     }
 
     /// Os ids dos mapas servidos, em ordem.

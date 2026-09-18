@@ -82,6 +82,16 @@ pub struct BaseDaClasse {
     pub velocidade_voando: f32,
 }
 
+/// Os quatro atributos de todo personagem novo, de **toda** classe: 5.
+///
+/// Os 12 moldes do `clsconfig` do `gamedbd` 1.5.5 (`pwserver_155v156`, roles 16..31,
+/// `GRoleStatus.property` = `extend_prop` com `vitality, energy, strength, agility` nos
+/// quatro primeiros inteiros, `property.h:35-41`) trazem 5/5/5/5; e 5 é o piso que o
+/// `gamed` restaura ao devolver pontos (`__Rollback`, `playertemplate.cpp:604-607`). Os
+/// `vitality`/`energy`/`strength`/`agility` do `ptemplate.conf` (Arqueiro 15/20/5/10) são
+/// lidos pelo `player_template` e **não** chegam ao personagem.
+pub const ATRIBUTO_INICIAL: i32 = 5;
+
 /// O arquivo inteiro.
 #[derive(Debug, Clone, Default)]
 pub struct TabelaDeBase {
@@ -98,9 +108,19 @@ impl BaseDaClasse {
     /// sai do `CHARRACTER_CLASS_CONFIG` do `elements.data` ([`crate::classes`]).
     ///
     /// ```text
-    /// max_hp = hp + lvlup_hp × (nível − 1) + vit_hp × vitalidade
-    /// max_mp = mp + lvlup_mp × (nível − 1) + eng_mp × energia
+    /// max_hp = lvlup_hp × (nível − 1) + vit_hp × vitalidade
+    /// max_mp = lvlup_mp × (nível − 1) + eng_mp × energia
     /// ```
+    ///
+    /// # Sem o `hp`/`mp` do `ptemplate.conf` (corrigido em 2026-09-16)
+    ///
+    /// O `gamed` não usa o `hp`/`mp` nem os atributos do `ptemplate.conf` para jogador: a
+    /// ficha vem gravada no banco (`userlogin.cpp`, `memcpy` em `_base_prop`), e nasce do
+    /// molde do `clsconfig`. Nos 12 moldes do `pwserver_155v156` o `max_hp` de nível 1 é
+    /// exatamente `vit_hp × 5` e o `max_mp` é `eng_mp × 5` (Arqueiro 13×5 = 65 e 11×5 = 55,
+    /// Bárbaro 17×5 = 85 e 7×5 = 35) — base zero. Depois disso só há soma: `lvlup_hp` por
+    /// nível (`__LevelUp`, `playertemplate.cpp:500-530`) e `vit_hp` por ponto
+    /// (`__UpdateBasic`, `:570-582`). Somar o `hp` do `.conf` dava 30 a mais ao Arqueiro.
     ///
     /// # Por que isto mora aqui e não no `PlayerEntity`
     ///
@@ -124,8 +144,8 @@ impl BaseDaClasse {
             return (self.vida, self.mana);
         };
         (
-            self.vida + c.vida_por_nivel as i32 * niveis + c.vida_por_vitalidade * vitalidade,
-            self.mana + c.mana_por_nivel as i32 * niveis + c.mana_por_energia * energia,
+            c.vida_por_nivel as i32 * niveis + c.vida_por_vitalidade * vitalidade,
+            c.mana_por_nivel as i32 * niveis + c.mana_por_energia * energia,
         )
     }
 
@@ -139,12 +159,13 @@ impl BaseDaClasse {
         &self,
         cfg: Option<&crate::ConfigDeClasse>,
     ) -> pw_core::AtributosIniciais {
-        let (vida, mana) = self.vida_e_mana_maximas(cfg, 1, self.vitalidade, self.energia);
+        let a = ATRIBUTO_INICIAL;
+        let (vida, mana) = self.vida_e_mana_maximas(cfg, 1, a, a);
         pw_core::AtributosIniciais {
-            forca: self.forca,
-            agilidade: self.agilidade,
-            vitalidade: self.vitalidade,
-            energia: self.energia,
+            forca: a,
+            agilidade: a,
+            vitalidade: a,
+            energia: a,
             vida,
             mana,
         }

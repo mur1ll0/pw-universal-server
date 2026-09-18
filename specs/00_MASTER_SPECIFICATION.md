@@ -11,7 +11,7 @@ versões diferentes sobre a mesma infraestrutura de contas.
 
 | versão | situação | referência |
 | :--- | :--- | :--- |
-| **1.5.5** | **alvo atual** (desde 2026-09-02). Realm de teste `realm_155BR` | fontes EvolvedPW (cliente e servidor), binário do cliente BR build 2569 |
+| **1.5.5** | **alvo atual** (desde 2026-09-02). Realm de teste `realm_155` (cliente BR; até 2026-09-17 `realm_155BR`) | fontes EvolvedPW (cliente e servidor), binário do cliente BR build 2569 |
 | 1.2.6 | segunda prioridade; loga e entra no mundo | capturas da VM com o servidor original, `docs/MEDIDAS_DO_126.md` |
 | 1.5.3 | abandonado (o cliente disponível nunca logou) | seus fontes geraram o IR do protocolo, que continua válido para o 1.5.5 |
 | 1.4.8 | nunca foi alvo | — |

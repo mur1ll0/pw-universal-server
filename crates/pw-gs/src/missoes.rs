@@ -19,11 +19,17 @@
 //!
 //! # O que não está portado (e o que acontece nesses casos)
 //!
-//! Sistemas que o servidor ainda não tem: janelas de horário (`m_ulTimetable`, recusadas com
-//! `WRONG_TIME`), equipe (`m_bTeamwork && m_bRcvByTeam` recusadas com `NOT_CAPTAIN`), facção,
-//! casamento, PQ, torre, variáveis globais (lidas como zero, que é o valor de variável não
-//! definida no original), prêmios por escala de tempo/itens (`enumTATRatio`/`ItemCount`,
-//! prêmio vazio), teleporte de prêmio, invocação de monstros, depósito de missões. Ver
+//! Portados em 2026-09-16: janelas de horário (`CheckTimetable`/`judge_time_date`, na hora
+//! local do servidor), região de entrega (`CheckInZone`), facção (`CheckFaction` — sem sistema
+//! de facção ninguém está em uma, e o original recusa igual), equipe recebida pelo capitão
+//! (`CheckTeamTask`/`HasAllTeamMemsWanted` e `OnDeliverTeamMemTask`), chegar e sair de lugar
+//! (`OnTaskReachSite`/`OnTaskLeaveSite`).
+//!
+//! Sistemas que o servidor ainda não tem: casamento, PQ, torre, variáveis globais (lidas como
+//! zero, que é o valor de variável não definida no original), prêmios por escala de
+//! tempo/itens (`enumTATRatio`/`ItemCount`, prêmio vazio), teleporte de prêmio, invocação de
+//! monstros, depósito de missões, falha/sucesso compartilhados pela equipe
+//! (`AwardNotifyTeamMem`) e abate contado para a equipe. Ver
 //! `specs/05_SIMULACAO_DO_MUNDO.md`.
 
 use pw_data_loader::tasks::{ItemDeMissao, TaskReward, TaskTemplate, TasksData};
@@ -86,7 +92,9 @@ pub mod metodo {
     pub const MATAR_MONSTROS: u32 = 1;
     pub const COLETAR_ITENS: u32 = 2;
     pub const FALAR_COM_NPC: u32 = 3;
+    pub const ALCANCAR_LUGAR: u32 = 4;
     pub const ESPERAR: u32 = 5;
+    pub const SAIR_DE_LUGAR: u32 = 11;
     pub const ALCANCAR_NIVEL: u32 = 15;
     pub const SIMPLES_DO_CLIENTE: u32 = 16;
     pub const SIMPLES_DO_CLIENTE_NAVEGACAO: u32 = 17;
@@ -118,13 +126,16 @@ pub mod erro {
     pub const MISSAO_ANTERIOR: u32 = 15;
     pub const DEPOSITO: u32 = 17;
     pub const NAO_E_CAPITAO: u32 = 19;
+    pub const MEMBRO_INVALIDO: u32 = 20;
     pub const HORARIO: u32 = 21;
     pub const EXCLUSIVA: u32 = 23;
     pub const FORA_DA_ZONA: u32 = 24;
     pub const SUBMISSAO_ERRADA: u32 = 25;
+    pub const LONGE_DA_EQUIPE: u32 = 26;
     pub const ITEM_ENTREGUE: u32 = 27;
     pub const GM: u32 = 30;
     pub const JA_TEM_PQ: u32 = 33;
+    pub const NAO_E_CASAL: u32 = 36;
     pub const CONTA_NO_LIMITE: u32 = 34;
     pub const SLOTS_DE_BOLSA: u32 = 38;
     pub const PERSONAGEM_NO_LIMITE: u32 = 63;
@@ -617,6 +628,23 @@ fn limpar_recursivo(a: &mut ListaAtiva, tarefas: &TasksData, idx: usize, ao_limp
 
 // =============================================================================== jogador
 
+/// `task_team_member_info` (`TaskInterface.h:167-177`). O capitão é o índice 0.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MembroDaEquipe {
+    pub id: u32,
+    pub nivel: u32,
+    pub classe: u32,
+    pub masculino: bool,
+    /// Mundo em que o membro está; 0 quando não está neste servidor de mundo.
+    pub mundo: u32,
+    pub pos: [f32; 3],
+}
+
+/// `_race_occ_map` (`TaskTempl.cpp:377-391`): a raça de cada classe.
+const RACA_DA_CLASSE: [u32; 12] = [1, 1, 3, 2, 2, 3, 4, 4, 5, 5, 6, 6];
+/// `INVALID_VAL`.
+const QUALQUER: u32 = 0xFFFF_FFFF;
+
 /// O que o motor precisa saber do jogador e pedir a ele — o `TaskInterface` do original
 /// (`task/TaskInterface.h`, implementado por `PlayerTaskInterface` em `taskman.cpp`).
 pub trait Jogador {
@@ -643,6 +671,21 @@ pub trait Jogador {
     fn avisar(&mut self, comando: Vec<u8>);
     /// `UnitRand` — `[0, 1)`.
     fn sortear(&mut self) -> f32;
+    /// `GetPos`: o mundo e a posição.
+    fn posicao(&self) -> (u32, [f32; 3]) {
+        (0, [0.0; 3])
+    }
+    /// `IsInFaction`/`GetFactionRole`: o id da facção (0 = nenhuma) e o cargo.
+    fn faccao(&self) -> (u32, i32) {
+        (0, 0)
+    }
+    /// A equipe, com o capitão no índice 0; vazio quando não está em equipe.
+    fn equipe(&self) -> Vec<MembroDaEquipe> {
+        Vec::new()
+    }
+    /// `TransportTo` (`taskman.cpp:504-507` → `LongJump`): leva o jogador a `pos` do mapa
+    /// `mundo`, depois que a operação terminar.
+    fn teleportar(&mut self, _mundo: u32, _pos: [f32; 3]) {}
 }
 
 /// Jogador vazio, só para limpar estrutura.
@@ -693,6 +736,67 @@ pub struct Motor<'a, J: Jogador> {
     pub tarefas: &'a TasksData,
     pub listas: &'a mut ListasDeMissao,
     pub j: &'a mut J,
+    /// O `roleid` do jogador — para saber se ele é o capitão da equipe.
+    pub eu: u32,
+}
+
+/// `TEAM_MEM_WANTED::IsMeetBaseInfo` (`TaskTempl.h:386-417`). Força (`m_iForce`) não existe
+/// no servidor: membro de força pedida não serve.
+fn membro_serve(w: &pw_data_loader::tasks::MembroPedido, m: &MembroDaEquipe) -> bool {
+    if w.nivel_minimo != 0 && m.nivel < w.nivel_minimo || w.nivel_maximo != 0 && m.nivel > w.nivel_maximo {
+        return false;
+    }
+    if w.raca != 0 {
+        if RACA_DA_CLASSE.get(m.classe as usize) != Some(&w.raca) {
+            return false;
+        }
+    } else if w.classe != QUALQUER && m.classe != w.classe {
+        return false;
+    }
+    if w.forca != 0 {
+        return false;
+    }
+    !(w.genero == 1 && !m.masculino || w.genero == 2 && m.masculino)
+}
+
+/// `judge_time_date` (`TaskTempl.h:1697-1733`) na hora local do servidor (`localtime`).
+fn janela_vale(j: &pw_data_loader::tasks::JanelaDeHorario, agora: u32) -> bool {
+    use chrono::{Datelike, TimeZone, Timelike};
+    let local = |t: u32| chrono::Local.timestamp_opt(t as i64, 0).single();
+    let (Some(h), Some(amanha)) = (local(agora), local(agora.saturating_add(24 * 3600))) else {
+        return false;
+    };
+    let ultimo_dia = h.month() != amanha.month();
+    let (ano, mes, dia, hora, min) = (h.year(), h.month() as i32, h.day() as i32, h.hour() as i32, h.minute() as i32);
+    // `task_week_map`: domingo é 7.
+    let semana = match h.weekday().num_days_from_sunday() { 0 => 7, d => d as i32 };
+    let (s, e) = (&j.inicio, &j.fim);
+    // `before`/`after` comparam de ano até minuto; as variantes por mês, semana e dia
+    // cortam o começo da comparação.
+    let hm_antes = |t: &pw_data_loader::tasks::MomentoDeMissao| t.hora < hora || t.hora == hora && t.minuto <= min;
+    let hm_depois = |t: &pw_data_loader::tasks::MomentoDeMissao| t.hora > hora || t.hora == hora && t.minuto > min;
+    match j.tipo {
+        0 => {
+            let chave = |t: &pw_data_loader::tasks::MomentoDeMissao| (t.ano, t.mes, t.dia);
+            let agora_ = (ano, mes, dia);
+            let ini = chave(s) < agora_ || chave(s) == agora_ && hm_antes(s);
+            let fim = chave(e) > agora_ || chave(e) == agora_ && hm_depois(e);
+            ini && fim
+        }
+        1 => {
+            // `before_per_month`/`after_per_month`.
+            let ini = if s.dia < dia { true } else if !ultimo_dia && s.dia > dia { false } else { hm_antes(s) };
+            let fim = if e.dia < dia { false } else if !ultimo_dia && e.dia > dia { true } else { hm_depois(e) };
+            ini && fim
+        }
+        2 => {
+            let ini = s.dia_da_semana < semana || s.dia_da_semana == semana && hm_antes(s);
+            let fim = e.dia_da_semana > semana || e.dia_da_semana == semana && hm_depois(e);
+            ini && fim
+        }
+        3 => hm_antes(s) && hm_depois(e),
+        _ => false,
+    }
 }
 
 fn pai_de<'t>(tarefas: &'t TasksData, t: &TaskTemplate) -> Option<&'t TaskTemplate> {
@@ -877,8 +981,7 @@ impl<'a, J: Jogador> Motor<'a, J> {
         {
             return erro::ITEM_ENTREGUE;
         }
-        if t.janelas_de_horario != 0 {
-            // `CheckTimetable` — as janelas (`m_tmStart`/`m_tmEnd`) não são lidas ainda.
+        if !t.janelas.is_empty() && !t.janelas.iter().any(|j| janela_vale(j, agora)) {
             return erro::HORARIO;
         }
         let r = self.verificar_frequencia(t, agora);
@@ -925,8 +1028,10 @@ impl<'a, J: Jogador> Motor<'a, J> {
         if r != 0 {
             return r;
         }
-        if t.faccao != 0 {
-            // Sem sistema de facção: ninguém está em uma.
+        // `CheckFaction` (`TaskTempl.inl:718-727`): `IsInFaction` é `id_mafia != 0`
+        // (`taskman.cpp:159-162`).
+        let (faccao, cargo) = self.j.faccao();
+        if t.faccao != 0 && !(faccao != 0 && cargo <= t.papel_na_faccao) {
             return erro::FACCAO;
         }
         let masculino = self.j.masculino();
@@ -980,12 +1085,23 @@ impl<'a, J: Jogador> Motor<'a, J> {
                 return erro::EXCLUSIVA;
             }
         }
+        // `CheckInZone` (`TaskTempl.inl:368-393`).
         if t.entrega_em_zona {
-            // `CheckInZone` — as regiões (`m_pDelvRegion`) não são lidas ainda.
-            return erro::FORA_DA_ZONA;
+            let (mundo, pos) = self.j.posicao();
+            if mundo != t.mundo_de_entrega || !t.regioes_de_entrega.iter().any(|r| r.contem(pos)) {
+                return erro::FORA_DA_ZONA;
+            }
         }
+        // `CheckTeamTask` (`TaskTempl.inl:330-339`), só para quem recebe por conta própria.
         if equipe && t.em_equipe && t.recebida_pela_equipe {
-            return erro::NAO_E_CAPITAO;
+            let membros = self.j.equipe();
+            if membros.first().map(|m| m.id) != Some(self.eu) {
+                return erro::NAO_E_CAPITAO;
+            }
+            let r = self.membros_pedidos_ok(t, &membros, true);
+            if r != 0 {
+                return r;
+            }
         }
         if t.conjuge {
             return erro::INDETERMINADO;
@@ -994,6 +1110,106 @@ impl<'a, J: Jogador> Motor<'a, J> {
             return erro::SLOTS_DE_BOLSA;
         }
         0
+    }
+
+    /// `HasAllTeamMemsWanted` (`TaskTempl.inl:149-252`), do lado do servidor.
+    fn membros_pedidos_ok(&self, t: &TaskTemplate, membros: &[MembroDaEquipe], estrito: bool) -> u32 {
+        let (mundo, pos) = self.j.posicao();
+        let perto = |m: &MembroDaEquipe| {
+            let d = (0..3).map(|i| (pos[i] - m.pos[i]).powi(2)).sum::<f32>();
+            m.mundo == mundo && d <= t.distancia_dos_membros
+        };
+        if t.membros_pedidos.is_empty() {
+            if t.confere_membros && membros.iter().skip(1).any(|m| !perto(m)) {
+                return erro::LONGE_DA_EQUIPE;
+            }
+            return 0;
+        }
+        let mut contagem = vec![0u32; t.membros_pedidos.len()];
+        let mut classes = std::collections::BTreeSet::new();
+        if let Some(c) = membros.first() {
+            classes.insert(c.classe);
+        }
+        for m in membros.iter().skip(1) {
+            classes.insert(m.classe);
+            if t.confere_membros && !perto(m) {
+                return erro::LONGE_DA_EQUIPE;
+            }
+            match t.membros_pedidos.iter().position(|w| membro_serve(w, m)) {
+                Some(j) => contagem[j] += 1,
+                None if estrito => return erro::MEMBRO_INVALIDO,
+                None => {}
+            }
+        }
+        if t.classes_distintas && classes.len() != membros.len() {
+            return erro::MEMBRO_INVALIDO;
+        }
+        if t.so_casal {
+            // Sem casamento no servidor: ninguém é cônjuge de ninguém.
+            return erro::NAO_E_CASAL;
+        }
+        for (w, &n) in t.membros_pedidos.iter().zip(&contagem) {
+            if w.minimo != 0 && n < w.minimo || w.maximo != 0 && n > w.maximo {
+                return erro::MEMBRO_INVALIDO;
+            }
+        }
+        0
+    }
+
+    /// `OnDeliverTeamMemTask` (`TaskProcess.cpp:1592-1640`): o membro recebe a missão que o
+    /// capitão aceitou (ou a que o `TEAM_MEM_WANTED` dele manda), sem conferir equipe.
+    pub fn aceitar_como_membro(&mut self, id_do_capitao: u32) -> u32 {
+        let Some(t) = self.t(id_do_capitao) else { return erro::INDETERMINADO };
+        let membros = self.j.equipe();
+        if !t.em_equipe || membros.first().map(|m| m.id) == Some(self.eu) {
+            return erro::INDETERMINADO;
+        }
+        if !t.membros_pedidos.is_empty() {
+            let eu = MembroDaEquipe {
+                id: self.eu,
+                nivel: self.j.nivel(),
+                classe: self.j.classe(),
+                masculino: self.j.masculino(),
+                mundo: 0,
+                pos: [0.0; 3],
+            };
+            let Some(w) = t.membros_pedidos.iter().find(|w| membro_serve(w, &eu)) else {
+                return erro::MEMBRO_INVALIDO;
+            };
+            if w.missao != 0 {
+                let topo = self.t(w.missao).map(|x| topo_de(self.tarefas, x).id).unwrap_or(0);
+                return self.aceitar_completo(topo, 0, true, true, id_do_capitao);
+            }
+        }
+        self.aceitar_completo(id_do_capitao, 0, true, true, 0)
+    }
+
+    /// `OnTaskReachSite` e `OnTaskLeaveSite` (`TaskServer.cpp:466-520`): o cliente avisa, o
+    /// servidor confere o lugar e finaliza.
+    pub fn conferir_lugar(&mut self, id: u32, saida: bool) -> bool {
+        let Some(idx) = (0..self.listas.ativa.quantidade as usize).find(|&i| self.listas.ativa.e[i].valida && self.listas.ativa.e[i].id as u32 == id) else {
+            return false;
+        };
+        if self.listas.ativa.e[idx].finalizada() {
+            return false;
+        }
+        let Some(t) = self.t(id) else { return false };
+        let (mundo, pos) = self.j.posicao();
+        let chegou = if saida {
+            if t.metodo != metodo::SAIR_DE_LUGAR || t.tipo_de_conclusao != conclusao::DIRETA {
+                return false;
+            }
+            !(mundo == t.mundo_a_sair && t.lugares_a_sair.iter().any(|r| r.contem(pos)))
+        } else {
+            if t.metodo != metodo::ALCANCAR_LUGAR || t.tipo_de_conclusao != conclusao::DIRETA {
+                return false;
+            }
+            mundo == t.mundo_a_alcancar && t.lugares_a_alcancar.iter().any(|r| r.contem(pos))
+        };
+        if chegou {
+            self.ao_finalizar(t, idx);
+        }
+        chegou
     }
 
     // ------------------------------------------------------------------ entrega
@@ -1124,6 +1340,12 @@ impl<'a, J: Jogador> Motor<'a, J> {
     /// `ATaskTempl::CheckDeliverTask` (`TaskProcess.cpp:1735-1880`), sem depósito, PQ, equipe
     /// e teleporte. `sub_id` é a submissão escolhida, para missão `m_bChooseOne`.
     pub fn aceitar(&mut self, id: u32, sub_id: u32, avisar_erro: bool) -> u32 {
+        self.aceitar_completo(id, sub_id, avisar_erro, false, 0)
+    }
+
+    /// `CheckDeliverTask(sub, global, bNotifyErr, bMemTask, ulCapId)`
+    /// (`TaskProcess.cpp:1735-1841`).
+    fn aceitar_completo(&mut self, id: u32, sub_id: u32, avisar_erro: bool, de_membro: bool, capitao: u32) -> u32 {
         let Some(t) = self.t(id) else { return erro::INDETERMINADO };
         let mut sub = None;
         if t.escolhe_um_filho {
@@ -1133,7 +1355,7 @@ impl<'a, J: Jogador> Motor<'a, J> {
             }
         }
         let agora = self.j.agora();
-        let r = self.verificar_pre_requisitos(t, agora, true, true, true);
+        let r = self.verificar_pre_requisitos(t, agora, true, !de_membro, true);
         if r != 0 {
             if avisar_erro && !t.entrega_automatica {
                 self.avisar_erro(t.id, r);
@@ -1144,11 +1366,15 @@ impl<'a, J: Jogador> Motor<'a, J> {
             self.tirar_itens_exigidos(t);
         }
         let mut tags = Etiquetas { uniao: sub.map(|s| s.id as u16).unwrap_or(0), tags: Vec::new() };
-        self.entregar(t, None, 0, agora, sub, &mut tags, SEM);
+        self.entregar(t, None, capitao, agora, sub, &mut tags, SEM);
         if t.frequencia != 0 && !t.limite_de_conta && !t.limite_de_personagem {
             self.listas.registrar_hora(t.id, agora);
         }
-        self.j.avisar(S2CGamedataSend::task_notify_new(t.id as u16, agora, 0, &tags.bytes()).data);
+        self.j.avisar(S2CGamedataSend::task_notify_new(t.id as u16, agora, capitao, &tags.bytes()).data);
+        // `if (m_bTransTo) pTask->TransportTo(...)` (`TaskProcess.cpp:1843-1844`).
+        if let Some((mundo, pos)) = t.teleporte_ao_receber {
+            self.j.teleportar(mundo, pos);
+        }
         0
     }
 
@@ -1479,6 +1705,11 @@ impl<'a, J: Jogador> Motor<'a, J> {
             if self.t(p.nova_missao).is_some_and(|n| n.parent.is_none()) {
                 self.aceitar(p.nova_missao, 0, true);
             }
+        }
+        // `if (pAward->m_ulTransWldId) pTask->TransportTo(...)` (`TaskProcess.cpp:1316-1317`),
+        // depois do resto do prêmio.
+        if let Some((mundo, pos)) = p.teleporte {
+            self.j.teleportar(mundo, pos);
         }
         let _ = en;
         ret
@@ -1920,6 +2151,10 @@ mod tests {
         exp: u32,
         sp: u32,
         avisos: Vec<Vec<u8>>,
+        posicao: (u32, [f32; 3]),
+        faccao: (u32, i32),
+        equipe: Vec<MembroDaEquipe>,
+        teleporte: Option<(u32, [f32; 3])>,
     }
 
     impl Jogador for JogadorDeTeste {
@@ -1941,6 +2176,10 @@ mod tests {
         fn dar_reputacao(&mut self, _: i32) {}
         fn avisar(&mut self, c: Vec<u8>) { self.avisos.push(c); }
         fn sortear(&mut self) -> f32 { 0.0 }
+        fn posicao(&self) -> (u32, [f32; 3]) { self.posicao }
+        fn faccao(&self) -> (u32, i32) { self.faccao }
+        fn equipe(&self) -> Vec<MembroDaEquipe> { self.equipe.clone() }
+        fn teleportar(&mut self, mundo: u32, pos: [f32; 3]) { self.teleporte = Some((mundo, pos)); }
     }
 
     fn modelo(id: u32) -> TaskTemplate {
@@ -1969,7 +2208,7 @@ mod tests {
         let d = dados(vec![t]);
         let mut l = ListasDeMissao::default();
         let mut j = JogadorDeTeste { nivel: 1, classe: 6, ..Default::default() };
-        let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j };
+        let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 };
         assert_eq!(m.aceitar(32201, 0, true), 0);
         assert_eq!(l.ativa.quantidade, 1);
         assert_eq!(l.ativa.topo_visiveis, 1);
@@ -1978,7 +2217,7 @@ mod tests {
         assert_eq!(j.avisos[0].len(), 2 + 4 + 14);
         assert_eq!(j.avisos[0][6], aviso::NOVA);
 
-        let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j };
+        let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 };
         assert!(m.entregar_no_npc(32201, 0));
         assert_eq!(l.ativa.quantidade, 0);
         assert_eq!(l.procurar_concluida(32201), 0);
@@ -1988,8 +2227,134 @@ mod tests {
         // estado: finalizada + sucesso.
         assert_eq!(completa[6 + 7], estado::FINALIZADA | estado::SUCESSO);
 
-        let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j };
+        let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 };
         assert_eq!(m.aceitar(32201, 0, false), erro::NAO_REPETE);
+    }
+
+    fn aceitar(d: &TasksData, j: &mut JogadorDeTeste, id: u32) -> u32 {
+        let mut l = ListasDeMissao::default();
+        Motor { tarefas: d, listas: &mut l, j, eu: 1 }.aceitar(id, 0, false)
+    }
+
+    fn momento(ano: i32, hora: i32, minuto: i32) -> pw_data_loader::tasks::MomentoDeMissao {
+        pw_data_loader::tasks::MomentoDeMissao { ano, mes: 1, dia: 1, hora, minuto, dia_da_semana: 0 }
+    }
+
+    /// `CheckTimetable`: basta uma janela valer. Uma janela diária de 00:00 a 24:00 vale a
+    /// qualquer hora; uma por data que acabou em 2011 nunca vale.
+    #[test]
+    fn a_janela_de_horario_e_conferida_e_nao_mais_recusada_sempre() {
+        use pw_data_loader::tasks::JanelaDeHorario;
+        let mut t = modelo(1);
+        t.janelas = vec![JanelaDeHorario { tipo: 3, inicio: momento(0, 0, 0), fim: momento(0, 24, 0) }];
+        let mut velha = modelo(2);
+        velha.janelas = vec![JanelaDeHorario { tipo: 0, inicio: momento(2010, 0, 0), fim: momento(2011, 0, 0) }];
+        let d = dados(vec![t, velha]);
+        let agora = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u32;
+        assert!(janela_vale(&d.get_task(1).unwrap().janelas[0], agora));
+        assert!(!janela_vale(&d.get_task(2).unwrap().janelas[0], agora));
+        let mut j = JogadorDeTeste::default();
+        // O `agora` do jogador de teste é 1970; a janela por data de 2010 continua fechada.
+        assert_eq!(aceitar(&d, &mut j, 2), erro::HORARIO);
+    }
+
+    /// `CheckInZone`: mundo **e** caixa.
+    #[test]
+    fn entrega_em_zona_exige_o_mundo_e_a_caixa() {
+        let mut t = modelo(1);
+        t.entrega_em_zona = true;
+        t.mundo_de_entrega = 161;
+        t.regioes_de_entrega = vec![pw_data_loader::tasks::RegiaoDeMissao { min: [-900.0, -9999.0, -300.0], max: [-800.0, 9999.0, -200.0] }];
+        let d = dados(vec![t]);
+        let mut dentro = JogadorDeTeste { posicao: (161, [-821.0, 44.0, -259.0]), ..Default::default() };
+        assert_eq!(aceitar(&d, &mut dentro, 1), 0);
+        let mut outro_mapa = JogadorDeTeste { posicao: (1, [-821.0, 44.0, -259.0]), ..Default::default() };
+        assert_eq!(aceitar(&d, &mut outro_mapa, 1), erro::FORA_DA_ZONA);
+        let mut fora = JogadorDeTeste { posicao: (161, [0.0, 44.0, 0.0]), ..Default::default() };
+        assert_eq!(aceitar(&d, &mut fora, 1), erro::FORA_DA_ZONA);
+    }
+
+    /// `CheckFaction`: em facção e com cargo até `m_iPremise_FactionRole`.
+    #[test]
+    fn faccao_exige_estar_em_uma_com_o_cargo_permitido() {
+        let mut t = modelo(1);
+        t.faccao = 1;
+        t.papel_na_faccao = 3;
+        let d = dados(vec![t]);
+        assert_eq!(aceitar(&d, &mut JogadorDeTeste::default(), 1), erro::FACCAO);
+        assert_eq!(aceitar(&d, &mut JogadorDeTeste { faccao: (77, 5), ..Default::default() }, 1), erro::FACCAO);
+        assert_eq!(aceitar(&d, &mut JogadorDeTeste { faccao: (77, 2), ..Default::default() }, 1), 0);
+    }
+
+    fn membro(id: u32, nivel: u32) -> MembroDaEquipe {
+        MembroDaEquipe { id, nivel, classe: 6, masculino: true, mundo: 161, pos: [0.0; 3] }
+    }
+
+    /// `CheckTeamTask` + `HasAllTeamMemsWanted`, e o membro recebendo pelo capitão com o id
+    /// dele no `cap_task` do aviso.
+    #[test]
+    fn missao_de_equipe_so_o_capitao_recebe_e_os_membros_ganham_junto() {
+        let mut t = modelo(50);
+        t.em_equipe = true;
+        t.recebida_pela_equipe = true;
+        t.membros_pedidos = vec![pw_data_loader::tasks::MembroPedido { nivel_minimo: 10, classe: 0xFFFF_FFFF, minimo: 1, ..Default::default() }];
+        let d = dados(vec![t]);
+
+        let mut sozinho = JogadorDeTeste::default();
+        assert_eq!(aceitar(&d, &mut sozinho, 50), erro::NAO_E_CAPITAO);
+
+        let mut nao_capitao = JogadorDeTeste { equipe: vec![membro(9, 20), membro(1, 20)], ..Default::default() };
+        assert_eq!(aceitar(&d, &mut nao_capitao, 50), erro::NAO_E_CAPITAO);
+
+        let mut fraco = JogadorDeTeste { equipe: vec![membro(1, 20), membro(2, 5)], ..Default::default() };
+        assert_eq!(aceitar(&d, &mut fraco, 50), erro::MEMBRO_INVALIDO);
+
+        let mut capitao = JogadorDeTeste { nivel: 20, equipe: vec![membro(1, 20), membro(2, 15)], ..Default::default() };
+        assert_eq!(aceitar(&d, &mut capitao, 50), 0);
+
+        let mut l = ListasDeMissao::default();
+        let mut m2 = JogadorDeTeste { nivel: 15, classe: 6, equipe: vec![membro(1, 20), membro(2, 15)], ..Default::default() };
+        assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut m2, eu: 2 }.aceitar_como_membro(50), 0);
+        assert_eq!(l.ativa.quantidade, 1);
+        // `task_notify_new`: 2 + reason 1 + task 2 + cur_time 4 → cap_task em 9.
+        let aviso = m2.avisos.last().unwrap();
+        assert_eq!(u32::from_le_bytes(aviso[13..17].try_into().unwrap()), 0, "a missão do capitão vai com cap_task 0");
+    }
+
+    /// `OnTaskReachSite`: o cliente avisa, o servidor confere o lugar e finaliza.
+    #[test]
+    fn chegar_ao_lugar_so_finaliza_dentro_da_caixa_do_mundo_certo() {
+        let mut t = modelo(60);
+        t.metodo = metodo::ALCANCAR_LUGAR;
+        t.tipo_de_conclusao = conclusao::DIRETA;
+        t.mundo_a_alcancar = 1;
+        t.lugares_a_alcancar = vec![pw_data_loader::tasks::RegiaoDeMissao { min: [0.0, -10.0, 0.0], max: [10.0, 10.0, 10.0] }];
+        t.rewards.exp = 7;
+        let d = dados(vec![t]);
+        let mut l = ListasDeMissao::default();
+        let mut j = JogadorDeTeste { posicao: (1, [50.0, 0.0, 50.0]), ..Default::default() };
+        assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(60, 0, false), 0);
+        assert!(!Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.conferir_lugar(60, false));
+        j.posicao = (1, [5.0, 0.0, 5.0]);
+        assert!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.conferir_lugar(60, false));
+        assert_eq!(l.ativa.quantidade, 0, "direta: finalizou e premiou");
+        assert_eq!(j.exp, 7);
+    }
+
+    /// `if (pAward->m_ulTransWldId) pTask->TransportTo(...)`.
+    #[test]
+    fn premio_com_teleporte_pede_o_teleporte_ao_jogador() {
+        let mut t = modelo(31379);
+        t.metodo = metodo::FALAR_COM_NPC;
+        t.tipo_de_conclusao = conclusao::NO_NPC;
+        t.rewards.teleporte = Some((1, [-319.667, 220.007, -900.309]));
+        let d = dados(vec![t]);
+        let mut l = ListasDeMissao::default();
+        let mut j = JogadorDeTeste::default();
+        assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(31379, 0, false), 0);
+        assert!(j.teleporte.is_none());
+        assert!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.entregar_no_npc(31379, 0));
+        assert_eq!(j.teleporte, Some((1, [-319.667, 220.007, -900.309])));
     }
 
     #[test]
@@ -2002,11 +2367,11 @@ mod tests {
         let d = dados(vec![t]);
         let mut l = ListasDeMissao::default();
         let mut j = JogadorDeTeste { nivel: 5, ..Default::default() };
-        Motor { tarefas: &d, listas: &mut l, j: &mut j }.aceitar(100, 0, true);
-        Motor { tarefas: &d, listas: &mut l, j: &mut j }.abateu_monstro(7, 5);
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(100, 0, true);
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.abateu_monstro(7, 5);
         assert_eq!(l.ativa.e[0].monstros(0), 1);
         assert_eq!(j.avisos.last().unwrap().len(), 2 + 4 + 17);
-        Motor { tarefas: &d, listas: &mut l, j: &mut j }.abateu_monstro(7, 5);
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.abateu_monstro(7, 5);
         assert_eq!(l.ativa.quantidade, 0, "conclusão direta ao completar");
         assert_eq!(j.exp, 50);
     }
@@ -2029,14 +2394,14 @@ mod tests {
         let d = dados(vec![pai, a, b]);
         let mut l = ListasDeMissao::default();
         let mut j = JogadorDeTeste::default();
-        Motor { tarefas: &d, listas: &mut l, j: &mut j }.aceitar(10, 0, true);
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(10, 0, true);
         assert_eq!(l.ativa.quantidade, 2);
         assert_eq!((l.ativa.e[1].id, l.ativa.e[1].pai), (11, 0));
         assert_eq!(l.ativa.e[0].filho, 1);
-        assert!(Motor { tarefas: &d, listas: &mut l, j: &mut j }.entregar_no_npc(11, 0));
+        assert!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.entregar_no_npc(11, 0));
         assert_eq!(l.ativa.quantidade, 2);
         assert_eq!((l.ativa.e[1].id, l.ativa.e[1].pai), (12, 0));
-        assert!(Motor { tarefas: &d, listas: &mut l, j: &mut j }.entregar_no_npc(12, 0));
+        assert!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.entregar_no_npc(12, 0));
         assert_eq!(l.ativa.quantidade, 0, "o último filho conclui o pai de conclusão direta");
         assert_eq!(l.procurar_concluida(10), 0);
     }
@@ -2058,7 +2423,7 @@ mod tests {
         let d = dados(vec![t]);
         let mut l = ListasDeMissao::default();
         let mut j = JogadorDeTeste::default();
-        Motor { tarefas: &d, listas: &mut l, j: &mut j }.aceitar(5, 0, true);
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(5, 0, true);
         l.marcar_concluida(3, false);
         let b = l.blocos();
         assert_eq!(b[0].len(), TAM_CABECALHO + TAM_ENTRADA);

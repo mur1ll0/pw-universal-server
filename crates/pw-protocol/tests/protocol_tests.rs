@@ -231,6 +231,7 @@ fn test_gamedatasend_s2c_subcommands() {
         energia_exigida: 3,
         municao_exigida: 0,
         tipo_maior: 292,
+        nivel_da_arma: 1,
         dano_minimo: 3,
         dano_maximo: 3,
         dano_magico_minimo: 5,
@@ -270,6 +271,40 @@ fn test_gamedatasend_s2c_subcommands() {
     // Sem ficha, o comando vai sem bloco nenhum — melhor do que inventar requisito.
     let sem = S2CGamedataSend::item_info(0, 3, 1796, 0, 0, 10, &[], None);
     assert_eq!(sem.data.len(), 24, "cabeçalho de 22 mais o tamanho do bloco em zero");
+}
+
+/// A munição vai com `IVTR_ESSENCE_ARROW` (20 bytes) e o cabeçalho de
+/// `generate_projectile` (`generate_item_temp.h:607-626`). Sem ela o cliente mostra
+/// "arma de nível 0-0" e o arco fica vermelho.
+#[test]
+fn a_municao_sai_com_a_faixa_de_nivel_da_arma() {
+    const BLOCO: usize = 22 + 2;
+    let m = pw_core::FichaDaMunicao {
+        tipo: 8546,
+        dano_extra: 1,
+        dano_extra_percentual: 0,
+        nivel_minimo_da_arma: 0,
+        nivel_maximo_da_arma: 17,
+    };
+    let p = S2CGamedataSend::item_info(
+        1, 11, 43283, 0, 0, 1000, &[],
+        Some(pw_core::FichaDoEquipamento::Municao(m)),
+    );
+    let s16 = |off: usize| i16::from_le_bytes([p.data[off], p.data[off + 1]]);
+    let s32 = |off: usize| i32::from_le_bytes([p.data[off], p.data[off + 1], p.data[off + 2], p.data[off + 3]]);
+
+    assert_eq!(s16(22) as usize, 20 + 4 + 20 + 8, "requisitos, tamanho+fabricante, essência, cravos e propriedades");
+    assert_eq!(p.data.len(), BLOCO + 52);
+    assert_eq!(s16(BLOCO + 2), -1, "máscara 0xFFFF");
+    // `generate_projectile` grava 1 (`generate_item_temp.h:615`) e o `update_require_data`
+    // do fim multiplica pela escala interna (`gs/item/item_addon.h:454-458`): o cliente
+    // divide por 100 arredondando para cima e mostra 1 (B61).
+    assert_eq!(s32(BLOCO + 12), pw_core::ESCALA_DA_DURABILIDADE, "durabilidade 1 na escala interna");
+    assert_eq!(s16(BLOCO + 20), 20, "sizeof(IVTR_ESSENCE_ARROW)");
+    assert_eq!(s32(BLOCO + 24), 8546, "tipo");
+    assert_eq!(s32(BLOCO + 28), 1, "dano extra");
+    assert_eq!(s32(BLOCO + 36), 0, "nível mínimo da arma");
+    assert_eq!(s32(BLOCO + 40), 17, "nível máximo da arma");
 }
 
 /// A armadura e o acessório têm o mesmo cabeçalho da arma e essências próprias — e sem
@@ -788,4 +823,84 @@ fn a_marca_das_missoes_dinamicas_vai_com_reason_8_e_nove_bytes() {
     assert_eq!(u16::from_le_bytes([d[7], d[8]]), 0, "task");
     assert_eq!(s32_de(d, 9) as u32, 0x5277_6c0d, "time_mark");
     assert_eq!(u16::from_le_bytes([d[13], d[14]]), 10, "version = DYN_TASK_CUR_VERSION");
+}
+
+/// B59 — o pacote de missões dinâmicas vai em pedaços de 4.093 bytes, com `reason` 9 e o
+/// `task` marcando o último (`ATaskTemplMan::OnTaskGetDynTasksData`, `TaskTemplMan.cpp:321-353`).
+///
+/// O cliente pede esses dados (`TASK_CLT_NOTIFY_DYN_DATA`, 8) quando a marca não bate com o
+/// pacote local dele, e **só monta a lista de missões ativas** depois de receber o último
+/// pedaço. Sem resposta, nenhuma missão nova aparece em jogo.
+#[test]
+fn as_missoes_dinamicas_vao_em_pedacos_com_reason_9() {
+    let pedaco = vec![0xABu8; S2CGamedataSend::PEDACO_DAS_MISSOES_DINAMICAS];
+    let p = S2CGamedataSend::task_dyn_data(&pedaco, false);
+    let d = &p.data;
+    assert_eq!(u16::from_le_bytes([d[0], d[1]]), 106, "TASK_VAR_DATA");
+    assert_eq!(s32_de(d, 2) as usize, 3 + pedaco.len(), "size = task_notify_base + dados");
+    assert_eq!(d[6], 9, "reason = TASK_SVR_NOTIFY_DYN_DATA");
+    assert_eq!(u16::from_le_bytes([d[7], d[8]]), 0, "task = 0 enquanto há mais");
+    assert_eq!(&d[9..], &pedaco[..], "os bytes do arquivo, sem mexer");
+
+    // O último pedaço é o que traz `task = 1`.
+    let fim = S2CGamedataSend::task_dyn_data(&[1, 2, 3], true);
+    assert_eq!(u16::from_le_bytes([fim.data[7], fim.data[8]]), 1, "task = 1 no último");
+    assert_eq!(&fim.data[9..], &[1, 2, 3]);
+
+    // `0x1000 - sizeof(task_notify_base)`, com `pack(1)`.
+    assert_eq!(S2CGamedataSend::PEDACO_DAS_MISSOES_DINAMICAS, 4093);
+}
+
+/// Os comandos novos do B51, com os tamanhos dos cabeçalhos do cliente
+/// (`EC_GPDataType.h`): o cliente descarta em silêncio o que vier com outro tamanho.
+#[test]
+fn os_comandos_do_b51_tem_o_tamanho_do_cliente() {
+    use pw_core::Vector3;
+    // cmd_add_status_point: 5 × size_t.
+    assert_eq!(S2CGamedataSend::add_status_point(1, 2, 3, 4, 5).data.len(), 2 + 20);
+    // cmd_attack_once: unsigned char.
+    assert_eq!(S2CGamedataSend::attack_once(1).data, vec![83, 0, 1]);
+    // cmd_notify_hostpos: A3DVECTOR3 + int tag + int line.
+    let n = S2CGamedataSend::notify_hostpos(Vector3::new(1.0, 2.0, 3.0), 161, 0).data;
+    assert_eq!(n.len(), 2 + 20);
+    assert_eq!(i32::from_le_bytes(n[14..18].try_into().unwrap()), 161);
+    // cmd_player_gather_start: int, int, unsigned char. _stop: int.
+    assert_eq!(S2CGamedataSend::player_gather_start(1, 2, 7).data.len(), 2 + 9);
+    assert_eq!(S2CGamedataSend::player_gather_stop(1).data.len(), 2 + 4);
+    // cmd_host_obtain_item: 4 ints + 2 bytes.
+    assert_eq!(S2CGamedataSend::obtain_item(795, 0, 2, 2, 0, 3).data.len(), 2 + 18);
+}
+
+/// B53 — estados de habilidade: tamanhos das structs do cliente (`EC_GPDataType.h`).
+#[test]
+fn estados_visiveis_icones_e_resultado_de_bencao_tem_o_tamanho_do_cliente() {
+    use pw_protocol::packets::s2c::S2CGamedataSend;
+    // 2 de cabeçalho + `cmd_update_ext_state` (28).
+    let p = S2CGamedataSend::update_ext_state(7, [1 << 5, 0, 0, 0, 0, 2]).data;
+    assert_eq!(p.len(), 30);
+    assert_eq!(&p[..2], &124u16.to_le_bytes());
+    assert_eq!(&p[6..10], &(1u32 << 5).to_le_bytes());
+    // 2 + id 4 + scount 2 + 2×2 + pcount 2 + 2×4.
+    let p = S2CGamedataSend::icon_state_notify(7, &[(1, 3), (32, 60)]).data;
+    assert_eq!(p.len(), 2 + 4 + 2 + 4 + 2 + 8);
+    // Cada estado leva 1 parâmetro nos 2 bits altos.
+    assert_eq!(u16::from_le_bytes([p[8], p[9]]), 1 | 0x4000);
+    assert_eq!(u16::from_le_bytes([p[12], p[13]]), 2);
+    assert_eq!(i32::from_le_bytes([p[18], p[19], p[20], p[21]]), 60);
+    // Sem ícones: id, 0, 0.
+    assert_eq!(S2CGamedataSend::icon_state_notify(7, &[]).data.len(), 2 + 4 + 2 + 2);
+    // 2 + `cmd_enchant_result` (19).
+    assert_eq!(S2CGamedataSend::enchant_result(1, 2, 3, 4, false, 0, 1).data.len(), 21);
+}
+
+/// B53 — a configuração volta ao cliente byte a byte (`SaveConfigsToServer` →
+/// `LoadConfigsFromServer`, `EC_GameRun.cpp:2014-2241`). Antes os 16 primeiros bytes eram
+/// trocados por um cabeçalho inventado e o cliente registrava `data read error (2)`.
+#[test]
+fn get_ui_config_re_devolve_o_bloco_gravado_sem_mexer() {
+    use pw_protocol::packets::s2c::S2CGetUIConfigRe;
+    let bloco: Vec<u8> = (0u8..=200).collect();
+    let p = S2CGetUIConfigRe::new(5491, 7, &bloco);
+    assert_eq!(p.ui_config, bloco);
+    assert!(S2CGetUIConfigRe::new(5491, 7, &[]).ui_config.is_empty());
 }

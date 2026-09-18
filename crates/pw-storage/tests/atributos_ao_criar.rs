@@ -99,7 +99,7 @@ async fn atributos_no_banco(pool: &PostgresPool, role_id: i32) -> (i32, i32, i32
 async fn o_guerreiro_nasce_com_os_atributos_da_classe() {
     let Some(c) = montar().await else { return };
 
-    // Os valores do `[SWORDSMAN]` do `ptemplate.conf` do realm 155BR.
+    // Os valores do `[SWORDSMAN]` do `ptemplate.conf` do realm 155.
     let do_guerreiro = AtributosIniciais {
         forca: 15,
         agilidade: 10,

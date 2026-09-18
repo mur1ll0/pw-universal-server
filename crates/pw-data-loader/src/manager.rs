@@ -189,6 +189,14 @@ pub struct GameDataManager {
     /// `None` quando a pasta não tem o arquivo, ele é recusado, ou a marca é zero: nos três
     /// casos o original **não responde** ao pedido (`TaskTemplMan.cpp:301`).
     pub marca_das_missoes_dinamicas: Option<u32>,
+    /// O `dyn_tasks.data` inteiro, como está no disco.
+    ///
+    /// O cliente compara a marca com a do pacote local dele e, quando não bate (ou ele não
+    /// tem o pacote), **pede os dados** (`TASK_CLT_NOTIFY_DYN_DATA`) e só monta a lista de
+    /// missões ativas depois de recebê-los (`OnDynTasksTimeMark` → `InitActiveTaskList`,
+    /// `task/TaskTemplMan.cpp:166-179`). Sem essa resposta o sistema de missões do cliente
+    /// fica sem inicializar: nenhuma missão nova aparece (B59).
+    pub missoes_dinamicas: Option<std::sync::Arc<Vec<u8>>>,
 
     // Spawns indexados por ID do Mapa/Instância (ex: 1 -> world/npcgen.data, 101 -> a01/npcgen.data)
     pub map_spawns: HashMap<i32, NpcGenData>,
@@ -222,6 +230,18 @@ pub struct GameDataManager {
     pub servicos_de_npc: HashMap<u32, crate::servicos::ServicosDoNpc>,
     /// `pile_num_max` de cada item.
     pub pilhas: HashMap<u32, u32>,
+    /// As minas (`MINE_ESSENCE`) com as regras de carga do original — ver [`crate::minas`].
+    pub minas: crate::minas::TabelaDeMinas,
+    /// Aljavas → munição (`generate_quiver`).
+    pub aljavas: crate::armas::TabelaDeAljavas,
+    /// Cartas da Sorte → missão sorteada (`item_taskdice`).
+    pub cartas: crate::cartas::TabelaDeCartas,
+    /// Addons: tratador e parâmetros (`EQUIPMENT_ADDON`).
+    pub addons: crate::addons::TabelaDeAddons,
+    /// O que o drop de equipamento sorteia (`generate_weapon/armor/decoration`).
+    pub geracao: crate::addons::TabelaDeGeracao,
+    /// `STONE_ESSENCE`: pedra → (addon na arma, addon na armadura, addon no acessório).
+    pub pedras: std::collections::HashMap<u32, (u32, u32, u32)>,
     /// Recarga, conjuração e custo de aprender de cada habilidade — ver
     /// [`crate::habilidades`]. Só o 1.5.5 tem tabela; nas outras versões fica vazia.
     pub habilidades: crate::habilidades::TabelaDeHabilidades,
@@ -362,6 +382,7 @@ impl GameDataManager {
             match CabecalhoDasMissoesDinamicas::ler(&data) {
                 Ok(c) => {
                     self.marca_das_missoes_dinamicas = (c.marca != 0).then_some(c.marca);
+                    self.missoes_dinamicas = Some(std::sync::Arc::new(data.clone()));
                     rel.lidos.push("dyn_tasks.data (cabeçalho)".into());
                 }
                 Err(e) => rel.falhou("dyn_tasks.data", e),
@@ -395,6 +416,19 @@ impl GameDataManager {
             self.progressao = crate::progressao::TabelaDeProgressao::carregar(g);
             self.servicos_de_npc = crate::servicos::carregar(g);
             self.pilhas = crate::servicos::pilhas(g);
+            self.minas = crate::minas::carregar(g);
+            self.aljavas = crate::armas::carregar_aljavas(g);
+            self.cartas = crate::cartas::carregar(g);
+            self.addons = crate::addons::TabelaDeAddons::carregar(g);
+            self.geracao = crate::addons::carregar_geracao(g);
+            self.pedras = g
+                .get("STONE_ESSENCE")
+                .iter()
+                .filter_map(|r| {
+                    let i = |n: &str| r.get(n).and_then(|v| v.as_i32()).unwrap_or(0).max(0) as u32;
+                    (i("ID") > 0).then(|| (i("ID"), (i("id_addon_damage"), i("id_addon_defence"), i("id_addon_decoration"))))
+                })
+                .collect();
             // Os stubs de habilidade são do servidor 1.5.5; as duas versões de
             // `elements.data` que o catálogo cobre (v156 BR, v159 EN) são desse servidor.
             if matches!(g.version, 156 | 159) {
@@ -478,12 +512,13 @@ impl GameDataManager {
         Some(shop_price.max(price).max(1))
     }
 
-    /// A durabilidade de fábrica de um equipamento, já na escala do cliente.
+    /// A durabilidade de fábrica de um equipamento, na escala do arquivo (a da tela).
     ///
-    /// O `elements.data` guarda `durability_min` na escala dele; o cliente multiplica por
-    /// `ENDURANCE_SCALE` (100) ao montar o item, e é nessa escala que o `OWN_ITEM_INFO`
-    /// viaja. Quem grava o item no banco guarda a escala do arquivo, e o codificador
-    /// multiplica — então o que sai daqui é o número do arquivo.
+    /// O `elements.data` guarda `durability_min` na escala dele — o número que aparece na
+    /// tela. **O que sai daqui é esse número**; quem monta o item multiplica pela escala
+    /// interna (`pw_core::ESCALA_DA_DURABILIDADE`, 100), como o `update_require_data` do
+    /// original (`gs/item/item_addon.h:454-458`), e é na escala interna que a durabilidade
+    /// fica no banco e viaja no bloco do `OWN_ITEM_INFO` (B61).
     ///
     /// `None` para item que não é equipamento: poção não tem durabilidade.
     pub fn durabilidade_de_fabrica(&self, item_id: u32) -> Option<u32> {

@@ -28,7 +28,7 @@ fn carregar(realm: &str) -> Option<TabelasDeEquipamento> {
 /// um espaço de essência só, e é isso que faz a busca por família funcionar.
 #[test]
 fn as_tres_familias_sao_conjuntos_disjuntos() {
-    let Some(t) = carregar("realm_155BR") else { return };
+    let Some(t) = carregar("realm_155") else { return };
 
     assert!(!t.armaduras.is_empty(), "ARMOR_ESSENCE vazio no realm");
     assert!(!t.decoracoes.is_empty(), "DECORATION_ESSENCE vazio no realm");
@@ -56,7 +56,7 @@ fn as_tres_familias_sao_conjuntos_disjuntos() {
 /// precisa de máscara.
 #[test]
 fn nenhuma_peca_com_nivel_exigido_viaja_com_mascara_de_classe_zerada() {
-    let Some(t) = carregar("realm_155BR") else { return };
+    let Some(t) = carregar("realm_155") else { return };
 
     let mut conferidas = 0usize;
     for a in t.armaduras.values() {
@@ -95,7 +95,7 @@ fn nenhuma_peca_com_nivel_exigido_viaja_com_mascara_de_classe_zerada() {
 #[test]
 fn a_busca_por_id_devolve_a_familia_certa() {
     use pw_core::FichaDoEquipamento as F;
-    let Some(t) = carregar("realm_155BR") else { return };
+    let Some(t) = carregar("realm_155") else { return };
 
     let id_armadura = *t.armaduras.keys().next().unwrap();
     let id_decoracao = *t.decoracoes.keys().next().unwrap();
@@ -110,7 +110,7 @@ fn a_busca_por_id_devolve_a_familia_certa() {
 /// a armadura de nível mais baixo que aceita o Sacerdote (bit 7).
 #[test]
 fn a_primeira_armadura_do_sacerdote_bate_campo_a_campo() {
-    let Some(t) = carregar("realm_155BR") else { return };
+    let Some(t) = carregar("realm_155") else { return };
 
     const SACERDOTE: i32 = 1 << 7;
     let peca = t
@@ -148,7 +148,7 @@ fn a_primeira_armadura_do_sacerdote_bate_campo_a_campo() {
 /// escala do cliente ao montar o comando, e zero ali significa peça quebrada.
 #[test]
 fn a_durabilidade_de_fabrica_nao_e_zero() {
-    let Some(t) = carregar("realm_155BR") else { return };
+    let Some(t) = carregar("realm_155") else { return };
 
     let zeradas = t
         .armaduras
@@ -167,7 +167,7 @@ fn a_durabilidade_de_fabrica_nao_e_zero() {
 /// cinco `magic_defences_N_low`, na ordem Metal, Madeira, Água, Fogo, Terra.
 #[test]
 fn as_cinco_resistencias_saem_de_campos_distintos() {
-    let Some(t) = carregar("realm_155BR") else { return };
+    let Some(t) = carregar("realm_155") else { return };
 
     let alguma = t
         .armaduras
@@ -181,4 +181,29 @@ fn as_cinco_resistencias_saem_de_campos_distintos() {
     // E o mesmo vale para o acessório, que lê os mesmos cinco campos.
     let _: &armaduras::TemplateDeDecoracao =
         t.decoracoes.values().next().expect("DECORATION_ESSENCE vazio");
+}
+
+/// O Arco de Madeira do Arqueiro novo é arma de **nível 0**, e só a munição que aceita
+/// nível 0 fica utilizável com ele — é a conta de `CanUseProjectile`
+/// (`EC_HostPlayer.cpp:5009-5016`). A Flecha de Iniciante (8543) pede 1-17 e deixava o arco
+/// vermelho; a Flecha de Novato (43283) aceita 0-17.
+#[test]
+fn a_flecha_de_novato_serve_no_arco_de_madeira_e_a_de_iniciante_nao() {
+    use pw_core::FichaDoEquipamento as F;
+    let Some(t) = carregar("realm_155") else { return };
+
+    let Some(F::Arma(arco)) = t.ficha(2250) else { panic!("2250 é arma") };
+    assert_eq!(arco.nivel_da_arma, 0, "Arco de Madeira: level 0 no WEAPON_ESSENCE");
+    assert_eq!(arco.municao_exigida, 8546);
+
+    let serve = |id: u32| match t.ficha(id) {
+        Some(F::Municao(m)) => {
+            m.tipo == arco.municao_exigida
+                && m.nivel_minimo_da_arma <= arco.nivel_da_arma
+                && arco.nivel_da_arma <= m.nivel_maximo_da_arma
+        }
+        outro => panic!("{id} devia ser munição: {outro:?}"),
+    };
+    assert!(serve(43283), "Flecha de Novato");
+    assert!(!serve(8543), "Flecha de Iniciante pede arma de nível 1");
 }

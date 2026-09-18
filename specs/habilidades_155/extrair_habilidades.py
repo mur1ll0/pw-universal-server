@@ -98,6 +98,206 @@ def estados(texto, max_level):
     return saida
 
 
+ALCANCE_DA_ARMA = re.compile(r"skill\s*->\s*GetPlayer\s*\(\s*\)\s*->\s*GetRange\s*\(\s*\)")
+BONUS_DE_ALCANCE = re.compile(r"skill\s*->\s*GetPlayer\s*\(\s*\)\s*->\s*GetPrayrangeplus\s*\(\s*\)")
+
+
+def alcance(texto, max_level):
+    """`GetPraydistance` por nível, separando o alcance de ataque do jogador.
+
+    `GetRange()` é `GetExtendProp().attack_range` (`playerwrapper.h:95`) — o alcance da arma
+    com o corpo. Sai como `{"arma": k, "fixo": [...]}`: alcance = `k × attack_range + fixo`.
+    `GetPrayrangeplus()` é bônus de talento/equipamento e vale 0 aqui (sem esses sistemas).
+    """
+    c = corpo(texto, "float GetPraydistance")
+    if c is None or "TODO fix" in c:
+        return None
+    m = re.search(r"return\s+(.+?)\s*;", c, re.S)
+    if not m:
+        return None
+    expr = BONUS_DE_ALCANCE.sub("0", m.group(1))
+    k = 1 if ALCANCE_DA_ARMA.search(expr) else 0
+    fixo = []
+    for n in range(1, max_level + 1):
+        v = avaliar(ALCANCE_DA_ARMA.sub("0", expr), n)
+        if v is None:
+            return None
+        fixo.append(float(v))
+    if k:
+        # Confere que o alcance entra somado, com coeficiente 1.
+        for n in range(1, max_level + 1):
+            um = avaliar(ALCANCE_DA_ARMA.sub("1", expr), n)
+            if um is None or abs(float(um) - fixo[n - 1] - 1.0) > 1e-6:
+                return None
+    return {"arma": k, "fixo": fixo}
+
+
+SETTER_DE_DANO = re.compile(
+    r"skill\s*->\s*Set(Damage|Golddamage|Wooddamage|Waterdamage|Firedamage|Earthdamage)\s*\(\s*"
+    r"(?:([\d.]+)\s*\*\s*)?skill\s*->\s*Get(Attack|Magicattack)\s*\(\s*\)\s*\)\s*;"
+)
+CARGA = re.compile(r"skill\s*->\s*GetCharging\s*\(\s*\)")
+
+
+def argumento(corpo_calc, setter):
+    """A expressão passada a `skill->SetX(...)`, com parênteses balanceados."""
+    m = re.search(rf"skill\s*->\s*{setter}\s*\(", corpo_calc)
+    if not m:
+        return None
+    i, prof = m.end(), 1
+    for k in range(i, len(corpo_calc)):
+        if corpo_calc[k] == "(":
+            prof += 1
+        elif corpo_calc[k] == ")":
+            prof -= 1
+            if prof == 0:
+                return corpo_calc[i:k]
+    return None
+
+
+def dano(texto, max_level, estados_ms):
+    """A conta de dano da habilidade: o estado com `SetDamage`/`SetXdamage(k * GetAttack())`.
+
+    O servidor faz `GeneratePhysicDamage((int)(ratio*100), (int)plus)` ou
+    `GenerateMaigicDamage2(...)` (`skill.cpp:897-898`, `skill.h:634`, `actobject.h:1422-1469`):
+    dano sorteado da arma e base × (100 + bônus do atributo + ratio×100)/100 + plus, vezes o
+    fator `k`. Em habilidade de carga, `GetCharging()` é o tempo carregado; aqui sai com a
+    carga **cheia** (o tempo do 1º estado) e `carga: true` — o mundo escala pelo tempo real.
+    """
+    ordem = re.findall(r"statestub\.push_back\s*\(\s*new\s+(State\d+)\s*\(\s*\)\s*\)", texto)
+    for idx, nome in enumerate(ordem):
+        i = texto.find(f"class {nome}:")
+        if i < 0:
+            i = texto.find(f"class {nome} :")
+        if i < 0:
+            continue
+        calc = corpo(texto[i:], "void Calculate")
+        if not calc or "TODO fix" in calc:
+            continue
+        m = SETTER_DE_DANO.search(calc)
+        if not m:
+            continue
+        elemento, fator, base = m.group(1), float(m.group(2) or 1.0), m.group(3)
+        carga = False
+        ratio, plus = [], []
+        for n in range(1, max_level + 1):
+            valores = []
+            for setter in ("SetRatio", "SetPlus"):
+                expr = argumento(calc, setter)
+                if expr is None:
+                    valores.append(0.0)
+                    continue
+                if CARGA.search(expr):
+                    carga = True
+                    cheia = (estados_ms or [None])[0]
+                    if not cheia or cheia[n - 1] is None:
+                        return None
+                    expr = CARGA.sub(f"({cheia[n - 1]})", expr)
+                v = avaliar(expr, n)
+                if v is None:
+                    return None
+                valores.append(float(v))
+            ratio.append(valores[0])
+            plus.append(valores[1])
+        return {
+            "estado": idx,
+            "base": "fisico" if base == "Attack" else "magico",
+            "elemento": elemento,
+            "fator": fator,
+            "ratio": ratio,
+            "plus": plus,
+            "carga": carga,
+        }
+    return None
+
+
+def distancia(texto, assinatura, max_level):
+    """`k × GetRange() + fixo[nível]` de uma função de distância (`GetEffectdistance`...).
+
+    Mesmo formato de [`alcance`]; `None` quando a expressão depende de outra coisa.
+    """
+    c = corpo(texto, assinatura)
+    if c is None or "TODO fix" in c:
+        return None
+    m = re.search(r"return\s+(.+?)\s*;", c, re.S)
+    if not m:
+        return None
+    expr = BONUS_DE_ALCANCE.sub("0", m.group(1))
+    k = 1 if ALCANCE_DA_ARMA.search(expr) else 0
+    fixo = []
+    for n in range(1, max_level + 1):
+        v = avaliar(ALCANCE_DA_ARMA.sub("0", expr), n)
+        if v is None:
+            return None
+        fixo.append(float(v))
+    if k:
+        for n in range(1, max_level + 1):
+            um = avaliar(ALCANCE_DA_ARMA.sub("1", expr), n)
+            if um is None or abs(float(um) - fixo[n - 1] - 1.0) > 1e-6:
+                return None
+    return {"arma": k, "fixo": fixo}
+
+
+# Getters que viram variáveis da expressão; o servidor (`efeitos::Expr`) conhece estas.
+_VARIAVEIS = [
+    (re.compile(r"skill\s*->\s*GetPlayer\s*\(\s*\)\s*->\s*Get(\w+)\s*\(\s*\)"), r"P_\1"),
+    (re.compile(r"skill\s*->\s*GetTarget\s*\(\s*\)\s*->\s*Get(\w+)\s*\(\s*\)"), r"A_\1"),
+    (re.compile(r"skill\s*->\s*GetVictim\s*\(\s*\)\s*->\s*Get(\w+)\s*\(\s*\)"), r"V_\1"),
+    (re.compile(r"skill\s*->\s*GetLevel\s*\(\s*\)"), "L"),
+    (re.compile(r"skill\s*->\s*Get(\w+)\s*\(\s*\)"), r"S_\1"),
+]
+_SETTER = re.compile(r"^skill\s*->\s*(?:(GetVictim|GetPlayer)\s*\(\s*\)\s*->\s*)?Set(\w+)\s*\((.*)\)$", re.S)
+
+
+def expressao(e):
+    """Uma expressão C++ de stub no formato que `efeitos::Expr` lê: números, `+ - * /`,
+    comparações, `?:`, `&& ||`, parênteses, `INT(...)` e variáveis `L`, `P_X`, `V_X`,
+    `A_X`, `S_X`. `None` quando sobra algo que não é isso."""
+    e = " ".join(e.split())
+    e = re.sub(r"\(\s*float\s*\)", "", e)
+    e = re.sub(r"\(\s*int\s*\)\s*\(", "INT(", e)
+    for rx, sub in _VARIAVEIS:
+        e = rx.sub(sub, e)
+    resto = re.sub(r"\b(INT|L|[PAVS]_\w+)\b", "", e)
+    resto = re.sub(r"\d+\.?\d*(e[-+]?\d+)?f?", "", resto)
+    if re.search(r"[A-Za-z_]", resto) or re.search(r"[^\s()+\-*/<>=!?:&|]", resto):
+        return None
+    return e
+
+
+def roteiro(texto, nome):
+    """O corpo de `StateAttack`/`BlessMe` como lista de `[quem, setter, expressão]`.
+
+    `quem`: `V` (a vítima), `P` (quem conjura), `S` (a própria habilidade). Corpo com
+    controle de fluxo (`if`, `for`, `switch`) ou expressão que não se deixa ler sai `None`
+    — o servidor não aplica o que não leu.
+    """
+    c = corpo(texto, f"bool {nome} (Skill * skill) const")
+    if c is None:
+        c = corpo(texto, f"bool {nome}(Skill * skill) const")
+    if c is None:
+        return None
+    if "TODO fix" in c or re.search(r"\b(if|for|while|switch)\b", c):
+        return None
+    passos = []
+    for s in c.split(";"):
+        s = " ".join(s.split())
+        # Comentário de linha antes do comando (ex.: "// Added in 1.5.5 ...").
+        if "//" in s:
+            s = re.sub(r"//.*?(?=skill\s*->|$)", "", s).strip()
+        if not s or s.startswith("return") or s == "{" or s == "}":
+            continue
+        m = _SETTER.match(s.strip("{} "))
+        if not m:
+            return None
+        quem = {"GetVictim": "V", "GetPlayer": "P", None: "S"}[m.group(1)]
+        e = expressao(m.group(3))
+        if e is None:
+            return None
+        passos.append([quem, m.group(2), e])
+    return passos
+
+
 def escalar(texto, campo, tipo=int):
     m = re.search(rf"\b{campo}\s*=\s*([-\d.]+)\s*;", texto)
     return tipo(float(m.group(1))) if m else None
@@ -110,7 +310,7 @@ def extrair(caminho):
         return None
     sid = int(m.group(1))
     max_level = escalar(texto, "max_level") or 1
-    return {
+    h = {
         "id": sid,
         "cls": escalar(texto, "cls"),
         "max_level": max_level,
@@ -134,7 +334,25 @@ def extrair(caminho):
         "sp_exigido": por_nivel(texto, "int GetRequiredSp", max_level, int),
         "dinheiro_exigido": por_nivel(texto, "int GetRequiredMoney", max_level, int),
         "estados_ms": estados(texto, max_level),
+        # `time_type == 3` é conjuração com carga que o jogador solta (`Skill::IsWarmup`,
+        # `skill.h:571`): o tempo carregado vira `GetCharging()`.
+        "time_type": escalar(texto, "time_type"),
+        "alcance": alcance(texto, max_level),
     }
+    h["dano"] = dano(texto, max_level, h["estados_ms"])
+    # Área, precisão e efeitos (B53) — `PlayerWrapper::SetPerform` (`playerwrapper.cpp:170-420`).
+    m = re.search(r"range\.type\s*=\s*(\d+)\s*;", texto)
+    h["tipo_de_area"] = int(m.group(1)) if m else None
+    h["doenchant"] = bool(re.search(r"doenchant\s*=\s*true", texto))
+    h["dobless"] = bool(re.search(r"dobless\s*=\s*true", texto))
+    h["raio"] = por_nivel(texto, "float GetRadius", max_level, float)
+    h["distancia_de_ataque"] = por_nivel(texto, "float GetAttackdistance", max_level, float)
+    h["angulo"] = por_nivel(texto, "float GetAngle", max_level, float)
+    h["distancia_de_efeito"] = distancia(texto, "float GetEffectdistance", max_level)
+    h["precisao"] = por_nivel(texto, "float GetHitrate", max_level, float)
+    h["no_alvo"] = roteiro(texto, "StateAttack")
+    h["em_si"] = roteiro(texto, "BlessMe")
+    return h
 
 
 def main():
@@ -156,6 +374,8 @@ def main():
     for campo in ("mp", "execucao_ms", "recarga_ms", "nivel_exigido", "sp_exigido", "dinheiro_exigido"):
         print(f"  {campo}: {conta(campo)} avaliadas")
     print(f"  estados: {sum(1 for h in saida.values() if h['estados_ms'] and all(e is not None for e in h['estados_ms']))} completos")
+    for campo in ("tipo_de_area", "raio", "angulo", "distancia_de_efeito", "precisao", "no_alvo", "em_si"):
+        print(f"  {campo}: {conta(campo)} lidas")
 
 
 if __name__ == "__main__":

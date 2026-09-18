@@ -66,12 +66,11 @@ VALUES
 -- "MUDANÇA DE BASE" em docs/ESTADO_E_RETOMADA.md. `enabled_classes` repete o do 1.5.3: o
 -- CHARACTER_CLASS_CONFIG do elements.data do 1.5.5 tem as mesmas 12 classes (confirmado
 -- decodificando o arquivo real, não suposto -- ver specs/elements_155/README.md).
-('realm_155', 'Perfect World Evolved (1.5.5)', '1.5.5', '127.0.0.1', 29003, 3000, '{"enabled_classes": [0,1,2,3,4,5,6,7,8,9,10,11], "max_level": 105, "meridians": true, "reincarnation": true}'::jsonb),
--- Realm gêmeo do 155, mesma build 1.5.5, mas com elements.data/tasks.data/gshop* do
--- client "1.5.5 BR" do Murillo (build v156 -- diferente do EN, que é v159) -- criado
--- 2026-09-03 pra comparar client EN×BR lado a lado e isolar se um crash é do client
--- ou do servidor (ver docs/ESTADO_E_RETOMADA.md).
-('realm_155BR', 'Perfect World Evolved BR (1.5.5)', '1.5.5', '127.0.0.1', 29004, 3000, '{"enabled_classes": [0,1,2,3,4,5,6,7,8,9,10,11], "max_level": 105, "meridians": true, "reincarnation": true}'::jsonb)
+-- Dados do cliente "1.5.5 BR" (build v156). Até 2026-09-17 este realm se chamava
+-- `realm_155BR` e havia um `realm_155` gêmeo com os dados do cliente EN (v159, porta 29003);
+-- o EN saiu e o BR ficou com o nome, na porta 29004
+-- (scripts/2026_09_17_realm_155_passa_a_ser_o_br.sql, histórico B55).
+('realm_155', 'Perfect World Evolved (1.5.5)', '1.5.5', '127.0.0.1', 29004, 3000, '{"enabled_classes": [0,1,2,3,4,5,6,7,8,9,10,11], "max_level": 105, "meridians": true, "reincarnation": true}'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
 -- -----------------------------------------------------------------------------
@@ -219,6 +218,16 @@ CREATE TABLE IF NOT EXISTS character_task_lists (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
+-- A configuração que o cliente guarda no servidor: o bloco do `SetUIConfig` (barras de
+-- atalho, layout, opções — opaco, comprimido pelo cliente) e as marcas de ajuda. Devolvida no
+-- `GetUIConfig_Re`/`GetHelpStates_Re`. Ver scripts/2026_09_16_configuracao_do_cliente.sql.
+CREATE TABLE IF NOT EXISTS character_client_config (
+    character_id INT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+    ui_config BYTEA,
+    help_states BYTEA,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
 -- -----------------------------------------------------------------------------
 -- 7. TABELA DE FACÇÕES / CLÃS (Por Realm)
 -- -----------------------------------------------------------------------------
@@ -302,6 +311,10 @@ CREATE TABLE IF NOT EXISTS class_templates (
     spawn_x REAL NOT NULL,
     spawn_y REAL NOT NULL,
     spawn_z REAL NOT NULL,
+    -- `config_data` do molde do `clsconfig` (barras, layout com o rastreador de missões,
+    -- opções): mandado a quem não tem configuração gravada. Ver
+    -- scripts/2026_09_17_configuracao_inicial_dos_moldes_155.sql.
+    ui_config BYTEA,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT uq_class_template_per_realm UNIQUE(realm_id, cls)
