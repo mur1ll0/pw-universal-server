@@ -593,7 +593,7 @@ impl BusServer {
             if let Some(p) = mundo.players.get(&objeto) {
                 let mut proprios = vec![Self::estado_proprio_de(p)];
                 if atributos {
-                    proprios.push(Self::ficha_propria(p));
+                    proprios.push(self.ficha_propria(p));
                     proprios.push(S2CGamedataSend::ext_prop_move(p.role_id, p.walk_speed, p.move_speed, p.swim_speed, p.fly_speed).data);
                 }
                 let todos = vec![

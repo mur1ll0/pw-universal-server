@@ -33,4 +33,4 @@ quando há código alterado sem spec nem estado alterados.
   nunca palpite nem número inventado.
 - O binário do cliente é o juiz; S2C de tamanho errado é descartado em silêncio.
 - Arquivo de dados fecha no último byte, pelo carregador do cliente.
-- Testes só valem com `TEST_DATABASE_URL` definido.
+- Testes só valem com `TEST_DATABASE_URL` definido (o `pw-storage` isola tudo no schema `test`, preservando o `public`).

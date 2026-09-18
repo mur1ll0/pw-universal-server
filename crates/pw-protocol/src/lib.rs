@@ -1,11 +1,13 @@
-pub mod por_versao;
 pub mod adapter;
 pub mod codec;
 pub mod edition;
 pub mod octets;
 pub mod opcodes;
 pub mod packets;
+pub mod por_versao;
+pub mod traits;
 pub mod version;
+pub mod versions;
 
 pub use adapter::*;
 pub use codec::*;
@@ -14,4 +16,6 @@ pub use octets::*;
 pub use opcodes::*;
 pub use packets::*;
 pub use por_versao::*;
+pub use traits::*;
 pub use version::*;
+pub use versions::*;

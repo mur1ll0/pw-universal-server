@@ -243,6 +243,14 @@ impl ProtocolAdapter for Protocol155Adapter {
     }
 }
 
+/// Adaptador para o Realm 1.7.2
+pub struct Protocol172Adapter;
+impl ProtocolAdapter for Protocol172Adapter {
+    fn version(&self) -> GameVersion {
+        GameVersion::V1_7_2
+    }
+}
+
 /// Factory para obter o adaptador correspondente à versão solicitada
 pub fn create_protocol_adapter(version: GameVersion) -> Arc<dyn ProtocolAdapter> {
     match version {
@@ -250,5 +258,6 @@ pub fn create_protocol_adapter(version: GameVersion) -> Arc<dyn ProtocolAdapter>
         GameVersion::V1_4_8 => Arc::new(Protocol148Adapter),
         GameVersion::V1_5_3 => Arc::new(Protocol153Adapter),
         GameVersion::V1_5_5 => Arc::new(Protocol155Adapter),
+        GameVersion::V1_7_2 => Arc::new(Protocol172Adapter),
     }
 }

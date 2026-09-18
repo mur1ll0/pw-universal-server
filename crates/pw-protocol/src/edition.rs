@@ -133,6 +133,8 @@ impl VersaoDoCliente {
             // cruzado contra o `elements.data`/`tasks.data` reais de `data/realm_155/`
             // (o `resolver()` abaixo lê o do realm por cima disto de qualquer forma).
             GameVersion::V1_5_5 => Self { elements_data: 0x3000_0091, task_templ: 125 },
+            // Stub 1.7.2: herda temporariamente os padrões de compilação da base mais recente
+            GameVersion::V1_7_2 => Self { elements_data: 0x3000_0091, task_templ: 125 },
         }
     }
 

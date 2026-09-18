@@ -15,6 +15,7 @@ pub enum GameVersion {
     /// temos é de uma build mais antiga que esse binário, então não dava pra confiar nela
     /// sozinha desta vez).
     V1_5_5,
+    V1_7_2,
 }
 
 impl GameVersion {
@@ -24,6 +25,7 @@ impl GameVersion {
             GameVersion::V1_4_8 => "1.4.8",
             GameVersion::V1_5_3 => "1.5.3",
             GameVersion::V1_5_5 => "1.5.5",
+            GameVersion::V1_7_2 => "1.7.2",
         }
     }
 
@@ -75,6 +77,7 @@ impl GameVersion {
             GameVersion::V1_4_8 => 0x0001_0408, // não conferido
             GameVersion::V1_5_3 => 0x0001_0502, // EC_Game.cpp:115
             GameVersion::V1_5_5 => 0x0001_0505, // medido no elementclient.exe (build 2575), 2026-09-03
+            GameVersion::V1_7_2 => 0x0001_0702,
         }
     }
 
@@ -97,6 +100,7 @@ impl GameVersion {
             // com o mesmo id, `Response` incluído (2026-09-02, comparação campo a campo
             // dos dois IRs).
             GameVersion::V1_5_5 => crate::opcodes::OP_RESPONSE_153,
+            GameVersion::V1_7_2 => crate::opcodes::OP_RESPONSE_153,
         }
     }
 
@@ -107,6 +111,7 @@ impl GameVersion {
             GameVersion::V1_4_8 => crate::opcodes::OP_KEYEXCHANGE_153,
             GameVersion::V1_5_3 => crate::opcodes::OP_KEYEXCHANGE_153,
             GameVersion::V1_5_5 => crate::opcodes::OP_KEYEXCHANGE_153,
+            GameVersion::V1_7_2 => crate::opcodes::OP_KEYEXCHANGE_153,
         }
     }
 
@@ -121,6 +126,7 @@ impl GameVersion {
             // (item 53 do docs/ESTADO_E_RETOMADA.md: é código morto), então o valor não
             // muda byte nenhum enquanto continuar assim.
             GameVersion::V1_5_5 => 23,
+            GameVersion::V1_7_2 => 23,
         }
     }
 
@@ -153,15 +159,16 @@ impl GameVersion {
             // Não conferido contra os fontes do 1.5.5 ainda; herda do 1.5.3 (superset
             // conhecido) em vez de restringir por palpite.
             GameVersion::V1_5_5 => true,
+            GameVersion::V1_7_2 => true,
         }
     }
 
     pub fn has_reincarnation(&self) -> bool {
-        matches!(self, GameVersion::V1_4_8 | GameVersion::V1_5_3 | GameVersion::V1_5_5)
+        matches!(self, GameVersion::V1_4_8 | GameVersion::V1_5_3 | GameVersion::V1_5_5 | GameVersion::V1_7_2)
     }
 
     pub fn has_meridians(&self) -> bool {
-        matches!(self, GameVersion::V1_4_8 | GameVersion::V1_5_3 | GameVersion::V1_5_5)
+        matches!(self, GameVersion::V1_4_8 | GameVersion::V1_5_3 | GameVersion::V1_5_5 | GameVersion::V1_7_2)
     }
 }
 
@@ -180,6 +187,7 @@ impl FromStr for GameVersion {
             "1.4.8" | "v1.4.8" | "148" | "realm_148" => Ok(GameVersion::V1_4_8),
             "1.5.3" | "v1.5.3" | "153" | "realm_153" => Ok(GameVersion::V1_5_3),
             "1.5.5" | "v1.5.5" | "155" | "realm_155" => Ok(GameVersion::V1_5_5),
+            "1.7.2" | "v1.7.2" | "172" | "realm_172" => Ok(GameVersion::V1_7_2),
             other => Err(format!("Versão do jogo desconhecida: '{}'", other)),
         }
     }

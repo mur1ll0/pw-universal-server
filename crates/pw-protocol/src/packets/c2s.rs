@@ -138,12 +138,18 @@ impl C2SCreateRole {
         let _worldtag = stream.read_i32()?;
         let _custom_status = stream.read_octets()?;
         let _charactermode = stream.read_octets()?;
-        let _referrer_role = stream.read_i32()?;
-        let _cash_add = stream.read_i32()?;
-        let _reincarnation_data = stream.read_octets()?;
-        let _realm_data = stream.read_octets()?;
 
-        let _referid = stream.read_octets()?;
+        // No 1.2.6, o `RoleInfo` termina em `charactermode` e o pacote `CreateRole` encerra aí
+        // (19 campos no RoleInfo e sem referid, medido na captura real de 1052 bytes: full_interno.pcap opcode 84).
+        // A partir do 1.4.8 e no 1.5.3/1.5.5, o `RoleInfo` ganhou mais 4 campos (_referrer_role, _cash_add,
+        // _reincarnation_data, _realm_data) e o pacote `CreateRole` ganhou o `_referid` no final.
+        if !stream.is_empty() {
+            let _referrer_role = stream.read_i32()?;
+            let _cash_add = stream.read_i32()?;
+            let _reincarnation_data = stream.read_octets()?;
+            let _realm_data = stream.read_octets()?;
+            let _referid = stream.read_octets()?;
+        }
 
         Ok(Self {
             userid,

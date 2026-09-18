@@ -53,10 +53,16 @@ ou com campos novos no fim. Novos do 1.5.5 ainda não triados: 66 GNET, 17 C2S, 
 | `pw-gs/tests/comandos_contra_o_ir.rs` | cada decodificador C2S devolve o valor posto no deslocamento que o IR anuncia |
 | `pw-wire/tests/conformance_*` | empacotamento contra o IR (1.064 structs gamedata, 620 GNET) |
 
-## 4. Diferenças por versão: `PorVersao`
+## 4. Diferenças por versão: Padrão Estratégia e Módulos por Versão
 
-A base `S2CGamedataSend::*` escreve um layout; `pw_protocol::PorVersao` escolhe a variante
-pela versão do realm. Um caminho de escrita por layout.
+Originalmente centralizado em `pw_protocol::PorVersao`, o despacho polimórfico por versão foi
+refatorado para o padrão **Strategy** com trait `WorldProtocol` e `ProtocolAdapter` sob
+`crates/pw-protocol/src/versions/`:
+- `traits.rs`: Trait abstrata `WorldProtocol` para os subcomandos do mundo 3D e reexportação de `ProtocolAdapter`.
+- `versions/v126/`: Implementação isolada de `WorldProtocol` e `ProtocolAdapter` para a 1.2.6 (152B `own_ext_prop`, 3 blocos em `task_data`, 27B `info_npc`, 19 campos em `RoleInfo`, sem `refretcode`).
+- `versions/v155/`: Implementação canônica completa para a 1.5.5 (196B `own_ext_prop`, 5 blocos em `task_data`, 35B `info_npc`, 23 campos em `RoleInfo`).
+- `versions/v148/`, `v153/`, `v172/`: Módulos modulares dedicados por versão, eliminando condicionais `if` ad-hoc nos pacotes e structs.
+- `por_versao.rs`: Fachada fina que encapsula `Arc<dyn WorldProtocol>`, preservando compatibilidade para o `pw-gs`.
 
 | codificador | 1.2.6 | 1.5.x | o que muda |
 | :--- | ---: | ---: | :--- |
@@ -69,8 +75,9 @@ pela versão do realm. Um caminho de escrita por layout.
 | 5 resultados de ataque (`host_attack_result`, `host_attacked`, `self_skill_attack_result`, `object_skill_attack_result`…) | −3/−4 | | `attack_flag` era `char` e virou `int`; o `section` falta no 1.2.6 |
 | `npc_info_00`, `player_info_00` | | | ganham `iTargetID` |
 | `enter_sanctuary`, `leave_sanctuary` | 0 | | ganham `id` |
+| `own_ext_prop` | 152 | 196 | `EXTENDED_PROPERTY` menor na 1.2.6 (sem atributos novos de classes tardias) |
 | `receive_exp`, contagens do `equip_item` | 16 bits | 32 bits | |
-| `equip_data`, `object_move`, `object_stop_move` | | | ver `por_versao.rs` |
+| `equip_data`, `object_move`, `object_stop_move` | | | ver `versions/v126/` e `versions/v155/` |
 
 Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferentes**
 (`docs/MEDIDAS_DO_126.md`). Só entra aqui diferença **medida**.

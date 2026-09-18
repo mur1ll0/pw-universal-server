@@ -303,7 +303,7 @@ impl BusServer {
                 atributos: (p.strength, p.agility, p.vitality, p.energy),
                 listas: p.missoes.blocos(),
             };
-            let ficha = (mudou || subiu_de_nivel).then(|| (Self::ficha_propria(p), Self::estado_proprio_de(p)));
+            let ficha = (mudou || subiu_de_nivel).then(|| (self.ficha_propria(p), Self::estado_proprio_de(p)));
             (r, para_mim, para_todos, subiu_de_nivel, [bolsa, bolsa_de_missao], gravacao, ficha, teleporte)
         };
 
@@ -375,8 +375,8 @@ impl BusServer {
     }
 
     /// `OWN_EXT_PROP` (50) com os números calculados — ver `todos_os_dados`.
-    pub(crate) fn ficha_propria(p: &PlayerEntity) -> Vec<u8> {
-        S2CGamedataSend::own_ext_prop(
+    pub(crate) fn ficha_propria(&self, p: &PlayerEntity) -> Vec<u8> {
+        self.sub.own_ext_prop(
             p.pontos_de_atributo.max(0) as u32,
             p.atributos_efetivos(),
             p.max_hp,
@@ -603,7 +603,7 @@ impl BusServer {
                 "mundo: {roleid} equipado — dano {}..{}, alcance {:.1}, golpe {:.2} s, defesa {}, evasão {}",
                 p.attack_min, p.attack_max, p.attack_range, p.attack_speed, p.def_phys, p.armor
             );
-            (Self::ficha_propria(p), Self::estado_proprio_de(p))
+            (self.ficha_propria(p), Self::estado_proprio_de(p))
         };
         if avisar {
             self.enviar_ao_jogador(roleid, pacotes.1).await;

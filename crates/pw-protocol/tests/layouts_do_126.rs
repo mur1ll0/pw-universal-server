@@ -220,3 +220,26 @@ fn info_npc_ganha_vis_tid_e_state2_do_153_em_diante() {
     assert_eq!(&slice[..2], &11u16.to_le_bytes());
     assert_eq!(slice.len(), cabecalho + 35);
 }
+
+#[test]
+fn own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante() {
+    let p126 = PorVersao::new(GameVersion::V1_2_6);
+    let p155 = PorVersao::new(GameVersion::V1_5_5);
+
+    let d126 = p126.own_ext_prop(
+        0, (10, 10, 10, 10), 100, 100, (2, 2),
+        (2.0, 4.9, 3.0, 5.0),
+        (40, 5, 10, 22, 3.8),
+        (2, 3)
+    ).data;
+
+    let d155 = p155.own_ext_prop(
+        0, (10, 10, 10, 10), 100, 100, (2, 2),
+        (2.0, 4.9, 3.0, 5.0),
+        (40, 5, 10, 22, 3.8),
+        (2, 3)
+    ).data;
+
+    assert_eq!(d126.len() - 2, 152, "payload do OWN_EXT_PROP no 1.2.6 deve ser 152 bytes exatos");
+    assert_eq!(d155.len() - 2, 196, "payload do OWN_EXT_PROP no 1.5.5 deve ser 196 bytes exatos");
+}

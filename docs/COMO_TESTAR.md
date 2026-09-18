@@ -39,14 +39,17 @@ cobrem o que só o banco pode responder (uma cláusula `WHERE`) e o que só o mu
 pode responder (um subcomando mudando a simulação):
 
 ```bash
-# Um banco descartável, com o esquema de verdade
-createdb pw_database_test
-psql pw_database_test -f specs/01_DATABASE_SCHEMA_POSTGRES.sql
-export TEST_DATABASE_URL='postgresql://SEU_USUARIO@localhost:5432/pw_database_test'
+# Com o PostgreSQL do Docker (ou local) em execução:
+export TEST_DATABASE_URL='postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw_database'
 
+# O pw-storage roteia automaticamente as conexões de teste para o schema `test`
+# (`search_path=test,public`), mantendo o schema `public` de produção 100% limpo!
 cargo test -p pw-storage --test autorizacao_de_personagem   # 6 testes
-cargo test -p pw-storage --test itens_sobrevivem            # 4 testes
-cargo test -p pw-gs      --test subcomandos_no_mundo        # 30 testes
+cargo test -p pw-storage --test itens_sobrevivem            # 5 testes
+cargo test -p pw-storage --test template_de_classe          # 5 testes
+cargo test -p pw-storage --test atributos_ao_criar          # 3 testes
+cargo test -p pw-gs      --test subcomandos_no_mundo        # 59 testes
+cargo test -p pw-gs      --test varios_mapas                # 3 testes
 ```
 
 O primeiro monta dois realms 1.2.6 e prova que um jogador não entra no mundo como outro

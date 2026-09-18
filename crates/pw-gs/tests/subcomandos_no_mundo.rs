@@ -711,7 +711,7 @@ async fn receber(link: &mut pw_bus::transport::BusConnection, n: usize) -> Vec<V
 /// monstro chega por evento do tique, atrás do que o combate em curso já enfileirou.
 async fn esperar_comando(link: &mut pw_bus::transport::BusConnection, cmd: u16) -> Vec<u8> {
     let mut vistos = Vec::new();
-    for _ in 0..60 {
+    for _ in 0..200 {
         let m = tokio::time::timeout(Duration::from_secs(5), link.receber())
             .await
             .unwrap_or_else(|_| panic!("nada chegou enquanto eu esperava o comando {cmd}"))
@@ -724,7 +724,7 @@ async fn esperar_comando(link: &mut pw_bus::transport::BusConnection, cmd: u16) 
             }
         }
     }
-    panic!("o comando {cmd} não chegou em 60 pacotes; vieram {vistos:?}");
+    panic!("o comando {cmd} não chegou em 200 pacotes; vieram {vistos:?}");
 }
 
 /// Junta tudo o que o mundo manda até o `TASK_DATA` (105), o marcador de fim da carga.

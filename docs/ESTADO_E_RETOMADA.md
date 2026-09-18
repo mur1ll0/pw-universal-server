@@ -5,7 +5,7 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-18**, B62 (branch `feat/aipolicy-reader`). Reescrito nesta data: o documento tinha 6.500 linhas de diário,
+> **Última atualização: 2026-09-18**, B64 (Schema `test` e isolamento de dados de teste). Reescrito nesta data: o documento tinha 6.500 linhas de diário,
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -162,13 +162,13 @@ Docker rodando junto); o arquivo sozinho passa 58/58
 (`cargo test -p pw-gs --test subcomandos_no_mundo -- --test-threads=4`).
 Qualquer outra falha é nova.
 
-A suíte cria realms `t_*`, contas e personagens de teste no banco local. **Desde o B49 cada
-arquivo de teste apaga, ao começar, o que execuções anteriores deixaram** com mais de 15
-minutos (`crates/pw-storage/tests/sql/limpar_sobras_de_teste.sql`) — então o banco guarda
-no máximo as rodadas recentes. Em 2026-09-14 foram apagados 3.078 realms de teste com suas
-contas, personagens e moldes; backup anterior em
-`data/_backups/pw_database_2026-09-14_antes_da_limpeza_de_testes.sql`. Contas reais no
-banco: `admin` e `testuser`.
+A suíte cria realms `t_*`, contas e personagens de teste no banco local. **Desde o B64 (2026-09-18),
+o `pw-storage` isola todas as conexões que rodam com `TEST_DATABASE_URL` no schema `test`
+(`options=-csearch_path=test,public`), mantendo o schema `public` de produção 100% limpo e intocado.**
+O schema `public` contém apenas as contas padrão (`admin`, `testuser`), os 4 realms base e personagens
+reais. O script de inicialização do schema de teste (`specs/03_TEST_SCHEMA_POSTGRES.sql`) é montado
+automaticamente no contêiner `pw-postgres`. Cada execução de teste limpa sobras antigas no schema `test`
+através de `crates/pw-storage/tests/sql/limpar_sobras_de_teste.sql`.
 
 **Scripts de dados do realm** (`scripts/`, aplicados à mão no banco): `asas_e_slot_de_municao_155.sql`,
 `corrige_skills_e_armas_155.sql`, `2026_09_08_last_login_at.sql`,
@@ -399,10 +399,14 @@ Critério de aceite: *o `gateway.rs` deixa de existir e nenhum gameplay fica no 
 
 ### 5D. Depois do 1.5.5
 
-- **1.2.6** (prioridade 2): skills, missões e HP de NPC falhavam no último teste (A62–A63,
-  2026-09-02) — muito disso foi resolvido depois, no código comum, mas não retestado lá.
-  Nove zonas com `npcgen.data` v5/v6 com conteúdo não são lidas; as duas falhas do
-  `loader_tests` são do `elements.data` v7, ainda no leitor tipado antigo (B2).
+- **1.2.6** (prioridade 2): Criação de personagem e entrada no mundo compatibilizadas (B63).
+  Arquitetura refatorada para o padrão Estratégia / traits com módulos segregados por versão
+  (`crates/pw-protocol/src/versions/v126/`, `v148/`, `v155/`, `v172/`), eliminando `if` arbitrários
+  dos pacotes. Layouts adaptados: `C2SCreateRole` lê campos pós-`charactermode` apenas se buffer não
+  estiver vazio; `S2CCreateRoleResponse` não envia `refretcode` (4B) para 1.2.6; `OWN_EXT_PROP` emite 152 bytes
+  (em vez de 196); `TASK_DATA` de 3 blocos; `info_npc` de 27 bytes; templates iniciais das 6 classes clássicas
+  configurados no banco para `realm_126` (`scripts/2026_09_18_templates_iniciais_realm_126.sql`).
+  Suíte de testes de protocolo 100% passando (73/73 em `pw-protocol`).
 - **Cliente v181** (`E:\0_GAMES\Perfect World`, build 2591): exigiria `v181.json` no
   catálogo e um pacote de servidor da mesma build (B11).
 - **Servidor 1.5.5 original numa VM 32-bit** (`pwserver_155v156`): o gabarito da versão

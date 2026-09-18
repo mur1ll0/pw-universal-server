@@ -185,3 +185,76 @@ fn o_challenge_que_mandamos_bate_byte_a_byte_com_o_do_servidor_real() {
         "o Challenge saiu diferente do que o servidor 1.2.6 real mandou"
     );
 }
+
+#[test]
+fn o_create_role_do_126_decodifica_sem_campos_pos_charactermode() {
+    let mut c = codec(GameVersion::V1_2_6);
+
+    // Monta o payload C2S do CreateRole de 1.2.6 (sem referrer_role, cash_add, reincarnation, realm_data e referid)
+    let mut s = OctetsStream::new();
+    s.write_i32(100); // userid
+    s.write_u32(1);   // localsid
+    s.write_i32(-1);  // role_id
+    s.write_u8(1);    // gender (Female)
+    s.write_u8(1);    // race (WingedElf)
+    s.write_u8(6);    // cls (Archer = 6)
+    s.write_i32(1);   // level
+    s.write_i32(0);   // level2
+    s.write_string_utf16le("Arqueira");
+    s.write_octets(&[1, 2, 3, 4]); // custom_appearance
+    s.write_compact_uint(0);       // 0 equipamentos
+    s.write_i8(1);                 // status
+    s.write_i32(0);                // delete_time
+    s.write_i32(0);                // create_time
+    s.write_i32(0);                // lastlogin_time
+    s.write_f32(-741.5);           // posx
+    s.write_f32(219.1);            // posy
+    s.write_f32(-1234.8);          // posz
+    s.write_i32(1);                // worldtag
+    s.write_octets(&[]);           // custom_status
+    s.write_octets(&[]);           // charactermode
+    // Acaba aqui no 1.2.6! Sem referid nem campos de reencarnação.
+
+    let payload = s.into_bytes();
+    let mut buf = BytesMut::new();
+    buf.extend_from_slice(&[84]); // Opcode 84 (CreateRole)
+    let mut len_stream = OctetsStream::new();
+    len_stream.write_compact_uint(payload.len() as u32);
+    buf.extend_from_slice(&len_stream.into_bytes());
+    buf.extend_from_slice(&payload);
+
+    match c.decode(&mut buf).unwrap() {
+        Some(InboundPacket::CreateRole(cr)) => {
+            assert_eq!(cr.name, "Arqueira");
+            assert_eq!(cr.cls, pw_core::CharacterClass::Archer);
+        }
+        outro => panic!("esperava CreateRole, recebeu {outro:?}"),
+    }
+}
+
+#[test]
+fn o_create_role_re_do_126_nao_manda_refretcode() {
+    let mut c126 = codec(GameVersion::V1_2_6);
+    let mut c155 = codec(GameVersion::V1_5_5);
+
+    let mut saida126 = BytesMut::new();
+    let mut saida155 = BytesMut::new();
+
+    let pkt = OutboundPacket::CreateRoleResponse(pw_protocol::S2CCreateRoleResponse {
+        result: 0,
+        role_id: 112,
+        localsid: 25,
+        character: None,
+    });
+
+    c126.encode(pkt.clone(), &mut saida126).unwrap();
+    c155.encode(pkt, &mut saida155).unwrap();
+
+    // No 1.5.5 há 4 campos adicionais no RoleInfo (referrer_role 4B, cash_add 4B,
+    // reincarnation 1B, realm_data 1B = 10B) mais o refretcode (4B) no final = 14B a mais
+    assert_eq!(
+        saida155.len() - saida126.len(),
+        14,
+        "o 1.5.5 tem que ter 14 bytes a mais que o 1.2.6 (10 bytes no RoleInfo + 4 bytes de refretcode)"
+    );
+}

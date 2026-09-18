@@ -22,6 +22,7 @@ services:
       #   docker compose exec -T pw-postgres psql -U pw_admin -d pw_database \
       #     < ../specs/02_MIGRACAO_COMPATIBILIDADE_MULTI_REALM.sql
       - ../specs/02_MIGRACAO_COMPATIBILIDADE_MULTI_REALM.sql:/docker-entrypoint-initdb.d/02_migracao.sql:ro
+      - ../specs/03_TEST_SCHEMA_POSTGRES.sql:/docker-entrypoint-initdb.d/03_test_schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pw_admin -d pw_database"]
       interval: 5s

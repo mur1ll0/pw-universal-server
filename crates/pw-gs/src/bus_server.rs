@@ -3089,7 +3089,7 @@ impl BusServer {
         // O que o original responde a este pedido é o `OWN_EXT_PROP` (`PlayerGetProperty`,
         // `player.cpp:8588-8596`) — é por ele que a janela de atributos se refaz depois de
         // gastar ponto (`OnMsgHstAddStatusPt` pede este comando, `EC_HostMsg.cpp:1624`).
-        let ficha = self.world.read().await.players.get(&(roleid as i64)).map(Self::ficha_propria);
+        let ficha = self.world.read().await.players.get(&(roleid as i64)).map(|p| self.ficha_propria(p));
         if let Some(f) = ficha {
             self.responder(roleid, f, envio).await;
         }
@@ -3427,29 +3427,7 @@ impl BusServer {
         if let Some(p) = self.world.read().await.players.get(&(roleid as i64)).cloned() {
             self.responder(
                 roleid,
-                S2CGamedataSend::own_ext_prop(
-                    p.pontos_de_atributo.max(0) as u32,
-                    p.atributos_efetivos(),
-                    p.max_hp,
-                    p.max_mp,
-                    // Regeneração e as quatro velocidades, do `CHARRACTER_CLASS_CONFIG` —
-                    // eram `(2, 2)` e `(1.5, _, 2.0, 4.0)` escritos aqui, para toda classe.
-                    (p.hp_gen, p.mp_gen),
-                    (p.walk_speed, p.move_speed, p.swim_speed, p.fly_speed),
-                    (
-                        p.attack_rate,
-                        p.attack_min,
-                        p.attack_max,
-                        // `ROLEEXTPROP_ATK.attack_speed` é o intervalo entre golpes **em
-                        // ticks de 50 ms** (`EC_RoleTypes.h:228`), e a entidade guarda o
-                        // mesmo dado em segundos. Mandar os segundos crus (2, para o
-                        // Sacerdote) declarava um intervalo de 0,1 s.
-                        (p.attack_speed * 20.0).round() as i32,
-                        p.attack_range,
-                    ),
-                    (p.def_phys, p.armor),
-                )
-                .data,
+                self.ficha_propria(&p),
                 envio,
             )
             .await;
