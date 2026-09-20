@@ -287,6 +287,12 @@ pub enum Efeito {
     Dechp,
     Powerup,
     Invincible,
+    Firearrow,
+    /// `healing_potion_filter` / `mana_potion_filter` (`gs/potion_filter.h:6-130`): a poção
+    /// não cura de uma vez — ela reparte o total pelo tempo e entrega **um pedaço por
+    /// batimento de 1 s**. Não vem de roteiro de habilidade; quem cria é o uso do item.
+    PocaoDeVida,
+    PocaoDeMana,
 }
 
 /// O que se sabe de cada efeito: convivência, se é bênção (`FILTER_MASK_BUFF`) ou
@@ -345,6 +351,7 @@ impl Efeito {
             "Dechp" => Dechp,
             "Powerup" => Powerup,
             "Invincible" => Invincible,
+            "Firearrow" => Firearrow,
             _ => return None,
         })
     }
@@ -406,6 +413,13 @@ impl Efeito {
             Powerup => f(Unico, true, 60, 17),
             // `SetInvincibleFilter` + `filter_Icon(HSTATE_INVINCIBLE 76)` quando `showicon`.
             Invincible => f(Unico, true, 76, 0),
+            // `filter_Firearrow` (`cskill/skill/skillfilter.h:4233-4290`):
+            // `WEAK|BUFF|HEARTBEAT|REMOVE_ON_DEATH|TRANSLATE_SEND_MSG|TRANSFERABLE_BUFF`,
+            // com `HSTATE_FIREARROW` na lista visível à equipe e `VSTATE_FIREARROW` no
+            // estado. **Fraco**, não único: com um já ativo, o novo é descartado.
+            Firearrow => f(Fraco, true, 70, 30),
+            // Sem ícone e sem estado visual: o original não acende nenhum (`potion_filter.h`).
+            PocaoDeVida | PocaoDeMana => f(Fundir, true, 0, 0),
         }
     }
 
@@ -498,6 +512,13 @@ impl Efeitos {
                         velho.restante_s = novo.restante_s.max(1);
                         let r = resto / velho.restante_s;
                         velho.por_segundo = (novo.por_segundo + if r != 0 { r } else { 1 }).max(1);
+                    } else if matches!(novo.efeito, Efeito::PocaoDeVida | Efeito::PocaoDeMana) {
+                        // `healing_potion_filter::Merge` (`potion_filter.h:30-42`): soma o
+                        // tempo e o total das duas, e reparte de novo.
+                        let total = velho.por_segundo * velho.restante_s + novo.por_segundo * novo.restante_s;
+                        velho.restante_s += novo.restante_s;
+                        velho.por_segundo = (total / velho.restante_s.max(1)).max(1);
+                        return true;
                     } else {
                         // `Merge` dos realces: o tempo e a razão do novo.
                         velho.restante_s = novo.restante_s;
@@ -520,6 +541,14 @@ impl Efeitos {
         for f in &mut self.filtros {
             // `filter_Wounded::Heartbeat`, `filter_Hpgen/Mpgen::Heartbeat`: a cada 3 s, ou no
             // último, o acumulado.
+            // A poção entrega todo segundo (`healing_potion_filter::Heartbeat`), sem o
+            // acúmulo de 3 s dos filtros de habilidade.
+            if matches!(f.efeito, Efeito::PocaoDeVida | Efeito::PocaoDeMana) {
+                let v = f.por_segundo.min(if f.restante_s <= 1 { i32::MAX } else { f.por_segundo });
+                tiques.push(if f.efeito == Efeito::PocaoDeVida { Tique::Cura(v) } else { Tique::Mana(v) });
+                f.restante_s -= 1;
+                continue;
+            }
             let acumula = f.efeito.dano_no_tempo().is_some() || matches!(f.efeito, Efeito::Hpgen | Efeito::Mpgen);
             if acumula {
                 f.contador += 1;
@@ -685,11 +714,61 @@ pub struct Aplicacao {
 /// (`playerwrapper.h:160-205`) e o dado (`ThrowDice`, `:170-178`), que **fixa** a
 /// probabilidade em 100 ou 0 depois de rolar — o efeito seguinte sem `SetProbability`
 /// herda o resultado.
+/// Os efeitos que **não** consultam o dado no original.
+///
+/// No `cskill`, quem decide se a probabilidade entra é **cada setter**: dos 486
+/// `PlayerWrapper::Set*` de `cskill/skill/playerwrapper.cpp`, 316 abrem com
+/// `if (ThrowDice())` e estes 170 aplicam o filtro direto. `SetFirearrow`
+/// (`playerwrapper.cpp:2333-2337`) é um deles — daí a Flecha Fulgurante (244) ser garantida,
+/// embora o roteiro dela não tenha `SetProbability` (`cskill/skills/skill244.h:234-240`).
+///
+/// A lista foi **extraída do fonte**, não escrita à mão. `probability` nasce em zero
+/// (`playerwrapper.h:61`) e `ThrowDice()` com zero devolve falso (`:169-178`): quem consulta o
+/// dado sem `SetProbability` antes não aplica nada, e é assim no original.
+const GARANTIDOS_SEM_DADO: &[&str] = &[
+    "Absorbdamageincdefense", "Addball", "Adddefence", "Additionalattack", "Additionalheal",
+    "Addmaxhp", "Addresistance", "Addskilldamage", "Airstreamlock", "Antiwater", "Apgen", "Apgen2",
+    "Appendenchant", "Attachstatetoself", "Attachstatetotarget", "Attackattachstate1",
+    "Attackattachstate2", "Attackattachstate3", "Attackattachstate4", "Aurabless2", "Aurabless3",
+    "Auracurse2", "Auracurse4asn", "Beastieform", "Beattackattachstate1", "Beattackattachstate2",
+    "Beattackattachstate3", "Beattackattachstate4", "Blessmagic", "Burningfeet", "Callupteammember",
+    "Chanceofrebirth", "Charred", "Clearinvisible", "Clearinvisible2", "Comboid", "CommonCoolDown",
+    "Debithurt", "Decdamagefromcrits", "Delaytransmit", "Denyattackcmd", "Devilstate", "Disappear",
+    "Disturbrecover", "Dropmoneyondeath", "Earthguard", "Earthhurt", "Enmity", "Enternonpenaltypvp",
+    "Entrap", "Entrap2", "Fairyform", "Fastprayincmagic", "Feathershield", "Filpball", "Firearrow",
+    "Firehurt", "Fishform", "Flower1", "Flower2", "Flower3", "Flower4", "Foxform", "Freemove",
+    "Freemoveapgen", "Frenetic", "Frighten", "Giant", "GiantForm", "Goldhurt", "Hardenskin",
+    "Healsteal", "Homefeeling", "Immunedrop", "Incantiinvisiblepassive", "Incatkdefhp",
+    "Incatkdefhp2", "Incattackondamage", "Incbow", "Incboxing", "Inccrit", "Incdagger",
+    "Incdefencesmite", "Incdefensedegree", "Incearth", "Incfarnormaldmgreduce",
+    "Incfarskilldmgreduce", "Incfeather", "Incfight", "Incfightproperty", "Incfire", "Incgold",
+    "Inchammer", "Inchitrate", "Inchpgen", "Inchurt3", "Incinvisiblepassive", "Incmaxhpatkdfdlevel",
+    "Incmpgen", "Incnearnormaldmgreduce", "Incnearskilldmgreduce", "Incpenres",
+    "Incpetattackdegree", "Incpetdamage", "Incpetdefenddegree", "Incpetdefense", "Incpethp",
+    "Incpetmagicdamage", "Incpetmagicdefense", "Incpetmp", "Incrange", "Incrementalhpgen",
+    "Incresistmagic", "Incscimitar", "Incspear", "Incswim", "Incswimspeed", "Incsword",
+    "Inctalisman", "Incwater", "Incwood", "Incwoodwaterdefense", "Insertvstate", "Ironshield",
+    "Jingji", "Leavenonpenaltypvp", "Longjumptospouse", "Magicfrenetic", "MnfactionDecresist",
+    "Moongod", "Panruo", "Perform", "Petsacrifice", "Physichurt", "Plantsuicide", "Powerup",
+    "Queryotherinventory", "Rebirth", "Rebirth2", "Reduceresurrectexplost", "Repelonnormalattack",
+    "Resurrect", "Retortmagic", "Returntown", "Sandstorm", "Shadowform", "Soulbeatback",
+    "Soulretort", "Soulretort2", "Soulsealed", "Soulstun", "Specialphysichurt", "Specialslow",
+    "Startcallup", "Stoneskin", "Summonpet2", "Summonplantpet", "Swiftform", "TalentData",
+    "Thunderform", "Tigerform", "Transportdamagetopet", "Transportmptopet", "Vacuum", "Waterhurt",
+    "Windshield", "Wingshield", "Woodhurt", "Xisui", "Yijin",
+];
+
+/// O efeito é aplicado sem passar pelo dado?
+fn garantido_sem_dado(setter: &str) -> bool {
+    GARANTIDOS_SEM_DADO.binary_search(&setter).is_ok()
+}
+
 pub fn executar_roteiro(
     passos: &[(String, String, String)],
     vars: &dyn Fn(&str) -> Option<f64>,
     dado: &mut dyn FnMut() -> i32,
 ) -> (Vec<Aplicacao>, Vec<String>) {
+    // `probability` nasce zerado no `PlayerWrapper` (`playerwrapper.h:61`).
     let mut prob = 0.0f64;
     let mut tempo_s = 0i32;
     let (mut razao, mut valor, mut quantia) = (0.0f32, 0.0f32, 0.0f32);
@@ -717,7 +796,10 @@ pub fn executar_roteiro(
             "Amount" => quantia = v as f32,
             "Showicon" => icone = v != 0.0,
             nome => {
-                let passou = if prob > 99.0 {
+                // Quem não consulta o dado entra sempre — ver [`GARANTIDOS_SEM_DADO`].
+                let passou = if garantido_sem_dado(nome) {
+                    true
+                } else if prob > 99.0 {
                     true
                 } else if prob < 0.001 {
                     false
@@ -770,6 +852,38 @@ pub fn variaveis<'a>(nivel: i32, jogador: &'a HashMap<&'static str, f64>, vitima
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// B67 — a lista de efeitos garantidos saiu do fonte e está ordenada (a busca é binária).
+    #[test]
+    fn a_lista_de_garantidos_esta_ordenada_e_tem_o_firearrow() {
+        let mut ordenada = GARANTIDOS_SEM_DADO.to_vec();
+        ordenada.sort_unstable();
+        assert_eq!(ordenada, GARANTIDOS_SEM_DADO, "a lista precisa estar ordenada");
+        assert!(garantido_sem_dado("Firearrow"), "SetFirearrow não consulta o dado no original");
+        assert!(garantido_sem_dado("Returntown"));
+        // E quem consulta continua dependendo da probabilidade.
+        assert!(!garantido_sem_dado("Speedup"), "SetSpeedup abre com if (ThrowDice())");
+        assert!(!garantido_sem_dado("Slow"));
+    }
+
+    /// B67 — sem `Probability`, o efeito garantido entra e o probabilístico não.
+    ///
+    /// É o comportamento do original: `probability` nasce em zero (`playerwrapper.h:61`) e
+    /// `ThrowDice()` com zero é falso; `SetFirearrow` nem pergunta.
+    #[test]
+    fn sem_probability_o_garantido_entra_e_o_probabilistico_nao() {
+        let passos: Vec<(String, String, String)> = vec![
+            ("V".into(), "Time".into(), "600000".into()),
+            ("V".into(), "Ratio".into(), "0.4".into()),
+            ("V".into(), "Firearrow".into(), "1".into()),
+            ("V".into(), "Slow".into(), "1".into()),
+        ];
+        let mut dado = || 50;
+        let (aplicadas, _) = executar_roteiro(&passos, &sem_vars, &mut dado);
+        let nomes: Vec<&str> = aplicadas.iter().map(|a| a.nome.as_str()).collect();
+        assert_eq!(nomes, vec!["Firearrow"], "só o garantido devia entrar");
+        assert_eq!(aplicadas[0].tempo_s, 600, "SetTime divide por 1000");
+    }
 
     fn sem_vars(n: &str) -> Option<f64> {
         (n == "L").then_some(3.0)

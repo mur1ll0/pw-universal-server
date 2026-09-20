@@ -122,6 +122,30 @@ impl HabilidadeDoServidor {
         no_nivel(self.estados_ms.first()?, nivel)
     }
 
+    /// `State2::GetTime` e seguintes — a **fase de execução**, depois da conjuração.
+    ///
+    /// A sessão de habilidade do original é um laço de estados: `StartSkill` devolve o tempo
+    /// do primeiro e `RunSkill` o do seguinte, a cada volta de `session_skill::RepeatSession`
+    /// (`gs/actsession.cpp:466-600`). Só quando não há próximo estado vem o `EndSession`, que
+    /// manda o `stop_skill` (`:558-574`). A Flecha Fulgurante (244), por exemplo, tem 3.000 ms
+    /// de conjuração e **800 ms de execução** (`cskill/skills/skill244.h:20-80`) — é nessa
+    /// segunda fase que o cliente anima o personagem recebendo a bênção.
+    ///
+    /// O número sai do `GetExecutetime` do stub (`cskill/skill/skill.cpp:617-622`), que para
+    /// a 244 é o mesmo 800 do `State2`; se ele faltar, a soma dos estados depois do primeiro.
+    pub fn fase_de_execucao_ms(&self, nivel: i32) -> Option<i32> {
+        if let Some(t) = no_nivel(&self.execucao_ms, nivel).filter(|t| *t > 0) {
+            return Some(t);
+        }
+        let total: i32 = self
+            .estados_ms
+            .iter()
+            .skip(1)
+            .filter_map(|e| e.as_ref().and_then(|v| v.get(usize::try_from(nivel - 1).ok()?).copied()))
+            .sum();
+        (total > 0).then_some(total)
+    }
+
     /// Conjuração com carga que o jogador solta antes do fim (`time_type == 3`).
     pub fn e_de_carga(&self) -> bool {
         self.time_type == Some(3)

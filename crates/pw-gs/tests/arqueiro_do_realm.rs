@@ -64,6 +64,7 @@ fn arqueiro() -> CharacterDetails {
         storehouse: Vec::new(),
         skills: Vec::new(),
         quests: Vec::new(),
+        waypoints: Vec::new(),
         custom_appearance: serde_json::Value::Null,
         version_data: serde_json::Value::Null,
         created_at: Utc::now(),
@@ -134,3 +135,97 @@ fn a_mira_solta_antes_da_carga_cheia_tira_menos() {
     assert_eq!(cheia, 272);
     assert_eq!(metade, 189);
 }
+
+/// A habilidade 244 (烈焰之矢 / Flecha Fulgurante): buff com ícone 70 (HSTATE_FIREARROW),
+/// estado visível 30 (VSTATE_FIREARROW) e adição de dano mágico de fogo (magic_damage[3])
+/// ao ataque físico normal (`filter_Firearrow::TranslateSendAttack`).
+#[test]
+fn a_flecha_fulgurante_adiciona_icone_70_e_dano_de_fogo_ao_ataque() {
+    let Some(r) = realm() else { return };
+    let mut j = com_arco(&r);
+
+    let filtro = pw_gs::efeitos::Filtro {
+        efeito: pw_gs::efeitos::Efeito::Firearrow,
+        restante_s: 600,
+        razao: 13,
+        fator: 0.13, // 0.10 + 0.03 * 1
+        por_segundo: 0,
+        contador: 0,
+        origem: j.role_id as i64,
+        icone: true,
+    };
+    j.efeitos.adicionar(filtro);
+
+    // 1. Ícones contém o estado 70 (HSTATE_FIREARROW) com 600 segundos
+    let icones = j.efeitos.icones();
+    assert!(icones.iter().any(|&(h, t)| h == 70 && t == 600), "deve conter ícone 70: {:?}", icones);
+
+    // 2. Estados visíveis contém o VSTATE_FIREARROW (30)
+    let visiveis = j.efeitos.estados_visiveis();
+    assert_ne!(visiveis[0] & (1 << 30), 0, "deve ter o bit 30 ativo no primeiro DWORD de estados visíveis");
+
+    // 3. O golpe normal soma o dano de fogo em `dano_magico[3]`, e a conta é sobre o dano
+    //    **da arma vestida** — `_ratio × 0,5 × (weapon.damage_low + weapon.damage_high)`
+    //    (`filter_Firearrow::TranslateSendAttack`, `cskill/skill/skillfilter.h:4268-4275`),
+    //    não sobre o dano total do personagem (B67).
+    let golpe = CombatEngine::golpe_de_jogador(&j);
+    let (baixo, alto) = j.equipamento.arma.expect("o arco está vestido").dano;
+    let esperado_fogo = (0.13 * 0.5 * (baixo + alto) as f32) as i32;
+    assert_eq!(golpe.dano_magico[3], esperado_fogo, "dano de fogo deve ser {esperado_fogo}");
+    // Com o Arco de Madeira (5..8) e razão 0,13 a conta trunca em zero — como no original,
+    // que também faz `(int)(...)`. Com uma arma de verdade o bônus aparece:
+    if let Some(arma) = j.equipamento.arma.as_mut() {
+        arma.dano = (200, 300);
+    }
+    let golpe = CombatEngine::golpe_de_jogador(&j);
+    assert_eq!(golpe.dano_magico[3], (0.13 * 0.5 * 500.0) as i32, "32 de fogo com arma 200..300");
+
+    // 4. Pacote ICON_STATE_NOTIFY (125) codifica corretamente
+    let pacote = pw_protocol::S2CGamedataSend::icon_state_notify(j.role_id, &icones);
+    assert_eq!(pacote.data[0..2], [125, 0], "opcode deve ser 125");
+}
+
+/// A habilidade 244 não possui `Probability` no stub: o roteiro deve aplicar o `Firearrow`
+/// com 100% de probabilidade padrão.
+#[test]
+fn o_roteiro_da_habilidade_244_aplica_firearrow_sem_precisar_de_set_probability() {
+    let h = TabelaDeHabilidades::do_155();
+    let skill = h.get(244).expect("habilidade 244 deve existir");
+    let passos = skill.no_alvo.clone().expect("deve ter no_alvo");
+
+    let vars = |nome: &str| match nome {
+        "L" => Some(1.0),
+        _ => None,
+    };
+    let mut dado = || 50;
+    let (aplicacoes, _) = pw_gs::efeitos::executar_roteiro(&passos, &vars, &mut dado);
+
+    let firearrow = aplicacoes.iter().find(|a| a.nome == "Firearrow");
+    assert!(firearrow.is_some(), "Firearrow deve ser aplicado mesmo sem SetProbability prévio!");
+    let fa = firearrow.unwrap();
+    assert_eq!(fa.tempo_s, 600, "tempo deve ser 600s");
+    assert!((fa.razao - 0.13).abs() < 1e-4, "razão do nível 1 deve ser 0.13: {}", fa.razao);
+    assert_eq!(fa.efeito, Some(pw_gs::efeitos::Efeito::Firearrow));
+}
+
+/// O ID do monstro invocado dinamicamente deve satisfazer a macro oficial do cliente:
+/// `#define ISNPCID(id) (((id) & 0x80000000) && !((id) & 0x40000000))` (EC_GPDataType.h:26).
+/// Se o bit 30 (0x40000000) for 1, o cliente o considera matéria/mina (ISMATTERID) e recusa seleção com clique.
+#[test]
+fn o_id_do_monstro_invocado_satisfaz_a_macro_is_npc_id_do_cliente() {
+    const PRIMEIRO: u32 = 0xA000_0000;
+    let mut prox = PRIMEIRO;
+    for _ in 0..100 {
+        let nid = prox as i32;
+        let is_npc_id = ((nid as u32 & 0x8000_0000) != 0) && ((nid as u32 & 0x4000_0000) == 0);
+        let is_player_id = (nid != 0) && ((nid as u32 & 0x8000_0000) == 0);
+        let is_matter_id = (nid as u32 & 0xC000_0000) == 0xC000_0000;
+
+        assert!(is_npc_id, "ID {:#X} deve ser reconhecido como NPC pelo cliente!", nid as u32);
+        assert!(!is_player_id, "ID {:#X} não deve ser jogador", nid as u32);
+        assert!(!is_matter_id, "ID {:#X} não deve ser matéria (mina/drop)", nid as u32);
+
+        prox = PRIMEIRO | ((prox.wrapping_add(1)) & 0x1FFF_FFFF);
+    }
+}
+

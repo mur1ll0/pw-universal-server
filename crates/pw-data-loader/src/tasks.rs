@@ -121,6 +121,24 @@ impl GrupoDeItens {
     }
 }
 
+/// Um monstro que a missão evoca/invoca (`MONSTERS_SUMMONED`, 16 bytes).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MonstroInvocado {
+    pub monstro: u32,
+    pub quantidade: u32,
+    pub probabilidade: f32,
+    pub periodo: i32,
+}
+
+/// A convocação de monstros no prêmio da missão (`AWARD_MONSTERS_SUMMONED`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct InvocacaoDeMonstros {
+    pub sorteia_um: bool,
+    pub raio: u32,
+    pub some_ao_morrer: bool,
+    pub monstros: Vec<MonstroInvocado>,
+}
+
 /// O que a missão paga (`AWARD_DATA`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TaskReward {
@@ -134,7 +152,11 @@ pub struct TaskReward {
     pub nova_missao: u32,
     /// `m_ulTransWldId` + `m_TransPt` — teleporte no fim (mundo 0 = sem teleporte).
     pub teleporte: Option<(u32, [f32; 3])>,
+    /// `m_ulNewPeriod` — o novo nível de cultivo (0 = a missão não mexe nele).
+    pub novo_cultivo: u32,
     pub grupos_de_itens: Vec<GrupoDeItens>,
+    /// `m_SummonedMonsters` — monstros invocados ao premiar/concluir a missão.
+    pub monstros_invocados: Option<InvocacaoDeMonstros>,
     /// `m_bUseLevCo` — exp e SP multiplicados por `_lev_co[nível-1]` (`TaskProcess.cpp:1260`).
     pub usa_coeficiente_de_nivel: bool,
     /// `m_bMulti`, `m_nNumType`, `m_lNum` — multiplicador por variável global.
@@ -151,8 +173,10 @@ impl TaskReward {
             || self.reputation != 0
             || self.realm_exp != 0
             || self.nova_missao != 0
+            || self.novo_cultivo != 0
             || self.teleporte.is_some()
             || self.grupos_de_itens.iter().any(|g| !g.itens.is_empty())
+            || self.monstros_invocados.is_some()
     }
 }
 
@@ -498,6 +522,11 @@ mod v129 {
         pub const NOVA_MISSAO: usize = 13;
         pub const SP: usize = 17;
         pub const REPUTACAO: usize = 21;
+        /// `m_ulNewPeriod` — o **nível de cultivo** que a missão concede
+        /// (`Task/TaskTempl.h:1136-1144`: `GoldNum, Exp, RealmExp, ExpandRealmLevelMax(1),
+        /// NewTask, SP, Reputation, NewPeriod`). Entregue por `SetCurPeriod`
+        /// (`TaskProcess.cpp:1284`).
+        pub const NOVO_CULTIVO: usize = 25;
         pub const MUNDO_DO_TELEPORTE: usize = 61;
         pub const PONTO_DO_TELEPORTE: usize = 65;
         pub const USA_COEF_DE_NIVEL: usize = 82;
@@ -601,10 +630,28 @@ fn premio(l: &mut Leitor) -> Result<TaskReward> {
         grupos.push(GrupoDeItens { sorteia_um, itens: itens(l, n)? });
     }
     let invocados = u32_em(a, p::SUMMONED_MONSTERS);
+    let mut monstros_invocados = None;
     if invocados != 0 {
-        l.pular(1 + 4 + 1)?;
+        let sorteia_um = l.u8()? != 0;
+        let raio = l.u32()?;
+        let some_ao_morrer = l.u8()? != 0;
         let n = l.contador(invocados, v129::MONSTER_SUMMONED)?;
-        l.pular(n * v129::MONSTER_SUMMONED)?;
+        let mut monstros = Vec::with_capacity(n);
+        for _ in 0..n {
+            let m = l.bytes(v129::MONSTER_SUMMONED)?;
+            monstros.push(MonstroInvocado {
+                monstro: u32_em(m, 0),
+                quantidade: u32_em(m, 4),
+                probabilidade: f32_em(m, 8),
+                periodo: u32_em(m, 12) as i32,
+            });
+        }
+        monstros_invocados = Some(InvocacaoDeMonstros {
+            sorteia_um,
+            raio,
+            some_ao_morrer,
+            monstros,
+        });
     }
     let ranking = u32_em(a, p::PQ_RANKING_CNT);
     if ranking != 0 {
@@ -630,6 +677,7 @@ fn premio(l: &mut Leitor) -> Result<TaskReward> {
         sp: u32_em(a, p::SP) as i64,
         money: u32_em(a, p::DINHEIRO) as i64,
         reputation: u32_em(a, p::REPUTACAO) as i32,
+        novo_cultivo: u32_em(a, p::NOVO_CULTIVO),
         realm_exp: u32_em(a, p::REALM_EXP),
         nova_missao: u32_em(a, p::NOVA_MISSAO),
         teleporte: (mundo != 0).then(|| {
@@ -637,6 +685,7 @@ fn premio(l: &mut Leitor) -> Result<TaskReward> {
             (mundo, [f32_em(a, o), f32_em(a, o + 4), f32_em(a, o + 8)])
         }),
         grupos_de_itens: grupos,
+        monstros_invocados,
         usa_coeficiente_de_nivel: a[p::USA_COEF_DE_NIVEL] != 0,
         multiplica: a[p::MULTIPLICA] != 0,
         tipo_do_multiplicador: u32_em(a, p::TIPO_DO_MULTIPLICADOR) as i32,

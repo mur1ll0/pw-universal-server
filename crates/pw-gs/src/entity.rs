@@ -149,6 +149,13 @@ pub struct PlayerEntity {
     /// O NPC com quem o jogador falou por último (`SEVNPC_HELLO`). Os pedidos de serviço
     /// (`SEVNPC_SERVE`) não trazem o NPC: vão ao que está em conversa.
     pub npc_em_conversa: Option<i64>,
+    /// Os pontos de teleporte já descobertos (`_waypoint_list`, `gs/player_imp.h:2520-2550`).
+    ///
+    /// O cliente manda os pontos da região onde está (`ACTIVATE_REGION_WAYPOINTS`, C2S 178);
+    /// os que ainda não estão aqui entram, são gravados e voltam em `ACTIVATE_WAYPOINT`
+    /// (179) — o comando que faz o cliente anunciar "novo ponto de teleporte" com o nome do
+    /// lugar (`CECHostPlayer::OnMsgHstWayPoint`, `EC_HostMsg.cpp:4681-4720`).
+    pub waypoints: Vec<u16>,
     /// As listas de missão — ver [`crate::missoes`].
     pub missoes: crate::missoes::ListasDeMissao,
     /// A mina que está colhendo (`session_gather`), se alguma.
@@ -578,6 +585,7 @@ impl PlayerEntity {
         pw_core::VistaDoJogador {
             pos: self.position,
             dir: 0,
+            cultivo: self.cultivation.clamp(0, 255) as u8,
             sec_level: self.sec_level,
             feminino: self.gender == pw_core::Gender::Female,
             crc_equipamento: 0,
@@ -863,6 +871,7 @@ impl PlayerEntity {
             contador_mp: 0,
             recargas: std::collections::HashMap::new(),
             npc_em_conversa: None,
+            waypoints: p.waypoints.clone(),
             missoes: crate::missoes::ListasDeMissao::default(),
             coleta: None,
             equipamento: Equipamento::default(),

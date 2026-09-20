@@ -5,7 +5,7 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-18**, B64 (Schema `test` e isolamento de dados de teste). Reescrito nesta data: o documento tinha 6.500 linhas de diário,
+> **Última atualização: 2026-09-20**, B68 (fase de execução da habilidade, pontos de teleporte, arquitetura por versão sem fachada).
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -43,25 +43,42 @@ se chamar **`realm_155`**, com contêineres `pw-realm-155`/`pw-world-155`, dados
 `data/realm_155/config` e a **mesma porta 29004** (o `serverlist.txt` do cliente BR não muda).
 Personagens (POTATO, eaa) e os 12 moldes vieram junto.
 
-**Último teste em jogo (2026-09-18, fim da tarde, com o eaa, nível 5):** o B61 passou —
-durabilidade certa, monstros atacando, e a missão "Descobertas Acidentais" chegou ao entrar na
-área. Sobrou **um** sintoma, o mesmo de duas sessões atrás visto de dois ângulos: o dano
-aparecia **antes** da animação (no golpe do arqueiro parecia um ataque a mais no começo da
-sessão; no monstro, ele batia ainda correndo).
+**Último teste em jogo (2026-09-19/20, com o eaa, nível 9 — B67):** cinco relatos novos, e
+uma auditoria do que veio de outra sessão (o Murillo pediu).
 
-A causa estava achada no original e nós não a tínhamos portado: o dano **não** tira vida no
-instante do golpe. `InsertDamageEntry` (`gs/actobject.cpp:1758-1776`) adia o `GM_MSG_HURT` em
-`attack.speed` tiques de 50 ms — o mesmo número que vai no comando e que o cliente usa como
-duração da animação. Agora o aviso sai na hora e a vida cai no fim da animação (B62); a
-ameaça, o estado de combate e o desgaste da arma continuam no instante do golpe, como no
-original. Habilidade não tem `speed` no original, então continua instantânea.
+Corrigidos com evidência do original:
+- **Missão de cultivo não subia o cultivo.** O prêmio `m_ulNewPeriod` do `AWARD_DATA`
+  (deslocamento 25) não era lido — é ele que o original passa a `SetCurPeriod` →
+  `SetSecLevel`. Agora grava em `characters.cultivation` e manda `TASK_DELIVER_LEVEL2` (160),
+  que é o que faz o cliente tocar o efeito do avanço. De quebra: o `level2` dos pacotes de
+  visão é o **cultivo**, e nós mandávamos ali o privilégio de GM.
+- **Poção curava de uma vez.** O `MEDICINE_ESSENCE` tem total **e** tempo, e o original
+  reparte (`healing_potion_filter`: um pedaço por batimento de 1 s). Só a poção de vida+mana
+  sem tempo é instantânea.
+- **Amuleto e hierograma zerados.** Iam sem bloco de dados; o conteúdo deles são 8 bytes
+  (`amulet_essence`: ponto e gatilho).
 
-De lambuja, o intervalo entre golpes do monstro passou a ser o `attack_speed` dele
-(`MONSTER_ESSENCE`), que estava 1,5 s escrito no código para todos os 29 mil monstros.
+Da auditoria: o id de monstro invocado (`0xA000_0000`) estava **certo**; o `prob = 100` por
+padrão no roteiro de habilidade estava **errado** e foi trocado pela lista
+`GARANTIDOS_SEM_DADO`, extraída do `playerwrapper.cpp` (170 setters não consultam o dado, 316
+consultam). Os contêineres `155b` foram removidos e o compose voltou ao `pw-realm-155` /
+`pw-world-155` construídos do fonte.
 
-**Habilidade de monstro continua não existindo:** 3.688 monstros têm habilidade no
-`elements.data`, mas quem decide quando usá-la é o `aipolicy.data`, e não há intérprete — é
-a maior peça que falta na IA (seção 5A).
+**Animação ao receber buff (B68):** corrigida. Faltava a **fase de execução** — a sessão do
+original percorre os estados e só manda `stop_skill` no fim de todos; a Flecha Fulgurante tem
+3.000 ms de conjuração e **800 ms de execução**, e nós cortávamos a segunda.
+
+**Pontos de teleporte (B68):** o jogador agora **descobre e lembra** os pontos — o mundo trata
+o `ACTIVATE_REGION_WAYPOINTS` (178), guarda em `characters.waypoints` e responde
+`ACTIVATE_WAYPOINT` (179) por ponto novo, que é o que faz o cliente anunciar a descoberta.
+**Viajar pela transportadora ainda falta**: o `NPC_TRANSMIT_SERVICE` dá destino, preço e
+nível, mas a **coordenada** vem do `npc_template` (arquivo de serviço do mapa), que ainda não
+lemos.
+
+**Arquitetura por versão (B68):** a fachada `PorVersao` foi removida; quem despacha é a
+estratégia da versão (`pw_protocol::versions`, um `WorldProtocol` por versão), guardada no
+`BusServer`. O 1.2.6 tem implementação própria; 1.4.8, 1.5.3 e 1.7.2 **compõem** a do 1.5.5 e
+sobrescrevem só o que difere.
 
 Roteiro do próximo teste na seção 3.4.
 
@@ -155,7 +172,7 @@ docker logs -f pw-realm-155        # login, entrada no mundo, o que o link trata
 docker logs -f pw-world-155        # os mapas 1 e 161
 ```
 
-**Referência da suíte, medida em 2026-09-18 (B62) com o banco:** **579 testes, todos
+**Referência da suíte, medida em 2026-09-20 (B68) com o banco:** **598 testes, todos
 passando** (`cargo test --workspace --no-fail-fast`). Os testes de tempo do
 `pw-gs/tests/subcomandos_no_mundo.rs` podem falhar sob carga (já aconteceu com um build do
 Docker rodando junto); o arquivo sozinho passa 58/58
@@ -179,6 +196,9 @@ através de `crates/pw-storage/tests/sql/limpar_sobras_de_teste.sql`.
 dados, gerado pelo `cargo run -p pw-gs --example gerar_octetos`),
 `2026_09_18_durabilidade_na_escala_interna.sql` (B61, aplicado uma vez — não reaplicar:
 multiplicaria de novo),
+`2026_09_20_cultivo_do_eaa.sql` (B67, aplicado uma vez) e
+`2026_09_20_pontos_de_teleporte.sql` (B68: a coluna `characters.waypoints`; também nas specs
+01 e 03 para bancos novos),
 `2026_09_14_listas_de_missao.sql` (tabela `character_task_lists`, também no
 `02_MIGRACAO…sql` para bancos novos). Conferido em 2026-09-13: os 12 moldes do
 `realm_155` estão com `spawn_world_id = 161`.
@@ -281,20 +301,22 @@ dois campos (`ataque_em_ticks` e `atraso_do_dano_em_ticks`) passaram a viver no
 durabilidade e **vermelho** em zero. O item 8/18 do relato está em 44%, por isso não aparece
 ainda.
 
-### 3.4 Publicado, falta ver em jogo (B54, B56, B57, B58, B59 e B62)
+### 3.4 Publicado, falta ver em jogo (B65 a B68)
 
-Publicado em 2026-09-18 (`pw-realm-155` e `pw-world-155`). Roteiro com o **eaa**:
+Publicado em 2026-09-20 (`pw-realm-155` e `pw-world-155`, construídos do fonte). Roteiro com
+o **eaa** (nível 9):
 
-1. **Golpe do arqueiro (B62)**: marcar um monstro e atacar. A vida dele deve cair **no fim**
-   da animação, uma vez por golpe — sem aquele dano extra no primeiro.
-2. **Monstro (B62)**: deixar um vir correndo. Ele deve parar, bater com a animação de ataque,
-   e a vida cair junto do golpe.
-3. **Durabilidade (B61)**: continuar de olho; com uma peça abaixo de 10% o ícone dela deve
-   aparecer em amarelo na janela de itens gastos.
-4. **Sons (B58)** e **NPCs virados para lados diferentes (B59)**: como no roteiro anterior.
+1. **Buff (B68)**: conjurar a Flecha Fulgurante. Além do ícone, o personagem deve **executar
+   a animação** de receber a bênção (os 800 ms depois da conjuração).
+2. **Pontos de teleporte (B68)**: andar até uma transportadora que ainda não visitou — deve
+   aparecer o aviso do ponto novo, e ele deve continuar no mapa depois de relogar. *Viajar
+   ainda não funciona* (falta a coordenada do destino).
+3. **Cultivo (B67)**: a ficha deve mostrar cultivo **1**; a próxima missão de cultivo sobe
+   sozinha.
+4. **Poção (B67)**: a cura entra aos poucos (25 em 10 s), não de uma vez.
+5. **Amuleto e hierograma (B67)**: devem mostrar 5.400 e 50%, não zero.
 
-Onde olhar: `docker logs pw-world-155 | grep -E "golpe normal|dano de|quebrou"` — cada golpe
-agora imprime em quantos milissegundos a vida vai cair, e a aplicação sai numa linha própria.
+Onde olhar: `docker logs pw-world-155 | grep -iE "cultivo|teleporte|ponto"`.
 
 ---
 
@@ -436,7 +458,8 @@ Cada uma custou pelo menos uma sessão. A evidência está no item citado.
    cadência, alcance e regeneração — ler a hierarquia inteira antes de concluir de onde vem
    um número (B44b2).
 6. **Um caminho de escrita por layout.** Duas funções escrevendo a mesma struct saem de
-   sincronia (A22). Diferença entre versões vai no `PorVersao`.
+   sincronia (A22). Diferença entre versões vai na **estratégia da versão**
+   (`pw_protocol::versions`, um `WorldProtocol` por versão), nunca num `if` solto.
 7. **Altura:** o terreno é piso, nunca teto; a altura de um spawn depende do **tipo de área**
    do `npcgen.data` (no chão ou em caixa) mais o `fOffsetTrn` (spec 03 §3.3).
 8. **Suíte só vale com `TEST_DATABASE_URL`**, e silêncio de log não prova sucesso: o autosave
@@ -514,3 +537,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 60 | 09-18 | resposta do `QUERY_TITLE` (a trava das missões automáticas); item de missão gerado com propriedades; `cEquipment`/`speed` no golpe do monstro |
 | 61 | 09-18 | durabilidade na escala interna (arco 1/1) e desgaste como o original; a 31690 é automática **por zona** — a linha principal não estava travada |
 | 62 | 09-18 | o dano só tira vida `attack.speed` tiques depois do golpe (`InsertDamageEntry`) — fim do "dano antes da animação"; cadência do monstro vinda do `MONSTER_ESSENCE` |
+| 63–64 | 09-18 | (outra sessão) NPCs de serviço no mundo; login do 1.5.3 |
+| 65–66 | 09-18/19 | (outra sessão) baú do Selo Divino, ameaça no impacto, `SCENE_SERVICE_NPC_LIST`, duplicatas do login, ESC cancelando conjuração; diálogo com NPC |
+| 67 | 09-20 | auditoria da sessão de fora (dado dos efeitos, id do monstro invocado, compose); cultivo pela missão (`m_ulNewPeriod`) e `level2` = cultivo; poção no tempo; conteúdo do amuleto |
+| 68 | 09-20 | fase de execução da habilidade (animação do buff); pontos de teleporte descobertos e lembrados; `PorVersao` removido — quem despacha é a estratégia da versão |

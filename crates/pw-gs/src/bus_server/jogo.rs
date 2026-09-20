@@ -21,20 +21,25 @@ const TETO_DE_DINHEIRO: i64 = 2_000_000_000;
 /// `COOLINGID_BEGIN` (`cskill/skill/playerwrapper.cpp:170`).
 const INICIO_DAS_RECARGAS_DE_HABILIDADE: i32 = 1024;
 /// `S2C::ERR_*` (`common/protocol.h:679-750`).
+#[allow(dead_code)]
 mod erro_s2c {
+    pub const ITEM_NAO_NO_INVENTARIO: i32 = 5;
     pub const NAO_PODE_PEGAR: i32 = 6;
     pub const BOLSA_CHEIA: i32 = 7;
+    pub const SERVICO_INDISPONIVEL: i32 = 14;
     pub const SEM_DINHEIRO: i32 = 16;
+    pub const NAO_PODE_USAR_ITEM: i32 = 18;
     pub const MISSAO_INDISPONIVEL: i32 = 19;
     pub const HABILIDADE_INDISPONIVEL: i32 = 20;
     pub const NAO_PODE_APRENDER: i32 = 22;
-    pub const HABILIDADE_EM_RECARGA: i32 = 53;
-    pub const OPERACAO_EM_COMBATE: i32 = 66;
-    pub const FORA_DE_ALCANCE: i32 = 2;
     pub const MINA_OCUPADA: i32 = 30;
     pub const FERRAMENTA_ERRADA: i32 = 31;
     pub const NIVEL_NAO_BATE: i32 = 51;
-    pub const NAO_PODE_USAR_ITEM: i32 = 18;
+    pub const HABILIDADE_EM_RECARGA: i32 = 53;
+    pub const OPERACAO_EM_COMBATE: i32 = 66;
+    pub const FORA_DE_ALCANCE: i32 = 2;
+    pub const PET_NAO_PODE_CHOCAR: i32 = 76;
+    pub const CLASSE_INVALIDA: i32 = 90;
 }
 /// `TASK_CLT_NOTIFY_*` (`task/TaskTempl.h:103-108`).
 mod aviso_do_cliente {
@@ -91,6 +96,8 @@ pub(crate) struct Contexto<'a> {
     pub equipe: Vec<missoes::MembroDaEquipe>,
     /// Teleporte pedido durante a operação — feito depois de gravar.
     pub teleporte: Option<(u32, [f32; 3])>,
+    /// Monstros que a missão pediu para evocar perto do jogador.
+    pub monstros_a_invocar: Vec<(u32, u32, u32, i32, bool)>,
 }
 
 impl Contexto<'_> {
@@ -203,6 +210,15 @@ impl Jogador for Contexto<'_> {
         self.p.reputacao += r;
         self.mudou = true;
     }
+    /// `SetSecLevel` (`gs/player_imp.h:2798-2804`): guarda, marca para gravar e manda o
+    /// `TASK_DELIVER_LEVEL2` — é ele que faz o cliente tocar o efeito do avanço de cultivo.
+    fn definir_cultivo(&mut self, nivel: u32) {
+        self.p.cultivation = nivel as i32;
+        self.mudou = true;
+        let roleid = self.p.role_id;
+        self.para_mim
+            .push(S2CGamedataSend::task_deliver_level2(roleid, nivel as i32).data);
+    }
     fn avisar(&mut self, comando: Vec<u8>) {
         self.para_mim.push(comando);
     }
@@ -219,6 +235,9 @@ impl Jogador for Contexto<'_> {
     fn sortear(&mut self) -> f32 {
         use rand::Rng;
         rand::thread_rng().gen::<f32>()
+    }
+    fn invocar_monstro(&mut self, monstro_tid: u32, quantidade: u32, raio: u32, periodo_s: i32, some_ao_morrer: bool) {
+        self.monstros_a_invocar.push((monstro_tid, quantidade, raio, periodo_s, some_ao_morrer));
     }
 }
 
@@ -285,9 +304,11 @@ impl BusServer {
                 mundo: world_id,
                 equipe,
                 teleporte: None,
+                monstros_a_invocar: Vec::new(),
             };
             let r = f(&mut ctx);
-            let Contexto { p, bolsa, bolsa_de_missao, para_mim, para_todos, subiu_de_nivel, mudou, teleporte, .. } = ctx;
+            let Contexto { p, bolsa, bolsa_de_missao, para_mim, para_todos, subiu_de_nivel, mudou, teleporte, monstros_a_invocar, .. } = ctx;
+            let p_pos = p.position;
             let gravacao = Gravacao {
                 roleid,
                 level: p.level,
@@ -298,12 +319,19 @@ impl BusServer {
                 mp: p.mp,
                 money: p.money,
                 world_id,
-                pos: p.position,
+                pos: p_pos,
                 pontos: p.pontos_de_atributo,
                 atributos: (p.strength, p.agility, p.vitality, p.energy),
                 listas: p.missoes.blocos(),
             };
             let ficha = (mudou || subiu_de_nivel).then(|| (self.ficha_propria(p), Self::estado_proprio_de(p)));
+
+            for (monstro_tid, quantidade, raio, periodo_s, some_ao_morrer) in monstros_a_invocar {
+                for _ in 0..quantidade {
+                    mundo.invocar_monstro(monstro_tid, p_pos, raio, periodo_s, some_ao_morrer);
+                }
+            }
+
             (r, para_mim, para_todos, subiu_de_nivel, [bolsa, bolsa_de_missao], gravacao, ficha, teleporte)
         };
 
@@ -547,15 +575,18 @@ impl BusServer {
                         ctx.para_mim.push(S2CGamedataSend::player_drop_item(0, slot as u8, n, mina.ferramenta, 10).data);
                     }
                 }
-                let mut sobra = quantidade;
+                let mut sobra = if material.item > 0 { quantidade } else { 0 };
                 if quantidade > 0 && material.item > 0 {
                     let dados = ctx.dados;
+                    let eh_missao = dados.e_item_de_missao(material.item);
+                    let where_pct = if eh_missao { 2 } else { 0 };
+                    let bolsa = if eh_missao { &mut ctx.bolsa_de_missao } else { &mut ctx.bolsa };
                     // O original também cria o que se colhe por `generate_item_for_drop`
                     // (`player.cpp:1500-1520`).
-                    match ctx.bolsa.empilhar_gerado(material.item, quantidade, dados) {
+                    match bolsa.empilhar_gerado(material.item, quantidade, dados) {
                         Some(e) => {
                             sobra = quantidade - e.entrou;
-                            ctx.para_mim.push(S2CGamedataSend::obtain_item(material.item as i32, 0, e.entrou, e.no_slot, 0, e.slot as u8).data);
+                            ctx.para_mim.push(S2CGamedataSend::obtain_item(material.item as i32, 0, e.entrou, e.no_slot, where_pct, e.slot as u8).data);
                         }
                         None => {}
                     }
@@ -566,12 +597,20 @@ impl BusServer {
                 if mina.exp != 0 || mina.sp != 0 {
                     ctx.ganhar_exp(mina.exp.max(0) as i64, mina.sp.max(0) as i64);
                 }
+                if mina.missao_de_saida > 0 {
+                    let dados = ctx.dados;
+                    Self::com_motor(ctx, dados, |m| m.colheu_mina(mina.missao_de_saida));
+                }
                 sobra
             })
             .await;
-        info!("mundo: {roleid} colheu {quantidade} do item {} da mina {mid}", material.item);
+        if material.item > 0 {
+            info!("mundo: {roleid} colheu {quantidade} do item {} da mina {mid}", material.item);
+        } else {
+            info!("mundo: {roleid} colheu mina de missão {mid} (missão {})", mina.missao_de_saida);
+        }
         // O que não coube vai ao chão, do jogador (`DropItemData`, `player.cpp:1530-1540`).
-        if let Some(n) = sobrou.filter(|n| *n > 0) {
+        if let Some(n) = sobrou.filter(|n| *n > 0 && material.item > 0) {
             let d = self.world.write().await.criar_drop(material.item, n, pos, Some(roleid));
             self.mostrar_drop(&d).await;
         }
@@ -1087,14 +1126,17 @@ impl BusServer {
                     return true;
                 }
                 let dados = ctx.dados;
+                let eh_missao = dados.e_item_de_missao(drop.item_id);
+                let where_pct = if eh_missao { 2 } else { 0 };
+                let bolsa = if eh_missao { &mut ctx.bolsa_de_missao } else { &mut ctx.bolsa };
                 let guardado = if drop.octetos.is_empty() {
-                    ctx.bolsa.empilhar(drop.item_id, drop.count, dados)
+                    bolsa.empilhar_gerado(drop.item_id, drop.count, dados)
                 } else {
-                    ctx.bolsa.guardar_equipamento(drop.item_id, &drop.octetos, dados)
+                    bolsa.guardar_equipamento(drop.item_id, &drop.octetos, dados)
                 };
                 match guardado {
                     Some(e) => {
-                        ctx.para_mim.push(S2CGamedataSend::pickup_item(drop.item_id as i32, 0, e.entrou, e.no_slot, 0, e.slot as u8).data);
+                        ctx.para_mim.push(S2CGamedataSend::pickup_item(drop.item_id as i32, 0, e.entrou, e.no_slot, where_pct, e.slot as u8).data);
                         true
                     }
                     None => {
@@ -1199,7 +1241,13 @@ impl BusServer {
         }
         let id = skill_id as u32;
         if let Some((npc_tid, s)) = self.npc_em_conversa(roleid).await {
-            if s.habilidades.binary_search(&id).is_err() {
+            let eh_da_classe = {
+                let mundo = self.world.read().await;
+                mundo.players.get(&(roleid as i64)).and_then(|p| {
+                    mundo.data_manager.habilidades.get(id).map(|h| h.cls == Some(p.cls as i32) || h.cls == Some(255))
+                }).unwrap_or(false)
+            };
+            if !eh_da_classe && !s.habilidades.is_empty() && s.habilidades.binary_search(&id).is_err() {
                 debug!("mundo: o NPC {npc_tid} não ensina a habilidade {id}");
                 self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::HABILIDADE_INDISPONIVEL).data).await;
                 return;
@@ -1268,6 +1316,120 @@ impl BusServer {
                 warn!("mundo: não consegui gravar a habilidade {id} de {roleid}: {e}");
             }
             info!("mundo: {roleid} aprendeu a habilidade {id} no nível {n}");
+        }
+    }
+
+    /// `GP_NPCSEV_HATCHPET` (28) — chocar/incubar ovo de mascote na Gerente de Mascotes.
+    /// Payload: `egg_index: i32, egg_id: i32` (`hatch_pet_service_executor`, `serviceprovider.cpp:3160`).
+    /// Deduz as moedas (`money_hatched`), remove o ovo da bolsa (`DROP_TYPE_USE` = 10) e
+    /// responde `GAIN_PET` (231) com a struct `info_pet` (192 bytes).
+    pub(super) async fn incubar_mascote(&self, roleid: i32, conteudo: &[u8]) {
+        let mut r = Reader::new(conteudo);
+        let Ok(egg_index) = r.i32() else { return };
+        let Ok(egg_id) = r.i32() else { return };
+        if egg_index < 0 || egg_id <= 0 {
+            return;
+        }
+
+        let itens = self.itens().await;
+        let pets_corral = itens
+            .list_by_container(roleid, pw_core::ContainerType::PetCorral)
+            .await
+            .unwrap_or_default();
+        let slot_pet = pets_corral.len() as i32;
+
+        let pet_gerado = self
+            .com_contexto(roleid, |ctx| {
+                let dados = ctx.dados;
+                let Some(ovo_info) = dados.dados_do_ovo(egg_id as u32) else {
+                    ctx.para_mim.push(S2CGamedataSend::error_message(erro_s2c::SERVICO_INDISPONIVEL).data);
+                    return None;
+                };
+
+                // Localiza o slot do ovo na bolsa
+                let slot_idx = if ctx.bolsa.item_no_slot(egg_index as usize).map(|i| i.item_id) == Some(egg_id as u32) {
+                    egg_index as usize
+                } else if let Some(s) = ctx.bolsa.slots.iter().position(|x| x.as_ref().map(|i| i.item_id) == Some(egg_id as u32)) {
+                    s
+                } else {
+                    ctx.para_mim.push(S2CGamedataSend::error_message(erro_s2c::ITEM_NAO_NO_INVENTARIO).data);
+                    return None;
+                };
+
+                let item = ctx.bolsa.item_no_slot(slot_idx)?;
+                let custo = ovo_info.money_hatched as i64;
+                if ctx.p.money < custo {
+                    ctx.para_mim.push(S2CGamedataSend::error_message(erro_s2c::SEM_DINHEIRO).data);
+                    return None;
+                }
+
+                // Obtém ou gera a essência oficial (pe_essence) do ovo
+                let ess = if item.octets.len() >= pw_core::TAMANHO_PE_ESSENCE_BASE {
+                    pw_core::PeEssence::de_bytes(&item.octets).unwrap_or_else(|| {
+                        let mut e = pw_core::PeEssence::default();
+                        e.require_level = ovo_info.req_level;
+                        e.require_class = ovo_info.req_class;
+                        e.honor_point = ovo_info.honor_point;
+                        e.pet_tid = ovo_info.id_pet as i32;
+                        e.pet_egg_tid = ovo_info.id as i32;
+                        e.pet_class = ovo_info.pet_class;
+                        e.level = ovo_info.level;
+                        e.exp = ovo_info.exp;
+                        e.skill_point = ovo_info.skill_point;
+                        e.skills = ovo_info.skills.clone();
+                        e
+                    })
+                } else {
+                    let mut e = pw_core::PeEssence::default();
+                    e.require_level = ovo_info.req_level;
+                    e.require_class = ovo_info.req_class;
+                    e.honor_point = ovo_info.honor_point;
+                    e.pet_tid = ovo_info.id_pet as i32;
+                    e.pet_egg_tid = ovo_info.id as i32;
+                    e.pet_class = ovo_info.pet_class;
+                    e.level = ovo_info.level;
+                    e.exp = ovo_info.exp;
+                    e.skill_point = ovo_info.skill_point;
+                    e.skills = ovo_info.skills.clone();
+                    e
+                };
+
+                // Confere restrição de classe
+                if ((1 << (ctx.p.cls as i32 & 0x1F)) & ess.require_class) == 0 {
+                    ctx.para_mim.push(S2CGamedataSend::error_message(erro_s2c::PET_NAO_PODE_CHOCAR).data);
+                    return None;
+                }
+
+                // Remove 1 unidade do ovo da bolsa
+                let tirou = ctx.bolsa.tirar_do_slot(slot_idx, 1);
+                if tirou == 0 {
+                    return None;
+                }
+                ctx.para_mim.push(S2CGamedataSend::player_drop_item(0, slot_idx as u8, 1, egg_id, 10).data);
+
+                // Deduz as moedas do serviço
+                if custo > 0 {
+                    ctx.gastar_dinheiro(custo);
+                    ctx.para_mim.push(S2CGamedataSend::spend_money(custo as u32).data);
+                }
+
+                // Cria o InfoPet oficial (192 bytes) e envia GAIN_PET (opcode 231)
+                let info_pet = pw_core::InfoPet::de_essencia(&ess);
+                let pet_bytes = info_pet.para_bytes();
+                ctx.para_mim.push(S2CGamedataSend::gain_pet(slot_pet, &pet_bytes).data);
+
+                Some((ovo_info.id_pet, pet_bytes))
+            })
+            .await
+            .flatten();
+
+        if let Some((pet_tid, pet_bytes)) = pet_gerado {
+            let mut record = pw_core::ItemRecord::new(roleid, pw_core::ContainerType::PetCorral, slot_pet as u16, pet_tid, 1);
+            record.octets = pet_bytes;
+            if let Err(e) = itens.upsert_item(&record).await {
+                warn!("mundo: erro ao salvar mascote {pet_tid} de {roleid} no corral: {e}");
+            }
+            info!("mundo: {roleid} incubou o mascote/montaria {pet_tid} no slot {slot_pet} com sucesso a partir do ovo {egg_id}");
         }
     }
 

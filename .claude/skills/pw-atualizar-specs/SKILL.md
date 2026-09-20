@@ -22,7 +22,7 @@ Use o mapa de `specs/README.md`. Resumo:
 
 | alterou | atualizar |
 | :--- | :--- |
-| `crates/pw-protocol/src/packets`, `por_versao.rs`, `crates/pw-gs/src/comandos.rs`, tratamento de subcomando | `04_PROTOCOLO_MUNDO_3D.md` (§4 `PorVersao`, §5 fatos, §6 onde cada C2S é tratado) |
+| `crates/pw-protocol/src/packets`, `versions/`, `crates/pw-gs/src/comandos.rs`, tratamento de subcomando | `04_PROTOCOLO_MUNDO_3D.md` (§4 estratégia por versão, §5 fatos, §6 onde cada C2S é tratado) |
 | `crates/pw-gs/src/{world,bus_server,ai,combat,habilidades,entity,npc}.rs` | `05_SIMULACAO_DO_MUNDO.md` (a linha da regra e o estado) |
 | `crates/pw-data-loader/`, `specs/elements_*`, `specs/mapas`, dados do realm | `03_DATA_LOADER_SPEC.md` |
 | `docker/`, `crates/pw-link/`, `crates/pw-bus/`, `version.rs`, `edition.rs` | `02_MULTI_REALM_ARCHITECTURE.md` |

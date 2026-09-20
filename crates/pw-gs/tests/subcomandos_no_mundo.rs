@@ -39,6 +39,10 @@ const LOCALSID: u32 = 0xC0FF_EE01;
 const MISSAO: u32 = 4242;
 /// Um item qualquer para o teste de loja, com preço conhecido.
 const ITEM_DE_LOJA: i32 = 4123;
+/// Um item da bolsa de missão (`TASKMATTER_ESSENCE`) no cenário.
+const ITEM_DE_MISSAO: i32 = 2106;
+/// Um ovo de montaria (`pet_class` 0) no cenário.
+const OVO_DE_MONTARIA: i32 = 41073;
 /// `shop_price` daquele item no cenário — o que a loja tem de cobrar por unidade.
 const PRECO_DO_ITEM_DE_LOJA: i32 = 137;
 
@@ -228,6 +232,26 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
         .insert(ITEM_DE_LOJA as u32, (50, PRECO_DO_ITEM_DE_LOJA));
     // A marca do `dyn_tasks.data` dos realms 1.5.5 (`dyn_tasks_do_realm.rs`).
     dados.marca_das_missoes_dinamicas = Some(MARCA_DAS_MISSOES_DINAMICAS);
+    // O cenário não carrega `elements.data`: o que os testes de item de missão e de ovo de
+    // mascote precisam entra aqui à mão, como os preços da loja e as missões acima.
+    dados.itens_de_missao.insert(ITEM_DE_MISSAO as u32);
+    dados.ovos_de_pet.insert(
+        OVO_DE_MONTARIA as u32,
+        pw_data_loader::pet::DadosDoOvoDePet {
+            id: OVO_DE_MONTARIA as u32,
+            id_pet: 3000,
+            money_hatched: 1000,
+            money_restored: 0,
+            honor_point: 0,
+            level: 1,
+            exp: 0,
+            skill_point: 0,
+            req_level: 0,
+            req_class: -1,
+            pet_class: 0,
+            skills: Vec::new(),
+        },
+    );
     // O ajuste padrão do construtor é zero (sem `PARAM_ADJUST_CONFIG` nenhum abate daria
     // experiência): o cenário usa o neutro.
     dados.progressao = pw_data_loader::TabelaDeProgressao::com_ajuste_uniforme(pw_data_loader::AjusteDeNivel {
@@ -2484,9 +2508,14 @@ async fn get_all_data_respeita_os_sinalizadores_do_cliente() {
     .unwrap();
 
     let r = receber_ate_o_fim_da_carga(&mut link).await;
+    // No servidor original C++ (player.cpp:13233-13248), OWN_IVTR_DATA (42) vai SEMPRE
+    // para as 3 bolsas (0, 1 e 2) para inicializar a estrutura no cliente.
+    // O que os três sinalizadores controlam são os blocos detalhados OWN_ITEM_INFO (40).
+    let ivtrs: Vec<_> = r.iter().filter(|v| cmd_de(v) == 42).collect();
+    assert_eq!(ivtrs.len(), 3, "as 3 bolsas (42) vão sempre para inicializar os contêineres");
     assert!(
-        !r.iter().any(|v| cmd_de(v) == 42),
-        "mandou a bolsa (42) com detail_inv = 0"
+        !r.iter().any(|v| cmd_de(v) == 40),
+        "mandou OWN_ITEM_INFO (40) com os sinalizadores desligados"
     );
     assert!(
         r.iter().any(|v| cmd_de(v) == 105),
@@ -2504,7 +2533,7 @@ async fn get_all_data_respeita_os_sinalizadores_do_cliente() {
         .expect("sem PLAYER_CASH (253)");
     assert_eq!(i32_em(saldo, 2), 999);
 
-    // E com os sinalizadores ligados, a bolsa vem.
+    // E com os sinalizadores ligados, as bolsas continuam vindo.
     link.enviar(BusMessage::ClientToGame {
         roleid,
         localsid: LOCALSID,
@@ -2513,9 +2542,10 @@ async fn get_all_data_respeita_os_sinalizadores_do_cliente() {
     .await
     .unwrap();
     let r = receber_ate_o_fim_da_carga(&mut link).await;
-    assert!(
-        r.iter().any(|v| cmd_de(v) == 42),
-        "não mandou a bolsa (42) nem com detail_inv = 1"
+    assert_eq!(
+        r.iter().filter(|v| cmd_de(v) == 42).count(),
+        3,
+        "as 3 bolsas (42) continuam vindo com detalhe ligado"
     );
 }
 
@@ -3759,4 +3789,209 @@ async fn esc_andar_e_a_morte_do_alvo_param_o_golpe() {
         }
         assert!(m.monsters[&MONSTRO].0.is_dead, "renasceu com o corpo ainda no chão");
     }
+}
+
+/// B65: ESC (CANCEL_ACTION) ou movimento interrompe conjuração com SELF_SKILL_INTERRUPTED (87).
+#[tokio::test]
+async fn esc_cancela_conjuracao_com_self_skill_interrupted() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let mut corpo = 167i32.to_le_bytes().to_vec(); // Portal da Cidade (167)
+    corpo.push(0);
+    corpo.push(0);
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::CAST_SKILL, &corpo),
+    })
+    .await
+    .unwrap();
+
+    let cast = esperar_comando(&mut link, 85).await;
+    assert_eq!(cmd_de(&cast), 85);
+    assert!(mundo.read().await.players[&(roleid as i64)].conjuracao.is_some());
+
+    // Pressiona ESC (CANCEL_ACTION)
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::CANCEL_ACTION, &[]),
+    })
+    .await
+    .unwrap();
+
+    // Deve receber SELF_SKILL_INTERRUPTED (87) com reason 2 (interrompido)
+    let interrupcao = esperar_comando(&mut link, 87).await;
+    assert_eq!(cmd_de(&interrupcao), 87);
+    assert_eq!(interrupcao[2], 2);
+    assert!(mundo.read().await.players[&(roleid as i64)].conjuracao.is_none());
+}
+
+/// B65: GET_ALL_DATA envia as três bolsas (0, 1 e 2) mesmo com detalhe_missoes = 0 (cliente 1.5.5 envia [1, 1, 0]),
+/// e não envia NPCs comuns da cena em SCENE_SERVICE_NPC_LIST (390) para não sequestrar a caixa de diálogo do NPC.
+#[tokio::test]
+async fn get_all_data_envia_bolsas_incondicionalmente_sem_sequestrar_npcs() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    // Adiciona um NPC no mundo
+    mundo.write().await.npcs.insert(12345, pw_gs::NpcEntity {
+        id: 12345,
+        template_id: 44698,
+        name: "Mestre".to_string(),
+        position: Vector3::new(0.0, 0.0, 0.0),
+        dialog_id: 0,
+        direcao: 0,
+    });
+
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // Cliente 1.5.5 envia GetAllData(true, true, false) => [1, 1, 0]
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::GET_ALL_DATA, &[1, 1, 0]),
+    })
+    .await
+    .unwrap();
+
+    let pacotes = receber_ate_o_fim_da_carga(&mut link).await;
+    // Verifica que as três bolsas (0, 1 e 2) foram enviadas via OWN_IVTR_DATA (42)
+    let ivtrs: Vec<_> = pacotes.iter().filter(|p| cmd_de(p) == 42).collect();
+    assert_eq!(ivtrs.len(), 3, "todas as 3 bolsas devem ser inicializadas mesmo com detalhe_missoes=0");
+    assert_eq!(ivtrs[0][2], 0, "bolsa comum (0)");
+    assert_eq!(ivtrs[1][2], 1, "bolsa equipamento (1)");
+    assert_eq!(ivtrs[2][2], 2, "bolsa missão (2)");
+
+    // NPCs comuns da cena não devem sair no 390
+    assert!(pacotes.iter().all(|p| cmd_de(p) != 390), "SCENE_SERVICE_NPC_LIST (390) não deve emitir NPCs comuns");
+}
+
+/// B65: Monstro só ganha ameaça e acorda quando o dano do golpe atinge o alvo, não no clique.
+#[tokio::test]
+async fn reacao_do_monstro_so_ocorre_quando_o_dano_atinge_o_alvo() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    receber(&mut link, 2).await;
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+    })
+    .await
+    .unwrap();
+    receber(&mut link, 3).await;
+
+    // Enquanto o dano não caiu, o monstro não pode ter ameaça nem reagir
+    assert_eq!(mundo.read().await.monsters[&MONSTRO].1.aggro_table.len(), 0);
+
+    // Quando o dano adiado atinge o monstro no tique do mundo:
+    assert!(tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.hp < MONSTRO_HP).await);
+
+    // Agora sim o monstro tem a ameaça registrada
+    assert!(mundo.read().await.monsters[&MONSTRO].1.aggro_table.contains_key(&(roleid as i64)));
+}
+
+/// B66: Incubação de mascote/montaria em NPC (`GP_NPCSEV_HATCHPET` = 28).
+/// Deduz moedas, remove o ovo da bolsa e responde `GAIN_PET` (231) com o `InfoPet` de 192 bytes.
+#[tokio::test]
+async fn incubar_ovo_de_montaria_no_npc_gera_mascote_e_salva_no_corral() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // Encontra um ovo de montaria no data_manager
+    let (ovo_id, ovo_info) = {
+        let m = mundo.read().await;
+        m.data_manager
+            .ovos_de_pet
+            .iter()
+            .find(|(_, o)| o.pet_class == 0)
+            .map(|(&id, o)| (id, o.clone()))
+            .expect("deve existir ovo de montaria")
+    };
+
+    dar_dinheiro(&mundo, roleid, (ovo_info.money_hatched as i64) + 50_000).await;
+
+    // Coloca o ovo no slot 0 da bolsa do jogador
+    let repo = mundo.read().await.char_repo.clone();
+    let itens = repo.item_repo().clone();
+    let mut item_ovo = pw_core::ItemRecord::new(roleid, pw_core::ContainerType::Inventory, 0, ovo_id, 1);
+    item_ovo.octets = mundo.read().await.data_manager.gerar_octetos_do_ovo(ovo_id).unwrap_or_default();
+    itens.upsert_item(&item_ovo).await.unwrap();
+
+    // Envia C2S::NPC_SERVICE com serviço 28 (INCUBAR_PET)
+    let mut conteudo = (0i32).to_le_bytes().to_vec(); // egg_index = 0
+    conteudo.extend_from_slice(&(ovo_id as i32).to_le_bytes()); // egg_id
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::INCUBAR_PET, &conteudo),
+    })
+    .await
+    .unwrap();
+
+    // Espera o pacote GAIN_PET (231)
+    let gain_pet = esperar_comando(&mut link, 231).await;
+    let slot_index = i32_em(&gain_pet, 2);
+    assert_eq!(slot_index, 0, "deve ser alocado no slot 0 do corral");
+    assert_eq!(gain_pet.len() - 6, pw_core::TAMANHO_INFO_PET, "info_pet deve ter exatamente 192 bytes");
+
+    // Verifica que o pet foi salvo no banco no container PetCorral
+    let corral = itens.list_by_container(roleid, pw_core::ContainerType::PetCorral).await.unwrap();
+    assert_eq!(corral.len(), 1);
+    assert_eq!(corral[0].item_id, ovo_info.id_pet);
+    assert_eq!(corral[0].octets.len(), pw_core::TAMANHO_INFO_PET);
+}
+
+/// B66: Coleta de item de missão do chão vai para a bolsa de missão (`where = 2`).
+#[tokio::test]
+async fn pegar_item_de_missao_vai_para_bolsa_de_missao() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // Encontra um id de item de missão no data_manager
+    let item_missao_id = {
+        let m = mundo.read().await;
+        m.data_manager
+            .itens_de_missao
+            .iter()
+            .copied()
+            .next()
+            .unwrap_or(ITEM_DE_MISSAO as u32)
+    };
+
+    // Cria um drop do item de missão no chão pertencente ao jogador
+    let drop = {
+        let mut m = mundo.write().await;
+        m.criar_drop(item_missao_id, 1, Vector3::new(1.0, 0.0, 1.0), Some(roleid))
+    };
+
+    let mut pedido = (drop.id as i32).to_le_bytes().to_vec();
+    pedido.extend_from_slice(&(item_missao_id as i32).to_le_bytes());
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::PICKUP, &pedido),
+    })
+    .await
+    .unwrap();
+
+    // PICKUP_ITEM (31): tid (4B), expire (4B), amount (4B), slot_amount (4B), package (1B), slot (1B)
+    let pickup = esperar_comando(&mut link, 31).await;
+    assert_eq!(i32_em(&pickup, 2), item_missao_id as i32, "item_id");
+    assert_eq!(pickup[18], 2, "pacote/where deve ser 2 (IL_TASK_INVENTORY)");
+
+    let sumiu = esperar_comando(&mut link, 152).await;
+    assert_eq!(i32_em(&sumiu, 2), drop.id as i32, "MATTER_PICKUP (152)");
 }

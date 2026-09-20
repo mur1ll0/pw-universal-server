@@ -26,7 +26,7 @@
 //! capturados (o `iHP` caindo enquanto o `iMaxHP` fica parado) e está registrado na
 //! documentação de cada função.
 
-use pw_protocol::{GameVersion, PorVersao};
+use pw_protocol::{versions::create_world_protocol, GameVersion, WorldProtocol};
 
 /// `(nome, id, bytes de payload no 1.2.6, bytes no 1.5.3, ocorrências na captura)`.
 ///
@@ -49,7 +49,7 @@ const MEDIDO: &[(&str, u16, usize, usize, usize)] = &[
 ///
 /// Os valores não importam para esta conferência — o que se mede é o **tamanho**. Valores
 /// distintos entre si, mesmo assim, para que uma troca de campos apareça noutro teste.
-fn escrever(p: &PorVersao, id: u16) -> Vec<u8> {
+fn escrever(p: &std::sync::Arc<dyn WorldProtocol>, id: u16) -> Vec<u8> {
     let d = match id {
         24 => p.host_attack_result(101, 7, 0, 0x10).data,
         26 => p.host_attacked(102, 1, 0x7f, 0, 0x1b).data,
@@ -68,7 +68,7 @@ fn escrever(p: &PorVersao, id: u16) -> Vec<u8> {
 
 #[test]
 fn o_126_escreve_o_tamanho_que_o_servidor_de_verdade_escreveu() {
-    let p = PorVersao::new(GameVersion::V1_2_6);
+    let p = create_world_protocol(GameVersion::V1_2_6);
     let mut erros = Vec::new();
 
     for (nome, id, bytes_126, _, vezes) in MEDIDO {
@@ -97,7 +97,7 @@ fn o_126_escreve_o_tamanho_que_o_servidor_de_verdade_escreveu() {
 #[test]
 fn o_153_continua_com_o_layout_do_ir() {
     // A ramificação por versão não pode ter mexido no que já estava certo para 1.5.3.
-    let p = PorVersao::new(GameVersion::V1_5_3);
+    let p = create_world_protocol(GameVersion::V1_5_3);
     let mut erros = Vec::new();
 
     for (nome, id, _, bytes_153, _) in MEDIDO {
@@ -115,8 +115,8 @@ fn as_duas_versoes_diferem_em_todos_os_comandos_da_tabela() {
     // Um comando que sai igual nas duas versões não deveria estar neste módulo: ou a
     // ramificação não foi escrita, ou o comando não pertence aqui. Os dois casos são
     // erro, e este teste é o que os separa de "está tudo bem".
-    let a = PorVersao::new(GameVersion::V1_2_6);
-    let b = PorVersao::new(GameVersion::V1_5_3);
+    let a = create_world_protocol(GameVersion::V1_2_6);
+    let b = create_world_protocol(GameVersion::V1_5_3);
 
     for (nome, id, _, _, _) in MEDIDO {
         assert_ne!(
@@ -132,8 +132,8 @@ fn o_148_usa_o_layout_do_153_por_falta_de_medicao() {
     // Não é uma afirmação sobre o 1.4.8: é o registro de que não temos captura dele. O
     // dia em que houver, este teste muda junto com a tabela — e é bom que ele exista para
     // que a mudança seja consciente em vez de silenciosa.
-    let quatro_oito = PorVersao::new(GameVersion::V1_4_8);
-    let cinco_tres = PorVersao::new(GameVersion::V1_5_3);
+    let quatro_oito = create_world_protocol(GameVersion::V1_4_8);
+    let cinco_tres = create_world_protocol(GameVersion::V1_5_3);
 
     for (_, id, _, _, _) in MEDIDO {
         assert_eq!(escrever(&quatro_oito, *id), escrever(&cinco_tres, *id));
@@ -145,7 +145,7 @@ fn o_receive_exp_do_126_cabe_em_16_bits_sem_estourar() {
     // Um abate que desse mais de 65.535 de experiência truncaria para um número pequeno e
     // aleatório: o jogador veria "ganhou 3 de exp" ao matar um chefe. O teto é errado por
     // menos.
-    let p = PorVersao::new(GameVersion::V1_2_6);
+    let p = create_world_protocol(GameVersion::V1_2_6);
     let d = p.receive_exp(70_000, -5).data;
     assert_eq!(d.len(), 2 + 4);
     assert_eq!(u16::from_le_bytes([d[2], d[3]]), u16::MAX, "não saturou o exp");
@@ -156,7 +156,7 @@ fn o_receive_exp_do_126_cabe_em_16_bits_sem_estourar() {
 fn o_hp_do_npc_info_00_do_126_fica_onde_a_captura_mostrou() {
     // A captura mostra o `iHP` caindo (29 → 22 → 17 → 11 → 2) enquanto o `iMaxHP` fica em
     // 29. É o que fixa a **ordem** dos dois campos, que o tamanho sozinho não fixaria.
-    let p = PorVersao::new(GameVersion::V1_2_6);
+    let p = create_world_protocol(GameVersion::V1_2_6);
     let d = p.npc_info_00(900_001, 11, 29, 0).data;
     assert_eq!(i32::from_le_bytes([d[2], d[3], d[4], d[5]]), 900_001, "idNPC");
     assert_eq!(i32::from_le_bytes([d[6], d[7], d[8], d[9]]), 11, "iHP fora do lugar");
@@ -173,14 +173,14 @@ fn o_hp_do_npc_info_00_do_126_fica_onde_a_captura_mostrou() {
 fn task_data_tem_tres_blocos_no_126_e_cinco_do_153_em_diante() {
     let cabecalho = 2; // u16 com o id do subcomando (105)
 
-    let p126 = PorVersao::new(GameVersion::V1_2_6);
+    let p126 = create_world_protocol(GameVersion::V1_2_6);
     let b126 = p126.task_data().data;
     assert_eq!(&b126[..2], &105u16.to_le_bytes());
     assert_eq!(b126.len(), cabecalho + 3 * 4, "1.2.6 espera exatamente 3 blocos");
     assert!(b126[2..].iter().all(|&b| b == 0), "todos os tamanhos são zero");
 
     for versao in [GameVersion::V1_5_3, GameVersion::V1_5_5] {
-        let b = PorVersao::new(versao).task_data().data;
+        let b = create_world_protocol(versao).task_data().data;
         assert_eq!(&b[..2], &105u16.to_le_bytes());
         assert_eq!(b.len(), cabecalho + 5 * 4, "{versao:?} espera exatamente 5 blocos");
         assert!(b[2..].iter().all(|&x| x == 0), "todos os tamanhos são zero");
@@ -199,12 +199,12 @@ fn info_npc_ganha_vis_tid_e_state2_do_153_em_diante() {
     let pos = Vector3::new(1.0, 2.0, 3.0);
     let cabecalho = 2;
 
-    let b126 = PorVersao::new(GameVersion::V1_2_6).npc_enter_world(7, 2191, pos, 64).data;
+    let b126 = create_world_protocol(GameVersion::V1_2_6).npc_enter_world(7, 2191, pos, 64).data;
     assert_eq!(&b126[..2], &16u16.to_le_bytes());
     assert_eq!(b126.len(), cabecalho + 27, "1.2.6: nid+tid+pos+seed+dir+state");
 
     for versao in [GameVersion::V1_5_3, GameVersion::V1_5_5] {
-        let b = PorVersao::new(versao).npc_enter_world(7, 2191, pos, 64).data;
+        let b = create_world_protocol(versao).npc_enter_world(7, 2191, pos, 64).data;
         assert_eq!(b.len(), cabecalho + 35, "{versao:?}: com vis_tid e state2");
         // vis_tid vem logo depois do tid e vai igual a ele
         let tid = i32::from_le_bytes(b[6..10].try_into().unwrap());
@@ -216,15 +216,15 @@ fn info_npc_ganha_vis_tid_e_state2_do_153_em_diante() {
     }
 
     // O ENTER_SLICE carrega a mesma struct, só muda o id do comando.
-    let slice = PorVersao::new(GameVersion::V1_5_5).npc_enter_slice(7, 2191, pos, 64).data;
+    let slice = create_world_protocol(GameVersion::V1_5_5).npc_enter_slice(7, 2191, pos, 64).data;
     assert_eq!(&slice[..2], &11u16.to_le_bytes());
     assert_eq!(slice.len(), cabecalho + 35);
 }
 
 #[test]
 fn own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante() {
-    let p126 = PorVersao::new(GameVersion::V1_2_6);
-    let p155 = PorVersao::new(GameVersion::V1_5_5);
+    let p126 = create_world_protocol(GameVersion::V1_2_6);
+    let p155 = create_world_protocol(GameVersion::V1_5_5);
 
     let d126 = p126.own_ext_prop(
         0, (10, 10, 10, 10), 100, 100, (2, 2),

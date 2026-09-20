@@ -1,6 +1,6 @@
 ---
 name: pw-protocolo-cliente
-description: Criar, corrigir ou diagnosticar um subcomando do mundo 3D (S2C ou C2S do GamedataSend) ou pacote GNET no pw-universal-server, conferindo o layout contra IR, EC_GPDataType.h e o overlay do cliente. Usar quando algo "não aparece na tela", ao escrever codificador/decodificador novo, ou ao mexer em por_versao.rs.
+description: Criar, corrigir ou diagnosticar um subcomando do mundo 3D (S2C ou C2S do GamedataSend) ou pacote GNET no pw-universal-server, conferindo o layout contra IR, EC_GPDataType.h e o overlay do cliente. Usar quando algo "não aparece na tela", ao escrever codificador/decodificador novo, ou ao mexer em `versions/`.
 ---
 
 # Layout de protocolo sem descarte silencioso
@@ -32,7 +32,7 @@ tamanho vira o tamanho-base.
 
 - Codificador S2C em `crates/pw-protocol/src/packets/s2c.rs` (`S2CGamedataSend::*`), com o
   comentário citando a struct e a linha do `EC_GPDataType.h`.
-- Diferença **medida** entre versões: variante em `crates/pw-protocol/src/por_versao.rs`; nunca
+- Diferença **medida** entre versões: variante na estratégia da versão (`crates/pw-protocol/src/versions/<versao>/`); nunca
   um segundo codificador paralelo.
 - Decodificador C2S em `crates/pw-gs/src/comandos.rs` (`ids::*` + struct com `BYTES`), tratamento
   em `BusServer::tratar_subcomando`. Não criar braço novo no `gateway.rs` do `pw-link` — e se

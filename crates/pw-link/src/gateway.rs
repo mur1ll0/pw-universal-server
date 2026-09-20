@@ -780,7 +780,7 @@ impl LinkGateway {
                     //    fixo; com personagem nascendo no mapa 161, o cliente receberia os
                     //    carimbos de outro mapa.
                     let id_inst: i32 = details.world_id;
-                    let sub = pw_protocol::PorVersao::new(self.game_version);
+                    let sub = pw_protocol::versions::create_world_protocol(self.game_version);
                     let region = self
                         .data_manager
                         .region_timestamps
@@ -862,8 +862,17 @@ impl LinkGateway {
                     // o `pw-gs`. Agora ele sai do mundo, junto do `GET_ALL_DATA` — ver
                     // `BusServer::todos_os_dados`.
 
-                    // 6. Envia SKILL_DATA (Comando 90) - Habilidades carregadas da tabela character_skills
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::skill_data_from_records(&details.skills))).await?;
+                    // 6. SKILL_DATA (90), OWN_IVTR_DATA (42) e OWN_ITEM_INFO (40)
+                    // **não saem daqui com servidor de mundo ativo** (B65).
+                    // Saíam antes do `GET_ALL_DATA` quando o Host do cliente ainda não
+                    // estava pronto (`HostIsReady()` falso), fazendo o cliente duplicar
+                    // as habilidades na janela (tecla R) e duplicar o inventário na entrada
+                    // quando o pw-gs respondia ao `GET_ALL_DATA` com `todos_os_dados`.
+                    // O servidor original (`player.cpp:13697-13727`) envia tudo isso
+                    // exclusivamente na resposta do `GET_ALL_DATA`.
+                    if self.uplink_da_sessao(&session).is_none() {
+                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::skill_data_from_records(&details.skills))).await?;
+                    }
 
                     // 7. Envia TASK_DATA (Comando 105) e inicializa o subsistema de missões do cliente.
                     // No client, `OnMsgHstTaskData` (EC_HostMsg.cpp) trata esse comando como o
@@ -872,7 +881,7 @@ impl LinkGateway {
                     // cruzar com o log de `InboundPacket::GetUIConfig` e confirmar se o pedido
                     // do client realmente chega depois disso.
                     // O número de blocos depende da versão (3 no 1.2.6, 5 do 1.5.3 em
-                    // diante) — ver `PorVersao::task_data`, que traz a desmontagem dos dois
+                    // diante) — ver `WorldProtocol::task_data`, que traz a desmontagem dos dois
                     // clients reais. Mandar 3 pro 1.5.5 deixava o cliente lendo 8 bytes de
                     // lixo depois do fim do buffer.
                     // As listas de missão **de verdade**, do banco (`character_task_lists`),
@@ -912,42 +921,32 @@ impl LinkGateway {
                     // raça) saiu: era inventada, e um `TASK_SVR_NOTIFY_NEW` sem a missão na
                     // lista desalinha a cópia do cliente. Missão se pega no NPC.
 
-                    // 8. Envia OWN_IVTR_DATA (Comando 42)
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(0, 32, &details.inventory))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(1, 32, &details.equipment))).await?;
-                    // A bolsa de missão (pacote 2) — `SendAllData` manda as três
-                    // (`player.cpp:13697-13713`). Sem ela o cliente não tem onde pôr item de
-                    // missão, e o `TASK_DELIVER_ITEM` é descartado.
-                    let bolsa_de_missao = self
-                        .char_repo
-                        .item_repo()
-                        .list_by_container(details.id, pw_core::ContainerType::TaskInventory)
-                        .await
-                        .unwrap_or_default();
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(2, 32, &bolsa_de_missao))).await?;
+                    // 8 e 9: OWN_IVTR_DATA (42) e OWN_ITEM_INFO (40)
+                    if self.uplink_da_sessao(&session).is_none() {
+                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(0, 32, &details.inventory))).await?;
+                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(1, 32, &details.equipment))).await?;
+                        let bolsa_de_missao = self
+                            .char_repo
+                            .item_repo()
+                            .list_by_container(details.id, pw_core::ContainerType::TaskInventory)
+                            .await
+                            .unwrap_or_default();
+                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::own_ivtr_from_items(2, 32, &bolsa_de_missao))).await?;
 
-                    // 9. Envia OWN_ITEM_INFO (Comando 40) para cada item
-                    //
-                    // A ficha sai do `elements.data` (`data_manager.equipamentos`), seja
-                    // arma, armadura ou acessório. Antes era montada por uma tabela de
-                    // quatro ids escrita no codificador, com um genérico que declarava
-                    // toda arma desconhecida como de longo alcance — e o cliente recusava
-                    // a arma por falta de munição; e armadura ia sem bloco nenhum, o que
-                    // a recusaria pela máscara de classes zerada. Ver
-                    // `S2CGamedataSend::item_info`.
-                    let equipamentos = &self.data_manager.equipamentos;
-                    for (onde, lista) in [(0u8, &details.inventory), (1u8, &details.equipment)] {
-                        for item in lista {
-                            tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
-                                onde,
-                                item.slot as u8,
-                                item.item_id as i32,
-                                item.durability as i32 * 100,
-                                item.max_durability as i32 * 100,
-                                item.count,
-                                &item.octets,
-                                equipamentos.ficha(item.item_id),
-                            ))).await?;
+                        let equipamentos = &self.data_manager.equipamentos;
+                        for (onde, lista) in [(0u8, &details.inventory), (1u8, &details.equipment)] {
+                            for item in lista {
+                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
+                                    onde,
+                                    item.slot as u8,
+                                    item.item_id as i32,
+                                    item.durability as i32 * 100,
+                                    item.max_durability as i32 * 100,
+                                    item.count,
+                                    &item.octets,
+                                    equipamentos.ficha(item.item_id),
+                                ))).await?;
+                            }
                         }
                     }
 
@@ -1207,33 +1206,6 @@ impl LinkGateway {
                                 info!("Duelo entre jogador {} e oponente {}", role_id, opponent_id);
                                 tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::duel_prepare(role_id, opponent_id))).await?;
                                 tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::host_duel_start(opponent_id))).await?;
-                            }
-                        }
-                        178 => {
-                            // C2S 178: ACTIVATE_REGION_WAYPOINTS — struct real (EvolvedPWServer
-                            // protocol.h): cmd_header(2) + num(1, unsigned char) + num * int(4,
-                            // não short). O client manda isso sozinho, sem pedido nosso, toda
-                            // vez que acha um waypoint da região atual que não está na lista que
-                            // `WAYPOINT_LIST` (S2C 180) já confirmou — e como nunca
-                            // respondíamos, ele repetia isso a cada quadro (~166/s medido) e a
-                            // tela de entrada no mundo nunca destravava. Devolver os mesmos IDs
-                            // via `player_waypoint_list` fecha o ciclo (ver o comentário em
-                            // `S2CGamedataSend::player_waypoint_list`).
-                            if gamedata.data.len() >= 3 {
-                                let num = gamedata.data[2] as usize;
-                                let mut waypoints = Vec::with_capacity(num);
-                                for i in 0..num {
-                                    let off = 3 + i * 4;
-                                    if gamedata.data.len() < off + 4 {
-                                        break;
-                                    }
-                                    let id = i32::from_le_bytes(gamedata.data[off..off + 4].try_into().unwrap());
-                                    waypoints.push(id.clamp(0, u16::MAX as i32) as u16);
-                                }
-                                if !waypoints.is_empty() {
-                                    debug!("Jogador {} ativou {} waypoint(s) da região: {:?}", role_id, waypoints.len(), waypoints);
-                                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_waypoint_list(&waypoints))).await?;
-                                }
                             }
                         }
                         _ => {

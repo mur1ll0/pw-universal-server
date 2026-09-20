@@ -103,6 +103,7 @@ fn personagem(level: i32, vitality: i32, energy: i32, agility: i32) -> Character
         storehouse: Vec::new(),
         skills: Vec::new(),
         quests: Vec::new(),
+        waypoints: Vec::new(),
         custom_appearance: serde_json::Value::Null,
         version_data: serde_json::Value::Null,
         created_at: Utc::now(),

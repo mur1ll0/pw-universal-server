@@ -7648,6 +7648,271 @@ realm) estão na memória `pw_universal_infra_access`.
     Suíte com banco: **579 testes, todos passando**. Publicado em
     `pw-realm-155`/`pw-world-155`.
 
+65. **Sessão 2026-09-18 (noite): resolução dos 5 problemas do teste em jogo (B67).**
+
+    ### a. O relato
+
+    No teste em jogo do Murillo com o Arqueiro `eaa` (1.5.5 BR, nível 5, mapa 161):
+    1. Baú da missão do Selo Divino (mina 44559) dropava `<ERRO>` e item 0 na bolsa.
+    2. Dano caía só no fim da animação (B62), mas o monstro começava a perseguir antes da flecha acertar.
+    3. Menu R de habilidades não deixava evoluir nada.
+    4. Habilidades mostravam Portal da Cidade e as duas iniciais duplicadas na lista.
+    5. ESC não cancelava a conjuração do Portal da Cidade (167) nem de outras habilidades.
+
+    ### b. Causa e solução de cada item
+
+    1. **Mina de saída de missão (`OnTaskMining`):** A mina 44559 tem `materials_1_id = 0` e
+       `task_out = 31694`. No original (`TaskServer.cpp:1116-1123`, `TaskTempl.inl:2105-2148`),
+       quando a mina tem `task_out > 0`, o servidor executa `CheckMining`, entregando o item pedido
+       pela submissão (item 44347) diretamente na bolsa do jogador e finalizando a submissão. Quando
+       `material.item == 0`, nenhum drop deve ser gerado no chão. Implementado `Motor::colheu_mina`
+       e tratado em `concluir_coleta` no GS. Excluído também o item 0 que havia ficado gravado no slot 15
+       do `eaa`.
+    2. **Ameaça do monstro adiada:** No original (`npc.cpp:1867`, `npc.cpp:2354-2364`),
+       `AddAggroEntry` envia `GM_MSG_GEN_AGGRO` como mensagem adiada (`speed + 1`). A ameaça só
+       nasce quando o projétil/golpe atinge o alvo. Movida a chamada de `ai.add_threat` de `atacar`
+       para `aplicar_dano_no_monstro`.
+    3. **Evolução de habilidades pelo menu R (`SCENE_SERVICE_NPC_LIST`):** No cliente 1.5.5
+       (`EC_HostSkillModel.cpp:558-605`), ao receber `S2C::SCENE_SERVICE_NPC_LIST` (opcode 390), ele
+       percorre os NPCs de serviço da cena (`m_allProfNPCs`) e define `m_skillLearnNPCNID`. Sem esse
+       pacote no login (`todos_os_dados`), o cliente desabilita `IsSkillServedByNPC(skillID)` e o botão
+       de evoluir pelo menu R. Adicionado opcode 390 ao `pw-protocol` e envio de `scene_service_npc_list`
+       no `todos_os_dados` do GS.
+    4. **Duplicação de habilidades e inventário:** O `pw-link` enviava `SKILL_DATA` (90), `OWN_IVTR_DATA`
+       (42) e `OWN_ITEM_INFO` (40) logo após o `ENTER_WORLD`, antes do cliente estar pronto
+       (`HostIsReady() == false`), e em seguida o GS reenviava esses dados em `todos_os_dados`. O envio
+       no link agora é condicionado a `self.uplink_da_sessao(&session).is_none()`, deixando o mundo simulado
+       como autoridade única e eliminando a duplicação.
+    5. **Cancelamento de conjuração por ESC e movimento:** No C++ original (`playercmd.cpp:2136-2153`,
+       `player.cpp:4017-4028`), `CANCEL_ACTION` e movimento enviam `SELF_SKILL_INTERRUPTED` (opcode 87,
+       motivo 2) para o conjurador e `SKILL_INTERRUPTED` (opcode 86) para outros jogadores, limpando a
+       conjuração. Adicionados opcodes 86 e 87 em `pw-protocol` e tratadores em `CANCEL_ACTION` e `mover`
+       no GS (`interromper_conjuracao`).
+
+    ### c. Provas
+
+    - `crates/pw-gs/tests/missoes_do_realm.rs`: `coletar_o_selo_divino_da_missao_31694_entrega_item_44347_e_finaliza`
+      aceita 31693 com submissão 31694, coleta a mina de saída e verifica a entrega do item 44347 e finalização.
+    - `crates/pw-gs/tests/subcomandos_no_mundo.rs`:
+      - `esc_cancela_conjuracao_com_self_skill_interrupted`: verifica limpeza de conjuração e emissão do opcode 87 (reason 2).
+      - `get_all_data_envia_scene_service_npc_list`: verifica emissão do opcode 390 com os provedores de serviços.
+      - `reacao_do_monstro_so_ocorre_quando_o_dano_atinge_o_alvo`: verifica que o monstro não gera ameaça nem persegue antes do dano conectar.
+    - `crates/pw-protocol/tests/subcomandos_s2c_contra_o_ir.rs`: validação dos opcodes 86, 87 e 390 contra o IR.
+    - Suíte inteira de testes automatizados passando.
+
+66. **Sessão 2026-09-19 (tarde): correção do diálogo com NPC (B66).**
+
+    ### a. O relato
+
+    No teste em jogo do Murillo com o Arqueiro `eaa` (1.5.5 BR, nível 5, mapa 161) após a B65:
+    "Ao testar percebi que não estou mais conseguindo falar com NPC (não abre a caixa de diálogo), veja o que você fez de errado e corrija".
+
+    ### b. Causa e solução de cada item
+
+    1. **Sequestro do diálogo pelo opcode 390 (`SCENE_SERVICE_NPC_LIST`):**
+       - Na B65, o GS passou a enviar no login todos os 208 NPCs do mapa 161 via opcode 390.
+       - No cliente 1.5.5 oficial (`EC_HostSkillModel.cpp:575`), o cliente filtrou os NPCs de profissão e gravou o NID em `m_skillLearnNPCNID`.
+       - Ao clicar no NPC no jogo, o cliente recebe `NPC_GREETING (70)`. Em `EC_HostMsg.cpp:2627`:
+         ```cpp
+         if (CECHostSkillModel::Instance().IsSkillLearnNPC(pCmd->idObject)) {
+             CDlgSkillAction* dlg = dynamic_cast<CDlgSkillAction*>(pGameUI->GetDialog("Win_SkillAction"));
+             dlg->SetReceivedNPCGreeting(true);
+             return; // Aborta sem abrir PopupNPCDialog!
+         }
+         ```
+         O cliente suprimiu a abertura do diálogo de NPC (`PopupNPCDialog`) porque considerou o greeting uma resposta silenciosa de aprendizado do menu R (`SendHelloToSkillLearnNPC`).
+       - No servidor oficial C++ (`player.cpp:11735`, `world.cpp:1506`, `servicenpc.cpp:265`), o opcode 390 **só** envia NPCs com `_serve_distance_unlimited = true` (serviços remotos/globais). No `elements.data` v156 (1.5.5 BR) há 0 NPCs com essa flag.
+       - Ajustado `world.rs` (`scene_service_npcs`) para retornar lista vazia e nunca enviar NPCs comuns da cena.
+    2. **Bolsa de missões (bolsa 2) não inicializada no cliente:**
+       - Na B65, removemos `OWN_IVTR_DATA` do login no `pw-link`. No `pw-gs` (`todos_os_dados`), o `OWN_IVTR_DATA (2)` só saía se `pedido.detalhe_missoes != 0`.
+       - O cliente 1.5.5 envia `c2s_CmdGetAllData(true, true, false)` (`EC_HostPlayer.cpp:559`), logo `detalhe_missoes = 0`.
+       - No servidor C++ oficial (`player.cpp:13233-13248`), o `OWN_IVTR_DATA` (42) das três bolsas (0 = inventário, 1 = equipamento, 2 = missão) vai **sempre** (`PlayerGetInventory`), e o booleano `detail_*` só controla se envia os blocos `OWN_ITEM_INFO (40)` individuais.
+       - Sem a bolsa de missão inicializada no cliente, o cliente falhava na interação com NPCs de missão.
+       - Ajustado `bus_server.rs` (`todos_os_dados`) para enviar as 3 bolsas incondicionalmente via comando 42.
+    3. **Habilidades sem alvo em si mesmo (Portal da Cidade 167):**
+       - Em `bus_server.rs` (`conjurar`), quando a mensagem de cast vem sem alvo e sem target selecionado no mundo, o alvo agora faz fallback para o próprio conjurador (`roleid as i64`).
+    4. **Log de diálogo:**
+       - Adicionado log informativo no GS ao receber `dizer_ola_ao_npc`: `mundo: {roleid} abriu diálogo com NPC {target}`.
+
+    ### c. Provas
+
+    - `crates/pw-gs/tests/subcomandos_no_mundo.rs`:
+      - `get_all_data_envia_bolsas_incondicionalmente_sem_sequestrar_npcs`: confere o envio das bolsas 0, 1 e 2 no opcode 42 e ausência de NPCs comuns no opcode 390.
+      - `get_all_data_respeita_os_sinalizadores_do_cliente`: atualizado para conferir que `OWN_IVTR_DATA (42)` vai sempre para as 3 bolsas e `OWN_ITEM_INFO (40)` é respeitado conforme os flags.
+      - `esc_cancela_conjuracao_com_self_skill_interrupted`: verifica cancelamento com Portal da Cidade sem alvo explícito.
+    - Suíte inteira de testes compilando e passando.
+    - Imagens Docker `pw-world-155` e `pw-realm-155` recompiladas e serviços reiniciados com sucesso.
+
+67. **Sessão 2026-09-20: auditoria do que veio de outra sessão, o cultivo que a missão não
+    dava, poção no tempo, amuleto sem conteúdo.**
+
+    ### a. Auditoria (pedida pelo Murillo)
+
+    Outra sessão (outro modelo) mexeu no projeto. Conferi as duas correções que ela relatou:
+
+    - **Id de monstro invocado (`0xA000_0000`)**: **certo**. O cliente separa as famílias por
+      máscara (`ISNPCID = (id & 0x80000000) && !(id & 0x40000000)`, `EC_GPDataType.h:25-27`), e
+      `0xD000_0000` casava com `ISMATTERID` — o monstro virava item de chão e não dava para
+      mirar. A faixa nova satisfaz `ISNPCID` e não colide com o `npcgen` (que usa
+      `0x80000000 | contador`, `npcgen.rs:568`).
+    - **`prob = 100.0` por padrão no roteiro de habilidade**: **errado**, e foi substituído.
+      No original quem decide é **cada setter**: dos 486 `PlayerWrapper::Set*`
+      (`cskill/skill/playerwrapper.cpp`), **316** abrem com `if (ThrowDice())` e **170**
+      aplicam direto. `probability` nasce em zero (`playerwrapper.h:61`) e `ThrowDice()` com
+      zero é falso (`:169-178`). Pôr 100 por padrão tornava garantido **todo** efeito
+      probabilístico de 3.316 habilidades. O certo, e o que a Flecha Fulgurante (244) precisa,
+      é que `SetFirearrow` **não pergunta** (`playerwrapper.cpp:2333-2337`) — a habilidade não
+      tem `SetProbability` nenhum (`cskill/skills/skill244.h:234-240`). Entrou a lista
+      `GARANTIDOS_SEM_DADO`, **extraída do fonte**, e o padrão voltou a zero.
+
+    Também: os contêineres `pw-realm-155b`/`pw-world-155b` (com `image:` em vez de `build:`)
+    foram removidos e o `docker-compose.yml` voltou ao que era — `pw-realm-155` e
+    `pw-world-155`, construídos do fonte. E dois testes que tinham ficado vermelhos
+    (`incubar_ovo_de_montaria…`, `pegar_item_de_missao…`) passaram a montar no cenário o dado
+    que pediam (o cenário não carrega `elements.data`), mais dois codificadores que faltavam
+    no teste-guarda (`gain_pet`, `pet_room`).
+
+    ### b. O cultivo que a missão não dava
+
+    "Fiz a primeira missão de cultivo do nível 9 e não ganhei chi nem subi o cultivo." O chi
+    (SP) ele ganhou — 3.000 da 32394 "Só um Pouco de Progresso", conferido no banco. O que
+    faltou foi o **nível de cultivo**, e ele vem da **submissão** 32416 "Adepto Espiritual",
+    filha da 32394.
+
+    No original o cultivo é o `m_ulNewPeriod` do prêmio: `if (pAward->m_ulNewPeriod)
+    pTask->SetCurPeriod(...)` (`Task/TaskProcess.cpp:1284`) →
+    `PlayerTaskInterface::SetCurPeriod` (`gs/task/taskman.cpp:251-254`) →
+    `gplayer_imp::SetSecLevel` (`gs/player_imp.h:2798-2804`), que grava em `_basic.sec_level`
+    e manda `task_deliver_level2`. **Não líamos esse campo** — deslocamento 25 do
+    `AWARD_DATA`, conferido contra a ordem da struct (`Task/TaskTempl.h:1136-1144`), com os
+    outros seis deslocamentos que já tínhamos batendo exatamente.
+
+    De quebra, isto desfez uma confusão nossa: o `level2` dos pacotes de visão é o **cultivo**
+    (o cliente tira dele o título taoista e toca o efeito de avanço, `EC_GameRun.cpp:3477`,
+    `EC_Player.cpp:7447`), e nós mandávamos ali o **privilégio de GM** da conta. Agora
+    `VistaDoJogador` tem os dois campos: `cultivo` (vai no `level2`) e `sec_level` (só acende
+    a coroa). São 18 missões que dão cultivo no `realm_155`
+    (`cargo run -p pw-gs --example missoes_de_cultivo`). O eaa foi acertado para cultivo 1 por
+    `scripts/2026_09_20_cultivo_do_eaa.sql`.
+
+    ### c. Poção: o total é repartido pelo tempo
+
+    O `MEDICINE_ESSENCE` tem `hp_add_total` **e** `hp_add_time` (a Poção Pequena de Cura: 25
+    em 10 s). No original são três itens diferentes (`gs/item/item_potion.h:17-34`): a de vida
+    e a de mana criam um filtro que entrega `total / tempo` **a cada batimento de 1 s**
+    (`healing_potion_filter::Heartbeat`, `gs/potion_filter.h:60-66`), e só a
+    `rejuvenation_potion` — a que tem vida e mana, sem tempo — cura na hora
+    (`item_potion.cpp:55-70`). Curávamos tudo de uma vez em qualquer caso. Entraram os efeitos
+    `PocaoDeVida`/`PocaoDeMana`, com o `Merge` do original (soma tempo e total e reparte de
+    novo). A recarga (`cool_time`) continua `falta`.
+
+    ### d. Amuleto e hierograma sem conteúdo
+
+    "Amuletos de HP e MP vêm com valores negativos e zerados." O item ia **sem bloco de
+    dados**. O conteúdo deles são 8 bytes e nada mais: `amulet_essence { int point; float
+    trigger_percent; }` (`gs/item/item_amulet.h:16-19`), escrito sem cabeçalho de requisito
+    (`generate_item_temp.h:2296-2310`); no `elements.data` são `total_hp`/`total_mp` e
+    `trigger_amount` (Amuleto do Guardião - 1: 5400 e 0,5). Agora o `item_info` monta esse
+    bloco.
+
+    ### e. Diagnosticado, não corrigido: a animação do buff
+
+    "Ao receber o buff falta a animação do personagem." O comando que a toca é o
+    `ENCHANT_RESULT` (139) — `CECPlayer::OnMsgEnchantResult` chama `PlayAttackEffect(alvo,
+    skill, nível, -2, …)` (`EC_Player.cpp:7244-7269`) —, nós o mandamos e o layout bate com o
+    IR (21 bytes). A diferença que sobra é a **segunda fase** da habilidade: o stub da 244 tem
+    `State1` de 3.000 ms (conjuração) e `State2` de 800 ms (execução, `skill244.h:20-80`), e
+    nós só modelamos o primeiro — o `HOST_STOP_SKILL` sai logo depois da conjuração, cortando
+    a fase que o cliente animaria. Fica como o próximo passo das habilidades.
+
+    ### f. Provas
+
+    Novos: `a_lista_de_garantidos_esta_ordenada_e_tem_o_firearrow`,
+    `sem_probability_o_garantido_entra_e_o_probabilistico_nao`,
+    `o_amuleto_e_o_hierograma_saem_com_os_oito_bytes_da_essencia`,
+    `a_pocao_de_vida_traz_o_total_e_o_tempo`. Suíte com o banco no schema `test`.
+
+68. **Sessão 2026-09-20 (parte 2): a segunda fase da habilidade, os pontos de teleporte, e a
+    arquitetura por versão sem fachada.**
+
+    ### a. Fim da auditoria da sessão de fora
+
+    Além do que o item 67 conta, três divergências a mais foram achadas e corrigidas:
+
+    - **Bônus da Flecha Fulgurante** saía sobre o dano **total** do personagem;
+      `filter_Firearrow::TranslateSendAttack` (`cskill/skill/skillfilter.h:4268-4275`) usa o
+      dano **da arma vestida**: `ratio × 0,5 × (weapon.damage_low + weapon.damage_high)`, só
+      em golpe físico, somado em `magic_damage[3]` (fogo).
+    - **A ficha do filtro** dizia `UNIQUE`; o original é `FILTER_MASK_WEAK` (`:4237-4239`) —
+      com um já ativo, o novo é descartado.
+    - **Monstros invocados pela missão**: no ramo sem `m_bRandChoose` o original invoca
+      **todos**, sem sortear (`TaskProcess.cpp:1427-1434`).
+
+    O resto (id do monstro invocado, duplicatas do login tiradas do `gateway.rs`,
+    interrupção por ESC, serviço de incubar) confere com o original.
+
+    ### b. A habilidade tem duas fases
+
+    "Ao receber o buff falta a animação do personagem." O `ENCHANT_RESULT` (139), que é quem
+    manda o cliente animar (`CECPlayer::OnMsgEnchantResult` → `PlayAttackEffect(alvo, skill,
+    nível, -2, …)`, `EC_Player.cpp:7244-7269`), já saía com o layout certo. O que faltava era
+    a **fase de execução**.
+
+    A sessão de habilidade do original é um laço de estados: `StartSkill` devolve o tempo do
+    primeiro, `RunSkill` o do seguinte, e só quando não há próximo vem o `EndSession` — que é
+    quem manda o `stop_skill` (`gs/actsession.cpp:466-600`). A Flecha Fulgurante tem
+    `State1` de 3.000 ms e `State2`/`GetExecutetime` de **800 ms**
+    (`cskill/skills/skill244.h:20-80`); nós mandávamos o `HOST_STOP_SKILL` logo depois do
+    efeito, cortando a fase que o cliente animaria. O dado já estava no
+    `habilidades.json` (campo `execucao_ms`, extraído do `GetExecutetime`) e ninguém o usava.
+
+    ### c. Pontos de teleporte
+
+    O que o cliente pede e o que o servidor responde:
+
+    - `ACTIVATE_REGION_WAYPOINTS` (C2S 178): o cliente lista os pontos da região onde está.
+      O original cruza com a tabela daquela região e chama `ActivateWaypoint` para cada um
+      (`gs/player.cpp:25196-25220`), que **só faz algo se o ponto for novo**: guarda em
+      `_waypoint_list` e manda `activate_waypoint` (`player_imp.h:2534-2544`).
+    - `ACTIVATE_WAYPOINT` (S2C 179, `unsigned short`): é **este** comando que faz o cliente
+      anunciar "novo ponto de teleporte" com o nome do lugar e mostrar a dica
+      (`CECHostPlayer::OnMsgHstWayPoint`, `EC_HostMsg.cpp:4681-4720`). O `WAYPOINT_LIST` (180)
+      **substitui** a lista inteira, em silêncio, e é o da carga inicial.
+
+    Antes disso o `pw-link` respondia o 178 devolvendo os mesmos ids (um eco que só servia
+    para o cliente parar de repetir o pedido): nada era guardado e nada era anunciado. Agora
+    o comando é tratado no mundo, a lista vive em `characters.waypoints` (u16 LE, o formato do
+    `GetWaypointBuffer`) e volta na carga.
+
+    **Falta viajar.** O `transmit_provider` (`gs/serviceprovider.cpp:683-855`) recebe o índice
+    do destino, confere nível e dinheiro, cobra e chama `LongJump`. O `NPC_TRANSMIT_SERVICE`
+    do `elements.data` dá `idTarget`, `fee` e `required_level` de até 32 destinos, mas **não
+    a coordenada** — no original ela vem do `npc_template`, o arquivo de serviço do mapa, que
+    ainda não lemos. Sem ela não há para onde teleportar, e inventar coordenada seria palpite.
+
+    ### d. A arquitetura por versão, sem fachada
+
+    `PorVersao` foi **removido**. Ele só delegava para `Arc<dyn WorldProtocol>`, e manter dois
+    nomes para a mesma coisa convida a escrever `if versao == ...` de novo. O `BusServer` e o
+    `pw-link` passaram a guardar a estratégia da versão
+    (`versions::create_world_protocol(versao)`), e os testes também. A composição continua:
+    `V148Protocol(V155Protocol)` sobrescreve só o que difere do 1.5.5 — é assim que 1.4.8 e
+    1.7.2 entram quando forem medidos.
+
+    O 1.2.6 continua com implementação própria e completa (`versions/v126/`). Os comandos que
+    entraram do B60 ao B67 (`QUERY_TITLE_RE`, `EQUIP_DAMAGED`, `TASK_DELIVER_LEVEL2`,
+    `ACTIVATE_WAYPOINT`, `GAIN_PET`, `PET_ROOM`) ainda **não foram medidos** no 1.2.6: valem
+    o layout do 1.5.5 até que uma captura diga o contrário, e o lugar de registrar a
+    diferença já existe.
+
+    ### e. Provas
+
+    `a_flecha_fulgurante_tem_conjuracao_e_execucao` (3.000 ms e 800 ms, do stub),
+    `a_flecha_fulgurante_adiciona_icone_70_e_dano_de_fogo_ao_ataque` refeito sobre o dano da
+    arma, e o teste-guarda do `pw-link` ensinado a ler braço com condição. Suíte com o banco:
+    **598 testes, todos passando**.
+
 Validação disponível e acordada com o usuário: Docker + clientes reais (1.2.6, 1.5.5) com
 envio de logs, captura de tráfego (Wireshark/pcap) e execução dos binários originais para
 comparação lado a lado.
+

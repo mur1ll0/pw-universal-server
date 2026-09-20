@@ -145,6 +145,19 @@ com bônus somado. `falta`: serviços de refinar/incrustar/fazer furo, addons de
 índice de velocidade aleatório da arma (`WEAPON_SUB_TYPE.probability_fastest`) — sem porte
 vão ao log `veste addons sem porte`.
 
+### 5.1.0 A habilidade tem duas fases — `testado` (B67)
+
+A sessão de habilidade do original é um **laço de estados**: `StartSkill` devolve o tempo do
+primeiro e `RunSkill` o do seguinte, a cada volta de `session_skill::RepeatSession`; só quando
+não há próximo estado vem o `EndSession`, que manda o `stop_skill`
+(`gs/actsession.cpp:466-600`). Então, depois da conjuração há a **fase de execução**, e é nela
+que o cliente anima o personagem.
+
+Exemplo: a Flecha Fulgurante (244) tem `State1` de 3.000 ms (conjuração, o que vai no
+`OBJECT_CAST_SKILL`) e `State2`/`GetExecutetime` de 800 ms (`cskill/skills/skill244.h:20-80`).
+O efeito entra no fim da conjuração; o `HOST_STOP_SKILL` só sai 800 ms depois. Mandando os
+dois juntos, o buff aparecia sem animação nenhuma (relato de 2026-09-19).
+
 ### 5.1.1 O dano cai depois da animação — `testado` (B62)
 
 O golpe é **anunciado na hora** (`HOST_ATTACKRESULT` a quem bateu, `HOST_ATTACKED` a quem
@@ -161,9 +174,10 @@ apanhou) e a vida só cai `attack.speed` tiques depois: `InsertDamageEntry(dano,
 É o mesmo número que o cliente usa como duração da animação do golpe. Aplicar o dano na hora
 fazia a vida do monstro cair no clique, antes de a flecha sair — em jogo parecia "um golpe a
 mais" no começo de cada sessão —, e o jogador perdia vida antes de o monstro parar de correr
-na tela (relato de 2026-09-18). A **ameaça**, o estado de combate e o desgaste da arma
-continuam no instante do golpe: no original eles estão em `OnAttacked`/`DoAttack`, não no
-`DoDamage`.
+na tela (relato de 2026-09-18). A **ameaça do monstro** (`AddAggroEntry`, `npc.cpp:1867`,
+`npc.cpp:2354-2364`) no original manda `GM_MSG_GEN_AGGRO` com o mesmo atraso (`speed + 1`):
+o monstro só reage e persegue quando o dano de fato atinge o alvo (`aplicar_dano_no_monstro`),
+eliminando a perseguição prematura antes do impacto da flecha (B67).
 
 A morte do alvo passa a ser resolvida quando o dano adiado vence
 (`EventoDoMundo::MonstroMorreu`), e é o caminho único das três origens — golpe, habilidade e
@@ -254,6 +268,18 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
   (`session_skill::RepeatSession`, `actsession.cpp:576-600`) e só depois o `EndSession` manda
   `stop_skill` (`actsession.cpp:558-574`). Mandando o 123 antes, o cliente retomava o golpe
   normal antes de a habilidade ter efeito.
+- **Cancelamento de conjuração por ESC e movimento (B67) — `testado`**: ESC (`CANCEL_ACTION`, C2S 42)
+  e movimento do jogador (`PLAYER_MOVE`, C2S 0) cancelam qualquer conjuração em andamento
+  (`p.conjuracao.take()`). O servidor envia `SELF_SKILL_INTERRUPTED` (opcode 87, reason 2) para o
+  conjurador (destravando a barra de conjuração no cliente imediatamente, como no Portal da
+  Cidade ou habilidades de combate) e `SKILL_INTERRUPTED` (opcode 86) para outros jogadores
+  ao redor (`playercmd.cpp:2136-2153`, `player.cpp:4017-4028`).
+- **Aprendizado pelo menu R (B67) — `testado`**: O cliente 1.5.5 (`EC_HostSkillModel.cpp:558-605`)
+  requer `SCENE_SERVICE_NPC_LIST` (opcode 390) no login (`todos_os_dados`) para vincular os
+  NPCs provedores de serviço da cena (`m_allProfNPCs`) em `m_skillLearnNPCNID`. Com o mestre da
+  classe do jogador presente na cena, o cliente habilita a evolução de habilidades diretamente
+  pelo menu (tecla R / `IsSkillServedByNPC`). O servidor valida se a habilidade pertence à
+  classe do jogador e debita SP e moedas normalmente.
 - Custo de mana como o cliente arredonda. Resultado: `SELF_SKILL_ATTACK_RESULT` (142) para
   quem conjura, `HOST_SKILL_ATTACKED` (144) para o alvo (`cEquipment = 0x7f`: sem desgaste).
 - **Tabela do servidor** (`pw_data_loader::habilidades`, spec 03 §3.12), para as 3.316:
@@ -374,10 +400,24 @@ banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
 | **drop de monstro** | `testado` | dono = maior dano (+`max_hp/4` do primeiro golpe). Itens: `drop_times` rodadas de `probability_drop_num0..3` e `drop_matters[32]` (da 2ª rodada, só índices < 16), com o ajuste de item por nível (`DropItemFromData`, `npc.cpp:2649`; `generate_item_from_monster`, `itemdataman.cpp:1191`). Moedas: `drop_times` vezes, `Rand(médio±variação)`, chance 0,7, × ajuste. Cada monte a ±2 m, no chão (`worldmanager.cpp:512-555`), `tid` 3044 para moedas, id de matéria `0xC8…` |
 | item no chão | `testado` | posse do dono por **30 s**, some em **300 s** (`matter.h:62`, `matter.cpp:133`); `MATTER_ENTER_WORLD` a quem está a 120 m e no streaming; `OBJECT_DISAPPEAR` ao sumir |
 | **pegar** (C2S 6 e 184) | `testado` | tipo confere, distância < 10 m, posse; moedas `PICKUP_MONEY` (30), item `PICKUP_ITEM` (31); `MATTER_PICKUP` (152) a todos; bolsa cheia `ERROR_MESSAGE` 7, fora da posse 6 (`playercmd.cpp:1347-1444`, `matter.h:97-129`) |
-| poção (`USE_ITEM`) | `confirmado` | `MEDICINE_ESSENCE` |
+| poção (`USE_ITEM`) | `testado` (B67) | `MEDICINE_ESSENCE`. **Restaura ao longo do tempo**: `hp_add_total / hp_add_time` por batimento de 1 s, e o mesmo para mana — é o `healing_potion_filter`/`mana_potion_filter` do original (`gs/item/item_potion.cpp:18-52`, `gs/potion_filter.h:6-130`), que reparte o total pelo tempo. Só a poção com vida **e** mana e sem tempo (`rejuvenation_potion`) cura na hora. `falta`: a recarga (`cool_time`, `COOLDOWN_INDEX_*_POTION`) |
+| amuleto e hierograma | `testado` (B67) | `AUTOHP_ESSENCE`/`AUTOMP_ESSENCE`: o conteúdo do item são **8 bytes**, `int point; float trigger_percent` (`gs/item/item_amulet.h:16-19`, `generate_item_temp.h:2296-2310`). Sem eles o cliente desenhava zeros e negativos. `falta`: o gatilho automático que repõe vida/mana |
 | colher recurso de mapa | `testado` (B51) | §7 "coleta de recurso" |
 | Loja Gold, barraca | `falta` | |
 | demais serviços de NPC (teleporte, pedras, forja, decompor, armazém, item de missão) | `falta` | |
+
+### 8.1 Pontos de teleporte — `parcial` (B67)
+
+O jogador guarda os pontos que já descobriu (`_waypoint_list`, `gs/player_imp.h:2520-2550`),
+hoje na coluna `characters.waypoints` (u16 little-endian em sequência, o mesmo formato do
+`GetWaypointBuffer`).
+
+| parte | estado | detalhe |
+| :--- | :--- | :--- |
+| descobrir | `testado` | o cliente manda os pontos da região (`ACTIVATE_REGION_WAYPOINTS`, C2S 178) e o mundo ativa os que faltam, respondendo um `ACTIVATE_WAYPOINT` (179) por ponto — é o comando que faz o cliente anunciar o ponto novo (`gs/player.cpp:25196-25220`) |
+| lembrar | `testado` | a lista é gravada a cada ponto novo e volta no `WAYPOINT_LIST` (180) da carga inicial |
+| validar por região | `falta` | o original cruza com `world_manager::GetRegionWaypoints()`; aceitamos o que o cliente diz haver na região dele |
+| **viajar** (transportadora) | `falta` | `transmit_provider`/`transmit_executor` (`gs/serviceprovider.cpp:683-855`): o cliente manda o índice do destino, o servidor confere nível e dinheiro, cobra e chama `LongJump`. O `NPC_TRANSMIT_SERVICE` do `elements.data` dá `idTarget`, `fee` e `required_level` de até 32 destinos — **falta a coordenada**, que no original vem do `npc_template` (arquivo de serviço do mapa) e não do `elements.data`; sem ela não dá para teleportar |
 
 ## 9. Persistência
 
@@ -420,8 +460,11 @@ original, mexidas pelas mesmas funções portadas linha a linha: `DeliverTask`, 
 | facção (B51) | `CheckFaction` (`TaskTempl.inl:718`): em facção (`id_mafia != 0`) com cargo ≤ `m_iPremise_FactionRole`. **Não há sistema de facção**, então quem pede facção é recusado — como no original para quem não tem | `testado` |
 | equipe (B51) | `CheckTeamTask`/`HasAllTeamMemsWanted` (`TaskTempl.inl:149-339`): só o capitão recebe; distância dos membros, `TEAM_MEM_WANTED` (nível, raça/classe, gênero, contagem), classes distintas; casal recusa (sem casamento). Aceita, cada membro **deste mapa** recebe por `OnDeliverTeamMemTask` (`TaskProcess.cpp:1592`) | `testado` |
 | teleporte (B51) | prêmio `m_ulTransWldId` (`TaskProcess.cpp:1316`) e `m_bTransTo` ao receber (`:1843`) → §7 "teleporte e troca de mapa" | `testado` |
+| coleta de mina (`OnTaskMining`) (B67) | mina com `task_out > 0` (`TaskServer.cpp:1116-1123`, `TaskTempl.inl:2105-2148`); se `material.item == 0`, não dropa nada no chão; entrega o item da submissão na bolsa (`j.dar_item`) e marca a submissão finalizada | `testado` |
 | itens de missão | bolsa de missão (pacote 2, `container_type` 5): `TASK_DELIVER_ITEM` (156), `PLAYER_DROP_ITEM` (46) tipo 3; prêmio `TASK_DELIVER_EXP/MONEY` (158/159), `SPEND_MONEY` | `testado` |
 | erros | `svr_task_err_code` (reason 6) com `TASK_PREREQU_FAIL_*`; NPC sem a missão `ERROR_MESSAGE` 19 | `testado` |
+| monstros invocados | `m_SummonedMonsters` do prêmio: com `m_bRandChoose` sorteia um quando as probabilidades somam 1 e senão sorteia cada um; **sem** ele invoca todos (`TaskProcess.cpp:1385-1436`). O id do invocado satisfaz `ISNPCID` (faixa `0xA000_0000`) — com `0xC000_0000` o cliente o lia como item de chão e não deixava mirar (B67) | `testado` |
+| **nível de cultivo** (B67) | `m_ulNewPeriod` do prêmio (deslocamento 25 do `AWARD_DATA`) → `SetCurPeriod` → `gplayer_imp::SetSecLevel` (`TaskProcess.cpp:1284`, `task/taskman.cpp:251-254`, `player_imp.h:2798-2804`): grava em `characters.cultivation` e manda `TASK_DELIVER_LEVEL2` (160), que faz o cliente tocar o efeito do avanço. São 18 missões no `realm_155` (`cargo run -p pw-gs --example missoes_de_cultivo`) | `testado` |
 
 Contra o `tasks.data` real (`tests/missoes_do_realm.rs`): o Arqueiro nível 1 aceita e entrega
 32201 (25 exp, 10 SP, 8 moedas); mais de 1.000 missões de topo entregam sem quebrar os

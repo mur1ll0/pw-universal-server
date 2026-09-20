@@ -245,6 +245,12 @@ pub struct GameDataManager {
     /// Recarga, conjuração e custo de aprender de cada habilidade — ver
     /// [`crate::habilidades`]. Só o 1.5.5 tem tabela; nas outras versões fica vazia.
     pub habilidades: crate::habilidades::TabelaDeHabilidades,
+    /// Templates de ovos de mascote (`PET_EGG_ESSENCE`).
+    pub ovos_de_pet: HashMap<u32, crate::pet::DadosDoOvoDePet>,
+    /// IDs de itens de missão (`TASKMATTER_ESSENCE` e itens com flag `0x0020`).
+    pub itens_de_missao: std::collections::HashSet<u32>,
+    /// Lista de NPCs de serviço da cena com alcance ilimitado (`SCENE_SERVICE_NPC_LIST`).
+    pub scene_service_npcs: Vec<(i32, i32)>,
 }
 
 impl GameDataManager {
@@ -429,6 +435,9 @@ impl GameDataManager {
                     (i("ID") > 0).then(|| (i("ID"), (i("id_addon_damage"), i("id_addon_defence"), i("id_addon_decoration"))))
                 })
                 .collect();
+            self.ovos_de_pet = crate::pet::carregar_ovos(g);
+            self.itens_de_missao = crate::pet::carregar_itens_de_missao(g);
+            self.scene_service_npcs = crate::pet::carregar_scene_service_npcs(g);
             // Os stubs de habilidade são do servidor 1.5.5; as duas versões de
             // `elements.data` que o catálogo cobre (v156 BR, v159 EN) são desse servidor.
             if matches!(g.version, 156 | 159) {
@@ -554,6 +563,114 @@ impl GameDataManager {
         }
         let m = self.elements.medicines.get(&item_id)?;
         Some((m.hp_restore, m.mp_restore))
+    }
+
+    /// O que um remédio restaura e **em quanto tempo** (`MEDICINE_ESSENCE`).
+    ///
+    /// Devolve `(hp_total, hp_segundos, mp_total, mp_segundos, recarga_ms)`. No original há
+    /// três itens diferentes (`gs/item/item_potion.h:17-34`):
+    ///
+    /// - `healing_potion { life, time, cool_time, require_level }` → `healing_potion_filter`,
+    ///   que cura `life / time` **por batimento de 1 s** até o tempo acabar
+    ///   (`gs/potion_filter.h:6-67`);
+    /// - `mana_potion { mana, time, ... }` → igual, para mana;
+    /// - `rejuvenation_potion { mana, life, cool_time, ... }` → **instantâneo**
+    ///   (`HealByPotion` + `InjectMana` direto, `item_potion.cpp:55-70`).
+    ///
+    /// No `elements.data` os três são a mesma tabela: o que separa é o **tempo**. Tempo zero
+    /// com total > 0 é a poção instantânea.
+    pub fn quanto_o_remedio_restaura_no_tempo(&self, item_id: u32) -> Option<(i32, i32, i32, i32, i32)> {
+        let Some(g) = self.elements_generic.as_ref() else {
+            // Leitor tipado (1.2.6/v7): não traz os tempos, então o remédio é instantâneo.
+            let m = self.elements.medicines.get(&item_id)?;
+            return Some((m.hp_restore, 0, m.mp_restore, 0, (m.cooldown_sec * 1000.0) as i32));
+        };
+        let rec = g
+            .get("MEDICINE_ESSENCE")
+            .iter()
+            .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?;
+        let campo = |n: &str| rec.get(n).and_then(|v| v.as_i32()).unwrap_or(0);
+        Some((
+            campo("hp_add_total"),
+            campo("hp_add_time"),
+            campo("mp_add_total"),
+            campo("mp_add_time"),
+            campo("cool_time"),
+        ))
+    }
+
+    /// O bloco de dados de um amuleto de vida (`AUTOHP_ESSENCE`) ou de mana
+    /// (`AUTOMP_ESSENCE`).
+    ///
+    /// São **8 bytes**, e só isso: `int point; float trigger_percent`
+    /// (`amulet_essence`, `gs/item/item_amulet.h:16-19`), escritos por `generate_hp_amulet`
+    /// / `generate_mp_amulet` sem cabeçalho de requisito nenhum
+    /// (`gs/template/generate_item_temp.h:2296-2310`). No `elements.data` os dois campos são
+    /// `total_hp`/`total_mp` e `trigger_amount`.
+    ///
+    /// Sem este bloco o cliente desenha o item com os números zerados ou negativos — era o
+    /// que acontecia com o Amuleto e o Hierograma do Guardião (B67).
+    pub fn conteudo_do_amuleto(&self, item_id: u32) -> Option<Vec<u8>> {
+        let g = self.elements_generic.as_ref()?;
+        for (tabela, campo) in [("AUTOHP_ESSENCE", "total_hp"), ("AUTOMP_ESSENCE", "total_mp")] {
+            let Some(r) = g
+                .get(tabela)
+                .iter()
+                .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))
+            else {
+                continue;
+            };
+            let ponto = r.get(campo).and_then(|v| v.as_i32()).unwrap_or(0);
+            let gatilho = match r.get("trigger_amount") {
+                Some(crate::generic_elements::FieldValue::Float(f)) => *f,
+                Some(crate::generic_elements::FieldValue::Int(i)) => *i as f32,
+                _ => 0.0,
+            };
+            let mut b = Vec::with_capacity(8);
+            b.extend_from_slice(&ponto.to_le_bytes());
+            b.extend_from_slice(&gatilho.to_le_bytes());
+            return Some(b);
+        }
+        None
+    }
+
+    /// Informa se o item pertence à bolsa de missões (`TaskInventory`).
+    pub fn e_item_de_missao(&self, item_id: u32) -> bool {
+        self.itens_de_missao.contains(&item_id)
+    }
+
+    /// Informa se o item é um ovo de mascote (`PET_EGG_ESSENCE`).
+    pub fn eh_ovo_de_pet(&self, item_id: u32) -> bool {
+        self.ovos_de_pet.contains_key(&item_id)
+    }
+
+    /// Obtém os dados do template do ovo de mascote.
+    pub fn dados_do_ovo(&self, item_id: u32) -> Option<&crate::pet::DadosDoOvoDePet> {
+        self.ovos_de_pet.get(&item_id)
+    }
+
+    /// Gera os octetos binários oficiais (`pe_essence`) para um ovo de mascote.
+    pub fn gerar_octetos_do_ovo(&self, item_id: u32) -> Option<Vec<u8>> {
+        let ovo = self.ovos_de_pet.get(&item_id)?;
+        let mut ess = pw_core::PeEssence::default();
+        ess.require_level = ovo.req_level;
+        ess.require_class = ovo.req_class;
+        ess.honor_point = ovo.honor_point;
+        ess.pet_tid = ovo.id_pet as i32;
+        ess.pet_vis_tid = 0;
+        ess.pet_egg_tid = ovo.id as i32;
+        ess.pet_class = ovo.pet_class;
+        ess.level = ovo.level;
+        ess.color = 0;
+        ess.exp = ovo.exp;
+        ess.skill_point = ovo.skill_point;
+        ess.skills = ovo.skills.clone();
+        Some(ess.para_bytes())
+    }
+
+    /// Lista de NPCs de serviço da cena com alcance ilimitado (`SCENE_SERVICE_NPC_LIST`).
+    pub fn scene_service_npcs(&self) -> &[(i32, i32)] {
+        &self.scene_service_npcs
     }
 
     /// Carrega os dados específicos de uma pasta de mapa (`npcgen.data` e colisão).

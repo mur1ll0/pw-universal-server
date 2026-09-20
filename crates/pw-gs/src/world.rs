@@ -97,6 +97,11 @@ pub const CORPO_MS: u32 = 20_000;
 /// Primeiro id de item no chão. Os dois bits altos marcam matéria (`ISMATTERID`,
 /// `EC_GPDataType.h:27`); o `npcgen.data` usa os ids baixos para minério e erva.
 const PRIMEIRO_ID_DE_DROP: u32 = 0xC800_0000;
+/// Primeiro id de monstro invocado dinamicamente.
+/// Deve ter bit 31 = 1 e bit 30 = 0 para satisfazer a macro oficial `ISNPCID`
+/// do cliente (`(id & 0x80000000) && !(id & 0x40000000)`, `EC_GPDataType.h:26`).
+/// `0xA000_0000` fica bem acima dos monstros normais do npcgen (~40.000) e não colide com nada.
+const PRIMEIRO_ID_DE_MONSTRO_DINAMICO: u32 = 0xA000_0000;
 
 /// Um grupo de jogadores.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +149,7 @@ pub struct WorldInstance {
     /// O batimento de 1 s dos jogadores (regeneração e combate).
     batimento_ms: u32,
     proximo_drop: u32,
+    proximo_monstro_dinamico: u32,
     /// Corpos de monstro ainda na tela: id → quanto falta para sumir.
     corpos: HashMap<i64, u32>,
     /// A última `(vida, alvo)` de cada monstro que os inscritos receberam — o papel do
@@ -204,6 +210,7 @@ impl WorldInstance {
             autosave_timer_ms: 0,
             batimento_ms: 0,
             proximo_drop: PRIMEIRO_ID_DE_DROP,
+            proximo_monstro_dinamico: PRIMEIRO_ID_DE_MONSTRO_DINAMICO,
             corpos: HashMap::new(),
             vida_informada: HashMap::new(),
             danos_adiados: Vec::new(),
@@ -392,6 +399,19 @@ impl WorldInstance {
         info!("Jogador #{} entrou no World #{}", role_id, self.world_id);
     }
 
+    /// Lista de NPCs de serviço ilimitado da cena (`w_scene_service_npcs` no original, `world.cpp:1506`).
+    /// No original, apenas NPCs com `_serve_distance_unlimited = true` entram aqui (`servicenpc.cpp:265`).
+    /// NPCs normais da cena NUNCA entram, pois listá-los faz o cliente (`EC_HostMsg.cpp:2627`) interceptar
+    /// o greeting e recusar a abertura da caixa de diálogo.
+    pub fn scene_service_npcs(&self) -> Vec<(i32, i32)> {
+        self.data_manager.scene_service_npcs().to_vec()
+    }
+
+    /// Informa se o NID pertence a um NPC de serviço ilimitado da cena.
+    pub fn is_scene_service_npc(&self, nid: i32) -> bool {
+        self.data_manager.scene_service_npcs().iter().any(|(_, n)| *n == nid)
+    }
+
     /// Remove um jogador ao deslogar ou mudar de mapa
     pub fn remove_player(&mut self, role_id: RoleId) -> Option<PlayerEntity> {
         let id = role_id as i64;
@@ -513,6 +533,59 @@ impl WorldInstance {
             p.visiveis.remove(&id);
         }
         Some(d)
+    }
+
+    /// `SummonMonster` (`TaskProcess.cpp:1189`, `gplayer_imp::SummonMonster`, `player.cpp:12608`).
+    /// Invoca um monstro dinâmico perto da posição indicada.
+    pub fn invocar_monstro(
+        &mut self,
+        template_id: u32,
+        pos_centro: pw_core::Vector3,
+        raio: u32,
+        _periodo_s: i32,
+        _some_ao_morrer: bool,
+    ) -> Option<i64> {
+        let modelo = match self.data_manager.monstros.get(template_id) {
+            Some(m) => m,
+            None => {
+                warn!("invocar_monstro: template {template_id} nao encontrado no elements.data");
+                return None;
+            }
+        };
+
+        let mut pos = pos_centro;
+        if raio > 0 {
+            use rand::Rng;
+            let mut rng = rand::thread_rng();
+            let angulo = rng.gen_range(0.0..std::f32::consts::TAU);
+            let dist = rng.gen_range(0.0..raio as f32);
+            pos.x += angulo.cos() * dist;
+            pos.z += angulo.sin() * dist;
+        }
+        if let Some(chao) = self.terreno.altura_em(pos.x, pos.z) {
+            pos.y = chao;
+        }
+
+        let monster_id = self.proximo_monstro_dinamico as i32 as i64;
+        self.proximo_monstro_dinamico = PRIMEIRO_ID_DE_MONSTRO_DINAMICO
+            | ((self.proximo_monstro_dinamico.wrapping_add(1)) & 0x1FFF_FFFF);
+
+        // Monstro invocado não tem respawn periódico após a morte (`respawn_ms = 0`)
+        let monster = MonsterEntity::do_template(monster_id, modelo, pos, 0);
+
+        self.grid.add_entity(monster_id, monster.position, false);
+        let mut ia = MonsterAi::new();
+        ia.direcao = rand::random::<u8>();
+        self.monsters.insert(monster_id, (monster, ia));
+
+        self.emitir(EventoDoMundo::MonstroRenasceu { id: monster_id });
+
+        info!(
+            "mundo #{}: invocado monstro {template_id} ({}) id {monster_id} em ({:.1}, {:.1}, {:.1})",
+            self.world_id, modelo.nome, pos.x, pos.y, pos.z
+        );
+
+        Some(monster_id)
     }
 
     /// A mina some do mapa e espera o tempo de renascer (`BeMined` → `Reclaim`,
@@ -844,13 +917,16 @@ impl WorldInstance {
 
     /// Tira a vida do monstro e resolve a morte. `None` quando o alvo sumiu ou já morreu.
     fn aplicar_dano_no_monstro(&mut self, alvo: i64, atacante: i64, dano: i64) {
-        let Some((m, _)) = self.monsters.get_mut(&alvo) else { return };
+        let Some((m, ai)) = self.monsters.get_mut(&alvo) else { return };
         if m.is_dead {
             return;
         }
         let real = dano.min(m.hp);
         m.hp = (m.hp - dano).max(0);
         m.registrar_dano(atacante, real);
+        // Ameaça do golpe no monstro (PostLazyMessage(GM_MSG_GEN_AGGRO, speed + 1) no original,
+        // npc.cpp:1867 e npc.cpp:2354-2364): o monstro só reage quando o golpe/projétil atinge.
+        ai.add_threat(atacante, real.max(1));
         let (hp, max_hp) = (m.hp, m.max_hp);
         let morreu = m.hp == 0;
         if morreu {
@@ -1027,6 +1103,25 @@ impl WorldInstance {
     /// saber qual dos dois formatos este realm usa.
     pub fn quanto_o_remedio_restaura(&self, item_id: u32) -> Option<(i32, i32)> {
         self.data_manager.quanto_o_remedio_restaura(item_id)
+    }
+
+    /// Põe no jogador o filtro de poção: `total / tempo` por batimento de 1 s
+    /// (`healing_potion_filter`, `gs/potion_filter.h:16-25`).
+    pub fn pocao_no_tempo(&mut self, roleid: RoleId, efeito: crate::efeitos::Efeito, total: i32, tempo_s: i32) {
+        let Some(p) = self.players.get_mut(&(roleid as i64)) else { return };
+        let tempo_s = tempo_s.max(1);
+        let filtro = crate::efeitos::Filtro {
+            efeito,
+            restante_s: tempo_s,
+            razao: 0,
+            fator: 0.0,
+            // `_life_per_tick = _total_life / timeout`, com o mínimo de 1 do original.
+            por_segundo: (total / tempo_s).max(1),
+            contador: 0,
+            origem: 0,
+            icone: false,
+        };
+        p.efeitos.adicionar(filtro);
     }
 
     /// Ciclo de Simulação em Tempo Real (Loop de 50ms / 20 TPS)

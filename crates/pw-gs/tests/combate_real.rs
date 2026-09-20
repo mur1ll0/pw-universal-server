@@ -405,6 +405,7 @@ fn jogador() -> PlayerEntity {
         contador_mp: 0,
         recargas: std::collections::HashMap::new(),
         npc_em_conversa: None,
+        waypoints: Vec::new(),
         missoes: Default::default(),
         coleta: None,
         equipamento: Default::default(),

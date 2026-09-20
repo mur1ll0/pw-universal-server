@@ -190,6 +190,16 @@ impl Bolsa {
     /// modelo no tooltip ("Destreza +1~2") e o servidor não somava nada, porque não havia
     /// propriedade adicional sorteada nenhuma (relato do set Halo, B60).
     pub fn empilhar_gerado(&mut self, tid: u32, quantidade: u32, dados: &GameDataManager) -> Option<Empilhado> {
+        if let Some(octetos) = dados.gerar_octetos_do_ovo(tid) {
+            let mut primeiro = None;
+            for _ in 0..quantidade.max(1) {
+                match self.guardar_equipamento(tid, &octetos, dados) {
+                    Some(e) => primeiro = primeiro.or(Some(e)),
+                    None => break,
+                }
+            }
+            return primeiro;
+        }
         let Some(conteudo) = crate::geracao::gerar_equipamento(dados, tid) else {
             return self.empilhar(tid, quantidade, dados);
         };
@@ -202,6 +212,10 @@ impl Bolsa {
             }
         }
         primeiro
+    }
+
+    pub fn item_no_slot(&self, slot: usize) -> Option<&ItemRecord> {
+        self.slots.get(slot).and_then(|x| x.as_ref())
     }
 
     pub fn guardar_equipamento(&mut self, tid: u32, octetos: &[u8], dados: &GameDataManager) -> Option<Empilhado> {

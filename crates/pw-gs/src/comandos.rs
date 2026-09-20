@@ -143,6 +143,11 @@ pub mod ids {
     /// `CheckAutoDelv`, que é quem descobre as missões de entrega automática. Sem resposta,
     /// nenhuma missão automática chega (B60).
     pub const QUERY_TITLE: u16 = 154;
+    /// `ACTIVATE_REGION_WAYPOINTS` — o cliente avisa quais pontos de teleporte há na região
+    /// onde ele está: `unsigned char num` e depois `num` × `int`
+    /// (`cgame/common/protocol.h`, `gs/playercmd.cpp:4262-4270`). O servidor ativa os que o
+    /// jogador ainda não tem e responde `ACTIVATE_WAYPOINT` (179) para cada um.
+    pub const ACTIVATE_REGION_WAYPOINTS: u16 = 178;
     /// `QUERY_CASH_INFO` — só cabeçalho. O cliente pergunta o saldo.
     pub const QUERY_CASH_INFO: u16 = 110;
     /// `SRV::C2S::CMD::service_hello` — abrir diálogo com um NPC. O IR marca este id como

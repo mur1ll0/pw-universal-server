@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS characters (
     gender SMALLINT NOT NULL, -- 0: Masculino, 1: Feminino
     level INT DEFAULT 1 NOT NULL,
     cultivation INT DEFAULT 0 NOT NULL, -- Nível de Cultivo Espiritual (0 a 32)
+    -- Pontos de teleporte descobertos: u16 LE em sequência (`_waypoint_list` do gs)
+    waypoints BYTEA DEFAULT ''::bytea NOT NULL,
     exp BIGINT DEFAULT 0 NOT NULL,
     sp BIGINT DEFAULT 0 NOT NULL,
     hp INT DEFAULT 100 NOT NULL,

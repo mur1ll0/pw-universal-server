@@ -443,6 +443,10 @@ pub fn sortear_dano_elemental(minimo: i32, maximo: i32) -> i32 {
 /// Ponte para o mundo: monta o golpe e a defesa a partir das entidades.
 pub struct CombatEngine;
 
+/// `magic_damage[3]` — a escola do fogo na ordem do original (metal, madeira, água, fogo,
+/// terra), que é a mesma do `MAGIC_CLASS` e das resistências.
+const ESCOLA_DO_FOGO: usize = 3;
+
 impl CombatEngine {
     /// O golpe normal de um jogador, com o dano já sorteado.
     ///
@@ -456,11 +460,20 @@ impl CombatEngine {
     /// `atacante_e_jogador_ou_pet` é `true`, e é o que liga a atenuação por distância —
     /// que não faz nada enquanto as razões do alvo forem zero.
     pub fn golpe_de_jogador(jogador: &PlayerEntity) -> Golpe {
+        // `filter_Firearrow::TranslateSendAttack` (`cskill/skill/skillfilter.h:4268-4275`):
+        // num golpe **físico**, soma `ratio × 0,5 × (dano_baixo + dano_alto)` **da arma
+        // vestida** ao dano de fogo (`magic_damage[3]`). É o dano da arma
+        // (`_parent.GetCurWeapon()`), não o dano total do personagem.
+        let mut dano_magico = [0; CLASSES_MAGICAS];
+        if let Some(f) = jogador.efeitos.filtros.iter().find(|f| f.efeito == crate::efeitos::Efeito::Firearrow) {
+            let (baixo, alto) = jogador.equipamento.arma.map(|a| a.dano).unwrap_or((0, 0));
+            dano_magico[ESCOLA_DO_FOGO] += (f.fator * 0.5 * (baixo + alto) as f32) as i32;
+        }
         Golpe {
             nivel_do_atacante: jogador.level,
             taxa_de_ataque: jogador.attack_rate,
             dano_fisico: sortear_dano_fisico(jogador.attack_min, jogador.attack_max),
-            dano_magico: [0; CLASSES_MAGICAS],
+            dano_magico,
             e_fisico: true,
             // `crit_rate` está em fração na entidade e em pontos percentuais no original.
             chance_de_critico: (jogador.crit_rate * 100.0).round() as i32,

@@ -51,7 +51,7 @@ use crate::npc::{self, servico, PedidoAoNpc};
 use crate::world::{EventoDoMundo, WorldInstance};
 use pw_bus::{BusListener, BusMessage};
 use pw_core::{ContainerType, Vector3};
-use pw_protocol::{GameVersion, PorVersao, S2CGamedataSend};
+use pw_protocol::{versions::create_world_protocol, GameVersion, S2CGamedataSend, WorldProtocol};
 use pw_wire::gamedata::Reader;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -276,7 +276,10 @@ pub struct BusServer {
     /// 1.5.3 (item 56). Mandar o layout errado não dá erro: o cliente **descarta o comando
     /// inteiro** (item 46). Por isso a versão vive aqui dentro, e não como um argumento
     /// que se pode esquecer numa chamada.
-    sub: PorVersao,
+    /// A estratégia de protocolo desta versão — uma implementação de [`WorldProtocol`] por
+    /// versão (`pw_protocol::versions`). Os comandos cujo layout muda entre versões saem
+    /// daqui; os que são iguais em todas ficam em `S2CGamedataSend`.
+    sub: Arc<dyn WorldProtocol>,
     /// Jogadores atendidos, por `roleid`. É o que permite ao mundo devolver uma
     /// mensagem a um jogador específico sem saber nada sobre conexões.
     sessoes: Arc<RwLock<HashMap<i32, Sessao>>>,
@@ -314,7 +317,7 @@ impl BusServer {
     pub fn new(world: Arc<RwLock<WorldInstance>>, versao: GameVersion) -> Self {
         Self {
             world,
-            sub: PorVersao::new(versao),
+            sub: create_world_protocol(versao),
             sessoes: Arc::new(RwLock::new(HashMap::new())),
             trocas: std::sync::OnceLock::new(),
             eu: std::sync::OnceLock::new(),
@@ -406,7 +409,7 @@ impl BusServer {
 
     /// A versão que este mundo fala.
     pub fn versao(&self) -> GameVersion {
-        self.sub.versao()
+        self.sub.version()
     }
 
     /// Liga a saída de eventos da simulação a este servidor e começa a entregá-los.
@@ -969,6 +972,7 @@ impl BusServer {
                     s.andar = false;
                     s.cancelar = true;
                 }
+                self.interromper_conjuracao(roleid, 2, envio).await;
                 self.postura(roleid, false, envio).await
             }
             ids::EMOTE_ACTION => self.emote(roleid, &cmd.payload, envio).await,
@@ -1006,6 +1010,7 @@ impl BusServer {
                 // sistema de missões do cliente (ver [`ids::QUERY_TITLE`], B60).
                 self.responder(roleid, S2CGamedataSend::query_title_re(roleid, &[], &[]).data, envio).await;
             }
+            ids::ACTIVATE_REGION_WAYPOINTS => self.ativar_waypoints(roleid, &cmd.payload, envio).await,
             outro => {
                 debug!("mundo: subcomando {outro} de {roleid} ainda não tratado aqui");
             }
@@ -1051,6 +1056,7 @@ impl BusServer {
 
         let pos = Vector3::new(m.cur_pos.x, m.cur_pos.y, m.cur_pos.z);
         self.interromper_coleta(roleid).await;
+        self.interromper_conjuracao(roleid, 2, envio).await;
         if !self.world.write().await.mover_jogador(roleid, pos) {
             trace!("mundo: movimento de {roleid}, que ainda não tem entidade neste mundo");
         }
@@ -1404,16 +1410,10 @@ impl BusServer {
         let resultado = CombatEngine::jogador_ataca_monstro(&atacante, monstro, distancia);
         let (dano, critico) = (resultado.dano() as i64, resultado.foi_critico());
 
-        // A ameaça é do **golpe**, não do dano: o original registra em `OnAttacked`, que
-        // roda junto com o aviso ao cliente, e só a perda de vida é adiada.
-        //
-        // Nada em produção alimentava esta tabela — só um teste de unidade. Ou seja, o
-        // `MonsterAi` inteiro e o `calculate_monster_to_player_damage` eram código morto:
-        // os monstros levavam dano e nunca reagiam. Esta linha é o que liga a outra metade
-        // do combate.
-        if let Some((_, ai)) = mundo.monsters.get_mut(&alvo) {
-            ai.add_threat(roleid as i64, dano);
-        }
+        // A ameaça e o dano são adiados juntos (PostLazyMessage(GM_MSG_GEN_AGGRO, speed + 1)
+        // no original, npc.cpp:1867 e npc.cpp:2354-2364): o monstro só reage e persegue
+        // quando o projétil/golpe atinge o alvo (aplicar_dano_no_monstro). Chamar add_threat
+        // aqui fazia o monstro correr antes da flecha sair (B67).
         // Atacar põe em combate por 15 s (`DoAttack`, `player.cpp:3062`).
         if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
             p.combate_s = crate::progressao::COMBATE_AO_ATACAR_S;
@@ -1718,11 +1718,37 @@ impl BusServer {
         )
         .await;
 
-        // Se for remédio, cura pelo que o `elements.data` diz.
+        // Se for remédio, cura pelo que o `elements.data` diz — e **ao longo do tempo**
+        // quando o modelo dá um tempo (`hp_add_time`/`mp_add_time`).
+        //
+        // No original são três itens: `healing_potion` e `mana_potion` criam um filtro que
+        // entrega `total / tempo` por batimento de 1 s (`gs/item/item_potion.cpp:18-52`,
+        // `gs/potion_filter.h:6-130`), e a `rejuvenation_potion` — a que tem vida **e** mana,
+        // sem tempo — cura na hora (`item_potion.cpp:55-70`). Curávamos tudo de uma vez em
+        // qualquer caso (B67).
         let curou = {
             let mut mundo = self.world.write().await;
-            match mundo.quanto_o_remedio_restaura(u.item_id as u32) {
-                Some((hp, mp)) => mundo.curar_jogador(roleid, hp * quantos as i32, mp * quantos as i32),
+            let n = quantos as i32;
+            match mundo.data_manager.quanto_o_remedio_restaura_no_tempo(u.item_id as u32) {
+                Some((hp, hp_s, mp, mp_s, _recarga)) => {
+                    let mut no_tempo = Vec::new();
+                    if hp > 0 && hp_s > 0 {
+                        no_tempo.push((crate::efeitos::Efeito::PocaoDeVida, hp * n, hp_s));
+                    }
+                    if mp > 0 && mp_s > 0 {
+                        no_tempo.push((crate::efeitos::Efeito::PocaoDeMana, mp * n, mp_s));
+                    }
+                    if no_tempo.is_empty() {
+                        mundo.curar_jogador(roleid, hp * n, mp * n)
+                    } else {
+                        for (efeito, total, tempo_s) in no_tempo {
+                            mundo.pocao_no_tempo(roleid, efeito, total, tempo_s);
+                        }
+                        // A vida de agora, que o `SELF_INFO_00` abaixo leva: o primeiro
+                        // pedaço entra no batimento seguinte, como no original.
+                        mundo.players.get(&(roleid as i64)).map(|p| (p.hp, p.max_hp, p.mp, p.max_mp))
+                    }
+                }
                 None => None,
             }
         };
@@ -1790,12 +1816,8 @@ impl BusServer {
             .alvos
             .first()
             .map(|a| *a as i64)
-            .or_else(|| mundo.players.get(&(roleid as i64)).and_then(|p| p.target_id));
-
-        let Some(alvo) = alvo else {
-            trace!("mundo: {roleid} conjurou {} sem alvo", c.skill_id);
-            return;
-        };
+            .or_else(|| mundo.players.get(&(roleid as i64)).and_then(|p| p.target_id))
+            .unwrap_or(roleid as i64);
 
         // A conjuração tem começo e fim, separados pelo tempo de conjuração.
         //
@@ -1949,6 +1971,71 @@ impl BusServer {
         }
     }
 
+    /// Interrompe uma conjuração aberta do jogador (player.cpp:4017-4028).
+    /// Envia SELF_SKILL_INTERRUPTED (87) para o jogador (fecha a barra de cast)
+    /// e SKILL_INTERRUPTED (86) para outros jogadores ao redor.
+    async fn interromper_conjuracao(&self, roleid: i32, motivo: u8, envio: &EnvioAoCliente) -> bool {
+        let mut mundo = self.world.write().await;
+        let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return false; };
+        if p.conjuracao.take().is_some() {
+            drop(mundo);
+            self.responder(roleid, self.sub.self_skill_interrupted(motivo).data, envio).await;
+            self.transmitir_a_outros(roleid, self.sub.skill_interrupted(roleid).data).await;
+            return true;
+        }
+        false
+    }
+
+    /// `ACTIVATE_REGION_WAYPOINTS` (C2S 178) — o cliente lista os pontos de teleporte da
+    /// região onde está, e o servidor ativa os que ainda não são dele.
+    ///
+    /// `gplayer_imp::ActivateRegionWaypoints` (`gs/player.cpp:25196-25220`) cruza o que
+    /// chegou com os pontos daquela região e chama `ActivateWaypoint` para cada um
+    /// (`player_imp.h:2534-2544`), que **só faz algo se o ponto for novo**: guarda em
+    /// `_waypoint_list` e manda `activate_waypoint` (179) — o comando que faz o cliente
+    /// escrever "novo ponto de teleporte" com o nome do lugar.
+    ///
+    /// `falta`: a tabela por região (`world_manager::GetRegionWaypoints`), que vive num
+    /// arquivo do servidor original que ainda não lemos. Sem ela aceitamos o que o cliente
+    /// diz haver na região dele — que é o que ele já sabe pelo mapa local.
+    async fn ativar_waypoints(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
+        // `{ unsigned char num; int waypoints[num]; }` — o corpo vem sem o cabeçalho.
+        let Some(&num) = payload.first() else { return };
+        let mut novos = Vec::new();
+        {
+            let mut mundo = self.world.write().await;
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            for i in 0..num as usize {
+                let off = 1 + i * 4;
+                let Some(b) = payload.get(off..off + 4) else { break };
+                // `waypoints[i] & 0xFFFF` (`player.cpp:25215`).
+                let wp = (i32::from_le_bytes(b.try_into().unwrap()) & 0xFFFF) as u16;
+                if !p.waypoints.contains(&wp) {
+                    p.waypoints.push(wp);
+                    novos.push(wp);
+                }
+            }
+        }
+        if novos.is_empty() {
+            return;
+        }
+        for wp in &novos {
+            self.responder(roleid, S2CGamedataSend::activate_waypoint(*wp).data, envio).await;
+        }
+        let lista = self
+            .world
+            .read()
+            .await
+            .players
+            .get(&(roleid as i64))
+            .map(|p| p.waypoints.clone())
+            .unwrap_or_default();
+        info!("mundo: {roleid} descobriu {} ponto(s) de teleporte: {novos:?}", novos.len());
+        if let Err(e) = self.repo().await.salvar_waypoints(roleid, &lista).await {
+            warn!("mundo: não consegui gravar os pontos de teleporte de {roleid}: {e}");
+        }
+    }
+
     /// `Some(distância)` quando o alvo está além de `corpo + 1 + GetPraydistance + corpo do
     /// alvo`; `None` quando está ao alcance, é o próprio jogador, ou não há dado de alcance.
     async fn alvo_longe_demais(&self, roleid: i32, skill_id: i32, alvo: i64) -> Option<f32> {
@@ -2008,6 +2095,34 @@ impl BusServer {
         //
         // Vai **antes** de qualquer coisa depender do alvo: uma cura em si mesmo, uma
         // bênção num companheiro e um ataque num monstro terminam todos aqui.
+        //
+        // **Mas só depois da fase de execução** (B67): a sessão do original é um laço de
+        // estados — `StartSkill` dá o tempo do primeiro, `RunSkill` o do seguinte, e o
+        // `EndSession` (que manda o `stop_skill`) só vem quando não há próximo
+        // (`gs/actsession.cpp:466-600`). A Flecha Fulgurante tem 3.000 ms de conjuração e
+        // **800 ms de execução** (`GetExecutetime`, `cskill/skills/skill244.h:20-80`); é
+        // nessa fase que o cliente anima o personagem recebendo a bênção. Mandando o 123
+        // logo depois do efeito, a animação era cortada e só o ícone do buff aparecia.
+        let nivel_conjurado = {
+            let mundo = self.world.read().await;
+            mundo.players.get(&(roleid as i64)).map(|p| nivel_da_habilidade(p, skill_id)).unwrap_or(1)
+        };
+        let execucao_ms = self
+            .world
+            .read()
+            .await
+            .data_manager
+            .habilidades
+            .get(skill_id.max(0) as u32)
+            .and_then(|h| h.fase_de_execucao_ms(nivel_conjurado))
+            .unwrap_or(0)
+            .clamp(0, 10_000);
+        if execucao_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(execucao_ms as u64)).await;
+            if !self.sessoes.read().await.contains_key(&roleid) {
+                return;
+            }
+        }
         self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio)
             .await;
         self.fechar_conjuracao_e_soltar_fila(roleid, envio).await;
@@ -2875,7 +2990,7 @@ impl BusServer {
         };
 
         let mut mundo = self.world.write().await;
-        let existe = mundo.dados_do_npc(pedido.target as i64).is_some();
+        let existe = mundo.dados_do_npc(pedido.target as i64).is_some() || mundo.is_scene_service_npc(pedido.target);
         if existe {
             if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
                 p.npc_em_conversa = Some(pedido.target as i64);
@@ -2890,6 +3005,8 @@ impl BusServer {
             );
             return;
         }
+
+        info!("mundo: {roleid} abriu diálogo com NPC {}", pedido.target);
 
         self.responder(
             roleid,
@@ -3054,6 +3171,7 @@ impl BusServer {
             }
 
             servico::APRENDER_HABILIDADE => self.aprender(roleid, c).await,
+            servico::INCUBAR_PET => self.incubar_mascote(roleid, c).await,
 
             outro => {
                 debug!("mundo: {roleid} pediu o serviço de NPC {outro}, ainda não tratado");
@@ -3315,9 +3433,9 @@ impl BusServer {
     /// `LoadConfigData` no cliente (`EC_HostMsg.cpp:3841`), então ele vai **sempre**,
     /// mesmo quando o cliente não pediu missões — sem ele o cliente fica esperando.
     async fn todos_os_dados(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
-        // As tabelas de equipamento do realm, para o bloco de dados de cada item sair do
+        // As tabelas de jogo do realm, para o bloco de dados de cada item sair do
         // `elements.data` em vez de um chute — ou de lugar nenhum.
-        let equipamentos = self.world.read().await.data_manager.equipamentos.clone();
+        let dados = self.world.read().await.data_manager.clone();
 
         let pedido = GetAllData::ler(payload).unwrap_or(GetAllData {
             // Um payload curto vem de cliente de outra versão. Mandar tudo é o
@@ -3329,35 +3447,39 @@ impl BusServer {
 
         let itens = self.itens().await;
 
+        // Bolsa 0 (Inventário): no original (`player.cpp:13233-13238`), OWN_IVTR_DATA (42) vai SEMPRE.
+        // Se detalhe_bolsa != 0, envia também os blocos detalhados (item_info 40) de cada item.
+        let bolsa = itens
+            .list_by_container(roleid, ContainerType::Inventory)
+            .await
+            .unwrap_or_default();
+        self.responder(
+            roleid,
+            S2CGamedataSend::own_ivtr_from_items(0, 32, &bolsa).data,
+            envio,
+        )
+        .await;
         if pedido.detalhe_bolsa != 0 {
-            let bolsa = itens
-                .list_by_container(roleid, ContainerType::Inventory)
-                .await
-                .unwrap_or_default();
-            self.responder(
-                roleid,
-                S2CGamedataSend::own_ivtr_from_items(0, 32, &bolsa).data,
-                envio,
-            )
-            .await;
             for item in &bolsa {
-                self.responder(roleid, Self::info_de(0, item, &equipamentos), envio).await;
+                self.responder(roleid, Self::info_de(0, item, &dados), envio).await;
             }
         }
 
+        // Bolsa 1 (Equipamento): no original (`player.cpp:13239-13242`), OWN_IVTR_DATA (42) vai SEMPRE.
+        // Se detalhe_equipamento != 0, envia também os blocos detalhados (item_info 40) de cada item.
+        let equipado = itens
+            .list_by_container(roleid, ContainerType::Equipment)
+            .await
+            .unwrap_or_default();
+        self.responder(
+            roleid,
+            S2CGamedataSend::own_ivtr_from_items(1, 32, &equipado).data,
+            envio,
+        )
+        .await;
         if pedido.detalhe_equipamento != 0 {
-            let equipado = itens
-                .list_by_container(roleid, ContainerType::Equipment)
-                .await
-                .unwrap_or_default();
-            self.responder(
-                roleid,
-                S2CGamedataSend::own_ivtr_from_items(1, 32, &equipado).data,
-                envio,
-            )
-            .await;
             for item in &equipado {
-                self.responder(roleid, Self::info_de(1, item, &equipamentos), envio).await;
+                self.responder(roleid, Self::info_de(1, item, &dados), envio).await;
             }
         }
 
@@ -3366,22 +3488,23 @@ impl BusServer {
                 .await;
         }
 
-        // A bolsa de missão (`IL_TASK_INVENTORY`, pacote 2): `SendAllData` manda as três
-        // bolsas (`player.cpp:13697-13713`), e é nela que entram os itens de missão. Segue o
-        // sinalizador de missões do pedido, como as outras duas seguem os delas.
+        // Bolsa 2 (Missão, `IL_TASK_INVENTORY`): no original (`player.cpp:13243-13247`),
+        // `SendAllData` manda as três bolsas SEMPRE. O cliente 1.5.5 pede `GetAllData(true, true, false)`
+        // (`EC_HostPlayer.cpp:559`), ou seja, `detalhe_missoes = 0`. O OWN_IVTR_DATA (42) precisa ir
+        // para o cliente inicializar o inventário de missão; os detalhes só vão se pedidos.
+        let bolsa_missao = itens
+            .list_by_container(roleid, ContainerType::TaskInventory)
+            .await
+            .unwrap_or_default();
+        self.responder(
+            roleid,
+            S2CGamedataSend::own_ivtr_from_items(2, crate::economia::TAMANHO_DA_BOLSA_DE_MISSAO as u8, &bolsa_missao).data,
+            envio,
+        )
+        .await;
         if pedido.detalhe_missoes != 0 {
-            let bolsa = itens
-                .list_by_container(roleid, ContainerType::TaskInventory)
-                .await
-                .unwrap_or_default();
-            self.responder(
-                roleid,
-                S2CGamedataSend::own_ivtr_from_items(2, crate::economia::TAMANHO_DA_BOLSA_DE_MISSAO as u8, &bolsa).data,
-                envio,
-            )
-            .await;
-            for item in &bolsa {
-                self.responder(roleid, Self::info_de(2, item, &equipamentos), envio).await;
+            for item in &bolsa_missao {
+                self.responder(roleid, Self::info_de(2, item, &dados), envio).await;
             }
         }
 
@@ -3412,6 +3535,68 @@ impl BusServer {
         )
         .await;
 
+        // A lista de NPCs de serviço da cena (SCENE_SERVICE_NPC_LIST 390):
+        // No original (`player.cpp:11735`), só envia NPCs com `_serve_distance_unlimited`
+        // (ex: serviços remotos globais). NPCs normais do mapa NUNCA entram aqui, pois o
+        // cliente (`EC_HostMsg.cpp:2627`) intercepta o greeting de qualquer NPC listado e
+        // suprime a abertura da caixa de diálogo.
+        let npcs_servico = self.world.read().await.scene_service_npcs();
+        if !npcs_servico.is_empty() {
+            self.responder(
+                roleid,
+                self.sub.scene_service_npc_list(&npcs_servico).data,
+                envio,
+            )
+            .await;
+        }
+
+        // Os pontos de teleporte já descobertos (`WAYPOINT_LIST` 180). No original sai do
+        // `SendAllData` com o `GetWaypointBuffer` (`gs/player_imp.h:2545-2550`); é esta lista
+        // que o cliente usa para saber o que **não** é novo — sem ela ele repete o
+        // `ACTIVATE_REGION_WAYPOINTS` a cada quadro (B67).
+        let waypoints = self
+            .world
+            .read()
+            .await
+            .players
+            .get(&(roleid as i64))
+            .map(|p| p.waypoints.clone())
+            .unwrap_or_default();
+        self.responder(roleid, S2CGamedataSend::player_waypoint_list(&waypoints).data, envio)
+            .await;
+
+        // Mascotes: capacidade da sala de mascotes (PET_ROOM_CAPACITY 240) e lista de mascotes (PET_ROOM 239).
+        // No original (`player.cpp:13265`), SendAllData envia os dois comandos.
+        let pets_corral = itens
+            .list_by_container(roleid, ContainerType::PetCorral)
+            .await
+            .unwrap_or_default();
+        let vagas = (pets_corral.len() as u32 + 1).max(1);
+        self.responder(
+            roleid,
+            S2CGamedataSend::pet_room_capacity(vagas).data,
+            envio,
+        )
+        .await;
+
+        let mut pets_buf = Vec::new();
+        for p in &pets_corral {
+            pets_buf.extend_from_slice(&(p.slot as i32).to_le_bytes());
+            if p.octets.len() >= pw_core::TAMANHO_INFO_PET {
+                pets_buf.extend_from_slice(&p.octets[..pw_core::TAMANHO_INFO_PET]);
+            } else {
+                let mut info = pw_core::InfoPet::default();
+                info.pet_tid = p.item_id as i32;
+                pets_buf.extend_from_slice(&info.para_bytes());
+            }
+        }
+        self.responder(
+            roleid,
+            S2CGamedataSend::pet_room(pets_corral.len() as u16, &pets_buf).data,
+            envio,
+        )
+        .await;
+
         // A ficha do jogador: `OWN_EXT_PROP` (50).
         //
         // É o **único** comando que preenche `CECHostPlayer::m_ExtProps`
@@ -3437,7 +3622,7 @@ impl BusServer {
 
         // Sempre, mesmo sem missões: é o marcador de fim da carga.
         // Via `self.sub` porque o número de blocos depende da versão (3 no 1.2.6, 5 do
-        // 1.5.3 em diante) — ver `PorVersao::task_data`.
+        // 1.5.3 em diante) — ver `WorldProtocol::task_data`.
         let listas = self
             .world
             .read()
@@ -3464,9 +3649,23 @@ impl BusServer {
     fn info_de(
         onde: u8,
         item: &pw_core::ItemRecord,
-        equipamentos: &pw_data_loader::armaduras::TabelasDeEquipamento,
+        dados: &pw_data_loader::GameDataManager,
     ) -> Vec<u8> {
         let mut octetos = item.octets.clone();
+        if octetos.is_empty() && dados.eh_ovo_de_pet(item.item_id) {
+            if let Some(o) = dados.gerar_octetos_do_ovo(item.item_id) {
+                octetos = o;
+            }
+        }
+        // Amuleto de vida (`AUTOHP_ESSENCE`) e hierograma de mana (`AUTOMP_ESSENCE`): o
+        // conteúdo são os 8 bytes do `amulet_essence` (`gs/item/item_amulet.h:16-19`,
+        // `generate_item_temp.h:2296-2310`). Sem eles o cliente desenhava zeros e números
+        // negativos no item (relato de 2026-09-19, B67).
+        if octetos.is_empty() {
+            if let Some(o) = dados.conteudo_do_amuleto(item.item_id) {
+                octetos = o;
+            }
+        }
         if item.max_durability > 0 {
             pw_core::escrever_durabilidade(&mut octetos, item.durability as i32, item.max_durability as i32);
         }
@@ -3478,7 +3677,7 @@ impl BusServer {
             item.max_durability as i32,
             item.count,
             &octetos,
-            equipamentos.ficha(item.item_id),
+            dados.equipamentos.ficha(item.item_id),
         )
         .data
     }
@@ -3504,8 +3703,8 @@ impl BusServer {
         let itens = self.itens().await;
         let ct = ContainerType::from_i16(onde as i16);
         if let Ok(Some(i)) = itens.get_item_by_slot(roleid, ct, slot as u16).await {
-            let equipamentos = self.world.read().await.data_manager.equipamentos.clone();
-            self.responder(roleid, Self::info_de(onde, &i, &equipamentos), envio)
+            let dados = self.world.read().await.data_manager.clone();
+            self.responder(roleid, Self::info_de(onde, &i, &dados), envio)
                 .await;
         }
     }

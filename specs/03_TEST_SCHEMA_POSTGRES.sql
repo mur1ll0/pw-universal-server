@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS test.characters (
     gender SMALLINT NOT NULL,
     level INT DEFAULT 1 NOT NULL,
     cultivation INT DEFAULT 0 NOT NULL,
+    -- Pontos de teleporte descobertos: u16 LE em sequência (`_waypoint_list` do gs)
+    waypoints BYTEA DEFAULT ''::bytea NOT NULL,
     exp BIGINT DEFAULT 0 NOT NULL,
     sp BIGINT DEFAULT 0 NOT NULL,
     hp INT DEFAULT 100 NOT NULL,

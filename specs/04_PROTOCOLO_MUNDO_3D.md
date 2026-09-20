@@ -1,7 +1,7 @@
 # Especificação 04: Protocolo do mundo 3D (subcomandos do `GamedataSend`)
 
 > Verificada contra o código em 2026-09-14, commit `e6433ae` + B49. Cobre
-> `crates/pw-protocol/src/{packets,por_versao.rs,opcodes.rs}`, `crates/pw-wire/`,
+> `crates/pw-protocol/src/{packets,versions,opcodes.rs}`, `crates/pw-wire/`,
 > `crates/pw-gs/src/comandos.rs`, `specs/protocol/` e `tools/pw-rpcgen/`.
 
 ## 1. Os dois formatos na mesma conexão
@@ -55,14 +55,21 @@ ou com campos novos no fim. Novos do 1.5.5 ainda não triados: 66 GNET, 17 C2S, 
 
 ## 4. Diferenças por versão: Padrão Estratégia e Módulos por Versão
 
-Originalmente centralizado em `pw_protocol::PorVersao`, o despacho polimórfico por versão foi
-refatorado para o padrão **Strategy** com trait `WorldProtocol` e `ProtocolAdapter` sob
-`crates/pw-protocol/src/versions/`:
-- `traits.rs`: Trait abstrata `WorldProtocol` para os subcomandos do mundo 3D e reexportação de `ProtocolAdapter`.
-- `versions/v126/`: Implementação isolada de `WorldProtocol` e `ProtocolAdapter` para a 1.2.6 (152B `own_ext_prop`, 3 blocos em `task_data`, 27B `info_npc`, 19 campos em `RoleInfo`, sem `refretcode`).
-- `versions/v155/`: Implementação canônica completa para a 1.5.5 (196B `own_ext_prop`, 5 blocos em `task_data`, 35B `info_npc`, 23 campos em `RoleInfo`).
-- `versions/v148/`, `v153/`, `v172/`: Módulos modulares dedicados por versão, eliminando condicionais `if` ad-hoc nos pacotes e structs.
-- `por_versao.rs`: Fachada fina que encapsula `Arc<dyn WorldProtocol>`, preservando compatibilidade para o `pw-gs`.
+O despacho por versão é uma **estratégia**: o trait `WorldProtocol`
+(`crates/pw-protocol/src/traits.rs`) declara os comandos cujo layout muda entre versões, e há
+uma implementação por versão em `crates/pw-protocol/src/versions/`. Quem precisa de um
+comando pede à estratégia da versão daquele realm
+(`versions::create_world_protocol(versao) -> Arc<dyn WorldProtocol>`), guardada no
+`BusServer`. **Não há mais a fachada `PorVersao`** (removida no B67): ela só delegava, e ter
+dois nomes para a mesma coisa convidava a escrever `if versao == ...` de novo.
+
+- `versions/v155/`: a implementação **canônica** (196 B de `own_ext_prop`, 5 blocos no `task_data`, 35 B de `info_npc`, 23 campos no `RoleInfo`).
+- `versions/v126/`: a 1.2.6 por inteiro (152 B, 3 blocos, 27 B, 19 campos, sem `refretcode`).
+- `versions/v148/`, `v153.rs`, `v172/`: **compõem** a do 1.5.5 (`V148Protocol(V155Protocol)`) e sobrescrevem só o que difere — é assim que se acrescenta versão nova.
+
+Um comando que **não** varia entre versões continua em `S2CGamedataSend`, com um só caminho
+de escrita. Quando uma medição mostrar que ele varia, ele sobe para o trait — é a regra "um
+caminho de escrita por layout".
 
 | codificador | 1.2.6 | 1.5.x | o que muda |
 | :--- | ---: | ---: | :--- |
@@ -101,8 +108,13 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | `ENCHANT_RESULT` (139) | `caster, target, skill i32; level, orange_name u8; attack_flag i32; section u8` (2+19) | `EC_GPDataType.h:2714-2723` (B53) |
 | bloco de dados do equipamento (`OWN_ITEM_INFO` 40) | cabeçalho 6×i16 + durabilidades (**na escala interna**, ×100 — spec 05, "Durabilidade") + essência + `i16 furos, u16 máscara, i32×furos` + `i32 addons` e cada addon `i32 tipo (id \| n<<13 \| 0x8000 pedra)` + `i32×n`; um só caminho: `pw_core::ConteudoDeEquipamento` (item sem octetos, octetos sorteados no drop, leitura dos atributos) | `EC_IvtrEquip.cpp:176-262` (B53) |
 | `HOST_START_ATTACK` (84) / `HOST_STOPATTACK` (23) | `idTarget i32, ammo_remain u16, attack_speed u8` (2+7) / `iReason i32` (2+4) — abrem e fecham a sessão de golpe (spec 05 §5.2) | `EC_GPDataType.h:1509,2190` (B52) |
-| `HOST_ATTACKED` (26) | `idAttacker i32, iDamage i32, cEquipment u8, attack_flag i32, speed i8`. O `cEquipment` é o **índice da peça que se desgastou** (`eq_index &= 0x7F`, bit alto = nome laranja): `0x7f` é "nenhuma", e **zero o cliente lê como a arma** e desconta durabilidade dela a cada golpe recebido. `speed` × 50 ms é a duração da animação do golpe (spec 05, "Durabilidade") | `cgame/common/protocol.h:1194-1201`, `protocol_imp.h:580-590`, `EC_HostMsg.cpp:968-1000` |
-| `EQUIP_DAMAGED` (68) | `unsigned char index; char reason` (2+2): a peça `index` acabou; motivo 0 é "sem durabilidade", 1 é "quebrou ao morrer" | `cgame/common/protocol.h:1598-1603` (B61) |
+| `SKILL_INTERRUPTED` (86) / `SELF_SKILL_INTERRUPTED` (87) | `caster i32` (2+4) enviado a terceiros / `reason u8` (2+1, reason=2) enviado ao próprio jogador quando a conjuração é cancelada (por ESC/`CANCEL_ACTION` ou movimento) | `playercmd.cpp:2136-2153`, `player.cpp:4017-4028` (B67) |
+| `SCENE_SERVICE_NPC_LIST` (390) | `count u32` seguido de pares `{ service_id i32, npc_id i32 }`. Enviado no `GET_ALL_DATA` com os provedores de serviços do mapa (incluindo mestres de classe). No 1.5.5 (`EC_HostSkillModel.cpp:558-605`), é obrigatório para registrar `m_allProfNPCs`, definir `m_skillLearnNPCNID` e habilitar o botão de evoluir habilidade pela árvore (tecla R) | `world.cpp`, `EC_HostSkillModel.cpp:558-605` (B67) |
+| `HOST_ATTACKED` (26) | `idAttacker i32, iDamage i32, cEquipment u8, attack_flag i32, speed i8`. O `cEquipment` é o **índice da peça que se desgastou** (`eq_index &= 0x7F`, bit alto = nome laranja): `0x7f` é "nenhuma", e **zero o cliente lê como a arma** e desconta durabilidade dela a cada golpe recebido. `speed` × 50 ms é a duração da animação do golpe (spec 05, "Durabilidade") | `cgame/common/protocol.h:1194-1201`, `protocol_imp.h:580-590`, `EC_HostMsg.cpp:968-1000` |
+| `TASK_DELIVER_LEVEL2` (160) | `int id_player; int level2` (2+8). O `level2` é o **nível de cultivo**, não o nível de GM: o cliente guarda em `m_BasicProps.iLevel2`, tira dele o título taoista e toca o efeito de avanço (`CECPlayer::OnMsgPlayerLevel2`, `EC_Player.cpp:7464`; `GetLevel2Name`, `EC_GameRun.cpp:3477`). O mesmo vale para o campo `level2` dos pacotes de visão — até o B67 mandávamos o privilégio da conta ali | `Network/EC_GPDataType.h:2859-2863`, `gs/player_imp.h:2798-2804` |
+| `ACTIVATE_WAYPOINT` (179) | `unsigned short waypoint` (2+2) — **um** ponto de teleporte novo. É ele que faz o cliente anunciar "novo ponto" com o nome do lugar (`CECHostPlayer::OnMsgHstWayPoint`, `EC_HostMsg.cpp:4681-4720`); o `WAYPOINT_LIST` (180) **substitui** a lista em silêncio e é o da carga inicial. Sai de `ActivateWaypoint` só quando o ponto ainda não é do jogador (`gs/player_imp.h:2534-2544`) (B67) |
+| `ACTIVATE_REGION_WAYPOINTS` (C2S 178) | `unsigned char num` + `num` × `int`; o servidor ativa os que faltam e responde um 179 por ponto. Tratado **no mundo** desde o B67 (`gs/playercmd.cpp:4262-4270`, `player.cpp:25196-25220`) |
+| `EQUIP_DAMAGED` (68) | `unsigned char index; char reason` (2+2): a peça `index` acabou; motivo 0 é "sem durabilidade", 1 é "quebrou ao morrer" | `cgame/common/protocol.h:1598-1603` (B61) |
 | `CALC_NETWORK_DELAY` (C2S 128) | `_RE` (S2C 291) devolve o `timestamp` intacto; só alimenta o indicador de ping | B42i |
 | `GP_NPCSEV_LEARN` | pedido só com `idSkill`; resposta `LEARN_SKILL` (95) com id e nível | `EC_SendC2SCmds.cpp:3379` |
 | `NORMAL_ATTACK` (C2S 3) | 3 bytes, **sem id de alvo** — o alvo é o selecionado | A33 |

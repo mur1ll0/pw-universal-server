@@ -96,6 +96,9 @@ pub struct CharacterDetails {
     pub storehouse: Vec<ItemRecord>,
     pub skills: Vec<LearnedSkill>,
     pub quests: Vec<CharacterQuest>,
+    /// Os pontos de teleporte já descobertos (`_waypoint_list`, `gs/player_imp.h:2520-2550`).
+    /// Vão ao cliente no `WAYPOINT_LIST` (180) da carga inicial.
+    pub waypoints: Vec<u16>,
     
     pub custom_appearance: serde_json::Value,
     pub version_data: serde_json::Value,
@@ -392,7 +395,15 @@ pub struct VistaDoJogador {
     /// Direção horizontal comprimida em 1/256 de volta. Zerada enquanto a grade espacial
     /// guardar posição e não direção.
     pub dir: u8,
-    /// Nível de GM. Acende `STATE_GAMEMASTER` no `state` e põe a coroa sobre o avatar.
+    /// O **nível de cultivo** (`_basic.sec_level` do original, o "period" das missões).
+    ///
+    /// É o `level2` dos pacotes de visão: o cliente guarda em `m_BasicProps.iLevel2`, tira
+    /// dele o título taoista (`CECGameRun::GetLevel2Name`, `EC_GameRun.cpp:3477-3499`) e
+    /// toca o efeito de avanço quando muda (`CECPlayer::SetLevel2`, `EC_Player.cpp:7447`).
+    /// **Não** é nível de GM — até 2026-09-20 mandávamos o privilégio da conta aqui (B67).
+    pub cultivo: u8,
+    /// Nível de GM da conta. Acende `STATE_GAMEMASTER` no `state` e põe a coroa sobre o
+    /// avatar; não viaja em campo próprio.
     pub sec_level: u8,
     /// **O sexo do personagem.** Vira o bit [`ESTADO2_MULHER`] do `state2`, e é de lá que
     /// o cliente o lê (`info_player_1::GetGender()`).

@@ -14,6 +14,7 @@ pub mod monstros;
 pub mod npcgen;
 pub mod habilidades;
 pub mod minas;
+pub mod pet;
 pub mod precinct;
 pub mod servicos;
 pub mod precos;

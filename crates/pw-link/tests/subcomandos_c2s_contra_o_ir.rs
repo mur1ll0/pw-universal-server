@@ -45,7 +45,6 @@ const FONTE: &str = include_str!("../src/gateway.rs");
 const INTENCAO: &[(u16, &str)] = &[
     (92, "DUEL_REQUEST"),
     (118, "GET_MALL_ITEM_PRICE"),
-    (178, "ACTIVATE_REGION_WAYPOINTS"),
 ];
 
 fn ir() -> Value {
@@ -78,6 +77,9 @@ fn ids_tratados() -> BTreeSet<u16> {
             continue;
         };
         let padrao = padrao.trim();
+        // Um braço pode ter guarda (`178 if ...`): o id é o que vem antes do `if`, e o
+        // comando continua tratado aqui — só que sob condição.
+        let padrao = padrao.split(" if ").next().unwrap_or(padrao).trim();
 
         if let Some((a, b)) = padrao.split_once("..=") {
             if let (Ok(a), Ok(b)) = (a.trim().parse::<u16>(), b.trim().parse::<u16>()) {

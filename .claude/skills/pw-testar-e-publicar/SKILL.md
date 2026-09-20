@@ -13,7 +13,7 @@ TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw
 ```
 
 - Sem `TEST_DATABASE_URL` os testes de integração **passam sem verificar nada**.
-- Referência (2026-09-18, B62): **579 testes, todos passando**; os de tempo do
+- Referência (2026-09-20, B68): **598 testes, todos passando**; os de tempo do
   `pw-gs/tests/subcomandos_no_mundo.rs` podem falhar sob carga (rodar o arquivo sozinho). As duas antigas do 1.2.6 em
   `pw-data-loader/tests/loader_tests.rs` foram resolvidas. Qualquer falha é nova.
 - Teste que cria dado no banco começa com `comum::limpar_sobras_de_teste(&pool)`

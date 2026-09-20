@@ -536,6 +536,24 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `ACTIVATE_WAYPOINT` (179) — **um ponto de teleporte novo**.
+    ///
+    /// `struct cmd_activate_waypoint { unsigned short waypoint; }` (2 bytes + cabeçalho). É o
+    /// comando que o cliente trata em `CECHostPlayer::OnMsgHstWayPoint`
+    /// (`EC_HostMsg.cpp:4681-4720`): soma o ponto à lista, põe no mapa e **escreve a mensagem
+    /// fixa `FIXMSG_NEWWAYPOINT`** com o nome do lugar, mais o balão de dica. O
+    /// `WAYPOINT_LIST` (180) não serve para isso: ele **substitui** a lista inteira, em
+    /// silêncio, e é o da carga inicial.
+    ///
+    /// No original sai de `gplayer_imp::ActivateWaypoint` (`gs/player_imp.h:2534-2544`), que
+    /// só o manda quando o ponto ainda não está na lista do jogador.
+    pub fn activate_waypoint(waypoint: u16) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(179);
+        stream.write_u16_le(waypoint);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// Cria o comando `MALL_ITEM_PRICE` (270), resposta à consulta de preços do gshop.
     ///
     /// # O id era 197, e 197 é outro comando
@@ -935,6 +953,25 @@ impl S2CGamedataSend {
         stream.write_u16_le(158);
         stream.write_i32_le(exp);
         stream.write_i32_le(sp);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `TASK_DELIVER_LEVEL2` (160) — o **nível de cultivo** novo.
+    ///
+    /// `struct cmd_task_deliver_level2 { int id_player; int level2; }`
+    /// (`Network/EC_GPDataType.h:2859-2863`), 10 bytes com o cabeçalho. Quem manda é
+    /// `gplayer_imp::SetSecLevel` (`player_imp.h:2798-2804`), chamado por
+    /// `PlayerTaskInterface::SetCurPeriod` (`task/taskman.cpp:251-254`) — o prêmio
+    /// `m_ulNewPeriod` da missão (`Task/TaskProcess.cpp:1284`).
+    ///
+    /// O cliente trata em `CECPlayer::OnMsgPlayerLevel2` (`EC_Player.cpp:7464-7470`): guarda
+    /// o valor, toca o efeito de tela cheia do avanço e atualiza o título taoista
+    /// (`GetLevel2Name`, `EC_GameRun.cpp:3477-3499`). **Não** é nível de GM.
+    pub fn task_deliver_level2(id_player: i32, level2: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(160);
+        stream.write_i32_le(id_player);
+        stream.write_i32_le(level2);
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -1403,7 +1440,7 @@ impl S2CGamedataSend {
         stream.write_u16_le(v.crc_equipamento); // unsigned short crc_e (2B)
         stream.write_u16_le(v.crc_aparencia);   // unsigned short crc_c (2B)
         stream.write_u8(v.dir);                // unsigned char dir (1B)
-        stream.write_u8(v.sec_level);          // unsigned char level2 (1B)
+        stream.write_u8(v.cultivo);            // unsigned char level2 (1B) — o cultivo
         let state = if v.sec_level > 0 { 0x0000_4000 } else { 0 }; // STATE_GAMEMASTER
         stream.write_i32_le(state);            // int state (4B)
         // `state2`. O único bit que este servidor sabe preencher é o do sexo — e ele não
@@ -1915,6 +1952,34 @@ impl S2CGamedataSend {
     pub fn self_stop_skill() -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(123);              // CMD_S2C_SELF_STOP_SKILL = 123
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando SKILL_INTERRUPTED (Comando 86) avisando que o conjurador parou
+    pub fn skill_interrupted(caster: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(86);
+        stream.write_i32_le(caster);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando SELF_SKILL_INTERRUPTED (Comando 87) cancelando a barra de conjuração
+    pub fn self_skill_interrupted(reason: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(87);
+        stream.write_u8(reason);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// Cria o comando SCENE_SERVICE_NPC_LIST (Comando 390) com a lista de NPCs prestadores de serviço
+    pub fn scene_service_npc_list(npcs: &[(i32, i32)]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(390);
+        stream.write_u32_le(npcs.len() as u32);
+        for &(tid, nid) in npcs {
+            stream.write_i32_le(tid);
+            stream.write_i32_le(nid);
+        }
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -2689,6 +2754,25 @@ impl S2CGamedataSend {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(240);
         stream.write_u32_le(capacity); // size_t capacity
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PET_ROOM` (239) — lista de pets ativos no pet corral/inventário de mascotes.
+    pub fn pet_room(count: u16, pets_payload: &[u8]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(239);
+        stream.write_u16_le(count);
+        stream.write_raw_bytes(pets_payload);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `GAIN_PET` (231) — pet obtido (ex: chocado no NPC de mascotes).
+    /// Estrutura no cliente: `int slot_index; info_pet data;` (4 + 192 = 196 bytes).
+    pub fn gain_pet(slot_index: i32, pet_data: &[u8]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(231);
+        stream.write_i32_le(slot_index);
+        stream.write_raw_bytes(pet_data);
         Self { data: stream.into_bytes().to_vec() }
     }
 

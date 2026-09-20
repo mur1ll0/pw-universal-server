@@ -1,7 +1,7 @@
 use pw_core::{CharacterClass, CharacterSummary, Gender, ItemRecord, Race, Vector3};
 use pw_protocol::{
     create_protocol_adapter, Edition, GameVersion, InboundPacket, OctetsStream, OutboundPacket,
-    PorVersao, PwPacketCodec, S2CChallenge, S2CGamedataSend, S2CRoleListResponse,
+    versions::create_world_protocol, PwPacketCodec, S2CChallenge, S2CGamedataSend, S2CRoleListResponse,
     S2CSelectRoleResponse,
 };
 use bytes::BytesMut;
@@ -439,7 +439,7 @@ fn test_inst_data_checkout_155_ganha_o_sexto_campo_gshop3() {
     // campos (`idInst`, `region`, `precinct`, `gshop`, `gshop2` — ver `layouts_do_126.rs`
     // para a diferença medida contra o 1.2.6, que só tem quatro); o 1.5.5 acrescenta um
     // sexto, `gshop_time_stamp3`.
-    let sub_155 = PorVersao::new(GameVersion::V1_5_5);
+    let sub_155 = create_world_protocol(GameVersion::V1_5_5);
     let com_terceiro = sub_155.inst_data_checkout(1, 10, 20, 30, 35, Some(40));
     // 2 (cabeçalho) + 4 (idInst) + 4 + 4 + 4 (gshop) + 4 (gshop2) + 4 (gshop3) = 26 bytes.
     assert_eq!(com_terceiro.data.len(), 26);
@@ -452,7 +452,7 @@ fn test_inst_data_checkout_155_ganha_o_sexto_campo_gshop3() {
     assert_eq!(sem_terceiro.data.len(), 22);
 
     // E o 1.5.3 ignora `Some` — o sexto campo é só para quem mediu precisar dele.
-    let sub_153 = PorVersao::new(GameVersion::V1_5_3);
+    let sub_153 = create_world_protocol(GameVersion::V1_5_3);
     let v153_com_some = sub_153.inst_data_checkout(1, 10, 20, 30, 35, Some(40));
     assert_eq!(v153_com_some.data.len(), 22, "1.5.3 não ganha o sexto campo só por receber Some");
 }
@@ -467,12 +467,12 @@ fn test_self_info_1_155_ganha_o_state2() {
     // desconecta com "EnterWorld Overtime".
     let pos = Vector3::new(10.0, 20.0, 30.0);
 
-    let sub_126 = PorVersao::new(GameVersion::V1_2_6);
+    let sub_126 = create_world_protocol(GameVersion::V1_2_6);
     let pacote_126 = sub_126.self_info_1(1000, 500, 1024, pos, 32);
     // 2 (cabeçalho) + 34 (cmd_self_info_1 do 1.2.6, sem state2) = 36 bytes.
     assert_eq!(pacote_126.data.len(), 36, "1.2.6 continua nos 34 bytes de sempre");
 
-    let sub_155 = PorVersao::new(GameVersion::V1_5_5);
+    let sub_155 = create_world_protocol(GameVersion::V1_5_5);
     let pacote_155 = sub_155.self_info_1(1000, 500, 1024, pos, 32);
     // 2 (cabeçalho) + 34 + 4 (state2) = 40 bytes.
     assert_eq!(pacote_155.data.len(), 40, "1.5.5 precisa do state2 de 4 bytes no fim");
@@ -503,7 +503,7 @@ fn test_player_waypoint_list_devolve_os_ids_recebidos() {
 #[test]
 fn test_get_own_money_tem_oito_bytes_nas_duas_versoes() {
     for versao in [GameVersion::V1_5_3, GameVersion::V1_5_5] {
-        let pacote = PorVersao::new(versao).get_own_money(1000, 2_000_000_000);
+        let pacote = create_world_protocol(versao).get_own_money(1000, 2_000_000_000);
         assert_eq!(
             pacote.data.len(),
             10,
@@ -520,7 +520,7 @@ fn test_get_own_money_tem_oito_bytes_nas_duas_versoes() {
 #[test]
 fn test_equip_data_nao_leva_color_name() {
     for versao in [GameVersion::V1_5_3, GameVersion::V1_5_5] {
-        let sub = PorVersao::new(versao);
+        let sub = create_world_protocol(versao);
 
         let vazio = sub.equip_data(40, 0, 0, &[]);
         assert_eq!(vazio.data.len(), 16, "{versao:?}: 2 + 14 de prefixo, sem item");
@@ -554,7 +554,7 @@ fn test_inst_data_checkout_gshop_e_gshop2_sao_valores_diferentes() {
     // `gshop_time_stamp2` errado (igual ao primeiro, nunca o valor real de
     // `gshop2.data`/`gshop1.data`) — um cliente 1.5.5 real recusava a instância com
     // "gshop1 timestamp error" mesmo depois do handshake de login já ter passado.
-    let sub = PorVersao::new(GameVersion::V1_5_3);
+    let sub = create_world_protocol(GameVersion::V1_5_3);
     let pacote = sub.inst_data_checkout(1, 10, 20, 0x1111_1111, 0x2222_2222, None);
     let gshop_no_fio = u32::from_le_bytes(pacote.data[14..18].try_into().unwrap());
     let gshop2_no_fio = u32::from_le_bytes(pacote.data[18..22].try_into().unwrap());
@@ -718,6 +718,7 @@ fn o_sexo_do_jogador_viaja_no_bit_do_state2() {
     let mulher = pw_core::VistaDoJogador {
         pos: pw_core::Vector3::new(1.0, 2.0, 3.0),
         dir: 0,
+        cultivo: 0,
         sec_level: 0,
         feminino: true,
         crc_equipamento: 0,

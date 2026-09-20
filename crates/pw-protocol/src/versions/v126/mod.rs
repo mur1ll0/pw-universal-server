@@ -298,7 +298,7 @@ impl V126Protocol {
         s.write_u16_le(v.crc_equipamento);
         s.write_u16_le(v.crc_aparencia);
         s.write_u8(v.dir);
-        s.write_u8(v.sec_level);
+        s.write_u8(v.cultivo);
         let state = if v.sec_level > 0 { 0x0000_4000 } else { 0 };
         s.write_i32_le(state);
         S2CGamedataSend { data: s.into_bytes().to_vec() }

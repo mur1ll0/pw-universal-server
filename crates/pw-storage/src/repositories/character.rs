@@ -22,6 +22,10 @@ pub struct CharacterRecord {
     pub gender: i16,
     pub level: i32,
     pub cultivation: i32,
+    /// Pontos de teleporte descobertos: `u16` little-endian em sequência, como o
+    /// `GetWaypointBuffer` do original (`gs/player_imp.h:2545-2550`).
+    #[sqlx(default)]
+    pub waypoints: Vec<u8>,
     pub exp: i64,
     pub sp: i64,
     pub hp: i32,
@@ -557,6 +561,7 @@ impl CharacterRepository {
             gender: Gender::from_u8(r.gender as u8),
             level: r.level,
             cultivation: r.cultivation,
+            waypoints: r.waypoints.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect(),
             exp: r.exp,
             sp: r.sp,
             hp: r.hp,
@@ -681,6 +686,19 @@ impl CharacterRepository {
     }
 
     /// Salva o estado básico do personagem
+    /// Grava os pontos de teleporte descobertos (`_waypoint_list` do original).
+    ///
+    /// Um `UPDATE` só quando um ponto novo entra — a lista é pequena e muda raramente.
+    pub async fn salvar_waypoints(&self, role_id: RoleId, waypoints: &[u16]) -> Result<()> {
+        let bytes: Vec<u8> = waypoints.iter().flat_map(|w| w.to_le_bytes()).collect();
+        sqlx::query("UPDATE characters SET waypoints = $1 WHERE id = $2")
+            .bind(bytes)
+            .bind(role_id)
+            .execute(self.pool.get_ref())
+            .await?;
+        Ok(())
+    }
+
     pub async fn save_status(
         &self,
         role_id: RoleId,

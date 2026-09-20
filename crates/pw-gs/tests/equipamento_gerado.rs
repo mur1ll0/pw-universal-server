@@ -139,3 +139,38 @@ fn a_peca_com_durabilidade_zerada_nao_entra_nos_atributos() {
     assert_eq!(quebrado.defesa, 0, "peça acabada ainda somava defesa");
     assert_eq!(quebrado.addons, BonusDeAddons::default(), "peça acabada ainda somava propriedade");
 }
+
+/// B67 — o amuleto de vida e o hierograma de mana têm conteúdo próprio: 8 bytes.
+///
+/// `amulet_essence { int point; float trigger_percent; }` (`gs/item/item_amulet.h:16-19`),
+/// escrito sem cabeçalho de requisito (`generate_item_temp.h:2296-2310`). Sem ele o cliente
+/// mostrava o item zerado (relato de 2026-09-19).
+#[test]
+fn o_amuleto_e_o_hierograma_saem_com_os_oito_bytes_da_essencia() {
+    let Some(d) = realm() else { return };
+    const AMULETO: u32 = 35370; // Amuleto do Guardião - 1 (AUTOHP_ESSENCE)
+    const HIEROGRAMA: u32 = 35376; // Hierograma do Guardião - 1 (AUTOMP_ESSENCE)
+
+    let a = d.conteudo_do_amuleto(AMULETO).expect("o 35370 é um AUTOHP_ESSENCE");
+    assert_eq!(a.len(), 8, "o conteúdo do amuleto tem 8 bytes");
+    assert_eq!(i32::from_le_bytes([a[0], a[1], a[2], a[3]]), 5400, "total_hp do elements");
+    assert!((f32::from_le_bytes([a[4], a[5], a[6], a[7]]) - 0.5).abs() < 1e-6, "trigger_amount");
+
+    let m = d.conteudo_do_amuleto(HIEROGRAMA).expect("o 35376 é um AUTOMP_ESSENCE");
+    assert_eq!(i32::from_le_bytes([m[0], m[1], m[2], m[3]]), 18000, "total_mp do elements");
+    assert!((f32::from_le_bytes([m[4], m[5], m[6], m[7]]) - 0.75).abs() < 1e-6);
+
+    // E um item qualquer não é amuleto.
+    assert!(d.conteudo_do_amuleto(1796).is_none(), "poção não tem essência de amuleto");
+}
+
+/// B67 — a poção restaura ao longo do tempo, e o `elements.data` diz em quanto.
+#[test]
+fn a_pocao_de_vida_traz_o_total_e_o_tempo() {
+    let Some(d) = realm() else { return };
+    // Poção Pequena de Cura: 25 de vida em 10 s, recarga de 15 s.
+    let (hp, hp_s, mp, mp_s, recarga) = d.quanto_o_remedio_restaura_no_tempo(1796).expect("1796 é remédio");
+    assert_eq!((hp, hp_s), (25, 10), "hp_add_total/hp_add_time do elements");
+    assert_eq!((mp, mp_s), (0, 0));
+    assert_eq!(recarga, 15000, "cool_time");
+}

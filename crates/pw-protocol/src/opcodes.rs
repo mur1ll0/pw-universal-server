@@ -311,6 +311,9 @@ pub mod gamedata_s2c {
     pub const RECEIVE_EXP: u16 = 36;
     pub const LEVEL_UP: u16 = 37;
     pub const SELF_INFO_00: u16 = 38;
+    pub const SKILL_INTERRUPTED: u16 = 86;
+    pub const SELF_SKILL_INTERRUPTED: u16 = 87;
+    pub const SCENE_SERVICE_NPC_LIST: u16 = 390;
 
     /// Ligação constante → nome do comando no IR, conferida pelo teste.
     pub const CONFERIDOS: &[(&str, u16)] = &[
@@ -329,6 +332,9 @@ pub mod gamedata_s2c {
         ("RECEIVE_EXP", RECEIVE_EXP),
         ("LEVEL_UP", LEVEL_UP),
         ("SELF_INFO_00", SELF_INFO_00),
+        ("SKILL_INTERRUPTED", SKILL_INTERRUPTED),
+        ("SELF_SKILL_INTERRUPTED", SELF_SKILL_INTERRUPTED),
+        ("SCENE_SERVICE_NPC_LIST", SCENE_SERVICE_NPC_LIST),
     ];
 }
 

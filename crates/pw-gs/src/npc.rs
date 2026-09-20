@@ -58,6 +58,10 @@ pub mod servico {
     pub const DECOMPOR: i32 = 13;
     pub const SENHA_DO_ARMAZEM: i32 = 14;
     pub const ABRIR_ARMAZEM: i32 = 15;
+    /// `GP_NPCSEV_HATCHPET` — chocar/incubar ovo de mascote na Gerente de Mascotes.
+    pub const INCUBAR_PET: i32 = 28;
+    /// `GP_NPCSEV_RESTOREPET` — reverter mascote em ovo na Gerente de Mascotes.
+    pub const RESTAURAR_PET: i32 = 29;
 }
 
 /// O envelope do comando, com o corpo ainda por interpretar.

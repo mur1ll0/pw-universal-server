@@ -138,6 +138,21 @@ pub trait WorldProtocol: Send + Sync {
 
     /// PLAYER_ENTER_SLICE (12)
     fn player_enter_slice(&self, role_id: i32, vista: pw_core::VistaDoJogador) -> S2CGamedataSend;
+
+    /// SELF_SKILL_INTERRUPTED (87)
+    fn self_skill_interrupted(&self, reason: u8) -> S2CGamedataSend {
+        S2CGamedataSend::self_skill_interrupted(reason)
+    }
+
+    /// SKILL_INTERRUPTED (86)
+    fn skill_interrupted(&self, caster: i32) -> S2CGamedataSend {
+        S2CGamedataSend::skill_interrupted(caster)
+    }
+
+    /// SCENE_SERVICE_NPC_LIST (390)
+    fn scene_service_npc_list(&self, npcs: &[(i32, i32)]) -> S2CGamedataSend {
+        S2CGamedataSend::scene_service_npc_list(npcs)
+    }
 }
 
 // ProtocolAdapter é exportado canonicamente de crate::adapter

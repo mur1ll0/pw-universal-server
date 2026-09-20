@@ -667,6 +667,11 @@ pub trait Jogador {
     /// `ReceiveTaskExp` — um de cada vez, como `DeliverExperience`/`DeliverSP`.
     fn dar_exp(&mut self, exp: u32, sp: u32);
     fn dar_reputacao(&mut self, r: i32);
+    /// `SetCurPeriod` (`task/taskman.cpp:251-254`) → `gplayer_imp::SetSecLevel`: o **nível de
+    /// cultivo** novo, que o prêmio `m_ulNewPeriod` da missão define
+    /// (`Task/TaskProcess.cpp:1284`). Quem implementa avisa o cliente com
+    /// `TASK_DELIVER_LEVEL2` (160).
+    fn definir_cultivo(&mut self, nivel: u32);
     /// Um comando pronto para o cliente (o `TASK_VAR_DATA` com o aviso).
     fn avisar(&mut self, comando: Vec<u8>);
     /// `UnitRand` — `[0, 1)`.
@@ -686,6 +691,8 @@ pub trait Jogador {
     /// `TransportTo` (`taskman.cpp:504-507` → `LongJump`): leva o jogador a `pos` do mapa
     /// `mundo`, depois que a operação terminar.
     fn teleportar(&mut self, _mundo: u32, _pos: [f32; 3]) {}
+    /// `SummonMonster` (`TaskProcess.cpp:1189`): evoca monstro na cena perto do jogador.
+    fn invocar_monstro(&mut self, _monstro_tid: u32, _quantidade: u32, _raio: u32, _periodo_s: i32, _some_ao_morrer: bool) {}
 }
 
 /// Jogador vazio, só para limpar estrutura.
@@ -707,6 +714,7 @@ impl Jogador for SemJogador {
     fn tirar_dinheiro(&mut self, _: u32) {}
     fn dar_exp(&mut self, _: u32, _: u32) {}
     fn dar_reputacao(&mut self, _: i32) {}
+    fn definir_cultivo(&mut self, _: u32) {}
     fn avisar(&mut self, _: Vec<u8>) {}
     fn sortear(&mut self) -> f32 { 0.0 }
 }
@@ -1657,6 +1665,12 @@ impl<'a, J: Jogador> Motor<'a, J> {
         if p.reputation != 0 {
             self.j.dar_reputacao(repu);
         }
+        // `if (pAward->m_ulNewPeriod) pTask->SetCurPeriod(...)` (`TaskProcess.cpp:1284`):
+        // é assim que a missão de cultivo sobe o nível de cultivo — sem multiplicador, que o
+        // original não aplica aqui (B67).
+        if p.novo_cultivo != 0 {
+            self.j.definir_cultivo(p.novo_cultivo);
+        }
         let mut ret = 0;
         if !p.grupos_de_itens.is_empty() {
             let e = if escolha < 0 || escolha as usize >= p.grupos_de_itens.len() { 0 } else { escolha as usize };
@@ -1704,6 +1718,38 @@ impl<'a, J: Jogador> Motor<'a, J> {
         if p.nova_missao != 0 {
             if self.t(p.nova_missao).is_some_and(|n| n.parent.is_none()) {
                 self.aceitar(p.nova_missao, 0, true);
+            }
+        }
+        // `if (pAward->m_ulSummonedMonsters)` (`TaskProcess.cpp:1349-1400`).
+        if let Some(ref inv) = p.monstros_invocados {
+            if inv.sorteia_um {
+                let total_prob: f32 = inv.monstros.iter().map(|m| m.probabilidade).sum();
+                if (total_prob - 1.0).abs() < 0.00001 {
+                    let mut prob = self.j.sortear();
+                    let mut dado = false;
+                    for m in &inv.monstros {
+                        if !dado {
+                            if prob <= m.probabilidade {
+                                self.j.invocar_monstro(m.monstro, m.quantidade, inv.raio, m.periodo, inv.some_ao_morrer);
+                                dado = true;
+                            } else {
+                                prob -= m.probabilidade;
+                            }
+                        }
+                    }
+                } else {
+                    for m in &inv.monstros {
+                        if self.j.sortear() <= m.probabilidade {
+                            self.j.invocar_monstro(m.monstro, m.quantidade, inv.raio, m.periodo, inv.some_ao_morrer);
+                        }
+                    }
+                }
+            } else {
+                // Sem `m_bRandChoose` o original invoca **todos**, sem sortear
+                // (`TaskProcess.cpp:1427-1434`). Sortear aqui era divergência (B67).
+                for m in &inv.monstros {
+                    self.j.invocar_monstro(m.monstro, m.quantidade, inv.raio, m.periodo, inv.some_ao_morrer);
+                }
             }
         }
         // `if (pAward->m_ulTransWldId) pTask->TransportTo(...)` (`TaskProcess.cpp:1316-1317`),
@@ -2000,6 +2046,34 @@ impl<'a, J: Jogador> Motor<'a, J> {
         }
     }
 
+    /// `OnTaskMining` (`TaskServer.cpp:1116-1123`) / `ATaskTempl::CheckMining` (`TaskTempl.inl:2105-2148`).
+    pub fn colheu_mina(&mut self, task_id: u32) {
+        if task_id == 0 {
+            return;
+        }
+        let Some(idx) = (0..self.listas.ativa.quantidade as usize)
+            .find(|&i| self.listas.ativa.e[i].id as u32 == task_id && self.listas.ativa.e[i].valida)
+        else {
+            return;
+        };
+        let Some(t) = self.t(task_id) else { return };
+        if t.metodo != metodo::COLETAR_ITENS || t.item_collections.is_empty() {
+            return;
+        }
+        let item_pedido = &t.item_collections[0];
+        let atual = self.j.contar(item_pedido.id, item_pedido.comum);
+        if item_pedido.quantidade != 0 && atual >= item_pedido.quantidade {
+            return;
+        }
+        if self.j.slots_livres(item_pedido.comum) >= 1 {
+            self.j.dar_item(item_pedido.id, 1, item_pedido.comum, 0);
+        }
+        let en = self.listas.ativa.e[idx];
+        if !en.finalizada() && self.tem_todos_os_itens(t) {
+            self.ao_finalizar(t, idx);
+        }
+    }
+
     /// `OnTaskCheckAward` (`TaskServer.cpp:767-862`) — entregar no NPC.
     pub fn entregar_no_npc(&mut self, id: u32, escolha: i32) -> bool {
         let Some(idx) = (0..self.listas.ativa.quantidade as usize).find(|&i| self.listas.ativa.e[i].id as u32 == id && self.listas.ativa.e[i].valida) else {
@@ -2174,6 +2248,7 @@ mod tests {
         fn tirar_dinheiro(&mut self, n: u32) { self.dinheiro -= n.min(self.dinheiro); }
         fn dar_exp(&mut self, exp: u32, sp: u32) { self.exp += exp; self.sp += sp; }
         fn dar_reputacao(&mut self, _: i32) {}
+    fn definir_cultivo(&mut self, _: u32) {}
         fn avisar(&mut self, c: Vec<u8>) { self.avisos.push(c); }
         fn sortear(&mut self) -> f32 { 0.0 }
         fn posicao(&self) -> (u32, [f32; 3]) { self.posicao }
