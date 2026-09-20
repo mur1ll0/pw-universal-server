@@ -190,6 +190,18 @@ impl Bolsa {
     /// modelo no tooltip ("Destreza +1~2") e o servidor não somava nada, porque não havia
     /// propriedade adicional sorteada nenhuma (relato do set Halo, B60).
     pub fn empilhar_gerado(&mut self, tid: u32, quantidade: u32, dados: &GameDataManager) -> Option<Empilhado> {
+        // Item de voo: o conteúdo é próprio (`generate_flysword`), e sem ele o item chega
+        // com máscara de classe zero e o cliente não deixa usar (B68).
+        if let Some(octetos) = dados.conteudo_do_item_de_voo(tid) {
+            let mut primeiro = None;
+            for _ in 0..quantidade.max(1) {
+                match self.guardar_equipamento(tid, &octetos, dados) {
+                    Some(e) => primeiro = primeiro.or(Some(e)),
+                    None => break,
+                }
+            }
+            return primeiro;
+        }
         if let Some(octetos) = dados.gerar_octetos_do_ovo(tid) {
             let mut primeiro = None;
             for _ in 0..quantidade.max(1) {

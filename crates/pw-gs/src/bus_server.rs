@@ -647,12 +647,12 @@ impl BusServer {
     /// intenção e errado no comando.
     async fn avisar_vida_propria(&self, roleid: i32) {
         let dados = self.world.read().await.dados_do_proprio(roleid);
-        let Some((nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp)) = dados else {
+        let Some((nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados else {
             return;
         };
         self.enviar_ao_jogador(
             roleid,
-            S2CGamedataSend::self_info_00(nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp).data,
+            S2CGamedataSend::self_info_00(nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
         )
         .await;
     }
@@ -1414,9 +1414,15 @@ impl BusServer {
         // no original, npc.cpp:1867 e npc.cpp:2354-2364): o monstro só reage e persegue
         // quando o projétil/golpe atinge o alvo (aplicar_dano_no_monstro). Chamar add_threat
         // aqui fazia o monstro correr antes da flecha sair (B67).
-        // Atacar põe em combate por 15 s (`DoAttack`, `player.cpp:3062`).
+        // Atacar põe em combate por 15 s (`DoAttack`, `player.cpp:3062`) e **enche o chi**:
+        // `if (_ap_per_hit > 0) ModifyAP(_ap_per_hit)` no fim do `DoAttack`
+        // (`player.cpp:3091-3093`), com o `ap_per_hit` da classe (`angro_increase`).
+        let mut chi_mudou = false;
         if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
             p.combate_s = crate::progressao::COMBATE_AO_ATACAR_S;
+            if p.ap_por_golpe > 0 {
+                chi_mudou = p.mexer_no_chi(p.ap_por_golpe);
+            }
         }
         // A vida só cai depois da animação: `InsertDamageEntry(dano, attack.speed)`
         // (`actobject.cpp:1758-1776`) adia o `GM_MSG_HURT` em `attack_delay` tiques de 50 ms
@@ -1425,6 +1431,10 @@ impl BusServer {
         mundo.adiar_dano(alvo, roleid as i64, dano, velocidade as u32 * 50, false);
         drop(mundo);
         debug!("mundo: golpe normal de {roleid} em {alvo}: dano {dano} (vida cai em {} ms)", velocidade as u32 * 50);
+        if chi_mudou {
+            // `SetRefreshState()` do `ModifyAP`: o cliente recebe a barra nova.
+            self.avisar_vida_propria(roleid).await;
+        }
         self.gastar_municao(roleid).await;
         // A arma se gasta no golpe normal, não na habilidade (`DoWeaponOperation<0>` está em
         // `FillAttackMsg` e não em `FillEnchantMsg`, `player.cpp:3133` e `:3174`).
@@ -1474,6 +1484,11 @@ impl BusServer {
     /// Os três só têm cabeçalho. O `CANCEL_ACTION` cai no mesmo lugar do `STAND_UP` porque
     /// cancelar uma ação em curso é, para o corpo do personagem, ficar de pé.
     async fn postura(&self, roleid: i32, sentado: bool, envio: &EnvioAoCliente) {
+        // Meditar liga o `sit_down_filter`, que dá 15 de chi por batimento de 1 s
+        // (`gs/sitdown_filter.cpp:19-34`).
+        if let Some(p) = self.world.write().await.players.get_mut(&(roleid as i64)) {
+            p.sentado = sentado;
+        }
         let cmd = if sentado {
             S2CGamedataSend::object_sit_down(roleid)
         } else {
@@ -1754,13 +1769,13 @@ impl BusServer {
         };
 
         if let Some((hp, max_hp, mp, max_mp)) = curou {
-            let (nivel, exp, sp) = {
+            let (nivel, exp, sp, ap, max_ap) = {
                 let mundo = self.world.read().await;
                 mundo
                     .players
                     .get(&(roleid as i64))
-                    .map(|p| (p.level, p.exp, p.sp))
-                    .unwrap_or((1, 0, 0))
+                    .map(|p| (p.level, p.exp, p.sp, p.ap, p.max_ap))
+                    .unwrap_or((1, 0, 0, 0, 0))
             };
             info!("mundo: {roleid} usou o item {} e ficou com {hp}/{max_hp}", u.item_id);
             self.responder(
@@ -1774,6 +1789,8 @@ impl BusServer {
                     max_mp,
                     exp as i32,
                     sp as i32,
+                    ap,
+                    max_ap,
                 )
                 .data,
                 envio,
@@ -2372,9 +2389,11 @@ impl BusServer {
                 vitima.level,
                 vitima.exp,
                 vitima.sp,
+                vitima.ap,
+                vitima.max_ap,
             )
         };
-        let (hp, max_hp, mp, max_mp, nivel, exp, sp) = estado;
+        let (hp, max_hp, mp, max_mp, nivel, exp, sp, ap, max_ap) = estado;
 
         info!(
             "mundo: {roleid} conjurou {skill_id} em {alvo} — {} de {}, alvo com {hp}/{max_hp}",
@@ -2488,6 +2507,8 @@ impl BusServer {
             max_mp,
             exp as i32,
             sp as i32,
+            ap,
+            max_ap,
         )
         .data;
         if alvo_id == roleid {
@@ -3142,8 +3163,8 @@ impl BusServer {
                 };
                 p.hp = p.max_hp;
                 p.mp = p.max_mp;
-                let (nivel, hp, max_hp, mp, max_mp, exp, sp) =
-                    (p.level, p.hp, p.max_hp, p.mp, p.max_mp, p.exp, p.sp);
+                let (nivel, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap) =
+                    (p.level, p.hp, p.max_hp, p.mp, p.max_mp, p.exp, p.sp, p.ap, p.max_ap);
                 drop(mundo);
 
                 self.responder(
@@ -3157,6 +3178,8 @@ impl BusServer {
                         max_mp,
                         exp as i32,
                         sp as i32,
+                        ap,
+                        max_ap,
                     )
                     .data,
                     envio,
@@ -3170,6 +3193,7 @@ impl BusServer {
                 debug!("mundo: {roleid} pediu item de missão ao NPC (serviço ainda não tratado)");
             }
 
+            servico::TELEPORTAR => self.teleportar_pela_transportadora(roleid, c, envio).await,
             servico::APRENDER_HABILIDADE => self.aprender(roleid, c).await,
             servico::INCUBAR_PET => self.incubar_mascote(roleid, c).await,
 
@@ -3193,14 +3217,14 @@ impl BusServer {
             let mundo = self.world.read().await;
             (mundo.dados_do_proprio(roleid), mundo.dinheiro(roleid))
         };
-        let Some((nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp)) = dados else {
+        let Some((nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados else {
             debug!("mundo: {roleid} pediu o próprio estado sem estar neste mundo");
             return;
         };
 
         self.responder(
             roleid,
-            S2CGamedataSend::self_info_00(nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp).data,
+            S2CGamedataSend::self_info_00(nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
             envio,
         )
         .await;
@@ -3663,6 +3687,13 @@ impl BusServer {
         // negativos no item (relato de 2026-09-19, B67).
         if octetos.is_empty() {
             if let Some(o) = dados.conteudo_do_amuleto(item.item_id) {
+                octetos = o;
+            }
+        }
+        // Item de voo (`FLYSWORD_ESSENCE`): sem o bloco, a máscara de classes vai zerada e
+        // o cliente recusa usá-lo — era a "Glória de Shalim" (B68).
+        if octetos.is_empty() {
+            if let Some(o) = dados.conteudo_do_item_de_voo(item.item_id) {
                 octetos = o;
             }
         }

@@ -228,6 +228,9 @@ pub struct GameDataManager {
     /// O que cada NPC entrega, recebe e ensina, pelo id do `NPC_ESSENCE` — ver
     /// [`crate::servicos`].
     pub servicos_de_npc: HashMap<u32, crate::servicos::ServicosDoNpc>,
+    /// Os pontos de destino do mundo (`world_targets.sev`), que é onde ficam as coordenadas
+    /// dos destinos que o `NPC_TRANSMIT_SERVICE` cita por id.
+    pub pontos_do_mundo: crate::world_targets::PontosDoMundo,
     /// `pile_num_max` de cada item.
     pub pilhas: HashMap<u32, u32>,
     /// As minas (`MINE_ESSENCE`) com as regras de carga do original — ver [`crate::minas`].
@@ -392,6 +395,16 @@ impl GameDataManager {
                     rel.lidos.push("dyn_tasks.data (cabeçalho)".into());
                 }
                 Err(e) => rel.falhou("dyn_tasks.data", e),
+            }
+        }
+
+        if let Some(data) = rel.ler(dir, "world_targets.sev") {
+            match crate::world_targets::PontosDoMundo::load_from_bytes(&data) {
+                Ok(p) => {
+                    rel.lidos.push(format!("world_targets.sev ({} pontos)", p.len()));
+                    self.pontos_do_mundo = p;
+                }
+                Err(e) => rel.falhou("world_targets.sev", e),
             }
         }
 
@@ -632,6 +645,53 @@ impl GameDataManager {
             return Some(b);
         }
         None
+    }
+
+    /// O bloco de dados de um item de voo (`FLYSWORD_ESSENCE`) — espada, asa ou montaria.
+    ///
+    /// `generate_flysword` (`gs/template/generate_item_temp.h:1126-1165`) escreve, nesta
+    /// ordem: `int cur_time` (metade do máximo), `int max_time`
+    /// (`RandNormal(time_max_min, time_max_max)`), `short require_player_level_min`,
+    /// `char level`, `char 0` (refino), **`int character_combo_id`** — a máscara de classes —,
+    /// `int time_increase_per_element`, `float speed_increase`, `float speed_rush_increase`,
+    /// e no fim os 2 bytes da etiqueta de fabricante (`m_byMadeFrom` + tamanho, lidos por
+    /// `CECIvtrEquip::ReadMakerInfo`). São **30 bytes**, e o cliente lê exatamente isso
+    /// (`IVTR_ESSENCE_FLYSWORD`, `EC_IvtrTypes.h:269-280`).
+    ///
+    /// Sem este bloco o item chega com máscara de classe **zero** e o cliente recusa usá-lo —
+    /// era o caso da "Glória de Shalim" (relato de 2026-09-20).
+    pub fn conteudo_do_item_de_voo(&self, item_id: u32) -> Option<Vec<u8>> {
+        let g = self.elements_generic.as_ref()?;
+        let r = g
+            .get("FLYSWORD_ESSENCE")
+            .iter()
+            .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?;
+        // Os campos de tempo vêm como `float` no arquivo (`(int)ess->time_max_min` no
+        // original), então ler só `as_i32` devolvia zero.
+        let f = |n: &str| match r.get(n) {
+            Some(crate::generic_elements::FieldValue::Float(v)) => *v,
+            Some(crate::generic_elements::FieldValue::Int(v)) => *v as f32,
+            _ => 0.0,
+        };
+        let i = |n: &str| f(n) as i32;
+        // `RandNormal(min, max)` com min == max é o próprio valor; com faixa, a média dos
+        // dois uniformes que o original usa (ver `pw_gs::geracao`).
+        let (t_min, t_max) = (i("time_max_min"), i("time_max_max"));
+        let t = if t_min >= t_max { t_min } else { (t_min + t_max) / 2 };
+
+        let mut b = Vec::with_capacity(30);
+        b.extend_from_slice(&((t as f32 * 0.5) as i32).to_le_bytes()); // cur_time
+        b.extend_from_slice(&t.to_le_bytes()); // max_time
+        b.extend_from_slice(&(i("require_player_level_min") as i16).to_le_bytes());
+        b.push(i("level").clamp(0, 255) as u8);
+        b.push(0); // improve_level (refino)
+        b.extend_from_slice(&i("character_combo_id").to_le_bytes());
+        b.extend_from_slice(&i("time_increase_per_element").to_le_bytes());
+        b.extend_from_slice(&f("speed_increase_min").to_le_bytes());
+        b.extend_from_slice(&f("speed_rush_increase_min").to_le_bytes());
+        b.push(0); // m_byMadeFrom
+        b.push(0); // tamanho do nome do fabricante
+        Some(b)
     }
 
     /// Informa se o item pertence à bolsa de missões (`TaskInventory`).

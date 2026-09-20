@@ -672,6 +672,9 @@ pub trait Jogador {
     /// (`Task/TaskProcess.cpp:1284`). Quem implementa avisa o cliente com
     /// `TASK_DELIVER_LEVEL2` (160).
     fn definir_cultivo(&mut self, nivel: u32);
+    /// `SetFuryUpperLimit` → `gplayer_imp::SetMaxAP` (`gs/task/taskman.cpp:498-501`): o teto
+    /// da barra de chi que o prêmio `m_ulFuryULimit` concede.
+    fn definir_teto_de_chi(&mut self, teto: u32);
     /// Um comando pronto para o cliente (o `TASK_VAR_DATA` com o aviso).
     fn avisar(&mut self, comando: Vec<u8>);
     /// `UnitRand` — `[0, 1)`.
@@ -715,6 +718,7 @@ impl Jogador for SemJogador {
     fn dar_exp(&mut self, _: u32, _: u32) {}
     fn dar_reputacao(&mut self, _: i32) {}
     fn definir_cultivo(&mut self, _: u32) {}
+    fn definir_teto_de_chi(&mut self, _: u32) {}
     fn avisar(&mut self, _: Vec<u8>) {}
     fn sortear(&mut self) -> f32 { 0.0 }
 }
@@ -1671,6 +1675,11 @@ impl<'a, J: Jogador> Motor<'a, J> {
         if p.novo_cultivo != 0 {
             self.j.definir_cultivo(p.novo_cultivo);
         }
+        // `if (pAward->m_ulFuryULimit) pTask->SetFuryUpperLimit(...)` — é assim que a barra
+        // de chi aparece e cresce (99 → 199 → 299 → 399 nas missões do realm_155), B68.
+        if p.teto_de_chi != 0 {
+            self.j.definir_teto_de_chi(p.teto_de_chi);
+        }
         let mut ret = 0;
         if !p.grupos_de_itens.is_empty() {
             let e = if escolha < 0 || escolha as usize >= p.grupos_de_itens.len() { 0 } else { escolha as usize };
@@ -2249,6 +2258,7 @@ mod tests {
         fn dar_exp(&mut self, exp: u32, sp: u32) { self.exp += exp; self.sp += sp; }
         fn dar_reputacao(&mut self, _: i32) {}
     fn definir_cultivo(&mut self, _: u32) {}
+    fn definir_teto_de_chi(&mut self, _: u32) {}
         fn avisar(&mut self, c: Vec<u8>) { self.avisos.push(c); }
         fn sortear(&mut self) -> f32 { 0.0 }
         fn posicao(&self) -> (u32, [f32; 3]) { self.posicao }

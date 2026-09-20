@@ -65,6 +65,8 @@ fn arqueiro() -> CharacterDetails {
         skills: Vec::new(),
         quests: Vec::new(),
         waypoints: Vec::new(),
+        ap: 0,
+        max_ap: 0,
         custom_appearance: serde_json::Value::Null,
         version_data: serde_json::Value::Null,
         created_at: Utc::now(),

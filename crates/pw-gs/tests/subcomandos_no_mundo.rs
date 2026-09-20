@@ -275,6 +275,7 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
             missoes_recebidas: vec![MISSAO_DO_NPC],
             habilidades: vec![HABILIDADE_DO_TREINADOR as u32],
             deposito: 0,
+            destinos: Vec::new(),
         },
     );
     dados.habilidades.por_id.insert(

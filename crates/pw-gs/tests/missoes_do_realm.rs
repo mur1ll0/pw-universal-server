@@ -35,6 +35,7 @@ impl Jogador for Arqueiro {
     fn dar_exp(&mut self, exp: u32, sp: u32) { self.exp += exp; self.sp += sp; }
     fn dar_reputacao(&mut self, _: i32) {}
     fn definir_cultivo(&mut self, _: u32) {}
+    fn definir_teto_de_chi(&mut self, _: u32) {}
     fn avisar(&mut self, c: Vec<u8>) { self.avisos.push(c); }
     fn sortear(&mut self) -> f32 { 0.5 }
 }
@@ -90,6 +91,7 @@ fn um_barbaro_nao_pega_a_missao_dos_alados() {
         fn dar_exp(&mut self, _: u32, _: u32) {}
         fn dar_reputacao(&mut self, _: i32) {}
         fn definir_cultivo(&mut self, _: u32) {}
+    fn definir_teto_de_chi(&mut self, _: u32) {}
         fn avisar(&mut self, c: Vec<u8>) { self.0.avisos.push(c); }
         fn sortear(&mut self) -> f32 { 0.5 }
     }

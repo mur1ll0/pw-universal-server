@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS test.characters (
     cultivation INT DEFAULT 0 NOT NULL,
     -- Pontos de teleporte descobertos: u16 LE em sequência (`_waypoint_list` do gs)
     waypoints BYTEA DEFAULT ''::bytea NOT NULL,
+    -- Barra de chi: atual e teto (o teto vem do prêmio `m_ulFuryULimit` de missão)
+    ap INT DEFAULT 0 NOT NULL,
+    max_ap INT DEFAULT 0 NOT NULL,
     exp BIGINT DEFAULT 0 NOT NULL,
     sp BIGINT DEFAULT 0 NOT NULL,
     hp INT DEFAULT 100 NOT NULL,

@@ -154,6 +154,8 @@ pub struct TaskReward {
     pub teleporte: Option<(u32, [f32; 3])>,
     /// `m_ulNewPeriod` — o novo nível de cultivo (0 = a missão não mexe nele).
     pub novo_cultivo: u32,
+    /// `m_ulFuryULimit` — o novo teto da barra de chi (0 = a missão não mexe nele).
+    pub teto_de_chi: u32,
     pub grupos_de_itens: Vec<GrupoDeItens>,
     /// `m_SummonedMonsters` — monstros invocados ao premiar/concluir a missão.
     pub monstros_invocados: Option<InvocacaoDeMonstros>,
@@ -174,6 +176,7 @@ impl TaskReward {
             || self.realm_exp != 0
             || self.nova_missao != 0
             || self.novo_cultivo != 0
+            || self.teto_de_chi != 0
             || self.teleporte.is_some()
             || self.grupos_de_itens.iter().any(|g| !g.itens.is_empty())
             || self.monstros_invocados.is_some()
@@ -527,6 +530,12 @@ mod v129 {
         /// NewTask, SP, Reputation, NewPeriod`). Entregue por `SetCurPeriod`
         /// (`TaskProcess.cpp:1284`).
         pub const NOVO_CULTIVO: usize = 25;
+        /// `m_ulFuryULimit` — o **teto da barra de chi** que a missão concede
+        /// (`Task/TaskTempl.h:1136-1152`: … `NewPeriod, NewRelayStation, StorehouseSize×4,
+        /// InventorySize, PetInventorySize, FuryULimit, TransWldId`). Entregue por
+        /// `SetFuryUpperLimit` → `gplayer_imp::SetMaxAP` (`gs/task/taskman.cpp:498-501`).
+        /// O deslocamento seguinte, 61, é o `MUNDO_DO_TELEPORTE` já validado.
+        pub const TETO_DE_CHI: usize = 57;
         pub const MUNDO_DO_TELEPORTE: usize = 61;
         pub const PONTO_DO_TELEPORTE: usize = 65;
         pub const USA_COEF_DE_NIVEL: usize = 82;
@@ -678,6 +687,7 @@ fn premio(l: &mut Leitor) -> Result<TaskReward> {
         money: u32_em(a, p::DINHEIRO) as i64,
         reputation: u32_em(a, p::REPUTACAO) as i32,
         novo_cultivo: u32_em(a, p::NOVO_CULTIVO),
+        teto_de_chi: u32_em(a, p::TETO_DE_CHI),
         realm_exp: u32_em(a, p::REALM_EXP),
         nova_missao: u32_em(a, p::NOVA_MISSAO),
         teleporte: (mundo != 0).then(|| {

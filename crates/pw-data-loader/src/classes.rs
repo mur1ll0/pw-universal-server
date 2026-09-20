@@ -61,6 +61,11 @@ pub struct ConfigDeClasse {
     /// quando dá zero ou menos) — a conversão fica em [`Self::ataque_em_ticks`].
     pub velocidade_de_ataque: f32,
     pub alcance_de_ataque: f32,
+    /// `angro_increase` — quanto de **chi** cada golpe normal acrescenta
+    /// (`player_template::__LoadDataFromDataMan`: `_class_list[cls].ap_per_hit =
+    /// config.angro_increase`, `gs/playertemplate.cpp:286`; o ganho em si está em
+    /// `gplayer_imp::DoAttack`, `player.cpp:3091-3093`). Arqueiro: 5.
+    pub chi_por_golpe: i32,
     pub regeneracao_de_vida: i32,
     pub regeneracao_de_mana: i32,
     pub velocidade_andando: f32,
@@ -160,6 +165,7 @@ pub fn carregar(elements: &GenericElementsData) -> TabelaDeClasses {
                 resistencia_por_nivel: f("lvlup_magicdefence"),
                 velocidade_de_ataque: f("attack_speed"),
                 alcance_de_ataque: f("attack_range"),
+                chi_por_golpe: i("angro_increase"),
                 regeneracao_de_vida: i("hp_gen"),
                 regeneracao_de_mana: i("mp_gen"),
                 velocidade_andando: f("walk_speed"),

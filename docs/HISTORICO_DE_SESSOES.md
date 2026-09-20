@@ -7912,6 +7912,71 @@ realm) estão na memória `pw_universal_infra_access`.
     arma, e o teste-guarda do `pw-link` ensinado a ler braço com condição. Suíte com o banco:
     **598 testes, todos passando**.
 
+69. **Sessão 2026-09-20 (parte 3): a barra de chi, o item de voo sem classe, e o teleporte
+    que faltava.**
+
+    ### a. O chi só existe depois que uma missão o concede
+
+    "Ao atacar não está enchendo o chi." O mecanismo inteiro:
+
+    - O chi é o `_basic.ap` do original (a "fúria"), preso entre 0 e `_base_prop.max_ap`
+      (`ModifyAP`, `gs/actobject.h:1642-1657`).
+    - **O teto vem de missão**: prêmio `m_ulFuryULimit` (deslocamento **57** do `AWARD_DATA`,
+      entre `PetInventorySize` e `TransWldId`, que já estavam validados) →
+      `SetFuryUpperLimit` → `gplayer_imp::SetMaxAP` (`gs/task/taskman.cpp:498-501`). São 8
+      missões no `realm_155`, e a primeira é a **32394 "Só um Pouco de Progresso"** — a mesma
+      de nível 9 que o Murillo fez, com teto **99**; depois 199, 299 e 399.
+    - **O ganho por golpe** é o `ap_per_hit` da classe, que o `player_template` copia do
+      `angro_increase` do `CHARRACTER_CLASS_CONFIG` (`gs/playertemplate.cpp:286`); o Arqueiro
+      ganha **5** por golpe normal (`DoAttack`, `player.cpp:3091-3093`).
+    - **Meditar** dá 15 por batimento de 1 s (`sit_down_filter::Heartbeat`,
+      `gs/sitdown_filter.cpp:19-34`).
+    - E o valor viaja no `iAP`/`iMaxAP` do `SELF_INFO_00`, que nós mandávamos **zero fixo**
+      (`EC_GPDataType.h:1739-1752`).
+
+    Faltava tudo isso. Agora o teto entra pelo prêmio, o golpe e a meditação enchem, o valor
+    vai ao cliente e fica em `characters.ap`/`max_ap`. **Não há ganho ao apanhar** no 1.5.5 —
+    procurei as dez chamadas de `ModifyAP` do servidor e nenhuma está no caminho de levar
+    dano. O eaa foi acertado para teto 99 (a missão que ele já fez).
+
+    ### b. O item de voo sem classe
+
+    "Glória de Shalim" (45782, `FLYSWORD_ESSENCE`) entrou na bolsa **sem bloco de dados**. O
+    cliente lê a máscara de classes de dentro do bloco (`IVTR_ESSENCE_FLYSWORD`,
+    `EC_IvtrTypes.h:269-280`), então sem ele a máscara é zero e nenhuma classe pode usar.
+
+    O conteúdo são 30 bytes (`generate_flysword`, `gs/template/generate_item_temp.h:1126-1165`):
+    `cur_time` (metade do máximo), `max_time`, `require_player_level_min`, `level`, refino,
+    **`character_combo_id`**, `time_increase_per_element`, `speed_increase`,
+    `speed_rush_increase`, mais os 2 bytes da etiqueta de fabricante que o
+    `ReadMakerInfo` consome (`EC_IvtrEquip.cpp:124-149`). Um detalhe: os campos de tempo são
+    **float** no arquivo (o original faz `(int)ess->time_max_min`), e lê-los como inteiro
+    devolvia zero.
+
+    Agora o prêmio de missão gera o bloco, o `item_info` o monta para item que já esteja sem
+    ele, e o item do eaa foi acertado por
+    `scripts/2026_09_20_gloria_de_shalim_do_eaa.sql`.
+
+    ### c. O teleporte: a coordenada estava no `world_targets.sev`
+
+    O que faltava no B68 era de onde vem a posição de cada destino. Está num arquivo do
+    próprio realm que ninguém lia: **`world_targets.sev`** —
+    `u32 quantidade` e registros de 24 bytes `{ i32 id; i32 world_tag; f32 x,y,z; i32 ordem }`.
+    No `realm_155` são 92 pontos em 2.212 bytes, fechando no último byte, e os **427 destinos
+    citados pelas 95 transportadoras estão todos lá**.
+
+    Com isso o serviço ficou igual ao original (`transmit_provider`/`transmit_executor`,
+    `gs/serviceprovider.cpp:683-852`): o cliente manda só o **índice** do destino na lista
+    daquele NPC; o servidor confere índice, nível (`required_level`) e dinheiro (`fee`), cobra
+    com `SPEND_MONEY` e teleporta com o equivalente do `LongJump`.
+
+    ### d. Provas
+
+    `o_chi_vem_da_classe_e_o_teto_vem_da_missao` (5 por golpe do Arqueiro; 99, 199 e 399 nas
+    missões) e `o_world_targets_fecha_e_tem_os_destinos_citados` (92 pontos, e todo destino
+    citado tem coordenada). Suíte com o banco: **599 testes**; o arquivo de tempo passa 64/64
+    sozinho.
+
 Validação disponível e acordada com o usuário: Docker + clientes reais (1.2.6, 1.5.5) com
 envio de logs, captura de tráfego (Wireshark/pcap) e execução dos binários originais para
 comparação lado a lado.

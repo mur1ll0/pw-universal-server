@@ -1050,7 +1050,7 @@ impl WorldInstance {
     /// respondia `120/120/280/280` para qualquer personagem, com exp e sp zerados —
     /// a **terceira** aparição do mesmo `120/280` escrito no código (itens 37 e 45).
     #[allow(clippy::type_complexity)]
-    pub fn dados_do_proprio(&self, role_id: RoleId) -> Option<(i16, u8, i32, i32, i32, i32, i32, i32)> {
+    pub fn dados_do_proprio(&self, role_id: RoleId) -> Option<(i16, u8, i32, i32, i32, i32, i32, i32, i32, i32)> {
         let p = self.players.get(&(role_id as i64))?;
         Some((
             p.level as i16,
@@ -1061,6 +1061,8 @@ impl WorldInstance {
             p.max_mp,
             p.exp.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
             p.sp.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+            p.ap,
+            p.max_ap,
         ))
     }
 
@@ -1344,6 +1346,8 @@ impl WorldInstance {
                         &player.position,
                     )
                     .await;
+                // A barra de chi anda junto (`_basic.ap`/`_base_prop.max_ap` do original).
+                let _ = self.char_repo.salvar_chi(player.role_id, player.ap, player.max_ap).await;
                 if let Err(e) = r {
                     falhas += 1;
                     warn!(

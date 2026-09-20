@@ -22,6 +22,7 @@ pub mod progressao;
 pub mod ptemplate;
 pub mod tasks;
 pub mod terreno;
+pub mod world_targets;
 pub mod validator;
 
 pub use aipolicy::AiPolicyData;

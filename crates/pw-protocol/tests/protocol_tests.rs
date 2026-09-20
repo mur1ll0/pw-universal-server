@@ -173,7 +173,7 @@ fn test_select_role_response_codec() {
 #[test]
 fn test_gamedatasend_s2c_subcommands() {
     // 1. SELF_INFO_00 (CMD 38)
-    let p1 = S2CGamedataSend::self_info_00(10, 32, 500, 500, 300, 300, 1000, 500);
+    let p1 = S2CGamedataSend::self_info_00(10, 32, 500, 500, 300, 300, 1000, 500, 40, 99);
     assert!(!p1.data.is_empty());
     assert_eq!(u16::from_le_bytes([p1.data[0], p1.data[1]]), 38);
 

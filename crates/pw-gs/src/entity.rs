@@ -156,6 +156,18 @@ pub struct PlayerEntity {
     /// (179) — o comando que faz o cliente anunciar "novo ponto de teleporte" com o nome do
     /// lugar (`CECHostPlayer::OnMsgHstWayPoint`, `EC_HostMsg.cpp:4681-4720`).
     pub waypoints: Vec<u16>,
+    /// A barra de **chi** ("fúria"): `_basic.ap` e `_base_prop.max_ap`
+    /// (`gs/actobject.h:1634-1657`). O teto nasce zero e é **concedido por missão**
+    /// (`m_ulFuryULimit` → `SetFuryUpperLimit` → `SetMaxAP`, `gs/task/taskman.cpp:498-501`);
+    /// enquanto for zero, o jogador não tem barra. O ganho por golpe normal é o
+    /// `angro_increase` da classe (`player.cpp:3091-3093`).
+    pub ap: i32,
+    pub max_ap: i32,
+    /// `_ap_per_hit` — quanto cada golpe normal acrescenta ao chi.
+    pub ap_por_golpe: i32,
+    /// O jogador está meditando (`SIT_DOWN`). Enquanto estiver, o batimento de 1 s dá
+    /// **15 de chi** (`sit_down_filter::Heartbeat`, `gs/sitdown_filter.cpp:19-34`).
+    pub sentado: bool,
     /// As listas de missão — ver [`crate::missoes`].
     pub missoes: crate::missoes::ListasDeMissao,
     /// A mina que está colhendo (`session_gather`), se alguma.
@@ -673,6 +685,20 @@ pub fn com_realce(valor: i32, porcento: i32) -> i32 {
     resultado(valor, 0, porcento)
 }
 
+impl PlayerEntity {
+    /// `gactive_imp::ModifyAP` (`gs/actobject.h:1642-1657`): soma ao chi e prende entre 0 e
+    /// o teto. Devolve `true` quando o valor mudou — é o `SetRefreshState()` do original,
+    /// que faz o estado ir ao cliente.
+    pub fn mexer_no_chi(&mut self, delta: i32) -> bool {
+        let novo = (self.ap + delta).clamp(0, self.max_ap.max(0));
+        if novo == self.ap {
+            return false;
+        }
+        self.ap = novo;
+        true
+    }
+}
+
 impl MonsterEntity {
     /// `run_speed` com `Slow`/`Speedup` (`UpdateSpeed`, `playertemplate.h:1091-1092`).
     pub fn corrida(&self) -> f32 {
@@ -872,6 +898,10 @@ impl PlayerEntity {
             recargas: std::collections::HashMap::new(),
             npc_em_conversa: None,
             waypoints: p.waypoints.clone(),
+            ap: p.ap,
+            max_ap: p.max_ap,
+            ap_por_golpe: cfg.map(|c| c.chi_por_golpe).unwrap_or(0),
+            sentado: false,
             missoes: crate::missoes::ListasDeMissao::default(),
             coleta: None,
             equipamento: Equipamento::default(),

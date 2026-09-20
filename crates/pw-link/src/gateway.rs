@@ -821,16 +821,19 @@ impl LinkGateway {
                         gshop3,
                     ))).await?;
 
-                    // 2. Envia SELF_INFO_00 (Comando 38) - Status vitais, nível e permissão de GM
+                    // 2. Envia SELF_INFO_00 (38) — vitais, nível de **cultivo** (não o de GM:
+                    // o `Level2` do comando é o cultivo, `EC_Player.cpp:7447`) e a barra de chi.
                     tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_info_00(
                         details.level as i16,
-                        session.sec_level,
+                        details.cultivation.clamp(0, 255) as u8,
                         details.hp,
                         details.hp,
                         details.mp,
                         details.mp,
                         details.exp as i32,
                         details.sp as i32,
+                        details.ap,
+                        details.max_ap,
                     ))).await?;
 
                     // 3. Envia PLAYER_EXT_PROP_MOVE (Comando 54) - Velocidades de movimento (4.8 m/s corrida, 5.0 m/s voo)

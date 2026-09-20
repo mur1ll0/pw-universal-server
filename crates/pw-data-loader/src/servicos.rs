@@ -29,6 +29,23 @@ pub struct ServicosDoNpc {
     pub missoes_recebidas: Vec<u32>,
     /// `NPC_SKILL_SERVICE.id_skills[256]`, ordenados.
     pub habilidades: Vec<u32>,
+    /// `NPC_TRANSMIT_SERVICE.targets[32]` — os destinos da transportadora, **na ordem do
+    /// arquivo**: é por índice que o cliente pede o teleporte
+    /// (`transmit_provider::TryServe`, `gs/serviceprovider.cpp:771-790`).
+    pub destinos: Vec<DestinoDeTeleporte>,
+}
+
+/// Um destino de transportadora (`NPC_TRANSMIT_SERVICE.targets_N_*`).
+///
+/// A coordenada **não** está aqui: o `id_ponto` remete ao `world_targets.sev`
+/// (`crate::world_targets`), que é de onde o original monta o `transmit_entry`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DestinoDeTeleporte {
+    pub id_ponto: i32,
+    /// `fee` — o preço em moedas.
+    pub preco: i32,
+    /// `required_level` — nível mínimo do jogador.
+    pub nivel: i32,
 }
 
 fn i(r: &Record, campo: &str) -> i32 {
@@ -57,6 +74,7 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
     let saidas = por_id(g, "NPC_TASK_OUT_SERVICE");
     let entradas = por_id(g, "NPC_TASK_IN_SERVICE");
     let ensinos = por_id(g, "NPC_SKILL_SERVICE");
+    let transportes = por_id(g, "NPC_TRANSMIT_SERVICE");
     g.get("NPC_ESSENCE")
         .iter()
         .filter_map(|npc| {
@@ -70,8 +88,26 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
                 deposito: saida.map(|r| i(r, "storage_id").max(0) as u32).unwrap_or(0),
                 missoes_recebidas: lista(entradas.get(&i(npc, "id_task_in_service")), "id_tasks_"),
                 habilidades: lista(ensinos.get(&i(npc, "id_skill_service")), "id_skills_"),
+                destinos: destinos(transportes.get(&i(npc, "id_transmit_service"))),
             };
             Some((id as u32, s))
+        })
+        .collect()
+}
+
+/// Os destinos de uma transportadora, na ordem do arquivo (1..32), parando no primeiro
+/// vazio — `num_targets` diz quantos são, e o original só inicializa os que existem.
+fn destinos(r: Option<&Record>) -> Vec<DestinoDeTeleporte> {
+    let Some(r) = r else { return Vec::new() };
+    let quantos = i(r, "num_targets").clamp(0, 32) as usize;
+    (1..=quantos)
+        .filter_map(|k| {
+            let id_ponto = i(r, &format!("targets_{k}_idTarget"));
+            (id_ponto > 0).then_some(DestinoDeTeleporte {
+                id_ponto,
+                preco: i(r, &format!("targets_{k}_fee")).max(0),
+                nivel: i(r, &format!("targets_{k}_required_level")).max(0),
+            })
         })
         .collect()
 }

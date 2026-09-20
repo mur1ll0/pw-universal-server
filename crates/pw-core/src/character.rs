@@ -99,6 +99,10 @@ pub struct CharacterDetails {
     /// Os pontos de teleporte já descobertos (`_waypoint_list`, `gs/player_imp.h:2520-2550`).
     /// Vão ao cliente no `WAYPOINT_LIST` (180) da carga inicial.
     pub waypoints: Vec<u16>,
+    /// A barra de chi: atual (`_basic.ap`) e teto (`_base_prop.max_ap`). O teto é concedido
+    /// por missão (`m_ulFuryULimit`); zero significa que o jogador ainda não tem a barra.
+    pub ap: i32,
+    pub max_ap: i32,
     
     pub custom_appearance: serde_json::Value,
     pub version_data: serde_json::Value,

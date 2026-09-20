@@ -20,3 +20,28 @@ fn a_flecha_fulgurante_tem_conjuracao_e_execucao() {
         .find(|x| x.conjuracao_ms(1).is_some() && x.fase_de_execucao_ms(1).is_none());
     assert!(sem.is_some(), "deveria haver habilidade sem fase de execução");
 }
+
+/// B68 — o chi: quanto cada golpe dá (`angro_increase` da classe) e quais missões concedem
+/// o teto (`m_ulFuryULimit` do prêmio).
+#[test]
+fn o_chi_vem_da_classe_e_o_teto_vem_da_missao() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_155/config");
+    if !dir.join("elements.data").exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        return;
+    }
+    let mut d = pw_data_loader::GameDataManager::new();
+    d.load_from_directory(&dir);
+
+    // Arqueiro (classe 6): 5 de chi por golpe normal.
+    let arqueiro = d.classes.get(6).expect("classe 6 no CHARRACTER_CLASS_CONFIG");
+    assert_eq!(arqueiro.chi_por_golpe, 5, "angro_increase do Arqueiro");
+
+    // A missão 32394 "Só um Pouco de Progresso" (nível 9) abre a barra com teto 99.
+    let t = &d.tasks;
+    let m = t.get_task(32394).expect("32394 no tasks.data");
+    assert_eq!(m.rewards.teto_de_chi, 99, "m_ulFuryULimit da missão de nível 9");
+    // E a progressão continua nas missões de cultivo.
+    assert_eq!(t.get_task(922).map(|x| x.rewards.teto_de_chi), Some(199));
+    assert_eq!(t.get_task(2804).map(|x| x.rewards.teto_de_chi), Some(399));
+}

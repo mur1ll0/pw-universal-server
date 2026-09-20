@@ -5,7 +5,7 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-20**, B68 (fase de execução da habilidade, pontos de teleporte, arquitetura por versão sem fachada).
+> **Última atualização: 2026-09-20**, B69 (barra de chi, item de voo, teleporte pela transportadora).
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -68,12 +68,20 @@ consultam). Os contêineres `155b` foram removidos e o compose voltou ao `pw-rea
 original percorre os estados e só manda `stop_skill` no fim de todos; a Flecha Fulgurante tem
 3.000 ms de conjuração e **800 ms de execução**, e nós cortávamos a segunda.
 
-**Pontos de teleporte (B68):** o jogador agora **descobre e lembra** os pontos — o mundo trata
-o `ACTIVATE_REGION_WAYPOINTS` (178), guarda em `characters.waypoints` e responde
-`ACTIVATE_WAYPOINT` (179) por ponto novo, que é o que faz o cliente anunciar a descoberta.
-**Viajar pela transportadora ainda falta**: o `NPC_TRANSMIT_SERVICE` dá destino, preço e
-nível, mas a **coordenada** vem do `npc_template` (arquivo de serviço do mapa), que ainda não
-lemos.
+**Teleporte (B68/B69): completo.** O jogador descobre e lembra os pontos (o mundo trata o
+`ACTIVATE_REGION_WAYPOINTS`, guarda em `characters.waypoints` e responde `ACTIVATE_WAYPOINT`
+por ponto novo), e **viaja**: o serviço `GP_NPCSEV_TRANSMIT` confere índice, nível e dinheiro,
+cobra e teleporta. A coordenada de cada destino estava num arquivo que ninguém lia — o
+**`world_targets.sev`** (92 pontos no `realm_155`).
+
+**Barra de chi (B69):** não existia. O teto vem do prêmio `m_ulFuryULimit` de uma missão (a
+32394, de nível 9, dá 99); o golpe normal enche com o `angro_increase` da classe (Arqueiro: 5)
+e meditar dá 15 por segundo. O valor viaja no `iAP`/`iMaxAP` do `SELF_INFO_00`, que ia zero
+fixo. **Não há ganho ao apanhar** no 1.5.5.
+
+**Item de voo (B69):** a "Glória de Shalim" entrou na bolsa sem bloco de dados, e é de lá que
+o cliente lê a máscara de classes — por isso não podia ser usada. O prêmio de missão agora
+gera o bloco (30 bytes do `generate_flysword`), e o item do eaa foi acertado por script.
 
 **Arquitetura por versão (B68):** a fachada `PorVersao` foi removida; quem despacha é a
 estratégia da versão (`pw_protocol::versions`, um `WorldProtocol` por versão), guardada no
@@ -172,8 +180,8 @@ docker logs -f pw-realm-155        # login, entrada no mundo, o que o link trata
 docker logs -f pw-world-155        # os mapas 1 e 161
 ```
 
-**Referência da suíte, medida em 2026-09-20 (B68) com o banco:** **598 testes, todos
-passando** (`cargo test --workspace --no-fail-fast`). Os testes de tempo do
+**Referência da suíte, medida em 2026-09-20 (B69) com o banco:** **599 testes**, com o
+arquivo de tempo passando 64/64 sozinho (`cargo test --workspace --no-fail-fast`). Os testes de tempo do
 `pw-gs/tests/subcomandos_no_mundo.rs` podem falhar sob carga (já aconteceu com um build do
 Docker rodando junto); o arquivo sozinho passa 58/58
 (`cargo test -p pw-gs --test subcomandos_no_mundo -- --test-threads=4`).
@@ -198,7 +206,7 @@ dados, gerado pelo `cargo run -p pw-gs --example gerar_octetos`),
 multiplicaria de novo),
 `2026_09_20_cultivo_do_eaa.sql` (B67, aplicado uma vez) e
 `2026_09_20_pontos_de_teleporte.sql` (B68: a coluna `characters.waypoints`; também nas specs
-01 e 03 para bancos novos),
+01 e 03 para bancos novos), as colunas `ap`/`max_ap` do chi entraram no mesmo script (B69); `2026_09_20_cultivo_do_eaa.sql` e `2026_09_20_gloria_de_shalim_do_eaa.sql` acertam o personagem de teste,
 `2026_09_14_listas_de_missao.sql` (tabela `character_task_lists`, também no
 `02_MIGRACAO…sql` para bancos novos). Conferido em 2026-09-13: os 12 moldes do
 `realm_155` estão com `spawn_world_id = 161`.
@@ -301,22 +309,20 @@ dois campos (`ataque_em_ticks` e `atraso_do_dano_em_ticks`) passaram a viver no
 durabilidade e **vermelho** em zero. O item 8/18 do relato está em 44%, por isso não aparece
 ainda.
 
-### 3.4 Publicado, falta ver em jogo (B65 a B68)
+### 3.4 Publicado, falta ver em jogo (B65 a B69)
 
-Publicado em 2026-09-20 (`pw-realm-155` e `pw-world-155`, construídos do fonte). Roteiro com
-o **eaa** (nível 9):
+Publicado em 2026-09-20 (`pw-realm-155` e `pw-world-155`). Roteiro com o **eaa** (nível 9):
 
-1. **Buff (B68)**: conjurar a Flecha Fulgurante. Além do ícone, o personagem deve **executar
-   a animação** de receber a bênção (os 800 ms depois da conjuração).
-2. **Pontos de teleporte (B68)**: andar até uma transportadora que ainda não visitou — deve
-   aparecer o aviso do ponto novo, e ele deve continuar no mapa depois de relogar. *Viajar
-   ainda não funciona* (falta a coordenada do destino).
-3. **Cultivo (B67)**: a ficha deve mostrar cultivo **1**; a próxima missão de cultivo sobe
-   sozinha.
-4. **Poção (B67)**: a cura entra aos poucos (25 em 10 s), não de uma vez.
-5. **Amuleto e hierograma (B67)**: devem mostrar 5.400 e 50%, não zero.
+1. **Chi (B69)**: bater num monstro — a barra deve subir 5 por golpe, até 99. Sentar deve
+   somar 15 por segundo. Ela some ao relogar? Não deve: fica no banco.
+2. **Voo (B69)**: a "Glória de Shalim" deve poder ser equipada agora.
+3. **Teleporte (B69)**: falar com uma transportadora e escolher um destino — deve cobrar e
+   levar. Sem dinheiro ou nível, recusa.
+4. **Ponto de teleporte (B68)**: chegar perto de uma transportadora nova deve anunciar o
+   ponto, e ele deve continuar no mapa depois de relogar.
+5. **Buff (B68)**: a Flecha Fulgurante deve executar a animação (800 ms depois da conjuração).
 
-Onde olhar: `docker logs pw-world-155 | grep -iE "cultivo|teleporte|ponto"`.
+Onde olhar: `docker logs pw-world-155 | grep -iE "viajou|ponto de teleporte|cultivo"`.
 
 ---
 
@@ -541,3 +547,4 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 65–66 | 09-18/19 | (outra sessão) baú do Selo Divino, ameaça no impacto, `SCENE_SERVICE_NPC_LIST`, duplicatas do login, ESC cancelando conjuração; diálogo com NPC |
 | 67 | 09-20 | auditoria da sessão de fora (dado dos efeitos, id do monstro invocado, compose); cultivo pela missão (`m_ulNewPeriod`) e `level2` = cultivo; poção no tempo; conteúdo do amuleto |
 | 68 | 09-20 | fase de execução da habilidade (animação do buff); pontos de teleporte descobertos e lembrados; `PorVersao` removido — quem despacha é a estratégia da versão |
+| 69 | 09-20 | barra de chi (teto por missão, ganho por golpe e meditação); item de voo com a máscara de classes; teleporte pela transportadora com o `world_targets.sev` |

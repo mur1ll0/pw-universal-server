@@ -128,8 +128,15 @@ pub fn batimento(p: &mut PlayerEntity) -> bool {
     let fator = if p.combate_s > 0 { 1 } else { 4 };
     gerar(&mut p.hp, &mut p.contador_hp, p.hp_gen * fator, p.max_hp);
     gerar(&mut p.mp, &mut p.contador_mp, p.mp_gen * fator, p.max_mp);
-    hp != p.hp || mp != p.mp
+    // Meditando, mais 15 de chi por batimento (`sit_down_filter::Heartbeat`,
+    // `gs/sitdown_filter.cpp:19-34`). `falta`: o `STAYIN_BONUS` que o mesmo filtro dá à
+    // regeneração de vida e mana depois de um tempo sentado.
+    let chi = p.sentado && p.mexer_no_chi(CHI_POR_MEDITACAO);
+    hp != p.hp || mp != p.mp || chi
 }
+
+/// `sit_down_filter::Heartbeat`: 15 de chi por segundo meditando.
+pub const CHI_POR_MEDITACAO: i32 = 15;
 
 /// Onde renascer: o ponto de cidade do distrito que contém a posição, se ele for deste mapa
 /// (`gplayer_controller::ResurrectInTown`, `playercmd.cpp:112-129`; `city_region::GetCityPos`).

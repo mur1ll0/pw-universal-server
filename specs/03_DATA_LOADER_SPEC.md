@@ -171,6 +171,21 @@ byte a mais. `distrito_em(x, z, mapa)` = menor prioridade que contém o ponto
 (`CELPrecinctSet::IsPointIn`, `:379-394`) — é o renascer na cidade. Carimbo que não bate com o `.clt` do cliente naquela zona gera erro visível no
 cliente (B25).
 
+### 3.7.1 `world_targets.sev` (`world_targets.rs`) — B68
+
+A tabela de **pontos de destino do mundo**: é dela que sai a coordenada de cada destino de
+transportadora (o `NPC_TRANSMIT_SERVICE` do `elements.data` cita os pontos só por id).
+
+```text
+u32 quantidade
+quantidade × { i32 id; i32 world_tag; f32 x; f32 y; f32 z; i32 ordem }   // 24 bytes
+```
+
+No `realm_155`: **92 pontos, 2.212 bytes** (`4 + 92 × 24`), fechando no último byte. Os 427
+destinos que as 95 transportadoras citam estão todos aqui
+(`pw-data-loader/tests/teleporte_do_realm.rs`). No original o equivalente entra no
+`transmit_entry` que o `transmit_provider` monta (`gs/serviceprovider.cpp:683-700`).
+
 ### 3.8 `gshop*.data` (`gshop.rs`)
 
 Aceita o nome do cliente (`gshop.data`, `gshop1.data`, `gshop2.data`) ou do servidor

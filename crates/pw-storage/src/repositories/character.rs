@@ -26,6 +26,11 @@ pub struct CharacterRecord {
     /// `GetWaypointBuffer` do original (`gs/player_imp.h:2545-2550`).
     #[sqlx(default)]
     pub waypoints: Vec<u8>,
+    /// `_basic.ap` e `_base_prop.max_ap` — a barra de chi.
+    #[sqlx(default)]
+    pub ap: i32,
+    #[sqlx(default)]
+    pub max_ap: i32,
     pub exp: i64,
     pub sp: i64,
     pub hp: i32,
@@ -562,6 +567,8 @@ impl CharacterRepository {
             level: r.level,
             cultivation: r.cultivation,
             waypoints: r.waypoints.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect(),
+            ap: r.ap,
+            max_ap: r.max_ap,
             exp: r.exp,
             sp: r.sp,
             hp: r.hp,
@@ -689,6 +696,17 @@ impl CharacterRepository {
     /// Grava os pontos de teleporte descobertos (`_waypoint_list` do original).
     ///
     /// Um `UPDATE` só quando um ponto novo entra — a lista é pequena e muda raramente.
+    /// Grava a barra de chi (`_basic.ap` e `_base_prop.max_ap`).
+    pub async fn salvar_chi(&self, role_id: RoleId, ap: i32, max_ap: i32) -> Result<()> {
+        sqlx::query("UPDATE characters SET ap = $1, max_ap = $2 WHERE id = $3")
+            .bind(ap)
+            .bind(max_ap)
+            .bind(role_id)
+            .execute(self.pool.get_ref())
+            .await?;
+        Ok(())
+    }
+
     pub async fn salvar_waypoints(&self, role_id: RoleId, waypoints: &[u16]) -> Result<()> {
         let bytes: Vec<u8> = waypoints.iter().flat_map(|w| w.to_le_bytes()).collect();
         sqlx::query("UPDATE characters SET waypoints = $1 WHERE id = $2")

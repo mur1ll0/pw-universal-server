@@ -406,7 +406,26 @@ banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
 | Loja Gold, barraca | `falta` | |
 | demais serviços de NPC (teleporte, pedras, forja, decompor, armazém, item de missão) | `falta` | |
 
-### 8.1 Pontos de teleporte — `parcial` (B67)
+### 8.0 A barra de chi — `testado` (B68)
+
+O chi (a "fúria" do original, `_basic.ap`) **não existe até uma missão dar o teto**: é o
+prêmio `m_ulFuryULimit` (deslocamento 57 do `AWARD_DATA`) → `SetFuryUpperLimit` →
+`gplayer_imp::SetMaxAP` (`gs/task/taskman.cpp:498-501`, `actobject.h:1634-1640`). No
+`realm_155` são 8 missões, e a primeira é a 32394 "Só um Pouco de Progresso" (nível 9, teto
+99); depois 199, 299 e 399 (`cargo run -p pw-gs --example missoes_de_chi`).
+
+| ganho | quanto | origem |
+| :--- | :--- | :--- |
+| golpe normal | `ap_per_hit` da classe (`angro_increase` do `CHARRACTER_CLASS_CONFIG`; Arqueiro: 5) | `gplayer_imp::DoAttack`, `player.cpp:3091-3093` |
+| meditar | **15 por batimento de 1 s** | `sit_down_filter::Heartbeat`, `gs/sitdown_filter.cpp:19-34` |
+| habilidade | filtros `Apgen`/`Apgen2` (`falta`: nenhum porte ainda) | `playerwrapper.cpp` |
+
+`ModifyAP` prende entre 0 e o teto e marca o estado para ir ao cliente; o valor viaja no
+`iAP`/`iMaxAP` do `SELF_INFO_00` (38), que ia **zero fixo** até o B68. Vive em
+`characters.ap`/`characters.max_ap`. **Não há ganho ao apanhar** no 1.5.5 — o fonte só dá chi
+nos três casos acima.
+
+### 8.1 Pontos de teleporte — `testado` (B68)
 
 O jogador guarda os pontos que já descobriu (`_waypoint_list`, `gs/player_imp.h:2520-2550`),
 hoje na coluna `characters.waypoints` (u16 little-endian em sequência, o mesmo formato do
@@ -417,7 +436,7 @@ hoje na coluna `characters.waypoints` (u16 little-endian em sequência, o mesmo 
 | descobrir | `testado` | o cliente manda os pontos da região (`ACTIVATE_REGION_WAYPOINTS`, C2S 178) e o mundo ativa os que faltam, respondendo um `ACTIVATE_WAYPOINT` (179) por ponto — é o comando que faz o cliente anunciar o ponto novo (`gs/player.cpp:25196-25220`) |
 | lembrar | `testado` | a lista é gravada a cada ponto novo e volta no `WAYPOINT_LIST` (180) da carga inicial |
 | validar por região | `falta` | o original cruza com `world_manager::GetRegionWaypoints()`; aceitamos o que o cliente diz haver na região dele |
-| **viajar** (transportadora) | `falta` | `transmit_provider`/`transmit_executor` (`gs/serviceprovider.cpp:683-855`): o cliente manda o índice do destino, o servidor confere nível e dinheiro, cobra e chama `LongJump`. O `NPC_TRANSMIT_SERVICE` do `elements.data` dá `idTarget`, `fee` e `required_level` de até 32 destinos — **falta a coordenada**, que no original vem do `npc_template` (arquivo de serviço do mapa) e não do `elements.data`; sem ela não dá para teleportar |
+| **viajar** (transportadora) | `testado` | `GP_NPCSEV_TRANSMIT` (5): o cliente manda só o **índice** do destino na lista daquele NPC; o servidor confere índice, nível e dinheiro, cobra e teleporta (`transmit_provider::TryServe` e `transmit_executor::OnServe`, `gs/serviceprovider.cpp:771-852`). Os destinos são o `NPC_TRANSMIT_SERVICE` do `elements.data` (`idTarget`, `fee`, `required_level`, até 32) e a **coordenada de cada um** está no `world_targets.sev` — 92 pontos no `realm_155`, e os 427 destinos citados pelas 95 transportadoras estão todos lá |
 
 ## 9. Persistência
 

@@ -212,6 +212,15 @@ impl Jogador for Contexto<'_> {
     }
     /// `SetSecLevel` (`gs/player_imp.h:2798-2804`): guarda, marca para gravar e manda o
     /// `TASK_DELIVER_LEVEL2` — é ele que faz o cliente tocar o efeito do avanço de cultivo.
+    /// `SetMaxAP` (`gs/actobject.h:1634-1640`): muda o teto e marca o estado para ir ao
+    /// cliente. O chi atual continua onde estava, preso ao novo teto.
+    fn definir_teto_de_chi(&mut self, teto: u32) {
+        self.p.max_ap = teto as i32;
+        self.p.ap = self.p.ap.min(self.p.max_ap);
+        self.mudou = true;
+        self.para_mim.push(crate::BusServer::estado_proprio_de(self.p));
+    }
+
     fn definir_cultivo(&mut self, nivel: u32) {
         self.p.cultivation = nivel as i32;
         self.mudou = true;
@@ -398,6 +407,8 @@ impl BusServer {
             p.max_mp,
             p.exp.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
             p.sp.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+            p.ap,
+            p.max_ap,
         )
         .data
     }
@@ -1234,6 +1245,76 @@ impl BusServer {
     /// de estar na lista do treinador; fora de combate; próximo nível ≤ máximo; classe;
     /// pré-requisitos; nível histórico; SP; `rank` × cultivo; dinheiro. Cobra dinheiro
     /// (`SPEND_MONEY`) e SP (`COST_SKILL_POINT`) e responde `LEARN_SKILL`.
+    /// `GP_NPCSEV_TRANSMIT` (5) — a transportadora leva o jogador a um destino.
+    ///
+    /// O cliente manda só o **índice** do destino na lista daquela transportadora
+    /// (`transmit_executor::SendRequest` → `transmit_provider::request { index, money }`,
+    /// `gs/serviceprovider.cpp:803-825`). O servidor confere:
+    ///
+    /// 1. índice dentro da lista, senão `ERR_SERVICE_ERR_REQUEST` (`:771-779`);
+    /// 2. dinheiro ≥ `fee`, senão `ERR_OUT_OF_FUND` (`:781-787`);
+    /// 3. nível ≥ `require_level` (`transmit_entry`), e então cobra e faz `LongJump`
+    ///    (`:827-852`).
+    ///
+    /// A coordenada do destino vem do `world_targets.sev` (o `idTarget` do
+    /// `NPC_TRANSMIT_SERVICE` é o id de lá) — ver [`pw_data_loader::world_targets`].
+    pub(super) async fn teleportar_pela_transportadora(&self, roleid: i32, conteudo: &[u8], envio: &crate::bus_server::EnvioAoCliente) {
+        let mut r = Reader::new(conteudo);
+        let Ok(indice) = r.i32() else {
+            warn!("mundo: pedido de teleporte de {roleid} sem índice");
+            return;
+        };
+
+        let (dados, npc_tid, nivel, dinheiro) = {
+            let mundo = self.world.read().await;
+            let Some(p) = mundo.players.get(&(roleid as i64)) else { return };
+            let tid = p
+                .npc_em_conversa
+                .and_then(|id| mundo.npcs.get(&id))
+                .map(|n| n.template_id);
+            (Arc::clone(&mundo.data_manager), tid, p.level, p.money)
+        };
+        let Some(npc_tid) = npc_tid else {
+            debug!("mundo: {roleid} pediu teleporte sem NPC em conversa");
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::SERVICO_INDISPONIVEL).data).await;
+            return;
+        };
+        let destinos = dados.servicos_de_npc.get(&npc_tid).map(|s| s.destinos.clone()).unwrap_or_default();
+        let Some(destino) = usize::try_from(indice).ok().and_then(|i| destinos.get(i)).copied() else {
+            debug!("mundo: {roleid} pediu o destino {indice} de {npc_tid}, que tem {}", destinos.len());
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::SERVICO_INDISPONIVEL).data).await;
+            return;
+        };
+        let Some(ponto) = dados.pontos_do_mundo.get(destino.id_ponto).copied() else {
+            warn!("mundo: o destino {} não está no world_targets.sev", destino.id_ponto);
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::SERVICO_INDISPONIVEL).data).await;
+            return;
+        };
+        if nivel < destino.nivel {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::NIVEL_NAO_BATE).data).await;
+            return;
+        }
+        if dinheiro < destino.preco as i64 {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::SEM_DINHEIRO).data).await;
+            return;
+        }
+
+        if destino.preco > 0 {
+            self.com_contexto(roleid, |ctx| {
+                ctx.gastar_dinheiro(destino.preco as i64);
+                ctx.para_mim.push(S2CGamedataSend::spend_money(destino.preco as u32).data);
+            })
+            .await;
+        }
+        info!(
+            "mundo: {roleid} viajou pela transportadora {npc_tid} até o ponto {} (mapa {}, {:.0} {:.0}), por {}",
+            destino.id_ponto, ponto.mundo, ponto.pos[0], ponto.pos[2], destino.preco
+        );
+        let _ = envio;
+        self.transportar(roleid, ponto.mundo, pw_core::Vector3::new(ponto.pos[0], ponto.pos[1], ponto.pos[2]))
+            .await;
+    }
+
     pub(super) async fn aprender(&self, roleid: i32, conteudo: &[u8]) {
         let Ok(skill_id) = Reader::new(conteudo).i32() else { return };
         if skill_id <= 0 {

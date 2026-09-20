@@ -1479,6 +1479,10 @@ impl S2CGamedataSend {
         max_mp: i32,
         exp: i32,
         sp: i32,
+        // `iAP`/`iMaxAP` — a barra de **chi**. Teto zero é o normal antes de a missão
+        // conceder a barra (`m_ulFuryULimit`): o cliente não desenha barra nenhuma.
+        ap: i32,
+        max_ap: i32,
     ) -> Self {
         let mut stream = OctetsStream::new();
         // Header do comando (u16 little-endian = 38)
@@ -1494,8 +1498,8 @@ impl S2CGamedataSend {
         stream.write_i32_le(max_mp);   // int iMaxMP (4B)
         stream.write_i32_le(exp);      // int iExp (4B)
         stream.write_i32_le(sp);       // int iSP (4B)
-        stream.write_i32_le(0);        // int iAP (4B)
-        stream.write_i32_le(0);        // int iMaxAP (4B)
+        stream.write_i32_le(ap);       // int iAP (4B)
+        stream.write_i32_le(max_ap);   // int iMaxAP (4B)
 
         Self {
             data: stream.into_bytes().to_vec(),
