@@ -1,0 +1,17 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running tests\layouts_do_126.rs (target\debug\deps\layouts_do_126-e83a2e9026400064.exe)
+
+running 11 tests
+test entrada_126_nao_envia_ids_acima_do_limite_do_binario ... ok
+test entrada_126_propriedades_conferem_os_campos_representados_no_trait ... ok
+test equip_data_126_nao_anexa_slots_que_sua_mascara_nao_representa ... ok
+test entrada_155_preserva_a_sequencia_e_os_bytes_anteriores ... ok
+test entrada_126_atalhos_preservam_o_blob_original_sem_reescrever_versao ... ok
+test equip_data_126_reproduz_a_mascara_de_32_bits_da_captura ... ok
+test entrada_126_self_info_e_bolsa_vazia_reproduzem_o_original ... ok
+test equip_data_155_preserva_a_mascara_de_64_bits ... ok
+test o_126_nao_anuncia_comando_390_que_o_binario_recusa ... ok
+test o_155_continua_anunciando_os_npcs_de_servico ... ok
+test own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s

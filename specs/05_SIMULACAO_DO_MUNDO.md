@@ -8,6 +8,11 @@
 
 ## 1. Estrutura
 
+No `GET_ALL_DATA`, a resposta `SCENE_SERVICE_NPC_LIST` é uma opção do
+`WorldProtocol`: o mundo só transmite quando há NPCs remotos e a estratégia
+retorna pacote. V126 retorna None (id 390 ausente no binário); o padrão mantém
+a resposta 155. Nenhuma regra de mundo consulta a versão (B74).
+
 | peça | o que é |
 | :--- | :--- |
 | `server.rs` | laço de **50 ms**: `world.tick(50)`, um por mapa |

@@ -14,6 +14,27 @@ impl WorldProtocol for V126Protocol {
         GameVersion::V1_2_6
     }
 
+    fn scene_service_npc_list(&self, _npcs: &[(i32, i32)]) -> Option<S2CGamedataSend> {
+        // elementclient.exe 126, validador 0x584610: ids acima de 260
+        // retornam inválido (docs/evidencias/126/cliente-validacao-entrada.txt:11).
+        None
+    }
+
+    fn initial_status_notifications(&self, reputation: i32, now: i32) -> Vec<S2CGamedataSend> {
+        // O validador 0x584610 do cliente 126 aceita somente ids até 260.
+        // SERVER_TIME=102 também consta em s2c-114.txt:2 (full_interno.pcap).
+        vec![
+            S2CGamedataSend::host_reputation(reputation),
+            S2CGamedataSend::pvp_mode(0),
+            S2CGamedataSend::server_time(now, 0, 102),
+            S2CGamedataSend::trashbox_pwd_state(false),
+            S2CGamedataSend::pet_room_capacity(0),
+            S2CGamedataSend::available_double_exp_time(0),
+            S2CGamedataSend::double_exp_time(0, 0),
+            S2CGamedataSend::pariah_time(0),
+        ]
+    }
+
     fn task_data(&self) -> S2CGamedataSend {
         // 1.2.6: 3 blocos (medido na desmontagem de elementclient.exe do 1.2.6)
         let mut s = OctetsStream::new();
@@ -158,6 +179,24 @@ impl WorldProtocol for V126Protocol {
         s.write_u8(idx_equip);
         s.write_u16_le(count_ivtr.min(u16::MAX as u32) as u16);
         s.write_u16_le(count_equip.min(u16::MAX as u32) as u16);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    fn equip_data(&self, player_id: i32, crc: u16, mask: u64, items: &[i32]) -> S2CGamedataSend {
+        // full_interno.pcap, S2C 66 #1: CRC 0x1c54, jogador 48,
+        // máscara 0x11, itens 2258 e 154: payload de 18 bytes.
+        // docs/evidencias/126/s2c-66.txt:8-10. A máscara tem 32 bits.
+        let mask = mask as u32;
+        let mut s = OctetsStream::new();
+        s.write_u16_le(66);
+        s.write_u16_le(crc);
+        s.write_i32_le(player_id);
+        s.write_u32_le(mask);
+        // O mundo fornece os itens em ordem crescente de slot; os slots
+        // acima de 31 não cabem no layout e não podem sobrar após a lista.
+        for item in items.iter().take(mask.count_ones() as usize) {
+            s.write_i32_le(*item);
+        }
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 

@@ -8,6 +8,26 @@ pub trait WorldProtocol: Send + Sync {
     /// Versão do jogo implementada por este protocolo
     fn version(&self) -> GameVersion;
 
+    /// Avisos neutros de status enviados pelo link ao entrar no mundo.
+    fn initial_status_notifications(&self, reputation: i32, now: i32) -> Vec<S2CGamedataSend> {
+        vec![
+            S2CGamedataSend::host_reputation(reputation),
+            S2CGamedataSend::pvp_mode(0),
+            S2CGamedataSend::self_country_notify(0),
+            S2CGamedataSend::server_time(now, 0, 102),
+            S2CGamedataSend::trashbox_pwd_state(false),
+            S2CGamedataSend::pet_room_capacity(0),
+            S2CGamedataSend::self_king_notify(false, 0),
+            S2CGamedataSend::faction_contrib_notify(0, 0, 0),
+            S2CGamedataSend::player_leadership(0, 0),
+            S2CGamedataSend::player_world_contribution(0, 0, 0),
+            S2CGamedataSend::player_dividend(0),
+            S2CGamedataSend::available_double_exp_time(0),
+            S2CGamedataSend::double_exp_time(0, 0),
+            S2CGamedataSend::pariah_time(0),
+        ]
+    }
+
     /// TASK_DATA (105) vazio
     fn task_data(&self) -> S2CGamedataSend;
 
@@ -150,8 +170,8 @@ pub trait WorldProtocol: Send + Sync {
     }
 
     /// SCENE_SERVICE_NPC_LIST (390)
-    fn scene_service_npc_list(&self, npcs: &[(i32, i32)]) -> S2CGamedataSend {
-        S2CGamedataSend::scene_service_npc_list(npcs)
+    fn scene_service_npc_list(&self, npcs: &[(i32, i32)]) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::scene_service_npc_list(npcs))
     }
 }
 

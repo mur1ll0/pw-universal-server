@@ -989,24 +989,10 @@ impl LinkGateway {
                     // exp em dobro, pária) — mandar o comando com zero é o que o `SendAllData`
                     // real também faz pra quem não tem o dado; não mandar nada é o que
                     // fazia o client nunca inicializar esses painéis de UI.
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::host_reputation(details.reputation))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::pvp_mode(0))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_country_notify(0))).await?;
                     let agora = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i32;
-                    // lua_version = 102: primeira linha de `global_api.lua` (ver o
-                    // comentário em `S2CGamedataSend::server_time` — um valor errado aqui
-                    // derruba o client, não é cosmético).
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::server_time(agora, 0, 102))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::trashbox_pwd_state(false))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::pet_room_capacity(0))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_king_notify(false, 0))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::faction_contrib_notify(0, 0, 0))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_leadership(0, 0))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_world_contribution(0, 0, 0))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_dividend(0))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::available_double_exp_time(0))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::double_exp_time(0, 0))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::pariah_time(0))).await?;
+                    for pacote in sub.initial_status_notifications(details.reputation, agora) {
+                        tx.send(OutboundPacket::GamedataSend(pacote)).await?;
+                    }
 
                     // 10.7 A visibilidade entre jogadores **não sai mais daqui**.
                     //

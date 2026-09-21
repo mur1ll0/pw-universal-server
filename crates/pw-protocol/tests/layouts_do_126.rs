@@ -243,3 +243,118 @@ fn own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante() {
     assert_eq!(d126.len() - 2, 152, "payload do OWN_EXT_PROP no 1.2.6 deve ser 152 bytes exatos");
     assert_eq!(d155.len() - 2, 196, "payload do OWN_EXT_PROP no 1.5.5 deve ser 196 bytes exatos");
 }
+
+// full_interno.pcap, S2C 66 amostra #1:
+// docs/evidencias/126/s2c-66.txt:8-10. CRC=0x1c54, role=48, mask=0x11,
+// itens 2258 e 154: 10 bytes de cabeçalho de payload + 2*4 de itens.
+#[test]
+fn equip_data_126_reproduz_a_mascara_de_32_bits_da_captura() {
+    let p = create_world_protocol(GameVersion::V1_2_6);
+    let esperado = [
+        66, 0, 0x54, 0x1c, 48, 0, 0, 0, 0x11, 0, 0, 0,
+        0xd2, 8, 0, 0, 0x9a, 0, 0, 0,
+    ];
+    assert_eq!(p.equip_data(48, 0x1c54, 0x11, &[2258, 154]).data, esperado);
+}
+
+#[test]
+fn equip_data_155_preserva_a_mascara_de_64_bits() {
+    let p = create_world_protocol(GameVersion::V1_5_5);
+    let esperado = [
+        66, 0, 0x54, 0x1c, 48, 0, 0, 0, 0x11, 0, 0, 0, 1, 0, 0, 0,
+        0xd2, 8, 0, 0, 0x9a, 0, 0, 0,
+    ];
+    assert_eq!(p.equip_data(48, 0x1c54, 0x1_0000_0011, &[2258, 154]).data, esperado);
+}
+
+#[test]
+fn equip_data_126_nao_anexa_slots_que_sua_mascara_nao_representa() {
+    let p = create_world_protocol(GameVersion::V1_2_6);
+    assert_eq!(
+        p.equip_data(48, 0, 0x1_0000_0011, &[2258, 154, 999]).data,
+        p.equip_data(48, 0, 0x11, &[2258, 154]).data,
+    );
+}
+
+#[test]
+fn o_126_nao_anuncia_comando_390_que_o_binario_recusa() {
+    // elementclient.exe SHA256 em cliente-validacao-entrada.txt:2;
+    // 0x584618 compara cmd com 0x104 (260), acima retorna inválido.
+    let p = create_world_protocol(GameVersion::V1_2_6);
+    assert!(p.scene_service_npc_list(&[(1, 123)]).is_none());
+}
+
+#[test]
+fn o_155_continua_anunciando_os_npcs_de_servico() {
+    let p = create_world_protocol(GameVersion::V1_5_5);
+    assert_eq!(
+        p.scene_service_npc_list(&[(1, 123)]).unwrap().data,
+        pw_protocol::S2CGamedataSend::scene_service_npc_list(&[(1, 123)]).data,
+    );
+}
+
+// Amostras originais, extraídas por pw-pcapdiff; não geradas pelo codificador.
+fn primeira_amostra(texto: &str) -> Vec<u8> {
+    texto.lines().skip(1).take_while(|l| !l.starts_with("## "))
+        .filter(|l| l.len() >= 6 && l.as_bytes()[..4].iter().all(u8::is_ascii_hexdigit))
+        .flat_map(|l| l.split_whitespace().skip(1).take(16))
+        .filter_map(|b| if b.len() == 2 { u8::from_str_radix(b, 16).ok() } else { None })
+        .collect()
+}
+
+#[test]
+fn entrada_126_self_info_e_bolsa_vazia_reproduzem_o_original() {
+    use pw_protocol::S2CGamedataSend;
+    let self_info = primeira_amostra(include_str!("../../../docs/evidencias/126/s2c-38.txt"));
+    assert_eq!(S2CGamedataSend::self_info_00(2, 0, 119, 119, 49, 49, 170, 541, 0, 0).data[2..], self_info);
+    let bolsa = primeira_amostra(include_str!("../../../docs/evidencias/126/s2c-42.txt"));
+    assert_eq!(S2CGamedataSend::own_ivtr_from_items(2, 32, &[]).data[2..], bolsa);
+}
+
+#[test]
+fn entrada_126_propriedades_conferem_os_campos_representados_no_trait() {
+    let original = primeira_amostra(include_str!("../../../docs/evidencias/126/s2c-50.txt"));
+    let p = create_world_protocol(GameVersion::V1_2_6);
+    let pacote = p.own_ext_prop(5, (5, 5, 5, 5), 119, 49, (5, 1),
+        (2.0, 4.9, 3.0, 5.0), (40, 6, 10, 22, 3.8), (3, 40));
+    let corpo = &pacote.data[2..];
+    assert_eq!(corpo.len(), 152);
+    assert_eq!(&corpo[..112], &original[..112]);
+    assert_eq!(&corpo[140..], &original[140..]);
+    // [112..140] são ataque mágico/resistências que o trait atual não recebe.
+    // Não declarar igualdade integral: esses valores ainda são zeros no servidor.
+}
+
+#[test]
+fn entrada_126_atalhos_preservam_o_blob_original_sem_reescrever_versao() {
+    use pw_protocol::packets::s2c::S2CGetUIConfigRe;
+    use pw_protocol::octets::OctetsStream;
+    let original = primeira_amostra(include_str!("../../../docs/evidencias/126/gnet-ui-105.txt"));
+    assert_eq!(original.len(), 323);
+    assert_eq!(&original[12..18], &[0x81, 0x35, 3, 0, 0, 0]);
+    let mut s = OctetsStream::new();
+    S2CGetUIConfigRe::new(48, 22, &original[14..]).encode(&mut s, "1.2.6");
+    assert_eq!(s.into_bytes().as_ref(), original.as_slice());
+}
+
+#[test]
+fn entrada_126_nao_envia_ids_acima_do_limite_do_binario() {
+    let p = create_world_protocol(GameVersion::V1_2_6);
+    for pacote in p.initial_status_notifications(17, 1788303334) {
+        let id = u16::from_le_bytes([pacote.data[0], pacote.data[1]]);
+        assert!(id <= 260, "comando {id} excede o limite em 0x584618 do cliente 126");
+    }
+}
+
+#[test]
+fn entrada_155_preserva_a_sequencia_e_os_bytes_anteriores() {
+    use pw_protocol::S2CGamedataSend as S;
+    let p = create_world_protocol(GameVersion::V1_5_5);
+    let esperado = vec![S::host_reputation(17), S::pvp_mode(0), S::self_country_notify(0),
+        S::server_time(1234, 0, 102), S::trashbox_pwd_state(false), S::pet_room_capacity(0),
+        S::self_king_notify(false, 0), S::faction_contrib_notify(0, 0, 0),
+        S::player_leadership(0, 0), S::player_world_contribution(0, 0, 0), S::player_dividend(0),
+        S::available_double_exp_time(0), S::double_exp_time(0, 0), S::pariah_time(0)];
+    let bytes = |v: Vec<S>| v.into_iter().map(|p| p.data).collect::<Vec<_>>();
+    assert_eq!(bytes(p.initial_status_notifications(17, 1234)), bytes(esperado));
+}

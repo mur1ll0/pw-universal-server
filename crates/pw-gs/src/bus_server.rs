@@ -3566,12 +3566,9 @@ impl BusServer {
         // suprime a abertura da caixa de diálogo.
         let npcs_servico = self.world.read().await.scene_service_npcs();
         if !npcs_servico.is_empty() {
-            self.responder(
-                roleid,
-                self.sub.scene_service_npc_list(&npcs_servico).data,
-                envio,
-            )
-            .await;
+            if let Some(pacote) = self.sub.scene_service_npc_list(&npcs_servico) {
+                self.responder(roleid, pacote.data, envio).await;
+            }
         }
 
         // Os pontos de teleporte já descobertos (`WAYPOINT_LIST` 180). No original sai do

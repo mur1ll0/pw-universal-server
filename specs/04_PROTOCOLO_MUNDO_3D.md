@@ -1,6 +1,7 @@
 # Especificação 04: Protocolo do mundo 3D (subcomandos do `GamedataSend`)
 
-> Verificada contra o código em 2026-09-14, commit `e6433ae` + B49. Cobre
+> Camada 2 do 126 conferida em 2026-09-21, base `2dca19e` + B74. Demais áreas:
+> referência 2026-09-14, commit `e6433ae` + B49. Cobre
 > `crates/pw-protocol/src/{packets,versions,opcodes.rs}`, `crates/pw-wire/`,
 > `crates/pw-gs/src/comandos.rs`, `specs/protocol/` e `tools/pw-rpcgen/`.
 
@@ -55,6 +56,22 @@ ou com campos novos no fim. Novos do 1.5.5 ainda não triados: 66 GNET, 17 C2S, 
 
 ## 4. Diferenças por versão: Padrão Estratégia e Módulos por Versão
 
+**Auditoria 1.2.6 em `2dca19e` (B73, 2026-09-20):** o inventário completo das chamadas
+atuais do mundo está em `docs/INVENTARIO_PROTOCOLO_126.md` (98 ids S2C, 46 C2S).
+Compatibilidade ainda **parcial**: os comandos comuns 14, 31, 46, 64, 72, 99, 144 e 156
+divergem dos comprimentos capturados. Medição reproduzida em
+`docs/evidencias/126/full_interno.medidas.md`; tamanho igual não comprova campos iguais.
+`SCENE_SERVICE_NPC_LIST` (390) é opcional no trait: v126 não emite, pois seu binário
+rejeita ids acima de 260 (VA 0x584618; B74, `docs/ENTRADA_126.md`).
+`EQUIP_DATA` no 126 usa máscara de 32 bits e 10+4×n bytes de payload (VA 0x584a1d);
+o 155 mantém 64 bits. Avisos de status da entrada vêm do trait, com a sequência
+anterior como padrão e oito avisos suportados no v126. Estado: **11 testes focados
+aprovados com TEST_DATABASE_URL**, incluindo sentinelas 155; não publicado.
+SELF_INFO_00 e GetUIConfig_Re reproduzem amostras; OWN_EXT_PROP mantém 152 B,
+com os campos representados conferidos. Ataque mágico/resistências continuam
+zeros, limitação da base. A suíte ampla anterior teve falha de persistência de
+missão; não há aprovação global de regressão (B74).
+
 O despacho por versão é uma **estratégia**: o trait `WorldProtocol`
 (`crates/pw-protocol/src/traits.rs`) declara os comandos cujo layout muda entre versões, e há
 uma implementação por versão em `crates/pw-protocol/src/versions/`. Quem precisa de um
@@ -77,8 +94,8 @@ caminho de escrita por layout".
 | `npc_enter_world` / `npc_enter_slice` (`info_npc`) | 27 | 35 | `vis_tid`, `state2` |
 | `self_info_1` | 34 | 38 | `state2`; sem ele, 30 s de "entrando" e desconexão |
 | `player_enter_world` / `player_enter_slice` (`info_player_1`) | 26 | 30 | `state2` |
-| `get_own_money` | 8 | 12 | |
-| `inst_data_checkout` | 20 | 24 | |
+| `get_own_money` | 8 | 8 no codificador comum | payload sem os 2 bytes do id; captura 126, S2C 82 |
+| `inst_data_checkout` | 16 | 20 (24 com gshop3) | payload sem os 2 bytes do id; captura 126, S2C 206 |
 | 5 resultados de ataque (`host_attack_result`, `host_attacked`, `self_skill_attack_result`, `object_skill_attack_result`…) | −3/−4 | | `attack_flag` era `char` e virou `int`; o `section` falta no 1.2.6 |
 | `npc_info_00`, `player_info_00` | | | ganham `iTargetID` |
 | `enter_sanctuary`, `leave_sanctuary` | 0 | | ganham `id` |

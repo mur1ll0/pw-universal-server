@@ -5,7 +5,7 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-20**, B69 (barra de chi, item de voo, teleporte pela transportadora).
+> **Última atualização: 2026-09-21**, B74 (Camada 2 do 126, worktree `versao-126`; sem publicação).
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -19,6 +19,18 @@
 ---
 
 ## 0. Em uma tela
+
+**Frente isolada 1.2.6 (B73, 2026-09-20):** branch `versao-126`, worktree `../pw-126`,
+base `2dca19e`. Inventário de 98 ids S2C e 46 C2S do mundo em
+`docs/INVENTARIO_PROTOCOLO_126.md`, com captura relida em `docs/evidencias/126/`.
+Há divergências ainda em chamadas comuns (14, 31, 46, 64, 72, 99, 144, 156).
+Nenhum código alterado/publicado nesta etapa. B71/B72 da outra sessão não estão nesta base.
+B74: entrada medida em `docs/ENTRADA_126.md`; corrigidos EQUIP_DATA (mask32) e
+avisos inexistentes no cliente. Fechamento local em 2026-09-21: **11 testes focados
+aprovados**, com `TEST_DATABASE_URL` definido. Parada para aprovação; Camadas 3/4
+fora do escopo desta sessão. A suíte iniciada anteriormente terminou com uma falha
+em persistência de missão (`subcomandos_no_mundo.rs:1807`); não repetida nem
+investigada nesta retomada, conforme o escopo reduzido.
 
 **Alvo:** o **1.5.5**, servido pelo realm `realm_155` ao cliente 1.5.5 BR
 (`elements.data` v156, `tasks.data` 129, build 2569). Ordem combinada com o Murillo:
@@ -500,6 +512,9 @@ Cada uma custou pelo menos uma sessão. A evidência está no item citado.
 ---
 
 ## 8. Índice do histórico (série B, frente 1.5.5)
+
+- **B74:** entrada 126, máscara de equipamento e avisos suportados; sem publicação.
+- **B73:** inventário de protocolo 1.2.6 na árvore isolada `versao-126` (sem publicação).
 
 Para achar rápido o item citado num comentário de código ou numa seção acima.
 

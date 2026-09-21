@@ -7981,3 +7981,50 @@ Validação disponível e acordada com o usuário: Docker + clientes reais (1.2.
 envio de logs, captura de tráfego (Wireshark/pcap) e execução dos binários originais para
 comparação lado a lado.
 
+
+
+73. **Sessão 2026-09-20: inventário do 1.2.6 em árvore isolada (versao-126).**
+
+    Pedido: trazer jogabilidade sem tocar na sessão 155. Worktree `../pw-126` criada
+    do HEAD `2dca19e`; alterações da árvore original preservadas. B70–B72 não são
+    importados desta outra sessão; a numeração 73 respeita a reserva solicitada.
+
+    Evidência: `pw-pcapdiff --interno` relê `full_interno.pcap`; relatório em
+    `docs/evidencias/126/full_interno.medidas.md`. Levantamento das chamadas de todos
+    os fontes de `pw-gs/src`: 98 ids S2C (104 métodos), 46 C2S tratados. Tabela com
+    chamadas arquivo:linha em `docs/INVENTARIO_PROTOCOLO_126.md`. Tamanhos variáveis
+    e comandos não observados ficam pendentes; nomes do PCAP vêm do IR.
+
+    Causas potenciais, ainda sem relato reproduzido de sintoma: layouts comuns dos
+    ids 14/31/46/64/72/99/144/156 diferem da captura. `bus_server.rs:361` usa
+    teleporte de 20 B; `s2c.rs:1034` compra de 11+n×15; `s2c.rs:2518` grupo de
+    6+n×34. O 126 observado tem 16 B, uma compra de 20 B, grupo 6+n×25.
+
+    Provas: ferramenta compilada e captura relida; ainda sem suíte do workspace.
+    Nenhuma correção de comportamento, commit, publicação ou reinício. A consulta
+    Docker inicial recusou acesso ao pipe; não impede a análise do PCAP.
+    Falta fechar camada 2 (entrada/propriedades/inventário/barras) antes do combate.
+
+
+74. **Sessão 2026-09-20: entrada 126 medida no PCAP e no binário.**
+
+    `docs/ENTRADA_126.md` registra provas, limites e roteiro em jogo.
+    EQUIP_DATA usava máscara u64 comum, quatro bytes além do 126; captura
+    `s2c-66.txt:8` e validador VA 0x584a1d comprovam mask32. Corrigido só
+    no override v126, com teste vermelho antes e verde depois.
+    O validador VA 0x584610 rejeita ids acima de 260: 390 e seis avisos de
+    status da entrada deixaram de sair no 126 por opções do WorldProtocol.
+    Padrões preservam os bytes e sequência do 155, sem condição de versão no gs.
+    SELF_INFO_00, bolsa vazia e configuração de atalhos reproduzem amostras
+    originais; OWN_EXT_PROP confirma 152 bytes e offsets representados.
+    Ataque mágico/resistências da propriedade seguem a limitação da base.
+    Fechamento em 2026-09-21, escopo reduzido pelo usuário à Camada 2:
+    11 testes focados aprovados, zero falhas, oito filtrados; TEST_DATABASE_URL
+    definido (`docs/evidencias/126/camada2-focado.log:17`). As sentinelas
+    verificam máscara 64 bits, pacote 390 e sequência de entrada do 155.
+    A suíte ampla iniciada anteriormente terminou com 63/64 no arquivo de
+    mundo: falhou a persistência das listas de missão em
+    `subcomandos_no_mundo.rs:1807`. Não repetida nem investigada nesta retomada.
+    Não se declara regressão global aprovada; Camadas 3/4 não iniciadas.
+    Parada para aprovação, sem novas alterações fora da Camada 2.
+    Nenhum commit, publicação, reinício ou teste visual declarado.
