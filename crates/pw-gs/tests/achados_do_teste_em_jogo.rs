@@ -69,6 +69,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         contador_hp: 0,
         contador_mp: 0,
         recargas: std::collections::HashMap::new(),
+        pecas: [None; pw_gs::entity::PECAS_VESTIDAS],
         npc_em_conversa: None,
         waypoints: Vec::new(),
         ap: 0,

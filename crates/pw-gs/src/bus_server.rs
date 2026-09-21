@@ -117,6 +117,36 @@ const SEM_MARCACAO: i32 = 0;
 /// primeira e única etapa.
 const SECAO_UNICA: u8 = 0;
 
+// Índices compartilhados por toda poção da mesma família. A ordem é a enumeração
+// `COOLDOWN_INDEX_*` de `gs/cooldowncfg.h:62-78`; `item_potion.cpp:18-110` confere o índice
+// antes de consumir e o arma com o `cool_time` do `MEDICINE_ESSENCE`.
+const RECARGA_POCAO_REJUVENESCEDORA: i32 = 3;
+const RECARGA_POCAO_DE_VIDA: i32 = 11;
+const RECARGA_POCAO_DE_MANA: i32 = 12;
+const RECARGA_ANTIDOTO: i32 = 13;
+
+/// `id_major_type` → família de recarga.
+///
+/// Quem decide **não** é o que a poção restaura, e sim a classe do item, que
+/// `set_to_classid` tira do `id_major_type` do `MEDICINE_ESSENCE`
+/// (`gs/template/setclassid.cpp:81-101`): 1794 `CLS_ITEM_HEALING_POTION`, 1802
+/// `CLS_ITEM_MANA_POTION`, 1810 `CLS_ITEM_REJUVENATION_POTION`, 1815 e 2038 os antídotos.
+/// Cada `OnUse` arma o índice da sua classe (`gs/item/item_potion.cpp:18-110`).
+///
+/// Sem o campo — o leitor tipado do 1.2.6 não o traz — sobra o que o remédio restaura, que
+/// é a mesma divisão nas poções que existem lá: `falta` medir o `id_major_type` do 1.2.6.
+fn familia_de_recarga(tipo_maior: Option<i32>, hp_total: i32, mp_total: i32) -> i32 {
+    match tipo_maior {
+        Some(1794) => RECARGA_POCAO_DE_VIDA,
+        Some(1802) => RECARGA_POCAO_DE_MANA,
+        Some(1810) => RECARGA_POCAO_REJUVENESCEDORA,
+        Some(1815) | Some(2038) => RECARGA_ANTIDOTO,
+        _ if hp_total > 0 && mp_total > 0 => RECARGA_POCAO_REJUVENESCEDORA,
+        _ if mp_total > 0 && hp_total <= 0 => RECARGA_POCAO_DE_MANA,
+        _ => RECARGA_POCAO_DE_VIDA,
+    }
+}
+
 /// `attack_speed` de um golpe de habilidade.
 ///
 /// O original só preenche `attack_msg.speed` no golpe **normal** (`MakeAttackMsg`,
@@ -474,8 +504,13 @@ impl BusServer {
                         .data,
                 )
                 .await;
+                // A vida **não** vai aqui. Este evento é o anúncio do golpe, e a vida só cai
+                // quando o dano adiado vence (`InsertDamageEntry`): quem emite
+                // [`EventoDoMundo::EstadoMudou`] é o `aplicar_dano_no_jogador`, e é de lá que
+                // sai o `SELF_INFO_00` com o valor já descontado. Mandar a barra aqui era
+                // mandá-la **antes** do dano, e o cliente recebia a vida velha depois do
+                // golpe — o banco lento é que escondia isso (B72).
                 let _ = (hp, max_hp);
-                self.avisar_vida_propria(roleid).await;
             }
 
             EventoDoMundo::MonstroAndou {
@@ -1322,20 +1357,35 @@ impl BusServer {
                 return;
             }
             let ticks = ((p.attack_speed * 20.0).round() as u32).clamp(4, 300);
+            let arma_de_longe = p.equipamento.arma.is_some_and(|a| a.de_longe);
             if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
-                p.ataque = Some(crate::entity::SessaoDeAtaque { alvo, falta_ms: ticks * 50, proximo: None, cancelar: false, andar: false });
+                p.ataque = Some(crate::entity::SessaoDeAtaque {
+                    alvo,
+                    falta_ms: ticks * 50,
+                    municao_restante: 0,
+                    arma_de_longe,
+                    proximo: None,
+                    cancelar: false,
+                    andar: false,
+                });
             }
-            (alvo, ticks)
+            (alvo, ticks, arma_de_longe)
         };
-        let municao = self
-            .itens()
-            .await
-            .get_item_by_slot(roleid, ContainerType::Equipment, 11)
-            .await
-            .ok()
-            .flatten()
-            .map(|i| i.count.min(u16::MAX as u32) as u16)
-            .unwrap_or(0);
+        let municao = if inicio.2 {
+            self.itens()
+                .await
+                .get_item_by_slot(roleid, ContainerType::Equipment, 11)
+                .await
+                .ok()
+                .flatten()
+                .map(|i| i.count.min(u16::MAX as u32) as u16)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        if let Some(s) = self.world.write().await.players.get_mut(&(roleid as i64)).and_then(|p| p.ataque.as_mut()) {
+            s.municao_restante = municao;
+        }
         self.responder(roleid, S2CGamedataSend::host_start_attack(inicio.0 as i32, municao, inicio.1 as u8).data, envio)
             .await;
         self.golpear(roleid, envio).await;
@@ -1385,7 +1435,9 @@ impl BusServer {
     /// Um golpe da sessão (`DoAttack`), depois de `CheckAttack`.
     async fn golpear(&self, roleid: i32, envio: &EnvioAoCliente) {
         let mut mundo = self.world.write().await;
-        let Some(alvo) = mundo.players.get(&(roleid as i64)).and_then(|p| p.ataque).map(|s| s.alvo) else {
+        let Some((alvo, de_longe)) =
+            mundo.players.get(&(roleid as i64)).and_then(|p| p.ataque.as_ref()).map(|s| (s.alvo, s.arma_de_longe))
+        else {
             return;
         };
         if let Err(motivo) = pode_golpear(&mundo, roleid, alvo) {
@@ -1418,8 +1470,20 @@ impl BusServer {
         // `if (_ap_per_hit > 0) ModifyAP(_ap_per_hit)` no fim do `DoAttack`
         // (`player.cpp:3091-3093`), com o `ap_per_hit` da classe (`angro_increase`).
         let mut chi_mudou = false;
+        // A flecha sai aqui, no `DoAttack` já validado: `_equipment.DecAmount(
+        // EQUIP_INDEX_PROJECTILE, 1)` (`player.cpp:3064-3070`). Tirá-la antes das conferências
+        // gastava munição em golpe que nem acontecia. `dec_arrow` do original vale **1 sempre
+        // que a arma é de longe** — o retorno do `DecAmount` é ignorado (`:3068`) —, por isso o
+        // `ATTACK_ONCE` não depende de ter sobrado flecha; só a baixa depende.
+        let mut gasta_municao = false;
         if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
             p.combate_s = crate::progressao::COMBATE_AO_ATACAR_S;
+            if let Some(s) = p.ataque.as_mut() {
+                if s.arma_de_longe && s.municao_restante > 0 {
+                    s.municao_restante -= 1;
+                    gasta_municao = true;
+                }
+            }
             if p.ap_por_golpe > 0 {
                 chi_mudou = p.mexer_no_chi(p.ap_por_golpe);
             }
@@ -1435,10 +1499,10 @@ impl BusServer {
             // `SetRefreshState()` do `ModifyAP`: o cliente recebe a barra nova.
             self.avisar_vida_propria(roleid).await;
         }
-        self.gastar_municao(roleid).await;
-        // A arma se gasta no golpe normal, não na habilidade (`DoWeaponOperation<0>` está em
-        // `FillAttackMsg` e não em `FillEnchantMsg`, `player.cpp:3133` e `:3174`).
-        self.gastar_arma(roleid).await;
+        // `FillAttackMsg` tira a flecha e chama `ATTACK_ONCE` antes do resultado
+        // (`player.cpp:3063-3134`). Ambos saem imediatamente: o original altera a
+        // `item_list` em memória, portanto latência de persistência nunca alonga a cadência.
+        self.responder(roleid, S2CGamedataSend::attack_once(u8::from(de_longe)).data, envio).await;
 
         // 1. O resultado do golpe.
         //
@@ -1458,6 +1522,23 @@ impl BusServer {
             envio,
         )
         .await;
+
+        // Munição e durabilidade são persistidas depois do fio. Os SQLs decrementam o valor
+        // atual de forma atômica; tarefas sobrepostas não perdem golpe. `gastar_arma` ainda
+        // notifica a quebra quando o retorno chegar.
+        let este = self.clone_arc();
+        tokio::spawn(async move {
+            let Some(este) = este else { return };
+            if gasta_municao {
+                let repo = este.itens().await;
+                if let Err(e) = repo.consume_item(roleid, ContainerType::Equipment, 11, 1).await {
+                    warn!("mundo: não consegui gastar a munição de {roleid}: {e}");
+                }
+            }
+            // A arma se gasta no golpe normal, não na habilidade (`FillAttackMsg` chama
+            // `DoWeaponOperation<0>`, `player.cpp:3133`; `FillEnchantMsg`, :3174, não chama).
+            este.gastar_arma(roleid).await;
+        });
 
         // 2. A barra de vida do alvo **não** vai aqui: o original a manda no heartbeat de
         // 1 s a quem tem o monstro selecionado (`RefreshSubscibeList`,
@@ -1683,10 +1764,11 @@ impl BusServer {
         // Usar um equipamento não é gastá-lo. A regra aqui é a do `elements.data`: se o
         // item não é remédio, nada é consumido — e nunca se mexe no container de
         // equipamento, aconteça o que acontecer.
-        let e_consumivel = {
+        let remedio = {
             let mundo = self.world.read().await;
-            mundo.quanto_o_remedio_restaura(u.item_id as u32).is_some()
+            mundo.data_manager.quanto_o_remedio_restaura_no_tempo(u.item_id as u32)
         };
+        let e_consumivel = remedio.is_some();
 
         // Usar o item do slot de voo é **decolar**, não gastar o item.
         //
@@ -1710,6 +1792,30 @@ impl BusServer {
             return;
         }
 
+        let (hp_total, hp_s, mp_total, mp_s, recarga_ms) = remedio.expect("remédio já conferido");
+        let indice_de_recarga = {
+            let mundo = self.world.read().await;
+            familia_de_recarga(mundo.data_manager.tipo_maior_do_remedio(u.item_id as u32), hp_total, mp_total)
+        };
+
+        // O original faz `CheckCoolDown` **antes** de gastar o item e devolve
+        // `ERR_OBJECT_IS_COOLING` (53) quando o índice da família ainda está armado
+        // (`item_potion.cpp:18-69`). Poções diferentes de vida compartilham o índice 11;
+        // as de mana, o 12; as instantâneas de vida+mana, o 3 (`cooldowncfg.h:59-76`).
+        let em_recarga = {
+            let mundo = self.world.read().await;
+            let agora = std::time::Instant::now();
+            mundo.players
+                .get(&(roleid as i64))
+                .and_then(|p| p.recargas.get(&indice_de_recarga))
+                .is_some_and(|ate| *ate > agora)
+        };
+        if em_recarga {
+            debug!("mundo: {roleid} tentou usar a poção {} durante a recarga {indice_de_recarga}", u.item_id);
+            self.responder(roleid, Self::erro_de_recarga(), envio).await;
+            return;
+        }
+
         let quantos = u.quantos.max(1) as u32;
         if itens
             .consume_item(roleid, ct, u.slot, quantos)
@@ -1718,6 +1824,21 @@ impl BusServer {
         {
             debug!("mundo: {roleid} não tinha {quantos} do item {}", u.item_id);
             return;
+        }
+
+        if recarga_ms > 0 {
+            if let Some(p) = self.world.write().await.players.get_mut(&(roleid as i64)) {
+                p.recargas.insert(
+                    indice_de_recarga,
+                    std::time::Instant::now() + std::time::Duration::from_millis(recarga_ms as u64),
+                );
+            }
+            self.responder(
+                roleid,
+                S2CGamedataSend::set_cooldown(indice_de_recarga, recarga_ms).data,
+                envio,
+            )
+            .await;
         }
 
         self.responder(
@@ -1744,45 +1865,45 @@ impl BusServer {
         let curou = {
             let mut mundo = self.world.write().await;
             let n = quantos as i32;
-            match mundo.data_manager.quanto_o_remedio_restaura_no_tempo(u.item_id as u32) {
-                Some((hp, hp_s, mp, mp_s, _recarga)) => {
-                    let mut no_tempo = Vec::new();
-                    if hp > 0 && hp_s > 0 {
-                        no_tempo.push((crate::efeitos::Efeito::PocaoDeVida, hp * n, hp_s));
-                    }
-                    if mp > 0 && mp_s > 0 {
-                        no_tempo.push((crate::efeitos::Efeito::PocaoDeMana, mp * n, mp_s));
-                    }
-                    if no_tempo.is_empty() {
-                        mundo.curar_jogador(roleid, hp * n, mp * n)
-                    } else {
-                        for (efeito, total, tempo_s) in no_tempo {
-                            mundo.pocao_no_tempo(roleid, efeito, total, tempo_s);
-                        }
-                        // A vida de agora, que o `SELF_INFO_00` abaixo leva: o primeiro
-                        // pedaço entra no batimento seguinte, como no original.
-                        mundo.players.get(&(roleid as i64)).map(|p| (p.hp, p.max_hp, p.mp, p.max_mp))
-                    }
+            let mut no_tempo = Vec::new();
+            if hp_total > 0 && hp_s > 0 {
+                no_tempo.push((crate::efeitos::Efeito::PocaoDeVida, hp_total * n, hp_s));
+            }
+            if mp_total > 0 && mp_s > 0 {
+                no_tempo.push((crate::efeitos::Efeito::PocaoDeMana, mp_total * n, mp_s));
+            }
+            if no_tempo.is_empty() {
+                mundo.curar_jogador(roleid, hp_total * n, mp_total * n)
+            } else {
+                for (efeito, total, tempo_s) in no_tempo {
+                    mundo.pocao_no_tempo(roleid, efeito, total, tempo_s);
                 }
-                None => None,
+                // A vida de agora, que o `SELF_INFO_00` abaixo leva: o primeiro
+                // pedaço entra no batimento seguinte, como no original.
+                mundo.players.get(&(roleid as i64)).map(|p| (p.hp, p.max_hp, p.mp, p.max_mp))
             }
         };
 
         if let Some((hp, max_hp, mp, max_mp)) = curou {
-            let (nivel, exp, sp, ap, max_ap) = {
+            // O `level2` é o **cultivo**, e o cliente toca o efeito de avanço sempre que
+            // ele sobe (`SetLevel2` → `CanPlayTaoistEffect`, `EC_Player.cpp:7434-7454`:
+            // `originalLevel2 < newLevel2`). Mandar zero aqui derrubava o cultivo para 0 e
+            // o `SELF_INFO_00` seguinte, com o valor certo, virava um avanço — era a tela
+            // de cultivo ao usar poção (B71).
+            let (nivel, cultivo, exp, sp, ap, max_ap) = {
                 let mundo = self.world.read().await;
                 mundo
                     .players
                     .get(&(roleid as i64))
-                    .map(|p| (p.level, p.exp, p.sp, p.ap, p.max_ap))
-                    .unwrap_or((1, 0, 0, 0, 0))
+                    .map(|p| (p.level, p.cultivation.clamp(0, u8::MAX as i32) as u8, p.exp, p.sp, p.ap, p.max_ap))
+                    .unwrap_or((1, 0, 0, 0, 0, 0))
             };
             info!("mundo: {roleid} usou o item {} e ficou com {hp}/{max_hp}", u.item_id);
             self.responder(
                 roleid,
                 S2CGamedataSend::self_info_00(
                     nivel as i16,
-                    0,
+                    cultivo,
                     hp,
                     max_hp,
                     mp,
@@ -2387,13 +2508,14 @@ impl BusServer {
                 vitima.mp,
                 vitima.max_mp,
                 vitima.level,
+                vitima.cultivation.clamp(0, u8::MAX as i32) as u8,
                 vitima.exp,
                 vitima.sp,
                 vitima.ap,
                 vitima.max_ap,
             )
         };
-        let (hp, max_hp, mp, max_mp, nivel, exp, sp, ap, max_ap) = estado;
+        let (hp, max_hp, mp, max_mp, nivel, cultivo, exp, sp, ap, max_ap) = estado;
 
         info!(
             "mundo: {roleid} conjurou {skill_id} em {alvo} — {} de {}, alvo com {hp}/{max_hp}",
@@ -2498,9 +2620,10 @@ impl BusServer {
             )
             .await;
         }
+        // O cultivo verdadeiro, não zero: ver `EC_Player.cpp:7434-7454` (B71).
         let vida = S2CGamedataSend::self_info_00(
             nivel as i16,
-            0,
+            cultivo,
             hp,
             max_hp,
             mp,
@@ -3163,15 +3286,25 @@ impl BusServer {
                 };
                 p.hp = p.max_hp;
                 p.mp = p.max_mp;
-                let (nivel, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap) =
-                    (p.level, p.hp, p.max_hp, p.mp, p.max_mp, p.exp, p.sp, p.ap, p.max_ap);
+                let (nivel, cultivo, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap) = (
+                    p.level,
+                    p.cultivation.clamp(0, u8::MAX as i32) as u8,
+                    p.hp,
+                    p.max_hp,
+                    p.mp,
+                    p.max_mp,
+                    p.exp,
+                    p.sp,
+                    p.ap,
+                    p.max_ap,
+                );
                 drop(mundo);
 
                 self.responder(
                     roleid,
                     S2CGamedataSend::self_info_00(
                         nivel as i16,
-                        0,
+                        cultivo,
                         hp,
                         max_hp,
                         mp,

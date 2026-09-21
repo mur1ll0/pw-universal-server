@@ -5,7 +5,8 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-20**, B69 (barra de chi, item de voo, teleporte pela transportadora).
+> **Última atualização: 2026-09-20**, B72 (o banco sai do caminho do jogo: autosave fora do
+> lock do tique e durabilidade das peças no mundo).
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -74,10 +75,27 @@ por ponto novo), e **viaja**: o serviço `GP_NPCSEV_TRANSMIT` confere índice, n
 cobra e teleporta. A coordenada de cada destino estava num arquivo que ninguém lia — o
 **`world_targets.sev`** (92 pontos no `realm_155`).
 
-**Barra de chi (B69):** não existia. O teto vem do prêmio `m_ulFuryULimit` de uma missão (a
-32394, de nível 9, dá 99); o golpe normal enche com o `angro_increase` da classe (Arqueiro: 5)
-e meditar dá 15 por segundo. O valor viaja no `iAP`/`iMaxAP` do `SELF_INFO_00`, que ia zero
-fixo. **Não há ganho ao apanhar** no 1.5.5.
+**Barra de chi (B69/B70):** o teto vem do prêmio `m_ulFuryULimit` de uma missão (a 32394, de
+nível 9, dá 99); o golpe normal enche com o `angro_increase` da classe (Arqueiro: 5) e meditar
+dá 15 por segundo. O valor corrente e o teto vão no `SELF_INFO_00`; o mesmo teto também precisa
+ir no último campo do `OWN_EXT_PROP`. Ele ia zero, e o cliente recebia 0→99 em cada atualização,
+mostrando repetidamente o aviso de aumento. A **Flecha Fulgurante não gera chi** no original:
+ela consome mana e aplica `Firearrow`. **Não há ganho ao apanhar** no 1.5.5.
+
+**Travamento no combate (B72):** o mundo parava por segundos porque o autosave gravava
+dentro do `world.tick` — e o tique segura o mundo inteiro. Saiu de lá; a durabilidade das
+peças passou a viver no `PlayerEntity`, e o `SELF_INFO_00` de quem apanha agora sai quando o
+dano cai, não no anúncio do golpe. Regra que ficou registrada: **nada que espere o banco no
+caminho do jogo**.
+
+**Item de missão na bolsa comum (B72):** não era defeito. Quem escolhe a bolsa é o
+`m_bCommonItem` de cada item do `tasks.data`, e a missão 31734 marca a Alma da Ninfa como
+item comum.
+
+**Poção e cultivo (B70/B71):** a poção agora respeita a recarga do `cool_time`, e o índice
+dela é o da **família** do item (`id_major_type` → classe → `COOLDOWN_INDEX_*`). E o `Level2`
+do `SELF_INFO_00` — que é o **cultivo** — ia zero em três caminhos; como o cliente anuncia
+avanço sempre que esse campo sobe, usar uma poção mostrava a tela de cultivo.
 
 **Item de voo (B69):** a "Glória de Shalim" entrou na bolsa sem bloco de dados, e é de lá que
 o cliente lê a máscara de classes — por isso não podia ser usada. O prêmio de missão agora
@@ -309,12 +327,14 @@ dois campos (`ataque_em_ticks` e `atraso_do_dano_em_ticks`) passaram a viver no
 durabilidade e **vermelho** em zero. O item 8/18 do relato está em 44%, por isso não aparece
 ainda.
 
-### 3.4 Publicado, falta ver em jogo (B65 a B69)
+### 3.4 Publicado, falta ver em jogo (B65 a B70) — e o B71, **ainda não publicado**
 
 Publicado em 2026-09-20 (`pw-realm-155` e `pw-world-155`). Roteiro com o **eaa** (nível 9):
 
-1. **Chi (B69)**: bater num monstro — a barra deve subir 5 por golpe, até 99. Sentar deve
-   somar 15 por segundo. Ela some ao relogar? Não deve: fica no banco.
+1. **Chi (B69/B70)**: bater num monstro — a barra deve subir 5 por golpe, até 99. Sentar deve
+   somar 15 por segundo. Usar Flecha Fulgurante **não** aumenta chi; ela não o faz no fonte.
+   Depois de relogar ou abrir C, o aviso “limite máximo de chi aumentado para 99” não deve mais
+   se repetir. Ela some ao relogar? Não deve: fica no banco.
 2. **Voo (B69)**: a "Glória de Shalim" deve poder ser equipada agora.
 3. **Teleporte (B69)**: falar com uma transportadora e escolher um destino — deve cobrar e
    levar. Sem dinheiro ou nível, recusa.
@@ -323,6 +343,17 @@ Publicado em 2026-09-20 (`pw-realm-155` e `pw-world-155`). Roteiro com o **eaa**
 5. **Buff (B68)**: a Flecha Fulgurante deve executar a animação (800 ms depois da conjuração).
 
 Onde olhar: `docker logs pw-world-155 | grep -iE "viajou|ponto de teleporte|cultivo"`.
+
+Depois de publicar o **B71** (falta pedido do Murillo), entram no roteiro:
+
+6. **Poção**: usar uma **não** pode mostrar a tela de avanço de cultivo. Usar de novo antes
+   dos 15 s recusa ("em recarga") sem consumir; passado o tempo, aceita. Poção de vida e de
+   mana têm recargas separadas, e o antídoto tem a dele.
+7. **Flecha**: a contagem no cliente cai de uma em uma, sem atraso e sem pular; um golpe
+   recusado (alvo longe, alvo morto) não pode comer flecha.
+8. **Travamento (B72)**: um combate longo (a Ninfa de novo) não pode ter pausas. O minuto do
+   autosave é o momento crítico — antes, o mundo parava nele. No log, `slow statement` pode
+   continuar aparecendo; o que não pode é o jogo parar junto.
 
 ---
 
@@ -548,3 +579,6 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 67 | 09-20 | auditoria da sessão de fora (dado dos efeitos, id do monstro invocado, compose); cultivo pela missão (`m_ulNewPeriod`) e `level2` = cultivo; poção no tempo; conteúdo do amuleto |
 | 68 | 09-20 | fase de execução da habilidade (animação do buff); pontos de teleporte descobertos e lembrados; `PorVersao` removido — quem despacha é a estratégia da versão |
 | 69 | 09-20 | barra de chi (teto por missão, ganho por golpe e meditação); item de voo com a máscara de classes; teleporte pela transportadora com o `world_targets.sev` |
+| 70 | 09-20 | `OWN_EXT_PROP` levava `max_ap = 0`; o cliente repetia o aviso de teto 99 e a Flecha Fulgurante foi confirmada como sem ganho de chi |
+| 71 | 09-20 | `Level2` (cultivo) ia zero em três `SELF_INFO_00` — era a tela de cultivo ao usar poção; recarga da poção pela família do `id_major_type`; a flecha desconta depois das conferências do golpe |
+| 72 | 09-20 | o combate travava porque o autosave gravava dentro do lock do tique; durabilidade das peças no mundo; a barra de vida de quem apanha segue o dano; a Alma da Ninfa na bolsa comum está certa (`m_bCommonItem`) |

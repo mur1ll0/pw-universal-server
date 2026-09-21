@@ -92,12 +92,13 @@ impl WorldProtocol for V172Protocol {
         atributos: (i32, i32, i32, i32),
         max_hp: i32,
         max_mp: i32,
+        max_ap: i32,
         regen: (i32, i32),
         velocidades: (f32, f32, f32, f32),
         ataque: (i32, i32, i32, i32, f32),
         defesa: (i32, i32),
     ) -> crate::packets::s2c::S2CGamedataSend {
-        self.0.own_ext_prop(status_point, atributos, max_hp, max_mp, regen, velocidades, ataque, defesa)
+        self.0.own_ext_prop(status_point, atributos, max_hp, max_mp, max_ap, regen, velocidades, ataque, defesa)
     }
 
     fn enter_sanctuary(&self, id: i32) -> crate::packets::s2c::S2CGamedataSend {

@@ -393,17 +393,40 @@ impl ItemRepository {
         slot: u16,
         amount: u32,
     ) -> Result<Option<ItemRecord>> {
-        if let Some(mut item) = self.get_item_by_slot(character_id, container_type, slot).await? {
-            if item.count <= amount {
-                self.delete_item_by_slot(character_id, container_type, slot).await?;
-                Ok(None)
-            } else {
-                item.count -= amount;
-                self.upsert_item(&item).await?;
-                Ok(Some(item))
-            }
-        } else {
-            Ok(None)
-        }
+        // Uma única instrução e o bloqueio de linha do `locked` tornam o consumo seguro
+        // mesmo quando a persistência de dois golpes se sobrepõe. O caminho antigo fazia
+        // SELECT → UPDATE em conexões soltas: duas leituras do mesmo `count` podiam gravar
+        // o mesmo restante e perder uma flecha.
+        let row = sqlx::query_as::<_, ItemRow>(
+            r#"
+            WITH locked AS (
+                SELECT id, count
+                  FROM character_items
+                 WHERE character_id = $1 AND container_type = $2 AND slot = $3
+                 FOR UPDATE
+            ),
+            updated AS (
+                UPDATE character_items AS item
+                   SET count = item.count - $4, updated_at = CURRENT_TIMESTAMP
+                  FROM locked
+                 WHERE item.id = locked.id AND locked.count > $4
+                RETURNING item.*
+            ),
+            deleted AS (
+                DELETE FROM character_items AS item
+                 USING locked
+                 WHERE item.id = locked.id AND locked.count <= $4
+                RETURNING item.id
+            )
+            SELECT * FROM updated
+            "#,
+        )
+        .bind(character_id)
+        .bind(container_type.to_i16())
+        .bind(slot as i16)
+        .bind(amount.min(i32::MAX as u32) as i32)
+        .fetch_optional(self.pool.get_ref())
+        .await?;
+        Ok(row.map(Into::into))
     }
 }

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash 'F:\\Python_C_Projects\\PWSource1.5.3\\pw-universal-server\\.codex\\hooks\\lembrar_specs.sh'",
+            "timeout": 30,
+            "statusMessage": "Conferindo se as specs acompanham o código"
+          }
+        ]
+      }
+    ]
+  }
+}

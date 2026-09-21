@@ -85,6 +85,7 @@ pub trait WorldProtocol: Send + Sync {
         atributos: (i32, i32, i32, i32),
         max_hp: i32,
         max_mp: i32,
+        max_ap: i32,
         regen: (i32, i32),
         velocidades: (f32, f32, f32, f32),
         ataque: (i32, i32, i32, i32, f32),

@@ -7981,3 +7981,121 @@ Validação disponível e acordada com o usuário: Docker + clientes reais (1.2.
 envio de logs, captura de tráfego (Wireshark/pcap) e execução dos binários originais para
 comparação lado a lado.
 
+70. **Sessão 2026-09-20 (parte 4): o teto de chi no pacote de propriedades.**
+
+    O aviso “limite máximo de chi aumentado para 99” reaparecia porque o mundo já enviava
+    `iAP = 0` e `iMaxAP = 99` no `SELF_INFO_00`, mas o `OWN_EXT_PROP` seguinte ainda fechava
+    com `max_ap = 0`. Em `EC_HostMsg.cpp:1319-1332`, o cliente compara esse valor com o que
+    recebeu antes e anuncia a diferença; cada atualização de propriedades virava 0→99.
+
+    `OWN_EXT_PROP` agora recebe `max_ap` pelo `WorldProtocol`, tanto no codificador 1.2.6 de
+    152 bytes quanto no 1.5.5 de 196 bytes, e o mundo passa o teto persistido do personagem.
+    A **Flecha Fulgurante (244) não é a origem nem deve gerar chi**: `skill244.h:20-80,234-240`
+    só consome mana e aplica `Firearrow`; não chama `SetApgen`, `SetApgen2` ou `ModifyAP`.
+
+    ### Provas
+
+    `layouts_do_126` e `protocol_tests`: **36/36** (o último `i32` vale 99 nos dois layouts).
+
+71. **Sessão 2026-09-20 (parte 5): a tela de cultivo da poção, a recarga por família e a
+    flecha na sessão.**
+
+    Parte do trabalho desta entrega veio de uma sessão de fora que parou sem relatório (e
+    sem commit): a **recarga das poções**, a **munição na sessão de ataque** com persistência
+    fora do fio, e o `consume_item` do `pw-storage` reescrito como uma instrução só
+    (`SELECT … FOR UPDATE` + `UPDATE`/`DELETE` nas CTEs), para que duas baixas simultâneas
+    não regravem o mesmo restante. Auditei tudo contra o fonte e corrigi três pontos.
+
+    **A tela de cultivo ao usar poção.** O `SELF_INFO_00` tem `Level2`, que é o cultivo, e o
+    cliente chama `SetLevel2` em *todo* comando desses: `CanPlayTaoistEffect`
+    (`EC_Player.cpp:7434-7445`) toca o efeito de avanço sempre que o valor novo é **maior**
+    que o anterior. Três caminhos nossos mandavam `0` fixo no campo — o uso de item, o
+    resultado de habilidade que cura ou fere e o serviço de cura do NPC. Com o eaa em cultivo
+    1, usar uma poção zerava o cultivo do cliente e o `SELF_INFO_00` seguinte, correto,
+    virava 0 → 1: avanço de cultivo em tela. É o mesmo erro do `max_ap` do B70, no campo
+    vizinho. Agora todo envio leva `p.cultivation`.
+
+    **A família da recarga.** A sessão de fora escolhia o `COOLDOWN_INDEX_*` por heurística
+    (o que a poção restaura). No original quem decide é a **classe do item**, e a classe sai
+    do `id_major_type` do `MEDICINE_ESSENCE` em `set_to_classid`
+    (`gs/template/setclassid.cpp:81-101`): 1794 `CLS_ITEM_HEALING_POTION`, 1802
+    `CLS_ITEM_MANA_POTION`, 1810 `CLS_ITEM_REJUVENATION_POTION`, 1815 e 2038 os antídotos.
+    Cada `OnUse` arma o índice da sua classe (`gs/item/item_potion.cpp:18-110`). Pela
+    heurística o antídoto — que não restaura vida nem mana — caía na família da mana e
+    travava as poções de mana por 15 s. O `id_major_type` agora vem do arquivo
+    (`tipo_maior_do_remedio`), e o `realm_155` confirma: 1796 → 1794, 1804 → 1802, 1812
+    (Nove Sóis) → 1810, 1817 e 2040 → antídotos.
+
+    **A flecha.** Ela estava sendo descontada da sessão antes das conferências do golpe
+    (`pode_golpear`, efeito que impede agir, alvo ainda existir), então um golpe que nem
+    acontecia comia munição. No original o desconto está dentro do `DoAttack`, depois do
+    `CheckAttack` (`player.cpp:3063-3070`). E o `dec_arrow` do `ATTACK_ONCE` vale **1 sempre
+    que a arma é de longe**: o retorno do `DecAmount` é ignorado (`:3068`), de modo que o
+    comando não muda quando acaba a flecha — só a baixa muda.
+
+    ### Provas
+
+    Suíte inteira com o banco: **602 testes, 0 falhas**. O teste da poção agora fixa o
+    cultivo do jogador e confere o `Level2` de cada `SELF_INFO_00` — com o zero de volta no
+    caminho do uso de item ele falha, como tem de falhar. Novo
+    `o_tipo_maior_do_remedio_separa_as_familias_de_recarga` lê os cinco `id_major_type` do
+    `elements.data` do `realm_155`.
+
+    ### Falta
+
+    O relato do combate travado contra a Ninfa não foi investigado — nenhuma medição foi
+    feita, e a sessão de fora não deixou registro do que tinha visto.
+
+72. **Sessão 2026-09-20 (parte 6): o que travou o combate contra a Ninfa, e por que a Alma
+    dela foi para a bolsa comum.**
+
+    **O combate em si saiu certo.** O log do `pw-world-155` de 20:49:03 a 20:49:58 UTC tem a
+    Ninfa (`-2147482351`, 5810 de vida) caindo golpe a golpe até zero, o monstro revidando,
+    a recarga da habilidade 235 recusando o que tinha de recusar ("ainda em recarga"), a
+    morte pela 235 e a missão avançando. Nenhum erro, nenhum pacote desconhecido.
+
+    **O travamento é de banco no caminho do jogo.** O mesmo minuto tem **49 avisos
+    `slow statement`** do `sqlx` — `UPDATE character_items SET durability` de 1,1 a 1,9 s,
+    `INSERT INTO character_items` de até 4,1 s, `UPDATE characters SET ap` de 4,1 s. Três
+    lugares punham essas escritas na frente do jogador:
+
+    1. O **autosave**, quatro escritas por jogador a cada 60 s, rodava **dentro do
+       `world.tick`** — e o tique roda inteiro com o `world.write()` na mão. Entre
+       20:49:59 e 20:50:08 não há uma única linha de combate no log: o mundo ficou **8
+       segundos parado** enquanto o autosave esperava o banco. Agora o `tick` devolve a
+       fotografia (`EstadoParaGravar`) e o laço grava numa tarefa, com o lock solto.
+    2. O **desgaste da peça ao apanhar** consultava o banco **antes** de mandar o
+       `HOST_ATTACKED` — o índice da peça vai dentro do comando. A durabilidade passou a
+       viver no mundo (`PlayerEntity::pecas`), como a `item_list` vestida do original
+       (`player.cpp:94`), e o banco acompanha depois.
+    3. A **munição e a durabilidade da arma** no golpe dado, já tratadas no B71.
+
+    De quebra, isso expôs um aviso prematuro: o `SELF_INFO_00` de quem apanhou saía junto do
+    `HOST_ATTACKED`, ou seja **antes** de o dano adiado vencer — o cliente recebia a vida
+    velha. Quem manda a barra é o `aplicar_dano_no_jogador`, pelo `EstadoMudou`. A lentidão
+    do banco é que escondia o erro.
+
+    **A Alma da Ninfa do Mar de Conchas (44357) na bolsa comum está certa.** Quem decide o
+    inventário não é o tipo do item, e sim o `m_bCommonItem` de cada item do `tasks.data`:
+    `_DeliverItem` manda os `true` para `DeliverCommonItem` → `IL_INVENTORY` e os `false`
+    para `DeliverTaskItem` → `IL_TASK_INVENTORY` (`task/TaskProcess.cpp:1190-1208`,
+    `task/taskman.cpp:281-330`). A missão **31734 "A Ninfa do Mar de Conchas"** declara o
+    item como o que o monstro 44618 solta com `comum = true`. Nosso `dar_item` já respeita o
+    bit; o item entrou na bolsa às 17:49:58 local, no mesmo segundo do abate.
+
+    ### Provas
+
+    Suíte inteira com o banco: **604 testes, 0 falhas**. Novos:
+    `o_tique_devolve_o_autosave_em_vez_de_gravar_dentro_do_lock` (o tique devolve o lote e
+    **não** grava; quem grava é o `gravar_autosave`) e
+    `a_durabilidade_das_pecas_vestidas_fica_no_mundo`. O
+    `o_monstro_revida_e_o_cliente_fica_sabendo` passou a conferir o desgaste na memória do
+    mundo e a esperar o banco — e a exigir que o `SELF_INFO_00` do golpe venha **depois** do
+    dano.
+
+    ### Falta
+
+    Por que o PostgreSQL do contêiner chegou a 4 s por escrita naquele minuto não está
+    provado — isolado, ele responde em 35 ms. A máquina estava com outra sessão compilando e
+    rodando a suíte contra o mesmo banco, o que é suspeita razoável, não prova. O que foi
+    corrigido é o que importa: nada que espere o banco fica mais no caminho do jogo.

@@ -173,4 +173,38 @@ fn a_pocao_de_vida_traz_o_total_e_o_tempo() {
     assert_eq!((hp, hp_s), (25, 10), "hp_add_total/hp_add_time do elements");
     assert_eq!((mp, mp_s), (0, 0));
     assert_eq!(recarga, 15000, "cool_time");
+
+    // Foram as outras duas usadas pelo eaa no relato de 2026-09-20. O número continua
+    // vindo do arquivo real: vida e mana têm famílias de recarga separadas, ambas 15 s.
+    assert_eq!(
+        d.quanto_o_remedio_restaura_no_tempo(36584),
+        Some((450, 3, 0, 0, 15000)),
+        "Orvalho do Florescer Vermelho"
+    );
+    assert_eq!(
+        d.quanto_o_remedio_restaura_no_tempo(36585),
+        Some((0, 0, 450, 3, 15000)),
+        "Orvalho do Fluxo Gélido"
+    );
+}
+
+/// B71 — quem decide a família de recarga é o `id_major_type`, não o que a poção restaura.
+///
+/// `set_to_classid` (`gs/template/setclassid.cpp:81-101`) traduz 1794 em
+/// `CLS_ITEM_HEALING_POTION`, 1802 em `CLS_ITEM_MANA_POTION`, 1810 em
+/// `CLS_ITEM_REJUVENATION_POTION` e 1815/2038 nos antídotos; cada `OnUse` arma o
+/// `COOLDOWN_INDEX_*` da sua classe (`gs/item/item_potion.cpp:18-110`).
+#[test]
+fn o_tipo_maior_do_remedio_separa_as_familias_de_recarga() {
+    let Some(d) = realm() else { return };
+    assert_eq!(d.tipo_maior_do_remedio(1796), Some(1794), "Poção Pequena de Cura");
+    assert_eq!(d.tipo_maior_do_remedio(1804), Some(1802), "Poção Pequena do Espírito");
+    assert_eq!(d.tipo_maior_do_remedio(1812), Some(1810), "Nove Sóis Pequeno (vida e mana)");
+    assert_eq!(d.tipo_maior_do_remedio(1817), Some(1815), "Pílula Desintoxicante");
+    assert_eq!(d.tipo_maior_do_remedio(2040), Some(2038), "Pílula das Nove Desintoxicações");
+    assert_eq!(d.tipo_maior_do_remedio(35370), None, "amuleto não é remédio");
+
+    // O antídoto restaura zero de vida e zero de mana: só o `id_major_type` o separa da
+    // poção de mana, e era nela que a divisão por hp/mp o punha.
+    assert_eq!(d.quanto_o_remedio_restaura_no_tempo(1817), Some((0, 0, 0, 0, 15000)));
 }

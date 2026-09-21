@@ -158,6 +158,22 @@ Exemplo: a Flecha Fulgurante (244) tem `State1` de 3.000 ms (conjuração, o que
 O efeito entra no fim da conjuração; o `HOST_STOP_SKILL` só sai 800 ms depois. Mandando os
 dois juntos, o buff aparecia sem animação nenhuma (relato de 2026-09-19).
 
+### 5.1.0 Nada que espere o banco fica no caminho do jogo — `testado` (B72)
+
+O tique de 50 ms roda inteiro com o `world.write()` na mão, e as respostas a comandos
+esperam esse mesmo lock. Toda escrita que ficar dentro dele para **o mundo todo** pelo tempo
+do banco.
+
+| onde estava | o que acontecia | onde está agora |
+| :--- | :--- | :--- |
+| autosave (4 escritas por jogador, a cada 60 s) | dentro do `tick`, com o mundo trancado | o `tick` devolve a fotografia (`EstadoParaGravar`) e o laço grava em `tokio::spawn`, com o lock solto |
+| durabilidade da arma e da peça | `SELECT`+`UPDATE` antes de responder ao golpe | decidida em `PlayerEntity::pecas`; a gravação vai em `tokio::spawn` |
+| munição | lida e gravada a cada golpe | contagem na sessão de ataque; baixa em `tokio::spawn` (B71) |
+
+No combate de 2026-09-20 20:50 UTC o banco de teste passou a responder em 1 a 4 segundos e
+o mundo ficou **8 segundos sem um único golpe** — o autosave segurava o lock. Os avisos
+`slow statement` do `sqlx` no log do mundo são o rastro disso.
+
 ### 5.1.1 O dano cai depois da animação — `testado` (B62)
 
 O golpe é **anunciado na hora** (`HOST_ATTACKRESULT` a quem bateu, `HOST_ATTACKED` a quem
@@ -170,6 +186,10 @@ apanhou) e a vida só cai `attack.speed` tiques depois: `InsertDamageEntry(dano,
 | jogador, golpe normal | `attack_delay = (attack_speed × 20 × 0,8) − 1` tiques | `playertemplate.h:980`, `MakeAttackMsg`, `actobject.cpp:824` |
 | monstro | `_damage_delay` do `MONSTER_ESSENCE` | `gnpc_imp::DoAttack`, `npc.cpp:2118` |
 | habilidade | **nada** — o original não preenche `speed`, então o dano é imediato | `FillEnchantMsg`, `player.cpp:3174` |
+
+A barra de vida segue o dano, não o anúncio: o `SELF_INFO_00` de quem apanhou sai do
+`aplicar_dano_no_jogador`, quando o golpe adiado vence, e **não** junto do `HOST_ATTACKED` —
+mandá-lo junto era mandar a vida velha depois do golpe (B72).
 
 É o mesmo número que o cliente usa como duração da animação do golpe. Aplicar o dano na hora
 fazia a vida do monstro cair no clique, antes de a flecha sair — em jogo parecia "um golpe a
@@ -335,7 +355,7 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
 | **subida de nível** | `testado` | `IncExp`/`LevelUp` (`player.cpp:2627-2711,2831-2896`): curva `PLAYER_LEVELEXP_CONFIG` 202, +5 pontos de atributo, atributos refeitos (`recalcular_por_nivel`), vida e mana cheias, experiência zera no teto (`logic_level_limit` 105); `LEVEL_UP` (37) a todos, `SELF_INFO_00` e `OWN_EXT_PROP` ao próprio |
 | reviver na cidade (C2S 4) | `testado` | ponto de cidade do distrito do `precinct.sev` que contém a posição (`ResurrectInTown`, `playercmd.cpp:112`; spec 03 §3.7); sem distrito ou distrito de outro mapa, no lugar. Vida e mana a 10 % e perda de `GetLvlupExp × exp_lost[cultivo]` (`Resurrect`, `player.cpp:8716`) |
 | distribuir pontos (C2S 22) | `testado` (B51) | `PlayerSetStatusPoint` (`player.cpp:8598`): recusa se alguma parcela ou a soma passa dos livres; soma, refaz vida/mana, evasão e precisão pela agilidade; `ADD_STATUS_POINT` (51, 22 bytes) com os quatro e o que sobrou (recusa com zeros). O cliente pede `GET_EXT_PROP` (21), que responde `OWN_EXT_PROP` (`PlayerGetProperty`, `:8588`) — antes só `SELF_INFO_00`. Grava atributos e pontos juntos (`gravar_atributos`) |
-| munição (golpe normal) | `testado` (B51) | arma de longo alcance (`weapon_type` 1) tira 1 do slot 11 no banco (`DoAttack`, `player.cpp:3063-3070`); todo golpe manda `ATTACK_ONCE` (83, 3 bytes) com quantas saíram (`FillAttackMsg`, `:3134`) — o cliente desconta e gasta durabilidade. Sem munição o golpe não é recusado (`falta`: invalidar o arco pelo equipamento); o bônus de dano da flecha não entra |
+| munição (golpe normal) | `testado` (B51, B71) | arma de longo alcance (`weapon_type` 1) tira 1 do slot 11 (`DoAttack`, `player.cpp:3063-3070`). A contagem **mora na sessão de ataque**, como o `item_list` em memória do original: o banco é lido uma vez ao abrir a sessão (o número que vai no `HOST_START_ATTACK`) e a baixa é persistida fora do fio, senão a latência do banco alongava a cadência (B71). O `arrow_dec` do `ATTACK_ONCE` vale **1 sempre que a arma é de longe**, com ou sem flecha sobrando: o original ignora o retorno do `DecAmount` (`:3064-3070`). A flecha só sai depois das conferências do golpe. Sem munição o golpe não é recusado (`falta`: invalidar o arco pelo equipamento); o bônus de dano da flecha não entra |
 | voo | `confirmado` | pelo item no slot 12 (`EQUIPIVTR_FLYSWORD`); sem custo de mana, sem teto, `GP_STATE_FLY` fora do `state` |
 | teleporte de GM (`GOTO`) | `confirmado` | `y` do cliente é marcador; altura = chão + 0,5 m (`playercmd.cpp:4926`) |
 | sentar, gestos, roupa, zona segura | `confirmado` | `modo_roupa` e `voando` não persistem |
@@ -374,6 +394,7 @@ desconta sozinho, com os mesmos números (`WEAPON_RUIN_SPEED -2`, `ARMOR_RUIN_SP
 | golpe normal dado | a arma perde **2** (`DURABILITY_DEC_PER_ATTACK`, `gs/config.h:61`; `weapon_item::OnAfterAttack`, `item/equip_item.cpp:978-988`), porque `DoWeaponOperation<0>` está em `FillAttackMsg` (`player.cpp:3133`) |
 | golpe de habilidade | **não** gasta arma — `FillEnchantMsg` não chama o desgaste, e o original diz por quê em comentário (`player.cpp:3174`) |
 | golpe recebido | `SelectRandomArmor` sorteia um slot de 1 a 10 (`EQUIP_ARMOR_START..EQUIP_ARMOR_END-1`, `gs/item.h:194-241`); com peça ali, ela perde **25** (`DURABILITY_DEC_PER_HIT`, `gs/config.h:60`), e o índice vai no `cEquipment` do `HOST_ATTACKED`; slot vazio manda `0x7f` (`player.cpp:9552-9570`) |
+| onde a durabilidade mora | **no mundo**, em `PlayerEntity::pecas` (`(atual, máxima)` por slot), preenchido pelo `recalcular_equipamento`: é ele que decide o índice do `cEquipment` e a quebra. O banco acompanha numa tarefa à parte. Até o B72 cada golpe — dado ou recebido — esperava um `SELECT`+`UPDATE` antes de o cliente ver o golpe, e o original mexe na `item_list` vestida e segue (`player.cpp:94`) |
 | chegou a zero | para em zero, e **uma vez** sai `EQUIP_DAMAGED` (68) com motivo 0 mais o recálculo do equipamento (`_runner->equipment_damaged` + `RefreshEquipment`, `player.cpp:9563-9567`) |
 | peça acabada | não conta em nada: `equip_item::VerifyRequirement` exige `durability > 0` (`item/equip_item.cpp:60-80`) |
 | aviso de durabilidade baixa | é **do cliente**, sem comando nenhum: `CECGameUIMan::RefreshBrokenList` (`EC_GameUIMan.cpp:5474-5555`) roda a cada quadro e põe na janela `Win_Broken` o ícone de toda peça com `cur <= max / 10`, amarelo (192,192,0) enquanto sobra durabilidade e vermelho (192,0,0) em zero; aljava entra abaixo de 15% de flechas, e asa/espada voadora/moda nunca entram |
@@ -400,13 +421,13 @@ banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
 | **drop de monstro** | `testado` | dono = maior dano (+`max_hp/4` do primeiro golpe). Itens: `drop_times` rodadas de `probability_drop_num0..3` e `drop_matters[32]` (da 2ª rodada, só índices < 16), com o ajuste de item por nível (`DropItemFromData`, `npc.cpp:2649`; `generate_item_from_monster`, `itemdataman.cpp:1191`). Moedas: `drop_times` vezes, `Rand(médio±variação)`, chance 0,7, × ajuste. Cada monte a ±2 m, no chão (`worldmanager.cpp:512-555`), `tid` 3044 para moedas, id de matéria `0xC8…` |
 | item no chão | `testado` | posse do dono por **30 s**, some em **300 s** (`matter.h:62`, `matter.cpp:133`); `MATTER_ENTER_WORLD` a quem está a 120 m e no streaming; `OBJECT_DISAPPEAR` ao sumir |
 | **pegar** (C2S 6 e 184) | `testado` | tipo confere, distância < 10 m, posse; moedas `PICKUP_MONEY` (30), item `PICKUP_ITEM` (31); `MATTER_PICKUP` (152) a todos; bolsa cheia `ERROR_MESSAGE` 7, fora da posse 6 (`playercmd.cpp:1347-1444`, `matter.h:97-129`) |
-| poção (`USE_ITEM`) | `testado` (B67) | `MEDICINE_ESSENCE`. **Restaura ao longo do tempo**: `hp_add_total / hp_add_time` por batimento de 1 s, e o mesmo para mana — é o `healing_potion_filter`/`mana_potion_filter` do original (`gs/item/item_potion.cpp:18-52`, `gs/potion_filter.h:6-130`), que reparte o total pelo tempo. Só a poção com vida **e** mana e sem tempo (`rejuvenation_potion`) cura na hora. `falta`: a recarga (`cool_time`, `COOLDOWN_INDEX_*_POTION`) |
+| poção (`USE_ITEM`) | `testado` (B67, B71) | `MEDICINE_ESSENCE`. **Restaura ao longo do tempo**: `hp_add_total / hp_add_time` por batimento de 1 s, e o mesmo para mana — é o `healing_potion_filter`/`mana_potion_filter` do original (`gs/item/item_potion.cpp:18-52`, `gs/potion_filter.h:6-130`), que reparte o total pelo tempo. Só a poção com vida **e** mana e sem tempo (`rejuvenation_potion`) cura na hora. **Recarga** (B70/B71): `CheckCoolDown` **antes** de consumir, recusa com `ERR_OBJECT_IS_COOLING` (53) e `SetCoolDown(índice, cool_time)` com `SET_COOLDOWN` (198) ao cliente. O índice é o da **família**, e a família vem do `id_major_type` do arquivo (`setclassid.cpp:81-101`), não do que a poção restaura: 11 vida, 12 mana, 3 vida+mana, 13 antídoto (`COOLDOWN_INDEX_*`, `gs/cooldowncfg.h:62-78`) — poções da mesma família compartilham a recarga |
 | amuleto e hierograma | `testado` (B67) | `AUTOHP_ESSENCE`/`AUTOMP_ESSENCE`: o conteúdo do item são **8 bytes**, `int point; float trigger_percent` (`gs/item/item_amulet.h:16-19`, `generate_item_temp.h:2296-2310`). Sem eles o cliente desenhava zeros e negativos. `falta`: o gatilho automático que repõe vida/mana |
 | colher recurso de mapa | `testado` (B51) | §7 "coleta de recurso" |
 | Loja Gold, barraca | `falta` | |
 | demais serviços de NPC (teleporte, pedras, forja, decompor, armazém, item de missão) | `falta` | |
 
-### 8.0 A barra de chi — `testado` (B68)
+### 8.0 A barra de chi — `testado` (B69/B70)
 
 O chi (a "fúria" do original, `_basic.ap`) **não existe até uma missão dar o teto**: é o
 prêmio `m_ulFuryULimit` (deslocamento 57 do `AWARD_DATA`) → `SetFuryUpperLimit` →
@@ -420,10 +441,15 @@ prêmio `m_ulFuryULimit` (deslocamento 57 do `AWARD_DATA`) → `SetFuryUpperLimi
 | meditar | **15 por batimento de 1 s** | `sit_down_filter::Heartbeat`, `gs/sitdown_filter.cpp:19-34` |
 | habilidade | filtros `Apgen`/`Apgen2` (`falta`: nenhum porte ainda) | `playerwrapper.cpp` |
 
-`ModifyAP` prende entre 0 e o teto e marca o estado para ir ao cliente; o valor viaja no
-`iAP`/`iMaxAP` do `SELF_INFO_00` (38), que ia **zero fixo** até o B68. Vive em
-`characters.ap`/`characters.max_ap`. **Não há ganho ao apanhar** no 1.5.5 — o fonte só dá chi
-nos três casos acima.
+`ModifyAP` prende entre 0 e o teto e marca o estado para ir ao cliente. O `iAP`/`iMaxAP` do
+`SELF_INFO_00` (38) e o último `i32` (`max_ap`) do `OWN_EXT_PROP` (50) têm de levar o mesmo
+teto; `EC_HostMsg.cpp:1319-1332` compara os dois e anuncia aumento quando o segundo muda. Até
+o B70, o segundo ia zero, então cada atualização posterior de `SELF_INFO_00` fazia o cliente
+repetir “limite máximo de chi aumentado para 99”. Vive em `characters.ap`/`characters.max_ap`.
+**A Flecha Fulgurante (244) não gera chi:** `skill244.h:20-80,234-240` só consome mana e aplica
+`Firearrow`. **Não há ganho ao apanhar** no 1.5.5 — o fonte só dá chi nos três casos acima.
+
+Os filtros `Apgen`/`Apgen2` seguem pendentes para as habilidades que efetivamente os usam.
 
 ### 8.1 Pontos de teleporte — `testado` (B68)
 
@@ -480,7 +506,7 @@ original, mexidas pelas mesmas funções portadas linha a linha: `DeliverTask`, 
 | equipe (B51) | `CheckTeamTask`/`HasAllTeamMemsWanted` (`TaskTempl.inl:149-339`): só o capitão recebe; distância dos membros, `TEAM_MEM_WANTED` (nível, raça/classe, gênero, contagem), classes distintas; casal recusa (sem casamento). Aceita, cada membro **deste mapa** recebe por `OnDeliverTeamMemTask` (`TaskProcess.cpp:1592`) | `testado` |
 | teleporte (B51) | prêmio `m_ulTransWldId` (`TaskProcess.cpp:1316`) e `m_bTransTo` ao receber (`:1843`) → §7 "teleporte e troca de mapa" | `testado` |
 | coleta de mina (`OnTaskMining`) (B67) | mina com `task_out > 0` (`TaskServer.cpp:1116-1123`, `TaskTempl.inl:2105-2148`); se `material.item == 0`, não dropa nada no chão; entrega o item da submissão na bolsa (`j.dar_item`) e marca a submissão finalizada | `testado` |
-| itens de missão | bolsa de missão (pacote 2, `container_type` 5): `TASK_DELIVER_ITEM` (156), `PLAYER_DROP_ITEM` (46) tipo 3; prêmio `TASK_DELIVER_EXP/MONEY` (158/159), `SPEND_MONEY` | `testado` |
+| itens de missão | **quem escolhe a bolsa é o `m_bCommonItem` de cada item do `tasks.data`**, não o tipo do item: `true` → `DeliverCommonItem` → bolsa normal; `false` → `DeliverTaskItem` → bolsa de missão (`task/TaskProcess.cpp:1190-1208`, `task/taskman.cpp:281-330`). O mesmo bit vale para contar e recolher. Bolsa de missão = pacote 2, `container_type` 5: `TASK_DELIVER_ITEM` (156), `PLAYER_DROP_ITEM` (46) tipo 3; prêmio `TASK_DELIVER_EXP/MONEY` (158/159), `SPEND_MONEY` | `testado` |
 | erros | `svr_task_err_code` (reason 6) com `TASK_PREREQU_FAIL_*`; NPC sem a missão `ERROR_MESSAGE` 19 | `testado` |
 | monstros invocados | `m_SummonedMonsters` do prêmio: com `m_bRandChoose` sorteia um quando as probabilidades somam 1 e senão sorteia cada um; **sem** ele invoca todos (`TaskProcess.cpp:1385-1436`). O id do invocado satisfaz `ISNPCID` (faixa `0xA000_0000`) — com `0xC000_0000` o cliente o lia como item de chão e não deixava mirar (B67) | `testado` |
 | **nível de cultivo** (B67) | `m_ulNewPeriod` do prêmio (deslocamento 25 do `AWARD_DATA`) → `SetCurPeriod` → `gplayer_imp::SetSecLevel` (`TaskProcess.cpp:1284`, `task/taskman.cpp:251-254`, `player_imp.h:2798-2804`): grava em `characters.cultivation` e manda `TASK_DELIVER_LEVEL2` (160), que faz o cliente tocar o efeito do avanço. São 18 missões no `realm_155` (`cargo run -p pw-gs --example missoes_de_cultivo`) | `testado` |

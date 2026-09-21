@@ -660,6 +660,7 @@ impl S2CGamedataSend {
         atributos: (i32, i32, i32, i32),
         max_hp: i32,
         max_mp: i32,
+        max_ap: i32,
         regen: (i32, i32),
         velocidades: (f32, f32, f32, f32),
         ataque: (i32, i32, i32, i32, f32),
@@ -722,7 +723,7 @@ impl S2CGamedataSend {
         s.write_i32_le(defense);
         s.write_i32_le(armor);
 
-        s.write_i32_le(0);                  // max_ap
+        s.write_i32_le(max_ap);             // tem de espelhar SELF_INFO_00 (EC_HostMsg.cpp:1319-1332)
 
         Self { data: s.into_bytes().to_vec() }
     }
@@ -1472,7 +1473,11 @@ impl S2CGamedataSend {
     /// Cria o comando SELF_INFO_00 (Comando 38) para sincronizar status de vida, mana, nível e atributos
     pub fn self_info_00(
         level: i16,
-        sec_level: u8,
+        // O **cultivo** (`Level2`), não a coroa de GM: o cliente toca o efeito de avanço
+        // sempre que este campo sobe (`SetLevel2` → `CanPlayTaoistEffect`,
+        // `EC_Player.cpp:7434-7454`). Mandar zero num comando qualquer e o valor certo no
+        // seguinte faz o cliente anunciar um avanço que não houve (B71).
+        level2: u8,
         hp: i32,
         max_hp: i32,
         mp: i32,
@@ -1491,7 +1496,7 @@ impl S2CGamedataSend {
         // struct cmd_self_info_00 (36 bytes)
         stream.write_i16_le(level);    // short sLevel (2B)
         stream.write_u8(0);            // unsigned char State (1B)
-        stream.write_u8(sec_level);    // unsigned char Level2 / sec_level (1B)
+        stream.write_u8(level2);       // unsigned char Level2 — o cultivo (1B)
         stream.write_i32_le(hp);       // int iHP (4B)
         stream.write_i32_le(max_hp);   // int iMaxHP (4B)
         stream.write_i32_le(mp);       // int iMP (4B)

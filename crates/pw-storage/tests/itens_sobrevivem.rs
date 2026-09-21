@@ -343,3 +343,38 @@ async fn desgastar_para_em_zero_e_avisa_quando_a_peca_quebra() {
         .expect("desgastar");
     assert_eq!(vazio, None);
 }
+
+/// A persistência dos golpes não fica no caminho crítico da animação e pode ter duas
+/// gravações simultâneas. O consumo precisa decrementar a linha atual, não regravar uma
+/// cópia lida antes: vinte flechas gastas em paralelo têm de remover uma pilha de vinte.
+#[tokio::test]
+async fn consumo_concorrente_nao_perde_municao() {
+    let c = cenario!();
+    let itens = c.repo.item_repo();
+    let mut flechas = espada(c.role_id, 11, ContainerType::Equipment);
+    flechas.count = 20;
+    itens.upsert_item(&flechas).await.expect("guardar as flechas");
+
+    let mut tarefas = Vec::new();
+    for _ in 0..20 {
+        let repo = itens.clone();
+        let roleid = c.role_id;
+        tarefas.push(tokio::spawn(async move {
+            repo.consume_item(roleid, ContainerType::Equipment, 11, 1)
+                .await
+                .expect("consumir uma flecha");
+        }));
+    }
+    for tarefa in tarefas {
+        tarefa.await.expect("tarefa de persistência");
+    }
+
+    assert!(
+        itens
+            .get_item_by_slot(c.role_id, ContainerType::Equipment, 11)
+            .await
+            .unwrap()
+            .is_none(),
+        "algum decremento concorrente foi perdido"
+    );
+}

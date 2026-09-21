@@ -227,14 +227,14 @@ fn own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante() {
     let p155 = create_world_protocol(GameVersion::V1_5_5);
 
     let d126 = p126.own_ext_prop(
-        0, (10, 10, 10, 10), 100, 100, (2, 2),
+        0, (10, 10, 10, 10), 100, 100, 99, (2, 2),
         (2.0, 4.9, 3.0, 5.0),
         (40, 5, 10, 22, 3.8),
         (2, 3)
     ).data;
 
     let d155 = p155.own_ext_prop(
-        0, (10, 10, 10, 10), 100, 100, (2, 2),
+        0, (10, 10, 10, 10), 100, 100, 99, (2, 2),
         (2.0, 4.9, 3.0, 5.0),
         (40, 5, 10, 22, 3.8),
         (2, 3)
@@ -242,4 +242,6 @@ fn own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante() {
 
     assert_eq!(d126.len() - 2, 152, "payload do OWN_EXT_PROP no 1.2.6 deve ser 152 bytes exatos");
     assert_eq!(d155.len() - 2, 196, "payload do OWN_EXT_PROP no 1.5.5 deve ser 196 bytes exatos");
+    assert_eq!(i32::from_le_bytes(d126[d126.len() - 4..].try_into().unwrap()), 99, "o max_ap fecha o OWN_EXT_PROP do 1.2.6");
+    assert_eq!(i32::from_le_bytes(d155[d155.len() - 4..].try_into().unwrap()), 99, "o max_ap fecha o OWN_EXT_PROP do 1.5.5");
 }

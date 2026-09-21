@@ -22,8 +22,17 @@ impl GameServer {
 
         loop {
             interval.tick().await;
-            let mut world = self.world.write().await;
-            world.tick(50).await;
+            // O tique tranca o mundo inteiro. Nada que espere o banco pode acontecer aqui
+            // dentro: o autosave sai daqui como fotografia e é gravado com o lock já solto,
+            // numa tarefa à parte (B72).
+            let (lote, repo, mundo) = {
+                let mut world = self.world.write().await;
+                let lote = world.tick(50).await;
+                (lote, world.char_repo.clone(), world.world_id)
+            };
+            if !lote.is_empty() {
+                tokio::spawn(crate::world::gravar_autosave(repo, lote, mundo));
+            }
         }
     }
 }

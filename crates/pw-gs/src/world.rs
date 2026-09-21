@@ -1127,7 +1127,12 @@ impl WorldInstance {
     }
 
     /// Ciclo de Simulação em Tempo Real (Loop de 50ms / 20 TPS)
-    pub async fn tick(&mut self, delta_ms: u32) {
+    ///
+    /// Devolve o lote do autosave quando o minuto fecha. **Quem grava é o chamador, com o
+    /// mundo já destrancado**: o tique roda inteiro com o `write()` do mundo na mão, e
+    /// gravar aqui dentro congelava o mundo pelo tempo do banco — foram 8 segundos sem um
+    /// único golpe no combate de 2026-09-20 20:50 UTC (B72).
+    pub async fn tick(&mut self, delta_ms: u32) -> Vec<EstadoParaGravar> {
         // 0. Os golpes que já foram anunciados e agora tiram vida (`InsertDamageEntry`).
         self.cobrar_danos_adiados(delta_ms);
 
@@ -1325,63 +1330,90 @@ impl WorldInstance {
             self.adiar_dano(player_id, monstro_id, damage as i64, atraso, true);
         }
 
-        // 3. Autosave Periódico de Personagens para o PostgreSQL (a cada 60s)
+        // 3. Autosave periódico (a cada 60 s): aqui só se **tira a fotografia**, com o mundo
+        // trancado. A gravação é do chamador, depois de soltar o lock.
         self.autosave_timer_ms += delta_ms;
-        if self.autosave_timer_ms >= 60_000 {
-            self.autosave_timer_ms = 0;
-            let mut falhas = 0usize;
-            for player in self.players.values() {
-                let r = self
-                    .char_repo
-                    .save_status(
-                        player.role_id,
-                        player.level,
-                        player.cultivation,
-                        player.exp,
-                        player.sp,
-                        player.hp,
-                        player.mp,
-                        player.money,
-                        self.world_id,
-                        &player.position,
-                    )
-                    .await;
-                // A barra de chi anda junto (`_basic.ap`/`_base_prop.max_ap` do original).
-                let _ = self.char_repo.salvar_chi(player.role_id, player.ap, player.max_ap).await;
-                if let Err(e) = r {
-                    falhas += 1;
-                    warn!(
-                        "autosave: não consegui gravar o personagem {}: {e}",
-                        player.role_id
-                    );
-                }
-                let atributos = (player.strength, player.agility, player.vitality, player.energy);
-                if let Err(e) = self.char_repo.gravar_atributos(player.role_id, atributos, player.pontos_de_atributo).await {
-                    warn!("autosave: não consegui gravar os atributos de {}: {e}", player.role_id);
-                }
-                let [a, b, c, d, e] = player.missoes.blocos();
-                let listas = pw_storage::ListasDeMissaoGravadas { ativa: a, concluidas: b, tempos: c, contagens: d, deposito: e };
-                if let Err(e) = self.char_repo.task_lists().gravar(player.role_id, &listas).await {
-                    warn!("autosave: não consegui gravar as missões de {}: {e}", player.role_id);
-                }
-            }
-            // O `let _ =` que havia aqui engolia o erro, e a linha abaixo dizia "com
-            // sucesso" de qualquer jeito. O `UPDATE` vinha falhando havia semanas porque
-            // escrevia numa coluna `last_login_at` que a tabela `characters` não tem —
-            // ninguém viu, e nada de posição, experiência, dinheiro ou nível era salvo.
-            if falhas == 0 {
-                debug!(
-                    "autosave: {} jogadores gravados no mundo {}",
-                    self.players.len(),
-                    self.world_id
-                );
-            } else {
-                warn!(
-                    "autosave: {falhas} de {} jogadores não foram gravados no mundo {}",
-                    self.players.len(),
-                    self.world_id
-                );
-            }
+        if self.autosave_timer_ms < 60_000 {
+            return Vec::new();
         }
+        self.autosave_timer_ms = 0;
+        let mundo = self.world_id;
+        self.players
+            .values()
+            .map(|player| {
+                let [a, b, c, d, e] = player.missoes.blocos();
+                EstadoParaGravar {
+                    role_id: player.role_id,
+                    mundo,
+                    level: player.level,
+                    cultivation: player.cultivation,
+                    exp: player.exp,
+                    sp: player.sp,
+                    hp: player.hp,
+                    mp: player.mp,
+                    money: player.money,
+                    posicao: player.position,
+                    ap: player.ap,
+                    max_ap: player.max_ap,
+                    atributos: (player.strength, player.agility, player.vitality, player.energy),
+                    pontos_de_atributo: player.pontos_de_atributo,
+                    missoes: pw_storage::ListasDeMissaoGravadas { ativa: a, concluidas: b, tempos: c, contagens: d, deposito: e },
+                }
+            })
+            .collect()
+    }
+}
+
+/// A fotografia de um jogador para o autosave — o que o tique tira com o mundo trancado e o
+/// laço grava com ele solto.
+#[derive(Debug, Clone)]
+pub struct EstadoParaGravar {
+    pub role_id: i32,
+    pub mundo: i32,
+    pub level: i32,
+    pub cultivation: i32,
+    pub exp: i64,
+    pub sp: i64,
+    pub hp: i32,
+    pub mp: i32,
+    pub money: i64,
+    pub posicao: pw_core::Vector3,
+    pub ap: i32,
+    pub max_ap: i32,
+    pub atributos: (i32, i32, i32, i32),
+    pub pontos_de_atributo: i32,
+    pub missoes: pw_storage::ListasDeMissaoGravadas,
+}
+
+/// Grava o lote do autosave. Fora do lock do mundo, e de propósito: cada personagem custa
+/// quatro escritas, e elas já chegaram a levar segundos no banco de teste.
+pub async fn gravar_autosave(repo: pw_storage::CharacterRepository, lote: Vec<EstadoParaGravar>, mundo: i32) {
+    let total = lote.len();
+    let mut falhas = 0usize;
+    for e in lote {
+        let r = repo
+            .save_status(e.role_id, e.level, e.cultivation, e.exp, e.sp, e.hp, e.mp, e.money, e.mundo, &e.posicao)
+            .await;
+        // A barra de chi anda junto (`_basic.ap`/`_base_prop.max_ap` do original).
+        let _ = repo.salvar_chi(e.role_id, e.ap, e.max_ap).await;
+        if let Err(err) = r {
+            falhas += 1;
+            warn!("autosave: não consegui gravar o personagem {}: {err}", e.role_id);
+        }
+        if let Err(err) = repo.gravar_atributos(e.role_id, e.atributos, e.pontos_de_atributo).await {
+            warn!("autosave: não consegui gravar os atributos de {}: {err}", e.role_id);
+        }
+        if let Err(err) = repo.task_lists().gravar(e.role_id, &e.missoes).await {
+            warn!("autosave: não consegui gravar as missões de {}: {err}", e.role_id);
+        }
+    }
+    // O `let _ =` que havia aqui engolia o erro, e a linha abaixo dizia "com sucesso" de
+    // qualquer jeito. O `UPDATE` vinha falhando havia semanas porque escrevia numa coluna
+    // `last_login_at` que a tabela `characters` não tem — ninguém viu, e nada de posição,
+    // experiência, dinheiro ou nível era salvo.
+    if falhas == 0 {
+        debug!("autosave: {total} jogadores gravados no mundo {mundo}");
+    } else {
+        warn!("autosave: {falhas} de {total} jogadores não foram gravados no mundo {mundo}");
     }
 }

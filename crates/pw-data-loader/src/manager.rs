@@ -612,6 +612,24 @@ impl GameDataManager {
         ))
     }
 
+    /// O `id_major_type` do `MEDICINE_ESSENCE` — o "grande tipo" do remédio
+    /// (`gs/template/exptypes.h:840-843`).
+    ///
+    /// É ele que dá a classe do item em `set_to_classid`
+    /// (`gs/template/setclassid.cpp:81-101`): **1794** cura vida, **1802** mana, **1810**
+    /// vida e mana, **1815** e **2038** são antídotos. A classe, por sua vez, escolhe qual
+    /// recarga o `OnUse` confere e arma (`gs/item/item_potion.cpp:18-110`).
+    ///
+    /// O leitor tipado (1.2.6) não traz o campo, e aí devolve `None`.
+    pub fn tipo_maior_do_remedio(&self, item_id: u32) -> Option<i32> {
+        let g = self.elements_generic.as_ref()?;
+        g.get("MEDICINE_ESSENCE")
+            .iter()
+            .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?
+            .get("id_major_type")
+            .and_then(|v| v.as_i32())
+    }
+
     /// O bloco de dados de um amuleto de vida (`AUTOHP_ESSENCE`) ou de mana
     /// (`AUTOMP_ESSENCE`).
     ///

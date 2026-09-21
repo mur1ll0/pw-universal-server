@@ -174,6 +174,13 @@ pub struct PlayerEntity {
     pub coleta: Option<i64>,
     /// O que o equipamento vestido acrescenta (`_cur_item` e `_en_point`).
     pub equipamento: Equipamento,
+    /// A durabilidade de cada peça vestida — `(atual, máxima)` por slot, como o `_equipment`
+    /// do original, que é uma `item_list` em memória (`player.cpp:94`). `None` é slot vazio
+    /// ou item sem durabilidade. Existe para que levar um golpe não precise perguntar ao
+    /// banco antes de responder ao cliente: o índice da peça desgastada vai **dentro** do
+    /// `be_damaged` (`player.cpp:9552-9570`), e ir ao banco ali punha a latência do
+    /// PostgreSQL no meio da animação (B72).
+    pub pecas: [Option<(i32, i32)>; PECAS_VESTIDAS],
     /// A sessão de golpe normal em andamento (`session_normal_attack`).
     pub ataque: Option<SessaoDeAtaque>,
     /// A conjuração em andamento, com o marcador que a identifica — a tarefa que a conclui
@@ -200,12 +207,21 @@ pub struct Conjuracao {
 /// `PLAYER_BODYSIZE` (`gs/config.h:104`).
 pub const CORPO_DO_JOGADOR: f32 = 0.3;
 
+/// Slots de equipamento que guardam durabilidade: `EQUIP_INDEX_WEAPON` (0) até
+/// `EQUIP_INDEX_PROJECTILE` (11) (`EC_IvtrTypes.h:56-67`).
+pub const PECAS_VESTIDAS: usize = 12;
+
 /// `session_normal_attack` (`actsession.cpp:350-418`): o alvo e quanto falta para o próximo
 /// golpe, que sai a cada `attack_speed` *ticks*.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SessaoDeAtaque {
     pub alvo: i64,
     pub falta_ms: u32,
+    /// A sessão guarda a munição como o `item_list` em memória do original. Consultar e
+    /// gravar PostgreSQL antes de cada `ATTACK_ONCE` atrasava a cadência pela latência do
+    /// banco; a persistência pode acontecer depois que o comando já saiu.
+    pub municao_restante: u16,
+    pub arma_de_longe: bool,
     /// O `NORMAL_ATTACK` que chegou com esta sessão aberta, na fila (`AddSession`,
     /// `actobject.cpp:1180-1213`). Só começa no próximo golpe (`GM_MSG_OBJ_SESSION_REPEAT`
     /// com `HasNextSession`, `actobject.cpp:180-189`) — o ritmo não muda com cliques.
@@ -896,6 +912,7 @@ impl PlayerEntity {
             contador_hp: 0,
             contador_mp: 0,
             recargas: std::collections::HashMap::new(),
+            pecas: [None; PECAS_VESTIDAS],
             npc_em_conversa: None,
             waypoints: p.waypoints.clone(),
             ap: p.ap,

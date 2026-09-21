@@ -51,11 +51,8 @@ mod aviso_do_cliente {
     pub const SAIU_DO_LUGAR: u8 = 10;
 }
 
-/// `EQUIP_INDEX_WEAPON` e `EQUIP_INDEX_PROJECTILE` (`EC_IvtrTypes.h:56-67`).
+/// `EQUIP_INDEX_WEAPON` (`EC_IvtrTypes.h:56-67`).
 const SLOT_DA_ARMA: u16 = 0;
-const SLOT_DA_MUNICAO: u16 = 11;
-/// `WEAPONTYPE_RANGE` (`EC_IvtrTypes.h:166-167`).
-const ARMA_DE_LONGE: i16 = 1;
 /// `EQUIP_ARMOR_START` (= `EQUIP_INDEX_HEAD`) e `EQUIP_ARMOR_END` (= `EQUIP_INDEX_PROJECTILE`)
 /// do `gs/item.h:194-241`: os slots que `SelectRandomArmor` sorteia são de 1 a 10.
 const PRIMEIRA_PECA: u16 = 1;
@@ -420,6 +417,7 @@ impl BusServer {
             p.atributos_efetivos(),
             p.max_hp,
             p.max_mp,
+            p.max_ap,
             (p.hp_gen, p.mp_gen),
             (p.walk_speed, p.move_speed, p.swim_speed, p.fly_speed),
             (p.attack_rate, p.attack_min, p.attack_max, (p.attack_speed * 20.0).round() as i32, p.attack_range),
@@ -644,6 +642,16 @@ impl BusServer {
             let dados = Arc::clone(&mundo.data_manager);
             let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
             let e = crate::entity::Equipamento::dos_itens_com_addons(&itens, &dados.equipamentos, Some(&dados.addons));
+            // A durabilidade de cada peça passa a viver no mundo, como o `_equipment` do
+            // original: é daqui que sai o índice do `be_damaged` e a quebra, sem ida ao
+            // banco no meio do golpe (B72).
+            p.pecas = [None; crate::entity::PECAS_VESTIDAS];
+            for item in &itens {
+                let slot = item.slot as usize;
+                if slot < crate::entity::PECAS_VESTIDAS && item.max_durability > 0 {
+                    p.pecas[slot] = Some((item.durability as i32, item.max_durability as i32));
+                }
+            }
             if !e.addons_sem_porte.is_empty() {
                 debug!("mundo: {roleid} veste addons sem porte: {:?}", e.addons_sem_porte);
             }
@@ -661,38 +669,6 @@ impl BusServer {
         }
     }
 
-    // ------------------------------------------------------------------ munição
-
-    /// A munição do golpe normal: `DoAttack` (`player.cpp:3063-3070`) tira uma do slot 11
-    /// (`EQUIP_INDEX_PROJECTILE`) quando a arma é de longo alcance (`weapon_type == 1`), e
-    /// `FillAttackMsg` manda `ATTACK_ONCE` com quantas saíram (`:3134`) — também para arma
-    /// de perto, com zero.
-    ///
-    /// A arma e a munição são lidas do banco: o mundo ainda não guarda o equipamento em
-    /// memória. O original não recusa o golpe sem munição aqui; sem flecha o arco perde a
-    /// validade pelo lado do equipamento, que ainda não existe (`falta`).
-    pub(super) async fn gastar_municao(&self, roleid: i32) {
-        let repo = self.itens().await;
-        let arma = repo.get_item_by_slot(roleid, ContainerType::Equipment, SLOT_DA_ARMA).await.ok().flatten();
-        let dados = Arc::clone(&self.world.read().await.data_manager);
-        let de_longe = arma.is_some_and(|a| {
-            matches!(dados.equipamentos.ficha(a.item_id), Some(pw_core::FichaDoEquipamento::Arma(f)) if f.tipo_de_arma == ARMA_DE_LONGE)
-        });
-        let mut gasta = 0u8;
-        if de_longe {
-            match repo.consume_item(roleid, ContainerType::Equipment, SLOT_DA_MUNICAO, 1).await {
-                Ok(restante) => {
-                    gasta = 1;
-                    if restante.is_none() {
-                        debug!("mundo: {roleid} gastou a última munição");
-                    }
-                }
-                Err(e) => warn!("mundo: não consegui gastar a munição de {roleid}: {e}"),
-            }
-        }
-        self.enviar_ao_jogador(roleid, S2CGamedataSend::attack_once(gasta).data).await;
-    }
-
     // -------------------------------------------------------------- durabilidade
 
     /// A arma perde `DURABILITY_DEC_PER_ATTACK` a cada **golpe normal**.
@@ -703,19 +679,40 @@ impl BusServer {
     /// comentário (`player.cpp:3174`). O cliente desconta o mesmo sozinho
     /// (`WEAPON_RUIN_SPEED = -2`, `EC_IvtrTypes.h:30`).
     pub(super) async fn gastar_arma(&self, roleid: i32) {
-        let repo = self.itens().await;
-        match repo.gastar_durabilidade(roleid, ContainerType::Equipment, SLOT_DA_ARMA, DESGASTE_POR_GOLPE).await {
-            Ok(Some((dur, max, quebrou))) => {
-                if quebrou {
-                    info!("mundo: a arma de {roleid} quebrou (0/{max})");
-                    self.equipamento_quebrou(roleid, SLOT_DA_ARMA as u8).await;
-                } else {
-                    trace!("mundo: arma de {roleid} em {dur}/{max}");
-                }
-            }
-            Ok(None) => {}
-            Err(e) => warn!("mundo: não consegui desgastar a arma de {roleid}: {e}"),
+        self.desgastar(roleid, SLOT_DA_ARMA, DESGASTE_POR_GOLPE).await;
+    }
+
+    /// Tira `quanto` da peça do slot, **em memória**, e manda o banco acompanhar depois.
+    ///
+    /// O original mexe na `item_list` vestida e segue (`DoWeaponOperation`, `OnDamage`); o
+    /// banco aqui é só persistência. Devolve o que sobrou, ou `None` se o slot está vazio ou
+    /// a peça não tem durabilidade.
+    async fn desgastar(&self, roleid: i32, slot: u16, quanto: i32) -> Option<(i32, i32)> {
+        let (restou, maxima, quebrou) = {
+            let mut mundo = self.world.write().await;
+            let p = mundo.players.get_mut(&(roleid as i64))?;
+            let (atual, maxima) = (*p.pecas.get(slot as usize)?)?;
+            let restou = (atual - quanto).max(0);
+            p.pecas[slot as usize] = Some((restou, maxima));
+            (restou, maxima, atual > 0 && restou == 0)
+        };
+        if quebrou {
+            info!("mundo: a peça {slot} de {roleid} quebrou (0/{maxima})");
+            self.equipamento_quebrou(roleid, slot as u8).await;
+        } else {
+            trace!("mundo: peça {slot} de {roleid} em {restou}/{maxima}");
         }
+        // A gravação sai do caminho da resposta: o `UPDATE` de durabilidade já levou mais de
+        // um segundo no banco de teste, e com ele no fio o cliente ficava esperando (B72).
+        if let Some(este) = self.clone_arc() {
+            tokio::spawn(async move {
+                let repo = este.itens().await;
+                if let Err(e) = repo.gastar_durabilidade(roleid, ContainerType::Equipment, slot, quanto).await {
+                    warn!("mundo: não consegui desgastar a peça {slot} de {roleid}: {e}");
+                }
+            });
+        }
+        Some((restou, maxima))
     }
 
     /// Uma peça sorteada perde `DURABILITY_DEC_PER_HIT` a cada golpe recebido, e o índice
@@ -728,22 +725,11 @@ impl BusServer {
     pub(super) async fn desgastar_peca(&self, roleid: i32) -> u8 {
         use rand::Rng;
         let slot = rand::thread_rng().gen_range(PRIMEIRA_PECA..DEPOIS_DA_ULTIMA_PECA);
-        let repo = self.itens().await;
-        match repo.gastar_durabilidade(roleid, ContainerType::Equipment, slot, DESGASTE_AO_APANHAR).await {
-            Ok(Some((_, max, quebrou))) => {
-                if quebrou {
-                    info!("mundo: a peça {slot} de {roleid} quebrou (0/{max})");
-                    self.equipamento_quebrou(roleid, slot as u8).await;
-                }
-                slot as u8
-            }
+        match self.desgastar(roleid, slot, DESGASTE_AO_APANHAR).await {
+            Some(_) => slot as u8,
             // Slot vazio (ou item sem durabilidade): o original manda -1, que o
             // `Make<be_attacked>` reduz a 0x7f.
-            Ok(None) => NENHUMA_PECA,
-            Err(e) => {
-                warn!("mundo: não consegui desgastar a peça {slot} de {roleid}: {e}");
-                NENHUMA_PECA
-            }
+            None => NENHUMA_PECA,
         }
     }
 

@@ -51,7 +51,7 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 | todas as tabelas com `pile_num_max` | `servicos::pilhas` (`limite_de_pilha`) | empilhamento na bolsa |
 | `PLAYER_LEVELEXP_CONFIG` (id 202), `PARAM_ADJUST_CONFIG`, `PLAYER_SECONDLEVEL_CONFIG` | `progressao.rs` | curva de exp, ajuste por diferença de nível (exp, SP, dinheiro, item), perda na morte por cultivo (`playertemplate.cpp:311-419`) |
 | `CHARRACTER_CLASS_CONFIG` | `classes.rs` | velocidades, cadência, alcance, regeneração — **sobrescrevem o `ptemplate.conf`** (`gs/playertemplate.cpp:293-301`) |
-| `MEDICINE_ESSENCE` | `quanto_o_remedio_restaura` | poções |
+| `MEDICINE_ESSENCE` | `quanto_o_remedio_restaura`, `quanto_o_remedio_restaura_no_tempo`, `tipo_maior_do_remedio` | poções. O `id_major_type` é quem dá a classe do item (`set_to_classid`, `gs/template/setclassid.cpp:81-101`): **1794** cura, **1802** mana, **1810** vida e mana, **1815**/**2038** antídotos — e com ela a família de recarga do `cool_time` (B71). O leitor tipado do 1.2.6 não traz o campo |
 | 25 tabelas com `price` + `shop_price` | `precos.rs` | preço de loja `max(shop_price, price)`; durabilidade de fábrica |
 | `WEAPON_SUB_TYPE` | `armas.rs` (`velocidade_em_ticks`) | cadência da arma: `(int)(attack_speed × 20 + 0,1)` (B52) |
 | `QUIVER_ESSENCE` | `armas.rs` (`GameDataManager::aljavas`) | drop de aljava vira munição (B52) |
