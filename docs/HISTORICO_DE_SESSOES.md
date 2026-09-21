@@ -8099,3 +8099,90 @@ comparação lado a lado.
     provado — isolado, ele responde em 35 ms. A máquina estava com outra sessão compilando e
     rodando a suíte contra o mesmo banco, o que é suspeita razoável, não prova. O que foi
     corrigido é o que importa: nada que espere o banco fica mais no caminho do jogo.
+
+73. **Sessão 2026-09-21: o chi que as habilidades cobram, o escudo da Barreira de Asa e o
+    hierograma que dispara sozinho.**
+
+    **Chi das habilidades.** Cada habilidade tem `apcost` e `apgain` fixos no stub
+    (`cskill/skill/skill.h:239,588`). `SkillStub::Condition` recusa a conjuração com
+    `GetAp() < apcost` (`cskill/skill/skill.cpp:125`) — sem mandar erro, porque o cliente já
+    barra — e a execução aplica a diferença de uma vez:
+    `int ap = GetApgain() - GetApcost(); if (ap) ModifyAP(ap)`
+    (`cskill/skill/playerwrapper.cpp:170-177`). Os dois números **já estavam** no
+    `habilidades.json` desde a extração; a struct `HabilidadeDoServidor` é que não os lia, e
+    o mundo nunca os cobrou. Agora cobra: Flecha Glacial (245) tira 25, Barreira de Asa (249)
+    tira 45, e o `SELF_INFO_00` com a barra nova sai junto, como o `SetRefreshState` do
+    `ModifyAP`.
+
+    **Correção de um erro meu (B70).** Ficou escrito que a Flecha Fulgurante (244) não gerava
+    chi, porque o corpo dela não chama `ModifyAP`. Quem chama é a execução, com o `apgain` do
+    stub — e o da 244 é **10** (`cskill/skills/skill244.h:142-144`). O relato do Murillo
+    estava certo e a spec, errada; a §8.0 foi corrigida.
+
+    **Barreira de Asa (249).** O log dizia `habilidade 249 — sem porte: Wingshield`: o efeito
+    não existia no `crate::efeitos`, então o buff era aplicado e sumia no mesmo instante.
+    `filter_Wingshield` (`cskill/skill/skillfilter.h:4136-4232`) é
+    `UNIQUE|BUFF|HEARTBEAT|REMOVE_ON_DEATH|ADJUST_DAMAGE|TRANSFERABLE_BUFF`, com
+    `HSTATE_WINGSHIELD` 69 e `VSTATE_WINGSHIELD` 29 (`statedef.h:40,261`). A 249 o arma com
+    `SetAmount(60 + 75 × nível)`, `SetValue(4 + 6 × nível)` e `SetTime(20000)`
+    (`skills/skill249.h:257-262`). O `AdjustDamage` compara **um quinto** do golpe com o
+    escudo: enquanto couber, passa só esse quinto e o escudo perde quatro vezes o absorvido;
+    quando não cabe, o dano é reduzido na proporção do que sobrou e o escudo zera. Abaixo de
+    6 o filtro se apaga. O `Heartbeat` injeta o `SetValue` inteiro a cada 3 s.
+
+    **Hierograma e amuleto automáticos.** Estavam anotados como `falta` desde o B67. Vesti-los
+    nos slots **20** e **21** (`EQUIP_INDEX_HP_ADDON`/`MP_ADDON`, `gs/item.h:216-217`) os
+    ativa (`OnActivate` → `SetHPAutoGen`/`SetMPAutoGen`, `gs/item/item_amulet.cpp:22-46`). No
+    batimento de 1 s, com `trigger_percent × máximo > atual`, o `AutoGenStat`
+    (`gs/player_imp.h:3562-3593`) confere a recarga (`COOLDOWN_INDEX_AUTO_HP` 24 e `AUTO_MP`
+    25), devolve `máximo − atual` preso ao que resta e arma o `cool_time` do próprio item
+    (10 s no Amuleto do Guardião). O que sobra é gravado nos **octetos do item**; em zero o
+    amuleto sai do corpo com `PLAYER_DROP_ITEM` tipo `DROP_TYPE_USE` (11). O eaa tem os dois
+    vestidos: 35370 no slot 20 e 35376 no 21.
+
+    ### Provas
+
+    Testes novos: `o_custo_e_o_ganho_de_chi_vem_do_stub` (os quatro números lidos do
+    `habilidades.json`), `a_barreira_de_asa_absorve_dano_e_devolve_mana` (ícone, estado, as
+    duas metades do `AdjustDamage` e os dois tiques de mana em 6 s),
+    `o_amuleto_traz_o_total_o_gatilho_e_a_recarga` (do `elements.data` do `realm_155`) e
+    `o_hierograma_vestido_devolve_mana_sozinho` (dispara, desconta do amuleto, arma a recarga
+    e não repete dentro dela).
+
+74. **Sessão 2026-09-21 (parte 2): a recarga do amuleto no cliente, e por que a Alma da
+    Pantera vai mesmo para a bolsa comum.**
+
+    **A recarga do amuleto.** O servidor já a respeitava desde o B73 (o hierograma não
+    dispara duas vezes dentro do `cool_time`), mas o ícone no cliente não escurecia: faltava
+    o comando. `gplayer_imp::SetCoolDown` (`gs/player.cpp:12701-12709`) grava **e sempre
+    manda** `set_cooldown(idx, msec)` ao cliente; como `base_amulet::OnAutoTrigger` chama
+    `SetCoolDown(cooldown_idx, cooltime)` (`gs/item/item_amulet.cpp:16-18`), o `SET_COOLDOWN`
+    (198) sai a cada disparo, com `COOLDOWN_INDEX_AUTO_HP` (24) ou `AUTO_MP` (25). O evento
+    `AmuletoDisparou` passou a levar o índice e o tempo, e o mundo manda o comando.
+
+    **Item de missão na bolsa comum: não é defeito.** Quem escolhe a bolsa é o
+    `m_bDropCmnItem` de cada `MONSTER_WANTED` (`gs/task/TaskTempl.inl:2028-2037`), exatamente
+    como nós fazemos. Três verificações:
+
+    1. O byte está alinhado: das 995 entradas com item, **nenhuma** tem o `m_fDropProb`
+       vizinho fora de 0..1, e os valores são redondos (1,0; 0,8; 0,6). Byte deslocado
+       produziria lixo nesse float.
+    2. O bit não é degenerado: 797 dos itens soltos vão para a bolsa de missão e 198 para a
+       comum.
+    3. O bit acompanha o **tipo** do item: no `realm_155`, todos os 413
+       `TASKMATTER_ESSENCE` vão para a bolsa de missão e os `TASKNORMALMATTER_ESSENCE` para
+       a comum — "matéria de missão **normal**" é a que fica no inventário normal. A única
+       exceção é a Presa de Filhote de Lobo (2654), e ela confirma que **o bit é a
+       autoridade**, não o tipo.
+
+    A Alma da Pantera Queimada de Sol (44363, missão 31765 "Queda do Sol") e a Alma da Ninfa
+    (44357, missão 31734) são `TASKNORMALMATTER_ESSENCE` com `comum = true`: bolsa normal,
+    como no original.
+
+    ### Provas
+
+    Teste novo `o_tipo_do_item_de_missao_decide_a_bolsa` (cruza as duas tabelas do
+    `elements.data` com todos os `MONSTER_WANTED` do `tasks.data` e fixa a exceção em 1) e
+    asserção do `SET_COOLDOWN` (198) com índice 25 e 10 s no
+    `o_hierograma_vestido_devolve_mana_sozinho`. Exemplo novo
+    `cargo run -p pw-data-loader --example bolsa_do_item_de_missao`.

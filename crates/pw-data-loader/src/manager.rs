@@ -630,6 +630,36 @@ impl GameDataManager {
             .and_then(|v| v.as_i32())
     }
 
+    /// Os números de um amuleto vestido: `(ponto, gatilho, recarga_ms, é_de_vida)`.
+    ///
+    /// `point` e `trigger_percent` são o que `OnActivate` entrega ao jogador
+    /// (`SetHPAutoGen`/`SetMPAutoGen`, `gs/item/item_amulet.cpp:22-46`); a recarga é o
+    /// `cool_time` do próprio item, que `OnAutoTrigger` arma depois de cada disparo
+    /// (`get_cool_time(_tid)`, `item_amulet.cpp:16-18`, `template/itemdataman.cpp:1725`).
+    pub fn dados_do_amuleto(&self, item_id: u32) -> Option<(i32, f32, i32, bool)> {
+        let g = self.elements_generic.as_ref()?;
+        for (tabela, campo, vida) in
+            [("AUTOHP_ESSENCE", "total_hp", true), ("AUTOMP_ESSENCE", "total_mp", false)]
+        {
+            let Some(r) = g
+                .get(tabela)
+                .iter()
+                .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))
+            else {
+                continue;
+            };
+            let ponto = r.get(campo).and_then(|v| v.as_i32()).unwrap_or(0);
+            let gatilho = match r.get("trigger_amount") {
+                Some(crate::generic_elements::FieldValue::Float(f)) => *f,
+                Some(crate::generic_elements::FieldValue::Int(i)) => *i as f32,
+                _ => 0.0,
+            };
+            let recarga = r.get("cool_time").and_then(|v| v.as_i32()).unwrap_or(0);
+            return Some((ponto, gatilho, recarga, vida));
+        }
+        None
+    }
+
     /// O bloco de dados de um amuleto de vida (`AUTOHP_ESSENCE`) ou de mana
     /// (`AUTOMP_ESSENCE`).
     ///

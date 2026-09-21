@@ -5,8 +5,8 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-20**, B72 (o banco sai do caminho do jogo: autosave fora do
-> lock do tique e durabilidade das peças no mundo).
+> **Última atualização: 2026-09-21**, B74 (a recarga do amuleto no cliente; a bolsa do item
+> de missão conferida contra o dado).
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -81,6 +81,16 @@ dá 15 por segundo. O valor corrente e o teto vão no `SELF_INFO_00`; o mesmo te
 ir no último campo do `OWN_EXT_PROP`. Ele ia zero, e o cliente recebia 0→99 em cada atualização,
 mostrando repetidamente o aviso de aumento. A **Flecha Fulgurante não gera chi** no original:
 ela consome mana e aplica `Firearrow`. **Não há ganho ao apanhar** no 1.5.5.
+
+**Bolsa do item de missão (B74):** conferido e **correto**. Quem escolhe é o `m_bDropCmnItem`
+de cada missão, e ele acompanha o tipo do item: `TASKMATTER_ESSENCE` vai para a bolsa de
+missão, `TASKNORMALMATTER_ESSENCE` (as "Almas") para a normal. Uma única exceção no realm.
+
+**Chi, escudo e amuleto (B73/B74):** as habilidades passaram a cobrar o `apcost` e a dar o
+`apgain` do stub (a Flecha Glacial tira 25, a Barreira de Asa 45, a Flecha Fulgurante **dá**
+10 — a §8.0 dizia o contrário e foi corrigida). A Barreira de Asa ganhou o efeito
+`Wingshield`, que faltava por inteiro. E o amuleto/hierograma vestidos agora disparam sozinhos
+no batimento, como no original, gravando o que resta nos octetos do item.
 
 **Travamento no combate (B72):** o mundo parava por segundos porque o autosave gravava
 dentro do `world.tick` — e o tique segura o mundo inteiro. Saiu de lá; a durabilidade das
@@ -354,6 +364,13 @@ Depois de publicar o **B71** (falta pedido do Murillo), entram no roteiro:
 8. **Travamento (B72)**: um combate longo (a Ninfa de novo) não pode ter pausas. O minuto do
    autosave é o momento crítico — antes, o mundo parava nele. No log, `slow statement` pode
    continuar aparecendo; o que não pode é o jogo parar junto.
+9. **Chi das habilidades (B73)**: a barra deve **cair 25** ao usar a Flecha Glacial e **45**
+   na Barreira de Asa; sem chi bastante, a habilidade nem sai. A Flecha Fulgurante **soma 10**.
+10. **Barreira de Asa (B73)**: o ícone do escudo deve ficar **20 s**, os golpes recebidos
+    devem doer bem menos enquanto ele dura, e a mana deve subir de 3 em 3 segundos.
+11. **Hierograma (B73/B74)**: deixar a mana cair abaixo de 75 % — ele deve repor sozinho, uma
+    vez a cada 10 s, e o número no item deve diminuir. O ícone tem de **escurecer pela
+    recarga** a cada disparo (B74). O amuleto de vida faz o mesmo a 50 %.
 
 ---
 
@@ -582,3 +599,5 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 70 | 09-20 | `OWN_EXT_PROP` levava `max_ap = 0`; o cliente repetia o aviso de teto 99 e a Flecha Fulgurante foi confirmada como sem ganho de chi |
 | 71 | 09-20 | `Level2` (cultivo) ia zero em três `SELF_INFO_00` — era a tela de cultivo ao usar poção; recarga da poção pela família do `id_major_type`; a flecha desconta depois das conferências do golpe |
 | 72 | 09-20 | o combate travava porque o autosave gravava dentro do lock do tique; durabilidade das peças no mundo; a barra de vida de quem apanha segue o dano; a Alma da Ninfa na bolsa comum está certa (`m_bCommonItem`) |
+| 73 | 09-21 | habilidades cobram `apcost` e dão `apgain` (a 244 dá 10 — a spec dizia o contrário); efeito `Wingshield` da Barreira de Asa; amuleto e hierograma disparando no batimento |
+| 74 | 09-21 | `SET_COOLDOWN` (198) do amuleto ao cliente; provado que a bolsa do item de missão vem do `m_bDropCmnItem` e está certa |

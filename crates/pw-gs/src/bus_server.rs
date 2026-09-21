@@ -578,6 +578,57 @@ impl BusServer {
                 self.avisar_vida_propria(roleid).await;
             }
 
+            EventoDoMundo::AmuletoDisparou { roleid, slot, item_id, restou, bloco, indice_de_recarga, recarga_ms } => {
+                // A recarga vai ao cliente: `gplayer_imp::SetCoolDown` grava e **sempre**
+                // manda `set_cooldown(idx, msec)` (`gs/player.cpp:12701-12709`); é ela que
+                // escurece o ícone do amuleto. Sem este comando o item parecia nunca entrar
+                // em recarga, embora o servidor já a respeitasse (B74).
+                if recarga_ms > 0 {
+                    self.enviar_ao_jogador(
+                        roleid,
+                        S2CGamedataSend::set_cooldown(indice_de_recarga, recarga_ms).data,
+                    )
+                    .await;
+                }
+                // O que sobrou fica gravado nos octetos do próprio item — é o `Save` do
+                // `amulet_essence` do original. Em zero o item sai do corpo e o cliente é
+                // avisado com `PLAYER_DROP_ITEM` tipo `DROP_TYPE_USE` (11); enquanto resta,
+                // vai o `item_info` com o número novo (`gs/player_imp.h:3568-3590`).
+                const DROP_POR_USO: u8 = 11;
+                let pacote = ContainerType::Equipment.pacote_do_cliente().unwrap_or(1);
+                if restou <= 0 {
+                    self.enviar_ao_jogador(
+                        roleid,
+                        S2CGamedataSend::player_drop_item(pacote, slot as u8, 1, item_id as i32, DROP_POR_USO).data,
+                    )
+                    .await;
+                } else if let Ok(Some(mut i)) =
+                    self.itens().await.get_item_by_slot(roleid, ContainerType::Equipment, slot).await
+                {
+                    i.octets = bloco.clone();
+                    let dados = self.world.read().await.data_manager.clone();
+                    self.enviar_ao_jogador(roleid, Self::info_de(pacote, &i, &dados)).await;
+                }
+                // O banco depois, fora do caminho do jogo (B72).
+                if let Some(este) = self.clone_arc() {
+                    tokio::spawn(async move {
+                        let repo = este.itens().await;
+                        if restou <= 0 {
+                            if let Err(e) = repo.delete_item_by_slot(roleid, ContainerType::Equipment, slot).await {
+                                warn!("mundo: não consegui tirar o amuleto gasto de {roleid}: {e}");
+                            }
+                        } else if let Ok(Some(mut i)) =
+                            repo.get_item_by_slot(roleid, ContainerType::Equipment, slot).await
+                        {
+                            i.octets = bloco;
+                            if let Err(e) = repo.upsert_item(&i).await {
+                                warn!("mundo: não consegui gravar o amuleto de {roleid}: {e}");
+                            }
+                        }
+                    });
+                }
+            }
+
             EventoDoMundo::EstadoMudou { roleid } => self.avisar_vida_propria(roleid).await,
 
             EventoDoMundo::VidaDoMonstro { id, hp, max_hp, alvo, para } => {
@@ -2304,6 +2355,43 @@ impl BusServer {
             if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
                 p.mp -= custo;
             }
+        }
+
+        // Chi. Cada habilidade tem um `apcost` e um `apgain` fixos no stub
+        // (`cskill/skill/skill.h:239,588`): `SkillStub::Condition` recusa com
+        // `GetAp() < apcost` (`skill.cpp:125`) — sem mandar erro, porque o cliente já
+        // barra —, e a execução aplica a diferença de uma vez:
+        // `int ap = GetApgain() - GetApcost(); if (ap) ModifyAP(ap)`
+        // (`playerwrapper.cpp:170-177`). A Flecha Glacial (245) custa 25, a Barreira de
+        // Asa (249) custa 45, a Flecha Fulgurante (244) **dá** 10 e a 235 dá 5.
+        let (apcost, apgain) = mundo
+            .data_manager
+            .habilidades
+            .get(skill_id.max(0) as u32)
+            .map(|h| (h.apcost.unwrap_or(0).max(0), h.apgain.unwrap_or(0).max(0)))
+            .unwrap_or((0, 0));
+        let chi_mudou = {
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            if p.ap < apcost {
+                debug!("mundo: {roleid} conjurou {skill_id} com {} de chi, precisa de {apcost}", p.ap);
+                return;
+            }
+            let delta = apgain - apcost;
+            delta != 0 && p.mexer_no_chi(delta)
+        };
+        if chi_mudou {
+            // `SetRefreshState()` do `ModifyAP`: a barra nova vai ao cliente.
+            let dados = mundo.dados_do_proprio(roleid);
+            drop(mundo);
+            if let Some((nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados {
+                self.responder(
+                    roleid,
+                    S2CGamedataSend::self_info_00(nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
+                    envio,
+                )
+                .await;
+            }
+            mundo = self.world.write().await;
         }
 
         // B53: a habilidade pelo stub (área, flechas, precisão, efeitos), quando ele tem o que

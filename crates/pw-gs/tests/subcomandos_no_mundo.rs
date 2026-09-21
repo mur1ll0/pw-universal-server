@@ -3751,6 +3751,66 @@ async fn clicar_de_novo_durante_a_sessao_nao_da_outro_golpe() {
     assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_some_and(|s| s.proximo.is_none()));
 }
 
+/// B73 — o hierograma vestido dispara sozinho quando a mana cai do gatilho.
+///
+/// `gplayer_imp::OnHeartbeat` (`gs/player.cpp:9121-9128`) testa `trigger_percent × max > atual`
+/// a cada segundo e chama `AutoGenStat`, que confere a recarga, devolve o que falta (preso ao
+/// que resta no amuleto) e arma o `cool_time` do item (`gs/player_imp.h:3562-3593`,
+/// `gs/item/item_amulet.cpp:9-20`).
+#[tokio::test]
+async fn o_hierograma_vestido_devolve_mana_sozinho() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let (max_mp, ponto_inicial) = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).expect("o jogador entrou");
+        p.mp = 10; // bem abaixo dos 75 % do gatilho
+        p.auto_mp = Some(pw_gs::entity::AmuletoAtivo {
+            slot: 21,
+            item_id: 35376,
+            ponto: 100,
+            gatilho: 0.75,
+            recarga_ms: 10_000,
+        });
+        (p.max_mp, 100)
+    };
+
+    mundo.write().await.tick(1000).await;
+
+    {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        let devolvido = p.mp - 10;
+        assert!(devolvido > 0, "o hierograma não devolveu mana nenhuma");
+        // `offset = max − atual`, preso ao que resta no amuleto.
+        assert_eq!(devolvido, (max_mp - 10).min(ponto_inicial), "devolveu o que não devia");
+        let a = p.auto_mp.expect("o hierograma ainda tem carga");
+        assert_eq!(a.ponto, ponto_inicial - devolvido, "o gasto não saiu do amuleto");
+        assert_eq!(p.recarga_do_auto_mp_s, 10, "a recarga do item não foi armada");
+    }
+
+    // E o cliente recebe a recarga: `SetCoolDown` sempre manda `set_cooldown(idx, msec)`
+    // (`gs/player.cpp:12701-12709`) — é o que escurece o ícone do amuleto (B74). O índice é
+    // o `COOLDOWN_INDEX_AUTO_MP` (25).
+    let cd = esperar_comando(&mut link, 198).await;
+    assert_eq!(i32_em(&cd, 2), 25, "o SET_COOLDOWN veio com outro índice");
+    assert_eq!(i32_em(&cd, 6), 10_000, "o tempo da recarga não é o `cool_time` do item");
+
+    // No segundo seguinte a recarga segura o próximo disparo.
+    let antes = mundo.read().await.players[&(roleid as i64)].auto_mp.unwrap().ponto;
+    {
+        let mut m = mundo.write().await;
+        m.players.get_mut(&(roleid as i64)).unwrap().mp = 10;
+    }
+    mundo.write().await.tick(1000).await;
+    assert_eq!(
+        mundo.read().await.players[&(roleid as i64)].auto_mp.unwrap().ponto,
+        antes,
+        "disparou de novo dentro da recarga"
+    );
+}
+
 /// B72 — a durabilidade das peças vestidas vive no mundo, não só no banco.
 ///
 /// O índice da peça desgastada vai **dentro** do `be_damaged` (`player.cpp:9552-9570`), e

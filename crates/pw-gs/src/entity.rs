@@ -181,6 +181,16 @@ pub struct PlayerEntity {
     /// `be_damaged` (`player.cpp:9552-9570`), e ir ao banco ali punha a latência do
     /// PostgreSQL no meio da animação (B72).
     pub pecas: [Option<(i32, i32)>; PECAS_VESTIDAS],
+    /// O amuleto de vida vestido (`EQUIP_INDEX_HP_ADDON` 20) e o hierograma de mana
+    /// (`EQUIP_INDEX_MP_ADDON` 21), com o que ainda resta neles. `OnActivate` guarda os dois
+    /// números no jogador (`SetHPAutoGen`/`SetMPAutoGen`, `gs/item/item_amulet.cpp:22-46`) e
+    /// é o batimento que os consome.
+    pub auto_hp: Option<AmuletoAtivo>,
+    pub auto_mp: Option<AmuletoAtivo>,
+    /// Quando cada recarga de amuleto vence, em segundos de batimento
+    /// (`COOLDOWN_INDEX_AUTO_HP` 24 e `AUTO_MP` 25, `gs/cooldowncfg.h:62-90`).
+    pub recarga_do_auto_hp_s: i32,
+    pub recarga_do_auto_mp_s: i32,
     /// A sessão de golpe normal em andamento (`session_normal_attack`).
     pub ataque: Option<SessaoDeAtaque>,
     /// A conjuração em andamento, com o marcador que a identifica — a tarefa que a conclui
@@ -206,6 +216,42 @@ pub struct Conjuracao {
 
 /// `PLAYER_BODYSIZE` (`gs/config.h:104`).
 pub const CORPO_DO_JOGADOR: f32 = 0.3;
+
+/// Um amuleto de vida ou hierograma de mana vestido, como `SetHPAutoGen`/`SetMPAutoGen` o
+/// deixam no jogador (`gs/item/item_amulet.cpp:22-46`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AmuletoAtivo {
+    pub slot: u16,
+    pub item_id: u32,
+    /// `_ess.point`: quanto ainda há para restaurar. Cai a cada disparo e, em zero, o item
+    /// some (`base_amulet::OnAutoTrigger`, `item_amulet.cpp:9-20`).
+    pub ponto: i32,
+    /// `_ess.trigger_percent`: dispara quando `gatilho × máximo > atual`.
+    pub gatilho: f32,
+    /// `get_cool_time(tid)` do `elements.data`, em milissegundos.
+    pub recarga_ms: i32,
+}
+
+impl AmuletoAtivo {
+    /// Lê `amulet_essence` dos octetos do item: `int point; float trigger_percent`
+    /// (`gs/item/item_amulet.h:16-19`). É o que o `Load` do original recupera.
+    pub fn do_bloco(octetos: &[u8]) -> Option<(i32, f32)> {
+        if octetos.len() < 8 {
+            return None;
+        }
+        let ponto = i32::from_le_bytes(octetos[0..4].try_into().ok()?);
+        let gatilho = f32::from_le_bytes(octetos[4..8].try_into().ok()?);
+        Some((ponto, gatilho))
+    }
+
+    /// O mesmo bloco de volta, para gravar o que sobrou.
+    pub fn bloco(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(8);
+        b.extend_from_slice(&self.ponto.to_le_bytes());
+        b.extend_from_slice(&self.gatilho.to_le_bytes());
+        b
+    }
+}
 
 /// Slots de equipamento que guardam durabilidade: `EQUIP_INDEX_WEAPON` (0) até
 /// `EQUIP_INDEX_PROJECTILE` (11) (`EC_IvtrTypes.h:56-67`).
@@ -913,6 +959,10 @@ impl PlayerEntity {
             contador_mp: 0,
             recargas: std::collections::HashMap::new(),
             pecas: [None; PECAS_VESTIDAS],
+            auto_hp: None,
+            auto_mp: None,
+            recarga_do_auto_hp_s: 0,
+            recarga_do_auto_mp_s: 0,
             npc_em_conversa: None,
             waypoints: p.waypoints.clone(),
             ap: p.ap,

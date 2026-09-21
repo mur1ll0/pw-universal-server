@@ -188,6 +188,76 @@ fn a_pocao_de_vida_traz_o_total_e_o_tempo() {
     );
 }
 
+/// B74 — item de missão na bolsa comum não é defeito: é o que o `tasks.data` manda.
+///
+/// Quem escolhe a bolsa é o `m_bDropCmnItem` de cada `MONSTER_WANTED`
+/// (`gs/task/TaskTempl.inl:2028-2037`), e ele acompanha o tipo do item no `elements.data`:
+/// **`TASKMATTER_ESSENCE` vai para a bolsa de missão, `TASKNORMALMATTER_ESSENCE` para a
+/// comum** — "matéria de missão normal" é justamente a que fica no inventário normal. As
+/// Almas que o Murillo pegou (44357 da Ninfa, 44363 da Pantera) são desse segundo tipo.
+#[test]
+fn o_tipo_do_item_de_missao_decide_a_bolsa() {
+    let Some(d) = realm() else { return };
+    let e = d.elements_generic.as_ref().expect("o realm tem elements.data");
+    let ids_da = |tabela: &str| -> std::collections::HashSet<u32> {
+        e.get(tabela).iter().filter_map(|r| r.get("ID").and_then(|v| v.as_i32())).map(|i| i as u32).collect()
+    };
+    let de_missao = ids_da("TASKMATTER_ESSENCE");
+    let normais = ids_da("TASKNORMALMATTER_ESSENCE");
+    assert!(!de_missao.is_empty() && !normais.is_empty(), "as duas tabelas existem no realm");
+
+    let (mut matter_na_comum, mut normal_na_de_missao, mut vistos_matter, mut vistos_normal) = (0, 0, 0, 0);
+    for m in d.tasks.tasks.values() {
+        for k in &m.monster_kills {
+            if k.item_que_cai == 0 {
+                continue;
+            }
+            if de_missao.contains(&k.item_que_cai) {
+                vistos_matter += 1;
+                if k.item_comum {
+                    matter_na_comum += 1;
+                }
+            } else if normais.contains(&k.item_que_cai) {
+                vistos_normal += 1;
+                if !k.item_comum {
+                    normal_na_de_missao += 1;
+                }
+            }
+        }
+    }
+    assert!(vistos_matter > 100 && vistos_normal > 100, "amostra pequena demais: {vistos_matter}/{vistos_normal}");
+    assert_eq!(matter_na_comum, 0, "algum TASKMATTER foi marcado para a bolsa comum");
+    // O tipo do item **descreve** a regra; quem manda é o bit. A única exceção do realm é a
+    // "Presa de Filhote de Lobo" (2654), um TASKNORMALMATTER que uma missão quer na bolsa de
+    // missão — e o servidor tem de obedecer ao bit, não ao tipo.
+    assert_eq!(normal_na_de_missao, 1, "mudou o número de exceções do realm");
+
+    // E os dois itens do relato, nomeados.
+    for id in [44357, 44363] {
+        assert!(normais.contains(&id), "o {id} devia ser TASKNORMALMATTER_ESSENCE");
+    }
+}
+
+/// B73 — o amuleto vestido traz o total, o gatilho e a recarga do `elements.data`.
+///
+/// `OnActivate` entrega `point` e `trigger_percent` ao jogador (`gs/item/item_amulet.cpp:22-46`)
+/// e `OnAutoTrigger` arma o `cool_time` do próprio item depois de cada disparo (`:9-20`).
+#[test]
+fn o_amuleto_traz_o_total_o_gatilho_e_a_recarga() {
+    let Some(d) = realm() else { return };
+    assert_eq!(
+        d.dados_do_amuleto(35370),
+        Some((5400, 0.5, 10000, true)),
+        "Amuleto do Guardião - 1: 5400 de vida, dispara a 50 %, recarrega em 10 s"
+    );
+    let (ponto, gatilho, recarga, de_vida) = d.dados_do_amuleto(35376).expect("o 35376 é um AUTOMP_ESSENCE");
+    assert_eq!(ponto, 18000, "Hierograma do Guardião - 1");
+    assert!((gatilho - 0.75).abs() < 1e-6, "dispara a 75 % de mana");
+    assert!(recarga > 0, "sem recarga o hierograma dispararia todo segundo");
+    assert!(!de_vida, "o hierograma é de mana");
+    assert_eq!(d.dados_do_amuleto(1796), None, "poção não é amuleto");
+}
+
 /// B71 — quem decide a família de recarga é o `id_major_type`, não o que a poção restaura.
 ///
 /// `set_to_classid` (`gs/template/setclassid.cpp:81-101`) traduz 1794 em

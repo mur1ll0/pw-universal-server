@@ -489,6 +489,7 @@ impl BusServer {
             contador: 0,
             origem,
             icone: true,
+            absorve: 0.0,
         };
 
         // Instantâneos: mexem na vida/mana, não criam filtro.
@@ -537,6 +538,16 @@ impl BusServer {
                     match efeito {
                         Efeito::Hpgen | Efeito::Mpgen => f.por_segundo = ap.valor as i32 / ap.tempo_s,
                         Efeito::Incsmite => f.por_segundo = ap.valor as i32,
+                        // `SetWingshield` monta `filter_Wingshield(object, amount, value,
+                        // time)` (`cskill/skill/playerwrapper.cpp:2327-2330`): o `SetAmount`
+                        // é o escudo e o `SetValue` a mana por 3 s.
+                        Efeito::Wingshield => {
+                            f.absorve = ap.quantia;
+                            f.por_segundo = ap.valor as i32;
+                            if f.absorve < 6.0 {
+                                return;
+                            }
+                        }
                         Efeito::Inchp => f.razao = (ap.razao * 100.0 + 0.00001) as i32,
                         Efeito::Inchurt if ap.razao <= 0.0 => return,
                         Efeito::Dechurt if !(ap.razao > 0.001 && ap.razao < 0.99) => return,

@@ -53,6 +53,9 @@ mod aviso_do_cliente {
 
 /// `EQUIP_INDEX_WEAPON` (`EC_IvtrTypes.h:56-67`).
 const SLOT_DA_ARMA: u16 = 0;
+/// `EQUIP_INDEX_HP_ADDON` (20) e `EQUIP_INDEX_MP_ADDON` (21) (`gs/item.h:216-217`).
+pub(super) const SLOT_DO_AMULETO_DE_VIDA: u16 = 20;
+pub(super) const SLOT_DO_AMULETO_DE_MANA: u16 = 21;
 /// `EQUIP_ARMOR_START` (= `EQUIP_INDEX_HEAD`) e `EQUIP_ARMOR_END` (= `EQUIP_INDEX_PROJECTILE`)
 /// do `gs/item.h:194-241`: os slots que `SelectRandomArmor` sorteia são de 1 a 10.
 const PRIMEIRA_PECA: u16 = 1;
@@ -650,6 +653,34 @@ impl BusServer {
                 let slot = item.slot as usize;
                 if slot < crate::entity::PECAS_VESTIDAS && item.max_durability > 0 {
                     p.pecas[slot] = Some((item.durability as i32, item.max_durability as i32));
+                }
+            }
+            // Amuleto e hierograma: vesti-los é ativá-los (`OnPutIn` → `Activate` →
+            // `SetHPAutoGen`/`SetMPAutoGen`, `gs/item/item_amulet.h:53-60`,
+            // `item_amulet.cpp:22-46`). O que resta vem dos octetos do item, porque é lá que
+            // o gasto fica gravado; sem octetos vale o total do `elements.data`.
+            p.auto_hp = None;
+            p.auto_mp = None;
+            for item in &itens {
+                if item.slot != SLOT_DO_AMULETO_DE_VIDA && item.slot != SLOT_DO_AMULETO_DE_MANA {
+                    continue;
+                }
+                let Some((total, gatilho_padrao, recarga_ms, de_vida)) = dados.dados_do_amuleto(item.item_id) else {
+                    continue;
+                };
+                let (ponto, gatilho) = crate::entity::AmuletoAtivo::do_bloco(&item.octets)
+                    .unwrap_or((total, gatilho_padrao));
+                let a = crate::entity::AmuletoAtivo {
+                    slot: item.slot,
+                    item_id: item.item_id,
+                    ponto,
+                    gatilho,
+                    recarga_ms,
+                };
+                if de_vida {
+                    p.auto_hp = Some(a);
+                } else {
+                    p.auto_mp = Some(a);
                 }
             }
             if !e.addons_sem_porte.is_empty() {

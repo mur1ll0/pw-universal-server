@@ -330,7 +330,10 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
   terra (dano no tempo reduzido pela defesa/resistência, punição de nível contra monstro, ¼
   entre jogadores, tique de 3 em 3 s), ± ataque/magia/defesa/resistência/evasão/precisão,
   ± cadência e conjuração, ± dano recebido, crítico, regeneração de vida/mana, ± vida máxima,
-  poder, invencível; instantâneos cura, cura/mana em %, dano direto, limpar bênçãos/maldições.
+  poder, invencível, **escudo de asa** (`Wingshield`, B73: absorve o golpe até o `SetAmount`
+  acabar — um quinto passa e o escudo perde quatro vezes isso — e injeta o `SetValue` de mana
+  a cada 3 s, `skillfilter.h:4136-4232`); instantâneos cura, cura/mana em %, dano direto,
+  limpar bênçãos/maldições.
   Convivência de `filter_man::AddFilter` (único substitui, fraco descarta, fundir absorve).
   Realces entram como `_en_percent` na conta do jogador e em monstro (NPC usa o mesmo
   `property_policy` com classe −1). Monstro atordoado/dormindo não age, preso não anda, lento
@@ -422,12 +425,12 @@ banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
 | item no chão | `testado` | posse do dono por **30 s**, some em **300 s** (`matter.h:62`, `matter.cpp:133`); `MATTER_ENTER_WORLD` a quem está a 120 m e no streaming; `OBJECT_DISAPPEAR` ao sumir |
 | **pegar** (C2S 6 e 184) | `testado` | tipo confere, distância < 10 m, posse; moedas `PICKUP_MONEY` (30), item `PICKUP_ITEM` (31); `MATTER_PICKUP` (152) a todos; bolsa cheia `ERROR_MESSAGE` 7, fora da posse 6 (`playercmd.cpp:1347-1444`, `matter.h:97-129`) |
 | poção (`USE_ITEM`) | `testado` (B67, B71) | `MEDICINE_ESSENCE`. **Restaura ao longo do tempo**: `hp_add_total / hp_add_time` por batimento de 1 s, e o mesmo para mana — é o `healing_potion_filter`/`mana_potion_filter` do original (`gs/item/item_potion.cpp:18-52`, `gs/potion_filter.h:6-130`), que reparte o total pelo tempo. Só a poção com vida **e** mana e sem tempo (`rejuvenation_potion`) cura na hora. **Recarga** (B70/B71): `CheckCoolDown` **antes** de consumir, recusa com `ERR_OBJECT_IS_COOLING` (53) e `SetCoolDown(índice, cool_time)` com `SET_COOLDOWN` (198) ao cliente. O índice é o da **família**, e a família vem do `id_major_type` do arquivo (`setclassid.cpp:81-101`), não do que a poção restaura: 11 vida, 12 mana, 3 vida+mana, 13 antídoto (`COOLDOWN_INDEX_*`, `gs/cooldowncfg.h:62-78`) — poções da mesma família compartilham a recarga |
-| amuleto e hierograma | `testado` (B67) | `AUTOHP_ESSENCE`/`AUTOMP_ESSENCE`: o conteúdo do item são **8 bytes**, `int point; float trigger_percent` (`gs/item/item_amulet.h:16-19`, `generate_item_temp.h:2296-2310`). Sem eles o cliente desenhava zeros e negativos. `falta`: o gatilho automático que repõe vida/mana |
+| amuleto e hierograma | `testado` (B67, B73) | `AUTOHP_ESSENCE`/`AUTOMP_ESSENCE`: o conteúdo do item são **8 bytes**, `int point; float trigger_percent` (`gs/item/item_amulet.h:16-19`, `generate_item_temp.h:2296-2310`). Sem eles o cliente desenhava zeros e negativos. **Disparo automático (B73)**: vesti-los nos slots **20** (vida) e **21** (mana) os ativa (`OnActivate` → `SetHPAutoGen`/`SetMPAutoGen`, `item_amulet.cpp:22-46`); a cada batimento de 1 s, com `trigger_percent × máximo > atual`, o `AutoGenStat` (`gs/player_imp.h:3562-3593`) confere a recarga (`COOLDOWN_INDEX_AUTO_HP` 24 / `AUTO_MP` 25), devolve `máximo − atual` preso ao que resta e arma o `cool_time` do item — e o `SetCoolDown` **sempre** manda `SET_COOLDOWN` (198) ao cliente (`gs/player.cpp:12701-12709`), que é o que escurece o ícone (B74). O que sobra fica nos **octetos do item**; em zero o amuleto some do corpo com `PLAYER_DROP_ITEM` tipo `DROP_TYPE_USE` (11) |
 | colher recurso de mapa | `testado` (B51) | §7 "coleta de recurso" |
 | Loja Gold, barraca | `falta` | |
 | demais serviços de NPC (teleporte, pedras, forja, decompor, armazém, item de missão) | `falta` | |
 
-### 8.0 A barra de chi — `testado` (B69/B70)
+### 8.0 A barra de chi — `testado` (B69/B70/B73)
 
 O chi (a "fúria" do original, `_basic.ap`) **não existe até uma missão dar o teto**: é o
 prêmio `m_ulFuryULimit` (deslocamento 57 do `AWARD_DATA`) → `SetFuryUpperLimit` →
@@ -439,15 +442,25 @@ prêmio `m_ulFuryULimit` (deslocamento 57 do `AWARD_DATA`) → `SetFuryUpperLimi
 | :--- | :--- | :--- |
 | golpe normal | `ap_per_hit` da classe (`angro_increase` do `CHARRACTER_CLASS_CONFIG`; Arqueiro: 5) | `gplayer_imp::DoAttack`, `player.cpp:3091-3093` |
 | meditar | **15 por batimento de 1 s** | `sit_down_filter::Heartbeat`, `gs/sitdown_filter.cpp:19-34` |
-| habilidade | filtros `Apgen`/`Apgen2` (`falta`: nenhum porte ainda) | `playerwrapper.cpp` |
+| **usar habilidade** | `apgain − apcost` do stub, de uma vez, na execução | `int ap = GetApgain() - GetApcost(); if (ap) ModifyAP(ap)`, `cskill/skill/playerwrapper.cpp:170-177` |
+| habilidade (filtros) | `Apgen`/`Apgen2` (`falta`: nenhum porte ainda) | `playerwrapper.cpp` |
+
+Cada habilidade tem **`apcost` e `apgain` fixos** no stub (`cskill/skill/skill.h:239,588`),
+e o servidor recusa a conjuração com `GetAp() < apcost` (`SkillStub::Condition`,
+`cskill/skill/skill.cpp:125`) — **sem mandar erro**, porque o cliente já barra antes. Os dois
+números já estavam no `habilidades.json`; o mundo é que não os lia até o B73. Exemplos do
+Arqueiro: Flecha Glacial (245) custa **25**, Barreira de Asa (249) custa **45**, Flecha
+Fulgurante (244) **dá 10** e a 235 **dá 5**.
 
 `ModifyAP` prende entre 0 e o teto e marca o estado para ir ao cliente. O `iAP`/`iMaxAP` do
 `SELF_INFO_00` (38) e o último `i32` (`max_ap`) do `OWN_EXT_PROP` (50) têm de levar o mesmo
 teto; `EC_HostMsg.cpp:1319-1332` compara os dois e anuncia aumento quando o segundo muda. Até
 o B70, o segundo ia zero, então cada atualização posterior de `SELF_INFO_00` fazia o cliente
 repetir “limite máximo de chi aumentado para 99”. Vive em `characters.ap`/`characters.max_ap`.
-**A Flecha Fulgurante (244) não gera chi:** `skill244.h:20-80,234-240` só consome mana e aplica
-`Firearrow`. **Não há ganho ao apanhar** no 1.5.5 — o fonte só dá chi nos três casos acima.
+**Correção do B70:** ficou escrito aqui que a Flecha Fulgurante (244) não gerava chi, porque
+o corpo da habilidade não chama `ModifyAP`. Quem chama é a execução, com o `apgain` do stub —
+e o da 244 é **10** (`cskill/skills/skill244.h:142-144`). **Não há ganho ao apanhar** no
+1.5.5: nenhuma das chamadas de `ModifyAP` está no caminho de levar dano.
 
 Os filtros `Apgen`/`Apgen2` seguem pendentes para as habilidades que efetivamente os usam.
 
@@ -506,7 +519,7 @@ original, mexidas pelas mesmas funções portadas linha a linha: `DeliverTask`, 
 | equipe (B51) | `CheckTeamTask`/`HasAllTeamMemsWanted` (`TaskTempl.inl:149-339`): só o capitão recebe; distância dos membros, `TEAM_MEM_WANTED` (nível, raça/classe, gênero, contagem), classes distintas; casal recusa (sem casamento). Aceita, cada membro **deste mapa** recebe por `OnDeliverTeamMemTask` (`TaskProcess.cpp:1592`) | `testado` |
 | teleporte (B51) | prêmio `m_ulTransWldId` (`TaskProcess.cpp:1316`) e `m_bTransTo` ao receber (`:1843`) → §7 "teleporte e troca de mapa" | `testado` |
 | coleta de mina (`OnTaskMining`) (B67) | mina com `task_out > 0` (`TaskServer.cpp:1116-1123`, `TaskTempl.inl:2105-2148`); se `material.item == 0`, não dropa nada no chão; entrega o item da submissão na bolsa (`j.dar_item`) e marca a submissão finalizada | `testado` |
-| itens de missão | **quem escolhe a bolsa é o `m_bCommonItem` de cada item do `tasks.data`**, não o tipo do item: `true` → `DeliverCommonItem` → bolsa normal; `false` → `DeliverTaskItem` → bolsa de missão (`task/TaskProcess.cpp:1190-1208`, `task/taskman.cpp:281-330`). O mesmo bit vale para contar e recolher. Bolsa de missão = pacote 2, `container_type` 5: `TASK_DELIVER_ITEM` (156), `PLAYER_DROP_ITEM` (46) tipo 3; prêmio `TASK_DELIVER_EXP/MONEY` (158/159), `SPEND_MONEY` | `testado` |
+| itens de missão | **quem escolhe a bolsa é o `m_bCommonItem` de cada item do `tasks.data`**, não o tipo do item (embora os dois quase sempre concordem: no `realm_155`, **todos** os 413 `TASKMATTER_ESSENCE` vão para a bolsa de missão e os `TASKNORMALMATTER_ESSENCE` para a comum — "matéria de missão **normal**" é a que fica no inventário normal —, com uma única exceção, a Presa de Filhote de Lobo 2654; ver `cargo run -p pw-data-loader --example bolsa_do_item_de_missao`): `true` → `DeliverCommonItem` → bolsa normal; `false` → `DeliverTaskItem` → bolsa de missão (`task/TaskProcess.cpp:1190-1208`, `task/taskman.cpp:281-330`). O mesmo bit vale para contar e recolher. Bolsa de missão = pacote 2, `container_type` 5: `TASK_DELIVER_ITEM` (156), `PLAYER_DROP_ITEM` (46) tipo 3; prêmio `TASK_DELIVER_EXP/MONEY` (158/159), `SPEND_MONEY` | `testado` |
 | erros | `svr_task_err_code` (reason 6) com `TASK_PREREQU_FAIL_*`; NPC sem a missão `ERROR_MESSAGE` 19 | `testado` |
 | monstros invocados | `m_SummonedMonsters` do prêmio: com `m_bRandChoose` sorteia um quando as probabilidades somam 1 e senão sorteia cada um; **sem** ele invoca todos (`TaskProcess.cpp:1385-1436`). O id do invocado satisfaz `ISNPCID` (faixa `0xA000_0000`) — com `0xC000_0000` o cliente o lia como item de chão e não deixava mirar (B67) | `testado` |
 | **nível de cultivo** (B67) | `m_ulNewPeriod` do prêmio (deslocamento 25 do `AWARD_DATA`) → `SetCurPeriod` → `gplayer_imp::SetSecLevel` (`TaskProcess.cpp:1284`, `task/taskman.cpp:251-254`, `player_imp.h:2798-2804`): grava em `characters.cultivation` e manda `TASK_DELIVER_LEVEL2` (160), que faz o cliente tocar o efeito do avanço. São 18 missões no `realm_155` (`cargo run -p pw-gs --example missoes_de_cultivo`) | `testado` |

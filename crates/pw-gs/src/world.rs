@@ -61,6 +61,21 @@ pub enum EventoDoMundo {
         hp: i32,
         max_hp: i32,
     },
+    /// Um amuleto vestido disparou: restaurou vida ou mana e gastou parte do que tinha
+    /// (`gplayer_imp::AutoGenStat`, `gs/player_imp.h:3562-3593`). O que sobrou tem de ir ao
+    /// banco e ao cliente — `item_info` enquanto resta, `PLAYER_DROP_ITEM` quando acaba.
+    AmuletoDisparou {
+        roleid: RoleId,
+        slot: u16,
+        item_id: u32,
+        restou: i32,
+        bloco: Vec<u8>,
+        /// `COOLDOWN_INDEX_AUTO_HP` (24) ou `AUTO_MP` (25) e o `cool_time` do item: o
+        /// `SetCoolDown` do original **sempre** manda `set_cooldown` ao cliente
+        /// (`gs/player.cpp:12701-12709`), e é ele que desenha a recarga no ícone.
+        indice_de_recarga: i32,
+        recarga_ms: i32,
+    },
     /// Vida ou mana do jogador mudaram sozinhas (regeneração): o `SELF_INFO_00` é o que o
     /// original manda quando o `_refresh_state` liga (`GenHPandMP`, `actobject.h:2167`).
     EstadoMudou { roleid: RoleId },
@@ -1107,6 +1122,74 @@ impl WorldInstance {
         self.data_manager.quanto_o_remedio_restaura(item_id)
     }
 
+    /// Os amuletos vestidos, no batimento de 1 s (`gplayer_imp::OnHeartbeat`,
+    /// `gs/player.cpp:9107-9129`).
+    ///
+    /// Dispara quando `trigger_percent × máximo > atual`, restaura o que falta até o limite
+    /// do que resta no amuleto (`offset = máximo − atual`, preso a `_ess.point`) e arma a
+    /// recarga do próprio item (`base_amulet::OnAutoTrigger`, `gs/item/item_amulet.cpp:9-20`).
+    /// Em zero, o amuleto acaba e sai do corpo.
+    fn disparar_amuletos(&mut self) -> Vec<EventoDoMundo> {
+        let mut eventos = Vec::new();
+        for p in self.players.values_mut() {
+            if p.recarga_do_auto_hp_s > 0 {
+                p.recarga_do_auto_hp_s -= 1;
+            }
+            if p.recarga_do_auto_mp_s > 0 {
+                p.recarga_do_auto_mp_s -= 1;
+            }
+            if p.hp <= 0 {
+                continue;
+            }
+            for de_vida in [true, false] {
+                let (atual, maximo) = if de_vida { (p.hp, p.max_hp) } else { (p.mp, p.max_mp) };
+                let recarga_s = if de_vida { p.recarga_do_auto_hp_s } else { p.recarga_do_auto_mp_s };
+                let Some(a) = (if de_vida { p.auto_hp.as_mut() } else { p.auto_mp.as_mut() }) else {
+                    continue;
+                };
+                if a.ponto <= 0 || recarga_s > 0 || a.gatilho * maximo as f32 <= atual as f32 {
+                    continue;
+                }
+                let quanto = (maximo - atual).min(a.ponto).max(0);
+                if quanto <= 0 {
+                    continue;
+                }
+                a.ponto -= quanto;
+                let (slot, item_id, restou, bloco, recarga_ms) =
+                    (a.slot, a.item_id, a.ponto, a.bloco(), a.recarga_ms);
+                if de_vida {
+                    p.hp += quanto;
+                    p.recarga_do_auto_hp_s = (recarga_ms / 1000).max(0);
+                    if restou <= 0 {
+                        p.auto_hp = None;
+                    }
+                } else {
+                    p.mp += quanto;
+                    p.recarga_do_auto_mp_s = (recarga_ms / 1000).max(0);
+                    if restou <= 0 {
+                        p.auto_mp = None;
+                    }
+                }
+                debug!(
+                    "mundo: o amuleto {item_id} de {} devolveu {quanto} de {} e ficou com {restou}",
+                    p.role_id,
+                    if de_vida { "vida" } else { "mana" }
+                );
+                eventos.push(EventoDoMundo::AmuletoDisparou {
+                    roleid: p.role_id,
+                    slot,
+                    item_id,
+                    restou,
+                    bloco,
+                    indice_de_recarga: if de_vida { RECARGA_DO_AMULETO_DE_VIDA } else { RECARGA_DO_AMULETO_DE_MANA },
+                    recarga_ms,
+                });
+                eventos.push(EventoDoMundo::EstadoMudou { roleid: p.role_id });
+            }
+        }
+        eventos
+    }
+
     /// Põe no jogador o filtro de poção: `total / tempo` por batimento de 1 s
     /// (`healing_potion_filter`, `gs/potion_filter.h:16-25`).
     pub fn pocao_no_tempo(&mut self, roleid: RoleId, efeito: crate::efeitos::Efeito, total: i32, tempo_s: i32) {
@@ -1122,6 +1205,7 @@ impl WorldInstance {
             contador: 0,
             origem: 0,
             icone: false,
+            absorve: 0.0,
         };
         p.efeitos.adicionar(filtro);
     }
@@ -1285,6 +1369,9 @@ impl WorldInstance {
             for roleid in mudaram {
                 self.emitir(EventoDoMundo::EstadoMudou { roleid });
             }
+            for ev in self.disparar_amuletos() {
+                self.emitir(ev);
+            }
             self.batida_dos_efeitos();
             self.informar_vida_aos_inscritos();
         }
@@ -1363,6 +1450,10 @@ impl WorldInstance {
             .collect()
     }
 }
+
+/// `COOLDOWN_INDEX_AUTO_HP` e `COOLDOWN_INDEX_AUTO_MP` (`gs/cooldowncfg.h:62-90`).
+pub const RECARGA_DO_AMULETO_DE_VIDA: i32 = 24;
+pub const RECARGA_DO_AMULETO_DE_MANA: i32 = 25;
 
 /// A fotografia de um jogador para o autosave — o que o tique tira com o mundo trancado e o
 /// laço grava com ele solto.
