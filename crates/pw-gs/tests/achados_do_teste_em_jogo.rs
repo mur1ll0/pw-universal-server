@@ -59,6 +59,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         visiveis: std::collections::HashSet::new(),
         centro_do_stream: Vector3::new(0.0, 0.0, 0.0),
         voando: false,
+        montaria: None,
         modo_roupa: false,
         sec_level: 0,
         habilidades: Default::default(),

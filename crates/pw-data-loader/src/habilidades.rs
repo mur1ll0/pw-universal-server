@@ -41,6 +41,12 @@ pub struct HabilidadeDoServidor {
     /// (`cskill/skill/playerwrapper.cpp:170-177`).
     #[serde(default)]
     pub apgain: Option<i32>,
+    /// `is_movingcast` (`cskill/skill/skill.h:382`): a habilidade é conjurada **andando**.
+    /// O original a despacha por `moving_skill` em vez de `session_skill`
+    /// (`gs/playercmd.cpp:2066-2088`), e o movimento do jogador não a interrompe. No 1.5.5
+    /// são **5**, todas da classe 11 (2909, 2910, 2913, 2914, 2917).
+    #[serde(default)]
+    pub is_movingcast: Option<i32>,
     pub execucao_ms: Option<Vec<i32>>,
     pub recarga_ms: Option<Vec<i32>>,
     pub nivel_exigido: Option<Vec<i32>>,
@@ -123,6 +129,11 @@ fn no_nivel<T: Copy>(v: &Option<Vec<T>>, nivel: i32) -> Option<T> {
 impl HabilidadeDoServidor {
     /// O tempo de recarga como o original arma: segundos **truncados**, vezes mil
     /// (`skill.h:577` devolve `(int)(0.001*coolingtime)`).
+    /// A habilidade pode ser conjurada andando.
+    pub fn conjura_andando(&self) -> bool {
+        self.is_movingcast.unwrap_or(0) != 0
+    }
+
     pub fn recarga_armada_ms(&self, nivel: i32) -> Option<i32> {
         no_nivel(&self.recarga_ms, nivel).map(|t| ((t as f64 * 0.001) as i32) * 1000)
     }
@@ -234,6 +245,11 @@ impl TabelaDeHabilidades {
     pub fn get(&self, id: u32) -> Option<&HabilidadeDoServidor> {
         self.por_id.get(&id)
     }
+
+    /// Todas as habilidades da tabela.
+    pub fn todas(&self) -> impl Iterator<Item = (&u32, &HabilidadeDoServidor)> {
+        self.por_id.iter()
+    }
 }
 
 #[cfg(test)]
@@ -269,6 +285,24 @@ mod tests {
         assert_eq!(t.get(235).and_then(|h| h.apgain), Some(5));
     }
 
+    /// B78 — conjurar andando é propriedade **da habilidade**, não da classe.
+    ///
+    /// `is_movingcast` no stub (`cskill/skill/skill.h:382`); o original despacha essas por
+    /// `moving_skill` (`gs/playercmd.cpp:2066-2088`). No 1.5.5 são cinco, todas da classe 11.
+    #[test]
+    fn so_cinco_habilidades_conjuram_andando_e_sao_da_classe_11() {
+        let t = TabelaDeHabilidades::do_155();
+        let andando: Vec<u32> = t.todas().filter(|(_, h)| h.conjura_andando()).map(|(id, _)| *id).collect();
+        let mut andando = andando;
+        andando.sort_unstable();
+        assert_eq!(andando, vec![2909, 2910, 2913, 2914, 2917]);
+        for id in &andando {
+            assert_eq!(t.get(*id).and_then(|h| h.cls), Some(11), "a {id} não é da classe 11");
+        }
+        // As antigas não têm: o Arqueiro não conjura andando.
+        assert!(!t.get(244).is_some_and(|h| h.conjura_andando()));
+    }
+
     #[test]
     fn a_recarga_trunca_os_segundos() {
         let h = HabilidadeDoServidor {
@@ -281,6 +315,7 @@ mod tests {
             mp: None,
             apcost: None,
             apgain: None,
+            is_movingcast: None,
             execucao_ms: None,
             recarga_ms: Some(vec![2500]),
             nivel_exigido: None,

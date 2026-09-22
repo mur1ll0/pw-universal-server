@@ -67,13 +67,14 @@ impl WorldProtocol for V153Protocol {
         player_id: i32,
         level: i16,
         level2: u8,
+        em_combate: bool,
         hp: i32,
         max_hp: i32,
         mp: i32,
         max_mp: i32,
         alvo: i32,
     ) -> crate::packets::s2c::S2CGamedataSend {
-        self.0.player_info_00(player_id, level, level2, hp, max_hp, mp, max_mp, alvo)
+        self.0.player_info_00(player_id, level, level2, em_combate, hp, max_hp, mp, max_mp, alvo)
     }
 
     fn receive_exp(&self, exp: i32, sp: i32) -> crate::packets::s2c::S2CGamedataSend {
@@ -94,9 +95,14 @@ impl WorldProtocol for V153Protocol {
         regen: (i32, i32),
         velocidades: (f32, f32, f32, f32),
         ataque: (i32, i32, i32, i32, f32),
+        // `damage_magic_low/high` do `ROLEEXTPROP_ATK`: é o "Atq. Mágico" da ficha, e ia
+        // zero fixo até o B77 (`gs/player.cpp:4358` manda o `_cur_prop` inteiro).
+        magico: (i32, i32),
+        // `resistance[5]` do `ROLEEXTPROP_DEF`, na ordem metal/madeira/água/fogo/terra.
+        resistencias: [i32; 5],
         defesa: (i32, i32),
     ) -> crate::packets::s2c::S2CGamedataSend {
-        self.0.own_ext_prop(status_point, atributos, max_hp, max_mp, max_ap, regen, velocidades, ataque, defesa)
+        self.0.own_ext_prop(status_point, atributos, max_hp, max_mp, max_ap, regen, velocidades, ataque, magico, resistencias, defesa)
     }
 
     fn enter_sanctuary(&self, id: i32) -> crate::packets::s2c::S2CGamedataSend {

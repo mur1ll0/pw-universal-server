@@ -59,6 +59,8 @@ pub trait WorldProtocol: Send + Sync {
         player_id: i32,
         level: i16,
         level2: u8,
+        // `State`: 1 em combate (`IsCombatState() ? 1 : 0`, `gs/player.cpp:3554`).
+        em_combate: bool,
         hp: i32,
         max_hp: i32,
         mp: i32,
@@ -89,6 +91,11 @@ pub trait WorldProtocol: Send + Sync {
         regen: (i32, i32),
         velocidades: (f32, f32, f32, f32),
         ataque: (i32, i32, i32, i32, f32),
+        // `damage_magic_low/high` do `ROLEEXTPROP_ATK`: é o "Atq. Mágico" da ficha, e ia
+        // zero fixo até o B77 (`gs/player.cpp:4358` manda o `_cur_prop` inteiro).
+        magico: (i32, i32),
+        // `resistance[5]` do `ROLEEXTPROP_DEF`, na ordem metal/madeira/água/fogo/terra.
+        resistencias: [i32; 5],
         defesa: (i32, i32),
     ) -> S2CGamedataSend;
 

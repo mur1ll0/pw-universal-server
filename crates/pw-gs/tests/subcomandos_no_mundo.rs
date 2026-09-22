@@ -102,6 +102,7 @@ fn monstro() -> MonsterEntity {
         is_dead: false,
         respawn_timer_ms: 0,
         respawn_delay_ms: 1000,
+        vida_restante_ms: 0,
         target_id: None,
         efeitos: Default::default(),
         danos: Vec::new(),
@@ -3810,6 +3811,119 @@ async fn o_hierograma_vestido_devolve_mana_sozinho() {
         antes,
         "disparou de novo dentro da recarga"
     );
+}
+
+/// B78 — montar: `SUMMON_PET` (C2S 100) com uma montaria é montar nela.
+///
+/// `pet_man::ActivePet` (`gs/petman.cpp:319-392`) confere o estado, calcula
+/// `speed_a + speed_b × (nível − 1)` (`petdataman.h:186-194`) e põe o `mount_filter`, que
+/// manda `PLAYER_MOUNTING` (227) e sobrepõe a velocidade (`mount_filter.cpp:24-33`).
+#[tokio::test]
+async fn montar_muda_a_velocidade_e_avisa_o_cliente() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // Uma montaria na sala de mascotes, com o bloco que o incubar grava.
+    const PET_TID: i32 = 8600;
+    const NIVEL: i16 = 3;
+    let mut info = pw_core::InfoPet::default();
+    info.pet_tid = PET_TID;
+    info.level = NIVEL;
+    info.color = 7;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens
+        .upsert_item(&pw_core::ItemRecord {
+            id: None,
+            character_id: roleid,
+            container_type: pw_core::ContainerType::PetCorral,
+            slot: 0,
+            item_id: PET_TID as u32,
+            count: 1,
+            max_count: 1,
+            refine_level: 0,
+            sockets_count: 0,
+            sockets: vec![],
+            durability: 0,
+            max_durability: 0,
+            bind_status: 0,
+            octets: info.para_bytes(),
+            custom_attributes: serde_json::json!({}),
+        })
+        .await
+        .expect("guardar a montaria");
+
+    // O cenário não carrega `elements.data`: a velocidade da montaria entra à mão, como os
+    // outros dados do mundo de teste. `speed_a = 5`, `speed_b = 0,5` dão 6 no nível 3.
+    {
+        let mut m = mundo.write().await;
+        let dm = Arc::make_mut(&mut m.data_manager);
+        dm.velocidades_de_montaria.insert(PET_TID as u32, (5.0, 0.5));
+    }
+
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) })
+        .await
+        .unwrap();
+
+    let montou = esperar_comando(&mut link, 227).await;
+    assert_eq!(i32_em(&montou, 2), roleid, "o PLAYER_MOUNTING é do jogador");
+    assert_eq!(i32_em(&montou, 6), PET_TID, "mount_id");
+    assert_eq!(u16::from_le_bytes([montou[10], montou[11]]), 7, "mount_color");
+    {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        assert_eq!(p.montaria.map(|(t, _, v)| (t, v)), Some((PET_TID as u32, 6.0)), "a montaria não entrou");
+        assert_eq!(p.move_speed, 6.0, "a velocidade não passou a ser a da montaria");
+    }
+
+    // Desmontar devolve tudo e avisa com zero nos dois campos.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::RECALL_PET, &[]) })
+        .await
+        .unwrap();
+    let desmontou = esperar_comando(&mut link, 227).await;
+    assert_eq!(i32_em(&desmontou, 6), 0, "desmontar manda mount_id zero");
+    assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_none());
+}
+
+/// B77 — monstro invocado **não renasce**, e some quando o tempo dele acaba.
+///
+/// Quem vem de missão (`SummonMonster` → `CreateMinors`, `gs/player.cpp:13072-13110`) ou de
+/// uma matéria não pertence a `mobs_spawner` nenhum: morreu, acabou. O `respawn_delay_ms`
+/// zero passava por um `.max(1)` e virava 1 ms de espera — era a Sombra do Olho do Deus da
+/// missão 31728 voltando assim que o corpo sumia.
+#[tokio::test]
+async fn o_monstro_invocado_nao_renasce_e_expira() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let _link = entrar(&mundo, addr, roleid).await;
+
+    const INVOCADO: i64 = 900_777;
+    const COM_GERADOR: i64 = 900_778;
+    {
+        let mut m = mundo.write().await;
+        // Invocado: sem gerador (`respawn_delay_ms` 0) e com 3 s de vida.
+        let mut i = monstro();
+        i.id = INVOCADO;
+        i.respawn_delay_ms = 0;
+        i.vida_restante_ms = 3_000;
+        m.monsters.insert(INVOCADO, (i, pw_gs::ai::MonsterAi::new()));
+        // De gerador: renasce, como sempre.
+        let mut g = monstro();
+        g.id = COM_GERADOR;
+        g.respawn_delay_ms = 1_000;
+        m.monsters.insert(COM_GERADOR, (g, pw_gs::ai::MonsterAi::new()));
+        m.matar_monstro(INVOCADO);
+        m.matar_monstro(COM_GERADOR);
+    }
+
+    // Tempo de sobra para o corpo sumir (20 s) e o renascimento acontecer.
+    for _ in 0..40 {
+        mundo.write().await.tick(1000).await;
+    }
+    let m = mundo.read().await;
+    assert!(
+        m.monsters.get(&INVOCADO).is_none() || m.monsters[&INVOCADO].0.is_dead,
+        "o invocado renasceu — ele não tem gerador"
+    );
+    assert!(!m.monsters[&COM_GERADOR].0.is_dead, "o monstro de gerador devia ter renascido");
 }
 
 /// B72 — a durabilidade das peças vestidas vive no mundo, não só no banco.

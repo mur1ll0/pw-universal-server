@@ -173,9 +173,13 @@ fn test_select_role_response_codec() {
 #[test]
 fn test_gamedatasend_s2c_subcommands() {
     // 1. SELF_INFO_00 (CMD 38)
-    let p1 = S2CGamedataSend::self_info_00(10, 32, 500, 500, 300, 300, 1000, 500, 40, 99);
+    let p1 = S2CGamedataSend::self_info_00(10, 32, true, 500, 500, 300, 300, 1000, 500, 40, 99);
     assert!(!p1.data.is_empty());
     assert_eq!(u16::from_le_bytes([p1.data[0], p1.data[1]]), 38);
+    // `State` = 1: é ele que põe o cliente em modo de luta (`EC_HostMsg.cpp:1334-1335`).
+    assert_eq!(p1.data[4], 1, "State (em combate)");
+    assert_eq!(p1.data[5], 32, "Level2 (cultivo)");
+    assert_eq!(S2CGamedataSend::self_info_00(10, 32, false, 500, 500, 300, 300, 1000, 500, 40, 99).data[4], 0);
 
     // 2. SELF_INFO_1 (CMD 8) com GM flag
     let p2 = S2CGamedataSend::self_info_1(1000, 500, 1024, Vector3::new(10.0, 20.0, 30.0), 32);
@@ -582,6 +586,8 @@ fn test_own_ext_prop_tem_196_bytes_e_os_atributos_no_lugar() {
         (2, 3),
         (1.5, 4.8, 2.2, 5.0),
         (7, 11, 19, 30, 1.4),
+        (12, 34),
+        [1, 2, 3, 4, 5],
         (23, 29),
     );
     assert_eq!(p.data.len(), 2 + 196, "cabeçalho de 2 + os 196 bytes medidos no cliente");
@@ -610,6 +616,14 @@ fn test_own_ext_prop_tem_196_bytes_e_os_atributos_no_lugar() {
     assert_eq!(i32_em(BS + 116 + 20), 23, "defense");
     assert_eq!(i32_em(BS + 116 + 24), 29, "armor");
     assert_eq!(i32_em(BS + 144), 99, "max_ap");
+    // B77 — o "Atq. Mágico" da ficha: `damage_magic_low/high` fecham o `ROLEEXTPROP_ATK`,
+    // logo depois dos dez `addon_damage`, e iam zero fixo. As cinco resistências vêm em
+    // seguida, no `ROLEEXTPROP_DEF`.
+    assert_eq!(i32_em(BS + 108), 12, "damage_magic_low");
+    assert_eq!(i32_em(BS + 112), 34, "damage_magic_high");
+    for (n, esperado) in [1, 2, 3, 4, 5].iter().enumerate() {
+        assert_eq!(i32_em(BS + 116 + n * 4), *esperado, "resistance[{n}]");
+    }
 }
 
 /// `HOST_SKILL_ATTACKED` (144) tem 19 bytes de corpo — o IR e o cabeçalho do cliente

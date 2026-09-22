@@ -208,6 +208,30 @@ impl InfoPet {
         pet
     }
 
+    /// O caminho de volta do [`Self::para_bytes`]: lê o bloco de 192 bytes guardado no item
+    /// do mascote. Só os campos que o mundo usa hoje — o resto fica no padrão.
+    pub fn do_bloco(b: &[u8]) -> Option<Self> {
+        if b.len() < 40 {
+            return None;
+        }
+        let i32_em = |i: usize| i32::from_le_bytes(b[i..i + 4].try_into().unwrap_or([0; 4]));
+        Some(Self {
+            honor_point: i32_em(0),
+            hunger: i32_em(4),
+            feed_time: i32_em(8),
+            pet_tid: i32_em(12),
+            pet_vis_tid: i32_em(16),
+            pet_egg_tid: i32_em(20),
+            pet_class: i32_em(24),
+            hp_factor: f32::from_le_bytes(b[28..32].try_into().ok()?),
+            level: i16::from_le_bytes(b[32..34].try_into().ok()?),
+            color: u16::from_le_bytes(b[34..36].try_into().ok()?),
+            exp: i32_em(36),
+            ..Default::default()
+        })
+    }
+
+
     pub fn para_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(TAMANHO_INFO_PET);
         buf.extend_from_slice(&self.honor_point.to_le_bytes());

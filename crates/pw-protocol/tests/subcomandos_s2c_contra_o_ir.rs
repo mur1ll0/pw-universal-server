@@ -97,6 +97,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("player_drop_item", "PLAYER_DROP_ITEM"),
     ("set_cooldown", "SET_COOLDOWN"),
     ("elf_exp", "ELF_EXP"),
+    ("player_mounting", "PLAYER_MOUNTING"),
     ("matter_pickup", "MATTER_PICKUP"),
     ("error_message", "ERROR_MESSAGE"),
     ("purchase_item", "PURCHASE_ITEM"),

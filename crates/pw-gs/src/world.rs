@@ -557,8 +557,9 @@ impl WorldInstance {
         template_id: u32,
         pos_centro: pw_core::Vector3,
         raio: u32,
-        _periodo_s: i32,
+        periodo_s: i32,
         _some_ao_morrer: bool,
+        invocador: Option<i64>,
     ) -> Option<i64> {
         let modelo = match self.data_manager.monstros.get(template_id) {
             Some(m) => m,
@@ -585,12 +586,21 @@ impl WorldInstance {
         self.proximo_monstro_dinamico = PRIMEIRO_ID_DE_MONSTRO_DINAMICO
             | ((self.proximo_monstro_dinamico.wrapping_add(1)) & 0x1FFF_FFFF);
 
-        // Monstro invocado não tem respawn periódico após a morte (`respawn_ms = 0`)
-        let monster = MonsterEntity::do_template(monster_id, modelo, pos, 0);
+        // Monstro invocado não tem gerador: `respawn_delay_ms = 0` quer dizer **nunca
+        // renasce** (ver `matar_monstro`).
+        let mut monster = MonsterEntity::do_template(monster_id, modelo, pos, 0);
+        // `remain_time` do `SummonMonster`: o invocado vive esse tanto e some
+        // (`prop.remain_time`, `gs/player.cpp:13079`). Zero é para sempre.
+        monster.vida_restante_ms = (periodo_s.max(0) as u32).saturating_mul(1000);
 
         self.grid.add_entity(monster_id, monster.position, false);
         let mut ia = MonsterAi::new();
         ia.direcao = rand::random::<u8>();
+        // O invocado nasce **odiando quem o chamou**: o original manda `GM_MSG_GEN_AGGRO`
+        // com 10000 de ódio logo depois de criar cada um (`gs/player.cpp:13093-13106`).
+        if let Some(quem) = invocador {
+            ia.add_threat(quem, 10_000);
+        }
         self.monsters.insert(monster_id, (monster, ia));
 
         self.emitir(EventoDoMundo::MonstroRenasceu { id: monster_id });
@@ -738,7 +748,12 @@ impl WorldInstance {
     pub fn matar_monstro(&mut self, id: i64) {
         if let Some((m, _)) = self.monsters.get_mut(&id) {
             m.is_dead = true;
-            m.respawn_timer_ms = m.respawn_delay_ms.max(1);
+            // **Sem gerador, sem renascimento.** Quem foi invocado — por missão
+            // (`SummonMonster` → `CreateMinors`, `gs/player.cpp:13072-13110`) ou por uma
+            // matéria — não pertence a um `mobs_spawner` e some de vez. O `.max(1)` que
+            // havia aqui virava 1 ms de espera e fazia a Sombra do Olho do Deus da missão
+            // 31728 renascer assim que o corpo sumia (B77).
+            m.respawn_timer_ms = m.respawn_delay_ms;
             m.target_id = None;
         }
         self.corpos.insert(id, CORPO_MS);
@@ -1046,11 +1061,13 @@ impl WorldInstance {
     /// respondia nada** ao `QUERY_PLAYER_INFO_1` (67): lia a contagem, escrevia uma linha
     /// de log e devolvia. Nenhum outro jogador tinha barra de vida.
     #[allow(clippy::type_complexity)]
-    pub fn dados_do_jogador(&self, role_id: RoleId) -> Option<(i16, u8, i32, i32, i32, i32, i32)> {
+    pub fn dados_do_jogador(&self, role_id: RoleId) -> Option<(i16, u8, bool, i32, i32, i32, i32, i32)> {
         let p = self.players.get(&(role_id as i64))?;
         Some((
             p.level as i16,
             p.cultivation.clamp(0, u8::MAX as i32) as u8,
+            // `IsCombatState()` (`gs/player.cpp:3554`): postura de luta para quem olha.
+            p.combate_s > 0,
             p.hp,
             p.max_hp,
             p.mp,
@@ -1065,11 +1082,13 @@ impl WorldInstance {
     /// respondia `120/120/280/280` para qualquer personagem, com exp e sp zerados —
     /// a **terceira** aparição do mesmo `120/280` escrito no código (itens 37 e 45).
     #[allow(clippy::type_complexity)]
-    pub fn dados_do_proprio(&self, role_id: RoleId) -> Option<(i16, u8, i32, i32, i32, i32, i32, i32, i32, i32)> {
+    pub fn dados_do_proprio(&self, role_id: RoleId) -> Option<(i16, u8, bool, i32, i32, i32, i32, i32, i32, i32, i32)> {
         let p = self.players.get(&(role_id as i64))?;
         Some((
             p.level as i16,
             p.cultivation.clamp(0, u8::MAX as i32) as u8,
+            // `IsCombatState()`: o `State` do `SELF_INFO_00` (`gs/player.cpp:3570`).
+            p.combate_s > 0,
             p.hp,
             p.max_hp,
             p.mp,
@@ -1225,6 +1244,28 @@ impl WorldInstance {
 
         let mut movimentos = Vec::new();
         let mut renasceram: Vec<(i64, pw_core::Vector3)> = Vec::new();
+
+        // O invocado com `remain_time` some quando o tempo acaba, vivo ou não
+        // (`prop.remain_time`, `gs/player.cpp:13079`).
+        let mut expiraram = Vec::new();
+        for (monster, _) in self.monsters.values_mut() {
+            if monster.vida_restante_ms > 0 {
+                monster.vida_restante_ms = monster.vida_restante_ms.saturating_sub(delta_ms);
+                if monster.vida_restante_ms == 0 {
+                    expiraram.push(monster.id);
+                }
+            }
+        }
+        for id in expiraram {
+            debug!("mundo: o invocado {id} chegou ao fim do tempo e sumiu");
+            self.monsters.remove(&id);
+            self.grid.remove_entity(id);
+            self.corpos.remove(&id);
+            for p in self.players.values_mut() {
+                p.visiveis.remove(&id);
+            }
+            self.emitir(EventoDoMundo::MonstroSumiu { id });
+        }
 
         for (monster, ai) in self.monsters.values_mut() {
             if monster.is_dead {

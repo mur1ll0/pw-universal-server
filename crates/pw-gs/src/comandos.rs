@@ -47,6 +47,10 @@ pub mod ids {
     pub const PICKUP: u16 = 6;
     /// `SRV::C2S::CMD::pickup_matter_all`
     pub const PICKUP_ALL: u16 = 184;
+    /// `SUMMON_PET` (`{ size_t pet_index }`) e `RECALL_PET` (sem corpo) —
+    /// `gs/playercmd.cpp:3235-3262`. Para montaria, invocar é **montar**.
+    pub const SUMMON_PET: u16 = 100;
+    pub const RECALL_PET: u16 = 101;
     /// `SRV::C2S::CMD::player_stop_move`
     pub const STOP_MOVE: u16 = 7;
     /// `UNSELECT` — só cabeçalho, sem struct no IR.

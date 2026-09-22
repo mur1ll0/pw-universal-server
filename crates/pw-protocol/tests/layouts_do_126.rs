@@ -53,7 +53,7 @@ fn escrever(p: &std::sync::Arc<dyn WorldProtocol>, id: u16) -> Vec<u8> {
     let d = match id {
         24 => p.host_attack_result(101, 7, 0, 0x10).data,
         26 => p.host_attacked(102, 1, 0x7f, 0, 0x1b).data,
-        32 => p.player_info_00(48, 3, 0, 153, 154, 83, 84, 0).data,
+        32 => p.player_info_00(48, 3, 0, false, 153, 154, 83, 84, 0).data,
         33 => p.npc_info_00(900_001, 29, 30, 0).data,
         36 => p.receive_exp(15, 36).data,
         48 => p.equip_item(7, 0, 1, 0).data,
@@ -230,6 +230,8 @@ fn own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante() {
         0, (10, 10, 10, 10), 100, 100, 99, (2, 2),
         (2.0, 4.9, 3.0, 5.0),
         (40, 5, 10, 22, 3.8),
+        (0, 0),
+        [0; 5],
         (2, 3)
     ).data;
 
@@ -237,6 +239,8 @@ fn own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante() {
         0, (10, 10, 10, 10), 100, 100, 99, (2, 2),
         (2.0, 4.9, 3.0, 5.0),
         (40, 5, 10, 22, 3.8),
+        (0, 0),
+        [0; 5],
         (2, 3)
     ).data;
 

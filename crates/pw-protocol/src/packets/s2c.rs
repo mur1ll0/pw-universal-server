@@ -664,6 +664,11 @@ impl S2CGamedataSend {
         regen: (i32, i32),
         velocidades: (f32, f32, f32, f32),
         ataque: (i32, i32, i32, i32, f32),
+        // `damage_magic_low/high` do `ROLEEXTPROP_ATK`: é o "Atq. Mágico" da ficha, e ia
+        // zero fixo até o B77 (`gs/player.cpp:4358` manda o `_cur_prop` inteiro).
+        magico: (i32, i32),
+        // `resistance[5]` do `ROLEEXTPROP_DEF`, na ordem metal/madeira/água/fogo/terra.
+        resistencias: [i32; 5],
         defesa: (i32, i32),
     ) -> Self {
         let (vitality, energy, strength, agility) = atributos;
@@ -713,12 +718,12 @@ impl S2CGamedataSend {
             s.write_i32_le(0);              // addon_damage[i].damage_low
             s.write_i32_le(0);              // addon_damage[i].damage_high
         }
-        s.write_i32_le(0);                  // damage_magic_low
-        s.write_i32_le(0);                  // damage_magic_high
+        s.write_i32_le(magico.0);           // damage_magic_low
+        s.write_i32_le(magico.1);           // damage_magic_high
 
         // ROLEEXTPROP_DEF
-        for _ in 0..5 {
-            s.write_i32_le(0);              // resistance[i]
+        for r in resistencias {
+            s.write_i32_le(r);          // resistance[i]
         }
         s.write_i32_le(defense);
         s.write_i32_le(armor);
@@ -1005,6 +1010,20 @@ impl S2CGamedataSend {
         stream.write_u32_le(count);
         stream.write_i32_le(tid);
         stream.write_u8(drop_type);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_MOUNTING` (227) — `{ int id; int mount_id; u16 mount_color }`, 10 bytes.
+    ///
+    /// `gplayer_imp::ActiveMountState` (`gs/player.cpp:14279-14299`) liga o
+    /// `STATE_MOUNT` e manda este comando; `DeactiveMountState` (`:14301-14319`) manda o
+    /// mesmo com **zero nos dois**, que é o desmontar.
+    pub fn player_mounting(player_id: i32, mount_id: i32, mount_color: u16) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(227);
+        stream.write_i32_le(player_id);
+        stream.write_i32_le(mount_id);
+        stream.write_u16_le(mount_color);
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -1489,6 +1508,12 @@ impl S2CGamedataSend {
         // `EC_Player.cpp:7434-7454`). Mandar zero num comando qualquer e o valor certo no
         // seguinte faz o cliente anunciar um avanço que não houve (B71).
         level2: u8,
+        // `State`: **1 em combate**, 0 fora. O cliente liga o modo de luta com ele —
+        // `if (pCmd->State && m_bFight == false) PlayEnterBattleGfx(); m_bFight = ...`
+        // (`EC_HostMsg.cpp:1334-1335`) —, e é o que troca a animação do personagem. O
+        // original manda `IsCombatState() ? 1 : 0` (`gs/player.cpp:3570`); ia zero fixo
+        // até o B77.
+        em_combate: bool,
         hp: i32,
         max_hp: i32,
         mp: i32,
@@ -1506,7 +1531,7 @@ impl S2CGamedataSend {
 
         // struct cmd_self_info_00 (36 bytes)
         stream.write_i16_le(level);    // short sLevel (2B)
-        stream.write_u8(0);            // unsigned char State (1B)
+        stream.write_u8(u8::from(em_combate)); // unsigned char State (1B)
         stream.write_u8(level2);       // unsigned char Level2 — o cultivo (1B)
         stream.write_i32_le(hp);       // int iHP (4B)
         stream.write_i32_le(max_hp);   // int iMaxHP (4B)
@@ -1668,6 +1693,9 @@ impl S2CGamedataSend {
         player_id: i32,
         level: i16,
         level2: u8,
+        // `State`: 1 em combate — é o que põe o outro jogador em postura de luta
+        // na tela (`IsCombatState() ? 1 : 0`, `gs/player.cpp:3554`).
+        em_combate: bool,
         hp: i32,
         max_hp: i32,
         mp: i32,
@@ -1678,7 +1706,7 @@ impl S2CGamedataSend {
         stream.write_u16_le(32);               // CMD_S2C_PLAYER_INFO_00 = 32
         stream.write_i32_le(player_id);        // idPlayer (4B)
         stream.write_i16_le(level);            // sLevel (2B)
-        stream.write_u8(0);                    // State (1B)
+        stream.write_u8(u8::from(em_combate)); // State (1B)
         stream.write_u8(level2);               // Level2 (1B)
         stream.write_i32_le(hp);               // iHP (4B)
         stream.write_i32_le(max_hp);           // iMaxHP (4B)

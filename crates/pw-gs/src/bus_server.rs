@@ -733,12 +733,12 @@ impl BusServer {
     /// intenção e errado no comando.
     async fn avisar_vida_propria(&self, roleid: i32) {
         let dados = self.world.read().await.dados_do_proprio(roleid);
-        let Some((nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados else {
+        let Some((nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados else {
             return;
         };
         self.enviar_ao_jogador(
             roleid,
-            S2CGamedataSend::self_info_00(nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
+            S2CGamedataSend::self_info_00(nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
         )
         .await;
     }
@@ -1067,6 +1067,8 @@ impl BusServer {
             ids::TASK_NOTIFY => self.notificar_tarefa(roleid, &cmd.payload, envio).await,
             ids::CHECK_SECURITY_PASSWD => self.conferir_senha(roleid, &cmd.payload, envio).await,
             ids::USE_ITEM => self.usar_item(roleid, &cmd.payload, envio).await,
+            ids::SUMMON_PET => self.invocar_mascote(roleid, &cmd.payload, envio).await,
+            ids::RECALL_PET => self.recolher_mascote(roleid, envio).await,
             ids::TEAM_INVITE => self.convidar(roleid, &cmd.payload).await,
             ids::TEAM_AGREE_INVITE => self.aceitar_grupo(roleid, &cmd.payload).await,
             ids::TEAM_REJECT_INVITE => self.recusar_grupo(roleid).await,
@@ -1272,9 +1274,9 @@ impl BusServer {
             .or_else(|| {
                 mundo
                     .dados_do_jogador(sel.id)
-                    .map(|(nivel, nivel2, hp, max_hp, mp, max_mp, alvo)| {
+                    .map(|(nivel, nivel2, lutando, hp, max_hp, mp, max_mp, alvo)| {
                         self.sub.player_info_00(
-                            sel.id, nivel, nivel2, hp, max_hp, mp, max_mp, alvo,
+                            sel.id, nivel, nivel2, lutando, hp, max_hp, mp, max_mp, alvo,
                         )
                         .data
                     })
@@ -1941,13 +1943,13 @@ impl BusServer {
             // `originalLevel2 < newLevel2`). Mandar zero aqui derrubava o cultivo para 0 e
             // o `SELF_INFO_00` seguinte, com o valor certo, virava um avanço — era a tela
             // de cultivo ao usar poção (B71).
-            let (nivel, cultivo, exp, sp, ap, max_ap) = {
+            let (nivel, cultivo, lutando, exp, sp, ap, max_ap) = {
                 let mundo = self.world.read().await;
                 mundo
                     .players
                     .get(&(roleid as i64))
-                    .map(|p| (p.level, p.cultivation.clamp(0, u8::MAX as i32) as u8, p.exp, p.sp, p.ap, p.max_ap))
-                    .unwrap_or((1, 0, 0, 0, 0, 0))
+                    .map(|p| (p.level, p.cultivation.clamp(0, u8::MAX as i32) as u8, p.combate_s > 0, p.exp, p.sp, p.ap, p.max_ap))
+                    .unwrap_or((1, 0, false, 0, 0, 0, 0))
             };
             info!("mundo: {roleid} usou o item {} e ficou com {hp}/{max_hp}", u.item_id);
             self.responder(
@@ -1955,6 +1957,7 @@ impl BusServer {
                 S2CGamedataSend::self_info_00(
                     nivel as i16,
                     cultivo,
+                    lutando,
                     hp,
                     max_hp,
                     mp,
@@ -2163,9 +2166,25 @@ impl BusServer {
     /// Interrompe uma conjuração aberta do jogador (player.cpp:4017-4028).
     /// Envia SELF_SKILL_INTERRUPTED (87) para o jogador (fecha a barra de cast)
     /// e SKILL_INTERRUPTED (86) para outros jogadores ao redor.
+    /// Corta a conjuração em andamento. `motivo` 2 é o movimento.
+    ///
+    /// **Habilidade de conjurar andando não é cortada pelo movimento**: o original a
+    /// despacha por `moving_skill` em vez de `session_skill` justamente para isso
+    /// (`gs/playercmd.cpp:2066-2088`), e só o `moving_skill_interrupt_filter` a encerra.
+    /// No 1.5.5 são cinco habilidades, todas da classe 11 — a do Tormentador (B78).
     async fn interromper_conjuracao(&self, roleid: i32, motivo: u8, envio: &EnvioAoCliente) -> bool {
+        const POR_MOVIMENTO: u8 = 2;
         let mut mundo = self.world.write().await;
+        let dados = Arc::clone(&mundo.data_manager);
         let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return false; };
+        if motivo == POR_MOVIMENTO
+            && p.conjuracao
+                .as_ref()
+                .and_then(|c| dados.habilidades.get(c.skill_id.max(0) as u32))
+                .is_some_and(|h| h.conjura_andando())
+        {
+            return false;
+        }
         if p.conjuracao.take().is_some() {
             drop(mundo);
             self.responder(roleid, self.sub.self_skill_interrupted(motivo).data, envio).await;
@@ -2383,10 +2402,10 @@ impl BusServer {
             // `SetRefreshState()` do `ModifyAP`: a barra nova vai ao cliente.
             let dados = mundo.dados_do_proprio(roleid);
             drop(mundo);
-            if let Some((nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados {
+            if let Some((nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados {
                 self.responder(
                     roleid,
-                    S2CGamedataSend::self_info_00(nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
+                    S2CGamedataSend::self_info_00(nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
                     envio,
                 )
                 .await;
@@ -2597,13 +2616,14 @@ impl BusServer {
                 vitima.max_mp,
                 vitima.level,
                 vitima.cultivation.clamp(0, u8::MAX as i32) as u8,
+                vitima.combate_s > 0,
                 vitima.exp,
                 vitima.sp,
                 vitima.ap,
                 vitima.max_ap,
             )
         };
-        let (hp, max_hp, mp, max_mp, nivel, cultivo, exp, sp, ap, max_ap) = estado;
+        let (hp, max_hp, mp, max_mp, nivel, cultivo, lutando, exp, sp, ap, max_ap) = estado;
 
         info!(
             "mundo: {roleid} conjurou {skill_id} em {alvo} — {} de {}, alvo com {hp}/{max_hp}",
@@ -2712,6 +2732,7 @@ impl BusServer {
         let vida = S2CGamedataSend::self_info_00(
             nivel as i16,
             cultivo,
+            lutando,
             hp,
             max_hp,
             mp,
@@ -3374,9 +3395,10 @@ impl BusServer {
                 };
                 p.hp = p.max_hp;
                 p.mp = p.max_mp;
-                let (nivel, cultivo, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap) = (
+                let (nivel, cultivo, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap) = (
                     p.level,
                     p.cultivation.clamp(0, u8::MAX as i32) as u8,
+                    p.combate_s > 0,
                     p.hp,
                     p.max_hp,
                     p.mp,
@@ -3393,6 +3415,7 @@ impl BusServer {
                     S2CGamedataSend::self_info_00(
                         nivel as i16,
                         cultivo,
+                        lutando,
                         hp,
                         max_hp,
                         mp,
@@ -3438,14 +3461,14 @@ impl BusServer {
             let mundo = self.world.read().await;
             (mundo.dados_do_proprio(roleid), mundo.dinheiro(roleid))
         };
-        let Some((nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados else {
+        let Some((nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados else {
             debug!("mundo: {roleid} pediu o próprio estado sem estar neste mundo");
             return;
         };
 
         self.responder(
             roleid,
-            S2CGamedataSend::self_info_00(nivel, nivel2, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
+            S2CGamedataSend::self_info_00(nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
             envio,
         )
         .await;
@@ -3497,10 +3520,10 @@ impl BusServer {
                 .collect()
         };
 
-        for (id, (nivel, nivel2, hp, max_hp, mp, max_mp, alvo)) in respostas {
+        for (id, (nivel, nivel2, lutando, hp, max_hp, mp, max_mp, alvo)) in respostas {
             self.responder(
                 roleid,
-                self.sub.player_info_00(id, nivel, nivel2, hp, max_hp, mp, max_mp, alvo)
+                self.sub.player_info_00(id, nivel, nivel2, lutando, hp, max_hp, mp, max_mp, alvo)
                     .data,
                 envio,
             )

@@ -121,6 +121,7 @@ impl WorldProtocol for V126Protocol {
         player_id: i32,
         level: i16,
         level2: u8,
+        em_combate: bool,
         hp: i32,
         max_hp: i32,
         mp: i32,
@@ -132,7 +133,7 @@ impl WorldProtocol for V126Protocol {
         s.write_u16_le(32);
         s.write_i32_le(player_id);
         s.write_i16_le(level);
-        s.write_u8(0);
+        s.write_u8(u8::from(em_combate)); // State — mesma posição do 1.5.5
         s.write_u8(level2);
         s.write_i32_le(hp);
         s.write_i32_le(max_hp);
@@ -171,6 +172,11 @@ impl WorldProtocol for V126Protocol {
         regen: (i32, i32),
         velocidades: (f32, f32, f32, f32),
         ataque: (i32, i32, i32, i32, f32),
+        // `damage_magic_low/high` do `ROLEEXTPROP_ATK`: é o "Atq. Mágico" da ficha, e ia
+        // zero fixo até o B77 (`gs/player.cpp:4358` manda o `_cur_prop` inteiro).
+        magico: (i32, i32),
+        // `resistance[5]` do `ROLEEXTPROP_DEF`, na ordem metal/madeira/água/fogo/terra.
+        resistencias: [i32; 5],
         defesa: (i32, i32),
     ) -> S2CGamedataSend {
         let (vitality, energy, strength, agility) = atributos;
@@ -206,15 +212,15 @@ impl WorldProtocol for V126Protocol {
         s.write_i32_le(attack_speed);
         s.write_f32_le(attack_range);
         for _ in 0..5 {
-            s.write_i32_le(0);
-            s.write_i32_le(0);
+            s.write_i32_le(0); // addon_damage[i].low
+            s.write_i32_le(0); // addon_damage[i].high
         }
-        s.write_i32_le(0);
-        s.write_i32_le(0);
+        s.write_i32_le(magico.0); // damage_magic_low
+        s.write_i32_le(magico.1); // damage_magic_high
 
         // ROLEEXTPROP_DEF (28B)
-        for _ in 0..5 {
-            s.write_i32_le(0);
+        for r in resistencias {
+            s.write_i32_le(r);
         }
         s.write_i32_le(defense);
         s.write_i32_le(armor);

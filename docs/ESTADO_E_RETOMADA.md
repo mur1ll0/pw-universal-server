@@ -5,8 +5,8 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-21**, B76 (a matéria que acorda monstro, o monstro agressivo
-> e a aritmética da experiência do Daimon).
+> **Última atualização: 2026-09-22**, B78 (conjurar andando, montaria, e a transformação
+> diagnosticada). Suíte com o banco: **618 testes, 0 falhas**.
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -81,6 +81,32 @@ dá 15 por segundo. O valor corrente e o teto vão no `SELF_INFO_00`; o mesmo te
 ir no último campo do `OWN_EXT_PROP`. Ele ia zero, e o cliente recebia 0→99 em cada atualização,
 mostrando repetidamente o aviso de aumento. A **Flecha Fulgurante não gera chi** no original:
 ela consome mana e aplica `Firearrow`. **Não há ganho ao apanhar** no 1.5.5.
+
+**Montaria (B78):** `SUMMON_PET` (C2S 100) com uma montaria monta nela — velocidade do
+`PET_ESSENCE` sobrepondo a de corrida, `PLAYER_MOUNTING` (227) ao cliente e aos outros, e
+`RECALL_PET` (101) desmonta. `falta`: mascote de combate, trava de ataque montado, água e
+invisibilidade.
+
+**Conjurar andando (B78):** é propriedade da habilidade (`is_movingcast`), não da classe — as
+cinco que existem são todas da classe 11. O movimento não as interrompe mais.
+
+**Transformação (B78, diagnosticada):** a habilidade 2570 do Tormentador põe o
+`filter_Fairyform`, que muda `shape_form` e liga o `STATE_SHAPE` do `object_state`. **Não
+mandamos estado estendido de jogador**, então nada apareceria mesmo com o filtro portado: o
+alicerce vem primeiro.
+
+**Modo de combate (B77):** o `State` do `SELF_INFO_00` e do `PLAYER_INFO_00` ia zero fixo — o
+cliente nunca entrava em postura de luta. Agora leva o `combate_s` do jogador.
+
+**Atq. Mágico na ficha (B77):** `damage_magic_low/high` e as cinco resistências do
+`OWN_EXT_PROP` iam zero. Os números já existiam no jogador; faltava enviá-los.
+
+**Monstro invocado (B77):** não renasce mais (era um `.max(1)` no `respawn_delay_ms` zero),
+nasce odiando quem o chamou e some quando o `remain_time` da missão acaba.
+
+**Montaria — `falta`, na fila (B77):** incubar funciona, invocar não existe. Caminho medido:
+`SUMMON_PET` (C2S 100, `{ size_t pet_index }`) → S2C 233 (`slot_index`, `pet_tid`, `pet_pid`,
+`life_time`), com `RECALL_PET` (101/234), `BANISH_PET` (102) e `PET_CTRL` (103).
 
 **Coleta que acorda monstro (B76):** a Flor de Safira não produz item — ela solta o Guardião
 de Almas, e é dele que cai o Estame da missão. Os `npcgen_1..4` do `MINE_ESSENCE` passaram a
@@ -388,7 +414,17 @@ Depois de publicar o **B71** (falta pedido do Murillo), entram no roteiro:
     matando-o, o Estame cai (80 %) e a missão anda.
 13. **Monstro agressivo (B76)**: chegar a menos de 15 m de um monstro agressivo (a maioria
     deles) tem de fazer ele vir para cima sem você bater primeiro.
-14. **Hierograma (B73/B74)**: deixar a mana cair abaixo de 75 % — ele deve repor sozinho, uma
+14. **Combate (B77)**: ao atacar, o personagem tem de mudar para a **postura de luta** e
+    voltar ao normal depois de uns segundos parado.
+15. **Ficha (B77)**: a tela de status de um personagem mágico tem de mostrar o **Atq.
+    Mágico** (e as resistências) da arma.
+16. **Sombra do Olho do Deus (B77)**: matar as três da missão "Surgem as Sombras" — elas
+    **não podem renascer**, e devem vir para cima de você assim que nascem.
+17. **Montaria (B78)**: invocar a montaria da sala de mascotes deve **montar** — a
+    velocidade sobe e o modelo aparece; `RECALL_PET` desmonta.
+18. **Conjurar andando (B78)**: com o Tormentador, usar uma das cinco habilidades da classe
+    11 e **andar durante a conjuração** — ela não pode ser cancelada.
+19. **Hierograma (B73/B74)**: deixar a mana cair abaixo de 75 % — ele deve repor sozinho, uma
     vez a cada 10 s, e o número no item deve diminuir. O ícone tem de **escurecer pela
     recarga** a cada disparo (B74). O amuleto de vida faz o mesmo a 50 %.
 
@@ -442,7 +478,10 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 8. **Sem trava de PvP:** qualquer jogador machuca qualquer outro, em qualquer lugar
     (`bus_server.rs`, comentário em `pvp`). O original exige duelo, guerra ou mapa de PK
     (B35d).
-9. **Daimon (B75/B76, parcial):** tem ficha e ganha experiência, e só. Faltam o equipamento e
+9. **Mascote de combate e estado estendido do jogador:** a montaria já monta (B78); falta
+    invocar a criatura de combate, e falta o `object_state` estendido — sem ele não há
+    transformação nem forma visível.
+10. **Daimon (B75/B76, parcial):** tem ficha e ganha experiência, e só. Faltam o equipamento e
     as habilidades dele, o vigor, as pílulas de experiência, a decomposição, o refino,
     distribuir pontos de atributo e de gênio, e o bônus sorteado de 10 em 10 níveis. **O ganho
     truncar para zero com o Daimon muito abaixo do dono é do original** (B76), não é defeito.
@@ -630,3 +669,5 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 74 | 09-21 | `SET_COOLDOWN` (198) do amuleto ao cliente; provado que a bolsa do item de missão vem do `m_bDropCmnItem` e está certa |
 | 75 | 09-21 | o Daimon passa a existir: bloco de dados do item (o estado dele) e um décimo da experiência do jogador, com subida de nível |
 | 76 | 09-21 | a mina acorda monstro (`npcgen` do `MINE_ESSENCE`) — é a missão da Flor de Safira; monstro agressivo (`aggressive_mode`) ataca quem chega a 15 m; o ganho de chi do Daimon trunca para zero como no original |
+| 77 | 09-22 | `State` (modo de combate) no `SELF_INFO_00`/`PLAYER_INFO_00`; Atq. Mágico e resistências no `OWN_EXT_PROP`; invocado não renasce, odeia quem o chamou e expira; montaria levantada e na fila |
+| 78 | 09-22 | conjurar andando (`is_movingcast`, 5 habilidades da classe 11); montaria com `SUMMON_PET`/`RECALL_PET` e `PLAYER_MOUNTING`; transformação diagnosticada (falta o estado estendido) |

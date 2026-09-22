@@ -93,6 +93,11 @@ pub struct PlayerEntity {
     /// Não há coluna no banco para isso, e nem deveria: quem relogar entra no chão, que é
     /// o que o cliente também assume.
     pub voando: bool,
+    /// A montaria em uso: `(pet_tid, cor, velocidade que ela impõe)`. O original é o
+    /// `mount_filter` (`gs/mount_filter.cpp:24-45`), que liga o `STATE_MOUNT`, manda
+    /// `PLAYER_MOUNTING` e **sobrepõe** a velocidade de corrida
+    /// (`EnhanceOverrideSpeed`, `gs/player.cpp:14279-14299`).
+    pub montaria: Option<(u32, u16, f32)>,
     /// O jogador está mostrando a roupa (moda) no lugar da armadura.
     ///
     /// É estado de aparência, e o cliente alterna com o `SWITCH_FASHION_MODE` (C2S 85).
@@ -737,6 +742,10 @@ pub struct MonsterEntity {
     pub is_dead: bool,
     pub respawn_timer_ms: u32,
     pub respawn_delay_ms: u32,
+    /// `prop.remain_time` do `SummonMonster` (`gs/player.cpp:13079`), em milissegundos: o
+    /// invocado vive esse tanto e some sozinho. **Zero é para sempre**, que é o caso de todo
+    /// monstro de gerador.
+    pub vida_restante_ms: u32,
     
     pub target_id: Option<i64>,
     /// Os filtros vivos (efeitos de habilidade) — ver [`crate::efeitos`].
@@ -950,6 +959,7 @@ impl PlayerEntity {
             visiveis: std::collections::HashSet::new(),
             centro_do_stream: p.position,
             voando: false,
+            montaria: None,
             // Todo mundo entra mostrando a armadura; o banco não guarda esta escolha.
             modo_roupa: false,
             // Quem preenche é `BusServer::colocar_no_mundo`, que tem o repositório à mão;
@@ -1095,6 +1105,7 @@ impl MonsterEntity {
             is_dead: false,
             respawn_timer_ms: 0,
             respawn_delay_ms,
+            vida_restante_ms: 0,
             target_id: None,
             efeitos: Default::default(),
             danos: Vec::new(),
@@ -1154,6 +1165,7 @@ impl MonsterEntity {
             is_dead: false,
             respawn_timer_ms: 0,
             respawn_delay_ms,
+            vida_restante_ms: 0,
             target_id: None,
             efeitos: Default::default(),
             danos: Vec::new(),

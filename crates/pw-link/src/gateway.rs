@@ -826,6 +826,8 @@ impl LinkGateway {
                     tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::self_info_00(
                         details.level as i16,
                         details.cultivation.clamp(0, 255) as u8,
+                        // Quem acabou de entrar no mundo não está em combate.
+                        false,
                         details.hp,
                         details.hp,
                         details.mp,

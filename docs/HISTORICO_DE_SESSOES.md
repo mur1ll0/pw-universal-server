@@ -8277,3 +8277,98 @@ comparação lado a lado.
     `o_monstro_agressivo_ataca_quem_chega_perto` (passivo não odeia sozinho; agressivo pega a
     5 m, não pega a 20 m, e morto não pega nada) e
     `o_ganho_trunca_para_zero_com_pouca_experiencia`.
+
+77. **Sessão 2026-09-22: o modo de combate, o Atq. Mágico da ficha e o monstro de missão que
+    voltava.**
+
+    Cinco relatos do teste com o Tormentador "RT". Três tinham correção, um é resposta e um
+    é sistema inteiro a fazer.
+
+    **O personagem nunca entrava em modo de combate.** O `State` do `SELF_INFO_00` (38) é o
+    modo de luta: o cliente faz `if (pCmd->State && m_bFight == false) PlayEnterBattleGfx();
+    m_bFight = pCmd->State ? true : false` (`EC_HostMsg.cpp:1334-1335`), e é ele que troca a
+    animação. Nós mandávamos **zero fixo**. O original manda `IsCombatState() ? 1 : 0`
+    (`gs/player.cpp:3570`), e o mesmo vale para o `PLAYER_INFO_00` (32), que é como os outros
+    jogadores veem a postura (`:3554`). Agora os dois levam `combate_s > 0`, o contador que já
+    existia (15 s ao atacar, 5 s ao apanhar).
+
+    **A ficha não mostrava Atq. Mágico.** No `OWN_EXT_PROP` (50), `damage_magic_low/high`
+    fecham o `ROLEEXTPROP_ATK` e as cinco `resistance[]` abrem o `ROLEEXTPROP_DEF` — os sete
+    campos iam zero fixo. O jogador já tinha os números calculados
+    (`UpdateMagic`, `entity.rs:575-580`), só não eram enviados. Um Tormentador com arma mágica
+    via o campo vazio.
+
+    **Monstro de missão renascia.** `matar_monstro` fazia
+    `respawn_timer_ms = respawn_delay_ms.max(1)`, e o invocado — que tem `respawn_delay_ms`
+    zero justamente por **não ter gerador** — voltava 1 ms depois de o corpo sumir. Era a
+    Sombra do Olho do Deus (44595) da missão 31728 "Surgem as Sombras". Zero agora quer dizer
+    nunca. Junto vieram duas coisas do mesmo trecho do original
+    (`gplayer_imp::SummonMonster`, `gs/player.cpp:13072-13110`): o invocado nasce **odiando
+    quem o chamou** (`GM_MSG_GEN_AGGRO` com 10000) e **some quando o `remain_time` acaba** —
+    a missão pede 60 s.
+
+    **Marcar sozinho quem me ataca: não é do original.** Procurei no cliente. `OnMsgHstAttacked`
+    (`EC_HostMsg.cpp:968-1008`) toca o efeito, vira o atacante de frente e avisa a
+    `CECAutoPolicy`; `SendEvent_BeHurt` (`EC_AutoPolicy.cpp:261-270`) chama o script Lua do
+    assistente e, só ali, `OnMonsterAttackMe` (`EC_PlayerWrapper.cpp:1237-1247`) **anota** o
+    monstro numa lista para o modo automático usar. Nada seleciona o alvo. Se quisermos esse
+    conforto, é decisão nossa, fora do original.
+
+    **Montaria: `falta` inteiro.** Incubar funciona (B67), invocar não existe. O caminho é
+    `SUMMON_PET` (C2S 100, `{ size_t pet_index }`) → `SUMMON_PET` (S2C 233,
+    `{ int slot_index; int pet_tid; int pet_pid; int life_time }`), mais `RECALL_PET`
+    (101/234), `BANISH_PET` (102) e `PET_CTRL` (103). Anotado na fila.
+
+    ### Provas
+
+    Suíte com o banco: **616 testes, 0 falhas**. Novos:
+    `o_monstro_invocado_nao_renasce_e_expira` (o invocado morto não volta e o de gerador
+    volta) e, nos testes de protocolo, o `State` em 1 e 0 e os sete campos do Atq.
+    Mágico/resistências no `OWN_EXT_PROP`.
+
+78. **Sessão 2026-09-22 (parte 2): conjurar andando, a transformação que falta e a montaria.**
+
+    **Conjurar andando é da habilidade, não da classe.** O stub tem `is_movingcast`
+    (`cskill/skill/skill.h:382`); com ele, `playercmd.cpp:2066-2088` despacha a conjuração
+    por `moving_skill` em vez de `session_skill`, e o movimento **não** a interrompe — só o
+    `moving_skill_interrupt_filter` a encerra. No 1.5.5 são **cinco** habilidades: 2909,
+    2910, 2913, 2914 e 2917, **todas da classe 11** (a do Tormentador do Murillo; o RT é
+    `cls = 11` no banco). Nenhuma classe antiga tem nenhuma. O campo passou a ser extraído
+    para o `habilidades.json` e o nosso `PLAYER_MOVE` deixou de cortar a conjuração quando a
+    habilidade é dessas.
+
+    **A transformação: diagnosticada, não corrigida.** A habilidade **2570** (胧) da classe 11
+    chama `SetFairyform(1)`, e o `filter_Fairyform` (`cskill/skill/skillfilter.h:16819-16880`)
+    faz `ChangeShape(1|(FORM_CLASS<<6))`, acende `HSTATE_FAIRYFORM` e aumenta a velocidade.
+    O `ChangeShape` (`gs/actobject.h:1047-1058`) grava `shape_form` e liga o bit
+    `STATE_SHAPE` do `object_state` — e é esse bloco condicional do estado estendido
+    (`common/protocol_imp.h:62-80`) que leva a forma ao cliente. **Não mandamos `object_state`
+    estendido de jogador nenhum**, então a transformação não teria como aparecer mesmo com o
+    filtro portado. Fica anotado junto: primeiro o estado estendido, depois o filtro.
+
+    **Montaria.** Invocar um mascote de montaria é montar nela:
+    `PlayerSummonPet` → `pet_man::ActivePet` (`gs/player.cpp:14474-14491`,
+    `gs/petman.cpp:319-392`) confere o estado, calcula
+    `speed_a + speed_b × (nível − 1)` do `PET_ESSENCE` (`petdataman.h:186-194`) e põe o
+    `mount_filter`, que liga o `STATE_MOUNT`, manda `PLAYER_MOUNTING` (227) e **sobrepõe** a
+    velocidade de corrida (`mount_filter.cpp:24-45`, `player.cpp:14279-14319`). Desmontar
+    (`RECALL_PET`, C2S 101) manda o mesmo comando com zero nos dois campos. Implementei os
+    dois comandos, a leitura do bloco do mascote (o inverso do que o incubar grava), a
+    velocidade pelo `PET_ESSENCE` e a ficha nova ao cliente.
+
+    ### Provas
+
+    Suíte com o banco: **618 testes, 0 falhas** — medida depois que o Murillo subiu o Docker
+    de volta (ele caiu no meio do trabalho e por um tempo todos os alvos com banco morriam em
+    `PoolTimedOut`). Novos:
+    `so_cinco_habilidades_conjuram_andando_e_sao_da_classe_11` e
+    `montar_muda_a_velocidade_e_avisa_o_cliente` (monta, confere o `PLAYER_MOUNTING` com id,
+    montaria e cor, a velocidade nova no mundo, e desmonta com zero). O `player_mounting`
+    passou pela guarda dos codificadores contra o IR.
+
+    ### Falta
+
+    Mascote de **combate** (invocar a criatura no mundo, que é outro caminho do mesmo
+    comando), a trava de ataque enquanto montado, água/invisibilidade/transformação como
+    recusa, a queda da montaria por lealdade — e o estado estendido do jogador, que é o que
+    falta para a transformação aparecer.

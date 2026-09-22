@@ -167,6 +167,9 @@ pub struct GameDataManager {
     /// arma, armadura, remédio, material e mais uma dúzia de famílias têm os mesmos dois
     /// campos, e a loja precisa do preço de qualquer uma delas. Vazio no 1.2.6/v7.
     pub precos: HashMap<u32, (i32, i32)>,
+    /// `(speed_a, speed_b)` por montaria, quando não vêm do `elements.data` — é assim que o
+    /// mundo de teste, que não carrega o arquivo, tem uma montaria com velocidade.
+    pub velocidades_de_montaria: HashMap<u32, (f32, f32)>,
     /// Os atributos **base** por classe, do `ptemplate.conf` — ver [`crate::ptemplate`].
     /// Fonte diferente da de [`Self::classes`]: aquela traz o que escala por nível e por
     /// ponto de atributo, esta traz o ponto de partida do nível 1. Vazia quando o pacote
@@ -628,6 +631,26 @@ impl GameDataManager {
             .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?
             .get("id_major_type")
             .and_then(|v| v.as_i32())
+    }
+
+    /// A velocidade de uma montaria: `speed_a + speed_b × (nível − 1)`
+    /// (`pet_dataman::CalcMountParam`, `gs/petdataman.h:186-194`), com os dois campos do
+    /// `PET_ESSENCE`. `None` quando o pet não está no arquivo.
+    pub fn velocidade_da_montaria(&self, pet_tid: u32, nivel: i32) -> Option<f32> {
+        if let Some((a, b)) = self.velocidades_de_montaria.get(&pet_tid) {
+            return Some(a + b * (nivel.max(1) - 1) as f32);
+        }
+        let g = self.elements_generic.as_ref()?;
+        let r = g
+            .get("PET_ESSENCE")
+            .iter()
+            .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(pet_tid as i32))?;
+        let f = |campo: &str| match r.get(campo) {
+            Some(crate::generic_elements::FieldValue::Float(v)) => *v,
+            Some(crate::generic_elements::FieldValue::Int(v)) => *v as f32,
+            _ => 0.0,
+        };
+        Some(f("speed_a") + f("speed_b") * (nivel.max(1) - 1) as f32)
     }
 
     /// O `exp_factor` e as habilidades iniciais de um Daimon (`GOBLIN_ESSENCE`).

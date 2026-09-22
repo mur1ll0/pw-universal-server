@@ -320,6 +320,10 @@ def extrair(caminho):
         "apcost": escalar(texto, "apcost"),
         "apgain": escalar(texto, "apgain"),
         "arrowcost": escalar(texto, "arrowcost"),
+        # `is_movingcast` (`cskill/skill/skill.h:382`): a habilidade pode ser conjurada
+        # andando — `playercmd.cpp:2066-2088` a manda por `moving_skill` em vez de
+        # `session_skill`, e o movimento não a cancela.
+        "is_movingcast": escalar(texto, "is_movingcast"),
         "commoncooldown": escalar(texto, "commoncooldown"),
         "commoncooldowntime": escalar(texto, "commoncooldowntime"),
         "pre_skills": [

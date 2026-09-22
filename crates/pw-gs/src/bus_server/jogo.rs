@@ -39,6 +39,12 @@ mod erro_s2c {
     pub const OPERACAO_EM_COMBATE: i32 = 66;
     pub const FORA_DE_ALCANCE: i32 = 2;
     pub const PET_NAO_PODE_CHOCAR: i32 = 76;
+    /// `ERR_PET_IS_ALEARY_ACTIVE` 71, `ERR_PET_IS_NOT_EXIST` 72, `ERR_PET_IS_NOT_ACTIVE` 73
+    /// e `ERR_PET_CAN_NOT_MOUNT` 81 (`common/protocol.h:748-761`).
+    pub const PET_JA_ATIVO: i32 = 71;
+    pub const PET_NAO_EXISTE: i32 = 72;
+    pub const PET_NAO_ATIVO: i32 = 73;
+    pub const PET_NAO_MONTA: i32 = 81;
     pub const CLASSE_INVALIDA: i32 = 90;
 }
 /// `TASK_CLT_NOTIFY_*` (`task/TaskTempl.h:103-108`).
@@ -385,7 +391,7 @@ impl BusServer {
 
             for (monstro_tid, quantidade, raio, periodo_s, some_ao_morrer) in monstros_a_invocar {
                 for _ in 0..quantidade {
-                    mundo.invocar_monstro(monstro_tid, p_pos, raio, periodo_s, some_ao_morrer);
+                    mundo.invocar_monstro(monstro_tid, p_pos, raio, periodo_s, some_ao_morrer, Some(roleid as i64));
                 }
             }
 
@@ -461,6 +467,7 @@ impl BusServer {
         S2CGamedataSend::self_info_00(
             p.level as i16,
             p.cultivation.clamp(0, 255) as u8,
+            p.combate_s > 0,
             p.hp,
             p.max_hp,
             p.mp,
@@ -484,6 +491,10 @@ impl BusServer {
             (p.hp_gen, p.mp_gen),
             (p.walk_speed, p.move_speed, p.swim_speed, p.fly_speed),
             (p.attack_rate, p.attack_min, p.attack_max, (p.attack_speed * 20.0).round() as i32, p.attack_range),
+            // Atq. Mágico da ficha: sem isto, um personagem mágico via o campo vazio mesmo
+            // com arma mágica na mão (B77).
+            (p.magic_attack_min, p.magic_attack_max),
+            p.equipamento.resistencias,
             (p.def_phys, p.armor),
         )
         .data
@@ -689,7 +700,7 @@ impl BusServer {
             let mut mundo = self.world.write().await;
             for (tid, quantos, raio, vida_s) in mina.monstros_ao_colher.clone() {
                 for _ in 0..quantos {
-                    mundo.invocar_monstro(tid, pos, raio.max(0.0) as u32, vida_s, false);
+                    mundo.invocar_monstro(tid, pos, raio.max(0.0) as u32, vida_s, false, Some(roleid as i64));
                 }
                 info!("mundo: a mina {mid} acordou {quantos}× o monstro {tid} para {roleid}");
             }
@@ -699,6 +710,104 @@ impl BusServer {
             let d = self.world.write().await.criar_drop(material.item, n, pos, Some(roleid));
             self.mostrar_drop(&d).await;
         }
+    }
+
+    // ------------------------------------------------------------------ montaria
+
+    /// `SUMMON_PET` (C2S 100) — invocar o mascote do índice. **Montaria é montar**
+    /// (`gplayer_imp::PlayerSummonPet` → `pet_man::ActivePet`, `gs/player.cpp:14474-14491`,
+    /// `gs/petman.cpp:319-392`).
+    ///
+    /// O original recusa fora do chão, voando, na água, transformado ou invisível, e então
+    /// põe o `mount_filter`: `STATE_MOUNT`, `PLAYER_MOUNTING` (227) e a velocidade da
+    /// montaria sobrepondo a de corrida (`mount_filter.cpp:24-33`). A velocidade é
+    /// `speed_a + speed_b × (nível − 1)` do `PET_ESSENCE`
+    /// (`pet_dataman::CalcMountParam`, `gs/petdataman.h:186-194`).
+    ///
+    /// `falta`: mascote de combate (só montaria por enquanto), água, invisibilidade e a
+    /// queda da montaria por lealdade.
+    pub(super) async fn invocar_mascote(&self, roleid: i32, payload: &[u8], envio: &crate::bus_server::EnvioAoCliente) {
+        if payload.len() < 4 {
+            debug!("mundo: SUMMON_PET de {roleid} com {} bytes", payload.len());
+            return;
+        }
+        let indice = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+        let Ok(Some(item)) = self
+            .itens()
+            .await
+            .get_item_by_slot(roleid, ContainerType::PetCorral, indice.min(u16::MAX as u32) as u16)
+            .await
+        else {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_EXISTE).data).await;
+            return;
+        };
+        let info = pw_core::InfoPet::do_bloco(&item.octets).unwrap_or_else(|| {
+            let mut i = pw_core::InfoPet::default();
+            i.pet_tid = item.item_id as i32;
+            i
+        });
+        let tid = if info.pet_vis_tid > 0 { info.pet_vis_tid } else { info.pet_tid } as u32;
+
+        let (pode, velocidade) = {
+            let mundo = self.world.read().await;
+            let velocidade = mundo.data_manager.velocidade_da_montaria(tid, info.level as i32);
+            let pode = mundo.players.get(&(roleid as i64)).map(|p| (p.montaria.is_none(), !p.voando));
+            (pode, velocidade)
+        };
+        let Some((livre, no_chao)) = pode else { return };
+        if !livre {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_JA_ATIVO).data).await;
+            return;
+        }
+        let Some(velocidade) = velocidade.filter(|v| *v > 0.0) else {
+            // Sem `speed_a`/`speed_b` não é montaria — mascote de combate ainda não tem porte.
+            debug!("mundo: o pet {tid} de {roleid} não é montaria (ou não está no elements)");
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_MONTA).data).await;
+            return;
+        };
+        if !no_chao {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_MONTA).data).await;
+            return;
+        }
+
+        let cor = info.color;
+        if let Some(p) = self.world.write().await.players.get_mut(&(roleid as i64)) {
+            p.montaria = Some((tid, cor, velocidade));
+            p.move_speed = velocidade;
+        }
+        info!("mundo: {roleid} montou o pet {tid} (nível {}) a {velocidade:.2} m/s", info.level);
+        let pacote = S2CGamedataSend::player_mounting(roleid, tid as i32, cor).data;
+        self.responder(roleid, pacote.clone(), envio).await;
+        self.transmitir_a_outros(roleid, pacote).await;
+        // `SendClientCurSpeed` do original; aqui a ficha inteira, que leva as quatro
+        // velocidades (`OWN_EXT_PROP`).
+        let ficha = {
+            let mundo = self.world.read().await;
+            mundo.players.get(&(roleid as i64)).map(|p| self.ficha_propria(p))
+        };
+        if let Some(f) = ficha {
+            self.responder(roleid, f, envio).await;
+        }
+    }
+
+    /// `RECALL_PET` (C2S 101) — desmontar. O original tira o `mount_filter`, devolve a
+    /// velocidade e manda `player_mounting(0, 0)` (`gs/player.cpp:14301-14319`).
+    pub(super) async fn recolher_mascote(&self, roleid: i32, envio: &crate::bus_server::EnvioAoCliente) {
+        let tinha = {
+            let mut mundo = self.world.write().await;
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            p.montaria.take().is_some()
+        };
+        if !tinha {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_ATIVO).data).await;
+            return;
+        }
+        // A velocidade volta ao que o equipamento e a classe dizem, e a ficha nova vai junto.
+        self.recalcular_equipamento(roleid, true).await;
+        info!("mundo: {roleid} desmontou");
+        let pacote = S2CGamedataSend::player_mounting(roleid, 0, 0).data;
+        self.responder(roleid, pacote.clone(), envio).await;
+        self.transmitir_a_outros(roleid, pacote).await;
     }
 
     // ------------------------------------------------------------------ equipamento
