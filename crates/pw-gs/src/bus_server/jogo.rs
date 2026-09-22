@@ -51,11 +51,13 @@ mod aviso_do_cliente {
     pub const SAIU_DO_LUGAR: u8 = 10;
 }
 
-/// `EQUIP_INDEX_WEAPON` e `EQUIP_INDEX_PROJECTILE` (`EC_IvtrTypes.h:56-67`).
+/// `EQUIP_INDEX_WEAPON` (`EC_IvtrTypes.h:56-67`).
 const SLOT_DA_ARMA: u16 = 0;
-const SLOT_DA_MUNICAO: u16 = 11;
-/// `WEAPONTYPE_RANGE` (`EC_IvtrTypes.h:166-167`).
-const ARMA_DE_LONGE: i16 = 1;
+/// `EQUIP_INDEX_ELF` (`gs/item.h:219`): onde o Daimon é vestido.
+pub(super) const SLOT_DO_DAIMON: u16 = 23;
+/// `EQUIP_INDEX_HP_ADDON` (20) e `EQUIP_INDEX_MP_ADDON` (21) (`gs/item.h:216-217`).
+pub(super) const SLOT_DO_AMULETO_DE_VIDA: u16 = 20;
+pub(super) const SLOT_DO_AMULETO_DE_MANA: u16 = 21;
 /// `EQUIP_ARMOR_START` (= `EQUIP_INDEX_HEAD`) e `EQUIP_ARMOR_END` (= `EQUIP_INDEX_PROJECTILE`)
 /// do `gs/item.h:194-241`: os slots que `SelectRandomArmor` sorteia são de 1 a 10.
 const PRIMEIRA_PECA: u16 = 1;
@@ -110,6 +112,7 @@ impl Contexto<'_> {
     pub fn ganhar_exp(&mut self, exp: i64, sp: i64) {
         let niveis = progressao::receber_exp(self.p, exp, sp, self.dados);
         self.mudou = true;
+        self.daimon_recebe(exp);
         if niveis > 0 {
             self.subiu_de_nivel = true;
             // `gplayer_dispatcher::level_up` difunde a quem vê o jogador, e o próprio recebe.
@@ -117,6 +120,46 @@ impl Contexto<'_> {
             self.para_mim.push(pacote.clone());
             self.para_todos.push(pacote);
             info!("mundo: {} subiu para o nível {}", self.p.role_id, self.p.level);
+        }
+    }
+
+    /// `ElfReceiveExp(exp / 10)` — o Daimon fica com **um décimo** da experiência do
+    /// jogador, toda vez que ele ganha (`gs/player.cpp:2921-2928`, `player_imp.h:2471`).
+    /// Subindo de nível, o cliente recebe a ficha nova do item; senão, só a barra
+    /// (`ELF_EXP` 283, `item_elf.cpp:740-748`).
+    fn daimon_recebe(&mut self, exp: i64) {
+        let parte = (exp.max(0) / 10).clamp(0, u32::MAX as i64) as u32;
+        if parte == 0 {
+            return;
+        }
+        let nivel = self.p.level.clamp(0, i16::MAX as i32) as i16;
+        let tabela = &self.dados.progressao;
+        let Some(d) = self.p.daimon.as_mut() else { return };
+        let (ganhou, subiu) = d.receber_exp(parte, nivel, nivel, |n| {
+            tabela.exp_para_subir(n as i32).clamp(0, u32::MAX as i64) as u32
+        });
+        if !ganhou {
+            return;
+        }
+        let (slot, item_id, bloco, exp_do_daimon) =
+            (d.slot, d.item_id, d.estado.bloco(), d.estado.exp.min(i32::MAX as u32) as i32);
+        if subiu {
+            info!("mundo: o Daimon de {} subiu para o nível {}", self.p.role_id, d.estado.nivel);
+            self.para_mim.push(
+                S2CGamedataSend::item_info(
+                    ContainerType::Equipment.pacote_do_cliente().unwrap_or(1),
+                    slot as u8,
+                    item_id as i32,
+                    0,
+                    0,
+                    1,
+                    &bloco,
+                    None,
+                )
+                .data,
+            );
+        } else {
+            self.para_mim.push(S2CGamedataSend::elf_exp(exp_do_daimon).data);
         }
     }
 
@@ -277,7 +320,7 @@ impl BusServer {
         let bolsa = itens_repo.list_by_container(roleid, ContainerType::Inventory).await.unwrap_or_default();
         let bolsa_de_missao = itens_repo.list_by_container(roleid, ContainerType::TaskInventory).await.unwrap_or_default();
 
-        let (r, para_mim, para_todos, subiu, mut bolsas, gravacao, ficha, teleporte) = {
+        let (r, para_mim, para_todos, subiu, mut bolsas, gravacao, ficha, teleporte, daimon) = {
             let mut guarda = self.world.write().await;
             let mundo = &mut *guarda;
             let dados = Arc::clone(&mundo.data_manager);
@@ -336,6 +379,11 @@ impl BusServer {
                 listas: p.missoes.blocos(),
             };
             let ficha = (mudou || subiu_de_nivel).then(|| (self.ficha_propria(p), Self::estado_proprio_de(p)));
+            // O bloco do Daimon é o estado dele: se mudou, vai ao banco junto do resto.
+            let daimon = p.daimon.as_mut().filter(|d| d.sujo).map(|d| {
+                d.sujo = false;
+                (d.slot, d.estado.bloco())
+            });
 
             for (monstro_tid, quantidade, raio, periodo_s, some_ao_morrer) in monstros_a_invocar {
                 for _ in 0..quantidade {
@@ -343,7 +391,7 @@ impl BusServer {
                 }
             }
 
-            (r, para_mim, para_todos, subiu_de_nivel, [bolsa, bolsa_de_missao], gravacao, ficha, teleporte)
+            (r, para_mim, para_todos, subiu_de_nivel, [bolsa, bolsa_de_missao], gravacao, ficha, teleporte, daimon)
         };
 
         for c in para_mim {
@@ -365,6 +413,18 @@ impl BusServer {
         for b in &mut bolsas {
             if let Err(e) = b.gravar(&itens_repo).await {
                 warn!("mundo: não consegui gravar a bolsa de {roleid}: {e}");
+            }
+        }
+        if let Some((slot, bloco)) = daimon {
+            match itens_repo.get_item_by_slot(roleid, ContainerType::Equipment, slot).await {
+                Ok(Some(mut i)) => {
+                    i.octets = bloco;
+                    if let Err(e) = itens_repo.upsert_item(&i).await {
+                        warn!("mundo: não consegui gravar o Daimon de {roleid}: {e}");
+                    }
+                }
+                Ok(None) => warn!("mundo: o Daimon de {roleid} sumiu do slot {slot} antes de gravar"),
+                Err(e) => warn!("mundo: não consegui ler o Daimon de {roleid}: {e}"),
             }
         }
         let gravar = async move {
@@ -422,6 +482,7 @@ impl BusServer {
             p.atributos_efetivos(),
             p.max_hp,
             p.max_mp,
+            p.max_ap,
             (p.hp_gen, p.mp_gen),
             (p.walk_speed, p.move_speed, p.swim_speed, p.fly_speed),
             (p.attack_rate, p.attack_min, p.attack_max, (p.attack_speed * 20.0).round() as i32, p.attack_range),
@@ -622,6 +683,19 @@ impl BusServer {
         } else {
             info!("mundo: {roleid} colheu mina de missão {mid} (missão {})", mina.missao_de_saida);
         }
+        // A matéria pode **soltar monstros** ao ser colhida: são os `npcgen_1..4` do
+        // `MINE_ESSENCE`. A Flor de Safira (44566) não produz item nenhum — o que ela faz é
+        // acordar o Guardião de Almas (44608), e é dele que cai o Estame da missão 31779
+        // (B76). Sem isto, colher a flor não fazia nada.
+        if !mina.monstros_ao_colher.is_empty() {
+            let mut mundo = self.world.write().await;
+            for (tid, quantos, raio, vida_s) in mina.monstros_ao_colher.clone() {
+                for _ in 0..quantos {
+                    mundo.invocar_monstro(tid, pos, raio.max(0.0) as u32, vida_s, false);
+                }
+                info!("mundo: a mina {mid} acordou {quantos}× o monstro {tid} para {roleid}");
+            }
+        }
         // O que não coube vai ao chão, do jogador (`DropItemData`, `player.cpp:1530-1540`).
         if let Some(n) = sobrou.filter(|n| *n > 0 && material.item > 0) {
             let d = self.world.write().await.criar_drop(material.item, n, pos, Some(roleid));
@@ -646,6 +720,58 @@ impl BusServer {
             let dados = Arc::clone(&mundo.data_manager);
             let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
             let e = crate::entity::Equipamento::dos_itens_com_addons(&itens, &dados.equipamentos, Some(&dados.addons));
+            // A durabilidade de cada peça passa a viver no mundo, como o `_equipment` do
+            // original: é daqui que sai o índice do `be_damaged` e a quebra, sem ida ao
+            // banco no meio do golpe (B72).
+            p.pecas = [None; crate::entity::PECAS_VESTIDAS];
+            for item in &itens {
+                let slot = item.slot as usize;
+                if slot < crate::entity::PECAS_VESTIDAS && item.max_durability > 0 {
+                    p.pecas[slot] = Some((item.durability as i32, item.max_durability as i32));
+                }
+            }
+            // Amuleto e hierograma: vesti-los é ativá-los (`OnPutIn` → `Activate` →
+            // `SetHPAutoGen`/`SetMPAutoGen`, `gs/item/item_amulet.h:53-60`,
+            // `item_amulet.cpp:22-46`). O que resta vem dos octetos do item, porque é lá que
+            // o gasto fica gravado; sem octetos vale o total do `elements.data`.
+            // Daimon no slot 23 (`EQUIP_INDEX_ELF`, `gs/item.h:219`): o estado dele vive no
+            // bloco do item, e é dele que sai a experiência (B75).
+            p.daimon = itens.iter().find(|i| i.slot == SLOT_DO_DAIMON).and_then(|item| {
+                let (fator, iniciais) = dados.dados_do_daimon(item.item_id)?;
+                let estado = crate::entity::Daimon::ler(&item.octets)
+                    .unwrap_or_else(|| crate::entity::Daimon::novo(&iniciais));
+                Some(crate::entity::DaimonVestido {
+                    slot: item.slot,
+                    item_id: item.item_id,
+                    fator_de_exp: fator,
+                    estado,
+                    sujo: item.octets.is_empty(),
+                })
+            });
+            p.auto_hp = None;
+            p.auto_mp = None;
+            for item in &itens {
+                if item.slot != SLOT_DO_AMULETO_DE_VIDA && item.slot != SLOT_DO_AMULETO_DE_MANA {
+                    continue;
+                }
+                let Some((total, gatilho_padrao, recarga_ms, de_vida)) = dados.dados_do_amuleto(item.item_id) else {
+                    continue;
+                };
+                let (ponto, gatilho) = crate::entity::AmuletoAtivo::do_bloco(&item.octets)
+                    .unwrap_or((total, gatilho_padrao));
+                let a = crate::entity::AmuletoAtivo {
+                    slot: item.slot,
+                    item_id: item.item_id,
+                    ponto,
+                    gatilho,
+                    recarga_ms,
+                };
+                if de_vida {
+                    p.auto_hp = Some(a);
+                } else {
+                    p.auto_mp = Some(a);
+                }
+            }
             if !e.addons_sem_porte.is_empty() {
                 debug!("mundo: {roleid} veste addons sem porte: {:?}", e.addons_sem_porte);
             }
@@ -663,38 +789,6 @@ impl BusServer {
         }
     }
 
-    // ------------------------------------------------------------------ munição
-
-    /// A munição do golpe normal: `DoAttack` (`player.cpp:3063-3070`) tira uma do slot 11
-    /// (`EQUIP_INDEX_PROJECTILE`) quando a arma é de longo alcance (`weapon_type == 1`), e
-    /// `FillAttackMsg` manda `ATTACK_ONCE` com quantas saíram (`:3134`) — também para arma
-    /// de perto, com zero.
-    ///
-    /// A arma e a munição são lidas do banco: o mundo ainda não guarda o equipamento em
-    /// memória. O original não recusa o golpe sem munição aqui; sem flecha o arco perde a
-    /// validade pelo lado do equipamento, que ainda não existe (`falta`).
-    pub(super) async fn gastar_municao(&self, roleid: i32) {
-        let repo = self.itens().await;
-        let arma = repo.get_item_by_slot(roleid, ContainerType::Equipment, SLOT_DA_ARMA).await.ok().flatten();
-        let dados = Arc::clone(&self.world.read().await.data_manager);
-        let de_longe = arma.is_some_and(|a| {
-            matches!(dados.equipamentos.ficha(a.item_id), Some(pw_core::FichaDoEquipamento::Arma(f)) if f.tipo_de_arma == ARMA_DE_LONGE)
-        });
-        let mut gasta = 0u8;
-        if de_longe {
-            match repo.consume_item(roleid, ContainerType::Equipment, SLOT_DA_MUNICAO, 1).await {
-                Ok(restante) => {
-                    gasta = 1;
-                    if restante.is_none() {
-                        debug!("mundo: {roleid} gastou a última munição");
-                    }
-                }
-                Err(e) => warn!("mundo: não consegui gastar a munição de {roleid}: {e}"),
-            }
-        }
-        self.enviar_ao_jogador(roleid, S2CGamedataSend::attack_once(gasta).data).await;
-    }
-
     // -------------------------------------------------------------- durabilidade
 
     /// A arma perde `DURABILITY_DEC_PER_ATTACK` a cada **golpe normal**.
@@ -705,19 +799,40 @@ impl BusServer {
     /// comentário (`player.cpp:3174`). O cliente desconta o mesmo sozinho
     /// (`WEAPON_RUIN_SPEED = -2`, `EC_IvtrTypes.h:30`).
     pub(super) async fn gastar_arma(&self, roleid: i32) {
-        let repo = self.itens().await;
-        match repo.gastar_durabilidade(roleid, ContainerType::Equipment, SLOT_DA_ARMA, DESGASTE_POR_GOLPE).await {
-            Ok(Some((dur, max, quebrou))) => {
-                if quebrou {
-                    info!("mundo: a arma de {roleid} quebrou (0/{max})");
-                    self.equipamento_quebrou(roleid, SLOT_DA_ARMA as u8).await;
-                } else {
-                    trace!("mundo: arma de {roleid} em {dur}/{max}");
-                }
-            }
-            Ok(None) => {}
-            Err(e) => warn!("mundo: não consegui desgastar a arma de {roleid}: {e}"),
+        self.desgastar(roleid, SLOT_DA_ARMA, DESGASTE_POR_GOLPE).await;
+    }
+
+    /// Tira `quanto` da peça do slot, **em memória**, e manda o banco acompanhar depois.
+    ///
+    /// O original mexe na `item_list` vestida e segue (`DoWeaponOperation`, `OnDamage`); o
+    /// banco aqui é só persistência. Devolve o que sobrou, ou `None` se o slot está vazio ou
+    /// a peça não tem durabilidade.
+    async fn desgastar(&self, roleid: i32, slot: u16, quanto: i32) -> Option<(i32, i32)> {
+        let (restou, maxima, quebrou) = {
+            let mut mundo = self.world.write().await;
+            let p = mundo.players.get_mut(&(roleid as i64))?;
+            let (atual, maxima) = (*p.pecas.get(slot as usize)?)?;
+            let restou = (atual - quanto).max(0);
+            p.pecas[slot as usize] = Some((restou, maxima));
+            (restou, maxima, atual > 0 && restou == 0)
+        };
+        if quebrou {
+            info!("mundo: a peça {slot} de {roleid} quebrou (0/{maxima})");
+            self.equipamento_quebrou(roleid, slot as u8).await;
+        } else {
+            trace!("mundo: peça {slot} de {roleid} em {restou}/{maxima}");
         }
+        // A gravação sai do caminho da resposta: o `UPDATE` de durabilidade já levou mais de
+        // um segundo no banco de teste, e com ele no fio o cliente ficava esperando (B72).
+        if let Some(este) = self.clone_arc() {
+            tokio::spawn(async move {
+                let repo = este.itens().await;
+                if let Err(e) = repo.gastar_durabilidade(roleid, ContainerType::Equipment, slot, quanto).await {
+                    warn!("mundo: não consegui desgastar a peça {slot} de {roleid}: {e}");
+                }
+            });
+        }
+        Some((restou, maxima))
     }
 
     /// Uma peça sorteada perde `DURABILITY_DEC_PER_HIT` a cada golpe recebido, e o índice
@@ -730,22 +845,11 @@ impl BusServer {
     pub(super) async fn desgastar_peca(&self, roleid: i32) -> u8 {
         use rand::Rng;
         let slot = rand::thread_rng().gen_range(PRIMEIRA_PECA..DEPOIS_DA_ULTIMA_PECA);
-        let repo = self.itens().await;
-        match repo.gastar_durabilidade(roleid, ContainerType::Equipment, slot, DESGASTE_AO_APANHAR).await {
-            Ok(Some((_, max, quebrou))) => {
-                if quebrou {
-                    info!("mundo: a peça {slot} de {roleid} quebrou (0/{max})");
-                    self.equipamento_quebrou(roleid, slot as u8).await;
-                }
-                slot as u8
-            }
+        match self.desgastar(roleid, slot, DESGASTE_AO_APANHAR).await {
+            Some(_) => slot as u8,
             // Slot vazio (ou item sem durabilidade): o original manda -1, que o
             // `Make<be_attacked>` reduz a 0x7f.
-            Ok(None) => NENHUMA_PECA,
-            Err(e) => {
-                warn!("mundo: não consegui desgastar a peça {slot} de {roleid}: {e}");
-                NENHUMA_PECA
-            }
+            None => NENHUMA_PECA,
         }
     }
 

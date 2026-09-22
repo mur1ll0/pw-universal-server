@@ -143,6 +143,9 @@ impl MonsterAi {
     pub const PASSO_DE_PERSEGUICAO_MS: u32 = 500;
     /// `NPC_PATROL_TIME` (`gs/config.h:116`) e o temporizador de 20 tiques do `cruise`.
     pub const PASSO_DE_PATRULHA_MS: u32 = 1000;
+    /// `world_manager::GetMaxMobSightRange()` — 15 m (`gs/worldmanager.cpp:48`): até onde o
+    /// aviso de movimento do jogador chega aos monstros agressivos.
+    pub const ALCANCE_DE_VISAO: f32 = 15.0;
     /// O batimento do NPC.
     pub const BATIMENTO_MS: u32 = 1000;
     /// `NPC_IDLE_TIMER` (`gs/config.h:40`).
@@ -235,6 +238,25 @@ impl MonsterAi {
         while self.batimento_ms >= Self::BATIMENTO_MS {
             self.batimento_ms -= Self::BATIMENTO_MS;
             self.batimento(monster, players);
+        }
+
+        // 0. Monstro agressivo procura briga: sem alvo, ele pega o jogador vivo mais perto
+        // dentro do alcance de visão. No original é o **jogador** que avisa ao andar —
+        // `GM_MSG_WATCHING_YOU` difundido a quem tem `MSG_MASK_PLAYER_MOVE`, a marca que só
+        // o monstro com `aggressive_mode` recebe (`npcgenerator.cpp:2534-2537`,
+        // `playerctrl.cpp:265-276`) —, num raio de `GetMaxMobSightRange`, 15 m
+        // (`worldmanager.cpp:48`). Quem decide odiar é a política do `aipolicy.data`, que
+        // ainda não interpretamos: aqui o agressivo odeia sempre (B76).
+        if monster.agressivo && self.get_highest_threat_target().is_none() {
+            let mais_perto = players
+                .iter()
+                .filter(|(_, p)| p.hp > 0)
+                .map(|(id, p)| (*id, monster.position.distance(&p.position)))
+                .filter(|(_, d)| *d <= Self::ALCANCE_DE_VISAO)
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((id, _)) = mais_perto {
+                self.add_threat(id, 1);
+            }
         }
 
         // 1. Com alvo: perseguir e bater.

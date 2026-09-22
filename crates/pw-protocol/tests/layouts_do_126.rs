@@ -227,14 +227,14 @@ fn own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante() {
     let p155 = create_world_protocol(GameVersion::V1_5_5);
 
     let d126 = p126.own_ext_prop(
-        0, (10, 10, 10, 10), 100, 100, (2, 2),
+        0, (10, 10, 10, 10), 100, 100, 99, (2, 2),
         (2.0, 4.9, 3.0, 5.0),
         (40, 5, 10, 22, 3.8),
         (2, 3)
     ).data;
 
     let d155 = p155.own_ext_prop(
-        0, (10, 10, 10, 10), 100, 100, (2, 2),
+        0, (10, 10, 10, 10), 100, 100, 99, (2, 2),
         (2.0, 4.9, 3.0, 5.0),
         (40, 5, 10, 22, 3.8),
         (2, 3)
@@ -242,6 +242,8 @@ fn own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante() {
 
     assert_eq!(d126.len() - 2, 152, "payload do OWN_EXT_PROP no 1.2.6 deve ser 152 bytes exatos");
     assert_eq!(d155.len() - 2, 196, "payload do OWN_EXT_PROP no 1.5.5 deve ser 196 bytes exatos");
+    assert_eq!(i32::from_le_bytes(d126[d126.len() - 4..].try_into().unwrap()), 99, "o max_ap fecha o OWN_EXT_PROP do 1.2.6");
+    assert_eq!(i32::from_le_bytes(d155[d155.len() - 4..].try_into().unwrap()), 99, "o max_ap fecha o OWN_EXT_PROP do 1.5.5");
 }
 
 // full_interno.pcap, S2C 66 amostra #1:
@@ -315,7 +317,7 @@ fn entrada_126_self_info_e_bolsa_vazia_reproduzem_o_original() {
 fn entrada_126_propriedades_conferem_os_campos_representados_no_trait() {
     let original = primeira_amostra(include_str!("../../../docs/evidencias/126/s2c-50.txt"));
     let p = create_world_protocol(GameVersion::V1_2_6);
-    let pacote = p.own_ext_prop(5, (5, 5, 5, 5), 119, 49, (5, 1),
+    let pacote = p.own_ext_prop(5, (5, 5, 5, 5), 119, 49, 0, (5, 1),
         (2.0, 4.9, 3.0, 5.0), (40, 6, 10, 22, 3.8), (3, 40));
     let corpo = &pacote.data[2..];
     assert_eq!(corpo.len(), 152);

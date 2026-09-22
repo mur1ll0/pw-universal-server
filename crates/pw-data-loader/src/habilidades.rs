@@ -31,6 +31,16 @@ pub struct HabilidadeDoServidor {
     pub rank: Option<i32>,
     pub pre_skills: Vec<(u32, i32)>,
     pub mp: Option<Vec<f32>>,
+    /// `apcost` do stub (`cskill/skill/skill.h:239`): o chi que a habilidade **consome**.
+    /// `SkillStub::Condition` recusa a conjuração com `GetAp() < apcost`
+    /// (`cskill/skill/skill.cpp:125`).
+    #[serde(default)]
+    pub apcost: Option<i32>,
+    /// `apgain`: o chi que a habilidade **dá**. Na execução, o original aplica a diferença de
+    /// uma vez: `int ap = GetApgain() - GetApcost(); if (ap) ModifyAP(ap)`
+    /// (`cskill/skill/playerwrapper.cpp:170-177`).
+    #[serde(default)]
+    pub apgain: Option<i32>,
     pub execucao_ms: Option<Vec<i32>>,
     pub recarga_ms: Option<Vec<i32>>,
     pub nivel_exigido: Option<Vec<i32>>,
@@ -242,6 +252,23 @@ mod tests {
         assert_eq!(h.nivel_exigido(11), None, "nível fora da tabela");
     }
 
+    /// B73 — o chi de cada habilidade vem do stub, e o JSON já o trazia.
+    ///
+    /// `SkillStub::Condition` recusa com `GetAp() < apcost` (`cskill/skill/skill.cpp:125`) e a
+    /// execução aplica `GetApgain() - GetApcost()` (`playerwrapper.cpp:170-177`).
+    #[test]
+    fn o_custo_e_o_ganho_de_chi_vem_do_stub() {
+        let t = TabelaDeHabilidades::do_155();
+        // Flecha Glacial (245) e Barreira de Asa (249) **gastam**; a 235 e a Flecha
+        // Fulgurante (244) **dão**.
+        assert_eq!(t.get(245).and_then(|h| h.apcost), Some(25), "Flecha Glacial");
+        assert_eq!(t.get(245).and_then(|h| h.apgain), Some(0));
+        assert_eq!(t.get(249).and_then(|h| h.apcost), Some(45), "Barreira de Asa");
+        assert_eq!(t.get(244).and_then(|h| h.apgain), Some(10), "Flecha Fulgurante");
+        assert_eq!(t.get(244).and_then(|h| h.apcost), Some(0));
+        assert_eq!(t.get(235).and_then(|h| h.apgain), Some(5));
+    }
+
     #[test]
     fn a_recarga_trunca_os_segundos() {
         let h = HabilidadeDoServidor {
@@ -252,6 +279,8 @@ mod tests {
             rank: None,
             pre_skills: vec![],
             mp: None,
+            apcost: None,
+            apgain: None,
             execucao_ms: None,
             recarga_ms: Some(vec![2500]),
             nivel_exigido: None,

@@ -14,9 +14,17 @@ fn main() {
         let entrega = m.itens_entregues.iter().any(|i| i.id == item);
         let premia = m.rewards.grupos_de_itens.iter().any(|g| g.itens.iter().any(|i| i.id == item));
         let exige = m.itens_exigidos.iter().any(|i| i.id == item);
-        if entrega || premia || exige {
+        // O item que o monstro solta para a missão (`MONSTER_WANTED::m_ulItemDropped`) é um
+        // quarto caminho, e é por ele que chega a maioria dos materiais de missão.
+        let cai_de: Vec<String> = m
+            .monster_kills
+            .iter()
+            .filter(|mo| mo.item_que_cai == item)
+            .map(|mo| format!("monstro {} ×{} comum={}", mo.monstro, mo.quantidade_do_item, mo.item_comum))
+            .collect();
+        if entrega || premia || exige || !cai_de.is_empty() {
             println!(
-                "{id} {:?} pai={:?} nivel {}-{} classes {:?} npc_entrega {} npc_premia {} entrega={entrega} premia={premia} exige={exige}",
+                "{id} {:?} pai={:?} nivel {}-{} classes {:?} npc_entrega {} npc_premia {} entrega={entrega} premia={premia} exige={exige} cai_de={cai_de:?}",
                 m.name, m.parent, m.min_level, m.max_level, m.req_classes, m.npc_que_entrega, m.npc_que_premia
             );
         }

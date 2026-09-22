@@ -1,6 +1,6 @@
 # Especificação 04: Protocolo do mundo 3D (subcomandos do `GamedataSend`)
 
-> Camadas 2/3 e pacotes de itens/experiência 126 conferidos em 2026-09-21, base `a305e51` + B75/B76. Demais áreas:
+> Camadas 2/3 e pacotes de itens/experiência 126 conferidos em 2026-09-21, base `a305e51` + B77/B78. Demais áreas:
 > referência 2026-09-14, commit `e6433ae` + B49. Cobre
 > `crates/pw-protocol/src/{packets,versions,opcodes.rs}`, `crates/pw-wire/`,
 > `crates/pw-gs/src/comandos.rs`, `specs/protocol/` e `tools/pw-rpcgen/`.
@@ -56,21 +56,22 @@ ou com campos novos no fim. Novos do 1.5.5 ainda não triados: 66 GNET, 17 C2S, 
 
 ## 4. Diferenças por versão: Padrão Estratégia e Módulos por Versão
 
-**Auditoria 1.2.6 em `2dca19e` (B73, 2026-09-20):** o inventário completo das chamadas
+**Auditoria 1.2.6 em `2dca19e` (B73-126, 2026-09-20):** o inventário completo das chamadas
 atuais do mundo está em `docs/INVENTARIO_PROTOCOLO_126.md` (98 ids S2C, 46 C2S).
 Compatibilidade ainda **parcial**: os comandos comuns 14 e 64
 divergem dos comprimentos capturados. Medição reproduzida em
 `docs/evidencias/126/full_interno.medidas.md`; tamanho igual não comprova campos iguais.
 `SCENE_SERVICE_NPC_LIST` (390) é opcional no trait: v126 não emite, pois seu binário
-rejeita ids acima de 260 (VA 0x584618; B74, `docs/ENTRADA_126.md`).
+rejeita ids acima de 260 (VA 0x584618; B74-126, `docs/ENTRADA_126.md`).
 `EQUIP_DATA` no 126 usa máscara de 32 bits e 10+4×n bytes de payload (VA 0x584a1d);
 o 155 mantém 64 bits. Avisos de status da entrada vêm do trait, com a sequência
 anterior como padrão e oito avisos suportados no v126. Estado: **11 testes focados
 aprovados com TEST_DATABASE_URL**, incluindo sentinelas 155; não publicado.
 SELF_INFO_00 e GetUIConfig_Re reproduzem amostras; OWN_EXT_PROP mantém 152 B,
-com os campos representados conferidos. Ataque mágico/resistências continuam
+com os campos representados conferidos. `max_ap` é parâmetro do trait (B70):
+na amostra original vale zero (`s2c-50.txt:11`); em jogo acompanha SELF_INFO_00 (B80). Ataque mágico/resistências continuam
 zeros, limitação da base. A suíte ampla anterior teve falha de persistência de
-missão; não há aprovação global de regressão (B74).
+missão; não há aprovação global de regressão (B74-126).
 
 O despacho por versão é uma **estratégia**: o trait `WorldProtocol`
 (`crates/pw-protocol/src/traits.rs`) declara os comandos cujo layout muda entre versões, e há
@@ -86,11 +87,11 @@ dois nomes para a mesma coisa convidava a escrever `if versao == ...` de novo.
 
 `HOST_SKILL_ATTACKED` (144) também passa pelo trait: v126 emite 15 bytes,
 com flag de um byte e sem section; padrão 155 mantém 19 bytes. Captura
-`s2c-144.txt:2` e validador do cliente VA 0x584af4 (B75). Os comandos normais
+`s2c-144.txt:2` e validador do cliente VA 0x584af4 (B77). Os comandos normais
 84/83/24/26/33 reproduzem as amostras. Estado: seis testes focados aprovados,
 sem validação visual; cadência medida e limites em `docs/COMBATE_126.md`.
 
-Itens 126 (B76, **testado**): 31/99 têm 14 B, 46 tem 9 B, 72 tem
+Itens 126 (B78, **testado**): 31/99 têm 14 B, 46 tem 9 B, 72 tem
 7+13×n B e 156 tem 10 B de payload. Os cinco passam pelo trait; padrão 155
 inalterado, overrides em v126. Contagens u16; 72 sem yinpiao e 156 sem validade.
 36 (4 B) já usa o trait; 158 (8 B) permanece comum. Gabaritos da captura e
@@ -129,7 +130,7 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | saída | criatura/jogador fora de alcance `OBJECT_LEAVE_SLICE` (13); matéria só sai por `OUT_OF_SIGHT_LIST` (34); jogador que saiu do jogo `PLAYER_LEAVE_WORLD` (19) | `EC_GameDataPrtc.cpp:891,1056` |
 | `MATTER_ENTER_WORLD` (18) | 25 bytes: `mid, tid, pos, dir0, dir1, rad, state, value`; `state = 0` recurso comum | `EC_GPDataType.h:784` |
 | `OBJECT_MOVE` | `use_time` em **milissegundos**, `speed` = velocidade × **256**, `move_mode` com bit do habitat | `gs/npcsession.cpp:258`, `gs/petnpc.cpp:350` (B48) |
-| `OWN_EXT_PROP` | **196** bytes no binário; `attack_speed` em ticks de 50 ms; velocidades do `CHARRACTER_CLASS_CONFIG` | B34a, B44b2 |
+| `OWN_EXT_PROP` | **196** bytes no binário; `attack_speed` em ticks de 50 ms; velocidades do `CHARRACTER_CLASS_CONFIG`; o `max_ap` é o último `i32` e tem de espelhar o `iMaxAP` do `SELF_INFO_00` — o cliente compara o anterior com ele e anuncia aumento se divergir | B34a, B44b2, `EC_HostMsg.cpp:1319-1332` (B70) |
 | `OWN_ITEM_INFO` (40) | arma/armadura/acessório **precisam** do bloco de dados, senão `CanUseEquipment` recusa (item vermelho). Cabeçalho `prerequisition` (vitalidade antes de agilidade, máscara de classe em 16 bits) + essência: arma 44 (`weapon_level` = `level` do arquivo, B51), armadura 36 (`defesa, evasão, +MP, +HP, resist[5]`), acessório 36 (`dano, dano mágico, defesa, evasão, resist[5]`), **munição 20** (`tipo, dano extra, dano %, nível mín/máx da arma`, cabeçalho `0/0xFFFF/…` e durabilidade 100/100 — 1/1 na tela, B61 — sem ela o cliente mostra "arma 0-0" e o arco fica vermelho, B51). Subtipo **não** viaja | `generate_item_temp.h:490-556,772-830` (B41a) |
 | `SERVER_TIME` (114) | `lua_version` = primeira linha do `global_api.lua` (1.5.5: 102); errado encerra o cliente | B9c |
 | `ACTIVATE_REGION_WAYPOINTS` (C2S 178) | responder `WAYPOINT_LIST` (S2C 180) com os ids recebidos; sem isso o cliente reenvia a cada quadro | B9b |
@@ -143,7 +144,7 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | `SCENE_SERVICE_NPC_LIST` (390) | `count u32` seguido de pares `{ service_id i32, npc_id i32 }`. Enviado no `GET_ALL_DATA` com os provedores de serviços do mapa (incluindo mestres de classe). No 1.5.5 (`EC_HostSkillModel.cpp:558-605`), é obrigatório para registrar `m_allProfNPCs`, definir `m_skillLearnNPCNID` e habilitar o botão de evoluir habilidade pela árvore (tecla R) | `world.cpp`, `EC_HostSkillModel.cpp:558-605` (B67) |
 | `HOST_ATTACKED` (26) | `idAttacker i32, iDamage i32, cEquipment u8, attack_flag i32, speed i8`. O `cEquipment` é o **índice da peça que se desgastou** (`eq_index &= 0x7F`, bit alto = nome laranja): `0x7f` é "nenhuma", e **zero o cliente lê como a arma** e desconta durabilidade dela a cada golpe recebido. `speed` × 50 ms é a duração da animação do golpe (spec 05, "Durabilidade") | `cgame/common/protocol.h:1194-1201`, `protocol_imp.h:580-590`, `EC_HostMsg.cpp:968-1000` |
 | `TASK_DELIVER_LEVEL2` (160) | `int id_player; int level2` (2+8). O `level2` é o **nível de cultivo**, não o nível de GM: o cliente guarda em `m_BasicProps.iLevel2`, tira dele o título taoista e toca o efeito de avanço (`CECPlayer::OnMsgPlayerLevel2`, `EC_Player.cpp:7464`; `GetLevel2Name`, `EC_GameRun.cpp:3477`). O mesmo vale para o campo `level2` dos pacotes de visão — até o B67 mandávamos o privilégio da conta ali | `Network/EC_GPDataType.h:2859-2863`, `gs/player_imp.h:2798-2804` |
-| `SELF_INFO_00` (38) | `sLevel, State, Level2, iHP, iMaxHP, iMP, iMaxMP, iExp, iSP, **iAP, iMaxAP**` — os dois últimos são a **barra de chi**, e iam zero fixo até o B68. `Level2` é o cultivo (ver `TASK_DELIVER_LEVEL2`) | `Network/EC_GPDataType.h:1739-1752` |
+| `SELF_INFO_00` (38) | `sLevel, State, Level2, iHP, iMaxHP, iMP, iMaxMP, iExp, iSP, **iAP, iMaxAP**` — os dois últimos são a **barra de chi**, e iam zero fixo até o B68. **`Level2` é o cultivo** e vale em *todo* envio: o cliente faz `SetLevel2` a cada comando e toca o efeito de avanço quando o novo é maior que o anterior (`CanPlayTaoistEffect`, `EC_Player.cpp:7434-7454`), de modo que mandar zero num comando e o valor certo no seguinte anuncia um avanço que não houve (B71) | `Network/EC_GPDataType.h:1739-1752`, `EC_HostMsg.cpp:1324` |
 | `ACTIVATE_WAYPOINT` (179) | `unsigned short waypoint` (2+2) — **um** ponto de teleporte novo. É ele que faz o cliente anunciar "novo ponto" com o nome do lugar (`CECHostPlayer::OnMsgHstWayPoint`, `EC_HostMsg.cpp:4681-4720`); o `WAYPOINT_LIST` (180) **substitui** a lista em silêncio e é o da carga inicial. Sai de `ActivateWaypoint` só quando o ponto ainda não é do jogador (`gs/player_imp.h:2534-2544`) (B67) |
 | `ACTIVATE_REGION_WAYPOINTS` (C2S 178) | `unsigned char num` + `num` × `int`; o servidor ativa os que faltam e responde um 179 por ponto. Tratado **no mundo** desde o B67 (`gs/playercmd.cpp:4262-4270`, `player.cpp:25196-25220`) |
 | `EQUIP_DAMAGED` (68) | `unsigned char index; char reason` (2+2): a peça `index` acabou; motivo 0 é "sem durabilidade", 1 é "quebrou ao morrer" | `cgame/common/protocol.h:1598-1603` (B61) |

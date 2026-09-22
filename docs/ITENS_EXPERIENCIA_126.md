@@ -1,6 +1,6 @@
-# Experiência e pacotes de itens 126 — B76
+# Experiência e pacotes de itens 126 — B78
 
-Estado: testado localmente em 2026-09-21, base a305e51 + B75/B76, sem publicação.
+Estado: testado localmente em 2026-09-21, base a305e51 + B77/B78, sem publicação.
 Escopo: codificação S2C; não declara missões, loja ou progressão inteiras jogáveis.
 
 | id / comando | payload 126 | payload padrão 155 | evidência original |

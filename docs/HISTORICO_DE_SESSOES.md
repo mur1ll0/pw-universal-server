@@ -7981,9 +7981,304 @@ Validação disponível e acordada com o usuário: Docker + clientes reais (1.2.
 envio de logs, captura de tráfego (Wireshark/pcap) e execução dos binários originais para
 comparação lado a lado.
 
+70. **Sessão 2026-09-20 (parte 4): o teto de chi no pacote de propriedades.**
 
+    O aviso “limite máximo de chi aumentado para 99” reaparecia porque o mundo já enviava
+    `iAP = 0` e `iMaxAP = 99` no `SELF_INFO_00`, mas o `OWN_EXT_PROP` seguinte ainda fechava
+    com `max_ap = 0`. Em `EC_HostMsg.cpp:1319-1332`, o cliente compara esse valor com o que
+    recebeu antes e anuncia a diferença; cada atualização de propriedades virava 0→99.
 
-73. **Sessão 2026-09-20: inventário do 1.2.6 em árvore isolada (versao-126).**
+    `OWN_EXT_PROP` agora recebe `max_ap` pelo `WorldProtocol`, tanto no codificador 1.2.6 de
+    152 bytes quanto no 1.5.5 de 196 bytes, e o mundo passa o teto persistido do personagem.
+    A **Flecha Fulgurante (244) não é a origem nem deve gerar chi**: `skill244.h:20-80,234-240`
+    só consome mana e aplica `Firearrow`; não chama `SetApgen`, `SetApgen2` ou `ModifyAP`.
+
+    ### Provas
+
+    `layouts_do_126` e `protocol_tests`: **36/36** (o último `i32` vale 99 nos dois layouts).
+
+71. **Sessão 2026-09-20 (parte 5): a tela de cultivo da poção, a recarga por família e a
+    flecha na sessão.**
+
+    Parte do trabalho desta entrega veio de uma sessão de fora que parou sem relatório (e
+    sem commit): a **recarga das poções**, a **munição na sessão de ataque** com persistência
+    fora do fio, e o `consume_item` do `pw-storage` reescrito como uma instrução só
+    (`SELECT … FOR UPDATE` + `UPDATE`/`DELETE` nas CTEs), para que duas baixas simultâneas
+    não regravem o mesmo restante. Auditei tudo contra o fonte e corrigi três pontos.
+
+    **A tela de cultivo ao usar poção.** O `SELF_INFO_00` tem `Level2`, que é o cultivo, e o
+    cliente chama `SetLevel2` em *todo* comando desses: `CanPlayTaoistEffect`
+    (`EC_Player.cpp:7434-7445`) toca o efeito de avanço sempre que o valor novo é **maior**
+    que o anterior. Três caminhos nossos mandavam `0` fixo no campo — o uso de item, o
+    resultado de habilidade que cura ou fere e o serviço de cura do NPC. Com o eaa em cultivo
+    1, usar uma poção zerava o cultivo do cliente e o `SELF_INFO_00` seguinte, correto,
+    virava 0 → 1: avanço de cultivo em tela. É o mesmo erro do `max_ap` do B70, no campo
+    vizinho. Agora todo envio leva `p.cultivation`.
+
+    **A família da recarga.** A sessão de fora escolhia o `COOLDOWN_INDEX_*` por heurística
+    (o que a poção restaura). No original quem decide é a **classe do item**, e a classe sai
+    do `id_major_type` do `MEDICINE_ESSENCE` em `set_to_classid`
+    (`gs/template/setclassid.cpp:81-101`): 1794 `CLS_ITEM_HEALING_POTION`, 1802
+    `CLS_ITEM_MANA_POTION`, 1810 `CLS_ITEM_REJUVENATION_POTION`, 1815 e 2038 os antídotos.
+    Cada `OnUse` arma o índice da sua classe (`gs/item/item_potion.cpp:18-110`). Pela
+    heurística o antídoto — que não restaura vida nem mana — caía na família da mana e
+    travava as poções de mana por 15 s. O `id_major_type` agora vem do arquivo
+    (`tipo_maior_do_remedio`), e o `realm_155` confirma: 1796 → 1794, 1804 → 1802, 1812
+    (Nove Sóis) → 1810, 1817 e 2040 → antídotos.
+
+    **A flecha.** Ela estava sendo descontada da sessão antes das conferências do golpe
+    (`pode_golpear`, efeito que impede agir, alvo ainda existir), então um golpe que nem
+    acontecia comia munição. No original o desconto está dentro do `DoAttack`, depois do
+    `CheckAttack` (`player.cpp:3063-3070`). E o `dec_arrow` do `ATTACK_ONCE` vale **1 sempre
+    que a arma é de longe**: o retorno do `DecAmount` é ignorado (`:3068`), de modo que o
+    comando não muda quando acaba a flecha — só a baixa muda.
+
+    ### Provas
+
+    Suíte inteira com o banco: **602 testes, 0 falhas**. O teste da poção agora fixa o
+    cultivo do jogador e confere o `Level2` de cada `SELF_INFO_00` — com o zero de volta no
+    caminho do uso de item ele falha, como tem de falhar. Novo
+    `o_tipo_maior_do_remedio_separa_as_familias_de_recarga` lê os cinco `id_major_type` do
+    `elements.data` do `realm_155`.
+
+    ### Falta
+
+    O relato do combate travado contra a Ninfa não foi investigado — nenhuma medição foi
+    feita, e a sessão de fora não deixou registro do que tinha visto.
+
+72. **Sessão 2026-09-20 (parte 6): o que travou o combate contra a Ninfa, e por que a Alma
+    dela foi para a bolsa comum.**
+
+    **O combate em si saiu certo.** O log do `pw-world-155` de 20:49:03 a 20:49:58 UTC tem a
+    Ninfa (`-2147482351`, 5810 de vida) caindo golpe a golpe até zero, o monstro revidando,
+    a recarga da habilidade 235 recusando o que tinha de recusar ("ainda em recarga"), a
+    morte pela 235 e a missão avançando. Nenhum erro, nenhum pacote desconhecido.
+
+    **O travamento é de banco no caminho do jogo.** O mesmo minuto tem **49 avisos
+    `slow statement`** do `sqlx` — `UPDATE character_items SET durability` de 1,1 a 1,9 s,
+    `INSERT INTO character_items` de até 4,1 s, `UPDATE characters SET ap` de 4,1 s. Três
+    lugares punham essas escritas na frente do jogador:
+
+    1. O **autosave**, quatro escritas por jogador a cada 60 s, rodava **dentro do
+       `world.tick`** — e o tique roda inteiro com o `world.write()` na mão. Entre
+       20:49:59 e 20:50:08 não há uma única linha de combate no log: o mundo ficou **8
+       segundos parado** enquanto o autosave esperava o banco. Agora o `tick` devolve a
+       fotografia (`EstadoParaGravar`) e o laço grava numa tarefa, com o lock solto.
+    2. O **desgaste da peça ao apanhar** consultava o banco **antes** de mandar o
+       `HOST_ATTACKED` — o índice da peça vai dentro do comando. A durabilidade passou a
+       viver no mundo (`PlayerEntity::pecas`), como a `item_list` vestida do original
+       (`player.cpp:94`), e o banco acompanha depois.
+    3. A **munição e a durabilidade da arma** no golpe dado, já tratadas no B71.
+
+    De quebra, isso expôs um aviso prematuro: o `SELF_INFO_00` de quem apanhou saía junto do
+    `HOST_ATTACKED`, ou seja **antes** de o dano adiado vencer — o cliente recebia a vida
+    velha. Quem manda a barra é o `aplicar_dano_no_jogador`, pelo `EstadoMudou`. A lentidão
+    do banco é que escondia o erro.
+
+    **A Alma da Ninfa do Mar de Conchas (44357) na bolsa comum está certa.** Quem decide o
+    inventário não é o tipo do item, e sim o `m_bCommonItem` de cada item do `tasks.data`:
+    `_DeliverItem` manda os `true` para `DeliverCommonItem` → `IL_INVENTORY` e os `false`
+    para `DeliverTaskItem` → `IL_TASK_INVENTORY` (`task/TaskProcess.cpp:1190-1208`,
+    `task/taskman.cpp:281-330`). A missão **31734 "A Ninfa do Mar de Conchas"** declara o
+    item como o que o monstro 44618 solta com `comum = true`. Nosso `dar_item` já respeita o
+    bit; o item entrou na bolsa às 17:49:58 local, no mesmo segundo do abate.
+
+    ### Provas
+
+    Suíte inteira com o banco: **604 testes, 0 falhas**. Novos:
+    `o_tique_devolve_o_autosave_em_vez_de_gravar_dentro_do_lock` (o tique devolve o lote e
+    **não** grava; quem grava é o `gravar_autosave`) e
+    `a_durabilidade_das_pecas_vestidas_fica_no_mundo`. O
+    `o_monstro_revida_e_o_cliente_fica_sabendo` passou a conferir o desgaste na memória do
+    mundo e a esperar o banco — e a exigir que o `SELF_INFO_00` do golpe venha **depois** do
+    dano.
+
+    ### Falta
+
+    Por que o PostgreSQL do contêiner chegou a 4 s por escrita naquele minuto não está
+    provado — isolado, ele responde em 35 ms. A máquina estava com outra sessão compilando e
+    rodando a suíte contra o mesmo banco, o que é suspeita razoável, não prova. O que foi
+    corrigido é o que importa: nada que espere o banco fica mais no caminho do jogo.
+
+73. **Sessão 2026-09-21: o chi que as habilidades cobram, o escudo da Barreira de Asa e o
+    hierograma que dispara sozinho.**
+
+    **Chi das habilidades.** Cada habilidade tem `apcost` e `apgain` fixos no stub
+    (`cskill/skill/skill.h:239,588`). `SkillStub::Condition` recusa a conjuração com
+    `GetAp() < apcost` (`cskill/skill/skill.cpp:125`) — sem mandar erro, porque o cliente já
+    barra — e a execução aplica a diferença de uma vez:
+    `int ap = GetApgain() - GetApcost(); if (ap) ModifyAP(ap)`
+    (`cskill/skill/playerwrapper.cpp:170-177`). Os dois números **já estavam** no
+    `habilidades.json` desde a extração; a struct `HabilidadeDoServidor` é que não os lia, e
+    o mundo nunca os cobrou. Agora cobra: Flecha Glacial (245) tira 25, Barreira de Asa (249)
+    tira 45, e o `SELF_INFO_00` com a barra nova sai junto, como o `SetRefreshState` do
+    `ModifyAP`.
+
+    **Correção de um erro meu (B70).** Ficou escrito que a Flecha Fulgurante (244) não gerava
+    chi, porque o corpo dela não chama `ModifyAP`. Quem chama é a execução, com o `apgain` do
+    stub — e o da 244 é **10** (`cskill/skills/skill244.h:142-144`). O relato do Murillo
+    estava certo e a spec, errada; a §8.0 foi corrigida.
+
+    **Barreira de Asa (249).** O log dizia `habilidade 249 — sem porte: Wingshield`: o efeito
+    não existia no `crate::efeitos`, então o buff era aplicado e sumia no mesmo instante.
+    `filter_Wingshield` (`cskill/skill/skillfilter.h:4136-4232`) é
+    `UNIQUE|BUFF|HEARTBEAT|REMOVE_ON_DEATH|ADJUST_DAMAGE|TRANSFERABLE_BUFF`, com
+    `HSTATE_WINGSHIELD` 69 e `VSTATE_WINGSHIELD` 29 (`statedef.h:40,261`). A 249 o arma com
+    `SetAmount(60 + 75 × nível)`, `SetValue(4 + 6 × nível)` e `SetTime(20000)`
+    (`skills/skill249.h:257-262`). O `AdjustDamage` compara **um quinto** do golpe com o
+    escudo: enquanto couber, passa só esse quinto e o escudo perde quatro vezes o absorvido;
+    quando não cabe, o dano é reduzido na proporção do que sobrou e o escudo zera. Abaixo de
+    6 o filtro se apaga. O `Heartbeat` injeta o `SetValue` inteiro a cada 3 s.
+
+    **Hierograma e amuleto automáticos.** Estavam anotados como `falta` desde o B67. Vesti-los
+    nos slots **20** e **21** (`EQUIP_INDEX_HP_ADDON`/`MP_ADDON`, `gs/item.h:216-217`) os
+    ativa (`OnActivate` → `SetHPAutoGen`/`SetMPAutoGen`, `gs/item/item_amulet.cpp:22-46`). No
+    batimento de 1 s, com `trigger_percent × máximo > atual`, o `AutoGenStat`
+    (`gs/player_imp.h:3562-3593`) confere a recarga (`COOLDOWN_INDEX_AUTO_HP` 24 e `AUTO_MP`
+    25), devolve `máximo − atual` preso ao que resta e arma o `cool_time` do próprio item
+    (10 s no Amuleto do Guardião). O que sobra é gravado nos **octetos do item**; em zero o
+    amuleto sai do corpo com `PLAYER_DROP_ITEM` tipo `DROP_TYPE_USE` (11). O eaa tem os dois
+    vestidos: 35370 no slot 20 e 35376 no 21.
+
+    ### Provas
+
+    Testes novos: `o_custo_e_o_ganho_de_chi_vem_do_stub` (os quatro números lidos do
+    `habilidades.json`), `a_barreira_de_asa_absorve_dano_e_devolve_mana` (ícone, estado, as
+    duas metades do `AdjustDamage` e os dois tiques de mana em 6 s),
+    `o_amuleto_traz_o_total_o_gatilho_e_a_recarga` (do `elements.data` do `realm_155`) e
+    `o_hierograma_vestido_devolve_mana_sozinho` (dispara, desconta do amuleto, arma a recarga
+    e não repete dentro dela).
+
+74. **Sessão 2026-09-21 (parte 2): a recarga do amuleto no cliente, e por que a Alma da
+    Pantera vai mesmo para a bolsa comum.**
+
+    **A recarga do amuleto.** O servidor já a respeitava desde o B73 (o hierograma não
+    dispara duas vezes dentro do `cool_time`), mas o ícone no cliente não escurecia: faltava
+    o comando. `gplayer_imp::SetCoolDown` (`gs/player.cpp:12701-12709`) grava **e sempre
+    manda** `set_cooldown(idx, msec)` ao cliente; como `base_amulet::OnAutoTrigger` chama
+    `SetCoolDown(cooldown_idx, cooltime)` (`gs/item/item_amulet.cpp:16-18`), o `SET_COOLDOWN`
+    (198) sai a cada disparo, com `COOLDOWN_INDEX_AUTO_HP` (24) ou `AUTO_MP` (25). O evento
+    `AmuletoDisparou` passou a levar o índice e o tempo, e o mundo manda o comando.
+
+    **Item de missão na bolsa comum: não é defeito.** Quem escolhe a bolsa é o
+    `m_bDropCmnItem` de cada `MONSTER_WANTED` (`gs/task/TaskTempl.inl:2028-2037`), exatamente
+    como nós fazemos. Três verificações:
+
+    1. O byte está alinhado: das 995 entradas com item, **nenhuma** tem o `m_fDropProb`
+       vizinho fora de 0..1, e os valores são redondos (1,0; 0,8; 0,6). Byte deslocado
+       produziria lixo nesse float.
+    2. O bit não é degenerado: 797 dos itens soltos vão para a bolsa de missão e 198 para a
+       comum.
+    3. O bit acompanha o **tipo** do item: no `realm_155`, todos os 413
+       `TASKMATTER_ESSENCE` vão para a bolsa de missão e os `TASKNORMALMATTER_ESSENCE` para
+       a comum — "matéria de missão **normal**" é a que fica no inventário normal. A única
+       exceção é a Presa de Filhote de Lobo (2654), e ela confirma que **o bit é a
+       autoridade**, não o tipo.
+
+    A Alma da Pantera Queimada de Sol (44363, missão 31765 "Queda do Sol") e a Alma da Ninfa
+    (44357, missão 31734) são `TASKNORMALMATTER_ESSENCE` com `comum = true`: bolsa normal,
+    como no original.
+
+    ### Provas
+
+    Teste novo `o_tipo_do_item_de_missao_decide_a_bolsa` (cruza as duas tabelas do
+    `elements.data` com todos os `MONSTER_WANTED` do `tasks.data` e fixa a exceção em 1) e
+    asserção do `SET_COOLDOWN` (198) com índice 25 e 10 s no
+    `o_hierograma_vestido_devolve_mana_sozinho`. Exemplo novo
+    `cargo run -p pw-data-loader --example bolsa_do_item_de_missao`.
+
+75. **Sessão 2026-09-21 (parte 3): o Daimon existe agora — ficha e experiência.**
+
+    O relato era "o Daimon não ganha experiência e aparentemente não faz nada". Ele não fazia
+    mesmo: **não havia uma linha** sobre ele no projeto. O `GOBLIN_ESSENCE` não era lido, o
+    item não tinha bloco de dados e nada ligava o ganho de experiência do jogador a ele. O
+    Daimon do eaa ("Verão", 23752) está no slot **23** do equipamento, que é o
+    `EQUIP_INDEX_ELF` do original (`gs/item.h:219`) — o cliente o pôs no lugar certo e o
+    servidor o ignorava.
+
+    **O estado do Daimon é o bloco do item.** `elf_item::Save` (`gs/item/item_elf.cpp:172-185`)
+    grava, nesta ordem: o `elf_essence` de 38 bytes com `#pragma pack(1)`
+    (`item_elf.h:84-102`) — experiência, nível, total de atributos, força/agilidade/
+    vitalidade/energia, total de gênios, os 5 gênios, refino, vigor e estado —, a lista de
+    equipamento e a de habilidades, cada uma precedida da contagem em 4 bytes. Um Daimon novo
+    sai de `generate_elf` (`gs/template/generate_item_temp.h:2442-2524`) com nível 1, um ponto
+    de gênio, **20000** de vigor e as `default_skill1..3` do `GOBLIN_ESSENCE` no nível 1.
+
+    **A experiência é um décimo da do jogador**, toda vez que ele ganha:
+    `ElfReceiveExp(exp / 10)` (`gs/player.cpp:2921-2928`, `player_imp.h:2471`). O `InsertExp`
+    (`item_elf.cpp:692-750`) aplica um fator de obtenção que é a razão dos níveis —
+    `elf_exp_loss_constant[i]` é a identidade, então o fator é `nível do Daimon ÷ nível de
+    quem deu`, com o mínimo de 10 % —, sobe **quantos níveis couberem** no laço e, ao
+    alcançar o nível do dono, para a um ponto de subir. Cada nível dá um ponto de atributo e,
+    a cada cinco até o 100, um de gênio (`LevelUp`, `:775-816`). Sem subir de nível o cliente
+    recebe `ELF_EXP` (283, 4 bytes); subindo, a ficha inteira do item.
+
+    Como o amuleto do B73, o Daimon vive em memória (`PlayerEntity::daimon`), preenchido pelo
+    `recalcular_equipamento`, e o bloco vai ao banco no fim do `com_contexto`.
+
+    ### Provas
+
+    Arquivo novo `crates/pw-gs/tests/daimon.rs`, 3 testes: o bloco do Daimon novo campo a
+    campo contra o gerador (e a releitura idempotente), o laço da experiência (1/5 de 50 vira
+    10; 1000 de experiência leva do nível 1 ao 5 com 8 de sobra, 4 pontos de atributo e 1
+    gênio; no teto para em 99 e não ganha mais; Daimon acima do dono não recebe nada) e o
+    `GOBLIN_ESSENCE` do `realm_155`. O `ELF_EXP` passou pela guarda que confere os
+    codificadores contra o IR.
+
+    ### Falta
+
+    O bônus de atributo sorteado de 10 em 10 níveis (`rand_prop` com `abase::RandSelect`,
+    `item_elf.cpp:779-796`: a semântica do sorteio não está medida), o equipamento e as
+    habilidades do Daimon, o vigor, as pílulas de experiência, a decomposição, o refino e a
+    distribuição de pontos.
+
+76. **Sessão 2026-09-21 (parte 4): a flor que acorda um monstro, os monstros que não
+    atacavam, e por que o Daimon não ganha experiência.**
+
+    Três relatos do teste em jogo, três causas distintas — e uma delas não era defeito.
+
+    **A missão da Flor de Safira (31779).** O Murillo colheu a flor muitas vezes e a missão
+    não andou. A mina 44566 do `realm_155` tem `materials_1_id = 0`: ela **não produz item
+    nenhum**. O que ela tem é `npcgen_1_id_monster = 44608`, `num = 1`, `life_time = 30` — os
+    `npcgen_1..4` do `MINE_ESSENCE`. Colher a flor **acorda o Guardião de Almas**, um monstro
+    de nível 16 que vive 30 s, e é dele que cai o Estame (44371) com 80 %, pelo
+    `MONSTER_WANTED` da missão. A descrição da missão já dizia: "um dos Guardiões de Almas é
+    uma Flor de Safira aparentemente inofensiva". Nosso leitor de minas ignorava esses
+    campos, então colher não fazia nada. De passagem, confirmei que o `CheckMining`
+    (`gs/task/TaskTempl.inl:2105-2145`) só entrega item quando o método da missão é "coletar
+    N itens", que não é o caso desta — o nosso `colheu_mina` já fazia a mesma recusa, e está
+    certo.
+
+    **Nenhum monstro atacava sozinho.** O campo existe e nós já o líamos sem usar:
+    `aggressive_mode` do `MONSTER_ESSENCE` — **4.874 dos 8.054** monstros do realm são
+    agressivos, incluindo o Guardião de Almas. No original o monstro agressivo recebe a marca
+    `MSG_MASK_PLAYER_MOVE` (`npcgenerator.cpp:2534-2537`) e o jogador, ao andar, difunde
+    `GM_MSG_WATCHING_YOU` para quem está a até `GetMaxMobSightRange` — **15 m**
+    (`playerctrl.cpp:265-276`, `worldmanager.cpp:48`). A decisão final é da política do
+    `aipolicy.data`, que ainda não interpretamos; aqui o monstro agressivo sem alvo passa a
+    pegar o jogador vivo mais perto dentro dos 15 m.
+
+    **O Daimon está ligado — o ganho é que trunca para zero.** O bloco dele foi criado no
+    primeiro abate (15:28:33 de hoje, no banco), então o B75 está no ar e funcionando. O que
+    acontece é aritmética do original: o fator de obtenção é a razão dos níveis com piso de
+    10 % (`GetExpObtainFactor`, `item_elf.cpp:754-773`) e o resultado é truncado para inteiro
+    (`:715`). Com o Daimon no nível 1 e o dono no 16, um monstro de **80** de experiência dá
+    `80 / 10 × 0,1 = 0,8` → **zero**. Só a partir de 100 de experiência por monstro entra o
+    primeiro ponto. Não há o que corrigir: é o que o original faz. O caminho rápido no jogo
+    são as pílulas de experiência, que seguem sem porte.
+
+    ### Provas
+
+    Suíte com o banco: **615 testes, 0 falhas**. Uma rodada intermediária acusou uma falha
+    que não se repetiu com `--no-fail-fast` nem nas duas execuções seguintes — é o teste de
+    tempo sob carga já conhecido, não uma regressão. Novos:
+    `a_mina_da_flor_de_safira_acorda_o_guardiao` (a mina não produz material, aponta para a
+    missão 31779 e acorda o 44608 por 30 s; e o 44608 é agressivo),
+    `o_monstro_agressivo_ataca_quem_chega_perto` (passivo não odeia sozinho; agressivo pega a
+    5 m, não pega a 20 m, e morto não pega nada) e
+    `o_ganho_trunca_para_zero_com_pouca_experiencia`.
+
+73-126. **Sessão 2026-09-20: inventário do 1.2.6 em árvore isolada (versao-126).**
 
     Pedido: trazer jogabilidade sem tocar na sessão 155. Worktree `../pw-126` criada
     do HEAD `2dca19e`; alterações da árvore original preservadas. B70–B72 não são
@@ -8006,7 +8301,7 @@ comparação lado a lado.
     Falta fechar camada 2 (entrada/propriedades/inventário/barras) antes do combate.
 
 
-74. **Sessão 2026-09-20: entrada 126 medida no PCAP e no binário.**
+74-126. **Sessão 2026-09-20: entrada 126 medida no PCAP e no binário.**
 
     `docs/ENTRADA_126.md` registra provas, limites e roteiro em jogo.
     EQUIP_DATA usava máscara u64 comum, quatro bytes além do 126; captura
@@ -8030,7 +8325,7 @@ comparação lado a lado.
     Nenhum commit, publicação, reinício ou teste visual declarado.
 
 
-75. **Sessão 2026-09-21: combate 126, comando 144 e cadência medida.**
+77. **Sessão 2026-09-21: combate 126, comando 144 e cadência medida.**
 
     Base a305e51, árvore versao-126. HOST_SKILL_ATTACKED saía pelo escritor
     comum de 19 B (`bus_server.rs:2489`); captura `s2c-144.txt:2` e cliente
@@ -8045,7 +8340,7 @@ comparação lado a lado.
     protocolo + 3 filtros de mundo aprovados, sem suíte completa.
     Sem commit/publicação; sem teste visual. Camada 4 não iniciada.
 
-76. **Sessão 2026-09-21: experiência e pacotes de itens 126; leitor v55 adiado.**
+78. **Sessão 2026-09-21: experiência e pacotes de itens 126; leitor v55 adiado.**
 
     Captura original e validador do cliente exigem 31/99=14 B, 46=9 B,
     72=7+13*n e 156=10 B; chamadas diretas em jogo.rs usavam formatos 155.
@@ -8061,7 +8356,7 @@ comparação lado a lado.
     Por pedido do usuário, leitor fica para sessão com modelo mais barato:
     docs/PROMPT_TASKS_V55.md contém escopo, critérios e relatório de retorno.
 
-77. **Sessão 2026-09-22: mapa estrutural completo do `tasks.data` v55.**
+79. **Sessão 2026-09-22: mapa estrutural completo do `tasks.data` v55.**
 
     O arquivo do realm 126 foi conferido em 20.793.663 bytes, SHA-256
     `ee042d417452cd26e076280fd2f8d0d05bda1c63b1777abfc6c7d5f8d7ca8017`, com
@@ -8085,3 +8380,16 @@ comparação lado a lado.
     Não foi alterado `tasks.rs`: falta projetar os campos fixos consumidos pelo servidor e
     escrever/testar o leitor Rust v55, que terá de impor o mesmo fechamento por offset.
     Sem contêiner, publicação, commit ou teste Cargo nesta etapa de evidência.
+
+80. **Sessão 2026-09-22: sincronização da versao-126 com multi-versions 6322d88.**
+
+    Resultados 126 separados em ccf7ae4 (combate/itens) e 36a88da (mapa v55,
+    sem leitor Rust). Validador repetido: 2819 raízes/7994 tarefas, EOF exato.
+    Merge com conflito apenas em estado/histórico; série 155 B70–B76 preservada.
+    Combate/itens 126 agora B77/B78; mapa v55 B79. Entradas históricas de
+    inventário/entrada qualificadas B73-126/B74-126 para evitar outra colisão.
+    A assinatura own_ext_prop ganhou max_ap: o teste da captura omitia argumento.
+    Acrescentado zero, os quatro bytes finais de s2c-50.txt:11; 19 testes focados
+    de layouts aprovados com banco (merge-layout-depois.log:26).
+    Suíte ampla e decisão do cenário de mundo ficam para a etapa seguinte.
+    Nenhum contêiner alterado ou publicação feita.

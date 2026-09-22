@@ -86,6 +86,7 @@ fn monstro() -> MonsterEntity {
         ataque_em_ticks: 30,
         atraso_do_dano_em_ticks: 10,
         aggro_range: 30.0,
+        agressivo: false,
         sight_range: 40,
         // Toda a vida máxima em experiência: quem tira os 137 de vida leva 137.
         exp: 480,
@@ -994,6 +995,11 @@ async fn a_vida_do_monstro_so_cai_depois_do_atraso_do_golpe() {
     .unwrap();
     // HOST_START_ATTACK + ATTACK_ONCE + HOST_ATTACKRESULT: o cliente já sabe do golpe.
     let resposta = receber(&mut link, 3).await;
+    assert_eq!(
+        resposta.iter().map(|v| cmd_de(v)).collect::<Vec<_>>(),
+        vec![84, 83, 24],
+        "a sessão deve abrir, descontar a flecha em memória e anunciar o golpe antes da persistência"
+    );
     let resultado = resposta
         .iter()
         .find(|v| cmd_de(v) == 24)
@@ -1226,47 +1232,73 @@ async fn o_monstro_revida_e_o_cliente_fica_sabendo() {
         "cEquipment veio {peca}: devia ser a peça sorteada entre 1 e 10"
     );
 
-    // E ela perdeu `DURABILITY_DEC_PER_HIT` (25, `gs/config.h:60`) — só ela.
+    // A vida **do próprio jogador** vai no `SELF_INFO_00` (38), e não no `NPC_INFO_00`
+    // (33): o cliente entrega o 33 ao gerenciador de NPCs, que não conhece jogador nenhum
+    // (`EC_GameDataPrtc.cpp`). Era o comando errado, e o aviso morria lá.
+    //
+    // Ela vem **depois** do `HOST_ATTACKED`, quando o dano adiado vence — o golpe é
+    // anunciado antes de doer (B62/B72).
+    let barra = esperar_comando(&mut link, 38).await;
+    // `cmd_self_info_00`: sLevel(2) State(1) Level2(1) iHP(4) ... depois do cabeçalho.
+    let hp_avisado = i32_em(&barra, 2 + 4);
+    assert!(hp_avisado > 0, "o SELF_INFO_00 veio com o jogador morto");
+    let hp_no_mundo = mundo.read().await.players[&(roleid as i64)].hp;
+    assert!(
+        hp_avisado >= hp_no_mundo,
+        "o HP avisado ({hp_avisado}) é menor que o do mundo ({hp_no_mundo}) — o aviso está adiantado"
+    );
+    assert!(
+        hp_avisado < mundo.read().await.players[&(roleid as i64)].max_hp,
+        "o SELF_INFO_00 do golpe veio com a vida cheia — foi mandado antes de o dano cair"
+    );
+
+    // Daqui em diante o teste espera o banco, e nesse tempo o monstro bate de novo: o que
+    // for comparado com o estado do mundo tem de ficar acima desta linha.
+
+    // E ela perdeu `DURABILITY_DEC_PER_HIT` (25, `gs/config.h:60`) — só ela. O desgaste
+    // acontece na memória do mundo, que é o que o comando acima acabou de usar; o banco
+    // acompanha depois, fora do caminho da resposta (B72).
+    let na_memoria: i32 = mundo.read().await.players[&(roleid as i64)].pecas[1..=10]
+        .iter()
+        .map(|p| p.map(|(dur, max)| max - dur).unwrap_or(0))
+        .sum();
+    assert!(
+        na_memoria >= 25 && na_memoria % 25 == 0,
+        "o golpe recebido desgastou {na_memoria} na memória do mundo — devia ser 25 por golpe"
+    );
+    let itens_para_esperar = itens.clone();
+    let chegou = ate_async(|| {
+        let itens = itens_para_esperar.clone();
+        async move {
+            let vestido = itens.list_by_container(roleid, pw_core::ContainerType::Equipment).await.unwrap_or_default();
+            let gasto: u32 = vestido.iter().filter(|i| (1..=10).contains(&i.slot)).map(|i| DURABILIDADE_DA_PECA - i.durability).sum();
+            gasto >= 25 && gasto % 25 == 0
+        }
+    })
+    .await;
+    assert!(chegou, "o desgaste da peça não chegou ao banco");
     let vestido = itens
         .list_by_container(roleid, pw_core::ContainerType::Equipment)
         .await
         .expect("ler o equipamento");
-    let gasto: u32 = vestido
-        .iter()
-        .filter(|i| (1..=10).contains(&i.slot))
-        .map(|i| DURABILIDADE_DA_PECA - i.durability)
-        .sum();
-    assert!(
-        gasto >= 25 && gasto % 25 == 0,
-        "o golpe recebido desgastou {gasto} — devia ser 25 por golpe"
-    );
 
     // E o golpe **dado** gastou a arma em `DURABILITY_DEC_PER_ATTACK` (2, `gs/config.h:61`;
     // `weapon_item::OnAfterAttack`, `item/equip_item.cpp:978-988`).
-    let arma = vestido.iter().find(|i| i.slot == 0).expect("o personagem nasce com arma");
-    let gasto_da_arma = arma.max_durability - arma.durability;
-    assert!(
-        gasto_da_arma >= 2 && gasto_da_arma % 2 == 0,
-        "a arma gastou {gasto_da_arma} — devia ser 2 por golpe normal"
-    );
+    let _ = &vestido;
+    let itens_para_esperar = itens.clone();
+    let arma_gastou = ate_async(|| {
+        let itens = itens_para_esperar.clone();
+        async move {
+            let Ok(Some(arma)) = itens.get_item_by_slot(roleid, pw_core::ContainerType::Equipment, 0).await else {
+                return false;
+            };
+            let gasto = arma.max_durability - arma.durability;
+            gasto >= 2 && gasto % 2 == 0
+        }
+    })
+    .await;
+    assert!(arma_gastou, "a arma não gastou 2 por golpe normal");
 
-    // A vida **do próprio jogador** vai no `SELF_INFO_00` (38), e não no `NPC_INFO_00`
-    // (33): o cliente entrega o 33 ao gerenciador de NPCs, que não conhece jogador nenhum
-    // (`EC_GameDataPrtc.cpp`). Era o comando errado, e o aviso morria lá.
-    assert!(
-        !avisos.iter().any(|v| cmd_de(v) == 33),
-        "a vida do jogador saiu como NPC_INFO_00 (33) — vai para o gerenciador de NPCs"
-    );
-    let barra = avisos
-        .iter()
-        .find(|v| cmd_de(v) == 38)
-        .expect("sem SELF_INFO_00 (38) — o jogador não soube quanta vida lhe restou");
-    // `cmd_self_info_00`: sLevel(2) State(1) Level2(1) iHP(4) ... depois do cabeçalho.
-    assert_eq!(
-        i32_em(barra, 2 + 4),
-        mundo.read().await.players[&(roleid as i64)].hp,
-        "o HP avisado ao cliente não é o do mundo"
-    );
 }
 
 #[tokio::test]
@@ -1957,10 +1989,13 @@ async fn usar_pocao_cura_pelo_valor_do_elements_data() {
 
     const POCAO: u32 = 7777;
     const CURA_HP: i32 = 37;
+    const CULTIVO: u8 = 3;
     {
         // Um remédio conhecido, posto direto no `elements` deste mundo de teste.
         let mut m = mundo.write().await;
-        let dm = Arc::get_mut(&mut m.data_manager).expect("único dono do data_manager");
+        // Um cultivo já conquistado: todo `SELF_INFO_00` tem de repeti-lo (B71).
+        m.players.get_mut(&(roleid as i64)).expect("o jogador entrou").cultivation = CULTIVO as i32;
+        let dm = Arc::make_mut(&mut m.data_manager);
         dm.elements.medicines.insert(
             POCAO,
             pw_data_loader::MedicineTemplate {
@@ -1968,7 +2003,7 @@ async fn usar_pocao_cura_pelo_valor_do_elements_data() {
                 name: "Poção de Teste".into(),
                 hp_restore: CURA_HP,
                 mp_restore: 0,
-                cooldown_sec: 0.0,
+                cooldown_sec: 0.05,
                 req_level: 1,
                 price: 10,
             },
@@ -2011,13 +2046,26 @@ async fn usar_pocao_cura_pelo_valor_do_elements_data() {
     .await
     .unwrap();
 
-    // HOST_USE_ITEM (91), unfreeze (181) e os status (38).
-    let r = receber(&mut link, 3).await;
+    // SET_COOLDOWN (198), HOST_USE_ITEM (91), unfreeze (181) e os status (38).
+    let r = receber(&mut link, 4).await;
+    assert!(r.iter().any(|v| cmd_de(v) == 198), "sem SET_COOLDOWN (198)");
     assert!(r.iter().any(|v| cmd_de(v) == 91), "sem HOST_USE_ITEM (91)");
     assert!(
         r.iter().any(|v| cmd_de(v) == 38),
         "sem SELF_INFO_00 (38) — a poção não curou"
     );
+    assert!(
+        r.iter().all(|v| cmd_de(v) != 160),
+        "usar poção enviou TASK_DELIVER_LEVEL2 (160), que é exclusivo do prêmio m_ulNewPeriod"
+    );
+    // O `Level2` do `SELF_INFO_00` é o cultivo (byte 5: 2 do comando, 2 do nível, 1 do
+    // estado). Zero aqui derruba o cultivo do cliente e faz o comando seguinte, com o valor
+    // verdadeiro, parecer um avanço — `CanPlayTaoistEffect` (`EC_Player.cpp:7434-7445`)
+    // toca o efeito sempre que o novo é maior que o anterior. Era a tela de cultivo ao usar
+    // poção (B71).
+    for v in r.iter().filter(|v| cmd_de(v) == 38) {
+        assert_eq!(v[5], CULTIVO, "o SELF_INFO_00 da poção mandou outro cultivo");
+    }
 
     let hp = mundo.read().await.players[&(roleid as i64)].hp;
     assert_eq!(
@@ -2033,6 +2081,42 @@ async fn usar_pocao_cura_pelo_valor_do_elements_data() {
         .unwrap()
         .expect("a pilha inteira sumiu");
     assert_eq!(sobrou.count, 4, "usou uma e devia sobrar quatro");
+
+    // Ainda dentro dos 50 ms: o original recusa antes de consumir
+    // (`item_potion.cpp:25-31`) com ERR_OBJECT_IS_COOLING (53).
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::USE_ITEM, &corpo),
+    })
+    .await
+    .unwrap();
+    let r = receber(&mut link, 1).await;
+    let erro = r.iter().find(|v| cmd_de(v) == 25).expect("sem ERROR_MESSAGE durante a recarga");
+    assert_eq!(i32_em(erro, 2), 53, "erro de poção em recarga");
+    let sobrou = itens
+        .get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 30)
+        .await
+        .unwrap()
+        .expect("a pilha inteira sumiu durante a recarga");
+    assert_eq!(sobrou.count, 4, "a tentativa recusada consumiu uma poção");
+
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::USE_ITEM, &corpo),
+    })
+    .await
+    .unwrap();
+    let r = receber(&mut link, 4).await;
+    assert!(r.iter().any(|v| cmd_de(v) == 91), "a poção não voltou a ser aceita depois da recarga");
+    let sobrou = itens
+        .get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 30)
+        .await
+        .unwrap()
+        .expect("a pilha inteira sumiu");
+    assert_eq!(sobrou.count, 3, "a terceira utilização devia consumir a segunda poção");
 }
 
 #[tokio::test]
@@ -3670,6 +3754,149 @@ async fn clicar_de_novo_durante_a_sessao_nao_da_outro_golpe() {
     assert_eq!(fim.len(), 2 + 4);
     esperar_comando(&mut link, 84).await;
     assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_some_and(|s| s.proximo.is_none()));
+}
+
+/// B73 — o hierograma vestido dispara sozinho quando a mana cai do gatilho.
+///
+/// `gplayer_imp::OnHeartbeat` (`gs/player.cpp:9121-9128`) testa `trigger_percent × max > atual`
+/// a cada segundo e chama `AutoGenStat`, que confere a recarga, devolve o que falta (preso ao
+/// que resta no amuleto) e arma o `cool_time` do item (`gs/player_imp.h:3562-3593`,
+/// `gs/item/item_amulet.cpp:9-20`).
+#[tokio::test]
+async fn o_hierograma_vestido_devolve_mana_sozinho() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let (max_mp, ponto_inicial) = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).expect("o jogador entrou");
+        p.mp = 10; // bem abaixo dos 75 % do gatilho
+        p.auto_mp = Some(pw_gs::entity::AmuletoAtivo {
+            slot: 21,
+            item_id: 35376,
+            ponto: 100,
+            gatilho: 0.75,
+            recarga_ms: 10_000,
+        });
+        (p.max_mp, 100)
+    };
+
+    mundo.write().await.tick(1000).await;
+
+    {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        let devolvido = p.mp - 10;
+        assert!(devolvido > 0, "o hierograma não devolveu mana nenhuma");
+        // `offset = max − atual`, preso ao que resta no amuleto.
+        assert_eq!(devolvido, (max_mp - 10).min(ponto_inicial), "devolveu o que não devia");
+        let a = p.auto_mp.expect("o hierograma ainda tem carga");
+        assert_eq!(a.ponto, ponto_inicial - devolvido, "o gasto não saiu do amuleto");
+        assert_eq!(p.recarga_do_auto_mp_s, 10, "a recarga do item não foi armada");
+    }
+
+    // E o cliente recebe a recarga: `SetCoolDown` sempre manda `set_cooldown(idx, msec)`
+    // (`gs/player.cpp:12701-12709`) — é o que escurece o ícone do amuleto (B74). O índice é
+    // o `COOLDOWN_INDEX_AUTO_MP` (25).
+    let cd = esperar_comando(&mut link, 198).await;
+    assert_eq!(i32_em(&cd, 2), 25, "o SET_COOLDOWN veio com outro índice");
+    assert_eq!(i32_em(&cd, 6), 10_000, "o tempo da recarga não é o `cool_time` do item");
+
+    // No segundo seguinte a recarga segura o próximo disparo.
+    let antes = mundo.read().await.players[&(roleid as i64)].auto_mp.unwrap().ponto;
+    {
+        let mut m = mundo.write().await;
+        m.players.get_mut(&(roleid as i64)).unwrap().mp = 10;
+    }
+    mundo.write().await.tick(1000).await;
+    assert_eq!(
+        mundo.read().await.players[&(roleid as i64)].auto_mp.unwrap().ponto,
+        antes,
+        "disparou de novo dentro da recarga"
+    );
+}
+
+/// B72 — a durabilidade das peças vestidas vive no mundo, não só no banco.
+///
+/// O índice da peça desgastada vai **dentro** do `be_damaged` (`player.cpp:9552-9570`), e
+/// até aqui era o banco que o dizia: cada golpe recebido esperava um `SELECT`+`UPDATE`
+/// antes de o cliente ver o golpe. O original mexe na `item_list` vestida (`player.cpp:94`).
+#[tokio::test]
+async fn a_durabilidade_das_pecas_vestidas_fica_no_mundo() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens
+        .upsert_item(&pw_core::ItemRecord {
+            id: None,
+            character_id: roleid,
+            container_type: pw_core::ContainerType::Inventory,
+            slot: 9,
+            item_id: 4123,
+            count: 1,
+            max_count: 1,
+            refine_level: 0,
+            sockets_count: 0,
+            sockets: vec![],
+            durability: 900,
+            max_durability: 1000,
+            bind_status: 0,
+            octets: vec![],
+            custom_attributes: serde_json::json!({}),
+        })
+        .await
+        .expect("guardar o item");
+
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::EQUIP_ITEM, &[9u8, 0u8]) })
+        .await
+        .unwrap();
+    let _ = receber(&mut link, 5).await;
+
+    let pecas = mundo.read().await.players[&(roleid as i64)].pecas;
+    assert_eq!(pecas[0], Some((900, 1000)), "a arma vestida não entrou na memória do mundo");
+    assert!(
+        pecas[1..].iter().all(|p| p.is_none()),
+        "slot sem peça (ou peça sem durabilidade) tem de ficar vazio — é o 0x7f do `be_damaged`"
+    );
+}
+
+/// B72 — o tique **não** grava no banco: ele tira a fotografia e devolve.
+///
+/// O autosave gravava quatro vezes por jogador dentro do `world.write()` do tique, e o
+/// mundo inteiro ficava parado enquanto o banco respondia — 8 segundos sem um golpe no
+/// combate de 2026-09-20 20:50 UTC. Quem grava agora é o laço, com o lock já solto.
+#[tokio::test]
+async fn o_tique_devolve_o_autosave_em_vez_de_gravar_dentro_do_lock() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let _link = entrar(&mundo, addr, roleid).await;
+    let repo = mundo.read().await.char_repo.clone();
+
+    // Uma posição que só existe na memória do mundo.
+    const X: f32 = 123.5;
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).expect("o jogador entrou");
+        p.position.x = X;
+    }
+    let antes = repo.get_details_por_role(roleid).await.unwrap().expect("o personagem existe");
+
+    // Antes do minuto não sai nada.
+    assert!(mundo.write().await.tick(50).await.is_empty(), "o tique comum não devolve lote");
+
+    let lote = mundo.write().await.tick(60_000).await;
+    assert_eq!(lote.len(), 1, "o minuto fechou e o lote tem o jogador");
+    assert_eq!(lote[0].role_id, roleid);
+    assert_eq!(lote[0].posicao.x, X, "a fotografia é a do mundo");
+
+    // E o tique não escreveu: o banco ainda tem a posição antiga.
+    let depois = repo.get_details_por_role(roleid).await.unwrap().expect("o personagem existe");
+    assert_eq!(depois.position.x, antes.position.x, "o tique gravou no banco por conta própria");
+
+    // Quem grava é o laço, fora do lock.
+    pw_gs::world::gravar_autosave(repo.clone(), lote, mundo.read().await.world_id).await;
+    let gravado = repo.get_details_por_role(roleid).await.unwrap().expect("o personagem existe");
+    assert_eq!(gravado.position.x, X, "o lote não chegou ao banco");
 }
 
 /// `CheckAttack`: além de `attack_range + corpo do alvo` a sessão nem começa.

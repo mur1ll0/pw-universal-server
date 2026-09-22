@@ -5,7 +5,7 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-22**, B77 (mapa estrutural do tasks v55 fechado; worktree `versao-126`, base `a305e51`; sem publicação).
+> **Última atualização: 2026-09-22**, B80: merge 6322d88 + frente 126 B77/B78/B79; validação ampla pendente.
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -20,29 +20,31 @@
 
 ## 0. Em uma tela
 
-**Frente isolada 1.2.6 (B73, 2026-09-20):** branch `versao-126`, worktree `../pw-126`,
+**Frente isolada 1.2.6 (B73-126, 2026-09-20):** branch `versao-126`, worktree `../pw-126`,
 base `2dca19e`. Inventário de 98 ids S2C e 46 C2S do mundo em
 `docs/INVENTARIO_PROTOCOLO_126.md`, com captura relida em `docs/evidencias/126/`.
-Há divergências ainda em chamadas comuns (14 e 64); itens corrigidos no B76.
-Nenhum código alterado/publicado nesta etapa. B71/B72 da outra sessão não estão nesta base.
-B74: entrada medida em `docs/ENTRADA_126.md`; corrigidos EQUIP_DATA (mask32) e
+Há divergências ainda em chamadas comuns (14 e 64); itens corrigidos no B78.
+Base histórica do inventário; os commits 155 até 6322d88 foram incorporados no merge.
+B73-126/B74-126 identificam inventário/entrada antigos sem colidir com B73/B74 do 155.
+B74-126: entrada medida em `docs/ENTRADA_126.md`; corrigidos EQUIP_DATA (mask32) e
 avisos inexistentes no cliente. Fechamento local em 2026-09-21: **11 testes focados
 aprovados**, com `TEST_DATABASE_URL` definido. Parada para aprovação; Camadas 3/4
 fora do escopo desta sessão. A suíte iniciada anteriormente terminou com uma falha
 em persistência de missão (`subcomandos_no_mundo.rs:1807`); não repetida nem
 investigada nesta retomada, conforme o escopo reduzido.
 
-**B75 — Camada 3:** 84/83/24/26/33 conferidos byte a byte; 144 corrigido
+**B77 — Camada 3:** 84/83/24/26/33 conferidos byte a byte; 144 corrigido
 para 15 bytes somente no v126. Cadência do original medida; sem alteração da
 regra temporal comum nem alegação de igualdade visual. Seis testes focados
 aprovados com banco; documentação em `docs/COMBATE_126.md`. Parada para revisão.
-**B76 — Camada 4 parcial:** 31/46/72/99/156 corrigidos via trait; experiência
+**B78 — Camada 4 parcial:** 31/46/72/99/156 corrigidos via trait; experiência
 36/158 conferida na captura. Nove testes focados aprovados com banco, incluindo
 sentinelas 155. Sem suíte completa, commit ou publicação. `docs/ITENS_EXPERIENCIA_126.md`.
-Leitor tasks v55: B77 fechou no cliente o bloco fixo de 534 B, cada contador variável,
+Leitor tasks v55: B79 fechou no cliente o bloco fixo de 534 B, cada contador variável,
 diálogos e recursão. O validador fecha 2.819/2.819 raízes (7.994 tarefas) no último byte;
 o loader continua só no cabeçalho até projetar os campos fixos em Rust. Mapa e provas em
 `docs/RESULTADO_TASKS_V55.md`. Não se declara missão 126 jogável.
+
 
 **Alvo:** o **1.5.5**, servido pelo realm `realm_155` ao cliente 1.5.5 BR
 (`elements.data` v156, `tasks.data` 129, build 2569). Ordem combinada com o Murillo:
@@ -98,10 +100,50 @@ por ponto novo), e **viaja**: o serviço `GP_NPCSEV_TRANSMIT` confere índice, n
 cobra e teleporta. A coordenada de cada destino estava num arquivo que ninguém lia — o
 **`world_targets.sev`** (92 pontos no `realm_155`).
 
-**Barra de chi (B69):** não existia. O teto vem do prêmio `m_ulFuryULimit` de uma missão (a
-32394, de nível 9, dá 99); o golpe normal enche com o `angro_increase` da classe (Arqueiro: 5)
-e meditar dá 15 por segundo. O valor viaja no `iAP`/`iMaxAP` do `SELF_INFO_00`, que ia zero
-fixo. **Não há ganho ao apanhar** no 1.5.5.
+**Barra de chi (B69/B70):** o teto vem do prêmio `m_ulFuryULimit` de uma missão (a 32394, de
+nível 9, dá 99); o golpe normal enche com o `angro_increase` da classe (Arqueiro: 5) e meditar
+dá 15 por segundo. O valor corrente e o teto vão no `SELF_INFO_00`; o mesmo teto também precisa
+ir no último campo do `OWN_EXT_PROP`. Ele ia zero, e o cliente recebia 0→99 em cada atualização,
+mostrando repetidamente o aviso de aumento. A **Flecha Fulgurante não gera chi** no original:
+ela consome mana e aplica `Firearrow`. **Não há ganho ao apanhar** no 1.5.5.
+
+**Coleta que acorda monstro (B76):** a Flor de Safira não produz item — ela solta o Guardião
+de Almas, e é dele que cai o Estame da missão. Os `npcgen_1..4` do `MINE_ESSENCE` passaram a
+ser lidos e a nascer na coleta.
+
+**Monstro agressivo (B76):** `aggressive_mode` — 4.874 dos 8.054 monstros do realm — nunca
+tinha sido usado: nenhum monstro atacava sozinho. Agora o agressivo sem alvo pega o jogador
+mais perto dentro de 15 m, que é o alcance do aviso de movimento no original.
+
+**Daimon (B75/B76):** não existia nada dele no projeto — por isso "não fazia nada". Agora o item
+sai com o bloco de dados (o estado dele) e recebe **um décimo** da experiência do jogador,
+subindo de nível como no original. Falta o resto do sistema: equipamento e habilidades do
+Daimon, vigor, pílulas, refino e distribuir pontos.
+
+**Bolsa do item de missão (B74):** conferido e **correto**. Quem escolhe é o `m_bDropCmnItem`
+de cada missão, e ele acompanha o tipo do item: `TASKMATTER_ESSENCE` vai para a bolsa de
+missão, `TASKNORMALMATTER_ESSENCE` (as "Almas") para a normal. Uma única exceção no realm.
+
+**Chi, escudo e amuleto (B73/B74):** as habilidades passaram a cobrar o `apcost` e a dar o
+`apgain` do stub (a Flecha Glacial tira 25, a Barreira de Asa 45, a Flecha Fulgurante **dá**
+10 — a §8.0 dizia o contrário e foi corrigida). A Barreira de Asa ganhou o efeito
+`Wingshield`, que faltava por inteiro. E o amuleto/hierograma vestidos agora disparam sozinhos
+no batimento, como no original, gravando o que resta nos octetos do item.
+
+**Travamento no combate (B72):** o mundo parava por segundos porque o autosave gravava
+dentro do `world.tick` — e o tique segura o mundo inteiro. Saiu de lá; a durabilidade das
+peças passou a viver no `PlayerEntity`, e o `SELF_INFO_00` de quem apanha agora sai quando o
+dano cai, não no anúncio do golpe. Regra que ficou registrada: **nada que espere o banco no
+caminho do jogo**.
+
+**Item de missão na bolsa comum (B72):** não era defeito. Quem escolhe a bolsa é o
+`m_bCommonItem` de cada item do `tasks.data`, e a missão 31734 marca a Alma da Ninfa como
+item comum.
+
+**Poção e cultivo (B70/B71):** a poção agora respeita a recarga do `cool_time`, e o índice
+dela é o da **família** do item (`id_major_type` → classe → `COOLDOWN_INDEX_*`). E o `Level2`
+do `SELF_INFO_00` — que é o **cultivo** — ia zero em três caminhos; como o cliente anuncia
+avanço sempre que esse campo sobe, usar uma poção mostrava a tela de cultivo.
 
 **Item de voo (B69):** a "Glória de Shalim" entrou na bolsa sem bloco de dados, e é de lá que
 o cliente lê a máscara de classes — por isso não podia ser usada. O prêmio de missão agora
@@ -333,12 +375,14 @@ dois campos (`ataque_em_ticks` e `atraso_do_dano_em_ticks`) passaram a viver no
 durabilidade e **vermelho** em zero. O item 8/18 do relato está em 44%, por isso não aparece
 ainda.
 
-### 3.4 Publicado, falta ver em jogo (B65 a B69)
+### 3.4 Publicado, falta ver em jogo (B65 a B70) — e o B71, **ainda não publicado**
 
 Publicado em 2026-09-20 (`pw-realm-155` e `pw-world-155`). Roteiro com o **eaa** (nível 9):
 
-1. **Chi (B69)**: bater num monstro — a barra deve subir 5 por golpe, até 99. Sentar deve
-   somar 15 por segundo. Ela some ao relogar? Não deve: fica no banco.
+1. **Chi (B69/B70)**: bater num monstro — a barra deve subir 5 por golpe, até 99. Sentar deve
+   somar 15 por segundo. Usar Flecha Fulgurante **não** aumenta chi; ela não o faz no fonte.
+   Depois de relogar ou abrir C, o aviso “limite máximo de chi aumentado para 99” não deve mais
+   se repetir. Ela some ao relogar? Não deve: fica no banco.
 2. **Voo (B69)**: a "Glória de Shalim" deve poder ser equipada agora.
 3. **Teleporte (B69)**: falar com uma transportadora e escolher um destino — deve cobrar e
    levar. Sem dinheiro ou nível, recusa.
@@ -347,6 +391,31 @@ Publicado em 2026-09-20 (`pw-realm-155` e `pw-world-155`). Roteiro com o **eaa**
 5. **Buff (B68)**: a Flecha Fulgurante deve executar a animação (800 ms depois da conjuração).
 
 Onde olhar: `docker logs pw-world-155 | grep -iE "viajou|ponto de teleporte|cultivo"`.
+
+Depois de publicar o **B71** (falta pedido do Murillo), entram no roteiro:
+
+6. **Poção**: usar uma **não** pode mostrar a tela de avanço de cultivo. Usar de novo antes
+   dos 15 s recusa ("em recarga") sem consumir; passado o tempo, aceita. Poção de vida e de
+   mana têm recargas separadas, e o antídoto tem a dele.
+7. **Flecha**: a contagem no cliente cai de uma em uma, sem atraso e sem pular; um golpe
+   recusado (alvo longe, alvo morto) não pode comer flecha.
+8. **Travamento (B72)**: um combate longo (a Ninfa de novo) não pode ter pausas. O minuto do
+   autosave é o momento crítico — antes, o mundo parava nele. No log, `slow statement` pode
+   continuar aparecendo; o que não pode é o jogo parar junto.
+9. **Chi das habilidades (B73)**: a barra deve **cair 25** ao usar a Flecha Glacial e **45**
+   na Barreira de Asa; sem chi bastante, a habilidade nem sai. A Flecha Fulgurante **soma 10**.
+10. **Barreira de Asa (B73)**: o ícone do escudo deve ficar **20 s**, os golpes recebidos
+    devem doer bem menos enquanto ele dura, e a mana deve subir de 3 em 3 segundos.
+11. **Daimon (B75)**: abrir a janela dele — a ficha tem de aparecer com nível 1 e a
+    experiência tem de subir ao matar monstros (um décimo da sua). Ao subir de nível, o item
+    se atualiza sozinho. Ele nunca passa do seu nível.
+12. **Flor de Safira (B76)**: colher a flor tem de **acordar o Guardião de Almas** ali mesmo;
+    matando-o, o Estame cai (80 %) e a missão anda.
+13. **Monstro agressivo (B76)**: chegar a menos de 15 m de um monstro agressivo (a maioria
+    deles) tem de fazer ele vir para cima sem você bater primeiro.
+14. **Hierograma (B73/B74)**: deixar a mana cair abaixo de 75 % — ele deve repor sozinho, uma
+    vez a cada 10 s, e o número no item deve diminuir. O ícone tem de **escurecer pela
+    recarga** a cada disparo (B74). O amuleto de vida faz o mesmo a 50 %.
 
 ---
 
@@ -369,12 +438,13 @@ Onde olhar: `docker logs pw-world-155 | grep -iE "viajou|ponto de teleporte|cult
 
 ## 5. O que falta
 
-**Frente 126 (B77):** tabela dos vetores/prêmios/diálogos do `tasks.data` v55 foi fechada
+**Frente 126 (B79):** tabela dos vetores/prêmios/diálogos do `tasks.data` v55 foi fechada
 e validada por offset em todas as raízes. Próximo passo: projetar os campos fixos usados
 em `TaskTemplate`, implementar o leitor v55 e seus testes de corrupção; depois medir listas
 de missão e integrar com evidência.
 Pacotes de itens estão testados localmente; ainda aguardam aprovação/publicação e teste
 visual.
+
 
 Conferido contra o código em 2026-09-13 — cada linha diz onde está a evidência.
 
@@ -405,6 +475,13 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 8. **Sem trava de PvP:** qualquer jogador machuca qualquer outro, em qualquer lugar
     (`bus_server.rs`, comentário em `pvp`). O original exige duelo, guerra ou mapa de PK
     (B35d).
+9. **Daimon (B75/B76, parcial):** tem ficha e ganha experiência, e só. Faltam o equipamento e
+    as habilidades dele, o vigor, as pílulas de experiência, a decomposição, o refino,
+    distribuir pontos de atributo e de gênio, e o bônus sorteado de 10 em 10 níveis. **O ganho
+    truncar para zero com o Daimon muito abaixo do dono é do original** (B76), não é defeito.
+10. **IA de monstro (B76, parcial):** o agressivo pega quem chega perto, mas as estratégias de
+    ódio do `aipolicy.data` (facção, nível, invisibilidade, probabilidade) seguem sem
+    intérprete.
 
 ### 5B. Fidelidade — números e sinais que ainda não são os do original
 
@@ -532,11 +609,12 @@ Cada uma custou pelo menos uma sessão. A evidência está no item citado.
 
 ## 8. Índice do histórico (série B, frente 1.5.5)
 
-- **B76:** experiência e cinco pacotes de itens; nove testes focados, leitor v55 adiado.
-- **B77:** mapa completo e fechamento estrutural do tasks v55 (2.819 raízes/7.994 tarefas); leitor Rust pendente.
-- **B75:** combate 126, comando 144 e medição de cadência; seis testes focados.
-- **B74:** entrada 126, máscara de equipamento e avisos suportados; sem publicação.
-- **B73:** inventário de protocolo 1.2.6 na árvore isolada `versao-126` (sem publicação).
+- **B80:** merge multi-versions, max_ap da captura e referências sem colisão.
+- **B78:** experiência e cinco pacotes de itens; nove testes focados, leitor v55 adiado.
+- **B79:** mapa completo e fechamento estrutural do tasks v55 (2.819 raízes/7.994 tarefas); leitor Rust pendente.
+- **B77:** combate 126, comando 144 e medição de cadência; seis testes focados.
+- **B74-126:** entrada 126, máscara de equipamento e avisos suportados; sem publicação.
+- **B73-126:** inventário de protocolo 1.2.6 na árvore isolada `versao-126` (sem publicação).
 
 Para achar rápido o item citado num comentário de código ou numa seção acima.
 
@@ -585,3 +663,10 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 67 | 09-20 | auditoria da sessão de fora (dado dos efeitos, id do monstro invocado, compose); cultivo pela missão (`m_ulNewPeriod`) e `level2` = cultivo; poção no tempo; conteúdo do amuleto |
 | 68 | 09-20 | fase de execução da habilidade (animação do buff); pontos de teleporte descobertos e lembrados; `PorVersao` removido — quem despacha é a estratégia da versão |
 | 69 | 09-20 | barra de chi (teto por missão, ganho por golpe e meditação); item de voo com a máscara de classes; teleporte pela transportadora com o `world_targets.sev` |
+| 70 | 09-20 | `OWN_EXT_PROP` levava `max_ap = 0`; o cliente repetia o aviso de teto 99 e a Flecha Fulgurante foi confirmada como sem ganho de chi |
+| 71 | 09-20 | `Level2` (cultivo) ia zero em três `SELF_INFO_00` — era a tela de cultivo ao usar poção; recarga da poção pela família do `id_major_type`; a flecha desconta depois das conferências do golpe |
+| 72 | 09-20 | o combate travava porque o autosave gravava dentro do lock do tique; durabilidade das peças no mundo; a barra de vida de quem apanha segue o dano; a Alma da Ninfa na bolsa comum está certa (`m_bCommonItem`) |
+| 73 | 09-21 | habilidades cobram `apcost` e dão `apgain` (a 244 dá 10 — a spec dizia o contrário); efeito `Wingshield` da Barreira de Asa; amuleto e hierograma disparando no batimento |
+| 74 | 09-21 | `SET_COOLDOWN` (198) do amuleto ao cliente; provado que a bolsa do item de missão vem do `m_bDropCmnItem` e está certa |
+| 75 | 09-21 | o Daimon passa a existir: bloco de dados do item (o estado dele) e um décimo da experiência do jogador, com subida de nível |
+| 76 | 09-21 | a mina acorda monstro (`npcgen` do `MINE_ESSENCE`) — é a missão da Flor de Safira; monstro agressivo (`aggressive_mode`) ataca quem chega a 15 m; o ganho de chi do Daimon trunca para zero como no original |

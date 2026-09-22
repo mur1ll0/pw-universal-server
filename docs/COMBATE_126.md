@@ -1,4 +1,4 @@
-# Camada 3 — combate 126 (B75, 2026-09-21)
+# Camada 3 — combate 126 (B77, 2026-09-21)
 
 Base `a305e51`, branch `versao-126`. Sem publicação; Camada 4 não iniciada.
 
@@ -52,7 +52,7 @@ Com TEST_DATABASE_URL definido:
   sem golpe extra, habilidade contra jogador: **3/3**, 61 filtrados.
 
 Sem suíte completa, rebuild, reinício ou commit nesta etapa. A falha de missão
-registrada em B74 continua fora do escopo; não se declara regressão global aprovada.
+registrada em B74-126 continua fora do escopo; não se declara regressão global aprovada.
 
 ## Roteiro de jogo após publicação autorizada
 

@@ -1,6 +1,6 @@
 # Especificação 05: Simulação do mundo (`pw-gs`)
 
-> Itens/combate 126 conferidos em 2026-09-21, base `a305e51` + B75/B76; demais áreas em 2026-09-14, B50. Cobre
+> Itens/combate 126 conferidos em 2026-09-21, base `a305e51` + B77/B78; demais áreas em 2026-09-14, B50. Cobre
 > `crates/pw-gs/src/{world,bus_server,bus_server/jogo,ai,combat,habilidades,entity,grid,npc,server,missoes,progressao,economia}.rs`.
 >
 > Estado de cada regra: `confirmado` (visto em jogo), `testado` (teste automatizado),
@@ -85,6 +85,7 @@ Regras de `gs/aipolicy.cpp`, `gs/ainpc.cpp`, `gs/npcsession.cpp`:
 | passear | só com jogador a menos de `RAIO_DE_ATIVIDADE` 120 m (renovado por 20 batimentos de 1 s), com `patroll_mode`, sem ódio: anda (`walk_speed`, passo de 1 s) até ponto a **10 m** do nascimento, no máximo 8 passos; 10% de emendar outro |
 | fase do batimento | **sorteada por monstro** (`MonsterAi::new`): o batimento de 1 s e o passo de patrulha começam em pontos diferentes do segundo, porque o original não bate em todos ao mesmo tempo — o coletor pega `tamanho / TICK_PER_SEC` objetos por tique (`objmanager.h:213-229`, `worldmanager.h:262`) e cada NPC nasce com `idle_timer_count = Rand(0, NPC_IDLE_HEARTBEAT)` (`npcgenerator.cpp:2014`). Sem isso, dez monstros davam o passo no mesmo quadro e o cliente tocava dez sons de passo sobrepostos (B58) |
 | aviso ao cliente | `OBJECT_MOVE` (ms, ×256, modo) e `OBJECT_STOP_MOVE` com direção ao parar |
+| alvo sozinho | `aggressive_mode` do `MONSTER_ESSENCE` (**4.874 dos 8.054** monstros do `realm_155`): o monstro recebe a marca `MSG_MASK_PLAYER_MOVE` (`npcgenerator.cpp:2534-2537`) e o jogador, ao andar, avisa quem está a até **15 m** (`GetMaxMobSightRange`, `playerctrl.cpp:265-276`, `worldmanager.cpp:48`). Nosso monstro agressivo sem alvo pega o jogador vivo mais perto dentro desse raio (B76). `falta`: as estratégias de ódio do `aipolicy.data` (facção, nível, invisibilidade, probabilidades) |
 | ataque | intervalo = `attack_speed` do `MONSTER_ESSENCE` em tiques (`ChangeInterval`, `npcsession.cpp:60-70`; era 1,5 s fixo até o B62) e alcance do mesmo lugar. O `HOST_ATTACKED` leva o **id do monstro** que bateu (B59) — com zero ali o cliente não acha o atacante e o jogador perde vida sem ver golpe —, `cEquipment = 0x7f` ("nenhuma peça desgastada"; com zero o cliente gastava a arma a cada golpe) e `speed` = `damage_delay` do `MONSTER_ESSENCE` em tiques, que é a duração da animação no cliente (`npc.cpp:2118`, `EC_NPC.cpp:2043-2064`) (B60) |
 | habilidades de monstro | `falta`: nenhum monstro conjura. Quem decide isso é o `aipolicy.data` (`ai_skill_task`), e não há intérprete — 3.688 monstros têm habilidade no `MONSTER_ESSENCE` e nenhuma é usada |
 
@@ -163,6 +164,22 @@ Exemplo: a Flecha Fulgurante (244) tem `State1` de 3.000 ms (conjuração, o que
 O efeito entra no fim da conjuração; o `HOST_STOP_SKILL` só sai 800 ms depois. Mandando os
 dois juntos, o buff aparecia sem animação nenhuma (relato de 2026-09-19).
 
+### 5.1.0 Nada que espere o banco fica no caminho do jogo — `testado` (B72)
+
+O tique de 50 ms roda inteiro com o `world.write()` na mão, e as respostas a comandos
+esperam esse mesmo lock. Toda escrita que ficar dentro dele para **o mundo todo** pelo tempo
+do banco.
+
+| onde estava | o que acontecia | onde está agora |
+| :--- | :--- | :--- |
+| autosave (4 escritas por jogador, a cada 60 s) | dentro do `tick`, com o mundo trancado | o `tick` devolve a fotografia (`EstadoParaGravar`) e o laço grava em `tokio::spawn`, com o lock solto |
+| durabilidade da arma e da peça | `SELECT`+`UPDATE` antes de responder ao golpe | decidida em `PlayerEntity::pecas`; a gravação vai em `tokio::spawn` |
+| munição | lida e gravada a cada golpe | contagem na sessão de ataque; baixa em `tokio::spawn` (B71) |
+
+No combate de 2026-09-20 20:50 UTC o banco de teste passou a responder em 1 a 4 segundos e
+o mundo ficou **8 segundos sem um único golpe** — o autosave segurava o lock. Os avisos
+`slow statement` do `sqlx` no log do mundo são o rastro disso.
+
 ### 5.1.1 O dano cai depois da animação — `testado` (B62)
 
 O golpe é **anunciado na hora** (`HOST_ATTACKRESULT` a quem bateu, `HOST_ATTACKED` a quem
@@ -176,6 +193,10 @@ apanhou) e a vida só cai `attack.speed` tiques depois: `InsertDamageEntry(dano,
 | monstro | `_damage_delay` do `MONSTER_ESSENCE` | `gnpc_imp::DoAttack`, `npc.cpp:2118` |
 | habilidade | **nada** — o original não preenche `speed`, então o dano é imediato | `FillEnchantMsg`, `player.cpp:3174` |
 
+A barra de vida segue o dano, não o anúncio: o `SELF_INFO_00` de quem apanhou sai do
+`aplicar_dano_no_jogador`, quando o golpe adiado vence, e **não** junto do `HOST_ATTACKED` —
+mandá-lo junto era mandar a vida velha depois do golpe (B72).
+
 É o mesmo número que o cliente usa como duração da animação do golpe. Aplicar o dano na hora
 fazia a vida do monstro cair no clique, antes de a flecha sair — em jogo parecia "um golpe a
 mais" no começo de cada sessão —, e o jogador perdia vida antes de o monstro parar de correr
@@ -188,7 +209,7 @@ A morte do alvo passa a ser resolvida quando o dano adiado vence
 (`EventoDoMundo::MonstroMorreu`), e é o caminho único das três origens — golpe, habilidade e
 dano no tempo.
 
-**126, medição B75:** para 22 ticks anunciados, 23 intervalos do resultado no
+**126, medição B77:** para 22 ticks anunciados, 23 intervalos do resultado no
 PCAP tiveram mediana 1149,332 ms (1049,265–1199,262). Entre ATTACK_ONCE e resultado,
 mediana 49,3695 ms em 52 pares. São tempos de recepção no elo interno, não de
 animação. Regra comum preservada; três testes focados do mundo aprovados.
@@ -319,7 +340,10 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
   terra (dano no tempo reduzido pela defesa/resistência, punição de nível contra monstro, ¼
   entre jogadores, tique de 3 em 3 s), ± ataque/magia/defesa/resistência/evasão/precisão,
   ± cadência e conjuração, ± dano recebido, crítico, regeneração de vida/mana, ± vida máxima,
-  poder, invencível; instantâneos cura, cura/mana em %, dano direto, limpar bênçãos/maldições.
+  poder, invencível, **escudo de asa** (`Wingshield`, B73: absorve o golpe até o `SetAmount`
+  acabar — um quinto passa e o escudo perde quatro vezes isso — e injeta o `SetValue` de mana
+  a cada 3 s, `skillfilter.h:4136-4232`); instantâneos cura, cura/mana em %, dano direto,
+  limpar bênçãos/maldições.
   Convivência de `filter_man::AddFilter` (único substitui, fraco descarta, fundir absorve).
   Realces entram como `_en_percent` na conta do jogador e em monstro (NPC usa o mesmo
   `property_policy` com classe −1). Monstro atordoado/dormindo não age, preso não anda, lento
@@ -344,17 +368,17 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
 | **subida de nível** | `testado` | `IncExp`/`LevelUp` (`player.cpp:2627-2711,2831-2896`): curva `PLAYER_LEVELEXP_CONFIG` 202, +5 pontos de atributo, atributos refeitos (`recalcular_por_nivel`), vida e mana cheias, experiência zera no teto (`logic_level_limit` 105); `LEVEL_UP` (37) a todos, `SELF_INFO_00` e `OWN_EXT_PROP` ao próprio |
 | reviver na cidade (C2S 4) | `testado` | ponto de cidade do distrito do `precinct.sev` que contém a posição (`ResurrectInTown`, `playercmd.cpp:112`; spec 03 §3.7); sem distrito ou distrito de outro mapa, no lugar. Vida e mana a 10 % e perda de `GetLvlupExp × exp_lost[cultivo]` (`Resurrect`, `player.cpp:8716`) |
 | distribuir pontos (C2S 22) | `testado` (B51) | `PlayerSetStatusPoint` (`player.cpp:8598`): recusa se alguma parcela ou a soma passa dos livres; soma, refaz vida/mana, evasão e precisão pela agilidade; `ADD_STATUS_POINT` (51, 22 bytes) com os quatro e o que sobrou (recusa com zeros). O cliente pede `GET_EXT_PROP` (21), que responde `OWN_EXT_PROP` (`PlayerGetProperty`, `:8588`) — antes só `SELF_INFO_00`. Grava atributos e pontos juntos (`gravar_atributos`) |
-| munição (golpe normal) | `testado` (B51) | arma de longo alcance (`weapon_type` 1) tira 1 do slot 11 no banco (`DoAttack`, `player.cpp:3063-3070`); todo golpe manda `ATTACK_ONCE` (83, 3 bytes) com quantas saíram (`FillAttackMsg`, `:3134`) — o cliente desconta e gasta durabilidade. Sem munição o golpe não é recusado (`falta`: invalidar o arco pelo equipamento); o bônus de dano da flecha não entra |
+| munição (golpe normal) | `testado` (B51, B71) | arma de longo alcance (`weapon_type` 1) tira 1 do slot 11 (`DoAttack`, `player.cpp:3063-3070`). A contagem **mora na sessão de ataque**, como o `item_list` em memória do original: o banco é lido uma vez ao abrir a sessão (o número que vai no `HOST_START_ATTACK`) e a baixa é persistida fora do fio, senão a latência do banco alongava a cadência (B71). O `arrow_dec` do `ATTACK_ONCE` vale **1 sempre que a arma é de longe**, com ou sem flecha sobrando: o original ignora o retorno do `DecAmount` (`:3064-3070`). A flecha só sai depois das conferências do golpe. Sem munição o golpe não é recusado (`falta`: invalidar o arco pelo equipamento); o bônus de dano da flecha não entra |
 | voo | `confirmado` | pelo item no slot 12 (`EQUIPIVTR_FLYSWORD`); sem custo de mana, sem teto, `GP_STATE_FLY` fora do `state` |
 | teleporte de GM (`GOTO`) | `confirmado` | `y` do cliente é marcador; altura = chão + 0,5 m (`playercmd.cpp:4926`) |
 | sentar, gestos, roupa, zona segura | `confirmado` | `modo_roupa` e `voando` não persistem |
 | grupo | `testado` | estado de grupo no mundo (convite, aceite, recusa, saída) |
 | teleporte e troca de mapa | `testado` (B51) | `LongJump` (`player.cpp:8617`): mesmo mapa → posição, `NOTIFY_HOSTPOS` (14, 22 bytes: `pos, tag, line`) e o mundo em volta; outro mapa **do mesmo processo** → o roteador tira o jogador do mapa de origem (some da vista, sessão e entidade) e o põe no destino: `NOTIFY_HOSTPOS` com o `tag` novo (o cliente descarrega e carrega o mundo, `JumpToInstance`), chão por baixo, grava mapa e posição na hora, e streaming completo (`global_message.cpp:111-117`). Disparado por prêmio de missão (`m_ulTransWldId`) e por missão com `m_bTransTo`. Mapa de outro processo `falta`; o grupo se desfaz na troca |
-| coleta de recurso (C2S 54) | `testado` (B51) | `GATHER_MATERIAL` → confere coletores (30), ferramenta e missão de entrada (31), nível (51), distância `gather_dist` 4–20 m (2) (`matter.cpp:265-382`); tempo `Rand(time_min, time_max)` s; `PLAYER_GATHER_START` (126) a todos. Andar interrompe (`PLAYER_GATHER_STOP` 127). No fim: sucesso por `material_gain_ratio`; material por probabilidade, `num1` ou `num2` com `probability2`, limitado à pilha; `HOST_OBTAIN_ITEM` (99); o que não cabe vai ao chão do jogador; exp e SP da mina **sem** ajuste de nível; a mina some (`OBJECT_DISAPPEAR`) e renasce em `max(dwRefreshTime, 15)` s. Mina com missão (`task_in/out`), monstros invocados, recarga de 500 ms e interrupção por dano `falta` |
+| coleta de recurso (C2S 54) | `testado` (B51) | `GATHER_MATERIAL` → confere coletores (30), ferramenta e missão de entrada (31), nível (51), distância `gather_dist` 4–20 m (2) (`matter.cpp:265-382`); tempo `Rand(time_min, time_max)` s; `PLAYER_GATHER_START` (126) a todos. Andar interrompe (`PLAYER_GATHER_STOP` 127). No fim: sucesso por `material_gain_ratio`; material por probabilidade, `num1` ou `num2` com `probability2`, limitado à pilha; `HOST_OBTAIN_ITEM` (99); o que não cabe vai ao chão do jogador; exp e SP da mina **sem** ajuste de nível; a mina some (`OBJECT_DISAPPEAR`) e renasce em `max(dwRefreshTime, 15)` s. **Colher pode acordar monstro**: os `npcgen_1..4` do `MINE_ESSENCE` (`(monstro, quantidade, raio, vida em s)`) nascem no lugar da matéria — é assim que a Flor de Safira (44566), que **não produz material nenhum**, entrega a missão 31779: ela solta o Guardião de Almas (44608), agressivo, e é dele que cai o Estame com 80 % (B76). A missão só conta o item pelo `CheckMining` quando o método é "coletar N itens" (`TaskTempl.inl:2105-2145`), que não é o caso dessa. `falta`: recarga de 500 ms, interrupção por dano e os `aggros_*` da matéria |
 
 ## 8. Itens e economia
 
-**Protocolo 126, testado (B76):** `Contexto` recebe `WorldProtocol` para codificar
+**Protocolo 126, testado (B78):** `Contexto` recebe `WorldProtocol` para codificar
 31/46/72/99/156. Somente o layout varia (spec 04); regras de empilhamento,
 cobrança e persistência continuam comuns. Experiência 36/158 reproduz capturas.
 Sete testes de protocolo e dois de mundo aprovados com banco; não confirma
@@ -389,6 +413,7 @@ desconta sozinho, com os mesmos números (`WEAPON_RUIN_SPEED -2`, `ARMOR_RUIN_SP
 | golpe normal dado | a arma perde **2** (`DURABILITY_DEC_PER_ATTACK`, `gs/config.h:61`; `weapon_item::OnAfterAttack`, `item/equip_item.cpp:978-988`), porque `DoWeaponOperation<0>` está em `FillAttackMsg` (`player.cpp:3133`) |
 | golpe de habilidade | **não** gasta arma — `FillEnchantMsg` não chama o desgaste, e o original diz por quê em comentário (`player.cpp:3174`) |
 | golpe recebido | `SelectRandomArmor` sorteia um slot de 1 a 10 (`EQUIP_ARMOR_START..EQUIP_ARMOR_END-1`, `gs/item.h:194-241`); com peça ali, ela perde **25** (`DURABILITY_DEC_PER_HIT`, `gs/config.h:60`), e o índice vai no `cEquipment` do `HOST_ATTACKED`; slot vazio manda `0x7f` (`player.cpp:9552-9570`) |
+| onde a durabilidade mora | **no mundo**, em `PlayerEntity::pecas` (`(atual, máxima)` por slot), preenchido pelo `recalcular_equipamento`: é ele que decide o índice do `cEquipment` e a quebra. O banco acompanha numa tarefa à parte. Até o B72 cada golpe — dado ou recebido — esperava um `SELECT`+`UPDATE` antes de o cliente ver o golpe, e o original mexe na `item_list` vestida e segue (`player.cpp:94`) |
 | chegou a zero | para em zero, e **uma vez** sai `EQUIP_DAMAGED` (68) com motivo 0 mais o recálculo do equipamento (`_runner->equipment_damaged` + `RefreshEquipment`, `player.cpp:9563-9567`) |
 | peça acabada | não conta em nada: `equip_item::VerifyRequirement` exige `durability > 0` (`item/equip_item.cpp:60-80`) |
 | aviso de durabilidade baixa | é **do cliente**, sem comando nenhum: `CECGameUIMan::RefreshBrokenList` (`EC_GameUIMan.cpp:5474-5555`) roda a cada quadro e põe na janela `Win_Broken` o ícone de toda peça com `cur <= max / 10`, amarelo (192,192,0) enquanto sobra durabilidade e vermelho (192,0,0) em zero; aljava entra abaixo de 15% de flechas, e asa/espada voadora/moda nunca entram |
@@ -415,13 +440,14 @@ banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
 | **drop de monstro** | `testado` | dono = maior dano (+`max_hp/4` do primeiro golpe). Itens: `drop_times` rodadas de `probability_drop_num0..3` e `drop_matters[32]` (da 2ª rodada, só índices < 16), com o ajuste de item por nível (`DropItemFromData`, `npc.cpp:2649`; `generate_item_from_monster`, `itemdataman.cpp:1191`). Moedas: `drop_times` vezes, `Rand(médio±variação)`, chance 0,7, × ajuste. Cada monte a ±2 m, no chão (`worldmanager.cpp:512-555`), `tid` 3044 para moedas, id de matéria `0xC8…` |
 | item no chão | `testado` | posse do dono por **30 s**, some em **300 s** (`matter.h:62`, `matter.cpp:133`); `MATTER_ENTER_WORLD` a quem está a 120 m e no streaming; `OBJECT_DISAPPEAR` ao sumir |
 | **pegar** (C2S 6 e 184) | `testado` | tipo confere, distância < 10 m, posse; moedas `PICKUP_MONEY` (30), item `PICKUP_ITEM` (31); `MATTER_PICKUP` (152) a todos; bolsa cheia `ERROR_MESSAGE` 7, fora da posse 6 (`playercmd.cpp:1347-1444`, `matter.h:97-129`) |
-| poção (`USE_ITEM`) | `testado` (B67) | `MEDICINE_ESSENCE`. **Restaura ao longo do tempo**: `hp_add_total / hp_add_time` por batimento de 1 s, e o mesmo para mana — é o `healing_potion_filter`/`mana_potion_filter` do original (`gs/item/item_potion.cpp:18-52`, `gs/potion_filter.h:6-130`), que reparte o total pelo tempo. Só a poção com vida **e** mana e sem tempo (`rejuvenation_potion`) cura na hora. `falta`: a recarga (`cool_time`, `COOLDOWN_INDEX_*_POTION`) |
-| amuleto e hierograma | `testado` (B67) | `AUTOHP_ESSENCE`/`AUTOMP_ESSENCE`: o conteúdo do item são **8 bytes**, `int point; float trigger_percent` (`gs/item/item_amulet.h:16-19`, `generate_item_temp.h:2296-2310`). Sem eles o cliente desenhava zeros e negativos. `falta`: o gatilho automático que repõe vida/mana |
+| poção (`USE_ITEM`) | `testado` (B67, B71) | `MEDICINE_ESSENCE`. **Restaura ao longo do tempo**: `hp_add_total / hp_add_time` por batimento de 1 s, e o mesmo para mana — é o `healing_potion_filter`/`mana_potion_filter` do original (`gs/item/item_potion.cpp:18-52`, `gs/potion_filter.h:6-130`), que reparte o total pelo tempo. Só a poção com vida **e** mana e sem tempo (`rejuvenation_potion`) cura na hora. **Recarga** (B70/B71): `CheckCoolDown` **antes** de consumir, recusa com `ERR_OBJECT_IS_COOLING` (53) e `SetCoolDown(índice, cool_time)` com `SET_COOLDOWN` (198) ao cliente. O índice é o da **família**, e a família vem do `id_major_type` do arquivo (`setclassid.cpp:81-101`), não do que a poção restaura: 11 vida, 12 mana, 3 vida+mana, 13 antídoto (`COOLDOWN_INDEX_*`, `gs/cooldowncfg.h:62-78`) — poções da mesma família compartilham a recarga |
+| Daimon (`GOBLIN_ESSENCE`) | `parcial` (B75) | O "pequeno elfo" do original (`elf_item`), vestido no slot **23** (`EQUIP_INDEX_ELF`, `gs/item.h:219`). O estado dele **é** o bloco do item: `elf_essence` de 38 bytes com `#pragma pack(1)` (exp, nível, total de atributos, força/agilidade/vitalidade/energia, total de gênios, 5 gênios, refino, vigor 20000, estado), depois a lista de equipamento e a de habilidades, cada uma com a contagem em 4 bytes (`elf_item::Save`, `gs/item/item_elf.cpp:172-185`; `generate_elf`, `generate_item_temp.h:2442-2524`). **Experiência:** um décimo da que o jogador ganha, sempre (`ElfReceiveExp(exp / 10)`, `gs/player.cpp:2921-2928`); `InsertExp` (`item_elf.cpp:692-750`) aplica o fator `nível do Daimon ÷ nível de quem deu` (mínimo 10 %), sobe quantos níveis couberem e **para a um ponto** de alcançar o dono. Cada nível dá 1 ponto de atributo, e 1 de gênio a cada 5 níveis até o 100. Sem subir de nível vai `ELF_EXP` (283) ao cliente; subindo, a ficha inteira do item. `falta`: bônus de atributo sorteado de 10 em 10 níveis (`rand_prop`), equipamento e habilidades do Daimon, vigor, pílulas, decomposição, refino e distribuir pontos |
+| amuleto e hierograma | `testado` (B67, B73) | `AUTOHP_ESSENCE`/`AUTOMP_ESSENCE`: o conteúdo do item são **8 bytes**, `int point; float trigger_percent` (`gs/item/item_amulet.h:16-19`, `generate_item_temp.h:2296-2310`). Sem eles o cliente desenhava zeros e negativos. **Disparo automático (B73)**: vesti-los nos slots **20** (vida) e **21** (mana) os ativa (`OnActivate` → `SetHPAutoGen`/`SetMPAutoGen`, `item_amulet.cpp:22-46`); a cada batimento de 1 s, com `trigger_percent × máximo > atual`, o `AutoGenStat` (`gs/player_imp.h:3562-3593`) confere a recarga (`COOLDOWN_INDEX_AUTO_HP` 24 / `AUTO_MP` 25), devolve `máximo − atual` preso ao que resta e arma o `cool_time` do item — e o `SetCoolDown` **sempre** manda `SET_COOLDOWN` (198) ao cliente (`gs/player.cpp:12701-12709`), que é o que escurece o ícone (B74). O que sobra fica nos **octetos do item**; em zero o amuleto some do corpo com `PLAYER_DROP_ITEM` tipo `DROP_TYPE_USE` (11) |
 | colher recurso de mapa | `testado` (B51) | §7 "coleta de recurso" |
 | Loja Gold, barraca | `falta` | |
 | demais serviços de NPC (teleporte, pedras, forja, decompor, armazém, item de missão) | `falta` | |
 
-### 8.0 A barra de chi — `testado` (B68)
+### 8.0 A barra de chi — `testado` (B69/B70/B73)
 
 O chi (a "fúria" do original, `_basic.ap`) **não existe até uma missão dar o teto**: é o
 prêmio `m_ulFuryULimit` (deslocamento 57 do `AWARD_DATA`) → `SetFuryUpperLimit` →
@@ -433,12 +459,27 @@ prêmio `m_ulFuryULimit` (deslocamento 57 do `AWARD_DATA`) → `SetFuryUpperLimi
 | :--- | :--- | :--- |
 | golpe normal | `ap_per_hit` da classe (`angro_increase` do `CHARRACTER_CLASS_CONFIG`; Arqueiro: 5) | `gplayer_imp::DoAttack`, `player.cpp:3091-3093` |
 | meditar | **15 por batimento de 1 s** | `sit_down_filter::Heartbeat`, `gs/sitdown_filter.cpp:19-34` |
-| habilidade | filtros `Apgen`/`Apgen2` (`falta`: nenhum porte ainda) | `playerwrapper.cpp` |
+| **usar habilidade** | `apgain − apcost` do stub, de uma vez, na execução | `int ap = GetApgain() - GetApcost(); if (ap) ModifyAP(ap)`, `cskill/skill/playerwrapper.cpp:170-177` |
+| habilidade (filtros) | `Apgen`/`Apgen2` (`falta`: nenhum porte ainda) | `playerwrapper.cpp` |
 
-`ModifyAP` prende entre 0 e o teto e marca o estado para ir ao cliente; o valor viaja no
-`iAP`/`iMaxAP` do `SELF_INFO_00` (38), que ia **zero fixo** até o B68. Vive em
-`characters.ap`/`characters.max_ap`. **Não há ganho ao apanhar** no 1.5.5 — o fonte só dá chi
-nos três casos acima.
+Cada habilidade tem **`apcost` e `apgain` fixos** no stub (`cskill/skill/skill.h:239,588`),
+e o servidor recusa a conjuração com `GetAp() < apcost` (`SkillStub::Condition`,
+`cskill/skill/skill.cpp:125`) — **sem mandar erro**, porque o cliente já barra antes. Os dois
+números já estavam no `habilidades.json`; o mundo é que não os lia até o B73. Exemplos do
+Arqueiro: Flecha Glacial (245) custa **25**, Barreira de Asa (249) custa **45**, Flecha
+Fulgurante (244) **dá 10** e a 235 **dá 5**.
+
+`ModifyAP` prende entre 0 e o teto e marca o estado para ir ao cliente. O `iAP`/`iMaxAP` do
+`SELF_INFO_00` (38) e o último `i32` (`max_ap`) do `OWN_EXT_PROP` (50) têm de levar o mesmo
+teto; `EC_HostMsg.cpp:1319-1332` compara os dois e anuncia aumento quando o segundo muda. Até
+o B70, o segundo ia zero, então cada atualização posterior de `SELF_INFO_00` fazia o cliente
+repetir “limite máximo de chi aumentado para 99”. Vive em `characters.ap`/`characters.max_ap`.
+**Correção do B70:** ficou escrito aqui que a Flecha Fulgurante (244) não gerava chi, porque
+o corpo da habilidade não chama `ModifyAP`. Quem chama é a execução, com o `apgain` do stub —
+e o da 244 é **10** (`cskill/skills/skill244.h:142-144`). **Não há ganho ao apanhar** no
+1.5.5: nenhuma das chamadas de `ModifyAP` está no caminho de levar dano.
+
+Os filtros `Apgen`/`Apgen2` seguem pendentes para as habilidades que efetivamente os usam.
 
 ### 8.1 Pontos de teleporte — `testado` (B68)
 
@@ -495,7 +536,7 @@ original, mexidas pelas mesmas funções portadas linha a linha: `DeliverTask`, 
 | equipe (B51) | `CheckTeamTask`/`HasAllTeamMemsWanted` (`TaskTempl.inl:149-339`): só o capitão recebe; distância dos membros, `TEAM_MEM_WANTED` (nível, raça/classe, gênero, contagem), classes distintas; casal recusa (sem casamento). Aceita, cada membro **deste mapa** recebe por `OnDeliverTeamMemTask` (`TaskProcess.cpp:1592`) | `testado` |
 | teleporte (B51) | prêmio `m_ulTransWldId` (`TaskProcess.cpp:1316`) e `m_bTransTo` ao receber (`:1843`) → §7 "teleporte e troca de mapa" | `testado` |
 | coleta de mina (`OnTaskMining`) (B67) | mina com `task_out > 0` (`TaskServer.cpp:1116-1123`, `TaskTempl.inl:2105-2148`); se `material.item == 0`, não dropa nada no chão; entrega o item da submissão na bolsa (`j.dar_item`) e marca a submissão finalizada | `testado` |
-| itens de missão | bolsa de missão (pacote 2, `container_type` 5): `TASK_DELIVER_ITEM` (156), `PLAYER_DROP_ITEM` (46) tipo 3; prêmio `TASK_DELIVER_EXP/MONEY` (158/159), `SPEND_MONEY` | `testado` |
+| itens de missão | **quem escolhe a bolsa é o `m_bCommonItem` de cada item do `tasks.data`**, não o tipo do item (embora os dois quase sempre concordem: no `realm_155`, **todos** os 413 `TASKMATTER_ESSENCE` vão para a bolsa de missão e os `TASKNORMALMATTER_ESSENCE` para a comum — "matéria de missão **normal**" é a que fica no inventário normal —, com uma única exceção, a Presa de Filhote de Lobo 2654; ver `cargo run -p pw-data-loader --example bolsa_do_item_de_missao`): `true` → `DeliverCommonItem` → bolsa normal; `false` → `DeliverTaskItem` → bolsa de missão (`task/TaskProcess.cpp:1190-1208`, `task/taskman.cpp:281-330`). O mesmo bit vale para contar e recolher. Bolsa de missão = pacote 2, `container_type` 5: `TASK_DELIVER_ITEM` (156), `PLAYER_DROP_ITEM` (46) tipo 3; prêmio `TASK_DELIVER_EXP/MONEY` (158/159), `SPEND_MONEY` | `testado` |
 | erros | `svr_task_err_code` (reason 6) com `TASK_PREREQU_FAIL_*`; NPC sem a missão `ERROR_MESSAGE` 19 | `testado` |
 | monstros invocados | `m_SummonedMonsters` do prêmio: com `m_bRandChoose` sorteia um quando as probabilidades somam 1 e senão sorteia cada um; **sem** ele invoca todos (`TaskProcess.cpp:1385-1436`). O id do invocado satisfaz `ISNPCID` (faixa `0xA000_0000`) — com `0xC000_0000` o cliente o lia como item de chão e não deixava mirar (B67) | `testado` |
 | **nível de cultivo** (B67) | `m_ulNewPeriod` do prêmio (deslocamento 25 do `AWARD_DATA`) → `SetCurPeriod` → `gplayer_imp::SetSecLevel` (`TaskProcess.cpp:1284`, `task/taskman.cpp:251-254`, `player_imp.h:2798-2804`): grava em `characters.cultivation` e manda `TASK_DELIVER_LEVEL2` (160), que faz o cliente tocar o efeito do avanço. São 18 missões no `realm_155` (`cargo run -p pw-gs --example missoes_de_cultivo`) | `testado` |

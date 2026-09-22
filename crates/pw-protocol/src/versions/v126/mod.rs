@@ -291,6 +291,7 @@ impl WorldProtocol for V126Protocol {
         atributos: (i32, i32, i32, i32),
         max_hp: i32,
         max_mp: i32,
+        max_ap: i32,
         regen: (i32, i32),
         velocidades: (f32, f32, f32, f32),
         ataque: (i32, i32, i32, i32, f32),
@@ -342,7 +343,7 @@ impl WorldProtocol for V126Protocol {
         s.write_i32_le(defense);
         s.write_i32_le(armor);
 
-        s.write_i32_le(0); // max_ap -> 152 bytes exatos
+        s.write_i32_le(max_ap); // tem de espelhar SELF_INFO_00; fecha em 152 bytes
 
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }

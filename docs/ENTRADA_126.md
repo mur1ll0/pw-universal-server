@@ -1,4 +1,4 @@
-# Entrada no mundo 1.2.6 — B74
+# Entrada no mundo 1.2.6 — B74-126
 
 Base `2dca19e`, árvore `../pw-126`, sem publicação.
 

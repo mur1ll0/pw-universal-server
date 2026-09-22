@@ -174,6 +174,25 @@ pub struct PlayerEntity {
     pub coleta: Option<i64>,
     /// O que o equipamento vestido acrescenta (`_cur_item` e `_en_point`).
     pub equipamento: Equipamento,
+    /// A durabilidade de cada peça vestida — `(atual, máxima)` por slot, como o `_equipment`
+    /// do original, que é uma `item_list` em memória (`player.cpp:94`). `None` é slot vazio
+    /// ou item sem durabilidade. Existe para que levar um golpe não precise perguntar ao
+    /// banco antes de responder ao cliente: o índice da peça desgastada vai **dentro** do
+    /// `be_damaged` (`player.cpp:9552-9570`), e ir ao banco ali punha a latência do
+    /// PostgreSQL no meio da animação (B72).
+    pub pecas: [Option<(i32, i32)>; PECAS_VESTIDAS],
+    /// O amuleto de vida vestido (`EQUIP_INDEX_HP_ADDON` 20) e o hierograma de mana
+    /// (`EQUIP_INDEX_MP_ADDON` 21), com o que ainda resta neles. `OnActivate` guarda os dois
+    /// números no jogador (`SetHPAutoGen`/`SetMPAutoGen`, `gs/item/item_amulet.cpp:22-46`) e
+    /// é o batimento que os consome.
+    pub auto_hp: Option<AmuletoAtivo>,
+    pub auto_mp: Option<AmuletoAtivo>,
+    /// O Daimon vestido no slot 23, com o estado que vive no bloco do item.
+    pub daimon: Option<DaimonVestido>,
+    /// Quando cada recarga de amuleto vence, em segundos de batimento
+    /// (`COOLDOWN_INDEX_AUTO_HP` 24 e `AUTO_MP` 25, `gs/cooldowncfg.h:62-90`).
+    pub recarga_do_auto_hp_s: i32,
+    pub recarga_do_auto_mp_s: i32,
     /// A sessão de golpe normal em andamento (`session_normal_attack`).
     pub ataque: Option<SessaoDeAtaque>,
     /// A conjuração em andamento, com o marcador que a identifica — a tarefa que a conclui
@@ -200,12 +219,57 @@ pub struct Conjuracao {
 /// `PLAYER_BODYSIZE` (`gs/config.h:104`).
 pub const CORPO_DO_JOGADOR: f32 = 0.3;
 
+/// Um amuleto de vida ou hierograma de mana vestido, como `SetHPAutoGen`/`SetMPAutoGen` o
+/// deixam no jogador (`gs/item/item_amulet.cpp:22-46`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AmuletoAtivo {
+    pub slot: u16,
+    pub item_id: u32,
+    /// `_ess.point`: quanto ainda há para restaurar. Cai a cada disparo e, em zero, o item
+    /// some (`base_amulet::OnAutoTrigger`, `item_amulet.cpp:9-20`).
+    pub ponto: i32,
+    /// `_ess.trigger_percent`: dispara quando `gatilho × máximo > atual`.
+    pub gatilho: f32,
+    /// `get_cool_time(tid)` do `elements.data`, em milissegundos.
+    pub recarga_ms: i32,
+}
+
+impl AmuletoAtivo {
+    /// Lê `amulet_essence` dos octetos do item: `int point; float trigger_percent`
+    /// (`gs/item/item_amulet.h:16-19`). É o que o `Load` do original recupera.
+    pub fn do_bloco(octetos: &[u8]) -> Option<(i32, f32)> {
+        if octetos.len() < 8 {
+            return None;
+        }
+        let ponto = i32::from_le_bytes(octetos[0..4].try_into().ok()?);
+        let gatilho = f32::from_le_bytes(octetos[4..8].try_into().ok()?);
+        Some((ponto, gatilho))
+    }
+
+    /// O mesmo bloco de volta, para gravar o que sobrou.
+    pub fn bloco(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(8);
+        b.extend_from_slice(&self.ponto.to_le_bytes());
+        b.extend_from_slice(&self.gatilho.to_le_bytes());
+        b
+    }
+}
+
+/// Slots de equipamento que guardam durabilidade: `EQUIP_INDEX_WEAPON` (0) até
+/// `EQUIP_INDEX_PROJECTILE` (11) (`EC_IvtrTypes.h:56-67`).
+pub const PECAS_VESTIDAS: usize = 12;
+
 /// `session_normal_attack` (`actsession.cpp:350-418`): o alvo e quanto falta para o próximo
 /// golpe, que sai a cada `attack_speed` *ticks*.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SessaoDeAtaque {
     pub alvo: i64,
     pub falta_ms: u32,
+    /// A sessão guarda a munição como o `item_list` em memória do original. Consultar e
+    /// gravar PostgreSQL antes de cada `ATTACK_ONCE` atrasava a cadência pela latência do
+    /// banco; a persistência pode acontecer depois que o comando já saiu.
+    pub municao_restante: u16,
+    pub arma_de_longe: bool,
     /// O `NORMAL_ATTACK` que chegou com esta sessão aberta, na fila (`AddSession`,
     /// `actobject.cpp:1180-1213`). Só começa no próximo golpe (`GM_MSG_OBJ_SESSION_REPEAT`
     /// com `HasNextSession`, `actobject.cpp:180-189`) — o ritmo não muda com cliques.
@@ -646,6 +710,12 @@ pub struct MonsterEntity {
     /// `aggro_range` do `elements.data`: até onde o monstro persegue. Era `35.0` escrito
     /// no `ai.rs` para todo monstro do jogo.
     pub aggro_range: f32,
+    /// `aggressive_mode` do `MONSTER_ESSENCE`: o monstro **procura briga**. No original ele
+    /// recebe a máscara `MSG_MASK_PLAYER_MOVE` (`npcgenerator.cpp:2534-2537`) e o jogador,
+    /// ao andar, avisa quem está a até `GetMaxMobSightRange` metros
+    /// (`playerctrl.cpp:265-276`; 15 m em `worldmanager.cpp:48`). 4.874 dos 8.054 monstros
+    /// do `realm_155` são assim (B76).
+    pub agressivo: bool,
     /// `sight_range`: até onde ele enxerga. Ainda não decide nada — entra quando a IA
     /// deixar de depender só da tabela de ameaça e passar a procurar alvo sozinha.
     pub sight_range: i32,
@@ -896,6 +966,12 @@ impl PlayerEntity {
             contador_hp: 0,
             contador_mp: 0,
             recargas: std::collections::HashMap::new(),
+            pecas: [None; PECAS_VESTIDAS],
+            auto_hp: None,
+            auto_mp: None,
+            daimon: None,
+            recarga_do_auto_hp_s: 0,
+            recarga_do_auto_mp_s: 0,
             npc_em_conversa: None,
             waypoints: p.waypoints.clone(),
             ap: p.ap,
@@ -1002,6 +1078,7 @@ impl MonsterEntity {
             ataque_em_ticks: modelo.ataque_em_ticks,
             atraso_do_dano_em_ticks: modelo.atraso_do_dano_em_ticks,
             aggro_range: modelo.raio_de_odio,
+            agressivo: modelo.agressivo != 0,
             sight_range: modelo.raio_de_visao,
             exp: modelo.exp as i64,
             sp: modelo.pontos_de_skill as i64,
@@ -1061,6 +1138,7 @@ impl MonsterEntity {
             ataque_em_ticks: 30,
             atraso_do_dano_em_ticks: 10,
             aggro_range: 15.0,
+            agressivo: false,
             sight_range: 20,
             exp: 100,
             sp: 20,
@@ -1157,4 +1235,235 @@ pub struct ItemDropEntity {
     /// O conteúdo sorteado de um equipamento (`ConteudoDeEquipamento::escrever`), vazio para
     /// o resto.
     pub octetos: Vec<u8>,
+}
+
+/// O Daimon vestido (o "pequeno elfo" do original, `elf_item`), no slot
+/// `EQUIP_INDEX_ELF` = **23** (`gs/item.h:219`).
+///
+/// O estado dele **é** o bloco de dados do item: `elf_essence` (empacotado em 1 byte,
+/// `gs/item/item_elf.h:84-102`), depois a lista de equipamento e a de habilidades, nessa
+/// ordem (`elf_item::Save`, `item_elf.cpp:172-185`). É o que `generate_elf` escreve para um
+/// Daimon novo (`gs/template/generate_item_temp.h:2442-2524`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Daimon {
+    pub exp: u32,
+    pub nivel: i16,
+    pub total_de_atributos: i16,
+    pub forca: i16,
+    pub agilidade: i16,
+    pub vitalidade: i16,
+    pub energia: i16,
+    pub total_de_genios: i16,
+    pub genios: [i16; 5],
+    pub refino: i16,
+    /// `stamina` — 20000 num Daimon novo.
+    pub vigor: i32,
+    pub status: i32,
+    /// Ids de equipamento do próprio Daimon (não portados: a lista é lida e devolvida
+    /// intacta).
+    pub equipamento: Vec<u32>,
+    /// `(id, nível)` de cada habilidade dele.
+    pub habilidades: Vec<(u16, i16)>,
+}
+
+impl Daimon {
+    /// Um Daimon recém-gerado (`generate_elf`): nível 1, sem atributo distribuído, um ponto
+    /// de gênio, 20000 de vigor e as habilidades iniciais do `GOBLIN_ESSENCE` no nível 1.
+    pub fn novo(habilidades_iniciais: &[u16]) -> Self {
+        Self {
+            exp: 0,
+            nivel: 1,
+            total_de_atributos: 0,
+            forca: 0,
+            agilidade: 0,
+            vitalidade: 0,
+            energia: 0,
+            total_de_genios: 1,
+            genios: [0; 5],
+            refino: 0,
+            vigor: 20_000,
+            status: 0,
+            equipamento: Vec::new(),
+            habilidades: habilidades_iniciais.iter().map(|id| (*id, 1)).collect(),
+        }
+    }
+
+    /// Lê o bloco. `None` quando não fecha — bloco curto ou contagem impossível.
+    pub fn ler(b: &[u8]) -> Option<Self> {
+        if b.len() < 46 {
+            return None;
+        }
+        let u32_em = |i: usize| u32::from_le_bytes(b[i..i + 4].try_into().ok().unwrap_or([0; 4]));
+        let i32_em = |i: usize| i32::from_le_bytes(b[i..i + 4].try_into().ok().unwrap_or([0; 4]));
+        let i16_em = |i: usize| i16::from_le_bytes(b[i..i + 2].try_into().ok().unwrap_or([0; 2]));
+        // `elf_essence` com `#pragma pack(1)` (`gs/item/item_elf.h:84-102`): exp 0, level 4,
+        // total_attribute 6, os quatro atributos 8..16, total_genius 16, genius[5] 18..28,
+        // refine_level 28, stamina 30, status_value 34 — 38 bytes.
+        let mut genios = [0i16; 5];
+        for (n, g) in genios.iter_mut().enumerate() {
+            *g = i16_em(18 + n * 2);
+        }
+        let mut d = Self {
+            exp: u32_em(0),
+            nivel: i16_em(4),
+            total_de_atributos: i16_em(6),
+            forca: i16_em(8),
+            agilidade: i16_em(10),
+            vitalidade: i16_em(12),
+            energia: i16_em(14),
+            total_de_genios: i16_em(16),
+            genios,
+            refino: i16_em(28),
+            vigor: i32_em(30),
+            status: i32_em(34),
+            equipamento: Vec::new(),
+            habilidades: Vec::new(),
+        };
+        // `SaveEquip`/`SaveSkill`: uma contagem de 4 bytes antes de cada lista
+        // (`item_elf.cpp:122-160`).
+        let mut i = 38;
+        let n = i32_em(i).max(0) as usize;
+        i += 4;
+        if b.len() < i + n * 4 + 4 {
+            return None;
+        }
+        for _ in 0..n {
+            d.equipamento.push(u32_em(i));
+            i += 4;
+        }
+        let n = i32_em(i).max(0) as usize;
+        i += 4;
+        if b.len() < i + n * 4 {
+            return None;
+        }
+        for _ in 0..n {
+            d.habilidades.push((u16::from_le_bytes([b[i], b[i + 1]]), i16_em(i + 2)));
+            i += 4;
+        }
+        Some(d)
+    }
+
+    /// O bloco de volta, na ordem do `Save` do original.
+    pub fn bloco(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(46 + self.habilidades.len() * 4);
+        b.extend_from_slice(&self.exp.to_le_bytes());
+        for v in [
+            self.nivel,
+            self.total_de_atributos,
+            self.forca,
+            self.agilidade,
+            self.vitalidade,
+            self.energia,
+            self.total_de_genios,
+        ] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        for g in self.genios {
+            b.extend_from_slice(&g.to_le_bytes());
+        }
+        b.extend_from_slice(&self.refino.to_le_bytes());
+        b.extend_from_slice(&self.vigor.to_le_bytes());
+        b.extend_from_slice(&self.status.to_le_bytes());
+        b.extend_from_slice(&(self.equipamento.len() as i32).to_le_bytes());
+        for e in &self.equipamento {
+            b.extend_from_slice(&e.to_le_bytes());
+        }
+        b.extend_from_slice(&(self.habilidades.len() as i32).to_le_bytes());
+        for (id, nivel) in &self.habilidades {
+            b.extend_from_slice(&id.to_le_bytes());
+            b.extend_from_slice(&nivel.to_le_bytes());
+        }
+        b
+    }
+}
+
+/// O Daimon vestido: o item (para gravar o bloco de volta), o `exp_factor` do
+/// `GOBLIN_ESSENCE` e o estado.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DaimonVestido {
+    pub slot: u16,
+    pub item_id: u32,
+    /// `prop.exp_factor`: multiplica a curva do jogador para dar a do Daimon
+    /// (`gs/item/item_elf.cpp:696-710`).
+    pub fator_de_exp: f32,
+    pub estado: Daimon,
+    /// O bloco mudou e ainda não foi gravado.
+    pub sujo: bool,
+}
+
+impl DaimonVestido {
+    /// `elf_item::InsertExp` (`gs/item/item_elf.cpp:692-750`).
+    ///
+    /// `exp_do_nivel` é a experiência que o **jogador** precisa para subir do nível do
+    /// Daimon — `GetLvlupExp(0, nível) × exp_factor` é o que o Daimon precisa. `nivel_da_exp`
+    /// é o nível de quem deu a experiência (o jogador, ou 100 na pílula).
+    ///
+    /// Devolve `(ganhou_alguma, subiu_de_nivel)`.
+    pub fn receber_exp(
+        &mut self,
+        mut exp: u32,
+        nivel_da_exp: i16,
+        nivel_do_jogador: i16,
+        exp_do_nivel: impl Fn(i16) -> u32,
+    ) -> (bool, bool) {
+        let d = &mut self.estado;
+        if exp == 0 || nivel_do_jogador <= 0 || nivel_da_exp <= 0 || nivel_do_jogador < d.nivel {
+            return (false, false);
+        }
+        let precisa = |nivel: i16| (exp_do_nivel(nivel) as f64 * self.fator_de_exp as f64) as u32;
+        if nivel_do_jogador == d.nivel && precisa(d.nivel) <= d.exp + 1 {
+            return (false, false);
+        }
+        let inicial = exp;
+        let mut subiu = false;
+        while exp > 0 {
+            let ate_subir = if precisa(d.nivel) <= d.exp { 1 } else { precisa(d.nivel) - d.exp };
+            // `GetExpObtainFactor`: `elf_exp_loss_constant[i] == i`, então a proporção é a
+            // dos níveis, com o mínimo de 10 % (`item_elf.cpp:754-773`).
+            let fator = if nivel_da_exp <= d.nivel {
+                1.0
+            } else {
+                (d.nivel as f64 / nivel_da_exp as f64).max(0.1)
+            };
+            let pode = (exp as f64 * fator + 0.00001) as u32;
+            if pode >= ate_subir {
+                if d.nivel >= nivel_do_jogador {
+                    // No teto do nível do jogador o Daimon para a um ponto de subir.
+                    d.exp += ate_subir - 1;
+                    break;
+                }
+                d.subir_de_nivel();
+                subiu = true;
+                let gasto = ((ate_subir as f64) / fator).ceil() as u32;
+                exp = exp.saturating_sub(gasto);
+            } else {
+                d.exp += pode;
+                let gasto = ((pode as f64) / fator).ceil() as u32;
+                exp = exp.saturating_sub(gasto);
+                break;
+            }
+        }
+        let ganhou = exp < inicial;
+        self.sujo |= ganhou;
+        (ganhou, subiu)
+    }
+}
+
+impl Daimon {
+    /// `elf_item::LevelUp` (`gs/item/item_elf.cpp:775-816`): zera a experiência, sobe o
+    /// nível e dá **um** ponto de atributo, mais um de gênio a cada 5 níveis até o 100 (e um
+    /// por nível depois disso).
+    ///
+    /// `falta`: o bônus de atributo sorteado de 10 em 10 níveis (`rand_prop` do
+    /// `GOBLIN_ESSENCE` com `abase::RandSelect`, `item_elf.cpp:779-796`) — a semântica do
+    /// sorteio não está medida.
+    pub fn subir_de_nivel(&mut self) {
+        let proximo = self.nivel + 1;
+        self.exp = 0;
+        self.nivel = proximo;
+        self.total_de_atributos += 1;
+        if proximo > 100 || proximo % 5 == 0 {
+            self.total_de_genios += 1;
+        }
+    }
 }

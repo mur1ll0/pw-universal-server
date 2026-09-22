@@ -612,6 +612,80 @@ impl GameDataManager {
         ))
     }
 
+    /// O `id_major_type` do `MEDICINE_ESSENCE` — o "grande tipo" do remédio
+    /// (`gs/template/exptypes.h:840-843`).
+    ///
+    /// É ele que dá a classe do item em `set_to_classid`
+    /// (`gs/template/setclassid.cpp:81-101`): **1794** cura vida, **1802** mana, **1810**
+    /// vida e mana, **1815** e **2038** são antídotos. A classe, por sua vez, escolhe qual
+    /// recarga o `OnUse` confere e arma (`gs/item/item_potion.cpp:18-110`).
+    ///
+    /// O leitor tipado (1.2.6) não traz o campo, e aí devolve `None`.
+    pub fn tipo_maior_do_remedio(&self, item_id: u32) -> Option<i32> {
+        let g = self.elements_generic.as_ref()?;
+        g.get("MEDICINE_ESSENCE")
+            .iter()
+            .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?
+            .get("id_major_type")
+            .and_then(|v| v.as_i32())
+    }
+
+    /// O `exp_factor` e as habilidades iniciais de um Daimon (`GOBLIN_ESSENCE`).
+    ///
+    /// O `exp_factor` multiplica a curva de experiência do jogador para dar a do Daimon
+    /// (`player_template::GetLvlupExp(0, nível) × exp_factor`, `gs/item/item_elf.cpp:696-710`).
+    /// As `default_skill1..3` já vêm aprendidas no nível 1 (`generate_elf`,
+    /// `gs/template/generate_item_temp.h:2505-2520`).
+    pub fn dados_do_daimon(&self, item_id: u32) -> Option<(f32, Vec<u16>)> {
+        let g = self.elements_generic.as_ref()?;
+        let r = g
+            .get("GOBLIN_ESSENCE")
+            .iter()
+            .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?;
+        let fator = match r.get("exp_factor") {
+            Some(crate::generic_elements::FieldValue::Float(f)) => *f,
+            Some(crate::generic_elements::FieldValue::Int(i)) => *i as f32,
+            _ => 1.0,
+        };
+        let habilidades = ["default_skill1", "default_skill2", "default_skill3"]
+            .iter()
+            .filter_map(|c| r.get(*c).and_then(|v| v.as_i32()))
+            .filter(|v| *v > 0)
+            .map(|v| v as u16)
+            .collect();
+        Some((fator, habilidades))
+    }
+
+    /// Os números de um amuleto vestido: `(ponto, gatilho, recarga_ms, é_de_vida)`.
+    ///
+    /// `point` e `trigger_percent` são o que `OnActivate` entrega ao jogador
+    /// (`SetHPAutoGen`/`SetMPAutoGen`, `gs/item/item_amulet.cpp:22-46`); a recarga é o
+    /// `cool_time` do próprio item, que `OnAutoTrigger` arma depois de cada disparo
+    /// (`get_cool_time(_tid)`, `item_amulet.cpp:16-18`, `template/itemdataman.cpp:1725`).
+    pub fn dados_do_amuleto(&self, item_id: u32) -> Option<(i32, f32, i32, bool)> {
+        let g = self.elements_generic.as_ref()?;
+        for (tabela, campo, vida) in
+            [("AUTOHP_ESSENCE", "total_hp", true), ("AUTOMP_ESSENCE", "total_mp", false)]
+        {
+            let Some(r) = g
+                .get(tabela)
+                .iter()
+                .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))
+            else {
+                continue;
+            };
+            let ponto = r.get(campo).and_then(|v| v.as_i32()).unwrap_or(0);
+            let gatilho = match r.get("trigger_amount") {
+                Some(crate::generic_elements::FieldValue::Float(f)) => *f,
+                Some(crate::generic_elements::FieldValue::Int(i)) => *i as f32,
+                _ => 0.0,
+            };
+            let recarga = r.get("cool_time").and_then(|v| v.as_i32()).unwrap_or(0);
+            return Some((ponto, gatilho, recarga, vida));
+        }
+        None
+    }
+
     /// O bloco de dados de um amuleto de vida (`AUTOHP_ESSENCE`) ou de mana
     /// (`AUTOMP_ESSENCE`).
     ///

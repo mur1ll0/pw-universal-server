@@ -52,7 +52,7 @@ A coluna 1.5.5 é o tamanho nominal do IR, exceto OWN_EXT_PROP=196 (binário ins
 | 60 TEAM_MEMBER_LEAVE | team_member_leave | 10×2 | 10 | team_member_leave: 10 | sim (numérico) / sim | team_member_leave (comum) | crates/pw-gs/src/bus_server.rs:1625; full_interno.medidas.md:52 |
 | 61 TEAM_LEAVE_PARTY | team_leave_party | 6×3 | 6 | team_leave_party: 6 | sim (numérico) / sim | team_leave_party (comum) | crates/pw-gs/src/bus_server.rs:1618; full_interno.medidas.md:53 |
 | 64 TEAM_MEMBER_DATA | team_member_data | 31×30, 56×16, 81×7 | variável / não fechado | team_member_data: 6+34n | sim (numérico) / pendente (variável) | team_member_data (comum) | crates/pw-gs/src/bus_server.rs:1580; full_interno.medidas.md:55 |
-| 66 EQUIP_DATA | equip_data | 14×2, 18×1, 22×2, 62×1, 66×2 | variável / não fechado | equip_data: 14+4n (incorreto no 126; B74 corrigiu para 10+4n) | sim (numérico) / pendente (variável) | equip_data (comum) | crates/pw-gs/src/bus_server.rs:3381; full_interno.medidas.md:56 |
+| 66 EQUIP_DATA | equip_data | 14×2, 18×1, 22×2, 62×1, 66×2 | variável / não fechado | equip_data: 14+4n (incorreto no 126; B74-126 corrigiu para 10+4n) | sim (numérico) / pendente (variável) | equip_data (comum) | crates/pw-gs/src/bus_server.rs:3381; full_interno.medidas.md:56 |
 | 68 EQUIP_DAMAGED | equip_damaged | — | 2 | equip_damaged: 2 | não observado / não medido | equip_damaged (comum) | crates/pw-gs/src/bus_server/jogo.rs:754; sem amostra |
 | 70 NPC_GREETING | npc_greeting | 4×18 | 4 | npc_greeting: 4 | sim (numérico) / sim | npc_greeting (comum) | crates/pw-gs/src/bus_server.rs:3034; full_interno.medidas.md:59 |
 | 72 PURCHASE_ITEM | purchase_item | 20×1 | variável / não fechado | purchase_item: 11+15n | sim (numérico) / pendente (variável) | purchase_item (comum) | crates/pw-gs/src/bus_server/jogo.rs:1208; full_interno.medidas.md:60 |
@@ -107,7 +107,7 @@ A coluna 1.5.5 é o tamanho nominal do IR, exceto OWN_EXT_PROP=196 (binário ins
 | 279 PLAYER_HP_STEAL | player_hp_steal | — | 4 | player_hp_steal: 4 | não observado / não medido | player_hp_steal (comum) | crates/pw-gs/src/bus_server.rs:2419; sem amostra |
 | 291 CALC_NETWORK_DELAY_RE | calc_network_delay_re | — | 4 | calc_network_delay_re: 4 | não observado / não medido | calc_network_delay_re (comum) | crates/pw-gs/src/bus_server.rs:1143; sem amostra |
 | 363 QUERY_TITLE_RE | query_title_re | — | variável / não fechado | query_title_re: 12+2n+6m | não observado / não medido | query_title_re (comum) | crates/pw-gs/src/bus_server.rs:1011; sem amostra |
-| 390 SCENE_SERVICE_NPC_LIST | scene_service_npc_list | — | variável / não fechado | scene_service_npc_list: 4+8n (B74: não emitido no 126) | não observado / não medido | scene_service_npc_list (comum) | crates/pw-gs/src/bus_server.rs:3571; sem amostra |
+| 390 SCENE_SERVICE_NPC_LIST | scene_service_npc_list | — | variável / não fechado | scene_service_npc_list: 4+8n (B74-126: não emitido no 126) | não observado / não medido | scene_service_npc_list (comum) | crates/pw-gs/src/bus_server.rs:3571; sem amostra |
 
 ## C2S
 
@@ -177,8 +177,8 @@ A referência nominal é o IR 1.5.5; TASK_NOTIFY contém envelope e mensagem var
 
 Este inventário não declara jogabilidade nem regressão aprovada. Não houve alteração de código de jogo. OWN_ITEM_INFO, OWN_IVTR_DATA, EQUIP_DATA, SKILL_DATA, TASK_DATA e TASK_VAR_DATA exigem comparação campo a campo; não basta a lista de comprimentos. Cadência de combate ainda precisa de timestamps, que o relatório atual não imprime.
 
-## Complemento após conferir o binário (B74)
+## Complemento após conferir o binário (B74-126)
 
-O validador em VA 0x584610 rejeita ids >260. Assim 277, 291, 363 e 390 da tabela não são reconhecidos por este binário. A tabela preserva o inventário da base anterior à correção; B74 corrigiu EQUIP_DATA e suprimiu o 390 e os avisos tardios de entrada. Outros ids tardios ainda ficam nas respostas a pedidos que o cliente 126 normal não faz.
+O validador em VA 0x584610 rejeita ids >260. Assim 277, 291, 363 e 390 da tabela não são reconhecidos por este binário. A tabela preserva o inventário da base anterior à correção; B74-126 corrigiu EQUIP_DATA e suprimiu o 390 e os avisos tardios de entrada. Outros ids tardios ainda ficam nas respostas a pedidos que o cliente 126 normal não faz.
 
 A coluna de emissão foi extraída dos escritores da base HEAD (escalares somados sem o id; laços/blobs explicitados). A referência continua sendo captura e binário, não o escritor. `n/m` são contagens de entradas; nos itens comuns o blob inclui a essência do item.

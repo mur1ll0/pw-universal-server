@@ -97,27 +97,27 @@ pub trait WorldProtocol: Send + Sync {
     /// RECEIVE_EXP (36)
     fn receive_exp(&self, exp: i32, sp: i32) -> S2CGamedataSend;
 
-    /// Layout padrão 155; contadores menores no 126 (B76).
+    /// Layout padrão 155; contadores menores no 126 (B78).
     fn pickup_item(&self, tid: i32, expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> S2CGamedataSend {
         S2CGamedataSend::pickup_item(tid, expire_date, amount, slot_amount, package, slot)
     }
 
-    /// Layout padrão 155; contadores menores no 126 (B76).
+    /// Layout padrão 155; contadores menores no 126 (B78).
     fn obtain_item(&self, tid: i32, expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> S2CGamedataSend {
         S2CGamedataSend::obtain_item(tid, expire_date, amount, slot_amount, package, slot)
     }
 
-    /// Layout padrão 155; contadores menores no 126 (B76).
+    /// Layout padrão 155; contadores menores no 126 (B78).
     fn task_deliver_item(&self, tid: i32, expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> S2CGamedataSend {
         S2CGamedataSend::task_deliver_item(tid, expire_date, amount, slot_amount, package, slot)
     }
 
-    /// Layout padrão 155; contadores menores no 126 (B76).
+    /// Layout padrão 155; contadores menores no 126 (B78).
     fn player_drop_item(&self, package: u8, slot: u8, count: u32, tid: i32, drop_type: u8) -> S2CGamedataSend {
         S2CGamedataSend::player_drop_item(package, slot, count, tid, drop_type)
     }
 
-    /// Layout padrão 155; contadores menores no 126 (B76).
+    /// Layout padrão 155; contadores menores no 126 (B78).
     fn purchase_item(&self, cost: u32, itens: &[(i32, i32, u32, u16)]) -> S2CGamedataSend {
         S2CGamedataSend::purchase_item(cost, itens)
     }
@@ -138,6 +138,7 @@ pub trait WorldProtocol: Send + Sync {
         atributos: (i32, i32, i32, i32),
         max_hp: i32,
         max_mp: i32,
+        max_ap: i32,
         regen: (i32, i32),
         velocidades: (f32, f32, f32, f32),
         ataque: (i32, i32, i32, i32, f32),

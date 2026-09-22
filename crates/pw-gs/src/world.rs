@@ -61,6 +61,21 @@ pub enum EventoDoMundo {
         hp: i32,
         max_hp: i32,
     },
+    /// Um amuleto vestido disparou: restaurou vida ou mana e gastou parte do que tinha
+    /// (`gplayer_imp::AutoGenStat`, `gs/player_imp.h:3562-3593`). O que sobrou tem de ir ao
+    /// banco e ao cliente — `item_info` enquanto resta, `PLAYER_DROP_ITEM` quando acaba.
+    AmuletoDisparou {
+        roleid: RoleId,
+        slot: u16,
+        item_id: u32,
+        restou: i32,
+        bloco: Vec<u8>,
+        /// `COOLDOWN_INDEX_AUTO_HP` (24) ou `AUTO_MP` (25) e o `cool_time` do item: o
+        /// `SetCoolDown` do original **sempre** manda `set_cooldown` ao cliente
+        /// (`gs/player.cpp:12701-12709`), e é ele que desenha a recarga no ícone.
+        indice_de_recarga: i32,
+        recarga_ms: i32,
+    },
     /// Vida ou mana do jogador mudaram sozinhas (regeneração): o `SELF_INFO_00` é o que o
     /// original manda quando o `_refresh_state` liga (`GenHPandMP`, `actobject.h:2167`).
     EstadoMudou { roleid: RoleId },
@@ -1107,6 +1122,74 @@ impl WorldInstance {
         self.data_manager.quanto_o_remedio_restaura(item_id)
     }
 
+    /// Os amuletos vestidos, no batimento de 1 s (`gplayer_imp::OnHeartbeat`,
+    /// `gs/player.cpp:9107-9129`).
+    ///
+    /// Dispara quando `trigger_percent × máximo > atual`, restaura o que falta até o limite
+    /// do que resta no amuleto (`offset = máximo − atual`, preso a `_ess.point`) e arma a
+    /// recarga do próprio item (`base_amulet::OnAutoTrigger`, `gs/item/item_amulet.cpp:9-20`).
+    /// Em zero, o amuleto acaba e sai do corpo.
+    fn disparar_amuletos(&mut self) -> Vec<EventoDoMundo> {
+        let mut eventos = Vec::new();
+        for p in self.players.values_mut() {
+            if p.recarga_do_auto_hp_s > 0 {
+                p.recarga_do_auto_hp_s -= 1;
+            }
+            if p.recarga_do_auto_mp_s > 0 {
+                p.recarga_do_auto_mp_s -= 1;
+            }
+            if p.hp <= 0 {
+                continue;
+            }
+            for de_vida in [true, false] {
+                let (atual, maximo) = if de_vida { (p.hp, p.max_hp) } else { (p.mp, p.max_mp) };
+                let recarga_s = if de_vida { p.recarga_do_auto_hp_s } else { p.recarga_do_auto_mp_s };
+                let Some(a) = (if de_vida { p.auto_hp.as_mut() } else { p.auto_mp.as_mut() }) else {
+                    continue;
+                };
+                if a.ponto <= 0 || recarga_s > 0 || a.gatilho * maximo as f32 <= atual as f32 {
+                    continue;
+                }
+                let quanto = (maximo - atual).min(a.ponto).max(0);
+                if quanto <= 0 {
+                    continue;
+                }
+                a.ponto -= quanto;
+                let (slot, item_id, restou, bloco, recarga_ms) =
+                    (a.slot, a.item_id, a.ponto, a.bloco(), a.recarga_ms);
+                if de_vida {
+                    p.hp += quanto;
+                    p.recarga_do_auto_hp_s = (recarga_ms / 1000).max(0);
+                    if restou <= 0 {
+                        p.auto_hp = None;
+                    }
+                } else {
+                    p.mp += quanto;
+                    p.recarga_do_auto_mp_s = (recarga_ms / 1000).max(0);
+                    if restou <= 0 {
+                        p.auto_mp = None;
+                    }
+                }
+                debug!(
+                    "mundo: o amuleto {item_id} de {} devolveu {quanto} de {} e ficou com {restou}",
+                    p.role_id,
+                    if de_vida { "vida" } else { "mana" }
+                );
+                eventos.push(EventoDoMundo::AmuletoDisparou {
+                    roleid: p.role_id,
+                    slot,
+                    item_id,
+                    restou,
+                    bloco,
+                    indice_de_recarga: if de_vida { RECARGA_DO_AMULETO_DE_VIDA } else { RECARGA_DO_AMULETO_DE_MANA },
+                    recarga_ms,
+                });
+                eventos.push(EventoDoMundo::EstadoMudou { roleid: p.role_id });
+            }
+        }
+        eventos
+    }
+
     /// Põe no jogador o filtro de poção: `total / tempo` por batimento de 1 s
     /// (`healing_potion_filter`, `gs/potion_filter.h:16-25`).
     pub fn pocao_no_tempo(&mut self, roleid: RoleId, efeito: crate::efeitos::Efeito, total: i32, tempo_s: i32) {
@@ -1122,12 +1205,18 @@ impl WorldInstance {
             contador: 0,
             origem: 0,
             icone: false,
+            absorve: 0.0,
         };
         p.efeitos.adicionar(filtro);
     }
 
     /// Ciclo de Simulação em Tempo Real (Loop de 50ms / 20 TPS)
-    pub async fn tick(&mut self, delta_ms: u32) {
+    ///
+    /// Devolve o lote do autosave quando o minuto fecha. **Quem grava é o chamador, com o
+    /// mundo já destrancado**: o tique roda inteiro com o `write()` do mundo na mão, e
+    /// gravar aqui dentro congelava o mundo pelo tempo do banco — foram 8 segundos sem um
+    /// único golpe no combate de 2026-09-20 20:50 UTC (B72).
+    pub async fn tick(&mut self, delta_ms: u32) -> Vec<EstadoParaGravar> {
         // 0. Os golpes que já foram anunciados e agora tiram vida (`InsertDamageEntry`).
         self.cobrar_danos_adiados(delta_ms);
 
@@ -1280,6 +1369,9 @@ impl WorldInstance {
             for roleid in mudaram {
                 self.emitir(EventoDoMundo::EstadoMudou { roleid });
             }
+            for ev in self.disparar_amuletos() {
+                self.emitir(ev);
+            }
             self.batida_dos_efeitos();
             self.informar_vida_aos_inscritos();
         }
@@ -1325,63 +1417,94 @@ impl WorldInstance {
             self.adiar_dano(player_id, monstro_id, damage as i64, atraso, true);
         }
 
-        // 3. Autosave Periódico de Personagens para o PostgreSQL (a cada 60s)
+        // 3. Autosave periódico (a cada 60 s): aqui só se **tira a fotografia**, com o mundo
+        // trancado. A gravação é do chamador, depois de soltar o lock.
         self.autosave_timer_ms += delta_ms;
-        if self.autosave_timer_ms >= 60_000 {
-            self.autosave_timer_ms = 0;
-            let mut falhas = 0usize;
-            for player in self.players.values() {
-                let r = self
-                    .char_repo
-                    .save_status(
-                        player.role_id,
-                        player.level,
-                        player.cultivation,
-                        player.exp,
-                        player.sp,
-                        player.hp,
-                        player.mp,
-                        player.money,
-                        self.world_id,
-                        &player.position,
-                    )
-                    .await;
-                // A barra de chi anda junto (`_basic.ap`/`_base_prop.max_ap` do original).
-                let _ = self.char_repo.salvar_chi(player.role_id, player.ap, player.max_ap).await;
-                if let Err(e) = r {
-                    falhas += 1;
-                    warn!(
-                        "autosave: não consegui gravar o personagem {}: {e}",
-                        player.role_id
-                    );
-                }
-                let atributos = (player.strength, player.agility, player.vitality, player.energy);
-                if let Err(e) = self.char_repo.gravar_atributos(player.role_id, atributos, player.pontos_de_atributo).await {
-                    warn!("autosave: não consegui gravar os atributos de {}: {e}", player.role_id);
-                }
-                let [a, b, c, d, e] = player.missoes.blocos();
-                let listas = pw_storage::ListasDeMissaoGravadas { ativa: a, concluidas: b, tempos: c, contagens: d, deposito: e };
-                if let Err(e) = self.char_repo.task_lists().gravar(player.role_id, &listas).await {
-                    warn!("autosave: não consegui gravar as missões de {}: {e}", player.role_id);
-                }
-            }
-            // O `let _ =` que havia aqui engolia o erro, e a linha abaixo dizia "com
-            // sucesso" de qualquer jeito. O `UPDATE` vinha falhando havia semanas porque
-            // escrevia numa coluna `last_login_at` que a tabela `characters` não tem —
-            // ninguém viu, e nada de posição, experiência, dinheiro ou nível era salvo.
-            if falhas == 0 {
-                debug!(
-                    "autosave: {} jogadores gravados no mundo {}",
-                    self.players.len(),
-                    self.world_id
-                );
-            } else {
-                warn!(
-                    "autosave: {falhas} de {} jogadores não foram gravados no mundo {}",
-                    self.players.len(),
-                    self.world_id
-                );
-            }
+        if self.autosave_timer_ms < 60_000 {
+            return Vec::new();
         }
+        self.autosave_timer_ms = 0;
+        let mundo = self.world_id;
+        self.players
+            .values()
+            .map(|player| {
+                let [a, b, c, d, e] = player.missoes.blocos();
+                EstadoParaGravar {
+                    role_id: player.role_id,
+                    mundo,
+                    level: player.level,
+                    cultivation: player.cultivation,
+                    exp: player.exp,
+                    sp: player.sp,
+                    hp: player.hp,
+                    mp: player.mp,
+                    money: player.money,
+                    posicao: player.position,
+                    ap: player.ap,
+                    max_ap: player.max_ap,
+                    atributos: (player.strength, player.agility, player.vitality, player.energy),
+                    pontos_de_atributo: player.pontos_de_atributo,
+                    missoes: pw_storage::ListasDeMissaoGravadas { ativa: a, concluidas: b, tempos: c, contagens: d, deposito: e },
+                }
+            })
+            .collect()
+    }
+}
+
+/// `COOLDOWN_INDEX_AUTO_HP` e `COOLDOWN_INDEX_AUTO_MP` (`gs/cooldowncfg.h:62-90`).
+pub const RECARGA_DO_AMULETO_DE_VIDA: i32 = 24;
+pub const RECARGA_DO_AMULETO_DE_MANA: i32 = 25;
+
+/// A fotografia de um jogador para o autosave — o que o tique tira com o mundo trancado e o
+/// laço grava com ele solto.
+#[derive(Debug, Clone)]
+pub struct EstadoParaGravar {
+    pub role_id: i32,
+    pub mundo: i32,
+    pub level: i32,
+    pub cultivation: i32,
+    pub exp: i64,
+    pub sp: i64,
+    pub hp: i32,
+    pub mp: i32,
+    pub money: i64,
+    pub posicao: pw_core::Vector3,
+    pub ap: i32,
+    pub max_ap: i32,
+    pub atributos: (i32, i32, i32, i32),
+    pub pontos_de_atributo: i32,
+    pub missoes: pw_storage::ListasDeMissaoGravadas,
+}
+
+/// Grava o lote do autosave. Fora do lock do mundo, e de propósito: cada personagem custa
+/// quatro escritas, e elas já chegaram a levar segundos no banco de teste.
+pub async fn gravar_autosave(repo: pw_storage::CharacterRepository, lote: Vec<EstadoParaGravar>, mundo: i32) {
+    let total = lote.len();
+    let mut falhas = 0usize;
+    for e in lote {
+        let r = repo
+            .save_status(e.role_id, e.level, e.cultivation, e.exp, e.sp, e.hp, e.mp, e.money, e.mundo, &e.posicao)
+            .await;
+        // A barra de chi anda junto (`_basic.ap`/`_base_prop.max_ap` do original).
+        let _ = repo.salvar_chi(e.role_id, e.ap, e.max_ap).await;
+        if let Err(err) = r {
+            falhas += 1;
+            warn!("autosave: não consegui gravar o personagem {}: {err}", e.role_id);
+        }
+        if let Err(err) = repo.gravar_atributos(e.role_id, e.atributos, e.pontos_de_atributo).await {
+            warn!("autosave: não consegui gravar os atributos de {}: {err}", e.role_id);
+        }
+        if let Err(err) = repo.task_lists().gravar(e.role_id, &e.missoes).await {
+            warn!("autosave: não consegui gravar as missões de {}: {err}", e.role_id);
+        }
+    }
+    // O `let _ =` que havia aqui engolia o erro, e a linha abaixo dizia "com sucesso" de
+    // qualquer jeito. O `UPDATE` vinha falhando havia semanas porque escrevia numa coluna
+    // `last_login_at` que a tabela `characters` não tem — ninguém viu, e nada de posição,
+    // experiência, dinheiro ou nível era salvo.
+    if falhas == 0 {
+        debug!("autosave: {total} jogadores gravados no mundo {mundo}");
+    } else {
+        warn!("autosave: {falhas} de {total} jogadores não foram gravados no mundo {mundo}");
     }
 }

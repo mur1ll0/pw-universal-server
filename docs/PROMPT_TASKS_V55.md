@@ -15,7 +15,7 @@ Idioma: português. Não use subagentes, salvo pedido explícito posterior.
   Contém trabalho de outra sessão. Não edite, reverta, limpe ou commite nele.
 - Trabalhe na worktree já existente `F:/Python_C_Projects/PWSource1.5.3/pw-126`,
   branch `versao-126`. Rode `git status -s` e `git log -n 1 --oneline` primeiro.
-  Último HEAD conhecido: a305e51. B75/B76 podem estar sem commit: preserve tudo.
+  Último HEAD conhecido: a305e51. B77/B78 podem estar sem commit: preserve tudo.
   Não recrie worktree/branch nem aplique reset/stash/clean. Não execute em paralelo
   com outra sessão escrevendo nessa worktree. Se a situação mudou, relate antes
   de sobrescrever qualquer arquivo.
@@ -76,7 +76,7 @@ Não leia o histórico nem o master de engenharia reversa inteiros.
    entre registros e corrupção representativa; mantenha verificação do v129 real
    e seus valores conhecidos. Não altere testes v129 para acomodar regressão.
 6. Atualize apenas parágrafos afetados da spec03, estado e próximo item livre no
-   histórico (B77 se ainda livre; não renumere). Guarde mapa v55 e provas em
+   histórico (B79 se ainda livre; não renumere). Guarde mapa v55 e provas em
    `specs/tasks_126/` e/ou `docs/evidencias/126/`. Deixe relatório curto em
    `docs/RESULTADO_TASKS_V55.md`. Use `pw-atualizar-specs` ao fechar.
 
@@ -103,7 +103,7 @@ reproduzível e bloqueio preciso; não declare leitor completo nem adivinhe layo
   carregador: IDs, pré-requisitos, objetivo e prêmio; valores reais, não placeholders.
 - Arquivo v129 preserva contagem e valores dos testes existentes, sem regressão focal.
 - Não declarar missões jogáveis: listas TASK_DATA/TASK_VAR_DATA e integração em jogo
-  ficam para a retomada. B76 só corrigiu pacotes de itens/experiência.
+  ficam para a retomada. B78 só corrigiu pacotes de itens/experiência.
 
 ## Resposta esperada para colar na sessão principal
 
@@ -111,7 +111,7 @@ Preencha com resultados reais; não copie números esperados como se fossem medi
 
 ```text
 Resultado: completo | parcial | bloqueado (uma frase e causa).
-Branch/HEAD: ...; mudanças anteriores B75/B76 preservadas: ...
+Branch/HEAD: ...; mudanças anteriores B77/B78 preservadas: ...
 Arquivo v55: caminho, bytes, SHA256, magic/versão/raízes.
 Fechamento: raízes lidas/2819; total com filhas; último offset; sobra; erros.
 Layout: arquivo:linha do mapa + VA/RVA/hash do cliente para bloco fixo,

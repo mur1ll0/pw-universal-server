@@ -138,6 +138,62 @@ fn a_mira_solta_antes_da_carga_cheia_tira_menos() {
     assert_eq!(metade, 189);
 }
 
+/// B73 — a Barreira de Asa (249) põe o `filter_Wingshield`: escudo que absorve dano e
+/// injeta mana a cada 3 s, por 20 s (`cskill/skills/skill249.h:257-262`).
+#[test]
+fn a_barreira_de_asa_absorve_dano_e_devolve_mana() {
+    let mut efeitos = pw_gs::efeitos::Efeitos::default();
+    // Nível 1: `SetAmount(60 + 75 × 1)` = 135, `SetValue(4 + 6 × 1)` = 10, `SetTime(20000)`.
+    efeitos.adicionar(pw_gs::efeitos::Filtro {
+        efeito: pw_gs::efeitos::Efeito::Wingshield,
+        restante_s: 20,
+        razao: 0,
+        fator: 0.0,
+        por_segundo: 10,
+        contador: 0,
+        origem: 0,
+        icone: true,
+        absorve: 135.0,
+    });
+
+    // Ícone 69 (HSTATE_WINGSHIELD) e estado visível 29 (VSTATE_WINGSHIELD).
+    assert!(efeitos.icones().iter().any(|&(h, t)| h == 69 && t == 20), "sem o ícone do escudo");
+    assert_ne!(efeitos.estados_visiveis()[0] & (1 << 29), 0, "sem o VSTATE_WINGSHIELD");
+
+    // `AdjustDamage`: um quinto do golpe (20) cabe no escudo (135), então passam 20 de 100 e
+    // o escudo perde quatro vezes isso (`skillfilter.h:4168-4183`).
+    assert_eq!(pw_gs::efeitos::dano_recebido(&mut efeitos, 100), 20, "o escudo não absorveu");
+    // 135 − 80 = 55. O golpe seguinte de 500 não cabe: `r = 1 − 55/100` = 0,45.
+    assert_eq!(pw_gs::efeitos::dano_recebido(&mut efeitos, 500), 225, "o escudo não se esgotou direito");
+    // Zerado, o filtro se apaga (`_amount < 6`).
+    let (_, algum_acabou) = efeitos.batida();
+    assert!(algum_acabou, "o escudo gasto devia sumir");
+    assert!(efeitos.icones().is_empty(), "o ícone do escudo ficou para trás");
+
+    // E o batimento devolve a mana de três em três segundos, o valor inteiro do `SetValue`.
+    let mut efeitos = pw_gs::efeitos::Efeitos::default();
+    efeitos.adicionar(pw_gs::efeitos::Filtro {
+        efeito: pw_gs::efeitos::Efeito::Wingshield,
+        restante_s: 20,
+        razao: 0,
+        fator: 0.0,
+        por_segundo: 10,
+        contador: 0,
+        origem: 0,
+        icone: true,
+        absorve: 135.0,
+    });
+    let mut manas = Vec::new();
+    for _ in 0..6 {
+        for t in efeitos.batida().0 {
+            if let pw_gs::efeitos::Tique::Mana(v) = t {
+                manas.push(v);
+            }
+        }
+    }
+    assert_eq!(manas, vec![10, 10], "seis segundos deviam render dois tiques de 10 de mana");
+}
+
 /// A habilidade 244 (烈焰之矢 / Flecha Fulgurante): buff com ícone 70 (HSTATE_FIREARROW),
 /// estado visível 30 (VSTATE_FIREARROW) e adição de dano mágico de fogo (magic_damage[3])
 /// ao ataque físico normal (`filter_Firearrow::TranslateSendAttack`).
@@ -155,6 +211,7 @@ fn a_flecha_fulgurante_adiciona_icone_70_e_dano_de_fogo_ao_ataque() {
         contador: 0,
         origem: j.role_id as i64,
         icone: true,
+        absorve: 0.0,
     };
     j.efeitos.adicionar(filtro);
 

@@ -173,4 +173,130 @@ fn a_pocao_de_vida_traz_o_total_e_o_tempo() {
     assert_eq!((hp, hp_s), (25, 10), "hp_add_total/hp_add_time do elements");
     assert_eq!((mp, mp_s), (0, 0));
     assert_eq!(recarga, 15000, "cool_time");
+
+    // Foram as outras duas usadas pelo eaa no relato de 2026-09-20. O número continua
+    // vindo do arquivo real: vida e mana têm famílias de recarga separadas, ambas 15 s.
+    assert_eq!(
+        d.quanto_o_remedio_restaura_no_tempo(36584),
+        Some((450, 3, 0, 0, 15000)),
+        "Orvalho do Florescer Vermelho"
+    );
+    assert_eq!(
+        d.quanto_o_remedio_restaura_no_tempo(36585),
+        Some((0, 0, 450, 3, 15000)),
+        "Orvalho do Fluxo Gélido"
+    );
+}
+
+/// B76 — a Flor de Safira não produz item: ela **acorda um monstro**.
+///
+/// O `MINE_ESSENCE` tem `npcgen_1..4` (`gs/npcgenerator.cpp:1280-1365` monta a matéria com
+/// eles), e é por aí que a missão 31779 funciona: colher a flor (44566) solta o Guardião de
+/// Almas (44608), que é quem deixa cair o Estame (44371) com 80 % ao morrer.
+#[test]
+fn a_mina_da_flor_de_safira_acorda_o_guardiao() {
+    let Some(d) = realm() else { return };
+    let mina = d.minas.get(&44566).expect("a Flor de Safira é uma mina do realm");
+    assert!(mina.materiais.iter().all(|m| m.item == 0), "a flor não produz material nenhum");
+    assert_eq!(mina.missao_de_saida, 31779, "a mina é da missão das Flores do Guardião de Almas");
+    assert_eq!(
+        mina.monstros_ao_colher,
+        vec![(44608, 1, 0.0, 30)],
+        "colher devia acordar um Guardião de Almas por 30 s"
+    );
+
+    // E o Guardião é agressivo: ele parte para cima de quem o acordou.
+    let guardiao = d.monstros.get(44608).expect("o 44608 está no elements");
+    assert_ne!(guardiao.agressivo, 0, "o Guardião de Almas tem de ser agressivo");
+}
+
+/// B74 — item de missão na bolsa comum não é defeito: é o que o `tasks.data` manda.
+///
+/// Quem escolhe a bolsa é o `m_bDropCmnItem` de cada `MONSTER_WANTED`
+/// (`gs/task/TaskTempl.inl:2028-2037`), e ele acompanha o tipo do item no `elements.data`:
+/// **`TASKMATTER_ESSENCE` vai para a bolsa de missão, `TASKNORMALMATTER_ESSENCE` para a
+/// comum** — "matéria de missão normal" é justamente a que fica no inventário normal. As
+/// Almas que o Murillo pegou (44357 da Ninfa, 44363 da Pantera) são desse segundo tipo.
+#[test]
+fn o_tipo_do_item_de_missao_decide_a_bolsa() {
+    let Some(d) = realm() else { return };
+    let e = d.elements_generic.as_ref().expect("o realm tem elements.data");
+    let ids_da = |tabela: &str| -> std::collections::HashSet<u32> {
+        e.get(tabela).iter().filter_map(|r| r.get("ID").and_then(|v| v.as_i32())).map(|i| i as u32).collect()
+    };
+    let de_missao = ids_da("TASKMATTER_ESSENCE");
+    let normais = ids_da("TASKNORMALMATTER_ESSENCE");
+    assert!(!de_missao.is_empty() && !normais.is_empty(), "as duas tabelas existem no realm");
+
+    let (mut matter_na_comum, mut normal_na_de_missao, mut vistos_matter, mut vistos_normal) = (0, 0, 0, 0);
+    for m in d.tasks.tasks.values() {
+        for k in &m.monster_kills {
+            if k.item_que_cai == 0 {
+                continue;
+            }
+            if de_missao.contains(&k.item_que_cai) {
+                vistos_matter += 1;
+                if k.item_comum {
+                    matter_na_comum += 1;
+                }
+            } else if normais.contains(&k.item_que_cai) {
+                vistos_normal += 1;
+                if !k.item_comum {
+                    normal_na_de_missao += 1;
+                }
+            }
+        }
+    }
+    assert!(vistos_matter > 100 && vistos_normal > 100, "amostra pequena demais: {vistos_matter}/{vistos_normal}");
+    assert_eq!(matter_na_comum, 0, "algum TASKMATTER foi marcado para a bolsa comum");
+    // O tipo do item **descreve** a regra; quem manda é o bit. A única exceção do realm é a
+    // "Presa de Filhote de Lobo" (2654), um TASKNORMALMATTER que uma missão quer na bolsa de
+    // missão — e o servidor tem de obedecer ao bit, não ao tipo.
+    assert_eq!(normal_na_de_missao, 1, "mudou o número de exceções do realm");
+
+    // E os dois itens do relato, nomeados.
+    for id in [44357, 44363] {
+        assert!(normais.contains(&id), "o {id} devia ser TASKNORMALMATTER_ESSENCE");
+    }
+}
+
+/// B73 — o amuleto vestido traz o total, o gatilho e a recarga do `elements.data`.
+///
+/// `OnActivate` entrega `point` e `trigger_percent` ao jogador (`gs/item/item_amulet.cpp:22-46`)
+/// e `OnAutoTrigger` arma o `cool_time` do próprio item depois de cada disparo (`:9-20`).
+#[test]
+fn o_amuleto_traz_o_total_o_gatilho_e_a_recarga() {
+    let Some(d) = realm() else { return };
+    assert_eq!(
+        d.dados_do_amuleto(35370),
+        Some((5400, 0.5, 10000, true)),
+        "Amuleto do Guardião - 1: 5400 de vida, dispara a 50 %, recarrega em 10 s"
+    );
+    let (ponto, gatilho, recarga, de_vida) = d.dados_do_amuleto(35376).expect("o 35376 é um AUTOMP_ESSENCE");
+    assert_eq!(ponto, 18000, "Hierograma do Guardião - 1");
+    assert!((gatilho - 0.75).abs() < 1e-6, "dispara a 75 % de mana");
+    assert!(recarga > 0, "sem recarga o hierograma dispararia todo segundo");
+    assert!(!de_vida, "o hierograma é de mana");
+    assert_eq!(d.dados_do_amuleto(1796), None, "poção não é amuleto");
+}
+
+/// B71 — quem decide a família de recarga é o `id_major_type`, não o que a poção restaura.
+///
+/// `set_to_classid` (`gs/template/setclassid.cpp:81-101`) traduz 1794 em
+/// `CLS_ITEM_HEALING_POTION`, 1802 em `CLS_ITEM_MANA_POTION`, 1810 em
+/// `CLS_ITEM_REJUVENATION_POTION` e 1815/2038 nos antídotos; cada `OnUse` arma o
+/// `COOLDOWN_INDEX_*` da sua classe (`gs/item/item_potion.cpp:18-110`).
+#[test]
+fn o_tipo_maior_do_remedio_separa_as_familias_de_recarga() {
+    let Some(d) = realm() else { return };
+    assert_eq!(d.tipo_maior_do_remedio(1796), Some(1794), "Poção Pequena de Cura");
+    assert_eq!(d.tipo_maior_do_remedio(1804), Some(1802), "Poção Pequena do Espírito");
+    assert_eq!(d.tipo_maior_do_remedio(1812), Some(1810), "Nove Sóis Pequeno (vida e mana)");
+    assert_eq!(d.tipo_maior_do_remedio(1817), Some(1815), "Pílula Desintoxicante");
+    assert_eq!(d.tipo_maior_do_remedio(2040), Some(2038), "Pílula das Nove Desintoxicações");
+    assert_eq!(d.tipo_maior_do_remedio(35370), None, "amuleto não é remédio");
+
+    // O antídoto restaura zero de vida e zero de mana: só o `id_major_type` o separa da
+    // poção de mana, e era nela que a divisão por hp/mp o punha.
+    assert_eq!(d.quanto_o_remedio_restaura_no_tempo(1817), Some((0, 0, 0, 0, 15000)));
 }

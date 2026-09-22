@@ -578,6 +578,7 @@ fn test_own_ext_prop_tem_196_bytes_e_os_atributos_no_lugar() {
         (10, 20, 15, 12), // vitalidade, energia, força, agilidade
         130,
         280,
+        99,
         (2, 3),
         (1.5, 4.8, 2.2, 5.0),
         (7, 11, 19, 30, 1.4),
@@ -608,7 +609,7 @@ fn test_own_ext_prop_tem_196_bytes_e_os_atributos_no_lugar() {
     // `df` fica em 116 dentro do ROLEEXTPROP, e a defesa em +20 dele.
     assert_eq!(i32_em(BS + 116 + 20), 23, "defense");
     assert_eq!(i32_em(BS + 116 + 24), 29, "armor");
-    assert_eq!(i32_em(BS + 144), 0, "max_ap");
+    assert_eq!(i32_em(BS + 144), 99, "max_ap");
 }
 
 /// `HOST_SKILL_ATTACKED` (144) tem 19 bytes de corpo — o IR e o cabeçalho do cliente

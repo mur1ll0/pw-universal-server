@@ -288,6 +288,11 @@ pub enum Efeito {
     Powerup,
     Invincible,
     Firearrow,
+    /// `filter_Wingshield` (`cskill/skill/skillfilter.h:4136-4232`): um escudo que **absorve**
+    /// dano até acabar e, de quebra, injeta mana a cada 3 s. A Barreira de Asa (249) o aplica
+    /// com `SetAmount(60 + 75 × nível)`, `SetValue(4 + 6 × nível)` e `SetTime(20000)`
+    /// (`cskill/skills/skill249.h:257-262`).
+    Wingshield,
     /// `healing_potion_filter` / `mana_potion_filter` (`gs/potion_filter.h:6-130`): a poção
     /// não cura de uma vez — ela reparte o total pelo tempo e entrega **um pedaço por
     /// batimento de 1 s**. Não vem de roteiro de habilidade; quem cria é o uso do item.
@@ -352,6 +357,7 @@ impl Efeito {
             "Powerup" => Powerup,
             "Invincible" => Invincible,
             "Firearrow" => Firearrow,
+            "Wingshield" => Wingshield,
             _ => return None,
         })
     }
@@ -418,6 +424,10 @@ impl Efeito {
             // com `HSTATE_FIREARROW` na lista visível à equipe e `VSTATE_FIREARROW` no
             // estado. **Fraco**, não único: com um já ativo, o novo é descartado.
             Firearrow => f(Fraco, true, 70, 30),
+            // `filter_Wingshield`: `UNIQUE|BUFF|HEARTBEAT|REMOVE_ON_DEATH|ADJUST_DAMAGE|
+            // TRANSFERABLE_BUFF`, `HSTATE_WINGSHIELD` 69 e `VSTATE_WINGSHIELD` 29
+            // (`cskill/skill/statedef.h:40,261`).
+            Wingshield => f(Unico, true, 69, 29),
             // Sem ícone e sem estado visual: o original não acende nenhum (`potion_filter.h`).
             PocaoDeVida | PocaoDeMana => f(Fundir, true, 0, 0),
         }
@@ -456,6 +466,9 @@ pub struct Filtro {
     pub origem: i64,
     /// Se mostra ícone (`Invincible` só com `showicon`).
     pub icone: bool,
+    /// `_amount` do `filter_Wingshield`: quanto de dano o escudo ainda aguenta. Cai a cada
+    /// golpe e, abaixo de 6, o filtro se apaga (`skillfilter.h:4168-4195`).
+    pub absorve: f32,
 }
 
 /// O que um segundo de filtros faz ([`Efeitos::batida`]).
@@ -549,6 +562,19 @@ impl Efeitos {
                 f.restante_s -= 1;
                 continue;
             }
+            // `filter_Wingshield::Heartbeat`: a cada 3 s injeta `_mpgen` **inteiro**, não o
+            // acumulado (`skillfilter.h:4207-4218`).
+            if f.efeito == Efeito::Wingshield {
+                f.contador += 1;
+                if f.contador >= 3 || 1 >= f.restante_s {
+                    if f.por_segundo > 0 {
+                        tiques.push(Tique::Mana(f.por_segundo));
+                    }
+                    f.contador -= 3;
+                }
+                f.restante_s -= 1;
+                continue;
+            }
             let acumula = f.efeito.dano_no_tempo().is_some() || matches!(f.efeito, Efeito::Hpgen | Efeito::Mpgen);
             if acumula {
                 f.contador += 1;
@@ -570,6 +596,33 @@ impl Efeitos {
             self.invencivel_s -= 1;
         }
         (tiques, self.filtros.len() != antes)
+    }
+
+    /// `filter_Wingshield::AdjustDamage` (`cskill/skill/skillfilter.h:4168-4195`).
+    ///
+    /// O original compara **um quinto** do golpe com o escudo. Enquanto couber ali, o dano
+    /// passa a 20% e o escudo perde quatro vezes o que absorveu; quando não cabe mais, o
+    /// dano é reduzido na proporção do que sobrou e o escudo zera. Abaixo de 6 o filtro se
+    /// apaga.
+    pub fn escudo_absorve(&mut self, dano: i32) -> i32 {
+        let Some(f) = self.filtros.iter_mut().find(|f| f.efeito == Efeito::Wingshield) else {
+            return dano;
+        };
+        let quinto = dano as f32 * 0.2;
+        let saida = if quinto < f.absorve {
+            f.absorve -= quinto * 4.0;
+            quinto
+        } else if quinto > 1.0 {
+            let r = 1.0 - f.absorve / quinto;
+            f.absorve = 0.0;
+            dano as f32 * r
+        } else {
+            dano as f32
+        };
+        if f.absorve < 6.0 {
+            f.restante_s = 0;
+        }
+        saida.max(0.0) as i32
     }
 
     /// `ClearSpecFilter(FILTER_MASK_BUFF/DEBUFF)`.
@@ -691,6 +744,7 @@ pub fn dano_recebido(efeitos: &mut Efeitos, dano: i32) -> i32 {
         return 0;
     }
     efeitos.ao_receber_dano();
+    let dano = efeitos.escudo_absorve(dano);
     ((dano as f32) * efeitos.realce().dano_recebido) as i32
 }
 
@@ -930,7 +984,7 @@ mod testes {
     }
 
     fn filtro(e: Efeito, s: i32, razao: i32) -> Filtro {
-        Filtro { efeito: e, restante_s: s, razao, fator: razao as f32 / 100.0, por_segundo: 0, contador: 0, origem: 0, icone: true }
+        Filtro { efeito: e, restante_s: s, razao, fator: razao as f32 / 100.0, por_segundo: 0, contador: 0, origem: 0, icone: true, absorve: 0.0 }
     }
 
     #[test]
@@ -956,7 +1010,7 @@ mod testes {
     #[test]
     fn dano_no_tempo_tica_de_tres_em_tres() {
         let mut e = Efeitos::default();
-        e.adicionar(Filtro { efeito: Efeito::Toxic, restante_s: 5, razao: 0, fator: 0.0, por_segundo: 20, contador: 0, origem: 7, icone: true });
+        e.adicionar(Filtro { efeito: Efeito::Toxic, restante_s: 5, razao: 0, fator: 0.0, por_segundo: 20, contador: 0, origem: 7, icone: true, absorve: 0.0 });
         let mut total = 0;
         for _ in 0..5 {
             for t in e.batida().0 {

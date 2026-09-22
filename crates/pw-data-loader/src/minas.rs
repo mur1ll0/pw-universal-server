@@ -46,6 +46,10 @@ pub struct MinaDoRealm {
     pub coletores: u32,
     /// `material_gain_ratio`.
     pub chance_de_sucesso: f32,
+    /// `npcgen_1..4` do `MINE_ESSENCE`: os monstros que **nascem ao colher**
+    /// (`(template, quantidade, raio, vida em segundos)`). É assim que a Flor de Safira
+    /// (44566) solta o Guardião de Almas (44608) que guarda o Estame da missão 31779.
+    pub monstros_ao_colher: Vec<(u32, u32, f32, i32)>,
     pub tipo: i32,
 }
 
@@ -124,6 +128,15 @@ pub fn carregar(elements: &GenericElementsData) -> TabelaDeMinas {
                 coletores: i("max_gatherer").clamp(1, 20) as u32,
                 chance_de_sucesso,
                 tipo,
+                monstros_ao_colher: (1..=4)
+                    .filter_map(|k| {
+                        let tid = i(&format!("npcgen_{k}_id_monster"));
+                        let num = i(&format!("npcgen_{k}_num"));
+                        (tid > 0 && num > 0).then(|| {
+                            (tid as u32, num as u32, f(&format!("npcgen_{k}_radius")), i(&format!("npcgen_{k}_life_time")))
+                        })
+                    })
+                    .collect(),
             },
         );
     }
