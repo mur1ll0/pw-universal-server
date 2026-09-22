@@ -1,0 +1,62 @@
+   Compiling pw-protocol v0.1.0 (F:\Python_C_Projects\PWSource1.5.3\pw-126\crates\pw-protocol)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.43s
+     Running tests\itens_do_126.rs (target\debug\deps\itens_do_126-05a624c0675a9f91.exe)
+
+running 7 tests
+test experiencia_126_reproduz_36_e_158 ... ok
+test itens_155_preservam_layout_e_contadores_u32 ... ok
+test compra_126 ... FAILED
+test retirada_126 ... FAILED
+test premio_item_126 ... FAILED
+test pickup_126 ... FAILED
+test obtain_126 ... FAILED
+
+failures:
+
+---- compra_126 stdout ----
+
+thread 'compra_126' (38672) panicked at crates\pw-protocol\tests\itens_do_126.rs:31:5:
+assertion `left == right` failed
+  left: [72, 0, 192, 93, 0, 0, 0, 0, 0, 0, 0, 1, 0, 155, 7, 0, 0, 0, 0, 0, 0, 232, 3, 0, 0, 21, 0, 0]
+ right: [72, 0, 192, 93, 0, 0, 0, 1, 0, 155, 7, 0, 0, 0, 0, 0, 0, 232, 3, 21, 0, 0]
+
+---- retirada_126 stdout ----
+
+thread 'retirada_126' (17224) panicked at crates\pw-protocol\tests\itens_do_126.rs:25:5:
+assertion `left == right` failed
+  left: [46, 0, 0, 4, 1, 0, 0, 0, 57, 3, 0, 0, 1]
+ right: [46, 0, 0, 4, 1, 0, 57, 3, 0, 0, 1]
+
+---- premio_item_126 stdout ----
+
+thread 'premio_item_126' (15272) panicked at crates\pw-protocol\tests\itens_do_126.rs:19:5:
+assertion `left == right` failed
+  left: [156, 0, 210, 48, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 4]
+ right: [156, 0, 210, 48, 0, 0, 1, 0, 1, 0, 0, 4]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- pickup_126 stdout ----
+
+thread 'pickup_126' (14628) panicked at crates\pw-protocol\tests\itens_do_126.rs:7:5:
+assertion `left == right` failed
+  left: [31, 0, 57, 3, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 4]
+ right: [31, 0, 57, 3, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 4]
+
+---- obtain_126 stdout ----
+
+thread 'obtain_126' (5936) panicked at crates\pw-protocol\tests\itens_do_126.rs:13:5:
+assertion `left == right` failed
+  left: [99, 0, 200, 43, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 58, 0, 0, 0, 0, 10]
+ right: [99, 0, 200, 43, 0, 0, 0, 0, 0, 0, 8, 0, 58, 0, 0, 10]
+
+
+failures:
+    compra_126
+    obtain_126
+    pickup_126
+    premio_item_126
+    retirada_126
+
+test result: FAILED. 2 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p pw-protocol --test itens_do_126`

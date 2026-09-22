@@ -1550,8 +1550,12 @@ async fn comprar_do_npc_tira_dinheiro_e_da_o_item() {
     // `PURCHASE_ITEM` (72): custo, e por item o id, a quantidade e o slot onde entrou.
     let compra = esperar_comando(&mut link, 72).await;
     assert_eq!(i32_em(&compra, 2), PRECO_DO_ITEM_DE_LOJA, "cost");
-    assert_eq!(i32_em(&compra, 13), ITEM_DE_LOJA, "item_id");
-    let slot = u16::from_le_bytes([compra[25], compra[26]]);
+    // O cenário é V1_2_6: docs/evidencias/126/s2c-72.txt:2 (7 + 13*n).
+    assert_eq!(compra.len(), 22);
+    assert_eq!(u16::from_le_bytes([compra[7], compra[8]]), 1, "item_count");
+    assert_eq!(i32_em(&compra, 9), ITEM_DE_LOJA, "item_id");
+    assert_eq!(u16::from_le_bytes([compra[17], compra[18]]), 1, "count");
+    let slot = u16::from_le_bytes([compra[19], compra[20]]);
 
     let itens2 = itens.clone();
     let chegou = ate_async(move || {
@@ -3988,10 +3992,13 @@ async fn pegar_item_de_missao_vai_para_bolsa_de_missao() {
     .await
     .unwrap();
 
-    // PICKUP_ITEM (31): tid (4B), expire (4B), amount (4B), slot_amount (4B), package (1B), slot (1B)
+    // PICKUP_ITEM 126: tid/expire i32, amount/slot_amount u16, package/slot u8 (s2c-31.txt:2).
     let pickup = esperar_comando(&mut link, 31).await;
     assert_eq!(i32_em(&pickup, 2), item_missao_id as i32, "item_id");
-    assert_eq!(pickup[18], 2, "pacote/where deve ser 2 (IL_TASK_INVENTORY)");
+    assert_eq!(pickup.len(), 16);
+    assert_eq!(u16::from_le_bytes([pickup[10], pickup[11]]), 1, "amount");
+    assert_eq!(u16::from_le_bytes([pickup[12], pickup[13]]), 1, "slot_amount");
+    assert_eq!(pickup[14], 2, "pacote/where deve ser 2 (IL_TASK_INVENTORY)");
 
     let sumiu = esperar_comando(&mut link, 152).await;
     assert_eq!(i32_em(&sumiu, 2), drop.id as i32, "MATTER_PICKUP (152)");

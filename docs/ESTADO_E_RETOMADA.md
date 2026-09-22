@@ -5,7 +5,7 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-21**, B74 (Camada 2 do 126, worktree `versao-126`; sem publicação).
+> **Última atualização: 2026-09-21**, B76 (experiência/pacotes de itens 126; worktree `versao-126`, base `a305e51`; sem publicação).
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -23,7 +23,7 @@
 **Frente isolada 1.2.6 (B73, 2026-09-20):** branch `versao-126`, worktree `../pw-126`,
 base `2dca19e`. Inventário de 98 ids S2C e 46 C2S do mundo em
 `docs/INVENTARIO_PROTOCOLO_126.md`, com captura relida em `docs/evidencias/126/`.
-Há divergências ainda em chamadas comuns (14, 31, 46, 64, 72, 99, 144, 156).
+Há divergências ainda em chamadas comuns (14 e 64); itens corrigidos no B76.
 Nenhum código alterado/publicado nesta etapa. B71/B72 da outra sessão não estão nesta base.
 B74: entrada medida em `docs/ENTRADA_126.md`; corrigidos EQUIP_DATA (mask32) e
 avisos inexistentes no cliente. Fechamento local em 2026-09-21: **11 testes focados
@@ -31,6 +31,16 @@ aprovados**, com `TEST_DATABASE_URL` definido. Parada para aprovação; Camadas 
 fora do escopo desta sessão. A suíte iniciada anteriormente terminou com uma falha
 em persistência de missão (`subcomandos_no_mundo.rs:1807`); não repetida nem
 investigada nesta retomada, conforme o escopo reduzido.
+
+**B75 — Camada 3:** 84/83/24/26/33 conferidos byte a byte; 144 corrigido
+para 15 bytes somente no v126. Cadência do original medida; sem alteração da
+regra temporal comum nem alegação de igualdade visual. Seis testes focados
+aprovados com banco; documentação em `docs/COMBATE_126.md`. Parada para revisão.
+**B76 — Camada 4 parcial:** 31/46/72/99/156 corrigidos via trait; experiência
+36/158 conferida na captura. Nove testes focados aprovados com banco, incluindo
+sentinelas 155. Sem suíte completa, commit ou publicação. `docs/ITENS_EXPERIENCIA_126.md`.
+Leitor tasks v55 adiado por pedido do usuário; prompt completo e resposta esperada
+em `docs/PROMPT_TASKS_V55.md`. Não se declara missão 126 jogável.
 
 **Alvo:** o **1.5.5**, servido pelo realm `realm_155` ao cliente 1.5.5 BR
 (`elements.data` v156, `tasks.data` 129, build 2569). Ordem combinada com o Murillo:
@@ -357,6 +367,10 @@ Onde olhar: `docker logs pw-world-155 | grep -iE "viajou|ponto de teleporte|cult
 
 ## 5. O que falta
 
+**Frente 126 (B76):** executar o roteiro `docs/PROMPT_TASKS_V55.md` em sessão
+separada; depois medir listas de missão e integrar com evidência. Pacotes de itens
+estão testados localmente; ainda aguardam aprovação/publicação e teste visual.
+
 Conferido contra o código em 2026-09-13 — cada linha diz onde está a evidência.
 
 ### 5A. Jogabilidade básica do 1.5.5 — a prioridade
@@ -513,6 +527,8 @@ Cada uma custou pelo menos uma sessão. A evidência está no item citado.
 
 ## 8. Índice do histórico (série B, frente 1.5.5)
 
+- **B76:** experiência e cinco pacotes de itens; nove testes focados, leitor v55 adiado.
+- **B75:** combate 126, comando 144 e medição de cadência; seis testes focados.
 - **B74:** entrada 126, máscara de equipamento e avisos suportados; sem publicação.
 - **B73:** inventário de protocolo 1.2.6 na árvore isolada `versao-126` (sem publicação).
 

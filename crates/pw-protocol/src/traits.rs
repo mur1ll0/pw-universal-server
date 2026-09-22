@@ -69,6 +69,14 @@ pub trait WorldProtocol: Send + Sync {
         section: u8,
     ) -> S2CGamedataSend;
 
+    /// HOST_SKILL_ATTACKED (144): o padrão preserva o layout do 155.
+    fn host_skill_attacked(
+        &self, attacker_id: i32, skill_id: i32, damage: i32,
+        attack_flag: i32, speed: u8, section: u8,
+    ) -> S2CGamedataSend {
+        S2CGamedataSend::host_skill_attacked(attacker_id, skill_id, damage, attack_flag, speed, section)
+    }
+
     /// NPC_INFO_00 (33)
     fn npc_info_00(&self, nid: i32, hp: i32, max_hp: i32, alvo: i32) -> S2CGamedataSend;
 
@@ -88,6 +96,31 @@ pub trait WorldProtocol: Send + Sync {
 
     /// RECEIVE_EXP (36)
     fn receive_exp(&self, exp: i32, sp: i32) -> S2CGamedataSend;
+
+    /// Layout padrão 155; contadores menores no 126 (B76).
+    fn pickup_item(&self, tid: i32, expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> S2CGamedataSend {
+        S2CGamedataSend::pickup_item(tid, expire_date, amount, slot_amount, package, slot)
+    }
+
+    /// Layout padrão 155; contadores menores no 126 (B76).
+    fn obtain_item(&self, tid: i32, expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> S2CGamedataSend {
+        S2CGamedataSend::obtain_item(tid, expire_date, amount, slot_amount, package, slot)
+    }
+
+    /// Layout padrão 155; contadores menores no 126 (B76).
+    fn task_deliver_item(&self, tid: i32, expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> S2CGamedataSend {
+        S2CGamedataSend::task_deliver_item(tid, expire_date, amount, slot_amount, package, slot)
+    }
+
+    /// Layout padrão 155; contadores menores no 126 (B76).
+    fn player_drop_item(&self, package: u8, slot: u8, count: u32, tid: i32, drop_type: u8) -> S2CGamedataSend {
+        S2CGamedataSend::player_drop_item(package, slot, count, tid, drop_type)
+    }
+
+    /// Layout padrão 155; contadores menores no 126 (B76).
+    fn purchase_item(&self, cost: u32, itens: &[(i32, i32, u32, u16)]) -> S2CGamedataSend {
+        S2CGamedataSend::purchase_item(cost, itens)
+    }
 
     /// EQUIP_ITEM (48)
     fn equip_item(&self, idx_ivtr: u8, idx_equip: u8, count_ivtr: u32, count_equip: u32) -> S2CGamedataSend;

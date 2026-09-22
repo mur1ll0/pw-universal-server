@@ -1,6 +1,6 @@
 # Especificação 04: Protocolo do mundo 3D (subcomandos do `GamedataSend`)
 
-> Camada 2 do 126 conferida em 2026-09-21, base `2dca19e` + B74. Demais áreas:
+> Camadas 2/3 e pacotes de itens/experiência 126 conferidos em 2026-09-21, base `a305e51` + B75/B76. Demais áreas:
 > referência 2026-09-14, commit `e6433ae` + B49. Cobre
 > `crates/pw-protocol/src/{packets,versions,opcodes.rs}`, `crates/pw-wire/`,
 > `crates/pw-gs/src/comandos.rs`, `specs/protocol/` e `tools/pw-rpcgen/`.
@@ -58,7 +58,7 @@ ou com campos novos no fim. Novos do 1.5.5 ainda não triados: 66 GNET, 17 C2S, 
 
 **Auditoria 1.2.6 em `2dca19e` (B73, 2026-09-20):** o inventário completo das chamadas
 atuais do mundo está em `docs/INVENTARIO_PROTOCOLO_126.md` (98 ids S2C, 46 C2S).
-Compatibilidade ainda **parcial**: os comandos comuns 14, 31, 46, 64, 72, 99, 144 e 156
+Compatibilidade ainda **parcial**: os comandos comuns 14 e 64
 divergem dos comprimentos capturados. Medição reproduzida em
 `docs/evidencias/126/full_interno.medidas.md`; tamanho igual não comprova campos iguais.
 `SCENE_SERVICE_NPC_LIST` (390) é opcional no trait: v126 não emite, pois seu binário
@@ -83,6 +83,20 @@ dois nomes para a mesma coisa convidava a escrever `if versao == ...` de novo.
 - `versions/v155/`: a implementação **canônica** (196 B de `own_ext_prop`, 5 blocos no `task_data`, 35 B de `info_npc`, 23 campos no `RoleInfo`).
 - `versions/v126/`: a 1.2.6 por inteiro (152 B, 3 blocos, 27 B, 19 campos, sem `refretcode`).
 - `versions/v148/`, `v153.rs`, `v172/`: **compõem** a do 1.5.5 (`V148Protocol(V155Protocol)`) e sobrescrevem só o que difere — é assim que se acrescenta versão nova.
+
+`HOST_SKILL_ATTACKED` (144) também passa pelo trait: v126 emite 15 bytes,
+com flag de um byte e sem section; padrão 155 mantém 19 bytes. Captura
+`s2c-144.txt:2` e validador do cliente VA 0x584af4 (B75). Os comandos normais
+84/83/24/26/33 reproduzem as amostras. Estado: seis testes focados aprovados,
+sem validação visual; cadência medida e limites em `docs/COMBATE_126.md`.
+
+Itens 126 (B76, **testado**): 31/99 têm 14 B, 46 tem 9 B, 72 tem
+7+13×n B e 156 tem 10 B de payload. Os cinco passam pelo trait; padrão 155
+inalterado, overrides em v126. Contagens u16; 72 sem yinpiao e 156 sem validade.
+36 (4 B) já usa o trait; 158 (8 B) permanece comum. Gabaritos da captura e
+validador em `docs/ITENS_EXPERIENCIA_126.md`; sete testes de protocolo e dois de
+mundo aprovados com banco. Não implica suporte às listas/missões v55 nem ao C2S
+de compra; sem publicação ou validação visual.
 
 Um comando que **não** varia entre versões continua em `S2CGamedataSend`, com um só caminho
 de escrita. Quando uma medição mostrar que ele varia, ele sobe para o trait — é a regra "um

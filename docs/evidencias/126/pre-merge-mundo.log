@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.68s
+warning: the following packages contain code that will be rejected by a future version of Rust: sqlx-postgres v0.7.4
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running tests\subcomandos_no_mundo.rs (target\debug\deps\subcomandos_no_mundo-1518ab5a1a62b944.exe)
+
+running 2 tests
+test comprar_do_npc_tira_dinheiro_e_da_o_item ... ok
+test pegar_item_de_missao_vai_para_bolsa_de_missao ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 62 filtered out; finished in 5.84s

@@ -21,3 +21,7 @@ dos quais 6.852.096 de entrada em cache. Não inclui a edição documental e res
 posteriores ao corte. Períodos incluem análise, ferramentas e comunicação; testes
 amplos executaram durante parte da implementação. Nenhuma suíte ampla foi
 iniciada na retomada de escopo reduzido.
+
+## Camada 3 — corte antes do fechamento documental
+
+Contador exato entre 2026-09-21T13:18:35.656Z e 2026-09-21T16:20:37.981Z: entrada **2240140** (cache 2215424), saída **9393**, total **2249533**. Acumulado da tarefa **11035713**. Inclui medição, implementação e testes focados; exclui este fechamento documental e a resposta final.

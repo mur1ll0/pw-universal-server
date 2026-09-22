@@ -8028,3 +8028,35 @@ comparação lado a lado.
     Não se declara regressão global aprovada; Camadas 3/4 não iniciadas.
     Parada para aprovação, sem novas alterações fora da Camada 2.
     Nenhum commit, publicação, reinício ou teste visual declarado.
+
+
+75. **Sessão 2026-09-21: combate 126, comando 144 e cadência medida.**
+
+    Base a305e51, árvore versao-126. HOST_SKILL_ATTACKED saía pelo escritor
+    comum de 19 B (`bus_server.rs:2489`); captura `s2c-144.txt:2` e cliente
+    VA 0x584af4 comprovam 15 B. Teste vermelho antes, verde após override
+    em `v126/mod.rs:130`; padrão do trait preserva bytes do 155.
+    84/83/24/26/33 reproduzem as amostras originais. Cadência: 23 intervalos
+    de resultado, 22 ticks anunciados, mediana 1149,332 ms; 83→24 mediana
+    49,3695 ms (52 pares). Script checa remontagem e contagens contra pcapdiff.
+    Regra temporal não alterada; corrigida apenas a contradição documental
+    sobre dano imediato (InsertDamageEntry, actobject.cpp:1758-1776).
+    Provas/limites/roteiro: docs/COMBATE_126.md. Testes com banco: 3 de
+    protocolo + 3 filtros de mundo aprovados, sem suíte completa.
+    Sem commit/publicação; sem teste visual. Camada 4 não iniciada.
+
+76. **Sessão 2026-09-21: experiência e pacotes de itens 126; leitor v55 adiado.**
+
+    Captura original e validador do cliente exigem 31/99=14 B, 46=9 B,
+    72=7+13*n e 156=10 B; chamadas diretas em jogo.rs usavam formatos 155.
+    Cinco métodos no trait preservam o padrão; overrides só em v126.
+    Contexto usa a estratégia do servidor; regras comuns não mudaram.
+    36=4 B e 158=8 B já corretos, agora com gabaritos da captura.
+    Teste mínimo antes: 2 aprovados/5 falhas; depois 7/0 protocolo e 2/0
+    mundo, com TEST_DATABASE_URL. Os dois gabaritos de mundo eram v126 com
+    offsets 155; corrigidos pela captura, sem retirar verificações de estado.
+    Evidências e limites: docs/ITENS_EXPERIENCIA_126.md. Sem suíte completa,
+    publicação, commit ou confirmação visual. O arquivo tasks v55 mede
+    20.793.663 B e declara 2819 entradas, mas tasks.rs:1139 só aceita v129.
+    Por pedido do usuário, leitor fica para sessão com modelo mais barato:
+    docs/PROMPT_TASKS_V55.md contém escopo, critérios e relatório de retorno.

@@ -2486,7 +2486,7 @@ impl BusServer {
         if alvo_id != roleid && !h.e_cura() {
             let _ = self.enviar_ao_jogador(
                 alvo_id,
-                S2CGamedataSend::host_skill_attacked(
+                self.sub.host_skill_attacked(
                     roleid,
                     skill_id,
                     saturar(valor as i64),
