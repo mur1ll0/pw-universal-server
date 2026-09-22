@@ -71,6 +71,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         recargas: std::collections::HashMap::new(),
         pecas: [None; pw_gs::entity::PECAS_VESTIDAS],
         auto_hp: None,
+        daimon: None,
         auto_mp: None,
         recarga_do_auto_hp_s: 0,
         recarga_do_auto_mp_s: 0,
@@ -104,6 +105,52 @@ fn monstro(pos: Vector3) -> MonsterEntity {
     m.aggro_range = 30.0;
     m.move_speed = 4.0;
     m
+}
+
+// ---------------------------------------------------------------------------------
+// "nenhum monstro ataca só de chegar perto" (B76)
+// ---------------------------------------------------------------------------------
+
+/// `aggressive_mode` do `MONSTER_ESSENCE`: o monstro marcado assim recebe o aviso de
+/// movimento do jogador (`MSG_MASK_PLAYER_MOVE`, `npcgenerator.cpp:2534-2537`) num raio de
+/// `GetMaxMobSightRange` — 15 m (`playerctrl.cpp:265-276`, `worldmanager.cpp:48`) — e parte
+/// para cima dele. O passivo só reage a quem bate.
+#[test]
+fn o_monstro_agressivo_ataca_quem_chega_perto() {
+    let perto = |d: f32| {
+        let mut players = std::collections::HashMap::new();
+        players.insert(1i64, jogador(Vector3::new(d, 0.0, 0.0)));
+        players
+    };
+
+    // Passivo: ninguém o incomoda, ele não sai do lugar por causa do jogador.
+    let mut ai = MonsterAi::new();
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    m.agressivo = false;
+    ai.tick(&mut m, &perto(5.0), 50, &sem_mapa);
+    assert_eq!(ai.get_highest_threat_target(), None, "monstro passivo não pode odiar sozinho");
+
+    // Agressivo, com o jogador dentro dos 15 m: pega o alvo.
+    let mut ai = MonsterAi::new();
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    m.agressivo = true;
+    ai.tick(&mut m, &perto(5.0), 50, &sem_mapa);
+    assert_eq!(ai.get_highest_threat_target(), Some(1), "o agressivo não viu o jogador a 5 m");
+
+    // Agressivo, mas longe demais: o aviso do original não chega.
+    let mut ai = MonsterAi::new();
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    m.agressivo = true;
+    ai.tick(&mut m, &perto(20.0), 50, &sem_mapa);
+    assert_eq!(ai.get_highest_threat_target(), None, "o agressivo enxergou além dos 15 m");
+
+    // E morto não vê ninguém.
+    let mut ai = MonsterAi::new();
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    m.agressivo = true;
+    m.is_dead = true;
+    ai.tick(&mut m, &perto(5.0), 50, &sem_mapa);
+    assert_eq!(ai.get_highest_threat_target(), None);
 }
 
 // ---------------------------------------------------------------------------------

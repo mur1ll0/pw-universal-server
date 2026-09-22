@@ -86,6 +86,7 @@ fn monstro() -> MonsterEntity {
         ataque_em_ticks: 30,
         atraso_do_dano_em_ticks: 10,
         aggro_range: 30.0,
+        agressivo: false,
         sight_range: 40,
         // Toda a vida máxima em experiência: quem tira os 137 de vida leva 137.
         exp: 480,

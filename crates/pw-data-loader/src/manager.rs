@@ -630,6 +630,32 @@ impl GameDataManager {
             .and_then(|v| v.as_i32())
     }
 
+    /// O `exp_factor` e as habilidades iniciais de um Daimon (`GOBLIN_ESSENCE`).
+    ///
+    /// O `exp_factor` multiplica a curva de experiência do jogador para dar a do Daimon
+    /// (`player_template::GetLvlupExp(0, nível) × exp_factor`, `gs/item/item_elf.cpp:696-710`).
+    /// As `default_skill1..3` já vêm aprendidas no nível 1 (`generate_elf`,
+    /// `gs/template/generate_item_temp.h:2505-2520`).
+    pub fn dados_do_daimon(&self, item_id: u32) -> Option<(f32, Vec<u16>)> {
+        let g = self.elements_generic.as_ref()?;
+        let r = g
+            .get("GOBLIN_ESSENCE")
+            .iter()
+            .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?;
+        let fator = match r.get("exp_factor") {
+            Some(crate::generic_elements::FieldValue::Float(f)) => *f,
+            Some(crate::generic_elements::FieldValue::Int(i)) => *i as f32,
+            _ => 1.0,
+        };
+        let habilidades = ["default_skill1", "default_skill2", "default_skill3"]
+            .iter()
+            .filter_map(|c| r.get(*c).and_then(|v| v.as_i32()))
+            .filter(|v| *v > 0)
+            .map(|v| v as u16)
+            .collect();
+        Some((fator, habilidades))
+    }
+
     /// Os números de um amuleto vestido: `(ponto, gatilho, recarga_ms, é_de_vida)`.
     ///
     /// `point` e `trigger_percent` são o que `OnActivate` entrega ao jogador

@@ -1008,6 +1008,17 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `ELF_EXP` (283) — `{ int exp; }`, a barra de experiência do Daimon.
+    ///
+    /// `elf_item::InsertExp` o manda a cada ganho que **não** sobe de nível
+    /// (`gs/item/item_elf.cpp:740-748`); quando sobe, o que vai é a ficha do item inteira.
+    pub fn elf_exp(exp: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(283);
+        stream.write_i32_le(exp);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `SET_COOLDOWN` (198) — `{ int cooldown_index; int cooldown_time; }`. O índice de
     /// habilidade é `id + COOLINGID_BEGIN` (1024, `playerwrapper.cpp:170`).
     pub fn set_cooldown(index: i32, time_ms: i32) -> Self {

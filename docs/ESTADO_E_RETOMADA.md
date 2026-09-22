@@ -5,8 +5,8 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-21**, B74 (a recarga do amuleto no cliente; a bolsa do item
-> de missão conferida contra o dado).
+> **Última atualização: 2026-09-21**, B76 (a matéria que acorda monstro, o monstro agressivo
+> e a aritmética da experiência do Daimon).
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -81,6 +81,19 @@ dá 15 por segundo. O valor corrente e o teto vão no `SELF_INFO_00`; o mesmo te
 ir no último campo do `OWN_EXT_PROP`. Ele ia zero, e o cliente recebia 0→99 em cada atualização,
 mostrando repetidamente o aviso de aumento. A **Flecha Fulgurante não gera chi** no original:
 ela consome mana e aplica `Firearrow`. **Não há ganho ao apanhar** no 1.5.5.
+
+**Coleta que acorda monstro (B76):** a Flor de Safira não produz item — ela solta o Guardião
+de Almas, e é dele que cai o Estame da missão. Os `npcgen_1..4` do `MINE_ESSENCE` passaram a
+ser lidos e a nascer na coleta.
+
+**Monstro agressivo (B76):** `aggressive_mode` — 4.874 dos 8.054 monstros do realm — nunca
+tinha sido usado: nenhum monstro atacava sozinho. Agora o agressivo sem alvo pega o jogador
+mais perto dentro de 15 m, que é o alcance do aviso de movimento no original.
+
+**Daimon (B75/B76):** não existia nada dele no projeto — por isso "não fazia nada". Agora o item
+sai com o bloco de dados (o estado dele) e recebe **um décimo** da experiência do jogador,
+subindo de nível como no original. Falta o resto do sistema: equipamento e habilidades do
+Daimon, vigor, pílulas, refino e distribuir pontos.
 
 **Bolsa do item de missão (B74):** conferido e **correto**. Quem escolhe é o `m_bDropCmnItem`
 de cada missão, e ele acompanha o tipo do item: `TASKMATTER_ESSENCE` vai para a bolsa de
@@ -368,7 +381,14 @@ Depois de publicar o **B71** (falta pedido do Murillo), entram no roteiro:
    na Barreira de Asa; sem chi bastante, a habilidade nem sai. A Flecha Fulgurante **soma 10**.
 10. **Barreira de Asa (B73)**: o ícone do escudo deve ficar **20 s**, os golpes recebidos
     devem doer bem menos enquanto ele dura, e a mana deve subir de 3 em 3 segundos.
-11. **Hierograma (B73/B74)**: deixar a mana cair abaixo de 75 % — ele deve repor sozinho, uma
+11. **Daimon (B75)**: abrir a janela dele — a ficha tem de aparecer com nível 1 e a
+    experiência tem de subir ao matar monstros (um décimo da sua). Ao subir de nível, o item
+    se atualiza sozinho. Ele nunca passa do seu nível.
+12. **Flor de Safira (B76)**: colher a flor tem de **acordar o Guardião de Almas** ali mesmo;
+    matando-o, o Estame cai (80 %) e a missão anda.
+13. **Monstro agressivo (B76)**: chegar a menos de 15 m de um monstro agressivo (a maioria
+    deles) tem de fazer ele vir para cima sem você bater primeiro.
+14. **Hierograma (B73/B74)**: deixar a mana cair abaixo de 75 % — ele deve repor sozinho, uma
     vez a cada 10 s, e o número no item deve diminuir. O ícone tem de **escurecer pela
     recarga** a cada disparo (B74). O amuleto de vida faz o mesmo a 50 %.
 
@@ -422,6 +442,13 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 8. **Sem trava de PvP:** qualquer jogador machuca qualquer outro, em qualquer lugar
     (`bus_server.rs`, comentário em `pvp`). O original exige duelo, guerra ou mapa de PK
     (B35d).
+9. **Daimon (B75/B76, parcial):** tem ficha e ganha experiência, e só. Faltam o equipamento e
+    as habilidades dele, o vigor, as pílulas de experiência, a decomposição, o refino,
+    distribuir pontos de atributo e de gênio, e o bônus sorteado de 10 em 10 níveis. **O ganho
+    truncar para zero com o Daimon muito abaixo do dono é do original** (B76), não é defeito.
+10. **IA de monstro (B76, parcial):** o agressivo pega quem chega perto, mas as estratégias de
+    ódio do `aipolicy.data` (facção, nível, invisibilidade, probabilidade) seguem sem
+    intérprete.
 
 ### 5B. Fidelidade — números e sinais que ainda não são os do original
 
@@ -601,3 +628,5 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 72 | 09-20 | o combate travava porque o autosave gravava dentro do lock do tique; durabilidade das peças no mundo; a barra de vida de quem apanha segue o dano; a Alma da Ninfa na bolsa comum está certa (`m_bCommonItem`) |
 | 73 | 09-21 | habilidades cobram `apcost` e dão `apgain` (a 244 dá 10 — a spec dizia o contrário); efeito `Wingshield` da Barreira de Asa; amuleto e hierograma disparando no batimento |
 | 74 | 09-21 | `SET_COOLDOWN` (198) do amuleto ao cliente; provado que a bolsa do item de missão vem do `m_bDropCmnItem` e está certa |
+| 75 | 09-21 | o Daimon passa a existir: bloco de dados do item (o estado dele) e um décimo da experiência do jogador, com subida de nível |
+| 76 | 09-21 | a mina acorda monstro (`npcgen` do `MINE_ESSENCE`) — é a missão da Flor de Safira; monstro agressivo (`aggressive_mode`) ataca quem chega a 15 m; o ganho de chi do Daimon trunca para zero como no original |

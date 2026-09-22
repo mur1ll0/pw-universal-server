@@ -53,6 +53,8 @@ mod aviso_do_cliente {
 
 /// `EQUIP_INDEX_WEAPON` (`EC_IvtrTypes.h:56-67`).
 const SLOT_DA_ARMA: u16 = 0;
+/// `EQUIP_INDEX_ELF` (`gs/item.h:219`): onde o Daimon é vestido.
+pub(super) const SLOT_DO_DAIMON: u16 = 23;
 /// `EQUIP_INDEX_HP_ADDON` (20) e `EQUIP_INDEX_MP_ADDON` (21) (`gs/item.h:216-217`).
 pub(super) const SLOT_DO_AMULETO_DE_VIDA: u16 = 20;
 pub(super) const SLOT_DO_AMULETO_DE_MANA: u16 = 21;
@@ -109,6 +111,7 @@ impl Contexto<'_> {
     pub fn ganhar_exp(&mut self, exp: i64, sp: i64) {
         let niveis = progressao::receber_exp(self.p, exp, sp, self.dados);
         self.mudou = true;
+        self.daimon_recebe(exp);
         if niveis > 0 {
             self.subiu_de_nivel = true;
             // `gplayer_dispatcher::level_up` difunde a quem vê o jogador, e o próprio recebe.
@@ -116,6 +119,46 @@ impl Contexto<'_> {
             self.para_mim.push(pacote.clone());
             self.para_todos.push(pacote);
             info!("mundo: {} subiu para o nível {}", self.p.role_id, self.p.level);
+        }
+    }
+
+    /// `ElfReceiveExp(exp / 10)` — o Daimon fica com **um décimo** da experiência do
+    /// jogador, toda vez que ele ganha (`gs/player.cpp:2921-2928`, `player_imp.h:2471`).
+    /// Subindo de nível, o cliente recebe a ficha nova do item; senão, só a barra
+    /// (`ELF_EXP` 283, `item_elf.cpp:740-748`).
+    fn daimon_recebe(&mut self, exp: i64) {
+        let parte = (exp.max(0) / 10).clamp(0, u32::MAX as i64) as u32;
+        if parte == 0 {
+            return;
+        }
+        let nivel = self.p.level.clamp(0, i16::MAX as i32) as i16;
+        let tabela = &self.dados.progressao;
+        let Some(d) = self.p.daimon.as_mut() else { return };
+        let (ganhou, subiu) = d.receber_exp(parte, nivel, nivel, |n| {
+            tabela.exp_para_subir(n as i32).clamp(0, u32::MAX as i64) as u32
+        });
+        if !ganhou {
+            return;
+        }
+        let (slot, item_id, bloco, exp_do_daimon) =
+            (d.slot, d.item_id, d.estado.bloco(), d.estado.exp.min(i32::MAX as u32) as i32);
+        if subiu {
+            info!("mundo: o Daimon de {} subiu para o nível {}", self.p.role_id, d.estado.nivel);
+            self.para_mim.push(
+                S2CGamedataSend::item_info(
+                    ContainerType::Equipment.pacote_do_cliente().unwrap_or(1),
+                    slot as u8,
+                    item_id as i32,
+                    0,
+                    0,
+                    1,
+                    &bloco,
+                    None,
+                )
+                .data,
+            );
+        } else {
+            self.para_mim.push(S2CGamedataSend::elf_exp(exp_do_daimon).data);
         }
     }
 
@@ -276,7 +319,7 @@ impl BusServer {
         let bolsa = itens_repo.list_by_container(roleid, ContainerType::Inventory).await.unwrap_or_default();
         let bolsa_de_missao = itens_repo.list_by_container(roleid, ContainerType::TaskInventory).await.unwrap_or_default();
 
-        let (r, para_mim, para_todos, subiu, mut bolsas, gravacao, ficha, teleporte) = {
+        let (r, para_mim, para_todos, subiu, mut bolsas, gravacao, ficha, teleporte, daimon) = {
             let mut guarda = self.world.write().await;
             let mundo = &mut *guarda;
             let dados = Arc::clone(&mundo.data_manager);
@@ -334,6 +377,11 @@ impl BusServer {
                 listas: p.missoes.blocos(),
             };
             let ficha = (mudou || subiu_de_nivel).then(|| (self.ficha_propria(p), Self::estado_proprio_de(p)));
+            // O bloco do Daimon é o estado dele: se mudou, vai ao banco junto do resto.
+            let daimon = p.daimon.as_mut().filter(|d| d.sujo).map(|d| {
+                d.sujo = false;
+                (d.slot, d.estado.bloco())
+            });
 
             for (monstro_tid, quantidade, raio, periodo_s, some_ao_morrer) in monstros_a_invocar {
                 for _ in 0..quantidade {
@@ -341,7 +389,7 @@ impl BusServer {
                 }
             }
 
-            (r, para_mim, para_todos, subiu_de_nivel, [bolsa, bolsa_de_missao], gravacao, ficha, teleporte)
+            (r, para_mim, para_todos, subiu_de_nivel, [bolsa, bolsa_de_missao], gravacao, ficha, teleporte, daimon)
         };
 
         for c in para_mim {
@@ -363,6 +411,18 @@ impl BusServer {
         for b in &mut bolsas {
             if let Err(e) = b.gravar(&itens_repo).await {
                 warn!("mundo: não consegui gravar a bolsa de {roleid}: {e}");
+            }
+        }
+        if let Some((slot, bloco)) = daimon {
+            match itens_repo.get_item_by_slot(roleid, ContainerType::Equipment, slot).await {
+                Ok(Some(mut i)) => {
+                    i.octets = bloco;
+                    if let Err(e) = itens_repo.upsert_item(&i).await {
+                        warn!("mundo: não consegui gravar o Daimon de {roleid}: {e}");
+                    }
+                }
+                Ok(None) => warn!("mundo: o Daimon de {roleid} sumiu do slot {slot} antes de gravar"),
+                Err(e) => warn!("mundo: não consegui ler o Daimon de {roleid}: {e}"),
             }
         }
         let gravar = async move {
@@ -621,6 +681,19 @@ impl BusServer {
         } else {
             info!("mundo: {roleid} colheu mina de missão {mid} (missão {})", mina.missao_de_saida);
         }
+        // A matéria pode **soltar monstros** ao ser colhida: são os `npcgen_1..4` do
+        // `MINE_ESSENCE`. A Flor de Safira (44566) não produz item nenhum — o que ela faz é
+        // acordar o Guardião de Almas (44608), e é dele que cai o Estame da missão 31779
+        // (B76). Sem isto, colher a flor não fazia nada.
+        if !mina.monstros_ao_colher.is_empty() {
+            let mut mundo = self.world.write().await;
+            for (tid, quantos, raio, vida_s) in mina.monstros_ao_colher.clone() {
+                for _ in 0..quantos {
+                    mundo.invocar_monstro(tid, pos, raio.max(0.0) as u32, vida_s, false);
+                }
+                info!("mundo: a mina {mid} acordou {quantos}× o monstro {tid} para {roleid}");
+            }
+        }
         // O que não coube vai ao chão, do jogador (`DropItemData`, `player.cpp:1530-1540`).
         if let Some(n) = sobrou.filter(|n| *n > 0 && material.item > 0) {
             let d = self.world.write().await.criar_drop(material.item, n, pos, Some(roleid));
@@ -659,6 +732,20 @@ impl BusServer {
             // `SetHPAutoGen`/`SetMPAutoGen`, `gs/item/item_amulet.h:53-60`,
             // `item_amulet.cpp:22-46`). O que resta vem dos octetos do item, porque é lá que
             // o gasto fica gravado; sem octetos vale o total do `elements.data`.
+            // Daimon no slot 23 (`EQUIP_INDEX_ELF`, `gs/item.h:219`): o estado dele vive no
+            // bloco do item, e é dele que sai a experiência (B75).
+            p.daimon = itens.iter().find(|i| i.slot == SLOT_DO_DAIMON).and_then(|item| {
+                let (fator, iniciais) = dados.dados_do_daimon(item.item_id)?;
+                let estado = crate::entity::Daimon::ler(&item.octets)
+                    .unwrap_or_else(|| crate::entity::Daimon::novo(&iniciais));
+                Some(crate::entity::DaimonVestido {
+                    slot: item.slot,
+                    item_id: item.item_id,
+                    fator_de_exp: fator,
+                    estado,
+                    sujo: item.octets.is_empty(),
+                })
+            });
             p.auto_hp = None;
             p.auto_mp = None;
             for item in &itens {

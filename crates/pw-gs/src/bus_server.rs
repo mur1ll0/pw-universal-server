@@ -3918,6 +3918,15 @@ impl BusServer {
                 octetos = o;
             }
         }
+        // Daimon (`GOBLIN_ESSENCE`): o bloco **é** o estado dele — experiência, nível,
+        // atributos, gênios, refino e vigor (`elf_item::Save`, `gs/item/item_elf.cpp:172-185`;
+        // `generate_elf`, `generate_item_temp.h:2442-2524`). Sem ele o cliente não desenha
+        // ficha nenhuma e o Daimon parece inerte (B75).
+        if octetos.is_empty() {
+            if let Some((_, iniciais)) = dados.dados_do_daimon(item.item_id) {
+                octetos = crate::entity::Daimon::novo(&iniciais).bloco();
+            }
+        }
         if item.max_durability > 0 {
             pw_core::escrever_durabilidade(&mut octetos, item.durability as i32, item.max_durability as i32);
         }

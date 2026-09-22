@@ -407,6 +407,7 @@ fn jogador() -> PlayerEntity {
         recargas: std::collections::HashMap::new(),
         pecas: [None; pw_gs::entity::PECAS_VESTIDAS],
         auto_hp: None,
+        daimon: None,
         auto_mp: None,
         recarga_do_auto_hp_s: 0,
         recarga_do_auto_mp_s: 0,

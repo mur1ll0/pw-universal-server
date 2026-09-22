@@ -188,6 +188,28 @@ fn a_pocao_de_vida_traz_o_total_e_o_tempo() {
     );
 }
 
+/// B76 — a Flor de Safira não produz item: ela **acorda um monstro**.
+///
+/// O `MINE_ESSENCE` tem `npcgen_1..4` (`gs/npcgenerator.cpp:1280-1365` monta a matéria com
+/// eles), e é por aí que a missão 31779 funciona: colher a flor (44566) solta o Guardião de
+/// Almas (44608), que é quem deixa cair o Estame (44371) com 80 % ao morrer.
+#[test]
+fn a_mina_da_flor_de_safira_acorda_o_guardiao() {
+    let Some(d) = realm() else { return };
+    let mina = d.minas.get(&44566).expect("a Flor de Safira é uma mina do realm");
+    assert!(mina.materiais.iter().all(|m| m.item == 0), "a flor não produz material nenhum");
+    assert_eq!(mina.missao_de_saida, 31779, "a mina é da missão das Flores do Guardião de Almas");
+    assert_eq!(
+        mina.monstros_ao_colher,
+        vec![(44608, 1, 0.0, 30)],
+        "colher devia acordar um Guardião de Almas por 30 s"
+    );
+
+    // E o Guardião é agressivo: ele parte para cima de quem o acordou.
+    let guardiao = d.monstros.get(44608).expect("o 44608 está no elements");
+    assert_ne!(guardiao.agressivo, 0, "o Guardião de Almas tem de ser agressivo");
+}
+
 /// B74 — item de missão na bolsa comum não é defeito: é o que o `tasks.data` manda.
 ///
 /// Quem escolhe a bolsa é o `m_bDropCmnItem` de cada `MONSTER_WANTED`

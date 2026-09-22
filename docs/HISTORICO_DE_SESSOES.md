@@ -8186,3 +8186,94 @@ comparação lado a lado.
     asserção do `SET_COOLDOWN` (198) com índice 25 e 10 s no
     `o_hierograma_vestido_devolve_mana_sozinho`. Exemplo novo
     `cargo run -p pw-data-loader --example bolsa_do_item_de_missao`.
+
+75. **Sessão 2026-09-21 (parte 3): o Daimon existe agora — ficha e experiência.**
+
+    O relato era "o Daimon não ganha experiência e aparentemente não faz nada". Ele não fazia
+    mesmo: **não havia uma linha** sobre ele no projeto. O `GOBLIN_ESSENCE` não era lido, o
+    item não tinha bloco de dados e nada ligava o ganho de experiência do jogador a ele. O
+    Daimon do eaa ("Verão", 23752) está no slot **23** do equipamento, que é o
+    `EQUIP_INDEX_ELF` do original (`gs/item.h:219`) — o cliente o pôs no lugar certo e o
+    servidor o ignorava.
+
+    **O estado do Daimon é o bloco do item.** `elf_item::Save` (`gs/item/item_elf.cpp:172-185`)
+    grava, nesta ordem: o `elf_essence` de 38 bytes com `#pragma pack(1)`
+    (`item_elf.h:84-102`) — experiência, nível, total de atributos, força/agilidade/
+    vitalidade/energia, total de gênios, os 5 gênios, refino, vigor e estado —, a lista de
+    equipamento e a de habilidades, cada uma precedida da contagem em 4 bytes. Um Daimon novo
+    sai de `generate_elf` (`gs/template/generate_item_temp.h:2442-2524`) com nível 1, um ponto
+    de gênio, **20000** de vigor e as `default_skill1..3` do `GOBLIN_ESSENCE` no nível 1.
+
+    **A experiência é um décimo da do jogador**, toda vez que ele ganha:
+    `ElfReceiveExp(exp / 10)` (`gs/player.cpp:2921-2928`, `player_imp.h:2471`). O `InsertExp`
+    (`item_elf.cpp:692-750`) aplica um fator de obtenção que é a razão dos níveis —
+    `elf_exp_loss_constant[i]` é a identidade, então o fator é `nível do Daimon ÷ nível de
+    quem deu`, com o mínimo de 10 % —, sobe **quantos níveis couberem** no laço e, ao
+    alcançar o nível do dono, para a um ponto de subir. Cada nível dá um ponto de atributo e,
+    a cada cinco até o 100, um de gênio (`LevelUp`, `:775-816`). Sem subir de nível o cliente
+    recebe `ELF_EXP` (283, 4 bytes); subindo, a ficha inteira do item.
+
+    Como o amuleto do B73, o Daimon vive em memória (`PlayerEntity::daimon`), preenchido pelo
+    `recalcular_equipamento`, e o bloco vai ao banco no fim do `com_contexto`.
+
+    ### Provas
+
+    Arquivo novo `crates/pw-gs/tests/daimon.rs`, 3 testes: o bloco do Daimon novo campo a
+    campo contra o gerador (e a releitura idempotente), o laço da experiência (1/5 de 50 vira
+    10; 1000 de experiência leva do nível 1 ao 5 com 8 de sobra, 4 pontos de atributo e 1
+    gênio; no teto para em 99 e não ganha mais; Daimon acima do dono não recebe nada) e o
+    `GOBLIN_ESSENCE` do `realm_155`. O `ELF_EXP` passou pela guarda que confere os
+    codificadores contra o IR.
+
+    ### Falta
+
+    O bônus de atributo sorteado de 10 em 10 níveis (`rand_prop` com `abase::RandSelect`,
+    `item_elf.cpp:779-796`: a semântica do sorteio não está medida), o equipamento e as
+    habilidades do Daimon, o vigor, as pílulas de experiência, a decomposição, o refino e a
+    distribuição de pontos.
+
+76. **Sessão 2026-09-21 (parte 4): a flor que acorda um monstro, os monstros que não
+    atacavam, e por que o Daimon não ganha experiência.**
+
+    Três relatos do teste em jogo, três causas distintas — e uma delas não era defeito.
+
+    **A missão da Flor de Safira (31779).** O Murillo colheu a flor muitas vezes e a missão
+    não andou. A mina 44566 do `realm_155` tem `materials_1_id = 0`: ela **não produz item
+    nenhum**. O que ela tem é `npcgen_1_id_monster = 44608`, `num = 1`, `life_time = 30` — os
+    `npcgen_1..4` do `MINE_ESSENCE`. Colher a flor **acorda o Guardião de Almas**, um monstro
+    de nível 16 que vive 30 s, e é dele que cai o Estame (44371) com 80 %, pelo
+    `MONSTER_WANTED` da missão. A descrição da missão já dizia: "um dos Guardiões de Almas é
+    uma Flor de Safira aparentemente inofensiva". Nosso leitor de minas ignorava esses
+    campos, então colher não fazia nada. De passagem, confirmei que o `CheckMining`
+    (`gs/task/TaskTempl.inl:2105-2145`) só entrega item quando o método da missão é "coletar
+    N itens", que não é o caso desta — o nosso `colheu_mina` já fazia a mesma recusa, e está
+    certo.
+
+    **Nenhum monstro atacava sozinho.** O campo existe e nós já o líamos sem usar:
+    `aggressive_mode` do `MONSTER_ESSENCE` — **4.874 dos 8.054** monstros do realm são
+    agressivos, incluindo o Guardião de Almas. No original o monstro agressivo recebe a marca
+    `MSG_MASK_PLAYER_MOVE` (`npcgenerator.cpp:2534-2537`) e o jogador, ao andar, difunde
+    `GM_MSG_WATCHING_YOU` para quem está a até `GetMaxMobSightRange` — **15 m**
+    (`playerctrl.cpp:265-276`, `worldmanager.cpp:48`). A decisão final é da política do
+    `aipolicy.data`, que ainda não interpretamos; aqui o monstro agressivo sem alvo passa a
+    pegar o jogador vivo mais perto dentro dos 15 m.
+
+    **O Daimon está ligado — o ganho é que trunca para zero.** O bloco dele foi criado no
+    primeiro abate (15:28:33 de hoje, no banco), então o B75 está no ar e funcionando. O que
+    acontece é aritmética do original: o fator de obtenção é a razão dos níveis com piso de
+    10 % (`GetExpObtainFactor`, `item_elf.cpp:754-773`) e o resultado é truncado para inteiro
+    (`:715`). Com o Daimon no nível 1 e o dono no 16, um monstro de **80** de experiência dá
+    `80 / 10 × 0,1 = 0,8` → **zero**. Só a partir de 100 de experiência por monstro entra o
+    primeiro ponto. Não há o que corrigir: é o que o original faz. O caminho rápido no jogo
+    são as pílulas de experiência, que seguem sem porte.
+
+    ### Provas
+
+    Suíte com o banco: **615 testes, 0 falhas**. Uma rodada intermediária acusou uma falha
+    que não se repetiu com `--no-fail-fast` nem nas duas execuções seguintes — é o teste de
+    tempo sob carga já conhecido, não uma regressão. Novos:
+    `a_mina_da_flor_de_safira_acorda_o_guardiao` (a mina não produz material, aponta para a
+    missão 31779 e acorda o 44608 por 30 s; e o 44608 é agressivo),
+    `o_monstro_agressivo_ataca_quem_chega_perto` (passivo não odeia sozinho; agressivo pega a
+    5 m, não pega a 20 m, e morto não pega nada) e
+    `o_ganho_trunca_para_zero_com_pouca_experiencia`.
