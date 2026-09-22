@@ -5,7 +5,7 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-21**, B76 (experiência/pacotes de itens 126; worktree `versao-126`, base `a305e51`; sem publicação).
+> **Última atualização: 2026-09-22**, B77 (mapa estrutural do tasks v55 fechado; worktree `versao-126`, base `a305e51`; sem publicação).
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -39,8 +39,10 @@ aprovados com banco; documentação em `docs/COMBATE_126.md`. Parada para revis�
 **B76 — Camada 4 parcial:** 31/46/72/99/156 corrigidos via trait; experiência
 36/158 conferida na captura. Nove testes focados aprovados com banco, incluindo
 sentinelas 155. Sem suíte completa, commit ou publicação. `docs/ITENS_EXPERIENCIA_126.md`.
-Leitor tasks v55 adiado por pedido do usuário; prompt completo e resposta esperada
-em `docs/PROMPT_TASKS_V55.md`. Não se declara missão 126 jogável.
+Leitor tasks v55: B77 fechou no cliente o bloco fixo de 534 B, cada contador variável,
+diálogos e recursão. O validador fecha 2.819/2.819 raízes (7.994 tarefas) no último byte;
+o loader continua só no cabeçalho até projetar os campos fixos em Rust. Mapa e provas em
+`docs/RESULTADO_TASKS_V55.md`. Não se declara missão 126 jogável.
 
 **Alvo:** o **1.5.5**, servido pelo realm `realm_155` ao cliente 1.5.5 BR
 (`elements.data` v156, `tasks.data` 129, build 2569). Ordem combinada com o Murillo:
@@ -367,9 +369,12 @@ Onde olhar: `docker logs pw-world-155 | grep -iE "viajou|ponto de teleporte|cult
 
 ## 5. O que falta
 
-**Frente 126 (B76):** executar o roteiro `docs/PROMPT_TASKS_V55.md` em sessão
-separada; depois medir listas de missão e integrar com evidência. Pacotes de itens
-estão testados localmente; ainda aguardam aprovação/publicação e teste visual.
+**Frente 126 (B77):** tabela dos vetores/prêmios/diálogos do `tasks.data` v55 foi fechada
+e validada por offset em todas as raízes. Próximo passo: projetar os campos fixos usados
+em `TaskTemplate`, implementar o leitor v55 e seus testes de corrupção; depois medir listas
+de missão e integrar com evidência.
+Pacotes de itens estão testados localmente; ainda aguardam aprovação/publicação e teste
+visual.
 
 Conferido contra o código em 2026-09-13 — cada linha diz onde está a evidência.
 
@@ -528,6 +533,7 @@ Cada uma custou pelo menos uma sessão. A evidência está no item citado.
 ## 8. Índice do histórico (série B, frente 1.5.5)
 
 - **B76:** experiência e cinco pacotes de itens; nove testes focados, leitor v55 adiado.
+- **B77:** mapa completo e fechamento estrutural do tasks v55 (2.819 raízes/7.994 tarefas); leitor Rust pendente.
 - **B75:** combate 126, comando 144 e medição de cadência; seis testes focados.
 - **B74:** entrada 126, máscara de equipamento e avisos suportados; sem publicação.
 - **B73:** inventário de protocolo 1.2.6 na árvore isolada `versao-126` (sem publicação).

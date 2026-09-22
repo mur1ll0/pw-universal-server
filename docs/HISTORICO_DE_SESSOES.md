@@ -8060,3 +8060,28 @@ comparação lado a lado.
     20.793.663 B e declara 2819 entradas, mas tasks.rs:1139 só aceita v129.
     Por pedido do usuário, leitor fica para sessão com modelo mais barato:
     docs/PROMPT_TASKS_V55.md contém escopo, critérios e relatório de retorno.
+
+77. **Sessão 2026-09-22: mapa estrutural completo do `tasks.data` v55.**
+
+    O arquivo do realm 126 foi conferido em 20.793.663 bytes, SHA-256
+    `ee042d417452cd26e076280fd2f8d0d05bda1c63b1777abfc6c7d5f8d7ca8017`, com
+    2.819 raízes. No `elementclient.exe` (SHA-256
+    `5fc88d47e01da3caea7d6ce4911b71b0f7085060a2d13889a380fc5ba7f0ed14`),
+    `LoadTasksFromPack` VA `0x630c10` valida cabeçalho, percorre a tabela e chama
+    `LoadFromBinFile` VA `0x62e550`, que entra em `LoadBinary` VA `0x62f6c0`; a rotina fixa lê `0x216` = 534 bytes e decifra o
+    nome pelo ID. Provas reproduzíveis: `docs/evidencias/126/tasks-v55-*.txt` e
+    `medir_tasks_v55.py`.
+
+    A tabela foi fechada pelo fluxo do binário: assinatura opcional (60 B), horários
+    (48 B por contador em `fixo+0x4e`), itens 13 B, equipe 32 B condicional,
+    monstros 22 B, prêmios 75 B com candidatos variáveis, quatro escalas, quatro textos
+    UTF-16, cinco diálogos e filhas recursivas. O candidato de prêmio não tem tamanho fixo:
+    `m_bRandChoose` (1 B), contador `u32` e `ITEM_WANTED` de 13 B; isso foi confirmado em
+    `0x62d9d0`, evitando a hipótese errada de 17 B por candidato. O validador independente
+    fecha 2.819/2.819 raízes, 7.994 tarefas e profundidade 4 exatamente no byte 20.793.663:
+    `docs/evidencias/126/tasks-v55-validacao-contagens.txt`. Mapa completo e VAs em
+    `docs/RESULTADO_TASKS_V55.md`.
+
+    Não foi alterado `tasks.rs`: falta projetar os campos fixos consumidos pelo servidor e
+    escrever/testar o leitor Rust v55, que terá de impor o mesmo fechamento por offset.
+    Sem contêiner, publicação, commit ou teste Cargo nesta etapa de evidência.

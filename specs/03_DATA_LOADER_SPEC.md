@@ -1,6 +1,6 @@
 # Especificação 03: Arquivos de dados do realm (`pw-data-loader`)
 
-> Verificada contra o código em 2026-09-14, commit `e6433ae` + B49. Cobre
+> Verificada contra o código/evidência em 2026-09-22, commit `a305e51` + B77. Cobre
 > `crates/pw-data-loader/`, `specs/elements_layouts/`, `specs/elements_155/`, `specs/mapas/`,
 > `specs/clsconfig_155/` e o conteúdo de `data/realm_*`.
 
@@ -70,7 +70,7 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 - Versão 129 (1.5.5): bloco fixo **1.157** bytes, prêmio **290** — o fonte (versão 125) dá
   1.087/269; a diferença são os campos do sistema de Lar (nomes do 1.7.2), mais o vetor
   `m_ulHomeItemsWanted × 8 bytes` (B45).
-- Estado: **14.885/14.885** (`realm_155`, cliente BR; o EN fechou 14.978/14.978 antes de sair). Versões 55 e 124: só cabeçalho.
+- Estado: **14.885/14.885** (`realm_155`, cliente BR; o EN fechou 14.978/14.978 antes de sair). Versão 124: só cabeçalho. Na v55 (1.2.6), o bloco fixo é **534 bytes** e o mapa de todas as seções variáveis foi medido no cliente: o validador fecha **2.819/2.819 raízes**, 7.994 tarefas recursivas, no último byte. O loader ainda lê v55 só no cabeçalho, até a projeção dos campos fixos e implementação em Rust (B77; `docs/RESULTADO_TASKS_V55.md`).
 - Extraído: id, nome/descrição (XOR pelo id), mãe/filhas, tipo, prazo, níveis, classes,
   gênero, pré-requisitos, itens pedidos/entregues, NPCs de entrega e prêmio, objetivos
   (monstros com item, itens, dinheiro, nível, mundo, espera), flags e os dois prêmios.

@@ -1,0 +1,4 @@
+arquivo=data\realm_126\config\tasks.data
+sha256=ee042d417452cd26e076280fd2f8d0d05bda1c63b1777abfc6c7d5f8d7ca8017
+raizes=2819 tarefas_recursivas=7994 profundidade_maxima=4
+fechamento_exato=sim ultimo_byte=20793663
