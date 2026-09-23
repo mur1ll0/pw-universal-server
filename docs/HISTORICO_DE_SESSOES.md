@@ -9039,3 +9039,10 @@ comparação lado a lado.
        passou a remeter ao `AGENTS.md`, em vez de manter uma cópia que envelhece.
     5. `ESTADO_E_RETOMADA.md` §0 encurtado para o marco "1.5.5 jogável no básico", com a
        fila do 1.5.5 em §5A e o painel de paridade 1.5.5 → 1.2.6 em §5D.
+    6. **Uma worktree só.** A `../pw-126` foi removida a pedido do Murillo, e a branch
+       `versao-126` apagada (estava inteira na `main`). Antes: os 32 `.log` de evidência
+       ignorados pelo git que os docs do 1.2.6 citam (`merge-layout-depois.log`,
+       `elf-depois.log`…) foram copiados para `docs/evidencias/126/` da principal, junto
+       com os três logs de sessão da raiz (prefixo `sessao-`); a `pw-126/data` era uma
+       **junção** para a `data/` da principal e foi desfeita com `rmdir` sem `/s` antes da
+       remoção. Claude e Codex trabalham agora na mesma pasta, na `main`.
