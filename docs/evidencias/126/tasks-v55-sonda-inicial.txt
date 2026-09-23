@@ -1,0 +1,31 @@
+arquivo=data\realm_126\config\tasks.data
+bytes=20793663 sha256=ee042d417452cd26e076280fd2f8d0d05bda1c63b1777abfc6c7d5f8d7ca8017
+magic=2475000673 version=55 roots=2819
+tabela_inicio=12 tabela_fim=11288
+primeiros_offsets=[11288, 14958, 18908, 21614, 23858, 25845, 27844, 29519]
+ultimos_offsets=[20683348, 20694343, 20714306, 20734070, 20744486, 20755600, 20763788, 20775057]
+primeiros_ids=[9376, 9375, 9374, 9373, 9372, 9371, 9370, 9369]
+ultimos_ids=[15, 14, 13, 9, 6, 5, 3, 1]
+pe=F:\Games\perfectworld_126\element\elementclient.exe sha256=5fc88d47e01da3caea7d6ce4911b71b0f7085060a2d13889a380fc5ba7f0ed14 image_base=0x400000
+string=b'LoadPack begin' locations=['file=0x4cc248/va=0x8cc248']
+xref file=0x230c2f va=0x630c2f
+  0x630c0f: nop
+  0x630c10: push -1
+  0x630c12: push 0x82c5c0
+  0x630c17: mov eax, dword ptr fs:[0]
+  0x630c1d: push eax
+  0x630c1e: mov dword ptr fs:[0], esp
+  0x630c25: sub esp, 0x424
+  0x630c2b: push ebx
+  0x630c2c: push esi
+  0x630c2d: push edi
+  0x630c2e: push 0x8cc248
+  0x630c33: xor ebx, ebx
+  0x630c35: push 2
+  0x630c37: push ebx
+  0x630c38: mov dword ptr [esp + 0x20], ecx
+  0x630c3c: push ebx
+  0x630c3d: call 0x42a0f0
+  0x630c42: mov eax, dword ptr [esp + 0x450]
+  0x630c49: push 0x8ac120
+  0x630c4e: push eax

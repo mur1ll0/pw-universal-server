@@ -1,6 +1,7 @@
 # Especificação 04: Protocolo do mundo 3D (subcomandos do `GamedataSend`)
 
-> Verificada contra o código em 2026-09-14, commit `e6433ae` + B49. Cobre
+> Camadas 2/3 e pacotes de itens/experiência 126 conferidos em 2026-09-21, base `a305e51` + B89/B90. Demais áreas:
+> referência 2026-09-14, commit `e6433ae` + B49. Cobre
 > `crates/pw-protocol/src/{packets,versions,opcodes.rs}`, `crates/pw-wire/`,
 > `crates/pw-gs/src/comandos.rs`, `specs/protocol/` e `tools/pw-rpcgen/`.
 
@@ -55,6 +56,23 @@ ou com campos novos no fim. Novos do 1.5.5 ainda não triados: 66 GNET, 17 C2S, 
 
 ## 4. Diferenças por versão: Padrão Estratégia e Módulos por Versão
 
+**Auditoria 1.2.6 em `2dca19e` (B73-126, 2026-09-20):** o inventário completo das chamadas
+atuais do mundo está em `docs/INVENTARIO_PROTOCOLO_126.md` (98 ids S2C, 46 C2S).
+Compatibilidade ainda **parcial**: os comandos comuns 14 e 64
+divergem dos comprimentos capturados. Medição reproduzida em
+`docs/evidencias/126/full_interno.medidas.md`; tamanho igual não comprova campos iguais.
+`SCENE_SERVICE_NPC_LIST` (390) é opcional no trait: v126 não emite, pois seu binário
+rejeita ids acima de 260 (VA 0x584618; B74-126, `docs/ENTRADA_126.md`).
+`EQUIP_DATA` no 126 usa máscara de 32 bits e 10+4×n bytes de payload (VA 0x584a1d);
+o 155 mantém 64 bits. Avisos de status da entrada vêm do trait, com a sequência
+anterior como padrão e oito avisos suportados no v126. Estado: **11 testes focados
+aprovados com TEST_DATABASE_URL**, incluindo sentinelas 155; não publicado.
+SELF_INFO_00 e GetUIConfig_Re reproduzem amostras; OWN_EXT_PROP tem 152 B e
+**confere byte a byte** com a amostra `s2c-50.txt` (B93): o trait recebe Atq. Mágico e
+resistências desde o B77, e na amostra valem 1–1 e 2×5 (`[112..140]`). `max_ap` é
+parâmetro do trait (B70): na amostra vale zero; em jogo acompanha SELF_INFO_00 (B92).
+Suíte inteira com o banco depois do merge na `main`: 654/0 (B93).
+
 O despacho por versão é uma **estratégia**: o trait `WorldProtocol`
 (`crates/pw-protocol/src/traits.rs`) declara os comandos cujo layout muda entre versões, e há
 uma implementação por versão em `crates/pw-protocol/src/versions/`. Quem precisa de um
@@ -67,6 +85,26 @@ dois nomes para a mesma coisa convidava a escrever `if versao == ...` de novo.
 - `versions/v126/`: a 1.2.6 por inteiro (152 B, 3 blocos, 27 B, 19 campos, sem `refretcode`).
 - `versions/v148/`, `v153.rs`, `v172/`: **compõem** a do 1.5.5 (`V148Protocol(V155Protocol)`) e sobrescrevem só o que difere — é assim que se acrescenta versão nova.
 
+`HOST_SKILL_ATTACKED` (144) também passa pelo trait: v126 emite 15 bytes,
+com flag de um byte e sem section; padrão 155 mantém 19 bytes. Captura
+`s2c-144.txt:2` e validador do cliente VA 0x584af4 (B89). Os comandos normais
+84/83/24/26/33 reproduzem as amostras. Estado: seis testes focados aprovados,
+sem validação visual; cadência medida e limites em `docs/COMBATE_126.md`.
+
+Itens 126 (B90, **testado**): 31/99 têm 14 B, 46 tem 9 B, 72 tem
+7+13×n B e 156 tem 10 B de payload. Os cinco passam pelo trait; padrão 155
+inalterado, overrides em v126. Contagens u16; 72 sem yinpiao e 156 sem validade.
+36 (4 B) já usa o trait; 158 (8 B) permanece comum. Gabaritos da captura e
+validador em `docs/ITENS_EXPERIENCIA_126.md`; sete testes de protocolo e dois de
+mundo aprovados com banco. Não implica suporte às listas/missões v55 nem ao C2S
+de compra; sem publicação ou validação visual.
+
+**Despacho pós-merge (B93):** retirada de amuleto esgotado usa `player_drop_item`
+do trait, inclusive no tratamento de eventos. `elf_exp` (283) é opcional:
+padrão Some preserva os bytes 155; v126 None pelo limite de id 260 do cliente
+(VA 0x584618). Sem mudança da regra de ganho do Daimon. O teste literal garante
+a omissão 126 e preservação 155; detalhes em `docs/SINCRONIZACAO_126.md`.
+
 Um comando que **não** varia entre versões continua em `S2CGamedataSend`, com um só caminho
 de escrita. Quando uma medição mostrar que ele varia, ele sobe para o trait — é a regra "um
 caminho de escrita por layout".
@@ -77,8 +115,8 @@ caminho de escrita por layout".
 | `npc_enter_world` / `npc_enter_slice` (`info_npc`) | 27 | 35 | `vis_tid`, `state2` |
 | `self_info_1` | 34 | 38 | `state2`; sem ele, 30 s de "entrando" e desconexão. O `state` leva o bit **`MODA`** quando o personagem está de roupa: é daqui que o **dono da tela** descobre o próprio modo (`m_bFashionMode`, `EC_HostPlayer.cpp:819-822`) — o `info_player_1` só resolve para quem o vê (B86). No 1.2.6 o bit não vai: não foi conferido contra aquele cliente |
 | `player_enter_world` / `player_enter_slice` (`info_player_1`) | 26 | 30 | `state2` |
-| `get_own_money` | 8 | 12 | |
-| `inst_data_checkout` | 20 | 24 | |
+| `get_own_money` | 8 | 8 no codificador comum | payload sem os 2 bytes do id; captura 126, S2C 82 |
+| `inst_data_checkout` | 16 | 20 (24 com gshop3) | payload sem os 2 bytes do id; captura 126, S2C 206 |
 | 5 resultados de ataque (`host_attack_result`, `host_attacked`, `self_skill_attack_result`, `object_skill_attack_result`…) | −3/−4 | | `attack_flag` era `char` e virou `int`; o `section` falta no 1.2.6 |
 | `npc_info_00`, `player_info_00` | | | ganham `iTargetID` |
 | `enter_sanctuary`, `leave_sanctuary` | 0 | | ganham `id` |

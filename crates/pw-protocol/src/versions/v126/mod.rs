@@ -14,6 +14,27 @@ impl WorldProtocol for V126Protocol {
         GameVersion::V1_2_6
     }
 
+    fn scene_service_npc_list(&self, _npcs: &[(i32, i32)]) -> Option<S2CGamedataSend> {
+        // elementclient.exe 126, validador 0x584610: ids acima de 260
+        // retornam inválido (docs/evidencias/126/cliente-validacao-entrada.txt:11).
+        None
+    }
+
+    fn initial_status_notifications(&self, reputation: i32, now: i32) -> Vec<S2CGamedataSend> {
+        // O validador 0x584610 do cliente 126 aceita somente ids até 260.
+        // SERVER_TIME=102 também consta em s2c-114.txt:2 (full_interno.pcap).
+        vec![
+            S2CGamedataSend::host_reputation(reputation),
+            S2CGamedataSend::pvp_mode(0),
+            S2CGamedataSend::server_time(now, 0, 102),
+            S2CGamedataSend::trashbox_pwd_state(false),
+            S2CGamedataSend::pet_room_capacity(0),
+            S2CGamedataSend::available_double_exp_time(0),
+            S2CGamedataSend::double_exp_time(0, 0),
+            S2CGamedataSend::pariah_time(0),
+        ]
+    }
+
     fn task_data(&self) -> S2CGamedataSend {
         // 1.2.6: 3 blocos (medido na desmontagem de elementclient.exe do 1.2.6)
         let mut s = OctetsStream::new();
@@ -106,6 +127,24 @@ impl WorldProtocol for V126Protocol {
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
+    fn host_skill_attacked(
+        &self, attacker_id: i32, skill_id: i32, damage: i32,
+        attack_flag: i32, speed: u8, _section: u8,
+    ) -> S2CGamedataSend {
+        // full_interno.pcap, S2C 144 #0 (s2c-144.txt:2): 15 bytes.
+        // Cliente 126: caso 144 na tabela VA 0x584e90 (cliente-validacao-combate.txt).
+        // attack_flag ocupa um byte; não existe section, como nos comandos 142/143.
+        let mut s = OctetsStream::new();
+        s.write_u16_le(144);
+        s.write_i32_le(attacker_id);
+        s.write_i32_le(skill_id);
+        s.write_i32_le(damage);
+        s.write_u8(0x7f); // nenhuma peça desgastada, igual à amostra e ao caminho comum
+        s.write_i8(estreitar(attack_flag));
+        s.write_u8(speed);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
     fn npc_info_00(&self, nid: i32, hp: i32, max_hp: i32, _alvo: i32) -> S2CGamedataSend {
         // 12 bytes no 1.2.6: sem iTargetID
         let mut s = OctetsStream::new();
@@ -142,12 +181,84 @@ impl WorldProtocol for V126Protocol {
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
+    fn elf_exp(&self, _exp: i32) -> Option<S2CGamedataSend> {
+        // O validador do cliente rejeita ids > 260 (VA 0x584618).
+        None
+    }
+
     fn receive_exp(&self, exp: i32, sp: i32) -> S2CGamedataSend {
         // 4 bytes: u16 exp, u16 sp
         let mut s = OctetsStream::new();
         s.write_u16_le(36);
         s.write_u16_le(estreitar_u16(exp));
         s.write_u16_le(estreitar_u16(sp));
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    // Original: docs/evidencias/126/s2c-31.txt:2; validador em cliente-validacao-itens.txt.
+    fn pickup_item(&self, tid: i32, expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u16_le(31);
+        s.write_i32_le(tid);
+        s.write_i32_le(expire_date);
+        s.write_u16_le(amount.min(u16::MAX as u32) as u16);
+        s.write_u16_le(slot_amount.min(u16::MAX as u32) as u16);
+        s.write_u8(package);
+        s.write_u8(slot);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    // Original: docs/evidencias/126/s2c-99.txt:2; validador em cliente-validacao-itens.txt.
+    fn obtain_item(&self, tid: i32, expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u16_le(99);
+        s.write_i32_le(tid);
+        s.write_i32_le(expire_date);
+        s.write_u16_le(amount.min(u16::MAX as u32) as u16);
+        s.write_u16_le(slot_amount.min(u16::MAX as u32) as u16);
+        s.write_u8(package);
+        s.write_u8(slot);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    // Original: docs/evidencias/126/s2c-156.txt:2; validador em cliente-validacao-itens.txt.
+    fn task_deliver_item(&self, tid: i32, _expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u16_le(156);
+        s.write_i32_le(tid);
+        s.write_u16_le(amount.min(u16::MAX as u32) as u16);
+        s.write_u16_le(slot_amount.min(u16::MAX as u32) as u16);
+        s.write_u8(package);
+        s.write_u8(slot);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    // S2C 46: contagem u16, payload 9 B (validador VA 0x584bc3).
+    fn player_drop_item(&self, package: u8, slot: u8, count: u32, tid: i32, drop_type: u8) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u16_le(46);
+        s.write_u8(package);
+        s.write_u8(slot);
+        s.write_u16_le(count.min(u16::MAX as u32) as u16);
+        s.write_i32_le(tid);
+        s.write_u8(drop_type);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    // S2C 72: sem yinpiao; cabeçalho 7 B + 13 B/item (VA 0x584abd).
+    fn purchase_item(&self, cost: u32, itens: &[(i32, i32, u32, u16)]) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u16_le(72);
+        s.write_u32_le(cost);
+        s.write_u8(0);
+        s.write_u16_le(itens.len() as u16);
+        for (tid, expira, n, slot) in itens {
+            s.write_i32_le(*tid);
+            s.write_i32_le(*expira);
+            s.write_u16_le((*n).min(u16::MAX as u32) as u16);
+            s.write_u16_le(*slot);
+            s.write_u8(0);
+        }
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
@@ -159,6 +270,24 @@ impl WorldProtocol for V126Protocol {
         s.write_u8(idx_equip);
         s.write_u16_le(count_ivtr.min(u16::MAX as u32) as u16);
         s.write_u16_le(count_equip.min(u16::MAX as u32) as u16);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    fn equip_data(&self, player_id: i32, crc: u16, mask: u64, items: &[i32]) -> S2CGamedataSend {
+        // full_interno.pcap, S2C 66 #1: CRC 0x1c54, jogador 48,
+        // máscara 0x11, itens 2258 e 154: payload de 18 bytes.
+        // docs/evidencias/126/s2c-66.txt:8-10. A máscara tem 32 bits.
+        let mask = mask as u32;
+        let mut s = OctetsStream::new();
+        s.write_u16_le(66);
+        s.write_u16_le(crc);
+        s.write_i32_le(player_id);
+        s.write_u32_le(mask);
+        // O mundo fornece os itens em ordem crescente de slot; os slots
+        // acima de 31 não cabem no layout e não podem sobrar após a lista.
+        for item in items.iter().take(mask.count_ones() as usize) {
+            s.write_i32_le(*item);
+        }
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 

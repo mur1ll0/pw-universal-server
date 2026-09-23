@@ -1,0 +1,138 @@
+F:\Games\perfectworld_126\element\elementclient.exe
+SHA256 5fc88d47e01da3caea7d6ce4911b71b0f7085060a2d13889a380fc5ba7f0ed14
+VA base 0x400000; validador de tamanho inferido pelo switch e pelos casos 38/50/66.
+
+CASO dispatch VA 0x584610
+00584610 push ecx
+00584611 mov eax, dword ptr [esp + 8]
+00584615 push ebx
+00584616 push ebp
+00584617 push esi
+00584618 cmp eax, 0x104
+0058461d push edi
+0058461e mov dword ptr [esp + 0x10], 0xffffffff
+00584626 ja 0x584e82
+0058462c jmp dword ptr [eax*4 + 0x584e90]
+
+CASO 38 VA 0x5849bf
+005849bf pop edi
+005849c0 mov dword ptr [esp + 0xc], 0x24
+005849c8 mov eax, dword ptr [esp + 0xc]
+005849cc pop esi
+005849cd pop ebp
+005849ce pop ebx
+005849cf pop ecx
+005849d0 ret 0xc
+
+CASO 40 VA 0x58490e
+0058490e mov edx, dword ptr [esp + 0x20]
+00584912 cmp edx, 0x16
+00584915 jb 0x584e82
+0058491b mov ecx, dword ptr [esp + 0x1c]
+0058491f xor eax, eax
+00584921 mov ax, word ptr [ecx + 0x14]
+00584925 add eax, 0x16
+00584928 cmp edx, eax
+0058492a setae cl
+0058492d test cl, cl
+0058492f je 0x584e82
+00584935 cmp edx, eax
+00584937 jne 0x584e82
+0058493d pop edi
+0058493e mov dword ptr [esp + 0xc], 0xfffffffe
+00584946 mov eax, dword ptr [esp + 0xc]
+0058494a pop esi
+0058494b pop ebp
+0058494c pop ebx
+0058494d pop ecx
+0058494e ret 0xc
+
+CASO 42 VA 0x584951
+00584951 mov edx, dword ptr [esp + 0x20]
+00584955 cmp edx, 6
+00584958 jb 0x584e82
+0058495e mov eax, dword ptr [esp + 0x1c]
+00584962 mov eax, dword ptr [eax + 2]
+00584965 add eax, 6
+00584968 jmp 0x584928
+
+CASO 43 VA 0x58496a
+0058496a mov edx, dword ptr [esp + 0x20]
+0058496e cmp edx, 6
+00584971 jb 0x584e82
+00584977 mov ecx, dword ptr [esp + 0x1c]
+0058497b mov eax, dword ptr [ecx + 2]
+0058497e add eax, 6
+00584981 jmp 0x584928
+
+CASO 50 VA 0x584997
+00584997 pop edi
+00584998 mov dword ptr [esp + 0xc], 0x98
+005849a0 mov eax, dword ptr [esp + 0xc]
+005849a4 pop esi
+005849a5 pop ebp
+005849a6 pop ebx
+005849a7 pop ecx
+005849a8 ret 0xc
+
+CASO 66 VA 0x584a1d
+00584a1d mov esi, dword ptr [esp + 0x20]
+00584a21 mov edx, 0xa
+00584a26 cmp esi, edx
+00584a28 jb 0x584e82
+00584a2e mov eax, dword ptr [esp + 0x1c]
+00584a32 xor ecx, ecx
+00584a34 mov eax, dword ptr [eax + 6]
+00584a37 mov edi, 1
+00584a3c shl edi, cl
+00584a3e test eax, edi
+00584a40 je 0x584a45
+00584a42 add edx, 4
+00584a45 inc ecx
+00584a46 cmp ecx, 0x20
+00584a49 jl 0x584a37
+00584a4b cmp esi, edx
+00584a4d setae al
+00584a50 test al, al
+00584a52 je 0x584e82
+00584a58 cmp esi, edx
+00584a5a jmp 0x584937
+
+CASO 90 VA 0x584b08
+00584b08 mov edx, dword ptr [esp + 0x20]
+00584b0c cmp edx, 4
+00584b0f jb 0x584e82
+00584b15 mov eax, dword ptr [esp + 0x1c]
+00584b19 mov eax, dword ptr [eax]
+00584b1b lea eax, [eax + eax*4 + 4]
+00584b1f jmp 0x584928
+
+CASO 105 VA 0x584b24
+00584b24 mov ecx, dword ptr [esp + 0x20]
+00584b28 cmp ecx, 4
+00584b2b jb 0x584e82
+00584b31 mov esi, dword ptr [esp + 0x1c]
+00584b35 mov edx, dword ptr [esi]
+00584b37 lea eax, [edx + 4]
+00584b3a cmp ecx, eax
+00584b3c jb 0x584e82
+00584b42 add eax, 4
+00584b45 lea edx, [edx + esi + 4]
+00584b49 cmp ecx, eax
+00584b4b mov dword ptr [esp + 0x18], eax
+00584b4f jb 0x584e82
+00584b55 mov esi, dword ptr [edx]
+00584b57 add eax, esi
+00584b59 cmp ecx, eax
+00584b5b jb 0x584e82
+00584b61 add eax, 4
+00584b64 cmp ecx, eax
+00584b66 mov dword ptr [esp + 0x18], eax
+00584b6a jb 0x584e82
+00584b70 add eax, dword ptr [esi + edx + 4]
+00584b74 cmp ecx, eax
+00584b76 setae dl
+00584b79 test dl, dl
+00584b7b je 0x584e82
+00584b81 cmp ecx, eax
+00584b83 jmp 0x584937

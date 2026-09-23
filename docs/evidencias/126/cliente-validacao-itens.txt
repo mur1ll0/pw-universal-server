@@ -1,0 +1,64 @@
+CASO 31 VA 0x584e7a
+00584e7a mov dword ptr [esp + 0x10], 0xe
+00584e82 mov eax, dword ptr [esp + 0x10]
+00584e86 pop edi
+00584e87 pop esi
+00584e88 pop ebp
+00584e89 pop ebx
+00584e8a pop ecx
+00584e8b ret 0xc
+CASO 36 VA 0x584df2
+00584df2 pop edi
+00584df3 mov dword ptr [esp + 0xc], 4
+00584dfb mov eax, dword ptr [esp + 0xc]
+00584dff pop esi
+00584e00 pop ebp
+00584e01 pop ebx
+00584e02 pop ecx
+00584e03 ret 0xc
+CASO 46 VA 0x584bc3
+00584bc3 pop edi
+00584bc4 mov dword ptr [esp + 0xc], 9
+00584bcc mov eax, dword ptr [esp + 0xc]
+00584bd0 pop esi
+00584bd1 pop ebp
+00584bd2 pop ebx
+00584bd3 pop ecx
+00584bd4 ret 0xc
+CASO 72 VA 0x584abd
+00584abd mov edx, dword ptr [esp + 0x20]
+00584ac1 cmp edx, 7
+00584ac4 jb 0x584e82
+00584aca mov ecx, dword ptr [esp + 0x1c]
+00584ace xor eax, eax
+00584ad0 mov ax, word ptr [ecx + 5]
+00584ad4 lea ecx, [eax + eax*2]
+00584ad7 lea eax, [eax + ecx*4 + 7]
+00584adb jmp 0x584928
+CASO 99 VA 0x584e7a
+00584e7a mov dword ptr [esp + 0x10], 0xe
+00584e82 mov eax, dword ptr [esp + 0x10]
+00584e86 pop edi
+00584e87 pop esi
+00584e88 pop ebp
+00584e89 pop ebx
+00584e8a pop ecx
+00584e8b ret 0xc
+CASO 156 VA 0x584c13
+00584c13 pop edi
+00584c14 mov dword ptr [esp + 0xc], 0xa
+00584c1c mov eax, dword ptr [esp + 0xc]
+00584c20 pop esi
+00584c21 pop ebp
+00584c22 pop ebx
+00584c23 pop ecx
+00584c24 ret 0xc
+CASO 158 VA 0x584e3e
+00584e3e pop edi
+00584e3f mov dword ptr [esp + 0xc], 8
+00584e47 mov eax, dword ptr [esp + 0xc]
+00584e4b pop esi
+00584e4c pop ebp
+00584e4d pop ebx
+00584e4e pop ecx
+00584e4f ret 0xc

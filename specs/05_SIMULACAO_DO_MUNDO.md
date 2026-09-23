@@ -1,12 +1,17 @@
 # Especificação 05: Simulação do mundo (`pw-gs`)
 
-> Verificada contra o código em 2026-09-14, B50. Cobre
+> Itens/combate 126 conferidos em 2026-09-21, base `a305e51` + B89/B90; demais áreas em 2026-09-14, B50. Cobre
 > `crates/pw-gs/src/{world,bus_server,bus_server/jogo,ai,combat,habilidades,entity,grid,npc,server,missoes,progressao,economia}.rs`.
 >
 > Estado de cada regra: `confirmado` (visto em jogo), `testado` (teste automatizado),
 > `parcial`, `falta`. Toda regra portada cita o fonte original no código.
 
 ## 1. Estrutura
+
+No `GET_ALL_DATA`, a resposta `SCENE_SERVICE_NPC_LIST` é uma opção do
+`WorldProtocol`: o mundo só transmite quando há NPCs remotos e a estratégia
+retorna pacote. V126 retorna None (id 390 ausente no binário); o padrão mantém
+a resposta 155. Nenhuma regra de mundo consulta a versão (B74-126).
 
 | peça | o que é |
 | :--- | :--- |
@@ -213,6 +218,12 @@ A morte do alvo passa a ser resolvida quando o dano adiado vence
 (`EventoDoMundo::MonstroMorreu`), e é o caminho único das três origens — golpe, habilidade e
 dano no tempo.
 
+**126, medição B89:** para 22 ticks anunciados, 23 intervalos do resultado no
+PCAP tiveram mediana 1149,332 ms (1049,265–1199,262). Entre ATTACK_ONCE e resultado,
+mediana 49,3695 ms em 52 pares. São tempos de recepção no elo interno, não de
+animação. Regra comum preservada; três testes focados do mundo aprovados.
+Bytes/cadência e limitações: `docs/COMBATE_126.md`.
+
 ### 5.2 Sessão de golpe normal — `testado` (B52)
 
 `session_normal_attack` (`playercmd.cpp:1319-1344`, `actsession.cpp:350-418`):
@@ -244,11 +255,9 @@ dano no tempo.
   (`PlayAttackEffect(..., attack_speed × 50, …)`, `EC_HostMsg.cpp:943-955`): com 30 em vez de
   23, a animação do arco ficava ~350 ms mais lenta que a do original (B58). Em golpe de
   habilidade o campo vai **zero**, como no original (só `MakeAttackMsg` o preenche).
-- **Quando o dano é aplicado**: no clique, como no original — `session_normal_attack::StartSession`
-  chama `DoAttack` na hora (`actsession.cpp:350-378`), e a mensagem de golpe não tem atraso na
-  fila (`PostLazyMessage` sem `delay_tick`, `world.h:452-465`). O cliente só anima ao receber o
-  resultado e só mostra o número quando a flecha chega (700 ms de voo, `EC_Player.cpp:3507-3545`),
-  então a barra de vida (batimento de 1 s) aparece antes do número — é assim no original.
+- **Quando o dano é aplicado**: `DoAttack` começa na hora, mas `InsertDamageEntry`
+  agenda a aplicação por `attack.speed` ticks (`actobject.cpp:1758-1776`), como
+  descrito em §5.1.1. O anúncio do resultado não significa HP já debitado.
 - **Barra de vida do alvo (`NPC_INFO_00`) não vai junto do golpe** (B56). O original só a
   manda ao selecionar (`InsertInfoSubscibe` → `query_info00`, `actobject.cpp:1610`) e no
   heartbeat de 1 s (`obj_manager<gnpc, TICK_PER_SEC>`, `worldmanager.h:262`), a quem tem o
@@ -377,6 +386,18 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
 | coleta de recurso (C2S 54) | `testado` (B51) | `GATHER_MATERIAL` → confere coletores (30), ferramenta e missão de entrada (31), nível (51), distância `gather_dist` 4–20 m (2) (`matter.cpp:265-382`); tempo `Rand(time_min, time_max)` s; `PLAYER_GATHER_START` (126) a todos. Andar interrompe (`PLAYER_GATHER_STOP` 127). No fim: sucesso por `material_gain_ratio`; material por probabilidade, `num1` ou `num2` com `probability2`, limitado à pilha; `HOST_OBTAIN_ITEM` (99); o que não cabe vai ao chão do jogador; exp e SP da mina **sem** ajuste de nível; a mina some (`OBJECT_DISAPPEAR`) e renasce em `max(dwRefreshTime, 15)` s. **Colher pode acordar monstro**: os `npcgen_1..4` do `MINE_ESSENCE` (`(monstro, quantidade, raio, vida em s)`) nascem no lugar da matéria — é assim que a Flor de Safira (44566), que **não produz material nenhum**, entrega a missão 31779: ela solta o Guardião de Almas (44608), agressivo, e é dele que cai o Estame com 80 % (B76). A missão só conta o item pelo `CheckMining` quando o método é "coletar N itens" (`TaskTempl.inl:2105-2145`), que não é o caso dessa. `falta`: recarga de 500 ms, interrupção por dano e os `aggros_*` da matéria |
 
 ## 8. Itens e economia
+
+**Cobertura de versão (B93):** o cenário geral de `subcomandos_no_mundo.rs` é
+155; compra e pickup também têm cenários explícitos 126. Banco e BusServer recebem
+a mesma versão. Permanecem os gabaritos unitários 126; quatro cenários de mundo
+passaram com banco. Retirada do amuleto passa pelo trait; ELF_EXP é opcional
+para omitir id 283 inexistente no 126, sem alterar ganho/persistência do Daimon.
+
+**Protocolo 126, testado (B90):** `Contexto` recebe `WorldProtocol` para codificar
+31/46/72/99/156. Somente o layout varia (spec 04); regras de empilhamento,
+cobrança e persistência continuam comuns. Experiência 36/158 reproduz capturas.
+Sete testes de protocolo e dois de mundo aprovados com banco; não confirma
+jogabilidade de missões v55 (leitor pendente), preços v7 nem C2S de compra.
 
 
 **Todo item que entra na bolsa por prêmio de missão ou por coleta é gerado**

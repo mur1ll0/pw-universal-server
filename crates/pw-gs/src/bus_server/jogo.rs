@@ -89,6 +89,7 @@ fn agora() -> u32 {
 /// Jogador, bolsas e a fila de comandos de uma operação — o `PlayerTaskInterface` do
 /// original (`task/taskman.cpp`).
 pub(crate) struct Contexto<'a> {
+    pub sub: &'a dyn WorldProtocol,
     pub p: &'a mut PlayerEntity,
     pub dados: &'a GameDataManager,
     pub bolsa: Bolsa,
@@ -163,8 +164,8 @@ impl Contexto<'_> {
                 )
                 .data,
             );
-        } else {
-            self.para_mim.push(S2CGamedataSend::elf_exp(exp_do_daimon).data);
+        } else if let Some(pacote) = self.sub.elf_exp(exp_do_daimon) {
+            self.para_mim.push(pacote.data);
         }
     }
 
@@ -230,7 +231,7 @@ impl Jogador for Contexto<'_> {
         };
         let _ = validade;
         self.para_mim.push(
-            S2CGamedataSend::task_deliver_item(tid as i32, 0, e.entrou, e.no_slot, tipo.pacote_do_cliente().unwrap_or(0), e.slot as u8)
+            self.sub.task_deliver_item(tid as i32, 0, e.entrou, e.no_slot, tipo.pacote_do_cliente().unwrap_or(0), e.slot as u8)
                 .data,
         );
     }
@@ -238,7 +239,7 @@ impl Jogador for Contexto<'_> {
         let tipo = if comum { ContainerType::Inventory } else { ContainerType::TaskInventory };
         for (slot, n) in self.bolsa_de(comum).tirar(tid, quantidade) {
             // `DROP_TYPE_TASK` = 3 (`common/protocol.h:932`).
-            self.para_mim.push(S2CGamedataSend::player_drop_item(tipo.pacote_do_cliente().unwrap_or(0), slot as u8, n, tid as i32, 3).data);
+            self.para_mim.push(self.sub.player_drop_item(tipo.pacote_do_cliente().unwrap_or(0), slot as u8, n, tid as i32, 3).data);
         }
     }
     fn dar_dinheiro(&mut self, n: u32) {
@@ -350,6 +351,7 @@ impl BusServer {
             let p = mundo.players.get_mut(&(roleid as i64))?;
             let gm = p.sec_level > 0;
             let mut ctx = Contexto {
+                sub: self.sub.as_ref(),
                 p,
                 dados: &dados,
                 bolsa: Bolsa::nova(roleid, ContainerType::Inventory, TAMANHO_DA_BOLSA, bolsa),
@@ -655,7 +657,7 @@ impl BusServer {
                 if mina.gasta_ferramenta && mina.ferramenta > 0 {
                     for (slot, n) in ctx.bolsa.tirar(mina.ferramenta as u32, 1) {
                         // `DROP_TYPE_USE` = 10 (`common/protocol.h:931-943`).
-                        ctx.para_mim.push(S2CGamedataSend::player_drop_item(0, slot as u8, n, mina.ferramenta, 10).data);
+                        ctx.para_mim.push(ctx.sub.player_drop_item(0, slot as u8, n, mina.ferramenta, 10).data);
                     }
                 }
                 let mut sobra = if material.item > 0 { quantidade } else { 0 };
@@ -669,7 +671,7 @@ impl BusServer {
                     match bolsa.empilhar_gerado(material.item, quantidade, dados) {
                         Some(e) => {
                             sobra = quantidade - e.entrou;
-                            ctx.para_mim.push(S2CGamedataSend::obtain_item(material.item as i32, 0, e.entrou, e.no_slot, where_pct, e.slot as u8).data);
+                            ctx.para_mim.push(ctx.sub.obtain_item(material.item as i32, 0, e.entrou, e.no_slot, where_pct, e.slot as u8).data);
                         }
                         None => {}
                     }
@@ -1499,7 +1501,7 @@ impl BusServer {
                 };
                 match guardado {
                     Some(e) => {
-                        ctx.para_mim.push(S2CGamedataSend::pickup_item(drop.item_id as i32, 0, e.entrou, e.no_slot, where_pct, e.slot as u8).data);
+                        ctx.para_mim.push(ctx.sub.pickup_item(drop.item_id as i32, 0, e.entrou, e.no_slot, where_pct, e.slot as u8).data);
                         true
                     }
                     None => {
@@ -1557,7 +1559,7 @@ impl BusServer {
             }
             ctx.gastar_dinheiro(total);
             info!("mundo: {roleid} comprou {} item(ns) por {total}", lista.len());
-            ctx.para_mim.push(S2CGamedataSend::purchase_item(total as u32, &lista).data);
+            ctx.para_mim.push(ctx.sub.purchase_item(total as u32, &lista).data);
         })
         .await;
     }
@@ -1838,7 +1840,7 @@ impl BusServer {
                 if tirou == 0 {
                     return None;
                 }
-                ctx.para_mim.push(S2CGamedataSend::player_drop_item(0, slot_idx as u8, 1, egg_id, 10).data);
+                ctx.para_mim.push(ctx.sub.player_drop_item(0, slot_idx as u8, 1, egg_id, 10).data);
 
                 // Deduz as moedas do serviço
                 if custo > 0 {

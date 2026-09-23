@@ -37,7 +37,8 @@ Formatos, estado de cada leitor e o que já está ligado ao mundo:
 
 ## 3. Consultar um realm
 
-Arquivos em `data/realm_155/config` (cliente BR, v156 — o único realm 1.5.5). Ferramentas:
+Arquivos em `data/realm_155/config` (cliente BR, v156 — o único realm 1.5.5) e em
+`data/realm_126/config` (1.2.6: `elements.data` v7, `tasks.data` v55). Ferramentas:
 `python specs/elements_layouts/pw_elements_reader.py <elements.data>` (mesmo algoritmo do Rust),
 `specs/clsconfig_155/ler_clsconfig.py`, `crates/pw-data-loader/examples/` (`dump_monstros`,
 `dump_aipolicy`, `cruza_monstro_aipolicy`):

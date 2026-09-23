@@ -61,8 +61,10 @@ grep -rn "<termo que mudou>" specs/ docs/ESTADO_E_RETOMADA.md
 
 ## 5. `docs/HISTORICO_DE_SESSOES.md`
 
-Acrescente ao **fim da lista da série B** (depois do último item, antes de
-"**Depois de "1.5.5 funcional" estar de fato provado**") um item com o próximo número:
+Acrescente **no fim do arquivo** (é onde a série B continua desde o item 49) um item com o
+próximo número — `grep -oE '^[0-9]+\. \*\*' docs/HISTORICO_DE_SESSOES.md | tail -1` dá o
+último. **Nunca reutilize número:** Claude e Codex escrevem na mesma série, e a colisão de
+B77–B81 entre a `main` e a `versao-126` custou uma renumeração (B93).
 
 ```markdown
 49. **Sessão AAAA-MM-DD: <o que mudou, em uma frase>.**

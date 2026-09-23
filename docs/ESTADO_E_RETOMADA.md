@@ -5,17 +5,16 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-22**, B79–B88 (sessão de invocar mascote, estado estendido
-> do jogador, economia de contexto, as 24 habilidades que conjuram andando, o modo roupa que
-> persiste **e agora aparece para o próprio dono**, o descarte de item com destrave de slot,
-> o mapa de água e a montaria que não entra nela). Suíte com o banco: **631 testes, 0
-> falhas** — medir com `--test-threads=2` (skill `pw-testar-e-publicar`).
+> **Última atualização: 2026-09-23**, B93 — **o 1.5.5 chegou a jogável no básico** e tudo
+> foi juntado na `main` (inclusive a frente 1.2.6 que estava na worktree `../pw-126`). A
+> frente ativa passa a ser **levar ao 1.2.6 o que o 1.5.5 já resolveu** (§5D). Suíte com o
+> banco na `main`: **654 testes, 0 falhas** — medir com `--test-threads=2` (skill `pw-testar-e-publicar`).
 >
-> **Publicado no realm 155 em 2026-09-22 23:5x** (B79–B86): os contêineres `pw-world-155` e
-> `pw-realm-155` rodam o código desta sessão, e a coluna `characters.character_mode` está
-> aplicada em `public` e em `test`.
-> com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
-> alteração, no `HISTORICO_DE_SESSOES.md`.
+> **Publicado no realm 155** em 2026-09-22 (B79–B86). B87–B88 (mapa de água) e o realm 126
+> **não** foram publicados.
+>
+> O Claude (`.claude/`, `CLAUDE.md`) e o Codex (`AGENTS.md`, `.codex/`) seguem as mesmas
+> diretrizes, com as skills em `.claude/skills/`.
 >
 > **Como o sistema é** (arquitetura, formatos, protocolo, regras de jogo) está nas specs —
 > `specs/README.md` é o índice. Este documento diz **onde o trabalho está**.
@@ -28,184 +27,59 @@
 
 ## 0. Em uma tela
 
-**Alvo:** o **1.5.5**, servido pelo realm `realm_155` ao cliente 1.5.5 BR
-(`elements.data` v156, `tasks.data` 129, build 2569). Ordem combinada com o Murillo:
+**Marco de 2026-09-23 (B93): o 1.5.5 está jogável no básico.** Tudo está na `main` (as
+branches `multi-versions` e `versao-126` foram juntadas). Ordem combinada com o Murillo:
 
-1. **1.5.5 totalmente funcional** ← estamos aqui.
-2. Depois, **1.2.6 totalmente funcional** (loga e entra no mundo; parado desde 2026-09-02).
-3. Só depois: banco de dados (Contexto E), painel `pw-admin` (G), atualizador/launcher (H).
+1. ~~1.5.5 jogável no básico~~ — **atingido**. O que falta dele está em §5A/§5B e continua na
+   fila, mas deixou de bloquear.
+2. **1.2.6 com o que o 1.5.5 já resolveu** ← **estamos aqui** (painel em §5D).
+3. Depois: banco de dados (Contexto E), painel `pw-admin` (G), atualizador/launcher (H).
 
-O 1.5.3 foi abandonado em 2026-09-02 (o cliente disponível nunca logou); todo o trabalho de
-protocolo feito contra os fontes 1.5.3 continua válido, porque o 1.5.5 só acrescenta ids e
-campos no fim (A-"MUDANÇA DE BASE" no histórico).
+**O que o 1.5.5 faz hoje** (realm `realm_155`, porta 29004, cliente BR v156, `elements.data`
+v156, `tasks.data` 129, build 2569):
 
-**Onde o 1.5.5 está:** loga, cria personagem, entra no mundo sem crash, vê NPCs, monstros,
-recursos e outros jogadores com streaming por distância, anda, voa, fala, compra na loja,
-aprende habilidade, bate em monstro e em jogador, cura, e os monstros perseguem, voltam e
-passeiam no chão. Os três arquivos de dados do realm são lidos **inteiros**, fechando no
-último byte. Personagem novo nasce no mapa 161, servido por um servidor de mundo próprio.
+- **Conta e personagem:** login, criação com os atributos, a arma e a habilidade iniciais da
+  classe, nascimento no mapa 161 num servidor de mundo próprio, troca de personagem, saída.
+- **Mundo:** NPCs, monstros, recursos e outros jogadores entram e saem por distância; altura
+  pelo `.hmap`, água pelo `watermap/`; os três `.data` do realm lidos inteiros, fechando no
+  último byte.
+- **Movimento:** andar, voar (item de voo com máscara de classes), meditar, gestos, montaria
+  (sessão de invocar/recolher, não monta na água funda e cai dela), teleporte por
+  transportadora com os pontos descobertos (`world_targets.sev`), modo roupa que persiste.
+- **Combate:** golpe normal com dano adiado como no original, monstros com dados do
+  `MONSTER_ESSENCE` que perseguem, voltam, passeiam e atacam sozinhos quando agressivos;
+  habilidades com conjuração, execução, recarga, chi (`apcost`/`apgain`) e conjurar andando;
+  cura e PvP; morte e renascimento no distrito; durabilidade das peças.
+- **Progressão:** experiência, nível, cultivo pela missão, pontos de atributo, treinador,
+  Daimon (ficha e experiência).
+- **Missões:** do `tasks.data` com listas binárias, automáticas por zona, dinâmicas,
+  prêmios (itens, dinheiro, experiência, cultivo, teto de chi), monstro invocado.
+- **Itens e economia:** loja de NPC com o preço do arquivo, drop e coleta (inclusive mina que
+  acorda monstro), poções no tempo com recarga por família, amuleto e hierograma automáticos,
+  flechas, descarte com destrave de slot, reparo.
+- **Social:** fala, grupo.
 
-**Um realm por versão (B55, 2026-09-17):** o realm 1.5.5 do cliente EN (v159, porta 29003)
-foi apagado — contêineres, pasta de dados e linha no banco — e o antigo `realm_155BR` passou a
-se chamar **`realm_155`**, com contêineres `pw-realm-155`/`pw-world-155`, dados em
-`data/realm_155/config` e a **mesma porta 29004** (o `serverlist.txt` do cliente BR não muda).
-Personagens (POTATO, eaa) e os 12 moldes vieram junto.
+**O que falta no 1.5.5** (§5A): serviços de refinar e incrustar, os ~300 efeitos de
+habilidade sem porte, intérprete do `aipolicy.data`, trava de PvP, mascote de combate, resto
+do Daimon, armazém, troca de mapa entre contêineres, fôlego debaixo d'água.
 
-**Último teste em jogo (2026-09-19/20, com o eaa, nível 9 — B67):** cinco relatos novos, e
-uma auditoria do que veio de outra sessão (o Murillo pediu).
+**O que o 1.2.6 faz hoje** (realm `realm_126`, porta 29000): loga, cria personagem e entra no
+mundo; os layouts de entrada, combate, experiência e itens foram conferidos com captura
+(B74-126, B89, B90, B93). As **regras de jogo são as mesmas** — ficam no `pw-gs`, e o que muda
+por versão fica no `WorldProtocol` de `crates/pw-protocol/src/versions/v126/`. O que impede o
+1.2.6 de ter tudo o que o 1.5.5 tem é **dado e layout**, não regra: o `elements.data` v7 é
+lido pelo leitor tipado antigo (sem os campos que as regras novas usam), o `tasks.data` v55
+só tem o cabeçalho lido, e os comandos acrescentados depois do B76 não foram conferidos para o
+1.2.6. **Nada do 1.2.6 foi visto em jogo depois do B63.** Painel em §5D.
 
-Corrigidos com evidência do original:
-- **Missão de cultivo não subia o cultivo.** O prêmio `m_ulNewPeriod` do `AWARD_DATA`
-  (deslocamento 25) não era lido — é ele que o original passa a `SetCurPeriod` →
-  `SetSecLevel`. Agora grava em `characters.cultivation` e manda `TASK_DELIVER_LEVEL2` (160),
-  que é o que faz o cliente tocar o efeito do avanço. De quebra: o `level2` dos pacotes de
-  visão é o **cultivo**, e nós mandávamos ali o privilégio de GM.
-- **Poção curava de uma vez.** O `MEDICINE_ESSENCE` tem total **e** tempo, e o original
-  reparte (`healing_potion_filter`: um pedaço por batimento de 1 s). Só a poção de vida+mana
-  sem tempo é instantânea.
-- **Amuleto e hierograma zerados.** Iam sem bloco de dados; o conteúdo deles são 8 bytes
-  (`amulet_essence`: ponto e gatilho).
+**Um realm por versão (B55):** `realm_155` = cliente BR, contêineres `pw-realm-155` /
+`pw-world-155`, dados em `data/realm_155/config`; `realm_126` = `pw-realm-126` /
+`pw-world-126`, dados em `data/realm_126/config`.
 
-Da auditoria: o id de monstro invocado (`0xA000_0000`) estava **certo**; o `prob = 100` por
-padrão no roteiro de habilidade estava **errado** e foi trocado pela lista
-`GARANTIDOS_SEM_DADO`, extraída do `playerwrapper.cpp` (170 setters não consultam o dado, 316
-consultam). Os contêineres `155b` foram removidos e o compose voltou ao `pw-realm-155` /
-`pw-world-155` construídos do fonte.
-
-**Animação ao receber buff (B68):** corrigida. Faltava a **fase de execução** — a sessão do
-original percorre os estados e só manda `stop_skill` no fim de todos; a Flecha Fulgurante tem
-3.000 ms de conjuração e **800 ms de execução**, e nós cortávamos a segunda.
-
-**Teleporte (B68/B69): completo.** O jogador descobre e lembra os pontos (o mundo trata o
-`ACTIVATE_REGION_WAYPOINTS`, guarda em `characters.waypoints` e responde `ACTIVATE_WAYPOINT`
-por ponto novo), e **viaja**: o serviço `GP_NPCSEV_TRANSMIT` confere índice, nível e dinheiro,
-cobra e teleporta. A coordenada de cada destino estava num arquivo que ninguém lia — o
-**`world_targets.sev`** (92 pontos no `realm_155`).
-
-**Barra de chi (B69/B70):** o teto vem do prêmio `m_ulFuryULimit` de uma missão (a 32394, de
-nível 9, dá 99); o golpe normal enche com o `angro_increase` da classe (Arqueiro: 5) e meditar
-dá 15 por segundo. O valor corrente e o teto vão no `SELF_INFO_00`; o mesmo teto também precisa
-ir no último campo do `OWN_EXT_PROP`. Ele ia zero, e o cliente recebia 0→99 em cada atualização,
-mostrando repetidamente o aviso de aumento. A **Flecha Fulgurante não gera chi** no original:
-ela consome mana e aplica `Firearrow`. **Não há ganho ao apanhar** no 1.5.5.
-
-**Montaria (B78, corrigida no B79):** `SUMMON_PET` (C2S 100) com uma montaria monta nela —
-velocidade do `PET_ESSENCE` sobrepondo a de corrida, `PLAYER_MOUNTING` (227) ao cliente e aos
-outros, e `RECALL_PET` (101) desmonta.
-
-**A montaria travava porque invocar não é um comando, é uma sessão (B79).** No teste em jogo
-do RT a montaria montou sem canalização e depois **não desmontava**: a jaula só deixava
-clicar em "Inv.", e a resposta era que o mascote já estava ativo. Faltavam três comandos:
-`PLAYER_START_PET_OP` (235) abre a canalização de 60 ticks (3 s; 10 ticks no recolher),
-`SUMMON_PET` (233) diz ao cliente **qual** mascote ficou ativo — sem ele o botão de recolher
-fica desabilitado (`DlgPetList.cpp:227`) — e `PLAYER_STOP_PET_OP` (236) fecha a canalização,
-inclusive quando a invocação é recusada. Desmontar manda também `RECALL_PET` (234). `falta`:
-mascote de combate, trava de ataque montado, água e invisibilidade.
-
-**Item apagado na bolsa (B84).** O cliente **congela o slot antes de mandar qualquer
-comando de item**, e só o `UNFREEZE_IVTR_SLOT` (181) destrava. Os comandos de **descartar**
-(14 e 15) não eram tratados: o item do RT ficou apagado na bolsa depois de ele tentar
-jogá-lo fora. Agora o descarte existe (item vai ao chão sem dono) e o ramo dos comandos não
-tratados destrava os slots, como o `UnLockInventoryHandler` do original. Continua faltando o
-**armazém**, que congela e não é tratado.
-
-**Montaria na água (B88, feito).** O `watermap/` de cada mapa passou a ser lido
-(`pw_data_loader::MapaDeAgua`, spec 03 §3.6b), e com ele as duas regras do original:
-**submerso mais de 0,5 m não monta** (erro 81, depois da canalização) e **mais de 1 m derruba
-a montaria** — a queda roda no batimento de 1 s e manda `PLAYER_MOUNTING(0,0)` mais o
-`RECALL_PET`. `falta`: o fôlego (`breath_ctrl`), que usa o mesmo dado.
-
-**Modo roupa: o dono da tela também precisa saber (B86).** Gravar e recarregar já
-funcionava no B83 — o que faltava era o bit `MODA` no `state` do **`SELF_INFO_1`**, que é de
-onde o cliente lê o próprio modo (`EC_HostPlayer.cpp:819-822`). Os outros jogadores já o
-viam de roupa desde o B80; só ele se via de armadura.
-
-**Estado estendido do jogador (B80).** O `state` do `info_player_1` ia com um bit só, o de
-GM: quem entrava no campo de visão de alguém **montado, voando, morto ou de moda** desenhava
-a pessoa a pé, no chão, viva e de armadura. Esses bits agora viajam, e o `MONTADO` leva junto
-os 6 bytes de `mount_color` + `mount_id`. Cuidado permanente: **os bits decidem o tamanho do
-comando** (`CheckValid`), então cada bit novo tem de escrever o campo dele na ordem do
-original. O campo da transformação (`shape_form`) já está escrito no lugar certo, esperando
-quem porte o `filter_Fairyform`.
-
-**Conjurar andando (B78, corrigido no B82):** é propriedade da habilidade
-(`is_movingcast`), não da classe — as **24** que existem são todas da classe 11, incluindo a
-**2571 e a 2579**, que são as duas de ataque que o RT tem. Eram "cinco" porque o extrator do
-`habilidades.json` só casava `is_movingcast = 1` e deixava de fora os 19 stubs que escrevem
-`= true`; por isso andar ainda cortava a conjuração em jogo.
-
-**Transformação (B78, diagnosticada):** a habilidade 2570 do Tormentador põe o
-`filter_Fairyform`, que muda `shape_form` e liga o `STATE_SHAPE` do `object_state`. **Não
-mandamos estado estendido de jogador**, então nada apareceria mesmo com o filtro portado: o
-alicerce vem primeiro.
-
-**Modo de combate (B77):** o `State` do `SELF_INFO_00` e do `PLAYER_INFO_00` ia zero fixo — o
-cliente nunca entrava em postura de luta. Agora leva o `combate_s` do jogador.
-
-**Atq. Mágico na ficha (B77):** `damage_magic_low/high` e as cinco resistências do
-`OWN_EXT_PROP` iam zero. Os números já existiam no jogador; faltava enviá-los.
-
-**Monstro invocado (B77):** não renasce mais (era um `.max(1)` no `respawn_delay_ms` zero),
-nasce odiando quem o chamou e some quando o `remain_time` da missão acaba.
-
-**Montaria — `falta`, na fila (B77):** incubar funciona, invocar não existe. Caminho medido:
-`SUMMON_PET` (C2S 100, `{ size_t pet_index }`) → S2C 233 (`slot_index`, `pet_tid`, `pet_pid`,
-`life_time`), com `RECALL_PET` (101/234), `BANISH_PET` (102) e `PET_CTRL` (103).
-
-**Coleta que acorda monstro (B76):** a Flor de Safira não produz item — ela solta o Guardião
-de Almas, e é dele que cai o Estame da missão. Os `npcgen_1..4` do `MINE_ESSENCE` passaram a
-ser lidos e a nascer na coleta.
-
-**Monstro agressivo (B76):** `aggressive_mode` — 4.874 dos 8.054 monstros do realm — nunca
-tinha sido usado: nenhum monstro atacava sozinho. Agora o agressivo sem alvo pega o jogador
-mais perto dentro de 15 m, que é o alcance do aviso de movimento no original.
-
-**Daimon (B75/B76):** não existia nada dele no projeto — por isso "não fazia nada". Agora o item
-sai com o bloco de dados (o estado dele) e recebe **um décimo** da experiência do jogador,
-subindo de nível como no original. Falta o resto do sistema: equipamento e habilidades do
-Daimon, vigor, pílulas, refino e distribuir pontos.
-
-**Bolsa do item de missão (B74):** conferido e **correto**. Quem escolhe é o `m_bDropCmnItem`
-de cada missão, e ele acompanha o tipo do item: `TASKMATTER_ESSENCE` vai para a bolsa de
-missão, `TASKNORMALMATTER_ESSENCE` (as "Almas") para a normal. Uma única exceção no realm.
-
-**Chi, escudo e amuleto (B73/B74):** as habilidades passaram a cobrar o `apcost` e a dar o
-`apgain` do stub (a Flecha Glacial tira 25, a Barreira de Asa 45, a Flecha Fulgurante **dá**
-10 — a §8.0 dizia o contrário e foi corrigida). A Barreira de Asa ganhou o efeito
-`Wingshield`, que faltava por inteiro. E o amuleto/hierograma vestidos agora disparam sozinhos
-no batimento, como no original, gravando o que resta nos octetos do item.
-
-**Travamento no combate (B72):** o mundo parava por segundos porque o autosave gravava
-dentro do `world.tick` — e o tique segura o mundo inteiro. Saiu de lá; a durabilidade das
-peças passou a viver no `PlayerEntity`, e o `SELF_INFO_00` de quem apanha agora sai quando o
-dano cai, não no anúncio do golpe. Regra que ficou registrada: **nada que espere o banco no
-caminho do jogo**.
-
-**Item de missão na bolsa comum (B72):** não era defeito. Quem escolhe a bolsa é o
-`m_bCommonItem` de cada item do `tasks.data`, e a missão 31734 marca a Alma da Ninfa como
-item comum.
-
-**Poção e cultivo (B70/B71):** a poção agora respeita a recarga do `cool_time`, e o índice
-dela é o da **família** do item (`id_major_type` → classe → `COOLDOWN_INDEX_*`). E o `Level2`
-do `SELF_INFO_00` — que é o **cultivo** — ia zero em três caminhos; como o cliente anuncia
-avanço sempre que esse campo sobe, usar uma poção mostrava a tela de cultivo.
-
-**Item de voo (B69):** a "Glória de Shalim" entrou na bolsa sem bloco de dados, e é de lá que
-o cliente lê a máscara de classes — por isso não podia ser usada. O prêmio de missão agora
-gera o bloco (30 bytes do `generate_flysword`), e o item do eaa foi acertado por script.
-
-**Arquitetura por versão (B68):** a fachada `PorVersao` foi removida; quem despacha é a
-estratégia da versão (`pw_protocol::versions`, um `WorldProtocol` por versão), guardada no
-`BusServer`. O 1.2.6 tem implementação própria; 1.4.8, 1.5.3 e 1.7.2 **compõem** a do 1.5.5 e
-sobrescrevem só o que difere.
-
-Roteiro do próximo teste na seção 3.4.
-
-**O que mais falta:** serviços de refinar/incrustar, os ~300 efeitos sem porte, intérprete do
-`aipolicy.data`, trava de PvP, teleporte por NPC, e o resto da seção 5A.
+**Detalhe de cada entrega:** índice do §8 → `docs/HISTORICO_DE_SESSOES.md` (só o item, com
+`grep`).
 
 ---
-
 ## 1. Ambiente
 
 ### 1.1 Serviços (`docker/docker-compose.yml`)
@@ -216,7 +90,7 @@ Credenciais na memória `pw_universal_infra_access`.
 | realm | versão | porta do cliente | servidor de mundo (mapas) | dados | situação |
 | :--- | :--- | ---: | :--- | :--- | :--- |
 | `realm_155` | 1.5.5 | **29004** | `pw-world-155` (mapas 1 e 161) | `data/realm_155/config` | **o realm de teste** — cliente BR; até 2026-09-17 se chamava `realm_155BR` (B55) |
-| `realm_126` | 1.2.6 | 29000 | `pw-world-126` (1) | `data/realm_126` | loga e entra no mundo; parado |
+| `realm_126` | 1.2.6 | 29000 | `pw-world-126` (1) | `data/realm_126` | loga e entra no mundo; **frente atual** (§5D) |
 | `realm_153` | 1.5.3 | 29001 | `pw-world-153` (1) | — | abandonado |
 | `realm_148` | 1.4.8 | 29002 | `pw-world-148` (1) | — | nunca foi alvo |
 
@@ -387,99 +261,26 @@ continua no mundo 1; para testar o nascimento no 161, criar um novo.
 - Autosave a cada 60 s de nível, experiência, SP, vida, mana, moedas, mundo e posição — o
   `UPDATE` falhava em silêncio até o B36f.
 
-### 3.3 Último teste em jogo (2026-09-18, fim da tarde, com o eaa, nível 5)
+### 3.3 Publicado ou feito, sem confirmação em jogo registrada
 
-Confirmado em jogo: **durabilidade** certa, **monstros atacando** com animação, e a missão
-**"Descobertas Acidentais" chegou** ao mudar de área — os três pontos do B61.
+Os itens abaixo passaram na suíte com o banco; o Murillo declarou o 1.5.5 jogável em
+2026-09-23 sem apontar defeito neles, mas não há relato item a item. Detalhe e roteiro de
+cada um no histórico.
 
-**O que sobrou: o dano vinha antes da animação.** Dois relatos, uma causa. No arqueiro, ao
-abrir a sessão de golpe o monstro perdia vida antes de a animação começar, parecendo "um
-ataque a mais"; no monstro, ele batia enquanto ainda executava a animação de corrida.
+| item | o que olhar | publicado? |
+| :--- | :--- | :--- |
+| B69–B70 | chi: +5 por golpe, +15/s meditando, teto 99 sem aviso repetido | sim |
+| B71 | poção sem tela de cultivo; recarga por família (vida, mana, antídoto) | sim |
+| B72 | combate longo sem pausa no minuto do autosave | sim |
+| B73–B74 | Flecha Glacial −25 chi, Barreira de Asa −45 e escudo de 20 s; amuleto automático | sim |
+| B75–B76 | Daimon ganha 1/10 da experiência; Flor de Safira solta o Guardião; monstro agressivo | sim |
+| B77–B80 | modo de combate, Atq. Mágico na ficha, montaria (canalizar, montar, desmontar), quem chega vê montado | sim |
+| B82–B86 | conjurar andando (2571/2579 do Tormentador), modo roupa persiste e o dono se vê de roupa, descarte de item | sim |
+| B87–B88 | montaria recusada na água funda (erro 81) e derrubada acima de 1 m | **não** |
 
-O original **não** tira vida no instante do golpe: `gactive_imp::InsertDamageEntry`
-(`actobject.cpp:1758-1776`) põe o dano num `GM_MSG_HURT` **adiado de `attack.speed` tiques de
-50 ms**, e só aplica na hora quando o `delay` não é positivo. O `attack.speed` é o
-`attack_delay = (attack_speed × 20 × 0,8) − 1` do jogador (`playertemplate.h:980`,
-`MakeAttackMsg` em `actobject.cpp:824`) e o `_damage_delay` do monstro (`npc.cpp:2118`) — o
-mesmo número que já mandávamos no comando e que o cliente usa como duração da animação.
-Habilidade não preenche `speed` (`player.cpp:3174`), então continua instantânea.
-
-Portado em `WorldInstance::adiar_dano` + `cobrar_danos_adiados`. **Continuam no instante do
-golpe**, como no original: a ameaça (`OnAttacked`), o estado de combate e o desgaste da arma.
-A morte do alvo passou a ser resolvida quando o dano vence, pelo evento `MonstroMorreu` — que
-agora é o caminho único das três origens (golpe, habilidade, dano no tempo).
-
-**E o intervalo entre golpes do monstro** deixou de ser 1,5 s escrito no código: é o
-`attack_speed` do `MONSTER_ESSENCE` em tiques (`ChangeInterval`, `npcsession.cpp:60-70`). Os
-dois campos (`ataque_em_ticks` e `atraso_do_dano_em_ticks`) passaram a viver no
-`MonsterEntity`.
-
-**Pergunta respondida (aviso de durabilidade baixa):** existe, e é só do cliente —
-`CECGameUIMan::RefreshBrokenList` (`EC_GameUIMan.cpp:5474-5555`) roda a cada quadro e põe o
-ícone da peça na janela `Win_Broken` quando `cur <= max / 10`, **amarelo** enquanto sobra
-durabilidade e **vermelho** em zero. O item 8/18 do relato está em 44%, por isso não aparece
-ainda.
-
-### 3.4 Publicado, falta ver em jogo (B65 a B70) — e o B71, **ainda não publicado**
-
-Publicado em 2026-09-20 (`pw-realm-155` e `pw-world-155`). Roteiro com o **eaa** (nível 9):
-
-1. **Chi (B69/B70)**: bater num monstro — a barra deve subir 5 por golpe, até 99. Sentar deve
-   somar 15 por segundo. Usar Flecha Fulgurante **não** aumenta chi; ela não o faz no fonte.
-   Depois de relogar ou abrir C, o aviso “limite máximo de chi aumentado para 99” não deve mais
-   se repetir. Ela some ao relogar? Não deve: fica no banco.
-2. **Voo (B69)**: a "Glória de Shalim" deve poder ser equipada agora.
-3. **Teleporte (B69)**: falar com uma transportadora e escolher um destino — deve cobrar e
-   levar. Sem dinheiro ou nível, recusa.
-4. **Ponto de teleporte (B68)**: chegar perto de uma transportadora nova deve anunciar o
-   ponto, e ele deve continuar no mapa depois de relogar.
-5. **Buff (B68)**: a Flecha Fulgurante deve executar a animação (800 ms depois da conjuração).
-
-Onde olhar: `docker logs pw-world-155 | grep -iE "viajou|ponto de teleporte|cultivo"`.
-
-Depois de publicar o **B71** (falta pedido do Murillo), entram no roteiro:
-
-6. **Poção**: usar uma **não** pode mostrar a tela de avanço de cultivo. Usar de novo antes
-   dos 15 s recusa ("em recarga") sem consumir; passado o tempo, aceita. Poção de vida e de
-   mana têm recargas separadas, e o antídoto tem a dele.
-7. **Flecha**: a contagem no cliente cai de uma em uma, sem atraso e sem pular; um golpe
-   recusado (alvo longe, alvo morto) não pode comer flecha.
-8. **Travamento (B72)**: um combate longo (a Ninfa de novo) não pode ter pausas. O minuto do
-   autosave é o momento crítico — antes, o mundo parava nele. No log, `slow statement` pode
-   continuar aparecendo; o que não pode é o jogo parar junto.
-9. **Chi das habilidades (B73)**: a barra deve **cair 25** ao usar a Flecha Glacial e **45**
-   na Barreira de Asa; sem chi bastante, a habilidade nem sai. A Flecha Fulgurante **soma 10**.
-10. **Barreira de Asa (B73)**: o ícone do escudo deve ficar **20 s**, os golpes recebidos
-    devem doer bem menos enquanto ele dura, e a mana deve subir de 3 em 3 segundos.
-11. **Daimon (B75)**: abrir a janela dele — a ficha tem de aparecer com nível 1 e a
-    experiência tem de subir ao matar monstros (um décimo da sua). Ao subir de nível, o item
-    se atualiza sozinho. Ele nunca passa do seu nível.
-12. **Flor de Safira (B76)**: colher a flor tem de **acordar o Guardião de Almas** ali mesmo;
-    matando-o, o Estame cai (80 %) e a missão anda.
-13. **Monstro agressivo (B76)**: chegar a menos de 15 m de um monstro agressivo (a maioria
-    deles) tem de fazer ele vir para cima sem você bater primeiro.
-14. **Combate (B77)**: ao atacar, o personagem tem de mudar para a **postura de luta** e
-    voltar ao normal depois de uns segundos parado.
-15. **Ficha (B77)**: a tela de status de um personagem mágico tem de mostrar o **Atq.
-    Mágico** (e as resistências) da arma.
-16. **Sombra do Olho do Deus (B77)**: matar as três da missão "Surgem as Sombras" — elas
-    **não podem renascer**, e devem vir para cima de você assim que nascem.
-17. **Montaria (B78/B79)**: invocar a montaria da sala de mascotes deve mostrar **a barra de
-    canalização por 3 segundos** e então montar — a velocidade sobe e o modelo aparece.
-    Depois disso o botão **"Rec." da jaula tem de ficar clicável**, e recolher desmonta com
-    meio segundo de canalização. Invocar e recolher várias vezes seguidas não pode deixar o
-    personagem preso em "operando mascote".
-18. **Conjurar andando (B78/B82)**: com o RT, usar a **Explosão Sônica** ou a **Ruptura
-    Descendente** (2571 e 2579) e **andar durante a conjuração** — ela não pode ser
-    cancelada. Era o relato de 22/09: as duas estavam fora da lista por erro do extrator.
-20. **Modo roupa (B83)**: trocar para roupa, **sair para a tela de seleção** e conferir que
-    o avatar continua de roupa; entrar de novo e conferir que continua também em jogo.
-19. **Hierograma (B73/B74)**: deixar a mana cair abaixo de 75 % — ele deve repor sozinho, uma
-    vez a cada 10 s, e o número no item deve diminuir. O ícone tem de **escurecer pela
-    recarga** a cada disparo (B74). O amuleto de vida faz o mesmo a 50 %.
+Onde olhar: `docker logs --since 10m pw-world-155 2>&1 | grep -iE "montou|desmontou|água|descartou|viajou"`.
 
 ---
-
 ## 4. Dados de referência
 
 | arquivo | leitor | estado | usado pelo mundo? |
@@ -499,9 +300,10 @@ Depois de publicar o **B71** (falta pedido do Murillo), entram no roteiro:
 
 ## 5. O que falta
 
+
 Conferido contra o código em 2026-09-13 — cada linha diz onde está a evidência.
 
-### 5A. Jogabilidade básica do 1.5.5 — a prioridade
+### 5A. Jogabilidade do 1.5.5 — o que ainda falta
 
 O pedido do Murillo no B44: combate básico inteiro, experiência, alma, moedas, animações,
 habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
@@ -536,7 +338,7 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
     as habilidades dele, o vigor, as pílulas de experiência, a decomposição, o refino,
     distribuir pontos de atributo e de gênio, e o bônus sorteado de 10 em 10 níveis. **O ganho
     truncar para zero com o Daimon muito abaixo do dono é do original** (B76), não é defeito.
-10. **IA de monstro (B76, parcial):** o agressivo pega quem chega perto, mas as estratégias de
+11. **IA de monstro (B76, parcial):** o agressivo pega quem chega perto, mas as estratégias de
     ódio do `aipolicy.data` (facção, nível, invisibilidade, probabilidade) seguem sem
     intérprete.
 
@@ -590,25 +392,45 @@ Critério de aceite: *o `gateway.rs` deixa de existir e nenhum gameplay fica no 
   ainda com duas implementações de layout (`adapter.rs` e `encode`, A24–A25); `octets.rs`
   duplicando o `pw-wire` (A-seção 1); cinco opcodes sem correspondência no IR (A21).
 
-### 5D. Depois do 1.5.5
+### 5D. 1.2.6 — paridade com o 1.5.5 (a frente atual)
 
-- **1.2.6** (prioridade 2): Criação de personagem e entrada no mundo compatibilizadas (B63).
-  Arquitetura refatorada para o padrão Estratégia / traits com módulos segregados por versão
-  (`crates/pw-protocol/src/versions/v126/`, `v148/`, `v155/`, `v172/`), eliminando `if` arbitrários
-  dos pacotes. Layouts adaptados: `C2SCreateRole` lê campos pós-`charactermode` apenas se buffer não
-  estiver vazio; `S2CCreateRoleResponse` não envia `refretcode` (4B) para 1.2.6; `OWN_EXT_PROP` emite 152 bytes
-  (em vez de 196); `TASK_DATA` de 3 blocos; `info_npc` de 27 bytes; templates iniciais das 6 classes clássicas
-  configurados no banco para `realm_126` (`scripts/2026_09_18_templates_iniciais_realm_126.sql`).
-  Suíte de testes de protocolo 100% passando (73/73 em `pw-protocol`).
+Objetivo: o cliente 1.2.6 (realm `realm_126`, porta 29000) fazer o que o 1.5.5 já faz (§0).
+**Princípio:** a regra de jogo é uma só, no `pw-gs`; o 1.2.6 difere em **layout** (o
+`WorldProtocol` de `crates/pw-protocol/src/versions/v126/`, que compõe o padrão e sobrescreve
+só o que muda) e em **dado** (versões dos `.data` do realm). Nada de `if versao == …` no mundo.
+
+Evidência do 1.2.6: fontes 1.5.3 (o protocolo base), capturas da VM 1.2.6 em
+`docs/evidencias/126/` (lidas com `cargo run -p pw-pcapdiff -- <pcap> --interno --subcomando N`),
+binário do cliente 1.2.6 (validador de ids: ids > 260 são recusados, VA 0x584618) e
+`docs/INVENTARIO_PROTOCOLO_126.md` (98 S2C e 46 C2S do `pw-gs`, com o que já foi conferido).
+
+| área | estado no 1.2.6 | o que falta | onde |
+| :--- | :--- | :--- | :--- |
+| login, criação, entrada | **testado** (B63, B74-126); moldes das 6 classes no banco | ver em jogo de novo depois do merge | `docs/ENTRADA_126.md` |
+| combate (layouts 24/26/33/83/84/144) | **testado** byte a byte com captura (B89) | ver em jogo | `docs/COMBATE_126.md` |
+| experiência e itens (31/36/46/72/99/156/158) | **testado** (B90, B93) | preço real da loja no 1.2.6 (v7) e ver em jogo | `docs/ITENS_EXPERIENCIA_126.md` |
+| `OWN_EXT_PROP` (152 B) | **confere byte a byte** com a captura (B93) | — | `specs/04` |
+| comandos 14 e 64 | **divergem** da captura | medir e sobrescrever no v126 | inventário |
+| `elements.data` v7 | lido pelo leitor tipado antigo (`elements.rs`), fecha no último byte | **layout v7 no catálogo do leitor genérico**, para as regras que leem campos novos: `aggressive_mode`, `npcgen` da mina, `cool_time`/`id_major_type` da poção, `PET_ESSENCE`, bloco do item de voo, amuleto, `CHARRACTER_CLASS_CONFIG` | `specs/03` §1 |
+| `tasks.data` v55 | **mapa estrutural fechado** (2.819 raízes, 7.994 tarefas, último byte) no validador Python; em Rust, **só o cabeçalho** | leitor Rust v55 com teste de corrupção, projetado no `TaskTemplate`; depois listas de missão | `docs/RESULTADO_TASKS_V55.md`, B91 |
+| comandos acrescentados depois do B76 no 1.5.5 | **não conferidos** no 1.2.6 | para cada um: existe no 1.2.6? tamanho? `PLAYER_MOUNTING` (227), `SUMMON_PET`/`RECALL_PET` (233/234), pet op (235/236), `UNFREEZE_IVTR_SLOT` (181), `SET_COOLDOWN` (198), estado estendido do `info_player_1`, bit `MODA` do `SELF_INFO_1`, descarte (C2S 14/15) | spec 04 |
+| sistemas que o 1.2.6 não tem | Daimon: `ELF_EXP` (283) já é omitido (B93) | conferir chi, cultivo, teto de chi e o que mais não existe no cliente 1.2.6, e omitir pelo trait | validador do cliente |
+| dados de mapa do `realm_126` | `.hmap`, `watermap/`, `world_targets.sev`, `npcgen.data`, `precinct.sev` presentes? | conferir que cada leitor fecha no último byte com os arquivos do 1.2.6 | `data/realm_126/config` |
+| publicação e teste em jogo | contêineres 126 **não** reconstruídos desde o merge | publicar só com pedido do Murillo; roteiro em `docs/SINCRONIZACAO_126.md` | skill `pw-testar-e-publicar` |
+
+Ordem sugerida: (1) layout v7 do `elements.data` no leitor genérico, porque destrava de uma
+vez as regras que dependem de dado; (2) conferir os comandos do B77–B88 no 1.2.6 e omitir os
+que não existem; (3) comandos 14 e 64; (4) leitor Rust do `tasks.data` v55; (5) publicar e
+roteiro em jogo com o Murillo.
+
+**Outras frentes, depois:**
 - **Cliente v181** (`E:\0_GAMES\Perfect World`, build 2591): exigiria `v181.json` no
   catálogo e um pacote de servidor da mesma build (B11).
 - **Servidor 1.5.5 original numa VM 32-bit** (`pwserver_155v156`): o gabarito da versão
-  certa, que fecharia a classe de problema "o fonte diz uma coisa, o binário faz outra"
-  (B44c).
+  certa (B44c).
 - Banco (E), `pw-admin` (G), atualizador/launcher (H) — memória `pw_roadmap_contextos`.
 
 ---
-
 ## 6. Regras que valem para qualquer mudança
 
 Cada uma custou pelo menos uma sessão. A evidência está no item citado.
@@ -659,13 +481,17 @@ Cada uma custou pelo menos uma sessão. A evidência está no item citado.
 | `scripts/` | correções de dados aplicadas ao banco |
 | `specs/` | a descrição atual do sistema, por área — índice em `specs/README.md` |
 | `docs/HISTORICO_DE_SESSOES.md` | o diário completo, séries A e B |
-| `CLAUDE.md`, `.claude/agents/pw-server-dev.md`, `.claude/skills/pw-*` | o agente de toda sessão, as skills de trabalho e o hook que cobra a atualização das specs |
+| `CLAUDE.md`, `.claude/agents/pw-server-dev.md`, `.claude/skills/pw-*` | o agente do Claude, as skills de trabalho e o hook que cobra a atualização das specs |
+| `AGENTS.md`, `.codex/` | as mesmas diretrizes para o Codex (as skills são lidas de `.claude/skills/`) |
 | `docs/COMO_TESTAR.md`, `MULTIPLOS_REALMS.md`, `MEDIDAS_DO_126.md`, `CAPTURA_DO_126.md`, `PLANO_ARQUITETURA_E_EXECUCAO.md` | referência |
 
 ---
 
 ## 8. Índice do histórico (série B, frente 1.5.5)
 
+Os itens da frente 1.2.6 anteriores ao merge de 2026-09-23 usam **B73-126** e **B74-126**;
+os seguintes foram renumerados para **B89–B93** (a `versao-126` usava B77–B81, que colidiam
+com os do 1.5.5 — ver B93).
 Para achar rápido o item citado num comentário de código ou numa seção acima.
 
 | item | data | assunto |
@@ -722,3 +548,17 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 76 | 09-21 | a mina acorda monstro (`npcgen` do `MINE_ESSENCE`) — é a missão da Flor de Safira; monstro agressivo (`aggressive_mode`) ataca quem chega a 15 m; o ganho de chi do Daimon trunca para zero como no original |
 | 77 | 09-22 | `State` (modo de combate) no `SELF_INFO_00`/`PLAYER_INFO_00`; Atq. Mágico e resistências no `OWN_EXT_PROP`; invocado não renasce, odeia quem o chamou e expira; montaria levantada e na fila |
 | 78 | 09-22 | conjurar andando (`is_movingcast`, 5 habilidades da classe 11); montaria com `SUMMON_PET`/`RECALL_PET` e `PLAYER_MOUNTING`; transformação diagnosticada (falta o estado estendido) |
+| 79 | 09-22 | invocar é uma sessão: `PLAYER_START_PET_OP`/`STOP_PET_OP` (235/236), `SUMMON_PET` (233) ao cliente, desmontar |
+| 80 | 09-22 | estado estendido do `info_player_1` (montado, voando, morto, moda) e o `mount_color`/`mount_id` |
+| 81 | 09-22 | economia de contexto virou regra escrita (agente, skills) |
+| 82 | 09-22 | as 24 habilidades que conjuram andando (o extrator não lia `= true`) |
+| 83 | 09-22 | o modo roupa persiste (`characters.character_mode`) |
+| 84 | 09-22 | descarte de item (14/15) e o `UNFREEZE_IVTR_SLOT` (181) nos comandos não tratados |
+| 85 | 09-22 | montaria na água diagnosticada |
+| 86 | 09-22 | bit `MODA` no `SELF_INFO_1` — o dono se vê de roupa |
+| 87–88 | 09-22 | inventário dos `.data`; leitor do `watermap/` e as regras de montaria na água |
+| 89 | 09-21 | (1.2.6) combate: 84/83/24/26/33 byte a byte, 144 com 15 B, cadência medida (`docs/COMBATE_126.md`) |
+| 90 | 09-21 | (1.2.6) experiência e pacotes de item 31/46/72/99/156 pelo trait (`docs/ITENS_EXPERIENCIA_126.md`) |
+| 91 | 09-22 | (1.2.6) mapa estrutural do `tasks.data` v55: 2.819 raízes, fecha no último byte; leitor Rust pendente |
+| 92 | 09-22 | (1.2.6) merge da `multi-versions` na `versao-126`; `max_ap` da captura |
+| 93 | 09-23 | 1.5.5 jogável no básico; tudo na `main`; despacho pós-merge do 126; `AGENTS.md` do Codex |

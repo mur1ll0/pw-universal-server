@@ -1,0 +1,32 @@
+## 127.0.0.1:41868 → 127.0.0.1:29301 — subcomando 42 #0 (134 bytes)
+0000  02 20 80 00 00 00 ff ff ff ff ff ff ff ff ff ff
+0010  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0020  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0030  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0040  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0050  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0060  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0070  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0080  ff ff ff ff ff ff
+
+## 127.0.0.1:41868 → 127.0.0.1:29301 — subcomando 42 #1 (134 bytes)
+0000  02 20 80 00 00 00 ff ff ff ff ff ff ff ff ff ff
+0010  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0020  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0030  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0040  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0050  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0060  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0070  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0080  ff ff ff ff ff ff
+
+## 127.0.0.1:41868 → 127.0.0.1:29301 — subcomando 42 #2 (134 bytes)
+0000  02 20 80 00 00 00 ff ff ff ff ff ff ff ff ff ff
+0010  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0020  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0030  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0040  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0050  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0060  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0070  ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+0080  ff ff ff ff ff ff

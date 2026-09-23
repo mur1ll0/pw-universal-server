@@ -1,0 +1,54 @@
+CASO 24 VA 0x584c13
+00584c13 pop edi
+00584c14 mov dword ptr [esp + 0xc], 0xa
+00584c1c mov eax, dword ptr [esp + 0xc]
+00584c20 pop esi
+00584c21 pop ebp
+00584c22 pop ebx
+00584c23 pop ecx
+00584c24 ret 0xc
+CASO 26 VA 0x5848ca
+005848ca pop edi
+005848cb mov dword ptr [esp + 0xc], 0xb
+005848d3 mov eax, dword ptr [esp + 0xc]
+005848d7 pop esi
+005848d8 pop ebp
+005848d9 pop ebx
+005848da pop ecx
+005848db ret 0xc
+CASO 33 VA 0x584e66
+00584e66 pop edi
+00584e67 mov dword ptr [esp + 0xc], 0xc
+00584e6f mov eax, dword ptr [esp + 0xc]
+00584e73 pop esi
+00584e74 pop ebp
+00584e75 pop ebx
+00584e76 pop ecx
+00584e77 ret 0xc
+CASO 83 VA 0x584db6
+00584db6 pop edi
+00584db7 mov dword ptr [esp + 0xc], 1
+00584dbf mov eax, dword ptr [esp + 0xc]
+00584dc3 pop esi
+00584dc4 pop ebp
+00584dc5 pop ebx
+00584dc6 pop ecx
+00584dc7 ret 0xc
+CASO 84 VA 0x584ae0
+00584ae0 pop edi
+00584ae1 mov dword ptr [esp + 0xc], 7
+00584ae9 mov eax, dword ptr [esp + 0xc]
+00584aed pop esi
+00584aee pop ebp
+00584aef pop ebx
+00584af0 pop ecx
+00584af1 ret 0xc
+CASO 144 VA 0x584af4
+00584af4 pop edi
+00584af5 mov dword ptr [esp + 0xc], 0xf
+00584afd mov eax, dword ptr [esp + 0xc]
+00584b01 pop esi
+00584b02 pop ebp
+00584b03 pop ebx
+00584b04 pop ecx
+00584b05 ret 0xc

@@ -1,0 +1,48 @@
+   Compiling pw-protocol v0.1.0 (F:\Python_C_Projects\PWSource1.5.3\pw-126\crates\pw-protocol)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.51s
+     Running tests\combate_do_126.rs (target\debug\deps\combate_do_126-88ff6ade059ae51c.exe)
+
+running 3 tests
+test habilidade_recebida_126_reproduz_os_15_bytes_do_original ... ok
+test habilidade_recebida_155_preserva_flag_i32_e_section ... ok
+test golpe_normal_126_reproduz_os_pacotes_originais ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\itens_do_126.rs (target\debug\deps\itens_do_126-05a624c0675a9f91.exe)
+
+running 7 tests
+test compra_126 ... ok
+test experiencia_126_reproduz_36_e_158 ... ok
+test pickup_126 ... ok
+test itens_155_preservam_layout_e_contadores_u32 ... ok
+test obtain_126 ... ok
+test premio_item_126 ... ok
+test retirada_126 ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\layouts_do_126.rs (target\debug\deps\layouts_do_126-e83a2e9026400064.exe)
+
+running 19 tests
+test entrada_126_nao_envia_ids_acima_do_limite_do_binario ... ok
+test as_duas_versoes_diferem_em_todos_os_comandos_da_tabela ... ok
+test entrada_126_propriedades_conferem_os_campos_representados_no_trait ... ok
+test entrada_155_preserva_a_sequencia_e_os_bytes_anteriores ... ok
+test equip_data_126_reproduz_a_mascara_de_32_bits_da_captura ... ok
+test equip_data_126_nao_anexa_slots_que_sua_mascara_nao_representa ... ok
+test entrada_126_atalhos_preservam_o_blob_original_sem_reescrever_versao ... ok
+test entrada_126_self_info_e_bolsa_vazia_reproduzem_o_original ... ok
+test equip_data_155_preserva_a_mascara_de_64_bits ... ok
+test o_126_escreve_o_tamanho_que_o_servidor_de_verdade_escreveu ... ok
+test info_npc_ganha_vis_tid_e_state2_do_153_em_diante ... ok
+test o_153_continua_com_o_layout_do_ir ... ok
+test o_126_nao_anuncia_comando_390_que_o_binario_recusa ... ok
+test o_155_continua_anunciando_os_npcs_de_servico ... ok
+test o_148_usa_o_layout_do_153_por_falta_de_medicao ... ok
+test o_hp_do_npc_info_00_do_126_fica_onde_a_captura_mostrou ... ok
+test o_receive_exp_do_126_cabe_em_16_bits_sem_estourar ... ok
+test own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante ... ok
+test task_data_tem_tres_blocos_no_126_e_cinco_do_153_em_diante ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

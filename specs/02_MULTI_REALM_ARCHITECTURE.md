@@ -6,6 +6,12 @@
 
 ## 1. Decisão: servidor polimórfico, cliente intocado
 
+A lista de avisos de status na entrada é fornecida por
+`WorldProtocol::initial_status_notifications`: padrão preserva a sequência 155;
+v126 omite os seis ids acima do limite 260 do binário (VA 0x584618, B74-126).
+`GetUIConfig_Re` preserva o blob recebido, inclusive versão 3 do cliente 126
+(amostra integral reproduzida em teste; `docs/ENTRADA_126.md`).
+
 Um binário `pw-link`/`pw-gs` serve todas as versões; a versão de cada realm vem da variável
 `GAME_VERSION` e decide layouts por `pw_protocol::PorVersao`. **Não se recompila nem se
 modifica o `elementclient.exe`**: o jogador usa o cliente da versão como ele é (a única

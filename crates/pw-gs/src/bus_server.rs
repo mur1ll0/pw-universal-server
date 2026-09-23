@@ -620,7 +620,7 @@ impl BusServer {
                 if restou <= 0 {
                     self.enviar_ao_jogador(
                         roleid,
-                        S2CGamedataSend::player_drop_item(pacote, slot as u8, 1, item_id as i32, DROP_POR_USO).data,
+                        self.sub.player_drop_item(pacote, slot as u8, 1, item_id as i32, DROP_POR_USO).data,
                     )
                     .await;
                 } else if let Ok(Some(mut i)) =
@@ -2756,7 +2756,7 @@ impl BusServer {
         if alvo_id != roleid && !h.e_cura() {
             let _ = self.enviar_ao_jogador(
                 alvo_id,
-                S2CGamedataSend::host_skill_attacked(
+                self.sub.host_skill_attacked(
                     roleid,
                     skill_id,
                     saturar(valor as i64),
@@ -3850,12 +3850,9 @@ impl BusServer {
         // suprime a abertura da caixa de diálogo.
         let npcs_servico = self.world.read().await.scene_service_npcs();
         if !npcs_servico.is_empty() {
-            self.responder(
-                roleid,
-                self.sub.scene_service_npc_list(&npcs_servico).data,
-                envio,
-            )
-            .await;
+            if let Some(pacote) = self.sub.scene_service_npc_list(&npcs_servico) {
+                self.responder(roleid, pacote.data, envio).await;
+            }
         }
 
         // Os pontos de teleporte já descobertos (`WAYPOINT_LIST` 180). No original sai do

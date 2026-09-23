@@ -8883,3 +8883,159 @@ comparação lado a lado.
     cenário de teste não roda o laço de tique**; os testes batem o relógio à mão com
     `mundo.tick(1000)`. O batimento de 1 s nunca acontecia. Vale lembrar disso ao testar
     qualquer coisa que dependa de batimento.
+
+73-126. **Sessão 2026-09-20: inventário do 1.2.6 em árvore isolada (versao-126).**
+
+    Pedido: trazer jogabilidade sem tocar na sessão 155. Worktree `../pw-126` criada
+    do HEAD `2dca19e`; alterações da árvore original preservadas. B70–B72 não são
+    importados desta outra sessão; a numeração 73 respeita a reserva solicitada.
+
+    Evidência: `pw-pcapdiff --interno` relê `full_interno.pcap`; relatório em
+    `docs/evidencias/126/full_interno.medidas.md`. Levantamento das chamadas de todos
+    os fontes de `pw-gs/src`: 98 ids S2C (104 métodos), 46 C2S tratados. Tabela com
+    chamadas arquivo:linha em `docs/INVENTARIO_PROTOCOLO_126.md`. Tamanhos variáveis
+    e comandos não observados ficam pendentes; nomes do PCAP vêm do IR.
+
+    Causas potenciais, ainda sem relato reproduzido de sintoma: layouts comuns dos
+    ids 14/31/46/64/72/99/144/156 diferem da captura. `bus_server.rs:361` usa
+    teleporte de 20 B; `s2c.rs:1034` compra de 11+n×15; `s2c.rs:2518` grupo de
+    6+n×34. O 126 observado tem 16 B, uma compra de 20 B, grupo 6+n×25.
+
+    Provas: ferramenta compilada e captura relida; ainda sem suíte do workspace.
+    Nenhuma correção de comportamento, commit, publicação ou reinício. A consulta
+    Docker inicial recusou acesso ao pipe; não impede a análise do PCAP.
+    Falta fechar camada 2 (entrada/propriedades/inventário/barras) antes do combate.
+
+
+74-126. **Sessão 2026-09-20: entrada 126 medida no PCAP e no binário.**
+
+    `docs/ENTRADA_126.md` registra provas, limites e roteiro em jogo.
+    EQUIP_DATA usava máscara u64 comum, quatro bytes além do 126; captura
+    `s2c-66.txt:8` e validador VA 0x584a1d comprovam mask32. Corrigido só
+    no override v126, com teste vermelho antes e verde depois.
+    O validador VA 0x584610 rejeita ids acima de 260: 390 e seis avisos de
+    status da entrada deixaram de sair no 126 por opções do WorldProtocol.
+    Padrões preservam os bytes e sequência do 155, sem condição de versão no gs.
+    SELF_INFO_00, bolsa vazia e configuração de atalhos reproduzem amostras
+    originais; OWN_EXT_PROP confirma 152 bytes e offsets representados.
+    Ataque mágico/resistências da propriedade seguem a limitação da base.
+    Fechamento em 2026-09-21, escopo reduzido pelo usuário à Camada 2:
+    11 testes focados aprovados, zero falhas, oito filtrados; TEST_DATABASE_URL
+    definido (`docs/evidencias/126/camada2-focado.log:17`). As sentinelas
+    verificam máscara 64 bits, pacote 390 e sequência de entrada do 155.
+    A suíte ampla iniciada anteriormente terminou com 63/64 no arquivo de
+    mundo: falhou a persistência das listas de missão em
+    `subcomandos_no_mundo.rs:1807`. Não repetida nem investigada nesta retomada.
+    Não se declara regressão global aprovada; Camadas 3/4 não iniciadas.
+    Parada para aprovação, sem novas alterações fora da Camada 2.
+    Nenhum commit, publicação, reinício ou teste visual declarado.
+
+
+89. **Sessão 2026-09-21: combate 126, comando 144 e cadência medida.**
+
+    Base a305e51, árvore versao-126. HOST_SKILL_ATTACKED saía pelo escritor
+    comum de 19 B (`bus_server.rs:2489`); captura `s2c-144.txt:2` e cliente
+    VA 0x584af4 comprovam 15 B. Teste vermelho antes, verde após override
+    em `v126/mod.rs:130`; padrão do trait preserva bytes do 155.
+    84/83/24/26/33 reproduzem as amostras originais. Cadência: 23 intervalos
+    de resultado, 22 ticks anunciados, mediana 1149,332 ms; 83→24 mediana
+    49,3695 ms (52 pares). Script checa remontagem e contagens contra pcapdiff.
+    Regra temporal não alterada; corrigida apenas a contradição documental
+    sobre dano imediato (InsertDamageEntry, actobject.cpp:1758-1776).
+    Provas/limites/roteiro: docs/COMBATE_126.md. Testes com banco: 3 de
+    protocolo + 3 filtros de mundo aprovados, sem suíte completa.
+    Sem commit/publicação; sem teste visual. Camada 4 não iniciada.
+
+90. **Sessão 2026-09-21: experiência e pacotes de itens 126; leitor v55 adiado.**
+
+    Captura original e validador do cliente exigem 31/99=14 B, 46=9 B,
+    72=7+13*n e 156=10 B; chamadas diretas em jogo.rs usavam formatos 155.
+    Cinco métodos no trait preservam o padrão; overrides só em v126.
+    Contexto usa a estratégia do servidor; regras comuns não mudaram.
+    36=4 B e 158=8 B já corretos, agora com gabaritos da captura.
+    Teste mínimo antes: 2 aprovados/5 falhas; depois 7/0 protocolo e 2/0
+    mundo, com TEST_DATABASE_URL. Os dois gabaritos de mundo eram v126 com
+    offsets 155; corrigidos pela captura, sem retirar verificações de estado.
+    Evidências e limites: docs/ITENS_EXPERIENCIA_126.md. Sem suíte completa,
+    publicação, commit ou confirmação visual. O arquivo tasks v55 mede
+    20.793.663 B e declara 2819 entradas, mas tasks.rs:1139 só aceita v129.
+    Por pedido do usuário, leitor fica para sessão com modelo mais barato:
+    docs/PROMPT_TASKS_V55.md contém escopo, critérios e relatório de retorno.
+
+91. **Sessão 2026-09-22: mapa estrutural completo do `tasks.data` v55.**
+
+    O arquivo do realm 126 foi conferido em 20.793.663 bytes, SHA-256
+    `ee042d417452cd26e076280fd2f8d0d05bda1c63b1777abfc6c7d5f8d7ca8017`, com
+    2.819 raízes. No `elementclient.exe` (SHA-256
+    `5fc88d47e01da3caea7d6ce4911b71b0f7085060a2d13889a380fc5ba7f0ed14`),
+    `LoadTasksFromPack` VA `0x630c10` valida cabeçalho, percorre a tabela e chama
+    `LoadFromBinFile` VA `0x62e550`, que entra em `LoadBinary` VA `0x62f6c0`; a rotina fixa lê `0x216` = 534 bytes e decifra o
+    nome pelo ID. Provas reproduzíveis: `docs/evidencias/126/tasks-v55-*.txt` e
+    `medir_tasks_v55.py`.
+
+    A tabela foi fechada pelo fluxo do binário: assinatura opcional (60 B), horários
+    (48 B por contador em `fixo+0x4e`), itens 13 B, equipe 32 B condicional,
+    monstros 22 B, prêmios 75 B com candidatos variáveis, quatro escalas, quatro textos
+    UTF-16, cinco diálogos e filhas recursivas. O candidato de prêmio não tem tamanho fixo:
+    `m_bRandChoose` (1 B), contador `u32` e `ITEM_WANTED` de 13 B; isso foi confirmado em
+    `0x62d9d0`, evitando a hipótese errada de 17 B por candidato. O validador independente
+    fecha 2.819/2.819 raízes, 7.994 tarefas e profundidade 4 exatamente no byte 20.793.663:
+    `docs/evidencias/126/tasks-v55-validacao-contagens.txt`. Mapa completo e VAs em
+    `docs/RESULTADO_TASKS_V55.md`.
+
+    Não foi alterado `tasks.rs`: falta projetar os campos fixos consumidos pelo servidor e
+    escrever/testar o leitor Rust v55, que terá de impor o mesmo fechamento por offset.
+    Sem contêiner, publicação, commit ou teste Cargo nesta etapa de evidência.
+
+92. **Sessão 2026-09-22: sincronização da versao-126 com multi-versions 6322d88.**
+
+    Resultados 126 separados em ccf7ae4 (combate/itens) e 36a88da (mapa v55,
+    sem leitor Rust). Validador repetido: 2819 raízes/7994 tarefas, EOF exato.
+    Merge com conflito apenas em estado/histórico; série 155 B70–B76 preservada.
+    Combate/itens 126 agora B89/B90; mapa v55 B91. Entradas históricas de
+    inventário/entrada qualificadas B73-126/B74-126 para evitar outra colisão.
+    A assinatura own_ext_prop ganhou max_ap: o teste da captura omitia argumento.
+    Acrescentado zero, os quatro bytes finais de s2c-50.txt:11; 19 testes focados
+    de layouts aprovados com banco (merge-layout-depois.log:26).
+    Suíte ampla e decisão do cenário de mundo ficam para a etapa seguinte.
+    Nenhum contêiner alterado ou publicação feita.
+
+93. **Sessão 2026-09-23: 1.5.5 jogável no básico — tudo na `main`, e a frente passa ao 1.2.6.**
+
+    O Murillo declarou o 1.5.5 jogável com os recursos básicos e pediu: commitar, juntar
+    as branches na `main`, juntar a worktree `../pw-126` (trabalho do Codex) e deixar
+    agentes, specs e docs com o estado atual — inclusive as instruções do Codex iguais às
+    do agente do Claude (economia de contexto e relatório de consumo por etapa).
+
+    1. `multi-versions` commitada (`dd33855`, B80–B88); suíte com o banco **631/0**.
+    2. Worktree `pw-126`: o Codex deixou sem commit o despacho pós-merge
+       (`docs/SINCRONIZACAO_126.md`): a retirada de amuleto esgotado passou a
+       `self.sub.player_drop_item` (9 B no 126, `evidencias/126/s2c-46.txt:2`) e o
+       `ELF_EXP` (283) virou `Option` no `WorldProtocol` — o 126 omite, porque o validador
+       do cliente recusa ids > 260 (VA 0x584618). O cenário de mundo dos testes ficou
+       parametrizado pela versão (padrão 155; compra e coleta com caso 126).
+       **Defeito achado na revisão:** a suíte inteira dava **636/2** — os testes de
+       `QUERY_NPC_INFO_1` e `QUERY_PLAYER_INFO_1` conferem o gabarito de captura do 1.2.6
+       (12 e 24 B, sem `iTargetID`) e herdaram o cenário padrão 155. Passaram a fixar
+       `cenario!(GameVersion::V1_2_6)`. Depois: **638/0** (`f2caa6f`).
+    3. `main` avançada até `multi-versions` e `versao-126` juntada. Conflito só em estado
+       e histórico, pela numeração: a `versao-126` usava B77–B81 para itens próprios, que
+       colidiam com os do 1.5.5. **Renumerados: B77→B89, B78→B90, B79→B91, B80→B92 e
+       B81→B93** (este item) — no histórico, nos `docs/*_126.md`, nos
+       `docs/*TASKS_V55.md`, no comentário do `traits.rs` e **só nas linhas das specs que
+       vieram da `versao-126`**. O "B74" solto dessas linhas virou `B74-126`. Referências
+       a B77–B88 fora disso são do 1.5.5.
+       **O merge não compilava** o `layouts_do_126.rs`: a `main` acrescentou argumentos
+       depois que o teste foi escrito — `em_combate` no `self_info_00` e `magico` +
+       `resistencias` no `own_ext_prop` (B77). O `State` da amostra `s2c-38.txt` é 0 (fora
+       de combate). E os bytes que o teste pulava (`s2c-50.txt[112..140]`, "o trait não
+       recebe") decodificam como Atq. Mágico 1–1 e resistências 2×5: passados ao trait, o
+       `OWN_EXT_PROP` do 1.2.6 **confere byte a byte com a captura**, e o teste passou a
+       comparar o pacote inteiro (spec 04 corrigida).
+       Suíte inteira com o banco na `main` depois do merge: **654 testes, 0 falhas**.
+    4. `AGENTS.md` reescrito para o Codex com as regras do `pw-server-dev` (evidência,
+       specs na mesma entrega, contexto é recurso, tabela de consumo por etapa), apontando
+       as skills como arquivos em `.claude/skills/`. `.codex/agents/pw-server-dev.toml`
+       passou a remeter ao `AGENTS.md`, em vez de manter uma cópia que envelhece.
+    5. `ESTADO_E_RETOMADA.md` §0 encurtado para o marco "1.5.5 jogável no básico", com a
+       fila do 1.5.5 em §5A e o painel de paridade 1.5.5 → 1.2.6 em §5D.

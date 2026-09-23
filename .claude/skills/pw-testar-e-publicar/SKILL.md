@@ -54,7 +54,8 @@ O `tail -5` não é enfeite: o build despeja centenas de linhas de compilação 
 Se o build falhar, aí sim `| grep -E "^error" -A 5`.
 
 São dois serviços: o link (29004) e um servidor de mundo com os mapas 1 e 161 (`WORLD_TAGS`). Mudou só dado do realm
-(`data/realm_155/config`)? Basta `docker compose restart` dos mundos.
+(`data/realm_155/config`)? Basta `docker compose restart` dos mundos. O 1.2.6 é igual, com
+`pw-world-126 pw-realm-126` (link na 29000, dados em `data/realm_126/config`).
 
 Conferir a subida:
 

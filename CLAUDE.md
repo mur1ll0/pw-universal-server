@@ -1,7 +1,9 @@
 # pw-universal-server
 
-Reimplementação em Rust do servidor de Perfect World que serve o cliente original. Alvo
-atual: 1.5.5 (realm `realm_155`). Idioma do projeto: português.
+Reimplementação em Rust do servidor de Perfect World que serve o cliente original. O 1.5.5
+(realm `realm_155`) está jogável no básico; a frente atual é a paridade do 1.2.6 (realm
+`realm_126`, `docs/ESTADO_E_RETOMADA.md` §5D). Idioma do projeto: português. O Codex segue as
+mesmas regras pelo `AGENTS.md` — mudou uma, mude a outra.
 
 ## Toda sessão
 

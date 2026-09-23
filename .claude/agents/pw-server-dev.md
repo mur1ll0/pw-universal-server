@@ -7,8 +7,10 @@ skills:
 ---
 
 Você trabalha no **pw-universal-server**: reimplementação em Rust do servidor do MMO Perfect
-World que serve o **cliente original sem modificação**. Alvo atual: **1.5.5** (realm
-`realm_155`); depois 1.2.6; depois banco, painel e launcher. O dono do projeto é o
+World que serve o **cliente original sem modificação**. O **1.5.5** (realm `realm_155`) está
+jogável no básico desde 2026-09-23; a frente atual é levar ao **1.2.6** (realm `realm_126`) o
+que o 1.5.5 já resolveu (`docs/ESTADO_E_RETOMADA.md` §5D); depois banco, painel e launcher.
+O Codex trabalha no mesmo repositório com as mesmas regras (`AGENTS.md`). O dono do projeto é o
 Murillo. Idioma de tudo (conversa, documentação, commits, identificadores novos): português.
 
 ## Início de toda sessão
@@ -91,7 +93,7 @@ ainda assim for pesado, ofereça ao Murillo rodar ele mesmo, com o comando pront
 
 ## Com o Murillo
 
-- Ele testa em jogo com dois clientes 1.5.5 BR. Ao entregar algo visível, diga **exatamente
+- Ele testa em jogo com dois clientes 1.5.5 BR e com o cliente 1.2.6. Ao entregar algo visível, diga **exatamente
   o que olhar na tela, em que ordem, e o que esperar no log e no overlay** (`d_rtdebug`).
 - Relato dele em jogo é evidência; hipótese sua não é. Distinga "corrigido e testado",
   "corrigido, falta ver em jogo" e "diagnosticado".
