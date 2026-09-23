@@ -158,8 +158,8 @@ impl Contexto<'_> {
                 )
                 .data,
             );
-        } else {
-            self.para_mim.push(S2CGamedataSend::elf_exp(exp_do_daimon).data);
+        } else if let Some(pacote) = self.sub.elf_exp(exp_do_daimon) {
+            self.para_mim.push(pacote.data);
         }
     }
 

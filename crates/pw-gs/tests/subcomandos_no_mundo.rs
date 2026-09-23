@@ -134,7 +134,7 @@ async fn pool_do_teste(url: String) -> PostgresPool {
 /// O `role_id` não é inventado: a notificação de abate consulta `character_quests`, que
 /// tem chave estrangeira para `characters`. Com um id fictício a consulta voltaria vazia
 /// e o teste do abate passaria sem testar nada — que era o caso antes.
-async fn personagem_com_missao(pool: &PostgresPool) -> (i32, i32) {
+async fn personagem_com_missao(pool: &PostgresPool, versao: GameVersion) -> (i32, i32) {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     // Só o relógio não basta: dois testes que começam no mesmo nanossegundo geram o mesmo
@@ -151,9 +151,10 @@ async fn personagem_com_missao(pool: &PostgresPool) -> (i32, i32) {
     let realm = format!("t_gs_{m}");
     sqlx::query(
         "INSERT INTO realms (id, name, version, host, port, max_players, config)
-         VALUES ($1, 'Teste GS', '1.2.6', '127.0.0.1', 29000, 10, '{}'::jsonb)",
+         VALUES ($1, 'Teste GS', $2, '127.0.0.1', 29000, 10, '{}'::jsonb)",
     )
     .bind(&realm)
+    .bind(versao.as_str())
     .execute(pool.get_ref())
     .await
     .expect("criar realm");
@@ -208,7 +209,7 @@ async fn personagem_com_missao(pool: &PostgresPool) -> (i32, i32) {
 }
 
 /// Monta mundo + servidor de barramento, ou `None` sem banco configurado.
-async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i32, i32)> {
+async fn montar(versao: GameVersion) -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i32, i32)> {
     let url = match std::env::var("TEST_DATABASE_URL") {
         Ok(u) if !u.trim().is_empty() => u,
         _ => {
@@ -222,7 +223,7 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
     // pelos testes em paralelo estoura o `max_connections` do servidor.
     let pool = pool_do_teste(url).await;
     comum::limpar_sobras_de_teste(&pool).await;
-    let (roleid, convidado) = personagem_com_missao(&pool).await;
+    let (roleid, convidado) = personagem_com_missao(&pool, versao).await;
 
     // A loja cobra o preço do `elements.data` desde 2026-09-11, e este cenário não carrega
     // arquivo nenhum — sem um preço aqui, **toda** compra é recusada, que é o
@@ -334,9 +335,8 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
 
     let escuta = BusListener::bind("127.0.0.1:0").await.unwrap();
     let addr = escuta.local_addr().unwrap();
-    // O realm de teste é 1.2.6 — é o que o `personagem_com_missao` cria — e desde o
-    // item 56 isso muda bytes: 32 comandos têm layout próprio naquela versão.
-    let servidor = Arc::new(BusServer::new(Arc::clone(&mundo), GameVersion::V1_2_6));
+    // O banco e o servidor usam a mesma versão; padrão 155, cenários explícitos 126.
+    let servidor = Arc::new(BusServer::new(Arc::clone(&mundo), versao));
     // Sem isto, o que o tick decide não chega ao cliente — que era o estado anterior.
     servidor.ligar_eventos_do_mundo().await;
     tokio::spawn(Arc::clone(&servidor).executar(escuta));
@@ -345,8 +345,9 @@ async fn montar() -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i
 }
 
 macro_rules! cenario {
-    () => {
-        match montar().await {
+    () => { cenario!(GameVersion::V1_5_5) };
+    ($versao:expr) => {
+        match montar($versao).await {
             Some(c) => c,
             None => return,
         }
@@ -1552,10 +1553,19 @@ fn pedido_ao_npc(servico: i32, conteudo: &[u8]) -> Vec<u8> {
 
 #[tokio::test]
 async fn comprar_do_npc_tira_dinheiro_e_da_o_item() {
+    conferir_compra(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn comprar_do_npc_tira_dinheiro_e_da_o_item_126() {
+    conferir_compra(GameVersion::V1_2_6).await;
+}
+
+async fn conferir_compra(versao: GameVersion) {
     // `GP_NPCSEV_SELL` é o **NPC vendendo**, ou seja, o jogador comprando. O `gateway.rs`
     // lia o nome do enum do ponto de vista do jogador e fazia o contrário: apagava um item
     // e pagava por ele.
-    let (mundo, addr, roleid, _convidado) = cenario!();
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
     let mut link = entrar(&mundo, addr, roleid).await;
 
     let repo = mundo.read().await.char_repo.clone();
@@ -1582,12 +1592,25 @@ async fn comprar_do_npc_tira_dinheiro_e_da_o_item() {
     // `PURCHASE_ITEM` (72): custo, e por item o id, a quantidade e o slot onde entrou.
     let compra = esperar_comando(&mut link, 72).await;
     assert_eq!(i32_em(&compra, 2), PRECO_DO_ITEM_DE_LOJA, "cost");
-    // O cenário é V1_2_6: docs/evidencias/126/s2c-72.txt:2 (7 + 13*n).
-    assert_eq!(compra.len(), 22);
-    assert_eq!(u16::from_le_bytes([compra[7], compra[8]]), 1, "item_count");
-    assert_eq!(i32_em(&compra, 9), ITEM_DE_LOJA, "item_id");
-    assert_eq!(u16::from_le_bytes([compra[17], compra[18]]), 1, "count");
-    let slot = u16::from_le_bytes([compra[19], compra[20]]);
+    let slot = match versao {
+        GameVersion::V1_2_6 => {
+            // Captura s2c-72.txt:2, payload 7 + 13*n.
+            assert_eq!(compra.len(), 22);
+            assert_eq!(u16::from_le_bytes([compra[7], compra[8]]), 1);
+            assert_eq!(i32_em(&compra, 9), ITEM_DE_LOJA);
+            assert_eq!(u16::from_le_bytes([compra[17], compra[18]]), 1);
+            u16::from_le_bytes([compra[19], compra[20]])
+        }
+        GameVersion::V1_5_5 => {
+            assert_eq!(compra.len(), 28);
+            assert_eq!(i32_em(&compra, 6), 0, "yinpiao");
+            assert_eq!(u16::from_le_bytes([compra[11], compra[12]]), 1);
+            assert_eq!(i32_em(&compra, 13), ITEM_DE_LOJA);
+            assert_eq!(i32_em(&compra, 21), 1, "count u32");
+            u16::from_le_bytes([compra[25], compra[26]])
+        }
+        _ => unreachable!(),
+    };
 
     let itens2 = itens.clone();
     let chegou = ate_async(move || {
@@ -2469,8 +2492,8 @@ async fn sair_do_mundo_tambem_sai_do_grupo() {
 async fn a_consulta_periodica_devolve_o_hp_real_do_monstro() {
     // O `gateway.rs` respondia `1000/1000` fixo. Como esta consulta é **periódica**, ela
     // desfazia o combate: o golpe tirava vida no mundo e a consulta seguinte redesenhava
-    // a barra cheia.
-    let (mundo, addr, roleid, _convidado) = cenario!();
+    // a barra cheia. O gabarito abaixo é o do 1.2.6 (captura), então o cenário também é.
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
     let mut link = entrar(&mundo, addr, roleid).await;
 
     // Um dano qualquer, para que o HP consultado seja diferente do inicial.
@@ -2504,8 +2527,8 @@ async fn a_consulta_periodica_devolve_o_hp_real_do_monstro() {
 #[tokio::test]
 async fn a_consulta_de_jogador_devolve_alguma_coisa() {
     // O `gateway.rs` lia a contagem, escrevia uma linha de log e **devolvia sem
-    // responder**. Nenhum outro jogador tinha barra de vida na tela.
-    let (mundo, addr, anfitriao, convidado) = cenario!();
+    // responder**. Nenhum outro jogador tinha barra de vida na tela. Gabarito do 1.2.6.
+    let (mundo, addr, anfitriao, convidado) = cenario!(GameVersion::V1_2_6);
     let mut link = entrar(&mundo, addr, anfitriao).await;
     let outro = convidado;
     let _link_b = segundo_jogador(&mundo, addr, outro).await;
@@ -4188,7 +4211,16 @@ async fn incubar_ovo_de_montaria_no_npc_gera_mascote_e_salva_no_corral() {
 /// B66: Coleta de item de missão do chão vai para a bolsa de missão (`where = 2`).
 #[tokio::test]
 async fn pegar_item_de_missao_vai_para_bolsa_de_missao() {
-    let (mundo, addr, roleid, _convidado) = cenario!();
+    conferir_pickup(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn pegar_item_de_missao_vai_para_bolsa_de_missao_126() {
+    conferir_pickup(GameVersion::V1_2_6).await;
+}
+
+async fn conferir_pickup(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
     let mut link = entrar(&mundo, addr, roleid).await;
 
     // Encontra um id de item de missão no data_manager
@@ -4219,13 +4251,24 @@ async fn pegar_item_de_missao_vai_para_bolsa_de_missao() {
     .await
     .unwrap();
 
-    // PICKUP_ITEM 126: tid/expire i32, amount/slot_amount u16, package/slot u8 (s2c-31.txt:2).
     let pickup = esperar_comando(&mut link, 31).await;
     assert_eq!(i32_em(&pickup, 2), item_missao_id as i32, "item_id");
-    assert_eq!(pickup.len(), 16);
-    assert_eq!(u16::from_le_bytes([pickup[10], pickup[11]]), 1, "amount");
-    assert_eq!(u16::from_le_bytes([pickup[12], pickup[13]]), 1, "slot_amount");
-    assert_eq!(pickup[14], 2, "pacote/where deve ser 2 (IL_TASK_INVENTORY)");
+    match versao {
+        GameVersion::V1_2_6 => {
+            // Captura s2c-31.txt:2, contagens u16.
+            assert_eq!(pickup.len(), 16);
+            assert_eq!(u16::from_le_bytes([pickup[10], pickup[11]]), 1);
+            assert_eq!(u16::from_le_bytes([pickup[12], pickup[13]]), 1);
+            assert_eq!(pickup[14], 2, "bolsa de missão");
+        }
+        GameVersion::V1_5_5 => {
+            assert_eq!(pickup.len(), 20);
+            assert_eq!(i32_em(&pickup, 10), 1, "amount u32");
+            assert_eq!(i32_em(&pickup, 14), 1, "slot_amount u32");
+            assert_eq!(pickup[18], 2, "bolsa de missão");
+        }
+        _ => unreachable!(),
+    }
 
     let sumiu = esperar_comando(&mut link, 152).await;
     assert_eq!(i32_em(&sumiu, 2), drop.id as i32, "MATTER_PICKUP (152)");

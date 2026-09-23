@@ -1,5 +1,9 @@
 # Prompt completo — leitor tasks.data v55 em sessão separada
 
+> Atualização 2026-09-22: o mapa estrutural está pronto em RESULTADO_TASKS_V55.md
+> (B79); falta a projeção semântica e o leitor Rust. Reuse as provas já validadas.
+> HEAD conhecido após merge: 0221911; confira HEAD/status atuais antes de trabalhar.
+
 Copie o bloco abaixo para a sessão com modelo mais barato. Ao terminar, cole aqui
 somente o relatório no formato do fim deste arquivo; deixe provas extensas em disco.
 
@@ -76,7 +80,7 @@ Não leia o histórico nem o master de engenharia reversa inteiros.
    entre registros e corrupção representativa; mantenha verificação do v129 real
    e seus valores conhecidos. Não altere testes v129 para acomodar regressão.
 6. Atualize apenas parágrafos afetados da spec03, estado e próximo item livre no
-   histórico (B79 se ainda livre; não renumere). Guarde mapa v55 e provas em
+   histórico (consulte o último item local e da multi-versions antes de escolher; não renumere). Guarde mapa v55 e provas em
    `specs/tasks_126/` e/ou `docs/evidencias/126/`. Deixe relatório curto em
    `docs/RESULTADO_TASKS_V55.md`. Use `pw-atualizar-specs` ao fechar.
 

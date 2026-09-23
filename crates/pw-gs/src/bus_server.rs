@@ -599,7 +599,7 @@ impl BusServer {
                 if restou <= 0 {
                     self.enviar_ao_jogador(
                         roleid,
-                        S2CGamedataSend::player_drop_item(pacote, slot as u8, 1, item_id as i32, DROP_POR_USO).data,
+                        self.sub.player_drop_item(pacote, slot as u8, 1, item_id as i32, DROP_POR_USO).data,
                     )
                     .await;
                 } else if let Ok(Some(mut i)) =

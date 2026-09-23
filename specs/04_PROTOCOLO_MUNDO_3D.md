@@ -99,6 +99,12 @@ validador em `docs/ITENS_EXPERIENCIA_126.md`; sete testes de protocolo e dois de
 mundo aprovados com banco. Não implica suporte às listas/missões v55 nem ao C2S
 de compra; sem publicação ou validação visual.
 
+**Despacho pós-merge (B81):** retirada de amuleto esgotado usa `player_drop_item`
+do trait, inclusive no tratamento de eventos. `elf_exp` (283) é opcional:
+padrão Some preserva os bytes 155; v126 None pelo limite de id 260 do cliente
+(VA 0x584618). Sem mudança da regra de ganho do Daimon. O teste literal garante
+a omissão 126 e preservação 155; detalhes em `docs/SINCRONIZACAO_126.md`.
+
 Um comando que **não** varia entre versões continua em `S2CGamedataSend`, com um só caminho
 de escrita. Quando uma medição mostrar que ele varia, ele sobe para o trait — é a regra "um
 caminho de escrita por layout".

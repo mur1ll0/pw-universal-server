@@ -94,6 +94,11 @@ pub trait WorldProtocol: Send + Sync {
         alvo: i32,
     ) -> S2CGamedataSend;
 
+    /// ELF_EXP (283): clientes anteriores ao comando podem omitir a notificação.
+    fn elf_exp(&self, exp: i32) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::elf_exp(exp))
+    }
+
     /// RECEIVE_EXP (36)
     fn receive_exp(&self, exp: i32, sp: i32) -> S2CGamedataSend;
 

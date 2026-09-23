@@ -378,6 +378,12 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
 
 ## 8. Itens e economia
 
+**Cobertura de versão (B81):** o cenário geral de `subcomandos_no_mundo.rs` é
+155; compra e pickup também têm cenários explícitos 126. Banco e BusServer recebem
+a mesma versão. Permanecem os gabaritos unitários 126; quatro cenários de mundo
+passaram com banco. Retirada do amuleto passa pelo trait; ELF_EXP é opcional
+para omitir id 283 inexistente no 126, sem alterar ganho/persistência do Daimon.
+
 **Protocolo 126, testado (B78):** `Contexto` recebe `WorldProtocol` para codificar
 31/46/72/99/156. Somente o layout varia (spec 04); regras de empilhamento,
 cobrança e persistência continuam comuns. Experiência 36/158 reproduz capturas.

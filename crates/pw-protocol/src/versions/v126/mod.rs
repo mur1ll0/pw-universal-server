@@ -180,6 +180,11 @@ impl WorldProtocol for V126Protocol {
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
+    fn elf_exp(&self, _exp: i32) -> Option<S2CGamedataSend> {
+        // O validador do cliente rejeita ids > 260 (VA 0x584618).
+        None
+    }
+
     fn receive_exp(&self, exp: i32, sp: i32) -> S2CGamedataSend {
         // 4 bytes: u16 exp, u16 sp
         let mut s = OctetsStream::new();

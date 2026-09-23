@@ -56,3 +56,11 @@ fn itens_155_preservam_layout_e_contadores_u32() {
     assert_eq!(p.receive_exp(70000, 80000).data,
         [36, 0, 0x70, 0x11, 1, 0, 0x80, 0x38, 1, 0]);
 }
+
+#[test]
+fn daimon_omite_283_no_126_e_preserva_os_bytes_155() {
+    // cliente-validacao-entrada.txt: switch em 0x584618 limita ids a 260.
+    assert!(create_world_protocol(GameVersion::V1_2_6).elf_exp(70000).is_none());
+    assert_eq!(create_world_protocol(GameVersion::V1_5_5).elf_exp(70000).unwrap().data,
+        [0x1b, 1, 0x70, 0x11, 1, 0]);
+}
