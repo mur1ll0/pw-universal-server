@@ -169,9 +169,10 @@ impl WorldProtocol for V155Protocol {
         world_id: i32,
         pos: Vector3,
         sec_level: u8,
+        modo_roupa: bool,
     ) -> S2CGamedataSend {
         // 38 bytes no 1.5.5: ganha state2 (4B)
-        let base = S2CGamedataSend::self_info_1(exp, sp, world_id, pos, sec_level);
+        let base = S2CGamedataSend::self_info_1(exp, sp, world_id, pos, sec_level, modo_roupa);
         let mut bytes = base.data;
         bytes.extend_from_slice(&0i32.to_le_bytes()); // state2
         S2CGamedataSend { data: bytes }

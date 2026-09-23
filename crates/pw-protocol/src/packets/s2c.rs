@@ -256,7 +256,11 @@ pub fn write_role_info(stream: &mut OctetsStream, c: Option<&CharacterSummary>, 
             stream.write_f32(c.position.z);
             stream.write_i32(c.world_id);
             stream.write_octets(&[]); // custom_status
-            stream.write_octets(&[]); // charactermode
+            // `charactermode`: pares (chave, valor) de int32. A tela de seleção lê daqui se
+            // o personagem está de roupa ou de armadura — `CECLoginPlayer::Load` varre
+            // `size / 8` pares e a chave 1 vira `m_bFashionMode`
+            // (`EC_LoginPlayer.cpp:172-189`). Ia vazio, e o avatar saía sempre de armadura.
+            stream.write_octets(&c.character_mode);
 
             if version != "1.2.6" {
                 stream.write_i32(0); // referrer_role
@@ -465,7 +469,7 @@ impl S2CGamedataSend {
     }
 
     /// Cria o comando SELF_INFO_1 (Comando 8) que cancela o timeout OT_ENTERGAME e spawna o jogador no mundo
-    pub fn self_info_1(exp: i32, sp: i32, world_id: i32, pos: Vector3, sec_level: u8) -> Self {
+    pub fn self_info_1(exp: i32, sp: i32, world_id: i32, pos: Vector3, sec_level: u8, modo_roupa: bool) -> Self {
         let mut stream = OctetsStream::new();
         // Header do comando (u16 little-endian = 8)
         stream.write_u16_le(crate::opcodes::CMD_S2C_SELF_INFO_1);
@@ -481,7 +485,21 @@ impl S2CGamedataSend {
         stream.write_u16_le(0);        // unsigned short crc_c (2B)
         stream.write_u8(0);            // unsigned char dir (1B)
         stream.write_u8(sec_level);    // unsigned char level2 / sec_level (1B)
-        let state = if sec_level > 0 { 0x00004000 } else { 0 }; // 0x4000 = STATE_GAMEMASTER (Ícone e permissão de GM)
+        // O `state` do **próprio** jogador. O cliente lê daqui o seu modo roupa
+        // (`m_bFashionMode = (Info.state & GP_STATE_FASHION)`, `EC_HostPlayer.cpp:819-822`)
+        // — sem este bit ele entra no mundo sempre de armadura, mesmo tendo saído de roupa
+        // e mesmo com os outros jogadores vendo-o de roupa (B86).
+        //
+        // Os demais bits do estado estendido (montaria, forma, voo) não saem daqui porque
+        // quem os conhece é o mundo, e o jogador entra sem nenhum deles. Nenhum dos dois
+        // que este codificador liga acrescenta bytes ao comando.
+        let mut state = 0i32;
+        if sec_level > 0 {
+            state |= pw_core::estado_do_jogador::MESTRE_DO_JOGO;
+        }
+        if modo_roupa {
+            state |= pw_core::estado_do_jogador::MODA;
+        }
         stream.write_i32_le(state);    // int state (4B)
 
         Self {
@@ -1027,6 +1045,65 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `SUMMON_PET` (233) — `{ int slot_index; int pet_tid; int pet_pid; int life_time }`,
+    /// 16 bytes. É **este** comando que faz o cliente registrar o mascote como ativo
+    /// (`SetActivePetIndex`, `EC_HostMsg.cpp:5274-5296`); sem ele o botão de recolher da
+    /// jaula fica desabilitado (`DlgPetList.cpp:227`). O `pet_tid` tem de ser o do bloco
+    /// do mascote, que o cliente confere (`ASSERT(pPet->GetTemplateID() == pCmd->pet_tid)`).
+    ///
+    /// `pet_manager::ActivePet` o manda **depois** do efeito da invocação
+    /// (`gs/petman.cpp:1337`), com `pet_pid` 0 quando não há criatura no mundo — o caso da
+    /// montaria — e `life_time` 0 para mascote sem prazo.
+    pub fn summon_pet(slot_index: i32, pet_tid: i32, pet_pid: i32, life_time: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(233);
+        stream.write_i32_le(slot_index);
+        stream.write_i32_le(pet_tid);
+        stream.write_i32_le(pet_pid);
+        stream.write_i32_le(life_time);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `RECALL_PET` (234) — `{ int slot_index; int pet_id; char reason }`, 11 bytes
+    /// (`common/protocol.h:2734-2740`, escrito sem enchimento pelo `<<` do original).
+    /// O `pet_id` é o `pet_tid` do bloco (`gs/petman.cpp:1376`) e o motivo vem do
+    /// `PET_RECALL_REASON`: 0 é o recolher normal (`Network/EC_GPDataType.h:3456-3462`).
+    pub fn recall_pet(slot_index: i32, pet_tid: i32, motivo: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(234);
+        stream.write_i32_le(slot_index);
+        stream.write_i32_le(pet_tid);
+        stream.write_u8(motivo);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_START_PET_OP` (235) — `{ int slot_index; int pet_id; int delay; int op }`,
+    /// 18 bytes. Abre a canalização da operação de mascote: o cliente cria o
+    /// `WORK_CONCENTRATE` e conta `delay × 50 ms` (`EC_HostMsg.cpp:5335-5356`), que é a
+    /// unidade do `tick` do original (`gs/config.h:43`, `TICK_PER_SEC 20`).
+    ///
+    /// `op`: 0 invocar, 1 recolher, 2 soltar, 3 devolver ao ovo
+    /// (`session_pet_operation::OnStart`, `gs/actsession.cpp:1705-1709`).
+    pub fn player_start_pet_op(slot_index: i32, pet_id: i32, delay: i32, op: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(235);
+        stream.write_i32_le(slot_index);
+        stream.write_i32_le(pet_id);
+        stream.write_i32_le(delay);
+        stream.write_i32_le(op);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_STOP_PET_OP` (236) — sem corpo. Fecha a canalização
+    /// (`session_pet_operation::OnEnd`, `gs/actsession.cpp:1711-1714`). Sem ele o cliente
+    /// fica "operando mascote" e recusa atacar, conjurar e invocar de novo
+    /// (`CECHostPlayer::IsOperatingPet`, `EC_HostPlayer.cpp:8661-8680`).
+    pub fn player_stop_pet_op() -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(236);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `ELF_EXP` (283) — `{ int exp; }`, a barra de experiência do Daimon.
     ///
     /// `elf_item::InsertExp` o manda a cada ganho que **não** sobe de nível
@@ -1472,7 +1549,18 @@ impl S2CGamedataSend {
         stream.write_u16_le(v.crc_aparencia);   // unsigned short crc_c (2B)
         stream.write_u8(v.dir);                // unsigned char dir (1B)
         stream.write_u8(v.cultivo);            // unsigned char level2 (1B) — o cultivo
-        let state = if v.sec_level > 0 { 0x0000_4000 } else { 0 }; // STATE_GAMEMASTER
+        // O `object_state`. Os bits **decidem o tamanho do comando**: o cliente soma os
+        // campos opcionais de cada um (`info_player_1::CheckValid`,
+        // `EC_GPDataType.h:624-710`) e descarta o pacote se a conta não fechar. A ordem de
+        // escrita é a do `MakePlayerExtendState` (`common/protocol_imp.h:62-180`).
+        use pw_core::estado_do_jogador as est;
+        let mut state = 0;
+        if v.forma.is_some() { state |= est::FORMA; }
+        if v.voando { state |= est::VOO; }
+        if v.morto { state |= est::CADAVER; }
+        if v.modo_roupa { state |= est::MODA; }
+        if v.sec_level > 0 { state |= est::MESTRE_DO_JOGO; }
+        if v.montaria.is_some() { state |= est::MONTADO; }
         stream.write_i32_le(state);            // int state (4B)
         // `state2`. O único bit que este servidor sabe preencher é o do sexo — e ele não
         // é enfeite: `info_player_1::GetGender()` (`EC_GPDataType.h:709-711`) lê o sexo de
@@ -1483,6 +1571,16 @@ impl S2CGamedataSend {
         // BODY_SIZE (`CheckValid`, `:689-703`), e nenhum deles é ligado aqui.
         let state2 = if v.feminino { pw_core::ESTADO2_MULHER } else { 0 };
         stream.write_i32_le(state2);           // int state2 (4B)
+        // Os campos dos bits ligados, **na ordem do original**. Quem entrar aqui no futuro
+        // (emote, efeito, facção, barraca) escreve no lugar que o `MakePlayerExtendState`
+        // dá a ele, não no fim.
+        if let Some(forma) = v.forma {
+            stream.write_u8(forma);            // char shape_form (1B)
+        }
+        if let Some((cor, modelo)) = v.montaria {
+            stream.write_u16_le(cor);          // unsigned short mount_color (2B)
+            stream.write_i32_le(modelo);       // int mount_id (4B)
+        }
         Self {
             data: stream.into_bytes().to_vec(),
         }

@@ -55,3 +55,8 @@ Evidência de um item citado (`B42`, `A46`): procure só ele no histórico,
 Em poucas linhas, antes de começar o trabalho: onde o projeto está, o que aguarda teste, e
 como o pedido se encaixa na fila (ou se muda a prioridade). Se o pedido for vago ("continua"),
 proponha o primeiro item de §3.3 (teste pendente) ou de §5A.
+
+**Anote o marcador de tokens.** O primeiro resultado de ferramenta da sessão traz o total
+restante: guarde esse número. É dele que sai a tabela de consumo por etapa que fecha cada
+bloco de trabalho (agente `pw-server-dev`, seção "Contexto é recurso"). Sem o valor inicial
+não há como medir — e medir é o que mostra onde a sessão está gastando à toa.

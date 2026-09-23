@@ -264,9 +264,13 @@ impl WorldProtocol for V126Protocol {
         world_id: i32,
         pos: Vector3,
         sec_level: u8,
+        modo_roupa: bool,
     ) -> S2CGamedataSend {
         // 34 bytes (sem state2)
-        S2CGamedataSend::self_info_1(exp, sp, world_id, pos, sec_level)
+        // `modo_roupa` ignorado de propósito: o bit `GP_STATE_FASHION` não foi conferido
+        // contra o cliente 1.2.6, e este servidor não muda o 1.2.6 sem evidência dele.
+        let _ = modo_roupa;
+        S2CGamedataSend::self_info_1(exp, sp, world_id, pos, sec_level, false)
     }
 
     fn player_enter_world(&self, role_id: i32, vista: VistaDoJogador) -> S2CGamedataSend {

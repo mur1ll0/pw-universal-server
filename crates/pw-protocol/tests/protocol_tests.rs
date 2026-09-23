@@ -81,6 +81,36 @@ fn test_challenge_153_has_edition_and_exp_rate() {
     assert_eq!(exp_rate, 1);
 }
 
+/// B83 — o `charactermode` do `RoleInfo` é o que a tela de seleção lê para saber se
+/// desenha o avatar de roupa ou de armadura.
+///
+/// `CECLoginPlayer::Load` varre `charactermode.size() / 8` pares de `int32` e a chave 1
+/// vira `m_bFashionMode` (`EC_LoginPlayer.cpp:172-189`); o original escreve esse par só
+/// quando o modo está ligado (`GetPlayerCharMode`, `gs/player.cpp:12585-12592`). Ia sempre
+/// vazio daqui, e o personagem voltava de armadura na seleção.
+#[test]
+fn o_charactermode_do_role_info_leva_o_modo_roupa() {
+    assert!(pw_core::charactermode_de_modo_roupa(false).is_empty(), "desligado não escreve par");
+    let ligado = pw_core::charactermode_de_modo_roupa(true);
+    assert_eq!(ligado, vec![1, 0, 0, 0, 1, 0, 0, 0], "par (chave 1, valor 1) em int32 LE");
+    assert!(pw_core::modo_roupa_do_charactermode(&ligado), "a volta tem de reconhecer o par");
+    assert!(!pw_core::modo_roupa_do_charactermode(&[1, 0, 0, 0, 0, 0, 0, 0]), "valor zero é desligado");
+
+    // E o blob sai **cru** no `RoleInfo`, no lugar dele.
+    let mut c = pw_core::CharacterSummary::vazio();
+    c.character_mode = ligado.clone();
+    let mut com = OctetsStream::new();
+    pw_protocol::packets::s2c::write_role_info(&mut com, Some(&c), "1.5.5");
+    let mut sem = OctetsStream::new();
+    pw_protocol::packets::s2c::write_role_info(&mut sem, Some(&pw_core::CharacterSummary::vazio()), "1.5.5");
+    let (com, sem) = (com.into_bytes().to_vec(), sem.into_bytes().to_vec());
+    assert_eq!(com.len(), sem.len() + 8, "o RoleInfo cresce os 8 bytes do par");
+    assert!(
+        com.windows(8).any(|j| j == ligado.as_slice()),
+        "o par não apareceu no RoleInfo"
+    );
+}
+
 #[test]
 fn test_role_list_multi_realm_encoding() {
     let summary = CharacterSummary {
@@ -118,6 +148,7 @@ fn test_role_list_multi_realm_encoding() {
         is_deleted: false,
         delete_time: None,
         last_login_at: None,
+        character_mode: Vec::new(),
     };
 
     // 1. Testa Realm 1.2.6 (19 campos por RoleInfo)
@@ -182,7 +213,7 @@ fn test_gamedatasend_s2c_subcommands() {
     assert_eq!(S2CGamedataSend::self_info_00(10, 32, false, 500, 500, 300, 300, 1000, 500, 40, 99).data[4], 0);
 
     // 2. SELF_INFO_1 (CMD 8) com GM flag
-    let p2 = S2CGamedataSend::self_info_1(1000, 500, 1024, Vector3::new(10.0, 20.0, 30.0), 32);
+    let p2 = S2CGamedataSend::self_info_1(1000, 500, 1024, Vector3::new(10.0, 20.0, 30.0), 32, false);
     assert_eq!(u16::from_le_bytes([p2.data[0], p2.data[1]]), 8);
 
     // 3. NPC_ENTER_SLICE (CMD 11)
@@ -461,6 +492,31 @@ fn test_inst_data_checkout_155_ganha_o_sexto_campo_gshop3() {
     assert_eq!(v153_com_some.data.len(), 22, "1.5.3 não ganha o sexto campo só por receber Some");
 }
 
+/// B86 — o **próprio** jogador descobre o modo roupa pelo `state` do `SELF_INFO_1`.
+///
+/// `CECHostPlayer` lê o seu próprio estado deste pacote: `m_bFashionMode = (Info.state &
+/// GP_STATE_FASHION)` (`EC_HostPlayer.cpp:819-822`). O `info_player_1` (B80) resolve para
+/// quem **vê** o jogador; para o dono da tela, é aqui. Sem o bit, quem saiu de roupa
+/// entrava de armadura — e os outros o viam de roupa, o que tornava o sintoma confuso.
+#[test]
+fn o_self_info_1_leva_o_modo_roupa_do_proprio_jogador() {
+    let pos = Vector3::new(1.0, 2.0, 3.0);
+    let armadura = S2CGamedataSend::self_info_1(0, 0, 7, pos, 0, false);
+    let roupa = S2CGamedataSend::self_info_1(0, 0, 7, pos, 0, true);
+
+    assert_eq!(armadura.data.len(), roupa.data.len(), "o bit não muda o tamanho do comando");
+    // exp 2..6, sp 6..10, cid 10..14, pos 14..26, crc_e 26..28, crc_c 28..30, dir 30,
+    // level2 31, state 32..36.
+    let state = |d: &[u8]| i32::from_le_bytes([d[32], d[33], d[34], d[35]]);
+    assert_eq!(state(&armadura.data), 0);
+    assert_eq!(state(&roupa.data), 0x2000, "GP_STATE_FASHION");
+
+    // E com GM os dois bits convivem.
+    let gm = S2CGamedataSend::self_info_1(0, 0, 7, pos, 3, true);
+    assert_eq!(state(&gm.data), 0x2000 | 0x4000);
+}
+
+#[test]
 #[test]
 fn test_self_info_1_155_ganha_o_state2() {
     // Achado em 2026-09-03 lendo `cmd_self_info_1::CheckValid` em EC_GPDataType.h (source
@@ -472,12 +528,12 @@ fn test_self_info_1_155_ganha_o_state2() {
     let pos = Vector3::new(10.0, 20.0, 30.0);
 
     let sub_126 = create_world_protocol(GameVersion::V1_2_6);
-    let pacote_126 = sub_126.self_info_1(1000, 500, 1024, pos, 32);
+    let pacote_126 = sub_126.self_info_1(1000, 500, 1024, pos, 32, false);
     // 2 (cabeçalho) + 34 (cmd_self_info_1 do 1.2.6, sem state2) = 36 bytes.
     assert_eq!(pacote_126.data.len(), 36, "1.2.6 continua nos 34 bytes de sempre");
 
     let sub_155 = create_world_protocol(GameVersion::V1_5_5);
-    let pacote_155 = sub_155.self_info_1(1000, 500, 1024, pos, 32);
+    let pacote_155 = sub_155.self_info_1(1000, 500, 1024, pos, 32, false);
     // 2 (cabeçalho) + 34 + 4 (state2) = 40 bytes.
     assert_eq!(pacote_155.data.len(), 40, "1.5.5 precisa do state2 de 4 bytes no fim");
 }
@@ -738,6 +794,11 @@ fn o_sexo_do_jogador_viaja_no_bit_do_state2() {
         feminino: true,
         crc_equipamento: 0,
         crc_aparencia: 0xBEEF,
+        voando: false,
+        morto: false,
+        modo_roupa: false,
+        montaria: None,
+        forma: None,
     };
     let p = S2CGamedataSend::player_enter_slice(42, mulher);
 
@@ -762,6 +823,63 @@ fn o_sexo_do_jogador_viaja_no_bit_do_state2() {
     let q = S2CGamedataSend::player_enter_slice(42, homem);
     assert_eq!(p.data.len(), q.data.len(), "o bit do sexo não pode mudar o tamanho");
     assert_eq!(s32_de(&q.data, 28), 0, "homem não liga bit nenhum");
+}
+
+/// B80 — o `object_state` do `info_player_1` decide o **tamanho** do comando.
+///
+/// O cliente soma os campos opcionais de cada bit ligado (`info_player_1::CheckValid`,
+/// `EC_GPDataType.h:624-710`) e, se o pacote não tiver exatamente esse tamanho, descarta
+/// tudo em silêncio. Este teste fixa a conta para os bits que este servidor liga, e a
+/// ordem em que os campos são escritos (`MakePlayerExtendState`,
+/// `common/protocol_imp.h:62-180`).
+#[test]
+fn os_bits_do_estado_acrescentam_os_campos_que_o_cliente_espera() {
+    let base = pw_core::VistaDoJogador {
+        pos: pw_core::Vector3::new(1.0, 2.0, 3.0),
+        dir: 0,
+        cultivo: 0,
+        sec_level: 0,
+        feminino: false,
+        crc_equipamento: 0,
+        crc_aparencia: 0,
+        voando: false,
+        morto: false,
+        modo_roupa: false,
+        montaria: None,
+        forma: None,
+    };
+    // 2 de cabeçalho + 30 da `info_player_1` fixa.
+    const FIXO: usize = 32;
+    let nu = S2CGamedataSend::player_enter_slice(42, base);
+    assert_eq!(nu.data.len(), FIXO, "a parte fixa são 30 bytes de corpo");
+    assert_eq!(s32_de(&nu.data, 24), 0, "sem estado nenhum ligado");
+
+    // Os bits sem campo não mudam o tamanho.
+    let voando = pw_core::VistaDoJogador { voando: true, morto: true, modo_roupa: true, sec_level: 3, ..base };
+    let v = S2CGamedataSend::player_enter_slice(42, voando);
+    assert_eq!(v.data.len(), FIXO, "voo, cadáver, moda e GM não acrescentam bytes");
+    assert_eq!(
+        s32_de(&v.data, 24),
+        0x0000_0010 | 0x0000_0080 | 0x0000_2000 | 0x0000_4000,
+        "VOO | CADAVER | MODA | MESTRE_DO_JOGO"
+    );
+
+    // Montado: o bit **e** os 6 bytes, cor antes do modelo.
+    let montado = pw_core::VistaDoJogador { montaria: Some((7, 8600)), ..base };
+    let m = S2CGamedataSend::player_enter_slice(42, montado);
+    assert_eq!(m.data.len(), FIXO + 6, "`u16 mount_color` + `int mount_id`");
+    assert_eq!(s32_de(&m.data, 24), 0x0008_0000, "GP_STATE_IN_MOUNT");
+    assert_eq!(u16::from_le_bytes([m.data[32], m.data[33]]), 7, "a cor vem primeiro");
+    assert_eq!(s32_de(&m.data, 34), 8600, "e depois o modelo");
+
+    // Transformado: 1 byte, e ele vem **antes** da montaria, como no original.
+    let os_dois = pw_core::VistaDoJogador { forma: Some(1), montaria: Some((7, 8600)), ..base };
+    let d = S2CGamedataSend::player_enter_slice(42, os_dois);
+    assert_eq!(d.data.len(), FIXO + 1 + 6);
+    assert_eq!(s32_de(&d.data, 24), 0x0000_0001 | 0x0008_0000, "FORMA | MONTADO");
+    assert_eq!(d.data[32], 1, "o `shape_form` vem antes do bloco da montaria");
+    assert_eq!(u16::from_le_bytes([d.data[33], d.data[34]]), 7);
+    assert_eq!(s32_de(&d.data, 35), 8600);
 }
 
 fn s32_de(d: &[u8], off: usize) -> i32 {

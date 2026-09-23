@@ -292,6 +292,9 @@ struct Sessao {
     envio: EnvioAoCliente,
 }
 
+/// `DROP_TYPE_PLAYER` = 1: o jogador jogou o item fora (`common/protocol.h:928-942`).
+const DROP_TYPE_PLAYER: u8 = 1;
+
 /// A ponta de rede do servidor de mundo.
 ///
 /// Clonar é barato e **compartilha o mesmo mundo**: `world` e `sessoes` são `Arc`, e
@@ -576,6 +579,24 @@ impl BusServer {
                 .await;
                 let _ = (hp, max_hp);
                 self.avisar_vida_propria(roleid).await;
+            }
+
+            EventoDoMundo::MontariaCaiuNaAgua { roleid } => {
+                // `mount_petdata_imp::TestUnderWater` (`gs/petman.cpp:402-410`): tira o
+                // `mount_filter` e limpa o mascote ativo.
+                //
+                // O original **só** limpa o estado interno ali — não manda `recall_pet`. Nós
+                // mandamos, reusando o mesmo caminho do recolher voluntário: sem ele o
+                // cliente ficaria com o mascote marcado como ativo e o botão de recolher
+                // apagado, que é exatamente o travamento que o B79 corrigiu.
+                let montaria = self.world.read().await.players.get(&(roleid as i64)).and_then(|p| p.montaria);
+                if let Some(m) = montaria {
+                    info!("mundo: a montaria de {roleid} caiu — entrou na água");
+                    let envio = self.envio_de(roleid).await;
+                    if let Some(envio) = envio {
+                        self.desmontar(roleid, m, &envio).await;
+                    }
+                }
             }
 
             EventoDoMundo::AmuletoDisparou { roleid, slot, item_id, restou, bloco, indice_de_recarga, recarga_ms } => {
@@ -1099,8 +1120,16 @@ impl BusServer {
                 self.responder(roleid, S2CGamedataSend::query_title_re(roleid, &[], &[]).data, envio).await;
             }
             ids::ACTIVATE_REGION_WAYPOINTS => self.ativar_waypoints(roleid, &cmd.payload, envio).await,
+            ids::DROP_IVTR_ITEM => self.descartar_item(roleid, 0, &cmd.payload, envio).await,
+            ids::DROP_EQUIP_ITEM => self.descartar_item(roleid, 1, &cmd.payload, envio).await,
             outro => {
                 debug!("mundo: subcomando {outro} de {roleid} ainda não tratado aqui");
+                // **A rede de segurança do original.** Comando de item que o servidor não
+                // executa tem de destravar os slots que o cliente congelou ao mandá-lo —
+                // é o `UnLockInventoryHandler` (`gs/playercmd.cpp:183-230`, e o `case` de
+                // estado inválido em `:654-678`). Sem isto, um comando que falte deixa o
+                // item apagado na bolsa até o relogue (B84).
+                self.destravar_slots_do_comando(roleid, outro, &cmd.payload, envio).await;
             }
         }
     }
@@ -2530,6 +2559,17 @@ impl BusServer {
         };
 
         debug!("mundo: {roleid} passou para o modo {}", if ativo { "roupa" } else { "armadura" });
+
+        // A escolha vai ao banco, senão morre no logout — e a **tela de seleção** lê o
+        // `charactermode` de lá para desenhar o avatar (`CECLoginPlayer::Load`,
+        // `EC_LoginPlayer.cpp:172-189`). Fora do fio do jogo, pela regra de nunca esperar o
+        // banco no caminho do comando: são 8 bytes e ninguém depende do resultado.
+        let repo = self.repo().await;
+        tokio::spawn(async move {
+            if let Err(e) = repo.salvar_modo_roupa(roleid, ativo).await {
+                warn!("mundo: não gravei o modo roupa de {roleid}: {e}");
+            }
+        });
 
         let pacote = S2CGamedataSend::player_enable_fashion(roleid, ativo).data;
         self.responder(roleid, pacote.clone(), envio).await;
@@ -4108,6 +4148,117 @@ impl BusServer {
         }
     }
 
+    /// `C2S::DROP_IVTR_ITEM` (14) e `DROP_EQUIP_ITEM` (15) — jogar um item fora.
+    ///
+    /// `onde` é o pacote do cliente: 0 é a bolsa (`IVTRTYPE_PACK`) e 1 é o corpo
+    /// (`IVTRTYPE_EQUIPPACK`, `EC_IvtrTypes.h:36-38`). O descarte da bolsa traz a
+    /// quantidade; o do corpo não traz nada além do índice, e leva a peça inteira.
+    ///
+    /// O original joga o item **no chão**, a até meio metro do jogador, e só então avisa:
+    /// `DropItemFromData`, `DecAmount` e `player_drop_item(onde, índice, tid, count,
+    /// DROP_TYPE_PLAYER)` (`ThrowEquipItem`, `gs/player.cpp:7932-7980`). Sem dono: item que
+    /// se joga fora é de quem pegar (o `XID(0,0)` do terceiro ramo, `:7968`).
+    ///
+    /// E o `UNFREEZE_IVTR_SLOT` no fim não é enfeite: o cliente congelou o slot ao mandar o
+    /// comando, e é só ele que destrava.
+    async fn descartar_item(&self, roleid: i32, onde: u8, payload: &[u8], envio: &EnvioAoCliente) {
+        if payload.is_empty() {
+            warn!("mundo: descarte de {roleid} sem corpo");
+            return;
+        }
+        let slot = payload[0];
+        let pedido = if onde == 0 && payload.len() >= 5 {
+            u32::from_le_bytes([payload[1], payload[2], payload[3], payload[4]])
+        } else {
+            u32::MAX // o corpo não manda quantidade: vai a peça inteira
+        };
+        let recipiente = if onde == 0 { ContainerType::Inventory } else { ContainerType::Equipment };
+
+        let itens = self.itens().await;
+        let Ok(Some(item)) = itens.get_item_by_slot(roleid, recipiente, slot as u16).await else {
+            // Nada ali: destrava e sai, senão o slot fica preso.
+            self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data, envio).await;
+            return;
+        };
+        let quantos = pedido.min(item.count).max(1);
+        let sobra = item.count.saturating_sub(quantos);
+
+        if sobra == 0 {
+            if let Err(e) = itens.delete_item_by_slot(roleid, recipiente, slot as u16).await {
+                warn!("mundo: não apaguei o item descartado de {roleid}: {e:?}");
+                self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data, envio).await;
+                return;
+            }
+        } else {
+            let mut restante = item.clone();
+            restante.count = sobra;
+            if let Err(e) = itens.upsert_item(&restante).await {
+                warn!("mundo: não gravei a sobra do descarte de {roleid}: {e:?}");
+                self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data, envio).await;
+                return;
+            }
+        }
+
+        // No chão, sem dono — e com o conteúdo do item, que é o que guarda refino,
+        // durabilidade e o resto (mesmo caminho do drop de monstro).
+        let drop = {
+            let pos = self.world.read().await.players.get(&(roleid as i64)).map(|p| p.position);
+            match pos {
+                Some(pos) => Some(self.world.write().await.criar_drop_com_octetos(
+                    item.item_id,
+                    quantos,
+                    pos,
+                    None,
+                    item.octets.clone(),
+                )),
+                None => None,
+            }
+        };
+        if let Some(d) = drop {
+            self.mostrar_drop(&d).await;
+        }
+        info!("mundo: {roleid} jogou fora {quantos}× o item {} do pacote {onde}", item.item_id);
+
+        self.responder(
+            roleid,
+            S2CGamedataSend::player_drop_item(onde, slot, quantos, item.item_id as i32, DROP_TYPE_PLAYER).data,
+            envio,
+        )
+        .await;
+        self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data, envio).await;
+        if onde == 1 {
+            self.recalcular_equipamento(roleid, true).await;
+        }
+    }
+
+    /// O `UnLockInventoryHandler` do original (`gs/playercmd.cpp:183-230`): destrava os
+    /// slots que um comando de item congela, para os comandos que este servidor ainda não
+    /// executa.
+    ///
+    /// O cliente congela **antes** de mandar e nunca destrava sozinho: só o
+    /// `UNFREEZE_IVTR_SLOT` (181) ou o fim de uma troca limpam o `m_bNetFrozen`
+    /// (`EC_HostMsg.cpp:2060-2064`; `CECIvtrItem::NetFreeze`, `EC_IvtrItem.h:292`). Um
+    /// comando que falte, então, não deixa só de funcionar: **apaga o item na bolsa** até o
+    /// jogador relogar. Foi o que aconteceu com o amuleto do RT (B84).
+    ///
+    /// A tabela é a dos comandos que o cliente congela ao enviar
+    /// (`Network/EC_GameSession.cpp:6304-6390`), com os pacotes de cada um.
+    async fn destravar_slots_do_comando(&self, roleid: i32, cmd: u16, payload: &[u8], envio: &EnvioAoCliente) {
+        let b = |i: usize| payload.get(i).copied().unwrap_or(0) as u16;
+        // (pacote, índice) de cada slot que aquele comando congelou.
+        let slots: &[(u8, u16)] = &match cmd {
+            ids::EXG_IVTR_ITEM | ids::MOVE_IVTR_ITEM => vec![(0, b(0)), (0, b(1))],
+            ids::DROP_IVTR_ITEM => vec![(0, b(0))],
+            ids::DROP_EQUIP_ITEM => vec![(1, b(0))],
+            ids::EXG_EQUIP_ITEM => vec![(1, b(0)), (1, b(1))],
+            ids::EQUIP_ITEM | ids::MOVE_ITEM_TO_EQUIP => vec![(0, b(0)), (1, b(1))],
+            _ => return,
+        };
+        for (onde, slot) in slots {
+            self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(*onde, *slot).data, envio).await;
+        }
+    }
+
     /// `C2S::EQUIP_ITEM` (17) — equipar ou desequipar.
     ///
     /// Bidirecional: o mesmo comando tira da bolsa para o corpo e o contrário, porque
@@ -4249,6 +4400,12 @@ impl BusServer {
     /// `false` quando o jogador não está neste servidor de mundo, ou quando a fila dele
     /// está cheia — os dois casos são do chamador decidir, não deste módulo.
     #[allow(clippy::let_underscore_future)]
+    /// O canal de saída de um jogador, para quem precisa passar um `EnvioAoCliente` adiante
+    /// (os tratadores que vieram de um evento do tique, e não de um comando).
+    async fn envio_de(&self, roleid: i32) -> Option<EnvioAoCliente> {
+        self.sessoes.read().await.get(&roleid).map(|s| s.envio.clone())
+    }
+
     pub async fn enviar_ao_jogador(&self, roleid: i32, data: Vec<u8>) -> bool {
         let sessoes = self.sessoes.read().await;
         let Some(s) = sessoes.get(&roleid) else {

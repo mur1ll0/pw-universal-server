@@ -60,6 +60,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         centro_do_stream: Vector3::new(0.0, 0.0, 0.0),
         voando: false,
         montaria: None,
+        operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
         habilidades: Default::default(),
@@ -449,4 +450,38 @@ fn a_direcao_do_gerador_e_a_do_original() {
         vistas.insert(direcao_do_gerador(dir, caixa));
     }
     assert!(vistas.len() > 10, "área com extensão devia sortear a direção: {} valores", vistas.len());
+}
+
+/// B80 — quem chega depois tem de ver a montaria.
+///
+/// O `PLAYER_MOUNTING` (227) só alcança quem já estava no campo de visão na hora em que o
+/// jogador montou. Para os demais, o que conta é o `object_state` do `info_player_1`: o
+/// original guarda `mount_id`/`mount_color` no `gplayer` (`gs/player.cpp:14293-14294`) e os
+/// escreve no bloco estendido sempre que apresenta o jogador a alguém
+/// (`MakePlayerExtendState`, `common/protocol_imp.h:105-109`).
+#[test]
+fn a_vista_de_quem_esta_montado_leva_a_montaria() {
+    let mut p = jogador(Vector3::new(0.0, 0.0, 0.0));
+    assert_eq!(p.vista().montaria, None, "a pé não manda bloco de montaria");
+
+    p.montaria = Some(pw_gs::entity::MontariaAtiva {
+        indice: 0,
+        tid: 8600,
+        pet_tid: 8600,
+        cor: 7,
+        velocidade: 6.0,
+    });
+    let v = p.vista();
+    assert_eq!(v.montaria, Some((7, 8600)), "cor e modelo, como o cliente lê");
+
+    // E o pacote que apresenta esse jogador cresce os 6 bytes do bloco.
+    let a_pe = S2CGamedataSend::player_enter_slice(p.role_id, pw_core::VistaDoJogador { montaria: None, ..v });
+    let montado = S2CGamedataSend::player_enter_slice(p.role_id, v);
+    assert_eq!(montado.data.len(), a_pe.data.len() + 6);
+
+    // Voando e morto também viajam — eram estados que só quem estava perto na hora via.
+    p.voando = true;
+    assert!(p.vista().voando);
+    p.hp = 0;
+    assert!(p.vista().morto, "cadáver é o `IsZombie()` do original");
 }

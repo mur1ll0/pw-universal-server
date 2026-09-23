@@ -601,6 +601,7 @@ impl LinkGateway {
                             delete_time: None,
                             // Personagem recém-criado nunca entrou no mundo.
                             last_login_at: None,
+                            character_mode: Vec::new(),
                         };
 
                         // 1. Envia CreateRole_Re (Opcode 0x55) contendo a struct RoleInfo completa
@@ -857,6 +858,9 @@ impl LinkGateway {
                         details.id,
                         details.position,
                         session.sec_level,
+                        // O modo roupa que o personagem tinha ao sair (B83/B86): é este bit
+                        // que faz o cliente desenhar o **dono da tela** de roupa ao entrar.
+                        details.modo_roupa,
                     ))).await?;
 
                     // O `OWN_EXT_PROP` (50) — a ficha do jogador, com os atributos que

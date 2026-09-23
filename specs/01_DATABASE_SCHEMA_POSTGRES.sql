@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS characters (
     -- Barra de chi: atual e teto (o teto vem do prêmio `m_ulFuryULimit` de missão)
     ap INT DEFAULT 0 NOT NULL,
     max_ap INT DEFAULT 0 NOT NULL,
+    -- `charactermode` do original: pares (chave, valor) de int32 LE, chave 1 = modo roupa
+    -- (`GetPlayerCharMode`, `gs/player.cpp:12585-12612`). Viaja cru no `RoleInfo`.
+    character_mode BYTEA DEFAULT ''::bytea NOT NULL,
     exp BIGINT DEFAULT 0 NOT NULL,
     sp BIGINT DEFAULT 0 NOT NULL,
     hp INT DEFAULT 100 NOT NULL,

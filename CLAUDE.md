@@ -34,3 +34,7 @@ quando há código alterado sem spec nem estado alterados.
 - O binário do cliente é o juiz; S2C de tamanho errado é descartado em silêncio.
 - Arquivo de dados fecha no último byte, pelo carregador do cliente.
 - Testes só valem com `TEST_DATABASE_URL` definido (o `pw-storage` isola tudo no schema `test`, preservando o `public`).
+- **Contexto é recurso:** saída de ferramenta entra filtrada (`grep`/`awk`/`tail`), rodada
+  longa vai para segundo plano, e o que se traz é o número, não a lista. Cada bloco de
+  trabalho termina com a tabela de consumo de tokens por etapa — agente `pw-server-dev`,
+  seção "Contexto é recurso", e skill `pw-testar-e-publicar`.

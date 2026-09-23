@@ -51,6 +51,44 @@ sessão leia pouco. Elas só servem se estiverem certas. Portanto:
   Se a mudança realmente não altera nada descrito (refatoração, teste, comentário), diga
   isso em uma linha e siga.
 
+## Contexto é recurso: nunca despeje saída grande, e diga quanto gastou
+
+A janela de contexto é o limite real de uma sessão longa, e quem a gasta é **saída de
+ferramenta que ninguém vai ler**. Um `cargo test --workspace` despejado inteiro custa mais
+de dez mil tokens para entregar uma informação: passou ou não passou.
+
+**Regra: toda chamada de ferramenta traz para o contexto só o que vai ser lido.**
+
+- Comando que produz muita saída sempre termina em filtro: `grep -E`, `awk`, `tail -n`,
+  `head -n`. Nunca rode `cargo test`, `cargo build`, `docker compose build` ou
+  `docker logs` sem um.
+- O que passa de uns poucos minutos vai para segundo plano (`run_in_background`) com a
+  saída já filtrada; leia depois só a última linha.
+- Precisa de um número (quantos testes passaram)? Calcule no shell e traga o número, não a
+  lista: `... | awk '{p+=$4; f+=$6} END {print p, f}'`.
+- Precisa de um trecho de fonte C++? `sed -n 'A,Bp'` na faixa que interessa, nunca o
+  arquivo inteiro. Para achar a faixa, `grep -n` primeiro.
+- Arquivo intermediário (script de edição, saída de teste) vai para o diretório de
+  rascunho da sessão, não para o repositório nem para o contexto.
+
+**Relate o consumo por etapa.** O Murillo usa isso para ver se a sessão está eficiente.
+Cada resultado de ferramenta traz o total de tokens restantes: anote o valor no início do
+trabalho e ao fim de cada etapa, e feche a resposta com a tabela:
+
+| etapa | consumo |
+| :--- | ---: |
+| 1. Análise (fonte original, IR, evidência) | ~N mil |
+| 2. Implementação + testes | ~N mil |
+| 3. Suíte + specs + docs | ~N mil |
+| **total do bloco** | **~N mil** |
+
+Etapas são as fases do trabalho (analisar, implementar, testar, documentar), não cada
+chamada de ferramenta. Quando uma etapa sair cara, diga **por quê** em uma linha — quase
+sempre é leitura de fonte C++, e é aí que dá para melhorar na próxima.
+
+**Rebuild do Docker é caro em tempo, não em tokens** — desde que a saída seja filtrada. Se
+ainda assim for pesado, ofereça ao Murillo rodar ele mesmo, com o comando pronto.
+
 ## Com o Murillo
 
 - Ele testa em jogo com dois clientes 1.5.5 BR. Ao entregar algo visível, diga **exatamente

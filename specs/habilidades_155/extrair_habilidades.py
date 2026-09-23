@@ -299,8 +299,22 @@ def roteiro(texto, nome):
 
 
 def escalar(texto, campo, tipo=int):
-    m = re.search(rf"\b{campo}\s*=\s*([-\d.]+)\s*;", texto)
-    return tipo(float(m.group(1))) if m else None
+    """O valor de `campo = <valor>;` no stub.
+
+    Aceita `true`/`false` além de número: os stubs escrevem os dois para o mesmo campo
+    (`is_movingcast = 1` em 5 deles, `= true` em 19), e um padrão que só casasse dígito
+    deixa 19 habilidades com o campo ausente — foi o que aconteceu no B78 e tirou do
+    Tormentador o conjurar andando das duas habilidades que ele de fato usa (B82).
+    """
+    m = re.search(rf"\b{campo}\s*=\s*([-\d.]+|true|false)\s*;", texto)
+    if not m:
+        return None
+    bruto = m.group(1)
+    if bruto == "true":
+        bruto = "1"
+    elif bruto == "false":
+        bruto = "0"
+    return tipo(float(bruto))
 
 
 def extrair(caminho):

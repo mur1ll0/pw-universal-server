@@ -127,6 +127,12 @@ pub trait WorldProtocol: Send + Sync {
     ) -> S2CGamedataSend;
 
     /// SELF_INFO_1 (8)
+    /// `SELF_INFO_1` (8) — a entidade do próprio jogador.
+    ///
+    /// `modo_roupa` acende `GP_STATE_FASHION` (0x2000) no `state`, e é **daqui** que o
+    /// cliente sabe que o dono da tela está de roupa: `CECHostPlayer` lê o próprio estado
+    /// deste pacote (`EC_HostPlayer.cpp:819-822`). O `info_player_1` só resolve para quem
+    /// **vê** o jogador, não para ele mesmo (B86).
     fn self_info_1(
         &self,
         exp: i32,
@@ -134,6 +140,7 @@ pub trait WorldProtocol: Send + Sync {
         world_id: i32,
         pos: Vector3,
         sec_level: u8,
+        modo_roupa: bool,
     ) -> S2CGamedataSend;
 
     /// GET_OWN_MONEY (82)

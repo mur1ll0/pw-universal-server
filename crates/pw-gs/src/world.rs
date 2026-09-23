@@ -76,6 +76,14 @@ pub enum EventoDoMundo {
         indice_de_recarga: i32,
         recarga_ms: i32,
     },
+    /// A montaria caiu porque o jogador entrou na água.
+    ///
+    /// `mount_petdata_imp::TestUnderWater` (`gs/petman.cpp:402-410`): passando de **1 metro**
+    /// abaixo da superfície, o original tira o `mount_filter` e limpa o mascote ativo. Quem
+    /// manda os comandos é o `BusServer`, que tem o fio do cliente (B88).
+    MontariaCaiuNaAgua {
+        roleid: RoleId,
+    },
     /// Vida ou mana do jogador mudaram sozinhas (regeneração): o `SELF_INFO_00` é o que o
     /// original manda quando o `_refresh_state` liga (`GenHPandMP`, `actobject.h:2167`).
     EstadoMudou { roleid: RoleId },
@@ -125,6 +133,11 @@ pub struct Grupo {
     pub membros: Vec<RoleId>,
 }
 
+/// `off > 0.5` liga o `_under_water` do jogador (`gs/player.cpp:14337`).
+const MERGULHO_MINIMO: f32 = 0.5;
+/// `offset > 1.0` derruba a montaria (`gs/petman.cpp:404`).
+pub const MERGULHO_QUE_DERRUBA_A_MONTARIA: f32 = 1.0;
+
 pub struct WorldInstance {
     pub world_id: WorldId,
     pub grid: SpatialGrid,
@@ -136,6 +149,10 @@ pub struct WorldInstance {
     /// Carregada só para **este** mapa, em [`Self::init_spawns`]: o mundo principal são 92
     /// MB de vértices, e o realm tem 68 pastas de mapa.
     pub terreno: pw_data_loader::Terreno,
+    /// A superfície da água deste mapa, do `watermap/` (`pw_data_loader::watermap`). É o
+    /// `path_finding::GetWaterHeight` do original, e dele saem a recusa de montar debaixo
+    /// d'água e a queda da montaria de quem entra na água montado (B88).
+    pub agua: pw_data_loader::MapaDeAgua,
     /// Os recursos do mapa — minério, erva, tronco. Ver [`MatterEntity`].
     ///
     /// Ficam separados dos NPCs porque o comando de entrada é outro
@@ -213,6 +230,7 @@ impl WorldInstance {
             minas_colhidas: Vec::new(),
             coletores: HashMap::new(),
             terreno: pw_data_loader::Terreno::vazio(),
+            agua: pw_data_loader::MapaDeAgua::vazio(),
             drops: HashMap::new(),
             data_manager,
             char_repo,
@@ -277,6 +295,7 @@ impl WorldInstance {
         // O mapa de alturas deste mapa, se o realm o trouxer.
         if let Some(dir) = self.data_manager.pastas_de_mapa.get(&self.world_id).cloned() {
             self.terreno = pw_data_loader::Terreno::ler(self.world_id, &dir);
+            self.agua = pw_data_loader::MapaDeAgua::ler(self.world_id, &dir);
         }
         let com_terreno = self.terreno.tem_dados();
 
@@ -505,6 +524,22 @@ impl WorldInstance {
 
     /// Põe um item (ou um monte de moedas, `tid` 3044) no chão, a ±2 m do ponto e no
     /// terreno (`GM_MSG_PRODUCE_MONEY`/`_MONSTER_DROP`, `worldmanager.cpp:512-555`).
+    /// O quanto um ponto está **abaixo** da superfície da água, em metros: o `off` do
+    /// `gplayer_imp::TestUnderWater` (`gs/player.cpp:14322-14348`). Zero fora da água.
+    ///
+    /// Os dois limiares do original saem daqui: **acima de 0,5 m** o jogador conta como
+    /// debaixo d'água (`SetUnderWater(true, off)`), e **acima de 1 m** a montaria cai
+    /// (`mount_petdata_imp::TestUnderWater`, `gs/petman.cpp:402-410`).
+    pub fn quanto_abaixo_da_agua(&self, pos: pw_core::Vector3) -> f32 {
+        self.agua.quanto_abaixo(pos.x, pos.y, pos.z)
+    }
+
+    /// `gplayer_imp::IsUnderWater()` — o `_under_water` do `breath_ctrl`
+    /// (`gs/breath_ctrl.h:38-46`), que o `TestUnderWater` liga com `off > 0.5`.
+    pub fn esta_na_agua(&self, pos: pw_core::Vector3) -> bool {
+        self.quanto_abaixo_da_agua(pos) > MERGULHO_MINIMO
+    }
+
     pub fn criar_drop(&mut self, tid: u32, quantidade: u32, perto_de: pw_core::Vector3, dono: Option<RoleId>) -> ItemDropEntity {
         self.criar_drop_com_octetos(tid, quantidade, perto_de, dono, Vec::new())
     }
@@ -1148,6 +1183,24 @@ impl WorldInstance {
     /// do que resta no amuleto (`offset = máximo − atual`, preso a `_ess.point`) e arma a
     /// recarga do próprio item (`base_amulet::OnAutoTrigger`, `gs/item/item_amulet.cpp:9-20`).
     /// Em zero, o amuleto acaba e sai do corpo.
+    /// `gplayer_imp::TestUnderWater` → `_petman.OnUnderWater` (`gs/player.cpp:14336-14342`):
+    /// quem está montado e passa de **1 metro** abaixo da superfície perde a montaria
+    /// (`gs/petman.cpp:402-410`).
+    ///
+    /// O original testa isso no tique do jogador; aqui vai no batimento de 1 s, junto dos
+    /// amuletos — a montaria não precisa cair no mesmo quadro em que o pé toca a água, e
+    /// varrer a posição de todo mundo 20 vezes por segundo custaria mais do que vale.
+    fn testar_agua_dos_montados(&mut self) -> Vec<EventoDoMundo> {
+        let caidos: Vec<RoleId> = self
+            .players
+            .values()
+            .filter(|p| p.montaria.is_some())
+            .filter(|p| self.quanto_abaixo_da_agua(p.position) > MERGULHO_QUE_DERRUBA_A_MONTARIA)
+            .map(|p| p.role_id)
+            .collect();
+        caidos.into_iter().map(|roleid| EventoDoMundo::MontariaCaiuNaAgua { roleid }).collect()
+    }
+
     fn disparar_amuletos(&mut self) -> Vec<EventoDoMundo> {
         let mut eventos = Vec::new();
         for p in self.players.values_mut() {
@@ -1411,6 +1464,9 @@ impl WorldInstance {
                 self.emitir(EventoDoMundo::EstadoMudou { roleid });
             }
             for ev in self.disparar_amuletos() {
+                self.emitir(ev);
+            }
+            for ev in self.testar_agua_dos_montados() {
                 self.emitir(ev);
             }
             self.batida_dos_efeitos();

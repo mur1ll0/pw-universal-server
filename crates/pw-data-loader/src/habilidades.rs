@@ -285,17 +285,25 @@ mod tests {
         assert_eq!(t.get(235).and_then(|h| h.apgain), Some(5));
     }
 
-    /// B78 — conjurar andando é propriedade **da habilidade**, não da classe.
+    /// B78/B82 — conjurar andando é propriedade **da habilidade**, não da classe.
     ///
     /// `is_movingcast` no stub (`cskill/skill/skill.h:382`); o original despacha essas por
-    /// `moving_skill` (`gs/playercmd.cpp:2066-2088`). No 1.5.5 são cinco, todas da classe 11.
+    /// `moving_skill` (`gs/playercmd.cpp:2066-2088`). No 1.5.5 são **24**, todas da classe 11.
+    ///
+    /// Eram "cinco" no B78 porque o extrator só casava dígito e os stubs escrevem o mesmo
+    /// campo de dois jeitos: `= 1` em cinco deles e `= true` em dezenove (B82). As duas
+    /// primeiras habilidades de ataque da classe — 2571 e 2579, as que um Tormentador tem
+    /// no nível 10 — estavam entre as dezenove, e era por isso que andar ainda cortava a
+    /// conjuração em jogo.
     #[test]
-    fn so_cinco_habilidades_conjuram_andando_e_sao_da_classe_11() {
+    fn as_habilidades_que_conjuram_andando_sao_as_24_da_classe_11() {
         let t = TabelaDeHabilidades::do_155();
-        let andando: Vec<u32> = t.todas().filter(|(_, h)| h.conjura_andando()).map(|(id, _)| *id).collect();
-        let mut andando = andando;
+        let mut andando: Vec<u32> = t.todas().filter(|(_, h)| h.conjura_andando()).map(|(id, _)| *id).collect();
         andando.sort_unstable();
-        assert_eq!(andando, vec![2909, 2910, 2913, 2914, 2917]);
+        assert_eq!(andando.len(), 24, "são 24 no 1.5.5 (5 com `= 1`, 19 com `= true`)");
+        for id in [2571, 2579, 2909, 2917] {
+            assert!(andando.contains(&id), "a {id} conjura andando e sumiu da lista");
+        }
         for id in &andando {
             assert_eq!(t.get(*id).and_then(|h| h.cls), Some(11), "a {id} não é da classe 11");
         }

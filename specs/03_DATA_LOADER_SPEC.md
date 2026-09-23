@@ -158,6 +158,43 @@ são mortas. `[TOWN_REGION]` é o mapa de ressurreição, não o nascimento.
 A configuração por mapa não se deduz da pasta (88 blocos podem ser 8×11 ou 11×8). O mapa
 161 (`a61`) é 4×3.
 
+### 3.6b `watermap/` — a superfície da água (`testado`, B88)
+
+Cada mapa do realm tem uma pasta `watermap/` ao lado de `map/`, com `watermap.conf` e
+arquivos `N.wmap`. São **75** no `realm_155`, e é deles que o original tira o
+`path_finding::GetWaterHeight` — a altura da água num ponto.
+
+| arquivo | formato |
+| :--- | :--- |
+| `watermap.conf` | texto, quatro linhas: `Map Width`, `Map Length`, `Submap Width`, `Submap Length` (`CGlobalWaterAreaMap::Load`, `gs/pathfinding/GlobalWaterAreaMap.cpp:75-120`). No `realm_155`, 1×1 submapas de 1024×1024 na maioria |
+| `N.wmap` | binário: `u32 versão`, `f32 largura`, `f32 comprimento`, `i32 n`, e `n` áreas de **5 `f32`** — `cx`, `cz`, meia-largura, meio-comprimento, **altura** (`CWaterAreaMap::Load`, `gs/pathfinding/WaterAreaMap.cpp:38-115`). O nome é `(m_iLength−i−1)*m_iWidth+j+1` |
+
+Sem áreas o arquivo tem 16 bytes (só o cabeçalho), e é o caso da maioria dos mapas; o mundo
+1 tem vários com água, o maior com 5 áreas (116 bytes).
+
+Lido por `watermap.rs` (`MapaDeAgua::ler`), que **recusa arquivo que não fecha no último
+byte** e recusa submapa cuja medida não bate com a do `.conf` — é o que o original faz, que
+libera o submapa nesse caso. `MapaDeAgua::altura_em(x, z)` é o `GetWaterHeight`, e
+`quanto_abaixo(x, y, z)` é o `off` do `TestUnderWater`. **Zero quer dizer "sem água"**, não
+"água no nível zero" (`NO_WATER`).
+
+**Para que serve:** `IsUnderWater` do jogador, que o original usa para recusar montaria e
+para **derrubar** quem entra na água montado (spec 05, montaria), e o fôlego (`breath_ctrl`,
+`falta`). O `fOffsetWater` do `npcgen.data` continua guardado sem uso.
+
+### 3.6c Arquivos do realm que este servidor **não** lê
+
+Estão na pasta do realm e não são pendência nossa, com uma exceção:
+
+| arquivo | de quem é |
+| :--- | :--- |
+| `task_npc.data` | **do cliente** (`LoadNPCInfoFromPack("data\task_npc.data")`, `Task/EC_TaskInterface.cpp:166`) |
+| `DynamicObjects.data` | **do cliente** (`m_pDynObjPath->Load("configs\DynamicObjects.data")`, `EC_Game.cpp:612`) |
+| `domain.data`, `domain2.data`, `domain2_cross.data` | não aparecem no fonte do `gs` nem no do cliente; provavelmente do `gdeliveryd` (domínios e cruzamento entre servidores) — fora do alvo atual |
+| `extra_drops.sev` | não aparece em nenhum dos dois fontes que temos; origem desconhecida |
+| `globalcontroller.conf` | **é do `gs`** (`worldmanager.cpp:1106`) e traz `cash_money_exchange_rate` (1.000.000 no `realm_155`). `falta`, mas só importa quando a **Loja Gold** existir |
+| `airmap/`, `movemap/`, `path.sev`, `map.bht`, `.dhmap`/`.rmap` | navegação e colisão do `path_finding`; o mundo hoje não faz pathfinding de criatura por malha |
+
 ### 3.7 `region.sev` / `precinct.sev` (por mapa)
 
 `REGIONFILEHEADER4` (`dwVersion, iNumRegion, iNumTrans, dwTimeStamp`@12) e

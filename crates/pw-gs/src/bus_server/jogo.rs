@@ -714,15 +714,27 @@ impl BusServer {
 
     // ------------------------------------------------------------------ montaria
 
+    /// Ticks de canalização de cada operação de mascote. O tick do original é de 50 ms
+    /// (`TICK_PER_SEC 20`, `gs/config.h:43`) e é essa a unidade que viaja no
+    /// `PLAYER_START_PET_OP` (`EC_HostMsg.cpp:5350`, `SetPeriod(delay * 50)`).
+    const TICKS_PARA_INVOCAR: i32 = 60; // `SetDelay(60)`, `gs/player.cpp:14485`
+    const TICKS_PARA_RECOLHER: i32 = 10; // `SetDelay(10)`, `gs/player.cpp:14507`
+    const MS_POR_TICK: u64 = 50;
+
     /// `SUMMON_PET` (C2S 100) — invocar o mascote do índice. **Montaria é montar**
     /// (`gplayer_imp::PlayerSummonPet` → `pet_man::ActivePet`, `gs/player.cpp:14474-14491`,
     /// `gs/petman.cpp:319-392`).
     ///
-    /// O original recusa fora do chão, voando, na água, transformado ou invisível, e então
-    /// põe o `mount_filter`: `STATE_MOUNT`, `PLAYER_MOUNTING` (227) e a velocidade da
-    /// montaria sobrepondo a de corrida (`mount_filter.cpp:24-33`). A velocidade é
-    /// `speed_a + speed_b × (nível − 1)` do `PET_ESSENCE`
-    /// (`pet_dataman::CalcMountParam`, `gs/petdataman.h:186-194`).
+    /// Invocar **não é um comando, é uma sessão** (`session_summon_pet`): o original só
+    /// confere que o mascote existe, abre a canalização com `PLAYER_START_PET_OP`, espera
+    /// 60 ticks (3 s) e só então tenta a invocação; ao fim manda `PLAYER_STOP_PET_OP`
+    /// (`session_pet_operation::OnStart`/`OnEnd`, `gs/actsession.cpp:1705-1721`).
+    ///
+    /// Os três comandos importam ao cliente: sem o `START`/`STOP` não há canalização nem
+    /// animação, e sem o `SUMMON_PET` (233) que vem depois do efeito
+    /// (`gs/petman.cpp:1337`) o cliente **não sabe qual mascote está ativo** — o botão de
+    /// recolher da jaula fica desabilitado (`DlgPetList.cpp:227`) e o de invocar responde
+    /// "o mascote já está ativo". Foi o que o teste em jogo do B78 mostrou.
     ///
     /// `falta`: mascote de combate (só montaria por enquanto), água, invisibilidade e a
     /// queda da montaria por lealdade.
@@ -732,11 +744,11 @@ impl BusServer {
             return;
         }
         let indice = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
-        let Ok(Some(item)) = self
-            .itens()
-            .await
-            .get_item_by_slot(roleid, ContainerType::PetCorral, indice.min(u16::MAX as u32) as u16)
-            .await
+        let indice = indice.min(u16::MAX as u32) as u16;
+        // A **única** conferência antes da canalização, como no original: o mascote existe.
+        // Note que o `PlayerSummonPet` deixa comentada a recusa por mascote já ativo — quem
+        // já tem um recolhe o anterior dentro do `ActivePet` (`gs/petman.cpp:1308-1312`).
+        let Ok(Some(item)) = self.itens().await.get_item_by_slot(roleid, ContainerType::PetCorral, indice).await
         else {
             self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_EXISTE).data).await;
             return;
@@ -746,39 +758,98 @@ impl BusServer {
             i.pet_tid = item.item_id as i32;
             i
         });
+        // O modelo é o `pet_vis_tid` quando existe (`gs/player.cpp:14483-14486`); o
+        // `pet_tid` é o que o cliente confere contra a jaula.
         let tid = if info.pet_vis_tid > 0 { info.pet_vis_tid } else { info.pet_tid } as u32;
 
-        let (pode, velocidade) = {
+        let marcador = self.abrir_operacao_de_pet(roleid).await;
+        self.responder(
+            roleid,
+            S2CGamedataSend::player_start_pet_op(indice as i32, tid as i32, Self::TICKS_PARA_INVOCAR, 0).data,
+            envio,
+        )
+        .await;
+
+        let este = self.clone();
+        let envio = envio.clone();
+        tokio::spawn(async move {
+            let espera = Self::TICKS_PARA_INVOCAR as u64 * Self::MS_POR_TICK;
+            tokio::time::sleep(std::time::Duration::from_millis(espera)).await;
+            if !este.operacao_de_pet_ainda_e_minha(roleid, marcador).await {
+                return;
+            }
+            este.montar(roleid, indice, tid, &info, &envio).await;
+            // `OnEnd`: a canalização fecha mesmo quando a invocação foi recusada, senão o
+            // cliente fica "operando mascote" para sempre.
+            este.responder(roleid, S2CGamedataSend::player_stop_pet_op().data, &envio).await;
+        });
+    }
+
+    /// `pet_manager::ActivePet` com um mascote de classe montaria (`gs/petman.cpp:1303-1348`,
+    /// `mount_petdata_imp::DoActivePet`, `:319-392`): recusa o que não pode montar, põe o
+    /// `mount_filter` — que manda `PLAYER_MOUNTING` e sobrepõe a velocidade — e só então
+    /// manda o `SUMMON_PET` (233).
+    async fn montar(
+        &self,
+        roleid: i32,
+        indice: u16,
+        tid: u32,
+        info: &pw_core::InfoPet,
+        envio: &crate::bus_server::EnvioAoCliente,
+    ) {
+        let (estado, velocidade) = {
             let mundo = self.world.read().await;
             let velocidade = mundo.data_manager.velocidade_da_montaria(tid, info.level as i32);
-            let pode = mundo.players.get(&(roleid as i64)).map(|p| (p.montaria.is_none(), !p.voando));
-            (pode, velocidade)
+            let estado = mundo
+                .players
+                .get(&(roleid as i64))
+                .map(|p| (p.montaria, p.voando, mundo.esta_na_agua(p.position)));
+            (estado, velocidade)
         };
-        let Some((livre, no_chao)) = pode else { return };
-        if !livre {
-            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_JA_ATIVO).data).await;
-            return;
-        }
+        let Some((ja_montado, voando, na_agua)) = estado else { return };
+        // `CalcMountParam` sem resposta é "não é montaria": mascote de combate ainda não tem
+        // porte (`gs/petman.cpp:371-378`).
         let Some(velocidade) = velocidade.filter(|v| *v > 0.0) else {
-            // Sem `speed_a`/`speed_b` não é montaria — mascote de combate ainda não tem porte.
             debug!("mundo: o pet {tid} de {roleid} não é montaria (ou não está no elements)");
             self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_MONTA).data).await;
             return;
         };
-        if !no_chao {
+        if voando {
+            // `IsOnGround` (`gs/petman.cpp:330-334`).
             self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_MONTA).data).await;
             return;
         }
+        if na_agua {
+            // `IsUnderWater()` (`gs/petman.cpp:344-348`) — montaria terrestre não entra na
+            // água. O limiar é o do `TestUnderWater`: meio metro abaixo da superfície (B88).
+            debug!("mundo: {roleid} tentou montar dentro d'água");
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_MONTA).data).await;
+            return;
+        }
+        // Já montado em outra: o original recolhe a anterior antes de pôr a nova.
+        if let Some(anterior) = ja_montado.filter(|m: &crate::entity::MontariaAtiva| m.indice != indice) {
+            self.desmontar(roleid, anterior, envio).await;
+        }
 
         let cor = info.color;
+        let montaria = crate::entity::MontariaAtiva {
+            indice,
+            tid,
+            pet_tid: info.pet_tid as u32,
+            cor,
+            velocidade,
+        };
         if let Some(p) = self.world.write().await.players.get_mut(&(roleid as i64)) {
-            p.montaria = Some((tid, cor, velocidade));
+            p.montaria = Some(montaria);
             p.move_speed = velocidade;
         }
         info!("mundo: {roleid} montou o pet {tid} (nível {}) a {velocidade:.2} m/s", info.level);
         let pacote = S2CGamedataSend::player_mounting(roleid, tid as i32, cor).data;
         self.responder(roleid, pacote.clone(), envio).await;
         self.transmitir_a_outros(roleid, pacote).await;
+        // O `summon_pet` vem **depois** do efeito (`gs/petman.cpp:1337`): `pet_pid` 0 porque
+        // montaria não põe criatura no mundo, e `life_time` 0 porque não tem prazo.
+        self.responder(roleid, S2CGamedataSend::summon_pet(indice as i32, info.pet_tid, 0, 0).data, envio).await;
         // `SendClientCurSpeed` do original; aqui a ficha inteira, que leva as quatro
         // velocidades (`OWN_EXT_PROP`).
         let ficha = {
@@ -790,16 +861,58 @@ impl BusServer {
         }
     }
 
-    /// `RECALL_PET` (C2S 101) — desmontar. O original tira o `mount_filter`, devolve a
-    /// velocidade e manda `player_mounting(0, 0)` (`gs/player.cpp:14301-14319`).
+    /// `RECALL_PET` (C2S 101) — desmontar, também por sessão (`session_recall_pet`,
+    /// `gplayer_imp::PlayerRecallPet`, `gs/player.cpp:14492-14512`), com 10 ticks (0,5 s)
+    /// de canalização.
     pub(super) async fn recolher_mascote(&self, roleid: i32, envio: &crate::bus_server::EnvioAoCliente) {
+        let montaria = self.world.read().await.players.get(&(roleid as i64)).and_then(|p| p.montaria);
+        // `IsPetActive` antes de abrir a sessão (`gs/player.cpp:14494-14495`).
+        let Some(montaria) = montaria else {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_ATIVO).data).await;
+            return;
+        };
+        let marcador = self.abrir_operacao_de_pet(roleid).await;
+        self.responder(
+            roleid,
+            S2CGamedataSend::player_start_pet_op(
+                montaria.indice as i32,
+                montaria.tid as i32,
+                Self::TICKS_PARA_RECOLHER,
+                1,
+            )
+            .data,
+            envio,
+        )
+        .await;
+
+        let este = self.clone();
+        let envio = envio.clone();
+        tokio::spawn(async move {
+            let espera = Self::TICKS_PARA_RECOLHER as u64 * Self::MS_POR_TICK;
+            tokio::time::sleep(std::time::Duration::from_millis(espera)).await;
+            if !este.operacao_de_pet_ainda_e_minha(roleid, marcador).await {
+                return;
+            }
+            este.desmontar(roleid, montaria, &envio).await;
+            este.responder(roleid, S2CGamedataSend::player_stop_pet_op().data, &envio).await;
+        });
+    }
+
+    /// `pet_manager::RecallPetWithoutFree` com montaria (`gs/petman.cpp:1359-1390`): tira o
+    /// `mount_filter` — que manda `PLAYER_MOUNTING(0, 0)` e devolve a velocidade — e então
+    /// manda o `RECALL_PET` (234) com o motivo padrão.
+    pub(super) async fn desmontar(
+        &self,
+        roleid: i32,
+        montaria: crate::entity::MontariaAtiva,
+        envio: &crate::bus_server::EnvioAoCliente,
+    ) {
         let tinha = {
             let mut mundo = self.world.write().await;
             let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
             p.montaria.take().is_some()
         };
         if !tinha {
-            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_ATIVO).data).await;
             return;
         }
         // A velocidade volta ao que o equipamento e a classe dizem, e a ficha nova vai junto.
@@ -808,6 +921,32 @@ impl BusServer {
         let pacote = S2CGamedataSend::player_mounting(roleid, 0, 0).data;
         self.responder(roleid, pacote.clone(), envio).await;
         self.transmitir_a_outros(roleid, pacote).await;
+        // `PET_RECALL_DEFAULT` = 0 (`Network/EC_GPDataType.h:3456-3462`).
+        self.responder(roleid, S2CGamedataSend::recall_pet(montaria.indice as i32, montaria.pet_tid as i32, 0).data, envio)
+            .await;
+    }
+
+    /// Abre uma operação de mascote e devolve o marcador dela: quem chegar depois invalida
+    /// a canalização de quem estava esperando, como o `AddSession` do original faz com a
+    /// sessão anterior.
+    async fn abrir_operacao_de_pet(&self, roleid: i32) -> u64 {
+        let mut mundo = self.world.write().await;
+        match mundo.players.get_mut(&(roleid as i64)) {
+            Some(p) => {
+                p.operacao_de_pet += 1;
+                p.operacao_de_pet
+            }
+            None => 0,
+        }
+    }
+
+    async fn operacao_de_pet_ainda_e_minha(&self, roleid: i32, marcador: u64) -> bool {
+        self.world
+            .read()
+            .await
+            .players
+            .get(&(roleid as i64))
+            .is_some_and(|p| p.operacao_de_pet == marcador)
     }
 
     // ------------------------------------------------------------------ equipamento
@@ -1267,7 +1406,7 @@ impl BusServer {
     }
 
     /// `MATTER_ENTER_WORLD` para quem está perto, já anotado como visto.
-    async fn mostrar_drop(&self, d: &crate::entity::ItemDropEntity) {
+    pub(super) async fn mostrar_drop(&self, d: &crate::entity::ItemDropEntity) {
         let perto: Vec<i32> = {
             let mut mundo = self.world.write().await;
             let ids: Vec<i64> = mundo

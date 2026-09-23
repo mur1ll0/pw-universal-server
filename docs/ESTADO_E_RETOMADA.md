@@ -5,8 +5,15 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-22**, B78 (conjurar andando, montaria, e a transformação
-> diagnosticada). Suíte com o banco: **618 testes, 0 falhas**.
+> **Última atualização: 2026-09-22**, B79–B88 (sessão de invocar mascote, estado estendido
+> do jogador, economia de contexto, as 24 habilidades que conjuram andando, o modo roupa que
+> persiste **e agora aparece para o próprio dono**, o descarte de item com destrave de slot,
+> o mapa de água e a montaria que não entra nela). Suíte com o banco: **631 testes, 0
+> falhas** — medir com `--test-threads=2` (skill `pw-testar-e-publicar`).
+>
+> **Publicado no realm 155 em 2026-09-22 23:5x** (B79–B86): os contêineres `pw-world-155` e
+> `pw-realm-155` rodam o código desta sessão, e a coluna `characters.character_mode` está
+> aplicada em `public` e em `test`.
 > com "próximos passos" de várias épocas empilhados. O texto antigo está inteiro, sem
 > alteração, no `HISTORICO_DE_SESSOES.md`.
 >
@@ -82,13 +89,50 @@ ir no último campo do `OWN_EXT_PROP`. Ele ia zero, e o cliente recebia 0→99 e
 mostrando repetidamente o aviso de aumento. A **Flecha Fulgurante não gera chi** no original:
 ela consome mana e aplica `Firearrow`. **Não há ganho ao apanhar** no 1.5.5.
 
-**Montaria (B78):** `SUMMON_PET` (C2S 100) com uma montaria monta nela — velocidade do
-`PET_ESSENCE` sobrepondo a de corrida, `PLAYER_MOUNTING` (227) ao cliente e aos outros, e
-`RECALL_PET` (101) desmonta. `falta`: mascote de combate, trava de ataque montado, água e
-invisibilidade.
+**Montaria (B78, corrigida no B79):** `SUMMON_PET` (C2S 100) com uma montaria monta nela —
+velocidade do `PET_ESSENCE` sobrepondo a de corrida, `PLAYER_MOUNTING` (227) ao cliente e aos
+outros, e `RECALL_PET` (101) desmonta.
 
-**Conjurar andando (B78):** é propriedade da habilidade (`is_movingcast`), não da classe — as
-cinco que existem são todas da classe 11. O movimento não as interrompe mais.
+**A montaria travava porque invocar não é um comando, é uma sessão (B79).** No teste em jogo
+do RT a montaria montou sem canalização e depois **não desmontava**: a jaula só deixava
+clicar em "Inv.", e a resposta era que o mascote já estava ativo. Faltavam três comandos:
+`PLAYER_START_PET_OP` (235) abre a canalização de 60 ticks (3 s; 10 ticks no recolher),
+`SUMMON_PET` (233) diz ao cliente **qual** mascote ficou ativo — sem ele o botão de recolher
+fica desabilitado (`DlgPetList.cpp:227`) — e `PLAYER_STOP_PET_OP` (236) fecha a canalização,
+inclusive quando a invocação é recusada. Desmontar manda também `RECALL_PET` (234). `falta`:
+mascote de combate, trava de ataque montado, água e invisibilidade.
+
+**Item apagado na bolsa (B84).** O cliente **congela o slot antes de mandar qualquer
+comando de item**, e só o `UNFREEZE_IVTR_SLOT` (181) destrava. Os comandos de **descartar**
+(14 e 15) não eram tratados: o item do RT ficou apagado na bolsa depois de ele tentar
+jogá-lo fora. Agora o descarte existe (item vai ao chão sem dono) e o ramo dos comandos não
+tratados destrava os slots, como o `UnLockInventoryHandler` do original. Continua faltando o
+**armazém**, que congela e não é tratado.
+
+**Montaria na água (B88, feito).** O `watermap/` de cada mapa passou a ser lido
+(`pw_data_loader::MapaDeAgua`, spec 03 §3.6b), e com ele as duas regras do original:
+**submerso mais de 0,5 m não monta** (erro 81, depois da canalização) e **mais de 1 m derruba
+a montaria** — a queda roda no batimento de 1 s e manda `PLAYER_MOUNTING(0,0)` mais o
+`RECALL_PET`. `falta`: o fôlego (`breath_ctrl`), que usa o mesmo dado.
+
+**Modo roupa: o dono da tela também precisa saber (B86).** Gravar e recarregar já
+funcionava no B83 — o que faltava era o bit `MODA` no `state` do **`SELF_INFO_1`**, que é de
+onde o cliente lê o próprio modo (`EC_HostPlayer.cpp:819-822`). Os outros jogadores já o
+viam de roupa desde o B80; só ele se via de armadura.
+
+**Estado estendido do jogador (B80).** O `state` do `info_player_1` ia com um bit só, o de
+GM: quem entrava no campo de visão de alguém **montado, voando, morto ou de moda** desenhava
+a pessoa a pé, no chão, viva e de armadura. Esses bits agora viajam, e o `MONTADO` leva junto
+os 6 bytes de `mount_color` + `mount_id`. Cuidado permanente: **os bits decidem o tamanho do
+comando** (`CheckValid`), então cada bit novo tem de escrever o campo dele na ordem do
+original. O campo da transformação (`shape_form`) já está escrito no lugar certo, esperando
+quem porte o `filter_Fairyform`.
+
+**Conjurar andando (B78, corrigido no B82):** é propriedade da habilidade
+(`is_movingcast`), não da classe — as **24** que existem são todas da classe 11, incluindo a
+**2571 e a 2579**, que são as duas de ataque que o RT tem. Eram "cinco" porque o extrator do
+`habilidades.json` só casava `is_movingcast = 1` e deixava de fora os 19 stubs que escrevem
+`= true`; por isso andar ainda cortava a conjuração em jogo.
 
 **Transformação (B78, diagnosticada):** a habilidade 2570 do Tormentador põe o
 `filter_Fairyform`, que muda `shape_form` e liga o `STATE_SHAPE` do `object_state`. **Não
@@ -420,10 +464,16 @@ Depois de publicar o **B71** (falta pedido do Murillo), entram no roteiro:
     Mágico** (e as resistências) da arma.
 16. **Sombra do Olho do Deus (B77)**: matar as três da missão "Surgem as Sombras" — elas
     **não podem renascer**, e devem vir para cima de você assim que nascem.
-17. **Montaria (B78)**: invocar a montaria da sala de mascotes deve **montar** — a
-    velocidade sobe e o modelo aparece; `RECALL_PET` desmonta.
-18. **Conjurar andando (B78)**: com o Tormentador, usar uma das cinco habilidades da classe
-    11 e **andar durante a conjuração** — ela não pode ser cancelada.
+17. **Montaria (B78/B79)**: invocar a montaria da sala de mascotes deve mostrar **a barra de
+    canalização por 3 segundos** e então montar — a velocidade sobe e o modelo aparece.
+    Depois disso o botão **"Rec." da jaula tem de ficar clicável**, e recolher desmonta com
+    meio segundo de canalização. Invocar e recolher várias vezes seguidas não pode deixar o
+    personagem preso em "operando mascote".
+18. **Conjurar andando (B78/B82)**: com o RT, usar a **Explosão Sônica** ou a **Ruptura
+    Descendente** (2571 e 2579) e **andar durante a conjuração** — ela não pode ser
+    cancelada. Era o relato de 22/09: as duas estavam fora da lista por erro do extrator.
+20. **Modo roupa (B83)**: trocar para roupa, **sair para a tela de seleção** e conferir que
+    o avatar continua de roupa; entrar de novo e conferir que continua também em jogo.
 19. **Hierograma (B73/B74)**: deixar a mana cair abaixo de 75 % — ele deve repor sozinho, uma
     vez a cada 10 s, e o número no item deve diminuir. O ícone tem de **escurecer pela
     recarga** a cada disparo (B74). O amuleto de vida faz o mesmo a 50 %.
@@ -478,9 +528,10 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 8. **Sem trava de PvP:** qualquer jogador machuca qualquer outro, em qualquer lugar
     (`bus_server.rs`, comentário em `pvp`). O original exige duelo, guerra ou mapa de PK
     (B35d).
-9. **Mascote de combate e estado estendido do jogador:** a montaria já monta (B78); falta
-    invocar a criatura de combate, e falta o `object_state` estendido — sem ele não há
-    transformação nem forma visível.
+9. **Mascote de combate:** a montaria já monta, com a sessão inteira (B78/B79), e quem chega
+    depois a vê (B80). Falta invocar a criatura de combate. Do estado estendido, os bits que
+    ainda vão zerados são os que não temos dado para preencher — emote, efeitos visíveis,
+    facção, barraca, cônjuge, título, VIP e os outros do `state2` (spec 04).
 10. **Daimon (B75/B76, parcial):** tem ficha e ganha experiência, e só. Faltam o equipamento e
     as habilidades dele, o vigor, as pílulas de experiência, a decomposição, o refino,
     distribuir pontos de atributo e de gênio, e o bônus sorteado de 10 em 10 níveis. **O ganho

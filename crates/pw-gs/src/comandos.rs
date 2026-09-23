@@ -66,6 +66,15 @@ pub mod ids {
     /// `SRV::C2S::CMD::move_inventory_item`
     pub const MOVE_IVTR_ITEM: u16 = 13;
     /// `SRV::C2S::CMD::exchange_equip_item`
+    /// `DROP_IVTR_ITEM` — descartar item da bolsa: `{ u8 index; u32 amount }`
+    /// (`SRV::C2S::CMD::drop_inventory_item`, 7 bytes com o cabeçalho).
+    ///
+    /// O cliente **congela o slot** ao mandar (`c2s_CmdDropIvtrItem`,
+    /// `Network/EC_GameSession.cpp:6318-6322`) e só o destrava com o `UNFREEZE_IVTR_SLOT`
+    /// (181). Sem tratamento, o item fica apagado na bolsa para sempre (B84).
+    pub const DROP_IVTR_ITEM: u16 = 14;
+    /// `DROP_EQUIP_ITEM` — descartar peça vestida: `{ u8 index }`.
+    pub const DROP_EQUIP_ITEM: u16 = 15;
     pub const EXG_EQUIP_ITEM: u16 = 16;
     /// `SRV::C2S::CMD::equip_item`
     pub const EQUIP_ITEM: u16 = 17;

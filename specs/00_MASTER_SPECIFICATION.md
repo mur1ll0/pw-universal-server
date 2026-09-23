@@ -36,6 +36,11 @@ Ordem de trabalho combinada: 1.5.5 funcional → 1.2.6 funcional → banco, pain
    (`pw_protocol::PorVersao`), não em ramos espalhados.
 6. **Teste contra a fonte, não contra si mesmo.** Codificadores são conferidos contra o IR;
    leitores de arquivo contra o arquivo real do realm, fechando no último byte.
+7. **Contexto é recurso.** As specs são curtas para que cada sessão leia pouco, e a mesma
+   economia vale para o trabalho: saída de ferramenta entra filtrada (`grep`, `awk`,
+   `tail`), rodada longa vai para segundo plano, e o que se traz é o número, não a lista.
+   Quem trabalha aqui relata o consumo de tokens por etapa — ver
+   `.claude/agents/pw-server-dev.md` e a skill `pw-testar-e-publicar`.
 
 ## 3. Arquitetura em uma figura
 

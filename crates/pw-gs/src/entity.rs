@@ -93,11 +93,15 @@ pub struct PlayerEntity {
     /// Não há coluna no banco para isso, e nem deveria: quem relogar entra no chão, que é
     /// o que o cliente também assume.
     pub voando: bool,
-    /// A montaria em uso: `(pet_tid, cor, velocidade que ela impõe)`. O original é o
-    /// `mount_filter` (`gs/mount_filter.cpp:24-45`), que liga o `STATE_MOUNT`, manda
-    /// `PLAYER_MOUNTING` e **sobrepõe** a velocidade de corrida
-    /// (`EnhanceOverrideSpeed`, `gs/player.cpp:14279-14299`).
-    pub montaria: Option<(u32, u16, f32)>,
+    /// A montaria em uso. O original é o `mount_filter` (`gs/mount_filter.cpp:24-45`), que
+    /// liga o `STATE_MOUNT`, manda `PLAYER_MOUNTING` e **sobrepõe** a velocidade de
+    /// corrida (`EnhanceOverrideSpeed`, `gs/player.cpp:14279-14299`).
+    pub montaria: Option<MontariaAtiva>,
+    /// O marcador da operação de mascote aberta — o `session_pet_operation` do original
+    /// (`gs/actsession.h:1203-1246`). Cada `SUMMON_PET`/`RECALL_PET` novo incrementa, e a
+    /// tarefa que conclui a canalização só age se o marcador ainda for o dela; é assim que
+    /// um segundo pedido cancela o primeiro em vez de os dois se aplicarem.
+    pub operacao_de_pet: u64,
     /// O jogador está mostrando a roupa (moda) no lugar da armadura.
     ///
     /// É estado de aparência, e o cliente alterna com o `SWITCH_FASHION_MODE` (C2S 85).
@@ -208,6 +212,24 @@ pub struct PlayerEntity {
     /// `actobject.h:1422-1469`). É a base do dano de habilidade.
     pub dano_bruto: (i32, i32),
     pub dano_magico_bruto: (i32, i32),
+}
+
+/// O mascote de montaria em uso — o que o `mount_filter` guarda no original, mais o slot
+/// da jaula, que é o que o cliente precisa de volta no `SUMMON_PET`/`RECALL_PET`
+/// (`gs/petman.cpp:1328-1339`, `:1376`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MontariaAtiva {
+    /// O índice na sala de mascotes (`_cur_active_pet`).
+    pub indice: u16,
+    /// O modelo que aparece: `pet_vis_tid` quando existe, senão `pet_tid`
+    /// (`gs/player.cpp:14483-14486`).
+    pub tid: u32,
+    /// O `pet_tid` do bloco. É **este** que o cliente confere contra o mascote da jaula
+    /// (`ASSERT(pPet->GetTemplateID() == pCmd->pet_tid)`, `EC_HostMsg.cpp:5278`).
+    pub pet_tid: u32,
+    pub cor: u16,
+    /// A velocidade que a montaria impõe, já com o nível dentro.
+    pub velocidade: f32,
 }
 
 /// Uma conjuração aberta.
@@ -671,6 +693,15 @@ impl PlayerEntity {
             feminino: self.gender == pw_core::Gender::Female,
             crc_equipamento: 0,
             crc_aparencia: self.crc_aparencia,
+            voando: self.voando,
+            morto: self.hp <= 0,
+            modo_roupa: self.modo_roupa,
+            // `mount_color` e `mount_id` do original (`gs/player.cpp:14293-14294`): o
+            // `PLAYER_MOUNTING` só alcança quem estava vendo na hora; quem chega depois
+            // precisa do estado aqui.
+            montaria: self.montaria.map(|m| (m.cor, m.tid as i32)),
+            // `shape_form` — nada o liga ainda (o `filter_Fairyform` não está portado).
+            forma: None,
         }
     }
 }
@@ -960,8 +991,10 @@ impl PlayerEntity {
             centro_do_stream: p.position,
             voando: false,
             montaria: None,
-            // Todo mundo entra mostrando a armadura; o banco não guarda esta escolha.
-            modo_roupa: false,
+            operacao_de_pet: 0,
+            // A escolha sobrevive ao logout: vem do `charactermode` do banco, como o
+            // `SetPlayerCharMode` do original faz no login (B83).
+            modo_roupa: p.modo_roupa,
             // Quem preenche é `BusServer::colocar_no_mundo`, que tem o repositório à mão;
             // o `CharacterDetails` não traz o privilégio da conta.
             sec_level: 0,

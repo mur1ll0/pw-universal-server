@@ -76,6 +76,7 @@ fn base() -> TabelaDeBase {
 
 fn personagem(level: i32, vitality: i32, energy: i32, agility: i32) -> CharacterDetails {
     CharacterDetails {
+        modo_roupa: false,
         id: 42,
         account_id: 7,
         realm_id: "realm_155".into(),

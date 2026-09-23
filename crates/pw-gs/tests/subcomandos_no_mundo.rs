@@ -2798,6 +2798,24 @@ async fn o_botao_de_roupa_alterna_e_avisa_os_dois_lados() {
     let volta = receber(&mut anfitriao, 1).await;
     let pacote = volta.iter().find(|v| cmd_de(v) == 192).expect("sem resposta na volta");
     assert_eq!(pacote[6], 0, "clicar de novo tem de voltar para a armadura");
+
+    // B83 — e a escolha **sobrevive ao logout**: vai para o `charactermode` do banco, que é
+    // de onde a tela de seleção lê para desenhar o avatar (`CECLoginPlayer::Load`,
+    // `EC_LoginPlayer.cpp:172-189`). A gravação é assíncrona, como a de durabilidade.
+    anfitriao
+        .enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SWITCH_FASHION_MODE, &[]) })
+        .await
+        .unwrap();
+    let _ = receber(&mut anfitriao, 1).await;
+    let repo = mundo.read().await.char_repo.clone();
+    let gravou = ate_async(|| {
+        let repo = repo.clone();
+        async move {
+            repo.get_details_por_role(roleid).await.ok().flatten().is_some_and(|c| c.modo_roupa)
+        }
+    })
+    .await;
+    assert!(gravou, "o modo roupa não chegou ao `charactermode` do banco");
 }
 
 /// Uma cura em si mesmo tem de **subir a vida** e mandar o número para a tela.
@@ -3813,11 +3831,204 @@ async fn o_hierograma_vestido_devolve_mana_sozinho() {
     );
 }
 
-/// B78 — montar: `SUMMON_PET` (C2S 100) com uma montaria é montar nela.
+/// B84 — jogar um item fora tem de **destravar o slot**, senão ele fica apagado na bolsa.
+///
+/// O cliente congela o slot ao mandar o comando (`c2s_CmdDropIvtrItem`,
+/// `Network/EC_GameSession.cpp:6318-6322`) e nada, fora o `UNFREEZE_IVTR_SLOT` (181), limpa
+/// esse estado (`CECIvtrItem::NetFreeze`, `EC_IvtrItem.h:292`; único `NetFreeze(false)` em
+/// `EC_HostMsg.cpp:2063`). Os comandos 14 e 15 não eram tratados: o item do RT ficou
+/// apagado na bolsa depois de ele tentar descartá-lo.
+#[tokio::test]
+async fn descartar_item_joga_no_chao_e_destrava_o_slot() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    const TID: u32 = 1000;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens
+        .upsert_item(&pw_core::ItemRecord {
+            id: None,
+            character_id: roleid,
+            container_type: pw_core::ContainerType::Inventory,
+            slot: 5,
+            item_id: TID,
+            count: 3,
+            max_count: 99,
+            refine_level: 0,
+            sockets_count: 0,
+            sockets: vec![],
+            durability: 0,
+            max_durability: 0,
+            bind_status: 0,
+            octets: vec![],
+            custom_attributes: serde_json::json!({}),
+        })
+        .await
+        .expect("guardar o item");
+
+    // Descarta 2 dos 3.
+    let mut corpo = vec![5u8];
+    corpo.extend_from_slice(&2u32.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::DROP_IVTR_ITEM, &corpo) })
+        .await
+        .unwrap();
+
+    let aviso = esperar_comando(&mut link, 46).await;
+    assert_eq!(aviso[2], 0, "pacote 0 = bolsa");
+    assert_eq!(aviso[3], 5, "o slot");
+    assert_eq!(u32::from_le_bytes([aviso[4], aviso[5], aviso[6], aviso[7]]), 2, "quantos foram");
+    assert_eq!(i32_em(&aviso, 8), TID as i32, "o tid");
+    assert_eq!(aviso[12], 1, "DROP_TYPE_PLAYER");
+
+    // **O destrave.** Sem ele o slot fica apagado na tela.
+    let destrave = esperar_comando(&mut link, 181).await;
+    assert_eq!(destrave[2], 0, "pacote da bolsa");
+    assert_eq!(u16::from_le_bytes([destrave[3], destrave[4]]), 5, "o mesmo slot");
+
+    // Sobrou 1 no slot, e o que saiu está no chão.
+    let sobrou = itens
+        .get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 5)
+        .await
+        .expect("consulta")
+        .expect("o resto do monte tem de ficar");
+    assert_eq!(sobrou.count, 1, "3 − 2 = 1");
+    assert!(
+        mundo.read().await.drops.values().any(|d| d.item_id == TID && d.count == 2),
+        "o item descartado não foi para o chão"
+    );
+}
+
+/// B84 — descartar de um slot **vazio** também destrava.
+///
+/// O cliente congela antes de mandar, então todo caminho de saída do tratador tem de
+/// devolver o `UNFREEZE_IVTR_SLOT` — inclusive os de desistência. É a mesma regra do
+/// `UnLockInventoryHandler` do original (`gs/playercmd.cpp:183-230`), que destrava os
+/// slots de um comando de item sempre que ele não vai ser executado.
+#[tokio::test]
+async fn descartar_slot_vazio_ainda_destrava() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let mut corpo = vec![42u8];
+    corpo.extend_from_slice(&1u32.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::DROP_IVTR_ITEM, &corpo) })
+        .await
+        .unwrap();
+
+    let destrave = esperar_comando(&mut link, 181).await;
+    assert_eq!(u16::from_le_bytes([destrave[3], destrave[4]]), 42, "o slot vazio tem de voltar destravado");
+}
+
+/// B88 — montaria terrestre não entra na água, e cai se a água vier até ela.
+///
+/// O original recusa no `mount_petdata_imp::DoActivePet` com `IsUnderWater()`
+/// (`gs/petman.cpp:344-348`), e derruba quem já está montado quando passa de **1 metro**
+/// abaixo da superfície (`TestUnderWater`, `:402-410`). Os dois limiares vêm do
+/// `gplayer_imp::TestUnderWater` (`gs/player.cpp:14336-14342`): meio metro para contar como
+/// submerso, um metro para a montaria cair.
+#[tokio::test]
+async fn a_montaria_nao_entra_na_agua_e_cai_se_a_agua_subir() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    const PET_TID: i32 = 8600;
+    let mut info = pw_core::InfoPet::default();
+    info.pet_tid = PET_TID;
+    info.level = 1;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens
+        .upsert_item(&pw_core::ItemRecord {
+            id: None,
+            character_id: roleid,
+            container_type: pw_core::ContainerType::PetCorral,
+            slot: 0,
+            item_id: PET_TID as u32,
+            count: 1,
+            max_count: 1,
+            refine_level: 0,
+            sockets_count: 0,
+            sockets: vec![],
+            durability: 0,
+            max_durability: 0,
+            bind_status: 0,
+            octets: info.para_bytes(),
+            custom_attributes: serde_json::json!({}),
+        })
+        .await
+        .expect("guardar a montaria");
+
+    // Uma poça de água com a superfície bem acima do jogador, em volta de onde ele está.
+    let pos = {
+        let mut m = mundo.write().await;
+        let dm = Arc::make_mut(&mut m.data_manager);
+        dm.velocidades_de_montaria.insert(PET_TID as u32, (5.0, 0.0));
+        let pos = m.players[&(roleid as i64)].position;
+        m.agua = agua_em_volta(pos, pos.y + 3.0);
+        pos
+    };
+    assert!(mundo.read().await.esta_na_agua(pos), "o cenário tem de deixar o jogador submerso");
+
+    // 1. Submerso, invocar a montaria é recusado — e o erro só chega **depois** da
+    //    canalização, porque é lá que o original confere.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) })
+        .await
+        .unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 81, "ERR_PET_CAN_NOT_MOUNT");
+    assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_none(), "montou dentro d'água");
+
+    // 2. Agora em terra seca: monta.
+    mundo.write().await.agua = pw_data_loader::MapaDeAgua::vazio();
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) })
+        .await
+        .unwrap();
+    esperar_comando(&mut link, 227).await;
+    assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_some(), "não montou em terra");
+
+    // 3. A água chega até ele: no batimento seguinte a montaria cai, com o
+    //    `PLAYER_MOUNTING` zerado e o `RECALL_PET` que libera a jaula.
+    {
+        let mut m = mundo.write().await;
+        m.agua = agua_em_volta(pos, pos.y + 3.0);
+    }
+    // O batimento de 1 s é quem confere a água (`TestUnderWater` do original). Este cenário
+    // não roda o laço de tique: os testes batem o relógio à mão.
+    mundo.write().await.tick(1000).await;
+
+    let caiu = esperar_comando(&mut link, 227).await;
+    assert_eq!(i32_em(&caiu, 6), 0, "a montaria caiu: mount_id zero");
+    esperar_comando(&mut link, 234).await;
+    assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_none());
+}
+
+/// Uma área de água de 100 m de lado em volta de `centro`, com a superfície em `altura`.
+fn agua_em_volta(centro: pw_core::Vector3, altura: f32) -> pw_data_loader::MapaDeAgua {
+    pw_data_loader::MapaDeAgua::de_areas(
+        1,
+        1,
+        4096.0,
+        4096.0,
+        vec![vec![pw_data_loader::AreaDeAgua {
+            centro_x: centro.x,
+            centro_z: centro.z,
+            meia_largura: 50.0,
+            meio_comprimento: 50.0,
+            altura,
+        }]],
+    )
+}
+
+/// B78/B79 — montar: `SUMMON_PET` (C2S 100) com uma montaria é montar nela, **por sessão**.
 ///
 /// `pet_man::ActivePet` (`gs/petman.cpp:319-392`) confere o estado, calcula
 /// `speed_a + speed_b × (nível − 1)` (`petdataman.h:186-194`) e põe o `mount_filter`, que
 /// manda `PLAYER_MOUNTING` (227) e sobrepõe a velocidade (`mount_filter.cpp:24-33`).
+///
+/// O que o B79 acrescentou é a sessão em volta (`session_summon_pet`,
+/// `gs/player.cpp:14474-14491`): `PLAYER_START_PET_OP` (235) abre a canalização de 60
+/// ticks, o efeito só vem depois dela, e no fim vão o `SUMMON_PET` (233) — que diz ao
+/// cliente **qual** mascote ficou ativo — e o `PLAYER_STOP_PET_OP` (236). O teste é lento
+/// de propósito: os 3 s da canalização são os do original.
 #[tokio::test]
 async fn montar_muda_a_velocidade_e_avisa_o_cliente() {
     let (mundo, addr, roleid, _convidado) = cenario!();
@@ -3864,6 +4075,18 @@ async fn montar_muda_a_velocidade_e_avisa_o_cliente() {
         .await
         .unwrap();
 
+    // 1. A canalização abre na hora: `PLAYER_START_PET_OP` com 60 ticks e `op` 0.
+    let abriu = esperar_comando(&mut link, 235).await;
+    assert_eq!(i32_em(&abriu, 2), 0, "slot_index");
+    assert_eq!(i32_em(&abriu, 6), PET_TID, "pet_id");
+    assert_eq!(i32_em(&abriu, 10), 60, "delay em ticks de 50 ms (`SetDelay(60)`)");
+    assert_eq!(i32_em(&abriu, 14), 0, "op 0 = invocar");
+    assert!(
+        mundo.read().await.players[&(roleid as i64)].montaria.is_none(),
+        "montou antes da canalização terminar"
+    );
+
+    // 2. Três segundos depois vem o efeito.
     let montou = esperar_comando(&mut link, 227).await;
     assert_eq!(i32_em(&montou, 2), roleid, "o PLAYER_MOUNTING é do jogador");
     assert_eq!(i32_em(&montou, 6), PET_TID, "mount_id");
@@ -3871,16 +4094,39 @@ async fn montar_muda_a_velocidade_e_avisa_o_cliente() {
     {
         let m = mundo.read().await;
         let p = &m.players[&(roleid as i64)];
-        assert_eq!(p.montaria.map(|(t, _, v)| (t, v)), Some((PET_TID as u32, 6.0)), "a montaria não entrou");
+        let mont = p.montaria.expect("a montaria não entrou");
+        assert_eq!((mont.tid, mont.velocidade), (PET_TID as u32, 6.0));
+        assert_eq!(mont.indice, 0, "o slot da jaula fica guardado, é o que volta no RECALL_PET");
         assert_eq!(p.move_speed, 6.0, "a velocidade não passou a ser a da montaria");
     }
 
-    // Desmontar devolve tudo e avisa com zero nos dois campos.
+    // 3. **`SUMMON_PET` (233)**: é ele que faz o cliente saber qual mascote está ativo.
+    // Sem ele o botão de recolher da jaula fica desabilitado (`DlgPetList.cpp:227`) e
+    // invocar de novo responde "já está ativo" — o travamento do teste em jogo do B78.
+    let ativo = esperar_comando(&mut link, 233).await;
+    assert_eq!(i32_em(&ativo, 2), 0, "slot_index");
+    assert_eq!(i32_em(&ativo, 6), PET_TID, "pet_tid: o cliente confere contra a jaula");
+    assert_eq!(i32_em(&ativo, 10), 0, "pet_pid: montaria não põe criatura no mundo");
+    assert_eq!(i32_em(&ativo, 14), 0, "life_time: sem prazo");
+
+    // 4. E a canalização fecha (`PLAYER_STOP_PET_OP`).
+    esperar_comando(&mut link, 236).await;
+
+    // Desmontar passa pela mesma sessão, com 10 ticks e `op` 1.
     link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::RECALL_PET, &[]) })
         .await
         .unwrap();
+    let abriu = esperar_comando(&mut link, 235).await;
+    assert_eq!(i32_em(&abriu, 10), 10, "delay do recolher (`SetDelay(10)`)");
+    assert_eq!(i32_em(&abriu, 14), 1, "op 1 = recolher");
     let desmontou = esperar_comando(&mut link, 227).await;
     assert_eq!(i32_em(&desmontou, 6), 0, "desmontar manda mount_id zero");
+    let recolheu = esperar_comando(&mut link, 234).await;
+    assert_eq!(i32_em(&recolheu, 2), 0, "slot_index");
+    assert_eq!(i32_em(&recolheu, 6), PET_TID, "pet_tid");
+    assert_eq!(recolheu[10], 0, "PET_RECALL_DEFAULT");
+    assert_eq!(recolheu.len(), 11, "o RECALL_PET tem 11 bytes");
+    esperar_comando(&mut link, 236).await;
     assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_none());
 }
 

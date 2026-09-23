@@ -134,8 +134,9 @@ impl WorldProtocol for V172Protocol {
         world_id: i32,
         pos: pw_core::Vector3,
         sec_level: u8,
+        modo_roupa: bool,
     ) -> crate::packets::s2c::S2CGamedataSend {
-        self.0.self_info_1(exp, sp, world_id, pos, sec_level)
+        self.0.self_info_1(exp, sp, world_id, pos, sec_level, modo_roupa)
     }
 
     fn player_enter_world(&self, role_id: i32, vista: pw_core::VistaDoJogador) -> crate::packets::s2c::S2CGamedataSend {

@@ -26,6 +26,10 @@ pub struct CharacterRecord {
     /// `GetWaypointBuffer` do original (`gs/player_imp.h:2545-2550`).
     #[sqlx(default)]
     pub waypoints: Vec<u8>,
+    /// `charactermode` do original: pares (chave, valor) de `int32`, chave 1 = modo roupa
+    /// (`GetPlayerCharMode`, `gs/player.cpp:12585-12612`).
+    #[sqlx(default)]
+    pub character_mode: Vec<u8>,
     /// `_basic.ap` e `_base_prop.max_ap` — a barra de chi.
     #[sqlx(default)]
     pub ap: i32,
@@ -382,6 +386,7 @@ impl CharacterRepository {
                 is_deleted: r.is_deleted,
                 delete_time: r.deleted_at,
                 last_login_at: r.last_login_at,
+                character_mode: r.character_mode,
             });
         }
 
@@ -557,6 +562,7 @@ impl CharacterRepository {
         }
 
         let details = CharacterDetails {
+            modo_roupa: pw_core::modo_roupa_do_charactermode(&r.character_mode),
             id: r.id,
             account_id: r.account_id,
             realm_id: r.realm_id,
@@ -701,6 +707,20 @@ impl CharacterRepository {
         sqlx::query("UPDATE characters SET ap = $1, max_ap = $2 WHERE id = $3")
             .bind(ap)
             .bind(max_ap)
+            .bind(role_id)
+            .execute(self.pool.get_ref())
+            .await?;
+        Ok(())
+    }
+
+    /// Grava o `charactermode` — hoje, só o modo roupa.
+    ///
+    /// O original o grava junto com o resto do personagem, no autosave e no logout
+    /// (`gs/userlogin.cpp:736-741`). Aqui é uma escrita própria, disparada na troca: são 8
+    /// bytes, e o jogador espera que a escolha sobreviva mesmo a uma queda do servidor.
+    pub async fn salvar_modo_roupa(&self, role_id: RoleId, ligado: bool) -> Result<()> {
+        sqlx::query("UPDATE characters SET character_mode = $1 WHERE id = $2")
+            .bind(pw_core::charactermode_de_modo_roupa(ligado))
             .bind(role_id)
             .execute(self.pool.get_ref())
             .await?;

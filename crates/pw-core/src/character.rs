@@ -29,7 +29,42 @@ pub struct CharacterSummary {
     /// personagem vem selecionado: ele varre a lista e fica com o de maior valor
     /// (`EC_LoginUIMan.cpp:809-818`). Com zero em todos, caía sempre no primeiro.
     pub last_login_at: Option<DateTime<Utc>>,
+    /// `charactermode` — o blob de modos do personagem, como o original o guarda: pares
+    /// `(chave, valor)` de `int32`, e a única chave definida é a **1, o modo roupa**
+    /// (`PLAYER_CHAR_MODE_FASHION`, `gs/player_mode.h:6`; `GetPlayerCharMode`,
+    /// `gs/player.cpp:12585-12592`).
+    ///
+    /// Viaja **cru** no `RoleInfo` da lista de personagens, e é de lá que a tela de seleção
+    /// decide se desenha o avatar de roupa ou de armadura (`CECLoginPlayer::Load`,
+    /// `EC_LoginPlayer.cpp:172-189`, que lê `size / 8` pares).
+    pub character_mode: Vec<u8>,
 }
+
+/// O `charactermode` de quem está (ou não) em modo roupa.
+///
+/// `GetPlayerCharMode` **só escreve o par quando o modo está ligado** — desligado, o blob
+/// sai vazio (`gs/player.cpp:12585-12592`).
+pub fn charactermode_de_modo_roupa(ligado: bool) -> Vec<u8> {
+    if !ligado {
+        return Vec::new();
+    }
+    let mut v = Vec::with_capacity(8);
+    v.extend_from_slice(&MODO_ROUPA.to_le_bytes());
+    v.extend_from_slice(&1i32.to_le_bytes());
+    v
+}
+
+/// O inverso: o modo roupa está ligado neste `charactermode`?
+pub fn modo_roupa_do_charactermode(blob: &[u8]) -> bool {
+    blob.chunks_exact(8).any(|par| {
+        let chave = i32::from_le_bytes([par[0], par[1], par[2], par[3]]);
+        let valor = i32::from_le_bytes([par[4], par[5], par[6], par[7]]);
+        chave == MODO_ROUPA && valor != 0
+    })
+}
+
+/// `PLAYER_CHAR_MODE_FASHION` (`gs/player_mode.h:6`).
+const MODO_ROUPA: i32 = 1;
 
 impl CharacterSummary {
     /// Um `CharacterSummary` zerado, para quando o protocolo exige um `RoleInfo` mas
@@ -54,6 +89,7 @@ impl CharacterSummary {
             is_deleted: false,
             delete_time: None,
             last_login_at: None,
+            character_mode: Vec::new(),
         }
     }
 }
@@ -61,6 +97,10 @@ impl CharacterSummary {
 /// Dados completos do Personagem para o Game Engine (`pw-gs`)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CharacterDetails {
+    /// O modo roupa, tirado do `charactermode` do banco
+    /// (`SetPlayerCharMode`, `gs/player.cpp:12596-12612`, chamado no login em
+    /// `gs/userlogin.cpp:161`). O original o restaura **antes** de o jogador aparecer.
+    pub modo_roupa: bool,
     pub id: RoleId,
     pub account_id: AccountId,
     pub realm_id: RealmId,
@@ -169,6 +209,30 @@ impl QuestStatus {
 /// jogador é homem — e o cliente acredita: duas sacerdotisas voltaram ao campo de visão
 /// como modelo masculino, com cabelo e barba de padrão.
 pub const ESTADO2_MULHER: i32 = 0x0000_0040;
+
+/// Bits do `object_state` que o `info_player_1` carrega (`gs/object.h:143-180`, iguais aos
+/// `GP_STATE_*` do cliente em `Network/EC_GPDataType.h:198-234`).
+///
+/// **Alguns deles acrescentam bytes ao comando.** O cliente calcula o tamanho esperado a
+/// partir dos bits (`info_player_1::CheckValid`, `EC_GPDataType.h:624-710`) e, se a conta
+/// não fechar, descarta o pacote em silêncio. Quem liga um bit destes escreve o campo dele
+/// **na ordem do original** (`MakePlayerExtendState`, `common/protocol_imp.h:62-180`).
+pub mod estado_do_jogador {
+    /// Transformado. Acrescenta 1 byte: `shape_form` (`protocol_imp.h:70-73`).
+    pub const FORMA: i32 = 0x0000_0001;
+    /// Voando. Sem campo — o cliente só põe o avatar no ar (`MOVEENV_AIR`,
+    /// `EC_ElsePlayer.cpp:335-337`).
+    pub const VOO: i32 = 0x0000_0010;
+    /// Cadáver (`STATE_ZOMBIE`). Sem campo.
+    pub const CADAVER: i32 = 0x0000_0080;
+    /// Mostrando a roupa de moda no lugar da armadura (`STATE_FASHION_MODE`). Sem campo.
+    pub const MODA: i32 = 0x0000_2000;
+    /// GM. Sem campo.
+    pub const MESTRE_DO_JOGO: i32 = 0x0000_4000;
+    /// Montado. Acrescenta **6 bytes**: `u16 mount_color` e depois `i32 mount_id`
+    /// (`protocol_imp.h:105-109`, lido em `EC_ElsePlayer.cpp:445-455`).
+    pub const MONTADO: i32 = 0x0008_0000;
+}
 
 /// O carimbo da aparência de um personagem — o `custom_crc` do original.
 ///
@@ -417,4 +481,20 @@ pub struct VistaDoJogador {
     /// `crc_c` — carimbo da aparência. Tem de ser **o mesmo** valor que o `custom_stamp`
     /// do `PlayerBaseInfo_Re` daquele personagem. Ver [`stamp_de_aparencia`].
     pub crc_aparencia: u16,
+    /// Voando: vira o bit [`estado_do_jogador::VOO`]. Sem ele, quem chega perto de alguém
+    /// no ar desenha a pessoa **no chão** até o primeiro pacote de movimento.
+    pub voando: bool,
+    /// Cadáver ([`estado_do_jogador::CADAVER`]) — `IsZombie()` do original
+    /// (`MakeObjectState`, `common/protocol_imp.h:50-60`).
+    pub morto: bool,
+    /// Mostrando a roupa de moda ([`estado_do_jogador::MODA`]).
+    pub modo_roupa: bool,
+    /// A montaria debaixo do jogador: `(cor, modelo)`. Liga [`estado_do_jogador::MONTADO`]
+    /// e **acrescenta 6 bytes** ao comando. Sem isto, quem entra no campo de visão de quem
+    /// já estava montado vê a pessoa a pé — o `PLAYER_MOUNTING` (227) só alcança quem
+    /// estava vendo na hora em que ela montou.
+    pub montaria: Option<(u16, i32)>,
+    /// A forma da transformação (`shape_form`): liga [`estado_do_jogador::FORMA`] e
+    /// acrescenta 1 byte. Nada a liga ainda — o `filter_Fairyform` não está portado.
+    pub forma: Option<u8>,
 }

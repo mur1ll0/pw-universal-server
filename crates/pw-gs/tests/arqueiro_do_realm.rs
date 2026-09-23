@@ -36,6 +36,7 @@ fn realm() -> Option<Realm> {
 /// O eaa do teste: Arqueiro nível 3, 5/5/5/10 (5 pontos em agilidade).
 fn arqueiro() -> CharacterDetails {
     CharacterDetails {
+        modo_roupa: false,
         id: 5491,
         account_id: 1,
         realm_id: "realm_155".into(),

@@ -8372,3 +8372,514 @@ comparação lado a lado.
     comando), a trava de ataque enquanto montado, água/invisibilidade/transformação como
     recusa, a queda da montaria por lealdade — e o estado estendido do jogador, que é o que
     falta para a transformação aparecer.
+
+79. **Sessão 2026-09-22 (parte 3): a montaria travava porque invocar mascote é uma sessão.**
+
+    **O relato.** O Murillo testou a montaria do B78 com o RT: "invoquei a montaria, não
+    apareceu canalização e só montou. Porém não consigo mais desmontar, aparece 'mascote
+    está em processo de convocação'. Pela jaula só consigo clicar no botão Inv. e dá a mesma
+    mensagem, como se o estado de invocação não tivesse ficado correto."
+
+    **A causa, no cliente.** O botão "Rec." da jaula só liga quando o slot é o do mascote
+    ativo: `bEnable = (pPetCorral->GetActivePetIndex() == nPetSlot && IsOperatingPet() == 0)`
+    (`DlgPetList.cpp:227-230`). Quem preenche esse índice é o S2C **`SUMMON_PET` (233)**
+    (`SetActivePetIndex(pCmd->slot_index)`, `EC_HostMsg.cpp:5274-5296`) — que nós não
+    mandávamos. Com o índice em −1 o cliente ficava com a montaria debaixo do personagem e
+    sem nenhum mascote ativo: "Rec." apagado, e "Inv." mandando `SUMMON_PET` de novo, que o
+    nosso servidor recusava com `ERR_PET_IS_ALEARY_ACTIVE` (71) — a mensagem que ele leu.
+
+    **A causa, no servidor.** Invocar **não é um comando, é uma sessão**. O
+    `gplayer_imp::PlayerSummonPet` (`gs/player.cpp:14474-14491`) só confere que o mascote
+    existe e abre uma `session_summon_pet` com `SetDelay(60)`; o resto é o ciclo da sessão
+    (`gs/actsession.cpp:1705-1721`):
+
+    - `OnStart` → `start_pet_operation(index, tid, delay, op)` = **`PLAYER_START_PET_OP`
+      (235)**. O cliente cria o `WORK_CONCENTRATE` e conta `delay × 50 ms`
+      (`EC_HostMsg.cpp:5335-5356`) — a canalização que faltava. A unidade é o tick do
+      original (`TICK_PER_SEC 20`, `gs/config.h:43`), então 60 ticks são 3 s.
+    - `OnRepeat`, depois do atraso → `SummonPet` → `pet_manager::ActivePet`
+      (`gs/petman.cpp:1303-1348`): o `mount_filter` manda `PLAYER_MOUNTING` (227) e sobrepõe
+      a velocidade, e **em seguida** vai o `summon_pet(index, pet_tid, 0, 0)` (`:1337`).
+    - `OnEnd` → `end_pet_operation()` = **`PLAYER_STOP_PET_OP` (236)**, sem corpo. Sem ele o
+      `IsOperatingPet()` do cliente (`EC_HostPlayer.cpp:8661-8680`) nunca volta a zero e o
+      personagem recusa atacar, conjurar e invocar.
+
+    Recolher é a mesma coisa com `session_recall_pet`, `SetDelay(10)` (0,5 s) e `op` 1
+    (`gs/player.cpp:14492-14512`), e termina com `PLAYER_MOUNTING(0, 0)` seguido de
+    **`RECALL_PET` (234)** com `PET_RECALL_DEFAULT` = 0 (`gs/petman.cpp:1376`).
+
+    **Um detalhe do original que tínhamos errado:** `PlayerSummonPet` deixa **comentada** a
+    recusa por mascote já ativo (`// if(_petman.IsPetActive()) return ERR_PET_IS_ALEARY_ACTIVE`,
+    `player.cpp:14476`). Quem já tem um mascote não é recusado: o `ActivePet` recolhe o
+    anterior e põe o novo (`petman.cpp:1308-1312`). Nós recusávamos — e era justamente o erro
+    que aparecia na tela. A conferência de montaria (chão, voo, `CalcMountParam`) fica onde o
+    original a tem: **depois** da canalização, dentro do `DoActivePet`.
+
+    **Layouts** (`common/protocol.h:2725-2753`, escritos sem enchimento pelo `<<`; conferidos
+    contra o IR do 1.5.5):
+
+    | comando | id | corpo |
+    | :--- | ---: | :--- |
+    | `SUMMON_PET` | 233 | `int slot_index; int pet_tid; int pet_pid; int life_time` (16 B) |
+    | `RECALL_PET` | 234 | `int slot_index; int pet_id; char reason` (**9 B**, não 12) |
+    | `PLAYER_START_PET_OP` | 235 | `int slot_index; int pet_id; int delay; int op` (16 B) |
+    | `PLAYER_STOP_PET_OP` | 236 | vazio |
+
+    O `pet_tid` do `SUMMON_PET` é o do bloco do mascote, não o `pet_vis_tid`: o cliente o
+    confere contra a jaula (`ASSERT(pPet->GetTemplateID() == pCmd->pet_tid)`,
+    `EC_HostMsg.cpp:5278`). O `pet_vis_tid` é o que vai no `PLAYER_MOUNTING` e no
+    `START_PET_OP`, porque é o modelo (`player.cpp:14483-14486`).
+
+    **O que mudou aqui.** Os quatro codificadores novos em `s2c.rs`; `MontariaAtiva` no
+    `PlayerEntity` (agora com o **slot da jaula** e o `pet_tid`, que é o que volta ao
+    cliente) e um contador `operacao_de_pet` que faz um pedido novo invalidar a canalização
+    aberta, como o `AddSession` do original; `invocar_mascote`/`recolher_mascote` reescritos
+    como sessão, com o efeito em `montar`/`desmontar` numa tarefa adiada — o mesmo desenho da
+    conjuração de habilidade, e nada bloqueando o fio do barramento por 3 s.
+
+    ### Provas
+
+    `montar_muda_a_velocidade_e_avisa_o_cliente` passou a cobrir a sequência inteira: 235 com
+    `delay` 60 e `op` 0, nada de montaria no mundo até a canalização acabar, 227 com id,
+    modelo e cor, **233 com o slot e o `pet_tid`**, 236; depois 235 com `delay` 10 e `op` 1,
+    227 zerado, 234 com 11 bytes e motivo 0, 236. O teste leva 6 s de propósito — são os 3 s
+    do original. Os quatro codificadores passaram pela guarda contra o IR
+    (`cada_codificador_escreve_o_id_que_o_ir_da_ao_comando`), que confirmou inclusive os 9
+    bytes do `RECALL_PET`.
+
+    `cargo test -p pw-gs -p pw-protocol`: tudo passa. O
+    `aceitar_forma_o_grupo_e_avisa_os_dois_com_dados_reais` falhou uma vez na rodada cheia e
+    passa isolado — é a instabilidade sob carga já registrada no B74, agora mais provável
+    porque o teste da montaria segura o binário por 6 s.
+
+    ### Falta
+
+    Mascote de **combate** (o outro caminho do mesmo comando), a trava de ataque montado,
+    água/invisibilidade/transformação como recusa, a queda por lealdade, e o
+    `mount_id`/`mount_color` no bloco de AOI do jogador (`gs/player.h:94`) — hoje quem entra
+    no campo de visão **depois** não vê a montaria, porque só o `PLAYER_MOUNTING` do momento
+    é transmitido.
+
+80. **Sessão 2026-09-22 (parte 4): o estado estendido do jogador — o bloco que faltava.**
+
+    **O problema.** O `PLAYER_MOUNTING` (227) só alcança quem já está no campo de visão na
+    hora em que alguém monta. Quem chega depois recebe o `PLAYER_ENTER_SLICE` (12), e nele
+    nós mandávamos o `state` com **um único bit**, o de GM. Resultado: um jogador montado,
+    voando, morto ou de moda aparecia a pé, no chão, vivo e de armadura para todo mundo que
+    se aproximasse dele depois. Era também o alicerce que faltava para a transformação
+    (B78).
+
+    **Como o comando funciona.** O `info_player_1` tem 30 bytes fixos e, depois deles,
+    campos **opcionais governados pelos bits do `state`**. O cliente calcula o tamanho
+    esperado somando esses campos (`info_player_1::CheckValid`, `EC_GPDataType.h:624-710`) —
+    ou seja, **o estado decide o tamanho do pacote**, e errar a conta cai na regra de sempre:
+    descarte em silêncio. O servidor escreve os campos em ordem fixa
+    (`MakePlayerExtendState`, `common/protocol_imp.h:62-180`); os dois lados batem campo a
+    campo, e os valores dos bits do servidor (`gs/object.h:143-180`) são os mesmos
+    `GP_STATE_*` do cliente (`EC_GPDataType.h:198-234`).
+
+    **O que passou a viajar** (o resto segue em `falta`, com bit zero):
+
+    | bit | valor | campo extra |
+    | :--- | :--- | :--- |
+    | `FORMA` (`STATE_SHAPE`) | `0x1` | 1 byte, `shape_form` |
+    | `VOO` | `0x10` | nenhum — o cliente põe o avatar em `MOVEENV_AIR` |
+    | `CADAVER` (`STATE_ZOMBIE`) | `0x80` | nenhum |
+    | `MODA` (`STATE_FASHION_MODE`) | `0x2000` | nenhum |
+    | `MESTRE_DO_JOGO` | `0x4000` | nenhum (já ia) |
+    | `MONTADO` (`STATE_MOUNT`) | `0x80000` | **6 bytes**: `u16 mount_color`, depois `int mount_id` |
+
+    Atenção ao `MONTADO`: o comentário da struct do cliente diz "1 char + 1 int", mas o
+    código — dos dois lados — é `unsigned short` + `int` (`CheckValid`,
+    `EC_GPDataType.h:663-667`; `EC_ElsePlayer.cpp:445-455`; `protocol_imp.h:105-109`). São 6
+    bytes, não 5. O comentário é o que estava errado.
+
+    A `VistaDoJogador` ganhou `voando`, `morto`, `modo_roupa`, `montaria` e `forma`, e o
+    `PlayerEntity::vista()` os preenche do mundo. O `forma` fica `None` até alguém portar o
+    `filter_Fairyform` — mas o campo e a escrita já estão no lugar certo da sequência, que é
+    a parte fácil de errar depois.
+
+    O 1.2.6 não é tocado: ele tem caminho próprio (`info_player_1_126`, 28 bytes de corpo,
+    sem `state2`).
+
+    ### Provas
+
+    `os_bits_do_estado_acrescentam_os_campos_que_o_cliente_espera` (pw-protocol) fixa a
+    conta: 32 bytes com o comando vazio, os mesmos 32 com voo + cadáver + moda + GM ligados,
+    38 com montaria (cor antes do modelo) e 39 com forma **mais** montaria — nessa ordem, que
+    é a do original. `a_vista_de_quem_esta_montado_leva_a_montaria` (pw-gs) prova que o
+    estado do mundo chega até lá.
+
+    Suíte com o banco: **620 testes, 0 falhas** (618 + os 2 deste item). Com a suíte inteira
+    em paralelo máximo, `aceitar_forma_o_grupo…` e `a_consulta_de_jogador…` falham de vez em
+    quando e passam isoladas — a instabilidade sob carga do B74. Com `--test-threads=2` a
+    rodada inteira passa, e é assim que vale a pena medir daqui em diante.
+
+    ### Falta
+
+    Os bits que continuam com valor zero por não termos o dado: `EMOTE`, `EXTEND_PROPERTY`
+    (as seis DWORD de estado de habilidade), `MAFIA`, `MARKET` (barraca), `EFFECT` (a lista
+    de efeitos visíveis), `PARIAH`, `IN_BIND`, `SPOUSE`, `EQUIPDISABLED`, `PLAYERFORCE`,
+    `MULTIOBJ_EFFECT`, `COUNTRY`, e os sete do `state2` (título, renascimento, reino, PvP de
+    facção, MnFaction, VIP, tamanho do corpo). O `self_info_1` (8) do próprio jogador também
+    tem bloco estendido no original e continua indo só com o bit de GM.
+
+81. **Sessão 2026-09-22 (parte 5): economia de contexto virou regra escrita.**
+
+    Pedido do Murillo: gravar nas specs e no agente as definições que vinham sendo usadas
+    na prática nesta sessão — não despejar saída grande no contexto, e relatar o consumo de
+    tokens por etapa.
+
+    **Por que importa.** A janela de contexto é o limite real de uma sessão longa, e quem a
+    gasta é saída de ferramenta que ninguém lê. Um `cargo test --workspace` inteiro custa
+    mais de dez mil tokens para entregar uma informação binária. Nesta sessão a mesma
+    rodada custou menos de mil, filtrando com `grep -E "^test result:"` e somando com `awk`.
+
+    **Onde ficou escrito:**
+
+    - `.claude/agents/pw-server-dev.md`, seção nova "Contexto é recurso: nunca despeje saída
+      grande, e diga quanto gastou" — a regra, os padrões de filtro, o uso de segundo plano,
+      e o formato da tabela de consumo por etapa.
+    - `.claude/skills/pw-testar-e-publicar/SKILL.md` — os comandos já com o filtro certo:
+      suíte com `--test-threads=2` somada por `awk`, lista de falhas sem rastro de pânico,
+      `docker compose build ... | tail -5`. Referência atualizada para **620 testes**.
+    - `.claude/skills/pw-retomar-sessao/SKILL.md` — anotar o total de tokens restantes no
+      primeiro resultado de ferramenta da sessão; é o marcador zero da medição.
+    - `specs/00_MASTER_SPECIFICATION.md`, princípio **7** — "Contexto é recurso", ao lado dos
+      outros seis.
+    - `CLAUDE.md` — uma linha nas regras que não se negociam.
+
+    Nenhum código mudou.
+
+82. **Sessão 2026-09-22 (parte 6): as 24 habilidades que conjuram andando — eu tinha contado cinco.**
+
+    **O relato.** "O combate ainda cancela as 2 skills principais: Explosão Sônica e
+    Ruptura Descendente. Essas skills não deveriam continuar canalizando mesmo quando
+    movimentar?"
+
+    **Quais são.** O RT (id 11456, classe 11, nível 10) tem quatro habilidades no banco:
+    167, **2571** (nível 3), **2579** (nível 2) e 2570 (a transformação). As duas de ataque
+    são as 2571 e 2579.
+
+    **A causa: o extrator, não o servidor.** Os dois stubs têm `is_movingcast = true`
+    (`cskill/skills/skill2571.h:176`, `skill2579.h:176`). O meu extrator do B78 lia o campo
+    com `([-\\d.]+)` — **um padrão que só casa número** — e os stubs escrevem o mesmo campo
+    de dois jeitos:
+
+    ```
+    5 stubs:  is_movingcast = 1;
+    19 stubs: is_movingcast = true;
+    ```
+
+    Os 19 saíam com o campo `null` no `habilidades.json`, e `conjura_andando()` respondia
+    "não". Daí a conclusão errada do B78 — "são cinco, todas da classe 11" —, que era certa
+    na segunda metade e errada na primeira: **são 24**, e continuam todas da classe 11.
+    Entre as que faltavam estavam justamente as duas primeiras habilidades de ataque da
+    classe, que é o que um Tormentador de nível 10 tem na barra.
+
+    O `escalar()` passou a aceitar `true`/`false`, o `habilidades.json` foi regerado e o
+    teste virou `as_habilidades_que_conjuram_andando_sao_as_24_da_classe_11`, que agora
+    exige a 2571 e a 2579 na lista pelo nome.
+
+    **Conferido que nada mais mudou:** comparando o JSON antigo com o novo, campo a campo,
+    o **único** campo alterado foi `is_movingcast` (3.311 habilidades, de `null` para 0 ou
+    1). Nenhum outro campo booleano passa pelo `escalar()`, então não houve efeito colateral
+    em recarga, custo de mana ou `notuse_in_combat`.
+
+    ### Lição
+
+    Um extrator que devolve `None` para um campo que existe é pior do que um que falha: o
+    valor ausente vira "não" silencioso e a conclusão errada entra na spec com ar de fato
+    medido. Extrator novo de campo booleano confere **quantos stubs têm o campo** contra
+    **quantos foram extraídos** — se a conta não bate, o padrão está errado.
+
+
+83. **Sessão 2026-09-22 (parte 7): o modo roupa tem de sobreviver ao logout.**
+
+    **O relato.** "Alterei meu personagem para modo roupa e não equipamento no jogo. Quando
+    voltei à tela de seleção de personagem isso não ficou salvo (continua mostrando
+    equipamento)."
+
+    **Como o original guarda.** Em jogo o estado é um bit do `object_state`
+    (`STATE_FASHION_MODE`, `gs/object.h:160`), mas o que vai ao banco é um **blob de pares
+    de `int32`**: `GetPlayerCharMode` escreve `(PLAYER_CHAR_MODE_FASHION = 1, 1)` quando o
+    bit está ligado e **não escreve nada** quando está desligado; `SetPlayerCharMode` relê
+    no login (`gs/player.cpp:12585-12612`, chamados em `gs/userlogin.cpp:161` e `:738`). O
+    campo do registro do personagem chama-se `charactermode`.
+
+    **Como a tela de seleção descobre.** O mesmo blob viaja no `RoleInfo` da lista de
+    personagens, e `CECLoginPlayer::Load` o lê ali: `iNumMode = charactermode.size() / 8`,
+    e a chave 1 vira `m_bFashionMode` (`EC_LoginPlayer.cpp:172-189`). **O campo já existia
+    no nosso `RoleInfo` e nós mandávamos vazio** — por isso o avatar voltava de armadura.
+
+    **O que mudou.** Quatro camadas, uma por vez:
+
+    | camada | mudança |
+    | :--- | :--- |
+    | banco | coluna `characters.character_mode BYTEA` (`scripts/2026_09_22_modo_roupa.sql`, aplicada em `public` **e** em `test`) |
+    | `pw-core` | `charactermode_de_modo_roupa` / `modo_roupa_do_charactermode` — o formato num lugar só |
+    | `pw-link` | `write_role_info` manda o blob cru no lugar do `&[]` |
+    | `pw-gs` | `SWITCH_FASHION_MODE` grava (em `tokio::spawn`, fora do fio do jogo), e o login carrega para `PlayerEntity::modo_roupa` |
+
+    Guardamos o **blob**, e não um booleano, porque é o que o protocolo manda cru — zero
+    conversão no caminho quente — e porque outra chave de modo entra sem migração nova.
+
+    ### Provas
+
+    `o_botao_de_roupa_alterna_e_avisa_os_dois_lados` ganhou a ida e volta completa: depois
+    da terceira troca, `get_details_por_role` — **o mesmo caminho que o login usa** —
+    responde `modo_roupa = true`. `o_charactermode_do_role_info_leva_o_modo_roupa` fixa o
+    formato (`[1,0,0,0, 1,0,0,0]`), a regra de não escrever nada quando desligado, e que o
+    `RoleInfo` cresce exatamente 8 bytes com o par.
+
+    Suíte com o banco: **621 testes, 0 falhas** (`--test-threads=2`).
+
+    ### Falta
+
+    O bit `MODA` do `object_state` (B80) e este estado agora concordam, mas quem estava
+    vendo o jogador antes do login continua sabendo pelo `PLAYER_ENABLE_FASHION` (192) — não
+    há nada a fazer aí. O `custom_status` do `RoleInfo` (a lista de efeitos visíveis na
+    seleção) segue indo vazio.
+
+84. **Sessão 2026-09-22 (parte 8): o item que ficava apagado na bolsa — e a regra do congelamento.**
+
+    **O relato.** "Ao receber um novo amuleto, pediu para substituir os meus, cliquei em sim
+    e, em vez de desaparecer, o antigo foi parar no inventário. Tentei remover do inventário
+    e o item ficou bugado (apagado como se estivesse bloqueado)."
+
+    **A primeira metade não é defeito.** Equipar sobre um slot ocupado é uma **troca**:
+    `gplayer_imp::EquipItem` põe o novo no corpo e devolve o antigo ao slot da bolsa de onde
+    o novo saiu (`gs/player.cpp:8069-8247`), e o cliente faz o mesmo com `PutItem`/`SetItem`
+    (`EC_HostMsg.cpp:1881-1985`). O antigo **deve** ir para o inventário.
+
+    **A segunda é, e a causa vale como regra geral.** O cliente **congela o slot antes de
+    mandar** todo comando de item:
+
+    ```cpp
+    void CECGameSession::c2s_CmdDropIvtrItem(int iIndex, int iAmount)
+    {
+        FreezeHostItem(IVTRTYPE_PACK, iIndex, true);
+        ::c2s_SendCmdDropIvtrItem(iIndex, iAmount);
+    }
+    ```
+
+    (`Network/EC_GameSession.cpp:6318-6322`; o mesmo em mover, trocar, equipar e
+    desequipar, `:6304-6390`.) O congelamento é do **objeto do item**
+    (`pItem->NetFreeze(true)`, `EC_HostPlayer.cpp:7792-7808`), e no cliente inteiro existem
+    **dois** lugares que o limpam: o fim de uma troca entre jogadores e o comando
+    **`UNFREEZE_IVTR_SLOT` (181)** (`EC_HostMsg.cpp:2060-2064`). Item congelado não pode ser
+    movido, usado nem equipado, e é desenhado apagado.
+
+    Nós **não tratávamos os comandos 14 (`DROP_IVTR_ITEM`) e 15 (`DROP_EQUIP_ITEM`)**. Eles
+    caíam no `outro =>` silencioso do `match`: o jogador tentava jogar o amuleto fora, o
+    cliente congelava o slot, e nada voltava. O item ficava apagado até o relogue.
+
+    **Como o original se protege.** Não é caso a caso: o `gplayer_controller` tem um
+    `UnLockInventoryHandler` (`gs/playercmd.cpp:183-230`) que destrava os slots de um
+    comando de item, e ele é chamado sempre que o comando **não vai ser executado** — por
+    recusa, ou porque o jogador está num estado que não permite (a lista de `case`s em
+    `:654-678`, do tratador de morto). São 115 chamadas de `unlock_inventory_slot` no gs.
+
+    > Nota de busca: procurar "unfreeze" no servidor não acha nada — do lado do servidor o
+    > comando se chama `unlock_inventory_slot` (`gs/player.cpp:5059-5066`). Os dois nomes
+    > são o mesmo comando, o 181.
+
+    **O que mudou.**
+
+    1. **Descarte implementado** (14 e 15): tira do banco (ou reduz o monte), cria o item no
+       chão **sem dono** — item que se joga fora é de quem pegar (`DropItemFromData` com
+       `XID(0,0)`, `ThrowEquipItem`, `gs/player.cpp:7932-7980`) — e responde
+       `PLAYER_DROP_ITEM` (46) com `DROP_TYPE_PLAYER` = 1, mais o destrave.
+    2. **A rede de segurança do original**: o ramo `outro =>` passou a destravar os slots que
+       o comando congela, pela tabela do `EC_GameSession`. Protege todo comando de item que
+       ainda falte.
+    3. Todo caminho de desistência do descarte destrava antes de sair — slot vazio, falha de
+       banco, jogador fora do mundo.
+
+    ### Provas
+
+    `descartar_item_joga_no_chao_e_destrava_o_slot`: descarta 2 de um monte de 3, confere o
+    `PLAYER_DROP_ITEM` campo a campo (pacote, slot, quantos, tid, `DROP_TYPE_PLAYER`), o
+    `UNFREEZE_IVTR_SLOT` do mesmo slot, que sobrou 1 na bolsa e que os 2 estão no chão.
+    `descartar_slot_vazio_ainda_destrava`: o caminho de desistência também devolve o 181.
+
+    ### Falta
+
+    Os comandos de **armazém** (`trashbox`) também congelam slots no cliente e não são
+    tratados aqui; eles não estão na tabela do destrave porque os payloads ainda não foram
+    conferidos contra o IR. Enquanto isso, mexer no armazém apaga o slot até o relogue.
+
+
+85. **Montaria na água: diagnosticada, falta o dado do mapa.**
+
+    **O relato.** "Está sendo possível invocar montaria terrestre embaixo d'água."
+
+    **O original recusa, em dois momentos.** No momento de montar, `mount_petdata_imp::DoActivePet`
+    testa `pImp->IsUnderWater()` e responde `ERR_PET_CAN_NOT_MOUNT` (81) — é a mesma sequência
+    de recusas que já portamos para chão e voo (`gs/petman.cpp:319-392`). E **depois** de
+    montado: `ActivePet` liga `pMan->SetTestUnderWater(true)`, e o `pet_manager::TestUnderWater`
+    derruba a montaria de quem entra na água (`gs/petman.cpp:1390+`).
+
+    **O que falta é o mapa de água.** `IsUnderWater` é o `_under_water` do `breath_ctrl`
+    (`gs/breath_ctrl.h:38-46`), ligado pelo `gplayer_imp::TestUnderWater`
+    (`gs/player.cpp:14322+`), que compara a altura do jogador com
+    `path_finding::GetWaterHeight(_plane, x, z)`.
+
+    > **Correção de 2026-09-22, no mesmo dia (B87).** Escrevi aqui que "não temos altura de
+    > água" porque olhei só a pasta `map/` de um mapa e vi apenas o `.hmap`. **O dado está no
+    > realm**: cada mapa tem uma pasta `watermap/` com `watermap.conf` e `N.wmap`, que é
+    > exatamente o que o `CGlobalWaterAreaMap::Load` lê
+    > (`gs/pathfinding/GlobalWaterAreaMap.cpp:75-120`). São 75 mapas com o arquivo. Afirmar
+    > falta de dado sem varrer a pasta inteira é o mesmo erro do extrator do B82: uma busca
+    > estreita vira conclusão larga.
+
+    O formato é pequeno (`CWaterAreaMap::Load`, `gs/pathfinding/WaterAreaMap.cpp:38-115`):
+    `u32 versão`, `f32 largura`, `f32 comprimento`, `i32 n`, e então `n` áreas de 5 `f32` —
+    `cx, cz, meia-largura, meio-comprimento, altura`. O `watermap.conf` ao lado diz a grade
+    (`Map Width`, `Map Length`, `Submap Width/Length`, em texto). No `realm_155` a maioria dos
+    mapas tem zero áreas (16 bytes, só o cabeçalho) e o mundo 1 tem vários com água de
+    verdade — o maior com 5 áreas.
+
+    **O que falta, em ordem:** ler o `watermap/` para uma segunda camada do
+    `pw_data_loader::Terreno`, expor `altura_da_agua_em(x, z)`, e então acrescentar as duas
+    recusas — a de montar e a de derrubar quem entra na água montado.
+
+86. **Sessão 2026-09-22 (parte 9): o modo roupa gravava, carregava — e o cliente não sabia.**
+
+    **O relato.** "Ao deslogar e logar continua não salvando o modo do equipamento para
+    roupas. Veja se você rodou o comando no meu banco."
+
+    **A migração estava aplicada** (`character_mode` em `public` e em `test`), e o binário em
+    execução **tinha** o código do B83 — conferido com `grep -c character_mode` no
+    `/app/server_bin` do contêiner. O log do mundo desmentiu a hipótese óbvia:
+
+    ```
+    23:29:53  mundo: 11456 passou para o modo roupa
+    23:44:38  mundo: RT (#11456) entrou no mapa 161      ← relogou
+    23:44:44  mundo: 11456 passou para o modo armadura   ← o primeiro clique foi para armadura
+    ```
+
+    Se o estado não tivesse sido gravado e recarregado, o primeiro clique depois do relogue
+    teria ido **para roupa**. Ele foi para armadura: o servidor sabia que o personagem estava
+    de roupa. **A escrita e a leitura funcionavam.**
+
+    **O que faltava.** O dono da tela não descobre o próprio modo roupa pelo `charactermode`
+    nem pelo `info_player_1` — ele lê o **`state` do seu próprio `SELF_INFO_1`**:
+
+    ```cpp
+    //	Parse travel flag
+    m_bFashionMode = false;
+    if (Info.state & GP_STATE_FASHION)
+        m_bFashionMode = true;
+    ```
+
+    (`CECHostPlayer::OnMsgHstSelfInfo`, `EC_HostPlayer.cpp:819-822`.) E o nosso `self_info_1`
+    montava o `state` com **um bit só**, o de GM — o mesmo defeito do B80, mas no pacote do
+    próprio jogador, que eu tinha deixado anotado como `falta` naquele item.
+
+    O efeito era confuso de propósito: **os outros jogadores o viam de roupa** (o
+    `info_player_1` já leva o bit desde o B80) e só ele se via de armadura.
+
+    **O que mudou.** O trait `self_info_1` ganhou `modo_roupa`, o `pw-link` o passa do
+    `CharacterDetails`, e o codificador acende `GP_STATE_FASHION` (0x2000). O 1.2.6 recebe o
+    parâmetro e **o ignora**: o bit não foi conferido contra aquele cliente, e este servidor
+    não muda o 1.2.6 sem evidência dele.
+
+    ### Provas
+
+    `o_self_info_1_leva_o_modo_roupa_do_proprio_jogador`: o bit sai em 0x2000, não muda o
+    tamanho do comando, e convive com o de GM. Publicado nos contêineres do realm 155
+    (build + `up -d`), que subiram limpos.
+
+    Suíte com o banco: **625 testes, 0 falhas** (`--test-threads=2`); a rodada anterior,
+    antes desta correção, já fechava em 623 com o B84 dentro.
+
+    ### Lição
+
+    Três perguntas antes de culpar a camada óbvia: o dado está no banco? o binário em
+    execução tem o código? o **cliente** foi informado? Aqui as duas primeiras estavam certas
+    desde o começo, e o log tinha a resposta — a ordem dos cliques depois do relogue provou
+    que o servidor sabia. Ler o log antes de mexer no código teria economizado a suspeita
+    sobre a migração.
+
+87. **Sessão 2026-09-22 (parte 10): o inventário dos `.data` — e o mapa de água que eu disse não existir.**
+
+    Pergunta do Murillo: "existe alguma pendência ainda de leitura de algum arquivo `.data`?"
+
+    **O levantamento.** Cruzei os arquivos que existem no realm com os nomes que o
+    `pw-data-loader` abre. O que sobrou, e de quem é cada um, está agora na spec 03 §3.6c. O
+    resultado curto: dos arquivos que sobram, **dois são do cliente** (`task_npc.data`,
+    `DynamicObjects.data`), três são provavelmente do `gdeliveryd` (`domain*.data`), um é de
+    origem desconhecida (`extra_drops.sev`), e **um é nosso**: o `globalcontroller.conf`, que
+    só importa quando a Loja Gold existir.
+
+    **O achado que corrige o B85.** No B85 eu afirmei que a montaria na água não podia ser
+    portada porque "não temos altura de água". **Está errado, e corrigi o item.** Cada mapa
+    do realm tem uma pasta `watermap/` — 75 delas — com `watermap.conf` e `N.wmap`, que é
+    exatamente o que o `CGlobalWaterAreaMap` do original lê. Eu havia olhado só a pasta
+    `map/` de um mapa, visto apenas o `.hmap`, e generalizado.
+
+    O formato está medido e documentado na spec 03 §3.6b: cabeçalho de 16 bytes e áreas de
+    20 (`cx`, `cz`, meia-largura, meio-comprimento, altura). É um leitor pequeno.
+
+    ### Lição, que é a mesma do B82
+
+    Duas vezes no mesmo dia uma **busca estreita virou conclusão larga**: o extrator que só
+    casava dígito virou "são cinco habilidades", e olhar uma pasta virou "não temos o dado".
+    Antes de escrever `falta` por ausência de dado, varrer a árvore inteira à procura do que
+    o original abre — `grep` pelas extensões nos fontes do `gs` foi o que achou o
+    `watermap.conf` aqui, em uma chamada.
+
+88. **Sessão 2026-09-22 (parte 11): o mapa de água, e a montaria que não entra nela.**
+
+    Fecha o que o B85 diagnosticou e o B87 corrigiu: o dado existia, faltava o leitor.
+
+    **O leitor** (`pw-data-loader/src/watermap.rs`). Porta de
+    `gs/pathfinding/{GlobalWaterAreaMap,WaterAreaMap}.{h,cpp}`. Formato na spec 03 §3.6b; o
+    que importa registrar aqui são as três recusas, todas do original: versão diferente de
+    `0xCC00_0001`, submapa cuja medida não bate com a do `watermap.conf`
+    (`GlobalWaterAreaMap.cpp:123-127`), e — regra da casa — **arquivo que não fecha no
+    último byte**.
+
+    Duas armadilhas do formato:
+
+    - `NO_WATER` é **0.0**, então "altura zero" quer dizer *não há água aqui*, não "água no
+      nível do mar". `quanto_abaixo` devolve 0 fora d'água, e não `0 − y`.
+    - O nome do arquivo do submapa `(u, v)` é `(comprimento − v − 1) × largura + u + 1`: a
+      numeração cresce **de baixo para cima**, ao contrário do índice interno
+      (`v × largura + u`). Trocar um pelo outro dá um mapa espelhado na vertical, que só
+      apareceria em jogo.
+
+    **A prova que vale.** `o_mundo_1_tem_agua_na_altura_que_o_arquivo_diz` refaz a conta
+    **fora** do leitor: o ponto `(0, 0)` do mundo cai no submapa `u = 4, v = 5` da grade 8×11
+    de 1024 — arquivo `45.wmap` —, e dentro dele em `(−512, 0)`; abrindo esse arquivo por
+    fora, a terceira das cinco áreas (`centro (−464, −240)`, meias medidas `48 × 272`) contém
+    o ponto, e a altura dela é **216**. Se o leitor errar a origem, o índice, o nome do
+    arquivo ou a caixa, o 216 não aparece. Os 75 mapas do realm são lidos sem uma recusa
+    sequer (`os_mapas_de_agua_do_realm_sao_lidos_inteiros`).
+
+    **A regra de jogo.** Dois limiares, os dois do `gplayer_imp::TestUnderWater`
+    (`gs/player.cpp:14336-14342`), sobre `off = altura da água − y`:
+
+    | `off` | o que acontece | onde |
+    | :--- | :--- | :--- |
+    | > 0,5 m | conta como submerso; invocar montaria é recusado com `ERR_PET_CAN_NOT_MOUNT` | `mount_petdata_imp::DoActivePet`, `gs/petman.cpp:344-348` |
+    | > 1,0 m | a montaria **cai** | `TestUnderWater`, `gs/petman.cpp:402-410` |
+
+    A recusa fica **depois** da canalização, onde o original a tem — quem tenta montar
+    submerso vê os 3 segundos e então o erro. A queda roda no batimento de 1 s, junto dos
+    amuletos: a montaria não precisa cair no mesmo quadro em que o pé toca a água, e varrer
+    a posição de todo mundo 20 vezes por segundo custaria mais do que vale.
+
+    **Uma diferença deliberada do original:** ao derrubar, o `mount_petdata_imp` só remove o
+    filtro e limpa o mascote ativo — **não manda `recall_pet`**. Nós mandamos, reusando o
+    caminho do recolher voluntário, porque sem ele o cliente fica com o mascote marcado como
+    ativo e o botão de recolher apagado: exatamente o travamento que o B79 corrigiu.
+
+    ### O que me custou tempo
+
+    O teste falhava dizendo que a montaria não caía, com o mundo mostrando `abaixo = 3` e
+    `na_agua = true` — ou seja, o estado certo e nenhum efeito. A causa não era o código: **o
+    cenário de teste não roda o laço de tique**; os testes batem o relógio à mão com
+    `mundo.tick(1000)`. O batimento de 1 s nunca acontecia. Vale lembrar disso ao testar
+    qualquer coisa que dependa de batimento.

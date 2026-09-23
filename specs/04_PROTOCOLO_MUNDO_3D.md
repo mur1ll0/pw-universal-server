@@ -75,7 +75,7 @@ caminho de escrita por layout".
 | :--- | ---: | ---: | :--- |
 | `task_data` | 12 | 25 | 3 → **5** tamanhos (`finished_count`, `storage_task`); com 3 o cliente 1.5.5 crasha na renderização (B14) |
 | `npc_enter_world` / `npc_enter_slice` (`info_npc`) | 27 | 35 | `vis_tid`, `state2` |
-| `self_info_1` | 34 | 38 | `state2`; sem ele, 30 s de "entrando" e desconexão |
+| `self_info_1` | 34 | 38 | `state2`; sem ele, 30 s de "entrando" e desconexão. O `state` leva o bit **`MODA`** quando o personagem está de roupa: é daqui que o **dono da tela** descobre o próprio modo (`m_bFashionMode`, `EC_HostPlayer.cpp:819-822`) — o `info_player_1` só resolve para quem o vê (B86). No 1.2.6 o bit não vai: não foi conferido contra aquele cliente |
 | `player_enter_world` / `player_enter_slice` (`info_player_1`) | 26 | 30 | `state2` |
 | `get_own_money` | 8 | 12 | |
 | `inst_data_checkout` | 20 | 24 | |
@@ -93,7 +93,8 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 
 | comando | fato | origem |
 | :--- | :--- | :--- |
-| `info_player_1` | `cid, pos, crc_e, crc_c, dir, level2, state, state2` — **sem `world_tag`**. Sexo = bit `0x40` do `state2` (zero = homem); `crc_c` tem de ser igual ao `custom_stamp` do `PlayerBaseInfo_Re`; `level2` leva o `sec_level` e o GM acende `STATE_GAMEMASTER 0x4000` | `EC_GPDataType.h:603,709`; `gs/player_imp.h:1886` (B42b) |
+| `info_player_1` | `cid, pos, crc_e, crc_c, dir, level2, state, state2` — **sem `world_tag`**; 30 bytes de parte fixa. Sexo = bit `0x40` do `state2` (zero = homem); `crc_c` tem de ser igual ao `custom_stamp` do `PlayerBaseInfo_Re`; `level2` leva o **cultivo** (`_basic.sec_level`) e o GM acende `STATE_GAMEMASTER 0x4000` no `state`. **O `state` decide o tamanho do comando** — ver a linha seguinte | `EC_GPDataType.h:603,709`; `gs/player_imp.h:1886` (B42b, B67) |
+| `object_state` do `info_player_1` | Cada bit ligado pode acrescentar campos, e o cliente **calcula o tamanho esperado a partir deles** (`info_player_1::CheckValid`): errar a conta faz o pacote ser descartado em silêncio. Escrevem-se na ordem do original. Os que este servidor liga (B80): `FORMA` 0x1 (+1 byte, `shape_form`), `VOO` 0x10, `CADAVER` 0x80 (`IsZombie`), `MODA` 0x2000, `GM` 0x4000, `MONTADO` 0x80000 (**+6 bytes**: `u16 mount_color`, depois `int mount_id`). Os demais (`EMOTE`, `EXTEND_PROPERTY`, `MAFIA`, `MARKET`, `EFFECT`, `PARIAH`, `IN_BIND`, `SPOUSE`, `EQUIPDISABLED`, `PLAYERFORCE`, `MULTIOBJ_EFFECT`, `COUNTRY`, e os sete do `state2`) seguem em `falta`, e por isso vão com bit zero. Sem o bit `MONTADO`, quem entra no campo de visão de alguém montado desenha a pessoa a pé — o `PLAYER_MOUNTING` (227) só alcança quem estava vendo na hora | `gs/object.h:143-180`; `common/protocol_imp.h:62-180`; `EC_GPDataType.h:198-234,624-710`; `EC_ElsePlayer.cpp:335-455` |
 | entrada por streaming | jogador `PLAYER_ENTER_SLICE` (12), NPC `NPC_ENTER_SLICE` (11); o 17 é para quem **surgiu** (efeito de teleporte) | `EC_ManPlayer.cpp:1845` |
 | saída | criatura/jogador fora de alcance `OBJECT_LEAVE_SLICE` (13); matéria só sai por `OUT_OF_SIGHT_LIST` (34); jogador que saiu do jogo `PLAYER_LEAVE_WORLD` (19) | `EC_GameDataPrtc.cpp:891,1056` |
 | `MATTER_ENTER_WORLD` (18) | 25 bytes: `mid, tid, pos, dir0, dir1, rad, state, value`; `state = 0` recurso comum | `EC_GPDataType.h:784` |

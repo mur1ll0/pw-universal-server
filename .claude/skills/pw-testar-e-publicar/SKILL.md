@@ -5,17 +5,35 @@ description: Rodar a suíte de testes do pw-universal-server com o banco, public
 
 # Testar e publicar
 
-## 1. Suíte — sempre com o banco
+> **Nenhum comando desta skill roda sem filtro de saída.** A suíte inteira despejada no
+> contexto custa mais de dez mil tokens para dizer "passou". Os comandos abaixo já vêm com
+> o filtro certo — use-os como estão, e relate o consumo por etapa (ver o agente
+> `pw-server-dev`, seção "Contexto é recurso").
+
+## 1. Suíte — sempre com o banco, sempre filtrada
+
+A rodada inteira demora mais de 10 minutos: mande para **segundo plano** e leia só o fim.
 
 ```bash
 TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw_database" \
-  cargo test --workspace --no-fail-fast 2>&1 | grep -E "^test result|FAILED|panicked"
+  cargo test --workspace --no-fail-fast -- --test-threads=2 2>&1 \
+  | grep -E "^test result:" | awk '{p+=$4; f+=$6} END {print "passaram:", p, "falharam:", f}'
+```
+
+Duas linhas de saída, e o número que interessa. Para ver **quais** falharam, troque o filtro
+por `grep -E "^test .* FAILED|^test result: FAILED"` — só os nomes, sem o rastro de pânico.
+Só vá ao `panicked at` de um teste específico depois de saber qual é:
+
+```bash
+... cargo test -p pw-gs --test subcomandos_no_mundo <nome_do_teste> 2>&1 | tail -20
 ```
 
 - Sem `TEST_DATABASE_URL` os testes de integração **passam sem verificar nada**.
-- Referência (2026-09-20, B69): **599 testes** (64/64 no arquivo de tempo sozinho); os de tempo do
-  `pw-gs/tests/subcomandos_no_mundo.rs` podem falhar sob carga (rodar o arquivo sozinho). As duas antigas do 1.2.6 em
-  `pw-data-loader/tests/loader_tests.rs` foram resolvidas. Qualquer falha é nova.
+- **`--test-threads=2`**: no paralelismo máximo, `aceitar_forma_o_grupo…` e
+  `a_consulta_de_jogador…` falham por contenção no pool do Postgres e passam isoladas (B74,
+  B80). Com 2 fios a rodada inteira passa — é assim que vale a pena medir.
+- Referência (2026-09-22, B80): **620 testes, 0 falhas**. Qualquer falha além das duas acima
+  é nova.
 - Teste que cria dado no banco começa com `comum::limpar_sobras_de_teste(&pool)`
   (`crates/pw-storage/tests/comum/mod.rs`): apaga sobras de execuções anteriores. Teste novo
   que cria realm ou conta usa esse módulo e os mesmos padrões de nome (`t_*`, e conta com
@@ -28,9 +46,12 @@ TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw
 ## 2. Publicar no realm de teste (só quando o Murillo pediu)
 
 ```bash
-cd docker && docker compose build pw-world-155 pw-realm-155 \
-  && docker compose up -d --remove-orphans pw-world-155 pw-realm-155
+cd docker && docker compose build pw-world-155 pw-realm-155 2>&1 | tail -5 \
+  && docker compose up -d --remove-orphans pw-world-155 pw-realm-155 2>&1 | tail -5
 ```
+
+O `tail -5` não é enfeite: o build despeja centenas de linhas de compilação que ninguém lê.
+Se o build falhar, aí sim `| grep -E "^error" -A 5`.
 
 São dois serviços: o link (29004) e um servidor de mundo com os mapas 1 e 161 (`WORLD_TAGS`). Mudou só dado do realm
 (`data/realm_155/config`)? Basta `docker compose restart` dos mundos.
@@ -72,3 +93,6 @@ docker exec pw-postgres psql -U pw_admin -d pw_database -c "<sql>"
 
 Resultado da suíte com números, o que foi publicado, e o roteiro: o que fazer em jogo, o que
 deve aparecer, e o que olhar no log/overlay se não aparecer.
+
+E a **tabela de consumo por etapa** (análise, implementação, testes, documentação), com o
+total do bloco. Etapa cara ganha uma linha de explicação.

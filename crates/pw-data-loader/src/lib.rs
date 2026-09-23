@@ -22,6 +22,7 @@ pub mod progressao;
 pub mod ptemplate;
 pub mod tasks;
 pub mod terreno;
+pub mod watermap;
 pub mod world_targets;
 pub mod validator;
 
@@ -47,4 +48,5 @@ pub use progressao::{AjusteDeNivel, TabelaDeProgressao};
 pub use ptemplate::{BaseDaClasse, TabelaDeBase};
 pub use tasks::TasksData;
 pub use terreno::{ConfigDeTerreno, Terreno};
+pub use watermap::{AreaDeAgua, MapaDeAgua};
 pub use validator::*;
