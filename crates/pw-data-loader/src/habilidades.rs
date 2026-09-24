@@ -19,6 +19,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 const HABILIDADES_155_JSON: &str = include_str!("../../../specs/habilidades_155/habilidades.json");
+/// Tempos dos 823 stubs do `gs` 1.2.6 (`specs/habilidades_126/extrair_tempos_126.py`).
+const TEMPOS_126_JSON: &str = include_str!("../../../specs/habilidades_126/tempos.json");
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HabilidadeDoServidor {
@@ -242,6 +244,43 @@ impl TabelaDeHabilidades {
         Self { por_id: a.habilidades.into_values().map(|h| (h.id, h)).collect() }
     }
 
+    /// A tabela do servidor 1.2.6: só as habilidades que o `gs` 1.2.6 compila (823), com
+    /// **conjuração, estados, execução e recarga do próprio `gs` 1.2.6** e o resto da entrada
+    /// (custo, alcance, dano, aprendizado) do stub 1.5.5 de mesmo id.
+    ///
+    /// Os tempos divergem do 1.5.5 em 28 funções de 18 habilidades (30, 97, 112, 329, 446, 454, 470, 472, 473,
+    /// 482, 483, 484, 506, 518, 519, 521, 598, 803) e
+    /// preenchem as 95 conjurações que o 1.5.5 deixou `null`; o texto do `skillstr.txt` do
+    /// cliente 1.2.6 não serve de fonte (diverge do `gs` 1.2.6 em 63 de 84 casos, B100).
+    /// Os demais campos do 1.5.5 **não** foram conferidos contra o `gs` 1.2.6.
+    pub fn do_126() -> Self {
+        #[derive(Deserialize)]
+        struct Tempos {
+            estados_ms: Vec<Option<Vec<i32>>>,
+            execucao_ms: Option<Vec<i32>>,
+            recarga_ms: Option<Vec<i32>>,
+        }
+        #[derive(Deserialize)]
+        struct ArquivoDeTempos {
+            habilidades: HashMap<String, Tempos>,
+        }
+        let base = Self::do_155();
+        let t: ArquivoDeTempos = serde_json::from_str(TEMPOS_126_JSON).expect("tempos.json embutido é válido");
+        let por_id = t
+            .habilidades
+            .into_iter()
+            .filter_map(|(id, t)| {
+                let id: u32 = id.parse().ok()?;
+                let mut h = base.por_id.get(&id)?.clone();
+                h.estados_ms = t.estados_ms;
+                h.execucao_ms = t.execucao_ms;
+                h.recarga_ms = t.recarga_ms;
+                Some((id, h))
+            })
+            .collect();
+        Self { por_id }
+    }
+
     pub fn get(&self, id: u32) -> Option<&HabilidadeDoServidor> {
         self.por_id.get(&id)
     }
@@ -255,6 +294,24 @@ impl TabelaDeHabilidades {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B100 — Enxame de Ferroadas (299) no `gs` 1.2.6: 1.500 ms de conjuração e 1.000 ms de
+    /// execução, o mesmo que a captura original mede entre o 85 e o 123 (2.504-2.551 ms).
+    #[test]
+    fn a_tabela_do_126_tem_os_tempos_do_gs_126() {
+        let t = TabelaDeHabilidades::do_126();
+        assert_eq!(t.por_id.len(), 823);
+        let h = t.get(299).expect("skill 299");
+        assert_eq!(h.conjuracao_ms(1), Some(1_500));
+        assert_eq!(h.fase_de_execucao_ms(1), Some(1_000));
+        assert_eq!(h.recarga_armada_ms(1), Some(1_000));
+        // 102 e 250 (nível 2) também medidas na captura: 200+700 e 500+900.
+        assert_eq!((t.get(102).unwrap().conjuracao_ms(1), t.get(102).unwrap().fase_de_execucao_ms(1)), (Some(200), Some(700)));
+        assert_eq!((t.get(250).unwrap().conjuracao_ms(2), t.get(250).unwrap().fase_de_execucao_ms(2)), (Some(500), Some(900)));
+        // Onde o 1.2.6 difere do 1.5.5 vale o 1.2.6: 803 recarrega em 60 s (3 s no 1.5.5).
+        assert_eq!(t.get(803).unwrap().recarga_armada_ms(1), Some(60_000));
+        assert_eq!(TabelaDeHabilidades::do_155().get(803).unwrap().recarga_armada_ms(1), Some(3_000));
+    }
 
     #[test]
     fn a_habilidade_1_do_guerreiro_bate_com_o_stub() {

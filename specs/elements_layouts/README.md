@@ -15,18 +15,25 @@ confirmada).
   World Data Editor, sELedit — todas usam o mesmo formato de `.cfg`) por
   `generate_vNNN.py`. Isto é **universal pra qualquer arquivo daquela build** — não
   depende de qual realm/servidor gerou o arquivo.
+- **`v7.json`** — 119 entradas (118 tabelas fixas e `TALK_PROC`), gerado por
+  `generate_v7.py` a partir da ordem do carregador disponível
+  (`source_client_153/CCommon/elementdataman.cpp:3611-3800`), do enum
+  (`CCommon/ExpTypes.h:4930-5000`) e dos tamanhos medidos no arquivo de
+  16.664.770 bytes do `realm_126`. O binário do cliente 1.2.6
+  (`elementclient.exe` VA `0x60ff5d-0x60ffb0`) confirma a versão, a primeira
+  contagem e o registro inicial de 84 B. Os campos que ainda não têm semântica
+  conferida são `_opaco`; o arquivo fecha no último byte sem blocos de tag.
 - **`pw_elements_reader.py`** — implementação de referência em Python: detecta a versão do
   cabeçalho, carrega o layout certo do catálogo e devolve `{nome_da_tabela: [registro,...]}`
   pra qualquer `elements.data`. É o que `web-admin/backend/elements_decoder.py` já usa (ver
   `_load_realm_elements_generic`). Testado ponta a ponta contra
-  `data/realm_155/config/elements.data` (231/231 tabelas, 69.626 registros).
+  `data/realm_155/config/elements.data` (231/231 tabelas, 69.640 registros).
 - **`crates/pw-data-loader/src/generic_elements.rs`** (não mora nesta pasta, mas lê o
-  mesmo `v156.json`, embutido no binário via `include_str!` em tempo de compilação — não
+  mesmo catálogo, embutido no binário via `include_str!` em tempo de compilação — não
   depende de `specs/` existir em produção, diferente do lado Python) — a mesma
-  implementação em Rust, aditiva (não substitui `crate::elements::ElementsData`, que o
-  `pw-gs` usa hoje). Testes em
+  implementação em Rust usada pelo `pw-gs` nos realms 126 e 155. Testes em
   `crates/pw-data-loader/tests/generic_elements_tests.rs` confirmam o mesmo resultado do
-  lado Python byte a byte (231 tabelas, 69.626 registros). **Achado ao portar**: uma
+  lado Python byte a byte (231 tabelas, 69.640 registros). **Achado ao portar**: uma
   verificação de "texto legível" que em Python usa `str.isprintable()` (cobre cirílico,
   CJK, etc.) tinha virado `char::is_ascii_graphic()` no Rust — só aceita ASCII — e isso
   sozinho derrubava o score de toda tabela com nome em cirílico abaixo da barra de aceite
@@ -43,12 +50,9 @@ se essas correções são do formato v156 (valeriam pra qualquer arquivo dessa b
 peculiaridade deste arquivo específico** (ver "Próximo passo" no README de
 `specs/elements_155/`) — não commitar um palpite como se fosse fato estabelecido.
 
-Na prática isso não trava o extrator genérico: o leitor (ver
-`crossref_admval.py`/`walk_tables.py` como referência do algoritmo, e o carregador em
-Rust/Python) deve tentar ler cada tabela pela posição ingênua primeiro (o mesmo `count==0`
-aceito de cara / primeiro registro plausível, guloso) e só consultar um arquivo de
-`*_overrides.json` como **dica opcional** quando disponível pro realm específico sendo
-carregado — nunca como parte fixa do layout de formato.
+Os leitores Rust e Python atuais não usam overrides: avançam pela contagem e pelo tamanho
+do catálogo e exigem fechamento no último byte. Os arquivos antigos de override são
+apenas registro da investigação anterior (B46).
 
 ## Como a versão é detectada (respondendo a pergunta do Murillo: copiar o `.cfg` pra pasta do realm?)
 
@@ -77,14 +81,11 @@ O extrator faz, então:
    de 8 bytes; senão, de 4 (e esses bytes já são o `count` da tabela 0).
 3. Procurar `specs/elements_layouts/v<build>.json` no catálogo.
 4. Se achar, carregar com aquele layout. Se não achar, falhar de forma clara dizendo qual
-   versão falta (é o caso do v7/1.2.6 hoje — `pw_elements_reader` já detecta a versão
-   certinho, só falta gerar `v7.json` a partir de um `.cfg` da era 1.2.6, ex. `sELedit`) —
-   não adivinhar nem tentar o layout mais próximo silenciosamente.
+   versão falta, sem tentar o layout mais próximo silenciosamente.
 
 Isso já testado com sucesso contra os dois arquivos reais do projeto: `data/realm_155/...`
 (v156, cabeçalho de 8 bytes, 231 tabelas) e `data/realm_126/...` (v7, cabeçalho de 4 bytes,
-detectado corretamente e recusado com uma mensagem clara por falta de layout — sem quebrar
-nem dar dado errado).
+119 entradas, 23.337 registros). Ambos fecham no último byte.
 
 ## Gerando um layout novo
 

@@ -35,6 +35,8 @@ COPY specs/mapas ./specs/mapas
 # Os números de cada habilidade (recarga, conjuração, custo de aprender), extraídos dos
 # stubs do cskill do servidor 1.5.5 — `pw_data_loader::habilidades` os embute.
 COPY specs/habilidades_155/habilidades.json ./specs/habilidades_155/habilidades.json
+# Tempos das habilidades do gs 1.2.6 (`TabelaDeHabilidades::do_126`, embutido com include_str!).
+COPY specs/habilidades_126/tempos.json ./specs/habilidades_126/tempos.json
 # O tratador de cada addon, extraído do item_addon.cpp — `pw_data_loader::addons` o embute.
 COPY specs/addons_155/addons.json ./specs/addons_155/addons.json
 

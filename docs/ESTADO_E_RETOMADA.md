@@ -5,10 +5,19 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **Última atualização: 2026-09-23**, B93 — **o 1.5.5 chegou a jogável no básico** e tudo
+> **B100 (2026-09-24), feito e não publicado:** duas causas do 1.2.6 resolvidas pelo `gs` 1.2.6 (ELF com símbolos, `files1.2.6/pwserver/gamed/gs`). (1) "Missão não disponível": o `NPC_TASK_OUT_SERVICE` v7 é ID + Name + `id_tasks[32]`, sem `storage_*`; o NPC 3518 entrega a 1177 (classes 3 e 4). A auditoria do `v7.json` corrigiu também ordem/tamanho das tabelas 98–112 (perda de exp na morte), `NPC_SKILL_SERVICE` e o `fixed_props` de armadura/ornamento. (2) Skill 299 sem animação: a tabela de habilidades não carregava no v7; agora `do_126` com os tempos do `gs` 1.2.6, e o 123 sai em conjuração + execução como na captura (+2,5 s). Suíte com banco: **681 testes, 0 falhas**. Falta ver em jogo.
+>
+> **B98 (2026-09-24), feito e não publicado:** a skill 299 (Enxame de Ferroadas) foi exercitada de ponta a ponta no barramento v126. Para o dono, a ordem e o tamanho são 85 → 88 → 142 (14 B) → 123. O 88 estava sendo enviado também a outros jogadores; agora só vai ao dono, como no original. Suíte com banco: **674 testes, 0 falhas**. O relato visual do próprio Tsuko ainda precisa de prova em jogo (alvo e overlay).
+>
+> **B96 (2026-09-23), feito e não publicado:** o leitor Rust fecha o `tasks.data` v55 do realm 126 e o Guerreiro nível 1 aceita a missão 1173 em teste. Campos fixos ainda não mapeados permanecem no padrão. Suíte com banco: **667 testes, 0 falhas**. O Murillo confirmou em jogo a agressividade dos monstros; a poção pareceu recuperar corretamente no 1.2.6. Relatou falta do efeito e da animação após canalizar uma skill. Próximo bloco: pipeline visual da skill, depois desta revisão.
+>
+> **B95 (2026-09-24), feito e não publicado:** a Forma Sombria (2570) transforma, e a caixa
+> de Cartas de General dá a carta — os dois relatos do teste do Murillo. Suíte com o banco: **664 testes, 0 falhas** (na árvore que também tinha o B94 do Codex em andamento).
+>
+> **Última atualização: 2026-09-23**, B94 — **o v7 do `elements.data` passou ao leitor genérico**; o 1.5.5 já estava jogável no básico e tudo
 > foi juntado na `main` (inclusive a frente 1.2.6 que estava na worktree `../pw-126`). A
 > frente ativa passa a ser **levar ao 1.2.6 o que o 1.5.5 já resolveu** (§5D). Suíte com o
-> banco na `main`: **654 testes, 0 falhas** — medir com `--test-threads=2` (skill `pw-testar-e-publicar`).
+> banco na `main`: **656 testes, 0 falhas** — medir com `--test-threads=2` (skill `pw-testar-e-publicar`).
 >
 > **Publicado no realm 155** em 2026-09-22 (B79–B86). B87–B88 (mapa de água) e o realm 126
 > **não** foram publicados.
@@ -27,7 +36,7 @@
 
 ## 0. Em uma tela
 
-**Marco de 2026-09-23 (B93): o 1.5.5 está jogável no básico.** Tudo está na `main` (as
+**Marco de 2026-09-24 (B98): o 1.5.5 está jogável no básico; o 1.2.6 lê `elements.data` v7 e `tasks.data` v55.** Tudo está na `main` (as
 branches `multi-versions` e `versao-126` foram juntadas). Ordem combinada com o Murillo:
 
 1. ~~1.5.5 jogável no básico~~ — **atingido**. O que falta dele está em §5A/§5B e continua na
@@ -59,7 +68,8 @@ v156, `tasks.data` 129, build 2569):
   flechas, descarte com destrave de slot, reparo.
 - **Social:** fala, grupo.
 
-**O que falta no 1.5.5** (§5A): serviços de refinar e incrustar, os ~300 efeitos de
+**O que falta no 1.5.5** (§5A): o sistema de Cartas de General (a caixa já dá a carta, B95),
+serviços de refinar e incrustar, os ~300 efeitos de
 habilidade sem porte, intérprete do `aipolicy.data`, trava de PvP, mascote de combate, resto
 do Daimon, armazém, troca de mapa entre contêineres, fôlego debaixo d'água.
 
@@ -67,10 +77,10 @@ do Daimon, armazém, troca de mapa entre contêineres, fôlego debaixo d'água.
 mundo; os layouts de entrada, combate, experiência e itens foram conferidos com captura
 (B74-126, B89, B90, B93). As **regras de jogo são as mesmas** — ficam no `pw-gs`, e o que muda
 por versão fica no `WorldProtocol` de `crates/pw-protocol/src/versions/v126/`. O que impede o
-1.2.6 de ter tudo o que o 1.5.5 tem é **dado e layout**, não regra: o `elements.data` v7 é
-lido pelo leitor tipado antigo (sem os campos que as regras novas usam), o `tasks.data` v55
-só tem o cabeçalho lido, e os comandos acrescentados depois do B76 não foram conferidos para o
-1.2.6. **Nada do 1.2.6 foi visto em jogo depois do B63.** Painel em §5D.
+1.2.6 de ter tudo o que o 1.5.5 tem é **dado e layout**, não regra: o `elements.data` v7
+agora fecha no leitor genérico com ordem e tamanhos do `gs` 1.2.6 (B94, B100; agressividade confirmada em jogo, poção aparentemente correta), o `tasks.data` v55
+fecha no leitor Rust (B96, projeção parcial dos campos), e os comandos acrescentados depois do B76 não foram conferidos para o
+1.2.6. As duas falhas relatadas no Tsuko (missão inicial e animação da skill 299) têm causa provada e correção testada no barramento (B100), aguardando publicação e teste em jogo. Painel em §5D.
 
 **Um realm por versão (B55):** `realm_155` = cliente BR, contêineres `pw-realm-155` /
 `pw-world-155`, dados em `data/realm_155/config`; `realm_126` = `pw-realm-126` /
@@ -165,12 +175,9 @@ docker logs -f pw-realm-155        # login, entrada no mundo, o que o link trata
 docker logs -f pw-world-155        # os mapas 1 e 161
 ```
 
-**Referência da suíte, medida em 2026-09-20 (B69) com o banco:** **599 testes**, com o
-arquivo de tempo passando 64/64 sozinho (`cargo test --workspace --no-fail-fast`). Os testes de tempo do
-`pw-gs/tests/subcomandos_no_mundo.rs` podem falhar sob carga (já aconteceu com um build do
-Docker rodando junto); o arquivo sozinho passa 58/58
-(`cargo test -p pw-gs --test subcomandos_no_mundo -- --test-threads=4`).
-Qualquer outra falha é nova.
+**Referência da suíte, medida em 2026-09-24 (B98) com o banco:** **674 testes, 0 falhas**
+(`cargo test --workspace --no-fail-fast -- --test-threads=2`). O limite de dois fios evita
+contenção no pool do Postgres nos testes de mundo. Qualquer falha nova deve ser investigada.
 
 A suíte cria realms `t_*`, contas e personagens de teste no banco local. **Desde o B64 (2026-09-18),
 o `pw-storage` isola todas as conexões que rodam com `TEST_DATABASE_URL` no schema `test`
@@ -277,6 +284,10 @@ cada um no histórico.
 | B77–B80 | modo de combate, Atq. Mágico na ficha, montaria (canalizar, montar, desmontar), quem chega vê montado | sim |
 | B82–B86 | conjurar andando (2571/2579 do Tormentador), modo roupa persiste e o dono se vê de roupa, descarte de item | sim |
 | B87–B88 | montaria recusada na água funda (erro 81) e derrubada acima de 1 m | **não** |
+| B99 | monstro de chão contorna obstáculo e estrutura ao perseguir, voltar e passear; cerca o alvo em vez de empilhar (meta dispersa) | **não** |
+| B97 | monstros de área no chão nascem e andam **em cima** de estrutura (Gárgulas na pedra do mapa 161, tela 486/525) | **não** |
+| B98 | skill 299 do 1.2.6: confirmar animação e efeito após a canalização; se faltar, conferir se o alvo ficou vivo até o 142 e o que o overlay registrou | **não** |
+| B95 | Forma Sombria (2570) transforma por 19 s (nível 1), tranca o equipamento e desfaz no fim; a Caixa de Tesouro do Guerreiro (41073) vira uma carta | **não** |
 
 Onde olhar: `docker logs --since 10m pw-world-155 2>&1 | grep -iE "montou|desmontou|água|descartou|viajou"`.
 
@@ -285,8 +296,8 @@ Onde olhar: `docker logs --since 10m pw-world-155 2>&1 | grep -iE "montou|desmon
 
 | arquivo | leitor | estado | usado pelo mundo? |
 | :--- | :--- | :--- | :--- |
-| `elements.data` | `pw-data-loader/src/generic_elements.rs` (+ `specs/elements_layouts/pw_elements_reader.py`) | **231/231** tabelas no v156 do `realm_155` (o v159 do EN fechou 234/234 antes de sair, B55); fecha no último byte, sem override (B46) | armas, armaduras, acessórios, monstros (com drop), NPCs e seus serviços de missão e habilidade, classes, poções, preços, pilhas, curva de exp, ajuste por nível, perda na morte (spec 03 §3.1). coleta (`MINE_ESSENCE`, B51), munição. **Não ligados:** `WEAPON_SUB_TYPE`, `NPC_SELL_SERVICE`, `NPC_TRANSMIT_SERVICE` |
-| `tasks.data` | `pw-data-loader/src/tasks.rs` | **14.885/14.885** missões de topo (`realm_155`), fecha pelos deslocamentos do cabeçalho (B45) | **sim** — motor de missões (`pw-gs/src/missoes.rs`, B50) |
+| `elements.data` | `pw-data-loader/src/generic_elements.rs` (+ `specs/elements_layouts/pw_elements_reader.py`) | v7 do `realm_126`: **119 entradas, 23.337 registros, 16.664.770 bytes** (B94); v156 do `realm_155`: **231/231** tabelas; v159 do EN: 234/234 antes de sair (B55). Fecham no último byte, sem override | armas, armaduras, acessórios, monstros (com drop), NPCs e seus serviços de missão e habilidade, classes, poções, preços, pilhas, curva de exp, ajuste por nível, perda na morte (spec 03 §3.1). coleta (`MINE_ESSENCE`, B51), munição. **Não ligados:** `WEAPON_SUB_TYPE`, `NPC_SELL_SERVICE`, `NPC_TRANSMIT_SERVICE` |
+| `tasks.data` | `pw-data-loader/src/tasks.rs` | **14.885/14.885** raízes no `realm_155` (B45); **2.819/2.819** no `realm_126`, 7.994 tarefas, projeção parcial (B96); ambas fecham pelos offsets | **sim** — motor de missões (`pw-gs/src/missoes.rs`, B50); v55 ainda requer mapeamento dos demais campos |
 | habilidades do servidor | `specs/habilidades_155/habilidades.json` (`habilidades.rs`) | 3.316 stubs do `cskill` | recarga, conjuração, custo de aprender (B50) |
 | `npcgen.data` | `pw-data-loader/src/npcgen.rs` | v5 a v11, fechando no último byte (B51); tipo de área, `fOffsetTrn`, extensão de recurso, sem tetos inventados (commit `931b39d`); `a01..a99` (B48) | sim; controladores (`id_ctrl`) tratados como ativos, sem modelar gatilho de evento (B17a) |
 | `aipolicy.data` | `pw-data-loader/src/aipolicy.rs` | lido, com o fonte 1.7.2 como autoridade (B27f) | **não** — não há intérprete; o `ai.rs` porta só perseguição, volta e passeio |
@@ -322,8 +333,9 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
    reencaminhar a sessão. **Teleporte por NPC** (`NPC_TRANSMIT_SERVICE`, destinos por
    waypoint) e GM para outro mapa `falta`. O grupo se desfaz na troca.
 6. **Habilidades:** dano (1.123), efeitos no alvo (2.304 roteiros) e em si (266) pelos stubs,
-   37 efeitos portados (B53); os ~300 outros (formas, invocação, escudos, recargas) sem
-   porte; imunidades de monstro; talentos. O **Portal da Cidade** (167) não tem efeito (B17c).
+   37 efeitos portados (B53), mais `Wingshield` (B73) e `Fairyform` (B95, Forma Sombria —
+   falta o `EventChange`, as habilidades próprias da forma); os ~300 outros (invocação,
+   escudos, recargas) sem porte; imunidades de monstro; talentos. O **Portal da Cidade** (167) não tem efeito (B17c).
 7. **Guia do jogo** do personagem novo: a barra de atalhos agora é gravada pelo próprio
     cliente (B51); o `config_data` do molde no `clsconfig` (barra pré-preenchida) segue não
     decodificado (B44b15, B47d).
@@ -338,6 +350,9 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
     as habilidades dele, o vigor, as pílulas de experiência, a decomposição, o refino,
     distribuir pontos de atributo e de gênio, e o bônus sorteado de 10 em 10 níveis. **O ganho
     truncar para zero com o Daimon muito abaixo do dono é do original** (B76), não é defeito.
+12. **Cartas de General (B95, só a caixa):** abrir a caixa (`POKER_DICE_ESSENCE`) dá a carta
+    com o bloco certo. Falta o sistema: equipar a carta, liderança, os atributos que ela dá,
+    subir de nível, devorar (`swallow_exp`) e renascer.
 11. **IA de monstro (B76, parcial):** o agressivo pega quem chega perto, mas as estratégias de
     ódio do `aipolicy.data` (facção, nível, invisibilidade, probabilidade) seguem sem
     intérprete.
@@ -363,7 +378,9 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
   `modo_roupa` e `voando` não persistem (B40c).
 - A cura usa o ataque mágico no lugar de `GetMagicdamage`; o Tiro Certeiro (234) assume
   carga cheia (B40c).
-- Monstro atravessa obstáculos: sem mapa de movimento (B48b).
+- Obstáculo: o monstro **de chão** desvia como o original desde o B99 (`navegacao.rs`, porte
+  do `pathfinding`); monstro de **água e ar** ainda anda em linha reta (os agentes
+  `ChaseInWaterPF`/`ChaseOnAirPF` e o mapa aéreo `airmap/` não foram portados).
 - `class_templates` tem colunas de atributo que o código ignora (quem manda é o
   `ptemplate.conf`) — decidir quando o painel for editar moldes (B43h).
 - Senha de segurança (`CHECK_SECURITY_PASSWD`): qualquer uma passa — não há senha no banco.
@@ -411,17 +428,15 @@ binário do cliente 1.2.6 (validador de ids: ids > 260 são recusados, VA 0x5846
 | experiência e itens (31/36/46/72/99/156/158) | **testado** (B90, B93) | preço real da loja no 1.2.6 (v7) e ver em jogo | `docs/ITENS_EXPERIENCIA_126.md` |
 | `OWN_EXT_PROP` (152 B) | **confere byte a byte** com a captura (B93) | — | `specs/04` |
 | comandos 14 e 64 | **divergem** da captura | medir e sobrescrever no v126 | inventário |
-| `elements.data` v7 | lido pelo leitor tipado antigo (`elements.rs`), fecha no último byte | **layout v7 no catálogo do leitor genérico**, para as regras que leem campos novos: `aggressive_mode`, `npcgen` da mina, `cool_time`/`id_major_type` da poção, `PET_ESSENCE`, bloco do item de voo, amuleto, `CHARRACTER_CLASS_CONFIG` | `specs/03` §1 |
-| `tasks.data` v55 | **mapa estrutural fechado** (2.819 raízes, 7.994 tarefas, último byte) no validador Python; em Rust, **só o cabeçalho** | leitor Rust v55 com teste de corrupção, projetado no `TaskTemplate`; depois listas de missão | `docs/RESULTADO_TASKS_V55.md`, B91 |
+| `elements.data` v7 | **testado no leitor genérico** (B94, B100): 119 entradas, **23.447 registros**, 16.664.770 bytes; ordem e `sizeof` das 118 tabelas pelo `gs` 1.2.6; `NPC_TASK_OUT/IN/SKILL_SERVICE`, `NPC_ESSENCE`, `NPC_TRANSMIT_SERVICE` conferidos no `gs`; arma/armadura/ornamento sem `fixed_props`; agressividade de monstros **confirmada em jogo**, poção aparentemente correta no relato do Murillo | ver em jogo mina, pet, voo, amuleto e classe; conferir no `gs` os prefixos só plausíveis (STONE, PARAM_ADJUST, TASKDICE, SECONDLEVEL) e os campos opacos | `specs/03` §3.1 |
+| `tasks.data` v55 | **testado no Rust** (B96): 2.819 raízes, 7.994 tarefas, último byte e corrupção; 1173 aceita por Guerreiro nível 1 em teste do motor; **1177 entregue pelo NPC 3518 a Bárbaro nível 1 no teste de mundo com banco** (B100) | projetar os campos fixos ainda não mapeados (nível, pré-missões, flags etc.); ver missão inicial em jogo após publicação | `specs/03` §3.2, B91/B96 |
+| skill após canalização | **causa provada e corrigida** (B100): a tabela de habilidades não carregava no v7 (123 colado ao 142). `TabelaDeHabilidades::do_126` com os tempos do `gs` 1.2.6 (823 skills); teste com relógio: 88 em ~1,5 s e 123 em ~2,5 s, como na captura. Ordem/destinatários do B98 mantidos | ver em jogo a animação da 299; mana/alcance/dano do 1.2.6 ainda vêm do stub 1.5.5 (não conferidos no `gs`) | `specs/05` §habilidades, `specs/04` §5 |
 | comandos acrescentados depois do B76 no 1.5.5 | **não conferidos** no 1.2.6 | para cada um: existe no 1.2.6? tamanho? `PLAYER_MOUNTING` (227), `SUMMON_PET`/`RECALL_PET` (233/234), pet op (235/236), `UNFREEZE_IVTR_SLOT` (181), `SET_COOLDOWN` (198), estado estendido do `info_player_1`, bit `MODA` do `SELF_INFO_1`, descarte (C2S 14/15) | spec 04 |
 | sistemas que o 1.2.6 não tem | Daimon: `ELF_EXP` (283) já é omitido (B93) | conferir chi, cultivo, teto de chi e o que mais não existe no cliente 1.2.6, e omitir pelo trait | validador do cliente |
 | dados de mapa do `realm_126` | `.hmap`, `watermap/`, `world_targets.sev`, `npcgen.data`, `precinct.sev` presentes? | conferir que cada leitor fecha no último byte com os arquivos do 1.2.6 | `data/realm_126/config` |
 | publicação e teste em jogo | contêineres 126 **não** reconstruídos desde o merge | publicar só com pedido do Murillo; roteiro em `docs/SINCRONIZACAO_126.md` | skill `pw-testar-e-publicar` |
 
-Ordem sugerida: (1) layout v7 do `elements.data` no leitor genérico, porque destrava de uma
-vez as regras que dependem de dado; (2) conferir os comandos do B77–B88 no 1.2.6 e omitir os
-que não existem; (3) comandos 14 e 64; (4) leitor Rust do `tasks.data` v55; (5) publicar e
-roteiro em jogo com o Murillo.
+Ordem atualizada pelo relato do Murillo: (1) ~~layout v7 do `elements.data`~~ (B94); (2) ~~leitor estrutural Rust do `tasks.data` v55 e missão 1173~~ (B96; projeção parcial); (3) ~~efeito/animação após canalização~~ (B98, B100; ver em jogo) e ~~missão 1177~~ (B100; ver em jogo); (4) conferir comandos do B77–B88 no 1.2.6; (5) comandos 14 e 64; (6) completar campos v55; (7) publicar somente a pedido e testar em jogo.
 
 **Outras frentes, depois:**
 - **Cliente v181** (`E:\0_GAMES\Perfect World`, build 2591): exigiria `v181.json` no
@@ -562,3 +577,9 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 91 | 09-22 | (1.2.6) mapa estrutural do `tasks.data` v55: 2.819 raízes, fecha no último byte; leitor Rust pendente |
 | 92 | 09-22 | (1.2.6) merge da `multi-versions` na `versao-126`; `max_ap` da captura |
 | 93 | 09-23 | 1.5.5 jogável no básico; tudo na `main`; despacho pós-merge do 126; `AGENTS.md` do Codex |
+| 94 | 09-23 | catálogo `elements.data` v7 no leitor genérico; campos do 1.2.6 e teste do realm |
+| 95 | 09-24 | Forma Sombria (`Fairyform`: forma pelo `PLAYER_CHGSHAPE` 163, equipamento trancado com erro 40, velocidade e defesa) e a caixa de Cartas de General (`POKER_DICE_ESSENCE` → carta de 32 B) |
+| 96 | 09-23 | Leitor Rust do `tasks.data` v55 (2.819 raízes/7.994 tarefas, corrupção); missão 1173 aceita no teste; agressividade confirmada, poção aparentemente correta em jogo, efeito da skill pendente |
+| 97 | 09-24 | leitor do `movemap/` (`.rmap` + `.dhmap`): nascimento de área no chão e passo do monstro em cima da estrutura (Gárgulas do mapa 161) |
+| 98 | 09-24 | skill 299 no v126: 85 → 88 → 142 → 123 para o dono; 88 removido do broadcast; visual do próprio Tsuko pendente em jogo |
+| 99 | 09-24 | desvio de obstáculo do monstro de chão: porte do `pathfinding` (perseguição dispersa sem bloqueio + `CPf2DBfs`, passeio com o agente de 30 nós), volta para casa com `ReturnHome` |

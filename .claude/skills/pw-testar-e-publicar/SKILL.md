@@ -32,8 +32,7 @@ Só vá ao `panicked at` de um teste específico depois de saber qual é:
 - **`--test-threads=2`**: no paralelismo máximo, `aceitar_forma_o_grupo…` e
   `a_consulta_de_jogador…` falham por contenção no pool do Postgres e passam isoladas (B74,
   B80). Com 2 fios a rodada inteira passa — é assim que vale a pena medir.
-- Referência (2026-09-22, B80): **620 testes, 0 falhas**. Qualquer falha além das duas acima
-  é nova.
+- Referência (2026-09-24, B98): **674 testes, 0 falhas** com dois fios.
 - Teste que cria dado no banco começa com `comum::limpar_sobras_de_teste(&pool)`
   (`crates/pw-storage/tests/comum/mod.rs`): apaga sobras de execuções anteriores. Teste novo
   que cria realm ou conta usa esse módulo e os mesmos padrões de nome (`t_*`, e conta com

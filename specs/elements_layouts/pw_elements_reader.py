@@ -143,7 +143,7 @@ def decode_record(buf: bytes, off: int, table_def: Dict[str, Any]) -> Dict[str, 
 
 
 # =============================================================================
-# TALK_PROC -- a única tabela de tamanho variável em elements.data (v156)
+# TALK_PROC -- a única tabela de tamanho variável nos layouts medidos
 # =============================================================================
 
 def _read_wstr(buf: bytes, off: int, nchars: int) -> Tuple[str, int]:
@@ -237,7 +237,7 @@ def load_elements_data(
         result[name] = [decode_record(buf, inicio + i * size, table_def) for i in range(count)]
         off = inicio + count * size
 
-        if name in ("ARMORRUNE_ESSENCE", "WAR_TANKCALLIN_ESSENCE"):
+        if header["version"] != 7 and name in ("ARMORRUNE_ESSENCE", "WAR_TANKCALLIN_ESSENCE"):
             esperado = TAG_DO_EXPORTADOR if name == "ARMORRUNE_ESSENCE" else TAG_DEPOIS_DOS_TANQUES
             achado = u32(off)
             if achado != esperado:

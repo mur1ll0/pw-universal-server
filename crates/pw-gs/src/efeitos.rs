@@ -293,6 +293,15 @@ pub enum Efeito {
     /// com `SetAmount(60 + 75 × nível)`, `SetValue(4 + 6 × nível)` e `SetTime(20000)`
     /// (`cskill/skills/skill249.h:257-262`).
     Wingshield,
+    /// `filter_Fairyform` (`cskill/skill/skillfilter.h:16819-16875`), a **Forma Sombria**
+    /// (2570) do Tormentador: enquanto dura, o jogador muda de forma (`ChangeShape(1 |
+    /// FORM_CLASS << 6)` → `PLAYER_CHGSHAPE`), tem o equipamento trancado
+    /// (`LockEquipment`), e ganha `_speed`% de velocidade e `_defense`% de defesa
+    /// (`EnhanceSpeed`, `EnhanceScaleDefense`). O roteiro dá `SetTime(16000 + 3000 × nível)`,
+    /// `SetRatio(0,04 × nível)` e `SetValue(0,6 × nível)` (`cskill/skills/skill2570.h:240-243`),
+    /// e `SetFairyform` os converte em `(int)(100 × ratio)` e `(int)(100 × value)`
+    /// (`cskill/skill/playerwrapper.cpp:5247-5257`).
+    Fairyform,
     /// `healing_potion_filter` / `mana_potion_filter` (`gs/potion_filter.h:6-130`): a poção
     /// não cura de uma vez — ela reparte o total pelo tempo e entrega **um pedaço por
     /// batimento de 1 s**. Não vem de roteiro de habilidade; quem cria é o uso do item.
@@ -358,6 +367,7 @@ impl Efeito {
             "Invincible" => Invincible,
             "Firearrow" => Firearrow,
             "Wingshield" => Wingshield,
+            "Fairyform" => Fairyform,
             _ => return None,
         })
     }
@@ -428,6 +438,11 @@ impl Efeito {
             // TRANSFERABLE_BUFF`, `HSTATE_WINGSHIELD` 69 e `VSTATE_WINGSHIELD` 29
             // (`cskill/skill/statedef.h:40,261`).
             Wingshield => f(Unico, true, 69, 29),
+            // `filter_Fairyform`: `FILTER_MASK_WEAK | FILTER_MASK_HEARTBEAT` — nem bênção nem
+            // maldição (o Dispersar não o tira) e **sem** `REMOVE_ON_DEATH`. O ícone é o
+            // `HSTATE_FAIRYFORM` 279 (`statedef.h:477`, `InsertTeamVisibleState`); não há
+            // `VSTATE`: o que o cliente desenha é a forma, pelo `PLAYER_CHGSHAPE`.
+            Fairyform => Ficha { convivencia: Fraco, bencao: false, maldicao: false, icone: 279, visivel: 0 },
             // Sem ícone e sem estado visual: o original não acende nenhum (`potion_filter.h`).
             PocaoDeVida | PocaoDeMana => f(Fundir, true, 0, 0),
         }
@@ -469,6 +484,9 @@ pub struct Filtro {
     /// `_amount` do `filter_Wingshield`: quanto de dano o escudo ainda aguenta. Cai a cada
     /// golpe e, abaixo de 6, o filtro se apaga (`skillfilter.h:4168-4195`).
     pub absorve: f32,
+    /// `_defense` do `filter_Fairyform`: porcentagem somada à defesa (`EnhanceScaleDefense`).
+    /// A velocidade vai na `razao`, como nos outros realces de velocidade.
+    pub escala_defesa: i32,
 }
 
 /// O que um segundo de filtros faz ([`Efeitos::batida`]).
@@ -635,9 +653,11 @@ impl Efeitos {
         antes != self.filtros.len()
     }
 
-    /// `FILTER_MASK_REMOVE_ON_DEATH` — todos os portados têm.
+    /// `FILTER_MASK_REMOVE_ON_DEATH` — todos os portados têm, **menos o `Fairyform`**, cuja
+    /// máscara é só `WEAK | HEARTBEAT` (`skillfilter.h:16822-16825`): a forma sobrevive à
+    /// morte e acaba pelo tempo.
     pub fn ao_morrer(&mut self) {
-        self.filtros.clear();
+        self.filtros.retain(|f| f.efeito == Efeito::Fairyform);
         self.invencivel_s = 0;
     }
 
@@ -650,6 +670,19 @@ impl Efeitos {
 
     fn tem(&self, e: Efeito) -> bool {
         self.filtros.iter().any(|f| f.efeito == e)
+    }
+
+    /// O `shape_form` do objeto: `1 | (FORM_CLASS << 6)` = 65 na Forma Sombria
+    /// (`skillfilter.h:16853`; `FORM_CLASS` = 1 em `cskill/skill/skill.h:84`), nenhum fora dela.
+    pub fn forma(&self) -> Option<u8> {
+        self.tem(Efeito::Fairyform).then_some(1 | (1 << 6))
+    }
+
+    /// `_lock_equipment` (`LockEquipment(true)` no `filter_Fairyform::OnAttach`): vestir,
+    /// trocar, mover para o corpo e descartar peça são recusados com
+    /// `ERR_EQUIPMENT_IS_LOCKED` (`gs/player.cpp:7874, 7991, 8077, 8258`).
+    pub fn equipamento_travado(&self) -> bool {
+        self.tem(Efeito::Fairyform)
     }
 
     /// `MODE_INDEX_STUN`/`SLEEP`: não age.
@@ -695,6 +728,10 @@ impl Efeitos {
                 Inchp => r.vida += k,
                 Dechp => r.vida -= k,
                 Incsmite => r.critico += f.por_segundo,
+                Fairyform => {
+                    r.velocidade += k;
+                    r.defesa += f.escala_defesa;
+                }
                 Inchurt => r.dano_recebido *= 1.0 + f.fator,
                 Dechurt => r.dano_recebido *= 1.0 - f.fator,
                 _ => {}
@@ -984,7 +1021,7 @@ mod testes {
     }
 
     fn filtro(e: Efeito, s: i32, razao: i32) -> Filtro {
-        Filtro { efeito: e, restante_s: s, razao, fator: razao as f32 / 100.0, por_segundo: 0, contador: 0, origem: 0, icone: true, absorve: 0.0 }
+        Filtro { efeito: e, restante_s: s, razao, fator: razao as f32 / 100.0, por_segundo: 0, contador: 0, origem: 0, icone: true, absorve: 0.0, escala_defesa: 0 }
     }
 
     #[test]
@@ -1010,7 +1047,7 @@ mod testes {
     #[test]
     fn dano_no_tempo_tica_de_tres_em_tres() {
         let mut e = Efeitos::default();
-        e.adicionar(Filtro { efeito: Efeito::Toxic, restante_s: 5, razao: 0, fator: 0.0, por_segundo: 20, contador: 0, origem: 7, icone: true, absorve: 0.0 });
+        e.adicionar(Filtro { efeito: Efeito::Toxic, restante_s: 5, razao: 0, fator: 0.0, por_segundo: 20, contador: 0, origem: 7, icone: true, absorve: 0.0, escala_defesa: 0 });
         let mut total = 0;
         for _ in 0..5 {
             for t in e.batida().0 {

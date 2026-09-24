@@ -97,6 +97,11 @@ pub struct PlayerEntity {
     /// liga o `STATE_MOUNT`, manda `PLAYER_MOUNTING` e **sobrepõe** a velocidade de
     /// corrida (`EnhanceOverrideSpeed`, `gs/player.cpp:14279-14299`).
     pub montaria: Option<MontariaAtiva>,
+    /// A última forma que o cliente recebeu por `PLAYER_CHGSHAPE` (163). O
+    /// `filter_Fairyform` manda o comando ao entrar e ao sair (`ChangeShape` no
+    /// `OnAttach`/`OnRelease`); aqui quem manda é o `avisar_efeitos`, quando a forma dos
+    /// filtros difere desta.
+    pub forma_enviada: Option<u8>,
     /// O marcador da operação de mascote aberta — o `session_pet_operation` do original
     /// (`gs/actsession.h:1203-1246`). Cada `SUMMON_PET`/`RECALL_PET` novo incrementa, e a
     /// tarefa que conclui a canalização só age se o marcador ainda for o dela; é assim que
@@ -700,8 +705,9 @@ impl PlayerEntity {
             // `PLAYER_MOUNTING` só alcança quem estava vendo na hora; quem chega depois
             // precisa do estado aqui.
             montaria: self.montaria.map(|m| (m.cor, m.tid as i32)),
-            // `shape_form` — nada o liga ainda (o `filter_Fairyform` não está portado).
-            forma: None,
+            // `shape_form`: 65 na Forma Sombria (`filter_Fairyform`, `gactive_imp::ChangeShape`
+            // em `gs/actobject.h:1047-1055` liga o `STATE_SHAPE` e guarda o byte).
+            forma: self.efeitos.forma(),
         }
     }
 }
@@ -991,6 +997,7 @@ impl PlayerEntity {
             centro_do_stream: p.position,
             voando: false,
             montaria: None,
+            forma_enviada: None,
             operacao_de_pet: 0,
             // A escolha sobrevive ao logout: vem do `charactermode` do banco, como o
             // `SetPlayerCharMode` do original faz no login (B83).

@@ -60,6 +60,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         centro_do_stream: Vector3::new(0.0, 0.0, 0.0),
         voando: false,
         montaria: None,
+        forma_enviada: None,
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
@@ -321,7 +322,9 @@ fn sem_alvo_o_monstro_volta_para_onde_nasceu() {
     let mut parou = false;
     for _ in 0..(30 * 20) {
         if let Some(AcaoDoMonstro::Parou { posicao, .. }) = ai.tick(&mut m, &players, 50, &sem_mapa) {
-            if posicao.x.abs() < 0.1 {
+            // `session_npc_patrol` acaba a 1,2 passo de casa (`squared_distance <= 1.44 ×
+            // speed²`, `gs/npcsession.cpp:903`) — o passo é a corrida de 1 s.
+            if (posicao.x.powi(2) + posicao.z.powi(2)).sqrt() <= 1.2 * m.corrida() + 0.01 {
                 parou = true;
                 break;
             }

@@ -6,6 +6,7 @@ pub mod entity;
 pub mod grid;
 pub mod habilidades;
 pub mod mapas;
+pub mod navegacao;
 pub mod missoes;
 pub mod progressao;
 pub mod economia;

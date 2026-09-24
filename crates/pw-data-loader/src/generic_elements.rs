@@ -1,14 +1,13 @@
 //! Leitor genérico de `elements.data`, dirigido pelo catálogo de layouts em
 //! `specs/elements_layouts/`. É a contraparte em Rust de
 //! `specs/elements_layouts/pw_elements_reader.py` — os dois devem seguir o mesmo
-//! algoritmo (ver o README daquela pasta para a arquitetura completa: detecção de versão
-//! pelo cabeçalho, catálogo de JSON por build, overrides por realm).
+//! algoritmo (ver o README daquela pasta: versão no cabeçalho, catálogo por build).
 //!
 //! `GameDataManager::load_from_directory` (`crates/pw-data-loader/src/manager.rs`) usa este
-//! leitor para qualquer `elements.data` cuja versão o catálogo cobre (hoje, só v156) — é o
+//! leitor para qualquer `elements.data` cuja versão o catálogo cobre (v7, v156, v159) — é o
 //! caminho real que o `pw-gs` percorre ao subir um realm. [`crate::elements::ElementsData`]
 //! (o leitor tipado antigo, `TABLE_SIZES_V7`, 118 tabelas) continua existindo só como
-//! **fallback para versões que o catálogo ainda não cobre** (1.2.6, v7) — não porque seja
+//! **fallback para versões que o catálogo ainda não cobre** — não porque seja
 //! preferido. Ver `docs/ESTADO_E_RETOMADA.md`, seção "Prioridade atual", para o porquê da
 //! migração (o leitor tipado nunca tinha terminado de carregar o `elements.data` real do
 //! 1.5.5; este aqui já foi validado byte a byte contra as 231 tabelas).
@@ -17,7 +16,8 @@
 //!
 //! `elementdataman::load_data` (`EvolvedPWClient/ElementClient/CCommon/elementdataman.cpp:3879`)
 //! lê, em ordem: versão, `time_t`, e cada tabela como `count` + `count × sizeof(T)`. Há só
-//! três exceções, e as três estão aqui:
+//! três exceções no v156/v159, e as três estão aqui. O v7 medido no arquivo
+//! `data/realm_126/config/elements.data` não traz os dois blocos de tag:
 //!
 //! 1. Depois de `ARMORRUNE_ESSENCE`: `tag` (`0xab7689dd`), `len`, `len` bytes com o nome da
 //!    máquina que exportou, e outro `time_t` (`elementdataman.cpp:4009-4016`).
@@ -47,6 +47,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 const V156_LAYOUT_JSON: &str = include_str!("../../../specs/elements_layouts/v156.json");
+const V7_LAYOUT_JSON: &str = include_str!("../../../specs/elements_layouts/v7.json");
 const V159_LAYOUT_JSON: &str = include_str!("../../../specs/elements_layouts/v159.json");
 
 /// `tag` gravado por `elementdataman::save_data` antes do nome da máquina exportadora
@@ -188,6 +189,9 @@ pub fn detect_header(buf: &[u8]) -> Result<HeaderInfo> {
 
 pub fn load_layout(version: u32) -> Result<LayoutCatalog> {
     match version {
+        // Cliente 1.2.6: `elementclient.exe` VA 0x60ff5d-0x60ffb0 compara
+        // 0x30000007, lê count u32 e registros de 0x54 B da primeira tabela.
+        7 => Ok(serde_json::from_str(V7_LAYOUT_JSON)?),
         156 => Ok(serde_json::from_str(V156_LAYOUT_JSON)?),
         159 => Ok(serde_json::from_str(V159_LAYOUT_JSON)?),
         v => Err(GenericElementsError::UnsupportedVersion(v)),
@@ -251,7 +255,7 @@ fn decode_one_field(buf: &[u8], off: usize, field: &FieldDef) -> Result<(FieldVa
 }
 
 // =============================================================================
-// TALK_PROC -- a única tabela de tamanho variável em elements.data (v156)
+// TALK_PROC -- a única tabela de tamanho variável nos layouts medidos
 // =============================================================================
 
 fn read_wstr(buf: &[u8], off: usize, nchars: usize) -> Result<(String, usize)> {
@@ -367,9 +371,10 @@ pub fn load_elements_data(buf: &[u8]) -> Result<GenericElementsData> {
         off = fim;
 
         // Os dois blocos que não são tabela (elementdataman.cpp:4009-4016 e 4122-4124).
-        let bloco = match table.name.as_str() {
-            "ARMORRUNE_ESSENCE" => Some((TAG_DO_EXPORTADOR, true)),
-            "WAR_TANKCALLIN_ESSENCE" => Some((TAG_DEPOIS_DOS_TANQUES, false)),
+        let bloco = match (header.version, table.name.as_str()) {
+            (7, _) => None,
+            (_, "ARMORRUNE_ESSENCE") => Some((TAG_DO_EXPORTADOR, true)),
+            (_, "WAR_TANKCALLIN_ESSENCE") => Some((TAG_DEPOIS_DOS_TANQUES, false)),
             _ => None,
         };
         if let Some((esperado, com_time_t)) = bloco {

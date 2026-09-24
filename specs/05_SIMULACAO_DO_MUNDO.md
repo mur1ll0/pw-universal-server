@@ -1,6 +1,6 @@
 # Especificação 05: Simulação do mundo (`pw-gs`)
 
-> Itens/combate 126 conferidos em 2026-09-21, base `a305e51` + B89/B90; demais áreas em 2026-09-14, B50. Cobre
+> Tempos da skill 299 v126 (tabela do `gs` 1.2.6) testados em 2026-09-24, base `b16f992` + B100; pipeline B98; itens/combate 126 conferidos em 2026-09-21, base `a305e51` + B89/B90; missão inicial v55 testada em 2026-09-23 (B96); demais áreas em 2026-09-14, B50. Cobre
 > `crates/pw-gs/src/{world,bus_server,bus_server/jogo,ai,combat,habilidades,entity,grid,npc,server,missoes,progressao,economia}.rs`.
 >
 > Estado de cada regra: `confirmado` (visto em jogo), `testado` (teste automatizado),
@@ -80,8 +80,9 @@ Regras de `gs/aipolicy.cpp`, `gs/ainpc.cpp`, `gs/npcsession.cpp`:
 | comportamento | regra |
 | :--- | :--- |
 | perseguir | a cada `PASSO_DE_PERSEGUICAO_MS` **500 ms** avança `run_speed × 0,5` m (`session_npc_follow_target`); para ao entrar no alcance |
-| altura do passo | monstro de chão: chão do `.hmap`; água/ar: segue o alvo sem descer abaixo do terreno |
-| voltar | sem alvo, corre ao nascimento, passo de 1 s (`ai_returnhome_task`) |
+| altura do passo | monstro de chão: chão do `.hmap` **+ o piso do `movemap`** (em cima de ponte e estrutura, `CNPCMoveMap::Get3DPosOnGround`, B97); água/ar: segue o alvo sem descer abaixo desse piso |
+| voltar | sem alvo, corre ao nascimento, passo de 1 s (`ai_returnhome_task` → `session_npc_patrol`, `follow_target` com alcance 0,8 m); acaba a **1,2 passo** de casa; se ao fim estiver a mais de **10 m** (`GetReturnHomeRange`), `ReturnHome`: parada em casa com `MOVE_MODE_RETURN` (7) e velocidade 0x500 (B99) |
+| desvio de obstáculo (monstro de chão) | `navegacao.rs`, porte de `cgame/gs/pathfinding`: perseguir e voltar = `CNPCDisperseChaseOnGroundAgent` sobre o `CNPCChaseOnGroundNoBlockAgent` (`CHASE_WITHOUT_BLOCK`): reta se o `.rmap` deixa; senão reta até o último pixel livre + busca gulosa `CPf2DBfs` (Manhattan, 8 vizinhos) em fatias de 20/40/60 pixels (50/90/120 bloqueado) pela distância inicial, teto 300/600/900; meta **dispersa** ±60° a `alcance` do alvo (`CChaseInfo` guarda a direção). Condutor = `session_npc_follow_target::Run`: recomeça ao chegar (alcance × 0,6) ou se o alvo se afastar > 7 m (> 4 m sem bloqueio); 3 chegadas ou agente desistindo encerram a sessão. Passear = `CNPCRambleOnGroundAgent`: meta no disco de 10 m, alcançável e de preferência em reta, e o `CNPCChaseOnGroundAgent` (lista aberta de 30 nós, 200 pixels, previsão diagonal). No mapa 161: reta 24% dos passos dentro de obstáculo, agente 0% (B99). Água/ar: ainda reta |
 | passear | só com jogador a menos de `RAIO_DE_ATIVIDADE` 120 m (renovado por 20 batimentos de 1 s), com `patroll_mode`, sem ódio: anda (`walk_speed`, passo de 1 s) até ponto a **10 m** do nascimento, no máximo 8 passos; 10% de emendar outro |
 | fase do batimento | **sorteada por monstro** (`MonsterAi::new`): o batimento de 1 s e o passo de patrulha começam em pontos diferentes do segundo, porque o original não bate em todos ao mesmo tempo — o coletor pega `tamanho / TICK_PER_SEC` objetos por tique (`objmanager.h:213-229`, `worldmanager.h:262`) e cada NPC nasce com `idle_timer_count = Rand(0, NPC_IDLE_HEARTBEAT)` (`npcgenerator.cpp:2014`). Sem isso, dez monstros davam o passo no mesmo quadro e o cliente tocava dez sons de passo sobrepostos (B58) |
 | aviso ao cliente | `OBJECT_MOVE` (ms, ×256, modo) e `OBJECT_STOP_MOVE` com direção ao parar |
@@ -172,6 +173,22 @@ Exemplo: a Flecha Fulgurante (244) tem `State1` de 3.000 ms (conjuração, o que
 `OBJECT_CAST_SKILL`) e `State2`/`GetExecutetime` de 800 ms (`cskill/skills/skill244.h:20-80`).
 O efeito entra no fim da conjuração; o `HOST_STOP_SKILL` só sai 800 ms depois. Mandando os
 dois juntos, o buff aparecia sem animação nenhuma (relato de 2026-09-19).
+
+No cliente 1.2.6, o Murillo relatou em 2026-09-23 que, depois da canalização,
+faltam a animação e o efeito de lançamento da skill 299 (Enxame de Ferroadas).
+**Testado no barramento (B98):** para o conjurador, 85 → 88 → 142 → 123, com
+142 de 14 bytes de payload (captura `full_interno.medidas.md:101`); o 142 chama
+`PlayAttackEffect` (`EC_HostMsg.cpp:947-955`) e este chama a ação de lançamento
+(`EC_Player.cpp:3414-3525`). O 88 só vai ao dono, como no original
+(`gs/player.cpp:4066-4073`); enviá-lo aos demais alterava o estado da skill deles.
+**Causa (B100, `diagnosticado` e corrigido no barramento; falta ver em jogo):** no realm
+1.2.6 a tabela de habilidades ficava **vazia** — o `manager.rs` só a carregava para
+`elements.data` v156/v159 —, então `fase_de_execucao_ms` era 0 e o 123 saía colado ao 142
+(`bus_server.rs:2358-2372`), e a conjuração caía na tabela embutida ou nos 1.000 ms fixos
+(`:2096-2106`). Mesmo sintoma do 1.5.5 no B67. Agora o v7 carrega `TabelaDeHabilidades::do_126`
+(tempos do `gs` 1.2.6, spec 03 §3.10b). Captura original da 299: `85` (tempo 1.500) → `88`
+em +1.505 ms → `142` em +1.555 → `123` em **+2.504..2.551 ms**; o teste de mundo mede o 88 entre
+1.400 e 1.800 ms e o 123 entre 2.400 e 2.900 ms, pelo menos 900 ms depois do 142.
 
 ### 5.1.0 Nada que espere o banco fica no caminho do jogo — `testado` (B72)
 
@@ -306,7 +323,8 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
   `HOST_STOP_SKILL` (123) → golpe da fila. É a do original: o dano sai do `RunSkill`
   (`session_skill::RepeatSession`, `actsession.cpp:576-600`) e só depois o `EndSession` manda
   `stop_skill` (`actsession.cpp:558-574`). Mandando o 123 antes, o cliente retomava o golpe
-  normal antes de a habilidade ter efeito.
+  normal antes de a habilidade ter efeito. O 88 é enviado só ao conjurador
+  (`gs/player.cpp:4066-4073`, B98); os demais recebem o 143 do lançamento.
 - **Cancelamento de conjuração por ESC e movimento (B67) — `testado`**: ESC (`CANCEL_ACTION`, C2S 42)
   e movimento do jogador (`PLAYER_MOVE`, C2S 0) cancelam qualquer conjuração em andamento
   (`p.conjuracao.take()`). O servidor envia `SELF_SKILL_INTERRUPTED` (opcode 87, reason 2) para o
@@ -351,7 +369,11 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
   ± cadência e conjuração, ± dano recebido, crítico, regeneração de vida/mana, ± vida máxima,
   poder, invencível, **escudo de asa** (`Wingshield`, B73: absorve o golpe até o `SetAmount`
   acabar — um quinto passa e o escudo perde quatro vezes isso — e injeta o `SetValue` de mana
-  a cada 3 s, `skillfilter.h:4136-4232`); instantâneos cura, cura/mana em %, dano direto,
+  a cada 3 s, `skillfilter.h:4136-4232`), **Forma Sombria** (`Fairyform`, B95: fraco, nem
+  bênção nem maldição, **sobrevive à morte**; forma 65 pelo `PLAYER_CHGSHAPE`, equipamento
+  trancado, +`100 × ratio`% de velocidade e +`100 × value`% de defesa, ícone 279;
+  `skillfilter.h:16819-16875`, roteiro da 2570 dá 19 s / 4% / 60% no nível 1. **Falta** o
+  `EventChange` da forma — as habilidades que só existem na forma); instantâneos cura, cura/mana em %, dano direto,
   limpar bênçãos/maldições.
   Convivência de `filter_man::AddFilter` (único substitui, fraco descarta, fundir absorve).
   Realces entram como `_en_percent` na conta do jogador e em monstro (NPC usa o mesmo
@@ -397,7 +419,8 @@ para omitir id 283 inexistente no 126, sem alterar ganho/persistência do Daimon
 31/46/72/99/156. Somente o layout varia (spec 04); regras de empilhamento,
 cobrança e persistência continuam comuns. Experiência 36/158 reproduz capturas.
 Sete testes de protocolo e dois de mundo aprovados com banco; não confirma
-jogabilidade de missões v55 (leitor pendente), preços v7 nem C2S de compra.
+jogabilidade completa de missões v55 (leitor estrutural no B96, mas projeção dos
+requisitos ainda parcial), preços v7 nem C2S de compra.
 
 
 **Todo item que entra na bolsa por prêmio de missão ou por coleta é gerado**
@@ -452,6 +475,7 @@ banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
 | aljava no drop (B52) | `testado` | `QUIVER_ESSENCE` vira `id_projectile` × `Rand(num_min, num_max)` (`generate_quiver`, `generate_item_temp.h:650-667`); o 1955 do Espírito da Estrela caía cru |
 | Carta da Sorte (B53) | `testado` | `TASKDICE_ESSENCE`: usar sorteia a missão por `task_lists` (`RandSelect`) e entrega pelo motor (`OnTaskCheckDeliver`); aceitou, gasta uma e responde `HOST_USE_ITEM`; recusou, `ERROR_MESSAGE` 18 e a carta fica; em combate com `no_use_in_combat`, erro 66 (`item_taskdice.cpp:12-42`) |
 | equipamento sorteado no drop (B53) | `testado` | ver §5.1 |
+| caixa de Cartas de General (B95) | `testado` | `POKER_DICE_ESSENCE` (32 caixas no 155; a "Caixa de Tesouro do Guerreiro" é a 41073): bolsa cheia recusa **sem erro** (o `error_cmd` está comentado no original) e só destrava o slot; senão sorteia uma das 256 entradas (`RandSelect`), gera a carta com o `generalcard_essence` de 32 B (tipo, qualidade, nível exigido, liderança sorteada em `require_control_point`, nível máximo, nível 1, exp 0, renascimentos 0), manda `HOST_OBTAIN_ITEM` (99) e gasta a caixa (`HOST_USE_ITEM`). `item_generalcard_dice.cpp:10-54`, `generate_item_temp.h:3144-3191`. **O sistema de cartas não existe**: equipar, liderança, atributos, nível, devorar — `falta` |
 | **drop de monstro** | `testado` | dono = maior dano (+`max_hp/4` do primeiro golpe). Itens: `drop_times` rodadas de `probability_drop_num0..3` e `drop_matters[32]` (da 2ª rodada, só índices < 16), com o ajuste de item por nível (`DropItemFromData`, `npc.cpp:2649`; `generate_item_from_monster`, `itemdataman.cpp:1191`). Moedas: `drop_times` vezes, `Rand(médio±variação)`, chance 0,7, × ajuste. Cada monte a ±2 m, no chão (`worldmanager.cpp:512-555`), `tid` 3044 para moedas, id de matéria `0xC8…` |
 | item no chão | `testado` | posse do dono por **30 s**, some em **300 s** (`matter.h:62`, `matter.cpp:133`); `MATTER_ENTER_WORLD` a quem está a 120 m e no streaming; `OBJECT_DISAPPEAR` ao sumir |
 | **pegar** (C2S 6 e 184) | `testado` | tipo confere, distância < 10 m, posse; moedas `PICKUP_MONEY` (30), item `PICKUP_ITEM` (31); `MATTER_PICKUP` (152) a todos; bolsa cheia `ERROR_MESSAGE` 7, fora da posse 6 (`playercmd.cpp:1347-1444`, `matter.h:97-129`) |

@@ -76,6 +76,39 @@ impl SpawnInstance {
     /// monstro no chão é o **tipo da área**, não o deslocamento. A dedução preservava a
     /// altura de qualquer área de chão cujo centro o editor tivesse posto um pouco acima
     /// do terreno — um NPC flutuando, por exemplo.
+    /// Um novo sorteio de `x`/`z` na área, para quando o primeiro cai num ponto que o mapa de
+    /// movimento diz não ser alcançável: `terrain_gen_pos::Generate` tenta **até cinco vezes**
+    /// (`gs/npcgenerator.cpp:4301-4315`). Determinístico como a dispersão (`tentativa` entra na
+    /// semente); área sem tamanho devolve o próprio centro.
+    pub fn posicao_alternativa(&self, tentativa: u32) -> Vector3 {
+        posicao_na_area(self.centro_da_area, self.extensao_da_area, self.instance_id, 0x4000_0000 | tentativa)
+    }
+
+    /// Onde a entidade nasce no mapa, com terreno e mapa de movimento, e se ela ficou em cima
+    /// de estrutura (piso acima do terreno).
+    ///
+    /// Área no chão: `terrain_gen_pos::Generate` (`gs/npcgenerator.cpp:4299-4318`) pergunta ao
+    /// mapa de movimento (`GetValidPos` → `CNPCMoveMap::GetValid3DPos`, `NPCMoveMap.h:199-210`)
+    /// a altura do piso acima do terreno; ponto inalcançável é sorteado de novo, até cinco
+    /// vezes, e sem nenhum fica o último sorteio no terreno. Área em caixa (`box_gen_pos`) não
+    /// consulta o mapa de movimento. Sem terreno sob o ponto, vale o `y` do arquivo. O `bool`
+    /// diz se a entidade ficou em cima de estrutura.
+    pub fn posicao_no_mapa(&self, terreno: &crate::Terreno, movimento: &crate::MapaDeMovimento) -> (Vector3, bool) {
+        let (mut x, mut z, mut acima) = (self.pos.x, self.pos.z, 0.0f32);
+        if self.tipo_de_area == TipoDeArea::NoChao && movimento.tem_dados() {
+            for tentativa in 0..5u32 {
+                let p = if tentativa == 0 { self.pos } else { self.posicao_alternativa(tentativa) };
+                (x, z) = (p.x, p.z);
+                if let Some(a) = movimento.acima_do_terreno(x, z) {
+                    acima = a;
+                    break;
+                }
+            }
+        }
+        let chao = terreno.altura_em(x, z);
+        (Vector3::new(x, self.altura_resolvida(chao.map(|h| h + acima)), z), chao.is_some() && acima > 0.0)
+    }
+
     pub fn altura_resolvida(&self, chao: Option<f32>) -> f32 {
         let Some(chao) = chao else {
             return self.pos.y;

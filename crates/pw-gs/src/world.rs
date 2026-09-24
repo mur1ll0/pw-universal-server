@@ -153,6 +153,10 @@ pub struct WorldInstance {
     /// `path_finding::GetWaterHeight` do original, e dele saem a recusa de montar debaixo
     /// d'água e a queda da montaria de quem entra na água montado (B88).
     pub agua: pw_data_loader::MapaDeAgua,
+    /// O piso andável acima do terreno, do `movemap/` (`pw_data_loader::movemap`): ponte,
+    /// plataforma, estrutura de pedra. É o `NPCMoveMap` do original, por onde o gerador de
+    /// posição e o monstro de chão ficam **em cima** da estrutura e não dentro dela.
+    pub movimento: pw_data_loader::MapaDeMovimento,
     /// Os recursos do mapa — minério, erva, tronco. Ver [`MatterEntity`].
     ///
     /// Ficam separados dos NPCs porque o comando de entrada é outro
@@ -231,6 +235,7 @@ impl WorldInstance {
             coletores: HashMap::new(),
             terreno: pw_data_loader::Terreno::vazio(),
             agua: pw_data_loader::MapaDeAgua::vazio(),
+            movimento: pw_data_loader::MapaDeMovimento::vazio(),
             drops: HashMap::new(),
             data_manager,
             char_repo,
@@ -296,8 +301,10 @@ impl WorldInstance {
         if let Some(dir) = self.data_manager.pastas_de_mapa.get(&self.world_id).cloned() {
             self.terreno = pw_data_loader::Terreno::ler(self.world_id, &dir);
             self.agua = pw_data_loader::MapaDeAgua::ler(self.world_id, &dir);
+            self.movimento = pw_data_loader::MapaDeMovimento::ler(self.world_id, &dir);
         }
         let com_terreno = self.terreno.tem_dados();
+        let mut assentados_no_piso = 0usize;
 
         let mut sem_template = 0usize;
         let mut fora_do_mapa = 0usize;
@@ -306,11 +313,14 @@ impl WorldInstance {
             for inst in &spawns.instances {
                 // A altura, pela regra do original — ver a nota da função.
                 let pos = if com_terreno {
-                    let chao = self.terreno.altura_em(inst.pos.x, inst.pos.z);
-                    if chao.is_none() {
+                    // Em cima da estrutura, não dentro: `SpawnInstance::posicao_no_mapa` pergunta
+                    // ao mapa de movimento a altura do piso (relato das Gárgulas do mapa 161, B97).
+                    if self.terreno.altura_em(inst.pos.x, inst.pos.z).is_none() {
                         fora_do_mapa += 1;
                     }
-                    pw_core::Vector3::new(inst.pos.x, inst.altura_resolvida(chao), inst.pos.z)
+                    let (pos, no_piso) = inst.posicao_no_mapa(&self.terreno, &self.movimento);
+                    assentados_no_piso += no_piso as usize;
+                    pos
                 } else {
                     inst.pos
                 };
@@ -410,6 +420,11 @@ impl WorldInstance {
             self.monsters.len(),
             self.npcs.len(),
             self.matters.len()
+        );
+        info!(
+            "World #{}: mapa de movimento com {} submapa(s); {assentados_no_piso} nascimento(s) em cima de estrutura",
+            self.world_id,
+            self.movimento.submapas_lidos()
         );
         if fora_do_mapa > 0 {
             warn!(
@@ -1278,6 +1293,7 @@ impl WorldInstance {
             origem: 0,
             icone: false,
             absorve: 0.0,
+            escala_defesa: 0,
         };
         p.efeitos.adicionar(filtro);
     }
@@ -1343,9 +1359,15 @@ impl WorldInstance {
                 continue;
             }
 
+            // O piso do monstro de chão é o do mapa de movimento, quando há: terreno + altura
+            // da estrutura (`CNPCMoveMap::Get3DPosOnGround`, `NPCMoveMap.cpp:155-166`) — sem
+            // isto o monstro que nasce na plataforma afunda nela ao dar o primeiro passo.
             let terreno = &self.terreno;
             let chao = |x: f32, z: f32| terreno.altura_em(x, z);
-            match ai.tick(monster, &self.players, delta_ms, &chao) {
+            // Com o mapa de movimento, o monstro de chão contorna obstáculo e anda em cima da
+            // estrutura ([`crate::navegacao`], B99).
+            let mapa = crate::navegacao::Mapa { terreno: &chao, movimento: &self.movimento };
+            match ai.tick_no_mapa(monster, &self.players, delta_ms, &mapa) {
                 Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano }) => {
                     // Quem bateu vai junto: sem o id, o `HOST_ATTACKED` saía com
                     // `idAttacker = 0` e o cliente não achava o atacante

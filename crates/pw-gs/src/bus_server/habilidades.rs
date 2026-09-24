@@ -490,6 +490,7 @@ impl BusServer {
             origem,
             icone: true,
             absorve: 0.0,
+            escala_defesa: 0,
         };
 
         // Instantâneos: mexem na vida/mana, não criam filtro.
@@ -549,6 +550,13 @@ impl BusServer {
                             }
                         }
                         Efeito::Inchp => f.razao = (ap.razao * 100.0 + 0.00001) as i32,
+                        // `SetFairyform`: `filter_Fairyform(object, time, (int)(100 * ratio +
+                        // 0.00001f), (int)(100 * value + 0.00001f))`
+                        // (`cskill/skill/playerwrapper.cpp:5247-5257`) — velocidade e defesa.
+                        Efeito::Fairyform => {
+                            f.razao = (ap.razao * 100.0 + 0.00001) as i32;
+                            f.escala_defesa = (ap.valor * 100.0 + 0.00001) as i32;
+                        }
                         Efeito::Inchurt if ap.razao <= 0.0 => return,
                         Efeito::Dechurt if !(ap.razao > 0.001 && ap.razao < 0.99) => return,
                         Efeito::Invincible => {
@@ -597,20 +605,29 @@ impl BusServer {
     }
 
     /// Avisa os filtros de um objeto: vida (`SELF_INFO_00` do jogador), ficha e
-    /// velocidade quando os realces mudaram, estado visível (124) e ícones (125).
+    /// velocidade quando os realces mudaram, estado visível (124) e ícones (125) — e a
+    /// forma (`PLAYER_CHGSHAPE`, 163) quando ela mudou.
     pub(super) async fn avisar_efeitos(&self, objeto: i64, atributos: bool) {
         let pacotes = {
-            let mundo = self.world.read().await;
-            if let Some(p) = mundo.players.get(&objeto) {
+            let mut mundo = self.world.write().await;
+            if let Some(p) = mundo.players.get_mut(&objeto) {
+                // `filter_Fairyform::OnAttach/OnRelease` chamam `ChangeShape`, que manda o
+                // comando ao dono e a quem está em volta; a troca vem **antes** do ícone e da
+                // velocidade (`skillfilter.h:16850-16873`). Só quando a forma de fato mudou:
+                // repetir o comando faria o cliente recarregar o modelo à toa.
+                let forma = p.efeitos.forma();
+                let troca_de_forma = (forma != p.forma_enviada).then(|| {
+                    p.forma_enviada = forma;
+                    S2CGamedataSend::player_change_shape(p.role_id, forma.unwrap_or(0)).data
+                });
                 let mut proprios = vec![Self::estado_proprio_de(p)];
                 if atributos {
                     proprios.push(self.ficha_propria(p));
                     proprios.push(S2CGamedataSend::ext_prop_move(p.role_id, p.walk_speed, p.move_speed, p.swim_speed, p.fly_speed).data);
                 }
-                let todos = vec![
-                    S2CGamedataSend::update_ext_state(p.role_id, p.efeitos.estados_visiveis()).data,
-                    S2CGamedataSend::icon_state_notify(p.role_id, &p.efeitos.icones()).data,
-                ];
+                let mut todos: Vec<Vec<u8>> = troca_de_forma.into_iter().collect();
+                todos.push(S2CGamedataSend::update_ext_state(p.role_id, p.efeitos.estados_visiveis()).data);
+                todos.push(S2CGamedataSend::icon_state_notify(p.role_id, &p.efeitos.icones()).data);
                 Some((Some(p.role_id), proprios, todos))
             } else if let Some((m, _)) = mundo.monsters.get(&objeto) {
                 let todos = vec![

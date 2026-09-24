@@ -2321,6 +2321,31 @@ mod tests {
         Motor { tarefas: d, listas: &mut l, j, eu: 1 }.aceitar(id, 0, false)
     }
 
+    #[test]
+    fn o_guerreiro_pode_receber_o_primeiro_teste_do_realm_126() {
+        let caminho = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../data/realm_126/config/tasks.data");
+        let bytes = std::fs::read(caminho).expect("tasks.data do realm 126");
+        let dados = TasksData::load_from_bytes(&bytes).expect("tasks.data v55 inteiro");
+        let mut jogador = JogadorDeTeste { nivel: 1, classe: 0, ..Default::default() };
+        assert_eq!(aceitar(&dados, &mut jogador, 1173), 0);
+    }
+
+    /// A missão inicial do Guia Selvagem (NPC 3518, serviço 3531 do `elements.data` v7):
+    /// no `tasks.data` v55 só as classes selvagens (3 e 4) a recebem no nível 1.
+    #[test]
+    fn a_missao_inicial_1177_do_realm_126_e_das_classes_selvagens() {
+        let caminho = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../data/realm_126/config/tasks.data");
+        let dados = TasksData::load_from_bytes(&std::fs::read(caminho).expect("tasks.data do realm 126"))
+            .expect("tasks.data v55 inteiro");
+        for classe in 0..8 {
+            let mut j = JogadorDeTeste { nivel: 1, classe, ..Default::default() };
+            let esperado = if classe == 3 || classe == 4 { 0 } else { 13 };
+            assert_eq!(aceitar(&dados, &mut j, 1177), esperado, "classe {classe}");
+        }
+    }
+
     fn momento(ano: i32, hora: i32, minuto: i32) -> pw_data_loader::tasks::MomentoDeMissao {
         pw_data_loader::tasks::MomentoDeMissao { ano, mes: 1, dia: 1, hora, minuto, dia_da_semana: 0 }
     }

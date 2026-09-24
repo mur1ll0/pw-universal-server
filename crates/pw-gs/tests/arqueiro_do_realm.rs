@@ -155,6 +155,7 @@ fn a_barreira_de_asa_absorve_dano_e_devolve_mana() {
         origem: 0,
         icone: true,
         absorve: 135.0,
+        escala_defesa: 0,
     });
 
     // Ícone 69 (HSTATE_WINGSHIELD) e estado visível 29 (VSTATE_WINGSHIELD).
@@ -183,6 +184,7 @@ fn a_barreira_de_asa_absorve_dano_e_devolve_mana() {
         origem: 0,
         icone: true,
         absorve: 135.0,
+        escala_defesa: 0,
     });
     let mut manas = Vec::new();
     for _ in 0..6 {
@@ -213,6 +215,7 @@ fn a_flecha_fulgurante_adiciona_icone_70_e_dano_de_fogo_ao_ataque() {
         origem: j.role_id as i64,
         icone: true,
         absorve: 0.0,
+        escala_defesa: 0,
     };
     j.efeitos.adicionar(filtro);
 
@@ -289,3 +292,66 @@ fn o_id_do_monstro_invocado_satisfaz_a_macro_is_npc_id_do_cliente() {
     }
 }
 
+/// A Forma Sombria (2570) do Tormentador: o roteiro é `SetTime(16000 + 3000 × L)`,
+/// `SetRatio(0,04 × L)`, `SetValue(0,6 × L)`, `SetFairyform(1)`
+/// (`cskill/skills/skill2570.h:240-243`), e o `SetFairyform` não consulta o dado.
+#[test]
+fn o_roteiro_da_forma_sombria_aplica_fairyform_com_os_numeros_do_stub() {
+    let h = TabelaDeHabilidades::do_155();
+    let passos = h.get(2570).expect("habilidade 2570").no_alvo.clone().expect("roteiro no alvo");
+    let vars = |nome: &str| (nome == "L").then_some(1.0);
+    let mut dado = || 99;
+    let (aplicacoes, _) = pw_gs::efeitos::executar_roteiro(&passos, &vars, &mut dado);
+    let f = aplicacoes.iter().find(|a| a.nome == "Fairyform").expect("Fairyform não saiu do roteiro");
+    assert_eq!(f.efeito, Some(pw_gs::efeitos::Efeito::Fairyform), "Fairyform continua sem porte");
+    assert_eq!(f.tempo_s, 19, "16000 + 3000 ms = 19 s");
+    assert!((f.razao - 0.04).abs() < 1e-5, "ratio {}", f.razao);
+    assert!((f.valor - 0.6).abs() < 1e-5, "value {}", f.valor);
+}
+
+/// `filter_Fairyform` (`cskill/skill/skillfilter.h:16819-16875`): forma 65 (`1 | FORM_CLASS <<
+/// 6`), equipamento trancado, `_speed`% de velocidade e `_defense`% de defesa, ícone 279
+/// (`HSTATE_FAIRYFORM`), **sem** `REMOVE_ON_DEATH`, e tudo desfeito quando o tempo acaba.
+#[test]
+fn a_forma_sombria_transforma_tranca_o_equipamento_e_acaba_no_tempo() {
+    use pw_gs::efeitos::{Efeito, Efeitos, Filtro};
+    let mut e = Efeitos::default();
+    assert_eq!(e.forma(), None);
+    // Nível 1: (int)(100 × 0,04) = 4 e (int)(100 × 0,6) = 60, por 19 s.
+    e.adicionar(Filtro {
+        efeito: Efeito::Fairyform,
+        restante_s: 19,
+        razao: 4,
+        fator: 0.04,
+        por_segundo: 0,
+        contador: 0,
+        origem: 0,
+        icone: true,
+        absorve: 0.0,
+        escala_defesa: 60,
+    });
+    assert_eq!(e.forma(), Some(65));
+    assert!(e.equipamento_travado());
+    let r = e.realce();
+    assert_eq!((r.velocidade, r.defesa), (4, 60));
+    assert!(e.icones().iter().any(|&(h, t)| h == 279 && t == 19), "sem o ícone HSTATE_FAIRYFORM");
+    assert_eq!(e.estados_visiveis(), [0; 6], "o Fairyform não tem VSTATE");
+
+    // `SetFairyform` recusa quem já está transformado; aqui, o WEAK descarta o segundo.
+    let mut outro = e.filtros[0].clone();
+    outro.restante_s = 99;
+    assert!(!e.adicionar(outro));
+    // Nem o Dispersar (bênção/maldição) nem a morte a tiram.
+    assert!(!e.limpar(true) && !e.limpar(false));
+    e.ao_morrer();
+    assert_eq!(e.forma(), Some(65), "a forma não tem FILTER_MASK_REMOVE_ON_DEATH");
+
+    let mut acabou = false;
+    for _ in 0..19 {
+        acabou |= e.batida().1;
+    }
+    assert!(acabou, "a forma devia acabar em 19 s");
+    assert_eq!(e.forma(), None);
+    assert!(!e.equipamento_travado());
+    assert_eq!(e.realce().velocidade, 0);
+}

@@ -87,6 +87,7 @@ fn test_combat_engine_damage_calculation() {
         centro_do_stream: Vector3::new(0.0, 0.0, 0.0),
         voando: false,
         montaria: None,
+        forma_enviada: None,
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,

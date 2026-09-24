@@ -1306,6 +1306,54 @@ impl BusServer {
         self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(u.onde, u.slot).data, envio).await;
     }
 
+    /// `generalcard_dice_item::OnUse` (`gs/item/item_generalcard_dice.cpp:10-54`): com a bolsa
+    /// cheia (`inv.IsFull()`, **mesmo** que a caixa fosse liberar o slot dela) recusa; senão
+    /// sorteia a carta (`RandSelect` nas 256 entradas), gera o `generalcard_essence` com a
+    /// liderança sorteada em `require_control_point` (`generate_poker`,
+    /// `gs/template/generate_item_temp.h:3144-3191`; `abase::RandNormal` no caminho do jogador),
+    /// põe no primeiro slot vazio com `obtain_item`, e a caixa se gasta (`UseItem` →
+    /// `use_item`, `gs/player_imp.h:3913-3928`).
+    ///
+    /// Recusado, o original não manda erro — o `error_cmd(ERR_CANNOT_USE_ITEM)` está comentado
+    /// em `gs/playercmd.cpp:2041-2045`; aqui só se destrava o slot que o cliente congelou.
+    pub(super) async fn usar_caixa_de_cartas(
+        &self,
+        roleid: i32,
+        u: &crate::comandos::UseItem,
+        caixa: &pw_data_loader::cartas_de_general::CaixaDeCartas,
+        envio: &crate::bus_server::EnvioAoCliente,
+    ) {
+        let slot_da_caixa = u.slot as usize;
+        let r = self
+            .com_contexto(roleid, |ctx| {
+                if ctx.bolsa.livres() == 0 {
+                    return Err("bolsa cheia".to_string());
+                }
+                let sorteada = caixa.sortear(rand::random::<f32>());
+                let Some((id, carta)) = sorteada.and_then(|id| ctx.dados.cartas_de_general.cartas.get(&id).map(|c| (id, c.clone()))) else {
+                    return Err(format!("a caixa sorteou {sorteada:?}, que não é carta"));
+                };
+                let lideranca = crate::geracao::rand_normal(carta.lideranca.0, carta.lideranca.1);
+                let Some(e) = ctx.bolsa.guardar_equipamento(id, &carta.octetos(lideranca), ctx.dados) else {
+                    return Err("sem slot para a carta".to_string());
+                };
+                // `obtain_item(type, 0, 1, inv[rst].count, IL_INVENTORY, rst)`.
+                ctx.para_mim.push(ctx.sub.obtain_item(id as i32, 0, 1, e.no_slot, 0, e.slot as u8).data);
+                ctx.bolsa.tirar_do_slot(slot_da_caixa, 1);
+                Ok((id, lideranca))
+            })
+            .await;
+        match r {
+            Some(Ok((carta, lideranca))) => {
+                info!("mundo: {roleid} abriu a caixa {} e tirou a carta {carta} (liderança {lideranca})", u.item_id);
+                self.responder(roleid, S2CGamedataSend::host_use_item(u.onde, u.slot as u8, u.item_id, 1).data, envio).await;
+            }
+            Some(Err(motivo)) => info!("mundo: {roleid} não abriu a caixa {}: {motivo}", u.item_id),
+            None => warn!("mundo: {roleid} fora do mundo ao abrir a caixa {}", u.item_id),
+        }
+        self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(u.onde, u.slot).data, envio).await;
+    }
+
     /// Roda uma operação do motor sobre as listas do jogador do contexto.
     fn com_motor<R>(ctx: &mut Contexto, dados: &GameDataManager, op: impl FnOnce(&mut Motor<Contexto>) -> R) -> R {
         let mut listas: ListasDeMissao = std::mem::take(&mut ctx.p.missoes);

@@ -55,9 +55,10 @@ pub struct MinaDoRealm {
 
 pub type TabelaDeMinas = HashMap<u32, MinaDoRealm>;
 
-/// Lê `MINE_ESSENCE` com as mesmas recusas de `npcgenerator.cpp:1297-1365`: sem quantidade
+/// Lê `MINE_ESSENCE` com as recusas de `npcgenerator.cpp:1230-1315`: sem quantidade
 /// e sem missão, tempos fora de 1..=1024 ou invertidos, probabilidades que não somam 1,
 /// missão de entrada sem a de saída, chance de sucesso zero, tipo fora de 0..=1.
+/// No v7, `material_gain_ratio` ainda não está identificado; ver a derivação abaixo.
 pub fn carregar(elements: &GenericElementsData) -> TabelaDeMinas {
     let mut tabela = TabelaDeMinas::new();
     for reg in elements.get("MINE_ESSENCE") {
@@ -100,7 +101,18 @@ pub fn carregar(elements: &GenericElementsData) -> TabelaDeMinas {
         if (entrada != 0) != (saida != 0) {
             continue;
         }
-        let chance_de_sucesso = f("material_gain_ratio");
+        // O v7 termina antes de `material_gain_ratio`: o catálogo registra os
+        // 48 B finais como opacos. Enquanto não há evidência do multiplicador
+        // antigo, usa-se a soma das probabilidades do próprio registro (já
+        // exigida como 1 acima), sem introduzir uma constante de jogo.
+        // Evidência: elements.data v7 do realm_126, MINE_ESSENCE de 452 B;
+        // `source_client_153/CCommon/ExpTypes.h:3597-3655` mostra os campos
+        // que só a estrutura posterior nomeia.
+        let chance_de_sucesso = if reg.contains_key("material_gain_ratio") {
+            f("material_gain_ratio")
+        } else {
+            soma
+        };
         let tipo = i("mine_type");
         if chance_de_sucesso <= 0.0 || !(0..=1).contains(&tipo) {
             continue;

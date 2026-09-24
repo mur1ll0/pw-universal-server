@@ -309,6 +309,14 @@ async fn montar(versao: GameVersion) -> Option<(Arc<RwLock<WorldInstance>>, std:
         )
         .expect("habilidade em área de teste"),
     );
+    // `skillstr.txt:2858` do cliente 1.2.6: Enxame de Ferroadas = 299, com os tempos do
+    // `gs` da versão do cenário (B100: a 1.2.6 sai de `specs/habilidades_126/tempos.json`).
+    let tabela = if versao == GameVersion::V1_2_6 {
+        pw_data_loader::habilidades::TabelaDeHabilidades::do_126()
+    } else {
+        pw_data_loader::habilidades::TabelaDeHabilidades::do_155()
+    };
+    dados.habilidades.por_id.insert(299, tabela.get(299).expect("stub 299").clone());
 
     let mut mundo = WorldInstance::new(
         1,
@@ -1867,6 +1875,54 @@ async fn aceitar_e_entregar_missao_no_npc_mexe_nas_listas_e_premia() {
     assert!(gravada, "as listas de missão não foram gravadas");
 }
 
+/// B100 — no realm 1.2.6 o Guia Selvagem (NPC 3518) entrega a missão inicial 1177.
+///
+/// Com o `NPC_TASK_OUT_SERVICE` do v7 lido com os campos `storage_*` do v156, a 1177 caía
+/// em `storage_id` e a lista do NPC ficava vazia: "Missão não disponível" em jogo.
+#[tokio::test]
+async fn o_guia_selvagem_do_126_entrega_a_missao_inicial_1177() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let mut reais = GameDataManager::new();
+    reais.load_from_directory(&pasta);
+    assert!(reais.servicos_de_npc.get(&3518).is_some_and(|s| s.missoes_entregues.contains(&1177)));
+    {
+        let mut m = mundo.write().await;
+        m.data_manager = Arc::new(reais);
+        m.npcs.get_mut(&NPC).unwrap().template_id = 3518;
+    }
+    let mut link = entrar(&mundo, addr, roleid).await;
+    // A 1177 é das classes selvagens (`missoes.rs`, teste da 1177): o Tsuko é uma delas.
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().cls = CharacterClass::Barbarian;
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    esperar_comando(&mut link, 70).await;
+
+    let mut aceitar = 1177i32.to_le_bytes().to_vec();
+    aceitar.extend_from_slice(&[0u8; 8]); // idStorage, idRefreshItem
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::ACEITAR_MISSAO, &aceitar),
+    })
+    .await
+    .unwrap();
+
+    let nova = esperar_comando(&mut link, 106).await;
+    assert_eq!(nova[6], 1, "reason devia ser TASK_SVR_NOTIFY_NEW");
+    assert_eq!(u16::from_le_bytes([nova[7], nova[8]]), 1177);
+    assert!(
+        mundo.read().await.players[&(roleid as i64)].missoes.ativa.indice(1177).is_some(),
+        "a 1177 não entrou na lista ativa"
+    );
+}
+
 /// B57 — o `NORMAL_ATTACK` que chega durante a conjuração espera a habilidade acabar.
 ///
 /// No original a habilidade é a sessão corrente e o golpe só entra na fila (`AddSession`
@@ -1920,6 +1976,53 @@ async fn o_golpe_que_chega_conjurando_espera_a_habilidade() {
         resultado < inicio && inicio < golpe,
         "o golpe saiu antes do dano da habilidade: {ordem:?}"
     );
+}
+
+#[tokio::test]
+async fn enxame_de_ferroadas_126_dispara_resultado_visual_so_para_o_conjurador() {
+    // `skillstr.txt:2858` (cliente 126) e `skill299.h`: 1.500 ms + 1.000 ms.
+    // `EC_HostMsg.cpp:947-955`: o 142 chama PlayAttackEffect; o 88 só avisa o dono.
+    let (mundo, addr, roleid, convidado) = cenario!(GameVersion::V1_2_6);
+    let mut dono = entrar(&mundo, addr, roleid).await;
+    let mut outro = entrar(&mundo, addr, convidado).await;
+    let mut corpo = 299i32.to_le_bytes().to_vec();
+    corpo.extend_from_slice(&[0, 1]);
+    corpo.extend_from_slice(&(MONSTRO as i32).to_le_bytes());
+    dono.enviar(BusMessage::ClientToGame {
+        roleid, localsid: LOCALSID, data: subcomando(ids::CAST_SKILL, &corpo),
+    }).await.unwrap();
+
+    let mut vistos = Vec::new();
+    let mut quando = Vec::new();
+    while !vistos.contains(&123) {
+        let pacote = tokio::time::timeout(Duration::from_secs(5), dono.receber())
+            .await.expect("fim da habilidade").unwrap().expect("conexão do dono");
+        if let BusMessage::GameToClient { data, .. } = pacote {
+            let cmd = cmd_de(&data);
+            if [85, 88, 142, 123].contains(&cmd) {
+                if cmd == 142 { assert_eq!(data.len(), 16, "resultado v126: 2+14 bytes"); }
+                vistos.push(cmd);
+                quando.push(std::time::Instant::now());
+            }
+        }
+    }
+    assert_eq!(vistos, [85, 88, 142, 123]);
+    // Captura original 1.2.6 (B100): 88 em +1.505 ms e 123 em +2.504..2.551 ms do 85 —
+    // conjuração (1.500) + execução (1.000) do `gs` 1.2.6. Antes o 123 saía logo após o 142.
+    let ms = |i: usize| quando[i].duration_since(quando[0]).as_millis();
+    assert!((1_400..1_800).contains(&ms(1)), "88 fora da conjuração: {} ms", ms(1));
+    assert!((2_400..2_900).contains(&ms(3)), "123 fora de conjuração + execução: {} ms", ms(3));
+    assert!(ms(3) - ms(2) >= 900, "123 cortou a fase de execução: {} ms após o 142", ms(3) - ms(2));
+    let mut vistos_pelo_outro = Vec::new();
+    while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+        tokio::time::timeout(Duration::from_millis(250), outro.receber()).await
+    {
+        let cmd = cmd_de(&data);
+        if [85, 88, 143].contains(&cmd) { vistos_pelo_outro.push(cmd); }
+    }
+    assert!(vistos_pelo_outro.contains(&85), "outro jogador não viu a conjuração");
+    assert!(vistos_pelo_outro.contains(&143), "outro jogador não viu o lançamento");
+    assert!(!vistos_pelo_outro.contains(&88), "SKILL_PERFORM pertence apenas ao dono");
 }
 
 #[tokio::test]
@@ -4632,4 +4735,133 @@ async fn conferir_pickup(versao: GameVersion) {
 
     let sumiu = esperar_comando(&mut link, 152).await;
     assert_eq!(i32_em(&sumiu, 2), drop.id as i32, "MATTER_PICKUP (152)");
+}
+
+/// Caixa de Cartas de General (`POKER_DICE_ESSENCE`, relato do Murillo em 2026-09-24: a
+/// "Caixa de Tesouro do Guerreiro" não fazia nada). `generalcard_dice_item::OnUse`
+/// (`gs/item/item_generalcard_dice.cpp:10-54`): sorteia a carta, gera o `generalcard_essence`
+/// (32 bytes, nível 1) e a caixa se gasta.
+#[tokio::test]
+async fn abrir_a_caixa_de_cartas_da_uma_carta_e_gasta_a_caixa() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    const CAIXA: u32 = 88001;
+    const CARTA: u32 = 88002;
+    {
+        let mut m = mundo.write().await;
+        let dm = Arc::make_mut(&mut m.data_manager);
+        dm.cartas_de_general.caixas.insert(
+            CAIXA,
+            pw_data_loader::cartas_de_general::CaixaDeCartas { cartas: vec![(CARTA, 1.0)] },
+        );
+        dm.cartas_de_general.cartas.insert(
+            CARTA,
+            pw_data_loader::cartas_de_general::CartaDeGeneral {
+                tipo: 3,
+                qualidade: 2,
+                nivel_exigido: 15,
+                lideranca: (10, 20),
+                nivel_maximo: 40,
+            },
+        );
+    }
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens
+        .upsert_item(&pw_core::ItemRecord {
+            id: None,
+            character_id: roleid,
+            container_type: pw_core::ContainerType::Inventory,
+            slot: 30,
+            item_id: CAIXA,
+            count: 2,
+            max_count: 10,
+            refine_level: 0,
+            sockets_count: 0,
+            sockets: vec![],
+            durability: 0,
+            max_durability: 0,
+            bind_status: 0,
+            octets: vec![],
+            custom_attributes: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+
+    let mut corpo = vec![0u8, 1u8]; // where = bolsa, count = 1
+    corpo.extend_from_slice(&30u16.to_le_bytes());
+    corpo.extend_from_slice(&(CAIXA as i32).to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::USE_ITEM, &corpo) })
+        .await
+        .unwrap();
+
+    // HOST_OBTAIN_ITEM (99) com a carta, HOST_USE_ITEM (91) com a caixa, UNFREEZE (181).
+    let r = receber(&mut link, 3).await;
+    let obtido = r.iter().find(|v| cmd_de(v) == 99).expect("sem HOST_OBTAIN_ITEM (99): a carta não chegou");
+    assert_eq!(i32_em(obtido, 2), CARTA as i32, "o item obtido não é a carta");
+    assert!(r.iter().any(|v| cmd_de(v) == 91), "sem HOST_USE_ITEM (91): a caixa não se gastou na tela");
+    assert!(r.iter().any(|v| cmd_de(v) == 181), "sem UNFREEZE_IVTR_SLOT (181): o slot fica apagado");
+
+    let bolsa = itens.list_by_container(roleid, pw_core::ContainerType::Inventory).await.unwrap();
+    let caixa = bolsa.iter().find(|i| i.item_id == CAIXA).expect("a caixa sumiu inteira");
+    assert_eq!(caixa.count, 1, "abrir uma caixa gasta uma");
+    let carta = bolsa.iter().find(|i| i.item_id == CARTA).expect("a carta não foi gravada");
+    let v: Vec<i32> = carta.octets.chunks(4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    assert_eq!(v.len(), 8, "o generalcard_essence tem oito int");
+    assert_eq!((v[0], v[1], v[2], v[4], v[5], v[6], v[7]), (3, 2, 15, 40, 1, 0, 0));
+    assert!((10..=20).contains(&v[3]), "liderança {} fora de require_control_point", v[3]);
+}
+
+/// Forma Sombria (`filter_Fairyform`, `cskill/skill/skillfilter.h:16819-16875`): enquanto dura,
+/// vestir é recusado com `ERR_EQUIPMENT_IS_LOCKED` (40, `gs/player.cpp:8077`) e o slot se
+/// destrava; quando o tempo acaba, sai o `PLAYER_CHGSHAPE` (163) com forma 0 (`OnRelease` →
+/// `ChangeShape(0)`).
+#[tokio::test]
+async fn a_forma_sombria_tranca_o_equipamento_e_desfaz_a_forma_no_fim() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).expect("o jogador entrou");
+        p.efeitos.adicionar(pw_gs::efeitos::Filtro {
+            efeito: pw_gs::efeitos::Efeito::Fairyform,
+            restante_s: 1,
+            razao: 4,
+            fator: 0.04,
+            por_segundo: 0,
+            contador: 0,
+            origem: roleid as i64,
+            icone: true,
+            absorve: 0.0,
+            escala_defesa: 60,
+        });
+        // Como se a entrada na forma já tivesse ido ao cliente.
+        p.forma_enviada = Some(65);
+    }
+
+    // EQUIP_ITEM { idx_bolsa, idx_corpo }.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::EQUIP_ITEM, &[5, 0]) })
+        .await
+        .unwrap();
+    let r = receber(&mut link, 3).await;
+    let erro = r.iter().find(|v| cmd_de(v) == 25).expect("sem ERROR_MESSAGE (25)");
+    assert_eq!(i32_em(erro, 2), 40, "o erro devia ser ERR_EQUIPMENT_IS_LOCKED");
+    assert_eq!(r.iter().filter(|v| cmd_de(v) == 181).count(), 2, "os dois slots congelados tinham de destravar");
+
+    // Um segundo depois a forma acaba: 163 com forma 0, ao próprio jogador.
+    mundo.write().await.tick(1000).await;
+    let mut formas = Vec::new();
+    while let Ok(Ok(Some(m))) = tokio::time::timeout(Duration::from_millis(500), link.receber()).await {
+        if let BusMessage::GameToClient { data, .. } = m {
+            if cmd_de(&data) == 163 {
+                assert_eq!(data.len(), 2 + 5, "PLAYER_CHGSHAPE com tamanho errado: o cliente descarta");
+                formas.push((i32_em(&data, 2), data[6]));
+            }
+        }
+    }
+    assert_eq!(formas, vec![(roleid, 0)], "a volta à forma normal não foi avisada (uma vez só)");
+    let m = mundo.read().await;
+    let p = &m.players[&(roleid as i64)];
+    assert_eq!(p.efeitos.forma(), None);
+    assert!(!p.efeitos.equipamento_travado());
 }

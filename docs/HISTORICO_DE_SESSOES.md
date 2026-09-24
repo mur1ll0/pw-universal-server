@@ -9046,3 +9046,311 @@ comparação lado a lado.
        com os três logs de sessão da raiz (prefixo `sessao-`); a `pw-126/data` era uma
        **junção** para a `data/` da principal e foi desfeita com `rmdir` sem `/s` antes da
        remoção. Claude e Codex trabalham agora na mesma pasta, na `main`.
+
+94. **Sessão 2026-09-23: `elements.data` v7 no catálogo genérico do realm 1.2.6.**
+
+    ### a. Pedido e causa
+
+    O `realm_126` ainda usava o leitor tipado antigo de `elements.rs`, que fechava o
+    arquivo por tamanho, mas devolvia valores provisórios e não alimentava monstros,
+    poções, minas, montarias, voo, amuletos e classes no `GameDataManager`.
+
+    ### b. Evidência
+
+    O carregador do binário **1.2.6** (`F:/Games/perfectworld_126/element/elementclient.exe`,
+    VA `0x60ff5d-0x60ffb0`) compara `0x30000007`, lê a primeira contagem `u32`
+    imediatamente depois e registros de 84 B. A ordem das tabelas vem do fonte
+    disponível mais próximo,
+    `source_client_153/CCommon/elementdataman.cpp:3611-3800`, e do enum em
+    `source_client_153/CCommon/ExpTypes.h:4930-5000`; os tamanhos foram medidos no
+    `data/realm_126/config/elements.data` de **16.664.770 bytes**. O v7 tem cabeçalho
+    de 4 B e não traz os dois blocos de tag do v156. O arquivo fecha com **119 entradas**
+    (118 fixas e `TALK_PROC`) e **23.337 registros**. Casos do arquivo: poção 1796
+    (`id_major_type=1794`, `cool_time=15000`), monstro 986 (`aggressive_mode=1`,
+    `common_strategy=60`, `drop_times=1`, primeiro drop 8612), mina 8592
+    (`npcgen_1_id_monster=8226`), Cavalo 8784 (`speed_a=8`), item de voo 2092
+    (`character_combo_id=192`), arma 6 (`price=120`, `shop_price=240`, pilha 1),
+    amuleto 12812 (`cool_time=10000`) e classe 2
+    (`character_class_id=0`). Os deslocamentos v7 que diferem do v156 foram medidos
+    nesses registros e fixados em `specs/elements_layouts/generate_v7.py`.
+
+    ### c. Correção
+
+    `v7.json` entra nos leitores Rust/Python; o `GameDataManager` passa ao genérico.
+    O catálogo deixa opacos os registros 103–112 e os trechos sem semântica verificada.
+    `MINE_ESSENCE` v7 não expõe `material_gain_ratio`; o carregador usa a soma das
+    probabilidades do próprio registro, já exigida como 1, até medir a regra antiga.
+
+    ### d. Provas e pendências
+
+    Teste vermelho antes do catálogo (versão não suportada) e verde depois; caso de
+    corrupção por byte extra e integração do `GameDataManager` com o realm 126.
+    **Suíte inteira com `TEST_DATABASE_URL` e dois fios: 656 aprovados, 0 falhas.** Ainda falta
+    confirmação em jogo no cliente 1.2.6; os bytes do arquivo v7 e a entrada do
+    carregador binário confirmam cabeçalho e fechamento.
+
+95. **Sessão 2026-09-24: a Forma Sombria que não transformava e a caixa que não abria.**
+
+    Relato do Murillo, teste no 155 com o Tormentador: (a) a "Caixa de Tesouro do Guerreiro"
+    não fazia nada ao usar; (b) a Forma Sombria (2570) não transformava. O log confirmou os
+    dois como **não implementados**: `usou o item 41073 ... que não se gasta` e
+    `habilidade 2570 — sem porte: Fairyform`. (Numerado 95 porque o Codex, trabalhando na
+    mesma pasta ao mesmo tempo, registrou o B94.)
+
+    **a. A caixa.** O 41073 é um `POKER_DICE_ESSENCE` — a caixa das Cartas de General.
+    `generalcard_dice_item::OnUse` (`gs/item/item_generalcard_dice.cpp:10-54`): bolsa cheia
+    (`IsFull`, mesmo que a caixa fosse liberar o slot) recusa; sorteia uma das 256 entradas
+    (`RandSelect`); gera a carta por `generate_poker` (`gs/template/generate_item_temp.h:
+    3144-3191`) — o conteúdo é o `generalcard_essence` (`gs/item/item_generalcard.h:9-19`),
+    oito `int`: tipo (do `POKER_SUB_TYPE`), `rank`, `require_level`, liderança sorteada em
+    `require_control_point[0..1]` (`abase::RandNormal`), `max_level`, nível 1, exp 0,
+    renascimentos 0; `obtain_item` e a caixa se gasta. Recusado, o original **não** manda
+    erro (`error_cmd` comentado em `gs/playercmd.cpp:2041-2045`).
+    Feito: `pw_data_loader::cartas_de_general` (32 caixas e 227 cartas no `realm_155`; a
+    41073 sorteia 3 cartas, probabilidades somando 1, todas `POKER_ESSENCE` com subtipo) e
+    `BusServer::usar_caixa_de_cartas`. **O sistema de cartas não existe** — equipar,
+    liderança, atributos, nível, devorar: a carta só fica na bolsa.
+
+    **b. A Forma Sombria.** `filter_Fairyform` (`cskill/skill/skillfilter.h:16819-16875`),
+    aplicado por `SetFairyform` (`playerwrapper.cpp:5247-5257`, um dos que não consultam o
+    dado) com `SetTime(16000 + 3000·L)`, `SetRatio(0,04·L)`, `SetValue(0,6·L)`
+    (`skills/skill2570.h:240-243`) — 19 s, +4% de velocidade e +60% de defesa no nível 1.
+    No `OnAttach`: `ChangeShape(1 | FORM_CLASS << 6)` (= 65), trava do equipamento, ícone
+    `HSTATE_FAIRYFORM` 279, `EnhanceSpeed`, `EnhanceScaleDefense`; no `OnRelease`, o inverso.
+    Máscara `WEAK | HEARTBEAT`: **sem `REMOVE_ON_DEATH`** (sobrevive à morte) e nem bênção
+    nem maldição.
+    Feito: `Efeito::Fairyform` (`efeitos.rs`, com `escala_defesa` no `Filtro`, `forma()` e
+    `equipamento_travado()`); o S2C `PLAYER_CHGSHAPE` (163, `{ int idPlayer; u8 shape }`,
+    `EC_GPDataType.h:2876-2880`), mandado ao dono e a quem está em volta pelo
+    `avisar_efeitos` quando a forma difere de `PlayerEntity::forma_enviada`; o `shape_form`
+    do `info_player_1` passa a ser a forma dos filtros (quem chega depois vê transformado);
+    vestir, mover para o corpo, trocar peças e descartar peça recusados com `ERROR_MESSAGE`
+    40 (`ERR_EQUIPMENT_IS_LOCKED`, `common/protocol.h:720`; `gs/player.cpp:7874, 7991,
+    8077, 8258`) e destrave dos slots. `ao_morrer` deixou de apagar o `Fairyform`.
+    **Falta:** o `EventChange` da forma (as habilidades que só existem transformado).
+
+    Provas: testes novos — `cartas_de_general` (2 unitários + 1 contra o `elements.data` do
+    realm), `o_roteiro_da_forma_sombria_aplica_fairyform_com_os_numeros_do_stub`,
+    `a_forma_sombria_transforma_tranca_o_equipamento_e_acaba_no_tempo`,
+    `player_change_shape_tem_5_bytes_depois_do_cabecalho`, e no mundo com o banco
+    `abrir_a_caixa_de_cartas_da_uma_carta_e_gasta_a_caixa` e
+    `a_forma_sombria_tranca_o_equipamento_e_desfaz_a_forma_no_fim`. Suíte com o banco: **664 testes, 0 falhas** (na árvore que também tinha o B94 do Codex em andamento).
+    Não publicado.
+
+96. **Sessão 2026-09-23: leitor Rust do `tasks.data` v55 e a missão inicial do Guerreiro.**
+
+    O Murillo confirmou no cliente 1.2.6 com Tsuko que a agressividade dos monstros está
+    correta e a poção parece recuperar corretamente. Ao buscar a missão inicial, recebeu
+    "Missão não disponível"; também observou falta da animação e do efeito depois da
+    canalização da skill (a investigar no bloco seguinte). `elements.data` é v7;
+    `tasks.data` deste realm é **v55**.
+
+    **Causa da missão:** `TasksData::load_from_bytes` lia somente o cabeçalho v55 e entregava
+    mapa vazio, de modo que o motor não encontrava a missão. O teste novo contra o arquivo
+    real falhou antes da correção (zero raízes carregadas). Autoridade: `elementclient.exe`
+    v126, `LoadBinary` VA `0x62f6c0`, leitura de 534 B fixos VA `0x62d04d`; seções variáveis
+    e limites em `docs/RESULTADO_TASKS_V55.md:24-63` e
+    `docs/evidencias/126/validar_tasks_v55.py:64-148`.
+
+    **Correção:** despachante v55 em `tasks.rs`: bloco fixo 534 B, `ITEM_WANTED` 13 B,
+    `MONSTER_WANTED` 22 B, prêmio 75 B, textos, diálogos e filhos recursivos. Cada raiz
+    deve terminar no próximo offset (a última no último byte). Projeta no `TaskTemplate`
+    id/nome/descrição, hierarquia, horários, itens, monstros, prêmio básico, NPCs, classes,
+    método e conclusão. A tarefa 1173 "Primeiro Teste" traz o NPC 3517, classe 0 e prêmio
+    45 moedas/75 exp/20 SP; 1174 usa método 1 (caça), conferidos no arquivo do realm.
+
+    **Provas:** teste v55 verde: **2.819** raízes, **7.994** tarefas, missão 1173,
+    corrupção por byte extra ou offset inválido recusada. Teste do motor: Guerreiro nível 1
+    aceita a 1173. Suíte completa com `TEST_DATABASE_URL` e dois fios:
+    **667 testes aprovados, 0 falhas**.
+    Os offsets dos demais requisitos/flags do bloco fixo ainda precisam de mapeamento;
+    ficam no padrão em `TaskTemplate`, portanto a paridade de todas as regras de missão
+    não está demonstrada. Falta publicar apenas a pedido e testar no cliente 1.2.6.
+
+97. **Sessão 2026-09-24: Gárgulas dentro da pedra — o mapa de movimento.**
+
+    Relato do Murillo (RT, 155): nas Ilhas Ascendentes, tela (486, 525), Gárgulas Ancestrais
+    nascem **dentro** de uma estrutura de pedra no chão. Pedido: que o nascimento considere,
+    além do terreno, a altura das estruturas — para todos os monstros.
+
+    **Onde:** mapa 161 (pasta `a61`), não o mundo — tela (486, 525) → mundo (860, −250)
+    (`x = 10·tx − 4000`, `z = 10·ty − 5500`). A Gárgula Ancestral é o tid 44606 (52 geradores
+    no `a61`, todos de área no chão).
+
+    **Causa, pelo original:** a área no chão (`terrain_gen_pos::Generate`,
+    `gs/npcgenerator.cpp:4299-4318`) não usa só o terreno — `path_finding::GetValidPos`
+    pergunta ao `NPCMoveMap` do plano (`gs.conf [MoveMap] Path`, `gs/mapresman.cpp:87-97`)
+    se o ponto é alcançável e **quanto o piso fica acima do terreno**
+    (`CNPCMoveMap::GetValid3DPos`, `pathfinding/NPCMoveMap.h:199-210`): `y = offset + delta +
+    terreno`; ponto inalcançável é sorteado de novo, até 5 vezes. O projeto não lia o
+    `movemap/` e punha todo mundo no `.hmap`. Medido no `a61`: 22 das 52 Gárgulas estão num
+    ponto cujo piso fica de 0,14 a 2,03 m acima do terreno — a pedra. O `GenerateY` (só
+    terreno) é usado apenas para os membros de grupo em volta do líder
+    (`group_spawner::GeneratePos`, `:5230-5246`), que o projeto não modela.
+
+    **Feito:** `pw_data_loader::MapaDeMovimento` (`movemap.rs`): `movemap.conf` (lido como
+    bytes — termina num comentário em GBK, e o `read_to_string` deixava o mapa vazio), `N.rmap`
+    (`CBitImage`, `BitImage.h:228-282`) e `N.dhmap` (`CBlockImage<FIX16>`, `BlockImage.h:
+    309-383`, altura em 1/64 m), fechando no último byte; `acima_do_terreno(x, z)`.
+    `SpawnInstance::posicao_no_mapa` porta o `Generate` (com as 5 tentativas, sorteio
+    determinístico por `posicao_alternativa`), e `WorldInstance::init_spawns` a usa; o
+    `chao` da IA do monstro passou a ser terreno + piso (`Get3DPosOnGround`,
+    `NPCMoveMap.cpp:155-166`), senão o monstro afundava na pedra no primeiro passo. O log de
+    subida diz quantos nascimentos ficaram em cima de estrutura. **Falta:** usar o alcance
+    (`.rmap`) para desviar de obstáculo.
+
+    Provas: `movemap.rs` (3 unitários de formato); `tests/movemap_do_realm.rs` — os 55
+    submapas do mundo fecham; `as_gargulas_do_mapa_161_nascem_em_cima_da_pedra` (22 de 52
+    levantadas, a de (848,7; −240,2) exatamente 2 m acima do terreno);
+    `nenhum_nascimento_no_chao_fica_dentro_de_estrutura` (36.945 conferidos em todos os mapas
+    do realm, 439 levantados). Suíte com o banco: **673 testes, 0 falhas** (a árvore
+    tinha também o trabalho do Codex em andamento). Não publicado. (Numerado 97: o Codex registrou o
+    96 na mesma pasta.)
+
+98. **Sessão 2026-09-24: resultado visual da skill 299 no cliente 1.2.6.**
+
+    **Relato:** depois de canalizar Enxame de Ferroadas, Tsuko não vê o efeito nem a
+    animação de lançamento. `skillstr.txt:2858-2869` do cliente 1.2.6 identifica a
+    habilidade 299 (1,5 s de conjuração, 1,0 s de execução).
+
+    **Evidência:** `EC_HostMsg.cpp:947-955` chama `PlayAttackEffect` ao receber o
+    resultado 142; `EC_Player.cpp:3414-3525` inicia a ação de ataque. A captura
+    `docs/evidencias/126/full_interno.medidas.md:101-102` mede os resultados 142/143
+    em 14/18 bytes de payload. O original envia `SKILL_PERFORM` (88) só ao dono
+    (`gs/player.cpp:4066-4073`); o broadcast está comentado. O código enviava 88
+    também aos demais, cuja própria skill tem estado alterado pelo tratador
+    (`EC_HostMsg.cpp:5929-5937`).
+
+    **Correção:** remover o broadcast do 88. Para a skill 299 no barramento v126,
+    o teste confirma 85 → 88 → 142 (14 bytes de payload) → 123 para o dono;
+    o outro jogador recebe 85 e 143, sem 88. O teste falhou antes da correção
+    em `SKILL_PERFORM pertence apenas ao dono` e passou depois (1/0, com banco).
+    Suíte inteira com `TEST_DATABASE_URL` e dois fios: **674 aprovados, 0 falhas**.
+
+    **Limite:** o teste prova a ordem e os bytes enviados, não o render do cliente.
+    A causa do visual ausente na tela do próprio Tsuko permanece pendente;
+    após publicação autorizada, conferir o alvo, o 142 e o overlay do 1.2.6.
+    Nenhum contêiner foi reconstruído nem houve commit/push.
+
+99. **Sessão 2026-09-24: o monstro de chão desvia de obstáculo — porte do `pathfinding`.**
+
+    Pergunta do Murillo: o 1.5.5 original desvia de obstáculo? Sim — `cgame/gs/pathfinding/`.
+    Pedido: implementar conforme o fonte.
+
+    **O que o original roda de fato** (é fácil ler o agente errado):
+    - Perseguir: `follow_target::CreateAgent` → `CreateNPCChaseAgent(mapa, chão)` com o modo
+      **padrão** `NPC_MOVE_BEHAVIOR_CHASE_DISPERSE_ONCE` (`NPCMoveAgent.h:58`) →
+      `CNPCDisperseChaseOnGroundAgent`, cuja base é o `CNPCChaseOnGroundNoBlockAgent` — e não
+      o `CNPCChaseOnGroundAgent` com lista de 30 nós — porque `NPCDisperseChaseOnGroundAgent.h:21`
+      define `CHASE_WITHOUT_BLOCK`.
+    - O NoBlock (`NPCChaseOnGroundNoBlockAgent.cpp`): se a reta até a meta está livre no
+      `.rmap` (`CanGoStraightForward`, Bresenham), anda reto; senão anda até o último pixel livre
+      e, dali, busca com o `CPf2DBfs` (`Pf2DBfs.cpp`: gulosa pela distância de Manhattan, 8
+      vizinhos, **em fatias** de N pixels por passo; o caminho gerado vai até o melhor nó visto,
+      mesmo com a busca em andamento) e segue pelo `CPathFollowing`. `MAX_BLOCK_TIMES` = 3.
+    - A dispersão: a meta é um ponto a `alcance` do alvo, num ângulo sorteado de ±60°
+      (`2π/3`) em torno da direção de quem vem; o `CChaseInfo` guarda a direção entre sessões
+      e espelha pelo plano do alvo (`CHalfSpace::Mirror`). É o que faz vários monstros
+      **cercarem** em vez de se empilharem.
+    - O condutor, `session_npc_follow_target::Run` (`npcsession.cpp:164-273`): passo de
+      `run_speed × 0,5` m a cada 0,5 s; detalhe 20/40/60 pixels (50/90/120 bloqueado; teto
+      300/600/900) pelo **quadrado** da distância inicial (≤ 100, ≤ 400, mais); recomeça ao
+      chegar com 60% do alcance, ou quando o alvo se afasta > 7 m da meta antiga (> 4 m sem
+      bloqueio); 3 chegadas (`_reachable_count`) ou o agente desistindo encerram a sessão.
+    - Voltar: `ai_returnhome_task` → `session_npc_patrol` (`npcsession.cpp:883-960`),
+      `follow_target` com alcance 0,8 m, acaba a 1,2 passo de casa; se ao fim ainda estiver a
+      mais de 10 m (`GetReturnHomeRange` = 10², `aipolicy.h:1393`), `ReturnHome`
+      (`ainpc.cpp:98-106`): `stop_move` em casa com `MOVE_MODE_RETURN` (7) e 0x500.
+    - Passear: `cruise` → `CNPCRambleOnGroundAgent` (meta no disco de 10 m, alcançável e de
+      preferência em reta, 12 tentativas cada) com o `CNPCChaseOnGroundAgent` (`CHASE_NORMAL`,
+      lista aberta ordenada de 30 nós `SortVectorPathNode.h`, 200 pixels, previsão em diagonal
+      quando não acha caminho, passo menor que um pixel repartido).
+    - A altura de cada posição: `AdjustCurPos` de chão — terreno no ponto, ou terreno no
+      **centro do pixel** + a altura do piso onde ela não é zero.
+
+    **Feito:** `pw_gs::navegacao` (`SeguirAlvo`, `Perseguicao`, `Bfs`, `Trajeto`,
+    `BuscaNaGrade`, `Passeio`); `MapaDeMovimento` ganhou a interface por pixel (`pixel_de`,
+    `alcancavel`, `acima_no_pixel`, `centro_do_pixel`, `vizinhos_alcancaveis`, `reta_livre` com
+    o pixel de parada); `MonsterAi::tick_no_mapa` usa os agentes para o monstro de chão
+    (perseguir, voltar, passear), e `MonsterAi::tick` virou o mesmo com mapa vazio (tudo
+    alcançável: a reta de antes). O mundo chama `tick_no_mapa` com o terreno e o `movemap`.
+    Um teste antigo exigia a volta parar a 0,1 m de casa; o original para a até 1,2 passo — o
+    teste foi corrigido para a regra do fonte.
+
+    **Falta:** monstro de água e de ar (`ChaseInWaterPF`, `ChaseOnAirPF`, o `airmap/`), a fuga
+    (`keep_out`, `CNPCFleeOnGroundAgent`) e o caminho de patrulha por pontos (`_path_agent`).
+
+    Provas: `navegacao.rs` (parede de 64×64: contorna sem pisar nela; sem obstáculo é reta; o
+    passeio nunca escolhe meta nem pisa na parede); `tests/navegacao_do_realm.rs` no `movemap`
+    real do mapa 161: em 60 pares com a reta bloqueada, a reta antiga passava **24,4%** dos
+    passos dentro de obstáculo e o agente **0,0%**, chegando em 47. Suíte com o banco: **678 testes, 0 falhas**
+    (com o trabalho do Codex em andamento na mesma árvore). Não
+    publicado. (Numerado 99: o Codex registrou o 98 na mesma pasta.)
+
+100. **Sessão 2026-09-24: realm 1.2.6 — missão inicial 1177 e tempos das habilidades pelo `gs` 1.2.6.**
+
+    Dois relatos do Murillo com o Tsuko (nível 1, cliente 1.2.6): "Missão não disponível" no
+    Guia Selvagem e a skill 299 (Enxame de Ferroadas) sem animação/efeito de lançamento.
+
+    **Nova fonte: o `gs` do servidor 1.2.6** (`files1.2.6/pwserver/gamed/gs`, ELF 32-bit
+    **com símbolos**). Exige `0x30000007` em `elementdataman::load_data` (VA 0x81b1e3d), ou
+    seja, é o servidor que carrega o `elements.data` v7 do realm. Lido com pyelftools +
+    capstone, e as funções de tempo executadas com unicorn.
+
+    **1) Missão.** Log real: `o NPC 3518 não entrega a missão 1177` (`jogo.rs:1161`). No
+    `v7.json` do B94 o `NPC_TASK_OUT_SERVICE` tinha os 7 `storage_*` do v156, e o serviço 3531
+    saía com `storage_id`=1177 e `storage_open_item`=1178, `id_tasks` zerados.
+    `npc_stubs_manager::LoadTemplate` (VA 0x80ef014-0x80ef055) varre `id_tasks[i]` em
+    `+0x44+4i` para i < 32: ID + Name + `id_tasks[32]`, 196 B. Corrigido no `generate_v7.py`.
+    A 1177 é das classes selvagens (3 e 4; outras recebem o erro 13 do motor).
+
+    **Auditoria do B94 ("encaixes" para fechar tamanho):**
+    - **Ordem e tamanhos:** a sequência de `array<T>::load` do `load_data` dá nome e `sizeof`
+      das 118 tabelas. Até a 97 os tamanhos batiam; **98–112 estavam errados** (1740, 368, 76,
+      584, 1124, 1776, 708, 708, 1420, 10684… contra 344, 148, 1092, 368, 76, 584, 76, 356,
+      436, 344…) — e **os dois conjuntos fecham o arquivo no último byte**. O do `gs` dá
+      contagens plausíveis (78 SKILLMATTER, 19 REFINE_TICKET, 12 SPEAKER, nomes legíveis). O
+      `PLAYER_SECONDLEVEL_CONFIG` usado por `progressao.rs:130` saía com `exp_lost_1`=1,7e-41
+      (perda de exp na morte ≈ 0 no 1.2.6); agora 0,05/0,05/0,045/0,04… Registros: 23.337 →
+      23.447. Não há mais `V7_OPACA_*`.
+    - `NPC_SKILL_SERVICE`: 129 ids → `id_skills[128]` + `id_dialog` (VA 0x80ef202; o 129º era
+      zero nos 31 registros).
+    - `ARMOR_ESSENCE`/`DECORATION_ESSENCE`: `fixed_props` não existe no v7 (como na arma). A
+      armadura 139 saía com `fixed_props`=`defence_low`=552 e `repairfee` float; só 18/1.036
+      armaduras tinham `shop_price` = 2·`price`. Agora 702/1.036 e 330/561 (o resto difere por
+      arredondamento), 139 = defesa 552/552, preço 4.800/9.600.
+    - Conferidos pelo `gs`: `NPC_ESSENCE` (16 ids de serviço, +760…+836), `NPC_TASK_IN_SERVICE`
+      (`id_tasks[32]`), `NPC_TRANSMIT_SERVICE` (`num_targets` +68, destinos de 12 B).
+    - Só plausibilidade: `STONE_ESSENCE` (fecha na fronteira de `proc_type`),
+      `CHARRACTER_CLASS_CONFIG` (lvlup_hp = 2·vit_hp), `PARAM_ADJUST_CONFIG`, `TASKDICE_ESSENCE`.
+
+    **Mesmo login:** `task_notify reason=9` = `TASK_CLT_NOTIFY_SPECIAL_AWARD`
+    (`TaskTempl.h:111`); o original só responde com o prêmio especial
+    (`TaskTemplMan.cpp:311-319`). C2S 62 = `TRICKS_ACTION` (acrobacia; `protocol.h`, contagem
+    desde o marcador `//60`). Nenhum dos dois participa de aceitar missão.
+
+    **2) Skill 299.** Causa: `manager.rs` só carregava a tabela de habilidades para v156/v159;
+    no v7 ela ficava vazia, `fase_de_execucao_ms` dava 0 e o 123 saía colado ao 142
+    (`bus_server.rs:2358-2372`); a conjuração caía na tabela embutida/1.000 ms. O teste do B98
+    passava porque o cenário injetava a 299 do 1.5.5 à mão.
+    - **Captura original** (`_sync/capturas/*.pcap`, com o laço do `medir_cadencia.py`): 299 →
+      `85` tempo 1.500, `88` +1.505 ms, `142` +1.555, `123` +2.504/2.514/2.534/2.551 (uma
+      interrompida por 86/87 em +1.586); 102 → 200+700 (907–986 ms, n=14); 250 nível 2 →
+      500+900 (1.449 ms).
+    - **Fonte dos tempos:** o `skillstr.txt` do cliente 1.2.6 tem as 823 skills, todas
+      presentes no `habilidades.json` 1.5.5; o texto diverge do 1.5.5 em 84 valores (30
+      conjurações, 17 durações, 37 esperas). Mas o `gs` 1.2.6 compila os mesmos 823 stubs, e
+      nas 84 divergências do texto concorda com o 1.5.5 em 62 — o texto não é fonte. Os tempos
+      do `gs` 1.2.6 (3.718 funções constantes, 13 por nível, todas executadas) diferem do 1.5.5
+      em 28 funções de 18 skills e preenchem 95 conjurações `null` do 1.5.5.
+    - `specs/habilidades_126/extrair_tempos_126.py` → `tempos.json`;
+      `TabelaDeHabilidades::do_126()` = as 823, tempos do `gs` 1.2.6, resto do stub 1.5.5 (mana,
+      alcance, dano: **não conferidos** contra o 1.2.6); o `manager` a carrega para o v7.
+
+    **Testes:** `generic_elements_tests` (serviço 3531 = [1177, 1178], 23.447 registros,
+    armadura 139, `NPC_SKILL_SERVICE`, manager: NPC 3518 entrega 1177/1178, `perda_na_morte(0)`
+    = 0,05, 299 = 1.500+1.000); `missoes.rs` (1177 por classe); `habilidades.rs` (tabela 126:
+    299, 102, 250, 803); mundo com banco: `o_guia_selvagem_do_126_entrega_a_missao_inicial_1177`
+    (Bárbaro nível 1 recebe `TASK_VAR_DATA` reason 1 da 1177) e o da 299 v126 agora com relógio
+    (88 em 1.400–1.800 ms, 123 em 2.400–2.900 ms e ≥ 900 ms após o 142). Suíte com o banco:
+    **681 testes, 0 falhas** (com o trabalho do Codex na mesma árvore). Não publicado; falta ver em jogo.

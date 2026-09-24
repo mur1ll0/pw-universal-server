@@ -112,12 +112,12 @@ impl fmt::Display for RelatorioDeCarga {
 #[derive(Debug, Clone, Default)]
 pub struct GameDataManager {
     /// Leitor **tipado** antigo (`TABLE_SIZES_V7`, 118 tabelas) — só populado quando
-    /// [`Self::elements_generic`] não cobre a versão do arquivo (hoje, 1.2.6/v7). Ver
+    /// [`Self::elements_generic`] não cobre a versão do arquivo. Ver
     /// `crates/pw-data-loader/src/generic_elements.rs` para o porquê da migração.
     pub elements: ElementsData,
-    /// Leitor **genérico**, dirigido pelo catálogo de `specs/elements_layouts/` — 231
-    /// tabelas, validado byte a byte. Populado quando a versão do `elements.data` deste
-    /// realm está no catálogo (hoje, v156/1.5.5). `None` quando a pasta não tem
+    /// Leitor **genérico**, dirigido pelo catálogo de `specs/elements_layouts/` — v7,
+    /// v156 e v159, validados até o último byte. Populado quando a versão deste
+    /// realm está no catálogo. `None` quando a pasta não tem
     /// `elements.data`, ou quando a versão só o leitor tipado acima cobre.
     pub elements_generic: Option<GenericElementsData>,
     pub gshop: GShopData,
@@ -136,8 +136,7 @@ pub struct GameDataManager {
     pub aipolicy: AiPolicyData,
     /// Os templates de monstro de verdade, montados da tabela `MONSTER_ESSENCE` — ver
     /// [`crate::monstros`]. Só é populada quando [`Self::elements_generic`] cobre a versão
-    /// do `elements.data` (hoje, v156/1.5.5); no 1.2.6/v7 fica vazia, e quem consulta
-    /// precisa saber lidar com a ausência do template.
+    /// do `elements.data`; também é populada no 1.2.6/v7.
     ///
     /// É montada **depois** do `aipolicy.data`, porque reproduz a checagem do original:
     /// monstro que aponta para política inexistente tem o campo zerado, com aviso.
@@ -149,7 +148,7 @@ pub struct GameDataManager {
     pub ids_de_npc: std::collections::HashSet<u32>,
     /// Os atributos por classe de personagem (`CHARRACTER_CLASS_CONFIG`) — ver
     /// [`crate::classes`]. É de onde saem a precisão e a evasão base do jogador. Vazia
-    /// no 1.2.6/v7, pelo mesmo motivo de [`Self::monstros`].
+    /// também é populada no 1.2.6/v7.
     pub classes: TabelaDeClasses,
 
     /// As três tabelas de equipamento do realm — armas (`WEAPON_ESSENCE`), armaduras
@@ -159,13 +158,13 @@ pub struct GameDataManager {
     /// É daqui que sai o bloco de dados que acompanha cada peça equipável no
     /// `OWN_ITEM_INFO`, e é esse bloco que decide se o cliente aceita o que está
     /// equipado: sem ele, a máscara de classes do item fica zerada no cliente e **toda**
-    /// classe é recusada. Vazias no 1.2.6/v7.
+    /// classe é recusada. Também carregadas no 1.2.6/v7.
     pub equipamentos: TabelasDeEquipamento,
     /// `(price, shop_price)` de cada item que declara os dois campos, por id.
     ///
     /// Varre **todas** as tabelas do `elements.data` em vez de conhecer uma por uma:
     /// arma, armadura, remédio, material e mais uma dúzia de famílias têm os mesmos dois
-    /// campos, e a loja precisa do preço de qualquer uma delas. Vazio no 1.2.6/v7.
+    /// campos, e a loja precisa do preço de qualquer uma delas. Também carrega no 1.2.6/v7.
     pub precos: HashMap<u32, (i32, i32)>,
     /// `(speed_a, speed_b)` por montaria, quando não vêm do `elements.data` — é assim que o
     /// mundo de teste, que não carrega o arquivo, tem uma montaria com velocidade.
@@ -242,6 +241,8 @@ pub struct GameDataManager {
     pub aljavas: crate::armas::TabelaDeAljavas,
     /// Cartas da Sorte → missão sorteada (`item_taskdice`).
     pub cartas: crate::cartas::TabelaDeCartas,
+    /// Cartas de General: caixas (`POKER_DICE_ESSENCE`) e cartas (`POKER_ESSENCE`).
+    pub cartas_de_general: crate::cartas_de_general::CartasDeGeneral,
     /// Addons: tratador e parâmetros (`EQUIPMENT_ADDON`).
     pub addons: crate::addons::TabelaDeAddons,
     /// O que o drop de equipamento sorteia (`generate_weapon/armor/decoration`).
@@ -293,7 +294,7 @@ impl GameDataManager {
             // terminou de carregar nenhum dos dois. A leitura segue o `load_data` do
             // cliente à risca e exige que o arquivo termine no último byte. O
             // leitor tipado só entra como fallback para versões que o catálogo ainda não
-            // tem (1.2.6/v7 hoje).
+            // tem.
             match generic_elements::load_elements_data_auto(&data) {
                 Ok(d) => {
                     self.elements_generic = Some(d);
@@ -441,6 +442,7 @@ impl GameDataManager {
             self.minas = crate::minas::carregar(g);
             self.aljavas = crate::armas::carregar_aljavas(g);
             self.cartas = crate::cartas::carregar(g);
+            self.cartas_de_general = crate::cartas_de_general::carregar(g);
             self.addons = crate::addons::TabelaDeAddons::carregar(g);
             self.geracao = crate::addons::carregar_geracao(g);
             self.pedras = g
@@ -454,10 +456,14 @@ impl GameDataManager {
             self.ovos_de_pet = crate::pet::carregar_ovos(g);
             self.itens_de_missao = crate::pet::carregar_itens_de_missao(g);
             self.scene_service_npcs = crate::pet::carregar_scene_service_npcs(g);
-            // Os stubs de habilidade são do servidor 1.5.5; as duas versões de
-            // `elements.data` que o catálogo cobre (v156 BR, v159 EN) são desse servidor.
-            if matches!(g.version, 156 | 159) {
-                self.habilidades = crate::habilidades::TabelaDeHabilidades::do_155();
+            // Os stubs de habilidade são do servidor da mesma versão do `elements.data`:
+            // v156 (BR) e v159 (EN) são do 1.5.5; o v7 é do 1.2.6, cujos tempos saem do `gs`
+            // 1.2.6 (B100). Sem tabela, a conjuração cai nos 1.000 ms fixos e o
+            // `HOST_STOP_SKILL` sai logo após o resultado, cortando a animação.
+            match g.version {
+                156 | 159 => self.habilidades = crate::habilidades::TabelaDeHabilidades::do_155(),
+                7 => self.habilidades = crate::habilidades::TabelaDeHabilidades::do_126(),
+                _ => {}
             }
         }
 
@@ -565,8 +571,8 @@ impl GameDataManager {
     /// disfarçado de cura).
     ///
     /// Funciona nos dois formatos: quando [`Self::elements_generic`] está populado (builds
-    /// cobertas pelo catálogo, ex. v156/1.5.5), consulta a tabela `MEDICINE_ESSENCE` por lá;
-    /// senão cai para o leitor tipado (`Self::elements.medicines`, 1.2.6/v7).
+    /// cobertas pelo catálogo, inclusive v7/1.2.6), consulta `MEDICINE_ESSENCE` por lá;
+    /// senão cai para o leitor tipado (`Self::elements.medicines`).
     pub fn quanto_o_remedio_restaura(&self, item_id: u32) -> Option<(i32, i32)> {
         if let Some(g) = &self.elements_generic {
             let rec = g
@@ -597,7 +603,7 @@ impl GameDataManager {
     /// com total > 0 é a poção instantânea.
     pub fn quanto_o_remedio_restaura_no_tempo(&self, item_id: u32) -> Option<(i32, i32, i32, i32, i32)> {
         let Some(g) = self.elements_generic.as_ref() else {
-            // Leitor tipado (1.2.6/v7): não traz os tempos, então o remédio é instantâneo.
+            // Leitor tipado legado: não traz os tempos.
             let m = self.elements.medicines.get(&item_id)?;
             return Some((m.hp_restore, 0, m.mp_restore, 0, (m.cooldown_sec * 1000.0) as i32));
         };
@@ -623,7 +629,7 @@ impl GameDataManager {
     /// vida e mana, **1815** e **2038** são antídotos. A classe, por sua vez, escolhe qual
     /// recarga o `OnUse` confere e arma (`gs/item/item_potion.cpp:18-110`).
     ///
-    /// O leitor tipado (1.2.6) não traz o campo, e aí devolve `None`.
+    /// O leitor tipado legado não traz o campo, e aí devolve `None`.
     pub fn tipo_maior_do_remedio(&self, item_id: u32) -> Option<i32> {
         let g = self.elements_generic.as_ref()?;
         g.get("MEDICINE_ESSENCE")

@@ -1,8 +1,10 @@
+pub mod movemap;
 pub mod addons;
 pub mod aipolicy;
 pub mod armaduras;
 pub mod armas;
 pub mod cartas;
+pub mod cartas_de_general;
 pub mod classes;
 pub mod dyn_tasks;
 pub mod collision;
@@ -49,4 +51,5 @@ pub use ptemplate::{BaseDaClasse, TabelaDeBase};
 pub use tasks::TasksData;
 pub use terreno::{ConfigDeTerreno, Terreno};
 pub use watermap::{AreaDeAgua, MapaDeAgua};
+pub use movemap::MapaDeMovimento;
 pub use validator::*;

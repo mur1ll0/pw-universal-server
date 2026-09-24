@@ -31,6 +31,36 @@ fn a_versao_129_fecha_inteira() {
     }
 }
 
+/// `elementclient.exe` v126, LoadBinary 0x62f6c0: 534 B fixos e seções variáveis;
+/// `docs/RESULTADO_TASKS_V55.md` confirma 2.819 raízes e 7.994 tarefas.
+#[test]
+fn a_versao_55_fecha_inteira_e_expoe_a_missao_inicial() {
+    let t = ler("realm_126").expect("tasks.data v55 do realm 126 precisa estar presente");
+    assert_eq!(t.version, 55);
+    assert_eq!(t.de_topo.len(), 2_819);
+    assert_eq!(t.tasks.len(), 7_994);
+    let inicial = t.get_task(1173).expect("Primeiro Teste, missão inicial");
+    assert!(inicial.name.contains("Primeiro Teste"), "{}", inicial.name);
+    assert_eq!(inicial.npc_que_entrega, 3517);
+    assert_eq!(inicial.req_classes, vec![0]);
+    assert_eq!((inicial.rewards.money, inicial.rewards.exp, inicial.rewards.sp), (45, 75, 20));
+    assert_eq!(inicial.rewards.nova_missao, 1174);
+    assert_eq!(inicial.metodo, 0);
+    assert_eq!(t.get_task(1174).expect("A Cidade das Espadas").metodo, 1);
+}
+
+#[test]
+fn a_versao_55_recusa_corrupcao_no_fim_e_na_tabela() {
+    let caminho = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../data/realm_126/config/tasks.data");
+    let mut bytes = std::fs::read(caminho).expect("tasks.data v55 do realm 126");
+    bytes.push(0);
+    assert!(TasksData::load_from_bytes(&bytes).is_err(), "byte extra no fim");
+    bytes.pop();
+    bytes[12..16].copy_from_slice(&0u32.to_le_bytes());
+    assert!(TasksData::load_from_bytes(&bytes).is_err(), "offset fora dos dados");
+}
+
 /// A primeira missão do Guerreiro: "Exposição de Talento" (1173), do NPC 3517, com duas
 /// submissões de caça. O nome e a descrição saem legíveis — o XOR pelo id está certo — e
 /// o monstro, a quantidade e o prêmio são os de jogo: 10 Insetos de Jade (o monstro 16,

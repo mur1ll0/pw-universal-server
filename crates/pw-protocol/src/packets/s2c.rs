@@ -1045,6 +1045,23 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `PLAYER_CHGSHAPE` (163) — `{ int idPlayer; u8 shape }`, 5 bytes
+    /// (`cmd_player_chgshape`, `EC_GPDataType.h:2876-2880`; `player_change_shape` em
+    /// `common/protocol.h:2231-2236`).
+    ///
+    /// `object_interface::ChangeShape` (`gs/obj_interface.cpp:1552-1556`) manda este comando
+    /// a quem está em volta **e ao próprio** (`AutoBroadcastCSMsg`, `gs/player.cpp:4892-4899`).
+    /// O cliente troca o modelo por ele (`CECPlayer::TransformShape`, `EC_Player.cpp:1901`):
+    /// `shape` = `id | (tipo << 6)`, e **0 é voltar à forma normal**. A Forma Sombria manda
+    /// `1 | (FORM_CLASS << 6)` = 65 ao entrar e 0 ao sair (`filter_Fairyform`).
+    pub fn player_change_shape(player_id: i32, shape: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(163);
+        stream.write_i32_le(player_id);
+        stream.write_u8(shape);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `SUMMON_PET` (233) — `{ int slot_index; int pet_tid; int pet_pid; int life_time }`,
     /// 16 bytes. É **este** comando que faz o cliente registrar o mascote como ativo
     /// (`SetActivePetIndex`, `EC_HostMsg.cpp:5274-5296`); sem ele o botão de recolher da

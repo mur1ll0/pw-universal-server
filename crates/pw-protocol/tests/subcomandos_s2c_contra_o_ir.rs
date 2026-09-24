@@ -98,6 +98,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("set_cooldown", "SET_COOLDOWN"),
     ("elf_exp", "ELF_EXP"),
     ("player_mounting", "PLAYER_MOUNTING"),
+    ("player_change_shape", "PLAYER_CHGSHAPE"),
     ("summon_pet", "SUMMON_PET"),
     ("recall_pet", "RECALL_PET"),
     ("player_start_pet_op", "PLAYER_START_PET_OP"),

@@ -199,6 +199,9 @@ const TEMPO_DE_CONJURACAO_MS: u16 = 1000;
 /// 1, e o cliente também recusaria o nível zero (`ElementSkill::Condition`).
 const NIVEL_MINIMO_DA_HABILIDADE: i32 = 1;
 
+/// `ERR_EQUIPMENT_IS_LOCKED` (`common/protocol.h:720`, "// 40").
+const ERRO_EQUIPAMENTO_TRANCADO: i32 = 40;
+
 /// `EQUIPIVTR_FLYSWORD` do `EC_IvtrTypes.h`: o slot do item de voo (espada voadora para os
 /// humanos, asa para os Alados).
 const SLOT_DE_VOO: u16 = 12;
@@ -1832,6 +1835,12 @@ impl BusServer {
                 self.usar_carta_de_missao(roleid, &u, &carta, envio).await;
                 return;
             }
+            // Caixa de Cartas de General (`POKER_DICE_ESSENCE`): sorteia uma carta e se gasta.
+            let caixa = self.world.read().await.data_manager.cartas_de_general.caixas.get(&(u.item_id as u32)).cloned();
+            if let Some(caixa) = caixa {
+                self.usar_caixa_de_cartas(roleid, &u, &caixa, envio).await;
+                return;
+            }
         }
 
         // **Só consumível é consumido.**
@@ -2310,9 +2319,10 @@ impl BusServer {
             return;
         }
 
-        let perform_pkt = S2CGamedataSend::skill_perform().data;
-        self.responder(roleid, perform_pkt.clone(), envio).await;
-        self.transmitir_a_outros(roleid, perform_pkt).await;
+        // `gplayer_dispatcher::skill_perform` envia só ao dono; o broadcast do original
+        // está comentado (`gs/player.cpp:4066-4073`). O 88 recebido por outro jogador
+        // altera o estado da habilidade *dele* (`EC_HostMsg.cpp:5929-5937`).
+        self.responder(roleid, S2CGamedataSend::skill_perform().data, envio).await;
 
         // O efeito da habilidade vem **antes** do fim da sessão, como no original: o dano sai
         // do `RunSkill` (`session_skill::RepeatSession`, `actsession.cpp:576-600`) e só depois
@@ -4059,6 +4069,30 @@ impl BusServer {
     ///
     /// Os dois comandos têm o mesmo layout e a mesma lógica; muda só o contêiner. Escrever
     /// duas vezes seria convidar as duas cópias a divergirem.
+    /// `_lock_equipment` (o `filter_Fairyform` o liga): o original recusa vestir, trocar
+    /// peças, mover para o corpo e descartar peça com `ERR_EQUIPMENT_IS_LOCKED` (40,
+    /// `common/protocol.h:720`; `gs/player.cpp:7874, 7991, 8077, 8258`). Aqui também se
+    /// destravam os slots que o cliente congelou ao mandar o comando (B84). `true` quando
+    /// recusou.
+    async fn equipamento_travado(&self, roleid: i32, slots: &[(u8, u16)], envio: &EnvioAoCliente) -> bool {
+        let travado = self
+            .world
+            .read()
+            .await
+            .players
+            .get(&(roleid as i64))
+            .is_some_and(|p| p.efeitos.equipamento_travado());
+        if !travado {
+            return false;
+        }
+        debug!("mundo: {roleid} está com o equipamento trancado (Forma Sombria)");
+        self.responder(roleid, S2CGamedataSend::error_message(ERRO_EQUIPAMENTO_TRANCADO).data, envio).await;
+        for &(onde, slot) in slots {
+            self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot).data, envio).await;
+        }
+        true
+    }
+
     async fn trocar_slots(
         &self,
         roleid: i32,
@@ -4070,6 +4104,9 @@ impl BusServer {
             warn!("mundo: troca de slots de {roleid} com payload curto");
             return;
         };
+        if onde == ContainerType::Equipment && self.equipamento_travado(roleid, &[(1, p.a as u16), (1, p.b as u16)], envio).await {
+            return;
+        }
 
         let itens = self.itens().await;
         if let Err(e) = itens.swap_slots(roleid, onde, p.a as u16, p.b as u16).await {
@@ -4164,6 +4201,9 @@ impl BusServer {
             return;
         }
         let slot = payload[0];
+        if onde == 1 && self.equipamento_travado(roleid, &[(1, slot as u16)], envio).await {
+            return;
+        }
         let pedido = if onde == 0 && payload.len() >= 5 {
             u32::from_le_bytes([payload[1], payload[2], payload[3], payload[4]])
         } else {
@@ -4267,6 +4307,9 @@ impl BusServer {
             return;
         };
         let (idx_bolsa, idx_corpo) = (p.a, p.b);
+        if self.equipamento_travado(roleid, &[(0, idx_bolsa as u16), (1, idx_corpo as u16)], envio).await {
+            return;
+        }
 
         let itens = self.itens().await;
         if let Err(e) = itens
@@ -4333,6 +4376,9 @@ impl BusServer {
             warn!("mundo: move_item_to_equip de {roleid} com payload curto");
             return;
         };
+        if self.equipamento_travado(roleid, &[(0, p.a as u16), (1, p.b as u16)], envio).await {
+            return;
+        }
 
         let itens = self.itens().await;
         if let Err(e) = itens

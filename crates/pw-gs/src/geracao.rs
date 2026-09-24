@@ -13,7 +13,7 @@ use rand::Rng;
 
 /// `abase::RandNormal(int, int)`: média de dois uniformes (ver
 /// [`crate::combat::sortear_dano_elemental`]).
-fn rand_normal(a: i32, b: i32) -> i32 {
+pub(crate) fn rand_normal(a: i32, b: i32) -> i32 {
     crate::combat::sortear_dano_elemental(a.min(b), a.max(b))
 }
 

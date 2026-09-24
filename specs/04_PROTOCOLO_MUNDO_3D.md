@@ -1,6 +1,6 @@
 # Especificação 04: Protocolo do mundo 3D (subcomandos do `GamedataSend`)
 
-> Camadas 2/3 e pacotes de itens/experiência 126 conferidos em 2026-09-21, base `a305e51` + B89/B90. Demais áreas:
+> Skill 299 v126 verificada no barramento em 2026-09-24, base `b16f992` + B98. Camadas 2/3 e pacotes de itens/experiência 126 conferidos em 2026-09-21, base `a305e51` + B89/B90. Demais áreas:
 > referência 2026-09-14, commit `e6433ae` + B49. Cobre
 > `crates/pw-protocol/src/{packets,versions,opcodes.rs}`, `crates/pw-wire/`,
 > `crates/pw-gs/src/comandos.rs`, `specs/protocol/` e `tools/pw-rpcgen/`.
@@ -148,6 +148,7 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | bloco de dados do equipamento (`OWN_ITEM_INFO` 40) | cabeçalho 6×i16 + durabilidades (**na escala interna**, ×100 — spec 05, "Durabilidade") + essência + `i16 furos, u16 máscara, i32×furos` + `i32 addons` e cada addon `i32 tipo (id \| n<<13 \| 0x8000 pedra)` + `i32×n`; um só caminho: `pw_core::ConteudoDeEquipamento` (item sem octetos, octetos sorteados no drop, leitura dos atributos) | `EC_IvtrEquip.cpp:176-262` (B53) |
 | `HOST_START_ATTACK` (84) / `HOST_STOPATTACK` (23) | `idTarget i32, ammo_remain u16, attack_speed u8` (2+7) / `iReason i32` (2+4) — abrem e fecham a sessão de golpe (spec 05 §5.2) | `EC_GPDataType.h:1509,2190` (B52) |
 | `SKILL_INTERRUPTED` (86) / `SELF_SKILL_INTERRUPTED` (87) | `caster i32` (2+4) enviado a terceiros / `reason u8` (2+1, reason=2) enviado ao próprio jogador quando a conjuração é cancelada (por ESC/`CANCEL_ACTION` ou movimento) | `playercmd.cpp:2136-2153`, `player.cpp:4017-4028` (B67) |
+| `SKILL_PERFORM` (88) | payload vazio (2+0); **só ao conjurador**. O original deixou o broadcast comentado. Para a skill 299 no v126, o dono recebe 85 → 88 → 142 (14 B de payload) → 123; outro jogador recebe 85 e 143, sem 88. Testado no barramento; visual do próprio Tsuko ainda pendente | `gs/player.cpp:4066-4073`, `EC_HostMsg.cpp:5929-5937`, `docs/evidencias/126/full_interno.medidas.md:101` (B98) |
 | `SCENE_SERVICE_NPC_LIST` (390) | `count u32` seguido de pares `{ service_id i32, npc_id i32 }`. Enviado no `GET_ALL_DATA` com os provedores de serviços do mapa (incluindo mestres de classe). No 1.5.5 (`EC_HostSkillModel.cpp:558-605`), é obrigatório para registrar `m_allProfNPCs`, definir `m_skillLearnNPCNID` e habilitar o botão de evoluir habilidade pela árvore (tecla R) | `world.cpp`, `EC_HostSkillModel.cpp:558-605` (B67) |
 | `HOST_ATTACKED` (26) | `idAttacker i32, iDamage i32, cEquipment u8, attack_flag i32, speed i8`. O `cEquipment` é o **índice da peça que se desgastou** (`eq_index &= 0x7F`, bit alto = nome laranja): `0x7f` é "nenhuma", e **zero o cliente lê como a arma** e desconta durabilidade dela a cada golpe recebido. `speed` × 50 ms é a duração da animação do golpe (spec 05, "Durabilidade") | `cgame/common/protocol.h:1194-1201`, `protocol_imp.h:580-590`, `EC_HostMsg.cpp:968-1000` |
 | `TASK_DELIVER_LEVEL2` (160) | `int id_player; int level2` (2+8). O `level2` é o **nível de cultivo**, não o nível de GM: o cliente guarda em `m_BasicProps.iLevel2`, tira dele o título taoista e toca o efeito de avanço (`CECPlayer::OnMsgPlayerLevel2`, `EC_Player.cpp:7464`; `GetLevel2Name`, `EC_GameRun.cpp:3477`). O mesmo vale para o campo `level2` dos pacotes de visão — até o B67 mandávamos o privilégio da conta ali | `Network/EC_GPDataType.h:2859-2863`, `gs/player_imp.h:2798-2804` |
@@ -177,6 +178,8 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | `NOTIFY_HOSTPOS` (14) | `pos, tag, line` = 2 + 20; `tag` diferente do mapa carregado faz o cliente trocar de mundo. Escrevia `pos + u8` | `EC_GPDataType.h:1362`, `player.cpp:3530` (B51) |
 | `ATTACK_ONCE` (83) | `arrow_dec u8` a cada golpe normal, antes do resultado | `player.cpp:3134,3321` (B51) |
 | `attack_flag` | bits desconhecidos; vai zero (crítico não sinalizado) | — |
+| `PLAYER_CHGSHAPE` (163) | `{ int idPlayer; u8 shape }` = 2 + 5, ao dono **e** a quem está em volta; `shape` = `id \| (tipo << 6)`, **0 volta à forma normal**. Sai do `avisar_efeitos` quando a forma dos filtros difere de `PlayerEntity::forma_enviada` (Forma Sombria: 65 ao entrar, 0 ao sair). Quem chega depois vê a forma pelo `shape_form` do `info_player_1` | `EC_GPDataType.h:2876-2880`, `gs/player.cpp:4892-4899`, `EC_Player.cpp:1901` (B95) |
+| trava de equipamento | com o `_lock_equipment` ligado (Forma Sombria), vestir (12), mover para o corpo (16), trocar peças (11 no corpo) e descartar peça (15) respondem `ERROR_MESSAGE` **40** (`ERR_EQUIPMENT_IS_LOCKED`) e destravam os slots (181) | `common/protocol.h:720`, `gs/player.cpp:7874, 7991, 8077, 8258` (B95) |
 
 ## 6. Onde cada C2S é tratado
 

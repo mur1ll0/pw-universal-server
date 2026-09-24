@@ -27,7 +27,8 @@ Subpastas com dado de referência: `protocol/` (IR gerado pelo `pw-rpcgen`),
 `elements_layouts/` (catálogo de layouts do `elements.data` + leitor Python),
 `elements_155/` (`.cfg` do ADMVAL e a arqueologia do v156/v159), `mapas/` (terreno por
 mapa), `clsconfig_155/` (leitor dos moldes de classe), `habilidades_155/` (números das
-habilidades extraídos dos stubs do servidor), `tasks_155/` (deslocamentos do `tasks.data` v129).
+habilidades extraídos dos stubs do servidor), `habilidades_126/` (tempos das habilidades
+executados do `gs` 1.2.6), `tasks_155/` (deslocamentos do `tasks.data` v129).
 
 ## Regra de manutenção
 

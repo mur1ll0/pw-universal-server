@@ -1038,3 +1038,13 @@ fn get_ui_config_re_devolve_o_bloco_gravado_sem_mexer() {
     assert_eq!(p.ui_config, bloco);
     assert!(S2CGetUIConfigRe::new(5491, 7, &[]).ui_config.is_empty());
 }
+
+/// `PLAYER_CHGSHAPE` (163): `{ int idPlayer; u8 shape }` (`EC_GPDataType.h:2876-2880`) —
+/// 2 de cabeçalho + 5. A Forma Sombria entra com 65 (`1 | FORM_CLASS << 6`) e sai com 0.
+#[test]
+fn player_change_shape_tem_5_bytes_depois_do_cabecalho() {
+    let p = pw_protocol::S2CGamedataSend::player_change_shape(0x0102_0304, 65);
+    assert_eq!(p.data, vec![163, 0, 0x04, 0x03, 0x02, 0x01, 65]);
+    let volta = pw_protocol::S2CGamedataSend::player_change_shape(7, 0);
+    assert_eq!(volta.data, vec![163, 0, 7, 0, 0, 0, 0]);
+}

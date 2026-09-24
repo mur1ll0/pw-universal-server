@@ -41,8 +41,11 @@
 //! (cliente BR, `realm_155`) e **14.978 de 14.978** (cliente EN, medido antes de sair do
 //! projeto em 2026-09-17) terminando no deslocamento certo.
 //!
-//! Outras versões (a 55 do 1.2.6, a 124 do 1.5.3) têm só o cabeçalho lido: o layout delas
-//! não foi medido, e um leitor que adivinha é pior que nenhum.
+//! A v55 do 1.2.6 é percorrida pelo layout medido no `elementclient.exe` v126
+//! (`docs/RESULTADO_TASKS_V55.md`): 534 bytes fixos, prêmio de 75 bytes e
+//! 2.819 raízes/7.994 tarefas até o último byte. Os campos ainda não
+//! identificados do bloco fixo ficam zerados no `TaskTemplate`; só os
+//! campos com offset confirmado são projetados. A v124 continua só no cabeçalho.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -234,7 +237,7 @@ pub struct MembroPedido {
     pub forca: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskTemplate {
     pub id: u32,
     pub name: String,
@@ -755,6 +758,142 @@ fn dialogo(l: &mut Leitor) -> Result<()> {
     Ok(())
 }
 
+/// Layout medido no `elementclient.exe` v126: `LoadBinary` VA 0x62f6c0,
+/// leitura fixa em 0x62d04d. Travessia completa documentada em
+/// `docs/RESULTADO_TASKS_V55.md` e `docs/evidencias/126/validar_tasks_v55.py:112-148`.
+mod v55 {
+    pub const FIXO: usize = 534;
+    pub const ITEM: usize = 13;
+    pub const MONSTRO: usize = 22;
+    pub const MEMBRO: usize = 32;
+    pub const PREMIO: usize = 75;
+}
+
+fn item_v55(b: &[u8]) -> ItemDeMissao {
+    ItemDeMissao {
+        id: u32_em(b, 0), comum: b[4] != 0, quantidade: u32_em(b, 5),
+        probabilidade: f32_em(b, 9), validade: 0,
+    }
+}
+
+fn itens_v55(l: &mut Leitor, n: u32) -> Result<Vec<ItemDeMissao>> {
+    let n = l.contador(n, v55::ITEM)?;
+    (0..n).map(|_| l.bytes(v55::ITEM).map(item_v55)).collect()
+}
+
+fn premio_v55(l: &mut Leitor) -> Result<TaskReward> {
+    let a = l.bytes(v55::PREMIO)?;
+    let mut grupos = Vec::new();
+    for _ in 0..l.contador(u32_em(a, 67), 5)? {
+        let sorteia_um = l.u8()? != 0;
+        let n = l.u32()?;
+        grupos.push(GrupoDeItens { sorteia_um, itens: itens_v55(l, n)? });
+    }
+    // `AWARD_DATA` v55: `m_ulGoldNum`, `m_ulExp`, `m_ulNewTask`,
+    // `m_ulSP`, `m_lReputation`, `m_ulNewPeriod` (cliente 1.5.3,
+    // CElementClient/Task/TaskTempl.h:1134-1141; posições v55
+    // conferidas no prêmio da tarefa 1173 do arquivo real).
+    Ok(TaskReward {
+        money: u32_em(a, 0) as i64, exp: u32_em(a, 4) as i64,
+        nova_missao: u32_em(a, 8), sp: u32_em(a, 12) as i64,
+        reputation: u32_em(a, 16) as i32, novo_cultivo: u32_em(a, 20),
+        grupos_de_itens: grupos, ..Default::default()
+    })
+}
+
+fn escala_v55(l: &mut Leitor, bytes_do_cabecalho: usize) -> Result<()> {
+    let n = l.i32()?;
+    if n < 0 { return Err(TasksError::InvalidFormat); }
+    l.pular(bytes_do_cabecalho)?;
+    for _ in 0..l.contador(n as u32, v55::PREMIO)? { premio_v55(l)?; }
+    Ok(())
+}
+
+fn dialogo_v55(l: &mut Leitor) -> Result<()> {
+    l.pular(4 + 128)?;
+    let janelas = l.i32()?;
+    if janelas < 0 { return Err(TasksError::InvalidFormat); }
+    for _ in 0..l.contador(janelas as u32, 16)? {
+        l.pular(8)?;
+        texto_longo(l, 0)?;
+        let opcoes = l.i32()?;
+        if opcoes < 0 { return Err(TasksError::InvalidFormat); }
+        let n = l.contador(opcoes as u32, 136)?;
+        l.pular(n * 136)?;
+    }
+    Ok(())
+}
+
+fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplate>) -> Result<u32> {
+    let b = l.bytes(v55::FIXO)?;
+    let id = u32_em(b, 0);
+    if b[0x40] != 0 { l.pular(60)?; }
+    let horarios = u32_em(b, 0x4e);
+    let n = l.contador(horarios, 48)?;
+    let mut janelas = Vec::with_capacity(n);
+    for i in 0..n {
+        let inicio = momento(l.bytes(24)?);
+        let fim = momento(l.bytes(24)?);
+        // `m_tmType` segue o contador no fixo: cliente 1.5.5,
+        // ElementClient/Task/TaskTempl.cpp:3885-3897; no v55,
+        // 0x4e + 4 = 0x52 (confirmado pelos 281 registros com horário).
+        let tipo = b.get(0x52 + i).copied().unwrap_or(0);
+        janelas.push(JanelaDeHorario { tipo, inicio, fim });
+    }
+    let itens_exigidos = itens_v55(l, u32_em(b, 0xca))?;
+    let itens_entregues = itens_v55(l, u32_em(b, 0xd3))?;
+    if b[0x176] != 0 {
+        let n = l.contador(u32_em(b, 0x191), v55::MEMBRO)?;
+        l.pular(n * v55::MEMBRO)?;
+    }
+    let n = l.contador(u32_em(b, 0x1a2), v55::MONSTRO)?;
+    let mut monstros = Vec::with_capacity(n);
+    for _ in 0..n {
+        let m = l.bytes(v55::MONSTRO)?;
+        monstros.push(MonstroPedido {
+            monstro: u32_em(m, 0), quantidade: u32_em(m, 4),
+            item_que_cai: u32_em(m, 8), quantidade_do_item: u32_em(m, 12),
+            item_comum: m[16] != 0, chance_do_item: f32_em(m, 17),
+            nivel_do_matador: m[21] != 0, dps: 0, dph: 0,
+        });
+    }
+    let coleta = itens_v55(l, u32_em(b, 0x1aa))?;
+    let rewards = premio_v55(l)?;
+    let premio_de_falha = premio_v55(l)?;
+    escala_v55(l, 20)?;
+    escala_v55(l, 20)?;
+    escala_v55(l, 24)?;
+    escala_v55(l, 24)?;
+    let descricao = texto_longo(l, id)?;
+    for _ in 0..3 { texto_longo(l, id)?; }
+    for _ in 0..5 { dialogo_v55(l)?; }
+
+    let mut tarefa = TaskTemplate {
+        id, name: texto(&b[4..64], id), parent: pai,
+        itens_exigidos, itens_entregues, monster_kills: monstros,
+        item_collections: coleta, rewards, premio_de_falha, descricao,
+        janelas_de_horario: horarios, janelas,
+        // `m_ulDelvNPC` em 0xb5: tarefa 1173 aponta ao NPC 3517
+        // (TaskTempl.h:2112; conferido com o registro do realm v55).
+        npc_que_entrega: u32_em(b, 0xb5),
+        npc_que_premia: u32_em(b, 0xb9),
+        // `m_ulOccupations`/`m_Occupations` e `m_enumMethod`/`m_enumFinishType`:
+        // TaskTempl.h:2243-2244,2346-2347; no v55 as contagens e os
+        // métodos são confirmados pelo bloco fixo e pelos vetores lidos em
+        // `validar_tasks_v55.py:119-131` (0x19a=1 nas tarefas de caça).
+        req_classes: lista_u32(b, 0x11d, u32_em(b, 0x119), 8),
+        metodo: u32_em(b, 0x19a),
+        tipo_de_conclusao: u32_em(b, 0x19e),
+        profundidade: 1, ..Default::default()
+    };
+    let filhos = l.i32()?;
+    if filhos < 0 { return Err(TasksError::InvalidFormat); }
+    let n = l.contador(filhos as u32, v55::FIXO)?;
+    for _ in 0..n { tarefa.sub_tasks.push(missao_v55(l, Some(id), saida)?); }
+    if saida.insert(id, tarefa).is_some() { return Err(TasksError::InvalidFormat); }
+    Ok(id)
+}
+
 /// `ATaskTempl::LoadBinary`: uma missão e, recursivamente, as submissões. Devolve o id.
 fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplate>) -> Result<u32> {
     use v129::f;
@@ -1126,8 +1265,8 @@ impl TasksData {
         Ok((u32_em(data, 4), u32_em(data, 8)))
     }
 
-    /// Lê o arquivo inteiro. Versão sem layout medido devolve só o cabeçalho (com aviso);
-    /// versão suportada que não fecha com a tabela de deslocamentos é erro.
+    /// Lê o arquivo inteiro para v55/v129. Versão sem layout medido devolve só
+    /// o cabeçalho (com aviso); versão suportada que não fecha é erro.
     pub fn load_from_bytes(data: &[u8]) -> Result<Self> {
         let (version, quantidade_declarada) = Self::ler_cabecalho(data)?;
         info!(
@@ -1136,22 +1275,31 @@ impl TasksData {
         );
         let mut tasks_data = Self { version, quantidade_declarada, ..Default::default() };
 
-        if version != VERSAO_SUPORTADA {
+        if version != VERSAO_SUPORTADA && version != 55 {
             warn!(
-                "tasks.data v{}: layout não medido (só a v{} é lida); nenhuma missão carregada",
+                "tasks.data v{}: layout não medido (só v55 e v{} são lidas); nenhuma missão carregada",
                 version, VERSAO_SUPORTADA
             );
             return Ok(tasks_data);
         }
 
         let n = quantidade_declarada as usize;
-        let tabela = data.get(12..12 + 4 * n).ok_or(TasksError::Truncado(12))?;
+        let fim_tabela = 12usize.checked_add(n.checked_mul(4).ok_or(TasksError::InvalidFormat)?)
+            .ok_or(TasksError::InvalidFormat)?;
+        let tabela = data.get(12..fim_tabela).ok_or(TasksError::Truncado(12))?;
         let inicios: Vec<usize> = (0..n).map(|i| u32_em(tabela, 4 * i) as usize).collect();
 
         for (indice, &inicio) in inicios.iter().enumerate() {
             let esperado = inicios.get(indice + 1).copied().unwrap_or(data.len());
-            let mut l = Leitor { d: data, o: inicio };
-            let id = missao(&mut l, None, &mut tasks_data.tasks)?;
+            if inicio < fim_tabela || esperado > data.len() || inicio >= esperado {
+                return Err(TasksError::InvalidFormat);
+            }
+            let mut l = Leitor { d: &data[..esperado], o: inicio };
+            let id = if version == 55 {
+                missao_v55(&mut l, None, &mut tasks_data.tasks)?
+            } else {
+                missao(&mut l, None, &mut tasks_data.tasks)?
+            };
             if l.o != esperado {
                 return Err(TasksError::Desalinhado { indice, id, inicio, fim: l.o, esperado });
             }
@@ -1194,10 +1342,10 @@ mod tests {
     fn versao_sem_layout_so_le_o_cabecalho() {
         let mut d = Vec::new();
         d.extend(MAGICO_DO_TASKS.to_le_bytes());
-        d.extend(55u32.to_le_bytes());
+        d.extend(124u32.to_le_bytes());
         d.extend(3u32.to_le_bytes());
         let t = TasksData::load_from_bytes(&d).unwrap();
-        assert_eq!((t.version, t.quantidade_declarada), (55, 3));
+        assert_eq!((t.version, t.quantidade_declarada), (124, 3));
         assert!(t.tasks.is_empty());
     }
 
