@@ -64,3 +64,31 @@ fn daimon_omite_283_no_126_e_preserva_os_bytes_155() {
     assert_eq!(create_world_protocol(GameVersion::V1_5_5).elf_exp(70000).unwrap().data,
         [0x1b, 1, 0x70, 0x11, 1, 0]);
 }
+
+/// B101 — `svr_monster_killed` do 1.2.6, byte a byte com a captura original da missão 1178
+/// (`_sync/capturas/*.pcap`, subcomando 106): 9 bytes, sem `dps`/`dph`.
+#[test]
+fn monstro_abatido_na_missao_126() {
+    let p = create_world_protocol(GameVersion::V1_2_6);
+    assert_eq!(p.task_notify_monster_killed(1178, 3303, 10).data,
+        [106, 0, 9, 0, 0, 0, 4, 0x9a, 0x04, 0xe7, 0x0c, 0, 0, 0x0a, 0]);
+    // O 1.5.5 segue com os 17 bytes do `TaskTempl.h:1773-1779`.
+    let p = create_world_protocol(GameVersion::V1_5_5);
+    assert_eq!(p.task_notify_monster_killed(1178, 3303, 10).data.len(), 2 + 4 + 17);
+}
+
+/// B102 — `TASK_DATA` do 1.2.6: concluídas no formato antigo, como na captura
+/// (`06 00 00 00 | 01 00 00 00 e8 06`).
+#[test]
+fn concluidas_no_task_data_126() {
+    let p = create_world_protocol(GameVersion::V1_2_6);
+    let ativa = [0u8, 0, 1, 0, 0, 1, 0, 0];
+    let concluidas = [1u8, 0, 1, 0, 0xe8, 0x06, 0, 1]; // formato novo: 1768, sucesso, 1 vez
+    let tempos = [0u8, 0];
+    let d = p.task_data_com_listas([&ativa, &concluidas, &tempos, &[], &[]]).data;
+    assert_eq!(&d[2 + 4 + 8..2 + 4 + 8 + 4 + 6], &[6, 0, 0, 0, 1, 0, 0, 0, 0xe8, 0x06]);
+    // Falha vai no bit 15.
+    let falhou = [1u8, 0, 1, 0, 0xe8, 0x06, 1, 1];
+    let d = p.task_data_com_listas([&ativa, &falhou, &tempos, &[], &[]]).data;
+    assert_eq!(&d[2 + 4 + 8 + 4 + 4..2 + 4 + 8 + 4 + 6], &[0xe8, 0x86]);
+}

@@ -186,7 +186,7 @@ impl Entrada {
     pub fn monstros(&self, i: usize) -> u16 {
         u16::from_le_bytes([self.buf[2 * i], self.buf[2 * i + 1]])
     }
-    fn definir_monstros(&mut self, i: usize, n: u16) {
+    pub fn definir_monstros(&mut self, i: usize, n: u16) {
         self.buf[2 * i..2 * i + 2].copy_from_slice(&n.to_le_bytes());
     }
 }
@@ -648,6 +648,10 @@ const QUALQUER: u32 = 0xFFFF_FFFF;
 /// O que o motor precisa saber do jogador e pedir a ele — o `TaskInterface` do original
 /// (`task/TaskInterface.h`, implementado por `PlayerTaskInterface` em `taskman.cpp`).
 pub trait Jogador {
+    /// O aviso de monstro abatido (`svr_monster_killed`), no layout da versão do cliente.
+    fn avisar_abate(&mut self, task_id: u16, monstro: u32, n: u16) {
+        self.avisar(S2CGamedataSend::task_notify_monster_killed(task_id, monstro, n, 0, 0).data);
+    }
     fn agora(&self) -> u32;
     fn nivel(&self) -> u32;
     fn classe(&self) -> u32;
@@ -2023,7 +2027,7 @@ impl<'a, J: Jogador> Motor<'a, J> {
                 }
                 let n = en.monstros(k).wrapping_add(1);
                 self.listas.ativa.e[idx].definir_monstros(k, n);
-                self.j.avisar(S2CGamedataSend::task_notify_monster_killed(t.id as u16, m.monstro, n, 0, 0).data);
+                self.j.avisar_abate(t.id as u16, m.monstro, n);
                 let en = self.listas.ativa.e[idx];
                 if self.tem_todos_os_monstros(t, &en) {
                     self.ao_finalizar(t, idx);
@@ -2327,8 +2331,15 @@ mod tests {
             .join("../../data/realm_126/config/tasks.data");
         let bytes = std::fs::read(caminho).expect("tasks.data do realm 126");
         let dados = TasksData::load_from_bytes(&bytes).expect("tasks.data v55 inteiro");
+        // A 1173 é "escolhe uma filha" (flag 0x6a do v55, B102): sem a filha, o original
+        // recusa com `TASK_PREREQU_FAIL_WRONG_SUB` (25); com a 1175 ("Matar Insetos de
+        // Jade"), aceita.
         let mut jogador = JogadorDeTeste { nivel: 1, classe: 0, ..Default::default() };
-        assert_eq!(aceitar(&dados, &mut jogador, 1173), 0);
+        assert_eq!(aceitar(&dados, &mut jogador, 1173), 25);
+        let mut l = ListasDeMissao::default();
+        let mut jogador = JogadorDeTeste { nivel: 1, classe: 0, ..Default::default() };
+        assert_eq!(Motor { tarefas: &dados, listas: &mut l, j: &mut jogador, eu: 1 }.aceitar(1173, 1175, false), 0);
+        assert!(l.ativa.indice(1175).is_some() && l.ativa.indice(1176).is_none());
     }
 
     /// A missão inicial do Guia Selvagem (NPC 3518, serviço 3531 do `elements.data` v7):

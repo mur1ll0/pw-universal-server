@@ -16153,11 +16153,6 @@
           "size": 4
         },
         {
-          "name": "pet_snd_type",
-          "type": "int32",
-          "size": 4
-        },
-        {
           "name": "hp_a",
           "type": "float",
           "size": 4
@@ -16199,6 +16194,11 @@
         },
         {
           "name": "damage_c",
+          "type": "float",
+          "size": 4
+        },
+        {
+          "name": "damage_d",
           "type": "float",
           "size": 4
         },
@@ -16283,26 +16283,6 @@
           "size": 4
         },
         {
-          "name": "mp_a",
-          "type": "float",
-          "size": 4
-        },
-        {
-          "name": "mp_gen_a",
-          "type": "float",
-          "size": 4
-        },
-        {
-          "name": "attack_degree_a",
-          "type": "float",
-          "size": 4
-        },
-        {
-          "name": "defence_degree_a",
-          "type": "float",
-          "size": 4
-        },
-        {
           "name": "size",
           "type": "float",
           "size": 4
@@ -16320,6 +16300,26 @@
         {
           "name": "attack_speed",
           "type": "float",
+          "size": 4
+        },
+        {
+          "name": "sight_range",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "food_mask",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "inhabit_type",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "unk",
+          "type": "int32",
           "size": 4
         }
       ]

@@ -254,6 +254,11 @@ pub struct GameDataManager {
     pub habilidades: crate::habilidades::TabelaDeHabilidades,
     /// Templates de ovos de mascote (`PET_EGG_ESSENCE`).
     pub ovos_de_pet: HashMap<u32, crate::pet::DadosDoOvoDePet>,
+    /// Os modelos de mascote (`pet_dataman`), com as fórmulas de atributo — ver
+    /// [`crate::pet::ModeloDeMascote`].
+    pub modelos_de_mascote: HashMap<u32, crate::pet::ModeloDeMascote>,
+    /// As comidas de mascote: `(lealdade, tipo)` — ver [`crate::pet::carregar_comidas`].
+    pub comidas_de_mascote: HashMap<u32, (i32, i32)>,
     /// IDs de itens de missão (`TASKMATTER_ESSENCE` e itens com flag `0x0020`).
     pub itens_de_missao: std::collections::HashSet<u32>,
     /// Lista de NPCs de serviço da cena com alcance ilimitado (`SCENE_SERVICE_NPC_LIST`).
@@ -276,6 +281,39 @@ impl GameDataManager {
         info!("Carregando templates de jogo a partir de: {:?}", dir);
 
         // 1. Arquivos Globais de Configuração
+        // O catálogo do realm (B102): `data/<realm>/catalogo/`, ao lado do `config/`. O que
+        // estiver lá vale no lugar do embutido da versão — o layout do `elements.data`
+        // (`elements_layout.json`, formato de `specs/elements_layouts/vNNN.json`) e a tabela de
+        // habilidades (`habilidades.json`, formato de `specs/habilidades_155/`). É o que deixa
+        // uma versão nova entrar sem mudar código nessas duas partes.
+        let catalogo = dir.parent().map(|p| p.join("catalogo")).filter(|c| c.is_dir());
+        let layout_do_realm = match catalogo.as_deref().and_then(|c| rel.ler(c, "elements_layout.json")) {
+            Some(b) => match generic_elements::layout_de_json(&String::from_utf8_lossy(&b)) {
+                Ok(l) => {
+                    rel.lidos.push(format!("catalogo/elements_layout.json (v{})", l.version));
+                    Some(l)
+                }
+                Err(e) => {
+                    rel.falhou("catalogo/elements_layout.json", e);
+                    None
+                }
+            },
+            None => None,
+        };
+        let habilidades_do_realm = match catalogo.as_deref().and_then(|c| rel.ler(c, "habilidades.json")) {
+            Some(b) => match crate::habilidades::TabelaDeHabilidades::de_json(&String::from_utf8_lossy(&b)) {
+                Ok(t) => {
+                    rel.lidos.push(format!("catalogo/habilidades.json ({} habilidades)", t.por_id.len()));
+                    Some(t)
+                }
+                Err(e) => {
+                    rel.falhou("catalogo/habilidades.json", e);
+                    None
+                }
+            },
+            None => None,
+        };
+
         if let Some(data) = rel.ler(dir, "elements.data") {
             // O cabeçalho primeiro, e **em separado**: são 8 bytes exatos, documentados em
             // `ElementsData::ler_cabecalho`, e deles sai o `ELEMENTDATA_VERSION` que vai
@@ -295,7 +333,7 @@ impl GameDataManager {
             // cliente à risca e exige que o arquivo termine no último byte. O
             // leitor tipado só entra como fallback para versões que o catálogo ainda não
             // tem.
-            match generic_elements::load_elements_data_auto(&data) {
+            match generic_elements::load_elements_data_com_layout(&data, layout_do_realm.as_ref()) {
                 Ok(d) => {
                     self.elements_generic = Some(d);
                     rel.lidos.push("elements.data".into());
@@ -454,15 +492,19 @@ impl GameDataManager {
                 })
                 .collect();
             self.ovos_de_pet = crate::pet::carregar_ovos(g);
+            self.modelos_de_mascote = crate::pet::carregar_modelos(g);
+            self.comidas_de_mascote = crate::pet::carregar_comidas(g);
             self.itens_de_missao = crate::pet::carregar_itens_de_missao(g);
             self.scene_service_npcs = crate::pet::carregar_scene_service_npcs(g);
             // Os stubs de habilidade são do servidor da mesma versão do `elements.data`:
             // v156 (BR) e v159 (EN) são do 1.5.5; o v7 é do 1.2.6, cujos tempos saem do `gs`
             // 1.2.6 (B100). Sem tabela, a conjuração cai nos 1.000 ms fixos e o
             // `HOST_STOP_SKILL` sai logo após o resultado, cortando a animação.
-            match g.version {
-                156 | 159 => self.habilidades = crate::habilidades::TabelaDeHabilidades::do_155(),
-                7 => self.habilidades = crate::habilidades::TabelaDeHabilidades::do_126(),
+            // Sem catálogo no realm, a embutida da versão do `elements.data`.
+            match (habilidades_do_realm, g.version) {
+                (Some(t), _) => self.habilidades = t,
+                (None, 156 | 159) => self.habilidades = crate::habilidades::TabelaDeHabilidades::do_155(),
+                (None, 7) => self.habilidades = crate::habilidades::TabelaDeHabilidades::do_126(),
                 _ => {}
             }
         }

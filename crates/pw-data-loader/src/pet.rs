@@ -140,3 +140,179 @@ pub fn carregar_scene_service_npcs(g: &GenericElementsData) -> Vec<(i32, i32)> {
     }
     lista
 }
+
+/// `pet_data_temp` (`gs/petdataman.h:18-150`): o modelo de um mascote no `PET_ESSENCE`, com
+/// as fórmulas de atributo por nível. Montado como `pet_dataman::LoadTemplate`
+/// (`gs/petdataman.cpp:10-150`; no `gs` 1.2.6, VA 0x8143580).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModeloDeMascote {
+    pub tid: u32,
+    /// `pet_data::PET_CLASS_*`: 0 montaria, 1 combate, 2 companhia, 3 invocação, 4 planta,
+    /// 5 evolução.
+    pub classe: i32,
+    pub hp: [f32; 3],
+    pub hp_gen: [f32; 3],
+    pub dano: [f32; 4],
+    pub velocidade: [f32; 2],
+    pub ataque: [f32; 3],
+    pub esquiva: [f32; 3],
+    pub defesa: [f32; 4],
+    pub resistencia: [f32; 4],
+    /// `size`: o raio do corpo, somado ao alcance do golpe (`CreatePetBase`,
+    /// `npcgenerator.cpp:2033`).
+    pub corpo: f32,
+    pub alcance: f32,
+    /// Em tiques de 50 ms: `(int)(segundos × 20 + 0,1)`.
+    pub atraso_do_dano: i32,
+    pub intervalo_do_golpe: i32,
+    pub visao: f32,
+    pub comida: i32,
+    pub habitat: i32,
+    pub imunidade: i32,
+    pub nivel_maximo: i32,
+    pub nivel_exigido: i32,
+}
+
+/// Os atributos de base de um mascote num nível: `pet_dataman::GenerateBaseProp`
+/// (`gs/petdataman.cpp:152-186`). O de combate não tem mana (`max_mp = 0`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct AtributosDeMascote {
+    pub vida: i32,
+    pub regeneracao: i32,
+    pub andar: f32,
+    pub correr: f32,
+    pub dano: i32,
+    /// `attack` (acerto).
+    pub acerto: i32,
+    pub intervalo_do_golpe: i32,
+    pub alcance: f32,
+    pub resistencia: i32,
+    pub defesa: i32,
+    /// `armor` (esquiva).
+    pub esquiva: i32,
+}
+
+impl ModeloDeMascote {
+    // As fórmulas de `gs/petdataman.h:23-76`, com o truncamento `(int)` do original.
+    pub fn vida(&self, n: i32) -> i32 {
+        (self.hp[0] * (n as f32 - self.hp[1] * self.nivel_exigido as f32 + self.hp[2])) as i32
+    }
+    pub fn regeneracao(&self, n: i32) -> i32 {
+        (self.hp_gen[0] * (n as f32 - self.hp_gen[1] * self.nivel_exigido as f32 + self.hp_gen[2])) as i32
+    }
+    pub fn dano(&self, n: i32) -> i32 {
+        let n = n as f32;
+        (self.dano[0] * (self.dano[1] * n * n + self.dano[2] * n + self.dano[3])) as i32
+    }
+    pub fn defesa(&self, n: i32) -> i32 {
+        (self.defesa[0] * (self.defesa[1] * (n as f32 - self.defesa[2] * self.nivel_exigido as f32) + self.defesa[3])) as i32
+    }
+    pub fn acerto(&self, n: i32) -> i32 {
+        (self.ataque[0] * (n as f32 - self.ataque[1] * self.nivel_exigido as f32 + self.ataque[2])) as i32
+    }
+    pub fn esquiva(&self, n: i32) -> i32 {
+        (self.esquiva[0] * (n as f32 - self.esquiva[1] * self.nivel_exigido as f32 + self.esquiva[2])) as i32
+    }
+    pub fn resistencia(&self, n: i32) -> i32 {
+        (self.resistencia[0] * (self.resistencia[1] * (n as f32 - self.resistencia[2] * self.nivel_exigido as f32) + self.resistencia[3]))
+            as i32
+    }
+
+    /// `GenerateBaseProp`: velocidade `speed_a + speed_b × (nível − 1)`, andar a metade.
+    pub fn atributos(&self, nivel: i32) -> AtributosDeMascote {
+        let velocidade = self.velocidade[0] + self.velocidade[1] * (nivel - 1) as f32;
+        AtributosDeMascote {
+            vida: self.vida(nivel),
+            regeneracao: self.regeneracao(nivel),
+            andar: velocidade * 0.5,
+            correr: velocidade,
+            dano: self.dano(nivel),
+            acerto: self.acerto(nivel),
+            intervalo_do_golpe: self.intervalo_do_golpe,
+            alcance: self.alcance,
+            resistencia: self.resistencia(nivel),
+            defesa: self.defesa(nivel),
+            esquiva: self.esquiva(nivel),
+        }
+    }
+}
+
+/// `pet_dataman::LoadTemplate`: `id_type` → classe (8781..8783, e no 1.5.5 também 28752,
+/// 28913 e 37698); o resto é recusado. Mascote que luta (combate, invocação, planta,
+/// evolução) com atraso de dano fora de 2..=200 tiques, intervalo ≤ 2, visão < 0,1 ou
+/// `hp_a` ≤ 0 também (`petdataman.cpp:120-133`; no 1.2.6 só o de combate é conferido).
+pub fn carregar_modelos(g: &GenericElementsData) -> HashMap<u32, ModeloDeMascote> {
+    let f = |r: &crate::generic_elements::Record, c: &str| match r.get(c) {
+        Some(crate::generic_elements::FieldValue::Float(v)) => *v,
+        Some(crate::generic_elements::FieldValue::Int(v)) => *v as f32,
+        _ => 0.0,
+    };
+    let mut modelos = HashMap::new();
+    for r in g.get("PET_ESSENCE") {
+        let id = i(r, "ID");
+        if id <= 0 {
+            continue;
+        }
+        let classe = match i(r, "id_type") {
+            8781 => 0,
+            8782 => 1,
+            8783 => 2,
+            28752 => 3,
+            28913 => 4,
+            37698 => 5,
+            _ => continue,
+        };
+        let tiques = |s: f32| (s * 20.0 + 0.1) as i32;
+        let m = ModeloDeMascote {
+            tid: id as u32,
+            classe,
+            hp: [f(r, "hp_a"), f(r, "hp_b"), f(r, "hp_c")],
+            hp_gen: [f(r, "hp_gen_a"), f(r, "hp_gen_b"), f(r, "hp_gen_c")],
+            dano: [f(r, "damage_a"), f(r, "damage_b"), f(r, "damage_c"), f(r, "damage_d")],
+            velocidade: [f(r, "speed_a"), f(r, "speed_b")],
+            ataque: [f(r, "attack_a"), f(r, "attack_b"), f(r, "attack_c")],
+            esquiva: [f(r, "armor_a"), f(r, "armor_b"), f(r, "armor_c")],
+            defesa: [f(r, "physic_defence_a"), f(r, "physic_defence_b"), f(r, "physic_defence_c"), f(r, "physic_defence_d")],
+            resistencia: [f(r, "magic_defence_a"), f(r, "magic_defence_b"), f(r, "magic_defence_c"), f(r, "magic_defence_d")],
+            corpo: f(r, "size"),
+            alcance: f(r, "attack_range"),
+            atraso_do_dano: tiques(f(r, "damage_delay")),
+            intervalo_do_golpe: tiques(f(r, "attack_speed")),
+            visao: f(r, "sight_range"),
+            comida: i(r, "food_mask"),
+            // O 1.2.6 aceita 0..=2 e põe 0 no resto (VA 0x8143893-0x81438a5); o 1.5.5 vai
+            // até 6. Fora disso, chão.
+            habitat: match i(r, "inhabit_type") {
+                h @ 0..=6 => h,
+                _ => 0,
+            },
+            imunidade: i(r, "immune_type"),
+            nivel_maximo: i(r, "level_max"),
+            nivel_exigido: i(r, "level_require"),
+        };
+        let luta = matches!(classe, 1 | 3 | 4 | 5);
+        if luta
+            && (m.atraso_do_dano > 200
+                || m.atraso_do_dano <= 1
+                || m.intervalo_do_golpe <= 2
+                || m.visao < 0.1
+                || m.hp[0] <= 0.0)
+        {
+            continue;
+        }
+        modelos.insert(id as u32, m);
+    }
+    modelos
+}
+
+/// `PET_FOOD_ESSENCE`: `(hornor, food_type)` de cada comida de mascote — o `_ess.honor` e o
+/// `_ess.food_type` do `item_pet_food::OnUse` (`gs/item/item_petfood.cpp:8-20`).
+pub fn carregar_comidas(g: &GenericElementsData) -> HashMap<u32, (i32, i32)> {
+    g.get("PET_FOOD_ESSENCE")
+        .iter()
+        .filter_map(|r| {
+            let id = i(r, "ID");
+            (id > 0).then(|| (id as u32, (i(r, "hornor"), i(r, "food_type"))))
+        })
+        .collect()
+}

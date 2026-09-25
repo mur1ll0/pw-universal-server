@@ -19,8 +19,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 const HABILIDADES_155_JSON: &str = include_str!("../../../specs/habilidades_155/habilidades.json");
-/// Tempos dos 823 stubs do `gs` 1.2.6 (`specs/habilidades_126/extrair_tempos_126.py`).
-const TEMPOS_126_JSON: &str = include_str!("../../../specs/habilidades_126/tempos.json");
+/// Os 823 stubs do `gs` 1.2.6, executados por nível (`specs/habilidades_126/extrair_habilidades_126.py`).
+const HABILIDADES_126_JSON: &str = include_str!("../../../specs/habilidades_126/habilidades.json");
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HabilidadeDoServidor {
@@ -238,47 +238,33 @@ pub struct TabelaDeHabilidades {
 }
 
 impl TabelaDeHabilidades {
-    /// A tabela dos stubs do servidor 1.5.5.
-    pub fn do_155() -> Self {
-        let a: Arquivo = serde_json::from_str(HABILIDADES_155_JSON).expect("habilidades.json embutido é válido");
-        Self { por_id: a.habilidades.into_values().map(|h| (h.id, h)).collect() }
+    /// Uma tabela completa no formato do `habilidades.json` (`{"habilidades": {id: {...}}}`)
+    /// — a embutida de uma versão ou a do catálogo do realm
+    /// (`data/<realm>/catalogo/habilidades.json`, B102).
+    pub fn de_json(texto: &str) -> Result<Self, serde_json::Error> {
+        let a: Arquivo = serde_json::from_str(texto)?;
+        Ok(Self { por_id: a.habilidades.into_values().map(|h| (h.id, h)).collect() })
     }
 
-    /// A tabela do servidor 1.2.6: só as habilidades que o `gs` 1.2.6 compila (823), com
-    /// **conjuração, estados, execução e recarga do próprio `gs` 1.2.6** e o resto da entrada
-    /// (custo, alcance, dano, aprendizado) do stub 1.5.5 de mesmo id.
+    /// A tabela dos stubs do servidor 1.5.5.
+    pub fn do_155() -> Self {
+        Self::de_json(HABILIDADES_155_JSON).expect("habilidades.json embutido é válido")
+    }
+
+    /// A tabela do servidor 1.2.6: só as habilidades que o `gs` 1.2.6 compila (823, as do
+    /// `skillstr.txt` do cliente 1.2.6), com **os números do próprio `gs` 1.2.6** — tempos,
+    /// mana, aprendizado, alcance, distâncias, raio, ângulo, precisão e dano — extraídos
+    /// executando cada função do stub por nível (B100/B101). O arquivo já vem completo
+    /// (`extrair_habilidades_126.py`, B102): do stub 1.5.5 de mesmo id ficam só o que não é
+    /// função de nível no stub (classe, tipo, pré-requisitos, `time_type`, área, flags, roteiros
+    /// `no_alvo`/`em_si`) e, onde a função do 1.2.6 depende de mais que o nível, o valor do
+    /// 1.5.5 — hoje só o dano de 317, 529, 666, 667 e 799 (`GetHp`).
     ///
-    /// Os tempos divergem do 1.5.5 em 28 funções de 18 habilidades (30, 97, 112, 329, 446, 454, 470, 472, 473,
-    /// 482, 483, 484, 506, 518, 519, 521, 598, 803) e
-    /// preenchem as 95 conjurações que o 1.5.5 deixou `null`; o texto do `skillstr.txt` do
-    /// cliente 1.2.6 não serve de fonte (diverge do `gs` 1.2.6 em 63 de 84 casos, B100).
-    /// Os demais campos do 1.5.5 **não** foram conferidos contra o `gs` 1.2.6.
+    /// Diferenças medidas contra o 1.5.5: `plus` do dano em 68 habilidades e `ratio` em 10
+    /// (a 299: 23,7 no nível 1, contra 124,5 do 1.5.5), custo em dinheiro em 186, nível exigido
+    /// em 142, tempos em 18. O texto do `skillstr.txt` 1.2.6 não é fonte (B100).
     pub fn do_126() -> Self {
-        #[derive(Deserialize)]
-        struct Tempos {
-            estados_ms: Vec<Option<Vec<i32>>>,
-            execucao_ms: Option<Vec<i32>>,
-            recarga_ms: Option<Vec<i32>>,
-        }
-        #[derive(Deserialize)]
-        struct ArquivoDeTempos {
-            habilidades: HashMap<String, Tempos>,
-        }
-        let base = Self::do_155();
-        let t: ArquivoDeTempos = serde_json::from_str(TEMPOS_126_JSON).expect("tempos.json embutido é válido");
-        let por_id = t
-            .habilidades
-            .into_iter()
-            .filter_map(|(id, t)| {
-                let id: u32 = id.parse().ok()?;
-                let mut h = base.por_id.get(&id)?.clone();
-                h.estados_ms = t.estados_ms;
-                h.execucao_ms = t.execucao_ms;
-                h.recarga_ms = t.recarga_ms;
-                Some((id, h))
-            })
-            .collect();
-        Self { por_id }
+        Self::de_json(HABILIDADES_126_JSON).expect("habilidades.json do 1.2.6 embutido é válido")
     }
 
     pub fn get(&self, id: u32) -> Option<&HabilidadeDoServidor> {
@@ -311,6 +297,17 @@ mod tests {
         // Onde o 1.2.6 difere do 1.5.5 vale o 1.2.6: 803 recarrega em 60 s (3 s no 1.5.5).
         assert_eq!(t.get(803).unwrap().recarga_armada_ms(1), Some(60_000));
         assert_eq!(TabelaDeHabilidades::do_155().get(803).unwrap().recarga_armada_ms(1), Some(3_000));
+        // B101 — o dano também é do `gs` 1.2.6: a 299 soma 23,7 de madeira no nível 1
+        // (`Skill299Stub::State2::Calculate`), não os 124,5 do 1.5.5; 55% do ataque mágico.
+        let d = h.dano.as_ref().expect("dano da 299");
+        assert_eq!((d.estado, d.base.as_str(), d.elemento.as_str()), (1, "magico", "Wooddamage"));
+        assert_eq!((d.ratio[0], d.plus[0], d.plus[1]), (0.55, 23.7, 94.0));
+        assert_eq!(h.mana(1), Some(4.0));
+        assert_eq!(h.dinheiro_exigido(2), Some(290));
+        // A skill 1 do guerreiro: 10,8 no 1.2.6, 102,6 no 1.5.5.
+        assert_eq!(t.get(1).unwrap().dano.as_ref().unwrap().plus[0], 10.8);
+        // Onde o 1.2.6 depende da vida do jogador fica o dano do 1.5.5.
+        assert!(t.get(317).unwrap().dano.is_some());
     }
 
     #[test]

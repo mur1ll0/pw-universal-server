@@ -454,6 +454,14 @@ impl BusServer {
         mud: &mut Mudanca,
         nao_portados: &mut Vec<String>,
     ) {
+        // `SetSummon` (`playerwrapper.cpp:2478-2482`) → `OI_ResurrectPet`: revive o mascote
+        // morto de quem recebeu o efeito — a habilidade 329, de área 5, no próprio conjurador.
+        if ap.nome == "Summon" {
+            if let Alvo::Jogador(id) = alvo {
+                mundo.pedir_reviver_mascote(id as i32);
+            }
+            return;
+        }
         // O objeto: efeitos, vida, máximos, defesa e resistências (para o dano no tempo).
         let (efs, hp, max_hp, mp_max, defesa, resist, nivel_alvo, e_jogador): (
             &mut efeitos::Efeitos,

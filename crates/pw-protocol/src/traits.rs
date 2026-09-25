@@ -104,6 +104,12 @@ pub trait WorldProtocol: Send + Sync {
     /// RECEIVE_EXP (36)
     fn receive_exp(&self, exp: i32, sp: i32) -> S2CGamedataSend;
 
+    /// `svr_monster_killed` no `TASK_VAR_DATA` (106): no 1.5.3/1.5.5 com `dps`/`dph`
+    /// (`cgame/gs/task/TaskTempl.h:1773-1779`, 17 bytes); o 1.2.6 sobrescreve (9 bytes).
+    fn task_notify_monster_killed(&self, task_id: u16, monster_id: u32, monster_num: u16) -> S2CGamedataSend {
+        S2CGamedataSend::task_notify_monster_killed(task_id, monster_id, monster_num, 0, 0)
+    }
+
     /// Layout padrão 155; contadores menores no 126 (B90).
     fn pickup_item(&self, tid: i32, expire_date: i32, amount: u32, slot_amount: u32, package: u8, slot: u8) -> S2CGamedataSend {
         S2CGamedataSend::pickup_item(tid, expire_date, amount, slot_amount, package, slot)
@@ -225,6 +231,149 @@ pub trait WorldProtocol: Send + Sync {
     /// SCENE_SERVICE_NPC_LIST (390)
     fn scene_service_npc_list(&self, npcs: &[(i32, i32)]) -> Option<S2CGamedataSend> {
         Some(S2CGamedataSend::scene_service_npc_list(npcs))
+    }
+
+    // ------------------------------------------------------------------ mascote
+    //
+    // Layouts do 1.5.5 (`Network/EC_GPDataType.h`, `cmd_summon_pet` e vizinhos). O 1.2.6
+    // sobrescreve os que o validador do cliente mede diferente (VA 0x584610, tabela em
+    // 0x584e90): 233 com 12 B, 234 com 8 B e 249 com 12 B, e o `info_npc` de 27 B.
+
+    /// SUMMON_PET (233) — `{slot_index, pet_tid, pet_pid, life_time}`, 16 B.
+    fn summon_pet(&self, slot: i32, pet_tid: i32, pet_pid: i32, life_time: i32) -> S2CGamedataSend {
+        S2CGamedataSend::summon_pet(slot, pet_tid, pet_pid, life_time)
+    }
+
+    /// RECALL_PET (234) — `{slot_index, pet_id, char reason}`, 9 B.
+    fn recall_pet(&self, slot: i32, pet_tid: i32, motivo: u8) -> S2CGamedataSend {
+        S2CGamedataSend::recall_pet(slot, pet_tid, motivo)
+    }
+
+    /// PET_HP_NOTIFY (249) — `{pet_index, hp_factor, cur_hp, mp_factor, cur_mp}`, 20 B.
+    fn pet_hp_notify(&self, slot: i32, hp_factor: f32, hp: i32, mp_factor: f32, mp: i32) -> S2CGamedataSend {
+        mascote_s2c(249, |s| {
+            s.write_i32_le(slot);
+            s.write_f32_le(hp_factor);
+            s.write_i32_le(hp);
+            s.write_f32_le(mp_factor);
+            s.write_i32_le(mp);
+        })
+    }
+
+    /// PET_AI_STATE (250) — `{u8 attack, u8 move}`, 2 B nas duas versões.
+    fn pet_ai_state(&self, agressividade: u8, movimento: u8) -> S2CGamedataSend {
+        mascote_s2c(250, |s| {
+            s.write_u8(agressividade);
+            s.write_u8(movimento);
+        })
+    }
+
+    /// PET_DEAD (247) — `{pet_index}`, 4 B.
+    fn pet_dead(&self, slot: i32) -> S2CGamedataSend {
+        mascote_s2c(247, |s| s.write_i32_le(slot))
+    }
+
+    /// PET_REVIVE (248) — `{pet_index, float hp_factor}`, 8 B.
+    fn pet_revive(&self, slot: i32, hp_factor: f32) -> S2CGamedataSend {
+        mascote_s2c(248, |s| {
+            s.write_i32_le(slot);
+            s.write_f32_le(hp_factor);
+        })
+    }
+
+    /// PET_RECEIVE_EXP (237) — `{slot_index, pet_id, exp}`, 12 B.
+    fn pet_receive_exp(&self, slot: i32, pet_tid: i32, exp: i32) -> S2CGamedataSend {
+        mascote_s2c(237, |s| {
+            s.write_i32_le(slot);
+            s.write_i32_le(pet_tid);
+            s.write_i32_le(exp);
+        })
+    }
+
+    /// PET_LEVELUP (238) — `{slot_index, pet_id, level, exp}`, 16 B.
+    fn pet_levelup(&self, slot: i32, pet_tid: i32, nivel: i32, exp: i32) -> S2CGamedataSend {
+        mascote_s2c(238, |s| {
+            s.write_i32_le(slot);
+            s.write_i32_le(pet_tid);
+            s.write_i32_le(nivel);
+            s.write_i32_le(exp);
+        })
+    }
+
+    /// PET_HONOR_POINT (241) — `{index, cur_honor_point}`, 8 B.
+    fn pet_honor_point(&self, slot: i32, lealdade: i32) -> S2CGamedataSend {
+        mascote_s2c(241, |s| {
+            s.write_i32_le(slot);
+            s.write_i32_le(lealdade);
+        })
+    }
+
+    /// PET_HUNGER_GAUGE (242) — `{index, cur_hunge_gauge}`, 8 B.
+    fn pet_hunger_gauge(&self, slot: i32, fome: i32) -> S2CGamedataSend {
+        mascote_s2c(242, |s| {
+            s.write_i32_le(slot);
+            s.write_i32_le(fome);
+        })
+    }
+
+    /// OBJECT_ATTACK_RESULT (120) — um golpe entre duas criaturas, para quem vê:
+    /// `{attacker_id, target_id, damage, int attack_flag, char speed}`, 17 B no 1.5.5
+    /// (`cmd_object_atk_result`, `EC_GPDataType.h`).
+    fn object_attack_result(&self, atacante: i32, alvo: i32, dano: i32, attack_flag: i32, speed: u8) -> S2CGamedataSend {
+        mascote_s2c(120, |s| {
+            s.write_i32_le(atacante);
+            s.write_i32_le(alvo);
+            s.write_i32_le(dano);
+            s.write_i32_le(attack_flag);
+            s.write_u8(speed);
+        })
+    }
+
+    /// NPC_ENTER_WORLD (16) / NPC_ENTER_SLICE (11) de um mascote: o `info_npc` com
+    /// `GP_STATE_NPC_PET` (0x1000) e o id do dono logo depois; com nome, também
+    /// `GP_STATE_NPC_NAME` (0x2000) + `u8` tamanho + bytes (`EC_GPDataType.h:725-770`;
+    /// `CreatePet`, `obj_interface.cpp:2826-2880`). 1.5.5: 35 B de base, com `vis_tid` e
+    /// `state2`.
+    #[allow(clippy::too_many_arguments)]
+    fn mascote_entra(&self, comando: u16, nid: i32, tid: i32, vis_tid: i32, pos: Vector3, dir: u8, dono: i32, nome: &[u8]) -> S2CGamedataSend {
+        mascote_s2c(comando, |s| {
+            s.write_i32_le(nid);
+            s.write_i32_le(tid);
+            s.write_i32_le(vis_tid);
+            s.write_f32_le(pos.x);
+            s.write_f32_le(pos.y);
+            s.write_f32_le(pos.z);
+            s.write_u16_le(0);
+            s.write_u8(dir);
+            s.write_i32_le(estado_do_mascote(nome));
+            s.write_i32_le(0);
+            cauda_do_mascote(s, dono, nome);
+        })
+    }
+}
+
+/// Um S2C de mascote: o número e o corpo.
+pub fn mascote_s2c(comando: u16, corpo: impl FnOnce(&mut crate::octets::OctetsStream)) -> S2CGamedataSend {
+    let mut s = crate::octets::OctetsStream::new();
+    s.write_u16_le(comando);
+    corpo(&mut s);
+    S2CGamedataSend { data: s.into_bytes().to_vec() }
+}
+
+/// `GP_STATE_NPC_PET`, mais `GP_STATE_NPC_NAME` quando há nome.
+pub fn estado_do_mascote(nome: &[u8]) -> i32 {
+    0x1000 | if nome.is_empty() { 0 } else { 0x2000 }
+}
+
+/// O que vem depois do `info_npc` de um mascote: o dono e, com nome, tamanho + bytes.
+pub fn cauda_do_mascote(s: &mut crate::octets::OctetsStream, dono: i32, nome: &[u8]) {
+    s.write_i32_le(dono);
+    if !nome.is_empty() {
+        let n = nome.len().min(u8::MAX as usize);
+        s.write_u8(n as u8);
+        for b in &nome[..n] {
+            s.write_u8(*b);
+        }
     }
 }
 

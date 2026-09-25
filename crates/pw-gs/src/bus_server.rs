@@ -60,6 +60,7 @@ use tracing::{debug, info, trace, warn};
 
 mod habilidades;
 mod jogo;
+mod mascote;
 
 /// Um subcomando do mundo 3D, já com o cabeçalho separado do corpo.
 ///
@@ -284,6 +285,8 @@ enum QuemChegou {
     Criatura { id: i32, tid: i32, pos: pw_core::Vector3, dir: u8 },
     Jogador { id: i32, vista: pw_core::VistaDoJogador },
     Materia { id: i32, tid: i32, pos: pw_core::Vector3 },
+    /// Mascote de combate: `info_npc` com a marca de mascote, o dono e o nome.
+    Mascote { id: i32, tid: i32, vis: i32, pos: pw_core::Vector3, dir: u8, dono: i32, nome: Vec<u8> },
 }
 
 /// Canal por onde o mundo devolve mensagens àquele jogador.
@@ -472,6 +475,15 @@ impl BusServer {
     /// É aqui — e só aqui — que o que aconteceu no mundo vira protocolo.
     async fn entregar_evento(&self, ev: EventoDoMundo) {
         match ev {
+            ev @ (EventoDoMundo::MascoteApareceu { .. }
+            | EventoDoMundo::MascoteRecolhido { .. }
+            | EventoDoMundo::MascoteMorreu { .. }
+            | EventoDoMundo::GolpeEntreCriaturas { .. }
+            | EventoDoMundo::VidaDoMascote { .. }
+            | EventoDoMundo::ExpDoMascote { .. }
+            | EventoDoMundo::IaDoMascote { .. }
+            | EventoDoMundo::FomeDoMascote { .. }
+            | EventoDoMundo::ReviverMascote { .. }) => self.evento_de_mascote(ev).await,
             EventoDoMundo::DanoRecebido {
                 roleid,
                 atacante,
@@ -734,7 +746,10 @@ impl BusServer {
                             p.visiveis.insert(id);
                         }
                     }
-                    (ids, self.sub.npc_enter_slice(id as i32, tid as i32, pos, dir).data)
+                    // `NPC_ENTER_WORLD` (16), como o original no renascimento (captura do 1.2.6:
+                    // o Filhote de Mandrágora volta com 16, sem `disappear` antes — o cliente
+                    // ainda tem o corpo com o mesmo id, e é o 16 que o põe de pé no ponto novo).
+                    (ids, self.sub.npc_enter_world(id as i32, tid as i32, pos, dir).data)
                 };
                 for pid in perto {
                     self.enviar_ao_jogador(pid as i32, pacote.clone()).await;
@@ -1093,6 +1108,7 @@ impl BusServer {
             ids::USE_ITEM => self.usar_item(roleid, &cmd.payload, envio).await,
             ids::SUMMON_PET => self.invocar_mascote(roleid, &cmd.payload, envio).await,
             ids::RECALL_PET => self.recolher_mascote(roleid, envio).await,
+            ids::PET_CTRL => self.ordem_ao_mascote(roleid, &cmd.payload).await,
             ids::TEAM_INVITE => self.convidar(roleid, &cmd.payload).await,
             ids::TEAM_AGREE_INVITE => self.aceitar_grupo(roleid, &cmd.payload).await,
             ids::TEAM_REJECT_INVITE => self.recusar_grupo(roleid).await,
@@ -1443,6 +1459,9 @@ impl BusServer {
             }
             let ticks = ((p.attack_speed * 20.0).round() as u32).clamp(4, 300);
             let arma_de_longe = p.equipamento.arma.is_some_and(|a| a.de_longe);
+            // `session_normal_attack::StartSession` → `Notify_StartAttack`
+            // (`actsession.cpp:361`): o mascote automático ataca junto.
+            mundo.dono_comecou_a_atacar(roleid, alvo);
             if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
                 p.ataque = Some(crate::entity::SessaoDeAtaque {
                     alvo,
@@ -1835,6 +1854,12 @@ impl BusServer {
                 self.usar_carta_de_missao(roleid, &u, &carta, envio).await;
                 return;
             }
+            // Comida de mascote (`PET_FOOD_ESSENCE`, `item_pet_food::OnUse`).
+            let comida = self.world.read().await.data_manager.comidas_de_mascote.get(&(u.item_id as u32)).copied();
+            if let Some(comida) = comida {
+                self.alimentar_mascote(roleid, &u, comida, envio).await;
+                return;
+            }
             // Caixa de Cartas de General (`POKER_DICE_ESSENCE`): sorteia uma carta e se gasta.
             let caixa = self.world.read().await.data_manager.cartas_de_general.caixas.get(&(u.item_id as u32)).cloned();
             if let Some(caixa) = caixa {
@@ -2034,7 +2059,7 @@ impl BusServer {
             return;
         };
 
-        let mundo = self.world.write().await;
+        let mut mundo = self.world.write().await;
         // `MODE_INDEX_SILENT`/`STUN`/`SLEEP` (`filter_Sealed`, `filter_Dizzy`, `filter_Sleep`).
         if mundo.players.get(&(roleid as i64)).is_some_and(|p| p.efeitos.selado()) {
             drop(mundo);
@@ -2048,6 +2073,9 @@ impl BusServer {
             .map(|a| *a as i64)
             .or_else(|| mundo.players.get(&(roleid as i64)).and_then(|p| p.target_id))
             .unwrap_or(roleid as i64);
+        // `session_skill::StartSession` → `Notify_StartAttack(_target_list[0])`
+        // (`actsession.cpp:491`).
+        mundo.dono_comecou_a_atacar(roleid, alvo);
 
         // A conjuração tem começo e fim, separados pelo tempo de conjuração.
         //
@@ -3032,6 +3060,10 @@ impl BusServer {
                     materias.push((id, centro.distance(&d.position)));
                     continue;
                 }
+                if let Some(m) = mundo.mascotes.get(&id) {
+                    criaturas.push((id, centro.distance(&m.corpo.position)));
+                    continue;
+                }
                 let pos = match mundo.monsters.get(&id) {
                     Some((m, _)) if !m.is_dead => m.position,
                     // Monstro morto não é ausência de dado: é uma criatura que não deve
@@ -3105,6 +3137,17 @@ impl BusServer {
                             pos: d.position,
                         });
                     }
+                    if let Some(m) = mundo.mascotes.get(id) {
+                        return Some(QuemChegou::Mascote {
+                            id: *id as i32,
+                            tid: m.info.pet_tid,
+                            vis: m.vis_tid as i32,
+                            pos: m.corpo.position,
+                            dir: m.ai.direcao,
+                            dono: m.dono as i32,
+                            nome: m.nome.clone(),
+                        });
+                    }
                     match mundo.monsters.get(id) {
                         Some((m, ia)) => Some(QuemChegou::Criatura {
                             id: *id as i32,
@@ -3141,6 +3184,9 @@ impl BusServer {
                 }
                 QuemChegou::Materia { id, tid, pos } => {
                     S2CGamedataSend::matter_enter_world(id, tid, pos).data
+                }
+                QuemChegou::Mascote { id, tid, vis, pos, dir, dono, nome } => {
+                    self.sub.mascote_entra(11, id, tid, vis, pos, dir, dono, &nome).data
                 }
             };
             self.responder(roleid, pacote, envio).await;

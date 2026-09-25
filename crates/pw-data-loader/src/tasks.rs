@@ -884,6 +884,60 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
         req_classes: lista_u32(b, 0x11d, u32_em(b, 0x119), 8),
         metodo: u32_em(b, 0x19a),
         tipo_de_conclusao: u32_em(b, 0x19e),
+        // B102 — as flags de filhas e de desistência, `pack(1)` logo após `m_lPeriodLimit`
+        // (`TaskTempl.h:2037-2057` do 1.5.3: `m_ulTimetable` 0x4e, `m_tmType[8]` 0x52, dois
+        // ponteiros e dois `long` → `m_bChooseOne` em 0x6a). No binário do servidor 1.2.6
+        // (`files1.2.6/pwserver/gamed/libtask.so`): `ATaskTempl::CheckDepth` (0x197b6) testa
+        // +0x6c/+0x6a/+0x6b na ordem de `m_bExeChildInOrder || m_bChooseOne || m_bRandOne`,
+        // e `ATaskTemplMan::CanGiveUpTask`/`GiveUpOneTask` leem +0x6f (`m_bCanGiveUp`).
+        // Sem elas a 1177 ativava as duas filhas juntas e o cliente 1.2.6 perdia a lista.
+        escolhe_um_filho: b[0x6a] != 0,
+        sorteia_um_filho: b[0x6b] != 0,
+        filhos_em_ordem: b[0x6c] != 0,
+        pai_tambem_falha: b[0x6d] != 0,
+        pai_tambem_sucesso: b[0x6e] != 0,
+        pode_desistir: b[0x6f] != 0,
+        pode_repetir: b[0x70] != 0,
+        refazer_apos_falha: b[0x71] != 0,
+        limpa_ao_desistir: b[0x72] != 0,
+        precisa_registro: b[0x73] != 0,
+        falha_ao_morrer: b[0x74] != 0,
+        // B107 — medidos no `libtask.so` 1.2.6, todos com base `this + 4` (o bloco fixo):
+        // `AddOneTaskTempl` (0x1cc8e/0x1ccbf) testa +0xad (`m_bDeathTrig`) e +0xac
+        // (`m_bAutoDeliver`), como `TaskTemplMan.cpp:1735-1736`; `CheckLevel` (0xfafd/0xfb26)
+        // lê +0xc1/+0xc5; `CheckPreTask` (0xff79/0xff8f) conta em +0xf1 e o vetor em +0xf5
+        // (5 posições: o que cabe até o gênero em +0x114, `CheckGender` 0xfd36, pela ordem do
+        // `TaskTempl.h:2227-2237` do 1.5.3); `CheckInZone` (0xf70f-0xf752) lê +0x79, +0x7a e a
+        // caixa em +0x7e/+0x8a. Sem eles, o 1.2.6 não tinha missão automática nenhuma.
+        entrega_automatica: b[0xac] != 0,
+        min_level: u32_em(b, 0xc1),
+        max_level: u32_em(b, 0xc5),
+        pre_tasks: lista_u32(b, 0xf5, u32_em(b, 0xf1), 5),
+        genero: u32_em(b, 0x114),
+        entrega_em_zona: b[0x79] != 0,
+        mundo_de_entrega: u32_em(b, 0x7a),
+        regioes_de_entrega: if b[0x79] != 0 {
+            vec![RegiaoDeMissao {
+                min: [f32_em(b, 0x7e), f32_em(b, 0x82), f32_em(b, 0x86)],
+                max: [f32_em(b, 0x8a), f32_em(b, 0x8e), f32_em(b, 0x92)],
+            }]
+        } else {
+            Vec::new()
+        },
+        // B110 — o lugar a alcançar (`enumTMReachSite`, método 4): `OnTaskReachSite` do
+        // `libtask.so` 1.2.6 (0x1fa00-0x1fa6e) testa +0x19a == 4, compara o mundo com +0x1de
+        // (base `this + 4`) e chama `is_in_zone(this + 0x1ca, this + 0x1d6, pos)` — no bloco
+        // fixo, mínimo +0x1c6 e máximo +0x1d2 — e então `OnSetFinished`. Sem isto a 5911
+        // "Instruções" (filha da automática 5909) nunca se cumpria.
+        mundo_a_alcancar: if u32_em(b, 0x19a) == 4 { u32_em(b, 0x1de) } else { 0 },
+        lugares_a_alcancar: if u32_em(b, 0x19a) == 4 {
+            vec![RegiaoDeMissao {
+                min: [f32_em(b, 0x1c6), f32_em(b, 0x1ca), f32_em(b, 0x1ce)],
+                max: [f32_em(b, 0x1d2), f32_em(b, 0x1d6), f32_em(b, 0x1da)],
+            }]
+        } else {
+            Vec::new()
+        },
         profundidade: 1, ..Default::default()
     };
     let filhos = l.i32()?;

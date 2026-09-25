@@ -1401,7 +1401,12 @@ impl LinkGateway {
                     result: 0,
                     role_id: req.role_id,
                     localsid: req.localsid,
-                    help_states: gravadas.unwrap_or_else(|| vec![0u8; 32]),
+                    // Personagem novo: vazio, como o original (`gamedbmanager.cpp:378`, `base.help_states.clear()`;
+                    // `gdeliveryd/gethelpstates.hpp:27-31` devolve o que tem). Com o vazio o cliente usa o
+                    // padrão — todas as dicas ativas e abrindo sozinhas (`ECScriptOption.cpp:89-101`). Os
+                    // 32 zeros de antes eram lidos como "nenhum tipo de dica ativo" (`:136-143`), e a tela
+                    // de dicas do jogador novo nunca abria (B107).
+                    help_states: gravadas.unwrap_or_default(),
                 })).await?;
             }
 

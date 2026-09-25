@@ -157,14 +157,18 @@ impl TemplateRepository {
     }
 
     /// Popula as tabelas com os valores oficiais do clsconfig / v1.2.6
+    ///
+    /// Habilidades: as do `GRoleStatus.skills` de cada molde do `clsconfig` 1.2.6 (B108) — a
+    /// de ataque da classe e o Portal da Cidade (167). As listas antigas (2, 7, 255-257,
+    /// 352-354, 437-439, 1840, 11, 117-119) não estão em molde nenhum.
     pub async fn seed_defaults(&self, realm_id: &str) -> Result<()> {
         let classes = [
-            (0, "Guerreiro", 15, 10, 20, 5, 976.0, 219.2, 4187.3, 2097, vec![1, 2, 7, 167]),
-            (1, "Mago", 10, 10, 10, 20, 976.0, 219.2, 4187.3, 2867, vec![255, 256, 257, 167]),
-            (3, "Bárbaro", 15, 5, 25, 5, -1445.6, 219.3, 2642.0, 2258, vec![352, 353, 354, 167]),
-            (4, "Feiticeira", 15, 5, 15, 15, -1445.6, 219.3, 2642.0, 2867, vec![437, 438, 439, 167]),
-            (6, "Arqueiro", 5, 15, 8, 22, -696.3, 219.0, -1178.8, 2250, vec![1840, 234, 235, 167]),
-            (7, "Sacerdote", 10, 10, 15, 15, -696.3, 219.0, -1178.8, 2867, vec![11, 117, 118, 119, 167]),
+            (0, "Guerreiro", 15, 10, 20, 5, 976.0, 219.2, 4187.3, 2097, vec![1, 167]),
+            (1, "Mago", 10, 10, 10, 20, 976.0, 219.2, 4187.3, 2867, vec![81, 167]),
+            (3, "Feiticeira", 15, 5, 25, 5, -1445.6, 219.3, 2642.0, 2258, vec![299, 167]),
+            (4, "Bárbaro", 15, 5, 15, 15, -1445.6, 219.3, 2642.0, 2867, vec![102, 167]),
+            (6, "Arqueiro", 5, 15, 8, 22, -696.3, 219.0, -1178.8, 2250, vec![234, 235, 167]),
+            (7, "Sacerdote", 10, 10, 15, 15, -696.3, 219.0, -1178.8, 2867, vec![113, 125, 167]),
         ];
 
         for (cls, name, str_pt, agi, vit, eng, sx, sy, sz, weapon_id, skills) in classes {

@@ -9354,3 +9354,335 @@ comparação lado a lado.
     (Bárbaro nível 1 recebe `TASK_VAR_DATA` reason 1 da 1177) e o da 299 v126 agora com relógio
     (88 em 1.400–1.800 ms, 123 em 2.400–2.900 ms e ≥ 900 ms após o 142). Suíte com o banco:
     **681 testes, 0 falhas** (com o trabalho do Codex na mesma árvore). Não publicado; falta ver em jogo.
+
+101. **Sessão 2026-09-24: realm 1.2.6 — ficha, atributos iniciais, contador de abate e dano de skill.**
+
+    Commit do B94–B100 a pedido do Murillo: `eee918e`. Depois, quatro relatos dele com a
+    Tsuko (Feiticeira, cls 3) no cliente 1.2.6.
+
+    **1) Dano físico e mágico 1-1 na ficha.** O log do mundo: `ptemplate.conf de /app/data/config
+    ilegível: ptemplate.conf não tem a seção [NEC]` e, no login, `o realm não tem ptemplate.conf`.
+    O leitor exigia as 12 seções do 1.5.5; o arquivo do 1.2.6 tem 8. Sem `base_das_classes`,
+    `recalcular_por_nivel` (`entity.rs:559`) sai sem fazer nada e fica o dano padrão 1.
+    `player_template::__Load` do `gs` 1.2.6 (VA 0x80e4efc) lê 0 SWORDSMAN, 1 MAGE, 2 MONK, 3 HAG,
+    4 ORGE, 5 GENIE, 6 ARCHER, 7 ANGEL → `SECOES_DE_CLASSE_126`; o leitor escolhe o conjunto
+    presente. Feiticeira nível 1 com a Varinha Mágica 2251 (dano 3-3, mágico 5-5): físico 4-4,
+    mágico 6-6, vida 60, mana 60 (`tests/ficha_do_126.rs`).
+
+    **2) Atributos 15 em quase tudo.** Os moldes do `realm_126` no banco tinham os números do
+    `ptemplate.conf` (Feiticeira 15/5/15/15 = seção `[HAG]`). O `clsconfig` 1.2.6
+    (`files1.2.6/pwserver/gamedbd/clsconfig`): o `extend_prop` dos moldes das seis classes do
+    1.2.6 no mundo 1 dá **5/5/5/5**, vida/mana = `vit_hp`/`eng_mp` × 5 (Feiticeira 60/60). É o
+    mesmo erro que o 1.5.5 corrigiu em 2026-09-16. A `ficha_inicial` do `pw-link` já dava
+    5/5/5/5, mas só com o `ptemplate.conf` carregado; sem ele o personagem caía no molde do
+    banco. `scripts/2026_09_24_atributos_iniciais_5_126.sql` (moldes e personagens do
+    `realm_126`: 5/5/5/5, `potential_points = 5 × (nível − 1)`) — **não aplicado**; o script
+    de moldes de 2026-09-18 passou a gravar 5/5/5/5. Achado sem correção: as posições do
+    `clsconfig` 1.2.6 para humanos e alados divergem das do banco.
+
+    **3) O abate não contava na missão.** A 1177 é mãe sem objetivo; a filha 1178 pede 10 ×
+    3303 (Filhote de Mandrágora, nível 1, 29 de vida). O banco mostrava a 1178 ativa com **5
+    abates**: o servidor contava. A captura original tem o aviso dessa missão com **9 bytes**
+    (`04 9a04 e70c0000 0a00`), sem os `dps`/`dph` que 1.5.3 e 1.5.5 têm (`TaskTempl.h:1773-1779`,
+    17 bytes); o cliente descartava o nosso. Novo `WorldProtocol::task_notify_monster_killed`
+    (v126 sobrescreve) e `Jogador::avisar_abate` (o `Contexto` usa o protocolo da versão).
+    `NEW` (14), `COMPLETE` (10) e `ERROR_CODE` (7) já batiam com a captura.
+
+    **4) Enxame de Ferroadas com 75 e 106 de dano no nível 1.** Não era dano padrão: era a
+    fórmula certa com os números do stub 1.5.5 (`plus` = 2,3L² + 68,2L + 54 = 124,5,
+    `skill299.h:81`). O `Calculate` do `gs` 1.2.6, executado no emulador, dá `plus` 23,7 / 94,0
+    / … / 966 e `ratio` 0,55…1,0. O extrator passou a gerar a tabela inteira do 1.2.6
+    (`specs/habilidades_126/extrair_habilidades_126.py` → `habilidades.json`, substitui o
+    `tempos.json`): mana, aprendizado, alcance, distâncias, raio, ângulo, precisão e dano. As
+    funções float saem da pilha x87 (TOP do FPSW), e o `GetRange` entra empilhado. Contra o
+    1.5.5, nas 823: `plus` diverge em 68, `ratio` em 10, dinheiro exigido em 186, nível exigido
+    em 142; elemento, base e fator nunca. Só 5 danos (317, 529, 666, 667, 799) dependem da vida
+    do jogador e ficam com o do 1.5.5. Com a ficha corrigida, a 299 nível 1 soma 32 antes da
+    resistência; a captura original mostra 20, 23, 23 e 24 no `142`.
+
+    **Testes:** `ptemplate_tests` (126: 8 classes, [HAG] 15/5/15/15, 50/30); `ficha_do_126`
+    (4-4, 6-6, 60/60, 299 = 32); `itens_do_126::monstro_abatido_na_missao_126` (bytes da
+    captura); `habilidades.rs` (299 plus 23,7/94, mana 4, dinheiro 290; skill 1 plus 10,8);
+    mundo com banco `o_guia_selvagem_do_126_entrega_a_missao_inicial_1177` agora também mata um
+    3303 e confere o `106` de 9 bytes. Suíte com o banco: **684 testes, 0 falhas**. Não publicado.
+
+102. **Sessão 2026-09-24: realm 1.2.6 — missões com filhas, moldes do `clsconfig`, catálogo por realm.**
+
+    Segundo teste do Murillo depois de subir os contêineres com o B101: WRA (Guerreiro novo)
+    nasceu com 5/5/5/5 (o B101 funcionou), mas com as barras de atalho vazias e no "galpão dos
+    lenhadores"; a Tsuko continuava com 15 e perdeu a lista de missões, e pedir a 1177 de novo
+    dava "Missão existente" + "Missão não disponível".
+
+    **Missões.** O banco tinha a lista (1177 → 1178 com 5 abates e 1179 como irmã), e o log
+    dava `não pode aceitar a missão 1177 (erro 3)` = já existe. O cliente processou o
+    `TASK_DATA`: os pedidos de missões dinâmicas e de prêmio especial só saem de dentro do
+    `InitActiveTaskList` (`TaskProcess.cpp:2123-2135` do 1.5.3). O cliente zera a lista inteira
+    se o cabeçalho ou uma entrada for inválida (`:2049-2054`, `:2146-2153`), mas a nossa passa
+    nessas regras, então **a causa exata do sumiço não está provada** (o `Tasks.log` da pasta do
+    cliente usado não estava disponível). A diferença para o original está provada: o leitor v55
+    deixava `filhos_em_ordem` em `false` (`tasks.rs`, B96) e o motor ativou as duas filhas.
+    Posições das flags: sequência `pack(1)` do `TaskTempl.h:2037-2057` do 1.5.3 a partir de
+    `m_ulTimetable` (0x4e): `m_bChooseOne` em 0x6a … `m_bFailAsPlayerDie` em 0x74. Conferidas
+    na `libtask.so` 1.2.6 (com símbolos): `ATaskTempl::CheckDepth` (0x197b6) testa
+    +0x6c/+0x6a/+0x6b na ordem de `m_bExeChildInOrder || m_bChooseOne || m_bRandOne`, e
+    `CanGiveUpTask`/`GiveUpOneTask` leem +0x6f. Contagens nas 7.994 tarefas: em ordem 526,
+    escolhe 136, sorteia 216, pai falha 7.993, pode desistir 7.254. Efeito colateral certo: a
+    1173 ("Primeiro Teste") é "escolhe uma filha" (1175 ou 1176) e agora exige a escolhida (erro
+    25 sem ela), como o original. Lista da Tsuko: `scripts/2026_09_24_lista_de_missoes_tsuko_126.sql`
+    (1177 + 1178 com os 5 abates; conferido com um `SELECT` do resultado).
+
+    **Concluídas no `TASK_DATA` do 1.2.6.** O 1.2.6 usa `FnshedTaskListOld` (versão 0, `u16` por
+    entrada, falha no bit 15; captura `01 00 00 00 e8 06`; conversão do cliente em
+    `TaskProcess.cpp:2060-2072`); nós mandávamos o formato novo. `concluidas_no_formato_antigo`
+    no `WorldProtocol` v126.
+
+    **Moldes.** O `realm_126` não tinha `ui_config` nos moldes (o link mandava barras vazias, e o
+    cliente gravou a configuração vazia do WRA). As posições eram pontos de cidade. O `clsconfig`
+    1.2.6 tem as duas coisas: o `config_data` (308–322 B) e a posição de cada molde. O
+    `GetDataRoleId` do `gamedbd` 1.2.6 (VA 0x810c542) é o do 1.5.5 para as classes 0–7 (16, 19,
+    20, 23, 24, 27, 28, 31). No `npcgen.data` do mapa 1, os pontos ficam ao lado do Guia de cada
+    raça: 3517 (221,5; 2854,4), 3518 (−1445,2; 1398,9) e Jace Johnson 3519 (−313,4; −893,1),
+    junto aos monstros das primeiras missões. O ponto antigo dos humanos ficava entre o Velho
+    Caçador, a Teleportadora e os artesãos. `ler_clsconfig.py --sql <realm> --classes …` gera o SQL:
+    `scripts/2026_09_24_moldes_do_clsconfig_126.sql`, e `2026_09_24_wra_pelo_molde_126.sql`
+    (configuração e posição do WRA). O script de moldes de 2026-09-18 passou a ter os pontos
+    novos. No 1.5.5 o nascimento também vinha do `clsconfig`, não de um `.data`.
+
+    **Carga e versões.** `tests/carga_dos_realms.rs`: `realm_126` carrega sem falha (132
+    lidos). Os não lidos são de sistemas que não existem em nenhum realm (`path.sev`,
+    `domain.data`, `extra_drops.sev`, `task_npc.data`, `global_api.lua`, `ExtDataID.dat`,
+    `precinct.clt`, `rare_item.conf`). O `realm_155` tem 3 falhas dos próprios arquivos
+    (`a46/npcgen.data`, `a50/precinct.sev` truncados). Para uma versão nova não exigir código
+    no que é tabela: `data/<realm>/catalogo/elements_layout.json` e `habilidades.json` valem no
+    lugar do embutido (versão do layout conferida contra o cabeçalho, senão falha registrada).
+    O extrator 1.2.6 passou a gravar a tabela de habilidades completa, e `do_126` só a lê.
+    Continua exigindo código: o formato do `tasks.data` (v55 e v129), o protocolo do cliente
+    (`WorldProtocol`) e as seções do `ptemplate.conf` (escolhidas pelo conteúdo).
+
+    **Aplicados depois, a pedido do Murillo** (atributos: 2 personagens e 6 moldes; moldes: 6; WRA: configuração e posição; Tsuko: lista 1177 + 1178). Os 4 scripts de
+    2026-09-24 ficam para o Murillo, na ordem: atributos, moldes, WRA, lista da Tsuko. Suíte com
+    o banco: **689 testes, 0 falhas** (uma rodada anterior teve 1 falha de tempo em `a_consulta_de_jogador_devolve_alguma_coisa`, que passa isolada 3/3).
+
+103. **Sessão 2026-09-24: realm 1.2.6 — movimento de monstro, dano da 299 e prêmios iniciais (diagnóstico).**
+
+    Terceiro teste do Murillo (Tsuko e WRA, primeira missão de cada), com os 4 scripts do B102
+    aplicados.
+
+    **Prêmios (correto).** O WRA recebeu a Espada de You Xia (12497) sem escolher, e a Tsuko
+    escolheu entre martelo e varinha. Pelo `tasks.data` v55, as seis classes seguem a mesma
+    estrutura, cada uma com a arma dela: Guerreiro 1173 → 1175/1176 → 12497 → 1174; Mago 1198
+    → 1202/1203 → 12500 → 1199; Selvagens 1177 → 1178 → 1179 (dois prêmios: 12498 + Cura ou
+    12501 + Espírito, porque a cadeia é de Feiticeira **e** Bárbaro) → 1204; Arqueiro 2566 →
+    2567/2568 → 12499 + 500 flechas → 2569; Sacerdote 1181 → 1183/1184 → 12500 → 1182. A
+    captura original da 1179 manda `156`, `156`, `159`, `158`, `158`, `106` nova (1204) e `106`
+    concluída só da filha, sem "concluída" para a mãe; o nosso manda o mesmo. O Murillo
+    confirmou a arma no WRA. Teste de mundo
+    `o_primeiro_teste_do_guerreiro_126_da_a_arma`: 10º abate real, entrega no 3517, `156` de 10
+    bytes com o 12497, `106` nova da 1174. (`Entrada::definir_monstros` passou a ser pública
+    para o teste.)
+
+    **Dano da 299 (correto).** Captura: Feiticeira nível 1 (`OWN_EXT_PROP`: 5/5/5/5, 60/60,
+    mágico 6–7) tira 20 do Filhote de Mandrágora (3303, madeira 10) e 23 do Inseto Esmeralda
+    (1000, madeira 6). A redução é `res/(res + 40·nível − 25)` (`combat.rs:242`): no nível 1,
+    10/25 = 40 %, então ~32 × 0,6 ≈ 20; no nível 2 da Tsuko, 10/65 = 15 %, então ~34 × 0,85 ≈ 29.
+    O log real mostra 29–31. O WRA tira menos porque a skill 1 é física, contra a defesa 6.
+
+    **Monstros "teleportando" (não reproduzido).** Medido contra a captura (16.822
+    `OBJECT_MOVE` de monstro) e no mapa real (`tests/passeio_do_126.rs`), tudo bate:
+    - passeio de 1.000 ms, um comando por segundo, passo = velocidade × 1 s (576 e 220 em 1/256
+      m/s, iguais ao `MONSTER_ESSENCE` v7), pausa de ~32 s;
+    - perseguição de 500 ms, modo 1, 4 m/s (o `gs` 1.2.6 confirma: 10 tiques e 0x1f4);
+    - alturas iguais em ±6 mm (18.918 pontos);
+    - 433 passos de passeio sem salto, perseguição sem salto, volta para casa andando em 19 de 20;
+    - nenhum aviso de fila cheia no link.
+    Diferença real, mas longe do jogador: o original deixa o cliente conhecer até 220 criaturas
+    (41 `OBJECT_LEAVE_SLICE` na sessão), e o nosso corta nas 80 mais próximas, o que perto dos
+    Guias dá 75–82 m. Falta o momento exato do salto em jogo. Suíte com o banco: **693 testes, 0 falhas**.
+
+104. **Sessão 2026-09-24: realm 1.2.6 — monstros correndo ou pulando no passeio (causa e correção).**
+
+    Novo relato: monstros **andando à toa** às vezes andam rápido demais ou "no ar". Hipóteses
+    descartadas com medição:
+    - `aipolicy`: não é interpretado no `pw-gs`, não mexe em movimento;
+    - habitat: o `inhabit_type` v7 da área inicial é 0 (chão), com os voadores legítimos nascendo
+      na caixa a y 279/330;
+    - `npcgen.data` do 126: v10, com a mesma distribuição de `fOffsetTrn` do 155; os 33.610 ids
+      do mapa 1 são únicos;
+    - água e estrutura contra a captura: 5 pontos sobre estrutura, 0 sobre água, nenhum com a
+      nossa altura acima da do original;
+    - o passeio de 55 spawns reais em volta do Guia: 927 passos sem salto e sem nenhum no ar.
+
+    **Reprodução ao vivo** (`reproducao_do_passeio_no_realm_126`, `#[ignore]`): o mapa 1 inteiro
+    (27.323 monstros), o laço de tiques real, o barramento e um jogador junto ao Guia 3518.
+    Em 30 s, **4 a 8 pares de `OBJECT_MOVE` do mesmo monstro a 45–63 ms** (ambos modo 0,
+    `use_time` 1 s, na velocidade de andar).
+
+    **Causa:** no último passo de um passeio, `fim_do_passeio` emenda outro com 10 % de chance
+    (`ai_rest_task::OnSessionEnd`), e `comecar_passeio` zerava `espera_ms`. Resultado: o primeiro
+    passo do passeio novo saía no tique seguinte ao último do anterior. **Correção:**
+    `comecar_passeio` não zera mais a espera (no começo normal ela já é zero). Depois: 0 pares em
+    647 movimentos. `o_filhote_de_mandragora_passeia_sem_saltos` agora confere o intervalo entre
+    passos e acusa 16 com o defeito de volta. Os inícios de perseguição e de volta para casa
+    também zeram a espera, mas só acontecem com luta: a conferir se aparecer salto em combate.
+    Suíte com o banco: **695 testes, 0 falhas, 1 ignorado (a reprodução de 30 s)**. Não publicado.
+
+105. **Sessão 2026-09-24: realm 1.2.6 — a Planta Devoradora que "teleportou" depois de morta.**
+
+    Relato: com o WRA (imagem já com a correção do B104), uma Planta Devoradora que ele matou
+    "teleportou". No log, o id era −2147477155 (29 de vida). O id vivo não bate com o do
+    `npcgen.data` offline, porque o contador de instâncias segue a ordem de leitura das pastas
+    de mapa, que muda entre o Windows e o contêiner.
+
+    **Reprodução** (`reproducao_da_planta_devoradora_no_realm_126`, `#[ignore]`): o mapa 1
+    inteiro, o laço de tiques real, o jogador a 6 m da Planta mais próxima do Guia 3517
+    batendo nela quando ela começa a andar. Na luta, **nenhum salto**: o passo de corrida
+    esperou o de passeio, 2 m a cada 0,5 s até o jogador, parada onde o cliente já a via. O
+    salto era **depois da morte**: corpo de 20 s, `OBJECT_DISAPPEAR`, e **1 s depois** a Planta
+    aparecia no ponto de nascimento, a 5 m de onde morreu.
+
+    **O original.** Na captura do 1.2.6, Filhote de Mandrágora e Inseto Esmeralda voltam
+    **~15,1–15,9 s depois da morte**, com `NPC_ENTER_WORLD` (16), a 3–19 m de onde morreram, e
+    **sem nenhum `OBJECT_DISAPPEAR`**. No fonte: o construtor põe `_corpse_delay = 20`, mas o
+    `CreateMobBase` o sobrescreve com o `iDeadTime` da entrada do gerador
+    (`npcgenerator.cpp:2486`, `3828-3833`: 0 = sem corpo; senão 10..10.800 s, e o `OnDeath`
+    corta em 200 s). No `gs` 1.2.6, `npc_spawner::CreateMobBase` faz o mesmo (VA 0x80f2407), e
+    o `OnDeath` tem o mesmo teto 0xfa0. Com `_corpse_delay` 0 não há `disappear`
+    (`npc.cpp:904-911`), e o `Reclaim` vem no tique seguinte. O renascimento é
+    `Rand(15 + iRefreshLower, 15 + iRefresh)` s (`BASE_REBORN_TIME`, `config.h:106`;
+    `npcgenerator.cpp:3355`, `3841-3855`), num ponto novo da área (`Reborn` → `GeneratePos`).
+    No `npcgen.data` do 126: 27.610 de 27.618 monstros do mapa 1 com `iDeadTime` 0; Planta e
+    Filhote com `iRefresh` 0 (15 s; o "1" que víamos era o `.max(1)` do leitor).
+
+    **Correção:** o leitor guarda `iDeadTime`/`iRefresh`/`iRefreshLower` em
+    `SpawnInstance::{corpo_s, renascer_min_s, renascer_max_s}` (`tempos_do_gerador`). O mundo
+    liga cada monstro ao gerador: corpo pelo `iDeadTime` (0 = sem corpo e sem `disappear`),
+    renascimento sorteado, posição nova (`SpawnInstance::posicao_de_renascimento`) e direção
+    nova, anunciado com `NPC_ENTER_WORLD`. Sem gerador (invocado): como antes. Depois: a Planta
+    morre, fica como corpo e volta **15,0 s** depois, a 16,2 m, sem `disappear`. Testes:
+    `o_gerador_do_126_da_o_corpo_e_o_renascimento` e a reprodução com asserções. Vale também
+    para o 1.5.5 (mesma regra do fonte). Suíte com o banco: **695 testes, 0 falhas, 2 ignorados (as reproduções)** — depois de corrigir a instabilidade de `a_consulta_de_jogador_devolve_alguma_coisa` (pegava só a primeira mensagem; agora espera o 32). Não publicado.
+
+106. **Sessão 2026-09-24: realm 1.2.6 — monstros que "disparam" no passeio e personagem preso em combate.**
+    Relato do Murillo testando com a WRA: monstros passeando começavam a andar rápido ou no ar e
+    depois voltavam de uma vez para perto de onde estavam; e a WRA não saía do estado de combate.
+    - **Passeio:** o último passo do passeio de chão ia como `OBJECT_MOVE` e a parada de
+      `fim_do_passeio` era descartada (`acao.or(parada)`). O cliente não para sozinho no destino:
+      segue andando na mesma direção até chegar comando novo (`CECNPC::MovingTo`,
+      `EC_NPC.cpp:1225-1240`) e só puxa o monstro de volta a mais de 25 m (`MAX_LAGDIST`,
+      `EC_NPC.cpp:79`). O original manda o último passo só como `stop_move` até o ponto final
+      (`npcsession.cpp:626-633`); agora o nosso também, no chão e na água/ar (`ai.rs`).
+      `o_filhote_de_mandragora_passeia_sem_saltos` passou a cobrar passo ou parada até o fim do
+      `use_time` de cada `OBJECT_MOVE` (305 passos, 0 sem continuação).
+    - **Combate:** o cliente só apaga a postura de luta com `SELF_INFO_00` de estado 0
+      (`EC_HostMsg.cpp:1335`), e o nosso batimento só mandava o aviso quando vida/mana mudavam.
+      A captura do 1.2.6 original (`full_interno.pcap`) tem `SELF_INFO_00` em que só o byte do
+      estado muda 1→0 (t = 2409,9 s e 2441,9 s). `progressao::batimento` agora avisa no batimento
+      em que `combate_s` chega a 0; teste `sair_do_combate_de_vida_cheia_avisa_o_cliente`.
+    - Suíte com o banco: **696 testes, 0 falhas, 2 ignorados** (as reproduções). Specs 05 e
+      ESTADO atualizados. Corrigido, falta ver em jogo; nada commitado nem publicado.
+
+107. **Sessão 2026-09-24: realm 1.2.6 — missão automática do jogador novo e tela de dicas.**
+    Relato do Murillo: o personagem novo não recebia a missão de entrega automática que ele
+    pôs no `tasks.data` 1.2.6, nem abria a tela de dicas de jogador novo.
+    - **Missão automática:** o leitor v55 (`missao_v55`) nunca lia `m_bAutoDeliver`; o
+      diagnóstico `missoes_automaticas` dava 0 no 1.2.6. No `libtask.so` 1.2.6 (base `this + 4`
+      = bloco fixo): `AddOneTaskTempl` testa +0xad/+0xac (`m_bDeathTrig`/`m_bAutoDeliver`,
+      0x1cc8e/0x1ccbf); `CheckLevel` +0xc1/+0xc5; `CheckPreTask` contador +0xf1 e vetor +0xf5
+      (5 posições até o gênero em +0x114, `CheckGender`); `CheckInZone` +0x79, +0x7a e a caixa
+      +0x7e/+0x8a. Agora são 81 automáticas, entre elas a 9376 "Virando Dinossauro" (nível
+      1..150, sem classe nem pré-requisito). No 1.2.6 o motivo 4 do `OnClientNotify` também é
+      `OnTaskAutoDelv` (PLT resolvida). Testes: `as_missoes_automaticas_do_126` (carga) e
+      `a_missao_automatica_do_126_e_entregue_ao_pedido_do_cliente` (mundo com banco).
+      Quem pede é o cliente (`CheckAutoDelv`), com o `tasks.data` dele: a missão tem de estar
+      também no arquivo do cliente.
+    - **Tela de dicas:** o `gateway.rs` respondia o `GetHelpStates` sem gravação com 32 bytes
+      zerados; o cliente os lia como "nenhum tipo de dica ativo" (`ECScriptOption.cpp:136-146`)
+      e gravava isso de volta. O original manda vazio (`gamedbmanager.cpp:378`,
+      `gethelpstates.hpp:27-31`) e o cliente usa o padrão, 0x7fff (`:89-101`). Agora vazio.
+      eaa, RT, Tsuko e WRA já tinham gravado a palavra de tipos 0x0000:
+      `scripts/2026_09_24_dicas_religadas.sql` a troca por 0x7fff, mantendo a lista de dicas
+      vistas (ensaiado com ROLLBACK: 4 linhas; não aplicado).
+    - Suíte com o banco: **698 testes, 0 falhas, 2 ignorados**. Specs 02, 03 e ESTADO
+      atualizados. Corrigido, falta ver em jogo; nada commitado nem publicado.
+
+108. **Sessão 2026-09-24: realm 1.2.6 — personagens sem o Portal da Cidade (167).**
+    - Causa: o `2026_09_18_templates_iniciais_realm_126.sql` recriou os moldes do `realm_126` só
+      com a habilidade de ataque de cada classe; no banco sobrou uma por classe (também sem a 235
+      do Arqueiro e a 125 do Sacerdote). Como o molde tinha habilidade, o `default_skills()` (que
+      põe a 167) não entrava. A semente do `template.rs` tinha listas sem evidência (2, 7,
+      255-257, 352-354, 437-439, 1840, 11, 117-119) e os nomes das classes 3 e 4 trocados.
+    - Evidência: `GRoleStatus.skills` dos moldes do `clsconfig` 1.2.6 (formato de
+      `SkillWrapper::StoreDatabase`, `skillwrapper.cpp:870-879`), agora lido por
+      `ler_clsconfig.py --habilidades`: cls 0: 1, 167; 1: 81, 167; 3: 167, 299; 4: 102, 167;
+      6: 167, 234, 235; 7: 113, 125, 167 — todas nível 1. O do 1.5.5 também tem a 167 em todas.
+    - `scripts/2026_09_24_habilidades_do_clsconfig_126.sql` (aplicado a pedido): moldes do
+      `realm_126` iguais ao `clsconfig` (14 linhas) e as que faltavam dadas aos existentes —
+      Tsuko e WRA receberam a 167. Script de 18/09 e semente do `template.rs` corrigidos.
+    - Suíte com o banco: **698 testes, 0 falhas, 2 ignorados**. Spec 02 e ESTADO atualizados.
+      Falta ver em jogo; nada commitado nem publicado.
+
+109. **Sessão 2026-09-24: realm 1.2.6 — itens sombreados na venda e o baú do "Teste de Salto".**
+    - **Venda:** o cliente congela cada espaço que manda vender e só o solta com
+      `UNFREEZE_IVTR_SLOT` (181, `EC_HostMsg.cpp:2060-2065`). A captura do 1.2.6 original
+      (`full_interno.pcap`, t = 2540,77 s) responde a venda com `181 00 01 00` e depois o `73`;
+      o nosso só mandava o 73, e os itens ficavam sombreados. Agora vai um 181 por espaço
+      pedido, também o recusado (o fonte 1.5.5 não o manda nesse caminho; no cliente 1.5.5 ele
+      só descongela, então vale para todas as versões). Testes de venda ajustados.
+    - **Baú:** a 3427 "Teste de Salto" tem a filha 3428, que pede 1 Sinal de Refinamento
+      (11131). Ele sai da mina 11117 **Baú de Tesouros** (`task_in`/`task_out` 3428,
+      `materials_1_id` 0: o item vem do `OnTaskMining`, já portado em `colheu_mina`), em
+      x 255, z 3234, `fHeiOff` 33,5 m. O Baú Desgastado (12858, `fHeiOff` 26,8 m, x 424,
+      z 3474) é da 7017 "As Pegadas de Laura" e não abre sem ela — certo. O Murillo confirmou
+      que os baús ficam altos por estarem em construções.
+    - Recurso passou a usar só relevo + `fHeiOff`, sem o mapa de movimento
+      (`SetRegion(0, ...)`, `npcgenerator.cpp:3900-3902`, `:4320-4324`); no Baú de Tesouros a
+      diferença era de 5 cm. Exemplos novos `missao` e `minas_do_item` (pw-data-loader).
+    - Suíte com o banco: **698 testes, 0 falhas, 2 ignorados**. Specs 03, 05 e ESTADO
+      atualizados. Falta ver em jogo; nada commitado nem publicado.
+
+110. **Sessão 2026-09-25: realm 1.2.6 — a Tsuko em laço com a 5909 "Domesticadores".**
+    Relato: ao receber a automática 5909, a Tsuko recebia a missão de novo mesmo clicando OK, e
+    a "Instruções" ficou travada, sem ir à Domesticadora.
+    - A 5909 (automática, classe 3, nível 3) tem as filhas 5911 "Instruções" (chegar a um
+      lugar, método 4) e 5912 "Um amigo leal" (falar com o NPC 11534). O lugar da 5911 é o
+      mapa 1 inteiro (±9999): o cliente a dá por alcançada logo e avisa (`TASK_NOTIFY` motivo 3,
+      que no `OnClientNotify` 1.2.6 é `OnTaskReachSite`). O leitor v55 não lia o lugar, o
+      `conferir_lugar` nunca a cumpria e a 5912 não vinha. Entrega e formato do `NEW` conferidos
+      com a captura (resposta ao motivo 4 idêntica à do original).
+    - Lugar medido no `OnTaskReachSite` do `libtask.so` 1.2.6 (0x1fa00-0x1fa6e): método +0x19a,
+      mundo +0x1de, caixa +0x1c6/+0x1d2 (bloco fixo), `is_in_zone` e `OnSetFinished`.
+      1.559 missões desse tipo; nove "Estágio 3-x" (4735-4770) com caixa invertida no arquivo.
+    - Testes: `os_lugares_a_alcancar_do_126` (carga) e
+      `a_5909_do_126_passa_da_5911_ao_chegar_ao_lugar` (mundo com banco: 5909+5911 → 5909+5912).
+      Suíte com o banco: **700 testes, 0 falhas, 2 ignorados**. Spec 03 e ESTADO atualizados.
+      Falta ver em jogo; nada commitado nem publicado.
+
+111. **Sessão 2026-09-25: mascote de combate, 1.2.6 e 1.5.5.**
+    Relato: a Tsuko pegou um mascote e tentou invocar; nada aconteceu. O log mostrava "montou o
+    pet 10386": o `montar` só perguntava a velocidade do `PET_ESSENCE`, que o de combate também
+    tem, e o `SUMMON_PET` de 16 B do 1.5.5 era descartado pelo cliente 1.2.6 (12 B).
+    - **Evidência:** `petman.cpp` (`combat_petdata_imp`, `pet_manager`), `petnpc.cpp`
+      (`gpet_imp`, `gpet_policy`), `petdataman.*`, `pet_filter.cpp`, `obj_interface.cpp:2826`,
+      `npcgenerator.cpp:1989-2139`; no 1.2.6, `pet_dataman::LoadTemplate` (VA 0x8143580) e
+      `__LoadDataFromDataMan` (curva 592 em VA 0x80e6fae) do `gs`, e a tabela do validador de
+      tamanho do cliente (VA 0x584610/0x584e90, extraída caso a caso): 233 = 12, 234 = 8,
+      249 = 12, 120 = 14, `info_npc` 27 B com +4 (0x1000) e +1+n (0x2000).
+    - **Dados:** layout v7 do `PET_ESSENCE` estava deslocado (um `pet_snd_type` inventado em
+      0x154); corrigido pelo `gs`, os coeficientes do 10386 ficam iguais aos do 1.5.5.
+      `ModeloDeMascote` com as recusas do original (460/413 no 1.2.6, 783/439 no 1.5.5),
+      curva 592 e `PET_FOOD_ESSENCE`.
+    - **Protocolo:** trait com os comandos de mascote e `OBJECT_ATTACK_RESULT`; o v126
+      sobrescreve 233, 234, 249, 120 e a entrada de mascote. A montaria do 1.2.6 passou a usar os
+      da versão (antes mandava os de 16/9 B).
+    - **Mundo:** `mascote.rs` (corpo por `GenerateBaseProp`, IA do `gpet_policy`, lealdade no
+      dano, experiência e nível, fome/comida), `WorldInstance::invocar_mascote` e vizinhos,
+      monstros que odeiam e atacam mascote (`tick_com_mascotes`), dano do mascote com crédito
+      do dono, morte, recolher na morte/saída do dono, visibilidade com o pacote de mascote.
+      Barramento: `bus_server/mascote.rs` (eventos, `PET_CTRL` 103, comida, reviver pela 329,
+      gravação no `PetCorral`).
+    - **Testes:** ponta a ponta nas duas versões (invocar → atacar por ordem → 120 → abate →
+      237/238 → recolher → jaula), morte (234 + 247, lealdade 200 → 180, erro 87 ao invocar),
+      tamanhos por versão, unidade de lealdade/fome/comida/experiência, modelos e curva nos dois
+      realms. Suíte com o banco: **712 testes, 0 falhas, 2 ignorados**.
+    - **Falta:** habilidades do mascote (comandos 4 e 5), soltar (`BANISH_PET`), renomear,
+      invisibilidade, mascote de água/ar. Nada commitado nem publicado.

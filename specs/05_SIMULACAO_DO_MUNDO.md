@@ -1,6 +1,6 @@
 # Especificação 05: Simulação do mundo (`pw-gs`)
 
-> Tempos da skill 299 v126 (tabela do `gs` 1.2.6) testados em 2026-09-24, base `b16f992` + B100; pipeline B98; itens/combate 126 conferidos em 2026-09-21, base `a305e51` + B89/B90; missão inicial v55 testada em 2026-09-23 (B96); demais áreas em 2026-09-14, B50. Cobre
+> Ficha, dano da 299 e aviso de abate v126 testados em 2026-09-24, base `eee918e` + B101; tempos da 299 v126 (B100); pipeline B98; itens/combate 126 conferidos em 2026-09-21, base `a305e51` + B89/B90; missão inicial v55 testada em 2026-09-23 (B96); demais áreas em 2026-09-14, B50. Cobre
 > `crates/pw-gs/src/{world,bus_server,bus_server/jogo,ai,combat,habilidades,entity,grid,npc,server,missoes,progressao,economia}.rs`.
 >
 > Estado de cada regra: `confirmado` (visto em jogo), `testado` (teste automatizado),
@@ -49,11 +49,20 @@ habilidades, itens, `sec_level`.
   (`GenDir`, `npcgenerator.h:747-757`). Vai no `dir` do `NPC_ENTER_SLICE`
   (`protocol_imp.h:297-306`). Mandávamos zero para todos, e em jogo os NPCs ficavam todos
   virados para o mesmo lado. `testado`, falta ver em jogo.
-- Monstro morto (`WorldInstance::matar_monstro`): o corpo some em **20 s** (`_corpse_delay`,
-  `npc.cpp:803,1446-1459` → `OBJECT_DISAPPEAR`) e ele renasce no centro após o tempo do gerador
-  (`respawn_sec` do `npcgen.data`), vida cheia, IA e lista de dano zeradas, com
-  `NPC_ENTER_SLICE` a quem está a 120 m. `testado`. (Até B50 o tempo ia zero e **nenhum
-  monstro renascia**.)
+- Monstro morto (`WorldInstance::matar_monstro`), **pelo gerador** (B105): o corpo dura o
+  `iDeadTime` do `npcgen.data` (o construtor põe 20 s, mas o `CreateMobBase` sobrescreve com o
+  da entrada — `npcgenerator.cpp:2486`; no `gs` 1.2.6, `npc_spawner::CreateMobBase` VA
+  0x80f2407); limitado a 10..10.800 s e a 200 s no `OnDeath`. **0 = sem corpo** (27.610 de
+  27.618 monstros do mapa 1 do 126): nenhum `OBJECT_DISAPPEAR`, o cliente mantém o corpo, e o
+  monstro volta ao gerador no tique seguinte. O renascimento é sorteado entre 15 s +
+  `iRefreshLower` e 15 s + `iRefresh` (`BASE_REBORN_TIME`, `npcgenerator.cpp:3355`,
+  `3841-3855`), contado da volta ao gerador, **num ponto novo da área** (`Reborn` →
+  `GeneratePos`/`GenDir`) e anunciado com `NPC_ENTER_WORLD` (16) a quem está a 120 m — o corpo
+  "levanta" noutro lugar, como no original (captura do 1.2.6: Filhote de Mandrágora de volta
+  ~15,5 s após a morte, a 3–19 m, com 16 e sem 21). Sem gerador (invocado): corpo de 20 s e não
+  renasce. `testado` (`reproducao_da_planta_devoradora_no_realm_126`, `#[ignore]`: de volta
+  15,0 s depois, a 16,2 m, sem `disappear`). Até o B104 era corpo fixo de 20 s + `disappear` +
+  `iRefresh` (mínimo 1 s) no mesmo ponto: a Planta reaparecia 1 s depois de o corpo sumir.
 
 ## 3. Visibilidade (streaming) — `confirmado`
 
@@ -189,6 +198,45 @@ faltam a animação e o efeito de lançamento da skill 299 (Enxame de Ferroadas)
 (tempos do `gs` 1.2.6, spec 03 §3.10b). Captura original da 299: `85` (tempo 1.500) → `88`
 em +1.505 ms → `142` em +1.555 → `123` em **+2.504..2.551 ms**; o teste de mundo mede o 88 entre
 1.400 e 1.800 ms e o 123 entre 2.400 e 2.900 ms, pelo menos 900 ms depois do 142.
+
+**Dano no 1.2.6 (B101, `corrigido`, falta ver em jogo):** a Tsuko matava o Filhote de
+Mandrágora (29 de vida) com 75 e 106 da 299 no nível 1. Não era um dano padrão: era a fórmula
+certa (`golpe_de_habilidade`, `combat.rs:567`) com os números do stub **1.5.5** (plus 124,5 no
+nível 1). O `gs` 1.2.6 dá plus 23,7 (spec 03 §3.10b); com a ficha corrigida (mágico 6-6) a 299
+nível 1 soma 32 antes da resistência. A captura original mostra 20, 23, 23 e 24 no `142`.
+
+### 5.0.9 Movimento de monstro no 1.2.6 conferido com a captura — `testado` (B103)
+
+Relato: "monstros teleportando" com a Tsuko e o WRA. Tudo o que o servidor controla bate com
+o original (`full_interno.pcap`, 16.822 `OBJECT_MOVE` de monstro): passeio com `use_time`
+1.000 ms, um comando a cada ~1 s e passo = velocidade × 1 s (3303: 2,25 m, 576/256 m/s; 1000:
+0,86 m, 220/256), pausa mediana de ~32 s; perseguição com 500 ms, modo 1, 4 m/s, 2 m por passo
+(o `gs` 1.2.6 também: `session_npc_follow_target` arma 10 tiques e usa 0x1f4 = 500);
+velocidades do `MONSTER_ESSENCE` v7 iguais às da captura; altura do terreno + estrutura igual à
+do original em ±6 mm (p1–p90 de 18.918 pontos). No mapa real (`tests/passeio_do_126.rs`): 433
+passos de passeio sem nenhum maior que velocidade × `use_time`; perseguição sem salto; volta
+para casa andando em 19 de 20 (1 pelo `ReturnHome`, que o original também faz). Nenhum
+`OBJECT_MOVE` descartado pela fila do link. **Diferença conhecida**: o original deixa o cliente
+conhecer até 220 criaturas de uma vez (captura; só 41 `OBJECT_LEAVE_SLICE` na sessão); o nosso
+corta nas 80 mais próximas (`TETO_DE_VISIVEIS`), o que perto dos Guias fica em 75–82 m.
+**Causa achada e corrigida (B104, falta ver em jogo):** a emenda de passeio
+(`ai_rest_task::OnSessionEnd`, 10 %) zerava a espera em `comecar_passeio`. O último passo do
+passeio saía com `use_time` de 1 s e o primeiro do passeio seguinte no tique seguinte: dois
+`OBJECT_MOVE` a ~50 ms, e o cliente corria ou pulava para o segundo destino. Reproduzido com o
+mapa 1 inteiro, o laço de tiques real e o barramento
+(`reproducao_do_passeio_no_realm_126`, `#[ignore]`): 4 a 8 pares em ~250 movimentos em 30 s,
+0 depois. A medição rápida (`o_filhote_de_mandragora_passeia_sem_saltos`) acusa 16 com o
+defeito. Água e estrutura conferidas contra a captura: 5 pontos sobre estrutura, 0 sobre água,
+nenhum com a nossa altura acima da do original.
+**Segunda causa, corrigida (B106, falta ver em jogo):** o último passo do passeio ia como
+`OBJECT_MOVE` e a parada era descartada (`acao.or(parada)`). O cliente segue andando o monstro na
+mesma direção enquanto não chega comando novo (`CECNPC::MovingTo`, `EC_NPC.cpp:1225-1240`) e só
+o puxa de volta a mais de 25 m do destino (`MAX_LAGDIST`, `EC_NPC.cpp:79`): o monstro
+"disparava", subia no relevo e voltava de uma vez. O original manda esse último passo **só** como
+`stop_move` até o ponto final (`session_npc_cruise::Run`, `npcsession.cpp:626-633`); o nosso
+agora também, no chão e na água/ar. `o_filhote_de_mandragora_passeia_sem_saltos` cobra que todo
+`OBJECT_MOVE` tenha passo ou parada seguinte até o fim do `use_time` (+100 ms). **Regra geral:**
+movimento de monstro sem continuação dentro do `use_time` faz o cliente extrapolar.
 
 ### 5.1.0 Nada que espere o banco fica no caminho do jogo — `testado` (B72)
 
@@ -391,9 +439,9 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
 | regra | estado | detalhe |
 | :--- | :--- | :--- |
 | velocidades, cadência, alcance, `hp_gen`/`mp_gen` | `confirmado` | `CHARRACTER_CLASS_CONFIG` (Bárbaro: correr 4,9 m/s, ataque 0,8 s = 16 ticks, alcance 2,5 m) |
-| atributos iniciais | `testado` (B51) | **5/5/5/5 para toda classe**, vida `vit_hp × 5` e mana `eng_mp × 5` — os 12 moldes do `clsconfig` do `pwserver_155v156`. Os atributos e o `hp`/`mp` do `ptemplate.conf` **não** chegam ao jogador (`userlogin.cpp` copia a ficha do banco). Até B50 o Arqueiro nascia com 20 de energia |
+| atributos iniciais | `testado` (B51) | **5/5/5/5 para toda classe**, vida `vit_hp × 5` e mana `eng_mp × 5` — os 12 moldes do `clsconfig` do `pwserver_155v156`. Os atributos e o `hp`/`mp` do `ptemplate.conf` **não** chegam ao jogador (`userlogin.cpp` copia a ficha do banco). Até B50 o Arqueiro nascia com 20 de energia. **1.2.6 igual** (`clsconfig` 1.2.6, B101): até o B101 a Feiticeira nascia com 15/5/15/15 (a seção `[HAG]`) e a ficha ficava com dano 1-1, porque o `ptemplate.conf` 1.2.6 era recusado — com ele, Feiticeira nível 1 com a Varinha Mágica: físico 4-4, mágico 6-6, vida 60, mana 60 (`tests/ficha_do_126.rs`) |
 | vida/mana máximas | `testado` (B51) | `lvlup_hp × (nível−1) + vit_hp × vitalidade` (e o par da mana), base zero (`__LevelUp`, `__UpdateBasic`, `playertemplate.cpp:500-582`); `BaseDaClasse::vida_e_mana_maximas` (spec 03 §3.5), a mesma conta da criação |
-| **combate** | `testado` | `combate_s`: atacar põe 15 s (`DoAttack`, `player.cpp:3062`), apanhar garante 5 s (`OnAttacked`, `:9514`); batimento de 1 s desconta |
+| **combate** | `testado` | `combate_s`: atacar põe 15 s (`DoAttack`, `player.cpp:3062`), apanhar garante 5 s (`OnAttacked`, `:9514`); batimento de 1 s desconta, e o batimento em que chega a 0 manda o `SELF_INFO_00` mesmo sem vida/mana mudar — é o único jeito de o cliente sair da postura de luta (`EC_HostMsg.cpp:1335`; captura 1.2.6, t = 2409,9 s) (B106) |
 | **regeneração** | `testado` | batimento de 1 s no `tick`: `hp_gen`/`mp_gen` em combate, ×4 fora (`player.cpp:9130-9137`), acumulando oitavos (`func::Update`, `actobject.h:2143`); `SELF_INFO_00` quando muda |
 | **experiência e SP do abate** | `testado` | lista de dano no monstro; cada um recebe `exp × dano / max(total, max_hp)` (`DispatchExp`, `npc.cpp:1515`) com o ajuste da diferença de nível e `+0,5` (`ReceiveExp`, `player.cpp:2813`); `RECEIVE_EXP` (36) depois de somar. Sem grupo: não há divisão de equipe |
 | **subida de nível** | `testado` | `IncExp`/`LevelUp` (`player.cpp:2627-2711,2831-2896`): curva `PLAYER_LEVELEXP_CONFIG` 202, +5 pontos de atributo, atributos refeitos (`recalcular_por_nivel`), vida e mana cheias, experiência zera no teto (`logic_level_limit` 105); `LEVEL_UP` (37) a todos, `SELF_INFO_00` e `OWN_EXT_PROP` ao próprio |
@@ -467,7 +515,7 @@ banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
 | equipar | `confirmado` | com bloco de dados (spec 04 §5) |
 | empilhar na bolsa | `testado` | `CECInventory::MergeItem` (`EC_Inventory.cpp:179-215`): completa pilhas na ordem dos slots, o resto no primeiro vazio; limite `pile_num_max`. O cliente confere o slot e a quantidade devolvidos |
 | comprar de NPC | `testado` | preço `max(shop_price, price)`; empilha e responde `PURCHASE_ITEM` (72) (`PurchaseItem`, `player.cpp:8900`); sem dinheiro `ERROR_MESSAGE` 16; `falta` conferir a lista de venda do NPC |
-| vender a NPC | `testado` | `price × quantidade`, proporcional à durabilidade (`ItemToMoney`, `player.cpp:13930`); `ITEM_TO_MONEY` (73); o `price` do cliente é ignorado |
+| vender a NPC | `testado` | `price × quantidade`, proporcional à durabilidade (`ItemToMoney`, `player.cpp:13930`); `ITEM_TO_MONEY` (73); o `price` do cliente é ignorado; antes do 73, um `UNFREEZE_IVTR_SLOT` (181) por espaço pedido, também o recusado — o cliente congela o espaço ao pedir e só o solta com ele (captura 1.2.6, t = 2540,77 s; B109) |
 | reparar | `parcial` | **150 fixo** (da entidade), e **não devolve durabilidade** |
 | durabilidade | `testado` (B61) | escala interna, desgaste e quebra — ver "Durabilidade" acima |
 | curar no NPC | `testado` | pelos valores do jogador |
@@ -536,6 +584,29 @@ hoje na coluna `characters.waypoints` (u16 little-endian em sequência, o mesmo 
 | validar por região | `falta` | o original cruza com `world_manager::GetRegionWaypoints()`; aceitamos o que o cliente diz haver na região dele |
 | **viajar** (transportadora) | `testado` | `GP_NPCSEV_TRANSMIT` (5): o cliente manda só o **índice** do destino na lista daquele NPC; o servidor confere índice, nível e dinheiro, cobra e teleporta (`transmit_provider::TryServe` e `transmit_executor::OnServe`, `gs/serviceprovider.cpp:771-852`). Os destinos são o `NPC_TRANSMIT_SERVICE` do `elements.data` (`idTarget`, `fee`, `required_level`, até 32) e a **coordenada de cada um** está no `world_targets.sev` — 92 pontos no `realm_155`, e os 427 destinos citados pelas 95 transportadoras estão todos lá |
 
+### 8.2 Mascote de combate — `testado` (B111, sem teste em jogo)
+
+Porte de `gs/petman.cpp` (`combat_petdata_imp`, `pet_manager`) e `gs/petnpc.cpp` (`gpet_imp`,
+`gpet_policy`) em `crates/pw-gs/src/mascote.rs`, `world.rs` e `bus_server/mascote.rs`. Vale
+para o 1.2.6 e o 1.5.5; só os layouts mudam (spec 04).
+
+| parte | estado | detalhe |
+| :--- | :--- | :--- |
+| invocar | `testado` | a mesma sessão de 60 ticks da montaria; ao fim, `ActivePet` escolhe pela **classe** do modelo (`PET_ESSENCE.id_type` 8782 = combate). Recusa nível de mascote > dono + 35 (`ERR_LEVEL_NOT_MATCH` 51) e morto (`hp_factor` 0, erro 87). Recolhe o anterior. A criatura nasce junto do dono com id `0x80000000 \| 0x20000000 \| n` (`PET_MASK`, `common/types.h:214`); dono recebe `SUMMON_PET` com o id, `PET_AI_STATE` e `PET_HP_NOTIFY`; quem está perto, `NPC_ENTER_WORLD` com a marca 0x1000 + dono (e 0x2000 + nome). Antes do B111 o de combate caía no caminho da montaria e "montava" |
+| atributos | `testado` | `GenerateBaseProp` (`petdataman.cpp:152-186`, fórmulas `petdataman.h:23-76`) no nível dele; vida × `hp_factor`; alcance + `size`; dano com a lealdade (−40/−20/0/+20% por nível de lealdade 0..3, `pet_filter.cpp:8`); sem mana; regenera `hp_gen` por segundo sempre (`SetFastRegen(0)`) |
+| IA | `testado` | `gpet_policy::OnHeartbeat` (`petnpc.cpp:1630-1735`): segue o dono correndo até 0,8 m quando passa de 1,5 m ou 10 m de altura (`session_npc_follow_target` com o mapa de movimento); com ódio, persegue e bate no ritmo do `attack_speed` com o atraso do `damage_delay`. Cercas: longe (≥ 60 m, altura > 60 m, > 150 m, 5 falhas de caminho) reposiciona junto do dono (`stop_move` com `MOVE_MODE_RETURN`); parado ("ficar") e longe, é recolhido. O último passo vai como parada (B106) |
+| agressividade | `testado` | começa automático + seguir (`petman.cpp:1283-1284`) e o dono guarda o último. Defesa: ódio por apanhar e quando o dono apanha (`MASTER_ASK_HELP`, 2). Automático: ataca o que o dono começar a atacar, se estiver sem ódio (`Notify_StartAttack` no golpe normal e na habilidade, `actsession.cpp:361`/`:491`). Passivo: só por ordem |
+| comandos (`PET_CTRL` C2S 103) | `testado` | `{int target; int pet_cmd; buf}`: 1 atacar (limpa o ódio, `max_hp + 10` no alvo), 2 seguir/ficar, 3 agressividade (automático e passivo congelam o ódio); `PET_AI_STATE` quando muda. **4 e 5 (habilidade manual e automática): `falta`** |
+| combate | `testado` | o golpe leva o **dono** como atacante (`FillAttackMsg`): crédito do abate, experiência e missão são do jogador; o monstro odeia o mascote (e 1 no dono). Os monstros atacam mascote como atacam jogador (e o agressivo o vê, `PeepEnemy`). `OBJECT_ATTACK_RESULT` (120) mostra os golpes entre criaturas a quem vê |
+| aviso ao dono | `testado` | `PET_HP_NOTIFY` a cada 5 s ou quando vida/combate mudam; mascote em combate põe o dono em combate por 6 s (`OnPetNotifyHP`) |
+| experiência | `testado` | no abate creditado ao dono (`KillMob`): 10 − (nível do mascote − nível do monstro, se menor) × ajuste da lealdade (0,1/0,5/1,0/1,5); curva `PLAYER_LEVELEXP_CONFIG` 592 (o `gs` 1.2.6 também, VA 0x80e6fae — lá começa em 3, 3, 3, 3, 5); trava no nível do dono e no `level_max`. `PET_RECEIVE_EXP` ou `PET_LEVELUP` (atributos novos, vida cheia) |
+| morte | `testado` | `RECALL_PET` com `PET_DEATH` (1), `PET_DEAD`, lealdade −10% (`PET_HONOR_POINT`), `hp_factor` 0 na jaula |
+| recolher | `testado` | `RECALL_PET` (sessão de 10 ticks); também quando o dono morre (`OnDeath`) ou sai |
+| fome e lealdade | `testado` (unidade) | a cada 300 s de mascote ativo a fome sobe 1 e a lealdade cai pela tabela `__pet_feed_param_list` (`petman.cpp:1645-1711`); comida (`PET_FOOD_ESSENCE`, `hornor`/`food_type`, recarga 18 de 60 s) exige o tipo no `food_mask` (erro 74), sobe a lealdade × fator e baixa a fome; `PET_HONOR_POINT` + `PET_HUNGER_GAUGE` |
+| reviver | `testado` (compila; sem teste de ponta) | habilidade 329 (efeito `SetSummon`): o primeiro morto da jaula volta com `hp_factor` 0,1 e `PET_REVIVE`; sem morto, erro 88 |
+| gravar | `testado` | nível, experiência, vida, lealdade e fome voltam ao bloco `pet_data` do slot do `PetCorral` a cada mudança |
+| habilidades do mascote, soltar (`BANISH_PET`), renomear, invisibilidade, água/ar | `falta` | |
+
 ## 9. Persistência
 
 - **Autosave a cada 60 s** por mundo: `save_status` com nível, cultivo, exp, SP, vida, mana,
@@ -549,7 +620,11 @@ hoje na coluna `characters.waypoints` (u16 little-endian em sequência, o mesmo 
   `scripts/2026_09_14_listas_de_missao.sql`); lidas no `EnterWorld` pelo mundo e pelo link.
 - Personagem novo: `class_templates` do realm (posição, kit, arma) + atributos 5/5/5/5 com a
   vida e a mana do `clsconfig` (spec 02 §4).
-- Barras de atalho, layout e opções do cliente: `character_client_config` (spec 02 §4).
+- Barras de atalho, layout e opções do cliente: `character_client_config` (spec 02 §4). Quem
+  não tem gravado recebe o `ui_config` do molde da classe (o `config_data` do `clsconfig`); no
+  `realm_126` esses moldes estavam vazios até o B102 e o personagem novo nascia com as barras
+  vazias (`scripts/2026_09_24_moldes_do_clsconfig_126.sql`).
+- 1.2.6 (B102): nascimento junto ao Guia da raça, pelo `clsconfig` 1.2.6 (spec 03 §3.10).
 
 ## 10. Missões (`missoes.rs`) — `testado` (sem teste em jogo)
 
@@ -562,7 +637,7 @@ original, mexidas pelas mesmas funções portadas linha a linha: `DeliverTask`, 
 | lista | bytes no `TASK_DATA` | notas |
 | :--- | :--- | :--- |
 | ativa | `8 + 32 × n`: `count u8, used u8, version u16 = 1, top_show u8, state u8 (1 = tempos absolutos), top_hide u8, maxsim:1\|title:7`; entrada `id u16, pai, anterior, próximo, filho, estado u8, tempo u32, capitão u16, templ u32, cap u32, buf[11]` (os três `m_wMonsterNum`) | **versão ≠ 1 faz o cliente descartar todo aviso** (`TaskClient.cpp:262`) — a causa de "aceitar não mostra nada" (B50) |
-| concluídas | `4 + 4 × n`, ordenada por id (`id u16, falhou:1, vezes u8`) | |
+| concluídas | `4 + 4 × n`, ordenada por id (`id u16, falhou:1, vezes u8`) | **1.2.6** (B102): formato antigo `FnshedTaskListOld` — versão 0 e `u16` por entrada, falha no bit 15 (captura: `01 00 00 00 e8 06`); o `WorldProtocol` v126 converte ao mandar o `TASK_DATA` (só 3 blocos: ativa, concluídas, tempos) |
 | tempos / contagens | `2 + 6 × n` / `2 + 14 × n` | frequência diária/semanal e limites por conta/personagem |
 | depósito | 864 bytes zerados | depósito de missões `falta` |
 
@@ -570,7 +645,7 @@ original, mexidas pelas mesmas funções portadas linha a linha: `DeliverTask`, 
 | :--- | :--- | :--- |
 | aceitar no NPC (`GP_NPCSEV_TASK_ACCEPT`) | NPC em conversa (`SEVNPC_HELLO`) com a missão em `NPC_TASK_OUT_SERVICE` (`serviceprovider.cpp:1088`); submissão vira escolha da mãe (`OnTaskCheckDeliver`); `CheckPrerequisite` na ordem do original; `svr_new_task` (17 bytes + tags) | `testado` |
 | entregar no NPC (`GP_NPCSEV_TASK_RETURN`) | missão em `NPC_TASK_IN_SERVICE`; `OnTaskCheckAward` por método; `DeliverAward` → `RecursiveCheckAward` → `RecursiveAward` → `DeliverByAwardData` (ouro, exp, SP, reputação, itens por grupo/escolha, missão nova, coeficiente de nível `_lev_co`); `svr_task_complete` com o estado | `testado` |
-| abate (`OnTaskKillMonster`) | dono do abate; `CheckKillMonster`: conta (`svr_monster_killed`, 17 bytes) ou sorteia o item de missão; completa → `OnSetFinished` (conclusão direta premia) | `testado` |
+| abate (`OnTaskKillMonster`) | dono do abate; `CheckKillMonster`: conta (`svr_monster_killed`, 17 bytes; **9 no 1.2.6**, B101) ou sorteia o item de missão; completa → `OnSetFinished` (conclusão direta premia) | `testado` |
 | `TASK_NOTIFY` 1/2/3/4/5/10 | concluir (`OnTaskCheckAwardDirect`), desistir, **chegou ao lugar** e **saiu do lugar** (`OnTaskReachSite`/`LeaveSite`, `TaskServer.cpp:466-520`: confere mundo e caixa, `OnSetFinished`), entrega automática, gatilho manual; 7 = marca dinâmica (B49) | `testado` |
 | horário (B51) | `CheckTimetable`/`judge_time_date` (`TaskTempl.h:1697`) na hora local do contêiner (`TZ=America/Sao_Paulo`): por data, mês, semana (1 = segunda … 7 = domingo) e dia; basta uma janela | `testado` |
 | região de entrega (B51) | `CheckInZone` (`TaskTempl.inl:368`): mundo `m_ulDelvWorld` e alguma caixa `m_pDelvRegion` (bordas incluídas) | `testado` |

@@ -67,6 +67,9 @@ pub enum GenericElementsError {
     #[error("versão {0} não tem layout no catálogo -- gere specs/elements_layouts/v{0}.json (ver o README daquela pasta)")]
     UnsupportedVersion(u32),
 
+    #[error("o layout do catálogo do realm é da versão {layout}, e o elements.data é da {arquivo}")]
+    LayoutDeOutraVersao { layout: u32, arquivo: u32 },
+
     #[error("tabela '{0}' (índice {1}) é de tamanho variável mas não tem leitor implementado")]
     UnhandledVariableTable(String, usize),
 
@@ -337,8 +340,30 @@ impl GenericElementsData {
 /// Carrega um `elements.data` inteiro, exatamente como `elementdataman::load_data` — ver a
 /// nota do módulo.
 pub fn load_elements_data(buf: &[u8]) -> Result<GenericElementsData> {
+    load_elements_data_com_layout(buf, None)
+}
+
+/// O layout de um arquivo `vNNN.json` fora do binário — o do catálogo do realm
+/// (`data/<realm>/catalogo/elements_layout.json`, B102). Mesmo formato dos embutidos.
+pub fn layout_de_json(texto: &str) -> Result<LayoutCatalog> {
+    Ok(serde_json::from_str(texto)?)
+}
+
+/// [`load_elements_data`] com um layout dado (o do catálogo do realm); sem ele, o embutido
+/// da versão do cabeçalho. O layout tem de declarar a mesma versão do arquivo.
+pub fn load_elements_data_com_layout(buf: &[u8], layout: Option<&LayoutCatalog>) -> Result<GenericElementsData> {
     let header = detect_header(buf)?;
-    let layout = load_layout(header.version)?;
+    let embutido;
+    let layout = match layout {
+        Some(l) if l.version != header.version => {
+            return Err(GenericElementsError::LayoutDeOutraVersao { layout: l.version, arquivo: header.version })
+        }
+        Some(l) => l,
+        None => {
+            embutido = load_layout(header.version)?;
+            &embutido
+        }
+    };
 
     let mut result = HashMap::with_capacity(layout.tables.len());
     let mut off = header.header_size;

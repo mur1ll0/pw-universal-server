@@ -1741,7 +1741,10 @@ async fn vender_ao_npc_tira_o_item_e_da_dinheiro() {
     .unwrap();
 
     // `ITEM_TO_MONEY` (73): slot, id, quantidade e quanto rendeu — o `price` do arquivo
-    // (50) vezes 2, e não os 999.999 que o cliente mandou.
+    // (50) vezes 2, e não os 999.999 que o cliente mandou. Antes dele, o
+    // `UNFREEZE_IVTR_SLOT` (181) do espaço vendido, como o 1.2.6 original (B109).
+    let solta = esperar_comando(&mut link, 181).await;
+    assert_eq!(&solta[2..], &[0, 21, 0], "181 = bolsa (0), espaço 21");
     let venda = esperar_comando(&mut link, 73).await;
     assert_eq!(u16::from_le_bytes([venda[2], venda[3]]), 21);
     assert_eq!(i32_em(&venda, 12), 100, "o valor da venda não é price × count");
@@ -1791,8 +1794,14 @@ async fn nao_da_para_vender_um_slot_vazio() {
     .await
     .unwrap();
 
-    let nada = tokio::time::timeout(Duration::from_millis(400), link.receber()).await;
-    assert!(nada.is_err(), "o mundo respondeu à venda de um slot vazio");
+    // Só o `UNFREEZE_IVTR_SLOT` (181) do espaço pedido, que o cliente congelou (B109);
+    // nenhum `ITEM_TO_MONEY` (73).
+    let fim = std::time::Instant::now() + Duration::from_millis(400);
+    while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+        tokio::time::timeout(fim.saturating_duration_since(std::time::Instant::now()), link.receber()).await
+    {
+        assert_ne!(cmd_de(&data), 73, "o mundo pagou a venda de um slot vazio");
+    }
     assert_eq!(
         dinheiro(&mundo, roleid).await,
         antes,
@@ -1921,6 +1930,104 @@ async fn o_guia_selvagem_do_126_entrega_a_missao_inicial_1177() {
         mundo.read().await.players[&(roleid as i64)].missoes.ativa.indice(1177).is_some(),
         "a 1177 não entrou na lista ativa"
     );
+
+    // B101 — o abate da filha 1178 (10 × Filhote de Mandrágora, 3303). O servidor contava,
+    // mas mandava o `svr_monster_killed` de 17 bytes do 1.5.x e o cliente 1.2.6 o descartava.
+    {
+        let mut m = mundo.write().await;
+        let (monstro, _) = m.monsters.get_mut(&MONSTRO).unwrap();
+        monstro.template_id = 3303;
+        monstro.hp = 1;
+    }
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
+        .await
+        .unwrap();
+    tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.hp == 0).await;
+    // Captura original: `09 00 00 00 | 04 | 9a 04 | e7 0c 00 00 | nn 00`.
+    let abate = loop {
+        let a = esperar_comando(&mut link, 106).await;
+        if a.get(6) == Some(&4) {
+            break a;
+        }
+    };
+    assert_eq!(abate.len(), 2 + 4 + 9, "svr_monster_killed do 1.2.6 tem 9 bytes: {abate:02x?}");
+    assert_eq!(&abate[2..], &[9, 0, 0, 0, 4, 0x9a, 0x04, 0xe7, 0x0c, 0, 0, 1, 0]);
+}
+
+/// B103 — o Guerreiro do 1.2.6 escolhe a 1175 na 1173 ("Primeiro Teste", NPC 3517) e, ao
+/// entregá-la, a mãe acaba e dá a arma 12497 (+75 exp, 45 moedas, e abre a 1174). O Murillo
+/// confirmou em jogo que a arma chegou; a Tsuko escolheu porque a 1179 tem dois prêmios.
+#[tokio::test]
+async fn o_primeiro_teste_do_guerreiro_126_da_a_arma() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let mut reais = GameDataManager::new();
+    reais.load_from_directory(&pasta);
+    {
+        let mut m = mundo.write().await;
+        m.data_manager = Arc::new(reais);
+        m.npcs.get_mut(&NPC).unwrap().template_id = 3517;
+    }
+    let mut link = entrar(&mundo, addr, roleid).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()) })
+        .await
+        .unwrap();
+    esperar_comando(&mut link, 70).await;
+    let mut aceitar = 1175i32.to_le_bytes().to_vec();
+    aceitar.extend_from_slice(&[0u8; 8]);
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::ACEITAR_MISSAO, &aceitar) })
+        .await
+        .unwrap();
+    esperar_comando(&mut link, 106).await;
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        let i = p.missoes.ativa.indice(1175).expect("1175 ativa");
+        p.missoes.ativa.e[i].definir_monstros(0, 9);
+        let alvo = m.data_manager.tasks.get_task(1175).unwrap().monster_kills[0].monstro;
+        let (monstro, _) = m.monsters.get_mut(&MONSTRO).unwrap();
+        monstro.template_id = alvo;
+        monstro.hp = 1;
+    }
+    // O décimo abate, de verdade: é ele que finaliza a entrada (`ao_finalizar`).
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) })
+        .await
+        .unwrap();
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
+        .await
+        .unwrap();
+    tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.hp == 0).await;
+    while tokio::time::timeout(Duration::from_millis(300), link.receber()).await.is_ok() {}
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()) })
+        .await
+        .unwrap();
+    esperar_comando(&mut link, 70).await;
+    let mut entregar = 1175i32.to_le_bytes().to_vec();
+    entregar.extend_from_slice(&0i32.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::ENTREGAR_MISSAO, &entregar) })
+        .await
+        .unwrap();
+    let mut vistos = Vec::new();
+    while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+        tokio::time::timeout(Duration::from_millis(800), link.receber()).await
+    {
+        vistos.push((cmd_de(&data), data.len() - 2, data[2..].to_vec()));
+    }
+    // Como a captura original da 1179: `156` (item do prêmio, 10 bytes no 1.2.6), `159`,
+    // `158`, e o `106` "nova" da seguinte; a mãe não ganha `106` "concluída" (nem no original).
+    let arma = vistos.iter().any(|(c, n, b)| *c == 156 && *n == 10 && b.get(0..4) == Some(&12497u32.to_le_bytes()[..]));
+    assert!(arma, "a Espada de You Xia (12497) não foi entregue: {vistos:?}");
+    assert!(vistos.iter().any(|(c, _, b)| *c == 106 && b.get(4) == Some(&1) && b.get(5..7) == Some(&1174u16.to_le_bytes()[..])), "{vistos:?}");
+    let m = mundo.read().await;
+    let p = &m.players[&(roleid as i64)];
+    assert!(p.missoes.ativa.indice(1174).is_some(), "a 1174 não ficou ativa");
 }
 
 /// B57 — o `NORMAL_ATTACK` que chega durante a conjuração espera a habilidade acabar.
@@ -2649,11 +2756,10 @@ async fn a_consulta_de_jogador_devolve_alguma_coisa() {
     .await
     .unwrap();
 
-    let r = receber(&mut link, 1).await;
-    let info = r
-        .iter()
-        .find(|v| cmd_de(v) == 32)
-        .expect("sem PLAYER_INFO_00 (32) — a consulta continua muda");
+    // Espera o 32 em si: pegar só a primeira mensagem falhava com a suíte em paralelo, quando
+    // um aviso do tique chegava antes (B102, B105).
+    let info = esperar_comando(&mut link, 32).await;
+    let info = &info;
 
     // `idPlayer(4) sLevel(2) State(1) Level2(1) iHP(4) iMaxHP(4) iMP(4) iMaxMP(4)` = 24
     // no 1.2.6 — **sem** o `iTargetID`, igual ao 33. Medido em 73 ocorrências.
@@ -4864,4 +4970,578 @@ async fn a_forma_sombria_tranca_o_equipamento_e_desfaz_a_forma_no_fim() {
     let p = &m.players[&(roleid as i64)];
     assert_eq!(p.efeitos.forma(), None);
     assert!(!p.efeitos.equipamento_travado());
+}
+
+/// B104 — diagnóstico do relato "monstros andando à toa pulam, correm ou andam no ar": o mapa 1
+/// do `realm_126` inteiro (27 mil monstros), o laço de tiques real e um jogador junto ao Guia dos
+/// Selvagens recebendo pelo barramento. Registra 30 s do que chega sobre monstros e confere,
+/// por monstro, intervalo, passo, altura e se o cliente o conhecia. Demora ~40 s: roda com
+/// `cargo test -p pw-gs --test subcomandos_no_mundo reproducao_do_passeio -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore]
+async fn reproducao_do_passeio_no_realm_126() {
+    let Ok(url) = std::env::var("TEST_DATABASE_URL") else { return };
+    let pool = pool_do_teste(url).await;
+    comum::limpar_sobras_de_teste(&pool).await;
+    let (roleid, _) = personagem_com_missao(&pool, GameVersion::V1_2_6).await;
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let mut dados = GameDataManager::new();
+    dados.load_from_directory(&pasta);
+    let mut mundo = WorldInstance::new(1, Arc::new(dados), CharacterRepository::new(pool));
+    mundo.init_spawns();
+    let servidor = Arc::new(pw_gs::GameServer::new(mundo));
+    let mundo = Arc::clone(&servidor.world);
+    let escuta = BusListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = escuta.local_addr().unwrap();
+    let bus = Arc::new(BusServer::new(Arc::clone(&mundo), GameVersion::V1_2_6));
+    bus.ligar_eventos_do_mundo().await;
+    tokio::spawn(Arc::clone(&bus).executar(escuta));
+    tokio::spawn(Arc::clone(&servidor).run_tick_loop());
+
+    let mut link = entrar_sem_ajustar(addr, roleid).await;
+    let guia = Vector3::new(-1440.0, 241.3, 1400.0);
+    for _ in 0..200 {
+        if mundo.read().await.players.contains_key(&(roleid as i64)) { break }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).expect("no mundo");
+        p.position = guia;
+        p.centro_do_stream = Vector3::new(0.0, 0.0, 0.0);
+    }
+    mundo.write().await.grid.update_position(roleid as i64, guia);
+    let mut corpo = vec3(guia.x, guia.y, guia.z);
+    corpo.extend_from_slice(&vec3(guia.x + 0.5, guia.y, guia.z));
+    corpo.extend_from_slice(&100u16.to_le_bytes());
+    corpo.extend_from_slice(&48u16.to_le_bytes());
+    corpo.push(0);
+    corpo.extend_from_slice(&1u16.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::PLAYER_MOVE, &corpo) }).await.unwrap();
+
+    // (id → (último instante, última posição, use_time, conhecido))
+    let inicio = std::time::Instant::now();
+    let mut conhecidos = std::collections::HashSet::new();
+    let mut ultimo: std::collections::HashMap<u32, (std::time::Instant, [f32; 3], u16)> = Default::default();
+    let mut ultimo_modo: std::collections::HashMap<u32, (u8, f32)> = Default::default();
+    let (mut moves, mut cedo, mut longe, mut desconhecido, mut entradas, mut saidas, mut paradas) = (0, 0, 0, 0, 0, 0, 0);
+    let mut exemplos = Vec::new();
+    let f = |d: &[u8], o: usize| f32::from_le_bytes(d[o..o + 4].try_into().unwrap());
+    let u = |d: &[u8], o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
+    while inicio.elapsed() < Duration::from_secs(30) {
+        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(500), link.receber()).await else { continue };
+        let agora = std::time::Instant::now();
+        let d = &data[2..];
+        match cmd_de(&data) {
+            11 | 16 => { entradas += 1; conhecidos.insert(u(d, 0)); }
+            13 | 21 => { saidas += 1; conhecidos.remove(&u(d, 0)); }
+            15 if d.len() == 21 && u(d, 0) & 0x8000_0000 != 0 => {
+                moves += 1;
+                let id = u(d, 0);
+                let p = [f(d, 4), f(d, 8), f(d, 12)];
+                let use_time = u16::from_le_bytes([d[16], d[17]]);
+                let vel = i16::from_le_bytes([d[18], d[19]]) as f32 / 256.0;
+                if !conhecidos.contains(&id) { desconhecido += 1; }
+                if let Some((t0, p0, u0)) = ultimo.get(&id) {
+                    let dt = agora.duration_since(*t0).as_millis() as u32;
+                    let dist = ((p[0] - p0[0]).powi(2) + (p[2] - p0[2]).powi(2)).sqrt();
+                    if dt + 150 < *u0 as u32 {
+                        cedo += 1;
+                        let (m0, v0) = ultimo_modo.get(&id).copied().unwrap_or_default();
+                        let dist0 = ((p[0] - p0[0]).powi(2) + (p[2] - p0[2]).powi(2)).sqrt();
+                        if exemplos.len() < 8 { exemplos.push(format!("cedo: {id:#x} {dt} ms depois (anterior: {u0} ms, modo {m0}, {v0:.2} m/s; este: {use_time} ms, modo {}, {vel:.2} m/s, {dist0:.2} m, dy {:.2})", d[20], p[1] - p0[1])); }
+                    }
+                    if dist > vel * use_time as f32 / 1000.0 * 1.1 + 0.1 {
+                        longe += 1;
+                        if exemplos.len() < 8 { exemplos.push(format!("longe: {id:#x} {dist:.2} m em {use_time} ms a {vel:.2} m/s")); }
+                    }
+                }
+                ultimo.insert(id, (agora, p, use_time));
+                ultimo_modo.insert(id, (d[20], vel));
+            }
+            35 => paradas += 1,
+            _ => {}
+        }
+    }
+    eprintln!("REPRO 126: {entradas} entradas, {saidas} saídas, {moves} movimentos, {paradas} paradas; {cedo} antes do use_time, {longe} longe demais, {desconhecido} de monstro desconhecido");
+    for e in exemplos { eprintln!("REPRO   {e}"); }
+    // Antes do B104: 4 a 8 pares a ~50 ms (a emenda de passeio zerava a espera).
+    assert!(moves > 100, "poucos movimentos para concluir algo: {moves}");
+    assert_eq!((cedo, longe, desconhecido), (0, 0, 0));
+}
+
+/// B105 — diagnóstico do relato "a Planta Devoradora que eu matei teleportou": o mapa 1 do
+/// `realm_126` inteiro, o laço de tiques real e um jogador junto ao Guia 3517 batendo na Planta
+/// (3302) mais próxima até ela morrer, e depois esperando o corpo sumir e ela renascer. Registra
+/// a linha do tempo daquele monstro e marca como salto toda parada ou entrada numa posição
+/// diferente da última que o cliente conhecia. Demora ~80 s:
+/// `cargo test -p pw-gs --test subcomandos_no_mundo reproducao_da_planta -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore]
+async fn reproducao_da_planta_devoradora_no_realm_126() {
+    let Ok(url) = std::env::var("TEST_DATABASE_URL") else { return };
+    let pool = pool_do_teste(url).await;
+    comum::limpar_sobras_de_teste(&pool).await;
+    let (roleid, _) = personagem_com_missao(&pool, GameVersion::V1_2_6).await;
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let mut dados = GameDataManager::new();
+    dados.load_from_directory(&pasta);
+    let mut mundo = WorldInstance::new(1, Arc::new(dados), CharacterRepository::new(pool));
+    mundo.init_spawns();
+    let servidor = Arc::new(pw_gs::GameServer::new(mundo));
+    let mundo = Arc::clone(&servidor.world);
+    let escuta = BusListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = escuta.local_addr().unwrap();
+    let bus = Arc::new(BusServer::new(Arc::clone(&mundo), GameVersion::V1_2_6));
+    bus.ligar_eventos_do_mundo().await;
+    tokio::spawn(Arc::clone(&bus).executar(escuta));
+    tokio::spawn(Arc::clone(&servidor).run_tick_loop());
+
+    let mut link = entrar_sem_ajustar(addr, roleid).await;
+    for _ in 0..200 {
+        if mundo.read().await.players.contains_key(&(roleid as i64)) { break }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // A Planta (3302) mais próxima do Guia 3517.
+    let guia = Vector3::new(221.5, 219.1, 2854.4);
+    let (planta, pos_planta) = {
+        let m = mundo.read().await;
+        m.monsters.values().filter(|(x, _)| x.template_id == 3302)
+            .min_by(|a, b| a.0.position.distance(&guia).total_cmp(&b.0.position.distance(&guia)))
+            .map(|(x, _)| (x.id, x.position)).expect("uma Planta Devoradora")
+    };
+    // A 6 m: ela passeia até ser atacada e então corre até o jogador.
+    let perto = Vector3::new(pos_planta.x + 6.0, pos_planta.y, pos_planta.z);
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.position = perto;
+        p.centro_do_stream = Vector3::new(0.0, 0.0, 0.0);
+        p.attack_range = 12.0;
+        m.grid.update_position(roleid as i64, perto);
+    }
+    let mut corpo = vec3(perto.x, perto.y, perto.z);
+    corpo.extend_from_slice(&vec3(perto.x + 0.1, perto.y, perto.z));
+    corpo.extend_from_slice(&100u16.to_le_bytes());
+    corpo.extend_from_slice(&48u16.to_le_bytes());
+    corpo.push(0);
+    corpo.extend_from_slice(&1u16.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::PLAYER_MOVE, &corpo) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(planta as i32).to_le_bytes()) }).await.unwrap();
+
+    let inicio = std::time::Instant::now();
+    // O primeiro golpe só depois que ela começar a andar (é quando o relato acontece).
+    let mut proximo_golpe = inicio + Duration::from_secs(10);
+    let mut andou = false;
+    let mut morta = false;
+    let mut conhecida: Option<[f32; 3]> = None;
+    let (mut linha, mut saltos) = (Vec::new(), 0);
+    let (mut t_morte, mut t_volta, mut sumiu) = (None, None, false);
+    let f = |d: &[u8], o: usize| f32::from_le_bytes(d[o..o + 4].try_into().unwrap());
+    let u = |d: &[u8], o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
+    let id = planta as u32;
+    while inicio.elapsed() < Duration::from_secs(if andou { 110 } else { 90 }) {
+        if !morta && std::time::Instant::now() >= proximo_golpe {
+            link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) }).await.unwrap();
+            proximo_golpe += Duration::from_millis(1000);
+        }
+        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(100), link.receber()).await else { continue };
+        let t = inicio.elapsed().as_millis();
+        let c = cmd_de(&data);
+        let d = &data[2..];
+        let pos = |o: usize| [f(d, o), f(d, o + 4), f(d, o + 8)];
+        let dist = |a: [f32; 3], b: [f32; 3]| ((a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+        match c {
+            11 | 16 if u(d, 0) == id => {
+                let p = pos(8);
+                let s = conhecida.map(|k| dist(k, p)).unwrap_or(0.0);
+                if t_morte.is_some() && t_volta.is_none() { t_volta = Some(t); }
+                linha.push(format!("{t} entra em ({:.1},{:.1},{:.1}) [{s:.1} m da última conhecida]", p[0], p[1], p[2]));
+                conhecida = Some(p);
+            }
+            13 | 21 if u(d, 0) == id => { sumiu = true; linha.push(format!("{t} sai/some (cmd {c})")); }
+            20 if u(d, 0) == id => { morta = true; t_morte = Some(t); linha.push(format!("{t} morre")); }
+            15 if u(d, 0) == id => {
+                if !andou {
+                    andou = true;
+                    proximo_golpe = std::time::Instant::now() + Duration::from_millis(300);
+                }
+                let p = pos(4);
+                let passo = conhecida.map(|k| dist(k, p)).unwrap_or(0.0);
+                linha.push(format!("{t} anda {passo:.2} m em {} ms a {:.2} m/s modo {} para ({:.1},{:.1},{:.1})", u16::from_le_bytes([d[16], d[17]]), i16::from_le_bytes([d[18], d[19]]) as f32 / 256.0, d[20], p[0], p[1], p[2]));
+                conhecida = Some(p);
+            }
+            35 if u(d, 0) == id => {
+                let p = pos(4);
+                let s = conhecida.map(|k| dist(k, p)).unwrap_or(0.0);
+                if s > 0.5 { saltos += 1; }
+                linha.push(format!("{t} para em ({:.1},{:.1},{:.1}) modo {} [{s:.2} m da última conhecida]", p[0], p[1], p[2], d[19]));
+                conhecida = Some(p);
+            }
+            26 if u(d, 0) == id => linha.push(format!("{t} bate no jogador")),
+            24 if u(d, 0) == id => linha.push(format!("{t} leva golpe")),
+            _ => {}
+        }
+    }
+    eprintln!("PLANTA {:#x} nasceu em ({:.1},{:.1},{:.1}); {} saltos", id, pos_planta.x, pos_planta.y, pos_planta.z, saltos);
+    for l in linha { eprintln!("PLANTA   {l}"); }
+    // B105 — como a captura original do 1.2.6: sem `disappear` (o `iDeadTime` é 0) e de volta
+    // 15 s depois da morte (`BASE_REBORN_TIME` + `iRefresh` 0), num ponto novo da área.
+    let (morte, volta) = (t_morte.expect("ela não morreu"), t_volta.expect("ela não renasceu"));
+    assert!(!sumiu, "não devia haver OBJECT_DISAPPEAR");
+    assert!((14_500..16_500).contains(&(volta - morte)), "renasceu {} ms depois da morte", volta - morte);
+    assert_eq!(saltos, 0);
+}
+
+/// B107 — a missão de entrega automática do `tasks.data` 1.2.6 (9376, "Virando Dinossauro",
+/// nível 1..150, sem classe nem pré-requisito): o cliente a pede com `TASK_NOTIFY` motivo 4
+/// (`ATaskTemplMan::CheckAutoDelv` → `TASK_CLT_NOTIFY_AUTO_DELV`; no `libtask.so` 1.2.6 o
+/// caso 4 de `OnClientNotify` chama `OnTaskAutoDelv`) e o mundo a entrega. Antes o leitor v55
+/// não lia `m_bAutoDeliver` (+0xac) e o pedido era ignorado.
+#[tokio::test]
+async fn a_missao_automatica_do_126_e_entregue_ao_pedido_do_cliente() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    if !pasta.exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", pasta.display());
+        return;
+    }
+    let mut reais = GameDataManager::new();
+    reais.load_from_directory(&pasta);
+    assert!(reais.tasks.get_task(9376).is_some_and(|t| t.entrega_automatica));
+    mundo.write().await.data_manager = Arc::new(reais);
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // `task_notify { size = 3; buf = { reason = 4, task = 9376 } }`
+    let mut corpo = 3u32.to_le_bytes().to_vec();
+    corpo.push(4);
+    corpo.extend_from_slice(&9376u16.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::TASK_NOTIFY, &corpo) })
+        .await
+        .unwrap();
+
+    let mut nova = None;
+    for _ in 0..10 {
+        let p = esperar_comando(&mut link, 106).await;
+        if p.get(6) == Some(&1) {
+            nova = Some(p);
+            break;
+        }
+    }
+    let nova = nova.expect("o mundo não entregou a missão automática");
+    assert_eq!(u16::from_le_bytes([nova[7], nova[8]]), 9376);
+    assert!(mundo.read().await.players[&(roleid as i64)].missoes.ativa.indice(9376).is_some());
+}
+
+/// B110 — a 5909 "Domesticadores" (automática, classe 3, nível 3) e a filha 5911
+/// "Instruções", de chegar a um lugar que é o mapa 1 inteiro: o cliente a dá por alcançada logo
+/// ao recebê-la (`TASK_NOTIFY` motivo 3). O leitor v55 não lia o lugar, a 5911 nunca se
+/// cumpria, e a Tsuko ficava em laço recebendo a missão. Agora ela se cumpre e vem a 5912.
+#[tokio::test]
+async fn a_5909_do_126_passa_da_5911_ao_chegar_ao_lugar() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let mut reais = GameDataManager::new();
+    reais.load_from_directory(&pasta);
+    mundo.write().await.data_manager = Arc::new(reais);
+    let mut link = entrar(&mundo, addr, roleid).await;
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.cls = CharacterClass::Venomancer;
+        p.level = 3;
+    }
+    eprintln!("classe {:?} ({})", CharacterClass::Venomancer, CharacterClass::Venomancer as i32);
+    for (rodada, (motivo, tarefa)) in [(4u8, 5909u16), (3, 5911), (4, 5909)].into_iter().enumerate() {
+        let mut corpo = 3u32.to_le_bytes().to_vec();
+        corpo.push(motivo);
+        corpo.extend_from_slice(&tarefa.to_le_bytes());
+        link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::TASK_NOTIFY, &corpo) }).await.unwrap();
+        let fim = std::time::Instant::now() + Duration::from_millis(1500);
+        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(fim.saturating_duration_since(std::time::Instant::now()), link.receber()).await
+        {
+            let c = cmd_de(&data);
+            if c == 106 || c == 25 {
+                eprintln!("R{rodada} cmd {c}: {:02x?}", &data[2..data.len().min(24)]);
+            }
+        }
+        let ativas: Vec<u16> = mundo.read().await.players[&(roleid as i64)].missoes.ativa.e.iter().filter(|e| e.valida).map(|e| e.id).collect();
+        eprintln!("R{rodada} ativas: {ativas:?}");
+        let esperado: &[u16] = if rodada == 0 { &[5909, 5911] } else { &[5909, 5912] };
+        assert_eq!(ativas, esperado, "rodada {rodada}");
+    }
+}
+
+/// B111 — o mascote de combate do 1.2.6, de ponta a ponta, com os dados reais: o Filhote de
+/// Lobo Feroz (10386) da jaula é invocado (`SUMMON_PET` de 12 B com o id da criatura), recebe a
+/// ordem de atacar (`PET_CTRL` 103, comando 1) um Filhote de Mandrágora (3303), bate nele
+/// (`OBJECT_ATTACK_RESULT` de 14 B a quem vê), o mata, ganha experiência (`PET_RECEIVE_EXP` ou
+/// `PET_LEVELUP`) e é recolhido (`RECALL_PET` de 8 B), com o registro gravado na jaula.
+#[tokio::test]
+async fn o_mascote_de_combate_do_126_invoca_ataca_ganha_exp_e_volta() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    mascote_de_ponta_a_ponta(mundo, addr, roleid, "realm_126", (12, 14, 8)).await;
+}
+
+/// O mesmo no 1.5.5, com os layouts das structs do cliente 1.5.5 (16, 17 e 9 B).
+#[tokio::test]
+async fn o_mascote_de_combate_do_155_invoca_ataca_ganha_exp_e_volta() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_5_5);
+    mascote_de_ponta_a_ponta(mundo, addr, roleid, "realm_155", (16, 17, 9)).await;
+}
+
+async fn mascote_de_ponta_a_ponta(
+    mundo: Arc<tokio::sync::RwLock<WorldInstance>>,
+    addr: std::net::SocketAddr,
+    roleid: i32,
+    realm: &str,
+    (t233, t120, t234): (usize, usize, usize),
+) {
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").join(realm).join("config");
+    if !pasta.exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", pasta.display());
+        return;
+    }
+    let mut reais = GameDataManager::new();
+    reais.load_from_directory(&pasta);
+    let filhote = reais.monstros.get(3303).expect("3303").clone();
+    mundo.write().await.data_manager = Arc::new(reais);
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let pos = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.cls = CharacterClass::Venomancer;
+        p.level = if realm == "realm_155" { 40 } else { 10 };
+        p.position
+    };
+
+    // No 1.5.5 o 10386 exige nível 20 (`level_require`), e abaixo disso as fórmulas dão
+    // defesa negativa: nível 30 lá, 2 no 1.2.6 (onde ele exige 2).
+    let nivel_do_mascote: i16 = if realm == "realm_155" { 30 } else { 2 };
+    let mut info = pw_core::InfoPet::default();
+    info.pet_tid = 10386;
+    info.pet_class = pw_core::PET_CLASS_COMBAT;
+    info.level = nivel_do_mascote;
+    info.hp_factor = 1.0;
+    info.honor_point = 200;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens
+        .upsert_item(&pw_core::ItemRecord {
+            id: None,
+            character_id: roleid,
+            container_type: pw_core::ContainerType::PetCorral,
+            slot: 0,
+            item_id: 10386,
+            count: 1,
+            max_count: 1,
+            refine_level: 0,
+            sockets_count: 0,
+            sockets: vec![],
+            durability: 0,
+            max_durability: 0,
+            bind_status: 0,
+            octets: info.para_bytes(),
+            custom_attributes: serde_json::json!({}),
+        })
+        .await
+        .expect("guardar o mascote");
+
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) })
+        .await
+        .unwrap();
+    let invocado = esperar_comando(&mut link, 233).await;
+    assert_eq!(invocado.len(), 2 + t233, "tamanho do SUMMON_PET");
+    let pet_id = i32::from_le_bytes(invocado[10..14].try_into().unwrap()) as i64;
+    assert!(pw_gs::mascote::e_mascote(pet_id), "o id {pet_id:#x} não é de mascote");
+    {
+        let m = mundo.read().await;
+        let pet = m.mascotes.get(&pet_id).expect("o mascote não está no mundo");
+        assert_eq!(pet.dono, roleid as i64);
+        assert!(pet.corpo.max_hp > 0 && pet.corpo.attack_min > 0);
+    }
+
+    // Um Filhote de Mandrágora a 3 m.
+    let alvo = (0x8000_1234u32) as i32 as i64;
+    {
+        let mut m = mundo.write().await;
+        let onde = Vector3::new(pos.x + 3.0, pos.y, pos.z);
+        let mut monstro = pw_gs::entity::MonsterEntity::do_template(alvo, &filhote, onde, 0);
+        // O 3303 não é o mesmo monstro nas duas versões (29 de vida no 1.2.6, 1.342 no
+        // 1.5.5): 30 de vida nos dois, para o teste medir o mascote e não o monstro.
+        monstro.hp = 30;
+        monstro.max_hp = 30;
+        // E no nível do mascote: 10 níveis abaixo dele o abate não dá experiência
+        // (`OnKillMob`, `petman.cpp:789-795`).
+        monstro.level = nivel_do_mascote as i32;
+        m.grid.add_entity(alvo, onde, false);
+        m.monsters.insert(alvo, (monstro, pw_gs::ai::MonsterAi::new()));
+    }
+    let mut ordem = (alvo as i32).to_le_bytes().to_vec();
+    ordem.extend_from_slice(&1i32.to_le_bytes());
+    ordem.push(0);
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::PET_CTRL, &ordem) }).await.unwrap();
+
+    // Até o monstro morrer: golpes de mascote a quem vê, e a experiência no fim.
+    let (mut golpes, mut exp) = (0, None);
+    // O cenário não roda o laço de tiques: 50 ms de mundo por volta, 60 s simulados no máximo.
+    let mut tiques = 0;
+    while tiques < 1200 && exp.is_none() {
+        mundo.write().await.tick(50).await;
+        tiques += 1;
+        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(5), link.receber()).await else { continue };
+        match cmd_de(&data) {
+            120 => {
+                assert_eq!(data.len(), 2 + t120, "tamanho do OBJECT_ATTACK_RESULT");
+                if i32::from_le_bytes(data[2..6].try_into().unwrap()) as i64 == pet_id {
+                    golpes += 1;
+                }
+            }
+            237 | 238 => exp = Some(data),
+            _ => {}
+        }
+    }
+    if exp.is_none() {
+        let m = mundo.read().await;
+        let pet = m.mascotes.get(&pet_id);
+        eprintln!(
+            "DIAG: golpes {golpes}; monstro {:?}; mascote pos {:?} odio {:?} alcance {:?} dano {:?} intervalo {:?}; jogador {:?}",
+            m.monsters.get(&alvo).map(|(x, _)| (x.hp, x.max_hp, x.is_dead, x.position)),
+            pet.map(|p| p.corpo.position),
+            pet.map(|p| p.ai.odio.clone()),
+            pet.map(|p| p.corpo.attack_range),
+            pet.map(|p| (p.corpo.attack_min, p.corpo.attack_rate)),
+            pet.map(|p| p.corpo.ataque_em_ticks),
+            m.players.get(&(roleid as i64)).map(|p| p.position)
+        );
+    }
+    let exp = exp.expect("o mascote não recebeu experiência pelo abate");
+    eprintln!("MASCOTE {realm}: {golpes} golpes; experiência: cmd {} {:02x?}", cmd_de(&exp), &exp[2..]);
+    assert!(golpes >= 1);
+    assert!(mundo.read().await.monsters.get(&alvo).is_some_and(|(m, _)| m.is_dead));
+
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::RECALL_PET, &[]) }).await.unwrap();
+    let recolhido = esperar_comando(&mut link, 234).await;
+    assert_eq!(recolhido.len(), 2 + t234, "tamanho do RECALL_PET");
+    assert!(mundo.read().await.mascotes.is_empty());
+    // O registro voltou à jaula com a experiência.
+    let mut gravado = None;
+    for _ in 0..50 {
+        let item = itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0).await.unwrap().unwrap();
+        let i = pw_core::InfoPet::do_bloco(&item.octets).unwrap();
+        if i.exp > 0 || i.level > nivel_do_mascote {
+            gravado = Some(i);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let gravado = gravado.expect("a experiência do mascote não foi gravada na jaula");
+    assert!(gravado.hp_factor > 0.0);
+}
+
+/// B111 — o mascote morre: um monstro que o odeia e bate forte. O dono recebe o `RECALL_PET`
+/// e o `PET_DEAD` (`OnPetDeath`, `petman.cpp:764-777`), a lealdade cai 10% (`PetDeath`,
+/// `:1777-1797`), a jaula guarda `hp_factor` 0, e invocar de novo dá `ERR_CANNOT_SUMMON_DEAD_PET`
+/// (87, `DoActivePet`, `:582-586`).
+#[tokio::test]
+async fn o_mascote_de_combate_morre_e_nao_volta_morto() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    if !pasta.exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", pasta.display());
+        return;
+    }
+    let mut reais = GameDataManager::new();
+    reais.load_from_directory(&pasta);
+    let filhote = reais.monstros.get(3303).expect("3303").clone();
+    mundo.write().await.data_manager = Arc::new(reais);
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let pos = mundo.read().await.players[&(roleid as i64)].position;
+    let mut info = pw_core::InfoPet::default();
+    info.pet_tid = 10386;
+    info.pet_class = pw_core::PET_CLASS_COMBAT;
+    info.level = 2;
+    info.hp_factor = 1.0;
+    info.honor_point = 200;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens
+        .upsert_item(&pw_core::ItemRecord {
+            id: None,
+            character_id: roleid,
+            container_type: pw_core::ContainerType::PetCorral,
+            slot: 0,
+            item_id: 10386,
+            count: 1,
+            max_count: 1,
+            refine_level: 0,
+            sockets_count: 0,
+            sockets: vec![],
+            durability: 0,
+            max_durability: 0,
+            bind_status: 0,
+            octets: info.para_bytes(),
+            custom_attributes: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) }).await.unwrap();
+    let invocado = esperar_comando(&mut link, 233).await;
+    let pet_id = i32::from_le_bytes(invocado[10..14].try_into().unwrap()) as i64;
+
+    // Um monstro que odeia o mascote e bate 500 por golpe.
+    let alvo = (0x8000_4321u32) as i32 as i64;
+    {
+        let mut m = mundo.write().await;
+        let onde = Vector3::new(pos.x + 2.0, pos.y, pos.z);
+        let mut monstro = pw_gs::entity::MonsterEntity::do_template(alvo, &filhote, onde, 0);
+        monstro.attack_min = 500;
+        monstro.attack_max = 500;
+        monstro.attack_rate = 100_000;
+        monstro.attack_range = 10.0;
+        let mut ia = pw_gs::ai::MonsterAi::new();
+        ia.add_threat(pet_id, 1_000);
+        m.grid.add_entity(alvo, onde, false);
+        m.monsters.insert(alvo, (monstro, ia));
+    }
+    let (mut recolhido, mut morto, mut honra) = (None, false, None);
+    for _ in 0..600 {
+        mundo.write().await.tick(50).await;
+        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(2), link.receber()).await {
+            match cmd_de(&data) {
+                234 => recolhido = Some(data),
+                247 => morto = true,
+                241 => honra = Some(i32::from_le_bytes(data[6..10].try_into().unwrap())),
+                _ => {}
+            }
+        }
+        if morto && honra.is_some() {
+            break;
+        }
+    }
+    assert!(recolhido.is_some(), "sem RECALL_PET na morte");
+    assert!(morto, "sem PET_DEAD");
+    assert_eq!(honra, Some(180), "200 − 10% = 180");
+    assert!(mundo.read().await.mascotes.is_empty());
+    let mut na_jaula = None;
+    for _ in 0..50 {
+        let item = itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0).await.unwrap().unwrap();
+        let i = pw_core::InfoPet::do_bloco(&item.octets).unwrap();
+        if i.hp_factor == 0.0 {
+            na_jaula = Some(i);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(na_jaula.expect("a morte não foi gravada").honor_point, 180);
+
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) }).await.unwrap();
+    let mut erro = None;
+    for _ in 0..200 {
+        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(100), link.receber()).await else { continue };
+        if cmd_de(&data) == 25 {
+            erro = Some(i32::from_le_bytes(data[2..6].try_into().unwrap()));
+            break;
+        }
+    }
+    assert_eq!(erro, Some(87), "invocar mascote morto devia dar ERR_CANNOT_SUMMON_DEAD_PET");
 }

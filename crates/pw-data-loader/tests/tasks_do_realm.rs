@@ -86,3 +86,32 @@ fn a_missao_inicial_do_guerreiro() {
     let itens: Vec<_> = caca.rewards.grupos_de_itens.iter().flat_map(|g| &g.itens).map(|i| (i.id, i.quantidade)).collect();
     assert_eq!(itens, vec![(8617, 5)]);
 }
+
+/// B102 — as flags de filhas e de desistência do bloco fixo v55 (0x6a..0x74, `libtask.so`
+/// 1.2.6). A 1177 (Guia Selvagem) corre as filhas em ordem: primeiro a 1178 (caça), depois a
+/// 1179 — como o servidor original entrega na captura.
+#[test]
+fn a_versao_55_le_as_flags_de_filhas() {
+    let t = ler("realm_126").expect("tasks.data v55 do realm 126");
+    let m = t.get_task(1177).expect("1177");
+    assert!(m.filhos_em_ordem, "1177 devia correr as filhas em ordem");
+    assert!(!m.escolhe_um_filho && !m.sorteia_um_filho);
+    assert_eq!(m.sub_tasks, vec![1178, 1179]);
+    // A 1173 ("Primeiro Teste") deixa escolher uma das filhas: 1175 ou 1176.
+    let p = t.get_task(1173).expect("1173");
+    assert!(p.escolhe_um_filho && !p.filhos_em_ordem);
+    assert_eq!(p.sub_tasks, vec![1175, 1176]);
+    let todas: Vec<_> = t.tasks.values().collect();
+    let conta = |f: fn(&pw_data_loader::tasks::TaskTemplate) -> bool| todas.iter().filter(|x| f(x)).count();
+    eprintln!(
+        "v55: {} tarefas; em ordem {}, escolhe {}, sorteia {}, pai falha {}, pai sucesso {}, desiste {}, repete {}, refaz {}, limpa {}, registro {}, morre {}",
+        todas.len(),
+        conta(|x| x.filhos_em_ordem), conta(|x| x.escolhe_um_filho), conta(|x| x.sorteia_um_filho),
+        conta(|x| x.pai_tambem_falha), conta(|x| x.pai_tambem_sucesso), conta(|x| x.pode_desistir),
+        conta(|x| x.pode_repetir), conta(|x| x.refazer_apos_falha), conta(|x| x.limpa_ao_desistir),
+        conta(|x| x.precisa_registro), conta(|x| x.falha_ao_morrer),
+    );
+    // Os padrões do editor (`vazia()`) aparecem ligados na quase totalidade: pai também falha
+    // 7.993 de 7.994, pode desistir 7.254, refazer após falha 7.769.
+    assert!(conta(|x| x.pai_tambem_falha) > 7900 && conta(|x| x.refazer_apos_falha) > 7700);
+}

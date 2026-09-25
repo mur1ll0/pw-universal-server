@@ -40,6 +40,8 @@ pub struct AjusteDeNivel {
 pub struct TabelaDeProgressao {
     /// Índice = nível atual; valor = experiência para passar ao seguinte.
     exp_por_nivel: Vec<i64>,
+    /// A mesma coisa para o mascote: `_pet_exp_list` (`playertemplate.cpp:29`, `:385-400`).
+    exp_do_mascote: Vec<i64>,
     ajuste: Vec<AjusteDeNivel>,
     perda_na_morte: Vec<f32>,
     /// Veio do `elements.data` (e não do padrão do construtor).
@@ -50,6 +52,7 @@ impl Default for TabelaDeProgressao {
     fn default() -> Self {
         Self {
             exp_por_nivel: (0..=NIVEL_MAXIMO_DO_JOGO as i64).map(|i| i * i * 500).collect(),
+            exp_do_mascote: (0..=NIVEL_MAXIMO_DO_JOGO as i64).map(|i| i * i * 500).collect(),
             ajuste: vec![AjusteDeNivel::default(); MAX_LEVEL_DIFF + 1],
             perda_na_morte: vec![0.05; 256],
             do_arquivo: false,
@@ -86,6 +89,19 @@ impl TabelaDeProgressao {
                 }
             }
             t.do_arquivo = true;
+        }
+
+        // `id == 592`: a curva do mascote, com a mesma regra — zero fica no padrão
+        // (`playertemplate.cpp:385-400`). O `gs` 1.2.6 faz o mesmo: `__LoadDataFromDataMan`
+        // compara com 0xca e 0x250 e grava em `this + 0x16a4` e `+ 0x16b4` (VA 0x80e6f27 e
+        // 0x80e6fae). No `realm_126` a curva começa em 3, 3, 3, 3, 5; no `realm_155`, 50, 60, 70.
+        if let Some(curva) = elements.get("PLAYER_LEVELEXP_CONFIG").iter().find(|r| i(r, "ID") == 592) {
+            for nivel in 1..=NIVEL_MAXIMO_DO_JOGO as usize {
+                let v = i(curva, &format!("exp_{nivel}"));
+                if v != 0 {
+                    t.exp_do_mascote[nivel] = v as i64;
+                }
+            }
         }
 
         // `playertemplate.cpp:315-337`, fielmente: `j` desce de `MAX_LEVEL_DIFF`, e cada
@@ -148,6 +164,16 @@ impl TabelaDeProgressao {
     }
 
     /// `player_template::GetLvlupExp` (`playertemplate.cpp:644-651`).
+    /// `player_template::__GetPetLvlupExp` (`playertemplate.cpp:653-660`): o que o mascote
+    /// precisa para passar do nível `nivel`, e `nível² × 500` fora da tabela.
+    pub fn exp_do_mascote_para_subir(&self, nivel: i32) -> i64 {
+        if (0..=NIVEL_MAXIMO_DO_JOGO).contains(&nivel) {
+            self.exp_do_mascote[nivel as usize]
+        } else {
+            nivel as i64 * nivel as i64 * 500
+        }
+    }
+
     pub fn exp_para_subir(&self, nivel: i32) -> i64 {
         if (0..=NIVEL_MAXIMO_DO_JOGO).contains(&nivel) {
             self.exp_por_nivel[nivel as usize]

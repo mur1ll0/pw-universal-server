@@ -51,6 +51,34 @@ pub struct SpawnInstance {
     pub caminho: i32,
     /// `iSpeedFlag` do gerador: `true` corre no caminho, `false` anda.
     pub corre_no_caminho: bool,
+    /// `iDeadTime` do gerador (`template/npcgendata.h:117`): quanto o corpo fica, em segundos.
+    /// **0 = sem corpo** — o monstro volta ao gerador no tique seguinte e nenhum
+    /// `disappear` é mandado (`npc.cpp:904-911`); o cliente vê o corpo até o renascimento.
+    /// Já limitado como o original: 10..10.800 s (`npcgenerator.cpp:3828-3833`) e 200 s no
+    /// `OnDeath` (`npc.cpp:1452-1453`; o `gs` 1.2.6 tem o mesmo teto 0xfa0 tiques).
+    pub corpo_s: u32,
+    /// Renascimento, contado de quando o monstro volta ao gerador, em segundos: sorteado
+    /// entre os dois (`mobs_spawner::Reclaim`, `npcgenerator.cpp:3355`). `BASE_REBORN_TIME`
+    /// (15, `config.h:106`) + `iRefresh`, ou + `iRefreshLower` no mínimo; `iRefresh`
+    /// negativo dá `-iRefresh + 3` (`npcgenerator.cpp:3841-3855`).
+    pub renascer_min_s: u32,
+    pub renascer_max_s: u32,
+}
+
+/// `BASE_REBORN_TIME` (`gs/config.h:106`).
+pub const BASE_DO_RENASCIMENTO_S: i32 = 15;
+
+/// `npcgenerator.cpp:3828-3855` e `npc.cpp:1452-1453`: (corpo, renascer mínimo, máximo), em s.
+pub fn tempos_do_gerador(dead_time: i32, refresh: i32, refresh_lower: i32) -> (u32, u32, u32) {
+    let corpo = if dead_time == 0 { 0 } else { dead_time.clamp(10, 3600 * 3).min(200) };
+    let (min, max) = if refresh >= 0 {
+        let max = BASE_DO_RENASCIMENTO_S + refresh;
+        let min = if refresh_lower > 0 && refresh_lower < refresh { BASE_DO_RENASCIMENTO_S + refresh_lower } else { max };
+        (min, max)
+    } else {
+        (-refresh + 3, -refresh + 3)
+    };
+    (corpo as u32, min.min(2_592_000) as u32, max.min(2_592_000) as u32)
 }
 
 impl SpawnInstance {
@@ -93,6 +121,15 @@ impl SpawnInstance {
     /// vezes, e sem nenhum fica o último sorteio no terreno. Área em caixa (`box_gen_pos`) não
     /// consulta o mapa de movimento. Sem terreno sob o ponto, vale o `y` do arquivo. O `bool`
     /// diz se a entidade ficou em cima de estrutura.
+    /// Onde o monstro renasce: `mobs_spawner::Reborn` chama `GeneratePos` de novo
+    /// (`npcgenerator.cpp:3457`), então cada renascimento sorteia outro ponto da área, com a
+    /// mesma regra de altura do nascimento. `sorteio` entra na semente (B105).
+    pub fn posicao_de_renascimento(&self, sorteio: u32, terreno: &crate::Terreno, movimento: &crate::MapaDeMovimento) -> Vector3 {
+        let mut s = self.clone();
+        s.pos = self.posicao_alternativa(0x1000 | (sorteio & 0xFFFF));
+        s.posicao_no_mapa(terreno, movimento).0
+    }
+
     pub fn posicao_no_mapa(&self, terreno: &crate::Terreno, movimento: &crate::MapaDeMovimento) -> (Vector3, bool) {
         let (mut x, mut z, mut acima) = (self.pos.x, self.pos.z, 0.0f32);
         if self.tipo_de_area == TipoDeArea::NoChao && movimento.tem_dados() {
@@ -356,6 +393,8 @@ impl NpcGenData {
             tid: u32,
             quantidade: u32,
             refresh: i32,
+            refresh_lower: i32,
+            dead_time: i32,
             agressivo: u32,
             acima_do_chao: f32,
             acima_da_agua: f32,
@@ -424,7 +463,7 @@ impl NpcGenData {
                 let caminho = cursor.read_i32::<LittleEndian>()?;
                 let _loop_type = cursor.read_i32::<LittleEndian>()?;
                 let speed_flag = cursor.read_i32::<LittleEndian>()?;
-                let _dead_time = cursor.read_i32::<LittleEndian>()?;
+                let dead_time = cursor.read_i32::<LittleEndian>()?;
 
                 // O registro de gerador tem tamanho **diferente** conforme a versão: 60
                 // bytes (`NPCGENFILEAIGEN10`) pra `version < 11`, 64 (`NPCGENFILEAIGEN`,
@@ -440,15 +479,15 @@ impl NpcGenData {
                 //
                 // Os 40 bytes que antes eram pulados de uma vez agora são lidos campo a
                 // campo acima; o que sobra é o `iRefreshLower`, só do `version >= 11`.
-                if version >= 11 {
-                    let _refresh_lower = cursor.read_i32::<LittleEndian>()?;
-                }
+                let refresh_lower = if version >= 11 { cursor.read_i32::<LittleEndian>()? } else { 0 };
 
                 if tid > 0 {
                     geradores.push(GeradorPendente {
                         tid,
                         quantidade: count,
                         refresh,
+                        refresh_lower,
+                        dead_time,
                         agressivo: aggressive,
                         acima_do_chao,
                         acima_da_agua,
@@ -615,6 +654,9 @@ impl NpcGenData {
                         acima_da_agua: g.acima_da_agua,
                         caminho: g.caminho,
                         corre_no_caminho: g.corre,
+                        corpo_s: tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower).0,
+                        renascer_min_s: tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower).1,
+                        renascer_max_s: tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower).2,
                     };
                     grid.insert(spawn.clone());
                     instances.push(spawn);
@@ -649,6 +691,9 @@ impl NpcGenData {
                         acima_da_agua: 0.0,
                         caminho: 0,
                         corre_no_caminho: false,
+                        corpo_s: 0,
+                        renascer_min_s: 0,
+                        renascer_max_s: 0,
                     };
                     grid.insert(spawn.clone());
                     instances.push(spawn);
@@ -679,6 +724,9 @@ impl NpcGenData {
                 acima_da_agua: 0.0,
                 caminho: 0,
                 corre_no_caminho: false,
+                corpo_s: 0,
+                renascer_min_s: 0,
+                renascer_max_s: 0,
             };
             grid.insert(spawn.clone());
             instances.push(spawn);
@@ -743,6 +791,9 @@ mod tests {
             acima_da_agua: 0.0,
             caminho: 0,
             corre_no_caminho: false,
+            corpo_s: 0,
+            renascer_min_s: 0,
+            renascer_max_s: 0,
         }
     }
 

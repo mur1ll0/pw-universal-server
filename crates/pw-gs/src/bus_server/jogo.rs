@@ -281,6 +281,9 @@ impl Jogador for Contexto<'_> {
     fn avisar(&mut self, comando: Vec<u8>) {
         self.para_mim.push(comando);
     }
+    fn avisar_abate(&mut self, task_id: u16, monstro: u32, n: u16) {
+        self.para_mim.push(self.sub.task_notify_monster_killed(task_id, monstro, n).data);
+    }
     fn posicao(&self) -> (u32, [f32; 3]) {
         let p = self.p.position;
         (self.mundo.max(0) as u32, [p.x, p.y, p.z])
@@ -780,7 +783,21 @@ impl BusServer {
             if !este.operacao_de_pet_ainda_e_minha(roleid, marcador).await {
                 return;
             }
-            este.montar(roleid, indice, tid, &info, &envio).await;
+            // `ActivePet` escolhe pela classe do mascote (`__pet_imp[pet_class]`,
+            // `petman.cpp:1316-1320`). Sem isto o de combate caía no caminho da montaria e
+            // "montava", porque o `PET_ESSENCE` dele também tem velocidade (B111).
+            let classe = {
+                let dados = este.world.read().await.data_manager.clone();
+                dados.modelos_de_mascote.get(&(info.pet_tid as u32)).map(|m| m.classe).unwrap_or(info.pet_class)
+            };
+            match classe {
+                pw_core::PET_CLASS_COMBAT => este.invocar_mascote_de_combate(roleid, indice, info.clone()).await,
+                pw_core::PET_CLASS_MOUNT => este.montar(roleid, indice, tid, &info, &envio).await,
+                outra => {
+                    debug!("mundo: mascote de classe {outra} de {roleid} ainda sem porte");
+                    este.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_MONTA).data).await;
+                }
+            }
             // `OnEnd`: a canalização fecha mesmo quando a invocação foi recusada, senão o
             // cliente fica "operando mascote" para sempre.
             este.responder(roleid, S2CGamedataSend::player_stop_pet_op().data, &envio).await;
@@ -851,7 +868,7 @@ impl BusServer {
         self.transmitir_a_outros(roleid, pacote).await;
         // O `summon_pet` vem **depois** do efeito (`gs/petman.cpp:1337`): `pet_pid` 0 porque
         // montaria não põe criatura no mundo, e `life_time` 0 porque não tem prazo.
-        self.responder(roleid, S2CGamedataSend::summon_pet(indice as i32, info.pet_tid, 0, 0).data, envio).await;
+        self.responder(roleid, self.sub.summon_pet(indice as i32, info.pet_tid, 0, 0).data, envio).await;
         // `SendClientCurSpeed` do original; aqui a ficha inteira, que leva as quatro
         // velocidades (`OWN_EXT_PROP`).
         let ficha = {
@@ -867,6 +884,24 @@ impl BusServer {
     /// `gplayer_imp::PlayerRecallPet`, `gs/player.cpp:14492-14512`), com 10 ticks (0,5 s)
     /// de canalização.
     pub(super) async fn recolher_mascote(&self, roleid: i32, envio: &crate::bus_server::EnvioAoCliente) {
+        // Mascote de combate: a mesma sessão de 10 ticks, e o `RecallPet` ao fim.
+        let de_combate = self.world.read().await.mascote_de(roleid as i64).map(|m| (m.slot, m.info.pet_tid));
+        if let Some((slot, pet_tid)) = de_combate {
+            let marcador = self.abrir_operacao_de_pet(roleid).await;
+            self.responder(roleid, S2CGamedataSend::player_start_pet_op(slot as i32, pet_tid, Self::TICKS_PARA_RECOLHER, 1).data, envio).await;
+            let este = self.clone();
+            let envio = envio.clone();
+            tokio::spawn(async move {
+                let espera = Self::TICKS_PARA_RECOLHER as u64 * Self::MS_POR_TICK;
+                tokio::time::sleep(std::time::Duration::from_millis(espera)).await;
+                if !este.operacao_de_pet_ainda_e_minha(roleid, marcador).await {
+                    return;
+                }
+                este.world.write().await.recolher_mascote(roleid as i64, 0);
+                este.responder(roleid, S2CGamedataSend::player_stop_pet_op().data, &envio).await;
+            });
+            return;
+        }
         let montaria = self.world.read().await.players.get(&(roleid as i64)).and_then(|p| p.montaria);
         // `IsPetActive` antes de abrir a sessão (`gs/player.cpp:14494-14495`).
         let Some(montaria) = montaria else {
@@ -924,7 +959,7 @@ impl BusServer {
         self.responder(roleid, pacote.clone(), envio).await;
         self.transmitir_a_outros(roleid, pacote).await;
         // `PET_RECALL_DEFAULT` = 0 (`Network/EC_GPDataType.h:3456-3462`).
-        self.responder(roleid, S2CGamedataSend::recall_pet(montaria.indice as i32, montaria.pet_tid as i32, 0).data, envio)
+        self.responder(roleid, self.sub.recall_pet(montaria.indice as i32, montaria.pet_tid as i32, 0).data, envio)
             .await;
     }
 
@@ -1423,6 +1458,9 @@ impl BusServer {
             })
             .await;
 
+        // `GM_MSG_KILL_MONSTER` → `_petman.KillMob` (`player.cpp:1375-1379`): o mascote ativo do
+        // dono do abate ganha experiência.
+        self.world.write().await.mascote_ganha_exp_por_abate(dono, nivel_do_monstro);
         let (Some(modelo), Some(nivel_do_dono)) = (modelo, nivel_do_dono) else { return };
         let queda = economia::gerar_queda(&modelo, nivel_do_dono, &dados, &mut rand::thread_rng());
         let mut criados = Vec::new();
@@ -1624,6 +1662,12 @@ impl BusServer {
             let dados = ctx.dados;
             for i in &pedidos {
                 let slot = i.index as usize;
+                // O cliente congela o espaço ao pedir a venda e só o solta com o
+                // `UNFREEZE_IVTR_SLOT` (181, `EC_HostMsg.cpp:2060-2065`). O `gs` 1.2.6 original
+                // manda um por item, antes do `ITEM_TO_MONEY` (`full_interno.pcap`, t = 2540,77 s:
+                // `181 00 01 00`, depois `73`); sem ele os itens ficavam sombreados (B109). Vai
+                // também para o recusado, que senão ficaria congelado.
+                ctx.para_mim.push(S2CGamedataSend::unfreeze_ivtr_slot(0, i.index as u16).data);
                 let Some(Some(item)) = ctx.bolsa.slots.get(slot).cloned() else { continue };
                 if item.item_id != i.tid as u32 || i.count == 0 || i.count > item.count {
                     continue;

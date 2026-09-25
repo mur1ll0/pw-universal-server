@@ -51,6 +51,9 @@ pub mod ids {
     /// `gs/playercmd.cpp:3235-3262`. Para montaria, invocar é **montar**.
     pub const SUMMON_PET: u16 = 100;
     pub const RECALL_PET: u16 = 101;
+    /// `PET_CTRL_CMD` — `{ int target; int pet_cmd; char buf[] }` (`common/protocol.h`,
+    /// `pet_ctrl_cmd`; tratado em `playercmd.cpp:3286-3297`).
+    pub const PET_CTRL: u16 = 103;
     /// `SRV::C2S::CMD::player_stop_move`
     pub const STOP_MOVE: u16 = 7;
     /// `UNSELECT` — só cabeçalho, sem struct no IR.

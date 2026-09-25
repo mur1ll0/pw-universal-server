@@ -118,6 +118,12 @@ fn gerar(base: &mut i32, contador: &mut i32, gen: i32, maximo: i32) {
 /// desconta o combate e regenera — `hp_gen`/`mp_gen` em combate, quatro vezes isso fora.
 /// Devolve `true` se vida ou mana mudaram.
 pub fn batimento(p: &mut PlayerEntity) -> bool {
+    // Saiu do combate: o `SELF_INFO_00` vai mesmo sem vida nem mana mudarem — é o único
+    // lugar em que o cliente apaga o estado de luta (`m_bFight = pCmd->State`,
+    // `EC_HostMsg.cpp:1335`). A captura do 1.2.6 original tem o aviso em que só o estado
+    // passa de 1 a 0 (`full_interno.pcap`, t = 2409,9 s e 2441,9 s). Sem ele, de vida e
+    // mana cheias, o personagem ficava em combate para sempre (B106).
+    let saiu_do_combate = p.combate_s == 1;
     if p.combate_s > 0 {
         p.combate_s -= 1;
     }
@@ -132,7 +138,7 @@ pub fn batimento(p: &mut PlayerEntity) -> bool {
     // `gs/sitdown_filter.cpp:19-34`). `falta`: o `STAYIN_BONUS` que o mesmo filtro dá à
     // regeneração de vida e mana depois de um tempo sentado.
     let chi = p.sentado && p.mexer_no_chi(CHI_POR_MEDITACAO);
-    hp != p.hp || mp != p.mp || chi
+    hp != p.hp || mp != p.mp || chi || saiu_do_combate
 }
 
 /// `sit_down_filter::Heartbeat`: 15 de chi por segundo meditando.

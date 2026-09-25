@@ -251,6 +251,21 @@ impl MonsterAi {
         delta_ms: u32,
         mapa: &Mapa,
     ) -> Option<AcaoDoMonstro> {
+        self.tick_com_mascotes(monster, players, &HashMap::new(), delta_ms, mapa)
+    }
+
+    /// O ciclo da IA com os mascotes de combate também como alvo: o monstro que apanha de
+    /// um mascote o odeia (`AddAggroEntry(msg.source, ...)`, `npc.cpp:1781`), e o
+    /// agressivo o vê como vê o jogador — o mascote difunde o `GM_MSG_WATCHING_YOU` como
+    /// ele (`gpet_imp::PeepEnemy`, `petnpc.cpp:1359-1374`). `mascotes`: o corpo de cada um.
+    pub fn tick_com_mascotes(
+        &mut self,
+        monster: &mut MonsterEntity,
+        players: &HashMap<i64, PlayerEntity>,
+        mascotes: &HashMap<i64, MonsterEntity>,
+        delta_ms: u32,
+        mapa: &Mapa,
+    ) -> Option<AcaoDoMonstro> {
         // O piso para o monstro de água e de ar: terreno + estrutura.
         let piso = |x: f32, z: f32| (mapa.terreno)(x, z).map(|h| h + mapa.movimento.acima_do_terreno(x, z).unwrap_or(0.0));
         let chao: Chao = &piso;
@@ -291,6 +306,12 @@ impl MonsterAi {
                 .iter()
                 .filter(|(_, p)| p.hp > 0)
                 .map(|(id, p)| (*id, monster.position.distance(&p.position)))
+                .chain(
+                    mascotes
+                        .iter()
+                        .filter(|(_, m)| !m.is_dead && m.hp > 0)
+                        .map(|(id, m)| (*id, monster.position.distance(&m.position))),
+                )
                 .filter(|(_, d)| *d <= Self::ALCANCE_DE_VISAO)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             if let Some((id, _)) = mais_perto {
@@ -300,14 +321,17 @@ impl MonsterAi {
 
         // 1. Com alvo: perseguir e bater.
         if let Some(target_id) = self.get_highest_threat_target() {
-            let alvo = match players.get(&target_id) {
-                Some(p) if p.hp > 0 => p,
-                _ => {
+            let jogador = players.get(&target_id).filter(|p| p.hp > 0);
+            let mascote = mascotes.get(&target_id).filter(|m| !m.is_dead && m.hp > 0);
+            let posicao_do_alvo = match (jogador, mascote) {
+                (Some(p), _) => p.position,
+                (None, Some(m)) => m.position,
+                (None, None) => {
                     self.aggro_table.remove(&target_id);
                     return self.sem_alvo(monster, mapa);
                 }
             };
-            let distancia = monster.position.distance(&alvo.position);
+            let distancia = monster.position.distance(&posicao_do_alvo);
 
             if distancia <= monster.attack_range {
                 // `range < _range_min`: a sessão de perseguição acaba (`npcsession.cpp:185-189`).
@@ -323,10 +347,18 @@ impl MonsterAi {
                     // `gs/npcsession.cpp:60-70`). Era 1,5 s escrito aqui para todos (B62).
                     self.attack_cooldown_ms = (monster.ataque_em_ticks.max(4) as u32) * 50;
                     // Golpe que erra é resultado legítimo, e o `dano()` devolve zero nele.
-                    let dano = crate::combat::CombatEngine::monstro_ataca_jogador(
-                        monster, alvo, distancia,
-                    )
-                    .dano();
+                    let dano = match (jogador, mascote) {
+                        (Some(p), _) => crate::combat::CombatEngine::monstro_ataca_jogador(monster, p, distancia).dano(),
+                        (None, Some(m)) => crate::combat::resolver(
+                            &crate::combat::CombatEngine::golpe_de_monstro(monster),
+                            &crate::combat::CombatEngine::defesa_do_monstro(m),
+                            distancia,
+                            false,
+                            crate::combat::Rolagens::sortear(),
+                        )
+                        .dano(),
+                        (None, None) => 0,
+                    };
                     return Some(AcaoDoMonstro::Atacou { alvo: target_id, dano });
                 }
                 return None;
@@ -360,11 +392,11 @@ impl MonsterAi {
             let parar_a = (monster.attack_range * 0.9).max(0.5);
             let passo = monster.corrida() * Self::PASSO_DE_PERSEGUICAO_MS as f32 / 1000.0;
             if monster.habitat == Habitat::Chao {
-                return self.perseguir(monster, target_id, alvo.position, passo, parar_a, mapa);
+                return self.perseguir(monster, target_id, posicao_do_alvo, passo, parar_a, mapa);
             }
             return self.passo(
                 monster,
-                alvo.position,
+                posicao_do_alvo,
                 passo,
                 parar_a,
                 Self::PASSO_DE_PERSEGUICAO_MS,
@@ -406,7 +438,10 @@ impl MonsterAi {
             monster.spawn_center.z + rng.gen_range(-r..=r),
         );
         self.sessao = Sessao::Passeando { destino, passos_restantes: Self::PASSOS_DO_PASSEIO };
-        self.espera_ms = 0;
+        // A espera **não** é zerada (B104): na emenda (`ai_rest_task::OnSessionEnd`, 10 %) o
+        // último passo do passeio anterior acabou de sair com `use_time` de 1 s, e o primeiro
+        // do novo saía no tique seguinte — dois `OBJECT_MOVE` a ~50 ms, e o cliente corria ou
+        // pulava o monstro para alcançar o segundo destino. No começo normal ela já é zero.
         self.state = MonsterState::Patrol;
     }
 
@@ -464,7 +499,7 @@ impl MonsterAi {
                 if monster.habitat == Habitat::Chao {
                     return self.passear(monster, passo, mapa);
                 }
-                let acao = self.passo(
+                let mut acao = self.passo(
                     monster,
                     destino,
                     passo,
@@ -474,6 +509,11 @@ impl MonsterAi {
                     MODO_ANDAR,
                     chao,
                 );
+                // Chegou neste passo: ele vai como parada, como o de chão acima (B106).
+                let (dx, dz) = (destino.x - monster.position.x, destino.z - monster.position.z);
+                if matches!(acao, Some(AcaoDoMonstro::Andou { .. })) && dx * dx + dz * dz <= 0.05 * 0.05 {
+                    acao = Some(self.parar(monster, monster.andar(), MODO_ANDAR));
+                }
                 if matches!(acao, Some(AcaoDoMonstro::Parou { .. }) | None) {
                     self.sessao = Sessao::Nenhuma;
                     self.state = MonsterState::Idle;
@@ -674,12 +714,24 @@ impl MonsterAi {
         }
         p.andar(passo, mapa);
         let alvo = p.posicao();
-        let parou = p.parou();
-        let acao = self.ir_para(monster, alvo, Self::PASSO_DE_PATRULHA_MS, monster.andar(), MODO_ANDAR);
-        if parou {
-            let parada = self.fim_do_passeio(monster);
-            return acao.or(parada);
+        if p.parou() {
+            // O último passo vai **só** como `stop_move` até o ponto final (`npcsession.cpp:
+            // 626-633`: `GetToGoal` depois do `StepMove` → `stop_move(targetpos)`, sem `move`).
+            // Antes ia como `OBJECT_MOVE` e a parada era descartada: o cliente segue andando
+            // na mesma direção enquanto não chega comando novo (`CECNPC::MovingTo`, "just move
+            // on", `EC_NPC.cpp:1225-1240`) e só puxa o monstro de volta quando passa de 25 m
+            // do destino (`MAX_LAGDIST`, `EC_NPC.cpp:79`) — o monstro "disparando" e
+            // voltando de uma vez que o Murillo via (B106).
+            let (dx, dz) = (alvo.x - monster.position.x, alvo.z - monster.position.z);
+            let m = (dx * dx + dz * dz).sqrt();
+            if m > 0.0 {
+                self.direcao = direcao_do_vetor(dx / m, dz / m);
+            }
+            monster.position = Vector3::new(alvo.x, alvo.y, alvo.z);
+            self.parado = false;
+            return self.fim_do_passeio(monster);
         }
+        let acao = self.ir_para(monster, alvo, Self::PASSO_DE_PATRULHA_MS, monster.andar(), MODO_ANDAR);
         self.passeio = Some(p);
         acao
     }

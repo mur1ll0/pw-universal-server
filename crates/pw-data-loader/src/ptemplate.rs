@@ -40,6 +40,13 @@ pub const SECOES_DE_CLASSE: [&str; 12] = [
     "SHADOW", "FAIRY",
 ];
 
+/// As seções do `ptemplate.conf` do servidor 1.2.6, pela classe: a ordem em que
+/// `player_template::__Load` as lê no `gs` 1.2.6 (`files1.2.6/pwserver/gamed/gs`, VA
+/// 0x80e4efc: 0 SWORDSMAN … 7 ANGEL). O 1.2.6 não tem `NEC`/`ASN`/`BLADE`/`SHADOW`/`FAIRY`;
+/// tem `MONK` (2) e `GENIE` (5). Sem esta lista o leitor recusava o arquivo do `realm_126`
+/// ("não tem a seção [NEC]") e o mundo ficava sem vida, mana e dano calculados (B101).
+pub const SECOES_DE_CLASSE_126: [&str; 8] = ["SWORDSMAN", "MAGE", "MONK", "HAG", "ORGE", "GENIE", "ARCHER", "ANGEL"];
+
 #[derive(Error, Debug)]
 pub enum PTemplateError {
     #[error("ptemplate.conf não tem a seção [{0}]")]
@@ -255,10 +262,18 @@ pub fn ler(texto: &str) -> Result<TabelaDeBase> {
     let secoes = separar_em_secoes(texto);
     let mut tabela = TabelaDeBase::default();
 
-    for (classe, secao) in SECOES_DE_CLASSE.iter().enumerate() {
-        if !secoes.contains_key(*secao) {
-            return Err(PTemplateError::SecaoAusente(secao.to_string()));
-        }
+    // O conjunto de seções diz de que servidor é o arquivo: o do 1.5.5 (12 classes) ou o do
+    // 1.2.6 (8). Faltando seção dos dois, o erro cita a primeira que falta no do 1.5.5.
+    let tem_todas = |lista: &[&str]| lista.iter().all(|s| secoes.contains_key(*s));
+    let lista: &[&str] = if tem_todas(&SECOES_DE_CLASSE) {
+        &SECOES_DE_CLASSE
+    } else if tem_todas(&SECOES_DE_CLASSE_126) {
+        &SECOES_DE_CLASSE_126
+    } else {
+        let falta = SECOES_DE_CLASSE.iter().find(|s| !secoes.contains_key(**s)).unwrap_or(&"");
+        return Err(PTemplateError::SecaoAusente(falta.to_string()));
+    };
+    for (classe, secao) in lista.iter().enumerate() {
         let classe = classe as i32;
         tabela.classes.insert(
             classe,

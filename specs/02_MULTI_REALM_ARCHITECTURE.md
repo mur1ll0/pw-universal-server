@@ -132,6 +132,13 @@ mapa), `SELF_INFO_00`, `OWN_EXT_PROP`, `SELF_INFO_1`, habilidades, `TASK_DATA` (
 bolsa de missão (pacote 2), com o bloco de dados de cada peça, dinheiro, reputação, modo PvP,
 `SERVER_TIME` com `lua_version = 102` (primeira linha do `global_api.lua`). Layouts: spec 04.
 
+**`GetHelpStates_Re` (B107):** o estado das dicas (`ECScriptOption`) gravado em
+`character_client_config.help_states`; sem gravação vai **vazio**, como o original
+(`gamedbmanager.cpp:378`, `gethelpstates.hpp:27-31`), e o cliente usa o padrão — todos os tipos
+ativos, abertura automática (`ECScriptOption.cpp:89-101`). Os 32 zeros de antes desligavam
+todas as dicas e o cliente gravava isso de volta; `scripts/2026_09_24_dicas_religadas.sql`
+religa quem ficou assim.
+
 **`GetUIConfig_Re` (B52):** uma vez por personagem, com o bloco gravado em
 `character_client_config`, e **só em resposta ao `GetUIConfig` que o cliente manda depois do
 `TASK_DATA` do mundo** (`BusUplink::dados_iniciais_entregues`, marcado quando o link repassa o
@@ -154,7 +161,11 @@ criar o personagem.
 Personagem novo: posição, kit e equipamento vêm de `class_templates` do realm (espelho do
 `gamedbd/clsconfig` original, B43/B47); atributos **5/5/5/5** para toda classe (os moldes do
 `clsconfig`, B51); raça pela classe; vida e mana cheias pela conta de
-`BaseDaClasse::vida_e_mana_maximas`.
+`BaseDaClasse::vida_e_mana_maximas`. Habilidades: as de `class_template_skills`, que no
+`realm_126` são as do `GRoleStatus.skills` de cada molde do `clsconfig` 1.2.6 (B108): a de
+ataque da classe (0: 1; 1: 81; 3: 299; 4: 102; 6: 234+235; 7: 113+125) e o Portal da Cidade
+(167) em todas, nível 1 (`scripts/2026_09_24_habilidades_do_clsconfig_126.sql`, aplicado).
+Molde sem habilidade nenhuma (o `realm_155`) cai no `default_skills()`, que também põe a 167.
 
 Ainda no link: fala (canal global por processo, sem raio), lista de amigos (sempre vazia),
 UI config e help states (gravados por personagem e só para o personagem da sessão, até

@@ -113,6 +113,31 @@ pub enum EventoDoMundo {
     /// inscritos (`gnpc_imp::SendDataToSubscibeList`, `npc.cpp:2219-2230`). Mandar na hora
     /// fazia a barra cair no clique, antes da flecha sair (teste de 2026-09-17, B56).
     VidaDoMonstro { id: i64, hp: i32, max_hp: i32, alvo: i32, para: Vec<RoleId> },
+    /// Mascote de combate — ver [`crate::mascote`]. Entrou no mundo: o dono recebe o
+    /// `SUMMON_PET` e o `PET_AI_STATE`, e quem está perto o vê entrar.
+    MascoteApareceu { id: i64, dono: RoleId },
+    /// Saiu do mundo sem morrer (o dono recolheu, morreu, saiu ou se afastou demais):
+    /// `RECALL_PET` ao dono, e o registro volta à jaula.
+    MascoteRecolhido { id: i64, dono: RoleId, slot: u16, pet_tid: i32, motivo: u8, info: pw_core::InfoPet },
+    /// Morreu (`OnPetDeath`, `petman.cpp:764-777`): `RECALL_PET` com `PET_DEATH`, `PET_DEAD`
+    /// e a lealdade que caiu 10%.
+    MascoteMorreu { id: i64, dono: RoleId, slot: u16, pet_tid: i32, matador: i64, info: pw_core::InfoPet },
+    /// Um golpe entre duas criaturas (mascote e monstro), para quem vê o atacante
+    /// (`OBJECT_ATTACK_RESULT`).
+    GolpeEntreCriaturas { atacante: i64, alvo: i64, dano: i32, velocidade: u8 },
+    /// `PET_HP_NOTIFY` ao dono.
+    VidaDoMascote { dono: RoleId, slot: u16, fator: f32, hp: i32 },
+    /// Experiência do mascote (`RecvExp`): `PET_RECEIVE_EXP`, ou `PET_LEVELUP` quando subiu.
+    ExpDoMascote { dono: RoleId, slot: u16, pet_tid: i32, ganho: i32, subiu: bool, info: pw_core::InfoPet },
+    /// `PET_AI_STATE` ao dono (mudou por comando).
+    IaDoMascote { dono: RoleId, agressividade: u8, movimento: u8 },
+    /// Lealdade e fome mudaram (o período de comida fechou ou o dono alimentou):
+    /// `PET_HONOR_POINT` e `PET_HUNGER_GAUGE`, e o registro volta à jaula.
+    FomeDoMascote { dono: RoleId, slot: u16, lealdade: i32, fome: i32, info: pw_core::InfoPet },
+    /// O efeito `SetSummon` (habilidade 329) pediu para reviver o primeiro mascote morto da
+    /// jaula (`pet_manager::ResurrectPet`, `petman.cpp:1891-1906`). A jaula está no banco:
+    /// quem resolve é o barramento.
+    ReviverMascote { dono: RoleId },
 }
 
 /// `_corpse_delay` do monstro: 20 s (`npc.cpp:803`), vezes 20 ticks no `PostLazyMessage`.
@@ -188,10 +213,19 @@ pub struct WorldInstance {
     proximo_monstro_dinamico: u32,
     /// Corpos de monstro ainda na tela: id → quanto falta para sumir.
     corpos: HashMap<i64, u32>,
+    /// O gerador (`npcgen.data`) de cada monstro de gerador: tempo de corpo, de renascimento
+    /// e a área onde ele renasce (B105). Quem não está aqui (invocado) não renasce.
+    geradores: HashMap<i64, pw_data_loader::SpawnInstance>,
     /// A última `(vida, alvo)` de cada monstro que os inscritos receberam — o papel do
     /// `_refresh_state` (`actobject.h:517`): o batimento só manda `NPC_INFO_00` quando
     /// mudou. Só tem monstro que alguém tem selecionado.
     vida_informada: HashMap<i64, (i32, i32)>,
+    /// Os mascotes de combate no mundo, pelo id de NPC deles (`MERGE_PET_ID`).
+    pub mascotes: HashMap<i64, crate::mascote::Mascote>,
+    proximo_mascote: u32,
+    /// A agressividade e o modo que cada dono deixou (`_cur_pet_aggro_state` e
+    /// `_cur_pet_stay_state`, que começam automático e seguir, `petman.cpp:1283-1284`).
+    estado_dos_mascotes: HashMap<i64, (u8, u8)>,
     /// Golpes já anunciados ao cliente que ainda não tiraram vida (B62).
     danos_adiados: Vec<DanoAdiado>,
 }
@@ -250,7 +284,11 @@ impl WorldInstance {
             proximo_drop: PRIMEIRO_ID_DE_DROP,
             proximo_monstro_dinamico: PRIMEIRO_ID_DE_MONSTRO_DINAMICO,
             corpos: HashMap::new(),
+            geradores: HashMap::new(),
             vida_informada: HashMap::new(),
+            mascotes: HashMap::new(),
+            proximo_mascote: 0,
+            estado_dos_mascotes: HashMap::new(),
             danos_adiados: Vec::new(),
         }
     }
@@ -318,7 +356,15 @@ impl WorldInstance {
                     if self.terreno.altura_em(inst.pos.x, inst.pos.z).is_none() {
                         fora_do_mapa += 1;
                     }
-                    let (pos, no_piso) = inst.posicao_no_mapa(&self.terreno, &self.movimento);
+                    // Recurso não consulta o mapa de movimento: `SetRegion(0, ...)` →
+                    // `terrain_gen_pos`, relevo + `fHeiOff` (`npcgenerator.cpp:3900-3902`,
+                    // `:4320-4324`). O `fHeiOff` é o que põe baú em cima de construção (B109).
+                    let (pos, no_piso) = if inst.spawn_type == pw_data_loader::SpawnType::ResourceMine {
+                        let chao = self.terreno.altura_em(inst.pos.x, inst.pos.z);
+                        (pw_core::Vector3::new(inst.pos.x, inst.altura_resolvida(chao), inst.pos.z), false)
+                    } else {
+                        inst.posicao_no_mapa(&self.terreno, &self.movimento)
+                    };
                     assentados_no_piso += no_piso as usize;
                     pos
                 } else {
@@ -373,6 +419,7 @@ impl WorldInstance {
                     };
 
                     self.grid.add_entity(monster_id, monster.position, false);
+                    self.geradores.insert(monster_id, inst.clone());
                     let mut ia = MonsterAi::new();
                     ia.direcao = direcao;
                     self.monsters.insert(monster_id, (monster, ia));
@@ -463,6 +510,8 @@ impl WorldInstance {
 
     /// Remove um jogador ao deslogar ou mudar de mapa
     pub fn remove_player(&mut self, role_id: RoleId) -> Option<PlayerEntity> {
+        // Sem o dono, o mascote some (`QueryTarget(leader)` falha → `GM_MSG_PET_DISAPPEAR`).
+        self.recolher_mascote(role_id as i64, 0);
         let id = role_id as i64;
         self.grid.remove_entity(id);
         // Sair do mundo é sair do grupo. Sem isto o grupo guardaria um membro que não
@@ -803,10 +852,34 @@ impl WorldInstance {
             // matéria — não pertence a um `mobs_spawner` e some de vez. O `.max(1)` que
             // havia aqui virava 1 ms de espera e fazia a Sombra do Olho do Deus da missão
             // 31728 renascer assim que o corpo sumia (B77).
-            m.respawn_timer_ms = m.respawn_delay_ms;
+            //
+            // Com gerador (B105): o corpo é o `iDeadTime` do `npcgen.data` — o construtor põe
+            // 20 s, mas o `CreateMobBase` sobrescreve com o da entrada (`npcgenerator.cpp:2486`,
+            // e no `gs` 1.2.6 `npc_spawner::CreateMobBase`, VA 0x80f2407). **Zero é sem corpo**:
+            // o monstro volta ao gerador no tique seguinte, sem `disappear`
+            // (`npc.cpp:904-911`). O renascimento é sorteado entre 15 s + `iRefreshLower` e
+            // 15 s + `iRefresh` (`npcgenerator.cpp:3355`, `3841-3855`) — a captura do 1.2.6
+            // mostra o Filhote de Mandrágora de volta ~15,5 s depois da morte, sem `disappear`.
+            let corpo = match self.geradores.get(&id) {
+                Some(g) => {
+                    if m.respawn_delay_ms > 0 {
+                        let s = rand::Rng::gen_range(&mut rand::thread_rng(), g.renascer_min_s..=g.renascer_max_s.max(g.renascer_min_s));
+                        m.respawn_timer_ms = s.max(1) * 1000;
+                    } else {
+                        m.respawn_timer_ms = 0;
+                    }
+                    g.corpo_s * 1000
+                }
+                None => {
+                    m.respawn_timer_ms = m.respawn_delay_ms;
+                    CORPO_MS
+                }
+            };
             m.target_id = None;
+            if corpo > 0 {
+                self.corpos.insert(id, corpo);
+            }
         }
-        self.corpos.insert(id, CORPO_MS);
     }
 
     // ------------------------------------------------------------------
@@ -960,6 +1033,10 @@ impl WorldInstance {
     /// lado. Enquanto isso o combate daqui debitava a vida de verdade, e a consulta
     /// seguinte desenhava a barra cheia de novo.
     pub fn dados_do_monstro(&self, id: i64) -> Option<(i32, i32, i32)> {
+        if let Some(m) = self.mascotes.get(&id) {
+            let alvo = m.ai.alvo().unwrap_or(0);
+            return Some((m.corpo.hp as i32, m.corpo.max_hp as i32, alvo as i32));
+        }
         let (m, _) = self.monsters.get(&id)?;
         let alvo = m.target_id.unwrap_or(0);
         Some((
@@ -997,16 +1074,29 @@ impl WorldInstance {
 
     /// Tira a vida do monstro e resolve a morte. `None` quando o alvo sumiu ou já morreu.
     fn aplicar_dano_no_monstro(&mut self, alvo: i64, atacante: i64, dano: i64) {
+        if self.mascotes.contains_key(&alvo) {
+            self.aplicar_dano_no_mascote(alvo, atacante, dano);
+            return;
+        }
+        // O golpe do mascote leva o dono como atacante (`gpet_imp::FillAttackMsg`,
+        // `petnpc.cpp:1211`): o crédito é do dono, e o ódio vai ao mascote e, menos, ao dono
+        // (`AddAggroEntry` 3 e 1, `npc.cpp:1781-1785`).
+        let dono_do_mascote = if crate::mascote::e_mascote(atacante) { self.mascotes.get(&atacante).map(|m| m.dono) } else { None };
+        let credito = dono_do_mascote.unwrap_or(atacante);
         let Some((m, ai)) = self.monsters.get_mut(&alvo) else { return };
         if m.is_dead {
             return;
         }
         let real = dano.min(m.hp);
         m.hp = (m.hp - dano).max(0);
-        m.registrar_dano(atacante, real);
+        m.registrar_dano(credito, real);
         // Ameaça do golpe no monstro (PostLazyMessage(GM_MSG_GEN_AGGRO, speed + 1) no original,
         // npc.cpp:1867 e npc.cpp:2354-2364): o monstro só reage quando o golpe/projétil atinge.
         ai.add_threat(atacante, real.max(1));
+        if let Some(dono) = dono_do_mascote {
+            ai.add_threat(dono, 1);
+        }
+        let atacante = credito;
         let (hp, max_hp) = (m.hp, m.max_hp);
         let morreu = m.hp == 0;
         if morreu {
@@ -1047,6 +1137,8 @@ impl WorldInstance {
             self.emitir(EventoDoMundo::EfeitosMudaram { objeto: alvo, atributos: true });
         }
         self.emitir(EventoDoMundo::JogadorMorreu { roleid: role_id, matador: atacante, pos });
+        // `OnDeath` recolhe o mascote (`player.cpp:7204`).
+        self.recolher_mascote(alvo, 0);
     }
 
     /// Os golpes adiados que venceram neste tique.
@@ -1312,6 +1404,8 @@ impl WorldInstance {
         let mut attacks_to_process = Vec::new();
 
         let mut movimentos = Vec::new();
+        let corpos_dos_mascotes: HashMap<i64, MonsterEntity> =
+            self.mascotes.iter().map(|(id, m)| (*id, m.corpo.clone())).collect();
         let mut renasceram: Vec<(i64, pw_core::Vector3)> = Vec::new();
 
         // O invocado com `remain_time` some quando o tempo acaba, vivo ou não
@@ -1349,10 +1443,21 @@ impl WorldInstance {
                         // Renascimento do Monstro
                         monster.is_dead = false;
                         monster.hp = monster.max_hp;
+                        // Outro ponto da área e outra direção (`Reborn` → `GeneratePos`/`GenDir`,
+                        // `npcgenerator.cpp:3457-3459`); a casa do monstro passa a ser ali.
+                        let mut direcao = None;
+                        if let Some(g) = self.geradores.get(&monster.id) {
+                            let p = g.posicao_de_renascimento(rand::Rng::gen(&mut rand::thread_rng()), &self.terreno, &self.movimento);
+                            monster.spawn_center = p;
+                            direcao = Some(crate::entity::direcao_do_gerador(g.dir, g.extensao_da_area));
+                        }
                         monster.position = monster.spawn_center;
                         monster.danos.clear();
                         monster.primeiro_atacante = None;
                         *ai = MonsterAi::new();
+                        if let Some(d) = direcao {
+                            ai.direcao = d;
+                        }
                         renasceram.push((monster.id, monster.position));
                     }
                 }
@@ -1367,7 +1472,7 @@ impl WorldInstance {
             // Com o mapa de movimento, o monstro de chão contorna obstáculo e anda em cima da
             // estrutura ([`crate::navegacao`], B99).
             let mapa = crate::navegacao::Mapa { terreno: &chao, movimento: &self.movimento };
-            match ai.tick_no_mapa(monster, &self.players, delta_ms, &mapa) {
+            match ai.tick_com_mascotes(monster, &self.players, &corpos_dos_mascotes, delta_ms, &mapa) {
                 Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano }) => {
                     // Quem bateu vai junto: sem o id, o `HOST_ATTACKED` saía com
                     // `idAttacker = 0` e o cliente não achava o atacante
@@ -1502,6 +1607,9 @@ impl WorldInstance {
             self.emitir(evento);
         }
 
+        // 1b. Os mascotes de combate.
+        self.tique_dos_mascotes(delta_ms);
+
         // 2. Os golpes que os monstros deram neste tique.
         //
         // O aviso ao cliente (`HOST_ATTACKED`) sai **agora**, e a vida cai depois do
@@ -1515,6 +1623,16 @@ impl WorldInstance {
                 .get(&monstro_id)
                 .map(|(m, _)| m.atraso_do_dano_em_ticks.clamp(0, 255) as u32 * 50)
                 .unwrap_or(0);
+            if self.mascotes.contains_key(&player_id) {
+                // Golpe em mascote: quem vê o monstro vê o golpe, e a vida cai depois do
+                // atraso, como no jogador.
+                let velocidade = self.monsters.get(&monstro_id).map(|(m, _)| m.ataque_em_ticks.clamp(0, 255) as u8).unwrap_or(0);
+                self.emitir(EventoDoMundo::GolpeEntreCriaturas { atacante: monstro_id, alvo: player_id, dano: damage, velocidade });
+                self.adiar_dano(player_id, monstro_id, damage as i64, atraso, false);
+                continue;
+            }
+            // `PlayerBeAttacked` → `GM_MSG_MASTER_ASK_HELP` (`player.cpp:9519`).
+            self.mascote_do_dono_ajuda(player_id, monstro_id);
             let Some(player) = self.players.get_mut(&player_id) else {
                 continue;
             };
@@ -1625,5 +1743,327 @@ pub async fn gravar_autosave(repo: pw_storage::CharacterRepository, lote: Vec<Es
         debug!("autosave: {total} jogadores gravados no mundo {mundo}");
     } else {
         warn!("autosave: {falhas} de {total} jogadores não foram gravados no mundo {mundo}");
+    }
+}
+
+// ----------------------------------------------------------------------
+// Mascote de combate — ver `crate::mascote`.
+// ----------------------------------------------------------------------
+
+/// `ERR_LEVEL_NOT_MATCH` 51, `ERR_SUMMON_PET_INVALID_POS` 85 e `ERR_CANNOT_SUMMON_DEAD_PET` 87
+/// (`common/protocol.h:731-768`; os mesmos números no 1.5.3).
+pub mod erro_de_mascote {
+    pub const NIVEL: i32 = 51;
+    pub const POSICAO: i32 = 85;
+    pub const MORTO: i32 = 87;
+}
+
+impl WorldInstance {
+    /// O mascote de combate ativo de um dono.
+    pub fn mascote_de(&self, dono: i64) -> Option<&crate::mascote::Mascote> {
+        self.mascotes.values().find(|m| m.dono == dono)
+    }
+
+    fn id_do_mascote_de(&self, dono: i64) -> Option<i64> {
+        self.mascotes.iter().find(|(_, m)| m.dono == dono).map(|(id, _)| *id)
+    }
+
+    /// `combat_petdata_imp::DoActivePet` (`petman.cpp:575-605`) com o `ActivePet` que recolhe
+    /// o anterior (`:1303-1348`): recusa o mascote de nível acima de dono + 35 e o morto
+    /// (`hp_factor` 0), e põe a criatura no mundo, junto do dono. Devolve o id ou o
+    /// `ERR_*` a mandar.
+    pub fn invocar_mascote(&mut self, dono: RoleId, slot: u16, info: pw_core::InfoPet) -> Result<i64, i32> {
+        let dono = dono as i64;
+        let dados = Arc::clone(&self.data_manager);
+        let Some(modelo) = dados.modelos_de_mascote.get(&(info.pet_tid as u32)) else {
+            return Err(erro_de_mascote::POSICAO);
+        };
+        let Some(p) = self.players.get(&dono) else { return Err(erro_de_mascote::POSICAO) };
+        if p.level < info.level as i32 - 35 {
+            return Err(erro_de_mascote::NIVEL);
+        }
+        if info.hp_factor <= 0.0 {
+            return Err(erro_de_mascote::MORTO);
+        }
+        let pos = p.position;
+        self.recolher_mascote(dono, 0);
+        self.proximo_mascote = self.proximo_mascote.wrapping_add(1);
+        let id = crate::mascote::id_do_mascote(self.proximo_mascote);
+        let (agressividade, movimento) = self
+            .estado_dos_mascotes
+            .get(&dono)
+            .copied()
+            .unwrap_or((crate::mascote::AGRESSIVIDADE_AUTOMATICA, crate::mascote::MOVIMENTO_SEGUIR));
+        let m = crate::mascote::Mascote::novo(id, dono, slot, info, modelo, pos, agressividade, movimento);
+        self.grid.add_entity(id, pos, false);
+        self.mascotes.insert(id, m);
+        self.emitir(EventoDoMundo::MascoteApareceu { id, dono: dono as RoleId });
+        Ok(id)
+    }
+
+    /// `RecallPetWithoutFree` (`petman.cpp:1360-1391`): tira a criatura do mundo e devolve o
+    /// registro à jaula. `false` sem mascote ativo.
+    pub fn recolher_mascote(&mut self, dono: i64, motivo: u8) -> bool {
+        let Some(id) = self.id_do_mascote_de(dono) else { return false };
+        let Some(m) = self.tirar_mascote(id) else { return false };
+        self.emitir(EventoDoMundo::MonstroSumiu { id });
+        self.emitir(EventoDoMundo::MascoteRecolhido {
+            id,
+            dono: dono as RoleId,
+            slot: m.slot,
+            pet_tid: m.info.pet_tid,
+            motivo,
+            info: m.para_a_jaula(),
+        });
+        true
+    }
+
+    fn tirar_mascote(&mut self, id: i64) -> Option<crate::mascote::Mascote> {
+        let m = self.mascotes.remove(&id)?;
+        self.grid.remove_entity(id);
+        for p in self.players.values_mut() {
+            p.visiveis.remove(&id);
+        }
+        for (_, ai) in self.monsters.values_mut() {
+            ai.aggro_table.remove(&id);
+        }
+        Some(m)
+    }
+
+    /// `PET_CTRL_CMD` (C2S 103) → `DispatchPlayerCommand` (`petnpc.cpp:950-1140`). `resto` é o
+    /// `buf` depois do `pet_cmd`. As habilidades (4 e 5) ainda não têm porte.
+    pub fn ordem_ao_mascote(&mut self, dono: RoleId, alvo: i32, comando: i32, resto: &[u8]) {
+        let dono = dono as i64;
+        let Some(id) = self.id_do_mascote_de(dono) else { return };
+        let estado = |b: &[u8]| b.get(0..4).map(|x| i32::from_le_bytes([x[0], x[1], x[2], x[3]]));
+        let alvo = alvo as i64;
+        let alvo_existe = self.monsters.get(&alvo).is_some_and(|(m, _)| !m.is_dead);
+        let Some(m) = self.mascotes.get_mut(&id) else { return };
+        let mudou = match comando {
+            1 => {
+                // `size == 1 + 4`: só o `force_attack`. Alvo 0 ou -1 não é alvo.
+                if resto.len() != 1 || alvo == 0 || alvo == -1 || !alvo_existe {
+                    return;
+                }
+                m.ai.atacar_por_ordem(alvo, m.corpo.max_hp);
+                None
+            }
+            2 => estado(resto).filter(|_| resto.len() == 4).and_then(|s| {
+                let pos = m.corpo.position;
+                m.ai.mudar_movimento(s as u8, pos)
+            }),
+            3 => estado(resto).filter(|_| resto.len() == 4).and_then(|s| m.ai.mudar_agressividade(s as u8)),
+            _ => {
+                debug!("mundo: ordem {comando} ao mascote de {dono} ainda sem porte");
+                None
+            }
+        };
+        let (agressividade, movimento) = (m.ai.agressividade, m.ai.movimento);
+        self.estado_dos_mascotes.insert(dono, (agressividade, movimento));
+        if mudou == Some(true) {
+            self.emitir(EventoDoMundo::IaDoMascote { dono: dono as RoleId, agressividade, movimento });
+        }
+    }
+
+    /// `gplayer_imp::FeedPet` → `FeedCurPet` (`player.cpp:14578-14581`,
+    /// `petman.cpp:1713-1750`) com a comida `(honra, tipo)`. `Err` com o `ERR_*`; no acerto o
+    /// dono é avisado pelo [`EventoDoMundo::FomeDoMascote`].
+    pub fn alimentar_mascote(&mut self, dono: RoleId, honra: i32, tipo: i32) -> Result<(), i32> {
+        let Some(id) = self.id_do_mascote_de(dono as i64) else { return Err(crate::mascote::ERRO_SEM_MASCOTE) };
+        let dados = Arc::clone(&self.data_manager);
+        let Some(m) = self.mascotes.get_mut(&id) else { return Err(crate::mascote::ERRO_SEM_MASCOTE) };
+        let Some(modelo) = dados.modelos_de_mascote.get(&(m.info.pet_tid as u32)) else {
+            return Err(crate::mascote::ERRO_COMIDA_ERRADA);
+        };
+        let (lealdade, fome) = m.alimentar(modelo, tipo, honra)?;
+        let ev = EventoDoMundo::FomeDoMascote { dono, slot: m.slot, lealdade, fome, info: m.para_a_jaula() };
+        self.emitir(ev);
+        Ok(())
+    }
+
+    /// Ver [`EventoDoMundo::ReviverMascote`].
+    pub fn pedir_reviver_mascote(&self, dono: RoleId) {
+        self.emitir(EventoDoMundo::ReviverMascote { dono });
+    }
+
+    /// `Notify_StartAttack` → `GM_MSG_PET_AUTO_ATTACK` (`player.cpp:15344`,
+    /// `petnpc.cpp:683-702`): o dono começou a atacar `alvo`.
+    pub fn dono_comecou_a_atacar(&mut self, dono: RoleId, alvo: i64) {
+        if !self.monsters.get(&alvo).is_some_and(|(m, _)| !m.is_dead) {
+            return;
+        }
+        if let Some(id) = self.id_do_mascote_de(dono as i64) {
+            if let Some(m) = self.mascotes.get_mut(&id) {
+                let max_hp = m.corpo.max_hp;
+                m.ai.dono_atacou(alvo, max_hp);
+            }
+        }
+    }
+
+    fn mascote_do_dono_ajuda(&mut self, dono: i64, atacante: i64) {
+        if let Some(id) = self.id_do_mascote_de(dono) {
+            if let Some(m) = self.mascotes.get_mut(&id) {
+                m.ai.dono_apanhou(atacante);
+            }
+        }
+    }
+
+    /// `combat_petdata_imp::OnKillMob` + `RecvExp` (`petman.cpp:787-800`, `:1541-1591`): o
+    /// dono matou (ou recebeu o crédito de) um monstro.
+    pub fn mascote_ganha_exp_por_abate(&mut self, dono: RoleId, nivel_do_monstro: i32) {
+        let dono64 = dono as i64;
+        let Some(id) = self.id_do_mascote_de(dono64) else { return };
+        let nivel_do_dono = self.players.get(&dono64).map(|p| p.level).unwrap_or(1);
+        let dados = Arc::clone(&self.data_manager);
+        let Some(m) = self.mascotes.get_mut(&id) else { return };
+        let Some(modelo) = dados.modelos_de_mascote.get(&(m.info.pet_tid as u32)) else { return };
+        let exp = crate::mascote::exp_por_abate(m.info.level as i32, nivel_do_monstro, m.info.honor_point);
+        if exp <= 0 {
+            return;
+        }
+        let r = crate::mascote::receber_exp(&mut m.info, exp, modelo.nivel_maximo, nivel_do_dono, |n| {
+            dados.progressao.exp_do_mascote_para_subir(n)
+        });
+        let (ganho, subiu) = match r {
+            crate::mascote::ExpDoMascote::Nada => return,
+            crate::mascote::ExpDoMascote::Ganhou(g) => (g, false),
+            crate::mascote::ExpDoMascote::Subiu => {
+                m.subir_de_nivel(modelo);
+                (0, true)
+            }
+        };
+        let evento = EventoDoMundo::ExpDoMascote {
+            dono,
+            slot: m.slot,
+            pet_tid: m.info.pet_tid,
+            ganho,
+            subiu,
+            info: m.para_a_jaula(),
+        };
+        self.emitir(evento);
+    }
+
+    fn aplicar_dano_no_mascote(&mut self, alvo: i64, atacante: i64, dano: i64) {
+        let Some(m) = self.mascotes.get_mut(&alvo) else { return };
+        if m.corpo.is_dead {
+            return;
+        }
+        let dano = crate::efeitos::dano_recebido(&mut m.corpo.efeitos, dano as i32) as i64;
+        m.corpo.hp = (m.corpo.hp - dano).max(0);
+        // Apanhar dá ódio de quem bateu, salvo congelado (`HandleAttackMsg`).
+        m.ai.apanhou(atacante, dano);
+        if m.corpo.hp > 0 {
+            return;
+        }
+        // `gpet_imp::OnDeath` → `NotifyDeathToMaster` → `OnPetDeath` + `PetDeath`
+        // (`petman.cpp:764-777`, `:1777-1797`): `hp_factor` 0, recolhido por morte, e a
+        // lealdade perde 10%.
+        m.corpo.is_dead = true;
+        let Some(mut m) = self.tirar_mascote(alvo) else { return };
+        let perda = (m.info.honor_point as f64 * 0.10 + 0.5) as i32;
+        m.info.honor_point = (m.info.honor_point - perda).clamp(0, crate::mascote::LEALDADE_MAXIMA);
+        let mut info = m.para_a_jaula();
+        info.hp_factor = 0.0;
+        self.emitir(EventoDoMundo::MascoteMorreu {
+            id: alvo,
+            dono: m.dono as RoleId,
+            slot: m.slot,
+            pet_tid: m.info.pet_tid,
+            matador: atacante,
+            info,
+        });
+    }
+
+    /// O tique dos mascotes: IA, golpes, cercas e o batimento (regeneração e aviso ao dono).
+    fn tique_dos_mascotes(&mut self, delta_ms: u32) {
+        if self.mascotes.is_empty() {
+            return;
+        }
+        let dados = Arc::clone(&self.data_manager);
+        // Os alvos possíveis: o que cada mascote odeia, com posição e corpo.
+        let mut alvos: HashMap<i64, (pw_core::Vector3, bool, MonsterEntity)> = HashMap::new();
+        for m in self.mascotes.values() {
+            for id in m.ai.odio.keys() {
+                if let Some((mo, _)) = self.monsters.get(id) {
+                    alvos.insert(*id, (mo.position, !mo.is_dead && mo.hp > 0, mo.clone()));
+                }
+            }
+        }
+        let terreno = &self.terreno;
+        let chao = |x: f32, z: f32| terreno.altura_em(x, z);
+        let mapa = crate::navegacao::Mapa { terreno: &chao, movimento: &self.movimento };
+        let mut acoes = Vec::new();
+        let mut avisos = Vec::new();
+        let mut fomes = Vec::new();
+        for (id, m) in self.mascotes.iter_mut() {
+            let dono = self.players.get(&m.dono).filter(|p| p.hp > 0).map(|p| p.position);
+            if let Some(a) = m.ai.tick(&mut m.corpo, dono, &alvos, delta_ms, &mapa) {
+                acoes.push((*id, a));
+            }
+            if let Some(modelo) = dados.modelos_de_mascote.get(&(m.info.pet_tid as u32)) {
+                let antes = m.batimentos();
+                if m.batimento(modelo, delta_ms) {
+                    avisos.push((m.dono, m.slot, m.fator_de_vida(), m.corpo.hp as i32, m.ai.em_combate()));
+                }
+                if m.batimentos() != antes {
+                    if let Some((lealdade, fome)) = m.passar_tempo_de_comida(modelo) {
+                        fomes.push(EventoDoMundo::FomeDoMascote { dono: m.dono as RoleId, slot: m.slot, lealdade, fome, info: m.para_a_jaula() });
+                    }
+                }
+            }
+        }
+        for ev in fomes {
+            self.emitir(ev);
+        }
+        for (dono, slot, fator, hp, combate) in avisos {
+            // `OnPetNotifyHP` (`petman.cpp:722-762`): mascote em combate põe o dono em
+            // combate por 6 s.
+            if combate {
+                if let Some(p) = self.players.get_mut(&dono) {
+                    p.combate_s = p.combate_s.max(6);
+                }
+            }
+            self.emitir(EventoDoMundo::VidaDoMascote { dono: dono as RoleId, slot, fator, hp });
+        }
+        for (id, acao) in acoes {
+            use crate::mascote::AcaoDoMascote as A;
+            match acao {
+                A::Moveu(crate::ai::AcaoDoMonstro::Andou { destino, tempo_ms, velocidade, modo }) => {
+                    self.grid.update_position(id, destino);
+                    self.emitir(EventoDoMundo::MonstroAndou { id, destino, tempo_ms, velocidade, modo });
+                }
+                A::Moveu(crate::ai::AcaoDoMonstro::Parou { posicao, velocidade, direcao, modo }) => {
+                    self.grid.update_position(id, posicao);
+                    self.emitir(EventoDoMundo::MonstroParou { id, posicao, velocidade, direcao, modo });
+                }
+                A::Moveu(_) => {}
+                A::Atacou { alvo, dano } => {
+                    let Some(m) = self.mascotes.get(&id) else { continue };
+                    let atraso = m.corpo.atraso_do_dano_em_ticks.clamp(0, 255) as u32 * 50;
+                    let velocidade = m.corpo.ataque_em_ticks.clamp(0, 255) as u8;
+                    self.emitir(EventoDoMundo::GolpeEntreCriaturas { atacante: id, alvo, dano, velocidade });
+                    self.adiar_dano(alvo, id, dano as i64, atraso, false);
+                }
+                A::Reposicionar => {
+                    let Some(dono) = self.mascotes.get(&id).map(|m| m.dono) else { continue };
+                    let Some(pos) = self.players.get(&dono).map(|p| p.position) else { continue };
+                    let Some(m) = self.mascotes.get_mut(&id) else { continue };
+                    m.corpo.position = pos;
+                    m.ai.reposicionado();
+                    let habitat = m.corpo.habitat;
+                    self.grid.update_position(id, pos);
+                    if let crate::ai::AcaoDoMonstro::Parou { posicao, velocidade, direcao, modo } =
+                        crate::mascote::parada_de_reposicao(pos, habitat)
+                    {
+                        self.emitir(EventoDoMundo::MonstroParou { id, posicao, velocidade, direcao, modo });
+                    }
+                }
+                A::Sumir => {
+                    if let Some(dono) = self.mascotes.get(&id).map(|m| m.dono) {
+                        self.recolher_mascote(dono, 0);
+                    }
+                }
+            }
+        }
     }
 }

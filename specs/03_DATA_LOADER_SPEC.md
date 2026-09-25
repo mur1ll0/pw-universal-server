@@ -24,6 +24,29 @@ Uma pasta de realm (`CONFIG_DIR`) tem os `.data` na raiz e uma pasta por mapa:
 dados comuns uma vez e **o terreno só dos mapas que serve** (`WORLD_TAGS`). A carga devolve um
 `RelatorioDeCarga` com lidos e falhas; falha de um arquivo não derruba o login (A60).
 
+**Catálogo do realm (B102).** Ao lado de `config/`, a pasta `data/<realm>/catalogo/` pode
+trazer `elements_layout.json` (formato de `specs/elements_layouts/vNNN.json`) e
+`habilidades.json` (formato de `specs/habilidades_155/habilidades.json`). O que estiver lá vale
+no lugar do embutido da versão; o layout tem de declarar a mesma versão do cabeçalho do
+`elements.data`, senão é falha registrada (`LayoutDeOutraVersao`). Sem catálogo, os embutidos
+de hoje (v7, v156, v159; habilidades 1.2.6 e 1.5.5). `data/` está no `.gitignore`: os geradores
+ficam em `specs/`. `tests/carga_dos_realms.rs` confere o catálogo e que cada realm carrega.
+
+**O que ainda exige código numa versão nova** (conferido em B102): o **formato binário do
+`tasks.data`** (um leitor por `_task_templ_cur_version`: v55 e v129, `tasks.rs`); o
+**protocolo do cliente** (`WorldProtocol` por versão, `pw-protocol/src/versions/`); as seções
+do `ptemplate.conf` (dois conjuntos, escolhidos pelo que o arquivo tem); e o `generate_vNNN.py`
+que produz o layout do `elements.data`. O resto — `npcgen`, `aipolicy`, `gshop`, `.sev`,
+`.hmap`, `dyn_tasks`, moldes do `clsconfig` — é lido pelo mesmo código em qualquer versão.
+
+**Estado da carga (B102):** `realm_126` carrega **sem falha** (132 arquivos). Não são lidos,
+em nenhum realm, por falta do sistema: `path.sev` (rotas de patrulha), `domain.data`,
+`extra_drops.sev`, `task_npc.data`, `global_api.lua`, `ExtDataID.dat`, `precinct.clt`,
+`rare_item.conf`. Na raiz do `realm_126`, `npcgen.data`/`precinct.sev` são cópias idênticas das
+de `world/` (as lidas); o `region.sev` da raiz (6.856 B) difere do de `world/` (8.860 B), e vale o
+de `world/`. `realm_155`: 3 falhas dos próprios arquivos — `a46/npcgen.data` e `a50/precinct.sev`
+terminam antes do que declaram.
+
 ## 3. Os arquivos
 
 ### 3.1 `elements.data` — itens, criaturas, classes, configurações
@@ -73,7 +96,7 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
   1.087/269; a diferença são os campos do sistema de Lar (nomes do 1.7.2), mais o vetor
   `m_ulHomeItemsWanted × 8 bytes` (B45).
 - Estado: **14.885/14.885** (`realm_155`, cliente BR; o EN fechou 14.978/14.978 antes de sair). Versão 124: só cabeçalho. Na v55 (1.2.6), o bloco fixo tem **534 B**, o prêmio **75 B**, o item **13 B** e o monstro pedido **22 B** (`elementclient.exe` VA `0x62f6c0`, leitura em `0x62d04d`; `docs/RESULTADO_TASKS_V55.md`). O leitor Rust fecha **2.819/2.819 raízes**, **7.994** tarefas recursivas e o último byte; rejeita corrupção na tabela ou um byte extra (B96).
-- Na v55, `TaskTemplate` recebe id/nome/descrição, hierarquia, horários, itens, monstros, prêmio básico, NPCs, classes, método e conclusão. Os demais campos do bloco fixo ainda ficam no padrão (`0`/`false`/vazio), inclusive requisitos de nível, missão anterior e flags; **a paridade completa das regras de missão ainda falta**. O Guerreiro nível 1 aceita a 1173 "Primeiro Teste" no teste do motor, com NPC 3517, classe 0 e prêmio de 45 moedas/75 exp/20 SP; falta ver em jogo após publicação (B96). A 1177, missão inicial do Guia Selvagem (NPC 3518, serviço 3531 = [1177, 1178]), só é aceita pelas classes 3 e 4 no nível 1 (erro 13 nas outras); com o `NPC_TASK_OUT_SERVICE` corrigido, o teste de mundo com o banco entrega a 1177 a um Bárbaro nível 1 (B100).
+- Na v55, `TaskTemplate` recebe id/nome/descrição, hierarquia, horários, itens, monstros, prêmio básico, NPCs, classes, método e conclusão, e desde o B102 as flags `0x6a`–`0x74` (escolhe uma filha, sorteia, filhas em ordem, pai também falha/sucesso, pode desistir, pode repetir, refazer após falha, limpa ao desistir, precisa registro, falha ao morrer), pela sequência `pack(1)` do `TaskTempl.h:2037-2057` e conferidas na `libtask.so` 1.2.6 (`CheckDepth` testa +0x6c/+0x6a/+0x6b; `CanGiveUpTask` lê +0x6f). Sem elas a 1177 ativava as duas filhas juntas (o original entrega só a 1178) e a 1173 deixava de pedir a filha escolhida (1175 ou 1176). Desde o B107 também `m_bAutoDeliver` +0xac (e `m_bDeathTrig` +0xad), zona de entrega +0x79/+0x7a com a caixa +0x7e/+0x8a, nível +0xc1/+0xc5, pré-missões (contador +0xf1, vetor de **5** em +0xf5) e gênero +0x114, medidos no `libtask.so` 1.2.6 (`AddOneTaskTempl`, `CheckInZone`, `CheckLevel`, `CheckPreTask`, `CheckGender`, todos com base `this + 4` = bloco fixo): 81 missões automáticas, entre elas a 9376 "Virando Dinossauro" (nível 1..150, sem classe nem pré-requisito); antes nenhuma. Dados do próprio arquivo: a 949 pede a 947 inexistente, e dez "Teste de Liu Weijun" têm mínimo acima do máximo. Desde o B110 também o lugar a alcançar (método 4): mundo +0x1de e caixa +0x1c6/+0x1d2 (`OnTaskReachSite` do `libtask.so` 1.2.6, que no 1.2.6 não confere o tipo de conclusão); 1.559 missões, nove "Estágio 3-x" (4735-4770) com a caixa invertida no próprio arquivo. Os demais campos do bloco fixo ainda ficam no padrão (`0`/`false`/vazio); **a paridade completa das regras de missão ainda falta**. O Guerreiro nível 1 aceita a 1173 "Primeiro Teste" no teste do motor, com NPC 3517, classe 0 e prêmio de 45 moedas/75 exp/20 SP; falta ver em jogo após publicação (B96). A 1177, missão inicial do Guia Selvagem (NPC 3518, serviço 3531 = [1177, 1178]), só é aceita pelas classes 3 e 4 no nível 1 (erro 13 nas outras); com o `NPC_TASK_OUT_SERVICE` corrigido, o teste de mundo com o banco entrega a 1177 a um Bárbaro nível 1 (B100).
 - Extraído: id, nome/descrição (XOR pelo id), mãe/filhas, tipo, prazo, níveis, classes,
   gênero, pré-requisitos, itens pedidos/entregues, NPCs de entrega e prêmio, objetivos
   (monstros com item, itens, dinheiro, nível, mundo, espera), flags e os dois prêmios.
@@ -123,8 +146,10 @@ Autoridade: `cgame/gs/template/npcgendata.h/.cpp`. Um arquivo por pasta de mapa.
   leitor **recusa sobra** — os arquivos em disco (41 do 1.2.6, 75 do `realm_155`; eram 193 com os 77 do EN, que saiu em B55) fecham no último
   byte (`examples/conferir_npcgen.rs`, B51).
 - Campos usados: tipo de área (`iType`: no chão / na caixa), `vExts` (**tamanho** da caixa),
-  `fOffsetTrn`/`fHeiOff` (zero em 18.902 de 18.903 geradores), `fOffsetWater` (guardado, sem
+  `iDeadTime`/`iRefresh`/`iRefreshLower` → `SpawnInstance::{corpo_s, renascer_min_s, renascer_max_s}` pelas regras de `npcgenerator.cpp:3828-3855` (B105; antes os dois primeiros eram lidos e descartados, e `respawn_sec` = `iRefresh.max(1)`), `fOffsetTrn`/`fHeiOff` (zero em 18.902 de 18.903 geradores), `fOffsetWater` (guardado, sem
   mapa de água), `iPathID`, `iSpeedFlag`, contagens sem teto inventado.
+- Recurso (`ResourceMine`): altura = relevo + `fHeiOff` do `NPCGENFILERES`, **sem** o mapa de movimento (`SetRegion(0, ...)` → `terrain_gen_pos`, `npcgenerator.cpp:3900-3902`, `:4320-4324`; B109). O `fHeiOff` põe baú em cima de construção: Baú de Tesouros 11117 (missão 3428) com 33,5 m, Baú Desgastado 12858 (missão 7017) com 26,8 m. Mina de missão: `materials_1_id` 0 e `task_in`/`task_out` = a missão; o item vem do `OnTaskMining` (`colheu_mina`).
+- `PET_ESSENCE` (B111): o layout v7 inventava um `pet_snd_type` em 0x154 e deslocava `hp`/`hp_gen`/`damage`; o `gs` 1.2.6 (`pet_dataman::LoadTemplate`, VA 0x8143580) lê `hp_a`…`magic_defence_d` (26 floats, com `damage_d`) a partir de 0x154, depois `size`, `damage_delay`, `attack_range`, `attack_speed`, `sight_range` (int), `food_mask`, `inhabit_type` e um `unk` até os 476 B. `ModeloDeMascote` (`pet.rs`) com as recusas do original: 460 modelos no 1.2.6 (413 de combate), 783 no 1.5.5 (439); `PET_FOOD_ESSENCE` → `comidas_de_mascote`; curva do mascote = `PLAYER_LEVELEXP_CONFIG` 592 (`exp_do_mascote_para_subir`).
 - Altura (`SpawnInstance::posicao_no_mapa` → `altura_resolvida`, `gs/npcgenerator.cpp:4296-4346`):
   área no chão → `chão + piso do movemap + offset`, com **até 5 sorteios** de `x`/`z` quando o
   ponto não é alcançável (`terrain_gen_pos::Generate` + `GetValidPos`, §3.6c, B97); área em
@@ -149,6 +174,14 @@ nada dele chega ao jogador: o `gamed` copia a ficha do banco (`userlogin.cpp`), 
 nem o `hp`/`mp`: `max_hp = lvlup_hp×(nível−1) + vit_hp×vitalidade`, base zero (B51 — antes
 somava o `hp` do `.conf` e o Arqueiro nascia com 20 de energia). As velocidades dele também
 são mortas. `[TOWN_REGION]` é o mapa de ressurreição, não o nascimento.
+
+**Dois conjuntos de seções (B101).** 1.5.5: as 12 de `SECOES_DE_CLASSE`. 1.2.6: 8, na ordem
+de `player_template::__Load` do `gs` 1.2.6 (VA 0x80e4efc): 0 `SWORDSMAN`, 1 `MAGE`, 2 `MONK`,
+3 `HAG`, 4 `ORGE`, 5 `GENIE`, 6 `ARCHER`, 7 `ANGEL` (`SECOES_DE_CLASSE_126`). O leitor escolhe
+o conjunto cujas seções estão todas no arquivo. Até o B101 ele exigia `[NEC]` e recusava o
+arquivo do `realm_126`, o mundo ficava com `base_das_classes` vazio e `recalcular_por_nivel`
+não fazia nada: ficha com dano 1-1, vida e mana gravadas no banco; e o `pw-link` criava o
+personagem sem ficha, caindo nos moldes do banco (que tinham os atributos do `.conf`).
 
 ### 3.6 Terreno: `gs.conf` → `specs/mapas/terreno_155.json` → `map/<n>.hmap` (`terreno.rs`)
 
@@ -281,6 +314,21 @@ Molde por classe via `GetDataRoleId` (`gamedbmanager.cpp:208`): 0→16, 1→19, 
 - `GRoleStatus.property` (`extend_prop`, `property.h:35`) dos 12 moldes: **5/5/5/5** e vida/mana
   = `vit_hp×5`/`eng_mp×5` — a evidência dos atributos iniciais (spec 05 §7).
 - `falta`: `config_data` (provável barra de atalhos), leitor de inventário/equipamento, habilidades.
+- **1.2.6** (`files1.2.6/pwserver/gamedbd/clsconfig`, B101): o `extend_prop` (vitality, energy,
+  strength, agility, max_hp, max_mp — `property.h:35-45`, little-endian dentro do `Octets`)
+  dos moldes das seis classes do 1.2.6 que estão no mundo 1 dá **5/5/5/5**, com vida/mana =
+  `vit_hp`/`eng_mp` × 5 do v7 (Feiticeira 60/60, Bárbaro 85/35). Os moldes de mundo 0 (classes
+  2 e 5, que o 1.2.6 não tem) guardam outros números e não valem. Aplicado ao banco por
+  `scripts/2026_09_24_atributos_iniciais_5_126.sql`. As posições do `clsconfig` 1.2.6 **não**
+  batem com as dos moldes do banco para humanos (217,3; 218,5; 2838,4 contra 976; 219,2;
+  4187,3) e alados (−317,4; 218,1; −910,99 contra −741,5; 219,1; −1234,8): `falta` decidir com
+  captura de personagem novo. **Resolvido (B102):** os pontos do `clsconfig` ficam ao lado do
+  Guia de cada raça no `npcgen.data` do mapa 1 (Guia 3517 em 221,5; 2854,4 — humanos; 3518 em
+  −1445,2; 1398,9 — selvagens; Guia Jace Johnson 3519 em −313,4; −893,1 — alados), junto aos
+  monstros das primeiras missões; os do banco eram pontos de cidade. O `gamedbd` 1.2.6 usa o
+  mesmo `GetDataRoleId` para as classes 0–7 (VA 0x810c542). `ler_clsconfig.py --sql <realm>
+  --classes …` gera o SQL (posição e `ui_config`); aplicado em
+  `scripts/2026_09_24_moldes_do_clsconfig_126.sql`.
 
 ### 3.10b Habilidades do servidor — `specs/habilidades_155/habilidades.json` (`habilidades.rs`)
 
@@ -299,18 +347,26 @@ alcance) e os roteiros `no_alvo` (`StateAttack`, 2.304) e `em_si` (`BlessMe`, 26
 avaliada pelo servidor (`pw_gs::efeitos::expr`). Carregado para `elements.data` v156/v159
 (`GameDataManager::habilidades`).
 
-**1.2.6 (`TabelaDeHabilidades::do_126`, B100)** — carregada para o `elements.data` v7. Só as
-823 habilidades que o `gs` 1.2.6 compila (as mesmas 823 do `skillstr.txt` do cliente 1.2.6).
-`estados_ms`, `execucao_ms` e `recarga_ms` vêm de `specs/habilidades_126/tempos.json`, extraído
-por `extrair_tempos_126.py`: cada `SkillNNNStub::StateK::GetTime`/`GetExecutetime`/
-`GetCoolingtime` do `gs` 1.2.6 é **executado** num emulador x86 por nível (`GetLevel`
-interceptado); 3.718 funções constantes, 13 por nível, nenhuma `null`. Diferem do 1.5.5 em 28
-funções de 18 habilidades (30, 97, 112, 329, 446, 454, 470, 472, 473, 482–484, 506, 518, 519,
-521, 598, 803) e preenchem 95 conjurações `null` do 1.5.5. O resto da entrada (mana, alcance,
-dano, aprendizado) é do stub 1.5.5 de mesmo id e **não** foi conferido contra o `gs` 1.2.6.
-O texto do `skillstr.txt` 1.2.6 não é fonte: nas 84 divergências dele com o 1.5.5, o `gs` 1.2.6
-concorda com o 1.5.5 em 62. Conferido com a captura original: 102 (200+700 ms), 250 nível 2
-(500+900) e 299 (1.500+1.000; `123` em +2.504..2.551 ms do `85`).
+**1.2.6 (`TabelaDeHabilidades::do_126`, B100/B101)** — carregada para o `elements.data` v7.
+Só as 823 habilidades que o `gs` 1.2.6 compila (as mesmas 823 do `skillstr.txt` do cliente
+1.2.6). `specs/habilidades_126/habilidades.json` — desde o B102 **completo**, no formato do 1.5.5 (pode ir para `data/<realm>/catalogo/`), gerado por `extrair_habilidades_126.py`:
+cada função do `SkillNNNStub` do `gs` 1.2.6 é **executada** num emulador x86 por nível, com
+`GetLevel`, `GetAttack`/`GetMagicattack` (sonda), `PlayerWrapper::GetRange` (0 e 1, na pilha
+x87) e `GetCharging` (carga cheia) interceptados e os `Set*` capturados — e daí saem os mesmos
+campos do 1.5.5: estados, execução, recarga, mana, aprendizado (nível, SP, dinheiro), alcance,
+distância de efeito, raio, distância de ataque, ângulo, precisão e **dano** (estado, base,
+elemento, fator, `ratio`, `plus`). Função ausente no stub = padrão do `SkillStub` (0,
+`skill.h:409-436`); função que lê outra coisa (vida, `GetPlus`) = `null`, e aí fica o valor do
+1.5.5 — hoje só o dano de 317, 529, 666, 667 e 799 (`GetHp`). Do 1.5.5 ficam também classe,
+tipo, pré-requisitos, `time_type`, área, flags e os roteiros `no_alvo`/`em_si`.
+Diferenças medidas contra o 1.5.5 nas 823: `plus` do dano em 68 e `ratio` em 10 (elemento,
+base e fator nunca diferem; a 299 tem 23,7 no nível 1 contra 124,5, a 1 tem 10,8 contra
+102,6), dinheiro exigido em 186, nível exigido em 142, estados em 13, recarga em 8, execução em
+3, distância de efeito em 9, raio em 3, alcance, mana e SP em 1 cada. O texto do `skillstr.txt`
+1.2.6 não é fonte (nas 84 divergências dele com o 1.5.5, o `gs` 1.2.6 concorda com o 1.5.5 em
+62). Conferido com a captura original: 102 (200+700 ms), 250 nível 2 (500+900), 299
+(1.500+1.000; `123` em +2.504..2.551 ms do `85`) e o dano da 299 no `142` (20, 23, 23, 24; a
+conta com a ficha nível 1 dá 32 antes da resistência).
 
 ### 3.10c Tratadores de addon — `specs/addons_155/addons.json` (`addons.rs`)
 

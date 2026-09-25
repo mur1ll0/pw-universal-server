@@ -160,3 +160,17 @@ fn todo_personagem_nasce_cinco_cinco_cinco_cinco_com_a_vida_do_clsconfig() {
         assert_eq!((a.vida, a.mana), (vida, mana), "classe {cls}");
     }
 }
+
+/// B101 — o `ptemplate.conf` do realm 1.2.6 tem as 8 seções do `gs` 1.2.6 (MONK e GENIE, sem
+/// NEC/ASN/BLADE/SHADOW/FAIRY) e agora é lido; antes ficava recusado e o mundo sem base.
+#[test]
+fn o_ptemplate_do_126_e_lido_com_as_secoes_do_gs_126() {
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let t = ptemplate::ler_da_pasta(&pasta).expect("ptemplate.conf do realm 126");
+    assert_eq!(t.classes.len(), 8);
+    // [HAG] = Feiticeira (3): 15/5/15/15 no arquivo — os números que o molde antigo do
+    // `realm_126` copiou para o personagem novo; o personagem nasce com 5/5/5/5 do `clsconfig`.
+    let hag = t.get(3).expect("classe 3");
+    assert_eq!((hag.forca, hag.agilidade, hag.vitalidade, hag.energia), (15, 5, 15, 15));
+    assert_eq!((hag.vida, hag.mana), (50, 30));
+}

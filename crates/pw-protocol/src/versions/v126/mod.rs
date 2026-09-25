@@ -14,6 +14,65 @@ impl WorldProtocol for V126Protocol {
         GameVersion::V1_2_6
     }
 
+    // Mascote — o validador do cliente 1.2.6 (VA 0x584610, tabela de saltos em 0x584e90)
+    // mede 233 = 12 B, 234 = 8 B e 249 = 12 B; a captura `full_interno.pcap` confirma 233 e 234.
+
+    /// OBJECT_ATTACK_RESULT (120) com o `attack_flag` de 1 byte, como o 24 e o 26 do 1.2.6:
+    /// 14 B no validador do cliente (caso 120, VA 0x584e7a).
+    fn object_attack_result(&self, atacante: i32, alvo: i32, dano: i32, attack_flag: i32, speed: u8) -> S2CGamedataSend {
+        crate::traits::mascote_s2c(120, |s| {
+            s.write_i32_le(atacante);
+            s.write_i32_le(alvo);
+            s.write_i32_le(dano);
+            s.write_i8(estreitar(attack_flag));
+            s.write_u8(speed);
+        })
+    }
+
+    /// SUMMON_PET (233) sem o `life_time`: `{slot_index, pet_tid, pet_pid}`.
+    fn summon_pet(&self, slot: i32, pet_tid: i32, pet_pid: i32, _life_time: i32) -> S2CGamedataSend {
+        crate::traits::mascote_s2c(233, |s| {
+            s.write_i32_le(slot);
+            s.write_i32_le(pet_tid);
+            s.write_i32_le(pet_pid);
+        })
+    }
+
+    /// RECALL_PET (234) sem o `reason`: `{slot_index, pet_id}`.
+    fn recall_pet(&self, slot: i32, pet_tid: i32, _motivo: u8) -> S2CGamedataSend {
+        crate::traits::mascote_s2c(234, |s| {
+            s.write_i32_le(slot);
+            s.write_i32_le(pet_tid);
+        })
+    }
+
+    /// PET_HP_NOTIFY (249) sem a mana: `{pet_index, hp_factor, cur_hp}`.
+    fn pet_hp_notify(&self, slot: i32, hp_factor: f32, hp: i32, _mp_factor: f32, _mp: i32) -> S2CGamedataSend {
+        crate::traits::mascote_s2c(249, |s| {
+            s.write_i32_le(slot);
+            s.write_f32_le(hp_factor);
+            s.write_i32_le(hp);
+        })
+    }
+
+    /// O `info_npc` de 27 B (sem `vis_tid` nem `state2`, estado em +0x17) e a mesma cauda: o
+    /// validador do caso 16 soma 4 com o bit 0x1000 e `1 + tamanho` com o 0x2000
+    /// (VA 0x58486a-0x5848a2).
+    #[allow(clippy::too_many_arguments)]
+    fn mascote_entra(&self, comando: u16, nid: i32, tid: i32, _vis_tid: i32, pos: Vector3, dir: u8, dono: i32, nome: &[u8]) -> S2CGamedataSend {
+        crate::traits::mascote_s2c(comando, |s| {
+            s.write_i32_le(nid);
+            s.write_i32_le(tid);
+            s.write_f32_le(pos.x);
+            s.write_f32_le(pos.y);
+            s.write_f32_le(pos.z);
+            s.write_u16_le(0);
+            s.write_u8(dir);
+            s.write_i32_le(crate::traits::estado_do_mascote(nome));
+            crate::traits::cauda_do_mascote(s, dono, nome);
+        })
+    }
+
     fn scene_service_npc_list(&self, _npcs: &[(i32, i32)]) -> Option<S2CGamedataSend> {
         // elementclient.exe 126, validador 0x584610: ids acima de 260
         // retornam inválido (docs/evidencias/126/cliente-validacao-entrada.txt:11).
@@ -48,7 +107,14 @@ impl WorldProtocol for V126Protocol {
     fn task_data_com_listas(&self, blocos: [&[u8]; 5]) -> S2CGamedataSend {
         let mut s = OctetsStream::new();
         s.write_u16_le(105);
-        for b in blocos.iter().take(3) {
+        for (i, b) in blocos.iter().take(3).enumerate() {
+            let convertido;
+            let b: &[u8] = if i == 1 {
+                convertido = concluidas_no_formato_antigo(b);
+                &convertido
+            } else {
+                b
+            };
             s.write_u32_le(b.len() as u32);
             s.write_raw_bytes(b);
         }
@@ -184,6 +250,19 @@ impl WorldProtocol for V126Protocol {
     fn elf_exp(&self, _exp: i32) -> Option<S2CGamedataSend> {
         // O validador do cliente rejeita ids > 260 (VA 0x584618).
         None
+    }
+
+    // B101 — captura original da missão 1178 (`_sync/capturas/*.pcap`, subcomando 106):
+    // `09 00 00 00 | 04 | 9a 04 | e7 0c 00 00 | 0a 00` — reason 4, task, monster, count;
+    // **sem** os `dps`/`dph` do 1.5.3. Com os 17 bytes do padrão o cliente descartava o aviso
+    // e o contador da missão não andava na tela, embora o servidor contasse.
+    fn task_notify_monster_killed(&self, task_id: u16, monster_id: u32, monster_num: u16) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u8(4);
+        s.write_u16_le(task_id);
+        s.write_u32_le(monster_id);
+        s.write_u16_le(monster_num);
+        S2CGamedataSend::task_var_data(&s.into_bytes())
     }
 
     fn receive_exp(&self, exp: i32, sp: i32) -> S2CGamedataSend {
@@ -490,4 +569,30 @@ impl ProtocolAdapter for V126Adapter {
         self.encode_role_info(stream, c);
         // Sem refretcode no 1.2.6
     }
+}
+
+/// B102 — a lista de concluídas no formato do 1.2.6 (`FnshedTaskListOld`): cabeçalho
+/// `m_uTaskCount u16, m_Version u8 = 0, reservado u8` e entradas `u16` com a falha no bit 15.
+/// É o que o servidor 1.2.6 manda (captura: `01 00 00 00 e8 06`) e o que o cliente 1.5.3
+/// converte (`CElementClient/Task/TaskProcess.cpp:2060-2072`: `id & 0x7fff`, `mask = id >> 15`).
+/// O mundo guarda o formato novo (versão 1: `id u16, falhou:1, vezes u8`); a contagem de vezes
+/// não existe no 1.2.6. Bloco que não é o formato novo segue como está.
+pub fn concluidas_no_formato_antigo(b: &[u8]) -> Vec<u8> {
+    if b.len() < 4 || b[2] != 1 {
+        return b.to_vec();
+    }
+    let n = u16::from_le_bytes([b[0], b[1]]) as usize;
+    if b.len() < 4 + 4 * n {
+        return b.to_vec();
+    }
+    let mut o = Vec::with_capacity(4 + 2 * n);
+    o.extend_from_slice(&(n as u16).to_le_bytes());
+    o.extend_from_slice(&[0, 0]);
+    for k in 0..n {
+        let e = &b[4 + 4 * k..8 + 4 * k];
+        let id = u16::from_le_bytes([e[0], e[1]]) & 0x7fff;
+        let falhou = (e[2] & 1) as u16;
+        o.extend_from_slice(&(id | falhou << 15).to_le_bytes());
+    }
+    o
 }

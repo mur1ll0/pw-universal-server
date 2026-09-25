@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod mascote;
 pub mod bus_server;
 pub mod comandos;
 pub mod combat;
