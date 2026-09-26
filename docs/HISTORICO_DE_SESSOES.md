@@ -10000,3 +10000,79 @@ comparação lado a lado.
     ### e. Falta
     Ver em jogo. Outros personagens do 1.2.6 que entregaram uma dessas 8 antes desta correção
     ficaram com teto 0 (hoje só a Tsuko tinha).
+
+120. **Sessão 2026-09-26: Chamado da Raposa e Muralha de Espinhos portados; regeneração do mascote conferida.**
+
+    ### a. Relato
+    Tsuko (1.2.6): a Chamado da Raposa não transforma nem libera as habilidades da raposa; o
+    mascote parece regenerar rápido demais; a Muralha de Espinhos não aplica efeito.
+
+    ### b. Causa
+    - Log do realm: "habilidade 306 — sem porte: Retort2"; a 312 caía em `Foxform`, também sem
+      porte. Nenhuma das duas fazia nada.
+    - A 306 do 1.2.6 não é a do 1.5.5: `Skill306Stub::StateAttack` (VA 0x837de86) faz
+      `SetProbability(100)`, `SetTime(600000)`, `SetRatio(0,05·L + 0,1)`, `SetShowicon(1)`,
+      `SetRetort` — `filter_Retort` (`skillfilter.h:1450-1505`), não o `Retort2` herdado.
+    - Formas: `SkillStub::Condition` recusa com `(allow_forms & (1 << GetForm())) == 0`
+      (`skill.cpp:128`), e o catálogo não tinha `allow_forms`. No 1.2.6 ele não é o do 1.5.5:
+      lido no construtor (`mov byte [eax+0x4a]`, validado pelo `time_type` em +0x49 em 822/823),
+      99 diferem (299–310 = 5 no 1.2.6, 1 no 1.5.5). 313–318 = 2 (só raposa), 312 = 3.
+    - `filter_Foxform::OnAttach` (`skillfilter.cpp:389-400`; o do `gs` 1.2.6 em VA 0x830b0f2 chama
+      as mesmas funções): `EventChange`, `LockEquipment`, `ImpairScaleMaxMP(100·ratio)`,
+      `EnhanceScaleDefense(100·amount)`, `EnhanceScaleAttack(100·probability)`,
+      `ChangeShape(_shape | FORM_CLASS << 6)` — no 1.2.6 `ChangeShape(1)`, e o `ChangeShape` 1.2.6
+      (VA 0x811d78a) guarda o valor como forma. `InsertTeamVisibleState(75)` sem parâmetro.
+    - Mascote: `hp_gen` = `hp_gen_a × (nível − hp_gen_b × nível_exigido + hp_gen_c)`
+      (`petdataman.h:14-16`), 17/s no 10386 nível 22, **também em combate**
+      (`npc.cpp:1948-1951`); defesa 1428 (`petdataman.h:24-26`). Contra atacante nível 22 passa
+      37,5% do golpe. Está como o original — sem mudança.
+
+    ### c. Correção
+    - Extratores: `allow_forms`/`eventflag` no 1.5.5; `allow_forms` do construtor no 1.2.6; a 306
+      em `ROTEIROS_DO_GS_126`. Catálogos regenerados (nenhum outro campo mudou).
+    - `HabilidadeDoServidor::allow_forms` + `permitida_na_forma`; `conjurar` recusa com
+      `ERR_SKILL_NOT_AVAILABLE` (20).
+    - `Efeito::Foxform` (sem tempo, fraco, sobrevive à morte, alternância pela 312), `Realce::mana`
+      no `UpdateMana`, `Efeitos::forma() -> (shape, forma)` e `WorldProtocol::byte_de_forma`
+      (1.2.6: `& 0x3f`); ícone sem parâmetro (`SEM_PARAMETRO`) no 125.
+    - `Efeito::Retort`/`Retort2` + `Efeitos::espinhos`; a IA passa o físico bruto do golpe
+      corpo a corpo que acertou (`AcaoDoMonstro::Atacou::fisico`), e o dano adiado no jogador
+      devolve o espinho ao monstro com o golpe do jogador (`FillAttackMsg`) como mágico.
+
+    ### d. Provas
+    `o_chamado_da_raposa_transforma_e_desfaz_155/126` (163 com 65/1, 299 recusada com 20, realces
+    −30/+60/+100, a 312 de novo manda 163 com 0), `a_muralha_de_espinhos_devolve_o_golpe_do_monstro`
+    (golpe 200, `ratio` 0,2 → o monstro perde 40), `os_espinhos_so_devolvem_acima_de_um`,
+    `a_muralha_de_espinhos_vira_retort_nas_duas_versoes`,
+    `o_chamado_da_raposa_e_as_formas_das_habilidades`, ícone sem parâmetro em `protocol_tests`.
+
+    ### e. O que continua faltando
+    Passivas `EVENT_CHANGE` da raposa (323, 324); forma no `info_player_1` do 1.2.6; espinhos
+    contra golpe de habilidade e de jogador. Ver em jogo.
+
+121. **Sessão 2026-09-26: revisão do estado e da documentação depois do B120 (sem código).**
+
+    ### a. Pedido
+    Conferir o andamento, o que falta e os próximos passos, e atualizar o que estivesse
+    desatualizado.
+
+    ### b. Achados
+    - O cabeçalho do `ESTADO_E_RETOMADA.md` tinha virado diário (B95–B120 em parágrafos) e
+      ainda dizia "última atualização 2026-09-23, B94"; o §0 parava no B98 e listava o mascote
+      de combate como falta; o §3.3 não tinha B100–B119; o §5D dizia "contêineres 126 não
+      reconstruídos" e "scripts a aplicar"; o índice do §8 não tinha 100–111.
+    - Medido: `pw-realm-126`, `pw-world-126`, `pw-realm-155` e `pw-world-155` foram
+      reconstruídos em 2026-09-26 11:10 (−03), depois da última alteração do B120 (03:08) —
+      tudo até o B120 está publicado, nada visto em jogo (nenhuma entrada no mundo no log).
+    - Medido no banco: os scripts de 2026-09-24 a 26 já têm efeito (Tsuko com base 5/5/5/5 e
+      `max_ap` 99; nenhuma linha de `help_states` desligada sobrando).
+    - O `README.md` descrevia o plano de agosto (1.5.3 "Eclipse" na 29001, FastAPI/Next.js,
+      testes em Python); os sete guias de 2026-08-27/29 em `docs/` idem.
+
+    ### c. O que mudou
+    `ESTADO_E_RETOMADA.md`: cabeçalho curto (com a regra de não virar diário), §0 no B120, §1.1,
+    §2 (publicar o 126), §3.3 com todos os itens a ver em jogo separados por versão, §5A.6,
+    §5D reescrito com os próximos passos e os achados soltos do B115/B120, índice 100–120.
+    `README.md` reescrito para o estado atual; banner "fase de planejamento, não atualizado"
+    nos sete guias antigos; `specs/00` (tabela de versões, fonte do 1.2.6) e `specs/README.md`
+    (subpastas `addons_155/`, `elements_126/`). Suíte com o banco na árvore com o B120: **746 testes, 744 passaram, 0 falhas, 2 ignorados** (97 binários).

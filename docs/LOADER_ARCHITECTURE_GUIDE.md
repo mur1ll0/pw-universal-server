@@ -1,5 +1,9 @@
 # Guia de Arquitetura: `pw-data-loader` e Consumo de Memória
 
+> **Documento da fase de planejamento (agosto de 2026), não atualizado.** Não descreve o
+> sistema atual e pode contradizê-lo. Onde o trabalho está: `docs/ESTADO_E_RETOMADA.md`;
+> como o sistema é: `specs/README.md`.
+
 Este documento descreve como o crate **`pw-data-loader`** processa, indexa e armazena os dados de jogo em memória com máxima eficiência.
 
 ---

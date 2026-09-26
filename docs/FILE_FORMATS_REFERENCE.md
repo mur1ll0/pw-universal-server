@@ -1,5 +1,9 @@
 # Guia de Referência Técnica: Formatos de Arquivos de Dados do Perfect World
 
+> **Documento da fase de planejamento (agosto de 2026), não atualizado.** Não descreve o
+> sistema atual e pode contradizê-lo. Onde o trabalho está: `docs/ESTADO_E_RETOMADA.md`;
+> como o sistema é: `specs/README.md`.
+
 Este documento é o manual oficial de especificação e engenharia reversa dos formatos de arquivos binários utilizados pelo Perfect World em todas as versões (v1.2.6 até v1.5.3+).
 
 ---

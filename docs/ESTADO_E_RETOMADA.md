@@ -3,62 +3,22 @@
 > Nota de passagem entre sessões: onde o trabalho está, o que já é fato verificado e qual é
 > a fila. **Atualizar ao fim de cada bloco de trabalho** — e manter curto: o relato
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
-> para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
+> para o `docs/HISTORICO_DE_SESSOES.md`, com número de item. **O cabeçalho não é diário:** um
+> bloco novo entra como linha no §3.3 (o que olhar em jogo), no §5 (o que ficou faltando) e
+> no índice do §8 — não como parágrafo aqui.
 >
-> **B119 (2026-09-26), testado com o banco, falta ver em jogo:** chi no 1.2.6 — o prêmio de teto de chi existe no v55 (+40 do `AWARD_DATA`, 8 missões; a 973, que a Tsuko entregou, dá 99) e o leitor não o lia; a Tsuko ficou com `max_ap` 0 e nada enchia. Teto dela acertado para 99 (`scripts/2026_09_26_teto_de_chi_tsuko_126.sql`). Meditar no 1.2.6 não dá chi (versão). **Corrige o B118**, que dizia que o 1.2.6 não tinha teto por missão. Item 119 do histórico.
+> **Última atualização: 2026-09-26**, revisão do estado depois do **B120**. Último commit:
+> `9ae52ec` (B112–B119); o **B120** (Chamado da Raposa e Muralha de Espinhos) está na árvore,
+> **não commitado**.
 >
-> **B118 (2026-09-26), testado com o banco, falta ver em jogo:** 1.2.6/1.5.5 — sentado dobra a regeneração a partir do 2º segundo (`STAYIN_BONUS`, os dois `gs`); a "FALHA" nas bênçãos do 1.2.6 era o `section` 1 lido como `modifier2` (`0x100` = `MOD_ENCHANT_FAILED`) — o 139 do 1.2.6 leva o modificador em dois bytes. **Conferidos sem mudança:** alcance do mascote (o original persegue até 0,8 × alcance puro + corpos) e dano de 1 no mascote (defesa 628 no nível 10 pela fórmula do original contra monstros de nível baixo). Item 118 do histórico.
+> **Publicado em 2026-09-26 11:10 (−03):** `pw-realm-126`, `pw-world-126`, `pw-realm-155` e
+> `pw-world-155` foram reconstruídos a partir da árvore que já tinha o B120 — ou seja, **tudo
+> até o B120 está nos dois realms**, nada disso visto em jogo ainda (roteiro no §3.3). Até
+> então o último publicado era o 155 de 2026-09-22 (B79–B86).
 >
-> **B117 (2026-09-26), testado com o banco, falta ver em jogo:** 1.2.6 — o leitor v55 não lia o `m_bClearAcquired` (+0xae) e nenhuma entrega tirava os itens de missão; 9 itens da Tsuko apagados por `scripts/2026_09_26_bolsa_de_missao_tsuko_126.sql`. Monstros invocados nasciam com ids na faixa dos mascotes (`0xA0000000`, bit `PET_MASK`) — agora `0x9000_0000`. A Fera Psíquica da mina não some sozinha no original (`life_time` 0). Item 117 do histórico.
->
-> **B116 (2026-09-26), testado com o banco, falta ver em jogo:** 1.2.6 — (1) Curar Mascote "não fazia nada": curava, mas o `ENCHANT_RESULT` ia com os 19 B do 1.5.5 e o cliente 1.2.6 (16 B) o descartava — vale para toda bênção/maldição do 1.2.6; (2) itens sombreados ao vender: o cliente 1.2.6 manda o item vendido com 12 B (sem `price`) e o leitor usava 16 — só o 1º item saía certo; (3) o `PLAYER_DROP_ITEM` do livro (B112/B113) e do jogar fora ia sem passar pela versão (11 B no lugar de 9). A Batatinha (15955) com o nome dentro do modelo é dado do cliente (a altura do nome vem só da caixa do modelo, `EC_NPC.cpp:2549-2552`, `EC_NPCModel.cpp:158-171`) — sem correção no servidor. Item 116 do histórico.
->
-> **B115 (2026-09-25), testado com o banco, falta ver em jogo:** Curar Mascote (330). 1.5.5: `Rebirth` (salva da morte com 20% da vida, também nas 1096/1280/1281/2411) e `Decregiondmg` (só ícone: a condição do fonte nunca ocorre) portados. 1.2.6: o `gs` não tem esses filtros; a 330 lá é só cura, `55·L − 10 + dano mágico × (0,02·L + 0,1)`, e o catálogo 1.2.6 herdava o roteiro do 1.5.5 — corrigido. **Achado:** 65 outros roteiros do catálogo 1.2.6 divergem do `gs` (`specs/habilidades_126/conferir_roteiros_126.py`), fila §5D. Item 115 do histórico.
->
-> **B114 (2026-09-25), testado com o banco, falta ver em jogo:** mascote do 1.2.6 e do 1.5.5 — (1) o som do andar recomeçava porque o mascote parava a cada passo que alcançava a meta; agora segue a sessão do original (sem parada até ficar a < 0,8 m, início só no batimento de 1 s); (2) na plataforma do Ancião da Cidade das Feras, que o `movemap` não tem, o mascote ia para a posição crua do dono e afundava na estrutura; agora invocar e reposicionar usam o `FindGroundPos` (sem ponto: erro 85 / recolhido); (3) a Curar Mascote (330) não tinha o mascote como alvo e não fazia nada. Testes intermitentes sob carga paralela (passam isolados): `aceitar_forma_o_grupo_e_avisa_os_dois_com_dados_reais`, `o_guia_selvagem_do_126_entrega_a_missao_inicial_1177`. Item 114 do histórico.
->
-> **B113 (2026-09-25), testado com o banco, falta ver em jogo:** o treinador não consumia o livro da habilidade (relato da Tsuko com Curar/Reviver Mascote, 328/329). `SkillStub::Learn` exige e tira o `GetRequiredItem` (`cskill/skill/skill.cpp:79-84`); agora vale nas duas versões (sem livro: erro 22). Item 113 do histórico.
->
-> **B112 (2026-09-25), testado com o banco, falta ver em jogo:** mascote de combate, 1.2.6 e 1.5.5 — habilidades por ordem (comando 4) e automática (5) com canto, dano, sangramento, recarga (`PET_SET_COOLDOWN` 252) e erro 93; soltar (`BANISH_PET` 102 → `FREE_PET` 232 após 10 s); renomear (NPC 36; o original recusa o mascote ativo, o nome aparece na próxima invocação); aprender e esquecer habilidade no NPC (38/37, livro e SP). Defeito do B111 corrigido: a gravação da jaula zerava nome e habilidades (`InfoPet::do_bloco` lia 40 de 192 B). Catálogos com `item_exigido`. Spec 05 §8.2. Item 112 do histórico.
->
-> **B111 (2026-09-25), testado com o banco, falta ver em jogo:** mascote de combate, 1.2.6 e 1.5.5 — invocar (a Tsuko "montava" o de combate), seguir, atacar por ordem/defesa/automático, apanhar dos monstros, morrer, experiência e nível, recolher, fome/lealdade/comida, reviver (habilidade 329), gravação na jaula. Layout v7 do `PET_ESSENCE` corrigido pelo `gs` 1.2.6; `SUMMON_PET`/`RECALL_PET`/`PET_HP_NOTIFY`/`OBJECT_ATTACK_RESULT` com o tamanho do cliente 1.2.6 (a montaria do 1.2.6 também usava os do 1.5.5). (Habilidades, soltar e renomear: B112.) Spec 05 §8.2. Item 111 do histórico.
->
-> **B110 (2026-09-25), corrigido, falta ver em jogo:** a Tsuko em laço com a 5909 "Domesticadores" e a "Instruções" (5911) travada: a 5911 é de chegar a um lugar (o mapa 1 inteiro) e o leitor v55 não lia o lugar, então o aviso do cliente (motivo 3) nunca a cumpria e a 5912 (Domesticadora) não vinha. Lugar medido no `OnTaskReachSite` do `libtask.so` 1.2.6. Item 110 do histórico.
->
-> **B109 (2026-09-24), corrigido, falta ver em jogo:** (1) itens sombreados depois de vender: faltava o `UNFREEZE_IVTR_SLOT` (181) por espaço vendido, que o 1.2.6 original manda antes do `ITEM_TO_MONEY` (captura). (2) missão 3427/3428 "Teste de Salto": o Sinal de Refinamento (11131) sai do **Baú de Tesouros** (mina 11117, x 255, z 3234, 33,5 m acima do relevo); o Baú Desgastado (12858) é da 7017 e não abre sem ela — comportamento certo. Recurso passou a usar só relevo + `fHeiOff` (o mapa de movimento somava 5 cm aqui). Item 109 do histórico.
->
-> **B108 (2026-09-24), corrigido no banco, falta ver em jogo:** personagens do 1.2.6 sem o Portal da Cidade (167): os moldes do `realm_126` tinham só a habilidade de ataque (o script de 18/09 não punha a 167, e sumiram a 235 do Arqueiro e a 125 do Sacerdote). Os moldes do `clsconfig` 1.2.6 têm a 167 em todas as classes; `scripts/2026_09_24_habilidades_do_clsconfig_126.sql` (aplicado) acerta os moldes e deu a 167 à Tsuko e à WRA. Item 108 do histórico.
->
-> **B107 (2026-09-24), corrigido, falta ver em jogo:** (1) missão automática do 1.2.6: o leitor v55 não lia `m_bAutoDeliver` (+0xac), nível, pré-missões, gênero nem zona — agora lê, medidos no `libtask.so` 1.2.6 (81 automáticas, entre elas a 9376); o pedido do cliente (`TASK_NOTIFY` motivo 4) entrega. (2) tela de dicas do jogador novo: o `gateway.rs` mandava 32 zeros como estado de ajuda e o cliente desligava todas as dicas; agora vai vazio, como o original. `scripts/2026_09_24_dicas_religadas.sql` religa os 4 personagens que gravaram o estado desligado (não aplicado). Item 107 do histórico.
->
-> **B106 (2026-09-24), corrigido, falta ver em jogo:** (1) monstros passeando que "disparavam"/subiam e voltavam de uma vez: o último passo do passeio saía como `OBJECT_MOVE` sem parada, e o cliente extrapola até 25 m (`EC_NPC.cpp:79`, `:1225-1240`); agora vai só o `stop_move`, como `npcsession.cpp:626-633`. (2) personagem preso em combate: o fim do `combate_s` não mandava `SELF_INFO_00` de vida/mana cheias; a captura 1.2.6 mostra o aviso só com o estado 1→0. Item 106 do histórico.
->
-> **B105 (2026-09-24), corrigido, falta ver em jogo:** a Planta Devoradora que "teleportou" depois de morta: o corpo era fixo de 20 s + `disappear` e ela voltava 1 s depois no mesmo ponto. No original (1.2.6 e 1.5.5) o corpo é o `iDeadTime` do gerador (0 em 27.610 de 27.618 monstros do mapa 1 = sem corpo e sem `disappear`) e o renascimento é 15 s + `iRefresh`, num ponto novo da área, com `NPC_ENTER_WORLD` — o corpo levanta noutro lugar ~15 s depois, como na captura. Suíte com banco: **695 testes, 0 falhas, 2 ignorados (as reproduções)** — depois de corrigir a instabilidade de `a_consulta_de_jogador_devolve_alguma_coisa` (pegava só a primeira mensagem; agora espera o 32).
->
-> **B104 (2026-09-24), corrigido, falta ver em jogo:** os monstros que "corriam, pulavam ou andavam no ar" no passeio: a emenda de passeio zerava a espera e mandava dois `OBJECT_MOVE` a ~50 ms (`ai.rs`, `comecar_passeio`). Reproduzido com o mapa 1 inteiro e o barramento; 0 depois da correção. `aipolicy`, habitat, `npcgen`, ids, água e estrutura conferidos (sem defeito). Suíte com banco: **695 testes, 0 falhas, 1 ignorado (a reprodução de 30 s)**.
->
-> **B103 (2026-09-24), diagnóstico:** terceiro teste do Murillo no 1.2.6. (1) "Monstros teleportando": **não reproduzido** — passeio, perseguição, volta para casa, velocidades, passo, intervalo e altura conferidos contra a captura original e medidos no mapa real (`tests/passeio_do_126.rs`); falta o momento exato em jogo. Diferença conhecida: teto de 80 criaturas visíveis contra 220 no original (spec 05 §5.0.9). (2) 299 matando o Filhote com 29–31: **correto** — a redução é `res/(res + 40·nível − 25)`; no nível 1 dá 20 (como a captura), no nível 2 a resistência 10 do Filhote quase some. (3) Prêmios: **corretos** para as seis classes; a Tsuko escolheu porque a 1179 é compartilhada por Feiticeira e Bárbaro (dois prêmios), o WRA não (1173 só do Guerreiro); o Murillo confirmou a arma no WRA. Suíte com banco: **693 testes, 0 falhas**.
->
-> **B102 (2026-09-24), feito e não publicado; os 4 scripts de banco de 2026-09-24 aplicados a pedido do Murillo:** segundo teste do Murillo no 1.2.6. (1) Missão "existente" e lista vazia: o leitor v55 ignorava as flags de filhas (0x6a–0x74, `libtask.so` 1.2.6) e a 1177 ativava 1178 e 1179 juntas; lidas agora (a 1173 passa a pedir a filha escolhida). A causa exata do sumiço na tela não está provada (o `Tasks.log` do cliente usado não estava disponível). A lista da Tsuko se conserta com `scripts/2026_09_24_lista_de_missoes_tsuko_126.sql`. (2) Tsuko com 15: `2026_09_24_atributos_iniciais_5_126.sql` (do B101) ainda não aplicado. (3) Barras vazias e nascimento errado: moldes do `realm_126` sem `ui_config` e com pontos de cidade; o `clsconfig` 1.2.6 dá os dois (nascimento junto ao Guia de cada raça) — `2026_09_24_moldes_do_clsconfig_126.sql` + `2026_09_24_wra_pelo_molde_126.sql`. (4) Concluídas no formato antigo do 1.2.6 no `TASK_DATA`. (5) Catálogo por realm: `data/<realm>/catalogo/{elements_layout,habilidades}.json` substitui o embutido; `realm_126` carrega sem falha (`tests/carga_dos_realms.rs`). Suíte com banco: **689 testes, 0 falhas**.
->
-> **B101 (2026-09-24), feito e não publicado:** quatro relatos do Tsuko no 1.2.6. (1) Dano 1-1: o `ptemplate.conf` 1.2.6 era recusado (o leitor exigia as seções do 1.5.5); agora lê as 8 do `gs` 1.2.6 e a Feiticeira nível 1 fica com físico 4-4, mágico 6-6, 60/60. (2) Atributos 15/5/15/15: são da seção `[HAG]`; o `clsconfig` 1.2.6 dá 5/5/5/5 — `scripts/2026_09_24_atributos_iniciais_5_126.sql` (**não aplicado**). (3) Contador de abate parado: o servidor contava, mas mandava o `svr_monster_killed` de 17 B; o 1.2.6 tem 9 (captura), agora no `WorldProtocol` v126. (4) 299 matando com 75–106: números do stub 1.5.5; a tabela 1.2.6 agora tem mana, aprendizado, alcance e dano executados do `gs` 1.2.6 (299 nível 1: plus 23,7; dano bruto 32; a captura mostra 20–24). Suíte com banco: **684 testes, 0 falhas**. Commit do bloco anterior: `eee918e`.
->
-> **B100 (2026-09-24), feito e não publicado:** duas causas do 1.2.6 resolvidas pelo `gs` 1.2.6 (ELF com símbolos, `files1.2.6/pwserver/gamed/gs`). (1) "Missão não disponível": o `NPC_TASK_OUT_SERVICE` v7 é ID + Name + `id_tasks[32]`, sem `storage_*`; o NPC 3518 entrega a 1177 (classes 3 e 4). A auditoria do `v7.json` corrigiu também ordem/tamanho das tabelas 98–112 (perda de exp na morte), `NPC_SKILL_SERVICE` e o `fixed_props` de armadura/ornamento. (2) Skill 299 sem animação: a tabela de habilidades não carregava no v7; agora `do_126` com os tempos do `gs` 1.2.6, e o 123 sai em conjuração + execução como na captura (+2,5 s). Suíte com banco: **681 testes, 0 falhas**. Falta ver em jogo.
->
-> **B98 (2026-09-24), feito e não publicado:** a skill 299 (Enxame de Ferroadas) foi exercitada de ponta a ponta no barramento v126. Para o dono, a ordem e o tamanho são 85 → 88 → 142 (14 B) → 123. O 88 estava sendo enviado também a outros jogadores; agora só vai ao dono, como no original. Suíte com banco: **674 testes, 0 falhas**. O relato visual do próprio Tsuko ainda precisa de prova em jogo (alvo e overlay).
->
-> **B96 (2026-09-23), feito e não publicado:** o leitor Rust fecha o `tasks.data` v55 do realm 126 e o Guerreiro nível 1 aceita a missão 1173 em teste. Campos fixos ainda não mapeados permanecem no padrão. Suíte com banco: **667 testes, 0 falhas**. O Murillo confirmou em jogo a agressividade dos monstros; a poção pareceu recuperar corretamente no 1.2.6. Relatou falta do efeito e da animação após canalizar uma skill. Próximo bloco: pipeline visual da skill, depois desta revisão.
->
-> **B95 (2026-09-24), feito e não publicado:** a Forma Sombria (2570) transforma, e a caixa
-> de Cartas de General dá a carta — os dois relatos do teste do Murillo. Suíte com o banco: **664 testes, 0 falhas** (na árvore que também tinha o B94 do Codex em andamento).
->
-> **Última atualização: 2026-09-23**, B94 — **o v7 do `elements.data` passou ao leitor genérico**; o 1.5.5 já estava jogável no básico e tudo
-> foi juntado na `main` (inclusive a frente 1.2.6 que estava na worktree `../pw-126`). A
-> frente ativa passa a ser **levar ao 1.2.6 o que o 1.5.5 já resolveu** (§5D). Suíte com o
-> banco na `main`: **656 testes, 0 falhas** — medir com `--test-threads=2` (skill `pw-testar-e-publicar`).
->
-> **Publicado no realm 155** em 2026-09-22 (B79–B86). B87–B88 (mapa de água) e o realm 126
-> **não** foram publicados.
+> **Scripts de banco de 2026-09-24 a 26:** todos com efeito no banco (conferido em
+> 2026-09-26: Tsuko com atributos base 5 e teto de chi 99, nenhuma linha de dicas desligada
+> sobrando). Nenhum pendente.
 >
 > O Claude (`.claude/`, `CLAUDE.md`) e o Codex (`AGENTS.md`, `.codex/`) seguem as mesmas
 > diretrizes, com as skills em `.claude/skills/`.
@@ -74,12 +34,15 @@
 
 ## 0. Em uma tela
 
-**Marco de 2026-09-24 (B98): o 1.5.5 está jogável no básico; o 1.2.6 lê `elements.data` v7 e `tasks.data` v55.** Tudo está na `main` (as
-branches `multi-versions` e `versao-126` foram juntadas). Ordem combinada com o Murillo:
+**Marco de 2026-09-26 (B120): o 1.5.5 está jogável no básico; o 1.2.6 carrega os dados
+próprios (`elements.data` v7, `tasks.data` v55, `ptemplate.conf`, `clsconfig`, habilidades do
+`gs` 1.2.6) e ganhou, junto com o 1.5.5, o mascote de combate.** Tudo está na `main`. Ordem
+combinada com o Murillo:
 
-1. ~~1.5.5 jogável no básico~~ — **atingido**. O que falta dele está em §5A/§5B e continua na
-   fila, mas deixou de bloquear.
-2. **1.2.6 com o que o 1.5.5 já resolveu** ← **estamos aqui** (painel em §5D).
+1. ~~1.5.5 jogável no básico~~ — **atingido** (2026-09-23). O que falta dele está em §5A/§5B e
+   continua na fila, mas deixou de bloquear.
+2. **1.2.6 com o que o 1.5.5 já resolveu** ← **estamos aqui** (painel em §5D). Desde o B101 o
+   trabalho é guiado pelos testes do Murillo com a **Tsuko** (Feiticeira/Bárbaro 1.2.6).
 3. Depois: banco de dados (Contexto E), painel `pw-admin` (G), atualizador/launcher (H).
 
 **O que o 1.5.5 faz hoje** (realm `realm_155`, porta 29004, cliente BR v156, `elements.data`
@@ -88,37 +51,44 @@ v156, `tasks.data` 129, build 2569):
 - **Conta e personagem:** login, criação com os atributos, a arma e a habilidade iniciais da
   classe, nascimento no mapa 161 num servidor de mundo próprio, troca de personagem, saída.
 - **Mundo:** NPCs, monstros, recursos e outros jogadores entram e saem por distância; altura
-  pelo `.hmap`, água pelo `watermap/`; os três `.data` do realm lidos inteiros, fechando no
-  último byte.
-- **Movimento:** andar, voar (item de voo com máscara de classes), meditar, gestos, montaria
-  (sessão de invocar/recolher, não monta na água funda e cai dela), teleporte por
-  transportadora com os pontos descobertos (`world_targets.sev`), modo roupa que persiste.
+  pelo `.hmap`, água pelo `watermap/`, estrutura pelo `movemap/`; os três `.data` do realm
+  lidos inteiros, fechando no último byte.
+- **Movimento:** andar, voar (item de voo com máscara de classes), meditar e sentar (dobra a
+  regeneração), gestos, montaria (sessão de invocar/recolher, não monta na água funda e cai
+  dela), teleporte por transportadora com os pontos descobertos (`world_targets.sev`), modo
+  roupa que persiste.
 - **Combate:** golpe normal com dano adiado como no original, monstros com dados do
-  `MONSTER_ESSENCE` que perseguem, voltam, passeiam e atacam sozinhos quando agressivos;
-  habilidades com conjuração, execução, recarga, chi (`apcost`/`apgain`) e conjurar andando;
-  cura e PvP; morte e renascimento no distrito; durabilidade das peças.
-- **Progressão:** experiência, nível, cultivo pela missão, pontos de atributo, treinador,
-  Daimon (ficha e experiência).
+  `MONSTER_ESSENCE` que perseguem desviando de obstáculo (porte do `pathfinding`), voltam,
+  passeiam, renascem num ponto novo da área e atacam sozinhos quando agressivos; habilidades
+  com conjuração, execução, recarga, chi e conjurar andando; formas (Sombria, Raposa); cura e
+  PvP; morte e renascimento no distrito; durabilidade das peças.
+- **Mascote de combate:** invocar, seguir, atacar (ordem/defesa/automático), habilidades,
+  morrer, reviver, experiência, fome e lealdade, soltar, renomear, aprender/esquecer
+  habilidade, gravação na jaula (B111–B115).
+- **Progressão:** experiência, nível, cultivo pela missão, pontos de atributo, treinador (que
+  consome o livro), Daimon (ficha e experiência).
 - **Missões:** do `tasks.data` com listas binárias, automáticas por zona, dinâmicas,
-  prêmios (itens, dinheiro, experiência, cultivo, teto de chi), monstro invocado.
-- **Itens e economia:** loja de NPC com o preço do arquivo, drop e coleta (inclusive mina que
-  acorda monstro), poções no tempo com recarga por família, amuleto e hierograma automáticos,
-  flechas, descarte com destrave de slot, reparo.
+  prêmios (itens, dinheiro, experiência, cultivo, teto de chi), monstro invocado, itens de
+  missão retirados na entrega.
+- **Itens e economia:** loja de NPC com o preço do arquivo, drop e
+  coleta (inclusive mina que acorda monstro), poções no tempo com recarga por família, amuleto
+  e hierograma automáticos, flechas, descarte com destrave de slot, reparo, caixa de Cartas de General.
 - **Social:** fala, grupo.
 
-**O que falta no 1.5.5** (§5A): o sistema de Cartas de General (a caixa já dá a carta, B95),
-serviços de refinar e incrustar, os ~300 efeitos de
-habilidade sem porte, intérprete do `aipolicy.data`, trava de PvP, mascote de combate, resto
-do Daimon, armazém, troca de mapa entre contêineres, fôlego debaixo d'água.
+**O que falta no 1.5.5** (§5A): o sistema de Cartas de General (a caixa já dá a carta),
+serviços de refinar e incrustar, os ~300 efeitos de habilidade sem porte, intérprete do
+`aipolicy.data`, trava de PvP, resto do Daimon, armazém, troca de mapa entre contêineres,
+fôlego debaixo d'água.
 
-**O que o 1.2.6 faz hoje** (realm `realm_126`, porta 29000): loga, cria personagem e entra no
-mundo; os layouts de entrada, combate, experiência e itens foram conferidos com captura
-(B74-126, B89, B90, B93). As **regras de jogo são as mesmas** — ficam no `pw-gs`, e o que muda
-por versão fica no `WorldProtocol` de `crates/pw-protocol/src/versions/v126/`. O que impede o
-1.2.6 de ter tudo o que o 1.5.5 tem é **dado e layout**, não regra: o `elements.data` v7
-agora fecha no leitor genérico com ordem e tamanhos do `gs` 1.2.6 (B94, B100; agressividade confirmada em jogo, poção aparentemente correta), o `tasks.data` v55
-fecha no leitor Rust (B96, projeção parcial dos campos), e os comandos acrescentados depois do B76 não foram conferidos para o
-1.2.6. As duas falhas relatadas no Tsuko (missão inicial e animação da skill 299) têm causa provada e correção testada no barramento (B100), aguardando publicação e teste em jogo. Painel em §5D.
+**O que o 1.2.6 faz hoje** (realm `realm_126`, porta 29000): as **regras de jogo são as
+mesmas** — ficam no `pw-gs`, e o que muda por versão fica no `WorldProtocol` de
+`crates/pw-protocol/src/versions/v126/` e nos dados do realm. Loga, cria personagem (moldes do
+`clsconfig` 1.2.6: atributos 5/5/5/5, barras, nascimento junto ao Guia, Portal da Cidade),
+entra no mundo, combate e experiência conferidos byte a byte com captura, ficha pelo
+`ptemplate.conf` 1.2.6, habilidades com tempos, mana, alcance e dano do `gs` 1.2.6, missões
+do v55 (filhas, automáticas, lugar a alcançar, itens retirados, teto de chi), venda, bênçãos
+visíveis (`ENCHANT_RESULT` de 16 B) e o mascote de combate. **Nada disso depois do B100 foi
+visto em jogo** — a publicação de 2026-09-26 é a primeira com esses blocos. Painel em §5D.
 
 **Um realm por versão (B55):** `realm_155` = cliente BR, contêineres `pw-realm-155` /
 `pw-world-155`, dados em `data/realm_155/config`; `realm_126` = `pw-realm-126` /
@@ -128,6 +98,7 @@ fecha no leitor Rust (B96, projeção parcial dos campos), e os comandos acresce
 `grep`).
 
 ---
+
 ## 1. Ambiente
 
 ### 1.1 Serviços (`docker/docker-compose.yml`)
@@ -138,7 +109,7 @@ Credenciais na memória `pw_universal_infra_access`.
 | realm | versão | porta do cliente | servidor de mundo (mapas) | dados | situação |
 | :--- | :--- | ---: | :--- | :--- | :--- |
 | `realm_155` | 1.5.5 | **29004** | `pw-world-155` (mapas 1 e 161) | `data/realm_155/config` | **o realm de teste** — cliente BR; até 2026-09-17 se chamava `realm_155BR` (B55) |
-| `realm_126` | 1.2.6 | 29000 | `pw-world-126` (1) | `data/realm_126` | loga e entra no mundo; **frente atual** (§5D) |
+| `realm_126` | 1.2.6 | 29000 | `pw-world-126` (1) | `data/realm_126/config` | loga, entra, combate, missões e mascote pelo `gs` 1.2.6 (testado, publicado em 2026-09-26); **frente atual** (§5D) |
 | `realm_153` | 1.5.3 | 29001 | `pw-world-153` (1) | — | abandonado |
 | `realm_148` | 1.4.8 | 29002 | `pw-world-148` (1) | — | nunca foi alvo |
 
@@ -208,12 +179,14 @@ TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw
 cd docker && docker compose build pw-world-155 pw-realm-155 \
   && docker compose up -d --remove-orphans pw-world-155 pw-realm-155
 
+# O realm 1.2.6 do mesmo jeito: pw-world-126 pw-realm-126
+
 # Logs
 docker logs -f pw-realm-155        # login, entrada no mundo, o que o link trata
 docker logs -f pw-world-155        # os mapas 1 e 161
 ```
 
-**Referência da suíte, medida em 2026-09-25 (B112) com o banco:** **738 testes: 737 passaram, 1 intermitente, 2 ignorados** (97 binários, B119; intermitentes sob carga, passam isolados: os de grupo, 1177, hierograma)
+**Referência da suíte, medida em 2026-09-26 (B121, árvore com o B120) com o banco:** **746 testes: 744 passaram, 0 falhas, 2 ignorados** (97 binários; intermitentes sob carga, passam isolados: os de grupo, 1177, hierograma)
 (`cargo test --workspace --no-fail-fast -- --test-threads=2`). O limite de dois fios evita
 contenção no pool do Postgres nos testes de mundo. Qualquer falha nova deve ser investigada.
 
@@ -308,26 +281,51 @@ continua no mundo 1; para testar o nascimento no 161, criar um novo.
 
 ### 3.3 Publicado ou feito, sem confirmação em jogo registrada
 
-Os itens abaixo passaram na suíte com o banco; o Murillo declarou o 1.5.5 jogável em
-2026-09-23 sem apontar defeito neles, mas não há relato item a item. Detalhe e roteiro de
-cada um no histórico.
+Os itens abaixo passaram na suíte com o banco. **Todos estão publicados** nos realms 126 e 155
+desde 2026-09-26 11:10 (−03). Até o B86 o Murillo declarou o 1.5.5 jogável sem apontar defeito
+neles, mas não há relato item a item. Detalhe e roteiro de cada um no histórico.
 
-| item | o que olhar | publicado? |
-| :--- | :--- | :--- |
-| B69–B70 | chi: +5 por golpe, +15/s meditando, teto 99 sem aviso repetido | sim |
-| B71 | poção sem tela de cultivo; recarga por família (vida, mana, antídoto) | sim |
-| B72 | combate longo sem pausa no minuto do autosave | sim |
-| B73–B74 | Flecha Glacial −25 chi, Barreira de Asa −45 e escudo de 20 s; amuleto automático | sim |
-| B75–B76 | Daimon ganha 1/10 da experiência; Flor de Safira solta o Guardião; monstro agressivo | sim |
-| B77–B80 | modo de combate, Atq. Mágico na ficha, montaria (canalizar, montar, desmontar), quem chega vê montado | sim |
-| B82–B86 | conjurar andando (2571/2579 do Tormentador), modo roupa persiste e o dono se vê de roupa, descarte de item | sim |
-| B87–B88 | montaria recusada na água funda (erro 81) e derrubada acima de 1 m | **não** |
-| B99 | monstro de chão contorna obstáculo e estrutura ao perseguir, voltar e passear; cerca o alvo em vez de empilhar (meta dispersa) | **não** |
-| B97 | monstros de área no chão nascem e andam **em cima** de estrutura (Gárgulas na pedra do mapa 161, tela 486/525) | **não** |
-| B98 | skill 299 do 1.2.6: confirmar animação e efeito após a canalização; se faltar, conferir se o alvo ficou vivo até o 142 e o que o overlay registrou | **não** |
-| B95 | Forma Sombria (2570) transforma por 19 s (nível 1), tranca o equipamento e desfaz no fim; a Caixa de Tesouro do Guerreiro (41073) vira uma carta | **não** |
+**1.5.5 (realm 155, e o que vale para os dois)**
 
-Onde olhar: `docker logs --since 10m pw-world-155 2>&1 | grep -iE "montou|desmontou|água|descartou|viajou"`.
+| item | o que olhar |
+| :--- | :--- |
+| B69–B70 | chi: +5 por golpe, +15/s meditando, teto 99 sem aviso repetido |
+| B71 | poção sem tela de cultivo; recarga por família (vida, mana, antídoto) |
+| B72 | combate longo sem pausa no minuto do autosave |
+| B73–B74 | Flecha Glacial −25 chi, Barreira de Asa −45 e escudo de 20 s; amuleto automático |
+| B75–B76 | Daimon ganha 1/10 da experiência; Flor de Safira solta o Guardião; monstro agressivo |
+| B77–B80 | modo de combate, Atq. Mágico na ficha, montaria (canalizar, montar, desmontar), quem chega vê montado |
+| B82–B86 | conjurar andando (2571/2579 do Tormentador), modo roupa persiste e o dono se vê de roupa, descarte de item |
+| B87–B88 | montaria recusada na água funda (erro 81) e derrubada acima de 1 m |
+| B95 | Forma Sombria (2570) transforma por 19 s (nível 1), tranca o equipamento e desfaz no fim; a Caixa de Tesouro do Guerreiro (41073) vira uma carta |
+| B97 | monstros de área no chão nascem e andam **em cima** de estrutura (Gárgulas na pedra do mapa 161, tela 486/525) |
+| B99 | monstro de chão contorna obstáculo e estrutura ao perseguir, voltar e passear; cerca o alvo em vez de empilhar |
+| B104–B106 | (os dois) monstro passeando sem "correr/pular/disparar"; corpo morto some e o monstro renasce ~15 s depois noutro ponto da área; sair de combate libera o personagem |
+| B111–B115 | (os dois) mascote de combate: invocar sem "montar", seguir sem o som do andar recomeçar, atacar, habilidades com recarga, morrer/reviver (329), Curar Mascote (330), soltar, renomear, aprender/esquecer no NPC; na plataforma do Ancião o mascote não afunda |
+| B113 | (os dois) aprender habilidade no treinador consome o livro; sem livro, erro 22 |
+| B118 | (os dois) sentado, a regeneração dobra a partir do 2º segundo |
+| B120 | (os dois) Chamado da Raposa (312): vira raposa, a barra troca, as habilidades fora da forma são recusadas, a 312 de novo desfaz. Muralha de Espinhos (306): o monstro corpo a corpo perde vida a cada golpe que acerta |
+
+**1.2.6 (realm 126, Tsuko e WRA)**
+
+| item | o que olhar |
+| :--- | :--- |
+| B98, B100 | skill 299: 85 → 88 → 142 → 123, animação e efeito depois da canalização (88 em ~1,5 s, 123 em ~2,5 s) |
+| B100 | NPC 3518 oferece a missão inicial 1177 (sem "missão não disponível") |
+| B101 | Feiticeira nível 1 com físico 4-4, mágico 6-6; atributos 5/5/5/5; contador de abate sobe; 299 tira ~20–24 no nível 1 |
+| B102 | 1177 ativa só a filha escolhida; lista de missões aparece; barras preenchidas e nascimento junto ao Guia da raça em personagem novo |
+| B107 | missão automática do jogador novo (9376) entregue; tela de dicas do jogador novo aparece |
+| B108 | Portal da Cidade (167) na barra de todas as classes |
+| B109 | vender não deixa itens sombreados; Baú de Tesouros da 3427/3428 dá o Sinal de Refinamento |
+| B110 | 5911 "Instruções" cumpre ao chegar ao lugar e a 5912 vem; fim do laço da 5909 |
+| B116 | Curar Mascote e toda bênção/maldição aparecem (sem "FALHA"); vender vários itens de uma vez não sombreia; jogar fora e usar livro sem descarte no overlay |
+| B117 | entregar missão tira os itens de missão da bolsa; invocado da mina não fica na faixa de mascote |
+| B119 | teto de chi 99 na Tsuko e chi enchendo no combate; meditar não dá chi no 1.2.6 (é da versão) |
+| B120 | Tsuko: a 312 vira raposa (sem tempo), a barra troca, a 299 é recusada, a 312 de novo desfaz; 306 com ícone e o monstro corpo a corpo perde vida a cada golpe |
+
+Onde olhar: `docker logs --since 10m pw-world-126 2>&1 | grep -iE "sem porte|recus|mascote|missão"`
+(e `pw-world-155` para o 1.5.5). No overlay (`d_rtdebug 1`), qualquer linha é um comando
+descartado — o esperado é silêncio.
 
 ---
 ## 4. Dados de referência
@@ -371,8 +369,9 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
    reencaminhar a sessão. **Teleporte por NPC** (`NPC_TRANSMIT_SERVICE`, destinos por
    waypoint) e GM para outro mapa `falta`. O grupo se desfaz na troca.
 6. **Habilidades:** dano (1.123), efeitos no alvo (2.304 roteiros) e em si (266) pelos stubs,
-   37 efeitos portados (B53), mais `Wingshield` (B73) e `Fairyform` (B95, Forma Sombria —
-   falta o `EventChange`, as habilidades próprias da forma); os ~300 outros (invocação,
+   37 efeitos portados (B53), mais `Wingshield` (B73), `Fairyform` (B95, Forma Sombria),
+   `Foxform` e `Retort`/`Retort2` (B120) e `Rebirth`/`Decregiondmg` (B115) — falta o
+   `EventChange` (as passivas próprias da forma); os ~300 outros (invocação,
    escudos, recargas) sem porte; imunidades de monstro; talentos. O **Portal da Cidade** (167) não tem efeito (B17c).
 7. **Guia do jogo** do personagem novo: a barra de atalhos agora é gravada pelo próprio
     cliente (B51); o `config_data` do molde no `clsconfig` (barra pré-preenchida) segue não
@@ -455,29 +454,53 @@ Objetivo: o cliente 1.2.6 (realm `realm_126`, porta 29000) fazer o que o 1.5.5 j
 `WorldProtocol` de `crates/pw-protocol/src/versions/v126/`, que compõe o padrão e sobrescreve
 só o que muda) e em **dado** (versões dos `.data` do realm). Nada de `if versao == …` no mundo.
 
-Evidência do 1.2.6: fontes 1.5.3 (o protocolo base), capturas da VM 1.2.6 em
-`docs/evidencias/126/` (lidas com `cargo run -p pw-pcapdiff -- <pcap> --interno --subcomando N`),
-binário do cliente 1.2.6 (validador de ids: ids > 260 são recusados, VA 0x584618) e
-`docs/INVENTARIO_PROTOCOLO_126.md` (98 S2C e 46 C2S do `pw-gs`, com o que já foi conferido).
+Evidência do 1.2.6: o **`gs` 1.2.6** (ELF com símbolos, `files1.2.6/pwserver/gamed/gs`) e o
+`libtask.so` 1.2.6 — a fonte mais forte desde o B100; fontes 1.5.3 (o protocolo base);
+capturas da VM 1.2.6 em `docs/evidencias/126/` (lidas com
+`cargo run -p pw-pcapdiff -- <pcap> --interno --subcomando N`); binário do cliente 1.2.6
+(validador de ids: ids > 260 são recusados, VA 0x584618); `docs/INVENTARIO_PROTOCOLO_126.md`
+(98 S2C e 46 C2S do `pw-gs`, com o que já foi conferido).
 
 | área | estado no 1.2.6 | o que falta | onde |
 | :--- | :--- | :--- | :--- |
-| login, criação, entrada | **testado** (B63, B74-126); moldes das 6 classes no banco | ver em jogo de novo depois do merge | `docs/ENTRADA_126.md` |
+| login, criação, entrada | **testado** (B63, B74-126); moldes das 6 classes pelo `clsconfig` 1.2.6 (atributos, barras, nascimento, 167) aplicados no banco (B101, B102, B108) | ver em jogo | `docs/ENTRADA_126.md` |
 | combate (layouts 24/26/33/83/84/144) | **testado** byte a byte com captura (B89) | ver em jogo | `docs/COMBATE_126.md` |
-| experiência e itens (31/36/46/72/99/156/158) | **testado** (B90, B93) | preço real da loja no 1.2.6 (v7) e ver em jogo | `docs/ITENS_EXPERIENCIA_126.md` |
+| experiência e itens (31/36/46/72/99/156/158, 181, venda de 12 B) | **testado** (B90, B93, B109, B116) | preço real da loja no 1.2.6 (v7) e ver em jogo | `docs/ITENS_EXPERIENCIA_126.md` |
 | `OWN_EXT_PROP` (152 B) | **confere byte a byte** com a captura (B93) | — | `specs/04` |
 | comandos 14 e 64 | **divergem** da captura | medir e sobrescrever no v126 | inventário |
-| `elements.data` v7 | **testado no leitor genérico** (B94, B100): 119 entradas, **23.447 registros**, 16.664.770 bytes; ordem e `sizeof` das 118 tabelas pelo `gs` 1.2.6; `NPC_TASK_OUT/IN/SKILL_SERVICE`, `NPC_ESSENCE`, `NPC_TRANSMIT_SERVICE` conferidos no `gs`; arma/armadura/ornamento sem `fixed_props`; agressividade de monstros **confirmada em jogo**, poção aparentemente correta no relato do Murillo | ver em jogo mina, pet, voo, amuleto e classe; conferir no `gs` os prefixos só plausíveis (STONE, PARAM_ADJUST, TASKDICE, SECONDLEVEL) e os campos opacos | `specs/03` §3.1 |
-| `tasks.data` v55 | **testado no Rust** (B96): 2.819 raízes, 7.994 tarefas, último byte e corrupção; 1173 aceita por Guerreiro nível 1 em teste do motor; **1177 entregue pelo NPC 3518 a Bárbaro nível 1 no teste de mundo com banco** (B100) | projetar os campos fixos ainda não mapeados (nível, pré-missões, flags etc.); ver missão inicial em jogo após publicação | `specs/03` §3.2, B91/B96 |
-| missões com filhas, moldes (nascimento e barras), concluídas no `TASK_DATA`, catálogo por realm | **corrigidos e testados** (B102); scripts de banco a aplicar | aplicar os 4 scripts de 2026-09-24, publicar e ver em jogo | `specs/03` §2/§3.2/§3.10, `specs/05` §7/§10 |
-| ficha, atributos, contador de abate e dano de skill no 1.2.6 | **corrigidos e testados** (B101): `ptemplate.conf` com as seções do `gs` 1.2.6; moldes 5/5/5/5 pelo `clsconfig` 1.2.6 (script a aplicar); `svr_monster_killed` de 9 B; tabela de habilidades inteira do `gs` 1.2.6 | aplicar o script de atributos, publicar e ver em jogo; posições de nascimento do `clsconfig` 1.2.6 divergem dos moldes do banco (humanos e alados) | `specs/03` §3.5/§3.10/§3.10b, `specs/04`, `specs/05` §7 |
-| skill após canalização | **causa provada e corrigida** (B100): a tabela de habilidades não carregava no v7 (123 colado ao 142). `TabelaDeHabilidades::do_126` com os tempos do `gs` 1.2.6 (823 skills); teste com relógio: 88 em ~1,5 s e 123 em ~2,5 s, como na captura. Ordem/destinatários do B98 mantidos | ver em jogo a animação da 299; mana/alcance/dano do 1.2.6 agora do `gs` 1.2.6 (B101) | `specs/05` §habilidades, `specs/04` §5 |
-| comandos acrescentados depois do B76 no 1.5.5 | **não conferidos** no 1.2.6 | para cada um: existe no 1.2.6? tamanho? `PLAYER_MOUNTING` (227), `SUMMON_PET`/`RECALL_PET` (233/234), pet op (235/236), `UNFREEZE_IVTR_SLOT` (181), `SET_COOLDOWN` (198), estado estendido do `info_player_1`, bit `MODA` do `SELF_INFO_1`, descarte (C2S 14/15) | spec 04 |
-| sistemas que o 1.2.6 não tem | Daimon: `ELF_EXP` (283) já é omitido (B93) | conferir chi, cultivo, teto de chi e o que mais não existe no cliente 1.2.6, e omitir pelo trait | validador do cliente |
-| dados de mapa do `realm_126` | `.hmap`, `watermap/`, `world_targets.sev`, `npcgen.data`, `precinct.sev` presentes? | conferir que cada leitor fecha no último byte com os arquivos do 1.2.6 | `data/realm_126/config` |
-| publicação e teste em jogo | contêineres 126 **não** reconstruídos desde o merge | publicar só com pedido do Murillo; roteiro em `docs/SINCRONIZACAO_126.md` | skill `pw-testar-e-publicar` |
+| `elements.data` v7 | **testado no leitor genérico** (B94, B100): 119 entradas, **23.447 registros**, 16.664.770 bytes; ordem e `sizeof` das 118 tabelas pelo `gs` 1.2.6; agressividade **confirmada em jogo** | conferir no `gs` os prefixos só plausíveis (STONE, PARAM_ADJUST, TASKDICE, SECONDLEVEL) e os campos opacos | `specs/03` §3.1 |
+| `tasks.data` v55 | **testado no Rust** (B96): 2.819 raízes, 7.994 tarefas, fecha no último byte; lidos filhas (B102), automática/nível/pré-missões/gênero/zona (B107), lugar a alcançar (B110), `m_bClearAcquired` (B117), teto de chi do prêmio (B119) | os campos fixos ainda não mapeados; ver as missões iniciais em jogo | `specs/03` §3.2 |
+| ficha e atributos | **testado** (B101): `ptemplate.conf` com as 8 seções do `gs` 1.2.6; `svr_monster_killed` de 9 B | ver em jogo | `specs/03` §3.5/§3.10 |
+| habilidades | **testado**: tempos, mana, aprendizado, alcance e dano do `gs` 1.2.6 (B100, B101); `ENCHANT_RESULT` de 16 B com modificador em 2 bytes (B116, B118); `allow_forms` do construtor do `gs` (B120) | **65 roteiros herdados do 1.5.5 divergem do `gs` 1.2.6** (B115, ver abaixo); ver a 299 em jogo | `specs/05` §habilidades, `specs/habilidades_126/` |
+| mascote de combate | **testado** (B111–B116): `PET_ESSENCE` v7 pelo `gs`, invocar/recolher/HP/ataque com os tamanhos do 1.2.6, Curar Mascote só cura (sem `Rebirth` no 1.2.6) | ver em jogo | `specs/05` §8.2 |
+| comandos acrescentados depois do B76 no 1.5.5 | parcialmente conferidos pelo caminho (181, 102/232, 233/234, 252, bênçãos) | conferir o resto: `PLAYER_MOUNTING` (227), pet op (235/236), `SET_COOLDOWN` (198), estado estendido do `info_player_1` (inclusive o bit de forma), bit `MODA` do `SELF_INFO_1`, descarte (C2S 14/15) | spec 04 |
+| sistemas que o 1.2.6 não tem | Daimon: `ELF_EXP` (283) omitido (B93); meditar não dá chi (B119); sem `Rebirth`/`Decregiondmg` (B115) | conferir cultivo e o que mais não existe no cliente 1.2.6, e omitir pelo trait | validador do cliente |
+| dados de mapa do `realm_126` | `.hmap`, `watermap/`, `movemap/`, `world_targets.sev`, `npcgen.data`, `precinct.sev` | conferir que cada leitor fecha no último byte com os arquivos do 1.2.6 | `data/realm_126/config` |
+| publicação e teste em jogo | **publicado em 2026-09-26** com tudo até o B120 | o teste do Murillo com a Tsuko (roteiro no §3.3) | skill `pw-testar-e-publicar` |
 
-Ordem atualizada pelo relato do Murillo: (1) ~~layout v7 do `elements.data`~~ (B94); (2) ~~leitor estrutural Rust do `tasks.data` v55 e missão 1173~~ (B96; projeção parcial); (3) ~~efeito/animação após canalização~~ (B98, B100; ver em jogo) e ~~missão 1177~~ (B100; ver em jogo); (4) conferir comandos do B77–B88 no 1.2.6; (5) comandos 14 e 64; (6) completar campos v55; (7) publicar somente a pedido e testar em jogo.
+**Roteiros de habilidade do 1.2.6 (B115):** o catálogo 1.2.6 herda do 1.5.5 os
+`StateAttack`/`BlessMe`; 65 divergem do `gs` 1.2.6 em efeito (ex.: 610 reduz ataque/magia lá e
+defesa/resistência no herdado; 404/406/… dão `Ap` e não `Apgencont2`; 58/59 não fazem nada
+lá). Lista: `python specs/habilidades_126/conferir_roteiros_126.py ../files1.2.6/pwserver/gamed/gs 70`.
+Caminho: estender o emulador do extrator aos `StateAttack`/`BlessMe` (sondando `L` e as
+variáveis) e gerar os roteiros do 1.2.6; enquanto isso, casos pontuais em `ROTEIROS_DO_GS_126`.
+
+**Forma de raposa (B120):** faltam as passivas `EVENT_CHANGE` (323: +50% de nado; 324:
+`SetIncfight(0,2 + 0,1·L)`) aplicadas só na forma (`SkillWrapper::EventChange`,
+`skillwrapper.cpp:589-610`) e o bit de forma no `info_player_1` do 1.2.6 (quem entra no campo
+de visão depois não vê a raposa; medir o `CheckValid` do cliente 1.2.6). Os espinhos só
+devolvem golpe normal de monstro; golpe de habilidade (o `value` do `Retort2`) e de jogador
+não passam por eles.
+
+**Diferenças conhecidas ainda abertas:** teto de 80 criaturas visíveis contra 220 no original
+(spec 05 §5.0.9, B103); a Batatinha (15955) com o nome dentro do modelo é dado do cliente
+(B116), sem correção no servidor.
+
+**Próximos passos, em ordem:** (1) **teste em jogo do Murillo** com o que foi publicado em
+2026-09-26 (§3.3) — o que ele relatar passa à frente de tudo; (2) commitar o B120 (a pedido);
+(3) roteiros do 1.2.6 gerados do `gs` (os 65 do B115); (4) passivas da raposa e bit de forma
+no `info_player_1`; (5) conferir os comandos restantes do B77–B88 no 1.2.6; (6) comandos 14 e
+64; (7) completar os campos do v55 e os prefixos do v7.
 
 **Outras frentes, depois:**
 - **Cliente v181** (`E:\0_GAMES\Perfect World`, build 2591): exigiria `v181.json` no
@@ -485,9 +508,6 @@ Ordem atualizada pelo relato do Murillo: (1) ~~layout v7 do `elements.data`~~ (B
 - **Servidor 1.5.5 original numa VM 32-bit** (`pwserver_155v156`): o gabarito da versão
   certa (B44c).
 - Banco (E), `pw-admin` (G), atualizador/launcher (H) — memória `pw_roadmap_contextos`.
-
----
-**Roteiros de habilidade do 1.2.6 (B115):** o catálogo 1.2.6 herda do 1.5.5 os `StateAttack`/`BlessMe`; 65 divergem do `gs` 1.2.6 em efeito (ex.: 610 reduz ataque/magia lá e defesa/resistência no herdado; 404/406/… dão `Ap` e não `Apgencont2`; 58/59 não fazem nada lá). Lista: `python specs/habilidades_126/conferir_roteiros_126.py ../files1.2.6/pwserver/gamed/gs 70`. Caminho: estender o emulador do extrator aos `StateAttack`/`BlessMe` (sondando `L` e as variáveis) e gerar os roteiros do 1.2.6; enquanto isso, casos pontuais em `ROTEIROS_DO_GS_126`.
 
 ## 6. Regras que valem para qualquer mudança
 
@@ -626,11 +646,25 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 97 | 09-24 | leitor do `movemap/` (`.rmap` + `.dhmap`): nascimento de área no chão e passo do monstro em cima da estrutura (Gárgulas do mapa 161) |
 | 98 | 09-24 | skill 299 no v126: 85 → 88 → 142 → 123 para o dono; 88 removido do broadcast; visual do próprio Tsuko pendente em jogo |
 | 99 | 09-24 | desvio de obstáculo do monstro de chão: porte do `pathfinding` (perseguição dispersa sem bloqueio + `CPf2DBfs`, passeio com o agente de 30 nós), volta para casa com `ReturnHome` |
-| 119 | 09-26 | 1.2.6: teto de chi do prêmio v55 (+40), Tsuko com 99; meditar sem chi no 1.2.6; corrige o B118 |
-| 118 | 09-26 | sentar dobra a regeneração; "FALHA" nas bênçãos 1.2.6 (modificador em 2 bytes); chi, alcance e dano do mascote conferidos |
-| 117 | 09-26 | 1.2.6: `m_bClearAcquired` no v55 (itens de missão não saíam) + limpeza SQL da Tsuko; id do invocado fora da faixa de mascote |
-| 116 | 09-26 | 1.2.6: `ENCHANT_RESULT` 16 B (bênçãos visíveis), item vendido de 12 B (sombreado), `PLAYER_DROP_ITEM` pela versão; Batatinha = dado do cliente |
-| 115 | 09-25 | Curar Mascote: `Rebirth`/`Decregiondmg` no 1.5.5; 1.2.6 só cura (roteiro do `gs`); 65 roteiros 1.2.6 divergentes achados |
-| 114 | 09-25 | mascote: som do andar (sem parada a cada passo), `FindGroundPos` ao invocar/reposicionar (plataforma do Ancião), Curar Mascote no mascote |
+| 100 | 09-24 | (1.2.6) missão inicial 1177 (`NPC_TASK_OUT_SERVICE` v7 pelo `gs`) e tempos das habilidades do `gs` 1.2.6 |
+| 101 | 09-24 | (1.2.6) `ptemplate.conf` do `gs` 1.2.6, atributos 5/5/5/5, `svr_monster_killed` de 9 B, mana/alcance/dano das habilidades |
+| 102 | 09-24 | (1.2.6) missões com filhas, moldes do `clsconfig` (barras e nascimento), concluídas no `TASK_DATA`, catálogo por realm |
+| 103 | 09-24 | (1.2.6) diagnóstico: monstros "teleportando" não reproduzido, dano da 299 e prêmios corretos |
+| 104 | 09-24 | (1.2.6) monstros correndo/pulando no passeio: dois `OBJECT_MOVE` a ~50 ms |
+| 105 | 09-24 | (1.2.6) corpo pelo `iDeadTime` e renascimento em ponto novo (a Planta Devoradora) |
+| 106 | 09-24 | (1.2.6) passeio sem `OBJECT_MOVE` final e saída de combate com `SELF_INFO_00` |
+| 107 | 09-24 | (1.2.6) missão automática do v55 e tela de dicas do jogador novo |
+| 108 | 09-24 | (1.2.6) Portal da Cidade (167) nos moldes pelo `clsconfig` |
+| 109 | 09-24 | (1.2.6) `UNFREEZE_IVTR_SLOT` na venda e o Baú de Tesouros do "Teste de Salto" |
+| 110 | 09-25 | (1.2.6) lugar a alcançar do v55 (5909/5911/5912) |
+| 111 | 09-25 | mascote de combate: invocar, IA, morte, experiência, fome, reviver, jaula; `PET_ESSENCE` v7 |
+| 112 | 09-25 | mascote de combate: habilidades (comandos 4/5, recarga 252, erro 93), soltar (102 → 232), renomear (NPC 36), aprender/esquecer (38/37); `InfoPet::do_bloco` lia 40 de 192 B e a gravação zerava nome e habilidades. |
 | 113 | 09-25 | o treinador consome o livro da habilidade (`GetRequiredItem`), 1.2.6 e 1.5.5 |
-| 112 | 09-25 | mascote de combate: habilidades (comandos 4/5, recarga 252, erro 93), soltar (102 → 232), renomear (NPC 36), aprender/esquecer (38/37); `InfoPet::do_bloco` lia 40 de 192 B e a gravação zerava nome e habilidades. (B100–B111 ainda sem linha aqui: ver o histórico.) |
+| 114 | 09-25 | mascote: som do andar (sem parada a cada passo), `FindGroundPos` ao invocar/reposicionar (plataforma do Ancião), Curar Mascote no mascote |
+| 115 | 09-25 | Curar Mascote: `Rebirth`/`Decregiondmg` no 1.5.5; 1.2.6 só cura (roteiro do `gs`); 65 roteiros 1.2.6 divergentes achados |
+| 116 | 09-26 | 1.2.6: `ENCHANT_RESULT` 16 B (bênçãos visíveis), item vendido de 12 B (sombreado), `PLAYER_DROP_ITEM` pela versão; Batatinha = dado do cliente |
+| 117 | 09-26 | 1.2.6: `m_bClearAcquired` no v55 (itens de missão não saíam) + limpeza SQL da Tsuko; id do invocado fora da faixa de mascote |
+| 118 | 09-26 | sentar dobra a regeneração; "FALHA" nas bênçãos 1.2.6 (modificador em 2 bytes); chi, alcance e dano do mascote conferidos |
+| 119 | 09-26 | 1.2.6: teto de chi do prêmio v55 (+40), Tsuko com 99; meditar sem chi no 1.2.6; corrige o B118 |
+| 120 | 09-26 | Chamado da Raposa (`Foxform` + `allow_forms`) e Muralha de Espinhos (`Retort`/`Retort2`) nas duas versões; regeneração do mascote conferida |
+| 121 | 09-26 | revisão do estado e da documentação depois do B120: publicação de 09-26 medida, scripts conferidos no banco, `README.md` reescrito |

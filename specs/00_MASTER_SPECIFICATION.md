@@ -1,6 +1,7 @@
 # Especificação Mestre 00: o pw-universal-server
 
-> Verificada contra o código em 2026-09-14, commit `e6433ae`. Índice das specs e regra de
+> Verificada contra o código em 2026-09-14, commit `e6433ae`; tabela de versões e §5 revistas
+> em 2026-09-26 (B120). Índice das specs e regra de
 > manutenção: [`README.md`](README.md).
 
 ## 1. O que é
@@ -11,8 +12,8 @@ versões diferentes sobre a mesma infraestrutura de contas.
 
 | versão | situação | referência |
 | :--- | :--- | :--- |
-| **1.5.5** | **alvo atual** (desde 2026-09-02). Realm de teste `realm_155` (cliente BR; até 2026-09-17 `realm_155BR`) | fontes EvolvedPW (cliente e servidor), binário do cliente BR build 2569 |
-| 1.2.6 | segunda prioridade; loga e entra no mundo | capturas da VM com o servidor original, `docs/MEDIDAS_DO_126.md` |
+| **1.5.5** | **jogável no básico** desde 2026-09-23. Realm de teste `realm_155` (cliente BR; até 2026-09-17 `realm_155BR`), porta 29004 | fontes EvolvedPW (cliente e servidor), binário do cliente BR build 2569 |
+| **1.2.6** | **frente atual** (paridade com o 1.5.5, `ESTADO_E_RETOMADA.md` §5D). Realm `realm_126`, porta 29000: entrada, combate, missões v55, habilidades e mascote testados na suíte | `gs` e `libtask.so` 1.2.6 (ELF com símbolos), capturas da VM com o servidor original, `docs/MEDIDAS_DO_126.md` |
 | 1.5.3 | abandonado (o cliente disponível nunca logou) | seus fontes geraram o IR do protocolo, que continua válido para o 1.5.5 |
 | 1.4.8 | nunca foi alvo | — |
 
@@ -95,6 +96,6 @@ ver [`06_ADMIN_PANEL_AND_CPW_SPEC.md`](06_ADMIN_PANEL_AND_CPW_SPEC.md).
 | onde o trabalho parou, o que falta | `docs/ESTADO_E_RETOMADA.md` |
 | por que algo é assim (evidência) | `docs/HISTORICO_DE_SESSOES.md`, item citado |
 | layout de subcomando | `specs/protocol/gamedata_155.json` + `EvolvedPWClient/.../EC_GPDataType.h` + overlay do cliente |
-| regra de jogo | `EvolvedPWServer/cgame/gs/*.cpp` |
+| regra de jogo | `EvolvedPWServer/cgame/gs/*.cpp`; no 1.2.6, o `gs` 1.2.6 quando difere (roteiros de habilidade, `allow_forms`, tabelas do v7) |
 | formato de arquivo de dados | o carregador **do cliente** (`elementdataman::load_data`, `ATaskTempl::LoadBinary`) e o tamanho do arquivo |
 | como testar | `docs/COMO_TESTAR.md`, seção 2 do `ESTADO_E_RETOMADA.md` |

@@ -1,5 +1,9 @@
 # Manual do Usuário: Painel Web Administrativo (`pw-admin-web`)
 
+> **Documento da fase de planejamento (agosto de 2026), não atualizado.** Não descreve o
+> sistema atual e pode contradizê-lo. Onde o trabalho está: `docs/ESTADO_E_RETOMADA.md`;
+> como o sistema é: `specs/README.md`.
+
 O **`pw-admin-web`** é o painel de controle e gestão moderno que substitui completamente o antigo `pwAdmin` em PHP. Ele opera em tempo real comunicando-se com a API FastAPI (`porta 8000`), o banco **PostgreSQL 16** e a memória de cache **DragonflyDB**.
 
 ---

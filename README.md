@@ -1,167 +1,111 @@
-# 🐉 PW-Universal-Server (Modern Perfect World Server Platform)
+# pw-universal-server
 
-[![Rust](https://img.shields.io/badge/Language-Rust%202021-orange.svg)](https://www.rust-lang.org/)
-[![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016-blue.svg)](https://www.postgresql.org/)
-[![DragonflyDB](https://img.shields.io/badge/Cache-DragonflyDB-red.svg)](https://www.dragonflydb.io/)
-[![Docker](https://img.shields.io/badge/Orchestration-Docker%20Compose-2496ED.svg)](https://www.docker.com/)
-[![FastAPI](https://img.shields.io/badge/API-FastAPI%20Python-009688.svg)](https://fastapi.tiangolo.com/)
+Reimplementação em **Rust** (Tokio) do servidor do MMO **Perfect World**, com **PostgreSQL 16**
+e **DragonflyDB**, que serve o **cliente original sem modificação** e roda um realm por versão
+do jogo sobre a mesma base de contas.
 
-Uma reescrita completa, moderna, modular e de altíssimo desempenho do servidor de **Perfect World**, desenvolvida em **Rust (Tokio assíncrono)**, **PostgreSQL 16**, **DragonflyDB**, **FastAPI** e **Next.js/Tailwind**.
+Toda regra, layout e número vem do original — fonte C++ do servidor e do cliente, o binário do
+cliente, capturas do servidor 1.2.6 rodando numa VM, os próprios arquivos de dados — e o
+código cita de onde saiu.
 
-A plataforma suporta nativamente **qualquer versão do jogo (v1.2.6 até v1.5.3+)** através de codecs de protocolo dinâmicos e permite rodar **múltiplos servidores concorrentes (Multi-Realm)** compartilhando a mesma base de contas global e saldo de Gold/CUBI.
+## Situação (2026-09-26)
 
----
+| versão | realm | porta | situação |
+| :--- | :--- | ---: | :--- |
+| **1.5.5** (cliente BR, build 2569) | `realm_155` | 29004 | **jogável no básico** desde 2026-09-23: conta e personagem, mundo, movimento, montaria, combate e habilidades, mascote de combate, progressão, missões, loja e itens, grupo |
+| **1.2.6** | `realm_126` | 29000 | **frente atual**: levar ao 1.2.6 o que o 1.5.5 já faz. Entrada, combate, missões, habilidades e mascote testados na suíte; em teste em jogo |
+| 1.5.3 | `realm_153` | 29001 | abandonado (o cliente disponível nunca logou) |
+| 1.4.8 | `realm_148` | 29002 | nunca foi alvo |
 
-## 🔑 Credenciais Padrão (Banco de Dados & Administrador)
+Depois do 1.2.6: banco de dados, painel de administração e atualizador/launcher.
 
-Ao subir os contêineres com `docker compose up -d`, o PostgreSQL cria automaticamente as tabelas e insere as seguintes contas padrão:
+**Onde o trabalho está e o que falta:** [`docs/ESTADO_E_RETOMADA.md`](docs/ESTADO_E_RETOMADA.md).
+**Como o sistema é:** [`specs/README.md`](specs/README.md).
 
-### 1. Banco de Dados PostgreSQL 16
-| Parâmetro | Valor Padrão | Onde Configurar / Alterar |
-| :--- | :--- | :--- |
-| **Host** | `localhost` (ou `pw-postgres` no Docker) | `.env` / `docker-compose.yml` |
-| **Porta** | `5432` | `POSTGRES_PORT` |
-| **Database** | `pw_database` | `POSTGRES_DB` |
-| **Usuário** | `pw_admin` | `POSTGRES_USER` |
-| **Senha** | `pw_secure_password_2026` | `POSTGRES_PASSWORD` |
-
-### 2. Contas de Jogo & Administrador Master (Iniciais)
-| Usuário | Senha | Nível de GM | Saldo Gold | Finalidade |
-| :--- | :--- | :---: | :---: | :--- |
-| **`admin`** | **`admin`** | **Nível 32 (God/Master)** | **1.000.000 Gold** | Conta Master com privilégios totais de GM in-game e acesso ao Painel Web. |
-| **`testuser`** | **`123456`** | Nível 0 (Normal) | 50.000 Gold | Conta de jogador comum para testes de login e jogabilidade. |
-
----
-
-## 🏛️ Arquitetura do Sistema
+## Arquitetura
 
 ```
-+-----------------------------------------------------------------------------------------------------------------------+
-|                                                  CLIENTES DE JOGO (WIN32)                                             |
-|                                                                                                                       |
-|         +----------------------------------+                          +----------------------------------+            |
-|         |   ElementClient.exe (v1.2.6)     |                          |   ElementClient.exe (v1.5.3)     |            |
-|         +----------------------------------+                          +----------------------------------+            |
-|                           │ (TCP Port 29000)                                            │ (TCP Port 29001)            |
-+───────────────────────────┼─────────────────────────────────────────────────────────────┼─────────────────────────────+
-                            ▼                                                             ▼
-+-----------------------------------------------------------------------------------------------------------------------+
-|                                             DOCKER MULTI-REALM EM RUST (TOKIO)                                        |
-|                                                                                                                       |
-|  [ REALM 1: Classic v1.2.6 ]                                 [ REALM 2: Eclipse v1.5.3 ]                              |
-|  ├── pw-link (Porta 29000 pública)                           ├── pw-link (Porta 29001 pública)                         |
-|  ├── pw-delivery (Roteador de Chat/Grupos)                   ├── pw-delivery (Roteador de Chat/Grupos)                 |
-|  └── pw-gs (World Server 3D - 50ms Tick Loop)                └── pw-gs (World Server 3D - 50ms Tick Loop)              |
-+───────────────────────────┼─────────────────────────────────────────────────────────────┼─────────────────────────────+
-                            ▼                                                             ▼
-+-----------------------------------------------------------------------------------------------------------------------+
-|                                    CAMADA COMPARTILHADA (BANCO DE DADOS & GESTÃO)                                     |
-|                                                                                                                       |
-|  • pw-auth (Autenticação Global / Argon2id / MD5 / Tickets)                                                           |
-|  • pw-uniquename (Unicidade de Nomes por Realm)                                                                       |
-|  • pw-admin-web (Dashboard Web FastAPI + Tailwind substituindo o pwAdmin)                                             |
-|  • DragonflyDB (Cache em RAM Sub-milissegundo para Sessões e Pub/Sub de Chat)                                         |
-|  • PostgreSQL 16 (Tabelas Normalizadas com Índices: accounts, characters, character_items, skills, quests)            |
-+-----------------------------------------------------------------------------------------------------------------------+
+cliente 1.5.5 ──29004──► pw-realm-155 (pw-link) ──barramento 29100──► pw-world-155 (pw-gs, mapas 1 e 161)
+cliente 1.2.6 ──29000──► pw-realm-126 (pw-link) ──barramento 29100──► pw-world-126 (pw-gs, mapa 1)
+                                   │                                        │
+                                   └──────────── pw-postgres (5432) ◄───────┘
+                                                 pw-dragonfly (6379), pw-auth, pw-admin-api (8000)
 ```
 
----
+- **`pw-link`** (um por realm): login, lista de personagens, entrada no mundo, fala.
+- **`pw-gs`** (um por realm, com todos os mapas dele): a simulação — visibilidade, movimento,
+  combate, IA, habilidades, missões, itens, mascote. A regra de jogo é uma só; o que muda entre
+  versões é o layout (`crates/pw-protocol/src/versions/`) e os dados do realm (`data/<realm>/config`).
+- A porta do barramento (29100) nunca é publicada.
 
-## 🚀 Como Rodar o Servidor (Guia Rápido)
+Detalhe: [`specs/02_MULTI_REALM_ARCHITECTURE.md`](specs/02_MULTI_REALM_ARCHITECTURE.md).
 
-### 1. Pré-requisitos
-- [Docker](https://www.docker.com/) e Docker Compose instalados.
-- Python 3.10+ (para executar testes locais e utilitários).
+## Crates
 
----
+| crate | papel |
+| :--- | :--- |
+| `pw-core`, `pw-crypto`, `pw-wire` | tipos comuns, RC4/hashes/tickets, formatos de fio GNET e gamedata |
+| `pw-protocol` | opcodes, pacotes, subcomandos do mundo, o `WorldProtocol` de cada versão |
+| `pw-bus` | barramento `pw-link` ↔ `pw-gs` |
+| `pw-storage` | PostgreSQL (contas, personagens, itens, habilidades, missões, moldes) |
+| `pw-data-loader` | `elements.data`, `tasks.data`, `npcgen.data`, `aipolicy.data`, `gshop`, `.conf`, `.hmap`, `watermap/`, `movemap/`, `.sev` |
+| `pw-link`, `pw-gs` | os dois daemons por realm |
+| `pw-auth` | autenticação (sobe no compose; o `pw-link` autentica pelo `pw-storage`) |
+| `pw-delivery`, `pw-uniquename` | não usados hoje |
 
-### 2. Copiar os Arquivos de Configuração (`.data`)
+Ferramentas em `tools/`: `pw-rpcgen` e `pw-ir` (IR do protocolo), `pw-pcapdiff` (capturas),
+`pw-crash-re` (minidumps do cliente), `pw-pck-extract`, `pw-patch-tool` (planejado).
 
-Cada Realm possui sua pasta dedicada dentro de `data/`. Copie os arquivos da versão correspondente:
+## Rodar
 
-#### Para o Realm 1.2.6 Classic:
-```bash
-# Copia os dados para data/realm_126/config/
-cp ../files1.2.6/pwserver/gamed/config/elements.data ./data/realm_126/config/
-cp ../files1.2.6/pwserver/gamed/config/gshop.data ./data/realm_126/config/
-cp ../files1.2.6/pwserver/gamed/config/tasks.data ./data/realm_126/config/
-cp ../files1.2.6/pwserver/gamed/config/aipolicy.data ./data/realm_126/config/
-cp -r ../files1.2.6/pwserver/gamed/config/world ./data/realm_126/config/
-```
-
-#### Para o Realm 1.5.3 Eclipse:
-```bash
-# Copia os dados para data/realm_153/config/
-cp ../pwclient_153v145/element/data/elements.data ./data/realm_153/config/
-cp ../pwclient_153v145/element/data/gshop.data ./data/realm_153/config/
-cp ../pwclient_153v145/element/data/tasks.data ./data/realm_153/config/
-cp ../pwclient_153v145/element/data/aipolicy.data ./data/realm_153/config/
-```
-
----
-
-### 3. Iniciar os Serviços
-
-#### Cenário A: Subir os 2 Servidores SIMULTÂNEOS (Multi-Realm: 1.2.6 + 1.5.3)
-```bash
-cd pw-universal-server/docker
-docker compose up -d
-```
-
-#### Cenário B: Subir Apenas o Servidor 1.2.6 Classic
-```bash
-docker compose up -d pw-postgres pw-dragonfly pw-auth pw-admin-api pw-realm-126
-```
-
----
-
-### 4. Portas de Rede e Conexão dos Clientes
-
-| Serviço | Porta Pública | Configuração no Cliente / Acesso |
-| :--- | :---: | :--- |
-| **Realm 1.2.6 Classic** | `29000` | Configurar `127.0.0.1 29000` no `serverlist.txt` do cliente 1.2.6. |
-| **Realm 1.5.3 Eclipse** | `29001` | Configurar `127.0.0.1 29001` no `serverlist.txt` do cliente 1.5.3. |
-| **Painel Web (pwAdmin)** | `8000` | Abra `web-admin/frontend/index.html` no navegador ou acesse `http://localhost:8000`. |
-| **PostgreSQL 16** | `5432` | Usuário: `pw_admin` \| Senha: `pw_secure_password_2026` \| Banco: `pw_database` |
-| **DragonflyDB (Cache)** | `6379` | Cache de sessões em RAM sub-milissegundo e canais de Chat Pub/Sub. |
-
----
-
-## 📚 Índice de Documentação e Manuais
-
-Todos os manuais técnicos e especificações detalhadas estão disponíveis no repositório:
-
-### 📖 Manuais Técnicos (`docs/`)
-- [📘 Guia de Operação: Como Rodar Servidor Único ou Multi-Realm](docs/HOW_TO_RUN_SINGLE_OR_MULTI_REALM.md)
-- [💻 Manual do Usuário: Painel Web de Administração (pw-admin-web)](docs/WEB_ADMIN_USER_GUIDE.md)
-- [🎨 Guia de Integração e Decodificação de Ícones (Surfaces & Iconset)](docs/SURFACES_ICONSET_GUIDE.md)
-- [📦 Guia do Gerador de Atualizações CDN (pw-patch-tool)](docs/PW_PATCH_TOOL_GUIDE.md)
-- [📜 Manual de Formatos Binários: elements.data, gshop, tasks e colisões](docs/FILE_FORMATS_REFERENCE.md)
-- [⚡ Guia de Arquitetura do Loader e Consumo de Memória RAM](docs/LOADER_ARCHITECTURE_GUIDE.md)
-- [🔍 Relatório de Auditoria e Revisão Minuciosa Final](docs/FINAL_COMPREHENSIVE_AUDIT.md)
-
-### 📐 Especificações de Engenharia (`specs/`)
-- [00. Especificação Mestre de Arquitetura](specs/00_MASTER_SPECIFICATION.md)
-- [01. Schema Relacional Normalizado do PostgreSQL 16](specs/01_DATABASE_SCHEMA_POSTGRES.sql)
-- [02. Arquitetura Multi-Realm & Portas de Rede](specs/02_MULTI_REALM_ARCHITECTURE.md)
-- [03. Especificação do Loader de Dados Dinâmico](specs/03_DATA_LOADER_SPEC.md)
-- [06. Especificação do Painel Web & Gerador de Patches](specs/06_ADMIN_PANEL_AND_CPW_SPEC.md)
-
----
-
-## 🧪 Execução de Testes Automatizados
-
-A plataforma inclui uma suíte completa de testes unitários e de integração que validam criptografia, regras de protocolo, fórmulas de combate e integridade dos arquivos `.data`:
+Pré-requisitos: Docker e Rust estável. Os dados de cada realm ficam em `data/<realm>/config`
+(pacote de servidor da versão, com os `.data` do cliente correspondente por cima — ver
+`ESTADO_E_RETOMADA.md` §1.2).
 
 ```bash
-# Executa todos os testes de ponta a ponta:
-python ./tests/verify_services.py
-python ./tests/test_game_mechanics_and_integrity.py
-python ./tests/test_character_inventory_editing.py
-python ./tests/test_account_auth_and_passwords.py
+cd docker
+docker compose up -d pw-postgres pw-dragonfly pw-auth pw-admin-api
+docker compose build pw-world-155 pw-realm-155 && docker compose up -d pw-world-155 pw-realm-155
+docker compose build pw-world-126 pw-realm-126 && docker compose up -d pw-world-126 pw-realm-126
 ```
 
----
+No cliente, `element/userdata/server/serverlist.txt` aponta para `127.0.0.1` na porta do realm
+(no 1.5.5, em UTF-16LE com BOM). O cliente 1.5.5 inicia com
+`elementclient.exe game:cpw console=1 logiccheck:0`. Pré-requisitos dos clientes:
+`ESTADO_E_RETOMADA.md` §1.3.
 
-## 🛡️ Licença e Direitos
-Desenvolvido para fins educacionais, de pesquisa e preservação histórica de software de emulação de Perfect World.
+O banco é criado por `specs/01_DATABASE_SCHEMA_POSTGRES.sql` (usuário `pw_admin`, banco
+`pw_database`, senha em `docker/docker-compose.yml`), com as contas de teste `admin` e
+`testuser`. São credenciais de desenvolvimento local — troque antes de expor qualquer porta.
+
+## Testar
+
+A suíte só verifica de verdade com o banco; sem `TEST_DATABASE_URL` os testes de integração
+passam sem verificar nada. Os testes rodam isolados no schema `test`.
+
+```bash
+TEST_DATABASE_URL="postgres://pw_admin:<senha>@127.0.0.1:5432/pw_database" cargo test --workspace --no-fail-fast -- --test-threads=2
+```
+
+Resultado de referência: `ESTADO_E_RETOMADA.md` §2. Os scripts em `tests/*.py` são da fase
+inicial do projeto e não são a referência.
+
+## Documentação
+
+| documento | para quê |
+| :--- | :--- |
+| [`docs/ESTADO_E_RETOMADA.md`](docs/ESTADO_E_RETOMADA.md) | onde o trabalho está, o que falta, como rodar e publicar |
+| [`docs/HISTORICO_DE_SESSOES.md`](docs/HISTORICO_DE_SESSOES.md) | diário com a evidência de cada decisão (itens A*n* e B*n*) |
+| [`specs/`](specs/README.md) | como o sistema é: arquitetura, banco, formatos de dados, protocolo, simulação, painel |
+| [`docs/COMO_TESTAR.md`](docs/COMO_TESTAR.md) | o que verificar e como interpretar |
+| `docs/*_126.md` | evidência do 1.2.6: entrada, combate, itens, handshake, medidas, inventário do protocolo |
+| [`AGENTS.md`](AGENTS.md), [`CLAUDE.md`](CLAUDE.md) | regras para os agentes (Codex e Claude) que trabalham no repositório |
+
+Os guias `docs/HOW_TO_RUN_SINGLE_OR_MULTI_REALM.md`, `WEB_ADMIN_USER_GUIDE.md`,
+`SURFACES_ICONSET_GUIDE.md`, `PW_PATCH_TOOL_GUIDE.md`, `FILE_FORMATS_REFERENCE.md`,
+`LOADER_ARCHITECTURE_GUIDE.md` e `FINAL_COMPREHENSIVE_AUDIT.md` são da fase de planejamento
+(fim de agosto de 2026) e **não descrevem o sistema atual**; valem as specs.
+
+## Licença
+
+Projeto educacional, de pesquisa e de preservação de software.

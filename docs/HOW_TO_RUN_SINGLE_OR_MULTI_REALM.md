@@ -1,5 +1,9 @@
 # Guia de Operação: Como Rodar o Servidor (Versão Única ou Multi-Realm Concorrente)
 
+> **Documento da fase de planejamento (agosto de 2026), não atualizado.** Não descreve o
+> sistema atual e pode contradizê-lo. Onde o trabalho está: `docs/ESTADO_E_RETOMADA.md`;
+> como o sistema é: `specs/README.md`.
+
 Este guia prático explica o passo a passo exato para subir o servidor em uma versão específica (ex: apenas 1.2.6 ou apenas 1.5.3) ou rodar **ambas as versões simultaneamente** compartilhando o mesmo banco de dados PostgreSQL e DragonflyDB.
 
 ---

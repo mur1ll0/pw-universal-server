@@ -5,7 +5,8 @@
 > tocar** — não o código inteiro, não o `docs/HISTORICO_DE_SESSOES.md` (6.500 linhas de
 > diário). O histórico guarda a evidência; a spec guarda a conclusão.
 >
-> Verificadas contra o código em **2026-09-14** (B50).
+> Verificadas contra o código em **2026-09-14** (B50); cada spec traz no cabeçalho a data
+> da última revisão. Índice revisto em 2026-09-26.
 
 ## Índice e mapa de código
 
@@ -28,7 +29,9 @@ Subpastas com dado de referência: `protocol/` (IR gerado pelo `pw-rpcgen`),
 `elements_155/` (`.cfg` do ADMVAL e a arqueologia do v156/v159), `mapas/` (terreno por
 mapa), `clsconfig_155/` (leitor dos moldes de classe), `habilidades_155/` (números das
 habilidades extraídos dos stubs do servidor), `habilidades_126/` (tempos das habilidades
-executados do `gs` 1.2.6), `tasks_155/` (deslocamentos do `tasks.data` v129).
+executados do `gs` 1.2.6, e o conferidor dos roteiros), `addons_155/` (tratador de cada addon
+pelo `item_addon.cpp` 1.5.5), `tasks_155/` (deslocamentos do `tasks.data` v129). `elements_126/`
+está vazia (o catálogo v7 fica em `elements_layouts/`).
 
 ## Regra de manutenção
 

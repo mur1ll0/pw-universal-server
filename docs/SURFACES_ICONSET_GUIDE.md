@@ -1,5 +1,9 @@
 # 🎨 Guia de Integração e Decodificação de Ícones (Surfaces & Iconset)
 
+> **Documento da fase de planejamento (agosto de 2026), não atualizado.** Não descreve o
+> sistema atual e pode contradizê-lo. Onde o trabalho está: `docs/ESTADO_E_RETOMADA.md`;
+> como o sistema é: `specs/README.md`.
+
 Este documento detalha o funcionamento, arquitetura e instruções para o uso de ícones do cliente do Perfect World (**Surfaces & Iconset**) no ecossistema `PW-Universal-Server` e no painel administrativo **Web-Admin**.
 
 ---
