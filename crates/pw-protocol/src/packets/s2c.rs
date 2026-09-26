@@ -457,6 +457,9 @@ pub struct MembroDoGrupo {
     pub profit_level: i32,
 }
 
+/// Parâmetro de ícone que não vai no `ICON_STATE_NOTIFY` (ícone sem tempo, como a raposa).
+pub const SEM_PARAMETRO: i32 = i32::MIN;
+
 /// S2C: Pacote de Dados de Jogo / Mundo 3D (Opcode 0x20 / PROTOCOL_GAMEDATASEND)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct S2CGamedataSend {
@@ -2438,17 +2441,23 @@ impl S2CGamedataSend {
     /// consome (`(s >> 14) & 3`) — o servidor escreve assim em `InsertTeamVisibleState`
     /// (`actobject.h:1799-1818`) e manda em `object_state_notify` (`player.cpp:11356-11372`).
     /// Aqui cada ícone leva um parâmetro, o tempo restante em segundos (`_timeout`).
+    ///
+    /// O ícone com parâmetro [`SEM_PARAMETRO`] vai **sem** parâmetro — os dois bits altos em
+    /// zero e nada na lista `param[]` —, como o `InsertTeamVisibleState(state)` sem tempo do
+    /// `filter_Foxform` (`gs/actobject.h:1799-1812`, `param_count` 0).
     pub fn icon_state_notify(id: i32, icones: &[(u16, i32)]) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(125);
         stream.write_i32_le(id);
         stream.write_u16_le(icones.len() as u16);
-        for (estado, _) in icones {
-            stream.write_u16_le((estado & 0x3FFF) | (1 << 14));
+        for (estado, parametro) in icones {
+            let contagem = if *parametro == SEM_PARAMETRO { 0 } else { 1 << 14 };
+            stream.write_u16_le((estado & 0x3FFF) | contagem);
         }
-        stream.write_u16_le(icones.len() as u16);
-        for (_, parametro) in icones {
-            stream.write_i32_le(*parametro);
+        let com_tempo: Vec<i32> = icones.iter().map(|(_, p)| *p).filter(|p| *p != SEM_PARAMETRO).collect();
+        stream.write_u16_le(com_tempo.len() as u16);
+        for parametro in com_tempo {
+            stream.write_i32_le(parametro);
         }
         Self { data: stream.into_bytes().to_vec() }
     }

@@ -55,6 +55,33 @@ CHAMADA = re.compile(r"_ZNK?4GNET(?:5Skill|13PlayerWrapper)(\d+)(\w+)$")
 ELEMENTOS = {"Damage", "Golddamage", "Wooddamage", "Waterdamage", "Firedamage", "Earthdamage"}
 
 
+def formas_do_construtor(emu) -> dict:
+    """`allow_forms` de cada stub, lido no construtor `SkillNNNStub::SkillNNNStub()` do `gs` 1.2.6.
+
+    O construtor grava os campos `char` do `SkillStub` com `mov byte ptr [eax + d], imm`. No
+    1.2.6 `time_type` fica em +0x49 e `allow_forms` em +0x4a (a 312 grava 3, as da raposa
+    313-318 gravam 2): conferido pelo `time_type`, que bate com o herdado em 822 das 823
+    habilidades. O `allow_forms` **não** é herdado — 99 diferem do 1.5.5 (a 299-310 da
+    Feiticeira gravam 5 no 1.2.6 e 1 no 1.5.5; B120).
+    """
+    from capstone import CS_ARCH_X86 as ARQ, CS_MODE_32 as MODO, Cs
+    md = Cs(ARQ, MODO)
+    padrao = re.compile(r"byte ptr \[e.x \+ (0x[0-9a-f]+)\], (0x[0-9a-f]+|\d+)$")
+    formas = {}
+    for s in emu.simbolos:
+        m = re.match(r"_ZN4GNET\d+Skill(\d+)StubC1Ev$", s.name)
+        if not m:
+            continue
+        cod = bytes(emu.mu.mem_read(s["st_value"], s["st_size"]))
+        gravados = {}
+        for i in md.disasm(cod, s["st_value"]):
+            g = padrao.search(i.op_str)
+            if i.mnemonic == "mov" and g:
+                gravados.setdefault(int(g.group(1), 16), int(g.group(2), 0))
+        formas[m.group(1)] = gravados.get(0x4A)
+    return formas
+
+
 class Desconhecido(Exception):
     """A função consultou algo além do nível: o valor não é tabela."""
 
@@ -156,6 +183,14 @@ ROTEIROS_DO_GS_126 = {
     "330": {"no_alvo": [["V", "Probability", "100.0"],
                         ["V", "Value", "55 * L - 10 + S_Magicdamage * (0.02 * L + 0.1)"],
                         ["V", "Heal", "1"]]},
+    # `Skill306Stub::StateAttack` (VA 0x837de86), a Muralha de Espinhos: `SetProbability(100)`,
+    # `SetTime(600000)` (0x49127c00), `SetRatio(0,05·L + 0,1)` (duplas em 0x85314a8/0x85314b0),
+    # `SetShowicon(1)` e `SetRetort` — o `filter_Retort`, sem o `Value` do `Retort2` do 1.5.5 (B120).
+    "306": {"no_alvo": [["V", "Probability", "1.0 * 100"],
+                        ["V", "Time", "600000"],
+                        ["V", "Ratio", "0.05 * L + 0.1"],
+                        ["V", "Showicon", "1"],
+                        ["V", "Retort", "1"]]},
 }
 
 
@@ -267,6 +302,7 @@ def main(caminho_gs: str) -> None:
     # roteiros `no_alvo`/`em_si`) vem do stub 1.5.5 de mesmo id; o que o 1.2.6 deixou `null`
     # (função que lê outra coisa, como `GetHp`) também. Assim o servidor lê esta tabela como
     # lê a do 1.5.5 — e ela pode ir para `data/<realm>/catalogo/habilidades.json`.
+    formas = formas_do_construtor(emu)
     completa = {}
     for sid, h in saida.items():
         base = h155.get(sid)
@@ -276,6 +312,8 @@ def main(caminho_gs: str) -> None:
         for campo, valor in h.items():
             if valor is not None or campo in ("estados_ms", "execucao_ms", "recarga_ms"):
                 m[campo] = valor
+        if formas.get(sid) is not None:
+            m["allow_forms"] = formas[sid]
         m.update(ROTEIROS_DO_GS_126.get(sid, {}))
         completa[sid] = m
     doc = {"fonte": "files1.2.6/pwserver/gamed/gs (SkillNNNStub, executado por nível) + "

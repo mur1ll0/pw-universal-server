@@ -89,8 +89,10 @@ pub const MODO_VOLTAR: u8 = 0x07;
 /// O que o monstro decidiu fazer neste tique.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AcaoDoMonstro {
-    /// Bateu em alguém.
-    Atacou { alvo: i64, dano: i32 },
+    /// Bateu em alguém. `fisico` é o dano físico **bruto** do golpe (`attack_msg.physic_damage`,
+    /// antes da defesa) quando ele acertou um jogador corpo a corpo — o que os espinhos
+    /// (`filter_Retort`) devolvem —, e 0 nos outros casos.
+    Atacou { alvo: i64, dano: i32, fisico: i32 },
     /// Deu um passo até `destino`, que o cliente percorre em `tempo_ms`.
     Andou { destino: Vector3, tempo_ms: u16, velocidade: f32, modo: u8 },
     /// Parou em `posicao` (`OBJECT_STOP_MOVE`).
@@ -347,8 +349,25 @@ impl MonsterAi {
                     // `gs/npcsession.cpp:60-70`). Era 1,5 s escrito aqui para todos (B62).
                     self.attack_cooldown_ms = (monster.ataque_em_ticks.max(4) as u32) * 50;
                     // Golpe que erra é resultado legítimo, e o `dano()` devolve zero nele.
+                    let mut fisico = 0;
                     let dano = match (jogador, mascote) {
-                        (Some(p), _) => crate::combat::CombatEngine::monstro_ataca_jogador(monster, p, distancia).dano(),
+                        (Some(p), _) => {
+                            let golpe = crate::combat::CombatEngine::golpe_de_monstro(monster);
+                            let r = crate::combat::resolver(
+                                &golpe,
+                                &crate::combat::CombatEngine::defesa_do_jogador(p),
+                                distancia,
+                                false,
+                                crate::combat::Rolagens::sortear(),
+                            );
+                            // `AdjustDamage` só roda no golpe que acertou, e os espinhos saem
+                            // com `short_range > 0` — o monstro de longe, `attack_range > 6`
+                            // (`short_range_mode`, `npcgenerator.cpp:1972`; `monstros.rs`).
+                            if matches!(r, crate::combat::Resultado::Acertou { .. }) && monster.attack_range <= 6.0 {
+                                fisico = golpe.dano_fisico;
+                            }
+                            r.dano()
+                        }
                         (None, Some(m)) => crate::combat::resolver(
                             &crate::combat::CombatEngine::golpe_de_monstro(monster),
                             &crate::combat::CombatEngine::defesa_do_monstro(m),
@@ -359,7 +378,7 @@ impl MonsterAi {
                         .dano(),
                         (None, None) => 0,
                     };
-                    return Some(AcaoDoMonstro::Atacou { alvo: target_id, dano });
+                    return Some(AcaoDoMonstro::Atacou { alvo: target_id, dano, fisico });
                 }
                 return None;
             }

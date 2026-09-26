@@ -41,6 +41,14 @@ impl WorldProtocol for V126Protocol {
         0
     }
 
+    /// O `filter_Foxform::OnAttach` do `gs` 1.2.6 chama `ChangeShape(1)` — o `_shape` sem o
+    /// `FORM_CLASS << 6` (VA 0x830b1a0: `push 1` antes do `object_interface::ChangeShape`) —, e
+    /// o `gactive_imp::ChangeShape` 1.2.6 (VA 0x811d78a) guarda o valor inteiro como forma:
+    /// `shape_form = shape & 0xff`, `_cur_form = shape`. O byte do cliente é só o `_shape`.
+    fn byte_de_forma(&self, forma_155: u8) -> u8 {
+        forma_155 & 0x3f
+    }
+
     /// ENCHANT_RESULT (139) em 16 B: `{caster, target, skill, char level, char orange_name,
     /// char modifier, char modifier2}` — validador do cliente
     /// 1.2.6 (caso 139, VA 0x584e52) e o montador do `gs` 1.2.6

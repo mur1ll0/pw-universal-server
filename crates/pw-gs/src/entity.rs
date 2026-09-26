@@ -581,9 +581,10 @@ impl PlayerEntity {
         let r = self.efeitos.realce();
 
         // `UpdateLife`/`UpdateMana` (`playertemplate.h:1153-1189`): o equipamento entra em
-        // `_en_point.max_hp/max_mp`; a porcentagem (`Inchp`/`Dechp`) só na vida.
+        // `_en_point.max_hp/max_mp` e a porcentagem em `_en_percent` — na vida o
+        // `Inchp`/`Dechp`, na mana o `ImpairScaleMaxMP` da raposa (`filter_Foxform`).
         self.max_hp = resultado(a.max_hp, e.vida + b.vida, r.vida).max(1);
-        self.max_mp = a.max_mp + e.mana + b.mana;
+        self.max_mp = resultado(a.max_mp, e.mana + b.mana, r.mana);
 
         // `UpdateAttack` (`playertemplate.h:916-990`).
         let arma = e.arma;
@@ -711,9 +712,9 @@ impl PlayerEntity {
             // `PLAYER_MOUNTING` só alcança quem estava vendo na hora; quem chega depois
             // precisa do estado aqui.
             montaria: self.montaria.map(|m| (m.cor, m.tid as i32)),
-            // `shape_form`: 65 na Forma Sombria (`filter_Fairyform`, `gactive_imp::ChangeShape`
+            // `shape_form`: 65 na Forma Sombria e na raposa (`filter_Fairyform`/`Foxform`, `gactive_imp::ChangeShape`
             // em `gs/actobject.h:1047-1055` liga o `STATE_SHAPE` e guarda o byte).
-            forma: self.efeitos.forma(),
+            forma: self.efeitos.forma().map(|(shape, classe)| shape | (classe << 6)),
         }
     }
 }

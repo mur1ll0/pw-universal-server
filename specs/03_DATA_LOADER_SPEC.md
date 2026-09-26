@@ -358,8 +358,13 @@ campos do 1.5.5: estados, execução, recarga, mana, aprendizado (nível, SP, di
 distância de efeito, raio, distância de ataque, ângulo, precisão e **dano** (estado, base,
 elemento, fator, `ratio`, `plus`). Função ausente no stub = padrão do `SkillStub` (0,
 `skill.h:409-436`); função que lê outra coisa (vida, `GetPlus`) = `null`, e aí fica o valor do
-1.5.5 — hoje só o dano de 317, 529, 666, 667 e 799 (`GetHp`). **Roteiros** (`no_alvo`/`em_si`) também vêm do 1.5.5, salvo os de `ROTEIROS_DO_GS_126` no extrator (hoje a 330, lida na desmontagem); `conferir_roteiros_126.py` compara setter a setter com o `gs` e acha **65 que ainda divergem** (B115). Do 1.5.5 ficam também classe,
-tipo, pré-requisitos, `time_type`, área, flags e os roteiros `no_alvo`/`em_si`.
+1.5.5 — hoje só o dano de 317, 529, 666, 667 e 799 (`GetHp`). **Roteiros** (`no_alvo`/`em_si`) também vêm do 1.5.5, salvo os de `ROTEIROS_DO_GS_126` no extrator (hoje a 330 e a 306, lidas na desmontagem — a 306 do 1.2.6 é `Retort`, não o `Retort2` herdado, B120); `conferir_roteiros_126.py` compara setter a setter com o `gs` e acha **65 que ainda divergem** (B115). Do 1.5.5 ficam também classe,
+tipo, pré-requisitos, `time_type`, área, flags, `eventflag` e os roteiros `no_alvo`/`em_si`.
+**`allow_forms`** (máscara das formas em que a habilidade pode ser lançada, `skill.cpp:128`) **não** é
+herdado: sai do construtor `SkillNNNStub::SkillNNNStub()` do `gs` 1.2.6 (`mov byte [eax+0x4a]`;
+o `time_type` em +0x49 bate com o herdado em 822 das 823), e 99 diferem do 1.5.5 (299–310 gravam 5
+no 1.2.6 e 1 no 1.5.5; B120). No 1.5.5, `extrair_habilidades.py` lê `allow_forms` e `eventflag`
+do stub.
 Diferenças medidas contra o 1.5.5 nas 823: `plus` do dano em 68 e `ratio` em 10 (elemento,
 base e fator nunca diferem; a 299 tem 23,7 no nível 1 contra 124,5, a 1 tem 10,8 contra
 102,6), dinheiro exigido em 186, nível exigido em 142, estados em 13, recarga em 8, execução em

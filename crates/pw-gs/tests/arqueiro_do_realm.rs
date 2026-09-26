@@ -332,7 +332,7 @@ fn a_forma_sombria_transforma_tranca_o_equipamento_e_acaba_no_tempo() {
         absorve: 0.0,
         escala_defesa: 60,
     });
-    assert_eq!(e.forma(), Some(65));
+    assert_eq!(e.forma(), Some((1, 1)));
     assert!(e.equipamento_travado());
     let r = e.realce();
     assert_eq!((r.velocidade, r.defesa), (4, 60));
@@ -346,7 +346,7 @@ fn a_forma_sombria_transforma_tranca_o_equipamento_e_acaba_no_tempo() {
     // Nem o Dispersar (bênção/maldição) nem a morte a tiram.
     assert!(!e.limpar(true) && !e.limpar(false));
     e.ao_morrer();
-    assert_eq!(e.forma(), Some(65), "a forma não tem FILTER_MASK_REMOVE_ON_DEATH");
+    assert_eq!(e.forma(), Some((1, 1)), "a forma não tem FILTER_MASK_REMOVE_ON_DEATH");
 
     let mut acabou = false;
     for _ in 0..19 {
@@ -356,4 +356,46 @@ fn a_forma_sombria_transforma_tranca_o_equipamento_e_acaba_no_tempo() {
     assert_eq!(e.forma(), None);
     assert!(!e.equipamento_travado());
     assert_eq!(e.realce().velocidade, 0);
+}
+
+/// Muralha de Espinhos (306, B120): no 1.2.6 o `gs` faz `SetRetort` com `ratio` 0,05·L + 0,1
+/// por 600 s (VA 0x837de86); no 1.5.5 o stub faz `SetRetort2` com o mesmo `ratio` e `value`
+/// 0,02·L (`cskill/skills/skill306.h`). Os dois viram filtro — antes, "sem porte".
+#[test]
+fn a_muralha_de_espinhos_vira_retort_nas_duas_versoes() {
+    for (tabela, nome, efeito) in [
+        (TabelaDeHabilidades::do_126(), "Retort", pw_gs::efeitos::Efeito::Retort),
+        (TabelaDeHabilidades::do_155(), "Retort2", pw_gs::efeitos::Efeito::Retort2),
+    ] {
+        let passos = tabela.get(306).expect("306").no_alvo.clone().expect("roteiro no alvo");
+        let vars = |n: &str| (n == "L").then_some(2.0);
+        let mut dado = || 0;
+        let (aplicacoes, _) = pw_gs::efeitos::executar_roteiro(&passos, &vars, &mut dado);
+        let a = aplicacoes.iter().find(|a| a.nome == nome).unwrap_or_else(|| panic!("{nome} não saiu"));
+        assert_eq!(a.efeito, Some(efeito));
+        assert_eq!(a.tempo_s, 600);
+        assert!((a.razao - 0.2).abs() < 1e-5, "ratio {}", a.razao);
+    }
+}
+
+/// Chamado da Raposa (312, B120): as duas versões fazem `SetFoxform` com os números do
+/// `skill312.h:163-167`, e o `allow_forms` separa as habilidades de forma.
+#[test]
+fn o_chamado_da_raposa_e_as_formas_das_habilidades() {
+    for tabela in [TabelaDeHabilidades::do_126(), TabelaDeHabilidades::do_155()] {
+        let passos = tabela.get(312).expect("312").no_alvo.clone().expect("roteiro no alvo");
+        let vars = |n: &str| (n == "L").then_some(1.0);
+        let mut dado = || 99;
+        let (aplicacoes, _) = pw_gs::efeitos::executar_roteiro(&passos, &vars, &mut dado);
+        let a = aplicacoes.iter().find(|a| a.nome == "Foxform").expect("Foxform não saiu");
+        assert_eq!(a.efeito, Some(pw_gs::efeitos::Efeito::Foxform));
+        assert!((a.razao - 0.3).abs() < 1e-5 && (a.quantia - 0.6).abs() < 1e-5 && (a.probabilidade - 1.0).abs() < 1e-5);
+        assert!(tabela.get(312).unwrap().permitida_na_forma(0) && tabela.get(312).unwrap().permitida_na_forma(1));
+        for forma_de_raposa in 313..=318 {
+            let h = tabela.get(forma_de_raposa).unwrap();
+            assert!(!h.permitida_na_forma(0) && h.permitida_na_forma(1), "{forma_de_raposa} só na raposa");
+        }
+        let h = tabela.get(299).unwrap();
+        assert!(h.permitida_na_forma(0) && !h.permitida_na_forma(1), "299 só fora da raposa");
+    }
 }

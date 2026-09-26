@@ -293,6 +293,18 @@ pub enum Efeito {
     /// com `SetAmount(60 + 75 × nível)`, `SetValue(4 + 6 × nível)` e `SetTime(20000)`
     /// (`cskill/skills/skill249.h:257-262`).
     Wingshield,
+    /// `filter_Retort` (`cskill/skill/skillfilter.h:1450-1505`), a **Muralha de Espinhos**
+    /// (306) do 1.2.6: todo golpe **físico corpo a corpo** que acerta devolve ao atacante
+    /// `(int)(physic_damage × ratio)` — o dano bruto do golpe, antes da defesa — como um
+    /// golpe mágico que sempre acerta e passa pela defesa física dele (`attack_attr =
+    /// MAGIC_ATTACK`, `attack_rate` 1000). Não devolve golpe de longe (`short_range > 0`),
+    /// nem golpe não físico, nem ≤ 1. O `gs` 1.2.6 faz o mesmo (`filter_Retort::AdjustDamage`,
+    /// VA 0x8310e96). A 306 do 1.2.6 dá `SetRatio(0,05·L + 0,1)` por 600 s (B120).
+    Retort,
+    /// `filter_Retort2` (`skillfilter.h:14617-14672`), a 306 do 1.5.5: igual ao `Retort`, mas
+    /// o golpe de **habilidade** usa o `value` em vez do `ratio`. Aqui só o golpe normal do
+    /// monstro dispara, então o `ratio` basta.
+    Retort2,
     /// `filter_Fairyform` (`cskill/skill/skillfilter.h:16819-16875`), a **Forma Sombria**
     /// (2570) do Tormentador: enquanto dura, o jogador muda de forma (`ChangeShape(1 |
     /// FORM_CLASS << 6)` → `PLAYER_CHGSHAPE`), tem o equipamento trancado
@@ -302,6 +314,18 @@ pub enum Efeito {
     /// e `SetFairyform` os converte em `(int)(100 × ratio)` e `(int)(100 × value)`
     /// (`cskill/skill/playerwrapper.cpp:5247-5257`).
     Fairyform,
+    /// `filter_Foxform` (`cskill/skill/skillfilter.h:4606-4648`, `skillfilter.cpp:389-413`), o
+    /// **Chamado da Raposa** (312) da Feiticeira: sem tempo — fica até a 312 ser lançada de
+    /// novo (`SetFoxform` o tira quando `GetForm() == FORM_CLASS`, `playerwrapper.cpp:2539-2551`).
+    /// Na forma: `EventChange` para `FORM_CLASS`, equipamento trancado, `ImpairScaleMaxMP`
+    /// (`_decmp` = 100 × ratio), `EnhanceScaleDefense` (`_incdefence` = 100 × amount),
+    /// `EnhanceScaleAttack` — a **precisão** (`_incaccuracy` = 100 × probability) — e
+    /// `ChangeShape(_shape | FORM_CLASS << 6)`, `_shape` = `GetValueInt()`. O roteiro da 312 dá
+    /// ratio 0,35 − 0,05 × L, amount 0,3 + 0,3 × L, probability 0,5 + 0,5 × L, value 1
+    /// (`cskill/skills/skill312.h:163-167`; o `gs` 1.2.6 faz o mesmo, `filter_Foxform::OnAttach`
+    /// em VA 0x830b0f2). No [`Filtro`]: `razao` = mana, `escala_defesa` = defesa,
+    /// `por_segundo` = precisão, `contador` = `_shape`.
+    Foxform,
     /// `healing_potion_filter` / `mana_potion_filter` (`gs/potion_filter.h:6-130`): a poção
     /// não cura de uma vez — ela reparte o total pelo tempo e entrega **um pedaço por
     /// batimento de 1 s**. Não vem de roteiro de habilidade; quem cria é o uso do item.
@@ -382,7 +406,10 @@ impl Efeito {
             "Invincible" => Invincible,
             "Firearrow" => Firearrow,
             "Wingshield" => Wingshield,
+            "Retort" => Retort,
+            "Retort2" => Retort2,
             "Fairyform" => Fairyform,
+            "Foxform" => Foxform,
             "Rebirth" => Rebirth,
             "Decregiondmg" => Decregiondmg,
             _ => return None,
@@ -455,11 +482,20 @@ impl Efeito {
             // TRANSFERABLE_BUFF`, `HSTATE_WINGSHIELD` 69 e `VSTATE_WINGSHIELD` 29
             // (`cskill/skill/statedef.h:40,261`).
             Wingshield => f(Unico, true, 69, 29),
+            // `FILTER_MASK_UNIQUE | BUFF | HEARTBEAT | REMOVE_ON_DEATH | ADJUST_DAMAGE |
+            // TRANSFERABLE_BUFF`; `VSTATE_RETORT` 3 e `HSTATE_RETORT` 4 / `HSTATE_RETORT2` 253
+            // (`statedef.h:11,183,451`; o `gs` 1.2.6 empurra 3 e 4, VA 0x8310f8e).
+            Retort => f(Unico, true, 4, 3),
+            Retort2 => f(Unico, true, 253, 3),
             // `filter_Fairyform`: `FILTER_MASK_WEAK | FILTER_MASK_HEARTBEAT` — nem bênção nem
             // maldição (o Dispersar não o tira) e **sem** `REMOVE_ON_DEATH`. O ícone é o
             // `HSTATE_FAIRYFORM` 279 (`statedef.h:477`, `InsertTeamVisibleState`); não há
             // `VSTATE`: o que o cliente desenha é a forma, pelo `PLAYER_CHGSHAPE`.
             Fairyform => Ficha { convivencia: Fraco, bencao: false, maldicao: false, icone: 279, visivel: 0 },
+            // `filter_Foxform`: só `FILTER_MASK_WEAK` (`skillfilter.h:4611`) — sem batimento,
+            // sem `REMOVE_ON_DEATH`. Ícone `HSTATE_FOXFORM` 75 (`statedef.h:268`; o `gs`
+            // 1.2.6 empurra 0x4b), **sem parâmetro**: `InsertTeamVisibleState(state)`.
+            Foxform => Ficha { convivencia: Fraco, bencao: false, maldicao: false, icone: 75, visivel: 0 },
             // Sem ícone e sem estado visual: o original não acende nenhum (`potion_filter.h`).
             PocaoDeVida | PocaoDeMana => f(Fundir, true, 0, 0),
             // Nem `BUFF` nem `DEBUFF`: o Dispersar não os tira.
@@ -483,6 +519,9 @@ impl Efeito {
         }
     }
 }
+
+/// `FORM_CLASS` (`cskill/skill/skill.h:84`): a forma de classe (raposa, Forma Sombria).
+pub const FORMA_DE_CLASSE: u8 = 1;
 
 /// Um filtro vivo num objeto.
 #[derive(Debug, Clone, PartialEq)]
@@ -529,6 +568,8 @@ pub struct Realce {
     pub velocidade_de_ataque: i32,
     pub velocidade: i32,
     pub vida: i32,
+    /// `_en_percent.max_mp` (`Enhance/ImpairScaleMaxMP`), aplicado no `UpdateMana`.
+    pub mana: i32,
     pub resistencia: i32,
     pub critico: i32,
     /// `DecPrayTime`/`IncPrayTime` — porcentagem a menos no tempo de conjuração.
@@ -590,6 +631,10 @@ impl Efeitos {
     pub fn batida(&mut self) -> (Vec<Tique>, bool) {
         let mut tiques = Vec::new();
         for f in &mut self.filtros {
+            // `filter_Foxform` não tem `FILTER_MASK_HEARTBEAT` nem tempo: nada a contar.
+            if f.efeito == Efeito::Foxform {
+                continue;
+            }
             // `filter_Wounded::Heartbeat`, `filter_Hpgen/Mpgen::Heartbeat`: a cada 3 s, ou no
             // último, o acumulado.
             // A poção entrega todo segundo (`healing_potion_filter::Heartbeat`), sem o
@@ -684,11 +729,11 @@ impl Efeitos {
         antes != self.filtros.len()
     }
 
-    /// `FILTER_MASK_REMOVE_ON_DEATH` — todos os portados têm, **menos o `Fairyform`**, cuja
-    /// máscara é só `WEAK | HEARTBEAT` (`skillfilter.h:16822-16825`): a forma sobrevive à
-    /// morte e acaba pelo tempo.
+    /// `FILTER_MASK_REMOVE_ON_DEATH` — todos os portados têm, **menos as formas**: o
+    /// `Fairyform` é só `WEAK | HEARTBEAT` (`skillfilter.h:16822-16825`) e acaba pelo tempo; o
+    /// `Foxform` é só `WEAK` (`:4611`) e fica até a 312 ser lançada de novo.
     pub fn ao_morrer(&mut self) {
-        self.filtros.retain(|f| f.efeito == Efeito::Fairyform);
+        self.filtros.retain(|f| matches!(f.efeito, Efeito::Fairyform | Efeito::Foxform));
         self.invencivel_s = 0;
     }
 
@@ -703,17 +748,50 @@ impl Efeitos {
         self.filtros.iter().any(|f| f.efeito == e)
     }
 
-    /// O `shape_form` do objeto: `1 | (FORM_CLASS << 6)` = 65 na Forma Sombria
-    /// (`skillfilter.h:16853`; `FORM_CLASS` = 1 em `cskill/skill/skill.h:84`), nenhum fora dela.
-    pub fn forma(&self) -> Option<u8> {
-        self.tem(Efeito::Fairyform).then_some(1 | (1 << 6))
+    /// A forma do objeto: `(_shape, FORM_CLASS)` na Forma Sombria (`_shape` 1,
+    /// `skillfilter.h:16853`) e na da raposa (`_shape` = o `value` da 312, 1), nenhuma fora
+    /// delas. `FORM_CLASS` = 1 (`cskill/skill/skill.h:84`). O byte que vai ao cliente é da
+    /// versão (`WorldProtocol::byte_de_forma`): 65 no 1.5.5, 1 no 1.2.6.
+    pub fn forma(&self) -> Option<(u8, u8)> {
+        self.filtros.iter().find_map(|f| match f.efeito {
+            Efeito::Fairyform => Some((1, FORMA_DE_CLASSE)),
+            Efeito::Foxform => Some((f.contador as u8, FORMA_DE_CLASSE)),
+            _ => None,
+        })
+    }
+
+    /// `GetForm()` (`gs/actobject.h:1058`): 0 fora de forma, `FORM_CLASS` numa forma de classe.
+    /// É o que o `allow_forms` das habilidades testa (`cskill/skill/skill.cpp:128`).
+    pub fn forma_atual(&self) -> u8 {
+        self.forma().map_or(0, |(_, forma)| forma)
+    }
+
+    /// `SetFoxform` com a raposa já ativa: `RemoveFilter(FILTER_FOXFORM)` e volta à forma
+    /// humana (`playerwrapper.cpp:2541-2546`). `true` quando havia o que tirar.
+    pub fn desfazer_raposa(&mut self) -> bool {
+        let antes = self.filtros.len();
+        self.filtros.retain(|f| f.efeito != Efeito::Foxform);
+        antes != self.filtros.len()
     }
 
     /// `_lock_equipment` (`LockEquipment(true)` no `filter_Fairyform::OnAttach`): vestir,
     /// trocar, mover para o corpo e descartar peça são recusados com
     /// `ERR_EQUIPMENT_IS_LOCKED` (`gs/player.cpp:7874, 7991, 8077, 8258`).
     pub fn equipamento_travado(&self) -> bool {
-        self.tem(Efeito::Fairyform)
+        self.tem(Efeito::Fairyform) || self.tem(Efeito::Foxform)
+    }
+
+    /// `filter_Retort(2)::AdjustDamage`: quanto do golpe **físico corpo a corpo, normal**
+    /// (dano bruto `fisico`, antes da defesa) volta ao atacante. `None` sem espinhos ou com
+    /// o resultado ≤ 1 (`skillfilter.h:1480-1484`, `:14646-14650`). O teto de 1.000.000 do
+    /// 1.5.5 não existe no 1.2.6 e não muda nada abaixo dele.
+    pub fn espinhos(&self, fisico: i32) -> Option<i32> {
+        if fisico >= 1_000_000 {
+            return None;
+        }
+        let f = self.filtros.iter().find(|f| matches!(f.efeito, Efeito::Retort | Efeito::Retort2))?;
+        let dano = (fisico as f32 * f.fator) as i32;
+        (dano > 1).then_some(dano)
     }
 
     /// `MODE_INDEX_STUN`/`SLEEP`: não age.
@@ -763,6 +841,13 @@ impl Efeitos {
                     r.velocidade += k;
                     r.defesa += f.escala_defesa;
                 }
+                // `ImpairScaleMaxMP(_decmp)`, `EnhanceScaleDefense(_incdefence)`,
+                // `EnhanceScaleAttack(_incaccuracy)` (`skillfilter.cpp:393-395`).
+                Foxform => {
+                    r.mana -= k;
+                    r.defesa += f.escala_defesa;
+                    r.precisao += f.por_segundo;
+                }
                 Inchurt => r.dano_recebido *= 1.0 + f.fator,
                 Dechurt => r.dano_recebido *= 1.0 - f.fator,
                 _ => {}
@@ -794,7 +879,10 @@ impl Efeitos {
             }
             let h = f.efeito.ficha().icone;
             if h != 0 && !out.iter().any(|(x, _)| *x == h) {
-                out.push((h, f.restante_s));
+                // A raposa entra sem parâmetro (`InsertTeamVisibleState(HSTATE_FOXFORM)`):
+                // [`SEM_PARAMETRO`] faz o `ICON_STATE_NOTIFY` mandar o ícone sem tempo.
+                let param = if f.efeito == Efeito::Foxform { pw_protocol::packets::s2c::SEM_PARAMETRO } else { f.restante_s };
+                out.push((h, param));
             }
         }
         out

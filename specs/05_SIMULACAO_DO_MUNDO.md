@@ -420,8 +420,21 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
   a cada 3 s, `skillfilter.h:4136-4232`), **Forma Sombria** (`Fairyform`, B95: fraco, nem
   bênção nem maldição, **sobrevive à morte**; forma 65 pelo `PLAYER_CHGSHAPE`, equipamento
   trancado, +`100 × ratio`% de velocidade e +`100 × value`% de defesa, ícone 279;
-  `skillfilter.h:16819-16875`, roteiro da 2570 dá 19 s / 4% / 60% no nível 1. **Falta** o
-  `EventChange` da forma — as habilidades que só existem na forma), **renascer** (`Rebirth`, B115:
+  `skillfilter.h:16819-16875`, roteiro da 2570 dá 19 s / 4% / 60% no nível 1), **raposa**
+  (`Foxform`, B120, o Chamado da Raposa 312 da Feiticeira: sem tempo, fraco, sobrevive à morte;
+  lançar a 312 **de novo desfaz** (`SetFoxform`, `playerwrapper.cpp:2539-2551`); mana máxima
+  −`100 × ratio`%, defesa +`100 × amount`%, precisão +`100 × probability`% (`skillfilter.cpp:389-413`;
+  nível 1: −30/+60/+100); equipamento trancado; ícone 75 **sem parâmetro**; forma pelo
+  `PLAYER_CHGSHAPE` — 65 no 1.5.5, 1 no 1.2.6 (`WorldProtocol::byte_de_forma`). Na forma de
+  classe só valem as habilidades cujo `allow_forms` tem o bit `1 << GetForm()`
+  (`skill.cpp:128`): 313–318 só na raposa, 312 nas duas, as comuns só fora; a recusa é
+  `ERR_SKILL_NOT_AVAILABLE` (20). **Falta** o `EventChange` — as passivas `EVENT_CHANGE` da
+  forma, 323 (+50% nado) e 324 (`Incfight`)), **espinhos** (`Retort`/`Retort2`, B120, a Muralha de
+  Espinhos 306: o golpe físico corpo a corpo de monstro que acerta o jogador devolve
+  `(int)(bruto × ratio)` — dano antes da defesa — como golpe mágico com o crítico/grau do
+  jogador, pela defesa física do monstro; não devolve de monstro de longe (`attack_range > 6`,
+  `short_range`) nem ≤ 1; ícone 4 / 253, estado visual 3; `skillfilter.h:1450-1505`,
+  `:14617-14672`. **Falta** devolver golpe de habilidade e de jogador), **renascer** (`Rebirth`, B115:
   antes de morrer, com a chance do `probability`, volta com `ratio` da vida máxima, `ENCHANT_RESULT`
   da 1085 e se desfaz; jogador e mascote; ícone 155; `skillfilter.h:9027-9070`), **redução de dano
   em área** (`Decregiondmg`, B115: só o ícone 328 pelo tempo — a redução exige `attack_attr < 0`, que
@@ -604,7 +617,7 @@ para o 1.2.6 e o 1.5.5; só os layouts mudam (spec 04).
 | parte | estado | detalhe |
 | :--- | :--- | :--- |
 | invocar | `testado` | a mesma sessão de 60 ticks da montaria; ao fim, `ActivePet` escolhe pela **classe** do modelo (`PET_ESSENCE.id_type` 8782 = combate). Recusa nível de mascote > dono + 35 (`ERR_LEVEL_NOT_MATCH` 51) e morto (`hp_factor` 0, erro 87). Recolhe o anterior. A criatura nasce junto do dono com id `0x80000000 \| 0x20000000 \| n` (`PET_MASK`, `common/types.h:214`); dono recebe `SUMMON_PET` com o id, `PET_AI_STATE` e `PET_HP_NOTIFY`; quem está perto, `NPC_ENTER_WORLD` com a marca 0x1000 + dono (e 0x2000 + nome). Antes do B111 o de combate caía no caminho da montaria e "montava" |
-| atributos | `testado` | `GenerateBaseProp` (`petdataman.cpp:152-186`, fórmulas `petdataman.h:23-76`) no nível dele; vida × `hp_factor`; alcance + `size`; dano com a lealdade (−40/−20/0/+20% por nível de lealdade 0..3, `pet_filter.cpp:8`); sem mana; regenera `hp_gen` por segundo sempre (`SetFastRegen(0)`) |
+| atributos | `testado` | `GenerateBaseProp` (`petdataman.cpp:152-186`, fórmulas `petdataman.h:23-76`) no nível dele; vida × `hp_factor`; alcance + `size`; dano com a lealdade (−40/−20/0/+20% por nível de lealdade 0..3, `pet_filter.cpp:8`); sem mana; regenera `hp_gen` por segundo **também em combate** (`SetFastRegen(0)`: `if(_combat_state || !_fast_regen) GenHPandMP(hp_gen)`, `npc.cpp:1948-1951`). Conferido no B120 com o mascote da Tsuko (10386, nível 22): vida 654, `hp_gen` 17/s, defesa 1428 (`petdataman.h:14-26`) — contra atacante de nível 22 passa 37,5% do golpe, e um monstro do mesmo nível tira menos do que ele regenera. É o original |
 | IA | `testado` (B114) | `gpet_policy::OnHeartbeat` (`petnpc.cpp:1630-1735`): o seguir começa **só no batimento de 1 s** com o dono a mais de 1,5 m (ou 10 m de altura) e é uma sessão (`session_npc_follow_target`, `npcsession.cpp:164-280`, meta 1,0 m) que acaba com parada abaixo de 0,8 m (3D). Ao alcançar a meta antiga o agente recomeça a `0,6 ×` **sem parar**; a parada só sai quando o recomeço já nasce na meta, o passo não sai do lugar ou o caminho falha. O cliente só reinicia a animação/som de andar quando o NPC sai de `WORK_MOVE` (`EC_NPC.cpp:1048-1053`) — parar a cada passo fazia o som do mascote recomeçar. Com ódio, persegue e bate no ritmo do `attack_speed` com o atraso do `damage_delay`. Cercas: longe (≥ 60 m, altura > 60 m, > 150 m, 5 falhas de caminho) reposiciona; parado ("ficar") e longe, é recolhido. **Reposicionar e invocar usam `pet_gen_pos::FindGroundPos`** (`petman.cpp:1-31`, `:595`, `:701-718`; igual no `gs` 1.2.6): 10 sorteios a ±0,8–1,2 m do dono, pixel alcançável do `movemap` (terreno + piso) e < 6,8 m da altura dele; sem ponto, a invocação dá 85 e o reposicionamento **recolhe**. A plataforma do Ancião da Cidade das Feras (2206, −1538/970) não está no `movemap` de nenhum dos dois realms (0 de 200 sorteios): antes o mascote ia para a posição crua do dono e o passo seguinte o assentava no terreno, 5 m abaixo, dentro da estrutura |
 | agressividade | `testado` | começa automático + seguir (`petman.cpp:1283-1284`) e o dono guarda o último. Defesa: ódio por apanhar e quando o dono apanha (`MASTER_ASK_HELP`, 2). Automático: ataca o que o dono começar a atacar, se estiver sem ódio (`Notify_StartAttack` no golpe normal e na habilidade, `actsession.cpp:361`/`:491`). Passivo: só por ordem |
 | comandos (`PET_CTRL` C2S 103) | `testado` | `{int target; int pet_cmd; buf}`: 1 atacar (limpa o ódio, `max_hp + 10` no alvo), 2 seguir/ficar, 3 agressividade (automático e passivo congelam o ódio); `PET_AI_STATE` quando muda. 4 e 5: habilidades (linha abaixo) |

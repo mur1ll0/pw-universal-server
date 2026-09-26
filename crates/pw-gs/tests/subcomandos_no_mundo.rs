@@ -318,6 +318,8 @@ async fn montar(versao: GameVersion) -> Option<(Arc<RwLock<WorldInstance>>, std:
         pw_data_loader::habilidades::TabelaDeHabilidades::do_155()
     };
     dados.habilidades.por_id.insert(299, tabela.get(299).expect("stub 299").clone());
+    // Chamado da Raposa (B120), do catálogo da versão.
+    dados.habilidades.por_id.insert(312, tabela.get(312).expect("stub 312").clone());
 
     let mut mundo = WorldInstance::new(
         1,
@@ -6148,4 +6150,129 @@ async fn vender_dois_itens_ao_npc_no_126() {
     }
     assert_eq!(soltos, vec![21, 22], "espaços soltos");
     assert_eq!(pagos, vec![21, 22], "espaços pagos");
+}
+
+/// Lança uma habilidade pelo barramento no alvo dado.
+async fn lancar(link: &mut pw_bus::transport::BusConnection, roleid: i32, skill: i32, alvo: i32) {
+    let mut corpo = skill.to_le_bytes().to_vec();
+    corpo.extend_from_slice(&[0, 1]);
+    corpo.extend_from_slice(&alvo.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CAST_SKILL, &corpo) })
+        .await
+        .unwrap();
+}
+
+/// Chamado da Raposa (312, B120): `filter_Foxform` — `PLAYER_CHGSHAPE` com a forma da versão,
+/// mana máxima −(35 − 5·L)%, as habilidades de forma humana recusadas (`allow_forms`) e a
+/// própria 312 desfazendo a raposa (`SetFoxform`, `playerwrapper.cpp:2539-2551`).
+async fn conferir_raposa(versao: GameVersion, byte_de_forma: u8) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let mut dono = entrar(&mundo, addr, roleid).await;
+    // A 312 custa 30 × L de mana; o personagem de teste tem pouca.
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().mp = 10_000;
+    lancar(&mut dono, roleid, 312, roleid).await;
+    let forma = esperar_comando(&mut dono, 163).await;
+    assert_eq!(forma.len(), 2 + 5, "PLAYER_CHGSHAPE: id + shape");
+    assert_eq!(i32_em(&forma, 2), roleid);
+    assert_eq!(forma[6], byte_de_forma, "byte de forma da raposa");
+    {
+        let m = mundo.read().await;
+        let p = m.players.get(&(roleid as i64)).unwrap();
+        assert_eq!(p.efeitos.forma_atual(), 1, "GetForm() == FORM_CLASS");
+        assert!(p.efeitos.equipamento_travado(), "LockEquipment(true)");
+        // Nível 1 (`skill312.h:163-167`): `_decmp` (int)(100 × 0,3) = 30, `_incdefence`
+        // (int)(100 × 0,6) = 60, `_incaccuracy` (int)(100 × 1,0) = 100.
+        let r = p.efeitos.realce();
+        assert_eq!((r.mana, r.defesa, r.precisao), (-30, 60, 100), "ImpairScaleMaxMP/EnhanceScaleDefense/EnhanceScaleAttack");
+    }
+    // A 299 não vale na forma de classe (`allow_forms` 1 no 1.5.5, 5 no 1.2.6).
+    lancar(&mut dono, roleid, 299, MONSTRO as i32).await;
+    let erro = esperar_comando(&mut dono, 25).await;
+    assert_eq!(i32_em(&erro, 2), 20, "ERR_SKILL_NOT_AVAILABLE");
+    // Sem a recarga de 6 s, a 312 de novo desfaz a raposa.
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.recargas.clear();
+        p.mp = 10_000;
+    }
+    lancar(&mut dono, roleid, 312, roleid).await;
+    let volta = esperar_comando(&mut dono, 163).await;
+    assert_eq!(volta[6], 0, "ChangeShape(0) ao sair da forma");
+    let m = mundo.read().await;
+    let p = m.players.get(&(roleid as i64)).unwrap();
+    assert_eq!(p.efeitos.forma_atual(), 0);
+    assert_eq!(p.efeitos.realce().mana, 0, "a mana máxima volta");
+    assert!(!p.efeitos.equipamento_travado());
+}
+
+#[tokio::test]
+async fn o_chamado_da_raposa_transforma_e_desfaz_155() {
+    conferir_raposa(GameVersion::V1_5_5, 1 | (1 << 6)).await;
+}
+
+#[tokio::test]
+async fn o_chamado_da_raposa_transforma_e_desfaz_126() {
+    conferir_raposa(GameVersion::V1_2_6, 1).await;
+}
+
+/// Muralha de Espinhos (306, B120): o `filter_Retort` devolve ao monstro `(int)(physic_damage
+/// × ratio)` do golpe corpo a corpo que acertou (`skillfilter.h:1480-1496`), como golpe mágico
+/// que passa pela defesa física dele.
+#[tokio::test]
+async fn a_muralha_de_espinhos_devolve_o_golpe_do_monstro() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let mut link = entrar(&mundo, addr, roleid).await;
+    {
+        let mut m = mundo.write().await;
+        m.mover_jogador(roleid, Vector3::new(5.0, 0.0, 5.0));
+    }
+    let _ = &mut link;
+    let hp_do_monstro = {
+        let mut m = mundo.write().await;
+        // Ameaça direto na IA: um golpe do jogador cairia adiado no meio da medida.
+        m.monsters.get_mut(&MONSTRO).unwrap().1.add_threat(roleid as i64, 10);
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.hp = p.max_hp.max(10_000);
+        p.max_hp = p.hp;
+        // A 306 do 1.2.6 no nível 2: `SetRatio(0,05·2 + 0,1)` = 0,2 por 600 s.
+        p.efeitos.adicionar(pw_gs::efeitos::Filtro {
+            efeito: pw_gs::efeitos::Efeito::Retort,
+            restante_s: 600,
+            razao: 20,
+            fator: 0.2,
+            por_segundo: 0,
+            contador: 0,
+            origem: 0,
+            icone: true,
+            absorve: 0.0,
+            escala_defesa: 0,
+        });
+        let (monstro, _) = m.monsters.get_mut(&MONSTRO).unwrap();
+        monstro.attack_min = 200;
+        monstro.attack_max = 200;
+        monstro.hp = monstro.max_hp;
+        monstro.hp
+    };
+    let hp_inicial = mundo.read().await.players[&(roleid as i64)].hp;
+    let apanhou = tickar_ate(&mundo, |m| m.players.get(&(roleid as i64)).is_some_and(|p| p.hp < hp_inicial)).await;
+    assert!(apanhou, "o monstro não bateu");
+    let perdeu = hp_do_monstro - mundo.read().await.monsters[&MONSTRO].0.hp;
+    // 200 × 0,2 = 40, defesa 0; o crítico do jogador vale no golpe devolvido (`FillAttackMsg`).
+    assert!(perdeu == 40 || perdeu == 80, "o espinho tirou {perdeu} do monstro, esperado 40 (ou 80 no crítico)");
+}
+
+/// O `Retort` só devolve golpe **físico corpo a corpo** que dê mais de 1
+/// (`skillfilter.h:1480-1484`).
+#[test]
+fn os_espinhos_so_devolvem_acima_de_um() {
+    use pw_gs::efeitos::{Efeito, Efeitos, Filtro};
+    let mut e = Efeitos::default();
+    assert_eq!(e.espinhos(200), None, "sem o filtro, nada");
+    e.adicionar(Filtro { efeito: Efeito::Retort, restante_s: 600, razao: 20, fator: 0.2, por_segundo: 0, contador: 0, origem: 0, icone: true, absorve: 0.0, escala_defesa: 0 });
+    assert_eq!(e.espinhos(200), Some(40));
+    assert_eq!(e.espinhos(9), None, "(int)(9 × 0,2) = 1 não passa de 1");
+    assert_eq!(e.espinhos(1_000_000), None, "o teto do 1.5.5");
+    assert_eq!(e.icones(), vec![(4, 600)], "HSTATE_RETORT com o tempo");
+    assert_eq!(e.estados_visiveis()[0], 1 << 3, "VSTATE_RETORT");
 }

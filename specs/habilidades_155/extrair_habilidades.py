@@ -340,6 +340,12 @@ def extrair(caminho):
         "is_movingcast": escalar(texto, "is_movingcast"),
         "commoncooldown": escalar(texto, "commoncooldown"),
         "commoncooldowntime": escalar(texto, "commoncooldowntime"),
+        # `allow_forms` (`cskill/skill/skill.cpp:128`): máscara das formas em que a habilidade
+        # pode ser lançada, `1 << GetForm()` — 1 só na humana, 2 só na forma de classe
+        # (raposa, tigre...), 3 nas duas. `eventflag` (`skill.h:72-77`): a passiva
+        # `EVENT_CHANGE` (4) só vale na forma de classe (`SkillWrapper::EventChange`).
+        "allow_forms": escalar(texto, "allow_forms"),
+        "eventflag": escalar(texto, "eventflag"),
         "pre_skills": [
             [int(a), int(b)]
             for a, b in re.findall(r"pre_skills\.push_back\s*\(\s*std::pair\s*<\s*ID\s*,\s*int\s*>\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*\)", texto)

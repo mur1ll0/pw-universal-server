@@ -20,6 +20,13 @@ pub trait WorldProtocol: Send + Sync {
         15
     }
 
+    /// O byte de forma do `PLAYER_CHGSHAPE` (163) a partir do `shape | FORM_CLASS << 6` do
+    /// 1.5.5: `ChangeShape(_shape | (FORM_CLASS << 6))` nos filtros de forma
+    /// (`cskill/skill/skillfilter.cpp:398`). O 1.2.6 sobrescreve.
+    fn byte_de_forma(&self, forma_155: u8) -> u8 {
+        forma_155
+    }
+
     /// Avisos neutros de status enviados pelo link ao entrar no mundo.
     fn initial_status_notifications(&self, reputation: i32, now: i32) -> Vec<S2CGamedataSend> {
         vec![

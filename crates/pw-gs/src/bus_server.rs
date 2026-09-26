@@ -2082,6 +2082,19 @@ impl BusServer {
             self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio).await;
             return;
         }
+        // `SkillStub::Condition`: `(allow_forms & (1 << GetForm())) == 0` recusa (retorno 5,
+        // `cskill/skill/skill.cpp:128`), e o `session_skill` responde
+        // `ERR_SKILL_NOT_AVAILABLE` (`gs/actsession.cpp:478-483`). Na raposa só as
+        // habilidades de forma (313-318, `allow_forms` 2) e a própria 312 (3); fora dela, as
+        // de forma são recusadas.
+        let forma = mundo.players.get(&(roleid as i64)).map_or(0, |p| p.efeitos.forma_atual());
+        if mundo.data_manager.habilidades.get(c.skill_id.max(0) as u32).is_some_and(|h| !h.permitida_na_forma(forma)) {
+            drop(mundo);
+            debug!("mundo: {roleid} conjurou {} fora da forma permitida (forma {forma})", c.skill_id);
+            self.responder(roleid, S2CGamedataSend::error_message(jogo::erro_s2c::HABILIDADE_INDISPONIVEL).data, envio).await;
+            self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio).await;
+            return;
+        }
         let alvo = c
             .alvos
             .first()

@@ -49,6 +49,13 @@ pub struct HabilidadeDoServidor {
     /// são **5**, todas da classe 11 (2909, 2910, 2913, 2914, 2917).
     #[serde(default)]
     pub is_movingcast: Option<i32>,
+    /// `allow_forms` do stub (`cskill/skill/skill.h:257`): máscara das formas em que a
+    /// habilidade pode ser lançada. `SkillStub::Condition` recusa com
+    /// `(allow_forms & (1 << GetForm())) == 0` (`cskill/skill/skill.cpp:128`): 1 = só a forma
+    /// humana, 2 = só a de classe (raposa, tigre), 3 = as duas. No 1.2.6 lido do construtor
+    /// do `gs` (`extrair_habilidades_126.py`, B120). Ausente = sem restrição.
+    #[serde(default)]
+    pub allow_forms: Option<i32>,
     pub execucao_ms: Option<Vec<i32>>,
     pub recarga_ms: Option<Vec<i32>>,
     pub nivel_exigido: Option<Vec<i32>>,
@@ -138,6 +145,12 @@ impl HabilidadeDoServidor {
     /// A habilidade pode ser conjurada andando.
     pub fn conjura_andando(&self) -> bool {
         self.is_movingcast.unwrap_or(0) != 0
+    }
+
+    /// `(allow_forms & (1 << forma)) != 0` (`cskill/skill/skill.cpp:128`), com `forma` o
+    /// `GetForm()` do conjurador (0 humana, 1 `FORM_CLASS`).
+    pub fn permitida_na_forma(&self, forma: u8) -> bool {
+        self.allow_forms.map_or(true, |m| m & (1 << forma) != 0)
     }
 
     pub fn recarga_armada_ms(&self, nivel: i32) -> Option<i32> {
@@ -386,6 +399,7 @@ mod tests {
             apcost: None,
             apgain: None,
             is_movingcast: None,
+            allow_forms: None,
             execucao_ms: None,
             recarga_ms: Some(vec![2500]),
             nivel_exigido: None,

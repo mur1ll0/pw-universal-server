@@ -681,6 +681,27 @@ impl BusServer {
             "Directhurt" => delta_hp = -(efeitos::dano_recebido(efs, ap.valor as i32) as i64),
             "Clearbuff" => mud.efeitos |= efs.limpar(true),
             "Cleardebuff" => mud.efeitos |= efs.limpar(false),
+            // `PlayerWrapper::SetFoxform` (`cskill/skill/playerwrapper.cpp:2539-2551`): já na
+            // forma de classe, a 312 **desfaz** a raposa; senão monta o `filter_Foxform(object,
+            // (int)(100 × ratio), (int)(100 × amount), (int)(100 × probability),
+            // GetValueInt())` — sem tempo, até ser desfeito.
+            "Foxform" => {
+                if efs.desfazer_raposa() {
+                    mud.efeitos = true;
+                    mud.atributos |= e_jogador;
+                } else if e_jogador && efs.forma_atual() == 0 {
+                    let mut f = novo(Efeito::Foxform);
+                    f.restante_s = i32::MAX;
+                    f.razao = (100.0 * ap.razao) as i32;
+                    f.escala_defesa = (100.0 * ap.quantia) as i32;
+                    f.por_segundo = (100.0 * ap.probabilidade) as i32;
+                    f.contador = ap.valor as i32;
+                    if efs.adicionar(f) {
+                        mud.efeitos = true;
+                        mud.atributos = true;
+                    }
+                }
+            }
             _ => {
                 let Some(efeito) = ap.efeito else {
                     nao_portados.push(ap.nome.clone());
@@ -806,7 +827,7 @@ impl BusServer {
                 // comando ao dono e a quem está em volta; a troca vem **antes** do ícone e da
                 // velocidade (`skillfilter.h:16850-16873`). Só quando a forma de fato mudou:
                 // repetir o comando faria o cliente recarregar o modelo à toa.
-                let forma = p.efeitos.forma();
+                let forma = p.efeitos.forma().map(|(shape, classe)| self.sub.byte_de_forma(shape | (classe << 6)));
                 let troca_de_forma = (forma != p.forma_enviada).then(|| {
                     p.forma_enviada = forma;
                     S2CGamedataSend::player_change_shape(p.role_id, forma.unwrap_or(0)).data

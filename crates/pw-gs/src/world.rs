@@ -269,6 +269,9 @@ pub struct DanoAdiado {
     pub falta_ms: u32,
     /// O alvo é um jogador; senão é monstro.
     pub no_jogador: bool,
+    /// Dano físico bruto do golpe corpo a corpo que acertou o jogador — o que os espinhos
+    /// devolvem quando o dano cai ([`crate::efeitos::Efeitos::espinhos`]); 0 sem isso.
+    pub fisico: i32,
 }
 
 impl WorldInstance {
@@ -1140,7 +1143,46 @@ impl WorldInstance {
             }
             return;
         }
-        self.danos_adiados.push(DanoAdiado { alvo, atacante, dano, falta_ms: atraso_ms, no_jogador });
+        self.danos_adiados.push(DanoAdiado { alvo, atacante, dano, falta_ms: atraso_ms, no_jogador, fisico: 0 });
+    }
+
+    /// O golpe normal do monstro no jogador, adiado como o [`Self::adiar_dano`], levando o
+    /// dano físico bruto para os espinhos.
+    fn adiar_golpe_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64, fisico: i32, atraso_ms: u32) {
+        if atraso_ms == 0 {
+            self.golpe_no_jogador(alvo, atacante, dano, fisico);
+            return;
+        }
+        self.danos_adiados.push(DanoAdiado { alvo, atacante, dano, falta_ms: atraso_ms, no_jogador: true, fisico });
+    }
+
+    /// `HandleAttackMsg` no jogador: os filtros ajustam o dano (`EF_AdjustDamage`, onde o
+    /// `filter_Retort` devolve o golpe, `actobject.cpp:756`) e depois ele cai. O golpe
+    /// devolvido é `_parent.Attack(attacker, ret)` com `attack_attr = MAGIC_ATTACK` e
+    /// `attack_rate` 1000: acerta sempre e passa pela defesa física do monstro com o nível de
+    /// quem devolve (`AttackJudgement`, `actobject.cpp:481-560`).
+    fn golpe_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64, fisico: i32) {
+        let devolvido = self.players.get(&alvo).filter(|p| p.hp > 0).and_then(|p| {
+            let espinho = p.efeitos.espinhos(fisico)?;
+            let (m, _) = self.monsters.get(&atacante).filter(|(m, _)| !m.is_dead)?;
+            // `FillAttackMsg` do jogador (`actobject.cpp:1473-1497`) põe o nível, o crítico, o
+            // grau de ataque e a penetração dele; o resto é o que o `filter_Retort` monta.
+            let mut golpe = crate::combat::CombatEngine::golpe_de_jogador(p);
+            golpe.dano_fisico = espinho;
+            golpe.dano_magico = [0; 5];
+            golpe.e_fisico = false;
+            golpe.taxa_de_ataque = 1000;
+            golpe.de_habilidade = false;
+            let defesa = crate::combat::CombatEngine::defesa_do_monstro(m);
+            let distancia = p.position.distance(&m.position);
+            Some(crate::combat::resolver(&golpe, &defesa, distancia, false, crate::combat::Rolagens::sortear()).dano())
+        });
+        // O golpe devolvido não tem animação: quem vê percebe a vida do monstro cair (o
+        // `NPC_INFO_00` do batimento).
+        if let Some(d) = devolvido.filter(|d| *d > 0) {
+            self.aplicar_dano_no_monstro(atacante, alvo, d as i64);
+        }
+        self.aplicar_dano_no_jogador(alvo, atacante, dano);
     }
 
     /// Tira a vida do monstro e resolve a morte. `None` quando o alvo sumiu ou já morreu.
@@ -1234,7 +1276,7 @@ impl WorldInstance {
         });
         for d in vencidos {
             if d.no_jogador {
-                self.aplicar_dano_no_jogador(d.alvo, d.atacante, d.dano);
+                self.golpe_no_jogador(d.alvo, d.atacante, d.dano, d.fisico);
             } else {
                 self.aplicar_dano_no_monstro(d.alvo, d.atacante, d.dano);
             }
@@ -1552,12 +1594,12 @@ impl WorldInstance {
             // estrutura ([`crate::navegacao`], B99).
             let mapa = crate::navegacao::Mapa { terreno: &chao, movimento: &self.movimento };
             match ai.tick_com_mascotes(monster, &self.players, &corpos_dos_mascotes, delta_ms, &mapa) {
-                Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano }) => {
+                Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano, fisico }) => {
                     // Quem bateu vai junto: sem o id, o `HOST_ATTACKED` saía com
                     // `idAttacker = 0` e o cliente não achava o atacante
                     // (`ISPLAYERID`/`ISNPCID` são falsos para zero, `EC_HostMsg.cpp:968-1006`)
                     // — o jogador perdia vida sem ver o monstro bater (B59).
-                    attacks_to_process.push((monster.id, alvo, dano));
+                    attacks_to_process.push((monster.id, alvo, dano, fisico));
                 }
                 Some(crate::ai::AcaoDoMonstro::Andou { destino, tempo_ms, velocidade, modo }) => {
                     // A grade espacial tem de acompanhar: quem consulta vizinhos por
@@ -1697,7 +1739,7 @@ impl WorldInstance {
         // (`actobject.cpp:1758-1776`), o mesmo número que o cliente usa como duração da
         // animação do golpe. Aplicar na hora fazia a vida cair antes de o monstro sequer
         // parar de correr na tela (relato de 2026-09-18, B62).
-        for (monstro_id, player_id, damage) in attacks_to_process {
+        for (monstro_id, player_id, damage, fisico) in attacks_to_process {
             let atraso = self
                 .monsters
                 .get(&monstro_id)
@@ -1731,7 +1773,7 @@ impl WorldInstance {
                 hp,
                 max_hp,
             });
-            self.adiar_dano(player_id, monstro_id, damage as i64, atraso, true);
+            self.adiar_golpe_no_jogador(player_id, monstro_id, damage as i64, fisico, atraso);
         }
 
         // 3. Autosave periódico (a cada 60 s): aqui só se **tira a fotografia**, com o mundo

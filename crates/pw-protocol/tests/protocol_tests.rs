@@ -1023,6 +1023,15 @@ fn estados_visiveis_icones_e_resultado_de_bencao_tem_o_tamanho_do_cliente() {
     assert_eq!(i32::from_le_bytes([p[18], p[19], p[20], p[21]]), 60);
     // Sem ícones: id, 0, 0.
     assert_eq!(S2CGamedataSend::icon_state_notify(7, &[]).data.len(), 2 + 4 + 2 + 2);
+    // B120 — a raposa (HSTATE_FOXFORM 75) vai sem parâmetro: bits altos 00 e fora do `param[]`
+    // (`InsertTeamVisibleState(state)`, `gs/actobject.h:1799-1812`).
+    let sem = pw_protocol::packets::s2c::SEM_PARAMETRO;
+    let p = S2CGamedataSend::icon_state_notify(7, &[(75, sem), (4, 600)]).data;
+    assert_eq!(p.len(), 2 + 4 + 2 + 4 + 2 + 4);
+    assert_eq!(u16::from_le_bytes([p[8], p[9]]), 75);
+    assert_eq!(u16::from_le_bytes([p[10], p[11]]), 4 | 0x4000);
+    assert_eq!(u16::from_le_bytes([p[12], p[13]]), 1);
+    assert_eq!(i32::from_le_bytes([p[14], p[15], p[16], p[17]]), 600);
     // 2 + `cmd_enchant_result` (19).
     assert_eq!(S2CGamedataSend::enchant_result(1, 2, 3, 4, false, 0, 1).data.len(), 21);
 }

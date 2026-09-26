@@ -22,7 +22,7 @@ const TETO_DE_DINHEIRO: i64 = 2_000_000_000;
 const INICIO_DAS_RECARGAS_DE_HABILIDADE: i32 = 1024;
 /// `S2C::ERR_*` (`common/protocol.h:679-750`).
 #[allow(dead_code)]
-mod erro_s2c {
+pub(super) mod erro_s2c {
     pub const ITEM_NAO_NO_INVENTARIO: i32 = 5;
     pub const NAO_PODE_PEGAR: i32 = 6;
     pub const BOLSA_CHEIA: i32 = 7;
