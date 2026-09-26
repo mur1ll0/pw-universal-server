@@ -724,6 +724,7 @@ impl BusServer {
     /// `PLAYER_START_PET_OP` (`EC_HostMsg.cpp:5350`, `SetPeriod(delay * 50)`).
     const TICKS_PARA_INVOCAR: i32 = 60; // `SetDelay(60)`, `gs/player.cpp:14485`
     const TICKS_PARA_RECOLHER: i32 = 10; // `SetDelay(10)`, `gs/player.cpp:14507`
+    const TICKS_PARA_SOLTAR: i32 = 200; // `SetDelay(200)`, `gs/player.cpp:14553`
     const MS_POR_TICK: u64 = 50;
 
     /// `SUMMON_PET` (C2S 100) — invocar o mascote do índice. **Montaria é montar**
@@ -933,6 +934,59 @@ impl BusServer {
             este.desmontar(roleid, montaria, &envio).await;
             este.responder(roleid, S2CGamedataSend::player_stop_pet_op().data, &envio).await;
         });
+    }
+
+    /// `BANISH_PET` (C2S 102) → `gplayer_imp::PlayerBanishPet` (`gs/player.cpp:14539-14557`):
+    /// o mascote tem de existir (`ERR_PET_IS_NOT_EXIST`) e não pode ser o ativo
+    /// (`ERR_PET_IS_ALEARY_ACTIVE`); então a `session_free_pet` — operação 2, 200 tiques (10 s)
+    /// de canalização — e, ao fim, `pet_manager::BanishPet` (`gs/petman.cpp:1521-1538`):
+    /// `FREE_PET` ao dono e o slot sai da jaula.
+    pub(super) async fn soltar_mascote(&self, roleid: i32, payload: &[u8], envio: &crate::bus_server::EnvioAoCliente) {
+        let Some(indice) = payload.get(0..4).filter(|_| payload.len() == 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])) else {
+            debug!("mundo: BANISH_PET de {roleid} com {} bytes", payload.len());
+            return;
+        };
+        let Ok(indice) = u16::try_from(indice) else { return };
+        let Ok(Some(item)) = self.itens().await.get_item_by_slot(roleid, ContainerType::PetCorral, indice).await else {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_EXISTE).data).await;
+            return;
+        };
+        if self.mascote_ativo_no_slot(roleid, indice).await {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_JA_ATIVO).data).await;
+            return;
+        }
+        let info = pw_core::InfoPet::do_bloco(&item.octets).unwrap_or_default();
+        let tid = if info.pet_vis_tid > 0 { info.pet_vis_tid } else { info.pet_tid.max(item.item_id as i32) };
+        let marcador = self.abrir_operacao_de_pet(roleid).await;
+        self.responder(roleid, S2CGamedataSend::player_start_pet_op(indice as i32, tid, Self::TICKS_PARA_SOLTAR, 2).data, envio).await;
+        let este = self.clone();
+        let envio = envio.clone();
+        tokio::spawn(async move {
+            let espera = Self::TICKS_PARA_SOLTAR as u64 * Self::MS_POR_TICK;
+            tokio::time::sleep(std::time::Duration::from_millis(espera)).await;
+            if !este.operacao_de_pet_ainda_e_minha(roleid, marcador).await {
+                return;
+            }
+            // `BanishPet` confere de novo: o slot pode ter sido invocado nesse meio tempo.
+            if !este.mascote_ativo_no_slot(roleid, indice).await {
+                let itens = este.itens().await;
+                match itens.delete_item_by_slot(roleid, ContainerType::PetCorral, indice).await {
+                    Ok(()) => {
+                        info!("mundo: {roleid} soltou o mascote {} do slot {indice}", info.pet_tid);
+                        este.responder(roleid, este.sub.free_pet(indice as i32, info.pet_tid).data, &envio).await;
+                    }
+                    Err(e) => warn!("mundo: o mascote do slot {indice} de {roleid} não foi solto: {e}"),
+                }
+            }
+            este.responder(roleid, S2CGamedataSend::player_stop_pet_op().data, &envio).await;
+        });
+    }
+
+    /// `_cur_active_pet == index`: o de combate no mundo ou a montaria montada.
+    pub(super) async fn mascote_ativo_no_slot(&self, roleid: i32, indice: u16) -> bool {
+        let mundo = self.world.read().await;
+        mundo.mascote_de(roleid as i64).is_some_and(|m| m.slot == indice)
+            || mundo.players.get(&(roleid as i64)).and_then(|p| p.montaria).is_some_and(|m| m.indice == indice)
     }
 
     /// `pet_manager::RecallPetWithoutFree` com montaria (`gs/petman.cpp:1359-1390`): tira o
@@ -1173,7 +1227,7 @@ impl BusServer {
     // ------------------------------------------------------------------ missões
 
     /// O NPC com quem o jogador está falando, e os serviços dele.
-    async fn npc_em_conversa(&self, roleid: i32) -> Option<(u32, pw_data_loader::ServicosDoNpc)> {
+    pub(super) async fn npc_em_conversa(&self, roleid: i32) -> Option<(u32, pw_data_loader::ServicosDoNpc)> {
         let mundo = self.world.read().await;
         let npc = mundo.players.get(&(roleid as i64))?.npc_em_conversa?;
         let tid = mundo.npcs.get(&npc)?.template_id;
@@ -1654,7 +1708,7 @@ impl BusServer {
     /// `player.cpp:13930-13997`): `price × count`, proporcional à durabilidade, e
     /// `ITEM_TO_MONEY` (73).
     pub(super) async fn vender(&self, roleid: i32, conteudo: &[u8]) {
-        let pedidos = npc::itens_vendidos(conteudo);
+        let pedidos = npc::itens_vendidos(conteudo, self.sub.bytes_do_item_vendido());
         if pedidos.is_empty() {
             return;
         }
@@ -1780,6 +1834,28 @@ impl BusServer {
                 return;
             }
         }
+        // O livro do nível seguinte (`GetRequiredItem`): `SkillStub::Learn` o exige e o tira da
+        // bolsa com `SetUseitem` → `TakeOutItem` (`cskill/skill/skill.cpp:79-84`,
+        // `playerwrapper.h:394`, `gs/player.cpp:10090-10102`); sem ele o `Learn` falha e vai
+        // `ERR_CANNOT_LEARN_SKILL` (`serviceprovider.cpp:1303-1306`). O 329 (Reviver Mascote)
+        // pede o 11524 no nível 1, nas duas versões.
+        let livro = {
+            let mundo = self.world.read().await;
+            let atual = mundo.players.get(&(roleid as i64)).and_then(|p| p.habilidades.get(&id).copied()).unwrap_or(0) as i32;
+            mundo.data_manager.habilidades.get(id).and_then(|h| h.item_exigido(atual + 1)).unwrap_or(0)
+        };
+        let slot_do_livro = if livro > 0 {
+            match self.achar_na_bolsa(roleid, livro).await {
+                Some(s) => Some(s),
+                None => {
+                    debug!("mundo: {roleid} tentou aprender {id} sem o livro {livro}");
+                    self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::NAO_PODE_APRENDER).data).await;
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         let novo = self
             .com_contexto(roleid, |ctx| {
                 let dados = ctx.dados;
@@ -1839,6 +1915,14 @@ impl BusServer {
             .await
             .flatten();
         if let Some(n) = novo {
+            if let Some(s) = slot_do_livro {
+                if self.itens().await.consume_item(roleid, ContainerType::Inventory, s, 1).await.is_ok() {
+                    // `player_drop_item(IL_INVENTORY, slot, livro, 1, DROP_TYPE_TAKEOUT)`.
+                    self.enviar_ao_jogador(roleid, self.sub.player_drop_item(0, s as u8, 1, livro, 2).data).await;
+                } else {
+                    warn!("mundo: o livro {livro} de {roleid} não saiu da bolsa");
+                }
+            }
             if let Err(e) = self.repo().await.skill_repo().learn_or_upgrade(roleid, id, n as u8).await {
                 warn!("mundo: não consegui gravar a habilidade {id} de {roleid}: {e}");
             }

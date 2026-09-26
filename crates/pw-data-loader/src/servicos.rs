@@ -33,6 +33,15 @@ pub struct ServicosDoNpc {
     /// arquivo**: é por índice que o cliente pede o teleporte
     /// (`transmit_provider::TryServe`, `gs/serviceprovider.cpp:771-790`).
     pub destinos: Vec<DestinoDeTeleporte>,
+    /// `NPC_PETNAME_SERVICE` `(price, id_object_need)` — renomear mascote, serviço 36
+    /// (`npcgenerator.cpp:783-795`, `change_pet_name_provider`).
+    pub renomear_mascote: Option<(i32, i32)>,
+    /// `NPC_PETFORGETSKILL_SERVICE` `(price, id_object_need)` — esquecer habilidade de
+    /// mascote, serviço 37 (`npcgenerator.cpp:815-826`).
+    pub esquecer_habilidade_de_mascote: Option<(i32, i32)>,
+    /// `NPC_PETLEARNSKILL_SERVICE.id_skills[128]`, ordenados — serviço 38
+    /// (`npcgenerator.cpp:797-813`, `pet_skill_provider` com `binary_search`).
+    pub habilidades_de_mascote: Vec<u32>,
 }
 
 /// Um destino de transportadora (`NPC_TRANSMIT_SERVICE.targets_N_*`).
@@ -75,6 +84,10 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
     let entradas = por_id(g, "NPC_TASK_IN_SERVICE");
     let ensinos = por_id(g, "NPC_SKILL_SERVICE");
     let transportes = por_id(g, "NPC_TRANSMIT_SERVICE");
+    let nomes_de_mascote = por_id(g, "NPC_PETNAME_SERVICE");
+    let esquecimentos = por_id(g, "NPC_PETFORGETSKILL_SERVICE");
+    let ensinos_de_mascote = por_id(g, "NPC_PETLEARNSKILL_SERVICE");
+    let preco_e_item = |r: Option<&Record>| r.map(|r| (i(r, "price").max(0), i(r, "id_object_need").max(0)));
     g.get("NPC_ESSENCE")
         .iter()
         .filter_map(|npc| {
@@ -89,6 +102,9 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
                 missoes_recebidas: lista(entradas.get(&i(npc, "id_task_in_service")), "id_tasks_"),
                 habilidades: lista(ensinos.get(&i(npc, "id_skill_service")), "id_skills_"),
                 destinos: destinos(transportes.get(&i(npc, "id_transmit_service"))),
+                renomear_mascote: preco_e_item(nomes_de_mascote.get(&i(npc, "id_petname_service"))),
+                esquecer_habilidade_de_mascote: preco_e_item(esquecimentos.get(&i(npc, "id_petforgetskill_service"))),
+                habilidades_de_mascote: lista(ensinos_de_mascote.get(&i(npc, "id_petlearnskill_service")), "id_skills_"),
             };
             Some((id as u32, s))
         })

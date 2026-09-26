@@ -51,6 +51,9 @@ pub mod ids {
     /// `gs/playercmd.cpp:3235-3262`. Para montaria, invocar é **montar**.
     pub const SUMMON_PET: u16 = 100;
     pub const RECALL_PET: u16 = 101;
+    /// `BANISH_PET` — `{ size_t pet_index }`, 4 B (`common/protocol.h:5627-5631`;
+    /// `playercmd.cpp:3267-3282`).
+    pub const BANISH_PET: u16 = 102;
     /// `PET_CTRL_CMD` — `{ int target; int pet_cmd; char buf[] }` (`common/protocol.h`,
     /// `pet_ctrl_cmd`; tratado em `playercmd.cpp:3286-3297`).
     pub const PET_CTRL: u16 = 103;

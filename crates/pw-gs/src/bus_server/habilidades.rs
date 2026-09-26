@@ -27,6 +27,8 @@ use std::collections::HashMap;
 const TIPO_ATAQUE: i32 = 1;
 const TIPO_BENCAO: i32 = 2;
 const TIPO_MALDICAO: i32 = 3;
+/// `TYPE_BLESSPET` (`cskill/skill/skill.h:53`).
+const TIPO_BENCAO_DE_MASCOTE: i32 = 10;
 /// `Range::Type` (`cskill/skill/range.h:18-25`).
 const AREA_PONTO: i32 = 0;
 const AREA_LINHA: i32 = 1;
@@ -40,13 +42,45 @@ const AREA_EM_SI: i32 = 5;
 enum Alvo {
     Jogador(i64),
     Monstro(i64),
+    /// O corpo de um mascote de combate (a bênção dele em si, `TYPE_BLESSPET`).
+    Mascote(i64),
 }
 
 impl Alvo {
     fn id(self) -> i64 {
         match self {
-            Alvo::Jogador(i) | Alvo::Monstro(i) => i,
+            Alvo::Jogador(i) | Alvo::Monstro(i) | Alvo::Mascote(i) => i,
         }
+    }
+}
+
+/// Quem conjura, do ponto de vista do roteiro: o `PlayerWrapper` do original embrulha o
+/// `object_interface` de qualquer um — jogador ou NPC (`SkillWrapper::NpcStart`,
+/// `skillwrapper.cpp:974-1004`).
+struct Conjurador {
+    /// A origem dos efeitos (ódio e crédito do dano no tempo).
+    id: i64,
+    nivel: i32,
+    /// `skill->GetPlayer()->Get*`.
+    vars: HashMap<&'static str, f64>,
+    /// Faixa do ataque mágico, para o `GetMagicdamage` do roteiro.
+    magico: (i32, i32),
+}
+
+impl Conjurador {
+    fn do_jogador(p: &PlayerEntity) -> Self {
+        Self { id: p.role_id as i64, nivel: p.level, vars: vars_do_jogador(p), magico: (p.magic_attack_min, p.magic_attack_max) }
+    }
+
+    /// O mascote: o corpo de NPC dele, com o ataque do `GenerateBaseProp` e sem ataque
+    /// mágico.
+    fn do_mascote(id: i64, corpo: &MonsterEntity) -> Self {
+        let mut vars = vars_do_monstro(corpo);
+        vars.insert("Attack", ((corpo.attack_min + corpo.attack_max) / 2) as f64);
+        vars.insert("Magicattack", 0.0);
+        vars.insert("Ap", 0.0);
+        vars.insert("Form", 0.0);
+        Self { id, nivel: corpo.level, vars, magico: (0, 0) }
     }
 }
 
@@ -98,8 +132,8 @@ fn vars_do_monstro(m: &MonsterEntity) -> HashMap<&'static str, f64> {
 
 /// `skill->GetDamage()/GetMagicdamage()/Get<escola>damage()`: o dano do golpe já sorteado,
 /// e o mágico de quem conjura (`SetMagicDamage(GetMagicattack())`, `playerwrapper.cpp:249`).
-fn vars_da_habilidade(golpe: &crate::combat::Golpe, conjurador: &PlayerEntity) -> HashMap<&'static str, f64> {
-    let magico = crate::combat::sortear_dano_fisico(conjurador.magic_attack_min, conjurador.magic_attack_max) as f64;
+fn vars_da_habilidade(golpe: &crate::combat::Golpe, conjurador: &Conjurador) -> HashMap<&'static str, f64> {
+    let magico = crate::combat::sortear_dano_fisico(conjurador.magico.0, conjurador.magico.1) as f64;
     HashMap::from([
         ("Damage", golpe.dano_fisico as f64),
         ("Attack", golpe.dano_fisico as f64),
@@ -209,13 +243,14 @@ impl BusServer {
         };
         golpe.taxa_de_ataque = (golpe.taxa_de_ataque as f32 * h.precisao(nivel)) as i32;
 
+        let quem = Conjurador::do_jogador(&conjurador);
         let mut nao_portados: Vec<String> = Vec::new();
         let mut avisar: Vec<(Alvo, Mudanca)> = Vec::new();
         let mut mortos: Vec<i64> = Vec::new();
 
         // 2. `BlessMe`.
         if let Some(passos) = &roteiro_em_si {
-            let m = self.rodar_roteiro(Alvo::Jogador(roleid as i64), passos, nivel, &conjurador, &golpe, &mut nao_portados).await;
+            let m = self.rodar_roteiro(Alvo::Jogador(roleid as i64), passos, nivel, &quem, &golpe, &mut nao_portados).await;
             avisar.push((Alvo::Jogador(roleid as i64), m));
         }
 
@@ -267,7 +302,7 @@ impl BusServer {
                 // `attached_skill` só vale se o golpe acertou (`HandleAttackMsg`).
                 if acertou {
                     if let Some(passos) = &roteiro_no_alvo {
-                        let m = self.rodar_roteiro(Alvo::Monstro(id), passos, nivel, &conjurador, &golpe, &mut nao_portados).await;
+                        let m = self.rodar_roteiro(Alvo::Monstro(id), passos, nivel, &quem, &golpe, &mut nao_portados).await;
                         if m.morreu {
                             mortos.push(id);
                         }
@@ -277,9 +312,9 @@ impl BusServer {
             }
         } else if let Some(passos) = &roteiro_no_alvo {
             for a in &alvos {
-                let m = self.rodar_roteiro(*a, passos, nivel, &conjurador, &golpe, &mut nao_portados).await;
+                let m = self.rodar_roteiro(*a, passos, nivel, &quem, &golpe, &mut nao_portados).await;
                 // `SendClientEnchantResult` (`skillwrapper.cpp:546-551`).
-                let pacote = S2CGamedataSend::enchant_result(roleid, a.id() as i32, skill_id, nivel.clamp(0, 255) as u8, false, 0, 1).data;
+                let pacote = self.sub.enchant_result(roleid, a.id() as i32, skill_id, nivel.clamp(0, 255) as u8, false, 0, 1).data;
                 self.responder(roleid, pacote.clone(), envio).await;
                 self.transmitir_a_outros(roleid, pacote).await;
                 if m.morreu {
@@ -319,6 +354,120 @@ impl BusServer {
         true
     }
 
+    /// O efeito de uma habilidade do mascote, ao fim do canto (`SkillWrapper::NpcEnd` →
+    /// `NpcRun` → `PlayerWrapper::SetPerform`, `skillwrapper.cpp:1006-1024`,
+    /// `playerwrapper.cpp:170-420`), com o mascote como conjurador:
+    ///
+    /// - `dobless` → o `BlessMe` no próprio mascote (a 761 acelera o golpe dele);
+    /// - ataque → o golpe, com o dano do mascote, a precisão × `GetHitrate`, e o crédito do
+    ///   **dono** (`gpet_imp::FillAttackMsg`) pelo mesmo caminho do golpe comum; quem vê
+    ///   recebe o `OBJECT_SKILL_ATTACK_RESULT` com o mascote como atacante (o monstro
+    ///   atingido por quem não é jogador manda a todos, `gnpc_dispatcher::be_damaged`,
+    ///   `npc.cpp:219-223`); acertou, o alvo roda o `StateAttack` (o sangramento da 747);
+    /// - maldição → o `StateAttack` no monstro; bênção de mascote (`TYPE_BLESSPET`, 10, área
+    ///   5) → no próprio mascote; os dois com `ENCHANT_RESULT` a quem vê.
+    pub(super) async fn aplicar_habilidade_do_mascote(&self, pet: i64, skill_id: i32, nivel: i32, alvo: Option<i64>) {
+        let (h, corpo, bruto, lealdade) = {
+            let mundo = self.world.read().await;
+            let Some(h) = mundo.data_manager.habilidades.get(skill_id.max(0) as u32).cloned() else { return };
+            // Recolhido ou morto entre o canto e o efeito: nada sai.
+            let Some(m) = mundo.mascotes.get(&pet).filter(|m| !m.corpo.is_dead) else { return };
+            let Some(modelo) = mundo.data_manager.modelos_de_mascote.get(&(m.info.pet_tid as u32)) else { return };
+            let bruto = modelo.atributos(m.corpo.level.max(1)).dano;
+            let lealdade = crate::mascote::ajuste_de_dano(crate::mascote::nivel_de_lealdade(m.info.honor_point));
+            (h, m.corpo.clone(), bruto, lealdade)
+        };
+        let tipo = h.tipo.unwrap_or(0);
+        let quem = Conjurador::do_mascote(pet, &corpo);
+        let mut golpe = match h.dano.as_ref().and_then(|d| CombatEngine::golpe_de_habilidade_de_mascote(&corpo, bruto, lealdade, d, nivel)) {
+            Some(g) => g,
+            None => {
+                let mut g = CombatEngine::golpe_de_monstro(&corpo);
+                g.atacante_e_jogador_ou_pet = true;
+                g.de_habilidade = true;
+                g
+            }
+        };
+        golpe.taxa_de_ataque = (golpe.taxa_de_ataque as f32 * h.precisao(nivel)) as i32;
+        let mut nao_portados = Vec::new();
+        let mut avisar: Vec<(Alvo, Mudanca)> = Vec::new();
+        let mut mortos = Vec::new();
+
+        if let Some(passos) = h.em_si.clone().filter(|_| h.dobless) {
+            let m = self.rodar_roteiro(Alvo::Mascote(pet), &passos, nivel, &quem, &golpe, &mut nao_portados).await;
+            avisar.push((Alvo::Mascote(pet), m));
+        }
+        let roteiro_no_alvo = h.no_alvo.clone().filter(|_| h.doenchant || tipo != TIPO_ATAQUE);
+        let alvo_monstro = alvo.filter(|a| !crate::mascote::e_mascote(*a));
+        if tipo == TIPO_ATAQUE {
+            let Some(alvo) = alvo_monstro else { return };
+            let resolvido = {
+                let mut mundo = self.world.write().await;
+                let r = mundo.monsters.get(&alvo).filter(|(m, _)| !m.is_dead).map(|(m, _)| {
+                    let d = corpo.position.distance(&m.position);
+                    combat::resolver(&golpe, &CombatEngine::defesa_do_monstro(m), d, false, combat::Rolagens::sortear())
+                });
+                if let Some(r) = &r {
+                    // O golpe do mascote: crédito do dono, ódio no mascote e 1 no dono.
+                    mundo.adiar_dano(alvo, pet, r.dano() as i64, 0, false);
+                }
+                r
+            };
+            let Some(r) = resolvido else { return };
+            let acertou = matches!(r, Resultado::Acertou { .. });
+            let pacote = self
+                .sub
+                .object_skill_attack_result(pet as i32, alvo as i32, skill_id, saturar(r.dano() as i64), SEM_MARCACAO, VELOCIDADE_PADRAO, SECAO_UNICA)
+                .data;
+            self.transmitir_a_quem_ve(pet, pacote).await;
+            debug!("mundo: o mascote {pet} usou {skill_id} (nível {nivel}) em {alvo}: dano {}", r.dano());
+            if acertou {
+                if let Some(passos) = &roteiro_no_alvo {
+                    let m = self.rodar_roteiro(Alvo::Monstro(alvo), passos, nivel, &quem, &golpe, &mut nao_portados).await;
+                    if m.morreu {
+                        mortos.push(alvo);
+                    }
+                    avisar.push((Alvo::Monstro(alvo), m));
+                }
+            }
+        } else if let Some(passos) = &roteiro_no_alvo {
+            let a = if crate::mascote::area_sem_alvo(h.tipo_de_area.unwrap_or(0)) {
+                Alvo::Mascote(pet)
+            } else {
+                match alvo_monstro {
+                    Some(id) => Alvo::Monstro(id),
+                    None => return,
+                }
+            };
+            let m = self.rodar_roteiro(a, passos, nivel, &quem, &golpe, &mut nao_portados).await;
+            let pacote = self.sub.enchant_result(pet as i32, a.id() as i32, skill_id, nivel.clamp(0, 255) as u8, false, 0, 1).data;
+            self.transmitir_a_quem_ve(pet, pacote).await;
+            debug!("mundo: o mascote {pet} usou {skill_id} (nível {nivel}, tipo {tipo}) em {}", a.id());
+            if m.morreu {
+                mortos.push(a.id());
+            }
+            avisar.push((a, m));
+        }
+        if !nao_portados.is_empty() {
+            nao_portados.sort();
+            nao_portados.dedup();
+            debug!("mundo: habilidade {skill_id} do mascote — sem porte: {}", nao_portados.join(", "));
+        }
+        for (a, m) in avisar {
+            if m.efeitos {
+                self.avisar_efeitos(a.id(), m.atributos).await;
+            }
+        }
+        // Morte pelo roteiro (dano direto do `StateAttack`): o crédito é do dono.
+        let dono = self.world.read().await.mascotes.get(&pet).map(|m| m.dono as i32);
+        for id in mortos {
+            if let Some(dono) = dono {
+                self.transmitir_a_outros(0, S2CGamedataSend::npc_died(id as i32, dono).data).await;
+            }
+            self.monstro_morreu(id).await;
+        }
+    }
+
     /// Quem a habilidade alcança, pela área.
     #[allow(clippy::too_many_arguments)]
     async fn alvos_da_habilidade(
@@ -338,7 +487,8 @@ impl BusServer {
             .monsters
             .get(&alvo)
             .map(|(m, _)| (m.position, mundo.data_manager.monstros.get(m.template_id).map(|t| t.tamanho).unwrap_or(0.0)))
-            .or_else(|| mundo.players.get(&alvo).map(|p| (p.position, CORPO_DO_JOGADOR)));
+            .or_else(|| mundo.players.get(&alvo).map(|p| (p.position, CORPO_DO_JOGADOR)))
+            .or_else(|| mundo.mascotes.get(&alvo).filter(|m| !m.corpo.is_dead).map(|m| (m.corpo.position, m.ai.raio_do_corpo)));
         let monstros_vivos = || mundo.monsters.iter().filter(|(_, (m, _))| !m.is_dead).map(|(id, (m, _))| (*id, m.position));
         let jogadores_vivos = || mundo.players.iter().filter(|(_, p)| p.hp > 0).map(|(id, p)| (*id, p.position));
         let alcance_de_ataque = conjurador.attack_range;
@@ -366,6 +516,11 @@ impl BusServer {
                 }
                 if mundo.monsters.contains_key(&alvo) {
                     if amigavel { Vec::new() } else { vec![Alvo::Monstro(alvo)] }
+                } else if mundo.mascotes.contains_key(&alvo) {
+                    // Bênção num mascote — a Curar Mascote (330) é `TYPE_BLESSPET` (10) de ponto
+                    // (`playerwrapper.cpp:398`: `TYPE_BLESS || TYPE_BLESSPET` → `enchant`). Antes
+                    // o mascote não era alvo possível e a conjuração acabava sem efeito (B114).
+                    if matches!(tipo, TIPO_BENCAO | TIPO_BENCAO_DE_MASCOTE | 11 | 12) { vec![Alvo::Mascote(alvo)] } else { Vec::new() }
                 } else {
                     vec![Alvo::Jogador(alvo)]
                 }
@@ -406,13 +561,13 @@ impl BusServer {
         alvo: Alvo,
         passos: &[(String, String, String)],
         nivel: i32,
-        conjurador: &PlayerEntity,
+        conjurador: &Conjurador,
         golpe: &crate::combat::Golpe,
         nao_portados: &mut Vec<String>,
     ) -> Mudanca {
         let mut mundo = self.world.write().await;
         let dados = Arc::clone(&mundo.data_manager);
-        let vars_p = vars_do_jogador(conjurador);
+        let vars_p = conjurador.vars.clone();
         let vars_s = vars_da_habilidade(golpe, conjurador);
         let vars_v = match alvo {
             Alvo::Jogador(id) => match mundo.players.get(&id) {
@@ -423,13 +578,17 @@ impl BusServer {
                 Some((m, _)) if !m.is_dead => vars_do_monstro(m),
                 _ => return Mudanca::default(),
             },
+            Alvo::Mascote(id) => match mundo.mascotes.get(&id) {
+                Some(m) if !m.corpo.is_dead => vars_do_monstro(&m.corpo),
+                _ => return Mudanca::default(),
+            },
         };
         let vars = efeitos::variaveis(nivel, &vars_p, &vars_v, &vars_s);
         let (aplicacoes, nao_lidos) = efeitos::executar_roteiro(passos, &vars, &mut || (rand::random::<u32>() % 100) as i32);
         nao_portados.extend(nao_lidos.into_iter().map(|n| format!("expressão {n}")));
 
         let mut mud = Mudanca::default();
-        let origem = conjurador.role_id as i64;
+        let origem = conjurador.id;
         for ap in aplicacoes {
             self.aplicar_um(&mut mundo, &dados, alvo, &ap, conjurador, origem, &mut mud, nao_portados);
         }
@@ -449,7 +608,7 @@ impl BusServer {
         dados: &pw_data_loader::GameDataManager,
         alvo: Alvo,
         ap: &Aplicacao,
-        conjurador: &PlayerEntity,
+        conjurador: &Conjurador,
         origem: i64,
         mud: &mut Mudanca,
         nao_portados: &mut Vec<String>,
@@ -484,6 +643,14 @@ impl BusServer {
                 let res = m.resistances.map(|x| crate::entity::com_realce(x, r.resistencia));
                 let def = crate::entity::com_realce(m.def_phys, r.defesa);
                 (&mut m.efeitos, m.hp, m.max_hp, m.max_mp, def, res, m.level, false)
+            }
+            Alvo::Mascote(id) => {
+                let Some(m) = mundo.mascotes.get_mut(&id) else { return };
+                let c = &mut m.corpo;
+                let r = c.efeitos.realce();
+                let res = c.resistances.map(|x| crate::entity::com_realce(x, r.resistencia));
+                let def = crate::entity::com_realce(c.def_phys, r.defesa);
+                (&mut c.efeitos, c.hp, c.max_hp, c.max_mp, def, res, c.level, false)
             }
         };
         let _ = mp_max;
@@ -530,11 +697,11 @@ impl BusServer {
                         None => defesa,
                         Some(i) => resist[i],
                     };
-                    let mut dano = (ap.quantia * (1.0 - combat::reducao_por_defesa(def, conjurador.level))) as i32;
+                    let mut dano = (ap.quantia * (1.0 - combat::reducao_por_defesa(def, conjurador.nivel))) as i32;
                     if e_jogador {
                         dano = (0.25 * dano as f32) as i32;
                     } else {
-                        dano = (dados.progressao.ajuste(conjurador.level - nivel_alvo).ataque * dano as f32) as i32;
+                        dano = (dados.progressao.ajuste(conjurador.nivel - nivel_alvo).ataque * dano as f32) as i32;
                     }
                     if dano <= 3 {
                         return;
@@ -566,6 +733,15 @@ impl BusServer {
                             f.escala_defesa = (ap.valor * 100.0 + 0.00001) as i32;
                         }
                         Efeito::Inchurt if ap.razao <= 0.0 => return,
+                        // `filter_Rebirth(object, time, (int)probability, ratio)`: a chance em
+                        // `razao`, a vida em `fator` (0,01..1).
+                        Efeito::Rebirth => {
+                            f.razao = ap.probabilidade as i32;
+                            f.fator = ap.razao.clamp(0.01, 1.0);
+                        }
+                        // `_ratio = ratio <= 1 ? 1 − ratio : 0,1` — guardado, sem uso: o
+                        // `attack_attr < 0` que o dispara não acontece (ver o `Efeito`).
+                        Efeito::Decregiondmg => f.fator = if ap.razao <= 1.0 { 1.0 - ap.razao } else { 0.1 },
                         Efeito::Dechurt if !(ap.razao > 0.001 && ap.razao < 0.99) => return,
                         Efeito::Invincible => {
                             // `SetInvincibleFilter(true, time)` + ícone só com `showicon`.
@@ -605,6 +781,13 @@ impl BusServer {
                             mud.morreu = true;
                             mundo.grid.remove_entity(id);
                         }
+                    }
+                }
+                Alvo::Mascote(id) => {
+                    if delta_hp < 0 {
+                        mundo.dano_no_mascote(id, origem, -delta_hp);
+                    } else if let Some(m) = mundo.mascotes.get_mut(&id) {
+                        m.corpo.hp = (m.corpo.hp + delta_hp).min(m.corpo.max_hp);
                     }
                 }
             }

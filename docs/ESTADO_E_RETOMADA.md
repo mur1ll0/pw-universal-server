@@ -5,7 +5,23 @@
 > detalhado de cada sessão (sintoma, causa com referência ao fonte, correção, provas) vai
 > para o `docs/HISTORICO_DE_SESSOES.md`, com número de item.
 >
-> **B111 (2026-09-25), testado com o banco, falta ver em jogo:** mascote de combate, 1.2.6 e 1.5.5 — invocar (a Tsuko "montava" o de combate), seguir, atacar por ordem/defesa/automático, apanhar dos monstros, morrer, experiência e nível, recolher, fome/lealdade/comida, reviver (habilidade 329), gravação na jaula. Layout v7 do `PET_ESSENCE` corrigido pelo `gs` 1.2.6; `SUMMON_PET`/`RECALL_PET`/`PET_HP_NOTIFY`/`OBJECT_ATTACK_RESULT` com o tamanho do cliente 1.2.6 (a montaria do 1.2.6 também usava os do 1.5.5). **Falta:** habilidades do mascote (comandos 4/5), soltar, renomear. Spec 05 §8.2. Item 111 do histórico.
+> **B119 (2026-09-26), testado com o banco, falta ver em jogo:** chi no 1.2.6 — o prêmio de teto de chi existe no v55 (+40 do `AWARD_DATA`, 8 missões; a 973, que a Tsuko entregou, dá 99) e o leitor não o lia; a Tsuko ficou com `max_ap` 0 e nada enchia. Teto dela acertado para 99 (`scripts/2026_09_26_teto_de_chi_tsuko_126.sql`). Meditar no 1.2.6 não dá chi (versão). **Corrige o B118**, que dizia que o 1.2.6 não tinha teto por missão. Item 119 do histórico.
+>
+> **B118 (2026-09-26), testado com o banco, falta ver em jogo:** 1.2.6/1.5.5 — sentado dobra a regeneração a partir do 2º segundo (`STAYIN_BONUS`, os dois `gs`); a "FALHA" nas bênçãos do 1.2.6 era o `section` 1 lido como `modifier2` (`0x100` = `MOD_ENCHANT_FAILED`) — o 139 do 1.2.6 leva o modificador em dois bytes. **Conferidos sem mudança:** alcance do mascote (o original persegue até 0,8 × alcance puro + corpos) e dano de 1 no mascote (defesa 628 no nível 10 pela fórmula do original contra monstros de nível baixo). Item 118 do histórico.
+>
+> **B117 (2026-09-26), testado com o banco, falta ver em jogo:** 1.2.6 — o leitor v55 não lia o `m_bClearAcquired` (+0xae) e nenhuma entrega tirava os itens de missão; 9 itens da Tsuko apagados por `scripts/2026_09_26_bolsa_de_missao_tsuko_126.sql`. Monstros invocados nasciam com ids na faixa dos mascotes (`0xA0000000`, bit `PET_MASK`) — agora `0x9000_0000`. A Fera Psíquica da mina não some sozinha no original (`life_time` 0). Item 117 do histórico.
+>
+> **B116 (2026-09-26), testado com o banco, falta ver em jogo:** 1.2.6 — (1) Curar Mascote "não fazia nada": curava, mas o `ENCHANT_RESULT` ia com os 19 B do 1.5.5 e o cliente 1.2.6 (16 B) o descartava — vale para toda bênção/maldição do 1.2.6; (2) itens sombreados ao vender: o cliente 1.2.6 manda o item vendido com 12 B (sem `price`) e o leitor usava 16 — só o 1º item saía certo; (3) o `PLAYER_DROP_ITEM` do livro (B112/B113) e do jogar fora ia sem passar pela versão (11 B no lugar de 9). A Batatinha (15955) com o nome dentro do modelo é dado do cliente (a altura do nome vem só da caixa do modelo, `EC_NPC.cpp:2549-2552`, `EC_NPCModel.cpp:158-171`) — sem correção no servidor. Item 116 do histórico.
+>
+> **B115 (2026-09-25), testado com o banco, falta ver em jogo:** Curar Mascote (330). 1.5.5: `Rebirth` (salva da morte com 20% da vida, também nas 1096/1280/1281/2411) e `Decregiondmg` (só ícone: a condição do fonte nunca ocorre) portados. 1.2.6: o `gs` não tem esses filtros; a 330 lá é só cura, `55·L − 10 + dano mágico × (0,02·L + 0,1)`, e o catálogo 1.2.6 herdava o roteiro do 1.5.5 — corrigido. **Achado:** 65 outros roteiros do catálogo 1.2.6 divergem do `gs` (`specs/habilidades_126/conferir_roteiros_126.py`), fila §5D. Item 115 do histórico.
+>
+> **B114 (2026-09-25), testado com o banco, falta ver em jogo:** mascote do 1.2.6 e do 1.5.5 — (1) o som do andar recomeçava porque o mascote parava a cada passo que alcançava a meta; agora segue a sessão do original (sem parada até ficar a < 0,8 m, início só no batimento de 1 s); (2) na plataforma do Ancião da Cidade das Feras, que o `movemap` não tem, o mascote ia para a posição crua do dono e afundava na estrutura; agora invocar e reposicionar usam o `FindGroundPos` (sem ponto: erro 85 / recolhido); (3) a Curar Mascote (330) não tinha o mascote como alvo e não fazia nada. Testes intermitentes sob carga paralela (passam isolados): `aceitar_forma_o_grupo_e_avisa_os_dois_com_dados_reais`, `o_guia_selvagem_do_126_entrega_a_missao_inicial_1177`. Item 114 do histórico.
+>
+> **B113 (2026-09-25), testado com o banco, falta ver em jogo:** o treinador não consumia o livro da habilidade (relato da Tsuko com Curar/Reviver Mascote, 328/329). `SkillStub::Learn` exige e tira o `GetRequiredItem` (`cskill/skill/skill.cpp:79-84`); agora vale nas duas versões (sem livro: erro 22). Item 113 do histórico.
+>
+> **B112 (2026-09-25), testado com o banco, falta ver em jogo:** mascote de combate, 1.2.6 e 1.5.5 — habilidades por ordem (comando 4) e automática (5) com canto, dano, sangramento, recarga (`PET_SET_COOLDOWN` 252) e erro 93; soltar (`BANISH_PET` 102 → `FREE_PET` 232 após 10 s); renomear (NPC 36; o original recusa o mascote ativo, o nome aparece na próxima invocação); aprender e esquecer habilidade no NPC (38/37, livro e SP). Defeito do B111 corrigido: a gravação da jaula zerava nome e habilidades (`InfoPet::do_bloco` lia 40 de 192 B). Catálogos com `item_exigido`. Spec 05 §8.2. Item 112 do histórico.
+>
+> **B111 (2026-09-25), testado com o banco, falta ver em jogo:** mascote de combate, 1.2.6 e 1.5.5 — invocar (a Tsuko "montava" o de combate), seguir, atacar por ordem/defesa/automático, apanhar dos monstros, morrer, experiência e nível, recolher, fome/lealdade/comida, reviver (habilidade 329), gravação na jaula. Layout v7 do `PET_ESSENCE` corrigido pelo `gs` 1.2.6; `SUMMON_PET`/`RECALL_PET`/`PET_HP_NOTIFY`/`OBJECT_ATTACK_RESULT` com o tamanho do cliente 1.2.6 (a montaria do 1.2.6 também usava os do 1.5.5). (Habilidades, soltar e renomear: B112.) Spec 05 §8.2. Item 111 do histórico.
 >
 > **B110 (2026-09-25), corrigido, falta ver em jogo:** a Tsuko em laço com a 5909 "Domesticadores" e a "Instruções" (5911) travada: a 5911 é de chegar a um lugar (o mapa 1 inteiro) e o leitor v55 não lia o lugar, então o aviso do cliente (motivo 3) nunca a cumpria e a 5912 (Domesticadora) não vinha. Lugar medido no `OnTaskReachSite` do `libtask.so` 1.2.6. Item 110 do histórico.
 >
@@ -197,7 +213,7 @@ docker logs -f pw-realm-155        # login, entrada no mundo, o que o link trata
 docker logs -f pw-world-155        # os mapas 1 e 161
 ```
 
-**Referência da suíte, medida em 2026-09-24 (B98) com o banco:** **674 testes, 0 falhas**
+**Referência da suíte, medida em 2026-09-25 (B112) com o banco:** **738 testes: 737 passaram, 1 intermitente, 2 ignorados** (97 binários, B119; intermitentes sob carga, passam isolados: os de grupo, 1177, hierograma)
 (`cargo test --workspace --no-fail-fast -- --test-threads=2`). O limite de dois fios evita
 contenção no pool do Postgres nos testes de mundo. Qualquer falha nova deve ser investigada.
 
@@ -364,8 +380,9 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 8. **Sem trava de PvP:** qualquer jogador machuca qualquer outro, em qualquer lugar
     (`bus_server.rs`, comentário em `pvp`). O original exige duelo, guerra ou mapa de PK
     (B35d).
-9. **Mascote de combate:** a montaria já monta, com a sessão inteira (B78/B79), e quem chega
-    depois a vê (B80). Falta invocar a criatura de combate. Do estado estendido, os bits que
+9. **Mascote de combate:** montaria (B78-B80) e combate (B111/B112: invocar, IA, habilidades,
+    soltar, renomear, aprender/esquecer) testados na suíte; falta ver em jogo, e faltam
+    invisibilidade, água/ar e bênção de mascote em outro alvo. Do estado estendido, os bits que
     ainda vão zerados são os que não temos dado para preencher — emote, efeitos visíveis,
     facção, barraca, cônjuge, título, VIP e os outros do `state2` (spec 04).
 10. **Daimon (B75/B76, parcial):** tem ficha e ganha experiência, e só. Faltam o equipamento e
@@ -470,6 +487,8 @@ Ordem atualizada pelo relato do Murillo: (1) ~~layout v7 do `elements.data`~~ (B
 - Banco (E), `pw-admin` (G), atualizador/launcher (H) — memória `pw_roadmap_contextos`.
 
 ---
+**Roteiros de habilidade do 1.2.6 (B115):** o catálogo 1.2.6 herda do 1.5.5 os `StateAttack`/`BlessMe`; 65 divergem do `gs` 1.2.6 em efeito (ex.: 610 reduz ataque/magia lá e defesa/resistência no herdado; 404/406/… dão `Ap` e não `Apgencont2`; 58/59 não fazem nada lá). Lista: `python specs/habilidades_126/conferir_roteiros_126.py ../files1.2.6/pwserver/gamed/gs 70`. Caminho: estender o emulador do extrator aos `StateAttack`/`BlessMe` (sondando `L` e as variáveis) e gerar os roteiros do 1.2.6; enquanto isso, casos pontuais em `ROTEIROS_DO_GS_126`.
+
 ## 6. Regras que valem para qualquer mudança
 
 Cada uma custou pelo menos uma sessão. A evidência está no item citado.
@@ -607,3 +626,11 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 97 | 09-24 | leitor do `movemap/` (`.rmap` + `.dhmap`): nascimento de área no chão e passo do monstro em cima da estrutura (Gárgulas do mapa 161) |
 | 98 | 09-24 | skill 299 no v126: 85 → 88 → 142 → 123 para o dono; 88 removido do broadcast; visual do próprio Tsuko pendente em jogo |
 | 99 | 09-24 | desvio de obstáculo do monstro de chão: porte do `pathfinding` (perseguição dispersa sem bloqueio + `CPf2DBfs`, passeio com o agente de 30 nós), volta para casa com `ReturnHome` |
+| 119 | 09-26 | 1.2.6: teto de chi do prêmio v55 (+40), Tsuko com 99; meditar sem chi no 1.2.6; corrige o B118 |
+| 118 | 09-26 | sentar dobra a regeneração; "FALHA" nas bênçãos 1.2.6 (modificador em 2 bytes); chi, alcance e dano do mascote conferidos |
+| 117 | 09-26 | 1.2.6: `m_bClearAcquired` no v55 (itens de missão não saíam) + limpeza SQL da Tsuko; id do invocado fora da faixa de mascote |
+| 116 | 09-26 | 1.2.6: `ENCHANT_RESULT` 16 B (bênçãos visíveis), item vendido de 12 B (sombreado), `PLAYER_DROP_ITEM` pela versão; Batatinha = dado do cliente |
+| 115 | 09-25 | Curar Mascote: `Rebirth`/`Decregiondmg` no 1.5.5; 1.2.6 só cura (roteiro do `gs`); 65 roteiros 1.2.6 divergentes achados |
+| 114 | 09-25 | mascote: som do andar (sem parada a cada passo), `FindGroundPos` ao invocar/reposicionar (plataforma do Ancião), Curar Mascote no mascote |
+| 113 | 09-25 | o treinador consome o livro da habilidade (`GetRequiredItem`), 1.2.6 e 1.5.5 |
+| 112 | 09-25 | mascote de combate: habilidades (comandos 4/5, recarga 252, erro 93), soltar (102 → 232), renomear (NPC 36), aprender/esquecer (38/37); `InfoPet::do_bloco` lia 40 de 192 B e a gravação zerava nome e habilidades. (B100–B111 ainda sem linha aqui: ver o histórico.) |

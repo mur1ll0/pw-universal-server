@@ -84,6 +84,8 @@ fn feiticeira_nivel_1() -> PlayerEntity {
         max_ap: 0,
         ap_por_golpe: 0,
         sentado: false,
+        meditacao_s: 0,
+        chi_ao_meditar: 15,
         missoes: Default::default(),
         coleta: None,
         equipamento: Default::default(),
@@ -319,4 +321,36 @@ fn sair_do_combate_de_vida_cheia_avisa_o_cliente() {
     let avisos: Vec<bool> = (0..4).map(|_| pw_gs::progressao::batimento(&mut p)).collect();
     assert_eq!(avisos, [false, true, false, false]);
     assert_eq!(p.combate_s, 0);
+}
+
+/// B118 — sentado, o `sit_down_filter` dobra a regeneração a partir do segundo batimento
+/// (`STAYIN_BONUS` 100, `gs/config.h:103`; `gs/sitdown_filter.cpp:19-34`; no `gs` 1.2.6 os mesmos
+/// `push 0x64`, VA 0x812ff22). Em pé nada muda; levantar tira o bônus.
+#[test]
+fn meditar_dobra_a_regeneracao_a_partir_do_segundo_batimento() {
+    let base = {
+        let mut p = feiticeira_nivel_1();
+        p.hp_gen = 8;
+        p.mp_gen = 8;
+        p.hp = 1;
+        p.mp = 1;
+        p.max_hp = 10_000;
+        p.max_mp = 10_000;
+        p.combate_s = 0;
+        p
+    };
+    let ganho = |sentado: bool, batimentos: usize| {
+        let mut p = base.clone();
+        p.sentado = sentado;
+        let mut v = Vec::new();
+        for _ in 0..batimentos {
+            let antes = p.hp;
+            pw_gs::progressao::batimento(&mut p);
+            v.push(p.hp - antes);
+        }
+        v
+    };
+    // Fora de combate: `hp_gen × 4` = 32 oitavos = 4 por batimento; sentado, 8 a partir do 2º.
+    assert_eq!(ganho(false, 3), vec![4, 4, 4]);
+    assert_eq!(ganho(true, 3), vec![4, 8, 8]);
 }

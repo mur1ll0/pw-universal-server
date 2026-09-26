@@ -180,8 +180,10 @@ impl Mascote {
         let corpo = corpo_do_mascote(id, modelo, &info, pos);
         let nome = info.name[..(info.name_len as usize).min(16)].to_vec();
         let vis_tid = if info.pet_vis_tid > 0 { info.pet_vis_tid } else { info.pet_tid } as u32;
+        let mut ai = MascoteAi::new(agressividade, movimento, pos);
+        ai.raio_do_corpo = modelo.corpo;
         Self {
-            ai: MascoteAi::new(agressividade, movimento, pos),
+            ai,
             corpo,
             dono,
             slot,
@@ -194,6 +196,15 @@ impl Mascote {
             batimento_ms: 0,
             batimentos_dados: 0,
         }
+    }
+
+    /// `gactive_imp::GetSkillLevel`: o nível da habilidade no `pet_data::skills`, que o
+    /// `CreatePetBase` põe no corpo (`npcgenerator.cpp:2098-2106`, parando no primeiro vazio).
+    pub fn nivel_da_habilidade(&self, id: i32) -> i32 {
+        if id <= 0 {
+            return 0;
+        }
+        self.info.skills.iter().take_while(|(s, _)| *s > 0).find(|(s, _)| *s == id).map(|(_, l)| *l).unwrap_or(0)
     }
 
     /// Batimentos de 1 s já dados.
@@ -296,10 +307,97 @@ impl Mascote {
     }
 }
 
+/// `pet_gen_pos::FindGroundPos` (`petman.cpp:1-31`; o mesmo no `gs` 1.2.6,
+/// `combat_petdata_imp::FindGroundPos` VA 0x8147752, 10 voltas e o 6,8 em 0x8504678): até
+/// 10 sorteios a `±Rand(0,8..1,2)` m do dono em `x` e em `z`, cada um no terreno + piso do
+/// mapa de movimento (`path_finding::GetValidPos`), recusando o inalcançável e o que fica a
+/// 6,8 m ou mais da altura do dono. Mapa sem terreno fica na altura do dono.
+pub fn posicao_no_chao(terreno: &pw_data_loader::Terreno, movimento: &pw_data_loader::MapaDeMovimento, dono: Vector3) -> Option<Vector3> {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    for _ in 0..10 {
+        let (ox, oz) = (rng.gen_range(0.8f32..1.2), rng.gen_range(0.8f32..1.2));
+        let x = dono.x + if rng.gen_bool(0.5) { ox } else { -ox };
+        let z = dono.z + if rng.gen_bool(0.5) { oz } else { -oz };
+        let Some(acima) = movimento.acima_do_terreno(x, z) else { continue };
+        let Some(chao) = terreno.altura_em(x, z) else {
+            return Some(Vector3::new(x, dono.y, z));
+        };
+        let y = chao + acima;
+        if (y - dono.y).abs() >= 6.8 {
+            continue;
+        }
+        return Some(Vector3::new(x, y, z));
+    }
+    None
+}
+
 /// A regeneração do batimento de 1 s: `GenHPandMP(hp_gen)` — o mascote tem `SetFastRegen(0)`,
 /// então é sempre a lenta (`gnpc_imp::OnHeartbeat`, `npc.cpp:1948-1957`).
 pub fn regeneracao(modelo: &ModeloDeMascote, nivel: i32) -> i64 {
     modelo.atributos(nivel.max(1)).regeneracao.max(0) as i64
+}
+
+/// `COOLINGID_BEGIN` (`cskill/skill/playerwrapper.h:22`): a recarga de uma habilidade é
+/// guardada em `id + 1024` (`SkillWrapper::GetCooldownID`, `skillwrapper.cpp:1495-1498`).
+pub const COOLINGID_BEGIN: i32 = 1024;
+
+/// `ERR_PET_SKILL_IN_COOLDOWN` (93 no 1.5.5, `common/protocol.h:773`; o mesmo `push 0x5d` no
+/// `gpet_imp::NotifySkillStillCoolDown` do `gs` 1.2.6, VA 0x813a1c1).
+pub const ERRO_HABILIDADE_EM_RECARGA: i32 = 93;
+
+/// `range.type` das habilidades que não pedem alvo: 2 bola em si e 5 em si
+/// (`cskill/skill/range.h:18-25`; `DispatchPlayerCommand`, `petnpc.cpp:1071-1072`).
+pub fn area_sem_alvo(area: i32) -> bool {
+    area == 2 || area == 5
+}
+
+/// Uma habilidade do mascote com o que o mundo precisa para conjurá-la, lida do catálogo do
+/// servidor no nível que o mascote tem (`pet_data::skills`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HabilidadeDoMascote {
+    pub id: i32,
+    pub nivel: i32,
+    /// `GetType`: 1 ataque, 2 bênção, 3 maldição…
+    pub tipo: i32,
+    /// `RangeType` (`range.type`).
+    pub area: i32,
+    /// `GetMagicRange` = `GetPraydistance` (sem o raio do corpo).
+    pub alcance: f32,
+    /// `State1::GetTime` — o canto: é o `time` do `OBJECT_CAST_SKILL` e o que falta até o
+    /// efeito (`SkillWrapper::NpcStart`, `skillwrapper.cpp:974-1004`).
+    pub canto_ms: u32,
+    /// `State2::GetTime` — a execução depois do efeito; 0 vira 20 tiques
+    /// (`session_npc_skill::StartSession`, `npcsession.cpp:718-721`).
+    pub execucao_ms: u32,
+    /// `GetCoolingtime` armado como o original: segundos truncados × 1000
+    /// (`PlayerWrapper::SetPerform`, `playerwrapper.cpp:170`).
+    pub recarga_ms: i32,
+    /// `GetMpCost`. É 0 em todas as habilidades de mascote dos dois catálogos — e o de combate
+    /// tem `max_mp` 0 (`GenerateBaseProp`, `petdataman.cpp:180`), então o `CheckMp` passa.
+    pub mana: i32,
+}
+
+impl HabilidadeDoMascote {
+    pub fn recarga(&self) -> i32 {
+        self.id + COOLINGID_BEGIN
+    }
+}
+
+/// `ai_pet_skill_task` (`aipolicy.h:733-748`): a habilidade e o alvo, com as duas perseguições
+/// que o `ai_skill_task_2::Execute` permite antes de conjurar de onde está (`_trace_count`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TarefaDeHabilidade {
+    pub habilidade: HabilidadeDoMascote,
+    pub alvo: Option<i64>,
+    rastros: u8,
+}
+
+/// `session_npc_skill`: o canto até o efeito e a execução depois dele.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Conjuracao {
+    Canto { habilidade: HabilidadeDoMascote, alvo: Option<i64>, falta_ms: u32 },
+    Execucao { falta_ms: u32 },
 }
 
 /// O que o mascote decidiu no tique.
@@ -313,6 +411,15 @@ pub enum AcaoDoMascote {
     Reposicionar,
     /// `RelocatePetPos(true)` ou o dono sumiu: recolher (`GM_MSG_PET_DISAPPEAR`).
     Sumir,
+    /// Começou a conjurar (`NpcStart` → `SendClientMsgSkillCasting`): `OBJECT_CAST_SKILL` a
+    /// quem vê. `alvo` `None` é a habilidade em si.
+    Conjurou { habilidade: HabilidadeDoMascote, alvo: Option<i64> },
+    /// O canto acabou (`RepeatSession` → `NpcEnd` → `SetPerform`): o efeito sai e a recarga
+    /// fica armada (`gpet_imp::SetCoolDown`, que avisa o dono).
+    UsouHabilidade { habilidade: HabilidadeDoMascote, alvo: Option<i64> },
+    /// A sessão abriu com a recarga armada (`NotifySkillStillCoolDown`, `petnpc.cpp:277-285`):
+    /// `ERR_PET_SKILL_IN_COOLDOWN` ao dono, e nada sai.
+    HabilidadeEmRecarga,
 }
 
 /// A IA do mascote (`gpet_policy` + as tarefas de alvo). Um passo de perseguição a cada
@@ -332,6 +439,19 @@ pub struct MascoteAi {
     pub direcao: u8,
     seguir: Option<SeguirAlvo>,
     falhas_de_caminho: u32,
+    /// A `ai_pet_follow_master` em curso: começa no batimento de 1 s com o dono a mais de
+    /// 1,5 m (`petnpc.cpp:1712-1716`) e acaba a menos de 0,8 m (`session_npc_follow_target`).
+    seguindo: bool,
+    /// `gpet_policy::_auto_skill_*` (`SetPetAutoSkill`, `petnpc.cpp:1812-1818`).
+    pub automatica: Option<HabilidadeDoMascote>,
+    /// A `ai_pet_skill_task` pendente (ordem do dono ou a automática).
+    pub tarefa: Option<TarefaDeHabilidade>,
+    conjuracao: Option<Conjuracao>,
+    /// `gpet_imp::_cooldown`: o que falta de cada recarga, em ms, pelo id da recarga.
+    pub recargas: HashMap<i32, u32>,
+    /// O raio do corpo, que o alcance da habilidade soma (`ai_pet_skill_task::StartTask`,
+    /// `aipolicy.cpp:1922-1927`).
+    pub raio_do_corpo: f32,
 }
 
 impl MascoteAi {
@@ -353,7 +473,35 @@ impl MascoteAi {
             direcao: 0,
             seguir: None,
             falhas_de_caminho: 0,
+            seguindo: false,
+            automatica: None,
+            tarefa: None,
+            conjuracao: None,
+            recargas: HashMap::new(),
+            raio_do_corpo: 0.0,
         }
+    }
+
+    /// A recarga pronta (`gpet_imp::CheckCoolDown`)?
+    pub fn recarga_pronta(&self, recarga: i32) -> bool {
+        self.recargas.get(&recarga).is_none_or(|ms| *ms == 0)
+    }
+
+    /// Está no meio de uma conjuração (`STATE_SESSION_USE_SKILL`)?
+    pub fn conjurando(&self) -> bool {
+        self.conjuracao.is_some()
+    }
+
+    /// Comando 4 (`petnpc.cpp:1065-1112`): `ClearNextTask` + `AddPetSkillTask`. Quem chama já
+    /// conferiu o nível, o alvo e, para quem não é bênção, pôs o alvo no ódio com
+    /// `max_hp + 10` (o mesmo de [`Self::atacar_por_ordem`]).
+    pub fn ordenar_habilidade(&mut self, habilidade: HabilidadeDoMascote, alvo: Option<i64>) {
+        self.tarefa = Some(TarefaDeHabilidade { habilidade, alvo, rastros: 2 });
+    }
+
+    /// Comando 5 (`petnpc.cpp:1115-1131`): `None` desliga.
+    pub fn habilidade_automatica(&mut self, habilidade: Option<HabilidadeDoMascote>) {
+        self.automatica = habilidade;
     }
 
     pub fn alvo(&self) -> Option<i64> {
@@ -445,6 +593,10 @@ impl MascoteAi {
         }
         self.espera_ms = self.espera_ms.saturating_sub(delta_ms);
         self.recarga_ms = self.recarga_ms.saturating_sub(delta_ms);
+        for ms in self.recargas.values_mut() {
+            *ms = ms.saturating_sub(delta_ms);
+        }
+        self.recargas.retain(|_, ms| *ms > 0);
         let Some(dono) = dono else {
             // `QueryTarget(leader) != TARGET_STATE_NORMAL` → `GM_MSG_PET_DISAPPEAR`.
             return Some(AcaoDoMascote::Sumir);
@@ -476,12 +628,37 @@ impl MascoteAi {
                     self.falhas_de_caminho = 0;
                     return Some(AcaoDoMascote::Reposicionar);
                 }
+                // `range > 1.5f*1.5f || h > 10.f` → `AddTargetTask<ai_pet_follow_master>`, só
+                // aqui no batimento — não a cada tique.
+                if d2 > 1.5 * 1.5 || h > 10.0 {
+                    self.seguindo = true;
+                }
             }
+        }
+
+        // A sessão de habilidade em curso ocupa o mascote até o fim da execução.
+        if let Some(c) = self.conjuracao {
+            return self.passar_conjuracao(c, delta_ms);
+        }
+        // `gpet_policy::OnHeartbeat` e `DeterminePolicy` (`petnpc.cpp:1487-1519`, `:1630-1645`):
+        // em combate, com a automática fora da recarga e mana para ela, a próxima tarefa é a
+        // habilidade no primeiro do ódio, em vez do golpe comum.
+        if self.tarefa.is_none() {
+            if let (Some(h), Some(alvo)) = (self.automatica, self.alvo()) {
+                if self.recarga_pronta(h.recarga()) && corpo.mp >= h.mana {
+                    self.tarefa = Some(TarefaDeHabilidade { habilidade: h, alvo: Some(alvo), rastros: 2 });
+                }
+            }
+        }
+        if let Some(t) = self.tarefa {
+            return self.executar_tarefa(t, corpo, alvos, mapa);
         }
 
         // Com alvo: a tarefa corpo a corpo — chegar ao alcance e bater no ritmo do
         // `attack_speed` (`ai_melee_task` → `session_npc_attack`).
         if let Some(alvo_id) = self.alvo() {
+            // `ai_pet_follow_master::OnHeartbeat`: em combate a tarefa de seguir acaba.
+            self.seguindo = false;
             let (pos_alvo, _, alvo_corpo) = &alvos[&alvo_id];
             let d = distancia_h(corpo.position, *pos_alvo);
             if d <= corpo.attack_range {
@@ -518,16 +695,109 @@ impl MascoteAi {
             }
             return (!self.parado).then(|| AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)));
         }
-        let d = distancia_h(corpo.position, dono);
-        let h = (corpo.position.y - dono.y).abs();
-        if d > 1.5 || h > 10.0 {
-            return self.mover_ate(corpo, dono, 0.8, mapa);
+        // `session_npc_follow_target::SetTarget(dono, 0.8, 62, 1.0)` (`aipolicy.cpp:1828-1838`):
+        // a sessão acaba com parada quando a distância (3D, `squared_distance`) fica abaixo de
+        // 0,8 m; até lá o agente persegue com meta de 1,0 m. Sem sessão, o mascote fica parado.
+        if !self.seguindo {
+            return (!self.parado).then(|| AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)));
         }
-        (!self.parado).then(|| AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)))
+        let d3 = ((corpo.position.x - dono.x).powi(2) + (corpo.position.y - dono.y).powi(2) + (corpo.position.z - dono.z).powi(2)).sqrt();
+        if d3 < 0.8 {
+            self.seguindo = false;
+            self.seguir = None;
+            return (!self.parado).then(|| AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)));
+        }
+        self.mover_ate(corpo, dono, 1.0, mapa)
     }
 
-    /// Um passo de 500 ms correndo até ficar a `alcance` de `meta`, desviando pelo mapa de
-    /// movimento (`session_npc_follow_target`); o passo que chega vai como parada (B106).
+    /// `ai_skill_task_2::Execute` (`aipolicy.cpp:1963-2050`): em si, conjura já; com alvo,
+    /// persegue até `0,9 ×` o alcance (`range > sa × 0,81`) e conjura, ou conjura de onde está
+    /// depois de duas perseguições. Alvo que sumiu sai do ódio e a tarefa acaba.
+    fn executar_tarefa(
+        &mut self,
+        t: TarefaDeHabilidade,
+        corpo: &mut MonsterEntity,
+        alvos: &HashMap<i64, (Vector3, bool, MonsterEntity)>,
+        mapa: &Mapa,
+    ) -> Option<AcaoDoMascote> {
+        if area_sem_alvo(t.habilidade.area) {
+            return self.comecar_a_conjurar(t.habilidade, t.alvo, corpo);
+        }
+        let Some(alvo) = t.alvo else {
+            self.tarefa = None;
+            return None;
+        };
+        let Some((pos, true, _)) = alvos.get(&alvo) else {
+            self.odio.remove(&alvo);
+            self.tarefa = None;
+            return None;
+        };
+        // O raio do alvo não entra: o `MonsterEntity` não o guarda (o golpe comum também
+        // mede só até o centro).
+        let alcance = t.habilidade.alcance + self.raio_do_corpo;
+        if t.rastros == 0 || distancia_h(corpo.position, *pos) <= alcance * 0.9 {
+            return self.comecar_a_conjurar(t.habilidade, t.alvo, corpo);
+        }
+        if self.seguir.is_none() {
+            // Uma perseguição nova (`_trace_count --`).
+            if let Some(t) = self.tarefa.as_mut() {
+                t.rastros -= 1;
+            }
+        }
+        self.mover_ate(corpo, *pos, (alcance * 0.9).max(0.5), mapa)
+    }
+
+    /// `session_npc_skill::StartSession` (`npcsession.cpp:654-730`): a recarga armada recusa
+    /// (e o dono ouve o erro 93), a mana que falta recusa em silêncio; senão o canto começa.
+    fn comecar_a_conjurar(&mut self, h: HabilidadeDoMascote, alvo: Option<i64>, corpo: &MonsterEntity) -> Option<AcaoDoMascote> {
+        self.tarefa = None;
+        if !self.recarga_pronta(h.recarga()) {
+            return Some(AcaoDoMascote::HabilidadeEmRecarga);
+        }
+        if h.mana > 0 && corpo.mp < h.mana {
+            return None;
+        }
+        self.seguir = None;
+        self.conjuracao = Some(Conjuracao::Canto { habilidade: h, alvo, falta_ms: h.canto_ms });
+        Some(AcaoDoMascote::Conjurou { habilidade: h, alvo })
+    }
+
+    /// O relógio da sessão: o canto acaba no efeito (e arma a recarga); a execução acaba
+    /// devolvendo o mascote à IA.
+    fn passar_conjuracao(&mut self, c: Conjuracao, delta_ms: u32) -> Option<AcaoDoMascote> {
+        match c {
+            Conjuracao::Canto { habilidade, alvo, falta_ms } => {
+                let falta_ms = falta_ms.saturating_sub(delta_ms);
+                if falta_ms > 0 {
+                    self.conjuracao = Some(Conjuracao::Canto { habilidade, alvo, falta_ms });
+                    return None;
+                }
+                if habilidade.recarga_ms > 0 {
+                    self.recargas.insert(habilidade.recarga(), habilidade.recarga_ms as u32);
+                }
+                // Canto 0 é `interval == 0`: o efeito sai na hora e a sessão não continua.
+                self.conjuracao = (habilidade.canto_ms > 0).then(|| Conjuracao::Execucao {
+                    falta_ms: if habilidade.execucao_ms > 0 { habilidade.execucao_ms } else { 20 * 50 },
+                });
+                Some(AcaoDoMascote::UsouHabilidade { habilidade, alvo })
+            }
+            Conjuracao::Execucao { falta_ms } => {
+                let falta_ms = falta_ms.saturating_sub(delta_ms);
+                self.conjuracao = (falta_ms > 0).then_some(Conjuracao::Execucao { falta_ms });
+                None
+            }
+        }
+    }
+
+    /// `session_npc_follow_target::Run` (`npcsession.cpp:164-280`): um passo de 500 ms
+    /// correndo rumo a `meta`, desviando pelo mapa de movimento.
+    ///
+    /// O que importa para o cliente é **quando sai a parada**: ao chegar à meta antiga
+    /// (`GetToGoal`) o agente recomeça rumo à posição nova com `0,6 × alcance` e segue andando;
+    /// a parada (`TrySendStop`, uma vez) só sai quando o recomeço já nasce na meta ou o passo não
+    /// sai do lugar. O cliente só reinicia a animação de andar — e o som dela — quando o NPC sai
+    /// de `WORK_MOVE` (`CECNPC::MoveTo`, `EC_NPC.cpp:1048-1053`); parar a cada passo que
+    /// alcançava a meta fazia o som do mascote recomeçar enquanto ele seguia o dono (B114).
     fn mover_ate(&mut self, corpo: &mut MonsterEntity, meta: Vector3, alcance: f32, mapa: &Mapa) -> Option<AcaoDoMascote> {
         if self.espera_ms > 0 {
             return None;
@@ -536,36 +806,44 @@ impl MascoteAi {
         let passo = corpo.move_speed * Self::PASSO_MS as f32 / 1000.0;
         let de = V3::new(corpo.position.x, corpo.position.y, corpo.position.z);
         let alvo = V3::new(meta.x, meta.y, meta.z);
-        let recomecar = match &self.seguir {
-            None => true,
+        let (recomecar, alcance_da_vez) = match &self.seguir {
+            None => (true, alcance),
+            Some(s) if s.chegou() => (true, alcance * 0.6),
             Some(s) => {
+                // O alvo andou mais de 7 m, ou mais de 4 m sem bloqueio: meta nova.
                 let a = s.alvo();
-                s.chegou() || (a.x - alvo.x).powi(2) + (a.z - alvo.z).powi(2) > 16.0
+                let dis = (a.x - alvo.x).powi(2) + (a.z - alvo.z).powi(2);
+                (dis > 49.0 || (dis > 16.0 && !s.bloqueado()), alcance)
             }
         };
         let mut s = self.seguir.take().unwrap_or_default();
         if recomecar {
-            let d2 = (de.x - alvo.x).powi(2) + (de.z - alvo.z).powi(2);
-            s.comecar(de, alvo, passo, alcance, d2, None, mapa);
+            let d2 = (de.x - alvo.x).powi(2) + (de.y - alvo.y).powi(2) + (de.z - alvo.z).powi(2);
+            s.comecar(de, alvo, passo, alcance_da_vez, d2, None, mapa);
+            if s.chegou() {
+                self.seguir = Some(s);
+                return (!self.parado).then(|| AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)));
+            }
         }
         if !s.andar(passo, mapa) {
+            // `NSRC_ERR_PATHFINDING`: a sessão acaba com parada e conta uma falha
+            // (`FollowMasterResult(1)`; 5 seguidas reposicionam).
             self.falhas_de_caminho += 1;
             return (!self.parado).then(|| AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)));
         }
         self.falhas_de_caminho = 0;
         let p = s.posicao();
         let (dx, dz) = (p.x - corpo.position.x, p.z - corpo.position.z);
+        let dy = p.y - corpo.position.y;
+        if dx * dx + dy * dy + dz * dz < 1e-3 {
+            self.seguir = Some(s);
+            return (!self.parado).then(|| AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)));
+        }
         let m = (dx * dx + dz * dz).sqrt();
         if m > 0.0 {
             self.direcao = crate::ai::direcao_do_vetor(dx / m, dz / m);
         }
         corpo.position = Vector3::new(p.x, p.y, p.z);
-        let chegou = s.chegou() || distancia_h(corpo.position, meta) <= alcance + 0.05;
-        if chegou {
-            self.seguir = None;
-            self.parado = false;
-            return Some(AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)));
-        }
         self.seguir = Some(s);
         self.parado = false;
         Some(AcaoDoMascote::Moveu(AcaoDoMonstro::Andou {

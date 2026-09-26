@@ -9686,3 +9686,317 @@ comparação lado a lado.
       realms. Suíte com o banco: **712 testes, 0 falhas, 2 ignorados**.
     - **Falta:** habilidades do mascote (comandos 4 e 5), soltar (`BANISH_PET`), renomear,
       invisibilidade, mascote de água/ar. Nada commitado nem publicado.
+
+112. **Sessão 2026-09-25: habilidades do mascote, soltar, renomear, aprender e esquecer — 1.2.6 e 1.5.5.**
+
+    ### a. Pedido
+    Fechar o que o B111 deixou: `PET_CTRL` comandos 4 e 5, `BANISH_PET`, renomear, e aprender/
+    esquecer habilidade de mascote no NPC, nas duas versões.
+
+    ### b. Evidência
+    - Comandos: `gpet_imp::DispatchPlayerCommand` (`petnpc.cpp:1065-1131`; o `buf` começa no
+      `pet_cmd`, então o 4 tem 5 B depois dele). Política: `DeterminePolicy`/`OnHeartbeat`/
+      `SetPetAutoSkill`/`CheckCoolDown`/`CheckMp` (`petnpc.cpp:1487-1830`). Tarefa:
+      `ai_pet_skill_task` + `ai_skill_task_2::Execute` (`aipolicy.h:733`, `aipolicy.cpp:1922-2050`:
+      0,9 × alcance, 2 perseguições). Sessão: `session_npc_skill` (`npcsession.cpp:654-760`),
+      `SkillWrapper::NpcStart/NpcEnd` (`skillwrapper.cpp:974-1024`: `cast_skill` com o `State1`,
+      efeito no `State2`). Recarga: `SetPerform` (`playerwrapper.cpp:170`, `id + 1024`),
+      `gpet_imp::SetCoolDown` → `PetSetCoolDown` → `pet_set_cooldown` (`petnpc.cpp:265-285`,
+      `petman.cpp:1881`). Dano: `Skill::GetAttack` → `GeneratePhysicDamage(ratio×100, plus)`
+      (`skill.cpp:897`, `actobject.h:1422`). NPC atingido por não-jogador: `OBJECT_SKILL_ATTACK_RESULT`
+      a todos (`npc.cpp:219-223`). `TYPE_BLESSPET` = 10 (`skill.h`, `playerwrapper.cpp:398`).
+    - Mana: o de combate tem `max_mp` 0 (`petdataman.cpp:180`) e todas as habilidades de mascote
+      dos dois catálogos custam 0 — o `CheckMp` passa.
+    - Soltar: `playercmd.cpp:3267-3282`, `PlayerBanishPet` (`player.cpp:14539-14557`, operação 2,
+      200 tiques), `BanishPet` (`petman.cpp:1521-1538`). Renomear: `change_pet_name_executor`
+      (`serviceprovider.cpp:3896-3984`), `ChangePetName` (`petman.cpp:1921-1935`, **recusa o
+      ativo**), `OnChangeName` (16 B). Aprender/esquecer: `pet_skill_executor`,
+      `forget_pet_skill_executor`, `OnLearnSkill`/`OnForgetSkill` (`petman.cpp:890-960`),
+      `SkillWrapper::PetLearn` (`skillwrapper.cpp:1512-1569`: `cls` 127, nível do mascote, SP,
+      livro), `GetNormalSkillNum` (≥ 4 recusa). Serviços 36/37/38 (`serviceprovider.cpp:8757-8759`).
+    - 1.2.6, `gs` com símbolos: serviços 36/37/38 (`push 0x24/0x25/0x26`, VA 0x8105502-0x8105546);
+      `NotifySkillStillCoolDown` manda 93 (`push 0x5d`, VA 0x813a1c1); `DispatchPlayerCommand` com
+      switch até 5 (VA 0x813b32f); `Skill747Stub::State2::Calculate` sem `SetRatio`. Tamanhos do
+      validador do cliente 1.2.6: 232 = 8, 252 = 12, 85 = 15 — iguais ao 1.5.5.
+
+    ### c. Correção
+    - `pw-data-loader`: `item_exigido` (`GetRequiredItem`) nos dois extratores e catálogos
+      (só esse campo mudou: 0 registros com outra diferença); `ServicosDoNpc` com os serviços 36/37/38.
+    - `pw-protocol`: `free_pet` (232) e `pet_set_cooldown` (252) no `S2CGamedataSend` e no trait.
+    - `mascote.rs`: `HabilidadeDoMascote`, tarefa, canto/execução, recargas, automática.
+      `world.rs`: comandos 4/5, eventos `MascoteConjurou`/`MascoteUsouHabilidade`/
+      `RecargaDoMascote`/`ErroDoMascote`, batimento dos filtros do corpo do mascote, e o dano no
+      tempo posto por mascote com crédito do dono (antes ia ao id do mascote).
+    - `bus_server/habilidades.rs`: `Conjurador` (jogador ou mascote) e `Alvo::Mascote`;
+      `aplicar_habilidade_do_mascote`. `jogo.rs`: `soltar_mascote`. `bus_server/mascote.rs`:
+      renomear, esquecer, aprender, `PET_ROOM` de um slot.
+    - **Defeito do B111:** `InfoPet::do_bloco` lia 40 dos 192 B; como a jaula é regravada a cada
+      mudança do mascote ativo, nome e habilidades voltavam zerados. Lê o bloco inteiro agora
+      (teste de ida e volta em `pw-core`).
+
+    ### d. Provas
+    - 10 testes novos em `subcomandos_no_mundo.rs`, as duas versões: habilidade por ordem (85 de
+      15 B com 400 ms, 252 de 12 B `(0, 1771, 15000)`, 143 do mascote; dano 19 no 1.2.6 e 403 no
+      1.5.5; erro 93 dentro da recarga), automática em combate, soltar (71 no ativo; 235 com
+      `(1, 200, 2)`; 232 de 8 B; slot fora da jaula), renomear (nome gravado, `PET_ROOM`, item
+      12403 gasto, nome no fim da entrada do mascote, 71 no ativo), aprender 748 (SP 8000 → 3000,
+      livro 11693) e esquecer 747. Tamanhos 232/252 em `mascote_por_versao.rs`.
+    - Suíte com o banco: **723 testes, 0 falhas, 2 ignorados** (97 binários).
+
+    ### e. Falta
+    Ver em jogo. Bênção de mascote em outro alvo (tipo 2 com alvo), raio do corpo do alvo no
+    alcance, invisibilidade, mascote de água/ar. Nada commitado nem publicado.
+
+113. **Sessão 2026-09-25: o treinador passa a consumir o livro da habilidade — 1.2.6 e 1.5.5.**
+
+    ### a. Relato
+    A Tsuko aprendeu Curar Mascote e Reviver Mascote no treinador e o livro continuou na bolsa.
+
+    ### b. Causa
+    `SkillStub::Learn` (`cskill/skill/skill.cpp:79-84`) exige o `GetRequiredItem` do nível e o
+    tira com `SetUseitem` → `TakeOutItem` (`playerwrapper.h:394`, `gs/player.cpp:10090-10102`:
+    `player_drop_item(IL_INVENTORY, slot, id, 1, DROP_TYPE_TAKEOUT)`); sem ele o `Learn` falha e o
+    `skill_executor` manda `ERR_CANNOT_LEARN_SKILL` (22, `serviceprovider.cpp:1303-1306`). O
+    `aprender` não olhava o livro — o catálogo só passou a ter `item_exigido` no B112. Nos dois
+    catálogos: 328 → 11526, 329 → 11524, 330 → 11525 no nível 1; 993 (1.5.5) e 321 (1.2.6)
+    habilidades de jogador pedem livro em algum nível.
+
+    ### c. Correção
+    `BusServer::aprender` (`bus_server/jogo.rs`): antes de cobrar, procura o livro do nível
+    seguinte na bolsa (sem ele, 22); aprendeu, o livro sai e vai o `PLAYER_DROP_ITEM` (46) com
+    `DROP_TYPE_TAKEOUT`. Mesmo código para as duas versões.
+
+    ### d. Provas
+    `aprender_no_treinador_do_{126,155}_consome_o_livro` (dados reais: sem o 11524, erro 22 e a
+    329 não entra; com ele, a 329 no nível 1 e o 46 com `(0, 7, 1, 11524, 2)`).
+
+    ### e. Falta
+    Ver em jogo. A Tsuko já tem as duas habilidades: o livro que ficou na bolsa não sai
+    retroativamente.
+
+114. **Sessão 2026-09-25: mascote — som do andar, plataforma do Ancião e Curar Mascote (1.2.6 e 1.5.5).**
+
+    ### a. Relato (Tsuko, 1.2.6)
+    1. Andando, o som do mascote recomeçava sem parar, em vez de tocar em laço.
+    2. Descendo da plataforma do Ancião da Cidade das Feras, o mascote sumiu — parecia ter caído
+       dentro da estrutura.
+    3. A Curar Mascote terminava a conjuração e não fazia nada.
+
+    ### b. Causas
+    1. O cliente só reinicia a animação de andar (e o som dela) quando o NPC sai de `WORK_MOVE`
+       (`CECNPC::MoveTo`, `EC_NPC.cpp:1048-1053`); a parada (`StopMoveTo`) o tira de lá. O nosso
+       mascote mandava `OBJECT_STOP_MOVE` a cada passo que alcançava a meta **antiga** e decidia
+       seguir a cada 50 ms. No original a sessão (`session_npc_follow_target::Run`,
+       `npcsession.cpp:164-280`; `ai_pet_follow_master`, `aipolicy.cpp:1821-1838`, meta 1,0 m e fim
+       a 0,8 m) recomeça o agente a `0,6 ×` sem parar e só manda parada quando não há para onde
+       andar ou quando acaba; o seguir só começa no batimento de 1 s (`petnpc.cpp:1712-1716`).
+    2. O Ancião 2206 (−1537,8; 258,6; 969,7) está 5 m acima do terreno, numa plataforma que o
+       `movemap` dos dois realms não tem (inalcançável, piso 0 — medido com
+       `examples/sondar_piso.rs`; o pixel alcançável mais próximo fica a ~10 m). O nosso
+       reposicionamento (e a invocação) punha o mascote na posição crua do dono; o passo seguinte
+       o assentava no terreno, dentro da estrutura. O original usa `pet_gen_pos::FindGroundPos`
+       (`petman.cpp:1-31`, na invocação `:595` e no `OnPetRelocate` `:701-718`): 10 sorteios a
+       ±0,8–1,2 m, pixel alcançável (`GetValidPos`), menos de 6,8 m de altura do dono; sem ponto,
+       invocar dá `ERR_SUMMON_PET_INVALID_POS` (85) e reposicionar **recolhe**. No `gs` 1.2.6:
+       `combat_petdata_imp::FindGroundPos` (VA 0x8147752), `cmp 9` e 6,8 em 0x8504678.
+    3. A 330 é `TYPE_BLESSPET` (10) de ponto (`playerwrapper.cpp:398`), mas o
+       `alvos_da_habilidade` só conhecia jogador e monstro: com o mascote de alvo a lista saía
+       vazia.
+
+    ### c. Correção
+    `mascote.rs`: `seguindo` (início no batimento, fim a < 0,8 m 3D, fim em combate) e
+    `mover_ate` no desenho da sessão original (sem parada ao chegar à meta antiga; parada uma vez
+    quando não anda); `posicao_no_chao` (`FindGroundPos`). `world.rs`: invocar e `Reposicionar`
+    por ela. `bus_server/habilidades.rs`: o mascote como alvo de ponto das bênçãos (2, 10, 11,
+    12). `examples/sondar_piso.rs` no `pw-data-loader`.
+
+    ### d. Provas
+    Testes novos, nas duas versões: o dono andando 8 s na velocidade do mascote → 15 passos e 0
+    paradas; 200 sorteios no Ancião 2206 → nenhum ponto inválido (0 válidos: ali o original recusa
+    / recolhe); Curar Mascote no mascote com 100 de vida → 640 e `ENCHANT_RESULT` com ele de alvo.
+    Os 20 testes de mascote passam com o banco. Suíte: **731 testes, 0 falhas, 2 ignorados** (97 binários).
+
+    ### e. Falta
+    Ver em jogo. `Decregiondmg` e `Rebirth` da 330 sem porte. Dois testes intermitentes sob carga
+    paralela (grupo e 1177), que passam isolados.
+
+115. **Sessão 2026-09-25: Curar Mascote (330) — `Rebirth` e `Decregiondmg` no 1.5.5, só cura no 1.2.6.**
+
+    ### a. Pedido
+    Portar a redução de dano em área e o renascimento da 330 (que ficavam "sem porte") nas duas
+    versões, se existirem no fonte.
+
+    ### b. Evidência
+    - 1.5.5: `SetRebirth` (`playerwrapper.cpp:3589-3593`, sem dado) → `filter_Rebirth`
+      (`skillfilter.h:9027-9070`): `BeforeDeath` com `rand()%100 < probability` cura
+      `ratio × max_hp` (0,01..1), `SendClientEnchantResult(self, 1085, 1, …)` e se apaga; ícone
+      `HSTATE_REBIRTH` 155. Também nas 1096, 1280, 1281, 2411. `SetDecregiondmg`
+      (`:6044-6052`) → `filter_Decregiondmg` (`skillfilter.h:19899-19950`): reduz a `1 − ratio`
+      o golpe de não-jogador **com `attack_attr < 0`**; no fonte o `attack_attr` só recebe
+      `PHYSIC_ATTACK`, `PHYSIC_ATTACK_HIT_DEFINITE`, `MAGIC_ATTACK` e o `attr` do stub (0..7 nas
+      3.316), então o original nunca reduz — fica o ícone 328 por 30 s.
+    - 1.2.6: nenhum símbolo `filter_Rebirth`/`Decregiondmg` no `gs`. `Skill330Stub::StateAttack`
+      (VA 0x8382482) chama só `SetProbability(100)`, `SetValue` e `SetHeal`, com
+      `valor = 55·L − 10 + GetMagicdamage × (0,02·L + 0,1)` (duplas em 0x8531690/0x8531698).
+    - O catálogo 1.2.6 herdava os roteiros do 1.5.5. Comparando setter a setter com o `gs`
+      (`specs/habilidades_126/conferir_roteiros_126.py`), **66** divergiam em efeito, a 330
+      entre eles.
+
+    ### c. Correção
+    `efeitos.rs`: `Efeito::Rebirth` e `Efeito::Decregiondmg`, `Aplicacao::probabilidade`,
+    `Efeitos::renascer`. `bus_server/habilidades.rs`: parâmetros dos dois. `world.rs`: o
+    "antes de morrer" no golpe no jogador, no dano no tempo do jogador e no dano no mascote;
+    evento `Renasceu` → `ENCHANT_RESULT` 1085. Extrator 1.2.6: `ROTEIROS_DO_GS_126` com a 330
+    (só ela mudou no catálogo).
+
+    ### d. Provas
+    `curar_mascote_do_{126,155}`: 1.2.6 cura 45 (nível 1) e não põe filtros; 1.5.5 cura 540, põe
+    os dois filtros, e um golpe de 1.000.000 deixa o mascote com 2.000 de 10.000 e sem o
+    `Rebirth`. Os 20 testes de mascote passam com o banco. Suíte: **731 testes, 0 falhas, 2 ignorados**.
+
+    ### e. Falta
+    Ver em jogo. Os outros 65 roteiros divergentes do 1.2.6 (ESTADO §5D).
+
+116. **Sessão 2026-09-26: 1.2.6 — bênção sem efeito na tela, itens sombreados na venda, nome da Batatinha.**
+
+    ### a. Relato (Tsuko, 1.2.6)
+    Curar Mascote canaliza e nada acontece; ao vender, itens ficam sombreados e bugados; a
+    Batatinha tem o nome dentro do modelo.
+
+    ### b. Causas
+    1. A 330 era aplicada (log: "usou 330 … em 1 alvo"), mas o `ENCHANT_RESULT` (139) ia com os
+       19 B do 1.5.5; o validador do cliente 1.2.6 quer 16 (VA 0x584e52) e o descarta em silêncio.
+       O `gs` 1.2.6 monta `{caster, target, skill, char level, char orange_name, char
+       attack_flag, char section}` (`S2C::CMD::Make<enchant_result>::From`, VA 0x80a6f0e). Vale
+       para toda bênção/maldição do 1.2.6. O cliente, na `TYPE_BLESSPET`, troca o alvo pelo
+       mascote ativo (`EC_HostPlayer.cpp:2379-2393`), e o servidor usa a lista de alvos do pacote.
+    2. O pedido de venda do cliente 1.2.6 tem itens de 12 B (`tid, index, count`, sem `price`):
+       medido no `pw-realm-126`, `len` 148 = 4 + 12 × 12. O leitor usava os 16 B do 1.5.5
+       (`npc_sell_item`, `EC_GPDataType.h:5462-5468`): só o primeiro saía certo, e os
+       `UNFREEZE_IVTR_SLOT` iam para índices como 1, 0x8cb, 0x19a — os itens verdadeiros ficavam
+       congelados (sombreados) e sem venda.
+    3. As chamadas novas de `PLAYER_DROP_ITEM` (livro, B112/B113) e a do jogar fora usavam o
+       codificador 1.5.5 direto (11 B) em vez do da versão (9 B no 1.2.6: o `Make<player_drop_item>
+       ::From` escreve `u8 where, u8 index, u16 count, int tid, char type`, VA 0x80906af-0x80906d3 —
+       confirma o override que já existia). Varredura: nenhum outro método sobrescrito no v126 é
+       chamado direto no `pw-gs` (o `task_notify_monster_killed` direto é o padrão do trait,
+       sobrescrito no `Contexto`).
+    4. Batatinha (15955, só no 1.2.6): a altura do nome é `centro + 1,15 × meia-altura` da caixa
+       do modelo (`EC_NPC.cpp:2549-2552`), que vem do `CHAABB` do `.ecm` ou da caixa do
+       `SkinModel` (`EC_NPCModel.cpp:158-171`) — dado do cliente; o servidor só manda a posição,
+       e o nome anda junto com o modelo.
+
+    ### c. Correção
+    `WorldProtocol::enchant_result` (19 B) com override v126 (16 B); `bytes_do_item_vendido`
+    (16; v126: 12) e `npc::itens_vendidos(conteudo, bytes)`; `self.sub.player_drop_item` nas três
+    chamadas.
+
+    ### d. Provas
+    `mascote_por_versao.rs` (139: 16 / 19), `npc::a_venda_do_126_tem_itens_de_12_bytes` (o
+    pedido medido), `vender_dois_itens_ao_npc_no_126` (181 e 73 nos espaços 21 e 22),
+    `curar_mascote_do_*` com o tamanho do 139. Suíte: **733 testes, 0 falhas, 2 ignorados**.
+
+    ### e. Falta
+    Ver em jogo. A Batatinha: comparar com o servidor oficial ou outro cliente, se incomodar.
+
+117. **Sessão 2026-09-26: 1.2.6 — itens de missão que não saíam, e o id da Fera Psíquica.**
+
+    ### a. Relato (Tsuko, 1.2.6)
+    A Fera Psíquica da "Capturar Fera Psíquica" continuou viva depois da missão; vários itens
+    ficavam na bolsa de missão depois de entregar.
+
+    ### b. Causas
+    1. O leitor v55 não lia o `m_bClearAcquired`: o `libtask.so` 1.2.6 testa `byte [this +
+       0xae]` antes de `RemoveAcquiredItem` (`ATaskTempl::RecursiveAward` 0xabee,
+       `ActiveTaskList::RecursiveClearTask` 0xd723). Sem ele, `limpa_adquiridos` era sempre
+       `false` no 1.2.6 — nas missões conferidas (5933, 5925, 5922, 5920, 1177, 9374) o valor lido
+       agora bate com o do 1.5.5.
+    2. Os monstros invocados começavam em `0xA0000000`, que tem o bit `PET_MASK` (0x20000000,
+       `common/types.h:214`): a Fera (11603, invocada pela mina 11542 da 5922) nasceu como
+       0xA0000000 — marcada como mascote — e o invocado seguinte teria o id 0xA0000001, o do
+       mascote da Tsuko.
+    3. A Fera não some sozinha no original: a mina a cria com `remain_time = npcgen_1_life_time`
+       (`matter.cpp:450-490`, `npcgenerator.cpp:1370`), que é 0 nos dois realms; nenhuma missão
+       da cadeia (5919-5933) a remove (`AWARD_MONSTERS_SUMMONED` só invoca). Ela é agressiva e
+       tem nível 1 — é para ser derrotada.
+
+    ### c. Correção
+    `tasks.rs` (v55): `limpa_adquiridos: b[0xae] != 0`. `world.rs`: faixa dos invocados
+    `0x9000_0000 | n` (máscara `0x0FFF_FFFF`). Bolsa da Tsuko: as ativas eram 2650, 2669 e 9374
+    (nenhuma pede os itens); apagados os 9 itens de missões concluídas com `m_bClearAcquired`
+    (11538, 11537, 11543, 11544-11547 da cadeia 5919; 11531 da 5913; 3268 da 915/917) —
+    `scripts/2026_09_26_bolsa_de_missao_tsuko_126.sql`, `DELETE 9`, com ela desconectada.
+
+    ### d. Provas
+    `carga_dos_realms::o_126_le_o_limpa_adquiridos_das_missoes`;
+    `arqueiro_do_realm::o_id_do_monstro_invocado_…` com a faixa nova e sem o bit de mascote.
+
+118. **Sessão 2026-09-26: sentar, "FALHA" nas bênçãos do 1.2.6; chi, alcance e dano do mascote conferidos.**
+
+    ### a. Relato
+    Meditar não parecia acelerar a regeneração; a Curar Mascote mostrava "FALHA" embora curasse;
+    sem chi ao atacar no 1.2.6; o mascote ataca de longe e quase não toma dano.
+
+    ### b. Evidência e conclusões
+    1. **Sentar:** `sit_down_filter::Heartbeat` (`gs/sitdown_filter.cpp:19-34`) soma
+       `STAYIN_BONUS` (100, `gs/config.h:103`) à escala da regeneração no 2º batimento
+       (`Result2` dobra o `hp_gen`/`mp_gen`, `playertemplate.h:880-894`). O nosso só dava o chi.
+       No `gs` 1.2.6 (VA 0x812ff22) o `Heartbeat` tem os mesmos `push 0x64` e **não** tem o
+       `ModifyAP(15)`.
+    2. **"FALHA":** o 139 do 1.2.6 não tem `section` — o `gs` 1.2.6 passa `immune & 0xff` e
+       `(immune & 0xff00) >> 8` (VA 0x831bb81-0x831bb93), o `modifier`/`modifier2` que o cliente
+       junta em `(modifier2 << 8) | modifier` (linha comentada em `EC_Player.cpp:7256`). O nosso
+       `section` 1 virava `0x100` = `MOD_ENCHANT_FAILED` → `BUBBLE_LOSE` (`EC_NPC.cpp:1371`).
+    3. **Chi no 1.2.6 (sem mudança):** o `DeliverByAwardData` do `libtask.so` 1.2.6 não chama o
+       `SetFuryUpperLimit` (vtable +0xbc); no `gs` 1.2.6 o `SetMaxAP` só vem do comando de GM
+       (0x80d2aea); o teto é o gravado (0 no personagem novo). Na captura original
+       (`cadencia-eventos.json`, `SELF_INFO_00`), personagens de nível 1–3 têm `max_ap` 0 e um de
+       nível 65 tem 99 (5 por golpe). A Tsuko tem 0 — sem chi ao atacar, como no original.
+    4. **Alcance do mascote (sem mudança):** 10386 tem `attack_range` 3 e `size` 0,9. O original
+       persegue até `3 × 0,8 + 0,9 + corpo do alvo` e golpeia até `3,9 + corpo do alvo`
+       (`aipolicy.cpp:589-597`, `actobject.cpp:1281-1286`); o nosso para em ≈ 3,5 m do centro.
+    5. **Dano no mascote (sem mudança):** `CalcDefense` do original (`petdataman.h:38-42`) dá 628
+       no nível 10 (161 no 3, 1.095 no 17) — `modelo_de_mascote` no `pw-data-loader`. Com
+       `def / (def + 40 × nível − 25)`, um monstro de nível ~5 perde ~78% e o resto cai no piso 1.
+
+    ### c. Correção
+    `progressao::batimento` com `meditacao_s` (bônus ×2 a partir do 2º batimento sentado);
+    `v126::enchant_result` com o modificador em dois bytes.
+
+    ### d. Provas
+    `passeio_do_126::meditar_dobra_a_regeneracao_a_partir_do_segundo_batimento` (4,4,4 em pé;
+    4,8,8 sentado); `mascote_por_versao::o_enchant_result_do_126_leva_o_modificador_em_dois_bytes`.
+    Suíte: **736 testes, 0 falhas, 2 ignorados** (97 binários).
+
+    ### e. Falta
+    Ver em jogo. Se o alcance ou o dano do mascote ainda parecerem errados, dizer o monstro e a
+    distância para medir.
+
+119. **Sessão 2026-09-26: chi no 1.2.6 — o teto vem do prêmio v55 (corrige o B118).**
+
+    ### a. Relato
+    A Tsuko não enchia chi ao usar habilidade.
+
+    ### b. Causa
+    O teto (`max_ap`) dela era 0, e o `ModifyAP` corta tudo no teto. O B118 concluiu que o 1.2.6
+    não tinha teto por missão — **errado**: a busca pela chamada virtual procurava
+    `mov reg, [reg+0xbc]; call reg`, e o `libtask.so` 1.2.6 soma o deslocamento ao ponteiro da
+    vtable antes (`add`). O que decidiu foi o dado: no prêmio v55 (75 B), o deslocamento **40**
+    tem 99/199/299/399 em exatamente 8 missões — 915, 966, 973 (99), 922 (199), 925 (299), 1888,
+    2804, 2818 (399) — e o `DeliverByAwardData` faz `if (award[0x28]) pTask->vfunc(award[0x28])`
+    (0xb4b3-0xb4d2). O 1.2.6 tem 272 habilidades que dão chi e 161 que gastam. A Tsuko entregou a
+    973 (log de 2026-09-26 00:28; a raiz 970 está nas concluídas dela).
+
+    ### c. Correção
+    `tasks.rs` (`premio_v55`): `teto_de_chi = u32 em +40`. Meditar: `WorldProtocol::
+    chi_por_meditacao` (15; v126: 0), guardado no jogador ao sentar (`chi_ao_meditar`). Banco:
+    `scripts/2026_09_26_teto_de_chi_tsuko_126.sql` (`max_ap` 99, com ela desconectada). Ganho
+    por golpe no 1.2.6 conferido: `angro_increase` da Feiticeira = 4.
+
+    ### d. Provas
+    `carga_dos_realms::as_missoes_de_teto_de_chi_do_126` (as 8, com os valores);
+    `mascote_por_versao::o_chi_de_meditar_por_versao`. Suíte: 737 passaram, 1 intermitente de grupo (passa isolado), 2 ignorados.
+
+    ### e. Falta
+    Ver em jogo. Outros personagens do 1.2.6 que entregaram uma dessas 8 antes desta correção
+    ficaram com teto 0 (hoje só a Tsuko tinha).

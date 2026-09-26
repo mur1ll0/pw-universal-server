@@ -307,6 +307,21 @@ pub enum Efeito {
     /// batimento de 1 s**. Não vem de roteiro de habilidade; quem cria é o uso do item.
     PocaoDeVida,
     PocaoDeMana,
+    /// `filter_Rebirth` (`cskill/skill/skillfilter.h:9027-9070`), de `SetRebirth(probability,
+    /// ratio)` (`playerwrapper.cpp:3589-3593`, sem dado): antes de morrer, com `probability`%
+    /// de chance, cura `ratio` (0,01..1) da vida máxima, avisa `ENCHANT_RESULT` da 1085 e se
+    /// desfaz (`BeforeDeath`). `UNIQUE|REMOVE_ON_DEATH|BEFORE_DEATH|TRANSFERABLE_BUFF`, ícone
+    /// `HSTATE_REBIRTH` 155. No 1.5.5 o põem a 330 (Curar Mascote), 1096, 1280, 1281 e 2411; no
+    /// `gs` 1.2.6 o filtro não existe.
+    Rebirth,
+    /// `filter_Decregiondmg` (`skillfilter.h:19899-19950`), de `SetDecregiondmg`
+    /// (`playerwrapper.cpp:6044-6052`): multiplica por `1 − ratio` o golpe recebido de quem não é
+    /// jogador **quando `attack_attr < 0`** (`TranslateRecvAttack`). No fonte do 1.5.5 o
+    /// `attack_attr` só recebe `PHYSIC_ATTACK`, `PHYSIC_ATTACK_HIT_DEFINITE`, `MAGIC_ATTACK` ou o
+    /// `attr` do stub (0..7 em todas as 3.316) — nunca negativo —, então o original nunca reduz:
+    /// fica o ícone `HSTATE_DECREGIONDMG` 328 pelo tempo. `UNIQUE|REMOVE_ON_DEATH`; a máscara de
+    /// bênção/maldição vem do `amount` (> 1: nenhuma — o caso da 330). Não existe no `gs` 1.2.6.
+    Decregiondmg,
 }
 
 /// O que se sabe de cada efeito: convivência, se é bênção (`FILTER_MASK_BUFF`) ou
@@ -368,6 +383,8 @@ impl Efeito {
             "Firearrow" => Firearrow,
             "Wingshield" => Wingshield,
             "Fairyform" => Fairyform,
+            "Rebirth" => Rebirth,
+            "Decregiondmg" => Decregiondmg,
             _ => return None,
         })
     }
@@ -445,6 +462,9 @@ impl Efeito {
             Fairyform => Ficha { convivencia: Fraco, bencao: false, maldicao: false, icone: 279, visivel: 0 },
             // Sem ícone e sem estado visual: o original não acende nenhum (`potion_filter.h`).
             PocaoDeVida | PocaoDeMana => f(Fundir, true, 0, 0),
+            // Nem `BUFF` nem `DEBUFF`: o Dispersar não os tira.
+            Rebirth => Ficha { convivencia: Unico, bencao: false, maldicao: false, icone: 155, visivel: 0 },
+            Decregiondmg => Ficha { convivencia: Unico, bencao: false, maldicao: false, icone: 328, visivel: 0 },
         }
     }
 
@@ -622,6 +642,17 @@ impl Efeitos {
     /// passa a 20% e o escudo perde quatro vezes o que absorveu; quando não cabe mais, o
     /// dano é reduzido na proporção do que sobrou e o escudo zera. Abaixo de 6 o filtro se
     /// apaga.
+    /// `filter_Rebirth::BeforeDeath`: com o filtro e o dado a favor (`rand() % 100 <
+    /// chance`), ele se desfaz e devolve a fração da vida máxima a curar. Dado contra: nada, e o
+    /// filtro sai com a morte (`REMOVE_ON_DEATH`).
+    pub fn renascer(&mut self, dado: i32) -> Option<f32> {
+        let i = self.filtros.iter().position(|f| f.efeito == Efeito::Rebirth)?;
+        if dado >= self.filtros[i].razao {
+            return None;
+        }
+        Some(self.filtros.remove(i).fator.clamp(0.01, 1.0))
+    }
+
     pub fn escudo_absorve(&mut self, dano: i32) -> i32 {
         let Some(f) = self.filtros.iter_mut().find(|f| f.efeito == Efeito::Wingshield) else {
             return dano;
@@ -799,6 +830,9 @@ pub struct Aplicacao {
     pub valor: f32,
     pub quantia: f32,
     pub mostra_icone: bool,
+    /// O `probability` do `PlayerWrapper` na hora do setter — o `SetRebirth` o usa como chance
+    /// (`(int)(probability)`).
+    pub probabilidade: f32,
 }
 
 /// `PlayerWrapper` do lado da vítima: os parâmetros que os `SetX` guardam
@@ -908,6 +942,7 @@ pub fn executar_roteiro(
                         valor,
                         quantia,
                         mostra_icone: icone,
+                        probabilidade: prob as f32,
                     });
                 }
             }

@@ -84,6 +84,8 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         max_ap: 0,
         ap_por_golpe: 0,
         sentado: false,
+        meditacao_s: 0,
+        chi_ao_meditar: 15,
         missoes: Default::default(),
         coleta: None,
         equipamento: Default::default(),

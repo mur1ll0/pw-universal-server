@@ -602,6 +602,47 @@ impl CombatEngine {
         Some(g)
     }
 
+    /// O golpe de uma habilidade do mascote. O motor do original é o mesmo do jogador — o
+    /// `Skill::GetAttack` vira `GeneratePhysicDamage(ratio × 100, plus)` no `gpet_imp`
+    /// (`cskill/skill/skill.cpp:897`, `gs/actobject.h:1422-1440`): o dano bruto do
+    /// `GenerateBaseProp` vezes `(100 + ajuste da lealdade + ratio × 100) / 100`, mais o
+    /// `plus`. `bruto` é o dano sem a lealdade, que entra em `bonus_pct` como no
+    /// `pet_damage_filter` (`_en_percent.damage`).
+    pub fn golpe_de_habilidade_de_mascote(
+        corpo: &MonsterEntity,
+        bruto: i32,
+        bonus_pct: i32,
+        d: &pw_data_loader::habilidades::DanoDaHabilidade,
+        nivel: i32,
+    ) -> Option<Golpe> {
+        let i = usize::try_from(nivel - 1).ok()?;
+        let ratio = *d.ratio.get(i)?;
+        let plus = *d.plus.get(i)? as i32;
+        let pct = 100 + bonus_pct + (ratio * 100.0) as i32;
+        let valor = (((bruto as f32 * 0.01 * pct as f32) as i32 + plus).max(0) as f32 * d.fator) as i32;
+        let mut g = Self::golpe_de_monstro(corpo);
+        g.atacante_e_jogador_ou_pet = true;
+        g.de_habilidade = true;
+        g.dano_fisico = 0;
+        g.dano_magico = [0; CLASSES_MAGICAS];
+        let escola = match d.elemento.as_str() {
+            "Golddamage" => Some(0),
+            "Wooddamage" => Some(1),
+            "Waterdamage" => Some(2),
+            "Firedamage" => Some(3),
+            "Earthdamage" => Some(4),
+            _ => None,
+        };
+        match escola {
+            Some(e) => {
+                g.dano_magico[e] = valor;
+                g.e_fisico = false;
+            }
+            None => g.dano_fisico = valor,
+        }
+        Some(g)
+    }
+
     /// Um golpe de monstro em jogador.
     pub fn monstro_ataca_jogador(
         monstro: &MonsterEntity,

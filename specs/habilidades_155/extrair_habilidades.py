@@ -351,6 +351,8 @@ def extrair(caminho):
         "nivel_exigido": por_nivel(texto, "int GetRequiredLevel", max_level, int),
         "sp_exigido": por_nivel(texto, "int GetRequiredSp", max_level, int),
         "dinheiro_exigido": por_nivel(texto, "int GetRequiredMoney", max_level, int),
+        # O livro que o aprendizado consome (`SkillWrapper::PetLearn`, `skillwrapper.cpp:1558-1564`).
+        "item_exigido": por_nivel(texto, "int GetRequiredItem", max_level, int),
         "estados_ms": estados(texto, max_level),
         # `time_type == 3` é conjuração com carga que o jogador solta (`Skill::IsWarmup`,
         # `skill.h:571`): o tempo carregado vira `GetCharging()`.
@@ -389,7 +391,7 @@ def main():
     def conta(campo):
         return sum(1 for h in saida.values() if h[campo] is not None)
     print(f"{total} habilidades -> {destino}")
-    for campo in ("mp", "execucao_ms", "recarga_ms", "nivel_exigido", "sp_exigido", "dinheiro_exigido"):
+    for campo in ("mp", "execucao_ms", "recarga_ms", "nivel_exigido", "sp_exigido", "dinheiro_exigido", "item_exigido"):
         print(f"  {campo}: {conta(campo)} avaliadas")
     print(f"  estados: {sum(1 for h in saida.values() if h['estados_ms'] and all(e is not None for e in h['estados_ms']))} completos")
     for campo in ("tipo_de_area", "raio", "angulo", "distancia_de_efeito", "precisao", "no_alvo", "em_si"):

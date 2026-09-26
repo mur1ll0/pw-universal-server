@@ -29,6 +29,42 @@ impl WorldProtocol for V126Protocol {
         })
     }
 
+    /// O cliente 1.2.6 manda o item vendido sem o `price`: `{tid, index, count}`, 12 B — medido
+    /// no pedido real (`len` 148 = 4 + 12 × 12, B116).
+    fn bytes_do_item_vendido(&self) -> usize {
+        12
+    }
+
+    /// O `sit_down_filter::Heartbeat` do `gs` 1.2.6 (VA 0x812ff22) só chama
+    /// `EnhanceScaleHPGen/MPGen` e `UpdateHPMPGen` — meditar não dá chi (B119).
+    fn chi_por_meditacao(&self) -> i32 {
+        0
+    }
+
+    /// ENCHANT_RESULT (139) em 16 B: `{caster, target, skill, char level, char orange_name,
+    /// char modifier, char modifier2}` — validador do cliente
+    /// 1.2.6 (caso 139, VA 0x584e52) e o montador do `gs` 1.2.6
+    /// (`S2C::CMD::Make<enchant_result>::From(…, int skill, char, char, char, char)`, VA
+    /// 0x80a6f0e: três `int` e quatro `char`). Com os 19 B do 1.5.5 o cliente descartava toda
+    /// bênção/maldição em silêncio (B116).
+    ///
+    /// B118 — os dois últimos bytes **não** são `attack_flag` e `section`: o `gs` 1.2.6 passa
+    /// `immune & 0xff` e `(immune & 0xff00) >> 8` (`SkillWrapper::Attack(…enchant_msg…)`, VA
+    /// 0x831bb81-0x831bb93), o `modifier`/`modifier2` que o cliente junta em
+    /// `(modifier2 << 8) | modifier` (a linha comentada em `EC_Player.cpp:7256`). Mandar o
+    /// `section` 1 ali acendia o `0x100` = `MOD_ENCHANT_FAILED`, e toda bênção mostrava "FALHA".
+    fn enchant_result(&self, caster: i32, alvo: i32, skill: i32, nivel: u8, orange_name: bool, attack_flag: i32, _section: u8) -> S2CGamedataSend {
+        crate::traits::mascote_s2c(139, |s| {
+            s.write_i32_le(caster);
+            s.write_i32_le(alvo);
+            s.write_i32_le(skill);
+            s.write_u8(nivel);
+            s.write_u8(orange_name as u8);
+            s.write_u8((attack_flag & 0xff) as u8);
+            s.write_u8(((attack_flag & 0xff00) >> 8) as u8);
+        })
+    }
+
     /// SUMMON_PET (233) sem o `life_time`: `{slot_index, pet_tid, pet_pid}`.
     fn summon_pet(&self, slot: i32, pet_tid: i32, pet_pid: i32, _life_time: i32) -> S2CGamedataSend {
         crate::traits::mascote_s2c(233, |s| {
@@ -312,7 +348,9 @@ impl WorldProtocol for V126Protocol {
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
-    // S2C 46: contagem u16, payload 9 B (validador VA 0x584bc3).
+    // S2C 46: contagem u16, payload 9 B (validador VA 0x584bc3); a ordem `where, index, count,
+    // tid, type` é a em que o `Make<player_drop_item>::From` do `gs` 1.2.6 escreve
+    // (VA 0x80906af-0x80906d3, conferido no B116).
     fn player_drop_item(&self, package: u8, slot: u8, count: u32, tid: i32, drop_type: u8) -> S2CGamedataSend {
         let mut s = OctetsStream::new();
         s.write_u16_le(46);

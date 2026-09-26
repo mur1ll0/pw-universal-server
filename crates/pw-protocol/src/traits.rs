@@ -8,6 +8,18 @@ pub trait WorldProtocol: Send + Sync {
     /// Versão do jogo implementada por este protocolo
     fn version(&self) -> GameVersion;
 
+    /// `sizeof(C2S::npc_sell_item)` no pedido de venda ao NPC (`c2s_SendCmdNPCSevSell`): 16 no
+    /// 1.5.5 (`tid, index, count, price`, `EC_GPDataType.h:5462-5468`). O 1.2.6 sobrescreve.
+    fn bytes_do_item_vendido(&self) -> usize {
+        16
+    }
+
+    /// Chi por batimento de 1 s meditando: `ModifyAP(15)` no `sit_down_filter::Heartbeat` do
+    /// 1.5.5 (`gs/sitdown_filter.cpp:19-34`). O 1.2.6 sobrescreve.
+    fn chi_por_meditacao(&self) -> i32 {
+        15
+    }
+
     /// Avisos neutros de status enviados pelo link ao entrar no mundo.
     fn initial_status_notifications(&self, reputation: i32, now: i32) -> Vec<S2CGamedataSend> {
         vec![
@@ -260,6 +272,17 @@ pub trait WorldProtocol: Send + Sync {
         })
     }
 
+    /// FREE_PET (232) — `{slot_index, pet_id}`, 8 B nas duas versões.
+    fn free_pet(&self, slot: i32, pet_tid: i32) -> S2CGamedataSend {
+        S2CGamedataSend::free_pet(slot, pet_tid)
+    }
+
+    /// PET_SET_COOLDOWN (252) — `{pet_index, cooldown_index, cooldown_time}`, 12 B nas duas
+    /// versões.
+    fn pet_set_cooldown(&self, slot: i32, recarga: i32, ms: i32) -> S2CGamedataSend {
+        S2CGamedataSend::pet_set_cooldown(slot, recarga, ms)
+    }
+
     /// PET_AI_STATE (250) — `{u8 attack, u8 move}`, 2 B nas duas versões.
     fn pet_ai_state(&self, agressividade: u8, movimento: u8) -> S2CGamedataSend {
         mascote_s2c(250, |s| {
@@ -314,6 +337,14 @@ pub trait WorldProtocol: Send + Sync {
             s.write_i32_le(slot);
             s.write_i32_le(fome);
         })
+    }
+
+    /// ENCHANT_RESULT (139) — bênção/maldição que pegou: `{caster, target, skill, char level,
+    /// char orange_name, int attack_flag, byte section}`, 19 B no 1.5.5 (`cmd_enchant_result`,
+    /// `EC_GPDataType.h`). O 1.2.6 sobrescreve (16 B).
+    #[allow(clippy::too_many_arguments)]
+    fn enchant_result(&self, caster: i32, alvo: i32, skill: i32, nivel: u8, orange_name: bool, attack_flag: i32, section: u8) -> S2CGamedataSend {
+        S2CGamedataSend::enchant_result(caster, alvo, skill, nivel, orange_name, attack_flag, section)
     }
 
     /// OBJECT_ATTACK_RESULT (120) — um golpe entre duas criaturas, para quem vê:

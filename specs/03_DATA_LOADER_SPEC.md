@@ -1,6 +1,6 @@
 # Especificação 03: Arquivos de dados do realm (`pw-data-loader`)
 
-> Verificada contra o código/evidência em 2026-09-23, base `b16f992` + B94/B96. Cobre
+> Serviços de mascote e `item_exigido` em 2026-09-25, base `ca082f8` + B112. Verificada contra o código/evidência em 2026-09-23, base `b16f992` + B94/B96. Cobre
 > `crates/pw-data-loader/`, `specs/elements_layouts/`, `specs/elements_155/`, `specs/mapas/`,
 > `specs/clsconfig_155/` e o conteúdo de `data/realm_*`.
 
@@ -72,6 +72,7 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 | `MONSTER_ESSENCE` | `monstros.rs` | atributos, resistências, raios de ódio/visão, `patroll_mode`, `aipolicy_id`, dinheiro e drop (`probability_drop_num0..3`, `drop_times`, `drop_matters[32]`) |
 | `NPC_ESSENCE` | `GameDataManager::ids_de_npc` | decide NPC × monstro de um spawn (como `gs/npcgenerator.cpp:79,415`) |
 | `NPC_ESSENCE` → `NPC_TASK_OUT_SERVICE`, `NPC_TASK_IN_SERVICE`, `NPC_SKILL_SERVICE` | `servicos.rs` (`servicos_de_npc`) | que missões o NPC entrega/recebe e que habilidades ensina, ordenadas para busca binária (`general_id_provider`) |
+| `NPC_ESSENCE` → `NPC_PETNAME_SERVICE`, `NPC_PETFORGETSKILL_SERVICE`, `NPC_PETLEARNSKILL_SERVICE` (B112) | `servicos.rs` (`renomear_mascote`, `esquecer_habilidade_de_mascote` = `(price, id_object_need)`; `habilidades_de_mascote` ordenadas) | serviços 36/37/38 (`npcgenerator.cpp:783-826`). Nos dois realms a Rilay (11534) cobra 0 moedas e o item 12403 (renomear) / 11690 (esquecer) |
 | todas as tabelas com `pile_num_max` | `servicos::pilhas` (`limite_de_pilha`) | empilhamento na bolsa |
 | `PLAYER_LEVELEXP_CONFIG` (id 202), `PARAM_ADJUST_CONFIG`, `PLAYER_SECONDLEVEL_CONFIG` | `progressao.rs` | curva de exp, ajuste por diferença de nível (exp, SP, dinheiro, item), perda na morte por cultivo (`playertemplate.cpp:311-419`) |
 | `CHARRACTER_CLASS_CONFIG` | `classes.rs` | velocidades, cadência, alcance, regeneração — **sobrescrevem o `ptemplate.conf`** (`gs/playertemplate.cpp:293-301`); agora também no v7 |
@@ -112,7 +113,7 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 - Para o motor de missões (spec 05 §10) também: as flags de `CheckPrerequisite`/`RecursiveAward`
   (`m_bParentAlsoFail/Succ`, `m_bCanRedoAfterFailure`, `m_bClearAsGiveUp`, `m_lAvailFrequency`,
   `m_bAccountTaskLimit`, `m_bRoleTaskLimit`, `m_bHidden`, `m_bDisplayInTitleTaskUI`,
-  `m_bClearAcquired`, `m_ulGivenCmnCount/TskCount`, `m_ulAwardType_S/F`, …), `dps`/`dph` do
+  `m_bClearAcquired` (no v55 em +0xae, B117 — o `libtask.so` 1.2.6 o testa antes do `RemoveAcquiredItem`), `m_ulGivenCmnCount/TskCount`, `m_ulAwardType_S/F`, …), `dps`/`dph` do
   monstro pedido e `m_bUseLevCo`/`m_bMulti` do prêmio. Deslocamentos em
   `specs/tasks_155/layout129.tsv` e `award_layout.tsv` (sonda do MSVC, B45).
 - `profundidade` = `m_uDepth` (`CheckDepth`, `TaskTempl.h:2748-2771`), calculada após a leitura.
@@ -335,7 +336,7 @@ Molde por classe via `GetDataRoleId` (`gamedbmanager.cpp:208`): 0→16, 1→19, 
 Não é arquivo do realm: é extraído dos stubs `cskill/skills/skillNNN.h` do `EvolvedPWServer`
 por `specs/habilidades_155/extrair_habilidades.py` e embutido com `include_str!` (o
 `Dockerfile.core` copia o JSON). 3.316 habilidades; por nível: mana, `GetExecutetime`,
-`GetCoolingtime`, `GetRequiredLevel/Sp/Money`, `GetTime` de cada estado, e desde o B52
+`GetCoolingtime`, `GetRequiredLevel/Sp/Money`, desde o B112 `GetRequiredItem` (`item_exigido`, o livro que o aprendizado de mascote consome; 1.111 no 1.5.5), `GetTime` de cada estado, e desde o B52
 `time_type` (3 = carga), `alcance` (`GetPraydistance` = `arma × GetRange() + fixo`, 3.313) e
 `dano` (o estado com `SetDamage`/`SetXdamage`: base física/mágica, escola, fator, `ratio` e
 `plus` por nível, com `GetCharging()` na carga cheia; 1.123). `null` = expressão
@@ -353,11 +354,11 @@ Só as 823 habilidades que o `gs` 1.2.6 compila (as mesmas 823 do `skillstr.txt`
 cada função do `SkillNNNStub` do `gs` 1.2.6 é **executada** num emulador x86 por nível, com
 `GetLevel`, `GetAttack`/`GetMagicattack` (sonda), `PlayerWrapper::GetRange` (0 e 1, na pilha
 x87) e `GetCharging` (carga cheia) interceptados e os `Set*` capturados — e daí saem os mesmos
-campos do 1.5.5: estados, execução, recarga, mana, aprendizado (nível, SP, dinheiro), alcance,
+campos do 1.5.5: estados, execução, recarga, mana, aprendizado (nível, SP, dinheiro, livro), alcance,
 distância de efeito, raio, distância de ataque, ângulo, precisão e **dano** (estado, base,
 elemento, fator, `ratio`, `plus`). Função ausente no stub = padrão do `SkillStub` (0,
 `skill.h:409-436`); função que lê outra coisa (vida, `GetPlus`) = `null`, e aí fica o valor do
-1.5.5 — hoje só o dano de 317, 529, 666, 667 e 799 (`GetHp`). Do 1.5.5 ficam também classe,
+1.5.5 — hoje só o dano de 317, 529, 666, 667 e 799 (`GetHp`). **Roteiros** (`no_alvo`/`em_si`) também vêm do 1.5.5, salvo os de `ROTEIROS_DO_GS_126` no extrator (hoje a 330, lida na desmontagem); `conferir_roteiros_126.py` compara setter a setter com o `gs` e acha **65 que ainda divergem** (B115). Do 1.5.5 ficam também classe,
 tipo, pré-requisitos, `time_type`, área, flags e os roteiros `no_alvo`/`em_si`.
 Diferenças medidas contra o 1.5.5 nas 823: `plus` do dano em 68 e `ratio` em 10 (elemento,
 base e fator nunca diferem; a 299 tem 23,7 no nível 1 contra 124,5, a 1 tem 10,8 contra

@@ -483,7 +483,19 @@ impl BusServer {
             | EventoDoMundo::ExpDoMascote { .. }
             | EventoDoMundo::IaDoMascote { .. }
             | EventoDoMundo::FomeDoMascote { .. }
-            | EventoDoMundo::ReviverMascote { .. }) => self.evento_de_mascote(ev).await,
+            | EventoDoMundo::ReviverMascote { .. }
+            | EventoDoMundo::MascoteConjurou { .. }
+            | EventoDoMundo::MascoteUsouHabilidade { .. }
+            | EventoDoMundo::RecargaDoMascote { .. }
+            | EventoDoMundo::ErroDoMascote { .. }) => self.evento_de_mascote(ev).await,
+            EventoDoMundo::Renasceu { objeto } => {
+                // `SendClientEnchantResult(GetSelfID(), 1085, 1, false, 0, 0)`.
+                let pacote = self.sub.enchant_result(objeto as i32, objeto as i32, 1085, 1, false, 0, 0).data;
+                if self.world.read().await.players.contains_key(&objeto) {
+                    self.enviar_ao_jogador(objeto as i32, pacote.clone()).await;
+                }
+                self.transmitir_a_quem_ve(objeto, pacote).await;
+            }
             EventoDoMundo::DanoRecebido {
                 roleid,
                 atacante,
@@ -1108,6 +1120,7 @@ impl BusServer {
             ids::USE_ITEM => self.usar_item(roleid, &cmd.payload, envio).await,
             ids::SUMMON_PET => self.invocar_mascote(roleid, &cmd.payload, envio).await,
             ids::RECALL_PET => self.recolher_mascote(roleid, envio).await,
+            ids::BANISH_PET => self.soltar_mascote(roleid, &cmd.payload, envio).await,
             ids::PET_CTRL => self.ordem_ao_mascote(roleid, &cmd.payload).await,
             ids::TEAM_INVITE => self.convidar(roleid, &cmd.payload).await,
             ids::TEAM_AGREE_INVITE => self.aceitar_grupo(roleid, &cmd.payload).await,
@@ -1669,10 +1682,12 @@ impl BusServer {
     /// Os três só têm cabeçalho. O `CANCEL_ACTION` cai no mesmo lugar do `STAND_UP` porque
     /// cancelar uma ação em curso é, para o corpo do personagem, ficar de pé.
     async fn postura(&self, roleid: i32, sentado: bool, envio: &EnvioAoCliente) {
-        // Meditar liga o `sit_down_filter`, que dá 15 de chi por batimento de 1 s
-        // (`gs/sitdown_filter.cpp:19-34`).
+        // Meditar liga o `sit_down_filter`: regeneração dobrada a partir do 2º batimento e,
+        // no 1.5.5, 15 de chi por batimento (`gs/sitdown_filter.cpp:19-34`) — o chi vem da versão.
+        let chi = self.sub.chi_por_meditacao();
         if let Some(p) = self.world.write().await.players.get_mut(&(roleid as i64)) {
             p.sentado = sentado;
+            p.chi_ao_meditar = chi;
         }
         let cmd = if sentado {
             S2CGamedataSend::object_sit_down(roleid)
@@ -3536,6 +3551,9 @@ impl BusServer {
             servico::TELEPORTAR => self.teleportar_pela_transportadora(roleid, c, envio).await,
             servico::APRENDER_HABILIDADE => self.aprender(roleid, c).await,
             servico::INCUBAR_PET => self.incubar_mascote(roleid, c).await,
+            servico::RENOMEAR_MASCOTE => self.renomear_mascote(roleid, c).await,
+            servico::ESQUECER_HABILIDADE_DE_MASCOTE => self.esquecer_habilidade_de_mascote(roleid, c).await,
+            servico::APRENDER_HABILIDADE_DE_MASCOTE => self.aprender_habilidade_de_mascote(roleid, c).await,
 
             outro => {
                 debug!("mundo: {roleid} pediu o serviço de NPC {outro}, ainda não tratado");
@@ -4304,7 +4322,7 @@ impl BusServer {
 
         self.responder(
             roleid,
-            S2CGamedataSend::player_drop_item(onde, slot, quantos, item.item_id as i32, DROP_TYPE_PLAYER).data,
+            self.sub.player_drop_item(onde, slot, quantos, item.item_id as i32, DROP_TYPE_PLAYER).data,
             envio,
         )
         .await;

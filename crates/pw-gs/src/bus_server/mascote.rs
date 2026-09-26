@@ -55,6 +55,21 @@ impl BusServer {
             EventoDoMundo::IaDoMascote { dono, agressividade, movimento } => {
                 self.enviar_ao_jogador(dono, self.sub.pet_ai_state(agressividade, movimento).data).await;
             }
+            EventoDoMundo::MascoteConjurou { id, alvo, skill, nivel, tempo_ms } => {
+                // `gnpc_dispatcher::cast_skill` → `OBJECT_CAST_SKILL` (85) a quem vê; 15 B nas
+                // duas versões (validador do cliente 1.2.6: 15).
+                let pacote = S2CGamedataSend::object_cast_skill(id as i32, alvo as i32, skill, tempo_ms, nivel.clamp(0, 255) as u8).data;
+                self.transmitir_a_quem_ve(id, pacote).await;
+            }
+            EventoDoMundo::MascoteUsouHabilidade { id, skill, nivel, alvo, .. } => {
+                self.aplicar_habilidade_do_mascote(id, skill, nivel, alvo).await;
+            }
+            EventoDoMundo::RecargaDoMascote { dono, slot, recarga, ms } => {
+                self.enviar_ao_jogador(dono, self.sub.pet_set_cooldown(slot as i32, recarga, ms).data).await;
+            }
+            EventoDoMundo::ErroDoMascote { dono, erro } => {
+                self.enviar_ao_jogador(dono, S2CGamedataSend::error_message(erro).data).await;
+            }
             _ => {}
         }
     }
@@ -192,6 +207,241 @@ impl BusServer {
             return;
         }
         self.enviar_ao_jogador(dono, S2CGamedataSend::error_message(88).data).await;
+    }
+
+    /// `send_pet_room(&pData, index, index + 1)` (`gs/player.cpp:5620-5627`): o `PET_ROOM`
+    /// (239) de um slot só, no formato do `SendAllData` — `count`, e `{slot, pet_data}`.
+    async fn avisar_slot_da_jaula(&self, dono: RoleId, slot: u16, info: &pw_core::InfoPet) {
+        let mut corpo = (slot as i32).to_le_bytes().to_vec();
+        corpo.extend_from_slice(&info.para_bytes());
+        self.enviar_ao_jogador(dono, S2CGamedataSend::pet_room(1, &corpo).data).await;
+    }
+
+    /// O `inv.Find(0, item)` do original: o primeiro slot da bolsa com o item.
+    pub(super) async fn achar_na_bolsa(&self, roleid: RoleId, item_id: i32) -> Option<u16> {
+        let mut bolsa = self.itens().await.list_by_container(roleid, ContainerType::Inventory).await.unwrap_or_default();
+        bolsa.sort_by_key(|i| i.slot);
+        bolsa.into_iter().find(|i| i.item_id as i32 == item_id && i.count > 0).map(|i| i.slot)
+    }
+
+    /// O custo dos serviços 36 e 37 depois do sucesso (`OnServe`): o item sai da bolsa
+    /// (`use_item`) e o dinheiro (`spend_money`).
+    async fn cobrar_servico_de_mascote(&self, roleid: RoleId, slot_do_item: Option<u16>, item_id: i32, preco: i32) {
+        if let Some(slot) = slot_do_item {
+            if self.itens().await.consume_item(roleid, ContainerType::Inventory, slot, 1).await.is_ok() {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::host_use_item(0, slot as u8, item_id, 1).data).await;
+            }
+        }
+        if preco > 0 {
+            let pagou = self.com_contexto(roleid, |ctx| ctx.gastar_dinheiro(preco as i64)).await.unwrap_or(false);
+            if pagou {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::spend_money(preco as u32).data).await;
+            }
+        }
+    }
+
+    /// As conferências de dinheiro e item comuns ao 36 e ao 37 (`TryServe` + `OnServe`):
+    /// `ERR_OUT_OF_FUND` e `ERR_ITEM_NOT_IN_INVENTORY`. Devolve o slot do item exigido.
+    async fn conferir_custo(&self, roleid: RoleId, (preco, item): (i32, i32)) -> Result<Option<u16>, i32> {
+        let dinheiro = self.world.read().await.players.get(&(roleid as i64)).map(|p| p.money).unwrap_or(0);
+        if dinheiro < preco as i64 {
+            return Err(16);
+        }
+        if item > 0 {
+            return match self.achar_na_bolsa(roleid, item).await {
+                Some(s) => Ok(Some(s)),
+                None => Err(5),
+            };
+        }
+        Ok(None)
+    }
+
+    /// Serviço 36 — `change_pet_name_executor` (`serviceprovider.cpp:3896-3984`):
+    /// `{u16 pet_index; u16 name_len; char name[]}`, com o nome em UTF-16 de 2 a 16 bytes e
+    /// tamanho par, e o corpo fechando no nome. `pet_manager::ChangePetName`
+    /// (`petman.cpp:1921-1935`) recusa o mascote que não existe e **o ativo** — então o nome
+    /// novo aparece na próxima invocação (`mascote_entra`, bit 0x2000); `OnChangeName` corta
+    /// em 16 bytes. Responde com o `PET_ROOM` do slot.
+    pub(super) async fn renomear_mascote(&self, roleid: RoleId, c: &[u8]) {
+        if c.len() < 4 {
+            return;
+        }
+        let indice = u16::from_le_bytes([c[0], c[1]]);
+        let tamanho = u16::from_le_bytes([c[2], c[3]]) as usize;
+        if tamanho == 0 || tamanho > 16 || tamanho & 1 != 0 || tamanho + 4 != c.len() {
+            debug!("mundo: renomear mascote de {roleid} com nome de {tamanho} bytes em {} — recusado", c.len());
+            return;
+        }
+        let Some((npc, servicos)) = self.npc_em_conversa(roleid).await else { return };
+        let Some(custo) = servicos.renomear_mascote else {
+            debug!("mundo: o NPC {npc} não renomeia mascote");
+            return;
+        };
+        let item_do_servico = match self.conferir_custo(roleid, custo).await {
+            Ok(s) => s,
+            Err(e) => {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(e).data).await;
+                return;
+            }
+        };
+        let itens = self.itens().await;
+        let Ok(Some(mut item)) = itens.get_item_by_slot(roleid, ContainerType::PetCorral, indice).await else {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(72).data).await;
+            return;
+        };
+        if self.mascote_ativo_no_slot(roleid, indice).await {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(71).data).await;
+            return;
+        }
+        let mut info = pw_core::InfoPet::do_bloco(&item.octets).unwrap_or_default();
+        info.name = [0; 16];
+        info.name[..tamanho].copy_from_slice(&c[4..4 + tamanho]);
+        info.name_len = tamanho as u16;
+        item.octets = info.para_bytes();
+        if let Err(e) = itens.upsert_item(&item).await {
+            warn!("mundo: o nome do mascote do slot {indice} de {roleid} não foi gravado: {e}");
+            return;
+        }
+        info!("mundo: {roleid} renomeou o mascote do slot {indice} ({tamanho} bytes)");
+        self.avisar_slot_da_jaula(roleid, indice, &info).await;
+        self.cobrar_servico_de_mascote(roleid, item_do_servico, custo.1, custo.0).await;
+    }
+
+    /// Serviço 37 — `forget_pet_skill_executor` (`serviceprovider.cpp:4075-4157`): `{int
+    /// skill_id}`. `pet_manager::ForgetPetSkill` (`petman.cpp:1937-1955`) exige o mascote
+    /// **ativo**; `combat_petdata_imp::OnForgetSkill` (`:890-917`) tira a habilidade e sobe as
+    /// seguintes (a lista não tem buraco), e o corpo recebe a lista nova
+    /// (`GM_MSG_PET_SKILL_LIST`). Falhou: `ERR_SKILL_NOT_AVAILABLE`.
+    pub(super) async fn esquecer_habilidade_de_mascote(&self, roleid: RoleId, c: &[u8]) {
+        let Some(skill) = c.get(0..4).filter(|_| c.len() == 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])) else { return };
+        let Some((npc, servicos)) = self.npc_em_conversa(roleid).await else { return };
+        let Some(custo) = servicos.esquecer_habilidade_de_mascote else {
+            debug!("mundo: o NPC {npc} não faz esquecer habilidade de mascote");
+            return;
+        };
+        let item_do_servico = match self.conferir_custo(roleid, custo).await {
+            Ok(s) => s,
+            Err(e) => {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(e).data).await;
+                return;
+            }
+        };
+        let resultado = {
+            let mut mundo = self.world.write().await;
+            match mundo.mascote_de(roleid as i64).map(|m| (m.slot, m.info.skills)) {
+                None => Err(73),
+                Some((slot, mut lista)) => match lista.iter().take_while(|(s, _)| *s > 0).position(|(s, _)| *s == skill) {
+                    None => Err(20),
+                    Some(i) => {
+                        lista.copy_within(i + 1.., i);
+                        lista[7] = (0, 0);
+                        mundo.trocar_habilidades_do_mascote(roleid, lista);
+                        Ok((slot, mundo.mascote_de(roleid as i64).map(|m| m.para_a_jaula())))
+                    }
+                },
+            }
+        };
+        match resultado {
+            Err(e) => {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(e).data).await;
+            }
+            Ok((slot, Some(info))) => {
+                info!("mundo: {roleid} fez o mascote esquecer a habilidade {skill}");
+                self.avisar_slot_da_jaula(roleid, slot, &info).await;
+                self.gravar_mascote(roleid, slot, &info).await;
+                self.cobrar_servico_de_mascote(roleid, item_do_servico, custo.1, custo.0).await;
+            }
+            Ok((_, None)) => {}
+        }
+    }
+
+    /// Serviço 38 — `pet_skill_executor` (`serviceprovider.cpp:4211-4236`): `{int skill_id}`,
+    /// da lista do NPC (`pet_skill_provider::TryServe`, `binary_search`; fora dela
+    /// `ERR_SKILL_NOT_AVAILABLE`). `pet_manager::LearnSkill` (`petman.cpp:1957-1974`) exige o
+    /// mascote ativo (`ERR_PET_IS_NOT_ACTIVE`); `combat_petdata_imp::OnLearnSkill`
+    /// (`:919-960`) recusa uma quinta habilidade normal (`GetNormalSkillNum >= 4`), e
+    /// `SkillWrapper::PetLearn` (`skillwrapper.cpp:1512-1569`): nível atual + 1 até o
+    /// `max_level`, `cls == 127`, pré-requisitos entre as do mascote, nível do **mascote** ≥
+    /// `GetRequiredLevel`, SP do dono ≥ `GetRequiredSp`, e o livro (`GetRequiredItem`) sai da
+    /// bolsa (`DROP_TYPE_TAKEOUT`). Qualquer recusa desses é `ERR_SERVICE_UNAVILABLE`.
+    pub(super) async fn aprender_habilidade_de_mascote(&self, roleid: RoleId, c: &[u8]) {
+        let Some(skill) = c.get(0..4).filter(|_| c.len() == 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])) else { return };
+        let Some((npc, servicos)) = self.npc_em_conversa(roleid).await else { return };
+        if skill <= 0 || servicos.habilidades_de_mascote.binary_search(&(skill as u32)).is_err() {
+            debug!("mundo: o NPC {npc} não ensina a habilidade de mascote {skill}");
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(20).data).await;
+            return;
+        }
+        const RECUSA: i32 = 14;
+        let (dados, ativo, sp) = {
+            let mundo = self.world.read().await;
+            let ativo = mundo.mascote_de(roleid as i64).map(|m| (m.slot, m.info.clone()));
+            let sp = mundo.players.get(&(roleid as i64)).map(|p| p.sp).unwrap_or(0);
+            (Arc::clone(&mundo.data_manager), ativo, sp)
+        };
+        let Some((slot, info)) = ativo else {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(73).data).await;
+            return;
+        };
+        let lista: Vec<(i32, i32)> = info.skills.iter().take_while(|(s, _)| *s > 0).copied().collect();
+        let atual = lista.iter().find(|(s, _)| *s == skill).map(|(_, l)| *l);
+        // Combate: sem natureza nem habilidade própria, então toda habilidade é "normal".
+        if atual.is_none() && lista.len() >= 4 {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(RECUSA).data).await;
+            return;
+        }
+        let proximo = atual.unwrap_or(0) + 1;
+        let Some(h) = dados.habilidades.get(skill as u32) else {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(RECUSA).data).await;
+            return;
+        };
+        let pre_ok = h.pre_skills.iter().all(|(pre, nivel)| *pre == 0 || lista.iter().find(|(s, _)| *s == *pre as i32).map(|(_, l)| *l).unwrap_or(0) >= *nivel);
+        let (Some(nivel), Some(sp_exigido)) = (h.nivel_exigido(proximo), h.sp_exigido(proximo)) else {
+            warn!("mundo: a habilidade de mascote {skill} nível {proximo} tem requisito desconhecido — recusada");
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(RECUSA).data).await;
+            return;
+        };
+        let livro = h.item_exigido(proximo).unwrap_or(0);
+        if proximo > h.max_level || h.cls != Some(127) || !pre_ok || (info.level as i32) < nivel || sp < sp_exigido as i64 {
+            debug!("mundo: o mascote de {roleid} não aprende {skill} nível {proximo} (nível {} / {nivel}, SP {sp} / {sp_exigido})", info.level);
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(RECUSA).data).await;
+            return;
+        }
+        // `TakeOutItem(item) < 0` recusa.
+        if livro > 0 {
+            let Some(s) = self.achar_na_bolsa(roleid, livro).await else {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(RECUSA).data).await;
+                return;
+            };
+            if self.itens().await.consume_item(roleid, ContainerType::Inventory, s, 1).await.is_err() {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(RECUSA).data).await;
+                return;
+            }
+            self.enviar_ao_jogador(roleid, self.sub.player_drop_item(0, s as u8, 1, livro, 2).data).await;
+        }
+        if sp_exigido > 0 {
+            let _ = self
+                .com_contexto(roleid, |ctx| {
+                    ctx.p.sp -= sp_exigido as i64;
+                    ctx.mudou = true;
+                })
+                .await;
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::cost_skill_point(sp_exigido).data).await;
+        }
+        let mut nova = info.skills;
+        match lista.iter().position(|(s, _)| *s == skill) {
+            Some(i) => nova[i].1 = proximo,
+            None => nova[lista.len()] = (skill, proximo),
+        }
+        let info = {
+            let mut mundo = self.world.write().await;
+            mundo.trocar_habilidades_do_mascote(roleid, nova);
+            mundo.mascote_de(roleid as i64).map(|m| m.para_a_jaula())
+        };
+        let Some(info) = info else { return };
+        info!("mundo: o mascote de {roleid} aprendeu a habilidade {skill} no nível {proximo}");
+        self.avisar_slot_da_jaula(roleid, slot, &info).await;
+        self.gravar_mascote(roleid, slot, &info).await;
     }
 
     /// `PET_CTRL_CMD` (C2S 103): `{int target; int pet_cmd; char buf[]}`

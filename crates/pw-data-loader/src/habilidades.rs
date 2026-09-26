@@ -54,6 +54,10 @@ pub struct HabilidadeDoServidor {
     pub nivel_exigido: Option<Vec<i32>>,
     pub sp_exigido: Option<Vec<i32>>,
     pub dinheiro_exigido: Option<Vec<i32>>,
+    /// `GetRequiredItem` — o livro que o aprendizado consome. Só o aprendizado de mascote o
+    /// usa (`SkillWrapper::PetLearn`, `cskill/skill/skillwrapper.cpp:1558-1564`).
+    #[serde(default)]
+    pub item_exigido: Option<Vec<i32>>,
     pub estados_ms: Vec<Option<Vec<i32>>>,
     /// `time_type` — 3 é conjuração com carga (`Skill::IsWarmup`, `skill.h:571`).
     #[serde(default)]
@@ -224,6 +228,10 @@ impl HabilidadeDoServidor {
     pub fn dinheiro_exigido(&self, nivel: i32) -> Option<i32> {
         no_nivel(&self.dinheiro_exigido, nivel)
     }
+
+    pub fn item_exigido(&self, nivel: i32) -> Option<i32> {
+        no_nivel(&self.item_exigido, nivel)
+    }
 }
 
 #[derive(Deserialize)]
@@ -383,6 +391,7 @@ mod tests {
             nivel_exigido: None,
             sp_exigido: None,
             dinheiro_exigido: None,
+            item_exigido: None,
             estados_ms: vec![],
             time_type: None,
             alcance: None,

@@ -252,3 +252,49 @@ fn a_curva_do_mascote_dos_dois_realms() {
         eprintln!("{realm}: id 592 no arquivo {tem_592}; mascote 1..10 {curva:?}; jogador 1..5 {jogador:?}");
     }
 }
+
+/// B117 — `m_bClearAcquired` do 1.2.6 em +0xae (o `libtask.so` 1.2.6 o testa antes de
+/// `RemoveAcquiredItem`, em `RecursiveAward` 0xabee e `RecursiveClearTask` 0xd723). Nas missões
+/// da cadeia da Fera Psíquica ele bate com o do 1.5.5 (`true` nas de coleta, `false` na 5920).
+#[test]
+fn o_126_le_o_limpa_adquiridos_das_missoes() {
+    let raiz = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let (d126, d155) = (raiz.join("realm_126/config"), raiz.join("realm_155/config"));
+    if !d126.exists() || !d155.exists() {
+        eprintln!("AVISO: sem os realms — este teste NÃO verificou nada.");
+        return;
+    }
+    let carregar = |d: &Path| {
+        let mut g = GameDataManager::new();
+        g.load_from_directory(d);
+        g
+    };
+    let (a, b) = (carregar(&d126), carregar(&d155));
+    for id in [5933u32, 5925, 5922, 5920, 1177, 9374] {
+        let (x, y) = (a.tasks.get_task(id).unwrap().limpa_adquiridos, b.tasks.get_task(id).unwrap().limpa_adquiridos);
+        assert_eq!(x, y, "missão {id}: 1.2.6 {x}, 1.5.5 {y}");
+    }
+    assert!(a.tasks.get_task(5933).unwrap().limpa_adquiridos);
+}
+
+/// B119 — `m_ulFuryULimit` do prêmio v55 em +40 (`libtask.so` 1.2.6, `DeliverByAwardData`
+/// 0xb4b3-0xb4d2). São 8 missões no `tasks.data` 1.2.6, como as 8 do 1.5.5.
+#[test]
+fn as_missoes_de_teto_de_chi_do_126() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    if !dir.exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        return;
+    }
+    let mut d = GameDataManager::new();
+    d.load_from_directory(&dir);
+    let mut tetos: Vec<(u32, u32)> = Vec::new();
+    for id in 1..40_000u32 {
+        if let Some(t) = d.tasks.get_task(id) {
+            if t.rewards.teto_de_chi != 0 {
+                tetos.push((id, t.rewards.teto_de_chi));
+            }
+        }
+    }
+    assert_eq!(tetos, vec![(915, 99), (922, 199), (925, 299), (966, 99), (973, 99), (1888, 399), (2804, 399), (2818, 399)]);
+}

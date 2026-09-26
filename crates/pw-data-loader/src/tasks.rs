@@ -797,6 +797,11 @@ fn premio_v55(l: &mut Leitor) -> Result<TaskReward> {
         money: u32_em(a, 0) as i64, exp: u32_em(a, 4) as i64,
         nova_missao: u32_em(a, 8), sp: u32_em(a, 12) as i64,
         reputation: u32_em(a, 16) as i32, novo_cultivo: u32_em(a, 20),
+        // B119 — `m_ulFuryULimit` do v55 em +40: o `DeliverByAwardData` do `libtask.so` 1.2.6
+        // faz `if (award[0x28]) pTask->SetFuryUpperLimit(award[0x28])` (0xb4b3-0xb4d2, pela
+        // vtable). No `tasks.data` 1.2.6 são 8 missões — 915/966/973 (99), 922 (199), 925 (299),
+        // 1888/2804/2818 (399) —, o mesmo desenho do 1.5.5.
+        teto_de_chi: u32_em(a, 40),
         grupos_de_itens: grupos, ..Default::default()
     })
 }
@@ -910,6 +915,11 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
         // `TaskTempl.h:2227-2237` do 1.5.3); `CheckInZone` (0xf70f-0xf752) lê +0x79, +0x7a e a
         // caixa em +0x7e/+0x8a. Sem eles, o 1.2.6 não tinha missão automática nenhuma.
         entrega_automatica: b[0xac] != 0,
+        // B117 — `m_bClearAcquired`: o `libtask.so` 1.2.6 testa `byte [this + 0xae]` antes de
+        // `RemoveAcquiredItem` em `ATaskTempl::RecursiveAward` (0xabee) e em
+        // `ActiveTaskList::RecursiveClearTask` (0xd723). Sem ele, as missões de coleta do 1.2.6
+        // deixavam os itens na bolsa de missão ao serem entregues.
+        limpa_adquiridos: b[0xae] != 0,
         min_level: u32_em(b, 0xc1),
         max_level: u32_em(b, 0xc5),
         pre_tasks: lista_u32(b, 0xf5, u32_em(b, 0xf1), 5),

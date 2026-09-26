@@ -1,6 +1,6 @@
 # Especificação 04: Protocolo do mundo 3D (subcomandos do `GamedataSend`)
 
-> Skill 299 v126 verificada no barramento em 2026-09-24, base `b16f992` + B98. Camadas 2/3 e pacotes de itens/experiência 126 conferidos em 2026-09-21, base `a305e51` + B89/B90. Demais áreas:
+> Mascote 232/252/85 e C2S 102/103 em 2026-09-25, base `ca082f8` + B112. Skill 299 v126 verificada no barramento em 2026-09-24, base `b16f992` + B98. Camadas 2/3 e pacotes de itens/experiência 126 conferidos em 2026-09-21, base `a305e51` + B89/B90. Demais áreas:
 > referência 2026-09-14, commit `e6433ae` + B49. Cobre
 > `crates/pw-protocol/src/{packets,versions,opcodes.rs}`, `crates/pw-wire/`,
 > `crates/pw-gs/src/comandos.rs`, `specs/protocol/` e `tools/pw-rpcgen/`.
@@ -124,6 +124,9 @@ caminho de escrita por layout".
 | `receive_exp`, contagens do `equip_item` | 16 bits | 32 bits | |
 | `equip_data`, `object_move`, `object_stop_move` | | | ver `versions/v126/` e `versions/v155/` |
 
+| `enchant_result` (139) | 16 | 19 | `{caster, target, skill, level, orange_name, char modifier, char modifier2}` — sem `section`: o `gs` 1.2.6 manda `immune & 0xff` e `immune >> 8` (VA 0x831bb81-0x831bb93), e o cliente junta em `(modifier2 << 8) \| modifier`; `section` 1 ali era `MOD_ENCHANT_FAILED` e mostrava "FALHA" (B118) — validador do cliente 1.2.6 (VA 0x584e52) e `S2C::CMD::Make<enchant_result>::From(…, int, char, char, char, char)` do `gs` 1.2.6 (VA 0x80a6f0e). Com 19 B o cliente 1.2.6 descartava toda bênção/maldição (B116) |
+| C2S `sevnpc_serve` venda (`npc_sell_item`) | 12 por item | 16 por item | o 1.2.6 não manda o `price` (pedido medido: `len` 148 com 12 itens); `WorldProtocol::bytes_do_item_vendido` (B116) |
+| `free_pet` (232), `pet_set_cooldown` (252), `object_cast_skill` (85) | 8, 12, 15 | 8, 12, 15 | iguais nas duas versões (validador do cliente 1.2.6 e `EC_GPDataType.h`); método comum no trait, travado em `tests/mascote_por_versao.rs` (B112) |
 | `summon_pet` (233), `recall_pet` (234), `pet_hp_notify` (249), `object_attack_result` (120) | 12, 8, 12, 14 | 16, 9, 20, 17 | o 1.2.6 não tem `life_time`, `reason`, a mana, e o `attack_flag` é 1 byte — medido no validador do cliente 1.2.6 (VA 0x584610, saltos em 0x584e90), 233/234 confirmados na captura. `mascote_entra`: `info_npc` 27/35 B + dono (0x1000) + nome (0x2000). Demais comandos de mascote iguais (B111, `tests/mascote_por_versao.rs`) |
 
 Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferentes**
@@ -207,6 +210,8 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | 27, 28, 29 | `TEAM_INVITE`, `_AGREE_`, `_REJECT_` | 85 | `SWITCH_FASHION_MODE` |
 | 110 | `QUERY_CASH_INFO` | 120 | `CHECK_SECURITY_PASSWD` |
 | 128 | `CALC_NETWORK_DELAY` | 6, 184 | `PICKUP`, `PICKUP_ALL` |
+| 100, 101 | `SUMMON_PET`, `RECALL_PET` | 102 | `BANISH_PET` `{size_t pet_index}` 4 B → `FREE_PET` (232) ao fim da sessão de 200 tiques (B112) |
+| 103 | `PET_CTRL_CMD` `{target, pet_cmd, buf}` — `buf` depois do `pet_cmd`: 1 `{char force}`, 2/3 `{int}`, 4 `{int skill, char force}` (5 B), 5 `{int skill}` | 37 | serviços de mascote 36 renomear `{u16 idx, u16 len, name[len]}`, 37 esquecer e 38 aprender `{int skill}` (B112) |
 
 **Ainda no `gateway.rs` do `pw-link`:** 92 (duelo: só "preparar", sem regra), 118 (preços do
 Mall, tabela vazia), 178 (waypoints). Nenhum id é tratado nos dois lados:

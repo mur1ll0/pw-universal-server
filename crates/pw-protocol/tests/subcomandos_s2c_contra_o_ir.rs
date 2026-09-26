@@ -101,6 +101,8 @@ const INTENCAO: &[(&str, &str)] = &[
     ("player_change_shape", "PLAYER_CHGSHAPE"),
     ("summon_pet", "SUMMON_PET"),
     ("recall_pet", "RECALL_PET"),
+    ("free_pet", "FREE_PET"),
+    ("pet_set_cooldown", "PET_SET_COOLDOWN"),
     ("player_start_pet_op", "PLAYER_START_PET_OP"),
     ("player_stop_pet_op", "PLAYER_STOP_PET_OP"),
     ("matter_pickup", "MATTER_PICKUP"),

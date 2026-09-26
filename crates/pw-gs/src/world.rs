@@ -125,6 +125,9 @@ pub enum EventoDoMundo {
     /// Um golpe entre duas criaturas (mascote e monstro), para quem vê o atacante
     /// (`OBJECT_ATTACK_RESULT`).
     GolpeEntreCriaturas { atacante: i64, alvo: i64, dano: i32, velocidade: u8 },
+    /// `filter_Rebirth::BeforeDeath` salvou o objeto (jogador ou mascote): `ENCHANT_RESULT`
+    /// dele nele mesmo com a habilidade 1085 (`SendClientEnchantResult(self, 1085, 1, …)`).
+    Renasceu { objeto: i64 },
     /// `PET_HP_NOTIFY` ao dono.
     VidaDoMascote { dono: RoleId, slot: u16, fator: f32, hp: i32 },
     /// Experiência do mascote (`RecvExp`): `PET_RECEIVE_EXP`, ou `PET_LEVELUP` quando subiu.
@@ -138,6 +141,16 @@ pub enum EventoDoMundo {
     /// jaula (`pet_manager::ResurrectPet`, `petman.cpp:1891-1906`). A jaula está no banco:
     /// quem resolve é o barramento.
     ReviverMascote { dono: RoleId },
+    /// O mascote começou a conjurar (`NpcStart` → `cast_skill`, `skillwrapper.cpp:996-1001`):
+    /// `OBJECT_CAST_SKILL` a quem o vê. `alvo` é ele mesmo na habilidade em si.
+    MascoteConjurou { id: i64, alvo: i64, skill: i32, nivel: i32, tempo_ms: u16 },
+    /// O canto acabou e o efeito sai (`NpcEnd`). Quem aplica é o barramento, com o motor de
+    /// habilidades e o mascote como conjurador.
+    MascoteUsouHabilidade { id: i64, dono: RoleId, skill: i32, nivel: i32, alvo: Option<i64> },
+    /// `PET_SET_COOLDOWN` ao dono (`gpet_imp::SetCoolDown` → `PetSetCoolDown`).
+    RecargaDoMascote { dono: RoleId, slot: u16, recarga: i32, ms: i32 },
+    /// Um `ERR_*` ao dono vindo da criatura (hoje só o `ERR_PET_SKILL_IN_COOLDOWN`).
+    ErroDoMascote { dono: RoleId, erro: i32 },
 }
 
 /// `_corpse_delay` do monstro: 20 s (`npc.cpp:803`), vezes 20 ticks no `PostLazyMessage`.
@@ -148,8 +161,14 @@ const PRIMEIRO_ID_DE_DROP: u32 = 0xC800_0000;
 /// Primeiro id de monstro invocado dinamicamente.
 /// Deve ter bit 31 = 1 e bit 30 = 0 para satisfazer a macro oficial `ISNPCID`
 /// do cliente (`(id & 0x80000000) && !(id & 0x40000000)`, `EC_GPDataType.h:26`).
-/// `0xA000_0000` fica bem acima dos monstros normais do npcgen (~40.000) e não colide com nada.
-const PRIMEIRO_ID_DE_MONSTRO_DINAMICO: u32 = 0xA000_0000;
+/// **Sem o bit 29** (`PET_MASK` 0x20000000, `common/types.h:214`): até o B117 a faixa era
+/// `0xA000_0000`, a mesma dos mascotes (`0x80000000 | PET_MASK | n`) — a Fera Psíquica da
+/// missão 5922 nasceu como 0xA0000000, marcada como mascote, e o monstro invocado seguinte teria
+/// o id do mascote da Tsuko. O bit 28 não tem significado no cliente (`ISNPCID`/`ISMATTERID`,
+/// `EC_GPDataType.h:26-27`) nem no servidor.
+const PRIMEIRO_ID_DE_MONSTRO_DINAMICO: u32 = 0x9000_0000;
+/// Os ids dinâmicos giram dentro de `0x9000_0000..=0x9FFF_FFFF`.
+const MASCARA_DE_MONSTRO_DINAMICO: u32 = 0x0FFF_FFFF;
 
 /// Um grupo de jogadores.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -683,7 +702,7 @@ impl WorldInstance {
 
         let monster_id = self.proximo_monstro_dinamico as i32 as i64;
         self.proximo_monstro_dinamico = PRIMEIRO_ID_DE_MONSTRO_DINAMICO
-            | ((self.proximo_monstro_dinamico.wrapping_add(1)) & 0x1FFF_FFFF);
+            | ((self.proximo_monstro_dinamico.wrapping_add(1)) & MASCARA_DE_MONSTRO_DINAMICO);
 
         // Monstro invocado não tem gerador: `respawn_delay_ms = 0` quer dizer **nunca
         // renasce** (ver `matar_monstro`).
@@ -760,6 +779,7 @@ impl WorldInstance {
             let (tiques, acabou) = p.efeitos.batida();
             let mut vida_mudou = false;
             let mut morto_por = None;
+            let mut renasceu = false;
             for t in tiques {
                 match t {
                     Tique::Dano { origem, valor } => {
@@ -768,7 +788,12 @@ impl WorldInstance {
                         p.combate_s = p.combate_s.max(crate::progressao::COMBATE_AO_APANHAR_S);
                         vida_mudou = true;
                         if p.hp == 0 {
-                            morto_por = Some(origem);
+                            if let Some(f) = p.efeitos.renascer(rand::random::<u32>() as i32 % 100) {
+                                p.hp = ((p.max_hp as f32 * f) as i32).max(1);
+                                renasceu = true;
+                            } else {
+                                morto_por = Some(origem);
+                            }
                         }
                     }
                     Tique::Cura(v) => {
@@ -791,6 +816,9 @@ impl WorldInstance {
                 self.emitir(EventoDoMundo::JogadorMorreu { roleid: role, matador, pos });
                 continue;
             }
+            if renasceu {
+                self.emitir(EventoDoMundo::Renasceu { objeto: id });
+            }
             if acabou {
                 self.refazer_atributos(id);
             }
@@ -805,6 +833,9 @@ impl WorldInstance {
             .filter(|(_, (m, _))| !m.is_dead && !m.efeitos.filtros.is_empty())
             .map(|(id, _)| *id)
             .collect();
+        // O dano no tempo posto por um mascote (o sangramento da 747) é crédito do dono, como
+        // o golpe (`gpet_imp::FillAttackMsg`): o ódio vai ao mascote e 1 ao dono.
+        let donos: HashMap<i64, i64> = self.mascotes.iter().map(|(id, m)| (*id, m.dono)).collect();
         for id in ids {
             let Some((m, ai)) = self.monsters.get_mut(&id) else { continue };
             let (tiques, acabou) = m.efeitos.batida();
@@ -816,11 +847,16 @@ impl WorldInstance {
                         let v = crate::efeitos::dano_recebido(&mut m.efeitos, valor) as i64;
                         let real = v.min(m.hp);
                         m.hp = (m.hp - v).max(0);
-                        m.registrar_dano(origem, real);
+                        let dono = donos.get(&origem).copied();
+                        let credito = dono.unwrap_or(origem);
+                        m.registrar_dano(credito, real);
                         ai.add_threat(origem, v);
+                        if let Some(dono) = dono {
+                            ai.add_threat(dono, 1);
+                        }
                         mudou = true;
                         if m.hp == 0 {
-                            matador = Some(origem);
+                            matador = Some(credito);
                         }
                     }
                     Tique::Cura(v) => {
@@ -837,6 +873,41 @@ impl WorldInstance {
                 self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: false });
                 self.emitir(EventoDoMundo::MonstroMorreu { id, matador });
                 continue;
+            }
+            if mudou {
+                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: acabou });
+            }
+        }
+    }
+
+    /// Os filtros no corpo do mascote (os da própria habilidade em si, 759/760, ou o que um
+    /// monstro puser): dano e cura no tempo e o fim de cada um.
+    fn batida_dos_efeitos_dos_mascotes(&mut self) {
+        use crate::efeitos::Tique;
+        let ids: Vec<i64> = self
+            .mascotes
+            .iter()
+            .filter(|(_, m)| !m.corpo.is_dead && !m.corpo.efeitos.filtros.is_empty())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let Some(m) = self.mascotes.get_mut(&id) else { continue };
+            let (tiques, acabou) = m.corpo.efeitos.batida();
+            let mut mudou = acabou;
+            let mut danos = Vec::new();
+            for t in tiques {
+                match t {
+                    Tique::Dano { origem, valor } => danos.push((origem, valor as i64)),
+                    Tique::Cura(v) => {
+                        m.corpo.hp = (m.corpo.hp + v as i64).min(m.corpo.max_hp);
+                        mudou = true;
+                    }
+                    Tique::Mana(_) => {}
+                }
+            }
+            for (origem, valor) in danos {
+                self.aplicar_dano_no_mascote(id, origem, valor);
+                mudou = true;
             }
             if mudou {
                 self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: acabou });
@@ -1118,6 +1189,14 @@ impl WorldInstance {
         }
         let dano = crate::efeitos::dano_recebido(&mut player.efeitos, dano as i32);
         player.hp = (player.hp - dano).max(0);
+        if player.hp == 0 {
+            if let Some(f) = player.efeitos.renascer(rand::random::<u32>() as i32 % 100) {
+                player.hp = ((player.max_hp as f32 * f) as i32).max(1);
+                self.emitir(EventoDoMundo::Renasceu { objeto: alvo });
+                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: alvo, atributos: false });
+            }
+        }
+        let Some(player) = self.players.get_mut(&alvo) else { return };
         let (hp, pos, role_id) = (player.hp, player.position, player.role_id);
         debug!("mundo: dano de {atacante} no jogador {alvo}: {dano}, vida {hp}");
         self.emitir(EventoDoMundo::EstadoMudou { roleid: role_id });
@@ -1597,6 +1676,7 @@ impl WorldInstance {
                 self.emitir(ev);
             }
             self.batida_dos_efeitos();
+            self.batida_dos_efeitos_dos_mascotes();
             self.informar_vida_aos_inscritos();
         }
 
@@ -1750,6 +1830,32 @@ pub async fn gravar_autosave(repo: pw_storage::CharacterRepository, lote: Vec<Es
 // Mascote de combate — ver `crate::mascote`.
 // ----------------------------------------------------------------------
 
+/// A habilidade `id` no nível `nivel` como o mascote a usa, pelo catálogo do servidor da versão.
+/// `alcance_do_corpo` é o `attack_range` do mascote, que o `GetPraydistance` multiplica pelo
+/// `arma` do stub (0 em todas as de mascote).
+pub fn habilidade_do_mascote(
+    dados: &pw_data_loader::GameDataManager,
+    id: i32,
+    nivel: i32,
+    alcance_do_corpo: f32,
+) -> Option<crate::mascote::HabilidadeDoMascote> {
+    let h = dados.habilidades.get(u32::try_from(id).ok()?)?;
+    let indice = usize::try_from(nivel - 1).ok()?;
+    let execucao = h.estados_ms.get(1).and_then(|e| e.as_ref()).and_then(|v| v.get(indice)).copied().unwrap_or(0);
+    let mana = h.mp.as_ref().and_then(|v| v.get(indice)).map(|m| m.ceil() as i32).unwrap_or(0);
+    Some(crate::mascote::HabilidadeDoMascote {
+        id,
+        nivel,
+        tipo: h.tipo.unwrap_or(0),
+        area: h.tipo_de_area.unwrap_or(0),
+        alcance: h.alcance(nivel, alcance_do_corpo).unwrap_or(0.0),
+        canto_ms: h.conjuracao_ms(nivel).unwrap_or(0).max(0) as u32,
+        execucao_ms: execucao.max(0) as u32,
+        recarga_ms: h.recarga_armada_ms(nivel).unwrap_or(0).max(0),
+        mana: mana.max(0),
+    })
+}
+
 /// `ERR_LEVEL_NOT_MATCH` 51, `ERR_SUMMON_PET_INVALID_POS` 85 e `ERR_CANNOT_SUMMON_DEAD_PET` 87
 /// (`common/protocol.h:731-768`; os mesmos números no 1.5.3).
 pub mod erro_de_mascote {
@@ -1785,7 +1891,9 @@ impl WorldInstance {
         if info.hp_factor <= 0.0 {
             return Err(erro_de_mascote::MORTO);
         }
-        let pos = p.position;
+        let Some(pos) = self.posicao_valida_para_mascote(p.position) else {
+            return Err(erro_de_mascote::POSICAO);
+        };
         self.recolher_mascote(dono, 0);
         self.proximo_mascote = self.proximo_mascote.wrapping_add(1);
         let id = crate::mascote::id_do_mascote(self.proximo_mascote);
@@ -1818,6 +1926,11 @@ impl WorldInstance {
         true
     }
 
+    /// O ponto do mascote perto do dono — ver [`crate::mascote::posicao_no_chao`].
+    pub fn posicao_valida_para_mascote(&self, dono: pw_core::Vector3) -> Option<pw_core::Vector3> {
+        crate::mascote::posicao_no_chao(&self.terreno, &self.movimento, dono)
+    }
+
     fn tirar_mascote(&mut self, id: i64) -> Option<crate::mascote::Mascote> {
         let m = self.mascotes.remove(&id)?;
         self.grid.remove_entity(id);
@@ -1831,7 +1944,8 @@ impl WorldInstance {
     }
 
     /// `PET_CTRL_CMD` (C2S 103) → `DispatchPlayerCommand` (`petnpc.cpp:950-1140`). `resto` é o
-    /// `buf` depois do `pet_cmd`. As habilidades (4 e 5) ainda não têm porte.
+    /// `buf` depois do `pet_cmd`: 1 atacar, 2 seguir/ficar, 3 agressividade, 4 habilidade,
+    /// 5 habilidade automática.
     pub fn ordem_ao_mascote(&mut self, dono: RoleId, alvo: i32, comando: i32, resto: &[u8]) {
         let dono = dono as i64;
         let Some(id) = self.id_do_mascote_de(dono) else { return };
@@ -1853,8 +1967,61 @@ impl WorldInstance {
                 m.ai.mudar_movimento(s as u8, pos)
             }),
             3 => estado(resto).filter(|_| resto.len() == 4).and_then(|s| m.ai.mudar_agressividade(s as u8)),
+            4 => {
+                // `size == 2 × 4 + 1`: `{pet_cmd, skill_id, char force_attack}`
+                // (`petnpc.cpp:1065-1112`); aqui o `resto` já vem sem o `pet_cmd`.
+                if resto.len() != 5 {
+                    return;
+                }
+                let skill = estado(resto).unwrap_or(0);
+                let nivel = m.nivel_da_habilidade(skill);
+                if nivel <= 0 {
+                    return;
+                }
+                let alcance = m.corpo.attack_range - m.ai.raio_do_corpo;
+                let Some(h) = habilidade_do_mascote(&self.data_manager, skill, nivel, alcance) else {
+                    debug!("mundo: a habilidade {skill} do mascote de {dono} não está no catálogo");
+                    return;
+                };
+                let mut alvo_da_tarefa = None;
+                if !crate::mascote::area_sem_alvo(h.area) {
+                    if alvo == 0 || alvo == -1 {
+                        return;
+                    }
+                    if h.tipo == 2 {
+                        // Bênção num alvo (o dono, outro jogador): nenhuma habilidade de
+                        // mascote de combate dos dois catálogos é assim.
+                        debug!("mundo: bênção {skill} do mascote de {dono} em {alvo} ainda sem porte");
+                        return;
+                    }
+                    if alvo == id || alvo == dono || !alvo_existe {
+                        return;
+                    }
+                    // `pAggro->Clear()` + `RawAddAggro(id, max_hp + 10)` mesmo congelado.
+                    m.ai.atacar_por_ordem(alvo, m.corpo.max_hp);
+                    alvo_da_tarefa = Some(alvo);
+                }
+                m.ai.ordenar_habilidade(h, alvo_da_tarefa);
+                None
+            }
+            5 => {
+                let skill = estado(resto).unwrap_or(0);
+                if skill <= 0 {
+                    m.ai.habilidade_automatica(None);
+                }
+                let nivel = m.nivel_da_habilidade(skill);
+                if nivel <= 0 {
+                    return;
+                }
+                let alcance = m.corpo.attack_range - m.ai.raio_do_corpo;
+                // Habilidade em si (área 5) não é automática (`petnpc.cpp:1127-1128`).
+                if let Some(h) = habilidade_do_mascote(&self.data_manager, skill, nivel, alcance).filter(|h| h.area != 5) {
+                    m.ai.habilidade_automatica(Some(h));
+                }
+                None
+            }
             _ => {
-                debug!("mundo: ordem {comando} ao mascote de {dono} ainda sem porte");
+                debug!("mundo: ordem {comando} ao mascote de {dono} desconhecida");
                 None
             }
         };
@@ -1862,6 +2029,22 @@ impl WorldInstance {
         self.estado_dos_mascotes.insert(dono, (agressividade, movimento));
         if mudou == Some(true) {
             self.emitir(EventoDoMundo::IaDoMascote { dono: dono as RoleId, agressividade, movimento });
+        }
+    }
+
+    /// `GM_MSG_PET_SKILL_LIST`: a lista nova de habilidades do mascote ativo depois de aprender
+    /// ou esquecer (`combat_petdata_imp::OnLearnSkill`/`OnForgetSkill`, `petman.cpp:890-960`).
+    /// A automática que sumiu da lista deixa de valer; a que mudou de nível passa ao novo.
+    pub fn trocar_habilidades_do_mascote(&mut self, dono: RoleId, habilidades: [(i32, i32); 8]) {
+        let Some(id) = self.id_do_mascote_de(dono as i64) else { return };
+        let dados = Arc::clone(&self.data_manager);
+        let Some(m) = self.mascotes.get_mut(&id) else { return };
+        m.info.skills = habilidades;
+        if let Some(a) = m.ai.automatica {
+            let nivel = m.nivel_da_habilidade(a.id);
+            let alcance = m.corpo.attack_range - m.ai.raio_do_corpo;
+            let nova = (nivel > 0).then(|| habilidade_do_mascote(&dados, a.id, nivel, alcance)).flatten();
+            m.ai.habilidade_automatica(nova);
         }
     }
 
@@ -1943,6 +2126,11 @@ impl WorldInstance {
         self.emitir(evento);
     }
 
+    /// Dano no corpo de um mascote vindo de fora do tique (o roteiro de uma habilidade).
+    pub fn dano_no_mascote(&mut self, alvo: i64, atacante: i64, dano: i64) {
+        self.aplicar_dano_no_mascote(alvo, atacante, dano);
+    }
+
     fn aplicar_dano_no_mascote(&mut self, alvo: i64, atacante: i64, dano: i64) {
         let Some(m) = self.mascotes.get_mut(&alvo) else { return };
         if m.corpo.is_dead {
@@ -1952,6 +2140,14 @@ impl WorldInstance {
         m.corpo.hp = (m.corpo.hp - dano).max(0);
         // Apanhar dá ódio de quem bateu, salvo congelado (`HandleAttackMsg`).
         m.ai.apanhou(atacante, dano);
+        if m.corpo.hp == 0 {
+            if let Some(f) = m.corpo.efeitos.renascer(rand::random::<u32>() as i32 % 100) {
+                m.corpo.hp = ((m.corpo.max_hp as f32 * f) as i64).max(1);
+                self.emitir(EventoDoMundo::Renasceu { objeto: alvo });
+                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: alvo, atributos: false });
+                return;
+            }
+        }
         if m.corpo.hp > 0 {
             return;
         }
@@ -2046,7 +2242,15 @@ impl WorldInstance {
                 }
                 A::Reposicionar => {
                     let Some(dono) = self.mascotes.get(&id).map(|m| m.dono) else { continue };
-                    let Some(pos) = self.players.get(&dono).map(|p| p.position) else { continue };
+                    let Some(junto) = self.players.get(&dono).map(|p| p.position) else { continue };
+                    // `combat_petdata_imp::OnPetRelocate` (`petman.cpp:701-718`): sem ponto
+                    // válido perto do dono o mascote é recolhido — nunca vai para um pixel fora do
+                    // mapa de movimento (plataforma de estrutura), de onde o passo seguinte o
+                    // assentaria no terreno por baixo dela (B114).
+                    let Some(pos) = self.posicao_valida_para_mascote(junto) else {
+                        self.recolher_mascote(dono, 0);
+                        continue;
+                    };
                     let Some(m) = self.mascotes.get_mut(&id) else { continue };
                     m.corpo.position = pos;
                     m.ai.reposicionado();
@@ -2061,6 +2265,24 @@ impl WorldInstance {
                 A::Sumir => {
                     if let Some(dono) = self.mascotes.get(&id).map(|m| m.dono) {
                         self.recolher_mascote(dono, 0);
+                    }
+                }
+                A::Conjurou { habilidade: h, alvo } => {
+                    // `IsCastSelf` → o próprio id; senão o alvo (`skillwrapper.cpp:997-1001`).
+                    let alvo = alvo.unwrap_or(id);
+                    let tempo_ms = h.canto_ms.min(u16::MAX as u32) as u16;
+                    self.emitir(EventoDoMundo::MascoteConjurou { id, alvo, skill: h.id, nivel: h.nivel, tempo_ms });
+                }
+                A::UsouHabilidade { habilidade: h, alvo } => {
+                    let Some((dono, slot)) = self.mascotes.get(&id).map(|m| (m.dono as RoleId, m.slot)) else { continue };
+                    if h.recarga_ms > 0 {
+                        self.emitir(EventoDoMundo::RecargaDoMascote { dono, slot, recarga: h.recarga(), ms: h.recarga_ms });
+                    }
+                    self.emitir(EventoDoMundo::MascoteUsouHabilidade { id, dono, skill: h.id, nivel: h.nivel, alvo });
+                }
+                A::HabilidadeEmRecarga => {
+                    if let Some(dono) = self.mascotes.get(&id).map(|m| m.dono as RoleId) {
+                        self.emitir(EventoDoMundo::ErroDoMascote { dono, erro: crate::mascote::ERRO_HABILIDADE_EM_RECARGA });
                     }
                 }
             }

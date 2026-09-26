@@ -1094,6 +1094,33 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `FREE_PET` (232) — `{ int slot_index; int pet_id }`, 8 B nas duas versões
+    /// (`cmd_free_pet`, `Network/EC_GPDataType.h`; validador do cliente 1.2.6: 8). O
+    /// `pet_id` é o `pet_tid` do bloco (`pet_manager::BanishPet`, `gs/petman.cpp:1529`); o
+    /// cliente tira o slot da jaula e avisa "mascote libertado"
+    /// (`EC_HostMsg.cpp:5253-5268`).
+    pub fn free_pet(slot_index: i32, pet_tid: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(232);
+        stream.write_i32_le(slot_index);
+        stream.write_i32_le(pet_tid);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PET_SET_COOLDOWN` (252) — `{ int pet_index; int cooldown_index; int cooldown_time }`,
+    /// 12 B nas duas versões (validador 1.2.6: 12). O mascote arma a recarga da habilidade
+    /// (`id + COOLINGID_BEGIN`, 1024) e o dono a recebe (`gpet_imp::SetCoolDown` →
+    /// `pet_manager::PetSetCoolDown`, `gs/petnpc.cpp:265-275`, `gs/petman.cpp:1881-1888`); o
+    /// cliente a põe no botão da habilidade (`SetSkillCoolTime`, `EC_HostMsg.cpp:5525-5532`).
+    pub fn pet_set_cooldown(pet_index: i32, cooldown_index: i32, msec: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(252);
+        stream.write_i32_le(pet_index);
+        stream.write_i32_le(cooldown_index);
+        stream.write_i32_le(msec);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `PLAYER_START_PET_OP` (235) — `{ int slot_index; int pet_id; int delay; int op }`,
     /// 18 bytes. Abre a canalização da operação de mascote: o cliente cria o
     /// `WORK_CONCENTRATE` e conta `delay × 50 ms` (`EC_HostMsg.cpp:5335-5356`), que é a

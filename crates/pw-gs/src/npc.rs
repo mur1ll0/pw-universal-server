@@ -60,6 +60,12 @@ pub mod servico {
     pub const ABRIR_ARMAZEM: i32 = 15;
     /// `GP_NPCSEV_HATCHPET` — chocar/incubar ovo de mascote na Gerente de Mascotes.
     pub const INCUBAR_PET: i32 = 28;
+    /// `change_pet_name_provider` (36), `forget_pet_skill_provider` (37) e
+    /// `pet_skill_provider` (38) — `serviceprovider.cpp:8757-8759`; os mesmos números no `gs`
+    /// 1.2.6 (`push 0x24/0x25/0x26` antes dos `service_inserter`, VA 0x8105502-0x8105546).
+    pub const RENOMEAR_MASCOTE: i32 = 36;
+    pub const ESQUECER_HABILIDADE_DE_MASCOTE: i32 = 37;
+    pub const APRENDER_HABILIDADE_DE_MASCOTE: i32 = 38;
     /// `GP_NPCSEV_RESTOREPET` — reverter mascote em ovo na Gerente de Mascotes.
     pub const RESTAURAR_PET: i32 = 29;
 }
@@ -145,21 +151,21 @@ pub fn itens_comprados(conteudo: &[u8]) -> Vec<ItemComprado> {
         .collect()
 }
 
-/// Lê a lista de itens de uma venda.
-pub fn itens_vendidos(conteudo: &[u8]) -> Vec<ItemVendido> {
+/// Lê a lista de itens de uma venda. `bytes_por_item` é o `sizeof(npc_sell_item)` do cliente
+/// da versão ([`pw_protocol::WorldProtocol::bytes_do_item_vendido`]): 16 no 1.5.5 (`tid,
+/// index, count, price`), 12 no 1.2.6 (sem o `price`). Lido com o tamanho errado, só o
+/// primeiro item saía certo e os outros ficavam congelados na bolsa (B116).
+pub fn itens_vendidos(conteudo: &[u8], bytes_por_item: usize) -> Vec<ItemVendido> {
     let Some(resto) = conteudo.get(CABECALHO_DE_VENDA..) else {
         return Vec::new();
     };
     let quantos = contagem(conteudo, 0);
-    let mut r = Reader::new(resto);
-    (0..quantos)
-        .map_while(|_| {
-            Some(ItemVendido {
-                tid: r.i32().ok()?,
-                index: r.u32().ok()?,
-                count: r.u32().ok()?,
-                price: r.i32().ok()?,
-            })
+    resto
+        .chunks_exact(bytes_por_item.max(12))
+        .take(quantos)
+        .map(|b| {
+            let i = |o: usize| i32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+            ItemVendido { tid: i(0), index: i(4) as u32, count: i(8) as u32, price: if b.len() >= 16 { i(12) } else { 0 } }
         })
         .collect()
 }
@@ -244,11 +250,24 @@ mod tests {
             c.extend_from_slice(&qtd.to_le_bytes());
             c.extend_from_slice(&preco.to_le_bytes());
         }
-        let itens = itens_vendidos(&c);
+        let itens = itens_vendidos(&c, 16);
         assert_eq!(itens.len(), 2);
         assert_eq!((itens[0].tid, itens[0].index, itens[0].count), (801, 5, 10));
         assert_eq!(itens[1].tid, 802);
         assert_eq!(itens[1].price, 88, "o preço do cliente é lido, não obedecido");
+    }
+
+    /// B116 — o pedido do cliente 1.2.6 medido no `pw-realm-126` (2026-09-25): 12 itens de 12 B,
+    /// `len` 148 = 4 + 12 × 12. Com 16 B por item o segundo em diante saía desalinhado
+    /// (`UNFREEZE` dos índices 1, 0x8cb, 0x19a…) e ficava sombreado na bolsa.
+    #[test]
+    fn a_venda_do_126_tem_itens_de_12_bytes() {
+        let c: Vec<u8> = [
+            0x0c, 0, 0, 0, 0xcc, 0, 0, 0, 0x0e, 0, 0, 0, 1, 0, 0, 0, 0x05, 0x2d, 0, 0, 0x11, 0, 0, 0, 1, 0, 0, 0, 0x04, 0x2d, 0, 0, 0x12, 0, 0, 0, 1, 0, 0, 0,
+        ]
+        .to_vec();
+        let itens = itens_vendidos(&c, 12);
+        assert_eq!(itens.iter().map(|i| (i.tid, i.index, i.count)).collect::<Vec<_>>(), vec![(204, 14, 1), (11525, 17, 1), (11524, 18, 1)]);
     }
 
     #[test]

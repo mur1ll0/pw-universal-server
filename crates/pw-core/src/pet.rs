@@ -209,12 +209,35 @@ impl InfoPet {
     }
 
     /// O caminho de volta do [`Self::para_bytes`]: lê o bloco de 192 bytes guardado no item
-    /// do mascote. Só os campos que o mundo usa hoje — o resto fica no padrão.
+    /// do mascote, **inteiro**. Até o B112 lia só os 40 primeiros bytes, e como o mundo grava a
+    /// jaula a cada mudança do mascote ativo (experiência, fome, recolher), nome e habilidades
+    /// voltavam zerados na primeira gravação.
     pub fn do_bloco(b: &[u8]) -> Option<Self> {
         if b.len() < 40 {
             return None;
         }
-        let i32_em = |i: usize| i32::from_le_bytes(b[i..i + 4].try_into().unwrap_or([0; 4]));
+        let i32_em = |i: usize| b.get(i..i + 4).map(|x| i32::from_le_bytes(x.try_into().unwrap())).unwrap_or(0);
+        let mut info = Self::cabecalho_do_bloco(b, &i32_em)?;
+        if b.len() >= TAMANHO_INFO_PET {
+            info.skill_point = i32_em(40);
+            info.is_bind = b[44];
+            info.unused = b[45];
+            info.name_len = u16::from_le_bytes([b[46], b[47]]).min(16);
+            info.name.copy_from_slice(&b[48..64]);
+            for (k, s) in info.skills.iter_mut().enumerate() {
+                *s = (i32_em(64 + k * 8), i32_em(68 + k * 8));
+            }
+            for (k, e) in info.evo_prop.iter_mut().enumerate() {
+                *e = i32_em(128 + k * 4);
+            }
+            for (k, r) in info.reserved.iter_mut().enumerate() {
+                *r = i32_em(152 + k * 4);
+            }
+        }
+        Some(info)
+    }
+
+    fn cabecalho_do_bloco(b: &[u8], i32_em: &dyn Fn(usize) -> i32) -> Option<Self> {
         Some(Self {
             honor_point: i32_em(0),
             hunger: i32_em(4),
@@ -261,5 +284,30 @@ impl InfoPet {
             buf.extend_from_slice(&r.to_le_bytes());
         }
         buf
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// O bloco de 192 B vai e volta inteiro: nome, habilidades e o resto (B112 — o
+    /// `do_bloco` antigo lia 40 bytes e a gravação da jaula zerava nome e habilidades).
+    #[test]
+    fn o_bloco_do_mascote_vai_e_volta_inteiro() {
+        let mut a = InfoPet::default();
+        a.pet_tid = 10386;
+        a.level = 7;
+        a.skill_point = 3;
+        a.is_bind = 1;
+        a.name_len = 8;
+        a.name[..8].copy_from_slice(&[76, 0, 111, 0, 98, 0, 111, 0]);
+        a.skills[0] = (747, 2);
+        a.skills[1] = (748, 1);
+        a.evo_prop[5] = 9;
+        a.reserved[9] = 4;
+        let b = a.para_bytes();
+        assert_eq!(b.len(), TAMANHO_INFO_PET);
+        assert_eq!(InfoPet::do_bloco(&b), Some(a));
     }
 }

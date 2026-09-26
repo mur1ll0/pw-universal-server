@@ -146,6 +146,19 @@ class Emulador:
         return valor, setters, usados
 
 
+# Roteiros (`StateAttack`/`BlessMe`) que o `gs` 1.2.6 executa diferente do stub 1.5.5 de mesmo
+# id, lidos na desmontagem — valem por cima do herdado. `conferir_roteiros_126.py` lista os
+# que ainda divergem (setter a setter).
+ROTEIROS_DO_GS_126 = {
+    # `Skill330Stub::StateAttack` (VA 0x8382482): `SetProbability(100)` (0x42c80000),
+    # `SetValue((55·L − 10) + GetMagicdamage × (0,02·L + 0,1))` (imul 55 e as duplas 0,02/0,1 em
+    # 0x8531690/0x8531698) e `SetHeal` — sem o `Decregiondmg` e o `Rebirth` do 1.5.5 (B115).
+    "330": {"no_alvo": [["V", "Probability", "100.0"],
+                        ["V", "Value", "55 * L - 10 + S_Magicdamage * (0.02 * L + 0.1)"],
+                        ["V", "Heal", "1"]]},
+}
+
+
 def arredondar(v: float) -> float:
     return float(f"{v:.6g}")
 
@@ -240,6 +253,7 @@ def main(caminho_gs: str) -> None:
             "nivel_exigido": inteiro("GetRequiredLevel"),
             "sp_exigido": inteiro("GetRequiredSp"),
             "dinheiro_exigido": inteiro("GetRequiredMoney"),
+            "item_exigido": inteiro("GetRequiredItem"),
             "alcance": distancia(fs.get("GetPraydistance"), n),
             "distancia_de_efeito": distancia(fs.get("GetEffectdistance"), n),
             "raio": decimal("GetRadius"),
@@ -262,6 +276,7 @@ def main(caminho_gs: str) -> None:
         for campo, valor in h.items():
             if valor is not None or campo in ("estados_ms", "execucao_ms", "recarga_ms"):
                 m[campo] = valor
+        m.update(ROTEIROS_DO_GS_126.get(sid, {}))
         completa[sid] = m
     doc = {"fonte": "files1.2.6/pwserver/gamed/gs (SkillNNNStub, executado por nível) + "
                     "specs/habilidades_155/habilidades.json (o que não é função de nível)",

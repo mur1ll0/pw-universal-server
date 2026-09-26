@@ -182,6 +182,12 @@ pub struct PlayerEntity {
     /// O jogador está meditando (`SIT_DOWN`). Enquanto estiver, o batimento de 1 s dá
     /// **15 de chi** (`sit_down_filter::Heartbeat`, `gs/sitdown_filter.cpp:19-34`).
     pub sentado: bool,
+    /// Batimentos de 1 s sentado — o `_timeout` do `sit_down_filter` (nasce 1): no segundo o
+    /// filtro dobra a regeneração (`EnhanceScaleHPGen/MPGen(STAYIN_BONUS)`).
+    pub meditacao_s: u32,
+    /// Chi por batimento meditando, da versão (`WorldProtocol::chi_por_meditacao`): 15 no 1.5.5,
+    /// 0 no 1.2.6.
+    pub chi_ao_meditar: i32,
     /// As listas de missão — ver [`crate::missoes`].
     pub missoes: crate::missoes::ListasDeMissao,
     /// A mina que está colhendo (`session_gather`), se alguma.
@@ -1028,6 +1034,8 @@ impl PlayerEntity {
             max_ap: p.max_ap,
             ap_por_golpe: cfg.map(|c| c.chi_por_golpe).unwrap_or(0),
             sentado: false,
+            meditacao_s: 0,
+            chi_ao_meditar: crate::progressao::CHI_POR_MEDITACAO_155,
             missoes: crate::missoes::ListasDeMissao::default(),
             coleta: None,
             equipamento: Equipamento::default(),

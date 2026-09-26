@@ -279,6 +279,7 @@ async fn montar(versao: GameVersion) -> Option<(Arc<RwLock<WorldInstance>>, std:
             habilidades: vec![HABILIDADE_DO_TREINADOR as u32],
             deposito: 0,
             destinos: Vec::new(),
+            ..Default::default()
         },
     );
     dados.habilidades.por_id.insert(
@@ -5544,4 +5545,607 @@ async fn o_mascote_de_combate_morre_e_nao_volta_morto() {
         }
     }
     assert_eq!(erro, Some(87), "invocar mascote morto devia dar ERR_CANNOT_SUMMON_DEAD_PET");
+}
+
+// ---------------------------------------------------------------------------------------
+// B112 — habilidades do mascote, soltar, renomear, aprender e esquecer.
+// ---------------------------------------------------------------------------------------
+
+/// Os dados reais do realm, com os serviços de mascote da Domesticadora Rilay (11534) no NPC do
+/// cenário; o jogador no mundo, o Filhote de Lobo Feroz (10386) no slot 0 da jaula com as
+/// habilidades dadas. `None` sem os dados (o teste avisa que não verificou nada).
+async fn preparar_mascote(
+    mundo: &Arc<RwLock<WorldInstance>>,
+    addr: std::net::SocketAddr,
+    roleid: i32,
+    versao: GameVersion,
+    habilidades: &[(i32, i32)],
+) -> Option<(pw_bus::transport::BusConnection, pw_storage::ItemRepository, Vector3, i16)> {
+    let realm = if versao == GameVersion::V1_5_5 { "realm_155" } else { "realm_126" };
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").join(realm).join("config");
+    if !pasta.exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", pasta.display());
+        return None;
+    }
+    let mut reais = GameDataManager::new();
+    reais.load_from_directory(&pasta);
+    let servicos = reais.servicos_de_npc.get(&11534).cloned().expect("a Domesticadora Rilay (11534)");
+    reais.servicos_de_npc.insert(TEMPLATE_DO_NPC, servicos);
+    mundo.write().await.data_manager = Arc::new(reais);
+    let link = entrar(mundo, addr, roleid).await;
+    let (nivel_do_dono, nivel_do_mascote) = if versao == GameVersion::V1_5_5 { (40, 30) } else { (10, 2) };
+    let pos = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.cls = CharacterClass::Venomancer;
+        p.level = nivel_do_dono;
+        p.position
+    };
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    guardar_mascote(&itens, roleid, 0, nivel_do_mascote, habilidades).await;
+    Some((link, itens, pos, nivel_do_mascote))
+}
+
+async fn guardar_mascote(itens: &pw_storage::ItemRepository, roleid: i32, slot: u16, nivel: i16, habilidades: &[(i32, i32)]) {
+    let mut info = pw_core::InfoPet::default();
+    info.pet_tid = 10386;
+    info.pet_class = pw_core::PET_CLASS_COMBAT;
+    info.level = nivel;
+    info.hp_factor = 1.0;
+    info.honor_point = 200;
+    for (i, h) in habilidades.iter().enumerate() {
+        info.skills[i] = *h;
+    }
+    guardar_item(itens, roleid, pw_core::ContainerType::PetCorral, slot, 10386, info.para_bytes()).await;
+}
+
+async fn guardar_item(itens: &pw_storage::ItemRepository, roleid: i32, onde: pw_core::ContainerType, slot: u16, item_id: u32, octets: Vec<u8>) {
+    itens
+        .upsert_item(&pw_core::ItemRecord {
+            id: None,
+            character_id: roleid,
+            container_type: onde,
+            slot,
+            item_id,
+            count: 1,
+            max_count: 1,
+            refine_level: 0,
+            sockets_count: 0,
+            sockets: vec![],
+            durability: 0,
+            max_durability: 0,
+            bind_status: 0,
+            octets,
+            custom_attributes: serde_json::json!({}),
+        })
+        .await
+        .expect("guardar o item");
+}
+
+async fn invocar_do_slot(link: &mut pw_bus::transport::BusConnection, roleid: i32, slot: u32) -> i64 {
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &slot.to_le_bytes()) }).await.unwrap();
+    let invocado = esperar_comando(link, 233).await;
+    i32::from_le_bytes(invocado[10..14].try_into().unwrap()) as i64
+}
+
+/// Um Filhote de Mandrágora (3303) a 3 m, com vida de sobra, sem esquiva e golpe de 1: o
+/// teste mede o mascote, não o monstro.
+async fn alvo_de_treino(mundo: &Arc<RwLock<WorldInstance>>, pos: Vector3, nivel: i32) -> i64 {
+    let alvo = (0x8000_5151u32) as i32 as i64;
+    let mut m = mundo.write().await;
+    let filhote = m.data_manager.monstros.get(3303).expect("3303").clone();
+    let onde = Vector3::new(pos.x + 3.0, pos.y, pos.z);
+    let mut monstro = MonsterEntity::do_template(alvo, &filhote, onde, 0);
+    monstro.hp = 100_000;
+    monstro.max_hp = 100_000;
+    monstro.armor = 0;
+    monstro.attack_min = 1;
+    monstro.attack_max = 1;
+    monstro.level = nivel;
+    m.grid.add_entity(alvo, onde, false);
+    m.monsters.insert(alvo, (monstro, MonsterAi::new()));
+    alvo
+}
+
+fn ordem(alvo: i64, comando: i32, resto: &[u8]) -> Vec<u8> {
+    let mut v = (alvo as i32).to_le_bytes().to_vec();
+    v.extend_from_slice(&comando.to_le_bytes());
+    v.extend_from_slice(resto);
+    subcomando(ids::PET_CTRL, &v)
+}
+
+/// Roda o mundo `tiques` × 50 ms guardando o que chega ao cliente.
+async fn rodar_e_colher(
+    mundo: &Arc<RwLock<WorldInstance>>,
+    link: &mut pw_bus::transport::BusConnection,
+    tiques: u32,
+    parar: impl Fn(&[Vec<u8>]) -> bool,
+) -> Vec<Vec<u8>> {
+    let mut vistos = Vec::new();
+    for _ in 0..tiques {
+        mundo.write().await.tick(50).await;
+        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(3), link.receber()).await {
+            vistos.push(data);
+        }
+        if parar(&vistos) {
+            break;
+        }
+    }
+    vistos
+}
+
+fn i32_de(v: &[u8], off: usize) -> i32 {
+    i32::from_le_bytes(v[off..off + 4].try_into().unwrap())
+}
+
+/// B112 — comando 4: o mascote conjura a 747 no monstro. Quem vê recebe o `OBJECT_CAST_SKILL`
+/// (85, 15 B) com o mascote como conjurador e 400 ms de canto (`State1` da 747); ao fim do
+/// canto o dono recebe o `PET_SET_COOLDOWN` (252, 12 B: slot 0, recarga 747 + 1024, 15 s) e
+/// sai o `OBJECT_SKILL_ATTACK_RESULT` (143) do mascote, com dano. De novo dentro da recarga:
+/// `ERR_PET_SKILL_IN_COOLDOWN` (93).
+async fn habilidade_manual(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let Some((mut link, _itens, pos, nivel)) = preparar_mascote(&mundo, addr, roleid, versao, &[(747, 1)]).await else { return };
+    let pet = invocar_do_slot(&mut link, roleid, 0).await;
+    let alvo = alvo_de_treino(&mundo, pos, nivel as i32).await;
+    let mut resto = 747i32.to_le_bytes().to_vec();
+    resto.push(0);
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: ordem(alvo, 4, &resto) }).await.unwrap();
+
+    let e_do_mascote = |v: &Vec<u8>, cmd: u16| cmd_de(v) == cmd && i32_de(v, 2) as i64 == pet;
+    let vistos = rodar_e_colher(&mundo, &mut link, 200, |v| v.iter().any(|p| e_do_mascote(p, 143))).await;
+    let conjurou = vistos.iter().find(|p| e_do_mascote(p, 85)).expect("sem OBJECT_CAST_SKILL do mascote");
+    assert_eq!(conjurou.len(), 2 + 15, "tamanho do OBJECT_CAST_SKILL");
+    assert_eq!(i32_de(conjurou, 6) as i64, alvo);
+    assert_eq!(i32_de(conjurou, 10), 747);
+    assert_eq!(u16::from_le_bytes([conjurou[14], conjurou[15]]), 400, "canto da 747");
+    let recarga = vistos.iter().find(|p| cmd_de(p) == 252).expect("sem PET_SET_COOLDOWN");
+    assert_eq!(recarga.len(), 2 + 12, "tamanho do PET_SET_COOLDOWN");
+    assert_eq!((i32_de(recarga, 2), i32_de(recarga, 6), i32_de(recarga, 10)), (0, 747 + 1024, 15_000));
+    let golpe = vistos.iter().find(|p| e_do_mascote(p, 143)).expect("sem OBJECT_SKILL_ATTACK_RESULT do mascote");
+    assert_eq!(i32_de(golpe, 6) as i64, alvo);
+    assert_eq!(i32_de(golpe, 10), 747);
+    let vida = mundo.read().await.monsters[&alvo].0.hp;
+    eprintln!("HABILIDADE {versao:?}: dano {} → vida {vida}", i32_de(golpe, 14));
+    assert!(vida < 100_000, "a 747 não tirou vida");
+
+    // Dentro dos 15 s: a sessão abre e recusa.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: ordem(alvo, 4, &resto) }).await.unwrap();
+    let vistos = rodar_e_colher(&mundo, &mut link, 40, |v| v.iter().any(|p| cmd_de(p) == 25)).await;
+    let erro = vistos.iter().find(|p| cmd_de(p) == 25).expect("sem erro na recarga");
+    assert_eq!(i32_de(erro, 2), 93);
+    assert!(!vistos.iter().any(|p| e_do_mascote(p, 85)), "conjurou dentro da recarga");
+}
+
+#[tokio::test]
+async fn o_mascote_do_126_usa_habilidade_por_ordem_com_dano_e_recarga() {
+    habilidade_manual(GameVersion::V1_2_6).await;
+}
+
+#[tokio::test]
+async fn o_mascote_do_155_usa_habilidade_por_ordem_com_dano_e_recarga() {
+    habilidade_manual(GameVersion::V1_5_5).await;
+}
+
+/// B112 — comando 5: a 747 como automática. Mandado atacar (comando 1), o mascote a conjura
+/// sozinho no alvo (`gpet_policy::OnHeartbeat`) e arma a recarga.
+async fn habilidade_automatica(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let Some((mut link, _itens, pos, nivel)) = preparar_mascote(&mundo, addr, roleid, versao, &[(747, 1)]).await else { return };
+    let pet = invocar_do_slot(&mut link, roleid, 0).await;
+    let alvo = alvo_de_treino(&mundo, pos, nivel as i32).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: ordem(0, 5, &747i32.to_le_bytes()) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: ordem(alvo, 1, &[0]) }).await.unwrap();
+    let e_do_mascote = |v: &Vec<u8>, cmd: u16| cmd_de(v) == cmd && i32_de(v, 2) as i64 == pet;
+    let vistos = rodar_e_colher(&mundo, &mut link, 200, |v| v.iter().any(|p| e_do_mascote(p, 143))).await;
+    let conjurou = vistos.iter().find(|p| e_do_mascote(p, 85)).expect("a automática não saiu");
+    assert_eq!(i32_de(conjurou, 10), 747);
+    assert_eq!(i32_de(conjurou, 6) as i64, alvo);
+    assert!(vistos.iter().any(|p| cmd_de(p) == 252), "sem PET_SET_COOLDOWN");
+    assert!(mundo.read().await.mascotes[&pet].ai.automatica.is_some_and(|h| h.id == 747));
+}
+
+#[tokio::test]
+async fn o_mascote_do_126_usa_a_habilidade_automatica_em_combate() {
+    habilidade_automatica(GameVersion::V1_2_6).await;
+}
+
+#[tokio::test]
+async fn o_mascote_do_155_usa_a_habilidade_automatica_em_combate() {
+    habilidade_automatica(GameVersion::V1_5_5).await;
+}
+
+/// B112 — `BANISH_PET` (C2S 102): soltar o ativo dá `ERR_PET_IS_ALEARY_ACTIVE` (71); o do slot
+/// 1 abre a operação 2 de 200 tiques (`PLAYER_START_PET_OP`) e, 10 s depois, `FREE_PET` (232,
+/// 8 B: slot e `pet_tid`) e o slot some da jaula.
+async fn soltar(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let Some((mut link, itens, _pos, nivel)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else { return };
+    guardar_mascote(&itens, roleid, 1, nivel, &[]).await;
+    invocar_do_slot(&mut link, roleid, 0).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::BANISH_PET, &0u32.to_le_bytes()) }).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_de(&erro, 2), 71, "soltar o ativo");
+
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::BANISH_PET, &1u32.to_le_bytes()) }).await.unwrap();
+    let op = esperar_comando(&mut link, 235).await;
+    assert_eq!((i32_de(&op, 2), i32_de(&op, 10), i32_de(&op, 14)), (1, 200, 2), "slot, atraso e operação");
+    let mut livre = None;
+    let fim = std::time::Instant::now() + Duration::from_secs(15);
+    while livre.is_none() && std::time::Instant::now() < fim {
+        if let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(500), link.receber()).await {
+            if cmd_de(&data) == 232 {
+                livre = Some(data);
+            }
+        }
+    }
+    let livre = livre.expect("sem FREE_PET");
+    assert_eq!(livre.len(), 2 + 8, "tamanho do FREE_PET");
+    assert_eq!((i32_de(&livre, 2), i32_de(&livre, 6)), (1, 10386));
+    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 1).await.unwrap().is_none(), "o slot 1 continua na jaula");
+    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn soltar_o_mascote_do_126_tira_da_jaula() {
+    soltar(GameVersion::V1_2_6).await;
+}
+
+#[tokio::test]
+async fn soltar_o_mascote_do_155_tira_da_jaula() {
+    soltar(GameVersion::V1_5_5).await;
+}
+
+/// B112 — serviço 36 com o item 12403 da Rilay: o nome fica gravado na jaula, o `PET_ROOM` do
+/// slot volta, o item sai, e a invocação seguinte leva o nome na entrada do mascote
+/// (`mascote_entra`, bit 0x2000). Com ele ativo, o original recusa (`ERR_PET_IS_ALEARY_ACTIVE`).
+async fn renomear(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let Some((mut link, itens, _pos, _)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else { return };
+    guardar_item(&itens, roleid, pw_core::ContainerType::Inventory, 5, 12403, vec![]).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()) }).await.unwrap();
+    let nome: Vec<u8> = "Lobo".encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
+    let mut c = 0u16.to_le_bytes().to_vec();
+    c.extend_from_slice(&(nome.len() as u16).to_le_bytes());
+    c.extend_from_slice(&nome);
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::RENOMEAR_MASCOTE, &c) }).await.unwrap();
+    let sala = esperar_comando(&mut link, 239).await;
+    assert_eq!(u16::from_le_bytes([sala[2], sala[3]]), 1);
+    let gravado = pw_core::InfoPet::do_bloco(&itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0).await.unwrap().unwrap().octets).unwrap();
+    assert_eq!(&gravado.name[..gravado.name_len as usize], &nome[..]);
+    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 5).await.unwrap().is_none_or(|i| i.count == 0), "o 12403 não saiu");
+
+    // A entrada do mascote (cmd 16, a quem está perto — o dono também) vem antes do 233.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) }).await.unwrap();
+    let entra = esperar_comando(&mut link, 16).await;
+    assert!(entra.ends_with(&nome), "a entrada do mascote não leva o nome novo: {:02x?}", &entra[entra.len().saturating_sub(12)..]);
+    assert_eq!(entra[entra.len() - nome.len() - 1] as usize, nome.len());
+    esperar_comando(&mut link, 233).await;
+
+    guardar_item(&itens, roleid, pw_core::ContainerType::Inventory, 5, 12403, vec![]).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::RENOMEAR_MASCOTE, &c) }).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_de(&erro, 2), 71, "renomear o ativo");
+}
+
+#[tokio::test]
+async fn renomear_o_mascote_do_126_grava_e_aparece_na_entrada() {
+    renomear(GameVersion::V1_2_6).await;
+}
+
+#[tokio::test]
+async fn renomear_o_mascote_do_155_grava_e_aparece_na_entrada() {
+    renomear(GameVersion::V1_5_5).await;
+}
+
+/// B112 — serviços 38 e 37 com o mascote ativo: aprender a 748 (nível 1: 5.000 de SP e o livro
+/// 11693) e esquecer a 747 (item 11690). A lista vai ao corpo (`GM_MSG_PET_SKILL_LIST`), à
+/// jaula e ao cliente (`PET_ROOM`).
+async fn aprender_e_esquecer(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let Some((mut link, itens, _pos, _)) = preparar_mascote(&mundo, addr, roleid, versao, &[(747, 1)]).await else { return };
+    guardar_item(&itens, roleid, pw_core::ContainerType::Inventory, 5, 11693, vec![]).await;
+    guardar_item(&itens, roleid, pw_core::ContainerType::Inventory, 6, 11690, vec![]).await;
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().sp = 8_000;
+    let pet = invocar_do_slot(&mut link, roleid, 0).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()) }).await.unwrap();
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::APRENDER_HABILIDADE_DE_MASCOTE, &748i32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    esperar_comando(&mut link, 239).await;
+    assert_eq!(&mundo.read().await.mascotes[&pet].info.skills[..3], &[(747, 1), (748, 1), (0, 0)]);
+    assert_eq!(mundo.read().await.players[&(roleid as i64)].sp, 3_000);
+    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 5).await.unwrap().is_none_or(|i| i.count == 0), "o livro não saiu");
+
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::ESQUECER_HABILIDADE_DE_MASCOTE, &747i32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    esperar_comando(&mut link, 239).await;
+    assert_eq!(&mundo.read().await.mascotes[&pet].info.skills[..2], &[(748, 1), (0, 0)]);
+    let mut gravado = None;
+    for _ in 0..50 {
+        let i = pw_core::InfoPet::do_bloco(&itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0).await.unwrap().unwrap().octets).unwrap();
+        if i.skills[0] == (748, 1) {
+            gravado = Some(i);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(gravado.is_some(), "a jaula não guardou a lista nova");
+}
+
+#[tokio::test]
+async fn o_mascote_do_126_aprende_e_esquece_habilidade_no_npc() {
+    aprender_e_esquecer(GameVersion::V1_2_6).await;
+}
+
+#[tokio::test]
+async fn o_mascote_do_155_aprende_e_esquece_habilidade_no_npc() {
+    aprender_e_esquecer(GameVersion::V1_5_5).await;
+}
+
+/// B113 — o treinador consome o livro (`GetRequiredItem`): `SkillStub::Learn` tira o item com
+/// `SetUseitem` → `TakeOutItem` (`cskill/skill/skill.cpp:79-84`), e sem ele o `Learn` falha com
+/// `ERR_CANNOT_LEARN_SKILL` (22). A Reviver Mascote (329, Espiritualista) pede o 11524 no nível 1
+/// nas duas versões. Relato da Tsuko: aprendeu Curar/Reviver Mascote e o livro ficou na bolsa.
+async fn aprender_consome_o_livro(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let Some((mut link, itens, _pos, _)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else { return };
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.sp = 1_000;
+        p.money += 10_000;
+        p.habilidades.remove(&329);
+    }
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()) }).await.unwrap();
+
+    // Sem o livro: 22 e nada aprendido.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::APRENDER_HABILIDADE, &329i32.to_le_bytes()) }).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_de(&erro, 2), 22);
+    assert!(!mundo.read().await.players[&(roleid as i64)].habilidades.contains_key(&329));
+
+    // Com o livro no slot 7: aprende, e o 11524 sai (`DROP_TYPE_TAKEOUT` = 2).
+    guardar_item(&itens, roleid, pw_core::ContainerType::Inventory, 7, 11524, vec![]).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::APRENDER_HABILIDADE, &329i32.to_le_bytes()) }).await.unwrap();
+    let saiu = esperar_comando(&mut link, 46).await;
+    if versao == GameVersion::V1_2_6 {
+        // 1.2.6: `{u8 where, u8 index, u16 count, int tid, char type}`, 9 B — a ordem em que o
+        // `S2C::CMD::Make<player_drop_item>::From` do `gs` 1.2.6 escreve (VA 0x80906af-0x80906d3).
+        assert_eq!(saiu.len(), 2 + 9);
+        assert_eq!((saiu[2], saiu[3], u16::from_le_bytes([saiu[4], saiu[5]]), i32_de(&saiu, 6), saiu[10]), (0, 7, 1, 11524, 2));
+    } else {
+        assert_eq!((saiu[2], saiu[3], i32_de(&saiu, 4), i32_de(&saiu, 8), saiu[12]), (0, 7, 1, 11524, 2));
+    }
+    assert_eq!(mundo.read().await.players[&(roleid as i64)].habilidades.get(&329).copied(), Some(1));
+    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 7).await.unwrap().is_none_or(|i| i.count == 0), "o livro ficou na bolsa");
+}
+
+#[tokio::test]
+async fn aprender_no_treinador_do_126_consome_o_livro() {
+    aprender_consome_o_livro(GameVersion::V1_2_6).await;
+}
+
+#[tokio::test]
+async fn aprender_no_treinador_do_155_consome_o_livro() {
+    aprender_consome_o_livro(GameVersion::V1_5_5).await;
+}
+
+// ---------------------------------------------------------------------------------------
+// B114 — mascote seguindo sem parar, posição válida perto do dono, e a Curar Mascote (330).
+// ---------------------------------------------------------------------------------------
+
+/// B114 — o dono anda sem parar na velocidade do mascote; o mascote o segue com
+/// `OBJECT_MOVE` (15) seguidos e **nenhum** `OBJECT_STOP_MOVE` (35) no caminho: o cliente só
+/// reinicia a animação de andar (e o som dela) quando o NPC sai de `WORK_MOVE`
+/// (`EC_NPC.cpp:1048-1053`), e o original só para ao ficar a menos de 0,8 m
+/// (`session_npc_follow_target::Run`, `npcsession.cpp:164-280`).
+async fn seguir_sem_parar(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let Some((mut link, _itens, pos, _)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else { return };
+    // Sem mapa (o cenário não carrega terreno nem movemap): tudo é alcançável e reto.
+    {
+        let mut m = mundo.write().await;
+        m.terreno = Default::default();
+        m.movimento = pw_data_loader::MapaDeMovimento::vazio();
+    }
+    let pet = invocar_do_slot(&mut link, roleid, 0).await;
+    let velocidade = mundo.read().await.mascotes[&pet].corpo.move_speed;
+    let mut vistos = Vec::new();
+    // 8 s andando em x.
+    for t in 0..160 {
+        {
+            let mut m = mundo.write().await;
+            let p = m.players.get_mut(&(roleid as i64)).unwrap();
+            p.position = Vector3::new(pos.x + velocidade * 0.05 * t as f32, pos.y, pos.z);
+        }
+        mundo.write().await.tick(50).await;
+        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(2), link.receber()).await {
+            if (cmd_de(&data) == 15 || cmd_de(&data) == 35) && i32_de(&data, 2) as i64 == pet {
+                vistos.push(cmd_de(&data));
+            }
+        }
+    }
+    let primeiro = vistos.iter().position(|c| *c == 15).expect("o mascote não seguiu");
+    let andou = vistos[primeiro..].iter().filter(|c| **c == 15).count();
+    let parou = vistos[primeiro..].iter().filter(|c| **c == 35).count();
+    eprintln!("SEGUIR {versao:?}: {andou} passos, {parou} paradas");
+    assert!(andou >= 10, "poucos passos: {vistos:?}");
+    assert_eq!(parou, 0, "o mascote parou seguindo o dono: {vistos:?}");
+}
+
+#[tokio::test]
+async fn o_mascote_do_126_segue_o_dono_sem_parar_a_cada_passo() {
+    seguir_sem_parar(GameVersion::V1_2_6).await;
+}
+
+#[tokio::test]
+async fn o_mascote_do_155_segue_o_dono_sem_parar_a_cada_passo() {
+    seguir_sem_parar(GameVersion::V1_5_5).await;
+}
+
+/// B114 — o Ancião da Cidade das Feras (2206) fica numa plataforma que o `movemap` dos dois
+/// realms não tem (inalcançável, sem piso: o terreno fica 5 m abaixo). O mascote invocado ou
+/// reposicionado ali vai para um ponto válido perto do dono (`pet_gen_pos::FindGroundPos`,
+/// `petman.cpp:1-31`): alcançável, na altura do piso, a menos de 6,8 m do dono — nunca para o
+/// pixel da plataforma, de onde o passo seguinte o assentava no terreno, dentro da estrutura.
+fn plataforma_do_anciao(realm: &str) {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").join(realm).join("config/world");
+    if !dir.exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        return;
+    }
+    let terreno = pw_data_loader::Terreno::ler(1, &dir);
+    let movimento = pw_data_loader::MapaDeMovimento::ler(1, &dir);
+    let valida = |p: Vector3| pw_gs::mascote::posicao_no_chao(&terreno, &movimento, p);
+    let anciao = Vector3::new(-1537.8479, 258.5887, 969.70544);
+    assert!(movimento.acima_do_terreno(anciao.x, anciao.z).is_none(), "a plataforma passou a existir no movemap");
+    let mut achou = 0;
+    for _ in 0..200 {
+        if let Some(p) = valida(anciao) {
+            achou += 1;
+            let acima = movimento.acima_do_terreno(p.x, p.z).expect("ponto inalcançável");
+            let chao = terreno.altura_em(p.x, p.z).unwrap();
+            assert!((p.y - (chao + acima)).abs() < 1e-3);
+            assert!((p.y - anciao.y).abs() < 6.8, "altura {} longe do dono", p.y);
+        }
+    }
+    eprintln!("ANCIÃO {realm}: {achou}/200 com ponto válido");
+    // No meio da plataforma (sem nada alcançável a ~1 m) não há ponto: o original recolhe.
+    let centro = Vector3::new(-1545.0, 258.6, 975.0);
+    if movimento.acima_do_terreno(centro.x - 1.2, centro.z - 1.2).is_none() && movimento.acima_do_terreno(centro.x + 1.2, centro.z + 1.2).is_none() {
+        assert!((0..50).all(|_| valida(centro).is_none_or(|p| movimento.acima_do_terreno(p.x, p.z).is_some())));
+    }
+}
+
+#[test]
+fn o_mascote_do_126_nao_vai_para_dentro_da_plataforma_do_anciao() {
+    plataforma_do_anciao("realm_126");
+}
+
+#[test]
+fn o_mascote_do_155_nao_vai_para_dentro_da_plataforma_do_anciao() {
+    plataforma_do_anciao("realm_155");
+}
+
+/// B114 — a Curar Mascote (330, `TYPE_BLESSPET` de ponto) no mascote ferido: a conjuração
+/// acaba em `ENCHANT_RESULT` (139) e a vida do mascote sobe (`Heal`, `S_Magicdamage × 0,3 +
+/// 540`). Antes o mascote não era alvo possível e nada acontecia.
+async fn curar_mascote(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let Some((mut link, _itens, _pos, _)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else { return };
+    let pet = invocar_do_slot(&mut link, roleid, 0).await;
+    let antes = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.habilidades.insert(330, 1);
+        p.mp = p.max_mp.max(5_000);
+        p.max_mp = p.max_mp.max(5_000);
+        let c = &mut m.mascotes.get_mut(&pet).unwrap().corpo;
+        c.max_hp = 10_000;
+        c.hp = 100;
+        c.hp
+    };
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(pet as i32).to_le_bytes()) }).await.unwrap();
+    let mut corpo = 330i32.to_le_bytes().to_vec();
+    corpo.push(0);
+    corpo.push(0);
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CAST_SKILL, &corpo) }).await.unwrap();
+    esperar_comando(&mut link, 85).await;
+    let bencao = esperar_comando(&mut link, 139).await;
+    assert_eq!(i32_de(&bencao, 6) as i64, pet, "ENCHANT_RESULT sem o mascote como alvo");
+    // B116 — 16 B no 1.2.6 (validador do cliente, VA 0x584e52); com os 19 B do 1.5.5 o cliente
+    // 1.2.6 descartava o aviso e a bênção "não fazia nada" na tela.
+    assert_eq!(bencao.len(), 2 + if versao == GameVersion::V1_2_6 { 16 } else { 19 }, "tamanho do ENCHANT_RESULT");
+    let depois = mundo.read().await.mascotes[&pet].corpo.hp;
+    eprintln!("CURAR {versao:?}: vida {antes} → {depois}");
+    let efeitos: Vec<pw_gs::efeitos::Efeito> = mundo.read().await.mascotes[&pet].corpo.efeitos.filtros.iter().map(|f| f.efeito).collect();
+    if versao == GameVersion::V1_2_6 {
+        // `gs` 1.2.6: só `Heal`, `55·L − 10 + dano mágico × (0,02·L + 0,1)` — 45 no nível 1.
+        assert!(depois >= antes + 45, "a Curar Mascote não curou: {antes} → {depois}");
+        assert!(efeitos.is_empty(), "o 1.2.6 não tem Rebirth/Decregiondmg: {efeitos:?}");
+        return;
+    }
+    // 1.5.5: `S_Magicdamage × 0,3 + 540`, e os dois filtros por 30 s.
+    assert!(depois >= antes + 540, "a Curar Mascote não curou: {antes} → {depois}");
+    assert!(efeitos.contains(&pw_gs::efeitos::Efeito::Rebirth) && efeitos.contains(&pw_gs::efeitos::Efeito::Decregiondmg), "{efeitos:?}");
+    // Um golpe mortal: o `filter_Rebirth` (chance 100) o salva com 20% da vida e se desfaz.
+    mundo.write().await.adiar_dano(pet, -5, 1_000_000, 0, false);
+    let m = mundo.read().await;
+    let c = &m.mascotes.get(&pet).expect("o mascote morreu apesar do Rebirth").corpo;
+    assert_eq!(c.hp, 2_000, "20% de 10.000");
+    assert!(!c.efeitos.filtros.iter().any(|f| f.efeito == pw_gs::efeitos::Efeito::Rebirth));
+}
+
+#[tokio::test]
+async fn curar_mascote_do_126_cura_o_mascote() {
+    curar_mascote(GameVersion::V1_2_6).await;
+}
+
+#[tokio::test]
+async fn curar_mascote_do_155_cura_o_mascote() {
+    curar_mascote(GameVersion::V1_5_5).await;
+}
+
+/// B116 — venda no 1.2.6 com dois itens: o cliente 1.2.6 manda `npc_sell_item` de 12 B (sem o
+/// `price`). Os dois espaços são soltos (`UNFREEZE_IVTR_SLOT` 21 e 22) e pagos (`ITEM_TO_MONEY`);
+/// com o leitor de 16 B só o primeiro saía certo e o segundo ficava sombreado.
+#[tokio::test]
+async fn vender_dois_itens_ao_npc_no_126() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    for slot in [21u16, 22] {
+        itens
+            .upsert_item(&pw_core::ItemRecord {
+                id: None,
+                character_id: roleid,
+                container_type: pw_core::ContainerType::Inventory,
+                slot,
+                item_id: ITEM_DE_LOJA as u32,
+                count: 1,
+                max_count: 99,
+                refine_level: 0,
+                sockets_count: 0,
+                sockets: vec![],
+                durability: 100,
+                max_durability: 100,
+                bind_status: 0,
+                octets: vec![],
+                custom_attributes: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+    }
+    let mut c = 2u32.to_le_bytes().to_vec();
+    for slot in [21u32, 22] {
+        c.extend_from_slice(&ITEM_DE_LOJA.to_le_bytes());
+        c.extend_from_slice(&slot.to_le_bytes());
+        c.extend_from_slice(&1u32.to_le_bytes());
+    }
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::NPC_COMPRA, &c) }).await.unwrap();
+    let (mut soltos, mut pagos) = (Vec::new(), Vec::new());
+    let fim = std::time::Instant::now() + Duration::from_millis(1500);
+    while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(fim.saturating_duration_since(std::time::Instant::now()), link.receber()).await {
+        match cmd_de(&data) {
+            181 => soltos.push(u16::from_le_bytes([data[3], data[4]])),
+            73 => pagos.push(u16::from_le_bytes([data[2], data[3]])),
+            _ => {}
+        }
+        if pagos.len() == 2 {
+            break;
+        }
+    }
+    assert_eq!(soltos, vec![21, 22], "espaços soltos");
+    assert_eq!(pagos, vec![21, 22], "espaços pagos");
 }

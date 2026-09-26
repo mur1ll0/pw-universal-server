@@ -276,7 +276,8 @@ fn o_roteiro_da_habilidade_244_aplica_firearrow_sem_precisar_de_set_probability(
 /// Se o bit 30 (0x40000000) for 1, o cliente o considera matéria/mina (ISMATTERID) e recusa seleção com clique.
 #[test]
 fn o_id_do_monstro_invocado_satisfaz_a_macro_is_npc_id_do_cliente() {
-    const PRIMEIRO: u32 = 0xA000_0000;
+    // B117: fora do bit 29 (`PET_MASK`), que marca mascote.
+    const PRIMEIRO: u32 = 0x9000_0000;
     let mut prox = PRIMEIRO;
     for _ in 0..100 {
         let nid = prox as i32;
@@ -287,6 +288,7 @@ fn o_id_do_monstro_invocado_satisfaz_a_macro_is_npc_id_do_cliente() {
         assert!(is_npc_id, "ID {:#X} deve ser reconhecido como NPC pelo cliente!", nid as u32);
         assert!(!is_player_id, "ID {:#X} não deve ser jogador", nid as u32);
         assert!(!is_matter_id, "ID {:#X} não deve ser matéria (mina/drop)", nid as u32);
+        assert!(!pw_gs::mascote::e_mascote(nid as i64), "ID {:#X} não pode ter o bit de mascote", nid as u32);
 
         prox = PRIMEIRO | ((prox.wrapping_add(1)) & 0x1FFF_FFFF);
     }

@@ -132,17 +132,28 @@ pub fn batimento(p: &mut PlayerEntity) -> bool {
     }
     let (hp, mp) = (p.hp, p.mp);
     let fator = if p.combate_s > 0 { 1 } else { 4 };
-    gerar(&mut p.hp, &mut p.contador_hp, p.hp_gen * fator, p.max_hp);
-    gerar(&mut p.mp, &mut p.contador_mp, p.mp_gen * fator, p.max_mp);
-    // Meditando, mais 15 de chi por batimento (`sit_down_filter::Heartbeat`,
-    // `gs/sitdown_filter.cpp:19-34`). `falta`: o `STAYIN_BONUS` que o mesmo filtro dá à
-    // regeneração de vida e mana depois de um tempo sentado.
-    let chi = p.sentado && p.mexer_no_chi(CHI_POR_MEDITACAO);
+    // `sit_down_filter::Heartbeat` (`gs/sitdown_filter.cpp:19-34`; no `gs` 1.2.6, VA 0x812ff22,
+    // os mesmos `push 0x64`): nasce com `_timeout` 1 e no segundo batimento sentado soma
+    // `STAYIN_BONUS` (100, `gs/config.h:103`) à escala da regeneração — `Result2(gen, 100, 0)`
+    // dobra o `hp_gen`/`mp_gen` (`playertemplate.h:880-894`) até se levantar (`OnRelease`).
+    if p.sentado {
+        p.meditacao_s = p.meditacao_s.saturating_add(1);
+    } else {
+        p.meditacao_s = 0;
+    }
+    let meditacao = if p.meditacao_s >= 2 { 2 } else { 1 };
+    gerar(&mut p.hp, &mut p.contador_hp, p.hp_gen * meditacao * fator, p.max_hp);
+    gerar(&mut p.mp, &mut p.contador_mp, p.mp_gen * meditacao * fator, p.max_mp);
+    // Meditando, o chi da versão por batimento (`ModifyAP(15)` no mesmo `Heartbeat` do 1.5.5;
+    // o do 1.2.6 não tem a chamada — `chi_ao_meditar` 0, B119).
+    let chi = p.sentado && p.chi_ao_meditar != 0 && p.mexer_no_chi(p.chi_ao_meditar);
     hp != p.hp || mp != p.mp || chi || saiu_do_combate
 }
 
 /// `sit_down_filter::Heartbeat`: 15 de chi por segundo meditando.
 pub const CHI_POR_MEDITACAO: i32 = 15;
+/// O valor com que o jogador nasce, antes de sentar (o barramento o põe pela versão).
+pub const CHI_POR_MEDITACAO_155: i32 = CHI_POR_MEDITACAO;
 
 /// Onde renascer: o ponto de cidade do distrito que contém a posição, se ele for deste mapa
 /// (`gplayer_controller::ResurrectInTown`, `playercmd.cpp:112-129`; `city_region::GetCityPos`).
