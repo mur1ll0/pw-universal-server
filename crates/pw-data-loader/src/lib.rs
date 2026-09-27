@@ -39,7 +39,7 @@ pub use collision::MapCollision;
 pub use elements::MedicineTemplate;
 pub use elements::ElementsData;
 pub use generic_elements::{GenericElementsData, load_elements_data as load_generic_elements_data};
-pub use gshop::GShopData;
+pub use gshop::{FormatoDoGshop, GShopData, OfertaDaLoja, OpcaoDeCompra};
 pub use manager::{FalhaDeCarga, GameDataManager, RelatorioDeCarga};
 pub use monstros::{TabelaDeMonstros, TemplateDeMonstro};
 pub use npcgen::{compress_dir_h, NpcGenData, SpatialGrid, SpawnInstance, SpawnType};

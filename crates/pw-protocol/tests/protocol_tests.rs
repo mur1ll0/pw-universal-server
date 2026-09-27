@@ -1057,3 +1057,106 @@ fn player_change_shape_tem_5_bytes_depois_do_cabecalho() {
     let volta = pw_protocol::S2CGamedataSend::player_change_shape(7, 0);
     assert_eq!(volta.data, vec![163, 0, 7, 0, 0, 0, 0]);
 }
+
+/// B122 — o `info_player_1` do 1.2.6 com a forma: o validador do cliente 1.2.6 (VA 0x584633)
+/// parte de 26 bytes e o bit `0x1` do `state` soma 1 (o `shape_form`), que no 1.2.6 é só o
+/// `_shape` (`byte_de_forma`: 1 na raposa). Sem forma, os 26 de antes.
+#[test]
+fn o_info_player_1_do_126_leva_a_forma() {
+    use pw_protocol::versions::v126::V126Protocol;
+    use pw_protocol::WorldProtocol;
+    let vista = |forma| pw_core::VistaDoJogador {
+        pos: pw_core::Vector3::new(1.0, 2.0, 3.0),
+        dir: 0,
+        cultivo: 0,
+        sec_level: 0,
+        feminino: false,
+        crc_equipamento: 0,
+        crc_aparencia: 0,
+        voando: false,
+        morto: false,
+        modo_roupa: false,
+        montaria: None,
+        forma,
+    };
+    let v = V126Protocol;
+    let normal = v.player_enter_slice(42, vista(None)).data;
+    assert_eq!(normal.len(), 2 + 26);
+    assert_eq!(i32::from_le_bytes(normal[24..28].try_into().unwrap()), 0);
+    let raposa = v.player_enter_slice(42, vista(Some(1 | (1 << 6)))).data;
+    assert_eq!(raposa.len(), 2 + 26 + 1, "o bit 0x1 soma o shape_form");
+    assert_eq!(i32::from_le_bytes(raposa[24..28].try_into().unwrap()) & 0x1, 0x1);
+    assert_eq!(raposa[28], 1, "o `_shape` do 1.2.6, sem o FORM_CLASS << 6");
+    assert_eq!(v.player_enter_world(42, vista(Some(1 | (1 << 6)))).data.len(), 2 + 27);
+
+    // Roupa (0x2000, `SwitchFashionMode` VA 0x807bb12) e cadáver (0x80, `MakeObjectState`
+    // VA 0x8062d08) só acendem bits: o tamanho fica.
+    let mut outra = vista(None);
+    outra.modo_roupa = true;
+    outra.morto = true;
+    let q = v.player_enter_slice(42, outra).data;
+    assert_eq!(q.len(), 2 + 26);
+    assert_eq!(i32::from_le_bytes(q[24..28].try_into().unwrap()), 0x2000 | 0x80);
+    // Montado na raposa: forma (1 B) e depois `{char cor; int modelo}` (5 B).
+    let mut montado = vista(Some(1 | (1 << 6)));
+    montado.montaria = Some((3, 9001));
+    let m = v.player_enter_slice(42, montado).data;
+    assert_eq!(m.len(), 2 + 26 + 1 + 5);
+    assert_eq!(i32::from_le_bytes(m[24..28].try_into().unwrap()), 0x1 | 0x80000);
+    assert_eq!((m[28], m[29]), (1, 3), "forma, depois a cor");
+    assert_eq!(i32::from_le_bytes(m[30..34].try_into().unwrap()), 9001);
+    // O dono vê a própria roupa pelo `state` do `self_info_1` (34 B no 1.2.6).
+    let s = v.self_info_1(0, 0, 1, pw_core::Vector3::new(0.0, 0.0, 0.0), 0, true).data;
+    assert_eq!(s.len(), 2 + 34);
+    assert_eq!(i32::from_le_bytes(s[32..36].try_into().unwrap()) & 0x2000, 0x2000);
+}
+
+/// B122 — PLAYER_MOUNTING (227) no 1.2.6: 9 B (`Make<player_mounting>`, VA 0x8092326: id,
+/// `int mount_id`, cor em `char`), contra 10 no 1.5.5.
+#[test]
+fn o_player_mounting_do_126_tem_9_bytes() {
+    use pw_protocol::versions::v126::V126Protocol;
+    use pw_protocol::WorldProtocol;
+    let p = V126Protocol.player_mounting(42, 7, 3).data;
+    assert_eq!(p.len(), 2 + 9);
+    assert_eq!(&p[0..2], &227u16.to_le_bytes());
+    assert_eq!(i32::from_le_bytes(p[6..10].try_into().unwrap()), 7);
+    assert_eq!(p[10], 3);
+    assert_eq!(pw_protocol::versions::v155::V155Protocol.player_mounting(42, 7, 3).data.len(), 2 + 10);
+}
+
+/// B122 — TEAM_MEMBER_DATA (64) no 1.2.6 igual, byte a byte, ao comando de 56 B da captura
+/// original (`_sync/capturas/full_interno.pcap`, subcomando 64 #0), e NOTIFY_HOSTPOS (14) com os
+/// 16 B que a captura e o validador do cliente 1.2.6 pedem.
+#[test]
+fn o_grupo_e_o_notify_hostpos_do_126_batem_com_a_captura() {
+    use pw_protocol::packets::s2c::MembroDoGrupo;
+    use pw_protocol::versions::v126::V126Protocol;
+    use pw_protocol::WorldProtocol;
+    let membro = |role_id, level, level2, hp, mp| MembroDoGrupo {
+        role_id,
+        level,
+        state: 0,
+        level2,
+        reencarnacoes: 0,
+        wallow_level: 0,
+        hp,
+        mp,
+        max_hp: hp,
+        max_mp: mp,
+        force_id: 0,
+        profit_level: 0,
+    };
+    let g = V126Protocol.team_member_data(0x22, &[membro(0x22, 65, 2, 0x703, 0x6f7), membro(0x30, 3, 0, 0x99, 0x53)]).data;
+    let captura: [u8; 56] = [
+        0x02, 0x02, 0x22, 0x00, 0x00, 0x00, 0x22, 0x00, 0x00, 0x00, 0x41, 0x00, 0x00, 0x02, 0xff, 0x03,
+        0x07, 0x00, 0x00, 0xf7, 0x06, 0x00, 0x00, 0x03, 0x07, 0x00, 0x00, 0xf7, 0x06, 0x00, 0x00, 0x30,
+        0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xff, 0x99, 0x00, 0x00, 0x00, 0x53, 0x00, 0x00, 0x00,
+        0x99, 0x00, 0x00, 0x00, 0x53, 0x00, 0x00, 0x00,
+    ];
+    assert_eq!(&g[0..2], &64u16.to_le_bytes());
+    assert_eq!(&g[2..], &captura[..]);
+    let n = V126Protocol.notify_hostpos(pw_core::Vector3::new(1.0, 2.0, 3.0), 1, 0).data;
+    assert_eq!(n.len(), 2 + 16);
+    assert_eq!(i32::from_le_bytes(n[14..18].try_into().unwrap()), 1, "tag");
+}

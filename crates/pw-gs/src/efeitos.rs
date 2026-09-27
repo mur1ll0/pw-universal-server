@@ -37,14 +37,19 @@ pub mod expr {
         let b = s.as_bytes();
         let mut i = 0;
         let mut out = Vec::new();
-        const OPS: [&str; 17] = ["&&", "||", "==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "(", ")", "?", ":", "!"];
+        const OPS: [&str; 17] = [
+            "&&", "||", "==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "(", ")", "?", ":",
+            "!",
+        ];
         while i < b.len() {
             let c = b[i] as char;
             if c.is_whitespace() {
                 i += 1;
                 continue;
             }
-            if c.is_ascii_digit() || (c == '.' && i + 1 < b.len() && (b[i + 1] as char).is_ascii_digit()) {
+            if c.is_ascii_digit()
+                || (c == '.' && i + 1 < b.len() && (b[i + 1] as char).is_ascii_digit())
+            {
                 let ini = i;
                 while i < b.len() && ((b[i] as char).is_ascii_digit() || b[i] == b'.') {
                     i += 1;
@@ -420,7 +425,13 @@ impl Efeito {
     pub fn ficha(self) -> Ficha {
         use Convivencia::*;
         use Efeito::*;
-        let f = |convivencia, bencao, icone, visivel| Ficha { convivencia, bencao, maldicao: !bencao, icone, visivel };
+        let f = |convivencia, bencao, icone, visivel| Ficha {
+            convivencia,
+            bencao,
+            maldicao: !bencao,
+            icone,
+            visivel,
+        };
         match self {
             // `filter_Slow`: UNIQUE|DEBUFF, VSTATE_SLOW 4, HSTATE_SLOW 3.
             Slow => f(Unico, false, 3, 4),
@@ -491,16 +502,40 @@ impl Efeito {
             // maldição (o Dispersar não o tira) e **sem** `REMOVE_ON_DEATH`. O ícone é o
             // `HSTATE_FAIRYFORM` 279 (`statedef.h:477`, `InsertTeamVisibleState`); não há
             // `VSTATE`: o que o cliente desenha é a forma, pelo `PLAYER_CHGSHAPE`.
-            Fairyform => Ficha { convivencia: Fraco, bencao: false, maldicao: false, icone: 279, visivel: 0 },
+            Fairyform => Ficha {
+                convivencia: Fraco,
+                bencao: false,
+                maldicao: false,
+                icone: 279,
+                visivel: 0,
+            },
             // `filter_Foxform`: só `FILTER_MASK_WEAK` (`skillfilter.h:4611`) — sem batimento,
             // sem `REMOVE_ON_DEATH`. Ícone `HSTATE_FOXFORM` 75 (`statedef.h:268`; o `gs`
             // 1.2.6 empurra 0x4b), **sem parâmetro**: `InsertTeamVisibleState(state)`.
-            Foxform => Ficha { convivencia: Fraco, bencao: false, maldicao: false, icone: 75, visivel: 0 },
+            Foxform => Ficha {
+                convivencia: Fraco,
+                bencao: false,
+                maldicao: false,
+                icone: 75,
+                visivel: 0,
+            },
             // Sem ícone e sem estado visual: o original não acende nenhum (`potion_filter.h`).
             PocaoDeVida | PocaoDeMana => f(Fundir, true, 0, 0),
             // Nem `BUFF` nem `DEBUFF`: o Dispersar não os tira.
-            Rebirth => Ficha { convivencia: Unico, bencao: false, maldicao: false, icone: 155, visivel: 0 },
-            Decregiondmg => Ficha { convivencia: Unico, bencao: false, maldicao: false, icone: 328, visivel: 0 },
+            Rebirth => Ficha {
+                convivencia: Unico,
+                bencao: false,
+                maldicao: false,
+                icone: 155,
+                visivel: 0,
+            },
+            Decregiondmg => Ficha {
+                convivencia: Unico,
+                bencao: false,
+                maldicao: false,
+                icone: 328,
+                visivel: 0,
+            },
         }
     }
 
@@ -576,7 +611,54 @@ pub struct Realce {
     pub conjuracao: i32,
     /// Multiplica o dano recebido (`AdjustDamage` de `Inchurt`/`Dechurt`).
     pub dano_recebido: f32,
+    /// `_en_percent.swim_speed` (`EnhanceSwimSpeed`, `obj_interface.cpp:475-478`).
+    pub natacao: i32,
 }
+
+impl Realce {
+    /// Soma as passivas de forma (`EventChange`) a este realce.
+    pub fn somar(&mut self, p: &Realce) {
+        self.dano += p.dano;
+        self.defesa += p.defesa;
+        self.critico += p.critico;
+        self.natacao += p.natacao;
+    }
+}
+
+/// As passivas `EVENT_CHANGE` que o jogador conhece, somadas (`SkillWrapper::EventChange`,
+/// `cskill/skill/skillwrapper.cpp:589-610`): o `TakeEffect` de cada uma, no nível dela, com os
+/// setters de `playerwrapper.cpp` — `SetIncswim` (`:2272-2285`, `EnhanceSwimSpeed(100 × inc)`),
+/// `SetIncfight` (`:2559-2566`, `EnhanceScaleDamage(100 × inc)`), `SetAdddefence`
+/// (`EnhanceScaleDefense(100 × m)`) e `SetInccrit` (`EnhanceCrit(point)`). Vale enquanto o
+/// jogador está na forma de classe; ao sair, o `UndoEffect` tira o mesmo tanto.
+pub fn passivas_de_forma(
+    tabela: &pw_data_loader::habilidades::TabelaDeHabilidades,
+    conhecidas: &std::collections::HashMap<u32, u8>,
+) -> Realce {
+    let mut r = Realce::default();
+    for (&id, &nivel) in conhecidas {
+        let Some(h) = tabela.get(id) else { continue };
+        if h.eventflag != Some(pw_data_loader::habilidades::EVENT_CHANGE) {
+            continue;
+        }
+        for (_, setter, e) in h.ao_mudar_de_forma.as_deref().unwrap_or_default() {
+            let Some(v) = expr::avaliar(e, &|n| (n == "L").then_some(nivel as f64)) else {
+                continue;
+            };
+            match setter.as_str() {
+                "Incswim" => r.natacao += (100.0 * v as f32) as i32,
+                "Incfight" => r.dano += (v as f32 * 100.0) as i32,
+                "Adddefence" => r.defesa += (v as f32 * 100.0) as i32,
+                "Inccrit" => r.critico += v as i32,
+                _ => {}
+            }
+        }
+    }
+    r
+}
+
+/// O estado visível do `invincible_filter` no 1.5.5 (`IncVisibleState(49)`).
+pub const ESTADO_VISIVEL_INVENCIVEL: usize = 49;
 
 /// Os filtros de um objeto.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -607,7 +689,8 @@ impl Efeitos {
                     } else if matches!(novo.efeito, Efeito::PocaoDeVida | Efeito::PocaoDeMana) {
                         // `healing_potion_filter::Merge` (`potion_filter.h:30-42`): soma o
                         // tempo e o total das duas, e reparte de novo.
-                        let total = velho.por_segundo * velho.restante_s + novo.por_segundo * novo.restante_s;
+                        let total = velho.por_segundo * velho.restante_s
+                            + novo.por_segundo * novo.restante_s;
                         velho.restante_s += novo.restante_s;
                         velho.por_segundo = (total / velho.restante_s.max(1)).max(1);
                         return true;
@@ -640,8 +723,16 @@ impl Efeitos {
             // A poção entrega todo segundo (`healing_potion_filter::Heartbeat`), sem o
             // acúmulo de 3 s dos filtros de habilidade.
             if matches!(f.efeito, Efeito::PocaoDeVida | Efeito::PocaoDeMana) {
-                let v = f.por_segundo.min(if f.restante_s <= 1 { i32::MAX } else { f.por_segundo });
-                tiques.push(if f.efeito == Efeito::PocaoDeVida { Tique::Cura(v) } else { Tique::Mana(v) });
+                let v = f.por_segundo.min(if f.restante_s <= 1 {
+                    i32::MAX
+                } else {
+                    f.por_segundo
+                });
+                tiques.push(if f.efeito == Efeito::PocaoDeVida {
+                    Tique::Cura(v)
+                } else {
+                    Tique::Mana(v)
+                });
                 f.restante_s -= 1;
                 continue;
             }
@@ -658,7 +749,8 @@ impl Efeitos {
                 f.restante_s -= 1;
                 continue;
             }
-            let acumula = f.efeito.dano_no_tempo().is_some() || matches!(f.efeito, Efeito::Hpgen | Efeito::Mpgen);
+            let acumula = f.efeito.dano_no_tempo().is_some()
+                || matches!(f.efeito, Efeito::Hpgen | Efeito::Mpgen);
             if acumula {
                 f.contador += 1;
                 if f.contador >= 3 || 1 >= f.restante_s {
@@ -667,7 +759,10 @@ impl Efeitos {
                     match f.efeito {
                         Efeito::Hpgen => tiques.push(Tique::Cura(v)),
                         Efeito::Mpgen => tiques.push(Tique::Mana(v)),
-                        _ => tiques.push(Tique::Dano { origem: f.origem, valor: v }),
+                        _ => tiques.push(Tique::Dano {
+                            origem: f.origem,
+                            valor: v,
+                        }),
                     }
                 }
             }
@@ -675,10 +770,13 @@ impl Efeitos {
         }
         let antes = self.filtros.len();
         self.filtros.retain(|f| f.restante_s > 0);
+        let invencivel_antes = self.invencivel_s > 0;
         if self.invencivel_s > 0 {
             self.invencivel_s -= 1;
         }
-        (tiques, self.filtros.len() != antes)
+        // O `invincible_filter` que acaba também muda o estado visível (49, 1.5.5).
+        let fim_do_invencivel = invencivel_antes && self.invencivel_s == 0;
+        (tiques, self.filtros.len() != antes || fim_do_invencivel)
     }
 
     /// `filter_Wingshield::AdjustDamage` (`cskill/skill/skillfilter.h:4168-4195`).
@@ -691,7 +789,10 @@ impl Efeitos {
     /// chance`), ele se desfaz e devolve a fração da vida máxima a curar. Dado contra: nada, e o
     /// filtro sai com a morte (`REMOVE_ON_DEATH`).
     pub fn renascer(&mut self, dado: i32) -> Option<f32> {
-        let i = self.filtros.iter().position(|f| f.efeito == Efeito::Rebirth)?;
+        let i = self
+            .filtros
+            .iter()
+            .position(|f| f.efeito == Efeito::Rebirth)?;
         if dado >= self.filtros[i].razao {
             return None;
         }
@@ -699,7 +800,11 @@ impl Efeitos {
     }
 
     pub fn escudo_absorve(&mut self, dano: i32) -> i32 {
-        let Some(f) = self.filtros.iter_mut().find(|f| f.efeito == Efeito::Wingshield) else {
+        let Some(f) = self
+            .filtros
+            .iter_mut()
+            .find(|f| f.efeito == Efeito::Wingshield)
+        else {
             return dano;
         };
         let quinto = dano as f32 * 0.2;
@@ -724,7 +829,11 @@ impl Efeitos {
         let antes = self.filtros.len();
         self.filtros.retain(|f| {
             let fi = f.efeito.ficha();
-            if bencaos { !fi.bencao } else { !fi.maldicao }
+            if bencaos {
+                !fi.bencao
+            } else {
+                !fi.maldicao
+            }
         });
         antes != self.filtros.len()
     }
@@ -733,7 +842,16 @@ impl Efeitos {
     /// `Fairyform` é só `WEAK | HEARTBEAT` (`skillfilter.h:16822-16825`) e acaba pelo tempo; o
     /// `Foxform` é só `WEAK` (`:4611`) e fica até a 312 ser lançada de novo.
     pub fn ao_morrer(&mut self) {
-        self.filtros.retain(|f| matches!(f.efeito, Efeito::Fairyform | Efeito::Foxform));
+        self.filtros
+            .retain(|f| matches!(f.efeito, Efeito::Fairyform | Efeito::Foxform));
+        self.invencivel_s = 0;
+    }
+
+    /// `gnpc_imp::Reborn` (`gs/npc.cpp:1970-1980`): o monstro que volta do gerador limpa as
+    /// maldições (`ClearSpecFilter(FILTER_MASK_DEBUFF)`) — o sangramento e todo dano no tempo
+    /// inclusive — e não volta invencível.
+    pub fn ao_renascer(&mut self) {
+        self.filtros.retain(|f| !f.efeito.ficha().maldicao);
         self.invencivel_s = 0;
     }
 
@@ -789,7 +907,10 @@ impl Efeitos {
         if fisico >= 1_000_000 {
             return None;
         }
-        let f = self.filtros.iter().find(|f| matches!(f.efeito, Efeito::Retort | Efeito::Retort2))?;
+        let f = self
+            .filtros
+            .iter()
+            .find(|f| matches!(f.efeito, Efeito::Retort | Efeito::Retort2))?;
         let dano = (fisico as f32 * f.fator) as i32;
         (dano > 1).then_some(dano)
     }
@@ -812,7 +933,10 @@ impl Efeitos {
 
     pub fn realce(&self) -> Realce {
         use Efeito::*;
-        let mut r = Realce { dano_recebido: 1.0, ..Default::default() };
+        let mut r = Realce {
+            dano_recebido: 1.0,
+            ..Default::default()
+        };
         for f in &self.filtros {
             let k = f.razao;
             match f.efeito {
@@ -860,6 +984,13 @@ impl Efeitos {
     /// `actobject.cpp:1531-1590`).
     pub fn estados_visiveis(&self) -> [u32; 6] {
         let mut s = [0u32; 6];
+        // `invincible_filter::OnAttach` → `IncVisibleState(49)` (`gs/invincible_filter.cpp:
+        // 13-22`, 1.5.5): o efeito sobre o monstro que volta para casa. O `gs` 1.2.6 não liga
+        // estado nenhum nesse filtro (VA 0x812f6ee), e o `UPDATE_EXT_STATE` do 1.2.6 só leva
+        // os estados 0..31 — o bit 49 não chega lá, como no original.
+        if self.invencivel_s > 0 {
+            s[ESTADO_VISIVEL_INVENCIVEL / 32] |= 1 << (ESTADO_VISIVEL_INVENCIVEL % 32);
+        }
         for f in &self.filtros {
             let v = f.efeito.ficha().visivel as usize;
             if v > 0 && v < 192 {
@@ -881,7 +1012,11 @@ impl Efeitos {
             if h != 0 && !out.iter().any(|(x, _)| *x == h) {
                 // A raposa entra sem parâmetro (`InsertTeamVisibleState(HSTATE_FOXFORM)`):
                 // [`SEM_PARAMETRO`] faz o `ICON_STATE_NOTIFY` mandar o ícone sem tempo.
-                let param = if f.efeito == Efeito::Foxform { pw_protocol::packets::s2c::SEM_PARAMETRO } else { f.restante_s };
+                let param = if f.efeito == Efeito::Foxform {
+                    pw_protocol::packets::s2c::SEM_PARAMETRO
+                } else {
+                    f.restante_s
+                };
                 out.push((h, param));
             }
         }
@@ -939,36 +1074,176 @@ pub struct Aplicacao {
 /// (`playerwrapper.h:61`) e `ThrowDice()` com zero devolve falso (`:169-178`): quem consulta o
 /// dado sem `SetProbability` antes não aplica nada, e é assim no original.
 const GARANTIDOS_SEM_DADO: &[&str] = &[
-    "Absorbdamageincdefense", "Addball", "Adddefence", "Additionalattack", "Additionalheal",
-    "Addmaxhp", "Addresistance", "Addskilldamage", "Airstreamlock", "Antiwater", "Apgen", "Apgen2",
-    "Appendenchant", "Attachstatetoself", "Attachstatetotarget", "Attackattachstate1",
-    "Attackattachstate2", "Attackattachstate3", "Attackattachstate4", "Aurabless2", "Aurabless3",
-    "Auracurse2", "Auracurse4asn", "Beastieform", "Beattackattachstate1", "Beattackattachstate2",
-    "Beattackattachstate3", "Beattackattachstate4", "Blessmagic", "Burningfeet", "Callupteammember",
-    "Chanceofrebirth", "Charred", "Clearinvisible", "Clearinvisible2", "Comboid", "CommonCoolDown",
-    "Debithurt", "Decdamagefromcrits", "Delaytransmit", "Denyattackcmd", "Devilstate", "Disappear",
-    "Disturbrecover", "Dropmoneyondeath", "Earthguard", "Earthhurt", "Enmity", "Enternonpenaltypvp",
-    "Entrap", "Entrap2", "Fairyform", "Fastprayincmagic", "Feathershield", "Filpball", "Firearrow",
-    "Firehurt", "Fishform", "Flower1", "Flower2", "Flower3", "Flower4", "Foxform", "Freemove",
-    "Freemoveapgen", "Frenetic", "Frighten", "Giant", "GiantForm", "Goldhurt", "Hardenskin",
-    "Healsteal", "Homefeeling", "Immunedrop", "Incantiinvisiblepassive", "Incatkdefhp",
-    "Incatkdefhp2", "Incattackondamage", "Incbow", "Incboxing", "Inccrit", "Incdagger",
-    "Incdefencesmite", "Incdefensedegree", "Incearth", "Incfarnormaldmgreduce",
-    "Incfarskilldmgreduce", "Incfeather", "Incfight", "Incfightproperty", "Incfire", "Incgold",
-    "Inchammer", "Inchitrate", "Inchpgen", "Inchurt3", "Incinvisiblepassive", "Incmaxhpatkdfdlevel",
-    "Incmpgen", "Incnearnormaldmgreduce", "Incnearskilldmgreduce", "Incpenres",
-    "Incpetattackdegree", "Incpetdamage", "Incpetdefenddegree", "Incpetdefense", "Incpethp",
-    "Incpetmagicdamage", "Incpetmagicdefense", "Incpetmp", "Incrange", "Incrementalhpgen",
-    "Incresistmagic", "Incscimitar", "Incspear", "Incswim", "Incswimspeed", "Incsword",
-    "Inctalisman", "Incwater", "Incwood", "Incwoodwaterdefense", "Insertvstate", "Ironshield",
-    "Jingji", "Leavenonpenaltypvp", "Longjumptospouse", "Magicfrenetic", "MnfactionDecresist",
-    "Moongod", "Panruo", "Perform", "Petsacrifice", "Physichurt", "Plantsuicide", "Powerup",
-    "Queryotherinventory", "Rebirth", "Rebirth2", "Reduceresurrectexplost", "Repelonnormalattack",
-    "Resurrect", "Retortmagic", "Returntown", "Sandstorm", "Shadowform", "Soulbeatback",
-    "Soulretort", "Soulretort2", "Soulsealed", "Soulstun", "Specialphysichurt", "Specialslow",
-    "Startcallup", "Stoneskin", "Summonpet2", "Summonplantpet", "Swiftform", "TalentData",
-    "Thunderform", "Tigerform", "Transportdamagetopet", "Transportmptopet", "Vacuum", "Waterhurt",
-    "Windshield", "Wingshield", "Woodhurt", "Xisui", "Yijin",
+    "Absorbdamageincdefense",
+    "Addball",
+    "Adddefence",
+    "Additionalattack",
+    "Additionalheal",
+    "Addmaxhp",
+    "Addresistance",
+    "Addskilldamage",
+    "Airstreamlock",
+    "Antiwater",
+    "Apgen",
+    "Apgen2",
+    "Appendenchant",
+    "Attachstatetoself",
+    "Attachstatetotarget",
+    "Attackattachstate1",
+    "Attackattachstate2",
+    "Attackattachstate3",
+    "Attackattachstate4",
+    "Aurabless2",
+    "Aurabless3",
+    "Auracurse2",
+    "Auracurse4asn",
+    "Beastieform",
+    "Beattackattachstate1",
+    "Beattackattachstate2",
+    "Beattackattachstate3",
+    "Beattackattachstate4",
+    "Blessmagic",
+    "Burningfeet",
+    "Callupteammember",
+    "Chanceofrebirth",
+    "Charred",
+    "Clearinvisible",
+    "Clearinvisible2",
+    "Comboid",
+    "CommonCoolDown",
+    "Debithurt",
+    "Decdamagefromcrits",
+    "Delaytransmit",
+    "Denyattackcmd",
+    "Devilstate",
+    "Disappear",
+    "Disturbrecover",
+    "Dropmoneyondeath",
+    "Earthguard",
+    "Earthhurt",
+    "Enmity",
+    "Enternonpenaltypvp",
+    "Entrap",
+    "Entrap2",
+    "Fairyform",
+    "Fastprayincmagic",
+    "Feathershield",
+    "Filpball",
+    "Firearrow",
+    "Firehurt",
+    "Fishform",
+    "Flower1",
+    "Flower2",
+    "Flower3",
+    "Flower4",
+    "Foxform",
+    "Freemove",
+    "Freemoveapgen",
+    "Frenetic",
+    "Frighten",
+    "Giant",
+    "GiantForm",
+    "Goldhurt",
+    "Hardenskin",
+    "Healsteal",
+    "Homefeeling",
+    "Immunedrop",
+    "Incantiinvisiblepassive",
+    "Incatkdefhp",
+    "Incatkdefhp2",
+    "Incattackondamage",
+    "Incbow",
+    "Incboxing",
+    "Inccrit",
+    "Incdagger",
+    "Incdefencesmite",
+    "Incdefensedegree",
+    "Incearth",
+    "Incfarnormaldmgreduce",
+    "Incfarskilldmgreduce",
+    "Incfeather",
+    "Incfight",
+    "Incfightproperty",
+    "Incfire",
+    "Incgold",
+    "Inchammer",
+    "Inchitrate",
+    "Inchpgen",
+    "Inchurt3",
+    "Incinvisiblepassive",
+    "Incmaxhpatkdfdlevel",
+    "Incmpgen",
+    "Incnearnormaldmgreduce",
+    "Incnearskilldmgreduce",
+    "Incpenres",
+    "Incpetattackdegree",
+    "Incpetdamage",
+    "Incpetdefenddegree",
+    "Incpetdefense",
+    "Incpethp",
+    "Incpetmagicdamage",
+    "Incpetmagicdefense",
+    "Incpetmp",
+    "Incrange",
+    "Incrementalhpgen",
+    "Incresistmagic",
+    "Incscimitar",
+    "Incspear",
+    "Incswim",
+    "Incswimspeed",
+    "Incsword",
+    "Inctalisman",
+    "Incwater",
+    "Incwood",
+    "Incwoodwaterdefense",
+    "Insertvstate",
+    "Ironshield",
+    "Jingji",
+    "Leavenonpenaltypvp",
+    "Longjumptospouse",
+    "Magicfrenetic",
+    "MnfactionDecresist",
+    "Moongod",
+    "Panruo",
+    "Perform",
+    "Petsacrifice",
+    "Physichurt",
+    "Plantsuicide",
+    "Powerup",
+    "Queryotherinventory",
+    "Rebirth",
+    "Rebirth2",
+    "Reduceresurrectexplost",
+    "Repelonnormalattack",
+    "Resurrect",
+    "Retortmagic",
+    "Returntown",
+    "Sandstorm",
+    "Shadowform",
+    "Soulbeatback",
+    "Soulretort",
+    "Soulretort2",
+    "Soulsealed",
+    "Soulstun",
+    "Specialphysichurt",
+    "Specialslow",
+    "Startcallup",
+    "Stoneskin",
+    "Summonpet2",
+    "Summonplantpet",
+    "Swiftform",
+    "TalentData",
+    "Thunderform",
+    "Tigerform",
+    "Transportdamagetopet",
+    "Transportmptopet",
+    "Vacuum",
+    "Waterhurt",
+    "Windshield",
+    "Wingshield",
+    "Woodhurt",
+    "Xisui",
+    "Yijin",
 ];
 
 /// O efeito é aplicado sem passar pelo dado?
@@ -1041,7 +1316,12 @@ pub fn executar_roteiro(
 
 /// Variáveis de um roteiro. `L` é o nível; `P_X` quem conjura, `V_X` a vítima, `S_X` a
 /// habilidade. Talentos (`S_T0..T2`) valem 0 — o servidor não tem talentos.
-pub fn variaveis<'a>(nivel: i32, jogador: &'a HashMap<&'static str, f64>, vitima: &'a HashMap<&'static str, f64>, habilidade: &'a HashMap<&'static str, f64>) -> impl Fn(&str) -> Option<f64> + 'a {
+pub fn variaveis<'a>(
+    nivel: i32,
+    jogador: &'a HashMap<&'static str, f64>,
+    vitima: &'a HashMap<&'static str, f64>,
+    habilidade: &'a HashMap<&'static str, f64>,
+) -> impl Fn(&str) -> Option<f64> + 'a {
     move |n: &str| {
         if n == "L" {
             return Some(nivel as f64);
@@ -1072,11 +1352,20 @@ mod testes {
     fn a_lista_de_garantidos_esta_ordenada_e_tem_o_firearrow() {
         let mut ordenada = GARANTIDOS_SEM_DADO.to_vec();
         ordenada.sort_unstable();
-        assert_eq!(ordenada, GARANTIDOS_SEM_DADO, "a lista precisa estar ordenada");
-        assert!(garantido_sem_dado("Firearrow"), "SetFirearrow não consulta o dado no original");
+        assert_eq!(
+            ordenada, GARANTIDOS_SEM_DADO,
+            "a lista precisa estar ordenada"
+        );
+        assert!(
+            garantido_sem_dado("Firearrow"),
+            "SetFirearrow não consulta o dado no original"
+        );
         assert!(garantido_sem_dado("Returntown"));
         // E quem consulta continua dependendo da probabilidade.
-        assert!(!garantido_sem_dado("Speedup"), "SetSpeedup abre com if (ThrowDice())");
+        assert!(
+            !garantido_sem_dado("Speedup"),
+            "SetSpeedup abre com if (ThrowDice())"
+        );
         assert!(!garantido_sem_dado("Slow"));
     }
 
@@ -1105,7 +1394,11 @@ mod testes {
 
     #[test]
     fn a_expressao_do_stub_se_avalia_como_em_cpp() {
-        assert_eq!(expr::avaliar("8 * L * L + 214.1 * L + 659.8", &sem_vars).map(|v| (v * 10.0).round() / 10.0), Some(1374.1));
+        assert_eq!(
+            expr::avaliar("8 * L * L + 214.1 * L + 659.8", &sem_vars)
+                .map(|v| (v * 10.0).round() / 10.0),
+            Some(1374.1)
+        );
         assert_eq!(expr::avaliar("1.0 * 5 + L", &sem_vars), Some(8.0));
         assert_eq!(expr::avaliar("L == 3 ? 100 : 0", &sem_vars), Some(100.0));
         assert_eq!(expr::avaliar("-5.5 + 7.5 * L", &sem_vars), Some(17.0));
@@ -1144,7 +1437,18 @@ mod testes {
     }
 
     fn filtro(e: Efeito, s: i32, razao: i32) -> Filtro {
-        Filtro { efeito: e, restante_s: s, razao, fator: razao as f32 / 100.0, por_segundo: 0, contador: 0, origem: 0, icone: true, absorve: 0.0, escala_defesa: 0 }
+        Filtro {
+            efeito: e,
+            restante_s: s,
+            razao,
+            fator: razao as f32 / 100.0,
+            por_segundo: 0,
+            contador: 0,
+            origem: 0,
+            icone: true,
+            absorve: 0.0,
+            escala_defesa: 0,
+        }
     }
 
     #[test]
@@ -1159,7 +1463,13 @@ mod testes {
         assert!(e.sem_acao() && e.preso() && e.selado());
         assert!(e.adicionar(filtro(Efeito::Incattack, 30, 10)));
         assert!(e.adicionar(filtro(Efeito::Incattack, 60, 25)));
-        assert_eq!(e.filtros.iter().filter(|f| f.efeito == Efeito::Incattack).count(), 1);
+        assert_eq!(
+            e.filtros
+                .iter()
+                .filter(|f| f.efeito == Efeito::Incattack)
+                .count(),
+            1
+        );
         assert_eq!(e.realce().dano, 25);
         assert_eq!(e.icones(), vec![(3, 5), (1, 3), (32, 60)]);
         let v = e.estados_visiveis();
@@ -1170,7 +1480,18 @@ mod testes {
     #[test]
     fn dano_no_tempo_tica_de_tres_em_tres() {
         let mut e = Efeitos::default();
-        e.adicionar(Filtro { efeito: Efeito::Toxic, restante_s: 5, razao: 0, fator: 0.0, por_segundo: 20, contador: 0, origem: 7, icone: true, absorve: 0.0, escala_defesa: 0 });
+        e.adicionar(Filtro {
+            efeito: Efeito::Toxic,
+            restante_s: 5,
+            razao: 0,
+            fator: 0.0,
+            por_segundo: 20,
+            contador: 0,
+            origem: 7,
+            icone: true,
+            absorve: 0.0,
+            escala_defesa: 0,
+        });
         let mut total = 0;
         for _ in 0..5 {
             for t in e.batida().0 {
@@ -1182,5 +1503,26 @@ mod testes {
         }
         assert_eq!(total, 100);
         assert!(e.filtros.is_empty());
+    }
+
+    /// B132 — o sangramento (e todo dano no tempo) é maldição: o `Reborn` o tira
+    /// (`ClearSpecFilter(FILTER_MASK_DEBUFF)`, `npc.cpp:1978`), e o monstro não volta sangrando
+    /// com ódio de quem o pôs (Filhote de Doninha da WRA, 2026-09-27).
+    #[test]
+    fn o_renascimento_tira_o_dano_no_tempo() {
+        use Efeito::*;
+        for e in [Bleeding, Thunder, Toxic, Flood, Burning, Fallen] {
+            assert!(e.ficha().maldicao, "{e:?} devia ser maldição");
+            let mut ef = Efeitos::default();
+            ef.filtros.push(filtro(e, 15, 10));
+            ef.invencivel_s = 5;
+            ef.ao_renascer();
+            assert!(ef.filtros.is_empty(), "{e:?} sobreviveu ao renascimento");
+            assert_eq!(ef.invencivel_s, 0);
+        }
+        let mut ef = Efeitos::default();
+        ef.filtros.push(filtro(Bleeding, 15, 10));
+        ef.ao_morrer();
+        assert!(ef.filtros.is_empty(), "a morte tira o sangramento");
     }
 }

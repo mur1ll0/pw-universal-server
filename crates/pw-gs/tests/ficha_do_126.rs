@@ -12,7 +12,10 @@ use std::path::PathBuf;
 fn realm_126() -> Option<GameDataManager> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     if !dir.join("elements.data").exists() {
-        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        eprintln!(
+            "AVISO: sem {} — este teste NÃO verificou nada.",
+            dir.display()
+        );
         return None;
     }
     let mut d = GameDataManager::new();
@@ -73,6 +76,7 @@ fn feiticeira_nivel_1() -> PlayerEntity {
         voando: false,
         montaria: None,
         forma_enviada: None,
+        passivas_de_forma: Default::default(),
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
@@ -115,7 +119,10 @@ fn feiticeira_nivel_1() -> PlayerEntity {
 #[test]
 fn a_feiticeira_de_nivel_1_do_126_tem_dano_da_varinha_e_vida_da_classe() {
     let Some(d) = realm_126() else { return };
-    assert!(!d.base_das_classes.is_empty(), "o ptemplate.conf do 1.2.6 não carregou");
+    assert!(
+        !d.base_das_classes.is_empty(),
+        "o ptemplate.conf do 1.2.6 não carregou"
+    );
     let mut p = feiticeira_nivel_1();
     // A Varinha Mágica (2251) do molde: dano 3-3 e mágico 5-5 no `WEAPON_ESSENCE` v7.
     let varinha = ItemRecord {
@@ -141,15 +148,48 @@ fn a_feiticeira_de_nivel_1_do_126_tem_dano_da_varinha_e_vida_da_classe() {
     // `CHARRACTER_CLASS_CONFIG`) — a mesma conta que o mundo faz.
     assert_eq!((p.max_hp, p.max_mp), (60, 60));
     // `UpdateAttack`/`UpdateMagic`: base da classe (1) + arma, com o bônus do atributo.
-    assert!(p.attack_min > 1 && p.attack_max > 1, "dano físico {}-{}", p.attack_min, p.attack_max);
-    assert!(p.magic_attack_min > 1 && p.magic_attack_max > 1, "dano mágico {}-{}", p.magic_attack_min, p.magic_attack_max);
-    eprintln!("ficha: físico {}-{}, mágico {}-{}, vida {}, mana {}", p.attack_min, p.attack_max, p.magic_attack_min, p.magic_attack_max, p.max_hp, p.max_mp);
+    assert!(
+        p.attack_min > 1 && p.attack_max > 1,
+        "dano físico {}-{}",
+        p.attack_min,
+        p.attack_max
+    );
+    assert!(
+        p.magic_attack_min > 1 && p.magic_attack_max > 1,
+        "dano mágico {}-{}",
+        p.magic_attack_min,
+        p.magic_attack_max
+    );
+    eprintln!(
+        "ficha: físico {}-{}, mágico {}-{}, vida {}, mana {}",
+        p.attack_min, p.attack_max, p.magic_attack_min, p.magic_attack_max, p.max_hp, p.max_mp
+    );
 
     // Enxame de Ferroadas (299) nível 1 com a tabela do `gs` 1.2.6: ataque mágico bruto 6
     // (1 da classe + 5 da varinha) × (100 + 5 da energia + 55 do ratio)% + 23,7 = 9 + 23 = 32
     // de madeira antes da resistência. A captura original mostra 20, 23, 23 e 24 no alvo
     // (`142`, B101); com a tabela do 1.5.5 (plus 124,5) saíam 75 e 106 no relato em jogo.
-    let dano = d.habilidades.get(299).and_then(|h| h.dano.clone()).expect("dano da 299");
+    let dano = d
+        .habilidades
+        .get(299)
+        .and_then(|h| h.dano.clone())
+        .expect("dano da 299");
     let g = pw_gs::combat::CombatEngine::golpe_de_habilidade(&p, &dano, 1, 1.0).expect("golpe");
     assert_eq!(g.dano_magico[1], 32);
+}
+
+/// B124 — `UpdatePlayerMPHPGen` (`playertemplate.h:874-894`): a regeneração é a da classe
+/// mais `vitalidade / 5` e `energia / 10` (`gs/config.h:137-138`). A Tsuko (energia 95)
+/// ficava sem os 9 de mana.
+#[test]
+fn a_regeneracao_soma_vitalidade_e_energia() {
+    let Some(d) = realm_126() else { return };
+    let mut p = feiticeira_nivel_1();
+    p.recalcular_por_nivel(&d.classes, Some(&d.base_das_classes));
+    let (vida, mana) = (p.hp_gen, p.mp_gen);
+    p.vitality += 10;
+    p.energy += 90;
+    p.recalcular_por_nivel(&d.classes, Some(&d.base_das_classes));
+    assert_eq!(p.hp_gen - vida, 2, "10 de vitalidade = +2");
+    assert_eq!(p.mp_gen - mana, 9, "90 de energia = +9");
 }

@@ -792,6 +792,35 @@ impl GameDataManager {
         None
     }
 
+    /// O bloco de dados de uma roupa (`FASHION_ESSENCE`): `int require_level`, `u16 color`,
+    /// **`u16 gender`** e os 2 bytes da etiqueta de fabricante — 10 bytes
+    /// (`generate_fashion_item`, `gs/template/generate_item_temp.h:1642-1712`; no `gs` 1.2.6 a
+    /// mesma ordem, VA 0x81f6fdc-0x81f7030; `IVTR_ESSENCE_FASHION`, `EC_IvtrTypes.h:262-267`).
+    /// `cor` é o sorteio `RandNormal(0, 0x7FFF)` de quem chama (o v156 e o v7 não têm o
+    /// `combined_switch` da cor por faixa).
+    ///
+    /// Sem este bloco o cliente lê `gender = 0` — masculino — e recusa a roupa feminina
+    /// depois de tirada (Tsuko, 2026-09-26).
+    pub fn conteudo_da_roupa(&self, item_id: u32, cor: u16) -> Option<Vec<u8>> {
+        let g = self.elements_generic.as_ref()?;
+        let r = g
+            .get("FASHION_ESSENCE")
+            .iter()
+            .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?;
+        let i = |n: &str| match r.get(n) {
+            Some(crate::generic_elements::FieldValue::Int(v)) => *v,
+            Some(crate::generic_elements::FieldValue::Float(v)) => *v as i32,
+            _ => 0,
+        };
+        let mut b = Vec::with_capacity(10);
+        b.extend_from_slice(&i("require_level").to_le_bytes());
+        b.extend_from_slice(&(cor & 0x7fff).to_le_bytes());
+        b.extend_from_slice(&(i("gender") as u16).to_le_bytes());
+        b.push(0); // m_byMadeFrom
+        b.push(0); // tamanho do nome do fabricante
+        Some(b)
+    }
+
     /// O bloco de dados de um item de voo (`FLYSWORD_ESSENCE`) — espada, asa ou montaria.
     ///
     /// `generate_flysword` (`gs/template/generate_item_temp.h:1126-1165`) escreve, nesta

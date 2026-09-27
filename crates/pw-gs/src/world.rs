@@ -81,9 +81,7 @@ pub enum EventoDoMundo {
     /// `mount_petdata_imp::TestUnderWater` (`gs/petman.cpp:402-410`): passando de **1 metro**
     /// abaixo da superfície, o original tira o `mount_filter` e limpa o mascote ativo. Quem
     /// manda os comandos é o `BusServer`, que tem o fio do cliente (B88).
-    MontariaCaiuNaAgua {
-        roleid: RoleId,
-    },
+    MontariaCaiuNaAgua { roleid: RoleId },
     /// Vida ou mana do jogador mudaram sozinhas (regeneração): o `SELF_INFO_00` é o que o
     /// original manda quando o `_refresh_state` liga (`GenHPandMP`, `actobject.h:2167`).
     EstadoMudou { roleid: RoleId },
@@ -105,6 +103,15 @@ pub enum EventoDoMundo {
     /// Um monstro chegou a zero de vida: por golpe adiado que venceu, por habilidade ou
     /// por dano no tempo (`filter_Wounded` → `BeHurt`).
     MonstroMorreu { id: i64, matador: i64 },
+    /// Um tique de dano no tempo (`filter_Wounded::Heartbeat` → `BeHurt` → `OnHurt`): o
+    /// original avisa o **número** — `BE_HURT` à vítima se for jogador e `HURT_RESULT` ao
+    /// atacante se for jogador (`gs/npc.cpp:188-199`, `gs/player.cpp:3380-3396`). A barra de
+    /// vida do monstro segue pelo batimento ([`EventoDoMundo::VidaDoMonstro`]).
+    DanoNoTempo {
+        vitima: i64,
+        atacante: i64,
+        dano: i32,
+    },
     /// A barra de vida de um monstro para quem o tem selecionado (`NPC_INFO_00`).
     ///
     /// O original **não** manda a vida junto do golpe: o dano liga o `_refresh_state` e o
@@ -112,43 +119,147 @@ pub enum EventoDoMundo {
     /// `RefreshSubscibeList` (`actobject.cpp:1346-1353`), que manda `npc_info_00` à lista de
     /// inscritos (`gnpc_imp::SendDataToSubscibeList`, `npc.cpp:2219-2230`). Mandar na hora
     /// fazia a barra cair no clique, antes da flecha sair (teste de 2026-09-17, B56).
-    VidaDoMonstro { id: i64, hp: i32, max_hp: i32, alvo: i32, para: Vec<RoleId> },
+    VidaDoMonstro {
+        id: i64,
+        hp: i32,
+        max_hp: i32,
+        alvo: i32,
+        para: Vec<RoleId>,
+    },
     /// Mascote de combate — ver [`crate::mascote`]. Entrou no mundo: o dono recebe o
     /// `SUMMON_PET` e o `PET_AI_STATE`, e quem está perto o vê entrar.
     MascoteApareceu { id: i64, dono: RoleId },
     /// Saiu do mundo sem morrer (o dono recolheu, morreu, saiu ou se afastou demais):
     /// `RECALL_PET` ao dono, e o registro volta à jaula.
-    MascoteRecolhido { id: i64, dono: RoleId, slot: u16, pet_tid: i32, motivo: u8, info: pw_core::InfoPet },
+    MascoteRecolhido {
+        id: i64,
+        dono: RoleId,
+        slot: u16,
+        pet_tid: i32,
+        motivo: u8,
+        info: pw_core::InfoPet,
+    },
     /// Morreu (`OnPetDeath`, `petman.cpp:764-777`): `RECALL_PET` com `PET_DEATH`, `PET_DEAD`
     /// e a lealdade que caiu 10%.
-    MascoteMorreu { id: i64, dono: RoleId, slot: u16, pet_tid: i32, matador: i64, info: pw_core::InfoPet },
+    MascoteMorreu {
+        id: i64,
+        dono: RoleId,
+        slot: u16,
+        pet_tid: i32,
+        matador: i64,
+        info: pw_core::InfoPet,
+    },
     /// Um golpe entre duas criaturas (mascote e monstro), para quem vê o atacante
     /// (`OBJECT_ATTACK_RESULT`).
-    GolpeEntreCriaturas { atacante: i64, alvo: i64, dano: i32, velocidade: u8 },
+    GolpeEntreCriaturas {
+        atacante: i64,
+        alvo: i64,
+        dano: i32,
+        velocidade: u8,
+    },
+    /// Os espinhos (`filter_Retort`) devolveram `dano` ao monstro. O golpe leva
+    /// `AT_STATE_ATTACK_RETORT` (0x20, `actobject.h:441`) e o `speed` do golpe recebido; o
+    /// `gnpc_dispatcher::be_damaged` manda `SELF_ATTACK_RESULT` ao dono e
+    /// `OBJECT_ATTACK_RESULT` a quem vê (`npc.cpp:228-241`) — o `MOD_RETORT` do cliente
+    /// (`EC_ManAttacks.h:34`, `EC_NPC.cpp:1383`).
+    EspinhoDevolvido {
+        jogador: RoleId,
+        monstro: i64,
+        dano: i32,
+        velocidade: u8,
+    },
+    /// O jogador sentado levantou por apanhar: `LeaveStayInState` no `GM_MSG_ATTACK`/`HURT`
+    /// (`gs/player.cpp:782-788`) manda `stand_up` (`player_imp.h:2403-2412`).
+    Levantou { roleid: RoleId },
     /// `filter_Rebirth::BeforeDeath` salvou o objeto (jogador ou mascote): `ENCHANT_RESULT`
     /// dele nele mesmo com a habilidade 1085 (`SendClientEnchantResult(self, 1085, 1, …)`).
     Renasceu { objeto: i64 },
     /// `PET_HP_NOTIFY` ao dono.
-    VidaDoMascote { dono: RoleId, slot: u16, fator: f32, hp: i32 },
+    VidaDoMascote {
+        dono: RoleId,
+        slot: u16,
+        fator: f32,
+        hp: i32,
+    },
     /// Experiência do mascote (`RecvExp`): `PET_RECEIVE_EXP`, ou `PET_LEVELUP` quando subiu.
-    ExpDoMascote { dono: RoleId, slot: u16, pet_tid: i32, ganho: i32, subiu: bool, info: pw_core::InfoPet },
+    ExpDoMascote {
+        dono: RoleId,
+        slot: u16,
+        pet_tid: i32,
+        ganho: i32,
+        subiu: bool,
+        info: pw_core::InfoPet,
+    },
     /// `PET_AI_STATE` ao dono (mudou por comando).
-    IaDoMascote { dono: RoleId, agressividade: u8, movimento: u8 },
+    IaDoMascote {
+        dono: RoleId,
+        agressividade: u8,
+        movimento: u8,
+    },
     /// Lealdade e fome mudaram (o período de comida fechou ou o dono alimentou):
     /// `PET_HONOR_POINT` e `PET_HUNGER_GAUGE`, e o registro volta à jaula.
-    FomeDoMascote { dono: RoleId, slot: u16, lealdade: i32, fome: i32, info: pw_core::InfoPet },
+    FomeDoMascote {
+        dono: RoleId,
+        slot: u16,
+        lealdade: i32,
+        fome: i32,
+        info: pw_core::InfoPet,
+    },
     /// O efeito `SetSummon` (habilidade 329) pediu para reviver o primeiro mascote morto da
     /// jaula (`pet_manager::ResurrectPet`, `petman.cpp:1891-1906`). A jaula está no banco:
     /// quem resolve é o barramento.
     ReviverMascote { dono: RoleId },
+    /// `PlayerWrapper::SetReturntown` (`cskill/skill/playerwrapper.cpp:1916-1939`) → `ReturnToTown`
+    /// (`gs/player.cpp:10949-10957`): o ponto de cidade do distrito (`GetTownPosition`, o mesmo do
+    /// renascer na cidade, `playercmd.cpp:121`) e o `LongJump`. O Portal da Cidade (167) do
+    /// 1.2.6 — quem move o jogador é o barramento.
+    VoltarParaACidade { roleid: RoleId },
+    /// A captura deu certo: `GM_MSG_MOB_BE_TRAINED` ao jogador com o ovo
+    /// (`gnpc_imp::OI_TransferPetEgg`, `npc.cpp:2526-2529`; `player.cpp:2198-2225`).
+    MonstroCapturado { roleid: RoleId, ovo: i32 },
     /// O mascote começou a conjurar (`NpcStart` → `cast_skill`, `skillwrapper.cpp:996-1001`):
     /// `OBJECT_CAST_SKILL` a quem o vê. `alvo` é ele mesmo na habilidade em si.
-    MascoteConjurou { id: i64, alvo: i64, skill: i32, nivel: i32, tempo_ms: u16 },
+    MascoteConjurou {
+        id: i64,
+        alvo: i64,
+        skill: i32,
+        nivel: i32,
+        tempo_ms: u16,
+    },
+    /// Um monstro começou a conjurar: `OBJECT_CAST_SKILL` a quem vê
+    /// (`gnpc_dispatcher::cast_skill`, via `SkillWrapper::NpcStart`, `skillwrapper.cpp:998-1001`).
+    MonstroConjurou {
+        id: i64,
+        alvo: i64,
+        skill: i32,
+        nivel: i32,
+        tempo_ms: u16,
+    },
+    /// Um monstro falou (`op_say`, `aitrigger.cpp:552-608`).
+    MonstroFalou { id: i64, texto: String, canal: crate::politica::CanalDaFala, dados: Vec<u8> },
+    /// O efeito da habilidade do monstro, ao fim do canto (`NPCEndSkill` → `NpcEnd`).
+    MonstroUsouHabilidade {
+        id: i64,
+        alvo: i64,
+        skill: i32,
+        nivel: i32,
+    },
     /// O canto acabou e o efeito sai (`NpcEnd`). Quem aplica é o barramento, com o motor de
     /// habilidades e o mascote como conjurador.
-    MascoteUsouHabilidade { id: i64, dono: RoleId, skill: i32, nivel: i32, alvo: Option<i64> },
+    MascoteUsouHabilidade {
+        id: i64,
+        dono: RoleId,
+        skill: i32,
+        nivel: i32,
+        alvo: Option<i64>,
+    },
     /// `PET_SET_COOLDOWN` ao dono (`gpet_imp::SetCoolDown` → `PetSetCoolDown`).
-    RecargaDoMascote { dono: RoleId, slot: u16, recarga: i32, ms: i32 },
+    RecargaDoMascote {
+        dono: RoleId,
+        slot: u16,
+        recarga: i32,
+        ms: i32,
+    },
     /// Um `ERR_*` ao dono vindo da criatura (hoje só o `ERR_PET_SKILL_IN_COOLDOWN`).
     ErroDoMascote { dono: RoleId, erro: i32 },
 }
@@ -187,6 +298,16 @@ pub struct WorldInstance {
     pub grid: SpatialGrid,
     pub players: HashMap<i64, PlayerEntity>,
     pub monsters: HashMap<i64, (MonsterEntity, MonsterAi)>,
+    /// `world::_common_data`: as variáveis globais que o `aipolicy.data` lê e escreve.
+    pub variaveis_globais: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
+    /// As políticas do `aipolicy.data` já compiladas, por id.
+    politicas: HashMap<u32, Arc<crate::politica::PoliticaDeIa>>,
+    /// As operações sem porte já registradas no log (uma vez cada).
+    sem_porte_da_politica: std::collections::HashSet<&'static str>,
+    /// Os ids que um controlador do `npcgen` pôs no mundo em jogo (`TriggerSpawn`).
+    nascidos_por_controlador: HashMap<i32, Vec<i64>>,
+    /// Os controladores desligados em jogo (`ClearSpawn`) que nasciam ligados.
+    controladores_desligados: std::collections::HashSet<i32>,
     pub npcs: HashMap<i64, NpcEntity>,
     /// A altura do chão deste mapa, dos `.hmap`. Ver [`pw_data_loader::terreno`].
     ///
@@ -312,6 +433,121 @@ impl WorldInstance {
             proximo_mascote: 0,
             estado_dos_mascotes: HashMap::new(),
             danos_adiados: Vec::new(),
+            variaveis_globais: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            politicas: HashMap::new(),
+            sem_porte_da_politica: std::collections::HashSet::new(),
+            nascidos_por_controlador: HashMap::new(),
+            controladores_desligados: std::collections::HashSet::new(),
+        }
+    }
+
+    /// A IA de um monstro que nasce: o perfil de combate e a política do `aipolicy.data`
+    /// (`SetAITrigger(nt.trigger_policy)`, `aipolicy.cpp:248-262`), com as variáveis locais
+    /// iniciais do `MONSTER_ESSENCE` e as globais do mundo.
+    pub fn ia_do_monstro(&mut self, template_id: u32, attack_range: f32) -> MonsterAi {
+        let dados = Arc::clone(&self.data_manager);
+        let politica = dados.monstros.get(template_id).filter(|t| t.politica_de_ia != 0).and_then(|t| {
+            let id = t.politica_de_ia;
+            if !self.politicas.contains_key(&id) {
+                let p = dados.aipolicy.get_policy(id)?;
+                self.politicas.insert(id, Arc::new(crate::politica::PoliticaDeIa::compilar(p)));
+            }
+            self.politicas.get(&id).map(|p| (Arc::clone(p), t.variaveis_locais))
+        });
+        let mut perfil = perfil_de_combate(&dados, template_id, attack_range);
+        if let (Some(perfil), Some((p, _))) = (perfil.as_mut(), politica.as_ref()) {
+            for (id, nivel) in p.habilidades_citadas() {
+                if let Some(h) = habilidade_de_monstro(&dados, id, nivel, attack_range) {
+                    perfil.habilidades_da_politica.insert((id, nivel), h);
+                }
+            }
+        }
+        let mut ia = MonsterAi::com_perfil(perfil);
+        if let Some((p, locais)) = politica {
+            let estado = p.novo_estado(locais);
+            ia.politica = Some((p, estado));
+            ia.globais = Some(Arc::clone(&self.variaveis_globais));
+        }
+        ia
+    }
+
+    /// O que as políticas pediram ao mundo neste tique: fala, controlador, sem porte.
+    fn escoar_pedidos_das_politicas(&mut self) {
+        use crate::politica::Pedido;
+        let mut pedidos: Vec<(i64, Pedido)> = Vec::new();
+        for (id, (_, ai)) in self.monsters.iter_mut() {
+            pedidos.extend(ai.pedidos_ao_mundo.drain(..).map(|p| (*id, p)));
+        }
+        for (id, p) in pedidos {
+            match p {
+                Pedido::Falar { texto, canal, dados } => self.emitir(EventoDoMundo::MonstroFalou { id, texto, canal, dados }),
+                Pedido::Controlador { id: c, ligar } => self.acionar_controlador(c, ligar),
+                Pedido::NaoPortado(nome) => {
+                    if self.sem_porte_da_politica.insert(nome) {
+                        debug!("mundo: aipolicy — sem porte: {nome} (monstro {id})");
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// `OnDamage` da política de um monstro que apanhou (golpe ou habilidade).
+    pub fn politica_ao_apanhar(&mut self, id: i64, dano: i32) {
+        let players = &self.players;
+        if let Some((m, ai)) = self.monsters.get_mut(&id) {
+            ai.ao_apanhar(m, players, dano);
+        }
+    }
+
+    /// `TriggerSpawn`/`ClearSpawn` (`world.cpp:196-215`, `npcgenerator.cpp:3616-3636`) do
+    /// controlador `iControllerID`. Ligar põe no mundo as áreas pendentes dele; desligar tira
+    /// o que ele pôs (na carga ou em jogo), sem renascer.
+    ///
+    /// **Não é igual:** a espera e a parada do controlador (`iWaitTime`, `iStopTime`,
+    /// `ActiveTime`/`StopTime`) e o `AdjustLocalControlID` das instâncias não estão portados:
+    /// ligar é na hora e fica ligado até alguém desligar.
+    pub fn acionar_controlador(&mut self, id: i32, ligar: bool) {
+        let dados = Arc::clone(&self.data_manager);
+        let Some(ctrl) = dados.map_spawns.get(&self.world_id).and_then(|s| s.controladores.get(&id)) else {
+            debug!("mundo: controlador {id} não existe no npcgen do mapa {}", self.world_id);
+            return;
+        };
+        if ligar {
+            if self.nascidos_por_controlador.contains_key(&id) || (ctrl.ativo_de_inicio && !self.controladores_desligados.contains(&id)) {
+                return;
+            }
+            self.controladores_desligados.remove(&id);
+            let com_terreno = self.terreno.tem_dados();
+            let mut nascidos = Vec::new();
+            for inst in &ctrl.pendentes {
+                if let Some(n) = self.nascer_da_instancia(inst, com_terreno).id {
+                    if self.monsters.contains_key(&n) {
+                        self.emitir(EventoDoMundo::MonstroRenasceu { id: n });
+                    }
+                    nascidos.push(n);
+                }
+            }
+            debug!("mundo: controlador {id} ligado — {} entidade(s)", nascidos.len());
+            self.nascidos_por_controlador.insert(id, nascidos);
+        } else {
+            let mut ids = self.nascidos_por_controlador.remove(&id).unwrap_or_default();
+            if ctrl.ativo_de_inicio && self.controladores_desligados.insert(id) {
+                ids.extend(ctrl.ativos.iter().map(|n| *n as i64));
+            }
+            for n in &ids {
+                let saiu = self.monsters.remove(n).is_some() | self.npcs.remove(n).is_some();
+                if saiu {
+                    self.geradores.remove(n);
+                    self.corpos.remove(n);
+                    self.grid.remove_entity(*n);
+                    for p in self.players.values_mut() {
+                        p.visiveis.remove(n);
+                    }
+                    self.emitir(EventoDoMundo::MonstroSumiu { id: *n });
+                }
+            }
+            debug!("mundo: controlador {id} desligado — {} entidade(s)", ids.len());
         }
     }
 
@@ -355,10 +591,18 @@ impl WorldInstance {
     /// Sem mapa de alturas (mapa fora do catálogo, pasta sem `map/`) vale o `y` que o
     /// arquivo e a dispersão deram — o comportamento antigo, que ao menos não piora.
     pub fn init_spawns(&mut self) {
-        info!("Inicializando monstros e NPCs do World #{} a partir do seu npcgen.data dedicado...", self.world_id);
+        info!(
+            "Inicializando monstros e NPCs do World #{} a partir do seu npcgen.data dedicado...",
+            self.world_id
+        );
 
         // O mapa de alturas deste mapa, se o realm o trouxer.
-        if let Some(dir) = self.data_manager.pastas_de_mapa.get(&self.world_id).cloned() {
+        if let Some(dir) = self
+            .data_manager
+            .pastas_de_mapa
+            .get(&self.world_id)
+            .cloned()
+        {
             self.terreno = pw_data_loader::Terreno::ler(self.world_id, &dir);
             self.agua = pw_data_loader::MapaDeAgua::ler(self.world_id, &dir);
             self.movimento = pw_data_loader::MapaDeMovimento::ler(self.world_id, &dir);
@@ -369,117 +613,13 @@ impl WorldInstance {
         let mut sem_template = 0usize;
         let mut fora_do_mapa = 0usize;
 
-        if let Some(spawns) = self.data_manager.map_spawns.get(&self.world_id) {
+        let dados = Arc::clone(&self.data_manager);
+        if let Some(spawns) = dados.map_spawns.get(&self.world_id) {
             for inst in &spawns.instances {
-                // A altura, pela regra do original — ver a nota da função.
-                let pos = if com_terreno {
-                    // Em cima da estrutura, não dentro: `SpawnInstance::posicao_no_mapa` pergunta
-                    // ao mapa de movimento a altura do piso (relato das Gárgulas do mapa 161, B97).
-                    if self.terreno.altura_em(inst.pos.x, inst.pos.z).is_none() {
-                        fora_do_mapa += 1;
-                    }
-                    // Recurso não consulta o mapa de movimento: `SetRegion(0, ...)` →
-                    // `terrain_gen_pos`, relevo + `fHeiOff` (`npcgenerator.cpp:3900-3902`,
-                    // `:4320-4324`). O `fHeiOff` é o que põe baú em cima de construção (B109).
-                    let (pos, no_piso) = if inst.spawn_type == pw_data_loader::SpawnType::ResourceMine {
-                        let chao = self.terreno.altura_em(inst.pos.x, inst.pos.z);
-                        (pw_core::Vector3::new(inst.pos.x, inst.altura_resolvida(chao), inst.pos.z), false)
-                    } else {
-                        inst.posicao_no_mapa(&self.terreno, &self.movimento)
-                    };
-                    assentados_no_piso += no_piso as usize;
-                    pos
-                } else {
-                    inst.pos
-                };
-
-                // Monstro ou NPC, pelo tipo do registro no `elements.data` — ver
-                // `GameDataManager::ids_de_npc`. O `npcgen.rs` chuta pelo número
-                // (`tid >= 10000` é NPC), o que no 1.5.5 transformava em NPC todo monstro
-                // novo: no mapa 161 eram 5 monstros e 1.472 "NPCs", com coelhos, cervos e
-                // esquilos entre eles. O chute só fica para id que nenhuma tabela conhece.
-                let tipo = match inst.spawn_type {
-                    pw_data_loader::SpawnType::Monster | pw_data_loader::SpawnType::Npc
-                        if self.data_manager.monstros.get(inst.template_id).is_some() =>
-                    {
-                        pw_data_loader::SpawnType::Monster
-                    }
-                    pw_data_loader::SpawnType::Monster | pw_data_loader::SpawnType::Npc
-                        if self.data_manager.ids_de_npc.contains(&inst.template_id) =>
-                    {
-                        pw_data_loader::SpawnType::Npc
-                    }
-                    outro => outro,
-                };
-
-                // `GenDir()` do original: ponto usa a direção do gerador, área sorteia
-                // (`npcgenerator.h:747-757`).
-                let direcao = crate::entity::direcao_do_gerador(inst.dir, inst.extensao_da_area);
-                if tipo == pw_data_loader::SpawnType::Monster {
-                    let monster_id = inst.instance_id as i64;
-
-                    // Os atributos vêm do `MONSTER_ESSENCE` do `elements.data`
-                    // (`pw_data_loader::monstros`), que é o que o `npcgenerator.cpp` do
-                    // servidor original usa. Antes eram todos escritos aqui — nível 1,
-                    // 500 de vida, dano 20 a 35 — para todo monstro de todo mapa.
-                    let monster = match self.data_manager.monstros.get(inst.template_id) {
-                        Some(modelo) => MonsterEntity::do_template(
-                            monster_id,
-                            modelo,
-                            pos,
-                            inst.respawn_sec * 1000,
-                        ),
-                        None => {
-                            sem_template += 1;
-                            MonsterEntity::placeholder(
-                                monster_id,
-                                inst.template_id,
-                                pos,
-                                inst.respawn_sec * 1000,
-                            )
-                        }
-                    };
-
-                    self.grid.add_entity(monster_id, monster.position, false);
-                    self.geradores.insert(monster_id, inst.clone());
-                    let mut ia = MonsterAi::new();
-                    ia.direcao = direcao;
-                    self.monsters.insert(monster_id, (monster, ia));
-                } else if tipo == pw_data_loader::SpawnType::Npc {
-                    // NPCs de serviço (treinador, vendedor, dador de missão, guarda) não
-                    // existiam como entidade nenhuma no mundo simulado — só monstros eram
-                    // spawnados. Sem isso, `SELECT_TARGET` e `SEVNPC_HELLO` não encontram o
-                    // id que o cliente manda, mesmo com o NPC visível na tela (o
-                    // `gateway.rs` mostra a lista de entidades ao entrar no mundo por outro
-                    // caminho, que não depende disto).
-                    let npc_id = inst.instance_id as i64;
-
-                    let npc = NpcEntity {
-                        id: npc_id,
-                        template_id: inst.template_id,
-                        name: "NPC".to_string(),
-                        position: pos,
-                        dialog_id: 0,
-                        direcao,
-                    };
-
-                    self.grid.add_entity(npc_id, npc.position, false);
-                    self.npcs.insert(npc_id, npc);
-                } else if inst.spawn_type == pw_data_loader::SpawnType::ResourceMine {
-                    // Minério, erva, tronco. Ninguém os mandava ao cliente: não havia
-                    // entidade nenhuma para eles no mundo, e `MATTER_ENTER_WORLD` (18) não
-                    // saía de lugar nenhum do servidor — o mapa vinha sem recurso algum
-                    // (2026-09-09).
-                    let mid = inst.instance_id as i64;
-                    let matter = MatterEntity {
-                        id: mid,
-                        template_id: inst.template_id,
-                        position: pos,
-                        renascer_s: inst.respawn_sec,
-                    };
-                    self.grid.add_entity(mid, matter.position, false);
-                    self.matters.insert(mid, matter);
-                }
+                let r = self.nascer_da_instancia(inst, com_terreno);
+                fora_do_mapa += r.fora as usize;
+                assentados_no_piso += r.no_piso as usize;
+                sem_template += r.sem_template as usize;
             }
         }
 
@@ -509,6 +649,133 @@ impl WorldInstance {
         }
     }
 
+    /// Uma instância do `npcgen.data` entra no mundo: monstro, NPC ou recurso, com a altura
+    /// pela regra do original (ver [`Self::init_spawns`]). Serve à carga e ao controlador
+    /// ligado em jogo (`TriggerSpawn`).
+    fn nascer_da_instancia(&mut self, inst: &pw_data_loader::SpawnInstance, com_terreno: bool) -> Nascimento {
+        let mut r = Nascimento::default();
+        // A altura, pela regra do original — ver a nota da função.
+        let pos = if com_terreno {
+            // Em cima da estrutura, não dentro: `SpawnInstance::posicao_no_mapa` pergunta
+            // ao mapa de movimento a altura do piso (relato das Gárgulas do mapa 161, B97).
+            if self.terreno.altura_em(inst.pos.x, inst.pos.z).is_none() {
+                r.fora = true;
+            }
+            // Recurso não consulta o mapa de movimento: `SetRegion(0, ...)` →
+            // `terrain_gen_pos`, relevo + `fHeiOff` (`npcgenerator.cpp:3900-3902`,
+            // `:4320-4324`). O `fHeiOff` é o que põe baú em cima de construção (B109).
+            let (pos, no_piso) =
+                if inst.spawn_type == pw_data_loader::SpawnType::ResourceMine {
+                    let chao = self.terreno.altura_em(inst.pos.x, inst.pos.z);
+                    (
+                        pw_core::Vector3::new(
+                            inst.pos.x,
+                            inst.altura_resolvida(chao),
+                            inst.pos.z,
+                        ),
+                        false,
+                    )
+                } else {
+                    inst.posicao_no_mapa(&self.terreno, &self.movimento)
+                };
+            r.no_piso = no_piso;
+            pos
+        } else {
+            inst.pos
+        };
+
+        // Monstro ou NPC, pelo tipo do registro no `elements.data` — ver
+        // `GameDataManager::ids_de_npc`. O `npcgen.rs` chuta pelo número
+        // (`tid >= 10000` é NPC), o que no 1.5.5 transformava em NPC todo monstro
+        // novo: no mapa 161 eram 5 monstros e 1.472 "NPCs", com coelhos, cervos e
+        // esquilos entre eles. O chute só fica para id que nenhuma tabela conhece.
+        let tipo = match inst.spawn_type {
+            pw_data_loader::SpawnType::Monster | pw_data_loader::SpawnType::Npc
+                if self.data_manager.monstros.get(inst.template_id).is_some() =>
+            {
+                pw_data_loader::SpawnType::Monster
+            }
+            pw_data_loader::SpawnType::Monster | pw_data_loader::SpawnType::Npc
+                if self.data_manager.ids_de_npc.contains(&inst.template_id) =>
+            {
+                pw_data_loader::SpawnType::Npc
+            }
+            outro => outro,
+        };
+
+        // `GenDir()` do original: ponto usa a direção do gerador, área sorteia
+        // (`npcgenerator.h:747-757`).
+        let direcao = crate::entity::direcao_do_gerador(inst.dir, inst.extensao_da_area);
+        if tipo == pw_data_loader::SpawnType::Monster {
+            let monster_id = inst.instance_id as i64;
+
+            // Os atributos vêm do `MONSTER_ESSENCE` do `elements.data`
+            // (`pw_data_loader::monstros`), que é o que o `npcgenerator.cpp` do
+            // servidor original usa. Antes eram todos escritos aqui — nível 1,
+            // 500 de vida, dano 20 a 35 — para todo monstro de todo mapa.
+            let monster = match self.data_manager.monstros.get(inst.template_id) {
+                Some(modelo) => MonsterEntity::do_template(
+                    monster_id,
+                    modelo,
+                    pos,
+                    inst.respawn_sec * 1000,
+                ),
+                None => {
+                    r.sem_template = true;
+                    MonsterEntity::placeholder(
+                        monster_id,
+                        inst.template_id,
+                        pos,
+                        inst.respawn_sec * 1000,
+                    )
+                }
+            };
+
+            self.grid.add_entity(monster_id, monster.position, false);
+            self.geradores.insert(monster_id, inst.clone());
+            let mut ia = self.ia_do_monstro(monster.template_id, monster.attack_range);
+            ia.direcao = direcao;
+            self.monsters.insert(monster_id, (monster, ia));
+            r.id = Some(monster_id);
+        } else if tipo == pw_data_loader::SpawnType::Npc {
+            // NPCs de serviço (treinador, vendedor, dador de missão, guarda) não
+            // existiam como entidade nenhuma no mundo simulado — só monstros eram
+            // spawnados. Sem isso, `SELECT_TARGET` e `SEVNPC_HELLO` não encontram o
+            // id que o cliente manda, mesmo com o NPC visível na tela (o
+            // `gateway.rs` mostra a lista de entidades ao entrar no mundo por outro
+            // caminho, que não depende disto).
+            let npc_id = inst.instance_id as i64;
+
+            let npc = NpcEntity {
+                id: npc_id,
+                template_id: inst.template_id,
+                name: "NPC".to_string(),
+                position: pos,
+                dialog_id: 0,
+                direcao,
+            };
+
+            self.grid.add_entity(npc_id, npc.position, false);
+            self.npcs.insert(npc_id, npc);
+            r.id = Some(npc_id);
+        } else if inst.spawn_type == pw_data_loader::SpawnType::ResourceMine {
+            // Minério, erva, tronco. Ninguém os mandava ao cliente: não havia
+            // entidade nenhuma para eles no mundo, e `MATTER_ENTER_WORLD` (18) não
+            // saía de lugar nenhum do servidor — o mapa vinha sem recurso algum
+            // (2026-09-09).
+            let mid = inst.instance_id as i64;
+            let matter = MatterEntity {
+                id: mid,
+                template_id: inst.template_id,
+                position: pos,
+                renascer_s: inst.respawn_sec,
+            };
+            self.grid.add_entity(mid, matter.position, false);
+            self.matters.insert(mid, matter);
+        }
+        r
+    }
+
     /// Adiciona um jogador que entrou neste mapa
     pub fn add_player(&mut self, player: PlayerEntity) {
         let role_id = player.role_id as i64;
@@ -527,7 +794,10 @@ impl WorldInstance {
 
     /// Informa se o NID pertence a um NPC de serviço ilimitado da cena.
     pub fn is_scene_service_npc(&self, nid: i32) -> bool {
-        self.data_manager.scene_service_npcs().iter().any(|(_, n)| *n == nid)
+        self.data_manager
+            .scene_service_npcs()
+            .iter()
+            .any(|(_, n)| *n == nid)
     }
 
     /// Remove um jogador ao deslogar ou mudar de mapa
@@ -585,7 +855,9 @@ impl WorldInstance {
             return None;
         }
         let mut pos = p.position;
-        if let Some((ponto, mapa_do_ponto)) = crate::progressao::ponto_de_renascimento(&dados, mapa, p.position.x, p.position.z) {
+        if let Some((ponto, mapa_do_ponto)) =
+            crate::progressao::ponto_de_renascimento(&dados, mapa, p.position.x, p.position.z)
+        {
             if mapa_do_ponto == mapa {
                 pos = pw_core::Vector3::new(ponto[0], ponto[1], ponto[2]);
             } else {
@@ -604,7 +876,10 @@ impl WorldInstance {
             hp,
             max_hp,
         });
-        info!("Jogador #{} renasceu em ({:.0}, {:.0}), perdeu {perdeu} de experiência", role_id, pos.x, pos.z);
+        info!(
+            "Jogador #{} renasceu em ({:.0}, {:.0}), perdeu {perdeu} de experiência",
+            role_id, pos.x, pos.z
+        );
         Some(pos)
     }
 
@@ -626,12 +901,25 @@ impl WorldInstance {
         self.quanto_abaixo_da_agua(pos) > MERGULHO_MINIMO
     }
 
-    pub fn criar_drop(&mut self, tid: u32, quantidade: u32, perto_de: pw_core::Vector3, dono: Option<RoleId>) -> ItemDropEntity {
+    pub fn criar_drop(
+        &mut self,
+        tid: u32,
+        quantidade: u32,
+        perto_de: pw_core::Vector3,
+        dono: Option<RoleId>,
+    ) -> ItemDropEntity {
         self.criar_drop_com_octetos(tid, quantidade, perto_de, dono, Vec::new())
     }
 
     /// [`Self::criar_drop`] de um equipamento com o conteúdo já sorteado.
-    pub fn criar_drop_com_octetos(&mut self, tid: u32, quantidade: u32, perto_de: pw_core::Vector3, dono: Option<RoleId>, octetos: Vec<u8>) -> ItemDropEntity {
+    pub fn criar_drop_com_octetos(
+        &mut self,
+        tid: u32,
+        quantidade: u32,
+        perto_de: pw_core::Vector3,
+        dono: Option<RoleId>,
+        octetos: Vec<u8>,
+    ) -> ItemDropEntity {
         use rand::Rng;
         let mut rng = rand::thread_rng();
         let mut pos = perto_de;
@@ -682,7 +970,8 @@ impl WorldInstance {
         _some_ao_morrer: bool,
         invocador: Option<i64>,
     ) -> Option<i64> {
-        let modelo = match self.data_manager.monstros.get(template_id) {
+        let dados = Arc::clone(&self.data_manager);
+        let modelo = match dados.monstros.get(template_id) {
             Some(m) => m,
             None => {
                 warn!("invocar_monstro: template {template_id} nao encontrado no elements.data");
@@ -715,7 +1004,7 @@ impl WorldInstance {
         monster.vida_restante_ms = (periodo_s.max(0) as u32).saturating_mul(1000);
 
         self.grid.add_entity(monster_id, monster.position, false);
-        let mut ia = MonsterAi::new();
+        let mut ia = self.ia_do_monstro(monster.template_id, monster.attack_range);
         ia.direcao = rand::random::<u8>();
         // O invocado nasce **odiando quem o chamou**: o original manda `GM_MSG_GEN_AGGRO`
         // com 10000 de ódio logo depois de criar cada um (`gs/player.cpp:13093-13106`).
@@ -758,6 +1047,8 @@ impl WorldInstance {
         let dados = Arc::clone(&self.data_manager);
         if let Some(p) = self.players.get_mut(&roleid) {
             let base = Some(&dados.base_das_classes).filter(|b| !b.is_empty());
+            p.passivas_de_forma =
+                crate::efeitos::passivas_de_forma(&dados.habilidades, &p.habilidades);
             p.recalcular_por_nivel(&dados.classes, base);
             p.hp = p.hp.min(p.max_hp);
             p.mp = p.mp.min(p.max_mp);
@@ -775,11 +1066,14 @@ impl WorldInstance {
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
-            let Some(p) = self.players.get_mut(&id) else { continue };
+            let Some(p) = self.players.get_mut(&id) else {
+                continue;
+            };
             if p.hp <= 0 {
                 continue;
             }
             let (tiques, acabou) = p.efeitos.batida();
+            let mut danos_no_tempo = Vec::new();
             let mut vida_mudou = false;
             let mut morto_por = None;
             let mut renasceu = false;
@@ -787,11 +1081,13 @@ impl WorldInstance {
                 match t {
                     Tique::Dano { origem, valor } => {
                         let v = crate::efeitos::dano_recebido(&mut p.efeitos, valor);
+                        danos_no_tempo.push((origem, v));
                         p.hp = (p.hp - v).max(0);
                         p.combate_s = p.combate_s.max(crate::progressao::COMBATE_AO_APANHAR_S);
                         vida_mudou = true;
                         if p.hp == 0 {
-                            if let Some(f) = p.efeitos.renascer(rand::random::<u32>() as i32 % 100) {
+                            if let Some(f) = p.efeitos.renascer(rand::random::<u32>() as i32 % 100)
+                            {
                                 p.hp = ((p.max_hp as f32 * f) as i32).max(1);
                                 renasceu = true;
                             } else {
@@ -810,13 +1106,29 @@ impl WorldInstance {
                 }
             }
             let (role, pos) = (p.role_id, p.position);
-            if let Some(matador) = morto_por {
+            if morto_por.is_some() {
                 p.ataque = None;
                 p.conjuracao = None;
                 p.efeitos.ao_morrer();
+            }
+            for (atacante, dano) in danos_no_tempo {
+                self.emitir(EventoDoMundo::DanoNoTempo {
+                    vitima: id,
+                    atacante,
+                    dano,
+                });
+            }
+            if let Some(matador) = morto_por {
                 self.refazer_atributos(id);
-                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: true });
-                self.emitir(EventoDoMundo::JogadorMorreu { roleid: role, matador, pos });
+                self.emitir(EventoDoMundo::EfeitosMudaram {
+                    objeto: id,
+                    atributos: true,
+                });
+                self.emitir(EventoDoMundo::JogadorMorreu {
+                    roleid: role,
+                    matador,
+                    pos,
+                });
                 continue;
             }
             if renasceu {
@@ -826,22 +1138,30 @@ impl WorldInstance {
                 self.refazer_atributos(id);
             }
             if acabou || vida_mudou {
-                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: acabou });
+                self.emitir(EventoDoMundo::EfeitosMudaram {
+                    objeto: id,
+                    atributos: acabou,
+                });
             }
         }
 
         let ids: Vec<i64> = self
             .monsters
             .iter()
-            .filter(|(_, (m, _))| !m.is_dead && !m.efeitos.filtros.is_empty())
+            .filter(|(_, (m, _))| {
+                !m.is_dead && (!m.efeitos.filtros.is_empty() || m.efeitos.invencivel_s > 0)
+            })
             .map(|(id, _)| *id)
             .collect();
         // O dano no tempo posto por um mascote (o sangramento da 747) é crédito do dono, como
         // o golpe (`gpet_imp::FillAttackMsg`): o ódio vai ao mascote e 1 ao dono.
         let donos: HashMap<i64, i64> = self.mascotes.iter().map(|(id, m)| (*id, m.dono)).collect();
         for id in ids {
-            let Some((m, ai)) = self.monsters.get_mut(&id) else { continue };
+            let Some((m, ai)) = self.monsters.get_mut(&id) else {
+                continue;
+            };
             let (tiques, acabou) = m.efeitos.batida();
+            let mut danos_no_tempo = Vec::new();
             let mut mudou = acabou;
             let mut matador = None;
             for t in tiques {
@@ -852,6 +1172,9 @@ impl WorldInstance {
                         m.hp = (m.hp - v).max(0);
                         let dono = donos.get(&origem).copied();
                         let credito = dono.unwrap_or(origem);
+                        // `gnpc_imp::OnHurt` → `be_hurt(info.attacker, …)`: o número vai a
+                        // quem tem o crédito (o dono, se foi o mascote).
+                        danos_no_tempo.push((credito, v as i32));
                         m.registrar_dano(credito, real);
                         ai.add_threat(origem, v);
                         if let Some(dono) = dono {
@@ -869,16 +1192,32 @@ impl WorldInstance {
                     Tique::Mana(_) => {}
                 }
             }
+            for (atacante, dano) in danos_no_tempo {
+                self.emitir(EventoDoMundo::DanoNoTempo {
+                    vitima: id,
+                    atacante,
+                    dano,
+                });
+            }
+            let Some((m, _)) = self.monsters.get_mut(&id) else {
+                continue;
+            };
             if let Some(matador) = matador {
                 m.is_dead = true;
                 m.efeitos.ao_morrer();
                 self.grid.remove_entity(id);
-                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: false });
+                self.emitir(EventoDoMundo::EfeitosMudaram {
+                    objeto: id,
+                    atributos: false,
+                });
                 self.emitir(EventoDoMundo::MonstroMorreu { id, matador });
                 continue;
             }
             if mudou {
-                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: acabou });
+                self.emitir(EventoDoMundo::EfeitosMudaram {
+                    objeto: id,
+                    atributos: acabou,
+                });
             }
         }
     }
@@ -894,7 +1233,9 @@ impl WorldInstance {
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
-            let Some(m) = self.mascotes.get_mut(&id) else { continue };
+            let Some(m) = self.mascotes.get_mut(&id) else {
+                continue;
+            };
             let (tiques, acabou) = m.corpo.efeitos.batida();
             let mut mudou = acabou;
             let mut danos = Vec::new();
@@ -913,7 +1254,10 @@ impl WorldInstance {
                 mudou = true;
             }
             if mudou {
-                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: id, atributos: acabou });
+                self.emitir(EventoDoMundo::EfeitosMudaram {
+                    objeto: id,
+                    atributos: acabou,
+                });
             }
         }
     }
@@ -921,6 +1265,7 @@ impl WorldInstance {
     pub fn matar_monstro(&mut self, id: i64) {
         if let Some((m, _)) = self.monsters.get_mut(&id) {
             m.is_dead = true;
+            m.efeitos.ao_morrer();
             // **Sem gerador, sem renascimento.** Quem foi invocado — por missão
             // (`SummonMonster` → `CreateMinors`, `gs/player.cpp:13072-13110`) ou por uma
             // matéria — não pertence a um `mobs_spawner` e some de vez. O `.max(1)` que
@@ -937,7 +1282,10 @@ impl WorldInstance {
             let corpo = match self.geradores.get(&id) {
                 Some(g) => {
                     if m.respawn_delay_ms > 0 {
-                        let s = rand::Rng::gen_range(&mut rand::thread_rng(), g.renascer_min_s..=g.renascer_max_s.max(g.renascer_min_s));
+                        let s = rand::Rng::gen_range(
+                            &mut rand::thread_rng(),
+                            g.renascer_min_s..=g.renascer_max_s.max(g.renascer_min_s),
+                        );
                         m.respawn_timer_ms = s.max(1) * 1000;
                     } else {
                         m.respawn_timer_ms = 0;
@@ -1134,7 +1482,14 @@ impl WorldInstance {
     /// Com `atraso_ms == 0` aplica agora, como o `InsertDamageEntry` faz quando o `delay`
     /// não é positivo (`actobject.cpp:1760-1762`). O aviso do golpe ao cliente é
     /// responsabilidade de quem chama, e sai **antes** disto.
-    pub fn adiar_dano(&mut self, alvo: i64, atacante: i64, dano: i64, atraso_ms: u32, no_jogador: bool) {
+    pub fn adiar_dano(
+        &mut self,
+        alvo: i64,
+        atacante: i64,
+        dano: i64,
+        atraso_ms: u32,
+        no_jogador: bool,
+    ) {
         if atraso_ms == 0 {
             if no_jogador {
                 self.aplicar_dano_no_jogador(alvo, atacante, dano);
@@ -1143,17 +1498,50 @@ impl WorldInstance {
             }
             return;
         }
-        self.danos_adiados.push(DanoAdiado { alvo, atacante, dano, falta_ms: atraso_ms, no_jogador, fisico: 0 });
+        self.danos_adiados.push(DanoAdiado {
+            alvo,
+            atacante,
+            dano,
+            falta_ms: atraso_ms,
+            no_jogador,
+            fisico: 0,
+        });
     }
 
     /// O golpe normal do monstro no jogador, adiado como o [`Self::adiar_dano`], levando o
     /// dano físico bruto para os espinhos.
-    fn adiar_golpe_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64, fisico: i32, atraso_ms: u32) {
+    /// Dano de habilidade de monstro num jogador (`gplayer_imp::OnDamage` →
+    /// `ActiveCombatState`, `player.cpp:9556-9560`): põe em combate, chama o mascote do dono e
+    /// tira a vida na hora — o `NpcRun` aplica o dano sem o atraso do golpe normal.
+    pub fn habilidade_de_monstro_no_jogador(&mut self, alvo: i64, monstro: i64, dano: i64) {
+        let Some(p) = self.players.get_mut(&alvo).filter(|p| p.hp > 0) else {
+            return;
+        };
+        p.combate_s = p.combate_s.max(crate::progressao::COMBATE_AO_APANHAR_S);
+        self.mascote_do_dono_ajuda(alvo, monstro);
+        self.aplicar_dano_no_jogador(alvo, monstro, dano);
+    }
+
+    fn adiar_golpe_no_jogador(
+        &mut self,
+        alvo: i64,
+        atacante: i64,
+        dano: i64,
+        fisico: i32,
+        atraso_ms: u32,
+    ) {
         if atraso_ms == 0 {
             self.golpe_no_jogador(alvo, atacante, dano, fisico);
             return;
         }
-        self.danos_adiados.push(DanoAdiado { alvo, atacante, dano, falta_ms: atraso_ms, no_jogador: true, fisico });
+        self.danos_adiados.push(DanoAdiado {
+            alvo,
+            atacante,
+            dano,
+            falta_ms: atraso_ms,
+            no_jogador: true,
+            fisico,
+        });
     }
 
     /// `HandleAttackMsg` no jogador: os filtros ajustam o dano (`EF_AdjustDamage`, onde o
@@ -1175,11 +1563,27 @@ impl WorldInstance {
             golpe.de_habilidade = false;
             let defesa = crate::combat::CombatEngine::defesa_do_monstro(m);
             let distancia = p.position.distance(&m.position);
-            Some(crate::combat::resolver(&golpe, &defesa, distancia, false, crate::combat::Rolagens::sortear()).dano())
+            let velocidade = m.ataque_em_ticks.clamp(0, 255) as u8;
+            Some((
+                crate::combat::resolver(
+                    &golpe,
+                    &defesa,
+                    distancia,
+                    false,
+                    crate::combat::Rolagens::sortear(),
+                )
+                .dano(),
+                velocidade,
+                p.role_id,
+            ))
         });
-        // O golpe devolvido não tem animação: quem vê percebe a vida do monstro cair (o
-        // `NPC_INFO_00` do batimento).
-        if let Some(d) = devolvido.filter(|d| *d > 0) {
+        if let Some((d, velocidade, jogador)) = devolvido.filter(|(d, _, _)| *d > 0) {
+            self.emitir(EventoDoMundo::EspinhoDevolvido {
+                jogador,
+                monstro: atacante,
+                dano: d,
+                velocidade,
+            });
             self.aplicar_dano_no_monstro(atacante, alvo, d as i64);
         }
         self.aplicar_dano_no_jogador(alvo, atacante, dano);
@@ -1194,9 +1598,15 @@ impl WorldInstance {
         // O golpe do mascote leva o dono como atacante (`gpet_imp::FillAttackMsg`,
         // `petnpc.cpp:1211`): o crédito é do dono, e o ódio vai ao mascote e, menos, ao dono
         // (`AddAggroEntry` 3 e 1, `npc.cpp:1781-1785`).
-        let dono_do_mascote = if crate::mascote::e_mascote(atacante) { self.mascotes.get(&atacante).map(|m| m.dono) } else { None };
+        let dono_do_mascote = if crate::mascote::e_mascote(atacante) {
+            self.mascotes.get(&atacante).map(|m| m.dono)
+        } else {
+            None
+        };
         let credito = dono_do_mascote.unwrap_or(atacante);
-        let Some((m, ai)) = self.monsters.get_mut(&alvo) else { return };
+        let Some((m, ai)) = self.monsters.get_mut(&alvo) else {
+            return;
+        };
         if m.is_dead {
             return;
         }
@@ -1209,36 +1619,63 @@ impl WorldInstance {
         if let Some(dono) = dono_do_mascote {
             ai.add_threat(dono, 1);
         }
+        ai.ao_apanhar(m, &self.players, real as i32);
         let atacante = credito;
         let (hp, max_hp) = (m.hp, m.max_hp);
         let morreu = m.hp == 0;
         if morreu {
             m.is_dead = true;
+            // `gnpc_imp::OnDeath`: os filtros saem com a morte (o sangramento não continua no
+            // corpo nem volta com o renascimento — B132).
+            m.efeitos.ao_morrer();
         }
         debug!("mundo: dano de {atacante} em {alvo}: {dano}, vida {hp}/{max_hp}");
         if morreu {
             self.grid.remove_entity(alvo);
-            self.emitir(EventoDoMundo::MonstroMorreu { id: alvo, matador: atacante });
+            self.emitir(EventoDoMundo::MonstroMorreu {
+                id: alvo,
+                matador: atacante,
+            });
         }
     }
 
     /// Tira a vida do jogador e resolve a morte, como o laço de golpes de monstro fazia
     /// quando o dano era imediato.
     fn aplicar_dano_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64) {
-        let Some(player) = self.players.get_mut(&alvo) else { return };
+        let Some(player) = self.players.get_mut(&alvo) else {
+            return;
+        };
         if player.hp <= 0 {
             return;
         }
+        // Apanhar sentado levanta (`LeaveStayInState`, `gs/player.cpp:782-788`) — antes do dano,
+        // como o original faz antes do `MessageHandler`.
+        let levantou = std::mem::take(&mut player.sentado);
+        if levantou {
+            player.meditacao_s = 0;
+        }
         let dano = crate::efeitos::dano_recebido(&mut player.efeitos, dano as i32);
         player.hp = (player.hp - dano).max(0);
+        let role_id = player.role_id;
+        if levantou {
+            self.emitir(EventoDoMundo::Levantou { roleid: role_id });
+        }
+        let Some(player) = self.players.get_mut(&alvo) else {
+            return;
+        };
         if player.hp == 0 {
             if let Some(f) = player.efeitos.renascer(rand::random::<u32>() as i32 % 100) {
                 player.hp = ((player.max_hp as f32 * f) as i32).max(1);
                 self.emitir(EventoDoMundo::Renasceu { objeto: alvo });
-                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: alvo, atributos: false });
+                self.emitir(EventoDoMundo::EfeitosMudaram {
+                    objeto: alvo,
+                    atributos: false,
+                });
             }
         }
-        let Some(player) = self.players.get_mut(&alvo) else { return };
+        let Some(player) = self.players.get_mut(&alvo) else {
+            return;
+        };
         let (hp, pos, role_id) = (player.hp, player.position, player.role_id);
         debug!("mundo: dano de {atacante} no jogador {alvo}: {dano}, vida {hp}");
         self.emitir(EventoDoMundo::EstadoMudou { roleid: role_id });
@@ -1246,6 +1683,10 @@ impl WorldInstance {
             return;
         }
         info!("Jogador #{alvo} morreu");
+        // `KillTarget` da política de quem o matou (`npc.cpp:685`).
+        if let Some((m, ai)) = self.monsters.get_mut(&atacante) {
+            ai.ao_matar_o_alvo(m, &self.players);
+        }
         let mut tinha_efeitos = false;
         if let Some(p) = self.players.get_mut(&alvo) {
             p.ataque = None;
@@ -1255,9 +1696,16 @@ impl WorldInstance {
         }
         if tinha_efeitos {
             self.refazer_atributos(alvo);
-            self.emitir(EventoDoMundo::EfeitosMudaram { objeto: alvo, atributos: true });
+            self.emitir(EventoDoMundo::EfeitosMudaram {
+                objeto: alvo,
+                atributos: true,
+            });
         }
-        self.emitir(EventoDoMundo::JogadorMorreu { roleid: role_id, matador: atacante, pos });
+        self.emitir(EventoDoMundo::JogadorMorreu {
+            roleid: role_id,
+            matador: atacante,
+            pos,
+        });
         // `OnDeath` recolhe o mascote (`player.cpp:7204`).
         self.recolher_mascote(alvo, 0);
     }
@@ -1295,15 +1743,24 @@ impl WorldInstance {
                 }
             }
         }
-        self.vida_informada.retain(|id, _| inscritos.contains_key(id));
+        self.vida_informada
+            .retain(|id, _| inscritos.contains_key(id));
         for (id, mut para) in inscritos {
-            let Some((hp, max_hp, alvo)) = self.dados_do_monstro(id) else { continue };
+            let Some((hp, max_hp, alvo)) = self.dados_do_monstro(id) else {
+                continue;
+            };
             if self.vida_informada.get(&id) == Some(&(hp, alvo)) {
                 continue;
             }
             self.vida_informada.insert(id, (hp, alvo));
             para.sort_unstable();
-            self.emitir(EventoDoMundo::VidaDoMonstro { id, hp, max_hp, alvo, para });
+            self.emitir(EventoDoMundo::VidaDoMonstro {
+                id,
+                hp,
+                max_hp,
+                alvo,
+                para,
+            });
         }
     }
 
@@ -1324,7 +1781,10 @@ impl WorldInstance {
     /// respondia nada** ao `QUERY_PLAYER_INFO_1` (67): lia a contagem, escrevia uma linha
     /// de log e devolvia. Nenhum outro jogador tinha barra de vida.
     #[allow(clippy::type_complexity)]
-    pub fn dados_do_jogador(&self, role_id: RoleId) -> Option<(i16, u8, bool, i32, i32, i32, i32, i32)> {
+    pub fn dados_do_jogador(
+        &self,
+        role_id: RoleId,
+    ) -> Option<(i16, u8, bool, i32, i32, i32, i32, i32)> {
         let p = self.players.get(&(role_id as i64))?;
         Some((
             p.level as i16,
@@ -1335,7 +1795,9 @@ impl WorldInstance {
             p.max_hp,
             p.mp,
             p.max_mp,
-            p.target_id.unwrap_or(0).clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+            p.target_id
+                .unwrap_or(0)
+                .clamp(i32::MIN as i64, i32::MAX as i64) as i32,
         ))
     }
 
@@ -1345,7 +1807,10 @@ impl WorldInstance {
     /// respondia `120/120/280/280` para qualquer personagem, com exp e sp zerados —
     /// a **terceira** aparição do mesmo `120/280` escrito no código (itens 37 e 45).
     #[allow(clippy::type_complexity)]
-    pub fn dados_do_proprio(&self, role_id: RoleId) -> Option<(i16, u8, bool, i32, i32, i32, i32, i32, i32, i32, i32)> {
+    pub fn dados_do_proprio(
+        &self,
+        role_id: RoleId,
+    ) -> Option<(i16, u8, bool, i32, i32, i32, i32, i32, i32, i32, i32)> {
         let p = self.players.get(&(role_id as i64))?;
         Some((
             p.level as i16,
@@ -1426,7 +1891,10 @@ impl WorldInstance {
             .filter(|p| self.quanto_abaixo_da_agua(p.position) > MERGULHO_QUE_DERRUBA_A_MONTARIA)
             .map(|p| p.role_id)
             .collect();
-        caidos.into_iter().map(|roleid| EventoDoMundo::MontariaCaiuNaAgua { roleid }).collect()
+        caidos
+            .into_iter()
+            .map(|roleid| EventoDoMundo::MontariaCaiuNaAgua { roleid })
+            .collect()
     }
 
     fn disparar_amuletos(&mut self) -> Vec<EventoDoMundo> {
@@ -1442,9 +1910,21 @@ impl WorldInstance {
                 continue;
             }
             for de_vida in [true, false] {
-                let (atual, maximo) = if de_vida { (p.hp, p.max_hp) } else { (p.mp, p.max_mp) };
-                let recarga_s = if de_vida { p.recarga_do_auto_hp_s } else { p.recarga_do_auto_mp_s };
-                let Some(a) = (if de_vida { p.auto_hp.as_mut() } else { p.auto_mp.as_mut() }) else {
+                let (atual, maximo) = if de_vida {
+                    (p.hp, p.max_hp)
+                } else {
+                    (p.mp, p.max_mp)
+                };
+                let recarga_s = if de_vida {
+                    p.recarga_do_auto_hp_s
+                } else {
+                    p.recarga_do_auto_mp_s
+                };
+                let Some(a) = (if de_vida {
+                    p.auto_hp.as_mut()
+                } else {
+                    p.auto_mp.as_mut()
+                }) else {
                     continue;
                 };
                 if a.ponto <= 0 || recarga_s > 0 || a.gatilho * maximo as f32 <= atual as f32 {
@@ -1481,7 +1961,11 @@ impl WorldInstance {
                     item_id,
                     restou,
                     bloco,
-                    indice_de_recarga: if de_vida { RECARGA_DO_AMULETO_DE_VIDA } else { RECARGA_DO_AMULETO_DE_MANA },
+                    indice_de_recarga: if de_vida {
+                        RECARGA_DO_AMULETO_DE_VIDA
+                    } else {
+                        RECARGA_DO_AMULETO_DE_MANA
+                    },
                     recarga_ms,
                 });
                 eventos.push(EventoDoMundo::EstadoMudou { roleid: p.role_id });
@@ -1492,8 +1976,16 @@ impl WorldInstance {
 
     /// Põe no jogador o filtro de poção: `total / tempo` por batimento de 1 s
     /// (`healing_potion_filter`, `gs/potion_filter.h:16-25`).
-    pub fn pocao_no_tempo(&mut self, roleid: RoleId, efeito: crate::efeitos::Efeito, total: i32, tempo_s: i32) {
-        let Some(p) = self.players.get_mut(&(roleid as i64)) else { return };
+    pub fn pocao_no_tempo(
+        &mut self,
+        roleid: RoleId,
+        efeito: crate::efeitos::Efeito,
+        total: i32,
+        tempo_s: i32,
+    ) {
+        let Some(p) = self.players.get_mut(&(roleid as i64)) else {
+            return;
+        };
         let tempo_s = tempo_s.max(1);
         let filtro = crate::efeitos::Filtro {
             efeito,
@@ -1525,9 +2017,16 @@ impl WorldInstance {
         let mut attacks_to_process = Vec::new();
 
         let mut movimentos = Vec::new();
-        let corpos_dos_mascotes: HashMap<i64, MonsterEntity> =
-            self.mascotes.iter().map(|(id, m)| (*id, m.corpo.clone())).collect();
+        let mut habilidades_de_monstro: Vec<EventoDoMundo> = Vec::new();
+        let corpos_dos_mascotes: HashMap<i64, MonsterEntity> = self
+            .mascotes
+            .iter()
+            .map(|(id, m)| (*id, m.corpo.clone()))
+            .collect();
         let mut renasceram: Vec<(i64, pw_core::Vector3)> = Vec::new();
+        // Quem ficou ou deixou de ficar invencível na volta para casa (o estado visível 49
+        // do `invincible_filter` no 1.5.5).
+        let mut invencibilidade_mudou: Vec<i64> = Vec::new();
 
         // O invocado com `remain_time` some quando o tempo acaba, vivo ou não
         // (`prop.remain_time`, `gs/player.cpp:13079`).
@@ -1553,6 +2052,13 @@ impl WorldInstance {
 
         for (monster, ai) in self.monsters.values_mut() {
             if monster.is_dead {
+                // `gnpc_imp::OnDeath` → `ai_policy::OnDeath`: uma vez, na primeira vez que o
+                // laço o vê morto. O crédito é de quem mais bateu (`GetChiefGainer`).
+                if ai.state != crate::ai::MonsterState::Dead {
+                    let matador = monster.danos.iter().max_by_key(|d| d.1).map(|d| d.0);
+                    ai.ao_morrer(monster, &self.players, matador);
+                    ai.state = crate::ai::MonsterState::Dead;
+                }
                 // O gerador só recebe o monstro de volta quando o corpo some
                 // (`GM_MSG_OBJ_ZOMBIE_END` → `LifeExhaust` → `mobs_spawner::Reclaim`,
                 // `npc.cpp:904-911`, `npcgenerator.cpp:3312`). Contar o renascimento desde a
@@ -1564,18 +2070,28 @@ impl WorldInstance {
                         // Renascimento do Monstro
                         monster.is_dead = false;
                         monster.hp = monster.max_hp;
+                        monster.efeitos.ao_renascer();
                         // Outro ponto da área e outra direção (`Reborn` → `GeneratePos`/`GenDir`,
                         // `npcgenerator.cpp:3457-3459`); a casa do monstro passa a ser ali.
                         let mut direcao = None;
                         if let Some(g) = self.geradores.get(&monster.id) {
-                            let p = g.posicao_de_renascimento(rand::Rng::gen(&mut rand::thread_rng()), &self.terreno, &self.movimento);
+                            let p = g.posicao_de_renascimento(
+                                rand::Rng::gen(&mut rand::thread_rng()),
+                                &self.terreno,
+                                &self.movimento,
+                            );
                             monster.spawn_center = p;
-                            direcao = Some(crate::entity::direcao_do_gerador(g.dir, g.extensao_da_area));
+                            direcao =
+                                Some(crate::entity::direcao_do_gerador(g.dir, g.extensao_da_area));
                         }
                         monster.position = monster.spawn_center;
                         monster.danos.clear();
                         monster.primeiro_atacante = None;
-                        *ai = MonsterAi::new();
+                        // `Reborn`: a mesma IA, com o `_cur_event_hp` de volta a ¾ (`aipolicy.h:1376-1385`).
+                        let (politica, globais) = (ai.politica.take(), ai.globais.take());
+                        *ai = MonsterAi::com_perfil(ai.perfil.take());
+                        ai.politica = politica;
+                        ai.globais = globais;
                         if let Some(d) = direcao {
                             ai.direcao = d;
                         }
@@ -1592,8 +2108,55 @@ impl WorldInstance {
             let chao = |x: f32, z: f32| terreno.altura_em(x, z);
             // Com o mapa de movimento, o monstro de chão contorna obstáculo e anda em cima da
             // estrutura ([`crate::navegacao`], B99).
-            let mapa = crate::navegacao::Mapa { terreno: &chao, movimento: &self.movimento };
-            match ai.tick_com_mascotes(monster, &self.players, &corpos_dos_mascotes, delta_ms, &mapa) {
+            let mapa = crate::navegacao::Mapa {
+                terreno: &chao,
+                movimento: &self.movimento,
+            };
+            let invencivel_antes = monster.efeitos.invencivel_s > 0;
+            let acao = ai.tick_com_mascotes(
+                monster,
+                &self.players,
+                &corpos_dos_mascotes,
+                delta_ms,
+                &mapa,
+            );
+            if invencivel_antes != (monster.efeitos.invencivel_s > 0) {
+                invencibilidade_mudou.push(monster.id);
+            }
+            match acao {
+                Some(crate::ai::AcaoDoMonstro::Conjurou {
+                    habilidade: h,
+                    alvo,
+                    instantanea,
+                }) => {
+                    let tempo_ms = h.canto_ms.min(u16::MAX as u32) as u16;
+                    habilidades_de_monstro.push(EventoDoMundo::MonstroConjurou {
+                        id: monster.id,
+                        alvo,
+                        skill: h.id,
+                        nivel: h.nivel,
+                        tempo_ms,
+                    });
+                    if instantanea {
+                        habilidades_de_monstro.push(EventoDoMundo::MonstroUsouHabilidade {
+                            id: monster.id,
+                            alvo,
+                            skill: h.id,
+                            nivel: h.nivel,
+                        });
+                    }
+                }
+                Some(crate::ai::AcaoDoMonstro::UsouHabilidade {
+                    habilidade: h,
+                    alvo,
+                }) => {
+                    habilidades_de_monstro.push(EventoDoMundo::MonstroUsouHabilidade {
+                        id: monster.id,
+                        alvo,
+                        skill: h.id,
+                        nivel: h.nivel,
+                    });
+                }
                 Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano, fisico }) => {
                     // Quem bateu vai junto: sem o id, o `HOST_ATTACKED` saía com
                     // `idAttacker = 0` e o cliente não achava o atacante
@@ -1601,25 +2164,52 @@ impl WorldInstance {
                     // — o jogador perdia vida sem ver o monstro bater (B59).
                     attacks_to_process.push((monster.id, alvo, dano, fisico));
                 }
-                Some(crate::ai::AcaoDoMonstro::Andou { destino, tempo_ms, velocidade, modo }) => {
+                Some(crate::ai::AcaoDoMonstro::Andou {
+                    destino,
+                    tempo_ms,
+                    velocidade,
+                    modo,
+                }) => {
                     // A grade espacial tem de acompanhar: quem consulta vizinhos por
                     // posição usa ela, não o campo da entidade.
                     movimentos.push((
                         monster.id,
                         destino,
-                        EventoDoMundo::MonstroAndou { id: monster.id, destino, tempo_ms, velocidade, modo },
+                        EventoDoMundo::MonstroAndou {
+                            id: monster.id,
+                            destino,
+                            tempo_ms,
+                            velocidade,
+                            modo,
+                        },
                     ));
                 }
-                Some(crate::ai::AcaoDoMonstro::Parou { posicao, velocidade, direcao, modo }) => {
+                Some(crate::ai::AcaoDoMonstro::Parou {
+                    posicao,
+                    velocidade,
+                    direcao,
+                    modo,
+                }) => {
                     movimentos.push((
                         monster.id,
                         posicao,
-                        EventoDoMundo::MonstroParou { id: monster.id, posicao, velocidade, direcao, modo },
+                        EventoDoMundo::MonstroParou {
+                            id: monster.id,
+                            posicao,
+                            velocidade,
+                            direcao,
+                            modo,
+                        },
                     ));
                 }
                 None => {}
             }
         }
+
+        for e in habilidades_de_monstro {
+            self.emitir(e);
+        }
+        self.escoar_pedidos_das_politicas();
 
         // Corpos que somem, e os que renasceram antes de o corpo sumir.
         let mut sumiram = Vec::new();
@@ -1644,6 +2234,12 @@ impl WorldInstance {
         for (id, pos) in renasceram {
             self.grid.add_entity(id, pos, false);
             self.emitir(EventoDoMundo::MonstroRenasceu { id });
+        }
+        for objeto in invencibilidade_mudou {
+            self.emitir(EventoDoMundo::EfeitosMudaram {
+                objeto,
+                atributos: false,
+            });
         }
 
         // Golpes normais em sessão: um a cada `attack_speed` *ticks* (`SetTimer(interval)`,
@@ -1748,8 +2344,17 @@ impl WorldInstance {
             if self.mascotes.contains_key(&player_id) {
                 // Golpe em mascote: quem vê o monstro vê o golpe, e a vida cai depois do
                 // atraso, como no jogador.
-                let velocidade = self.monsters.get(&monstro_id).map(|(m, _)| m.ataque_em_ticks.clamp(0, 255) as u8).unwrap_or(0);
-                self.emitir(EventoDoMundo::GolpeEntreCriaturas { atacante: monstro_id, alvo: player_id, dano: damage, velocidade });
+                let velocidade = self
+                    .monsters
+                    .get(&monstro_id)
+                    .map(|(m, _)| m.ataque_em_ticks.clamp(0, 255) as u8)
+                    .unwrap_or(0);
+                self.emitir(EventoDoMundo::GolpeEntreCriaturas {
+                    atacante: monstro_id,
+                    alvo: player_id,
+                    dano: damage,
+                    velocidade,
+                });
                 self.adiar_dano(player_id, monstro_id, damage as i64, atraso, false);
                 continue;
             }
@@ -1763,7 +2368,9 @@ impl WorldInstance {
             }
             // Apanhar põe em combate por pelo menos 5 s (`OnAttacked`, `player.cpp:9514`) —
             // isso é do golpe, não do dano, e vale já.
-            player.combate_s = player.combate_s.max(crate::progressao::COMBATE_AO_APANHAR_S);
+            player.combate_s = player
+                .combate_s
+                .max(crate::progressao::COMBATE_AO_APANHAR_S);
             let (hp, max_hp, role_id) = (player.hp, player.max_hp, player.role_id);
 
             self.emitir(EventoDoMundo::DanoRecebido {
@@ -1801,9 +2408,20 @@ impl WorldInstance {
                     posicao: player.position,
                     ap: player.ap,
                     max_ap: player.max_ap,
-                    atributos: (player.strength, player.agility, player.vitality, player.energy),
+                    atributos: (
+                        player.strength,
+                        player.agility,
+                        player.vitality,
+                        player.energy,
+                    ),
                     pontos_de_atributo: player.pontos_de_atributo,
-                    missoes: pw_storage::ListasDeMissaoGravadas { ativa: a, concluidas: b, tempos: c, contagens: d, deposito: e },
+                    missoes: pw_storage::ListasDeMissaoGravadas {
+                        ativa: a,
+                        concluidas: b,
+                        tempos: c,
+                        contagens: d,
+                        deposito: e,
+                    },
                 }
             })
             .collect()
@@ -1837,24 +2455,51 @@ pub struct EstadoParaGravar {
 
 /// Grava o lote do autosave. Fora do lock do mundo, e de propósito: cada personagem custa
 /// quatro escritas, e elas já chegaram a levar segundos no banco de teste.
-pub async fn gravar_autosave(repo: pw_storage::CharacterRepository, lote: Vec<EstadoParaGravar>, mundo: i32) {
+pub async fn gravar_autosave(
+    repo: pw_storage::CharacterRepository,
+    lote: Vec<EstadoParaGravar>,
+    mundo: i32,
+) {
     let total = lote.len();
     let mut falhas = 0usize;
     for e in lote {
         let r = repo
-            .save_status(e.role_id, e.level, e.cultivation, e.exp, e.sp, e.hp, e.mp, e.money, e.mundo, &e.posicao)
+            .save_status(
+                e.role_id,
+                e.level,
+                e.cultivation,
+                e.exp,
+                e.sp,
+                e.hp,
+                e.mp,
+                e.money,
+                e.mundo,
+                &e.posicao,
+            )
             .await;
         // A barra de chi anda junto (`_basic.ap`/`_base_prop.max_ap` do original).
         let _ = repo.salvar_chi(e.role_id, e.ap, e.max_ap).await;
         if let Err(err) = r {
             falhas += 1;
-            warn!("autosave: não consegui gravar o personagem {}: {err}", e.role_id);
+            warn!(
+                "autosave: não consegui gravar o personagem {}: {err}",
+                e.role_id
+            );
         }
-        if let Err(err) = repo.gravar_atributos(e.role_id, e.atributos, e.pontos_de_atributo).await {
-            warn!("autosave: não consegui gravar os atributos de {}: {err}", e.role_id);
+        if let Err(err) = repo
+            .gravar_atributos(e.role_id, e.atributos, e.pontos_de_atributo)
+            .await
+        {
+            warn!(
+                "autosave: não consegui gravar os atributos de {}: {err}",
+                e.role_id
+            );
         }
         if let Err(err) = repo.task_lists().gravar(e.role_id, &e.missoes).await {
-            warn!("autosave: não consegui gravar as missões de {}: {err}", e.role_id);
+            warn!(
+                "autosave: não consegui gravar as missões de {}: {err}",
+                e.role_id
+            );
         }
     }
     // O `let _ =` que havia aqui engolia o erro, e a linha abaixo dizia "com sucesso" de
@@ -1883,8 +2528,18 @@ pub fn habilidade_do_mascote(
 ) -> Option<crate::mascote::HabilidadeDoMascote> {
     let h = dados.habilidades.get(u32::try_from(id).ok()?)?;
     let indice = usize::try_from(nivel - 1).ok()?;
-    let execucao = h.estados_ms.get(1).and_then(|e| e.as_ref()).and_then(|v| v.get(indice)).copied().unwrap_or(0);
-    let mana = h.mp.as_ref().and_then(|v| v.get(indice)).map(|m| m.ceil() as i32).unwrap_or(0);
+    let execucao = h
+        .estados_ms
+        .get(1)
+        .and_then(|e| e.as_ref())
+        .and_then(|v| v.get(indice))
+        .copied()
+        .unwrap_or(0);
+    let mana =
+        h.mp.as_ref()
+            .and_then(|v| v.get(indice))
+            .map(|m| m.ceil() as i32)
+            .unwrap_or(0);
     Some(crate::mascote::HabilidadeDoMascote {
         id,
         nivel,
@@ -1896,6 +2551,89 @@ pub fn habilidade_do_mascote(
         recarga_ms: h.recarga_armada_ms(nivel).unwrap_or(0).max(0),
         mana: mana.max(0),
     })
+}
+
+/// O que [`WorldInstance::nascer_da_instancia`] fez.
+#[derive(Default)]
+struct Nascimento {
+    id: Option<i64>,
+    fora: bool,
+    no_piso: bool,
+    sem_template: bool,
+}
+
+/// Uma habilidade de monstro como a IA a usa. As tabelas por nível do catálogo (alcance, canto,
+/// execução) vão até o `max_level` da habilidade; o `MONSTER_ESSENCE` tem monstros com nível
+/// acima disso (76 pares no 1.5.5, 75 no 1.2.6) ou zero (22 e 11). `falta`: o valor desses
+/// níveis — o `SkillStub` do original calcula por fórmula e o catálogo só guardou até o
+/// `max_level`; aqui a tabela usa o nível mais próximo que existe. O roteiro do efeito roda
+/// com o nível verdadeiro.
+pub fn habilidade_de_monstro(
+    dados: &pw_data_loader::GameDataManager,
+    id: i32,
+    nivel: i32,
+    alcance_do_corpo: f32,
+) -> Option<crate::ai::HabilidadeDeCriatura> {
+    let h = dados.habilidades.get(u32::try_from(id).ok()?)?;
+    let na_tabela = nivel.clamp(1, h.max_level.max(1));
+    let mut r = habilidade_do_mascote(dados, id, na_tabela, alcance_do_corpo)?;
+    r.nivel = nivel;
+    Some(r)
+}
+
+/// O perfil de combate de um monstro, como o `npc_template` e o `ai_param` do original o montam
+/// (`npcgenerator.cpp:216-290`, `2560-2605`): a estratégia (`id_strategy`), as habilidades
+/// separadas pelo tipo (1 ataque, 2 bênção, 3 maldição; as de outro tipo o original ignora),
+/// os eventos de 75/50/25 % sorteados agora (`RandSelect`) e se há política no `aipolicy.data`.
+pub fn perfil_de_combate(
+    dados: &pw_data_loader::GameDataManager,
+    template_id: u32,
+    alcance_do_corpo: f32,
+) -> Option<crate::ai::PerfilDeCombate> {
+    use crate::ai::{Estrategia, EventoDeVida, PerfilDeCombate, HABILIDADE_DE_FUGA};
+    let t = dados.monstros.get(template_id)?;
+    let mut p = PerfilDeCombate {
+        estrategia: Estrategia::do_elements(t.estrategia),
+        corpo: t.tamanho,
+        tem_politica: t.politica_de_ia != 0,
+        ..Default::default()
+    };
+    for s in &t.skills {
+        let Some(h) = habilidade_de_monstro(dados, s.id, s.nivel, alcance_do_corpo) else {
+            continue;
+        };
+        match h.tipo {
+            1 => p.ataque.push(h),
+            2 => p.bencao.push(h),
+            3 => p.maldicao.push(h),
+            _ => {}
+        }
+    }
+    // `copy_skill` guarda no máximo 8 de cada (`__TSKILL`, `npcgenerator.cpp:37-45`).
+    p.ataque.truncate(8);
+    p.bencao.truncate(8);
+    p.maldicao.truncate(8);
+    let mut rng = rand::thread_rng();
+    for (i, lista) in [
+        &t.skills_com_25_de_vida,
+        &t.skills_com_50_de_vida,
+        &t.skills_com_75_de_vida,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (id, nivel) = pw_data_loader::monstros::sortear_evento_de_vida(
+            lista,
+            rand::Rng::gen::<f32>(&mut rng),
+        );
+        p.eventos[i] = match id {
+            HABILIDADE_DE_FUGA => Some(EventoDeVida::Fugir),
+            id if id > 0 => habilidade_de_monstro(dados, id, nivel, alcance_do_corpo)
+                .map(EventoDeVida::Habilidade),
+            _ => None,
+        };
+    }
+    Some(p)
 }
 
 /// `ERR_LEVEL_NOT_MATCH` 51, `ERR_SUMMON_PET_INVALID_POS` 85 e `ERR_CANNOT_SUMMON_DEAD_PET` 87
@@ -1913,49 +2651,78 @@ impl WorldInstance {
     }
 
     fn id_do_mascote_de(&self, dono: i64) -> Option<i64> {
-        self.mascotes.iter().find(|(_, m)| m.dono == dono).map(|(id, _)| *id)
+        self.mascotes
+            .iter()
+            .find(|(_, m)| m.dono == dono)
+            .map(|(id, _)| *id)
     }
 
     /// `combat_petdata_imp::DoActivePet` (`petman.cpp:575-605`) com o `ActivePet` que recolhe
     /// o anterior (`:1303-1348`): recusa o mascote de nível acima de dono + 35 e o morto
     /// (`hp_factor` 0), e põe a criatura no mundo, junto do dono. Devolve o id ou o
     /// `ERR_*` a mandar.
-    pub fn invocar_mascote(&mut self, dono: RoleId, slot: u16, info: pw_core::InfoPet) -> Result<i64, i32> {
+    pub fn invocar_mascote(
+        &mut self,
+        dono: RoleId,
+        slot: u16,
+        info: pw_core::InfoPet,
+    ) -> Result<i64, i32> {
         let dono = dono as i64;
         let dados = Arc::clone(&self.data_manager);
         let Some(modelo) = dados.modelos_de_mascote.get(&(info.pet_tid as u32)) else {
             return Err(erro_de_mascote::POSICAO);
         };
-        let Some(p) = self.players.get(&dono) else { return Err(erro_de_mascote::POSICAO) };
+        let Some(p) = self.players.get(&dono) else {
+            return Err(erro_de_mascote::POSICAO);
+        };
         if p.level < info.level as i32 - 35 {
             return Err(erro_de_mascote::NIVEL);
         }
         if info.hp_factor <= 0.0 {
             return Err(erro_de_mascote::MORTO);
         }
-        let Some(pos) = self.posicao_valida_para_mascote(p.position) else {
+        let camada = self.camada_do_jogador(p);
+        let Some((pos, modo)) = self.lugar_do_mascote(p, modelo.habitat) else {
             return Err(erro_de_mascote::POSICAO);
         };
         self.recolher_mascote(dono, 0);
         self.proximo_mascote = self.proximo_mascote.wrapping_add(1);
         let id = crate::mascote::id_do_mascote(self.proximo_mascote);
-        let (agressividade, movimento) = self
-            .estado_dos_mascotes
-            .get(&dono)
-            .copied()
-            .unwrap_or((crate::mascote::AGRESSIVIDADE_AUTOMATICA, crate::mascote::MOVIMENTO_SEGUIR));
-        let m = crate::mascote::Mascote::novo(id, dono, slot, info, modelo, pos, agressividade, movimento);
+        let (agressividade, movimento) = self.estado_dos_mascotes.get(&dono).copied().unwrap_or((
+            crate::mascote::AGRESSIVIDADE_AUTOMATICA,
+            crate::mascote::MOVIMENTO_SEGUIR,
+        ));
+        let m = crate::mascote::Mascote::novo(
+            id,
+            dono,
+            slot,
+            info,
+            modelo,
+            pos,
+            agressividade,
+            movimento,
+        );
+        let mut m = m;
+        m.corpo.habitat = modo;
+        m.camada_do_dono = camada;
         self.grid.add_entity(id, pos, false);
         self.mascotes.insert(id, m);
-        self.emitir(EventoDoMundo::MascoteApareceu { id, dono: dono as RoleId });
+        self.emitir(EventoDoMundo::MascoteApareceu {
+            id,
+            dono: dono as RoleId,
+        });
         Ok(id)
     }
 
     /// `RecallPetWithoutFree` (`petman.cpp:1360-1391`): tira a criatura do mundo e devolve o
     /// registro à jaula. `false` sem mascote ativo.
     pub fn recolher_mascote(&mut self, dono: i64, motivo: u8) -> bool {
-        let Some(id) = self.id_do_mascote_de(dono) else { return false };
-        let Some(m) = self.tirar_mascote(id) else { return false };
+        let Some(id) = self.id_do_mascote_de(dono) else {
+            return false;
+        };
+        let Some(m) = self.tirar_mascote(id) else {
+            return false;
+        };
         self.emitir(EventoDoMundo::MonstroSumiu { id });
         self.emitir(EventoDoMundo::MascoteRecolhido {
             id,
@@ -1971,6 +2738,38 @@ impl WorldInstance {
     /// O ponto do mascote perto do dono — ver [`crate::mascote::posicao_no_chao`].
     pub fn posicao_valida_para_mascote(&self, dono: pw_core::Vector3) -> Option<pw_core::Vector3> {
         crate::mascote::posicao_no_chao(&self.terreno, &self.movimento, dono)
+    }
+
+    /// `_layer_ctrl.GetLayer()` do jogador: no ar voando, na água mergulhado
+    /// (`IsUnderWater`), senão no chão.
+    pub fn camada_do_jogador(&self, p: &PlayerEntity) -> crate::combat::Camada {
+        if p.voando {
+            crate::combat::Camada::Ar
+        } else if self.esta_na_agua(p.position) {
+            crate::combat::Camada::Agua
+        } else {
+            crate::combat::Camada::Chao
+        }
+    }
+
+    /// `pet_gen_pos::FindValidPos(pos, mode, leader_layer, inhabit_type, plane)` perto do dono
+    /// (`petman.cpp:592-596`, e o `OnPetRelocate`, `:701-718`): o ponto e o modo do mascote.
+    pub fn lugar_do_mascote(
+        &self,
+        dono: &PlayerEntity,
+        tipo_de_habitat: i32,
+    ) -> Option<(pw_core::Vector3, crate::ai::Habitat)> {
+        crate::mascote::posicao_para_mascote(
+            &self.terreno,
+            &self.movimento,
+            &self.agua,
+            dono.position,
+            self.camada_do_jogador(dono),
+            tipo_de_habitat,
+            0.0,
+            pw_core::Vector3::new(0.0, 0.0, 0.0),
+        )
+        .ok()
     }
 
     fn tirar_mascote(&mut self, id: i64) -> Option<crate::mascote::Mascote> {
@@ -1990,11 +2789,18 @@ impl WorldInstance {
     /// 5 habilidade automática.
     pub fn ordem_ao_mascote(&mut self, dono: RoleId, alvo: i32, comando: i32, resto: &[u8]) {
         let dono = dono as i64;
-        let Some(id) = self.id_do_mascote_de(dono) else { return };
-        let estado = |b: &[u8]| b.get(0..4).map(|x| i32::from_le_bytes([x[0], x[1], x[2], x[3]]));
+        let Some(id) = self.id_do_mascote_de(dono) else {
+            return;
+        };
+        let estado = |b: &[u8]| {
+            b.get(0..4)
+                .map(|x| i32::from_le_bytes([x[0], x[1], x[2], x[3]]))
+        };
         let alvo = alvo as i64;
         let alvo_existe = self.monsters.get(&alvo).is_some_and(|(m, _)| !m.is_dead);
-        let Some(m) = self.mascotes.get_mut(&id) else { return };
+        let Some(m) = self.mascotes.get_mut(&id) else {
+            return;
+        };
         let mudou = match comando {
             1 => {
                 // `size == 1 + 4`: só o `force_attack`. Alvo 0 ou -1 não é alvo.
@@ -2008,7 +2814,9 @@ impl WorldInstance {
                 let pos = m.corpo.position;
                 m.ai.mudar_movimento(s as u8, pos)
             }),
-            3 => estado(resto).filter(|_| resto.len() == 4).and_then(|s| m.ai.mudar_agressividade(s as u8)),
+            3 => estado(resto)
+                .filter(|_| resto.len() == 4)
+                .and_then(|s| m.ai.mudar_agressividade(s as u8)),
             4 => {
                 // `size == 2 × 4 + 1`: `{pet_cmd, skill_id, char force_attack}`
                 // (`petnpc.cpp:1065-1112`); aqui o `resto` já vem sem o `pet_cmd`.
@@ -2021,7 +2829,8 @@ impl WorldInstance {
                     return;
                 }
                 let alcance = m.corpo.attack_range - m.ai.raio_do_corpo;
-                let Some(h) = habilidade_do_mascote(&self.data_manager, skill, nivel, alcance) else {
+                let Some(h) = habilidade_do_mascote(&self.data_manager, skill, nivel, alcance)
+                else {
                     debug!("mundo: a habilidade {skill} do mascote de {dono} não está no catálogo");
                     return;
                 };
@@ -2033,7 +2842,9 @@ impl WorldInstance {
                     if h.tipo == 2 {
                         // Bênção num alvo (o dono, outro jogador): nenhuma habilidade de
                         // mascote de combate dos dois catálogos é assim.
-                        debug!("mundo: bênção {skill} do mascote de {dono} em {alvo} ainda sem porte");
+                        debug!(
+                            "mundo: bênção {skill} do mascote de {dono} em {alvo} ainda sem porte"
+                        );
                         return;
                     }
                     if alvo == id || alvo == dono || !alvo_existe {
@@ -2057,7 +2868,9 @@ impl WorldInstance {
                 }
                 let alcance = m.corpo.attack_range - m.ai.raio_do_corpo;
                 // Habilidade em si (área 5) não é automática (`petnpc.cpp:1127-1128`).
-                if let Some(h) = habilidade_do_mascote(&self.data_manager, skill, nivel, alcance).filter(|h| h.area != 5) {
+                if let Some(h) = habilidade_do_mascote(&self.data_manager, skill, nivel, alcance)
+                    .filter(|h| h.area != 5)
+                {
                     m.ai.habilidade_automatica(Some(h));
                 }
                 None
@@ -2068,9 +2881,14 @@ impl WorldInstance {
             }
         };
         let (agressividade, movimento) = (m.ai.agressividade, m.ai.movimento);
-        self.estado_dos_mascotes.insert(dono, (agressividade, movimento));
+        self.estado_dos_mascotes
+            .insert(dono, (agressividade, movimento));
         if mudou == Some(true) {
-            self.emitir(EventoDoMundo::IaDoMascote { dono: dono as RoleId, agressividade, movimento });
+            self.emitir(EventoDoMundo::IaDoMascote {
+                dono: dono as RoleId,
+                agressividade,
+                movimento,
+            });
         }
     }
 
@@ -2078,14 +2896,20 @@ impl WorldInstance {
     /// ou esquecer (`combat_petdata_imp::OnLearnSkill`/`OnForgetSkill`, `petman.cpp:890-960`).
     /// A automática que sumiu da lista deixa de valer; a que mudou de nível passa ao novo.
     pub fn trocar_habilidades_do_mascote(&mut self, dono: RoleId, habilidades: [(i32, i32); 8]) {
-        let Some(id) = self.id_do_mascote_de(dono as i64) else { return };
+        let Some(id) = self.id_do_mascote_de(dono as i64) else {
+            return;
+        };
         let dados = Arc::clone(&self.data_manager);
-        let Some(m) = self.mascotes.get_mut(&id) else { return };
+        let Some(m) = self.mascotes.get_mut(&id) else {
+            return;
+        };
         m.info.skills = habilidades;
         if let Some(a) = m.ai.automatica {
             let nivel = m.nivel_da_habilidade(a.id);
             let alcance = m.corpo.attack_range - m.ai.raio_do_corpo;
-            let nova = (nivel > 0).then(|| habilidade_do_mascote(&dados, a.id, nivel, alcance)).flatten();
+            let nova = (nivel > 0)
+                .then(|| habilidade_do_mascote(&dados, a.id, nivel, alcance))
+                .flatten();
             m.ai.habilidade_automatica(nova);
         }
     }
@@ -2094,16 +2918,50 @@ impl WorldInstance {
     /// `petman.cpp:1713-1750`) com a comida `(honra, tipo)`. `Err` com o `ERR_*`; no acerto o
     /// dono é avisado pelo [`EventoDoMundo::FomeDoMascote`].
     pub fn alimentar_mascote(&mut self, dono: RoleId, honra: i32, tipo: i32) -> Result<(), i32> {
-        let Some(id) = self.id_do_mascote_de(dono as i64) else { return Err(crate::mascote::ERRO_SEM_MASCOTE) };
+        let Some(id) = self.id_do_mascote_de(dono as i64) else {
+            return Err(crate::mascote::ERRO_SEM_MASCOTE);
+        };
         let dados = Arc::clone(&self.data_manager);
-        let Some(m) = self.mascotes.get_mut(&id) else { return Err(crate::mascote::ERRO_SEM_MASCOTE) };
+        let Some(m) = self.mascotes.get_mut(&id) else {
+            return Err(crate::mascote::ERRO_SEM_MASCOTE);
+        };
         let Some(modelo) = dados.modelos_de_mascote.get(&(m.info.pet_tid as u32)) else {
             return Err(crate::mascote::ERRO_COMIDA_ERRADA);
         };
         let (lealdade, fome) = m.alimentar(modelo, tipo, honra)?;
-        let ev = EventoDoMundo::FomeDoMascote { dono, slot: m.slot, lealdade, fome, info: m.para_a_jaula() };
+        let ev = EventoDoMundo::FomeDoMascote {
+            dono,
+            slot: m.slot,
+            lealdade,
+            fome,
+            info: m.para_a_jaula(),
+        };
         self.emitir(ev);
         Ok(())
+    }
+
+    /// `SetEntrap` que acertou (`playerwrapper.cpp:2460-2479`): o ovo vai ao jogador
+    /// (`TransferPetEgg`) e o monstro **some** (`gnpc_imp::OI_Disappear`, `npc.cpp:2532-2551`) —
+    /// sem morte, sem experiência nem drop, de volta ao gerador pelo `GM_MSG_OBJ_ZOMBIE_END`.
+    /// Aqui: morto sem crédito nem política de morte, corpo de 1 ms (o `MonstroSumiu` do tique
+    /// seguinte manda o sumiço) e o renascimento do gerador.
+    pub fn capturar_monstro(&mut self, id: i64, roleid: RoleId, ovo: i32) {
+        self.matar_monstro(id);
+        if let Some((m, ai)) = self.monsters.get_mut(&id) {
+            m.danos.clear();
+            m.primeiro_atacante = None;
+            m.efeitos.ao_morrer();
+            ai.aggro_table.clear();
+            ai.state = crate::ai::MonsterState::Dead;
+        }
+        self.corpos.insert(id, 1);
+        self.grid.remove_entity(id);
+        self.emitir(EventoDoMundo::MonstroCapturado { roleid, ovo });
+    }
+
+    /// Ver [`EventoDoMundo::VoltarParaACidade`].
+    pub fn pedir_volta_a_cidade(&self, roleid: RoleId) {
+        self.emitir(EventoDoMundo::VoltarParaACidade { roleid });
     }
 
     /// Ver [`EventoDoMundo::ReviverMascote`].
@@ -2137,18 +2995,32 @@ impl WorldInstance {
     /// dono matou (ou recebeu o crédito de) um monstro.
     pub fn mascote_ganha_exp_por_abate(&mut self, dono: RoleId, nivel_do_monstro: i32) {
         let dono64 = dono as i64;
-        let Some(id) = self.id_do_mascote_de(dono64) else { return };
+        let Some(id) = self.id_do_mascote_de(dono64) else {
+            return;
+        };
         let nivel_do_dono = self.players.get(&dono64).map(|p| p.level).unwrap_or(1);
         let dados = Arc::clone(&self.data_manager);
-        let Some(m) = self.mascotes.get_mut(&id) else { return };
-        let Some(modelo) = dados.modelos_de_mascote.get(&(m.info.pet_tid as u32)) else { return };
-        let exp = crate::mascote::exp_por_abate(m.info.level as i32, nivel_do_monstro, m.info.honor_point);
+        let Some(m) = self.mascotes.get_mut(&id) else {
+            return;
+        };
+        let Some(modelo) = dados.modelos_de_mascote.get(&(m.info.pet_tid as u32)) else {
+            return;
+        };
+        let exp = crate::mascote::exp_por_abate(
+            m.info.level as i32,
+            nivel_do_monstro,
+            m.info.honor_point,
+        );
         if exp <= 0 {
             return;
         }
-        let r = crate::mascote::receber_exp(&mut m.info, exp, modelo.nivel_maximo, nivel_do_dono, |n| {
-            dados.progressao.exp_do_mascote_para_subir(n)
-        });
+        let r = crate::mascote::receber_exp(
+            &mut m.info,
+            exp,
+            modelo.nivel_maximo,
+            nivel_do_dono,
+            |n| dados.progressao.exp_do_mascote_para_subir(n),
+        );
         let (ganho, subiu) = match r {
             crate::mascote::ExpDoMascote::Nada => return,
             crate::mascote::ExpDoMascote::Ganhou(g) => (g, false),
@@ -2174,7 +3046,9 @@ impl WorldInstance {
     }
 
     fn aplicar_dano_no_mascote(&mut self, alvo: i64, atacante: i64, dano: i64) {
-        let Some(m) = self.mascotes.get_mut(&alvo) else { return };
+        let Some(m) = self.mascotes.get_mut(&alvo) else {
+            return;
+        };
         if m.corpo.is_dead {
             return;
         }
@@ -2186,7 +3060,10 @@ impl WorldInstance {
             if let Some(f) = m.corpo.efeitos.renascer(rand::random::<u32>() as i32 % 100) {
                 m.corpo.hp = ((m.corpo.max_hp as f32 * f) as i64).max(1);
                 self.emitir(EventoDoMundo::Renasceu { objeto: alvo });
-                self.emitir(EventoDoMundo::EfeitosMudaram { objeto: alvo, atributos: false });
+                self.emitir(EventoDoMundo::EfeitosMudaram {
+                    objeto: alvo,
+                    atributos: false,
+                });
                 return;
             }
         }
@@ -2197,7 +3074,9 @@ impl WorldInstance {
         // (`petman.cpp:764-777`, `:1777-1797`): `hp_factor` 0, recolhido por morte, e a
         // lealdade perde 10%.
         m.corpo.is_dead = true;
-        let Some(mut m) = self.tirar_mascote(alvo) else { return };
+        let Some(mut m) = self.tirar_mascote(alvo) else {
+            return;
+        };
         let perda = (m.info.honor_point as f64 * 0.10 + 0.5) as i32;
         m.info.honor_point = (m.info.honor_point - perda).clamp(0, crate::mascote::LEALDADE_MAXIMA);
         let mut info = m.para_a_jaula();
@@ -2227,25 +3106,97 @@ impl WorldInstance {
                 }
             }
         }
+        // `GM_MSG_MASTER_NOTIFY_LAYER` → `TryChangeInhabitMode` (`petnpc.cpp:313-355`,
+        // `:791-802`): o dono mudou de camada.
+        let camadas: HashMap<i64, crate::combat::Camada> = self
+            .mascotes
+            .values()
+            .filter_map(|m| self.players.get(&m.dono).map(|p| (m.dono, self.camada_do_jogador(p))))
+            .collect();
+        let mut trocas = Vec::new();
+        for (id, m) in self.mascotes.iter_mut() {
+            let Some(c) = camadas.get(&m.dono).copied() else { continue };
+            if c == m.camada_do_dono {
+                continue;
+            }
+            m.camada_do_dono = c;
+            if crate::mascote::tenta_trocar_de_modo(m.tipo_de_habitat, c, m.corpo.habitat) {
+                trocas.push((*id, m.dono, c, m.tipo_de_habitat));
+            }
+        }
+        for (id, dono, camada, tipo) in trocas {
+            let Some(pos_dono) = self.players.get(&dono).map(|p| p.position) else { continue };
+            let Some(m) = self.mascotes.get(&id) else { continue };
+            let aqui = m.corpo.position;
+            let mut offset = pw_core::Vector3::new(pos_dono.x - aqui.x, pos_dono.y - aqui.y, pos_dono.z - aqui.z);
+            let n = (offset.x * offset.x + offset.y * offset.y + offset.z * offset.z).sqrt();
+            if n > 1.0 {
+                offset = pw_core::Vector3::new(offset.x / n, offset.y / n, offset.z / n);
+            }
+            match crate::mascote::posicao_para_mascote(&self.terreno, &self.movimento, &self.agua, aqui, camada, tipo, 0.0, offset) {
+                Ok((pos, modo)) => {
+                    let Some(m) = self.mascotes.get_mut(&id) else { continue };
+                    m.corpo.habitat = modo;
+                    m.corpo.position = pos;
+                    m.ai.reposicionado();
+                    let velocidade = m.corpo.move_speed;
+                    self.grid.update_position(id, pos);
+                    // `stop_move(pos, run_speed, 1, modo | MOVE_MODE_RUN)`.
+                    self.emitir(EventoDoMundo::MonstroParou {
+                        id,
+                        posicao: pos,
+                        velocidade,
+                        direcao: 1,
+                        modo: crate::ai::MODO_CORRER | modo.mascara_de_movimento(),
+                    });
+                }
+                Err(_) if aqui.distance(&pos_dono) > 10.0 => {
+                    // `PetRelocatePos(false)`.
+                    if let Some(m) = self.mascotes.get_mut(&id) {
+                        m.ai.pedir_reposicao();
+                    }
+                }
+                Err(_) => {}
+            }
+        }
         let terreno = &self.terreno;
         let chao = |x: f32, z: f32| terreno.altura_em(x, z);
-        let mapa = crate::navegacao::Mapa { terreno: &chao, movimento: &self.movimento };
+        let mapa = crate::navegacao::Mapa {
+            terreno: &chao,
+            movimento: &self.movimento,
+        };
         let mut acoes = Vec::new();
         let mut avisos = Vec::new();
         let mut fomes = Vec::new();
         for (id, m) in self.mascotes.iter_mut() {
-            let dono = self.players.get(&m.dono).filter(|p| p.hp > 0).map(|p| p.position);
+            let dono = self
+                .players
+                .get(&m.dono)
+                .filter(|p| p.hp > 0)
+                .map(|p| p.position);
             if let Some(a) = m.ai.tick(&mut m.corpo, dono, &alvos, delta_ms, &mapa) {
                 acoes.push((*id, a));
             }
             if let Some(modelo) = dados.modelos_de_mascote.get(&(m.info.pet_tid as u32)) {
                 let antes = m.batimentos();
                 if m.batimento(modelo, delta_ms) {
-                    avisos.push((m.dono, m.slot, m.fator_de_vida(), m.corpo.hp as i32, m.ai.em_combate()));
+                    avisos.push((
+                        m.dono,
+                        m.slot,
+                        m.fator_de_vida(),
+                        m.corpo.hp as i32,
+                        m.ai.em_combate(),
+                    ));
                 }
                 if m.batimentos() != antes {
                     if let Some((lealdade, fome)) = m.passar_tempo_de_comida(modelo) {
-                        fomes.push(EventoDoMundo::FomeDoMascote { dono: m.dono as RoleId, slot: m.slot, lealdade, fome, info: m.para_a_jaula() });
+                        fomes.push(EventoDoMundo::FomeDoMascote {
+                            dono: m.dono as RoleId,
+                            slot: m.slot,
+                            lealdade,
+                            fome,
+                            info: m.para_a_jaula(),
+                        });
                     }
                 }
             }
@@ -2261,47 +3212,97 @@ impl WorldInstance {
                     p.combate_s = p.combate_s.max(6);
                 }
             }
-            self.emitir(EventoDoMundo::VidaDoMascote { dono: dono as RoleId, slot, fator, hp });
+            self.emitir(EventoDoMundo::VidaDoMascote {
+                dono: dono as RoleId,
+                slot,
+                fator,
+                hp,
+            });
         }
         for (id, acao) in acoes {
             use crate::mascote::AcaoDoMascote as A;
             match acao {
-                A::Moveu(crate::ai::AcaoDoMonstro::Andou { destino, tempo_ms, velocidade, modo }) => {
+                A::Moveu(crate::ai::AcaoDoMonstro::Andou {
+                    destino,
+                    tempo_ms,
+                    velocidade,
+                    modo,
+                }) => {
                     self.grid.update_position(id, destino);
-                    self.emitir(EventoDoMundo::MonstroAndou { id, destino, tempo_ms, velocidade, modo });
+                    self.emitir(EventoDoMundo::MonstroAndou {
+                        id,
+                        destino,
+                        tempo_ms,
+                        velocidade,
+                        modo,
+                    });
                 }
-                A::Moveu(crate::ai::AcaoDoMonstro::Parou { posicao, velocidade, direcao, modo }) => {
+                A::Moveu(crate::ai::AcaoDoMonstro::Parou {
+                    posicao,
+                    velocidade,
+                    direcao,
+                    modo,
+                }) => {
                     self.grid.update_position(id, posicao);
-                    self.emitir(EventoDoMundo::MonstroParou { id, posicao, velocidade, direcao, modo });
+                    self.emitir(EventoDoMundo::MonstroParou {
+                        id,
+                        posicao,
+                        velocidade,
+                        direcao,
+                        modo,
+                    });
                 }
                 A::Moveu(_) => {}
                 A::Atacou { alvo, dano } => {
-                    let Some(m) = self.mascotes.get(&id) else { continue };
+                    let Some(m) = self.mascotes.get(&id) else {
+                        continue;
+                    };
                     let atraso = m.corpo.atraso_do_dano_em_ticks.clamp(0, 255) as u32 * 50;
                     let velocidade = m.corpo.ataque_em_ticks.clamp(0, 255) as u8;
-                    self.emitir(EventoDoMundo::GolpeEntreCriaturas { atacante: id, alvo, dano, velocidade });
+                    self.emitir(EventoDoMundo::GolpeEntreCriaturas {
+                        atacante: id,
+                        alvo,
+                        dano,
+                        velocidade,
+                    });
                     self.adiar_dano(alvo, id, dano as i64, atraso, false);
                 }
                 A::Reposicionar => {
-                    let Some(dono) = self.mascotes.get(&id).map(|m| m.dono) else { continue };
-                    let Some(junto) = self.players.get(&dono).map(|p| p.position) else { continue };
+                    let Some(dono) = self.mascotes.get(&id).map(|m| m.dono) else {
+                        continue;
+                    };
+                    let tipo = self.mascotes.get(&id).map(|m| m.tipo_de_habitat).unwrap_or(0);
                     // `combat_petdata_imp::OnPetRelocate` (`petman.cpp:701-718`): sem ponto
                     // válido perto do dono o mascote é recolhido — nunca vai para um pixel fora do
                     // mapa de movimento (plataforma de estrutura), de onde o passo seguinte o
-                    // assentaria no terreno por baixo dela (B114).
-                    let Some(pos) = self.posicao_valida_para_mascote(junto) else {
+                    // assentaria no terreno por baixo dela (B114). O de ar vai ao ar (B131).
+                    let lugar = self.players.get(&dono).and_then(|p| self.lugar_do_mascote(p, tipo));
+                    let Some((pos, modo)) = lugar else {
                         self.recolher_mascote(dono, 0);
                         continue;
                     };
-                    let Some(m) = self.mascotes.get_mut(&id) else { continue };
+                    let Some(m) = self.mascotes.get_mut(&id) else {
+                        continue;
+                    };
+                    m.corpo.habitat = modo;
                     m.corpo.position = pos;
                     m.ai.reposicionado();
                     let habitat = m.corpo.habitat;
                     self.grid.update_position(id, pos);
-                    if let crate::ai::AcaoDoMonstro::Parou { posicao, velocidade, direcao, modo } =
-                        crate::mascote::parada_de_reposicao(pos, habitat)
+                    if let crate::ai::AcaoDoMonstro::Parou {
+                        posicao,
+                        velocidade,
+                        direcao,
+                        modo,
+                    } = crate::mascote::parada_de_reposicao(pos, habitat)
                     {
-                        self.emitir(EventoDoMundo::MonstroParou { id, posicao, velocidade, direcao, modo });
+                        self.emitir(EventoDoMundo::MonstroParou {
+                            id,
+                            posicao,
+                            velocidade,
+                            direcao,
+                            modo,
+                        });
                     }
                 }
                 A::Sumir => {
@@ -2309,22 +3310,52 @@ impl WorldInstance {
                         self.recolher_mascote(dono, 0);
                     }
                 }
-                A::Conjurou { habilidade: h, alvo } => {
+                A::Conjurou {
+                    habilidade: h,
+                    alvo,
+                } => {
                     // `IsCastSelf` → o próprio id; senão o alvo (`skillwrapper.cpp:997-1001`).
                     let alvo = alvo.unwrap_or(id);
                     let tempo_ms = h.canto_ms.min(u16::MAX as u32) as u16;
-                    self.emitir(EventoDoMundo::MascoteConjurou { id, alvo, skill: h.id, nivel: h.nivel, tempo_ms });
+                    self.emitir(EventoDoMundo::MascoteConjurou {
+                        id,
+                        alvo,
+                        skill: h.id,
+                        nivel: h.nivel,
+                        tempo_ms,
+                    });
                 }
-                A::UsouHabilidade { habilidade: h, alvo } => {
-                    let Some((dono, slot)) = self.mascotes.get(&id).map(|m| (m.dono as RoleId, m.slot)) else { continue };
+                A::UsouHabilidade {
+                    habilidade: h,
+                    alvo,
+                } => {
+                    let Some((dono, slot)) =
+                        self.mascotes.get(&id).map(|m| (m.dono as RoleId, m.slot))
+                    else {
+                        continue;
+                    };
                     if h.recarga_ms > 0 {
-                        self.emitir(EventoDoMundo::RecargaDoMascote { dono, slot, recarga: h.recarga(), ms: h.recarga_ms });
+                        self.emitir(EventoDoMundo::RecargaDoMascote {
+                            dono,
+                            slot,
+                            recarga: h.recarga(),
+                            ms: h.recarga_ms,
+                        });
                     }
-                    self.emitir(EventoDoMundo::MascoteUsouHabilidade { id, dono, skill: h.id, nivel: h.nivel, alvo });
+                    self.emitir(EventoDoMundo::MascoteUsouHabilidade {
+                        id,
+                        dono,
+                        skill: h.id,
+                        nivel: h.nivel,
+                        alvo,
+                    });
                 }
                 A::HabilidadeEmRecarga => {
                     if let Some(dono) = self.mascotes.get(&id).map(|m| m.dono as RoleId) {
-                        self.emitir(EventoDoMundo::ErroDoMascote { dono, erro: crate::mascote::ERRO_HABILIDADE_EM_RECARGA });
+                        self.emitir(EventoDoMundo::ErroDoMascote {
+                            dono,
+                            erro: crate::mascote::ERRO_HABILIDADE_EM_RECARGA,
+                        });
                     }
                 }
             }

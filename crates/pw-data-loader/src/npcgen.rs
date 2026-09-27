@@ -250,6 +250,25 @@ pub struct NpcGenData {
     pub version: u32,
     pub instances: Vec<SpawnInstance>,
     pub grid: SpatialGrid,
+    /// Os controladores das áreas de monstro/NPC, pelo `iControllerID` — o número que o
+    /// `aipolicy.data` passa ao `TriggerSpawn`/`ClearSpawn` (`npc_generator::AddCtrlData`
+    /// registra o controlador sob `GenBlockUniqueID(ctrl.iControllerID)`,
+    /// `npcgenerator.cpp:3969-4010`; `TriggerSpawn(condition)` o procura por esse número,
+    /// `:3616-3636`).
+    pub controladores: HashMap<i32, Controlador>,
+}
+
+/// Um controlador do `npcgen.data` e o que ele liga.
+#[derive(Debug, Clone, Default)]
+pub struct Controlador {
+    /// `bActived`: as áreas dele nascem na carga.
+    pub ativo_de_inicio: bool,
+    /// Os ids das instâncias que nasceram na carga sob ele (as que o `ClearSpawn` tira).
+    pub ativos: Vec<i32>,
+    /// As instâncias que só nascem quando alguém o liga: áreas com `bInitGen` falso ou com
+    /// o controlador desligado. Os ids delas vêm **depois** de todos os da carga, para não
+    /// mudar o id de ninguém que já nascia.
+    pub pendentes: Vec<SpawnInstance>,
 }
 
 /// Onde um monstro nasce dentro da área que o gera.
@@ -607,9 +626,11 @@ impl NpcGenData {
         // continua contando como ativo — a suposição seguraa é "existe", não "sumiu".
         const NPCGENFILECTRL8_SIZE: i64 = 4 + 4 + 128 + 1 + 4 + 4 + 1 + 1 + 24 + 24 + 4;
         let mut controladores_ativados: HashMap<u32, bool> = HashMap::with_capacity(num_npc_ctrl);
+        let mut numero_do_controlador: HashMap<u32, i32> = HashMap::with_capacity(num_npc_ctrl);
         for _ in 0..num_npc_ctrl {
             let id = cursor.read_u32::<LittleEndian>()?;
-            let _controller_id = cursor.read_i32::<LittleEndian>()?;
+            let controller_id = cursor.read_i32::<LittleEndian>()?;
+            numero_do_controlador.insert(id, controller_id);
             cursor.seek(SeekFrom::Current(128))?; // nome, char[128]
             let ativado = cursor.read_u8()? != 0;
             // resto do registro: espera/parar (2×i32), 2 bools de horário, ActiveTime/
@@ -625,10 +646,20 @@ impl NpcGenData {
         // Agora que os controladores são conhecidos, cada seção vira `SpawnInstance` de
         // verdade — mesma lógica de antes, só que a decisão de "ativa no boot" usa
         // `esta_ativa` em vez do antigo `id_ctrl == 0`.
+        let mut controladores: HashMap<i32, Controlador> = HashMap::new();
+        for (id, ativo) in &controladores_ativados {
+            if let Some(n) = numero_do_controlador.get(id) {
+                controladores.entry(*n).or_default().ativo_de_inicio |= *ativo;
+            }
+        }
+        let controlador_da_area = |id_ctrl: i32| -> Option<i32> {
+            (id_ctrl != 0).then(|| numero_do_controlador.get(&(id_ctrl as u32)).copied()).flatten()
+        };
         for area in &areas_pendentes {
             if !area.b_init_gen || !esta_ativa(area.id_ctrl) {
                 continue;
             }
+            let controlador = controlador_da_area(area.id_ctrl);
             for g in &area.geradores {
                 // **Sem teto.** Isto era `count.min(10)`, e o de recurso `count.min(5)` —
                 // números sem origem no original, que usa `dwNum`/`dwNumber` como veio.
@@ -658,6 +689,9 @@ impl NpcGenData {
                         renascer_min_s: tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower).1,
                         renascer_max_s: tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower).2,
                     };
+                    if let Some(n) = controlador {
+                        controladores.entry(n).or_default().ativos.push(npc_nid);
+                    }
                     grid.insert(spawn.clone());
                     instances.push(spawn);
                 }
@@ -732,6 +766,41 @@ impl NpcGenData {
             instances.push(spawn);
         }
 
+        // As áreas de monstro/NPC que só nascem quando o controlador é ligado. Ids depois de
+        // todos os da carga.
+        for area in &areas_pendentes {
+            if area.b_init_gen && esta_ativa(area.id_ctrl) {
+                continue;
+            }
+            let Some(n) = controlador_da_area(area.id_ctrl) else { continue };
+            for g in &area.geradores {
+                for c in 0..g.quantidade {
+                    instance_counter += 1;
+                    let npc_nid = (0x80000000u32 | (instance_counter & 0x3FFFFFFF)) as i32;
+                    let (corpo_s, renascer_min_s, renascer_max_s) = tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower);
+                    controladores.entry(n).or_default().pendentes.push(SpawnInstance {
+                        instance_id: npc_nid,
+                        template_id: g.tid,
+                        spawn_type: if g.tid >= 10000 { SpawnType::Npc } else { SpawnType::Monster },
+                        pos: posicao_na_area(area.pos, area.exts, npc_nid, c),
+                        dir: area.dir,
+                        respawn_sec: g.refresh.max(1) as u32,
+                        aggressive: g.agressivo,
+                        centro_da_area: area.pos,
+                        extensao_da_area: area.exts,
+                        tipo_de_area: area.tipo,
+                        acima_do_chao: g.acima_do_chao,
+                        acima_da_agua: g.acima_da_agua,
+                        caminho: g.caminho,
+                        corre_no_caminho: g.corre,
+                        corpo_s,
+                        renascer_min_s,
+                        renascer_max_s,
+                    });
+                }
+            }
+        }
+
         // O arquivo fecha no último byte: sobra aqui é leitura de versão errada.
         let sobra = data.len() as u64 - cursor.position();
         if sobra != 0 {
@@ -747,6 +816,7 @@ impl NpcGenData {
             version,
             instances,
             grid,
+            controladores,
         })
     }
 

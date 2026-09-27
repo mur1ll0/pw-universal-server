@@ -10076,3 +10076,478 @@ comparação lado a lado.
     `README.md` reescrito para o estado atual; banner "fase de planejamento, não atualizado"
     nos sete guias antigos; `specs/00` (tabela de versões, fonte do 1.2.6) e `specs/README.md`
     (subpastas `addons_155/`, `elements_126/`). Suíte com o banco na árvore com o B120: **746 testes, 744 passaram, 0 falhas, 2 ignorados** (97 binários).
+
+122. **Sessão 2026-09-26: 1.2.6 — roteiros e passivas do `gs`, comandos do B77–B88/14/64, campos do v55 e prefixos do v7.**
+
+    ### a. Pedido
+    Commitar o B120 e a revisão (feito: `d6a6c4a`, `ff778c1`) e, em ordem: (1) roteiros de
+    habilidade do 1.2.6 a partir do `gs`; (2) passivas da raposa e bit de forma; (3) comandos do
+    B77–B88 no 1.2.6, depois 14 e 64, e os campos que faltam do v55 e do v7.
+
+    ### b. Roteiros (`specs/habilidades_126/roteiros_126.py`)
+    - Cada `StateAttack`/`BlessMe`/`TakeEffect` do `gs` 1.2.6 é executado no emulador do extrator
+      por nível; `GetPlayer/GetVictim/GetTarget` devolvem três ponteiros e o `this` de cada chamada
+      dá `P_/V_/A_/S_`; `Get*` respondem sondas (int em `EAX`, `float` na pilha x87 para os que o
+      `playerwrapper.h` 1.5.5 declara `float`); setters gravados em ordem.
+    - Expressão: a herdada quando reproduz os números; senão a mesma com `INT(a / b)` (divisão
+      inteira do C++: `S_Magicdamage * 3 * L / 100`, `S_Rand / 50`) ou `INT(...)` inteira (a 116
+      guarda o valor num `int`: 766 e não 766,59); senão ajuste (constante, afim, quadrática em
+      `L`, tabela, afim nas consultas, `X_Cls == -1 ? :`).
+    - 1.065 iguais ao herdado, 578 gerados, 3 vazios, 0 não lidos; o conferidor foi de 64 a 0.
+      O gerador reproduz as duas manuais (330, 306). A 187 do 1.2.6 é `SetProbability(11.0)`,
+      `SetTime(rand()%100 + 100)`, `SetShowicon(11)`, `SetDizzy` (VA 0x835ff10).
+    - A 312 do 1.2.6 tem `probability` `0,5·L + 1` e nenhum `SetValue`: `filter_Foxform` (VA
+      0x83080b8) toma `ratio`/`amount`/`probability` de +0x70/+0x74/+0x6c (conferido nos
+      `SetRatio/SetAmount/SetProbability`) — precisão +150 % no nível 1, não +100 — e o
+      `OnAttach` faz `ChangeShape(1)` fixo (VA 0x830b1a0). O motor usava o `value` como forma e
+      a raposa do 1.2.6 saía com forma 0; agora 1 quando não há `value`.
+    - Efeitos novos: `SetAp` (`playerwrapper.cpp:2351-2357`) e `SetReturntown` (`:1916-1939` →
+      `ReturnToTown`, `player.cpp:10949-10957`, o mesmo `GetTownPosition` do renascer).
+
+    ### c. Passivas de forma e bit de forma
+    - `eventflag` do 1.2.6 no construtor, `int` em +0x22 (layout de `skill.h:231-235`): 11 com
+      `EVENT_CHANGE`. `TakeEffect` de 323/324 no 1.2.6: `Incswim` 0,5 e `Incfight` 0,2 + 0,1·L,
+      iguais ao 1.5.5. `passivas_de_forma` no jogador, somadas ao realce só na forma de classe;
+      nado pelo `UpdateSpeed` com teto 15 (`playertemplate.h:1104-1108`).
+    - `info_player_1` do 1.2.6 (validador do cliente VA 0x584633, ordem do `MakePlayerExtendState`
+      VA 0x8062d54): forma `0x1` +1; também cadáver `0x80`, roupa `0x2000` (`SwitchFashionMode`
+      VA 0x807bb12 liga o bit 13 do `object_state`) e montado `0x80000` com `char cor, int id`
+      (+5, não os +6 do 1.5.5). `self_info_1` do 1.2.6 com a roupa.
+
+    ### d. Comandos
+    - Conferem: 163, 181, 198, 232–236, 252. **227** = 9 B (`Make<player_mounting>` VA 0x8092326:
+      id, `int`, `char`) — os 10 B do 1.5.5 eram descartados. **14** = 16 B (`Make<notify_pos>`
+      VA 0x808ed9d, sem `line`) — teleporte/volta para a cidade descartados antes. **64** =
+      `6 + 25·n` (`Make<team_member_data>` VA 0x808fe34), igual byte a byte ao comando de 56 B da
+      captura; o `char` extra é `0xff` nos 6 membros das 3 amostras. **C2S 14** do 1.2.6 =
+      `u8 index, u16 amount` (`CommandHandler` VA 0x80ce383 exige 5 B; lê `word [+3]`) — o
+      descarte parcial jogava a pilha inteira.
+
+    ### e. Dados
+    - v55: campos pelo `Check*` do `libtask.so` 1.2.6 que os lê (lista na spec 03 §3.2); medido no
+      `realm_126`: 189 diárias, 118 com prazo de 10 h, 92 com espera de 10 min, 18 pedindo
+      1.000.000 de ouro, 2 de casamento, 3 de GM, 0 teleportando ao receber.
+    - v7: `CHARRACTER_CLASS_CONFIG` (23 campos na ordem do `playertemplate.cpp`), `PARAM_ADJUST`,
+      `SECONDLEVEL` e `STONE` conferidos nos consumidores do `gs`. **`TASKDICE_ESSENCE` errado:**
+      `task_lists[8]` + `use_on_pick`, `pile_num_max`, `has_guid`, `proc_type` (`generate_taskdice`
+      lê +0x188, +0x18c == 1, +0x190). **`MINE_ESSENCE`:** `npcgen[3]` + `aggros[1]` + `permenent`
+      nos 64 B de +0x184 — lido como `npcgen_4`, dava monstro inexistente e `num` 200.0 em float;
+      com o `permenent` no `_opaco`, as **47 minas permanentes** do 1.2.6 sumiam ao ser colhidas.
+      O `generate_v7.py` passou a carregar o `PET_ESSENCE` do B111 (só estava no JSON: rodar o
+      gerador o desfazia).
+
+    ### f. Testes e o que falta
+    Testes novos: `os_roteiros_do_126_sao_os_do_gs_126`, `as_passivas_de_forma_valem_so_na_forma_de_classe`
+    (com os dados do realm), `o_portal_da_cidade_do_126_leva_ao_ponto_do_distrito`,
+    `o_descarte_parcial_do_126_le_a_quantidade_em_u16`, `o_info_player_1_do_126_leva_a_forma`,
+    `o_player_mounting_do_126_tem_9_bytes`, `o_grupo_e_o_notify_hostpos_do_126_batem_com_a_captura`,
+    `os_campos_do_v55_lidos_pelo_libtask`; a raposa passou a conferir as passivas e a precisão por
+    versão. Falta: ver em jogo; os outros bits do `state` do 1.2.6; `m_ulType`/`m_bItemNotTakeOff`
+    do v55; espinhos contra habilidade e jogador; o Portal no 1.5.5. Não publicado.
+    Suíte com o banco: **754 testes, 750 passaram, 2 falhas intermitentes, 2 ignorados** (97
+    binários). As duas são de `navegacao.rs` (não alterado neste bloco), que sorteia com
+    `rand::thread_rng`: isoladas e em 3 rodadas da lib do `pw-gs`, 55/55.
+
+123. **Sessão 2026-09-26: as 2 falhas intermitentes de `navegacao.rs` eram corrida de pasta temporária, não o sorteio.**
+
+    ### a. Reprodução
+    Binário da lib do `pw-gs` em laço, filtro `navegacao::testes`: **4 falhas em 200 rodadas com
+    `--test-threads=2`**, todas no `assert!(mov.tem_dados() …)` da linha 1143 — o `movemap` nem
+    tinha sido lido. Com `--test-threads=1`: **0 em 300**. O sorteio (`rand::thread_rng`, porte do
+    `RAND(x)` do `NPCMove.h:50`) não tinha parte nisso; o porte do B99 está certo.
+
+    ### b. Causa
+    `mapa_com_parede()` escrevia o `movemap` de teste em `temp_dir/pw_navegacao_{pid}` e o apagava
+    no fim. Os dois testes que a usam rodam em paralelo **no mesmo processo** (mesmo pid): o
+    `remove_dir_all` de um apagava os arquivos que o outro ia ler.
+
+    ### c. Correção (só teste; produção igual)
+    - Pasta única por chamada: `pw_navegacao_{pid}_{contador atômico}`.
+    - Sorteio determinístico nos testes: sob `#[cfg(test)]`, `rand_ate` lê um `StdRng` por thread
+      (`semear(semente)`); fora dos testes continua `rand::thread_rng()`.
+    - `a_perseguicao_contorna_a_parede_em_vez_de_atravessar` e `sem_obstaculo_a_perseguicao_e_uma_reta`
+      percorrem 8 sementes fixas (`SEMENTES`) e exigem o resultado em todas; o passeio semeia 0 e
+      mantém as 50 metas.
+    - Depois: **0 falhas em 300 rodadas com 2 fios e 0 em 200 com 8 fios.**
+    Spec 05 não muda (comportamento de produção igual).
+    Suíte com o banco (`--test-threads=2`): **754 testes, 752 passaram, 0 falhas, 2 ignorados**
+    (97 binários). Árvore com alterações não commitadas de outro bloco em `pw-data-loader`/`pw-gs`.
+
+124. **Sessão 2026-09-26: ícones do 1.2.6, espinho visível, regeneração com atributos, sentar e mascote.**
+
+    ### a. Relato (Tsuko, 1.2.6)
+    Muralha de Espinhos sem ícone e sem sinal do dano refletido; meditação recupera devagar;
+    morrer raposa deveria renascer humano?; meditando, recolher o mascote levantou o personagem
+    e ele travou até clicar em meditar.
+
+    ### b. Causa
+    - Ícones: o validador do `elementclient.exe` 1.2.6 exige `6 + 2 × count` no 125 (VA 0x584ba3,
+      `lea eax, [eax + eax + 6]`) e 8 bytes no 124; mandávamos o formato do 1.5.5 (com a lista
+      de parâmetros e seis `DWORD`), descartado em silêncio — nenhum ícone de bênção no 1.2.6.
+      O `gs` 1.2.6 monta o 124 com `update_visible_state(gobject*, unsigned)` (VA 0x80a6ed2).
+    - Espinho: o original anuncia o golpe devolvido pelo `gnpc_dispatcher::be_damaged`
+      (`npc.cpp:228-241`) com `AT_STATE_ATTACK_RETORT` 0x20 (`actobject.h:441`), o `MOD_RETORT` do
+      cliente (`EC_ManAttacks.h:34`, `EC_NPC.cpp:1383`); não mandávamos nada.
+    - Regeneração: `UpdatePlayerMPHPGen` soma `vitalidade / PLAYER_HP_GEN_FACTOR` (5) e
+      `energia / PLAYER_MP_GEN_FACTOR` (10) (`playertemplate.h:874-894`, `config.h:137-138`);
+      o nosso usava só a base da classe (Tsuko, energia 95: 9 de mana a menos por batimento).
+      O batimento é 1/s (`obj_manager<gplayer, TICK_PER_SEC>`) e o `sit_down_filter` já estava.
+    - Raposa na morte: `Die` só limpa `REMOVE_ON_DEATH` (`player.cpp:14108`), o `filter_Foxform`
+      não o tem (1.5.5 `skillfilter.h:4611`; `gs` 1.2.6 `push 0x8000`, VA 0x83080c1), e o
+      `Resurrect` não mexe em forma: renasce raposa. Já era assim; faltava reenviar a forma.
+    - Travamento: sentado, o original passa os comandos pelo `StayInCommandHandler`
+      (`playercmd.cpp:873-1015`), sem `SUMMON_PET`/`RECALL_PET` — ignora. Nós abríamos a sessão
+      (`PLAYER_START_PET_OP`), o cliente animava em pé e ficava no estado de sentado. E apanhar
+      levanta (`LeaveStayInState`, `player.cpp:782-788`), o que também faltava.
+
+    ### c. Correção
+    `WorldProtocol::update_ext_state`/`icon_state_notify` com o override do 1.2.6;
+    `EventoDoMundo::EspinhoDevolvido` → `SELF_ATTACK_RESULT`/`OBJECT_ATTACK_RESULT` com 0x20;
+    `recalcular_por_nivel` soma vitalidade/energia à regeneração; `SUMMON_PET`/`RECALL_PET`
+    ignorados sentado; `aplicar_dano_no_jogador` levanta (`EventoDoMundo::Levantou` → 112);
+    o renascer reenvia a forma.
+
+    ### d. Provas
+    `os_estados_e_icones_do_126_tem_o_tamanho_do_validador`, `a_regeneracao_soma_vitalidade_e_energia`,
+    `a_muralha_de_espinhos_devolve_o_golpe_do_monstro` (agora com o 24 e o 0x20),
+    `sentado_o_mascote_e_ignorado_e_apanhar_levanta`. Suíte com o banco (junto com o B122 na
+    árvore): 97 binários, 753 passaram, 2 ignorados, 2 falhas — `aceitar_forma_o_grupo…` (a
+    intermitente sob carga, 3/3 isolada) e `os_comandos_ja_migrados_nao_sobraram_no_gateway`,
+    que o braço com guarda no despacho quebrava; a checagem foi para dentro de
+    `invocar_mascote`/`recolher_mascote` e o teste passa (4/4).
+
+    ### e. O que continua faltando
+    O restante do `StayInCommandHandler` (atacar, conjurar e andar sentado também são ignorados no
+    original; aqui só o mascote); maldição levanta (`GM_MSG_ENCHANT` não amigável). Ver em jogo.
+
+125. **Sessão 2026-09-26: Loja Gold funcional nas duas versões (1.5.5 e 1.2.6).**
+
+    ### a. Sintoma / pedido
+    - Murillo, Tsuko (realm_126): comprar um item de voo na Loja Gold não fazia nada. Pedido:
+      loja funcional no 1.5.5 e no 1.2.6, com as medidas do 1.2.6.
+
+    ### b. Causa
+    - O C2S 106 `MALL_SHOPPING` não era tratado (removido no A51); o `gshop.rs` tinha um
+      registro de 24 B inventado; o `PLAYER_CASH` levava o dinheiro do personagem, não o cash
+      (`GetMallCash()`, `gs/playercmd.cpp:176`); `mall_item_buy_failed` escrevia 4 B em vez de
+      `{short, char}` (`gs/player.cpp:5773-5777`).
+    - Medidas completas em `docs/evidencias/LOJA_GOLD_DIAGNOSTICO.md`. 1.2.6 pelo `gs` 1.2.6:
+      id 106 (tabela 0x84f4ce4), corpo `6+6·count` (VA 0x80d1637), `PlayerDoShopping(unsigned,
+      const short*)` lendo `short×3` com sinal (VA 0x807f9f1), erros 7/94/16, `load_malldata`
+      com `buy` de 12 B `{price, data, time}` (VA 0x81e877c). Registro do `gshop.data`: 1436 B
+      (1.5.5 VIP) e 1288 B (1.2.6), fechando no último byte. O `gshopsev.data` do realm_155 é
+      outra lista (2262 × 1726) — a loja sai do arquivo do cliente.
+
+    ### c. Correção
+    - `pw-data-loader/src/gshop.rs`: leitor real (`OfertaDaLoja`, `OpcaoDeCompra`,
+      `FormatoDoGshop`), layout escolhido pelo fechamento no último byte; sem layout, só o carimbo.
+    - `WorldProtocol::pedido_da_loja_gold` (12 B no padrão, 6 B com sinal no v126).
+    - `pw-storage`: `cash_da_conta` e `gastar_cash_da_conta` (débito atômico, `>=` na mesma
+      instrução) pelo id do personagem.
+    - `pw-gs`: `comprar_na_loja_gold` (porte do `PlayerDoShopping`, conferências na ordem do
+      original, estorno se a bolsa encher entre a conferência e a entrega); `PLAYER_CASH` com o
+      cash da conta nos três lugares (`GET_EXT_PROP`, `QUERY_CASH_INFO`, `GET_ALL_DATA`).
+    - `mall_item_buy_failed(i16, u8)`, fora do `LAYOUT_DIVERGE`.
+
+    ### d. Provas
+    - `pw-data-loader/tests/gshop_do_realm.rs` 3/3 (contagens medidas: 1726/205 ofertas no 155,
+      668 no 126, 975 opções, 38 VIP, 55 brindes, 20 limites).
+    - `pw-protocol/tests/layouts_do_126.rs`: pedido nos dois tamanhos e 271 = `0f 01 9c 01 00`.
+    - `pw-gs/tests/subcomandos_no_mundo.rs::comprar_na_loja_gold_*` (155 e 126) com o banco:
+      saldo 1000 → compra de 700 → `OBTAIN_ITEM` + `PLAYER_CASH` 300, item na bolsa, dinheiro do
+      personagem intacto; depois 16, 94 (id errado), 94 (opção vazia), 226 (VIP), sem cobrar.
+    - `get_all_data_respeita_os_sinalizadores_do_cliente` e `o_proprio_estado_sai_do_personagem…`
+      travavam o `PLAYER_CASH` com o dinheiro do personagem; passam a conferir o cash da conta.
+    - Suíte com o banco (`--workspace --no-fail-fast`): **762 passaram, 0 falharam**.
+
+    ### e. O que continua faltando
+    - Período de venda, limite de compras, `IsItemForbidShop`, VIP, validade do item comprado
+      (a bolsa não guarda validade), variante `ADDON_LIST_SHOP` dos equipamentos,
+      `GET_MALL_ITEM_PRICE` (118, ainda no `gateway.rs` com tabela vazia). Ver em jogo.
+
+126. **Sessão 2026-09-26: dano no tempo com número, golpe que para com habilidade em recarga, IA de combate do monstro.**
+
+    ### a. Sintoma / pedido
+    - Murillo, WRA (Guerreiro, realm_126): (1) o Soco de Uma Polegada (2) põe sangramento no
+      monstro, mas "não toma dano"; (2) com o golpe normal em curso, apertar uma habilidade em
+      recarga interrompe o golpe; (3) monstros deveriam usar habilidade de longe ou em certo
+      momento do combate — conferir no fonte do 1.5.5 todos os comportamentos de combate e
+      implementar o que falta no 155 e no 126.
+
+    ### b. Causa
+    - (1) O sangramento **tirava** vida: no log, o monstro -2147476694 foi de 116 a 86 com um
+      golpe de 21 e de 86 a 63 com um de 14 — tiques de 9 a cada 3 s (75,9 de `Amount` no nível 1,
+      menos a defesa, em 15 s). Faltava o **número**: o original manda `HURT_RESULT` (122) ao
+      atacante e `BE_HURT` (121) à vítima jogador em cada tique (`gnpc_dispatcher::be_hurt`,
+      `npc.cpp:188-199`; `gplayer_dispatcher::be_hurt`, `player.cpp:3380-3396`); nenhum dos
+      dois existia no servidor.
+    - (2) O cliente 1.5.5 não manda `CAST_SKILL` com a habilidade em recarga (`ReadyToCast()`,
+      `EC_HostPlayer.cpp:2833-2836`), e o original, recebendo, também encerraria o golpe
+      (`AddSession` + `GM_MSG_OBJ_SESSION_REPEAT` + `StartSkill` recusando,
+      `actobject.cpp:180-189`, `1180-1213`, `actsession.cpp:477-482`). No log de 4 h do WRA
+      **nenhum** `CAST_SKILL` foi recusado por recarga; houve duas pausas de ~2 s no golpe
+      (18:59:38 e 19:15:51, a segunda quando a habilidade 2 — 8 s de recarga, usada às 43,6 —
+      ficaria pronta às 51,6) sem habilidade no meio. O golpe parou por outro comando
+      (`CANCEL_ACTION`, movimento ou `CheckAttack`), que o log não registrava. **Diagnosticado,
+      não corrigido.**
+    - (3) Nenhum monstro conjurava: a `ai.rs` tinha só perseguir e bater. O original tem três
+      camadas: a estratégia do `MONSTER_ESSENCE` (`id_strategy` → `AddPrimaryTask`,
+      `aipolicy.h:1214-1277`), os eventos de 75/50/25 % de vida (`TriggerEvent`,
+      `aipolicy.h:1343-1370`) e o `aipolicy.data`. Contagem (`--example ia_de_monstro`): no
+      1.5.5, 2.179 monstros de estratégia 3 (magia de longe), 1.048 fixos mágicos, 299 mágicos,
+      246 de distância, 717 fixos, 103 fugitivos, 148 inertes; no 1.2.6, 1.216/60/67/165/112/19/15.
+
+    ### c. Correção
+    - `S2CGamedataSend::hurt_result` (8 B) e `be_hurt` (9 B), mesmos tamanhos no cliente 1.2.6;
+      `EventoDoMundo::DanoNoTempo` emitido nos tiques de jogador e monstro (crédito do dono
+      quando o mascote pôs o efeito).
+    - `debug!` em `CANCEL_ACTION`, na sessão de golpe cedendo à fila (novo alvo, cancelar,
+      andar) e no `CheckAttack` recusando.
+    - `ai.rs`: `Estrategia` (0–7), `PerfilDeCombate`, sessões `Conjurando`/`Afastando`/`Serie`;
+      porte do `ai_melee/range/magic/magic_melee/fix_melee/fix_magic/runaway_task`,
+      `GetPrimarySkill`, `session_npc_skill` (canto, efeito, execução; sem recarga/mana),
+      `session_npc_attack` com `_attack_times`, `session_npc_range_attack` com `_auto_interrupt`,
+      `keep_out`/`flee` (reta, sem o agente), `TriggerEvent`/`RollBack`.
+    - `world.rs`: `perfil_de_combate` (habilidades pelo tipo do catálogo, eventos sorteados no
+      nascimento), `habilidade_de_monstro`, eventos `MonstroConjurou`/`MonstroUsouHabilidade`,
+      `habilidade_de_monstro_no_jogador`; o renascimento mantém o perfil.
+    - `bus_server/habilidades.rs`: `aplicar_habilidade_do_monstro` (motor de roteiros com o
+      monstro como conjurador; `HOST_SKILL_ATTACKED`/`OBJECT_SKILL_ATTACK_RESULT`/`ENCHANT_RESULT`),
+      `alvos_do_monstro` por área; `Conjurador::e_jogador` — o ¼ do dano no tempo é só de
+      jogador em jogador (`playerwrapper.cpp:1279-1287`).
+    - `combat.rs`: `golpe_de_habilidade_de_monstro` (`GeneratePhysicDamage`/`GenerateMaigicDamage2`).
+    - `monstros.rs`: `skill_hp75/50/25` com as 5 entradas (inclusive id 0) e
+      `sortear_evento_de_vida` (`abase::RandSelect`).
+
+    ### d. Provas
+    - `pw-gs/tests/ia_de_combate_do_monstro.rs` 10/10: estratégia 3 conjura no alvo a 12 m sem
+      sair do lugar e o efeito sai no fim do canto; perto, 9–10 golpes (`attack_speed` 20) e
+      depois magia; a 2 se afasta e conjura, sem golpe normal; fixo não persegue; distância bate
+      de 12 m; inerte parado; fugitivo foge; evento de 75 % (e só ele numa queda direta); nada
+      com política; `RandSelect`.
+    - Suíte com o banco (`--workspace --no-fail-fast`): **770 passaram, 2 falharam** —
+      `aceitar_forma_o_grupo_e_avisa_os_dois_com_dados_reais` e
+      `o_guia_selvagem_do_126_entrega_a_missao_inicial_1177`, ambos por tempo esgotado (5 s
+      sem o comando esperado) com a suíte inteira em paralelo; o `subcomandos_no_mundo` sozinho
+      passa **112/0**. No B125 eram 762/0: a diferença merece olhar (mais custo por tique?).
+
+    ### e. O que continua faltando
+    - **Intérprete do `aipolicy.data`** (spec 05 §4): o "usa habilidade em determinado
+      momento" dos 645 monstros com política no 1.2.6 e 4.442 no 1.5.5.
+    - Interromper o canto do monstro ao apanhar; estratégias com selo (`ai_silent_*`); os
+      níveis de habilidade acima do `max_level` do catálogo; o agente `keep_out`; ódio pelo
+      tique do dano no tempo (o nosso põe, o original não).
+    - (2) ver no log do próximo teste o que encerrou o golpe.
+    - O `cargo fmt` desta sessão reformatou `bus_server/mascote.rs` (≈400 linhas, só forma) e
+      trechos de `bus_server.rs`, `habilidades.rs`, `world.rs`, `combat.rs`; o projeto não usa
+      o `rustfmt` padrão. **No B127 voltaram ao `HEAD` o `mascote.rs` e os outros 26 arquivos
+      só reformatados**; os que têm trabalho não commitado seguem com a forma do `rustfmt`.
+
+127. **Sessão 2026-09-26: `mascote.rs` de volta ao `HEAD` e o intérprete do `aipolicy.data`.**
+
+    ### a. Pedido
+    - Murillo: corrigir o que o `cargo fmt` fez no `mascote.rs` (funcional nos dois realms) e
+      implementar o `aipolicy.data` — o "usar habilidade em determinado momento" dos monstros.
+
+    ### b. `mascote.rs`
+    - Comparado token a token com o `HEAD`: 26 vírgulas finais, 7 `;` e 3 pares de chaves a
+      mais — só forma, nenhuma lógica. Ele não tinha mudança própria na árvore; voltou ao
+      `HEAD` (`git checkout`, a pedido). O `cargo fmt -p pw-gs` da sessão anterior tinha
+      passado por **todo o `pw-gs`**: outros 26 arquivos que estavam limpos (`src/mascote.rs`,
+      `economia.rs`, `geracao.rs`, `habilidades.rs`, `missoes.rs`, `npc.rs`, `progressao.rs`,
+      `main.rs`, 11 exemplos, 7 testes) tinham diferença só de forma (conferido token a token)
+      e também voltaram ao `HEAD`. Os 20 que seguem alterados têm trabalho real (B122–B127) e a
+      forma do `rustfmt` misturada a ele. Depois da volta: lib + testes de IA/política 87/0.
+
+    ### c. Evidência do original
+    - `aitrigger.h`/`aitrigger.cpp` (condições, alvos, operações, `policy` com as listas e os
+      timers), `ai/policy_loader.cpp` (tipo do arquivo → classe; `bRun` fora das listas;
+      `bActive`, `bAttackValid`), `aipolicy.cpp` (`OnHeartbeat`, `EnableCombat`, `OnDeath`,
+      `ai_skill_task_2`), `aggrolist.cpp` (primeiro/último/metade/1 em todos), `npc.cpp`
+      (`OnDamage`, `KillTarget`), `ainpc.cpp:47-88` (fala local/grito/sistema/instância),
+      `npcgenerator.cpp:3616-3636`, `3969-4010` (`TriggerSpawn` pelo `iControllerID`),
+      `exptypes.h:2957-2959` (`local_var[3]`), `EC_GameSession.cpp:4953-4965` (o cliente mostra
+      fala de NPC do `ChatMessage` 80), IR GNET (`ChatSingleCast` 94 `gamed`→`glinkd`).
+    - As capturas do 1.2.6 não têm fala (elo interno sem 80/94; o lado do cliente é cifrado):
+      o `srclevel` do `ChatMessage` no 1.2.6 fica sem medida.
+
+    ### d. Correção
+    - `pw-gs/src/politica.rs` (novo): compilação (`PoliticaDeIa::compilar`), estado por monstro
+      (ligados, timers, `local_var`), eventos (batimento em combate/paz, começo/fim de
+      combate, morte, dano, matar) e as operações; o que precisa do mundo vira `Pedido`.
+    - `ai.rs`: política na IA (`rodar_politica`, `ao_morrer`/`ao_apanhar`/`ao_matar_o_alvo`),
+      tarefas da política (`ai_skill_task_2`, `op_attack`, `op_flee`) antes da estratégia.
+    - `world.rs`: `ia_do_monstro` (política em cache + habilidades citadas + globais),
+      `nascer_da_instancia` (a carga e o controlador usam a mesma), `acionar_controlador`,
+      `escoar_pedidos_das_politicas`, ganchos de morte/dano/abate; evento `MonstroFalou`.
+    - `bus_server.rs`: `monstro_falou` → `BusMessage::ChatSingleCast` a quem ouve.
+    - `pw-bus`: `ChatSingleCast` (94) com a ordem do IR; `pw-link`: entrega como `ChatMessage` (80).
+    - `pw-data-loader`: `NpcGenData::controladores` (ids da carga + pendentes, ids depois dos
+      da carga); `TemplateDeMonstro::variaveis_locais` (`param1..3`).
+
+    ### e. Provas
+    - `politica.rs` 5/5 (timer de 3 s dispara aos 3/6/9 s; `hp_less` uma vez por combate;
+      `Pular` para a lista; ódio; prefixo da fala).
+    - `tests/politica_do_realm.rs` 3/3 com os dados reais: **1.2.6 — 258 políticas, 0 operação e
+      0 condição sem porte**; 1.5.5 — 2.771 políticas, o que falta é só o conhecido
+      (`InvocarMonstro` 703, `AndarPorCaminho` 161, `TocarAcao` 114, …, 93 condições); o monstro
+      7088 (política 75) do 1.2.6 conjura a habilidade 703 do timer do começo de combate.
+    - `pw-bus` 21/0 (ida e volta e ordem do IR do `ChatSingleCast`).
+    - Suíte com o banco (`--workspace --no-fail-fast`): **779 passaram, 1 falhou** —
+      `aceitar_forma_o_grupo_e_avisa_os_dois_com_dados_reais`, tempo esgotado esperando o 64
+      com a suíte em paralelo (o mesmo do B126); o `subcomandos_no_mundo` sozinho passa 112/0.
+
+    ### f. O que continua faltando
+    - Invocar monstro/NPC/mina, caminhos, `TocarAcao`, histórico, missões e PvP de facção da
+      política; a espera/parada dos controladores; `_max_move_range`; o dono do mascote no
+      alvo redirecionado; as duas perseguições do `ai_skill_task_2`.
+    - Ver em jogo: fala no chat e no balão (1.5.5 e 1.2.6 — o `srclevel` do 1.2.6), habilidade
+      no tempo, controlador.
+
+128. **Sessão 2026-09-26: correções do teste da Tsuko no 1.2.6 — IA de perseguição, voo, varinha, compra.**
+    Relato do Murillo (Tsuko, realm 126, B122–B127 publicados às 19:32): monstro persegue para
+    sempre; renasce já atacando; detecta de longe; Varinha Curta do Iniciante pega do chão foi
+    parar na bolsa de missão como "Portal da Cidade"; voo de 15 m/s lento; dano reduzido em voo;
+    comprar um bracelete da Alfaiate não fazia nada.
+    - **Varinha (confirmado no banco):** `character_items` da Tsuko, `container_type` 5 (bolsa de
+      missão) slot 0 = 12503 (`WEAPON_ESSENCE` "☆☆☆Varinha Curta do Iniciante", `proc_type` 51 =
+      0x33, que tem o 0x20 `ITEM_PROC_TYPE_TASKITEM`). A coleta mandava à bolsa de missão todo
+      item com esse bit. Original: `gplayer_imp::OnPickupItem` (`player.cpp:8933-8962`) faz
+      sempre `_inventory.Push` e `pickup_item(..., 0, rst)`; a bolsa de missão só recebe pela
+      entrega de missão (`taskman.cpp:326`). Corrigido em `jogo.rs` (pegar). O nome "Portal da
+      Cidade" era o cliente mostrando a arma na bolsa errada. **O item já gravado continua no
+      contêiner 5** — mover com o SQL abaixo, com a Tsuko fora do jogo. A coleta de mina segue
+      usando a bolsa de missão para item de missão (atalho do `OnTaskMining`), sem mudança.
+    - **Compra no NPC do 1.2.6:** o log mostrava 3 diálogos com o NPC −2147465644 e nenhuma
+      compra — o `comprar` saía calado com a lista vazia. A captura da VM 1.2.6
+      (`_sync/capturas/full_interno.pcap`, subcomando 37 #0, `pw-pcapdiff --do-cliente`):
+      `service_type 1`, `len 20`, `money 0, item_count 1, {1947, 194, 1000}` — cabeçalho de
+      **8 B**, não os 28 B do 1.5.5. `WorldProtocol::bytes_do_cabecalho_da_compra` (28; v126 = 8)
+      e log de pedido sem itens.
+    - **Voo:** `fly_speed` ficava no do `ptemplate` (3,0 m/s). O original soma o `speed_increase`
+      do item (`flysword_item::OnActivate`, `item_flysword.h:126-129`) e limita a 20
+      (`playertemplate.h:1101-1110`, `config.h:109`). Lido do offset 20 do conteúdo gravado (o da
+      Tsuko, 15732: `0x41700000` = 15,0). `Equipamento::velocidade_de_voo`.
+    - **Dano em voo:** não existia. `gnpc_imp::AdjustDamage` (`npc.cpp:1727-1768`): golpe de
+      jogador/mascote em monstro vale metade do ar no chão/água, do chão na água, da água no
+      chão/ar; o monstro batendo no jogador não tem ajuste por camada. `Golpe.camada`,
+      `Defesa.camada_de_npc`, `combat::ajuste_de_camada_no_npc`. Falta a camada "água" do jogador.
+    - **Perseguição infinita:** só perdíamos o alvo além do `aggro_range`, e a distância não cresce
+      enquanto o monstro corre atrás. Original: `aggro_policy::_cur_time` = `aggro_time` (15 s nos
+      monstros do começo), −1 por batimento (`ainpc.h:259-275`); renovam a lista ficar não vazia,
+      o topo ganhar ódio (`AddRage == 0`) e o golpe do monstro (`RefreshAggroTimer`,
+      `npcsession.cpp:73/284/690/741`). Zerou → sai o primeiro → lista vazia → `RollBack`
+      (`aipolicy.cpp:204-231`): a mais de 10 m de casa, `ai_returnhome_task` com
+      `SetInvincibleFilter(true, 22)` (conferido no `gs` 1.2.6, VA 0x80db6e5), sem notar ninguém
+      nem aceitar ódio; `EndTask` tira. Vida: `gnpc_imp::OnHeartbeat` (`npc.cpp:1946-1958`) — fora
+      de combate enche tudo, em combate `hp_gen`. **Não havia regeneração de monstro nenhuma.**
+    - **O efeito sobre o monstro:** `invincible_filter::OnAttach` liga o estado visível 49 no
+      1.5.5; no `gs` 1.2.6 (VA 0x812f6ee, desmontado com pyelftools+capstone) **não liga estado
+      nenhum**. `Efeitos::estados_visiveis` põe o 49 com `invencivel_s > 0`; o 1.2.6 só manda os
+      estados 0..31, então fica igual ao original. A volta e o fim dela emitem `EfeitosMudaram`.
+    - **Detecção:** usávamos 15 m (o raio do aviso do jogador) para todo agressivo; o monstro só
+      aceita a menos de `sight_range + body_size` (`ainpc.h:851-854`, `ainpc.cpp:251-252`) —
+      Inseto de Jade 6 + 1,0, Espadachim Minotauro 8 + 1,2. `MonsterAi::raio_de_deteccao`.
+    - **Renasce atacando (diagnóstico, falta ver em jogo):** o renascimento já refaz a IA com a
+      lista vazia (`world.rs`, `Reborn`); não é ódio antigo. A causa provável é a detecção de 15 m:
+      o agressivo renasce em outro ponto da área e já via a Tsuko de longe.
+    - Testes novos (`ia_de_combate_do_monstro.rs`): quem só foge faz o monstro desistir em 5–7 s
+      com `aggro_time` 5, voltar invencível (estado 49, dano 0, ódio recusado) e chegar com a vida
+      cheia; quem fica ao alcance continua odiado; detecção a 7 m; golpe do ar = metade; a
+      velocidade do item da Tsuko = 15,0. `npc.rs`: a compra capturada do 1.2.6.
+    - SQL para a varinha (Tsuko fora do jogo; slot 6 da bolsa comum estava livre):
+      `UPDATE character_items SET container_type = 0, slot = 6 WHERE character_id = 11455 AND
+      container_type = 5 AND slot = 0 AND item_id = 12503;`
+
+129. **Sessão 2026-09-26: roupa feminina aparecia como "Masculino".**
+    Relato: a Tsuko comprou o maiô feminino na Loja Gold, equipou, o inventário de roupas o
+    mostrava com restrição "Masculino" e, tirado, não equipava mais. No banco, 15767 e 15770
+    (`FASHION_ESSENCE`, `gender` 1 nos dois realms) estavam **sem conteúdo** (`extra_data`
+    vazio): o `empilhar_gerado` só gerava equipamento, item de voo e ovo. O cliente lê o
+    `IVTR_ESSENCE_FASHION` (`EC_IvtrTypes.h:262-267`: `int require_level; u16 color; u16
+    gender`) e, sem ele, `gender` 0 = masculino. Original: `generate_fashion_item`
+    (`generate_item_temp.h:1642-1712`) escreve nível, cor `RandNormal(0, 0x7FFF)`, sexo e a
+    etiqueta de fabricante — 10 B; o `gs` 1.2.6 na mesma ordem (VA 0x81f6fdc-0x81f7030). O v156
+    e o v7 não têm o `combined_switch` (cor por faixa HSV do 1.5.5 mais novo).
+    - `GameDataManager::conteudo_da_roupa`; `Bolsa::empilhar_gerado` gera a roupa (cor por peça).
+    - Compra no NPC: roupa e item de voo passam pelo gerador (`get_item_for_sell` →
+      `generate_fashion_item(..., SPECIFIC(0))`, `itemdataman.cpp:1471`; a tendência `ANY` ainda
+      sorteia a cor). Os demais equipamentos da loja continuam sem conteúdo (o original usa
+      `ADDON_LIST_SHOP`, sem porte).
+    - Teste `pw-data-loader/tests/roupa_do_realm.rs`: 15770 nos dois realms = 10 B, nível 5,
+      `gender` 1; arma não é roupa.
+    - As duas peças já gravadas (Tsuko estava no jogo — não mexido). Com ela fora:
+      `UPDATE character_items SET extra_data = decode('05000000055101000000','hex') WHERE
+      character_id = 11455 AND item_id = 15767;` e o mesmo com `'050000007f2601000000'` para a
+      15770.
+
+130. **Sessão 2026-09-26: captura de mascote — Domesticar Animal (328).**
+    Relato: a Tsuko tirou vida de um Gato de Presas Afiadas e usou Domesticar Animal; nada
+    aconteceu (nem falha, nem sucesso). Log: `habilidade 328 — sem porte: Entrap`.
+    - Original (`PlayerWrapper::SetEntrap`, `playerwrapper.cpp:2460-2479`; o `gs` 1.2.6 igual,
+      VA 0x8305982 — `or dl, 0x80`, `or ah, 2`, `or dh, 1`, `TransferPetEgg`, `Disappear`):
+      sem ovo (`GetPetEggID` = `id_pet_egg_captured`, `npcgenerator.cpp:146`) ou conjurador de
+      nível menor que o alvo → 0x80; chance `((máx − vida)/máx)² × 100 × (1,35 − nível/100 +
+      nível_hab × 0,05)` (a divisão `GetLevel()/100` é inteira) → 0x200 e ovo, senão 0x100.
+    - Ovo: `OI_TransferPetEgg` manda `GM_MSG_MOB_BE_TRAINED` (`npc.cpp:2526-2529`); o jogador
+      (`player.cpp:2198-2225`) põe `get_item_for_sell(ovo)` no primeiro vazio e manda
+      `obtain_item`; sem vazio, `ERR_INVENTORY_IS_FULL`. Monstro: `OI_Disappear` (`npc.cpp:
+      2532-2551`) — some sem morte nem drop, volta ao gerador.
+    - Cliente: `MOD_IMMUNE` 0x80, `MOD_ENCHANT_FAILED` 0x100, `MOD_SUCCESS` 0x200
+      (`EC_ManAttacks.h:36-38`), no `ENCHANT_RESULT` (`SendClientEnchantResult`,
+      `skillwrapper.cpp:552-556`). O 1.2.6 passa a marca em dois `char` (`immune & 0xff`,
+      `(immune & 0xff00) >> 8`, `SkillWrapper::Attack(enchant_msg)`, VA 0x831bb88-0x831bb9f) —
+      o que o `enchant_result` do v126 já escrevia; só faltava o servidor pôr a marca (ia 0).
+    - Código: `TemplateDeMonstro::ovo_de_captura`; `Mudanca::imune` no `ENCHANT_RESULT`;
+      `aplicar_um` trata `Entrap`/`Entrap2`; `WorldInstance::capturar_monstro` (morto sem
+      crédito nem política de morte, corpo de 1 ms, renasce pelo gerador) e o evento
+      `MonstroCapturado` → `receber_ovo_capturado` (`empilhar_gerado`, que dá o conteúdo do ovo).
+    - Testes: `chance_de_captura` (lib `pw-gs`); `roupa_do_realm.rs`: 3316 → ovo 10765 com
+      conteúdo nos dois realms.
+
+131. **Sessão 2026-09-27: mascote de ar (Vespão Pequeno) andava no chão.**
+    Relato: a Tsuko capturou um Vespão Pequeno, incubou e invocou; ele só andava no chão.
+    O `PET_ESSENCE` 10521 tem `inhabit_type` 2 (ar) nos dois realms, e o corpo já recebia
+    `Habitat::Ar` — mas (1) o `mover_ate` do mascote usava sempre o agente de chão
+    (`SeguirAlvo`, que assenta cada passo no terreno), (2) o lugar ao invocar/reposicionar era só
+    o `FindGroundPos`, e (3) a entrada em cena não levava `GP_STATE_NPC_FLY`: o cliente põe o NPC
+    em `MOVEENV_AIR` só por esse bit (`CECNPC::Init`, `EC_NPC.cpp:411-416`) ou por um passo com a
+    marca de ar (`:1013-1025`).
+    - Original: `pet_gen_pos::FindValidPos`/`IsValidInhabit`/`Find{Ground,Air,Water}Pos`
+      (`petman.cpp:10-286`); o 1.2.6 tem os mesmos (`combat_petdata_imp::FindValidPos` VA
+      0x814753c, `FindAirPos` VA 0x8147a3e com 1,5 em 0x8504680/0x8504688; `CreatePetBase` faz
+      `TakeOff` para o de ar, VA 0x80f1ed1). Passo do NPC de ar: `CNPCChaseOnAirStraightAgent`
+      (reta), limitado pelo `GetLastReachablePos(..., Env_OnAir)` (`pathfinding.cpp:80-86`).
+      Troca de modo: `GM_MSG_MASTER_NOTIFY_LAYER` → `TryChangeInhabitMode` (`petnpc.cpp:313-355`,
+      `791-802`).
+    - O bit: `STATE_NPC_FLY` 0x10000 / `STATE_NPC_SWIM` 0x20000 (`object.h:192-193`, iguais no
+      1.5.3); no NPC é "voa" — no jogador o mesmo valor é `STATE_EFFECT`. No `gs` 1.2.6 o
+      `MakeObjectState<gnpc>` (VA 0x80630aa) liga 0x10000 por um byte do `gnpc`; o validador do
+      caso 16 do cliente 1.2.6 não soma bytes por ele.
+    - Código: `mascote::posicao_para_mascote` (+ `procurar_posicao`), `tenta_trocar_de_modo`,
+      `MascoteAi::mover_em_linha_reta` (a mesma altura do monstro de ar, `MonsterAi::altura`),
+      `pedir_reposicao`; `Mascote::{tipo_de_habitat, camada_do_dono}`;
+      `WorldInstance::{camada_do_jogador, lugar_do_mascote}` na invocação, no reposicionamento e
+      no tique; `Habitat::estado_de_ambiente`; `mascote_entra(..., ambiente)` nas duas versões.
+    - Falta: `IsValidSPPos` (espaço aéreo/aquático do `CGlobalSPMap`, não lido — o primeiro
+      sorteio é aceito), o `nofly` do mapa, e o mesmo bit na entrada dos **monstros** de ar (eles
+      aparecem no chão no cliente até o primeiro passo com a marca 0x40).
+    - Testes: `mascote.rs` (lugar por habitat e camada; Vespão sobe até o dono a 30 m com a marca
+      de céu); `mascote_por_versao.rs` (0x11000 no `state` do 1.2.6, 31 B).
+
+132. **Sessão 2026-09-27: monstro renascia sangrando e vinha atacar.**
+    Relato (WRA, 1.2.6): um Filhote de Doninha (não agressivo) morto enquanto sangrava renasceu
+    com o sangramento e veio atacar.
+    - Causa: `Efeitos::ao_morrer` só era chamado na morte por dano no tempo, pela habilidade do
+      roteiro e pela captura. A morte por **golpe normal** (`WorldInstance`, `aplicar` do dano
+      adiado) e pela habilidade da tabela antiga (`bus_server.rs`, o dano sem stub) marcavam
+      `is_dead` e deixavam os filtros; o `matar_monstro` também não limpava; e o renascimento não
+      tocava neles. O batimento dos filtros pula monstro morto — então o sangramento ficava
+      parado no corpo e voltava a correr no monstro renascido, e cada tique dá ódio a quem o pôs
+      (`add_threat(origem)`): o não agressivo atacava.
+    - Original: `gnpc_imp::OnDeath` tira os filtros da morte, e `gnpc_imp::Reborn` ainda limpa as
+      maldições (`_filters.ClearSpecFilter(filter::FILTER_MASK_DEBUFF)`, `npc.cpp:1978`).
+    - Correção: `ao_morrer` nos dois caminhos que faltavam e no `matar_monstro`;
+      `Efeitos::ao_renascer` (tira toda maldição — os seis danos no tempo são maldição na ficha —
+      e o invencível) no renascimento do gerador.
+    - Teste: `efeitos::o_renascimento_tira_o_dano_no_tempo`.

@@ -85,8 +85,27 @@ impl V3 {
 }
 
 /// `RAND(x)` = `x * rand() / RAND_MAX` (`NPCMove.h:50`).
+#[cfg(not(test))]
 fn rand_ate(x: f32) -> f32 {
     rand::thread_rng().gen::<f32>() * x
+}
+
+// Nos testes o sorteio vem de um gerador semeado por thread (`semear`), para que cada rodada
+// seja reproduzível; em produção continua o `thread_rng` acima.
+#[cfg(test)]
+thread_local! {
+    static GERADOR_DE_TESTE: std::cell::RefCell<rand::rngs::StdRng> =
+        std::cell::RefCell::new(rand::SeedableRng::seed_from_u64(0));
+}
+
+#[cfg(test)]
+fn semear(semente: u64) {
+    GERADOR_DE_TESTE.with(|g| *g.borrow_mut() = rand::SeedableRng::seed_from_u64(semente));
+}
+
+#[cfg(test)]
+fn rand_ate(x: f32) -> f32 {
+    GERADOR_DE_TESTE.with(|g| g.borrow_mut().gen::<f32>() * x)
 }
 
 /// O mapa que os agentes consultam: terreno (`GetTerrainHeight`) e movimento.
@@ -175,7 +194,14 @@ impl Bfs {
             ant_z: NO_INVALIDO,
             custo: Self::manhattan(inicio.0, inicio.1, meta.0, meta.1),
         };
-        Self { aberta: vec![atual], fechada: HashMap::new(), atual, meta, alcance: alcance + 0.001, estado: EstadoBusca::Buscando }
+        Self {
+            aberta: vec![atual],
+            fechada: HashMap::new(),
+            atual,
+            meta,
+            alcance: alcance + 0.001,
+            estado: EstadoBusca::Buscando,
+        }
     }
 
     /// `StepSearch(nSteps)`.
@@ -184,7 +210,16 @@ impl Bfs {
             return;
         }
         // `NeighborD`: esquerda, direita, cima, baixo e as quatro diagonais.
-        const VIZINHOS: [(i16, i16); 8] = [(-1, 0), (1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)];
+        const VIZINHOS: [(i16, i16); 8] = [
+            (-1, 0),
+            (1, 0),
+            (0, 1),
+            (0, -1),
+            (1, 1),
+            (1, -1),
+            (-1, 1),
+            (-1, -1),
+        ];
         let mut contador = 0;
         while self.estado == EstadoBusca::Buscando && !self.aberta.is_empty() && contador < passos {
             // `PopMinCost`: o primeiro de menor custo; o último da lista ocupa o lugar dele.
@@ -195,10 +230,16 @@ impl Bfs {
                 }
             }
             self.atual = self.aberta.swap_remove(i_min);
-            let (dx, dz) = (self.atual.x as i32 - self.meta.0, self.atual.z as i32 - self.meta.1);
+            let (dx, dz) = (
+                self.atual.x as i32 - self.meta.0,
+                self.atual.z as i32 - self.meta.1,
+            );
             if (((dx * dx + dz * dz) as f32).sqrt()) < self.alcance {
                 self.estado = EstadoBusca::Achou;
-                self.fechada.insert((self.atual.x, self.atual.z), (self.atual.ant_x, self.atual.ant_z));
+                self.fechada.insert(
+                    (self.atual.x, self.atual.z),
+                    (self.atual.ant_x, self.atual.ant_z),
+                );
                 break;
             }
             contador += 1;
@@ -218,7 +259,10 @@ impl Bfs {
                     custo: Self::manhattan(x as i32, z as i32, self.meta.0, self.meta.1),
                 });
             }
-            self.fechada.insert((self.atual.x, self.atual.z), (self.atual.ant_x, self.atual.ant_z));
+            self.fechada.insert(
+                (self.atual.x, self.atual.z),
+                (self.atual.ant_x, self.atual.ant_z),
+            );
         }
         if self.aberta.is_empty() && self.estado != EstadoBusca::Achou {
             self.estado = EstadoBusca::SemCaminho;
@@ -379,7 +423,13 @@ impl Perseguicao {
     }
 
     /// `CNPCDisperseChaseOnGroundAgent::SetGoal` (`NPCDisperseChaseOnGroundAgent.cpp`).
-    fn meta_dispersa(&mut self, meta: V3, min: f32, info: Option<&mut InfoDePerseguicao>, mapa: &Mapa) {
+    fn meta_dispersa(
+        &mut self,
+        meta: V3,
+        min: f32,
+        info: Option<&mut InfoDePerseguicao>,
+        mapa: &Mapa,
+    ) {
         self.meta_base(meta, min);
         self.chegou = self.chegou_agora();
         if self.chegou {
@@ -514,7 +564,9 @@ impl Perseguicao {
         if (self.pf_pixels as f32) < self.passo {
             self.pf_pixels = self.passo as i32 + 1;
         }
-        let Some(busca) = self.busca.as_mut() else { return };
+        let Some(busca) = self.busca.as_mut() else {
+            return;
+        };
         match busca.estado {
             EstadoBusca::Buscando => busca.buscar(self.pf_pixels, mapa),
             EstadoBusca::Achou => self.achou = true,
@@ -529,7 +581,9 @@ impl Perseguicao {
                 caminho_final = true;
             }
         }
-        let Some(t) = self.trajeto.as_mut() else { return };
+        let Some(t) = self.trajeto.as_mut() else {
+            return;
+        };
         t.andar(self.passo);
         if t.fim_do_trajeto() {
             self.bloqueios += 1;
@@ -556,7 +610,9 @@ impl Perseguicao {
 
     /// `UpdateFollowPath`.
     fn atualizar_trajeto(&mut self, anterior: &[Pixel], mapa: &Mapa) {
-        let Some(t) = self.trajeto.as_mut() else { return };
+        let Some(t) = self.trajeto.as_mut() else {
+            return;
+        };
         if self.caminho.is_empty() {
             return;
         }
@@ -566,7 +622,10 @@ impl Perseguicao {
                 t.adicionar(mapa.centro(*p));
             }
         } else {
-            let (de, ate) = (anterior[anterior.len() - 1], self.caminho[self.caminho.len() - 1]);
+            let (de, ate) = (
+                anterior[anterior.len() - 1],
+                self.caminho[self.caminho.len() - 1],
+            );
             if mapa.reta(de, ate).0 {
                 t.adicionar(mapa.centro(de));
                 t.adicionar(mapa.centro(ate));
@@ -606,8 +665,23 @@ impl SeguirAlvo {
     /// `Start(source, target, speed, range, cur_distance, pInfo)`. `distancia_ao_quadrado`
     /// é o `range` do chamador — o original passa o **quadrado** da distância
     /// (`squared_distance`, `npcsession.cpp:179`) e compara com 100 e 400.
-    pub fn comecar(&mut self, de: V3, alvo: V3, passo: f32, alcance: f32, distancia_ao_quadrado: f32, info: Option<&mut InfoDePerseguicao>, mapa: &Mapa) {
-        self.detalhe = if distancia_ao_quadrado <= 100.0 { 0 } else if distancia_ao_quadrado <= 400.0 { 1 } else { 2 };
+    pub fn comecar(
+        &mut self,
+        de: V3,
+        alvo: V3,
+        passo: f32,
+        alcance: f32,
+        distancia_ao_quadrado: f32,
+        info: Option<&mut InfoDePerseguicao>,
+        mapa: &Mapa,
+    ) {
+        self.detalhe = if distancia_ao_quadrado <= 100.0 {
+            0
+        } else if distancia_ao_quadrado <= 400.0 {
+            1
+        } else {
+            2
+        };
         self.contador = 0;
         self.nivel_de_passo = false;
         self.alvo = alvo;
@@ -729,7 +803,8 @@ impl BuscaNaGrade {
     fn chegou_agora(&self) -> bool {
         let mut d = self.meta.sub(self.pos);
         d.y = 0.0;
-        d.sqr() <= self.min2 + 2.0 * RELAX_ERROR * self.min + SQR_RELAX_ERROR || (self.reto && d.dot(self.direcao) < 0.0)
+        d.sqr() <= self.min2 + 2.0 * RELAX_ERROR * self.min + SQR_RELAX_ERROR
+            || (self.reto && d.dot(self.direcao) < 0.0)
     }
 
     fn definir_meta(&mut self, meta: V3, min: f32) {
@@ -775,7 +850,12 @@ impl BuscaNaGrade {
         self.du = (self.p_meta.0 - self.p_inicio.0).signum();
         self.dv = (self.p_meta.1 - self.p_inicio.1).signum();
         let h = self.manhattan(self.p_inicio.0, self.p_inicio.1);
-        self.nos.push(NoGrade { u: self.p_inicio.0, v: self.p_inicio.1, h, anterior: None });
+        self.nos.push(NoGrade {
+            u: self.p_inicio.0,
+            v: self.p_inicio.1,
+            h,
+            anterior: None,
+        });
         self.inserir_ordenado(0);
         self.achou = false;
         self.chegou = false;
@@ -808,12 +888,18 @@ impl BuscaNaGrade {
         if !mapa.alcancavel((u, v)) {
             return;
         }
-        let ja = |l: &Vec<usize>, nos: &Vec<NoGrade>| l.iter().any(|&j| nos[j].u == u && nos[j].v == v);
+        let ja =
+            |l: &Vec<usize>, nos: &Vec<NoGrade>| l.iter().any(|&j| nos[j].u == u && nos[j].v == v);
         if ja(&self.aberta, &self.nos) || ja(&self.fechada, &self.nos) {
             return;
         }
         let h = self.manhattan(u, v);
-        self.nos.push(NoGrade { u, v, h, anterior: Some(anterior) });
+        self.nos.push(NoGrade {
+            u,
+            v,
+            h,
+            anterior: Some(anterior),
+        });
         let i = self.nos.len() - 1;
         if !self.inserir_ordenado(i) {
             self.nos.pop();
@@ -836,7 +922,16 @@ impl BuscaNaGrade {
                 break;
             }
             buscados += 1;
-            for (du, dv) in [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)] {
+            for (du, dv) in [
+                (1, 0),
+                (1, 1),
+                (0, 1),
+                (-1, 1),
+                (-1, 0),
+                (-1, -1),
+                (0, -1),
+                (1, -1),
+            ] {
                 self.inserir(u + du, v + dv, i, mapa);
             }
             self.fechada.push(i);
@@ -863,8 +958,16 @@ impl BuscaNaGrade {
         let mut ultimo = *self.previsto.last().unwrap_or(&self.p_inicio);
         for _ in 0..self.pixels_por_passo {
             let atual = (
-                if ultimo.0 == self.p_meta.0 { ultimo.0 } else { ultimo.0 + self.du },
-                if ultimo.1 == self.p_meta.1 { ultimo.1 } else { ultimo.1 + self.dv },
+                if ultimo.0 == self.p_meta.0 {
+                    ultimo.0
+                } else {
+                    ultimo.0 + self.du
+                },
+                if ultimo.1 == self.p_meta.1 {
+                    ultimo.1
+                } else {
+                    ultimo.1 + self.dv
+                },
             );
             if !mapa.alcancavel(atual) {
                 self.bloqueado = true;
@@ -1094,10 +1197,19 @@ impl Passeio {
 mod testes {
     use super::*;
 
+    /// Sementes fixas: cada teste com sorteio roda em todas e exige o resultado em todas.
+    const SEMENTES: [u64; 8] = [0, 1, 2, 3, 7, 42, 1234, 0xDEAD_BEEF];
+
     /// Um mapa de 64×64 pixels com uma parede em `u = 32` de `v = 10` a `v = 54`, feito à mão
     /// no formato do `movemap` e lido pelo leitor de verdade.
+    ///
+    /// A pasta é única por chamada (processo + contador): os testes rodam em paralelo no mesmo
+    /// processo, e com uma pasta só por processo o `remove_dir_all` de um teste apagava os
+    /// arquivos que o outro ia ler (falha de 4 em 200 rodadas com `--test-threads=2`).
     fn mapa_com_parede() -> MapaDeMovimento {
-        let dir = std::env::temp_dir().join(format!("pw_navegacao_{}", std::process::id()));
+        static CONTADOR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = CONTADOR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("pw_navegacao_{}_{n}", std::process::id()));
         let pasta = dir.join("movemap");
         std::fs::create_dir_all(&pasta).unwrap();
         std::fs::write(pasta.join("movemap.conf"), "Map Width = 1\nMap Length = 1\nSubmap Width = 64\nSubmap Length = 64\nPixel Size = 1.0\n").unwrap();
@@ -1141,46 +1253,79 @@ mod testes {
     fn a_perseguicao_contorna_a_parede_em_vez_de_atravessar() {
         let mov = mapa_com_parede();
         assert!(mov.tem_dados() && !mov.alcancavel(32, 30) && mov.alcancavel(32, 60));
-        let mapa = Mapa { terreno: &plano, movimento: &mov };
+        let mapa = Mapa {
+            terreno: &plano,
+            movimento: &mov,
+        };
         // Origem no centro: pixel (u, v) = (x + 32, z + 32). De (20, 30) a (44, 30).
-        let (de, ate) = (V3::new(20.5 - 32.0, 0.0, 30.5 - 32.0), V3::new(44.5 - 32.0, 0.0, 30.5 - 32.0));
-        let mut s = SeguirAlvo::default();
-        s.comecar(de, ate, 2.0, 1.0, de.sub(ate).sqr(), None, &mapa);
-        let mut atravessou = false;
-        for _ in 0..200 {
-            if s.chegou() {
-                break;
+        let (de, ate) = (
+            V3::new(20.5 - 32.0, 0.0, 30.5 - 32.0),
+            V3::new(44.5 - 32.0, 0.0, 30.5 - 32.0),
+        );
+        for semente in SEMENTES {
+            semear(semente);
+            let mut s = SeguirAlvo::default();
+            s.comecar(de, ate, 2.0, 1.0, de.sub(ate).sqr(), None, &mapa);
+            let mut atravessou = false;
+            for _ in 0..200 {
+                if s.chegou() {
+                    break;
+                }
+                if !s.andar(2.0, &mapa) {
+                    s.comecar(
+                        s.posicao(),
+                        ate,
+                        2.0,
+                        1.0,
+                        s.posicao().sub(ate).sqr(),
+                        None,
+                        &mapa,
+                    );
+                }
+                let (u, v) = mov.pixel_de(s.posicao().x, s.posicao().z);
+                atravessou |= !mov.alcancavel(u, v);
             }
-            if !s.andar(2.0, &mapa) {
-                s.comecar(s.posicao(), ate, 2.0, 1.0, s.posicao().sub(ate).sqr(), None, &mapa);
-            }
-            let (u, v) = mov.pixel_de(s.posicao().x, s.posicao().z);
-            atravessou |= !mov.alcancavel(u, v);
+            assert!(
+                !atravessou,
+                "semente {semente}: passou por dentro da parede"
+            );
+            let fim = s.posicao();
+            assert!(
+                fim.sub(ate).xz().sqr() <= 2.5 * 2.5,
+                "semente {semente}: não chegou perto do alvo: {fim:?}"
+            );
         }
-        assert!(!atravessou, "passou por dentro da parede");
-        let fim = s.posicao();
-        assert!(fim.sub(ate).xz().sqr() <= 2.5 * 2.5, "não chegou perto do alvo: {fim:?}");
     }
 
     #[test]
     fn sem_obstaculo_a_perseguicao_e_uma_reta() {
         let vazio = MapaDeMovimento::vazio();
-        let mapa = Mapa { terreno: &plano, movimento: &vazio };
-        let mut s = SeguirAlvo::default();
-        let (de, ate) = (V3::new(0.0, 0.0, 0.0), V3::new(10.0, 0.0, 0.0));
-        s.comecar(de, ate, 2.0, 1.0, 100.0, None, &mapa);
-        assert!(s.andar(2.0, &mapa));
-        // A meta é dispersa: um ponto a 1 m do alvo, até ±60° em torno da direção de quem vem
-        // — o passo de 2 m sai quase reto, mas não exatamente.
-        let p = s.posicao();
-        assert!((p.sub(de).xz().sqr().sqrt() - 2.0).abs() < 1e-3, "{p:?}");
-        assert!(p.x > 1.9 && p.z.abs() < 0.2, "{p:?}");
+        let mapa = Mapa {
+            terreno: &plano,
+            movimento: &vazio,
+        };
+        for semente in SEMENTES {
+            semear(semente);
+            let mut s = SeguirAlvo::default();
+            let (de, ate) = (V3::new(0.0, 0.0, 0.0), V3::new(10.0, 0.0, 0.0));
+            s.comecar(de, ate, 2.0, 1.0, 100.0, None, &mapa);
+            assert!(s.andar(2.0, &mapa));
+            // A meta é dispersa: um ponto a 1 m do alvo, até ±60° em torno da direção de quem vem
+            // — o passo de 2 m sai quase reto, mas não exatamente.
+            let p = s.posicao();
+            assert!((p.sub(de).xz().sqr().sqrt() - 2.0).abs() < 1e-3, "{p:?}");
+            assert!(p.x > 1.9 && p.z.abs() < 0.2, "semente {semente}: {p:?}");
+        }
     }
 
     #[test]
     fn o_passeio_nao_escolhe_meta_dentro_da_parede() {
         let mov = mapa_com_parede();
-        let mapa = Mapa { terreno: &plano, movimento: &mov };
+        let mapa = Mapa {
+            terreno: &plano,
+            movimento: &mov,
+        };
+        semear(0);
         for _ in 0..50 {
             let mut p = Passeio::default();
             let centro = V3::new(0.5, 0.0, 0.0); // o pixel da parede é (32, 32)
@@ -1190,7 +1335,10 @@ mod testes {
             for _ in 0..30 {
                 p.andar(1.0, &mapa);
                 let (u, v) = mov.pixel_de(p.posicao().x, p.posicao().z);
-                assert!(mov.alcancavel(u, v) || p.parou(), "passeou por dentro da parede em ({u},{v})");
+                assert!(
+                    mov.alcancavel(u, v) || p.parou(),
+                    "passeou por dentro da parede em ({u},{v})"
+                );
             }
         }
     }

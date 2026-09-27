@@ -183,6 +183,7 @@ Protocolos GNET **reais** do IR, não formato inventado. Quadro:
 | `EnterWorld` | 72 | link → mundo | `roleid`, `provider_link_id`, `locktime`, `timeout`, `settime`, `localsid` |
 | `S2CGamedataSend` | 74 | mundo → link | `roleid`, `localsid`, `data` |
 | `C2SGamedataSend` | 75 | link → mundo | `roleid`, `localsid`, `data` |
+| `ChatSingleCast` | 94 | mundo → link | `channel`, `emotion`, `srcroleid`, `dstroleid`, `dstlocalsid`, `msg` (UTF-16LE), `data` — a fala de monstro (B127); o link a entrega como `ChatMessage` (80) |
 
 - O link repassa **todo** `GamedataSend` do cliente ao mundo, sem interpretar, e ainda trata
   alguns no próprio `gateway.rs` (migração incompleta).

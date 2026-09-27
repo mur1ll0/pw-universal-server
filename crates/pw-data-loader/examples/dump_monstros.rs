@@ -17,7 +17,7 @@ fn main() {
 
     let com_politica = t.templates.values().filter(|m| m.politica_de_ia != 0).count();
     let com_skill = t.templates.values().filter(|m| !m.skills.is_empty()).count();
-    let com_hp75 = t.templates.values().filter(|m| !m.skills_com_75_de_vida.is_empty()).count();
+    let com_hp75 = t.templates.values().filter(|m| m.skills_com_75_de_vida.iter().any(|s| s.id > 0)).count();
     println!("com política de IA: {com_politica} | com skills: {com_skill} | com skill de 75% vida: {com_hp75}");
 
     let mut niveis: Vec<i32> = t.templates.values().map(|m| m.nivel).collect();

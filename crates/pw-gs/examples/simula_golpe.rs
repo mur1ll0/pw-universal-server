@@ -39,6 +39,7 @@ fn main() {
             anti_defesa: 0,
             anti_resistencia: 0,
             atacante_e_jogador_ou_pet: true,
+            camada: pw_gs::combat::Camada::Chao,
         };
         let def = Defesa::simples(m.armadura, m.defesa, m.resistencias, m.grau_de_defesa);
         let chance = chance_de_acerto(precisao, m.armadura);

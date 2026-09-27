@@ -61,6 +61,7 @@ fn feiticeira_nivel_1() -> PlayerEntity {
         voando: false,
         montaria: None,
         forma_enviada: None,
+        passivas_de_forma: Default::default(),
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
@@ -104,7 +105,10 @@ fn feiticeira_nivel_1() -> PlayerEntity {
 fn o_filhote_de_mandragora_passeia_sem_saltos() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     if !dir.join("world").exists() {
-        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        eprintln!(
+            "AVISO: sem {} — este teste NÃO verificou nada.",
+            dir.display()
+        );
         return;
     }
     let mut d = GameDataManager::new();
@@ -112,7 +116,10 @@ fn o_filhote_de_mandragora_passeia_sem_saltos() {
     let ter = Terreno::ler(1, &dir.join("world"));
     let mov = MapaDeMovimento::ler(1, &dir.join("world"));
     let chao = |x: f32, z: f32| ter.altura_em(x, z);
-    let mapa = Mapa { terreno: &chao, movimento: &mov };
+    let mapa = Mapa {
+        terreno: &chao,
+        movimento: &mov,
+    };
     let modelo = d.monstros.get(3303).expect("3303");
     // A IA só passeia com alguém por perto (`RAIO_DE_ATIVIDADE`); o 3303 não é agressivo.
     let mut j = feiticeira_nivel_1();
@@ -140,7 +147,13 @@ fn o_filhote_de_mandragora_passeia_sem_saltos() {
             if let Some(AcaoDoMonstro::Andou { tempo_ms, .. }) = acao {
                 prazo = Some(t * 50 + tempo_ms as u32 + 100);
             }
-            if let Some(AcaoDoMonstro::Andou { destino, tempo_ms, velocidade, .. }) = acao {
+            if let Some(AcaoDoMonstro::Andou {
+                destino,
+                tempo_ms,
+                velocidade,
+                ..
+            }) = acao
+            {
                 if let Some((t0, u0)) = ultimo {
                     if (t - t0) * 50 < u0 as u32 {
                         colados += 1;
@@ -154,7 +167,14 @@ fn o_filhote_de_mandragora_passeia_sem_saltos() {
                 if dist > limite * 1.1 + 0.05 {
                     saltos += 1;
                     if saltos <= 5 {
-                        eprintln!("SALTO: {:.2} m em {} ms a {:.2} m/s (de {:?} para {:?})", dist, tempo_ms, velocidade, (antes.x, antes.z), (destino.x, destino.z));
+                        eprintln!(
+                            "SALTO: {:.2} m em {} ms a {:.2} m/s (de {:?} para {:?})",
+                            dist,
+                            tempo_ms,
+                            velocidade,
+                            (antes.x, antes.z),
+                            (destino.x, destino.z)
+                        );
                     }
                 }
             }
@@ -171,7 +191,10 @@ fn o_filhote_de_mandragora_passeia_sem_saltos() {
 fn o_filhote_persegue_sem_saltos() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     if !dir.join("world").exists() {
-        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        eprintln!(
+            "AVISO: sem {} — este teste NÃO verificou nada.",
+            dir.display()
+        );
         return;
     }
     let mut d = GameDataManager::new();
@@ -179,7 +202,10 @@ fn o_filhote_persegue_sem_saltos() {
     let ter = Terreno::ler(1, &dir.join("world"));
     let mov = MapaDeMovimento::ler(1, &dir.join("world"));
     let chao = |x: f32, z: f32| ter.altura_em(x, z);
-    let mapa = Mapa { terreno: &chao, movimento: &mov };
+    let mapa = Mapa {
+        terreno: &chao,
+        movimento: &mov,
+    };
     let modelo = d.monstros.get(3303).expect("3303");
     let mut m = MonsterEntity::do_template(1, modelo, Vector3::new(-1445.0, 241.0, 1390.0), 30_000);
     let mut ai = MonsterAi::new();
@@ -195,12 +221,19 @@ fn o_filhote_persegue_sem_saltos() {
         }
         let antes = m.position;
         match ai.tick_no_mapa(&mut m, &jogadores, 50, &mapa) {
-            Some(AcaoDoMonstro::Andou { destino, tempo_ms, velocidade, modo }) => {
+            Some(AcaoDoMonstro::Andou {
+                destino,
+                tempo_ms,
+                velocidade,
+                modo,
+            }) => {
                 let dist = ((destino.x - antes.x).powi(2) + (destino.z - antes.z).powi(2)).sqrt();
                 if dist > velocidade * tempo_ms as f32 / 1000.0 * 1.1 + 0.05 {
                     saltos += 1;
                 }
-                log.push(format!("t={t} anda {dist:.2}m/{tempo_ms}ms v={velocidade:.2} modo={modo}"));
+                log.push(format!(
+                    "t={t} anda {dist:.2}m/{tempo_ms}ms v={velocidade:.2} modo={modo}"
+                ));
             }
             Some(AcaoDoMonstro::Parou { posicao, .. }) => {
                 let dist = ((posicao.x - antes.x).powi(2) + (posicao.z - antes.z).powi(2)).sqrt();
@@ -222,7 +255,10 @@ fn o_filhote_persegue_sem_saltos() {
 fn a_volta_para_casa_no_126() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     if !dir.join("world").exists() {
-        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        eprintln!(
+            "AVISO: sem {} — este teste NÃO verificou nada.",
+            dir.display()
+        );
         return;
     }
     let mut d = GameDataManager::new();
@@ -230,11 +266,18 @@ fn a_volta_para_casa_no_126() {
     let ter = Terreno::ler(1, &dir.join("world"));
     let mov = MapaDeMovimento::ler(1, &dir.join("world"));
     let chao = |x: f32, z: f32| ter.altura_em(x, z);
-    let mapa = Mapa { terreno: &chao, movimento: &mov };
+    let mapa = Mapa {
+        terreno: &chao,
+        movimento: &mov,
+    };
     let modelo = d.monstros.get(3303).expect("3303");
     let (mut andando, mut salto) = (0, 0);
     for k in 0..20 {
-        let casa = Vector3::new(-1450.0 + (k % 5) as f32 * 6.0, 241.0, 1385.0 + (k / 5) as f32 * 6.0);
+        let casa = Vector3::new(
+            -1450.0 + (k % 5) as f32 * 6.0,
+            241.0,
+            1385.0 + (k / 5) as f32 * 6.0,
+        );
         let mut m = MonsterEntity::do_template(1, modelo, casa, 30_000);
         let mut ai = MonsterAi::new();
         let mut j = feiticeira_nivel_1();
@@ -250,13 +293,19 @@ fn a_volta_para_casa_no_126() {
                 jogadores.clear();
                 ai.aggro_table.clear();
             }
-            if let Some(AcaoDoMonstro::Parou { modo, .. }) = ai.tick_no_mapa(&mut m, &jogadores, 50, &mapa) {
+            if let Some(AcaoDoMonstro::Parou { modo, .. }) =
+                ai.tick_no_mapa(&mut m, &jogadores, 50, &mapa)
+            {
                 if modo == 7 {
                     voltou_de_uma_vez = true;
                 }
             }
         }
-        if voltou_de_uma_vez { salto += 1 } else { andando += 1 }
+        if voltou_de_uma_vez {
+            salto += 1
+        } else {
+            andando += 1
+        }
     }
     eprintln!("volta para casa 126: {andando} andando, {salto} de uma vez (modo 7)");
     // Medido em 2026-09-24: 19 andando, 1 de uma vez.
@@ -269,7 +318,10 @@ fn a_volta_para_casa_no_126() {
 fn o_passeio_de_chao_fica_no_chao() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     if !dir.join("world").exists() {
-        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        eprintln!(
+            "AVISO: sem {} — este teste NÃO verificou nada.",
+            dir.display()
+        );
         return;
     }
     let mut d = GameDataManager::new();
@@ -277,14 +329,23 @@ fn o_passeio_de_chao_fica_no_chao() {
     let ter = Terreno::ler(1, &dir.join("world"));
     let mov = MapaDeMovimento::ler(1, &dir.join("world"));
     let chao = |x: f32, z: f32| ter.altura_em(x, z);
-    let mapa = Mapa { terreno: &chao, movimento: &mov };
+    let mapa = Mapa {
+        terreno: &chao,
+        movimento: &mov,
+    };
     let mut j = feiticeira_nivel_1();
     j.position = Vector3::new(-1440.0, 241.0, 1400.0);
     let jogadores: HashMap<i64, PlayerEntity> = [(1i64, j)].into_iter().collect();
     // Os spawns reais em volta do Guia dos Selvagens.
-    let spawns: Vec<_> = d.map_spawns[&1].instances.iter()
-        .filter(|s| (s.pos.x + 1445.0).hypot(s.pos.z - 1399.0) < 60.0 && d.monstros.get(s.template_id).is_some())
-        .cloned().collect();
+    let spawns: Vec<_> = d.map_spawns[&1]
+        .instances
+        .iter()
+        .filter(|s| {
+            (s.pos.x + 1445.0).hypot(s.pos.z - 1399.0) < 60.0
+                && d.monstros.get(s.template_id).is_some()
+        })
+        .cloned()
+        .collect();
     let (mut passos, mut no_ar, mut rapido) = (0, 0, 0);
     for s in &spawns {
         let modelo = d.monstros.get(s.template_id).unwrap();
@@ -292,22 +353,46 @@ fn o_passeio_de_chao_fica_no_chao() {
         let mut ai = MonsterAi::new();
         for _ in 0..(120_000 / 50) {
             let antes = m.position;
-            if let Some(AcaoDoMonstro::Andou { destino, tempo_ms, velocidade, modo }) = ai.tick_no_mapa(&mut m, &jogadores, 50, &mapa) {
+            if let Some(AcaoDoMonstro::Andou {
+                destino,
+                tempo_ms,
+                velocidade,
+                modo,
+            }) = ai.tick_no_mapa(&mut m, &jogadores, 50, &mapa)
+            {
                 passos += 1;
-                let piso = ter.altura_em(destino.x, destino.z).unwrap_or(destino.y) + mov.acima_do_terreno(destino.x, destino.z).unwrap_or(0.0);
+                let piso = ter.altura_em(destino.x, destino.z).unwrap_or(destino.y)
+                    + mov.acima_do_terreno(destino.x, destino.z).unwrap_or(0.0);
                 if modo & 0xC0 == 0 && destino.y - piso > 0.5 {
                     no_ar += 1;
-                    if no_ar <= 5 { eprintln!("NO AR: modelo {} y={:.2} piso={:.2} terreno={:?} em ({:.1},{:.1})", s.template_id, destino.y, piso, ter.altura_em(destino.x, destino.z), destino.x, destino.z); }
+                    if no_ar <= 5 {
+                        eprintln!(
+                            "NO AR: modelo {} y={:.2} piso={:.2} terreno={:?} em ({:.1},{:.1})",
+                            s.template_id,
+                            destino.y,
+                            piso,
+                            ter.altura_em(destino.x, destino.z),
+                            destino.x,
+                            destino.z
+                        );
+                    }
                 }
                 let dist = ((destino.x - antes.x).powi(2) + (destino.z - antes.z).powi(2)).sqrt();
-                if velocidade > modelo.velocidade_andando * 1.01 && modo == 0 || dist > velocidade * tempo_ms as f32 / 1000.0 * 1.1 + 0.05 {
+                if velocidade > modelo.velocidade_andando * 1.01 && modo == 0
+                    || dist > velocidade * tempo_ms as f32 / 1000.0 * 1.1 + 0.05
+                {
                     rapido += 1;
-                    if rapido <= 5 { eprintln!("RÁPIDO: modelo {} {dist:.2} m em {tempo_ms} ms a {velocidade:.2} m/s modo {modo}", s.template_id); }
+                    if rapido <= 5 {
+                        eprintln!("RÁPIDO: modelo {} {dist:.2} m em {tempo_ms} ms a {velocidade:.2} m/s modo {modo}", s.template_id);
+                    }
                 }
             }
         }
     }
-    eprintln!("passeio de chão 126: {} spawns, {passos} passos, {no_ar} no ar, {rapido} rápidos", spawns.len());
+    eprintln!(
+        "passeio de chão 126: {} spawns, {passos} passos, {no_ar} no ar, {rapido} rápidos",
+        spawns.len()
+    );
 }
 
 /// B106 — de vida e mana cheias, o batimento em que o combate acaba ainda manda o
@@ -318,7 +403,9 @@ fn sair_do_combate_de_vida_cheia_avisa_o_cliente() {
     let mut p = feiticeira_nivel_1();
     p.mp = p.max_mp;
     p.combate_s = 2;
-    let avisos: Vec<bool> = (0..4).map(|_| pw_gs::progressao::batimento(&mut p)).collect();
+    let avisos: Vec<bool> = (0..4)
+        .map(|_| pw_gs::progressao::batimento(&mut p))
+        .collect();
     assert_eq!(avisos, [false, true, false, false]);
     assert_eq!(p.combate_s, 0);
 }

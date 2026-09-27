@@ -363,3 +363,63 @@ fn entrada_155_preserva_a_sequencia_e_os_bytes_anteriores() {
     let bytes = |v: Vec<S>| v.into_iter().map(|p| p.data).collect::<Vec<_>>();
     assert_eq!(bytes(p.initial_status_notifications(17, 1234)), bytes(esperado));
 }
+
+/// B124 — o validador do `elementclient.exe` 1.2.6 exige 8 bytes no `UPDATE_EXT_STATE` (124) e
+/// `6 + 2 × count` no `ICON_STATE_NOTIFY` (125, VA 0x584ba3). No formato do 1.5.5 os dois eram
+/// descartados em silêncio e nenhum ícone de bênção aparecia.
+#[test]
+fn os_estados_e_icones_do_126_tem_o_tamanho_do_validador() {
+    let p = create_world_protocol(GameVersion::V1_2_6);
+    let d = p.update_ext_state(7, [1 << 3, 5, 0, 0, 0, 0]).data;
+    assert_eq!(d.len() - 2, 8);
+    assert_eq!(u32::from_le_bytes([d[6], d[7], d[8], d[9]]), 1 << 3);
+    let d = p.icon_state_notify(7, &[(4, 600), (75, pw_protocol::packets::s2c::SEM_PARAMETRO)]).data;
+    assert_eq!(d.len() - 2, 6 + 2 * 2);
+    assert_eq!(u16::from_le_bytes([d[8], d[9]]), 4);
+    assert_eq!(u16::from_le_bytes([d[10], d[11]]), 75);
+    assert_eq!(p.icon_state_notify(7, &[]).data.len() - 2, 6);
+    // O 1.5.5 segue com os seis DWORD e a lista de parâmetros.
+    let q = create_world_protocol(GameVersion::V1_5_5);
+    assert_eq!(q.update_ext_state(7, [0; 6]).data.len() - 2, 28);
+}
+
+/// Loja Gold — `C2S::MALL_SHOPPING` (106). 1.5.5: entradas de 12 B `{int id, int index, int
+/// slot}` e corpo exato `4 + 12·count` (`playercmd.cpp:3299-3318`). 1.2.6: entradas de 6 B
+/// `{short, short, short}` com sinal (`CommandHandler` VA 0x80d1637, `PlayerDoShopping(unsigned,
+/// const short*)` VA 0x807f9f1). Só a primeira entrada é comprada.
+#[test]
+fn o_pedido_da_loja_gold_tem_o_tamanho_de_cada_versao() {
+    let q = create_world_protocol(GameVersion::V1_5_5);
+    let mut c = 1u32.to_le_bytes().to_vec();
+    for v in [39616i32, 412, 0] {
+        c.extend(v.to_le_bytes());
+    }
+    assert_eq!(q.pedido_da_loja_gold(&c), Some((39616, 412, 0)));
+    assert_eq!(q.pedido_da_loja_gold(&c[..15]), None, "corpo curto");
+    let mut zero = c.clone();
+    zero[0] = 0;
+    assert_eq!(q.pedido_da_loja_gold(&zero), None, "count 0");
+
+    let p = create_world_protocol(GameVersion::V1_2_6);
+    let mut c = 1u32.to_le_bytes().to_vec();
+    for v in [4276i16, 0, 0] {
+        c.extend(v.to_le_bytes());
+    }
+    assert_eq!(p.pedido_da_loja_gold(&c), Some((4276, 0, 0)));
+    // O de 12 B do 1.5.5 não passa no 1.2.6, e vice-versa.
+    assert_eq!(q.pedido_da_loja_gold(&c), None);
+    // `movsx`: um `short` acima de 32767 vira negativo, como no `gs` 1.2.6.
+    let mut alto = 1u32.to_le_bytes().to_vec();
+    for v in [40000u16, 5, 0] {
+        alto.extend(v.to_le_bytes());
+    }
+    assert_eq!(p.pedido_da_loja_gold(&alto), Some((40000u16 as i16 as i32, 5, 0)));
+}
+
+/// `MALL_ITEM_BUY_FAILED` (271) = `{short index; char reason}`, 3 B de corpo
+/// (`gs/player.cpp:5773-5777`). Escrevia um `int` (4 B).
+#[test]
+fn a_falha_de_compra_na_loja_tem_3_bytes() {
+    let d = pw_protocol::packets::s2c::S2CGamedataSend::mall_item_buy_failed(412, 0).data;
+    assert_eq!(d, vec![0x0f, 0x01, 0x9c, 0x01, 0x00]);
+}

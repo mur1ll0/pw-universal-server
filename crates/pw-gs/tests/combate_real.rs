@@ -31,6 +31,7 @@ fn golpe() -> Golpe {
         anti_defesa: 0,
         anti_resistencia: 0,
         atacante_e_jogador_ou_pet: false,
+        camada: pw_gs::combat::Camada::Chao,
     }
 }
 
@@ -40,7 +41,10 @@ fn defesa() -> Defesa {
 
 /// Rolagens que sempre acertam e nunca dão crítico.
 fn certeiro() -> Rolagens {
-    Rolagens { acerto: 0.0, critico: 99 }
+    Rolagens {
+        acerto: 0.0,
+        critico: 99,
+    }
 }
 
 // ---------------------------------------------------------------------------------
@@ -51,7 +55,11 @@ fn certeiro() -> Rolagens {
 fn a_chance_de_acerto_e_taxa_sobre_taxa_mais_meia_armadura() {
     // `attack_pb = rate / (rate + (armor >> 1))`, com piso de 0,05 e **sem teto** — a
     // linha do teto de 0,95 está comentada no original.
-    assert_eq!(chance_de_acerto(1000, 0), 1.0, "sem armadura o golpe sempre acerta");
+    assert_eq!(
+        chance_de_acerto(1000, 0),
+        1.0,
+        "sem armadura o golpe sempre acerta"
+    );
     // 1000 / (1000 + 500) = 0,666…
     assert!((chance_de_acerto(1000, 1000) - 2.0 / 3.0).abs() < 1e-6);
     // O deslocamento é inteiro: 999>>1 = 499, não 499,5.
@@ -69,7 +77,10 @@ fn a_reducao_por_defesa_usa_o_nivel_de_quem_ataca() {
     // 1975 / (1975 + 4000 - 25) = 1975/5950 ≈ 0,3319.
     let alto = reducao_por_defesa(1975, 100);
     assert!(alto < 0.34 && alto > 0.33, "reduziu {alto}");
-    assert!(alto < reducao_por_defesa(1975, 50), "nível maior tem de reduzir menos");
+    assert!(
+        alto < reducao_por_defesa(1975, 50),
+        "nível maior tem de reduzir menos"
+    );
     // Teto.
     assert_eq!(reducao_por_defesa(10_000_000, 1), 0.95);
     // Sem defesa nenhuma não há redução.
@@ -79,7 +90,11 @@ fn a_reducao_por_defesa_usa_o_nivel_de_quem_ataca() {
 #[test]
 fn a_penetracao_tem_teto_de_35_por_cento() {
     // `anti_ratio = anti/(anti+10000)`, limitado a 0,35.
-    assert_eq!(defesa_apos_penetracao(0, 1000), 1000, "sem penetração a defesa fica inteira");
+    assert_eq!(
+        defesa_apos_penetracao(0, 1000),
+        1000,
+        "sem penetração a defesa fica inteira"
+    );
     // 10000/(10000+10000) = 0,5 → limitado a 0,35 → 1000*0,65 = 650.
     assert_eq!(defesa_apos_penetracao(10_000, 1000), 650);
     // Muito acima do teto continua em 0,35.
@@ -111,10 +126,31 @@ fn a_atenuacao_por_distancia_tem_os_limiares_do_original() {
 fn errar_a_rolagem_de_acerto_encerra_o_golpe() {
     let mut d = defesa();
     d.armadura = 1000; // chance = 1000/1500 = 0,666…
-    // A rolagem erra quando é MAIOR que a chance.
-    assert_eq!(resolver(&golpe(), &d, 5.0, false, Rolagens { acerto: 0.7, critico: 0 }), Resultado::Errou);
+                       // A rolagem erra quando é MAIOR que a chance.
+    assert_eq!(
+        resolver(
+            &golpe(),
+            &d,
+            5.0,
+            false,
+            Rolagens {
+                acerto: 0.7,
+                critico: 0
+            }
+        ),
+        Resultado::Errou
+    );
     assert!(matches!(
-        resolver(&golpe(), &d, 5.0, false, Rolagens { acerto: 0.6, critico: 99 }),
+        resolver(
+            &golpe(),
+            &d,
+            5.0,
+            false,
+            Rolagens {
+                acerto: 0.6,
+                critico: 99
+            }
+        ),
         Resultado::Acertou { .. }
     ));
 }
@@ -129,8 +165,20 @@ fn o_ataque_magico_nao_rola_acerto() {
     let mut d = defesa();
     d.armadura = 1_000_000; // acerto impossível, se fosse testado
 
-    let r = resolver(&g, &d, 5.0, false, Rolagens { acerto: 1.0, critico: 99 });
-    assert!(matches!(r, Resultado::Acertou { .. }), "golpe mágico não deveria errar: {r:?}");
+    let r = resolver(
+        &g,
+        &d,
+        5.0,
+        false,
+        Rolagens {
+            acerto: 1.0,
+            critico: 99,
+        },
+    );
+    assert!(
+        matches!(r, Resultado::Acertou { .. }),
+        "golpe mágico não deveria errar: {r:?}"
+    );
 }
 
 #[test]
@@ -170,7 +218,13 @@ fn a_imunidade_zera_a_classe_e_deixa_as_outras_passarem() {
     let r = resolver(&g, &d, 5.0, false, certeiro());
     assert_eq!(r.dano(), 1000, "só o mágico deveria ter passado");
     assert!(
-        matches!(r, Resultado::Acertou { alguma_imunidade: true, .. }),
+        matches!(
+            r,
+            Resultado::Acertou {
+                alguma_imunidade: true,
+                ..
+            }
+        ),
         "a imunidade tem de ser sinalizada: {r:?}"
     );
 
@@ -186,7 +240,10 @@ fn imune_a_tudo_e_sem_efeito_e_nao_acerto() {
     g.dano_magico[0] = 1000;
     let mut d = defesa();
     d.imunidades = IMUNE_A_FISICO | (1 << 1);
-    assert_eq!(resolver(&g, &d, 5.0, false, certeiro()), Resultado::SemEfeito);
+    assert_eq!(
+        resolver(&g, &d, 5.0, false, certeiro()),
+        Resultado::SemEfeito
+    );
 }
 
 #[test]
@@ -195,7 +252,10 @@ fn golpe_sem_dano_nenhum_e_sem_efeito() {
     // esquiva.
     let mut g = golpe();
     g.dano_fisico = 0;
-    assert_eq!(resolver(&g, &defesa(), 5.0, false, certeiro()), Resultado::SemEfeito);
+    assert_eq!(
+        resolver(&g, &defesa(), 5.0, false, certeiro()),
+        Resultado::SemEfeito
+    );
 }
 
 #[test]
@@ -205,24 +265,60 @@ fn o_critico_dobra_e_o_bonus_soma_por_cima() {
     g.chance_de_critico = 50;
 
     // Rolagem 49 < 50 → crítico. 1000 * 2,0 = 2000 (mais o 0,5 do arredondamento).
-    let r = resolver(&g, &defesa(), 5.0, false, Rolagens { acerto: 0.0, critico: 49 });
+    let r = resolver(
+        &g,
+        &defesa(),
+        5.0,
+        false,
+        Rolagens {
+            acerto: 0.0,
+            critico: 49,
+        },
+    );
     assert_eq!(r.dano(), 2000);
     assert!(r.foi_critico());
 
     // Rolagem 50 não é menor que 50 → sem crítico.
-    let r = resolver(&g, &defesa(), 5.0, false, Rolagens { acerto: 0.0, critico: 50 });
+    let r = resolver(
+        &g,
+        &defesa(),
+        5.0,
+        false,
+        Rolagens {
+            acerto: 0.0,
+            critico: 50,
+        },
+    );
     assert_eq!(r.dano(), 1000);
     assert!(!r.foi_critico());
 
     // Bônus de 50% → 2,5×.
     g.bonus_de_dano_critico = 50;
-    let r = resolver(&g, &defesa(), 5.0, false, Rolagens { acerto: 0.0, critico: 0 });
+    let r = resolver(
+        &g,
+        &defesa(),
+        5.0,
+        false,
+        Rolagens {
+            acerto: 0.0,
+            critico: 0,
+        },
+    );
     assert_eq!(r.dano(), 2500);
 
     // A resistência a crítico do alvo desconta da chance: 50 - 50 = 0, nada é crítico.
     let mut d = defesa();
     d.resistencia_a_critico = 50;
-    let r = resolver(&g, &d, 5.0, false, Rolagens { acerto: 0.0, critico: 0 });
+    let r = resolver(
+        &g,
+        &d,
+        5.0,
+        false,
+        Rolagens {
+            acerto: 0.0,
+            critico: 0,
+        },
+    );
     assert!(!r.foi_critico(), "resistência deveria ter anulado a chance");
 }
 
@@ -303,7 +399,10 @@ fn a_penetracao_aumenta_o_dano_que_passa() {
 
     let sem = resolver(&golpe(), &d, 5.0, false, certeiro()).dano();
     let com = resolver(&g, &d, 5.0, false, certeiro()).dano();
-    assert!(com > sem, "penetração deveria aumentar o dano: {sem} contra {com}");
+    assert!(
+        com > sem,
+        "penetração deveria aumentar o dano: {sem} contra {com}"
+    );
     // 1975*0,65 = 1283 (truncado) → 1283/(1283+1975) = 0,3937 → 606,3 → 606.
     assert_eq!(com, 606);
 }
@@ -397,6 +496,7 @@ fn jogador() -> PlayerEntity {
         voando: false,
         montaria: None,
         forma_enviada: None,
+        passivas_de_forma: Default::default(),
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
@@ -441,7 +541,11 @@ fn a_precisao_e_a_evasao_do_jogador_vem_da_tabela_de_classes() {
     t.classes.insert(0, classe(0, 10, 10));
 
     let mut p = jogador();
-    assert_eq!((p.attack_rate, p.armor), (0, 0), "começa sem origem nenhuma");
+    assert_eq!(
+        (p.attack_rate, p.armor),
+        (0, 0),
+        "começa sem origem nenhuma"
+    );
 
     assert!(p.aplicar_atributos_de_classe(&t));
     // agilidade 40 × 10 = 400 nos dois.
@@ -455,8 +559,15 @@ fn sem_a_tabela_a_derivacao_avisa_em_vez_de_inventar() {
     let mut p = jogador();
     p.attack_rate = 123;
     p.armor = 456;
-    assert!(!p.aplicar_atributos_de_classe(&vazia), "deveria dizer que não conseguiu");
-    assert_eq!((p.attack_rate, p.armor), (123, 456), "não pode mexer no que já estava lá");
+    assert!(
+        !p.aplicar_atributos_de_classe(&vazia),
+        "deveria dizer que não conseguiu"
+    );
+    assert_eq!(
+        (p.attack_rate, p.armor),
+        (123, 456),
+        "não pode mexer no que já estava lá"
+    );
 }
 
 /// Um monstro com os números que o `elements.data` do realm 155 dá para o
@@ -489,7 +600,10 @@ fn um_golpe_realista_cai_na_faixa_que_a_formula_manda() {
     // Precisão 400 contra armadura 46: chance = 400/(400+23) ≈ 0,945. Alta, mas não 1 —
     // e é exatamente esse "não 1" que a fórmula antiga não tinha.
     let chance = chance_de_acerto(p.attack_rate, tauroc().armor);
-    assert!((chance - 400.0 / 423.0).abs() < 1e-6, "chance saiu {chance}");
+    assert!(
+        (chance - 400.0 / 423.0).abs() < 1e-6,
+        "chance saiu {chance}"
+    );
 
     // Dano: 300..400 uniforme, reduzido por defesa 468 contra atacante nível 50:
     // 468 / (468 + 2000 - 25) = 0,1916 → passa 80,8%.
@@ -525,10 +639,16 @@ fn o_monstro_devolve_dano_pela_mesma_formula() {
     for _ in 0..50 {
         vistos.push(CombatEngine::monstro_ataca_jogador(&m, &p, 3.0).dano());
     }
-    assert!(vistos.iter().all(|d| *d > 0), "o monstro não deveria errar sem evasão");
+    assert!(
+        vistos.iter().all(|d| *d > 0),
+        "o monstro não deveria errar sem evasão"
+    );
     // Dano 311..356 contra defesa 500 e atacante nível 47:
     // 500 / (500 + 1880 - 25) = 0,2123 → passa ~78,8%, ou seja 245..280.
     let maior = *vistos.iter().max().unwrap();
     let menor = *vistos.iter().min().unwrap();
-    assert!(menor >= 240 && maior <= 285, "dano do monstro em {menor}..{maior}");
+    assert!(
+        menor >= 240 && maior <= 285,
+        "dano do monstro em {menor}..{maior}"
+    );
 }

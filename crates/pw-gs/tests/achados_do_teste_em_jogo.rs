@@ -61,6 +61,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         voando: false,
         montaria: None,
         forma_enviada: None,
+        passivas_de_forma: Default::default(),
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
@@ -133,21 +134,33 @@ fn o_monstro_agressivo_ataca_quem_chega_perto() {
     let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
     m.agressivo = false;
     ai.tick(&mut m, &perto(5.0), 50, &sem_mapa);
-    assert_eq!(ai.get_highest_threat_target(), None, "monstro passivo não pode odiar sozinho");
+    assert_eq!(
+        ai.get_highest_threat_target(),
+        None,
+        "monstro passivo não pode odiar sozinho"
+    );
 
     // Agressivo, com o jogador dentro dos 15 m: pega o alvo.
     let mut ai = MonsterAi::new();
     let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
     m.agressivo = true;
     ai.tick(&mut m, &perto(5.0), 50, &sem_mapa);
-    assert_eq!(ai.get_highest_threat_target(), Some(1), "o agressivo não viu o jogador a 5 m");
+    assert_eq!(
+        ai.get_highest_threat_target(),
+        Some(1),
+        "o agressivo não viu o jogador a 5 m"
+    );
 
     // Agressivo, mas longe demais: o aviso do original não chega.
     let mut ai = MonsterAi::new();
     let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
     m.agressivo = true;
     ai.tick(&mut m, &perto(20.0), 50, &sem_mapa);
-    assert_eq!(ai.get_highest_threat_target(), None, "o agressivo enxergou além dos 15 m");
+    assert_eq!(
+        ai.get_highest_threat_target(),
+        None,
+        "o agressivo enxergou além dos 15 m"
+    );
 
     // E morto não vê ninguém.
     let mut ai = MonsterAi::new();
@@ -176,16 +189,27 @@ fn o_monstro_que_persegue_anuncia_o_movimento() {
     let mut andou = None;
     // Um passo a cada 0,5 s (`NPC_FOLLOW_TARGET_TIME`): 4 m/s dão 2 m por passo.
     for _ in 0..40 {
-        if let Some(AcaoDoMonstro::Andou { destino, velocidade, .. }) = ai.tick(&mut m, &players, 50, &sem_mapa) {
+        if let Some(AcaoDoMonstro::Andou {
+            destino,
+            velocidade,
+            ..
+        }) = ai.tick(&mut m, &players, 50, &sem_mapa)
+        {
             andou = Some((destino, velocidade));
             break;
         }
     }
     let (destino, velocidade) = andou.expect("o monstro perseguiu e nunca avisou");
     assert_eq!(velocidade, 4.0);
-    assert!(destino.x > 1.5, "andou pouco demais para valer um aviso: {destino:?}");
+    assert!(
+        destino.x > 1.5,
+        "andou pouco demais para valer um aviso: {destino:?}"
+    );
     assert!(destino.x < 20.0, "passou do alvo: {destino:?}");
-    assert_eq!(m.position, destino, "o aviso tem de ser a posição de verdade");
+    assert_eq!(
+        m.position, destino,
+        "o aviso tem de ser a posição de verdade"
+    );
 }
 
 #[test]
@@ -202,13 +226,19 @@ fn o_monstro_nao_anuncia_a_cada_tique() {
 
     let mut avisos = 0;
     for _ in 0..200 {
-        if matches!(ai.tick(&mut m, &players, 50, &sem_mapa), Some(AcaoDoMonstro::Andou { .. })) {
+        if matches!(
+            ai.tick(&mut m, &players, 50, &sem_mapa),
+            Some(AcaoDoMonstro::Andou { .. })
+        ) {
             avisos += 1;
         }
     }
     // 200 tiques = 10 s, um passo a cada 0,5 s: 20 avisos.
     assert!(avisos > 0, "nenhum aviso em 200 tiques");
-    assert!(avisos <= 25, "{avisos} avisos em 200 tiques — está mandando quase por tique");
+    assert!(
+        avisos <= 25,
+        "{avisos} avisos em 200 tiques — está mandando quase por tique"
+    );
 }
 
 #[test]
@@ -224,7 +254,11 @@ fn a_perseguicao_usa_o_aggro_range_do_monstro() {
     ai.add_threat(1, 10);
 
     ai.tick(&mut m, &players, 50, &sem_mapa);
-    assert_eq!(m.position, Vector3::new(0.0, 0.0, 0.0), "perseguiu além do próprio raio de ódio");
+    assert_eq!(
+        m.position,
+        Vector3::new(0.0, 0.0, 0.0),
+        "perseguiu além do próprio raio de ódio"
+    );
     assert!(ai.aggro_table.is_empty(), "devia ter perdido o alvo");
 }
 
@@ -247,7 +281,10 @@ fn o_monstro_de_chao_persegue_assentado_no_terreno() {
     let mut passos = 0;
     for _ in 0..60 {
         if let Some(AcaoDoMonstro::Andou { destino, .. }) = ai.tick(&mut m, &players, 50, &rampa) {
-            assert!((destino.y - destino.x).abs() < 1e-3, "fora do chão: {destino:?}");
+            assert!(
+                (destino.y - destino.x).abs() < 1e-3,
+                "fora do chão: {destino:?}"
+            );
             passos += 1;
         }
     }
@@ -263,7 +300,13 @@ fn o_movimento_do_monstro_vai_nas_unidades_do_original() {
     let mut players = std::collections::HashMap::new();
     players.insert(1i64, jogador(Vector3::new(20.0, 0.0, 0.0)));
     ai.add_threat(1, 10);
-    let Some(AcaoDoMonstro::Andou { tempo_ms, velocidade, modo, .. }) = ai.tick(&mut m, &players, 50, &sem_mapa) else {
+    let Some(AcaoDoMonstro::Andou {
+        tempo_ms,
+        velocidade,
+        modo,
+        ..
+    }) = ai.tick(&mut m, &players, 50, &sem_mapa)
+    else {
         panic!("o primeiro tique da perseguição dá um passo");
     };
     assert_eq!(tempo_ms, 500);
@@ -291,19 +334,30 @@ fn o_monstro_ocioso_passeia_perto_de_onde_nasceu_e_so_com_jogador_perto() {
     let mut andou = 0;
     for _ in 0..(120 * 20) {
         match ai.tick(&mut m, &perto, 50, &plano) {
-            Some(AcaoDoMonstro::Andou { destino, tempo_ms, modo, .. }) => {
+            Some(AcaoDoMonstro::Andou {
+                destino,
+                tempo_ms,
+                modo,
+                ..
+            }) => {
                 andou += 1;
                 assert_eq!(tempo_ms, 1000);
                 assert_eq!(modo, pw_gs::ai::MODO_ANDAR);
                 assert_eq!(destino.y, 5.0);
                 let dx = destino.x - 100.0;
                 let dz = destino.z - 100.0;
-                assert!(dx.abs() <= 10.01 && dz.abs() <= 10.01, "saiu do raio de 10 m: {destino:?}");
+                assert!(
+                    dx.abs() <= 10.01 && dz.abs() <= 10.01,
+                    "saiu do raio de 10 m: {destino:?}"
+                );
             }
             _ => {}
         }
     }
-    assert!(andou > 0, "em 2 minutos com jogador perto não passeou nenhuma vez");
+    assert!(
+        andou > 0,
+        "em 2 minutos com jogador perto não passeou nenhuma vez"
+    );
 }
 
 #[test]
@@ -314,16 +368,19 @@ fn sem_alvo_o_monstro_volta_para_onde_nasceu() {
     let mut players = std::collections::HashMap::new();
     players.insert(1i64, jogador(Vector3::new(25.0, 0.0, 0.0)));
     ai.add_threat(1, 10);
-    for _ in 0..40 {
+    // Persegue além de 10 m: só assim o `RollBack` abre a volta (`IsReturnHome`,
+    // `ainpc.cpp:28-37`, `GetReturnHomeRange` = 10²).
+    for _ in 0..100 {
         ai.tick(&mut m, &players, 50, &sem_mapa);
     }
-    assert!(m.position.x > 5.0, "não perseguiu: {:?}", m.position);
+    assert!(m.position.x > 10.0, "não perseguiu: {:?}", m.position);
 
     // O jogador foge para longe: perde o alvo e corre de volta.
     players.insert(1i64, jogador(Vector3::new(500.0, 0.0, 0.0)));
     let mut parou = false;
     for _ in 0..(30 * 20) {
-        if let Some(AcaoDoMonstro::Parou { posicao, .. }) = ai.tick(&mut m, &players, 50, &sem_mapa) {
+        if let Some(AcaoDoMonstro::Parou { posicao, .. }) = ai.tick(&mut m, &players, 50, &sem_mapa)
+        {
             // `session_npc_patrol` acaba a 1,2 passo de casa (`squared_distance <= 1.44 ×
             // speed²`, `gs/npcsession.cpp:903`) — o passo é a corrida de 1 s.
             if (posicao.x.powi(2) + posicao.z.powi(2)).sqrt() <= 1.2 * m.corrida() + 0.01 {
@@ -370,11 +427,24 @@ fn a_lista_de_habilidades_tem_o_layout_do_cliente() {
     // habilidade. Tamanho errado faz o cliente descartar o comando inteiro, e a barra de
     // habilidades fica vazia — que é o sintoma relatado.
     let skills = vec![
-        pw_core::LearnedSkill { character_id: 42, skill_id: 11, level: 1 },
-        pw_core::LearnedSkill { character_id: 42, skill_id: 167, level: 3 },
+        pw_core::LearnedSkill {
+            character_id: 42,
+            skill_id: 11,
+            level: 1,
+        },
+        pw_core::LearnedSkill {
+            character_id: 42,
+            skill_id: 167,
+            level: 3,
+        },
     ];
     let p = S2CGamedataSend::skill_data_from_records(&skills).data;
-    assert_eq!(p.len(), 2 + 4 + 2 * 5, "tamanho fora do layout: {} bytes", p.len());
+    assert_eq!(
+        p.len(),
+        2 + 4 + 2 * 5,
+        "tamanho fora do layout: {} bytes",
+        p.len()
+    );
     assert_eq!(u16::from_le_bytes([p[0], p[1]]), 90);
     assert_eq!(u32::from_le_bytes([p[2], p[3], p[4], p[5]]), 2);
     assert_eq!(i16::from_le_bytes([p[6], p[7]]), 11);
@@ -386,7 +456,10 @@ fn a_lista_de_habilidades_tem_o_layout_do_cliente() {
     // habilidade, e não ficar esperando.
     let vazio = S2CGamedataSend::skill_data_from_records(&[]).data;
     assert_eq!(vazio.len(), 6);
-    assert_eq!(u32::from_le_bytes([vazio[2], vazio[3], vazio[4], vazio[5]]), 0);
+    assert_eq!(
+        u32::from_le_bytes([vazio[2], vazio[3], vazio[4], vazio[5]]),
+        0
+    );
 }
 
 /// B59 — o monstro do teste em jogo (Lobo Sangrento: alcance 3 m, ódio 35 m) tem de
@@ -441,11 +514,27 @@ fn a_direcao_do_gerador_e_a_do_original() {
     let ponto = Vector3::new(0.0, 0.0, 0.0);
 
     // Área que é um ponto: a direção do gerador, `atan2(z, x) × 128/π`.
-    assert_eq!(direcao_do_gerador(Vector3::new(1.0, 0.0, 0.0), ponto), 0, "leste = 0");
-    assert_eq!(direcao_do_gerador(Vector3::new(0.0, 0.0, 1.0), ponto), 64, "norte = 1/4 de volta");
-    assert_eq!(direcao_do_gerador(Vector3::new(-1.0, 0.0, 0.0), ponto), 128, "oeste = 1/2 volta");
+    assert_eq!(
+        direcao_do_gerador(Vector3::new(1.0, 0.0, 0.0), ponto),
+        0,
+        "leste = 0"
+    );
+    assert_eq!(
+        direcao_do_gerador(Vector3::new(0.0, 0.0, 1.0), ponto),
+        64,
+        "norte = 1/4 de volta"
+    );
+    assert_eq!(
+        direcao_do_gerador(Vector3::new(-1.0, 0.0, 0.0), ponto),
+        128,
+        "oeste = 1/2 volta"
+    );
     // `atan2` negativo vira o complemento pelo `& 0xFF` do original.
-    assert_eq!(direcao_do_gerador(Vector3::new(0.0, 0.0, -1.0), ponto), 192, "sul = 3/4 de volta");
+    assert_eq!(
+        direcao_do_gerador(Vector3::new(0.0, 0.0, -1.0), ponto),
+        192,
+        "sul = 3/4 de volta"
+    );
 
     // Área com extensão: direção sorteada — o que se garante é que ela varia.
     let caixa = Vector3::new(20.0, 0.0, 20.0);
@@ -454,7 +543,11 @@ fn a_direcao_do_gerador_e_a_do_original() {
     for _ in 0..200 {
         vistas.insert(direcao_do_gerador(dir, caixa));
     }
-    assert!(vistas.len() > 10, "área com extensão devia sortear a direção: {} valores", vistas.len());
+    assert!(
+        vistas.len() > 10,
+        "área com extensão devia sortear a direção: {} valores",
+        vistas.len()
+    );
 }
 
 /// B80 — quem chega depois tem de ver a montaria.
@@ -477,10 +570,20 @@ fn a_vista_de_quem_esta_montado_leva_a_montaria() {
         velocidade: 6.0,
     });
     let v = p.vista();
-    assert_eq!(v.montaria, Some((7, 8600)), "cor e modelo, como o cliente lê");
+    assert_eq!(
+        v.montaria,
+        Some((7, 8600)),
+        "cor e modelo, como o cliente lê"
+    );
 
     // E o pacote que apresenta esse jogador cresce os 6 bytes do bloco.
-    let a_pe = S2CGamedataSend::player_enter_slice(p.role_id, pw_core::VistaDoJogador { montaria: None, ..v });
+    let a_pe = S2CGamedataSend::player_enter_slice(
+        p.role_id,
+        pw_core::VistaDoJogador {
+            montaria: None,
+            ..v
+        },
+    );
     let montado = S2CGamedataSend::player_enter_slice(p.role_id, v);
     assert_eq!(montado.data.len(), a_pe.data.len() + 6);
 
@@ -489,4 +592,27 @@ fn a_vista_de_quem_esta_montado_leva_a_montaria() {
     assert!(p.vista().voando);
     p.hp = 0;
     assert!(p.vista().morto, "cadáver é o `IsZombie()` do original");
+}
+
+/// A menos de 10 m de casa o `RollBack` não abre a volta (`IsReturnHome` é falso): o monstro
+/// fica onde está, sem ficar invencível.
+#[test]
+fn perto_de_casa_o_monstro_nao_volta_nem_fica_invencivel() {
+    let mut ai = MonsterAi::new();
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    m.aggro_range = 30.0;
+    let mut players = std::collections::HashMap::new();
+    players.insert(1i64, jogador(Vector3::new(25.0, 0.0, 0.0)));
+    ai.add_threat(1, 10);
+    for _ in 0..30 {
+        ai.tick(&mut m, &players, 50, &sem_mapa);
+    }
+    let x = m.position.x;
+    assert!(x > 1.0 && x < 10.0, "posição {x}");
+    players.insert(1i64, jogador(Vector3::new(500.0, 0.0, 0.0)));
+    for _ in 0..40 {
+        ai.tick(&mut m, &players, 50, &sem_mapa);
+    }
+    assert!(!ai.esta_voltando());
+    assert!(!m.efeitos.invencivel());
 }

@@ -2300,6 +2300,33 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `BE_HURT` (121): a vítima **jogador** perdeu vida por dano no tempo (`filter_Wounded` →
+    /// `BeHurt` → `gplayer_imp::OnHurt` → `gplayer_dispatcher::be_hurt`, `gs/player.cpp:3380-3396`).
+    /// `cmd_be_hurt` = `int attacker_id, int damage, unsigned char flag` (9 B,
+    /// `EC_GPDataType.h`; 9 B também no cliente 1.2.6, `tamanhos_s2c_126.txt`). `flag` é o
+    /// `invader` do servidor.
+    pub fn be_hurt(attacker_id: i32, damage: i32, invader: bool) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(121);              // BE_HURT = 121
+        stream.write_i32_le(attacker_id);      // attacker_id (4B)
+        stream.write_i32_le(damage);           // damage (4B)
+        stream.write_u8(invader as u8);        // flag (1B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `HURT_RESULT` (122): ao **atacante** jogador, o número do dano no tempo que o alvo
+    /// tomou (`gnpc_dispatcher::be_hurt`, `gs/npc.cpp:188-199`; `gplayer_dispatcher::be_hurt`,
+    /// `gs/player.cpp:3386-3392`). O cliente põe o número sobre o NPC ou o outro jogador
+    /// (`EC_HostMsg.cpp:4184-4201`). `cmd_hurt_result` = `int target_id, int damage` (8 B; 8 B
+    /// também no 1.2.6).
+    pub fn hurt_result(target_id: i32, damage: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(122);              // HURT_RESULT = 122
+        stream.write_i32_le(target_id);        // target_id (4B)
+        stream.write_i32_le(damage);           // damage (4B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// Cria o comando RECEIVE_EXP (Comando 36) entregando EXP e Alma
     pub fn receive_exp(exp: i32, sp: i32) -> Self {
         let mut stream = OctetsStream::new();
@@ -2806,11 +2833,17 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando MALL_ITEM_BUY_FAILED (Comando 271) informando falha de compra no GShop
-    pub fn mall_item_buy_failed(reason: i32) -> Self {
+    /// `MALL_ITEM_BUY_FAILED` (271): `{ short index; char reason; }` — 3 B de corpo
+    /// (IR; `gplayer_dispatcher::mall_item_buy_failed`, `gs/player.cpp:5773-5777`). Escrevia
+    /// um `int` sozinho (4 B), e o cliente o descartaria.
+    ///
+    /// Só existe do 1.5.x em diante: o cliente 1.2.6 recusa ids acima de 260, e o
+    /// `PlayerDoShopping` do `gs` 1.2.6 não o manda.
+    pub fn mall_item_buy_failed(index: i16, reason: u8) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(271);              // CMD_S2C_MALL_ITEM_BUY_FAILED = 271
-        stream.write_i32_le(reason);
+        stream.write_i16_le(index);
+        stream.write_u8(reason);
         Self { data: stream.into_bytes().to_vec() }
     }
 

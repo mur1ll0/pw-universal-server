@@ -42,6 +42,9 @@ pub type EnvioAoCliente = mpsc::Sender<OutboundPacket>;
 /// memória do processo.
 const CAPACIDADE_DA_FILA: usize = 1024;
 
+/// `PROTOCOL_CHATMESSAGE` (80): a fala que o cliente mostra, inclusive a de NPC.
+const CHAT_MESSAGE: u32 = 80;
+
 /// `TASK_DATA` (S2C 105).
 const TASK_DATA: u16 = 105;
 
@@ -203,6 +206,24 @@ async fn entregar(msg: BusMessage, sessoes: &RwLock<HashMap<i32, EnvioAoCliente>
                 .is_err()
             {
                 warn!("barramento: a fila do jogador {roleid} está cheia ou fechada");
+            }
+        }
+        BusMessage::ChatSingleCast { channel, emotion, srcroleid, dstroleid, msg, data, .. } => {
+            // `glinkd` entrega a fala ao cliente como `ChatMessage` (80): `channel, emotion,
+            // srcroleid, msg, data, srclevel` (IR `gnet_155`/`gnet_153`). O `srclevel` fica 0
+            // (`ChatMessage::srclevel` tem `default 0`).
+            let sessoes = sessoes.read().await;
+            let Some(envio) = sessoes.get(&dstroleid) else { return };
+            let mut w = pw_protocol::octets::OctetsStream::new();
+            w.write_u8(channel);
+            w.write_u8(emotion);
+            w.write_i32(srcroleid);
+            w.write_octets(&msg);
+            w.write_octets(&data);
+            w.write_i32(0);
+            let pacote = OutboundPacket::Raw { opcode: CHAT_MESSAGE, payload: w.into_bytes().to_vec() };
+            if envio.try_send(pacote).is_err() {
+                warn!("barramento: a fila do jogador {dstroleid} está cheia ou fechada");
             }
         }
         BusMessage::PlayerLogout {

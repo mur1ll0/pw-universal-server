@@ -737,6 +737,43 @@ impl CharacterRepository {
         Ok(())
     }
 
+    /// O cash da Loja Gold da **conta** do personagem (`accounts.gold_balance`), na unidade
+    /// do original: o `int` que o `PLAYER_CASH` leva (o cliente mostra ÷100). No original o
+    /// cash é do usuário, não do personagem (`gplayer_imp::_mall_cash`, vindo do
+    /// `gdeliveryd`). `None` se o personagem não existir.
+    pub async fn cash_da_conta(&self, role_id: RoleId) -> Result<Option<i64>> {
+        let v = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT a.gold_balance FROM accounts a
+            JOIN characters c ON c.account_id = a.id
+            WHERE c.id = $1
+            "#,
+        )
+        .bind(role_id)
+        .fetch_optional(self.pool.get_ref())
+        .await?;
+        Ok(v)
+    }
+
+    /// Debita `valor` do cash da conta **só se houver saldo**, numa instrução só (duas
+    /// compras simultâneas de personagens da mesma conta não passam do saldo). Devolve o
+    /// saldo novo, ou `None` sem saldo.
+    pub async fn gastar_cash_da_conta(&self, role_id: RoleId, valor: i64) -> Result<Option<i64>> {
+        let v = sqlx::query_scalar::<_, i64>(
+            r#"
+            UPDATE accounts a SET gold_balance = a.gold_balance - $1
+            FROM characters c
+            WHERE c.id = $2 AND a.id = c.account_id AND a.gold_balance >= $1
+            RETURNING a.gold_balance
+            "#,
+        )
+        .bind(valor)
+        .bind(role_id)
+        .fetch_optional(self.pool.get_ref())
+        .await?;
+        Ok(v)
+    }
+
     pub async fn save_status(
         &self,
         role_id: RoleId,

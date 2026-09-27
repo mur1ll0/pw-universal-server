@@ -39,14 +39,14 @@
 //! O que fica no `gateway.rs` é sobretudo consulta (`GET_ALL_DATA`, `GET_EXT_PROP`,
 //! `QUERY_*_INFO`), `TASK_NOTIFY`, moda, duelo e Mall.
 
-use crate::entity::PlayerEntity;
-use crate::combat::{self, CombatEngine};
-use crate::habilidades::Habilidade;
 use crate::comandos::{
     ids, CastSkill, ConsultaDeIds, EmoteAction, GetAllData, GetIvtrDetail, Logout, MoveIvtrItem,
     NormalAttack, ParDeSlots, PlayerMove, SelectTarget, SevnpcHello, StopMove, TaskNotify,
     TipoDeSaida, UseItem,
 };
+use crate::combat::{self, CombatEngine};
+use crate::entity::PlayerEntity;
+use crate::habilidades::Habilidade;
 use crate::npc::{self, servico, PedidoAoNpc};
 use crate::world::{EventoDoMundo, WorldInstance};
 use pw_bus::{BusListener, BusMessage};
@@ -265,7 +265,11 @@ const TETO_DE_MATERIA: usize = 40;
 static PROXIMA_CONJURACAO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 fn nivel_da_habilidade(jogador: &PlayerEntity, skill_id: i32) -> i32 {
-    let id = if skill_id < 0 { return NIVEL_MINIMO_DA_HABILIDADE } else { skill_id as u32 };
+    let id = if skill_id < 0 {
+        return NIVEL_MINIMO_DA_HABILIDADE;
+    } else {
+        skill_id as u32
+    };
     jogador
         .habilidades
         .get(&id)
@@ -282,11 +286,32 @@ fn e_materia(id: i64) -> bool {
 }
 
 enum QuemChegou {
-    Criatura { id: i32, tid: i32, pos: pw_core::Vector3, dir: u8 },
-    Jogador { id: i32, vista: pw_core::VistaDoJogador },
-    Materia { id: i32, tid: i32, pos: pw_core::Vector3 },
+    Criatura {
+        id: i32,
+        tid: i32,
+        pos: pw_core::Vector3,
+        dir: u8,
+    },
+    Jogador {
+        id: i32,
+        vista: pw_core::VistaDoJogador,
+    },
+    Materia {
+        id: i32,
+        tid: i32,
+        pos: pw_core::Vector3,
+    },
     /// Mascote de combate: `info_npc` com a marca de mascote, o dono e o nome.
-    Mascote { id: i32, tid: i32, vis: i32, pos: pw_core::Vector3, dir: u8, dono: i32, nome: Vec<u8> },
+    Mascote {
+        id: i32,
+        tid: i32,
+        vis: i32,
+        pos: pw_core::Vector3,
+        dir: u8,
+        dono: i32,
+        nome: Vec<u8>,
+        ambiente: i32,
+    },
 }
 
 /// Canal por onde o mundo devolve mensagens àquele jogador.
@@ -383,22 +408,39 @@ impl BusServer {
                 Some(t) if t.send(PedidoDeTroca { roleid, mundo, pos }).is_ok() => {
                     info!("mundo: {roleid} vai do mapa {este} para o {mundo} em {pos:?}");
                 }
-                _ => warn!("mundo: {roleid} devia ir para o mapa {mundo}, que este processo não serve"),
+                _ => warn!(
+                    "mundo: {roleid} devia ir para o mapa {mundo}, que este processo não serve"
+                ),
             }
             return;
         }
-        let Some(envio) = self.sessoes.read().await.get(&roleid).map(|s| s.envio.clone()) else {
+        let Some(envio) = self
+            .sessoes
+            .read()
+            .await
+            .get(&roleid)
+            .map(|s| s.envio.clone())
+        else {
             return;
         };
         {
             let mut mundo_ = self.world.write().await;
-            let Some(j) = mundo_.players.get_mut(&(roleid as i64)) else { return };
+            let Some(j) = mundo_.players.get_mut(&(roleid as i64)) else {
+                return;
+            };
             j.position = pos;
             mundo_.grid.update_position(roleid as i64, pos);
         }
         info!("mundo: {roleid} teleportado para {pos:?} no mapa {este}");
-        self.enviar_ao_jogador(roleid, S2CGamedataSend::notify_hostpos(pos, este, 0).data).await;
-        self.transmitir_a_outros(roleid, self.sub.object_stop_move(roleid, pos, 0, 0, MODO_DE_MOVIMENTO_ANDANDO).data).await;
+        self.enviar_ao_jogador(roleid, self.sub.notify_hostpos(pos, este, 0).data)
+            .await;
+        self.transmitir_a_outros(
+            roleid,
+            self.sub
+                .object_stop_move(roleid, pos, 0, 0, MODO_DE_MOVIMENTO_ANDANDO)
+                .data,
+        )
+        .await;
         self.atualizar_visiveis(roleid, &envio, true).await;
     }
 
@@ -413,11 +455,23 @@ impl BusServer {
     /// A outra metade da troca: o que o `gs` original faz ao receber um jogador de fora
     /// (`global_message.cpp:111-117`) — `notify_pos` com o mapa novo, e o mundo em volta.
     /// Grava mapa e posição na hora, para que um relogar caia aqui.
-    pub(crate) async fn receber_de_outro_mapa(&self, roleid: i32, vindo: JogadorEmTroca, pos: Vector3) {
-        let JogadorEmTroca { sessao, mut jogador } = vindo;
+    pub(crate) async fn receber_de_outro_mapa(
+        &self,
+        roleid: i32,
+        vindo: JogadorEmTroca,
+        pos: Vector3,
+    ) {
+        let JogadorEmTroca {
+            sessao,
+            mut jogador,
+        } = vindo;
         let (este, repo, chao) = {
             let m = self.world.read().await;
-            (m.world_id, m.char_repo.clone(), m.terreno.altura_em(pos.x, pos.z))
+            (
+                m.world_id,
+                m.char_repo.clone(),
+                m.terreno.altura_em(pos.x, pos.z),
+            )
         };
         let mut pos = pos;
         // `if (pos.y < height) pos.y = height` (`global_message.cpp:100-101`).
@@ -430,12 +484,24 @@ impl BusServer {
         jogador.target_id = None;
         let envio = sessao.envio.clone();
         // Grava antes de o jogador existir no mapa novo: ninguém vê o estado novo sem o banco.
-        let g = (jogador.level, jogador.cultivation, jogador.exp, jogador.sp, jogador.hp, jogador.mp, jogador.money);
-        if let Err(e) = repo.save_status(roleid, g.0, g.1, g.2, g.3, g.4, g.5, g.6, este, &pos).await {
+        let g = (
+            jogador.level,
+            jogador.cultivation,
+            jogador.exp,
+            jogador.sp,
+            jogador.hp,
+            jogador.mp,
+            jogador.money,
+        );
+        if let Err(e) = repo
+            .save_status(roleid, g.0, g.1, g.2, g.3, g.4, g.5, g.6, este, &pos)
+            .await
+        {
             warn!("mundo: não consegui gravar {roleid} no mapa {este}: {e}");
         }
         self.sessoes.write().await.insert(roleid, sessao);
-        self.enviar_ao_jogador(roleid, S2CGamedataSend::notify_hostpos(pos, este, 0).data).await;
+        self.enviar_ao_jogador(roleid, self.sub.notify_hostpos(pos, este, 0).data)
+            .await;
         self.world.write().await.add_player(jogador);
         info!("mundo: {roleid} chegou ao mapa {este} em {pos:?}");
         self.atualizar_visiveis(roleid, &envio, true).await;
@@ -475,6 +541,35 @@ impl BusServer {
     /// É aqui — e só aqui — que o que aconteceu no mundo vira protocolo.
     async fn entregar_evento(&self, ev: EventoDoMundo) {
         match ev {
+            EventoDoMundo::Levantou { roleid } => {
+                let pacote = S2CGamedataSend::object_stand_up(roleid).data;
+                self.enviar_ao_jogador(roleid, pacote.clone()).await;
+                self.transmitir_a_outros(roleid, pacote).await;
+            }
+            EventoDoMundo::EspinhoDevolvido {
+                jogador,
+                monstro,
+                dano,
+                velocidade,
+            } => {
+                const AT_STATE_ATTACK_RETORT: i32 = 0x20;
+                let dono = self
+                    .sub
+                    .host_attack_result(monstro as i32, dano, AT_STATE_ATTACK_RETORT, velocidade)
+                    .data;
+                self.enviar_ao_jogador(jogador, dono).await;
+                let outros = self
+                    .sub
+                    .object_attack_result(
+                        jogador,
+                        monstro as i32,
+                        dano,
+                        AT_STATE_ATTACK_RETORT,
+                        velocidade,
+                    )
+                    .data;
+                self.transmitir_a_outros(jogador, outros).await;
+            }
             ev @ (EventoDoMundo::MascoteApareceu { .. }
             | EventoDoMundo::MascoteRecolhido { .. }
             | EventoDoMundo::MascoteMorreu { .. }
@@ -488,9 +583,43 @@ impl BusServer {
             | EventoDoMundo::MascoteUsouHabilidade { .. }
             | EventoDoMundo::RecargaDoMascote { .. }
             | EventoDoMundo::ErroDoMascote { .. }) => self.evento_de_mascote(ev).await,
+            EventoDoMundo::MonstroConjurou {
+                id,
+                alvo,
+                skill,
+                nivel,
+                tempo_ms,
+            } => {
+                // `NpcStart` → `SendClientMsgSkillCasting` → `OBJECT_CAST_SKILL` (85) a quem
+                // vê; 15 B nas duas versões.
+                let pacote = S2CGamedataSend::object_cast_skill(
+                    id as i32,
+                    alvo as i32,
+                    skill,
+                    tempo_ms,
+                    nivel.clamp(0, 255) as u8,
+                )
+                .data;
+                self.transmitir_a_quem_ve(id, pacote).await;
+            }
+            EventoDoMundo::MonstroFalou { id, texto, canal, dados } => self.monstro_falou(id, &texto, canal, dados).await,
+            EventoDoMundo::MonstroUsouHabilidade {
+                id,
+                alvo,
+                skill,
+                nivel,
+            } => {
+                self.aplicar_habilidade_do_monstro(id, skill, nivel, alvo)
+                    .await;
+            }
+            EventoDoMundo::VoltarParaACidade { roleid } => self.voltar_para_a_cidade(roleid).await,
+            EventoDoMundo::MonstroCapturado { roleid, ovo } => self.receber_ovo_capturado(roleid, ovo).await,
             EventoDoMundo::Renasceu { objeto } => {
                 // `SendClientEnchantResult(GetSelfID(), 1085, 1, false, 0, 0)`.
-                let pacote = self.sub.enchant_result(objeto as i32, objeto as i32, 1085, 1, false, 0, 0).data;
+                let pacote = self
+                    .sub
+                    .enchant_result(objeto as i32, objeto as i32, 1085, 1, false, 0, 0)
+                    .data;
                 if self.world.read().await.players.contains_key(&objeto) {
                     self.enviar_ao_jogador(objeto as i32, pacote.clone()).await;
                 }
@@ -524,13 +653,7 @@ impl BusServer {
                 self.enviar_ao_jogador(
                     roleid,
                     self.sub
-                        .host_attacked(
-                            atacante as i32,
-                            dano,
-                            peca,
-                            SEM_MARCACAO,
-                            atraso,
-                        )
+                        .host_attacked(atacante as i32, dano, peca, SEM_MARCACAO, atraso)
                         .data,
                 )
                 .await;
@@ -599,13 +722,28 @@ impl BusServer {
                 max_hp,
             } => {
                 // `sReviveType` 0 = renascimento na cidade.
-                self.enviar_ao_jogador(
-                    roleid,
-                    S2CGamedataSend::player_revive(roleid, 0, pos).data,
-                )
-                .await;
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::player_revive(roleid, 0, pos).data)
+                    .await;
                 let _ = (hp, max_hp);
                 self.avisar_vida_propria(roleid).await;
+                // A raposa (`filter_Foxform`) não tem `REMOVE_ON_DEATH` — nem no 1.5.5
+                // (`skillfilter.h:4611`) nem no `gs` 1.2.6 (`push 0x8000`, VA 0x83080c1) — e o
+                // `Resurrect` não mexe em forma (`player.cpp:8696-8770`): quem morre raposa
+                // renasce raposa. O cliente recarrega o personagem ao renascer; a forma vai de
+                // novo para ele não desenhar humano o que o servidor trata como raposa (B124).
+                let transformado = {
+                    let mut mundo = self.world.write().await;
+                    mundo.players.get_mut(&(roleid as i64)).is_some_and(|p| {
+                        let tem = p.efeitos.forma().is_some();
+                        if tem {
+                            p.forma_enviada = None;
+                        }
+                        tem
+                    })
+                };
+                if transformado {
+                    self.avisar_efeitos(roleid as i64, false).await;
+                }
             }
 
             EventoDoMundo::MontariaCaiuNaAgua { roleid } => {
@@ -616,7 +754,13 @@ impl BusServer {
                 // mandamos, reusando o mesmo caminho do recolher voluntário: sem ele o
                 // cliente ficaria com o mascote marcado como ativo e o botão de recolher
                 // apagado, que é exatamente o travamento que o B79 corrigiu.
-                let montaria = self.world.read().await.players.get(&(roleid as i64)).and_then(|p| p.montaria);
+                let montaria = self
+                    .world
+                    .read()
+                    .await
+                    .players
+                    .get(&(roleid as i64))
+                    .and_then(|p| p.montaria);
                 if let Some(m) = montaria {
                     info!("mundo: a montaria de {roleid} caiu — entrou na água");
                     let envio = self.envio_de(roleid).await;
@@ -626,7 +770,15 @@ impl BusServer {
                 }
             }
 
-            EventoDoMundo::AmuletoDisparou { roleid, slot, item_id, restou, bloco, indice_de_recarga, recarga_ms } => {
+            EventoDoMundo::AmuletoDisparou {
+                roleid,
+                slot,
+                item_id,
+                restou,
+                bloco,
+                indice_de_recarga,
+                recarga_ms,
+            } => {
                 // A recarga vai ao cliente: `gplayer_imp::SetCoolDown` grava e **sempre**
                 // manda `set_cooldown(idx, msec)` (`gs/player.cpp:12701-12709`); é ela que
                 // escurece o ícone do amuleto. Sem este comando o item parecia nunca entrar
@@ -647,26 +799,36 @@ impl BusServer {
                 if restou <= 0 {
                     self.enviar_ao_jogador(
                         roleid,
-                        self.sub.player_drop_item(pacote, slot as u8, 1, item_id as i32, DROP_POR_USO).data,
+                        self.sub
+                            .player_drop_item(pacote, slot as u8, 1, item_id as i32, DROP_POR_USO)
+                            .data,
                     )
                     .await;
-                } else if let Ok(Some(mut i)) =
-                    self.itens().await.get_item_by_slot(roleid, ContainerType::Equipment, slot).await
+                } else if let Ok(Some(mut i)) = self
+                    .itens()
+                    .await
+                    .get_item_by_slot(roleid, ContainerType::Equipment, slot)
+                    .await
                 {
                     i.octets = bloco.clone();
                     let dados = self.world.read().await.data_manager.clone();
-                    self.enviar_ao_jogador(roleid, Self::info_de(pacote, &i, &dados)).await;
+                    self.enviar_ao_jogador(roleid, Self::info_de(pacote, &i, &dados))
+                        .await;
                 }
                 // O banco depois, fora do caminho do jogo (B72).
                 if let Some(este) = self.clone_arc() {
                     tokio::spawn(async move {
                         let repo = este.itens().await;
                         if restou <= 0 {
-                            if let Err(e) = repo.delete_item_by_slot(roleid, ContainerType::Equipment, slot).await {
+                            if let Err(e) = repo
+                                .delete_item_by_slot(roleid, ContainerType::Equipment, slot)
+                                .await
+                            {
                                 warn!("mundo: não consegui tirar o amuleto gasto de {roleid}: {e}");
                             }
-                        } else if let Ok(Some(mut i)) =
-                            repo.get_item_by_slot(roleid, ContainerType::Equipment, slot).await
+                        } else if let Ok(Some(mut i)) = repo
+                            .get_item_by_slot(roleid, ContainerType::Equipment, slot)
+                            .await
                         {
                             i.octets = bloco;
                             if let Err(e) = repo.upsert_item(&i).await {
@@ -679,7 +841,13 @@ impl BusServer {
 
             EventoDoMundo::EstadoMudou { roleid } => self.avisar_vida_propria(roleid).await,
 
-            EventoDoMundo::VidaDoMonstro { id, hp, max_hp, alvo, para } => {
+            EventoDoMundo::VidaDoMonstro {
+                id,
+                hp,
+                max_hp,
+                alvo,
+                para,
+            } => {
                 let pacote = self.sub.npc_info_00(id as i32, hp, max_hp, alvo).data;
                 for roleid in para {
                     self.enviar_ao_jogador(roleid, pacote.clone()).await;
@@ -687,25 +855,82 @@ impl BusServer {
             }
 
             EventoDoMundo::MonstroSumiu { id } | EventoDoMundo::DropSumiu { id } => {
-                self.transmitir_a_outros(0, S2CGamedataSend::object_disappear(id as i32).data).await;
+                self.transmitir_a_outros(0, S2CGamedataSend::object_disappear(id as i32).data)
+                    .await;
             }
 
-            EventoDoMundo::EfeitosMudaram { objeto, atributos } => self.avisar_efeitos(objeto, atributos).await,
-            EventoDoMundo::MonstroMorreu { id, matador } => self.anunciar_morte_do_monstro(id, matador).await,
+            EventoDoMundo::EfeitosMudaram { objeto, atributos } => {
+                self.avisar_efeitos(objeto, atributos).await
+            }
+            EventoDoMundo::MonstroMorreu { id, matador } => {
+                self.anunciar_morte_do_monstro(id, matador).await
+            }
+            EventoDoMundo::DanoNoTempo {
+                vitima,
+                atacante,
+                dano,
+            } => {
+                // `gplayer_dispatcher::be_hurt` (`gs/player.cpp:3380-3396`) e
+                // `gnpc_dispatcher::be_hurt` (`gs/npc.cpp:188-199`). `invader` fica 0: a
+                // marca de agressor do PvP não está portada.
+                let jogadores: Vec<i64> = {
+                    let mundo = self.world.read().await;
+                    [vitima, atacante]
+                        .into_iter()
+                        .filter(|id| mundo.players.contains_key(id))
+                        .collect()
+                };
+                if atacante != vitima && jogadores.contains(&atacante) {
+                    self.enviar_ao_jogador(
+                        atacante as i32,
+                        S2CGamedataSend::hurt_result(vitima as i32, dano).data,
+                    )
+                    .await;
+                }
+                if jogadores.contains(&vitima) {
+                    self.enviar_ao_jogador(
+                        vitima as i32,
+                        S2CGamedataSend::be_hurt(atacante as i32, dano, false).data,
+                    )
+                    .await;
+                }
+            }
 
             EventoDoMundo::GolpeDoJogador { roleid } => {
-                let envio = self.sessoes.read().await.get(&roleid).map(|s| s.envio.clone());
+                let envio = self
+                    .sessoes
+                    .read()
+                    .await
+                    .get(&roleid)
+                    .map(|s| s.envio.clone());
                 if let Some(envio) = envio {
                     // Com um golpe na fila, a sessão atual termina e a da fila começa
                     // (`EndCurSession` + `StartSession`, `actobject.cpp:185-189`).
-                    let sessao = self.world.read().await.players.get(&(roleid as i64)).and_then(|p| p.ataque);
+                    let sessao = self
+                        .world
+                        .read()
+                        .await
+                        .players
+                        .get(&(roleid as i64))
+                        .and_then(|p| p.ataque);
                     match sessao {
                         Some(s) if s.proximo.is_some() || s.cancelar || s.andar => {
+                            debug!(
+                                "mundo: golpe de {roleid} cede à fila (novo alvo {:?}, cancelar {}, andar {})",
+                                s.proximo, s.cancelar, s.andar
+                            );
                             self.encerrar_ataque(roleid, 0).await;
                             if let Some(alvo) = s.proximo {
                                 self.abrir_sessao_de_golpe(roleid, alvo, &envio).await;
                                 if s.andar {
-                                    if let Some(n) = self.world.write().await.players.get_mut(&(roleid as i64)).and_then(|p| p.ataque.as_mut()) {
+                                    if let Some(n) = self
+                                        .world
+                                        .write()
+                                        .await
+                                        .players
+                                        .get_mut(&(roleid as i64))
+                                        .and_then(|p| p.ataque.as_mut())
+                                    {
                                         n.andar = true;
                                     }
                                 }
@@ -720,7 +945,9 @@ impl BusServer {
             EventoDoMundo::MinaRenasceu { id } => {
                 let (perto, pacote) = {
                     let mut mundo = self.world.write().await;
-                    let Some(m) = mundo.matters.get(&id) else { return };
+                    let Some(m) = mundo.matters.get(&id) else {
+                        return;
+                    };
                     let (pos, tid) = (m.position, m.template_id);
                     let ids: Vec<i64> = mundo
                         .players
@@ -733,7 +960,10 @@ impl BusServer {
                             p.visiveis.insert(id);
                         }
                     }
-                    (ids, S2CGamedataSend::matter_enter_world(id as i32, tid as i32, pos).data)
+                    (
+                        ids,
+                        S2CGamedataSend::matter_enter_world(id as i32, tid as i32, pos).data,
+                    )
                 };
                 for pid in perto {
                     self.enviar_ao_jogador(pid as i32, pacote.clone()).await;
@@ -745,7 +975,9 @@ impl BusServer {
                 // recalcula depois de 20 m (`PASSO_PARA_RECALCULAR`).
                 let (perto, pacote) = {
                     let mut mundo = self.world.write().await;
-                    let Some((m, ia)) = mundo.monsters.get(&id) else { return };
+                    let Some((m, ia)) = mundo.monsters.get(&id) else {
+                        return;
+                    };
                     let (pos, tid, dir) = (m.position, m.template_id, ia.direcao);
                     let ids: Vec<i64> = mundo
                         .players
@@ -761,7 +993,12 @@ impl BusServer {
                     // `NPC_ENTER_WORLD` (16), como o original no renascimento (captura do 1.2.6:
                     // o Filhote de Mandrágora volta com 16, sem `disappear` antes — o cliente
                     // ainda tem o corpo com o mesmo id, e é o 16 que o põe de pé no ponto novo).
-                    (ids, self.sub.npc_enter_world(id as i32, tid as i32, pos, dir).data)
+                    (
+                        ids,
+                        self.sub
+                            .npc_enter_world(id as i32, tid as i32, pos, dir)
+                            .data,
+                    )
                 };
                 for pid in perto {
                     self.enviar_ao_jogador(pid as i32, pacote.clone()).await;
@@ -784,12 +1021,16 @@ impl BusServer {
     /// intenção e errado no comando.
     async fn avisar_vida_propria(&self, roleid: i32) {
         let dados = self.world.read().await.dados_do_proprio(roleid);
-        let Some((nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados else {
+        let Some((nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados
+        else {
             return;
         };
         self.enviar_ao_jogador(
             roleid,
-            S2CGamedataSend::self_info_00(nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
+            S2CGamedataSend::self_info_00(
+                nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap,
+            )
+            .data,
         )
         .await;
     }
@@ -910,6 +1151,9 @@ impl BusServer {
                 // servidores de mundo um no outro, ou trocou os opcodes do par 74/75.
                 warn!("mundo: recebi um GameToClient (74) de {roleid} — sentido invertido");
             }
+            BusMessage::ChatSingleCast { dstroleid, .. } => {
+                warn!("mundo: recebi um ChatSingleCast (94) para {dstroleid} — sentido invertido");
+            }
         }
     }
 
@@ -992,7 +1236,13 @@ impl BusServer {
         match repo.task_lists().carregar(roleid).await {
             Ok(Some(l)) => {
                 jogador.missoes = crate::missoes::ListasDeMissao::de_blocos(
-                    [&l.ativa, &l.concluidas, &l.tempos, &l.contagens, &l.deposito],
+                    [
+                        &l.ativa,
+                        &l.concluidas,
+                        &l.tempos,
+                        &l.contagens,
+                        &l.deposito,
+                    ],
                     &dados.tasks,
                 );
             }
@@ -1035,7 +1285,10 @@ impl BusServer {
         // quem estivesse num deles.
         {
             let mundo = self.world.read().await;
-            if let Some(chao) = mundo.terreno.altura_em(jogador.position.x, jogador.position.z) {
+            if let Some(chao) = mundo
+                .terreno
+                .altura_em(jogador.position.x, jogador.position.z)
+            {
                 if jogador.position.y < chao {
                     warn!(
                         "mundo: {roleid} entraria {:.1} m abaixo do chão em ({:.0}, {:.0}) —                          subido para a superfície",
@@ -1090,8 +1343,14 @@ impl BusServer {
             ids::PICKUP => self.pegar(roleid, &cmd.payload).await,
             ids::PICKUP_ALL => self.pegar_todos(roleid, &cmd.payload).await,
             ids::GET_IVTR_DETAIL => self.detalhe_do_container(roleid, &cmd.payload, envio).await,
-            ids::EXG_IVTR_ITEM => self.trocar_slots(roleid, &cmd.payload, ContainerType::Inventory, envio).await,
-            ids::EXG_EQUIP_ITEM => self.trocar_slots(roleid, &cmd.payload, ContainerType::Equipment, envio).await,
+            ids::EXG_IVTR_ITEM => {
+                self.trocar_slots(roleid, &cmd.payload, ContainerType::Inventory, envio)
+                    .await
+            }
+            ids::EXG_EQUIP_ITEM => {
+                self.trocar_slots(roleid, &cmd.payload, ContainerType::Equipment, envio)
+                    .await
+            }
             ids::MOVE_IVTR_ITEM => self.mover_item(roleid, &cmd.payload, envio).await,
             ids::EQUIP_ITEM => self.equipar(roleid, &cmd.payload, envio).await,
             ids::MOVE_ITEM_TO_EQUIP => self.mover_para_equipar(roleid, &cmd.payload, envio).await,
@@ -1104,7 +1363,15 @@ impl BusServer {
                 // (`actsession.h:109-115`). A sessão termina no **próximo golpe**, quando
                 // `HasNextSession` a encerra (`actobject.cpp:180-189`). B53 deixava o
                 // cancelamento sem efeito: Esc não parava o ataque (teste de 2026-09-17).
-                if let Some(s) = self.world.write().await.players.get_mut(&(roleid as i64)).and_then(|p| p.ataque.as_mut()) {
+                debug!("mundo: {roleid} mandou CANCEL_ACTION");
+                if let Some(s) = self
+                    .world
+                    .write()
+                    .await
+                    .players
+                    .get_mut(&(roleid as i64))
+                    .and_then(|p| p.ataque.as_mut())
+                {
                     s.proximo = None;
                     s.andar = false;
                     s.cancelar = true;
@@ -1141,6 +1408,7 @@ impl BusServer {
             ids::CONTINUE_ACTION => self.soltar_carga(roleid, envio).await,
             ids::GATHER_MATERIAL => self.coletar(roleid, &cmd.payload).await,
             ids::QUERY_CASH_INFO => self.saldo(roleid, envio).await,
+            ids::MALL_SHOPPING => self.comprar_na_loja_gold(roleid, &cmd.payload, envio).await,
             ids::GET_ALL_DATA => self.todos_os_dados(roleid, &cmd.payload, envio).await,
             ids::QUERY_PLAYER_INFO_1 => self.consultar_jogadores(roleid, &cmd.payload, envio).await,
             ids::QUERY_NPC_INFO_1 => self.consultar_npcs(roleid, &cmd.payload, envio).await,
@@ -1149,9 +1417,16 @@ impl BusServer {
             ids::QUERY_TITLE => {
                 // Sem título nenhum no banco ainda: a lista vai vazia, que é o que destrava o
                 // sistema de missões do cliente (ver [`ids::QUERY_TITLE`], B60).
-                self.responder(roleid, S2CGamedataSend::query_title_re(roleid, &[], &[]).data, envio).await;
+                self.responder(
+                    roleid,
+                    S2CGamedataSend::query_title_re(roleid, &[], &[]).data,
+                    envio,
+                )
+                .await;
             }
-            ids::ACTIVATE_REGION_WAYPOINTS => self.ativar_waypoints(roleid, &cmd.payload, envio).await,
+            ids::ACTIVATE_REGION_WAYPOINTS => {
+                self.ativar_waypoints(roleid, &cmd.payload, envio).await
+            }
             ids::DROP_IVTR_ITEM => self.descartar_item(roleid, 0, &cmd.payload, envio).await,
             ids::DROP_EQUIP_ITEM => self.descartar_item(roleid, 1, &cmd.payload, envio).await,
             outro => {
@@ -1161,7 +1436,8 @@ impl BusServer {
                 // é o `UnLockInventoryHandler` (`gs/playercmd.cpp:183-230`, e o `case` de
                 // estado inválido em `:654-678`). Sem isto, um comando que falte deixa o
                 // item apagado na bolsa até o relogue (B84).
-                self.destravar_slots_do_comando(roleid, outro, &cmd.payload, envio).await;
+                self.destravar_slots_do_comando(roleid, outro, &cmd.payload, envio)
+                    .await;
             }
         }
     }
@@ -1283,7 +1559,10 @@ impl BusServer {
     /// jogador, enterrando o que importa.
     async fn medir_latencia(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
         if payload.len() < 4 {
-            warn!("mundo: calc_network_delay de {roleid} com {} bytes", payload.len());
+            warn!(
+                "mundo: calc_network_delay de {roleid} com {} bytes",
+                payload.len()
+            );
             return;
         }
         let timestamp = i32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
@@ -1333,14 +1612,15 @@ impl BusServer {
             .or_else(|| mundo.dados_do_npc(sel.id as i64))
             .map(|(hp, max_hp, alvo)| self.sub.npc_info_00(sel.id, hp, max_hp, alvo).data)
             .or_else(|| {
-                mundo
-                    .dados_do_jogador(sel.id)
-                    .map(|(nivel, nivel2, lutando, hp, max_hp, mp, max_mp, alvo)| {
-                        self.sub.player_info_00(
-                            sel.id, nivel, nivel2, lutando, hp, max_hp, mp, max_mp, alvo,
-                        )
-                        .data
-                    })
+                mundo.dados_do_jogador(sel.id).map(
+                    |(nivel, nivel2, lutando, hp, max_hp, mp, max_mp, alvo)| {
+                        self.sub
+                            .player_info_00(
+                                sel.id, nivel, nivel2, lutando, hp, max_hp, mp, max_mp, alvo,
+                            )
+                            .data
+                    },
+                )
             });
         // Quem seleciona recebe a vida agora (`query_info00`, `actobject.cpp:1610`); o
         // batimento só repete quando ela mudar.
@@ -1356,7 +1636,10 @@ impl BusServer {
         } else {
             // Alvo que este mundo não conhece: o cliente fica com a seleção, sem barra de
             // vida. Inventar 1000/1000 aqui seria mostrar um número falso ao jogador.
-            debug!("mundo: {roleid} selecionou {}, que não está neste mundo", sel.id);
+            debug!(
+                "mundo: {roleid} selecionou {}, que não está neste mundo",
+                sel.id
+            );
         }
     }
 
@@ -1431,7 +1714,9 @@ impl BusServer {
         }
         let destino = {
             let mut mundo = self.world.write().await;
-            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else {
+                return;
+            };
             // O alvo vem do `SELECT_TARGET` anterior, não do pacote — ver [`NormalAttack`].
             let Some(alvo) = p.target_id else {
                 trace!("mundo: {roleid} atacou sem alvo selecionado");
@@ -1465,7 +1750,9 @@ impl BusServer {
     async fn abrir_sessao_de_golpe(&self, roleid: i32, alvo: i64, envio: &EnvioAoCliente) {
         let inicio = {
             let mut mundo = self.world.write().await;
-            let Some(p) = mundo.players.get(&(roleid as i64)) else { return };
+            let Some(p) = mundo.players.get(&(roleid as i64)) else {
+                return;
+            };
             if let Err(motivo) = pode_golpear(&mundo, roleid, alvo) {
                 debug!("mundo: {roleid} não pode golpear {alvo} (motivo {motivo})");
                 return;
@@ -1500,18 +1787,36 @@ impl BusServer {
         } else {
             0
         };
-        if let Some(s) = self.world.write().await.players.get_mut(&(roleid as i64)).and_then(|p| p.ataque.as_mut()) {
+        if let Some(s) = self
+            .world
+            .write()
+            .await
+            .players
+            .get_mut(&(roleid as i64))
+            .and_then(|p| p.ataque.as_mut())
+        {
             s.municao_restante = municao;
         }
-        self.responder(roleid, S2CGamedataSend::host_start_attack(inicio.0 as i32, municao, inicio.1 as u8).data, envio)
-            .await;
+        self.responder(
+            roleid,
+            S2CGamedataSend::host_start_attack(inicio.0 as i32, municao, inicio.1 as u8).data,
+            envio,
+        )
+        .await;
         self.golpear(roleid, envio).await;
     }
 
     /// `cmd_user_move`/`cmd_user_stop_move` põem `session_move` na fila
     /// (`playercmd.cpp:9297-9303`): com golpe em andamento, ele termina no próximo golpe.
     async fn andar_na_fila(&self, roleid: i32) {
-        if let Some(s) = self.world.write().await.players.get_mut(&(roleid as i64)).and_then(|p| p.ataque.as_mut()) {
+        if let Some(s) = self
+            .world
+            .write()
+            .await
+            .players
+            .get_mut(&(roleid as i64))
+            .and_then(|p| p.ataque.as_mut())
+        {
             s.andar = true;
         }
     }
@@ -1545,20 +1850,27 @@ impl BusServer {
             .and_then(|p| p.ataque.take())
             .is_some();
         if tinha {
-            self.enviar_ao_jogador(roleid, S2CGamedataSend::host_stop_attack(motivo).data).await;
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::host_stop_attack(motivo).data)
+                .await;
         }
     }
 
     /// Um golpe da sessão (`DoAttack`), depois de `CheckAttack`.
     async fn golpear(&self, roleid: i32, envio: &EnvioAoCliente) {
         let mut mundo = self.world.write().await;
-        let Some((alvo, de_longe)) =
-            mundo.players.get(&(roleid as i64)).and_then(|p| p.ataque.as_ref()).map(|s| (s.alvo, s.arma_de_longe))
+        let Some((alvo, de_longe)) = mundo
+            .players
+            .get(&(roleid as i64))
+            .and_then(|p| p.ataque.as_ref())
+            .map(|s| (s.alvo, s.arma_de_longe))
         else {
             return;
         };
         if let Err(motivo) = pode_golpear(&mundo, roleid, alvo) {
             drop(mundo);
+            debug!(
+                "mundo: golpe de {roleid} em {alvo} recusado pelo CheckAttack (motivo {motivo})"
+            );
             self.encerrar_ataque(roleid, motivo).await;
             return;
         }
@@ -1611,7 +1923,10 @@ impl BusServer {
         // vida no clique, antes de a flecha sair, e parecia um golpe a mais (B62).
         mundo.adiar_dano(alvo, roleid as i64, dano, velocidade as u32 * 50, false);
         drop(mundo);
-        debug!("mundo: golpe normal de {roleid} em {alvo}: dano {dano} (vida cai em {} ms)", velocidade as u32 * 50);
+        debug!(
+            "mundo: golpe normal de {roleid} em {alvo}: dano {dano} (vida cai em {} ms)",
+            velocidade as u32 * 50
+        );
         if chi_mudou {
             // `SetRefreshState()` do `ModifyAP`: o cliente recebe a barra nova.
             self.avisar_vida_propria(roleid).await;
@@ -1619,7 +1934,12 @@ impl BusServer {
         // `FillAttackMsg` tira a flecha e chama `ATTACK_ONCE` antes do resultado
         // (`player.cpp:3063-3134`). Ambos saem imediatamente: o original altera a
         // `item_list` em memória, portanto latência de persistência nunca alonga a cadência.
-        self.responder(roleid, S2CGamedataSend::attack_once(u8::from(de_longe)).data, envio).await;
+        self.responder(
+            roleid,
+            S2CGamedataSend::attack_once(u8::from(de_longe)).data,
+            envio,
+        )
+        .await;
 
         // 1. O resultado do golpe.
         //
@@ -1629,13 +1949,9 @@ impl BusServer {
         let _ = critico;
         self.responder(
             roleid,
-            self.sub.host_attack_result(
-                alvo as i32,
-                saturar(dano),
-                SEM_MARCACAO,
-                velocidade,
-            )
-            .data,
+            self.sub
+                .host_attack_result(alvo as i32, saturar(dano), SEM_MARCACAO, velocidade)
+                .data,
             envio,
         )
         .await;
@@ -1648,7 +1964,10 @@ impl BusServer {
             let Some(este) = este else { return };
             if gasta_municao {
                 let repo = este.itens().await;
-                if let Err(e) = repo.consume_item(roleid, ContainerType::Equipment, 11, 1).await {
+                if let Err(e) = repo
+                    .consume_item(roleid, ContainerType::Equipment, 11, 1)
+                    .await
+                {
                     warn!("mundo: não consegui gastar a munição de {roleid}: {e}");
                 }
             }
@@ -1671,6 +1990,15 @@ impl BusServer {
     /// Não havia tratamento nenhum para este comando: quem chegava a zero de vida ficava
     /// preso, sem nada que o tirasse de lá a não ser reconectar. O aviso ao cliente sai
     /// pelo canal de eventos, como o resto do que a simulação decide.
+    pub(super) async fn esta_sentado(&self, roleid: i32) -> bool {
+        self.world
+            .read()
+            .await
+            .players
+            .get(&(roleid as i64))
+            .is_some_and(|p| p.sentado)
+    }
+
     async fn reviver(&self, roleid: i32) {
         if self.world.write().await.reviver_jogador(roleid).is_none() {
             debug!("mundo: {roleid} pediu para reviver sem estar morto");
@@ -1777,7 +2105,7 @@ impl BusServer {
                 S2CGamedataSend::team_join_party(lider, PICK_FLAG_PADRAO).data,
             )
             .await;
-            self.enviar_ao_jogador(*m, S2CGamedataSend::team_member_data(lider, &dados).data)
+            self.enviar_ao_jogador(*m, self.sub.team_member_data(lider, &dados).data)
                 .await;
         }
     }
@@ -1825,7 +2153,7 @@ impl BusServer {
                 S2CGamedataSend::team_member_leave(lider, roleid, SAIDA_VOLUNTARIA).data,
             )
             .await;
-            self.enviar_ao_jogador(*m, S2CGamedataSend::team_member_data(lider, &dados).data)
+            self.enviar_ao_jogador(*m, self.sub.team_member_data(lider, &dados).data)
                 .await;
         }
     }
@@ -1851,7 +2179,10 @@ impl BusServer {
         // Confere que o item está mesmo ali antes de consumir: sem isso o cliente escolhe
         // o que quer usar, inclusive o que não tem.
         let Ok(Some(guardado)) = itens.get_item_by_slot(roleid, ct, u.slot).await else {
-            debug!("mundo: {roleid} tentou usar o slot {} , que está vazio", u.slot);
+            debug!(
+                "mundo: {roleid} tentou usar o slot {} , que está vazio",
+                u.slot
+            );
             return;
         };
         if guardado.item_id != u.item_id as u32 {
@@ -1864,19 +2195,41 @@ impl BusServer {
 
         // Carta da Sorte (`TASKDICE_ESSENCE`): entrega uma missão e se gasta.
         if ct == ContainerType::Inventory {
-            let carta = self.world.read().await.data_manager.cartas.get(&(u.item_id as u32)).cloned();
+            let carta = self
+                .world
+                .read()
+                .await
+                .data_manager
+                .cartas
+                .get(&(u.item_id as u32))
+                .cloned();
             if let Some(carta) = carta {
                 self.usar_carta_de_missao(roleid, &u, &carta, envio).await;
                 return;
             }
             // Comida de mascote (`PET_FOOD_ESSENCE`, `item_pet_food::OnUse`).
-            let comida = self.world.read().await.data_manager.comidas_de_mascote.get(&(u.item_id as u32)).copied();
+            let comida = self
+                .world
+                .read()
+                .await
+                .data_manager
+                .comidas_de_mascote
+                .get(&(u.item_id as u32))
+                .copied();
             if let Some(comida) = comida {
                 self.alimentar_mascote(roleid, &u, comida, envio).await;
                 return;
             }
             // Caixa de Cartas de General (`POKER_DICE_ESSENCE`): sorteia uma carta e se gasta.
-            let caixa = self.world.read().await.data_manager.cartas_de_general.caixas.get(&(u.item_id as u32)).cloned();
+            let caixa = self
+                .world
+                .read()
+                .await
+                .data_manager
+                .cartas_de_general
+                .caixas
+                .get(&(u.item_id as u32))
+                .cloned();
             if let Some(caixa) = caixa {
                 self.usar_caixa_de_cartas(roleid, &u, &caixa, envio).await;
                 return;
@@ -1897,7 +2250,9 @@ impl BusServer {
         // equipamento, aconteça o que acontecer.
         let remedio = {
             let mundo = self.world.read().await;
-            mundo.data_manager.quanto_o_remedio_restaura_no_tempo(u.item_id as u32)
+            mundo
+                .data_manager
+                .quanto_o_remedio_restaura_no_tempo(u.item_id as u32)
         };
         let e_consumivel = remedio.is_some();
 
@@ -1926,7 +2281,11 @@ impl BusServer {
         let (hp_total, hp_s, mp_total, mp_s, recarga_ms) = remedio.expect("remédio já conferido");
         let indice_de_recarga = {
             let mundo = self.world.read().await;
-            familia_de_recarga(mundo.data_manager.tipo_maior_do_remedio(u.item_id as u32), hp_total, mp_total)
+            familia_de_recarga(
+                mundo.data_manager.tipo_maior_do_remedio(u.item_id as u32),
+                hp_total,
+                mp_total,
+            )
         };
 
         // O original faz `CheckCoolDown` **antes** de gastar o item e devolve
@@ -1936,13 +2295,17 @@ impl BusServer {
         let em_recarga = {
             let mundo = self.world.read().await;
             let agora = std::time::Instant::now();
-            mundo.players
+            mundo
+                .players
                 .get(&(roleid as i64))
                 .and_then(|p| p.recargas.get(&indice_de_recarga))
                 .is_some_and(|ate| *ate > agora)
         };
         if em_recarga {
-            debug!("mundo: {roleid} tentou usar a poção {} durante a recarga {indice_de_recarga}", u.item_id);
+            debug!(
+                "mundo: {roleid} tentou usar a poção {} durante a recarga {indice_de_recarga}",
+                u.item_id
+            );
             self.responder(roleid, Self::erro_de_recarga(), envio).await;
             return;
         }
@@ -2011,7 +2374,10 @@ impl BusServer {
                 }
                 // A vida de agora, que o `SELF_INFO_00` abaixo leva: o primeiro
                 // pedaço entra no batimento seguinte, como no original.
-                mundo.players.get(&(roleid as i64)).map(|p| (p.hp, p.max_hp, p.mp, p.max_mp))
+                mundo
+                    .players
+                    .get(&(roleid as i64))
+                    .map(|p| (p.hp, p.max_hp, p.mp, p.max_mp))
             }
         };
 
@@ -2026,10 +2392,23 @@ impl BusServer {
                 mundo
                     .players
                     .get(&(roleid as i64))
-                    .map(|p| (p.level, p.cultivation.clamp(0, u8::MAX as i32) as u8, p.combate_s > 0, p.exp, p.sp, p.ap, p.max_ap))
+                    .map(|p| {
+                        (
+                            p.level,
+                            p.cultivation.clamp(0, u8::MAX as i32) as u8,
+                            p.combate_s > 0,
+                            p.exp,
+                            p.sp,
+                            p.ap,
+                            p.max_ap,
+                        )
+                    })
                     .unwrap_or((1, 0, false, 0, 0, 0, 0))
             };
-            info!("mundo: {roleid} usou o item {} e ficou com {hp}/{max_hp}", u.item_id);
+            info!(
+                "mundo: {roleid} usou o item {} e ficou com {hp}/{max_hp}",
+                u.item_id
+            );
             self.responder(
                 roleid,
                 S2CGamedataSend::self_info_00(
@@ -2076,10 +2455,18 @@ impl BusServer {
 
         let mut mundo = self.world.write().await;
         // `MODE_INDEX_SILENT`/`STUN`/`SLEEP` (`filter_Sealed`, `filter_Dizzy`, `filter_Sleep`).
-        if mundo.players.get(&(roleid as i64)).is_some_and(|p| p.efeitos.selado()) {
+        if mundo
+            .players
+            .get(&(roleid as i64))
+            .is_some_and(|p| p.efeitos.selado())
+        {
             drop(mundo);
-            debug!("mundo: {roleid} conjurou {} selado/atordoado — recusado", c.skill_id);
-            self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio).await;
+            debug!(
+                "mundo: {roleid} conjurou {} selado/atordoado — recusado",
+                c.skill_id
+            );
+            self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio)
+                .await;
             return;
         }
         // `SkillStub::Condition`: `(allow_forms & (1 << GetForm())) == 0` recusa (retorno 5,
@@ -2087,19 +2474,41 @@ impl BusServer {
         // `ERR_SKILL_NOT_AVAILABLE` (`gs/actsession.cpp:478-483`). Na raposa só as
         // habilidades de forma (313-318, `allow_forms` 2) e a própria 312 (3); fora dela, as
         // de forma são recusadas.
-        let forma = mundo.players.get(&(roleid as i64)).map_or(0, |p| p.efeitos.forma_atual());
-        if mundo.data_manager.habilidades.get(c.skill_id.max(0) as u32).is_some_and(|h| !h.permitida_na_forma(forma)) {
+        let forma = mundo
+            .players
+            .get(&(roleid as i64))
+            .map_or(0, |p| p.efeitos.forma_atual());
+        if mundo
+            .data_manager
+            .habilidades
+            .get(c.skill_id.max(0) as u32)
+            .is_some_and(|h| !h.permitida_na_forma(forma))
+        {
             drop(mundo);
-            debug!("mundo: {roleid} conjurou {} fora da forma permitida (forma {forma})", c.skill_id);
-            self.responder(roleid, S2CGamedataSend::error_message(jogo::erro_s2c::HABILIDADE_INDISPONIVEL).data, envio).await;
-            self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio).await;
+            debug!(
+                "mundo: {roleid} conjurou {} fora da forma permitida (forma {forma})",
+                c.skill_id
+            );
+            self.responder(
+                roleid,
+                S2CGamedataSend::error_message(jogo::erro_s2c::HABILIDADE_INDISPONIVEL).data,
+                envio,
+            )
+            .await;
+            self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio)
+                .await;
             return;
         }
         let alvo = c
             .alvos
             .first()
             .map(|a| *a as i64)
-            .or_else(|| mundo.players.get(&(roleid as i64)).and_then(|p| p.target_id))
+            .or_else(|| {
+                mundo
+                    .players
+                    .get(&(roleid as i64))
+                    .and_then(|p| p.target_id)
+            })
             .unwrap_or(roleid as i64);
         // `session_skill::StartSession` → `Notify_StartAttack(_target_list[0])`
         // (`actsession.cpp:491`).
@@ -2118,8 +2527,12 @@ impl BusServer {
         // `playerwrapper.cpp:1751-1778`): distância < corpo + 1 + alcance da habilidade +
         // corpo do alvo. Para o Arqueiro o alcance é o da arma (`GetRange()`).
         if let Some(longe) = self.alvo_longe_demais(roleid, c.skill_id, alvo).await {
-            debug!("mundo: {roleid} conjurou {} a {longe:.1} m do alvo — fora do alcance", c.skill_id);
-            self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio).await;
+            debug!(
+                "mundo: {roleid} conjurou {} a {longe:.1} m do alvo — fora do alcance",
+                c.skill_id
+            );
+            self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio)
+                .await;
             return;
         }
         // O tempo de conjuração é o da **habilidade**, não um número fixo. Ver
@@ -2131,11 +2544,17 @@ impl BusServer {
             Some(None) => {
                 debug!("mundo: {roleid} conjurou {} ainda em recarga", c.skill_id);
                 self.responder(roleid, Self::erro_de_recarga(), envio).await;
-                self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio).await;
+                self.responder(roleid, S2CGamedataSend::self_stop_skill().data, envio)
+                    .await;
                 return;
             }
             Some(Some(ms)) if ms > 0 => {
-                self.responder(roleid, S2CGamedataSend::set_cooldown(c.skill_id + 1024, ms).data, envio).await;
+                self.responder(
+                    roleid,
+                    S2CGamedataSend::set_cooldown(c.skill_id + 1024, ms).data,
+                    envio,
+                )
+                .await;
             }
             _ => {}
         }
@@ -2203,7 +2622,8 @@ impl BusServer {
                 }
             };
             if let Some(c) = minha {
-                este.concluir_conjuracao(roleid, c.skill_id, c.alvo, &envio, 1.0).await;
+                este.concluir_conjuracao(roleid, c.skill_id, c.alvo, &envio, 1.0)
+                    .await;
             }
         });
     }
@@ -2215,12 +2635,18 @@ impl BusServer {
         let solta = {
             let mut mundo = self.world.write().await;
             let dados = Arc::clone(&mundo.data_manager);
-            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else {
+                return;
+            };
             let de_carga = p
                 .conjuracao
                 .and_then(|c| dados.habilidades.get(c.skill_id.max(0) as u32))
                 .is_some_and(|h| h.e_de_carga());
-            if de_carga { p.conjuracao } else { None }
+            if de_carga {
+                p.conjuracao
+            } else {
+                None
+            }
         };
         let Some(c) = solta else {
             trace!("mundo: {roleid} mandou CONTINUE_ACTION sem carga aberta");
@@ -2231,8 +2657,13 @@ impl BusServer {
         } else {
             (c.inicio.elapsed().as_millis() as f32 / c.duracao_ms as f32).min(1.0)
         };
-        debug!("mundo: {roleid} soltou a {} com {:.0}% de carga", c.skill_id, carga * 100.0);
-        self.concluir_conjuracao(roleid, c.skill_id, c.alvo, envio, carga).await;
+        debug!(
+            "mundo: {roleid} soltou a {} com {:.0}% de carga",
+            c.skill_id,
+            carga * 100.0
+        );
+        self.concluir_conjuracao(roleid, c.skill_id, c.alvo, envio, carga)
+            .await;
     }
 
     /// Fecha a conjuração aberta e solta o golpe normal que esperava a vez.
@@ -2244,7 +2675,9 @@ impl BusServer {
         if let Some(p) = self.world.write().await.players.get_mut(&(roleid as i64)) {
             p.conjuracao = None;
         }
-        let Some(alvo) = self.golpe_na_fila.write().await.remove(&roleid) else { return };
+        let Some(alvo) = self.golpe_na_fila.write().await.remove(&roleid) else {
+            return;
+        };
         let atacando = self
             .world
             .read()
@@ -2266,11 +2699,18 @@ impl BusServer {
     /// despacha por `moving_skill` em vez de `session_skill` justamente para isso
     /// (`gs/playercmd.cpp:2066-2088`), e só o `moving_skill_interrupt_filter` a encerra.
     /// No 1.5.5 são cinco habilidades, todas da classe 11 — a do Tormentador (B78).
-    async fn interromper_conjuracao(&self, roleid: i32, motivo: u8, envio: &EnvioAoCliente) -> bool {
+    async fn interromper_conjuracao(
+        &self,
+        roleid: i32,
+        motivo: u8,
+        envio: &EnvioAoCliente,
+    ) -> bool {
         const POR_MOVIMENTO: u8 = 2;
         let mut mundo = self.world.write().await;
         let dados = Arc::clone(&mundo.data_manager);
-        let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return false; };
+        let Some(p) = mundo.players.get_mut(&(roleid as i64)) else {
+            return false;
+        };
         if motivo == POR_MOVIMENTO
             && p.conjuracao
                 .as_ref()
@@ -2281,8 +2721,10 @@ impl BusServer {
         }
         if p.conjuracao.take().is_some() {
             drop(mundo);
-            self.responder(roleid, self.sub.self_skill_interrupted(motivo).data, envio).await;
-            self.transmitir_a_outros(roleid, self.sub.skill_interrupted(roleid).data).await;
+            self.responder(roleid, self.sub.self_skill_interrupted(motivo).data, envio)
+                .await;
+            self.transmitir_a_outros(roleid, self.sub.skill_interrupted(roleid).data)
+                .await;
             return true;
         }
         false
@@ -2306,10 +2748,14 @@ impl BusServer {
         let mut novos = Vec::new();
         {
             let mut mundo = self.world.write().await;
-            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else {
+                return;
+            };
             for i in 0..num as usize {
                 let off = 1 + i * 4;
-                let Some(b) = payload.get(off..off + 4) else { break };
+                let Some(b) = payload.get(off..off + 4) else {
+                    break;
+                };
                 // `waypoints[i] & 0xFFFF` (`player.cpp:25215`).
                 let wp = (i32::from_le_bytes(b.try_into().unwrap()) & 0xFFFF) as u16;
                 if !p.waypoints.contains(&wp) {
@@ -2322,7 +2768,8 @@ impl BusServer {
             return;
         }
         for wp in &novos {
-            self.responder(roleid, S2CGamedataSend::activate_waypoint(*wp).data, envio).await;
+            self.responder(roleid, S2CGamedataSend::activate_waypoint(*wp).data, envio)
+                .await;
         }
         let lista = self
             .world
@@ -2332,7 +2779,10 @@ impl BusServer {
             .get(&(roleid as i64))
             .map(|p| p.waypoints.clone())
             .unwrap_or_default();
-        info!("mundo: {roleid} descobriu {} ponto(s) de teleporte: {novos:?}", novos.len());
+        info!(
+            "mundo: {roleid} descobriu {} ponto(s) de teleporte: {novos:?}",
+            novos.len()
+        );
         if let Err(e) = self.repo().await.salvar_waypoints(roleid, &lista).await {
             warn!("mundo: não consegui gravar os pontos de teleporte de {roleid}: {e}");
         }
@@ -2349,7 +2799,15 @@ impl BusServer {
         let h = mundo.data_manager.habilidades.get(skill_id.max(0) as u32)?;
         let alcance = h.alcance(nivel_da_habilidade(p, skill_id), p.attack_range)?;
         let (pos, corpo) = if let Some((m, _)) = mundo.monsters.get(&alvo) {
-            (m.position, mundo.data_manager.monstros.get(m.template_id).map(|t| t.tamanho).unwrap_or(0.0))
+            (
+                m.position,
+                mundo
+                    .data_manager
+                    .monstros
+                    .get(m.template_id)
+                    .map(|t| t.tamanho)
+                    .unwrap_or(0.0),
+            )
         } else if let Some(o) = mundo.players.get(&alvo) {
             (o.position, crate::entity::CORPO_DO_JOGADOR)
         } else {
@@ -2378,13 +2836,15 @@ impl BusServer {
         // `gplayer_dispatcher::skill_perform` envia só ao dono; o broadcast do original
         // está comentado (`gs/player.cpp:4066-4073`). O 88 recebido por outro jogador
         // altera o estado da habilidade *dele* (`EC_HostMsg.cpp:5929-5937`).
-        self.responder(roleid, S2CGamedataSend::skill_perform().data, envio).await;
+        self.responder(roleid, S2CGamedataSend::skill_perform().data, envio)
+            .await;
 
         // O efeito da habilidade vem **antes** do fim da sessão, como no original: o dano sai
         // do `RunSkill` (`session_skill::RepeatSession`, `actsession.cpp:576-600`) e só depois
         // o `EndSession` manda `stop_skill` (`actsession.cpp:558-574`). Mandando o 123 antes,
         // o cliente retomava o golpe normal e os dois danos caíam juntos (B57).
-        self.aplicar_conjuracao(roleid, skill_id, alvo, envio, carga).await;
+        self.aplicar_conjuracao(roleid, skill_id, alvo, envio, carga)
+            .await;
 
         // `HOST_STOP_SKILL` (123) é o que **fecha a conjuração de quem conjurou**, e é
         // sem corpo (o cliente exige `dwSize == 0`, `EC_GameDataPrtc.cpp:305`).
@@ -2408,7 +2868,11 @@ impl BusServer {
         // logo depois do efeito, a animação era cortada e só o ícone do buff aparecia.
         let nivel_conjurado = {
             let mundo = self.world.read().await;
-            mundo.players.get(&(roleid as i64)).map(|p| nivel_da_habilidade(p, skill_id)).unwrap_or(1)
+            mundo
+                .players
+                .get(&(roleid as i64))
+                .map(|p| nivel_da_habilidade(p, skill_id))
+                .unwrap_or(1)
         };
         let execucao_ms = self
             .world
@@ -2461,7 +2925,11 @@ impl BusServer {
             .and_then(|h| h.mana(nivel))
             .map(|m| m.round() as i32);
         if let Some(custo) = custo_do_stub.or_else(|| habilidade.map(|h| h.custo_de_mp(nivel))) {
-            let tem = mundo.players.get(&(roleid as i64)).map(|p| p.mp).unwrap_or(0);
+            let tem = mundo
+                .players
+                .get(&(roleid as i64))
+                .map(|p| p.mp)
+                .unwrap_or(0);
             if tem < custo {
                 debug!("mundo: {roleid} conjurou {skill_id} com {tem} de mana, precisa de {custo}");
                 return;
@@ -2485,9 +2953,14 @@ impl BusServer {
             .map(|h| (h.apcost.unwrap_or(0).max(0), h.apgain.unwrap_or(0).max(0)))
             .unwrap_or((0, 0));
         let chi_mudou = {
-            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else {
+                return;
+            };
             if p.ap < apcost {
-                debug!("mundo: {roleid} conjurou {skill_id} com {} de chi, precisa de {apcost}", p.ap);
+                debug!(
+                    "mundo: {roleid} conjurou {skill_id} com {} de chi, precisa de {apcost}",
+                    p.ap
+                );
                 return;
             }
             let delta = apgain - apcost;
@@ -2497,10 +2970,15 @@ impl BusServer {
             // `SetRefreshState()` do `ModifyAP`: a barra nova vai ao cliente.
             let dados = mundo.dados_do_proprio(roleid);
             drop(mundo);
-            if let Some((nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados {
+            if let Some((nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) =
+                dados
+            {
                 self.responder(
                     roleid,
-                    S2CGamedataSend::self_info_00(nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
+                    S2CGamedataSend::self_info_00(
+                        nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap,
+                    )
+                    .data,
                     envio,
                 )
                 .await;
@@ -2511,7 +2989,10 @@ impl BusServer {
         // B53: a habilidade pelo stub (área, flechas, precisão, efeitos), quando ele tem o que
         // fazer; senão o caminho antigo.
         drop(mundo);
-        if self.aplicar_habilidade(roleid, skill_id, alvo, nivel, carga, envio).await {
+        if self
+            .aplicar_habilidade(roleid, skill_id, alvo, nivel, carga, envio)
+            .await
+        {
             return;
         }
         let mut mundo = self.world.write().await;
@@ -2539,20 +3020,31 @@ impl BusServer {
             .and_then(|h| h.dano.clone())
             .and_then(|d| CombatEngine::golpe_de_habilidade(&atacante, &d, nivel, carga));
         let dano = if let Some(g) = do_stub {
-            combat::resolver(&g, &CombatEngine::defesa_do_monstro(monstro), distancia, false, combat::Rolagens::sortear()).dano() as i64
-        } else { match habilidade.and_then(|h| {
-            h.dano(
-                nivel,
-                (atacante.attack_min + atacante.attack_max) / 2,
-                (atacante.magic_attack_min + atacante.magic_attack_max) / 2,
+            combat::resolver(
+                &g,
+                &CombatEngine::defesa_do_monstro(monstro),
+                distancia,
+                false,
+                combat::Rolagens::sortear(),
             )
-        }) {
-            Some(d) => {
-                let reducao = combat::reducao_por_defesa(monstro.def_phys, atacante.level);
-                (((d as f32) * (1.0 - reducao)).round() as i64).max(1)
+            .dano() as i64
+        } else {
+            match habilidade.and_then(|h| {
+                h.dano(
+                    nivel,
+                    (atacante.attack_min + atacante.attack_max) / 2,
+                    (atacante.magic_attack_min + atacante.magic_attack_max) / 2,
+                )
+            }) {
+                Some(d) => {
+                    let reducao = combat::reducao_por_defesa(monstro.def_phys, atacante.level);
+                    (((d as f32) * (1.0 - reducao)).round() as i64).max(1)
+                }
+                None => {
+                    CombatEngine::jogador_ataca_monstro(&atacante, monstro, distancia).dano() as i64
+                }
             }
-            None => CombatEngine::jogador_ataca_monstro(&atacante, monstro, distancia).dano() as i64,
-        } };
+        };
         let (hp, max_hp, morreu, template, exp, sp) = {
             let (m, ai) = mundo.monsters.get_mut(&alvo).expect("conferido acima");
             ai.add_threat(roleid as i64, dano);
@@ -2562,6 +3054,7 @@ impl BusServer {
             let morreu = m.hp == 0;
             if morreu {
                 m.is_dead = true;
+                m.efeitos.ao_morrer();
             }
             (m.hp, m.max_hp, morreu, m.template_id, m.exp, m.sp)
         };
@@ -2576,21 +3069,24 @@ impl BusServer {
 
         self.responder(
             roleid,
-            self.sub.self_skill_attack_result(
-                alvo as i32,
-                skill_id,
-                saturar(dano),
-                SEM_MARCACAO,
-                VELOCIDADE_PADRAO,
-                SECAO_UNICA,
-            )
+            self.sub
+                .self_skill_attack_result(
+                    alvo as i32,
+                    skill_id,
+                    saturar(dano),
+                    SEM_MARCACAO,
+                    VELOCIDADE_PADRAO,
+                    SECAO_UNICA,
+                )
                 .data,
             envio,
         )
         .await;
         // A barra de vida vai no batimento de 1 s ([`EventoDoMundo::VidaDoMonstro`]), como o
         // golpe normal (B56).
-        debug!("mundo: habilidade {skill_id} de {roleid} em {alvo}: dano {dano}, vida {hp}/{max_hp}");
+        debug!(
+            "mundo: habilidade {skill_id} de {roleid} em {alvo}: dano {dano}, vida {hp}/{max_hp}"
+        );
 
         if morreu {
             info!("mundo: {roleid} matou {alvo} com a habilidade {}", skill_id);
@@ -2624,7 +3120,10 @@ impl BusServer {
             jogador.modo_roupa
         };
 
-        debug!("mundo: {roleid} passou para o modo {}", if ativo { "roupa" } else { "armadura" });
+        debug!(
+            "mundo: {roleid} passou para o modo {}",
+            if ativo { "roupa" } else { "armadura" }
+        );
 
         // A escolha vai ao banco, senão morre no logout — e a **tela de seleção** lê o
         // `charactermode` de lá para desenhar o avatar (`CECLoginPlayer::Load`,
@@ -2680,7 +3179,9 @@ impl BusServer {
                 return;
             };
             let Some(vitima) = mundo.players.get(&alvo) else {
-                debug!("mundo: {roleid} conjurou {skill_id} em {alvo}, que não é jogador deste mundo");
+                debug!(
+                    "mundo: {roleid} conjurou {skill_id} em {alvo}, que não é jogador deste mundo"
+                );
                 return;
             };
             if vitima.hp <= 0 {
@@ -2820,19 +3321,21 @@ impl BusServer {
         // A vida nova do alvo, e — se doeu — o efeito de ter sido acertado.
         let alvo_id = alvo as i32;
         if alvo_id != roleid && !h.e_cura() {
-            let _ = self.enviar_ao_jogador(
-                alvo_id,
-                self.sub.host_skill_attacked(
-                    roleid,
-                    skill_id,
-                    saturar(valor as i64),
-                    SEM_MARCACAO,
-                    VELOCIDADE_PADRAO,
-                    SECAO_UNICA,
+            let _ = self
+                .enviar_ao_jogador(
+                    alvo_id,
+                    self.sub
+                        .host_skill_attacked(
+                            roleid,
+                            skill_id,
+                            saturar(valor as i64),
+                            SEM_MARCACAO,
+                            VELOCIDADE_PADRAO,
+                            SECAO_UNICA,
+                        )
+                        .data,
                 )
-                .data,
-            )
-            .await;
+                .await;
         }
         // O cultivo verdadeiro, não zero: ver `EC_Player.cpp:7434-7454` (B71).
         let vida = S2CGamedataSend::self_info_00(
@@ -2890,10 +3393,15 @@ impl BusServer {
     /// já usa); um jogador comum que mande este comando à mão é recusado e fica no log.
     async fn teleportar(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
         if payload.len() < 12 {
-            warn!("mundo: goto de {roleid} com payload curto ({} bytes)", payload.len());
+            warn!(
+                "mundo: goto de {roleid} com payload curto ({} bytes)",
+                payload.len()
+            );
             return;
         }
-        let f = |i: usize| f32::from_le_bytes([payload[i], payload[i + 1], payload[i + 2], payload[i + 3]]);
+        let f = |i: usize| {
+            f32::from_le_bytes([payload[i], payload[i + 1], payload[i + 2], payload[i + 3]])
+        };
         let destino = pw_core::Vector3::new(f(0), f(4), f(8));
 
         let nivel_de_gm = self.repo().await.nivel_de_gm(roleid).await;
@@ -3053,7 +3561,10 @@ impl BusServer {
         // 1. Vale a pena recalcular?
         let Some((centro, anterior)) = ({
             let mundo = self.world.read().await;
-            mundo.players.get(&eu).map(|p| (p.position, p.centro_do_stream))
+            mundo
+                .players
+                .get(&eu)
+                .map(|p| (p.position, p.centro_do_stream))
         }) else {
             return;
         };
@@ -3109,8 +3620,16 @@ impl BusServer {
             materias.sort_by(|a, b| a.1.total_cmp(&b.1));
 
             (
-                criaturas.into_iter().take(TETO_DE_VISIVEIS).map(|(id, _)| id).collect(),
-                materias.into_iter().take(TETO_DE_MATERIA).map(|(id, _)| id).collect(),
+                criaturas
+                    .into_iter()
+                    .take(TETO_DE_VISIVEIS)
+                    .map(|(id, _)| id)
+                    .collect(),
+                materias
+                    .into_iter()
+                    .take(TETO_DE_MATERIA)
+                    .map(|(id, _)| id)
+                    .collect(),
                 jogadores,
             )
         };
@@ -3121,11 +3640,15 @@ impl BusServer {
             let Some(jogador) = mundo.players.get_mut(&eu) else {
                 return;
             };
-            let tudo = || criaturas.iter().chain(&materias).chain(&jogadores_perto).copied();
+            let tudo = || {
+                criaturas
+                    .iter()
+                    .chain(&materias)
+                    .chain(&jogadores_perto)
+                    .copied()
+            };
             let novos: std::collections::HashSet<i64> = tudo().collect();
-            let entraram: Vec<i64> = tudo()
-                .filter(|id| !jogador.visiveis.contains(id))
-                .collect();
+            let entraram: Vec<i64> = tudo().filter(|id| !jogador.visiveis.contains(id)).collect();
             let sairam: Vec<i64> = jogador
                 .visiveis
                 .iter()
@@ -3149,7 +3672,10 @@ impl BusServer {
                 .iter()
                 .filter_map(|id| {
                     if let Some(p) = mundo.players.get(id) {
-                        return Some(QuemChegou::Jogador { id: *id as i32, vista: p.vista() });
+                        return Some(QuemChegou::Jogador {
+                            id: *id as i32,
+                            vista: p.vista(),
+                        });
                     }
                     if let Some(m) = mundo.matters.get(id) {
                         return Some(QuemChegou::Materia {
@@ -3174,6 +3700,7 @@ impl BusServer {
                             dir: m.ai.direcao,
                             dono: m.dono as i32,
                             nome: m.nome.clone(),
+                            ambiente: m.corpo.habitat.estado_de_ambiente(),
                         });
                     }
                     match mundo.monsters.get(id) {
@@ -3207,14 +3734,23 @@ impl BusServer {
                 QuemChegou::Criatura { id, tid, pos, dir } => {
                     self.sub.npc_enter_slice(id, tid, pos, dir).data
                 }
-                QuemChegou::Jogador { id, vista } => {
-                    self.sub.player_enter_slice(id, vista).data
-                }
+                QuemChegou::Jogador { id, vista } => self.sub.player_enter_slice(id, vista).data,
                 QuemChegou::Materia { id, tid, pos } => {
                     S2CGamedataSend::matter_enter_world(id, tid, pos).data
                 }
-                QuemChegou::Mascote { id, tid, vis, pos, dir, dono, nome } => {
-                    self.sub.mascote_entra(11, id, tid, vis, pos, dir, dono, &nome).data
+                QuemChegou::Mascote {
+                    id,
+                    tid,
+                    vis,
+                    pos,
+                    dir,
+                    dono,
+                    nome,
+                    ambiente,
+                } => {
+                    self.sub
+                        .mascote_entra(11, id, tid, vis, pos, dir, dono, &nome, ambiente)
+                        .data
                 }
             };
             self.responder(roleid, pacote, envio).await;
@@ -3251,12 +3787,14 @@ impl BusServer {
 
         for outro in entraram {
             if self.passou_a_ver(outro, eu).await {
-                self.enviar_ao_jogador(outro as i32, meu_pacote.clone()).await;
+                self.enviar_ao_jogador(outro as i32, meu_pacote.clone())
+                    .await;
             }
         }
         for outro in sairam {
             if self.deixou_de_ver(outro, eu).await {
-                self.enviar_ao_jogador(outro as i32, minha_saida.clone()).await;
+                self.enviar_ao_jogador(outro as i32, minha_saida.clone())
+                    .await;
             }
         }
     }
@@ -3348,7 +3886,10 @@ impl BusServer {
         } else {
             S2CGamedataSend::object_landing(roleid).data
         };
-        debug!("mundo: {roleid} {}", if voando { "decolou" } else { "pousou" });
+        debug!(
+            "mundo: {roleid} {}",
+            if voando { "decolou" } else { "pousou" }
+        );
         self.responder(roleid, pacote.clone(), envio).await;
         self.transmitir_a_outros(roleid, pacote).await;
     }
@@ -3367,7 +3908,8 @@ impl BusServer {
         };
 
         let mut mundo = self.world.write().await;
-        let existe = mundo.dados_do_npc(pedido.target as i64).is_some() || mundo.is_scene_service_npc(pedido.target);
+        let existe = mundo.dados_do_npc(pedido.target as i64).is_some()
+            || mundo.is_scene_service_npc(pedido.target);
         if existe {
             if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
                 p.npc_em_conversa = Some(pedido.target as i64);
@@ -3424,7 +3966,12 @@ impl BusServer {
         };
 
         if tn.reason == Some(PEDIDO_DA_MARCA_DINAMICA) {
-            let marca = self.world.read().await.data_manager.marca_das_missoes_dinamicas;
+            let marca = self
+                .world
+                .read()
+                .await
+                .data_manager
+                .marca_das_missoes_dinamicas;
             match marca {
                 Some(marca) => {
                     debug!("mundo: {roleid} pediu a marca das missões dinâmicas: {marca:#x}");
@@ -3439,9 +3986,17 @@ impl BusServer {
         }
 
         if tn.reason == Some(PEDIDO_DOS_DADOS_DINAMICOS) {
-            let dados = self.world.read().await.data_manager.missoes_dinamicas.clone();
+            let dados = self
+                .world
+                .read()
+                .await
+                .data_manager
+                .missoes_dinamicas
+                .clone();
             let Some(dados) = dados else {
-                debug!("mundo: {roleid} pediu as missões dinâmicas, e o realm não tem dyn_tasks.data");
+                debug!(
+                    "mundo: {roleid} pediu as missões dinâmicas, e o realm não tem dyn_tasks.data"
+                );
                 return;
             };
             let passo = S2CGamedataSend::PEDACO_DAS_MISSOES_DINAMICAS;
@@ -3451,8 +4006,12 @@ impl BusServer {
             while enviados < total {
                 let fim = (enviados + passo).min(total);
                 let ultimo = fim == total;
-                self.responder(roleid, S2CGamedataSend::task_dyn_data(&dados[enviados..fim], ultimo).data, envio)
-                    .await;
+                self.responder(
+                    roleid,
+                    S2CGamedataSend::task_dyn_data(&dados[enviados..fim], ultimo).data,
+                    envio,
+                )
+                .await;
                 enviados = fim;
             }
             return;
@@ -3500,10 +4059,17 @@ impl BusServer {
                 // TODO: o custo é fixo enquanto a durabilidade dos itens não for lida. O
                 // dinheiro sai da entidade (o autosave grava a entidade por cima do banco).
                 const CUSTO: i64 = 150;
-                let pagou = self.com_contexto(roleid, |ctx| ctx.gastar_dinheiro(CUSTO)).await.unwrap_or(false);
+                let pagou = self
+                    .com_contexto(roleid, |ctx| ctx.gastar_dinheiro(CUSTO))
+                    .await
+                    .unwrap_or(false);
                 if pagou {
-                    self.responder(roleid, S2CGamedataSend::repair_all(CUSTO as i32).data, envio)
-                        .await;
+                    self.responder(
+                        roleid,
+                        S2CGamedataSend::repair_all(CUSTO as i32).data,
+                        envio,
+                    )
+                    .await;
                 } else {
                     debug!("mundo: {roleid} não tem os {CUSTO} do reparo");
                 }
@@ -3565,8 +4131,12 @@ impl BusServer {
             servico::APRENDER_HABILIDADE => self.aprender(roleid, c).await,
             servico::INCUBAR_PET => self.incubar_mascote(roleid, c).await,
             servico::RENOMEAR_MASCOTE => self.renomear_mascote(roleid, c).await,
-            servico::ESQUECER_HABILIDADE_DE_MASCOTE => self.esquecer_habilidade_de_mascote(roleid, c).await,
-            servico::APRENDER_HABILIDADE_DE_MASCOTE => self.aprender_habilidade_de_mascote(roleid, c).await,
+            servico::ESQUECER_HABILIDADE_DE_MASCOTE => {
+                self.esquecer_habilidade_de_mascote(roleid, c).await
+            }
+            servico::APRENDER_HABILIDADE_DE_MASCOTE => {
+                self.aprender_habilidade_de_mascote(roleid, c).await
+            }
 
             outro => {
                 debug!("mundo: {roleid} pediu o serviço de NPC {outro}, ainda não tratado");
@@ -3584,44 +4154,53 @@ impl BusServer {
     ///
     /// Manda também o dinheiro, que era `50000` fixo para todo mundo.
     async fn estado_proprio(&self, roleid: i32, envio: &EnvioAoCliente) {
-        let (dados, dinheiro) = {
-            let mundo = self.world.read().await;
-            (mundo.dados_do_proprio(roleid), mundo.dinheiro(roleid))
-        };
-        let Some((nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados else {
+        let dados = self.world.read().await.dados_do_proprio(roleid);
+        let Some((nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados
+        else {
             debug!("mundo: {roleid} pediu o próprio estado sem estar neste mundo");
             return;
         };
 
         self.responder(
             roleid,
-            S2CGamedataSend::self_info_00(nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap).data,
+            S2CGamedataSend::self_info_00(
+                nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap,
+            )
+            .data,
             envio,
         )
         .await;
         // O que o original responde a este pedido é o `OWN_EXT_PROP` (`PlayerGetProperty`,
         // `player.cpp:8588-8596`) — é por ele que a janela de atributos se refaz depois de
         // gastar ponto (`OnMsgHstAddStatusPt` pede este comando, `EC_HostMsg.cpp:1624`).
-        let ficha = self.world.read().await.players.get(&(roleid as i64)).map(|p| self.ficha_propria(p));
+        let ficha = self
+            .world
+            .read()
+            .await
+            .players
+            .get(&(roleid as i64))
+            .map(|p| self.ficha_propria(p));
         if let Some(f) = ficha {
             self.responder(roleid, f, envio).await;
         }
-        if let Some(d) = dinheiro {
-            self.responder(roleid, S2CGamedataSend::player_cash(d).data, envio)
-                .await;
-        }
+        self.saldo(roleid, envio).await;
     }
 
     /// `C2S::QUERY_CASH_INFO` (110) — o cliente pergunta o saldo.
     ///
-    /// O `gateway.rs` respondia `50000` escrito no código, para qualquer jogador, sempre.
+    /// `PLAYER_CASH` leva sempre o cash da Loja Gold, `GetMallCash()` (`gs/playercmd.cpp:176`,
+    /// `player.cpp:10818`, `13737`, `15996`), que é da **conta** (`accounts.gold_balance`).
+    /// Mandava o dinheiro do personagem (B-loja-gold, 2026-09-26); antes disso, `50000` fixo.
     async fn saldo(&self, roleid: i32, envio: &EnvioAoCliente) {
-        let Some(d) = self.world.read().await.dinheiro(roleid) else {
-            debug!("mundo: {roleid} pediu o saldo sem estar neste mundo");
-            return;
-        };
-        self.responder(roleid, S2CGamedataSend::player_cash(d).data, envio)
-            .await;
+        match self.repo().await.cash_da_conta(roleid).await {
+            Ok(Some(c)) => {
+                let c = c.clamp(0, i32::MAX as i64) as i32;
+                self.responder(roleid, S2CGamedataSend::player_cash(c).data, envio)
+                    .await;
+            }
+            Ok(None) => debug!("mundo: {roleid} pediu o saldo e não tem conta"),
+            Err(e) => warn!("mundo: cash de {roleid} ilegível: {e}"),
+        }
     }
 
     /// `C2S::QUERY_PLAYER_INFO_1` (67) — barra de vida dos outros jogadores.
@@ -3650,7 +4229,8 @@ impl BusServer {
         for (id, (nivel, nivel2, lutando, hp, max_hp, mp, max_mp, alvo)) in respostas {
             self.responder(
                 roleid,
-                self.sub.player_info_00(id, nivel, nivel2, lutando, hp, max_hp, mp, max_mp, alvo)
+                self.sub
+                    .player_info_00(id, nivel, nivel2, lutando, hp, max_hp, mp, max_mp, alvo)
                     .data,
                 envio,
             )
@@ -3740,7 +4320,10 @@ impl BusServer {
             warn!("mundo: get_others_equipment de {roleid} com payload curto");
             return;
         };
-        debug!("mundo: get_other_equip de {roleid}, ids: {:?}", consulta.ids);
+        debug!(
+            "mundo: get_other_equip de {roleid}, ids: {:?}",
+            consulta.ids
+        );
 
         let itens = self.repo().await.item_repo().clone();
         for id in consulta.ids {
@@ -3813,8 +4396,12 @@ impl BusServer {
         if tamanho != 0 {
             info!("mundo: {roleid} mandou senha de guarda-roupa com {tamanho} bytes —                    ainda não há senha no banco, então passa");
         }
-        self.responder(roleid, S2CGamedataSend::security_passwd_checked().data, envio)
-            .await;
+        self.responder(
+            roleid,
+            S2CGamedataSend::security_passwd_checked().data,
+            envio,
+        )
+        .await;
     }
 
     /// `C2S::GET_ALL_DATA` (39) — a carga inicial ao entrar no mundo.
@@ -3856,7 +4443,8 @@ impl BusServer {
         .await;
         if pedido.detalhe_bolsa != 0 {
             for item in &bolsa {
-                self.responder(roleid, Self::info_de(0, item, &dados), envio).await;
+                self.responder(roleid, Self::info_de(0, item, &dados), envio)
+                    .await;
             }
         }
 
@@ -3874,14 +4462,12 @@ impl BusServer {
         .await;
         if pedido.detalhe_equipamento != 0 {
             for item in &equipado {
-                self.responder(roleid, Self::info_de(1, item, &dados), envio).await;
+                self.responder(roleid, Self::info_de(1, item, &dados), envio)
+                    .await;
             }
         }
 
-        if let Some(d) = self.world.read().await.dinheiro(roleid) {
-            self.responder(roleid, S2CGamedataSend::player_cash(d).data, envio)
-                .await;
-        }
+        self.saldo(roleid, envio).await;
 
         // Bolsa 2 (Missão, `IL_TASK_INVENTORY`): no original (`player.cpp:13243-13247`),
         // `SendAllData` manda as três bolsas SEMPRE. O cliente 1.5.5 pede `GetAllData(true, true, false)`
@@ -3893,13 +4479,19 @@ impl BusServer {
             .unwrap_or_default();
         self.responder(
             roleid,
-            S2CGamedataSend::own_ivtr_from_items(2, crate::economia::TAMANHO_DA_BOLSA_DE_MISSAO as u8, &bolsa_missao).data,
+            S2CGamedataSend::own_ivtr_from_items(
+                2,
+                crate::economia::TAMANHO_DA_BOLSA_DE_MISSAO as u8,
+                &bolsa_missao,
+            )
+            .data,
             envio,
         )
         .await;
         if pedido.detalhe_missoes != 0 {
             for item in &bolsa_missao {
-                self.responder(roleid, Self::info_de(2, item, &dados), envio).await;
+                self.responder(roleid, Self::info_de(2, item, &dados), envio)
+                    .await;
             }
         }
 
@@ -3954,8 +4546,12 @@ impl BusServer {
             .get(&(roleid as i64))
             .map(|p| p.waypoints.clone())
             .unwrap_or_default();
-        self.responder(roleid, S2CGamedataSend::player_waypoint_list(&waypoints).data, envio)
-            .await;
+        self.responder(
+            roleid,
+            S2CGamedataSend::player_waypoint_list(&waypoints).data,
+            envio,
+        )
+        .await;
 
         // Mascotes: capacidade da sala de mascotes (PET_ROOM_CAPACITY 240) e lista de mascotes (PET_ROOM 239).
         // No original (`player.cpp:13265`), SendAllData envia os dois comandos.
@@ -4001,13 +4597,15 @@ impl BusServer {
         // dono da tela já existe (o cliente é que pediu os dados), e aqui os números são
         // os **calculados** — precisão, evasão, defesa e dano do `PlayerEntity`, em vez
         // dos zeros que o link tinha para oferecer.
-        if let Some(p) = self.world.read().await.players.get(&(roleid as i64)).cloned() {
-            self.responder(
-                roleid,
-                self.ficha_propria(&p),
-                envio,
-            )
-            .await;
+        if let Some(p) = self
+            .world
+            .read()
+            .await
+            .players
+            .get(&(roleid as i64))
+            .cloned()
+        {
+            self.responder(roleid, self.ficha_propria(&p), envio).await;
         } else {
             warn!("mundo: {roleid} pediu todos os dados sem estar no mundo — sem OWN_EXT_PROP");
         }
@@ -4024,8 +4622,12 @@ impl BusServer {
             .map(|p| p.missoes.blocos())
             .unwrap_or_else(|| crate::missoes::ListasDeMissao::default().blocos());
         let [a, b, c, d, e] = &listas;
-        self.responder(roleid, self.sub.task_data_com_listas([a, b, c, d, e]).data, envio)
-            .await;
+        self.responder(
+            roleid,
+            self.sub.task_data_com_listas([a, b, c, d, e]).data,
+            envio,
+        )
+        .await;
     }
 
     /// O `item_info` de um item já carregado, para não repetir a conversão em dois lugares.
@@ -4075,7 +4677,11 @@ impl BusServer {
             }
         }
         if item.max_durability > 0 {
-            pw_core::escrever_durabilidade(&mut octetos, item.durability as i32, item.max_durability as i32);
+            pw_core::escrever_durabilidade(
+                &mut octetos,
+                item.durability as i32,
+                item.max_durability as i32,
+            );
         }
         S2CGamedataSend::item_info(
             onde,
@@ -4101,13 +4707,7 @@ impl BusServer {
     }
 
     /// Manda o `item_info` de um item, se ele existir naquele slot.
-    async fn mandar_info(
-        &self,
-        roleid: i32,
-        onde: u8,
-        slot: u8,
-        envio: &EnvioAoCliente,
-    ) {
+    async fn mandar_info(&self, roleid: i32, onde: u8, slot: u8, envio: &EnvioAoCliente) {
         let itens = self.itens().await;
         let ct = ContainerType::from_i16(onde as i16);
         if let Ok(Some(i)) = itens.get_item_by_slot(roleid, ct, slot as u16).await {
@@ -4151,7 +4751,12 @@ impl BusServer {
     /// `common/protocol.h:720`; `gs/player.cpp:7874, 7991, 8077, 8258`). Aqui também se
     /// destravam os slots que o cliente congelou ao mandar o comando (B84). `true` quando
     /// recusou.
-    async fn equipamento_travado(&self, roleid: i32, slots: &[(u8, u16)], envio: &EnvioAoCliente) -> bool {
+    async fn equipamento_travado(
+        &self,
+        roleid: i32,
+        slots: &[(u8, u16)],
+        envio: &EnvioAoCliente,
+    ) -> bool {
         let travado = self
             .world
             .read()
@@ -4163,9 +4768,19 @@ impl BusServer {
             return false;
         }
         debug!("mundo: {roleid} está com o equipamento trancado (Forma Sombria)");
-        self.responder(roleid, S2CGamedataSend::error_message(ERRO_EQUIPAMENTO_TRANCADO).data, envio).await;
+        self.responder(
+            roleid,
+            S2CGamedataSend::error_message(ERRO_EQUIPAMENTO_TRANCADO).data,
+            envio,
+        )
+        .await;
         for &(onde, slot) in slots {
-            self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot).data, envio).await;
+            self.responder(
+                roleid,
+                S2CGamedataSend::unfreeze_ivtr_slot(onde, slot).data,
+                envio,
+            )
+            .await;
         }
         true
     }
@@ -4181,7 +4796,11 @@ impl BusServer {
             warn!("mundo: troca de slots de {roleid} com payload curto");
             return;
         };
-        if onde == ContainerType::Equipment && self.equipamento_travado(roleid, &[(1, p.a as u16), (1, p.b as u16)], envio).await {
+        if onde == ContainerType::Equipment
+            && self
+                .equipamento_travado(roleid, &[(1, p.a as u16), (1, p.b as u16)], envio)
+                .await
+        {
             return;
         }
 
@@ -4236,7 +4855,12 @@ impl BusServer {
 
         let itens = self.itens().await;
         if let Err(e) = itens
-            .swap_slots(roleid, ContainerType::Inventory, m.src as u16, m.dest as u16)
+            .swap_slots(
+                roleid,
+                ContainerType::Inventory,
+                m.src as u16,
+                m.dest as u16,
+            )
             .await
         {
             warn!("mundo: falha ao mover item de {roleid}: {e:?}");
@@ -4278,29 +4902,56 @@ impl BusServer {
             return;
         }
         let slot = payload[0];
-        if onde == 1 && self.equipamento_travado(roleid, &[(1, slot as u16)], envio).await {
+        if onde == 1
+            && self
+                .equipamento_travado(roleid, &[(1, slot as u16)], envio)
+                .await
+        {
             return;
         }
-        let pedido = if onde == 0 && payload.len() >= 5 {
-            u32::from_le_bytes([payload[1], payload[2], payload[3], payload[4]])
+        // A quantidade pela versão (`u32` no 1.5.5, `u16` no 1.2.6); o corpo não manda nada:
+        // vai a peça inteira.
+        let pedido = if onde == 0 {
+            self.sub.quantidade_do_descarte(payload)
         } else {
-            u32::MAX // o corpo não manda quantidade: vai a peça inteira
+            None
+        }
+        .unwrap_or(u32::MAX);
+        let recipiente = if onde == 0 {
+            ContainerType::Inventory
+        } else {
+            ContainerType::Equipment
         };
-        let recipiente = if onde == 0 { ContainerType::Inventory } else { ContainerType::Equipment };
 
         let itens = self.itens().await;
-        let Ok(Some(item)) = itens.get_item_by_slot(roleid, recipiente, slot as u16).await else {
+        let Ok(Some(item)) = itens
+            .get_item_by_slot(roleid, recipiente, slot as u16)
+            .await
+        else {
             // Nada ali: destrava e sai, senão o slot fica preso.
-            self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data, envio).await;
+            self.responder(
+                roleid,
+                S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data,
+                envio,
+            )
+            .await;
             return;
         };
         let quantos = pedido.min(item.count).max(1);
         let sobra = item.count.saturating_sub(quantos);
 
         if sobra == 0 {
-            if let Err(e) = itens.delete_item_by_slot(roleid, recipiente, slot as u16).await {
+            if let Err(e) = itens
+                .delete_item_by_slot(roleid, recipiente, slot as u16)
+                .await
+            {
                 warn!("mundo: não apaguei o item descartado de {roleid}: {e:?}");
-                self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data, envio).await;
+                self.responder(
+                    roleid,
+                    S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data,
+                    envio,
+                )
+                .await;
                 return;
             }
         } else {
@@ -4308,7 +4959,12 @@ impl BusServer {
             restante.count = sobra;
             if let Err(e) = itens.upsert_item(&restante).await {
                 warn!("mundo: não gravei a sobra do descarte de {roleid}: {e:?}");
-                self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data, envio).await;
+                self.responder(
+                    roleid,
+                    S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data,
+                    envio,
+                )
+                .await;
                 return;
             }
         }
@@ -4316,7 +4972,13 @@ impl BusServer {
         // No chão, sem dono — e com o conteúdo do item, que é o que guarda refino,
         // durabilidade e o resto (mesmo caminho do drop de monstro).
         let drop = {
-            let pos = self.world.read().await.players.get(&(roleid as i64)).map(|p| p.position);
+            let pos = self
+                .world
+                .read()
+                .await
+                .players
+                .get(&(roleid as i64))
+                .map(|p| p.position);
             match pos {
                 Some(pos) => Some(self.world.write().await.criar_drop_com_octetos(
                     item.item_id,
@@ -4331,15 +4993,25 @@ impl BusServer {
         if let Some(d) = drop {
             self.mostrar_drop(&d).await;
         }
-        info!("mundo: {roleid} jogou fora {quantos}× o item {} do pacote {onde}", item.item_id);
+        info!(
+            "mundo: {roleid} jogou fora {quantos}× o item {} do pacote {onde}",
+            item.item_id
+        );
 
         self.responder(
             roleid,
-            self.sub.player_drop_item(onde, slot, quantos, item.item_id as i32, DROP_TYPE_PLAYER).data,
+            self.sub
+                .player_drop_item(onde, slot, quantos, item.item_id as i32, DROP_TYPE_PLAYER)
+                .data,
             envio,
         )
         .await;
-        self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data, envio).await;
+        self.responder(
+            roleid,
+            S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data,
+            envio,
+        )
+        .await;
         if onde == 1 {
             self.recalcular_equipamento(roleid, true).await;
         }
@@ -4357,7 +5029,13 @@ impl BusServer {
     ///
     /// A tabela é a dos comandos que o cliente congela ao enviar
     /// (`Network/EC_GameSession.cpp:6304-6390`), com os pacotes de cada um.
-    async fn destravar_slots_do_comando(&self, roleid: i32, cmd: u16, payload: &[u8], envio: &EnvioAoCliente) {
+    async fn destravar_slots_do_comando(
+        &self,
+        roleid: i32,
+        cmd: u16,
+        payload: &[u8],
+        envio: &EnvioAoCliente,
+    ) {
         let b = |i: usize| payload.get(i).copied().unwrap_or(0) as u16;
         // (pacote, índice) de cada slot que aquele comando congelou.
         let slots: &[(u8, u16)] = &match cmd {
@@ -4369,7 +5047,12 @@ impl BusServer {
             _ => return,
         };
         for (onde, slot) in slots {
-            self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(*onde, *slot).data, envio).await;
+            self.responder(
+                roleid,
+                S2CGamedataSend::unfreeze_ivtr_slot(*onde, *slot).data,
+                envio,
+            )
+            .await;
         }
     }
 
@@ -4384,7 +5067,14 @@ impl BusServer {
             return;
         };
         let (idx_bolsa, idx_corpo) = (p.a, p.b);
-        if self.equipamento_travado(roleid, &[(0, idx_bolsa as u16), (1, idx_corpo as u16)], envio).await {
+        if self
+            .equipamento_travado(
+                roleid,
+                &[(0, idx_bolsa as u16), (1, idx_corpo as u16)],
+                envio,
+            )
+            .await
+        {
             return;
         }
 
@@ -4414,13 +5104,14 @@ impl BusServer {
 
         self.responder(
             roleid,
-            self.sub.equip_item(
-                idx_bolsa,
-                idx_corpo,
-                u32::from(na_bolsa.is_some()),
-                u32::from(no_corpo.is_some()),
-            )
-            .data,
+            self.sub
+                .equip_item(
+                    idx_bolsa,
+                    idx_corpo,
+                    u32::from(na_bolsa.is_some()),
+                    u32::from(no_corpo.is_some()),
+                )
+                .data,
             envio,
         )
         .await;
@@ -4453,7 +5144,10 @@ impl BusServer {
             warn!("mundo: move_item_to_equip de {roleid} com payload curto");
             return;
         };
-        if self.equipamento_travado(roleid, &[(0, p.a as u16), (1, p.b as u16)], envio).await {
+        if self
+            .equipamento_travado(roleid, &[(0, p.a as u16), (1, p.b as u16)], envio)
+            .await
+        {
             return;
         }
 
@@ -4523,7 +5217,11 @@ impl BusServer {
     /// O canal de saída de um jogador, para quem precisa passar um `EnvioAoCliente` adiante
     /// (os tratadores que vieram de um evento do tique, e não de um comando).
     async fn envio_de(&self, roleid: i32) -> Option<EnvioAoCliente> {
-        self.sessoes.read().await.get(&roleid).map(|s| s.envio.clone())
+        self.sessoes
+            .read()
+            .await
+            .get(&roleid)
+            .map(|s| s.envio.clone())
     }
 
     pub async fn enviar_ao_jogador(&self, roleid: i32, data: Vec<u8>) -> bool {
@@ -4594,23 +5292,73 @@ impl BusServer {
         }
     }
 
+    /// A fala de um monstro (`op_say`): `ChatSingleCast` (94) a cada jogador que a ouve; o
+    /// link a entrega como `ChatMessage` (80). Local (e `$A`) a quem vê o monstro, com o id
+    /// dele como remetente (`SaySomething(..., CHAT_CHANNEL_LOCAL, npc_id)`,
+    /// `ainpc.cpp:47-55`; anônima com 0); `$B` grito (`CHAT_CHANNEL_FARCRY` 1), `$S`
+    /// sistema (`CHAT_CHANNEL_BROADCAST` 9) e `$I`/`$X` instância (`CHAT_CHANNEL_INSTANCE`
+    /// 11) a todos deste mundo, com remetente 0 (`gsp_if.h:35-52`, `ainpc.cpp:76-88`).
+    async fn monstro_falou(&self, id: i64, texto: &str, canal: crate::politica::CanalDaFala, dados: Vec<u8>) {
+        use crate::politica::CanalDaFala as C;
+        let (canal_do_chat, remetente) = match canal {
+            C::Local => (0u8, id as i32),
+            C::LocalAnonima => (0, 0),
+            C::Grito => (1, 0),
+            C::Sistema => (9, 0),
+            C::Instancia => (11, 0),
+        };
+        let quem: Vec<i32> = {
+            let mundo = self.world.read().await;
+            mundo
+                .players
+                .values()
+                .filter(|p| !matches!(canal, C::Local | C::LocalAnonima) || p.visiveis.contains(&id))
+                .map(|p| p.role_id)
+                .collect()
+        };
+        let msg: Vec<u8> = texto.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let sessoes = self.sessoes.read().await;
+        for roleid in quem {
+            if let Some(s) = sessoes.get(&roleid) {
+                let _ = s.envio.try_send(BusMessage::ChatSingleCast {
+                    channel: canal_do_chat,
+                    emotion: 0,
+                    srcroleid: remetente,
+                    dstroleid: roleid,
+                    dstlocalsid: s.localsid,
+                    msg: msg.clone(),
+                    data: dados.clone(),
+                });
+            }
+        }
+        debug!("mundo: o monstro {id} falou ({canal:?}): {texto}");
+    }
+
     /// Quantos jogadores este servidor de mundo está atendendo.
     pub async fn jogadores_atendidos(&self) -> usize {
         self.sessoes.read().await.len()
     }
 }
 
-
 /// `gactive_imp::CheckAttack(target, &flag, …)` (`actobject.cpp:1254-1292`) para monstro:
 /// vivo e a no máximo `attack_range + body_size` (o `attack_range` do jogador já inclui o
 /// corpo dele, `playertemplate.h:954`). `Err` com o bit do motivo: 2 alvo inválido, 4 longe.
 fn pode_golpear(mundo: &crate::world::WorldInstance, roleid: i32, alvo: i64) -> Result<(), i32> {
-    let Some(p) = mundo.players.get(&(roleid as i64)) else { return Err(1) };
-    let Some((m, _)) = mundo.monsters.get(&alvo) else { return Err(2) };
+    let Some(p) = mundo.players.get(&(roleid as i64)) else {
+        return Err(1);
+    };
+    let Some((m, _)) = mundo.monsters.get(&alvo) else {
+        return Err(2);
+    };
     if m.is_dead {
         return Err(2);
     }
-    let corpo = mundo.data_manager.monstros.get(m.template_id).map(|t| t.tamanho).unwrap_or(0.0);
+    let corpo = mundo
+        .data_manager
+        .monstros
+        .get(m.template_id)
+        .map(|t| t.tamanho)
+        .unwrap_or(0.0);
     if p.position.distance(&m.position) > p.attack_range + corpo {
         return Err(4);
     }
@@ -4676,7 +5424,11 @@ mod tests {
         let (mascara, ids) = BusServer::mascara_de_equipamento(&itens);
 
         assert_eq!(mascara, (1 << 0) | (1 << 4) | (1 << 11));
-        assert_eq!(ids, vec![2251, 1234, 2271], "arma, corpo, munição — nessa ordem");
+        assert_eq!(
+            ids,
+            vec![2251, 1234, 2271],
+            "arma, corpo, munição — nessa ordem"
+        );
         assert_eq!(
             ids.len(),
             mascara.count_ones() as usize,

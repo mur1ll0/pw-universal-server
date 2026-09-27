@@ -22,7 +22,7 @@
 //! batimentos ou quando algo muda (`NotifyMasterInHeartbeat`, `:1318-1357`), e morre
 //! avisando (`NotifyDeathToMaster`).
 
-use crate::ai::{AcaoDoMonstro, MODO_CORRER, MODO_VOLTAR};
+use crate::ai::{AcaoDoMonstro, Habitat, MODO_CORRER, MODO_VOLTAR};
 use crate::entity::MonsterEntity;
 use crate::navegacao::{Mapa, SeguirAlvo, V3};
 use pw_core::{InfoPet, Vector3};
@@ -155,6 +155,10 @@ pub fn corpo_do_mascote(id: i64, modelo: &ModeloDeMascote, info: &InfoPet, pos: 
 /// representa (`pet_data`), que volta ao banco com nível, experiência e vida.
 #[derive(Debug, Clone)]
 pub struct Mascote {
+    /// `_inhabit_type` do `PET_ESSENCE` (0..=6); o modo em uso fica em `corpo.habitat`.
+    pub tipo_de_habitat: i32,
+    /// A camada do dono da última vez que o mascote a viu (`GM_MSG_MASTER_NOTIFY_LAYER`).
+    pub camada_do_dono: crate::combat::Camada,
     pub corpo: MonsterEntity,
     pub ai: MascoteAi,
     pub dono: i64,
@@ -183,6 +187,8 @@ impl Mascote {
         let mut ai = MascoteAi::new(agressividade, movimento, pos);
         ai.raio_do_corpo = modelo.corpo;
         Self {
+            tipo_de_habitat: modelo.habitat,
+            camada_do_dono: crate::combat::Camada::Chao,
             ai,
             corpo,
             dono,
@@ -332,6 +338,144 @@ pub fn posicao_no_chao(terreno: &pw_data_loader::Terreno, movimento: &pw_data_lo
     None
 }
 
+/// Os três `Find*Pos` do `pet_gen_pos` (`petman.cpp:10-87`) num só: até 10 sorteios a
+/// `dis ± Rand(0,8..1,2)` m de `base` em `x` e em `z`, somando `offset` a cada volta.
+/// * chão: terreno + piso do mapa de movimento, recusando 6,8 m ou mais da altura de `base`;
+/// * ar: `base.y + 1`, nunca abaixo de terreno + 1,5 nem de água + 1,5;
+/// * água: `base.y + 1`, entre terreno + 1 e água − 1 (sem água suficiente, recusa).
+///
+/// Falta o `IsValidSPPos` (o mapa de espaço do ar e da água, `CGlobalSPMap`, não é lido): o
+/// primeiro sorteio de ar ou água é aceito.
+fn procurar_posicao(
+    ambiente: Habitat,
+    terreno: &pw_data_loader::Terreno,
+    movimento: &pw_data_loader::MapaDeMovimento,
+    agua: &pw_data_loader::MapaDeAgua,
+    base: Vector3,
+    dis: f32,
+    offset: Vector3,
+) -> Option<Vector3> {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let mut off = Vector3::new(0.0, 0.0, 0.0);
+    for _ in 0..10 {
+        off = Vector3::new(off.x + offset.x, off.y + offset.y, off.z + offset.z);
+        let (ox, oz) = (dis + rng.gen_range(0.8f32..1.2), dis + rng.gen_range(0.8f32..1.2));
+        let x = base.x + off.x + if rng.gen_bool(0.5) { ox } else { -ox };
+        let z = base.z + off.z + if rng.gen_bool(0.5) { oz } else { -oz };
+        let y0 = base.y + off.y;
+        let chao = terreno.altura_em(x, z);
+        match ambiente {
+            Habitat::Chao => {
+                let Some(acima) = movimento.acima_do_terreno(x, z) else { continue };
+                let Some(chao) = chao else {
+                    return Some(Vector3::new(x, y0, z));
+                };
+                let y = chao + acima;
+                if (y - y0).abs() >= 6.8 {
+                    continue;
+                }
+                return Some(Vector3::new(x, y, z));
+            }
+            Habitat::Ar => {
+                let mut y = y0 + 1.0;
+                if let Some(h) = chao {
+                    y = y.max(h + 1.5);
+                }
+                let superficie = agua.altura_em(x, z);
+                if superficie != pw_data_loader::watermap::SEM_AGUA {
+                    y = y.max(superficie + 1.5);
+                }
+                return Some(Vector3::new(x, y, z));
+            }
+            Habitat::Agua => {
+                let superficie = agua.altura_em(x, z);
+                if superficie == pw_data_loader::watermap::SEM_AGUA {
+                    continue;
+                }
+                let piso = chao.map(|h| h + 1.0);
+                let mut y = y0 + 1.0;
+                if let Some(p) = piso {
+                    y = y.max(p);
+                }
+                if y > superficie - 1.0 {
+                    y = superficie - 1.0;
+                    if piso.is_some_and(|p| y < p) {
+                        continue;
+                    }
+                }
+                return Some(Vector3::new(x, y, z));
+            }
+        }
+    }
+    None
+}
+
+/// `pet_gen_pos::FindValidPos` (`petman.cpp:127-286`): o `inhabit_type` do mascote (0 chão,
+/// 1 água, 2 ar, 3 chão+água, 4 chão+ar, 5 água+ar, 6 todos) contra a camada do dono decide se
+/// ele pode aparecer (`Err(-3)`) e em que ordem se procura o lugar — o de mais de um ambiente
+/// tenta primeiro o do dono. Devolve o ponto e o modo (`inhabit_mode`); sem lugar, `Err(-4)`.
+/// O 1.2.6 só tem os tipos 0..=2 (o leitor zera o resto, VA 0x8143893).
+#[allow(clippy::too_many_arguments)]
+pub fn posicao_para_mascote(
+    terreno: &pw_data_loader::Terreno,
+    movimento: &pw_data_loader::MapaDeMovimento,
+    agua: &pw_data_loader::MapaDeAgua,
+    base: Vector3,
+    camada_do_dono: crate::combat::Camada,
+    tipo_de_habitat: i32,
+    dis: f32,
+    offset: Vector3,
+) -> Result<(Vector3, Habitat), i32> {
+    use crate::combat::Camada as C;
+    let pode = match tipo_de_habitat {
+        0 => camada_do_dono == C::Chao,
+        1 => camada_do_dono == C::Agua,
+        2 | 4 => camada_do_dono != C::Agua,
+        3 => camada_do_dono != C::Ar,
+        5 | 6 => true,
+        _ => return Err(-2),
+    };
+    if !pode {
+        return Err(-3);
+    }
+    let ordem: &[Habitat] = match (tipo_de_habitat, camada_do_dono) {
+        (0, _) => &[Habitat::Chao],
+        (1, _) => &[Habitat::Agua],
+        (2, _) => &[Habitat::Ar],
+        (3, C::Agua) => &[Habitat::Agua, Habitat::Chao],
+        (3, _) => &[Habitat::Chao, Habitat::Agua],
+        (4, C::Ar) => &[Habitat::Ar, Habitat::Chao],
+        (4, _) => &[Habitat::Chao, Habitat::Ar],
+        (5, C::Agua) => &[Habitat::Agua, Habitat::Ar],
+        (5, _) => &[Habitat::Ar, Habitat::Agua],
+        (6, C::Agua) => &[Habitat::Agua, Habitat::Chao, Habitat::Ar],
+        (6, C::Ar) => &[Habitat::Ar, Habitat::Chao, Habitat::Agua],
+        _ => &[Habitat::Chao, Habitat::Ar, Habitat::Agua],
+    };
+    for amb in ordem {
+        if let Some(p) = procurar_posicao(*amb, terreno, movimento, agua, base, dis, offset) {
+            return Ok((p, *amb));
+        }
+    }
+    Err(-4)
+}
+
+/// `gpet_imp::TryChangeInhabitMode` (`petnpc.cpp:313-355`), no `GM_MSG_MASTER_NOTIFY_LAYER`
+/// (`:791-802`): o dono mudou de camada. Só o mascote de mais de um ambiente tenta o outro
+/// modo (0, 1 e 2 ficam com o dono, que o recolhe); o de chão+água não vai ao ar, o de
+/// chão+ar não vai à água, o de água+ar no ar fica no ar com o dono no chão.
+pub fn tenta_trocar_de_modo(tipo_de_habitat: i32, camada_do_dono: crate::combat::Camada, modo_atual: Habitat) -> bool {
+    use crate::combat::Camada as C;
+    match tipo_de_habitat {
+        3 => camada_do_dono != C::Ar,
+        4 => camada_do_dono != C::Agua,
+        5 => !(camada_do_dono == C::Chao && modo_atual == Habitat::Ar),
+        6 => true,
+        _ => false,
+    }
+}
+
 /// A regeneração do batimento de 1 s: `GenHPandMP(hp_gen)` — o mascote tem `SetFastRegen(0)`,
 /// então é sempre a lenta (`gnpc_imp::OnHeartbeat`, `npc.cpp:1948-1957`).
 pub fn regeneracao(modelo: &ModeloDeMascote, nivel: i32) -> i64 {
@@ -426,6 +570,8 @@ pub enum AcaoDoMascote {
 /// 500 ms (`NPC_FOLLOW_TARGET_TIME`), como o monstro.
 #[derive(Debug, Clone)]
 pub struct MascoteAi {
+    /// `PetRelocatePos(false)` pedido fora do tique (troca de modo sem lugar, B131).
+    reposicao_pedida: bool,
     pub agressividade: u8,
     pub movimento: u8,
     /// `aggro_policy::STATE_FREEZE`: não ganha ódio por apanhar.
@@ -473,6 +619,7 @@ impl MascoteAi {
             direcao: 0,
             seguir: None,
             falhas_de_caminho: 0,
+            reposicao_pedida: false,
             seguindo: false,
             automatica: None,
             tarefa: None,
@@ -597,6 +744,9 @@ impl MascoteAi {
             *ms = ms.saturating_sub(delta_ms);
         }
         self.recargas.retain(|_, ms| *ms > 0);
+        if std::mem::take(&mut self.reposicao_pedida) && dono.is_some() {
+            return Some(AcaoDoMascote::Reposicionar);
+        }
         let Some(dono) = dono else {
             // `QueryTarget(leader) != TARGET_STATE_NORMAL` → `GM_MSG_PET_DISAPPEAR`.
             return Some(AcaoDoMascote::Sumir);
@@ -804,6 +954,9 @@ impl MascoteAi {
         }
         self.espera_ms = Self::PASSO_MS;
         let passo = corpo.move_speed * Self::PASSO_MS as f32 / 1000.0;
+        if corpo.habitat != Habitat::Chao {
+            return self.mover_em_linha_reta(corpo, meta, alcance, passo, mapa);
+        }
         let de = V3::new(corpo.position.x, corpo.position.y, corpo.position.z);
         let alvo = V3::new(meta.x, meta.y, meta.z);
         let (recomecar, alcance_da_vez) = match &self.seguir {
@@ -854,6 +1007,38 @@ impl MascoteAi {
         }))
     }
 
+    /// O mascote de ar ou de água: o agente do original é a reta em 3D
+    /// (`CNPCChaseOnAirStraightAgent`, `pathfinding/NPCChaseOnAirAgent.cpp`, limitado pelo
+    /// `GetLastReachablePos(..., Env_OnAir)`, `pathfinding.cpp:80-86`) — ele sobe e desce com a
+    /// meta, que é o dono no ar. Nunca abaixo do terreno + estrutura (`MonsterAi::altura`, a
+    /// mesma regra do monstro de ar); o espaço do ar em si (`CGlobalSPMap`) não é lido.
+    fn mover_em_linha_reta(&mut self, corpo: &mut MonsterEntity, meta: Vector3, alcance: f32, passo: f32, mapa: &Mapa) -> Option<AcaoDoMascote> {
+        self.seguir = None;
+        let (dx, dy, dz) = (meta.x - corpo.position.x, meta.y - corpo.position.y, meta.z - corpo.position.z);
+        let d = (dx * dx + dy * dy + dz * dz).sqrt();
+        let falta = d - alcance;
+        if falta <= 0.05 || d <= 0.0 {
+            return (!self.parado).then(|| AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)));
+        }
+        let andar = passo.min(falta) / d;
+        let (x, z) = (corpo.position.x + dx * andar, corpo.position.z + dz * andar);
+        let piso = |x: f32, z: f32| (mapa.terreno)(x, z).map(|h| h + mapa.movimento.acima_do_terreno(x, z).unwrap_or(0.0));
+        let y = crate::ai::MonsterAi::altura(corpo.habitat, x, z, corpo.position.y + dy * andar, &piso);
+        let m = (dx * dx + dz * dz).sqrt();
+        if m > 0.0 {
+            self.direcao = crate::ai::direcao_do_vetor(dx / m, dz / m);
+        }
+        corpo.position = Vector3::new(x, y, z);
+        self.parado = false;
+        self.falhas_de_caminho = 0;
+        Some(AcaoDoMascote::Moveu(AcaoDoMonstro::Andou {
+            destino: corpo.position,
+            tempo_ms: Self::PASSO_MS as u16,
+            velocidade: corpo.move_speed,
+            modo: MODO_CORRER | corpo.habitat.mascara_de_movimento(),
+        }))
+    }
+
     fn parar(&mut self, corpo: &MonsterEntity, modo: u8) -> AcaoDoMonstro {
         self.parado = true;
         AcaoDoMonstro::Parou {
@@ -865,6 +1050,11 @@ impl MascoteAi {
     }
 
     /// Depois de reposicionado: sem perseguição em curso, parado no ponto novo.
+    /// `gpet_imp::PetRelocatePos(false)` (`petnpc.cpp:302-310`): o próximo tique reposiciona.
+    pub fn pedir_reposicao(&mut self) {
+        self.reposicao_pedida = true;
+    }
+
     pub fn reposicionado(&mut self) {
         self.seguir = None;
         self.parado = true;
@@ -1026,5 +1216,55 @@ mod tests {
         let mut info = InfoPet { level: 3, exp: 0, ..Default::default() };
         assert_eq!(receber_exp(&mut info, 100_000, 150, 3, curva), ExpDoMascote::Ganhou(4500));
         assert_eq!((info.level, info.exp), (3, 4500));
+    }
+
+    /// B131 — `FindValidPos` (`petman.cpp:127-286`): o de chão não aparece com o dono no ar; o
+    /// de ar aparece 1 m acima do dono; o de chão+ar vai ao ar quando o dono voa.
+    #[test]
+    fn o_lugar_do_mascote_segue_o_habitat_e_a_camada_do_dono() {
+        use crate::combat::Camada;
+        let (t, mv, ag) = (
+            pw_data_loader::Terreno::vazio(),
+            pw_data_loader::MapaDeMovimento::vazio(),
+            pw_data_loader::MapaDeAgua::vazio(),
+        );
+        let dono = Vector3::new(0.0, 20.0, 0.0);
+        let zero = Vector3::new(0.0, 0.0, 0.0);
+        assert_eq!(posicao_para_mascote(&t, &mv, &ag, dono, Camada::Ar, 0, 0.0, zero), Err(-3));
+        let (p, modo) = posicao_para_mascote(&t, &mv, &ag, dono, Camada::Ar, 2, 0.0, zero).unwrap();
+        assert_eq!(modo, Habitat::Ar);
+        assert!((p.y - 21.0).abs() < 1e-3, "{p:?}");
+        let d = ((p.x - dono.x).powi(2) + (p.z - dono.z).powi(2)).sqrt();
+        assert!(d > 1.0 && d < 1.8, "{d}");
+        assert_eq!(posicao_para_mascote(&t, &mv, &ag, dono, Camada::Agua, 2, 0.0, zero), Err(-3));
+        assert_eq!(posicao_para_mascote(&t, &mv, &ag, dono, Camada::Ar, 4, 0.0, zero).unwrap().1, Habitat::Ar);
+        assert!(tenta_trocar_de_modo(4, Camada::Ar, Habitat::Chao));
+        assert!(!tenta_trocar_de_modo(2, Camada::Chao, Habitat::Ar), "o de ar só fica com o dono");
+    }
+
+    /// B131 — o mascote de ar segue o dono no ar em linha reta (`CNPCChaseOnAirStraightAgent`):
+    /// o Vespão Pequeno (`inhabit_type` 2) sobe até o dono a 30 m e manda o passo com a marca de
+    /// céu (0x40).
+    #[test]
+    fn o_mascote_de_ar_sobe_atras_do_dono() {
+        let mut m0 = modelo();
+        m0.habitat = 2;
+        let info = InfoPet { pet_tid: 10386, level: 5, hp_factor: 1.0, ..Default::default() };
+        let mut m = Mascote::novo(id_do_mascote(1), 7, 0, info, &m0, Vector3::new(0.0, 5.0, 0.0), 1, MOVIMENTO_SEGUIR);
+        m.corpo.habitat = Habitat::Ar;
+        let dono = Vector3::new(3.0, 30.0, 0.0);
+        let chao = |_x: f32, _z: f32| Some(0.0f32);
+        let mv = pw_data_loader::MapaDeMovimento::vazio();
+        let mapa = Mapa { terreno: &chao, movimento: &mv };
+        let mut ceu = false;
+        for _ in 0..(20_000 / 50) {
+            if let Some(AcaoDoMascote::Moveu(AcaoDoMonstro::Andou { modo, .. })) =
+                m.ai.tick(&mut m.corpo, Some(dono), &HashMap::new(), 50, &mapa)
+            {
+                ceu |= modo & 0x40 != 0;
+            }
+        }
+        assert!(ceu, "o passo não levou a marca de céu");
+        assert!((m.corpo.position.y - dono.y).abs() < 1.5, "ficou em {:?}", m.corpo.position);
     }
 }

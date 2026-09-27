@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     username VARCHAR(64) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     email VARCHAR(128),
-    gold_balance BIGINT DEFAULT 0 NOT NULL,
+    gold_balance BIGINT DEFAULT 0 NOT NULL, -- cash da Loja Gold da conta, na unidade do PLAYER_CASH (o cliente mostra ÷100); lido/debitado pelo pw-gs (B125)
     silver_balance BIGINT DEFAULT 0 NOT NULL,
     gm_privileges INT DEFAULT 0 NOT NULL, -- 0: Normal, 1..32: Níveis de GM
     is_banned BOOLEAN DEFAULT FALSE NOT NULL,

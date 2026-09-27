@@ -1,6 +1,6 @@
 # Especificação 04: Protocolo do mundo 3D (subcomandos do `GamedataSend`)
 
-> Mascote 232/252/85 e C2S 102/103 em 2026-09-25, base `ca082f8` + B112. Skill 299 v126 verificada no barramento em 2026-09-24, base `b16f992` + B98. Camadas 2/3 e pacotes de itens/experiência 126 conferidos em 2026-09-21, base `a305e51` + B89/B90. Demais áreas:
+> Comandos do B77–B88, 14, 64 e C2S 14 do 1.2.6 em 2026-09-26, base `ff778c1` + B122. Mascote 232/252/85 e C2S 102/103 em 2026-09-25, base `ca082f8` + B112. Skill 299 v126 verificada no barramento em 2026-09-24, base `b16f992` + B98. Camadas 2/3 e pacotes de itens/experiência 126 conferidos em 2026-09-21, base `a305e51` + B89/B90. Demais áreas:
 > referência 2026-09-14, commit `e6433ae` + B49. Cobre
 > `crates/pw-protocol/src/{packets,versions,opcodes.rs}`, `crates/pw-wire/`,
 > `crates/pw-gs/src/comandos.rs`, `specs/protocol/` e `tools/pw-rpcgen/`.
@@ -85,6 +85,18 @@ dois nomes para a mesma coisa convidava a escrever `if versao == ...` de novo.
 - `versions/v126/`: a 1.2.6 por inteiro (152 B, 3 blocos, 27 B, 19 campos, sem `refretcode`).
 - `versions/v148/`, `v153.rs`, `v172/`: **compõem** a do 1.5.5 (`V148Protocol(V155Protocol)`) e sobrescrevem só o que difere — é assim que se acrescenta versão nova.
 
+**Fala de NPC/monstro (B127):** não é gamedata — o mundo manda `ChatSingleCast` (94) pelo
+barramento e o `pw-link` entrega `ChatMessage` (80: `channel u8, emotion u8, srcroleid i32, msg
+octets, data octets, srclevel i32`, IR `gnet_153`/`gnet_155`) com o id do monstro como
+remetente. É o único pacote de fala que o cliente 1.5.5 trata com remetente NPC
+(`EC_GameSession.cpp:4953-4965`; não há tratador de `ChatBroadCast` 120 lá). O `srclevel` no
+1.2.6 não foi medido.
+
+`BE_HURT` (121, 9 B `{attacker_id, damage, flag}`) e `HURT_RESULT` (122, 8 B `{target_id,
+damage}`) — o número do dano no tempo, à vítima e ao atacante (B126) — têm o mesmo tamanho no
+cliente 1.2.6 (`docs/evidencias/126/tamanhos_s2c_126.txt`: 121 = 9, 122 = 8) e usam o codificador
+comum.
+
 `HOST_SKILL_ATTACKED` (144) também passa pelo trait: v126 emite 15 bytes,
 com flag de um byte e sem section; padrão 155 mantém 19 bytes. Captura
 `s2c-144.txt:2` e validador do cliente VA 0x584af4 (B89). Os comandos normais
@@ -104,6 +116,25 @@ do trait, inclusive no tratamento de eventos. `elf_exp` (283) é opcional:
 padrão Some preserva os bytes 155; v126 None pelo limite de id 260 do cliente
 (VA 0x584618). Sem mudança da regra de ganho do Daimon. O teste literal garante
 a omissão 126 e preservação 155; detalhes em `docs/SINCRONIZACAO_126.md`.
+
+**Comandos do B77–B88, 14 e 64 no 1.2.6 (B122, testado).** Tamanho de cada S2C pelo validador
+do cliente 1.2.6 (`docs/evidencias/126/tamanhos_s2c_126.txt`) e layout pelo `S2C::CMD::Make<…>`
+do `gs` 1.2.6. Conferem sem mudança: 163 (5), 181 (3), 198 (8), 232 (8), 233 (12), 234 (8), 235
+(16), 236 (0), 252 (12). **Sobrescritos no v126:** `NOTIFY_HOSTPOS` (14) = `pos + tag`, 16 B (o
+1.5.5 tem `line`, 20 B; `Make<notify_pos>` VA 0x808ed9d; captura 16 × 7) — teleporte e volta para
+a cidade eram descartados; `TEAM_MEMBER_DATA` (64) = `6 + 25·n` (por membro `id, level, state,
+level2`, um `char` que a captura traz sempre `0xff`, `hp, mp, max_hp, max_mp`; `Make<team_member_data>`
+VA 0x808fe34) — igual byte a byte ao comando de 56 B da captura; `PLAYER_MOUNTING` (227) =
+`id, int mount_id, char cor`, 9 B (`Make<player_mounting>` VA 0x8092326). **`info_player_1`
+(12/17) do 1.2.6:** 26 B e o `state` soma por bit (validador VA 0x584633): `0x1` +1, `0x2` +1, `0x8`
++1, `0x40` +4, `0x400` → 34, `0x800` +5, `0x1000` +1, `0x10000` variável, `0x80000` +5, `0x100000`
++5, `0x800000` +4, na ordem do `MakePlayerExtendState` (VA 0x8062d54). O v126 liga forma (`0x1`,
+`byte_de_forma`), cadáver (`0x80`, `MakeObjectState` VA 0x8062d08), roupa (`0x2000`,
+`SwitchFashionMode` VA 0x807bb12) e montado (`0x80000` com `char cor, int mount_id`). O
+`self_info_1` do 1.2.6 leva o `0x2000` (o dono se vê de roupa). **C2S 14 (`DROP_IVTR_ITEM`) do
+1.2.6** = `u8 index, u16 amount` (o `CommandHandler` exige 5 B com o cabeçalho, VA 0x80ce383) —
+lido como o `u32` do 1.5.5, o descarte parcial jogava a pilha inteira; C2S 15 = `u8 index` (3 B)
+nas duas. Os demais bits do `state` do 1.2.6 (`0x2`, `0x40`, `0x400`…) seguem em `falta`.
 
 Um comando que **não** varia entre versões continua em `S2CGamedataSend`, com um só caminho
 de escrita. Quando uma medição mostrar que ele varia, ele sobe para o trait — é a regra "um
@@ -126,6 +157,7 @@ caminho de escrita por layout".
 
 | `enchant_result` (139) | 16 | 19 | `{caster, target, skill, level, orange_name, char modifier, char modifier2}` — sem `section`: o `gs` 1.2.6 manda `immune & 0xff` e `immune >> 8` (VA 0x831bb81-0x831bb93), e o cliente junta em `(modifier2 << 8) \| modifier`; `section` 1 ali era `MOD_ENCHANT_FAILED` e mostrava "FALHA" (B118) — validador do cliente 1.2.6 (VA 0x584e52) e `S2C::CMD::Make<enchant_result>::From(…, int, char, char, char, char)` do `gs` 1.2.6 (VA 0x80a6f0e). Com 19 B o cliente 1.2.6 descartava toda bênção/maldição (B116) |
 | C2S `sevnpc_serve` venda (`npc_sell_item`) | 12 por item | 16 por item | o 1.2.6 não manda o `price` (pedido medido: `len` 148 com 12 itens); `WorldProtocol::bytes_do_item_vendido` (B116) |
+| C2S `sevnpc_serve` compra (cabeçalho antes dos `{tid, index, count}`) | 8 (`money`, `item_count`) | 28 (`money`, cinco campos de contribuição/facção, `item_count`) | captura da VM 1.2.6 (`full_interno.pcap`, subcomando 37 #0: `service_type 1`, `len 20`); `WorldProtocol::bytes_do_cabecalho_da_compra` (B128). Com 28 B a lista saía vazia e a compra não fazia nada |
 | `free_pet` (232), `pet_set_cooldown` (252), `object_cast_skill` (85) | 8, 12, 15 | 8, 12, 15 | iguais nas duas versões (validador do cliente 1.2.6 e `EC_GPDataType.h`); método comum no trait, travado em `tests/mascote_por_versao.rs` (B112) |
 | `summon_pet` (233), `recall_pet` (234), `pet_hp_notify` (249), `object_attack_result` (120) | 12, 8, 12, 14 | 16, 9, 20, 17 | o 1.2.6 não tem `life_time`, `reason`, a mana, e o `attack_flag` é 1 byte — medido no validador do cliente 1.2.6 (VA 0x584610, saltos em 0x584e90), 233/234 confirmados na captura. `mascote_entra`: `info_npc` 27/35 B + dono (0x1000) + nome (0x2000). Demais comandos de mascote iguais (B111, `tests/mascote_por_versao.rs`) |
 
@@ -147,8 +179,8 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | `SERVER_TIME` (114) | `lua_version` = primeira linha do `global_api.lua` (1.5.5: 102); errado encerra o cliente | B9c |
 | `ACTIVATE_REGION_WAYPOINTS` (C2S 178) | responder `WAYPOINT_LIST` (S2C 180) com os ids recebidos; sem isso o cliente reenvia a cada quadro | B9b |
 | `GetUIConfig_Re` (GNET 105) | vazio é válido (o cliente cai nas opções padrão e barras vazias); com dado, o bloco exato do último `SetUIConfig`: `USERCFG_VERSION` + zlib(host = barras de atalho, layout — inclusive o rastreador de missões `bTraceAll` no byte 288 do layout e `dwTraceMask` no 320, `DlgTask.cpp:425-455`, `EC_GameUIMan.h:319-388` —, opções) (`EC_GameRun.cpp:2014-2230`). Uma resposta, ao pedido que vem depois do `TASK_DATA` do mundo; com mundo, o link não manda `TASK_DATA` próprio (spec 02 §4). Com `bTraceAll = 0` "fixar missão" não desenha nada (`DlgTask.cpp:476`). **Byte a byte** o que o `SetUIConfig` gravou — até o B53 os 16 primeiros bytes eram trocados e o cliente registrava `data read error (2)` (B54); sem gravação, o `config_data` do molde da classe | B7, B51–B54 |
-| `UPDATE_EXT_STATE` (124) | `int id; DWORD states[6]` (2+28) — bits `VSTATE_*` dos efeitos | `EC_GPDataType.h:2520-2524`, `:539` (B53) |
-| `ICON_STATE_NOTIFY` (125) | variável: `int id; u16 scount; u16 state[]` (2 bits altos = nº de parâmetros); `u16 pcount; int param[]` — cada ícone com 1 parâmetro (tempo restante, s), salvo o de parâmetro `SEM_PARAMETRO`, que vai com os bits altos em 00 e fora do `param[]` (a raposa, `InsertTeamVisibleState(state)`, B120) | `EC_GPDataType.h:2538-2622` (B53) |
+| `UPDATE_EXT_STATE` (124) | `int id; DWORD states[6]` (2+28) — bits `VSTATE_*` dos efeitos. **1.2.6:** `int id; DWORD state` (2+8, validador do cliente; `update_visible_state(gobject*, unsigned)` no `gs` 1.2.6, VA 0x80a6ed2) — `WorldProtocol::update_ext_state` (B124) | `EC_GPDataType.h:2520-2524`, `:539` (B53) |
+| `ICON_STATE_NOTIFY` (125) | variável: `int id; u16 scount; u16 state[]` (2 bits altos = nº de parâmetros); `u16 pcount; int param[]` — cada ícone com 1 parâmetro (tempo restante, s), salvo o de parâmetro `SEM_PARAMETRO`, que vai com os bits altos em 00 e fora do `param[]` (a raposa, `InsertTeamVisibleState(state)`, B120). **1.2.6:** `int id; u16 count; u16 state[count]`, sem parâmetros — o validador do cliente 1.2.6 (VA 0x584ba3) exige `6 + 2 × count`; no formato do 1.5.5 **nenhum ícone aparecia no 1.2.6** (`WorldProtocol::icon_state_notify`, B124) | `EC_GPDataType.h:2538-2622` (B53) |
 | `ENCHANT_RESULT` (139) | `caster, target, skill i32; level, orange_name u8; attack_flag i32; section u8` (2+19) | `EC_GPDataType.h:2714-2723` (B53) |
 | bloco de dados do equipamento (`OWN_ITEM_INFO` 40) | cabeçalho 6×i16 + durabilidades (**na escala interna**, ×100 — spec 05, "Durabilidade") + essência + `i16 furos, u16 máscara, i32×furos` + `i32 addons` e cada addon `i32 tipo (id \| n<<13 \| 0x8000 pedra)` + `i32×n`; um só caminho: `pw_core::ConteudoDeEquipamento` (item sem octetos, octetos sorteados no drop, leitura dos atributos) | `EC_IvtrEquip.cpp:176-262` (B53) |
 | `HOST_START_ATTACK` (84) / `HOST_STOPATTACK` (23) | `idTarget i32, ammo_remain u16, attack_speed u8` (2+7) / `iReason i32` (2+4) — abrem e fecham a sessão de golpe (spec 05 §5.2) | `EC_GPDataType.h:1509,2190` (B52) |
@@ -208,7 +240,8 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | 22 | `SET_STATUS_POINT` → `ADD_STATUS_POINT` (51) | 54 | `GATHER_MATERIAL` → `PLAYER_GATHER_START/STOP` (126/127), `HOST_OBTAIN_ITEM` (99) |
 | 3 | `NORMAL_ATTACK` → sessão (`HOST_START_ATTACK` 84 … `HOST_STOPATTACK` 23) | 51 | `CONTINUE_ACTION` — solta a carga da habilidade |
 | 27, 28, 29 | `TEAM_INVITE`, `_AGREE_`, `_REJECT_` | 85 | `SWITCH_FASHION_MODE` |
-| 110 | `QUERY_CASH_INFO` | 120 | `CHECK_SECURITY_PASSWD` |
+| 110 | `QUERY_CASH_INFO` → `PLAYER_CASH` com o cash da **conta** (B125) | 120 | `CHECK_SECURITY_PASSWD` |
+| 106 | `MALL_SHOPPING` — corpo por versão (`WorldProtocol::pedido_da_loja_gold`): `u32 count` + entradas `{int id, int index, int slot}` (1.5.5, `6+12·count`) ou `{short×3}` com sinal (1.2.6, `6+6·count`, VA 0x80d1637); só a 1ª é comprada (B125) | | |
 | 128 | `CALC_NETWORK_DELAY` | 6, 184 | `PICKUP`, `PICKUP_ALL` |
 | 100, 101 | `SUMMON_PET`, `RECALL_PET` | 102 | `BANISH_PET` `{size_t pet_index}` 4 B → `FREE_PET` (232) ao fim da sessão de 200 tiques (B112) |
 | 103 | `PET_CTRL_CMD` `{target, pet_cmd, buf}` — `buf` depois do `pet_cmd`: 1 `{char force}`, 2/3 `{int}`, 4 `{int skill, char force}` (5 B), 5 `{int skill}` | 37 | serviços de mascote 36 renomear `{u16 idx, u16 len, name[len]}`, 37 esquecer e 38 aprender `{int skill}` (B112) |
@@ -218,7 +251,7 @@ Mall, tabela vazia), 178 (waypoints). Nenhum id é tratado nos dois lados:
 `pw-link/tests/subcomandos_c2s_contra_o_ir.rs::os_comandos_ja_migrados_nao_sobraram_no_gateway`
 lê o `match` do mundo e cobra (B49). C2S 23–26 são `GET_EXT_PROP_BASE/MOVE/ATK/DEF`, não voo.
 
-**Sem tratamento:** `OPEN_BOOTH` (76), `MALL_SHOPPING` (106, removido de propósito),
+**Sem tratamento:** `OPEN_BOOTH` (76),
 dividir pilha (`amount` do 13 ignorado), `pvp_mode` (79), e todo o
 resto do enum (o mundo registra "subcomando ainda não tratado").
 

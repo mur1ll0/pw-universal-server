@@ -24,7 +24,11 @@ pub async fn limpar_sobras_de_teste(pool: &PostgresPool) {
         .collect::<Vec<_>>()
         .join("\n");
 
-    for comando in sem_comentarios.split(';').map(str::trim).filter(|c| !c.is_empty()) {
+    for comando in sem_comentarios
+        .split(';')
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+    {
         sqlx::query(comando)
             .execute(pool.get_ref())
             .await

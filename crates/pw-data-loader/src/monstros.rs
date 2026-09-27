@@ -59,6 +59,20 @@ pub struct SkillPorVida {
     pub probabilidade: f32,
 }
 
+/// `abase::RandSelect(&cond[0].prob, sizeof(condition_skill), 5)` (`arandomgen.h:140-153`):
+/// `p` uniforme em [0, 1); a primeira entrada com `p <= prob` sai, descontando as anteriores;
+/// se nenhuma sai, o **índice 0**. O sorteio é feito uma vez, quando o monstro é criado
+/// (`npcgenerator.cpp:2579-2587`). Devolve `(id, nível)`; id ≤ 0 é "sem evento".
+pub fn sortear_evento_de_vida(entradas: &[SkillPorVida], mut p: f32) -> (i32, i32) {
+    for e in entradas {
+        if p <= e.probabilidade {
+            return (e.id, e.nivel);
+        }
+        p -= e.probabilidade;
+    }
+    entradas.first().map_or((0, 0), |e| (e.id, e.nivel))
+}
+
 /// Uma das quatro estratégias de ódio sorteadas por probabilidade
 /// (`mob.aggro_strategy[j]`).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -165,6 +179,9 @@ pub struct TemplateDeMonstro {
     pub tempo_de_odio: i32,
     /// `mob.sight_range` → `nt.sight_range`.
     pub raio_de_visao: i32,
+    /// `mob.id_pet_egg_captured` → `nt.petegg_id` (`npcgenerator.cpp:146`): o ovo que a
+    /// captura (`SetEntrap`) dá; 0 = não se captura.
+    pub ovo_de_captura: i32,
     /// `mob.faction` / `mob.monster_faction` → `nt.faction` / `nt.monster_faction`.
     pub faccao: i32,
     pub faccao_de_monstro: i32,
@@ -176,13 +193,20 @@ pub struct TemplateDeMonstro {
     /// bênção e maldição por `SkillWrapper::GetType`, que depende do `cskill/` — como esse
     /// sistema ainda não existe do nosso lado, aqui elas ficam numa lista só.
     pub skills: Vec<SkillDeMonstro>,
-    /// `mob.skill_hp75` / `skill_hp50` / `skill_hp25` → `nt.skill_hp75/50/25`: até cinco
-    /// habilidades por limiar de vida, cada uma com probabilidade.
+    /// `mob.skill_hp75` / `skill_hp50` / `skill_hp25` → `nt.skill_hp75/50/25`: as cinco
+    /// entradas por limiar de vida, na ordem do arquivo e **com as de id 0** (o sorteio precisa
+    /// delas — ver [`sortear_evento_de_vida`]).
     pub skills_com_75_de_vida: Vec<SkillPorVida>,
     pub skills_com_50_de_vida: Vec<SkillPorVida>,
     pub skills_com_25_de_vida: Vec<SkillPorVida>,
     /// `mob.aggro_strategy[0..4]`, só as com probabilidade não nula.
     pub estrategias_de_odio: Vec<EstrategiaDeOdio>,
+
+    /// `mob.local_var[3]` → `nt.local_var` → `gnpc_imp::_local_var` (`npcgenerator.cpp:342`,
+    /// `npc.cpp:1996`): as três variáveis locais que o `aipolicy.data` lê e escreve. No layout
+    /// v156 são os três últimos campos, `param1..3` (`exptypes.h:2957-2959`: `label[16]`,
+    /// `domain_related`, `local_var[3]`); layout sem eles dá zero.
+    pub variaveis_locais: [i32; 3],
 
     // ---- dinheiro ----
     /// `mob.money_average` / `mob.money_var`.
@@ -346,15 +370,16 @@ pub fn carregar(
             })
             .collect();
 
+        // As **cinco** entradas, inclusive as de id 0: o sorteio do evento
+        // (`abase::RandSelect(&skill_hp75[0].prob, …, 5)`, `npcgenerator.cpp:2579-2587`) percorre
+        // as cinco probabilidades em ordem e, se a soma não fecha, cai no índice 0
+        // (`arandomgen.h:140-153`) — a entrada de id 0 é o "nenhum evento".
         let por_vida = |prefixo: &str| -> Vec<SkillPorVida> {
             (0..5)
-                .filter_map(|i| {
-                    let id = c.i32_indexado(prefixo, i, "_id_skill");
-                    (id > 0).then(|| SkillPorVida {
-                        id,
-                        nivel: c.i32_indexado(prefixo, i, "_level"),
-                        probabilidade: c.f32_indexado(prefixo, i, "_probability"),
-                    })
+                .map(|i| SkillPorVida {
+                    id: c.i32_indexado(prefixo, i, "_id_skill"),
+                    nivel: c.i32_indexado(prefixo, i, "_level"),
+                    probabilidade: c.f32_indexado(prefixo, i, "_probability"),
                 })
                 .collect()
         };
@@ -417,12 +442,14 @@ pub fn carregar(
             tamanho: c.f32("size"),
             tipo_de_habitat: c.i32("inhabit_type"),
             patrulha: c.i32("patroll_mode") != 0,
+            variaveis_locais: [c.i32("param1"), c.i32("param2"), c.i32("param3")],
             estrategia: c.i32("id_strategy"),
             politica_de_ia,
             agressivo: c.i32("aggressive_mode"),
             raio_de_odio: c.f32("aggro_range"),
             tempo_de_odio: tempo_de_odio.max(1),
             raio_de_visao: c.i32("sight_range"),
+            ovo_de_captura: c.i32("id_pet_egg_captured"),
             faccao: c.i32("faction"),
             faccao_de_monstro: c.i32("monster_faction"),
             depois_da_morte: c.i32("after_death"),

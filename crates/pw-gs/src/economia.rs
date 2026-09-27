@@ -202,6 +202,19 @@ impl Bolsa {
             }
             return primeiro;
         }
+        // Roupa: `generate_fashion_item` — cada peça com a sua cor sorteada e o sexo do molde.
+        if dados.conteudo_da_roupa(tid, 0).is_some() {
+            let mut primeiro = None;
+            for _ in 0..quantidade.max(1) {
+                let cor = crate::geracao::rand_normal(0, 0x7fff) as u16;
+                let Some(octetos) = dados.conteudo_da_roupa(tid, cor) else { break };
+                match self.guardar_equipamento(tid, &octetos, dados) {
+                    Some(e) => primeiro = primeiro.or(Some(e)),
+                    None => break,
+                }
+            }
+            return primeiro;
+        }
         if let Some(octetos) = dados.gerar_octetos_do_ovo(tid) {
             let mut primeiro = None;
             for _ in 0..quantidade.max(1) {

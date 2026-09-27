@@ -47,8 +47,12 @@ import unicorn.x86_const as X
 from elftools.elf.elffile import ELFFile
 from unicorn import UC_ARCH_X86, UC_HOOK_CODE, UC_MODE_32, Uc
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from roteiros_126 import Gerador  # noqa: E402
+
 AQUI = Path(__file__).resolve().parent
 PILHA, FIM = 0x7000_0000, 0x7100_0000
+EVENT_CHANGE = 4  # `cskill/skill/skill.h:76`
 SONDA = 1000
 FUNCAO = re.compile(r"_ZNK4GNET\d+Skill(\d+)Stub(?:6State(\d+)(7GetTime|9Calculate)|(\d+)(\w+?))EPNS_5SkillE$")
 CHAMADA = re.compile(r"_ZNK?4GNET(?:5Skill|13PlayerWrapper)(\d+)(\w+)$")
@@ -66,7 +70,7 @@ def formas_do_construtor(emu) -> dict:
     """
     from capstone import CS_ARCH_X86 as ARQ, CS_MODE_32 as MODO, Cs
     md = Cs(ARQ, MODO)
-    padrao = re.compile(r"byte ptr \[e.x \+ (0x[0-9a-f]+)\], (0x[0-9a-f]+|\d+)$")
+    padrao = re.compile(r"(?:byte|dword) ptr \[e.x \+ (0x[0-9a-f]+)\], (0x[0-9a-f]+|\d+)$")
     formas = {}
     for s in emu.simbolos:
         m = re.match(r"_ZN4GNET\d+Skill(\d+)StubC1Ev$", s.name)
@@ -78,7 +82,10 @@ def formas_do_construtor(emu) -> dict:
             g = padrao.search(i.op_str)
             if i.mnemonic == "mov" and g:
                 gravados.setdefault(int(g.group(1), 16), int(g.group(2), 0))
-        formas[m.group(1)] = gravados.get(0x4A)
+        # `eventflag` (`int`, +0x22 depois de `max_level` +0x18, `type` +0x1c, `attr` +0x1d e
+        # `rank` +0x1e, como em `skill.h:231-235`): 4 = `EVENT_CHANGE` na 323 e na 324, 0 nas
+        # outras conferidas (B122).
+        formas[m.group(1)] = (gravados.get(0x4A), gravados.get(0x22, 0))
     return formas
 
 
@@ -173,25 +180,10 @@ class Emulador:
         return valor, setters, usados
 
 
-# Roteiros (`StateAttack`/`BlessMe`) que o `gs` 1.2.6 executa diferente do stub 1.5.5 de mesmo
-# id, lidos na desmontagem — valem por cima do herdado. `conferir_roteiros_126.py` lista os
-# que ainda divergem (setter a setter).
-ROTEIROS_DO_GS_126 = {
-    # `Skill330Stub::StateAttack` (VA 0x8382482): `SetProbability(100)` (0x42c80000),
-    # `SetValue((55·L − 10) + GetMagicdamage × (0,02·L + 0,1))` (imul 55 e as duplas 0,02/0,1 em
-    # 0x8531690/0x8531698) e `SetHeal` — sem o `Decregiondmg` e o `Rebirth` do 1.5.5 (B115).
-    "330": {"no_alvo": [["V", "Probability", "100.0"],
-                        ["V", "Value", "55 * L - 10 + S_Magicdamage * (0.02 * L + 0.1)"],
-                        ["V", "Heal", "1"]]},
-    # `Skill306Stub::StateAttack` (VA 0x837de86), a Muralha de Espinhos: `SetProbability(100)`,
-    # `SetTime(600000)` (0x49127c00), `SetRatio(0,05·L + 0,1)` (duplas em 0x85314a8/0x85314b0),
-    # `SetShowicon(1)` e `SetRetort` — o `filter_Retort`, sem o `Value` do `Retort2` do 1.5.5 (B120).
-    "306": {"no_alvo": [["V", "Probability", "1.0 * 100"],
-                        ["V", "Time", "600000"],
-                        ["V", "Ratio", "0.05 * L + 0.1"],
-                        ["V", "Showicon", "1"],
-                        ["V", "Retort", "1"]]},
-}
+# Roteiros (`StateAttack`/`BlessMe`) escritos à mão por cima do gerado — vazio: o gerador
+# (`roteiros_126.py`) reproduz os dois que eram manuais (330, Curar Mascote, VA 0x8382482; 306,
+# Muralha de Espinhos, VA 0x837de86 — B115, B120) e gera os outros 574 que divergiam (B122).
+ROTEIROS_DO_GS_126 = {}
 
 
 def arredondar(v: float) -> float:
@@ -303,6 +295,10 @@ def main(caminho_gs: str) -> None:
     # (função que lê outra coisa, como `GetHp`) também. Assim o servidor lê esta tabela como
     # lê a do 1.5.5 — e ela pode ir para `data/<realm>/catalogo/habilidades.json`.
     formas = formas_do_construtor(emu)
+    # Roteiros executados no `gs` 1.2.6 (`roteiros_126.py`): o herdado do 1.5.5 fica onde
+    # reproduz os números do 1.2.6, e o resto sai do próprio binário.
+    gerador = Gerador(emu)
+    situacoes = defaultdict(int)
     completa = {}
     for sid, h in saida.items():
         base = h155.get(sid)
@@ -312,8 +308,23 @@ def main(caminho_gs: str) -> None:
         for campo, valor in h.items():
             if valor is not None or campo in ("estados_ms", "execucao_ms", "recarga_ms"):
                 m[campo] = valor
-        if formas.get(sid) is not None:
-            m["allow_forms"] = formas[sid]
+        forma, evento = formas.get(sid, (None, 0))
+        if forma is not None:
+            m["allow_forms"] = forma
+        m["eventflag"] = evento
+        m.pop("ao_mudar_de_forma", None)
+        if evento == EVENT_CHANGE:
+            # O `TakeEffect` que o `SkillWrapper::EventChange` roda ao entrar na forma de classe.
+            rot, sit = gerador.gerar(funcoes[int(sid)].get("TakeEffect"), m.get("max_level") or 1,
+                                     base.get("ao_mudar_de_forma"))
+            m["ao_mudar_de_forma"] = rot
+            situacoes["ao_mudar_de_forma " + sit.split(" (")[0]] += 1
+        for campo, nome_f in (("no_alvo", "StateAttack"), ("em_si", "BlessMe")):
+            rot, sit = gerador.gerar(funcoes[int(sid)].get(nome_f), m.get("max_level") or 1, base.get(campo))
+            situacoes[sit.split(" (")[0]] += 1
+            if sit.startswith("nao_lido"):
+                print(f"  {sid} {campo}: {sit}")
+            m[campo] = rot
         m.update(ROTEIROS_DO_GS_126.get(sid, {}))
         completa[sid] = m
     doc = {"fonte": "files1.2.6/pwserver/gamed/gs (SkillNNNStub, executado por nível) + "
@@ -326,7 +337,7 @@ def main(caminho_gs: str) -> None:
         for c, v in h.items():
             if v is None:
                 nulos[c] += 1
-    print(f"{len(saida)} habilidades; campos null: {dict(nulos)}")
+    print(f"{len(saida)} habilidades; campos null: {dict(nulos)}; roteiros: {dict(situacoes)}")
 
 
 if __name__ == "__main__":

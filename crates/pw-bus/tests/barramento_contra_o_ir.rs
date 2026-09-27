@@ -40,6 +40,7 @@ fn os_opcodes_do_barramento_batem_com_o_ir() {
         ("EnterWorld", opcode::ENTER_WORLD),
         ("S2CGamedataSend", opcode::S2C_GAMEDATA_SEND),
         ("C2SGamedataSend", opcode::C2S_GAMEDATA_SEND),
+        ("ChatSingleCast", opcode::CHAT_SINGLE_CAST),
     ] {
         let p = protocolo(&ir, nome);
         assert_eq!(
@@ -58,6 +59,7 @@ fn os_campos_de_cada_mensagem_seguem_a_ordem_do_ir() {
         ("S2CGamedataSend", &["i32", "u32", "octets"]),
         ("EnterWorld", &["i32", "i32", "i32", "i32", "i32", "u32"]),
         ("PlayerLogout", &["i32", "i32", "i32", "u32"]),
+        ("ChatSingleCast", &["u8", "u8", "i32", "i32", "u32", "octets", "octets"]),
     ];
 
     let ir = ir();

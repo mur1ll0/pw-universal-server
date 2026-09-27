@@ -18,14 +18,14 @@
 //! Sem `TEST_DATABASE_URL` o teste passa sem verificar nada e diz isso na saída. Como
 //! rodar está no cabeçalho de `pw-storage/tests/autorizacao_de_personagem.rs`.
 
-use pw_protocol::GameVersion;
 use pw_bus::{BusClient, BusListener, BusMessage};
 use pw_core::{CharacterClass, Gender, Race, Vector3};
 use pw_data_loader::GameDataManager;
-use pw_gs::comandos::ids;
 use pw_gs::ai::MonsterAi;
+use pw_gs::comandos::ids;
 use pw_gs::entity::{MatterEntity, MonsterEntity};
 use pw_gs::{BusServer, WorldInstance};
+use pw_protocol::GameVersion;
 use pw_storage::{CharacterRepository, PostgresPool, StorageConfig};
 
 #[path = "../../pw-storage/tests/comum/mod.rs"]
@@ -45,6 +45,8 @@ const ITEM_DE_MISSAO: i32 = 2106;
 const OVO_DE_MONTARIA: i32 = 41073;
 /// `shop_price` daquele item no cenário — o que a loja tem de cobrar por unidade.
 const PRECO_DO_ITEM_DE_LOJA: i32 = 137;
+/// O preço, em cash, da oferta 0 da Loja Gold do cenário.
+const PRECO_NA_LOJA_GOLD: i64 = 700;
 
 const MONSTRO: i64 = 900_001;
 /// O NPC de serviço do cenário, que entrega e recebe [`MISSAO_DO_NPC`] e ensina
@@ -88,6 +90,9 @@ fn monstro() -> MonsterEntity {
         aggro_range: 30.0,
         agressivo: false,
         sight_range: 40,
+        tamanho: 0.0,
+        tempo_de_odio_s: 20,
+        regeneracao_de_vida: 0,
         // Toda a vida máxima em experiência: quem tira os 137 de vida leva 137.
         exp: 480,
         sp: 480,
@@ -109,7 +114,6 @@ fn monstro() -> MonsterEntity {
         primeiro_atacante: None,
     }
 }
-
 
 /// Abre um pool **por teste**, pequeno.
 ///
@@ -142,7 +146,10 @@ async fn personagem_com_missao(pool: &PostgresPool, versao: GameVersion) -> (i32
     // id e o segundo morre em `duplicate key`. Aconteceu ao subir de 30 para 32 testes em
     // paralelo. O contador desempata dentro do processo, e o relógio entre execuções.
     static SEQ: AtomicU64 = AtomicU64::new(0);
-    let agora = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+    let agora = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
     let m = format!(
         "{}_{}",
         agora % 1_000_000_000,
@@ -210,13 +217,13 @@ async fn personagem_com_missao(pool: &PostgresPool, versao: GameVersion) -> (i32
 }
 
 /// Monta mundo + servidor de barramento, ou `None` sem banco configurado.
-async fn montar(versao: GameVersion) -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i32, i32)> {
+async fn montar(
+    versao: GameVersion,
+) -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i32, i32)> {
     let url = match std::env::var("TEST_DATABASE_URL") {
         Ok(u) if !u.trim().is_empty() => u,
         _ => {
-            eprintln!(
-                "AVISO: TEST_DATABASE_URL não definida — este teste NÃO verificou nada."
-            );
+            eprintln!("AVISO: TEST_DATABASE_URL não definida — este teste NÃO verificou nada.");
             return None;
         }
     };
@@ -233,6 +240,27 @@ async fn montar(versao: GameVersion) -> Option<(Arc<RwLock<WorldInstance>>, std:
     dados
         .precos
         .insert(ITEM_DE_LOJA as u32, (50, PRECO_DO_ITEM_DE_LOJA));
+    // A Loja Gold do cenário: oferta 0 = o item de loja por 700 de cash; oferta 1 = o
+    // mesmo item, mas exigindo VIP 3.
+    let opcao = |preco, vip| pw_data_loader::OpcaoDeCompra {
+        preco,
+        tipo_de_periodo: -1,
+        vip_minimo: vip,
+        ..Default::default()
+    };
+    for vip in [0, 3] {
+        dados.gshop.ofertas.push(pw_data_loader::OfertaDaLoja {
+            item_id: ITEM_DE_LOJA as u32,
+            quantidade: 1,
+            opcoes: [
+                opcao(PRECO_NA_LOJA_GOLD as u32, vip),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+            ],
+            ..Default::default()
+        });
+    }
     // A marca do `dyn_tasks.data` dos realms 1.5.5 (`dyn_tasks_do_realm.rs`).
     dados.marca_das_missoes_dinamicas = Some(MARCA_DAS_MISSOES_DINAMICAS);
     // O cenário não carrega `elements.data`: o que os testes de item de missão e de ovo de
@@ -257,13 +285,14 @@ async fn montar(versao: GameVersion) -> Option<(Arc<RwLock<WorldInstance>>, std:
     );
     // O ajuste padrão do construtor é zero (sem `PARAM_ADJUST_CONFIG` nenhum abate daria
     // experiência): o cenário usa o neutro.
-    dados.progressao = pw_data_loader::TabelaDeProgressao::com_ajuste_uniforme(pw_data_loader::AjusteDeNivel {
-        exp: 1.0,
-        sp: 1.0,
-        dinheiro: 1.0,
-        item: 1.0,
-        ataque: 1.0,
-    });
+    dados.progressao =
+        pw_data_loader::TabelaDeProgressao::com_ajuste_uniforme(pw_data_loader::AjusteDeNivel {
+            exp: 1.0,
+            sp: 1.0,
+            dinheiro: 1.0,
+            item: 1.0,
+            ataque: 1.0,
+        });
     // Uma missão de falar com NPC, que o NPC do cenário entrega e recebe.
     let mut falar = pw_data_loader::tasks::TaskTemplate::vazia(MISSAO_DO_NPC);
     falar.metodo = 3; // enumTMTalkToNPC
@@ -317,15 +346,29 @@ async fn montar(versao: GameVersion) -> Option<(Arc<RwLock<WorldInstance>>, std:
     } else {
         pw_data_loader::habilidades::TabelaDeHabilidades::do_155()
     };
-    dados.habilidades.por_id.insert(299, tabela.get(299).expect("stub 299").clone());
+    dados
+        .habilidades
+        .por_id
+        .insert(299, tabela.get(299).expect("stub 299").clone());
     // Chamado da Raposa (B120), do catálogo da versão.
-    dados.habilidades.por_id.insert(312, tabela.get(312).expect("stub 312").clone());
+    dados
+        .habilidades
+        .por_id
+        .insert(312, tabela.get(312).expect("stub 312").clone());
+    // Portal da Cidade (B122): no 1.2.6 o `StateAttack` da 167 faz `SetReturntown`.
+    dados
+        .habilidades
+        .por_id
+        .insert(167, tabela.get(167).expect("stub 167").clone());
+    // Passivas `EVENT_CHANGE` da raposa (B122): nado +50 % (323) e dano +(20 + 10·L) % (324).
+    for passiva in [323, 324] {
+        dados.habilidades.por_id.insert(
+            passiva,
+            tabela.get(passiva).expect("passiva da raposa").clone(),
+        );
+    }
 
-    let mut mundo = WorldInstance::new(
-        1,
-        Arc::new(dados),
-        CharacterRepository::new(pool),
-    );
+    let mut mundo = WorldInstance::new(1, Arc::new(dados), CharacterRepository::new(pool));
     // O jogador **não** é inserido aqui: quem o põe no mundo é o `EnterWorld`, que carrega
     // o personagem do banco (`BusServer::colocar_no_mundo`). Fabricar um aqui esconderia
     // justamente o caminho que interessa — e escondeu, até 2026-09-07.
@@ -357,7 +400,9 @@ async fn montar(versao: GameVersion) -> Option<(Arc<RwLock<WorldInstance>>, std:
 }
 
 macro_rules! cenario {
-    () => { cenario!(GameVersion::V1_5_5) };
+    () => {
+        cenario!(GameVersion::V1_5_5)
+    };
     ($versao:expr) => {
         match montar($versao).await {
             Some(c) => c,
@@ -452,7 +497,9 @@ async fn um_player_move_do_cliente_move_o_jogador_no_mundo() {
 
     // E a grade espacial acompanhou. Se só a entidade tivesse mudado, o jogador andaria
     // na tela e continuaria sendo visto — e agredido — no lugar antigo.
-    let perto = m.grid.get_players_in_range(&Vector3::new(10.0, 20.0, 30.0), 1.0);
+    let perto = m
+        .grid
+        .get_players_in_range(&Vector3::new(10.0, 20.0, 30.0), 1.0);
     assert!(
         perto.contains(&(roleid as i64)),
         "a grade continuou com a posição velha"
@@ -562,13 +609,19 @@ async fn selecionar_alvo_devolve_o_hp_de_verdade_do_monstro() {
     }
 
     let cmd = |v: &Vec<u8>| u16::from_le_bytes([v[0], v[1]]);
-    let sel = vistos.iter().find(|v| cmd(v) == 52).expect("sem SELECT_TARGET (52)");
+    let sel = vistos
+        .iter()
+        .find(|v| cmd(v) == 52)
+        .expect("sem SELECT_TARGET (52)");
     assert_eq!(
         i32::from_le_bytes([sel[2], sel[3], sel[4], sel[5]]),
         MONSTRO as i32
     );
 
-    let info = vistos.iter().find(|v| cmd(v) == 33).expect("sem NPC_INFO_00 (33)");
+    let info = vistos
+        .iter()
+        .find(|v| cmd(v) == 33)
+        .expect("sem NPC_INFO_00 (33)");
     let campo = |i: usize| i32::from_le_bytes([info[i], info[i + 1], info[i + 2], info[i + 3]]);
     assert_eq!(campo(2), MONSTRO as i32, "idNPC");
     assert_eq!(
@@ -611,7 +664,11 @@ async fn desmarcar_o_alvo_manda_unselect() {
         .unwrap();
     match m {
         BusMessage::GameToClient { data, .. } => {
-            assert_eq!(u16::from_le_bytes([data[0], data[1]]), 39, "devia ser UNSELECT (39)");
+            assert_eq!(
+                u16::from_le_bytes([data[0], data[1]]),
+                39,
+                "devia ser UNSELECT (39)"
+            );
             assert_eq!(data.len(), 2, "UNSELECT não tem payload");
         }
         outra => panic!("chegou {outra:?}"),
@@ -654,11 +711,17 @@ async fn entrar(
         })
         .await
     };
-    assert!(presente, "o jogador não entrou no mundo depois do EnterWorld");
+    assert!(
+        presente,
+        "o jogador não entrou no mundo depois do EnterWorld"
+    );
 
     {
         let mut m = mundo.write().await;
-        let p = m.players.get_mut(&(roleid as i64)).expect("conferido acima");
+        let p = m
+            .players
+            .get_mut(&(roleid as i64))
+            .expect("conferido acima");
         p.position = Vector3::new(0.0, 0.0, 0.0);
         // A âncora do streaming anda junto: mexer na posição sem mexer nela faria o
         // primeiro passo do jogador parecer um salto de quilômetros, e o mundo em volta
@@ -687,7 +750,8 @@ async fn entrar(
 /// avisá-la deixaria as duas em desacordo.
 async fn m_grade(mundo: &Arc<RwLock<WorldInstance>>, roleid: i32) {
     let mut m = mundo.write().await;
-    m.grid.update_position(roleid as i64, Vector3::new(0.0, 0.0, 0.0));
+    m.grid
+        .update_position(roleid as i64, Vector3::new(0.0, 0.0, 0.0));
 }
 
 /// `entrar` sem o ajuste — para o teste que confere o que a carga do banco produz.
@@ -826,13 +890,29 @@ async fn atacar_debita_o_hp_de_verdade_do_monstro() {
     // HOST_START_ATTACK (84, a sessão), ATTACK_ONCE (83, a munição do golpe,
     // `FillAttackMsg`) e HOST_ATTACKRESULT. A barra de vida **não** vem junto (B56).
     let resp = receber(&mut link, 3).await;
-    let inicio = resp.iter().find(|v| cmd_de(v) == 84).expect("sem HOST_START_ATTACK (84)");
-    assert_eq!(inicio.len(), 2 + 7, "cmd_host_start_attack: idTarget, ammo_remain, attack_speed");
+    let inicio = resp
+        .iter()
+        .find(|v| cmd_de(v) == 84)
+        .expect("sem HOST_START_ATTACK (84)");
+    assert_eq!(
+        inicio.len(),
+        2 + 7,
+        "cmd_host_start_attack: idTarget, ammo_remain, attack_speed"
+    );
     assert_eq!(i32_em(inicio, 2), MONSTRO as i32);
-    let municao = resp.iter().find(|v| cmd_de(v) == 83).expect("sem ATTACK_ONCE (83)");
+    let municao = resp
+        .iter()
+        .find(|v| cmd_de(v) == 83)
+        .expect("sem ATTACK_ONCE (83)");
     assert_eq!(municao.len(), 3, "ATTACK_ONCE: cabeçalho + arrow_dec");
-    assert_eq!(municao[2], 0, "sem arma de longo alcance nenhuma flecha sai");
-    let golpe = resp.iter().find(|v| cmd_de(v) == 24).expect("sem HOST_ATTACKRESULT (24)");
+    assert_eq!(
+        municao[2], 0,
+        "sem arma de longo alcance nenhuma flecha sai"
+    );
+    let golpe = resp
+        .iter()
+        .find(|v| cmd_de(v) == 24)
+        .expect("sem HOST_ATTACKRESULT (24)");
     let dano = i32_em(golpe, 6);
     assert!(dano > 0, "o golpe não causou dano");
     assert_eq!(i32_em(golpe, 2), MONSTRO as i32, "idTarget");
@@ -879,7 +959,9 @@ async fn a_barra_de_vida_vai_no_batimento_e_so_quando_muda() {
     // Quantos NPC_INFO_00 do monstro chegam em 300 ms.
     async fn barras(link: &mut pw_bus::transport::BusConnection) -> Vec<i32> {
         let mut v = Vec::new();
-        while let Ok(Ok(Some(m))) = tokio::time::timeout(Duration::from_millis(300), link.receber()).await {
+        while let Ok(Ok(Some(m))) =
+            tokio::time::timeout(Duration::from_millis(300), link.receber()).await
+        {
             if let BusMessage::GameToClient { data, .. } = m {
                 if cmd_de(&data) == 33 && i32_em(&data, 2) == MONSTRO as i32 {
                     v.push(i32_em(&data, 6));
@@ -892,7 +974,10 @@ async fn a_barra_de_vida_vai_no_batimento_e_so_quando_muda() {
     // Sem seleção, dano no monstro não manda nada.
     mundo.write().await.monsters.get_mut(&MONSTRO).unwrap().0.hp -= 5;
     mundo.write().await.tick(1000).await;
-    assert!(barras(&mut link).await.is_empty(), "barra para quem não selecionou");
+    assert!(
+        barras(&mut link).await.is_empty(),
+        "barra para quem não selecionou"
+    );
 
     // Selecionar manda na hora (`query_info00`).
     link.enviar(BusMessage::ClientToGame {
@@ -906,14 +991,20 @@ async fn a_barra_de_vida_vai_no_batimento_e_so_quando_muda() {
 
     // Sem mudança, o batimento não repete.
     mundo.write().await.tick(1000).await;
-    assert!(barras(&mut link).await.is_empty(), "o batimento repetiu a mesma vida");
+    assert!(
+        barras(&mut link).await.is_empty(),
+        "o batimento repetiu a mesma vida"
+    );
 
     // Com mudança, manda uma vez.
     mundo.write().await.monsters.get_mut(&MONSTRO).unwrap().0.hp -= 7;
     mundo.write().await.tick(1000).await;
     assert_eq!(barras(&mut link).await, vec![(MONSTRO_HP - 12) as i32]);
     mundo.write().await.tick(1000).await;
-    assert!(barras(&mut link).await.is_empty(), "a mesma mudança saiu duas vezes");
+    assert!(
+        barras(&mut link).await.is_empty(),
+        "a mesma mudança saiu duas vezes"
+    );
 }
 
 #[tokio::test]
@@ -954,7 +1045,13 @@ async fn o_monstro_morre_e_o_abate_leva_o_template_certo() {
             break;
         }
         // Fecha a sessão para o próximo `NORMAL_ATTACK` abrir outra e golpear na hora.
-        mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
+        mundo
+            .write()
+            .await
+            .players
+            .get_mut(&(roleid as i64))
+            .unwrap()
+            .ataque = None;
     }
     assert!(morreu, "o monstro não chegou a zero em 500 golpes");
 
@@ -1033,7 +1130,10 @@ async fn a_vida_do_monstro_so_cai_depois_do_atraso_do_golpe() {
         let v = m.players[&(roleid as i64)].attack_speed;
         ((v * 20.0).round() as i32 as f32 * 0.8) as i32 - 1
     };
-    assert!(ticks > 1, "o personagem de teste precisa de um atraso mensurável: {ticks}");
+    assert!(
+        ticks > 1,
+        "o personagem de teste precisa de um atraso mensurável: {ticks}"
+    );
 
     let mut passados = 0;
     let caiu = tickar_ate(&mundo, |m| {
@@ -1199,13 +1299,22 @@ async fn o_monstro_revida_e_o_cliente_fica_sabendo() {
     .await
     .unwrap();
     receber(&mut link, 3).await; // HOST_START_ATTACK + ATTACK_ONCE + HOST_ATTACKRESULT
-    // Sem mais golpes da sessão enquanto o teste espera o revide.
-    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
+                                 // Sem mais golpes da sessão enquanto o teste espera o revide.
+    mundo
+        .write()
+        .await
+        .players
+        .get_mut(&(roleid as i64))
+        .unwrap()
+        .ataque = None;
 
     let hp_inicial = mundo.read().await.players[&(roleid as i64)].hp;
 
     let apanhou = tickar_ate(&mundo, |m| {
-        m.players.get(&(roleid as i64)).map(|p| p.hp < hp_inicial).unwrap_or(false)
+        m.players
+            .get(&(roleid as i64))
+            .map(|p| p.hp < hp_inicial)
+            .unwrap_or(false)
     })
     .await;
     assert!(
@@ -1283,8 +1392,15 @@ async fn o_monstro_revida_e_o_cliente_fica_sabendo() {
     let chegou = ate_async(|| {
         let itens = itens_para_esperar.clone();
         async move {
-            let vestido = itens.list_by_container(roleid, pw_core::ContainerType::Equipment).await.unwrap_or_default();
-            let gasto: u32 = vestido.iter().filter(|i| (1..=10).contains(&i.slot)).map(|i| DURABILIDADE_DA_PECA - i.durability).sum();
+            let vestido = itens
+                .list_by_container(roleid, pw_core::ContainerType::Equipment)
+                .await
+                .unwrap_or_default();
+            let gasto: u32 = vestido
+                .iter()
+                .filter(|i| (1..=10).contains(&i.slot))
+                .map(|i| DURABILIDADE_DA_PECA - i.durability)
+                .sum();
             gasto >= 25 && gasto % 25 == 0
         }
     })
@@ -1302,7 +1418,10 @@ async fn o_monstro_revida_e_o_cliente_fica_sabendo() {
     let arma_gastou = ate_async(|| {
         let itens = itens_para_esperar.clone();
         async move {
-            let Ok(Some(arma)) = itens.get_item_by_slot(roleid, pw_core::ContainerType::Equipment, 0).await else {
+            let Ok(Some(arma)) = itens
+                .get_item_by_slot(roleid, pw_core::ContainerType::Equipment, 0)
+                .await
+            else {
                 return false;
             };
             let gasto = arma.max_durability - arma.durability;
@@ -1311,7 +1430,6 @@ async fn o_monstro_revida_e_o_cliente_fica_sabendo() {
     })
     .await;
     assert!(arma_gastou, "a arma não gastou 2 por golpe normal");
-
 }
 
 #[tokio::test]
@@ -1342,11 +1460,20 @@ async fn morrer_avisa_o_cliente_e_reviver_devolve_a_vida() {
     .await
     .unwrap();
     receber(&mut link, 3).await; // HOST_START_ATTACK + ATTACK_ONCE + HOST_ATTACKRESULT
-    // Sem mais golpes da sessão enquanto o teste espera o revide.
-    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
+                                 // Sem mais golpes da sessão enquanto o teste espera o revide.
+    mundo
+        .write()
+        .await
+        .players
+        .get_mut(&(roleid as i64))
+        .unwrap()
+        .ataque = None;
 
     let morreu = tickar_ate(&mundo, |m| {
-        m.players.get(&(roleid as i64)).map(|p| p.hp == 0).unwrap_or(false)
+        m.players
+            .get(&(roleid as i64))
+            .map(|p| p.hp == 0)
+            .unwrap_or(false)
     })
     .await;
     assert!(morreu, "o jogador não chegou a zero");
@@ -1375,7 +1502,11 @@ async fn morrer_avisa_o_cliente_e_reviver_devolve_a_vida() {
     let m = mundo.read().await;
     let p = &m.players[&(roleid as i64)];
     // `DEFAULT_RESURRECT_HP_FACTOR` = 0,1 (`gs/config.h:168`), arredondado.
-    assert_eq!(p.hp, (p.max_hp as f32 * 0.1 + 0.5) as i32, "o renascimento não devolveu 10 % da vida");
+    assert_eq!(
+        p.hp,
+        (p.max_hp as f32 * 0.1 + 0.5) as i32,
+        "o renascimento não devolveu 10 % da vida"
+    );
     assert_eq!(p.target_id, None, "o alvo antigo sobreviveu à morte");
 }
 
@@ -1397,7 +1528,10 @@ async fn quem_esta_vivo_nao_revive() {
     .unwrap();
 
     let nada = tokio::time::timeout(Duration::from_millis(400), link.receber()).await;
-    assert!(nada.is_err(), "o mundo respondeu a um revive de quem está vivo");
+    assert!(
+        nada.is_err(),
+        "o mundo respondeu a um revive de quem está vivo"
+    );
 
     let depois = mundo.read().await.players[&(roleid as i64)].position;
     assert_eq!(
@@ -1552,7 +1686,13 @@ async fn dinheiro(mundo: &Arc<RwLock<WorldInstance>>, roleid: i32) -> i64 {
 }
 
 async fn dar_dinheiro(mundo: &Arc<RwLock<WorldInstance>>, roleid: i32, n: i64) {
-    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().money += n;
+    mundo
+        .write()
+        .await
+        .players
+        .get_mut(&(roleid as i64))
+        .unwrap()
+        .money += n;
 }
 
 /// Monta o envelope do `SEVNPC_SERVE`: serviço, tamanho e conteúdo.
@@ -1585,9 +1725,15 @@ async fn conferir_compra(versao: GameVersion) {
     dar_dinheiro(&mundo, roleid, 10_000).await;
     let antes = dinheiro(&mundo, roleid).await;
 
-    // CONTENT da compra: 28 bytes de cabeçalho, depois `npc_trade_item`.
+    // CONTENT da compra: o cabeçalho da versão, depois `npc_trade_item`. 1.5.5: 28 B (money +
+    // as cinco contribuições + item_count); 1.2.6: 8 B (money + item_count), como na captura da
+    // VM (`full_interno.pcap`, subcomando 37 #0, B128).
     let mut c = Vec::new();
-    c.extend_from_slice(&[0u8; 24]); // money + as cinco contribuições
+    let zeros_antes_da_contagem = match versao {
+        GameVersion::V1_2_6 => 4,
+        _ => 24,
+    };
+    c.extend_from_slice(&vec![0u8; zeros_antes_da_contagem]);
     c.extend_from_slice(&1u32.to_le_bytes()); // item_count
     c.extend_from_slice(&ITEM_DE_LOJA.to_le_bytes()); // tid
     c.extend_from_slice(&20u32.to_le_bytes()); // index (slot de destino)
@@ -1694,8 +1840,15 @@ async fn item_sem_preco_no_arquivo_nao_e_vendido() {
         }
     })
     .await;
-    assert!(!entregou, "um item sem preço no arquivo foi entregue mesmo assim");
-    assert_eq!(dinheiro(&mundo, roleid).await, antes, "cobrou por um item que não vendeu");
+    assert!(
+        !entregou,
+        "um item sem preço no arquivo foi entregue mesmo assim"
+    );
+    assert_eq!(
+        dinheiro(&mundo, roleid).await,
+        antes,
+        "cobrou por um item que não vendeu"
+    );
 }
 
 #[tokio::test]
@@ -1750,7 +1903,11 @@ async fn vender_ao_npc_tira_o_item_e_da_dinheiro() {
     assert_eq!(&solta[2..], &[0, 21, 0], "181 = bolsa (0), espaço 21");
     let venda = esperar_comando(&mut link, 73).await;
     assert_eq!(u16::from_le_bytes([venda[2], venda[3]]), 21);
-    assert_eq!(i32_em(&venda, 12), 100, "o valor da venda não é price × count");
+    assert_eq!(
+        i32_em(&venda, 12),
+        100,
+        "o valor da venda não é price × count"
+    );
 
     let itens2 = itens.clone();
     let saiu = ate_async(move || {
@@ -1800,8 +1957,11 @@ async fn nao_da_para_vender_um_slot_vazio() {
     // Só o `UNFREEZE_IVTR_SLOT` (181) do espaço pedido, que o cliente congelou (B109);
     // nenhum `ITEM_TO_MONEY` (73).
     let fim = std::time::Instant::now() + Duration::from_millis(400);
-    while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
-        tokio::time::timeout(fim.saturating_duration_since(std::time::Instant::now()), link.receber()).await
+    while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(
+        fim.saturating_duration_since(std::time::Instant::now()),
+        link.receber(),
+    )
+    .await
     {
         assert_ne!(cmd_de(&data), 73, "o mundo pagou a venda de um slot vazio");
     }
@@ -1843,7 +2003,10 @@ async fn aceitar_e_entregar_missao_no_npc_mexe_nas_listas_e_premia() {
     assert_eq!(nova[6], 1, "reason devia ser TASK_SVR_NOTIFY_NEW");
     assert_eq!(u16::from_le_bytes([nova[7], nova[8]]) as u32, MISSAO_DO_NPC);
     assert_eq!(
-        mundo.read().await.players[&(roleid as i64)].missoes.ativa.indice(MISSAO_DO_NPC),
+        mundo.read().await.players[&(roleid as i64)]
+            .missoes
+            .ativa
+            .indice(MISSAO_DO_NPC),
         Some(0),
         "a missão não entrou na lista ativa"
     );
@@ -1866,8 +2029,15 @@ async fn aceitar_e_entregar_missao_no_npc_mexe_nas_listas_e_premia() {
 
     let m = mundo.read().await;
     let p = &m.players[&(roleid as i64)];
-    assert_eq!(p.missoes.ativa.quantidade, 0, "a missão entregue continuou ativa");
-    assert_eq!(p.missoes.procurar_concluida(MISSAO_DO_NPC), 0, "não ficou registrada como concluída");
+    assert_eq!(
+        p.missoes.ativa.quantidade, 0,
+        "a missão entregue continuou ativa"
+    );
+    assert_eq!(
+        p.missoes.procurar_concluida(MISSAO_DO_NPC),
+        0,
+        "não ficou registrada como concluída"
+    );
     let repo = m.char_repo.clone();
     drop(m);
 
@@ -1894,10 +2064,14 @@ async fn aceitar_e_entregar_missao_no_npc_mexe_nas_listas_e_premia() {
 #[tokio::test]
 async fn o_guia_selvagem_do_126_entrega_a_missao_inicial_1177() {
     let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
-    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let pasta =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     let mut reais = GameDataManager::new();
     reais.load_from_directory(&pasta);
-    assert!(reais.servicos_de_npc.get(&3518).is_some_and(|s| s.missoes_entregues.contains(&1177)));
+    assert!(reais
+        .servicos_de_npc
+        .get(&3518)
+        .is_some_and(|s| s.missoes_entregues.contains(&1177)));
     {
         let mut m = mundo.write().await;
         m.data_manager = Arc::new(reais);
@@ -1905,7 +2079,13 @@ async fn o_guia_selvagem_do_126_entrega_a_missao_inicial_1177() {
     }
     let mut link = entrar(&mundo, addr, roleid).await;
     // A 1177 é das classes selvagens (`missoes.rs`, teste da 1177): o Tsuko é uma delas.
-    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().cls = CharacterClass::Barbarian;
+    mundo
+        .write()
+        .await
+        .players
+        .get_mut(&(roleid as i64))
+        .unwrap()
+        .cls = CharacterClass::Barbarian;
 
     link.enviar(BusMessage::ClientToGame {
         roleid,
@@ -1930,7 +2110,11 @@ async fn o_guia_selvagem_do_126_entrega_a_missao_inicial_1177() {
     assert_eq!(nova[6], 1, "reason devia ser TASK_SVR_NOTIFY_NEW");
     assert_eq!(u16::from_le_bytes([nova[7], nova[8]]), 1177);
     assert!(
-        mundo.read().await.players[&(roleid as i64)].missoes.ativa.indice(1177).is_some(),
+        mundo.read().await.players[&(roleid as i64)]
+            .missoes
+            .ativa
+            .indice(1177)
+            .is_some(),
         "a 1177 não entrou na lista ativa"
     );
 
@@ -1949,9 +2133,13 @@ async fn o_guia_selvagem_do_126_entrega_a_missao_inicial_1177() {
     })
     .await
     .unwrap();
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+    })
+    .await
+    .unwrap();
     tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.hp == 0).await;
     // Captura original: `09 00 00 00 | 04 | 9a 04 | e7 0c 00 00 | nn 00`.
     let abate = loop {
@@ -1960,8 +2148,15 @@ async fn o_guia_selvagem_do_126_entrega_a_missao_inicial_1177() {
             break a;
         }
     };
-    assert_eq!(abate.len(), 2 + 4 + 9, "svr_monster_killed do 1.2.6 tem 9 bytes: {abate:02x?}");
-    assert_eq!(&abate[2..], &[9, 0, 0, 0, 4, 0x9a, 0x04, 0xe7, 0x0c, 0, 0, 1, 0]);
+    assert_eq!(
+        abate.len(),
+        2 + 4 + 9,
+        "svr_monster_killed do 1.2.6 tem 9 bytes: {abate:02x?}"
+    );
+    assert_eq!(
+        &abate[2..],
+        &[9, 0, 0, 0, 4, 0x9a, 0x04, 0xe7, 0x0c, 0, 0, 1, 0]
+    );
 }
 
 /// B103 — o Guerreiro do 1.2.6 escolhe a 1175 na 1173 ("Primeiro Teste", NPC 3517) e, ao
@@ -1970,7 +2165,8 @@ async fn o_guia_selvagem_do_126_entrega_a_missao_inicial_1177() {
 #[tokio::test]
 async fn o_primeiro_teste_do_guerreiro_126_da_a_arma() {
     let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
-    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let pasta =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     let mut reais = GameDataManager::new();
     reais.load_from_directory(&pasta);
     {
@@ -1979,15 +2175,23 @@ async fn o_primeiro_teste_do_guerreiro_126_da_a_arma() {
         m.npcs.get_mut(&NPC).unwrap().template_id = 3517;
     }
     let mut link = entrar(&mundo, addr, roleid).await;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
     esperar_comando(&mut link, 70).await;
     let mut aceitar = 1175i32.to_le_bytes().to_vec();
     aceitar.extend_from_slice(&[0u8; 8]);
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::ACEITAR_MISSAO, &aceitar) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::ACEITAR_MISSAO, &aceitar),
+    })
+    .await
+    .unwrap();
     esperar_comando(&mut link, 106).await;
     {
         let mut m = mundo.write().await;
@@ -2000,23 +2204,42 @@ async fn o_primeiro_teste_do_guerreiro_126_da_a_arma() {
         monstro.hp = 1;
     }
     // O décimo abate, de verdade: é ele que finaliza a entrada (`ao_finalizar`).
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) })
-        .await
-        .unwrap();
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+    })
+    .await
+    .unwrap();
     tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.hp == 0).await;
-    while tokio::time::timeout(Duration::from_millis(300), link.receber()).await.is_ok() {}
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()) })
+    while tokio::time::timeout(Duration::from_millis(300), link.receber())
         .await
-        .unwrap();
+        .is_ok()
+    {}
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
     esperar_comando(&mut link, 70).await;
     let mut entregar = 1175i32.to_le_bytes().to_vec();
     entregar.extend_from_slice(&0i32.to_le_bytes());
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::ENTREGAR_MISSAO, &entregar) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::ENTREGAR_MISSAO, &entregar),
+    })
+    .await
+    .unwrap();
     let mut vistos = Vec::new();
     while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
         tokio::time::timeout(Duration::from_millis(800), link.receber()).await
@@ -2025,12 +2248,25 @@ async fn o_primeiro_teste_do_guerreiro_126_da_a_arma() {
     }
     // Como a captura original da 1179: `156` (item do prêmio, 10 bytes no 1.2.6), `159`,
     // `158`, e o `106` "nova" da seguinte; a mãe não ganha `106` "concluída" (nem no original).
-    let arma = vistos.iter().any(|(c, n, b)| *c == 156 && *n == 10 && b.get(0..4) == Some(&12497u32.to_le_bytes()[..]));
-    assert!(arma, "a Espada de You Xia (12497) não foi entregue: {vistos:?}");
-    assert!(vistos.iter().any(|(c, _, b)| *c == 106 && b.get(4) == Some(&1) && b.get(5..7) == Some(&1174u16.to_le_bytes()[..])), "{vistos:?}");
+    let arma = vistos
+        .iter()
+        .any(|(c, n, b)| *c == 156 && *n == 10 && b.get(0..4) == Some(&12497u32.to_le_bytes()[..]));
+    assert!(
+        arma,
+        "a Espada de You Xia (12497) não foi entregue: {vistos:?}"
+    );
+    assert!(
+        vistos.iter().any(|(c, _, b)| *c == 106
+            && b.get(4) == Some(&1)
+            && b.get(5..7) == Some(&1174u16.to_le_bytes()[..])),
+        "{vistos:?}"
+    );
     let m = mundo.read().await;
     let p = &m.players[&(roleid as i64)];
-    assert!(p.missoes.ativa.indice(1174).is_some(), "a 1174 não ficou ativa");
+    assert!(
+        p.missoes.ativa.indice(1174).is_some(),
+        "a 1174 não ficou ativa"
+    );
 }
 
 /// B57 — o `NORMAL_ATTACK` que chega durante a conjuração espera a habilidade acabar.
@@ -2057,16 +2293,24 @@ async fn o_golpe_que_chega_conjurando_espera_a_habilidade() {
     let mut corpo = 4321i32.to_le_bytes().to_vec(); // skill_id
     corpo.push(0); // force_attack
     corpo.push(0); // target_count
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CAST_SKILL, &corpo) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::CAST_SKILL, &corpo),
+    })
+    .await
+    .unwrap();
     // O `OBJECT_CAST_SKILL` (85) abre a conjuração.
     esperar_comando(&mut link, 85).await;
 
     // O clique no monstro durante a conjuração.
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+    })
+    .await
+    .unwrap();
 
     // A ordem tem de ser: resultado da habilidade (142) e só depois o golpe (84 + 24).
     let mut ordem = Vec::new();
@@ -2099,18 +2343,27 @@ async fn enxame_de_ferroadas_126_dispara_resultado_visual_so_para_o_conjurador()
     corpo.extend_from_slice(&[0, 1]);
     corpo.extend_from_slice(&(MONSTRO as i32).to_le_bytes());
     dono.enviar(BusMessage::ClientToGame {
-        roleid, localsid: LOCALSID, data: subcomando(ids::CAST_SKILL, &corpo),
-    }).await.unwrap();
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::CAST_SKILL, &corpo),
+    })
+    .await
+    .unwrap();
 
     let mut vistos = Vec::new();
     let mut quando = Vec::new();
     while !vistos.contains(&123) {
         let pacote = tokio::time::timeout(Duration::from_secs(5), dono.receber())
-            .await.expect("fim da habilidade").unwrap().expect("conexão do dono");
+            .await
+            .expect("fim da habilidade")
+            .unwrap()
+            .expect("conexão do dono");
         if let BusMessage::GameToClient { data, .. } = pacote {
             let cmd = cmd_de(&data);
             if [85, 88, 142, 123].contains(&cmd) {
-                if cmd == 142 { assert_eq!(data.len(), 16, "resultado v126: 2+14 bytes"); }
+                if cmd == 142 {
+                    assert_eq!(data.len(), 16, "resultado v126: 2+14 bytes");
+                }
                 vistos.push(cmd);
                 quando.push(std::time::Instant::now());
             }
@@ -2120,19 +2373,42 @@ async fn enxame_de_ferroadas_126_dispara_resultado_visual_so_para_o_conjurador()
     // Captura original 1.2.6 (B100): 88 em +1.505 ms e 123 em +2.504..2.551 ms do 85 —
     // conjuração (1.500) + execução (1.000) do `gs` 1.2.6. Antes o 123 saía logo após o 142.
     let ms = |i: usize| quando[i].duration_since(quando[0]).as_millis();
-    assert!((1_400..1_800).contains(&ms(1)), "88 fora da conjuração: {} ms", ms(1));
-    assert!((2_400..2_900).contains(&ms(3)), "123 fora de conjuração + execução: {} ms", ms(3));
-    assert!(ms(3) - ms(2) >= 900, "123 cortou a fase de execução: {} ms após o 142", ms(3) - ms(2));
+    assert!(
+        (1_400..1_800).contains(&ms(1)),
+        "88 fora da conjuração: {} ms",
+        ms(1)
+    );
+    assert!(
+        (2_400..2_900).contains(&ms(3)),
+        "123 fora de conjuração + execução: {} ms",
+        ms(3)
+    );
+    assert!(
+        ms(3) - ms(2) >= 900,
+        "123 cortou a fase de execução: {} ms após o 142",
+        ms(3) - ms(2)
+    );
     let mut vistos_pelo_outro = Vec::new();
     while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
         tokio::time::timeout(Duration::from_millis(250), outro.receber()).await
     {
         let cmd = cmd_de(&data);
-        if [85, 88, 143].contains(&cmd) { vistos_pelo_outro.push(cmd); }
+        if [85, 88, 143].contains(&cmd) {
+            vistos_pelo_outro.push(cmd);
+        }
     }
-    assert!(vistos_pelo_outro.contains(&85), "outro jogador não viu a conjuração");
-    assert!(vistos_pelo_outro.contains(&143), "outro jogador não viu o lançamento");
-    assert!(!vistos_pelo_outro.contains(&88), "SKILL_PERFORM pertence apenas ao dono");
+    assert!(
+        vistos_pelo_outro.contains(&85),
+        "outro jogador não viu a conjuração"
+    );
+    assert!(
+        vistos_pelo_outro.contains(&143),
+        "outro jogador não viu o lançamento"
+    );
+    assert!(
+        !vistos_pelo_outro.contains(&88),
+        "SKILL_PERFORM pertence apenas ao dono"
+    );
 }
 
 #[tokio::test]
@@ -2171,7 +2447,10 @@ async fn conjurar_habilidade_causa_dano_real_no_alvo_selecionado() {
     assert!(r.iter().any(|v| cmd_de(v) == 88), "sem SKILL_PERFORM");
     assert!(r.iter().any(|v| cmd_de(v) == 123), "sem HOST_STOP_SKILL");
 
-    let res = r.iter().find(|v| cmd_de(v) == 142).expect("sem o resultado (142)");
+    let res = r
+        .iter()
+        .find(|v| cmd_de(v) == 142)
+        .expect("sem o resultado (142)");
     let dano = i32_em(res, 10);
     assert!(dano > 0, "a habilidade não causou dano");
     assert_ne!(dano, 150, "o dano voltou a ser o valor fixo de antes");
@@ -2205,7 +2484,10 @@ async fn conjurar_no_alvo_da_lista_e_nao_no_selecionado() {
     .unwrap();
 
     let r = receber(&mut link, 4).await;
-    let res = r.iter().find(|v| cmd_de(v) == 142).expect("sem o resultado");
+    let res = r
+        .iter()
+        .find(|v| cmd_de(v) == 142)
+        .expect("sem o resultado");
     assert_eq!(
         i32_em(res, 2),
         MONSTRO as i32,
@@ -2231,7 +2513,10 @@ async fn usar_pocao_cura_pelo_valor_do_elements_data() {
         // Um remédio conhecido, posto direto no `elements` deste mundo de teste.
         let mut m = mundo.write().await;
         // Um cultivo já conquistado: todo `SELF_INFO_00` tem de repeti-lo (B71).
-        m.players.get_mut(&(roleid as i64)).expect("o jogador entrou").cultivation = CULTIVO as i32;
+        m.players
+            .get_mut(&(roleid as i64))
+            .expect("o jogador entrou")
+            .cultivation = CULTIVO as i32;
         let dm = Arc::make_mut(&mut m.data_manager);
         dm.elements.medicines.insert(
             POCAO,
@@ -2301,7 +2586,10 @@ async fn usar_pocao_cura_pelo_valor_do_elements_data() {
     // toca o efeito sempre que o novo é maior que o anterior. Era a tela de cultivo ao usar
     // poção (B71).
     for v in r.iter().filter(|v| cmd_de(v) == 38) {
-        assert_eq!(v[5], CULTIVO, "o SELF_INFO_00 da poção mandou outro cultivo");
+        assert_eq!(
+            v[5], CULTIVO,
+            "o SELF_INFO_00 da poção mandou outro cultivo"
+        );
     }
 
     let hp = mundo.read().await.players[&(roleid as i64)].hp;
@@ -2329,7 +2617,10 @@ async fn usar_pocao_cura_pelo_valor_do_elements_data() {
     .await
     .unwrap();
     let r = receber(&mut link, 1).await;
-    let erro = r.iter().find(|v| cmd_de(v) == 25).expect("sem ERROR_MESSAGE durante a recarga");
+    let erro = r
+        .iter()
+        .find(|v| cmd_de(v) == 25)
+        .expect("sem ERROR_MESSAGE durante a recarga");
     assert_eq!(i32_em(erro, 2), 53, "erro de poção em recarga");
     let sobrou = itens
         .get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 30)
@@ -2347,13 +2638,19 @@ async fn usar_pocao_cura_pelo_valor_do_elements_data() {
     .await
     .unwrap();
     let r = receber(&mut link, 4).await;
-    assert!(r.iter().any(|v| cmd_de(v) == 91), "a poção não voltou a ser aceita depois da recarga");
+    assert!(
+        r.iter().any(|v| cmd_de(v) == 91),
+        "a poção não voltou a ser aceita depois da recarga"
+    );
     let sobrou = itens
         .get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 30)
         .await
         .unwrap()
         .expect("a pilha inteira sumiu");
-    assert_eq!(sobrou.count, 3, "a terceira utilização devia consumir a segunda poção");
+    assert_eq!(
+        sobrou.count, 3,
+        "a terceira utilização devia consumir a segunda poção"
+    );
 }
 
 #[tokio::test]
@@ -2409,9 +2706,13 @@ async fn segundo_jogador(
         // O segundo fica a dois metros do primeiro, que é o que os testes de grupo
         // assumem — os dois entram na mesma posição por padrão.
         let mut m = mundo.write().await;
-        let p = m.players.get_mut(&(roleid as i64)).expect("acabou de entrar");
+        let p = m
+            .players
+            .get_mut(&(roleid as i64))
+            .expect("acabou de entrar");
         p.position = Vector3::new(2.0, 0.0, 2.0);
-        m.grid.update_position(roleid as i64, Vector3::new(2.0, 0.0, 2.0));
+        m.grid
+            .update_position(roleid as i64, Vector3::new(2.0, 0.0, 2.0));
     }
 
     // `UNSELECT` de propósito, e não `SIT_DOWN`: a resposta de sentar é **transmitida a
@@ -2453,11 +2754,19 @@ async fn o_convite_de_grupo_chega_a_quem_foi_convidado() {
     let nada = tokio::time::timeout(Duration::from_millis(300), link_a.receber()).await;
     assert!(
         nada.is_err(),
-        "o convite voltou para quem convidou — é o bug de origem"
+        "o convite voltou para quem convidou — é o bug de origem: {:?}",
+        nada.ok().and_then(|m| m.ok().flatten()).map(|m| match m {
+            BusMessage::GameToClient { data, .. } => format!("comando {} ({} B)", cmd_de(&data), data.len()),
+            outra => format!("{outra:?}"),
+        })
     );
 
     let v = receber(&mut link_b, 1).await;
-    assert_eq!(cmd_de(&v[0]), 57, "o convidado não recebeu TEAM_LEADER_INVITE");
+    assert_eq!(
+        cmd_de(&v[0]),
+        57,
+        "o convidado não recebeu TEAM_LEADER_INVITE"
+    );
     assert_eq!(
         i32_em(&v[0], 2),
         anfitriao,
@@ -2528,7 +2837,10 @@ async fn aceitar_forma_o_grupo_e_avisa_os_dois_com_dados_reais() {
         // Os dois primeiros bytes contam separado de propósito: o `CheckValid` do cliente
         // dimensiona o pacote por `data_count`, e era ele que faltava.
         assert_eq!(lista[2], 2, "member_count devia ser 2");
-        assert_eq!(lista[3], 2, "data_count devia ser 2 — é por ele que o cliente conta");
+        assert_eq!(
+            lista[3], 2,
+            "data_count devia ser 2 — é por ele que o cliente conta"
+        );
         assert_eq!(i32_em(lista, 4), anfitriao, "o idLeader não é o anfitrião");
 
         const MEMBRO: usize = 34;
@@ -2546,7 +2858,11 @@ async fn aceitar_forma_o_grupo_e_avisa_os_dois_com_dados_reais() {
     }
 
     let m = mundo.read().await;
-    assert_eq!(m.membros_do_grupo(anfitriao).len(), 2, "o grupo não se formou");
+    assert_eq!(
+        m.membros_do_grupo(anfitriao).len(),
+        2,
+        "o grupo não se formou"
+    );
     assert_eq!(m.membros_do_grupo(convidado).len(), 2);
 }
 
@@ -2732,7 +3048,11 @@ async fn a_consulta_periodica_devolve_o_hp_real_do_monstro() {
     // **12 bytes no 1.2.6**, medidos em 80 ocorrências de um servidor real: `idNPC`,
     // `iHP`, `iMaxHP` e **sem** o `iTargetID`, que só existe a partir do 1.5.3 (item 56).
     // O mundo deste teste é 1.2.6, então é este o tamanho esperado.
-    assert_eq!(info.len(), 2 + 12, "NPC_INFO_00 com tamanho errado: o cliente descarta");
+    assert_eq!(
+        info.len(),
+        2 + 12,
+        "NPC_INFO_00 com tamanho errado: o cliente descarta"
+    );
     assert_eq!(i32_em(info, 2), MONSTRO as i32);
     assert_eq!(i32_em(info, 6), 55, "veio HP fixo em vez do HP do mundo");
     assert_eq!(i32_em(info, 10), MONSTRO_HP_MAX as i32);
@@ -2747,7 +3067,13 @@ async fn a_consulta_de_jogador_devolve_alguma_coisa() {
     let outro = convidado;
     let _link_b = segundo_jogador(&mundo, addr, outro).await;
 
-    mundo.write().await.players.get_mut(&(outro as i64)).unwrap().hp = 77;
+    mundo
+        .write()
+        .await
+        .players
+        .get_mut(&(outro as i64))
+        .unwrap()
+        .hp = 77;
 
     let mut corpo = 1u16.to_le_bytes().to_vec();
     corpo.extend_from_slice(&outro.to_le_bytes());
@@ -2768,7 +3094,11 @@ async fn a_consulta_de_jogador_devolve_alguma_coisa() {
     // no 1.2.6 — **sem** o `iTargetID`, igual ao 33. Medido em 73 ocorrências.
     assert_eq!(info.len(), 2 + 24, "PLAYER_INFO_00 com tamanho errado");
     assert_eq!(i32_em(info, 2), outro);
-    assert_eq!(i32_em(info, 10), 77, "o HP do outro jogador não é o do mundo");
+    assert_eq!(
+        i32_em(info, 10),
+        77,
+        "o HP do outro jogador não é o do mundo"
+    );
 }
 
 #[tokio::test]
@@ -2796,23 +3126,44 @@ async fn o_proprio_estado_sai_do_personagem_e_nao_de_120_280() {
 
     // SELF_INFO_00, OWN_EXT_PROP (`PlayerGetProperty`, `player.cpp:8588`) e PLAYER_CASH.
     let r = receber(&mut link, 3).await;
-    assert!(r.iter().any(|v| cmd_de(v) == 50), "sem OWN_EXT_PROP (50): a janela de atributos não se refaz");
+    assert!(
+        r.iter().any(|v| cmd_de(v) == 50),
+        "sem OWN_EXT_PROP (50): a janela de atributos não se refaz"
+    );
     let info = r
         .iter()
         .find(|v| cmd_de(v) == 38)
         .expect("sem SELF_INFO_00 (38)");
     // sLevel(2) State(1) Level2(1) iHP(4) iMaxHP(4) iMP(4) ...
     assert_eq!(i16::from_le_bytes([info[2], info[3]]), 23, "nível fixo");
-    assert_eq!(i32_em(info, 6), 91, "veio vida fixa em vez da do personagem");
-    assert_eq!(i32_em(info, 14), 17, "veio mana fixa em vez da do personagem");
+    assert_eq!(
+        i32_em(info, 6),
+        91,
+        "veio vida fixa em vez da do personagem"
+    );
+    assert_eq!(
+        i32_em(info, 14),
+        17,
+        "veio mana fixa em vez da do personagem"
+    );
 
     let saldo = r
         .iter()
         .find(|v| cmd_de(v) == 253)
         .expect("sem PLAYER_CASH (253)");
     // `struct player_cash { int cash_amount; }` — **um** campo. Escrevíamos dois.
-    assert_eq!(saldo.len(), 2 + 4, "PLAYER_CASH com tamanho errado: o cliente descarta");
-    assert_eq!(i32_em(saldo, 2), 4242, "o saldo veio de 50000 escrito no código");
+    assert_eq!(
+        saldo.len(),
+        2 + 4,
+        "PLAYER_CASH com tamanho errado: o cliente descarta"
+    );
+    // O saldo é o cash da **conta** (`GetMallCash()`), não o dinheiro do personagem (4242)
+    // nem os 50000 escritos no código de antes (B125). A conta de teste nasce com 0.
+    assert_eq!(
+        i32_em(saldo, 2),
+        0,
+        "o PLAYER_CASH não levou o cash da conta"
+    );
 }
 
 #[tokio::test]
@@ -2821,7 +3172,13 @@ async fn get_all_data_respeita_os_sinalizadores_do_cliente() {
     // tudo. O servidor original passa os três adiante (`playercmd.cpp:1863`).
     let (mundo, addr, roleid, _convidado) = cenario!();
     let mut link = entrar(&mundo, addr, roleid).await;
-    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().money = 999;
+    mundo
+        .write()
+        .await
+        .players
+        .get_mut(&(roleid as i64))
+        .unwrap()
+        .money = 999;
 
     // Só o dinheiro e o marcador de fim: nada de bolsa, equipamento ou missões.
     link.enviar(BusMessage::ClientToGame {
@@ -2837,7 +3194,11 @@ async fn get_all_data_respeita_os_sinalizadores_do_cliente() {
     // para as 3 bolsas (0, 1 e 2) para inicializar a estrutura no cliente.
     // O que os três sinalizadores controlam são os blocos detalhados OWN_ITEM_INFO (40).
     let ivtrs: Vec<_> = r.iter().filter(|v| cmd_de(v) == 42).collect();
-    assert_eq!(ivtrs.len(), 3, "as 3 bolsas (42) vão sempre para inicializar os contêineres");
+    assert_eq!(
+        ivtrs.len(),
+        3,
+        "as 3 bolsas (42) vão sempre para inicializar os contêineres"
+    );
     assert!(
         !r.iter().any(|v| cmd_de(v) == 40),
         "mandou OWN_ITEM_INFO (40) com os sinalizadores desligados"
@@ -2856,7 +3217,11 @@ async fn get_all_data_respeita_os_sinalizadores_do_cliente() {
         .iter()
         .find(|v| cmd_de(v) == 253)
         .expect("sem PLAYER_CASH (253)");
-    assert_eq!(i32_em(saldo, 2), 999);
+    assert_eq!(
+        i32_em(saldo, 2),
+        0,
+        "o PLAYER_CASH leva o cash da conta, não o dinheiro (B125)"
+    );
 
     // E com os sinalizadores ligados, as bolsas continuam vindo.
     link.enviar(BusMessage::ClientToGame {
@@ -2910,7 +3275,10 @@ async fn o_enter_world_poe_o_jogador_no_mundo_com_os_dados_do_banco() {
 
     // E a grade espacial conhece o jogador — sem isso ele não é visto por ninguém.
     let perto = m.grid.get_players_in_range(&p.position, 5.0);
-    assert!(perto.contains(&(roleid as i64)), "o jogador não entrou na grade espacial");
+    assert!(
+        perto.contains(&(roleid as i64)),
+        "o jogador não entrou na grade espacial"
+    );
 }
 
 #[tokio::test]
@@ -2938,7 +3306,12 @@ async fn sair_tira_o_jogador_do_mundo() {
     .await;
     assert!(saiu, "o PlayerLogout não tirou o jogador do mundo");
     assert!(
-        mundo.read().await.grid.get_players_in_range(&Vector3::new(0.0, 0.0, 0.0), 50.0).is_empty(),
+        mundo
+            .read()
+            .await
+            .grid
+            .get_players_in_range(&Vector3::new(0.0, 0.0, 0.0), 50.0)
+            .is_empty(),
         "o jogador ficou na grade espacial depois de sair"
     );
 }
@@ -3015,7 +3388,11 @@ async fn o_botao_de_roupa_alterna_e_avisa_os_dois_lados() {
         .find(|v| cmd_de(v) == 192)
         .expect("quem apertou não recebeu PLAYER_ENABLE_FASHION");
     assert_eq!(pacote.len(), 2 + 5, "cmd_player_enable_fashion tem 5 bytes");
-    assert_eq!(i32_em(pacote, 2), roleid, "o comando tem de dizer de quem é a roupa");
+    assert_eq!(
+        i32_em(pacote, 2),
+        roleid,
+        "o comando tem de dizer de quem é a roupa"
+    );
     assert_eq!(pacote[6], 1, "a primeira troca liga o modo roupa");
 
     let dele = receber(&mut outro, 1).await;
@@ -3035,14 +3412,21 @@ async fn o_botao_de_roupa_alterna_e_avisa_os_dois_lados() {
         .unwrap();
 
     let volta = receber(&mut anfitriao, 1).await;
-    let pacote = volta.iter().find(|v| cmd_de(v) == 192).expect("sem resposta na volta");
+    let pacote = volta
+        .iter()
+        .find(|v| cmd_de(v) == 192)
+        .expect("sem resposta na volta");
     assert_eq!(pacote[6], 0, "clicar de novo tem de voltar para a armadura");
 
     // B83 — e a escolha **sobrevive ao logout**: vai para o `charactermode` do banco, que é
     // de onde a tela de seleção lê para desenhar o avatar (`CECLoginPlayer::Load`,
     // `EC_LoginPlayer.cpp:172-189`). A gravação é assíncrona, como a de durabilidade.
     anfitriao
-        .enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SWITCH_FASHION_MODE, &[]) })
+        .enviar(BusMessage::ClientToGame {
+            roleid,
+            localsid: LOCALSID,
+            data: subcomando(ids::SWITCH_FASHION_MODE, &[]),
+        })
         .await
         .unwrap();
     let _ = receber(&mut anfitriao, 1).await;
@@ -3050,11 +3434,18 @@ async fn o_botao_de_roupa_alterna_e_avisa_os_dois_lados() {
     let gravou = ate_async(|| {
         let repo = repo.clone();
         async move {
-            repo.get_details_por_role(roleid).await.ok().flatten().is_some_and(|c| c.modo_roupa)
+            repo.get_details_por_role(roleid)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|c| c.modo_roupa)
         }
     })
     .await;
-    assert!(gravou, "o modo roupa não chegou ao `charactermode` do banco");
+    assert!(
+        gravou,
+        "o modo roupa não chegou ao `charactermode` do banco"
+    );
 }
 
 /// Uma cura em si mesmo tem de **subir a vida** e mandar o número para a tela.
@@ -3069,7 +3460,10 @@ async fn a_cura_em_si_mesmo_devolve_vida() {
     // Machuca o jogador para haver o que curar.
     let (antes, max_hp) = {
         let mut m = mundo.write().await;
-        let p = m.players.get_mut(&(roleid as i64)).expect("jogador no mundo");
+        let p = m
+            .players
+            .get_mut(&(roleid as i64))
+            .expect("jogador no mundo");
         p.hp = 10;
         (p.hp, p.max_hp)
     };
@@ -3089,7 +3483,10 @@ async fn a_cura_em_si_mesmo_devolve_vida() {
     .unwrap();
 
     let r = receber(&mut link, 6).await;
-    assert!(r.iter().any(|v| cmd_de(v) == 123), "a conjuração não fechou");
+    assert!(
+        r.iter().any(|v| cmd_de(v) == 123),
+        "a conjuração não fechou"
+    );
     let res = r
         .iter()
         .find(|v| cmd_de(v) == 279)
@@ -3111,7 +3508,11 @@ async fn a_cura_em_si_mesmo_devolve_vida() {
     );
 
     let depois = mundo.read().await.players[&(roleid as i64)].hp;
-    assert_eq!(depois, antes + curado, "a vida no mundo não subiu o que foi anunciado");
+    assert_eq!(
+        depois,
+        antes + curado,
+        "a vida no mundo não subiu o que foi anunciado"
+    );
     assert!(
         r.iter().any(|v| cmd_de(v) == 38),
         "sem o SELF_INFO_00 (38) a barra de vida do cliente não mexe"
@@ -3158,12 +3559,19 @@ async fn uma_habilidade_de_ataque_machuca_o_outro_jogador() {
         .unwrap();
 
     let r = receber(&mut atacante, 4).await;
-    let res = r.iter().find(|v| cmd_de(v) == 142).expect("sem o resultado (142)");
+    let res = r
+        .iter()
+        .find(|v| cmd_de(v) == 142)
+        .expect("sem o resultado (142)");
     let dano = i32_em(res, 10);
     assert!(dano > 0, "o dano veio {dano}");
 
     let depois = mundo.read().await.players[&(convidado as i64)].hp;
-    assert_eq!(depois, antes - dano, "a vida do alvo não caiu o dano anunciado");
+    assert_eq!(
+        depois,
+        antes - dano,
+        "a vida do alvo não caiu o dano anunciado"
+    );
 
     // O alvo precisa saber que levou: sem o 144 ele não toca efeito nenhum nem entra em
     // combate (`EC_HostMsg.cpp:1023-1068`).
@@ -3194,7 +3602,10 @@ async fn habilidade_desconhecida_nao_mexe_na_vida_de_ninguem() {
     .unwrap();
 
     let r = receber(&mut link, 3).await;
-    assert!(r.iter().any(|v| cmd_de(v) == 123), "a conjuração tem de fechar mesmo assim");
+    assert!(
+        r.iter().any(|v| cmd_de(v) == 123),
+        "a conjuração tem de fechar mesmo assim"
+    );
     assert_eq!(
         mundo.read().await.players[&(convidado as i64)].hp,
         antes,
@@ -3296,14 +3707,25 @@ async fn usar_a_asa_decola_em_vez_de_gastar() {
 
     link.enviar(usar.clone()).await.unwrap();
     let r = receber(&mut link, 1).await;
-    assert_eq!(cmd_de(&r[0]), 96, "usar a asa tem de decolar (OBJECT_TAKEOFF)");
+    assert_eq!(
+        cmd_de(&r[0]),
+        96,
+        "usar a asa tem de decolar (OBJECT_TAKEOFF)"
+    );
     assert_eq!(i32_em(&r[0], 2), roleid);
-    assert!(mundo.read().await.players[&(roleid as i64)].voando, "o mundo não marcou o voo");
+    assert!(
+        mundo.read().await.players[&(roleid as i64)].voando,
+        "o mundo não marcou o voo"
+    );
 
     // Usar de novo pousa.
     link.enviar(usar).await.unwrap();
     let r = receber(&mut link, 1).await;
-    assert_eq!(cmd_de(&r[0]), 97, "usar a asa voando tem de pousar (OBJECT_LANDING)");
+    assert_eq!(
+        cmd_de(&r[0]),
+        97,
+        "usar a asa voando tem de pousar (OBJECT_LANDING)"
+    );
     assert!(!mundo.read().await.players[&(roleid as i64)].voando);
 }
 
@@ -3324,7 +3746,10 @@ async fn sentar_aparece_para_o_outro_jogador() {
         .unwrap();
 
     let meu = receber(&mut anfitriao, 1).await;
-    assert!(meu.iter().any(|v| !v.is_empty()), "quem sentou não recebeu nada");
+    assert!(
+        meu.iter().any(|v| !v.is_empty()),
+        "quem sentou não recebeu nada"
+    );
 
     let dele = receber(&mut outro, 1).await;
     assert!(
@@ -3408,12 +3833,19 @@ async fn o_teleporte_ignora_o_y_do_cliente() {
     .await
     .unwrap();
     let r = receber(&mut link, 1).await;
-    assert_eq!(cmd_de(&r[0]), 177, "sem HOST_CORRECT_POS o cliente não se move");
+    assert_eq!(
+        cmd_de(&r[0]),
+        177,
+        "sem HOST_CORRECT_POS o cliente não se move"
+    );
 
     let depois = mundo.read().await.players[&(roleid as i64)].position;
     assert_eq!(depois.x, antes.x + 80.0, "não andou em x");
     assert_eq!(depois.z, antes.z + 80.0, "não andou em z");
-    assert_eq!(depois.y, antes.y, "o y do cliente (1.0) enterraria o personagem");
+    assert_eq!(
+        depois.y, antes.y,
+        "o y do cliente (1.0) enterraria o personagem"
+    );
 
     let y_no_pacote = f32::from_le_bytes(r[0][6..10].try_into().unwrap());
     assert_eq!(y_no_pacote, antes.y, "o pacote levou o y errado");
@@ -3459,7 +3891,11 @@ async fn o_teleporte_reenvia_os_npcs_do_destino() {
     .unwrap();
 
     let r = receber(&mut link, 1).await;
-    assert_eq!(cmd_de(&r[0]), 177, "o teleporte tem de confirmar com HOST_CORRECT_POS");
+    assert_eq!(
+        cmd_de(&r[0]),
+        177,
+        "o teleporte tem de confirmar com HOST_CORRECT_POS"
+    );
 }
 
 /// O mundo em volta acompanha quem anda.
@@ -3507,7 +3943,9 @@ async fn andar_traz_o_que_entra_no_alcance_e_tira_o_que_sai() {
         "o NPC_ENTER_SLICE não é do monstro que entrou no alcance"
     );
     assert!(
-        mundo.read().await.players[&(roleid as i64)].visiveis.contains(&MONSTRO),
+        mundo.read().await.players[&(roleid as i64)]
+            .visiveis
+            .contains(&MONSTRO),
         "o mundo não anotou que o jogador passou a ver o monstro"
     );
 
@@ -3535,7 +3973,9 @@ async fn andar_traz_o_que_entra_no_alcance_e_tira_o_que_sai() {
         "o OBJECT_LEAVE_SLICE não é do monstro que saiu do alcance"
     );
     assert!(
-        !mundo.read().await.players[&(roleid as i64)].visiveis.contains(&MONSTRO),
+        !mundo.read().await.players[&(roleid as i64)]
+            .visiveis
+            .contains(&MONSTRO),
         "o mundo continua achando que o jogador vê o monstro"
     );
 }
@@ -3583,7 +4023,9 @@ async fn passo_curto_nao_refaz_a_conta_do_que_esta_a_vista() {
         );
     }
     assert!(
-        !mundo.read().await.players[&(roleid as i64)].visiveis.contains(&MONSTRO),
+        !mundo.read().await.players[&(roleid as i64)]
+            .visiveis
+            .contains(&MONSTRO),
         "o conjunto visível foi recalculado sem o jogador andar o passo mínimo"
     );
 }
@@ -3611,7 +4053,11 @@ async fn dois_jogadores_se_veem_se_perdem_e_se_reencontram() {
     // 12 é `PLAYER_ENTER_SLICE`, não 17 (`PLAYER_ENTER_WORLD`): a struct é a mesma, mas o
     // cliente escolhe o efeito de aparição pelo comando (`EC_ManPlayer.cpp:1845`).
     let viu = esperar_comando(&mut link_b, 12).await;
-    assert_eq!(i32_em(&viu, 2), anfitriao, "quem entrou não viu quem já estava");
+    assert_eq!(
+        i32_em(&viu, 2),
+        anfitriao,
+        "quem entrou não viu quem já estava"
+    );
 
     let foi_visto = esperar_comando(&mut link_a, 12).await;
     assert_eq!(
@@ -3632,7 +4078,11 @@ async fn dois_jogadores_se_veem_se_perdem_e_se_reencontram() {
     andar(&mut link_a, anfitriao, Vector3::new(5_000.0, 0.0, 5_000.0)).await;
 
     let sumiu = esperar_comando(&mut link_a, 13).await;
-    assert_eq!(i32_em(&sumiu, 2), convidado, "quem andou continuou vendo quem ficou");
+    assert_eq!(
+        i32_em(&sumiu, 2),
+        convidado,
+        "quem andou continuou vendo quem ficou"
+    );
 
     let sumiu = esperar_comando(&mut link_b, 13).await;
     assert_eq!(
@@ -3709,15 +4159,14 @@ async fn esperar_no_mundo(mundo: &Arc<RwLock<WorldInstance>>, roleid: i32) {
         async move { m.read().await.players.contains_key(&id) }
     })
     .await;
-    assert!(presente, "o jogador {roleid} não entrou no mundo depois do EnterWorld");
+    assert!(
+        presente,
+        "o jogador {roleid} não entrou no mundo depois do EnterWorld"
+    );
 }
 
 /// Um `PLAYER_MOVE` completo para `destino`.
-async fn andar(
-    link: &mut pw_bus::transport::BusConnection,
-    roleid: i32,
-    destino: Vector3,
-) {
+async fn andar(link: &mut pw_bus::transport::BusConnection, roleid: i32, destino: Vector3) {
     let mut corpo = vec3(destino.x, destino.y, destino.z);
     corpo.extend_from_slice(&vec3(destino.x, destino.y, destino.z));
     corpo.extend_from_slice(&0u16.to_le_bytes()); // use_time
@@ -3760,7 +4209,12 @@ async fn o_minerio_do_mapa_entra_pelo_comando_de_materia_e_sai_pela_lista() {
         let perto = Vector3::new(origem.x + 10.0, origem.y, origem.z);
         m.matters.insert(
             MINERIO,
-            MatterEntity { id: MINERIO, template_id: TID_DO_MINERIO, position: perto, renascer_s: 15 },
+            MatterEntity {
+                id: MINERIO,
+                template_id: TID_DO_MINERIO,
+                position: perto,
+                renascer_s: 15,
+            },
         );
         m.grid.add_entity(MINERIO, perto, false);
         origem
@@ -3775,11 +4229,24 @@ async fn o_minerio_do_mapa_entra_pelo_comando_de_materia_e_sai_pela_lista() {
         2 + 25,
         "MATTER_ENTER_WORLD com tamanho errado é descartado em silêncio pelo cliente"
     );
-    assert_eq!(i32_em(&entrou, 2), MINERIO as i32, "o mid não é o do minério");
-    assert_eq!(i32_em(&entrou, 6), TID_DO_MINERIO as i32, "o tid não é o do minério");
+    assert_eq!(
+        i32_em(&entrou, 2),
+        MINERIO as i32,
+        "o mid não é o do minério"
+    );
+    assert_eq!(
+        i32_em(&entrou, 6),
+        TID_DO_MINERIO as i32,
+        "o tid não é o do minério"
+    );
 
     // Agora para longe: tem de sair — e pela lista, não pelo 13.
-    andar(&mut link, roleid, Vector3::new(origem.x + 5_000.0, origem.y, origem.z)).await;
+    andar(
+        &mut link,
+        roleid,
+        Vector3::new(origem.x + 5_000.0, origem.y, origem.z),
+    )
+    .await;
 
     let saiu = esperar_comando(&mut link, 34).await;
     assert_eq!(
@@ -3789,7 +4256,9 @@ async fn o_minerio_do_mapa_entra_pelo_comando_de_materia_e_sai_pela_lista() {
     );
     assert_eq!(i32_em(&saiu, 6), MINERIO as i32);
     assert!(
-        !mundo.read().await.players[&(roleid as i64)].visiveis.contains(&MINERIO),
+        !mundo.read().await.players[&(roleid as i64)]
+            .visiveis
+            .contains(&MINERIO),
         "o mundo continua achando que o jogador vê o minério"
     );
 }
@@ -3835,11 +4304,19 @@ async fn o_treinador_sobe_a_habilidade_um_nivel_e_grava() {
     .unwrap();
 
     let resposta = esperar_comando(&mut link, 95).await;
-    assert_eq!(i32_em(&resposta, 2), HABILIDADE, "o LEARN_SKILL não é da habilidade pedida");
+    assert_eq!(
+        i32_em(&resposta, 2),
+        HABILIDADE,
+        "o LEARN_SKILL não é da habilidade pedida"
+    );
     {
         let m = mundo.read().await;
         let p = &m.players[&(roleid as i64)];
-        assert_eq!((p.sp, p.money), (900, 990), "aprender não cobrou SP e dinheiro da tabela");
+        assert_eq!(
+            (p.sp, p.money),
+            (900, 990),
+            "aprender não cobrou SP e dinheiro da tabela"
+        );
     }
     assert_eq!(
         i32_em(&resposta, 6),
@@ -3885,9 +4362,13 @@ async fn pegar_moedas_do_chao_da_o_dinheiro_e_some_o_monte() {
     };
     let mut pedido = (outro.id as i32).to_le_bytes().to_vec();
     pedido.extend_from_slice(&3044i32.to_le_bytes());
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::PICKUP, &pedido) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::PICKUP, &pedido),
+    })
+    .await
+    .unwrap();
     // `ERR_ITEM_CANT_PICKUP` (6): durante os 30 s de posse só o dono pega.
     let erro = esperar_comando(&mut link, 25).await;
     assert_eq!(i32_em(&erro, 2), 6);
@@ -3898,15 +4379,30 @@ async fn pegar_moedas_do_chao_da_o_dinheiro_e_some_o_monte() {
     };
     let mut pedido = (meu.id as i32).to_le_bytes().to_vec();
     pedido.extend_from_slice(&3044i32.to_le_bytes());
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::PICKUP, &pedido) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::PICKUP, &pedido),
+    })
+    .await
+    .unwrap();
     let moedas = esperar_comando(&mut link, 30).await;
-    assert_eq!(i32_em(&moedas, 2), 25, "PICKUP_MONEY (30) com o valor do monte");
+    assert_eq!(
+        i32_em(&moedas, 2),
+        25,
+        "PICKUP_MONEY (30) com o valor do monte"
+    );
     let sumiu = esperar_comando(&mut link, 152).await;
-    assert_eq!(i32_em(&sumiu, 2), meu.id as i32, "MATTER_PICKUP (152) com o id do monte");
+    assert_eq!(
+        i32_em(&sumiu, 2),
+        meu.id as i32,
+        "MATTER_PICKUP (152) com o id do monte"
+    );
     assert_eq!(dinheiro(&mundo, roleid).await, antes + 25);
-    assert!(!mundo.read().await.drops.contains_key(&meu.id), "o monte continuou no chão");
+    assert!(
+        !mundo.read().await.drops.contains_key(&meu.id),
+        "o monte continuou no chão"
+    );
 }
 
 /// A marca do `dyn_tasks.data` que o `montar()` põe no realm de teste.
@@ -3949,8 +4445,16 @@ async fn o_pedido_da_marca_das_missoes_dinamicas_recebe_a_marca_do_realm() {
     assert_eq!(i32_em(&p, 2), 9, "size = sizeof(svr_task_dyn_time_mark)");
     assert_eq!(p.len(), 2 + 4 + 9);
     assert_eq!(u16::from_le_bytes([p[7], p[8]]), 0, "task");
-    assert_eq!(i32_em(&p, 9) as u32, MARCA_DAS_MISSOES_DINAMICAS, "a marca do realm");
-    assert_eq!(u16::from_le_bytes([p[13], p[14]]), 10, "DYN_TASK_CUR_VERSION");
+    assert_eq!(
+        i32_em(&p, 9) as u32,
+        MARCA_DAS_MISSOES_DINAMICAS,
+        "a marca do realm"
+    );
+    assert_eq!(
+        u16::from_le_bytes([p[13], p[14]]),
+        10,
+        "DYN_TASK_CUR_VERSION"
+    );
 }
 
 /// `session_normal_attack`: com uma sessão aberta, outro `NORMAL_ATTACK` só entra na fila e
@@ -3960,46 +4464,80 @@ async fn o_pedido_da_marca_das_missoes_dinamicas_recebe_a_marca_do_realm() {
 async fn clicar_de_novo_durante_a_sessao_nao_da_outro_golpe() {
     let (mundo, addr, roleid, _convidado) = cenario!();
     let mut link = entrar(&mundo, addr, roleid).await;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
     receber(&mut link, 2).await;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+    })
+    .await
+    .unwrap();
     receber(&mut link, 3).await;
     let hp = mundo.read().await.monsters[&MONSTRO].0.hp;
     for _ in 0..5 {
-        link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
-            .await
-            .unwrap();
+        link.enviar(BusMessage::ClientToGame {
+            roleid,
+            localsid: LOCALSID,
+            data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+        })
+        .await
+        .unwrap();
     }
     let nada = tokio::time::timeout(Duration::from_millis(400), link.receber()).await;
     assert!(nada.is_err(), "um clique durante a sessão respondeu");
-    assert_eq!(mundo.read().await.monsters[&MONSTRO].0.hp, hp, "os cliques golpearam");
-    assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_some());
+    assert_eq!(
+        mundo.read().await.monsters[&MONSTRO].0.hp,
+        hp,
+        "os cliques golpearam"
+    );
+    assert!(mundo.read().await.players[&(roleid as i64)]
+        .ataque
+        .is_some());
 
     // B53 — o cliente manda CANCEL_ACTION + NORMAL_ATTACK a cada clique. O cancelamento não
     // fecha a sessão de golpe (`TerminateSession(false)` recusa, `actsession.h:109-115`), e o
     // novo golpe só entra na fila: nada de dano na hora.
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CANCEL_ACTION, &[]) })
-        .await
-        .unwrap();
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::CANCEL_ACTION, &[]),
+    })
+    .await
+    .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+    })
+    .await
+    .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     {
         let m = mundo.read().await;
-        let s = m.players[&(roleid as i64)].ataque.expect("o cancelamento fechou a sessão de golpe");
+        let s = m.players[&(roleid as i64)]
+            .ataque
+            .expect("o cancelamento fechou a sessão de golpe");
         assert_eq!(s.proximo, Some(MONSTRO), "o clique não entrou na fila");
-        assert_eq!(m.monsters[&MONSTRO].0.hp, hp, "cancelar + atacar golpeou na hora");
+        assert_eq!(
+            m.monsters[&MONSTRO].0.hp, hp,
+            "cancelar + atacar golpeou na hora"
+        );
     }
     // No golpe seguinte a sessão da fila substitui a atual: HOST_STOPATTACK (23) e
     // HOST_START_ATTACK (84), no ritmo da arma.
     for _ in 0..120 {
         mundo.write().await.tick(50).await;
-        if mundo.read().await.players[&(roleid as i64)].ataque.is_some_and(|s| s.proximo.is_none()) {
+        if mundo.read().await.players[&(roleid as i64)]
+            .ataque
+            .is_some_and(|s| s.proximo.is_none())
+        {
             break;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
@@ -4007,7 +4545,9 @@ async fn clicar_de_novo_durante_a_sessao_nao_da_outro_golpe() {
     let fim = esperar_comando(&mut link, 23).await;
     assert_eq!(fim.len(), 2 + 4);
     esperar_comando(&mut link, 84).await;
-    assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_some_and(|s| s.proximo.is_none()));
+    assert!(mundo.read().await.players[&(roleid as i64)]
+        .ataque
+        .is_some_and(|s| s.proximo.is_none()));
 }
 
 /// B73 — o hierograma vestido dispara sozinho quando a mana cai do gatilho.
@@ -4023,7 +4563,10 @@ async fn o_hierograma_vestido_devolve_mana_sozinho() {
 
     let (max_mp, ponto_inicial) = {
         let mut m = mundo.write().await;
-        let p = m.players.get_mut(&(roleid as i64)).expect("o jogador entrou");
+        let p = m
+            .players
+            .get_mut(&(roleid as i64))
+            .expect("o jogador entrou");
         p.mp = 10; // bem abaixo dos 75 % do gatilho
         p.auto_mp = Some(pw_gs::entity::AmuletoAtivo {
             slot: 21,
@@ -4043,10 +4586,21 @@ async fn o_hierograma_vestido_devolve_mana_sozinho() {
         let devolvido = p.mp - 10;
         assert!(devolvido > 0, "o hierograma não devolveu mana nenhuma");
         // `offset = max − atual`, preso ao que resta no amuleto.
-        assert_eq!(devolvido, (max_mp - 10).min(ponto_inicial), "devolveu o que não devia");
+        assert_eq!(
+            devolvido,
+            (max_mp - 10).min(ponto_inicial),
+            "devolveu o que não devia"
+        );
         let a = p.auto_mp.expect("o hierograma ainda tem carga");
-        assert_eq!(a.ponto, ponto_inicial - devolvido, "o gasto não saiu do amuleto");
-        assert_eq!(p.recarga_do_auto_mp_s, 10, "a recarga do item não foi armada");
+        assert_eq!(
+            a.ponto,
+            ponto_inicial - devolvido,
+            "o gasto não saiu do amuleto"
+        );
+        assert_eq!(
+            p.recarga_do_auto_mp_s, 10,
+            "a recarga do item não foi armada"
+        );
     }
 
     // E o cliente recebe a recarga: `SetCoolDown` sempre manda `set_cooldown(idx, msec)`
@@ -4054,17 +4608,27 @@ async fn o_hierograma_vestido_devolve_mana_sozinho() {
     // o `COOLDOWN_INDEX_AUTO_MP` (25).
     let cd = esperar_comando(&mut link, 198).await;
     assert_eq!(i32_em(&cd, 2), 25, "o SET_COOLDOWN veio com outro índice");
-    assert_eq!(i32_em(&cd, 6), 10_000, "o tempo da recarga não é o `cool_time` do item");
+    assert_eq!(
+        i32_em(&cd, 6),
+        10_000,
+        "o tempo da recarga não é o `cool_time` do item"
+    );
 
     // No segundo seguinte a recarga segura o próximo disparo.
-    let antes = mundo.read().await.players[&(roleid as i64)].auto_mp.unwrap().ponto;
+    let antes = mundo.read().await.players[&(roleid as i64)]
+        .auto_mp
+        .unwrap()
+        .ponto;
     {
         let mut m = mundo.write().await;
         m.players.get_mut(&(roleid as i64)).unwrap().mp = 10;
     }
     mundo.write().await.tick(1000).await;
     assert_eq!(
-        mundo.read().await.players[&(roleid as i64)].auto_mp.unwrap().ponto,
+        mundo.read().await.players[&(roleid as i64)]
+            .auto_mp
+            .unwrap()
+            .ponto,
         antes,
         "disparou de novo dentro da recarga"
     );
@@ -4108,21 +4672,33 @@ async fn descartar_item_joga_no_chao_e_destrava_o_slot() {
     // Descarta 2 dos 3.
     let mut corpo = vec![5u8];
     corpo.extend_from_slice(&2u32.to_le_bytes());
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::DROP_IVTR_ITEM, &corpo) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::DROP_IVTR_ITEM, &corpo),
+    })
+    .await
+    .unwrap();
 
     let aviso = esperar_comando(&mut link, 46).await;
     assert_eq!(aviso[2], 0, "pacote 0 = bolsa");
     assert_eq!(aviso[3], 5, "o slot");
-    assert_eq!(u32::from_le_bytes([aviso[4], aviso[5], aviso[6], aviso[7]]), 2, "quantos foram");
+    assert_eq!(
+        u32::from_le_bytes([aviso[4], aviso[5], aviso[6], aviso[7]]),
+        2,
+        "quantos foram"
+    );
     assert_eq!(i32_em(&aviso, 8), TID as i32, "o tid");
     assert_eq!(aviso[12], 1, "DROP_TYPE_PLAYER");
 
     // **O destrave.** Sem ele o slot fica apagado na tela.
     let destrave = esperar_comando(&mut link, 181).await;
     assert_eq!(destrave[2], 0, "pacote da bolsa");
-    assert_eq!(u16::from_le_bytes([destrave[3], destrave[4]]), 5, "o mesmo slot");
+    assert_eq!(
+        u16::from_le_bytes([destrave[3], destrave[4]]),
+        5,
+        "o mesmo slot"
+    );
 
     // Sobrou 1 no slot, e o que saiu está no chão.
     let sobrou = itens
@@ -4132,7 +4708,12 @@ async fn descartar_item_joga_no_chao_e_destrava_o_slot() {
         .expect("o resto do monte tem de ficar");
     assert_eq!(sobrou.count, 1, "3 − 2 = 1");
     assert!(
-        mundo.read().await.drops.values().any(|d| d.item_id == TID && d.count == 2),
+        mundo
+            .read()
+            .await
+            .drops
+            .values()
+            .any(|d| d.item_id == TID && d.count == 2),
         "o item descartado não foi para o chão"
     );
 }
@@ -4150,12 +4731,20 @@ async fn descartar_slot_vazio_ainda_destrava() {
 
     let mut corpo = vec![42u8];
     corpo.extend_from_slice(&1u32.to_le_bytes());
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::DROP_IVTR_ITEM, &corpo) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::DROP_IVTR_ITEM, &corpo),
+    })
+    .await
+    .unwrap();
 
     let destrave = esperar_comando(&mut link, 181).await;
-    assert_eq!(u16::from_le_bytes([destrave[3], destrave[4]]), 42, "o slot vazio tem de voltar destravado");
+    assert_eq!(
+        u16::from_le_bytes([destrave[3], destrave[4]]),
+        42,
+        "o slot vazio tem de voltar destravado"
+    );
 }
 
 /// B88 — montaria terrestre não entra na água, e cai se a água vier até ela.
@@ -4200,29 +4789,51 @@ async fn a_montaria_nao_entra_na_agua_e_cai_se_a_agua_subir() {
     let pos = {
         let mut m = mundo.write().await;
         let dm = Arc::make_mut(&mut m.data_manager);
-        dm.velocidades_de_montaria.insert(PET_TID as u32, (5.0, 0.0));
+        dm.velocidades_de_montaria
+            .insert(PET_TID as u32, (5.0, 0.0));
         let pos = m.players[&(roleid as i64)].position;
         m.agua = agua_em_volta(pos, pos.y + 3.0);
         pos
     };
-    assert!(mundo.read().await.esta_na_agua(pos), "o cenário tem de deixar o jogador submerso");
+    assert!(
+        mundo.read().await.esta_na_agua(pos),
+        "o cenário tem de deixar o jogador submerso"
+    );
 
     // 1. Submerso, invocar a montaria é recusado — e o erro só chega **depois** da
     //    canalização, porque é lá que o original confere.
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
     let erro = esperar_comando(&mut link, 25).await;
     assert_eq!(i32_em(&erro, 2), 81, "ERR_PET_CAN_NOT_MOUNT");
-    assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_none(), "montou dentro d'água");
+    assert!(
+        mundo.read().await.players[&(roleid as i64)]
+            .montaria
+            .is_none(),
+        "montou dentro d'água"
+    );
 
     // 2. Agora em terra seca: monta.
     mundo.write().await.agua = pw_data_loader::MapaDeAgua::vazio();
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
     esperar_comando(&mut link, 227).await;
-    assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_some(), "não montou em terra");
+    assert!(
+        mundo.read().await.players[&(roleid as i64)]
+            .montaria
+            .is_some(),
+        "não montou em terra"
+    );
 
     // 3. A água chega até ele: no batimento seguinte a montaria cai, com o
     //    `PLAYER_MOUNTING` zerado e o `RECALL_PET` que libera a jaula.
@@ -4237,7 +4848,9 @@ async fn a_montaria_nao_entra_na_agua_e_cai_se_a_agua_subir() {
     let caiu = esperar_comando(&mut link, 227).await;
     assert_eq!(i32_em(&caiu, 6), 0, "a montaria caiu: mount_id zero");
     esperar_comando(&mut link, 234).await;
-    assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_none());
+    assert!(mundo.read().await.players[&(roleid as i64)]
+        .montaria
+        .is_none());
 }
 
 /// Uma área de água de 100 m de lado em volta de `centro`, com a superfície em `altura`.
@@ -4307,21 +4920,32 @@ async fn montar_muda_a_velocidade_e_avisa_o_cliente() {
     {
         let mut m = mundo.write().await;
         let dm = Arc::make_mut(&mut m.data_manager);
-        dm.velocidades_de_montaria.insert(PET_TID as u32, (5.0, 0.5));
+        dm.velocidades_de_montaria
+            .insert(PET_TID as u32, (5.0, 0.5));
     }
 
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
 
     // 1. A canalização abre na hora: `PLAYER_START_PET_OP` com 60 ticks e `op` 0.
     let abriu = esperar_comando(&mut link, 235).await;
     assert_eq!(i32_em(&abriu, 2), 0, "slot_index");
     assert_eq!(i32_em(&abriu, 6), PET_TID, "pet_id");
-    assert_eq!(i32_em(&abriu, 10), 60, "delay em ticks de 50 ms (`SetDelay(60)`)");
+    assert_eq!(
+        i32_em(&abriu, 10),
+        60,
+        "delay em ticks de 50 ms (`SetDelay(60)`)"
+    );
     assert_eq!(i32_em(&abriu, 14), 0, "op 0 = invocar");
     assert!(
-        mundo.read().await.players[&(roleid as i64)].montaria.is_none(),
+        mundo.read().await.players[&(roleid as i64)]
+            .montaria
+            .is_none(),
         "montou antes da canalização terminar"
     );
 
@@ -4329,14 +4953,24 @@ async fn montar_muda_a_velocidade_e_avisa_o_cliente() {
     let montou = esperar_comando(&mut link, 227).await;
     assert_eq!(i32_em(&montou, 2), roleid, "o PLAYER_MOUNTING é do jogador");
     assert_eq!(i32_em(&montou, 6), PET_TID, "mount_id");
-    assert_eq!(u16::from_le_bytes([montou[10], montou[11]]), 7, "mount_color");
+    assert_eq!(
+        u16::from_le_bytes([montou[10], montou[11]]),
+        7,
+        "mount_color"
+    );
     {
         let m = mundo.read().await;
         let p = &m.players[&(roleid as i64)];
         let mont = p.montaria.expect("a montaria não entrou");
         assert_eq!((mont.tid, mont.velocidade), (PET_TID as u32, 6.0));
-        assert_eq!(mont.indice, 0, "o slot da jaula fica guardado, é o que volta no RECALL_PET");
-        assert_eq!(p.move_speed, 6.0, "a velocidade não passou a ser a da montaria");
+        assert_eq!(
+            mont.indice, 0,
+            "o slot da jaula fica guardado, é o que volta no RECALL_PET"
+        );
+        assert_eq!(
+            p.move_speed, 6.0,
+            "a velocidade não passou a ser a da montaria"
+        );
     }
 
     // 3. **`SUMMON_PET` (233)**: é ele que faz o cliente saber qual mascote está ativo.
@@ -4344,17 +4978,29 @@ async fn montar_muda_a_velocidade_e_avisa_o_cliente() {
     // invocar de novo responde "já está ativo" — o travamento do teste em jogo do B78.
     let ativo = esperar_comando(&mut link, 233).await;
     assert_eq!(i32_em(&ativo, 2), 0, "slot_index");
-    assert_eq!(i32_em(&ativo, 6), PET_TID, "pet_tid: o cliente confere contra a jaula");
-    assert_eq!(i32_em(&ativo, 10), 0, "pet_pid: montaria não põe criatura no mundo");
+    assert_eq!(
+        i32_em(&ativo, 6),
+        PET_TID,
+        "pet_tid: o cliente confere contra a jaula"
+    );
+    assert_eq!(
+        i32_em(&ativo, 10),
+        0,
+        "pet_pid: montaria não põe criatura no mundo"
+    );
     assert_eq!(i32_em(&ativo, 14), 0, "life_time: sem prazo");
 
     // 4. E a canalização fecha (`PLAYER_STOP_PET_OP`).
     esperar_comando(&mut link, 236).await;
 
     // Desmontar passa pela mesma sessão, com 10 ticks e `op` 1.
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::RECALL_PET, &[]) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::RECALL_PET, &[]),
+    })
+    .await
+    .unwrap();
     let abriu = esperar_comando(&mut link, 235).await;
     assert_eq!(i32_em(&abriu, 10), 10, "delay do recolher (`SetDelay(10)`)");
     assert_eq!(i32_em(&abriu, 14), 1, "op 1 = recolher");
@@ -4366,7 +5012,9 @@ async fn montar_muda_a_velocidade_e_avisa_o_cliente() {
     assert_eq!(recolheu[10], 0, "PET_RECALL_DEFAULT");
     assert_eq!(recolheu.len(), 11, "o RECALL_PET tem 11 bytes");
     esperar_comando(&mut link, 236).await;
-    assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_none());
+    assert!(mundo.read().await.players[&(roleid as i64)]
+        .montaria
+        .is_none());
 }
 
 /// B77 — monstro invocado **não renasce**, e some quando o tempo dele acaba.
@@ -4389,12 +5037,14 @@ async fn o_monstro_invocado_nao_renasce_e_expira() {
         i.id = INVOCADO;
         i.respawn_delay_ms = 0;
         i.vida_restante_ms = 3_000;
-        m.monsters.insert(INVOCADO, (i, pw_gs::ai::MonsterAi::new()));
+        m.monsters
+            .insert(INVOCADO, (i, pw_gs::ai::MonsterAi::new()));
         // De gerador: renasce, como sempre.
         let mut g = monstro();
         g.id = COM_GERADOR;
         g.respawn_delay_ms = 1_000;
-        m.monsters.insert(COM_GERADOR, (g, pw_gs::ai::MonsterAi::new()));
+        m.monsters
+            .insert(COM_GERADOR, (g, pw_gs::ai::MonsterAi::new()));
         m.matar_monstro(INVOCADO);
         m.matar_monstro(COM_GERADOR);
     }
@@ -4408,7 +5058,10 @@ async fn o_monstro_invocado_nao_renasce_e_expira() {
         m.monsters.get(&INVOCADO).is_none() || m.monsters[&INVOCADO].0.is_dead,
         "o invocado renasceu — ele não tem gerador"
     );
-    assert!(!m.monsters[&COM_GERADOR].0.is_dead, "o monstro de gerador devia ter renascido");
+    assert!(
+        !m.monsters[&COM_GERADOR].0.is_dead,
+        "o monstro de gerador devia ter renascido"
+    );
 }
 
 /// B72 — a durabilidade das peças vestidas vive no mundo, não só no banco.
@@ -4443,13 +5096,21 @@ async fn a_durabilidade_das_pecas_vestidas_fica_no_mundo() {
         .await
         .expect("guardar o item");
 
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::EQUIP_ITEM, &[9u8, 0u8]) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::EQUIP_ITEM, &[9u8, 0u8]),
+    })
+    .await
+    .unwrap();
     let _ = receber(&mut link, 5).await;
 
     let pecas = mundo.read().await.players[&(roleid as i64)].pecas;
-    assert_eq!(pecas[0], Some((900, 1000)), "a arma vestida não entrou na memória do mundo");
+    assert_eq!(
+        pecas[0],
+        Some((900, 1000)),
+        "a arma vestida não entrou na memória do mundo"
+    );
     assert!(
         pecas[1..].iter().all(|p| p.is_none()),
         "slot sem peça (ou peça sem durabilidade) tem de ficar vazio — é o 0x7f do `be_damaged`"
@@ -4471,13 +5132,23 @@ async fn o_tique_devolve_o_autosave_em_vez_de_gravar_dentro_do_lock() {
     const X: f32 = 123.5;
     {
         let mut m = mundo.write().await;
-        let p = m.players.get_mut(&(roleid as i64)).expect("o jogador entrou");
+        let p = m
+            .players
+            .get_mut(&(roleid as i64))
+            .expect("o jogador entrou");
         p.position.x = X;
     }
-    let antes = repo.get_details_por_role(roleid).await.unwrap().expect("o personagem existe");
+    let antes = repo
+        .get_details_por_role(roleid)
+        .await
+        .unwrap()
+        .expect("o personagem existe");
 
     // Antes do minuto não sai nada.
-    assert!(mundo.write().await.tick(50).await.is_empty(), "o tique comum não devolve lote");
+    assert!(
+        mundo.write().await.tick(50).await.is_empty(),
+        "o tique comum não devolve lote"
+    );
 
     let lote = mundo.write().await.tick(60_000).await;
     assert_eq!(lote.len(), 1, "o minuto fechou e o lote tem o jogador");
@@ -4485,12 +5156,23 @@ async fn o_tique_devolve_o_autosave_em_vez_de_gravar_dentro_do_lock() {
     assert_eq!(lote[0].posicao.x, X, "a fotografia é a do mundo");
 
     // E o tique não escreveu: o banco ainda tem a posição antiga.
-    let depois = repo.get_details_por_role(roleid).await.unwrap().expect("o personagem existe");
-    assert_eq!(depois.position.x, antes.position.x, "o tique gravou no banco por conta própria");
+    let depois = repo
+        .get_details_por_role(roleid)
+        .await
+        .unwrap()
+        .expect("o personagem existe");
+    assert_eq!(
+        depois.position.x, antes.position.x,
+        "o tique gravou no banco por conta própria"
+    );
 
     // Quem grava é o laço, fora do lock.
     pw_gs::world::gravar_autosave(repo.clone(), lote, mundo.read().await.world_id).await;
-    let gravado = repo.get_details_por_role(roleid).await.unwrap().expect("o personagem existe");
+    let gravado = repo
+        .get_details_por_role(roleid)
+        .await
+        .unwrap()
+        .expect("o personagem existe");
     assert_eq!(gravado.position.x, X, "o lote não chegou ao banco");
 }
 
@@ -4499,14 +5181,28 @@ async fn o_tique_devolve_o_autosave_em_vez_de_gravar_dentro_do_lock() {
 async fn fora_do_alcance_o_golpe_nao_comeca() {
     let (mundo, addr, roleid, _convidado) = cenario!();
     let mut link = entrar(&mundo, addr, roleid).await;
-    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().attack_range = 2.8;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) })
+    mundo
+        .write()
         .await
-        .unwrap();
+        .players
+        .get_mut(&(roleid as i64))
+        .unwrap()
+        .attack_range = 2.8;
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
     receber(&mut link, 2).await;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+    })
+    .await
+    .unwrap();
     let nada = tokio::time::timeout(Duration::from_millis(400), link.receber()).await;
     assert!(nada.is_err(), "golpeou a 7 m com 2,8 m de alcance");
     assert_eq!(mundo.read().await.monsters[&MONSTRO].0.hp, MONSTRO_HP);
@@ -4533,18 +5229,30 @@ async fn habilidade_em_area_acerta_os_vizinhos_e_aplica_os_efeitos() {
         m.monsters.insert(LONGE, (l, MonsterAi::new()));
     }
     let mut link = entrar(&mundo, addr, roleid).await;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
     receber(&mut link, 2).await;
     let mut corpo = HABILIDADE_EM_AREA.to_le_bytes().to_vec();
     corpo.push(0);
     corpo.push(0);
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CAST_SKILL, &corpo) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::CAST_SKILL, &corpo),
+    })
+    .await
+    .unwrap();
     let estado = esperar_comando(&mut link, 124).await;
-    assert_eq!(estado.len(), 30, "UPDATE_EXT_STATE fora do tamanho do cliente");
+    assert_eq!(
+        estado.len(),
+        30,
+        "UPDATE_EXT_STATE fora do tamanho do cliente"
+    );
     let icones = esperar_comando(&mut link, 125).await;
     // id + 2 ícones (Slow 3, Dizzy 1) com 1 parâmetro cada.
     assert_eq!(icones.len(), 2 + 4 + 2 + 2 * 2 + 2 + 2 * 4);
@@ -4568,30 +5276,59 @@ async fn habilidade_em_area_acerta_os_vizinhos_e_aplica_os_efeitos() {
 async fn esc_andar_e_a_morte_do_alvo_param_o_golpe() {
     let (mundo, addr, roleid, _convidado) = cenario!();
     let mut link = entrar(&mundo, addr, roleid).await;
-    let atacar = || BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) };
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) })
-        .await
-        .unwrap();
+    let atacar = || BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+    };
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
     receber(&mut link, 2).await;
 
     for comando in [ids::CANCEL_ACTION, ids::STOP_MOVE] {
         mundo.write().await.monsters.get_mut(&MONSTRO).unwrap().0.hp = MONSTRO_HP_MAX;
         link.enviar(atacar()).await.unwrap();
         esperar_comando(&mut link, 84).await;
-        let corpo = if comando == ids::STOP_MOVE { vec![0u8; 20] } else { Vec::new() };
-        link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(comando, &corpo) })
-            .await
-            .unwrap();
+        let corpo = if comando == ids::STOP_MOVE {
+            vec![0u8; 20]
+        } else {
+            Vec::new()
+        };
+        link.enviar(BusMessage::ClientToGame {
+            roleid,
+            localsid: LOCALSID,
+            data: subcomando(comando, &corpo),
+        })
+        .await
+        .unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_some(), "comando {comando} parou na hora");
+        assert!(
+            mundo.read().await.players[&(roleid as i64)]
+                .ataque
+                .is_some(),
+            "comando {comando} parou na hora"
+        );
         for _ in 0..120 {
             mundo.write().await.tick(50).await;
-            if mundo.read().await.players[&(roleid as i64)].ataque.is_none() {
+            if mundo.read().await.players[&(roleid as i64)]
+                .ataque
+                .is_none()
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_none(), "comando {comando} não parou o golpe");
+        assert!(
+            mundo.read().await.players[&(roleid as i64)]
+                .ataque
+                .is_none(),
+            "comando {comando} não parou o golpe"
+        );
         esperar_comando(&mut link, 23).await;
     }
 
@@ -4605,8 +5342,14 @@ async fn esc_andar_e_a_morte_do_alvo_param_o_golpe() {
         "o dano adiado não chegou a matar o monstro"
     );
     let fim = esperar_comando(&mut link, 23).await;
-    assert_eq!(i32::from_le_bytes([fim[2], fim[3], fim[4], fim[5]]), 2, "motivo: alvo inválido");
-    assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_none());
+    assert_eq!(
+        i32::from_le_bytes([fim[2], fim[3], fim[4], fim[5]]),
+        2,
+        "motivo: alvo inválido"
+    );
+    assert!(mundo.read().await.players[&(roleid as i64)]
+        .ataque
+        .is_none());
     {
         let mut m = mundo.write().await;
         m.monsters.get_mut(&MONSTRO).unwrap().0.respawn_delay_ms = 100;
@@ -4614,7 +5357,10 @@ async fn esc_andar_e_a_morte_do_alvo_param_o_golpe() {
         for _ in 0..40 {
             m.tick(50).await;
         }
-        assert!(m.monsters[&MONSTRO].0.is_dead, "renasceu com o corpo ainda no chão");
+        assert!(
+            m.monsters[&MONSTRO].0.is_dead,
+            "renasceu com o corpo ainda no chão"
+        );
     }
 }
 
@@ -4638,7 +5384,9 @@ async fn esc_cancela_conjuracao_com_self_skill_interrupted() {
 
     let cast = esperar_comando(&mut link, 85).await;
     assert_eq!(cmd_de(&cast), 85);
-    assert!(mundo.read().await.players[&(roleid as i64)].conjuracao.is_some());
+    assert!(mundo.read().await.players[&(roleid as i64)]
+        .conjuracao
+        .is_some());
 
     // Pressiona ESC (CANCEL_ACTION)
     link.enviar(BusMessage::ClientToGame {
@@ -4653,7 +5401,9 @@ async fn esc_cancela_conjuracao_com_self_skill_interrupted() {
     let interrupcao = esperar_comando(&mut link, 87).await;
     assert_eq!(cmd_de(&interrupcao), 87);
     assert_eq!(interrupcao[2], 2);
-    assert!(mundo.read().await.players[&(roleid as i64)].conjuracao.is_none());
+    assert!(mundo.read().await.players[&(roleid as i64)]
+        .conjuracao
+        .is_none());
 }
 
 /// B65: GET_ALL_DATA envia as três bolsas (0, 1 e 2) mesmo com detalhe_missoes = 0 (cliente 1.5.5 envia [1, 1, 0]),
@@ -4662,14 +5412,17 @@ async fn esc_cancela_conjuracao_com_self_skill_interrupted() {
 async fn get_all_data_envia_bolsas_incondicionalmente_sem_sequestrar_npcs() {
     let (mundo, addr, roleid, _convidado) = cenario!();
     // Adiciona um NPC no mundo
-    mundo.write().await.npcs.insert(12345, pw_gs::NpcEntity {
-        id: 12345,
-        template_id: 44698,
-        name: "Mestre".to_string(),
-        position: Vector3::new(0.0, 0.0, 0.0),
-        dialog_id: 0,
-        direcao: 0,
-    });
+    mundo.write().await.npcs.insert(
+        12345,
+        pw_gs::NpcEntity {
+            id: 12345,
+            template_id: 44698,
+            name: "Mestre".to_string(),
+            position: Vector3::new(0.0, 0.0, 0.0),
+            dialog_id: 0,
+            direcao: 0,
+        },
+    );
 
     let mut link = entrar(&mundo, addr, roleid).await;
 
@@ -4685,13 +5438,20 @@ async fn get_all_data_envia_bolsas_incondicionalmente_sem_sequestrar_npcs() {
     let pacotes = receber_ate_o_fim_da_carga(&mut link).await;
     // Verifica que as três bolsas (0, 1 e 2) foram enviadas via OWN_IVTR_DATA (42)
     let ivtrs: Vec<_> = pacotes.iter().filter(|p| cmd_de(p) == 42).collect();
-    assert_eq!(ivtrs.len(), 3, "todas as 3 bolsas devem ser inicializadas mesmo com detalhe_missoes=0");
+    assert_eq!(
+        ivtrs.len(),
+        3,
+        "todas as 3 bolsas devem ser inicializadas mesmo com detalhe_missoes=0"
+    );
     assert_eq!(ivtrs[0][2], 0, "bolsa comum (0)");
     assert_eq!(ivtrs[1][2], 1, "bolsa equipamento (1)");
     assert_eq!(ivtrs[2][2], 2, "bolsa missão (2)");
 
     // NPCs comuns da cena não devem sair no 390
-    assert!(pacotes.iter().all(|p| cmd_de(p) != 390), "SCENE_SERVICE_NPC_LIST (390) não deve emitir NPCs comuns");
+    assert!(
+        pacotes.iter().all(|p| cmd_de(p) != 390),
+        "SCENE_SERVICE_NPC_LIST (390) não deve emitir NPCs comuns"
+    );
 }
 
 /// B65: Monstro só ganha ameaça e acorda quando o dano do golpe atinge o alvo, não no clique.
@@ -4725,7 +5485,10 @@ async fn reacao_do_monstro_so_ocorre_quando_o_dano_atinge_o_alvo() {
     assert!(tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.hp < MONSTRO_HP).await);
 
     // Agora sim o monstro tem a ameaça registrada
-    assert!(mundo.read().await.monsters[&MONSTRO].1.aggro_table.contains_key(&(roleid as i64)));
+    assert!(mundo.read().await.monsters[&MONSTRO]
+        .1
+        .aggro_table
+        .contains_key(&(roleid as i64)));
 }
 
 /// B66: Incubação de mascote/montaria em NPC (`GP_NPCSEV_HATCHPET` = 28).
@@ -4751,8 +5514,14 @@ async fn incubar_ovo_de_montaria_no_npc_gera_mascote_e_salva_no_corral() {
     // Coloca o ovo no slot 0 da bolsa do jogador
     let repo = mundo.read().await.char_repo.clone();
     let itens = repo.item_repo().clone();
-    let mut item_ovo = pw_core::ItemRecord::new(roleid, pw_core::ContainerType::Inventory, 0, ovo_id, 1);
-    item_ovo.octets = mundo.read().await.data_manager.gerar_octetos_do_ovo(ovo_id).unwrap_or_default();
+    let mut item_ovo =
+        pw_core::ItemRecord::new(roleid, pw_core::ContainerType::Inventory, 0, ovo_id, 1);
+    item_ovo.octets = mundo
+        .read()
+        .await
+        .data_manager
+        .gerar_octetos_do_ovo(ovo_id)
+        .unwrap_or_default();
     itens.upsert_item(&item_ovo).await.unwrap();
 
     // Envia C2S::NPC_SERVICE com serviço 28 (INCUBAR_PET)
@@ -4771,10 +5540,17 @@ async fn incubar_ovo_de_montaria_no_npc_gera_mascote_e_salva_no_corral() {
     let gain_pet = esperar_comando(&mut link, 231).await;
     let slot_index = i32_em(&gain_pet, 2);
     assert_eq!(slot_index, 0, "deve ser alocado no slot 0 do corral");
-    assert_eq!(gain_pet.len() - 6, pw_core::TAMANHO_INFO_PET, "info_pet deve ter exatamente 192 bytes");
+    assert_eq!(
+        gain_pet.len() - 6,
+        pw_core::TAMANHO_INFO_PET,
+        "info_pet deve ter exatamente 192 bytes"
+    );
 
     // Verifica que o pet foi salvo no banco no container PetCorral
-    let corral = itens.list_by_container(roleid, pw_core::ContainerType::PetCorral).await.unwrap();
+    let corral = itens
+        .list_by_container(roleid, pw_core::ContainerType::PetCorral)
+        .await
+        .unwrap();
     assert_eq!(corral.len(), 1);
     assert_eq!(corral[0].item_id, ovo_info.id_pet);
     assert_eq!(corral[0].octets.len(), pw_core::TAMANHO_INFO_PET);
@@ -4782,12 +5558,12 @@ async fn incubar_ovo_de_montaria_no_npc_gera_mascote_e_salva_no_corral() {
 
 /// B66: Coleta de item de missão do chão vai para a bolsa de missão (`where = 2`).
 #[tokio::test]
-async fn pegar_item_de_missao_vai_para_bolsa_de_missao() {
+async fn pegar_item_de_missao_vai_para_bolsa_comum() {
     conferir_pickup(GameVersion::V1_5_5).await;
 }
 
 #[tokio::test]
-async fn pegar_item_de_missao_vai_para_bolsa_de_missao_126() {
+async fn pegar_item_de_missao_vai_para_bolsa_comum_126() {
     conferir_pickup(GameVersion::V1_2_6).await;
 }
 
@@ -4831,13 +5607,16 @@ async fn conferir_pickup(versao: GameVersion) {
             assert_eq!(pickup.len(), 16);
             assert_eq!(u16::from_le_bytes([pickup[10], pickup[11]]), 1);
             assert_eq!(u16::from_le_bytes([pickup[12], pickup[13]]), 1);
-            assert_eq!(pickup[14], 2, "bolsa de missão");
+            // Pegar do chão vai sempre à bolsa comum (`OnPickupItem` só faz `_inventory.Push`:
+            // `player.cpp:8933-8962`; no `gs` 1.2.6 um só `item_list::Push` em `this+0x3b0`,
+            // VA 0x8075488 — B128).
+            assert_eq!(pickup[14], 0, "bolsa comum");
         }
         GameVersion::V1_5_5 => {
             assert_eq!(pickup.len(), 20);
             assert_eq!(i32_em(&pickup, 10), 1, "amount u32");
             assert_eq!(i32_em(&pickup, 14), 1, "slot_amount u32");
-            assert_eq!(pickup[18], 2, "bolsa de missão");
+            assert_eq!(pickup[18], 0, "bolsa comum");
         }
         _ => unreachable!(),
     }
@@ -4862,7 +5641,9 @@ async fn abrir_a_caixa_de_cartas_da_uma_carta_e_gasta_a_caixa() {
         let dm = Arc::make_mut(&mut m.data_manager);
         dm.cartas_de_general.caixas.insert(
             CAIXA,
-            pw_data_loader::cartas_de_general::CaixaDeCartas { cartas: vec![(CARTA, 1.0)] },
+            pw_data_loader::cartas_de_general::CaixaDeCartas {
+                cartas: vec![(CARTA, 1.0)],
+            },
         );
         dm.cartas_de_general.cartas.insert(
             CARTA,
@@ -4900,25 +5681,62 @@ async fn abrir_a_caixa_de_cartas_da_uma_carta_e_gasta_a_caixa() {
     let mut corpo = vec![0u8, 1u8]; // where = bolsa, count = 1
     corpo.extend_from_slice(&30u16.to_le_bytes());
     corpo.extend_from_slice(&(CAIXA as i32).to_le_bytes());
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::USE_ITEM, &corpo) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::USE_ITEM, &corpo),
+    })
+    .await
+    .unwrap();
 
     // HOST_OBTAIN_ITEM (99) com a carta, HOST_USE_ITEM (91) com a caixa, UNFREEZE (181).
     let r = receber(&mut link, 3).await;
-    let obtido = r.iter().find(|v| cmd_de(v) == 99).expect("sem HOST_OBTAIN_ITEM (99): a carta não chegou");
-    assert_eq!(i32_em(obtido, 2), CARTA as i32, "o item obtido não é a carta");
-    assert!(r.iter().any(|v| cmd_de(v) == 91), "sem HOST_USE_ITEM (91): a caixa não se gastou na tela");
-    assert!(r.iter().any(|v| cmd_de(v) == 181), "sem UNFREEZE_IVTR_SLOT (181): o slot fica apagado");
+    let obtido = r
+        .iter()
+        .find(|v| cmd_de(v) == 99)
+        .expect("sem HOST_OBTAIN_ITEM (99): a carta não chegou");
+    assert_eq!(
+        i32_em(obtido, 2),
+        CARTA as i32,
+        "o item obtido não é a carta"
+    );
+    assert!(
+        r.iter().any(|v| cmd_de(v) == 91),
+        "sem HOST_USE_ITEM (91): a caixa não se gastou na tela"
+    );
+    assert!(
+        r.iter().any(|v| cmd_de(v) == 181),
+        "sem UNFREEZE_IVTR_SLOT (181): o slot fica apagado"
+    );
 
-    let bolsa = itens.list_by_container(roleid, pw_core::ContainerType::Inventory).await.unwrap();
-    let caixa = bolsa.iter().find(|i| i.item_id == CAIXA).expect("a caixa sumiu inteira");
+    let bolsa = itens
+        .list_by_container(roleid, pw_core::ContainerType::Inventory)
+        .await
+        .unwrap();
+    let caixa = bolsa
+        .iter()
+        .find(|i| i.item_id == CAIXA)
+        .expect("a caixa sumiu inteira");
     assert_eq!(caixa.count, 1, "abrir uma caixa gasta uma");
-    let carta = bolsa.iter().find(|i| i.item_id == CARTA).expect("a carta não foi gravada");
-    let v: Vec<i32> = carta.octets.chunks(4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    let carta = bolsa
+        .iter()
+        .find(|i| i.item_id == CARTA)
+        .expect("a carta não foi gravada");
+    let v: Vec<i32> = carta
+        .octets
+        .chunks(4)
+        .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
     assert_eq!(v.len(), 8, "o generalcard_essence tem oito int");
-    assert_eq!((v[0], v[1], v[2], v[4], v[5], v[6], v[7]), (3, 2, 15, 40, 1, 0, 0));
-    assert!((10..=20).contains(&v[3]), "liderança {} fora de require_control_point", v[3]);
+    assert_eq!(
+        (v[0], v[1], v[2], v[4], v[5], v[6], v[7]),
+        (3, 2, 15, 40, 1, 0, 0)
+    );
+    assert!(
+        (10..=20).contains(&v[3]),
+        "liderança {} fora de require_control_point",
+        v[3]
+    );
 }
 
 /// Forma Sombria (`filter_Fairyform`, `cskill/skill/skillfilter.h:16819-16875`): enquanto dura,
@@ -4931,7 +5749,10 @@ async fn a_forma_sombria_tranca_o_equipamento_e_desfaz_a_forma_no_fim() {
     let mut link = entrar(&mundo, addr, roleid).await;
     {
         let mut m = mundo.write().await;
-        let p = m.players.get_mut(&(roleid as i64)).expect("o jogador entrou");
+        let p = m
+            .players
+            .get_mut(&(roleid as i64))
+            .expect("o jogador entrou");
         p.efeitos.adicionar(pw_gs::efeitos::Filtro {
             efeito: pw_gs::efeitos::Efeito::Fairyform,
             restante_s: 1,
@@ -4949,26 +5770,51 @@ async fn a_forma_sombria_tranca_o_equipamento_e_desfaz_a_forma_no_fim() {
     }
 
     // EQUIP_ITEM { idx_bolsa, idx_corpo }.
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::EQUIP_ITEM, &[5, 0]) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::EQUIP_ITEM, &[5, 0]),
+    })
+    .await
+    .unwrap();
     let r = receber(&mut link, 3).await;
-    let erro = r.iter().find(|v| cmd_de(v) == 25).expect("sem ERROR_MESSAGE (25)");
-    assert_eq!(i32_em(erro, 2), 40, "o erro devia ser ERR_EQUIPMENT_IS_LOCKED");
-    assert_eq!(r.iter().filter(|v| cmd_de(v) == 181).count(), 2, "os dois slots congelados tinham de destravar");
+    let erro = r
+        .iter()
+        .find(|v| cmd_de(v) == 25)
+        .expect("sem ERROR_MESSAGE (25)");
+    assert_eq!(
+        i32_em(erro, 2),
+        40,
+        "o erro devia ser ERR_EQUIPMENT_IS_LOCKED"
+    );
+    assert_eq!(
+        r.iter().filter(|v| cmd_de(v) == 181).count(),
+        2,
+        "os dois slots congelados tinham de destravar"
+    );
 
     // Um segundo depois a forma acaba: 163 com forma 0, ao próprio jogador.
     mundo.write().await.tick(1000).await;
     let mut formas = Vec::new();
-    while let Ok(Ok(Some(m))) = tokio::time::timeout(Duration::from_millis(500), link.receber()).await {
+    while let Ok(Ok(Some(m))) =
+        tokio::time::timeout(Duration::from_millis(500), link.receber()).await
+    {
         if let BusMessage::GameToClient { data, .. } = m {
             if cmd_de(&data) == 163 {
-                assert_eq!(data.len(), 2 + 5, "PLAYER_CHGSHAPE com tamanho errado: o cliente descarta");
+                assert_eq!(
+                    data.len(),
+                    2 + 5,
+                    "PLAYER_CHGSHAPE com tamanho errado: o cliente descarta"
+                );
                 formas.push((i32_em(&data, 2), data[6]));
             }
         }
     }
-    assert_eq!(formas, vec![(roleid, 0)], "a volta à forma normal não foi avisada (uma vez só)");
+    assert_eq!(
+        formas,
+        vec![(roleid, 0)],
+        "a volta à forma normal não foi avisada (uma vez só)"
+    );
     let m = mundo.read().await;
     let p = &m.players[&(roleid as i64)];
     assert_eq!(p.efeitos.forma(), None);
@@ -4983,11 +5829,14 @@ async fn a_forma_sombria_tranca_o_equipamento_e_desfaz_a_forma_no_fim() {
 #[tokio::test]
 #[ignore]
 async fn reproducao_do_passeio_no_realm_126() {
-    let Ok(url) = std::env::var("TEST_DATABASE_URL") else { return };
+    let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+        return;
+    };
     let pool = pool_do_teste(url).await;
     comum::limpar_sobras_de_teste(&pool).await;
     let (roleid, _) = personagem_com_missao(&pool, GameVersion::V1_2_6).await;
-    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let pasta =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     let mut dados = GameDataManager::new();
     dados.load_from_directory(&pasta);
     let mut mundo = WorldInstance::new(1, Arc::new(dados), CharacterRepository::new(pool));
@@ -5004,7 +5853,9 @@ async fn reproducao_do_passeio_no_realm_126() {
     let mut link = entrar_sem_ajustar(addr, roleid).await;
     let guia = Vector3::new(-1440.0, 241.3, 1400.0);
     for _ in 0..200 {
-        if mundo.read().await.players.contains_key(&(roleid as i64)) { break }
+        if mundo.read().await.players.contains_key(&(roleid as i64)) {
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     {
@@ -5013,38 +5864,62 @@ async fn reproducao_do_passeio_no_realm_126() {
         p.position = guia;
         p.centro_do_stream = Vector3::new(0.0, 0.0, 0.0);
     }
-    mundo.write().await.grid.update_position(roleid as i64, guia);
+    mundo
+        .write()
+        .await
+        .grid
+        .update_position(roleid as i64, guia);
     let mut corpo = vec3(guia.x, guia.y, guia.z);
     corpo.extend_from_slice(&vec3(guia.x + 0.5, guia.y, guia.z));
     corpo.extend_from_slice(&100u16.to_le_bytes());
     corpo.extend_from_slice(&48u16.to_le_bytes());
     corpo.push(0);
     corpo.extend_from_slice(&1u16.to_le_bytes());
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::PLAYER_MOVE, &corpo) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::PLAYER_MOVE, &corpo),
+    })
+    .await
+    .unwrap();
 
     // (id → (último instante, última posição, use_time, conhecido))
     let inicio = std::time::Instant::now();
     let mut conhecidos = std::collections::HashSet::new();
-    let mut ultimo: std::collections::HashMap<u32, (std::time::Instant, [f32; 3], u16)> = Default::default();
+    let mut ultimo: std::collections::HashMap<u32, (std::time::Instant, [f32; 3], u16)> =
+        Default::default();
     let mut ultimo_modo: std::collections::HashMap<u32, (u8, f32)> = Default::default();
-    let (mut moves, mut cedo, mut longe, mut desconhecido, mut entradas, mut saidas, mut paradas) = (0, 0, 0, 0, 0, 0, 0);
+    let (mut moves, mut cedo, mut longe, mut desconhecido, mut entradas, mut saidas, mut paradas) =
+        (0, 0, 0, 0, 0, 0, 0);
     let mut exemplos = Vec::new();
     let f = |d: &[u8], o: usize| f32::from_le_bytes(d[o..o + 4].try_into().unwrap());
     let u = |d: &[u8], o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
     while inicio.elapsed() < Duration::from_secs(30) {
-        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(500), link.receber()).await else { continue };
+        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_millis(500), link.receber()).await
+        else {
+            continue;
+        };
         let agora = std::time::Instant::now();
         let d = &data[2..];
         match cmd_de(&data) {
-            11 | 16 => { entradas += 1; conhecidos.insert(u(d, 0)); }
-            13 | 21 => { saidas += 1; conhecidos.remove(&u(d, 0)); }
+            11 | 16 => {
+                entradas += 1;
+                conhecidos.insert(u(d, 0));
+            }
+            13 | 21 => {
+                saidas += 1;
+                conhecidos.remove(&u(d, 0));
+            }
             15 if d.len() == 21 && u(d, 0) & 0x8000_0000 != 0 => {
                 moves += 1;
                 let id = u(d, 0);
                 let p = [f(d, 4), f(d, 8), f(d, 12)];
                 let use_time = u16::from_le_bytes([d[16], d[17]]);
                 let vel = i16::from_le_bytes([d[18], d[19]]) as f32 / 256.0;
-                if !conhecidos.contains(&id) { desconhecido += 1; }
+                if !conhecidos.contains(&id) {
+                    desconhecido += 1;
+                }
                 if let Some((t0, p0, u0)) = ultimo.get(&id) {
                     let dt = agora.duration_since(*t0).as_millis() as u32;
                     let dist = ((p[0] - p0[0]).powi(2) + (p[2] - p0[2]).powi(2)).sqrt();
@@ -5052,11 +5927,17 @@ async fn reproducao_do_passeio_no_realm_126() {
                         cedo += 1;
                         let (m0, v0) = ultimo_modo.get(&id).copied().unwrap_or_default();
                         let dist0 = ((p[0] - p0[0]).powi(2) + (p[2] - p0[2]).powi(2)).sqrt();
-                        if exemplos.len() < 8 { exemplos.push(format!("cedo: {id:#x} {dt} ms depois (anterior: {u0} ms, modo {m0}, {v0:.2} m/s; este: {use_time} ms, modo {}, {vel:.2} m/s, {dist0:.2} m, dy {:.2})", d[20], p[1] - p0[1])); }
+                        if exemplos.len() < 8 {
+                            exemplos.push(format!("cedo: {id:#x} {dt} ms depois (anterior: {u0} ms, modo {m0}, {v0:.2} m/s; este: {use_time} ms, modo {}, {vel:.2} m/s, {dist0:.2} m, dy {:.2})", d[20], p[1] - p0[1]));
+                        }
                     }
                     if dist > vel * use_time as f32 / 1000.0 * 1.1 + 0.1 {
                         longe += 1;
-                        if exemplos.len() < 8 { exemplos.push(format!("longe: {id:#x} {dist:.2} m em {use_time} ms a {vel:.2} m/s")); }
+                        if exemplos.len() < 8 {
+                            exemplos.push(format!(
+                                "longe: {id:#x} {dist:.2} m em {use_time} ms a {vel:.2} m/s"
+                            ));
+                        }
                     }
                 }
                 ultimo.insert(id, (agora, p, use_time));
@@ -5067,7 +5948,9 @@ async fn reproducao_do_passeio_no_realm_126() {
         }
     }
     eprintln!("REPRO 126: {entradas} entradas, {saidas} saídas, {moves} movimentos, {paradas} paradas; {cedo} antes do use_time, {longe} longe demais, {desconhecido} de monstro desconhecido");
-    for e in exemplos { eprintln!("REPRO   {e}"); }
+    for e in exemplos {
+        eprintln!("REPRO   {e}");
+    }
     // Antes do B104: 4 a 8 pares a ~50 ms (a emenda de passeio zerava a espera).
     assert!(moves > 100, "poucos movimentos para concluir algo: {moves}");
     assert_eq!((cedo, longe, desconhecido), (0, 0, 0));
@@ -5082,11 +5965,14 @@ async fn reproducao_do_passeio_no_realm_126() {
 #[tokio::test]
 #[ignore]
 async fn reproducao_da_planta_devoradora_no_realm_126() {
-    let Ok(url) = std::env::var("TEST_DATABASE_URL") else { return };
+    let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+        return;
+    };
     let pool = pool_do_teste(url).await;
     comum::limpar_sobras_de_teste(&pool).await;
     let (roleid, _) = personagem_com_missao(&pool, GameVersion::V1_2_6).await;
-    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let pasta =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     let mut dados = GameDataManager::new();
     dados.load_from_directory(&pasta);
     let mut mundo = WorldInstance::new(1, Arc::new(dados), CharacterRepository::new(pool));
@@ -5102,16 +5988,25 @@ async fn reproducao_da_planta_devoradora_no_realm_126() {
 
     let mut link = entrar_sem_ajustar(addr, roleid).await;
     for _ in 0..200 {
-        if mundo.read().await.players.contains_key(&(roleid as i64)) { break }
+        if mundo.read().await.players.contains_key(&(roleid as i64)) {
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     // A Planta (3302) mais próxima do Guia 3517.
     let guia = Vector3::new(221.5, 219.1, 2854.4);
     let (planta, pos_planta) = {
         let m = mundo.read().await;
-        m.monsters.values().filter(|(x, _)| x.template_id == 3302)
-            .min_by(|a, b| a.0.position.distance(&guia).total_cmp(&b.0.position.distance(&guia)))
-            .map(|(x, _)| (x.id, x.position)).expect("uma Planta Devoradora")
+        m.monsters
+            .values()
+            .filter(|(x, _)| x.template_id == 3302)
+            .min_by(|a, b| {
+                a.0.position
+                    .distance(&guia)
+                    .total_cmp(&b.0.position.distance(&guia))
+            })
+            .map(|(x, _)| (x.id, x.position))
+            .expect("uma Planta Devoradora")
     };
     // A 6 m: ela passeia até ser atacada e então corre até o jogador.
     let perto = Vector3::new(pos_planta.x + 6.0, pos_planta.y, pos_planta.z);
@@ -5129,8 +6024,20 @@ async fn reproducao_da_planta_devoradora_no_realm_126() {
     corpo.extend_from_slice(&48u16.to_le_bytes());
     corpo.push(0);
     corpo.extend_from_slice(&1u16.to_le_bytes());
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::PLAYER_MOVE, &corpo) }).await.unwrap();
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(planta as i32).to_le_bytes()) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::PLAYER_MOVE, &corpo),
+    })
+    .await
+    .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(planta as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
 
     let inicio = std::time::Instant::now();
     // O primeiro golpe só depois que ela começar a andar (é quando o relato acontece).
@@ -5145,25 +6052,48 @@ async fn reproducao_da_planta_devoradora_no_realm_126() {
     let id = planta as u32;
     while inicio.elapsed() < Duration::from_secs(if andou { 110 } else { 90 }) {
         if !morta && std::time::Instant::now() >= proximo_golpe {
-            link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) }).await.unwrap();
+            link.enviar(BusMessage::ClientToGame {
+                roleid,
+                localsid: LOCALSID,
+                data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+            })
+            .await
+            .unwrap();
             proximo_golpe += Duration::from_millis(1000);
         }
-        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(100), link.receber()).await else { continue };
+        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_millis(100), link.receber()).await
+        else {
+            continue;
+        };
         let t = inicio.elapsed().as_millis();
         let c = cmd_de(&data);
         let d = &data[2..];
         let pos = |o: usize| [f(d, o), f(d, o + 4), f(d, o + 8)];
-        let dist = |a: [f32; 3], b: [f32; 3]| ((a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+        let dist =
+            |a: [f32; 3], b: [f32; 3]| ((a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
         match c {
             11 | 16 if u(d, 0) == id => {
                 let p = pos(8);
                 let s = conhecida.map(|k| dist(k, p)).unwrap_or(0.0);
-                if t_morte.is_some() && t_volta.is_none() { t_volta = Some(t); }
-                linha.push(format!("{t} entra em ({:.1},{:.1},{:.1}) [{s:.1} m da última conhecida]", p[0], p[1], p[2]));
+                if t_morte.is_some() && t_volta.is_none() {
+                    t_volta = Some(t);
+                }
+                linha.push(format!(
+                    "{t} entra em ({:.1},{:.1},{:.1}) [{s:.1} m da última conhecida]",
+                    p[0], p[1], p[2]
+                ));
                 conhecida = Some(p);
             }
-            13 | 21 if u(d, 0) == id => { sumiu = true; linha.push(format!("{t} sai/some (cmd {c})")); }
-            20 if u(d, 0) == id => { morta = true; t_morte = Some(t); linha.push(format!("{t} morre")); }
+            13 | 21 if u(d, 0) == id => {
+                sumiu = true;
+                linha.push(format!("{t} sai/some (cmd {c})"));
+            }
+            20 if u(d, 0) == id => {
+                morta = true;
+                t_morte = Some(t);
+                linha.push(format!("{t} morre"));
+            }
             15 if u(d, 0) == id => {
                 if !andou {
                     andou = true;
@@ -5171,14 +6101,27 @@ async fn reproducao_da_planta_devoradora_no_realm_126() {
                 }
                 let p = pos(4);
                 let passo = conhecida.map(|k| dist(k, p)).unwrap_or(0.0);
-                linha.push(format!("{t} anda {passo:.2} m em {} ms a {:.2} m/s modo {} para ({:.1},{:.1},{:.1})", u16::from_le_bytes([d[16], d[17]]), i16::from_le_bytes([d[18], d[19]]) as f32 / 256.0, d[20], p[0], p[1], p[2]));
+                linha.push(format!(
+                    "{t} anda {passo:.2} m em {} ms a {:.2} m/s modo {} para ({:.1},{:.1},{:.1})",
+                    u16::from_le_bytes([d[16], d[17]]),
+                    i16::from_le_bytes([d[18], d[19]]) as f32 / 256.0,
+                    d[20],
+                    p[0],
+                    p[1],
+                    p[2]
+                ));
                 conhecida = Some(p);
             }
             35 if u(d, 0) == id => {
                 let p = pos(4);
                 let s = conhecida.map(|k| dist(k, p)).unwrap_or(0.0);
-                if s > 0.5 { saltos += 1; }
-                linha.push(format!("{t} para em ({:.1},{:.1},{:.1}) modo {} [{s:.2} m da última conhecida]", p[0], p[1], p[2], d[19]));
+                if s > 0.5 {
+                    saltos += 1;
+                }
+                linha.push(format!(
+                    "{t} para em ({:.1},{:.1},{:.1}) modo {} [{s:.2} m da última conhecida]",
+                    p[0], p[1], p[2], d[19]
+                ));
                 conhecida = Some(p);
             }
             26 if u(d, 0) == id => linha.push(format!("{t} bate no jogador")),
@@ -5186,13 +6129,25 @@ async fn reproducao_da_planta_devoradora_no_realm_126() {
             _ => {}
         }
     }
-    eprintln!("PLANTA {:#x} nasceu em ({:.1},{:.1},{:.1}); {} saltos", id, pos_planta.x, pos_planta.y, pos_planta.z, saltos);
-    for l in linha { eprintln!("PLANTA   {l}"); }
+    eprintln!(
+        "PLANTA {:#x} nasceu em ({:.1},{:.1},{:.1}); {} saltos",
+        id, pos_planta.x, pos_planta.y, pos_planta.z, saltos
+    );
+    for l in linha {
+        eprintln!("PLANTA   {l}");
+    }
     // B105 — como a captura original do 1.2.6: sem `disappear` (o `iDeadTime` é 0) e de volta
     // 15 s depois da morte (`BASE_REBORN_TIME` + `iRefresh` 0), num ponto novo da área.
-    let (morte, volta) = (t_morte.expect("ela não morreu"), t_volta.expect("ela não renasceu"));
+    let (morte, volta) = (
+        t_morte.expect("ela não morreu"),
+        t_volta.expect("ela não renasceu"),
+    );
     assert!(!sumiu, "não devia haver OBJECT_DISAPPEAR");
-    assert!((14_500..16_500).contains(&(volta - morte)), "renasceu {} ms depois da morte", volta - morte);
+    assert!(
+        (14_500..16_500).contains(&(volta - morte)),
+        "renasceu {} ms depois da morte",
+        volta - morte
+    );
     assert_eq!(saltos, 0);
 }
 
@@ -5204,14 +6159,21 @@ async fn reproducao_da_planta_devoradora_no_realm_126() {
 #[tokio::test]
 async fn a_missao_automatica_do_126_e_entregue_ao_pedido_do_cliente() {
     let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
-    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let pasta =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     if !pasta.exists() {
-        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", pasta.display());
+        eprintln!(
+            "AVISO: sem {} — este teste NÃO verificou nada.",
+            pasta.display()
+        );
         return;
     }
     let mut reais = GameDataManager::new();
     reais.load_from_directory(&pasta);
-    assert!(reais.tasks.get_task(9376).is_some_and(|t| t.entrega_automatica));
+    assert!(reais
+        .tasks
+        .get_task(9376)
+        .is_some_and(|t| t.entrega_automatica));
     mundo.write().await.data_manager = Arc::new(reais);
     let mut link = entrar(&mundo, addr, roleid).await;
 
@@ -5219,9 +6181,13 @@ async fn a_missao_automatica_do_126_e_entregue_ao_pedido_do_cliente() {
     let mut corpo = 3u32.to_le_bytes().to_vec();
     corpo.push(4);
     corpo.extend_from_slice(&9376u16.to_le_bytes());
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::TASK_NOTIFY, &corpo) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::TASK_NOTIFY, &corpo),
+    })
+    .await
+    .unwrap();
 
     let mut nova = None;
     for _ in 0..10 {
@@ -5233,7 +6199,11 @@ async fn a_missao_automatica_do_126_e_entregue_ao_pedido_do_cliente() {
     }
     let nova = nova.expect("o mundo não entregou a missão automática");
     assert_eq!(u16::from_le_bytes([nova[7], nova[8]]), 9376);
-    assert!(mundo.read().await.players[&(roleid as i64)].missoes.ativa.indice(9376).is_some());
+    assert!(mundo.read().await.players[&(roleid as i64)]
+        .missoes
+        .ativa
+        .indice(9376)
+        .is_some());
 }
 
 /// B110 — a 5909 "Domesticadores" (automática, classe 3, nível 3) e a filha 5911
@@ -5243,7 +6213,8 @@ async fn a_missao_automatica_do_126_e_entregue_ao_pedido_do_cliente() {
 #[tokio::test]
 async fn a_5909_do_126_passa_da_5911_ao_chegar_ao_lugar() {
     let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
-    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let pasta =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     let mut reais = GameDataManager::new();
     reais.load_from_directory(&pasta);
     mundo.write().await.data_manager = Arc::new(reais);
@@ -5254,24 +6225,51 @@ async fn a_5909_do_126_passa_da_5911_ao_chegar_ao_lugar() {
         p.cls = CharacterClass::Venomancer;
         p.level = 3;
     }
-    eprintln!("classe {:?} ({})", CharacterClass::Venomancer, CharacterClass::Venomancer as i32);
-    for (rodada, (motivo, tarefa)) in [(4u8, 5909u16), (3, 5911), (4, 5909)].into_iter().enumerate() {
+    eprintln!(
+        "classe {:?} ({})",
+        CharacterClass::Venomancer,
+        CharacterClass::Venomancer as i32
+    );
+    for (rodada, (motivo, tarefa)) in [(4u8, 5909u16), (3, 5911), (4, 5909)]
+        .into_iter()
+        .enumerate()
+    {
         let mut corpo = 3u32.to_le_bytes().to_vec();
         corpo.push(motivo);
         corpo.extend_from_slice(&tarefa.to_le_bytes());
-        link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::TASK_NOTIFY, &corpo) }).await.unwrap();
+        link.enviar(BusMessage::ClientToGame {
+            roleid,
+            localsid: LOCALSID,
+            data: subcomando(ids::TASK_NOTIFY, &corpo),
+        })
+        .await
+        .unwrap();
         let fim = std::time::Instant::now() + Duration::from_millis(1500);
-        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
-            tokio::time::timeout(fim.saturating_duration_since(std::time::Instant::now()), link.receber()).await
+        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(
+            fim.saturating_duration_since(std::time::Instant::now()),
+            link.receber(),
+        )
+        .await
         {
             let c = cmd_de(&data);
             if c == 106 || c == 25 {
                 eprintln!("R{rodada} cmd {c}: {:02x?}", &data[2..data.len().min(24)]);
             }
         }
-        let ativas: Vec<u16> = mundo.read().await.players[&(roleid as i64)].missoes.ativa.e.iter().filter(|e| e.valida).map(|e| e.id).collect();
+        let ativas: Vec<u16> = mundo.read().await.players[&(roleid as i64)]
+            .missoes
+            .ativa
+            .e
+            .iter()
+            .filter(|e| e.valida)
+            .map(|e| e.id)
+            .collect();
         eprintln!("R{rodada} ativas: {ativas:?}");
-        let esperado: &[u16] = if rodada == 0 { &[5909, 5911] } else { &[5909, 5912] };
+        let esperado: &[u16] = if rodada == 0 {
+            &[5909, 5911]
+        } else {
+            &[5909, 5912]
+        };
         assert_eq!(ativas, esperado, "rodada {rodada}");
     }
 }
@@ -5301,9 +6299,15 @@ async fn mascote_de_ponta_a_ponta(
     realm: &str,
     (t233, t120, t234): (usize, usize, usize),
 ) {
-    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").join(realm).join("config");
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../data")
+        .join(realm)
+        .join("config");
     if !pasta.exists() {
-        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", pasta.display());
+        eprintln!(
+            "AVISO: sem {} — este teste NÃO verificou nada.",
+            pasta.display()
+        );
         return;
     }
     let mut reais = GameDataManager::new();
@@ -5350,16 +6354,26 @@ async fn mascote_de_ponta_a_ponta(
         .await
         .expect("guardar o mascote");
 
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
     let invocado = esperar_comando(&mut link, 233).await;
     assert_eq!(invocado.len(), 2 + t233, "tamanho do SUMMON_PET");
     let pet_id = i32::from_le_bytes(invocado[10..14].try_into().unwrap()) as i64;
-    assert!(pw_gs::mascote::e_mascote(pet_id), "o id {pet_id:#x} não é de mascote");
+    assert!(
+        pw_gs::mascote::e_mascote(pet_id),
+        "o id {pet_id:#x} não é de mascote"
+    );
     {
         let m = mundo.read().await;
-        let pet = m.mascotes.get(&pet_id).expect("o mascote não está no mundo");
+        let pet = m
+            .mascotes
+            .get(&pet_id)
+            .expect("o mascote não está no mundo");
         assert_eq!(pet.dono, roleid as i64);
         assert!(pet.corpo.max_hp > 0 && pet.corpo.attack_min > 0);
     }
@@ -5378,12 +6392,19 @@ async fn mascote_de_ponta_a_ponta(
         // (`OnKillMob`, `petman.cpp:789-795`).
         monstro.level = nivel_do_mascote as i32;
         m.grid.add_entity(alvo, onde, false);
-        m.monsters.insert(alvo, (monstro, pw_gs::ai::MonsterAi::new()));
+        m.monsters
+            .insert(alvo, (monstro, pw_gs::ai::MonsterAi::new()));
     }
     let mut ordem = (alvo as i32).to_le_bytes().to_vec();
     ordem.extend_from_slice(&1i32.to_le_bytes());
     ordem.push(0);
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::PET_CTRL, &ordem) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::PET_CTRL, &ordem),
+    })
+    .await
+    .unwrap();
 
     // Até o monstro morrer: golpes de mascote a quem vê, e a experiência no fim.
     let (mut golpes, mut exp) = (0, None);
@@ -5392,7 +6413,11 @@ async fn mascote_de_ponta_a_ponta(
     while tiques < 1200 && exp.is_none() {
         mundo.write().await.tick(50).await;
         tiques += 1;
-        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(5), link.receber()).await else { continue };
+        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_millis(5), link.receber()).await
+        else {
+            continue;
+        };
         match cmd_de(&data) {
             120 => {
                 assert_eq!(data.len(), 2 + t120, "tamanho do OBJECT_ATTACK_RESULT");
@@ -5419,18 +6444,37 @@ async fn mascote_de_ponta_a_ponta(
         );
     }
     let exp = exp.expect("o mascote não recebeu experiência pelo abate");
-    eprintln!("MASCOTE {realm}: {golpes} golpes; experiência: cmd {} {:02x?}", cmd_de(&exp), &exp[2..]);
+    eprintln!(
+        "MASCOTE {realm}: {golpes} golpes; experiência: cmd {} {:02x?}",
+        cmd_de(&exp),
+        &exp[2..]
+    );
     assert!(golpes >= 1);
-    assert!(mundo.read().await.monsters.get(&alvo).is_some_and(|(m, _)| m.is_dead));
+    assert!(mundo
+        .read()
+        .await
+        .monsters
+        .get(&alvo)
+        .is_some_and(|(m, _)| m.is_dead));
 
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::RECALL_PET, &[]) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::RECALL_PET, &[]),
+    })
+    .await
+    .unwrap();
     let recolhido = esperar_comando(&mut link, 234).await;
     assert_eq!(recolhido.len(), 2 + t234, "tamanho do RECALL_PET");
     assert!(mundo.read().await.mascotes.is_empty());
     // O registro voltou à jaula com a experiência.
     let mut gravado = None;
     for _ in 0..50 {
-        let item = itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0).await.unwrap().unwrap();
+        let item = itens
+            .get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0)
+            .await
+            .unwrap()
+            .unwrap();
         let i = pw_core::InfoPet::do_bloco(&item.octets).unwrap();
         if i.exp > 0 || i.level > nivel_do_mascote {
             gravado = Some(i);
@@ -5449,9 +6493,13 @@ async fn mascote_de_ponta_a_ponta(
 #[tokio::test]
 async fn o_mascote_de_combate_morre_e_nao_volta_morto() {
     let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
-    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    let pasta =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
     if !pasta.exists() {
-        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", pasta.display());
+        eprintln!(
+            "AVISO: sem {} — este teste NÃO verificou nada.",
+            pasta.display()
+        );
         return;
     }
     let mut reais = GameDataManager::new();
@@ -5487,7 +6535,13 @@ async fn o_mascote_de_combate_morre_e_nao_volta_morto() {
         })
         .await
         .unwrap();
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
     let invocado = esperar_comando(&mut link, 233).await;
     let pet_id = i32::from_le_bytes(invocado[10..14].try_into().unwrap()) as i64;
 
@@ -5509,7 +6563,9 @@ async fn o_mascote_de_combate_morre_e_nao_volta_morto() {
     let (mut recolhido, mut morto, mut honra) = (None, false, None);
     for _ in 0..600 {
         mundo.write().await.tick(50).await;
-        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(2), link.receber()).await {
+        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_millis(2), link.receber()).await
+        {
             match cmd_de(&data) {
                 234 => recolhido = Some(data),
                 247 => morto = true,
@@ -5527,7 +6583,11 @@ async fn o_mascote_de_combate_morre_e_nao_volta_morto() {
     assert!(mundo.read().await.mascotes.is_empty());
     let mut na_jaula = None;
     for _ in 0..50 {
-        let item = itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0).await.unwrap().unwrap();
+        let item = itens
+            .get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0)
+            .await
+            .unwrap()
+            .unwrap();
         let i = pw_core::InfoPet::do_bloco(&item.octets).unwrap();
         if i.hp_factor == 0.0 {
             na_jaula = Some(i);
@@ -5537,16 +6597,30 @@ async fn o_mascote_de_combate_morre_e_nao_volta_morto() {
     }
     assert_eq!(na_jaula.expect("a morte não foi gravada").honor_point, 180);
 
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
     let mut erro = None;
     for _ in 0..200 {
-        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(100), link.receber()).await else { continue };
+        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_millis(100), link.receber()).await
+        else {
+            continue;
+        };
         if cmd_de(&data) == 25 {
             erro = Some(i32::from_le_bytes(data[2..6].try_into().unwrap()));
             break;
         }
     }
-    assert_eq!(erro, Some(87), "invocar mascote morto devia dar ERR_CANNOT_SUMMON_DEAD_PET");
+    assert_eq!(
+        erro,
+        Some(87),
+        "invocar mascote morto devia dar ERR_CANNOT_SUMMON_DEAD_PET"
+    );
 }
 
 // ---------------------------------------------------------------------------------------
@@ -5562,20 +6636,43 @@ async fn preparar_mascote(
     roleid: i32,
     versao: GameVersion,
     habilidades: &[(i32, i32)],
-) -> Option<(pw_bus::transport::BusConnection, pw_storage::ItemRepository, Vector3, i16)> {
-    let realm = if versao == GameVersion::V1_5_5 { "realm_155" } else { "realm_126" };
-    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").join(realm).join("config");
+) -> Option<(
+    pw_bus::transport::BusConnection,
+    pw_storage::ItemRepository,
+    Vector3,
+    i16,
+)> {
+    let realm = if versao == GameVersion::V1_5_5 {
+        "realm_155"
+    } else {
+        "realm_126"
+    };
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../data")
+        .join(realm)
+        .join("config");
     if !pasta.exists() {
-        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", pasta.display());
+        eprintln!(
+            "AVISO: sem {} — este teste NÃO verificou nada.",
+            pasta.display()
+        );
         return None;
     }
     let mut reais = GameDataManager::new();
     reais.load_from_directory(&pasta);
-    let servicos = reais.servicos_de_npc.get(&11534).cloned().expect("a Domesticadora Rilay (11534)");
+    let servicos = reais
+        .servicos_de_npc
+        .get(&11534)
+        .cloned()
+        .expect("a Domesticadora Rilay (11534)");
     reais.servicos_de_npc.insert(TEMPLATE_DO_NPC, servicos);
     mundo.write().await.data_manager = Arc::new(reais);
     let link = entrar(mundo, addr, roleid).await;
-    let (nivel_do_dono, nivel_do_mascote) = if versao == GameVersion::V1_5_5 { (40, 30) } else { (10, 2) };
+    let (nivel_do_dono, nivel_do_mascote) = if versao == GameVersion::V1_5_5 {
+        (40, 30)
+    } else {
+        (10, 2)
+    };
     let pos = {
         let mut m = mundo.write().await;
         let p = m.players.get_mut(&(roleid as i64)).unwrap();
@@ -5588,7 +6685,13 @@ async fn preparar_mascote(
     Some((link, itens, pos, nivel_do_mascote))
 }
 
-async fn guardar_mascote(itens: &pw_storage::ItemRepository, roleid: i32, slot: u16, nivel: i16, habilidades: &[(i32, i32)]) {
+async fn guardar_mascote(
+    itens: &pw_storage::ItemRepository,
+    roleid: i32,
+    slot: u16,
+    nivel: i16,
+    habilidades: &[(i32, i32)],
+) {
     let mut info = pw_core::InfoPet::default();
     info.pet_tid = 10386;
     info.pet_class = pw_core::PET_CLASS_COMBAT;
@@ -5598,10 +6701,25 @@ async fn guardar_mascote(itens: &pw_storage::ItemRepository, roleid: i32, slot: 
     for (i, h) in habilidades.iter().enumerate() {
         info.skills[i] = *h;
     }
-    guardar_item(itens, roleid, pw_core::ContainerType::PetCorral, slot, 10386, info.para_bytes()).await;
+    guardar_item(
+        itens,
+        roleid,
+        pw_core::ContainerType::PetCorral,
+        slot,
+        10386,
+        info.para_bytes(),
+    )
+    .await;
 }
 
-async fn guardar_item(itens: &pw_storage::ItemRepository, roleid: i32, onde: pw_core::ContainerType, slot: u16, item_id: u32, octets: Vec<u8>) {
+async fn guardar_item(
+    itens: &pw_storage::ItemRepository,
+    roleid: i32,
+    onde: pw_core::ContainerType,
+    slot: u16,
+    item_id: u32,
+    octets: Vec<u8>,
+) {
     itens
         .upsert_item(&pw_core::ItemRecord {
             id: None,
@@ -5624,8 +6742,18 @@ async fn guardar_item(itens: &pw_storage::ItemRepository, roleid: i32, onde: pw_
         .expect("guardar o item");
 }
 
-async fn invocar_do_slot(link: &mut pw_bus::transport::BusConnection, roleid: i32, slot: u32) -> i64 {
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &slot.to_le_bytes()) }).await.unwrap();
+async fn invocar_do_slot(
+    link: &mut pw_bus::transport::BusConnection,
+    roleid: i32,
+    slot: u32,
+) -> i64 {
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SUMMON_PET, &slot.to_le_bytes()),
+    })
+    .await
+    .unwrap();
     let invocado = esperar_comando(link, 233).await;
     i32::from_le_bytes(invocado[10..14].try_into().unwrap()) as i64
 }
@@ -5666,7 +6794,9 @@ async fn rodar_e_colher(
     let mut vistos = Vec::new();
     for _ in 0..tiques {
         mundo.write().await.tick(50).await;
-        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(3), link.receber()).await {
+        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_millis(3), link.receber()).await
+        {
             vistos.push(data);
         }
         if parar(&vistos) {
@@ -5687,36 +6817,80 @@ fn i32_de(v: &[u8], off: usize) -> i32 {
 /// `ERR_PET_SKILL_IN_COOLDOWN` (93).
 async fn habilidade_manual(versao: GameVersion) {
     let (mundo, addr, roleid, _convidado) = cenario!(versao);
-    let Some((mut link, _itens, pos, nivel)) = preparar_mascote(&mundo, addr, roleid, versao, &[(747, 1)]).await else { return };
+    let Some((mut link, _itens, pos, nivel)) =
+        preparar_mascote(&mundo, addr, roleid, versao, &[(747, 1)]).await
+    else {
+        return;
+    };
     let pet = invocar_do_slot(&mut link, roleid, 0).await;
     let alvo = alvo_de_treino(&mundo, pos, nivel as i32).await;
     let mut resto = 747i32.to_le_bytes().to_vec();
     resto.push(0);
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: ordem(alvo, 4, &resto) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: ordem(alvo, 4, &resto),
+    })
+    .await
+    .unwrap();
 
     let e_do_mascote = |v: &Vec<u8>, cmd: u16| cmd_de(v) == cmd && i32_de(v, 2) as i64 == pet;
-    let vistos = rodar_e_colher(&mundo, &mut link, 200, |v| v.iter().any(|p| e_do_mascote(p, 143))).await;
-    let conjurou = vistos.iter().find(|p| e_do_mascote(p, 85)).expect("sem OBJECT_CAST_SKILL do mascote");
+    let vistos = rodar_e_colher(&mundo, &mut link, 200, |v| {
+        v.iter().any(|p| e_do_mascote(p, 143))
+    })
+    .await;
+    let conjurou = vistos
+        .iter()
+        .find(|p| e_do_mascote(p, 85))
+        .expect("sem OBJECT_CAST_SKILL do mascote");
     assert_eq!(conjurou.len(), 2 + 15, "tamanho do OBJECT_CAST_SKILL");
     assert_eq!(i32_de(conjurou, 6) as i64, alvo);
     assert_eq!(i32_de(conjurou, 10), 747);
-    assert_eq!(u16::from_le_bytes([conjurou[14], conjurou[15]]), 400, "canto da 747");
-    let recarga = vistos.iter().find(|p| cmd_de(p) == 252).expect("sem PET_SET_COOLDOWN");
+    assert_eq!(
+        u16::from_le_bytes([conjurou[14], conjurou[15]]),
+        400,
+        "canto da 747"
+    );
+    let recarga = vistos
+        .iter()
+        .find(|p| cmd_de(p) == 252)
+        .expect("sem PET_SET_COOLDOWN");
     assert_eq!(recarga.len(), 2 + 12, "tamanho do PET_SET_COOLDOWN");
-    assert_eq!((i32_de(recarga, 2), i32_de(recarga, 6), i32_de(recarga, 10)), (0, 747 + 1024, 15_000));
-    let golpe = vistos.iter().find(|p| e_do_mascote(p, 143)).expect("sem OBJECT_SKILL_ATTACK_RESULT do mascote");
+    assert_eq!(
+        (i32_de(recarga, 2), i32_de(recarga, 6), i32_de(recarga, 10)),
+        (0, 747 + 1024, 15_000)
+    );
+    let golpe = vistos
+        .iter()
+        .find(|p| e_do_mascote(p, 143))
+        .expect("sem OBJECT_SKILL_ATTACK_RESULT do mascote");
     assert_eq!(i32_de(golpe, 6) as i64, alvo);
     assert_eq!(i32_de(golpe, 10), 747);
     let vida = mundo.read().await.monsters[&alvo].0.hp;
-    eprintln!("HABILIDADE {versao:?}: dano {} → vida {vida}", i32_de(golpe, 14));
+    eprintln!(
+        "HABILIDADE {versao:?}: dano {} → vida {vida}",
+        i32_de(golpe, 14)
+    );
     assert!(vida < 100_000, "a 747 não tirou vida");
 
     // Dentro dos 15 s: a sessão abre e recusa.
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: ordem(alvo, 4, &resto) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: ordem(alvo, 4, &resto),
+    })
+    .await
+    .unwrap();
     let vistos = rodar_e_colher(&mundo, &mut link, 40, |v| v.iter().any(|p| cmd_de(p) == 25)).await;
-    let erro = vistos.iter().find(|p| cmd_de(p) == 25).expect("sem erro na recarga");
+    let erro = vistos
+        .iter()
+        .find(|p| cmd_de(p) == 25)
+        .expect("sem erro na recarga");
     assert_eq!(i32_de(erro, 2), 93);
-    assert!(!vistos.iter().any(|p| e_do_mascote(p, 85)), "conjurou dentro da recarga");
+    assert!(
+        !vistos.iter().any(|p| e_do_mascote(p, 85)),
+        "conjurou dentro da recarga"
+    );
 }
 
 #[tokio::test]
@@ -5733,18 +6907,46 @@ async fn o_mascote_do_155_usa_habilidade_por_ordem_com_dano_e_recarga() {
 /// sozinho no alvo (`gpet_policy::OnHeartbeat`) e arma a recarga.
 async fn habilidade_automatica(versao: GameVersion) {
     let (mundo, addr, roleid, _convidado) = cenario!(versao);
-    let Some((mut link, _itens, pos, nivel)) = preparar_mascote(&mundo, addr, roleid, versao, &[(747, 1)]).await else { return };
+    let Some((mut link, _itens, pos, nivel)) =
+        preparar_mascote(&mundo, addr, roleid, versao, &[(747, 1)]).await
+    else {
+        return;
+    };
     let pet = invocar_do_slot(&mut link, roleid, 0).await;
     let alvo = alvo_de_treino(&mundo, pos, nivel as i32).await;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: ordem(0, 5, &747i32.to_le_bytes()) }).await.unwrap();
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: ordem(alvo, 1, &[0]) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: ordem(0, 5, &747i32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: ordem(alvo, 1, &[0]),
+    })
+    .await
+    .unwrap();
     let e_do_mascote = |v: &Vec<u8>, cmd: u16| cmd_de(v) == cmd && i32_de(v, 2) as i64 == pet;
-    let vistos = rodar_e_colher(&mundo, &mut link, 200, |v| v.iter().any(|p| e_do_mascote(p, 143))).await;
-    let conjurou = vistos.iter().find(|p| e_do_mascote(p, 85)).expect("a automática não saiu");
+    let vistos = rodar_e_colher(&mundo, &mut link, 200, |v| {
+        v.iter().any(|p| e_do_mascote(p, 143))
+    })
+    .await;
+    let conjurou = vistos
+        .iter()
+        .find(|p| e_do_mascote(p, 85))
+        .expect("a automática não saiu");
     assert_eq!(i32_de(conjurou, 10), 747);
     assert_eq!(i32_de(conjurou, 6) as i64, alvo);
-    assert!(vistos.iter().any(|p| cmd_de(p) == 252), "sem PET_SET_COOLDOWN");
-    assert!(mundo.read().await.mascotes[&pet].ai.automatica.is_some_and(|h| h.id == 747));
+    assert!(
+        vistos.iter().any(|p| cmd_de(p) == 252),
+        "sem PET_SET_COOLDOWN"
+    );
+    assert!(mundo.read().await.mascotes[&pet]
+        .ai
+        .automatica
+        .is_some_and(|h| h.id == 747));
 }
 
 #[tokio::test]
@@ -5762,20 +6964,42 @@ async fn o_mascote_do_155_usa_a_habilidade_automatica_em_combate() {
 /// 8 B: slot e `pet_tid`) e o slot some da jaula.
 async fn soltar(versao: GameVersion) {
     let (mundo, addr, roleid, _convidado) = cenario!(versao);
-    let Some((mut link, itens, _pos, nivel)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else { return };
+    let Some((mut link, itens, _pos, nivel)) =
+        preparar_mascote(&mundo, addr, roleid, versao, &[]).await
+    else {
+        return;
+    };
     guardar_mascote(&itens, roleid, 1, nivel, &[]).await;
     invocar_do_slot(&mut link, roleid, 0).await;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::BANISH_PET, &0u32.to_le_bytes()) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::BANISH_PET, &0u32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
     let erro = esperar_comando(&mut link, 25).await;
     assert_eq!(i32_de(&erro, 2), 71, "soltar o ativo");
 
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::BANISH_PET, &1u32.to_le_bytes()) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::BANISH_PET, &1u32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
     let op = esperar_comando(&mut link, 235).await;
-    assert_eq!((i32_de(&op, 2), i32_de(&op, 10), i32_de(&op, 14)), (1, 200, 2), "slot, atraso e operação");
+    assert_eq!(
+        (i32_de(&op, 2), i32_de(&op, 10), i32_de(&op, 14)),
+        (1, 200, 2),
+        "slot, atraso e operação"
+    );
     let mut livre = None;
     let fim = std::time::Instant::now() + Duration::from_secs(15);
     while livre.is_none() && std::time::Instant::now() < fim {
-        if let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(500), link.receber()).await {
+        if let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_millis(500), link.receber()).await
+        {
             if cmd_de(&data) == 232 {
                 livre = Some(data);
             }
@@ -5784,8 +7008,19 @@ async fn soltar(versao: GameVersion) {
     let livre = livre.expect("sem FREE_PET");
     assert_eq!(livre.len(), 2 + 8, "tamanho do FREE_PET");
     assert_eq!((i32_de(&livre, 2), i32_de(&livre, 6)), (1, 10386));
-    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 1).await.unwrap().is_none(), "o slot 1 continua na jaula");
-    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0).await.unwrap().is_some());
+    assert!(
+        itens
+            .get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 1)
+            .await
+            .unwrap()
+            .is_none(),
+        "o slot 1 continua na jaula"
+    );
+    assert!(itens
+        .get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0)
+        .await
+        .unwrap()
+        .is_some());
 }
 
 #[tokio::test]
@@ -5803,29 +7038,95 @@ async fn soltar_o_mascote_do_155_tira_da_jaula() {
 /// (`mascote_entra`, bit 0x2000). Com ele ativo, o original recusa (`ERR_PET_IS_ALEARY_ACTIVE`).
 async fn renomear(versao: GameVersion) {
     let (mundo, addr, roleid, _convidado) = cenario!(versao);
-    let Some((mut link, itens, _pos, _)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else { return };
-    guardar_item(&itens, roleid, pw_core::ContainerType::Inventory, 5, 12403, vec![]).await;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()) }).await.unwrap();
-    let nome: Vec<u8> = "Lobo".encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
+    let Some((mut link, itens, _pos, _)) =
+        preparar_mascote(&mundo, addr, roleid, versao, &[]).await
+    else {
+        return;
+    };
+    guardar_item(
+        &itens,
+        roleid,
+        pw_core::ContainerType::Inventory,
+        5,
+        12403,
+        vec![],
+    )
+    .await;
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    let nome: Vec<u8> = "Lobo"
+        .encode_utf16()
+        .flat_map(|c| c.to_le_bytes())
+        .collect();
     let mut c = 0u16.to_le_bytes().to_vec();
     c.extend_from_slice(&(nome.len() as u16).to_le_bytes());
     c.extend_from_slice(&nome);
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::RENOMEAR_MASCOTE, &c) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::RENOMEAR_MASCOTE, &c),
+    })
+    .await
+    .unwrap();
     let sala = esperar_comando(&mut link, 239).await;
     assert_eq!(u16::from_le_bytes([sala[2], sala[3]]), 1);
-    let gravado = pw_core::InfoPet::do_bloco(&itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0).await.unwrap().unwrap().octets).unwrap();
+    let gravado = pw_core::InfoPet::do_bloco(
+        &itens
+            .get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0)
+            .await
+            .unwrap()
+            .unwrap()
+            .octets,
+    )
+    .unwrap();
     assert_eq!(&gravado.name[..gravado.name_len as usize], &nome[..]);
-    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 5).await.unwrap().is_none_or(|i| i.count == 0), "o 12403 não saiu");
+    assert!(
+        itens
+            .get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 5)
+            .await
+            .unwrap()
+            .is_none_or(|i| i.count == 0),
+        "o 12403 não saiu"
+    );
 
     // A entrada do mascote (cmd 16, a quem está perto — o dono também) vem antes do 233.
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SUMMON_PET, &0u32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
     let entra = esperar_comando(&mut link, 16).await;
-    assert!(entra.ends_with(&nome), "a entrada do mascote não leva o nome novo: {:02x?}", &entra[entra.len().saturating_sub(12)..]);
+    assert!(
+        entra.ends_with(&nome),
+        "a entrada do mascote não leva o nome novo: {:02x?}",
+        &entra[entra.len().saturating_sub(12)..]
+    );
     assert_eq!(entra[entra.len() - nome.len() - 1] as usize, nome.len());
     esperar_comando(&mut link, 233).await;
 
-    guardar_item(&itens, roleid, pw_core::ContainerType::Inventory, 5, 12403, vec![]).await;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::RENOMEAR_MASCOTE, &c) }).await.unwrap();
+    guardar_item(
+        &itens,
+        roleid,
+        pw_core::ContainerType::Inventory,
+        5,
+        12403,
+        vec![],
+    )
+    .await;
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::RENOMEAR_MASCOTE, &c),
+    })
+    .await
+    .unwrap();
     let erro = esperar_comando(&mut link, 25).await;
     assert_eq!(i32_de(&erro, 2), 71, "renomear o ativo");
 }
@@ -5845,37 +7146,96 @@ async fn renomear_o_mascote_do_155_grava_e_aparece_na_entrada() {
 /// jaula e ao cliente (`PET_ROOM`).
 async fn aprender_e_esquecer(versao: GameVersion) {
     let (mundo, addr, roleid, _convidado) = cenario!(versao);
-    let Some((mut link, itens, _pos, _)) = preparar_mascote(&mundo, addr, roleid, versao, &[(747, 1)]).await else { return };
-    guardar_item(&itens, roleid, pw_core::ContainerType::Inventory, 5, 11693, vec![]).await;
-    guardar_item(&itens, roleid, pw_core::ContainerType::Inventory, 6, 11690, vec![]).await;
-    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().sp = 8_000;
+    let Some((mut link, itens, _pos, _)) =
+        preparar_mascote(&mundo, addr, roleid, versao, &[(747, 1)]).await
+    else {
+        return;
+    };
+    guardar_item(
+        &itens,
+        roleid,
+        pw_core::ContainerType::Inventory,
+        5,
+        11693,
+        vec![],
+    )
+    .await;
+    guardar_item(
+        &itens,
+        roleid,
+        pw_core::ContainerType::Inventory,
+        6,
+        11690,
+        vec![],
+    )
+    .await;
+    mundo
+        .write()
+        .await
+        .players
+        .get_mut(&(roleid as i64))
+        .unwrap()
+        .sp = 8_000;
     let pet = invocar_do_slot(&mut link, roleid, 0).await;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
 
     link.enviar(BusMessage::ClientToGame {
         roleid,
         localsid: LOCALSID,
-        data: pedido_ao_npc(pw_gs::npc::servico::APRENDER_HABILIDADE_DE_MASCOTE, &748i32.to_le_bytes()),
+        data: pedido_ao_npc(
+            pw_gs::npc::servico::APRENDER_HABILIDADE_DE_MASCOTE,
+            &748i32.to_le_bytes(),
+        ),
     })
     .await
     .unwrap();
     esperar_comando(&mut link, 239).await;
-    assert_eq!(&mundo.read().await.mascotes[&pet].info.skills[..3], &[(747, 1), (748, 1), (0, 0)]);
+    assert_eq!(
+        &mundo.read().await.mascotes[&pet].info.skills[..3],
+        &[(747, 1), (748, 1), (0, 0)]
+    );
     assert_eq!(mundo.read().await.players[&(roleid as i64)].sp, 3_000);
-    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 5).await.unwrap().is_none_or(|i| i.count == 0), "o livro não saiu");
+    assert!(
+        itens
+            .get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 5)
+            .await
+            .unwrap()
+            .is_none_or(|i| i.count == 0),
+        "o livro não saiu"
+    );
 
     link.enviar(BusMessage::ClientToGame {
         roleid,
         localsid: LOCALSID,
-        data: pedido_ao_npc(pw_gs::npc::servico::ESQUECER_HABILIDADE_DE_MASCOTE, &747i32.to_le_bytes()),
+        data: pedido_ao_npc(
+            pw_gs::npc::servico::ESQUECER_HABILIDADE_DE_MASCOTE,
+            &747i32.to_le_bytes(),
+        ),
     })
     .await
     .unwrap();
     esperar_comando(&mut link, 239).await;
-    assert_eq!(&mundo.read().await.mascotes[&pet].info.skills[..2], &[(748, 1), (0, 0)]);
+    assert_eq!(
+        &mundo.read().await.mascotes[&pet].info.skills[..2],
+        &[(748, 1), (0, 0)]
+    );
     let mut gravado = None;
     for _ in 0..50 {
-        let i = pw_core::InfoPet::do_bloco(&itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0).await.unwrap().unwrap().octets).unwrap();
+        let i = pw_core::InfoPet::do_bloco(
+            &itens
+                .get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 0)
+                .await
+                .unwrap()
+                .unwrap()
+                .octets,
+        )
+        .unwrap();
         if i.skills[0] == (748, 1) {
             gravado = Some(i);
             break;
@@ -5901,7 +7261,11 @@ async fn o_mascote_do_155_aprende_e_esquece_habilidade_no_npc() {
 /// nas duas versões. Relato da Tsuko: aprendeu Curar/Reviver Mascote e o livro ficou na bolsa.
 async fn aprender_consome_o_livro(versao: GameVersion) {
     let (mundo, addr, roleid, _convidado) = cenario!(versao);
-    let Some((mut link, itens, _pos, _)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else { return };
+    let Some((mut link, itens, _pos, _)) =
+        preparar_mascote(&mundo, addr, roleid, versao, &[]).await
+    else {
+        return;
+    };
     {
         let mut m = mundo.write().await;
         let p = m.players.get_mut(&(roleid as i64)).unwrap();
@@ -5909,28 +7273,93 @@ async fn aprender_consome_o_livro(versao: GameVersion) {
         p.money += 10_000;
         p.habilidades.remove(&329);
     }
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
 
     // Sem o livro: 22 e nada aprendido.
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::APRENDER_HABILIDADE, &329i32.to_le_bytes()) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(
+            pw_gs::npc::servico::APRENDER_HABILIDADE,
+            &329i32.to_le_bytes(),
+        ),
+    })
+    .await
+    .unwrap();
     let erro = esperar_comando(&mut link, 25).await;
     assert_eq!(i32_de(&erro, 2), 22);
-    assert!(!mundo.read().await.players[&(roleid as i64)].habilidades.contains_key(&329));
+    assert!(!mundo.read().await.players[&(roleid as i64)]
+        .habilidades
+        .contains_key(&329));
 
     // Com o livro no slot 7: aprende, e o 11524 sai (`DROP_TYPE_TAKEOUT` = 2).
-    guardar_item(&itens, roleid, pw_core::ContainerType::Inventory, 7, 11524, vec![]).await;
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::APRENDER_HABILIDADE, &329i32.to_le_bytes()) }).await.unwrap();
+    guardar_item(
+        &itens,
+        roleid,
+        pw_core::ContainerType::Inventory,
+        7,
+        11524,
+        vec![],
+    )
+    .await;
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(
+            pw_gs::npc::servico::APRENDER_HABILIDADE,
+            &329i32.to_le_bytes(),
+        ),
+    })
+    .await
+    .unwrap();
     let saiu = esperar_comando(&mut link, 46).await;
     if versao == GameVersion::V1_2_6 {
         // 1.2.6: `{u8 where, u8 index, u16 count, int tid, char type}`, 9 B — a ordem em que o
         // `S2C::CMD::Make<player_drop_item>::From` do `gs` 1.2.6 escreve (VA 0x80906af-0x80906d3).
         assert_eq!(saiu.len(), 2 + 9);
-        assert_eq!((saiu[2], saiu[3], u16::from_le_bytes([saiu[4], saiu[5]]), i32_de(&saiu, 6), saiu[10]), (0, 7, 1, 11524, 2));
+        assert_eq!(
+            (
+                saiu[2],
+                saiu[3],
+                u16::from_le_bytes([saiu[4], saiu[5]]),
+                i32_de(&saiu, 6),
+                saiu[10]
+            ),
+            (0, 7, 1, 11524, 2)
+        );
     } else {
-        assert_eq!((saiu[2], saiu[3], i32_de(&saiu, 4), i32_de(&saiu, 8), saiu[12]), (0, 7, 1, 11524, 2));
+        assert_eq!(
+            (
+                saiu[2],
+                saiu[3],
+                i32_de(&saiu, 4),
+                i32_de(&saiu, 8),
+                saiu[12]
+            ),
+            (0, 7, 1, 11524, 2)
+        );
     }
-    assert_eq!(mundo.read().await.players[&(roleid as i64)].habilidades.get(&329).copied(), Some(1));
-    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 7).await.unwrap().is_none_or(|i| i.count == 0), "o livro ficou na bolsa");
+    assert_eq!(
+        mundo.read().await.players[&(roleid as i64)]
+            .habilidades
+            .get(&329)
+            .copied(),
+        Some(1)
+    );
+    assert!(
+        itens
+            .get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 7)
+            .await
+            .unwrap()
+            .is_none_or(|i| i.count == 0),
+        "o livro ficou na bolsa"
+    );
 }
 
 #[tokio::test]
@@ -5954,7 +7383,11 @@ async fn aprender_no_treinador_do_155_consome_o_livro() {
 /// (`session_npc_follow_target::Run`, `npcsession.cpp:164-280`).
 async fn seguir_sem_parar(versao: GameVersion) {
     let (mundo, addr, roleid, _convidado) = cenario!(versao);
-    let Some((mut link, _itens, pos, _)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else { return };
+    let Some((mut link, _itens, pos, _)) =
+        preparar_mascote(&mundo, addr, roleid, versao, &[]).await
+    else {
+        return;
+    };
     // Sem mapa (o cenário não carrega terreno nem movemap): tudo é alcançável e reto.
     {
         let mut m = mundo.write().await;
@@ -5972,13 +7405,18 @@ async fn seguir_sem_parar(versao: GameVersion) {
             p.position = Vector3::new(pos.x + velocidade * 0.05 * t as f32, pos.y, pos.z);
         }
         mundo.write().await.tick(50).await;
-        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(Duration::from_millis(2), link.receber()).await {
+        while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_millis(2), link.receber()).await
+        {
             if (cmd_de(&data) == 15 || cmd_de(&data) == 35) && i32_de(&data, 2) as i64 == pet {
                 vistos.push(cmd_de(&data));
             }
         }
     }
-    let primeiro = vistos.iter().position(|c| *c == 15).expect("o mascote não seguiu");
+    let primeiro = vistos
+        .iter()
+        .position(|c| *c == 15)
+        .expect("o mascote não seguiu");
     let andou = vistos[primeiro..].iter().filter(|c| **c == 15).count();
     let parou = vistos[primeiro..].iter().filter(|c| **c == 35).count();
     eprintln!("SEGUIR {versao:?}: {andou} passos, {parou} paradas");
@@ -6002,21 +7440,32 @@ async fn o_mascote_do_155_segue_o_dono_sem_parar_a_cada_passo() {
 /// `petman.cpp:1-31`): alcançável, na altura do piso, a menos de 6,8 m do dono — nunca para o
 /// pixel da plataforma, de onde o passo seguinte o assentava no terreno, dentro da estrutura.
 fn plataforma_do_anciao(realm: &str) {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").join(realm).join("config/world");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../data")
+        .join(realm)
+        .join("config/world");
     if !dir.exists() {
-        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        eprintln!(
+            "AVISO: sem {} — este teste NÃO verificou nada.",
+            dir.display()
+        );
         return;
     }
     let terreno = pw_data_loader::Terreno::ler(1, &dir);
     let movimento = pw_data_loader::MapaDeMovimento::ler(1, &dir);
     let valida = |p: Vector3| pw_gs::mascote::posicao_no_chao(&terreno, &movimento, p);
     let anciao = Vector3::new(-1537.8479, 258.5887, 969.70544);
-    assert!(movimento.acima_do_terreno(anciao.x, anciao.z).is_none(), "a plataforma passou a existir no movemap");
+    assert!(
+        movimento.acima_do_terreno(anciao.x, anciao.z).is_none(),
+        "a plataforma passou a existir no movemap"
+    );
     let mut achou = 0;
     for _ in 0..200 {
         if let Some(p) = valida(anciao) {
             achou += 1;
-            let acima = movimento.acima_do_terreno(p.x, p.z).expect("ponto inalcançável");
+            let acima = movimento
+                .acima_do_terreno(p.x, p.z)
+                .expect("ponto inalcançável");
             let chao = terreno.altura_em(p.x, p.z).unwrap();
             assert!((p.y - (chao + acima)).abs() < 1e-3);
             assert!((p.y - anciao.y).abs() < 6.8, "altura {} longe do dono", p.y);
@@ -6025,8 +7474,18 @@ fn plataforma_do_anciao(realm: &str) {
     eprintln!("ANCIÃO {realm}: {achou}/200 com ponto válido");
     // No meio da plataforma (sem nada alcançável a ~1 m) não há ponto: o original recolhe.
     let centro = Vector3::new(-1545.0, 258.6, 975.0);
-    if movimento.acima_do_terreno(centro.x - 1.2, centro.z - 1.2).is_none() && movimento.acima_do_terreno(centro.x + 1.2, centro.z + 1.2).is_none() {
-        assert!((0..50).all(|_| valida(centro).is_none_or(|p| movimento.acima_do_terreno(p.x, p.z).is_some())));
+    if movimento
+        .acima_do_terreno(centro.x - 1.2, centro.z - 1.2)
+        .is_none()
+        && movimento
+            .acima_do_terreno(centro.x + 1.2, centro.z + 1.2)
+            .is_none()
+    {
+        assert!(
+            (0..50)
+                .all(|_| valida(centro)
+                    .is_none_or(|p| movimento.acima_do_terreno(p.x, p.z).is_some()))
+        );
     }
 }
 
@@ -6045,7 +7504,11 @@ fn o_mascote_do_155_nao_vai_para_dentro_da_plataforma_do_anciao() {
 /// 540`). Antes o mascote não era alvo possível e nada acontecia.
 async fn curar_mascote(versao: GameVersion) {
     let (mundo, addr, roleid, _convidado) = cenario!(versao);
-    let Some((mut link, _itens, _pos, _)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else { return };
+    let Some((mut link, _itens, _pos, _)) =
+        preparar_mascote(&mundo, addr, roleid, versao, &[]).await
+    else {
+        return;
+    };
     let pet = invocar_do_slot(&mut link, roleid, 0).await;
     let antes = {
         let mut m = mundo.write().await;
@@ -6058,35 +7521,86 @@ async fn curar_mascote(versao: GameVersion) {
         c.hp = 100;
         c.hp
     };
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(pet as i32).to_le_bytes()) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(pet as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
     let mut corpo = 330i32.to_le_bytes().to_vec();
     corpo.push(0);
     corpo.push(0);
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CAST_SKILL, &corpo) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::CAST_SKILL, &corpo),
+    })
+    .await
+    .unwrap();
     esperar_comando(&mut link, 85).await;
     let bencao = esperar_comando(&mut link, 139).await;
-    assert_eq!(i32_de(&bencao, 6) as i64, pet, "ENCHANT_RESULT sem o mascote como alvo");
+    assert_eq!(
+        i32_de(&bencao, 6) as i64,
+        pet,
+        "ENCHANT_RESULT sem o mascote como alvo"
+    );
     // B116 — 16 B no 1.2.6 (validador do cliente, VA 0x584e52); com os 19 B do 1.5.5 o cliente
     // 1.2.6 descartava o aviso e a bênção "não fazia nada" na tela.
-    assert_eq!(bencao.len(), 2 + if versao == GameVersion::V1_2_6 { 16 } else { 19 }, "tamanho do ENCHANT_RESULT");
+    assert_eq!(
+        bencao.len(),
+        2 + if versao == GameVersion::V1_2_6 {
+            16
+        } else {
+            19
+        },
+        "tamanho do ENCHANT_RESULT"
+    );
     let depois = mundo.read().await.mascotes[&pet].corpo.hp;
     eprintln!("CURAR {versao:?}: vida {antes} → {depois}");
-    let efeitos: Vec<pw_gs::efeitos::Efeito> = mundo.read().await.mascotes[&pet].corpo.efeitos.filtros.iter().map(|f| f.efeito).collect();
+    let efeitos: Vec<pw_gs::efeitos::Efeito> = mundo.read().await.mascotes[&pet]
+        .corpo
+        .efeitos
+        .filtros
+        .iter()
+        .map(|f| f.efeito)
+        .collect();
     if versao == GameVersion::V1_2_6 {
         // `gs` 1.2.6: só `Heal`, `55·L − 10 + dano mágico × (0,02·L + 0,1)` — 45 no nível 1.
-        assert!(depois >= antes + 45, "a Curar Mascote não curou: {antes} → {depois}");
-        assert!(efeitos.is_empty(), "o 1.2.6 não tem Rebirth/Decregiondmg: {efeitos:?}");
+        assert!(
+            depois >= antes + 45,
+            "a Curar Mascote não curou: {antes} → {depois}"
+        );
+        assert!(
+            efeitos.is_empty(),
+            "o 1.2.6 não tem Rebirth/Decregiondmg: {efeitos:?}"
+        );
         return;
     }
     // 1.5.5: `S_Magicdamage × 0,3 + 540`, e os dois filtros por 30 s.
-    assert!(depois >= antes + 540, "a Curar Mascote não curou: {antes} → {depois}");
-    assert!(efeitos.contains(&pw_gs::efeitos::Efeito::Rebirth) && efeitos.contains(&pw_gs::efeitos::Efeito::Decregiondmg), "{efeitos:?}");
+    assert!(
+        depois >= antes + 540,
+        "a Curar Mascote não curou: {antes} → {depois}"
+    );
+    assert!(
+        efeitos.contains(&pw_gs::efeitos::Efeito::Rebirth)
+            && efeitos.contains(&pw_gs::efeitos::Efeito::Decregiondmg),
+        "{efeitos:?}"
+    );
     // Um golpe mortal: o `filter_Rebirth` (chance 100) o salva com 20% da vida e se desfaz.
     mundo.write().await.adiar_dano(pet, -5, 1_000_000, 0, false);
     let m = mundo.read().await;
-    let c = &m.mascotes.get(&pet).expect("o mascote morreu apesar do Rebirth").corpo;
+    let c = &m
+        .mascotes
+        .get(&pet)
+        .expect("o mascote morreu apesar do Rebirth")
+        .corpo;
     assert_eq!(c.hp, 2_000, "20% de 10.000");
-    assert!(!c.efeitos.filtros.iter().any(|f| f.efeito == pw_gs::efeitos::Efeito::Rebirth));
+    assert!(!c
+        .efeitos
+        .filtros
+        .iter()
+        .any(|f| f.efeito == pw_gs::efeitos::Efeito::Rebirth));
 }
 
 #[tokio::test]
@@ -6135,10 +7649,21 @@ async fn vender_dois_itens_ao_npc_no_126() {
         c.extend_from_slice(&slot.to_le_bytes());
         c.extend_from_slice(&1u32.to_le_bytes());
     }
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::NPC_COMPRA, &c) }).await.unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::NPC_COMPRA, &c),
+    })
+    .await
+    .unwrap();
     let (mut soltos, mut pagos) = (Vec::new(), Vec::new());
     let fim = std::time::Instant::now() + Duration::from_millis(1500);
-    while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(fim.saturating_duration_since(std::time::Instant::now()), link.receber()).await {
+    while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) = tokio::time::timeout(
+        fim.saturating_duration_since(std::time::Instant::now()),
+        link.receber(),
+    )
+    .await
+    {
         match cmd_de(&data) {
             181 => soltos.push(u16::from_le_bytes([data[3], data[4]])),
             73 => pagos.push(u16::from_le_bytes([data[2], data[3]])),
@@ -6157,19 +7682,33 @@ async fn lancar(link: &mut pw_bus::transport::BusConnection, roleid: i32, skill:
     let mut corpo = skill.to_le_bytes().to_vec();
     corpo.extend_from_slice(&[0, 1]);
     corpo.extend_from_slice(&alvo.to_le_bytes());
-    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CAST_SKILL, &corpo) })
-        .await
-        .unwrap();
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::CAST_SKILL, &corpo),
+    })
+    .await
+    .unwrap();
 }
 
 /// Chamado da Raposa (312, B120): `filter_Foxform` — `PLAYER_CHGSHAPE` com a forma da versão,
 /// mana máxima −(35 − 5·L)%, as habilidades de forma humana recusadas (`allow_forms`) e a
 /// própria 312 desfazendo a raposa (`SetFoxform`, `playerwrapper.cpp:2539-2551`).
-async fn conferir_raposa(versao: GameVersion, byte_de_forma: u8) {
+async fn conferir_raposa(versao: GameVersion, byte_de_forma: u8, precisao: i32) {
     let (mundo, addr, roleid, _convidado) = cenario!(versao);
     let mut dono = entrar(&mundo, addr, roleid).await;
-    // A 312 custa 30 × L de mana; o personagem de teste tem pouca.
-    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().mp = 10_000;
+    // A 312 custa 30 × L de mana; o personagem de teste tem pouca. Ele conhece as duas
+    // passivas da raposa no nível 1.
+    let (nado_antes, ataque_antes) = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.mp = 10_000;
+        p.habilidades.insert(323, 1);
+        p.habilidades.insert(324, 1);
+        m.refazer_atributos(roleid as i64);
+        let p = &m.players[&(roleid as i64)];
+        (p.swim_speed, p.attack_max)
+    };
     lancar(&mut dono, roleid, 312, roleid).await;
     let forma = esperar_comando(&mut dono, 163).await;
     assert_eq!(forma.len(), 2 + 5, "PLAYER_CHGSHAPE: id + shape");
@@ -6180,10 +7719,21 @@ async fn conferir_raposa(versao: GameVersion, byte_de_forma: u8) {
         let p = m.players.get(&(roleid as i64)).unwrap();
         assert_eq!(p.efeitos.forma_atual(), 1, "GetForm() == FORM_CLASS");
         assert!(p.efeitos.equipamento_travado(), "LockEquipment(true)");
-        // Nível 1 (`skill312.h:163-167`): `_decmp` (int)(100 × 0,3) = 30, `_incdefence`
-        // (int)(100 × 0,6) = 60, `_incaccuracy` (int)(100 × 1,0) = 100.
+        // Nível 1: `_decmp` (int)(100 × 0,3) = 30, `_incdefence` (int)(100 × 0,6) = 60 e
+        // `_incaccuracy` (int)(100 × probability): 1,0 no 1.5.5 (`skill312.h:163-167`), 1,5 no
+        // 1.2.6 (`filter_Foxform` VA 0x83080b8 com `ratio`/`amount`/`probability` de +0x70/+0x74/
+        // +0x6c do `PlayerWrapper`, B122).
         let r = p.efeitos.realce();
-        assert_eq!((r.mana, r.defesa, r.precisao), (-30, 60, 100), "ImpairScaleMaxMP/EnhanceScaleDefense/EnhanceScaleAttack");
+        assert_eq!(
+            (r.mana, r.defesa, r.precisao),
+            (-30, 60, precisao),
+            "ImpairScaleMaxMP/EnhanceScaleDefense/EnhanceScaleAttack"
+        );
+        // `EventChange(0 → FORM_CLASS)`: `EnhanceSwimSpeed(50)` e `EnhanceScaleDamage(30)`.
+        assert_eq!(
+            (p.passivas_de_forma.natacao, p.passivas_de_forma.dano),
+            (50, 30)
+        );
     }
     // A 299 não vale na forma de classe (`allow_forms` 1 no 1.5.5, 5 no 1.2.6).
     lancar(&mut dono, roleid, 299, MONSTRO as i32).await;
@@ -6203,17 +7753,22 @@ async fn conferir_raposa(versao: GameVersion, byte_de_forma: u8) {
     let p = m.players.get(&(roleid as i64)).unwrap();
     assert_eq!(p.efeitos.forma_atual(), 0);
     assert_eq!(p.efeitos.realce().mana, 0, "a mana máxima volta");
+    // `EventChange(FORM_CLASS → 0)`: o `UndoEffect` tira as passivas.
+    // Nado e dano passam pelo `UpdateSpeed`/`UpdateAttack`, que precisam das tabelas de classe e
+    // do `ptemplate.conf` que este cenário não tem — o efeito neles está em
+    // `arqueiro_do_realm.rs::as_passivas_de_forma_valem_so_na_forma_de_classe`.
+    let _ = (nado_antes, ataque_antes);
     assert!(!p.efeitos.equipamento_travado());
 }
 
 #[tokio::test]
 async fn o_chamado_da_raposa_transforma_e_desfaz_155() {
-    conferir_raposa(GameVersion::V1_5_5, 1 | (1 << 6)).await;
+    conferir_raposa(GameVersion::V1_5_5, 1 | (1 << 6), 100).await;
 }
 
 #[tokio::test]
 async fn o_chamado_da_raposa_transforma_e_desfaz_126() {
-    conferir_raposa(GameVersion::V1_2_6, 1).await;
+    conferir_raposa(GameVersion::V1_2_6, 1, 150).await;
 }
 
 /// Muralha de Espinhos (306, B120): o `filter_Retort` devolve ao monstro `(int)(physic_damage
@@ -6231,7 +7786,11 @@ async fn a_muralha_de_espinhos_devolve_o_golpe_do_monstro() {
     let hp_do_monstro = {
         let mut m = mundo.write().await;
         // Ameaça direto na IA: um golpe do jogador cairia adiado no meio da medida.
-        m.monsters.get_mut(&MONSTRO).unwrap().1.add_threat(roleid as i64, 10);
+        m.monsters
+            .get_mut(&MONSTRO)
+            .unwrap()
+            .1
+            .add_threat(roleid as i64, 10);
         let p = m.players.get_mut(&(roleid as i64)).unwrap();
         p.hp = p.max_hp.max(10_000);
         p.max_hp = p.hp;
@@ -6255,11 +7814,77 @@ async fn a_muralha_de_espinhos_devolve_o_golpe_do_monstro() {
         monstro.hp
     };
     let hp_inicial = mundo.read().await.players[&(roleid as i64)].hp;
-    let apanhou = tickar_ate(&mundo, |m| m.players.get(&(roleid as i64)).is_some_and(|p| p.hp < hp_inicial)).await;
+    let apanhou = tickar_ate(&mundo, |m| {
+        m.players
+            .get(&(roleid as i64))
+            .is_some_and(|p| p.hp < hp_inicial)
+    })
+    .await;
     assert!(apanhou, "o monstro não bateu");
     let perdeu = hp_do_monstro - mundo.read().await.monsters[&MONSTRO].0.hp;
     // 200 × 0,2 = 40, defesa 0; o crítico do jogador vale no golpe devolvido (`FillAttackMsg`).
-    assert!(perdeu == 40 || perdeu == 80, "o espinho tirou {perdeu} do monstro, esperado 40 (ou 80 no crítico)");
+    assert!(
+        perdeu == 40 || perdeu == 80,
+        "o espinho tirou {perdeu} do monstro, esperado 40 (ou 80 no crítico)"
+    );
+    // B124 — o dono vê o golpe refletido: `SELF_ATTACK_RESULT` (24) com `MOD_RETORT` (0x20),
+    // como o `gnpc_dispatcher::be_damaged` (`npc.cpp:228-235`).
+    let resultado = esperar_comando(&mut link, 24).await;
+    assert_eq!(i32_em(&resultado, 2), MONSTRO as i32);
+    assert_eq!(i32_em(&resultado, 6), perdeu as i32);
+    // 1.2.6: `attack_flag` é um byte em +10 (`{id, dano, char flag, char speed}`).
+    assert_eq!(resultado[2 + 8] & 0x20, 0x20, "sem AT_STATE_ATTACK_RETORT");
+}
+
+/// B124 — sentado: apanhar levanta (`LeaveStayInState`, `player.cpp:782-788`, `OBJECT_STAND_UP`
+/// 112) e pedir o mascote é ignorado (`StayInCommandHandler`, `playercmd.cpp:873-1015`).
+#[tokio::test]
+async fn sentado_o_mascote_e_ignorado_e_apanhar_levanta() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let mut link = entrar(&mundo, addr, roleid).await;
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SIT_DOWN, &[]),
+    })
+    .await
+    .unwrap();
+    esperar_comando(&mut link, 111).await;
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::RECALL_PET, &[]),
+    })
+    .await
+    .unwrap();
+    while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+        tokio::time::timeout(Duration::from_millis(400), link.receber()).await
+    {
+        assert!(
+            ![25, 235, 236].contains(&cmd_de(&data)),
+            "o pedido de mascote sentado foi respondido ({})",
+            cmd_de(&data)
+        );
+    }
+    assert!(
+        mundo.read().await.players[&(roleid as i64)].sentado,
+        "continua sentado"
+    );
+    {
+        let mut m = mundo.write().await;
+        m.mover_jogador(roleid, Vector3::new(5.0, 0.0, 5.0));
+        m.monsters
+            .get_mut(&MONSTRO)
+            .unwrap()
+            .1
+            .add_threat(roleid as i64, 10);
+    }
+    assert!(
+        tickar_ate(&mundo, |m| !m.players[&(roleid as i64)].sentado).await,
+        "apanhar não levantou"
+    );
+    let levantou = esperar_comando(&mut link, 112).await;
+    assert_eq!(i32_em(&levantou, 2), roleid);
 }
 
 /// O `Retort` só devolve golpe **físico corpo a corpo** que dê mais de 1
@@ -6269,10 +7894,245 @@ fn os_espinhos_so_devolvem_acima_de_um() {
     use pw_gs::efeitos::{Efeito, Efeitos, Filtro};
     let mut e = Efeitos::default();
     assert_eq!(e.espinhos(200), None, "sem o filtro, nada");
-    e.adicionar(Filtro { efeito: Efeito::Retort, restante_s: 600, razao: 20, fator: 0.2, por_segundo: 0, contador: 0, origem: 0, icone: true, absorve: 0.0, escala_defesa: 0 });
+    e.adicionar(Filtro {
+        efeito: Efeito::Retort,
+        restante_s: 600,
+        razao: 20,
+        fator: 0.2,
+        por_segundo: 0,
+        contador: 0,
+        origem: 0,
+        icone: true,
+        absorve: 0.0,
+        escala_defesa: 0,
+    });
     assert_eq!(e.espinhos(200), Some(40));
     assert_eq!(e.espinhos(9), None, "(int)(9 × 0,2) = 1 não passa de 1");
     assert_eq!(e.espinhos(1_000_000), None, "o teto do 1.5.5");
     assert_eq!(e.icones(), vec![(4, 600)], "HSTATE_RETORT com o tempo");
     assert_eq!(e.estados_visiveis()[0], 1 << 3, "VSTATE_RETORT");
+}
+
+/// Um `precinct.sev` v7 com um distrito quadrado de (0, 0) a (10, 10) no mapa 1 e o ponto de
+/// cidade `ponto` (o formato de `Distritos::ler`, `crates/pw-data-loader/src/precinct.rs`).
+fn precinct_de_um_quadrado(ponto: [f32; 3]) -> pw_data_loader::precinct::Distritos {
+    let mut b = Vec::new();
+    for v in [7u32, 1, 123] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in [4i32, 0, 1, 1, 0] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    b.push(0);
+    for c in ponto {
+        b.extend_from_slice(&c.to_le_bytes());
+    }
+    for (x, z) in [(0.0f32, 0.0f32), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)] {
+        for c in [x, 0.0, z] {
+            b.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    pw_data_loader::precinct::Distritos::ler(&b).expect("precinct de teste")
+}
+
+/// Portal da Cidade (167) no 1.2.6 (B122): o `StateAttack` do `gs` 1.2.6 faz `SetReturntown`,
+/// que leva ao ponto de cidade do distrito (`gplayer_imp::ReturnToTown`, `player.cpp:10949-10957`,
+/// com o `GetTownPosition` do renascer na cidade).
+#[tokio::test]
+async fn o_portal_da_cidade_do_126_leva_ao_ponto_do_distrito() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let ponto = [3.0f32, 0.0, 4.0];
+    {
+        let mut m = mundo.write().await;
+        let dm = Arc::make_mut(&mut m.data_manager);
+        dm.distritos.insert(1, precinct_de_um_quadrado(ponto));
+        m.mover_jogador(roleid, Vector3::new(8.0, 0.0, 8.0));
+        m.players.get_mut(&(roleid as i64)).unwrap().mp = 10_000;
+    }
+    lancar(&mut link, roleid, 167, roleid).await;
+    let mut chegou = false;
+    for _ in 0..800 {
+        {
+            let m = mundo.read().await;
+            let p = &m.players[&(roleid as i64)].position;
+            if (p.x - ponto[0]).abs() < 0.01 && (p.z - ponto[2]).abs() < 0.01 {
+                chegou = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(chegou, "a 167 devia levar ao ponto de cidade do distrito");
+}
+
+/// B122 — o descarte parcial no 1.2.6: o cliente manda `{u8 index; u16 amount}` (o `gs` 1.2.6
+/// exige 5 B com o cabeçalho, VA 0x80ce383, e lê `word [+3]`). Lido como o `u32` do 1.5.5, o
+/// corpo de 3 B não trazia quantidade e ia a pilha inteira.
+#[tokio::test]
+async fn o_descarte_parcial_do_126_le_a_quantidade_em_u16() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let mut link = entrar(&mundo, addr, roleid).await;
+    const TID: u32 = 1000;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens
+        .upsert_item(&pw_core::ItemRecord {
+            id: None,
+            character_id: roleid,
+            container_type: pw_core::ContainerType::Inventory,
+            slot: 5,
+            item_id: TID,
+            count: 3,
+            max_count: 99,
+            refine_level: 0,
+            sockets_count: 0,
+            sockets: vec![],
+            durability: 0,
+            max_durability: 0,
+            bind_status: 0,
+            octets: vec![],
+            custom_attributes: serde_json::json!({}),
+        })
+        .await
+        .expect("guardar o item");
+    let mut corpo = vec![5u8];
+    corpo.extend_from_slice(&2u16.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::DROP_IVTR_ITEM, &corpo),
+    })
+    .await
+    .unwrap();
+    let destrave = esperar_comando(&mut link, 181).await;
+    assert_eq!(
+        u16::from_le_bytes([destrave[3], destrave[4]]),
+        5,
+        "o mesmo slot"
+    );
+    let sobrou = itens
+        .get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 5)
+        .await
+        .expect("consulta")
+        .expect("o resto do monte tem de ficar");
+    assert_eq!(sobrou.count, 1, "3 − 2 = 1, e não a pilha inteira");
+    assert!(mundo
+        .read()
+        .await
+        .drops
+        .values()
+        .any(|d| d.item_id == TID && d.count == 2));
+}
+
+/// O corpo do `MALL_SHOPPING` (106) de cada versão: `{u32 count; int×3}` no 1.5.5 e
+/// `{u32 count; short×3}` no 1.2.6 (`gs` 1.2.6 VA 0x80d1637).
+fn pedido_da_loja_gold(versao: GameVersion, id: i32, indice: i32, slot: i32) -> Vec<u8> {
+    let mut c = 1u32.to_le_bytes().to_vec();
+    for v in [id, indice, slot] {
+        match versao {
+            GameVersion::V1_2_6 => c.extend((v as i16).to_le_bytes()),
+            _ => c.extend(v.to_le_bytes()),
+        }
+    }
+    subcomando(106, &c)
+}
+
+async fn cash_da_conta(mundo: &Arc<RwLock<WorldInstance>>, roleid: i32) -> i64 {
+    let repo = mundo.read().await.char_repo.clone();
+    repo.cash_da_conta(roleid).await.unwrap().unwrap()
+}
+
+#[tokio::test]
+async fn comprar_na_loja_gold_debita_o_cash_da_conta_e_da_o_item() {
+    conferir_loja_gold(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn comprar_na_loja_gold_debita_o_cash_da_conta_e_da_o_item_126() {
+    conferir_loja_gold(GameVersion::V1_2_6).await;
+}
+
+/// `PlayerDoShopping` (`gs/player.cpp:15709-16010`; `gs` 1.2.6 VA 0x807f8e0): cobra o
+/// `cash_need` da opção no cash da **conta**, entrega com `OBTAIN_ITEM` (99) e responde
+/// `PLAYER_CASH` (253) com o saldo; sem saldo, `ERR_OUT_OF_FUND` (16); oferta de outro item,
+/// `ERR_GSHOP_INVALID_REQUEST` (94).
+async fn conferir_loja_gold(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let repo = mundo.read().await.char_repo.clone();
+    sqlx::query("UPDATE accounts SET gold_balance = 1000 FROM characters c WHERE c.id = $1 AND accounts.id = c.account_id")
+        .bind(roleid)
+        .execute(repo.pool().get_ref())
+        .await
+        .unwrap();
+    let dinheiro_antes = dinheiro(&mundo, roleid).await;
+
+    // O saldo que o cliente vê é o cash da conta, não o dinheiro do personagem.
+    let pedir = |data| BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data,
+    };
+    link.enviar(pedir(subcomando(110, &[]))).await.unwrap();
+    assert_eq!(i32_em(&esperar_comando(&mut link, 253).await, 2), 1000);
+
+    link.enviar(pedir(pedido_da_loja_gold(versao, ITEM_DE_LOJA, 0, 0)))
+        .await
+        .unwrap();
+    let obtido = esperar_comando(&mut link, 99).await;
+    assert_eq!(i32_em(&obtido, 2), ITEM_DE_LOJA);
+    assert_eq!(i32_em(&obtido, 6), 0, "o expire_date do molde");
+    let slot = *obtido.last().unwrap() as u16;
+    assert_eq!(
+        i32_em(&esperar_comando(&mut link, 253).await, 2),
+        1000 - PRECO_NA_LOJA_GOLD as i32
+    );
+    assert_eq!(
+        cash_da_conta(&mundo, roleid).await,
+        1000 - PRECO_NA_LOJA_GOLD
+    );
+    assert_eq!(
+        dinheiro(&mundo, roleid).await,
+        dinheiro_antes,
+        "a Loja Gold não mexe no dinheiro"
+    );
+    let itens = repo.item_repo().clone();
+    let chegou = ate_async(move || {
+        let i = itens.clone();
+        async move {
+            i.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, slot)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|x| x.item_id == ITEM_DE_LOJA as u32)
+        }
+    })
+    .await;
+    assert!(chegou, "o item comprado não chegou ao slot {slot} da bolsa");
+
+    // Sem saldo para a segunda.
+    link.enviar(pedir(pedido_da_loja_gold(versao, ITEM_DE_LOJA, 0, 0)))
+        .await
+        .unwrap();
+    assert_eq!(i32_em(&esperar_comando(&mut link, 25).await, 2), 16);
+    // Oferta 0 pedida como outro item.
+    link.enviar(pedir(pedido_da_loja_gold(versao, ITEM_DE_LOJA + 1, 0, 0)))
+        .await
+        .unwrap();
+    assert_eq!(i32_em(&esperar_comando(&mut link, 25).await, 2), 94);
+    // Opção vazia.
+    link.enviar(pedir(pedido_da_loja_gold(versao, ITEM_DE_LOJA, 0, 1)))
+        .await
+        .unwrap();
+    assert_eq!(i32_em(&esperar_comando(&mut link, 25).await, 2), 94);
+    // VIP exigido: o `pw-gs` não tem VIP.
+    link.enviar(pedir(pedido_da_loja_gold(versao, ITEM_DE_LOJA, 1, 0)))
+        .await
+        .unwrap();
+    assert_eq!(i32_em(&esperar_comando(&mut link, 25).await, 2), 226);
+    assert_eq!(
+        cash_da_conta(&mundo, roleid).await,
+        1000 - PRECO_NA_LOJA_GOLD,
+        "recusa não cobra"
+    );
 }

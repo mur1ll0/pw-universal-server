@@ -14,6 +14,33 @@ pub trait WorldProtocol: Send + Sync {
         16
     }
 
+    /// Cabeçalho do pedido de **compra** ao NPC (`c2s_SendCmdNPCSevBuy`), antes da lista de
+    /// `{tid, index, count}`: 28 B no 1.5.5 (`money`, cinco campos de contribuição/facção,
+    /// `item_count`). O `item_count` é sempre o último `int`. O 1.2.6 sobrescreve.
+    fn bytes_do_cabecalho_da_compra(&self) -> usize {
+        28
+    }
+
+    /// A quantidade do `C2S::DROP_IVTR_ITEM` (14), depois do `u8 index`: `u32` no 1.5.5 (o
+    /// corpo de 5 B que o descarte lê desde o B84). `None` quando o corpo não a traz. O 1.2.6
+    /// sobrescreve.
+    fn quantidade_do_descarte(&self, corpo: &[u8]) -> Option<u32> {
+        corpo.get(1..5).map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+    }
+
+    /// `C2S::MALL_SHOPPING` (106): a primeira entrada do pedido de compra na Loja Gold,
+    /// `(goods_id, goods_index, goods_slot)`, ou `None` se o corpo não tiver o tamanho que
+    /// o original exige.
+    ///
+    /// 1.5.5: `{ u32 count; count × { int goods_id; int goods_index; int goods_slot } }`
+    /// (`common/protocol.h:5654-5665`); o `gs` recusa com `ERR_FATAL_ERR` se `count == 0`,
+    /// `count > 65535` ou o tamanho não for `6 + 12·count` com o cabeçalho, e só compra a
+    /// `list[0]` (`PlayerDoShopping(1, …)`, `gs/playercmd.cpp:3299-3318`). O 1.2.6
+    /// sobrescreve.
+    fn pedido_da_loja_gold(&self, corpo: &[u8]) -> Option<(i32, i32, i32)> {
+        entrada_da_loja_gold(corpo, 12, |b| i32::from_le_bytes(b.try_into().unwrap()))
+    }
+
     /// Chi por batimento de 1 s meditando: `ModifyAP(15)` no `sit_down_filter::Heartbeat` do
     /// 1.5.5 (`gs/sitdown_filter.cpp:19-34`). O 1.2.6 sobrescreve.
     fn chi_por_meditacao(&self) -> i32 {
@@ -25,6 +52,16 @@ pub trait WorldProtocol: Send + Sync {
     /// (`cskill/skill/skillfilter.cpp:398`). O 1.2.6 sobrescreve.
     fn byte_de_forma(&self, forma_155: u8) -> u8 {
         forma_155
+    }
+
+    /// `UPDATE_EXT_STATE` (124): os seis `DWORD` de estado visual. O 1.2.6 sobrescreve.
+    fn update_ext_state(&self, id: i32, estados: [u32; 6]) -> S2CGamedataSend {
+        S2CGamedataSend::update_ext_state(id, estados)
+    }
+
+    /// `ICON_STATE_NOTIFY` (125): os ícones de estado. O 1.2.6 sobrescreve.
+    fn icon_state_notify(&self, id: i32, icones: &[(u16, i32)]) -> S2CGamedataSend {
+        S2CGamedataSend::icon_state_notify(id, icones)
     }
 
     /// Avisos neutros de status enviados pelo link ao entrar no mundo.
@@ -346,6 +383,25 @@ pub trait WorldProtocol: Send + Sync {
         })
     }
 
+    /// TEAM_MEMBER_DATA (64) — cabeçalho de 6 B e 34 B por membro no 1.5.5
+    /// ([`S2CGamedataSend::team_member_data`]). O 1.2.6 sobrescreve (25 B por membro).
+    fn team_member_data(&self, lider: i32, membros: &[crate::packets::s2c::MembroDoGrupo]) -> S2CGamedataSend {
+        S2CGamedataSend::team_member_data(lider, membros)
+    }
+
+    /// NOTIFY_HOSTPOS (14) — `{A3DVECTOR pos; int tag; int line}`, 20 B no 1.5.5
+    /// (`EC_GPDataType.h:1362-1367`). O 1.2.6 sobrescreve (16 B, sem `line`).
+    fn notify_hostpos(&self, pos: Vector3, tag: i32, linha: i32) -> S2CGamedataSend {
+        S2CGamedataSend::notify_hostpos(pos, tag, linha)
+    }
+
+    /// PLAYER_MOUNTING (227) — `{ int id; int mount_id; u16 mount_color }`, 10 B no 1.5.5
+    /// (`gplayer_imp::ActiveMountState`, `gs/player.cpp:14279-14299`; zero nos dois é o
+    /// desmontar). O 1.2.6 sobrescreve (9 B).
+    fn player_mounting(&self, player_id: i32, mount_id: i32, mount_color: u16) -> S2CGamedataSend {
+        S2CGamedataSend::player_mounting(player_id, mount_id, mount_color)
+    }
+
     /// ENCHANT_RESULT (139) — bênção/maldição que pegou: `{caster, target, skill, char level,
     /// char orange_name, int attack_flag, byte section}`, 19 B no 1.5.5 (`cmd_enchant_result`,
     /// `EC_GPDataType.h`). O 1.2.6 sobrescreve (16 B).
@@ -371,9 +427,11 @@ pub trait WorldProtocol: Send + Sync {
     /// `GP_STATE_NPC_PET` (0x1000) e o id do dono logo depois; com nome, também
     /// `GP_STATE_NPC_NAME` (0x2000) + `u8` tamanho + bytes (`EC_GPDataType.h:725-770`;
     /// `CreatePet`, `obj_interface.cpp:2826-2880`). 1.5.5: 35 B de base, com `vis_tid` e
-    /// `state2`.
+    /// `state2`. `ambiente`: `GP_STATE_NPC_FLY` 0x10000 / `GP_STATE_NPC_SWIM` 0x20000
+    /// (`SetInhabitMode`, `npc.cpp:823-843`), que o cliente usa para pôr o NPC no ar
+    /// (`CECNPC::Init`, `EC_NPC.cpp:411-416`); sem bytes a mais.
     #[allow(clippy::too_many_arguments)]
-    fn mascote_entra(&self, comando: u16, nid: i32, tid: i32, vis_tid: i32, pos: Vector3, dir: u8, dono: i32, nome: &[u8]) -> S2CGamedataSend {
+    fn mascote_entra(&self, comando: u16, nid: i32, tid: i32, vis_tid: i32, pos: Vector3, dir: u8, dono: i32, nome: &[u8], ambiente: i32) -> S2CGamedataSend {
         mascote_s2c(comando, |s| {
             s.write_i32_le(nid);
             s.write_i32_le(tid);
@@ -383,7 +441,7 @@ pub trait WorldProtocol: Send + Sync {
             s.write_f32_le(pos.z);
             s.write_u16_le(0);
             s.write_u8(dir);
-            s.write_i32_le(estado_do_mascote(nome));
+            s.write_i32_le(estado_do_mascote(nome) | ambiente);
             s.write_i32_le(0);
             cauda_do_mascote(s, dono, nome);
         })
@@ -417,3 +475,15 @@ pub fn cauda_do_mascote(s: &mut crate::octets::OctetsStream, dono: i32, nome: &[
 
 // ProtocolAdapter é exportado canonicamente de crate::adapter
 pub use crate::adapter::ProtocolAdapter;
+
+/// Confere `{u32 count; count × entrada}` com `count` em `1..=65535` e o corpo exato, e
+/// devolve os três campos da primeira entrada, cada um com `bytes/3` bytes.
+pub fn entrada_da_loja_gold(corpo: &[u8], bytes: usize, ler: impl Fn(&[u8]) -> i32) -> Option<(i32, i32, i32)> {
+    let count = u32::from_le_bytes(corpo.get(0..4)?.try_into().ok()?) as usize;
+    if count == 0 || count > 65535 || corpo.len() != 4 + bytes * count {
+        return None;
+    }
+    let c = bytes / 3;
+    let e = &corpo[4..4 + bytes];
+    Some((ler(&e[0..c]), ler(&e[c..2 * c]), ler(&e[2 * c..3 * c])))
+}

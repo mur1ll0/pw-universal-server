@@ -280,6 +280,7 @@ fn as_habilidades_dos_monstros_sao_lidas() {
                 .iter()
                 .chain(&m.skills_com_50_de_vida)
                 .chain(&m.skills_com_25_de_vida)
+                .filter(|s| s.id > 0)
                 .map(|s| s.probabilidade)
         })
         .collect();

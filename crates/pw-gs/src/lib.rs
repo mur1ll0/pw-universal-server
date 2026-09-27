@@ -1,19 +1,20 @@
 pub mod ai;
-pub mod mascote;
 pub mod bus_server;
 pub mod comandos;
 pub mod combat;
+pub mod economia;
+pub mod efeitos;
 pub mod entity;
+pub mod geracao;
 pub mod grid;
 pub mod habilidades;
 pub mod mapas;
-pub mod navegacao;
+pub mod mascote;
 pub mod missoes;
-pub mod progressao;
-pub mod economia;
-pub mod efeitos;
-pub mod geracao;
+pub mod navegacao;
 pub mod npc;
+pub mod politica;
+pub mod progressao;
 pub mod server;
 pub mod world;
 

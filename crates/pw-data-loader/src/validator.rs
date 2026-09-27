@@ -70,7 +70,7 @@ impl DataValidator {
         }
 
         // 2. Valida se as ofertas do gshop.data apontam para itens reais do elements.data
-        for (&shop_id, item) in &data.gshop.items {
+        for (shop_id, item) in data.gshop.ofertas.iter().enumerate() {
             if !data.elements.is_valid_item_id(item.item_id) {
                 issues.push(IntegrityIssue {
                     category: "GSHOP_ORPHAN_ITEM",

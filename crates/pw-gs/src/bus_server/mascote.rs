@@ -82,6 +82,7 @@ impl BusServer {
             let mut mundo = self.world.write().await;
             let Some(m) = mundo.mascotes.get(&id) else { return };
             let (pos, tid, vis, dir, nome) = (m.corpo.position, m.info.pet_tid, m.vis_tid, m.ai.direcao, m.nome.clone());
+            let ambiente = m.corpo.habitat.estado_de_ambiente();
             let dono_pacotes = vec![
                 self.sub.summon_pet(m.slot as i32, m.info.pet_tid, id as i32, 0).data,
                 self.sub.pet_ai_state(m.ai.agressividade, m.ai.movimento).data,
@@ -98,7 +99,7 @@ impl BusServer {
                     p.visiveis.insert(id);
                 }
             }
-            let pacote = self.sub.mascote_entra(16, id as i32, tid, vis as i32, pos, dir, dono, &nome).data;
+            let pacote = self.sub.mascote_entra(16, id as i32, tid, vis as i32, pos, dir, dono, &nome, ambiente).data;
             (ids, pacote, dono_pacotes)
         };
         for pid in perto {

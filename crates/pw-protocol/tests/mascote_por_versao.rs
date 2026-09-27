@@ -40,12 +40,16 @@ fn os_comandos_de_mascote_do_126_tem_o_tamanho_do_validador() {
     );
     // `info_npc` 27 B + dono (bit 0x1000) e + 1 + tamanho com nome (bit 0x2000), VA 0x58486a.
     let pos = Vector3::new(1.0, 2.0, 3.0);
-    let sem_nome = w.mascote_entra(16, -5, 10386, 10386, pos, 7, 11455, &[]);
+    let sem_nome = w.mascote_entra(16, -5, 10386, 10386, pos, 7, 11455, &[], 0);
     assert_eq!(corpo(&sem_nome), (16, 27 + 4));
     assert_eq!(i32::from_le_bytes(sem_nome.data[2 + 23..2 + 27].try_into().unwrap()), 0x1000);
     assert_eq!(i32::from_le_bytes(sem_nome.data[2 + 27..2 + 31].try_into().unwrap()), 11455);
-    let com_nome = w.mascote_entra(11, -5, 10386, 10386, pos, 7, 11455, b"Lobo");
+    let com_nome = w.mascote_entra(11, -5, 10386, 10386, pos, 7, 11455, b"Lobo", 0);
     assert_eq!(corpo(&com_nome), (11, 27 + 4 + 1 + 4));
+    // B131 — mascote de ar: `GP_STATE_NPC_FLY` (0x10000) no `state`, sem mudar o tamanho.
+    let no_ar = w.mascote_entra(16, -5, 10521, 10521, pos, 7, 11455, &[], 0x10000);
+    assert_eq!(corpo(&no_ar), (16, 27 + 4));
+    assert_eq!(i32::from_le_bytes(no_ar.data[2 + 23..2 + 27].try_into().unwrap()), 0x11000);
 }
 
 /// B118 — no 1.2.6 os dois últimos bytes do 139 são o modificador (baixo e alto), sem
@@ -68,7 +72,7 @@ fn os_comandos_de_mascote_do_155_tem_o_tamanho_das_structs() {
         vec![(233, 16), (234, 9), (249, 20), (250, 2), (247, 4), (248, 8), (237, 12), (238, 16), (241, 8), (242, 8), (120, 17), (232, 8), (252, 12), (139, 19)]
     );
     let pos = Vector3::new(1.0, 2.0, 3.0);
-    let p = w.mascote_entra(16, -5, 10386, 10386, pos, 7, 11455, &[]);
+    let p = w.mascote_entra(16, -5, 10386, 10386, pos, 7, 11455, &[], 0);
     assert_eq!(corpo(&p), (16, 35 + 4));
     assert_eq!(i32::from_le_bytes(p.data[2 + 27..2 + 31].try_into().unwrap()), 0x1000);
 }

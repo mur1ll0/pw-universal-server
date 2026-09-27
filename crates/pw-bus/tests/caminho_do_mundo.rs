@@ -49,7 +49,7 @@ impl MundoDeTeste {
                         BusMessage::PlayerLogout { roleid, .. } => {
                             self.sessoes.lock().await.remove(&roleid);
                         }
-                        BusMessage::GameToClient { .. } => panic!("sentido invertido"),
+                        BusMessage::GameToClient { .. } | BusMessage::ChatSingleCast { .. } => panic!("sentido invertido"),
                     }
                 }
                 saida = fila.recv() => {

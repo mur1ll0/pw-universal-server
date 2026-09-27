@@ -109,10 +109,68 @@ def main() -> None:
                 "uniques_16_id_unique", "uniques_16_probability_unique",
                 "id_drop_after_damaged", "num_drop_after_damaged",
             } and not c["name"].startswith("hiddens_")]
+        elif origem["name"] == "TASKDICE_ESSENCE":
+            # gs 1.2.6, itemdataman::generate_taskdice (VA 0x81f08a0): task_lists[i].id
+            # em +0x144+8*i, e depois `+0x188`, `has_guid == 1` em +0x18c e `+0x190` —
+            # pile_num_max, has_guid e proc_type do fonte 1.5.5 (`gs/template/exptypes.h`,
+            # TASKDICE_ESSENCE: task_lists[20], use_on_pick, pile_num_max, has_guid,
+            # proc_type). No v7 são 8 listas (0x144..0x184) e `use_on_pick` em +0x184:
+            # 404 B. O corte do v156 punha 10 listas e perdia os quatro (B122).
+            campos_origem = campos_origem[:4] + [
+                c for j in range(1, 9) for c in (
+                    {"name": f"task_lists_{j}_id", "type": "int32", "size": 4},
+                    {"name": f"task_lists_{j}_probability", "type": "float", "size": 4})
+            ] + [c for c in campos_origem if c["name"] in {
+                "use_on_pick", "pile_num_max", "has_guid", "proc_type"}]
         elif origem["name"] == "PET_ESSENCE":
-            # O Cavalo 8784 grava 8.0/0.1 em +380/+384: `damage_d` do
-            # v156 ainda não existe no v7, deslocando speed_a/b em 4 B.
-            campos_origem = [c for c in campos_origem if c["name"] != "damage_d"]
+            # B111: o `gs` 1.2.6 (`pet_dataman::LoadTemplate`, VA 0x8143580) lê
+            # `hp_a`…`magic_defence_d` sem o `pet_snd_type` que o corte do v156 punha em
+            # 0x154. A lista é a do `v7.json` corrigido no B111 (antes só no JSON; B122
+            # a trouxe para cá para que rodar o gerador não a desfaça).
+            campos_origem = [
+                {"name": "ID", "type": "int32", "size": 4},
+                {"name": "id_type", "type": "int32", "size": 4},
+                {"name": "Name", "type": "wstring", "size": 64},
+                {"name": "file_model", "type": "string", "size": 128},
+                {"name": "file_icon", "type": "string", "size": 128},
+                {"name": "character_combo_id", "type": "int32", "size": 4},
+                {"name": "level_max", "type": "int32", "size": 4},
+                {"name": "level_require", "type": "int32", "size": 4},
+                {"name": "hp_a", "type": "float", "size": 4},
+                {"name": "hp_b", "type": "float", "size": 4},
+                {"name": "hp_c", "type": "float", "size": 4},
+                {"name": "hp_gen_a", "type": "float", "size": 4},
+                {"name": "hp_gen_b", "type": "float", "size": 4},
+                {"name": "hp_gen_c", "type": "float", "size": 4},
+                {"name": "damage_a", "type": "float", "size": 4},
+                {"name": "damage_b", "type": "float", "size": 4},
+                {"name": "damage_c", "type": "float", "size": 4},
+                {"name": "damage_d", "type": "float", "size": 4},
+                {"name": "speed_a", "type": "float", "size": 4},
+                {"name": "speed_b", "type": "float", "size": 4},
+                {"name": "attack_a", "type": "float", "size": 4},
+                {"name": "attack_b", "type": "float", "size": 4},
+                {"name": "attack_c", "type": "float", "size": 4},
+                {"name": "armor_a", "type": "float", "size": 4},
+                {"name": "armor_b", "type": "float", "size": 4},
+                {"name": "armor_c", "type": "float", "size": 4},
+                {"name": "physic_defence_a", "type": "float", "size": 4},
+                {"name": "physic_defence_b", "type": "float", "size": 4},
+                {"name": "physic_defence_c", "type": "float", "size": 4},
+                {"name": "physic_defence_d", "type": "float", "size": 4},
+                {"name": "magic_defence_a", "type": "float", "size": 4},
+                {"name": "magic_defence_b", "type": "float", "size": 4},
+                {"name": "magic_defence_c", "type": "float", "size": 4},
+                {"name": "magic_defence_d", "type": "float", "size": 4},
+                {"name": "size", "type": "float", "size": 4},
+                {"name": "damage_delay", "type": "float", "size": 4},
+                {"name": "attack_range", "type": "float", "size": 4},
+                {"name": "attack_speed", "type": "float", "size": 4},
+                {"name": "sight_range", "type": "int32", "size": 4},
+                {"name": "food_mask", "type": "int32", "size": 4},
+                {"name": "inhabit_type", "type": "int32", "size": 4},
+                {"name": "unk", "type": "int32", "size": 4},
+            ]
         elif origem["name"] == "MONSTER_ESSENCE":
             # No monstro 986, `common_strategy` = 60 em +744 e as chances
             # de drop começam em +1220. O v7 ainda não tem os campos
@@ -135,12 +193,17 @@ def main() -> None:
                     {"name": f"materials_{j}_id", "type": "int32", "size": 4},
                     {"name": f"materials_{j}_probability", "type": "float", "size": 4},
                 ]
+            # B122 — os 48 B que eram `_opaco` em +0x194: no fonte 1.5.5
+            # (`gs/template/exptypes.h`, MINE_ESSENCE) vêm `npcgen[4]`, `aggros[1]
+            # {monster_faction, radius, num}` e `permenent`. No v7 são `npcgen[3]` +
+            # `aggros[1]` + `permenent` (48 + 12 + 4): lidos como `npcgen_4`, os 3 registros
+            # não nulos davam monstro inexistente e `num` = 0x43480000 (200.0 em float, o
+            # `radius` do `aggros`).
             campos_origem += [c for c in origem["fields"] if c["name"] in {
                 "num1", "probability1", "num2", "probability2",
                 "task_in", "task_out", "uninterruptable",
-                "npcgen_1_id_monster", "npcgen_1_num",
-                "npcgen_1_radius", "npcgen_1_life_time",
-            }]
+            } or c["name"].startswith(("npcgen_1_", "npcgen_2_", "npcgen_3_", "aggros_1_"))
+                or c["name"] == "permenent"]
         campos = []
         pos = 0
         for campo in campos_origem:

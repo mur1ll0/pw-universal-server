@@ -14233,23 +14233,23 @@
           "size": 4
         },
         {
-          "name": "task_lists_9_id",
+          "name": "use_on_pick",
           "type": "int32",
           "size": 4
         },
         {
-          "name": "task_lists_9_probability",
-          "type": "float",
-          "size": 4
-        },
-        {
-          "name": "task_lists_10_id",
+          "name": "pile_num_max",
           "type": "int32",
           "size": 4
         },
         {
-          "name": "task_lists_10_probability",
-          "type": "float",
+          "name": "has_guid",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "proc_type",
+          "type": "int32",
           "size": 4
         }
       ]
@@ -15423,9 +15423,64 @@
           "size": 4
         },
         {
-          "name": "_opaco",
-          "type": "string",
-          "size": 48
+          "name": "npcgen_2_id_monster",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "npcgen_2_num",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "npcgen_2_radius",
+          "type": "float",
+          "size": 4
+        },
+        {
+          "name": "npcgen_2_life_time",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "npcgen_3_id_monster",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "npcgen_3_num",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "npcgen_3_radius",
+          "type": "float",
+          "size": 4
+        },
+        {
+          "name": "npcgen_3_life_time",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "aggros_1_monster_faction",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "aggros_1_radius",
+          "type": "float",
+          "size": 4
+        },
+        {
+          "name": "aggros_1_num",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "permenent",
+          "type": "int32",
+          "size": 4
         }
       ]
     },

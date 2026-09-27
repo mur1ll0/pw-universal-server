@@ -1,8 +1,8 @@
 use pw_core::{CharacterClass, Gender, Race, Vector3};
+use pw_gs::ai::{MonsterAi, MonsterState};
 use pw_gs::combat::CombatEngine;
 use pw_gs::entity::{MonsterEntity, PlayerEntity};
 use pw_gs::grid::SpatialGrid;
-use pw_gs::ai::{MonsterAi, MonsterState};
 
 #[test]
 fn test_spatial_grid_queries() {
@@ -88,6 +88,7 @@ fn test_combat_engine_damage_calculation() {
         voando: false,
         montaria: None,
         forma_enviada: None,
+        passivas_de_forma: Default::default(),
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
@@ -148,6 +149,9 @@ fn test_combat_engine_damage_calculation() {
         aggro_range: 30.0,
         agressivo: false,
         sight_range: 40,
+        tamanho: 0.0,
+        tempo_de_odio_s: 20,
+        regeneracao_de_vida: 0,
         exp: 300,
         sp: 60,
         aipolicy_id: 0,

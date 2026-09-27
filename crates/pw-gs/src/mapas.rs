@@ -84,10 +84,19 @@ impl RoteadorDeMapas {
 
     async fn trocar(&self, p: crate::bus_server::PedidoDeTroca) {
         let Some(destino) = self.mapas.get(&p.mundo) else {
-            warn!("mundo: {} pediu o mapa {}, que este processo não serve ({:?})", p.roleid, p.mundo, self.mapas());
+            warn!(
+                "mundo: {} pediu o mapa {}, que este processo não serve ({:?})",
+                p.roleid,
+                p.mundo,
+                self.mapas()
+            );
             return;
         };
-        let Some(origem) = self.mapa_de(p.roleid).await.and_then(|m| self.mapas.get(&m)) else {
+        let Some(origem) = self
+            .mapa_de(p.roleid)
+            .await
+            .and_then(|m| self.mapas.get(&m))
+        else {
             return;
         };
         let Some(vindo) = origem.retirar_para_troca(p.roleid).await else {
@@ -111,7 +120,10 @@ impl RoteadorDeMapas {
 
     /// Aceita conexões de daemons de link até a escuta cair.
     pub async fn executar(self: Arc<Self>, escuta: BusListener) {
-        info!("servidor de mundo escutando o barramento pelos mapas {:?}", self.mapas());
+        info!(
+            "servidor de mundo escutando o barramento pelos mapas {:?}",
+            self.mapas()
+        );
         loop {
             match escuta.aceitar().await {
                 Ok(conexao) => {
@@ -189,6 +201,7 @@ impl RoteadorDeMapas {
             | BusMessage::PlayerLogout { roleid, .. }
             | BusMessage::ClientToGame { roleid, .. }
             | BusMessage::GameToClient { roleid, .. } => *roleid,
+            BusMessage::ChatSingleCast { dstroleid, .. } => *dstroleid,
         };
 
         let mapa = if matches!(msg, BusMessage::EnterWorld { .. }) {
@@ -223,7 +236,10 @@ impl RoteadorDeMapas {
             }
             Ok(None) => self.padrao,
             Err(e) => {
-                warn!("mundo: não consegui ler o mapa de {roleid}: {e} — vai para o {}", self.padrao);
+                warn!(
+                    "mundo: não consegui ler o mapa de {roleid}: {e} — vai para o {}",
+                    self.padrao
+                );
                 self.padrao
             }
         }

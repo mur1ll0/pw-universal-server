@@ -55,7 +55,7 @@ fn test_gshop_data_real_file_if_present() {
         let bytes = std::fs::read(path).expect("Falha ao ler gshop.data 1.2.6");
         let gshop = GShopData::load_from_bytes(&bytes).expect("Falha ao parsear gshop.data");
         
-        assert!(!gshop.items.is_empty() || gshop.timestamp > 0);
+        assert!(!gshop.ofertas.is_empty() || gshop.timestamp > 0);
     }
 }
 

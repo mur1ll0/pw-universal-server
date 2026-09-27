@@ -108,7 +108,18 @@ pub struct HabilidadeDoServidor {
     pub no_alvo: Option<Vec<(String, String, String)>>,
     #[serde(default)]
     pub em_si: Option<Vec<(String, String, String)>>,
+    /// `eventflag` do stub (`cskill/skill/skill.h:235`); 4 = `EVENT_CHANGE`.
+    #[serde(default)]
+    pub eventflag: Option<i32>,
+    /// O `TakeEffect` das passivas `EVENT_CHANGE`, que o `SkillWrapper::EventChange`
+    /// (`skillwrapper.cpp:589-610`) aplica ao entrar na forma de classe e desfaz ao sair
+    /// (`UndoEffect` = o mesmo com `enable` falso). As da raposa: 323 e 324 (B122).
+    #[serde(default)]
+    pub ao_mudar_de_forma: Option<Vec<(String, String, String)>>,
 }
+
+/// `EVENT_CHANGE` (`cskill/skill/skill.h:76`).
+pub const EVENT_CHANGE: i32 = 4;
 
 /// `GetPraydistance` = `arma × attack_range + fixo[nível]` (`GetRange()`,
 /// `playerwrapper.h:95`).
@@ -421,6 +432,8 @@ mod tests {
             distancia_de_efeito: None,
             no_alvo: None,
             em_si: None,
+            eventflag: None,
+            ao_mudar_de_forma: None,
         };
         assert_eq!(h.recarga_armada_ms(1), Some(2000));
     }

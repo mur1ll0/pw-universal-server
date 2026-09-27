@@ -167,6 +167,9 @@ pub mod ids {
     /// (`cgame/common/protocol.h`, `gs/playercmd.cpp:4262-4270`). O servidor ativa os que o
     /// jogador ainda não tem e responde `ACTIVATE_WAYPOINT` (179) para cada um.
     pub const ACTIVATE_REGION_WAYPOINTS: u16 = 178;
+    /// `MALL_SHOPPING` — compra na Loja Gold. O corpo muda por versão
+    /// (`WorldProtocol::pedido_da_loja_gold`): entradas de 12 B no 1.5.5, 6 B no 1.2.6.
+    pub const MALL_SHOPPING: u16 = 106;
     /// `QUERY_CASH_INFO` — só cabeçalho. O cliente pergunta o saldo.
     pub const QUERY_CASH_INFO: u16 = 110;
     /// `SRV::C2S::CMD::service_hello` — abrir diálogo com um NPC. O IR marca este id como
@@ -474,7 +477,10 @@ impl EmoteAction {
     pub const BYTES: usize = 4 - BYTES_DO_CABECALHO;
 
     pub fn ler(payload: &[u8]) -> Option<Self> {
-        Reader::new(payload).u16().ok().map(|action| Self { action })
+        Reader::new(payload)
+            .u16()
+            .ok()
+            .map(|action| Self { action })
     }
 }
 
@@ -730,7 +736,10 @@ mod tests {
 
     #[test]
     fn o_logout_de_um_byte_ainda_e_lido() {
-        assert_eq!(Logout::ler(&[1]).unwrap().tipo(), TipoDeSaida::SelecaoDePersonagem);
+        assert_eq!(
+            Logout::ler(&[1]).unwrap().tipo(),
+            TipoDeSaida::SelecaoDePersonagem
+        );
         assert_eq!(Logout::ler(&[0]).unwrap().tipo(), TipoDeSaida::SairDoJogo);
         assert_eq!(Logout::ler(&[]), None);
     }

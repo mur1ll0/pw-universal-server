@@ -948,6 +948,41 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
         } else {
             Vec::new()
         },
+        // B122 — o resto do bloco fixo que o motor usa, cada deslocamento pela função do
+        // `libtask.so` 1.2.6 que o lê (`files1.2.6/pwserver/gamed/libtask.so`, com símbolos;
+        // base `this + 4` = o bloco): `RecursiveCheckTimeLimit` (+0x49), `CheckDeliverTime`
+        // (+0x66, `m_lAvailFrequency` — o v55 não tem `m_lPeriodLimit`), `CheckGlobalRequired`
+        // (+0x75), `CheckDeliverTask` (+0x96 `m_bTransTo`, +0x97 mundo, ponto +0x9b entre ele e
+        // o `m_lMonsCtrl` +0xa7), `CheckMarriage` (+0xc0), `CheckGivenItems` (+0xd7/+0xdb),
+        // `CheckDeposit` (+0xe3), `CheckRepu` (+0xe8), `CheckPeriod` (+0x10a), `CheckFaction`
+        // (+0x10f), `CheckSpouse` (+0x13e), `CheckGM` (+0x140), `CheckMutexTask` (+0x149; a
+        // lista em +0x14d, 5 ids, que o `LoadFixedData` lê), `CheckTeamTask` (+0x176/+0x177),
+        // `HasAllItemsWanted` (+0x1b2 = `m_ulGoldWanted`, `TaskTempl.inl`), `CheckWaitTime`
+        // (+0x1e2) e `CalcAwardData` (+0x1e6/+0x1ea, os tipos de prêmio). `m_bKeyTask` (+0xb4)
+        // e `m_bShowPrompt` (+0xb3) pela ordem do `TaskTempl.h` entre `m_bClearAcquired` +0xae
+        // e `m_ulDelvNPC` +0xb5 (4 + 1 + 1 B), lidos pelo `LoadFixedData`.
+        limite_de_tempo: u32_em(b, 0x49),
+        frequencia: u32_em(b, 0x66) as i32,
+        max_receptores: u32_em(b, 0x75),
+        teleporte_ao_receber: (b[0x96] != 0).then(|| (u32_em(b, 0x97), [f32_em(b, 0x9b), f32_em(b, 0x9f), f32_em(b, 0xa3)])),
+        mostra_aviso: b[0xb3] != 0,
+        missao_chave: b[0xb4] != 0,
+        casamento: b[0xc0] != 0,
+        entregues_comuns: u32_em(b, 0xd7),
+        entregues_de_missao: u32_em(b, 0xdb),
+        deposito: u32_em(b, 0xe3),
+        reputacao_minima: u32_em(b, 0xe8) as i32,
+        periodo: u32_em(b, 0x10a),
+        faccao: u32_em(b, 0x10f),
+        conjuge: b[0x13e] != 0,
+        so_gm: b[0x140] != 0,
+        missoes_exclusivas: lista_u32(b, 0x14d, u32_em(b, 0x149), 5),
+        em_equipe: b[0x176] != 0,
+        recebida_pela_equipe: b[0x177] != 0,
+        dinheiro_pedido: u32_em(b, 0x1b2),
+        espera: u32_em(b, 0x1e2),
+        tipo_de_premio_sucesso: u32_em(b, 0x1e6),
+        tipo_de_premio_falha: u32_em(b, 0x1ea),
         profundidade: 1, ..Default::default()
     };
     let filhos = l.i32()?;

@@ -115,3 +115,24 @@ fn a_versao_55_le_as_flags_de_filhas() {
     // 7.993 de 7.994, pode desistir 7.254, refazer após falha 7.769.
     assert!(conta(|x| x.pai_tambem_falha) > 7900 && conta(|x| x.refazer_apos_falha) > 7700);
 }
+
+/// B122 — os campos do bloco fixo v55 que o motor usa, pelos deslocamentos do `libtask.so`
+/// 1.2.6: a distribuição medida no `tasks.data` do `realm_126` (7.994 tarefas). Número fora
+/// do lugar daria lixo aqui (frequências e prazos quaisquer, listas de exclusão sem sentido).
+#[test]
+fn os_campos_do_v55_lidos_pelo_libtask() {
+    let Some(t) = ler("realm_126") else { return };
+    let v: Vec<_> = t.tasks.values().collect();
+    let conta = |f: &dyn Fn(&pw_data_loader::tasks::TaskTemplate) -> bool| v.iter().filter(|x| f(x)).count();
+    assert_eq!(conta(&|x| x.frequencia == 1), 189, "`m_lAvailFrequency` diária");
+    assert_eq!(conta(&|x| x.frequencia == 2), 11);
+    assert_eq!(conta(&|x| x.limite_de_tempo == 36_000), 118, "prazo de 10 h");
+    assert_eq!(conta(&|x| x.espera == 600), 92, "`m_ulWaitTime` de 10 min");
+    assert_eq!(conta(&|x| x.periodo == 30) + conta(&|x| x.periodo == 20), 121, "`m_ulPremise_Period` 20/30");
+    assert_eq!(conta(&|x| x.casamento), 2);
+    assert_eq!(conta(&|x| x.so_gm), 3);
+    assert_eq!(conta(&|x| x.dinheiro_pedido == 1_000_000), 18, "`m_ulGoldWanted`");
+    assert_eq!(conta(&|x| x.teleporte_ao_receber.is_some()), 0, "nenhuma missão do 1.2.6 teleporta ao receber");
+    assert_eq!(t.tasks[&9322].missoes_exclusivas, vec![9321, 9323], "`m_ulMutexTasks`");
+}
+

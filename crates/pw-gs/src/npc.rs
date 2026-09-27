@@ -133,12 +133,15 @@ pub const CABECALHO_DE_COMPRA: usize = 28;
 /// Cabeçalho do conteúdo de uma **venda** (o NPC comprando): só `item_count`.
 pub const CABECALHO_DE_VENDA: usize = 4;
 
-/// Lê a lista de itens de uma compra.
-pub fn itens_comprados(conteudo: &[u8]) -> Vec<ItemComprado> {
-    let Some(resto) = conteudo.get(CABECALHO_DE_COMPRA..) else {
+/// Lê a lista de itens de uma compra. `cabecalho` é o tamanho do cabeçalho do cliente da
+/// versão ([`pw_protocol::WorldProtocol::bytes_do_cabecalho_da_compra`]): 28 no 1.5.5
+/// ([`CABECALHO_DE_COMPRA`]), 8 no 1.2.6. O `item_count` é sempre o último `int` dele.
+pub fn itens_comprados(conteudo: &[u8], cabecalho: usize) -> Vec<ItemComprado> {
+    let cabecalho = cabecalho.max(4);
+    let Some(resto) = conteudo.get(cabecalho..) else {
         return Vec::new();
     };
-    let quantos = contagem(conteudo, CABECALHO_DE_COMPRA - 4);
+    let quantos = contagem(conteudo, cabecalho - 4);
     let mut r = Reader::new(resto);
     (0..quantos)
         .map_while(|_| {
@@ -234,7 +237,7 @@ mod tests {
         c.extend_from_slice(&3u32.to_le_bytes()); // index
         c.extend_from_slice(&2u32.to_le_bytes()); // count
 
-        let itens = itens_comprados(&c);
+        let itens = itens_comprados(&c, CABECALHO_DE_COMPRA);
         assert_eq!(itens.len(), 1);
         assert_eq!(itens[0].tid, 4123, "leu o `money` no lugar do `tid`?");
         assert_eq!(itens[0].index, 3);
@@ -270,6 +273,22 @@ mod tests {
         assert_eq!(itens.iter().map(|i| (i.tid, i.index, i.count)).collect::<Vec<_>>(), vec![(204, 14, 1), (11525, 17, 1), (11524, 18, 1)]);
     }
 
+    /// O pedido de compra do cliente 1.2.6 capturado na VM original
+    /// (`_sync/capturas/full_interno.pcap`, subcomando 37 #0, `pw-pcapdiff --do-cliente`):
+    /// `service_type 1`, `len 20` — cabeçalho de 8 B (`money`, `item_count`), sem os cinco
+    /// campos de contribuição/facção do 1.5.5. Lido com 28 B, a lista saía vazia e a compra
+    /// não fazia nada (Tsuko, bracelete da Alfaiate, 2026-09-26).
+    #[test]
+    fn a_compra_do_126_tem_cabecalho_de_8_bytes() {
+        let c: Vec<u8> = [
+            0, 0, 0, 0, 1, 0, 0, 0, 0x9b, 0x07, 0, 0, 0xc2, 0, 0, 0, 0xe8, 0x03, 0, 0,
+        ]
+        .to_vec();
+        let itens = itens_comprados(&c, 8);
+        assert_eq!(itens.iter().map(|i| (i.tid, i.index, i.count)).collect::<Vec<_>>(), vec![(1947, 194, 1000)]);
+        assert!(itens_comprados(&c, CABECALHO_DE_COMPRA).is_empty());
+    }
+
     #[test]
     fn uma_contagem_absurda_nao_derruba_o_servidor() {
         // `item_count` vem do cliente. Sem teto, um número grande faria o servidor tentar
@@ -277,7 +296,7 @@ mod tests {
         let mut c = Vec::new();
         c.extend_from_slice(&[0u8; 24]);
         c.extend_from_slice(&u32::MAX.to_le_bytes()); // item_count
-        let itens = itens_comprados(&c);
+        let itens = itens_comprados(&c, CABECALHO_DE_COMPRA);
         assert!(itens.is_empty(), "não havia item nenhum depois da contagem");
     }
 }

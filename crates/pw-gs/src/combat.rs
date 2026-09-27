@@ -98,6 +98,43 @@ pub struct Golpe {
     pub anti_resistencia: i32,
     /// `attack->ainfo.attacker.IsPlayer() || IsPet()` — só nesse caso a distância atenua.
     pub atacante_e_jogador_ou_pet: bool,
+    /// `attacker_layer`: a camada de quem bate (`FillAttackMsg`, `actobject.cpp:1482`).
+    pub camada: Camada,
+}
+
+/// A camada em que o objeto está (`_layer_ctrl.GetLayer()`: `LAYER_GROUND`, `LAYER_AIR`,
+/// `LAYER_WATER`, `actobject.h:58-62`). Entra no ajuste de dano de [`ajuste_de_camada_no_npc`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Camada {
+    #[default]
+    Chao,
+    Ar,
+    Agua,
+}
+
+/// `gnpc_imp::AdjustDamage` (`gs/npc.cpp:1727-1768`): golpe de jogador (ou mascote) num
+/// monstro vale **metade** quando atacante e alvo estão em camadas que não se alcançam —
+/// do ar no chão ou na água, do chão na água, da água no chão ou no ar. Do chão no ar e
+/// na mesma camada, inteiro. O monstro batendo no jogador não tem ajuste por camada
+/// (`gplayer_imp::AdjustDamage`, `player.cpp:9610-9652`, só a tabela de PvP).
+pub fn ajuste_de_camada_no_npc(atacante: Camada, alvo: Camada) -> f32 {
+    use Camada::*;
+    match (atacante, alvo) {
+        (Chao, Chao) | (Ar, Ar) | (Agua, Agua) | (Chao, Ar) => 1.0,
+        (Chao, Agua) | (Ar, Chao) | (Ar, Agua) | (Agua, Chao) | (Agua, Ar) => 0.5,
+    }
+}
+
+impl Camada {
+    /// `gnpc_imp::SetInhabitMode` (`gs/npc.cpp:823-843`): no ar `TakeOff`, na água
+    /// `Swiming`, senão `Ground`.
+    pub fn do_habitat(h: crate::ai::Habitat) -> Self {
+        match h {
+            crate::ai::Habitat::Chao => Camada::Chao,
+            crate::ai::Habitat::Ar => Camada::Ar,
+            crate::ai::Habitat::Agua => Camada::Agua,
+        }
+    }
 }
 
 /// O que o alvo opõe — os campos de `_cur_prop` que o cálculo consulta.
@@ -125,6 +162,9 @@ pub struct Defesa {
     pub reducao_longe_habilidade: f32,
     pub reducao_perto_normal: f32,
     pub reducao_longe_normal: f32,
+    /// A camada do alvo quando ele é NPC (`gnpc_imp`): liga o ajuste de
+    /// [`ajuste_de_camada_no_npc`]. `None` para jogador.
+    pub camada_de_npc: Option<Camada>,
 }
 
 impl Defesa {
@@ -149,6 +189,7 @@ impl Defesa {
             reducao_longe_habilidade: 0.0,
             reducao_perto_normal: 0.0,
             reducao_longe_normal: 0.0,
+            camada_de_npc: None,
         }
     }
 }
@@ -385,8 +426,14 @@ pub fn resolver(
         return Resultado::SemEfeito;
     }
 
-    // ---- 5. crítico ----
-    let mut ajuste = 1.0f32;
+    // ---- 5. `damage_adjust`: `AdjustDamage` (camada), depois o crítico ----
+    // (`gactive_imp::HandleAttackMsg`, `actobject.cpp:731-742`.)
+    let mut ajuste = match defesa.camada_de_npc {
+        Some(alvo) if golpe.atacante_e_jogador_ou_pet => {
+            ajuste_de_camada_no_npc(golpe.camada, alvo)
+        }
+        _ => 1.0f32,
+    };
     let chance_efetiva = golpe.chance_de_critico - defesa.resistencia_a_critico;
     let critico = rolagens.critico < chance_efetiva;
     if critico {
@@ -408,7 +455,11 @@ pub fn resolver(
     // ---- 7. piso de 1 ----
     let dano = (dano as i32).max(1);
 
-    Resultado::Acertou { dano, critico, alguma_imunidade }
+    Resultado::Acertou {
+        dano,
+        critico,
+        alguma_imunidade,
+    }
 }
 
 /// Sorteia o dano físico de um golpe normal — `GenerateAttackDamage`, que usa
@@ -465,7 +516,12 @@ impl CombatEngine {
         // vestida** ao dano de fogo (`magic_damage[3]`). É o dano da arma
         // (`_parent.GetCurWeapon()`), não o dano total do personagem.
         let mut dano_magico = [0; CLASSES_MAGICAS];
-        if let Some(f) = jogador.efeitos.filtros.iter().find(|f| f.efeito == crate::efeitos::Efeito::Firearrow) {
+        if let Some(f) = jogador
+            .efeitos
+            .filtros
+            .iter()
+            .find(|f| f.efeito == crate::efeitos::Efeito::Firearrow)
+        {
             let (baixo, alto) = jogador.equipamento.arma.map(|a| a.dano).unwrap_or((0, 0));
             dano_magico[ESCOLA_DO_FOGO] += (f.fator * 0.5 * (baixo + alto) as f32) as i32;
         }
@@ -484,6 +540,8 @@ impl CombatEngine {
             anti_defesa: 0,
             anti_resistencia: 0,
             atacante_e_jogador_ou_pet: true,
+            // Voando é `LAYER_AIR`. Nadando (`LAYER_WATER`) ainda não é acompanhado.
+            camada: if jogador.voando { Camada::Ar } else { Camada::Chao },
         }
     }
 
@@ -500,7 +558,10 @@ impl CombatEngine {
         Golpe {
             nivel_do_atacante: monstro.level,
             taxa_de_ataque: com_realce(monstro.attack_rate, r.precisao),
-            dano_fisico: sortear_dano_fisico(com_realce(monstro.attack_min, r.dano), com_realce(monstro.attack_max, r.dano)),
+            dano_fisico: sortear_dano_fisico(
+                com_realce(monstro.attack_min, r.dano),
+                com_realce(monstro.attack_max, r.dano),
+            ),
             dano_magico,
             e_fisico: true,
             // Monstro comum não tem crítico próprio no original: o `crit_rate` do
@@ -513,18 +574,21 @@ impl CombatEngine {
             anti_defesa: 0,
             anti_resistencia: 0,
             atacante_e_jogador_ou_pet: false,
+            camada: Camada::do_habitat(monstro.habitat),
         }
     }
 
     pub fn defesa_do_monstro(monstro: &MonsterEntity) -> Defesa {
         use crate::entity::com_realce;
         let r = monstro.efeitos.realce();
-        Defesa::simples(
+        let mut d = Defesa::simples(
             com_realce(monstro.armor, r.evasao),
             com_realce(monstro.def_phys, r.defesa),
             monstro.resistances.map(|x| com_realce(x, r.resistencia)),
             monstro.defend_degree,
-        )
+        );
+        d.camada_de_npc = Some(Camada::do_habitat(monstro.habitat));
+        d
     }
 
     pub fn defesa_do_jogador(jogador: &PlayerEntity) -> Defesa {
@@ -580,7 +644,8 @@ impl CombatEngine {
         };
         let bruto = sortear_dano_fisico(faixa.0, faixa.1);
         let pct = 100 + bonus + (ratio * 100.0) as i32;
-        let valor = (((bruto as f32 * 0.01 * pct as f32) as i32 + plus).max(0) as f32 * d.fator) as i32;
+        let valor =
+            (((bruto as f32 * 0.01 * pct as f32) as i32 + plus).max(0) as f32 * d.fator) as i32;
         let mut g = Self::golpe_de_jogador(jogador);
         g.de_habilidade = true;
         g.dano_fisico = 0;
@@ -619,9 +684,56 @@ impl CombatEngine {
         let ratio = *d.ratio.get(i)?;
         let plus = *d.plus.get(i)? as i32;
         let pct = 100 + bonus_pct + (ratio * 100.0) as i32;
-        let valor = (((bruto as f32 * 0.01 * pct as f32) as i32 + plus).max(0) as f32 * d.fator) as i32;
+        let valor =
+            (((bruto as f32 * 0.01 * pct as f32) as i32 + plus).max(0) as f32 * d.fator) as i32;
         let mut g = Self::golpe_de_monstro(corpo);
         g.atacante_e_jogador_ou_pet = true;
+        g.de_habilidade = true;
+        g.dano_fisico = 0;
+        g.dano_magico = [0; CLASSES_MAGICAS];
+        let escola = match d.elemento.as_str() {
+            "Golddamage" => Some(0),
+            "Wooddamage" => Some(1),
+            "Waterdamage" => Some(2),
+            "Firedamage" => Some(3),
+            "Earthdamage" => Some(4),
+            _ => None,
+        };
+        match escola {
+            Some(e) => {
+                g.dano_magico[e] = valor;
+                g.e_fisico = false;
+            }
+            None => g.dano_fisico = valor,
+        }
+        Some(g)
+    }
+
+    /// O golpe de uma habilidade de monstro. `Skill::GetAttack` no NPC é o
+    /// `GeneratePhysicDamage(ratio × 100, plus)` ou o `GenerateMaigicDamage2` dele
+    /// (`gs/actobject.h:1422-1466`): o dano do `MONSTER_ESSENCE` sorteado × (100 + ratio%)/100 +
+    /// `plus` — o físico de `damage_min/max`, o mágico de `magic_damage_min/max`
+    /// (`npcgenerator.cpp:395-396`). `falta`: o `_en_percent` dos filtros do monstro (bênção de
+    /// dano nele) não entra.
+    pub fn golpe_de_habilidade_de_monstro(
+        monstro: &MonsterEntity,
+        magico: (i32, i32),
+        d: &pw_data_loader::habilidades::DanoDaHabilidade,
+        nivel: i32,
+    ) -> Option<Golpe> {
+        let i = usize::try_from(nivel - 1).ok()?;
+        let ratio = *d.ratio.get(i)?;
+        let plus = *d.plus.get(i)? as i32;
+        let faixa = if d.base == "magico" {
+            magico
+        } else {
+            (monstro.attack_min, monstro.attack_max)
+        };
+        let bruto = sortear_dano_fisico(faixa.0, faixa.1);
+        let pct = 100 + (ratio * 100.0) as i32;
+        let valor =
+            (((bruto as f32 * 0.01 * pct as f32) as i32 + plus).max(0) as f32 * d.fator) as i32;
+        let mut g = Self::golpe_de_monstro(monstro);
         g.de_habilidade = true;
         g.dano_fisico = 0;
         g.dano_magico = [0; CLASSES_MAGICAS];

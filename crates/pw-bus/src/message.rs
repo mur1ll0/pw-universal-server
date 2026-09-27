@@ -40,6 +40,8 @@ pub mod opcode {
     pub const S2C_GAMEDATA_SEND: u32 = 74;
     /// `PROTOCOL_C2SGAMEDATASEND` — `glinkd` → `gamed`.
     pub const C2S_GAMEDATA_SEND: u32 = 75;
+    /// `PROTOCOL_CHATSINGLECAST` — `gamed` → `glinkd`: uma fala para um jogador.
+    pub const CHAT_SINGLE_CAST: u32 = 94;
 }
 
 /// Uma mensagem entre daemons.
@@ -73,6 +75,19 @@ pub enum BusMessage {
         provider_link_id: i32,
         localsid: u32,
     },
+    /// `ChatSingleCast` (94): uma fala que o mundo manda a **um** jogador — a do monstro
+    /// (`SaySomething`, `ainpc.cpp:47-55`). `msg` em UTF-16LE, como no cliente. O link a
+    /// entrega como `ChatMessage` (80), o pacote que o cliente trata para fala de NPC
+    /// (`EC_GameSession.cpp:4953-4965`).
+    ChatSingleCast {
+        channel: u8,
+        emotion: u8,
+        srcroleid: i32,
+        dstroleid: i32,
+        dstlocalsid: u32,
+        msg: Vec<u8>,
+        data: Vec<u8>,
+    },
 }
 
 impl BusMessage {
@@ -82,6 +97,7 @@ impl BusMessage {
             BusMessage::GameToClient { .. } => opcode::S2C_GAMEDATA_SEND,
             BusMessage::EnterWorld { .. } => opcode::ENTER_WORLD,
             BusMessage::PlayerLogout { .. } => opcode::PLAYER_LOGOUT,
+            BusMessage::ChatSingleCast { .. } => opcode::CHAT_SINGLE_CAST,
         }
     }
 
@@ -93,6 +109,7 @@ impl BusMessage {
             | BusMessage::GameToClient { roleid, .. }
             | BusMessage::EnterWorld { roleid, .. }
             | BusMessage::PlayerLogout { roleid, .. } => *roleid,
+            BusMessage::ChatSingleCast { dstroleid, .. } => *dstroleid,
         }
     }
 
@@ -139,6 +156,15 @@ impl BusMessage {
                 w.i32(*provider_link_id);
                 w.u32(*localsid);
             }
+            BusMessage::ChatSingleCast { channel, emotion, srcroleid, dstroleid, dstlocalsid, msg, data } => {
+                w.u8(*channel);
+                w.u8(*emotion);
+                w.i32(*srcroleid);
+                w.i32(*dstroleid);
+                w.u32(*dstlocalsid);
+                w.octets(msg);
+                w.octets(data);
+            }
         }
     }
 
@@ -174,6 +200,15 @@ impl BusMessage {
                 settime: r.i32()?,
                 localsid: r.u32()?,
             },
+            opcode::CHAT_SINGLE_CAST => BusMessage::ChatSingleCast {
+                channel: r.u8()?,
+                emotion: r.u8()?,
+                srcroleid: r.i32()?,
+                dstroleid: r.i32()?,
+                dstlocalsid: r.u32()?,
+                msg: r.octets()?.to_vec(),
+                data: r.octets()?.to_vec(),
+            },
             opcode::PLAYER_LOGOUT => BusMessage::PlayerLogout {
                 result: r.i32()?,
                 roleid: r.i32()?,
@@ -208,6 +243,15 @@ mod tests {
             roleid: 1024,
             localsid: 0xDEAD_BEEF,
             data: vec![1, 2, 3],
+        });
+        ida_e_volta(BusMessage::ChatSingleCast {
+            channel: 0,
+            emotion: 0,
+            srcroleid: -2147476694,
+            dstroleid: 11457,
+            dstlocalsid: 3,
+            msg: "Morra!".encode_utf16().flat_map(|u| u.to_le_bytes()).collect(),
+            data: vec![],
         });
         ida_e_volta(BusMessage::GameToClient {
             roleid: -1,

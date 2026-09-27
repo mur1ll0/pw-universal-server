@@ -378,7 +378,16 @@ def extrair(caminho):
     h["precisao"] = por_nivel(texto, "float GetHitrate", max_level, float)
     h["no_alvo"] = roteiro(texto, "StateAttack")
     h["em_si"] = roteiro(texto, "BlessMe")
+    # `eventflag` (`skill.h:235`) e o `TakeEffect` das passivas de evento: com `EVENT_CHANGE` (4)
+    # o `SkillWrapper::EventChange` (`skillwrapper.cpp:589-610`) as aplica ao entrar na forma de
+    # classe e as desfaz ao sair — as da raposa, 323 e 324 (B122).
+    h["eventflag"] = escalar(texto, "eventflag") or 0
+    if h["eventflag"] == EVENT_CHANGE:
+        h["ao_mudar_de_forma"] = roteiro(texto, "TakeEffect")
     return h
+
+
+EVENT_CHANGE = 4  # `cskill/skill/skill.h`, `EVENT_CHANGE`
 
 
 def main():

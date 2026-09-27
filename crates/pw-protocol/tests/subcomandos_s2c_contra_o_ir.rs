@@ -153,6 +153,8 @@ const INTENCAO: &[(&str, &str)] = &[
     ("object_disappear", "OBJECT_DISAPPEAR"),
     ("host_attack_result", "HOST_ATTACKRESULT"),
     ("npc_died", "NPC_DIED"),
+    ("be_hurt", "BE_HURT"),
+    ("hurt_result", "HURT_RESULT"),
     // Estes nasceram do IR, e não de engenharia reversa do 1.2.6 — então não entram
     // em `LAYOUT_DIVERGE`: se algum divergir, é bug de quem escreveu.
     ("host_attacked", "HOST_ATTACKED"),
@@ -246,7 +248,6 @@ const LAYOUT_DIVERGE: &[&str] = &[
     "flysword_time",
     "trashbox_open",
     "trashbox_wealth",
-    "mall_item_buy_failed",
     "pariah_rise",
     "duel_result",
     // Estes quatro passaram a divergir em 2026-09-04, quando `bytes_do_comando` parou

@@ -35,6 +35,31 @@ impl WorldProtocol for V126Protocol {
         12
     }
 
+    /// O pedido de compra do cliente 1.2.6 tem cabeçalho de 8 B — `money`, `item_count` —,
+    /// sem os campos de contribuição/facção do 1.5.5: capturado na VM original
+    /// (`_sync/capturas/full_interno.pcap`, subcomando 37 #0: `service_type 1`, `len 20` =
+    /// 8 + 1 × 12). Com 28 B a lista saía vazia e a compra não fazia nada.
+    fn bytes_do_cabecalho_da_compra(&self) -> usize {
+        8
+    }
+
+    /// O `gplayer_controller::CommandHandler` do `gs` 1.2.6 exige 5 B no comando 14 (com o
+    /// cabeçalho; VA 0x80ce383) e passa ao `PlayerDropInvItem` o `byte [+2]` e o `word [+3]`
+    /// (VA 0x80ce44c-0x80ce45f): `{u8 index; u16 amount}`. Lido como o 1.5.5, o corpo de 3 B
+    /// não trazia quantidade e ia a pilha inteira (B122).
+    fn quantidade_do_descarte(&self, corpo: &[u8]) -> Option<u32> {
+        corpo.get(1..3).map(|b| u16::from_le_bytes(b.try_into().unwrap()) as u32)
+    }
+
+    /// O `CommandHandler` do `gs` 1.2.6 aceita o comando 106 com `6 + 6·count` bytes (com o
+    /// cabeçalho; VA 0x80d1637-0x80d1666) e passa a lista a `PlayerDoShopping(unsigned,
+    /// const short*)` (VA 0x807f8e0), que lê cada entrada como três `short` com sinal
+    /// (`movsx`, VA 0x807f9f1-0x807fa19): `{short goods_id; short goods_index; short
+    /// goods_slot}`.
+    fn pedido_da_loja_gold(&self, corpo: &[u8]) -> Option<(i32, i32, i32)> {
+        crate::traits::entrada_da_loja_gold(corpo, 6, |b| i16::from_le_bytes(b.try_into().unwrap()) as i32)
+    }
+
     /// O `sit_down_filter::Heartbeat` do `gs` 1.2.6 (VA 0x812ff22) só chama
     /// `EnhanceScaleHPGen/MPGen` e `UpdateHPMPGen` — meditar não dá chi (B119).
     fn chi_por_meditacao(&self) -> i32 {
@@ -49,6 +74,33 @@ impl WorldProtocol for V126Protocol {
         forma_155 & 0x3f
     }
 
+    /// `UPDATE_EXT_STATE` (124) do 1.2.6: `{int id; DWORD state}`, 8 bytes — o validador do
+    /// `elementclient.exe` 1.2.6 exige 8 (`docs/evidencias/126/tamanhos_s2c_126.txt`) e o `gs`
+    /// 1.2.6 monta com `update_visible_state(gobject*, unsigned int)` (VA 0x80a6ed2): um só
+    /// `DWORD`, os estados 0..31 (B124).
+    fn update_ext_state(&self, id: i32, estados: [u32; 6]) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u16_le(124);
+        s.write_i32_le(id);
+        s.write_u32_le(estados[0]);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    /// `ICON_STATE_NOTIFY` (125) do 1.2.6: `{int id; u16 count; u16 state[count]}`, **sem** a
+    /// lista de parâmetros do 1.5.5 — o validador do cliente 1.2.6 (VA 0x584ba3) exige
+    /// `tamanho == 6 + 2 × count` (`lea eax, [eax + eax + 6]`) e descartava o formato do 1.5.5 em
+    /// silêncio: nenhum ícone de bênção aparecia no 1.2.6 (B124).
+    fn icon_state_notify(&self, id: i32, icones: &[(u16, i32)]) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u16_le(125);
+        s.write_i32_le(id);
+        s.write_u16_le(icones.len() as u16);
+        for (estado, _) in icones {
+            s.write_u16_le(*estado);
+        }
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
     /// ENCHANT_RESULT (139) em 16 B: `{caster, target, skill, char level, char orange_name,
     /// char modifier, char modifier2}` — validador do cliente
     /// 1.2.6 (caso 139, VA 0x584e52) e o montador do `gs` 1.2.6
@@ -61,6 +113,56 @@ impl WorldProtocol for V126Protocol {
     /// 0x831bb81-0x831bb93), o `modifier`/`modifier2` que o cliente junta em
     /// `(modifier2 << 8) | modifier` (a linha comentada em `EC_Player.cpp:7256`). Mandar o
     /// `section` 1 ali acendia o `0x100` = `MOD_ENCHANT_FAILED`, e toda bênção mostrava "FALHA".
+    /// TEAM_MEMBER_DATA (64) em `6 + 25·n`: o `Make<team_member_data>` do `gs` 1.2.6 (VA
+    /// 0x808fe34) escreve `u8 member_count, u8 data_count, int idLeader` e por membro `int id,
+    /// short level, char state, u8 level2`, um `char` do `member_entry` (+0x20) e `hp, mp,
+    /// max_hp, max_mp` — sem `reincarnation_times`, `force_id` e `profit_level` do 1.5.5. Na
+    /// captura (`_sync/capturas/full_interno.pcap`, 3 comandos, 6 membros) esse `char` é
+    /// sempre `0xff` (B122).
+    fn team_member_data(&self, lider: i32, membros: &[crate::packets::s2c::MembroDoGrupo]) -> S2CGamedataSend {
+        crate::traits::mascote_s2c(64, |s| {
+            s.write_u8(membros.len() as u8);
+            s.write_u8(membros.len() as u8);
+            s.write_i32_le(lider);
+            for m in membros {
+                s.write_i32_le(m.role_id);
+                s.write_i16_le(m.level);
+                s.write_u8(m.state);
+                s.write_u8(m.level2);
+                s.write_u8(0xff);
+                s.write_i32_le(m.hp);
+                s.write_i32_le(m.mp);
+                s.write_i32_le(m.max_hp);
+                s.write_i32_le(m.max_mp);
+            }
+        })
+    }
+
+    /// NOTIFY_HOSTPOS (14) em 16 B: o `Make<notify_pos>::From(…, A3DVECTOR, int)` do `gs` 1.2.6
+    /// (VA 0x808ed9d) escreve `pos` e `tag`, sem a linha do mundo paralelo; o validador do cliente
+    /// 1.2.6 pede 16 e a captura tem 16 × 7. Os 20 B do 1.5.5 eram descartados — teleporte e
+    /// volta para a cidade não reposicionavam o cliente (B122).
+    fn notify_hostpos(&self, pos: Vector3, tag: i32, _linha: i32) -> S2CGamedataSend {
+        crate::traits::mascote_s2c(14, |s| {
+            s.write_f32_le(pos.x);
+            s.write_f32_le(pos.y);
+            s.write_f32_le(pos.z);
+            s.write_i32_le(tag);
+        })
+    }
+
+    /// PLAYER_MOUNTING (227) em 9 B: `S2C::CMD::Make<player_mounting>::From(…, XID, int, char)`
+    /// do `gs` 1.2.6 (VA 0x8092326) escreve `id`, `mount_id` e a cor como `char`; o validador do
+    /// cliente 1.2.6 pede 9 (`docs/evidencias/126/tamanhos_s2c_126.txt`). Os 10 B do 1.5.5 eram
+    /// descartados: quem estava vendo não via o outro montar (B122).
+    fn player_mounting(&self, player_id: i32, mount_id: i32, mount_color: u16) -> S2CGamedataSend {
+        crate::traits::mascote_s2c(227, |s| {
+            s.write_i32_le(player_id);
+            s.write_i32_le(mount_id);
+            s.write_u8(mount_color as u8);
+        })
+    }
+
     fn enchant_result(&self, caster: i32, alvo: i32, skill: i32, nivel: u8, orange_name: bool, attack_flag: i32, _section: u8) -> S2CGamedataSend {
         crate::traits::mascote_s2c(139, |s| {
             s.write_i32_le(caster);
@@ -103,7 +205,7 @@ impl WorldProtocol for V126Protocol {
     /// validador do caso 16 soma 4 com o bit 0x1000 e `1 + tamanho` com o 0x2000
     /// (VA 0x58486a-0x5848a2).
     #[allow(clippy::too_many_arguments)]
-    fn mascote_entra(&self, comando: u16, nid: i32, tid: i32, _vis_tid: i32, pos: Vector3, dir: u8, dono: i32, nome: &[u8]) -> S2CGamedataSend {
+    fn mascote_entra(&self, comando: u16, nid: i32, tid: i32, _vis_tid: i32, pos: Vector3, dir: u8, dono: i32, nome: &[u8], ambiente: i32) -> S2CGamedataSend {
         crate::traits::mascote_s2c(comando, |s| {
             s.write_i32_le(nid);
             s.write_i32_le(tid);
@@ -112,7 +214,9 @@ impl WorldProtocol for V126Protocol {
             s.write_f32_le(pos.z);
             s.write_u16_le(0);
             s.write_u8(dir);
-            s.write_i32_le(crate::traits::estado_do_mascote(nome));
+            // O bit de ambiente do NPC é o mesmo no fonte 1.5.3 (`GP_STATE_NPC_FLY` 0x10000,
+            // `EC_GPDataType.h:237`) e o validador do caso 16 não soma bytes por ele.
+            s.write_i32_le(crate::traits::estado_do_mascote(nome) | ambiente);
             crate::traits::cauda_do_mascote(s, dono, nome);
         })
     }
@@ -520,11 +624,11 @@ impl WorldProtocol for V126Protocol {
         sec_level: u8,
         modo_roupa: bool,
     ) -> S2CGamedataSend {
-        // 34 bytes (sem state2)
-        // `modo_roupa` ignorado de propósito: o bit `GP_STATE_FASHION` não foi conferido
-        // contra o cliente 1.2.6, e este servidor não muda o 1.2.6 sem evidência dele.
-        let _ = modo_roupa;
-        S2CGamedataSend::self_info_1(exp, sp, world_id, pos, sec_level, false)
+        // 34 bytes (sem state2). O `state` é `MakeObjectState<gplayer> | object_state`
+        // (`Make<INFO::self_info_1>`, VA 0x808edf8), e o `gplayer_imp::SwitchFashionMode` do
+        // `gs` 1.2.6 (VA 0x807bb12) liga e desliga o bit 13 (0x2000) desse `object_state` —
+        // o mesmo `GP_STATE_FASHION` do 1.5.5 (B122).
+        S2CGamedataSend::self_info_1(exp, sp, world_id, pos, sec_level, modo_roupa)
     }
 
     fn player_enter_world(&self, role_id: i32, vista: VistaDoJogador) -> S2CGamedataSend {
@@ -564,8 +668,40 @@ impl V126Protocol {
         s.write_u16_le(v.crc_aparencia);
         s.write_u8(v.dir);
         s.write_u8(v.cultivo);
-        let state = if v.sec_level > 0 { 0x0000_4000 } else { 0 };
+        // `state`: o validador do cliente 1.2.6 (VA 0x584633, o caso de 12 e 17) parte de 26
+        // bytes e soma por bit — `0x1` +1 (o `shape_form`), `0x2` +1, `0x40` +4, `0x400` → 34,
+        // `0x800` +5, `0x1000` +1, `0x8` +1, `0x80000` +5, `0x100000` +5, `0x800000` +4, `0x10000`
+        // variável. Por ora só a forma (B122): com o bit, quem entra no campo de visão de alguém na
+        // raposa já o desenha raposa (o `PLAYER_CHGSHAPE` só alcança quem estava vendo).
+        let mut state = if v.sec_level > 0 { 0x0000_4000 } else { 0 };
+        if v.forma.is_some() {
+            state |= 0x1;
+        }
+        // `MakeObjectState<gplayer>` (VA 0x8062d08) liga 0x80 no cadáver (`IsZombie`); o
+        // `object_state` leva a roupa em 0x2000 (`SwitchFashionMode`, VA 0x807bb12). Nenhum dos
+        // dois soma bytes no validador.
+        if v.morto {
+            state |= 0x80;
+        }
+        if v.modo_roupa {
+            state |= 0x2000;
+        }
+        // Montado: 0x80000 com `{char mount_color; int mount_id}` (+5 no validador; o
+        // `MakePlayerExtendState` do `gs` 1.2.6, VA 0x8062ebc-0x8062eed, escreve o `char` de
+        // +0xca e o `int` de +0xd0 que o `ActiveMountState` grava). Quem entra no campo de visão
+        // de alguém montado já o vê montado (B122).
+        if v.montaria.is_some() {
+            state |= 0x80000;
+        }
         s.write_i32_le(state);
+        // Na ordem do `MakePlayerExtendState` 1.2.6: forma (0x1) antes da montaria (0x80000).
+        if let Some(forma) = v.forma {
+            s.write_u8(self.byte_de_forma(forma));
+        }
+        if let Some((cor, modelo)) = v.montaria {
+            s.write_u8(cor as u8);
+            s.write_i32_le(modelo);
+        }
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 }
