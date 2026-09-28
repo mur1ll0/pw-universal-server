@@ -19,13 +19,12 @@
 > NPC do 1.2.6; **B129** — roupa com o conteúdo do original (o sexo exigido). Últimos commits:
 > `d6a6c4a` (B120) e `ff778c1` (revisão, B121); **B130** — captura de mascote (Domesticar
 > Animal); **B131** — mascote de ar segue voando; **B132** — monstro renasce sem o sangramento.
-> **B122 a B132 commitados em 2026-09-27** (`2b7b621`); **B133** (espaço aéreo, monstro de ar no
-> ar, `nofly`), **B134** (monstro desiste de quem não alcança), **B135** (dano, alcance e
-> altura do mascote) e **B136** (mascote de ar sem afundar nem travar; rotas de patrulha do
-> `path.sev`; grupo e chefe com subordinados) na árvore, não commitados. As imagens
-> `pw-world-126` e `pw-world-155` de 2026-09-27 12:04 têm até o B135 (foi o que a Tsuko testou);
-> o B136 não está publicado. **B137** (punição de nível no dano do jogador, ódio de habilidade
-> pelo `GetEnmity` e não pelo tique, redução/esquiva de dano, roubo de vida) na árvore.
+> **B122 a B132 commitados em 2026-09-27** (`2b7b621`); **B133 a B137 commitados em 2026-09-27**
+> (`bd25437`): espaço aéreo e `nofly` (B133), monstro que desiste de quem não alcança (B134),
+> dano/alcance/altura do mascote (B135), mascote de ar sem afundar nem travar + rotas do
+> `path.sev` + grupo e chefe (B136), punição de nível, ódio pelo `GetEnmity`, redução/esquiva de
+> dano e roubo de vida (B137). As imagens `pw-world-126` e `pw-world-155` de 2026-09-27 12:04
+> têm até o B135 (foi o que a Tsuko testou); **B136 e B137 não publicados**.
 >
 > **Publicado em 2026-09-26 11:10 (−03):** `pw-realm-126`, `pw-world-126`, `pw-realm-155` e
 > `pw-world-155` foram reconstruídos a partir da árvore que já tinha o B120 — ou seja, **tudo
