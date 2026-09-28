@@ -24,12 +24,12 @@ impl WorldProtocol for V148Protocol {
         self.0.task_data_com_listas(blocos)
     }
 
-    fn npc_enter_world(&self, nid: i32, tid: i32, pos: pw_core::Vector3, dir: u8) -> crate::packets::s2c::S2CGamedataSend {
-        self.0.npc_enter_world(nid, tid, pos, dir)
+    fn npc_enter_world(&self, nid: i32, tid: i32, pos: pw_core::Vector3, dir: u8, estado: u32) -> crate::packets::s2c::S2CGamedataSend {
+        self.0.npc_enter_world(nid, tid, pos, dir, estado)
     }
 
-    fn npc_enter_slice(&self, nid: i32, tid: i32, pos: pw_core::Vector3, dir: u8) -> crate::packets::s2c::S2CGamedataSend {
-        self.0.npc_enter_slice(nid, tid, pos, dir)
+    fn npc_enter_slice(&self, nid: i32, tid: i32, pos: pw_core::Vector3, dir: u8, estado: u32) -> crate::packets::s2c::S2CGamedataSend {
+        self.0.npc_enter_slice(nid, tid, pos, dir, estado)
     }
 
     fn host_attack_result(&self, target_id: i32, damage: i32, attack_flag: i32, speed: u8) -> crate::packets::s2c::S2CGamedataSend {

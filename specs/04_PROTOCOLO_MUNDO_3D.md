@@ -143,7 +143,7 @@ caminho de escrita por layout".
 | codificador | 1.2.6 | 1.5.x | o que muda |
 | :--- | ---: | ---: | :--- |
 | `task_data` | 12 | 25 | 3 → **5** tamanhos (`finished_count`, `storage_task`); com 3 o cliente 1.5.5 crasha na renderização (B14) |
-| `npc_enter_world` / `npc_enter_slice` (`info_npc`) | 27 | 35 | `vis_tid`, `state2` |
+| `npc_enter_world` / `npc_enter_slice` (`info_npc`) | 27 | 35 | `vis_tid`, `state2`. O `state` leva `GP_STATE_NPC_FLY` 0x10000 / `SWIM` 0x20000 do monstro de ar/água (B133; `SetInhabitMode`, `npc.cpp:823-843`; no fonte 1.5.3 o mesmo valor, e o validador do 1.2.6 não soma bytes) — sem ele o cliente põe o NPC no chão (`CECNPC::Init`, `EC_NPC.cpp:411-416`) |
 | `self_info_1` | 34 | 38 | `state2`; sem ele, 30 s de "entrando" e desconexão. O `state` leva o bit **`MODA`** quando o personagem está de roupa: é daqui que o **dono da tela** descobre o próprio modo (`m_bFashionMode`, `EC_HostPlayer.cpp:819-822`) — o `info_player_1` só resolve para quem o vê (B86). No 1.2.6 o bit não vai: não foi conferido contra aquele cliente |
 | `player_enter_world` / `player_enter_slice` (`info_player_1`) | 26 | 30 | `state2` |
 | `get_own_money` | 8 | 8 no codificador comum | payload sem os 2 bytes do id; captura 126, S2C 82 |

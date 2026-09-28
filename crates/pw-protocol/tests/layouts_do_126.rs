@@ -199,12 +199,12 @@ fn info_npc_ganha_vis_tid_e_state2_do_153_em_diante() {
     let pos = Vector3::new(1.0, 2.0, 3.0);
     let cabecalho = 2;
 
-    let b126 = create_world_protocol(GameVersion::V1_2_6).npc_enter_world(7, 2191, pos, 64).data;
+    let b126 = create_world_protocol(GameVersion::V1_2_6).npc_enter_world(7, 2191, pos, 64, 0).data;
     assert_eq!(&b126[..2], &16u16.to_le_bytes());
     assert_eq!(b126.len(), cabecalho + 27, "1.2.6: nid+tid+pos+seed+dir+state");
 
     for versao in [GameVersion::V1_5_3, GameVersion::V1_5_5] {
-        let b = create_world_protocol(versao).npc_enter_world(7, 2191, pos, 64).data;
+        let b = create_world_protocol(versao).npc_enter_world(7, 2191, pos, 64, 0).data;
         assert_eq!(b.len(), cabecalho + 35, "{versao:?}: com vis_tid e state2");
         // vis_tid vem logo depois do tid e vai igual a ele
         let tid = i32::from_le_bytes(b[6..10].try_into().unwrap());
@@ -216,9 +216,24 @@ fn info_npc_ganha_vis_tid_e_state2_do_153_em_diante() {
     }
 
     // O ENTER_SLICE carrega a mesma struct, só muda o id do comando.
-    let slice = create_world_protocol(GameVersion::V1_5_5).npc_enter_slice(7, 2191, pos, 64).data;
+    let slice = create_world_protocol(GameVersion::V1_5_5).npc_enter_slice(7, 2191, pos, 64, 0).data;
     assert_eq!(&slice[..2], &11u16.to_le_bytes());
     assert_eq!(slice.len(), cabecalho + 35);
+}
+
+/// B133 — monstro de ar: `GP_STATE_NPC_FLY` (0x10000) no `state` do `info_npc`, sem mudar o
+/// tamanho (1.2.6: state em +23; 1.5.5: em +27, antes do `state2`).
+#[test]
+fn o_monstro_de_ar_entra_com_o_bit_de_voo() {
+    use pw_core::Vector3;
+    let pos = Vector3::new(1.0, 2.0, 3.0);
+    let b126 = create_world_protocol(GameVersion::V1_2_6).npc_enter_slice(7, 2191, pos, 64, 0x10000).data;
+    assert_eq!(b126.len(), 2 + 27);
+    assert_eq!(u32::from_le_bytes(b126[2 + 23..2 + 27].try_into().unwrap()), 0x10000);
+    let b155 = create_world_protocol(GameVersion::V1_5_5).npc_enter_world(7, 2191, pos, 64, 0x10000).data;
+    assert_eq!(b155.len(), 2 + 35);
+    assert_eq!(u32::from_le_bytes(b155[2 + 27..2 + 31].try_into().unwrap()), 0x10000);
+    assert_eq!(&b155[b155.len() - 4..], &0u32.to_le_bytes(), "state2 continua zerado");
 }
 
 #[test]

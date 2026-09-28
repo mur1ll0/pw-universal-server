@@ -92,6 +92,7 @@ fn rand_ate(x: f32) -> f32 {
 
 // Nos testes o sorteio vem de um gerador semeado por thread (`semear`), para que cada rodada
 // seja reproduzível; em produção continua o `thread_rng` acima.
+
 #[cfg(test)]
 thread_local! {
     static GERADOR_DE_TESTE: std::cell::RefCell<rand::rngs::StdRng> =
@@ -108,10 +109,14 @@ fn rand_ate(x: f32) -> f32 {
     GERADOR_DE_TESTE.with(|g| g.borrow_mut().gen::<f32>() * x)
 }
 
-/// O mapa que os agentes consultam: terreno (`GetTerrainHeight`) e movimento.
+/// O mapa que os agentes consultam: terreno (`GetTerrainHeight`) e movimento; para o NPC de ar
+/// e de água, também o espaço passável (`CGlobalSPMap`) e a água (`GetWaterHeight`). Sem espaço,
+/// o agente de ar/água anda em linha reta (o que se fazia antes do B133).
 pub struct Mapa<'a> {
     pub terreno: &'a dyn Fn(f32, f32) -> Option<f32>,
     pub movimento: &'a MapaDeMovimento,
+    pub espaco: Option<&'a pw_data_loader::MapaDoEspaco>,
+    pub agua: Option<&'a pw_data_loader::MapaDeAgua>,
 }
 
 impl Mapa<'_> {
@@ -1193,6 +1198,520 @@ impl Passeio {
     }
 }
 
+
+// =============================================================================
+// CNPCChaseSpatiallyPFAgent (ar e água) — B133
+// =============================================================================
+
+/// `RELAX_ABOVE_DIST` / `RELAX_BELOW_DIST` (`NPCMove.h:42-43`).
+const FOLGA_DO_AMBIENTE: f32 = -0.001;
+/// `ABOVE_DIST` / `BELOW_DIST` (`NPCMove.h:36-37`): o quanto o agente reto de ar fica acima do
+/// terreno e da água, e o de água acima do terreno e abaixo da superfície.
+const ACIMA: f32 = 0.2;
+const ABAIXO: f32 = 0.2;
+/// `MAX_SEARCH_VOXEL_NUM` (`SpatialPathFinding.h:9`).
+const MAX_VOXELS_DA_BUSCA: i32 = 100_000;
+/// `MAX_NODE_NUM` da lista aberta espacial (`SortVectorSpatialPathNode.h:17`).
+const MAX_NOS_ESPACIAIS: usize = 60;
+
+/// O ambiente do agente espacial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Ambiente {
+    #[default]
+    Ar,
+    Agua,
+}
+
+impl Mapa<'_> {
+    fn altura_do_terreno(&self, x: f32, z: f32) -> f32 {
+        (self.terreno)(x, z).unwrap_or(f32::MIN)
+    }
+    fn altura_da_agua(&self, x: f32, z: f32) -> f32 {
+        let h = self.agua.map(|a| a.altura_em(x, z)).unwrap_or(pw_data_loader::watermap::SEM_AGUA);
+        if h == pw_data_loader::watermap::SEM_AGUA { f32::MIN } else { h }
+    }
+    /// `CNPCMoveAgent::IsPosOnAir` / `IsPosInWater` (`NPCMove.h:116-138`).
+    fn no_ambiente(&self, amb: Ambiente, v: V3) -> bool {
+        let (t, a) = (self.altura_do_terreno(v.x, v.z), self.altura_da_agua(v.x, v.z));
+        match amb {
+            Ambiente::Ar => v.y > t + FOLGA_DO_AMBIENTE && v.y > a + FOLGA_DO_AMBIENTE,
+            Ambiente::Agua => v.y > t + FOLGA_DO_AMBIENTE && v.y < a - FOLGA_DO_AMBIENTE,
+        }
+    }
+    /// `AdjustCurPos` dos agentes retos de ar e de água (`CNPCChaseOnAirStraightAgent`,
+    /// `NPCChaseOnAirAgent.h:27-36`; `CNPCChaseInWaterStraightAgent`, `NPCChaseInWaterAgent.h:27-49`):
+    /// o de ar sobe a `max(terreno, água) + 0,2`; o de água fica entre `terreno + 0,2` e
+    /// `água − 0,2` (onde o terreno passa da água, no terreno + 0,2).
+    pub fn ajustar_ao_ambiente(&self, amb: Ambiente, mut v: V3) -> V3 {
+        let (t, a) = (self.altura_do_terreno(v.x, v.z), self.altura_da_agua(v.x, v.z));
+        match amb {
+            Ambiente::Ar => {
+                let piso = t.max(a) + ACIMA;
+                if v.y < piso {
+                    v.y = piso;
+                }
+            }
+            Ambiente::Agua => {
+                let (t, a) = (t + ACIMA, a - ABAIXO);
+                if t > a || v.y < t {
+                    v.y = t;
+                } else if v.y > a {
+                    v.y = a;
+                }
+            }
+        }
+        v
+    }
+    fn centro_do_voxel(&self, v: V3) -> [i32; 3] {
+        match self.espaco {
+            Some(e) => e.centro_do_voxel([v.x, v.y, v.z]),
+            None => [v.x as i32, v.y as i32, v.z as i32],
+        }
+    }
+    /// `IsPosPassable` com o teste extra do ambiente (`GlobalSPMap.h:168-179`).
+    fn passavel(&self, p: [i32; 3], extra: Option<Ambiente>) -> Option<pw_data_loader::espaco::No> {
+        if let Some(amb) = extra {
+            if !self.no_ambiente(amb, V3::new(p[0] as f32, p[1] as f32, p[2] as f32)) {
+                return None;
+            }
+        }
+        self.espaco?.livre(p)
+    }
+    /// `CGlobalSPMap::CanGoStraightForward` (`GlobalSPMap.cpp:254-345`): a reta de voxel em
+    /// voxel; devolve se chegou e onde parou.
+    fn reta_no_espaco(&self, de: V3, ate: V3, extra: Option<Ambiente>) -> (bool, [i32; 3]) {
+        let p_de = self.centro_do_voxel(de);
+        let Some(no_de) = self.passavel(p_de, extra) else {
+            return (false, p_de);
+        };
+        let p_ate = self.centro_do_voxel(ate);
+        let no_ate = self.passavel(p_ate, extra);
+        if let (Some(n), None) = (no_ate, extra) {
+            if n.mesmo(&no_de) || n.vizinho_irmao(&no_de) {
+                return (true, p_ate);
+            }
+        }
+        let d = ate.sub(de);
+        let maior = d.x.abs().max(d.y.abs()).max(d.z.abs());
+        if maior <= 0.0 {
+            return (no_ate.is_some(), if no_ate.is_some() { p_ate } else { p_de });
+        }
+        let passo = d.mul(1.0 / maior);
+        let (mut v, mut atual) = (de, p_de);
+        for _ in 0..maior as i32 {
+            v = v.add(passo);
+            let anterior = atual;
+            atual = self.centro_do_voxel(v);
+            if let (Some(n), None) = (no_ate, extra) {
+                if n.dentro(atual) {
+                    return (true, p_ate);
+                }
+            }
+            if self.passavel(atual, extra).is_none() {
+                return (false, anterior);
+            }
+        }
+        match no_ate {
+            Some(_) => (true, p_ate),
+            None => (false, atual),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NoEspacial {
+    pos: [i32; 3],
+    h: i32,
+    anterior: Option<usize>,
+}
+
+/// `CSpatialPathFinding` / `CAerialPathFinding` / `CUnderwaterPathFinding`
+/// (`SpatialPathFinding.cpp:22-202`): busca gulosa pela distância de Manhattan nos 26 vizinhos
+/// de voxel, com a lista aberta de até 60 nós ordenada por `h`.
+#[derive(Debug, Clone, Default)]
+struct BuscaEspacial {
+    meta: [i32; 3],
+    voxel: i32,
+    amb: Ambiente,
+    nos: Vec<NoEspacial>,
+    aberta: Vec<usize>,
+    fechada: Vec<usize>,
+    no_da_meta: Option<pw_data_loader::espaco::No>,
+    acabou: bool,
+    achou: bool,
+    vistos: i32,
+    caminho: Vec<[i32; 3]>,
+}
+
+fn manhattan(a: [i32; 3], b: [i32; 3]) -> i32 {
+    (a[0] - b[0]).abs() + (a[1] - b[1]).abs() + (a[2] - b[2]).abs()
+}
+
+impl BuscaEspacial {
+    fn iniciar(inicio: [i32; 3], meta: [i32; 3], voxel: i32, amb: Ambiente, mapa: &Mapa) -> Self {
+        let mut b = Self { meta, voxel, amb, ..Default::default() };
+        let no_inicio = mapa.passavel(inicio, Some(amb));
+        b.no_da_meta = mapa.passavel(meta, Some(amb));
+        match (no_inicio, b.no_da_meta) {
+            (Some(n), Some(_)) => {
+                let _ = n;
+                b.nos.push(NoEspacial { pos: inicio, h: manhattan(inicio, meta), anterior: None });
+                b.aberta.push(0);
+            }
+            _ => b.acabou = true,
+        }
+        b
+    }
+
+    /// `SortPush`: entra antes do primeiro de `h` maior; cheia, o último sai.
+    fn empurrar(&mut self, idx: usize) -> bool {
+        let h = self.nos[idx].h;
+        if let Some(i) = self.aberta.iter().position(|&k| h < self.nos[k].h) {
+            self.aberta.insert(i, idx);
+            if self.aberta.len() > MAX_NOS_ESPACIAIS {
+                self.aberta.pop();
+            }
+            return true;
+        }
+        if self.aberta.len() == MAX_NOS_ESPACIAIS {
+            return false;
+        }
+        self.aberta.push(idx);
+        true
+    }
+
+    /// `StepBestFirstSearch(iSearchVoxels)`.
+    fn passo(&mut self, voxels: i32, mapa: &Mapa) {
+        if self.acabou {
+            return;
+        }
+        let Some(meta_no) = self.no_da_meta else {
+            self.acabou = true;
+            return;
+        };
+        let mut contador = 0;
+        let mut melhor: Option<(i32, [i32; 3])> = None;
+        let mut atual = None;
+        while !self.aberta.is_empty() && contador < voxels && self.vistos < MAX_VOXELS_DA_BUSCA {
+            let idx = self.aberta.remove(0);
+            atual = Some(idx);
+            if self.nos[idx].pos == self.meta {
+                self.achou = true;
+                break;
+            }
+            contador += 1;
+            self.vistos += 1;
+            let base = self.nos[idx].pos;
+            for i in 0..27 {
+                if i == 13 {
+                    continue;
+                }
+                let d = [i / 9 - 1, (i % 9) / 3 - 1, i % 3 - 1];
+                let viz = [base[0] + d[0] * self.voxel, base[1] + d[1] * self.voxel, base[2] + d[2] * self.voxel];
+                if !mapa.no_ambiente(self.amb, V3::new(viz[0] as f32, viz[1] as f32, viz[2] as f32)) {
+                    continue;
+                }
+                let no_viz = mapa.espaco.and_then(|e| e.livre(viz));
+                if meta_no.dentro(viz) || no_viz.is_some_and(|n| meta_no.vizinho_irmao(&n)) {
+                    let h = manhattan(viz, self.meta);
+                    if melhor.is_none_or(|(mh, _)| h < mh) {
+                        melhor = Some((h, viz));
+                    }
+                    self.achou = true;
+                    continue;
+                }
+                let Some(n) = no_viz else { continue };
+                if self.fechada.iter().any(|&k| self.nos[k].pos == viz) {
+                    continue;
+                }
+                let _ = n;
+                self.nos.push(NoEspacial { pos: viz, h: manhattan(viz, self.meta), anterior: Some(idx) });
+                let novo = self.nos.len() - 1;
+                if !self.empurrar(novo) {
+                    self.nos.pop();
+                }
+            }
+            if self.achou {
+                break;
+            }
+            self.fechada.push(idx);
+        }
+        if self.achou {
+            let mut volta = Vec::new();
+            let mut k = atual;
+            while let Some(i) = k {
+                volta.push(self.nos[i].pos);
+                k = self.nos[i].anterior;
+            }
+            volta.reverse();
+            self.caminho = volta;
+            if self.caminho.last() != Some(&self.meta) {
+                if let Some((_, p)) = melhor {
+                    self.caminho.push(p);
+                }
+                self.caminho.push(self.meta);
+            }
+            self.acabou = true;
+        } else if self.aberta.is_empty() || self.vistos >= MAX_VOXELS_DA_BUSCA {
+            self.acabou = true;
+        }
+    }
+}
+
+/// `CNPCChaseSpatiallyPFAgent` com o agente reto (`CNPCChaseOnAirStraightAgent` /
+/// `...InWater...`) quando dá: `NPCChaseSpatiallyPFAgent.cpp:78-249`, `NPCMove.h:175-330`.
+#[derive(Debug, Clone, Default)]
+struct PerseguicaoNoEspaco {
+    amb: Ambiente,
+    pos: V3,
+    passo: f32,
+    meta: V3,
+    min: f32,
+    min2: f32,
+    direcao: V3,
+    chegou: bool,
+    bloqueado_alem: bool,
+    bloqueado: bool,
+    achou: bool,
+    pf_pixels: i32,
+    reto: bool,
+    busca: Option<BuscaEspacial>,
+    trajeto: Option<Trajeto>,
+    meta_da_busca: V3,
+}
+
+impl PerseguicaoNoEspaco {
+    fn na_meta(&self, p: V3) -> bool {
+        p.sub(self.meta).sqr() <= self.min2 + 2.0 * RELAX_ERROR * self.min + SQR_RELAX_ERROR
+    }
+    fn chegou_agora(&self) -> bool {
+        let d = self.meta.sub(self.pos);
+        d.sqr() <= self.min2 + 2.0 * RELAX_ERROR * self.min + SQR_RELAX_ERROR || d.dot(self.direcao) < 0.0
+    }
+    fn apontar(&mut self) {
+        let mut d = self.meta.sub(self.pos);
+        d.normalizar();
+        self.direcao = d;
+    }
+    /// `SetGoal` da base.
+    fn meta(&mut self, meta: V3, min: f32) {
+        self.meta = meta;
+        self.min = min;
+        self.min2 = min * min;
+        self.apontar();
+        self.chegou = self.chegou_agora();
+        self.bloqueado_alem = false;
+    }
+
+    /// `GeneratePathFindingGoal`: a meta recuada de `min`; não passável, até 11 sorteios na
+    /// esfera de raio `min`, espelhados para o lado de cá.
+    fn meta_da_busca(&self, mapa: &Mapa) -> Option<V3> {
+        if self.min < ZERO_DIST_ERROR {
+            return Some(self.meta);
+        }
+        let v = self.meta.sub(self.direcao.mul(self.min));
+        if mapa.passavel(mapa.centro_do_voxel(v), Some(self.amb)).is_some() {
+            return Some(v);
+        }
+        let d_plano = self.direcao.dot(self.meta);
+        let mut rng = rand::thread_rng();
+        for _ in 0..MAX_GENERATE_GOAL_TIMES {
+            let lat = rng.gen::<f32>() * std::f32::consts::PI - std::f32::consts::FRAC_PI_2;
+            let lon = rng.gen::<f32>() * 2.0 * std::f32::consts::PI;
+            let t = self.min * lat.cos();
+            let off = V3::new(t * lon.cos(), self.min * lat.sin(), t * lon.sin());
+            let mut v = self.meta.add(off);
+            if self.direcao.dot(off) > 0.0 {
+                let dist = self.direcao.dot(v) - d_plano;
+                v = v.sub(self.direcao.mul(2.0 * dist));
+            }
+            if mapa.passavel(mapa.centro_do_voxel(v), Some(self.amb)).is_some() {
+                return Some(v);
+            }
+        }
+        None
+    }
+
+    fn comecar(&mut self, pixels: i32, mapa: &Mapa) {
+        if self.chegou {
+            return;
+        }
+        self.busca = None;
+        self.trajeto = None;
+        self.pf_pixels = pixels;
+        self.reto = false;
+        // Sem o mapa do espaço: só a reta (o agente reto, que não desvia de nada).
+        if mapa.espaco.is_none_or(|e| !e.tem_dados()) {
+            self.reto_ate_a_meta();
+            return;
+        }
+        if mapa.passavel(mapa.centro_do_voxel(self.pos), Some(self.amb)).is_none() {
+            self.bloqueado = true;
+            self.bloqueado_alem = true;
+            self.achou = false;
+            return;
+        }
+        let (livre, parou) = mapa.reta_no_espaco(self.pos, self.meta, None);
+        let parou_v = V3::new(parou[0] as f32, parou[1] as f32, parou[2] as f32);
+        let meta_busca = if livre || self.na_meta(parou_v) { None } else { self.meta_da_busca(mapa) };
+        match meta_busca {
+            None => self.reto_ate_a_meta(),
+            Some(m) => {
+                self.meta_da_busca = m;
+                let voxel = mapa.espaco.map(|e| e.tamanho_do_voxel()).unwrap_or(2);
+                self.busca = Some(BuscaEspacial::iniciar(parou, mapa.centro_do_voxel(m), voxel, self.amb, mapa));
+                let mut t = Trajeto::default();
+                t.adicionar(self.pos);
+                t.adicionar(parou_v);
+                t.comecar();
+                self.trajeto = Some(t);
+                self.bloqueado = false;
+                self.achou = false;
+            }
+        }
+    }
+
+    /// `CNPCChaseAgent::StartPathFinding` + o agente reto.
+    fn reto_ate_a_meta(&mut self) {
+        self.achou = true;
+        self.bloqueado = false;
+        self.reto = true;
+    }
+
+    /// `CNPCChaseAgent::MoveOneStep` do agente reto (`NPCMove.h:201-226`): sair do ambiente
+    /// bloqueia; o passo aceito passa pelo `AdjustCurPos` — sem ele o mascote de ar descia até
+    /// os pés do alvo, ficava rente ao chão ("enterrado") e o passo seguinte, numa subida,
+    /// entrava no terreno e travava a perseguição (B136).
+    fn passo_reto(&mut self, mapa: &Mapa) {
+        if self.chegou || self.bloqueado_alem {
+            return;
+        }
+        let prox = self.pos.add(self.direcao.mul(self.passo));
+        if !mapa.no_ambiente(self.amb, prox) {
+            self.bloqueado_alem = true;
+            return;
+        }
+        self.pos = mapa.ajustar_ao_ambiente(self.amb, prox);
+        self.chegou = self.chegou_agora();
+        if self.chegou {
+            // `AdjustGetToGoalPos` (`NPCMove.h:300-314`), também com o `AdjustCurPos`.
+            let antes = self.pos;
+            self.pos = mapa.ajustar_ao_ambiente(self.amb, self.meta.sub(self.direcao.mul(self.min)));
+            if !self.chegou_agora() {
+                self.pos = antes;
+            }
+        } else {
+            self.apontar();
+        }
+    }
+
+    fn andar(&mut self, mapa: &Mapa) {
+        if self.chegou || (self.bloqueado && self.busca.is_none()) {
+            return;
+        }
+        if self.reto {
+            self.passo_reto(mapa);
+            return;
+        }
+        if !self.bloqueado {
+            let passo = self.passo;
+            if let Some((p, fim)) = self.trajeto.as_mut().map(|t| {
+                t.andar(passo);
+                (t.atual, t.fim_do_trajeto())
+            }) {
+                self.pos = p;
+                self.chegou = self.na_meta(p);
+                self.bloqueado = fim;
+            }
+        }
+        if let Some(b) = self.busca.as_mut() {
+            if !b.acabou {
+                b.passo(self.pf_pixels, mapa);
+                if b.achou {
+                    if let Some(t) = self.trajeto.as_mut() {
+                        for p in &b.caminho {
+                            t.adicionar(V3::new(p[0] as f32, p[1] as f32, p[2] as f32));
+                        }
+                        t.adicionar(self.meta_da_busca);
+                    }
+                    self.achou = true;
+                    self.bloqueado = false;
+                }
+            }
+        }
+    }
+}
+
+/// `path_finding::follow_target` com o agente de ar ou de água: os mesmos níveis de detalhe e
+/// o mesmo teto de passos que o [`SeguirAlvo`] de chão (`pathfinding.h:34-134`).
+#[derive(Debug, Clone, Default)]
+pub struct SeguirNoEspaco {
+    agente: PerseguicaoNoEspaco,
+    alvo: V3,
+    contador: i32,
+    detalhe: usize,
+    nivel_de_passo: bool,
+}
+
+impl SeguirNoEspaco {
+    #[allow(clippy::too_many_arguments)]
+    pub fn comecar(&mut self, amb: Ambiente, de: V3, alvo: V3, passo: f32, alcance: f32, distancia_ao_quadrado: f32, mapa: &Mapa) {
+        self.detalhe = if distancia_ao_quadrado <= 100.0 {
+            0
+        } else if distancia_ao_quadrado <= 400.0 {
+            1
+        } else {
+            2
+        };
+        self.contador = 0;
+        self.nivel_de_passo = false;
+        self.alvo = alvo;
+        self.agente = PerseguicaoNoEspaco { amb, pos: de, passo, ..Default::default() };
+        self.agente.meta(alvo, alcance);
+        self.agente.comecar(DETALHE[self.detalhe][1], mapa);
+    }
+    pub fn chegou(&self) -> bool {
+        self.agente.chegou
+    }
+    pub fn bloqueado(&self) -> bool {
+        self.agente.bloqueado
+    }
+    pub fn alvo(&self) -> V3 {
+        self.alvo
+    }
+    pub fn posicao(&self) -> V3 {
+        self.agente.pos
+    }
+    /// `MoveOneStep(speed)`: `false` quando desistiu.
+    pub fn andar(&mut self, passo: f32, mapa: &Mapa) -> bool {
+        self.agente.passo = passo;
+        self.agente.andar(mapa);
+        self.contador += self.agente.pf_pixels;
+        if self.agente.bloqueado {
+            if !self.nivel_de_passo {
+                self.nivel_de_passo = true;
+                self.agente.pf_pixels = DETALHE[self.detalhe][2];
+            }
+        } else {
+            self.nivel_de_passo = false;
+            self.agente.pf_pixels = DETALHE[self.detalhe][1];
+        }
+        if self.agente.bloqueado_alem {
+            return false;
+        }
+        self.agente.achou || self.contador < DETALHE[self.detalhe][0]
+    }
+}
+
+/// `path_finding::IsValidSPPos` (`pathfinding.cpp:46-51`): o ponto está numa folha livre do
+/// espaço. Sem o mapa do espaço, tudo vale.
+pub fn ponto_livre_no_espaco(mapa: &Mapa, p: V3) -> bool {
+    match mapa.espaco {
+        Some(e) if e.tem_dados() => mapa.passavel(mapa.centro_do_voxel(p), None).is_some(),
+        _ => true,
+    }
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -1256,6 +1775,8 @@ mod testes {
         let mapa = Mapa {
             terreno: &plano,
             movimento: &mov,
+            espaco: None,
+            agua: None,
         };
         // Origem no centro: pixel (u, v) = (x + 32, z + 32). De (20, 30) a (44, 30).
         let (de, ate) = (
@@ -1303,6 +1824,8 @@ mod testes {
         let mapa = Mapa {
             terreno: &plano,
             movimento: &vazio,
+            espaco: None,
+            agua: None,
         };
         for semente in SEMENTES {
             semear(semente);
@@ -1324,6 +1847,8 @@ mod testes {
         let mapa = Mapa {
             terreno: &plano,
             movimento: &mov,
+            espaco: None,
+            agua: None,
         };
         semear(0);
         for _ in 0..50 {

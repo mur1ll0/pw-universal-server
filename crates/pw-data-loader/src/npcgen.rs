@@ -51,6 +51,17 @@ pub struct SpawnInstance {
     pub caminho: i32,
     /// `iSpeedFlag` do gerador: `true` corre no caminho, `false` anda.
     pub corre_no_caminho: bool,
+    /// `iLoopType` do gerador (`ent.path_type`, `npcgenerator.cpp:3861`): 0 vai até o fim e
+    /// para, 1 vai e volta, 2 (e qualquer outro) recomeça do primeiro ponto
+    /// (`base_patrol_agent::GetNextWayPoint`, `patrol_agent.h:52-99`).
+    pub laco_do_caminho: i32,
+    /// `iGroupType` da área (`npcgenerator.cpp:3717-3732`): 0 `mobs_spawner`, 1
+    /// `group_spawner` (o gerador 0 é o líder, os outros o seguem), 2 `boss_spawner`.
+    pub tipo_de_grupo: i32,
+    /// A área de IA de onde veio (a ordem no arquivo), ou -1 fora delas.
+    pub area_de_ia: i32,
+    /// A posição do gerador dentro da área (só os de `tid > 0`, como a `_entry_list`).
+    pub gerador_na_area: u32,
     /// `iDeadTime` do gerador (`template/npcgendata.h:117`): quanto o corpo fica, em segundos.
     /// **0 = sem corpo** — o monstro volta ao gerador no tique seguinte e nenhum
     /// `disappear` é mandado (`npc.cpp:904-911`); o cliente vê o corpo até o renascimento.
@@ -63,6 +74,17 @@ pub struct SpawnInstance {
     /// negativo dá `-iRefresh + 3` (`npcgenerator.cpp:3841-3855`).
     pub renascer_min_s: u32,
     pub renascer_max_s: u32,
+}
+
+/// Quantos o gerador põe no mundo: no grupo e no chefe (`iGroupType` 1 e 2) o gerador 0 é o
+/// líder, e o original força uma cópia só ("ajustado para 1", `group_spawner::CreateMobs`,
+/// `npcgenerator.cpp:5297-5312`; `boss_spawner::CreateMobs`, `:5405-5415`).
+pub fn quantidade_do_gerador(tipo_de_grupo: i32, gerador_na_area: usize, quantidade: u32) -> u32 {
+    if matches!(tipo_de_grupo, 1 | 2) && gerador_na_area == 0 {
+        quantidade.min(1)
+    } else {
+        quantidade
+    }
 }
 
 /// `BASE_REBORN_TIME` (`gs/config.h:106`).
@@ -406,6 +428,7 @@ impl NpcGenData {
             /// os monstros de uma área nascerem empilhados.
             exts: Vector3,
             dir: Vector3,
+            tipo_de_grupo: i32,
             geradores: Vec<GeradorPendente>,
         }
         struct GeradorPendente {
@@ -419,6 +442,7 @@ impl NpcGenData {
             acima_da_agua: f32,
             caminho: i32,
             corre: bool,
+            laco: i32,
         }
         struct ResAreaPendente {
             id_ctrl: i32,
@@ -452,7 +476,7 @@ impl NpcGenData {
             let ext_y = cursor.read_f32::<LittleEndian>()?;
             let ext_z = cursor.read_f32::<LittleEndian>()?;
             let _npc_type = cursor.read_i32::<LittleEndian>()?;
-            let _grp_type = cursor.read_i32::<LittleEndian>()?;
+            let grp_type = cursor.read_i32::<LittleEndian>()?;
             let b_init_gen = cursor.read_u8()? != 0;
             let _b_auto_revive = cursor.read_u8()? != 0;
             let _b_valid_once = cursor.read_u8()? != 0;
@@ -480,7 +504,7 @@ impl NpcGenData {
                 // facção (4): o servidor ainda não tem sistema de facção de monstro.
                 cursor.seek(SeekFrom::Current(16))?;
                 let caminho = cursor.read_i32::<LittleEndian>()?;
-                let _loop_type = cursor.read_i32::<LittleEndian>()?;
+                let loop_type = cursor.read_i32::<LittleEndian>()?;
                 let speed_flag = cursor.read_i32::<LittleEndian>()?;
                 let dead_time = cursor.read_i32::<LittleEndian>()?;
 
@@ -512,6 +536,7 @@ impl NpcGenData {
                         acima_da_agua,
                         caminho,
                         corre: speed_flag == 1,
+                        laco: loop_type,
                     });
                 }
             }
@@ -522,6 +547,7 @@ impl NpcGenData {
                 pos: Vector3::new(pos_x, pos_y, pos_z),
                 exts: Vector3::new(ext_x, ext_y, ext_z),
                 dir: Vector3::new(dir_x, dir_y, dir_z),
+                tipo_de_grupo: grp_type,
                 geradores,
             });
         }
@@ -655,17 +681,17 @@ impl NpcGenData {
         let controlador_da_area = |id_ctrl: i32| -> Option<i32> {
             (id_ctrl != 0).then(|| numero_do_controlador.get(&(id_ctrl as u32)).copied()).flatten()
         };
-        for area in &areas_pendentes {
+        for (indice_da_area, area) in areas_pendentes.iter().enumerate() {
             if !area.b_init_gen || !esta_ativa(area.id_ctrl) {
                 continue;
             }
             let controlador = controlador_da_area(area.id_ctrl);
-            for g in &area.geradores {
+            for (indice_do_gerador, g) in area.geradores.iter().enumerate() {
                 // **Sem teto.** Isto era `count.min(10)`, e o de recurso `count.min(5)` —
                 // números sem origem no original, que usa `dwNum`/`dwNumber` como veio.
                 // Medido no mundo do 155: os dois tetos escondiam 5.811 monstros e NPCs
                 // (337 geradores declaram mais de dez) e 271 recursos.
-                for c in 0..g.quantidade {
+                for c in 0..quantidade_do_gerador(area.tipo_de_grupo, indice_do_gerador, g.quantidade) {
                     instance_counter += 1;
                     // No Perfect World oficial, IDs de NPCs/Monstros possuem o bit 31 ativo (ISNPCID: (id & 0x80000000) && !(id & 0x40000000))
                     let npc_nid = (0x80000000u32 | (instance_counter & 0x3FFFFFFF)) as i32;
@@ -685,6 +711,10 @@ impl NpcGenData {
                         acima_da_agua: g.acima_da_agua,
                         caminho: g.caminho,
                         corre_no_caminho: g.corre,
+                        laco_do_caminho: g.laco,
+                        tipo_de_grupo: area.tipo_de_grupo,
+                        area_de_ia: indice_da_area as i32,
+                        gerador_na_area: indice_do_gerador as u32,
                         corpo_s: tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower).0,
                         renascer_min_s: tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower).1,
                         renascer_max_s: tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower).2,
@@ -725,6 +755,10 @@ impl NpcGenData {
                         acima_da_agua: 0.0,
                         caminho: 0,
                         corre_no_caminho: false,
+                        laco_do_caminho: 0,
+                        tipo_de_grupo: 0,
+                        area_de_ia: -1,
+                        gerador_na_area: 0,
                         corpo_s: 0,
                         renascer_min_s: 0,
                         renascer_max_s: 0,
@@ -758,6 +792,10 @@ impl NpcGenData {
                 acima_da_agua: 0.0,
                 caminho: 0,
                 corre_no_caminho: false,
+                laco_do_caminho: 0,
+                tipo_de_grupo: 0,
+                area_de_ia: -1,
+                gerador_na_area: 0,
                 corpo_s: 0,
                 renascer_min_s: 0,
                 renascer_max_s: 0,
@@ -768,13 +806,13 @@ impl NpcGenData {
 
         // As áreas de monstro/NPC que só nascem quando o controlador é ligado. Ids depois de
         // todos os da carga.
-        for area in &areas_pendentes {
+        for (indice_da_area, area) in areas_pendentes.iter().enumerate() {
             if area.b_init_gen && esta_ativa(area.id_ctrl) {
                 continue;
             }
             let Some(n) = controlador_da_area(area.id_ctrl) else { continue };
-            for g in &area.geradores {
-                for c in 0..g.quantidade {
+            for (indice_do_gerador, g) in area.geradores.iter().enumerate() {
+                for c in 0..quantidade_do_gerador(area.tipo_de_grupo, indice_do_gerador, g.quantidade) {
                     instance_counter += 1;
                     let npc_nid = (0x80000000u32 | (instance_counter & 0x3FFFFFFF)) as i32;
                     let (corpo_s, renascer_min_s, renascer_max_s) = tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower);
@@ -793,6 +831,10 @@ impl NpcGenData {
                         acima_da_agua: g.acima_da_agua,
                         caminho: g.caminho,
                         corre_no_caminho: g.corre,
+                        laco_do_caminho: g.laco,
+                        tipo_de_grupo: area.tipo_de_grupo,
+                        area_de_ia: indice_da_area as i32,
+                        gerador_na_area: indice_do_gerador as u32,
                         corpo_s,
                         renascer_min_s,
                         renascer_max_s,
@@ -861,6 +903,10 @@ mod tests {
             acima_da_agua: 0.0,
             caminho: 0,
             corre_no_caminho: false,
+            laco_do_caminho: 0,
+            tipo_de_grupo: 0,
+            area_de_ia: -1,
+            gerador_na_area: 0,
             corpo_s: 0,
             renascer_min_s: 0,
             renascer_max_s: 0,

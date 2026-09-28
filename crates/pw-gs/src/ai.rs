@@ -291,6 +291,86 @@ enum Sessao {
         destino: Vector3,
         passos_restantes: i32,
     },
+    /// A `session_npc_patrol` do `ai_patrol_task` (B136): o ponto da rota em que está, os passos
+    /// que restam (`SetTarget(pos, 120, ...)`, `aipolicy.cpp:1716-1726`) e onde a tarefa começou.
+    Patrulhando {
+        alvo: Vector3,
+        restantes: i32,
+        inicio: Vector3,
+    },
+    /// A `session_npc_follow_target` do `ai_follow_master` (`SetTarget(leader, 7, 20, 7)`,
+    /// `aipolicy.cpp:1566-1572`).
+    SeguindoLider,
+}
+
+/// `base_patrol_agent` (`gs/patrol_agent.h`): os pontos da rota (`path_manager`) e onde o
+/// monstro está nela. `tipo` é o `iLoopType` do gerador.
+#[derive(Debug, Clone)]
+pub struct Rota {
+    pontos: std::sync::Arc<Vec<Vector3>>,
+    tipo: i32,
+    indice: usize,
+    fim: bool,
+    adiante: bool,
+    /// `_speed_flag` (`iSpeedFlag`): corre na rota em vez de andar.
+    pub corre: bool,
+}
+
+impl Rota {
+    /// `base_patrol_agent::Init`: rota de menos de dois pontos é recusada.
+    pub fn nova(pontos: std::sync::Arc<Vec<Vector3>>, tipo: i32, corre: bool) -> Option<Self> {
+        (pontos.len() >= 2).then_some(Self { pontos, tipo, indice: 0, fim: false, adiante: true, corre })
+    }
+
+    /// `base_patrol_agent::Reset`: do começo, indo adiante.
+    pub fn recomecar(&mut self) {
+        self.indice = 0;
+        self.fim = false;
+        self.adiante = true;
+    }
+
+    /// `GetCurWayPoint`: o ponto do índice atual (o próximo a pegar).
+    pub fn atual(&self) -> Vector3 {
+        self.pontos[self.indice]
+    }
+
+    /// `GetNextWayPoint` (`patrol_agent.h:52-99`): devolve o ponto do índice e avança — 0 para
+    /// no fim, 1 vai e volta, 2 (e qualquer outro) recomeça do primeiro.
+    pub fn proximo(&mut self) -> Option<Vector3> {
+        if self.fim {
+            return None;
+        }
+        let p = self.pontos[self.indice];
+        let ultimo = self.pontos.len() - 1;
+        match self.tipo {
+            0 => {
+                if self.indice < ultimo {
+                    self.indice += 1;
+                } else {
+                    self.fim = true;
+                }
+            }
+            1 => {
+                if self.adiante {
+                    if self.indice < ultimo {
+                        self.indice += 1;
+                    } else {
+                        self.indice -= 1;
+                        self.adiante = false;
+                    }
+                } else if self.indice > 0 {
+                    self.indice -= 1;
+                } else {
+                    self.indice += 1;
+                    self.adiante = true;
+                }
+            }
+            _ => {
+                self.indice = if self.indice < ultimo { self.indice + 1 } else { 0 };
+            }
+        }
+        Some(p)
+    }
 }
 
 /// Quem sabe a altura do chão de um ponto do mapa.
@@ -323,6 +403,10 @@ pub struct MonsterAi {
     chegadas: i32,
     /// O `follow_target` da volta para casa (`session_npc_patrol`).
     volta: Option<SeguirAlvo>,
+    /// O `follow_target` da perseguição do monstro de ar ou de água (B133).
+    no_espaco: Option<crate::navegacao::SeguirNoEspaco>,
+    /// A perseguição acabou com `NSRC_ERR_PATHFINDING` neste tique (B134).
+    caminho_falhou: bool,
     /// `aggro_policy::_cur_time`: batimentos que o primeiro da lista de ódio ainda dura sem
     /// renovar. Zero com a lista vazia.
     odio_restante: i32,
@@ -362,6 +446,28 @@ pub struct MonsterAi {
     /// combate.
     estrategia_forcada: Option<Estrategia>,
     fim_de_combate_pendente: bool,
+    /// A rota de patrulha (`ai_policy::_path_agent`, B136).
+    pub rota: Option<Rota>,
+    /// O líder do grupo (`gnpc_imp::_leader_id`), e onde ele está: o mundo põe a cada tique,
+    /// `None` com o líder morto (`QueryTarget(leader) != TARGET_STATE_NORMAL`).
+    pub lider: Option<i64>,
+    pub lider_em: Option<Vector3>,
+    /// É o chefe de um `boss_spawner` (`group_boss_policy`): repassa o ódio aos subordinados.
+    pub chefe: bool,
+    /// `group_boss_policy::_enemy` e o repasse que o mundo ainda vai entregar
+    /// (`ForwardFirstAggro` → `GM_MSG_TRANSFER_AGGRO`).
+    inimigo_repassado: Option<i64>,
+    pub odio_a_repassar: Option<(i64, i64)>,
+    /// O agente da `session_npc_patrol` e do `follow_target` atrás do líder.
+    patrulha: Option<SeguirAlvo>,
+    /// Para onde a volta vai: o ponto atual da rota (`RollBack` com `_path_agent`,
+    /// `aipolicy.cpp:214-220`); `None` é a casa.
+    volta_para: Option<Vector3>,
+    /// Centro, raio e passos do passeio em volta do líder (`session_npc_cruise::SetTarget(info.pos,
+    /// 6, 7)`, `aipolicy.cpp:1576-1580`); `None` é o passeio de sempre, em volta de casa.
+    centro_do_passeio: Option<(Vector3, f32, i32)>,
+    /// O `ReturnHome(leader, 7)` pendente: um `stop_move` com `MOVE_MODE_RETURN`.
+    teleporte: Option<Vector3>,
 }
 
 impl Default for MonsterAi {
@@ -387,6 +493,14 @@ impl MonsterAi {
     pub const PASSOS_DO_PASSEIO: i32 = 8;
     /// `abase::Rand(0,1) < 0.1f` do `ai_rest_task::OnSessionEnd`.
     pub const CHANCE_DE_EMENDAR_PASSEIO: f64 = 0.1;
+    /// `session_npc_patrol::SetTarget(pos, 120, ...)` do `ai_patrol_task` (`aipolicy.cpp:1722`).
+    pub const PASSOS_DA_PATRULHA: i32 = 120;
+    /// `MAX_MASTER_MINOR_RANGE` (`config.h:105`), comparado com a distância horizontal ao
+    /// quadrado: 20 m.
+    pub const LONGE_DO_LIDER_AO_QUADRADO: f32 = 400.0;
+    /// O 7 do `ReturnHome(info.pos, 7)`, do `SetTarget(_target, 7, 20, 7)` e do raio do passeio
+    /// em volta do líder (`aipolicy.cpp:1560-1580`).
+    pub const PERTO_DO_LIDER: f32 = 7.0;
     /// Até onde um jogador conta como "por perto" para o monstro não ficar ocioso. É o raio
     /// de visão do `bus_server`: quem está vendo o monstro.
     pub const RAIO_DE_ATIVIDADE: f32 = 120.0;
@@ -437,6 +551,8 @@ impl MonsterAi {
             info: InfoDePerseguicao::default(),
             chegadas: 0,
             volta: None,
+            no_espaco: None,
+            caminho_falhou: false,
             odio_restante: 0,
             renovar_odio: false,
             passeio: None,
@@ -457,6 +573,16 @@ impl MonsterAi {
             tarefa_de_habilidade: None,
             estrategia_forcada: None,
             fim_de_combate_pendente: false,
+            rota: None,
+            lider: None,
+            lider_em: None,
+            chefe: false,
+            inimigo_repassado: None,
+            odio_a_repassar: None,
+            patrulha: None,
+            volta_para: None,
+            centro_do_passeio: None,
+            teleporte: None,
         }
     }
 
@@ -728,12 +854,23 @@ impl MonsterAi {
     /// efeito sobre o monstro) e o leva de volta correndo.
     fn voltar_para_casa(&mut self, monster: &mut MonsterEntity) {
         self.seguir = None;
+        self.no_espaco = None;
         self.perseguindo = None;
         self.passeio = None;
         self.volta = None;
+        self.patrulha = None;
         self.state = MonsterState::Idle;
-        let longe = monster.position.distance(&monster.spawn_center).powi(2)
-            > Self::DISTANCIA_PARA_VOLTAR_AO_QUADRADO;
+        // Subordinado com o líder vivo: `GetReturnHomeRange` = 1e20 (`aipolicy.cpp:1360-1369`),
+        // não volta — o `ai_follow_master` o leva de novo ao líder.
+        if self.lider_em.is_some() {
+            self.sessao = Sessao::Nenhuma;
+            return;
+        }
+        // Com rota, a volta é sempre, ao ponto atual dela (`aipolicy.cpp:214-220`).
+        self.volta_para = self.rota.as_ref().map(|r| r.atual());
+        let casa = self.casa(monster);
+        let longe = self.volta_para.is_some()
+            || monster.position.distance(&casa).powi(2) > Self::DISTANCIA_PARA_VOLTAR_AO_QUADRADO;
         if longe {
             self.sessao = Sessao::Voltando;
             self.espera_ms = 0;
@@ -747,7 +884,22 @@ impl MonsterAi {
     /// `ai_returnhome_task::EndTask` (`aipolicy.cpp:1307-1320`): tira o invencível.
     fn fim_da_volta(&mut self, monster: &mut MonsterEntity) {
         self.sessao = Sessao::Nenhuma;
+        self.volta_para = None;
         monster.efeitos.invencivel_s = 0;
+    }
+
+    /// Para onde a volta vai: o ponto da rota, ou onde nasceu.
+    fn casa(&self, monster: &MonsterEntity) -> Vector3 {
+        self.volta_para.unwrap_or(monster.spawn_center)
+    }
+
+    /// `GM_MSG_TRANSFER_AGGRO` no subordinado do chefe (`aggro_minor_policy::AggroTransfer`,
+    /// `aiaggro.h:11-27`): a lista vira só o inimigo do chefe, com a mesma raiva, e o
+    /// `_cur_time` volta a `aggro_time`.
+    pub fn receber_odio_do_chefe(&mut self, alvo: i64, raiva: i64) {
+        self.aggro_table.clear();
+        self.aggro_table.insert(alvo, raiva.max(1));
+        self.renovar_odio = true;
     }
 
     /// Retorna o alvo com maior ameaça
@@ -782,6 +934,8 @@ impl MonsterAi {
             &Mapa {
                 terreno: chao,
                 movimento: &vazio,
+                espaco: None,
+                agua: None,
             },
         )
     }
@@ -1282,19 +1436,25 @@ impl MonsterAi {
         }
         self.espera_ms = Self::PASSO_DE_PERSEGUICAO_MS;
         let passo = monster.corrida() * Self::PASSO_DE_PERSEGUICAO_MS as f32 / 1000.0;
-        if monster.habitat == Habitat::Chao {
-            return self.perseguir(monster, alvo.id, alvo.posicao, passo, parar_a, mapa);
+        let acao = if monster.habitat == Habitat::Chao {
+            self.perseguir(monster, alvo.id, alvo.posicao, passo, parar_a, mapa)
+        } else {
+            let _ = chao;
+            self.perseguir_no_espaco(monster, alvo.id, alvo.posicao, passo, parar_a, mapa)
+        };
+        // `ai_target_task::OnSessionEnd` (`aipolicy.cpp:443-480`): a perseguição a um
+        // **jogador** que acaba em `NSRC_ERR_PATHFINDING` — o agente desistiu, ou "chegou" três
+        // vezes sem alcançar (`TEST_GETTOGOAL`, `npcsession.cpp:166-177`), como embaixo de quem
+        // bate voando — faz o monstro esquecer tudo: `ClearAggro` + `ClearDamageList` e fim da
+        // tarefa (o comentário do original: "igual ao WoW, todo mundo é esquivado"). Contra
+        // mascote, a tarefa só recomeça (B134).
+        if std::mem::take(&mut self.caminho_falhou) && alvo.jogador.is_some() {
+            self.aggro_table.clear();
+            monster.danos.clear();
+            monster.primeiro_atacante = None;
+            return self.sem_alvo(monster, mapa).or(acao);
         }
-        self.passo(
-            monster,
-            alvo.posicao,
-            passo,
-            parar_a,
-            Self::PASSO_DE_PERSEGUICAO_MS,
-            monster.corrida(),
-            MODO_CORRER,
-            chao,
-        )
+        acao
     }
 
     /// `session_npc_keep_out` / `session_npc_flee` (`npcsession.cpp:316-477`): um passo de
@@ -1608,26 +1768,88 @@ impl MonsterAi {
             self.idle_timer -= 1;
         }
 
+        // `group_boss_policy::OnHeartbeat` → `TryForwardAggro` (`aipolicy.h:1470-1497`): o
+        // primeiro da lista, quando muda, vai aos subordinados.
+        if self.chefe {
+            match self.get_highest_threat_target() {
+                Some(t) if self.inimigo_repassado != Some(t) => {
+                    self.inimigo_repassado = Some(t);
+                    self.odio_a_repassar = Some((t, self.aggro_table.get(&t).copied().unwrap_or(1)));
+                }
+                Some(_) => {}
+                None => self.inimigo_repassado = None,
+            }
+        }
+
         let livre = matches!(self.sessao, Sessao::Nenhuma) && self.aggro_table.is_empty();
+        // `ai_policy::OnHeartbeat` sem tarefa e fora de combate (`aipolicy.cpp:320-340`): com
+        // rota, o próximo ponto vira um `ai_patrol_task`; senão o `HaveRest` — no subordinado com
+        // líder, o `ai_follow_master`. Parado sem ninguém por perto (`_idle_mode`), nada.
+        if livre && self.idle_timer > 0 {
+            if let Some(p) = self.rota.as_mut().and_then(|r| r.proximo()) {
+                self.sessao = Sessao::Patrulhando { alvo: p, restantes: Self::PASSOS_DA_PATRULHA, inicio: monster.position };
+                self.patrulha = None;
+                self.espera_ms = 0;
+                self.state = MonsterState::Patrol;
+                return;
+            }
+            if self.rota.is_some() {
+                return;
+            }
+            if let Some(l) = self.lider_em {
+                self.seguir_o_lider(monster, l);
+                return;
+            }
+        }
         if livre && monster.patrulha && self.idle_timer > 0 {
             self.cruise_timer = self.cruise_timer.wrapping_sub(1) & 31;
             if self.cruise_timer == 0 {
+                // O passeio do `ai_rest_task`, em volta de casa (o do líder já não vale).
+                self.centro_do_passeio = None;
                 self.comecar_passeio(monster);
             }
         }
     }
 
+    /// `ai_follow_master::OnHeartbeat` (`aipolicy.cpp:1519-1583`), a distância **horizontal**
+    /// ao líder: de 20 m para cima (`MAX_MASTER_MINOR_RANGE` 400, ao quadrado, `config.h:105`)
+    /// vai de uma vez para até 7 m dele (`ReturnHome(info.pos, 7)`); de 8 m para cima corre
+    /// atrás dele; perto, passeia em volta dele.
+    fn seguir_o_lider(&mut self, monster: &MonsterEntity, lider: Vector3) {
+        let d2 = (lider.x - monster.position.x).powi(2) + (lider.z - monster.position.z).powi(2);
+        self.centro_do_passeio = None;
+        if d2 >= Self::LONGE_DO_LIDER_AO_QUADRADO {
+            let mut rng = rand::thread_rng();
+            let r = Self::PERTO_DO_LIDER;
+            self.teleporte = Some(Vector3::new(
+                lider.x + rng.gen_range(-r..=r),
+                lider.y,
+                lider.z + rng.gen_range(-r..=r),
+            ));
+        } else if d2 >= 64.0 {
+            self.sessao = Sessao::SeguindoLider;
+            self.patrulha = None;
+            self.espera_ms = 0;
+            self.state = MonsterState::Patrol;
+        } else {
+            self.centro_do_passeio = Some((lider, Self::PERTO_DO_LIDER, 6));
+            self.passeio = None;
+            self.comecar_passeio(monster);
+        }
+    }
+
     fn comecar_passeio(&mut self, monster: &MonsterEntity) {
         let mut rng = rand::thread_rng();
-        let r = Self::RAIO_DO_PASSEIO;
+        let (centro, r, passos) =
+            self.centro_do_passeio.unwrap_or((monster.spawn_center, Self::RAIO_DO_PASSEIO, Self::PASSOS_DO_PASSEIO));
         let destino = Vector3::new(
-            monster.spawn_center.x + rng.gen_range(-r..=r),
-            monster.spawn_center.y,
-            monster.spawn_center.z + rng.gen_range(-r..=r),
+            centro.x + rng.gen_range(-r..=r),
+            centro.y,
+            centro.z + rng.gen_range(-r..=r),
         );
         self.sessao = Sessao::Passeando {
             destino,
-            passos_restantes: Self::PASSOS_DO_PASSEIO,
+            passos_restantes: passos,
         };
         // A espera **não** é zerada (B104): na emenda (`ai_rest_task::OnSessionEnd`, 10 %) o
         // último passo do passeio anterior acabou de sair com `use_time` de 1 s, e o primeiro
@@ -1652,7 +1874,21 @@ impl MonsterAi {
         let chao: Chao = &piso;
         self.seguir = None;
         self.perseguindo = None;
+        if let Some(p) = self.teleporte.take() {
+            // `ai_npcobject::ReturnHome` (`ainpc.cpp:98-107`): `stop_move(pos, 0x500, 1,
+            // MOVE_MODE_RETURN)` e o passo de uma vez.
+            monster.position = p;
+            self.parado = true;
+            return Some(AcaoDoMonstro::Parou {
+                posicao: p,
+                velocidade: 0x500 as f32 / 256.0,
+                direcao: self.direcao,
+                modo: MODO_VOLTAR,
+            });
+        }
         match self.sessao {
+            Sessao::Patrulhando { .. } => self.passo_de_patrulha(monster, mapa, chao),
+            Sessao::SeguindoLider => self.passo_atras_do_lider(monster, mapa, chao),
             Sessao::Perseguindo => {
                 // Perdeu o alvo sem a lista esvaziar do lado de cá (alvo que sumiu):
                 // o mesmo `RollBack`.
@@ -1668,9 +1904,10 @@ impl MonsterAi {
                 if monster.habitat == Habitat::Chao {
                     return self.voltar(monster, passo, mapa);
                 }
+                let casa = self.casa(monster);
                 let acao = self.passo(
                     monster,
-                    monster.spawn_center,
+                    casa,
                     passo,
                     0.0,
                     Self::PASSO_DE_PATRULHA_MS,
@@ -1818,6 +2055,69 @@ impl MonsterAi {
     /// mais de 7 m da meta antiga (4 m, se não estiver bloqueado); três chegadas sem encostar
     /// (`_reachable_count`) ou o agente desistindo encerram a sessão, e a próxima começa do
     /// zero no passo seguinte — no original é a tarefa de IA que abre outra.
+    /// A perseguição do monstro de ar ou de água: `follow_target` com o `CNPCChaseOnAirPFAgent`
+    /// / `CNPCChaseInWaterPFAgent` (`NPCMoveAgent.cpp:68-90`), sem a dispersão (que é só do
+    /// agente de chão) — reta quando o `airmap/` deixa, senão a busca na octree (B133).
+    fn perseguir_no_espaco(
+        &mut self,
+        monster: &mut MonsterEntity,
+        alvo_id: i64,
+        alvo: Vector3,
+        passo: f32,
+        alcance: f32,
+        mapa: &Mapa,
+    ) -> Option<AcaoDoMonstro> {
+        use crate::navegacao::Ambiente;
+        let amb = if monster.habitat == Habitat::Agua { Ambiente::Agua } else { Ambiente::Ar };
+        let de = V3::new(monster.position.x, monster.position.y, monster.position.z);
+        let meta = V3::new(alvo.x, alvo.y, alvo.z);
+        let d2 = monster.position.distance(&alvo).powi(2);
+        if self.perseguindo != Some(alvo_id) {
+            self.perseguindo = Some(alvo_id);
+            self.no_espaco = None;
+            self.chegadas = 0;
+        }
+        let primeira = self.no_espaco.is_none();
+        let mut s = self.no_espaco.take().unwrap_or_default();
+        let mut recomecou = false;
+        if primeira {
+            s.comecar(amb, de, meta, passo, alcance, d2, mapa);
+            recomecou = true;
+        } else if s.chegou() {
+            s.comecar(amb, de, meta, passo, alcance * 0.6, d2, mapa);
+            recomecou = true;
+        } else {
+            let a = s.alvo();
+            let dis = (a.x - meta.x).powi(2) + (a.z - meta.z).powi(2);
+            if dis > 49.0 || (dis > 16.0 && !s.bloqueado()) {
+                s.comecar(amb, de, meta, passo, alcance, d2, mapa);
+                recomecou = true;
+            }
+        }
+        if recomecou && s.chegou() {
+            self.chegadas += 1;
+            if self.chegadas >= 3 {
+                self.chegadas = 0;
+                self.caminho_falhou = true;
+            } else {
+                self.no_espaco = Some(s);
+            }
+            return (!self.parado).then(|| self.parar(monster, monster.corrida(), MODO_CORRER));
+        }
+        if !s.andar(passo, mapa) {
+            if primeira {
+                self.no_espaco = Some(s);
+                return None;
+            }
+            self.chegadas = 0;
+            self.caminho_falhou = true;
+            return (!self.parado).then(|| self.parar(monster, monster.corrida(), MODO_CORRER));
+        }
+        let p = s.posicao();
+        self.no_espaco = Some(s);
+        self.ir_para(monster, p, Self::PASSO_DE_PERSEGUICAO_MS, monster.corrida(), MODO_CORRER)
+    }
+
     fn perseguir(
         &mut self,
         monster: &mut MonsterEntity,
@@ -1869,6 +2169,7 @@ impl MonsterAi {
             if self.chegadas >= 3 {
                 // `NSRC_ERR_PATHFINDING`: a sessão acaba.
                 self.chegadas = 0;
+                self.caminho_falhou = true;
             } else {
                 self.seguir = Some(s);
             }
@@ -1881,6 +2182,7 @@ impl MonsterAi {
             }
             // `NSRC_ERR_PATHFINDING`: a sessão acaba.
             self.chegadas = 0;
+            self.caminho_falhou = true;
             return (!self.parado).then(|| self.parar(monster, monster.corrida(), MODO_CORRER));
         }
         let p = s.posicao();
@@ -1905,7 +2207,7 @@ impl MonsterAi {
         passo: f32,
         mapa: &Mapa,
     ) -> Option<AcaoDoMonstro> {
-        let casa = monster.spawn_center;
+        let casa = self.casa(monster);
         let de = V3::new(monster.position.x, monster.position.y, monster.position.z);
         let meta = V3::new(casa.x, casa.y, casa.z);
         let mut s = match self.volta.take() {
@@ -1943,6 +2245,130 @@ impl MonsterAi {
         (!self.parado).then(|| self.parar(monster, monster.corrida(), MODO_CORRER))
     }
 
+    /// `session_npc_patrol::Run` (`npcsession.cpp:883-994`) da patrulha: um passo por segundo
+    /// (`NPC_PATROL_TIME`), andando, ou correndo com o `iSpeedFlag`. Perto do ponto
+    /// (`1,44 × passo²`) ou com o agente na meta, pega o próximo da rota (meta de 1,8 m ou
+    /// 0,8 m); sem próximo, ou com o agente sem caminho, a sessão acaba. O de ar e o de água
+    /// vão em reta.
+    fn passo_de_patrulha(&mut self, monster: &mut MonsterEntity, mapa: &Mapa, chao: Chao) -> Option<AcaoDoMonstro> {
+        let Sessao::Patrulhando { mut alvo, restantes, inicio } = self.sessao else {
+            return None;
+        };
+        if self.espera_ms > 0 {
+            return None;
+        }
+        self.espera_ms = Self::PASSO_DE_PATRULHA_MS;
+        let corre = self.rota.as_ref().is_some_and(|r| r.corre);
+        let (velocidade, modo) = if corre { (monster.corrida(), MODO_CORRER) } else { (monster.andar(), MODO_ANDAR) };
+        if restantes <= 0 {
+            return self.fim_da_patrulha(monster, alvo, inicio, velocidade, modo);
+        }
+        let passo = velocidade * Self::PASSO_DE_PATRULHA_MS as f32 / 1000.0;
+        let de = V3::new(monster.position.x, monster.position.y, monster.position.z);
+        let perto = monster.position.distance(&alvo).powi(2) <= 1.44 * passo * passo;
+        if monster.habitat != Habitat::Chao {
+            if perto {
+                match self.rota.as_mut().and_then(|r| r.proximo()) {
+                    Some(n) => alvo = n,
+                    None => return self.fim_da_patrulha(monster, alvo, inicio, velocidade, modo),
+                }
+            }
+            self.sessao = Sessao::Patrulhando { alvo, restantes: restantes - 1, inicio };
+            return self.passo(monster, alvo, passo, 0.0, Self::PASSO_DE_PATRULHA_MS, velocidade, modo, chao);
+        }
+        let mut s = self.patrulha.take().unwrap_or_else(|| {
+            let mut s = SeguirAlvo::default();
+            s.comecar(de, V3::new(alvo.x, alvo.y, alvo.z), passo, 0.8, 15.0, None, mapa);
+            s
+        });
+        let reinicio = if perto { Some(1.8) } else if s.chegou() { Some(0.8) } else { None };
+        if let Some(meta) = reinicio {
+            match self.rota.as_mut().and_then(|r| r.proximo()) {
+                Some(n) => {
+                    alvo = n;
+                    s.comecar(de, V3::new(n.x, n.y, n.z), passo, meta, 15.0, None, mapa);
+                }
+                None => return self.fim_da_patrulha(monster, alvo, inicio, velocidade, modo),
+            }
+        }
+        if !s.andar(passo, mapa) {
+            return self.fim_da_patrulha(monster, alvo, inicio, velocidade, modo);
+        }
+        let p = s.posicao();
+        self.patrulha = Some(s);
+        self.sessao = Sessao::Patrulhando { alvo, restantes: restantes - 1, inicio };
+        self.ir_para(monster, p, Self::PASSO_DE_PATRULHA_MS, velocidade, modo)
+    }
+
+    /// `session_npc_patrol::EndSession` (a parada, se ainda andava) e `ai_patrol_task::EndTask`
+    /// (`aipolicy.cpp:1661-1673`): quem não saiu do lugar desde o começo da tarefa vai de uma
+    /// vez ao ponto (`ReturnHome(_target, 0)`).
+    fn fim_da_patrulha(&mut self, monster: &mut MonsterEntity, alvo: Vector3, inicio: Vector3, velocidade: f32, modo: u8) -> Option<AcaoDoMonstro> {
+        self.sessao = Sessao::Nenhuma;
+        self.patrulha = None;
+        self.state = MonsterState::Idle;
+        if monster.position.distance(&inicio).powi(2) < 1e-3 && monster.position.distance(&alvo) > 1e-3 {
+            monster.position = alvo;
+            self.parado = true;
+            return Some(AcaoDoMonstro::Parou {
+                posicao: alvo,
+                velocidade: 0x500 as f32 / 256.0,
+                direcao: self.direcao,
+                modo: MODO_VOLTAR,
+            });
+        }
+        (!self.parado).then(|| self.parar(monster, velocidade, modo))
+    }
+
+    /// `session_npc_follow_target` do `ai_follow_master`: correndo, a cada 500 ms, até ficar a
+    /// menos de 7 m do líder (`_range_min`), desistindo além de 20 m (`_range_max`) ou sem
+    /// caminho. As regras de recomeço do agente são as do `follow_target` (`npcsession.cpp:
+    /// 199-233`).
+    fn passo_atras_do_lider(&mut self, monster: &mut MonsterEntity, mapa: &Mapa, chao: Chao) -> Option<AcaoDoMonstro> {
+        let fim = |ia: &mut Self, monster: &MonsterEntity| {
+            ia.sessao = Sessao::Nenhuma;
+            ia.patrulha = None;
+            ia.state = MonsterState::Idle;
+            (!ia.parado).then(|| ia.parar(monster, monster.corrida(), MODO_CORRER))
+        };
+        let Some(lider) = self.lider_em else {
+            return fim(self, monster);
+        };
+        if self.espera_ms > 0 {
+            return None;
+        }
+        self.espera_ms = Self::PASSO_DE_PERSEGUICAO_MS;
+        let d = monster.position.distance(&lider);
+        if !(Self::PERTO_DO_LIDER..=20.0).contains(&d) {
+            return fim(self, monster);
+        }
+        let passo = monster.corrida() * Self::PASSO_DE_PERSEGUICAO_MS as f32 / 1000.0;
+        if monster.habitat != Habitat::Chao {
+            return self.passo(monster, lider, passo, Self::PERTO_DO_LIDER, Self::PASSO_DE_PERSEGUICAO_MS, monster.corrida(), MODO_CORRER, chao);
+        }
+        let de = V3::new(monster.position.x, monster.position.y, monster.position.z);
+        let meta = V3::new(lider.x, lider.y, lider.z);
+        let (recomecar, alcance) = match &self.patrulha {
+            None => (true, Self::PERTO_DO_LIDER),
+            Some(s) if s.chegou() => (true, Self::PERTO_DO_LIDER * 0.6),
+            Some(s) => {
+                let a = s.alvo();
+                let dis = (a.x - meta.x).powi(2) + (a.z - meta.z).powi(2);
+                (dis > 49.0 || (dis > 16.0 && !s.bloqueado()), Self::PERTO_DO_LIDER)
+            }
+        };
+        let mut s = self.patrulha.take().unwrap_or_default();
+        if recomecar {
+            s.comecar(de, meta, passo, alcance, d * d, None, mapa);
+        }
+        if !s.andar(passo, mapa) {
+            return fim(self, monster);
+        }
+        let p = s.posicao();
+        self.patrulha = Some(s);
+        self.ir_para(monster, p, Self::PASSO_DE_PERSEGUICAO_MS, monster.corrida(), MODO_CORRER)
+    }
+
     /// `session_npc_cruise::Run` (`gs/npcsession.cpp:590-650`) com o `cruise`: a meta é
     /// sorteada no disco de 10 m em volta de onde nasceu, alcançável e de preferência em linha
     /// reta, e o caminho até ela desvia de obstáculo.
@@ -1953,7 +2379,8 @@ impl MonsterAi {
         mapa: &Mapa,
     ) -> Option<AcaoDoMonstro> {
         let de = V3::new(monster.position.x, monster.position.y, monster.position.z);
-        let casa = monster.spawn_center;
+        let (casa, raio, _) =
+            self.centro_do_passeio.unwrap_or((monster.spawn_center, Self::RAIO_DO_PASSEIO, 0));
         let mut p = match self.passeio.take() {
             Some(p) => p,
             None => {
@@ -1962,7 +2389,7 @@ impl MonsterAi {
                     de,
                     V3::new(casa.x, casa.y, casa.z),
                     passo,
-                    Self::RAIO_DO_PASSEIO,
+                    raio,
                     mapa,
                 );
                 p

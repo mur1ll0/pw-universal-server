@@ -145,6 +145,25 @@ pub(crate) fn chance_de_captura(hp: i64, max_hp: i64, nivel_do_monstro: i32, niv
     falta * falta * 100.0 * (1.35 - (nivel_do_monstro / 100) as f32 + nivel_da_habilidade as f32 * 0.05)
 }
 
+/// `SkillStub::GetEnmity` (`skill.cpp:648-653`): o ódio que a habilidade põe em cada vítima,
+/// pelo nível dela e, em 18 habilidades, pelo nível de quem lança (`10 * P_Level * (3 + L)`).
+/// Talentos (`S_T0`) valem 0, como no resto dos roteiros.
+fn odio_da_habilidade(h: &pw_data_loader::habilidades::HabilidadeDoServidor, nivel: i32, nivel_de_quem_lanca: i32) -> i64 {
+    if let Some(e) = &h.odio_expr {
+        let vars = |v: &str| match v {
+            "L" => Some(nivel as f64),
+            "P_Level" => Some(nivel_de_quem_lanca as f64),
+            "S_T0" | "S_T1" | "S_T2" => Some(0.0),
+            _ => None,
+        };
+        return efeitos::expr::avaliar(e, &vars).unwrap_or(0.0) as i64;
+    }
+    h.odio
+        .as_ref()
+        .and_then(|v| v.get(usize::try_from(nivel - 1).ok()?).copied())
+        .unwrap_or(0) as i64
+}
+
 fn vars_do_jogador(p: &PlayerEntity) -> HashMap<&'static str, f64> {
     HashMap::from([
         ("Maxhp", p.max_hp as f64),
@@ -330,6 +349,7 @@ impl BusServer {
         golpe.taxa_de_ataque = (golpe.taxa_de_ataque as f32 * h.precisao(nivel)) as i32;
 
         let quem = Conjurador::do_jogador(&conjurador);
+        let odio = odio_da_habilidade(&h, nivel, conjurador.level);
         let mut nao_portados: Vec<String> = Vec::new();
         let mut avisar: Vec<(Alvo, Mudanca)> = Vec::new();
         let mut mortos: Vec<i64> = Vec::new();
@@ -357,6 +377,8 @@ impl BusServer {
             let mut resultados = Vec::new();
             {
                 let mut mundo = self.world.write().await;
+                let progressao = std::sync::Arc::clone(&mundo.data_manager);
+                let progressao = &progressao.progressao;
                 let mut apanharam = Vec::new();
                 for a in &alvos {
                     let Alvo::Monstro(id) = *a else { continue };
@@ -369,7 +391,7 @@ impl BusServer {
                     let distancia = conjurador.position.distance(&m.position);
                     let r = combat::resolver(
                         &golpe,
-                        &CombatEngine::defesa_do_monstro(m),
+                        &CombatEngine::defesa_do_monstro_contra(m, conjurador.level, &progressao),
                         distancia,
                         false,
                         combat::Rolagens::sortear(),
@@ -448,6 +470,8 @@ impl BusServer {
                 }
                 // `attached_skill` só vale se o golpe acertou (`HandleAttackMsg`).
                 if acertou {
+                    // `SkillWrapper::Attack` → `SetEnmity(GetEnmity())` (`skillwrapper.cpp:475-477`).
+                    self.world.write().await.odio_de_habilidade(id, roleid as i64, odio);
                     if let Some(passos) = &roteiro_no_alvo {
                         let m = self
                             .rodar_roteiro(
@@ -471,6 +495,10 @@ impl BusServer {
                 let m = self
                     .rodar_roteiro(*a, passos, nivel, &quem, &golpe, &mut nao_portados)
                     .await;
+                // `SkillWrapper::Enchant` → `SetEnmity` na vítima monstro (maldição).
+                if let Alvo::Monstro(id) = *a {
+                    self.world.write().await.odio_de_habilidade(id, roleid as i64, odio);
+                }
                 // `SendClientEnchantResult` (`skillwrapper.cpp:546-551`).
                 let pacote = self
                     .sub
@@ -574,6 +602,7 @@ impl BusServer {
         };
         let tipo = h.tipo.unwrap_or(0);
         let quem = Conjurador::do_mascote(pet, &corpo);
+        let odio = odio_da_habilidade(&h, nivel, corpo.level);
         let mut golpe = match h.dano.as_ref().and_then(|d| {
             CombatEngine::golpe_de_habilidade_de_mascote(&corpo, bruto, lealdade, d, nivel)
         }) {
@@ -652,6 +681,8 @@ impl BusServer {
                 r.dano()
             );
             if acertou {
+                // O ódio da habilidade vai a quem lança: o mascote (`GetPerformerid`).
+                self.world.write().await.odio_de_habilidade(alvo, pet, odio);
                 if let Some(passos) = &roteiro_no_alvo {
                     let m = self
                         .rodar_roteiro(
@@ -681,6 +712,9 @@ impl BusServer {
             let m = self
                 .rodar_roteiro(a, passos, nivel, &quem, &golpe, &mut nao_portados)
                 .await;
+            if let Alvo::Monstro(id) = a {
+                self.world.write().await.odio_de_habilidade(id, pet, odio);
+            }
             let pacote = self
                 .sub
                 .enchant_result(
@@ -1345,6 +1379,11 @@ impl BusServer {
             return;
         }
         // O objeto: efeitos, vida, máximos, defesa e resistências (para o dano no tempo).
+        // `GetCls()` da vítima (o NPC não tem classe: -1).
+        let cls_do_alvo = match alvo {
+            Alvo::Jogador(id) => mundo.players.get(&id).map(|p| p.cls as i32).unwrap_or(-1),
+            _ => -1,
+        };
         let (efs, hp, max_hp, mp_max, defesa, resist, nivel_alvo, e_jogador): (
             &mut efeitos::Efeitos,
             i64,
@@ -1477,6 +1516,14 @@ impl BusServer {
                     return;
                 };
                 let mut f = novo(efeito);
+                if efeito == Efeito::Inchpsteal {
+                    // `PlayerWrapper::SetInchpsteal` (`playerwrapper.cpp:3549-3559`): as classes
+                    // da máscara 0xACE não recebem; a porcentagem com `+ 0.00001`.
+                    if cls_do_alvo >= 0 && (1 << cls_do_alvo) & 0xACE != 0 {
+                        return;
+                    }
+                    f.razao = (ap.razao * 100.0 + 0.00001) as i32;
+                }
                 if ap.tempo_s <= 0 {
                     return;
                 }
@@ -1573,7 +1620,9 @@ impl BusServer {
                 Alvo::Monstro(id) => {
                     if let Some((m, ai)) = mundo.monsters.get_mut(&id) {
                         if delta_hp < 0 {
-                            ai.add_threat(origem, -delta_hp);
+                            // `BeHurt` → `OnHurt` só registra o dano (`npc.cpp:1829-1845`): o
+                            // ódio da habilidade é o `GetEnmity` (B137).
+                            let _ = &ai;
                             m.registrar_dano(origem, (-delta_hp).min(m.hp));
                         }
                         m.hp = (m.hp + delta_hp).clamp(0, m.max_hp);
@@ -1741,5 +1790,21 @@ mod testes {
         // `GetLevel() / 100` é divisão inteira: nível 150 tira 1 inteiro.
         let alto = chance_de_captura(50, 100, 150, 1);
         assert!((alto - 25.0 * 0.40).abs() < 1e-3, "{alto}");
+    }
+
+    /// B137 — o `GetEnmity` de cada versão: por nível (a 150 do 1.2.6, 200 × L, contra
+    /// 300 × L no 1.5.5) e por expressão com o nível de quem lança (a 747, `10 × P_Level ×
+    /// (3 + L)`, nas duas).
+    #[test]
+    fn o_odio_da_habilidade_sai_do_stub_de_cada_versao() {
+        use pw_data_loader::habilidades::TabelaDeHabilidades;
+        let t126 = TabelaDeHabilidades::do_126();
+        let t155 = TabelaDeHabilidades::do_155();
+        assert_eq!(odio_da_habilidade(&t126.por_id[&150], 2, 50), 400);
+        assert_eq!(odio_da_habilidade(&t155.por_id[&150], 2, 50), 600);
+        assert_eq!(odio_da_habilidade(&t126.por_id[&747], 1, 50), 2000);
+        assert_eq!(odio_da_habilidade(&t155.por_id[&747], 3, 20), 1200);
+        let sem = t155.por_id.values().filter(|h| h.odio.is_none() && h.odio_expr.is_none()).count();
+        assert_eq!(sem, 0, "habilidade sem ódio lido");
     }
 }

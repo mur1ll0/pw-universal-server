@@ -77,6 +77,14 @@ fn f(reg: &Record, campo: &str) -> f32 {
 }
 
 impl TabelaDeProgressao {
+    /// Uma tabela sem punição nenhuma (todo fator 1), **só para teste** de conta que não é a
+    /// da diferença de nível. O padrão do construtor tem os fatores em 0, como o `memset` do
+    /// original antes do `ptemplate.conf`.
+    pub fn neutra_para_teste() -> Self {
+        let um = AjusteDeNivel { exp: 1.0, sp: 1.0, dinheiro: 1.0, item: 1.0, ataque: 1.0 };
+        Self { ajuste: vec![um; MAX_LEVEL_DIFF + 1], ..Self::default() }
+    }
+
     /// Monta as tabelas como `__LoadDataFromDataMan`. Tabela ausente fica no padrão.
     pub fn carregar(elements: &GenericElementsData) -> Self {
         let mut t = Self::default();

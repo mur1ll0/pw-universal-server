@@ -279,6 +279,12 @@ pub enum Efeito {
     Decdodge,
     Incaccuracy,
     Decaccuracy,
+    /// `filter_Inchpsteal` (1.5.5, B137): % de roubo de vida no golpe físico corpo a corpo.
+    Inchpsteal,
+    /// `filter_Incdamagedodge`: % de chance de o dano do golpe sumir.
+    Incdamagedodge,
+    /// `filter_Incdebuffdodge`: % de chance de escapar de maldição (a regra ainda sem porte).
+    Incdebuffdodge,
     Fastattack,
     Slowattack,
     Fastpray,
@@ -396,6 +402,9 @@ impl Efeito {
             "Decdodge" => Decdodge,
             "Incaccuracy" => Incaccuracy,
             "Decaccuracy" => Decaccuracy,
+            "Inchpsteal" => Inchpsteal,
+            "Incdamagedodge" => Incdamagedodge,
+            "Incdebuffdodge" => Incdebuffdodge,
             "Fastattack" => Fastattack,
             "Slowattack" => Slowattack,
             "Fastpray" => Fastpray,
@@ -465,6 +474,12 @@ impl Efeito {
             Decdodge => f(Unico, false, 25, VS_CURSED),
             Incaccuracy => f(Unico, true, 36, VS_BLESSED),
             Decaccuracy => f(Unico, false, 24, VS_INFAUST),
+            // `skillfilter.h:8808-8862`: MERGE|BUFF, HSTATE_INCHPSTEAL 151, sem estado visível.
+            Inchpsteal => f(Fundir, true, 151, 0),
+            // `:8940-8990`/`:8991-9040`: UNIQUE, HSTATE 153/154, VSTATE_INCDAMAGEDODGE 65 /
+            // VSTATE_INCDEBUFFDODGE 64 (`statedef.h:82-83`, `:351-352`).
+            Incdamagedodge => f(Unico, true, 153, 65),
+            Incdebuffdodge => f(Unico, true, 154, 64),
             // `filter_Crazy`: MERGE|BUFF.
             Fastattack => f(Fundir, true, 33, VS_BLESSED),
             // `filter_Tardy`: UNIQUE|DEBUFF.
@@ -613,6 +628,10 @@ pub struct Realce {
     pub dano_recebido: f32,
     /// `_en_percent.swim_speed` (`EnhanceSwimSpeed`, `obj_interface.cpp:475-478`).
     pub natacao: i32,
+    /// `_hp_steal_rate`, `_damage_dodge_rate`, `_debuff_dodge_rate` (%), B137.
+    pub roubo_de_vida: i32,
+    pub esquiva_de_dano: i32,
+    pub esquiva_de_maldicao: i32,
 }
 
 impl Realce {
@@ -694,6 +713,14 @@ impl Efeitos {
                         velho.restante_s += novo.restante_s;
                         velho.por_segundo = (total / velho.restante_s.max(1)).max(1);
                         return true;
+                    } else if novo.efeito == Efeito::Inchpsteal {
+                        // `filter_Inchpsteal::Merge` (`skillfilter.h:8840-8854`): igual renova o
+                        // tempo, maior substitui, menor não muda nada.
+                        if novo.razao >= velho.razao {
+                            velho.restante_s = novo.restante_s;
+                            velho.razao = novo.razao;
+                            velho.fator = novo.fator;
+                        }
                     } else {
                         // `Merge` dos realces: o tempo e a razão do novo.
                         velho.restante_s = novo.restante_s;
@@ -954,6 +981,9 @@ impl Efeitos {
                 Decdodge => r.evasao -= k,
                 Incaccuracy => r.precisao += k,
                 Decaccuracy => r.precisao -= k,
+                Inchpsteal => r.roubo_de_vida += k,
+                Incdamagedodge => r.esquiva_de_dano += k,
+                Incdebuffdodge => r.esquiva_de_maldicao += k,
                 Fastattack => r.velocidade_de_ataque -= k,
                 Slowattack => r.velocidade_de_ataque += k,
                 Fastpray => r.conjuracao += k,

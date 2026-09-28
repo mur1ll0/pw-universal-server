@@ -40,7 +40,7 @@ que produz o layout do `elements.data`. O resto — `npcgen`, `aipolicy`, `gshop
 `.hmap`, `dyn_tasks`, moldes do `clsconfig` — é lido pelo mesmo código em qualquer versão.
 
 **Estado da carga (B102):** `realm_126` carrega **sem falha** (132 arquivos). Não são lidos,
-em nenhum realm, por falta do sistema: `path.sev` (rotas de patrulha), `domain.data`,
+em nenhum realm, por falta do sistema: `domain.data`,
 `extra_drops.sev`, `task_npc.data`, `global_api.lua`, `ExtDataID.dat`, `precinct.clt`,
 `rare_item.conf`. Na raiz do `realm_126`, `npcgen.data`/`precinct.sev` são cópias idênticas das
 de `world/` (as lidas); o `region.sev` da raiz (6.856 B) difere do de `world/` (8.860 B), e vale o
@@ -148,7 +148,12 @@ Autoridade: `cgame/gs/template/npcgendata.h/.cpp`. Um arquivo por pasta de mapa.
   byte (`examples/conferir_npcgen.rs`, B51).
 - Campos usados: tipo de área (`iType`: no chão / na caixa), `vExts` (**tamanho** da caixa),
   `iDeadTime`/`iRefresh`/`iRefreshLower` → `SpawnInstance::{corpo_s, renascer_min_s, renascer_max_s}` pelas regras de `npcgenerator.cpp:3828-3855` (B105; antes os dois primeiros eram lidos e descartados, e `respawn_sec` = `iRefresh.max(1)`), `fOffsetTrn`/`fHeiOff` (zero em 18.902 de 18.903 geradores), `fOffsetWater` (guardado, sem
-  mapa de água), `iPathID`, `iSpeedFlag`, contagens sem teto inventado.
+  mapa de água), `iPathID`, `iSpeedFlag`, `iLoopType` (B136), contagens sem teto inventado.
+- Grupo (B136): `iGroupType` da área → `SpawnInstance::tipo_de_grupo` (0 `mobs_spawner`, 1
+  `group_spawner`, 2 `boss_spawner`, `npcgenerator.cpp:3717-3732`), com `area_de_ia` (a ordem da
+  área) e `gerador_na_area`. No grupo e no chefe o gerador 0 é o líder e sai com **uma** cópia
+  (`quantidade_do_gerador`; o original força 1, `npcgenerator.cpp:5297-5312`, `:5405-5415`).
+  `examples/grupo_do_monstro.rs` lista as áreas de um monstro pelo nome.
 - Recurso (`ResourceMine`): altura = relevo + `fHeiOff` do `NPCGENFILERES`, **sem** o mapa de movimento (`SetRegion(0, ...)` → `terrain_gen_pos`, `npcgenerator.cpp:3900-3902`, `:4320-4324`; B109). O `fHeiOff` põe baú em cima de construção: Baú de Tesouros 11117 (missão 3428) com 33,5 m, Baú Desgastado 12858 (missão 7017) com 26,8 m. Mina de missão: `materials_1_id` 0 e `task_in`/`task_out` = a missão; o item vem do `OnTaskMining` (`colheu_mina`).
 - `PET_ESSENCE` (B111): o layout v7 inventava um `pet_snd_type` em 0x154 e deslocava `hp`/`hp_gen`/`damage`; o `gs` 1.2.6 (`pet_dataman::LoadTemplate`, VA 0x8143580) lê `hp_a`…`magic_defence_d` (26 floats, com `damage_d`) a partir de 0x154, depois `size`, `damage_delay`, `attack_range`, `attack_speed`, `sight_range` (int), `food_mask`, `inhabit_type` e um `unk` até os 476 B. `ModeloDeMascote` (`pet.rs`) com as recusas do original: 460 modelos no 1.2.6 (413 de combate), 783 no 1.5.5 (439); `PET_FOOD_ESSENCE` → `comidas_de_mascote`; curva do mascote = `PLAYER_LEVELEXP_CONFIG` 592 (`exp_do_mascote_para_subir`).
 - Altura (`SpawnInstance::posicao_no_mapa` → `altura_resolvida`, `gs/npcgenerator.cpp:4296-4346`):
@@ -251,6 +256,47 @@ libera o submapa nesse caso. `MapaDeAgua::altura_em(x, z)` é o `GetWaterHeight`
 para **derrubar** quem entra na água montado (spec 05, montaria), e o fôlego (`breath_ctrl`,
 `falta`). O `fOffsetWater` do `npcgen.data` continua guardado sem uso.
 
+### 3.6d `airmap/` — o espaço passável do ar e da água (`testado`, B133)
+
+`pw_data_loader::MapaDoEspaco` (`espaco.rs`), porte de `gs/pathfinding/GlobalSPMap` e
+`CompactSpacePassableOctree`, carregado por mapa (`WorldInstance::espaco`, junto do `watermap/`).
+
+| arquivo | formato |
+| :--- | :--- |
+| `spmap.conf` | texto (termina num comentário em GBK — lido como bytes): `Map Width`, `Map Length`, `Submap Size`, `Voxel Size` (mapa 1: 8 × 11, 1024, 2) |
+| `N.octr` | `u32 0xcc000001`, `u8 id`, `CubeInt` (4 `int`: centro e meia aresta), `int` folha, `u32 n`, `n × u32` nós (2 bits de estado — 0 livre, 1 bloqueado, 2 borda —, 26 bits do endereço dos filhos) — **29 + 4n B, fecha no último byte**. `N = (comprimento − linha − 1) × largura + coluna + 1` |
+
+Submapa sem arquivo (ou recusado) é **livre**, com o centro calculado (`SetFreeSPMap`). Consultas:
+`centro_do_voxel` (`GetVoxelCenter`), `no` (`GetTraversalNode`, filho = x·4 + y·2 + z), `livre`.
+Conferido: **27 octrees no `realm_126` e 120 no `realm_155`, todas fechando** (`tests/espaco_do_realm.rs`).
+
+### 3.6e Limites do mapa: `gs.conf` → `specs/mapas/limites_<versão>.json` (`limites.rs`, B133)
+
+A chave `limit` (e `height_limit`) de cada `[World_*]`/`[Instance_*]` do `gs.conf` original
+(`world_manager::InitWorldLimit`, `worldmanager.cpp:108-160`), pela `tag`, gerada por
+`specs/mapas/gerar_limites.py`: **1.2.6** do `files1.2.6/pwserver/gamed/gs.conf` (43 mapas, 34
+`nofly`), **1.5.5** do `pwserver_155v156` (79 mapas, 50 `nofly`). O mapa 1 **voa** nas duas. Só o
+`nofly` tem consumidor (spec 05 §7).
+
+### 3.6f `path.sev` — as rotas de patrulha (`testado`, B136)
+
+`pw_data_loader::rotas::Rotas` (`rotas.rs`), porte do `path_manager::Init`
+(`gs/template/pathman.cpp`) sobre o `CSevBezierMan` (`gs/template/sevbezier.cpp`), da pasta do
+mapa (`world/path.sev` no mapa 1).
+
+| parte | formato |
+| :--- | :--- |
+| cabeçalho | `int iVersion` (recusa `> 1`), `int iNumBezier` |
+| curva | `u32 dwVersion`, `int id`; com `dwVersion ≥ 2`, `int global`, `int próximo global`; `int n` × (`pos` 12 + `dir` 12); `int m` × (âncora início 12, âncora fim 12, `int início`, `int fim`, `float comprimento`) |
+
+O servidor não anda na curva: na carga, cada rota vira a lista de pontos de um
+`CSevBezierWalker` a **8 m/s amostrado a cada 1000 ms** (a posição antes de cada `Tick`; o
+ponto final da curva não entra; para quando acaba ou não sai do lugar), com as curvas
+encadeadas por `iNextGlobalID` emendadas. `do_global` é a tabela `IdConvert`. Arquivo de 0 B
+(o `b01` do 1.5.5) = sem rota. Conferido: **116 `path.sev` nos dois realms, 3.792 rotas, todos
+fechando no último byte**; a rota 486539715 do Carniçal Sanguinário (1.2.6) tem 134 pontos
+(`tests/rotas_do_realm.rs`).
+
 ### 3.6c Arquivos do realm que este servidor **não** lê
 
 Estão na pasta do realm e não são pendência nossa, com uma exceção:
@@ -262,7 +308,7 @@ Estão na pasta do realm e não são pendência nossa, com uma exceção:
 | `domain.data`, `domain2.data`, `domain2_cross.data` | não aparecem no fonte do `gs` nem no do cliente; provavelmente do `gdeliveryd` (domínios e cruzamento entre servidores) — fora do alvo atual |
 | `extra_drops.sev` | não aparece em nenhum dos dois fontes que temos; origem desconhecida |
 | `globalcontroller.conf` | **é do `gs`** (`worldmanager.cpp:1106`) e traz `cash_money_exchange_rate` (1.000.000 no `realm_155`). `falta`, mas só importa quando a **Loja Gold** existir |
-| `airmap/`, `movemap/`, `path.sev`, `map.bht`, `.dhmap`/`.rmap` | navegação e colisão do `path_finding`; o mundo hoje não faz pathfinding de criatura por malha |
+| `airmap/`, `movemap/`, `map.bht`, `.dhmap`/`.rmap` | navegação e colisão do `path_finding`; o mundo hoje não faz pathfinding de criatura por malha |
 
 ### 3.7 `region.sev` / `precinct.sev` (por mapa)
 
@@ -349,6 +395,14 @@ Molde por classe via `GetDataRoleId` (`gamedbmanager.cpp:208`): 0→16, 1→19, 
   `scripts/2026_09_24_moldes_do_clsconfig_126.sql`.
 
 ### 3.10b Habilidades do servidor — `specs/habilidades_155/habilidades.json` (`habilidades.rs`)
+
+**Ódio (B137):** `odio` = `GetEnmity` por nível (`SkillStub::GetEnmity`, `skill.cpp:648-653`),
+e `odio_expr` quando depende do nível de quem lança ou do talento. 1.5.5: 3.285 por nível, 31
+por expressão (18 com `10 * P_Level * (3 + L)`). 1.2.6: 805 executados no `gs` por nível e as
+mesmas 18 por expressão — o extrator distingue o `GetLevel` do jogador (o `this` falso 0x3000),
+executa com o jogador nos níveis 10 e 57 e só aceita a expressão do 1.5.5 se ela reproduz os
+dois. Valores próprios do 1.2.6 em 150, 520, 521, 524, 525 (menores que os do 1.5.5), 28, 151,
+275, 277, 290, 498, 499 e 500.
 
 Não é arquivo do realm: é extraído dos stubs `cskill/skills/skillNNN.h` do `EvolvedPWServer`
 por `specs/habilidades_155/extrair_habilidades.py` e embutido com `include_str!` (o

@@ -33,12 +33,12 @@ impl WorldProtocol for V155Protocol {
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
-    fn npc_enter_world(&self, nid: i32, tid: i32, pos: Vector3, dir: u8) -> S2CGamedataSend {
-        self.info_npc(16, nid, tid, pos, dir)
+    fn npc_enter_world(&self, nid: i32, tid: i32, pos: Vector3, dir: u8, estado: u32) -> S2CGamedataSend {
+        self.info_npc(16, nid, tid, pos, dir, estado)
     }
 
-    fn npc_enter_slice(&self, nid: i32, tid: i32, pos: Vector3, dir: u8) -> S2CGamedataSend {
-        self.info_npc(11, nid, tid, pos, dir)
+    fn npc_enter_slice(&self, nid: i32, tid: i32, pos: Vector3, dir: u8, estado: u32) -> S2CGamedataSend {
+        self.info_npc(11, nid, tid, pos, dir, estado)
     }
 
     fn host_attack_result(&self, target_id: i32, damage: i32, attack_flag: i32, speed: u8) -> S2CGamedataSend {
@@ -188,7 +188,7 @@ impl WorldProtocol for V155Protocol {
 }
 
 impl V155Protocol {
-    fn info_npc(&self, comando: u16, nid: i32, tid: i32, pos: Vector3, dir: u8) -> S2CGamedataSend {
+    fn info_npc(&self, comando: u16, nid: i32, tid: i32, pos: Vector3, dir: u8, estado: u32) -> S2CGamedataSend {
         // 35 bytes no 1.5.5 (com vis_tid e state2)
         let mut s = OctetsStream::new();
         s.write_u16_le(comando);
@@ -200,7 +200,7 @@ impl V155Protocol {
         s.write_f32_le(pos.z);
         s.write_u16_le(0); // seed
         s.write_u8(dir);
-        s.write_i32_le(0); // state
+        s.write_u32_le(estado); // state
         s.write_i32_le(0); // state2
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }

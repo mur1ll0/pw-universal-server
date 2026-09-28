@@ -10551,3 +10551,133 @@ comparação lado a lado.
       `Efeitos::ao_renascer` (tira toda maldição — os seis danos no tempo são maldição na ficha —
       e o invencível) no renascimento do gerador.
     - Teste: `efeitos::o_renascimento_tira_o_dano_no_tempo`.
+
+133. **Sessão 2026-09-27: espaço aéreo, monstro de ar no ar e mapas sem voo.**
+    Os três pendentes do B131.
+    - **Monstro de ar entra no ar:** `npc_enter_world`/`npc_enter_slice` ganham `estado` em todas
+      as versões; o monstro manda `Habitat::estado_de_ambiente` (0x10000 ar, 0x20000 água). Mesma
+      evidência do B131 (`EC_NPC.cpp:411-416`; o valor no fonte 1.5.3; o validador do 1.2.6).
+      Teste: `layouts_do_126::o_monstro_de_ar_entra_com_o_bit_de_voo`.
+    - **Espaço aéreo:** os realms trazem `<mapa>/airmap/spmap.conf` + `N.octr` (o `CGlobalSPMap`
+      do original, `GlobalSPMap.cpp:59-143`). Leitor `pw_data_loader::espaco` — `.octr` = 29 + 4n
+      B, fechando no último (27 octrees no 126, 120 no 155, todas). Agente
+      `navegacao::SeguirNoEspaco`: porte do `CNPCChaseSpatiallyPFAgent`
+      (`NPCChaseSpatiallyPFAgent.cpp:78-249`), do `CSpatialPathFinding`
+      (`SpatialPathFinding.cpp`, lista aberta `SortVectorSpatialPathNode.h`, 60 nós) e do
+      `CanGoStraightForward`; o `follow_target` igual ao de chão. Usado pela perseguição do
+      monstro de ar/água (`MonsterAi::perseguir_no_espaco`) e pelo seguir do mascote
+      (`mover_no_espaco`); o `IsValidSPPos` entrou no lugar do mascote de ar/água. Achado ao
+      testar: com alcance > 0 o original recua a meta e, se ela e 11 sorteios na esfera caem no
+      bloqueado, **desiste da busca e vai em reta** — e a reta só olha terreno/água: atravessa a
+      octree. Reproduzido; o teste com o `airmap` real do mapa 1 (155) usa alcance 0 e centros
+      de voxel: 20 casos, 16 chegam em 400 passos, **0** entram em folha bloqueada.
+      Sem porte: a volta para casa do monstro de ar (reta) e o passeio no ar.
+    - **`nofly`:** `specs/mapas/gerar_limites.py` extrai o `limit` do `gs.conf` das duas versões
+      (`limites_126.json`: 43 mapas, 34 sem voo; `limites_155.json`: 79, 50). `WorldInstance::
+      sem_voo` pelo catálogo da versão (`main.rs`). Decolar: `ERR_CANNOT_FLY` 55
+      (`item_flysword.cpp:55-70`; `push 0x37` no 1.2.6, VA 0x819505f). Entrar voando: cai com
+      `OBJECT_LANDING` (`player.cpp:11994`). Mascote: -2 / pula o ar (`petman.cpp:104/140/270`).
+      O mapa 1 voa nas duas versões — o efeito só aparece em instância.
+
+134. **Sessão 2026-09-27: monstro de chão travado embaixo de quem bate voando.**
+    Relato (Tsuko voando + Vespão Pequeno contra Esqueleto Espectral): o monstro virava para ela
+    (mais dano), não a alcançava, e ficava sem bater em ninguém; o mascote às vezes parava.
+    - Causa: o agente de chão mede a meta **no plano** — embaixo da Tsuko ele "chega"; a IA
+      recomeça, "chega" de novo… O `perseguir` contava as três chegadas (`TEST_GETTOGOAL`) mas
+      só zerava o contador e parava: o monstro ficava indo e vindo embaixo dela para sempre,
+      com o ódio dela no topo (e cada golpe dela renovava o `aggro_time`).
+    - Original: essas três chegadas (ou o agente desistir) encerram a sessão com
+      `NSRC_ERR_PATHFINDING` (`npcsession.cpp:164-245`), e `ai_target_task::OnSessionEnd`
+      (`aipolicy.cpp:443-480`) contra jogador faz `ClearAggro` + `ClearDamageList`, a
+      regeneração rápida e `EndTask` — o comentário do original compara com o WoW ("todo mundo
+      é esquivado"). Contra alvo que não é jogador (o mascote), só `Execute()` de novo.
+    - Correção: `MonsterAi::caminho_falhou`, marcado nos dois pontos de `NSRC_ERR_PATHFINDING` do
+      `perseguir` (chão) e do `perseguir_no_espaco` (ar/água); o `aproximar` limpa ódio e dano
+      quando o alvo é jogador e passa ao `sem_alvo` (→ `RollBack`, volta para casa).
+    - O mascote parado: **diagnóstico, não confirmado** — com o monstro sempre em movimento o
+      mascote vivia recomeçando a perseguição; com o monstro desistindo, ele fica parado (em
+      casa) ou vai para o mascote. Ver em jogo. Diferença conhecida: o golpe do mascote confere
+      a distância no plano (`distancia_h`), o original em 3D (`aipolicy.cpp:579`).
+    - Testes: `embaixo_de_quem_voa_o_monstro_de_chao_desiste_do_jogador` (desiste em < 5 s,
+      ódio e dano limpos) e `contra_mascote_fora_de_alcance_o_odio_fica`.
+
+135. **Sessão 2026-09-27: dano, alcance e altura do mascote de ar.**
+    Relato: Vespão Pequeno (Atq 466 na janela) tirava ~115 por golpe e o Filhote de Lobo Feroz
+    (Atq 332) ~200; o Vespão ficava "enterrado"; pedido o alcance em 3D do original. (A Taça de
+    Sangue de Jade dos Escudeiros Minotauros: o Murillo conseguiu — era taxa baixa.)
+    - "Atq" = dano do `GenerateBaseProp`: 466 e 332 no nível 30, iguais ao servidor
+      (`modelo_de_mascote`). A diferença era **erro do B128**: o corte de 0,5 do ar para o chão
+      (`gnpc_imp::AdjustDamage`) foi aplicado a "jogador ou mascote", e o original o aplica só a
+      `IS_HUMANSIDE(source)` = `GM_TYPE_PLAYER` (`common/types.h:321`). `Golpe::camada` virou
+      `Option`: `Some` só no golpe de jogador.
+    - Alcance: o golpe e a habilidade do mascote passaram a medir em 3D (`ai_melee_task`,
+      `aipolicy.cpp:579-591`; `ai_skill_task_2`, `:1999-2027`); era `distancia_h` (no plano) —
+      o de ar batia "de cima".
+    - Enterrado: `ai_pet_follow_master::Execute` (`aipolicy.cpp:1827-1835`) dá
+      `_height_offset = 1,5` a quem tem `inhabit_type != 0`, e a sessão soma à meta
+      (`npcsession.cpp:197`). O nosso mirava os pés do dono. `MascoteAi::altura_ao_seguir`.
+    - Testes: `o_mascote_de_ar_bate_inteiro_no_monstro_de_chao`,
+      `o_mascote_de_ar_segue_o_dono_no_chao_por_cima`, `dez_metros_acima_do_alvo_o_mascote_de_ar_nao_bate`.
+
+136. **Sessão 2026-09-27: mascote de ar que afunda e trava; monstros andarilhos parados.**
+    Relato (Tsuko, 1.2.6, com o B135 publicado): o Vespão Pequeno (1) entra no chão para atacar,
+    (2) para de perseguir quando o monstro anda, (3) às vezes não volta voando depois de matar;
+    (4) o Carniçal Violento e os Fantasmas Malignos que o acompanham ficam parados.
+    - (1)+(2): o passo reto de ar do original passa pelo `AdjustCurPos` do
+      `CNPCChaseOnAirStraightAgent` (`NPCChaseOnAirAgent.h:27-36`): sobe a `max(terreno, água) +
+      ABOVE_DIST` (0,2). O nosso não tinha: o mascote descia até os pés do alvo e ficava rente ao
+      chão; na primeira subida o passo seguinte caía abaixo do terreno (`IsPosBeyondEnv`), a
+      perseguição falhava e recomeçava do mesmo lugar para sempre. `Mapa::ajustar_ao_ambiente`
+      (ar e água), também na parada de chegada. O alcance do golpe passou ao do `ai_melee_task`
+      (`(attack_range − corpo) × 0,8 + corpo + corpo do alvo`, persegue a `× 0,6`; `CheckAttack`
+      com `attack_range + corpo do alvo` enquanto bate) — para mais longe e mais alto. Numa crista
+      acentuada o original também trava (a falha contra alvo que não é jogador só re-executa a
+      tarefa, `aipolicy.cpp:484-492`): não inventamos resgate.
+    - (3): o mascote reaproveitava o agente da tarefa anterior; com o dono voando por cima do
+      morto (a menos de 4 m na horizontal) não recomeçava e ia primeiro aos pés do morto. Cada
+      tarefa começa sessão nova (`MascoteAi::sessao`). A contagem `_trace_count` da habilidade
+      passou a valer para o de ar (antes descontava a cada tique).
+    - (4): o andarilho com os Fantasmas é o **Carniçal Sanguinário** (3885): área de chefe
+      (`iGroupType` 2) do mapa 1 do 1.2.6 com rota 486539715 em laço; o Carniçal Violento (6423)
+      é solto em 88 áreas, sem rota (só passeia). Nada disso existia: o `path.sev` não era lido
+      e o `iGroupType` era descartado. Porte: `pw_data_loader::rotas` (`path_manager::Init` +
+      `CSevBezierMan`/`CSevBezierWalker`: 8 m/s amostrado a 1 s — 116 arquivos, 3.792 rotas,
+      todos fechando no último byte); `ai::Rota` (`base_patrol_agent`) e a `session_npc_patrol`
+      (um passo por segundo, 120 passos, próximo ponto a `1,44 × passo²`); `RollBack` com rota
+      volta ao ponto atual; grupo/chefe: líder = gerador 0 com uma cópia, subordinados em volta
+      dele (`sctab`, 7 m), `ai_follow_master` (≥ 20 m `ReturnHome`, ≥ 8 m corre, perto passeia),
+      sem volta para casa com o líder vivo, `TryForwardAggro` → `aggro_minor_policy`, e o
+      subordinado só renasce com o líder (`group_spawner::OnHeartbeat`/`Reclaim`).
+    - Testes: `o_mascote_de_ar_persegue_o_monstro_que_anda_no_morro_sem_afundar` (sem o
+      `AdjustCurPos` falha: 80 tiques abaixo de terreno + 0,2), `depois_de_matar_o_mascote_de_ar_
+      volta_ao_dono_que_voa`, `a_rota_para_vai_e_volta_ou_recomeca`, `o_monstro_com_rota_anda_
+      ponto_a_ponto`, `sem_ninguem_por_perto_a_rota_espera`, `o_subordinado_segue_o_lider`,
+      `longe_do_lider_o_subordinado_vai_de_uma_vez`, `o_chefe_repassa_o_odio_ao_subordinado`,
+      `rotas_do_realm` (dois).
+
+137. **Sessão 2026-09-27: auditoria do combate — itens 1, 2 e 3.**
+    Auditoria contra o fonte 1.5.5 e o `gs` 1.2.6 (resposta da sessão); o Murillo pediu os três
+    primeiros.
+    - **Punição por nível:** `gnpc_imp::AdjustDamage` (`npc.cpp:1727-1768`) multiplica todo
+      golpe de `IS_HUMANSIDE` em NPC por `GetAttackLevelPunishment` — conferido no `gs` 1.2.6
+      (VA 0x809f7a4: `IS_HUMANSIDE` → `GetAttackLevelPunishment` → camada). Só o dano no tempo a
+      usava. `Defesa::ajuste_de_nivel` e `CombatEngine::defesa_do_monstro_contra`; golpe normal,
+      habilidade pelo stub e pela tabela antiga. Tabela dos dois realms: −5 0,9; −10 0,7; −20
+      0,5; −30 0,25. `TabelaDeProgressao::neutra_para_teste` para os testes que não medem isto (a
+      padrão tem os fatores em 0).
+    - **Ódio:** o tique (`BeHurt` → `OnHurt`) e o `Directhurt` não dão ódio. O ódio de habilidade
+      do original é o `GetEnmity` do stub (`SkillWrapper`, `skillwrapper.cpp:475-477`), que não
+      era extraído: `odio`/`odio_expr` nos dois extratores (1.5.5: 3.285 + 31; 1.2.6: 805 + 18).
+      Achado no extrator 1.2.6: o gancho de `GetLevel` respondia o nível da **habilidade** também
+      quando o `this` era o jogador — corrigido para `GetEnmity` (as 18 `10 * P_Level * (3 + L)`
+      conferidas com o jogador nos níveis 10 e 57); o resto do JSON regerado igual (0 diferenças
+      fora do ódio, nas duas versões). Aplicado a jogador e mascote que lançam.
+    - **Redução, esquiva e roubo:** `DoDamageReduce` (físico, teto 75) e `DoMagicDamageReduce`
+      (teto 90) pelos adicionais; `Incdamagedodge` (dano vira 1), `Inchpsteal` (golpe físico sem
+      arma de longe, `int(rate × 0.01f × dano)` = 99 em 10 % de 1000, `PLAYER_HP_STEAL` na hora) e
+      `Incdebuffdodge` lido sem regra. Os três efeitos só existem em habilidades do 1.5.5.
+    - Testes: `a_punicao_de_nivel_vale_so_para_jogador_em_npc`,
+      `a_reducao_de_dano_tem_teto_de_75_no_fisico_e_90_no_magico`, `a_esquiva_de_dano_deixa_1`,
+      `o_roubo_de_vida_devolve_a_porcentagem_do_dano_final`,
+      `a_tabela_de_punicao_do_realm_reduz_o_dano_em_monstro_acima`,
+      `o_odio_da_habilidade_sai_do_stub_de_cada_versao`, `o_tique_do_sangramento_nao_da_odio`.

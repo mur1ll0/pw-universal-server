@@ -119,6 +119,8 @@ fn o_filhote_de_mandragora_passeia_sem_saltos() {
     let mapa = Mapa {
         terreno: &chao,
         movimento: &mov,
+        espaco: None,
+        agua: None,
     };
     let modelo = d.monstros.get(3303).expect("3303");
     // A IA só passeia com alguém por perto (`RAIO_DE_ATIVIDADE`); o 3303 não é agressivo.
@@ -205,6 +207,8 @@ fn o_filhote_persegue_sem_saltos() {
     let mapa = Mapa {
         terreno: &chao,
         movimento: &mov,
+        espaco: None,
+        agua: None,
     };
     let modelo = d.monstros.get(3303).expect("3303");
     let mut m = MonsterEntity::do_template(1, modelo, Vector3::new(-1445.0, 241.0, 1390.0), 30_000);
@@ -269,6 +273,8 @@ fn a_volta_para_casa_no_126() {
     let mapa = Mapa {
         terreno: &chao,
         movimento: &mov,
+        espaco: None,
+        agua: None,
     };
     let modelo = d.monstros.get(3303).expect("3303");
     let (mut andando, mut salto) = (0, 0);
@@ -332,6 +338,8 @@ fn o_passeio_de_chao_fica_no_chao() {
     let mapa = Mapa {
         terreno: &chao,
         movimento: &mov,
+        espaco: None,
+        agua: None,
     };
     let mut j = feiticeira_nivel_1();
     j.position = Vector3::new(-1440.0, 241.0, 1400.0);

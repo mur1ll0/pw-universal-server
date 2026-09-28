@@ -174,7 +174,7 @@ fn test_combat_engine_damage_calculation() {
 
     // O golpe pode errar agora — há rolagem de acerto, que a fórmula antiga não tinha.
     // Então o que se afirma é a faixa do que sai, não que sempre saia dano.
-    let r = CombatEngine::jogador_ataca_monstro(&player, &monster, 2.0);
+    let r = CombatEngine::jogador_ataca_monstro(&player, &monster, 2.0, &pw_data_loader::TabelaDeProgressao::neutra_para_teste());
     match r {
         pw_gs::combat::Resultado::Acertou { dano, .. } => assert!(dano > 0),
         pw_gs::combat::Resultado::Errou => {}

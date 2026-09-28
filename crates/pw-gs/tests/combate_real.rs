@@ -31,7 +31,8 @@ fn golpe() -> Golpe {
         anti_defesa: 0,
         anti_resistencia: 0,
         atacante_e_jogador_ou_pet: false,
-        camada: pw_gs::combat::Camada::Chao,
+        camada: None,
+        roubo_de_vida: 0,
     }
 }
 
@@ -614,7 +615,7 @@ fn um_golpe_realista_cai_na_faixa_que_a_formula_manda() {
     let m = tauroc();
     let mut acertos = 0;
     for _ in 0..200 {
-        match CombatEngine::jogador_ataca_monstro(&p, &m, 3.0) {
+        match CombatEngine::jogador_ataca_monstro(&p, &m, 3.0, &pw_data_loader::TabelaDeProgressao::neutra_para_teste()) {
             pw_gs::combat::Resultado::Acertou { dano, .. } => {
                 assert!(
                     (minimo..=maximo).contains(&dano),
@@ -651,4 +652,75 @@ fn o_monstro_devolve_dano_pela_mesma_formula() {
         menor >= 240 && maior <= 285,
         "dano do monstro em {menor}..{maior}"
     );
+}
+
+// ---- B137: punição por nível, redução de dano, esquiva de dano e roubo de vida ----
+
+/// O golpe de jogador em NPC leva o `attack_adjust` da diferença de nível
+/// (`gnpc_imp::AdjustDamage`, `npc.cpp:1731-1733`); o de monstro ou mascote (`camada` `None`,
+/// fora do `IS_HUMANSIDE`) não.
+#[test]
+fn a_punicao_de_nivel_vale_so_para_jogador_em_npc() {
+    let mut g = golpe();
+    let mut d = defesa();
+    d.camada_de_npc = Some(pw_gs::combat::Camada::Chao);
+    d.ajuste_de_nivel = 0.5;
+    assert_eq!(resolver(&g, &d, 1.0, false, certeiro()).dano(), 1000, "sem camada (monstro/mascote): sem punição");
+    g.camada = Some(pw_gs::combat::Camada::Chao);
+    assert_eq!(resolver(&g, &d, 1.0, false, certeiro()).dano(), 500, "jogador em NPC: metade");
+}
+
+/// `DoDamageReduce`: % a menos no físico depois da defesa, teto 75; o mágico com teto 90.
+#[test]
+fn a_reducao_de_dano_tem_teto_de_75_no_fisico_e_90_no_magico() {
+    let g = golpe();
+    let mut d = defesa();
+    d.reducao_de_dano = 30;
+    assert_eq!(resolver(&g, &d, 1.0, false, certeiro()).dano(), 700);
+    d.reducao_de_dano = 95;
+    assert_eq!(resolver(&g, &d, 1.0, false, certeiro()).dano(), 250);
+    let mut m = golpe();
+    m.dano_fisico = 0;
+    m.dano_magico = [1000, 0, 0, 0, 0];
+    m.e_fisico = false;
+    let mut d2 = defesa();
+    d2.reducao_de_dano_magico = [95, 0, 0, 0, 0];
+    assert_eq!(resolver(&m, &d2, 1.0, false, certeiro()).dano(), 100);
+}
+
+/// `_damage_dodge_rate` 100: o dano some e o piso deixa 1 (`HandleAttackMsg`).
+#[test]
+fn a_esquiva_de_dano_deixa_1() {
+    let mut d = defesa();
+    d.esquiva_de_dano = 100;
+    assert_eq!(resolver(&golpe(), &d, 1.0, false, certeiro()).dano(), 1);
+}
+
+/// `hp_steal_rate` 10: volta `int(hp_steal_rate × 0.01f × dano)`, em float e nessa ordem
+/// (`actobject.cpp:777-778`): 10 × 0,01f = 0,0999999977…, vezes 1000 trunca em **99**.
+#[test]
+fn o_roubo_de_vida_devolve_a_porcentagem_do_dano_final() {
+    let mut g = golpe();
+    g.roubo_de_vida = 10;
+    let r = resolver(&g, &defesa(), 1.0, false, certeiro());
+    assert_eq!((r.dano(), r.vida_roubada()), (1000, 99));
+}
+
+/// A tabela de diferença de nível dos dois realms: batendo em monstro bem acima, o jogador tira
+/// menos (e no mesmo nível, tudo).
+#[test]
+fn a_tabela_de_punicao_do_realm_reduz_o_dano_em_monstro_acima() {
+    for realm in ["realm_126", "realm_155"] {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config"));
+        let Ok(b) = std::fs::read(dir.join("elements.data")) else {
+            eprintln!("pulado: sem {realm}");
+            continue;
+        };
+        let el = pw_data_loader::generic_elements::load_elements_data_auto(&b).unwrap();
+        let t = pw_data_loader::progressao::TabelaDeProgressao::carregar(&el);
+        let linha: Vec<(i32, f32)> = [-30, -20, -10, -5, 0, 10].iter().map(|d| (*d, t.ajuste(*d).ataque)).collect();
+        eprintln!("{realm}: {linha:?}");
+        assert!((t.ajuste(0).ataque - 1.0).abs() < 1e-6, "{realm}: no mesmo nível deveria ser 1");
+        assert!(t.ajuste(-30).ataque < 1.0, "{realm}: 30 níveis abaixo sem punição");
+    }
 }

@@ -269,12 +269,12 @@ impl WorldProtocol for V126Protocol {
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
-    fn npc_enter_world(&self, nid: i32, tid: i32, pos: Vector3, dir: u8) -> S2CGamedataSend {
-        self.info_npc(16, nid, tid, pos, dir)
+    fn npc_enter_world(&self, nid: i32, tid: i32, pos: Vector3, dir: u8, estado: u32) -> S2CGamedataSend {
+        self.info_npc(16, nid, tid, pos, dir, estado)
     }
 
-    fn npc_enter_slice(&self, nid: i32, tid: i32, pos: Vector3, dir: u8) -> S2CGamedataSend {
-        self.info_npc(11, nid, tid, pos, dir)
+    fn npc_enter_slice(&self, nid: i32, tid: i32, pos: Vector3, dir: u8, estado: u32) -> S2CGamedataSend {
+        self.info_npc(11, nid, tid, pos, dir, estado)
     }
 
     fn host_attack_result(&self, target_id: i32, damage: i32, attack_flag: i32, speed: u8) -> S2CGamedataSend {
@@ -641,7 +641,7 @@ impl WorldProtocol for V126Protocol {
 }
 
 impl V126Protocol {
-    fn info_npc(&self, comando: u16, nid: i32, tid: i32, pos: Vector3, dir: u8) -> S2CGamedataSend {
+    fn info_npc(&self, comando: u16, nid: i32, tid: i32, pos: Vector3, dir: u8, estado: u32) -> S2CGamedataSend {
         // 27 bytes no 1.2.6 (sem vis_tid e sem state2)
         let mut s = OctetsStream::new();
         s.write_u16_le(comando);
@@ -652,7 +652,10 @@ impl V126Protocol {
         s.write_f32_le(pos.z);
         s.write_u16_le(0);
         s.write_u8(dir);
-        s.write_i32_le(0);
+        // O `state`: 0x10000/0x20000 são "voa"/"nada" também no fonte 1.5.3
+        // (`GP_STATE_NPC_FLY`, `EC_GPDataType.h:237`); o validador do caso 11/16 não soma bytes
+        // por eles (B133).
+        s.write_u32_le(estado);
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 

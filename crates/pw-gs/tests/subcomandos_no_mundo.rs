@@ -2817,7 +2817,13 @@ async fn aceitar_forma_o_grupo_e_avisa_os_dois_com_dados_reais() {
 
     // Os **dois** recebem entrada no grupo (59) e a lista de membros (64).
     for (quem, link) in [("anfitrião", &mut link_a), ("convidado", &mut link_b)] {
-        let r = receber(link, 2).await;
+        // Lê até achar os dois: sob carga, outro pacote do mundo pode chegar no meio (contar
+        // exatamente 2 falhava de vez em quando na suíte cheia).
+        let mut r: Vec<Vec<u8>> = Vec::new();
+        while !(r.iter().any(|v| cmd_de(v) == 59) && r.iter().any(|v| cmd_de(v) == 64)) {
+            assert!(r.len() < 50, "{quem}: sem 59 e 64 em {} pacotes", r.len());
+            r.extend(receber(link, 1).await);
+        }
         assert!(
             r.iter().any(|v| cmd_de(v) == 59),
             "{quem} não recebeu TEAM_JOIN_TEAM (59)"
@@ -8135,4 +8141,42 @@ async fn conferir_loja_gold(versao: GameVersion) {
         1000 - PRECO_NA_LOJA_GOLD,
         "recusa não cobra"
     );
+}
+
+/// B137 — o tique do sangramento é `BeHurt` → `gnpc_imp::OnHurt`, que só registra o dano
+/// (`npc.cpp:1829-1845`): o monstro perde vida e o dano conta para a experiência, mas quem pôs o
+/// sangramento **não** ganha ódio por ele.
+#[tokio::test]
+async fn o_tique_do_sangramento_nao_da_odio() {
+    use pw_gs::efeitos::{Efeito, Filtro};
+    let (mundo, _addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let id = 0x7ff0_0001i64;
+    {
+        let mut m = mundo.write().await;
+        let mut monstro = MonsterEntity::placeholder(id, 1001, Vector3::new(500.0, 0.0, 500.0), 30_000);
+        monstro.max_hp = 10_000;
+        monstro.hp = 10_000;
+        monstro.regeneracao_de_vida = 0;
+        monstro.efeitos.adicionar(Filtro {
+            efeito: Efeito::Bleeding,
+            restante_s: 10,
+            razao: 0,
+            fator: 0.0,
+            por_segundo: 50,
+            contador: 0,
+            origem: roleid as i64,
+            icone: true,
+            absorve: 0.0,
+            escala_defesa: 0,
+        });
+        m.monsters.insert(id, (monstro, MonsterAi::new()));
+    }
+    for _ in 0..4 {
+        mundo.write().await.tick(1000).await;
+    }
+    let m = mundo.read().await;
+    let (monstro, ai) = &m.monsters[&id];
+    assert!(monstro.hp < 10_000, "o sangramento não tirou vida: {}", monstro.hp);
+    assert!(monstro.danos.iter().any(|d| d.0 == roleid as i64), "o dano do tique não foi registrado");
+    assert!(ai.aggro_table.is_empty(), "o tique deu ódio: {:?}", ai.aggro_table);
 }

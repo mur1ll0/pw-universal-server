@@ -66,6 +66,15 @@ pub struct HabilidadeDoServidor {
     #[serde(default)]
     pub item_exigido: Option<Vec<i32>>,
     pub estados_ms: Vec<Option<Vec<i32>>>,
+    /// `GetEnmity` por nível: o ódio que cada vítima ganha de quem lança
+    /// (`SkillWrapper::Attack`/`Enchant` → `SetEnmity`, `skillwrapper.cpp:475-477`; B137).
+    #[serde(default)]
+    pub odio: Option<Vec<i32>>,
+    /// O `GetEnmity` que depende do nível do jogador, como expressão (`10 * P_Level * (3 + L)`
+    /// em 18 habilidades nas duas versões; no 1.2.6 conferida executando o `gs` com dois níveis
+    /// de jogador).
+    #[serde(default)]
+    pub odio_expr: Option<String>,
     /// `time_type` — 3 é conjuração com carga (`Skill::IsWarmup`, `skill.h:571`).
     #[serde(default)]
     pub time_type: Option<i32>,
@@ -418,6 +427,8 @@ mod tests {
             dinheiro_exigido: None,
             item_exigido: None,
             estados_ms: vec![],
+            odio: None,
+            odio_expr: None,
             time_type: None,
             alcance: None,
             dano: None,

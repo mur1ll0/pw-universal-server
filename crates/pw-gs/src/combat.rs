@@ -98,8 +98,16 @@ pub struct Golpe {
     pub anti_resistencia: i32,
     /// `attack->ainfo.attacker.IsPlayer() || IsPet()` — só nesse caso a distância atenua.
     pub atacante_e_jogador_ou_pet: bool,
-    /// `attacker_layer`: a camada de quem bate (`FillAttackMsg`, `actobject.cpp:1482`).
-    pub camada: Camada,
+    /// `attacker_layer`: a camada de quem bate (`FillAttackMsg`, `actobject.cpp:1482`). Só o
+    /// **jogador** leva: o ajuste do `gnpc_imp::AdjustDamage` vale para `IS_HUMANSIDE(source)`,
+    /// que é `type == GM_TYPE_PLAYER` (`common/types.h:321`) — mascote e monstro são
+    /// `GM_TYPE_NPC` e batem inteiro de qualquer camada (B135; no B128 o mascote de ar batia com
+    /// metade no monstro de chão).
+    pub camada: Option<Camada>,
+    /// `attack.hp_steal_rate` (`FillAttackMsg`, `actobject.cpp:1496-1497`): o `_hp_steal_rate`
+    /// do atacante, em %, só no golpe **físico** de quem não tem distância mínima
+    /// (`short_range <= 0`). Volta como vida a quem bateu (`GM_MSG_HP_STEAL`, B137).
+    pub roubo_de_vida: i32,
 }
 
 /// A camada em que o objeto está (`_layer_ctrl.GetLayer()`: `LAYER_GROUND`, `LAYER_AIR`,
@@ -165,6 +173,18 @@ pub struct Defesa {
     /// A camada do alvo quando ele é NPC (`gnpc_imp`): liga o ajuste de
     /// [`ajuste_de_camada_no_npc`]. `None` para jogador.
     pub camada_de_npc: Option<Camada>,
+    /// `GetAttackLevelPunishment(nível do atacante − nível do NPC)` do `gnpc_imp::AdjustDamage`
+    /// (`npc.cpp:1731-1733`; no `gs` 1.2.6, VA 0x809f7ea): o `attack_adjust` da tabela de
+    /// diferença de nível. Vale só para golpe de jogador em NPC (`IS_HUMANSIDE`); 1 sem tabela.
+    pub ajuste_de_nivel: f32,
+    /// `_damage_reduce` (`DoDamageReduce`, `actobject.h:1573-1582`): % a menos no dano físico
+    /// depois da defesa, teto 75. Dos adicionais `enhance_damage_reduce_addon*`.
+    pub reducao_de_dano: i32,
+    /// `_magic_damage_reduce[5]` (`DoMagicDamageReduce`, `actobject.h:1584-1593`), teto 90.
+    pub reducao_de_dano_magico: [i32; CLASSES_MAGICAS],
+    /// `_damage_dodge_rate`: % de chance de o dano do golpe que acertou virar zero
+    /// (`HandleAttackMsg`, `actobject.cpp:707-711`) — o piso deixa 1.
+    pub esquiva_de_dano: i32,
 }
 
 impl Defesa {
@@ -190,6 +210,10 @@ impl Defesa {
             reducao_perto_normal: 0.0,
             reducao_longe_normal: 0.0,
             camada_de_npc: None,
+            ajuste_de_nivel: 1.0,
+            reducao_de_dano: 0,
+            reducao_de_dano_magico: [0; CLASSES_MAGICAS],
+            esquiva_de_dano: 0,
         }
     }
 }
@@ -233,10 +257,20 @@ pub enum Resultado {
         critico: bool,
         /// Alguma classe de dano foi barrada por imunidade (`AT_STATE_IMMUNE`).
         alguma_imunidade: bool,
+        /// A vida que volta a quem bateu (`GM_MSG_HP_STEAL`), já com o dano final.
+        vida_roubada: i32,
     },
 }
 
 impl Resultado {
+    /// A vida roubada pelo golpe (0 sem roubo ou sem acerto).
+    pub fn vida_roubada(&self) -> i32 {
+        match self {
+            Resultado::Acertou { vida_roubada, .. } => *vida_roubada,
+            _ => 0,
+        }
+    }
+
     /// O dano a debitar — zero quando o golpe não chegou.
     pub fn dano(&self) -> i32 {
         match self {
@@ -396,7 +430,10 @@ pub fn resolver(
             } else {
                 defesa_apos_penetracao(golpe.anti_defesa, defesa.defesa)
             };
-            let passou = dano_fisico * (1.0 - reducao_por_defesa(def, nivel));
+            let mut passou = dano_fisico * (1.0 - reducao_por_defesa(def, nivel));
+            if defesa.reducao_de_dano != 0 {
+                passou *= (100.0 - defesa.reducao_de_dano.min(75) as f32) * 0.01;
+            }
             total += passou.max(0.0);
             acertou_alguma_coisa = true;
         }
@@ -416,7 +453,10 @@ pub fn resolver(
         } else {
             defesa_apos_penetracao(golpe.anti_resistencia, defesa.resistencias[i])
         };
-        let passou = dano_magico[i] * (1.0 - reducao_por_defesa(res, nivel));
+        let mut passou = dano_magico[i] * (1.0 - reducao_por_defesa(res, nivel));
+        if defesa.reducao_de_dano_magico[i] != 0 {
+            passou *= (100.0 - defesa.reducao_de_dano_magico[i].min(90) as f32) * 0.01;
+        }
         total += passou.max(0.0);
         acertou_alguma_coisa = true;
     }
@@ -428,10 +468,14 @@ pub fn resolver(
 
     // ---- 5. `damage_adjust`: `AdjustDamage` (camada), depois o crítico ----
     // (`gactive_imp::HandleAttackMsg`, `actobject.cpp:731-742`.)
-    let mut ajuste = match defesa.camada_de_npc {
-        Some(alvo) if golpe.atacante_e_jogador_ou_pet => {
-            ajuste_de_camada_no_npc(golpe.camada, alvo)
-        }
+    // `_damage_dodge_rate`: o dano some (e o piso de 1 fica).
+    if defesa.esquiva_de_dano > 0 && rand::Rng::gen_range(&mut rand::thread_rng(), 0..=99) < defesa.esquiva_de_dano {
+        total = 0.0;
+    }
+    // `gnpc_imp::AdjustDamage` (`npc.cpp:1727-1768`): golpe de jogador em NPC leva a punição
+    // por diferença de nível e o ajuste de camada.
+    let mut ajuste = match (defesa.camada_de_npc, golpe.camada) {
+        (Some(alvo), Some(atacante)) => defesa.ajuste_de_nivel * ajuste_de_camada_no_npc(atacante, alvo),
         _ => 1.0f32,
     };
     let chance_efetiva = golpe.chance_de_critico - defesa.resistencia_a_critico;
@@ -454,11 +498,12 @@ pub fn resolver(
 
     // ---- 7. piso de 1 ----
     let dano = (dano as i32).max(1);
-
     Resultado::Acertou {
         dano,
         critico,
         alguma_imunidade,
+        // `int(hp_steal_rate × 0,01 × int_damage)` (`actobject.cpp:777-782`).
+        vida_roubada: if golpe.roubo_de_vida > 0 { (golpe.roubo_de_vida as f32 * 0.01 * dano as f32) as i32 } else { 0 },
     }
 }
 
@@ -541,7 +586,13 @@ impl CombatEngine {
             anti_resistencia: 0,
             atacante_e_jogador_ou_pet: true,
             // Voando é `LAYER_AIR`. Nadando (`LAYER_WATER`) ainda não é acompanhado.
-            camada: if jogador.voando { Camada::Ar } else { Camada::Chao },
+            camada: Some(if jogador.voando { Camada::Ar } else { Camada::Chao }),
+            // Arma de longe tem distância mínima (`short_range > 0`): não rouba.
+            roubo_de_vida: if jogador.equipamento.arma.is_some_and(|a| a.de_longe) {
+                0
+            } else {
+                jogador.efeitos.realce().roubo_de_vida
+            },
         }
     }
 
@@ -574,8 +625,21 @@ impl CombatEngine {
             anti_defesa: 0,
             anti_resistencia: 0,
             atacante_e_jogador_ou_pet: false,
-            camada: Camada::do_habitat(monstro.habitat),
+            camada: None,
+            roubo_de_vida: 0,
         }
+    }
+
+    /// A defesa do monstro contra o golpe de um jogador do nível `nivel_do_jogador`: a de
+    /// sempre com a punição por diferença de nível ([`Defesa::ajuste_de_nivel`]).
+    pub fn defesa_do_monstro_contra(
+        monstro: &MonsterEntity,
+        nivel_do_jogador: i32,
+        tabela: &pw_data_loader::progressao::TabelaDeProgressao,
+    ) -> Defesa {
+        let mut d = Self::defesa_do_monstro(monstro);
+        d.ajuste_de_nivel = tabela.ajuste(nivel_do_jogador - monstro.level).ataque;
+        d
     }
 
     pub fn defesa_do_monstro(monstro: &MonsterEntity) -> Defesa {
@@ -592,6 +656,15 @@ impl CombatEngine {
     }
 
     pub fn defesa_do_jogador(jogador: &PlayerEntity) -> Defesa {
+        let mut d = Self::defesa_do_jogador_sem_reducao(jogador);
+        let a = &jogador.equipamento.addons;
+        d.reducao_de_dano = a.reducao_de_dano;
+        d.reducao_de_dano_magico = a.reducao_de_dano_magico;
+        d.esquiva_de_dano = jogador.efeitos.realce().esquiva_de_dano;
+        d
+    }
+
+    fn defesa_do_jogador_sem_reducao(jogador: &PlayerEntity) -> Defesa {
         Defesa::simples(
             jogador.armor,
             jogador.def_phys,
@@ -611,10 +684,11 @@ impl CombatEngine {
         jogador: &PlayerEntity,
         monstro: &MonsterEntity,
         distancia: f32,
+        tabela: &pw_data_loader::progressao::TabelaDeProgressao,
     ) -> Resultado {
         resolver(
             &Self::golpe_de_jogador(jogador),
-            &Self::defesa_do_monstro(monstro),
+            &Self::defesa_do_monstro_contra(monstro, jogador.level, tabela),
             distancia,
             false,
             Rolagens::sortear(),

@@ -318,6 +318,16 @@ pub struct WorldInstance {
     /// `path_finding::GetWaterHeight` do original, e dele saem a recusa de montar debaixo
     /// d'água e a queda da montaria de quem entra na água montado (B88).
     pub agua: pw_data_loader::MapaDeAgua,
+    /// O espaço passável do ar e da água (`airmap/`), para o NPC de ar/água (B133).
+    pub espaco: pw_data_loader::MapaDoEspaco,
+    /// `_world_limit.nofly` do `gs.conf` deste mapa (`pw_data_loader::limites`, B133).
+    pub sem_voo: bool,
+    /// As rotas de patrulha do `path.sev` deste mapa, pelo id (`path_manager`, B136).
+    pub rotas: HashMap<i32, Arc<Vec<pw_core::Vector3>>>,
+    /// O líder de cada área de grupo ou de chefe (`group_spawner::_leader_id`), pela área do
+    /// `npcgen.data`, e os subordinados de cada líder (B136).
+    lideres_das_areas: HashMap<i32, i64>,
+    pub subordinados: HashMap<i64, Vec<i64>>,
     /// O piso andável acima do terreno, do `movemap/` (`pw_data_loader::movemap`): ponte,
     /// plataforma, estrutura de pedra. É o `NPCMoveMap` do original, por onde o gerador de
     /// posição e o monstro de chão ficam **em cima** da estrutura e não dentro dela.
@@ -395,6 +405,33 @@ pub struct DanoAdiado {
     pub fisico: i32,
 }
 
+/// `Reborn`: o monstro volta vivo em `pos`, com a vida cheia, sem filtros de maldição nem
+/// lista de dano, e a mesma IA do zero — política, variáveis, rota (do começo), líder e chefe
+/// continuam; o `_cur_event_hp` volta a ¾ (`aipolicy.h:1376-1385`).
+fn renascer_monstro(monster: &mut MonsterEntity, ai: &mut MonsterAi, pos: pw_core::Vector3, direcao: Option<u8>) {
+    monster.is_dead = false;
+    monster.hp = monster.max_hp;
+    monster.efeitos.ao_renascer();
+    monster.spawn_center = pos;
+    monster.position = pos;
+    monster.danos.clear();
+    monster.primeiro_atacante = None;
+    let (politica, globais) = (ai.politica.take(), ai.globais.take());
+    let (rota, lider, chefe) = (ai.rota.take(), ai.lider, ai.chefe);
+    *ai = MonsterAi::com_perfil(ai.perfil.take());
+    ai.politica = politica;
+    ai.globais = globais;
+    ai.rota = rota.map(|mut r| {
+        r.recomecar();
+        r
+    });
+    ai.lider = lider;
+    ai.chefe = chefe;
+    if let Some(d) = direcao {
+        ai.direcao = d;
+    }
+}
+
 impl WorldInstance {
     pub fn new(
         world_id: WorldId,
@@ -412,6 +449,11 @@ impl WorldInstance {
             coletores: HashMap::new(),
             terreno: pw_data_loader::Terreno::vazio(),
             agua: pw_data_loader::MapaDeAgua::vazio(),
+            espaco: pw_data_loader::MapaDoEspaco::vazio(),
+            sem_voo: false,
+            rotas: HashMap::new(),
+            lideres_das_areas: HashMap::new(),
+            subordinados: HashMap::new(),
             movimento: pw_data_loader::MapaDeMovimento::vazio(),
             drops: HashMap::new(),
             data_manager,
@@ -605,7 +647,22 @@ impl WorldInstance {
         {
             self.terreno = pw_data_loader::Terreno::ler(self.world_id, &dir);
             self.agua = pw_data_loader::MapaDeAgua::ler(self.world_id, &dir);
+            self.espaco = pw_data_loader::MapaDoEspaco::ler(self.world_id, &dir);
             self.movimento = pw_data_loader::MapaDeMovimento::ler(self.world_id, &dir);
+            // `path_manager::Init` (`global_manager.cpp:219-223`): o `path.sev` da pasta do mapa.
+            if let Ok(b) = std::fs::read(dir.join("path.sev")) {
+                match pw_data_loader::rotas::Rotas::ler(&b) {
+                    Ok(r) => {
+                        self.rotas = r
+                            .pontos
+                            .into_iter()
+                            .map(|(id, v)| (id, Arc::new(v.into_iter().map(|p| pw_core::Vector3::new(p[0], p[1], p[2])).collect())))
+                            .collect();
+                        info!("World #{}: {} rota(s) de patrulha no path.sev", self.world_id, self.rotas.len());
+                    }
+                    Err(e) => warn!("World #{}: {e}", self.world_id),
+                }
+            }
         }
         let com_terreno = self.terreno.tem_dados();
         let mut assentados_no_piso = 0usize;
@@ -646,6 +703,21 @@ impl WorldInstance {
                 "World #{}: {} monstro(s) sem template no elements.data — entraram com                  atributos de placeholder. No realm 1.2.6 isso é esperado (o leitor                  genérico ainda não cobre a v7); no 1.5.5 significa npcgen.data citando                  monstro que o elements.data não tem, ou que o original recusaria.",
                 self.world_id, sem_template
             );
+        }
+    }
+
+    /// `group_spawner::GeneratePos` com `_gen_pos_mode` (`npcgenerator.cpp:5232-5251`): o
+    /// subordinado nasce no círculo de 7 m em volta do líder (`sctab`, 256 direções,
+    /// `x += sin·7`, `z += cos·7`), com a altura do gerador (`GenerateY`).
+    fn perto_do_lider(&self, inst: &pw_data_loader::SpawnInstance, lider: pw_core::Vector3) -> pw_core::Vector3 {
+        let i = rand::Rng::gen_range(&mut rand::thread_rng(), 0..65536u32) & 0xFF;
+        let ang = std::f64::consts::PI * 2.0 / 256.0 * i as f64;
+        let mut g = inst.clone();
+        g.pos = pw_core::Vector3::new(lider.x + (ang.sin() * 7.0) as f32, lider.y, lider.z + (ang.cos() * 7.0) as f32);
+        if self.terreno.tem_dados() {
+            g.posicao_no_mapa(&self.terreno, &self.movimento).0
+        } else {
+            g.pos
         }
     }
 
@@ -731,10 +803,37 @@ impl WorldInstance {
                 }
             };
 
+            // Grupo e chefe (`iGroupType` 1 e 2): o gerador 0 é o líder; os outros nascem em volta
+            // dele e o seguem (`group_spawner::CreateMobs`, `npcgenerator.cpp:5297-5337`).
+            let mut monster = monster;
+            let mut lider = None;
+            if matches!(inst.tipo_de_grupo, 1 | 2) {
+                if inst.gerador_na_area == 0 {
+                    self.lideres_das_areas.insert(inst.area_de_ia, monster_id);
+                } else if let Some(&l) = self.lideres_das_areas.get(&inst.area_de_ia) {
+                    if let Some(pos_lider) = self.monsters.get(&l).map(|(m, _)| m.position) {
+                        let p = self.perto_do_lider(inst, pos_lider);
+                        monster.position = p;
+                        monster.spawn_center = p;
+                    }
+                    self.subordinados.entry(l).or_default().push(monster_id);
+                    lider = Some(l);
+                }
+            }
             self.grid.add_entity(monster_id, monster.position, false);
             self.geradores.insert(monster_id, inst.clone());
             let mut ia = self.ia_do_monstro(monster.template_id, monster.attack_range);
             ia.direcao = direcao;
+            // A rota do gerador (`ai_policy::ChangePath(path_id, path_type, speed_flag)`,
+            // `aipolicy.cpp:90-113`).
+            if inst.caminho > 0 {
+                ia.rota = self
+                    .rotas
+                    .get(&inst.caminho)
+                    .and_then(|p| crate::ai::Rota::nova(Arc::clone(p), inst.laco_do_caminho, inst.corre_no_caminho));
+            }
+            ia.lider = lider;
+            ia.chefe = inst.tipo_de_grupo == 2 && inst.gerador_na_area == 0;
             self.monsters.insert(monster_id, (monster, ia));
             r.id = Some(monster_id);
         } else if tipo == pw_data_loader::SpawnType::Npc {
@@ -1176,10 +1275,9 @@ impl WorldInstance {
                         // quem tem o crédito (o dono, se foi o mascote).
                         danos_no_tempo.push((credito, v as i32));
                         m.registrar_dano(credito, real);
-                        ai.add_threat(origem, v);
-                        if let Some(dono) = dono {
-                            ai.add_threat(dono, 1);
-                        }
+                        // Sem ódio: o tique é `BeHurt` → `OnHurt`, que só registra o dano
+                        // (`npc.cpp:1829-1845`; B137). O ódio veio do golpe ou do `GetEnmity`.
+                        let _ = &ai;
                         mudou = true;
                         if m.hp == 0 {
                             matador = Some(credito);
@@ -1482,6 +1580,19 @@ impl WorldInstance {
     /// Com `atraso_ms == 0` aplica agora, como o `InsertDamageEntry` faz quando o `delay`
     /// não é positivo (`actobject.cpp:1760-1762`). O aviso do golpe ao cliente é
     /// responsabilidade de quem chama, e sai **antes** disto.
+    /// `SetEnmity(n)` numa vítima monstro (`PlayerWrapper::SetEnmity`, `playerwrapper.cpp:
+    /// 729-740` → `gnpc_imp::AddAggro`): `n` de ódio a quem lançou, se `n > 0`.
+    pub fn odio_de_habilidade(&mut self, monstro: i64, quem: i64, odio: i64) {
+        if odio <= 0 {
+            return;
+        }
+        if let Some((m, ai)) = self.monsters.get_mut(&monstro) {
+            if !m.is_dead {
+                ai.add_threat(quem, odio);
+            }
+        }
+    }
+
     pub fn adiar_dano(
         &mut self,
         alvo: i64,
@@ -2050,7 +2161,14 @@ impl WorldInstance {
             self.emitir(EventoDoMundo::MonstroSumiu { id });
         }
 
+        // Onde está cada líder vivo: o `QueryTarget(leader)` do subordinado.
+        let lideres_vivos: HashMap<i64, pw_core::Vector3> = self
+            .subordinados
+            .keys()
+            .filter_map(|l| self.monsters.get(l).filter(|(m, _)| !m.is_dead).map(|(m, _)| (*l, m.position)))
+            .collect();
         for (monster, ai) in self.monsters.values_mut() {
+            ai.lider_em = ai.lider.and_then(|l| lideres_vivos.get(&l).copied());
             if monster.is_dead {
                 // `gnpc_imp::OnDeath` → `ai_policy::OnDeath`: uma vez, na primeira vez que o
                 // laço o vê morto. O crédito é de quem mais bateu (`GetChiefGainer`).
@@ -2064,37 +2182,24 @@ impl WorldInstance {
                 // `npc.cpp:904-911`, `npcgenerator.cpp:3312`). Contar o renascimento desde a
                 // morte fazia o monstro voltar com o mesmo id antes do golpe seguinte, e a
                 // sessão de golpe nunca o via morto (teste de 2026-09-17).
-                if monster.respawn_timer_ms > 0 && !self.corpos.contains_key(&monster.id) {
+                // O subordinado do grupo não renasce sozinho: volta com o líder (abaixo).
+                if ai.lider.is_none() && monster.respawn_timer_ms > 0 && !self.corpos.contains_key(&monster.id) {
                     monster.respawn_timer_ms = monster.respawn_timer_ms.saturating_sub(delta_ms);
                     if monster.respawn_timer_ms == 0 {
-                        // Renascimento do Monstro
-                        monster.is_dead = false;
-                        monster.hp = monster.max_hp;
-                        monster.efeitos.ao_renascer();
                         // Outro ponto da área e outra direção (`Reborn` → `GeneratePos`/`GenDir`,
                         // `npcgenerator.cpp:3457-3459`); a casa do monstro passa a ser ali.
+                        let mut pos = monster.spawn_center;
                         let mut direcao = None;
                         if let Some(g) = self.geradores.get(&monster.id) {
-                            let p = g.posicao_de_renascimento(
+                            pos = g.posicao_de_renascimento(
                                 rand::Rng::gen(&mut rand::thread_rng()),
                                 &self.terreno,
                                 &self.movimento,
                             );
-                            monster.spawn_center = p;
                             direcao =
                                 Some(crate::entity::direcao_do_gerador(g.dir, g.extensao_da_area));
                         }
-                        monster.position = monster.spawn_center;
-                        monster.danos.clear();
-                        monster.primeiro_atacante = None;
-                        // `Reborn`: a mesma IA, com o `_cur_event_hp` de volta a ¾ (`aipolicy.h:1376-1385`).
-                        let (politica, globais) = (ai.politica.take(), ai.globais.take());
-                        *ai = MonsterAi::com_perfil(ai.perfil.take());
-                        ai.politica = politica;
-                        ai.globais = globais;
-                        if let Some(d) = direcao {
-                            ai.direcao = d;
-                        }
+                        renascer_monstro(monster, ai, pos, direcao);
                         renasceram.push((monster.id, monster.position));
                     }
                 }
@@ -2111,6 +2216,8 @@ impl WorldInstance {
             let mapa = crate::navegacao::Mapa {
                 terreno: &chao,
                 movimento: &self.movimento,
+                espaco: Some(&self.espaco),
+                agua: Some(&self.agua),
             };
             let invencivel_antes = monster.efeitos.invencivel_s > 0;
             let acao = ai.tick_com_mascotes(
@@ -2210,6 +2317,43 @@ impl WorldInstance {
             self.emitir(e);
         }
         self.escoar_pedidos_das_politicas();
+
+        // `boss_spawner::ForwardFirstAggro` (`npcgenerator.cpp:5447-5457`): o inimigo novo do
+        // chefe vai, com a raiva, a todos os subordinados (`GM_MSG_TRANSFER_AGGRO`).
+        let repasses: Vec<(i64, i64, i64)> = self
+            .monsters
+            .iter_mut()
+            .filter_map(|(id, (_, ai))| ai.odio_a_repassar.take().map(|(alvo, raiva)| (*id, alvo, raiva)))
+            .collect();
+        for (chefe, alvo, raiva) in repasses {
+            for sub in self.subordinados.get(&chefe).cloned().unwrap_or_default() {
+                if let Some((m, ai)) = self.monsters.get_mut(&sub) {
+                    if !m.is_dead {
+                        ai.receber_odio_do_chefe(alvo, raiva);
+                    }
+                }
+            }
+        }
+
+        // O grupo renasce com o líder (`group_spawner::OnHeartbeat`, `npcgenerator.cpp:5188-5229`;
+        // `Reclaim`, `:5340-5358`): o subordinado cujo corpo já sumiu volta quando o líder volta,
+        // em volta dele.
+        let lideres_de_volta: Vec<(i64, pw_core::Vector3)> =
+            renasceram.iter().filter(|(id, _)| self.subordinados.contains_key(id)).copied().collect();
+        for (lider, pos_lider) in lideres_de_volta {
+            for sub in self.subordinados.get(&lider).cloned().unwrap_or_default() {
+                let pronto = self.monsters.get(&sub).is_some_and(|(m, _)| m.is_dead) && !self.corpos.contains_key(&sub);
+                let Some(g) = self.geradores.get(&sub).cloned().filter(|_| pronto) else {
+                    continue;
+                };
+                let p = self.perto_do_lider(&g, pos_lider);
+                let direcao = crate::entity::direcao_do_gerador(g.dir, g.extensao_da_area);
+                if let Some((m, ai)) = self.monsters.get_mut(&sub) {
+                    renascer_monstro(m, ai, p, Some(direcao));
+                    renasceram.push((sub, p));
+                }
+            }
+        }
 
         // Corpos que somem, e os que renasceram antes de o corpo sumir.
         let mut sumiram = Vec::new();
@@ -2763,6 +2907,8 @@ impl WorldInstance {
             &self.terreno,
             &self.movimento,
             &self.agua,
+            Some(&self.espaco),
+            self.sem_voo,
             dono.position,
             self.camada_do_jogador(dono),
             tipo_de_habitat,
@@ -3133,7 +3279,7 @@ impl WorldInstance {
             if n > 1.0 {
                 offset = pw_core::Vector3::new(offset.x / n, offset.y / n, offset.z / n);
             }
-            match crate::mascote::posicao_para_mascote(&self.terreno, &self.movimento, &self.agua, aqui, camada, tipo, 0.0, offset) {
+            match crate::mascote::posicao_para_mascote(&self.terreno, &self.movimento, &self.agua, Some(&self.espaco), self.sem_voo, aqui, camada, tipo, 0.0, offset) {
                 Ok((pos, modo)) => {
                     let Some(m) = self.mascotes.get_mut(&id) else { continue };
                     m.corpo.habitat = modo;
@@ -3164,6 +3310,8 @@ impl WorldInstance {
         let mapa = crate::navegacao::Mapa {
             terreno: &chao,
             movimento: &self.movimento,
+            espaco: Some(&self.espaco),
+            agua: Some(&self.agua),
         };
         let mut acoes = Vec::new();
         let mut avisos = Vec::new();

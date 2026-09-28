@@ -370,6 +370,11 @@ pub struct BonusDeAddons {
     pub dano_pct: i32,
     pub magico_pct: i32,
     pub resistencia_pct: i32,
+    /// `_damage_reduce` e `_magic_damage_reduce[5]` (%, B137): `enhance_damage_reduce_addon*`,
+    /// `enhance_magic_damage_reduceN_addon`, `enhance_all_magic_damage_reduce_addon*`
+    /// (`item_addon.cpp:696-722`, `:1456-1462`).
+    pub reducao_de_dano: i32,
+    pub reducao_de_dano_magico: [i32; 5],
 }
 
 impl BonusDeAddons {
@@ -433,6 +438,18 @@ impl BonusDeAddons {
             "enhance_damage_scale_addon_2" => self.dano_pct += v,
             "enhance_magic_damage_scale_addon" => self.magico_pct += v,
             "enhance_all_resistance_scale_addon" => self.resistencia_pct += v,
+            "enhance_damage_reduce_addon" | "enhance_damage_reduce_addon_2arg" => self.reducao_de_dano += v,
+            "enhance_all_magic_damage_reduce_addon" | "enhance_all_magic_damage_reduce_addon_2arg" => {
+                for r in &mut self.reducao_de_dano_magico {
+                    *r += v;
+                }
+            }
+            t if t.starts_with("enhance_magic_damage_reduce") && t.ends_with("_addon") => {
+                match t.as_bytes().get("enhance_magic_damage_reduce".len()).map(|c| c.wrapping_sub(b'0')) {
+                    Some(i @ 0..=4) => self.reducao_de_dano_magico[i as usize] += v,
+                    _ => return false,
+                }
+            }
             _ => return false,
         }
         true

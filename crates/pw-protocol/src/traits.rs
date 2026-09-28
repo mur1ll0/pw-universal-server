@@ -91,10 +91,12 @@ pub trait WorldProtocol: Send + Sync {
     fn task_data_com_listas(&self, blocos: [&[u8]; 5]) -> S2CGamedataSend;
 
     /// NPC_ENTER_WORLD (16)
-    fn npc_enter_world(&self, nid: i32, tid: i32, pos: Vector3, dir: u8) -> S2CGamedataSend;
+    /// `estado`: o `state` do `info_npc` — `GP_STATE_NPC_FLY` 0x10000 / `SWIM` 0x20000 do NPC de
+    /// ar/água (`SetInhabitMode`, `npc.cpp:823-843`; o cliente o põe no ar, `EC_NPC.cpp:411-416`).
+    fn npc_enter_world(&self, nid: i32, tid: i32, pos: Vector3, dir: u8, estado: u32) -> S2CGamedataSend;
 
     /// NPC_ENTER_SLICE (11)
-    fn npc_enter_slice(&self, nid: i32, tid: i32, pos: Vector3, dir: u8) -> S2CGamedataSend;
+    fn npc_enter_slice(&self, nid: i32, tid: i32, pos: Vector3, dir: u8, estado: u32) -> S2CGamedataSend;
 
     /// HOST_ATTACKRESULT (24)
     fn host_attack_result(&self, target_id: i32, damage: i32, attack_flag: i32, speed: u8) -> S2CGamedataSend;

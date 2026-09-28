@@ -78,7 +78,14 @@ async fn main() -> anyhow::Result<()> {
     // 3. Um mundo por mapa, cada um com seu tick, todos sobre os mesmos dados.
     let mut servidos = Vec::with_capacity(mapas.len());
     for mapa in &mapas {
-        let mundo = WorldInstance::new(*mapa, Arc::clone(&data_manager), char_repo.clone());
+        let mut mundo = WorldInstance::new(*mapa, Arc::clone(&data_manager), char_repo.clone());
+        // `_world_limit.nofly` do `gs.conf` da versão (B133).
+        let catalogo = if game_version == GameVersion::V1_2_6 {
+            pw_data_loader::limites::CatalogoDeLimites::V126
+        } else {
+            pw_data_loader::limites::CatalogoDeLimites::V155
+        };
+        mundo.sem_voo = pw_data_loader::limites::sem_voo(catalogo, *mapa);
         servidos.push(RoteadorDeMapas::preparar_mapa(mundo, game_version).await);
     }
     let roteador = Arc::new(RoteadorDeMapas::new(servidos, char_repo));

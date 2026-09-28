@@ -132,7 +132,8 @@ class Emulador:
         self.mu.reg_write(getattr(X, f"UC_X86_REG_FP{top}"), (man, exp))
         self.mu.reg_write(X.UC_X86_REG_FPSW, (sw & ~(7 << 11)) | (top << 11))
 
-    def executar(self, endereco, nivel, *, alcance=0.0, ataque=0, magico=0, carga=0, retorno="int"):
+    def executar(self, endereco, nivel, *, alcance=0.0, ataque=0, magico=0, carga=0, retorno="int",
+                 nivel_do_jogador=None):
         """Executa `f(this, skill)`; devolve (retorno, setters capturados, getters usados)."""
         setters, usados = {}, set()
 
@@ -144,7 +145,16 @@ class Emulador:
             esp = uc.reg_read(X.UC_X86_REG_ESP)
             volta = struct.unpack("<I", uc.mem_read(esp, 4))[0]
             if nome == "GetLevel":
-                uc.reg_write(X.UC_X86_REG_EAX, nivel)
+                # `skill->GetPlayer()->GetLevel()` chega com `this` = o jogador falso (0x3000):
+                # é o nível do **jogador**, não o da habilidade.
+                this = struct.unpack("<I", uc.mem_read(esp + 4, 4))[0]
+                if this == 0x3000:
+                    if nivel_do_jogador is None:
+                        raise Desconhecido("GetLevel do jogador")
+                    usados.add("GetLevel do jogador")
+                    uc.reg_write(X.UC_X86_REG_EAX, nivel_do_jogador)
+                else:
+                    uc.reg_write(X.UC_X86_REG_EAX, nivel)
             elif nome == "GetPlayer":
                 uc.reg_write(X.UC_X86_REG_EAX, 0x3000)
             elif nome == "GetRange":
@@ -211,6 +221,24 @@ def main(caminho_gs: str) -> None:
         except Desconhecido:
             return None
 
+    def odio_do_jogador(f, n, expr_155):
+        """O `GetEnmity` que usa o nível do jogador: executado com o jogador nos níveis 10 e 57, e
+        aceito como a expressão do 1.5.5 só se ela reproduz os dois em todo nível da habilidade."""
+        if f is None or expr_155 is None:
+            return None
+        try:
+            for pj in (10, 57):
+                for nv in range(1, n + 1):
+                    v = emu.executar(f, nv, nivel_do_jogador=pj)[0]
+                    esperado = eval(expr_155.replace("P_Level", str(pj)).replace("S_T0", "0")
+                                    .replace("INT", "int").replace("L", str(nv)))
+                    if int(esperado) != v:
+                        print(f"  {sid_atual[0]} odio: 1.2.6 dá {v} (jogador {pj}, nível {nv}), a expressão do 1.5.5 {int(esperado)}")
+                        return None
+            return expr_155
+        except Desconhecido:
+            return None
+
     def distancia(f, n):
         """`k × GetRange() + fixo` — o formato `{arma, fixo}` do 1.5.5."""
         if f is None:
@@ -229,7 +257,9 @@ def main(caminho_gs: str) -> None:
             return None
 
     saida = {}
+    sid_atual = [0]
     for sid in sorted(funcoes):
+        sid_atual[0] = sid
         fs = funcoes[sid]
         n = (h155.get(str(sid)) or {}).get("max_level") or 10
         num_estados = max((k[1] for k in fs if isinstance(k, tuple)), default=0)
@@ -288,6 +318,10 @@ def main(caminho_gs: str) -> None:
             "angulo": decimal("GetAngle"),
             "precisao": decimal("GetHitrate"),
             "dano": dano,
+            # `GetEnmity` executado por nível. Quem consulta outra coisa (o nível do jogador,
+            # o talento) dá `Desconhecido`: fica `null` e herda o `odio`/`odio_expr` do 1.5.5.
+            "odio": por_nivel(fs["GetEnmity"], n) if "GetEnmity" in fs else [0] * n,
+            "odio_expr": odio_do_jogador(fs.get("GetEnmity"), n, (h155.get(str(sid)) or {}).get("odio_expr")),
         }
     # A tabela sai **completa**, no formato do `habilidades.json` 1.5.5: o que o stub 1.2.6
     # não tem como função de nível (classe, tipo, pré-requisitos, `time_type`, área, flags,
@@ -308,6 +342,8 @@ def main(caminho_gs: str) -> None:
         for campo, valor in h.items():
             if valor is not None or campo in ("estados_ms", "execucao_ms", "recarga_ms"):
                 m[campo] = valor
+        if h.get("odio") is not None or h.get("odio_expr") is None:
+            m["odio_expr"] = h.get("odio_expr")
         forma, evento = formas.get(sid, (None, 0))
         if forma is not None:
             m["allow_forms"] = forma

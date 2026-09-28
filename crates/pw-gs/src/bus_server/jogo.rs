@@ -26,6 +26,9 @@ pub(super) mod erro_s2c {
     pub const ITEM_NAO_NO_INVENTARIO: i32 = 5;
     pub const NAO_PODE_PEGAR: i32 = 6;
     pub const BOLSA_CHEIA: i32 = 7;
+    /// `ERR_CANNOT_FLY` (`common/protocol.h:735`, "// 55"; o mesmo `push 0x37` no
+    /// `flysword_item::OnUse` do `gs` 1.2.6, VA 0x819505f).
+    pub const NAO_PODE_VOAR: i32 = 55;
     pub const SERVICO_INDISPONIVEL: i32 = 14;
     pub const SEM_DINHEIRO: i32 = 16;
     pub const NAO_PODE_USAR_ITEM: i32 = 18;

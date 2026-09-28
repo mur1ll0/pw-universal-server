@@ -521,3 +521,199 @@ fn a_velocidade_do_item_de_voo_vem_do_conteudo() {
     let b: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
     assert_eq!(pw_gs::entity::velocidade_do_item_de_voo(&b), Some(15.0));
 }
+
+/// B134 — `ai_target_task::OnSessionEnd` (`aipolicy.cpp:443-480`): o monstro de chão embaixo de
+/// quem bate voando "chega" três vezes sem alcançar (`TEST_GETTOGOAL`) → `NSRC_ERR_PATHFINDING`,
+/// e contra **jogador** limpa o ódio e o registro de dano. Antes ele ficava parado embaixo, sem
+/// bater em ninguém (teste da Tsuko com o Esqueleto Espectral).
+#[test]
+fn embaixo_de_quem_voa_o_monstro_de_chao_desiste_do_jogador() {
+    let mut ai = MonsterAi::new();
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    m.tempo_de_odio_s = 600; // o temporizador não é quem decide aqui
+    ai.add_threat(1, 50);
+    m.registrar_dano(1, 50);
+    let mut jogadores = com_alvo(0.5);
+    jogadores.get_mut(&1).unwrap().position = Vector3::new(0.5, 20.0, 0.0);
+    let mut t = 0;
+    while t < 10_000 && !ai.aggro_table.is_empty() {
+        ai.tick(&mut m, &jogadores, 50, &sem_mapa);
+        t += 50;
+    }
+    assert!(ai.aggro_table.is_empty(), "continuou odiando quem não alcança");
+    assert!(m.danos.is_empty(), "ClearDamageList");
+    assert!(t < 5_000, "levou {t} ms");
+}
+
+/// Contra um **mascote** que não alcança, a tarefa só recomeça: o ódio fica.
+#[test]
+fn contra_mascote_fora_de_alcance_o_odio_fica() {
+    use pw_gs::navegacao::Mapa;
+    let mut ai = MonsterAi::new();
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    m.tempo_de_odio_s = 600;
+    ai.add_threat(2, 50);
+    let mut pet = MonsterEntity::placeholder(2, 10521, Vector3::new(0.5, 20.0, 0.0), 0);
+    pet.hp = 100;
+    let mascotes = HashMap::from([(2i64, pet)]);
+    let vazio = pw_data_loader::MapaDeMovimento::vazio();
+    let mapa = Mapa { terreno: &sem_mapa, movimento: &vazio, espaco: None, agua: None };
+    for _ in 0..(10_000 / 50) {
+        ai.tick_com_mascotes(&mut m, &HashMap::new(), &mascotes, 50, &mapa);
+    }
+    assert_eq!(ai.get_highest_threat_target(), Some(2));
+}
+
+/// B135 — `IS_HUMANSIDE` é só jogador (`common/types.h:321`): o mascote de ar bate **inteiro**
+/// no monstro de chão (no B128 levava o corte de 0,5 do ar para o chão).
+#[test]
+fn o_mascote_de_ar_bate_inteiro_no_monstro_de_chao() {
+    use pw_gs::combat::{self, CombatEngine, Rolagens};
+    let alvo = monstro(Vector3::new(0.0, 0.0, 0.0));
+    let certo = Rolagens { acerto: 0.0, critico: 99 };
+    let dano = |habitat| {
+        let mut pet = MonsterEntity::placeholder(2, 10521, Vector3::new(0.0, 5.0, 0.0), 0);
+        pet.habitat = habitat;
+        let mut g = CombatEngine::golpe_de_monstro(&pet);
+        g.atacante_e_jogador_ou_pet = true;
+        g.dano_fisico = 1000;
+        combat::resolver(&g, &CombatEngine::defesa_do_monstro(&alvo), 1.0, false, certo).dano()
+    };
+    assert_eq!(dano(pw_gs::ai::Habitat::Ar), dano(pw_gs::ai::Habitat::Chao));
+}
+
+
+// ---- B136: rota de patrulha, subordinado que segue o líder, ódio do chefe ----
+
+fn rota_reta(tipo: i32, corre: bool) -> pw_gs::ai::Rota {
+    let pontos = (0..4).map(|i| Vector3::new(i as f32 * 20.0, 0.0, 0.0)).collect();
+    pw_gs::ai::Rota::nova(std::sync::Arc::new(pontos), tipo, corre).unwrap()
+}
+
+/// `base_patrol_agent::GetNextWayPoint`: 0 para no fim, 1 vai e volta, 2 recomeça.
+#[test]
+fn a_rota_para_vai_e_volta_ou_recomeca() {
+    let xs = |tipo: i32| {
+        let mut r = rota_reta(tipo, false);
+        (0..7).map(|_| r.proximo().map(|p| p.x as i32)).collect::<Vec<_>>()
+    };
+    assert_eq!(xs(0), vec![Some(0), Some(20), Some(40), Some(60), None, None, None]);
+    assert_eq!(xs(1), vec![Some(0), Some(20), Some(40), Some(60), Some(40), Some(20), Some(0)]);
+    assert_eq!(xs(2), vec![Some(0), Some(20), Some(40), Some(60), Some(0), Some(20), Some(40)]);
+    assert!(pw_gs::ai::Rota::nova(std::sync::Arc::new(vec![Vector3::new(0.0, 0.0, 0.0)]), 2, false).is_none());
+}
+
+/// Com rota, o monstro sem combate anda de ponto em ponto, um passo por segundo, **andando**
+/// (sem o `iSpeedFlag`) — o Carniçal Sanguinário parado do relato (`ai_patrol_task`).
+#[test]
+fn o_monstro_com_rota_anda_ponto_a_ponto() {
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    let mut ai = MonsterAi::new();
+    ai.rota = Some(rota_reta(2, false));
+    // Alguém a 50 m: o monstro não fica no `_idle_mode`, e não é agressivo.
+    let p = com_alvo(50.0);
+    let (mut max_x, mut andou_a_pe, mut correu) = (0.0f32, 0, 0);
+    for _ in 0..(40_000 / 50) {
+        if let Some(AcaoDoMonstro::Andou { destino, modo, tempo_ms, .. }) = ai.tick(&mut m, &p, 50, &sem_mapa) {
+            assert_eq!(tempo_ms, 1000, "a patrulha anda um passo por segundo");
+            max_x = max_x.max(destino.x);
+            if modo == pw_gs::ai::MODO_ANDAR {
+                andou_a_pe += 1;
+            } else {
+                correu += 1;
+            }
+        }
+    }
+    eprintln!("x máximo {max_x}, {andou_a_pe} passos andando, {correu} correndo");
+    assert!(max_x > 45.0, "o monstro não seguiu a rota: x máximo {max_x}");
+    assert!(andou_a_pe > 0 && correu == 0);
+}
+
+/// Sem ninguém por perto (`_idle_mode`), a patrulha não anda.
+#[test]
+fn sem_ninguem_por_perto_a_rota_espera() {
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    let mut ai = MonsterAi::new();
+    ai.rota = Some(rota_reta(2, false));
+    let ninguem = HashMap::new();
+    for _ in 0..(60_000 / 50) {
+        ai.tick(&mut m, &ninguem, 50, &sem_mapa);
+    }
+    assert!(m.position.x < 1.0, "andou sem ninguém por perto: {:?}", m.position);
+}
+
+/// `ai_follow_master`: a 15 m do líder (entre 8 e 20), o subordinado corre até ficar a menos
+/// de 7 m; perto dele, passeia em volta sem se afastar.
+#[test]
+fn o_subordinado_segue_o_lider() {
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    let mut ai = MonsterAi::new();
+    ai.lider = Some(77);
+    let lider = Vector3::new(15.0, 0.0, 0.0);
+    let p = com_alvo(60.0);
+    let mut correu = false;
+    for _ in 0..(8_000 / 50) {
+        ai.lider_em = Some(lider);
+        if let Some(AcaoDoMonstro::Andou { modo, .. }) = ai.tick(&mut m, &p, 50, &sem_mapa) {
+            correu |= modo == pw_gs::ai::MODO_CORRER;
+        }
+    }
+    let d = m.position.distance(&lider);
+    assert!(correu, "o subordinado não correu atrás do líder");
+    assert!(d < 8.0, "ficou a {d} m do líder");
+    let mut mais_longe = 0.0f32;
+    for _ in 0..(30_000 / 50) {
+        ai.lider_em = Some(lider);
+        ai.tick(&mut m, &p, 50, &sem_mapa);
+        mais_longe = mais_longe.max(m.position.distance(&lider));
+    }
+    assert!(mais_longe < 15.0, "passeando, afastou-se {mais_longe} m do líder");
+}
+
+/// A 20 m ou mais do líder (`MAX_MASTER_MINOR_RANGE`), o subordinado vai de uma vez para até
+/// 7 m dele: `ReturnHome(info.pos, 7)`, uma parada com `MOVE_MODE_RETURN`.
+#[test]
+fn longe_do_lider_o_subordinado_vai_de_uma_vez() {
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    let mut ai = MonsterAi::new();
+    ai.lider = Some(77);
+    let lider = Vector3::new(30.0, 0.0, 0.0);
+    let p = com_alvo(60.0);
+    let mut volta = None;
+    for _ in 0..(3_000 / 50) {
+        ai.lider_em = Some(lider);
+        if let Some(AcaoDoMonstro::Parou { posicao, modo, .. }) = ai.tick(&mut m, &p, 50, &sem_mapa) {
+            if modo == pw_gs::ai::MODO_VOLTAR {
+                volta = Some(posicao);
+                break;
+            }
+        }
+    }
+    let v = volta.expect("não voltou para perto do líder");
+    assert!((v.x - lider.x).abs() <= 7.0 && (v.z - lider.z).abs() <= 7.0, "{v:?}");
+}
+
+/// O chefe (`group_boss_policy`) avisa o primeiro da lista quando ele muda, uma vez; o
+/// subordinado (`aggro_minor_policy`) troca a lista por ele.
+#[test]
+fn o_chefe_repassa_o_odio_ao_subordinado() {
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    let mut chefe = MonsterAi::new();
+    chefe.chefe = true;
+    chefe.add_threat(1, 10);
+    let p = com_alvo(3.0);
+    for _ in 0..(1_100 / 50) {
+        chefe.tick(&mut m, &p, 50, &sem_mapa);
+    }
+    assert_eq!(chefe.odio_a_repassar.take(), Some((1, 10)));
+    for _ in 0..(2_000 / 50) {
+        chefe.tick(&mut m, &p, 50, &sem_mapa);
+    }
+    assert_eq!(chefe.odio_a_repassar, None, "o mesmo inimigo não é repassado de novo");
+
+    let mut sub = MonsterAi::new();
+    sub.add_threat(9, 50);
+    sub.receber_odio_do_chefe(1, 10);
+    assert_eq!(sub.get_highest_threat_target(), Some(1));
+    assert_eq!(sub.aggro_table.len(), 1);
+}

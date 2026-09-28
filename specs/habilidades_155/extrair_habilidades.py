@@ -366,6 +366,15 @@ def extrair(caminho):
         "alcance": alcance(texto, max_level),
     }
     h["dano"] = dano(texto, max_level, h["estados_ms"])
+    # `GetEnmity` (`SkillStub::GetEnmity`, `skill.cpp:648-653`): o ódio que a vítima ganha de
+    # quem lança (`SkillWrapper::Attack`/`Enchant` → `SetEnmity`, `skillwrapper.cpp:475-477`).
+    # Por nível quando só depende do nível; senão a expressão (`10 * P_Level * (3 + L)`).
+    h["odio"] = por_nivel(texto, "int GetEnmity", max_level, int)
+    h["odio_expr"] = None
+    if h["odio"] is None:
+        c = corpo(texto, "int GetEnmity")
+        m = re.search(r"return\s+(.+?)\s*;", c or "", re.S)
+        h["odio_expr"] = expressao(m.group(1)) if m else None
     # Área, precisão e efeitos (B53) — `PlayerWrapper::SetPerform` (`playerwrapper.cpp:170-420`).
     m = re.search(r"range\.type\s*=\s*(\d+)\s*;", texto)
     h["tipo_de_area"] = int(m.group(1)) if m else None
@@ -409,6 +418,8 @@ def main():
     for campo in ("mp", "execucao_ms", "recarga_ms", "nivel_exigido", "sp_exigido", "dinheiro_exigido", "item_exigido"):
         print(f"  {campo}: {conta(campo)} avaliadas")
     print(f"  estados: {sum(1 for h in saida.values() if h['estados_ms'] and all(e is not None for e in h['estados_ms']))} completos")
+    print(f"  odio: {conta('odio')} por nível, {conta('odio_expr')} por expressão, "
+          f"{sum(1 for h in saida.values() if h['odio'] is None and h['odio_expr'] is None)} sem leitura")
     for campo in ("tipo_de_area", "raio", "angulo", "distancia_de_efeito", "precisao", "no_alvo", "em_si"):
         print(f"  {campo}: {conta(campo)} lidas")
 

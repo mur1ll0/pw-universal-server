@@ -1,0 +1,515 @@
+{
+  "fonte": "gamed/gs.conf do servidor 126 (chave `limit` e `height_limit` de [World_*]/[Instance_*]); gerado por specs/mapas/gerar_limites.py",
+  "como_ler": "world_id é a `tag` do gs.conf. `limites` são os tokens do `limit` (worldmanager.cpp:108-160): `nofly` proíbe voar (item_flysword.cpp:66, ERR_CANNOT_FLY) e mascote de ar (petman.cpp:104/140/270).",
+  "mapas": [
+    {
+      "world_id": 1,
+      "secao": "World_gs01",
+      "limites": [
+        "allow-root"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 101,
+      "secao": "World_is01",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "nomount",
+        "use-save-point"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 102,
+      "secao": "World_is02",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "nomount"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 105,
+      "secao": "Instance_is05",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "clear-ap",
+        "allow-root",
+        "nomount",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 106,
+      "secao": "Instance_is06",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "clear-ap",
+        "allow-root",
+        "nomount",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 107,
+      "secao": "Instance_is07",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "clear-ap",
+        "allow-root",
+        "nomount",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 108,
+      "secao": "Instance_is08",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "clear-ap",
+        "allow-root",
+        "nomount",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 109,
+      "secao": "Instance_is09",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "nomount",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 110,
+      "secao": "Instance_is10",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "nomount",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 111,
+      "secao": "Instance_is11",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "nomount",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 112,
+      "secao": "World_is12",
+      "limites": [
+        "nofly",
+        "nomount",
+        "nothrow",
+        "clear-ap",
+        "use-save-point",
+        "allow-root"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 113,
+      "secao": "World_is13",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "nomount"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 114,
+      "secao": "Instance_is14",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "nomount",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 115,
+      "secao": "Instance_is15",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "nomount",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 116,
+      "secao": "Instance_is16",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "nomount",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 117,
+      "secao": "Instance_is17",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "nomount",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 118,
+      "secao": "World_is18",
+      "limites": [
+        "nofly",
+        "nomount",
+        "nothrow",
+        "clear-ap",
+        "use-save-point",
+        "allow-root"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 119,
+      "secao": "World_is19",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "nomount"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 120,
+      "secao": "World_is20",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "clear-ap",
+        "use-save-point"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 121,
+      "secao": "World_is21",
+      "limites": [
+        "nothrow",
+        "allow-root"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 122,
+      "secao": "World_is22",
+      "limites": [
+        "nothrow",
+        "allow-root"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 123,
+      "secao": "Instance_is23",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "nomount",
+        "allow-root",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 124,
+      "secao": "Instance_is24",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "nomount",
+        "allow-root",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 125,
+      "secao": "Instance_is25",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "nomount",
+        "allow-root",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 126,
+      "secao": "Instance_is26",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "nomount",
+        "allow-root",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 127,
+      "secao": "Instance_is27",
+      "limites": [
+        "nothrow",
+        "allow-root"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 128,
+      "secao": "Instance_is28",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "nomount",
+        "allow-root",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 129,
+      "secao": "Instance_is29",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "allow-root",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 131,
+      "secao": "Instance_is31",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "nomount",
+        "allow-root",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 132,
+      "secao": "Instance_is32",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "nomount",
+        "allow-root",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 133,
+      "secao": "World_is33",
+      "limites": [
+        "nothrow",
+        "allow-root"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 134,
+      "secao": "World_is34",
+      "limites": [
+        "nothrow",
+        "nofly",
+        "nomount",
+        "allow-root",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 201,
+      "secao": "World_arena01",
+      "limites": [
+        "nothrow",
+        "clear-ap",
+        "use-save-point",
+        "allow-root"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 202,
+      "secao": "World_arena02",
+      "limites": [
+        "nothrow",
+        "clear-ap",
+        "use-save-point",
+        "allow-root"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 203,
+      "secao": "World_arena03",
+      "limites": [
+        "nothrow",
+        "clear-ap",
+        "use-save-point",
+        "allow-root"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 204,
+      "secao": "World_arena04",
+      "limites": [
+        "nothrow",
+        "clear-ap",
+        "use-save-point",
+        "allow-root"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 205,
+      "secao": "Instance_arena05",
+      "limites": [
+        "nofly",
+        "nomount",
+        "allow-root",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 230,
+      "secao": "Instance_bg01",
+      "limites": [
+        "nothrow",
+        "allow-root",
+        "gm-free",
+        "noduel",
+        "nofly",
+        "clear-ap",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 231,
+      "secao": "Instance_bg02",
+      "limites": [
+        "nothrow",
+        "allow-root",
+        "gm-free",
+        "nofly",
+        "noduel",
+        "clear-ap",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 232,
+      "secao": "Instance_bg03",
+      "limites": [
+        "nothrow",
+        "allow-root",
+        "gm-free",
+        "noduel",
+        "nofly",
+        "clear-ap",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 233,
+      "secao": "Instance_bg04",
+      "limites": [
+        "nothrow",
+        "allow-root",
+        "gm-free",
+        "nofly",
+        "noduel",
+        "clear-ap",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 234,
+      "secao": "Instance_bg05",
+      "limites": [
+        "nothrow",
+        "allow-root",
+        "gm-free",
+        "noduel",
+        "nofly",
+        "clear-ap",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    },
+    {
+      "world_id": 235,
+      "secao": "Instance_bg06",
+      "limites": [
+        "nothrow",
+        "allow-root",
+        "gm-free",
+        "nofly",
+        "noduel",
+        "clear-ap",
+        "no-bind"
+      ],
+      "altura_maxima": 0.0
+    }
+  ]
+}

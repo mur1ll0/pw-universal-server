@@ -291,6 +291,8 @@ enum QuemChegou {
         tid: i32,
         pos: pw_core::Vector3,
         dir: u8,
+        /// `GP_STATE_NPC_FLY`/`SWIM` do monstro de ar/água; 0 para NPC e monstro de chão.
+        estado: u32,
     },
     Jogador {
         id: i32,
@@ -465,14 +467,20 @@ impl BusServer {
             sessao,
             mut jogador,
         } = vindo;
-        let (este, repo, chao) = {
+        let (este, repo, chao, sem_voo) = {
             let m = self.world.read().await;
             (
                 m.world_id,
                 m.char_repo.clone(),
                 m.terreno.altura_em(pos.x, pos.z),
+                m.sem_voo,
             )
         };
+        // `player.cpp:11994-11998`: no mapa `nofly` o voo cai ao entrar (B133).
+        let pousou_ao_entrar = sem_voo && jogador.voando;
+        if pousou_ao_entrar {
+            jogador.voando = false;
+        }
         let mut pos = pos;
         // `if (pos.y < height) pos.y = height` (`global_message.cpp:100-101`).
         if let Some(c) = chao {
@@ -503,6 +511,11 @@ impl BusServer {
         self.enviar_ao_jogador(roleid, self.sub.notify_hostpos(pos, este, 0).data)
             .await;
         self.world.write().await.add_player(jogador);
+        if pousou_ao_entrar {
+            // O `RemoveFilter(FILTER_FLY_EFFECT)` do original tira o voo: `OBJECT_LANDING`.
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::object_landing(roleid).data)
+                .await;
+        }
         info!("mundo: {roleid} chegou ao mapa {este} em {pos:?}");
         self.atualizar_visiveis(roleid, &envio, true).await;
     }
@@ -979,6 +992,7 @@ impl BusServer {
                         return;
                     };
                     let (pos, tid, dir) = (m.position, m.template_id, ia.direcao);
+                    let estado = m.habitat.estado_de_ambiente() as u32;
                     let ids: Vec<i64> = mundo
                         .players
                         .iter()
@@ -996,7 +1010,7 @@ impl BusServer {
                     (
                         ids,
                         self.sub
-                            .npc_enter_world(id as i32, tid as i32, pos, dir)
+                            .npc_enter_world(id as i32, tid as i32, pos, dir, estado)
                             .data,
                     )
                 };
@@ -1888,8 +1902,22 @@ impl BusServer {
         // A distância entra no cálculo (atenuação por perto/longe do original); o alvo já
         // foi validado como selecionado, então usar a distância real é o certo.
         let distancia = atacante.position.distance(&monstro.position);
-        let resultado = CombatEngine::jogador_ataca_monstro(&atacante, monstro, distancia);
+        let resultado = CombatEngine::jogador_ataca_monstro(
+            &atacante,
+            monstro,
+            distancia,
+            &mundo.data_manager.progressao,
+        );
         let (dano, critico) = (resultado.dano() as i64, resultado.foi_critico());
+        // `GM_MSG_HP_STEAL` sai do `HandleAttackMsg` na chegada do golpe, antes do dano adiado
+        // (`actobject.cpp:777-782`): `IncHP` e o `hp_steal` (279) a quem bateu
+        // (`actobject.cpp:297-302`).
+        let roubo = resultado.vida_roubada();
+        if roubo > 0 {
+            if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
+                p.hp = (p.hp + roubo).min(p.max_hp);
+            }
+        }
 
         // A ameaça e o dano são adiados juntos (PostLazyMessage(GM_MSG_GEN_AGGRO, speed + 1)
         // no original, npc.cpp:1867 e npc.cpp:2354-2364): o monstro só reage e persegue
@@ -1927,7 +1955,10 @@ impl BusServer {
             "mundo: golpe normal de {roleid} em {alvo}: dano {dano} (vida cai em {} ms)",
             velocidade as u32 * 50
         );
-        if chi_mudou {
+        if roubo > 0 {
+            self.responder(roleid, S2CGamedataSend::player_hp_steal(roubo).data, envio).await;
+        }
+        if chi_mudou || roubo > 0 {
             // `SetRefreshState()` do `ModifyAP`: o cliente recebe a barra nova.
             self.avisar_vida_propria(roleid).await;
         }
@@ -3022,7 +3053,7 @@ impl BusServer {
         let dano = if let Some(g) = do_stub {
             combat::resolver(
                 &g,
-                &CombatEngine::defesa_do_monstro(monstro),
+                &CombatEngine::defesa_do_monstro_contra(monstro, atacante.level, &mundo.data_manager.progressao),
                 distancia,
                 false,
                 combat::Rolagens::sortear(),
@@ -3038,11 +3069,16 @@ impl BusServer {
             }) {
                 Some(d) => {
                     let reducao = combat::reducao_por_defesa(monstro.def_phys, atacante.level);
-                    (((d as f32) * (1.0 - reducao)).round() as i64).max(1)
+                    let nivel = mundo.data_manager.progressao.ajuste(atacante.level - monstro.level).ataque;
+                    (((d as f32) * (1.0 - reducao) * nivel).round() as i64).max(1)
                 }
-                None => {
-                    CombatEngine::jogador_ataca_monstro(&atacante, monstro, distancia).dano() as i64
-                }
+                None => CombatEngine::jogador_ataca_monstro(
+                    &atacante,
+                    monstro,
+                    distancia,
+                    &mundo.data_manager.progressao,
+                )
+                .dano() as i64,
             }
         };
         let (hp, max_hp, morreu, template, exp, sp) = {
@@ -3709,12 +3745,14 @@ impl BusServer {
                             tid: m.template_id as i32,
                             pos: m.position,
                             dir: ia.direcao,
+                            estado: m.habitat.estado_de_ambiente() as u32,
                         }),
                         None => mundo.npcs.get(id).map(|n| QuemChegou::Criatura {
                             id: *id as i32,
                             tid: n.template_id as i32,
                             pos: n.position,
                             dir: n.direcao,
+                            estado: 0,
                         }),
                     }
                 })
@@ -3731,8 +3769,8 @@ impl BusServer {
 
         for c in chegando {
             let pacote = match c {
-                QuemChegou::Criatura { id, tid, pos, dir } => {
-                    self.sub.npc_enter_slice(id, tid, pos, dir).data
+                QuemChegou::Criatura { id, tid, pos, dir, estado } => {
+                    self.sub.npc_enter_slice(id, tid, pos, dir, estado).data
                 }
                 QuemChegou::Jogador { id, vista } => self.sub.player_enter_slice(id, vista).data,
                 QuemChegou::Materia { id, tid, pos } => {
@@ -3873,10 +3911,20 @@ impl BusServer {
     async fn alternar_voo(&self, roleid: i32, envio: &EnvioAoCliente) {
         let voando = {
             let mut mundo = self.world.write().await;
+            let sem_voo = mundo.sem_voo;
             let Some(jogador) = mundo.players.get_mut(&(roleid as i64)) else {
                 warn!("mundo: {roleid} pediu voo sem estar no mundo");
                 return;
             };
+            // `flysword_item::OnUse` (`item_flysword.cpp:55-70`): mapa `nofly` →
+            // `ERR_CANNOT_FLY`, e não decola (B133).
+            if sem_voo && !jogador.voando {
+                drop(mundo);
+                self.responder(roleid, S2CGamedataSend::error_message(jogo::erro_s2c::NAO_PODE_VOAR).data, envio)
+                    .await;
+                debug!("mundo: {roleid} tentou voar num mapa sem voo");
+                return;
+            }
             jogador.voando = !jogador.voando;
             jogador.voando
         };
