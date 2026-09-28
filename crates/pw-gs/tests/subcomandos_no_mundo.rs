@@ -8180,3 +8180,66 @@ async fn o_tique_do_sangramento_nao_da_odio() {
     assert!(monstro.danos.iter().any(|d| d.0 == roleid as i64), "o dano do tique não foi registrado");
     assert!(ai.aggro_table.is_empty(), "o tique deu ódio: {:?}", ai.aggro_table);
 }
+
+/// B141 — o veneno (a 25 do Predador Venenoso: `Toxic`, 15 s) no mascote: o tique tira vida,
+/// não dá ódio (`BeHurt` → `OnHurt`), e quem vê recebe o estado dele (`UPDATE_EXT_STATE`, 124,
+/// com o id do mascote) — até o B140 o estado do mascote não ia a ninguém.
+#[tokio::test]
+async fn o_veneno_no_mascote_tira_vida_sem_odio_e_aparece() {
+    use pw_gs::efeitos::{Efeito, Filtro};
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let modelo = pw_data_loader::pet::ModeloDeMascote {
+        tid: 10386,
+        classe: 1,
+        hp: [27.5, 0.1, 2.0],
+        hp_gen: [0.72, 0.1, 2.0],
+        dano: [1.625, 0.108, 3.3888, 5.74992],
+        velocidade: [6.71, 0.01],
+        ataque: [21.6667, 0.1, 2.0],
+        esquiva: [13.3333, 0.1, 2.0],
+        defesa: [1.66667, 40.0, 0.1, -15.0],
+        resistencia: [1.83333, 40.0, 0.1, -15.0],
+        corpo: 0.9,
+        alcance: 3.0,
+        atraso_do_dano: 23,
+        intervalo_do_golpe: 25,
+        visao: 6.0,
+        comida: 26,
+        habitat: 0,
+        imunidade: 0,
+        nivel_maximo: 150,
+        nivel_exigido: 2,
+    };
+    let pet = pw_gs::mascote::id_do_mascote(9);
+    let vida_antes = {
+        let mut m = mundo.write().await;
+        let pos = m.players[&(roleid as i64)].position;
+        let info = pw_core::pet::InfoPet { pet_tid: 10386, level: 30, hp_factor: 1.0, ..Default::default() };
+        let mut mascote = pw_gs::mascote::Mascote::novo(pet, roleid as i64, 0, info, &modelo, pos, 1, 1);
+        mascote.corpo.efeitos.adicionar(Filtro {
+            efeito: Efeito::Toxic,
+            restante_s: 15,
+            razao: 0,
+            fator: 0.0,
+            por_segundo: 40,
+            contador: 0,
+            origem: 0x7ff0_0002,
+            icone: true,
+            absorve: 0.0,
+            escala_defesa: 0,
+        });
+        let hp = mascote.corpo.hp;
+        m.mascotes.insert(pet, mascote);
+        hp
+    };
+    for _ in 0..4 {
+        mundo.write().await.tick(1000).await;
+    }
+    let estado = esperar_comando(&mut link, 124).await;
+    assert_eq!(i32_em(&estado, 2), pet as i32, "o UPDATE_EXT_STATE não foi do mascote");
+    let m = mundo.read().await;
+    let mascote = &m.mascotes[&pet];
+    assert!(mascote.corpo.hp < vida_antes, "o veneno não tirou vida: {} de {vida_antes}", mascote.corpo.hp);
+    assert!(mascote.ai.odio.is_empty(), "o tique deu ódio ao mascote: {:?}", mascote.ai.odio);
+}

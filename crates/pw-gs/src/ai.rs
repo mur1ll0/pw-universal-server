@@ -253,6 +253,12 @@ struct Serie {
     interrompe: bool,
 }
 
+/// O `info.body_size` do alvo (`QueryTarget`): `PLAYER_BODYSIZE` do jogador, o `size` do
+/// mascote (B139).
+fn corpo_do_alvo(alvo: &AlvoDeCombate) -> f32 {
+    alvo.mascote.map(|m| m.tamanho.max(0.0)).unwrap_or(crate::entity::CORPO_DO_JOGADOR)
+}
+
 /// O alvo da tarefa, resolvido neste tique.
 struct AlvoDeCombate<'a> {
     id: i64,
@@ -468,6 +474,8 @@ pub struct MonsterAi {
     centro_do_passeio: Option<(Vector3, f32, i32)>,
     /// O `ReturnHome(leader, 7)` pendente: um `stop_move` com `MOVE_MODE_RETURN`.
     teleporte: Option<Vector3>,
+    /// A `session_npc_attack` do corpo a corpo em curso (o alcance de continuar é maior).
+    golpeando_perto: bool,
 }
 
 impl Default for MonsterAi {
@@ -583,6 +591,7 @@ impl MonsterAi {
             volta_para: None,
             centro_do_passeio: None,
             teleporte: None,
+            golpeando_perto: false,
         }
     }
 
@@ -744,7 +753,8 @@ impl MonsterAi {
         };
         let distancia = monster.position.distance(&posicao);
         let corpo = self.perfil.as_ref().map_or(0.0, |p| p.corpo);
-        let alcance = h.alcance + corpo + crate::entity::CORPO_DO_JOGADOR;
+        let corpo_alvo = mascote.map(|m| m.tamanho.max(0.0)).unwrap_or(crate::entity::CORPO_DO_JOGADOR);
+        let alcance = h.alcance + corpo + corpo_alvo;
         let estrategia = self.estrategia_forcada.or(self.perfil.as_ref().map(|p| p.estrategia));
         let fixo = matches!(estrategia, Some(Estrategia::Fixo | Estrategia::FixoMagico));
         if fixo || distancia * distancia <= alcance * alcance * 0.81 || monster.efeitos.preso() {
@@ -1005,8 +1015,13 @@ impl MonsterAi {
         }
 
         // `IncIdleSealMode(MODE_INDEX_STUN/SLEEP)` (`filter_Dizzy`, `filter_Sleep`): parado,
-        // sem golpe nem passo, até o filtro sair.
+        // sem golpe nem passo, até o filtro sair. `gnpc_imp::SetIdleMode` (`npc.cpp:2129-2138`)
+        // faz `ClearSession`: o canto em curso acaba, não fica pausado (B140).
         if monster.efeitos.sem_acao() {
+            if matches!(self.combate, Combate::Conjurando { .. } | Combate::Serie(_) | Combate::Afastando { .. }) {
+                self.combate = Combate::Nenhum;
+            }
+            self.seguir = None;
             if !self.parado {
                 return Some(self.parar(monster, monster.corrida(), MODO_CORRER));
             }
@@ -1108,6 +1123,7 @@ impl MonsterAi {
     /// recomeçam (cada `AddTargetTask` constrói a tarefa do zero).
     fn nova_tarefa(&mut self, alvo: i64) {
         self.tarefa_alvo = Some(alvo);
+        self.golpeando_perto = false;
         self.habilidade_da_tarefa = None;
         self.vezes_de_afastar = VEZES_DE_AFASTAR;
         self.estado_da_tarefa = match self.perfil.as_ref().map(|p| p.estrategia) {
@@ -1390,7 +1406,22 @@ impl MonsterAi {
         mapa: &Mapa,
         chao: Chao,
     ) -> Option<AcaoDoMonstro> {
-        if alvo.distancia <= monster.attack_range {
+        // `ai_melee_task::Execute` (`aipolicy.cpp:597-609`): começa a bater a `(attack_range −
+        // corpo) × 0,8 + corpo + corpo do alvo` e persegue até `× 0,6`; a `session_npc_attack`
+        // continua até `attack_range + corpo do alvo` (`CheckAttack`, `actobject.cpp:1280-1287`).
+        // Tudo em 3D, e a meta do agente de chão no plano: antes o monstro parava a 0,9 ×
+        // `attack_range` no plano, sem o corpo do alvo, e quem estava um pouco acima (voando, o
+        // mascote de ar) ficava fora do alcance 3D — ele chegava, não batia e desistia (B139).
+        let corpo = self.perfil.as_ref().map_or(0.0, |p| p.corpo);
+        let corpo_alvo = corpo_do_alvo(alvo);
+        let puro = monster.attack_range - corpo;
+        let limite = if self.golpeando_perto {
+            monster.attack_range + corpo_alvo
+        } else {
+            puro * 0.8 + corpo + corpo_alvo
+        };
+        if alvo.distancia <= limite {
+            self.golpeando_perto = true;
             // `range < _range_min`: a sessão de perseguição acaba (`npcsession.cpp:185-189`).
             self.seguir = None;
             self.state = MonsterState::Attacking;
@@ -1400,8 +1431,8 @@ impl MonsterAi {
             }
             return self.golpear(monster, alvo);
         }
-        // Para um pouco antes do alcance, como o `_range_target` do original.
-        let parar_a = (monster.attack_range * 0.9).max(0.5);
+        self.golpeando_perto = false;
+        let parar_a = (puro * 0.6 + corpo + corpo_alvo).max(0.5);
         self.aproximar(monster, alvo, parar_a, mapa, chao)
     }
 
@@ -1573,7 +1604,7 @@ impl MonsterAi {
             return a;
         }
         let corpo = self.perfil.as_ref().map_or(0.0, |p| p.corpo);
-        let corpo_alvo = crate::entity::CORPO_DO_JOGADOR;
+        let corpo_alvo = corpo_do_alvo(alvo);
         let alcance = (monster.attack_range - corpo) * 0.8 + corpo + corpo_alvo;
         if alvo.distancia < alcance {
             let serie = Serie {
@@ -1599,7 +1630,7 @@ impl MonsterAi {
             return a;
         }
         let corpo = self.perfil.as_ref().map_or(0.0, |p| p.corpo);
-        let corpo_alvo = crate::entity::CORPO_DO_JOGADOR;
+        let corpo_alvo = corpo_do_alvo(alvo);
         let alcance = monster.attack_range + corpo_alvo;
         let sa = alcance * alcance;
         let d2 = alvo.distancia * alvo.distancia;
@@ -1645,7 +1676,7 @@ impl MonsterAi {
             return a;
         }
         let corpo = self.perfil.as_ref().map_or(0.0, |p| p.corpo);
-        let corpo_alvo = crate::entity::CORPO_DO_JOGADOR;
+        let corpo_alvo = corpo_do_alvo(alvo);
         if self.habilidade_da_tarefa.is_none() {
             self.habilidade_da_tarefa = self.habilidade_principal();
         }

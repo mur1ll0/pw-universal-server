@@ -10681,3 +10681,72 @@ comparação lado a lado.
       `o_roubo_de_vida_devolve_a_porcentagem_do_dano_final`,
       `a_tabela_de_punicao_do_realm_reduz_o_dano_em_monstro_acima`,
       `o_odio_da_habilidade_sai_do_stub_de_cada_versao`, `o_tique_do_sangramento_nao_da_odio`.
+
+138. **Sessão 2026-09-28: o Vespão preso no terreno perseguindo quem foge.**
+    Relato (Tsuko, 1.2.6, imagem de 27/09 23:37 com o B137): perseguindo monstro que foge por
+    desnível, o mascote entra no chão e fica bugado. Log: Vespão Pequeno (10521) usando a 687.
+    - Reproduzido no terreno real do mapa 1 (`tests/mascote_no_terreno.rs`: 40 perseguições em
+      encosta, monstro fugindo a 4 m/s, dono indo atrás): **39 travadas**.
+    - Causa 1 — erro de porte do B133: o `IsPosPassable(const A3DVECTOR3&, extra)` do original
+      testa o ambiente (acima do terreno) na **posição** e só o nó da octree no centro do voxel
+      (`GlobalSPMap.h:187-204`); o nosso testava no centro do voxel de 2 m. A menos de ~1 m do
+      chão o centro caía abaixo do terreno e toda perseguição falhava na partida
+      (`NPCChaseSpatiallyPFAgent.cpp:87`) — também na geração da meta (`:206`, `:238`). A partida
+      da busca (`SpatialPathFinding.cpp:47-50`) não tem o teste extra. Corrigido: 26 travadas.
+    - Causa 2 — o original: com o alvo descendo a encosta, a reta do mascote (0,2 m acima da
+      crista) até os pés lá embaixo entra no terreno logo à frente; `IsPosBeyondEnv` bloqueia e a
+      falha contra alvo que não é jogador só recomeça a tarefa — o mascote do original também
+      pararia. **Diferença pedida, só no mascote** (`SeguirNoEspaco::sobe_o_chao`): o passo sobe
+      para terreno + 0,2 em vez de bloquear, e o destino sobe o bastante para a reta desde o ponto
+      anterior passar acima do chão em 4 pontos do meio (o cliente desenha o NPC de ar em reta,
+      `EC_NPC.cpp:1000-1020`). Monstros de ar continuam como o original.
+    - Resultado: 0 travadas, 0 tiques abaixo do chão, 0 trechos desenhados pelo chão, 681 golpes.
+
+139. **Sessão 2026-09-28: monstro de chão não bate em mascote voador nem em quem voa.**
+    Relato: monstros terrestres não atacam o Vespão nem a Tsuko voando, mesmo ao alcance.
+    - Nada descartava alvo voando (a distância já era 3D e o mundo aplica golpe em mascote).
+      A diferença era de alcance: o corpo a corpo do monstro parava a 0,9 × `attack_range` no
+      plano e batia só a `attack_range` em 3D, **sem o corpo do alvo**; nas outras estratégias o
+      corpo do alvo era sempre o do jogador (0,3). O original (`ai_melee_task::Execute`,
+      `aipolicy.cpp:597-609`; `CheckAttack`, `actobject.cpp:1280-1287`) persegue até
+      `puro × 0,6 + corpo + corpo do alvo`, bate a `× 0,8` e continua até `attack_range + corpo do
+      alvo`, com o `info.body_size` do alvo — o Vespão Pequeno tem `size` 1 e bate de até 4 m
+      (alcance 3 + corpo): pairando 2 m acima, ficava fora dos 2 m do monstro.
+    - Correção: `corpo_do_alvo` (jogador 0,3; mascote o `tamanho`, agora = `size` do modelo em
+      `corpo_do_mascote`) em todas as estratégias e o corpo a corpo com os alcances do original.
+    - Quem voa acima do alcance continua fora dele, como no original (e o monstro desiste do
+      jogador, B134).
+    - Testes: `o_monstro_de_chao_bate_no_mascote_de_ar_ao_alcance` (falha sem a correção),
+      `o_monstro_de_chao_bate_em_quem_voa_baixo_ao_alcance`.
+
+140. **Sessão 2026-09-28: o Vespão não ficava atordoado.**
+    Relato: o stun do Guerreiro Golem acertou o mascote e ele não parou. Pedido também conferir
+    stun de monstro em jogador e de jogador em monstro.
+    - Log: os Guerreiros Golem usaram a 37 (tipo 3; `Dizzy`, `Probability 75`, `Time 3500`) no
+      Vespão. O filtro caía no corpo do mascote (`aplicar_um` trata `Alvo::Mascote`), mas: (1) a
+      `MascoteAi::tick` não consultava `sem_acao`/`preso`/`selado` — o mascote seguia andando e
+      batendo; (2) `avisar_efeitos` só tratava jogador e monstro — o estado do mascote não ia a
+      ninguém.
+    - Original: `IncIdleSealMode` → `gnpc_imp::SetIdleMode` (`npc.cpp:2129-2138`) faz
+      `ClearSession`, a IA `ClearTask` (`aipolicy.h:1075-1080`) e para (`aipolicy.cpp:281`); o
+      `gpet_policy` depois dele ainda roda as cercas do dono. Preso: `IsRootMode` no
+      `follow_target` (`npcsession.cpp:190`). Selado: o `session_npc_skill` recusa.
+    - Portado no mascote; no monstro faltava o `ClearSession` (o canto pausava e seguia depois
+      do atordoamento — agora acaba). Jogador: golpe e habilidade já recusavam atordoado/selado.
+    - Testes: `o_mascote_atordoado_nao_anda_nem_bate`, `o_mascote_preso_nao_anda_mas_bate_ao_alcance`,
+      `atordoar_o_monstro_cancela_o_canto`.
+
+141. **Sessão 2026-09-28: veneno do Predador Venenoso no mascote.**
+    Relato: sangramento e veneno não se aplicam ao mascote; o Predador Venenoso bateu no mascote e
+    não envenenou.
+    - O Predador Venenoso (1114, nível 30) tem a 25: maldição, `Toxic` 100 % por 15 s,
+      `Amount = S_Magicdamage` (o dano mágico dele, 248–303). O log mostra a 25 usada 7 vezes no
+      mascote -1610612734: o roteiro rodava, a conta (`SetToxic`, igual à do `SetBleeding`,
+      `playerwrapper.cpp:1259-1295`) passava de 3 e o filtro entrava; o batimento do mascote já
+      aplicava o tique. **O que não aparecia** era o estado: `avisar_efeitos` ignorava mascote —
+      corrigido no B140.
+    - Faltava também: o tique e o `Directhurt` davam ódio ao mascote; o original é `BeHurt` →
+      `OnHurt`, sem ódio. `aplicar_dano_no_mascote(.., com_odio)`.
+    - `examples/habilidades_do_monstro.rs` lista as habilidades de um monstro e os roteiros.
+    - Teste: `o_veneno_no_mascote_tira_vida_sem_odio_e_aparece` (vida cai, ódio vazio, 124 com o
+      id do mascote).

@@ -1348,7 +1348,8 @@ impl WorldInstance {
                 }
             }
             for (origem, valor) in danos {
-                self.aplicar_dano_no_mascote(id, origem, valor);
+                // O tique é `BeHurt` → `OnHurt`: sem ódio (`npc.cpp:1829-1845`, B141).
+                self.aplicar_dano_no_mascote(id, origem, valor, false);
                 mudou = true;
             }
             if mudou {
@@ -1703,7 +1704,7 @@ impl WorldInstance {
     /// Tira a vida do monstro e resolve a morte. `None` quando o alvo sumiu ou já morreu.
     fn aplicar_dano_no_monstro(&mut self, alvo: i64, atacante: i64, dano: i64) {
         if self.mascotes.contains_key(&alvo) {
-            self.aplicar_dano_no_mascote(alvo, atacante, dano);
+            self.aplicar_dano_no_mascote(alvo, atacante, dano, true);
             return;
         }
         // O golpe do mascote leva o dono como atacante (`gpet_imp::FillAttackMsg`,
@@ -3187,11 +3188,12 @@ impl WorldInstance {
     }
 
     /// Dano no corpo de um mascote vindo de fora do tique (o roteiro de uma habilidade).
+    /// Dano direto de habilidade (`Directhurt` → `BeHurt`): sem ódio, como o tique.
     pub fn dano_no_mascote(&mut self, alvo: i64, atacante: i64, dano: i64) {
-        self.aplicar_dano_no_mascote(alvo, atacante, dano);
+        self.aplicar_dano_no_mascote(alvo, atacante, dano, false);
     }
 
-    fn aplicar_dano_no_mascote(&mut self, alvo: i64, atacante: i64, dano: i64) {
+    fn aplicar_dano_no_mascote(&mut self, alvo: i64, atacante: i64, dano: i64, com_odio: bool) {
         let Some(m) = self.mascotes.get_mut(&alvo) else {
             return;
         };
@@ -3200,8 +3202,11 @@ impl WorldInstance {
         }
         let dano = crate::efeitos::dano_recebido(&mut m.corpo.efeitos, dano as i32) as i64;
         m.corpo.hp = (m.corpo.hp - dano).max(0);
-        // Apanhar dá ódio de quem bateu, salvo congelado (`HandleAttackMsg`).
-        m.ai.apanhou(atacante, dano);
+        // Apanhar dá ódio de quem bateu, salvo congelado (`HandleAttackMsg`) — o golpe, não o
+        // `BeHurt` do tique nem do dano direto.
+        if com_odio {
+            m.ai.apanhou(atacante, dano);
+        }
         if m.corpo.hp == 0 {
             if let Some(f) = m.corpo.efeitos.renascer(rand::random::<u32>() as i32 % 100) {
                 m.corpo.hp = ((m.corpo.max_hp as f32 * f) as i64).max(1);

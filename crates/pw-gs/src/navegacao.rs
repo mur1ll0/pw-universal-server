@@ -1268,7 +1268,17 @@ impl Mapa<'_> {
             None => [v.x as i32, v.y as i32, v.z as i32],
         }
     }
-    /// `IsPosPassable` com o teste extra do ambiente (`GlobalSPMap.h:168-179`).
+    /// `IsPosPassable(const A3DVECTOR3&, ...)` (`GlobalSPMap.h:187-204`): o teste do ambiente é
+    /// na **posição**, e só o nó da octree sai do centro do voxel. Testar o ambiente no centro
+    /// (um voxel de 2 m) recusava o mascote de ar a menos de 1 m do chão — o centro caía abaixo
+    /// do terreno —, e toda perseguição falhava na partida (B138).
+    fn passavel_na_posicao(&self, v: V3, amb: Ambiente) -> Option<pw_data_loader::espaco::No> {
+        if !self.no_ambiente(amb, v) {
+            return None;
+        }
+        self.espaco?.livre(self.centro_do_voxel(v))
+    }
+    /// `IsPosPassable(const Pos3DInt&, ...)` com o teste extra do ambiente (`GlobalSPMap.h:168-179`).
     fn passavel(&self, p: [i32; 3], extra: Option<Ambiente>) -> Option<pw_data_loader::espaco::No> {
         if let Some(amb) = extra {
             if !self.no_ambiente(amb, V3::new(p[0] as f32, p[1] as f32, p[2] as f32)) {
@@ -1350,8 +1360,9 @@ fn manhattan(a: [i32; 3], b: [i32; 3]) -> i32 {
 impl BuscaEspacial {
     fn iniciar(inicio: [i32; 3], meta: [i32; 3], voxel: i32, amb: Ambiente, mapa: &Mapa) -> Self {
         let mut b = Self { meta, voxel, amb, ..Default::default() };
-        let no_inicio = mapa.passavel(inicio, Some(amb));
-        b.no_da_meta = mapa.passavel(meta, Some(amb));
+        // `IsPosPassable(posStart, ...)` sem o teste extra (`SpatialPathFinding.cpp:47-50`).
+        let no_inicio = mapa.passavel(inicio, None);
+        b.no_da_meta = mapa.passavel(meta, None);
         match (no_inicio, b.no_da_meta) {
             (Some(n), Some(_)) => {
                 let _ = n;
@@ -1462,6 +1473,8 @@ impl BuscaEspacial {
 /// `...InWater...`) quando dá: `NPCChaseSpatiallyPFAgent.cpp:78-249`, `NPCMove.h:175-330`.
 #[derive(Debug, Clone, Default)]
 struct PerseguicaoNoEspaco {
+    /// Ver [`SeguirNoEspaco::sobe_o_chao`].
+    sobe_o_chao: bool,
     amb: Ambiente,
     pos: V3,
     passo: f32,
@@ -1510,7 +1523,7 @@ impl PerseguicaoNoEspaco {
             return Some(self.meta);
         }
         let v = self.meta.sub(self.direcao.mul(self.min));
-        if mapa.passavel(mapa.centro_do_voxel(v), Some(self.amb)).is_some() {
+        if mapa.passavel_na_posicao(v, self.amb).is_some() {
             return Some(v);
         }
         let d_plano = self.direcao.dot(self.meta);
@@ -1525,7 +1538,7 @@ impl PerseguicaoNoEspaco {
                 let dist = self.direcao.dot(v) - d_plano;
                 v = v.sub(self.direcao.mul(2.0 * dist));
             }
-            if mapa.passavel(mapa.centro_do_voxel(v), Some(self.amb)).is_some() {
+            if mapa.passavel_na_posicao(v, self.amb).is_some() {
                 return Some(v);
             }
         }
@@ -1545,7 +1558,7 @@ impl PerseguicaoNoEspaco {
             self.reto_ate_a_meta();
             return;
         }
-        if mapa.passavel(mapa.centro_do_voxel(self.pos), Some(self.amb)).is_none() {
+        if mapa.passavel_na_posicao(self.pos, self.amb).is_none() {
             self.bloqueado = true;
             self.bloqueado_alem = true;
             self.achou = false;
@@ -1587,11 +1600,26 @@ impl PerseguicaoNoEspaco {
             return;
         }
         let prox = self.pos.add(self.direcao.mul(self.passo));
-        if !mapa.no_ambiente(self.amb, prox) {
+        if !mapa.no_ambiente(self.amb, prox) && !self.sobe_o_chao {
             self.bloqueado_alem = true;
             return;
         }
+        let antes = self.pos;
         self.pos = mapa.ajustar_ao_ambiente(self.amb, prox);
+        if self.sobe_o_chao && self.amb == Ambiente::Ar {
+            // O cliente desenha o NPC de ar em reta entre dois pontos (`CECNPC::MoveTo` sem
+            // acompanhar o chão, `EC_NPC.cpp:1000-1020`): o destino sobe o que for preciso para a
+            // reta desde `antes` passar acima do terreno nos pontos do meio (B138).
+            for k in 1..5 {
+                let f = k as f32 / 5.0;
+                let q = V3::new(antes.x + (self.pos.x - antes.x) * f, 0.0, antes.z + (self.pos.z - antes.z) * f);
+                let piso = mapa.ajustar_ao_ambiente(Ambiente::Ar, V3::new(q.x, f32::MIN, q.z)).y;
+                let preciso = (piso - antes.y * (1.0 - f)) / f;
+                if self.pos.y < preciso {
+                    self.pos.y = preciso;
+                }
+            }
+        }
         self.chegou = self.chegou_agora();
         if self.chegou {
             // `AdjustGetToGoalPos` (`NPCMove.h:300-314`), também com o `AdjustCurPos`.
@@ -1646,6 +1674,13 @@ impl PerseguicaoNoEspaco {
 /// o mesmo teto de passos que o [`SeguirAlvo`] de chão (`pathfinding.h:34-134`).
 #[derive(Debug, Clone, Default)]
 pub struct SeguirNoEspaco {
+    /// **Diferença do original, só para o mascote (B138):** o passo reto que cairia abaixo do
+    /// terreno ou fora da água sobe para o `AdjustCurPos` em vez de bloquear
+    /// (`IsPosBeyondEnv`, `NPCMove.h:201-226`). No original o mascote de ar que persegue um
+    /// monstro que desce uma encosta fica parado na crista até o alvo sair dali — a reta até os
+    /// pés dele entra no terreno logo à frente, e a falha contra alvo que não é jogador só
+    /// recomeça a tarefa (`aipolicy.cpp:484-492`). O Murillo pediu que não prenda.
+    pub sobe_o_chao: bool,
     agente: PerseguicaoNoEspaco,
     alvo: V3,
     contador: i32,
@@ -1666,7 +1701,7 @@ impl SeguirNoEspaco {
         self.contador = 0;
         self.nivel_de_passo = false;
         self.alvo = alvo;
-        self.agente = PerseguicaoNoEspaco { amb, pos: de, passo, ..Default::default() };
+        self.agente = PerseguicaoNoEspaco { amb, pos: de, passo, sobe_o_chao: self.sobe_o_chao, ..Default::default() };
         self.agente.meta(alvo, alcance);
         self.agente.comecar(DETALHE[self.detalhe][1], mapa);
     }

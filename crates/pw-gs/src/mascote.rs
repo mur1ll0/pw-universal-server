@@ -137,6 +137,8 @@ pub fn corpo_do_mascote(id: i64, modelo: &ModeloDeMascote, info: &InfoPet, pos: 
     m.attack_max = dano;
     m.magic_attack = [(0, 0); 5];
     m.attack_range = a.alcance + modelo.corpo;
+    // `body_size` do mascote: o `info.body_size` que o monstro soma ao alcance (B139).
+    m.tamanho = modelo.corpo;
     m.ataque_em_ticks = a.intervalo_do_golpe;
     m.atraso_do_dano_em_ticks = modelo.atraso_do_dano;
     m.aggro_range = 60.0;
@@ -835,6 +837,24 @@ impl MascoteAi {
             }
         }
 
+        // Atordoado ou adormecido (`IncIdleSealMode(MODE_INDEX_STUN/SLEEP)` → `gnpc_imp::
+        // SetIdleMode`, `npc.cpp:2129-2138`): a sessão em curso acaba (`ClearSession` — o canto
+        // também), a IA limpa a tarefa (`ai_policy::SetIdleMode`, `aipolicy.h:1075-1080`) e não
+        // decide nada até o filtro sair (`if(_idle_mode) return`, `aipolicy.cpp:281`); as cercas
+        // de distância do dono acima continuam (`gpet_policy::OnHeartbeat` roda depois). B140.
+        if corpo.efeitos.sem_acao() {
+            self.conjuracao = None;
+            self.tarefa = None;
+            self.seguir = None;
+            self.no_espaco = None;
+            self.seguindo = false;
+            self.golpeando = false;
+            return (!self.parado).then(|| AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)));
+        }
+        // Selado (`SetSealMode(silent)`): não começa habilidade (`session_npc_skill` recusa).
+        if corpo.efeitos.selado() {
+            self.tarefa = None;
+        }
         // A sessão de habilidade em curso ocupa o mascote até o fim da execução.
         if let Some(c) = self.conjuracao {
             return self.passar_conjuracao(c, delta_ms);
@@ -842,7 +862,7 @@ impl MascoteAi {
         // `gpet_policy::OnHeartbeat` e `DeterminePolicy` (`petnpc.cpp:1487-1519`, `:1630-1645`):
         // em combate, com a automática fora da recarga e mana para ela, a próxima tarefa é a
         // habilidade no primeiro do ódio, em vez do golpe comum.
-        if self.tarefa.is_none() {
+        if self.tarefa.is_none() && !corpo.efeitos.selado() {
             if let (Some(h), Some(alvo)) = (self.automatica, self.alvo()) {
                 if self.recarga_pronta(h.recarga()) && corpo.mp >= h.mana {
                     self.tarefa = Some(TarefaDeHabilidade { habilidade: h, alvo: Some(alvo), rastros: 2 });
@@ -1040,6 +1060,11 @@ impl MascoteAi {
         if self.espera_ms > 0 {
             return None;
         }
+        // Preso (`SetSealMode(root)`): `if(_imp->IsRootMode()) return 0` no `follow_target`
+        // (`npcsession.cpp:190`) — não anda, mas bate no que estiver ao alcance.
+        if corpo.efeitos.preso() {
+            return (!self.parado).then(|| AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)));
+        }
         self.espera_ms = Self::PASSO_MS;
         let passo = corpo.move_speed * Self::PASSO_MS as f32 / 1000.0;
         if corpo.habitat != Habitat::Chao {
@@ -1115,6 +1140,7 @@ impl MascoteAi {
             }
         };
         let mut s = self.no_espaco.take().unwrap_or_default();
+        s.sobe_o_chao = true;
         if recomecar {
             let d2 = (de.x - alvo.x).powi(2) + (de.y - alvo.y).powi(2) + (de.z - alvo.z).powi(2);
             s.comecar(amb, de, alvo, passo, alcance_da_vez, d2, mapa);
@@ -1498,5 +1524,74 @@ mod tests {
         }
         let d = m.corpo.position.distance(&Vector3::new(dono.x, dono.y + 1.5, dono.z));
         assert!(d < 2.5, "não voltou ao dono: {:?} (a {d} m)", m.corpo.position);
+    }
+
+    fn filtro(efeito: crate::efeitos::Efeito, s: i32) -> crate::efeitos::Filtro {
+        crate::efeitos::Filtro {
+            efeito,
+            restante_s: s,
+            razao: 0,
+            fator: 0.0,
+            por_segundo: 0,
+            contador: 0,
+            origem: 0,
+            icone: true,
+            absorve: 0.0,
+            escala_defesa: 0,
+        }
+    }
+
+    /// B140 — atordoado (a 37 do Guerreiro Golem, `Dizzy`), o mascote não anda nem bate até o
+    /// filtro sair (`gnpc_imp::SetIdleMode` → `ClearSession`; `if(_idle_mode) return`).
+    #[test]
+    fn o_mascote_atordoado_nao_anda_nem_bate() {
+        let chao = |_x: f32, _z: f32| Some(0.0f32);
+        let mv = pw_data_loader::MapaDeMovimento::vazio();
+        let mapa = Mapa { terreno: &chao, movimento: &mv, espaco: None, agua: None };
+        let mut m = vespao(Vector3::new(0.0, 1.0, 0.0));
+        let alvo = MonsterEntity::placeholder(900_001, 1001, Vector3::new(1.0, 0.0, 0.0), 0);
+        let alvos = HashMap::from([(900_001i64, (alvo.position, true, alvo.clone()))]);
+        m.ai.atacar_por_ordem(900_001, m.corpo.max_hp);
+        m.corpo.efeitos.adicionar(filtro(crate::efeitos::Efeito::Dizzy, 3));
+        let inicio = m.corpo.position;
+        for _ in 0..(2_000 / 50) {
+            let a = m.ai.tick(&mut m.corpo, Some(Vector3::new(-2.0, 0.0, 0.0)), &alvos, 50, &mapa);
+            assert!(!matches!(a, Some(AcaoDoMascote::Atacou { .. })), "bateu atordoado");
+        }
+        assert_eq!(m.corpo.position, inicio, "andou atordoado");
+        // O filtro sai: volta a bater.
+        m.corpo.efeitos = Default::default();
+        let mut bateu = false;
+        for _ in 0..(3_000 / 50) {
+            bateu |= matches!(m.ai.tick(&mut m.corpo, Some(Vector3::new(-2.0, 0.0, 0.0)), &alvos, 50, &mapa), Some(AcaoDoMascote::Atacou { .. }));
+        }
+        assert!(bateu, "não voltou a bater depois do atordoamento");
+    }
+
+    /// B140 — preso (`Fix`), não anda (`IsRootMode` no `follow_target`), mas bate no que está ao
+    /// alcance.
+    #[test]
+    fn o_mascote_preso_nao_anda_mas_bate_ao_alcance() {
+        let chao = |_x: f32, _z: f32| Some(0.0f32);
+        let mv = pw_data_loader::MapaDeMovimento::vazio();
+        let mapa = Mapa { terreno: &chao, movimento: &mv, espaco: None, agua: None };
+        let mut m = vespao(Vector3::new(0.0, 1.0, 0.0));
+        m.corpo.efeitos.adicionar(filtro(crate::efeitos::Efeito::Fix, 10));
+        let longe = MonsterEntity::placeholder(900_001, 1001, Vector3::new(15.0, 0.0, 0.0), 0);
+        let alvos = HashMap::from([(900_001i64, (longe.position, true, longe.clone()))]);
+        m.ai.atacar_por_ordem(900_001, m.corpo.max_hp);
+        let inicio = m.corpo.position;
+        for _ in 0..(2_000 / 50) {
+            m.ai.tick(&mut m.corpo, Some(Vector3::new(-2.0, 0.0, 0.0)), &alvos, 50, &mapa);
+        }
+        assert_eq!(m.corpo.position, inicio, "andou preso");
+        let perto = MonsterEntity::placeholder(900_002, 1001, Vector3::new(1.5, 0.5, 0.0), 0);
+        let alvos = HashMap::from([(900_002i64, (perto.position, true, perto.clone()))]);
+        m.ai.atacar_por_ordem(900_002, m.corpo.max_hp);
+        let mut bateu = false;
+        for _ in 0..(2_000 / 50) {
+            bateu |= matches!(m.ai.tick(&mut m.corpo, Some(Vector3::new(-2.0, 0.0, 0.0)), &alvos, 50, &mapa), Some(AcaoDoMascote::Atacou { .. }));
+        }
+        assert!(bateu, "preso, não bateu no que estava ao alcance");
     }
 }

@@ -1729,6 +1729,18 @@ impl BusServer {
                 // A vida do monstro sob dano no tempo vai aos inscritos no batimento de 1 s
                 // (`EventoDoMundo::VidaDoMonstro`), e não a todos em volta (B56).
                 Some((None, Vec::new(), todos))
+            } else if let Some(m) = mundo.mascotes.get(&objeto) {
+                // O mascote é um NPC para quem vê (`gnpc_dispatcher`): o mesmo `UPDATE_EXT_STATE`
+                // e os ícones — sem isto o atordoado do mascote não aparecia a ninguém (B140).
+                let todos = vec![
+                    self.sub
+                        .update_ext_state(objeto as i32, m.corpo.efeitos.estados_visiveis())
+                        .data,
+                    self.sub
+                        .icon_state_notify(objeto as i32, &m.corpo.efeitos.icones())
+                        .data,
+                ];
+                Some((None, Vec::new(), todos))
             } else {
                 None
             }

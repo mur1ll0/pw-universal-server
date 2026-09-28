@@ -24,7 +24,11 @@
 > dano/alcance/altura do mascote (B135), mascote de ar sem afundar nem travar + rotas do
 > `path.sev` + grupo e chefe (B136), punição de nível, ódio pelo `GetEnmity`, redução/esquiva de
 > dano e roubo de vida (B137). As imagens `pw-world-126` e `pw-world-155` de 2026-09-27 12:04
-> têm até o B135 (foi o que a Tsuko testou); **B136 e B137 não publicados**.
+> têm até o B135; a `pw-world-126` de 2026-09-27 23:37 tem até o B137 (a Tsuko testou o B136/B137
+> nela). **B138** (mascote de ar no terreno) e **B139** (monstro de chão alcança mascote de ar e quem
+> voa baixo), **B140** (atordoar/prender/selar mascote e cancelar canto de monstro) e **B141**
+> (veneno/sangramento no mascote aparecem, sem ódio pelo tique) na árvore, não commitados nem
+> publicados.
 >
 > **Publicado em 2026-09-26 11:10 (−03):** `pw-realm-126`, `pw-world-126`, `pw-realm-155` e
 > `pw-world-155` foram reconstruídos a partir da árvore que já tinha o B120 — ou seja, **tudo
@@ -206,7 +210,7 @@ docker logs -f pw-realm-155        # login, entrada no mundo, o que o link trata
 docker logs -f pw-world-155        # os mapas 1 e 161
 ```
 
-**Referência da suíte, medida em 2026-09-27 (B137) com o banco:** **827 testes: 825 passaram, 0 falhas, 2 ignorados** (103 binários, `--no-fail-fast`). Intermitente conhecida de grupo: `o_convite_de_grupo_chega_a_quem_foi_convidado` (~1 em 20; a mensagem diz qual comando chegou a quem convidou).
+**Referência da suíte, medida em 2026-09-28 (B141) com o banco:** **834 testes: 832 passaram, 0 falhas, 2 ignorados** (104 binários, `--no-fail-fast`). Intermitente conhecida de grupo: `o_convite_de_grupo_chega_a_quem_foi_convidado` (~1 em 20; a mensagem diz qual comando chegou a quem convidou).
 (`cargo test --workspace --no-fail-fast -- --test-threads=2`). O limite de dois fios evita
 contenção no pool do Postgres nos testes de mundo. Qualquer falha nova deve ser investigada.
 
@@ -328,7 +332,11 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 | B124 | (os dois) meditando, vida e mana sobem mais rápido (regeneração com vitalidade/5 e energia/10); apanhar sentado levanta; sentado, recolher/invocar mascote não faz nada (sem travar); morrer raposa renasce raposa e continua vendo a raposa |
 | B127 | (os dois) Monstro com política no `aipolicy.data` (645 no 1.2.6, 4.442 no 1.5.5): **fala** no chat e no balão ao entrar em combate/morrer ("Prepare-se para retornar à cidade!!"); usa a habilidade da política no tempo dela (ex.: monstro 7088 conjura a 703 poucos segundos depois de começar o combate); abaixo de metade da vida muda de comportamento; chefe liga/desliga grupos de monstros (controlador). Log: `grep -E "o monstro .* (falou|usou)|controlador|aipolicy — sem porte"` |
 | B126 | (os dois) Soco de Uma Polegada (2) e todo dano no tempo: o número aparece sobre o monstro a cada 3 s (antes a vida caía sem número). Monstro de estratégia 3 (a maioria: 2.179 no 1.5.5, 1.216 no 1.2.6) com o alvo longe **conjura** de onde está (animação de canto, depois dano com número de habilidade); perto, bate uma série e conjura; monstro mágico (2) se afasta de quem chega perto; monstro fixo não persegue; monstro sem política no `aipolicy.data` usa a habilidade dos 75/50/25 % de vida ou foge. Log: `grep -E "o monstro .* usou"` |
-| B137 | (os dois) **não publicado.** (1) Batendo num monstro 10 níveis acima, o dano cai para ~70 % (20 acima: 50 %; 30 acima: 25 %); no mesmo nível, igual. (2) Um monstro que só sangra (sem golpe) não vira contra você pelo tique, e fora de combate recupera a vida. Habilidade com ódio próprio puxa o monstro mesmo sem dano (ex.: as de mascote 747–758, `10 × nível do mascote × (3 + L)`). (3) 1.5.5: roupa com "redução de dano" corta o dano recebido; efeitos de roubo de vida e esquiva de dano funcionam |
+| B141 | (os dois) **não publicado.** Predador Venenoso (1114) no Vespão ou no Lobo: aparece o veneno sobre o mascote e a vida dele cai a cada 3 s por 15 s (barra do mascote) |
+| B140 | (os dois) **não publicado.** Guerreiro Golem (habilidade 37, 75 % de atordoar por 3 s) no Vespão: o Vespão para, não bate nem anda, e aparece atordoado para você; depois volta a bater. Atordoar um monstro que está conjurando cancela a magia dele |
+| B139 | (os dois) **não publicado.** Monstro de chão (corpo a corpo) que o Vespão ataca de cima vai até ele e **bate** no Vespão; Tsuko voando baixo (até ~1–1,5 m acima do alcance do golpe) apanha. Voando mais alto que o alcance do monstro, ele continua sem alcançar e desiste — é o original |
+| B138 | (os dois) **não publicado.** O Vespão perseguindo monstro que foge por encosta (sobe ou desce morro) acompanha sem parar na crista, sempre acima do chão, e o trajeto desenhado não corta o terreno. Monstros de ar também deixam de "empacar" rente ao chão (erro de porte do B133) |
+| B137 | (os dois) **publicado no `pw-world-126` de 27/09 23:37.** (1) Batendo num monstro 10 níveis acima, o dano cai para ~70 % (20 acima: 50 %; 30 acima: 25 %); no mesmo nível, igual. (2) Um monstro que só sangra (sem golpe) não vira contra você pelo tique, e fora de combate recupera a vida. Habilidade com ódio próprio puxa o monstro mesmo sem dano (ex.: as de mascote 747–758, `10 × nível do mascote × (3 + L)`). (3) 1.5.5: roupa com "redução de dano" corta o dano recebido; efeitos de roubo de vida e esquiva de dano funcionam |
 | B136 | (os dois) **não publicado.** (1) O Vespão atacando monstro de chão fica **acima** do chão (terreno + 0,2 no mínimo), não entra nele. (2) Com o monstro andando, o Vespão continua perseguindo e batendo. (3) Voando, depois de matar, ele sobe de volta até você. (4) Mapa 1 do 1.2.6, perto de (1506, 2302): o **Carniçal Sanguinário** anda pela rota (um passo por segundo, a pé), com os **dois Fantasmas Malignos** atrás dele (correm quando ele passa de 8 m, passeiam em volta quando está perto). Bater no Carniçal faz os Fantasmas virem em você; os Fantasmas mortos só voltam quando o Carniçal morre e renasce. Log ao subir: `World #1: N rota(s) de patrulha no path.sev`. O Carniçal Violento é outro monstro (solto, 88 áreas, sem rota): ele só passeia 10 m em volta de onde nasce |
 | B135 | (os dois) **publicado (imagens `pw-world-*` de 12:04), testado pela Tsuko no 126** — o que continuou errado virou o B136. Vespão Pequeno (Atq 466) bate **mais** que o Filhote de Lobo Feroz (332) — antes tirava ~115 contra ~200 porque levava o corte de 0,5 do ar para o chão, que só vale para jogador. Seguindo você no chão, o Vespão fica 1,5 m acima, não enterrado. No combate ele desce até alcançar o monstro (alcance em 3D) |
 | B134 | (os dois) **não publicado.** Batendo de cima (voando) num monstro de chão: depois de ~1–2 s embaixo de você sem alcançar, ele **desiste** — esquece o ódio e volta para casa (invencível se estiver a mais de 10 m); o mascote que bate nele volta a ter o alvo parado. Se o mascote continuar batendo, o monstro vai para o mascote |
@@ -715,6 +723,10 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 124 | 09-26 | 1.2.6: `ICON_STATE_NOTIFY`/`UPDATE_EXT_STATE` no formato do cliente 1.2.6 (ícones sumiam); espinho com `MOD_RETORT`; regeneração com vitalidade/energia; sentado ignora mascote e apanhar levanta; forma reenviada ao renascer |
 | 127 | 09-26 | intérprete do `aipolicy.data` (`politica.rs`): gatilhos, timers, variáveis, ódio, habilidade/atacar/fugir, fala (`ChatSingleCast` 94 → `ChatMessage` 80), controladores do `npcgen` em jogo; `mascote.rs` devolvido ao `HEAD` (só forma) |
 | 126 | 09-26 | IA de combate do monstro: estratégias 0–7 do `MONSTER_ESSENCE`, `GetPrimarySkill`, `session_npc_skill` (canto, efeito, execução), eventos de vida pelo `RandSelect`, afastar/fugir; `HURT_RESULT`/`BE_HURT` no dano no tempo; diagnóstico do golpe que para com habilidade em recarga |
+| 141 | 09-28 | veneno/sangramento no mascote: visível (via B140) e sem ódio pelo tique nem pelo dano direto |
+| 140 | 09-28 | atordoado/preso/selado no mascote (a IA obedece e o estado vai a quem vê); canto de monstro cancelado pelo atordoamento |
+| 139 | 09-28 | monstro: alcance do `ai_melee_task` (0,6/0,8 do alcance puro + corpos) e o corpo do alvo real (o `size` do mascote) |
+| 138 | 09-28 | mascote de ar no terreno: `IsPosPassable` com o ambiente na posição (erro do B133) e, só no mascote, o passo reto sobe o chão em vez de bloquear |
 | 137 | 09-27 | punição por diferença de nível no dano do jogador; `GetEnmity` extraído (1.2.6 e 1.5.5) e aplicado, sem ódio pelo tique; redução de dano dos adicionais, esquiva de dano e roubo de vida |
 | 136 | 09-27 | mascote de ar: `AdjustCurPos` (terreno + 0,2), alcance do `ai_melee_task`, sessão nova por tarefa; `path.sev` e patrulha; grupo/chefe (líder, `ai_follow_master`, ódio repassado, renascer com o líder) |
 | 135 | 09-27 | mascote: sem o corte de camada (`IS_HUMANSIDE` é só jogador), alcance em 3D, 1,5 m acima do dono ao seguir |

@@ -717,3 +717,86 @@ fn o_chefe_repassa_o_odio_ao_subordinado() {
     assert_eq!(sub.get_highest_threat_target(), Some(1));
     assert_eq!(sub.aggro_table.len(), 1);
 }
+
+// ---- B139: monstro de chão bate em quem está ao alcance acima dele ----
+
+/// Jogador voando 1 m acima do chão, fugindo devagar: o monstro de chão (alcance 2) chega e
+/// **bate** — o `ai_melee_task` persegue até `puro × 0,6 + corpo + corpo do alvo` no plano e
+/// bate a `× 0,8` em 3D. Antes ele parava a 0,9 × alcance no plano e ficava fora do alcance 3D.
+#[test]
+fn o_monstro_de_chao_bate_em_quem_voa_baixo_ao_alcance() {
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    let mut ai = MonsterAi::new();
+    let mut alvo = jogador(Vector3::new(6.0, 1.0, 0.0));
+    alvo.voando = true;
+    let p = HashMap::from([(1i64, alvo)]);
+    ai.add_threat(1, 100);
+    let a = ate(&mut ai, &mut m, &p, 8_000, |a| matches!(a, AcaoDoMonstro::Atacou { .. }));
+    assert!(a.is_some(), "não bateu no jogador 1 m acima; monstro em {:?}", m.position);
+    assert!(ai.get_highest_threat_target() == Some(1), "desistiu do jogador ao alcance");
+}
+
+/// O Vespão Pequeno (`size` 1, alcance 3: bate de até 4 m) pairando 2,2 m acima do chão: o
+/// monstro de alcance 2 só o alcança somando o corpo **dele** (`CheckAttack`: `attack_range +
+/// info.body_size`, `actobject.cpp:1280-1287`). Sem isso ficava embaixo sem bater (B139).
+#[test]
+fn o_monstro_de_chao_bate_no_mascote_de_ar_ao_alcance() {
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    let mut ai = MonsterAi::new();
+    let mut pet = MonsterEntity::placeholder(pw_gs::mascote::id_do_mascote(1), 10521, Vector3::new(6.0, 2.2, 0.0), 0);
+    pet.tamanho = 1.0;
+    pet.hp = 1000;
+    pet.max_hp = 1000;
+    let pets = HashMap::from([(pet.id, pet.clone())]);
+    ai.add_threat(pet.id, 100);
+    let ninguem = HashMap::new();
+    let mut bateu = false;
+    for _ in 0..(8_000 / 50) {
+        if let Some(AcaoDoMonstro::Atacou { alvo, .. }) =
+            ai.tick_com_mascotes(&mut m, &ninguem, &pets, 50, &pw_gs::navegacao::Mapa {
+                terreno: &sem_mapa,
+                movimento: &pw_data_loader::MapaDeMovimento::vazio(),
+                espaco: None,
+                agua: None,
+            })
+        {
+            bateu |= alvo == pet.id;
+        }
+    }
+    assert!(bateu, "não bateu no mascote de ar; monstro em {:?}", m.position);
+}
+
+/// B140 — atordoar o monstro no meio do canto acaba com a conjuração (`SetIdleMode` →
+/// `ClearSession`): quando o filtro sai, o efeito daquele canto não sai.
+#[test]
+fn atordoar_o_monstro_cancela_o_canto() {
+    use pw_gs::efeitos::{Efeito, Filtro};
+    let mut m = monstro(Vector3::new(0.0, 0.0, 0.0));
+    let mut ai = MonsterAi::com_perfil(Some(PerfilDeCombate {
+        estrategia: Estrategia::CorpoACorpoEMagia,
+        ataque: vec![habilidade(9001, 1, 20.0, 2000)],
+        ..perfil(Estrategia::CorpoACorpoEMagia)
+    }));
+    let p = com_alvo(10.0);
+    ai.add_threat(1, 100);
+    let conjurou = ate(&mut ai, &mut m, &p, 3_000, |a| matches!(a, AcaoDoMonstro::Conjurou { .. }));
+    assert!(conjurou.is_some(), "não começou a conjurar");
+    assert!(ai.conjurando());
+    m.efeitos.adicionar(Filtro {
+        efeito: Efeito::Dizzy,
+        restante_s: 3,
+        razao: 0,
+        fator: 0.0,
+        por_segundo: 0,
+        contador: 0,
+        origem: 1,
+        icone: true,
+        absorve: 0.0,
+        escala_defesa: 0,
+    });
+    ai.tick(&mut m, &p, 50, &sem_mapa);
+    assert!(!ai.conjurando(), "o canto continuou atordoado");
+    m.efeitos = Default::default();
+    let saiu = ate(&mut ai, &mut m, &p, 600, |a| matches!(a, AcaoDoMonstro::UsouHabilidade { .. }));
+    assert!(saiu.is_none(), "o efeito do canto cancelado saiu");
+}
