@@ -45,6 +45,9 @@ const ITEM_DE_MISSAO: i32 = 2106;
 const OVO_DE_MONTARIA: i32 = 41073;
 /// `shop_price` daquele item no cenário — o que a loja tem de cobrar por unidade.
 const PRECO_DO_ITEM_DE_LOJA: i32 = 137;
+/// O que o vendedor cobra por ele: 137 × 1,05 + 0,5 = 144 → `AdjustVendorFee` → 150
+/// (`vendor_provider::OnInit`, `gs/serviceprovider.cpp:220-252`; B143).
+const PRECO_NO_VENDEDOR: i32 = 150;
 /// O preço, em cash, da oferta 0 da Loja Gold do cenário.
 const PRECO_NA_LOJA_GOLD: i64 = 700;
 
@@ -1758,7 +1761,7 @@ async fn conferir_compra(versao: GameVersion) {
 
     // `PURCHASE_ITEM` (72): custo, e por item o id, a quantidade e o slot onde entrou.
     let compra = esperar_comando(&mut link, 72).await;
-    assert_eq!(i32_em(&compra, 2), PRECO_DO_ITEM_DE_LOJA, "cost");
+    assert_eq!(i32_em(&compra, 2), PRECO_NO_VENDEDOR, "cost");
     let slot = match versao {
         GameVersion::V1_2_6 => {
             // Captura s2c-72.txt:2, payload 7 + 13*n.
@@ -1803,7 +1806,7 @@ async fn conferir_compra(versao: GameVersion) {
     // 2026-09-11.
     assert_eq!(
         antes - depois,
-        PRECO_DO_ITEM_DE_LOJA as i64,
+        PRECO_NO_VENDEDOR as i64,
         "a loja não cobrou o shop_price do elements.data"
     );
 }
@@ -5771,6 +5774,7 @@ async fn a_forma_sombria_tranca_o_equipamento_e_desfaz_a_forma_no_fim() {
             icone: true,
             absorve: 0.0,
             escala_defesa: 60,
+            fator_de_habilidade: 0.0,
         });
         // Como se a entrada na forma já tivesse ido ao cliente.
         p.forma_enviada = Some(65);
@@ -7813,6 +7817,7 @@ async fn a_muralha_de_espinhos_devolve_o_golpe_do_monstro() {
             icone: true,
             absorve: 0.0,
             escala_defesa: 0,
+            fator_de_habilidade: 0.0,
         });
         let (monstro, _) = m.monsters.get_mut(&MONSTRO).unwrap();
         monstro.attack_min = 200;
@@ -7900,7 +7905,7 @@ async fn sentado_o_mascote_e_ignorado_e_apanhar_levanta() {
 fn os_espinhos_so_devolvem_acima_de_um() {
     use pw_gs::efeitos::{Efeito, Efeitos, Filtro};
     let mut e = Efeitos::default();
-    assert_eq!(e.espinhos(200), None, "sem o filtro, nada");
+    assert_eq!(e.espinhos(200, false), None, "sem o filtro, nada");
     e.adicionar(Filtro {
         efeito: Efeito::Retort,
         restante_s: 600,
@@ -7912,12 +7917,41 @@ fn os_espinhos_so_devolvem_acima_de_um() {
         icone: true,
         absorve: 0.0,
         escala_defesa: 0,
+        fator_de_habilidade: 0.0,
     });
-    assert_eq!(e.espinhos(200), Some(40));
-    assert_eq!(e.espinhos(9), None, "(int)(9 × 0,2) = 1 não passa de 1");
-    assert_eq!(e.espinhos(1_000_000), None, "o teto do 1.5.5");
+    assert_eq!(e.espinhos(200, false), Some(40));
+    assert_eq!(e.espinhos(9, false), None, "(int)(9 × 0,2) = 1 não passa de 1");
+    assert_eq!(e.espinhos(1_000_000, false), None, "o teto do 1.5.5");
     assert_eq!(e.icones(), vec![(4, 600)], "HSTATE_RETORT com o tempo");
     assert_eq!(e.estados_visiveis()[0], 1 << 3, "VSTATE_RETORT");
+}
+
+/// B143 — golpe de **habilidade**: o `Retort` (1.2.6) usa o mesmo `ratio`; o `Retort2`
+/// (1.5.5) usa o `_ratio_skill` (`msg.skill_id ? _ratio_skill : _ratio`,
+/// `skillfilter.h:14646`) — a 306 no nível 3: `ratio` 0,25, `value` 0,06.
+#[test]
+fn os_espinhos_do_retort2_usam_a_razao_de_habilidade() {
+    use pw_gs::efeitos::{Efeito, Efeitos, Filtro};
+    let filtro = |efeito| Filtro {
+        efeito,
+        restante_s: 600,
+        razao: 25,
+        fator: 0.25,
+        por_segundo: 0,
+        contador: 0,
+        origem: 0,
+        icone: true,
+        absorve: 0.0,
+        escala_defesa: 0,
+        fator_de_habilidade: 0.06,
+    };
+    let mut e = Efeitos::default();
+    e.adicionar(filtro(Efeito::Retort2));
+    assert_eq!(e.espinhos(1000, false), Some(250), "golpe normal: ratio");
+    assert_eq!(e.espinhos(1000, true), Some(60), "golpe de habilidade: _ratio_skill");
+    let mut e = Efeitos::default();
+    e.adicionar(filtro(Efeito::Retort));
+    assert_eq!(e.espinhos(1000, true), Some(250), "o Retort do 1.2.6 não distingue");
 }
 
 /// Um `precinct.sev` v7 com um distrito quadrado de (0, 0) a (10, 10) no mapa 1 e o ponto de
@@ -8169,6 +8203,7 @@ async fn o_tique_do_sangramento_nao_da_odio() {
             icone: true,
             absorve: 0.0,
             escala_defesa: 0,
+            fator_de_habilidade: 0.0,
         });
         m.monsters.insert(id, (monstro, MonsterAi::new()));
     }
@@ -8229,6 +8264,7 @@ async fn o_veneno_no_mascote_tira_vida_sem_odio_e_aparece() {
             icone: true,
             absorve: 0.0,
             escala_defesa: 0,
+            fator_de_habilidade: 0.0,
         });
         let hp = mascote.corpo.hp;
         m.mascotes.insert(pet, mascote);
@@ -8402,4 +8438,44 @@ async fn trocar_de_equipamento_avisa_quem_ve_com_o_carimbo() {
     assert_eq!(crc, p.crc_equipamento);
     let (mascara, ids) = p.equip_visivel.clone().unwrap();
     assert_eq!(crc, pw_core::carimbo::carimbo_do_equipamento(mascara, &ids));
+}
+
+/// B143 — sentado, o `StayInCommandHandler` (`playercmd.cpp:873-1015`) ignora andar e atacar;
+/// `CANCEL_ACTION` levanta (`OBJECT_STAND_UP` 112) e depois o golpe volta a valer.
+#[tokio::test]
+async fn sentado_andar_e_atacar_sao_ignorados_e_cancelar_levanta() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let antes = mundo.read().await.players[&(roleid as i64)].position;
+    let enviar = |id: u16, corpo: Vec<u8>| BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(id, &corpo),
+    };
+    link.enviar(enviar(ids::SIT_DOWN, vec![])).await.unwrap();
+    esperar_comando(&mut link, 111).await;
+    link.enviar(enviar(ids::SELECT_TARGET, (MONSTRO as i32).to_le_bytes().to_vec()))
+        .await
+        .unwrap();
+    receber(&mut link, 2).await; // SELECT_TARGET é aceito sentado
+    link.enviar(enviar(ids::NORMAL_ATTACK, vec![0])).await.unwrap();
+    let mut corpo = vec3(antes.x + 5.0, antes.y, antes.z);
+    corpo.extend_from_slice(&vec3(antes.x + 5.0, antes.y, antes.z));
+    corpo.extend_from_slice(&[0; 7]);
+    link.enviar(enviar(ids::PLAYER_MOVE, corpo)).await.unwrap();
+    while let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+        tokio::time::timeout(Duration::from_millis(400), link.receber()).await
+    {
+        assert!(![67, 83].contains(&cmd_de(&data)), "sentado atacou ({})", cmd_de(&data));
+    }
+    {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        assert!(p.sentado);
+        assert!(p.ataque.is_none(), "sentado não abre sessão de golpe");
+        assert_eq!(p.position, antes, "sentado não anda");
+    }
+    link.enviar(enviar(ids::CANCEL_ACTION, vec![])).await.unwrap();
+    esperar_comando(&mut link, 112).await;
+    assert!(!mundo.read().await.players[&(roleid as i64)].sentado);
 }

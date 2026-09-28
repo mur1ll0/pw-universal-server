@@ -210,11 +210,6 @@ const SLOT_DE_VOO: u16 = 12;
 /// desperdício de fila.
 const RAIO_DE_VISAO: f32 = 120.0;
 
-/// Quanto o jogador precisa andar para o mundo em volta ser recalculado, em metros.
-///
-/// O cliente manda movimento 20 vezes por segundo. Sem esta histerese, cada jogador faria
-/// 20 varreduras da grade por segundo para achar quase sempre o mesmo conjunto.
-const PASSO_PARA_RECALCULAR: f32 = 20.0;
 
 /// Quanto acima do chão o teleporte deposita o jogador, em metros.
 ///
@@ -226,20 +221,33 @@ const PASSO_PARA_RECALCULAR: f32 = 20.0;
 /// personagem dentro da geometria; chegar meio metro acima deixa a queda resolver.
 const FOLGA_AO_TELEPORTAR: f32 = 0.5;
 
-/// Quantas entidades no máximo um jogador acompanha de uma vez.
-///
-/// Este mapa tem 21.846 monstros e 3.911 NPCs. Numa região densa, o raio de 120 m pega
-/// centenas — e cada uma é um pacote. O teto é orçamento de fila, não regra do jogo: os
-/// mais próximos entram primeiro, e o resto chega na próxima atualização.
-const TETO_DE_VISIVEIS: usize = 80;
+/// O lado de uma fatia da grade, em metros: `grid = {800,800,25,…}` do `gs.conf` (o do 1.2.6 em
+/// `files1.2.6/pwserver/gamed/gs.conf`, em todos os mapas). As origens (−10000 no mundo,
+/// −1000 nas instâncias) são múltiplas de 25, então a fatia é `floor(x / 25)`.
+const PASSO_DA_FATIA: f32 = 25.0;
 
-/// Quantos recursos de mapa (minério, erva) um jogador acompanha de uma vez.
-///
-/// Orçamento **separado** do de [`TETO_DE_VISIVEIS`], de propósito. O `npcgen.data` deste
-/// mapa tem 5.125 instâncias de matéria, e um campo de mineração as concentra: no mesmo
-/// balde que monstro e NPC, elas comeriam o teto inteiro e fariam os NPCs sumirem perto de
-/// uma mina — trocando um buraco por outro.
-const TETO_DE_MATERIA: usize = 40;
+/// Quantas fatias para cada lado o jogador enxerga: `world::BuildSliceMask(near, far)`
+/// (`gs/world.cpp:231-262`) com `far = grid_sight_range` (`GRID_SIGHT_RANGE` 60, `gs/config.h:20`;
+/// `global_manager.cpp:170-172`, nenhum `gs.conf` o muda) monta os anéis até
+/// `ceil(far / passo)` = **3** — um quadrado de 7 × 7 fatias em volta da do jogador. É o conjunto
+/// que o `MoveBetweenSlice` (`gs/world.h:636-690`) faz entrar e sair. **Não há teto de
+/// quantidade** no original; a captura do 1.2.6 mostra o cliente com até 220 criaturas (B143).
+const FATIAS_DE_VISAO: i32 = 3;
+
+/// A fatia de uma posição.
+fn fatia(p: &Vector3) -> (i32, i32) {
+    ((p.x / PASSO_DA_FATIA).floor() as i32, (p.z / PASSO_DA_FATIA).floor() as i32)
+}
+
+/// `b` está no quadrado de fatias visto de `a`.
+fn na_visao(a: &Vector3, b: &Vector3) -> bool {
+    let ((ax, az), (bx, bz)) = (fatia(a), fatia(b));
+    (ax - bx).abs() <= FATIAS_DE_VISAO && (az - bz).abs() <= FATIAS_DE_VISAO
+}
+
+/// O raio que a grade espacial consulta para cobrir o quadrado de fatias: meia diagonal de
+/// 3,5 fatias, com folga. O que passa do quadrado é filtrado por [`na_visao`].
+const RAIO_DA_BUSCA: f32 = (FATIAS_DE_VISAO as f32 + 1.0) * PASSO_DA_FATIA * 1.4143;
 
 /// O que entrou no campo de visão de um jogador, com o que o comando de entrada precisa.
 ///
@@ -578,6 +586,15 @@ impl BusServer {
                     )
                     .data;
                 self.transmitir_a_outros(jogador, outros).await;
+                // Espinhos em jogador (golpe PvP): o `_parent.Attack(attacker, ret)` chega a ele
+                // como golpe recebido — `HOST_ATTACKED` com a marca de revide e sem peça gasta.
+                if self.world.read().await.players.contains_key(&monstro) {
+                    let pacote = self
+                        .sub
+                        .host_attacked(jogador, dano, 0x7f, AT_STATE_ATTACK_RETORT, velocidade)
+                        .data;
+                    self.enviar_ao_jogador(monstro as i32, pacote).await;
+                }
             }
             ev @ (EventoDoMundo::MascoteApareceu { .. }
             | EventoDoMundo::MascoteRecolhido { .. }
@@ -976,7 +993,7 @@ impl BusServer {
                     let ids: Vec<i64> = mundo
                         .players
                         .iter()
-                        .filter(|(_, p)| p.position.distance(&pos) <= RAIO_DE_VISAO)
+                        .filter(|(_, p)| na_visao(&p.position, &pos))
                         .map(|(pid, _)| *pid)
                         .collect();
                     for pid in &ids {
@@ -996,7 +1013,7 @@ impl BusServer {
 
             EventoDoMundo::MonstroRenasceu { id } => {
                 // Quem está perto volta a ver o monstro sem precisar andar: o streaming só
-                // recalcula depois de 20 m (`PASSO_PARA_RECALCULAR`).
+                // recalcula ao trocar de fatia.
                 let (perto, pacote) = {
                     let mut mundo = self.world.write().await;
                     let Some((m, ia)) = mundo.monsters.get(&id) else {
@@ -1007,7 +1024,7 @@ impl BusServer {
                     let ids: Vec<i64> = mundo
                         .players
                         .iter()
-                        .filter(|(_, p)| p.position.distance(&pos) <= RAIO_DE_VISAO)
+                        .filter(|(_, p)| na_visao(&p.position, &pos))
                         .map(|(pid, _)| *pid)
                         .collect();
                     for pid in &ids {
@@ -1350,6 +1367,38 @@ impl BusServer {
     /// Um comando ainda não migrado é registrado e ignorado — **sem** derrubar a conexão,
     /// que tiraria do ar todos os jogadores daquele link por causa de um comando só.
     async fn tratar_subcomando(&self, roleid: i32, cmd: SubComando, envio: &EnvioAoCliente) {
+        // Sentado, só passa o que o `StayInCommandHandler` aceita (B143).
+        if self.esta_sentado(roleid).await {
+            use crate::comandos::Sentado;
+            match crate::comandos::sentado(cmd.id) {
+                Sentado::Aceita => {}
+                Sentado::Levanta => {
+                    self.postura(roleid, false, envio).await;
+                    return;
+                }
+                Sentado::SoItemDeSentado => {
+                    // `SitDownCanUse`: das famílias que temos, só a poção (`base_potion`).
+                    let pocao = match crate::comandos::UseItem::ler(&cmd.payload) {
+                        Some(u) => self
+                            .world
+                            .read()
+                            .await
+                            .data_manager
+                            .quanto_o_remedio_restaura(u.item_id as u32)
+                            .is_some(),
+                        None => false,
+                    };
+                    if !pocao {
+                        debug!("mundo: {roleid} sentado tentou usar item que não é de sentado");
+                        return;
+                    }
+                }
+                Sentado::Ignora => {
+                    debug!("mundo: {roleid} sentado — comando {} ignorado", cmd.id);
+                    return;
+                }
+            }
+        }
         match cmd.id {
             ids::PLAYER_MOVE => {
                 self.andar_na_fila(roleid).await;
@@ -3225,7 +3274,7 @@ impl BusServer {
             return;
         };
 
-        let (valor, alvo_vivo) = {
+        let (valor, alvo_vivo, fisico_bruto) = {
             let mundo = self.world.read().await;
             let Some(conjurador) = mundo.players.get(&(roleid as i64)) else {
                 return;
@@ -3244,14 +3293,24 @@ impl BusServer {
             // O nível em que o **conjurador** tem esta habilidade — não o do alvo, e não
             // o 1 fixo que valia para todo mundo até 2026-09-09.
             let nivel = nivel_da_habilidade(conjurador, skill_id);
-            let valor = if h.e_cura() {
-                h.cura(nivel, magico).unwrap_or(0)
+            let (valor, fisico_bruto) = if h.e_cura() {
+                (h.cura(nivel, magico).unwrap_or(0), 0)
             } else {
                 let bruto = h.dano(nivel, fisico, magico).unwrap_or(0);
                 let reducao = combat::reducao_por_defesa(vitima.def_phys, conjurador.level);
-                (((bruto as f32) * (1.0 - reducao)).round() as i32).max(1)
+                // Os espinhos do alvo pegam o dano físico **bruto** da habilidade física
+                // (`msg.physic_damage`, `skillfilter.h:14646`).
+                let fisico_bruto = if matches!(
+                    h.efeito,
+                    crate::habilidades::Efeito::Dano { base: crate::habilidades::BaseDeDano::Fisico, .. }
+                ) {
+                    bruto
+                } else {
+                    0
+                };
+                ((((bruto as f32) * (1.0 - reducao)).round() as i32).max(1), fisico_bruto)
             };
-            (valor, true)
+            (valor, true, fisico_bruto)
         };
         if !alvo_vivo {
             return;
@@ -3260,6 +3319,9 @@ impl BusServer {
         // Aplica no mundo e devolve a vida nova do alvo.
         let estado = {
             let mut mundo = self.world.write().await;
+            if !h.e_cura() {
+                mundo.devolver_espinhos(alvo, roleid as i64, fisico_bruto, true);
+            }
             let Some(vitima) = mundo.players.get_mut(&alvo) else {
                 return;
             };
@@ -3588,22 +3650,17 @@ impl BusServer {
     /// distância é simétrica e o raio é o mesmo para todos, então as duas visões
     /// concordam.
     ///
-    /// # As três decisões que fazem isto não derrubar o servidor
+    /// # A regra do original (B143)
     ///
-    /// 1. **Histerese**: a conta só é refeita depois que o jogador anda
-    ///    [`PASSO_PARA_RECALCULAR`]. O cliente manda movimento 20 vezes por segundo, e
-    ///    varrer a grade a cada pacote seria varrer 20 vezes por segundo por jogador para
-    ///    achar quase sempre o mesmo conjunto.
-    /// 2. **Teto por atualização, e um por família**: este mapa tem 21.846 monstros, 3.911
-    ///    NPCs e 5.125 recursos. Uma região densa pode ter centenas dentro do raio, e
-    ///    mandar tudo de uma vez enche a fila de saída. Criatura tem
-    ///    [`TETO_DE_VISIVEIS`] e matéria tem [`TETO_DE_MATERIA`], **separados**: num campo
-    ///    de mineração, um teto só faria as pedras expulsarem os NPCs. Nos dois, os mais
-    ///    próximos primeiro; o que sobra entra na próxima atualização.
-    /// 3. **Jogador não entra no teto.** São poucos — o limite é a capacidade do servidor
-    ///    de mundo, não a densidade do mapa — e cortar um jogador por causa de uma
-    ///    multidão de monstros quebraria a simetria do parágrafo acima: eu deixaria de
-    ///    vê-lo sem que ele deixasse de me ver.
+    /// 1. **Troca de fatia**: a conta só é refeita quando o jogador muda de fatia de 25 m
+    ///    (`MoveBetweenSlice`, `gs/world.h:636-690`) — o cliente manda movimento 20 vezes por
+    ///    segundo, e a fatia muda poucas vezes.
+    /// 2. **O quadrado de fatias, sem teto**: o que está a até [`FATIAS_DE_VISAO`] fatias em
+    ///    cada eixo ([`na_visao`]). Até o B142 havia um teto de 80 criaturas e 40 matérias
+    ///    (orçamento de fila); o original não tem, e o envio passa a esperar a fila
+    ///    ([`Self::responder_com_espera`]) em vez de descartar quando ela enche.
+    /// 3. **Simetria**: a vista em fatias é simétrica, então quem entra na minha vista me
+    ///    vê também, e este método escreve nos dois lados.
     ///
     /// `forcar` pula a histerese. Serve para os dois momentos em que a posição muda sem o
     /// jogador andar: a entrada no mundo e o teleporte.
@@ -3620,7 +3677,8 @@ impl BusServer {
         }) else {
             return;
         };
-        if !forcar && centro.distance(&anterior) < PASSO_PARA_RECALCULAR {
+        // O original refaz a vista ao **trocar de fatia** (`MoveBetweenSlice`).
+        if !forcar && fatia(&centro) == fatia(&anterior) {
             return;
         }
 
@@ -3629,7 +3687,7 @@ impl BusServer {
         //    teto, pela simetria (ver a documentação).
         let (criaturas, materias, jogadores_perto): (Vec<i64>, Vec<i64>, Vec<i64>) = {
             let mundo = self.world.read().await;
-            let perto = mundo.grid.get_entities_in_range(&centro, RAIO_DE_VISAO);
+            let perto = mundo.grid.get_entities_in_range(&centro, RAIO_DA_BUSCA);
 
             let mut jogadores = Vec::new();
             let mut criaturas: Vec<(i64, f32)> = Vec::new();
@@ -3639,20 +3697,28 @@ impl BusServer {
                 if id == eu {
                     continue;
                 }
-                if mundo.players.contains_key(&id) {
-                    jogadores.push(id);
+                if let Some(o) = mundo.players.get(&id) {
+                    if na_visao(&centro, &o.position) {
+                        jogadores.push(id);
+                    }
                     continue;
                 }
                 if let Some(m) = mundo.matters.get(&id) {
-                    materias.push((id, centro.distance(&m.position)));
+                    if na_visao(&centro, &m.position) {
+                        materias.push((id, centro.distance(&m.position)));
+                    }
                     continue;
                 }
                 if let Some(d) = mundo.drops.get(&id) {
-                    materias.push((id, centro.distance(&d.position)));
+                    if na_visao(&centro, &d.position) {
+                        materias.push((id, centro.distance(&d.position)));
+                    }
                     continue;
                 }
                 if let Some(m) = mundo.mascotes.get(&id) {
-                    criaturas.push((id, centro.distance(&m.corpo.position)));
+                    if na_visao(&centro, &m.corpo.position) {
+                        criaturas.push((id, centro.distance(&m.corpo.position)));
+                    }
                     continue;
                 }
                 let pos = match mundo.monsters.get(&id) {
@@ -3665,23 +3731,18 @@ impl BusServer {
                         None => continue,
                     },
                 };
-                criaturas.push((id, centro.distance(&pos)));
+                if na_visao(&centro, &pos) {
+                    criaturas.push((id, centro.distance(&pos)));
+                }
             }
 
             criaturas.sort_by(|a, b| a.1.total_cmp(&b.1));
             materias.sort_by(|a, b| a.1.total_cmp(&b.1));
 
             (
-                criaturas
-                    .into_iter()
-                    .take(TETO_DE_VISIVEIS)
-                    .map(|(id, _)| id)
-                    .collect(),
-                materias
-                    .into_iter()
-                    .take(TETO_DE_MATERIA)
-                    .map(|(id, _)| id)
-                    .collect(),
+                // Sem teto: os mais próximos primeiro, mas todos (B143).
+                criaturas.into_iter().map(|(id, _)| id).collect(),
+                materias.into_iter().map(|(id, _)| id).collect(),
                 jogadores,
             )
         };
@@ -3723,11 +3784,8 @@ impl BusServer {
             let chegando: Vec<QuemChegou> = entraram
                 .iter()
                 .filter_map(|id| {
-                    if let Some(p) = mundo.players.get(id) {
-                        return Some(QuemChegou::Jogador {
-                            id: *id as i32,
-                            vista: p.vista(),
-                        });
+                    if let Some(vista) = mundo.vista_de(*id) {
+                        return Some(QuemChegou::Jogador { id: *id as i32, vista });
                     }
                     if let Some(m) = mundo.matters.get(id) {
                         return Some(QuemChegou::Materia {
@@ -3773,7 +3831,7 @@ impl BusServer {
                     }
                 })
                 .collect();
-            let eu_mesmo = mundo.players.get(&eu).map(|p| p.vista());
+            let eu_mesmo = mundo.vista_de(eu);
             (chegando, eu_mesmo)
         };
 
@@ -3807,7 +3865,7 @@ impl BusServer {
                         .data
                 }
             };
-            self.responder(roleid, pacote, envio).await;
+            self.responder_com_espera(roleid, pacote, envio).await;
         }
         // A saída depende da família, e por outro motivo que a entrada: o
         // `OBJECT_LEAVE_SLICE` (13) só trata `ISPLAYERID` e `ISNPCID`
@@ -3817,7 +3875,7 @@ impl BusServer {
         let (materia_saiu, resto_saiu): (Vec<i64>, Vec<i64>) =
             sairam.iter().partition(|id| e_materia(**id));
         for id in &resto_saiu {
-            self.responder(
+            self.responder_com_espera(
                 roleid,
                 S2CGamedataSend::object_leave_slice(*id as i32).data,
                 envio,
@@ -3826,7 +3884,7 @@ impl BusServer {
         }
         if !materia_saiu.is_empty() {
             let ids: Vec<i32> = materia_saiu.iter().map(|id| *id as i32).collect();
-            self.responder(roleid, S2CGamedataSend::out_of_sight_list(&ids).data, envio)
+            self.responder_com_espera(roleid, S2CGamedataSend::out_of_sight_list(&ids).data, envio)
                 .await;
         }
 
@@ -5305,6 +5363,26 @@ impl BusServer {
         }
     }
 
+    /// Como [`Self::responder`], mas **espera** a fila em vez de descartar quando ela enche —
+    /// para as rajadas do streaming de visão, que sem teto passam de 200 comandos (B143). Dois
+    /// segundos de espera no máximo: fila parada assim é cliente que caiu.
+    async fn responder_com_espera(&self, roleid: i32, data: Vec<u8>, envio: &EnvioAoCliente) {
+        let localsid = self
+            .sessoes
+            .read()
+            .await
+            .get(&roleid)
+            .map(|s| s.localsid)
+            .unwrap_or(0);
+        let msg = BusMessage::GameToClient { roleid, localsid, data };
+        if tokio::time::timeout(std::time::Duration::from_secs(2), envio.send(msg))
+            .await
+            .map_or(true, |r| r.is_err())
+        {
+            warn!("mundo: fila de {roleid} parada no streaming de visão");
+        }
+    }
+
     /// Envia uma mensagem a um jogador específico.
     ///
     /// `false` quando o jogador não está neste servidor de mundo, ou quando a fila dele
@@ -5464,6 +5542,19 @@ fn pode_golpear(mundo: &crate::world::WorldInstance, roleid: i32, alvo: i64) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B143 — a vista do original é o quadrado de ±3 fatias de 25 m (`BuildSliceMask` com
+    /// `grid_sight_range` 60): quem está na fatia 3 adiante é visto, na 4 não, e a diagonal
+    /// conta como qualquer eixo.
+    #[test]
+    fn a_vista_e_o_quadrado_de_fatias() {
+        let eu = Vector3::new(10.0, 0.0, 10.0); // fatia (0, 0)
+        assert!(na_visao(&eu, &Vector3::new(99.0, 0.0, 99.0)), "(3, 3), a quina do quadrado");
+        assert!(!na_visao(&eu, &Vector3::new(100.0, 0.0, 10.0)), "(4, 0)");
+        assert!(na_visao(&eu, &Vector3::new(-75.0, 0.0, 0.0)), "(-3, 0)");
+        assert!(!na_visao(&eu, &Vector3::new(-75.1, 0.0, 0.0)), "(-4, 0)");
+        assert_eq!(fatia(&Vector3::new(-0.1, 0.0, 24.9)), (-1, 0));
+    }
 
     #[test]
     fn o_cabecalho_do_subcomando_e_little_endian() {

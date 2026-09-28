@@ -31,7 +31,11 @@
 > **B142 (2026-09-28):** oito ajustes de fidelidade do §5B — reparo pelo `repairfee`, carimbo
 > `crc_e` com a tabela do original e `EQUIP_DATA_CHANGED` (67) a quem vê, crítico e esquiva de
 > dano no `attack_flag`, `PLAYER_DIED` a quem vê, saldo sem duplicata, `NPC_INFO_LIST` ao C2S
-> 68, direção do jogador, mana só nas asas de Arqueiro/Anjo.
+> 68, direção do jogador, mana só nas asas de Arqueiro/Anjo. Commitado em `6b84bcb`.
+> **B143 (2026-09-28):** paridade do 1.2.6 — voo e efeitos visíveis no `state` (grupo no
+> 1.5.5), `m_ulType` do v55 (sem `m_bItemNotTakeOff` no v55), espinhos contra habilidade e
+> jogador, sentado pelo `StayInCommandHandler` e maldição que levanta, preço do vendedor (×1,05 e
+> arredondamento), opacos do v7 nomeados, mapas do 126 fechando, vista por fatias sem teto.
 >
 > **Publicado em 2026-09-26 11:10 (−03):** `pw-realm-126`, `pw-world-126`, `pw-realm-155` e
 > `pw-world-155` foram reconstruídos a partir da árvore que já tinha o B120 — ou seja, **tudo
@@ -349,6 +353,7 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 | B130 | (os dois) **não publicado.** Domesticar Animal (328): no monstro com ovo (ex.: Gato de Presas Afiadas), com a vida baixa, aparece **Sucesso** ou **Falha** sobre ele; no sucesso o monstro some e o ovo entra na bolsa. Monstro sem ovo ou de nível acima do seu: **Imune**. Log: `grep -E "capturou|captura de"` |
 | B129 | (os dois) **não publicado.** Roupa comprada (Loja Gold ou NPC) chega com o sexo do molde: o maiô feminino da Tsuko mostra "Feminino" e volta a equipar depois de tirado. As duas peças já gravadas sem conteúdo precisam do SQL do histórico B129 (com a Tsuko fora do jogo) |
 | B128 | (os dois) **não publicado.** Monstro que te persegue desiste em `aggro_time` s (15 s nos do começo) se não te alcança — fugindo ou voando — e volta correndo para casa; na volta não leva dano nem nota ninguém, e chega com a vida cheia (no 1.5.5 aparece o efeito de invencível, estado 49; no 1.2.6 o `gs` original não mostra efeito). Agressivo só te nota a `sight_range + tamanho` (6–8 m nos do começo), não a 15 m. Golpe do ar em monstro de chão tira metade. Voo com o item de 15 m/s: 18 m/s (base 3 + 15). Pegar arma do chão vai para a bolsa comum. Comprar no NPC do 1.2.6 funciona |
+| B143 | (os dois) **não publicado.** Quem chega depois vê a Muralha/raposa/escudo e quem voa já no ar (1.2.6). Sentado: clicar no chão ou atacar não faz nada; Esc levanta; poção funciona; monstro que amaldiçoa levanta. Muralha de Espinhos: habilidade física de monstro também leva dano de volta (no 1.5.5, 0,02·L do golpe). Loja: o preço cobrado é o que a janela do cliente mostra (ex.: armadura 139 = 10.100). Perto dos Guias, **todas** as criaturas até ~90 m (antes cortava em 80) — observar se o cliente engasga. Log: `grep -E "sentado — comando|fila de .* parada"` |
 | B142 | (os dois) **não publicado.** Ferreiro: "consertar tudo" cobra `repairfee × desgaste` (não 150) e a peça volta cheia. Crítico: o número sai **grande** (o `MOD_CRITICAL_STRIKE`). Com dois clientes: A morre, B vê a morte (27); A troca de peça, B vê a troca **na hora** (67 — no 1.5.5 BR o 67 é por analogia com o 66: se B não vir a troca, o overlay de B deve mostrar `Invalid EQUIP_DATA_CHANGED size`); A para virado para um lado, B chega depois e o vê virado para o mesmo lado. Arqueiro com asas: decolar tira mana e o voo tira mana por segundo; sem mana, pousa. Outras classes voam sem gastar mana. Log: `grep -E "consertou|pousou sem mana"` |
 | B125 | (os dois) Loja Gold: a janela mostra o cash da **conta** (Tsuko/admin: 1.000.000 → "10000.00"), não o dinheiro do personagem; comprar um item de voo o põe na bolsa e o saldo cai o preço; sem saldo, "dinheiro insuficiente"; item VIP recusado (1.5.5) |
 
@@ -462,6 +467,8 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 - `class_templates` tem colunas de atributo que o código ignora (quem manda é o
   `ptemplate.conf`) — decidir quando o painel for editar moldes (B43h).
 - Senha de segurança (`CHECK_SECURITY_PASSWD`): qualquer uma passa — não há senha no banco.
+- A lista de venda do NPC (`NPC_SELL_SERVICE`) não é lida — no v7 os nomes vêm do v156 e não
+  servem — e a compra não confere se o NPC vende o item (B143).
 
 ### 5C. Arquitetura (Fase 2 do `PLANO_ARQUITETURA_E_EXECUCAO.md`)
 
@@ -504,18 +511,18 @@ capturas da VM 1.2.6 em `docs/evidencias/126/` (lidas com
 | :--- | :--- | :--- | :--- |
 | login, criação, entrada | **testado** (B63, B74-126); moldes das 6 classes pelo `clsconfig` 1.2.6 (atributos, barras, nascimento, 167) aplicados no banco (B101, B102, B108) | ver em jogo | `docs/ENTRADA_126.md` |
 | combate (layouts 24/26/33/83/84/144) | **testado** byte a byte com captura (B89) | ver em jogo | `docs/COMBATE_126.md` |
-| experiência e itens (31/36/46/72/99/156/158, 181, venda de 12 B) | **testado** (B90, B93, B109, B116) | preço real da loja no 1.2.6 (v7) e ver em jogo | `docs/ITENS_EXPERIENCIA_126.md` |
+| experiência e itens (31/36/46/72/99/156/158, 181, venda de 12 B) | **testado** (B90, B93, B109, B116) | preço do vendedor (×1,05 e `AdjustVendorFee`) desde o B143; ver em jogo | `docs/ITENS_EXPERIENCIA_126.md` |
 | Loja Gold (`gshop.data` de 1288 B, C2S 106 com `short×3`) | **testado** (B125) | ver em jogo; sem VIP, brinde nem limite no 1.2.6 (não existem no `gs` 1.2.6) | spec 05 §8, `docs/evidencias/LOJA_GOLD_DIAGNOSTICO.md` |
 | `OWN_EXT_PROP` (152 B) | **confere byte a byte** com a captura (B93) | — | `specs/04` |
 | comandos 14 e 64 | **sobrescritos no v126** (B122): 14 = 16 B (`pos + tag`), 64 = `6 + 25·n`, igual byte a byte à captura | ver em jogo | `specs/04` §4 |
-| `elements.data` v7 | **testado no leitor genérico** (B94, B100): 119 entradas, **23.447 registros**, 16.664.770 bytes; ordem e `sizeof` das 118 tabelas pelo `gs` 1.2.6; agressividade **confirmada em jogo** | conferir os opacos sem consumidor (`CUSTOMIZEDATA`, `PLAYER_ACTION_INFO`, `FACEPILL`); desde o B122 `CHARRACTER_CLASS_CONFIG`, `PARAM_ADJUST`, `SECONDLEVEL` e `STONE` conferidos no `gs`, `TASKDICE` e `MINE_ESSENCE` corrigidos | `specs/03` §3.1 |
-| `tasks.data` v55 | **testado no Rust** (B96): 2.819 raízes, 7.994 tarefas, fecha no último byte; lidos filhas (B102), automática/nível/pré-missões/gênero/zona (B107), lugar a alcançar (B110), `m_bClearAcquired` (B117), teto de chi do prêmio (B119) | desde o B122 os campos que o motor usa pelo `libtask.so` (prazo, frequência, depósito, ouro, equipe, período, facção, exclusivas, espera…); faltam `m_ulType`, `m_bItemNotTakeOff` e ver as missões em jogo | `specs/03` §3.2 |
+| `elements.data` v7 | **testado no leitor genérico** (B94, B100): 119 entradas, **23.447 registros**, 16.664.770 bytes; ordem e `sizeof` das 118 tabelas pelo `gs` 1.2.6; agressividade **confirmada em jogo** | sem opacos desde o B143 (`CUSTOMIZEDATA`, `PLAYER_ACTION_INFO`, `FACEPILL` nomeados pelos valores); desde o B122 `CHARRACTER_CLASS_CONFIG`, `PARAM_ADJUST`, `SECONDLEVEL` e `STONE` conferidos no `gs`, `TASKDICE` e `MINE_ESSENCE` corrigidos | `specs/03` §3.1 |
+| `tasks.data` v55 | **testado no Rust** (B96): 2.819 raízes, 7.994 tarefas, fecha no último byte; lidos filhas (B102), automática/nível/pré-missões/gênero/zona (B107), lugar a alcançar (B110), `m_bClearAcquired` (B117), teto de chi do prêmio (B119) | desde o B122 os campos que o motor usa pelo `libtask.so` (prazo, frequência, depósito, ouro, equipe, período, facção, exclusivas, espera…); `m_ulType` lido desde o B143 (o v55 não tem `m_bItemNotTakeOff`); falta ver as missões em jogo | `specs/03` §3.2 |
 | ficha e atributos | **testado** (B101): `ptemplate.conf` com as 8 seções do `gs` 1.2.6; `svr_monster_killed` de 9 B | ver em jogo | `specs/03` §3.5/§3.10 |
 | habilidades | **testado**: tempos, mana, aprendizado, alcance e dano do `gs` 1.2.6 (B100, B101); `ENCHANT_RESULT` de 16 B com modificador em 2 bytes (B116, B118); `allow_forms` do construtor do `gs` (B120) | **65 roteiros herdados do 1.5.5 divergem do `gs` 1.2.6** (B115, ver abaixo); ver a 299 em jogo | `specs/05` §habilidades, `specs/habilidades_126/` |
 | mascote de combate | **testado** (B111–B116): `PET_ESSENCE` v7 pelo `gs`, invocar/recolher/HP/ataque com os tamanhos do 1.2.6, Curar Mascote só cura (sem `Rebirth` no 1.2.6) | ver em jogo | `specs/05` §8.2 |
-| comandos acrescentados depois do B76 no 1.5.5 | **conferidos** (B122) pelo validador do cliente e o `gs` 1.2.6: 163, 181, 198, 232–236, 252 conferem; **227 = 9 B** (sobrescrito); `info_player_1` com forma, cadáver, roupa e montado (`char cor, int id`); `self_info_1` com roupa; C2S 14 = `u8, u16` (sobrescrito) | os outros bits do `state` do 1.2.6 (`0x2`, `0x40`, `0x400`…) | `specs/04` §4 |
+| comandos acrescentados depois do B76 no 1.5.5 | **conferidos** (B122) pelo validador do cliente e o `gs` 1.2.6: 163, 181, 198, 232–236, 252 conferem; **227 = 9 B** (sobrescrito); `info_player_1` com forma, cadáver, roupa e montado (`char cor, int id`); `self_info_1` com roupa; C2S 14 = `u8, u16` (sobrescrito) | voo (0x10) e efeitos visíveis (0x40) no B143; os demais bits são de sistemas que não existem | `specs/04` §4 |
 | sistemas que o 1.2.6 não tem | Daimon: `ELF_EXP` (283) omitido (B93); meditar não dá chi (B119); sem `Rebirth`/`Decregiondmg` (B115) | conferir cultivo e o que mais não existe no cliente 1.2.6, e omitir pelo trait | validador do cliente |
-| dados de mapa do `realm_126` | `.hmap`, `watermap/`, `movemap/`, `world_targets.sev`, `npcgen.data`, `precinct.sev` | conferir que cada leitor fecha no último byte com os arquivos do 1.2.6 | `data/realm_126/config` |
+| dados de mapa do `realm_126` | `.hmap`, `watermap/`, `movemap/`, `world_targets.sev`, `npcgen.data`, `precinct.sev` | todos fecham (B143, `tests/mapas_do_126.rs`) | `data/realm_126/config` |
 | publicação e teste em jogo | **publicado em 2026-09-26** com tudo até o B120 | o teste do Murillo com a Tsuko (roteiro no §3.3) | skill `pw-testar-e-publicar` |
 
 **Roteiros e passivas do 1.2.6 (B122, testado):** gerados do `gs` 1.2.6 por `roteiros_126.py`
@@ -529,8 +536,7 @@ passam por eles.
 portado; no original, atacar, conjurar e andar sentado também são ignorados, e a maldição
 (`GM_MSG_ENCHANT` não amigável) levanta como o golpe.
 
-**Diferenças conhecidas ainda abertas:** teto de 80 criaturas visíveis contra 220 no original
-(spec 05 §5.0.9, B103); a Batatinha (15955) com o nome dentro do modelo é dado do cliente
+**Diferenças conhecidas ainda abertas:** a Batatinha (15955) com o nome dentro do modelo é dado do cliente
 (B116), sem correção no servidor.
 
 **IA de monstro (B126):** estratégias, eventos de vida e habilidades de monstro valem nas duas
@@ -547,7 +553,7 @@ grupo pelo `iFirstGen` (usa o do líder).
 **Fila pedida pelo Murillo em 2026-09-28, em ordem, com um commit ao fim de cada fase:**
 
 1. ~~Fidelidade (§5B)~~ — **feito no B142** (falta ver em jogo).
-2. **1.2.6:** (a) os bits do `state` do 1.2.6 que faltam (`0x2`, `0x40`, `0x400`…); (b)
+2. ~~**1.2.6**~~ — **feito no B143** (falta ver em jogo): (a) os bits do `state` do 1.2.6 que faltam (`0x2`, `0x40`, `0x400`…); (b)
    `m_ulType` e `m_bItemNotTakeOff` do `tasks.data` v55; (c) espinhos (`Retort2`) contra golpe de
    habilidade e de jogador; (d) sentado: ignorar atacar, conjurar e andar, e a maldição levantar
    (`StayInCommandHandler`, `playercmd.cpp:873-1015`); (e) preço real da loja no v7; (f)
@@ -747,3 +753,4 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 128 | 09-26 | teste da Tsuko: temporizador de ódio (`aggro_time`), `RollBack` com volta invencível (22) e vida cheia fora de combate, detecção por `sight_range + size`, camada no dano (`gnpc_imp::AdjustDamage`), `speed_increase` do item de voo, pegar sempre na bolsa comum, cabeçalho de compra de 8 B no 1.2.6 |
 | 125 | 09-26 | Loja Gold nas duas versões: `gshop.data` do cliente lido (1436/1288 B), `MALL_SHOPPING` 12 B/6 B por versão, cash da conta (`gold_balance`) no `PLAYER_CASH`, `MALL_ITEM_BUY_FAILED` com 3 B |
 | 142 | 09-28 | fidelidade: reparo pelo `repairfee`, `crc_e` (tabela do `crc.c`) e `EQUIP_DATA_CHANGED`, crítico no `attack_flag`, `PLAYER_DIED`, saldo sem duplicata, `NPC_INFO_LIST` ao 68, direção do jogador, mana das asas |
+| 143 | 09-28 | 1.2.6: voo/efeitos visíveis no `state`, `m_ulType` v55, espinhos contra habilidade e jogador, sentado (`StayInCommandHandler`), preço do vendedor (×1,05, `AdjustVendorFee`), opacos do v7, mapas do 126, vista por fatias sem teto |

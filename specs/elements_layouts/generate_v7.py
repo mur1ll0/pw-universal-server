@@ -179,6 +179,21 @@ def main() -> None:
             campos_origem = [c for c in campos_origem if c["name"] not in {
                 "attack_degree", "defend_degree",
             }]
+        elif origem["name"] == "CUSTOMIZEDATA_ESSENCE":
+            # B143 — sem `file_icon` no v7: os 8 B finais são `character_combo_id` (1, 2, 8,
+            # 64, 128, 192 nos 140 registros do `realm_126`) e `gender_id` (0/1).
+            campos_origem = [c for c in campos_origem if c["name"] != "file_icon"]
+        elif origem["name"] == "PLAYER_ACTION_INFO_CONFIG":
+            # B143 — 11 sufixos de arma (e não 15) e `hide_weapon` nos 4 B finais: 132 + 11×32
+            # + 4 = 488; `hide_weapon` 0 em 512 registros e 1 em 61.
+            campos_origem = [c for c in campos_origem if not any(
+                c["name"] == f"action_weapon_suffix_{k}_suffix" for k in range(12, 16))]
+        elif origem["name"] == "FACEPILL_ESSENCE":
+            # B143 — 16 arquivos `pllfiles` (e não 24) e o rabo do fonte (`exptypes.h:2151-2159`):
+            # `price`, `shop_price`, `pile_num_max`, `has_guid`, `proc_type` — (500, 2000, 10,
+            # 0, 0) em 3 dos 5 registros.
+            campos_origem = [c for c in campos_origem if not any(
+                c["name"] == f"pllfiles_{k}_file" for k in range(17, 25))]
         elif origem["name"] == "MINE_ESSENCE":
             # O v7 tem 16 materiais de 8 B (id, probabilidade), sem `life`.
             # No item 6849, o monstro 3360/quantidade 1/raio 1.0 está em

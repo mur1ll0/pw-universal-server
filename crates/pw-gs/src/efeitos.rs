@@ -313,8 +313,8 @@ pub enum Efeito {
     /// VA 0x8310e96). A 306 do 1.2.6 dá `SetRatio(0,05·L + 0,1)` por 600 s (B120).
     Retort,
     /// `filter_Retort2` (`skillfilter.h:14617-14672`), a 306 do 1.5.5: igual ao `Retort`, mas
-    /// o golpe de **habilidade** usa o `value` em vez do `ratio`. Aqui só o golpe normal do
-    /// monstro dispara, então o `ratio` basta.
+    /// o golpe de **habilidade** usa o `value` (`_ratio_skill`, [`Filtro::fator_de_habilidade`])
+    /// em vez do `ratio`.
     Retort2,
     /// `filter_Fairyform` (`cskill/skill/skillfilter.h:16819-16875`), a **Forma Sombria**
     /// (2570) do Tormentador: enquanto dura, o jogador muda de forma (`ChangeShape(1 |
@@ -596,6 +596,10 @@ pub struct Filtro {
     /// `_defense` do `filter_Fairyform`: porcentagem somada à defesa (`EnhanceScaleDefense`).
     /// A velocidade vai na `razao`, como nos outros realces de velocidade.
     pub escala_defesa: i32,
+    /// `_ratio_skill` do `filter_Retort2`: a parte do golpe de **habilidade** que os espinhos
+    /// devolvem (o `Value` do roteiro; a 306 do 1.5.5 dá `0,02·L`). O `filter_Retort` do
+    /// 1.2.6 não distingue: usa o `ratio` nos dois (`skillfilter.h:1478-1484`, `:14644-14650`).
+    pub fator_de_habilidade: f32,
 }
 
 /// O que um segundo de filtros faz ([`Efeitos::batida`]).
@@ -926,11 +930,13 @@ impl Efeitos {
         self.tem(Efeito::Fairyform) || self.tem(Efeito::Foxform)
     }
 
-    /// `filter_Retort(2)::AdjustDamage`: quanto do golpe **físico corpo a corpo, normal**
-    /// (dano bruto `fisico`, antes da defesa) volta ao atacante. `None` sem espinhos ou com
-    /// o resultado ≤ 1 (`skillfilter.h:1480-1484`, `:14646-14650`). O teto de 1.000.000 do
-    /// 1.5.5 não existe no 1.2.6 e não muda nada abaixo dele.
-    pub fn espinhos(&self, fisico: i32) -> Option<i32> {
+    /// `filter_Retort(2)::AdjustDamage`: quanto do golpe **físico corpo a corpo** (dano bruto
+    /// `fisico`, antes da defesa) volta ao atacante — golpe normal ou de habilidade, de monstro
+    /// ou de jogador. `Retort2` usa `_ratio_skill` no golpe de habilidade (`msg.skill_id ?
+    /// _ratio_skill : _ratio`, `skillfilter.h:14646`); `Retort`, o `ratio` nos dois (`:1480`).
+    /// `None` sem espinhos ou com o resultado ≤ 1 (`:1480-1484`, `:14646-14650`). O teto de
+    /// 1.000.000 do 1.5.5 não existe no 1.2.6 e não muda nada abaixo dele.
+    pub fn espinhos(&self, fisico: i32, de_habilidade: bool) -> Option<i32> {
         if fisico >= 1_000_000 {
             return None;
         }
@@ -938,7 +944,12 @@ impl Efeitos {
             .filtros
             .iter()
             .find(|f| matches!(f.efeito, Efeito::Retort | Efeito::Retort2))?;
-        let dano = (fisico as f32 * f.fator) as i32;
+        let razao = if de_habilidade && f.efeito == Efeito::Retort2 {
+            f.fator_de_habilidade
+        } else {
+            f.fator
+        };
+        let dano = (fisico as f32 * razao) as i32;
         (dano > 1).then_some(dano)
     }
 
@@ -1478,6 +1489,7 @@ mod testes {
             icone: true,
             absorve: 0.0,
             escala_defesa: 0,
+            fator_de_habilidade: 0.0,
         }
     }
 
@@ -1521,6 +1533,7 @@ mod testes {
             icone: true,
             absorve: 0.0,
             escala_defesa: 0,
+            fator_de_habilidade: 0.0,
         });
         let mut total = 0;
         for _ in 0..5 {

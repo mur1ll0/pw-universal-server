@@ -878,7 +878,15 @@ impl BusServer {
                         );
                         match a {
                             Alvo::Jogador(j) => {
-                                mundo.habilidade_de_monstro_no_jogador(j, id, r.dano() as i64)
+                                // `msg.short_range` é 0 no golpe de habilidade sem
+                                // `RangeAdjust` (`playerwrapper.cpp:269-278`): os espinhos
+                                // valem se a habilidade é física e acertou.
+                                let fisico = if golpe.e_fisico && matches!(r, Resultado::Acertou { .. }) {
+                                    golpe.dano_fisico
+                                } else {
+                                    0
+                                };
+                                mundo.habilidade_de_monstro_no_jogador(j, id, r.dano() as i64, fisico)
                             }
                             _ => mundo.adiar_dano(a.id(), id, r.dano() as i64, 0, false),
                         }
@@ -927,6 +935,13 @@ impl BusServer {
                     }
                 }
             } else if let Some(passos) = &roteiro_no_alvo {
+                // Maldição em jogador sentado levanta (`GM_MSG_ENCHANT` não amigável,
+                // `gs/player.cpp:776-781`).
+                if let Alvo::Jogador(j) = a {
+                    if !matches!(tipo, TIPO_BENCAO | TIPO_BENCAO_DE_MASCOTE) {
+                        self.world.write().await.maldicao_levanta(j);
+                    }
+                }
                 let m = self
                     .rodar_roteiro(a, passos, nivel, &quem, &golpe, &mut nao_portados)
                     .await;
@@ -1472,6 +1487,7 @@ impl BusServer {
             icone: true,
             absorve: 0.0,
             escala_defesa: 0,
+            fator_de_habilidade: ap.valor,
         };
 
         // Instantâneos: mexem na vida/mana, não criam filtro.

@@ -754,3 +754,59 @@ mod tests {
         );
     }
 }
+
+
+/// O que um comando faz com o jogador **sentado** — `gplayer_controller::StayInCommandHandler`
+/// (`gs/playercmd.cpp:873-1015`), para onde o `DispatchCommand` manda todo comando no
+/// `PLAYER_SIT_DOWN` (`gs/player.cpp:8797-8800`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sentado {
+    /// Na lista: vai ao `CommandHandler` de sempre.
+    Aceita,
+    /// `USE_ITEM` → `PlayerSitDownUseItem` (`player.cpp:10840-10856`): só item que
+    /// `SitDownCanUse` — poção (`base_potion`, `item_potion.h:106`), alma e Daimon refinado.
+    SoItemDeSentado,
+    /// `STAND_UP` e `CANCEL_ACTION` → `PlayerStandUp`.
+    Levanta,
+    /// O resto (andar, atacar, conjurar, NPC, pegar, sentar de novo, gestos, consultas 67/68…)
+    /// não faz nada.
+    Ignora,
+}
+
+/// A classificação de [`Sentado`] pelos ids que o `pw-gs` trata. A lista é a do 1.5.5; a
+/// tabela de saltos do `gs` 1.2.6 (VA 0x84f4588, ids 0..=0x6c) aceita os mesmos ids tratados
+/// aqui, exceto 120 e 128, que lá caem no padrão e são ignorados sentado — sem efeito em jogo.
+pub fn sentado(id: u16) -> Sentado {
+    match id {
+        ids::STAND_UP | ids::CANCEL_ACTION => Sentado::Levanta,
+        ids::USE_ITEM => Sentado::SoItemDeSentado,
+        ids::LOGOUT
+        | ids::SELECT_TARGET
+        | ids::UNSELECT
+        | ids::GET_ITEM_INFO
+        | ids::GET_IVTR_DETAIL
+        | ids::EXG_IVTR_ITEM
+        | ids::MOVE_IVTR_ITEM
+        | ids::DROP_IVTR_ITEM
+        | ids::DROP_EQUIP_ITEM
+        | ids::EXG_EQUIP_ITEM
+        | ids::EQUIP_ITEM
+        | ids::MOVE_ITEM_TO_EQUIP
+        | ids::GOTO
+        | ids::GET_EXT_PROP
+        | ids::SET_STATUS_POINT
+        | ids::TEAM_INVITE
+        | ids::TEAM_AGREE_INVITE
+        | ids::TEAM_REJECT_INVITE
+        | ids::TEAM_LEAVE_PARTY
+        | ids::GET_OTHER_EQUIP
+        | ids::GET_ALL_DATA
+        | ids::TASK_NOTIFY
+        | ids::PET_CTRL
+        | ids::CHECK_SECURITY_PASSWD
+        | ids::CALC_NETWORK_DELAY
+        | ids::QUERY_TITLE
+        | ids::ACTIVATE_REGION_WAYPOINTS => Sentado::Aceita,
+        _ => Sentado::Ignora,
+    }
+}

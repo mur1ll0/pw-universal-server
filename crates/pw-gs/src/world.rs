@@ -1503,6 +1503,28 @@ impl WorldInstance {
     }
 
     /// Os membros do grupo do jogador, ou vazio se ele não tem grupo.
+    /// A visão de um jogador para quem o vê, com o que só o mundo sabe: o grupo
+    /// (`STATE_TEAM`/`STATE_TEAMLEADER`, `gs/playerteam.h:226-379`).
+    pub fn vista_de(&self, id: i64) -> Option<pw_core::VistaDoJogador> {
+        let p = self.players.get(&id)?;
+        let mut v = p.vista();
+        let lider = self.lider_do_grupo(p.role_id);
+        v.em_grupo = lider.is_some();
+        v.lider_do_grupo = lider == Some(p.role_id);
+        Some(v)
+    }
+
+    /// `LeaveStayInState` pela maldição: o `GM_MSG_ENCHANT` não amigável levanta quem está
+    /// sentado, como o golpe (`gs/player.cpp:776-781`).
+    pub fn maldicao_levanta(&mut self, alvo: i64) {
+        let Some(p) = self.players.get_mut(&alvo) else { return };
+        if std::mem::take(&mut p.sentado) {
+            p.meditacao_s = 0;
+            let roleid = p.role_id;
+            self.emitir(EventoDoMundo::Levantou { roleid });
+        }
+    }
+
     pub fn membros_do_grupo(&self, quem: RoleId) -> Vec<RoleId> {
         self.grupo_de
             .get(&quem)
@@ -1630,12 +1652,15 @@ impl WorldInstance {
     /// Dano de habilidade de monstro num jogador (`gplayer_imp::OnDamage` →
     /// `ActiveCombatState`, `player.cpp:9556-9560`): põe em combate, chama o mascote do dono e
     /// tira a vida na hora — o `NpcRun` aplica o dano sem o atraso do golpe normal.
-    pub fn habilidade_de_monstro_no_jogador(&mut self, alvo: i64, monstro: i64, dano: i64) {
+    /// `fisico`: o dano físico bruto do golpe de habilidade que acertou, para os espinhos
+    /// (`filter_Retort2` com o `_ratio_skill`); zero quando a habilidade não é física.
+    pub fn habilidade_de_monstro_no_jogador(&mut self, alvo: i64, monstro: i64, dano: i64, fisico: i32) {
         let Some(p) = self.players.get_mut(&alvo).filter(|p| p.hp > 0) else {
             return;
         };
         p.combate_s = p.combate_s.max(crate::progressao::COMBATE_AO_APANHAR_S);
         self.mascote_do_dono_ajuda(alvo, monstro);
+        self.devolver_espinhos(alvo, monstro, fisico, true);
         self.aplicar_dano_no_jogador(alvo, monstro, dano);
     }
 
@@ -1667,9 +1692,20 @@ impl WorldInstance {
     /// `attack_rate` 1000: acerta sempre e passa pela defesa física do monstro com o nível de
     /// quem devolve (`AttackJudgement`, `actobject.cpp:481-560`).
     fn golpe_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64, fisico: i32) {
+        self.devolver_espinhos(alvo, atacante, fisico, false);
+        self.aplicar_dano_no_jogador(alvo, atacante, dano);
+    }
+
+    /// Os espinhos do jogador `alvo` contra quem o golpeou — monstro ou jogador, golpe normal
+    /// ou de habilidade (`de_habilidade`, o `msg.skill_id` do original). `fisico` é o dano
+    /// físico **bruto** do golpe (antes da defesa); zero quando o golpe não é físico, é de
+    /// longe (`short_range > 0`) ou não acertou — aí nada volta.
+    pub fn devolver_espinhos(&mut self, alvo: i64, atacante: i64, fisico: i32, de_habilidade: bool) {
+        if fisico <= 1 || alvo == atacante {
+            return;
+        }
         let devolvido = self.players.get(&alvo).filter(|p| p.hp > 0).and_then(|p| {
-            let espinho = p.efeitos.espinhos(fisico)?;
-            let (m, _) = self.monsters.get(&atacante).filter(|(m, _)| !m.is_dead)?;
+            let espinho = p.efeitos.espinhos(fisico, de_habilidade)?;
             // `FillAttackMsg` do jogador (`actobject.cpp:1473-1497`) põe o nível, o crítico, o
             // grau de ataque e a penetração dele; o resto é o que o `filter_Retort` monta.
             let mut golpe = crate::combat::CombatEngine::golpe_de_jogador(p);
@@ -1678,32 +1714,44 @@ impl WorldInstance {
             golpe.e_fisico = false;
             golpe.taxa_de_ataque = 1000;
             golpe.de_habilidade = false;
-            let defesa = crate::combat::CombatEngine::defesa_do_monstro(m);
-            let distancia = p.position.distance(&m.position);
-            let velocidade = m.ataque_em_ticks.clamp(0, 255) as u8;
-            Some((
-                crate::combat::resolver(
-                    &golpe,
-                    &defesa,
-                    distancia,
-                    false,
-                    crate::combat::Rolagens::sortear(),
+            let (defesa, pos, velocidade) = if let Some((m, _)) =
+                self.monsters.get(&atacante).filter(|(m, _)| !m.is_dead)
+            {
+                (
+                    crate::combat::CombatEngine::defesa_do_monstro(m),
+                    m.position,
+                    m.ataque_em_ticks.clamp(0, 255) as u8,
                 )
-                .dano(),
-                velocidade,
-                p.role_id,
-            ))
+            } else {
+                let o = self.players.get(&atacante).filter(|o| o.hp > 0)?;
+                // `ret.speed = msg.speed` (`skillfilter.h:14666`): a cadência de quem bateu.
+                let velocidade = (o.attack_speed * 20.0).round().clamp(0.0, 255.0) as u8;
+                (crate::combat::CombatEngine::defesa_do_jogador(o), o.position, velocidade)
+            };
+            let dano = crate::combat::resolver(
+                &golpe,
+                &defesa,
+                p.position.distance(&pos),
+                false,
+                crate::combat::Rolagens::sortear(),
+            )
+            .dano();
+            Some((dano, velocidade, p.role_id))
         });
-        if let Some((d, velocidade, jogador)) = devolvido.filter(|(d, _, _)| *d > 0) {
-            self.emitir(EventoDoMundo::EspinhoDevolvido {
-                jogador,
-                monstro: atacante,
-                dano: d,
-                velocidade,
-            });
+        let Some((d, velocidade, jogador)) = devolvido.filter(|(d, _, _)| *d > 0) else {
+            return;
+        };
+        self.emitir(EventoDoMundo::EspinhoDevolvido {
+            jogador,
+            monstro: atacante,
+            dano: d,
+            velocidade,
+        });
+        if self.players.contains_key(&atacante) {
+            self.aplicar_dano_no_jogador(atacante, alvo, d as i64);
+        } else {
             self.aplicar_dano_no_monstro(atacante, alvo, d as i64);
         }
-        self.aplicar_dano_no_jogador(alvo, atacante, dano);
     }
 
     /// Tira a vida do monstro e resolve a morte. `None` quando o alvo sumiu ou já morreu.
@@ -2139,6 +2187,7 @@ impl WorldInstance {
             icone: false,
             absorve: 0.0,
             escala_defesa: 0,
+            fator_de_habilidade: 0.0,
         };
         p.efeitos.adicionar(filtro);
     }

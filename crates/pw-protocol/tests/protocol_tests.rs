@@ -799,6 +799,9 @@ fn o_sexo_do_jogador_viaja_no_bit_do_state2() {
         modo_roupa: false,
         montaria: None,
         forma: None,
+        estados_visiveis: [0; 6],
+        em_grupo: false,
+        lider_do_grupo: false,
     };
     let p = S2CGamedataSend::player_enter_slice(42, mulher);
 
@@ -847,6 +850,9 @@ fn os_bits_do_estado_acrescentam_os_campos_que_o_cliente_espera() {
         modo_roupa: false,
         montaria: None,
         forma: None,
+        estados_visiveis: [0; 6],
+        em_grupo: false,
+        lider_do_grupo: false,
     };
     // 2 de cabeçalho + 30 da `info_player_1` fixa.
     const FIXO: usize = 32;
@@ -1078,6 +1084,9 @@ fn o_info_player_1_do_126_leva_a_forma() {
         modo_roupa: false,
         montaria: None,
         forma,
+        estados_visiveis: [0; 6],
+        em_grupo: false,
+        lider_do_grupo: false,
     };
     let v = V126Protocol;
     let normal = v.player_enter_slice(42, vista(None)).data;
@@ -1159,4 +1168,48 @@ fn o_grupo_e_o_notify_hostpos_do_126_batem_com_a_captura() {
     let n = V126Protocol.notify_hostpos(pw_core::Vector3::new(1.0, 2.0, 3.0), 1, 0).data;
     assert_eq!(n.len(), 2 + 16);
     assert_eq!(i32::from_le_bytes(n[14..18].try_into().unwrap()), 1, "tag");
+}
+
+
+/// B143 — `EXTEND_PROPERTY` (0x40) e voo (0x10) no `info_player_1` das duas versões. O 1.2.6
+/// soma **4** bytes (um `extend_state`; validador VA 0x584633, `MakeObjectState` VA 0x8062d31)
+/// e o 1.5.5 **24** (`OBJECT_EXT_STATE_COUNT`, `EC_GPDataType.h` `info_player_1::CheckValid`);
+/// grupo (0x100/0x200) só no 1.5.5, sem bytes.
+#[test]
+fn o_info_player_1_leva_efeitos_visiveis_voo_e_grupo() {
+    use pw_protocol::versions::v126::V126Protocol;
+    use pw_protocol::WorldProtocol;
+    let base = pw_core::VistaDoJogador {
+        pos: pw_core::Vector3::new(1.0, 2.0, 3.0),
+        dir: 0,
+        cultivo: 0,
+        sec_level: 0,
+        feminino: false,
+        crc_equipamento: 0,
+        crc_aparencia: 0,
+        voando: false,
+        morto: false,
+        modo_roupa: false,
+        montaria: None,
+        forma: None,
+        estados_visiveis: [0; 6],
+        em_grupo: false,
+        lider_do_grupo: false,
+    };
+    let muralha = pw_core::VistaDoJogador { estados_visiveis: [1 << 3, 0, 0, 0, 0, 0], voando: true, ..base };
+    let v126 = V126Protocol;
+    let a = v126.player_enter_slice(42, base).data.len();
+    let b = v126.player_enter_slice(42, muralha).data;
+    assert_eq!(b.len(), a + 4);
+    let estado = i32::from_le_bytes(b[24..28].try_into().unwrap());
+    assert_eq!(estado & 0x50, 0x50, "0x40 e o voo 0x10");
+    assert_eq!(u32::from_le_bytes(b[28..32].try_into().unwrap()), 1 << 3);
+
+    let v155 = create_world_protocol(GameVersion::V1_5_5);
+    let a = v155.player_enter_slice(42, base).data.len();
+    let lider = pw_core::VistaDoJogador { em_grupo: true, lider_do_grupo: true, ..muralha };
+    let b = v155.player_enter_slice(42, lider).data;
+    assert_eq!(b.len(), a + 24);
+    let estado = i32::from_le_bytes(b[24..28].try_into().unwrap());
+    assert_eq!(estado & 0x350, 0x350, "extend, voo, grupo e líder");
 }

@@ -961,6 +961,13 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
         // (+0x1e2) e `CalcAwardData` (+0x1e6/+0x1ea, os tipos de prêmio). `m_bKeyTask` (+0xb4)
         // e `m_bShowPrompt` (+0xb3) pela ordem do `TaskTempl.h` entre `m_bClearAcquired` +0xae
         // e `m_ulDelvNPC` +0xb5 (4 + 1 + 1 B), lidos pelo `LoadFixedData`.
+        // `m_ulType` +0x45: `m_ID` (4) + nome (60) + `m_bHasSign` (1) + `m_pszSignature` (4),
+        // a ordem de `ATaskTemplFixedData::LoadFixedDataFromTextFile` do `libtask.so` 1.2.6
+        // ("ID", "Type", "Dyn", "HasSign", "TimeLimit", "AbsTime"…; `HasSign` grava +0x40 e o
+        // ponteiro +0x41, VA 0x127c7/0x127ec). O byte +0x4d é `m_bAbsTime` (grava em VA
+        // 0x12925 depois do formato "AbsTime: %d"): **o v55 não tem `m_bItemNotTakeOff`** — a
+        // entrega sempre retira os itens de missão, que é o padrão `item_nao_retirado = false`.
+        tipo: u32_em(b, 0x45),
         limite_de_tempo: u32_em(b, 0x49),
         frequencia: u32_em(b, 0x66) as i32,
         max_receptores: u32_em(b, 0x75),

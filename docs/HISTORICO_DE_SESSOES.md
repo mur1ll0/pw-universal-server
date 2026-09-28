@@ -10809,3 +10809,48 @@ comparação lado a lado.
     Ver em jogo, sobretudo o 67 no 1.5.5 BR (sem `color_name`, por analogia com o 66 medido). O
     `GetIdModify` (cor de moda, pedras 7+, afiador) não entra nos ids. A espada voadora não
     desconta o tempo de voo. Golpe de mascote sem marca.
+
+143. **Sessão 2026-09-28: paridade do 1.2.6 — bits do `state`, `m_ulType`, espinhos contra habilidade e jogador, sentado, preço do vendedor, opacos do v7, mapas do 126 e vista por fatias.**
+
+    ### a. Pedido
+    Fase 2 da fila do Murillo (§5D): os oito itens do 1.2.6.
+
+    ### b. Evidência e correção
+    - **Bits do `state`:** `TakeOff` do `gs` 1.2.6 liga 0x10 (VA 0x811d575) — o voo ia sem bit no
+      1.2.6; `MakeObjectState` liga 0x40 com o `extend_state` (um `int`, VA 0x8062d31). O
+      `info_player_1` passa a levar voo e efeitos visíveis (1 `int` no 1.2.6, 6 no 1.5.5) e, no
+      1.5.5, grupo/líder (`playerteam.h`). O 1.2.6 não liga grupo no `object_state`; os outros bits
+      são de sistemas inexistentes.
+    - **`m_ulType`/`m_bItemNotTakeOff`:** pela ordem do `LoadFixedDataFromTextFile` do
+      `libtask.so` 1.2.6, `Type` em +0x45 e `AbsTime` em +0x4d. O v55 **não tem**
+      `m_bItemNotTakeOff`; a entrega sempre retira.
+    - **Espinhos:** `filter_Retort2` usa `_ratio_skill` no golpe com `skill_id`
+      (`skillfilter.h:14646`); `Retort`, o `ratio` sempre. `devolver_espinhos` vale para monstro e
+      jogador atacante, golpe normal ou de habilidade física (`short_range` 0 sem `RangeAdjust`,
+      `playerwrapper.cpp:269-278`).
+    - **Sentado:** `DispatchCommand` → `StayInCommandHandler` no `PLAYER_SIT_DOWN`; tabela de
+      saltos do 1.2.6 (VA 0x84f4588) com os mesmos ids tratados, salvo 120/128. Maldição levanta
+      (`player.cpp:776-781`).
+    - **Preço do vendedor:** a loja cobrava o `shop_price` puro; o original cobra `× 1,05 × (1 +
+      tax_rate) + 0,5` e arredonda para cima (`vendor_provider::OnInit`/`AdjustVendorFee`,
+      `serviceprovider.cpp:183-252`; iguais no `gs` 1.2.6, 1,05 no construtor VA 0x8107987). A
+      armadura 139 sai 10.100, não 9.600.
+    - **Opacos do v7:** nomeados pelos valores (`character_combo_id`/`gender_id`; `hide_weapon`;
+      `price`…`proc_type` do `FACEPILL`) — `generate_v7.py`, sem opaco nenhum no v7.
+    - **Mapas do 126:** `world_targets`, 43 `precinct.sev`, 41 `path.sev`, 41 `npcgen.data`,
+      terreno, 46 `.rmap` e 40 `watermap` fecham.
+    - **Teto de visíveis:** o original não tem; a vista é o quadrado de ±3 fatias de 25 m
+      (`BuildSliceMask`, `MoveBetweenSlice`), refeita ao trocar de fatia. O streaming envia com
+      espera na fila.
+
+    ### c. Provas
+    `o_info_player_1_leva_efeitos_visiveis_voo_e_grupo`; `tasks_do_realm` (`m_ulType`);
+    `os_espinhos_do_retort2_usam_a_razao_de_habilidade`;
+    `sentado_andar_e_atacar_sao_ignorados_e_cancelar_levanta`;
+    `o_vendedor_cobra_a_taxa_e_arredonda_para_cima`, `o_preco_do_vendedor_do_126`;
+    `mapas_do_126` (2 testes); `a_vista_e_o_quadrado_de_fatias`; `subcomandos_no_mundo` 120/120.
+
+    ### d. O que continua faltando
+    Ver em jogo — sobretudo a vista sem teto (carga de rede perto dos Guias) e o preço novo na
+    loja. A lista de venda do `NPC_SELL_SERVICE` v7 tem nomes herdados do v156 (páginas com
+    contribuição/força) e não é lida; a compra ainda não confere a lista do NPC.

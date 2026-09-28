@@ -713,10 +713,28 @@ impl V126Protocol {
         if v.montaria.is_some() {
             state |= 0x80000;
         }
+        // Voo: `object_interface::TakeOff` → `gplayer_imp` faz `object_state |= 0x10`
+        // (`gs` 1.2.6, VA 0x811d575); sem bytes no validador (B143).
+        if v.voando {
+            state |= 0x10;
+        }
+        // `MakeObjectState<gplayer>` liga 0x40 com o `extend_state` (um só `int`, +0x60) não zero
+        // (VA 0x8062d31); o validador soma +4. É o mesmo DWORD do `UPDATE_EXT_STATE` do 1.2.6
+        // (B124). O 1.2.6 não liga os bits de grupo no `object_state` (nenhum `or` com
+        // 0x100/0x200 no `gs`), e os demais (`0x2` emote, `0x8` pária, `0x400` anúncio, `0x800`
+        // facção, `0x1000` barraca, `0x10000` efeito, `0x100000` casal, `0x800000` cônjuge) são
+        // de sistemas que o `pw-gs` não tem: vão zero (B143).
+        let estendido = v.estados_visiveis[0];
+        if estendido != 0 {
+            state |= 0x40;
+        }
         s.write_i32_le(state);
         // Na ordem do `MakePlayerExtendState` 1.2.6: forma (0x1) antes da montaria (0x80000).
         if let Some(forma) = v.forma {
             s.write_u8(self.byte_de_forma(forma));
+        }
+        if estendido != 0 {
+            s.write_u32_le(estendido);
         }
         if let Some((cor, modelo)) = v.montaria {
             s.write_u8(cor as u8);

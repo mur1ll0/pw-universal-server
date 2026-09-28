@@ -797,6 +797,7 @@ fn atordoar_o_monstro_cancela_o_canto() {
         icone: true,
         absorve: 0.0,
         escala_defesa: 0,
+        fator_de_habilidade: 0.0,
     });
     ai.tick(&mut m, &p, 50, &sem_mapa);
     assert!(!ai.conjurando(), "o canto continuou atordoado");

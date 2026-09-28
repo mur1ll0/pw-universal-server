@@ -114,6 +114,29 @@ pub fn carregar_asas(elements: &GenericElementsData) -> HashMap<u32, (i32, i32)>
         .collect()
 }
 
+/// `_tax_rate` do `vendor_provider` (`gs/serviceprovider.cpp:183`; 1,05 também no `gs` 1.2.6,
+/// VA 0x8107987).
+pub const TAXA_DO_VENDEDOR: f32 = 1.05;
+
+/// `shop_price × 1,05 × (tax_rate + 1) + 0,5` em `float`, teto 2·10⁸, piso 1, e o
+/// `AdjustVendorFee` (`gs/serviceprovider.cpp:185-198`, 220-252).
+pub fn preco_do_vendedor(shop_price: i32, taxa_do_npc: f32) -> i32 {
+    let taxa = taxa_do_npc + 1.0;
+    let mut fp = shop_price as f32 * TAXA_DO_VENDEDOR * taxa + 0.5;
+    if fp > 2e8 {
+        fp = 2e8;
+    }
+    let mut preco = (fp as i32).max(1);
+    if preco >= 100 {
+        let passo = if preco < 1000 { 10 } else { 100 };
+        let r = preco % passo;
+        if r != 0 {
+            preco += passo - r;
+        }
+    }
+    preco
+}
+
 /// `player_template::GetRepairCost` (`gs/playertemplate.h:535-546`): `base × (falta/máxima)`
 /// em `float`, zero quando nada falta. Quem soma várias peças trunca a soma, não cada parcela
 /// (`item_list::GetRepairCost`, `gs/item_list.cpp:217-239`).
@@ -136,6 +159,20 @@ mod tests {
         r.insert("price".into(), FieldValue::Int(price));
         r.insert("shop_price".into(), FieldValue::Int(shop));
         r
+    }
+
+    #[test]
+    fn o_vendedor_cobra_a_taxa_e_arredonda_para_cima() {
+        // 9600 × 1,05 + 0,5 = 10080,5 → 10080 → múltiplo de 100 acima: 10100.
+        assert_eq!(preco_do_vendedor(9600, 0.0), 10100);
+        // 50 × 1,05f + 0,5 = 52,99999 em `float` (1,05f é 1,0499999…): trunca em 52, como o
+        // original, que faz a mesma conta em `float`. Abaixo de 100 não arredonda.
+        assert_eq!(preco_do_vendedor(50, 0.0), 52);
+        // 137 × 1,05 + 0,5 = 144,35 → 144 → 150.
+        assert_eq!(preco_do_vendedor(137, 0.0), 150);
+        // Com a taxa do NPC (0,05): 1000 × 1,05 × 1,05 + 0,5 = 1103 → 1200.
+        assert_eq!(preco_do_vendedor(1000, 0.05), 1200);
+        assert_eq!(preco_do_vendedor(0, 0.0), 1);
     }
 
     #[test]

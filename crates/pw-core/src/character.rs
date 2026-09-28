@@ -232,6 +232,12 @@ pub mod estado_do_jogador {
     /// Montado. Acrescenta **6 bytes**: `u16 mount_color` e depois `i32 mount_id`
     /// (`protocol_imp.h:105-109`, lido em `EC_ElsePlayer.cpp:445-455`).
     pub const MONTADO: i32 = 0x0008_0000;
+    /// `STATE_EXTEND_PROPERTY`: acrescenta os `extend_state` — 6 DWORDs no 1.5.5
+    /// (`OBJECT_EXT_STATE_COUNT`), 1 no 1.2.6.
+    pub const PROPRIEDADE_ESTENDIDA: i32 = 0x0000_0040;
+    /// `STATE_TEAM` e `STATE_TEAMLEADER` (`gs/object.h:154-155`). Sem campo.
+    pub const EM_GRUPO: i32 = 0x0000_0100;
+    pub const LIDER_DO_GRUPO: i32 = 0x0000_0200;
 }
 
 /// O carimbo da aparência de um personagem — o `custom_crc` do original.
@@ -497,4 +503,12 @@ pub struct VistaDoJogador {
     /// A forma da transformação (`shape_form`): liga [`estado_do_jogador::FORMA`] e
     /// acrescenta 1 byte. Nada a liga ainda — o `filter_Fairyform` não está portado.
     pub forma: Option<u8>,
+    /// Os `VSTATE_*` dos efeitos visíveis (`extend_state`..`extend_state6`). Qualquer um não
+    /// zero liga [`estado_do_jogador::PROPRIEDADE_ESTENDIDA`] e acrescenta os DWORDs
+    /// (`MakeObjectState`/`MakePlayerExtendState`, `common/protocol_imp.h:46-80`): quem chega
+    /// depois vê a Muralha, a raposa, o escudo (B143).
+    pub estados_visiveis: [u32; 6],
+    /// Em grupo / líder do grupo: `STATE_TEAM`/`STATE_TEAMLEADER` (`gs/playerteam.h:226-379`).
+    pub em_grupo: bool,
+    pub lider_do_grupo: bool,
 }

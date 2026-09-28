@@ -1538,6 +1538,7 @@ mod tests {
             icone: true,
             absorve: 0.0,
             escala_defesa: 0,
+            fator_de_habilidade: 0.0,
         }
     }
 

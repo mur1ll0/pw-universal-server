@@ -1608,6 +1608,9 @@ impl S2CGamedataSend {
         if v.modo_roupa { state |= est::MODA; }
         if v.sec_level > 0 { state |= est::MESTRE_DO_JOGO; }
         if v.montaria.is_some() { state |= est::MONTADO; }
+        if v.estados_visiveis.iter().any(|&e| e != 0) { state |= est::PROPRIEDADE_ESTENDIDA; }
+        if v.em_grupo { state |= est::EM_GRUPO; }
+        if v.lider_do_grupo { state |= est::LIDER_DO_GRUPO; }
         stream.write_i32_le(state);            // int state (4B)
         // `state2`. O único bit que este servidor sabe preencher é o do sexo — e ele não
         // é enfeite: `info_player_1::GetGender()` (`EC_GPDataType.h:709-711`) lê o sexo de
@@ -1623,6 +1626,13 @@ impl S2CGamedataSend {
         // dá a ele, não no fim.
         if let Some(forma) = v.forma {
             stream.write_u8(forma);            // char shape_form (1B)
+        }
+        // `STATE_EXTEND_PROPERTY` vem depois de `shape`/`emote` e antes de `mafia`
+        // (`MakePlayerExtendState`, `protocol_imp.h:77-80`): `OBJECT_EXT_STATE_COUNT` DWORDs.
+        if v.estados_visiveis.iter().any(|&e| e != 0) {
+            for e in v.estados_visiveis {
+                stream.write_u32_le(e);        // int extend_state[6] (24B)
+            }
         }
         if let Some((cor, modelo)) = v.montaria {
             stream.write_u16_le(cor);          // unsigned short mount_color (2B)

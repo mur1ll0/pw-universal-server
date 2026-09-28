@@ -171,6 +171,9 @@ pub struct GameDataManager {
     pub reparo: HashMap<u32, crate::precos::ReparoDoItem>,
     /// `(mp_launch, mp_per_second)` das asas — ver [`crate::precos::carregar_asas`].
     pub asas: HashMap<u32, (i32, i32)>,
+    /// `tax_rate` de cada `NPC_ESSENCE` (quase todos 0; `npcgenerator.cpp:437`,
+    /// `SetTaxRate`, `:2661`) — entra no preço da loja ([`Self::preco_de_loja`]).
+    pub taxas_de_npc: HashMap<u32, f32>,
     /// `(speed_a, speed_b)` por montaria, quando não vêm do `elements.data` — é assim que o
     /// mundo de teste, que não carrega o arquivo, tem uma montaria com velocidade.
     pub velocidades_de_montaria: HashMap<u32, (f32, f32)>,
@@ -481,6 +484,18 @@ impl GameDataManager {
             self.precos = crate::precos::carregar(g);
             self.reparo = crate::precos::carregar_reparo(g);
             self.asas = crate::precos::carregar_asas(g);
+            self.taxas_de_npc = g
+                .get("NPC_ESSENCE")
+                .iter()
+                .filter_map(|r| {
+                    let id = r.get("ID").and_then(|v| v.as_i32())?;
+                    let taxa = match r.get("tax_rate") {
+                        Some(crate::generic_elements::FieldValue::Float(f)) => *f as f32,
+                        _ => 0.0,
+                    };
+                    Some((id as u32, taxa))
+                })
+                .collect();
             self.progressao = crate::progressao::TabelaDeProgressao::carregar(g);
             self.servicos_de_npc = crate::servicos::carregar(g);
             self.pilhas = crate::servicos::pilhas(g);
@@ -590,6 +605,23 @@ impl GameDataManager {
     pub fn preco_de_compra(&self, item_id: u32) -> Option<i32> {
         let (price, shop_price) = self.precos.get(&item_id).copied()?;
         Some(shop_price.max(price).max(1))
+    }
+
+    /// O preço que o **vendedor** cobra de fato — `vendor_provider::OnInit`
+    /// (`gs/serviceprovider.cpp:220-252`): o [`Self::preco_de_compra`] (`shop_price` com piso
+    /// no `price`) × `_tax_rate` (1,05, o construtor, `:183`) × (`tax_rate` do NPC + 1), + 0,5
+    /// em `float`, teto 2·10⁸, piso 1, e o `AdjustVendorFee` (`:185-198`): de 100 a 999 sobe
+    /// para o múltiplo de 10, de 1000 em diante para o de 100. Igual no `gs` 1.2.6
+    /// (`vendor_provider::OnInit` VA 0x8108874, `AdjustVendorFee` VA 0x8108e0e, 1,05 no
+    /// construtor VA 0x8107987). A armadura 139 (`shop_price` 9.600) sai 10.100.
+    pub fn preco_de_loja(&self, item_id: u32, taxa_do_npc: f32) -> Option<i32> {
+        let base = self.preco_de_compra(item_id)?;
+        Some(crate::precos::preco_do_vendedor(base, taxa_do_npc))
+    }
+
+    /// O `tax_rate` do NPC (0 quando o realm não o conhece).
+    pub fn taxa_do_npc(&self, npc_tid: u32) -> f32 {
+        self.taxas_de_npc.get(&npc_tid).copied().unwrap_or(0.0)
     }
 
     /// A durabilidade de fábrica de um equipamento, na escala do arquivo (a da tela).

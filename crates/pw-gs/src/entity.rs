@@ -886,6 +886,10 @@ impl PlayerEntity {
                 .efeitos
                 .forma()
                 .map(|(shape, classe)| shape | (classe << 6)),
+            estados_visiveis: self.efeitos.estados_visiveis(),
+            // O grupo vive no mundo: quem monta a visão preenche (`WorldInstance::vista_de`).
+            em_grupo: false,
+            lider_do_grupo: false,
         }
     }
 }

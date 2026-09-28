@@ -134,5 +134,10 @@ fn os_campos_do_v55_lidos_pelo_libtask() {
     assert_eq!(conta(&|x| x.dinheiro_pedido == 1_000_000), 18, "`m_ulGoldWanted`");
     assert_eq!(conta(&|x| x.teleporte_ao_receber.is_some()), 0, "nenhuma missão do 1.2.6 teleporta ao receber");
     assert_eq!(t.tasks[&9322].missoes_exclusivas, vec![9321, 9323], "`m_ulMutexTasks`");
+    // `m_ulType` +0x45 (B143): a enumeração do 1.2.6 vai de 0 a 8 — o v129 do 1.5.5 usa 100–110.
+    assert!(v.iter().all(|x| x.tipo <= 8), "`m_ulType` fora de 0..=8");
+    assert_eq!(conta(&|x| x.tipo == 0), 7201);
+    assert_eq!(conta(&|x| x.tipo == 4), 298);
+    assert_eq!(t.tasks[&9376].tipo, 2);
 }
 

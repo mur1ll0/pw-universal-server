@@ -298,3 +298,21 @@ fn as_missoes_de_teto_de_chi_do_126() {
     }
     assert_eq!(tetos, vec![(915, 99), (922, 199), (925, 299), (966, 99), (973, 99), (1888, 399), (2804, 399), (2818, 399)]);
 }
+
+/// B143 — o preço do vendedor com os dados do 1.2.6: `shop_price` 9.600 da armadura 139 ×
+/// 1,05 + 0,5 → 10.080 → `AdjustVendorFee` → 10.100; e as taxas do `NPC_ESSENCE` v7
+/// (1.441 NPCs com 0, 28 com 0,05, 2 com 17).
+#[test]
+fn o_preco_do_vendedor_do_126() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    if !dir.exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        return;
+    }
+    let mut d = GameDataManager::new();
+    d.load_from_directory(&dir);
+    assert_eq!(d.preco_de_compra(139), Some(9600));
+    assert_eq!(d.preco_de_loja(139, 0.0), Some(10_100));
+    assert_eq!(d.taxas_de_npc.values().filter(|t| **t == 17.0).count(), 2);
+    assert_eq!(d.taxas_de_npc.values().filter(|t| (**t - 0.05).abs() < 1e-6).count(), 28);
+}

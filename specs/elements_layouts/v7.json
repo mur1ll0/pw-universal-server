@@ -12554,9 +12554,14 @@
           "size": 128
         },
         {
-          "name": "_opaco",
-          "type": "string",
-          "size": 8
+          "name": "character_combo_id",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "gender_id",
+          "type": "int32",
+          "size": 4
         }
       ]
     },
@@ -14120,8 +14125,8 @@
           "size": 32
         },
         {
-          "name": "_opaco",
-          "type": "string",
+          "name": "hide_weapon",
+          "type": "int32",
           "size": 4
         }
       ]
@@ -15923,9 +15928,29 @@
           "size": 128
         },
         {
-          "name": "_opaco",
-          "type": "string",
-          "size": 20
+          "name": "price",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "shop_price",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "pile_num_max",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "has_guid",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "proc_type",
+          "type": "int32",
+          "size": 4
         }
       ]
     },

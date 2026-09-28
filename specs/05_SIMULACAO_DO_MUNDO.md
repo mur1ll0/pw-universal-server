@@ -74,10 +74,10 @@ habilidades, itens, `sec_level`.
 
 | regra | valor | por quê |
 | :--- | :--- | :--- |
-| raio | `RAIO_DE_VISAO` **120 m** | raio ativo do cliente |
-| histerese | recalcula após andar `PASSO_PARA_RECALCULAR` **20 m** (ou forçado: entrada, teleporte) | o cliente manda 20 movimentos/s |
-| teto por atualização | criaturas **80**, matéria **40**, separados; mais próximos primeiro | não encher a fila; pedras não expulsam NPCs |
-| jogadores | fora do teto; visibilidade **mútua** — quem se move escreve nos dois `visiveis` | simetria |
+| área (B143) | o quadrado de **±3 fatias de 25 m** em volta da fatia do jogador (`na_visao`, `FATIAS_DE_VISAO`): `BuildSliceMask(near, grid_sight_range)` monta os anéis até `ceil(60 / 25)` = 3 (`gs/world.cpp:231-262`, `GRID_SIGHT_RANGE` 60 em `config.h:20`, fatia de 25 m no `grid` do `gs.conf`) | é o conjunto que o `MoveBetweenSlice` (`world.h:636-690`) faz entrar e sair |
+| quando recalcula | ao **trocar de fatia** (ou forçado: entrada, teleporte) | `MoveBetweenSlice` |
+| teto | **nenhum** (até o B142: 80 criaturas e 40 matérias). O envio do streaming espera a fila (`responder_com_espera`, até 2 s) em vez de descartar | o original não tem teto; a captura 1.2.6 mostra o cliente com até 220 criaturas |
+| jogadores | visibilidade **mútua** — quem se move escreve nos dois `visiveis`; a vista em fatias é simétrica | simetria |
 | comandos | spec 04 §5 (11/12/18 entram; 13/34/19 saem) | |
 | alcance dos avisos | movimento e parada de monstro vão **só a quem o vê** (`transmitir_a_quem_ve`) | o original difunde na fatia do NPC (`AutoBroadcastCSMsg`, `npc.cpp:85-98`). Mandando ao mapa inteiro, o cliente recebia comando de monstro que nunca viu entrar, o punha na fila de "NPC desconhecido" e perguntava por ele de 10 em 10 s para sempre (`EC_ManNPC.cpp:967-975`, `1144-1164`) — 319 comandos assim no teste de 2026-09-17 (B57) |
 
@@ -304,7 +304,7 @@ passos de passeio sem nenhum maior que velocidade × `use_time`; perseguição s
 para casa andando em 19 de 20 (1 pelo `ReturnHome`, que o original também faz). Nenhum
 `OBJECT_MOVE` descartado pela fila do link. **Diferença conhecida**: o original deixa o cliente
 conhecer até 220 criaturas de uma vez (captura; só 41 `OBJECT_LEAVE_SLICE` na sessão); o nosso
-corta nas 80 mais próximas (`TETO_DE_VISIVEIS`), o que perto dos Guias fica em 75–82 m.
+cortava nas 80 mais próximas (`TETO_DE_VISIVEIS`) até o B142; desde o B143 vale o quadrado de fatias do original, sem teto (§1).
 **Causa achada e corrigida (B104, falta ver em jogo):** a emenda de passeio
 (`ai_rest_task::OnSessionEnd`, 10 %) zerava a espera em `comecar_passeio`. O último passo do
 passeio saía com `use_time` de 1 s e o primeiro do passeio seguinte no tique seguinte: dois
@@ -564,8 +564,13 @@ jogador fere qualquer outro), sessão de golpe contra jogador, marca no golpe de
   `short_range`) nem ≤ 1; ícone 4 / 253, estado visual 3; `skillfilter.h:1450-1505`,
   `:14617-14672`. O golpe devolvido vai ao dono como `SELF_ATTACK_RESULT` e a quem vê como
   `OBJECT_ATTACK_RESULT`, com `AT_STATE_ATTACK_RETORT` 0x20 — o `MOD_RETORT` do cliente
-  (`npc.cpp:228-241`, `EC_ManAttacks.h:34`, B124). **Falta** devolver golpe de habilidade e de
-  jogador), **renascer** (`Rebirth`, B115:
+  (`npc.cpp:228-241`, `EC_ManAttacks.h:34`, B124). Desde o B143 também o golpe de **habilidade**
+  física de monstro (`habilidade_de_monstro_no_jogador`) e a habilidade física de **jogador**
+  (PvP, `efeito_em_jogador`), com o dano bruto do golpe: o `Retort2` (1.5.5) usa o `_ratio_skill`
+  (o `Value` do roteiro, 0,02·L na 306) no golpe de habilidade e o `ratio` no normal; o `Retort`
+  (1.2.6) usa o `ratio` nos dois (`skillfilter.h:1480`, `:14646`). Espinho em jogador vai a ele
+  como `HOST_ATTACKED` com a marca 0x20 (`WorldInstance::devolver_espinhos`). O golpe **normal**
+  de jogador em jogador não existe no `pw-gs` (só habilidade), então não passa por eles), **renascer** (`Rebirth`, B115:
   antes de morrer, com a chance do `probability`, volta com `ratio` da vida máxima, `ENCHANT_RESULT`
   da 1085 e se desfaz; jogador e mascote; ícone 155; `skillfilter.h:9027-9070`), **redução de dano
   em área** (`Decregiondmg`, B115: só o ícone 328 pelo tempo — a redução exige `attack_attr < 0`, que
@@ -601,7 +606,7 @@ jogador fere qualquer outro), sessão de golpe contra jogador, marca no golpe de
 | atributos iniciais | `testado` (B51) | **5/5/5/5 para toda classe**, vida `vit_hp × 5` e mana `eng_mp × 5` — os 12 moldes do `clsconfig` do `pwserver_155v156`. Os atributos e o `hp`/`mp` do `ptemplate.conf` **não** chegam ao jogador (`userlogin.cpp` copia a ficha do banco). Até B50 o Arqueiro nascia com 20 de energia. **1.2.6 igual** (`clsconfig` 1.2.6, B101): até o B101 a Feiticeira nascia com 15/5/15/15 (a seção `[HAG]`) e a ficha ficava com dano 1-1, porque o `ptemplate.conf` 1.2.6 era recusado — com ele, Feiticeira nível 1 com a Varinha Mágica: físico 4-4, mágico 6-6, vida 60, mana 60 (`tests/ficha_do_126.rs`) |
 | vida/mana máximas | `testado` (B51) | `lvlup_hp × (nível−1) + vit_hp × vitalidade` (e o par da mana), base zero (`__LevelUp`, `__UpdateBasic`, `playertemplate.cpp:500-582`); `BaseDaClasse::vida_e_mana_maximas` (spec 03 §3.5), a mesma conta da criação |
 | **combate** | `testado` | `combate_s`: atacar põe 15 s (`DoAttack`, `player.cpp:3062`), apanhar garante 5 s (`OnAttacked`, `:9514`); batimento de 1 s desconta, e o batimento em que chega a 0 manda o `SELF_INFO_00` mesmo sem vida/mana mudar — é o único jeito de o cliente sair da postura de luta (`EC_HostMsg.cpp:1335`; captura 1.2.6, t = 2409,9 s) (B106) |
-| **regeneração** | `testado` | batimento de 1 s no `tick`: `hp_gen`/`mp_gen` em combate, ×4 fora (`player.cpp:9130-9137`), acumulando oitavos (`func::Update`, `actobject.h:2143`); `SELF_INFO_00` quando muda. O `hp_gen`/`mp_gen` é o da classe **mais `vitalidade / 5` e `energia / 10`** (`UpdatePlayerMPHPGen`, `playertemplate.h:874-894`; `config.h:137-138`), refeito a cada `recalcular_por_nivel` (B124 — antes só a classe). Sentado: ×2 a partir do 2º batimento (`sit_down_filter`); **apanhar levanta** (`LeaveStayInState` no `GM_MSG_ATTACK`/`HURT`, `player.cpp:782-788`: `OBJECT_STAND_UP` 112 ao dono e a quem vê); sentado, invocar/recolher mascote é ignorado (`StayInCommandHandler`, `playercmd.cpp:873-1015`, B124) |
+| **regeneração** | `testado` | batimento de 1 s no `tick`: `hp_gen`/`mp_gen` em combate, ×4 fora (`player.cpp:9130-9137`), acumulando oitavos (`func::Update`, `actobject.h:2143`); `SELF_INFO_00` quando muda. O `hp_gen`/`mp_gen` é o da classe **mais `vitalidade / 5` e `energia / 10`** (`UpdatePlayerMPHPGen`, `playertemplate.h:874-894`; `config.h:137-138`), refeito a cada `recalcular_por_nivel` (B124 — antes só a classe). Sentado: ×2 a partir do 2º batimento (`sit_down_filter`); **apanhar levanta** (`LeaveStayInState` no `GM_MSG_ATTACK`/`HURT`, `player.cpp:782-788`: `OBJECT_STAND_UP` 112 ao dono e a quem vê); sentado, só passa a lista do `StayInCommandHandler` (`playercmd.cpp:873-1015`; `DispatchCommand` no `PLAYER_SIT_DOWN`, `player.cpp:8797-8800`) — andar, atacar, conjurar, NPC, pegar, gestos, mascote e as consultas 67/68 são ignorados; `USE_ITEM` só de poção (`PlayerSitDownUseItem`/`SitDownCanUse`); `STAND_UP` e `CANCEL_ACTION` levantam (`comandos::sentado`, B143). A tabela de saltos do `gs` 1.2.6 (VA 0x84f4588) aceita os mesmos ids que tratamos, salvo 120 e 128. **Maldição levanta** como o golpe (`GM_MSG_ENCHANT` não amigável, `player.cpp:776-781`; `WorldInstance::maldicao_levanta`, B143) |
 | **experiência e SP do abate** | `testado` | lista de dano no monstro; cada um recebe `exp × dano / max(total, max_hp)` (`DispatchExp`, `npc.cpp:1515`) com o ajuste da diferença de nível e `+0,5` (`ReceiveExp`, `player.cpp:2813`); `RECEIVE_EXP` (36) depois de somar. Sem grupo: não há divisão de equipe |
 | **subida de nível** | `testado` | `IncExp`/`LevelUp` (`player.cpp:2627-2711,2831-2896`): curva `PLAYER_LEVELEXP_CONFIG` 202, +5 pontos de atributo, atributos refeitos (`recalcular_por_nivel`), vida e mana cheias, experiência zera no teto (`logic_level_limit` 105); `LEVEL_UP` (37) a todos, `SELF_INFO_00` e `OWN_EXT_PROP` ao próprio |
 | reviver na cidade (C2S 4) | `testado` | ponto de cidade do distrito do `precinct.sev` que contém a posição (`ResurrectInTown`, `playercmd.cpp:112`; spec 03 §3.7); sem distrito ou distrito de outro mapa, no lugar. Vida e mana a 10 % e perda de `GetLvlupExp × exp_lost[cultivo]` (`Resurrect`, `player.cpp:8716`) |

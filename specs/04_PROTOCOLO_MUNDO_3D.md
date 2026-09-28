@@ -134,7 +134,15 @@ VA 0x808fe34) — igual byte a byte ao comando de 56 B da captura; `PLAYER_MOUNT
 `self_info_1` do 1.2.6 leva o `0x2000` (o dono se vê de roupa). **C2S 14 (`DROP_IVTR_ITEM`) do
 1.2.6** = `u8 index, u16 amount` (o `CommandHandler` exige 5 B com o cabeçalho, VA 0x80ce383) —
 lido como o `u32` do 1.5.5, o descarte parcial jogava a pilha inteira; C2S 15 = `u8 index` (3 B)
-nas duas. Os demais bits do `state` do 1.2.6 (`0x2`, `0x40`, `0x400`…) seguem em `falta`.
+nas duas. **B143:** o `info_player_1` liga o voo `0x10` também no 1.2.6 (`TakeOff` faz
+`object_state |= 0x10`, VA 0x811d575) e o `EXTEND_PROPERTY` `0x40` com o `extend_state` — **um**
+`int` no 1.2.6 (`MakeObjectState` VA 0x8062d31, +4 no validador), **seis** no 1.5.5
+(`OBJECT_EXT_STATE_COUNT`) —, escrito depois da forma e antes da montaria (ordem do
+`MakePlayerExtendState`, VA 0x8062d54: 0x400, 0x1, 0x2, 0x40, 0x800, 0x1000, 0x10000, 0x8, 0x80000):
+quem chega depois vê a Muralha, a raposa, o escudo. `TEAM`/`TEAMLEADER` (0x100/0x200) só no 1.5.5
+(`playerteam.h:226-379`; o `gs` 1.2.6 não os liga no `object_state`). Os demais do 1.2.6 (`0x2`
+emote, `0x8` pária, `0x400` anúncio, `0x800` facção, `0x1000` barraca, `0x10000` efeito,
+`0x100000` casal, `0x800000` cônjuge) são de sistemas que o `pw-gs` não tem e vão zero.
 
 Um comando que **não** varia entre versões continua em `S2CGamedataSend`, com um só caminho
 de escrita. Quando uma medição mostrar que ele varia, ele sobe para o trait — é a regra "um
@@ -169,7 +177,7 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | comando | fato | origem |
 | :--- | :--- | :--- |
 | `info_player_1` | `cid, pos, crc_e, crc_c, dir, level2, state, state2` — **sem `world_tag`**; 30 bytes de parte fixa. Sexo = bit `0x40` do `state2` (zero = homem); `crc_c` tem de ser igual ao `custom_stamp` do `PlayerBaseInfo_Re`; `level2` leva o **cultivo** (`_basic.sec_level`) e o GM acende `STATE_GAMEMASTER 0x4000` no `state`. **O `state` decide o tamanho do comando** — ver a linha seguinte | `EC_GPDataType.h:603,709`; `gs/player_imp.h:1886` (B42b, B67) |
-| `object_state` do `info_player_1` | Cada bit ligado pode acrescentar campos, e o cliente **calcula o tamanho esperado a partir deles** (`info_player_1::CheckValid`): errar a conta faz o pacote ser descartado em silêncio. Escrevem-se na ordem do original. Os que este servidor liga (B80): `FORMA` 0x1 (+1 byte, `shape_form`), `VOO` 0x10, `CADAVER` 0x80 (`IsZombie`), `MODA` 0x2000, `GM` 0x4000, `MONTADO` 0x80000 (**+6 bytes**: `u16 mount_color`, depois `int mount_id`). Os demais (`EMOTE`, `EXTEND_PROPERTY`, `MAFIA`, `MARKET`, `EFFECT`, `PARIAH`, `IN_BIND`, `SPOUSE`, `EQUIPDISABLED`, `PLAYERFORCE`, `MULTIOBJ_EFFECT`, `COUNTRY`, e os sete do `state2`) seguem em `falta`, e por isso vão com bit zero. Sem o bit `MONTADO`, quem entra no campo de visão de alguém montado desenha a pessoa a pé — o `PLAYER_MOUNTING` (227) só alcança quem estava vendo na hora | `gs/object.h:143-180`; `common/protocol_imp.h:62-180`; `EC_GPDataType.h:198-234,624-710`; `EC_ElsePlayer.cpp:335-455` |
+| `object_state` do `info_player_1` | Cada bit ligado pode acrescentar campos, e o cliente **calcula o tamanho esperado a partir deles** (`info_player_1::CheckValid`): errar a conta faz o pacote ser descartado em silêncio. Escrevem-se na ordem do original. Os que este servidor liga (B80, B143): `FORMA` 0x1 (+1 byte, `shape_form`), `VOO` 0x10, `EXTEND_PROPERTY` 0x40 (+24 B, os 6 `extend_state`, com efeito visível), `CADAVER` 0x80 (`IsZombie`), `TEAM` 0x100 e `TEAMLEADER` 0x200, `MODA` 0x2000, `GM` 0x4000, `MONTADO` 0x80000 (**+6 bytes**: `u16 mount_color`, depois `int mount_id`). Os demais (`EMOTE`, `MAFIA`, `MARKET`, `EFFECT`, `PARIAH`, `IN_BIND`, `SPOUSE`, `EQUIPDISABLED`, `PLAYERFORCE`, `MULTIOBJ_EFFECT`, `COUNTRY`, e os sete do `state2`) seguem em `falta`, e por isso vão com bit zero. Sem o bit `MONTADO`, quem entra no campo de visão de alguém montado desenha a pessoa a pé — o `PLAYER_MOUNTING` (227) só alcança quem estava vendo na hora | `gs/object.h:143-180`; `common/protocol_imp.h:62-180`; `EC_GPDataType.h:198-234,624-710`; `EC_ElsePlayer.cpp:335-455` |
 | entrada por streaming | jogador `PLAYER_ENTER_SLICE` (12), NPC `NPC_ENTER_SLICE` (11); o 17 é para quem **surgiu** (efeito de teleporte) | `EC_ManPlayer.cpp:1845` |
 | saída | criatura/jogador fora de alcance `OBJECT_LEAVE_SLICE` (13); matéria só sai por `OUT_OF_SIGHT_LIST` (34); jogador que saiu do jogo `PLAYER_LEAVE_WORLD` (19) | `EC_GameDataPrtc.cpp:891,1056` |
 | `MATTER_ENTER_WORLD` (18) | 25 bytes: `mid, tid, pos, dir0, dir1, rad, state, value`; `state = 0` recurso comum | `EC_GPDataType.h:784` |

@@ -2367,11 +2367,22 @@ impl BusServer {
             debug!("mundo: pedido de compra de {roleid} sem itens ({} B)", conteudo.len());
             return;
         }
+        // O `tax_rate` do NPC em conversa entra no preço (`vendor_provider::OnInit`).
+        let taxa = {
+            let mundo = self.world.read().await;
+            mundo
+                .players
+                .get(&(roleid as i64))
+                .and_then(|p| p.npc_em_conversa)
+                .and_then(|id| mundo.npcs.get(&id))
+                .map(|n| mundo.data_manager.taxa_do_npc(n.template_id))
+                .unwrap_or(0.0)
+        };
         self.com_contexto(roleid, |ctx| {
             let dados = ctx.dados;
             let mut total: i64 = 0;
             for i in &pedidos {
-                let Some(unitario) = dados.preco_de_compra(i.tid as u32) else {
+                let Some(unitario) = dados.preco_de_loja(i.tid as u32, taxa) else {
                     debug!("mundo: o item {} não tem preço no elements.data", i.tid);
                     return;
                 };
