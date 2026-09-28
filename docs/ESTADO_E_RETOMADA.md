@@ -25,10 +25,9 @@
 > `path.sev` + grupo e chefe (B136), punição de nível, ódio pelo `GetEnmity`, redução/esquiva de
 > dano e roubo de vida (B137). As imagens `pw-world-126` e `pw-world-155` de 2026-09-27 12:04
 > têm até o B135; a `pw-world-126` de 2026-09-27 23:37 tem até o B137 (a Tsuko testou o B136/B137
-> nela). **B138** (mascote de ar no terreno) e **B139** (monstro de chão alcança mascote de ar e quem
-> voa baixo), **B140** (atordoar/prender/selar mascote e cancelar canto de monstro) e **B141**
-> (veneno/sangramento no mascote aparecem, sem ódio pelo tique) na árvore, não commitados nem
-> publicados.
+> nela). **B138 a B141 commitados em 2026-09-28** (`3daad2d`): mascote de ar no terreno (B138),
+> alcance do corpo a corpo do monstro com o corpo do alvo (B139), atordoado/preso/selado no
+> mascote (B140), veneno no mascote sem ódio pelo tique (B141). Não publicados.
 >
 > **Publicado em 2026-09-26 11:10 (−03):** `pw-realm-126`, `pw-world-126`, `pw-realm-155` e
 > `pw-world-155` foram reconstruídos a partir da árvore que já tinha o B120 — ou seja, **tudo
