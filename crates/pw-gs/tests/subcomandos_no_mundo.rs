@@ -49,6 +49,10 @@ const PRECO_DO_ITEM_DE_LOJA: i32 = 137;
 const PRECO_NA_LOJA_GOLD: i64 = 700;
 
 const MONSTRO: i64 = 900_001;
+/// Uma peça com `repairfee` 1000 no cenário (B142).
+const ITEM_REPARAVEL: i32 = 4125;
+/// Asas de Arqueiro do cenário: `mp_launch` 30, `mp_per_second` 7 (B142).
+const ASA_DE_ARQUEIRO: i32 = 2097;
 /// O NPC de serviço do cenário, que entrega e recebe [`MISSAO_DO_NPC`] e ensina
 /// [`HABILIDADE_DO_TREINADOR`].
 const NPC: i64 = 0x8000_0101u32 as i32 as i64;
@@ -240,6 +244,11 @@ async fn montar(
     dados
         .precos
         .insert(ITEM_DE_LOJA as u32, (50, PRECO_DO_ITEM_DE_LOJA));
+    dados.reparo.insert(
+        ITEM_REPARAVEL as u32,
+        pw_data_loader::precos::ReparoDoItem { taxa: 1000, irreparavel: false },
+    );
+    dados.asas.insert(ASA_DE_ARQUEIRO as u32, (30, 7));
     // A Loja Gold do cenário: oferta 0 = o item de loja por 700 de cash; oferta 1 = o
     // mesmo item, mas exigindo VIP 3.
     let opcao = |preco, vip| pw_data_loader::OpcaoDeCompra {
@@ -3025,15 +3034,13 @@ async fn sair_do_mundo_tambem_sai_do_grupo() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_consulta_periodica_devolve_o_hp_real_do_monstro() {
-    // O `gateway.rs` respondia `1000/1000` fixo. Como esta consulta é **periódica**, ela
-    // desfazia o combate: o golpe tirava vida no mundo e a consulta seguinte redesenhava
-    // a barra cheia. O gabarito abaixo é o do 1.2.6 (captura), então o cenário também é.
+async fn a_consulta_de_npc_desconhecido_devolve_a_ficha_para_o_cliente_o_criar() {
+    // `QUERY_NPC_INFO_1` (68) é o `UpdateUnknownNPCs` do cliente (`EC_ManNPC.cpp:1144-1164`),
+    // e o original responde `NPC_INFO_LIST` com um NPC (`gnpc_dispatcher::query_info_1`,
+    // `npc.cpp:331-338`). Respondia `NPC_INFO_00`, que não cria a criatura (B142).
     let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
     let mut link = entrar(&mundo, addr, roleid).await;
-
-    // Um dano qualquer, para que o HP consultado seja diferente do inicial.
-    mundo.write().await.monsters.get_mut(&MONSTRO).unwrap().0.hp = 55;
+    let tid = mundo.read().await.monsters.get(&MONSTRO).unwrap().0.template_id as i32;
 
     let mut corpo = 1u16.to_le_bytes().to_vec();
     corpo.extend_from_slice(&(MONSTRO as i32).to_le_bytes());
@@ -3046,22 +3053,16 @@ async fn a_consulta_periodica_devolve_o_hp_real_do_monstro() {
     .unwrap();
 
     let r = receber(&mut link, 1).await;
-    let info = r
+    let lista = r
         .iter()
-        .find(|v| cmd_de(v) == 33)
-        .expect("sem NPC_INFO_00 (33)");
-
-    // **12 bytes no 1.2.6**, medidos em 80 ocorrências de um servidor real: `idNPC`,
-    // `iHP`, `iMaxHP` e **sem** o `iTargetID`, que só existe a partir do 1.5.3 (item 56).
-    // O mundo deste teste é 1.2.6, então é este o tamanho esperado.
-    assert_eq!(
-        info.len(),
-        2 + 12,
-        "NPC_INFO_00 com tamanho errado: o cliente descarta"
-    );
-    assert_eq!(i32_em(info, 2), MONSTRO as i32);
-    assert_eq!(i32_em(info, 6), 55, "veio HP fixo em vez do HP do mundo");
-    assert_eq!(i32_em(info, 10), MONSTRO_HP_MAX as i32);
+        .find(|v| cmd_de(v) == 9)
+        .expect("sem NPC_INFO_LIST (9)");
+    // 1.2.6: `count` (2) + `info_npc` de 27 B — o `29×10` do `NPC_INFO_LIST` na captura
+    // (`docs/evidencias/126/full_interno.medidas.md`).
+    assert_eq!(lista.len(), 2 + 29, "NPC_INFO_LIST de um NPC com tamanho errado");
+    assert_eq!(u16::from_le_bytes([lista[2], lista[3]]), 1, "count");
+    assert_eq!(i32_em(lista, 4), MONSTRO as i32);
+    assert_eq!(i32_em(lista, 8), tid);
 }
 
 #[tokio::test]
@@ -8242,4 +8243,163 @@ async fn o_veneno_no_mascote_tira_vida_sem_odio_e_aparece() {
     let mascote = &m.mascotes[&pet];
     assert!(mascote.corpo.hp < vida_antes, "o veneno não tirou vida: {} de {vida_antes}", mascote.corpo.hp);
     assert!(mascote.ai.odio.is_empty(), "o tique deu ódio ao mascote: {:?}", mascote.ai.odio);
+}
+
+
+// ---------------------------------------------------------------------------
+// Fidelidade (B142)
+// ---------------------------------------------------------------------------
+
+fn peca(roleid: i32, onde: pw_core::ContainerType, slot: u16, item_id: i32, dur: u32, max: u32) -> pw_core::ItemRecord {
+    pw_core::ItemRecord {
+        id: None,
+        character_id: roleid,
+        container_type: onde,
+        slot,
+        item_id: item_id as u32,
+        count: 1,
+        max_count: 1,
+        refine_level: 0,
+        sockets_count: 0,
+        sockets: vec![],
+        durability: dur,
+        max_durability: max,
+        bind_status: 0,
+        octets: Vec::new(),
+        custom_attributes: serde_json::json!({}),
+    }
+}
+
+/// `RepairAllEquipment` (`player.cpp:9692-9713`): `repairfee × falta/máxima`, e o cliente
+/// desconta o dinheiro sozinho ao receber `REPAIR_ALL`. Era 150 fixo.
+#[tokio::test]
+async fn o_ferreiro_cobra_pela_taxa_do_arquivo_e_pelo_desgaste() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    // Cabeça (slot 1) com metade da durabilidade: 1000 × 1400/2800 = 500.
+    itens
+        .upsert_item(&peca(roleid, pw_core::ContainerType::Equipment, 1, ITEM_REPARAVEL, 1400, 2800))
+        .await
+        .unwrap();
+    dar_dinheiro(&mundo, roleid, 10_000).await;
+    let antes = dinheiro(&mundo, roleid).await;
+
+    let mut pedido = (-1i32).to_le_bytes().to_vec();
+    pedido.extend_from_slice(&[1u8, 0u8]);
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(3, &pedido),
+    })
+    .await
+    .unwrap();
+
+    let r = esperar_comando(&mut link, 74).await;
+    assert_eq!(r.len(), 2 + 4, "REPAIR_ALL é cabeçalho + cost");
+    assert_eq!(i32_em(&r, 2), 500, "custo pela taxa e pelo desgaste");
+    assert_eq!(dinheiro(&mundo, roleid).await, antes - 500);
+    let depois = itens
+        .get_item_by_slot(roleid, pw_core::ContainerType::Equipment, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(depois.durability, 2800, "a peça não voltou à durabilidade máxima");
+}
+
+/// Só as asas gastam mana: `mp_launch` ao decolar e `mp_per_second` a cada segundo; sem
+/// mana, o jogador pousa (`item_flysword.cpp:118-148`, `fly_filter.cpp:42-48`).
+#[tokio::test]
+async fn as_asas_gastam_mana_ao_decolar_e_por_segundo_e_pousam_sem_ela() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens
+        .upsert_item(&peca(roleid, pw_core::ContainerType::Equipment, 12, ASA_DE_ARQUEIRO, 0, 0))
+        .await
+        .unwrap();
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.max_mp = 1000;
+        p.mp = 100;
+    }
+    let mut corpo = vec![1u8, 1u8];
+    corpo.extend_from_slice(&12u16.to_le_bytes());
+    corpo.extend_from_slice(&ASA_DE_ARQUEIRO.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::USE_ITEM, &corpo),
+    })
+    .await
+    .unwrap();
+    esperar_comando(&mut link, 96).await;
+    {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        assert!(p.voando);
+        assert_eq!(p.mp, 70, "decolar de asas custa o mp_launch");
+        assert_eq!(p.voo_gasta_mana, Some(7));
+    }
+    // Um batimento: −7. Com a mana abaixo do custo, pousa e zera.
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().mp = 10;
+    assert!(tickar_ate(&mundo, |m| m.players[&(roleid as i64)].mp <= 3).await);
+    assert_eq!(mundo.read().await.players[&(roleid as i64)].mp, 3);
+    assert!(tickar_ate(&mundo, |m| !m.players[&(roleid as i64)].voando).await, "sem mana tem de pousar");
+    assert_eq!(mundo.read().await.players[&(roleid as i64)].mp, 0, "DrainMana zera a mana que não basta");
+    esperar_comando(&mut link, 97).await;
+}
+
+/// `PLAYER_DEAD` (27) a quem vê (`gplayer_dispatcher::on_death`, `player.cpp:3456-3468`).
+#[tokio::test]
+async fn quem_ve_o_jogador_morrer_recebe_player_died() {
+    let (mundo, addr, a, b) = cenario!();
+    let _link_a = entrar(&mundo, addr, a).await;
+    let mut link_b = segundo_jogador(&mundo, addr, b).await;
+    // O streaming só refaz a vista no movimento; é o que ele anotaria com os dois a 3 m.
+    mundo.write().await.players.get_mut(&(b as i64)).unwrap().visiveis.insert(a as i64);
+    mundo.write().await.adiar_dano(a as i64, MONSTRO, 1_000_000, 0, true);
+    let r = esperar_comando(&mut link_b, 27).await;
+    assert_eq!(r.len(), 2 + 8);
+    assert_eq!(i32_em(&r, 2), MONSTRO as i32, "idKiller");
+    assert_eq!(i32_em(&r, 6), a, "idPlayer");
+}
+
+/// `CalcEquipmentInfo` + `equipment_info_changed`: trocar de peça avisa quem vê só com a
+/// diferença, e o carimbo é o mesmo do `EQUIP_DATA` e da visão.
+#[tokio::test]
+async fn trocar_de_equipamento_avisa_quem_ve_com_o_carimbo() {
+    let (mundo, addr, a, b) = cenario!();
+    let mut link_a = entrar(&mundo, addr, a).await;
+    let mut link_b = segundo_jogador(&mundo, addr, b).await;
+    mundo.write().await.players.get_mut(&(b as i64)).unwrap().visiveis.insert(a as i64);
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens
+        .upsert_item(&peca(a, pw_core::ContainerType::Inventory, 9, ITEM_REPARAVEL, 100, 100))
+        .await
+        .unwrap();
+    let crc_antes = mundo.read().await.players[&(a as i64)].crc_equipamento;
+    // Vestir na cabeça (slot 1), que estava vazia.
+    link_a
+        .enviar(BusMessage::ClientToGame {
+            roleid: a,
+            localsid: LOCALSID,
+            data: subcomando(ids::EQUIP_ITEM, &[9u8, 1u8]),
+        })
+        .await
+        .unwrap();
+    let r = esperar_comando(&mut link_b, 67).await;
+    let crc = u16::from_le_bytes([r[2], r[3]]);
+    assert_eq!(i32_em(&r, 4), a);
+    assert_eq!(u64::from_le_bytes(r[8..16].try_into().unwrap()), 1 << 1, "mask_add: a cabeça");
+    assert_eq!(u64::from_le_bytes(r[16..24].try_into().unwrap()), 0, "mask_del");
+    assert_eq!(i32_em(&r, 24), ITEM_REPARAVEL);
+    assert_eq!(r.len(), 2 + 22 + 4);
+    let m = mundo.read().await;
+    let p = &m.players[&(a as i64)];
+    assert_ne!(crc, crc_antes, "o carimbo tem de mudar com o equipamento");
+    assert_eq!(crc, p.crc_equipamento);
+    let (mascara, ids) = p.equip_visivel.clone().unwrap();
+    assert_eq!(crc, pw_core::carimbo::carimbo_do_equipamento(mascara, &ids));
 }

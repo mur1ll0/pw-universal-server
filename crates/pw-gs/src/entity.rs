@@ -205,6 +205,19 @@ pub struct PlayerEntity {
     /// `be_damaged` (`player.cpp:9552-9570`), e ir ao banco ali punha a latência do
     /// PostgreSQL no meio da animação (B72).
     pub pecas: [Option<(i32, i32)>; PECAS_VESTIDAS],
+    /// O equipamento visível `(mask, ids)` como o `_equip_info` do original
+    /// (`gs/player_imp.h:1523`), refeito a cada `RefreshEquipment`. `None` antes da primeira
+    /// leitura: aí não há troca a anunciar.
+    pub equip_visivel: Option<(u64, Vec<i32>)>,
+    /// Voando de asas (`angel_wing_fly_filter`): a mana que o voo gasta por segundo
+    /// (`mp_per_second`, `gs/fly_filter.cpp:42-48`). `None` no chão ou de espada voadora.
+    pub voo_gasta_mana: Option<i32>,
+    /// Para onde olha, em 1/256 de volta: o `dir` do último `STOP_MOVE`
+    /// (`gplayer_dispatcher::stop_move`, `gs/player.cpp:3655`).
+    pub direcao: u8,
+    /// `crc_e` — [`pw_core::carimbo::carimbo_do_equipamento`] do [`Self::equip_visivel`]
+    /// (`CalcEquipmentInfo`, `gs/player.cpp:8316-8321`).
+    pub crc_equipamento: u16,
     /// O amuleto de vida vestido (`EQUIP_INDEX_HP_ADDON` 20) e o hierograma de mana
     /// (`EQUIP_INDEX_MP_ADDON` 21), com o que ainda resta neles. `OnActivate` guarda os dois
     /// números no jogador (`SetHPAutoGen`/`SetMPAutoGen`, `gs/item/item_amulet.cpp:22-46`) e
@@ -854,11 +867,11 @@ impl PlayerEntity {
     pub fn vista(&self) -> pw_core::VistaDoJogador {
         pw_core::VistaDoJogador {
             pos: self.position,
-            dir: 0,
+            dir: self.direcao,
             cultivo: self.cultivation.clamp(0, 255) as u8,
             sec_level: self.sec_level,
             feminino: self.gender == pw_core::Gender::Female,
-            crc_equipamento: 0,
+            crc_equipamento: self.crc_equipamento,
             crc_aparencia: self.crc_aparencia,
             voando: self.voando,
             morto: self.hp <= 0,
@@ -1197,6 +1210,10 @@ impl PlayerEntity {
             contador_mp: 0,
             recargas: std::collections::HashMap::new(),
             pecas: [None; PECAS_VESTIDAS],
+            equip_visivel: None,
+            voo_gasta_mana: None,
+            direcao: 0,
+            crc_equipamento: 0,
             auto_hp: None,
             auto_mp: None,
             daimon: None,

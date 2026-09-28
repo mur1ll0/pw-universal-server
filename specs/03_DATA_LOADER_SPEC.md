@@ -78,6 +78,8 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 | `CHARRACTER_CLASS_CONFIG` | `classes.rs` | velocidades, cadência, alcance, regeneração — **sobrescrevem o `ptemplate.conf`** (`gs/playertemplate.cpp:293-301`); agora também no v7 |
 | `MEDICINE_ESSENCE` | `quanto_o_remedio_restaura`, `quanto_o_remedio_restaura_no_tempo`, `tipo_maior_do_remedio` | poções. O `id_major_type` dá a classe do item (`set_to_classid`, `gs/template/setclassid.cpp:81-101`): **1794** cura, **1802** mana, **1810** vida e mana, **1815**/**2038** antídotos — e a família de recarga do `cool_time` (B71). Ambos chegam agora pelo catálogo v7 |
 | 25 tabelas com `price` + `shop_price` | `precos.rs` | preço de loja `max(shop_price, price)`; durabilidade de fábrica |
+| `WEAPON`/`ARMOR`/`DECORATION_ESSENCE` (`repairfee`, `proc_type`) | `precos.rs::carregar_reparo` | preço do reparo e a marca `ITEM_PROC_TYPE_UNREPAIRABLE` 0x1000 (`itemdataman.cpp:1016-1034`, `item.h:321`), v7/v156/v159 pelo nome (B142) |
+| `WINGMANWING_ESSENCE` (`mp_launch`, `mp_per_second`) | `precos.rs::carregar_asas` | mana das asas de Arqueiro/Anjo ao decolar e por segundo (B142) |
 | `WEAPON_SUB_TYPE` | `armas.rs` (`velocidade_em_ticks`) | cadência da arma: `(int)(attack_speed × 20 + 0,1)` (B52) |
 | `QUIVER_ESSENCE` | `armas.rs` (`GameDataManager::aljavas`) | drop de aljava vira munição (B52) |
 | `MONSTER_ESSENCE.size` | `monstros.rs` (`tamanho`) | corpo do alvo no alcance de golpe e habilidade (B52) |

@@ -259,7 +259,21 @@ pub enum Resultado {
         alguma_imunidade: bool,
         /// A vida que volta a quem bateu (`GM_MSG_HP_STEAL`), já com o dano final.
         vida_roubada: i32,
+        /// `_damage_dodge_rate` zerou o dano (`AT_STATE_DODGE_DAMAGE`, `actobject.cpp:717-721`).
+        esquivou_dano: bool,
     },
+}
+
+/// Os bits do `attack_flag`/`attack_state` que vão ao cliente no resultado do golpe —
+/// `gactive_imp::AT_STATE_*` (`gs/actobject.h:436-451`), os mesmos valores do
+/// `CECAttackEvent::MOD_*` do cliente (`EC_ManAttacks.h:28-42`).
+pub mod marca {
+    /// `AT_STATE_ATTACK_CRIT` / `MOD_CRITICAL_STRIKE`: o número sai dobrado de tamanho.
+    pub const CRITICO: i32 = 0x0010;
+    /// `AT_STATE_ATTACK_RETORT` / `MOD_RETORT`: golpe devolvido (espinhos).
+    pub const REVIDE: i32 = 0x0020;
+    /// `AT_STATE_DODGE_DAMAGE` / `MOD_DODGE_DAMAGE`.
+    pub const ESQUIVA_DE_DANO: i32 = 0x0400;
 }
 
 impl Resultado {
@@ -281,6 +295,19 @@ impl Resultado {
 
     pub fn foi_critico(&self) -> bool {
         matches!(self, Resultado::Acertou { critico: true, .. })
+    }
+
+    /// O `attack_state` do golpe que acertou, como o `OnDamage` o manda
+    /// (`actobject.cpp:728-766`): crítico e esquiva de dano. Zero no golpe que não chegou
+    /// — esse vai por `dodge_attack`, não pelo resultado.
+    pub fn marca(&self) -> i32 {
+        match self {
+            Resultado::Acertou { critico, esquivou_dano, .. } => {
+                (if *critico { marca::CRITICO } else { 0 })
+                    | (if *esquivou_dano { marca::ESQUIVA_DE_DANO } else { 0 })
+            }
+            _ => 0,
+        }
     }
 }
 
@@ -469,7 +496,9 @@ pub fn resolver(
     // ---- 5. `damage_adjust`: `AdjustDamage` (camada), depois o crítico ----
     // (`gactive_imp::HandleAttackMsg`, `actobject.cpp:731-742`.)
     // `_damage_dodge_rate`: o dano some (e o piso de 1 fica).
-    if defesa.esquiva_de_dano > 0 && rand::Rng::gen_range(&mut rand::thread_rng(), 0..=99) < defesa.esquiva_de_dano {
+    let esquivou_dano = defesa.esquiva_de_dano > 0
+        && rand::Rng::gen_range(&mut rand::thread_rng(), 0..=99) < defesa.esquiva_de_dano;
+    if esquivou_dano {
         total = 0.0;
     }
     // `gnpc_imp::AdjustDamage` (`npc.cpp:1727-1768`): golpe de jogador em NPC leva a punição
@@ -504,6 +533,7 @@ pub fn resolver(
         alguma_imunidade,
         // `int(hp_steal_rate × 0,01 × int_damage)` (`actobject.cpp:777-782`).
         vida_roubada: if golpe.roubo_de_vida > 0 { (golpe.roubo_de_vida as f32 * 0.01 * dano as f32) as i32 } else { 0 },
+        esquivou_dano,
     }
 }
 

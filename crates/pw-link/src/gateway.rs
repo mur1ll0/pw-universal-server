@@ -986,7 +986,12 @@ impl LinkGateway {
                         details.money.clamp(0, MONEY_CAPACITY_BASE as i64) as u32,
                         MONEY_CAPACITY_BASE,
                     ))).await?;
-                    tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_cash(0))).await?;
+                    // O cash da Loja Gold é do mundo, na resposta ao `GET_ALL_DATA` (`saldo`, com
+                    // o `accounts.gold_balance`): daqui ia um `0` antes dele, e o cliente recebia
+                    // o saldo duas vezes, a primeira errada (B142).
+                    if self.uplink_da_sessao(&session).is_none() {
+                        tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::player_cash(0))).await?;
+                    }
 
                     // 10.6 Notificações "de status" que o `SendAllData` real manda no
                     // world-entry — achadas em 2026-09-03 lendo o source do 1.5.5 (sem

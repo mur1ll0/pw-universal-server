@@ -10750,3 +10750,62 @@ comparação lado a lado.
     - `examples/habilidades_do_monstro.rs` lista as habilidades de um monstro e os roteiros.
     - Teste: `o_veneno_no_mascote_tira_vida_sem_odio_e_aparece` (vida cai, ódio vazio, 124 com o
       id do mascote).
+
+142. **Sessão 2026-09-28: oito ajustes de fidelidade do §5B (reparo, carimbo do equipamento, crítico, `PLAYER_DIED`, duplicatas, `NPC_INFO_LIST`, direção, mana das asas).**
+
+    ### a. Pedido
+    O Murillo pediu os ajustes de fidelidade do §5B: reparo de 150 fixo, `crc_e`/`weapon_level`
+    fixos, crítico sem sinal, `PLAYER_DIED` aos outros, pacotes duplicados, `NPC_INFO_LIST`,
+    direção zerada e voo sem mana — lembrando que mana no voo "parece só do arqueiro".
+
+    ### b. Causas e evidência
+    - **Reparo:** `RepairAllEquipment`/`Repair` (`gs/player.cpp:9692-9784`) cobram
+      `repairfee × falta/máxima` (`playertemplate.h:535-546`, `itemdataman.cpp:1016-1034`), só do
+      equipamento no "tudo", soma em `float` truncada, piso 1, `custo < dinheiro`. O nosso cobrava
+      150 e não consertava nada. O `REPAIR` (75) escrevia 5 B; o cliente lê `byPackage, bySlot,
+      cost` (6 B).
+    - **`crc_e`:** `CalcEquipmentInfo` (`player.cpp:8316-8321`) = `crc16(ids) ^ mask`. A tabela do
+      `libcommon/crc.c` difere da CCITT em 16 entradas; é a mesma no `gs` 1.2.6 (VA 0x86ef6e0,
+      `crc16` VA 0x82167ac, `CalcEquipmentInfo` VA 0x8073a5c), e confere com as 3 respostas 66 da
+      captura (0x1c54, 0x4cf5, 0xc035). Gerar a tabela pelo polinômio **não** batia. O original
+      também avisa quem vê a cada troca (`equipment_info_changed`), que não existia.
+      **`weapon_level` e `attack_speed` da arma já estavam certos** desde o B41h/B61
+      (`nivel_da_arma`, `velocidade_em_ticks`): o §5B estava desatualizado.
+    - **Crítico:** os bits estão no fonte, sim — `AT_STATE_*` (`actobject.h:436-451`) = `MOD_*`
+      do cliente (`EC_ManAttacks.h:28-42`), crítico 0x10. O comentário do `SEM_MARCACAO` dizia o
+      contrário.
+    - **`PLAYER_DIED`:** `on_death` (`player.cpp:3456-3468`) manda `player_dead` na fatia.
+    - **Duplicatas:** a carga de bolsa/habilidades já saía só do mundo desde o B65. Sobravam o
+      `GET_OWN_MONEY` de todo `com_contexto` que mudava estado (a experiência do abate) e o
+      `PLAYER_CASH(0)` do link antes do do mundo.
+    - **`NPC_INFO_LIST`:** o C2S 68 é o `UpdateUnknownNPCs` (`EC_ManNPC.cpp:1144-1164`); o
+      original responde `NPC_INFO_LIST` com 1 NPC a < 150 m (`player.cpp:11610-11637`,
+      `npc.cpp:331-338`). A captura 1.2.6 não tem nenhum C2S 68 — o "gabarito" do teste antigo era
+      só o tamanho do `NPC_INFO_00`.
+    - **Direção:** criatura já ia com a direção; o jogador guarda a do `stop_move`
+      (`player.cpp:3655`).
+    - **Voo:** o Murillo tinha razão — só `angel_wing_item` (asas de Arqueiro/Anjo,
+      `WINGMANWING_ESSENCE`) gasta mana: `mp_launch` ao decolar, `mp_per_second` no
+      `angel_wing_fly_filter::Heartbeat` (`item_flysword.cpp:118-148`, `fly_filter.cpp:42-48`). A
+      espada voadora gasta o próprio tempo (`cur_time`).
+
+    ### c. Correção
+    `precos::carregar_reparo`/`carregar_asas`; `BusServer::reparar` (jogo.rs);
+    `pw_core::carimbo` (tabela literal); `PlayerEntity::{equip_visivel, crc_equipamento,
+    direcao, voo_gasta_mana}`; `EQUIP_DATA_CHANGED` (67) por versão; `combat::marca` e
+    `Resultado::marca`; `AcaoDoMonstro::Atacou.marca` → `DanoRecebido.marca` → `host_attacked`;
+    `S2CGamedataSend::player_died`; `WorldProtocol::npc_info_list_de_um`;
+    `WorldInstance::gastar_mana_do_voo` + `EventoDoMundo::PousouSemMana`.
+
+    ### d. Provas
+    `carimbo::confere_com_as_capturas_do_126`; `o_ferreiro_cobra_pela_taxa_do_arquivo_e_pelo_desgaste`
+    (500 por metade de 1000); `as_asas_gastam_mana_ao_decolar_e_por_segundo_e_pousam_sem_ela`
+    (100 → 70 → pousa com 0); `quem_ve_o_jogador_morrer_recebe_player_died`;
+    `trocar_de_equipamento_avisa_quem_ve_com_o_carimbo`;
+    `a_consulta_de_npc_desconhecido_devolve_a_ficha_para_o_cliente_o_criar` (2+29 B no 1.2.6);
+    `o_critico_dobra_e_o_bonus_soma_por_cima` (marca 0x10).
+
+    ### e. O que continua faltando
+    Ver em jogo, sobretudo o 67 no 1.5.5 BR (sem `color_name`, por analogia com o 66 medido). O
+    `GetIdModify` (cor de moda, pedras 7+, afiador) não entra nos ids. A espada voadora não
+    desconta o tempo de voo. Golpe de mascote sem marca.

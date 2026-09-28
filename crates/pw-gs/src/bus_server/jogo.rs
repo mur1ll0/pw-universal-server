@@ -55,6 +55,30 @@ pub(super) mod erro_s2c {
     pub const LOJA_GOLD_PEDIDO_INVALIDO: i32 = 94;
     pub const LOJA_GOLD_VIP: i32 = 226;
 }
+/// A diferença entre dois equipamentos visíveis, como o original a anuncia: `mask_add` tem
+/// os slots que entraram ou trocaram de item (`equipment_info_changed(1 << idx, 0, &id)` ao
+/// vestir por cima, `gs/player.cpp:8204`), `mask_del` os que esvaziaram (`:7979`, `:8246`), e
+/// os ids vão na ordem crescente dos slots de `mask_add`.
+pub(crate) fn diferenca_de_equipamento(antes: &(u64, Vec<i32>), depois: &(u64, Vec<i32>)) -> (u64, u64, Vec<i32>) {
+    let por_slot = |(mascara, ids): &(u64, Vec<i32>)| -> std::collections::BTreeMap<u32, i32> {
+        (0..64).filter(|b| mascara & (1u64 << b) != 0).zip(ids.iter().copied()).collect()
+    };
+    let (a, d) = (por_slot(antes), por_slot(depois));
+    let (mut mais, mut menos, mut ids) = (0u64, 0u64, Vec::new());
+    for (slot, id) in &d {
+        if a.get(slot) != Some(id) {
+            mais |= 1u64 << slot;
+            ids.push(*id);
+        }
+    }
+    for slot in a.keys() {
+        if !d.contains_key(slot) {
+            menos |= 1u64 << slot;
+        }
+    }
+    (mais, menos, ids)
+}
+
 /// `TASK_CLT_NOTIFY_*` (`task/TaskTempl.h:103-108`).
 mod aviso_do_cliente {
     pub const CONCLUIR: u8 = 1;
@@ -447,6 +471,7 @@ impl BusServer {
                 .collect();
             let p = mundo.players.get_mut(&(roleid as i64))?;
             let gm = p.sec_level > 0;
+            let dinheiro_antes = p.money;
             let mut ctx = Contexto {
                 sub: self.sub.as_ref(),
                 p,
@@ -497,8 +522,13 @@ impl BusServer {
                 atributos: (p.strength, p.agility, p.vitality, p.energy),
                 listas: p.missoes.blocos(),
             };
-            let ficha = (mudou || subiu_de_nivel)
-                .then(|| (self.ficha_propria(p), Self::estado_proprio_de(p)));
+            let ficha = (mudou || subiu_de_nivel).then(|| {
+                (
+                    self.ficha_propria(p),
+                    Self::estado_proprio_de(p),
+                    p.money != dinheiro_antes,
+                )
+            });
             // O bloco do Daimon é o estado dele: se mudou, vai ao banco junto do resto.
             let daimon = p.daimon.as_mut().filter(|d| d.sujo).map(|d| {
                 d.sujo = false;
@@ -537,19 +567,25 @@ impl BusServer {
         for c in para_todos {
             self.transmitir_a_outros(roleid, c).await;
         }
-        if let Some((ficha, estado)) = ficha {
+        if let Some((ficha, estado, dinheiro_mudou)) = ficha {
             self.enviar_ao_jogador(roleid, estado).await;
             if subiu {
                 self.enviar_ao_jogador(roleid, ficha).await;
             }
-            let dinheiro = gravacao.money.clamp(0, u32::MAX as i64) as u32;
-            self.enviar_ao_jogador(
-                roleid,
-                self.sub
-                    .get_own_money(dinheiro, TETO_DE_DINHEIRO as u32)
-                    .data,
-            )
-            .await;
+            // Só quando o dinheiro mudou: o original não manda `GET_OWN_MONEY` a cada
+            // mudança de estado — ganhar experiência num abate (`IncExp` → `receive_exp`,
+            // `player.cpp:2924`) não mexe no saldo, e o B56 mediu o saldo indo em dobro por
+            // abate por causa deste envio incondicional.
+            if dinheiro_mudou {
+                let dinheiro = gravacao.money.clamp(0, u32::MAX as i64) as u32;
+                self.enviar_ao_jogador(
+                    roleid,
+                    self.sub
+                        .get_own_money(dinheiro, TETO_DE_DINHEIRO as u32)
+                        .data,
+                )
+                .await;
+            }
         }
 
         // Grava: bolsas primeiro (são o que o próximo pedido vai ler), o resto numa tarefa.
@@ -1483,6 +1519,17 @@ impl BusServer {
             // A durabilidade de cada peça passa a viver no mundo, como o `_equipment` do
             // original: é daqui que sai o índice do `be_damaged` e a quebra, sem ida ao
             // banco no meio do golpe (B72).
+            // `CalcEquipmentInfo` (`gs/player.cpp:8316-8321`): máscara, ids e carimbo do
+            // equipamento visível; se mudou, quem vê recebe só a diferença
+            // (`equipment_info_changed`).
+            let visivel = Self::mascara_de_equipamento(&itens);
+            p.crc_equipamento = pw_core::carimbo::carimbo_do_equipamento(visivel.0, &visivel.1);
+            let troca = p
+                .equip_visivel
+                .replace(visivel.clone())
+                .filter(|antes| *antes != visivel)
+                .map(|antes| diferenca_de_equipamento(&antes, &visivel));
+            let crc = p.crc_equipamento;
             p.pecas = [None; crate::entity::PECAS_VESTIDAS];
             for item in &itens {
                 let slot = item.slot as usize;
@@ -1549,8 +1596,12 @@ impl BusServer {
                 "mundo: {roleid} equipado — dano {}..{}, alcance {:.1}, golpe {:.2} s, defesa {}, evasão {}",
                 p.attack_min, p.attack_max, p.attack_range, p.attack_speed, p.def_phys, p.armor
             );
-            (self.ficha_propria(p), Self::estado_proprio_de(p))
+            (self.ficha_propria(p), Self::estado_proprio_de(p), troca, crc)
         };
+        if let Some((mais, menos, ids)) = pacotes.2 {
+            let aviso = self.sub.equip_data_changed(roleid, pacotes.3, mais, menos, &ids).data;
+            self.transmitir_a_quem_ve(roleid as i64, aviso).await;
+        }
         if avisar {
             self.enviar_ao_jogador(roleid, pacotes.1).await;
             self.enviar_ao_jogador(roleid, pacotes.0).await;
@@ -2607,6 +2658,115 @@ impl BusServer {
             }
         })
         .await;
+    }
+
+    /// `GP_NPCSEV_REPAIR` (3) — o ferreiro conserta uma peça ou todo o equipamento.
+    ///
+    /// Pedido `repair_executor::player_request { int type; u8 where; u8 index }`, 6 B
+    /// (`gs/serviceprovider.cpp:600-607`); `type == -1` é "consertar tudo".
+    ///
+    /// - **Tudo** (`gplayer_imp::RepairAllEquipment`, `gs/player.cpp:9692-9713`): só o
+    ///   **equipamento** vestido; soma `repairfee × falta/máxima` de cada peça em `float` e
+    ///   trunca a soma (`item_list::GetRepairCost`, `gs/item_list.cpp:217-239`); sem peça
+    ///   gasta, nada acontece; com peça gasta e soma zero, custa 1. Paga se
+    ///   `custo < dinheiro` (estrito), senão `ERR_OUT_OF_FUND`. Responde `REPAIR_ALL(custo)`.
+    /// - **Uma peça** (`gplayer_imp::Repair`, `gs/player.cpp:9755-9784`): da bolsa ou do
+    ///   equipamento; o mesmo custo, piso 1, e responde `REPAIR(where, index, custo)`.
+    ///
+    /// Peça com `proc_type & ITEM_PROC_TYPE_UNREPAIRABLE` fica de fora nos dois. O cliente
+    /// conserta e desconta o dinheiro sozinho ao receber a resposta (`OnMsgHstRepair`,
+    /// `EC_HostMsg.cpp:3417-3443`) — por isso não vai `SPEND_MONEY`.
+    pub(super) async fn reparar(
+        &self,
+        roleid: i32,
+        conteudo: &[u8],
+        envio: &crate::bus_server::EnvioAoCliente,
+    ) {
+        /// `IL_INVENTORY` 0 e `IL_EQUIPMENT` 1 (`gs/player_imp.h:1829-1831`).
+        const NA_BOLSA: u8 = 0;
+        const VESTIDO: u8 = 1;
+        let mut r = Reader::new(conteudo);
+        let (Ok(tipo), Ok(onde), Ok(indice)) = (r.i32(), r.u8(), r.u8()) else {
+            warn!("mundo: pedido de reparo de {roleid} curto ({} B)", conteudo.len());
+            return;
+        };
+        if onde != NA_BOLSA && onde != VESTIDO {
+            return;
+        }
+        let (dados, dinheiro) = {
+            let mundo = self.world.read().await;
+            let Some(p) = mundo.players.get(&(roleid as i64)) else { return };
+            (Arc::clone(&mundo.data_manager), p.money)
+        };
+        let repo = self.itens().await;
+        let recipiente = if tipo == -1 || onde == VESTIDO {
+            ContainerType::Equipment
+        } else {
+            ContainerType::Inventory
+        };
+        let pecas: Vec<pw_core::ItemRecord> = match repo.list_by_container(roleid, recipiente).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("mundo: reparo de {roleid} sem as peças: {e}");
+                return;
+            }
+        };
+        // As peças consertáveis e gastas, com o custo de cada uma (`float`, sem truncar).
+        let gastas: Vec<(u16, f32)> = pecas
+            .iter()
+            .filter(|i| tipo == -1 || (i.slot == indice as u16 && i.item_id as i32 == tipo))
+            .filter_map(|i| {
+                let reparo = dados.reparo.get(&i.item_id).copied().unwrap_or_default();
+                if reparo.irreparavel {
+                    return None;
+                }
+                let falta = i.max_durability as i32 - i.durability as i32;
+                (falta > 0 && i.max_durability > 0).then(|| {
+                    let custo = pw_data_loader::precos::custo_do_reparo(
+                        falta,
+                        i.max_durability as i32,
+                        reparo.taxa,
+                    );
+                    (i.slot, custo)
+                })
+            })
+            .collect();
+        if gastas.is_empty() {
+            // `IsItemNeedRepair` falso (peça única) ou `count == 0` (tudo): nada acontece.
+            debug!("mundo: {roleid} pediu reparo sem peça gasta (type={tipo})");
+            return;
+        }
+        let soma: f32 = gastas.iter().map(|(_, c)| *c).sum();
+        let custo = (soma as i64).max(1);
+        if custo >= dinheiro {
+            self.responder(roleid, S2CGamedataSend::error_message(erro_s2c::SEM_DINHEIRO).data, envio)
+                .await;
+            return;
+        }
+        for (slot, _) in &gastas {
+            if let Err(e) = repo.reparar(roleid, recipiente, *slot).await {
+                warn!("mundo: não gravei o reparo do slot {slot} de {roleid}: {e}");
+            }
+        }
+        {
+            let mut mundo = self.world.write().await;
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            p.money -= custo;
+            if recipiente == ContainerType::Equipment {
+                for (slot, _) in &gastas {
+                    if let Some(Some((dur, max))) = p.pecas.get_mut(*slot as usize) {
+                        *dur = *max;
+                    }
+                }
+            }
+        }
+        let resposta = if tipo == -1 {
+            S2CGamedataSend::repair_all(custo as i32)
+        } else {
+            S2CGamedataSend::repair(onde, indice, custo as i32)
+        };
+        info!("mundo: {roleid} consertou {} peça(s) por {custo}", gastas.len());
+        self.responder(roleid, resposta.data, envio).await;
     }
 
     /// `GP_NPCSEV_LEARN` (9) — `skill_executor::OnServe` (`serviceprovider.cpp:1288-1312`) e

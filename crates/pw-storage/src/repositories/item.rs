@@ -224,6 +224,30 @@ impl ItemRepository {
         Ok(linha.map(|(dur, max)| (dur, max, dur == 0)))
     }
 
+    /// Conserta a peça de um slot: a durabilidade volta à máxima (`item::Repair`,
+    /// `gs/item.h`). Devolve `true` se havia o que consertar.
+    pub async fn reparar(
+        &self,
+        character_id: RoleId,
+        container_type: ContainerType,
+        slot: u16,
+    ) -> Result<bool> {
+        let r = sqlx::query(
+            r#"
+            UPDATE character_items
+               SET durability = max_durability, updated_at = CURRENT_TIMESTAMP
+             WHERE character_id = $1 AND container_type = $2 AND slot = $3
+               AND max_durability > 0 AND durability < max_durability
+            "#,
+        )
+        .bind(character_id)
+        .bind(container_type.to_i16())
+        .bind(slot as i16)
+        .execute(self.pool.get_ref())
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Remove um item de um slot
     pub async fn delete_item_by_slot(
         &self,

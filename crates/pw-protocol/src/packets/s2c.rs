@@ -1917,6 +1917,26 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `EQUIP_DATA_CHANGED` (67) — o equipamento visível de outro jogador mudou
+    /// (`equipment_info_changed`, `gs/player.cpp:7979/8066/8204/8246`, montado em
+    /// `common/protocol_imp.h:1281-1295`). `mask_add` traz os slots que entraram **ou
+    /// trocaram de item**, com um `int` por bit em ordem crescente de slot; `mask_del`, os que
+    /// esvaziaram. O cliente troca só esses slots (`CECElsePlayer::ChangeEquipments` com
+    /// `bReset` falso). Sem `color_name` na frente, como o `EQUIP_DATA` que o binário v156
+    /// aceita (`test_equip_data_nao_leva_color_name`) — **o 67 não foi medido em jogo**.
+    pub fn equip_data_changed(player_id: i32, crc: u16, mask_add: u64, mask_del: u64, items: &[i32]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(67);                // CMD_S2C_EQUIP_DATA_CHANGED = 67
+        stream.write_u16_le(crc);               // unsigned short crc (2B)
+        stream.write_i32_le(player_id);         // int idPlayer (4B)
+        stream.write_u64_le(mask_add);          // __int64 mask_add (8B)
+        stream.write_u64_le(mask_del);          // __int64 mask_del (8B)
+        for item in items {
+            stream.write_i32_le(*item);         // int data_add[n]
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `OBJECT_MOVE` (15) — avisa quem está por perto que outro jogador (ou NPC/monstro)
     /// está andando pra `dest`. Struct real, `S2C::cmd_object_move`
     /// (`gamedata_155.json`, `S2C::cmd_object_move`), 21 bytes, **idêntica no 1.2.6 e no
@@ -2262,6 +2282,18 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `PLAYER_DIED` (27) — a quem vê: outro jogador morreu. `cmd_player_died { int
+    /// idKiller; int idPlayer }`, 8 B; o original manda com `AutoBroadcastCSMsg` na fatia de
+    /// quem morreu, sem ele (`gplayer_dispatcher::on_death`, `gs/player.cpp:3456-3468`;
+    /// `Make<player_dead>`, `common/protocol_imp.h:617-625`).
+    pub fn player_died(killer_id: i32, player_id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(27);               // PLAYER_DEAD = 27
+        stream.write_i32_le(killer_id);
+        stream.write_i32_le(player_id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `HOST_DIED` (28) — **o próprio jogador** morreu.
     ///
     /// `S2C::cmd_host_died`, 16 bytes: `idKiller` (int) e `pos` (A3DVECTOR). Ver a nota
@@ -2528,10 +2560,13 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando REPAIR (Comando 75) reparando um item individual
-    pub fn repair(slot: u8, cost: i32) -> Self {
+    /// `REPAIR` (75) — uma peça consertada: `cmd_repair { byPackage, bySlot, cost }`, 6 B
+    /// (`EC_GPDataType.h`; `repair` do servidor, `where, index, cost`). O cliente conserta a
+    /// peça e tira o `cost` do dinheiro (`OnMsgHstRepair`, `EC_HostMsg.cpp:3431-3442`).
+    pub fn repair(pacote: u8, slot: u8, cost: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(75);               // CMD_S2C_REPAIR = 75
+        stream.write_u8(pacote);
         stream.write_u8(slot);
         stream.write_i32_le(cost);
         Self { data: stream.into_bytes().to_vec() }

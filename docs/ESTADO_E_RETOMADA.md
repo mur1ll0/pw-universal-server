@@ -28,6 +28,10 @@
 > nela). **B138 a B141 commitados em 2026-09-28** (`3daad2d`): mascote de ar no terreno (B138),
 > alcance do corpo a corpo do monstro com o corpo do alvo (B139), atordoado/preso/selado no
 > mascote (B140), veneno no mascote sem ódio pelo tique (B141). Não publicados.
+> **B142 (2026-09-28):** oito ajustes de fidelidade do §5B — reparo pelo `repairfee`, carimbo
+> `crc_e` com a tabela do original e `EQUIP_DATA_CHANGED` (67) a quem vê, crítico e esquiva de
+> dano no `attack_flag`, `PLAYER_DIED` a quem vê, saldo sem duplicata, `NPC_INFO_LIST` ao C2S
+> 68, direção do jogador, mana só nas asas de Arqueiro/Anjo.
 >
 > **Publicado em 2026-09-26 11:10 (−03):** `pw-realm-126`, `pw-world-126`, `pw-realm-155` e
 > `pw-world-155` foram reconstruídos a partir da árvore que já tinha o B120 — ou seja, **tudo
@@ -99,9 +103,9 @@ v156, `tasks.data` 129, build 2569):
 - **Social:** fala, grupo.
 
 **O que falta no 1.5.5** (§5A): o sistema de Cartas de General (a caixa já dá a carta),
-serviços de refinar e incrustar, os ~300 efeitos de habilidade sem porte, intérprete do
-`aipolicy.data`, trava de PvP, resto do Daimon, armazém, troca de mapa entre contêineres,
-fôlego debaixo d'água.
+serviços de refinar, furar e incrustar, os ~300 efeitos de habilidade sem porte, trava de PvP,
+resto do Daimon, armazém, troca de mapa entre contêineres, fôlego debaixo d'água, munição e
+coleta. (O intérprete do `aipolicy.data` foi feito no B127.)
 
 **O que o 1.2.6 faz hoje** (realm `realm_126`, porta 29000): as **regras de jogo são as
 mesmas** — ficam no `pw-gs`, e o que muda por versão fica no `WorldProtocol` de
@@ -345,6 +349,7 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 | B130 | (os dois) **não publicado.** Domesticar Animal (328): no monstro com ovo (ex.: Gato de Presas Afiadas), com a vida baixa, aparece **Sucesso** ou **Falha** sobre ele; no sucesso o monstro some e o ovo entra na bolsa. Monstro sem ovo ou de nível acima do seu: **Imune**. Log: `grep -E "capturou|captura de"` |
 | B129 | (os dois) **não publicado.** Roupa comprada (Loja Gold ou NPC) chega com o sexo do molde: o maiô feminino da Tsuko mostra "Feminino" e volta a equipar depois de tirado. As duas peças já gravadas sem conteúdo precisam do SQL do histórico B129 (com a Tsuko fora do jogo) |
 | B128 | (os dois) **não publicado.** Monstro que te persegue desiste em `aggro_time` s (15 s nos do começo) se não te alcança — fugindo ou voando — e volta correndo para casa; na volta não leva dano nem nota ninguém, e chega com a vida cheia (no 1.5.5 aparece o efeito de invencível, estado 49; no 1.2.6 o `gs` original não mostra efeito). Agressivo só te nota a `sight_range + tamanho` (6–8 m nos do começo), não a 15 m. Golpe do ar em monstro de chão tira metade. Voo com o item de 15 m/s: 18 m/s (base 3 + 15). Pegar arma do chão vai para a bolsa comum. Comprar no NPC do 1.2.6 funciona |
+| B142 | (os dois) **não publicado.** Ferreiro: "consertar tudo" cobra `repairfee × desgaste` (não 150) e a peça volta cheia. Crítico: o número sai **grande** (o `MOD_CRITICAL_STRIKE`). Com dois clientes: A morre, B vê a morte (27); A troca de peça, B vê a troca **na hora** (67 — no 1.5.5 BR o 67 é por analogia com o 66: se B não vir a troca, o overlay de B deve mostrar `Invalid EQUIP_DATA_CHANGED size`); A para virado para um lado, B chega depois e o vê virado para o mesmo lado. Arqueiro com asas: decolar tira mana e o voo tira mana por segundo; sem mana, pousa. Outras classes voam sem gastar mana. Log: `grep -E "consertou|pousou sem mana"` |
 | B125 | (os dois) Loja Gold: a janela mostra o cash da **conta** (Tsuko/admin: 1.000.000 → "10000.00"), não o dinheiro do personagem; comprar um item de voo o põe na bolsa e o saldo cai o preço; sem saldo, "dinheiro insuficiente"; item VIP recusado (1.5.5) |
 
 **1.2.6 (realm 126, Tsuko e WRA)**
@@ -434,34 +439,26 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 12. **Cartas de General (B95, só a caixa):** abrir a caixa (`POKER_DICE_ESSENCE`) dá a carta
     com o bloco certo. Falta o sistema: equipar a carta, liderança, os atributos que ela dá,
     subir de nível, devorar (`swallow_exp`) e renascer.
-11. **IA de monstro (B76, parcial):** o agressivo pega quem chega perto, mas as estratégias de
-    ódio do `aipolicy.data` (facção, nível, invisibilidade, probabilidade) seguem sem
-    intérprete.
+11. **IA de monstro:** estratégias, eventos de vida e o intérprete do `aipolicy.data` feitos
+    (B126/B127, spec 05 §4.1); no 1.5.5 faltam invocações, caminhos, ações, histórico e missões
+    da política, e as estratégias de ódio por facção/invisibilidade.
 
 ### 5B. Fidelidade — números e sinais que ainda não são os do original
 
-- Valor fixo no `bus_server.rs`: reparar custa **150**. A conjuração só usa os 1000 ms fixos
-  quando a habilidade não tem `State1` na tabela do servidor.
-- `crc_e` (carimbo de equipamento) vai zero: o cliente repede o equipamento a cada
-  reaparição (B42k).
-- `weapon_level` fixo em 1 e `attack_speed` da arma zerada no bloco do item; o original tira
-  o segundo do `WEAPON_SUB_TYPE` (B41h).
-- Bits do `attack_flag` desconhecidos: o crítico é calculado e não sinalizado (A-"Na ordem").
-- `PLAYER_DIED` (27) não é mandado aos outros jogadores.
-- Duplicatas medidas no B56: a carga de inventário e habilidades (`OWN_IVTR_DATA`,
-  `OWN_ITEM_INFO`, `SKILL_DATA`) vai duas vezes por login — o link manda no `EnterWorld` e o
-  mundo de novo no `GET_ALL_DATA` (39); e `SELF_INFO_00` + `GET_OWN_MONEY` vão duas vezes
-  por abate. Falta conferir no original quem manda o quê e tirar a cópia.
-- `QUERY_NPC_INFO_1` (68) responde `NPC_INFO_00`; o original responde `NPC_INFO_LIST` com a
-  ficha do NPC (`gnpc_dispatcher::query_info_1`, `npc.cpp:330-338`) (B56).
-- `dir` zerado no streaming de NPC e jogador — a grade guarda posição, não direção (B39e).
-- Voo sem custo de mana e sem teto; `GP_STATE_FLY` fora do `state` dos pacotes de visão;
+- **Feitos no B142:** reparo pelo `repairfee`, `crc_e` e `EQUIP_DATA_CHANGED`, crítico e esquiva
+  de dano no `attack_flag`, `PLAYER_DIED` a quem vê, saldo sem duplicata, `NPC_INFO_LIST` ao 68,
+  direção do jogador, mana das asas. (`weapon_level`/`attack_speed` da arma já estavam certos
+  desde o B41h/B61.)
+- A conjuração só usa os 1000 ms fixos quando a habilidade não tem `State1` na tabela do
+  servidor.
+- O `GetIdModify` (cor de moda, pedras de nível 7+, afiador) não entra nos ids do equipamento
+  visível; o golpe de mascote vai sem marca de crítico.
+- Voo sem teto; a espada voadora não desconta o tempo de voo do item (`cls_flysword_item::OnFlying`);
   `modo_roupa` e `voando` não persistem (B40c).
 - A cura usa o ataque mágico no lugar de `GetMagicdamage`; o Tiro Certeiro (234) assume
   carga cheia (B40c).
-- Obstáculo: o monstro **de chão** desvia como o original desde o B99 (`navegacao.rs`, porte
-  do `pathfinding`); monstro de **água e ar** ainda anda em linha reta (os agentes
-  `ChaseInWaterPF`/`ChaseOnAirPF` e o mapa aéreo `airmap/` não foram portados).
+- Obstáculo: o monstro de chão desvia desde o B99 e o de ar pela octree do `airmap/` desde o
+  B133; o de **água** ainda anda em linha reta (`ChaseInWaterPF` não portado).
 - `class_templates` tem colunas de atributo que o código ignora (quem manda é o
   `ptemplate.conf`) — decidir quando o painel for editar moldes (B43h).
 - Senha de segurança (`CHECK_SECURITY_PASSWD`): qualquer uma passa — não há senha no banco.
@@ -547,10 +544,22 @@ missões.
 reta), os gatilhos de rota do `aipolicy` (`PathEnd`, trocar de rota) e o tempo de renascer do
 grupo pelo `iFirstGen` (usa o do líder).
 
-**Próximos passos, em ordem:** (1) publicar o B136 (a pedido) e o **teste em jogo do Murillo**
-(§3.3, B136 primeiro) — o que ele relatar passa à frente de tudo; (2) commitar o B122 (a pedido);
-(3) os bits restantes do `state` do 1.2.6 e o `m_ulType` do v55; (4) espinhos contra golpe de
-habilidade e de jogador; (5) voltar à fila do 1.5.5 (§5A).
+**Fila pedida pelo Murillo em 2026-09-28, em ordem, com um commit ao fim de cada fase:**
+
+1. ~~Fidelidade (§5B)~~ — **feito no B142** (falta ver em jogo).
+2. **1.2.6:** (a) os bits do `state` do 1.2.6 que faltam (`0x2`, `0x40`, `0x400`…); (b)
+   `m_ulType` e `m_bItemNotTakeOff` do `tasks.data` v55; (c) espinhos (`Retort2`) contra golpe de
+   habilidade e de jogador; (d) sentado: ignorar atacar, conjurar e andar, e a maldição levantar
+   (`StayInCommandHandler`, `playercmd.cpp:873-1015`); (e) preço real da loja no v7; (f)
+   conferir `CUSTOMIZEDATA`, `PLAYER_ACTION_INFO` e `FACEPILL` do v7; (g) cada leitor de mapa do
+   `realm_126` fechando no último byte; (h) teto de 80 criaturas visíveis contra 220.
+3. **1.5.5 (§5A):** Cartas de General; refinar, fazer furo e incrustar; os ~300 efeitos de
+   habilidade sem porte; trava de PvP; o resto do Daimon; armazém; troca de mapa entre
+   contêineres e teleporte por NPC; fôlego debaixo d'água; casos de missão recusados;
+   munição (golpe sem flecha recusado, bônus da flecha); coleta (recarga, interrupção por dano,
+   ajuste de nível).
+
+O teste em jogo do Murillo continua passando à frente de tudo quando chegar um relato.
 
 **Outras frentes, depois:**
 - **Cliente v181** (`E:\0_GAMES\Perfect World`, build 2591): exigiria `v181.json` no
@@ -737,3 +746,4 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 129 | 09-26 | conteúdo da roupa (`generate_fashion_item`: nível, cor, **sexo**, etiqueta); roupa e item de voo gerados também na compra no NPC |
 | 128 | 09-26 | teste da Tsuko: temporizador de ódio (`aggro_time`), `RollBack` com volta invencível (22) e vida cheia fora de combate, detecção por `sight_range + size`, camada no dano (`gnpc_imp::AdjustDamage`), `speed_increase` do item de voo, pegar sempre na bolsa comum, cabeçalho de compra de 8 B no 1.2.6 |
 | 125 | 09-26 | Loja Gold nas duas versões: `gshop.data` do cliente lido (1436/1288 B), `MALL_SHOPPING` 12 B/6 B por versão, cash da conta (`gold_balance`) no `PLAYER_CASH`, `MALL_ITEM_BUY_FAILED` com 3 B |
+| 142 | 09-28 | fidelidade: reparo pelo `repairfee`, `crc_e` (tabela do `crc.c`) e `EQUIP_DATA_CHANGED`, crítico no `attack_flag`, `PLAYER_DIED`, saldo sem duplicata, `NPC_INFO_LIST` ao 68, direção do jogador, mana das asas |

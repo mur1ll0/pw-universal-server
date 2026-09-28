@@ -28,6 +28,8 @@ pub enum EventoDoMundo {
         dano: i32,
         hp: i32,
         max_hp: i32,
+        /// O `attack_state` do golpe (crítico etc., [`crate::combat::marca`]).
+        marca: i32,
     },
     /// O jogador chegou a zero de vida.
     JogadorMorreu {
@@ -85,6 +87,9 @@ pub enum EventoDoMundo {
     /// Vida ou mana do jogador mudaram sozinhas (regeneração): o `SELF_INFO_00` é o que o
     /// original manda quando o `_refresh_state` liga (`GenHPandMP`, `actobject.h:2167`).
     EstadoMudou { roleid: RoleId },
+    /// A mana acabou no voo de asas e o filtro de voo saiu (`angel_wing_fly_filter::Heartbeat`
+    /// → `_is_deleted`, `gs/fly_filter.cpp:42-48`): o jogador pousa.
+    PousouSemMana { roleid: RoleId },
     /// O corpo do monstro some (`GM_MSG_OBJ_ZOMBIE_END`, `_corpse_delay`, `npc.cpp:1446-1459`).
     MonstroSumiu { id: i64 },
     /// O monstro renasceu no ponto de origem.
@@ -2009,6 +2014,29 @@ impl WorldInstance {
             .collect()
     }
 
+    /// `angel_wing_fly_filter::Heartbeat` (`gs/fly_filter.cpp:42-48`): a cada segundo o voo de
+    /// asas tira `mp_per_second` (`DrainMana`, `gs/player.cpp:10697-10712`); sem mana
+    /// bastante, a mana zera, o filtro sai e o jogador pousa.
+    pub fn gastar_mana_do_voo(&mut self) -> Vec<EventoDoMundo> {
+        let mut eventos = Vec::new();
+        for p in self.players.values_mut() {
+            let Some(custo) = p.voo_gasta_mana.filter(|_| p.voando) else { continue };
+            if p.mp >= custo {
+                p.mp -= custo;
+                if custo > 0 {
+                    eventos.push(EventoDoMundo::EstadoMudou { roleid: p.role_id });
+                }
+            } else {
+                p.mp = 0;
+                p.voando = false;
+                p.voo_gasta_mana = None;
+                eventos.push(EventoDoMundo::EstadoMudou { roleid: p.role_id });
+                eventos.push(EventoDoMundo::PousouSemMana { roleid: p.role_id });
+            }
+        }
+        eventos
+    }
+
     fn disparar_amuletos(&mut self) -> Vec<EventoDoMundo> {
         let mut eventos = Vec::new();
         for p in self.players.values_mut() {
@@ -2265,12 +2293,12 @@ impl WorldInstance {
                         nivel: h.nivel,
                     });
                 }
-                Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano, fisico }) => {
+                Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano, fisico, marca }) => {
                     // Quem bateu vai junto: sem o id, o `HOST_ATTACKED` saía com
                     // `idAttacker = 0` e o cliente não achava o atacante
                     // (`ISPLAYERID`/`ISNPCID` são falsos para zero, `EC_HostMsg.cpp:968-1006`)
                     // — o jogador perdia vida sem ver o monstro bater (B59).
-                    attacks_to_process.push((monster.id, alvo, dano, fisico));
+                    attacks_to_process.push((monster.id, alvo, dano, fisico, marca));
                 }
                 Some(crate::ai::AcaoDoMonstro::Andou {
                     destino,
@@ -2452,6 +2480,9 @@ impl WorldInstance {
             for roleid in mudaram {
                 self.emitir(EventoDoMundo::EstadoMudou { roleid });
             }
+            for ev in self.gastar_mana_do_voo() {
+                self.emitir(ev);
+            }
             for ev in self.disparar_amuletos() {
                 self.emitir(ev);
             }
@@ -2480,7 +2511,7 @@ impl WorldInstance {
         // (`actobject.cpp:1758-1776`), o mesmo número que o cliente usa como duração da
         // animação do golpe. Aplicar na hora fazia a vida cair antes de o monstro sequer
         // parar de correr na tela (relato de 2026-09-18, B62).
-        for (monstro_id, player_id, damage, fisico) in attacks_to_process {
+        for (monstro_id, player_id, damage, fisico, marca) in attacks_to_process {
             let atraso = self
                 .monsters
                 .get(&monstro_id)
@@ -2524,6 +2555,7 @@ impl WorldInstance {
                 dano: damage,
                 hp,
                 max_hp,
+                marca,
             });
             self.adiar_golpe_no_jogador(player_id, monstro_id, damage as i64, fisico, atraso);
         }

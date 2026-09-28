@@ -62,6 +62,69 @@ pub fn carregar(elements: &GenericElementsData) -> TabelaDePrecos {
     tabela
 }
 
+/// `ITEM_PROC_TYPE_UNREPAIRABLE` (`gs/item.h:321`): a peça não entra no reparo.
+pub const PROC_IRREPARAVEL: i32 = 0x1000;
+
+/// O que o reparo precisa de um equipamento: `repairfee` e se o `proc_type` o proíbe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ReparoDoItem {
+    /// `repairfee` do `WEAPON_ESSENCE`/`ARMOR_ESSENCE`/`DECORATION_ESSENCE` — o preço de
+    /// consertar a peça inteira (`itemdataman::get_item_repair_fee`,
+    /// `gs/template/itemdataman.cpp:1016-1034`; outras famílias devolvem 0).
+    pub taxa: i32,
+    /// `proc_type & ITEM_PROC_TYPE_UNREPAIRABLE` (`gs/item_list.cpp:226`).
+    pub irreparavel: bool,
+}
+
+/// As três famílias que têm `repairfee` (`itemdataman.cpp:1022-1030`).
+const FAMILIAS_COM_REPARO: [&str; 3] = ["WEAPON_ESSENCE", "ARMOR_ESSENCE", "DECORATION_ESSENCE"];
+
+/// `repairfee` e `proc_type` por id de equipamento. Lê as três tabelas pelo nome do campo, o
+/// mesmo nas versões v7, v156 e v159 do catálogo.
+pub fn carregar_reparo(elements: &GenericElementsData) -> HashMap<u32, ReparoDoItem> {
+    let mut tabela = HashMap::new();
+    for familia in FAMILIAS_COM_REPARO {
+        for reg in elements.get(familia) {
+            let i = |n: &str| reg.get(n).and_then(|v| v.as_i32()).unwrap_or(0);
+            let id = i("ID");
+            if id <= 0 {
+                continue;
+            }
+            tabela.entry(id as u32).or_insert(ReparoDoItem {
+                taxa: i("repairfee").max(0),
+                irreparavel: i("proc_type") & PROC_IRREPARAVEL != 0,
+            });
+        }
+    }
+    tabela
+}
+
+/// `(mp_launch, mp_per_second)` das asas de Arqueiro/Anjo (`WINGMANWING_ESSENCE`), por id.
+/// São o único item de voo que gasta mana (`angel_wing_item::OnUse`,
+/// `gs/item/item_flysword.cpp:118-148`; `angel_wing_fly_filter::Heartbeat`,
+/// `gs/fly_filter.cpp:42-48`); a espada voadora gasta o próprio tempo de voo (`cur_time`).
+pub fn carregar_asas(elements: &GenericElementsData) -> HashMap<u32, (i32, i32)> {
+    elements
+        .get("WINGMANWING_ESSENCE")
+        .iter()
+        .filter_map(|r| {
+            let i = |n: &str| r.get(n).and_then(|v| v.as_i32()).unwrap_or(0);
+            (i("ID") > 0).then(|| (i("ID") as u32, (i("mp_launch").max(0), i("mp_per_second").max(0))))
+        })
+        .collect()
+}
+
+/// `player_template::GetRepairCost` (`gs/playertemplate.h:535-546`): `base × (falta/máxima)`
+/// em `float`, zero quando nada falta. Quem soma várias peças trunca a soma, não cada parcela
+/// (`item_list::GetRepairCost`, `gs/item_list.cpp:217-239`).
+pub fn custo_do_reparo(falta: i32, maxima: i32, taxa: i32) -> f32 {
+    if maxima > 0 && falta > 0 {
+        taxa as f32 * (falta as f32 / maxima as f32)
+    } else {
+        0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,6 +136,14 @@ mod tests {
         r.insert("price".into(), FieldValue::Int(price));
         r.insert("shop_price".into(), FieldValue::Int(shop));
         r
+    }
+
+    #[test]
+    fn custo_do_reparo_e_proporcional_ao_desgaste() {
+        // taxa 1000, metade gasta → 500; nada gasto → 0; máxima zero → 0.
+        assert_eq!(custo_do_reparo(1400, 2800, 1000), 500.0);
+        assert_eq!(custo_do_reparo(0, 2800, 1000), 0.0);
+        assert_eq!(custo_do_reparo(10, 0, 1000), 0.0);
     }
 
     #[test]

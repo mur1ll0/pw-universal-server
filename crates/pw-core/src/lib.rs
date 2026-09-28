@@ -1,3 +1,4 @@
+pub mod carimbo;
 pub mod character;
 pub mod equipamento;
 pub mod items;

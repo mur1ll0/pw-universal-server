@@ -82,9 +82,9 @@ habilidades, itens, `sec_level`.
 | alcance dos avisos | movimento e parada de monstro vão **só a quem o vê** (`transmitir_a_quem_ve`) | o original difunde na fatia do NPC (`AutoBroadcastCSMsg`, `npc.cpp:85-98`). Mandando ao mapa inteiro, o cliente recebia comando de monstro que nunca viu entrar, o punha na fila de "NPC desconhecido" e perguntava por ele de 10 em 10 s para sempre (`EC_ManNPC.cpp:967-975`, `1144-1164`) — 319 comandos assim no teste de 2026-09-17 (B57) |
 
 Saída do jogo: `tirar_da_vista_de_todos` (no `LOGOUT` e no `PlayerLogout`).
-`falta`: o `dir` de **jogador** vai zero (a grade guarda posição, não direção) — o de criatura
-leva a direção do gerador desde o B59 (§2); jogadores visíveis por link na fala não separam
-mundos.
+Direção: a criatura leva a do gerador desde o B59 (§2); o jogador, o `dir` do último `STOP_MOVE`
+(`pPlayer->dir = dir`, `gs/player.cpp:3655`; `PlayerEntity::direcao`, B142). `falta`: jogadores
+visíveis por link na fala não separam mundos.
 
 ## 4. IA de monstro (`ai.rs`, `politica.rs`) — `testado` (B126 e B127 não publicados)
 
@@ -455,8 +455,11 @@ maior substitui; `+ 0,00001` na porcentagem; classes da máscara 0xACE não rece
 `actobject.cpp:1496-1497`): `int(rate × 0.01f × dano)` em float (10 % de 1000 = 99) volta na
 hora a quem bateu, com o `PLAYER_HP_STEAL` 279 (`actobject.cpp:297-302`).
 
-`falta`: filtros de escudo, esquiva de maldição (`Incdebuffdodge` é lido, a regra não), vigor, bits do `attack_flag`, **trava de PvP** (qualquer
-jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe contra jogador.
+Sinais ao cliente (B142, `testado`): o crítico e a esquiva de dano vão no `attack_flag` (spec 04
+§5); quem vê um jogador morrer recebe `PLAYER_DIED` (27).
+
+`falta`: filtros de escudo, esquiva de maldição (`Incdebuffdodge` é lido, a regra não), vigor, **trava de PvP** (qualquer
+jogador fere qualquer outro), sessão de golpe contra jogador, marca no golpe de mascote.
 
 ## 6. Habilidades (`habilidades.rs`) — `parcial`
 
@@ -605,7 +608,7 @@ jogador fere qualquer outro), `PLAYER_DIED` para terceiros, sessão de golpe con
 | distribuir pontos (C2S 22) | `testado` (B51) | `PlayerSetStatusPoint` (`player.cpp:8598`): recusa se alguma parcela ou a soma passa dos livres; soma, refaz vida/mana, evasão e precisão pela agilidade; `ADD_STATUS_POINT` (51, 22 bytes) com os quatro e o que sobrou (recusa com zeros). O cliente pede `GET_EXT_PROP` (21), que responde `OWN_EXT_PROP` (`PlayerGetProperty`, `:8588`) — antes só `SELF_INFO_00`. Grava atributos e pontos juntos (`gravar_atributos`) |
 | munição (golpe normal) | `testado` (B51, B71) | arma de longo alcance (`weapon_type` 1) tira 1 do slot 11 (`DoAttack`, `player.cpp:3063-3070`). A contagem **mora na sessão de ataque**, como o `item_list` em memória do original: o banco é lido uma vez ao abrir a sessão (o número que vai no `HOST_START_ATTACK`) e a baixa é persistida fora do fio, senão a latência do banco alongava a cadência (B71). O `arrow_dec` do `ATTACK_ONCE` vale **1 sempre que a arma é de longe**, com ou sem flecha sobrando: o original ignora o retorno do `DecAmount` (`:3064-3070`). A flecha só sai depois das conferências do golpe. Sem munição o golpe não é recusado (`falta`: invalidar o arco pelo equipamento); o bônus de dano da flecha não entra |
 | mapa sem voo (B133) | `testado` | `nofly` do `gs.conf` (spec 03 §3.6e): decolar manda `ERR_CANNOT_FLY` **55** e não decola (`flysword_item::OnUse`, `item_flysword.cpp:55-70`; `push 0x37` no `gs` 1.2.6, VA 0x819505f); chegar voando a um mapa `nofly` derruba o voo com `OBJECT_LANDING` (`player.cpp:11994-11998`); mascote de ar não aparece (-2) e o de chão+ar/todos pula o ar (`petman.cpp:104/140/270`). Nenhum mapa servido hoje (o 1) é `nofly` |
-| voo | `confirmado` | pelo item no slot 12 (`EQUIPIVTR_FLYSWORD`); sem custo de mana, sem teto, `GP_STATE_FLY` fora do `state`. **Velocidade (B128, `testado`):** `fly_speed` do `ptemplate` + o `speed_increase` do item de voo (offset 20 do conteúdo gravado; `flysword_item::OnActivate`, `item_flysword.h:126-129`), teto `MAX_FLIGHT_SPEED` 20 (`playertemplate.h:1101-1110`), no `OWN_EXT_PROP`. Antes o item não somava: a Tsuko voava a 3 m/s com o de "15 m/s". Falta o `_en_percent.flight_speed` (`EnhanceFlySpeed`) |
+| voo | `confirmado` | pelo item no slot 12 (`EQUIPIVTR_FLYSWORD`); sem teto. **Mana só nas asas** (B142, `testado`): as asas de Arqueiro/Anjo (`WINGMANWING_ESSENCE`) tiram `mp_launch` ao decolar e `mp_per_second` a cada segundo; sem a mana da decolagem a mana zera e não decola, e sem a do segundo pousa (`OBJECT_LANDING`) com a mana em zero (`angel_wing_item::OnUse`, `item_flysword.cpp:118-148`; `angel_wing_fly_filter::Heartbeat`, `fly_filter.cpp:42-48`; `DrainMana`, `player.cpp:10697-10712`). A espada voadora das outras classes não gasta mana: gasta o tempo de voo do item (`cls_flysword_item::OnFlying`) — `falta` descontar esse tempo. **Velocidade (B128, `testado`):** `fly_speed` do `ptemplate` + o `speed_increase` do item de voo (offset 20 do conteúdo gravado; `flysword_item::OnActivate`, `item_flysword.h:126-129`), teto `MAX_FLIGHT_SPEED` 20 (`playertemplate.h:1101-1110`), no `OWN_EXT_PROP`. Antes o item não somava: a Tsuko voava a 3 m/s com o de "15 m/s". Falta o `_en_percent.flight_speed` (`EnhanceFlySpeed`) |
 | teleporte de GM (`GOTO`) | `confirmado` | `y` do cliente é marcador; altura = chão + 0,5 m (`playercmd.cpp:4926`) |
 | sentar, gestos, roupa, zona segura | `confirmado` | O **modo roupa persiste** (B83): o `SWITCH_FASHION_MODE` grava o `charactermode` em `characters.character_mode` — pares `(chave, valor)` de `int32`, chave 1, e nada quando desligado (`GetPlayerCharMode`, `gs/player.cpp:12585-12612`) —, o login o relê, e ele viaja cru no `RoleInfo` da lista de personagens, que é de onde a **tela de seleção** decide desenhar roupa ou armadura (`CECLoginPlayer::Load`, `EC_LoginPlayer.cpp:172-189`). `voando` continua sem persistir, de propósito: quem relogar entra no chão **Sentado**, o `sit_down_filter` dobra a regeneração de vida e mana a partir do 2º batimento (`STAYIN_BONUS` 100, `gs/config.h:103`; igual no `gs` 1.2.6, VA 0x812ff22) — `testado` (B118) |
 | grupo | `testado` | estado de grupo no mundo (convite, aceite, recusa, saída) |
@@ -660,7 +663,7 @@ desconta sozinho, com os mesmos números (`WEAPON_RUIN_SPEED -2`, `ARMOR_RUIN_SP
 | chegou a zero | para em zero, e **uma vez** sai `EQUIP_DAMAGED` (68) com motivo 0 mais o recálculo do equipamento (`_runner->equipment_damaged` + `RefreshEquipment`, `player.cpp:9563-9567`) |
 | peça acabada | não conta em nada: `equip_item::VerifyRequirement` exige `durability > 0` (`item/equip_item.cpp:60-80`) |
 | aviso de durabilidade baixa | é **do cliente**, sem comando nenhum: `CECGameUIMan::RefreshBrokenList` (`EC_GameUIMan.cpp:5474-5555`) roda a cada quadro e põe na janela `Win_Broken` o ícone de toda peça com `cur <= max / 10`, amarelo (192,192,0) enquanto sobra durabilidade e vermelho (192,0,0) em zero; aljava entra abaixo de 15% de flechas, e asa/espada voadora/moda nunca entram |
-| reparar | `falta`: o custo é 150 fixo e nada devolve durabilidade |
+| reparar | ver "reparar" na tabela da economia (B142) |
 
 A bolsa é lida do banco a cada operação e gravada de volta só nos slots que mudaram
 (`economia::Bolsa`). O **dinheiro vive na entidade** (o autosave grava a entidade por cima do
@@ -674,7 +677,8 @@ banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
 | conteúdo da roupa (B129) | `testado` | `FASHION_ESSENCE` entra com 10 B: `int require_level`, `u16 color` (`RandNormal(0, 0x7FFF)`), `u16 gender`, etiqueta de 2 B (`generate_fashion_item`, `generate_item_temp.h:1642-1712`; mesma ordem no `gs` 1.2.6, VA 0x81f6fdc). `GameDataManager::conteudo_da_roupa`, usado pelo `empilhar_gerado` (Loja Gold, prêmio, drop) e pela compra no NPC. Sem ele o cliente lia `gender` 0 (masculino) e recusava a roupa feminina |
 | comprar de NPC | `testado` | roupa e item de voo com conteúdo próprio (`get_item_for_sell`); cabeçalho do pedido por versão (`WorldProtocol::bytes_do_cabecalho_da_compra`: 28 B no 1.5.5, **8 B no 1.2.6** — B128, spec 04); preço `max(shop_price, price)`; empilha e responde `PURCHASE_ITEM` (72) (`PurchaseItem`, `player.cpp:8900`); sem dinheiro `ERROR_MESSAGE` 16; `falta` conferir a lista de venda do NPC |
 | vender a NPC | `testado` | `price × quantidade`, proporcional à durabilidade (`ItemToMoney`, `player.cpp:13930`); `ITEM_TO_MONEY` (73); o `price` do cliente é ignorado; antes do 73, um `UNFREEZE_IVTR_SLOT` (181) por espaço pedido, também o recusado — o cliente congela o espaço ao pedir e só o solta com ele (captura 1.2.6, t = 2540,77 s; B109) O item do pedido tem 16 B no 1.5.5 (`npc_sell_item` com `price`) e **12 B no 1.2.6** (sem `price`, medido no pedido real: `len` 148 = 4 + 12 × 12) — `WorldProtocol::bytes_do_item_vendido` (B116; antes só o 1º item saía certo e os outros ficavam sombreados) |
-| reparar | `parcial` | **150 fixo** (da entidade), e **não devolve durabilidade** |
+| reparar (B142) | `testado` | serviço 3, pedido `{int type; u8 where; u8 index}` (`serviceprovider.cpp:600-607`). **Tudo** (`type` −1, `RepairAllEquipment`, `player.cpp:9692-9713`): só o equipamento vestido; soma em `float` `repairfee × (máx − atual)/máx` de cada peça gasta (`GetRepairCost`, `playertemplate.h:535-546`; `repairfee` de `WEAPON`/`ARMOR`/`DECORATION_ESSENCE`, `itemdataman.cpp:1016-1034`) e trunca a soma; nada gasto, nada acontece; soma zero com peça gasta custa 1; paga se `custo < dinheiro`, senão `ERROR_MESSAGE` 16; `REPAIR_ALL` (74). **Uma peça** (`Repair`, `player.cpp:9755-9784`): bolsa ou corpo, piso 1, `REPAIR` (75). Peça com `proc_type & 0x1000` fica de fora. A durabilidade volta à máxima no banco e em `PlayerEntity::pecas` |
+| saldo ao cliente | `testado` (B142) | `GET_OWN_MONEY` (82) só quando o dinheiro muda num `com_contexto` — a experiência do abate não o manda mais (o B56 mediu o saldo em dobro por abate); o `PLAYER_CASH` da entrada é só o do mundo, com o cash da conta (o link mandava um `0` antes) |
 | durabilidade | `testado` (B61) | escala interna, desgaste e quebra — ver "Durabilidade" acima |
 | curar no NPC | `testado` | pelos valores do jogador |
 | aprender habilidade | `testado` | `skill_executor::OnServe` + `SkillStub::LearnCondition`/`Learn` (`serviceprovider.cpp:1288`, `cskill/skill/skill.cpp:14-93`): habilidade da lista do treinador (`NPC_SKILL_SERVICE`), fora de combate, nível ≤ máximo, classe, pré-requisitos, nível, SP, `rank` × cultivo, dinheiro, e o livro do nível (`GetRequiredItem`, `SetUseitem` → `TakeOutItem`, `skill.cpp:79-84`; sem ele 22); cobra (`SPEND_MONEY` 77, `COST_SKILL_POINT` 94), o livro sai com `PLAYER_DROP_ITEM` (46, `DROP_TYPE_TAKEOUT` 2) (B113) e responde `LEARN_SKILL` (95). Requisito `null` na tabela recusa |

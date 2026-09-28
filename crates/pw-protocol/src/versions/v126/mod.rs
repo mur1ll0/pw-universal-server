@@ -520,6 +520,23 @@ impl WorldProtocol for V126Protocol {
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
+    fn equip_data_changed(&self, player_id: i32, crc: u16, mask_add: u64, mask_del: u64, items: &[i32]) -> S2CGamedataSend {
+        // `Make<equipment_info_changed>::From` do `gs` 1.2.6 (VA 0x808fc06): cabeçalho 0x43,
+        // `(u16) crc`, `int id`, `unsigned int mask_add`, `unsigned int mask_del` e os ids —
+        // as máscaras têm 32 bits, como a do 66 (assinatura `gplayer*, jjPKvj`).
+        let mask_add = mask_add as u32;
+        let mut s = OctetsStream::new();
+        s.write_u16_le(67);
+        s.write_u16_le(crc);
+        s.write_i32_le(player_id);
+        s.write_u32_le(mask_add);
+        s.write_u32_le(mask_del as u32);
+        for item in items.iter().take(mask_add.count_ones() as usize) {
+            s.write_i32_le(*item);
+        }
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
     fn own_ext_prop(
         &self,
         status_point: u32,

@@ -101,14 +101,10 @@ fn saturar(v: i64) -> i32 {
 /// ainda não guarda essa preferência por grupo; quando guardar, é este valor que sai daqui.
 const PICK_FLAG_PADRAO: u16 = 0;
 
-/// `attack_flag` sem nenhum bit ligado.
-///
-/// O campo existe nos comandos de resultado de ataque e o comentário do
-/// `protocol.h` original diz que ele marca runas de ataque, runas de defesa e crítico —
-/// mas **as posições dos bits não estão em nenhuma fonte que temos**, nem no cliente nem
-/// no servidor vazado. Zero é o único valor que sabemos ser correto: nenhum efeito
-/// especial. O dano crítico continua sendo calculado e debitado; o que falta é o aviso
-/// visual, e está anotado como dívida em `docs/ESTADO_E_RETOMADA.md`.
+/// `attack_flag` sem nenhum bit ligado — para o que não sai de um [`combat::Resultado`]
+/// (dano de efeito no tempo, golpe devolvido sem rolagem). Os bits são os
+/// `AT_STATE_*` (`gs/actobject.h:436-451`), em [`combat::marca`]; até 2026-09-28 este
+/// comentário dizia que eles não estavam em fonte nenhuma.
 const SEM_MARCACAO: i32 = 0;
 
 /// `section` de uma habilidade que causa dano uma vez só.
@@ -644,6 +640,7 @@ impl BusServer {
                 dano,
                 hp,
                 max_hp,
+                marca,
             } => {
                 // Dois avisos: o golpe em si, e a vida que sobrou.
                 //
@@ -666,7 +663,7 @@ impl BusServer {
                 self.enviar_ao_jogador(
                     roleid,
                     self.sub
-                        .host_attacked(atacante as i32, dano, peca, SEM_MARCACAO, atraso)
+                        .host_attacked(atacante as i32, dano, peca, marca, atraso)
                         .data,
                 )
                 .await;
@@ -713,6 +710,14 @@ impl BusServer {
                 self.transmitir_a_quem_ve(id, pacote).await;
             }
 
+            EventoDoMundo::PousouSemMana { roleid } => {
+                // O filtro de voo saiu: `OBJECT_LANDING` a ele e a quem vê, como ao pousar.
+                let pacote = S2CGamedataSend::object_landing(roleid).data;
+                self.enviar_ao_jogador(roleid, pacote.clone()).await;
+                self.transmitir_a_outros(roleid, pacote).await;
+                debug!("mundo: {roleid} pousou sem mana para as asas");
+            }
+
             EventoDoMundo::JogadorMorreu {
                 roleid,
                 matador,
@@ -724,6 +729,12 @@ impl BusServer {
                 self.enviar_ao_jogador(
                     roleid,
                     S2CGamedataSend::host_died(matador as i32, pos).data,
+                )
+                .await;
+                // E quem vê recebe `PLAYER_DEAD` (`on_death`, `gs/player.cpp:3466-3467`).
+                self.transmitir_a_quem_ve(
+                    roleid as i64,
+                    S2CGamedataSend::player_died(matador as i32, roleid).data,
                 )
                 .await;
             }
@@ -1679,7 +1690,15 @@ impl BusServer {
             return;
         };
         let pos = Vector3::new(m.pos.x, m.pos.y, m.pos.z);
-        self.world.write().await.mover_jogador(roleid, pos);
+        {
+            let mut mundo = self.world.write().await;
+            mundo.mover_jogador(roleid, pos);
+            // `pPlayer->dir = dir` (`gplayer_dispatcher::stop_move`, `gs/player.cpp:3655`): é a
+            // direção que vai a quem passa a ver o jogador depois.
+            if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
+                p.direcao = m.dir;
+            }
+        }
 
         let pacote = self
             .sub
@@ -1972,16 +1991,13 @@ impl BusServer {
         )
         .await;
 
-        // 1. O resultado do golpe.
-        //
-        // O `attack_flag` vai em `SEM_MARCACAO`: os bits dele não estão em nenhuma das
-        // fontes que temos (ver a constante). O crítico já foi aplicado ao dano; o que se
-        // perde é o *aviso visual* de crítico, e é uma dívida anotada — não um palpite.
+        // 1. O resultado do golpe, com o `attack_state` do `OnDamage` (crítico, esquiva de
+        // dano — `actobject.cpp:728-766`; bits em [`combat::marca`]).
         let _ = critico;
         self.responder(
             roleid,
             self.sub
-                .host_attack_result(alvo as i32, saturar(dano), SEM_MARCACAO, velocidade)
+                .host_attack_result(alvo as i32, saturar(dano), resultado.marca(), velocidade)
                 .data,
             envio,
         )
@@ -3905,12 +3921,26 @@ impl BusServer {
     /// O comando vai para quem pediu **e** para quem está por perto — é assim que os
     /// outros veem as asas abrirem.
     ///
-    /// **Sabidamente incompleto**: o voo não custa mana nem tem altura máxima, e o
-    /// `GP_STATE_FLY` não entra no `state` dos pacotes de visão, então quem chegar depois
-    /// vê o jogador andando no ar em vez de voando.
+    /// **Mana só nas asas** (Arqueiro/Anjo, `WINGMANWING_ESSENCE`): decolar tira `mp_launch`
+    /// e o voo tira `mp_per_second` a cada segundo (`angel_wing_item::OnUse`,
+    /// `gs/item/item_flysword.cpp:118-148`; [`WorldInstance::gastar_mana_do_voo`]). Sem a
+    /// mana da decolagem, `DrainMana` zera a mana e não decola (`OnUse` devolve −3, sem
+    /// mensagem). A espada voadora das outras classes não gasta mana — gasta o próprio tempo
+    /// de voo (`cls_flysword_item::OnFlying`), que ainda não é descontado.
     async fn alternar_voo(&self, roleid: i32, envio: &EnvioAoCliente) {
+        /// `EQUIP_INDEX_FLYSWORD` (`gs/item.h:208`).
+        const SLOT_DE_VOO: u16 = 12;
+        let item_de_voo = self
+            .itens()
+            .await
+            .get_item_by_slot(roleid, ContainerType::Equipment, SLOT_DE_VOO)
+            .await
+            .ok()
+            .flatten()
+            .map(|i| i.item_id);
         let voando = {
             let mut mundo = self.world.write().await;
+            let asas = item_de_voo.and_then(|id| mundo.data_manager.asas.get(&id).copied());
             let sem_voo = mundo.sem_voo;
             let Some(jogador) = mundo.players.get_mut(&(roleid as i64)) else {
                 warn!("mundo: {roleid} pediu voo sem estar no mundo");
@@ -3925,9 +3955,29 @@ impl BusServer {
                 debug!("mundo: {roleid} tentou voar num mapa sem voo");
                 return;
             }
+            if !jogador.voando {
+                if let Some((decolar, por_segundo)) = asas {
+                    // `DrainMana(mp_launch)` (`gs/player.cpp:10697-10712`).
+                    if jogador.mp < decolar {
+                        jogador.mp = 0;
+                        drop(mundo);
+                        self.avisar_vida_propria(roleid).await;
+                        debug!("mundo: {roleid} sem os {decolar} de mana para abrir as asas");
+                        return;
+                    }
+                    jogador.mp -= decolar;
+                    jogador.voo_gasta_mana = Some(por_segundo);
+                }
+            } else {
+                jogador.voo_gasta_mana = None;
+            }
             jogador.voando = !jogador.voando;
-            jogador.voando
+            (jogador.voando, asas.is_some())
         };
+        let (voando, de_asas) = voando;
+        if voando && de_asas {
+            self.avisar_vida_propria(roleid).await;
+        }
 
         let pacote = if voando {
             S2CGamedataSend::object_takeoff(roleid).data
@@ -4103,25 +4153,7 @@ impl BusServer {
             // O NPC **compra**: o jogador está vendendo.
             servico::NPC_COMPRA => self.vender(roleid, c).await,
 
-            servico::REPARAR => {
-                // TODO: o custo é fixo enquanto a durabilidade dos itens não for lida. O
-                // dinheiro sai da entidade (o autosave grava a entidade por cima do banco).
-                const CUSTO: i64 = 150;
-                let pagou = self
-                    .com_contexto(roleid, |ctx| ctx.gastar_dinheiro(CUSTO))
-                    .await
-                    .unwrap_or(false);
-                if pagou {
-                    self.responder(
-                        roleid,
-                        S2CGamedataSend::repair_all(CUSTO as i32).data,
-                        envio,
-                    )
-                    .await;
-                } else {
-                    debug!("mundo: {roleid} não tem os {CUSTO} do reparo");
-                }
-            }
+            servico::REPARAR => self.reparar(roleid, c, envio).await,
 
             servico::CURAR => {
                 // Cura de verdade, com os valores do jogador — e não os fixos que o
@@ -4286,17 +4318,18 @@ impl BusServer {
         }
     }
 
-    /// `C2S::QUERY_NPC_INFO_1` (68) — barra de vida de monstros e NPCs.
+    /// `C2S::QUERY_NPC_INFO_1` (68) — o cliente pergunta por NPCs que ele não conhece.
     ///
-    /// # O que desfazia o combate
-    ///
-    /// O `gateway.rs` respondia `npc_info_00(nid, 1000, 1000)` — **vida cheia fixa** —
-    /// para qualquer id, porque o daemon de link não sabe o estado das criaturas. É a
-    /// mesma razão que já tinha feito o `SELECT_TARGET` mudar de lado (item 2), mas com
-    /// uma consequência pior: esta consulta é **periódica**. O golpe tirava vida de
-    /// verdade no mundo, o `SELECT_TARGET` mostrava o valor certo, e a consulta seguinte
-    /// redesenhava a barra cheia.
+    /// Quem manda é `CECNPCMan::UpdateUnknownNPCs` (`EC_ManNPC.cpp:1144-1164`), de 10 em 10 s,
+    /// com os ids de criaturas que apareceram num comando sem ter entrado antes. O original
+    /// (`gplayer_imp::QueryNPCInfo1`, `gs/player.cpp:11610-11637`) responde a cada uma que
+    /// esteja a menos de 150 m na horizontal com `NPC_INFO_LIST` de um NPC
+    /// (`gnpc_dispatcher::query_info_1`, `gs/npc.cpp:331-338`) — e o cliente passa a conhecê-la.
+    /// Respondia `NPC_INFO_00` (a barra de vida), que não cria a criatura: ela seguia
+    /// desconhecida e perguntada para sempre (B142).
     async fn consultar_npcs(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
+        /// `info.pos.horizontal_distance(_parent->pos) < 150 * 150` (`player.cpp:11624`).
+        const ALCANCE_H2: f32 = 150.0 * 150.0;
         let Some(consulta) = ConsultaDeIds::ler(payload) else {
             warn!("mundo: query_npc_info_1 de {roleid} com payload curto");
             return;
@@ -4304,17 +4337,31 @@ impl BusServer {
 
         let respostas: Vec<_> = {
             let mundo = self.world.read().await;
+            let Some(eu) = mundo.players.get(&(roleid as i64)).map(|p| p.position) else {
+                return;
+            };
+            let perto = |pos: &Vector3| {
+                let (dx, dz) = (pos.x - eu.x, pos.z - eu.z);
+                dx * dx + dz * dz < ALCANCE_H2
+            };
             consulta
                 .ids
                 .iter()
-                .filter_map(|id| mundo.dados_do_monstro(*id as i64).map(|d| (*id, d)))
+                .filter_map(|&id| match mundo.monsters.get(&(id as i64)) {
+                    Some((m, ia)) => perto(&m.position).then(|| {
+                        (id, m.template_id as i32, m.position, ia.direcao, m.habitat.estado_de_ambiente() as u32)
+                    }),
+                    None => mundo.npcs.get(&(id as i64)).filter(|n| perto(&n.position)).map(|n| {
+                        (id, n.template_id as i32, n.position, n.direcao, 0)
+                    }),
+                })
                 .collect()
         };
 
-        for (id, (hp, max_hp, alvo)) in respostas {
+        for (id, tid, pos, dir, estado) in respostas {
             self.responder(
                 roleid,
-                self.sub.npc_info_00(id, hp, max_hp, alvo).data,
+                self.sub.npc_info_list_de_um(id, tid, pos, dir, estado).data,
                 envio,
             )
             .await;
@@ -4380,7 +4427,8 @@ impl BusServer {
                 .await
                 .unwrap_or_default();
             let (mascara, ids) = Self::mascara_de_equipamento(&equipado);
-            let pacote = self.sub.equip_data(id, 0, mascara, &ids).data;
+            let crc = pw_core::carimbo::carimbo_do_equipamento(mascara, &ids);
+            let pacote = self.sub.equip_data(id, crc, mascara, &ids).data;
             debug!(
                 "mundo: equip_data pra {roleid} sobre {id} — máscara {mascara:#x}, {} item(ns)",
                 ids.len()
@@ -4393,7 +4441,7 @@ impl BusServer {
     ///
     /// Devolve os ids **ordenados por slot**, que é a ordem em que o cliente os consome.
     /// Ver a documentação de [`Self::equipamento_de_outro`] para as fontes no cliente.
-    fn mascara_de_equipamento(equipado: &[pw_core::ItemRecord]) -> (u64, Vec<i32>) {
+    pub(crate) fn mascara_de_equipamento(equipado: &[pw_core::ItemRecord]) -> (u64, Vec<i32>) {
         /// `SIZE_ALL_EQUIPIVTR` do `EC_IvtrTypes.h` — o tamanho do array `m_aNewEquips`.
         const TOTAL_DE_SLOTS: u16 = 40;
 

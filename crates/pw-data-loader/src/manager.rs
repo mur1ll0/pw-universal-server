@@ -166,6 +166,11 @@ pub struct GameDataManager {
     /// arma, armadura, remédio, material e mais uma dúzia de famílias têm os mesmos dois
     /// campos, e a loja precisa do preço de qualquer uma delas. Também carrega no 1.2.6/v7.
     pub precos: HashMap<u32, (i32, i32)>,
+    /// `repairfee` e a marca de irreparável de cada equipamento — ver
+    /// [`crate::precos::carregar_reparo`].
+    pub reparo: HashMap<u32, crate::precos::ReparoDoItem>,
+    /// `(mp_launch, mp_per_second)` das asas — ver [`crate::precos::carregar_asas`].
+    pub asas: HashMap<u32, (i32, i32)>,
     /// `(speed_a, speed_b)` por montaria, quando não vêm do `elements.data` — é assim que o
     /// mundo de teste, que não carrega o arquivo, tem uma montaria com velocidade.
     pub velocidades_de_montaria: HashMap<u32, (f32, f32)>,
@@ -474,6 +479,8 @@ impl GameDataManager {
             self.classes = crate::classes::carregar(g);
             self.equipamentos = TabelasDeEquipamento::carregar(g);
             self.precos = crate::precos::carregar(g);
+            self.reparo = crate::precos::carregar_reparo(g);
+            self.asas = crate::precos::carregar_asas(g);
             self.progressao = crate::progressao::TabelaDeProgressao::carregar(g);
             self.servicos_de_npc = crate::servicos::carregar(g);
             self.pilhas = crate::servicos::pilhas(g);

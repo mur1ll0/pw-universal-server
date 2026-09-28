@@ -134,6 +134,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("npc_enter_world", "NPC_ENTER_WORLD"),
     ("npc_info_00", "NPC_INFO_00"),
     ("equip_data", "EQUIP_DATA"),
+    ("equip_data_changed", "EQUIP_DATA_CHANGED"),
     ("object_move", "OBJECT_MOVE"),
     ("object_stop_move", "OBJECT_STOP_MOVE"),
     ("unselect", "UNSELECT"),
@@ -159,6 +160,7 @@ const INTENCAO: &[(&str, &str)] = &[
     // em `LAYOUT_DIVERGE`: se algum divergir, é bug de quem escreveu.
     ("host_attacked", "HOST_ATTACKED"),
     ("host_died", "HOST_DIED"),
+    ("player_died", "PLAYER_DIED"),
     ("player_revive", "PLAYER_REVIVE"),
     ("player_info_00", "PLAYER_INFO_00"),
     ("team_member_leave", "TEAM_MEMBER_LEAVE"),
@@ -239,7 +241,6 @@ const DELEGAM: &[&str] = &[
 ///
 /// **Esta lista só encolhe.** Quem resolver um caso tira o nome daqui.
 const LAYOUT_DIVERGE: &[&str] = &[
-    "repair",
     "produce_start",
     "produce_once",
     "decompose_start",

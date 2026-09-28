@@ -98,6 +98,19 @@ pub trait WorldProtocol: Send + Sync {
     /// NPC_ENTER_SLICE (11)
     fn npc_enter_slice(&self, nid: i32, tid: i32, pos: Vector3, dir: u8, estado: u32) -> S2CGamedataSend;
 
+    /// NPC_INFO_LIST (9) com um NPC — a resposta ao `QUERY_NPC_INFO_1`
+    /// (`gnpc_dispatcher::query_info_1`, `gs/npc.cpp:331-338`: `multi_data_header` com
+    /// `count = 1` e a `INFO::npc_info`). O corpo é a mesma `INFO::npc_info` do
+    /// `NPC_ENTER_WORLD`, então sai do codificador de cada versão, trocando o cabeçalho.
+    fn npc_info_list_de_um(&self, nid: i32, tid: i32, pos: Vector3, dir: u8, estado: u32) -> S2CGamedataSend {
+        let corpo = self.npc_enter_world(nid, tid, pos, dir, estado).data;
+        let mut data = Vec::with_capacity(corpo.len() + 2);
+        data.extend_from_slice(&9u16.to_le_bytes());
+        data.extend_from_slice(&1u16.to_le_bytes());
+        data.extend_from_slice(&corpo[2..]);
+        S2CGamedataSend { data }
+    }
+
     /// HOST_ATTACKRESULT (24)
     fn host_attack_result(&self, target_id: i32, damage: i32, attack_flag: i32, speed: u8) -> S2CGamedataSend;
 
@@ -199,6 +212,11 @@ pub trait WorldProtocol: Send + Sync {
     /// EQUIP_DATA (66)
     fn equip_data(&self, player_id: i32, crc: u16, mask: u64, items: &[i32]) -> S2CGamedataSend {
         S2CGamedataSend::equip_data(player_id, crc, mask, items)
+    }
+
+    /// EQUIP_DATA_CHANGED (67)
+    fn equip_data_changed(&self, player_id: i32, crc: u16, mask_add: u64, mask_del: u64, items: &[i32]) -> S2CGamedataSend {
+        S2CGamedataSend::equip_data_changed(player_id, crc, mask_add, mask_del, items)
     }
 
     /// OWN_EXT_PROP (50)

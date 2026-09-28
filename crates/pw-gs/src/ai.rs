@@ -102,7 +102,13 @@ pub enum AcaoDoMonstro {
     /// Bateu em alguém. `fisico` é o dano físico **bruto** do golpe (`attack_msg.physic_damage`,
     /// antes da defesa) quando ele acertou um jogador corpo a corpo — o que os espinhos
     /// (`filter_Retort`) devolvem —, e 0 nos outros casos.
-    Atacou { alvo: i64, dano: i32, fisico: i32 },
+    Atacou {
+        alvo: i64,
+        dano: i32,
+        fisico: i32,
+        /// O `attack_state` do golpe ([`crate::combat::Resultado::marca`]).
+        marca: i32,
+    },
     /// Deu um passo até `destino`, que o cliente percorre em `tempo_ms`.
     Andou {
         destino: Vector3,
@@ -1360,6 +1366,7 @@ impl MonsterAi {
         self.attack_cooldown_ms = (monster.ataque_em_ticks.max(4) as u32) * 50;
         // Golpe que erra é resultado legítimo, e o `dano()` devolve zero nele.
         let mut fisico = 0;
+        let mut marca = 0;
         let dano = match (alvo.jogador, alvo.mascote) {
             (Some(p), _) => {
                 let golpe = crate::combat::CombatEngine::golpe_de_monstro(monster);
@@ -1378,6 +1385,7 @@ impl MonsterAi {
                 {
                     fisico = golpe.dano_fisico;
                 }
+                marca = r.marca();
                 r.dano()
             }
             (None, Some(m)) => crate::combat::resolver(
@@ -1394,6 +1402,7 @@ impl MonsterAi {
             alvo: alvo.id,
             dano,
             fisico,
+            marca,
         })
     }
 

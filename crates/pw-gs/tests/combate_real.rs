@@ -278,6 +278,9 @@ fn o_critico_dobra_e_o_bonus_soma_por_cima() {
     );
     assert_eq!(r.dano(), 2000);
     assert!(r.foi_critico());
+    // E o cliente fica sabendo: `AT_STATE_ATTACK_CRIT` 0x10 (`actobject.h:440`) = o
+    // `MOD_CRITICAL_STRIKE` do cliente (`EC_ManAttacks.h:33`) (B142).
+    assert_eq!(r.marca(), pw_gs::combat::marca::CRITICO);
 
     // Rolagem 50 não é menor que 50 → sem crítico.
     let r = resolver(
@@ -510,6 +513,10 @@ fn jogador() -> PlayerEntity {
         contador_mp: 0,
         recargas: std::collections::HashMap::new(),
         pecas: [None; pw_gs::entity::PECAS_VESTIDAS],
+        equip_visivel: None,
+        voo_gasta_mana: None,
+        direcao: 0,
+        crc_equipamento: 0,
         auto_hp: None,
         daimon: None,
         auto_mp: None,

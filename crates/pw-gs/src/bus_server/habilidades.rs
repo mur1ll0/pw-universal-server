@@ -397,6 +397,7 @@ impl BusServer {
                         combat::Rolagens::sortear(),
                     );
                     let acertou = matches!(r, Resultado::Acertou { .. });
+                    let marca = r.marca();
                     let dano = efeitos::dano_recebido(&mut m.efeitos, r.dano()) as i64;
                     ai.add_threat(roleid as i64, dano.max(1));
                     let real = dano.min(m.hp);
@@ -416,6 +417,7 @@ impl BusServer {
                         m.hp,
                         m.max_hp,
                         m.target_id.unwrap_or(0),
+                        marca,
                     ));
                     if morreu {
                         mundo.grid.remove_entity(id);
@@ -429,8 +431,7 @@ impl BusServer {
                     mundo.politica_ao_apanhar(id, dano);
                 }
             }
-            for (id, dano, acertou, morreu, hp, max_hp, alvo_do_alvo) in resultados {
-                let flag = SEM_MARCACAO;
+            for (id, dano, acertou, morreu, hp, max_hp, alvo_do_alvo, flag) in resultados {
                 self.responder(
                     roleid,
                     self.sub
@@ -670,7 +671,7 @@ impl BusServer {
                     alvo as i32,
                     skill_id,
                     saturar(r.dano() as i64),
-                    SEM_MARCACAO,
+                    r.marca(),
                     VELOCIDADE_PADRAO,
                     SECAO_UNICA,
                 )
@@ -893,7 +894,7 @@ impl BusServer {
                             id as i32,
                             skill_id,
                             dano,
-                            SEM_MARCACAO,
+                            r.marca(),
                             VELOCIDADE_PADRAO,
                             SECAO_UNICA,
                         )
@@ -907,7 +908,7 @@ impl BusServer {
                         a.id() as i32,
                         skill_id,
                         dano,
-                        SEM_MARCACAO,
+                        r.marca(),
                         VELOCIDADE_PADRAO,
                         SECAO_UNICA,
                     )
