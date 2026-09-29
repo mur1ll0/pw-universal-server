@@ -179,6 +179,21 @@ def main() -> None:
             campos_origem = [c for c in campos_origem if c["name"] not in {
                 "attack_degree", "defend_degree",
             }]
+        elif origem["name"] == "RECIPE_ESSENCE":
+            # B145 — `recipe_manager::LoadTemplate` do `gs` 1.2.6 (VA 0x80f0a12) lê
+            # `recipe_level` +0x4c, `id_skill` +0x50, `skill_level` +0x54, os alvos a partir de
+            # +0x58, `fail_probability` +0x78, `num_to_make` +0x7c, `price` +0x80, `duration`
+            # +0x84 (×20), `exp` +0x88, `skillpoint` +0x8c e os 32 materiais de +0x90 a +0x190:
+            # **sem `bind_type`** (o v156 o tem em +0x58) e sem o rabo de melhoria.
+            campos_origem = [c for c in campos_origem if c["name"] not in {
+                "bind_type", "id_upgrade_equip", "upgrade_rate", "proc_type",
+                "character_combo_id", "upgrade_engrave_rate", "upgrade_addon_rate",
+            }]
+        elif origem["name"] == "NPC_MAKE_SERVICE":
+            # B145 — sem `produce_type` no v7 (1224 = 72 + 8 × 144): lido como v156, o
+            # `produce_type` saía 0x00730045, o texto UTF-16 do título da primeira página, e
+            # cada receita deslocada de uma posição.
+            campos_origem = [c for c in campos_origem if c["name"] != "produce_type"]
         elif origem["name"] == "CUSTOMIZEDATA_ESSENCE":
             # B143 — sem `file_icon` no v7: os 8 B finais são `character_combo_id` (1, 2, 8,
             # 64, 128, 192 nos 140 registros do `realm_126`) e `gender_id` (0/1).

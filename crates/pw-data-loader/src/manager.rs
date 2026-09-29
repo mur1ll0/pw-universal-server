@@ -171,6 +171,10 @@ pub struct GameDataManager {
     pub reparo: HashMap<u32, crate::precos::ReparoDoItem>,
     /// `(mp_launch, mp_per_second)` das asas — ver [`crate::precos::carregar_asas`].
     pub asas: HashMap<u32, (i32, i32)>,
+    /// As receitas de produção (`RECIPE_ESSENCE`) — ver [`crate::receitas`].
+    pub receitas: HashMap<u32, crate::receitas::Receita>,
+    /// O serviço de produção de cada NPC, pelo id do `NPC_ESSENCE` (via `id_make_service`).
+    pub producao_do_npc: HashMap<u32, crate::receitas::ServicoDeProducao>,
     /// `tax_rate` de cada `NPC_ESSENCE` (quase todos 0; `npcgenerator.cpp:437`,
     /// `SetTaxRate`, `:2661`) — entra no preço da loja ([`Self::preco_de_loja`]).
     pub taxas_de_npc: HashMap<u32, f32>,
@@ -484,6 +488,17 @@ impl GameDataManager {
             self.precos = crate::precos::carregar(g);
             self.reparo = crate::precos::carregar_reparo(g);
             self.asas = crate::precos::carregar_asas(g);
+            self.receitas = crate::receitas::carregar_receitas(g);
+            let servicos = crate::receitas::carregar_servicos_de_producao(g);
+            self.producao_do_npc = g
+                .get("NPC_ESSENCE")
+                .iter()
+                .filter_map(|n| {
+                    let id = n.get("ID").and_then(|v| v.as_i32())?;
+                    let s = n.get("id_make_service").and_then(|v| v.as_i32())?;
+                    servicos.get(&s).map(|sv| (id as u32, sv.clone()))
+                })
+                .collect();
             self.taxas_de_npc = g
                 .get("NPC_ESSENCE")
                 .iter()

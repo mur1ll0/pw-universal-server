@@ -353,6 +353,8 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 | B130 | (os dois) **não publicado.** Domesticar Animal (328): no monstro com ovo (ex.: Gato de Presas Afiadas), com a vida baixa, aparece **Sucesso** ou **Falha** sobre ele; no sucesso o monstro some e o ovo entra na bolsa. Monstro sem ovo ou de nível acima do seu: **Imune**. Log: `grep -E "capturou|captura de"` |
 | B129 | (os dois) **não publicado.** Roupa comprada (Loja Gold ou NPC) chega com o sexo do molde: o maiô feminino da Tsuko mostra "Feminino" e volta a equipar depois de tirado. As duas peças já gravadas sem conteúdo precisam do SQL do histórico B129 (com a Tsuko fora do jogo) |
 | B128 | (os dois) **não publicado.** Monstro que te persegue desiste em `aggro_time` s (15 s nos do começo) se não te alcança — fugindo ou voando — e volta correndo para casa; na volta não leva dano nem nota ninguém, e chega com a vida cheia (no 1.5.5 aparece o efeito de invencível, estado 49; no 1.2.6 o `gs` original não mostra efeito). Agressivo só te nota a `sight_range + tamanho` (6–8 m nos do começo), não a 15 m. Golpe do ar em monstro de chão tira metade. Voo com o item de 15 m/s: 18 m/s (base 3 + 15). Pegar arma do chão vai para a bolsa comum. Comprar no NPC do 1.2.6 funciona |
+| B146 | (os dois) **não publicado.** PvP: sem ligar a chave (botão de PK), nenhuma habilidade fere outro jogador; com os dois ligados, só com Ctrl. Nível 29 ou menos não liga. Desligar logo depois dá a mensagem de espera. Log: `grep -E "PvP|sem PvP"` |
+| B144–B145 | (os dois) **não publicado.** Arqueiro: sem flecha certa o arco não ataca ("não pode atacar"); com a Flecha de Novato o dano sobe. Colher: um golpe interrompe; no 1.5.5 clicar duas vezes seguidas na mina dá "em recarga". RT, missão 31797: a Água Cristalizada fica **na borda** da fonte do mapa 161, não dentro. Forja: no NPC de forja, escolher uma receita com os materiais na bolsa → barra de produção, item na bolsa, materiais e taxa descontados, proficiência sobe na janela de habilidades. Log: `grep -E "produzir|consertou"` |
 | B143 | (os dois) **não publicado.** Quem chega depois vê a Muralha/raposa/escudo e quem voa já no ar (1.2.6). Sentado: clicar no chão ou atacar não faz nada; Esc levanta; poção funciona; monstro que amaldiçoa levanta. Muralha de Espinhos: habilidade física de monstro também leva dano de volta (no 1.5.5, 0,02·L do golpe). Loja: o preço cobrado é o que a janela do cliente mostra (ex.: armadura 139 = 10.100). Perto dos Guias, **todas** as criaturas até ~90 m (antes cortava em 80) — observar se o cliente engasga. Log: `grep -E "sentado — comando|fila de .* parada"` |
 | B142 | (os dois) **não publicado.** Ferreiro: "consertar tudo" cobra `repairfee × desgaste` (não 150) e a peça volta cheia. Crítico: o número sai **grande** (o `MOD_CRITICAL_STRIKE`). Com dois clientes: A morre, B vê a morte (27); A troca de peça, B vê a troca **na hora** (67 — no 1.5.5 BR o 67 é por analogia com o 66: se B não vir a troca, o overlay de B deve mostrar `Invalid EQUIP_DATA_CHANGED size`); A para virado para um lado, B chega depois e o vê virado para o mesmo lado. Arqueiro com asas: decolar tira mana e o voo tira mana por segundo; sem mana, pousa. Outras classes voam sem gastar mana. Log: `grep -E "consertou|pousou sem mana"` |
 | B125 | (os dois) Loja Gold: a janela mostra o cash da **conta** (Tsuko/admin: 1.000.000 → "10000.00"), não o dinheiro do personagem; comprar um item de voo o põe na bolsa e o saldo cai o preço; sem saldo, "dinheiro insuficiente"; item VIP recusado (1.5.5) |
@@ -559,11 +561,12 @@ grupo pelo `iFirstGen` (usa o do líder).
    (`StayInCommandHandler`, `playercmd.cpp:873-1015`); (e) preço real da loja no v7; (f)
    conferir `CUSTOMIZEDATA`, `PLAYER_ACTION_INFO` e `FACEPILL` do v7; (g) cada leitor de mapa do
    `realm_126` fechando no último byte; (h) teto de 80 criaturas visíveis contra 220.
-3. **1.5.5 (§5A):** Cartas de General; refinar, fazer furo e incrustar; os ~300 efeitos de
-   habilidade sem porte; trava de PvP; o resto do Daimon; armazém; troca de mapa entre
-   contêineres e teleporte por NPC; fôlego debaixo d'água; casos de missão recusados;
-   munição (golpe sem flecha recusado, bônus da flecha); coleta (recarga, interrupção por dano,
-   ajuste de nível).
+3. **1.5.5 (§5A)** — em andamento. **Feitos (B144–B146):** munição, coleta, recurso no piso
+   (Água Cristalizada), produção no NPC nas duas versões (pedido do Murillo de 2026-09-28), trava
+   de PvP; fôlego: o original não desconta (nada a portar). **Faltam, nesta ordem:** armazém;
+   refinar/furar/incrustar; casos de missão recusados; troca de mapa entre contêineres (o
+   teleporte por NPC já existe, B51); o resto do Daimon; Cartas de General; os ~300 efeitos de
+   habilidade; as produções 2–5 e a decomposição.
 
 O teste em jogo do Murillo continua passando à frente de tudo quando chegar um relato.
 
@@ -754,3 +757,6 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 125 | 09-26 | Loja Gold nas duas versões: `gshop.data` do cliente lido (1436/1288 B), `MALL_SHOPPING` 12 B/6 B por versão, cash da conta (`gold_balance`) no `PLAYER_CASH`, `MALL_ITEM_BUY_FAILED` com 3 B |
 | 142 | 09-28 | fidelidade: reparo pelo `repairfee`, `crc_e` (tabela do `crc.c`) e `EQUIP_DATA_CHANGED`, crítico no `attack_flag`, `PLAYER_DIED`, saldo sem duplicata, `NPC_INFO_LIST` ao 68, direção do jogador, mana das asas |
 | 143 | 09-28 | 1.2.6: voo/efeitos visíveis no `state`, `m_ulType` v55, espinhos contra habilidade e jogador, sentado (`StayInCommandHandler`), preço do vendedor (×1,05, `AdjustVendorFee`), opacos do v7, mapas do 126, vista por fatias sem teto |
+| 144 | 09-28 | (em andamento) munição ativa pela faixa da arma e bônus da flecha; coleta com recarga (1.5.5), punição de nível e interrupção pelo golpe |
+| 145 | 09-28 | produção no NPC (serviço 12) nas duas versões, proficiência das habilidades de produção, layouts v7 de receita/serviço, recurso sobe ao piso do mapa de movimento (Água Cristalizada na fonte) |
+| 146 | 09-28 | trava de PvP (chave 82/83, espera, Ctrl, grupo) e o fôlego que o original não desconta |

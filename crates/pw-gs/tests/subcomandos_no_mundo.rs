@@ -56,6 +56,9 @@ const MONSTRO: i64 = 900_001;
 const ITEM_REPARAVEL: i32 = 4125;
 /// Asas de Arqueiro do cenário: `mp_launch` 30, `mp_per_second` 7 (B142).
 const ASA_DE_ARQUEIRO: i32 = 2097;
+/// A receita e o material do cenário de produção (B145).
+const RECEITA: i32 = 9001;
+const MATERIAL: i32 = 4124;
 /// O NPC de serviço do cenário, que entrega e recebe [`MISSAO_DO_NPC`] e ensina
 /// [`HABILIDADE_DO_TREINADOR`].
 const NPC: i64 = 0x8000_0101u32 as i32 as i64;
@@ -252,6 +255,32 @@ async fn montar(
         pw_data_loader::precos::ReparoDoItem { taxa: 1000, irreparavel: false },
     );
     dados.asas.insert(ASA_DE_ARQUEIRO as u32, (30, 7));
+    // Produção (B145): a receita 9001 da habilidade 158 faz 1 item de loja com 2 materiais
+    // (o item 4124) por 100 moedas; o NPC do cenário a produz.
+    dados.receitas.insert(
+        RECEITA as u32,
+        pw_data_loader::receitas::Receita {
+            id: RECEITA as u32,
+            habilidade: 158,
+            nivel_exigido: 1,
+            nivel_da_receita: 1,
+            exp: 10,
+            sp: 5,
+            chance_de_nada: 0.0,
+            tempo_em_tiques: 1,
+            quantidade: 1,
+            taxa: 100,
+            vinculo: 0,
+            proc_type: 0,
+            melhoria: 0,
+            alvos: [(ITEM_DE_LOJA, 1.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            materiais: vec![(MATERIAL as u32, 2)],
+        },
+    );
+    dados.producao_do_npc.insert(
+        TEMPLATE_DO_NPC,
+        pw_data_loader::receitas::ServicoDeProducao { habilidade: 158, receitas: vec![RECEITA as u32], tipo: 0 },
+    );
     // A Loja Gold do cenário: oferta 0 = o item de loja por 700 de cash; oferta 1 = o
     // mesmo item, mas exigindo VIP 3.
     let opcao = |preco, vip| pw_data_loader::OpcaoDeCompra {
@@ -3545,8 +3574,11 @@ async fn uma_habilidade_de_ataque_machuca_o_outro_jogador() {
         let a = m.players.get_mut(&(roleid as i64)).unwrap();
         a.magic_attack_min = 200;
         a.magic_attack_max = 200;
+        // B146: a trava de PvP — os dois com a chave ligada e o golpe forçado.
+        a.pvp_ligado = true;
         let v = m.players.get_mut(&(convidado as i64)).unwrap();
         v.def_phys = 0;
+        v.pvp_ligado = true;
         // A Pluma Espiritual faz ~234 com 200 de ataque mágico. Sem vida de sobra o HP
         // bate no piso de zero e a conta "vida - dano" deixa de valer.
         v.max_hp = 5_000;
@@ -3555,7 +3587,7 @@ async fn uma_habilidade_de_ataque_machuca_o_outro_jogador() {
     };
 
     let mut corpo = 125i32.to_le_bytes().to_vec(); // Pluma Espiritual
-    corpo.push(0);
+    corpo.push(1); // force_attack (Ctrl)
     corpo.push(1);
     corpo.extend_from_slice(&(convidado as i32).to_le_bytes());
 
@@ -8478,4 +8510,133 @@ async fn sentado_andar_e_atacar_sao_ignorados_e_cancelar_levanta() {
     link.enviar(enviar(ids::CANCEL_ACTION, vec![])).await.unwrap();
     esperar_comando(&mut link, 112).await;
     assert!(!mundo.read().await.players[&(roleid as i64)].sentado);
+}
+
+/// B144 — o golpe que chega interrompe a coleta (`gather_interrupt_filter::TranslateRecvAttack`
+/// → `session_gather::OnAttacked`): a coleta acaba sem prêmio e o cliente recebe
+/// `PLAYER_GATHER_STOP` (127).
+#[tokio::test]
+async fn o_golpe_interrompe_a_coleta() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    const MINA: i64 = 0xC000_0777u32 as i32 as i64;
+    {
+        let mut m = mundo.write().await;
+        m.matters.insert(
+            MINA,
+            pw_gs::entity::MatterEntity {
+                id: MINA,
+                template_id: 999_999,
+                position: Vector3::new(1.0, 0.0, 1.0),
+                renascer_s: 30,
+            },
+        );
+        m.players.get_mut(&(roleid as i64)).unwrap().coleta = Some(MINA);
+        m.golpe_interrompe_coleta(roleid as i64);
+    }
+    let fim = esperar_comando(&mut link, 127).await;
+    assert_eq!(i32_em(&fim, 2), roleid);
+    assert_eq!(mundo.read().await.players[&(roleid as i64)].coleta, None);
+}
+
+
+/// B145 — produção no NPC (serviço 12): `PRODUCE_START`, um `PRODUCE_ONCE` com o item gerado,
+/// materiais retirados com `DROP_TYPE_PRODUCE`, taxa com `SPEND_MONEY`, proficiência com
+/// `SKILL_ABILITY` e `PRODUCE_END` (`produce_executor`, `session_produce`, `ProduceItem`).
+async fn conferir_producao(versao: GameVersion, tamanho_do_once: usize) {
+    let Some((mundo, addr, roleid, _)) = montar(versao).await else { return };
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    let mut material = peca(roleid, pw_core::ContainerType::Inventory, 10, MATERIAL, 0, 0);
+    material.count = 2;
+    itens.upsert_item(&material).await.unwrap();
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.habilidades.insert(158, 1);
+        p.money += 1000;
+        p.npc_em_conversa = Some(NPC);
+    }
+    let antes = dinheiro(&mundo, roleid).await;
+    let mut pedido = 158i32.to_le_bytes().to_vec();
+    pedido.extend_from_slice(&RECEITA.to_le_bytes());
+    pedido.extend_from_slice(&1u32.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(12, &pedido) })
+        .await
+        .unwrap();
+    let inicio = esperar_comando(&mut link, 100).await;
+    assert_eq!(inicio.len(), 2 + 8, "PRODUCE_START");
+    assert_eq!(i32_em(&inicio, 6), RECEITA);
+    let feito = esperar_comando(&mut link, 101).await;
+    assert_eq!(feito.len(), 2 + tamanho_do_once, "PRODUCE_ONCE");
+    assert_eq!(i32_em(&feito, 2), ITEM_DE_LOJA);
+    let proficiencia = esperar_comando(&mut link, 187).await;
+    assert_eq!(i32_em(&proficiencia, 2), 158);
+    assert_eq!(i32_em(&proficiencia, 6), 1, "nível igual ao da receita: +1");
+    esperar_comando(&mut link, 102).await;
+    assert_eq!(dinheiro(&mundo, roleid).await, antes - 100);
+    let resto = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 10).await.unwrap();
+    assert!(resto.is_none(), "os 2 materiais saíram");
+    assert_eq!(mundo.read().await.players[&(roleid as i64)].proficiencias.get(&158), Some(&1));
+}
+
+#[tokio::test]
+async fn produzir_no_npc_155() {
+    conferir_producao(GameVersion::V1_5_5, 14).await;
+}
+
+#[tokio::test]
+async fn produzir_no_npc_126() {
+    conferir_producao(GameVersion::V1_2_6, 10).await;
+}
+
+
+/// B146 — a trava de PvP (`PetTestHarmfulEffect`, `gs/player.cpp:15097-15114`): sem o golpe
+/// forçado, ou sem a chave de PvP de um dos dois, a habilidade não fere o outro jogador.
+#[tokio::test]
+async fn sem_pvp_a_habilidade_nao_fere_outro_jogador() {
+    let (mundo, addr, roleid, convidado) = cenario!();
+    let mut atacante = entrar(&mundo, addr, roleid).await;
+    let _vitima = entrar(&mundo, addr, convidado).await;
+    let antes = {
+        let mut m = mundo.write().await;
+        let a = m.players.get_mut(&(roleid as i64)).unwrap();
+        a.magic_attack_min = 200;
+        a.magic_attack_max = 200;
+        a.pvp_ligado = true; // só o atacante: o alvo está com a chave desligada
+        m.players[&(convidado as i64)].hp
+    };
+    let mut corpo = 125i32.to_le_bytes().to_vec();
+    corpo.push(1);
+    corpo.push(1);
+    corpo.extend_from_slice(&(convidado as i32).to_le_bytes());
+    atacante
+        .enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CAST_SKILL, &corpo) })
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(3500)).await;
+    assert_eq!(mundo.read().await.players[&(convidado as i64)].hp, antes, "feriu sem a chave do alvo");
+}
+
+/// B146 — a chave de PvP: nível 29 não liga; nível 30 liga, avisa quem vê (183) e arma a espera
+/// de 36000 s (185); desligar antes dela dá o erro 47 (`gs/player.cpp:12421-12460`).
+#[tokio::test]
+async fn a_chave_de_pvp_tem_nivel_minimo_e_espera() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let enviar = |id: u16| BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(id, &[]) };
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().level = 29;
+    link.enviar(enviar(ids::ENABLE_PVP_STATE)).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!mundo.read().await.players[&(roleid as i64)].pvp_ligado, "nível 29 é protegido");
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().level = 30;
+    link.enviar(enviar(ids::ENABLE_PVP_STATE)).await.unwrap();
+    let ligou = esperar_comando(&mut link, 183).await;
+    assert_eq!(ligou.len(), 2 + 5, "1.5.5: who + type");
+    let espera = esperar_comando(&mut link, 185).await;
+    assert_eq!(i32_em(&espera, 2), 36_000);
+    link.enviar(enviar(ids::DISABLE_PVP_STATE)).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 47);
+    assert!(mundo.read().await.players[&(roleid as i64)].pvp_ligado);
 }

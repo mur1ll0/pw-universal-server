@@ -66,6 +66,32 @@ impl WorldProtocol for V126Protocol {
         0
     }
 
+    fn recarga_da_coleta_ms(&self) -> u32 {
+        0
+    }
+
+    fn player_pvp(&self, ligado: bool, who: i32, _tipo: u8) -> S2CGamedataSend {
+        // 4 B no validador do cliente 1.2.6 (casos 183 e 184 → 4, VA 0x584df2): só o `who`.
+        let mut s = OctetsStream::new();
+        s.write_u16_le(if ligado { 183 } else { 184 });
+        s.write_i32_le(who);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    fn produce_once(&self, item_id: i32, amount: u32, slot_amount: u32, onde: u8, slot: u8) -> S2CGamedataSend {
+        // 10 B no validador do cliente 1.2.6 (caso 101 → 0xa, VA 0x584c13): o
+        // `Make<produce_once>` do `gs` 1.2.6 (VA 0x809012a, assinatura `itthh`) escreve `int
+        // type`, `u16 amount`, `u16 slot_amount`, `u8 where`, `u8 index`.
+        let mut s = OctetsStream::new();
+        s.write_u16_le(101);
+        s.write_i32_le(item_id);
+        s.write_u16_le(amount.min(u16::MAX as u32) as u16);
+        s.write_u16_le(slot_amount.min(u16::MAX as u32) as u16);
+        s.write_u8(onde);
+        s.write_u8(slot);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
     /// O `filter_Foxform::OnAttach` do `gs` 1.2.6 chama `ChangeShape(1)` — o `_shape` sem o
     /// `FORM_CLASS << 6` (VA 0x830b1a0: `push 1` antes do `object_interface::ChangeShape`) —, e
     /// o `gactive_imp::ChangeShape` 1.2.6 (VA 0x811d78a) guarda o valor inteiro como forma:

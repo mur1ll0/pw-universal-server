@@ -676,3 +676,24 @@ fn as_passivas_de_forma_valem_so_na_forma_de_classe() {
         "o UndoEffect tira as passivas"
     );
 }
+
+/// B144 — munição: `projectile_equip_item::VerifyRequirement` (`equip_item.cpp:1251-1271`) só
+/// ativa a flecha com o tipo que a arma pede e o `weapon_level` na faixa dela; ativa, soma o
+/// `enhance_damage` ao dano (`UpdateEssence` + `NormalEnhance`). O Arco de Madeira (2250, nível
+/// 0, pede 8546) aceita a Flecha de Novato (43283, 0–17, +1) e recusa a de Iniciante (8543,
+/// 1–17).
+#[test]
+fn a_flecha_so_ativa_na_faixa_da_arma_e_soma_o_dano() {
+    let Some(r) = realm() else { return };
+    let arco = ItemRecord::new(5491, ContainerType::Equipment, 0, 2250, 1);
+    let novato = ItemRecord::new(5491, ContainerType::Equipment, 11, 43283, 100);
+    let iniciante = ItemRecord::new(5491, ContainerType::Equipment, 11, 8543, 100);
+    let sem = Equipamento::dos_itens(std::slice::from_ref(&arco), &r.equipamentos);
+    let com = Equipamento::dos_itens(&[arco.clone(), novato], &r.equipamentos);
+    let fora = Equipamento::dos_itens(&[arco, iniciante], &r.equipamentos);
+    assert_eq!(sem.municao_ativa, None);
+    assert_eq!(com.municao_ativa, Some(8546));
+    assert_eq!(com.dano, sem.dano + 1, "o enhance_damage da flecha");
+    assert_eq!(fora.municao_ativa, None, "8543 pede arma de nível 1 a 17");
+    assert_eq!(fora.dano, sem.dano);
+}

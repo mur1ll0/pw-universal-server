@@ -90,6 +90,10 @@ pub enum EventoDoMundo {
     /// A mana acabou no voo de asas e o filtro de voo saiu (`angel_wing_fly_filter::Heartbeat`
     /// → `_is_deleted`, `gs/fly_filter.cpp:42-48`): o jogador pousa.
     PousouSemMana { roleid: RoleId },
+    /// Um golpe chegou em quem colhia uma mina interrompível: `gather_interrupt_filter::
+    /// TranslateRecvAttack` → `session_gather::OnAttacked` (`gs/skill_filter.cpp:37-46`,
+    /// `gs/actsession.cpp:1130-1141`) — a coleta acaba sem prêmio.
+    ColetaInterrompida { roleid: RoleId },
     /// O corpo do monstro some (`GM_MSG_OBJ_ZOMBIE_END`, `_corpse_delay`, `npc.cpp:1446-1459`).
     MonstroSumiu { id: i64 },
     /// O monstro renasceu no ponto de origem.
@@ -738,23 +742,14 @@ impl WorldInstance {
             if self.terreno.altura_em(inst.pos.x, inst.pos.z).is_none() {
                 r.fora = true;
             }
-            // Recurso não consulta o mapa de movimento: `SetRegion(0, ...)` →
-            // `terrain_gen_pos`, relevo + `fHeiOff` (`npcgenerator.cpp:3900-3902`,
-            // `:4320-4324`). O `fHeiOff` é o que põe baú em cima de construção (B109).
-            let (pos, no_piso) =
-                if inst.spawn_type == pw_data_loader::SpawnType::ResourceMine {
-                    let chao = self.terreno.altura_em(inst.pos.x, inst.pos.z);
-                    (
-                        pw_core::Vector3::new(
-                            inst.pos.x,
-                            inst.altura_resolvida(chao),
-                            inst.pos.z,
-                        ),
-                        false,
-                    )
-                } else {
-                    inst.posicao_no_mapa(&self.terreno, &self.movimento)
-                };
+            // Recurso também passa pelo mapa de movimento: `SetRegion(0, ...)` →
+            // `terrain_gen_pos::Generate` (`npcgenerator.cpp:3900-3902`, `:4299-4318`) põe
+            // `y = fHeiOff`, chama `GetValidPos` — que **soma o piso** acima do terreno
+            // (`GetValid3DPos`, `pathfinding/NPCMoveMap.h:200-211`) — e soma o terreno. Até o
+            // B144 o recurso ficava em terreno + `fHeiOff`, sem o piso: a Água Cristalizada da
+            // fonte do mapa 161 (mina 44570) nascia 0,94 m abaixo da borda, dentro do objeto, e o
+            // cliente só traça para baixo (`EC_Matter.cpp:203-209`).
+            let (pos, no_piso) = inst.posicao_no_mapa(&self.terreno, &self.movimento);
             r.no_piso = no_piso;
             pos
         } else {
@@ -1660,6 +1655,7 @@ impl WorldInstance {
         };
         p.combate_s = p.combate_s.max(crate::progressao::COMBATE_AO_APANHAR_S);
         self.mascote_do_dono_ajuda(alvo, monstro);
+        self.golpe_interrompe_coleta(alvo);
         self.devolver_espinhos(alvo, monstro, fisico, true);
         self.aplicar_dano_no_jogador(alvo, monstro, dano);
     }
@@ -1692,8 +1688,23 @@ impl WorldInstance {
     /// `attack_rate` 1000: acerta sempre e passa pela defesa física do monstro com o nível de
     /// quem devolve (`AttackJudgement`, `actobject.cpp:481-560`).
     fn golpe_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64, fisico: i32) {
+        self.golpe_interrompe_coleta(alvo);
         self.devolver_espinhos(alvo, atacante, fisico, false);
         self.aplicar_dano_no_jogador(alvo, atacante, dano);
+    }
+
+    /// O golpe que chega interrompe a coleta, salvo mina `uninterruptable` (o
+    /// `_can_be_interruputed` do `session_gather`, que só instala o filtro nas outras).
+    pub fn golpe_interrompe_coleta(&mut self, alvo: i64) {
+        let Some(mid) = self.players.get(&alvo).and_then(|p| p.coleta) else { return };
+        let ininterrupta = self
+            .matters
+            .get(&mid)
+            .and_then(|m| self.data_manager.minas.get(&m.template_id))
+            .is_some_and(|mina| mina.ininterrupta);
+        if !ininterrupta {
+            self.emitir(EventoDoMundo::ColetaInterrompida { roleid: alvo as RoleId });
+        }
     }
 
     /// Os espinhos do jogador `alvo` contra quem o golpeou — monstro ou jogador, golpe normal
@@ -2528,6 +2539,11 @@ impl WorldInstance {
                 .collect();
             for roleid in mudaram {
                 self.emitir(EventoDoMundo::EstadoMudou { roleid });
+            }
+            // `if (_pvp_enable_flag && --_pvp_cooldown < 0) _pvp_cooldown = 0`
+            // (`gs/player.cpp:9092-9098`).
+            for p in self.players.values_mut().filter(|p| p.pvp_ligado) {
+                p.pvp_espera_s = (p.pvp_espera_s - 1).max(0);
             }
             for ev in self.gastar_mana_do_voo() {
                 self.emitir(ev);

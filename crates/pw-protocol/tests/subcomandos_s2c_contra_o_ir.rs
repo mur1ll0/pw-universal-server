@@ -174,6 +174,11 @@ const INTENCAO: &[(&str, &str)] = &[
     ("produce_start", "PRODUCE_START"),
     ("produce_once", "PRODUCE_ONCE"),
     ("produce_end", "PRODUCE_END"),
+    ("produce_null", "PRODUCE_NULL"),
+    ("host_pvp_cooldown", "HOST_PVP_COOLDOWN"),
+    ("player_enable_pvp", "PLAYER_ENABLE_PVP"),
+    ("player_disable_pvp", "PLAYER_DISABLE_PVP"),
+    ("skill_ability", "SKILL_ABILITY"),
     ("decompose_start", "DECOMPOSE_START"),
     ("decompose_end", "DECOMPOSE_END"),
     ("embed_item", "EMBED_ITEM"),
@@ -241,8 +246,6 @@ const DELEGAM: &[&str] = &[
 ///
 /// **Esta lista só encolhe.** Quem resolver um caso tira o nome daqui.
 const LAYOUT_DIVERGE: &[&str] = &[
-    "produce_start",
-    "produce_once",
     "decompose_start",
     "embed_item",
     "clear_tessera",

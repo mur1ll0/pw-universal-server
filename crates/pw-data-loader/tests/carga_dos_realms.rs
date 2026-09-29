@@ -316,3 +316,22 @@ fn o_preco_do_vendedor_do_126() {
     assert_eq!(d.taxas_de_npc.values().filter(|t| **t == 17.0).count(), 2);
     assert_eq!(d.taxas_de_npc.values().filter(|t| (**t - 0.05).abs() < 1e-6).count(), 28);
 }
+
+/// B145 — receitas e serviço de produção do 1.2.6 com o layout v7 corrigido (sem `bind_type`
+/// no `RECIPE_ESSENCE`, sem `produce_type` no `NPC_MAKE_SERVICE`): a 54 "Espada Unificadora" é
+/// da habilidade 158 no nível 2, 11 s (220 tiques), 4 × 800, 8 × 825 e 2 × 771; um NPC de forja a oferece.
+#[test]
+fn as_receitas_do_126() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    if !dir.exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        return;
+    }
+    let mut d = GameDataManager::new();
+    d.load_from_directory(&dir);
+    let r = &d.receitas[&54];
+    assert_eq!((r.habilidade, r.nivel_exigido, r.tempo_em_tiques, r.exp), (158, 2, 220, 50));
+    assert_eq!(r.materiais, vec![(800, 4), (825, 8), (771, 2)]);
+    assert_eq!(r.vinculo, 0, "o v7 não tem bind_type");
+    assert!(d.producao_do_npc.values().any(|s| s.habilidade == 158 && s.receitas.contains(&54)));
+}

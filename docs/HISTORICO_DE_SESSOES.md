@@ -10854,3 +10854,65 @@ comparação lado a lado.
     Ver em jogo — sobretudo a vista sem teto (carga de rede perto dos Guias) e o preço novo na
     loja. A lista de venda do `NPC_SELL_SERVICE` v7 tem nomes herdados do v156 (páginas com
     contribuição/força) e não é lida; a compra ainda não confere a lista do NPC.
+
+144. **Sessão 2026-09-28 (fase 3, em andamento, NÃO commitada): munição e coleta.**
+    - **Munição:** a flecha só fica ativa com o tipo que a arma pede e o `weapon_level` na faixa
+      (`projectile_equip_item::VerifyRequirement`, `equip_item.cpp:1251-1271`); ativa, soma o
+      `enhance_damage`/`scale_enhance_damage` (`UpdateEssence`/`NormalEnhance`). Arma de longe sem
+      flecha ativa não golpeia (`range_weapon_item::OnCheckAttack`): `ERR_CANNOT_ATTACK` (9) no
+      começo, `stop_attack(1)` quando acaba. `Equipamento::municao_ativa`, `SessaoDeAtaque::iniciada`.
+      Teste: `a_flecha_so_ativa_na_faixa_da_arma_e_soma_o_dano` (2250 + 43283 ativa, + 8543 não).
+    - **Coleta:** recarga de 500 ms com erro 187 só no 1.5.5 (`WorldProtocol::recarga_da_coleta_ms`;
+      o `gs` 1.2.6 não tem); exp/SP com `GetExpPunishment(nível − nível da mina)` e `+ 0,5`
+      (`matter.cpp:439-446`, `player.cpp:2813-2829`); golpe interrompe a coleta salvo mina
+      `uninterruptable` (`EventoDoMundo::ColetaInterrompida`). Teste: `o_golpe_interrompe_a_coleta`.
+    - Falta rodar a suíte inteira, specs 05 (munição/coleta) e commit.
+
+145. **Sessão 2026-09-28: produção no NPC (1.2.6 e 1.5.5) e a Água Cristalizada dentro da fonte.**
+
+    ### a. Pedido
+    Implementar a produção nas duas versões pelo fonte 1.5.5; e o relato do Murillo: na missão
+    do RT, a Água Cristalizada nasceu dentro da fonte.
+
+    ### b. Recurso dentro da fonte
+    A missão é a 31797 "Metal para Água" (coletar 44380); a mina é a 44570 "Cristal de Água",
+    no mapa 161 (`a61`). O `terrain_gen_pos::Generate` do original chama `GetValidPos`, que soma
+    o piso do mapa de movimento (`npcgenerator.cpp:4299-4318`, `NPCMoveMap.h:200-211`); o nosso
+    recurso usava só terreno + `fHeiOff` (o comentário do B109 dizia o contrário do fonte). Ali o
+    piso da fonte está 0,9375 m acima do terreno: a mina ficava 0,94 m dentro do objeto e o
+    cliente só traça para baixo (`EC_Matter.cpp:203-209`). Recurso agora usa
+    `posicao_no_mapa`, como monstro e NPC. Teste com o dado real.
+
+    ### c. Produção
+    Serviço 12: `produce_executor`/`produce_provider` (pedido de 12 B, conferências, erros 16 e
+    20), `session_produce` (início, um item a cada `use_time` tiques, fim, `CANCEL_ACTION`) e
+    `ProduceItem` (taxa, slot, sorteio, materiais, exp com a punição do nível 150, proficiência
+    +2/+1 até o `GetMaxAbility`, `SPEND_MONEY`, `PLAYER_DROP_ITEM` tipo 7, item gerado,
+    `PRODUCE_ONCE`/`PRODUCE_NULL`). Aprender o próximo nível de habilidade de produção exige a
+    proficiência cheia. Proficiência em `character_skills.ability` (script
+    `2026_09_28_proficiencia_das_habilidades.sql`, aplicado em `public` e `test`) e no
+    `SKILL_DATA`. Layouts do 1.2.6: `PRODUCE_ONCE` de 10 B (validador do cliente e `Make` do
+    `gs`), `RECIPE_ESSENCE` v7 sem `bind_type` (`recipe_manager::LoadTemplate` VA 0x80f0a12) e
+    `NPC_MAKE_SERVICE` v7 sem `produce_type` (valor 0x00730045 = texto) — `generate_v7.py`.
+    Também: a coleta passa a mandar `RECEIVE_EXP`.
+
+    ### d. Provas
+    `produzir_no_npc_155`/`_126` (start 8 B, once 14/10 B, ability, end, dinheiro −100,
+    materiais fora); `as_receitas_do_126` (a 54: 158 nível 2, 220 tiques, 800×4/825×8/771×2);
+    `a_agua_cristalizada_nasce_na_borda_da_fonte`; `a_proficiencia_para_no_teto_do_nivel`.
+
+    ### e. Falta
+    Produções 2–5 (síntese, melhoria, herança), decomposição (13), nome do fabricante no item,
+    `ADDON_LIST_PRODUCE`. Ver em jogo: a Água na borda da fonte; forjar no NPC de forja.
+
+146. **Sessão 2026-09-28: trava de PvP e fôlego (que o original não tem).**
+    - **PvP:** chave por jogador (C2S 82/83, nível > 29, espera de 36000 s, erro 47, S2C 183/184
+      — 4 B no 1.2.6 pelo validador — e 185), e a regra do `PetTestHarmfulEffect`
+      (`player.cpp:15097-15114`): habilidade que machuca outro jogador só com Ctrl, as duas
+      chaves e fora do mesmo grupo. O mundo continua PvE (`PVP_MODE(0)`). Testes:
+      `uma_habilidade_de_ataque_machuca_o_outro_jogador` (agora com as chaves),
+      `sem_pvp_a_habilidade_nao_fere_outro_jogador`, `a_chave_de_pvp_tem_nivel_minimo_e_espera`.
+    - **Fôlego:** o `breath_ctrl` só entra em "debaixo d'água" por chamadas que estão comentadas
+      no `TestUnderWater` (`player.cpp:14322-14348`), e o `gs` 1.2.6 não chama o `ChangeState`
+      (VA 0x8134b58) em lugar nenhum: o servidor original não desconta fôlego. Nada a portar.
+    - Falta: duelo, agressor e perdas na morte PvP, zona de segurança, `STATE_PVPMODE`.

@@ -182,6 +182,9 @@ pub mod ids {
     /// `CHECK_SECURITY_PASSWD` — o cliente manda a senha do guarda-roupa (vazia quando não
     /// há uma) e espera `SECURITY_PASSWD_CHECKED` (277) de volta.
     pub const CHECK_SECURITY_PASSWD: u16 = 120;
+    /// `ENABLE_PVP_STATE` (82) e `DISABLE_PVP_STATE` (83), sem corpo — a chave de PvP.
+    pub const ENABLE_PVP_STATE: u16 = 82;
+    pub const DISABLE_PVP_STATE: u16 = 83;
 }
 
 /// Tamanho do cabeçalho de subcomando (`cmd_header { unsigned short cmd; }`).

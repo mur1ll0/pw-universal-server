@@ -36,6 +36,8 @@ pub(super) mod erro_s2c {
     pub const HABILIDADE_INDISPONIVEL: i32 = 20;
     pub const NAO_PODE_APRENDER: i32 = 22;
     pub const MINA_OCUPADA: i32 = 30;
+    /// `ERR_MINE_GATHER_IS_COOLING` (`common/protocol.h`, 185 + 2).
+    pub const COLETA_EM_RECARGA: i32 = 187;
     pub const FERRAMENTA_ERRADA: i32 = 31;
     pub const NIVEL_NAO_BATE: i32 = 51;
     pub const HABILIDADE_EM_RECARGA: i32 = 53;
@@ -751,6 +753,16 @@ impl BusServer {
                 return;
             };
             let (nivel, pos, ja) = (p.level, p.position, p.coleta);
+            // Recarga da coleta (1.5.5; o 1.2.6 não tem): `TestCoolDown` antes de tudo.
+            let recarga = self.sub.recarga_da_coleta_ms();
+            if recarga > 0
+                && p.ultima_coleta.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(recarga as u64))
+            {
+                drop(guarda);
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::COLETA_EM_RECARGA).data)
+                    .await;
+                return;
+            }
             let coletores = mundo.coletores.entry(mid).or_default();
             let erro = if ja.is_some()
                 || coletores.len() as u32 >= mina.coletores
@@ -774,6 +786,7 @@ impl BusServer {
                     coletores.push(roleid);
                     if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
                         p.coleta = Some(mid);
+                        p.ultima_coleta = Some(std::time::Instant::now());
                     }
                     use rand::Rng;
                     let t = rand::thread_rng()
@@ -944,8 +957,18 @@ impl BusServer {
                             .push(S2CGamedataSend::error_message(erro_s2c::BOLSA_CHEIA).data);
                     }
                 }
+                // `GM_MSG_EXPERIENCE` com o nível da mina → `ReceiveExp(msg_exp_t)`: o
+                // `GetExpPunishment(nível do jogador − nível da mina)` e `+ 0,5`
+                // (`gs/matter.cpp:439-446`, `gs/player.cpp:2813-2829`).
                 if mina.exp != 0 || mina.sp != 0 {
-                    ctx.ganhar_exp(mina.exp.max(0) as i64, mina.sp.max(0) as i64);
+                    let a = ctx.dados.progressao.ajuste(ctx.p.level - mina.nivel);
+                    let exp = (mina.exp.max(0) as f32 * a.exp + 0.5) as i64;
+                    let sp = (mina.sp.max(0) as f32 * a.sp + 0.5) as i64;
+                    if exp + sp > 0 {
+                        ctx.ganhar_exp(exp, sp);
+                        // `ReceiveExp(exp, sp)` → `_runner->receive_exp` (`player.cpp:2924`).
+                        ctx.para_mim.push(ctx.sub.receive_exp(exp as i32, sp as i32).data);
+                    }
                 }
                 if mina.missao_de_saida > 0 {
                     let dados = ctx.dados;
@@ -2990,6 +3013,14 @@ impl BusServer {
                 let proximo = atual + 1;
                 if proximo > h.max_level {
                     return recusa(ctx, erro_s2c::NAO_PODE_APRENDER);
+                }
+                // `SkillWrapper::Learn` (`cskill/skill/skillwrapper.cpp:84-89`): a habilidade
+                // de produção só sobe com a proficiência do nível atual cheia (B145).
+                if atual > 0 {
+                    let teto = super::producao::teto_de_proficiencia(id, atual as u8);
+                    if teto > 0 && ctx.p.proficiencias.get(&id).copied().unwrap_or(0) < teto {
+                        return recusa(ctx, erro_s2c::NAO_PODE_APRENDER);
+                    }
                 }
                 if let Some(cls) = h.cls {
                     if cls != 255 && cls != ctx.p.cls as i32 {

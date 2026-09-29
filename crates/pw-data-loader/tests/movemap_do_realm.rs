@@ -87,3 +87,22 @@ fn nenhum_nascimento_no_chao_fica_dentro_de_estrutura() {
     eprintln!("{conferidos} nascimentos no chão conferidos, {levantados} em cima de estrutura");
     assert!(conferidos > 10_000 && levantados > 0);
 }
+
+/// B144 — o recurso também sobe ao piso do mapa de movimento (`terrain_gen_pos` →
+/// `GetValidPos`, `npcgenerator.cpp:4299-4318`): a Água Cristalizada da missão 31797 (mina
+/// 44570, mapa 161) fica na borda da fonte, 0,9375 m acima do terreno, e não dentro dela.
+#[test]
+fn a_agua_cristalizada_nasce_na_borda_da_fonte() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_155/config/a61");
+    let Ok(b) = std::fs::read(dir.join("npcgen.data")) else {
+        eprintln!("pulado: sem a61");
+        return;
+    };
+    let n = NpcGenData::load_from_bytes(&b).unwrap();
+    let agua = n.instances.iter().find(|s| s.template_id == 44570).expect("mina 44570 no a61");
+    let (t, m) = (Terreno::ler(161, &dir), MapaDeMovimento::ler(161, &dir));
+    let chao = t.altura_em(agua.pos.x, agua.pos.z).unwrap();
+    let (pos, no_piso) = agua.posicao_no_mapa(&t, &m);
+    assert!(no_piso, "a borda da fonte é piso do mapa de movimento");
+    assert!((pos.y - (chao + 0.9375)).abs() < 1e-3, "y {} com terreno {chao}", pos.y);
+}

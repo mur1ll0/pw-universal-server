@@ -61,6 +61,7 @@ use tracing::{debug, info, trace, warn};
 mod habilidades;
 mod jogo;
 mod mascote;
+mod producao;
 
 /// Um subcomando do mundo 3D, já com o cabeçalho separado do corpo.
 ///
@@ -727,6 +728,7 @@ impl BusServer {
                 self.transmitir_a_quem_ve(id, pacote).await;
             }
 
+            EventoDoMundo::ColetaInterrompida { roleid } => self.interromper_coleta(roleid).await,
             EventoDoMundo::PousouSemMana { roleid } => {
                 // O filtro de voo saiu: `OBJECT_LANDING` a ele e a quem vê, como ao pousar.
                 let pacote = S2CGamedataSend::object_landing(roleid).data;
@@ -1438,6 +1440,8 @@ impl BusServer {
                 // `HasNextSession` a encerra (`actobject.cpp:180-189`). B53 deixava o
                 // cancelamento sem efeito: Esc não parava o ataque (teste de 2026-09-17).
                 debug!("mundo: {roleid} mandou CANCEL_ACTION");
+                // `CANCEL_ACTION` encerra também a produção (`session_produce::TerminateSession`).
+                self.encerrar_producao(roleid, 0).await;
                 if let Some(s) = self
                     .world
                     .write()
@@ -1458,6 +1462,8 @@ impl BusServer {
             ids::SEVNPC_HELLO => self.dizer_ola_ao_npc(roleid, &cmd.payload, envio).await,
             ids::TASK_NOTIFY => self.notificar_tarefa(roleid, &cmd.payload, envio).await,
             ids::CHECK_SECURITY_PASSWD => self.conferir_senha(roleid, &cmd.payload, envio).await,
+            ids::ENABLE_PVP_STATE => self.chave_de_pvp(roleid, true, envio).await,
+            ids::DISABLE_PVP_STATE => self.chave_de_pvp(roleid, false, envio).await,
             ids::USE_ITEM => self.usar_item(roleid, &cmd.payload, envio).await,
             ids::SUMMON_PET => self.invocar_mascote(roleid, &cmd.payload, envio).await,
             ids::RECALL_PET => self.recolher_mascote(roleid, envio).await,
@@ -1837,6 +1843,12 @@ impl BusServer {
             };
             if let Err(motivo) = pode_golpear(&mundo, roleid, alvo) {
                 debug!("mundo: {roleid} não pode golpear {alvo} (motivo {motivo})");
+                // `CheckAttack(_target)` com `report_err` (`actobject.cpp:1226-1231`): sem
+                // flecha, `ERR_CANNOT_ATTACK` (9, `common/protocol.h:689`).
+                if motivo == 1 {
+                    drop(mundo);
+                    self.responder(roleid, S2CGamedataSend::error_message(9).data, envio).await;
+                }
                 return;
             }
             let ticks = ((p.attack_speed * 20.0).round() as u32).clamp(4, 300);
@@ -1849,6 +1861,7 @@ impl BusServer {
                     alvo,
                     falta_ms: ticks * 50,
                     municao_restante: 0,
+                    iniciada: false,
                     arma_de_longe,
                     proximo: None,
                     cancelar: false,
@@ -1878,6 +1891,7 @@ impl BusServer {
             .and_then(|p| p.ataque.as_mut())
         {
             s.municao_restante = municao;
+            s.iniciada = true;
         }
         self.responder(
             roleid,
@@ -2548,6 +2562,11 @@ impl BusServer {
             warn!("mundo: cast_skill de {roleid} com payload curto");
             return;
         };
+        // O `force_attack` vai no golpe da habilidade (`FillAttackMsg`, que o zera sem a chave
+        // de PvP, `gs/player.cpp:3103-3104`).
+        if let Some(p) = self.world.write().await.players.get_mut(&(roleid as i64)) {
+            p.forcar_ataque = c.force_attack != 0;
+        }
 
         let mut mundo = self.world.write().await;
         // `MODE_INDEX_SILENT`/`STUN`/`SLEEP` (`filter_Sealed`, `filter_Dizzy`, `filter_Sleep`).
@@ -3288,6 +3307,14 @@ impl BusServer {
             if vitima.hp <= 0 {
                 return;
             }
+            // A trava de PvP (`PetTestHarmfulEffect`, `gs/player.cpp:15097-15114`): em outro
+            // jogador, a habilidade que machuca só pega com o ataque forçado, a chave de PvP
+            // dos dois ligada e fora do mesmo grupo; senão o golpe não tem efeito.
+            if !h.e_cura() && alvo != roleid as i64 && !pode_ferir_jogador(&mundo, conjurador, vitima) {
+                debug!("mundo: {roleid} tentou ferir {alvo} sem PvP (forçado {}, chaves {}/{})",
+                    conjurador.forcar_ataque, conjurador.pvp_ligado, vitima.pvp_ligado);
+                return;
+            }
             let magico = (conjurador.magic_attack_min + conjurador.magic_attack_max) / 2;
             let fisico = (conjurador.attack_min + conjurador.attack_max) / 2;
             // O nível em que o **conjurador** tem esta habilidade — não o do alvo, e não
@@ -3320,6 +3347,7 @@ impl BusServer {
         let estado = {
             let mut mundo = self.world.write().await;
             if !h.e_cura() {
+                mundo.golpe_interrompe_coleta(alvo);
                 mundo.devolver_espinhos(alvo, roleid as i64, fisico_bruto, true);
             }
             let Some(vitima) = mundo.players.get_mut(&alvo) else {
@@ -4213,6 +4241,8 @@ impl BusServer {
 
             servico::REPARAR => self.reparar(roleid, c, envio).await,
 
+            servico::FORJAR => self.produzir(roleid, c, envio).await,
+
             servico::CURAR => {
                 // Cura de verdade, com os valores do jogador — e não os fixos que o
                 // `gateway.rs` mandava (120/280 para qualquer personagem, de qualquer
@@ -4521,6 +4551,55 @@ impl BusServer {
             mascara |= 1u64 << slot;
         }
         (mascara, por_slot.into_values().collect())
+    }
+
+    /// `ENABLE_PVP_STATE` (82) / `DISABLE_PVP_STATE` (83): a chave de PvP num mundo PvE
+    /// (`PlayerEnablePVPState`/`PlayerDisablePVPState`, `gs/player.cpp:12421-12460`; o mundo é PvE
+    /// — anunciamos `PVP_MODE(0)` na entrada). Ligar exige nível acima de `PVP_PROTECT_LEVEL` (29)
+    /// e arma a espera de 36000 s; desligar com espera pendente dá `ERR_CAN_NOT_DISABLE_PVP_STATE`
+    /// (47) e o `HOST_PVP_COOLDOWN`. A mudança vai a quem vê (`AutoBroadcastCSMsg`, com o próprio).
+    async fn chave_de_pvp(&self, roleid: i32, ligar: bool, envio: &EnvioAoCliente) {
+        /// `PVP_PROTECT_LEVEL` e `PVP_STATE_COOLDOWN` (`gs/config.h:75`, `:130`).
+        const NIVEL_PROTEGIDO: i32 = 29;
+        const ESPERA_S: i32 = 10 * 3600;
+        let resposta = {
+            let mut mundo = self.world.write().await;
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            if ligar {
+                if p.pvp_ligado || p.level <= NIVEL_PROTEGIDO {
+                    None
+                } else {
+                    p.pvp_ligado = true;
+                    p.pvp_espera_s = ESPERA_S;
+                    Some(Ok(ESPERA_S))
+                }
+            } else if !p.pvp_ligado {
+                None
+            } else if p.pvp_espera_s > 0 {
+                Some(Err(p.pvp_espera_s))
+            } else {
+                p.pvp_ligado = false;
+                Some(Ok(0))
+            }
+        };
+        match resposta {
+            None => {}
+            Some(Err(espera)) => {
+                self.responder(roleid, S2CGamedataSend::error_message(47).data, envio).await;
+                self.responder(roleid, S2CGamedataSend::host_pvp_cooldown(espera, ESPERA_S).data, envio)
+                    .await;
+            }
+            Some(Ok(espera)) => {
+                let aviso = self.sub.player_pvp(ligar, roleid, 0).data;
+                self.responder(roleid, aviso.clone(), envio).await;
+                self.transmitir_a_quem_ve(roleid as i64, aviso).await;
+                if ligar {
+                    self.responder(roleid, S2CGamedataSend::host_pvp_cooldown(espera, ESPERA_S).data, envio)
+                        .await;
+                }
+                info!("mundo: {roleid} {} o PvP", if ligar { "ligou" } else { "desligou" });
+            }
+        }
     }
 
     /// `C2S::CHECK_SECURITY_PASSWD` (120) — a senha do guarda-roupa.
@@ -5514,6 +5593,17 @@ impl BusServer {
     }
 }
 
+/// Se um jogador pode ferir outro — a parte de jogador do `PetTestHarmfulEffect`
+/// (`gs/player.cpp:15097-15114`): `force_attack` (que o `FillAttackMsg` zera sem a chave de PvP
+/// do atacante, `:3103-3104`), `PVP_ENABLE` do atacante, a chave do alvo e não serem do mesmo
+/// grupo. Duelo, facção, força e agressor (nome laranja/vermelho) não existem no `pw-gs`.
+pub(crate) fn pode_ferir_jogador(mundo: &crate::world::WorldInstance, atacante: &PlayerEntity, alvo: &PlayerEntity) -> bool {
+    if !(atacante.forcar_ataque && atacante.pvp_ligado && alvo.pvp_ligado) {
+        return false;
+    }
+    !mundo.membros_do_grupo(atacante.role_id).contains(&alvo.role_id)
+}
+
 /// `gactive_imp::CheckAttack(target, &flag, …)` (`actobject.cpp:1254-1292`) para monstro:
 /// vivo e a no máximo `attack_range + body_size` (o `attack_range` do jogador já inclui o
 /// corpo dele, `playertemplate.h:954`). `Err` com o bit do motivo: 2 alvo inválido, 4 longe.
@@ -5521,6 +5611,14 @@ fn pode_golpear(mundo: &crate::world::WorldInstance, roleid: i32, alvo: i64) -> 
     let Some(p) = mundo.players.get(&(roleid as i64)) else {
         return Err(1);
     };
+    // `CanAttack` → `range_weapon_item::OnCheckAttack` (`gs/item/equip_item.cpp:1186-1194`):
+    // arma de longe sem a munição certa ativa no slot 11 não golpeia (`CANNOT_ATTACK`, 1).
+    let sem_flecha = p.equipamento.arma.is_some_and(|a| a.de_longe)
+        && (p.equipamento.municao_ativa.is_none()
+            || p.ataque.is_some_and(|s| s.arma_de_longe && s.municao_restante == 0 && s.iniciada));
+    if sem_flecha {
+        return Err(1);
+    }
     let Some((m, _)) = mundo.monsters.get(&alvo) else {
         return Err(2);
     };

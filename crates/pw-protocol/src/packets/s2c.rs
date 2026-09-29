@@ -1490,7 +1490,7 @@ impl S2CGamedataSend {
         for skill in skills {
             stream.write_i16_le(skill.skill_id as i16);
             stream.write_u8(skill.level);
-            stream.write_i16_le(0);          // ability
+            stream.write_i16_le(skill.ability.clamp(0, i16::MAX as i32) as i16); // short ability
         }
         Self {
             data: stream.into_bytes().to_vec(),
@@ -2599,20 +2599,51 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando PRODUCE_START (Comando 100) iniciando a forja com barra de progresso
-    pub fn produce_start(recipe_id: i32, time_ms: u16) -> Self {
+    /// `PRODUCE_START` (100) — `cmd_produce_start { u16 use_time; u16 count; int type }`, 8 B
+    /// (`EC_GPDataType.h:2298-2303`; 8 também no validador do cliente 1.2.6). `use_time` em
+    /// tiques de 50 ms e `type` a receita (`session_produce::StartSession`,
+    /// `actsession.cpp:657-668`).
+    pub fn produce_start(use_time: u16, count: u16, recipe_id: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(100);              // CMD_S2C_PRODUCE_START = 100
+        stream.write_u16_le(use_time);
+        stream.write_u16_le(count);
         stream.write_i32_le(recipe_id);
-        stream.write_u16_le(time_ms);
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando PRODUCE_ONCE (Comando 101) gerando o item forjado
-    pub fn produce_once(item_id: i32) -> Self {
+    /// `PRODUCE_ONCE` (101) — um item produzido: `cmd_produce_once { int type; u32 amount; u32
+    /// slot_amount; u8 where; u8 index }`, 14 B no 1.5.5 (`EC_GPDataType.h:2305-2312`); o
+    /// 1.2.6 tem 10 B (`WorldProtocol::produce_once`). `amount` é quanto entrou,
+    /// `slot_amount` quanto ficou no slot (`ProduceItem`, `player.cpp:16617-16622`).
+    pub fn produce_once(item_id: i32, amount: u32, slot_amount: u32, onde: u8, slot: u8) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(101);              // CMD_S2C_PRODUCE_ONCE = 101
         stream.write_i32_le(item_id);
+        stream.write_u32_le(amount);
+        stream.write_u32_le(slot_amount);
+        stream.write_u8(onde);
+        stream.write_u8(slot);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PRODUCE_NULL` (210) — a produção não deu nada (`null_prob`): `int idRecipe`, 4 B nas
+    /// duas versões (`produce_null`, `player.cpp:16640`).
+    pub fn produce_null(recipe_id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(210);              // CMD_S2C_PRODUCE_NULL = 210
+        stream.write_i32_le(recipe_id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `SKILL_ABILITY` (187) — a proficiência nova de uma habilidade: `cmd_skill_ability { int
+    /// skill_id; int skill_ability }`, 8 B nas duas versões (`EC_GPDataType.h:3188-3192`;
+    /// `SkillWrapper::IncAbility`, `skillwrapper.cpp:1325-1350`).
+    pub fn skill_ability(skill_id: i32, ability: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(187);              // CMD_S2C_SKILL_ABILITY = 187
+        stream.write_i32_le(skill_id);
+        stream.write_i32_le(ability);
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -2975,6 +3006,36 @@ impl S2CGamedataSend {
     }
 
     /// `PVP_MODE` (256) — modo de PVP atual (0 = pacífico na maioria dos servidores).
+    /// `PLAYER_ENABLE_PVP` (183) / `PLAYER_DISABLE_PVP` (184) — a quem vê: `cmd_player_enable_pvp
+    /// { int who; char type }`, 5 B no 1.5.5 (`gplayer_dispatcher::enable_pvp_state`,
+    /// `gs/player.cpp:5077-5093`, `AutoBroadcastCSMsg`); o 1.2.6 tem 4 B (`WorldProtocol`).
+    pub fn player_enable_pvp(who: i32, tipo: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(183);
+        stream.write_i32_le(who);
+        stream.write_u8(tipo);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_DISABLE_PVP` (184) — ver [`Self::player_enable_pvp`].
+    pub fn player_disable_pvp(who: i32, tipo: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(184);
+        stream.write_i32_le(who);
+        stream.write_u8(tipo);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `HOST_PVP_COOLDOWN` (185) — `int cool_time, int max_cool_time` (8 B nas duas versões;
+    /// `player_pvp_cooldown`, `gs/player.cpp:5095-5102`, com `PVP_STATE_COOLDOWN` 36000).
+    pub fn host_pvp_cooldown(restante: i32, maximo: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(185);
+        stream.write_i32_le(restante);
+        stream.write_i32_le(maximo);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     pub fn pvp_mode(mode: u8) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(256);

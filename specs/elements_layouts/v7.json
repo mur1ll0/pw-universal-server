@@ -10634,11 +10634,6 @@
           "size": 4
         },
         {
-          "name": "produce_type",
-          "type": "int32",
-          "size": 4
-        },
-        {
           "name": "pages_1_page_title",
           "type": "wstring",
           "size": 16
@@ -11952,6 +11947,11 @@
           "name": "pages_8_id_goods_31",
           "type": "int32",
           "size": 4
+        },
+        {
+          "name": "pages_8_id_goods_32",
+          "type": "int32",
+          "size": 4
         }
       ]
     },
@@ -12643,11 +12643,6 @@
           "size": 4
         },
         {
-          "name": "bind_type",
-          "type": "int32",
-          "size": 4
-        },
-        {
           "name": "targets_1_id_to_make",
           "type": "int32",
           "size": 4
@@ -13029,6 +13024,11 @@
         },
         {
           "name": "materials_32_id",
+          "type": "int32",
+          "size": 4
+        },
+        {
+          "name": "materials_32_num",
           "type": "int32",
           "size": 4
         }

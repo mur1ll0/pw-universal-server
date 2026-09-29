@@ -20,6 +20,7 @@ pub mod pet;
 pub mod precinct;
 pub mod servicos;
 pub mod precos;
+pub mod receitas;
 pub mod progressao;
 pub mod ptemplate;
 pub mod tasks;

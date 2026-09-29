@@ -157,6 +157,11 @@ pub struct LearnedSkill {
     pub character_id: RoleId,
     pub skill_id: u32,
     pub level: u8,
+    /// A proficiência (`ability`) — só as habilidades de produção a usam: sobe a cada item
+    /// produzido até o `GetMaxability` do nível (`SkillWrapper::IncAbility`,
+    /// `cskill/skill/skillwrapper.cpp:1325-1350`) e viaja no `SKILL_DATA`.
+    #[serde(default)]
+    pub ability: i32,
 }
 
 /// Missão do personagem (ativa ou concluída)

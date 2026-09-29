@@ -41,6 +41,14 @@ pub trait WorldProtocol: Send + Sync {
         entrada_da_loja_gold(corpo, 12, |b| i32::from_le_bytes(b.try_into().unwrap()))
     }
 
+    /// Recarga da coleta, em ms: `SetCoolDown(COOLDOWN_INDEX_PLAYER_GATHER,
+    /// PLAYER_GATHER_COOLDOWN_TIME)` (500, `gs/cooldowncfg.h:46`) no `GATHER_MATERIAL` do 1.5.5
+    /// (`gs/playercmd.cpp:2345-2379`), que recusa com `ERR_MINE_GATHER_IS_COOLING` (187). O
+    /// 1.2.6 não tem (nenhum 500 no tratador de comandos do `gs` 1.2.6) e sobrescreve com 0.
+    fn recarga_da_coleta_ms(&self) -> u32 {
+        500
+    }
+
     /// Chi por batimento de 1 s meditando: `ModifyAP(15)` no `sit_down_filter::Heartbeat` do
     /// 1.5.5 (`gs/sitdown_filter.cpp:19-34`). O 1.2.6 sobrescreve.
     fn chi_por_meditacao(&self) -> i32 {
@@ -212,6 +220,20 @@ pub trait WorldProtocol: Send + Sync {
     /// EQUIP_DATA (66)
     fn equip_data(&self, player_id: i32, crc: u16, mask: u64, items: &[i32]) -> S2CGamedataSend {
         S2CGamedataSend::equip_data(player_id, crc, mask, items)
+    }
+
+    /// PLAYER_ENABLE_PVP (183) / PLAYER_DISABLE_PVP (184): 5 B no 1.5.5, 4 no 1.2.6.
+    fn player_pvp(&self, ligado: bool, who: i32, tipo: u8) -> S2CGamedataSend {
+        if ligado {
+            S2CGamedataSend::player_enable_pvp(who, tipo)
+        } else {
+            S2CGamedataSend::player_disable_pvp(who, tipo)
+        }
+    }
+
+    /// PRODUCE_ONCE (101): 14 B no 1.5.5, 10 no 1.2.6.
+    fn produce_once(&self, item_id: i32, amount: u32, slot_amount: u32, onde: u8, slot: u8) -> S2CGamedataSend {
+        S2CGamedataSend::produce_once(item_id, amount, slot_amount, onde, slot)
     }
 
     /// EQUIP_DATA_CHANGED (67)

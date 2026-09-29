@@ -137,6 +137,9 @@ pub struct PlayerEntity {
     /// nível 1 (`NIVEL_DA_HABILIDADE` em `bus_server.rs`): subir uma habilidade não mudava
     /// nada em jogo — nem dano, nem cura, nem custo de mana.
     pub habilidades: std::collections::HashMap<u32, u8>,
+    /// A proficiência (`ability`) das habilidades que a têm — as de produção
+    /// ([`pw_core::LearnedSkill::ability`]).
+    pub proficiencias: std::collections::HashMap<u32, i32>,
     /// `custom_crc` — o carimbo da aparência gravada deste personagem.
     ///
     /// Viaja no `crc_c` de todo pacote que apresenta este jogador a outro, e tem de ser o
@@ -196,6 +199,18 @@ pub struct PlayerEntity {
     pub missoes: crate::missoes::ListasDeMissao,
     /// A mina que está colhendo (`session_gather`), se alguma.
     pub coleta: Option<i64>,
+    /// Quando começou a última coleta, para a recarga de 500 ms do 1.5.5.
+    pub ultima_coleta: Option<std::time::Instant>,
+    /// A chave de PvP (`_pvp_enable_flag`) e a espera para desligá-la (`_pvp_cooldown`, em
+    /// segundos, `PVP_STATE_COOLDOWN` 36000 — `gs/player.cpp:12421-12460`, `:9092-9098`).
+    pub pvp_ligado: bool,
+    pub pvp_espera_s: i32,
+    /// O `force_attack` do último pedido de habilidade (Ctrl): sem ele, golpe em jogador não
+    /// fere (`PetTestHarmfulEffect`, `gs/player.cpp:15097-15107`).
+    pub forcar_ataque: bool,
+    /// Contador das sessões de produção abertas e a que está em curso (`session_produce`).
+    pub producao: u64,
+    pub produzindo: Option<u64>,
     /// O que o equipamento vestido acrescenta (`_cur_item` e `_en_point`).
     pub equipamento: Equipamento,
     /// A durabilidade de cada peça vestida — `(atual, máxima)` por slot, como o `_equipment`
@@ -314,6 +329,9 @@ impl AmuletoAtivo {
 /// `EQUIP_INDEX_PROJECTILE` (11) (`EC_IvtrTypes.h:56-67`).
 pub const PECAS_VESTIDAS: usize = 12;
 
+/// `EQUIP_INDEX_PROJECTILE` (`gs/item.h:208`).
+pub const SLOT_DA_MUNICAO: i32 = 11;
+
 /// `session_normal_attack` (`actsession.cpp:350-418`): o alvo e quanto falta para o próximo
 /// golpe, que sai a cada `attack_speed` *ticks*.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -324,6 +342,8 @@ pub struct SessaoDeAtaque {
     /// gravar PostgreSQL antes de cada `ATTACK_ONCE` atrasava a cadência pela latência do
     /// banco; a persistência pode acontecer depois que o comando já saiu.
     pub municao_restante: u16,
+    /// A contagem da munição já veio do banco — antes disso, zero não quer dizer "acabou".
+    pub iniciada: bool,
     pub arma_de_longe: bool,
     /// O `NORMAL_ATTACK` que chegou com esta sessão aberta, na fila (`AddSession`,
     /// `actobject.cpp:1180-1213`). Só começa no próximo golpe (`GM_MSG_OBJ_SESSION_REPEAT`
@@ -349,6 +369,10 @@ pub struct ArmaEmUso {
     pub dano_magico: (i32, i32),
     pub alcance: f32,
     pub velocidade_em_ticks: i32,
+    /// `require_projectile`: o tipo de munição que a arma pede (0 nas de perto).
+    pub municao_exigida: i32,
+    /// `weapon_level`: a faixa da munição confere contra ele.
+    pub nivel: i32,
 }
 
 /// O que as propriedades adicionais do equipamento vestido somam (`Activate`/`UpdateItem`
@@ -489,6 +513,12 @@ pub struct Equipamento {
     /// `_en_point.flight_speed` do item de voo vestido: o `speed_increase` gravado no
     /// conteúdo dele (`flysword_item::OnActivate`, `gs/item/item_flysword.h:126-129`). Em m/s.
     pub velocidade_de_voo: f32,
+    /// O tipo da munição **ativa** no slot 11, se alguma: `projectile_equip_item::
+    /// VerifyRequirement` (`gs/item/equip_item.cpp:1251-1271`) — arma ativa, tipo igual ao
+    /// `require_projectile` dela e o `weapon_level` na faixa da flecha. Só ativa ela soma o
+    /// dano (`UpdateEssence` + `NormalEnhance`, `:1239-1245`, `actobject.h:1194-1206`), e sem
+    /// ela a arma de longe não golpeia (`range_weapon_item::OnCheckAttack`, `:1186-1194`).
+    pub municao_ativa: Option<i32>,
 }
 
 /// Slot do item de voo no equipamento (`EQUIPIVTR_FLYSWORD` = 12, `EC_IvtrTypes.h`).
@@ -531,6 +561,7 @@ impl Equipamento {
     ) -> Self {
         use pw_core::FichaDoEquipamento as F;
         let mut e = Equipamento::default();
+        let mut municao: Option<pw_core::FichaDaMunicao> = None;
         for item in itens {
             // Peça acabada não vale nada: `equip_item::VerifyRequirement` só ativa o item
             // com `_base_limit.durability > 0` (`gs/item/equip_item.cpp:60-80`), e é por
@@ -576,8 +607,11 @@ impl Equipamento {
                         dano_magico: (a.dano_magico_minimo, a.dano_magico_maximo),
                         alcance: a.alcance,
                         velocidade_em_ticks: a.velocidade_de_ataque,
+                        municao_exigida: a.municao_exigida,
+                        nivel: a.nivel_da_arma,
                     });
                 }
+                Some(F::Municao(m)) if i32::from(item.slot) == SLOT_DA_MUNICAO => municao = Some(m),
                 Some(F::Armadura(a)) => {
                     e.defesa += a.defesa;
                     e.evasao += a.evasao;
@@ -597,6 +631,16 @@ impl Equipamento {
                     }
                 }
                 _ => {}
+            }
+        }
+        if let (Some(a), Some(m)) = (e.arma, municao) {
+            if m.tipo == a.municao_exigida
+                && a.nivel >= m.nivel_minimo_da_arma
+                && a.nivel <= m.nivel_maximo_da_arma
+            {
+                e.dano += m.dano_extra;
+                e.addons.dano_pct += m.dano_extra_percentual;
+                e.municao_ativa = Some(m.tipo);
             }
         }
         e
@@ -1203,6 +1247,7 @@ impl PlayerEntity {
             // o `CharacterDetails` não traz o privilégio da conta.
             sec_level: 0,
             habilidades: p.skills.iter().map(|h| (h.skill_id, h.level)).collect(),
+            proficiencias: p.skills.iter().filter(|h| h.ability > 0).map(|h| (h.skill_id, h.ability)).collect(),
             crc_aparencia: pw_core::stamp_de_aparencia(&pw_core::bytes_da_aparencia(
                 &p.custom_appearance,
             )),
@@ -1233,6 +1278,12 @@ impl PlayerEntity {
             chi_ao_meditar: crate::progressao::CHI_POR_MEDITACAO_155,
             missoes: crate::missoes::ListasDeMissao::default(),
             coleta: None,
+            ultima_coleta: None,
+            producao: 0,
+            pvp_ligado: false,
+            pvp_espera_s: 0,
+            forcar_ataque: false,
+            produzindo: None,
             equipamento: Equipamento::default(),
             ataque: None,
             conjuracao: None,

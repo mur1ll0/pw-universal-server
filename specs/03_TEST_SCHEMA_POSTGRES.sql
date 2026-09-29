@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS test.character_skills (
     character_id INT NOT NULL REFERENCES test.characters(id) ON DELETE CASCADE,
     skill_id INT NOT NULL,
     level SMALLINT DEFAULT 1 NOT NULL,
+    ability INT DEFAULT 0 NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     PRIMARY KEY (character_id, skill_id)
 );
