@@ -1,6 +1,6 @@
-//! O equipamento que cai de monstro, sorteado como o original
-//! (`generate_weapon/armor/decoration` com `ADDON_LIST_DROP`,
-//! `gs/template/generate_item_temp.h:156-480`, `740-830`).
+//! O equipamento gerado como o original (`generate_weapon/armor/decoration`,
+//! `gs/template/generate_item_temp.h:156-480`, `740-830`), nas três variantes que o jogo usa
+//! ([`Geracao`]): o drop de monstro, a fabricação e a venda na loja.
 //!
 //! Sai um [`pw_core::ConteudoDeEquipamento`] com a essência sorteada, os furos vazios e as
 //! propriedades adicionais — gravado nos octetos do item, mandado cru ao cliente e lido de
@@ -61,12 +61,49 @@ fn sortear_da_lista(dados: &GameDataManager, lista: &[(u32, f32)], n: usize) -> 
         .collect()
 }
 
-/// `generate_magic_defense` (`generate_item_temp.h:360-392`).
-fn resistencias(faixas: &[(i32, i32); 5], fixo: bool) -> [i32; 5] {
+/// Qual das três chamadas do original gera o item.
+///
+/// | variante | quem chama | sorteio | lista de addons | `item_tag_t` |
+/// | :--- | :--- | :--- | :--- | :--- |
+/// | [`Geracao::Drop`] | `generate_item_for_drop` (monstro, mina, missão) | `NORMAL` | `ADDON_LIST_DROP` (`addons`) | `IMT_DROP` |
+/// | [`Geracao::Producao`] | `generate_item_from_player` (`ProduceItem`, `itemdataman.cpp:1239-1246`) | `NORMAL(0)` | `ADDON_LIST_PRODUCE` (`rands`) | `IMT_PRODUCE` + nome |
+/// | [`Geracao::Loja`] | `get_item_for_sell` (montado no carregamento, `itemdataman.cpp:1352-1379`) | `SPECIFIC(0)` | `ADDON_LIST_SHOP` (nenhuma) | `IMT_SHOP` |
+///
+/// O `SPECIFIC` não sorteia (`itemdataman.h:196-247`): `RandSelect` com tendência `LOWER` dá
+/// o índice 0 (sem furo, sem addon, nenhuma resistência zerada), com `MIDDLE` o do meio, e
+/// `RandNormal` com `LOWER` dá o mínimo da faixa.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Geracao {
+    Drop,
+    /// Com o nome de quem fabricou (os bytes de [`pw_core::nome_do_fabricante`]).
+    Producao { fabricante: Vec<u8> },
+    Loja,
+}
+
+impl Geracao {
+    /// `RandNormal(lower, upper, cls, LOWER_TREND)`.
+    fn faixa(&self, a: i32, b: i32) -> i32 {
+        match self {
+            Geracao::Loja => a,
+            _ => rand_normal(a, b),
+        }
+    }
+
+    /// `RandSelect(..., LOWER_TREND)`.
+    fn escolher(&self, probs: &[f32]) -> usize {
+        match self {
+            Geracao::Loja => 0,
+            _ => rand_select(probs),
+        }
+    }
+}
+
+/// `generate_magic_defense` (`generate_item_temp.h:374-402`).
+fn resistencias_de(faixas: &[(i32, i32); 5], fixo: bool, g: &Geracao) -> [i32; 5] {
     const QUANTOS_ZERADOS: [f32; 6] = [0.35, 0.25, 0.20, 0.15, 0.05, 0.051];
     const AJUSTE: [f32; 5] = [1.0, 1.1, 1.3, 1.6, 2.0];
     let mut res = [0; 5];
-    let zerados = if fixo { 0 } else { rand_select(&QUANTOS_ZERADOS) };
+    let zerados = if fixo { 0 } else { g.escolher(&QUANTOS_ZERADOS) };
     if zerados == 5 {
         return res;
     }
@@ -77,7 +114,7 @@ fn resistencias(faixas: &[(i32, i32); 5], fixo: bool) -> [i32; 5] {
         ordem.swap(i, r);
     }
     for &idx in ordem.iter().take(5 - zerados) {
-        res[idx] = (rand_normal(faixas[idx].0, faixas[idx].1) as f32 * AJUSTE[zerados]) as i32;
+        res[idx] = (g.faixa(faixas[idx].0, faixas[idx].1) as f32 * AJUSTE[zerados]) as i32;
     }
     res
 }
@@ -149,13 +186,21 @@ fn aplicar_na_essencia(dados: &GameDataManager, ficha: &mut FichaDoEquipamento, 
 /// Um equipamento de drop. `None` quando o item não é arma/armadura/acessório com modelo, ou
 /// é um dos subtipos que o original não gera (`generate_item_temp.h:208-211`).
 pub fn gerar_equipamento(dados: &GameDataManager, tid: u32) -> Option<ConteudoDeEquipamento> {
+    gerar_equipamento_de(dados, tid, Geracao::Drop)
+}
+
+/// Um equipamento na variante `g` (ver [`Geracao`]).
+pub fn gerar_equipamento_de(dados: &GameDataManager, tid: u32, g: Geracao) -> Option<ConteudoDeEquipamento> {
     let m: &ModeloDeGeracao = dados.geracao.get(&tid)?;
     let mut ficha = dados.equipamentos.ficha(tid)?;
     if m.familia == Familia::Arma && [300, 293, 76, 291].contains(&m.id_sub_type) {
         return None;
     }
-    let furos = if m.furos_no_drop.is_empty() { 0 } else { rand_select(&m.furos_no_drop) };
-    let mut quantos = rand_select(&m.quantos_addons);
+    // Furos (`generate_item_temp.h:215-222`): a tabela do drop no drop, a da fabricação nos
+    // outros dois (na loja, índice 0 — nenhum).
+    let tabela_de_furos = if g == Geracao::Drop { &m.furos_no_drop } else { &m.furos_na_producao };
+    let furos = if tabela_de_furos.is_empty() { 0 } else { g.escolher(tabela_de_furos) };
+    let mut quantos = g.escolher(&m.quantos_addons);
     let mut addons = Vec::new();
     if m.fixed_props {
         // `generate_equipment_addon_buffer_2`: todos os da lista, se sorteou algum.
@@ -163,41 +208,56 @@ pub fn gerar_equipamento(dados: &GameDataManager, tid: u32) -> Option<ConteudoDe
             addons = m.addons.iter().filter(|x| x.0 > 0).filter_map(|x| gerar_addon(dados, x.0)).collect();
         }
     } else if quantos > 0 {
-        // `generate_template_addon` (`:156-170`): o único só existe na arma.
-        if !m.unicos.is_empty() && rand::thread_rng().gen::<f32>() < m.chance_de_unico {
-            addons.extend(sortear_da_lista(dados, &m.unicos, 1));
-            quantos -= 1;
+        // `generate_template_addon` (`:156-190`): o único só existe na arma; a lista é a do
+        // drop (`addons`) ou a da fabricação (`rands`). A loja (`ADDON_LIST_SHOP`) cai no
+        // `else` que zera tudo — e o `SPECIFIC` já sorteia zero addons.
+        let lista = match &g {
+            Geracao::Drop => &m.addons,
+            Geracao::Producao { .. } => &m.addons_da_producao,
+            Geracao::Loja => &Vec::new(),
+        };
+        if !lista.is_empty() {
+            if !m.unicos.is_empty() && rand::thread_rng().gen::<f32>() < m.chance_de_unico {
+                addons.extend(sortear_da_lista(dados, &m.unicos, 1));
+                quantos -= 1;
+            }
+            addons.extend(sortear_da_lista(dados, lista, quantos));
         }
-        addons.extend(sortear_da_lista(dados, &m.addons, quantos));
     }
 
-    // Durabilidade (`:292-310`): no drop, `min(RandNormal(drop), máxima)`. Os dois números
-    // saem do `elements.data` na escala do arquivo e o original os multiplica pela escala
-    // interna no fim da geração (`update_require_data`, `gs/item/item_addon.h:454-458`,
+    // Durabilidade (`:292-310`): a máxima é `RandNormal(durability_min, durability_max)`; só o
+    // drop (sem o bit 0x1000 do `proc_type`) sai gasto, com `min(RandNormal(drop), máxima)` —
+    // a fabricação e a loja saem **cheias** (a foice 15964 fabricada saía 245/300, B151). Os
+    // números saem do `elements.data` na escala do arquivo e o original os multiplica pela
+    // escala interna no fim da geração (`update_require_data`, `gs/item/item_addon.h:454-458`,
     // chamado em `generate_item_temp.h:367`) — sem isso o cliente divide por 100 e mostra
     // **1/1** em qualquer equipamento gerado (relato do arco, 2026-09-18).
     let escala = pw_core::ESCALA_DA_DURABILIDADE;
-    let dur_max = rand_normal(m.durabilidade.0, m.durabilidade.1) * escala;
-    let dur = if m.proc_type & 0x1000 != 0 { dur_max } else { (rand_normal(m.durabilidade_no_drop.0, m.durabilidade_no_drop.1) * escala).min(dur_max) };
+    let dur_max = g.faixa(m.durabilidade.0, m.durabilidade.1) * escala;
+    let dur = if g != Geracao::Drop || m.proc_type & 0x1000 != 0 {
+        dur_max
+    } else {
+        (rand_normal(m.durabilidade_no_drop.0, m.durabilidade_no_drop.1) * escala).min(dur_max)
+    };
 
     match &mut ficha {
         FichaDoEquipamento::Arma(w) => {
-            w.dano_maximo = rand_normal(m.dano_maximo.0, m.dano_maximo.1);
-            w.dano_magico_maximo = rand_normal(m.dano_magico_maximo.0, m.dano_magico_maximo.1);
+            w.dano_maximo = g.faixa(m.dano_maximo.0, m.dano_maximo.1);
+            w.dano_magico_maximo = g.faixa(m.dano_magico_maximo.0, m.dano_magico_maximo.1);
         }
         FichaDoEquipamento::Armadura(r) => {
-            r.defesa = rand_normal(m.defesa.0, m.defesa.1);
-            r.evasao = rand_normal(m.evasao.0, m.evasao.1);
-            r.mp_extra = rand_normal(m.mana.0, m.mana.1);
-            r.hp_extra = rand_normal(m.vida.0, m.vida.1);
-            r.resistencias = resistencias(&m.resistencias, m.todas_as_resistencias || m.fixed_props);
+            r.defesa = g.faixa(m.defesa.0, m.defesa.1);
+            r.evasao = g.faixa(m.evasao.0, m.evasao.1);
+            r.mp_extra = g.faixa(m.mana.0, m.mana.1);
+            r.hp_extra = g.faixa(m.vida.0, m.vida.1);
+            r.resistencias = resistencias_de(&m.resistencias, m.todas_as_resistencias || m.fixed_props, &g);
         }
         FichaDoEquipamento::Decoracao(d) => {
-            d.dano = rand_normal(m.dano.0, m.dano.1);
-            d.dano_magico = rand_normal(m.dano_magico.0, m.dano_magico.1);
-            d.defesa = rand_normal(m.defesa.0, m.defesa.1);
-            d.evasao = rand_normal(m.evasao.0, m.evasao.1);
-            d.resistencias = resistencias(&m.resistencias, m.fixed_props);
+            d.dano = g.faixa(m.dano.0, m.dano.1);
+            d.dano_magico = g.faixa(m.dano_magico.0, m.dano_magico.1);
+            d.defesa = g.faixa(m.defesa.0, m.defesa.1);
+            d.evasao = g.faixa(m.evasao.0, m.evasao.1);
+            d.resistencias = resistencias_de(&m.resistencias, m.fixed_props, &g);
         }
         FichaDoEquipamento::Municao(_) => return None,
     }
@@ -207,5 +267,10 @@ pub fn gerar_equipamento(dados: &GameDataManager, tid: u32) -> Option<ConteudoDe
     let mut c = ConteudoDeEquipamento::novo(ficha, dur, dur_max);
     c.furos = vec![0; furos];
     c.addons = addons;
+    (c.origem, c.fabricante) = match g {
+        Geracao::Drop => (pw_core::OrigemDoItem::Drop, Vec::new()),
+        Geracao::Loja => (pw_core::OrigemDoItem::Loja, Vec::new()),
+        Geracao::Producao { fabricante } => (pw_core::OrigemDoItem::Producao, fabricante),
+    };
     Some(c)
 }

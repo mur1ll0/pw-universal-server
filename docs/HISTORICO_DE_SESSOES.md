@@ -10934,3 +10934,86 @@ comparação lado a lado.
       `economia::{mover_entre, trocar_entre}`. Testes: `armazem_no_155`, `armazem_no_126`,
       `dinheiro_do_armazem_segue_o_original`, `mover_entre_bolsas_parte_junta_e_recusa`.
     - Falta: senha (serviço 14), armazém da conta, armazéns especiais com slots, expansão.
+
+148. **Sessão 2026-09-29: requisito de equipamento (relato do 1.2.6).**
+    - **Relato:** item comprado no NPC, de outra classe, aparecia vermelho mas era vestido.
+    - **Diagnóstico:** o dado estava certo — a compra grava a peça sem octetos e o `item_info`
+      monta o bloco do modelo, com a máscara de classe do `elements.data` (por isso o vermelho).
+      O erro era do servidor: `equipar`/`mover_para_equipar` não conferiam requisito nenhum.
+    - **Correção:** `pode_vestir` porta `EquipItem` → `CanActivate` → `VerifyRequirement`
+      (`player.cpp:8476-8493`, `equip_item.cpp:60-80`): nível, classe, os quatro atributos e
+      durabilidade; recusa com `ERR_ITEM_CANNOT_EQUIP` (8) e destrava os slots. `pw_core::Requisitos`
+      lê a `prerequisition` do bloco. O `gs` 1.2.6 tem o mesmo caminho (`PlayerEquipItem` VA
+      0x80731b6 chama `EquipItem` VA 0x8073e04 e testa o retorno).
+    - Testes: `requisito_de_vestir_no_155`, `requisito_de_vestir_no_126`.
+    - Falta: posição do slot, reputação, nível histórico, roupa/item de voo; e gravar o bloco
+      da loja (`get_item_for_sell`, `ADDON_LIST_SHOP`) na compra.
+
+149. **Sessão 2026-09-29: bolsa dos cristais da Maestria Elemental (relato do 1.5.5) — sem mudança.**
+    - Relato: os cristais colhidos foram para a bolsa comum, e o tooltip diz "Item de Missão".
+    - Fonte: mina com `task_out` → `CheckMining` → `DeliverCommonItem` (bolsa comum) quando o
+      `ITEM_WANTED` é `m_bCommonItem`, `DeliverTaskItem` (bolsa de missão) quando não
+      (`TaskTempl.inl:2105-2145`, `taskman.cpp:281-326`). Os cristais 44378–44382 são
+      `TASKNORMALMATTER_ESSENCE` com `comum` nas missões 31797–31802: a bolsa comum é o certo.
+    - Conferência do campo: exemplo novo `comum_por_tipo` — `TASKNORMALMATTER` 2958/2958 comum,
+      `TASKMATTER` 731/731 não comum. Spec 05 atualizada.
+    - Divergência achada e só registrada: o material próprio da mina vai à bolsa de missão quando
+      é item de missão; o original sempre à comum (`player.cpp:1526`).
+
+150. **Sessão 2026-09-29: material da mina sempre na bolsa comum (pedido do Murillo).**
+    - Alinha a divergência do item 149: o material próprio da mina ia à bolsa de missão quando era
+      item de missão; o original faz `_inventory.Push` e `obtain_item(..., 0, rst)` sempre
+      (`player.cpp:1526-1532`). Agora vai à bolsa comum, com `where` 0. O item entregue pela
+      missão (`task_out`) continua pela regra do `m_bCommonItem`.
+
+151. **Sessão 2026-09-29: item comprado e fabricado com o bloco do original (relato do 1.2.6, personagem WB).**
+
+    ### a. Sintoma
+    - Arma comprada no NPC ficava **vermelha** na bolsa e sem tooltip.
+    - A ★★★Nighthawk (15964) fabricada saiu **245/300**, sem "fabricado por" e sem linha de classe.
+
+    ### b. Causa
+    - Log do `pw-world-126`: logo depois de `comprou 1 item(ns) por 84`, `subcomando 53 de 11458
+      ainda não tratado`. O cliente, ao receber `PURCHASE_ITEM`, pede o bloco dos equipamentos
+      comprados com `GET_ITEM_INFO_LIST` (`EC_HostMsg.cpp:3334-3386`: "otherwise it may be shown as
+      unable to be equipped"); sem resposta, fica vermelho e sem tooltip. Original:
+      `playercmd.cpp:2310-2322` → `PlayerGetItemInfoList` (`player.cpp:7356-7377`).
+    - A compra gravava arma/armadura/acessório **sem octetos**; o original entrega o
+      `get_item_for_sell` (`SPECIFIC(0)`, `ADDON_LIST_SHOP`, tag `IMT_SHOP`,
+      `itemdataman.cpp:1352-1379`), também na Loja Gold (`player.cpp:15873, 15941`).
+    - A produção usava a geração de **drop**: durabilidade `min(RandNormal(drop), máx)` = 245, tag 0.
+      O original: `generate_item_from_player` (`NORMAL(0)`, `ADDON_LIST_PRODUCE` = `rands`, furos
+      `make_probability_socket`, durabilidade cheia) com `{IMT_PRODUCE, len, nome}`
+      (`player.cpp:16499-16515`, `itemdataman.cpp:1239-1246`, `generate_item_temp.h:156-310`).
+    - Achado no caminho: o `v7.json` de arma/armadura/acessório estava desalinhado.
+      `generate_weapon<NORMAL>` do `gs` 1.2.6 (VA 0x81f4eae) lê `level` +0x268, `fixed_props` +0x26c,
+      `RandSelect` de **4** `probability_addon_num` em +0x2c4, `probability_unique` +0x2d4, addons
+      +0x2d8, rands +0x3d8, 16 únicos +0x4d8; armadura (0x81f57a4) e acessório (0x81f6026) idem com
+      `fixed_props` +0x18c/+0x1e8 e 4 `addon_num`. O JSON tinha `require_reputation` e 6/5
+      probabilidades: a foice lia `probability_addon_num5` = 6,6e-43 (o id 473 do 1º addon), `level`
+      2 (era o `fixed_props`) e a lista de addons deslocada.
+    - Classe: a foice tem `character_combo_id` 255, e a captura do `gs` 1.2.6 original
+      (`full_interno.pcap`, detalhe da bolsa) também grava `ff 00` nos itens de todas as classes. O
+      cliente 1.5.5 omite a linha quando a máscara cobre todas as classes (`AddProfReqDesc`,
+      `EC_IvtrItem.cpp:646-667`); o binário do cliente 1.2.6 não foi conferido.
+
+    ### c. Correção
+    - `C2S::GET_ITEM_INFO_LIST` (53, `PedidoDeInfoDeItens`): um `OWN_ITEM_INFO` por índice.
+    - `pw_gs::geracao::Geracao {Drop, Producao{fabricante}, Loja}` + `gerar_equipamento_de`;
+      `Bolsa::empilhar_gerado_de`. Compra no NPC e Loja Gold usam `Loja`; `ProduceItem`, `Producao`
+      com `nome_do_fabricante` (UTF-16LE, até 40 B).
+    - `ConteudoDeEquipamento` ganhou `origem: OrigemDoItem` e `fabricante`, escritos e lidos na
+      etiqueta depois do tamanho da essência (drop agora grava `IMT_DROP` 2, como a captura).
+    - `ModeloDeGeracao` ganhou `furos_na_producao` e `addons_da_producao`.
+    - `generate_v7.py`/`v7.json` corrigidos (os três registros fecham com 1404/1104/1156 B; 32
+      deslocamentos conferidos contra o binário).
+
+    ### d. Provas
+    - `comprar_equipamento_grava_o_bloco_da_loja_{155,126}`, `fabricar_equipamento_grava_o_fabricante_
+      {155,126}`, `a_geracao_de_equipamento_do_126` (foice: nível 13, fixos 473/1008/1321, 300/245;
+      **todos** os modelos do realm com `addon_num` somando 1).
+
+    ### e. Falta
+    - Roupa comprada/fabricada ainda grava tag 0. Itens comprados antes desta versão seguem sem bloco.
+    - Conferir no binário do cliente 1.2.6 se a linha de classe some com máscara 0xFF (hipótese:
+      igual ao 1.5.5).

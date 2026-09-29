@@ -104,11 +104,34 @@ def main() -> None:
             # `fixed_props` inexistente no v7: com ele, a armadura 139 saía com
             # fixed_props=defence_low=552 e `repairfee` como float, e só 18
             # de 1.036 armaduras tinham shop_price coerente com price.
-            campos_origem = [c for c in campos_origem if c["name"] not in {
-                "fixed_props", "probability_hidden",
-                "uniques_16_id_unique", "uniques_16_probability_unique",
+            #
+            # B151 — o corte acima tirava o campo errado. O `gs` 1.2.6 (`generate_weapon<NORMAL>`
+            # VA 0x81f4eae, `generate_armor<NORMAL>` 0x81f57a4, `generate_decoration<NORMAL>`
+            # 0x81f6026) lê:
+            # - arma: `require_level` +0x264, o `level` da arma +0x268 (vai à essência),
+            #   `fixed_props` +0x26c (`cmp [ess+0x26c], 0` antes de
+            #   `generate_equipment_addon_buffer_2`), dano +0x270; `RandSelect` de **4**
+            #   `probability_addon_num` em +0x2c4, `probability_unique` +0x2d4, addons +0x2d8,
+            #   rands +0x3d8, **16** únicos +0x4d8, `durability_drop` +0x558;
+            # - armadura: `require_level` +0x188, `fixed_props` +0x18c, **4** `addon_num` em
+            #   +0x21c, addons +0x22c, rands +0x32c, `durability_drop` +0x42c, `pile_num_max`
+            #   +0x444, `has_guid` +0x448, `proc_type` +0x44c (sem `id_hair`/`id_hair_texture`
+            #   nem `force_all_magic_defences`);
+            # - acessório: `require_level` +0x1e4, `fixed_props` +0x1e8, **4** `addon_num` em
+            #   +0x250, addons +0x260, rands +0x360, `durability_drop` +0x460, `pile_num_max`
+            #   +0x478, `has_guid` +0x47c, `proc_type` +0x480.
+            # Ou seja: no v7 não há `require_reputation` (o que se lia ali era o `level`/o
+            # `fixed_props`) nem a 5ª/6ª probabilidade de número de addons. Lido do jeito antigo,
+            # a foice 15964 saía com `probability_addon_num5` = 6.6e-43 (o id do 1º addon) e a
+            # lista de addons deslocada em um par.
+            sem = {
+                "require_reputation", "probability_hidden",
                 "id_drop_after_damaged", "num_drop_after_damaged",
-            } and not c["name"].startswith("hiddens_")]
+                "probability_addon_num4", "probability_addon_num5",
+                "id_hair", "id_hair_texture", "force_all_magic_defences",
+            }
+            campos_origem = [c for c in campos_origem if c["name"] not in sem
+                             and not c["name"].startswith("hiddens_")]
         elif origem["name"] == "TASKDICE_ESSENCE":
             # gs 1.2.6, itemdataman::generate_taskdice (VA 0x81f08a0): task_lists[i].id
             # em +0x144+8*i, e depois `+0x188`, `has_guid == 1` em +0x18c e `+0x190` —

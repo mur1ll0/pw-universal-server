@@ -59,6 +59,11 @@ const ASA_DE_ARQUEIRO: i32 = 2097;
 /// A receita e o material do cenário de produção (B145).
 const RECEITA: i32 = 9001;
 const MATERIAL: i32 = 4124;
+/// B151 — receita que fabrica a arma [`ARMA_GERADA`].
+const RECEITA_DA_ARMA: i32 = 9002;
+/// B151 — a arma 9102 (todas as classes) com modelo de geração: durabilidade 300 e 245 no drop,
+/// os números da foice 15964 do `realm_126`.
+const ARMA_GERADA: i32 = 9102;
 /// O NPC de serviço do cenário, que entrega e recebe [`MISSAO_DO_NPC`] e ensina
 /// [`HABILIDADE_DO_TREINADOR`].
 const NPC: i64 = 0x8000_0101u32 as i32 as i64;
@@ -255,6 +260,34 @@ async fn montar(
         pw_data_loader::precos::ReparoDoItem { taxa: 1000, irreparavel: false },
     );
     dados.asas.insert(ASA_DE_ARQUEIRO as u32, (30, 7));
+    // Requisito de vestir (B148): duas armas de nível 1, uma de todas as classes menos a 0 (a
+    // do personagem de teste) e outra de todas.
+    for (id, classes) in [(9101u32, 0xFFFE), (9102, 0xFFFF)] {
+        dados.equipamentos.armas.insert(
+            id,
+            pw_data_loader::armas::TemplateDeArma {
+                id,
+                tipo_maior: 1,
+                classes_permitidas: classes,
+                nivel_exigido: 1,
+                forca_exigida: 0,
+                agilidade_exigida: 0,
+                vitalidade_exigida: 0,
+                energia_exigida: 0,
+                reputacao_exigida: 0,
+                municao_exigida: 0,
+                nivel: 1,
+                velocidade_em_ticks: 20,
+                modo_de_alcance: 1,
+                dano_minimo: 1,
+                dano_maximo: 2,
+                dano_magico_minimo: 0,
+                dano_magico_maximo: 0,
+                alcance: 2.0,
+                durabilidade: 100,
+            },
+        );
+    }
     // Produção (B145): a receita 9001 da habilidade 158 faz 1 item de loja com 2 materiais
     // (o item 4124) por 100 moedas; o NPC do cenário a produz.
     dados.receitas.insert(
@@ -277,9 +310,63 @@ async fn montar(
             materiais: vec![(MATERIAL as u32, 2)],
         },
     );
+    // B151 — a arma 9102 à venda e fabricável, com o modelo de geração do `elements.data`.
+    dados.precos.insert(ARMA_GERADA as u32, (50, PRECO_DO_ITEM_DE_LOJA));
+    dados.geracao.insert(
+        ARMA_GERADA as u32,
+        pw_data_loader::addons::ModeloDeGeracao {
+            familia: pw_data_loader::addons::Familia::Arma,
+            id_sub_type: 0,
+            fixed_props: false,
+            proc_type: 0,
+            furos_no_drop: vec![1.0],
+            furos_na_producao: vec![1.0],
+            quantos_addons: vec![1.0],
+            chance_de_unico: 0.0,
+            addons: vec![],
+            addons_da_producao: vec![],
+            unicos: vec![],
+            durabilidade: (300, 300),
+            durabilidade_no_drop: (245, 245),
+            dano_maximo: (2, 2),
+            dano_magico_maximo: (0, 0),
+            defesa: (0, 0),
+            evasao: (0, 0),
+            mana: (0, 0),
+            vida: (0, 0),
+            dano: (0, 0),
+            dano_magico: (0, 0),
+            resistencias: [(0, 0); 5],
+            todas_as_resistencias: false,
+        },
+    );
+    dados.receitas.insert(
+        RECEITA_DA_ARMA as u32,
+        pw_data_loader::receitas::Receita {
+            id: RECEITA_DA_ARMA as u32,
+            habilidade: 158,
+            nivel_exigido: 1,
+            nivel_da_receita: 1,
+            exp: 0,
+            sp: 0,
+            chance_de_nada: 0.0,
+            tempo_em_tiques: 1,
+            quantidade: 1,
+            taxa: 0,
+            vinculo: 0,
+            proc_type: 0,
+            melhoria: 0,
+            alvos: [(ARMA_GERADA, 1.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            materiais: vec![(MATERIAL as u32, 2)],
+        },
+    );
     dados.producao_do_npc.insert(
         TEMPLATE_DO_NPC,
-        pw_data_loader::receitas::ServicoDeProducao { habilidade: 158, receitas: vec![RECEITA as u32], tipo: 0 },
+        pw_data_loader::receitas::ServicoDeProducao {
+            habilidade: 158,
+            receitas: vec![RECEITA as u32, RECEITA_DA_ARMA as u32],
+            tipo: 0,
+        },
     );
     // A Loja Gold do cenário: oferta 0 = o item de loja por 700 de cash; oferta 1 = o
     // mesmo item, mas exigindo VIP 3.
@@ -8732,4 +8819,205 @@ async fn armazem_no_155() {
 #[tokio::test]
 async fn armazem_no_126() {
     conferir_armazem(GameVersion::V1_2_6).await;
+}
+
+
+/// B148 — requisito de equipamento (`EquipItem` → `equip_item::VerifyRequirement`,
+/// `gs/player.cpp:8476-8493`, `gs/item/equip_item.cpp:60-80`): arma de outra classe comprada no
+/// NPC (sem octetos, como a compra grava) não vai ao corpo — `ERR_ITEM_CANNOT_EQUIP` (8) e o
+/// item fica na bolsa; uma da própria classe, com o requisito atendido, vai.
+async fn conferir_requisito_de_vestir(versao: GameVersion) {
+    let Some((mundo, addr, roleid, _)) = montar(versao).await else { return };
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    let (dados, nivel, classe, atributos) = {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        (m.data_manager.clone(), p.level, p.cls as i32, p.atributos_efetivos())
+    };
+    let requisitos = |tid: u32| {
+        let ficha = dados.equipamentos.ficha(tid)?;
+        pw_core::Requisitos::do_bloco(&pw_core::ConteudoDeEquipamento::novo(ficha, 100, 100).escrever())
+    };
+    let mut armas: Vec<u32> = dados.equipamentos.armas.keys().copied().collect();
+    armas.sort();
+    let proibida = armas
+        .iter()
+        .copied()
+        .find(|&t| requisitos(t).is_some_and(|r| r.classes != 0 && (1u32 << (classe & 0x0F)) & r.classes as u32 == 0))
+        .unwrap_or_else(|| panic!("uma arma de outra classe: {} armas, classe {classe}, amostra {:?}", armas.len(), armas.iter().take(5).map(|&t| (t, requisitos(t))).collect::<Vec<_>>()));
+    let permitida = armas
+        .iter()
+        .copied()
+        .find(|&t| requisitos(t).is_some_and(|r| r.atende(nivel, classe, atributos)))
+        .expect("uma arma da própria classe");
+    let durabilidade = dados.durabilidade_de_fabrica(proibida).unwrap_or(100).max(1) * pw_core::ESCALA_DA_DURABILIDADE as u32;
+    for (slot, tid) in [(20u16, proibida), (21, permitida)] {
+        let mut i = peca(roleid, pw_core::ContainerType::Inventory, slot, tid as i32, durabilidade, durabilidade);
+        i.octets = vec![];
+        itens.upsert_item(&i).await.unwrap();
+    }
+    itens.delete_item_by_slot(roleid, pw_core::ContainerType::Equipment, 0).await.ok();
+
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::EQUIP_ITEM, &[20u8, 0u8]) })
+        .await
+        .unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 8, "ERR_ITEM_CANNOT_EQUIP");
+    let ficou = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 20).await.unwrap();
+    assert_eq!(ficou.map(|i| i.item_id), Some(proibida), "a arma de outra classe ficou na bolsa");
+    let corpo = itens.get_item_by_slot(roleid, pw_core::ContainerType::Equipment, 0).await.unwrap();
+    assert!(corpo.is_none(), "nada foi ao corpo");
+
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::EQUIP_ITEM, &[21u8, 0u8]) })
+        .await
+        .unwrap();
+    let corpo = loop {
+        let c = itens.get_item_by_slot(roleid, pw_core::ContainerType::Equipment, 0).await.unwrap();
+        if c.is_some() {
+            break c;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!(corpo.map(|i| i.item_id), Some(permitida), "a arma da própria classe foi ao corpo");
+}
+
+#[tokio::test]
+async fn requisito_de_vestir_no_155() {
+    conferir_requisito_de_vestir(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn requisito_de_vestir_no_126() {
+    conferir_requisito_de_vestir(GameVersion::V1_2_6).await;
+}
+
+
+/// O bloco de um equipamento que chegou ao cliente num `OWN_ITEM_INFO` (40): `id 2, where 1,
+/// slot 1, type 4, expire 4, state 4, count 4, crc 2, content_length 2, content`.
+fn bloco_do_item_info(cmd: &[u8]) -> &[u8] {
+    let n = u16::from_le_bytes([cmd[22], cmd[23]]) as usize;
+    assert_eq!(cmd.len(), 24 + n, "OWN_ITEM_INFO com tamanho que não fecha");
+    &cmd[24..]
+}
+
+/// B151 — a arma comprada no NPC vai ao banco com o bloco da loja (`get_item_for_sell`:
+/// `SPECIFIC(0)`, `ADDON_LIST_SHOP`, `IMT_SHOP`), durabilidade cheia e a máscara de classes; e o
+/// `GET_ITEM_INFO_LIST` (53) que o cliente manda depois da compra é respondido com o
+/// `OWN_ITEM_INFO` desse bloco (`player.cpp:7356-7377`) — sem ele o item ficava vermelho e sem
+/// tooltip no 1.2.6.
+async fn conferir_compra_de_equipamento(versao: GameVersion) {
+    let Some((mundo, addr, roleid, _)) = montar(versao).await else { return };
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    dar_dinheiro(&mundo, roleid, 10_000).await;
+    let mut c = vec![0u8; if versao == GameVersion::V1_2_6 { 4 } else { 24 }];
+    c.extend_from_slice(&1u32.to_le_bytes());
+    c.extend_from_slice(&ARMA_GERADA.to_le_bytes());
+    c.extend_from_slice(&20u32.to_le_bytes());
+    c.extend_from_slice(&1u32.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: pedido_ao_npc(pw_gs::npc::servico::NPC_VENDE, &c),
+    })
+    .await
+    .unwrap();
+    esperar_comando(&mut link, 72).await;
+
+    let mut achado = None;
+    for _ in 0..50 {
+        let lista = itens.list_by_container(roleid, pw_core::ContainerType::Inventory).await.unwrap();
+        if let Some(i) = lista.into_iter().find(|i| i.item_id == ARMA_GERADA as u32) {
+            achado = Some(i);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let item = achado.expect("a arma comprada não chegou à bolsa");
+    let dados = mundo.read().await.data_manager.clone();
+    let ficha = dados.equipamentos.ficha(ARMA_GERADA as u32).unwrap();
+    let c = pw_core::ConteudoDeEquipamento::ler(&item.octets, &ficha)
+        .unwrap_or_else(|| panic!("a compra não gravou o bloco da loja: {:02x?}", item.octets));
+    assert_eq!(c.origem, pw_core::OrigemDoItem::Loja, "IMT_SHOP");
+    assert!(c.fabricante.is_empty());
+    assert_eq!((c.durabilidade, c.durabilidade_maxima), (30_000, 30_000), "durabilidade cheia");
+    assert_eq!((item.durability, item.max_durability), (30_000, 30_000));
+    assert!(c.furos.is_empty() && c.addons.is_empty(), "SPECIFIC(0): sem furo nem addon");
+    let r = pw_core::Requisitos::do_bloco(&item.octets).unwrap();
+    assert_eq!(r.classes, 0xFFFF, "a máscara de classes do modelo");
+
+    // GET_ITEM_INFO_LIST: where 0, count 1, o slot da arma.
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::GET_ITEM_INFO_LIST, &[0, 1, item.slot as u8]),
+    })
+    .await
+    .unwrap();
+    let info = esperar_comando(&mut link, 40).await;
+    assert_eq!(info[3], item.slot as u8);
+    assert_eq!(i32_em(&info, 4), ARMA_GERADA);
+    assert_eq!(bloco_do_item_info(&info), &item.octets[..], "o bloco gravado vai ao cliente");
+}
+
+#[tokio::test]
+async fn comprar_equipamento_grava_o_bloco_da_loja_155() {
+    conferir_compra_de_equipamento(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn comprar_equipamento_grava_o_bloco_da_loja_126() {
+    conferir_compra_de_equipamento(GameVersion::V1_2_6).await;
+}
+
+/// B151 — a arma fabricada sai como o `ProduceItem` a gera (`generate_item_from_player`:
+/// `NORMAL(0)`, `ADDON_LIST_PRODUCE`, `{IMT_PRODUCE, len, nome}`): durabilidade **cheia** (a foice
+/// saía 245/300, a do drop) e o nome de quem fabricou no bloco.
+async fn conferir_fabricacao_de_equipamento(versao: GameVersion) {
+    let Some((mundo, addr, roleid, _)) = montar(versao).await else { return };
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    let mut material = peca(roleid, pw_core::ContainerType::Inventory, 10, MATERIAL, 0, 0);
+    material.count = 2;
+    itens.upsert_item(&material).await.unwrap();
+    let nome = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.habilidades.insert(158, 1);
+        p.npc_em_conversa = Some(NPC);
+        p.name.clone()
+    };
+    let mut pedido = 158i32.to_le_bytes().to_vec();
+    pedido.extend_from_slice(&RECEITA_DA_ARMA.to_le_bytes());
+    pedido.extend_from_slice(&1u32.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(12, &pedido) })
+        .await
+        .unwrap();
+    let feito = esperar_comando(&mut link, 101).await;
+    assert_eq!(i32_em(&feito, 2), ARMA_GERADA);
+    esperar_comando(&mut link, 102).await;
+
+    let lista = itens.list_by_container(roleid, pw_core::ContainerType::Inventory).await.unwrap();
+    let item = lista.into_iter().find(|i| i.item_id == ARMA_GERADA as u32).expect("a arma fabricada");
+    let ficha = mundo.read().await.data_manager.equipamentos.ficha(ARMA_GERADA as u32).unwrap();
+    let c = pw_core::ConteudoDeEquipamento::ler(&item.octets, &ficha).expect("bloco da arma fabricada");
+    assert_eq!(c.origem, pw_core::OrigemDoItem::Producao, "IMT_PRODUCE");
+    assert!(!nome.is_empty());
+    assert_eq!(c.fabricante, pw_core::nome_do_fabricante(&nome), "o nome de quem fabricou, em UTF-16LE");
+    assert_eq!((c.durabilidade, c.durabilidade_maxima), (30_000, 30_000), "fabricado sai cheio");
+    assert_eq!(c.furos.len(), 0, "make_probability_socket0 = 1.0");
+    assert_eq!(pw_core::Requisitos::do_bloco(&item.octets).unwrap().classes, 0xFFFF);
+    // O bloco relido reescreve igual: o nome não desloca o resto.
+    assert_eq!(c.escrever(), item.octets);
+}
+
+#[tokio::test]
+async fn fabricar_equipamento_grava_o_fabricante_155() {
+    conferir_fabricacao_de_equipamento(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn fabricar_equipamento_grava_o_fabricante_126() {
+    conferir_fabricacao_de_equipamento(GameVersion::V1_2_6).await;
 }

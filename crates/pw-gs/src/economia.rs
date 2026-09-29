@@ -190,6 +190,19 @@ impl Bolsa {
     /// modelo no tooltip ("Destreza +1~2") e o servidor não somava nada, porque não havia
     /// propriedade adicional sorteada nenhuma (relato do set Halo, B60).
     pub fn empilhar_gerado(&mut self, tid: u32, quantidade: u32, dados: &GameDataManager) -> Option<Empilhado> {
+        self.empilhar_gerado_de(tid, quantidade, dados, crate::geracao::Geracao::Drop)
+    }
+
+    /// [`Self::empilhar_gerado`] com a variante da geração do equipamento: o drop, a
+    /// fabricação (com o nome de quem fez) ou a venda na loja ([`crate::geracao::Geracao`]).
+    /// Roupa, item de voo e ovo têm geração própria, igual nas três.
+    pub fn empilhar_gerado_de(
+        &mut self,
+        tid: u32,
+        quantidade: u32,
+        dados: &GameDataManager,
+        geracao: crate::geracao::Geracao,
+    ) -> Option<Empilhado> {
         // Item de voo: o conteúdo é próprio (`generate_flysword`), e sem ele o item chega
         // com máscara de classe zero e o cliente não deixa usar (B68).
         if let Some(octetos) = dados.conteudo_do_item_de_voo(tid) {
@@ -225,7 +238,7 @@ impl Bolsa {
             }
             return primeiro;
         }
-        let Some(conteudo) = crate::geracao::gerar_equipamento(dados, tid) else {
+        let Some(conteudo) = crate::geracao::gerar_equipamento_de(dados, tid, geracao) else {
             return self.empilhar(tid, quantidade, dados);
         };
         let octetos = conteudo.escrever();

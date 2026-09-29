@@ -1440,6 +1440,7 @@ impl BusServer {
             ids::NORMAL_ATTACK => self.atacar(roleid, &cmd.payload, envio).await,
             ids::REVIVE_VILLAGE => self.reviver(roleid).await,
             ids::GET_ITEM_INFO => self.info_do_item(roleid, &cmd.payload, envio).await,
+            ids::GET_ITEM_INFO_LIST => self.info_de_varios_itens(roleid, &cmd.payload, envio).await,
             ids::PICKUP => self.pegar(roleid, &cmd.payload).await,
             ids::PICKUP_ALL => self.pegar_todos(roleid, &cmd.payload).await,
             ids::GET_IVTR_DETAIL => self.detalhe_do_container(roleid, &cmd.payload, envio).await,
@@ -4985,6 +4986,21 @@ impl BusServer {
         self.mandar_info(roleid, p.a, p.b, envio).await;
     }
 
+    /// `C2S::GET_ITEM_INFO_LIST` (53) — `gplayer_imp::PlayerGetItemInfoList`
+    /// (`player.cpp:7356-7377`): um `self_item_info` (`OWN_ITEM_INFO`, 40) por índice que
+    /// existe no contêiner; índice fora dele ou slot vazio, nada. Tamanho errado,
+    /// `ERR_FATAL_ERR` (`playercmd.cpp:2313-2316`).
+    async fn info_de_varios_itens(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
+        let Some(p) = crate::comandos::PedidoDeInfoDeItens::ler(payload) else {
+            warn!("mundo: get_item_info_list de {roleid} com {} B que não fecham com a contagem", payload.len());
+            self.responder(roleid, S2CGamedataSend::error_message(jogo::erro_s2c::ERRO_FATAL).data, envio).await;
+            return;
+        };
+        for i in p.indices {
+            self.mandar_info(roleid, p.onde, i, envio).await;
+        }
+    }
+
     /// `C2S::GET_IVTR_DETAIL` (11) — o cliente pediu um contêiner inteiro.
     async fn detalhe_do_container(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
         let onde = GetIvtrDetail::ler(payload).map(|d| d.onde).unwrap_or(0);
@@ -5336,6 +5352,9 @@ impl BusServer {
         {
             return;
         }
+        if !self.pode_vestir(roleid, idx_bolsa, idx_corpo, envio).await {
+            return;
+        }
 
         let itens = self.itens().await;
         if let Err(e) = itens
@@ -5397,6 +5416,60 @@ impl BusServer {
         self.recalcular_equipamento(roleid, true).await;
     }
 
+    /// `EquipItem` → `CanActivate` → `equip_item::VerifyRequirement` (`gs/player.cpp:8476-8493`,
+    /// `gs/item/equip_item.cpp:60-80`): o item da bolsa só vai ao corpo se o jogador atende o
+    /// nível, a **classe** e os quatro atributos da `prerequisition` e se a durabilidade não
+    /// está zerada; senão `ERR_ITEM_CANNOT_EQUIP` (8, `player.cpp:8172-8175`) e os slots
+    /// destravados. Até o B148 o servidor vestia qualquer coisa: o cliente pintava de vermelho
+    /// a peça de outra classe comprada no NPC, mas ela entrava no corpo (relato do 1.2.6).
+    ///
+    /// Os requisitos saem do bloco gravado; sem bloco (item antigo, de antes do B151, quando a
+    /// compra no NPC gravava o item sem
+    /// octetos), do bloco que o `item_info` monta do modelo — o mesmo que o cliente lê. Só vale
+    /// para equipamento com ficha (arma, armadura, acessório, munição); roupa e item de voo têm
+    /// `VerifyRequirement` próprio (`fashion_item.cpp:11`, `item_flysword`), ainda não portado.
+    /// **Falta** também a posição (`CheckEquipPostion`, sem `equip_mask` carregado) e a
+    /// reputação (`get_item_reputation_limit`); o nível é o atual, não o histórico.
+    async fn pode_vestir(&self, roleid: i32, idx_bolsa: u8, idx_corpo: u8, envio: &EnvioAoCliente) -> bool {
+        /// `ERR_ITEM_CANNOT_EQUIP` (`common/protocol.h:688`).
+        const ERR_ITEM_CANNOT_EQUIP: i32 = 8;
+        let itens = self.itens().await;
+        let Ok(Some(item)) = itens
+            .get_item_by_slot(roleid, ContainerType::Inventory, idx_bolsa as u16)
+            .await
+        else {
+            return true; // bolsa vazia: é tirar a peça, sem requisito.
+        };
+        let (dados, nivel, classe, atributos) = {
+            let mundo = self.world.read().await;
+            let Some(p) = mundo.players.get(&(roleid as i64)) else { return false };
+            (Arc::clone(&mundo.data_manager), p.level, p.cls as i32, p.atributos_efetivos())
+        };
+        let Some(ficha) = dados.equipamentos.ficha(item.item_id) else {
+            return true;
+        };
+        let bloco = if item.octets.len() >= 12 {
+            item.octets.clone()
+        } else {
+            pw_core::ConteudoDeEquipamento::novo(ficha, item.durability as i32, item.max_durability as i32)
+                .escrever()
+        };
+        let quebrado = item.max_durability > 0 && item.durability == 0;
+        let atende = pw_core::Requisitos::do_bloco(&bloco).is_some_and(|r| r.atende(nivel, classe, atributos));
+        if atende && !quebrado {
+            return true;
+        }
+        info!("mundo: {roleid} tentou vestir {} sem atender o requisito (nível {nivel}, classe {classe})", item.item_id);
+        for d in [
+            S2CGamedataSend::error_message(ERR_ITEM_CANNOT_EQUIP).data,
+            S2CGamedataSend::unfreeze_ivtr_slot(0, idx_bolsa as u16).data,
+            S2CGamedataSend::unfreeze_ivtr_slot(1, idx_corpo as u16).data,
+        ] {
+            self.responder(roleid, d, envio).await;
+        }
+        false
+    }
+
     /// `C2S::MOVE_ITEM_TO_EQUIP` (18) — mover da bolsa direto para um slot do corpo.
     async fn mover_para_equipar(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
         let Some(p) = ParDeSlots::ler(payload) else {
@@ -5407,6 +5480,9 @@ impl BusServer {
             .equipamento_travado(roleid, &[(0, p.a as u16), (1, p.b as u16)], envio)
             .await
         {
+            return;
+        }
+        if !self.pode_vestir(roleid, p.a, p.b, envio).await {
             return;
         }
 

@@ -335,3 +335,42 @@ fn as_receitas_do_126() {
     assert_eq!(r.vinculo, 0, "o v7 não tem bind_type");
     assert!(d.producao_do_npc.values().any(|s| s.habilidade == 158 && s.receitas.contains(&54)));
 }
+
+/// B151 — arma, armadura e acessório do v7 pelo `gs` 1.2.6 (`generate_weapon/armor/decoration
+/// <NORMAL>`, VA 0x81f4eae, 0x81f57a4, 0x81f6026): sem `require_reputation`, com `fixed_props`, 4
+/// probabilidades de número de addons e 16 únicos. A foice ★★★Nighthawk 15964 (fabricada pelo
+/// Murillo) tem arma de nível 13, propriedades fixas 473/1008/1321 e durabilidade 300 (245 no
+/// drop); e em todo modelo do realm as probabilidades de número de addons somam 1 (ou 0) — no
+/// layout antigo a 5ª era o `probability_unique` e a 6ª o id do 1º addon.
+#[test]
+fn a_geracao_de_equipamento_do_126() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+    if !dir.exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        return;
+    }
+    let mut d = GameDataManager::new();
+    d.load_from_directory(&dir);
+    let foice = &d.geracao[&15964];
+    assert!(foice.fixed_props);
+    assert_eq!(foice.quantos_addons, vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+    assert_eq!(foice.addons.iter().take(3).map(|a| a.0).collect::<Vec<_>>(), vec![473, 1008, 1321]);
+    assert_eq!((foice.durabilidade, foice.durabilidade_no_drop), ((300, 300), (245, 245)));
+    assert_eq!(foice.furos_na_producao, vec![0.0, 0.9, 0.1]);
+    assert_eq!(d.equipamentos.armas[&15964].nivel, 13);
+    assert_eq!(d.equipamentos.armas[&15964].reputacao_exigida, 0);
+    let arco = &d.geracao[&212];
+    assert!((arco.chance_de_unico - 0.044118).abs() < 1e-6);
+    assert_eq!(arco.unicos[15].0, 421, "o 16º único existe no v7");
+    assert_eq!(arco.addons_da_producao[0].0, 784);
+    let fora: Vec<u32> = d
+        .geracao
+        .iter()
+        .filter(|(_, m)| {
+            let s: f32 = m.quantos_addons.iter().sum();
+            s.abs() > 1e-3 && (s - 1.0).abs() > 1e-3
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    assert!(fora.is_empty(), "{} de {} modelos com addon_num que não soma 1: {:?}", fora.len(), d.geracao.len(), &fora[..fora.len().min(10)]);
+}

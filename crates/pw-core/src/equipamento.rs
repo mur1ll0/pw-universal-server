@@ -51,6 +51,53 @@ pub struct ConteudoDeEquipamento {
     pub furos: Vec<i32>,
     pub mascara_das_pedras: u16,
     pub addons: Vec<AddonDoItem>,
+    /// O `item_tag_t` gravado logo depois do tamanho da essência (`generate_item_temp.h:312-314`,
+    /// `memcpy(buf, tag, tag_size)`): `type` é o `m_byMadeFrom` do cliente
+    /// (`EC_IvtrEquip.cpp:199-206`) e o nome é o de quem fabricou, que o tooltip mostra.
+    pub origem: OrigemDoItem,
+    /// Nome do fabricante nos bytes que o original copia (`GetPlayerName`, UTF-16LE), no máximo
+    /// `MAX_USERNAME_LENGTH` (40, `gs/config.h:139`). Vazio fora da produção.
+    pub fabricante: Vec<u8>,
+}
+
+/// `element_data::ITEM_MAKE_TAG` (`gs/template/itemdataman.h:309-317`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum OrigemDoItem {
+    #[default]
+    Nenhuma = 0,
+    Criado = 1,
+    /// `IMT_DROP`: o drop de monstro, a mina e o prêmio de missão (`generate_item_for_drop`).
+    /// A captura do `gs` 1.2.6 original (`_sync/capturas/full_interno.pcap`, detalhe da bolsa)
+    /// traz `02 00` depois do tamanho da essência.
+    Drop = 2,
+    /// `IMT_SHOP`: a variante de venda (`get_item_for_sell`, `itemdataman.cpp:1352`).
+    Loja = 3,
+    /// `IMT_PRODUCE`: `gplayer_imp::ProduceItem` (`player.cpp:16499-16515`).
+    Producao = 4,
+}
+
+impl OrigemDoItem {
+    fn de(b: u8) -> Self {
+        match b {
+            1 => Self::Criado,
+            2 => Self::Drop,
+            3 => Self::Loja,
+            4 => Self::Producao,
+            _ => Self::Nenhuma,
+        }
+    }
+}
+
+/// `MAX_USERNAME_LENGTH` (`gs/config.h:139`): o `ProduceItem` corta o nome aqui.
+pub const TAMANHO_MAXIMO_DO_NOME: usize = 40;
+
+/// O nome do personagem como o original o grava no item: os bytes UTF-16LE do nome, cortados
+/// em `MAX_USERNAME_LENGTH` (`player.cpp:16509-16513`).
+pub fn nome_do_fabricante(nome: &str) -> Vec<u8> {
+    let mut b: Vec<u8> = nome.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    b.truncate(TAMANHO_MAXIMO_DO_NOME);
+    b
 }
 
 struct Leitor<'a> {
@@ -110,10 +157,64 @@ pub fn escrever_durabilidade(bloco: &mut [u8], durabilidade: i32, maxima: i32) -
     true
 }
 
+/// A `prerequisition` do começo do bloco de equipamento (`gs/item/item_addon.h:30-40`):
+/// `short level, race, strength, vitality, agility, energy; int durability, max_durability`.
+/// `race` é a máscara de classes (`character_combo_id & 0xFFFF`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Requisitos {
+    pub nivel: i16,
+    pub classes: u16,
+    pub forca: i16,
+    pub vitalidade: i16,
+    pub agilidade: i16,
+    pub energia: i16,
+}
+
+impl Requisitos {
+    /// Lê os requisitos do bloco; `None` se ele é curto demais para ter a `prerequisition`.
+    pub fn do_bloco(bloco: &[u8]) -> Option<Self> {
+        if bloco.len() < 12 {
+            return None;
+        }
+        let h = |i: usize| i16::from_le_bytes([bloco[2 * i], bloco[2 * i + 1]]);
+        Some(Self {
+            nivel: h(0),
+            classes: h(1) as u16,
+            forca: h(2),
+            vitalidade: h(3),
+            agilidade: h(4),
+            energia: h(5),
+        })
+    }
+
+    /// `equip_item::VerifyRequirement` (`gs/item/equip_item.cpp:60-80`), sem a reputação: nível
+    /// histórico, o bit da classe (`1 << (classe & 0x0F)`) e os quatro atributos de `_cur_prop`.
+    /// `atributos` na ordem `(vitalidade, energia, força, agilidade)`.
+    pub fn atende(&self, nivel: i32, classe: i32, atributos: (i32, i32, i32, i32)) -> bool {
+        let (vit, eng, forca, agi) = atributos;
+        nivel >= self.nivel as i32
+            && (1u32 << (classe & 0x0F)) & self.classes as u32 != 0
+            && forca >= self.forca as i32
+            && vit >= self.vitalidade as i32
+            && agi >= self.agilidade as i32
+            && eng >= self.energia as i32
+    }
+}
+
 impl ConteudoDeEquipamento {
     /// Um item sem furos nem addons, com a ficha do modelo.
     pub fn novo(ficha: FichaDoEquipamento, durabilidade: i32, durabilidade_maxima: i32) -> Self {
-        Self { ficha, durabilidade, durabilidade_maxima, alcance_curto: 0.0, furos: Vec::new(), mascara_das_pedras: 0, addons: Vec::new() }
+        Self {
+            ficha,
+            durabilidade,
+            durabilidade_maxima,
+            alcance_curto: 0.0,
+            furos: Vec::new(),
+            mascara_das_pedras: 0,
+            addons: Vec::new(),
+            origem: OrigemDoItem::Nenhuma,
+            fabricante: Vec::new(),
+        }
     }
 
     fn requisitos(&self) -> (i16, i32, i16, i16, i16, i16) {
@@ -151,8 +252,11 @@ impl ConteudoDeEquipamento {
             F::Municao(_) => 20,
         };
         o.extend_from_slice(&tamanho.to_le_bytes());
-        o.push(0); // m_byMadeFrom
-        o.push(0); // tamanho do nome do fabricante
+        // `item_tag_t { char type; char size; char name[size]; }`.
+        o.push(self.origem as u8);
+        let nome = &self.fabricante[..self.fabricante.len().min(TAMANHO_MAXIMO_DO_NOME)];
+        o.push(nome.len() as u8);
+        o.extend_from_slice(nome);
         let i32s = |o: &mut Vec<u8>, vs: &[i32]| {
             for v in vs {
                 o.extend_from_slice(&v.to_le_bytes());
@@ -202,8 +306,9 @@ impl ConteudoDeEquipamento {
         let (nivel, classes, forca, vitalidade, agilidade, energia) = (r.i16()?, r.i16()?, r.i16()?, r.i16()?, r.i16()?, r.i16()?);
         let (durabilidade, durabilidade_maxima) = (r.i32()?, r.i32()?);
         let tamanho = r.i16()?;
-        let _feito_de = r.u8()?;
+        let origem = OrigemDoItem::de(r.u8()?);
         let nome = r.u8()? as usize;
+        let fabricante = r.b.get(r.i..r.i + nome)?.to_vec();
         r.i += nome;
         let inicio = r.i;
         let classes = classes as u16 as i32;
@@ -306,7 +411,7 @@ impl ConteudoDeEquipamento {
             addons.push(AddonDoItem { tipo, args });
         }
         // O bloco fecha no último byte.
-        (r.i == bytes.len()).then_some(Self { ficha, durabilidade, durabilidade_maxima, alcance_curto, furos, mascara_das_pedras, addons })
+        (r.i == bytes.len()).then_some(Self { ficha, durabilidade, durabilidade_maxima, alcance_curto, furos, mascara_das_pedras, addons, origem, fabricante })
     }
 }
 

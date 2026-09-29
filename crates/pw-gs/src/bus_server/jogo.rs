@@ -925,13 +925,12 @@ impl BusServer {
                 let mut sobra = if material.item > 0 { quantidade } else { 0 };
                 if quantidade > 0 && material.item > 0 {
                     let dados = ctx.dados;
-                    let eh_missao = dados.e_item_de_missao(material.item);
-                    let where_pct = if eh_missao { 2 } else { 0 };
-                    let bolsa = if eh_missao {
-                        &mut ctx.bolsa_de_missao
-                    } else {
-                        &mut ctx.bolsa
-                    };
+                    // O material da mina vai **sempre** para a bolsa comum, seja qual for o tipo
+                    // (`_inventory.Push` e `obtain_item(..., 0, rst)`, `player.cpp:1526-1532`). O
+                    // que vai à bolsa de missão é o item que a própria missão entrega pelo
+                    // `task_out` (`colheu_mina` → `DeliverTaskItem`, quando não é comum).
+                    let where_pct = 0;
+                    let bolsa = &mut ctx.bolsa;
                     // O original também cria o que se colhe por `generate_item_for_drop`
                     // (`player.cpp:1500-1520`).
                     match bolsa.empilhar_gerado(material.item, quantidade, dados) {
@@ -2428,11 +2427,18 @@ impl BusServer {
                 // → `generate_fashion_item(..., SPECIFIC(0))`, `itemdataman.cpp:1471`, com a
                 // cor ainda sorteada pela tendência `ANY`): sem ele a roupa feminina chegava
                 // com `gender` 0 (B129).
+                //
+                // Arma, armadura e acessório idem: o item vendido é o bloco que
+                // `get_item_for_sell` montou no carregamento (`generate_weapon/armor/decoration(
+                // ..., SPECIFIC(0), ADDON_LIST_SHOP, {IMT_SHOP, 0})`, `itemdataman.cpp:1352-1379`),
+                // com a `prerequisition` (a máscara de classes), a durabilidade cheia, sem furo
+                // nem addon. Sem ele o item ia ao banco sem octetos (B151).
                 let tid = i.tid as u32;
                 let com_conteudo = dados.conteudo_da_roupa(tid, 0).is_some()
-                    || dados.conteudo_do_item_de_voo(tid).is_some();
+                    || dados.conteudo_do_item_de_voo(tid).is_some()
+                    || dados.geracao.contains_key(&tid);
                 let guardado = if com_conteudo {
-                    ctx.bolsa.empilhar_gerado(tid, i.count.max(1), dados)
+                    ctx.bolsa.empilhar_gerado_de(tid, i.count.max(1), dados, crate::geracao::Geracao::Loja)
                 } else {
                     ctx.bolsa.empilhar(tid, i.count.max(1), dados)
                 };
@@ -2497,9 +2503,10 @@ impl BusServer {
     /// **Falta** (fica registrado, não inventado): período de venda (`sale_time`, nenhuma
     /// opção dos dois arquivos tem — recusada com `MALL_ITEM_BUY_FAILED`), limite de compras
     /// (`_purchase_limit_info`: não é contado), itens proibidos na loja (`IsItemForbidShop`),
-    /// validade do item comprado (a bolsa não guarda validade — vai só ao log) e a variante
-    /// "de venda" dos equipamentos (`get_item_for_sell`, `ADDON_LIST_SHOP`): entra pelo
-    /// `empilhar_gerado`, que dá ao item de voo e ao ovo o conteúdo próprio.
+    /// e a validade do item comprado (a bolsa não guarda validade — vai só ao log). O item é a
+    /// variante "de venda" (`get_item_for_sell`, `player.cpp:15873`, `:15941`): equipamento com
+    /// `SPECIFIC(0)`/`ADDON_LIST_SHOP`/`IMT_SHOP`, item de voo e ovo com o conteúdo próprio
+    /// (`empilhar_gerado_de(..., Geracao::Loja)`, B151).
     pub(super) async fn comprar_na_loja_gold(
         &self,
         roleid: i32,
@@ -2621,7 +2628,7 @@ impl BusServer {
                     if id == 0 {
                         continue;
                     }
-                    if let Some(e) = ctx.bolsa.empilhar_gerado(id, n.max(1), ctx.dados) {
+                    if let Some(e) = ctx.bolsa.empilhar_gerado_de(id, n.max(1), ctx.dados, crate::geracao::Geracao::Loja) {
                         ctx.para_mim.push(
                             ctx.sub
                                 .obtain_item(id as i32, 0, e.entrou, e.no_slot, 0, e.slot as u8)

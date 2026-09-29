@@ -242,8 +242,13 @@ impl BusServer {
             ctx.para_mim.push(S2CGamedataSend::produce_null(rt.id as i32).data);
             return Produzido { continuar: true, proficiencia };
         }
+        // `generate_item_from_player(item_id, {IMT_PRODUCE, len, nome}, ...)` → `generate_item(...,
+        // NORMAL(0), ADDON_LIST_PRODUCE, tag)` (`player.cpp:16499-16515`, `itemdataman.cpp:1239-1246`):
+        // furos e addons das tabelas de fabricação, durabilidade cheia e o nome de quem fez, que o
+        // tooltip mostra (B151 — antes saía como drop: 245/300 e sem fabricante).
         let dados = ctx.dados;
-        match ctx.bolsa.empilhar_gerado(item_id as u32, rt.quantidade.max(1), dados) {
+        let geracao = crate::geracao::Geracao::Producao { fabricante: pw_core::nome_do_fabricante(&ctx.p.name) };
+        match ctx.bolsa.empilhar_gerado_de(item_id as u32, rt.quantidade.max(1), dados, geracao) {
             Some(e) => {
                 let pacote = ctx.sub.produce_once(item_id, e.entrou, e.no_slot, 0, e.slot as u8);
                 ctx.para_mim.push(pacote.data);

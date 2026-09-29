@@ -110,9 +110,16 @@ pub struct ModeloDeGeracao {
     pub fixed_props: bool,
     pub proc_type: i32,
     pub furos_no_drop: Vec<f32>,
+    /// `make_probability_socket*`: os furos do item fabricado e do vendido na loja
+    /// (`generate_weapon/armor`, ramo `else` de `normal_addon == ADDON_LIST_DROP`,
+    /// `generate_item_temp.h:217-222`).
+    pub furos_na_producao: Vec<f32>,
     pub quantos_addons: Vec<f32>,
     pub chance_de_unico: f32,
     pub addons: Vec<(u32, f32)>,
+    /// `rands[32]`: a lista do `ADDON_LIST_PRODUCE` (`generate_template_addon`,
+    /// `generate_item_temp.h:175-187`) — o `produce` dos argumentos é o `ess->rands`.
+    pub addons_da_producao: Vec<(u32, f32)>,
     pub unicos: Vec<(u32, f32)>,
     pub durabilidade: (i32, i32),
     pub durabilidade_no_drop: (i32, i32),
@@ -157,10 +164,13 @@ pub fn carregar_geracao(elements: &GenericElementsData) -> TabelaDeGeracao {
                 continue;
             }
             let probs = |base: &str, n: usize| (0..n).map(|k| f(r, &format!("{base}{k}"))).collect::<Vec<_>>();
-            let (furos, n_addons) = match familia {
-                Familia::Arma => (probs("drop_probability_socket", 3), probs("probability_addon_num", 6)),
-                Familia::Armadura => (probs("drop_probability_socket", 5), probs("probability_addon_num", 5)),
-                Familia::Decoracao => (Vec::new(), probs("probability_addon_num", 5)),
+            // O número de `probability_addon_num` muda por versão (v156: 6 na arma, 5 na
+            // armadura e no acessório; v7: 4 nos três — `gs` 1.2.6, B151); o que falta no
+            // registro vira probabilidade 0 e nunca é sorteado.
+            let (furos, furos_prod, n_addons) = match familia {
+                Familia::Arma => (probs("drop_probability_socket", 3), probs("make_probability_socket", 3), probs("probability_addon_num", 6)),
+                Familia::Armadura => (probs("drop_probability_socket", 5), probs("make_probability_socket", 5), probs("probability_addon_num", 5)),
+                Familia::Decoracao => (Vec::new(), Vec::new(), probs("probability_addon_num", 5)),
             };
             let par = |a: &str, b: &str| (i(r, a), i(r, b));
             let mut res = [(0, 0); 5];
@@ -175,9 +185,11 @@ pub fn carregar_geracao(elements: &GenericElementsData) -> TabelaDeGeracao {
                     fixed_props: i(r, "fixed_props") != 0,
                     proc_type: i(r, "proc_type"),
                     furos_no_drop: furos,
+                    furos_na_producao: furos_prod,
                     quantos_addons: n_addons,
                     chance_de_unico: f(r, "probability_unique"),
                     addons: lista(r, "addons", "id_addon", "probability_addon", 32),
+                    addons_da_producao: lista(r, "rands", "id_rand", "probability_rand", 32),
                     unicos: if familia == Familia::Arma { lista(r, "uniques", "id_unique", "probability_unique", 16) } else { Vec::new() },
                     durabilidade: par("durability_min", "durability_max"),
                     durabilidade_no_drop: par("durability_drop_min", "durability_drop_max"),

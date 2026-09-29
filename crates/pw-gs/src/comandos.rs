@@ -137,6 +137,12 @@ pub mod ids {
     /// `C2S::CMD::gather_material { int mid; short tool_where; short tool_index; int
     /// tool_type; int task_id; }` (`common/protocol.h:5310-5318`).
     pub const GATHER_MATERIAL: u16 = 54;
+    /// `C2S::CMD::get_item_info_list { char where; unsigned char count; unsigned char
+    /// item_list[]; }` — layout em [`super::PedidoDeInfoDeItens`]. O cliente o manda depois da
+    /// compra no NPC para ler o bloco dos equipamentos comprados
+    /// (`CECHostPlayer::OnMsgHstPurchaseItems`, `EC_HostMsg.cpp:3334-3386`: sem ele o item fica
+    /// "unable to be equipped" — vermelho e sem tooltip, relato do 1.2.6, B151).
+    pub const GET_ITEM_INFO_LIST: u16 = 53;
     /// Armazém (`common/protocol.h:4730-4737`, 55–61) — layouts em [`super::PedidoDoArmazem`].
     pub const GET_TRASHBOX_INFO: u16 = 55;
     pub const EXCHANGE_TRASHBOX_ITEM: u16 = 56;
@@ -427,6 +433,23 @@ impl ParDeSlots {
         let a = r.u8().ok()?;
         let b = r.u8().ok()?;
         Some(Self { a, b })
+    }
+}
+
+/// `SRV::C2S::CMD::get_item_info_list` (`common/protocol.h`, IR `gamedata_155.json`): cabeçalho,
+/// `char where`, `unsigned char count` e `count` índices de slot. O original recusa com
+/// `ERR_FATAL_ERR` quando o tamanho não é exatamente `sizeof + count` (`playercmd.cpp:2310-2322`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PedidoDeInfoDeItens {
+    pub onde: u8,
+    pub indices: Vec<u8>,
+}
+
+impl PedidoDeInfoDeItens {
+    pub fn ler(payload: &[u8]) -> Option<Self> {
+        let (&onde, resto) = payload.split_first()?;
+        let (&n, indices) = resto.split_first()?;
+        (indices.len() == n as usize).then(|| Self { onde, indices: indices.to_vec() })
     }
 }
 
