@@ -108,8 +108,8 @@ v156, `tasks.data` 129, build 2569):
 
 **O que falta no 1.5.5** (§5A): o sistema de Cartas de General (a caixa já dá a carta),
 serviços de refinar, furar e incrustar, os ~300 efeitos de habilidade sem porte, trava de PvP,
-resto do Daimon, armazém, troca de mapa entre contêineres, fôlego debaixo d'água, munição e
-coleta. (O intérprete do `aipolicy.data` foi feito no B127.)
+resto do Daimon e troca de mapa entre contêineres (armazém, munição, coleta, produção e trava
+de PvP feitos em B144–B147; fôlego: o original não desconta). (O intérprete do `aipolicy.data` foi feito no B127.)
 
 **O que o 1.2.6 faz hoje** (realm `realm_126`, porta 29000): as **regras de jogo são as
 mesmas** — ficam no `pw-gs`, e o que muda por versão fica no `WorldProtocol` de
@@ -353,6 +353,7 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 | B130 | (os dois) **não publicado.** Domesticar Animal (328): no monstro com ovo (ex.: Gato de Presas Afiadas), com a vida baixa, aparece **Sucesso** ou **Falha** sobre ele; no sucesso o monstro some e o ovo entra na bolsa. Monstro sem ovo ou de nível acima do seu: **Imune**. Log: `grep -E "capturou|captura de"` |
 | B129 | (os dois) **não publicado.** Roupa comprada (Loja Gold ou NPC) chega com o sexo do molde: o maiô feminino da Tsuko mostra "Feminino" e volta a equipar depois de tirado. As duas peças já gravadas sem conteúdo precisam do SQL do histórico B129 (com a Tsuko fora do jogo) |
 | B128 | (os dois) **não publicado.** Monstro que te persegue desiste em `aggro_time` s (15 s nos do começo) se não te alcança — fugindo ou voando — e volta correndo para casa; na volta não leva dano nem nota ninguém, e chega com a vida cheia (no 1.5.5 aparece o efeito de invencível, estado 49; no 1.2.6 o `gs` original não mostra efeito). Agressivo só te nota a `sight_range + tamanho` (6–8 m nos do começo), não a 15 m. Golpe do ar em monstro de chão tira metade. Voo com o item de 15 m/s: 18 m/s (base 3 + 15). Pegar arma do chão vai para a bolsa comum. Comprar no NPC do 1.2.6 funciona |
+| B147 | (os dois) **não publicado.** Armazém: falar com o NPC do armazém e abrir; a janela mostra 16 slots e o dinheiro guardado. Arrastar item da bolsa para o armazém (pilha parcial também), guardar/retirar dinheiro, trocar slots, devolver à bolsa; andar ou Esc fecham a janela. Nada fica apagado/congelado. Relogar e reabrir: itens e dinheiro continuam. Log: `grep -E "armazém"` |
 | B146 | (os dois) **não publicado.** PvP: sem ligar a chave (botão de PK), nenhuma habilidade fere outro jogador; com os dois ligados, só com Ctrl. Nível 29 ou menos não liga. Desligar logo depois dá a mensagem de espera. Log: `grep -E "PvP|sem PvP"` |
 | B144–B145 | (os dois) **não publicado.** Arqueiro: sem flecha certa o arco não ataca ("não pode atacar"); com a Flecha de Novato o dano sobe. Colher: um golpe interrompe; no 1.5.5 clicar duas vezes seguidas na mina dá "em recarga". RT, missão 31797: a Água Cristalizada fica **na borda** da fonte do mapa 161, não dentro. Forja: no NPC de forja, escolher uma receita com os materiais na bolsa → barra de produção, item na bolsa, materiais e taxa descontados, proficiência sobe na janela de habilidades. Log: `grep -E "produzir|consertou"` |
 | B143 | (os dois) **não publicado.** Quem chega depois vê a Muralha/raposa/escudo e quem voa já no ar (1.2.6). Sentado: clicar no chão ou atacar não faz nada; Esc levanta; poção funciona; monstro que amaldiçoa levanta. Muralha de Espinhos: habilidade física de monstro também leva dano de volta (no 1.5.5, 0,02·L do golpe). Loja: o preço cobrado é o que a janela do cliente mostra (ex.: armadura 139 = 10.100). Perto dos Guias, **todas** as criaturas até ~90 m (antes cortava em 80) — observar se o cliente engasga. Log: `grep -E "sentado — comando|fila de .* parada"` |
@@ -563,7 +564,7 @@ grupo pelo `iFirstGen` (usa o do líder).
    `realm_126` fechando no último byte; (h) teto de 80 criaturas visíveis contra 220.
 3. **1.5.5 (§5A)** — em andamento. **Feitos (B144–B146):** munição, coleta, recurso no piso
    (Água Cristalizada), produção no NPC nas duas versões (pedido do Murillo de 2026-09-28), trava
-   de PvP; fôlego: o original não desconta (nada a portar). **Faltam, nesta ordem:** armazém;
+   de PvP; fôlego: o original não desconta (nada a portar); armazém (B147). **Faltam, nesta ordem:**
    refinar/furar/incrustar; casos de missão recusados; troca de mapa entre contêineres (o
    teleporte por NPC já existe, B51); o resto do Daimon; Cartas de General; os ~300 efeitos de
    habilidade; as produções 2–5 e a decomposição.

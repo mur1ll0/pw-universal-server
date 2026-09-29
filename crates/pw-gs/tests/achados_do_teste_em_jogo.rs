@@ -96,6 +96,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         coleta: None,
         ultima_coleta: None,
         producao: 0,
+        armazem_aberto: false,
         pvp_ligado: false,
         pvp_espera_s: 0,
         forcar_ataque: false,

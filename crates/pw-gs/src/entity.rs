@@ -210,6 +210,9 @@ pub struct PlayerEntity {
     pub forcar_ataque: bool,
     /// Contador das sessões de produção abertas e a que está em curso (`session_produce`).
     pub producao: u64,
+    /// `_trash_box_open_flag` (`gs/player.cpp:7379-7406`): a sessão `session_use_trashbox`
+    /// aberta pelo serviço 15; qualquer outra ação a encerra (`TRASHBOX_CLOSE`).
+    pub armazem_aberto: bool,
     pub produzindo: Option<u64>,
     /// O que o equipamento vestido acrescenta (`_cur_item` e `_en_point`).
     pub equipamento: Equipamento,
@@ -1280,6 +1283,7 @@ impl PlayerEntity {
             coleta: None,
             ultima_coleta: None,
             producao: 0,
+            armazem_aberto: false,
             pvp_ligado: false,
             pvp_espera_s: 0,
             forcar_ataque: false,

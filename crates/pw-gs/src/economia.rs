@@ -313,6 +313,82 @@ impl Bolsa {
     }
 
     /// Grava no banco só os slots que mudaram.
+    /// Tira o item de um slot (marcando-o para apagar no banco).
+    pub fn pegar(&mut self, slot: usize) -> Option<ItemRecord> {
+        let i = self.slots.get_mut(slot)?.take();
+        if i.is_some() {
+            self.alterados.insert(slot);
+        }
+        i
+    }
+
+    /// Põe um item (ou nada) num slot, ajustando o recipiente e o slot do registro.
+    pub fn por(&mut self, slot: usize, item: Option<ItemRecord>) {
+        if slot >= self.slots.len() {
+            return;
+        }
+        self.slots[slot] = item.map(|mut i| {
+            i.container_type = self.tipo;
+            i.slot = slot as u16;
+            i.character_id = self.dono;
+            i
+        });
+        self.alterados.insert(slot);
+    }
+
+    /// `item_list::ExchangeItem`: troca dois slots da mesma bolsa. `false` fora da bolsa.
+    pub fn trocar(&mut self, a: usize, b: usize) -> bool {
+        if a >= self.slots.len() || b >= self.slots.len() {
+            return false;
+        }
+        let (x, y) = (self.pegar(a), self.pegar(b));
+        self.por(a, y);
+        self.por(b, x);
+        true
+    }
+
+    /// `item_list::MoveItem` (`gs/item_list.h:702-755`): `count` do slot `src` para `dest` da
+    /// mesma bolsa — em vazio parte a pilha, no mesmo item junta se couber inteiro na pilha;
+    /// senão (ou sem o bastante na origem) move 0. `None` com índice fora da bolsa.
+    pub fn mover(&mut self, src: usize, dest: usize, count: u32, pilha: u32) -> Option<u32> {
+        if src >= self.slots.len() || dest >= self.slots.len() {
+            return None;
+        }
+        if src == dest {
+            return Some(count);
+        }
+        if count == 0 {
+            return None;
+        }
+        let Some(origem) = self.slots[src].clone() else { return Some(0) };
+        if origem.count < count {
+            return Some(0);
+        }
+        match self.slots[dest].clone() {
+            None => {
+                let mut novo = origem.clone();
+                novo.id = None;
+                novo.count = count;
+                self.por(dest, Some(novo));
+            }
+            Some(d) if d.item_id == origem.item_id && d.count + count <= pilha => {
+                let mut d = d;
+                d.count += count;
+                self.por(dest, Some(d));
+            }
+            Some(_) => return Some(0),
+        }
+        let resto = origem.count - count;
+        if resto == 0 {
+            self.pegar(src);
+        } else {
+            let mut o = origem;
+            o.count = resto;
+            self.por(src, Some(o));
+        }
+        Some(count)
+    }
+
     pub async fn gravar(&mut self, repo: &pw_storage::ItemRepository) -> Result<(), String> {
         for s in std::mem::take(&mut self.alterados) {
             let r = match &self.slots[s] {
@@ -325,9 +401,87 @@ impl Bolsa {
     }
 }
 
+/// `MoveBetweenItemList` (`gs/item_list.h:980-1035`): `count` do slot `s` de `origem` para o
+/// slot `d` de `destino` — em vazio vai o que foi pedido (tudo move o item inteiro), no mesmo item
+/// junta até a pilha. Devolve quanto passou; `None` é o `-1` (fora, origem vazia, itens
+/// diferentes ou nada coube).
+pub fn mover_entre(origem: &mut Bolsa, s: usize, destino: &mut Bolsa, d: usize, count: u32, pilha: u32) -> Option<u32> {
+    if s >= origem.slots.len() || d >= destino.slots.len() || count == 0 {
+        return None;
+    }
+    let it = origem.slots[s].clone()?;
+    let count = count.min(it.count);
+    match destino.slots[d].clone() {
+        None => {
+            if count == it.count {
+                let i = origem.pegar(s);
+                destino.por(d, i);
+            } else {
+                let mut novo = it.clone();
+                novo.id = None;
+                novo.count = count;
+                destino.por(d, Some(novo));
+                let mut o = it;
+                o.count -= count;
+                origem.por(s, Some(o));
+            }
+            Some(count)
+        }
+        Some(alvo) if alvo.item_id == it.item_id => {
+            let cabe = pilha.saturating_sub(alvo.count).min(count);
+            if cabe == 0 {
+                return None;
+            }
+            let mut a = alvo;
+            a.count += cabe;
+            destino.por(d, Some(a));
+            if cabe == it.count {
+                origem.pegar(s);
+            } else {
+                let mut o = it;
+                o.count -= cabe;
+                origem.por(s, Some(o));
+            }
+            Some(cabe)
+        }
+        Some(_) => None,
+    }
+}
+
+/// A troca do armazém com a bolsa (`box.Exchange` + `_inventory.Exchange`,
+/// `gs/player.cpp:7633-7636`): o que está em cada slot vai para o outro.
+pub fn trocar_entre(a: &mut Bolsa, i: usize, b: &mut Bolsa, j: usize) -> bool {
+    if i >= a.slots.len() || j >= b.slots.len() {
+        return false;
+    }
+    let (x, y) = (a.pegar(i), b.pegar(j));
+    a.por(i, y);
+    b.por(j, x);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mover_entre_bolsas_parte_junta_e_recusa() {
+        let mut bolsa = Bolsa::nova(1, ContainerType::Inventory, 4, vec![item(0, 10, 5), item(1, 20, 1)]);
+        let mut armazem = Bolsa::nova(1, ContainerType::Storehouse, 4, vec![item(2, 10, 8)]);
+        // Parte 2 de 5 para um vazio.
+        assert_eq!(mover_entre(&mut bolsa, 0, &mut armazem, 0, 2, 10), Some(2));
+        assert_eq!(bolsa.slots[0].as_ref().unwrap().count, 3);
+        assert_eq!(armazem.slots[0].as_ref().unwrap().container_type, ContainerType::Storehouse);
+        // Junta no mesmo item até a pilha de 10: 8 + 3 não cabe inteiro, passam 2.
+        assert_eq!(mover_entre(&mut bolsa, 0, &mut armazem, 2, 3, 10), Some(2));
+        assert_eq!(bolsa.slots[0].as_ref().unwrap().count, 1);
+        // Item diferente no destino: -1.
+        assert_eq!(mover_entre(&mut bolsa, 1, &mut armazem, 2, 1, 10), None);
+        // Tudo: o registro inteiro muda de recipiente.
+        assert_eq!(mover_entre(&mut bolsa, 1, &mut armazem, 3, 9, 10), Some(1));
+        assert!(bolsa.slots[1].is_none());
+        assert_eq!(armazem.slots[3].as_ref().unwrap().item_id, 20);
+    }
 
     fn item(slot: u16, tid: u32, count: u32) -> ItemRecord {
         ItemRecord {

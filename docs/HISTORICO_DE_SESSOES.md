@@ -10916,3 +10916,21 @@ comparação lado a lado.
       no `TestUnderWater` (`player.cpp:14322-14348`), e o `gs` 1.2.6 não chama o `ChangeState`
       (VA 0x8134b58) em lugar nenhum: o servidor original não desconta fôlego. Nada a portar.
     - Falta: duelo, agressor e perdas na morte PvP, zona de segurança, `STATE_PVPMODE`.
+
+147. **Sessão 2026-09-29: armazém do personagem (1.5.5 e 1.2.6).**
+    - **Abrir** (serviço 15, `trashbox_open_executor`, `serviceprovider.cpp:2026-2069`): senha
+      vazia (sem senha guardada, `CheckPassword` só aceita a vazia), sessão em curso → erro 33,
+      senha → 35; `TRASHBOX_OPEN` com 16 slots. Andar, cancelar, atacar, conjurar, coletar ou
+      sentar fecham (`session_use_trashbox::EndSession` → `TRASHBOX_CLOSE`).
+    - **C2S 55–61** (`playercmd.cpp:2389-2600`, `player.cpp:7423-7779`): lista (1.5.5 também a de
+      materiais com 0 slots), troca/movimento no armazém, troca com a bolsa, `MoveBetweenItemList`
+      nos dois sentidos, dinheiro com teto 2e9 e `ERR_INVENTORY_IS_FULL`; destrava os slots (181)
+      antes de tudo. Fechado → 36; tamanho errado → 3.
+    - **Layouts:** 1.5.5 com `where` e quantidade `u32`; **1.2.6 sem `where` e quantidade `u16`**
+      (`CommandHandler` do `gs` 1.2.6, VA 0x80cfecc–0x80d03c9: tamanhos 3/4/6/4/6/6/10); S2C
+      130–138 do 1.2.6 sem o byte (validador do cliente) — `WorldProtocol::armazem`.
+    - Banco: `characters.storehouse_money` (`scripts/2026_09_28_dinheiro_do_armazem.sql`, aplicado
+      em `public` e `test`). Código: `bus_server/armazem.rs`, `comandos::PedidoDoArmazem`,
+      `economia::{mover_entre, trocar_entre}`. Testes: `armazem_no_155`, `armazem_no_126`,
+      `dinheiro_do_armazem_segue_o_original`, `mover_entre_bolsas_parte_junta_e_recusa`.
+    - Falta: senha (serviço 14), armazém da conta, armazéns especiais com slots, expansão.

@@ -137,6 +137,14 @@ pub mod ids {
     /// `C2S::CMD::gather_material { int mid; short tool_where; short tool_index; int
     /// tool_type; int task_id; }` (`common/protocol.h:5310-5318`).
     pub const GATHER_MATERIAL: u16 = 54;
+    /// Armazém (`common/protocol.h:4730-4737`, 55–61) — layouts em [`super::PedidoDoArmazem`].
+    pub const GET_TRASHBOX_INFO: u16 = 55;
+    pub const EXCHANGE_TRASHBOX_ITEM: u16 = 56;
+    pub const MOVE_TRASHBOX_ITEM: u16 = 57;
+    pub const EXCHANGE_TRASHBOX_INVENTORY: u16 = 58;
+    pub const MOVE_TRASHBOX_ITEM_TO_INVENTORY: u16 = 59;
+    pub const MOVE_INVENTORY_ITEM_TO_TRASHBOX: u16 = 60;
+    pub const EXCHANGE_TRASHBOX_MONEY: u16 = 61;
     /// `SRV::C2S::CMD::self_get_property` — só cabeçalho. O cliente pede o próprio bloco
     /// de estado.
     pub const GET_EXT_PROP: u16 = 21;
@@ -466,6 +474,89 @@ impl MoveIvtrItem {
             src,
             dest,
             amount: r.u32().unwrap_or(1),
+        })
+    }
+}
+
+/// `IL_TRASH_BOX` (`gs/player_imp.h:1833`): o `where` do armazém do personagem.
+pub const IL_TRASH_BOX: u8 = 3;
+
+/// Um pedido C2S do armazém (55–61), já sem o cabeçalho.
+///
+/// 1.5.5 (`common/protocol.h:5320-5375`, empacotado): todos trazem `where`/`is_usertrashbox`
+/// depois do cabeçalho e quantidade `unsigned int`. 1.2.6 (`gplayer_controller::CommandHandler`
+/// do `gs` 1.2.6, VA `0x80cfecc`–`0x80d03c9`): sem o byte, e a quantidade é `u16` em +4
+/// (`movzx word [+4]`); tamanhos 3, 4, 6, 4, 6, 6, 10. Tamanho diferente é `ERR_FATAL_ERR`
+/// no original (`playercmd.cpp:2392`, `:2422`…); aqui, `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PedidoDoArmazem {
+    /// 55 — `get_trashbox_info { char is_usertrashbox; char detail; }`.
+    Info { conta: bool, detalhe: bool },
+    /// 56 — trocar dois slots do armazém.
+    Trocar { onde: u8, a: u8, b: u8 },
+    /// 57 — mover parte de uma pilha dentro do armazém.
+    Mover { onde: u8, src: u8, dest: u8, quantidade: u32 },
+    /// 58 — trocar um slot do armazém com um da bolsa.
+    TrocarComBolsa { onde: u8, armazem: u8, bolsa: u8 },
+    /// 59 — do armazém para a bolsa.
+    ParaBolsa { onde: u8, armazem: u8, bolsa: u8, quantidade: u32 },
+    /// 60 — da bolsa para o armazém.
+    ParaArmazem { onde: u8, bolsa: u8, armazem: u8, quantidade: u32 },
+    /// 61 — `excnahge_trashbox_money { is_usertrashbox; inv_money; trashbox_money }`.
+    Dinheiro { conta: bool, da_bolsa: u32, do_armazem: u32 },
+}
+
+impl PedidoDoArmazem {
+    pub fn ler(id: u16, payload: &[u8], do_126: bool) -> Option<Self> {
+        let onde_len = if do_126 { 0 } else { 1 };
+        let qtd_len = if do_126 { 2 } else { 4 };
+        let esperado = match id {
+            ids::GET_TRASHBOX_INFO => onde_len + 1,
+            ids::EXCHANGE_TRASHBOX_ITEM | ids::EXCHANGE_TRASHBOX_INVENTORY => onde_len + 2,
+            ids::MOVE_TRASHBOX_ITEM
+            | ids::MOVE_TRASHBOX_ITEM_TO_INVENTORY
+            | ids::MOVE_INVENTORY_ITEM_TO_TRASHBOX => onde_len + 2 + qtd_len,
+            ids::EXCHANGE_TRASHBOX_MONEY => onde_len + 8,
+            _ => return None,
+        };
+        if payload.len() != esperado {
+            return None;
+        }
+        let mut r = Reader::new(payload);
+        let onde = if do_126 { IL_TRASH_BOX } else { r.u8().ok()? };
+        let qtd = |r: &mut Reader| -> Option<u32> {
+            if do_126 {
+                r.u16().ok().map(u32::from)
+            } else {
+                r.u32().ok()
+            }
+        };
+        Some(match id {
+            ids::GET_TRASHBOX_INFO => {
+                // No 1.2.6 o único byte é o `detail`; o 1.5.5 põe o da conta antes.
+                let conta = !do_126 && onde != 0;
+                Self::Info { conta, detalhe: r.u8().ok()? != 0 }
+            }
+            ids::EXCHANGE_TRASHBOX_ITEM => Self::Trocar { onde, a: r.u8().ok()?, b: r.u8().ok()? },
+            ids::MOVE_TRASHBOX_ITEM => {
+                let (src, dest) = (r.u8().ok()?, r.u8().ok()?);
+                Self::Mover { onde, src, dest, quantidade: qtd(&mut r)? }
+            }
+            ids::EXCHANGE_TRASHBOX_INVENTORY => {
+                Self::TrocarComBolsa { onde, armazem: r.u8().ok()?, bolsa: r.u8().ok()? }
+            }
+            ids::MOVE_TRASHBOX_ITEM_TO_INVENTORY => {
+                let (armazem, bolsa) = (r.u8().ok()?, r.u8().ok()?);
+                Self::ParaBolsa { onde, armazem, bolsa, quantidade: qtd(&mut r)? }
+            }
+            ids::MOVE_INVENTORY_ITEM_TO_TRASHBOX => {
+                let (bolsa, armazem) = (r.u8().ok()?, r.u8().ok()?);
+                Self::ParaArmazem { onde, bolsa, armazem, quantidade: qtd(&mut r)? }
+            }
+            _ => {
+                let conta = !do_126 && onde != 0;
+                Self::Dinheiro { conta, da_bolsa: r.u32().ok()?, do_armazem: r.u32().ok()? }
+            }
         })
     }
 }

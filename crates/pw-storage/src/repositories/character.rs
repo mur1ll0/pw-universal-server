@@ -741,6 +741,24 @@ impl CharacterRepository {
     /// do original: o `int` que o `PLAYER_CASH` leva (o cliente mostra ÷100). No original o
     /// cash é do usuário, não do personagem (`gplayer_imp::_mall_cash`, vindo do
     /// `gdeliveryd`). `None` se o personagem não existir.
+    /// O dinheiro do armazém (`characters.storehouse_money`, B147).
+    pub async fn dinheiro_do_armazem(&self, role_id: RoleId) -> Result<i64> {
+        let v: Option<i64> = sqlx::query_scalar("SELECT storehouse_money FROM characters WHERE id = $1")
+            .bind(role_id)
+            .fetch_optional(self.pool.get_ref())
+            .await?;
+        Ok(v.unwrap_or(0))
+    }
+
+    pub async fn gravar_dinheiro_do_armazem(&self, role_id: RoleId, valor: i64) -> Result<()> {
+        sqlx::query("UPDATE characters SET storehouse_money = $2 WHERE id = $1")
+            .bind(role_id)
+            .bind(valor)
+            .execute(self.pool.get_ref())
+            .await?;
+        Ok(())
+    }
+
     pub async fn cash_da_conta(&self, role_id: RoleId) -> Result<Option<i64>> {
         let v = sqlx::query_scalar::<_, i64>(
             r#"

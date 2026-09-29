@@ -58,6 +58,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, trace, warn};
 
+mod armazem;
 mod habilidades;
 mod jogo;
 mod mascote;
@@ -1401,7 +1402,30 @@ impl BusServer {
                 }
             }
         }
+        // `session_use_trashbox` termina quando outra sessão começa (`actsession.cpp:1232-1246`):
+        // andar, atacar, conjurar, coletar ou cancelar fecham o armazém.
+        if matches!(
+            cmd.id,
+            ids::PLAYER_MOVE
+                | ids::CANCEL_ACTION
+                | ids::NORMAL_ATTACK
+                | ids::CAST_SKILL
+                | ids::CAST_INSTANT_SKILL
+                | ids::GATHER_MATERIAL
+                | ids::SIT_DOWN
+        ) {
+            self.fechar_armazem(roleid).await;
+        }
         match cmd.id {
+            ids::GET_TRASHBOX_INFO
+            | ids::EXCHANGE_TRASHBOX_ITEM
+            | ids::MOVE_TRASHBOX_ITEM
+            | ids::EXCHANGE_TRASHBOX_INVENTORY
+            | ids::MOVE_TRASHBOX_ITEM_TO_INVENTORY
+            | ids::MOVE_INVENTORY_ITEM_TO_TRASHBOX
+            | ids::EXCHANGE_TRASHBOX_MONEY => {
+                self.pedido_do_armazem(roleid, cmd.id, &cmd.payload, envio).await
+            }
             ids::PLAYER_MOVE => {
                 self.andar_na_fila(roleid).await;
                 self.mover(roleid, &cmd.payload, envio).await
@@ -4242,6 +4266,8 @@ impl BusServer {
             servico::REPARAR => self.reparar(roleid, c, envio).await,
 
             servico::FORJAR => self.produzir(roleid, c, envio).await,
+
+            servico::ABRIR_ARMAZEM => self.abrir_armazem(roleid, c, envio).await,
 
             servico::CURAR => {
                 // Cura de verdade, com os valores do jogador — e não os fixos que o

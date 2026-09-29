@@ -2839,19 +2839,98 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando TRASHBOX_OPEN (Comando 130) abrindo o banqueiro/armazém
-    pub fn trashbox_open(capacity: u8) -> Self {
+    // ---- armazém (B147): layout do 1.5.5, com `where`/`is_accountbox` na frente
+    // (`EC_GPDataType.h`, `common/protocol_imp.h:1990-2110`). O 1.2.6 não tem o byte — ver
+    // `WorldProtocol::armazem_*`. `where` 3 é o `IL_TRASH_BOX` (`gs/player_imp.h:1833`).
+
+    /// `TRASHBOX_OPEN` (130): `char is_accountbox; u16 slot_size, slot_size2, slot_size3` (2+7).
+    pub fn trashbox_open(tamanho: u16, tamanho2: u16, tamanho3: u16) -> Self {
         let mut stream = OctetsStream::new();
-        stream.write_u16_le(130);              // CMD_S2C_TRASHBOX_OPEN = 130
-        stream.write_u8(capacity);
+        stream.write_u16_le(130);
+        stream.write_u8(0);
+        stream.write_u16_le(tamanho);
+        stream.write_u16_le(tamanho2);
+        stream.write_u16_le(tamanho3);
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando TRASHBOX_WEALTH (Comando 132) atualizando moedas guardadas no banco
-    pub fn trashbox_wealth(money: i32) -> Self {
+    /// `TRASHBOX_CLOSE` (131): `char is_accountbox` (2+1).
+    pub fn trashbox_close() -> Self {
         let mut stream = OctetsStream::new();
-        stream.write_u16_le(132);              // CMD_S2C_TRASHBOX_WEALTH = 132
-        stream.write_i32_le(money);
+        stream.write_u16_le(131);
+        stream.write_u8(0);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `TRASHBOX_WEALTH` (132): `char is_accountbox; size_t money` (2+5).
+    pub fn trashbox_wealth(money: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(132);
+        stream.write_u8(0);
+        stream.write_u32_le(money);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `EXG_TRASHBOX_ITEM` (133): `u8 where, idx1, idx2` (2+3).
+    pub fn exg_trashbox_item(a: u8, b: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(133);
+        stream.write_u8(3);
+        stream.write_u8(a);
+        stream.write_u8(b);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `MOVE_TRASHBOX_ITEM` (134): `u8 where, src, dest; size_t amount` (2+7).
+    pub fn move_trashbox_item(src: u8, dest: u8, amount: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(134);
+        stream.write_u8(3);
+        stream.write_u8(src);
+        stream.write_u8(dest);
+        stream.write_u32_le(amount);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `EXG_TRASHBOX_IVTR` (135): `u8 where, idx_tra, idx_inv` (2+3).
+    pub fn exg_trashbox_ivtr(idx_tra: u8, idx_inv: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(135);
+        stream.write_u8(3);
+        stream.write_u8(idx_tra);
+        stream.write_u8(idx_inv);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `IVTR_ITEM_TO_TRASH` (136): `u8 where, src (bolsa), dest (armazém); size_t amount` (2+7).
+    pub fn ivtr_item_to_trash(idx_inv: u8, idx_tra: u8, amount: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(136);
+        stream.write_u8(3);
+        stream.write_u8(idx_inv);
+        stream.write_u8(idx_tra);
+        stream.write_u32_le(amount);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `TRASH_ITEM_TO_IVTR` (137): `u8 where, src (armazém), dest (bolsa); size_t amount` (2+7).
+    pub fn trash_item_to_ivtr(idx_tra: u8, idx_inv: u8, amount: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(137);
+        stream.write_u8(3);
+        stream.write_u8(idx_tra);
+        stream.write_u8(idx_inv);
+        stream.write_u32_le(amount);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `EXG_TRASH_MONEY` (138): `char is_accountbox; int inv_delta, tra_delta` (2+9).
+    pub fn exg_trash_money(inv_delta: i32, tra_delta: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(138);
+        stream.write_u8(0);
+        stream.write_i32_le(inv_delta);
+        stream.write_i32_le(tra_delta);
         Self { data: stream.into_bytes().to_vec() }
     }
 

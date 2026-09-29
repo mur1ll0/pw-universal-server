@@ -231,6 +231,25 @@ pub trait WorldProtocol: Send + Sync {
         }
     }
 
+    /// Armazém (B147): o 1.5.5 põe `where`/`is_accountbox` depois do cabeçalho de todo pacote
+    /// do armazém (131–138); o 1.2.6 não tem o byte (validador do cliente: 131 = 0, 132 = 4,
+    /// 133/135 = 2, 134/136/137 = 6, 138 = 8), e sobrescreve para tirá-lo.
+    fn armazem(&self, pacote: S2CGamedataSend) -> S2CGamedataSend {
+        pacote
+    }
+
+    /// `TRASHBOX_OPEN` (130): no 1.5.5 os três tamanhos (armazém, material, o terceiro zerados
+    /// quando não expandidos); no 1.2.6 só o `u16` do armazém (validador: 2 B).
+    fn trashbox_open(&self, tamanho: u16) -> S2CGamedataSend {
+        S2CGamedataSend::trashbox_open(tamanho, 0, 0)
+    }
+
+    /// Os C2S 56–61 do armazém trazem `where`/`is_usertrashbox` e quantidade de 4 B no 1.5.5; no
+    /// 1.2.6 nem o byte nem mais que 2 B de quantidade (`gs` 1.2.6: `movzx word [+4]`).
+    fn armazem_do_126(&self) -> bool {
+        false
+    }
+
     /// PRODUCE_ONCE (101): 14 B no 1.5.5, 10 no 1.2.6.
     fn produce_once(&self, item_id: i32, amount: u32, slot_amount: u32, onde: u8, slot: u8) -> S2CGamedataSend {
         S2CGamedataSend::produce_once(item_id, amount, slot_amount, onde, slot)

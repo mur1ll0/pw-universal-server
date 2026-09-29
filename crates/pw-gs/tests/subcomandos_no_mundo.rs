@@ -8640,3 +8640,96 @@ async fn a_chave_de_pvp_tem_nivel_minimo_e_espera() {
     assert_eq!(i32_em(&erro, 2), 47);
     assert!(mundo.read().await.players[&(roleid as i64)].pvp_ligado);
 }
+
+
+/// B147 — o armazém (serviço 15 e C2S 55–61): fechado recusa com `ERR_TRASH_BOX_NOT_OPEN`;
+/// aberto, lista, guarda parte de uma pilha, guarda dinheiro, devolve à bolsa e fecha ao
+/// cancelar (`serviceprovider.cpp:2026-2069`, `playercmd.cpp:2389-2600`, `player.cpp:7379-7779`).
+async fn conferir_armazem(versao: GameVersion) {
+    let Some((mundo, addr, roleid, _)) = montar(versao).await else { return };
+    let do_126 = versao == GameVersion::V1_2_6;
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    let repo = mundo.read().await.char_repo.clone();
+    repo.gravar_dinheiro_do_armazem(roleid, 0).await.unwrap();
+    let mut material = peca(roleid, pw_core::ContainerType::Inventory, 5, MATERIAL, 0, 0);
+    material.count = 3;
+    itens.upsert_item(&material).await.unwrap();
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().money += 1000;
+    // `where` (1.5.5) + índices + quantidade (`u32` no 1.5.5, `u16` no 1.2.6).
+    let corpo = |a: u8, b: u8, qtd: Option<u32>| {
+        let mut v = if do_126 { vec![] } else { vec![3u8] };
+        v.extend_from_slice(&[a, b]);
+        if let Some(q) = qtd {
+            if do_126 {
+                v.extend_from_slice(&(q as u16).to_le_bytes());
+            } else {
+                v.extend_from_slice(&q.to_le_bytes());
+            }
+        }
+        v
+    };
+    let info = if do_126 { vec![0u8] } else { vec![0u8, 0] };
+    let mandar = |id: u16, p: Vec<u8>| BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(id, &p) };
+    let onde = if do_126 { 0 } else { 1 };
+
+    link.enviar(mandar(ids::GET_TRASHBOX_INFO, info.clone())).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 36, "fechado: ERR_TRASH_BOX_NOT_OPEN");
+
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(15, &0u32.to_le_bytes()) })
+        .await
+        .unwrap();
+    let aberto = esperar_comando(&mut link, 130).await;
+    assert_eq!(aberto.len(), if do_126 { 4 } else { 9 }, "TRASHBOX_OPEN");
+    assert_eq!(u16::from_le_bytes([aberto[2 + onde], aberto[3 + onde]]), 16);
+
+    link.enviar(mandar(ids::GET_TRASHBOX_INFO, info)).await.unwrap();
+    let riqueza = esperar_comando(&mut link, 132).await;
+    assert_eq!(riqueza.len(), if do_126 { 6 } else { 7 }, "TRASHBOX_WEALTH");
+
+    link.enviar(mandar(ids::MOVE_INVENTORY_ITEM_TO_TRASHBOX, corpo(5, 0, Some(2)))).await.unwrap();
+    let destravou = esperar_comando(&mut link, 181).await;
+    assert_eq!(destravou[2], 3, "UNFREEZE_IVTR_SLOT do armazém primeiro");
+    let guardou = esperar_comando(&mut link, 136).await;
+    assert_eq!(guardou.len(), if do_126 { 8 } else { 9 }, "IVTR_ITEM_TO_TRASH");
+    assert_eq!(i32_em(&guardou, 4 + onde), 2);
+    let na_bolsa = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 5).await.unwrap();
+    assert_eq!(na_bolsa.map(|i| i.count), Some(1));
+    let no_armazem = itens.get_item_by_slot(roleid, pw_core::ContainerType::Storehouse, 0).await.unwrap();
+    assert_eq!(no_armazem.map(|i| (i.item_id as i32, i.count)), Some((MATERIAL, 2)));
+
+    let antes = dinheiro(&mundo, roleid).await;
+    let mut d = if do_126 { vec![] } else { vec![0u8] };
+    d.extend_from_slice(&400u32.to_le_bytes());
+    d.extend_from_slice(&0u32.to_le_bytes());
+    link.enviar(mandar(ids::EXCHANGE_TRASHBOX_MONEY, d)).await.unwrap();
+    let troca = esperar_comando(&mut link, 138).await;
+    assert_eq!(troca.len(), if do_126 { 10 } else { 11 }, "EXG_TRASH_MONEY");
+    assert_eq!(i32_em(&troca, 2 + onde), -400);
+    assert_eq!(i32_em(&troca, 6 + onde), 400);
+    assert_eq!(dinheiro(&mundo, roleid).await, antes - 400);
+    assert_eq!(repo.dinheiro_do_armazem(roleid).await.unwrap(), 400);
+
+    link.enviar(mandar(ids::MOVE_TRASHBOX_ITEM_TO_INVENTORY, corpo(0, 7, Some(2)))).await.unwrap();
+    let devolveu = esperar_comando(&mut link, 137).await;
+    assert_eq!(i32_em(&devolveu, 4 + onde), 2);
+    let vazio = itens.get_item_by_slot(roleid, pw_core::ContainerType::Storehouse, 0).await.unwrap();
+    assert!(vazio.is_none(), "o armazém esvaziou");
+
+    link.enviar(mandar(ids::CANCEL_ACTION, vec![])).await.unwrap();
+    let fechou = esperar_comando(&mut link, 131).await;
+    assert_eq!(fechou.len(), if do_126 { 2 } else { 3 }, "TRASHBOX_CLOSE");
+    assert!(!mundo.read().await.players[&(roleid as i64)].armazem_aberto);
+    repo.gravar_dinheiro_do_armazem(roleid, 0).await.unwrap();
+}
+
+#[tokio::test]
+async fn armazem_no_155() {
+    conferir_armazem(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn armazem_no_126() {
+    conferir_armazem(GameVersion::V1_2_6).await;
+}

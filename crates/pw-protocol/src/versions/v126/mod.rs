@@ -70,6 +70,27 @@ impl WorldProtocol for V126Protocol {
         0
     }
 
+    fn armazem(&self, pacote: S2CGamedataSend) -> S2CGamedataSend {
+        // Sem o `where`/`is_accountbox` depois do cabeçalho (validador do cliente 1.2.6, casos
+        // 131–138): o `gs` 1.2.6 tem um armazém só (`PlayerExchangeTrashItem(jj)`…).
+        let mut data = pacote.data;
+        if data.len() > 2 {
+            data.remove(2);
+        }
+        S2CGamedataSend { data }
+    }
+
+    fn trashbox_open(&self, tamanho: u16) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u16_le(130);
+        s.write_u16_le(tamanho);
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    fn armazem_do_126(&self) -> bool {
+        true
+    }
+
     fn player_pvp(&self, ligado: bool, who: i32, _tipo: u8) -> S2CGamedataSend {
         // 4 B no validador do cliente 1.2.6 (casos 183 e 184 → 4, VA 0x584df2): só o `who`.
         let mut s = OctetsStream::new();
