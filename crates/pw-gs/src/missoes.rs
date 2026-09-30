@@ -679,6 +679,9 @@ pub trait Jogador {
     /// `SetFuryUpperLimit` → `gplayer_imp::SetMaxAP` (`gs/task/taskman.cpp:498-501`): o teto
     /// da barra de chi que o prêmio `m_ulFuryULimit` concede.
     fn definir_teto_de_chi(&mut self, teto: u32);
+    /// `SetPetInventorySize` → `gplayer_imp::SetPetSlotCapacity` (`gs/task/taskman.cpp:515-518`,
+    /// `player.cpp:14559-14564`): as vagas da jaula que o prêmio `m_ulPetInventorySize` concede.
+    fn ampliar_jaula(&mut self, _vagas: u32) {}
     /// Um comando pronto para o cliente (o `TASK_VAR_DATA` com o aviso).
     fn avisar(&mut self, comando: Vec<u8>);
     /// `UnitRand` — `[0, 1)`.
@@ -1683,6 +1686,10 @@ impl<'a, J: Jogador> Motor<'a, J> {
         // de chi aparece e cresce (99 → 199 → 299 → 399 nas missões do realm_155), B68.
         if p.teto_de_chi != 0 {
             self.j.definir_teto_de_chi(p.teto_de_chi);
+        }
+        // `if (pAward->m_ulPetInventorySize) pTask->SetPetInventorySize(...)` (`TaskProcess.cpp:1292`).
+        if p.vagas_na_jaula != 0 {
+            self.j.ampliar_jaula(p.vagas_na_jaula);
         }
         let mut ret = 0;
         if !p.grupos_de_itens.is_empty() {

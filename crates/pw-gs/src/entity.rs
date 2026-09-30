@@ -154,6 +154,10 @@ pub struct PlayerEntity {
     /// `status_point` — pontos de atributo por distribuir (`potential_points` no banco).
     /// Cinco por nível (`LevelUp`, `gs/player.cpp:2647`).
     pub pontos_de_atributo: i32,
+    /// Vagas da jaula de mascotes (`pet_manager::_active_pet_slot`): começa em 1
+    /// (`petman.cpp:1276`), só cresce pelo prêmio de missão até [`MAXIMO_DE_VAGAS_NA_JAULA`]
+    /// (`SetAvailPetSlot`, `petman.h:170-176`). Gravada em `characters.pet_slots` (B153).
+    pub vagas_na_jaula: u32,
     /// `_basic.reputation` (sem sistema de reputação ainda, vem zerada do banco).
     pub reputacao: i32,
     /// `_combat_timer`, em segundos: atacar põe 15 (`MAX_COMBAT_TIME`, `DoAttack`,
@@ -331,6 +335,10 @@ impl AmuletoAtivo {
 /// Slots de equipamento que guardam durabilidade: `EQUIP_INDEX_WEAPON` (0) até
 /// `EQUIP_INDEX_PROJECTILE` (11) (`EC_IvtrTypes.h:56-67`).
 pub const PECAS_VESTIDAS: usize = 12;
+
+/// `pet_manager::MAX_PET_CAPACITY` (`gs/petman.h:114`).
+pub const MAXIMO_DE_VAGAS_NA_JAULA: u32 = 20;
+
 
 /// `EQUIP_INDEX_PROJECTILE` (`gs/item.h:208`).
 pub const SLOT_DA_MUNICAO: i32 = 11;
@@ -902,6 +910,44 @@ impl PlayerEntity {
         true
     }
 
+    /// `gplayer_imp::RegroupPropPoint` → `player_template::__Rollback(cls, prop, str, agi, vit,
+    /// eng)` (`gs/player.cpp:14920-14940`, `gs/playertemplate.cpp:618-642`; no `gs` 1.2.6,
+    /// VA 0x807ecee e 0x80e7684): tira até `força/agilidade/vitalidade/energia` pontos de cada
+    /// atributo, sem descer abaixo do `piso` da versão (`WorldProtocol::piso_da_restauracao`:
+    /// 5 nos quatro no 1.5.5; 3 em vitalidade e energia no 1.2.6), e devolve o que tirou aos pontos
+    /// livres. Devolve quantos pontos voltaram — 0 quando nada mudou (o original recusa com
+    /// `ERR_CAN_NOT_RESET_PP`). Com mudança, refaz o que depende dos atributos (`UpdateBasic`,
+    /// como em [`Self::distribuir_pontos`]).
+    pub fn restaurar_atributos(
+        &mut self,
+        (forca, agilidade, vitalidade, energia): (i32, i32, i32, i32),
+        (piso_f, piso_a, piso_v, piso_e): (i32, i32, i32, i32),
+        classes: &TabelaDeClasses,
+        base: Option<&TabelaDeBase>,
+    ) -> i32 {
+        // `x1 = piso - atual`; `x = -delta`; `x = max(x, x1)`; `x = min(x, 0)`.
+        let recuo = |atual: i32, delta: i32, piso: i32| (-delta).max(piso - atual).min(0);
+        let (s, a, v, e) = (
+            recuo(self.strength, forca, piso_f),
+            recuo(self.agility, agilidade, piso_a),
+            recuo(self.vitality, vitalidade, piso_v),
+            recuo(self.energy, energia, piso_e),
+        );
+        let devolvidos = -(s + a + v + e);
+        if devolvidos == 0 {
+            return 0;
+        }
+        self.strength += s;
+        self.agility += a;
+        self.vitality += v;
+        self.energy += e;
+        self.pontos_de_atributo += devolvidos;
+        self.recalcular_por_nivel(classes, base);
+        self.hp = self.hp.min(self.max_hp);
+        self.mp = self.mp.min(self.max_mp);
+        devolvidos
+    }
+
     /// Como este jogador aparece para os outros.
     ///
     /// O `dir` vai zerado: a grade espacial guarda posição, não direção — a mesma lacuna
@@ -1256,6 +1302,7 @@ impl PlayerEntity {
             )),
             // Quem preenche é `BusServer::colocar_no_mundo`, que tem o repositório.
             pontos_de_atributo: 0,
+            vagas_na_jaula: 1,
             reputacao: p.reputation,
             combate_s: 0,
             contador_hp: 0,

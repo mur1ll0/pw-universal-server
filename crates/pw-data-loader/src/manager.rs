@@ -717,6 +717,17 @@ impl GameDataManager {
         ))
     }
 
+    /// O `cool_time` (ms) de um `REVIVESCROLL_ESSENCE` — o que o `ResurrectByItem` arma na
+    /// recarga `COOLDOWN_INDEX_SOUL_STONE` (`get_cool_time`, `gs/playercmd.cpp:93-100`). 3043:
+    /// 1.800.000 nos dois realms. B155.
+    pub fn recarga_do_pergaminho(&self, item_id: u32) -> Option<i32> {
+        let g = self.elements_generic.as_ref()?;
+        g.get("REVIVESCROLL_ESSENCE")
+            .iter()
+            .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))
+            .and_then(|r| r.get("cool_time").and_then(|v| v.as_i32()))
+    }
+
     /// O `id_major_type` do `MEDICINE_ESSENCE` — o "grande tipo" do remédio
     /// (`gs/template/exptypes.h:840-843`).
     ///

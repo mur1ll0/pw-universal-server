@@ -63,6 +63,9 @@ pub mod ids {
     pub const UNSELECT: u16 = 8;
     /// `SRV::C2S::CMD::resurrect` — o servidor chama de `RESURRECT_IN_TOWN`.
     pub const REVIVE_VILLAGE: u16 = 4;
+    /// `RESURRECT_BY_ITEM` — o pergaminho de renascer, `{int param}` (`common/protocol.h:4665`,
+    /// IR `REVIVE_ITEM` 5). B155.
+    pub const REVIVE_ITEM: u16 = 5;
     /// `SRV::C2S::CMD::get_item_info`
     pub const GET_ITEM_INFO: u16 = 9;
     /// `SRV::C2S::CMD::get_inventory_detail`

@@ -329,9 +329,12 @@ impl BusServer {
         };
         let resultado = {
             let mut mundo = self.world.write().await;
-            match mundo.mascote_de(roleid as i64).map(|m| (m.slot, m.info.skills)) {
+            match mundo.mascote_de(roleid as i64).map(|m| (m.slot, m.info.skills, m.ornamental)) {
                 None => Err(73),
-                Some((slot, mut lista)) => match lista.iter().take_while(|(s, _)| *s > 0).position(|(s, _)| *s == skill) {
+                // `follow_petdata_imp::OnForgetSkill` → `false` → `ERR_SKILL_NOT_AVAILABLE`
+                // (`petman.cpp:1946-1949`).
+                Some((_, _, true)) => Err(20),
+                Some((slot, mut lista, false)) => match lista.iter().take_while(|(s, _)| *s > 0).position(|(s, _)| *s == skill) {
                     None => Err(20),
                     Some(i) => {
                         lista.copy_within(i + 1.., i);
@@ -376,14 +379,20 @@ impl BusServer {
         const RECUSA: i32 = 14;
         let (dados, ativo, sp) = {
             let mundo = self.world.read().await;
-            let ativo = mundo.mascote_de(roleid as i64).map(|m| (m.slot, m.info.clone()));
+            let ativo = mundo.mascote_de(roleid as i64).map(|m| (m.slot, m.info.clone(), m.ornamental));
             let sp = mundo.players.get(&(roleid as i64)).map(|p| p.sp).unwrap_or(0);
             (Arc::clone(&mundo.data_manager), ativo, sp)
         };
-        let Some((slot, info)) = ativo else {
+        let Some((slot, info, ornamental)) = ativo else {
             self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(73).data).await;
             return;
         };
+        // `follow_petdata_imp::OnLearnSkill` → `false` → `ERR_SERVICE_UNAVILABLE`
+        // (`petman.cpp:1965-1968`).
+        if ornamental {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(RECUSA).data).await;
+            return;
+        }
         let lista: Vec<(i32, i32)> = info.skills.iter().take_while(|(s, _)| *s > 0).copied().collect();
         let atual = lista.iter().find(|(s, _)| *s == skill).map(|(_, l)| *l);
         // Combate: sem natureza nem habilidade própria, então toda habilidade é "normal".

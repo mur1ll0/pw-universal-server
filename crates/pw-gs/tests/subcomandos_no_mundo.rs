@@ -64,6 +64,8 @@ const RECEITA_DA_ARMA: i32 = 9002;
 /// B151 — a arma 9102 (todas as classes) com modelo de geração: durabilidade 300 e 245 no drop,
 /// os números da foice 15964 do `realm_126`.
 const ARMA_GERADA: i32 = 9102;
+/// B152 — "Rest. Superior Total" do `realm_126` (opção 15 do serviço 10226: 100 em cada).
+const ITEM_DE_RESTAURACAO: i32 = 12764;
 /// O NPC de serviço do cenário, que entrega e recebe [`MISSAO_DO_NPC`] e ensina
 /// [`HABILIDADE_DO_TREINADOR`].
 const NPC: i64 = 0x8000_0101u32 as i32 as i64;
@@ -436,6 +438,13 @@ async fn montar(
             habilidades: vec![HABILIDADE_DO_TREINADOR as u32],
             deposito: 0,
             destinos: Vec::new(),
+            restauracao_de_atributos: vec![pw_data_loader::EntradaDeRestauracao {
+                item: ITEM_DE_RESTAURACAO,
+                forca: 100,
+                agilidade: 100,
+                vitalidade: 100,
+                energia: 100,
+            }],
             ..Default::default()
         },
     );
@@ -1620,12 +1629,9 @@ async fn morrer_avisa_o_cliente_e_reviver_devolve_a_vida() {
     .await
     .unwrap();
 
-    let resp = receber(&mut link, 2).await;
-    let revive = resp
-        .iter()
-        .find(|v| cmd_de(v) == 29)
-        .expect("sem PLAYER_REVIVE (29)");
-    assert_eq!(i32_em(revive, 2), roleid, "idPlayer");
+    // Depois da sessão de 39 tiques (B155).
+    let revive = esperar_comando(&mut link, 29).await;
+    assert_eq!(i32_em(&revive, 2), roleid, "idPlayer");
 
     let m = mundo.read().await;
     let p = &m.players[&(roleid as i64)];
@@ -9020,4 +9026,424 @@ async fn fabricar_equipamento_grava_o_fabricante_155() {
 #[tokio::test]
 async fn fabricar_equipamento_grava_o_fabricante_126() {
     conferir_fabricacao_de_equipamento(GameVersion::V1_2_6).await;
+}
+
+
+/// B152 — restauração de atributos (serviço 33, `resetprop_provider/executor`,
+/// `serviceprovider.cpp:3527-3690`; `RegroupPropPoint` → `__Rollback`, `player.cpp:14920`,
+/// `playertemplate.cpp:618-642`). Com força 20, agilidade 8, vitalidade 10 e energia 10, a opção
+/// de 100 em cada desce ao piso da versão — 5 nos quatro no 1.5.5; vitalidade e energia 3 no
+/// 1.2.6 (`gs` 1.2.6 VA 0x80e7684) — e devolve a diferença aos pontos livres; o item sai com
+/// `HOST_USE_ITEM`. Opção inexistente dá 14; já no piso, 82 e o item fica.
+async fn conferir_restauracao_de_atributos(versao: GameVersion, piso_vit_eng: i32) {
+    let Some((mundo, addr, roleid, _)) = montar(versao).await else { return };
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    let mut item = peca(roleid, pw_core::ContainerType::Inventory, 7, ITEM_DE_RESTAURACAO, 0, 0);
+    item.count = 2;
+    itens.upsert_item(&item).await.unwrap();
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.npc_em_conversa = Some(NPC);
+        (p.strength, p.agility, p.vitality, p.energy, p.pontos_de_atributo) = (20, 8, 10, 10, 0);
+    }
+    let pedir = |indice: u32| {
+        let mut c = indice.to_le_bytes().to_vec();
+        c.extend_from_slice(&ITEM_DE_RESTAURACAO.to_le_bytes());
+        BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(33, &c) }
+    };
+    link.enviar(pedir(3)).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 14, "opção fora da lista: ERR_SERVICE_UNAVILABLE");
+
+    link.enviar(pedir(0)).await.unwrap();
+    esperar_comando(&mut link, 50).await; // OWN_EXT_PROP
+    let usado = esperar_comando(&mut link, 91).await;
+    assert_eq!((usado[2], usado[3]), (0, 7), "HOST_USE_ITEM where/slot");
+    assert_eq!(i32_em(&usado, 4), ITEM_DE_RESTAURACAO);
+    {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        assert_eq!((p.strength, p.agility, p.vitality, p.energy), (5, 5, piso_vit_eng, piso_vit_eng));
+        assert_eq!(p.pontos_de_atributo, 15 + 3 + 2 * (10 - piso_vit_eng), "os pontos tirados voltam livres");
+    }
+    let resto = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 7).await.unwrap();
+    assert_eq!(resto.map(|i| i.count), Some(1), "um item gasto");
+
+    // Já no piso: nada a devolver → ERR_CAN_NOT_RESET_PP (82), e o item fica.
+    link.enviar(pedir(0)).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 82);
+    let resto = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 7).await.unwrap();
+    assert_eq!(resto.map(|i| i.count), Some(1));
+}
+
+#[tokio::test]
+async fn restaurar_atributos_155() {
+    conferir_restauracao_de_atributos(GameVersion::V1_5_5, 5).await;
+}
+
+#[tokio::test]
+async fn restaurar_atributos_126() {
+    conferir_restauracao_de_atributos(GameVersion::V1_2_6, 3).await;
+}
+
+
+/// B153 — o prêmio `m_ulPetInventorySize` amplia a jaula (`TaskProcess.cpp:1292` →
+/// `SetPetSlotCapacity`): a missão do NPC com 3 vagas manda `PET_ROOM_CAPACITY` (240) com 3 e
+/// grava `characters.pet_slots`.
+async fn conferir_premio_que_amplia_a_jaula(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    {
+        let mut m = mundo.write().await;
+        let mut d = (*m.data_manager).clone();
+        let mut t = d.tasks.get_task(MISSAO_DO_NPC).cloned().unwrap();
+        t.rewards.vagas_na_jaula = 3;
+        d.tasks.inserir(t);
+        m.data_manager = Arc::new(d);
+    }
+    let mut link = entrar(&mundo, addr, roleid).await;
+    assert_eq!(mundo.read().await.players[&(roleid as i64)].vagas_na_jaula, 1, "a jaula começa com 1 vaga");
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SEVNPC_HELLO, &(NPC as i32).to_le_bytes()) })
+        .await
+        .unwrap();
+    esperar_comando(&mut link, 70).await;
+    let mut aceitar = (MISSAO_DO_NPC as i32).to_le_bytes().to_vec();
+    aceitar.extend_from_slice(&[0u8; 8]);
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::ACEITAR_MISSAO, &aceitar) })
+        .await
+        .unwrap();
+    esperar_comando(&mut link, 106).await;
+    let mut entregar = (MISSAO_DO_NPC as i32).to_le_bytes().to_vec();
+    entregar.extend_from_slice(&0i32.to_le_bytes());
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::ENTREGAR_MISSAO, &entregar) })
+        .await
+        .unwrap();
+    let capacidade = esperar_comando(&mut link, 240).await;
+    assert_eq!(capacidade.len(), 2 + 4);
+    assert_eq!(i32_em(&capacidade, 2), 3);
+    assert_eq!(mundo.read().await.players[&(roleid as i64)].vagas_na_jaula, 3);
+    let repo = mundo.read().await.char_repo.clone();
+    let gravou = ate_async(move || {
+        let r = repo.clone();
+        async move { r.vagas_da_jaula(roleid).await.ok() == Some(3) }
+    })
+    .await;
+    assert!(gravou, "as vagas da jaula não foram gravadas");
+}
+
+#[tokio::test]
+async fn premio_de_missao_amplia_a_jaula_155() {
+    conferir_premio_que_amplia_a_jaula(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn premio_de_missao_amplia_a_jaula_126() {
+    conferir_premio_que_amplia_a_jaula(GameVersion::V1_2_6).await;
+}
+
+/// B153 — com a jaula cheia (1 vaga, o slot 0 ocupado) a incubação falha com
+/// `ERR_PET_CAN_NOT_BE_HATCHED` (76) e o ovo fica; com 2 vagas o mascote vai ao slot 1
+/// (`pet_manager::AddPetData`, `petman.cpp:1487-1503`).
+#[tokio::test]
+async fn incubar_com_a_jaula_cheia_falha() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let (ovo_id, ovo_info) = {
+        let m = mundo.read().await;
+        m.data_manager.ovos_de_pet.iter().find(|(_, o)| o.pet_class == 0).map(|(&id, o)| (id, o.clone())).unwrap()
+    };
+    dar_dinheiro(&mundo, roleid, ovo_info.money_hatched as i64 + 50_000).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    guardar_mascote(&itens, roleid, 0, 1, &[]).await;
+    let mut ovo = pw_core::ItemRecord::new(roleid, pw_core::ContainerType::Inventory, 0, ovo_id, 1);
+    ovo.octets = mundo.read().await.data_manager.gerar_octetos_do_ovo(ovo_id).unwrap_or_default();
+    itens.upsert_item(&ovo).await.unwrap();
+    let mut conteudo = 0i32.to_le_bytes().to_vec();
+    conteudo.extend_from_slice(&(ovo_id as i32).to_le_bytes());
+    let pedido = || BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(pw_gs::npc::servico::INCUBAR_PET, &conteudo) };
+    link.enviar(pedido()).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 76, "jaula cheia");
+    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 0).await.unwrap().is_some(), "o ovo ficou");
+
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().vagas_na_jaula = 2;
+    link.enviar(pedido()).await.unwrap();
+    let ganhou = esperar_comando(&mut link, 231).await;
+    assert_eq!(i32_em(&ganhou, 2), 1, "o primeiro slot livre dentro das vagas");
+}
+
+/// B153 — serviço 29 (`ServiceConvertPetToEgg` → `session_restore_pet` → `ConvertPetToEgg`): o
+/// mascote do slot 1 abre a operação 3 de 200 tiques e, 10 s depois, sai da jaula (`FREE_PET`) e
+/// entra na bolsa como ovo com os dados dele (`ConvertPetDataToEggData`: nível, experiência, nome,
+/// habilidades, `honor_point` 0). Slot vazio dá 72; o ativo, 71.
+async fn conferir_restaurar_mascote_em_ovo(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let Some((mut link, itens, _pos, nivel)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else {
+        return;
+    };
+    let (ovo, preco) = {
+        let m = mundo.read().await;
+        m.data_manager
+            .ovos_de_pet
+            .values()
+            .find(|o| o.id_pet == 10386)
+            .map(|o| (o.id as i32, o.money_restored))
+            .expect("o ovo do mascote 10386")
+    };
+    dar_dinheiro(&mundo, roleid, preco as i64 + 1000).await;
+    let mut info = pw_core::InfoPet::default();
+    info.pet_tid = 10386;
+    info.pet_egg_tid = ovo;
+    info.pet_class = pw_core::PET_CLASS_COMBAT;
+    info.level = nivel + 3;
+    info.exp = 1234;
+    info.honor_point = 300;
+    info.name_len = 6;
+    info.name[..6].copy_from_slice(&[b'R', 0, b'e', 0, b'x', 0]);
+    info.skills[0] = (511, 2);
+    guardar_item(&itens, roleid, pw_core::ContainerType::PetCorral, 1, 10386, info.para_bytes()).await;
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().npc_em_conversa = Some(NPC);
+    let pedir = |slot: u32| BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(29, &slot.to_le_bytes()) };
+
+    link.enviar(pedir(7)).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_de(&erro, 2), 72, "slot vazio");
+
+    link.enviar(pedir(1)).await.unwrap();
+    let op = esperar_comando(&mut link, 235).await;
+    assert_eq!((i32_de(&op, 2), i32_de(&op, 10), i32_de(&op, 14)), (1, 200, 3), "slot, atraso e operação");
+    let (mut livre, mut obtido) = (None, None);
+    let fim = std::time::Instant::now() + Duration::from_secs(15);
+    while livre.is_none() && std::time::Instant::now() < fim {
+        if let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_millis(500), link.receber()).await
+        {
+            if cmd_de(&data) == 232 {
+                livre = Some(data);
+            }
+            if obtido.is_none() {
+                obtido = itens.list_by_container(roleid, pw_core::ContainerType::Inventory).await.unwrap().into_iter().find(|i| i.item_id == ovo as u32);
+            }
+        }
+    }
+    let livre = livre.expect("sem FREE_PET");
+    assert_eq!((i32_de(&livre, 2), i32_de(&livre, 6)), (1, 10386));
+    assert!(itens.get_item_by_slot(roleid, pw_core::ContainerType::PetCorral, 1).await.unwrap().is_none(), "o slot 1 continua na jaula");
+    let obtido = match obtido {
+        Some(o) => o,
+        None => itens.list_by_container(roleid, pw_core::ContainerType::Inventory).await.unwrap().into_iter().find(|i| i.item_id == ovo as u32).expect("o ovo na bolsa"),
+    };
+    let e = pw_core::PeEssence::de_bytes(&obtido.octets).expect("pe_essence do ovo");
+    assert_eq!((e.pet_tid, e.pet_egg_tid, e.level, e.exp, e.honor_point), (10386, ovo, nivel + 3, 1234, 0));
+    assert_eq!((e.name_len, &e.name[..6]), (6, &[b'R', 0, b'e', 0, b'x', 0][..]));
+    assert_eq!(e.skills, vec![(511, 2)]);
+    assert_eq!(obtido.octets.len(), pw_core::TAMANHO_PE_ESSENCE_BASE + 8);
+}
+
+#[tokio::test]
+async fn restaurar_mascote_em_ovo_155() {
+    conferir_restaurar_mascote_em_ovo(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn restaurar_mascote_em_ovo_126() {
+    conferir_restaurar_mascote_em_ovo(GameVersion::V1_2_6).await;
+}
+
+/// B154 — o mascote **ornamental** ("Ver Mascote", `id_type` 8783 → `PET_CLASS_FOLLOW`,
+/// `petdataman.cpp:32-33`; o Falcão do Paraíso 12340 do `realm_126`) é invocado como o de combate
+/// (`follow_petdata_imp : combat_petdata_imp`, `petman.cpp:1006`) — `SUMMON_PET` (233), não o erro
+/// 81 — e no mundo não apanha, não obedece ordem e não entra na mira dos monstros
+/// (`gpet_imp_2`, `petnpc.cpp:1819-1856`).
+async fn conferir_mascote_ornamental(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let Some((mut link, itens, _pos, _nivel)) = preparar_mascote(&mundo, addr, roleid, versao, &[]).await else {
+        return;
+    };
+    let ornamental = {
+        let m = mundo.read().await;
+        let mut ids: Vec<u32> = m.data_manager.modelos_de_mascote.iter().filter(|(_, x)| x.classe == pw_core::PET_CLASS_FOLLOW).map(|(id, _)| *id).collect();
+        ids.sort();
+        if versao == GameVersion::V1_2_6 {
+            assert!(ids.contains(&12340), "o Falcão do Paraíso é ornamental no 1.2.6");
+            12340
+        } else {
+            *ids.first().expect("um ornamental no 1.5.5")
+        }
+    };
+    let mut info = pw_core::InfoPet::default();
+    info.pet_tid = ornamental as i32;
+    info.pet_class = pw_core::PET_CLASS_FOLLOW;
+    info.level = 1;
+    info.hp_factor = 1.0;
+    guardar_item(&itens, roleid, pw_core::ContainerType::PetCorral, 1, ornamental, info.para_bytes()).await;
+    let id = invocar_do_slot(&mut link, roleid, 1).await;
+    let vida = {
+        let mut m = mundo.write().await;
+        let mascote = m.mascote_de(roleid as i64).expect("o ornamental no mundo");
+        assert!(mascote.ornamental);
+        let vida = mascote.corpo.hp;
+        m.dano_no_mascote(id, 0x8000_0001u32 as i32 as i64, 500);
+        m.ordem_ao_mascote(roleid, 0x8000_0001u32 as i32, 2, &1i32.to_le_bytes());
+        vida
+    };
+    let m = mundo.read().await;
+    let mascote = m.mascote_de(roleid as i64).unwrap();
+    assert_eq!(mascote.corpo.hp, vida, "o ornamental não apanha");
+    assert_eq!(mascote.ai.movimento, pw_gs::mascote::MOVIMENTO_SEGUIR, "o ornamental não obedece ordem");
+}
+
+#[tokio::test]
+async fn mascote_ornamental_e_invocado_e_nao_combate_155() {
+    conferir_mascote_ornamental(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn mascote_ornamental_e_invocado_e_nao_combate_126() {
+    conferir_mascote_ornamental(GameVersion::V1_2_6).await;
+}
+
+/// Carrega os dados reais do realm da versão no mundo do cenário. `None` sem a pasta.
+async fn dados_reais(mundo: &Arc<RwLock<WorldInstance>>, versao: GameVersion) -> Option<()> {
+    let realm = if versao == GameVersion::V1_5_5 { "realm_155" } else { "realm_126" };
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").join(realm).join("config");
+    if !pasta.exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", pasta.display());
+        return None;
+    }
+    let mut d = GameDataManager::new();
+    d.load_from_directory(&pasta);
+    mundo.write().await.data_manager = Arc::new(d);
+    Some(())
+}
+
+/// B155 — renascer na cidade (`RESURRECT_IN_TOWN` 4 → `session_resurrect_in_town` de 39 tiques
+/// → `ResurrectInTown` → `Resurrect(nomove = false)`): `PLAYER_REVIVAL` tipo 0 com a posição da
+/// morte e o `LongJump` — `NOTIFY_POS` (14) com o ponto de cidade do distrito. Até o B155 o
+/// `NOTIFY_POS` não ia, e o cliente ficava de pé onde morreu.
+async fn conferir_renascer_na_cidade(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    if dados_reais(&mundo, versao).await.is_none() {
+        return;
+    }
+    let (morte, ponto) = {
+        let m = mundo.read().await;
+        let mapa = m.world_id;
+        let ds = m.data_manager.distritos.get(&mapa).expect("distritos do mapa");
+        ds.lista
+            .iter()
+            .filter(|d| d.mapa_do_ponto == mapa && !d.vertices.is_empty())
+            .find_map(|d| {
+                let n = d.vertices.len() as f32;
+                let (x, z) = d.vertices.iter().fold((0.0, 0.0), |a, v| (a.0 + v[0] / n, a.1 + v[2] / n));
+                let e = ds.distrito_em(x, z, mapa)?;
+                (e.mapa_do_ponto == mapa).then_some(((x, z), e.ponto_de_cidade))
+            })
+            .expect("um distrito com ponto de cidade no próprio mapa")
+    };
+    let mut link = entrar(&mundo, addr, roleid).await;
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.position = Vector3::new(morte.0, 200.0, morte.1);
+        p.hp = 0;
+    }
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::REVIVE_VILLAGE, &0i32.to_le_bytes()) })
+        .await
+        .unwrap();
+    let revive = esperar_comando(&mut link, 29).await;
+    assert_eq!(revive.len(), 20, "PLAYER_REVIVAL: 20 B");
+    assert_eq!(i32_em(&revive, 2), roleid);
+    assert_eq!(i16::from_le_bytes([revive[6], revive[7]]), 0, "tipo 0, na cidade");
+    assert_eq!(f32::from_le_bytes(revive[8..12].try_into().unwrap()), morte.0, "a posição da morte");
+    let pos = esperar_comando(&mut link, 14).await;
+    let x = f32::from_le_bytes(pos[2..6].try_into().unwrap());
+    let z = f32::from_le_bytes(pos[10..14].try_into().unwrap());
+    assert_eq!((x, z), (ponto[0], ponto[2]), "o NOTIFY_POS leva ao ponto de cidade");
+    let m = mundo.read().await;
+    let p = &m.players[&(roleid as i64)];
+    assert_eq!((p.position.x, p.position.z), (ponto[0], ponto[2]));
+    assert_eq!(p.hp, (p.max_hp as f32 * 0.1 + 0.5) as i32);
+}
+
+#[tokio::test]
+async fn renascer_na_cidade_leva_ao_ponto_do_distrito_155() {
+    conferir_renascer_na_cidade(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn renascer_na_cidade_leva_ao_ponto_do_distrito_126() {
+    conferir_renascer_na_cidade(GameVersion::V1_2_6).await;
+}
+
+/// B155 — o pergaminho (`RESURRECT_BY_ITEM` 5 → sessão de 99 tiques → `ResurrectByItem`): sem
+/// ele, `ERR_ITEM_NOT_IN_INVENTORY` (5) e continua morto; com o 3043, `SET_COOLDOWN` (10,
+/// 1.800.000 ms), `PLAYER_DROP_ITEM` tipo 10, `PLAYER_REVIVAL` tipo 1 **no lugar**, invencível e,
+/// 5 s depois, `PLAYER_REVIVAL` tipo 2.
+async fn conferir_renascer_com_pergaminho(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    if dados_reais(&mundo, versao).await.is_none() {
+        return;
+    }
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let morte = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.hp = 0;
+        p.position
+    };
+    let pedido = || BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::REVIVE_ITEM, &0i32.to_le_bytes()) };
+    link.enviar(pedido()).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 5, "sem pergaminho");
+    assert_eq!(mundo.read().await.players[&(roleid as i64)].hp, 0, "continua morto");
+
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    let mut rolo = peca(roleid, pw_core::ContainerType::Inventory, 4, 3043, 0, 0);
+    rolo.count = 2;
+    itens.upsert_item(&rolo).await.unwrap();
+    link.enviar(pedido()).await.unwrap();
+    let recarga = esperar_comando_por(&mut link, 198, 10).await;
+    assert_eq!((i32_em(&recarga, 2), i32_em(&recarga, 6)), (10, 1_800_000));
+    let gasto = esperar_comando(&mut link, 46).await;
+    assert_eq!((gasto[3], i32_em(&gasto, 8), gasto[12]), (4, 3043, 10), "slot, item e DROP_TYPE_RESURRECT");
+    let revive = esperar_comando(&mut link, 29).await;
+    assert_eq!(i16::from_le_bytes([revive[6], revive[7]]), 1, "tipo 1, no lugar");
+    {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        assert!(p.hp > 0);
+        assert_eq!((p.position.x, p.position.z), (morte.x, morte.z), "no lugar");
+        assert!(p.efeitos.invencivel(), "5 s de proteção");
+    }
+    assert_eq!(itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 4).await.unwrap().map(|i| i.count), Some(1));
+    let fim = esperar_comando_por(&mut link, 29, 10).await;
+    assert_eq!(i16::from_le_bytes([fim[6], fim[7]]), 2, "fim da proteção");
+}
+
+#[tokio::test]
+async fn renascer_com_pergaminho_no_lugar_155() {
+    conferir_renascer_com_pergaminho(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn renascer_com_pergaminho_no_lugar_126() {
+    conferir_renascer_com_pergaminho(GameVersion::V1_2_6).await;
+}
+
+/// [`esperar_comando`] com prazo total de `segundos` (as sessões do renascer passam dos 5 s).
+async fn esperar_comando_por(link: &mut pw_bus::transport::BusConnection, id: u16, segundos: u64) -> Vec<u8> {
+    let fim = std::time::Instant::now() + Duration::from_secs(segundos);
+    while std::time::Instant::now() < fim {
+        if let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_millis(500), link.receber()).await
+        {
+            if cmd_de(&data) == id {
+                return data;
+            }
+        }
+    }
+    panic!("o comando {id} não chegou em {segundos} s");
 }

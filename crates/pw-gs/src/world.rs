@@ -936,16 +936,17 @@ impl WorldInstance {
         true
     }
 
-    /// Renasce o jogador na cidade (`gplayer_controller::ResurrectInTown`,
-    /// `playercmd.cpp:112-129`).
+    /// `gplayer_imp::Resurrect` (`player.cpp:8716-8768`): vida e mana a 10 %, a perda de
+    /// experiência ([`crate::progressao::renascer`]) e o alvo limpo. `no_lugar` é o pergaminho
+    /// (`nomove`); senão o destino é o ponto de cidade do distrito que contém a posição
+    /// (`ResurrectInTown` → `GetTownPosition`, `playercmd.cpp:112-129`), que pode ser de outro
+    /// mapa, e sem distrito o próprio lugar. **Não** move o jogador: quem chama faz o
+    /// `LongJump` (`BusServer::transportar`), que manda o `NOTIFY_POS` — sem ele o cliente ficava
+    /// onde morreu (B155).
     ///
-    /// O ponto é o de cidade do distrito do `precinct.sev` que contém a posição, quando é
-    /// deste mapa; sem distrito o original renasce no lugar. Vida e mana voltam a 10 % e a
-    /// experiência perde a fração do cultivo — ver [`crate::progressao::renascer`].
-    ///
-    /// Devolve a posição, ou `None` se o jogador não estiver neste mundo ou não estiver
-    /// morto — ressuscitar quem está vivo é o caminho para se teleportar de graça.
-    pub fn reviver_jogador(&mut self, role_id: RoleId) -> Option<pw_core::Vector3> {
+    /// `None` se o jogador não está neste mundo ou não está morto — ressuscitar quem está vivo
+    /// seria um teleporte de graça.
+    pub fn reviver_jogador(&mut self, role_id: RoleId, no_lugar: bool) -> Option<Renascimento> {
         let id = role_id as i64;
         let dados = Arc::clone(&self.data_manager);
         let mapa = self.world_id;
@@ -953,33 +954,31 @@ impl WorldInstance {
         if p.hp > 0 {
             return None;
         }
-        let mut pos = p.position;
-        if let Some((ponto, mapa_do_ponto)) =
+        let pos_da_morte = p.position;
+        let (destino, mapa_de_destino) = if no_lugar {
+            (pos_da_morte, mapa)
+        } else {
             crate::progressao::ponto_de_renascimento(&dados, mapa, p.position.x, p.position.z)
-        {
-            if mapa_do_ponto == mapa {
-                pos = pw_core::Vector3::new(ponto[0], ponto[1], ponto[2]);
-            } else {
-                warn!("renascer: o distrito de #{role_id} manda para o mapa {mapa_do_ponto}, e trocar de mapa não existe — renasce no lugar");
-            }
-        }
+                .map(|(ponto, m)| (pw_core::Vector3::new(ponto[0], ponto[1], ponto[2]), m))
+                .unwrap_or((pos_da_morte, mapa))
+        };
         let perdeu = crate::progressao::renascer(p, &dados, false);
-        p.position = pos;
         p.target_id = None;
         let (hp, max_hp) = (p.hp, p.max_hp);
-
-        self.grid.update_position(id, pos);
         self.emitir(EventoDoMundo::JogadorReviveu {
             roleid: role_id,
-            pos,
+            pos: destino,
             hp,
             max_hp,
         });
         info!(
-            "Jogador #{} renasceu em ({:.0}, {:.0}), perdeu {perdeu} de experiência",
-            role_id, pos.x, pos.z
+            "Jogador #{} renasceu {} ({:.0}, {:.0}) do mapa {mapa_de_destino}, perdeu {perdeu} de experiência",
+            role_id,
+            if no_lugar { "no lugar" } else { "na cidade," },
+            destino.x,
+            destino.z
         );
-        Some(pos)
+        Some(Renascimento { pos_da_morte, destino, mapa: mapa_de_destino, perdeu })
     }
 
     /// Põe um item (ou um monte de moedas, `tid` 3044) no chão, a ±2 m do ponto e no
@@ -2218,9 +2217,12 @@ impl WorldInstance {
 
         let mut movimentos = Vec::new();
         let mut habilidades_de_monstro: Vec<EventoDoMundo> = Vec::new();
+        // O ornamental não se anuncia aos monstros (`gpet_imp_2::PeepEnemy` vazio) nem apanha:
+        // não é alvo.
         let corpos_dos_mascotes: HashMap<i64, MonsterEntity> = self
             .mascotes
             .iter()
+            .filter(|(_, m)| !m.ornamental)
             .map(|(id, m)| (*id, m.corpo.clone()))
             .collect();
         let mut renasceram: Vec<(i64, pw_core::Vector3)> = Vec::new();
@@ -2878,6 +2880,16 @@ pub fn perfil_de_combate(
     Some(p)
 }
 
+/// O que [`WorldInstance::reviver_jogador`] decidiu.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Renascimento {
+    /// Onde morreu — a posição do `PLAYER_REVIVAL` (`Make<player_revival>::From(pObj, ...)`).
+    pub pos_da_morte: pw_core::Vector3,
+    pub destino: pw_core::Vector3,
+    pub mapa: i32,
+    pub perdeu: i64,
+}
+
 /// `ERR_LEVEL_NOT_MATCH` 51, `ERR_SUMMON_PET_INVALID_POS` 85 e `ERR_CANNOT_SUMMON_DEAD_PET` 87
 /// (`common/protocol.h:731-768`; os mesmos números no 1.5.3).
 pub mod erro_de_mascote {
@@ -3045,6 +3057,10 @@ impl WorldInstance {
         let Some(m) = self.mascotes.get_mut(&id) else {
             return;
         };
+        // `follow_petdata_imp::OnPetCtrl` → `false` e `gpet_imp_2` ignora o `GM_MSG_PET_CTRL_CMD`.
+        if m.ornamental {
+            return;
+        }
         let mudou = match comando {
             1 => {
                 // `size == 1 + 4`: só o `force_attack`. Alvo 0 ou -1 não é alvo.
@@ -3220,7 +3236,7 @@ impl WorldInstance {
             return;
         }
         if let Some(id) = self.id_do_mascote_de(dono as i64) {
-            if let Some(m) = self.mascotes.get_mut(&id) {
+            if let Some(m) = self.mascotes.get_mut(&id).filter(|m| !m.ornamental) {
                 let max_hp = m.corpo.max_hp;
                 m.ai.dono_atacou(alvo, max_hp);
             }
@@ -3229,7 +3245,7 @@ impl WorldInstance {
 
     fn mascote_do_dono_ajuda(&mut self, dono: i64, atacante: i64) {
         if let Some(id) = self.id_do_mascote_de(dono) {
-            if let Some(m) = self.mascotes.get_mut(&id) {
+            if let Some(m) = self.mascotes.get_mut(&id).filter(|m| !m.ornamental) {
                 m.ai.dono_apanhou(atacante);
             }
         }
@@ -3247,6 +3263,10 @@ impl WorldInstance {
         let Some(m) = self.mascotes.get_mut(&id) else {
             return;
         };
+        // `follow_petdata_imp::OnKillMob` vazio.
+        if m.ornamental {
+            return;
+        }
         let Some(modelo) = dados.modelos_de_mascote.get(&(m.info.pet_tid as u32)) else {
             return;
         };
@@ -3294,7 +3314,8 @@ impl WorldInstance {
         let Some(m) = self.mascotes.get_mut(&alvo) else {
             return;
         };
-        if m.corpo.is_dead {
+        // `gpet_imp_2`: `GM_MSG_ATTACK`/`GM_MSG_DUEL_HURT` → `return 0` (`petnpc.cpp:1827-1835`).
+        if m.corpo.is_dead || m.ornamental {
             return;
         }
         let dano = crate::efeitos::dano_recebido(&mut m.corpo.efeitos, dano as i32) as i64;

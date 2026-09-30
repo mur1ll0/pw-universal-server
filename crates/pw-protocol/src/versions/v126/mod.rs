@@ -70,6 +70,13 @@ impl WorldProtocol for V126Protocol {
         0
     }
 
+    /// `player_template::__Rollback(int, extend_prop&, int, int, int, int)` do `gs` 1.2.6
+    /// (VA 0x80e7684): `3 - vitality` (+0) e `3 - energy` (+4), `5 - strength` (+8) e
+    /// `5 - agility` (+0xc) — o piso de 3 que o 1.5.5 corrigiu para 5 em 2013.
+    fn piso_da_restauracao(&self) -> (i32, i32, i32, i32) {
+        (5, 5, 3, 3)
+    }
+
     fn armazem(&self, pacote: S2CGamedataSend) -> S2CGamedataSend {
         // Sem o `where`/`is_accountbox` depois do cabeçalho (validador do cliente 1.2.6, casos
         // 131–138): o `gs` 1.2.6 tem um armazém só (`PlayerExchangeTrashItem(jj)`…).

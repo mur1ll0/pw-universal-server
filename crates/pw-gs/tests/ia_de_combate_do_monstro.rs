@@ -72,6 +72,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         proficiencias: Default::default(),
         crc_aparencia: 0,
         pontos_de_atributo: 0,
+        vagas_na_jaula: 1,
         reputacao: 0,
         combate_s: 0,
         contador_hp: 0,

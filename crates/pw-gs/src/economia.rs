@@ -127,6 +127,11 @@ impl Bolsa {
         self.slots.iter().flatten().filter(|i| i.item_id == tid).map(|i| i.count).sum()
     }
 
+    /// `item_list::Find(0, tid)`: o primeiro slot com o item.
+    pub fn primeiro_slot_com(&self, tid: u32) -> Option<usize> {
+        self.slots.iter().position(|s| s.as_ref().is_some_and(|i| i.item_id == tid))
+    }
+
     pub fn livres(&self) -> u32 {
         self.slots.iter().filter(|s| s.is_none()).count() as u32
     }

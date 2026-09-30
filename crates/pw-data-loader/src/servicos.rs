@@ -42,6 +42,26 @@ pub struct ServicosDoNpc {
     /// `NPC_PETLEARNSKILL_SERVICE.id_skills[128]`, ordenados — serviço 38
     /// (`npcgenerator.cpp:797-813`, `pet_skill_provider` com `binary_search`).
     pub habilidades_de_mascote: Vec<u32>,
+    /// `NPC_RESETPROP_SERVICE.prop_entry[15]` — restauração de atributos, serviço 33
+    /// ([`EntradaDeRestauracao`]).
+    pub restauracao_de_atributos: Vec<EntradaDeRestauracao>,
+}
+
+/// Uma opção do serviço de restauração de atributos (`npc_statement::__reset_prop`,
+/// `gs/npcgenerator.h:235-243`). A lista é a do `npcgenerator.cpp:750-780`: na ordem do
+/// arquivo, **sem** as entradas de `id_object_need <= 0` nem as de delta negativo — é por
+/// índice nela que o cliente pede (`resetprop_provider::TryServe`,
+/// `serviceprovider.cpp:3593-3614`). O `gs` 1.2.6 monta igual (`npc_stubs_manager::LoadTemplate`,
+/// VA 0x80ef74b-0x80ef9dd: `id_resetprop_service` do `NPC_ESSENCE` em +0x32c, 15 entradas de
+/// 20 B a partir de +0x44).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntradaDeRestauracao {
+    /// O item consumido (`id_object_need`).
+    pub item: i32,
+    pub forca: i32,
+    pub agilidade: i32,
+    pub vitalidade: i32,
+    pub energia: i32,
 }
 
 /// Um destino de transportadora (`NPC_TRANSMIT_SERVICE.targets_N_*`).
@@ -87,6 +107,7 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
     let nomes_de_mascote = por_id(g, "NPC_PETNAME_SERVICE");
     let esquecimentos = por_id(g, "NPC_PETFORGETSKILL_SERVICE");
     let ensinos_de_mascote = por_id(g, "NPC_PETLEARNSKILL_SERVICE");
+    let restauracoes = por_id(g, "NPC_RESETPROP_SERVICE");
     let preco_e_item = |r: Option<&Record>| r.map(|r| (i(r, "price").max(0), i(r, "id_object_need").max(0)));
     g.get("NPC_ESSENCE")
         .iter()
@@ -105,9 +126,28 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
                 renomear_mascote: preco_e_item(nomes_de_mascote.get(&i(npc, "id_petname_service"))),
                 esquecer_habilidade_de_mascote: preco_e_item(esquecimentos.get(&i(npc, "id_petforgetskill_service"))),
                 habilidades_de_mascote: lista(ensinos_de_mascote.get(&i(npc, "id_petlearnskill_service")), "id_skills_"),
+                restauracao_de_atributos: restauracao(restauracoes.get(&i(npc, "id_resetprop_service"))),
             };
             Some((id as u32, s))
         })
+        .collect()
+}
+
+/// As opções de restauração de atributos, como `npcgenerator.cpp:762-778` as filtra.
+fn restauracao(r: Option<&Record>) -> Vec<EntradaDeRestauracao> {
+    let Some(r) = r else { return Vec::new() };
+    (1..=15)
+        .map(|k| {
+            let c = |n: &str| i(r, &format!("prop_entry_{k}_{n}"));
+            EntradaDeRestauracao {
+                item: c("id_object_need"),
+                forca: c("strength_delta"),
+                agilidade: c("agility_delta"),
+                vitalidade: c("vital_delta"),
+                energia: c("energy_delta"),
+            }
+        })
+        .filter(|e| e.item > 0 && e.forca >= 0 && e.agilidade >= 0 && e.vitalidade >= 0 && e.energia >= 0)
         .collect()
 }
 

@@ -69,6 +69,7 @@ fn feiticeira_nivel_1() -> PlayerEntity {
         proficiencias: Default::default(),
         crc_aparencia: 0,
         pontos_de_atributo: 0,
+        vagas_na_jaula: 1,
         reputacao: 0,
         combate_s: 0,
         contador_hp: 0,
@@ -176,9 +177,28 @@ fn o_filhote_de_mandragora_passeia_sem_saltos() {
                 ultimo = Some((t, tempo_ms));
                 let dist = ((destino.x - antes.x).powi(2) + (destino.z - antes.z).powi(2)).sqrt();
                 let limite = velocidade * tempo_ms as f32 / 1000.0;
+                // O passear usa o `CNPCChaseOnGroundAgent`, que anda **pixels inteiros**:
+                // `m_StepPixels = round(passo / pixel)` (ou, com passo menor que meio pixel,
+                // `1/m_iStepsOneGrid` de pixel) e cada pixel soma o tamanho em x **e** em z
+                // (`NPCChaseOnGroundAgent.h:36-48`, `.cpp:388-428`). Na diagonal isso é √2 × pixel:
+                // com pixel de 2 m (1.2.6) e passo de 2,25 m, 2,83 m — o original faz igual. Salto
+                // é o que passa disso (a rodada que falhou em 2026-09-29 tinha 4 passos de
+                // exatamente (+2, −2) m, que são esse caso).
+                let pixel = mov.tamanho_do_pixel();
+                let pixels_por_passo = (limite / pixel + 0.5) as i32;
+                let passo_em_pixels = if pixels_por_passo == 0 {
+                    pixel / ((pixel / limite.max(0.01) + 0.5) as i32).max(1) as f32
+                } else {
+                    pixels_por_passo as f32 * pixel
+                };
+                // Cada eixo anda no máximo os pixels do passo (o `FollowFoundPath` soma um pixel
+                // por eixo a cada nó): acima de velocidade × tempo, só vale o passo de pixel.
+                let (dx, dz) = ((destino.x - antes.x).abs(), (destino.z - antes.z).abs());
+                let de_pixel = dx <= passo_em_pixels + 0.05 && dz <= passo_em_pixels + 0.05;
+                let salto = dist > limite * 1.1 + 0.05 && !de_pixel;
                 passos += 1;
-                maior = maior.max(dist / limite.max(0.01));
-                if dist > limite * 1.1 + 0.05 {
+                maior = maior.max(dist / (limite * 1.1 + 0.05));
+                if salto {
                     saltos += 1;
                     if saltos <= 5 {
                         eprintln!(
@@ -194,7 +214,7 @@ fn o_filhote_de_mandragora_passeia_sem_saltos() {
             }
         }
     }
-    eprintln!("passeio 126: {passos} passos, {saltos} maiores que velocidade × use_time, {colados} antes do use_time do anterior, {sem_parada} sem passo nem parada depois, maior razão {maior:.2}");
+    eprintln!("passeio 126: {passos} passos, {saltos} maiores que o passo do original, maior razão sobre velocidade × tempo {maior:.2}, {colados} antes do use_time do anterior, {sem_parada} sem passo nem parada depois");
     assert!(passos > 100);
     assert_eq!((saltos, colados, sem_parada), (0, 0, 0));
 }

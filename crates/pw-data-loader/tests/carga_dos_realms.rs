@@ -374,3 +374,50 @@ fn a_geracao_de_equipamento_do_126() {
         .collect();
     assert!(fora.is_empty(), "{} de {} modelos com addon_num que não soma 1: {:?}", fora.len(), d.geracao.len(), &fora[..fora.len().min(10)]);
 }
+
+/// B152 — o serviço de restauração de atributos (`NPC_RESETPROP_SERVICE`, 368 B nas duas
+/// versões; no `gs` 1.2.6 `id_resetprop_service` em +0x32c do `NPC_ESSENCE` e 15 entradas de
+/// 20 B em +0x44). Os serviços 10226/10227 têm as 15 opções; a última é o 12764 com 100 em cada
+/// atributo, e a primeira o 9834 com 10 de força.
+#[test]
+fn a_restauracao_de_atributos_dos_realms() {
+    for realm in ["realm_126", "realm_155"] {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").join(realm).join("config");
+        if !dir.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+            continue;
+        }
+        let mut d = GameDataManager::new();
+        d.load_from_directory(&dir);
+        let com: Vec<_> = d.servicos_de_npc.values().filter(|s| !s.restauracao_de_atributos.is_empty()).collect();
+        assert!(!com.is_empty(), "{realm}: nenhum NPC com o serviço");
+        for s in com {
+            let l = &s.restauracao_de_atributos;
+            assert_eq!(l.len(), 15, "{realm}");
+            assert_eq!((l[0].item, l[0].forca, l[0].agilidade), (9834, 10, 0), "{realm}");
+            let u = l[14];
+            assert_eq!((u.item, u.forca, u.agilidade, u.vitalidade, u.energia), (12764, 100, 100, 100, 100), "{realm}");
+        }
+    }
+}
+
+/// B153 — `m_ulPetInventorySize` do prêmio: +53 no v129 (`TaskTempl.h:1149`) e +36 no v55
+/// (`libtask.so` 1.2.6, `DeliverByAwardData` 0xb48c → `SetPetInventorySize`). A série "Jaula de
+/// Mascote"/"Expandir Jaula" da Gerente de Mascotes (3327–3330) dá 2, 3, 4 e 5 vagas nos dois
+/// realms, e a 8990 dá 10.
+#[test]
+fn as_missoes_que_ampliam_a_jaula() {
+    for realm in ["realm_126", "realm_155"] {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").join(realm).join("config");
+        if !dir.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+            continue;
+        }
+        let mut d = GameDataManager::new();
+        d.load_from_directory(&dir);
+        let vagas = |id: u32| d.tasks.get_task(id).map(|t| t.rewards.vagas_na_jaula);
+        assert_eq!([3327, 3328, 3329, 3330, 8990].map(vagas), [Some(2), Some(3), Some(4), Some(5), Some(10)], "{realm}");
+        let fora = (1..40_000u32).filter_map(|id| d.tasks.get_task(id)).filter(|t| t.rewards.vagas_na_jaula > 20).count();
+        assert_eq!(fora, 0, "{realm}: vagas acima de MAX_PET_CAPACITY");
+    }
+}

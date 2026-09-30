@@ -159,6 +159,10 @@ pub struct TaskReward {
     pub novo_cultivo: u32,
     /// `m_ulFuryULimit` — o novo teto da barra de chi (0 = a missão não mexe nele).
     pub teto_de_chi: u32,
+    /// `m_ulPetInventorySize` — as novas vagas da jaula de mascotes (0 = a missão não mexe
+    /// nelas), entregues por `SetPetInventorySize` → `SetPetSlotCapacity`
+    /// (`TaskProcess.cpp:1292`, `taskman.cpp:515-518`). B153.
+    pub vagas_na_jaula: u32,
     pub grupos_de_itens: Vec<GrupoDeItens>,
     /// `m_SummonedMonsters` — monstros invocados ao premiar/concluir a missão.
     pub monstros_invocados: Option<InvocacaoDeMonstros>,
@@ -180,6 +184,7 @@ impl TaskReward {
             || self.nova_missao != 0
             || self.novo_cultivo != 0
             || self.teto_de_chi != 0
+            || self.vagas_na_jaula != 0
             || self.teleporte.is_some()
             || self.grupos_de_itens.iter().any(|g| !g.itens.is_empty())
             || self.monstros_invocados.is_some()
@@ -539,6 +544,8 @@ mod v129 {
         /// `SetFuryUpperLimit` → `gplayer_imp::SetMaxAP` (`gs/task/taskman.cpp:498-501`).
         /// O deslocamento seguinte, 61, é o `MUNDO_DO_TELEPORTE` já validado.
         pub const TETO_DE_CHI: usize = 57;
+        /// `m_ulPetInventorySize`, o `unsigned long` antes do `m_ulFuryULimit` (`TaskTempl.h:1149`).
+        pub const VAGAS_NA_JAULA: usize = 53;
         pub const MUNDO_DO_TELEPORTE: usize = 61;
         pub const PONTO_DO_TELEPORTE: usize = 65;
         pub const USA_COEF_DE_NIVEL: usize = 82;
@@ -691,6 +698,7 @@ fn premio(l: &mut Leitor) -> Result<TaskReward> {
         reputation: u32_em(a, p::REPUTACAO) as i32,
         novo_cultivo: u32_em(a, p::NOVO_CULTIVO),
         teto_de_chi: u32_em(a, p::TETO_DE_CHI),
+        vagas_na_jaula: u32_em(a, p::VAGAS_NA_JAULA),
         realm_exp: u32_em(a, p::REALM_EXP),
         nova_missao: u32_em(a, p::NOVA_MISSAO),
         teleporte: (mundo != 0).then(|| {
@@ -802,6 +810,11 @@ fn premio_v55(l: &mut Leitor) -> Result<TaskReward> {
         // vtable). No `tasks.data` 1.2.6 são 8 missões — 915/966/973 (99), 922 (199), 925 (299),
         // 1888/2804/2818 (399) —, o mesmo desenho do 1.5.5.
         teto_de_chi: u32_em(a, 40),
+        // B153 — `m_ulPetInventorySize` em +36: o mesmo `DeliverByAwardData` faz
+        // `if (award[0x24]) pTask->SetPetInventorySize(award[0x24])` (0xb48c-0xb4ab, vtable +0xc4 =
+        // `PlayerTaskInterface::SetPetInventorySize` no `gs` 1.2.6; +0xbc é o `SetFuryUpperLimit`
+        // do +40, o que confere a leitura).
+        vagas_na_jaula: u32_em(a, 36),
         grupos_de_itens: grupos, ..Default::default()
     })
 }

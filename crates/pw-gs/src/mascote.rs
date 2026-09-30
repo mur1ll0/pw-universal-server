@@ -174,6 +174,16 @@ pub struct Mascote {
     /// O que já foi dito ao dono no último `PET_HP_NOTIFY` e o contador dos 5 batimentos
     /// (`NotifyMasterInHeartbeat`).
     pub vida_avisada: i64,
+    /// Mascote **ornamental** ("Ver Mascote", `PET_ESSENCE.id_type` 8783 →
+    /// `PET_CLASS_FOLLOW`, `petdataman.cpp:32-33`; igual no `gs` 1.2.6, VA 0x814364b). No
+    /// original é o de combate com quase tudo desligado (B154):
+    /// - dono: `follow_petdata_imp` (`petman.cpp:1006-1077`) — sem nível, lealdade, comandos
+    ///   (`OnPetCtrl` false), experiência por abate, ajuda ao dono, habilidades nem tinta; morto
+    ///   é só recolhido, com a vida cheia;
+    /// - no mundo: `gpet_imp_2` (`petnpc.cpp:1819-1856`, `petnpc.h:230-236`) — ignora golpe,
+    ///   bênção/maldição, comando, ódio, ataque automático e pedido de ajuda, e não se anuncia
+    ///   aos monstros (`PeepEnemy` vazio). Só segue o dono.
+    pub ornamental: bool,
     pub combate_avisado: bool,
     pub batimentos_sem_aviso: u32,
     batimento_ms: u32,
@@ -200,6 +210,7 @@ impl Mascote {
             vis_tid,
             nome,
             vida_avisada: -1,
+            ornamental: modelo.classe == pw_core::PET_CLASS_FOLLOW,
             combate_avisado: false,
             batimentos_sem_aviso: 0,
             batimento_ms: 0,

@@ -244,6 +244,7 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | 2 | `SELECT_TARGET` | 35 | `SEVNPC_HELLO` |
 | 3 | `NORMAL_ATTACK` | 37 | `SEVNPC_SERVE` (loja, treinador, missão…) |
 | 4 | `REVIVE_VILLAGE` | 39 | `GET_ALL_DATA` |
+| 5 | `REVIVE_ITEM` (`RESURRECT_BY_ITEM`) `{int param}` → sessão de 99 tiques e `PLAYER_REVIVAL` 1/2 (B155) | | |
 | 7 | `STOP_MOVE` | 40 | `USE_ITEM` |
 | 8 | `UNSELECT` | 41, 80 | `CAST_SKILL`, `CAST_INSTANT_SKILL` |
 | 9 | `GET_ITEM_INFO` | 42 | `CANCEL_ACTION` |

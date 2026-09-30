@@ -163,6 +163,9 @@ pub fn ponto_de_renascimento(dados: &GameDataManager, mapa: i32, x: f32, z: f32)
     Some((d.ponto_de_cidade, d.mapa_do_ponto))
 }
 
+/// `LOW_PROTECT_LEVEL` (`gs/config.h:74`): até este nível, renascer não custa experiência.
+pub const NIVEL_SEM_PERDA_AO_RENASCER: i32 = 9;
+
 /// `gplayer_imp::Resurrect` (`player.cpp:8716-8768`): vida e mana a 10 %, e a perda de
 /// experiência — `GetLvlupExp(nível) × GetResurrectExpReduce(cultivo)`, sem ficar negativa
 /// e zero no teto de nível. Devolve quanto perdeu.
@@ -170,7 +173,14 @@ pub fn renascer(p: &mut PlayerEntity, dados: &GameDataManager, morto_por_jogador
     p.hp = (p.max_hp as f32 * FATOR_DE_RENASCIMENTO + 0.5) as i32;
     p.mp = (p.max_mp as f32 * FATOR_DE_RENASCIMENTO + 0.5) as i32;
     p.combate_s = 0;
-    let reducao = if morto_por_jogador { 0.0 } else { dados.progressao.perda_na_morte(p.cultivation) };
+    // `if (pImp->_basic.level <= LOW_PROTECT_LEVEL) exp_reduce = 0.f` (`playercmd.cpp:697-699`,
+    // `LOW_PROTECT_LEVEL` 9 em `gs/config.h:74`; `cmp word [+0xe4], 9` no `gs` 1.2.6, VA
+    // 0x80cd2b4) — B155.
+    let reducao = if morto_por_jogador || p.level <= NIVEL_SEM_PERDA_AO_RENASCER {
+        0.0
+    } else {
+        dados.progressao.perda_na_morte(p.cultivation)
+    };
     let exp_do_nivel = dados.progressao.exp_para_subir(p.level);
     let perda = (exp_do_nivel as f32 * reducao + 0.5) as i64;
     if perda > 0 {

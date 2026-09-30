@@ -68,6 +68,10 @@ pub mod servico {
     pub const APRENDER_HABILIDADE_DE_MASCOTE: i32 = 38;
     /// `GP_NPCSEV_RESTOREPET` — reverter mascote em ovo na Gerente de Mascotes.
     pub const RESTAURAR_PET: i32 = 29;
+    /// `resetprop_provider`/`resetprop_executor` — restauração de atributos ("Reverter
+    /// Atributos") com o item da opção: `SERVICE_INSERTER(..., 33)` (`serviceprovider.cpp:8754`);
+    /// 33 também no `gs` 1.2.6 (`push 0x21` antes do `service_inserter`, VA 0x8105491).
+    pub const RESTAURAR_ATRIBUTOS: i32 = 33;
 }
 
 /// O envelope do comando, com o corpo ainda por interpretar.

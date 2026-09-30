@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS characters (
     -- (`GetPlayerCharMode`, `gs/player.cpp:12585-12612`). Viaja cru no `RoleInfo`.
     character_mode BYTEA DEFAULT ''::bytea NOT NULL,
     storehouse_money BIGINT DEFAULT 0 NOT NULL,
+    pet_slots INTEGER DEFAULT 1 NOT NULL,
     exp BIGINT DEFAULT 0 NOT NULL,
     sp BIGINT DEFAULT 0 NOT NULL,
     hp INT DEFAULT 100 NOT NULL,

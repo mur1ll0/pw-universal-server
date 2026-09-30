@@ -1011,7 +1011,8 @@ impl BusServer {
                 mundo
                     .mascotes
                     .iter()
-                    .filter(|(_, m)| !m.corpo.is_dead)
+                    // O ornamental ignora golpe e bênção (`gpet_imp_2`, `petnpc.cpp:1819-1856`).
+                    .filter(|(_, m)| !m.corpo.is_dead && !m.ornamental)
                     .map(|(id, m)| (Alvo::Mascote(*id), m.corpo.position)),
             )
             .collect();
@@ -1277,7 +1278,7 @@ impl BusServer {
                 _ => return Mudanca::default(),
             },
             Alvo::Mascote(id) => match mundo.mascotes.get(&id) {
-                Some(m) if !m.corpo.is_dead => vars_do_monstro(&m.corpo),
+                Some(m) if !m.corpo.is_dead && !m.ornamental => vars_do_monstro(&m.corpo),
                 _ => return Mudanca::default(),
             },
         };
@@ -1453,7 +1454,7 @@ impl BusServer {
                 )
             }
             Alvo::Mascote(id) => {
-                let Some(m) = mundo.mascotes.get_mut(&id) else {
+                let Some(m) = mundo.mascotes.get_mut(&id).filter(|m| !m.ornamental) else {
                     return;
                 };
                 let c = &mut m.corpo;
@@ -1654,7 +1655,8 @@ impl BusServer {
                 Alvo::Mascote(id) => {
                     if delta_hp < 0 {
                         mundo.dano_no_mascote(id, origem, -delta_hp);
-                    } else if let Some(m) = mundo.mascotes.get_mut(&id) {
+                    } else if let Some(m) = mundo.mascotes.get_mut(&id).filter(|m| !m.ornamental) {
+                        // `gpet_imp_2` ignora o `GM_MSG_ENCHANT` (`petnpc.cpp:1830-1831`).
                         m.corpo.hp = (m.corpo.hp + delta_hp).min(m.corpo.max_hp);
                     }
                 }

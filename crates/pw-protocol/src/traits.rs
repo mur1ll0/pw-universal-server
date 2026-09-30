@@ -49,6 +49,14 @@ pub trait WorldProtocol: Send + Sync {
         500
     }
 
+    /// O piso de cada atributo na restauração de atributos (serviço 33), na ordem
+    /// `(força, agilidade, vitalidade, energia)`: o `5 - data.x` de
+    /// `player_template::__Rollback` do 1.5.5 (`gs/playertemplate.cpp:622-626`, com a nota
+    /// "3->5, fix bug by liuguichen, 20130721"). O 1.2.6 é de antes da correção e sobrescreve.
+    fn piso_da_restauracao(&self) -> (i32, i32, i32, i32) {
+        (5, 5, 5, 5)
+    }
+
     /// Chi por batimento de 1 s meditando: `ModifyAP(15)` no `sit_down_filter::Heartbeat` do
     /// 1.5.5 (`gs/sitdown_filter.cpp:19-34`). O 1.2.6 sobrescreve.
     fn chi_por_meditacao(&self) -> i32 {

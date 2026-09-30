@@ -11017,3 +11017,153 @@ comparação lado a lado.
     - Roupa comprada/fabricada ainda grava tag 0. Itens comprados antes desta versão seguem sem bloco.
     - Conferir no binário do cliente 1.2.6 se a linha de classe some com máscara 0xFF (hipótese:
       igual ao 1.5.5).
+
+152. **Sessão 2026-09-29: restauração de atributos (serviço 33) no 1.5.5 e no 1.2.6.**
+
+    ### a. Pedido
+    - Com o WB no 1.2.6: "Rest. Superior Total" no Ancião da Cidade do Dragão, Reverter Atributos,
+      OK — nada acontecia. Log: `pediu o serviço de NPC 33, ainda não tratado`.
+
+    ### b. Original
+    - `resetprop_executor::SendRequest/OnServe` + `resetprop_provider::TryServe`
+      (`serviceprovider.cpp:3527-3690`), `SERVICE_INSERTER(..., 33)` (`:8754`); lista do NPC em
+      `npcgenerator.cpp:750-780` (sem item ou com delta negativo fica fora).
+    - `RegroupPropPoint` (`player.cpp:14920-14940`) → `__Rollback` (`playertemplate.cpp:618-642`):
+      `x1 = 5 - atual`, `x = max(-delta, x1)`, `min(x, 0)`; pontos devolvidos; 0 → 82.
+    - `gs` 1.2.6: serviço 33 (VA 0x8105491), `TryServe` com pedido de 8 B e erros 0xe/5 (VA
+      0x810fc0a), `OnServe` com 5/0x52 (0x810fdde), `NPC_ESSENCE+0x32c` e entradas de 20 B em
+      +0x44 (0x80ef74b). **Diferença:** o `__Rollback` 1.2.6 (VA 0x80e7684) usa `3 - vitality`,
+      `3 - energy`, `5 - strength`, `5 - agility` (ordem do `extend_prop`, `gs/property.h:35`) — o
+      piso que o 1.5.5 corrigiu ("3->5, fix bug by liuguichen, 20130721").
+
+    ### c. Correção
+    - `ServicosDoNpc::restauracao_de_atributos` (`EntradaDeRestauracao`); serviço 33 em
+      `bus_server/restauracao.rs`; `PlayerEntity::restaurar_atributos` com o piso de
+      `WorldProtocol::piso_da_restauracao` (v126 sobrescreve com 5/5/3/3);
+      `Bolsa::primeiro_slot_com`; `BusServer::ficha_de` para mandar o `OWN_EXT_PROP` do contexto.
+
+    ### d. Provas
+    - `restaurar_atributos_{155,126}` (índice inválido 14; sucesso com `OWN_EXT_PROP` e
+      `HOST_USE_ITEM`, atributos no piso da versão, pontos devolvidos, item gasto; no piso 82 e o
+      item fica); `a_restauracao_de_atributos_dos_realms` (15 opções nos dois realms).
+
+    ### e. Falta
+    - Ver em jogo. `UpdateMallConsumptionDestroying` (consumo da Loja Gold) não é contado.
+
+153. **Sessão 2026-09-29: jaula de mascotes — vagas, missão que amplia e restaurar mascote em ovo.**
+
+    ### a. Pedido (teste da Tsuko, 1.2.6)
+    - Jaula cheia; pedir a missão e o sistema de ampliar; o "Reanimar Mascote" não tirava o
+      mascote da jaula. Log: `pediu o serviço de NPC 29, ainda não tratado`.
+
+    ### b. Original
+    - Vagas: `pet_manager::_active_pet_slot` começa em 1 (`petman.cpp:1276`), só cresce até 20
+      (`SetAvailPetSlot`, `petman.h:170-176`), vai ao cliente com `pet_room_capacity`
+      (`player.cpp:13731`, `:14559-14564`) e é gravada (`userlogin.cpp:133, 782`). O prêmio
+      `m_ulPetInventorySize` → `SetPetInventorySize` → `SetPetSlotCapacity` (`TaskProcess.cpp:1292`,
+      `taskman.cpp:515-518`). No v129 em +53; no v55 em **+36** (`libtask.so` 1.2.6
+      `DeliverByAwardData` 0xb48c, vtable +0xc4 = `SetPetInventorySize` pela vtable do
+      `PlayerTaskInterface` no `gs`; o +40 → `SetFuryUpperLimit` do B119 confere o mapeamento).
+    - Incubar: `AddPetData` usa o primeiro slot vazio abaixo das vagas; sem vaga,
+      `ERR_PET_CAN_NOT_BE_HATCHED` (`serviceprovider.cpp:3181-3228`, `player.cpp:14417-14470`).
+    - Serviço 29: `restore_pet_service_executor` → `ServiceConvertPetToEgg` → `session_restore_pet`
+      (operação 3, 200 tiques) → `ConvertPetToEgg` + `ConvertPetDataToEggData`
+      (`player.cpp:14360-14670`). `gs` 1.2.6 igual (serviço 29 em VA 0x8105409, 200/3 em 0x807e4b2
+      e 0x808e6ac, erros 7/72/71/77/16/14 em 0x807e7ee, conversão em 0x807df12).
+    - **Erro nosso:** a capacidade mandada no login era "mascotes + 1", sem gravar, e a incubação
+      usava "quantos mascotes há" como slot, sem limite.
+
+    ### c. Correção
+    - `characters.pet_slots` (`scripts/2026_09_29_vagas_da_jaula.sql`, aplicado; começa cada
+      personagem com `max(1, último slot + 1)` para não perder mascote — a Tsuko ficou com 4);
+      `PlayerEntity::vagas_na_jaula`; `TaskReward::vagas_na_jaula`; `Jogador::ampliar_jaula`;
+      incubação pelo primeiro slot livre; serviço 29 (`restaurar_mascote_em_ovo`) e
+      `pw_core::ovo_do_mascote`. Exemplo `missoes_da_jaula`.
+    - Missões: Gerente de Mascotes (9762) 3327–3330 (2…5 vagas; cada etapa escolhe entre comida
+      de mascote — 20 Grama Verdejante, 50 Fruto Selvagem, 100 Lingzhi, 150 Ginseng Selvagem — ou
+      1 "Jaula de Mascote" 12768) e 8986–8990 (6…10); Domesticadora Rilay (11534) 5933–5936, 8981–8985.
+
+    ### d. Provas
+    - `premio_de_missao_amplia_a_jaula_{155,126}`, `incubar_com_a_jaula_cheia_falha`,
+      `restaurar_mascote_em_ovo_{155,126}`, `as_missoes_que_ampliam_a_jaula`.
+
+    ### e. Falta
+    - Ver em jogo. O vínculo do ovo (`proc_type` BIND) não é gravado; a ordem da recusa por jaula
+      cheia na incubação vem antes da do dinheiro.
+
+154. **Sessão 2026-09-29: mascote ornamental (Falcão do Paraíso, Filhote de Prata).**
+
+    ### a. Relato (Tsuko, 1.2.6)
+    - Os dois mascotes comprados e chocados não mostravam atributos de combate e, ao invocar,
+      davam "Não é possível executar a operação neste local". Log: `mascote de classe 2 de 11455
+      ainda sem porte`.
+
+    ### b. Causa
+    - Dados: 12339/12340 têm `id_type` **8783** "Ver Mascote", `level_max` 1 e só `hp_a`/`speed_a`.
+      O original mapeia 8781/8782/8783 para montaria/combate/**ornamental** (`PET_CLASS_FOLLOW`,
+      `petdataman.cpp:24-33`; `gs` 1.2.6 igual, `pet_dataman::LoadTemplate` 0x8143625-0x8143671).
+      Não ter atributos de combate **é o certo**: não são mascotes de luta.
+    - O `pw-gs` só invocava combate e montaria; a classe 2 mandava o erro 81.
+    - Original: `follow_petdata_imp` herda o `combat_petdata_imp` (mesma invocação) e anula
+      nível, lealdade, comandos, experiência, ajuda ao dono, habilidades e tinta
+      (`petman.cpp:1006-1077`); a criatura é `gpet_imp_2` (`CreatePet` escolhe
+      `CLS_PET_IMP_2`, `obj_interface.cpp:2829-2832`), que ignora golpe, bênção, comando, ódio,
+      ataque automático e pedido de ajuda, e não se anuncia (`petnpc.cpp:1819-1856`,
+      `petnpc.h:230-236`). O `gs` 1.2.6 tem as duas classes.
+
+    ### c. Correção
+    - `Mascote::ornamental` (de `modelo.classe`); invocação por `PET_CLASS_COMBAT | FOLLOW`;
+      proteções no dano, nos alvos de habilidade (área, efeito, roteiro), na IA dos monstros, nos
+      comandos, no ataque automático, na ajuda ao dono, na experiência por abate e no
+      aprender (14)/esquecer (20).
+
+    ### d. Provas
+    - `mascote_ornamental_e_invocado_e_nao_combate_{155,126}` (o 12340 no 1.2.6).
+
+155. **Sessão 2026-09-29: renascer na cidade e com pergaminho (1.5.5 e 1.2.6).**
+
+    ### a. Relato
+    - Nas duas versões, "Cidade mais próxima" só levantava o personagem onde morreu, e o
+      pergaminho não fazia nada.
+
+    ### b. Causa
+    - `reviver_jogador` achava o ponto do distrito e mudava a posição **no servidor**, mas não
+      mandava o `NOTIFY_POS` do `LongJump` (`player.cpp:8643-8672`): o cliente ficava onde morreu.
+      O log do 1.2.6 tinha `renasceu em (299, 1878)` — posição que só o servidor conhecia. Distrito
+      de outro mapa: renascia no lugar. O `PLAYER_REVIVAL` ia só a ele.
+    - C2S 5 (`RESURRECT_BY_ITEM`) não era tratado; não havia as sessões (39/99 tiques), nem a
+      proteção de 5 s, nem o nível protegido 9.
+    - Original: `ZombieCommandHandler` (`playercmd.cpp:683-720`), sessões
+      (`actsession.cpp:1300-1350`), `ResurrectInTown`/`ResurrectByItem` (`playercmd.cpp:64-129`),
+      `Resurrect` (`player.cpp:8716-8768`), `session_resurrect_protect`
+      (`actsession.cpp:1480-1503`), `gplayer_dispatcher::resurrect` (`player.cpp:3485-3498`,
+      `AutoBroadcastCSMsg` com ele incluído). `gs` 1.2.6: 0x27/0x63 tiques, nível 9, só o 3043,
+      erros 5/0x36, recarga 10, descarte 10, proteção 0x64 tiques.
+
+    ### c. Correção
+    - `bus_server/renascer.rs` (sessões em tarefa própria, pergaminho, proteção e difusão);
+      `reviver_jogador(no_lugar)` devolve `Renascimento` e não move — quem chama usa
+      `transportar` (mesmo mapa: `NOTIFY_POS`; outro: roteador); `NIVEL_SEM_PERDA_AO_RENASCER`;
+      `GameDataManager::recarga_do_pergaminho`; `ids::REVIVE_ITEM` = 5.
+
+    ### d. Provas
+    - `renascer_na_cidade_leva_ao_ponto_do_distrito_{155,126}` (distrito real do realm),
+      `renascer_com_pergaminho_no_lugar_{155,126}`; os antigos `morrer_avisa_o_cliente_e_reviver_
+      devolve_a_vida` e `quem_esta_vivo_nao_revive` seguem verdes.
+
+    ### e. Falta
+    - Morto por jogador não deveria perder experiência (`_kill_by_player`); `RESURRECT_BY_CASH`
+      (1.5.5) e o `REVIVAL_INQUIRE` (reviver por habilidade de sacerdote) não portados.
+
+156. **Sessão 2026-09-29: teste `o_filhote_de_mandragora_passeia_sem_saltos` com o passo do original (só teste).**
+    - Falhou uma vez na suíte completa com 4 "saltos", todos de exatamente (+2, −2) m em 1.000 ms a
+      2,25 m/s. **Não era relógio de parede** (o teste usa tempo simulado de 50 ms): o passear é
+      sorteado com o `thread_rng` (o gerador semeado de `navegacao.rs` só vale nos testes internos
+      do crate), e a rodada caiu num desvio de obstáculo.
+    - O `CNPCChaseOnGroundAgent` anda pixels inteiros: `m_StepPixels = round(passo / pixel)` e cada
+      pixel soma o tamanho em x e em z (`pathfinding/NPCChaseOnGroundAgent.h:36-48`, `.cpp:388-428`).
+      Pixel de 2 m no 1.2.6 e passo de 2,25 m → 1 pixel → 2,83 m na diagonal. O porte está fiel;
+      o critério do teste é que estava errado.
+    - Critério novo: acima de velocidade × tempo × 1,1, só se aceita o passo em que **cada eixo**
+      anda no máximo os pixels do passo. O caso que falhou é aceito; um salto de 3 m em reta
+      continua recusado. 20 de 20 rodadas verdes (5.621 passos, 0 saltos). Sem mudança de regra.

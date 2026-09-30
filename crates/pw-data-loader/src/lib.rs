@@ -49,7 +49,7 @@ pub use monstros::{TabelaDeMonstros, TemplateDeMonstro};
 pub use npcgen::{compress_dir_h, NpcGenData, SpatialGrid, SpawnInstance, SpawnType};
 pub use habilidades::{HabilidadeDoServidor, TabelaDeHabilidades};
 pub use precinct::{Distrito, Distritos};
-pub use servicos::ServicosDoNpc;
+pub use servicos::{EntradaDeRestauracao, ServicosDoNpc};
 pub use progressao::{AjusteDeNivel, TabelaDeProgressao};
 pub use ptemplate::{BaseDaClasse, TabelaDeBase};
 pub use tasks::TasksData;

@@ -63,6 +63,8 @@ mod habilidades;
 mod jogo;
 mod mascote;
 mod producao;
+mod restauracao;
+mod renascer;
 
 /// Um subcomando do mundo 3D, já com o cabeçalho separado do corpo.
 ///
@@ -765,10 +767,9 @@ impl BusServer {
                 hp,
                 max_hp,
             } => {
-                // `sReviveType` 0 = renascimento na cidade.
-                self.enviar_ao_jogador(roleid, S2CGamedataSend::player_revive(roleid, 0, pos).data)
-                    .await;
-                let _ = (hp, max_hp);
+                // O `PLAYER_REVIVAL` (0 cidade, 1 no lugar) e o `LongJump` saem de
+                // `bus_server/renascer.rs`, na ordem do original (B155).
+                let _ = (pos, hp, max_hp);
                 self.avisar_vida_propria(roleid).await;
                 // A raposa (`filter_Foxform`) não tem `REMOVE_ON_DEATH` — nem no 1.5.5
                 // (`skillfilter.h:4611`) nem no `gs` 1.2.6 (`push 0x8000`, VA 0x83080c1) — e o
@@ -1278,6 +1279,7 @@ impl BusServer {
         // apresenta este jogador aos outros.
         jogador.sec_level = repo.nivel_de_gm(roleid).await.clamp(0, 255) as u8;
         jogador.pontos_de_atributo = repo.pontos_de_atributo(roleid).await.unwrap_or(0);
+        jogador.vagas_na_jaula = repo.vagas_da_jaula(roleid).await.unwrap_or(1);
         match repo.task_lists().carregar(roleid).await {
             Ok(Some(l)) => {
                 jogador.missoes = crate::missoes::ListasDeMissao::de_blocos(
@@ -1438,7 +1440,8 @@ impl BusServer {
                 self.parar(roleid, &cmd.payload, envio).await
             }
             ids::NORMAL_ATTACK => self.atacar(roleid, &cmd.payload, envio).await,
-            ids::REVIVE_VILLAGE => self.reviver(roleid).await,
+            ids::REVIVE_VILLAGE => self.renascer_na_cidade(roleid).await,
+            ids::REVIVE_ITEM => self.renascer_com_pergaminho(roleid).await,
             ids::GET_ITEM_INFO => self.info_do_item(roleid, &cmd.payload, envio).await,
             ids::GET_ITEM_INFO_LIST => self.info_de_varios_itens(roleid, &cmd.payload, envio).await,
             ids::PICKUP => self.pegar(roleid, &cmd.payload).await,
@@ -2120,11 +2123,7 @@ impl BusServer {
         // (`EventoDoMundo::MonstroMorreu`).
     }
 
-    /// `C2S::REVIVE_VILLAGE` (4) — o jogador pediu para renascer na cidade.
-    ///
-    /// Não havia tratamento nenhum para este comando: quem chegava a zero de vida ficava
-    /// preso, sem nada que o tirasse de lá a não ser reconectar. O aviso ao cliente sai
-    /// pelo canal de eventos, como o resto do que a simulação decide.
+    /// Se o jogador está sentado (`PLAYER_SIT_DOWN`).
     pub(super) async fn esta_sentado(&self, roleid: i32) -> bool {
         self.world
             .read()
@@ -2132,12 +2131,6 @@ impl BusServer {
             .players
             .get(&(roleid as i64))
             .is_some_and(|p| p.sentado)
-    }
-
-    async fn reviver(&self, roleid: i32) {
-        if self.world.write().await.reviver_jogador(roleid).is_none() {
-            debug!("mundo: {roleid} pediu para reviver sem estar morto");
-        }
     }
 
     /// `SIT_DOWN` (46), `STAND_UP` (47) e `CANCEL_ACTION` (42) — sentar e levantar.
@@ -4332,6 +4325,8 @@ impl BusServer {
             servico::APRENDER_HABILIDADE_DE_MASCOTE => {
                 self.aprender_habilidade_de_mascote(roleid, c).await
             }
+            servico::RESTAURAR_ATRIBUTOS => self.restaurar_atributos(roleid, c, envio).await,
+            servico::RESTAURAR_PET => self.restaurar_mascote_em_ovo(roleid, c, envio).await,
 
             outro => {
                 debug!("mundo: {roleid} pediu o serviço de NPC {outro}, ainda não tratado");
@@ -4819,7 +4814,12 @@ impl BusServer {
             .list_by_container(roleid, ContainerType::PetCorral)
             .await
             .unwrap_or_default();
-        let vagas = (pets_corral.len() as u32 + 1).max(1);
+        // `pet_room_capacity(_petman.GetAvailPetSlot())` (`player.cpp:13731`): as vagas gravadas,
+        // não a contagem de mascotes (até o B153 era `mascotes + 1`, inventado).
+        let vagas = match self.world.read().await.players.get(&(roleid as i64)) {
+            Some(p) => p.vagas_na_jaula,
+            None => self.repo().await.vagas_da_jaula(roleid).await.unwrap_or(1),
+        };
         self.responder(
             roleid,
             S2CGamedataSend::pet_room_capacity(vagas).data,

@@ -137,6 +137,36 @@ impl PeEssence {
     }
 }
 
+/// `gplayer_imp::ConvertPetDataToEggData` (`gs/player.cpp:14360-14415`; `gs` 1.2.6 VA
+/// 0x807df12, mesmos deslocamentos): o ovo que o mascote vira na restauração. Parte do `pe_essence`
+/// do **modelo** do ovo (`get_item_for_sell(pet_egg_tid)`) e troca pelos dados do mascote: `honor_point`
+/// 0, `pet_tid`, `pet_vis_tid`, nível, cor, experiência, pontos de habilidade, nome (só se tiver) e as
+/// habilidades até a primeira vazia; mascote de evolução leva ainda o `evo_prop` depois das
+/// habilidades. `None` se o modelo não é um `pe_essence`.
+pub fn ovo_do_mascote(modelo: &[u8], m: &InfoPet) -> Option<Vec<u8>> {
+    let mut e = PeEssence::de_bytes(modelo)?;
+    e.honor_point = 0;
+    e.pet_tid = m.pet_tid;
+    e.pet_vis_tid = m.pet_vis_tid;
+    e.level = m.level;
+    e.color = m.color;
+    e.exp = m.exp;
+    e.skill_point = m.skill_point;
+    e.name_len = m.name_len;
+    if m.name_len != 0 {
+        e.name = m.name;
+    }
+    e.skills = m.skills.iter().copied().take_while(|s| s.0 != 0).collect();
+    e.skill_count = e.skills.len() as u16;
+    let mut b = e.para_bytes();
+    if m.pet_class == PET_CLASS_EVOLUTION {
+        for v in m.evo_prop {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    Some(b)
+}
+
 /// Estrutura `info_pet` / `pet_data` serializada em 192 bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InfoPet {

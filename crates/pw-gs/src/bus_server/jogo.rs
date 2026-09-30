@@ -44,6 +44,8 @@ pub(super) mod erro_s2c {
     pub const OPERACAO_EM_COMBATE: i32 = 66;
     pub const FORA_DE_ALCANCE: i32 = 2;
     pub const PET_NAO_PODE_CHOCAR: i32 = 76;
+    /// `ERR_PET_CAN_NOT_BE_RESTORED` (`common/protocol.h:757`; 0x4d no `gs` 1.2.6, VA 0x807e8a9).
+    pub const PET_NAO_PODE_RESTAURAR: i32 = 77;
     /// `ERR_PET_IS_ALEARY_ACTIVE` 71, `ERR_PET_IS_NOT_EXIST` 72, `ERR_PET_IS_NOT_ACTIVE` 73
     /// e `ERR_PET_CAN_NOT_MOUNT` 81 (`common/protocol.h:748-761`).
     pub const PET_JA_ATIVO: i32 = 71;
@@ -362,6 +364,17 @@ impl Jogador for Contexto<'_> {
             .push(crate::BusServer::estado_proprio_de(self.p));
     }
 
+    /// `pet_manager::SetAvailPetSlot` (`gs/petman.h:170-176`): só aceita um número **maior**
+    /// que o atual e até 20; `SetPetSlotCapacity(n, true)` manda `PET_ROOM_CAPACITY` (240) com o
+    /// valor que ficou (`player.cpp:14559-14564`).
+    fn ampliar_jaula(&mut self, vagas: u32) {
+        if vagas > self.p.vagas_na_jaula && vagas <= crate::entity::MAXIMO_DE_VAGAS_NA_JAULA {
+            self.p.vagas_na_jaula = vagas;
+            self.mudou = true;
+        }
+        self.para_mim.push(S2CGamedataSend::pet_room_capacity(self.p.vagas_na_jaula).data);
+    }
+
     fn definir_cultivo(&mut self, nivel: u32) {
         self.p.cultivation = nivel as i32;
         self.mudou = true;
@@ -421,6 +434,8 @@ struct Gravacao {
     pontos: i32,
     atributos: (i32, i32, i32, i32),
     listas: [Vec<u8>; 5],
+    /// As vagas da jaula, quando mudaram nesta operação (B153).
+    jaula: Option<u32>,
 }
 
 impl BusServer {
@@ -474,6 +489,7 @@ impl BusServer {
             let p = mundo.players.get_mut(&(roleid as i64))?;
             let gm = p.sec_level > 0;
             let dinheiro_antes = p.money;
+            let jaula_antes = p.vagas_na_jaula;
             let mut ctx = Contexto {
                 sub: self.sub.as_ref(),
                 p,
@@ -523,6 +539,7 @@ impl BusServer {
                 pontos: p.pontos_de_atributo,
                 atributos: (p.strength, p.agility, p.vitality, p.energy),
                 listas: p.missoes.blocos(),
+                jaula: (p.vagas_na_jaula != jaula_antes).then_some(p.vagas_na_jaula),
             };
             let ficha = (mudou || subiu_de_nivel).then(|| {
                 (
@@ -632,6 +649,11 @@ impl BusServer {
             {
                 warn!("mundo: não consegui gravar o estado de {}: {e}", g.roleid);
             }
+            if let Some(vagas) = g.jaula {
+                if let Err(e) = repo.gravar_vagas_da_jaula(g.roleid, vagas).await {
+                    warn!("mundo: não consegui gravar as vagas da jaula de {}: {e}", g.roleid);
+                }
+            }
             if let Err(e) = repo.gravar_atributos(g.roleid, g.atributos, g.pontos).await {
                 warn!(
                     "mundo: não consegui gravar os atributos de {}: {e}",
@@ -689,7 +711,12 @@ impl BusServer {
 
     /// `OWN_EXT_PROP` (50) com os números calculados — ver `todos_os_dados`.
     pub(crate) fn ficha_propria(&self, p: &PlayerEntity) -> Vec<u8> {
-        self.sub
+        Self::ficha_de(self.sub.as_ref(), p)
+    }
+
+    /// [`Self::ficha_propria`] para quem só tem o protocolo (o [`Contexto`]).
+    pub(crate) fn ficha_de(sub: &dyn WorldProtocol, p: &PlayerEntity) -> Vec<u8> {
+        sub
             .own_ext_prop(
                 p.pontos_de_atributo.max(0) as u32,
                 p.atributos_efetivos(),
@@ -1128,7 +1155,10 @@ impl BusServer {
                     .unwrap_or(info.pet_class)
             };
             match classe {
-                pw_core::PET_CLASS_COMBAT => {
+                // O ornamental é o de combate com quase tudo desligado (`follow_petdata_imp :
+                // combat_petdata_imp`, `petman.cpp:1006`; `DoActivePet` herdado): a mesma
+                // invocação, e o `Mascote::ornamental` faz o resto (B154).
+                pw_core::PET_CLASS_COMBAT | pw_core::PET_CLASS_FOLLOW => {
                     este.invocar_mascote_de_combate(roleid, indice, info.clone())
                         .await
                 }
@@ -1441,6 +1471,141 @@ impl BusServer {
             este.responder(roleid, S2CGamedataSend::player_stop_pet_op().data, &envio)
                 .await;
         });
+    }
+
+    /// `GP_NPCSEV_RESTOREPET` (serviço 29, "Restauração/Reanimação de Mascote") — o mascote da
+    /// jaula volta a ser ovo na bolsa.
+    ///
+    /// `restore_pet_service_executor` (`gs/serviceprovider.cpp:3234-3272`, pedido `{size_t
+    /// pet_index}` de 4 B) → `gplayer_imp::ServiceConvertPetToEgg` (`player.cpp:14514-14537`):
+    /// bolsa sem vaga (7), mascote inexistente (72) ou o ativo (71); então a
+    /// `session_restore_pet` — operação 3, `SetDelay(10 * 20)` = 200 tiques — e, ao fim,
+    /// `ConvertPetToEgg` (`player.cpp:14583-14670`): confere de novo, o `PET_EGG_ESSENCE` do
+    /// `pet_egg_tid` (senão 77), o `money_restored` (16), monta o ovo pelo modelo de venda com os
+    /// dados do mascote (`ConvertPetDataToEggData`, `player.cpp:14360-14415`: `honor_point` 0,
+    /// modelo/nível/cor/experiência/pontos/nome/habilidades do mascote), `obtain_item`,
+    /// `spend_money` e `FreePet` (`FREE_PET`, o slot sai da jaula). O `gs` 1.2.6 é igual: 200
+    /// tiques e operação 3 (VA 0x807e4b2, 0x808e6ac), os mesmos erros (0x807e7ee) e a conversão
+    /// nos mesmos deslocamentos (0x807df12). B153.
+    pub(super) async fn restaurar_mascote_em_ovo(
+        &self,
+        roleid: i32,
+        conteudo: &[u8],
+        envio: &crate::bus_server::EnvioAoCliente,
+    ) {
+        const TICKS_PARA_RESTAURAR: i32 = 200;
+        const OPERACAO_RESTAURAR: i32 = 3;
+        let Some(indice) = conteudo
+            .get(0..4)
+            .filter(|_| conteudo.len() == 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        else {
+            debug!("mundo: restauração de mascote de {roleid} com {} bytes", conteudo.len());
+            return;
+        };
+        let indice = indice.min(u16::MAX as u32) as u16;
+        let erro = |e: i32| S2CGamedataSend::error_message(e).data;
+        let Some(info) = self.conferir_restauracao(roleid, indice).await else { return };
+        let info = match info {
+            Ok(info) => info,
+            Err(e) => {
+                self.responder(roleid, erro(e), envio).await;
+                return;
+            }
+        };
+        let tid = if info.pet_vis_tid > 0 { info.pet_vis_tid } else { info.pet_tid };
+        let marcador = self.abrir_operacao_de_pet(roleid).await;
+        self.responder(
+            roleid,
+            S2CGamedataSend::player_start_pet_op(indice as i32, tid, TICKS_PARA_RESTAURAR, OPERACAO_RESTAURAR).data,
+            envio,
+        )
+        .await;
+        let este = self.clone();
+        let envio = envio.clone();
+        tokio::spawn(async move {
+            let espera = TICKS_PARA_RESTAURAR as u64 * Self::MS_POR_TICK;
+            tokio::time::sleep(std::time::Duration::from_millis(espera)).await;
+            if !este.operacao_de_pet_ainda_e_minha(roleid, marcador).await {
+                return;
+            }
+            if let Some(e) = este.converter_mascote_em_ovo(roleid, indice).await {
+                este.responder(roleid, erro(e), &envio).await;
+            }
+            este.responder(roleid, S2CGamedataSend::player_stop_pet_op().data, &envio).await;
+        });
+    }
+
+    /// As conferências comuns a `ServiceConvertPetToEgg` e `ConvertPetToEgg`: vaga na bolsa (7),
+    /// mascote no slot (72), não ativo (71). `None` se o jogador não está neste mundo.
+    async fn conferir_restauracao(&self, roleid: i32, indice: u16) -> Option<Result<pw_core::InfoPet, i32>> {
+        let livres = self.com_contexto(roleid, |ctx| ctx.bolsa.livres()).await?;
+        if livres == 0 {
+            return Some(Err(erro_s2c::BOLSA_CHEIA));
+        }
+        let item = match self.itens().await.get_item_by_slot(roleid, ContainerType::PetCorral, indice).await {
+            Ok(Some(item)) => item,
+            _ => return Some(Err(erro_s2c::PET_NAO_EXISTE)),
+        };
+        if self.mascote_ativo_no_slot(roleid, indice).await {
+            return Some(Err(erro_s2c::PET_JA_ATIVO));
+        }
+        let mut info = pw_core::InfoPet::do_bloco(&item.octets).unwrap_or_default();
+        if info.pet_tid <= 0 {
+            info.pet_tid = item.item_id as i32;
+        }
+        Some(Ok(info))
+    }
+
+    /// `ConvertPetToEgg`. `Some(erro)` quando recusou; `None` quando o ovo foi entregue (ou o
+    /// jogador saiu).
+    async fn converter_mascote_em_ovo(&self, roleid: i32, indice: u16) -> Option<i32> {
+        let info = match self.conferir_restauracao(roleid, indice).await? {
+            Ok(info) => info,
+            Err(e) => return Some(e),
+        };
+        // `slot_index >= MAX_PET_CAPACITY` → `ERR_PET_CAN_NOT_BE_RESTORED`.
+        if indice as u32 >= crate::entity::MAXIMO_DE_VAGAS_NA_JAULA {
+            return Some(erro_s2c::PET_NAO_PODE_RESTAURAR);
+        }
+        let ovo = info.pet_egg_tid;
+        let r = self
+            .com_contexto(roleid, |ctx| {
+                let Some(o) = ctx.dados.dados_do_ovo(ovo.max(0) as u32) else {
+                    return Err(erro_s2c::PET_NAO_PODE_RESTAURAR);
+                };
+                let preco = o.money_restored.max(0) as i64;
+                if ctx.p.money < preco {
+                    return Err(erro_s2c::SEM_DINHEIRO);
+                }
+                // `get_item_for_sell(pet_egg_tid)`: o ovo do modelo, sobre o qual vão os dados.
+                let Some(modelo) = ctx.dados.gerar_octetos_do_ovo(ovo as u32) else {
+                    return Err(erro_s2c::SERVICO_INDISPONIVEL);
+                };
+                let Some(bytes) = pw_core::ovo_do_mascote(&modelo, &info) else {
+                    return Err(erro_s2c::SERVICO_INDISPONIVEL);
+                };
+                let Some(e) = ctx.bolsa.guardar_equipamento(ovo as u32, &bytes, ctx.dados) else {
+                    return Err(erro_s2c::SERVICO_INDISPONIVEL);
+                };
+                ctx.para_mim.push(ctx.sub.obtain_item(ovo, 0, 1, e.no_slot, 0, e.slot as u8).data);
+                if preco > 0 {
+                    ctx.gastar_dinheiro(preco);
+                    ctx.para_mim.push(S2CGamedataSend::spend_money(preco as u32).data);
+                }
+                Ok(())
+            })
+            .await?;
+        if let Err(e) = r {
+            return Some(e);
+        }
+        // `pet_manager::FreePet` (`petman.cpp:1505-1520`): `free_pet` e o slot vazio.
+        match self.itens().await.delete_item_by_slot(roleid, ContainerType::PetCorral, indice).await {
+            Ok(()) => info!("mundo: {roleid} restaurou o mascote {} do slot {indice} no ovo {ovo}", info.pet_tid),
+            Err(e) => warn!("mundo: o mascote do slot {indice} de {roleid} virou ovo mas não saiu da jaula: {e}"),
+        }
+        self.enviar_ao_jogador(roleid, self.sub.free_pet(indice as i32, info.pet_tid).data).await;
+        None
     }
 
     /// `_cur_active_pet == index`: o de combate no mundo ou a montaria montada.
@@ -3117,7 +3282,24 @@ impl BusServer {
             .list_by_container(roleid, pw_core::ContainerType::PetCorral)
             .await
             .unwrap_or_default();
-        let slot_pet = pets_corral.len() as i32;
+        // `pet_manager::AddPetData` (`gs/petman.cpp:1487-1503`): o primeiro slot vazio abaixo das
+        // vagas da jaula; sem nenhum, a incubação falha com `ERR_PET_CAN_NOT_BE_HATCHED`
+        // (`serviceprovider.cpp:3211-3228`). Até o B153 era "quantos mascotes há", sem limite.
+        let vagas = self
+            .world
+            .read()
+            .await
+            .players
+            .get(&(roleid as i64))
+            .map(|p| p.vagas_na_jaula)
+            .unwrap_or(1);
+        let ocupados: std::collections::HashSet<u16> = pets_corral.iter().map(|p| p.slot).collect();
+        let Some(slot_pet) = (0..vagas as u16).find(|s| !ocupados.contains(s)).map(i32::from) else {
+            debug!("mundo: {roleid} tentou incubar {egg_id} com a jaula cheia ({vagas} vagas)");
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_s2c::PET_NAO_PODE_CHOCAR).data)
+                .await;
+            return;
+        };
 
         let pet_gerado = self
             .com_contexto(roleid, |ctx| {
