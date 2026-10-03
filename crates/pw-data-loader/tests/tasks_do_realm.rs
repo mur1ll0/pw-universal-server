@@ -141,3 +141,17 @@ fn os_campos_do_v55_lidos_pelo_libtask() {
     assert_eq!(t.tasks[&9376].tipo, 2);
 }
 
+
+/// `m_bDeathTrig` (`TaskTempl.h:2106-2107`): v55 em `+0xad` (`AddOneTaskTempl` do `libtask.so`
+/// 1.2.6, B107), v129 no byte 230. A 990 do cultivo 39 só chega assim — sem NPC, sem entrega
+/// automática, sem conversa que a ofereça.
+#[test]
+fn as_missoes_de_gatilho_por_morte() {
+    for (realm, esperadas) in [("realm_126", vec![990]), ("realm_155", vec![990, 29649])] {
+        let Some(t) = ler(realm) else { continue };
+        let mut ids: Vec<u32> = t.tasks.values().filter(|x| x.entrega_ao_morrer).map(|x| x.id).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, esperadas, "{realm}");
+        assert_eq!(t.tasks[&990].pre_tasks, vec![923], "{realm}");
+    }
+}

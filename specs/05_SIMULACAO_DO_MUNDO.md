@@ -163,10 +163,21 @@ Também fica de fora: `CHAT_AIPOLICY_VALUE` = 2 é o do 1.5.5 (as falas com anex
 gatilho de versão ≥ 17); o `srclevel` do `ChatMessage` no cliente 1.2.6 não foi medido (vai 0 no
 fim, como no IR 1.5.3/1.5.5).
 
-`falta` (fora da política): o mapa de
-movimento (atravessa obstáculos). O limite da perseguição ainda é a distância até o alvo; no
-original é a distância **do ninho** contra o `_max_move_range` da política
-(`aipolicy.cpp:300-307`), e a volta para casa é o `GetReturnHomeRange` (`ainpc.cpp:29-37`).
+O original tem **dois** limites de perseguição (corrigido em 2026-10-01; esta nota dizia que só
+havia o segundo):
+
+1. Distância até o alvo ≥ `aggro_range`: o alvo sai da lista (`ai_melee_task::Execute`,
+   `aipolicy.cpp:577-585`; `GetIgnoreRange` = `GetAggroRange`, `ainpc.h:545`). Este está portado,
+   mas com um **piso de 15 m sem fonte** (`MonsterAi::PERSEGUICAO_MINIMA`): o original usa o
+   `aggro_range` puro (`npcgenerator.cpp:2566`, sem piso nem teto).
+2. Distância **do ninho** > `max_move_range` (do `MONSTER_ESSENCE`; zero = sem limite, senão
+   piso de 20 m, `npcgenerator.cpp:313-316`): `ClearAggro` (`aipolicy.cpp:298-307`, só sem rota).
+   `falta`.
+
+Não há regra de ódio própria de masmorra: o código de `gs/instance/` não toca na IA. O monstro da
+Caverna Sombria (169) é persistente pelos dados: `aggro_range` 107,25, `aggro_time` 100 e
+`max_move_range` 0 nos seis tipos. A volta para casa é o `GetReturnHomeRange`
+(`ainpc.cpp:29-37`).
 
 ## 5. Combate (`combat.rs`) — `confirmado`
 
@@ -459,6 +470,16 @@ hora a quem bateu, com o `PLAYER_HP_STEAL` 279 (`actobject.cpp:297-302`).
 Sinais ao cliente (B142, `testado`): o crítico e a esquiva de dano vão no `attack_flag` (spec 04
 §5); quem vê um jogador morrer recebe `PLAYER_DIED` (27).
 
+**Morrer voando ou montado (B158, `testado`; falta ver em jogo):** `gactive_imp::Die`
+(`actobject.cpp:590-606`) tira os filtros `FILTER_MASK_REMOVE_ON_DEATH` **antes** do `OnDeath`. O de
+voo (`fly_filter.h:10-28`) pousa — `Landing` → `STATE_FLY` desligado e `_runner->landing()`
+(`OBJECT_LANDING` 97 a ele e a quem vê, `actobject.h:891-896`); o de montaria (`mount_filter.h:14`)
+desmonta — `DeactiveMountState` → `RecallPet`, `STATE_MOUNT` desligado e `player_mounting(0, 0)`
+(`mount_filter.cpp:36-45`, `player.cpp:14301-14320`). No servidor: no `JogadorMorreu`, antes do
+`HOST_DIED`, `voando`/`voo_gasta_mana` zerados com o pouso, e a montaria sai pelo mesmo `desmontar`
+do recolher (227 com 0, velocidade refeita, `RECALL_PET` 234). Antes, o personagem renascia
+voando/montado para o servidor e o botão de voo/montaria pedia dois cliques.
+
 **Trava de PvP (B146, `testado`):** o mundo é PvE (`PVP_MODE(0)` na entrada, o `pve_mode` que o
 servidor de entrega liga, `serverstat.cpp:113`) e cada jogador tem a chave: `ENABLE_PVP_STATE` (82)
 liga acima do nível 29 (`PVP_PROTECT_LEVEL`) e arma 36000 s de espera (`HOST_PVP_COOLDOWN` 185);
@@ -629,6 +650,7 @@ sessão de golpe contra jogador (o golpe normal não mira jogador), marca no gol
 | mapa sem voo (B133) | `testado` | `nofly` do `gs.conf` (spec 03 §3.6e): decolar manda `ERR_CANNOT_FLY` **55** e não decola (`flysword_item::OnUse`, `item_flysword.cpp:55-70`; `push 0x37` no `gs` 1.2.6, VA 0x819505f); chegar voando a um mapa `nofly` derruba o voo com `OBJECT_LANDING` (`player.cpp:11994-11998`); mascote de ar não aparece (-2) e o de chão+ar/todos pula o ar (`petman.cpp:104/140/270`). Nenhum mapa servido hoje (o 1) é `nofly` |
 | voo | `confirmado` | pelo item no slot 12 (`EQUIPIVTR_FLYSWORD`); sem teto. **Mana só nas asas** (B142, `testado`): as asas de Arqueiro/Anjo (`WINGMANWING_ESSENCE`) tiram `mp_launch` ao decolar e `mp_per_second` a cada segundo; sem a mana da decolagem a mana zera e não decola, e sem a do segundo pousa (`OBJECT_LANDING`) com a mana em zero (`angel_wing_item::OnUse`, `item_flysword.cpp:118-148`; `angel_wing_fly_filter::Heartbeat`, `fly_filter.cpp:42-48`; `DrainMana`, `player.cpp:10697-10712`). A espada voadora das outras classes não gasta mana: gasta o tempo de voo do item (`cls_flysword_item::OnFlying`) — `falta` descontar esse tempo. **Velocidade (B128, `testado`):** `fly_speed` do `ptemplate` + o `speed_increase` do item de voo (offset 20 do conteúdo gravado; `flysword_item::OnActivate`, `item_flysword.h:126-129`), teto `MAX_FLIGHT_SPEED` 20 (`playertemplate.h:1101-1110`), no `OWN_EXT_PROP`. Antes o item não somava: a Tsuko voava a 3 m/s com o de "15 m/s". Falta o `_en_percent.flight_speed` (`EnhanceFlySpeed`) |
 | teleporte de GM (`GOTO`) | `confirmado` | `y` do cliente é marcador; altura = chão + 0,5 m (`playercmd.cpp:4926`) |
+| painel de GM (Ctrl+G) | `testado` (2026-10-01, falta ver em jogo) | `bus_server/gm.rs`. Privilégio = `sec_level` > 0 (sem os bits por comando do `_gm_auth`); quem não é GM é ignorado calado. **Invencível** (205): `Efeitos::gm_invencivel`, sem prazo, dano zero (PvP inclusive), estado visível 49. **Invisível** (204): `Efeitos::gm_invisivel`, `PLAYER_LEAVE_WORLD` aos outros, fora da vista deles (o GM continua vendo todos), não golpeia (`DenyCmd(CMD_ATTACK)`), não é ferido (`target_faction = 0`); ao voltar, aparece para quem ele vê. Os monstros ainda o notam, como no original (o `WATCHING_YOU` não olha a invisibilidade de GM). **Ir até / chamar** (201/202): mapa e posição pelo roteador, `transportar` (troca de mapa inclusive). **Criar monstro** (208): só com `debug_command_mode = active`; `count` monstros a ±6 m (`CreateMinors`, `obj_interface.cpp:1990`), vida `life` s, sem ódio; `vis_id` e nome `falta`. **Criar item** (206) e **gerador** (207): `falta` |
 | sentar, gestos, roupa, zona segura | `confirmado` | O **modo roupa persiste** (B83): o `SWITCH_FASHION_MODE` grava o `charactermode` em `characters.character_mode` — pares `(chave, valor)` de `int32`, chave 1, e nada quando desligado (`GetPlayerCharMode`, `gs/player.cpp:12585-12612`) —, o login o relê, e ele viaja cru no `RoleInfo` da lista de personagens, que é de onde a **tela de seleção** decide desenhar roupa ou armadura (`CECLoginPlayer::Load`, `EC_LoginPlayer.cpp:172-189`). `voando` continua sem persistir, de propósito: quem relogar entra no chão **Sentado**, o `sit_down_filter` dobra a regeneração de vida e mana a partir do 2º batimento (`STAYIN_BONUS` 100, `gs/config.h:103`; igual no `gs` 1.2.6, VA 0x812ff22) — `testado` (B118) |
 | grupo | `testado` | estado de grupo no mundo (convite, aceite, recusa, saída) |
 | teleporte e troca de mapa | `testado` (B51) | `LongJump` (`player.cpp:8617`): mesmo mapa → posição, `NOTIFY_HOSTPOS` (14, 22 bytes: `pos, tag, line`) e o mundo em volta; outro mapa **do mesmo processo** → o roteador tira o jogador do mapa de origem (some da vista, sessão e entidade) e o põe no destino: `NOTIFY_HOSTPOS` com o `tag` novo (o cliente descarrega e carrega o mundo, `JumpToInstance`), chão por baixo, grava mapa e posição na hora, e streaming completo (`global_message.cpp:111-117`). Disparado por prêmio de missão (`m_ulTransWldId`) e por missão com `m_bTransTo`. Mapa de outro processo `falta`; o grupo se desfaz na troca |
@@ -858,6 +880,7 @@ original, mexidas pelas mesmas funções portadas linha a linha: `DeliverTask`, 
 | aceitar no NPC (`GP_NPCSEV_TASK_ACCEPT`) | NPC em conversa (`SEVNPC_HELLO`) com a missão em `NPC_TASK_OUT_SERVICE` (`serviceprovider.cpp:1088`); submissão vira escolha da mãe (`OnTaskCheckDeliver`); `CheckPrerequisite` na ordem do original; `svr_new_task` (17 bytes + tags) | `testado` |
 | entregar no NPC (`GP_NPCSEV_TASK_RETURN`) | missão em `NPC_TASK_IN_SERVICE`; `OnTaskCheckAward` por método; `DeliverAward` → `RecursiveCheckAward` → `RecursiveAward` → `DeliverByAwardData` (ouro, exp, SP, reputação, itens por grupo/escolha, missão nova, coeficiente de nível `_lev_co`); `svr_task_complete` com o estado | `testado` |
 | abate (`OnTaskKillMonster`) | dono do abate; `CheckKillMonster`: conta (`svr_monster_killed`, 17 bytes; **9 no 1.2.6**, B101) ou sorteia o item de missão; completa → `OnSetFinished` (conclusão direta premia) | `testado` |
+| **morte do jogador** (`OnTaskPlayerKilled`, B157) | `OnDeath` (`gs/player.cpp:7295-7297`) → `TaskServer.cpp:1125-1154`: cada missão ativa com sucesso e `m_bFailAsPlayerDie` perde o sucesso e é finalizada (`OnSetFinished`); depois `CheckDeathTrig` (`TaskTemplMan.cpp:271-281`) tenta entregar, sem aviso de erro, as de topo com `m_bDeathTrig`. No 1.2.6 a única é a **990 "A Divina de Hades Vazia"** (cultivo 39: pré-requisito 923, sem NPC, sem entrega automática, sem conversa que a ofereça) — o jogador precisa **morrer** depois da 923; no 1.5.5, a 990 e a 29649. Chamado em `EventoDoMundo::JogadorMorreu`, depois do `PLAYER_DIED` | `testado` (falta ver em jogo) |
 | `TASK_NOTIFY` 1/2/3/4/5/10 | concluir (`OnTaskCheckAwardDirect`), desistir, **chegou ao lugar** e **saiu do lugar** (`OnTaskReachSite`/`LeaveSite`, `TaskServer.cpp:466-520`: confere mundo e caixa, `OnSetFinished`), entrega automática, gatilho manual; 7 = marca dinâmica (B49) | `testado` |
 | horário (B51) | `CheckTimetable`/`judge_time_date` (`TaskTempl.h:1697`) na hora local do contêiner (`TZ=America/Sao_Paulo`): por data, mês, semana (1 = segunda … 7 = domingo) e dia; basta uma janela | `testado` |
 | região de entrega (B51) | `CheckInZone` (`TaskTempl.inl:368`): mundo `m_ulDelvWorld` e alguma caixa `m_pDelvRegion` (bordas incluídas) | `testado` |

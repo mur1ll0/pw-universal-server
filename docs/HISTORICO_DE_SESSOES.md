@@ -11167,3 +11167,121 @@ comparação lado a lado.
     - Critério novo: acima de velocidade × tempo × 1,1, só se aceita o passo em que **cada eixo**
       anda no máximo os pixels do passo. O caso que falhou é aceito; um salto de 3 m em reta
       continua recusado. 20 de 20 rodadas verdes (5.621 passos, 0 saltos). Sem mudança de regra.
+
+157. **Sessão 2026-09-30: cultivo 39 da Tsuko (1.2.6) — a 990 é entregue pela morte.**
+    - Relato: na 1862 "Aumentar cultivo" o Taoísta Dongming (3288) deu a 923 "Aparição Vazia de
+      Hades", que sumiu em seguida; sem missão de cultivo depois. Log do `pw-world-126`:
+      `entregou a missão 1862`, `aceitou a missão 923` às 12:46:41, nada mais. Banco
+      (`character_task_lists` da 11455): a 923 está nas concluídas **com sucesso**, a lista ativa
+      não tem nada do cultivo, e o item 3277 "Rem. Refeito de Reunir Espírit." está na bolsa de
+      missão (contêiner 5). **O sumiço da 923 é o original:** método 5 (espera), 0 s, conclusão
+      direta, prêmio só o 3277.
+    - A seguinte é a 990 "A Divina de Hades Vazia" (pré-requisito 923; filhas em ordem 991
+      "Demônio Imortal Jeffrey" e 992; prêmio 49.000 SP, cultivo 4, nova missão 1597). Nenhum NPC a
+      oferece (`npcs_da_missao`, exemplo novo), não é automática, nenhuma outra missão a dá como
+      "nova missão", e nenhuma opção `NPC_GIVE_TASK` (0x80000006) de conversa no `tasks.data` nem
+      no `elements.data` dos dois realms tem 990 como parâmetro. Ela tem `m_bDeathTrig`
+      (`TaskTempl.h:2106-2107`; v55 +0xad, já medido no B107 mas não guardado; v129 byte 230): o
+      `OnDeath` do jogador (`gs/player.cpp:7295-7297`) chama `OnTaskPlayerKilled`
+      (`TaskServer.cpp:1125-1154`) → `CheckDeathTrig` (`TaskTemplMan.cpp:271-281`), que tenta
+      entregar cada missão de topo com a flag. **É a única no 1.2.6**; no 1.5.5, a 990 e a 29649.
+    - Porte: `entrega_ao_morrer` no `TaskTemplate` (v55 e v129); `Motor::jogador_morreu` faz as
+      duas metades do `OnTaskPlayerKilled` — `_on_player_killed` (missão ativa com sucesso e
+      `m_bFailAsPlayerDie` perde o sucesso e vai a `OnSetFinished`, uma por vez) e o
+      `CheckDeathTrig` (`aceitar(id, 0, false)`, sem aviso de erro, em ordem de id); chamado no
+      `EventoDoMundo::JogadorMorreu` depois do `PLAYER_DIED`. A falha ao morrer também não existia.
+    - Personagem: nada a corrigir no banco — o estado é o que o original teria. Com o servidor
+      publicado, basta a Tsuko morrer (qualquer causa) para receber a 990.
+    - Testes: `morrer_falha_as_de_falha_ao_morrer_e_entrega_as_de_gatilho_por_morte` (motor) e
+      `as_missoes_de_gatilho_por_morte` (990 no 126; 990 e 29649 no 155). Corrigido também o
+      exemplo `missoes_que_citam` (cortava texto no meio de um caractere). Falta ver em jogo.
+
+158. **Sessão 2026-09-30: morrer voando ou montado deixava o estado ligado ao reviver.**
+    - Relato: morrer montado ou voando e reviver deixava o personagem "montado/voando" sem
+      montaria/voo; eram precisos dois cliques no botão para voltar ao normal.
+    - Original: `gactive_imp::Die` (`gs/actobject.cpp:590-606`) chama
+      `_filters.ClearSpecFilter(FILTER_MASK_REMOVE_ON_DEATH)` antes de `OnDeath`. `fly_filter` e
+      `mount_filter` têm a máscara (`fly_filter.h:10-12`, `mount_filter.h:14`). `fly_filter::OnRelease`
+      → `Landing` (`actobject.h:891-896`: tira `STATE_FLY`, `_runner->landing()`);
+      `mount_filter::OnRelease` → `DeactiveMountState` (`player.cpp:14301-14320`: `RecallPet`, tira
+      `STATE_MOUNT`, `_runner->player_mounting(0, 0)`) e devolve a velocidade. O `OnDeath`
+      (`player.cpp:7108-7297`) não mexe em voo nem montaria — tudo sai pelos filtros.
+    - Nosso `JogadorMorreu` não fazia nada disso: `voando` e `montaria` ficavam ligados, o
+      renascer recarregava o personagem com eles, e o primeiro clique só "desligava" no servidor.
+    - Correção (`bus_server.rs`, `JogadorMorreu`): antes do `HOST_DIED`, zera `voando` e
+      `voo_gasta_mana` e manda `OBJECT_LANDING` a ele e a quem vê; com montaria, o `desmontar` do
+      recolher (227 com 0, velocidade refeita, `RECALL_PET` 234).
+    - Teste `morrer_voando_ou_montado_pousa_e_desmonta_antes_do_aviso_de_morte` (com o banco): 97
+      antes do 28 voando; 227(0) e 234 antes do 28 montado; estado limpo nos dois. Falta ver em jogo.
+
+159. **Sessão 2026-10-01: mapa da Caverna Sombria no 1.5.5 e o painel de GM (Ctrl+G).**
+    - Relato 1: na missão "Entre na caverna sombria" (32429) o NPC concluía e nada acontecia.
+      Log do `pw-world-155`: `vai do mapa 161 para o 169` seguido de `pediu o mapa 169, que este
+      processo não serve ([1, 161])`. O `WORLD_TAGS` passou a `"1,161,169"`; o `a69` sobe com 38
+      monstros, 0 NPCs, 12 rotas. Contêiner recriado com a mudança (sem rebuild). Falta ver em jogo.
+    - Relato 2: no painel de GM, "invencível" não fazia nada. Log: `subcomando 205 … ainda não
+      tratado` (6×) e o 204 (3×). Nenhum comando de GM do mundo existia.
+    - Fonte: o painel do cliente (`GMCommandInGame.cpp`) manda pelo `GamedataSend` os 201, 202 e
+      204–208 (`EC_SendC2SCmds.cpp`). O 203 nunca é enviado. Expulsar, silenciar, anunciar,
+      contar online, reiniciar e travar vão pelo GNET (`EC_PrtcProc.cpp:276-395`). O servidor
+      (`GMCommandHandler`, `playercmd.cpp:4806-5230`) ignora calado quem não tem `_gm_auth`. O 206 e
+      o 208 só funcionam com `debug_command_mode = active` (`playertemplate.cpp:217`), e o
+      `ptemplate.conf` do realm vinha com `false`.
+    - Feito: `bus_server/gm.rs`. Os S2C 175/176 têm 1 byte (IR `gm_cmd_invincible`/`invisible`),
+      com `Some` no v155/v153 e `None` nas outras versões. O `Efeitos` ganhou `gm_invencivel`
+      (dano zero, estado 49) e `gm_invisivel` (dano zero, fora da vista dos outros, sem golpe).
+      O dano de habilidade em jogador passa a ir por `dano_recebido`; antes ignorava os filtros do
+      alvo. Ir até e chamar usam o roteador (`RoteadorDeMapas::posicao_de`, ref. fraca no
+      `BusServer`). Criar monstro gera `count` monstros a ±6 m, vida `life` s, sem ódio. O
+      `ptemplate` passou a ler o `modo_de_depuracao`, e o `realm_155` ficou `active`.
+    - Ficou `falta`: 206 (o `elements.data` não lê `GM_GENERATOR_ESSENCE`), 207 (gatilho dos
+      controladores), `vis_id` e nome do monstro, bits de privilégio por comando, os comandos GNET
+      de GM no link, e o S2C 175/176 do 1.2.6 (sem evidência do número).
+    - Testes (com o banco): `o_gm_alterna_invencivel_e_invisivel`, `jogador_comum_nao_fica_invencivel`,
+      `o_modo_de_depuracao_so_liga_com_active`, e 2 unitários em `gm.rs`. Suíte com o banco: 762 passaram, 0 falharam (o `subcomandos_s2c_contra_o_ir` confere os dois codificadores novos contra o IR, 175 e 176).
+
+160. **Sessão 2026-10-01: como o original trata as masmorras (só diagnóstico).**
+    - Relato: a Tsuko relogou dentro da Caverna Sombria (169), os monstros tinham renascido e ela
+      continuava no mapa. Aqui o 169 é um mapa único, compartilhado, que nunca reinicia.
+    - Original (`gs/instance/`): `[Instance_is69]` tem `player_per_instance 15` e
+      `instance_capacity 100`, sem `idle_time`/`life_time`/`owner_mode` (valem os padrões: grupo,
+      1.200 s e 14.400 s) e sem `can-reenter`/`gm-free`. As regras de chave, recolhimento, login
+      e expulsão estão no ESTADO §5A ("Instâncias").
+    - Proposta de porte: um gerenciador de cópias por tag de instância no `RoteadorDeMapas`; a
+      chave e a última instância (tag, posição de entrada, `create_timestamp`) gravadas por
+      personagem; o batimento de 10 s; o filtro de 3 s com `kickout_instance` e `world_life_time`
+      (S2C, `protocol.h:2497`, `:3219`).
+
+161. **Sessão 2026-10-01: custo do cultivo automático (só análise).**
+    - O sistema é o `CECAutoPolicy` do cliente (`EC_AutoPolicy.cpp`, 2013): no menu Sistema,
+      "AutoRobot" (`DlgSystem2.cpp:215`) abre `Win_AutoPolicy` (`DlgAutoPolicy.cpp`). A lógica é Lua
+      (`configs\autopolicy\{aimanager,autokillmonster,utility,constant}.lua`, presentes no
+      `configs.pck` do BR). A trava é `EnableAutoPolicy` no `configs\uiconfig.ini` do próprio
+      cliente (= 1 no BR). O `EvolvedPWServer` não tem nada do sistema.
+    - O script chama o `CECPlayerWrapper`: `SearchTarget`, `SelectTarget`, `NormalAttack`,
+      `CastSkill`/`CastComboSkill`, `UseItem`, `Pickup`, `MoveTo`, `ReviveInTown` (C2S 4),
+      `ReviveByItem` (5), `AcceptRevive` (`REVIVAL_AGREE` 87, **não tratado** aqui) e
+      `GetWeaponEndurance` (com arma em 0 de durabilidade, nem começa). Configura habilidade de
+      ataque e de apoio, intervalo, tempo (padrão 1 h), modo de pegar e raio de patrulha (500).
+    - O auto HP/MP (`DlgAutoHPMP`, `CEComputerAid`) só libera com um dos itens 36764–36767 na
+      bolsa ("Pedra da Recuperação" etc., `TASKNORMALMATTER_ESSENCE` no v156) e usa a poção pelo
+      `USE_ITEM`.
+    - Custo no servidor: tratar o 87 e testar uma sessão longa em jogo. O resto já existe.
+
+162. **Sessão 2026-10-01: monstro da Caverna Sombria "resetou" — o que o original faz (análise).**
+    - Relato: dentro do 169 um monstro desistiu e voltou para casa. A hipótese era ódio infinito
+      em masmorra.
+    - Original: não há regra de masmorra; nada em `gs/instance/` toca na IA. O monstro desiste:
+      (1) com o alvo a mais de `aggro_range` dele (`ai_melee_task::Execute`,
+      `aipolicy.cpp:577-585`); (2) quando o `_cur_time` zera, depois de `aggro_time` s sem
+      renovação (`ainpc.h:259-275`); (3) quando a perseguição a um jogador acaba em
+      `NSRC_ERR_PATHFINDING` (`aipolicy.cpp:443-470`, `ClearAggro`); (4) longe do ninho mais que
+      `max_move_range` (`aipolicy.cpp:298-307`).
+    - Dados do `a69` (exemplo temporário, apagado): Cavaleiro Negro ×6, Golem de Pedra Gigante ×12,
+      Assassino da Selva ×2, Vixen da Chama Vermelha ×6, Pilar de Demônio ×11, Raposa Esmaga-neve ×1.
+      Todos com `aggro_range` 107,25, `aggro_time` 100 e `max_move_range` 0. Persistentes, mas finitos.
+    - Aqui: (1) a (3) portados; (4) `falta`, o que não pesa no 169; o piso de 15 m do (1) não tem fonte.
+      O reset não deixou rastro: a IA não registra o motivo da desistência. O suspeito é o (3),
+      porque a perseguição depende do mapa de movimento da caverna.
+    - Spec 05 corrigida (os dois limites de perseguição). Sem mudança de código.
+

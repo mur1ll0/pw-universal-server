@@ -103,6 +103,25 @@ pub mod ids {
     /// 2026-09-08, apareceu quatro vezes no log como "subcomando 19 ainda não tratado".
     pub const GOTO: u16 = 19;
 
+    // Os comandos de GM do mundo (`EC_GPDataType.h:5722-5740`; servidor `GMCMD_*`,
+    // `cgame/common/protocol.h`, `GM_COMMAND_START = 200`). O cliente nunca manda o 203
+    // (`GM_KICK_PLAYER`): expulsar vai pelo GNET (`gm_KickOutRole`). 209–217 obsoletos.
+    /// `gm_cmd_moveto_player { int pid; }` — 4 bytes.
+    pub const GM_MOVETO_PLAYER: u16 = 201;
+    /// `gm_cmd_callin_player { int pid; }` — 4 bytes.
+    pub const GM_CALLIN_PLAYER: u16 = 202;
+    /// Só cabeçalho (`_SendNakeCommand`).
+    pub const GM_INVISIBLE: u16 = 204;
+    /// Só cabeçalho (`_SendNakeCommand`).
+    pub const GM_INVINCIBLE: u16 = 205;
+    /// `gm_cmd_generate { int tid; }` — 4 bytes.
+    pub const GM_GENERATE: u16 = 206;
+    /// `gm_cmd_active_spawner { char is_active; int sp_id; }`.
+    pub const GM_ACTIVE_SPAWNER: u16 = 207;
+    /// `gm_cmd_generate_mob { int mob_id; int vis_id; short count; short life; size_t
+    /// name_len; char name[]; }` — 16 bytes + nome.
+    pub const GM_GENERATE_MOB: u16 = 208;
+
     /// `SIT_DOWN` — só cabeçalho.
     pub const SIT_DOWN: u16 = 46;
     /// `STAND_UP` — só cabeçalho.

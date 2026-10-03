@@ -9,6 +9,15 @@ use pw_core::{CharacterSummary, Vector3, VistaDoJogador};
 pub struct V155Protocol;
 
 impl WorldProtocol for V155Protocol {
+    // IR `gamedata_155.json`, 175/176: os mesmos números e o mesmo byte nas duas pontas.
+    fn gm_invincible(&self, ligado: bool) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::gm_invincible(ligado))
+    }
+
+    fn gm_invisible(&self, visivel: bool) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::gm_invisible(visivel))
+    }
+
     fn version(&self) -> GameVersion {
         GameVersion::V1_5_5
     }

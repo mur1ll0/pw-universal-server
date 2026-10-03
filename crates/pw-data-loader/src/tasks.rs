@@ -286,6 +286,10 @@ pub struct TaskTemplate {
     /// `m_ulWaitTime`, em segundos, para missões de espera.
     pub espera: u32,
     pub entrega_automatica: bool,
+    /// `m_bDeathTrig` — a missão é oferecida quando o jogador morre
+    /// (`ATaskTemplMan::CheckDeathTrig`, `TaskTemplMan.cpp:268-280`, chamado pelo `gs` na morte).
+    /// Tem precedência sobre `entrega_automatica` (`AddOneTaskTempl`, `TaskTemplMan.cpp:1735-1736`).
+    pub entrega_ao_morrer: bool,
     pub pode_desistir: bool,
     pub pode_repetir: bool,
     /// `m_bNeedRecord` — fica registrada como concluída (e por isso não se repete).
@@ -487,6 +491,9 @@ mod v129 {
         pub const ENTER_REGION_CNT: usize = 182;
         pub const LEAVE_REGION_CNT: usize = 195;
         pub const ENTREGA_AUTOMATICA: usize = 226;
+        /// `m_bDeathTrig`: entre `m_bUsedInTokenShop` e `m_bClearAcquired` (231) em
+        /// `TaskTempl.h:2106-2109` do 1.5.5.
+        pub const ENTREGA_AO_MORRER: usize = 230;
         pub const MISSAO_CHAVE: usize = 237;
         pub const NPC_QUE_ENTREGA: usize = 238;
         pub const NPC_QUE_PREMIA: usize = 242;
@@ -928,6 +935,7 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
         // `TaskTempl.h:2227-2237` do 1.5.3); `CheckInZone` (0xf70f-0xf752) lê +0x79, +0x7a e a
         // caixa em +0x7e/+0x8a. Sem eles, o 1.2.6 não tinha missão automática nenhuma.
         entrega_automatica: b[0xac] != 0,
+        entrega_ao_morrer: b[0xad] != 0,
         // B117 — `m_bClearAcquired`: o `libtask.so` 1.2.6 testa `byte [this + 0xae]` antes de
         // `RemoveAcquiredItem` em `ATaskTempl::RecursiveAward` (0xabee) e em
         // `ActiveTaskList::RecursiveClearTask` (0xd723). Sem ele, as missões de coleta do 1.2.6
@@ -1145,6 +1153,7 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         mundo_a_alcancar: u32_em(b, f::MUNDO_A_ALCANCAR),
         espera: u32_em(b, f::ESPERA),
         entrega_automatica: flag(f::ENTREGA_AUTOMATICA),
+        entrega_ao_morrer: flag(f::ENTREGA_AO_MORRER),
         pode_desistir: flag(f::PODE_DESISTIR),
         pode_repetir: flag(f::PODE_REPETIR),
         precisa_registro: flag(f::PRECISA_REGISTRO),
@@ -1277,6 +1286,7 @@ impl TaskTemplate {
             mundo_a_alcancar: 0,
             espera: 0,
             entrega_automatica: false,
+            entrega_ao_morrer: false,
             pode_desistir: true,
             pode_repetir: false,
             precisa_registro: true,

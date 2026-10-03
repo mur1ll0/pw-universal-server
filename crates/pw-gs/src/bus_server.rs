@@ -59,6 +59,7 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, trace, warn};
 
 mod armazem;
+mod gm;
 mod habilidades;
 mod jogo;
 mod mascote;
@@ -360,6 +361,9 @@ pub struct BusServer {
     /// Para onde mandar o pedido de trocar de mapa — ligado por
     /// [`crate::mapas::RoteadorDeMapas::ligar_trocas`]. Vazio num mapa avulso.
     trocas: std::sync::OnceLock<mpsc::UnboundedSender<PedidoDeTroca>>,
+    /// O roteador dos mapas deste processo, para os comandos de GM que acham um jogador
+    /// noutro mapa (`GM_MOVETO_PLAYER`, `GM_CALLIN_PLAYER`). Fraco: o roteador é dono dos mapas.
+    roteador: std::sync::OnceLock<std::sync::Weak<crate::mapas::RoteadorDeMapas>>,
     /// Referência fraca a si mesmo, para tarefas que terminam depois do comando (a coleta).
     eu: std::sync::OnceLock<std::sync::Weak<BusServer>>,
     /// Golpe normal que chegou com uma conjuração em curso, esperando a vez: `roleid → alvo`.
@@ -394,6 +398,7 @@ impl BusServer {
             sub: create_world_protocol(versao),
             sessoes: Arc::new(RwLock::new(HashMap::new())),
             trocas: std::sync::OnceLock::new(),
+            roteador: std::sync::OnceLock::new(),
             eu: std::sync::OnceLock::new(),
             golpe_na_fila: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -407,6 +412,21 @@ impl BusServer {
     /// Liga este mapa ao roteador que executa as trocas de mapa.
     pub fn ligar_trocas(&self, envio: mpsc::UnboundedSender<PedidoDeTroca>) {
         let _ = self.trocas.set(envio);
+    }
+
+    /// Liga este mapa ao roteador, para os comandos de GM que acham jogador noutro mapa.
+    pub fn ligar_roteador(&self, roteador: std::sync::Weak<crate::mapas::RoteadorDeMapas>) {
+        let _ = self.roteador.set(roteador);
+    }
+
+    /// A posição de um jogador deste mapa.
+    pub(crate) async fn posicao_do_jogador(&self, roleid: i32) -> Option<Vector3> {
+        self.world
+            .read()
+            .await
+            .players
+            .get(&(roleid as i64))
+            .map(|p| p.position)
     }
 
     /// `gplayer_imp::LongJump` (`player.cpp:8617-8680`): no mesmo mapa, `notify_pos` e
@@ -748,6 +768,36 @@ impl BusServer {
                 // Morrer cancela golpe e conjuração (`world.rs`), e com eles o golpe que
                 // esperava a vez (B57).
                 self.golpe_na_fila.write().await.remove(&roleid);
+                // `gactive_imp::Die` (`gs/actobject.cpp:590-606`) tira os filtros
+                // `FILTER_MASK_REMOVE_ON_DEATH` **antes** do `OnDeath` que avisa a morte. O de voo
+                // (`fly_filter.h:10-27`) pousa: `Landing` → `_runner->landing()`
+                // (`actobject.h:891-896`). O de montaria (`mount_filter.h:14`) desmonta:
+                // `DeactiveMountState` → `RecallPet` e `player_mounting(0, 0)`
+                // (`mount_filter.cpp:36-45`, `player.cpp:14301-14320`). Sem isso o personagem
+                // renascia ainda voando/montado para o servidor, e o botão pedia dois cliques (B158).
+                let (pousou, montaria) = {
+                    let mut mundo = self.world.write().await;
+                    match mundo.players.get_mut(&(roleid as i64)) {
+                        Some(p) => {
+                            let pousou = p.voando;
+                            p.voando = false;
+                            p.voo_gasta_mana = None;
+                            (pousou, p.montaria)
+                        }
+                        None => (false, None),
+                    }
+                };
+                if pousou {
+                    let pacote = S2CGamedataSend::object_landing(roleid).data;
+                    self.enviar_ao_jogador(roleid, pacote.clone()).await;
+                    self.transmitir_a_outros(roleid, pacote).await;
+                    debug!("mundo: {roleid} morreu voando — pousou");
+                }
+                if let Some(m) = montaria {
+                    if let Some(envio) = self.envio_de(roleid).await {
+                        self.desmontar(roleid, m, &envio).await;
+                    }
+                }
                 self.enviar_ao_jogador(
                     roleid,
                     S2CGamedataSend::host_died(matador as i32, pos).data,
@@ -759,6 +809,9 @@ impl BusServer {
                     S2CGamedataSend::player_died(matador as i32, roleid).data,
                 )
                 .await;
+                // Depois do aviso de morte, como no `OnDeath` (`gs/player.cpp:7295-7297`): é aqui
+                // que a missão de gatilho por morte (990 do cultivo 39) é oferecida.
+                self.missoes_ao_morrer(roleid as i32).await;
             }
 
             EventoDoMundo::JogadorReviveu {
@@ -1503,6 +1556,13 @@ impl BusServer {
             ids::TEAM_LEAVE_PARTY => self.deixar_grupo(roleid).await,
             ids::SWITCH_FASHION_MODE => self.trocar_modo_roupa(roleid, envio).await,
             ids::GOTO => self.teleportar(roleid, &cmd.payload, envio).await,
+            ids::GM_MOVETO_PLAYER
+            | ids::GM_CALLIN_PLAYER
+            | ids::GM_INVISIBLE
+            | ids::GM_INVINCIBLE
+            | ids::GM_GENERATE
+            | ids::GM_ACTIVE_SPAWNER
+            | ids::GM_GENERATE_MOB => self.comando_de_gm(roleid, cmd.id, &cmd.payload, envio).await,
             ids::CAST_SKILL | ids::CAST_INSTANT_SKILL => {
                 self.conjurar(roleid, &cmd.payload, envio).await
             }
@@ -3374,7 +3434,10 @@ impl BusServer {
             if h.e_cura() {
                 vitima.hp = (vitima.hp + valor).min(vitima.max_hp);
             } else {
-                vitima.hp = (vitima.hp - valor).max(0);
+                // Os filtros do alvo também valem contra jogador (`AdjustDamage` e o
+                // `TranslateRecvAttack` dos filtros de invencível): GM invencível não perde vida.
+                let tirado = crate::efeitos::dano_recebido(&mut vitima.efeitos, valor);
+                vitima.hp = (vitima.hp - tirado).max(0);
             }
             (
                 vitima.hp,
@@ -3744,7 +3807,9 @@ impl BusServer {
                     continue;
                 }
                 if let Some(o) = mundo.players.get(&id) {
-                    if na_visao(&centro, &o.position) {
+                    // GM invisível não entra na vista de ninguém (`gm_dispatcher::enter_slice`
+                    // e companhia não mandam nada, `gs/gm_player.cpp:25-115`).
+                    if !o.efeitos.gm_invisivel && na_visao(&centro, &o.position) {
                         jogadores.push(id);
                     }
                     continue;
@@ -3877,7 +3942,10 @@ impl BusServer {
                     }
                 })
                 .collect();
-            let eu_mesmo = mundo.vista_de(eu);
+            // Invisível, eu vejo os outros mas não me apresento a eles.
+            let eu_mesmo = mundo
+                .vista_de(eu)
+                .filter(|_| !mundo.players.get(&eu).is_some_and(|p| p.efeitos.gm_invisivel));
             (chegando, eu_mesmo)
         };
 
@@ -5719,6 +5787,10 @@ fn pode_golpear(mundo: &crate::world::WorldInstance, roleid: i32, alvo: i64) -> 
         && (p.equipamento.municao_ativa.is_none()
             || p.ataque.is_some_and(|s| s.arma_de_longe && s.municao_restante == 0 && s.iniciada));
     if sem_flecha {
+        return Err(1);
+    }
+    // GM invisível não ataca: `SetGMInvisible` → `DenyCmd(CMD_ATTACK)` (`gs/player.cpp:13366`).
+    if p.efeitos.gm_invisivel {
         return Err(1);
     }
     let Some((m, _)) = mundo.monsters.get(&alvo) else {

@@ -200,6 +200,8 @@ const INTENCAO: &[(&str, &str)] = &[
     ("trashbox_wealth", "TRASHBOX_WEALTH"),
     ("enter_sanctuary", "ENTER_SANCTUARY"),
     ("leave_sanctuary", "LEAVE_SANCTUARY"),
+    ("gm_invincible", "GM_INVINCIBLE"),
+    ("gm_invisible", "GM_INVISIBLE"),
     ("player_leave_world", "PLAYER_LEAVE_WORLD"),
     ("player_enable_fashion", "PLAYER_ENABLE_FASHION"),
     ("player_cash", "PLAYER_CASH"),

@@ -2945,6 +2945,29 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `GM_INVINCIBLE` (175): `struct gm_cmd_invincible { unsigned char is_invincible; }` — 1 byte
+    /// (IR `gamedata_155.json` `S2C::gm_cmd_invincible`; servidor `gm_toggle_invincible`,
+    /// `cgame/common/protocol.h:2331`). Resposta do `GMCMD_TOGGLE_INVINCIBLE`
+    /// (`gplayer_dispatcher::toggle_invincible`, `gs/player.cpp:4996-5003`); o cliente liga o
+    /// `GMF_INVINCIBLE` e mostra a mensagem fixa (`CECHostPlayer::OnMsgHstGMOpt`,
+    /// `EC_HostMsg.cpp:5715-5727`).
+    pub fn gm_invincible(ligado: bool) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(175);              // GM_TOGGLE_INVINCIBLE = 175
+        stream.write_u8(ligado as u8);         // is_invincible (1B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `GM_INVISIBLE` (176): `struct gm_cmd_invisible { unsigned char is_visible; }` — 1 byte,
+    /// e o sentido é **visível** (0 = sumiu): `gm_toggle_invisible(0)` em
+    /// `gplayer_imp::SetGMInvisible` (`gs/player.cpp:13365`).
+    pub fn gm_invisible(visivel: bool) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(176);              // GM_TOGGLE_INVISIBLE = 176
+        stream.write_u8(visivel as u8);        // is_visible (1B)
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `struct cmd_object_leave_sanctuary { int id; }` — o par do anterior.
     pub fn leave_sanctuary(id: i32) -> Self {
         let mut stream = OctetsStream::new();

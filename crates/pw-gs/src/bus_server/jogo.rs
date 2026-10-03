@@ -56,6 +56,8 @@ pub(super) mod erro_s2c {
     /// `ERR_FATAL_ERR` 3, `ERR_GSHOP_INVALID_REQUEST` 94, `ERR_CASH_VIP_LIMIT` 226
     /// (`common/protocol.h`); 94 e 16 também no `gs` 1.2.6 (VA 0x807fa38, 0x807fbf4).
     pub const ERRO_FATAL: i32 = 3;
+    /// `ERR_INVALID_TARGET` (`cgame/common/protocol.h:681`).
+    pub const ALVO_INVALIDO: i32 = 1;
     pub const LOJA_GOLD_PEDIDO_INVALIDO: i32 = 94;
     pub const LOJA_GOLD_VIP: i32 = 226;
 }
@@ -2274,6 +2276,14 @@ impl BusServer {
         ctx.p.missoes = listas;
         ctx.mudou = true;
         r
+    }
+
+    /// `OnTaskPlayerKilled(&task_if)` no `OnDeath` do jogador (`gs/player.cpp:7295-7297`):
+    /// falha as missões `m_bFailAsPlayerDie` e entrega as de `m_bDeathTrig`.
+    pub(super) async fn missoes_ao_morrer(&self, roleid: i32) {
+        let dados = self.world.read().await.data_manager.clone();
+        self.com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.jogador_morreu()))
+            .await;
     }
 
     // ------------------------------------------------------------------ abate

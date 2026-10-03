@@ -105,6 +105,11 @@ pub struct TabelaDeBase {
     pub classes: HashMap<i32, BaseDaClasse>,
     /// `[GENERAL] logic_level_limit` — o teto de nível do realm.
     pub nivel_maximo: Option<i32>,
+    /// `[GENERAL] debug_command_mode` — liga os comandos de depuração e os de GM que o
+    /// original guarda atrás dele (criar monstro e o gerador de item, `gs/playercmd.cpp:4933`
+    /// e `:4991`). Só vale com o texto exato `active`
+    /// (`gs/playertemplate.cpp:217`); qualquer outro valor, ou a falta da chave, desliga.
+    pub modo_de_depuracao: bool,
 }
 
 impl BaseDaClasse {
@@ -298,6 +303,10 @@ pub fn ler(texto: &str) -> Result<TabelaDeBase> {
     }
 
     tabela.nivel_maximo = inteiro(&secoes, "GENERAL", "logic_level_limit").ok();
+    tabela.modo_de_depuracao = secoes
+        .get("GENERAL")
+        .and_then(|g| g.get("debug_command_mode"))
+        .is_some_and(|v| v == "active");
 
     info!(
         "ptemplate.conf: {} classes base carregadas (teto de nível {:?})",

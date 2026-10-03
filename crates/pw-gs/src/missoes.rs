@@ -2066,6 +2066,40 @@ impl<'a, J: Jogador> Motor<'a, J> {
         }
     }
 
+    /// `OnTaskPlayerKilled` (`TaskServer.cpp:1125-1154`), chamado no `OnDeath` do jogador
+    /// (`gs/player.cpp:7295-7297`). Primeiro `_on_player_killed`: cada missão ativa com sucesso
+    /// e `m_bFailAsPlayerDie` perde o sucesso e é finalizada (`OnSetFinished`), uma por vez,
+    /// recomeçando a varredura. Depois `CheckDeathTrig` (`TaskTemplMan.cpp:271-281`): tenta
+    /// entregar, sem aviso de erro, cada missão de topo com `m_bDeathTrig` — é assim que a 990
+    /// ("A Divina de Hades Vazia", cultivo do nível 39) chega, sem NPC nenhum.
+    pub fn jogador_morreu(&mut self) {
+        loop {
+            let achou = (0..self.listas.ativa.quantidade as usize).find_map(|i| {
+                let en = self.listas.ativa.e[i];
+                if !en.valida || !en.sucesso() {
+                    return None;
+                }
+                self.t(en.id as u32).filter(|t| t.falha_ao_morrer).map(|t| (i, t))
+            });
+            let Some((idx, t)) = achou else { break };
+            self.listas.ativa.e[idx].estado &= !estado::SUCESSO;
+            self.ao_finalizar(t, idx);
+        }
+        // `m_DeathTrigMap` guarda só as de topo (`AddOneTaskTempl`, `TaskTemplMan.cpp:1735`);
+        // a ordem do `std::map` é a dos ids.
+        let mut ids: Vec<u32> = self
+            .tarefas
+            .tasks
+            .values()
+            .filter(|t| t.entrega_ao_morrer && t.parent.is_none())
+            .map(|t| t.id)
+            .collect();
+        ids.sort_unstable();
+        for id in ids {
+            self.aceitar(id, 0, false);
+        }
+    }
+
     /// `OnTaskMining` (`TaskServer.cpp:1116-1123`) / `ATaskTempl::CheckMining` (`TaskTempl.inl:2105-2148`).
     pub fn colheu_mina(&mut self, task_id: u32) {
         if task_id == 0 {
@@ -2502,6 +2536,37 @@ mod tests {
         Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.abateu_monstro(7, 5);
         assert_eq!(l.ativa.quantidade, 0, "conclusão direta ao completar");
         assert_eq!(j.exp, 50);
+    }
+
+    #[test]
+    fn morrer_falha_as_de_falha_ao_morrer_e_entrega_as_de_gatilho_por_morte() {
+        // O desenho do cultivo 39 do tasks.data 1.2.6: a 990 só tem `m_bDeathTrig` e a 923
+        // como pré-requisito; a 50 é uma qualquer com `m_bFailAsPlayerDie`.
+        let mut perde = modelo(50);
+        perde.metodo = metodo::MATAR_MONSTROS;
+        perde.falha_ao_morrer = true;
+        let mut gatilho = modelo(990);
+        gatilho.metodo = metodo::FALAR_COM_NPC;
+        gatilho.entrega_ao_morrer = true;
+        gatilho.pre_tasks = vec![923];
+        let d = dados(vec![perde, gatilho, modelo(923)]);
+        let mut l = ListasDeMissao::default();
+        let mut j = JogadorDeTeste { nivel: 39, ..Default::default() };
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(50, 0, true);
+        assert_eq!(l.ativa.quantidade, 1);
+
+        // Sem a 923 concluída, morrer só falha a 50.
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.jogador_morreu();
+        assert_eq!(l.ativa.quantidade, 0, "a 50 falhou e saiu da lista");
+        assert!(l.concluidas.iter().any(|c| c.id == 50 && c.falhou));
+
+        // Com a 923 concluída, a morte entrega a 990 — e uma segunda morte não a repete.
+        l.marcar_concluida(923, true);
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.jogador_morreu();
+        assert_eq!(l.ativa.quantidade, 1);
+        assert_eq!(l.ativa.e[0].id, 990);
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.jogador_morreu();
+        assert_eq!(l.ativa.quantidade, 1);
     }
 
     #[test]

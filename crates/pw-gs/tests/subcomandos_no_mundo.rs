@@ -1644,6 +1644,111 @@ async fn morrer_avisa_o_cliente_e_reviver_devolve_a_vida() {
     assert_eq!(p.target_id, None, "o alvo antigo sobreviveu à morte");
 }
 
+/// Deixa o jogador com 1 de vida encostado no monstro, provoca o revide e devolve os comandos
+/// que chegaram até o `HOST_DIED` (28), inclusive.
+async fn morrer_pelo_monstro(
+    mundo: &Arc<RwLock<WorldInstance>>,
+    link: &mut pw_bus::transport::BusConnection,
+    roleid: i32,
+) -> Vec<Vec<u8>> {
+    {
+        let mut m = mundo.write().await;
+        m.mover_jogador(roleid, Vector3::new(5.0, 0.0, 5.0));
+        m.players.get_mut(&(roleid as i64)).unwrap().hp = 1;
+    }
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    receber(link, 2).await;
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::NORMAL_ATTACK, &[0u8]),
+    })
+    .await
+    .unwrap();
+    receber(link, 3).await; // HOST_START_ATTACK + ATTACK_ONCE + HOST_ATTACKRESULT
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
+    let morreu = tickar_ate(mundo, |m| m.players.get(&(roleid as i64)).is_some_and(|p| p.hp == 0)).await;
+    assert!(morreu, "o jogador não chegou a zero");
+    let mut vistos = Vec::new();
+    for _ in 0..200 {
+        let m = tokio::time::timeout(Duration::from_secs(5), link.receber())
+            .await
+            .expect("o HOST_DIED não chegou")
+            .unwrap()
+            .expect("conexão fechou");
+        if let BusMessage::GameToClient { data, .. } = m {
+            let fim = cmd_de(&data) == 28;
+            vistos.push(data);
+            if fim {
+                return vistos;
+            }
+        }
+    }
+    panic!("o HOST_DIED não chegou em 200 pacotes");
+}
+
+/// B158 — `gactive_imp::Die` (`gs/actobject.cpp:590-606`) tira os filtros
+/// `FILTER_MASK_REMOVE_ON_DEATH` antes do `OnDeath`: o de voo manda `OBJECT_LANDING` (97,
+/// `fly_filter.h:24-28` → `actobject.h:891-896`) e o de montaria `PLAYER_MOUNTING(0, 0)` (227,
+/// `mount_filter.cpp:36-45` → `player.cpp:14301-14320`), com o `RECALL_PET` (234) do
+/// `RecallPet`. Sem eles o personagem renascia voando/montado para o servidor.
+#[tokio::test]
+async fn morrer_voando_ou_montado_pousa_e_desmonta_antes_do_aviso_de_morte() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    // 1. Voando.
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.voando = true;
+        p.voo_gasta_mana = Some(7);
+    }
+    let vistos = morrer_pelo_monstro(&mundo, &mut link, roleid).await;
+    let cmds: Vec<u16> = vistos.iter().map(|d| cmd_de(d)).collect();
+    let pouso = cmds.iter().position(|&c| c == 97).unwrap_or_else(|| panic!("sem OBJECT_LANDING: {cmds:?}"));
+    assert!(pouso < cmds.len() - 1, "o pouso veio depois do HOST_DIED: {cmds:?}");
+    assert_eq!(i32_em(&vistos[pouso], 2), roleid);
+    {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        assert!(!p.voando, "continuou voando morto");
+        assert_eq!(p.voo_gasta_mana, None);
+    }
+
+    // 2. Montado (depois de reviver).
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::REVIVE_VILLAGE, &0i32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    let _ = esperar_comando(&mut link, 29).await;
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().montaria = Some(pw_gs::entity::MontariaAtiva {
+        indice: 0,
+        tid: 8600,
+        pet_tid: 8600,
+        cor: 7,
+        velocidade: 6.0,
+    });
+    let vistos = morrer_pelo_monstro(&mundo, &mut link, roleid).await;
+    let cmds: Vec<u16> = vistos.iter().map(|d| cmd_de(d)).collect();
+    let desmontou = cmds.iter().position(|&c| c == 227).unwrap_or_else(|| panic!("sem PLAYER_MOUNTING: {cmds:?}"));
+    assert_eq!(i32_em(&vistos[desmontou], 2), roleid);
+    assert_eq!(i32_em(&vistos[desmontou], 6), 0, "mount_id 0 = desmontou");
+    let recolheu = cmds.iter().position(|&c| c == 234).unwrap_or_else(|| panic!("sem RECALL_PET: {cmds:?}"));
+    assert!(desmontou < recolheu && recolheu < cmds.len() - 1, "ordem: {cmds:?}");
+    assert!(!cmds.contains(&97), "não voava: não há pouso");
+    assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_none(), "continuou montado morto");
+}
+
 #[tokio::test]
 async fn quem_esta_vivo_nao_revive() {
     // Ressuscitar quem não morreu seria um teleporte grátis para a cidade sempre que o
@@ -9446,4 +9551,74 @@ async fn esperar_comando_por(link: &mut pw_bus::transport::BusConnection, id: u1
         }
     }
     panic!("o comando {id} não chegou em {segundos} s");
+}
+
+/// Painel de GM (Ctrl+G): invencível (205) e invisível (204) alternam e respondem com 175/176.
+///
+/// Em jogo, 2026-10-01: o Murillo ligou o invencível e nada aconteceu — o 205 caía no "subcomando
+/// ainda não tratado". O original: `GMCMD_TOGGLE_INVINCIBLE`/`INVISIBLE`
+/// (`gs/playercmd.cpp:4879-4910`).
+#[tokio::test]
+async fn o_gm_alterna_invencivel_e_invisivel() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let repo = mundo.read().await.char_repo.clone();
+    let conta = repo
+        .get_details_por_role(roleid)
+        .await
+        .unwrap()
+        .expect("personagem existe")
+        .account_id;
+    sqlx::query("UPDATE accounts SET gm_privileges = 32 WHERE id = $1")
+        .bind(conta)
+        .execute(repo.pool().get_ref())
+        .await
+        .unwrap();
+    let mut link = entrar(&mundo, addr, roleid).await;
+
+    let mandar = |id: u16| BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(id, &[]),
+    };
+
+    link.enviar(mandar(ids::GM_INVINCIBLE)).await.unwrap();
+    let r = esperar_comando(&mut link, 175).await;
+    assert_eq!(r.len(), 3, "gm_cmd_invincible tem 1 byte");
+    assert_eq!(r[2], 1, "is_invincible");
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        assert!(p.efeitos.gm_invencivel);
+        assert_eq!(pw_gs::efeitos::dano_recebido(&mut p.efeitos, 500), 0, "invencível não perde vida");
+    }
+
+    link.enviar(mandar(ids::GM_INVISIBLE)).await.unwrap();
+    let r = esperar_comando(&mut link, 176).await;
+    assert_eq!(r, vec![176, 0, 0], "is_visible = 0: sumiu");
+    assert!(mundo.read().await.players[&(roleid as i64)].efeitos.gm_invisivel);
+
+    link.enviar(mandar(ids::GM_INVINCIBLE)).await.unwrap();
+    let r = esperar_comando(&mut link, 175).await;
+    assert_eq!(r[2], 0, "a segunda vez desliga");
+    link.enviar(mandar(ids::GM_INVISIBLE)).await.unwrap();
+    let r = esperar_comando(&mut link, 176).await;
+    assert_eq!(r[2], 1, "voltou a ser visível");
+    let p = mundo.read().await.players[&(roleid as i64)].clone();
+    assert!(!p.efeitos.gm_invencivel && !p.efeitos.gm_invisivel);
+}
+
+/// Sem privilégio de GM o comando é ignorado calado (`if (!_gm_auth) return 0;`).
+#[tokio::test]
+async fn jogador_comum_nao_fica_invencivel() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::GM_INVINCIBLE, &[]),
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!mundo.read().await.players[&(roleid as i64)].efeitos.gm_invencivel);
 }

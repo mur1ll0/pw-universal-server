@@ -290,7 +290,8 @@ services:
       - pw-auth
       - pw-world-155
 
-  # Servidor de mundo do realm 1.5.5, com os mapas 1 (`world`) e 161 (`a61`, onde todo
+  # Servidor de mundo do realm 1.5.5, com os mapas 1 (`world`), 169 (`a69`, a Caverna Sombria
+  # da missão 32429) e 161 (`a61`, onde todo
   # personagem novo nasce pelos moldes do `clsconfig` do pwserver_155v156). Um processo
   # para os dois, com os dados carregados uma vez — o equivalente do `./gs gs01 ... is61`
   # do original. Sem `ports:` — barramento interno (ver 1.2.6).
@@ -305,7 +306,7 @@ services:
     environment:
       REALM_ID: realm_155
       GAME_VERSION: "1.5.5"
-      WORLD_TAGS: "1,161"
+      WORLD_TAGS: "1,161,169"
       BUS_LISTEN: 0.0.0.0:29100
       CONFIG_DIR: /app/data/config
       RUST_LOG: info,pw_gs=debug

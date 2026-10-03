@@ -263,6 +263,16 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | 100, 101 | `SUMMON_PET`, `RECALL_PET` | 102 | `BANISH_PET` `{size_t pet_index}` 4 B → `FREE_PET` (232) ao fim da sessão de 200 tiques (B112) |
 | 103 | `PET_CTRL_CMD` `{target, pet_cmd, buf}` — `buf` depois do `pet_cmd`: 1 `{char force}`, 2/3 `{int}`, 4 `{int skill, char force}` (5 B), 5 `{int skill}` | 37 | serviços de mascote 36 renomear `{u16 idx, u16 len, name[len]}`, 37 esquecer e 38 aprender `{int skill}` (B112) |
 
+**Comandos de GM do mundo (painel Ctrl+G, 2026-10-01)** — `bus_server/gm.rs`, porte de
+`GMCommandHandler` (`playercmd.cpp:4806`): 201 `GM_MOVETO_PLAYER` e 202 `GM_CALLIN_PLAYER`
+(`{int pid}`), 204 `GM_INVISIBLE` e 205 `GM_INVINCIBLE` (só cabeçalho), 206 `GM_GENERATE`
+(`{int tid}`, `falta`), 207 `GM_ACTIVE_SPAWNER` (`{u8 is_active; int sp_id}`, 5 B empacotado,
+`falta`), 208 `GM_GENERATE_MOB` (16 B + nome ≤ 18 B). As respostas S2C são 175 `GM_INVINCIBLE`
+`{u8 is_invincible}` e 176 `GM_INVISIBLE` `{u8 is_visible}`, ambas com 1 byte (IR `gm_cmd_*`).
+Elas existem no 1.5.5 e no 1.5.3; nas outras versões, `None` por falta de evidência. O 203
+`GM_KICK_PLAYER` nunca sai do cliente: expulsar, silenciar e anunciar vão pelo GNET
+(`gm_KickOutRole`, … em `EC_PrtcProc.cpp:276-395`), e o link ainda não trata nenhum deles.
+
 **Ainda no `gateway.rs` do `pw-link`:** 92 (duelo: só "preparar", sem regra), 118 (preços do
 Mall, tabela vazia), 178 (waypoints). Nenhum id é tratado nos dois lados:
 `pw-link/tests/subcomandos_c2s_contra_o_ir.rs::os_comandos_ja_migrados_nao_sobraram_no_gateway`

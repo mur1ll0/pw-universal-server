@@ -689,6 +689,14 @@ pub struct Efeitos {
     pub filtros: Vec<Filtro>,
     /// `_invincible_timeout` do `SetInvincibleFilter` (sem ícone).
     pub invencivel_s: i32,
+    /// O `invincible_filter(FILTER_INVINCIBLE)` sem prazo que o GM liga e desliga
+    /// (`GMCMD_TOGGLE_INVINCIBLE`, `gs/playercmd.cpp:4895-4910`): dano não entra e o estado
+    /// visível 49 acende, como o filtro com prazo (`invincible_filter.cpp:13-36`).
+    pub gm_invencivel: bool,
+    /// O `gm_invisible_filter` (`GMCMD_TOGGLE_INVISIBLE`, `gs/playercmd.cpp:4879-4893`): some da
+    /// vista dos outros e o ataque que chega perde a facção (`TranslateRecvAttack` →
+    /// `target_faction = 0`, `invisible_filter.cpp:115-123`) — não fere.
+    pub gm_invisivel: bool,
 }
 
 impl Efeitos {
@@ -966,7 +974,7 @@ impl Efeitos {
         self.sem_acao() || self.tem(Efeito::Sealed)
     }
     pub fn invencivel(&self) -> bool {
-        self.invencivel_s > 0 || self.tem(Efeito::Invincible)
+        self.invencivel_s > 0 || self.tem(Efeito::Invincible) || self.gm_invencivel || self.gm_invisivel
     }
 
     pub fn realce(&self) -> Realce {
@@ -1029,7 +1037,7 @@ impl Efeitos {
         // 13-22`, 1.5.5): o efeito sobre o monstro que volta para casa. O `gs` 1.2.6 não liga
         // estado nenhum nesse filtro (VA 0x812f6ee), e o `UPDATE_EXT_STATE` do 1.2.6 só leva
         // os estados 0..31 — o bit 49 não chega lá, como no original.
-        if self.invencivel_s > 0 {
+        if self.invencivel_s > 0 || self.gm_invencivel {
             s[ESTADO_VISIVEL_INVENCIVEL / 32] |= 1 << (ESTADO_VISIVEL_INVENCIVEL % 32);
         }
         for f in &self.filtros {

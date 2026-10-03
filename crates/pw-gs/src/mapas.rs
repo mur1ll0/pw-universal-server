@@ -66,6 +66,7 @@ impl RoteadorDeMapas {
         let (envio, mut fila) = mpsc::unbounded_channel::<crate::bus_server::PedidoDeTroca>();
         for mapa in self.mapas.values() {
             mapa.ligar_trocas(envio.clone());
+            mapa.ligar_roteador(Arc::downgrade(self));
         }
         let este = Arc::clone(self);
         tokio::spawn(async move {
@@ -111,6 +112,13 @@ impl RoteadorDeMapas {
         let mut v: Vec<i32> = self.mapas.keys().copied().collect();
         v.sort_unstable();
         v
+    }
+
+    /// Mapa e posição de um jogador atendido por este processo (comandos de GM).
+    pub(crate) async fn posicao_de(&self, roleid: i32) -> Option<(i32, pw_core::Vector3)> {
+        let mapa = self.mapa_de(roleid).await?;
+        let pos = self.mapas.get(&mapa)?.posicao_do_jogador(roleid).await?;
+        Some((mapa, pos))
     }
 
     /// Em que mapa este jogador está sendo atendido agora.

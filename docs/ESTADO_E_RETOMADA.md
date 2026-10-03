@@ -28,6 +28,8 @@
 > nela). **B138 a B141 commitados em 2026-09-28** (`3daad2d`): mascote de ar no terreno (B138),
 > alcance do corpo a corpo do monstro com o corpo do alvo (B139), atordoado/preso/selado no
 > mascote (B140), veneno no mascote sem ódio pelo tique (B141). Não publicados.
+> **B157 (2026-09-30)** — missões na morte do jogador (`OnTaskPlayerKilled`): a 990 do cultivo 39
+> chega ao morrer depois da 923. **B158** — morrer voando/montado pousa e desmonta. Não publicados.
 > **B142 (2026-09-28):** oito ajustes de fidelidade do §5B — reparo pelo `repairfee`, carimbo
 > `crc_e` com a tabela do original e `EQUIP_DATA_CHANGED` (67) a quem vê, crítico e esquiva de
 > dano no `attack_flag`, `PLAYER_DIED` a quem vê, saldo sem duplicata, `NPC_INFO_LIST` ao C2S
@@ -139,7 +141,7 @@ Credenciais na memória `pw_universal_infra_access`.
 
 | realm | versão | porta do cliente | servidor de mundo (mapas) | dados | situação |
 | :--- | :--- | ---: | :--- | :--- | :--- |
-| `realm_155` | 1.5.5 | **29004** | `pw-world-155` (mapas 1 e 161) | `data/realm_155/config` | **o realm de teste** — cliente BR; até 2026-09-17 se chamava `realm_155BR` (B55) |
+| `realm_155` | 1.5.5 | **29004** | `pw-world-155` (mapas 1, 161 e 169) | `data/realm_155/config` | **o realm de teste** — cliente BR; até 2026-09-17 se chamava `realm_155BR` (B55) |
 | `realm_126` | 1.2.6 | 29000 | `pw-world-126` (1) | `data/realm_126/config` | loga, entra, combate, missões e mascote pelo `gs` 1.2.6 (testado, publicado em 2026-09-26); **frente atual** (§5D) |
 | `realm_153` | 1.5.3 | 29001 | `pw-world-153` (1) | — | abandonado |
 | `realm_148` | 1.4.8 | 29002 | `pw-world-148` (1) | — | nunca foi alvo |
@@ -148,7 +150,7 @@ Mais `pw-postgres` (5432), `pw-dragonfly` (6379), `pw-auth` e `pw-admin-api` (80
 porta do barramento `pw-link`↔`pw-gs` (29100) **nunca** é publicada — não tem autenticação,
 e `pw-bus/tests/topologia_do_compose.rs` cobra isso.
 
-Um servidor de mundo por realm com todos os mapas dele (`WORLD_TAGS: "1,161"`), dados
+Um servidor de mundo por realm com todos os mapas dele (`WORLD_TAGS: "1,161,169"` — o 169 é a Caverna Sombria `a69` da missão 32429, desde 2026-10-01), dados
 carregados uma vez; o roteador entrega cada jogador ao mapa gravado (spec 02 §2.2).
 
 ### 1.2 O que há em `data/realm_155/config`
@@ -206,7 +208,7 @@ Pré-requisitos do cliente 1.5.5 que **não** são do servidor, e que custaram s
 TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw_database" \
   cargo test --workspace
 
-# Publicar no realm de teste (um link e um servidor de mundo com os mapas 1 e 161)
+# Publicar no realm de teste (um link e um servidor de mundo com os mapas 1, 161 e 169)
 cd docker && docker compose build pw-world-155 pw-realm-155 \
   && docker compose up -d --remove-orphans pw-world-155 pw-realm-155
 
@@ -214,7 +216,7 @@ cd docker && docker compose build pw-world-155 pw-realm-155 \
 
 # Logs
 docker logs -f pw-realm-155        # login, entrada no mundo, o que o link trata
-docker logs -f pw-world-155        # os mapas 1 e 161
+docker logs -f pw-world-155        # os mapas 1, 161 e 169
 ```
 
 **Referência da suíte, medida em 2026-09-28 (B141) com o banco:** **834 testes: 832 passaram, 0 falhas, 2 ignorados** (104 binários, `--no-fail-fast`). Intermitente conhecida de grupo: `o_convite_de_grupo_chega_a_quem_foi_convidado` (~1 em 20; a mensagem diz qual comando chegou a quem convidou).
@@ -320,6 +322,7 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 
 | item | o que olhar |
 | :--- | :--- |
+| B159 | **não publicado.** Painel de GM (Ctrl+G), conta com `gm_privileges` > 0: **Invencível** → mensagem fixa do cliente e monstro/jogador não tiram vida; de novo desliga. **Invisível** → some da tela do outro cliente, não consegue golpear; de novo, reaparece para ele. **Ir até jogador** / **Chamar jogador** com o id (inclusive entre os mapas 1, 161 e 169). **Criar monstro** (id, aparência 0, quantidade, vida em s) → nascem a até 6 m. Log: `grep -E "GM [0-9]+"` |
 | B69–B70 | chi: +5 por golpe, +15/s meditando, teto 99 sem aviso repetido |
 | B71 | poção sem tela de cultivo; recarga por família (vida, mana, antídoto) |
 | B72 | combate longo sem pausa no minuto do autosave |
@@ -353,6 +356,8 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 | B130 | (os dois) **não publicado.** Domesticar Animal (328): no monstro com ovo (ex.: Gato de Presas Afiadas), com a vida baixa, aparece **Sucesso** ou **Falha** sobre ele; no sucesso o monstro some e o ovo entra na bolsa. Monstro sem ovo ou de nível acima do seu: **Imune**. Log: `grep -E "capturou|captura de"` |
 | B129 | (os dois) **não publicado.** Roupa comprada (Loja Gold ou NPC) chega com o sexo do molde: o maiô feminino da Tsuko mostra "Feminino" e volta a equipar depois de tirado. As duas peças já gravadas sem conteúdo precisam do SQL do histórico B129 (com a Tsuko fora do jogo) |
 | B128 | (os dois) **não publicado.** Monstro que te persegue desiste em `aggro_time` s (15 s nos do começo) se não te alcança — fugindo ou voando — e volta correndo para casa; na volta não leva dano nem nota ninguém, e chega com a vida cheia (no 1.5.5 aparece o efeito de invencível, estado 49; no 1.2.6 o `gs` original não mostra efeito). Agressivo só te nota a `sight_range + tamanho` (6–8 m nos do começo), não a 15 m. Golpe do ar em monstro de chão tira metade. Voo com o item de 15 m/s: 18 m/s (base 3 + 15). Pegar arma do chão vai para a bolsa comum. Comprar no NPC do 1.2.6 funciona |
+| B158 | (os dois) **não publicado.** Morrer **voando** (asas ou espada) ou **montado**: na tela de morte o personagem já aparece no chão / a pé; ao reviver, **um** clique no voo decola e **um** na montaria invoca (antes eram dois). No log: `morreu voando — pousou` ou `desmontou` antes do aviso de morte |
+| B157 | (os dois) **não publicado.** Cultivo 39: com a 923 "Aparição Vazia de Hades" concluída (ela some logo após aceitar — espera de 0 s, conclusão direta, dá o item 3277 na bolsa de missão), **morrer** oferece a 990 "A Divina de Hades Vazia" (`m_bDeathTrig`). No log: `mundo: … aceitou`/`task_notify_new` da 990 logo após a morte; no diário de missões aparece a 990 com a filha 991 "Demônio Imortal Jeffrey". Missão com `m_bFailAsPlayerDie` ativa falha na morte |
 | B155 | (os dois) **não publicado.** Morrer longe da cidade: (1) **Cidade mais próxima** → ~2 s depois o personagem aparece no ponto de renascimento do distrito, com 10 % de vida; outro jogador vê ele sumir do lugar. (2) Morrer de novo com o **Pergaminho da Ressurreição** (3043) na bolsa → **Usar pergaminho**: ~5 s depois levanta **no lugar** com a animação de reviver, fica 5 s invencível, some 1 pergaminho e a recarga de 30 min aparece no item. Sem pergaminho: mensagem de item ausente. Até o nível 9 não perde experiência. Log: `grep "renasceu"` |
 | B154 | (os dois) **não publicado.** Invocar o Falcão do Paraíso ou o Filhote de Prata (mascotes **ornamentais**): a barra de 3 s corre e o mascote aparece seguindo a Tsuko, **sem** erro. Não tem atributos de combate (é assim no arquivo e no original), não ataca, não obedece ordem, os monstros o ignoram e golpes não o ferem. Log: `grep "invocou o mascote 1234"` |
 | B153 | (os dois) **não publicado; exige o `scripts/2026_09_29_vagas_da_jaula.sql` (já aplicado no banco local).** (1) Com a Tsuko: a jaula mostra **4** vagas (as 4 ocupadas). (2) Na **Gerente de Mascotes** → Restaurar/Reanimar Mascote: escolher um mascote que **não** esteja invocado; a barra de 10 s corre, o mascote some da jaula e aparece o **ovo** na bolsa, com o nível/nome dele no tooltip; cobra o `money_restored` do ovo. Log: `grep "restaurou o mascote"`. (3) Incubar com a jaula cheia: erro e o ovo fica. (4) Missão "Jaula de Mascote" (3327→3330) na Gerente de Mascotes: ao entregar cada etapa, a jaula passa a 2/3/4/5 vagas (a Tsuko só muda na 3330, que dá 5) |
@@ -456,6 +461,29 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 11. **IA de monstro:** estratégias, eventos de vida e o intérprete do `aipolicy.data` feitos
     (B126/B127, spec 05 §4.1); no 1.5.5 faltam invocações, caminhos, ações, histórico e missões
     da política, e as estratégias de ódio por facção/invisibilidade.
+
+**Instâncias (masmorras), diagnóstico B160, `falta` inteiro:** no original, os mapas
+`[Instance_isNN]` do `gs.conf` (o 169 é um deles; 52 ao todo) são cópias por **chave**. Sem grupo,
+a chave é `(id do jogador, contador)`; em grupo, é a do líder, repassada aos membros
+(`GetInstanceKey`, `player_imp.h:2577`). Uma cópia vazia dura `idle_time` (20 min) e cada cópia
+tem `life_time` (4 h; `instance_manager.h:164-165`). O batimento é de 10 s
+(`instance_manager.cpp:630-700`). Ao relogar, o jogador volta à cópia da chave dele, se ela ainda
+existir; se não, entra numa nova, na entrada (`instance_userlogin.cpp:110-227`). Quem sai do grupo
+ou excede o limite recebe `kickout_instance` com 60 s e vai para a cidade; a vida em zero
+reinicia a chave (`aei_filter.cpp:32-110`, `ResetInstance`, `player.cpp:12925`). Hoje o 169 é
+um mapa comum e compartilhado.
+
+**Cultivo automático (robô do cliente), análise B161:** é todo do cliente, sem nada no `gs`.
+Botão "AutoRobot" no menu Sistema → `Win_AutoPolicy` → Lua `configs\autopolicy\autokillmonster.lua`.
+Ele está presente no cliente BR, com `EnableAutoPolicy = 1` no `uiconfig.ini`. Usa só C2S comuns
+(alvo, golpe, habilidade, item, pegar, mover, reviver 4/5). Falta o `REVIVAL_AGREE` (87): aceitar
+o reviver de outro jogador. O auto HP/MP exige na bolsa um dos itens 36764–36767
+(`HaveHealthStones`, `EC_HostPlayer.cpp:10470`).
+
+**Painel de GM (B159):** do mundo, faltam o 206 (criar item, que precisa ler o
+`GM_GENERATOR_ESSENCE`), o 207 (gatilho de gerador), a aparência e o nome do monstro criado, e
+os bits de privilégio por comando. Os comandos GNET de GM (expulsar, silenciar, anunciar,
+contar online, travar) ainda não existem no link.
 
 ### 5B. Fidelidade — números e sinais que ainda não são os do original
 
@@ -576,6 +604,8 @@ grupo pelo `iFirstGen` (usa o do líder).
    habilidade; as produções 2–5 e a decomposição.
 
 O teste em jogo do Murillo continua passando à frente de tudo quando chegar um relato.
+(B157, 2026-09-30: relato da Tsuko no cultivo 39 — a 990 só chega pela morte; `OnTaskPlayerKilled`
+portado. Falta ver em jogo.)
 
 **Outras frentes, depois:**
 - **Cliente v181** (`E:\0_GAMES\Perfect World`, build 2591): exigiria `v181.json` no
@@ -777,3 +807,9 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 154 | 09-29 | mascote ornamental (`PET_CLASS_FOLLOW`, id_type 8783) invocado como no original, só seguindo o dono |
 | 155 | 09-29 | renascer na cidade com `NOTIFY_POS` (e troca de mapa) e com pergaminho no lugar (animação e 5 s de proteção), sessões de 39/99 tiques, nível protegido 9 |
 | 156 | 09-29 | teste do passeio do 1.2.6 com o passo de pixel do original (diagonal √2 × pixel) — só teste |
+| 157 | 09-30 | cultivo 39 travado na Tsuko: a 990 é de gatilho por morte (`m_bDeathTrig`); `OnTaskPlayerKilled` portado (falha ao morrer + `CheckDeathTrig`) |
+| 158 | 09-30 | morrer voando/montado: pouso e desmonte antes do `HOST_DIED` (filtros `REMOVE_ON_DEATH` do `Die`) |
+| 159 | 10-01 | mapa 169 (`a69`, Caverna Sombria da missão 32429) no `pw-world-155`; painel de GM: invencível, invisível, ir até/chamar jogador, criar monstro (`debug_command_mode`) |
+| 160 | 10-01 | diagnóstico das instâncias (masmorras) do original: chave por jogador/grupo, 20 min ocioso, 4 h de vida, relogar volta à cópia — nada implementado |
+| 161 | 10-01 | cultivo automático: robô em Lua no cliente, sem código no servidor; custo = conferir os C2S comuns e o `REVIVAL_AGREE` (87) |
+| 162 | 10-01 | monstro que "resetou" no 169: não há ódio infinito em masmorra; as quatro causas de desistência do original; `max_move_range` e o piso de 15 m divergem; motivo do reset não é registrado |

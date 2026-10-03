@@ -183,6 +183,18 @@ pub trait WorldProtocol: Send + Sync {
         alvo: i32,
     ) -> S2CGamedataSend;
 
+    /// GM_INVINCIBLE (175), resposta ao GM que alterna a invencibilidade. `None` onde não há
+    /// evidência do número do comando naquela versão: o estado muda no servidor, só a mensagem
+    /// fixa do cliente não aparece.
+    fn gm_invincible(&self, _ligado: bool) -> Option<S2CGamedataSend> {
+        None
+    }
+
+    /// GM_INVISIBLE (176), resposta ao GM que alterna a invisibilidade (`visivel` = 0 sumiu).
+    fn gm_invisible(&self, _visivel: bool) -> Option<S2CGamedataSend> {
+        None
+    }
+
     /// ELF_EXP (283): clientes anteriores ao comando podem omitir a notificação.
     fn elf_exp(&self, exp: i32) -> Option<S2CGamedataSend> {
         Some(S2CGamedataSend::elf_exp(exp))

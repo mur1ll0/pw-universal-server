@@ -5,6 +5,15 @@ use crate::versions::v155::V155Protocol;
 pub struct V153Protocol(pub V155Protocol);
 
 impl WorldProtocol for V153Protocol {
+    // IR `gamedata_153.json`, 175/176: os mesmos números e o mesmo byte nas duas pontas.
+    fn gm_invincible(&self, ligado: bool) -> Option<crate::packets::s2c::S2CGamedataSend> {
+        Some(crate::packets::s2c::S2CGamedataSend::gm_invincible(ligado))
+    }
+
+    fn gm_invisible(&self, visivel: bool) -> Option<crate::packets::s2c::S2CGamedataSend> {
+        Some(crate::packets::s2c::S2CGamedataSend::gm_invisible(visivel))
+    }
+
     fn version(&self) -> GameVersion {
         GameVersion::V1_5_3
     }

@@ -174,3 +174,15 @@ fn o_ptemplate_do_126_e_lido_com_as_secoes_do_gs_126() {
     assert_eq!((hag.forca, hag.agilidade, hag.vitalidade, hag.energia), (15, 5, 15, 15));
     assert_eq!((hag.vida, hag.mana), (50, 30));
 }
+
+/// `debug_command_mode` só liga com o texto exato `active` (`gs/playertemplate.cpp:217`,
+/// `strcmp(..., "active") == 0`); `false`, `true` ou a falta da chave desligam.
+#[test]
+fn o_modo_de_depuracao_so_liga_com_active() {
+    let base = conf_minimo();
+    assert!(!ptemplate::ler(&base).unwrap().modo_de_depuracao, "sem a chave");
+    for (valor, esperado) in [("active", true), ("false", false), ("true", false), ("Active", false)] {
+        let texto = base.replacen("[GENERAL]", &format!("[GENERAL]\ndebug_command_mode = {valor}"), 1);
+        assert_eq!(ptemplate::ler(&texto).unwrap().modo_de_depuracao, esperado, "{valor}");
+    }
+}

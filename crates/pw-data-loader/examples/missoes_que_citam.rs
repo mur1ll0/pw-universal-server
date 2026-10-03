@@ -10,7 +10,11 @@ fn main() {
         if d.contains(alvo.as_str()) {
             let i = d.find(alvo.as_str()).unwrap();
             let ini = d[..i].rfind(|c: char| c == '{' || c == ',').unwrap_or(0);
-            println!("{id} {:?}: …{}…", x.name, &d[ini..(i + 40).min(d.len())]);
+            let mut fim = (i + 40).min(d.len());
+            while !d.is_char_boundary(fim) {
+                fim += 1;
+            }
+            println!("{id} {:?}: …{}…", x.name, &d[ini..fim]);
         }
     }
 }
