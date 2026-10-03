@@ -145,6 +145,8 @@ pub(crate) struct Contexto<'a> {
     pub teleporte: Option<(u32, [f32; 3])>,
     /// Monstros que a missão pediu para evocar perto do jogador.
     pub monstros_a_invocar: Vec<(u32, u32, u32, i32, bool)>,
+    /// `TaskNotifyPlayer` pendentes: `(membro, missão, razão)`, entregues depois de gravar.
+    pub avisos_a_equipe: Vec<(u32, u32, u8)>,
 }
 
 impl Contexto<'_> {
@@ -241,6 +243,9 @@ impl Contexto<'_> {
 }
 
 impl Jogador for Contexto<'_> {
+    fn avisar_membro(&mut self, membro: u32, tarefa: u32, razao: u8) {
+        self.avisos_a_equipe.push((membro, tarefa, razao));
+    }
     fn agora(&self) -> u32 {
         agora()
     }
@@ -449,6 +454,39 @@ impl BusServer {
         roleid: i32,
         f: impl FnOnce(&mut Contexto) -> R,
     ) -> Option<R> {
+        let (r, mut fila) = self.com_contexto_bruto(roleid, f).await?;
+        // `TaskNotifyPlayer` → `OnPlayerNotify` do membro (`TaskServer.cpp:285-325`): o
+        // `OnTaskForceSucc/Fail` não avisa de novo, então a fila acaba; o teto só protege.
+        let mut voltas = 0;
+        while let Some((membro, tarefa, razao)) = fila.pop() {
+            voltas += 1;
+            if voltas > 64 {
+                warn!("mundo: avisos de equipe em cadeia demais a partir de {roleid}");
+                break;
+            }
+            let dados = self.world.read().await.data_manager.clone();
+            let feito = self
+                .com_contexto_bruto(membro as i32, |ctx| {
+                    Self::com_motor(ctx, &dados, |m| m.forcar_pela_equipe(tarefa, razao));
+                })
+                .await;
+            match feito {
+                Some((_, mais)) => {
+                    info!("mundo: {membro} recebeu da equipe de {roleid} o aviso {razao} da missão {tarefa}");
+                    fila.extend(mais);
+                }
+                None => debug!("mundo: {membro}, da equipe de {roleid}, não está neste mapa"),
+            }
+        }
+        Some(r)
+    }
+
+    /// [`Self::com_contexto`] sem entregar os avisos à equipe: devolve-os.
+    async fn com_contexto_bruto<R>(
+        &self,
+        roleid: i32,
+        f: impl FnOnce(&mut Contexto) -> R,
+    ) -> Option<(R, Vec<(u32, u32, u8)>)> {
         let (itens_repo, repo) = (self.itens().await, self.repo().await);
         let bolsa = itens_repo
             .list_by_container(roleid, ContainerType::Inventory)
@@ -459,7 +497,7 @@ impl BusServer {
             .await
             .unwrap_or_default();
 
-        let (r, para_mim, para_todos, subiu, mut bolsas, gravacao, ficha, teleporte, daimon) = {
+        let (r, para_mim, para_todos, subiu, mut bolsas, gravacao, ficha, teleporte, daimon, avisos) = {
             let mut guarda = self.world.write().await;
             let mundo = &mut *guarda;
             let dados = Arc::clone(&mundo.data_manager);
@@ -512,6 +550,7 @@ impl BusServer {
                 equipe,
                 teleporte: None,
                 monstros_a_invocar: Vec::new(),
+                avisos_a_equipe: Vec::new(),
             };
             let r = f(&mut ctx);
             let Contexto {
@@ -524,6 +563,7 @@ impl BusServer {
                 mudou,
                 teleporte,
                 monstros_a_invocar,
+                avisos_a_equipe,
                 ..
             } = ctx;
             let p_pos = p.position;
@@ -579,6 +619,7 @@ impl BusServer {
                 ficha,
                 teleporte,
                 daimon,
+                avisos_a_equipe,
             )
         };
 
@@ -690,7 +731,7 @@ impl BusServer {
                 tokio::spawn(gravar);
             }
         }
-        Some(r)
+        Some((r, avisos))
     }
 
     /// `SELF_INFO_00` do jogador.
@@ -1971,6 +2012,34 @@ impl BusServer {
         }
     }
 
+    /// `GP_NPCSEV_TASK_MATTER` (8): `{ int task_id }`, 4 bytes (`task_provider::request`; `cmp
+    /// [ebp+0x14], 4` no `task_matter_provider::TryServe` do `gs` 1.2.6, VA 0x810abb4). Missão fora
+    /// da lista do NPC → `ERR_TASK_NOT_AVAILABLE` (19; `push 0x13` no 1.2.6); senão
+    /// `OnNPCDeliverTaskItem`.
+    pub(super) async fn itens_de_missao_do_npc(&self, roleid: i32, conteudo: &[u8], envio: &EnvioAoCliente) {
+        let Ok(b) = <[u8; 4]>::try_from(conteudo) else {
+            warn!("mundo: pedido de item de missão de {roleid} com {} B (esperados 4)", conteudo.len());
+            return;
+        };
+        let tarefa = u32::from_le_bytes(b);
+        let (servicos, dados) = {
+            let mundo = self.world.read().await;
+            let Some(p) = mundo.players.get(&(roleid as i64)) else { return };
+            let npc = p.npc_em_conversa.and_then(|id| mundo.npcs.get(&id)).map(|n| n.template_id);
+            let s = npc.and_then(|t| mundo.data_manager.servicos_de_npc.get(&t).cloned());
+            (s, Arc::clone(&mundo.data_manager))
+        };
+        let Some(s) = servicos.filter(|s| s.missoes_com_item.binary_search(&tarefa).is_ok()) else {
+            debug!("mundo: {roleid} pediu item da missão {tarefa} a um NPC que não a tem");
+            self.responder(roleid, S2CGamedataSend::error_message(erro_s2c::MISSAO_INDISPONIVEL).data, envio).await;
+            return;
+        };
+        let n = self
+            .com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.itens_do_npc(&s.itens_de_missao, tarefa)))
+            .await;
+        info!("mundo: {roleid} pediu ao NPC os itens da missão {tarefa}: {:?} entregues", n);
+    }
+
     /// `DeliverTeamMemTask` (`TaskTempl.inl:2304-2321`): missão de equipe aceita pelo capitão
     /// vai a cada membro (`TASK_PLY_NOTIFY_NEW_MEM_TASK` → `OnDeliverTeamMemTask`). Só alcança
     /// quem está neste servidor de mundo.
@@ -2302,15 +2371,33 @@ impl BusServer {
                 return;
             };
             let dono = progressao::dono_do_abate(m);
-            let partes: Vec<(i32, i64, i64)> = m
-                .danos
-                .iter()
-                .filter_map(|(quem, _)| {
-                    let nivel = mundo.players.get(quem)?.level;
-                    let (exp, sp) = progressao::parte_do_abate(m, *quem, nivel, &dados.progressao);
-                    Some((*quem as i32, exp, sp))
-                })
-                .collect();
+            // Quem bateu e os membros das equipes deles que estão neste mundo.
+            let mut quem: HashMap<i64, progressao::Participante> = HashMap::new();
+            let mut ids: Vec<i64> = m.danos.iter().map(|d| d.0).collect();
+            for &(id, _) in &m.danos {
+                ids.extend(mundo.membros_do_grupo(id as i32).into_iter().map(|x| x as i64));
+            }
+            for id in ids {
+                if let Some(p) = mundo.players.get(&id) {
+                    quem.insert(
+                        id,
+                        progressao::Participante {
+                            nivel: p.level,
+                            classe: p.cls as i32,
+                            pos: p.position,
+                            grupo: mundo.grupo_do_jogador(id as i32),
+                        },
+                    );
+                }
+            }
+            let sorteio: f32 = rand::Rng::gen(&mut rand::thread_rng());
+            let partes = progressao::repartir_abate(
+                &progressao::Abatido::de(m),
+                &dados.progressao,
+                &quem,
+                |g| mundo.membros_do_grupo_por_id(g).into_iter().map(|x| x as i64).collect(),
+                sorteio,
+            );
             let info = (
                 m.template_id,
                 m.level,
@@ -2327,17 +2414,26 @@ impl BusServer {
             info
         };
 
-        for (quem, exp, sp) in partes {
-            if exp + sp <= 0 {
-                continue;
-            }
+        let dados_do_abate = self.world.read().await.data_manager.clone();
+        for parte in partes {
+            let (quem, exp, sp, equipe) = match parte {
+                progressao::ParteDoAbate::Sozinho { id, exp, sp } => (id as i32, exp, sp, None),
+                progressao::ParteDoAbate::EmEquipe { id, exp, sp, monstro, nivel, sorteio } => {
+                    (id as i32, exp, sp, Some((monstro, nivel, sorteio)))
+                }
+            };
             self.com_contexto(quem, |ctx| {
-                let (exp0, sp0) = (ctx.p.exp, ctx.p.sp);
-                ctx.ganhar_exp(exp, sp);
-                // `_runner->receive_exp(exp, sp)` depois do `IncExp` (`player.cpp:2924`).
-                let _ = (exp0, sp0);
-                ctx.para_mim
-                    .push(self.sub.receive_exp(exp as i32, sp as i32).data);
+                if exp + sp > 0 {
+                    ctx.ganhar_exp(exp, sp);
+                    // `_runner->receive_exp(exp, sp)` depois do `IncExp` (`player.cpp:2924`).
+                    ctx.para_mim.push(self.sub.receive_exp(exp as i32, sp as i32).data);
+                }
+                // `GM_MSG_TEAM_EXPERIENCE` com `level > 0` → `OnTaskTeamKillMonster`.
+                if let Some((monstro, nivel, sorteio)) = equipe.filter(|e| e.1 > 0) {
+                    Self::com_motor(ctx, &dados_do_abate, |m| {
+                        m.abateu_monstro_em_equipe(monstro, nivel as u32, sorteio)
+                    });
+                }
             })
             .await;
         }

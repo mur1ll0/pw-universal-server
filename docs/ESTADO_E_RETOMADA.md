@@ -106,7 +106,7 @@ v156, `tasks.data` 129, build 2569):
 - **Itens e economia:** loja de NPC com o preço do arquivo, Loja Gold com o cash da conta (B125, falta ver em jogo), drop e
   coleta (inclusive mina que acorda monstro), poções no tempo com recarga por família, amuleto
   e hierograma automáticos, flechas, descarte com destrave de slot, reparo, caixa de Cartas de General.
-- **Social:** fala, grupo.
+- **Social:** fala, grupo, com experiência repartida pela equipe a 100 m (B164).
 
 **O que falta no 1.5.5** (§5A): o sistema de Cartas de General (a caixa já dá a carta),
 os ~300 efeitos de habilidade sem porte, trava de PvP,
@@ -322,6 +322,7 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 
 | item | o que olhar |
 | :--- | :--- |
+| B164 | (os dois) **não publicado.** Dois clientes em grupo, perto um do outro (< 100 m do monstro): (1) só um bate e mata → **os dois** recebem experiência na barra; um terceiro membro longe (> 100 m) não recebe. (2) Missão de caça **de equipe** (aceita pelo capitão): cada abate do grupo soma no contador dos dois; fora do grupo ela conta normalmente. (3) Missão de equipe com "capitão conclui, todos concluem": o capitão entrega no NPC → no outro cliente a missão aparece concluída/pronta para entregar. (4) NPC com "item de missão" (serviço 8): com a missão ativa, pedir o item → ele cai na bolsa de missão; sem a missão, mensagem de missão indisponível. Log: `recebeu da equipe de <id> o aviso 3 da missão <n>` e `pediu ao NPC os itens da missão <n>` |
 | B163 | (os dois) **não publicado.** No NPC Ferreiro/Refinador: (1) **Incrustar** uma pedra numa arma com furo vazio → a pedra some da bolsa, o dinheiro cai o `install_price`, o tooltip da arma mostra a pedra e o atributo; pedra de grau maior que a arma → mensagem de não incrustar (21). (2) **Remover pedras** → furos vazios no tooltip e o custo descontado. (3) **Refinar** com Pedra Celestial (11208) → janela mostra sucesso/falha; +1 no nome em caso de sucesso; nível ≥1 e falha volta a +0; clicar duas vezes em menos de 1 s → "em recarga". (4) **Furar** (só 1.5.5) com pedras 21043 → "furo feito" e um furo a mais; no 1.2.6 não há a opção. Log: `mundo: <id> incrustou/removeu as pedras de/refinou/furou o item <tid>` |
 | B159 | **não publicado.** Painel de GM (Ctrl+G), conta com `gm_privileges` > 0: **Invencível** → mensagem fixa do cliente e monstro/jogador não tiram vida; de novo desliga. **Invisível** → some da tela do outro cliente, não consegue golpear; de novo, reaparece para ele. **Ir até jogador** / **Chamar jogador** com o id (inclusive entre os mapas 1, 161 e 169). **Criar monstro** (id, aparência 0, quantidade, vida em s) → nascem a até 6 m. Log: `grep -E "GM [0-9]+"` |
 | B69–B70 | chi: +5 por golpe, +15/s meditando, teto 99 sem aviso repetido |
@@ -424,9 +425,11 @@ O pedido do Murillo no B44: combate básico inteiro, experiência, alma, moedas,
 habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 
 1. **Missões — o que o motor ainda recusa ou ignora** (spec 05 §10): casamento, PQ, prêmio
-   por escala, invocação, falha por morte, sucesso/falha compartilhados pela equipe, abate
-   contado para a equipe, item de missão pelo NPC (serviço 8), coleta com missão
-   (`task_in/out`). Facção recusa sempre (não há sistema de facção).
+   por escala, `FORCE_GIVEUP`, limite de tempo checado só na entrega, força, região que falha.
+   Facção recusa sempre (não há sistema de facção). Feitos: invocação, falha por morte (B157),
+   coleta com missão (B67), abate em equipe, sucesso/falha da equipe e serviço 8 (B164).
+   **Grupo sem limite de membros:** o original tem 10 no 1.5.5 e 6 no 1.2.6
+   (`TEAM_MEMBER_CAPACITY`; tabelas de bônus de 11 e 7 entradas) — o nosso convite não confere.
 2. **Munição:** sem flecha o golpe não é recusado e o bônus de dano da flecha não entra;
    a compra na loja não confere a lista de venda do NPC. **Itens:** refinar, incrustar, remover
    pedras e furar feitos no B163 (spec 05 §8.3); faltam o furo de acessório (serviço 96),
@@ -560,6 +563,7 @@ capturas da VM 1.2.6 em `docs/evidencias/126/` (lidas com
 | habilidades | **testado**: tempos, mana, aprendizado, alcance e dano do `gs` 1.2.6 (B100, B101); `ENCHANT_RESULT` de 16 B com modificador em 2 bytes (B116, B118); `allow_forms` do construtor do `gs` (B120) | **65 roteiros herdados do 1.5.5 divergem do `gs` 1.2.6** (B115, ver abaixo); ver a 299 em jogo | `specs/05` §habilidades, `specs/habilidades_126/` |
 | mascote de combate | **testado** (B111–B116): `PET_ESSENCE` v7 pelo `gs`, invocar/recolher/HP/ataque com os tamanhos do 1.2.6, Curar Mascote só cura (sem `Rebirth` no 1.2.6) | ver em jogo | `specs/05` §8.2 |
 | comandos acrescentados depois do B76 no 1.5.5 | **conferidos** (B122) pelo validador do cliente e o `gs` 1.2.6: 163, 181, 198, 232–236, 252 conferem; **227 = 9 B** (sobrescrito); `info_player_1` com forma, cadáver, roupa e montado (`char cor, int id`); `self_info_1` com roupa; C2S 14 = `u8, u16` (sobrescrito) | voo (0x10) e efeitos visíveis (0x40) no B143; os demais bits são de sistemas que não existem | `specs/04` §4 |
+| equipe e missões (B164) | **testado**: repartição de experiência (100 m, piso 0x13, `_team_adjust` de `PARAM_ADJUST+0x1c4` com 7 entradas, classes /20 com 9), `CheckKillMonster` com `bTeam`, `AwardNotifyTeamMem` sem `m_bAllSucc` (`libtask.so` 0xd8be) e serviço 8 (`task_matter_provider`, 4 B) conferidos no `gs`/`libtask.so` 1.2.6 | ver em jogo | `specs/05` §2 e §10 |
 | refino e pedras (serviços 10, 11, 35) | **testado** (B163): tamanhos, erros, comandos 92/93/251 e tabelas de refino conferidos no `gs` 1.2.6; talismã sem `binding_only`/`require_level_max`; **furar (47) não existe** no `gs` 1.2.6 | ver em jogo | `specs/05` §8.3 |
 | sistemas que o 1.2.6 não tem | Daimon: `ELF_EXP` (283) omitido (B93); meditar não dá chi (B119); sem `Rebirth`/`Decregiondmg` (B115) | conferir cultivo e o que mais não existe no cliente 1.2.6, e omitir pelo trait | validador do cliente |
 | dados de mapa do `realm_126` | `.hmap`, `watermap/`, `movemap/`, `world_targets.sev`, `npcgen.data`, `precinct.sev` | todos fecham (B143, `tests/mapas_do_126.rs`) | `data/realm_126/config` |
@@ -602,7 +606,9 @@ grupo pelo `iFirstGen` (usa o do líder).
 3. **1.5.5 (§5A)** — em andamento. **Feitos (B144–B146):** munição, coleta, recurso no piso
    (Água Cristalizada), produção no NPC nas duas versões (pedido do Murillo de 2026-09-28), trava
    de PvP; fôlego: o original não desconta (nada a portar); armazém (B147); refinar, incrustar,
-   remover pedras e furar nas duas versões (B163). **Faltam, nesta ordem:** casos de missão recusados; troca de mapa entre contêineres (o
+   remover pedras e furar nas duas versões (B163); experiência de equipe, abate em equipe,
+   sucesso/falha da equipe e item de missão pelo NPC (B164). **Faltam, nesta ordem:** o resto dos
+   casos de missão recusados (§5A item 1); troca de mapa entre contêineres (o
    teleporte por NPC já existe, B51); o resto do Daimon; Cartas de General; os ~300 efeitos de
    habilidade; as produções 2–5 e a decomposição.
 
@@ -817,3 +823,4 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 161 | 10-01 | cultivo automático: robô em Lua no cliente, sem código no servidor; custo = conferir os C2S comuns e o `REVIVAL_AGREE` (87) |
 | 162 | 10-01 | monstro que "resetou" no 169: não há ódio infinito em masmorra; as quatro causas de desistência do original; `max_move_range` e o piso de 15 m divergem; motivo do reset não é registrado |
 | 163 | 10-02 | refinar (35), incrustar (10), remover pedras (11) e furar (47, só 1.5.5) portados nas duas versões; `EMBED_ITEM`/`CLEAR_TESSERA` corrigidos, `REFINE_RESULT` novo; `combined_services` do layout v7 renomeado |
+| 164 | 10-02 | experiência repartida pela equipe (`DispatchExp`/`ReceiveGroupExp`/`player_team::DispatchExp`), abate contado para missão de equipe, `AwardNotifyTeamMem` + `OnTaskForceSucc/Fail` e serviço 8 (item de missão pelo NPC), nas duas versões |

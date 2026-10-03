@@ -84,6 +84,14 @@ pub mod estado {
     pub const SUCESSO: u8 = 0x02;
     pub const DESISTIU: u8 = 0x04;
     pub const ERRO_AVISADO: u8 = 0x08;
+    /// `TASK_STATE_AWARD_NOTIFY_TEAM` (`TaskProcess.h:109`): a equipe já foi avisada.
+    pub const EQUIPE_AVISADA: u8 = 0x10;
+}
+
+/// `TASK_PLY_NOTIFY_FORCE_FAIL` e `TASK_PLY_NOTIFY_FORCE_SUCC` (`TaskTempl.h:129-130`).
+pub mod aviso_de_equipe {
+    pub const FALHA: u8 = 2;
+    pub const SUCESSO: u8 = 3;
 }
 
 /// `enumTM*` (`TaskTempl.h:173-191`).
@@ -703,6 +711,9 @@ pub trait Jogador {
     fn teleportar(&mut self, _mundo: u32, _pos: [f32; 3]) {}
     /// `SummonMonster` (`TaskProcess.cpp:1189`): evoca monstro na cena perto do jogador.
     fn invocar_monstro(&mut self, _monstro_tid: u32, _quantidade: u32, _raio: u32, _periodo_s: i32, _some_ao_morrer: bool) {}
+    /// `TaskNotifyPlayer(pTask, membro, tarefa, razao)` (`TaskServer.cpp`): o aviso a outro
+    /// jogador, entregue depois da operação.
+    fn avisar_membro(&mut self, _membro: u32, _tarefa: u32, _razao: u8) {}
 }
 
 /// Jogador vazio, só para limpar estrutura.
@@ -1898,6 +1909,11 @@ impl<'a, J: Jogador> Motor<'a, J> {
 
     /// `ATaskTempl::DeliverAward` (`TaskProcess.cpp:1882-2028`).
     pub fn entregar_premio(&mut self, idx: usize, escolha: i32) -> bool {
+        self.entregar_premio_avisando(idx, escolha, true)
+    }
+
+    /// `DeliverAward(..., bNotifyTeamMem)` (`TaskProcess.cpp:1884-2028`).
+    fn entregar_premio_avisando(&mut self, idx: usize, escolha: i32, avisar_equipe: bool) -> bool {
         let en = self.listas.ativa.e[idx];
         let Some(t) = self.t(en.id as u32).filter(|_| en.valida) else { return false };
         let agora = self.j.agora();
@@ -1918,6 +1934,12 @@ impl<'a, J: Jogador> Motor<'a, J> {
         if !self.pais_com_sucesso(idx) {
             self.listas.ativa.e[idx].estado &= !estado::SUCESSO;
         }
+        // Falha de missão de equipe: avisa os membros, uma vez (`TaskProcess.cpp:1902-1907`).
+        let en = self.listas.ativa.e[idx];
+        if avisar_equipe && en.estado & estado::EQUIPE_AVISADA == 0 && !en.sucesso() && self.capitao_ou_propria(idx).is_some_and(|c| c.em_equipe) {
+            self.avisar_a_equipe(t, idx);
+            self.listas.ativa.e[idx].estado |= estado::EQUIPE_AVISADA;
+        }
         let en = self.listas.ativa.e[idx];
         if en.desistiu() && t.limpa_ao_desistir {
             self.limpar_missao(idx, true);
@@ -1933,6 +1955,14 @@ impl<'a, J: Jogador> Motor<'a, J> {
             }
             return false;
         }
+        // Sucesso de missão de equipe: avisa os membros, uma vez (`TaskProcess.cpp:1966-1974`). O
+        // caso da filha de uma missão de topo de equipe (`m_ChildIndex == 0xff` e última irmã,
+        // `:1975-2000`) não está portado.
+        let en = self.listas.ativa.e[idx];
+        if avisar_equipe && en.estado & estado::EQUIPE_AVISADA == 0 && en.sucesso() && self.capitao_ou_propria(idx).is_some_and(|c| c.em_equipe) {
+            self.avisar_a_equipe(t, idx);
+            self.listas.ativa.e[idx].estado |= estado::EQUIPE_AVISADA;
+        }
         let mut tags = Etiquetas { uniao: self.listas.ativa.e[idx].estado as u16, tags: Vec::new() };
         self.premiar_recursivo(t, idx, agora, escolha, &mut tags);
         self.j.avisar(S2CGamedataSend::task_notify_complete(t.id as u16, agora, &tags.bytes()).data);
@@ -1941,10 +1971,103 @@ impl<'a, J: Jogador> Motor<'a, J> {
 
     /// `OnSetFinished` (`TaskTempl.inl:2184-2204`).
     fn ao_finalizar(&mut self, t: &'a TaskTemplate, idx: usize) {
+        self.ao_finalizar_avisando(t, idx, true);
+    }
+
+    fn ao_finalizar_avisando(&mut self, t: &'a TaskTemplate, idx: usize, avisar_equipe: bool) {
         self.listas.ativa.e[idx].estado |= estado::FINALIZADA;
         self.j.avisar(S2CGamedataSend::task_notify_base(aviso::FINALIZADA, t.id as u16).data);
         if t.tipo_de_conclusao == conclusao::DIRETA || !self.listas.ativa.e[idx].sucesso() {
-            self.entregar_premio(idx, -1);
+            self.entregar_premio_avisando(idx, -1, avisar_equipe);
+        }
+    }
+
+    /// `ActiveTaskEntry::GetCapOrSelf`: a missão do capitão, se a entrada veio dele; senão a própria.
+    fn capitao_ou_propria(&self, idx: usize) -> Option<&'a TaskTemplate> {
+        let en = self.listas.ativa.e[idx];
+        let id = if en.capitao != 0 { en.capitao as u32 } else { en.id as u32 };
+        self.t(id)
+    }
+
+    /// `ATaskTempl::AwardNotifyTeamMem` (`TaskProcess.cpp:2030-2084`; no `libtask.so` 1.2.6 em
+    /// 0xd8be, sem `m_bAllSucc`, que o v55 não tem e fica falso). No sucesso, só com
+    /// `m_bAllSucc` da missão do capitão ou com o capitão concluindo uma de `m_bCapSucc`, e só
+    /// os membros no mesmo mundo dentro de `m_fSuccDist` (comparada ao quadrado da distância);
+    /// na falha, com `m_bAllFail` ou com o capitão falhando uma de `m_bCapFail`.
+    fn avisar_a_equipe(&mut self, t: &'a TaskTemplate, idx: usize) {
+        let Some(cap) = self.capitao_ou_propria(idx) else { return };
+        let membros = self.j.equipe();
+        let sou_capitao = membros.first().map(|m| m.id) == Some(self.eu);
+        let sucesso = self.listas.ativa.e[idx].sucesso();
+        let razao = if sucesso {
+            if !cap.todos_sucesso && (!sou_capitao || !t.capitao_sucesso) {
+                return;
+            }
+            aviso_de_equipe::SUCESSO
+        } else if cap.todos_falham || (cap.capitao_falha && sou_capitao) {
+            aviso_de_equipe::FALHA
+        } else {
+            return;
+        };
+        let conferir_posicao = sucesso && t.distancia_do_sucesso > 0.0;
+        let (mundo, pos) = self.j.posicao();
+        for m in membros.iter().filter(|m| m.id != self.eu) {
+            if conferir_posicao {
+                let d: f32 = (0..3).map(|k| (m.pos[k] - pos[k]).powi(2)).sum();
+                if m.mundo != mundo || d > t.distancia_do_sucesso {
+                    continue;
+                }
+            }
+            self.j.avisar_membro(m.id, cap.id, razao);
+        }
+    }
+
+    /// `OnNPCDeliverTaskItem` (`TaskServer.cpp:706-760`): o serviço 8 entrega os itens de missão
+    /// que o NPC dá para `tarefa`, se ela está ativa; cabendo todos os tipos na bolsa de missão
+    /// (`CanDeliverTaskItem`), cada item que o jogador ainda não tem vem com a quantidade da tabela.
+    /// Devolve quantos tipos entregou.
+    pub fn itens_do_npc(&mut self, lista: &[(u32, [(u32, u32); 4])], tarefa: u32) -> u32 {
+        let mut entregues = 0;
+        for (id, itens) in lista {
+            if *id == 0 {
+                break;
+            }
+            if *id != tarefa || self.listas.ativa.indice(*id).is_none() {
+                continue;
+            }
+            let tipos = itens.iter().take_while(|m| m.0 != 0).count();
+            if tipos == 0 || self.j.slots_livres(false) < tipos as u32 {
+                break;
+            }
+            for &(item, n) in &itens[..tipos] {
+                if self.j.contar(item, false) > 0 {
+                    continue;
+                }
+                self.j.dar_item(item, n, false, 0);
+                entregues += 1;
+            }
+            break;
+        }
+        entregues
+    }
+
+    /// `OnTaskForceFail` / `OnTaskForceSucc` (`TaskServer.cpp:37-71`): a entrada da missão (ou a
+    /// que veio dela pelo capitão) é finalizada — na falha, sem o sucesso — e o prêmio sai sem
+    /// avisar a equipe de novo.
+    pub fn forcar_pela_equipe(&mut self, tarefa: u32, razao: u8) {
+        let achada = (0..self.listas.ativa.quantidade as usize).find(|&i| {
+            let en = self.listas.ativa.e[i];
+            en.id as u32 == tarefa || en.capitao as u32 == tarefa
+        });
+        let Some(idx) = achada else { return };
+        let Some(t) = self.t(self.listas.ativa.e[idx].id as u32) else { return };
+        match razao {
+            aviso_de_equipe::FALHA => {
+                self.listas.ativa.e[idx].estado &= !estado::SUCESSO;
+                self.ao_finalizar_avisando(t, idx, false);
+            }
+            aviso_de_equipe::SUCESSO => self.ao_finalizar_avisando(t, idx, false),
+            _ => {}
         }
     }
 
@@ -1983,13 +2106,16 @@ impl<'a, J: Jogador> Motor<'a, J> {
     }
 
     /// `ATaskTempl::CheckKillMonster` (`TaskTempl.inl:1972-2070`), fora de equipe.
-    fn conferir_abate(&mut self, t: &'a TaskTemplate, idx: usize, monstro: u32, nivel_do_monstro: u32, mut sorteio: f32) -> bool {
+    fn conferir_abate(&mut self, t: &'a TaskTemplate, idx: usize, monstro: u32, nivel_do_monstro: u32, em_equipe: bool, mut sorteio: f32) -> bool {
         if t.metodo != metodo::MATAR_MONSTROS {
             return false;
         }
-        if t.em_equipe || topo_de(self.tarefas, t).em_equipe {
-            // `bTeam != ((teamwork) && IsInTeam())` — sem equipe, `IsInTeam` é falso e a
-            // conta segue normalmente.
+        // `if (bTeam != ((m_bTeamwork || GetTopTask()->m_bTeamwork) && IsInTeam())) return false;`
+        // (`TaskTempl.inl:1985-1987`): em equipe, a missão de equipe só conta pelo abate da
+        // equipe (`OnTaskTeamKillMonster`), e a comum só pelo abate do dono.
+        let de_equipe = (t.em_equipe || topo_de(self.tarefas, t).em_equipe) && !self.j.equipe().is_empty();
+        if em_equipe != de_equipe {
+            return false;
         }
         let mut ret = false;
         let nivel = self.j.nivel();
@@ -2045,9 +2171,21 @@ impl<'a, J: Jogador> Motor<'a, J> {
         ret
     }
 
-    /// `OnTaskKillMonster` / `_on_kill_monster` (`TaskServer.cpp:1068-1109`).
+    /// `OnTaskKillMonster` / `_on_kill_monster` (`TaskServer.cpp:1068-1109`): o abate do dono
+    /// (`GM_MSG_NPC_BE_KILLED`, `player.cpp:1372`).
     pub fn abateu_monstro(&mut self, monstro: u32, nivel_do_monstro: u32) {
         let sorteio = self.j.sortear();
+        self.abate(monstro, nivel_do_monstro, false, sorteio);
+    }
+
+    /// `OnTaskTeamKillMonster` (`TaskServer.cpp:1111-1114`): o abate que chega com a
+    /// experiência da equipe (`GM_MSG_TEAM_EXPERIENCE`, `player.cpp:1155-1161`), com o sorteio
+    /// da equipe.
+    pub fn abateu_monstro_em_equipe(&mut self, monstro: u32, nivel_do_monstro: u32, sorteio: f32) {
+        self.abate(monstro, nivel_do_monstro, true, sorteio);
+    }
+
+    fn abate(&mut self, monstro: u32, nivel_do_monstro: u32, em_equipe: bool, sorteio: f32) {
         let mut i: i64 = 0;
         while (i as usize) < self.listas.ativa.quantidade as usize {
             let idx = i as usize;
@@ -2056,7 +2194,7 @@ impl<'a, J: Jogador> Motor<'a, J> {
                 i += 1;
                 continue;
             };
-            self.conferir_abate(t, idx, monstro, nivel_do_monstro, sorteio);
+            self.conferir_abate(t, idx, monstro, nivel_do_monstro, em_equipe, sorteio);
             // A lista mudou por baixo (uma missão acabou): recomeça.
             if self.listas.ativa.e[idx].id as u32 != t.id {
                 i = 0;
@@ -2283,6 +2421,7 @@ mod tests {
         faccao: (u32, i32),
         equipe: Vec<MembroDaEquipe>,
         teleporte: Option<(u32, [f32; 3])>,
+        avisos_de_equipe: Vec<(u32, u32, u8)>,
     }
 
     impl Jogador for JogadorDeTeste {
@@ -2307,6 +2446,7 @@ mod tests {
         fn avisar(&mut self, c: Vec<u8>) { self.avisos.push(c); }
         fn sortear(&mut self) -> f32 { 0.0 }
         fn posicao(&self) -> (u32, [f32; 3]) { self.posicao }
+        fn avisar_membro(&mut self, membro: u32, tarefa: u32, razao: u8) { self.avisos_de_equipe.push((membro, tarefa, razao)); }
         fn faccao(&self) -> (u32, i32) { self.faccao }
         fn equipe(&self) -> Vec<MembroDaEquipe> { self.equipe.clone() }
         fn teleportar(&mut self, mundo: u32, pos: [f32; 3]) { self.teleporte = Some((mundo, pos)); }
@@ -2483,6 +2623,71 @@ mod tests {
         assert_eq!(u32::from_le_bytes(aviso[13..17].try_into().unwrap()), 0, "a missão do capitão vai com cap_task 0");
     }
 
+    /// `AwardNotifyTeamMem` + `OnTaskForceSucc/Fail` (`TaskProcess.cpp:2030-2084`,
+    /// `TaskServer.cpp:37-71`): o capitão que conclui uma de `m_bCapSucc` avisa os membros, e o
+    /// membro finaliza a dele; quem desiste de uma de `m_bAllFail` faz a equipe falhar.
+    #[test]
+    fn a_equipe_conclui_com_o_capitao_e_falha_com_um_membro() {
+        let mut t = modelo(60);
+        t.em_equipe = true;
+        t.recebida_pela_equipe = true;
+        t.capitao_sucesso = true;
+        t.metodo = metodo::FALAR_COM_NPC;
+        t.tipo_de_conclusao = conclusao::NO_NPC;
+        t.membros_pedidos = vec![pw_data_loader::tasks::MembroPedido { nivel_minimo: 1, classe: 0xFFFF_FFFF, minimo: 1, ..Default::default() }];
+        let mut f = modelo(61);
+        f.em_equipe = true;
+        f.recebida_pela_equipe = true;
+        f.todos_falham = true;
+        f.pode_desistir = true;
+        f.membros_pedidos = t.membros_pedidos.clone();
+        let d = dados(vec![t, f]);
+        let equipe = vec![membro(1, 20), membro(2, 15)];
+
+        // Sucesso: o capitão entrega no NPC e avisa o 2 com `FORCE_SUCC` (3).
+        let mut lc = ListasDeMissao::default();
+        let mut cap = JogadorDeTeste { nivel: 20, equipe: equipe.clone(), ..Default::default() };
+        assert_eq!(Motor { tarefas: &d, listas: &mut lc, j: &mut cap, eu: 1 }.aceitar(60, 0, false), 0);
+        assert!(Motor { tarefas: &d, listas: &mut lc, j: &mut cap, eu: 1 }.entregar_no_npc(60, 0));
+        assert_eq!(cap.avisos_de_equipe, vec![(2, 60, aviso_de_equipe::SUCESSO)]);
+        let mut lm = ListasDeMissao::default();
+        let mut m2 = JogadorDeTeste { nivel: 15, equipe: equipe.clone(), ..Default::default() };
+        assert_eq!(Motor { tarefas: &d, listas: &mut lm, j: &mut m2, eu: 2 }.aceitar_como_membro(60), 0);
+        Motor { tarefas: &d, listas: &mut lm, j: &mut m2, eu: 2 }.forcar_pela_equipe(60, aviso_de_equipe::SUCESSO);
+        assert!(lm.ativa.e[0].finalizada(), "o membro fica com a missão finalizada (entrega no NPC)");
+        assert!(m2.avisos_de_equipe.is_empty(), "quem recebe não avisa de novo");
+
+        // Falha: o membro 2 desiste da 61 (`m_bAllFail`) e o capitão falha junto.
+        let mut lm = ListasDeMissao::default();
+        let mut m2 = JogadorDeTeste { nivel: 15, equipe: equipe.clone(), ..Default::default() };
+        assert_eq!(Motor { tarefas: &d, listas: &mut lm, j: &mut m2, eu: 2 }.aceitar_como_membro(61), 0);
+        assert!(Motor { tarefas: &d, listas: &mut lm, j: &mut m2, eu: 2 }.desistir(61));
+        assert_eq!(m2.avisos_de_equipe, vec![(1, 61, aviso_de_equipe::FALHA)]);
+        let mut lc = ListasDeMissao::default();
+        let mut cap = JogadorDeTeste { nivel: 20, equipe, ..Default::default() };
+        assert_eq!(Motor { tarefas: &d, listas: &mut lc, j: &mut cap, eu: 1 }.aceitar(61, 0, false), 0);
+        Motor { tarefas: &d, listas: &mut lc, j: &mut cap, eu: 1 }.forcar_pela_equipe(61, aviso_de_equipe::FALHA);
+        assert_eq!(lc.ativa.quantidade, 0, "a falha encerra a missão do capitão");
+    }
+
+    /// `OnNPCDeliverTaskItem`: só com a missão ativa; o item que o jogador já tem não vem de novo.
+    #[test]
+    fn o_npc_da_os_itens_da_missao_ativa_que_faltam() {
+        let mut t = modelo(70);
+        t.metodo = metodo::COLETAR_ITENS;
+        let d = dados(vec![t]);
+        let lista = vec![(69, [(400, 1), (0, 0), (0, 0), (0, 0)]), (70, [(500, 3), (501, 1), (0, 0), (0, 0)]), (0, [(0, 0); 4])];
+        let mut l = ListasDeMissao::default();
+        let mut j = JogadorDeTeste::default();
+        assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.itens_do_npc(&lista, 70), 0, "sem a missão, nada");
+        assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(70, 0, false), 0);
+        j.itens.insert((501, false), 1);
+        assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.itens_do_npc(&lista, 70), 1);
+        assert_eq!(j.contar(500, false), 3);
+        assert_eq!(j.contar(501, false), 1, "o que já tinha não dobra");
+        assert_eq!(j.contar(400, false), 0);
+    }
+
     /// `OnTaskReachSite`: o cliente avisa, o servidor confere o lugar e finaliza.
     #[test]
     fn chegar_ao_lugar_so_finaliza_dentro_da_caixa_do_mundo_certo() {
@@ -2536,6 +2741,35 @@ mod tests {
         Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.abateu_monstro(7, 5);
         assert_eq!(l.ativa.quantidade, 0, "conclusão direta ao completar");
         assert_eq!(j.exp, 50);
+    }
+
+    /// `CheckKillMonster` com `bTeam` (`TaskTempl.inl:1985-1987`): em equipe, a missão de equipe só
+    /// conta o abate da equipe; sozinho, só o abate comum.
+    #[test]
+    fn missao_de_equipe_em_equipe_so_conta_o_abate_da_equipe() {
+        let mut t = modelo(101);
+        t.metodo = metodo::MATAR_MONSTROS;
+        t.tipo_de_conclusao = conclusao::NO_NPC;
+        t.em_equipe = true;
+        t.monster_kills = vec![MonstroPedido { monstro: 7, quantidade: 5, item_que_cai: 0, quantidade_do_item: 0, item_comum: false, chance_do_item: 0.0, nivel_do_matador: false, dps: 0, dph: 0 }];
+        let d = dados(vec![t]);
+        let mut l = ListasDeMissao::default();
+        let mut j = JogadorDeTeste { nivel: 5, ..Default::default() };
+        // Sem equipe a missão entra e o abate comum conta (`IsInTeam` falso).
+        assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(101, 0, false), 0);
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.abateu_monstro(7, 5);
+        assert_eq!(l.ativa.e[0].monstros(0), 1);
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.abateu_monstro_em_equipe(7, 5, 0.5);
+        assert_eq!(l.ativa.e[0].monstros(0), 1, "sem equipe, o abate de equipe não conta");
+        // Em equipe: o abate comum do dono não conta; o da equipe conta, e o de monstro 0 não.
+        let membro = |id| MembroDaEquipe { id, nivel: 5, classe: 0, masculino: true, mundo: 1, pos: [0.0; 3] };
+        j.equipe = vec![membro(1), membro(2)];
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.abateu_monstro(7, 5);
+        assert_eq!(l.ativa.e[0].monstros(0), 1);
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.abateu_monstro_em_equipe(7, 5, 0.5);
+        assert_eq!(l.ativa.e[0].monstros(0), 2);
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.abateu_monstro_em_equipe(0, 5, 0.0);
+        assert_eq!(l.ativa.e[0].monstros(0), 2, "a equipe sem o maior dano chega com monstro 0");
     }
 
     #[test]

@@ -70,23 +70,217 @@ fn subir_de_nivel(p: &mut PlayerEntity, tabela: &TabelaDeProgressao, maximo: i32
     subiu
 }
 
-/// A parte de um jogador na experiência de um monstro morto.
+/// `TEAM_EXP_DISTANCE` (100 m, `gs/config.h:47`; `10000.0` comparado ao quadrado da distância
+/// no `ReceiveGroupExp` do `gs` 1.2.6, VA 0x8069e56).
+pub const DISTANCIA_DA_EXP_DE_EQUIPE: f32 = 100.0;
+/// `MIN_TEAM_DISEXP_LEVEL` (`gs/config.h:143`; `cmp ..., 0x13` no 1.2.6): o piso de nível na
+/// partilha.
+pub const NIVEL_MINIMO_NA_PARTILHA: i32 = 20;
+
+/// O que a repartição usa do monstro morto.
+#[derive(Debug, Clone)]
+pub struct Abatido<'a> {
+    pub danos: &'a [(i64, i64)],
+    pub primeiro_atacante: Option<i64>,
+    pub max_hp: i64,
+    pub exp: i64,
+    pub sp: i64,
+    pub level: i32,
+    pub template_id: u32,
+    pub position: pw_core::Vector3,
+}
+
+impl<'a> Abatido<'a> {
+    pub fn de(m: &'a MonsterEntity) -> Self {
+        Self {
+            danos: &m.danos,
+            primeiro_atacante: m.primeiro_atacante,
+            max_hp: m.max_hp,
+            exp: m.exp,
+            sp: m.sp,
+            level: m.level,
+            template_id: m.template_id,
+            position: m.position,
+        }
+    }
+}
+
+/// Quem toma parte no abate, como o mundo o vê na hora da morte.
+#[derive(Debug, Clone, Copy)]
+pub struct Participante {
+    pub nivel: i32,
+    pub classe: i32,
+    pub pos: pw_core::Vector3,
+    pub grupo: Option<u32>,
+}
+
+/// O que cada jogador recebe de um abate.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParteDoAbate {
+    /// `GM_MSG_EXPERIENCE` → `ReceiveExp(msg_exp_t)`: já com o ajuste de nível.
+    Sozinho { id: i64, exp: i64, sp: i64 },
+    /// `GM_MSG_TEAM_EXPERIENCE` → `ReceiveExp(exp, sp)` sem ajuste e
+    /// `OnTaskTeamKillMonster(monstro, nivel, sorteio)` (`gs/player.cpp:1138-1170`). `monstro` é o
+    /// modelo só para a equipe de maior dano; para as outras, 0 (`npc.cpp:1645-1656`).
+    EmEquipe { id: i64, exp: i64, sp: i64, monstro: u32, nivel: i32, sorteio: f32 },
+}
+
+/// `gnpc_imp::DispatchExp` (`npc.cpp:1515-1716`) + `gplayer_imp::ReceiveGroupExp`
+/// (`player.cpp:2713-2811`) + `player_team::DispatchExp` (`playerteam.cpp:1530-1570`).
 ///
-/// `gnpc_imp::DispatchExp` (`npc.cpp:1515`): cada um recebe `exp × dano / total`, com o total
-/// nunca menor que a vida máxima do monstro; depois `gplayer_imp::ReceiveExp`
-/// (`player.cpp:2813-2829`) aplica o ajuste da diferença de nível e arredonda (`+ 0.5`).
-/// Devolve `(exp, sp)`.
-pub fn parte_do_abate(m: &MonsterEntity, quem: i64, nivel_do_jogador: i32, tabela: &TabelaDeProgressao) -> (i64, i64) {
-    let total: i64 = m.danos.iter().map(|d| d.1).sum();
-    let Some(dano) = m.danos.iter().find(|d| d.0 == quem).map(|d| d.1) else {
-        return (0, 0);
-    };
-    let base = total.max(m.max_hp).max(1) as f32;
-    let fator = dano as f32 / base;
-    let exp = (m.exp as f32 * fator + 0.5) as i64;
-    let sp = (m.sp as f32 * fator + 0.5) as i64;
-    let ajuste = tabela.ajuste(nivel_do_jogador - m.level);
-    ((exp as f32 * ajuste.exp + 0.5) as i64, (sp as f32 * ajuste.sp + 0.5) as i64)
+/// Quem está em equipe soma o dano à equipe; a equipe de maior dano (comparada ao dano
+/// equivalente de quem está só) leva o modelo do monstro para as missões de equipe. A parte de
+/// cada equipe vai a quem está a até 100 m do monstro — membros que bateram e os que não —,
+/// encolhida se algum dos que bateram está longe; multiplicada pelo ajuste da diferença entre o
+/// maior nível e o do monstro e, com menos de 20 níveis entre o maior e o menor, pelo bônus
+/// `SetTeamBonus(membros, classes)`; e dividida pelo nível (piso 20).
+///
+/// **Diferença conhecida:** o original grava a equipe no golpe (`damage_entry.team_id`); aqui
+/// vale a equipe na hora da morte. As classes da equipe (`CalcRaceCount`) são as dos membros
+/// neste mundo.
+pub fn repartir_abate(
+    m: &Abatido,
+    tabela: &TabelaDeProgressao,
+    quem: &std::collections::HashMap<i64, Participante>,
+    membros: impl Fn(u32) -> Vec<i64>,
+    sorteio: f32,
+) -> Vec<ParteDoAbate> {
+    if m.danos.is_empty() {
+        return Vec::new();
+    }
+    // Entradas na ordem do primeiro aparecimento: `Err(id)` sozinho, `Ok(grupo)` equipe.
+    let mut ordem: Vec<Result<u32, i64>> = Vec::new();
+    let mut dano_de: std::collections::HashMap<Result<u32, i64>, i64> = std::collections::HashMap::new();
+    let mut lista_de: std::collections::HashMap<u32, Vec<(i64, i64)>> = std::collections::HashMap::new();
+    let (mut total, mut maior, mut equipe_maior) = (0i64, -1i64, None::<u32>);
+    for &(id, dano) in m.danos {
+        let equivalente = if Some(id) == m.primeiro_atacante { dano + (m.max_hp >> 2) } else { dano };
+        total += dano;
+        let chave = match quem.get(&id).and_then(|p| p.grupo) {
+            Some(g) => Ok(g),
+            None => Err(id),
+        };
+        if !dano_de.contains_key(&chave) {
+            ordem.push(chave);
+        }
+        let d = dano_de.entry(chave).or_insert(0);
+        *d += dano;
+        match chave {
+            Ok(g) => {
+                lista_de.entry(g).or_default().push((id, dano));
+                if maior < *d {
+                    maior = *d;
+                    equipe_maior = Some(g);
+                }
+            }
+            Err(_) => {
+                if maior < equivalente {
+                    maior = equivalente;
+                    equipe_maior = None;
+                }
+            }
+        }
+    }
+    let fator = 1.0 / total.max(m.max_hp).max(1) as f32;
+    let perto = |p: &Participante| p.pos.distance_squared(&m.position) <= DISTANCIA_DA_EXP_DE_EQUIPE * DISTANCIA_DA_EXP_DE_EQUIPE;
+    let mut partes = Vec::new();
+    for chave in ordem {
+        let dano = dano_de[&chave];
+        let exp = (m.exp as f32 * fator * dano as f32 + 0.5) as i64;
+        let sp = (m.sp as f32 * fator * dano as f32 + 0.5) as i64;
+        if exp <= 0 {
+            continue;
+        }
+        match chave {
+            Err(id) => {
+                let Some(p) = quem.get(&id) else { continue };
+                let a = tabela.ajuste(p.nivel - m.level);
+                partes.push(ParteDoAbate::Sozinho { id, exp: (exp as f32 * a.exp + 0.5) as i64, sp: (sp as f32 * a.sp + 0.5) as i64 });
+            }
+            Ok(g) => {
+                let (monstro, s) = if equipe_maior == Some(g) { (m.template_id, sorteio) } else { (0, 0.0) };
+                partes.extend(partilhar_na_equipe(m, tabela, quem, &membros(g), &lista_de[&g], dano, exp, sp, monstro, s, &perto));
+            }
+        }
+    }
+    partes
+}
+
+/// `ReceiveGroupExp` + `player_team::DispatchExp`.
+#[allow(clippy::too_many_arguments)]
+fn partilhar_na_equipe(
+    m: &Abatido,
+    tabela: &TabelaDeProgressao,
+    quem: &std::collections::HashMap<i64, Participante>,
+    equipe: &[i64],
+    lista: &[(i64, i64)],
+    dano_da_equipe: i64,
+    mut exp: i64,
+    mut sp: i64,
+    monstro: u32,
+    sorteio: f32,
+    perto: &impl Fn(&Participante) -> bool,
+) -> Vec<ParteDoAbate> {
+    let fator = 1.0 / dano_da_equipe.max(1) as f32;
+    let mut recebem: Vec<(i64, i32)> = Vec::new();
+    let mut dano_perto = 0i64;
+    for &(id, dano) in lista {
+        if let Some(p) = quem.get(&id).filter(|p| perto(p)) {
+            dano_perto += dano;
+            if !recebem.iter().any(|r| r.0 == id) {
+                recebem.push((id, p.nivel));
+            }
+        }
+    }
+    if dano_perto == 0 || recebem.is_empty() {
+        return Vec::new();
+    }
+    if dano_perto < dano_da_equipe {
+        let f = fator * dano_perto as f32;
+        exp = (f * exp as f32 + 0.5) as i64;
+        sp = (f * sp as f32 + 0.5) as i64;
+    }
+    for &id in equipe {
+        if recebem.iter().any(|r| r.0 == id) {
+            continue;
+        }
+        if let Some(p) = quem.get(&id).filter(|p| perto(p)) {
+            recebem.push((id, p.nivel));
+        }
+    }
+    let soma: i32 = recebem.iter().map(|r| r.1.max(NIVEL_MINIMO_NA_PARTILHA)).sum();
+    let maior = recebem.iter().map(|r| r.1).max().unwrap_or(0);
+    let menor = recebem.iter().map(|r| r.1).min().unwrap_or(0);
+    if soma <= 0 {
+        return Vec::new();
+    }
+    let a = tabela.ajuste(maior - m.level);
+    let (mut ae, mut asp) = (a.exp, a.sp);
+    if maior - menor < 20 {
+        let mut classes: Vec<i32> = equipe.iter().filter_map(|id| quem.get(id)).map(|p| p.classe & 0x1F).collect();
+        classes.sort_unstable();
+        classes.dedup();
+        let (be, bs) = tabela.bonus_de_equipe(recebem.len(), classes.len());
+        ae *= be;
+        asp *= bs;
+    }
+    exp = (exp as f32 * ae + 0.5) as i64;
+    sp = (sp as f32 * asp + 0.5) as i64;
+    let fator = 1.0 / soma as f32;
+    recebem
+        .into_iter()
+        .map(|(id, nivel)| {
+            let f = nivel.max(NIVEL_MINIMO_NA_PARTILHA) as f32 * fator;
+            ParteDoAbate::EmEquipe {
+                id,
+                exp: (exp as f32 * f + 0.5) as i64,
+                sp: (sp as f32 * f + 0.5) as i64,
+                monstro,
+                nivel: m.level,
+                sorteio,
+            }
+        })
+        .collect()
 }
 
 /// O dono do abate: maior dano, com o primeiro atacante valendo `max_hp/4` a mais
@@ -198,6 +392,62 @@ pub fn renascer(p: &mut PlayerEntity, dados: &GameDataManager, morto_por_jogador
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn participante(nivel: i32, classe: i32, x: f32, grupo: Option<u32>) -> Participante {
+        Participante { nivel, classe, pos: pw_core::Vector3 { x, y: 0.0, z: 0.0 }, grupo }
+    }
+
+    fn abatido(danos: &[(i64, i64)]) -> Abatido<'_> {
+        Abatido {
+            danos,
+            primeiro_atacante: None,
+            max_hp: 1000,
+            exp: 1000,
+            sp: 100,
+            level: 30,
+            template_id: 77,
+            position: pw_core::Vector3 { x: 0.0, y: 0.0, z: 0.0 },
+        }
+    }
+
+    fn tabela() -> TabelaDeProgressao {
+        TabelaDeProgressao::com_ajuste_uniforme(pw_data_loader::progressao::AjusteDeNivel { exp: 1.0, sp: 1.0, ..Default::default() })
+    }
+
+    #[test]
+    fn sozinho_recebe_pela_fracao_do_dano_com_o_ajuste_de_nivel() {
+        let quem = std::collections::HashMap::from([(1, participante(30, 0, 0.0, None)), (2, participante(30, 1, 0.0, None))]);
+        let danos = [(1, 600), (2, 400)];
+        let p = repartir_abate(&abatido(&danos), &tabela(), &quem, |_| vec![], 0.5);
+        assert_eq!(p, vec![ParteDoAbate::Sozinho { id: 1, exp: 600, sp: 60 }, ParteDoAbate::Sozinho { id: 2, exp: 400, sp: 40 }]);
+    }
+
+    #[test]
+    fn a_equipe_reparte_por_nivel_a_100_m_e_a_de_maior_dano_leva_o_monstro() {
+        // Equipe 9: 1 (nível 30) e 2 (nível 10, piso 20) bateram; 3 não bateu mas está a 10 m;
+        // 4 está a 150 m. O 5, sozinho, bateu menos que a equipe.
+        let quem = std::collections::HashMap::from([
+            (1, participante(30, 0, 0.0, Some(9))),
+            (2, participante(10, 1, 50.0, Some(9))),
+            (3, participante(30, 1, 10.0, Some(9))),
+            (4, participante(30, 2, 150.0, Some(9))),
+            (5, participante(30, 0, 0.0, None)),
+        ]);
+        let danos = [(1, 500), (5, 300), (2, 200)];
+        let p = repartir_abate(&abatido(&danos), &tabela(), &quem, |_| vec![1, 2, 3, 4], 0.25);
+        // 700 de exp e 70 de sp à equipe, divididos por 30/80, 20/80 e 30/80 (20 níveis entre o
+        // maior e o menor: sem `SetTeamBonus`).
+        let e = |id, exp, sp| ParteDoAbate::EmEquipe { id, exp, sp, monstro: 77, nivel: 30, sorteio: 0.25 };
+        assert_eq!(p, vec![e(1, 263, 26), e(2, 175, 18), e(3, 263, 26), ParteDoAbate::Sozinho { id: 5, exp: 300, sp: 30 }]);
+    }
+
+    #[test]
+    fn a_equipe_sem_o_maior_dano_vai_com_monstro_zero() {
+        let quem = std::collections::HashMap::from([(1, participante(30, 0, 0.0, Some(9))), (5, participante(30, 0, 0.0, None))]);
+        let danos = [(1, 300), (5, 700)];
+        let p = repartir_abate(&abatido(&danos), &tabela(), &quem, |_| vec![1], 0.25);
+        assert_eq!(p[0], ParteDoAbate::EmEquipe { id: 1, exp: 300, sp: 30, monstro: 0, nivel: 30, sorteio: 0.0 });
+    }
 
     #[test]
     fn a_regeneracao_acumula_oitavos() {

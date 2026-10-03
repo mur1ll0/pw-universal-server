@@ -11316,3 +11316,31 @@ comparação lado a lado.
       2.709; todo `levelup_addon` com tratador `refine_*`); `pedras_e_refino_155/126` com banco.
     - Falta: ver em jogo; furo de acessório (96), transferir refino (45), gerar o conteúdo da
       pedra na criação.
+
+164. **Sessão 2026-10-02: experiência de equipe, missões de equipe e item de missão pelo NPC.**
+    - Achado: o abate dava experiência só a quem bateu (`parte_do_abate`), sem grupo — e no
+      original o abate de missão de equipe **só** chega pela experiência do grupo
+      (`GM_MSG_TEAM_EXPERIENCE` → `OnTaskTeamKillMonster`, `player.cpp:1138-1170`). Por isso o bloco
+      começou pela repartição.
+    - Porte: `progressao::repartir_abate` (`gnpc_imp::DispatchExp`, `npc.cpp:1515-1716` +
+      `ReceiveGroupExp`, `player.cpp:2713-2811` + `player_team::DispatchExp`,
+      `playerteam.cpp:1530-1570`): dano somado por grupo, grupo de maior dano leva o modelo do
+      monstro, membros a 100 m, ajuste do maior nível, `SetTeamBonus` com menos de 20 níveis de
+      diferença, divisão por nível com piso 20. `parte_do_abate` removida (um caminho só).
+      `TabelaDeProgressao::bonus_de_equipe` lê `team_adjust` e `team_profession_adjust` (/20).
+    - Motor: `abateu_monstro_em_equipe` e o teste de `bTeam` no `conferir_abate`
+      (`TaskTempl.inl:1985-1987`); `AwardNotifyTeamMem` (falha e sucesso, uma vez por entrada,
+      `TASK_STATE_AWARD_NOTIFY_TEAM` 0x10) e `forcar_pela_equipe` (`OnTaskForceSucc/Fail`). O aviso
+      entre jogadores vai por uma fila no `Contexto` que o `com_contexto` entrega depois de gravar
+      (o antigo virou `com_contexto_bruto`). `tasks.data`: `m_bAllFail/CapFail/CapSucc/fSuccDist`
+      (v129 683–686, `m_bAllSucc` 701; v55 0x17f–0x182, sem `m_bAllSucc`).
+    - Serviço 8: `NPC_TASK_MATTER_SERVICE` em `ServicosDoNpc`, `task_matter_provider` (4 B, erro 19)
+      e `itens_do_npc` (`OnNPCDeliverTaskItem`, `TaskServer.cpp:706-760`).
+    - 1.2.6 (`gs` e `libtask.so`): distância 10000, piso 0x13, `_team_adjust` de 7 entradas e
+      classes /20 com 9 (`__LoadDataFromDataMan`, VA 0x80e6e3a-0x80e6eaa), `CheckKillMonster` com a
+      mesma regra de `bTeam` (`+4+0x176`), `AwardNotifyTeamMem` sem `m_bAllSucc`, serviço 8 igual.
+    - Testes: repartição (3), motor (abate em equipe, aviso à equipe, serviço 8), dados reais
+      (bônus 1,0/1,2/2,1 nos dois realms; campos de equipe só em missões de equipe; 18 e 14 NPCs com
+      o serviço 8) e, com banco, o membro que não bateu recebendo experiência.
+    - Achado não corrigido: o convite de grupo não limita o tamanho (10 no 1.5.5, 6 no 1.2.6).
+

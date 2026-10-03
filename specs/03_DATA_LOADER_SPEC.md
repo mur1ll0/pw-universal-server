@@ -91,6 +91,8 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 | `WEAPON/ARMOR/DECORATION_ESSENCE` (faixas, `addons`/`uniques`, probabilidades de furo e de nº de addons) | `addons.rs` (`geracao`) | sorteio do equipamento no drop (B53) |
 | `STONE_ESSENCE` | `manager.rs` (`pedras`) | addon da pedra na arma/armadura/acessório (B53) |
 | `WEAPON/ARMOR/DECORATION_ESSENCE` (`level`, `levelup_addon`, `material_need`, `id_sub_type`), `STONE_ESSENCE` (grau, cor, `install_price`, `uninstall_price`, addons), `REFINE_TICKET_ESSENCE`, `DECORATION_SUB_TYPE.equip_mask`, `EQUIP_MAKE_HOLE_CONFIG` 2013 | `refino.rs` (`GameDataManager::refino`) | refino, incrustar, remover pedras e furar (B163, `testado` em `tests/refino_do_realm.rs`: 155 = 190 pedras, 24 só de acessório, 55 talismãs, 5.101 refináveis; 126 = 125 pedras, 19 talismãs, 2.709 refináveis, sem a tabela de furos e sem o item 21043). Todo `levelup_addon` dos dois realms tem tratador `refine_*` |
+| `NPC_ESSENCE` → `NPC_TASK_MATTER_SERVICE` (B164) | `servicos.rs` (`itens_de_missao`, `missoes_com_item`) | serviço 8: 16 × `{id_task, 4 × {id_matter, num_matter}}`; 155 = 18 NPCs/21 missões, 126 = 14/16 (`tests/servicos_do_realm.rs`) |
+| `PARAM_ADJUST_CONFIG` → `team_adjust`, `team_profession_adjust` (B164) | `progressao.rs` (`bonus_de_equipe`) | bônus de equipe por membros e por classes (/20); 1,0 / 1,2 / 2,1 para 1/2/6 membros nos dois realms |
 | `NPC_ESSENCE` (`id_install_service`, `id_uninstall_service`, `combined_services & 0x4000`) | `servicos.rs` (`incrustar`, `remover_pedras`, `refinar`) | quem oferece os serviços 10, 11 e 35 (`npcgenerator.cpp:596-604`, `:975-979`). **No layout v7 o campo em `+0x348` se chamava `id_goblin_skill_service` (nome herdado do v156) e foi renomeado para `combined_services` no B163**: o `gs` 1.2.6 testa nele os bits 0x400–0x8000 (`npc_stubs_manager::LoadTemplate`, VA 0x80eff76-0x80f0020) |
 | **não ligadas** | — | `NPC_SELL_SERVICE` (lista de venda), `NPC_TRANSMIT_SERVICE` (teleporte por NPC) |
 
@@ -117,6 +119,11 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
   155: 1.058 missões com horário, 1.227 com entrega em zona, 3.136 de chegar a lugar, 444 de
   equipe, 25 de facção, 227 com teleporte ao receber
   (`examples/missoes_por_sistema.rs`, `missoes_com_teleporte.rs`).
+- Lidos no B164 (`AwardNotifyTeamMem`): `m_bAllFail`/`m_bCapFail`/`m_bCapSucc`/`m_fSuccDist`
+  em 683/684/685/686 e `m_bAllSucc` em 701 no v129 (ordem do `ATaskTempl`, fechando com o 691 e o
+  702 já conferidos); no v55 em 0x17f/0x180/0x181/0x182 (o `libtask.so` 1.2.6 lê `this+4+…`, o
+  mesmo `+4` do `m_bTeamwork` em 0x176) e **sem `m_bAllSucc`**. Só missões de equipe os têm nos
+  dois realms (155: 148 capSucc, 141 allFail, 84 capFail, 2 allSucc; 126: 40, 6, 2).
 - Para o motor de missões (spec 05 §10) também: as flags de `CheckPrerequisite`/`RecursiveAward`
   (`m_bParentAlsoFail/Succ`, `m_bCanRedoAfterFailure`, `m_bClearAsGiveUp`, `m_lAvailFrequency`,
   `m_bAccountTaskLimit`, `m_bRoleTaskLimit`, `m_bHidden`, `m_bDisplayInTitleTaskUI`,

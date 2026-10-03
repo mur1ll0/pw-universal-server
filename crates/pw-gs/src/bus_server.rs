@@ -4380,9 +4380,7 @@ impl BusServer {
 
             servico::ACEITAR_MISSAO => self.aceitar_missao(roleid, c).await,
             servico::ENTREGAR_MISSAO => self.entregar_missao(roleid, c).await,
-            servico::ITEM_DE_MISSAO => {
-                debug!("mundo: {roleid} pediu item de missão ao NPC (serviço ainda não tratado)");
-            }
+            servico::ITEM_DE_MISSAO => self.itens_de_missao_do_npc(roleid, c, envio).await,
 
             servico::TELEPORTAR => self.teleportar_pela_transportadora(roleid, c, envio).await,
             servico::APRENDER_HABILIDADE => self.aprender(roleid, c).await,

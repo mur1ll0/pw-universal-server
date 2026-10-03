@@ -53,6 +53,13 @@ pub struct ServicosDoNpc {
     /// 1.2.6 o mesmo bit, lido em `NPC_ESSENCE+0x348` (`npc_stubs_manager::LoadTemplate`, VA
     /// 0x80efff8) — o campo que o layout v7 chama `combined_services` desde o B163.
     pub refinar: bool,
+    /// `NPC_TASK_MATTER_SERVICE.tasks[16]` (via `id_task_matter_service`) — serviço 8, item de
+    /// missão pelo NPC: `(id_task, [(id_matter, num_matter); 4])` **na ordem do arquivo**, zeros
+    /// inclusive (`OnNPCDeliverTaskItem` para no primeiro `id_task` 0, `TaskServer.cpp:706-760`).
+    pub itens_de_missao: Vec<(u32, [(u32, u32); 4])>,
+    /// As missões do serviço 8, sem zeros e ordenadas (`npcgenerator.cpp:576-593` +
+    /// `binary_search` do `task_matter_provider::TryServe`).
+    pub missoes_com_item: Vec<u32>,
 }
 
 /// Uma opção do serviço de restauração de atributos (`npc_statement::__reset_prop`,
@@ -116,6 +123,7 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
     let esquecimentos = por_id(g, "NPC_PETFORGETSKILL_SERVICE");
     let ensinos_de_mascote = por_id(g, "NPC_PETLEARNSKILL_SERVICE");
     let restauracoes = por_id(g, "NPC_RESETPROP_SERVICE");
+    let itens = por_id(g, "NPC_TASK_MATTER_SERVICE");
     let preco_e_item = |r: Option<&Record>| r.map(|r| (i(r, "price").max(0), i(r, "id_object_need").max(0)));
     g.get("NPC_ESSENCE")
         .iter()
@@ -138,8 +146,27 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
                 incrustar: i(npc, "id_install_service") != 0,
                 remover_pedras: i(npc, "id_uninstall_service") != 0,
                 refinar: i(npc, "combined_services") & 0x4000 != 0,
+                itens_de_missao: itens_de_missao(itens.get(&i(npc, "id_task_matter_service"))),
+                missoes_com_item: Vec::new(),
             };
+            let mut s = s;
+            s.missoes_com_item = s.itens_de_missao.iter().map(|e| e.0).filter(|&id| id != 0).collect();
+            s.missoes_com_item.sort_unstable();
             Some((id as u32, s))
+        })
+        .collect()
+}
+
+fn itens_de_missao(r: Option<&Record>) -> Vec<(u32, [(u32, u32); 4])> {
+    let Some(r) = r else { return Vec::new() };
+    (1..=16)
+        .map(|k| {
+            let mut m = [(0u32, 0u32); 4];
+            for (j, x) in m.iter_mut().enumerate() {
+                let p = format!("tasks_{k}_taks_matters_{}_", j + 1);
+                *x = (i(r, &format!("{p}id_matter")).max(0) as u32, i(r, &format!("{p}num_matter")).max(0) as u32);
+            }
+            (i(r, &format!("tasks_{k}_id_task")).max(0) as u32, m)
         })
         .collect()
 }

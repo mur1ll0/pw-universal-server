@@ -155,3 +155,28 @@ fn as_missoes_de_gatilho_por_morte() {
         assert_eq!(t.tasks[&990].pre_tasks, vec![923], "{realm}");
     }
 }
+
+/// B164 — `m_bAllFail`, `m_bCapFail`, `m_bCapSucc`, `m_fSuccDist` e `m_bAllSucc` (só v129): só em
+/// missões de equipe, e a distância nunca negativa.
+#[test]
+fn os_campos_de_sucesso_e_falha_da_equipe_so_aparecem_em_missao_de_equipe() {
+    for realm in ["realm_155", "realm_126"] {
+        let Some(d) = ler(realm) else { continue };
+        let (mut equipe, mut cap_succ, mut all_fail, mut cap_fail, mut all_succ, mut fora) = (0, 0, 0, 0, 0, 0);
+        for t in d.tasks.values() {
+            let algum = t.capitao_sucesso || t.todos_falham || t.capitao_falha || t.todos_sucesso;
+            if t.em_equipe {
+                equipe += 1;
+            } else if algum {
+                fora += 1;
+            }
+            cap_succ += t.capitao_sucesso as u32;
+            all_fail += t.todos_falham as u32;
+            cap_fail += t.capitao_falha as u32;
+            all_succ += t.todos_sucesso as u32;
+            assert!(t.distancia_do_sucesso >= 0.0 && t.distancia_do_sucesso.is_finite(), "{realm}: {} com distância {}", t.id, t.distancia_do_sucesso);
+        }
+        eprintln!("{realm}: {equipe} de equipe; capSucc {cap_succ}, allFail {all_fail}, capFail {cap_fail}, allSucc {all_succ}; marcadas sem ser de equipe {fora}");
+        assert!(cap_succ + all_fail + cap_fail > 0, "{realm}: nenhuma missão com aviso à equipe");
+    }
+}

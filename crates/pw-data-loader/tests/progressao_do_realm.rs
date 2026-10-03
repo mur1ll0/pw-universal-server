@@ -66,3 +66,23 @@ fn o_distrito_do_nascimento_no_161_tem_ponto_de_cidade_no_proprio_161() {
     let e = d.distrito_em(-712.9, -364.4, 161).expect("o nascimento está num distrito");
     assert_eq!(e.mapa_do_ponto, 161);
 }
+
+/// B164 — `_team_adjust` e `_team_race_adjust` (/20) do `PARAM_ADJUST_CONFIG` dos dois realms.
+#[test]
+fn o_bonus_de_equipe_vem_do_param_adjust_nos_dois_realms() {
+    for realm in ["realm_155", "realm_126"] {
+        let caminho = format!("{}/../../data/{realm}/config/elements.data", env!("CARGO_MANIFEST_DIR"));
+        let Ok(bytes) = std::fs::read(&caminho) else {
+            eprintln!("sem {caminho}: pulado");
+            continue;
+        };
+        let e = pw_data_loader::generic_elements::load_elements_data_auto(&bytes).expect("elements");
+        let t = pw_data_loader::TabelaDeProgressao::carregar(&e);
+        let (sozinho, _) = t.bonus_de_equipe(1, 1);
+        let (dois, _) = t.bonus_de_equipe(2, 2);
+        let (seis, _) = t.bonus_de_equipe(6, 3);
+        eprintln!("{realm}: bônus 1/1 = {sozinho}, 2/2 = {dois}, 6/3 = {seis}");
+        assert!(sozinho > 0.0, "{realm}: equipe de um sem bônus");
+        assert!(seis >= dois, "{realm}: o bônus não cresce com a equipe");
+    }
+}

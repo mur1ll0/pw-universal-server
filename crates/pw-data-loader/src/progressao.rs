@@ -44,6 +44,14 @@ pub struct TabelaDeProgressao {
     exp_do_mascote: Vec<i64>,
     ajuste: Vec<AjusteDeNivel>,
     perda_na_morte: Vec<f32>,
+    /// `_team_adjust[n]` (exp, sp) por número de membros que recebem
+    /// (`playertemplate.cpp:340-344`; no `gs` 1.2.6 `__LoadDataFromDataMan` copia de
+    /// `PARAM_ADJUST+0x1c4` para `this+0x1614`, VA 0x80e6e3a-0x80e6e6f).
+    ajuste_de_equipe: Vec<(f32, f32)>,
+    /// `_team_race_adjust[n]` (exp, sp) por número de classes distintas na equipe: o
+    /// `team_profession_adjust` **dividido por 20** (`playertemplate.cpp:346-350`; `fdiv` por
+    /// 20,0 em VA 0x80e6ea2 no `gs` 1.2.6).
+    ajuste_por_classes: Vec<(f32, f32)>,
     /// Veio do `elements.data` (e não do padrão do construtor).
     pub do_arquivo: bool,
 }
@@ -55,6 +63,9 @@ impl Default for TabelaDeProgressao {
             exp_do_mascote: (0..=NIVEL_MAXIMO_DO_JOGO as i64).map(|i| i * i * 500).collect(),
             ajuste: vec![AjusteDeNivel::default(); MAX_LEVEL_DIFF + 1],
             perda_na_morte: vec![0.05; 256],
+            // Neutro para teste (1 + 0): o original zera e só o arquivo preenche.
+            ajuste_de_equipe: vec![(1.0, 1.0); 11],
+            ajuste_por_classes: vec![(0.0, 0.0); 13],
             do_arquivo: false,
         }
     }
@@ -148,6 +159,11 @@ impl TabelaDeProgressao {
                 t.ajuste[j as usize] = lad;
                 j -= 1;
             }
+            // As colunas que o layout tiver: 11 de equipe nos dois; de classes, 11 no v156 e 9
+            // no v7 (`USER_CLASS_COUNT + 1`; o 1.2.6 compara com 8, VA 0x80e6e84).
+            let par = |p: &str| (adj.contains_key(&format!("{p}adjust_exp"))).then(|| (f(adj, &format!("{p}adjust_exp")), f(adj, &format!("{p}adjust_sp"))));
+            t.ajuste_de_equipe = (1..).map_while(|k| par(&format!("team_adjust_{k}_"))).collect();
+            t.ajuste_por_classes = (1..).map_while(|k| par(&format!("team_profession_adjust_{k}_"))).map(|(e, s)| (e / 20.0, s / 20.0)).collect();
             t.do_arquivo = true;
         }
 
@@ -201,6 +217,15 @@ impl TabelaDeProgressao {
             return self.ajuste[MAX_LEVEL_DIFF - 1];
         }
         self.ajuste[idx]
+    }
+
+    /// `player_template::SetTeamBonus` (`playertemplate.h:375-383`): o multiplicador de equipe,
+    /// `_team_adjust[membros] + _team_race_adjust[classes]`, para exp e sp. Índice fora da
+    /// tabela vale o último.
+    pub fn bonus_de_equipe(&self, membros: usize, classes: usize) -> (f32, f32) {
+        let pega = |v: &Vec<(f32, f32)>, i: usize| v.get(i).or(v.last()).copied().unwrap_or((0.0, 0.0));
+        let (a, b) = (pega(&self.ajuste_de_equipe, membros), pega(&self.ajuste_por_classes, classes));
+        (a.0 + b.0, a.1 + b.1)
     }
 
     /// `GetResurrectExpReduce(sec_level)` — fração da experiência do nível perdida ao

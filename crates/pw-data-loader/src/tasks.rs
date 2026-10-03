@@ -345,6 +345,18 @@ pub struct TaskTemplate {
     pub em_equipe: bool,
     /// `m_bRcvByTeam` — entregue à equipe inteira pelo capitão.
     pub recebida_pela_equipe: bool,
+    /// `m_bAllFail` — um membro falha, a equipe toda falha (`AwardNotifyTeamMem`).
+    pub todos_falham: bool,
+    /// `m_bCapFail` — o capitão falha, a equipe toda falha.
+    pub capitao_falha: bool,
+    /// `m_bCapSucc` — o capitão conclui, a equipe toda conclui.
+    pub capitao_sucesso: bool,
+    /// `m_fSuccDist` — no sucesso, só os membros com distância **ao quadrado** até isto (0 = sem
+    /// limite; o original compara `x²+y²+z²` direto com o campo).
+    pub distancia_do_sucesso: f32,
+    /// `m_bAllSucc` — um membro conclui, a equipe toda conclui. Não existe no v55: o
+    /// `AwardNotifyTeamMem` do `libtask.so` 1.2.6 (0xd8be) só lê `m_bCapSucc`.
+    pub todos_sucesso: bool,
     /// `m_bDelvInZone` — só se aceita dentro de uma região.
     pub entrega_em_zona: bool,
     /// `m_ulPremise_Faction` — exige facção.
@@ -478,6 +490,15 @@ mod v129 {
         pub const CLASSES_DISTINTAS: usize = 703;
         pub const CONJUGE: usize = 568;
         pub const RECEBIDA_PELA_EQUIPE: usize = 675;
+        /// `m_bAllFail`, `m_bCapFail`, `m_bCapSucc`, `m_fSuccDist` e `m_bAllSucc`, na ordem de
+        /// `ATaskTempl` (`TaskTempl.h`: depois de `m_bRcvByTeam` 675 vêm `m_bSharedTask`,
+        /// `m_bSharedAchieved`, `m_bCheckTeammate`, `m_fTeammateDist` 679, e o `m_bRcvChckMem`
+        /// 691 e o `m_bCoupleOnly` 702 já usados fecham a conta).
+        pub const TODOS_FALHAM: usize = 683;
+        pub const CAPITAO_FALHA: usize = 684;
+        pub const CAPITAO_SUCESSO: usize = 685;
+        pub const DISTANCIA_DO_SUCESSO: usize = 686;
+        pub const TODOS_SUCESSO: usize = 701;
         pub const COTASK: usize = 621;
         pub const TIPO_DE_PREMIO_SUCESSO: usize = 1099;
         pub const TIPO_DE_PREMIO_FALHA: usize = 1103;
@@ -1007,6 +1028,13 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
         missoes_exclusivas: lista_u32(b, 0x14d, u32_em(b, 0x149), 5),
         em_equipe: b[0x176] != 0,
         recebida_pela_equipe: b[0x177] != 0,
+        // `AwardNotifyTeamMem` do `libtask.so` 1.2.6 (0xd8be): `this+4+0x17f` (`m_bAllFail`),
+        // `+0x180` (`m_bCapFail`), `+0x181` (`m_bCapSucc`), `+0x182` (`m_fSuccDist`); o `+4` é o
+        // vtable, então são os mesmos deslocamentos no bloco (`m_bTeamwork` em 0x176).
+        todos_falham: b[0x17f] != 0,
+        capitao_falha: b[0x180] != 0,
+        capitao_sucesso: b[0x181] != 0,
+        distancia_do_sucesso: f32_em(b, 0x182),
         dinheiro_pedido: u32_em(b, 0x1b2),
         espera: u32_em(b, 0x1e2),
         tipo_de_premio_sucesso: u32_em(b, 0x1e6),
@@ -1201,6 +1229,11 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         cotask: u32_em(b, f::COTASK),
         em_equipe: flag(f::TEAMWORK),
         recebida_pela_equipe: flag(f::RECEBIDA_PELA_EQUIPE),
+        todos_falham: flag(f::TODOS_FALHAM),
+        capitao_falha: flag(f::CAPITAO_FALHA),
+        capitao_sucesso: flag(f::CAPITAO_SUCESSO),
+        distancia_do_sucesso: f32_em(b, f::DISTANCIA_DO_SUCESSO),
+        todos_sucesso: flag(f::TODOS_SUCESSO),
         entrega_em_zona: flag(f::ENTREGA_EM_ZONA),
         faccao: u32_em(b, f::FACCAO),
         papel_na_faccao: u32_em(b, f::PAPEL_NA_FACCAO) as i32,
@@ -1334,6 +1367,11 @@ impl TaskTemplate {
             cotask: 0,
             em_equipe: false,
             recebida_pela_equipe: false,
+            todos_falham: false,
+            capitao_falha: false,
+            capitao_sucesso: false,
+            distancia_do_sucesso: 0.0,
+            todos_sucesso: false,
             entrega_em_zona: false,
             faccao: 0,
             papel_na_faccao: 0,

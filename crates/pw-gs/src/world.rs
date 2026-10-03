@@ -1527,6 +1527,16 @@ impl WorldInstance {
             .unwrap_or_default()
     }
 
+    /// O id do grupo do jogador.
+    pub fn grupo_do_jogador(&self, quem: RoleId) -> Option<u32> {
+        self.grupo_de.get(&quem).copied()
+    }
+
+    /// Os membros de um grupo pelo id.
+    pub fn membros_do_grupo_por_id(&self, id: u32) -> Vec<RoleId> {
+        self.grupos.get(&id).map(|g| g.membros.clone()).unwrap_or_default()
+    }
+
     /// Quem lidera o grupo do jogador.
     pub fn lider_do_grupo(&self, quem: RoleId) -> Option<RoleId> {
         self.grupo_de

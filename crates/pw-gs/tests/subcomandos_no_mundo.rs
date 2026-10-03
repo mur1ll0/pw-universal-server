@@ -9769,3 +9769,56 @@ async fn pedras_e_refino_155() {
 async fn pedras_e_refino_126() {
     conferir_pedras_e_refino(GameVersion::V1_2_6).await;
 }
+
+/// B164 — experiência de equipe (`gnpc_imp::DispatchExp` → `ReceiveGroupExp` →
+/// `player_team::DispatchExp`): o líder mata o monstro sozinho no golpe, e o membro que não
+/// bateu, a menos de 100 m, também recebe a parte dele pelo nível. Antes, só quem batia recebia.
+#[tokio::test]
+async fn o_membro_da_equipe_que_nao_bateu_recebe_a_experiencia() {
+    let (mundo, addr, roleid, convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let _outro = entrar(&mundo, addr, convidado).await;
+    {
+        let mut m = mundo.write().await;
+        assert!(m.convidar_para_grupo(roleid, convidado));
+        assert!(m.aceitar_convite(convidado, roleid).is_some(), "o grupo não se formou");
+        let pos = m.players[&(roleid as i64)].position;
+        let nivel = m.players[&(roleid as i64)].level;
+        let o = m.players.get_mut(&(convidado as i64)).unwrap();
+        o.position = pos;
+        o.level = nivel;
+        let (monstro, _) = m.monsters.get_mut(&MONSTRO).unwrap();
+        monstro.hp = 1;
+        monstro.exp = 1000;
+        monstro.sp = 100;
+    }
+    let exp_antes = mundo.read().await.players[&(convidado as i64)].exp;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) })
+        .await
+        .unwrap();
+    receber(&mut link, 2).await;
+    let mut morreu = false;
+    for _ in 0..50 {
+        link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::NORMAL_ATTACK, &[0u8]) })
+            .await
+            .unwrap();
+        receber(&mut link, 3).await;
+        tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.hp == 0).await;
+        if mundo.read().await.monsters[&MONSTRO].0.hp == 0 {
+            morreu = true;
+            break;
+        }
+        mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
+    }
+    assert!(morreu, "o monstro de 1 de vida não morreu");
+    esperar_comando(&mut link, 36).await; // RECEIVE_EXP do líder
+    let mut recebeu = false;
+    for _ in 0..40 {
+        if mundo.read().await.players[&(convidado as i64)].exp > exp_antes {
+            recebeu = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(recebeu, "o membro que não bateu não recebeu experiência");
+}
