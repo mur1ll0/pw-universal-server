@@ -12188,7 +12188,7 @@
           "size": 4
         },
         {
-          "name": "id_goblin_skill_service",
+          "name": "combined_services",
           "type": "int32",
           "size": 4
         },

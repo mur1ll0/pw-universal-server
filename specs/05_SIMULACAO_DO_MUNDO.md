@@ -748,6 +748,43 @@ banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
 | demais serviços de NPC (teleporte, pedras, forja, decompor, item de missão) | `falta` | |
 | **armazém** (serviço 15, C2S 55–61) | `testado` (B147, 1.5.5 e 1.2.6) | `bus_server/armazem.rs`. Abrir (`trashbox_open_executor`, `serviceprovider.cpp:2026-2069`): `{u32 passwd_size; passwd}`; sessão em curso (golpe, produção, coleta, armazém) → `ERR_OTHER_SESSION_IN_EXECUTE` 33; senha não vazia → `ERR_PASSWD_NOT_MATCH` 35 (sem senha guardada, `CheckPassword` só aceita a vazia); responde `TRASHBOX_OPEN` com 16 slots (`TRASHBOX_BASE_SIZE`). Fechado ou `where`/conta fora → `ERR_TRASH_BOX_NOT_OPEN` 36; tamanho errado → `ERR_FATAL_ERR`. 55: a lista `IL_TRASH_BOX` (3), no 1.5.5 também `IL_TRASH_BOX2` (4) com 0 slots, `item_info` de cada um se `detail`, e `TRASHBOX_WEALTH`. 56/57 trocar/mover no armazém (`ExchangeItem`/`MoveItem`); 58 troca com a bolsa; 59/60 `MoveBetweenItemList` (junta até a pilha; `-1` → `ERR_FATAL_ERR`; índice fora do armazém em 60 retorna calado). 61 dinheiro: um dos dois valores e nunca mais do que há (`ERR_FATAL_ERR`); guardar corta em `TRASHBOX_MONEY_CAPACITY` 2e9; tirar além do teto da bolsa → `ERR_INVENTORY_IS_FULL` 7. Dinheiro do armazém em `characters.storehouse_money`. Andar, cancelar, atacar, conjurar, coletar ou sentar fecham (`TRASHBOX_CLOSE`, `session_use_trashbox::EndSession`). `falta`: senha do armazém (serviço 14), armazém da conta, armazém de materiais/roupas/cartas com slots, expansão, `_lock_inventory`, restrições de tipo do `VerifySpecTrashBox` (só valem nos armazéns especiais) |
 
+### 8.3 Refino, pedras e furos — `testado` (B163, sem teste em jogo)
+
+Serviços de NPC 10 (incrustar), 11 (remover as pedras), 35 (refinar) e 47 (furar), em
+`bus_server/pedras_e_refino.rs`; a regra pura em `refino.rs`; os dados em
+`pw-data-loader/src/refino.rs` (spec 03). Porte de `install/uninstall/refine_service/make_slot_executor`
+(`serviceprovider.cpp`) e de `EmbedChipToEquipment`, `ClearEmbed`, `RefineItemAddon`,
+`ItemMakeSlot`, `RefineAddon`, `MakeSlot`, `OnInsertChip`, `OnClearChips`, `AfterChipChanged`.
+
+- **Ordem do original:** item no slot com o tipo dito (senão recusa calada) → NPC sem o serviço
+  `ERR_SERVICE_UNAVILABLE` (14) → operação. O refino confere antes a recarga
+  `COOLDOWN_INDEX_REFINE` (22, 1000 ms, `SET_COOLDOWN` ao cliente; erro 54).
+- **Quem oferece:** 10 = `id_install_service`, 11 = `id_uninstall_service`, 35 =
+  `combined_services & 0x4000`, 47 = todo NPC no 1.5.5 (`if(1 || ...)`).
+- **Incrustar:** pedra de grau ≤ ao do equipamento e `IsStoneFit` com `combined_switch` 0 (a coluna
+  não existe no v156 nem no v7): arma e armadura sim, acessório não. Sem dinheiro para o
+  `install_price` → 16; o resto → 21. A pedra vai ao primeiro furo vazio, os addons dela entram com
+  `0x8000`, a máscara das pedras é recalculada; `EMBED_ITEM` e `SPEND_MONEY`. Os addons vêm das duas
+  listas gravadas na pedra ou, sem octetos (nossas pedras não têm), do `generate_addon` de
+  `id_addon_damage`/`id_addon_defence`.
+- **Remover:** soma o `uninstall_price` de cada pedra; sem pedra ou sem dinheiro, recusa calada;
+  senão zera os furos, tira os addons `0x8000` e manda só o `CLEAR_TESSERA`.
+- **Refinar:** `levelup_addon` e `material_need` do equipamento, Pedra Celestial 11208; talismã
+  (`REFINE_TICKET_ESSENCE`) soma `ext_succeed_prob` à chance de sucesso, `ext_reserved_prob` à de
+  cair um, e com `fail_reserve_level` troca a chance pela `fail_ext_succeed_prob[nível]` e faz a
+  falha não mudar nada. Tabelas `refine_table`/`refine_factor` iguais nas duas versões. Resultado
+  0/1/2/3 no `REFINE_RESULT`, item de volta (menos no 1), material e talismã saem com
+  `DROP_TYPE_USE` (11). Qualquer recusa → 92 sem gastar nada. O cabeçalho e a essência do bloco
+  ficam byte a byte (`ConteudoDeEquipamento::alterar_rabo`); `refine_level` do banco acompanha.
+- **Furar (só 1.5.5):** arma até 2 furos, armadura até 4, pelas tabelas
+  `weapon/armor_slot_material_count` com 21043 e depois 34232 (`DROP_TYPE_TASK`); sucesso responde
+  `ERROR_MESSAGE` 107 e o item. Acessório pelo 47 sempre erra (106 ou 25), como no original.
+- **1.2.6:** mesmos tamanhos, erros, comandos e tabelas; sem trava de segurança (não temos
+  nenhuma), o talismã não confere `binding_only`/`require_level_max`
+  (`WorldProtocol::talisma_confere_vinculo_e_grau`) e furar não existe (`furar_existe`, 14).
+- **Falta:** furo de acessório de verdade (serviço 96, `make_slot_for_decoration`), transferir
+  refino (45), trava de segurança, e gerar o conteúdo da pedra ao criá-la (`generate_stone`).
+
 ### 8.0 A barra de chi — `testado` (B69/B70/B73)
 
 O chi (a "fúria" do original, `_basic.ap`) **não existe até uma missão dar o teto**: é o

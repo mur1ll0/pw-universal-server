@@ -286,15 +286,42 @@ impl ConteudoDeEquipamento {
             // `IVTR_ESSENCE_ARROW` (`EC_IvtrTypes.h:235-242`).
             F::Municao(m) => i32s(&mut o, &[m.tipo, m.dano_extra, m.dano_extra_percentual, m.nivel_minimo_da_arma, m.nivel_maximo_da_arma]),
         }
+        self.escrever_rabo(&mut o);
+        o
+    }
+
+    /// `SaveSocketData` + `SaveAddOn` (`gs/item/equip_item.h:407-415`): furos, máscara das
+    /// pedras, as pedras, e os addons.
+    fn escrever_rabo(&self, o: &mut Vec<u8>) {
         o.extend_from_slice(&(self.furos.len() as i16).to_le_bytes());
         o.extend_from_slice(&self.mascara_das_pedras.to_le_bytes());
-        i32s(&mut o, &self.furos);
+        for v in &self.furos {
+            o.extend_from_slice(&v.to_le_bytes());
+        }
         o.extend_from_slice(&(self.addons.len() as i32).to_le_bytes());
         for a in &self.addons {
             o.extend_from_slice(&a.tipo.to_le_bytes());
-            i32s(&mut o, &a.args);
+            for v in &a.args {
+                o.extend_from_slice(&v.to_le_bytes());
+            }
         }
-        o
+    }
+
+    fn tamanho_do_rabo(&self) -> usize {
+        4 + 4 * self.furos.len() + 4 + self.addons.iter().map(|a| 4 + 4 * a.args.len()).sum::<usize>()
+    }
+
+    /// Lê o bloco gravado, deixa `f` mexer em furos, máscara e addons, e devolve o bloco com
+    /// o rabo novo e **o cabeçalho e a essência byte a byte como estavam** — o
+    /// `equip_item::OnRefreshItem` (`gs/item/equip_item.cpp:83-97`) regrava `_ess` intacta e
+    /// só muda o que vem depois. `None` se o bloco não fecha no último byte.
+    pub fn alterar_rabo<R>(bytes: &[u8], modelo: &FichaDoEquipamento, f: impl FnOnce(&mut Self) -> R) -> Option<(Vec<u8>, R)> {
+        let mut c = Self::ler(bytes, modelo)?;
+        let corpo = bytes.len() - c.tamanho_do_rabo();
+        let r = f(&mut c);
+        let mut o = bytes[..corpo].to_vec();
+        c.escrever_rabo(&mut o);
+        Some((o, r))
     }
 
     /// Lê um bloco gravado. `modelo` diz a família (a essência não se identifica sozinha:
@@ -453,6 +480,25 @@ mod testes {
         assert_eq!(lido, c);
         assert_eq!(lido.addons[1].id(), 1497);
         assert!(ConteudoDeEquipamento::ler(&b[..b.len() - 1], &arco()).is_none());
+    }
+
+    #[test]
+    fn alterar_o_rabo_preserva_cabecalho_e_essencia() {
+        let mut c = ConteudoDeEquipamento::novo(arco(), 2500, 3000);
+        c.furos = vec![0];
+        let mut b = c.escrever();
+        // Um byte da essência que a reescrita completa não reproduziria (`weapon_delay`).
+        b[26] = 7;
+        let (novo, _) = ConteudoDeEquipamento::alterar_rabo(&b, &arco(), |c| {
+            c.furos.push(0);
+            c.addons.push(AddonDoItem::novo(1497, vec![12, 1]));
+        })
+        .expect("alterar");
+        let corpo = b.len() - 12;
+        assert_eq!(&novo[..corpo], &b[..corpo]);
+        let lido = ConteudoDeEquipamento::ler(&novo, &arco()).expect("ler");
+        assert_eq!(lido.furos, vec![0, 0]);
+        assert_eq!(lido.addons, vec![AddonDoItem::novo(1497, vec![12, 1])]);
     }
 
     #[test]

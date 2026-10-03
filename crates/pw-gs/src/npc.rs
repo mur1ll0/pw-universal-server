@@ -72,6 +72,10 @@ pub mod servico {
     /// Atributos") com o item da opção: `SERVICE_INSERTER(..., 33)` (`serviceprovider.cpp:8754`);
     /// 33 também no `gs` 1.2.6 (`push 0x21` antes do `service_inserter`, VA 0x8105491).
     pub const RESTAURAR_ATRIBUTOS: i32 = 33;
+    /// `refine_service_executor` (35, `serviceprovider.cpp:8756`; `GP_NPCSEV_REFINE` no cliente).
+    pub const REFINAR: i32 = 35;
+    /// `make_slot_executor` (47, `serviceprovider.cpp:8768`; `GP_NPCSEV_MAKE_SLOT`). Só no 1.5.5.
+    pub const FURAR: i32 = 47;
 }
 
 /// O envelope do comando, com o corpo ainda por interpretar.

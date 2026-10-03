@@ -45,6 +45,14 @@ pub struct ServicosDoNpc {
     /// `NPC_RESETPROP_SERVICE.prop_entry[15]` — restauração de atributos, serviço 33
     /// ([`EntradaDeRestauracao`]).
     pub restauracao_de_atributos: Vec<EntradaDeRestauracao>,
+    /// `id_install_service` ≠ 0 → incrustar pedra, serviço 10 (`npcgenerator.cpp:596-599`).
+    pub incrustar: bool,
+    /// `id_uninstall_service` ≠ 0 → remover as pedras, serviço 11 (`npcgenerator.cpp:601-604`).
+    pub remover_pedras: bool,
+    /// `combined_services & 0x4000` → refinar, serviço 35 (`npcgenerator.cpp:975-979`). No `gs`
+    /// 1.2.6 o mesmo bit, lido em `NPC_ESSENCE+0x348` (`npc_stubs_manager::LoadTemplate`, VA
+    /// 0x80efff8) — o campo que o layout v7 chama `combined_services` desde o B163.
+    pub refinar: bool,
 }
 
 /// Uma opção do serviço de restauração de atributos (`npc_statement::__reset_prop`,
@@ -127,6 +135,9 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
                 esquecer_habilidade_de_mascote: preco_e_item(esquecimentos.get(&i(npc, "id_petforgetskill_service"))),
                 habilidades_de_mascote: lista(ensinos_de_mascote.get(&i(npc, "id_petlearnskill_service")), "id_skills_"),
                 restauracao_de_atributos: restauracao(restauracoes.get(&i(npc, "id_resetprop_service"))),
+                incrustar: i(npc, "id_install_service") != 0,
+                remover_pedras: i(npc, "id_uninstall_service") != 0,
+                refinar: i(npc, "combined_services") & 0x4000 != 0,
             };
             Some((id as u32, s))
         })

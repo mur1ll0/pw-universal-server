@@ -36,7 +36,7 @@ fn como_float(v: i32) -> f32 {
 
 /// `itemdataman::generate_addon` + `GenerateParam` do tratador. `None` para tratador sem
 /// porte — o addon não é gerado.
-fn gerar_addon(dados: &GameDataManager, id: u32) -> Option<AddonDoItem> {
+pub(crate) fn gerar_addon(dados: &GameDataManager, id: u32) -> Option<AddonDoItem> {
     let a = dados.addons.por_id.get(&id)?;
     let p = a.params;
     let args = match a.sorteio()? {

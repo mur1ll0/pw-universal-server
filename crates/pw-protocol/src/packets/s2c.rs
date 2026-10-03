@@ -2669,20 +2669,38 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando EMBED_ITEM (Comando 92) fundindo Pedra de Alma no equipamento
-    pub fn embed_item(equip_slot: u8, stone_id: i32) -> Self {
+    /// `EMBED_ITEM` (92) — `{ u8 chip_idx; u8 equip_idx; }`, 2 bytes (`common/protocol.h:1749-1754`,
+    /// `cmd_embed_item` do IR). O cliente tira uma pedra do slot `chip_idx` e pede de volta o
+    /// item do slot `equip_idx` (`CECHostPlayer::OnMsgHstEmbedItem`, `EC_HostMsg.cpp`). O `gs`
+    /// 1.2.6 escreve o mesmo (`Make<embed_item>::From(..., uchar, uchar)`, `push 0x5c`, VA 0x808f42f).
+    pub fn embed_item(chip_idx: u8, equip_idx: u8) -> Self {
         let mut stream = OctetsStream::new();
-        stream.write_u16_le(92);               // CMD_S2C_EMBED_ITEM = 92
-        stream.write_u8(equip_slot);
-        stream.write_i32_le(stone_id);
+        stream.write_u16_le(92);
+        stream.write_u8(chip_idx);
+        stream.write_u8(equip_idx);
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// Cria o comando CLEAR_TESSERA (Comando 93) limpando pedras de alma
-    pub fn clear_tessera(equip_slot: u8) -> Self {
+    /// `CLEAR_TESSERA` (93, `CLEAR_EMBEDDED_CHIP` no servidor) — `{ u16 equip_idx; size_t cost; }`,
+    /// 6 bytes (`common/protocol.h:1756-1761`). O cliente desconta `cost` sozinho e pede o item
+    /// de volta (`OnMsgHstClearTessera`). Igual no `gs` 1.2.6 (`From(..., ushort, uint)`, `push 0x5d`,
+    /// VA 0x80908f2).
+    pub fn clear_tessera(equip_idx: u16, cost: u32) -> Self {
         let mut stream = OctetsStream::new();
-        stream.write_u16_le(93);               // CMD_S2C_CLEAR_EMBEDDED_CHIP = 93
-        stream.write_u8(equip_slot);
+        stream.write_u16_le(93);
+        stream.write_u16_le(equip_idx);
+        stream.write_u32_le(cost);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `REFINE_RESULT` (251) — `{ int result; }`, 4 bytes (`common/protocol.h:2866-2870`): 0
+    /// sucesso, 1 falhou sem mudar, 2 caiu um nível, 3 voltou a zero (`RefineItemAddon`,
+    /// `gs/player.cpp:11762-11797`). O cliente passa a `CDlgEquipRefine::RefineResult`. Igual no
+    /// `gs` 1.2.6 (`push 0xfb`, VA 0x80929a7).
+    pub fn refine_result(result: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(251);
+        stream.write_i32_le(result);
         Self { data: stream.into_bytes().to_vec() }
     }
 

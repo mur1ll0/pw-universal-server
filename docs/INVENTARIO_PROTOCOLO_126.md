@@ -68,6 +68,8 @@ A coluna 1.5.5 é o tamanho nominal do IR, exceto OWN_EXT_PROP=196 (binário ins
 | 88 SKILL_PERFORM | skill_perform | 0×18 | variável / não fechado | skill_perform: 0 | sim (numérico) / pendente (variável) | skill_perform (comum) | crates/pw-gs/src/bus_server.rs:2093; full_interno.medidas.md:71 |
 | 90 SKILL_DATA | skill_data_from_records | 14×2, 74×1 | variável / não fechado | skill_data_from_records: 4+5n | sim (numérico) / pendente (variável) | skill_data_from_records (comum) | crates/pw-gs/src/bus_server.rs:3557; full_interno.medidas.md:72 |
 | 91 HOST_USE_ITEM | host_use_item | 8×11 | 8 | host_use_item: 8 | sim (numérico) / sim | host_use_item (comum) | crates/pw-gs/src/bus_server.rs:1725; full_interno.medidas.md:73 |
+| 92 EMBED_ITEM | embed_item | sem captura | 2 | gs 1.2.6 `Make<embed_item>(uchar,uchar)`: 2 | sim (gs 1.2.6, B163) / não | embed_item (comum) | crates/pw-gs/src/bus_server/pedras_e_refino.rs |
+| 93 CLEAR_TESSERA | clear_tessera | sem captura | 6 | gs 1.2.6 `Make<clear_embedded_chip>(ushort,uint)`: 6 | sim (gs 1.2.6, B163) / não | clear_tessera (comum) | crates/pw-gs/src/bus_server/pedras_e_refino.rs |
 | 94 COST_SKILL_POINT | cost_skill_point | 4×1 | 4 | cost_skill_point: 4 | sim (numérico) / sim | cost_skill_point (comum) | crates/pw-gs/src/bus_server/jogo.rs:1386; full_interno.medidas.md:75 |
 | 95 LEARN_SKILL | learn_skill | 8×1 | 8 | learn_skill: 8 | sim (numérico) / sim | learn_skill (comum) | crates/pw-gs/src/bus_server/jogo.rs:1390; full_interno.medidas.md:76 |
 | 96 OBJECT_TAKEOFF | object_takeoff | 4×5 | 4 | object_takeoff: 4 | sim (numérico) / sim | object_takeoff (comum) | crates/pw-gs/src/bus_server.rs:2991; full_interno.medidas.md:77 |
@@ -102,6 +104,7 @@ A coluna 1.5.5 é o tamanho nominal do IR, exceto OWN_EXT_PROP=196 (binário ins
 | 231 GAIN_PET | gain_pet | — | 196 | gain_pet: 4+blob (192 na chamada) | não observado / não medido | gain_pet (comum) | crates/pw-gs/src/bus_server/jogo.rs:1500; sem amostra |
 | 239 PET_ROOM | pet_room | 2×2, 198×1 | 2 | pet_room: 2+blob | sim (numérico) / não | pet_room (comum) | crates/pw-gs/src/bus_server.rs:3619; full_interno.medidas.md:138 |
 | 240 PET_ROOM_CAPACITY | pet_room_capacity | 4×4 | 4 | pet_room_capacity: 4 | sim (numérico) / sim | pet_room_capacity (comum) | crates/pw-gs/src/bus_server.rs:3601; full_interno.medidas.md:139 |
+| 251 REFINE_RESULT | refine_result | sem captura | 4 | gs 1.2.6 `Make<refine_result>(int)`: 4 | sim (gs 1.2.6, B163) / não | refine_result (comum) | crates/pw-gs/src/bus_server/pedras_e_refino.rs |
 | 253 PLAYER_CASH | player_cash | 4×4 | 4 | player_cash: 4 | sim (numérico) / sim | player_cash (comum) | crates/pw-gs/src/bus_server.rs:3239; full_interno.medidas.md:141 |
 | 277 SECURITY_PASSWD_CHECKED | security_passwd_checked | — | variável / não fechado | security_passwd_checked: 0 | não observado / não medido | security_passwd_checked (comum) | crates/pw-gs/src/bus_server.rs:3445; sem amostra |
 | 279 PLAYER_HP_STEAL | player_hp_steal | — | 4 | player_hp_steal: 4 | não observado / não medido | player_hp_steal (comum) | crates/pw-gs/src/bus_server.rs:2419; sem amostra |

@@ -190,6 +190,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("decompose_end", "DECOMPOSE_END"),
     ("embed_item", "EMBED_ITEM"),
     ("clear_tessera", "CLEAR_TESSERA"),
+    ("refine_result", "REFINE_RESULT"),
     ("object_takeoff", "OBJECT_TAKEOFF"),
     ("object_landing", "OBJECT_LANDING"),
     ("flysword_time", "FLYSWORD_TIME"),
@@ -256,8 +257,6 @@ const DELEGAM: &[&str] = &[
 /// **Esta lista só encolhe.** Quem resolver um caso tira o nome daqui.
 const LAYOUT_DIVERGE: &[&str] = &[
     "decompose_start",
-    "embed_item",
-    "clear_tessera",
     "flysword_time",
     "pariah_rise",
     "duel_result",

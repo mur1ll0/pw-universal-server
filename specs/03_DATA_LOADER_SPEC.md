@@ -89,7 +89,9 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 | `TASKDICE_ESSENCE` | `cartas.rs` (`GameDataManager::cartas`) | Carta da Sorte: 20 missões com probabilidade, `no_use_in_combat` (B53; 2.498 no 155) |
 | `EQUIPMENT_ADDON` + `specs/addons_155/addons.json` | `addons.rs` (`addons`) | parâmetros e tratador de cada addon (B53) |
 | `WEAPON/ARMOR/DECORATION_ESSENCE` (faixas, `addons`/`uniques`, probabilidades de furo e de nº de addons) | `addons.rs` (`geracao`) | sorteio do equipamento no drop (B53) |
-| `STONE_ESSENCE` | `manager.rs` (`pedras`) | addon da pedra na arma/armadura/acessório (B53; sem serviço de incrustar ainda) |
+| `STONE_ESSENCE` | `manager.rs` (`pedras`) | addon da pedra na arma/armadura/acessório (B53) |
+| `WEAPON/ARMOR/DECORATION_ESSENCE` (`level`, `levelup_addon`, `material_need`, `id_sub_type`), `STONE_ESSENCE` (grau, cor, `install_price`, `uninstall_price`, addons), `REFINE_TICKET_ESSENCE`, `DECORATION_SUB_TYPE.equip_mask`, `EQUIP_MAKE_HOLE_CONFIG` 2013 | `refino.rs` (`GameDataManager::refino`) | refino, incrustar, remover pedras e furar (B163, `testado` em `tests/refino_do_realm.rs`: 155 = 190 pedras, 24 só de acessório, 55 talismãs, 5.101 refináveis; 126 = 125 pedras, 19 talismãs, 2.709 refináveis, sem a tabela de furos e sem o item 21043). Todo `levelup_addon` dos dois realms tem tratador `refine_*` |
+| `NPC_ESSENCE` (`id_install_service`, `id_uninstall_service`, `combined_services & 0x4000`) | `servicos.rs` (`incrustar`, `remover_pedras`, `refinar`) | quem oferece os serviços 10, 11 e 35 (`npcgenerator.cpp:596-604`, `:975-979`). **No layout v7 o campo em `+0x348` se chamava `id_goblin_skill_service` (nome herdado do v156) e foi renomeado para `combined_services` no B163**: o `gs` 1.2.6 testa nele os bits 0x400–0x8000 (`npc_stubs_manager::LoadTemplate`, VA 0x80eff76-0x80f0020) |
 | **não ligadas** | — | `NPC_SELL_SERVICE` (lista de venda), `NPC_TRANSMIT_SERVICE` (teleporte por NPC) |
 
 ### 3.2 `tasks.data` — missões (`tasks.rs`)

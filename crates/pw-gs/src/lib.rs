@@ -15,6 +15,7 @@ pub mod navegacao;
 pub mod npc;
 pub mod politica;
 pub mod progressao;
+pub mod refino;
 pub mod server;
 pub mod world;
 

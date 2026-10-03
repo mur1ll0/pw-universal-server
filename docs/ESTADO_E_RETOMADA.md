@@ -109,9 +109,9 @@ v156, `tasks.data` 129, build 2569):
 - **Social:** fala, grupo.
 
 **O que falta no 1.5.5** (§5A): o sistema de Cartas de General (a caixa já dá a carta),
-serviços de refinar, furar e incrustar, os ~300 efeitos de habilidade sem porte, trava de PvP,
+os ~300 efeitos de habilidade sem porte, trava de PvP,
 resto do Daimon e troca de mapa entre contêineres (armazém, munição, coleta, produção e trava
-de PvP feitos em B144–B147; fôlego: o original não desconta). (O intérprete do `aipolicy.data` foi feito no B127.)
+de PvP feitos em B144–B147; refinar, incrustar, remover pedras e furar no B163; fôlego: o original não desconta). (O intérprete do `aipolicy.data` foi feito no B127.)
 
 **O que o 1.2.6 faz hoje** (realm `realm_126`, porta 29000): as **regras de jogo são as
 mesmas** — ficam no `pw-gs`, e o que muda por versão fica no `WorldProtocol` de
@@ -322,6 +322,7 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 
 | item | o que olhar |
 | :--- | :--- |
+| B163 | (os dois) **não publicado.** No NPC Ferreiro/Refinador: (1) **Incrustar** uma pedra numa arma com furo vazio → a pedra some da bolsa, o dinheiro cai o `install_price`, o tooltip da arma mostra a pedra e o atributo; pedra de grau maior que a arma → mensagem de não incrustar (21). (2) **Remover pedras** → furos vazios no tooltip e o custo descontado. (3) **Refinar** com Pedra Celestial (11208) → janela mostra sucesso/falha; +1 no nome em caso de sucesso; nível ≥1 e falha volta a +0; clicar duas vezes em menos de 1 s → "em recarga". (4) **Furar** (só 1.5.5) com pedras 21043 → "furo feito" e um furo a mais; no 1.2.6 não há a opção. Log: `mundo: <id> incrustou/removeu as pedras de/refinou/furou o item <tid>` |
 | B159 | **não publicado.** Painel de GM (Ctrl+G), conta com `gm_privileges` > 0: **Invencível** → mensagem fixa do cliente e monstro/jogador não tiram vida; de novo desliga. **Invisível** → some da tela do outro cliente, não consegue golpear; de novo, reaparece para ele. **Ir até jogador** / **Chamar jogador** com o id (inclusive entre os mapas 1, 161 e 169). **Criar monstro** (id, aparência 0, quantidade, vida em s) → nascem a até 6 m. Log: `grep -E "GM [0-9]+"` |
 | B69–B70 | chi: +5 por golpe, +15/s meditando, teto 99 sem aviso repetido |
 | B71 | poção sem tela de cultivo; recarga por família (vida, mana, antídoto) |
@@ -427,8 +428,9 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
    contado para a equipe, item de missão pelo NPC (serviço 8), coleta com missão
    (`task_in/out`). Facção recusa sempre (não há sistema de facção).
 2. **Munição:** sem flecha o golpe não é recusado e o bônus de dano da flecha não entra;
-   a compra na loja não confere a lista de venda do NPC. **Itens:** sem serviços de refinar,
-   fazer furo e incrustar; addons de habilidade/conjunto sem porte (B53).
+   a compra na loja não confere a lista de venda do NPC. **Itens:** refinar, incrustar, remover
+   pedras e furar feitos no B163 (spec 05 §8.3); faltam o furo de acessório (serviço 96),
+   transferir refino (45) e addons de habilidade/conjunto (B53).
 3. **Coleta:** sem recarga de 500 ms, sem interrupção por dano, exp/SP sem ajuste de nível.
 4. **Ataque normal sem animação, e o monstro atacado não reage** (B44 #6). A investigar —
    não medido.
@@ -558,6 +560,7 @@ capturas da VM 1.2.6 em `docs/evidencias/126/` (lidas com
 | habilidades | **testado**: tempos, mana, aprendizado, alcance e dano do `gs` 1.2.6 (B100, B101); `ENCHANT_RESULT` de 16 B com modificador em 2 bytes (B116, B118); `allow_forms` do construtor do `gs` (B120) | **65 roteiros herdados do 1.5.5 divergem do `gs` 1.2.6** (B115, ver abaixo); ver a 299 em jogo | `specs/05` §habilidades, `specs/habilidades_126/` |
 | mascote de combate | **testado** (B111–B116): `PET_ESSENCE` v7 pelo `gs`, invocar/recolher/HP/ataque com os tamanhos do 1.2.6, Curar Mascote só cura (sem `Rebirth` no 1.2.6) | ver em jogo | `specs/05` §8.2 |
 | comandos acrescentados depois do B76 no 1.5.5 | **conferidos** (B122) pelo validador do cliente e o `gs` 1.2.6: 163, 181, 198, 232–236, 252 conferem; **227 = 9 B** (sobrescrito); `info_player_1` com forma, cadáver, roupa e montado (`char cor, int id`); `self_info_1` com roupa; C2S 14 = `u8, u16` (sobrescrito) | voo (0x10) e efeitos visíveis (0x40) no B143; os demais bits são de sistemas que não existem | `specs/04` §4 |
+| refino e pedras (serviços 10, 11, 35) | **testado** (B163): tamanhos, erros, comandos 92/93/251 e tabelas de refino conferidos no `gs` 1.2.6; talismã sem `binding_only`/`require_level_max`; **furar (47) não existe** no `gs` 1.2.6 | ver em jogo | `specs/05` §8.3 |
 | sistemas que o 1.2.6 não tem | Daimon: `ELF_EXP` (283) omitido (B93); meditar não dá chi (B119); sem `Rebirth`/`Decregiondmg` (B115) | conferir cultivo e o que mais não existe no cliente 1.2.6, e omitir pelo trait | validador do cliente |
 | dados de mapa do `realm_126` | `.hmap`, `watermap/`, `movemap/`, `world_targets.sev`, `npcgen.data`, `precinct.sev` | todos fecham (B143, `tests/mapas_do_126.rs`) | `data/realm_126/config` |
 | publicação e teste em jogo | **publicado em 2026-09-26** com tudo até o B120 | o teste do Murillo com a Tsuko (roteiro no §3.3) | skill `pw-testar-e-publicar` |
@@ -598,8 +601,8 @@ grupo pelo `iFirstGen` (usa o do líder).
    `realm_126` fechando no último byte; (h) teto de 80 criaturas visíveis contra 220.
 3. **1.5.5 (§5A)** — em andamento. **Feitos (B144–B146):** munição, coleta, recurso no piso
    (Água Cristalizada), produção no NPC nas duas versões (pedido do Murillo de 2026-09-28), trava
-   de PvP; fôlego: o original não desconta (nada a portar); armazém (B147). **Faltam, nesta ordem:**
-   refinar/furar/incrustar; casos de missão recusados; troca de mapa entre contêineres (o
+   de PvP; fôlego: o original não desconta (nada a portar); armazém (B147); refinar, incrustar,
+   remover pedras e furar nas duas versões (B163). **Faltam, nesta ordem:** casos de missão recusados; troca de mapa entre contêineres (o
    teleporte por NPC já existe, B51); o resto do Daimon; Cartas de General; os ~300 efeitos de
    habilidade; as produções 2–5 e a decomposição.
 
@@ -813,3 +816,4 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 160 | 10-01 | diagnóstico das instâncias (masmorras) do original: chave por jogador/grupo, 20 min ocioso, 4 h de vida, relogar volta à cópia — nada implementado |
 | 161 | 10-01 | cultivo automático: robô em Lua no cliente, sem código no servidor; custo = conferir os C2S comuns e o `REVIVAL_AGREE` (87) |
 | 162 | 10-01 | monstro que "resetou" no 169: não há ódio infinito em masmorra; as quatro causas de desistência do original; `max_move_range` e o piso de 15 m divergem; motivo do reset não é registrado |
+| 163 | 10-02 | refinar (35), incrustar (10), remover pedras (11) e furar (47, só 1.5.5) portados nas duas versões; `EMBED_ITEM`/`CLEAR_TESSERA` corrigidos, `REFINE_RESULT` novo; `combined_services` do layout v7 renomeado |

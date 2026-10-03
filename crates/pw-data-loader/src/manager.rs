@@ -261,6 +261,8 @@ pub struct GameDataManager {
     pub geracao: crate::addons::TabelaDeGeracao,
     /// `STONE_ESSENCE`: pedra → (addon na arma, addon na armadura, addon no acessório).
     pub pedras: std::collections::HashMap<u32, (u32, u32, u32)>,
+    /// Refino, pedras, talismãs e furos de acessório — ver [`crate::refino`] (B163).
+    pub refino: crate::refino::DadosDeRefino,
     /// Recarga, conjuração e custo de aprender de cada habilidade — ver
     /// [`crate::habilidades`]. Só o 1.5.5 tem tabela; nas outras versões fica vazia.
     pub habilidades: crate::habilidades::TabelaDeHabilidades,
@@ -528,6 +530,7 @@ impl GameDataManager {
                     (i("ID") > 0).then(|| (i("ID"), (i("id_addon_damage"), i("id_addon_defence"), i("id_addon_decoration"))))
                 })
                 .collect();
+            self.refino = crate::refino::carregar(g);
             self.ovos_de_pet = crate::pet::carregar_ovos(g);
             self.modelos_de_mascote = crate::pet::carregar_modelos(g);
             self.comidas_de_mascote = crate::pet::carregar_comidas(g);

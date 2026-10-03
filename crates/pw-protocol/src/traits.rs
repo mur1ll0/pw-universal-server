@@ -57,6 +57,20 @@ pub trait WorldProtocol: Send + Sync {
         (5, 5, 5, 5)
     }
 
+    /// Se o serviço de furar (47, `make_slot_executor`, `gs/serviceprovider.cpp:4912-4950`)
+    /// existe. Todo NPC do 1.5.5 o tem (`if(1 || service_make_slot)`, `npcgenerator.cpp:2931`).
+    /// O 1.2.6 sobrescreve.
+    fn furar_existe(&self) -> bool {
+        true
+    }
+
+    /// Se o talismã de refino recusa equipamento não vinculado (`binding_only`) ou de grau acima
+    /// de `require_level_max` (`gplayer_imp::RefineItemAddon`, `gs/player.cpp:11703-11708`). O
+    /// 1.2.6 sobrescreve.
+    fn talisma_confere_vinculo_e_grau(&self) -> bool {
+        true
+    }
+
     /// Chi por batimento de 1 s meditando: `ModifyAP(15)` no `sit_down_filter::Heartbeat` do
     /// 1.5.5 (`gs/sitdown_filter.cpp:19-34`). O 1.2.6 sobrescreve.
     fn chi_por_meditacao(&self) -> i32 {

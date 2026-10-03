@@ -11285,3 +11285,34 @@ comparação lado a lado.
       porque a perseguição depende do mapa de movimento da caverna.
     - Spec 05 corrigida (os dois limites de perseguição). Sem mudança de código.
 
+
+163. **Sessão 2026-10-02: refinar, incrustar, remover pedras e furar (1.5.5 e 1.2.6).**
+    - Original 1.5.5: `install_executor` (10, `{u16 chip, u16 equip, int, int}` 12 B),
+      `uninstall_executor` (11, `{size_t, int}` 8 B), `refine_service_executor` (35, `{int, int,
+      int rt_index}` 12 B, recarga `COOLDOWN_INDEX_REFINE` 22 de 1000 ms) e `make_slot_executor`
+      (47, `{int, int}` 8 B, em todo NPC). Regras em `EmbedChipToEquipment`/`EmbedItem`/
+      `OnInsertChip`, `ClearEmbed`/`OnClearChips`, `RefineItemAddon`/`RefineAddon` (`refine_table`,
+      `refine_factor`, Pedra Celestial 11208) e `ItemMakeSlot`/`MakeSlot` (tabelas de material,
+      21043 e 34232). NPC sem o serviço → 14.
+    - `gs` 1.2.6 (desmontado com pyelftools + capstone): mesmos tamanhos, erros (0x15, 0x10, 0x36,
+      0x5c), comandos (`push 0x5c/0x5d/0xfb`) e as duas tabelas de refino valor a valor; o talismã
+      não confere `binding_only`/`require_level_max`; `EmbedItem` só arma e armadura; nenhum
+      símbolo de `MakeSlot` → furar não existe. O bit 0x4000 do refino é lido em
+      `NPC_ESSENCE+0x348`, que o layout v7 chamava `id_goblin_skill_service`: renomeado para
+      `combined_services` (`specs/elements_layouts/v7.json`).
+    - Código: `pw-data-loader/src/refino.rs` (dados), bandeiras `incrustar`/`remover_pedras`/`refinar`
+      em `ServicosDoNpc`, `ConteudoDeEquipamento::alterar_rabo` (regrava furos/addons mantendo
+      cabeçalho e essência byte a byte), `pw-gs/src/refino.rs` (regra pura),
+      `bus_server/pedras_e_refino.rs` (os quatro tratadores), ganchos `furar_existe` e
+      `talisma_confere_vinculo_e_grau` no `WorldProtocol` (v126 sobrescreve). `EMBED_ITEM`
+      escrevia `u8 + i32` (certo: `u8 chip, u8 equip`) e `CLEAR_TESSERA` não tinha o `cost`; os dois
+      saíram do `LAYOUT_DIVERGE`. `REFINE_RESULT` (251) novo.
+    - Decisões com evidência: `IsStoneFit` com `combined_switch` 0 (a coluna não existe no v156
+      nem no v7) → pedra não entra em acessório; acessório pelo 47 sempre erra (106/25), como no
+      original; nossas pedras não têm octetos, então os addons saem do `generate_addon` de
+      `id_addon_damage`/`id_addon_defence` (o que `generate_stone` gravaria).
+    - Testes: unitários de regra (7) e de listas da pedra; `tests/refino_do_realm.rs` com os dados
+      reais (155: 190 pedras, 24 só de acessório, 55 talismãs, 5.101 refináveis; 126: 125, 19,
+      2.709; todo `levelup_addon` com tratador `refine_*`); `pedras_e_refino_155/126` com banco.
+    - Falta: ver em jogo; furo de acessório (96), transferir refino (45), gerar o conteúdo da
+      pedra na criação.

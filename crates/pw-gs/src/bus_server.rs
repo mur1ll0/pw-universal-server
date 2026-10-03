@@ -63,6 +63,7 @@ mod gm;
 mod habilidades;
 mod jogo;
 mod mascote;
+mod pedras_e_refino;
 mod producao;
 mod restauracao;
 mod renascer;
@@ -4394,6 +4395,10 @@ impl BusServer {
                 self.aprender_habilidade_de_mascote(roleid, c).await
             }
             servico::RESTAURAR_ATRIBUTOS => self.restaurar_atributos(roleid, c, envio).await,
+            servico::INCRUSTAR_PEDRA => self.incrustar_pedra(roleid, c, envio).await,
+            servico::LIMPAR_PEDRAS => self.remover_pedras(roleid, c, envio).await,
+            servico::REFINAR => self.refinar(roleid, c, envio).await,
+            servico::FURAR => self.furar(roleid, c, envio).await,
             servico::RESTAURAR_PET => self.restaurar_mascote_em_ovo(roleid, c, envio).await,
 
             outro => {

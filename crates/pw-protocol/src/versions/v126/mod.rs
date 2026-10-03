@@ -77,6 +77,20 @@ impl WorldProtocol for V126Protocol {
         (5, 5, 3, 3)
     }
 
+    /// O `gs` 1.2.6 não tem `make_slot_executor`, `ItemMakeSlot` nem `MakeSlot` (nenhum símbolo),
+    /// e nenhum `service_inserter<..., make_slot_executor>`: furar não existe — o NPC responde
+    /// `ERR_SERVICE_UNAVILABLE` como a qualquer serviço que não tem.
+    fn furar_existe(&self) -> bool {
+        false
+    }
+
+    /// O `RefineItemAddon` do `gs` 1.2.6 (VA 0x807aa8a) lê do talismã só `ext_reserved_prob`
+    /// (+0x164), `ext_succeed_prob` (+0x168), `fail_reserve_level` (+0x16c) e as 12 chances
+    /// (+0x170) — nada de `binding_only` nem `require_level_max`.
+    fn talisma_confere_vinculo_e_grau(&self) -> bool {
+        false
+    }
+
     fn armazem(&self, pacote: S2CGamedataSend) -> S2CGamedataSend {
         // Sem o `where`/`is_accountbox` depois do cabeçalho (validador do cliente 1.2.6, casos
         // 131–138): o `gs` 1.2.6 tem um armazém só (`PlayerExchangeTrashItem(jj)`…).

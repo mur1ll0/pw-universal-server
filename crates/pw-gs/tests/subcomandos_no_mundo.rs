@@ -66,6 +66,8 @@ const RECEITA_DA_ARMA: i32 = 9002;
 const ARMA_GERADA: i32 = 9102;
 /// B152 — "Rest. Superior Total" do `realm_126` (opção 15 do serviço 10226: 100 em cada).
 const ITEM_DE_RESTAURACAO: i32 = 12764;
+/// B163 — a pedra do cenário (`STONE_ESSENCE` sintético, grau 1).
+const PEDRA: u32 = 900;
 /// O NPC de serviço do cenário, que entrega e recebe [`MISSAO_DO_NPC`] e ensina
 /// [`HABILIDADE_DO_TREINADOR`].
 const NPC: i64 = 0x8000_0101u32 as i32 as i64;
@@ -445,9 +447,41 @@ async fn montar(
                 vitalidade: 100,
                 energia: 100,
             }],
+            incrustar: true,
+            remover_pedras: true,
+            refinar: true,
             ..Default::default()
         },
     );
+    // B163 — refino e pedras: a arma 9102 refina com o addon 1497 (1 Pedra Celestial por vez) e
+    // a pedra 900 põe o addon 300 na arma.
+    dados.refino.equipamentos.insert(
+        ARMA_GERADA as u32,
+        pw_data_loader::refino::EquipamentoRefinavel {
+            familia: pw_data_loader::refino::Familia::Arma,
+            grau: 1,
+            addon_de_refino: 1497,
+            material: 1,
+            subtipo: 0,
+        },
+    );
+    dados.refino.pedras.insert(
+        PEDRA,
+        pw_data_loader::refino::Pedra {
+            grau: 1,
+            cor: 2,
+            preco_de_incrustar: 100,
+            preco_de_remover: 50,
+            addon_na_arma: 300,
+            addon_na_armadura: 301,
+        },
+    );
+    for (id, tratador, p0) in [(1497u32, "refine_damage", 12), (300, "enhance_damage_addon", 9)] {
+        dados.addons.por_id.insert(
+            id,
+            pw_data_loader::addons::DadosDoAddon { tratador: tratador.into(), num_params: 1, params: [p0, 0, 0] },
+        );
+    }
     dados.habilidades.por_id.insert(
         HABILIDADE_DO_TREINADOR as u32,
         serde_json::from_str(
@@ -9621,4 +9655,117 @@ async fn jogador_comum_nao_fica_invencivel() {
     .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!mundo.read().await.players[&(roleid as i64)].efeitos.gm_invencivel);
+}
+
+
+/// B163 — incrustar (10), refinar (35), remover as pedras (11) e furar (47), portados de
+/// `install/uninstall/refine_service/make_slot_executor` (`serviceprovider.cpp`). A arma com um
+/// furo recebe a pedra (`EMBED_ITEM` 92 com `chip, equip` e `SPEND_MONEY` 100); o refino responde
+/// `REFINE_RESULT` (251) e gasta a Pedra Celestial; um segundo refino logo em seguida cai na recarga
+/// de 1 s (54); remover as pedras responde `CLEAR_TESSERA` (93) com o custo 50 e tira o addon
+/// embutido; furar (só no 1.5.5) gasta 10 pedras de furo e responde 107; no 1.2.6, 14.
+async fn conferir_pedras_e_refino(versao: GameVersion) {
+    let Some((mundo, addr, roleid, _)) = montar(versao).await else { return };
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    let ficha = mundo.read().await.data_manager.equipamentos.ficha(ARMA_GERADA as u32).unwrap();
+    let mut bloco = pw_core::ConteudoDeEquipamento::novo(ficha.clone(), 100, 100);
+    bloco.furos = vec![0];
+    let mut arma = peca(roleid, pw_core::ContainerType::Inventory, 3, ARMA_GERADA, 100, 100);
+    arma.octets = bloco.escrever();
+    itens.upsert_item(&arma).await.unwrap();
+    for (slot, id, n) in [(4u16, PEDRA as i32, 2u32), (5, 11208, 3), (6, 21043, 20)] {
+        let mut i = peca(roleid, pw_core::ContainerType::Inventory, slot, id, 0, 0);
+        i.count = n;
+        itens.upsert_item(&i).await.unwrap();
+    }
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.npc_em_conversa = Some(NPC);
+        p.money = 1000;
+    }
+    let pedir = |servico: i32, c: Vec<u8>| BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(servico, &c) };
+    let ler_arma = || async {
+        let i = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 3).await.unwrap().expect("a arma");
+        (pw_core::ConteudoDeEquipamento::ler(&i.octets, &ficha).expect("bloco da arma"), i)
+    };
+
+    // Incrustar: `{ u16 chip, u16 equip, int chip_type, int equip_type }`.
+    let mut c = 4u16.to_le_bytes().to_vec();
+    c.extend_from_slice(&3u16.to_le_bytes());
+    c.extend_from_slice(&(PEDRA as i32).to_le_bytes());
+    c.extend_from_slice(&ARMA_GERADA.to_le_bytes());
+    link.enviar(pedir(10, c)).await.unwrap();
+    let e = esperar_comando(&mut link, 92).await;
+    assert_eq!((e.len(), e[2], e[3]), (4, 4, 3), "EMBED_ITEM: chip_idx, equip_idx");
+    let gasto = esperar_comando(&mut link, 77).await;
+    assert_eq!(i32_em(&gasto, 2), 100, "SPEND_MONEY install_price");
+    let (c1, _) = ler_arma().await;
+    assert_eq!(c1.furos, vec![PEDRA as i32]);
+    assert_eq!(c1.addons, vec![pw_core::AddonDoItem { tipo: (300 | 1 << 13) | 0x8000, args: vec![9] }]);
+    let pedras = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 4).await.unwrap();
+    assert_eq!(pedras.map(|i| i.count), Some(1), "uma pedra gasta");
+
+    // Refinar sem talismã: `{ int inv_index, int item_type, int rt_index }`.
+    let refino = || {
+        let mut c = 3i32.to_le_bytes().to_vec();
+        c.extend_from_slice(&ARMA_GERADA.to_le_bytes());
+        c.extend_from_slice(&(-1i32).to_le_bytes());
+        pedir(35, c)
+    };
+    link.enviar(refino()).await.unwrap();
+    let r = esperar_comando(&mut link, 251).await;
+    let resultado = i32_em(&r, 2);
+    assert!(resultado == 0 || resultado == 1, "do nível 0 só sai sucesso ou nada: {resultado}");
+    let (c2, item) = ler_arma().await;
+    let nivel = c2.addons.iter().find(|a| a.id() == 1497).map(|a| a.args.clone());
+    if resultado == 0 {
+        assert_eq!(nivel, Some(vec![12, 1]), "12 × refine_factor[1] e nível 1");
+        assert_eq!(item.refine_level, 1);
+    } else {
+        assert_eq!(nivel, None);
+    }
+    let celestiais = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 5).await.unwrap();
+    assert_eq!(celestiais.map(|i| i.count), Some(2), "uma Pedra Celestial gasta");
+    link.enviar(refino()).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 54, "recarga do refino");
+
+    // Remover as pedras: `{ size_t equip_idx, int equip_type }`.
+    let mut c = 3u32.to_le_bytes().to_vec();
+    c.extend_from_slice(&ARMA_GERADA.to_le_bytes());
+    link.enviar(pedir(11, c)).await.unwrap();
+    let t = esperar_comando(&mut link, 93).await;
+    assert_eq!(t.len(), 8, "CLEAR_TESSERA de 6 B");
+    assert_eq!((u16::from_le_bytes([t[2], t[3]]), i32_em(&t, 4)), (3, 50));
+    let (c3, _) = ler_arma().await;
+    assert_eq!(c3.furos, vec![0]);
+    assert!(c3.addons.iter().all(|a| a.tipo & 0x8000 == 0), "sem addon embutido");
+    assert_eq!(mundo.read().await.players[&(roleid as i64)].money, 1000 - 100 - 50);
+
+    // Furar: `{ int src_index, int src_id }`.
+    let mut c = 3i32.to_le_bytes().to_vec();
+    c.extend_from_slice(&ARMA_GERADA.to_le_bytes());
+    link.enviar(pedir(47, c)).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    if versao == GameVersion::V1_2_6 {
+        assert_eq!(i32_em(&erro, 2), 14, "o 1.2.6 não tem furar");
+        return;
+    }
+    assert_eq!(i32_em(&erro, 2), 107, "ERR_MAKE_SLOT_SUCCESS");
+    let (c4, _) = ler_arma().await;
+    assert_eq!(c4.furos, vec![0, 0], "o segundo furo");
+    let resto = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 6).await.unwrap();
+    assert_eq!(resto.map(|i| i.count), Some(10), "weapon_slot_material_count[1][0] = 10");
+}
+
+#[tokio::test]
+async fn pedras_e_refino_155() {
+    conferir_pedras_e_refino(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn pedras_e_refino_126() {
+    conferir_pedras_e_refino(GameVersion::V1_2_6).await;
 }
