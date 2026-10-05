@@ -26,6 +26,7 @@ pub struct ClientSession {
     pub localsid: u32,
     pub target_id: Option<i32>,
     pub sec_level: u8,
+    pub revisao_gm: i64,
     /// O mundo (`worldtag`) em que o personagem desta sessão está — decide para qual
     /// servidor de mundo os comandos dele vão. Ver `LinkGateway::uplink_da_sessao`.
     pub world_id: Option<i32>,
@@ -51,6 +52,7 @@ pub struct ClientSession {
     pub client_ip: String,
     pub realm_id: String,
     pub game_version: String,
+    pub desafio_login: Vec<u8>,
     
     // Cifras simétricas RC4 por direção de fluxo
     pub client_rc4: Option<Rc4>, // Decripta pacotes recebidos do cliente
@@ -69,11 +71,13 @@ impl ClientSession {
             localsid: 0,
             target_id: None,
             sec_level: 0,
+            revisao_gm: 0,
             world_id: None,
             ui_config_enviado: false,
             client_ip,
             realm_id,
             game_version,
+            desafio_login: Vec::new(),
             client_rc4: None,
             server_rc4: None,
         }

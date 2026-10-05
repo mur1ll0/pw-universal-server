@@ -1,5 +1,7 @@
 # Especificação 05: Simulação do mundo (`pw-gs`)
 
+> Presença/consulta administrativa e coordenação/consumo de GM verificadas em 2026-10-05, base `a010ff7` + B166/B169/B170 sem commit.
+
 > Passivas de forma, `SetAp`, Portal da Cidade 1.2.6 e roteiros do `gs` 1.2.6 testados em 2026-09-26, base `ff778c1` + B122; Mascote de combate (habilidades, soltar, renomear, aprender/esquecer) testado em 2026-09-25, base `ca082f8` + B112; Ficha, dano da 299 e aviso de abate v126 testados em 2026-09-24, base `eee918e` + B101; tempos da 299 v126 (B100); pipeline B98; itens/combate 126 conferidos em 2026-09-21, base `a305e51` + B89/B90; missão inicial v55 testada em 2026-09-23 (B96); demais áreas em 2026-09-14, B50. Cobre
 > `crates/pw-gs/src/{world,bus_server,bus_server/jogo,ai,combat,habilidades,entity,grid,npc,server,missoes,progressao,economia}.rs`.
 >
@@ -16,7 +18,8 @@ a resposta 155. Nenhuma regra de mundo consulta a versão (B74-126).
 | peça | o que é |
 | :--- | :--- |
 | `server.rs` | laço de **50 ms**: `world.tick(50)`, um por mapa |
-| `mapas.rs` (`RoteadorDeMapas`) | escuta do barramento; entrega cada `roleid` ao mapa gravado dele |
+| `mapas.rs` (`RoteadorDeMapas`) | entrega cada `roleid` ao mapa; guarda de presença durante entrada, logout, queda do link e troca, para snapshots administrativos coerentes (B166) |
+| `administracao.rs` | canal opcional somente de consulta, autenticado por realm; copia ficha viva sem I/O sob lock do mundo (spec 06) |
 | `world.rs` (`WorldInstance`) | um mapa: jogadores, monstros, NPCs, matéria, grade, terreno, autosave; emite `EventoDoMundo` |
 | `bus_server.rs` (`BusServer`) | ponta do barramento: roteia por `roleid`, trata subcomandos (spec 04 §6), traduz eventos em S2C, streaming de visibilidade |
 | `grid.rs` | grade espacial, célula de **50 m** |
@@ -344,7 +347,7 @@ do banco.
 
 | onde estava | o que acontecia | onde está agora |
 | :--- | :--- | :--- |
-| autosave (4 escritas por jogador, a cada 60 s) | dentro do `tick`, com o mundo trancado | o `tick` devolve a fotografia (`EstadoParaGravar`) e o laço grava em `tokio::spawn`, com o lock solto |
+| autosave (fotografia atômica a cada 60 s; B170) | dentro do `tick`, com o mundo trancado | `EstadoParaGravar` com carimbo local; uma transação fora do lock, fotografia antiga descartada |
 | durabilidade da arma e da peça | `SELECT`+`UPDATE` antes de responder ao golpe | decidida em `PlayerEntity::pecas`; a gravação vai em `tokio::spawn` |
 | munição | lida e gravada a cada golpe | contagem na sessão de ataque; baixa em `tokio::spawn` (B71) |
 
@@ -650,7 +653,7 @@ sessão de golpe contra jogador (o golpe normal não mira jogador), marca no gol
 | mapa sem voo (B133) | `testado` | `nofly` do `gs.conf` (spec 03 §3.6e): decolar manda `ERR_CANNOT_FLY` **55** e não decola (`flysword_item::OnUse`, `item_flysword.cpp:55-70`; `push 0x37` no `gs` 1.2.6, VA 0x819505f); chegar voando a um mapa `nofly` derruba o voo com `OBJECT_LANDING` (`player.cpp:11994-11998`); mascote de ar não aparece (-2) e o de chão+ar/todos pula o ar (`petman.cpp:104/140/270`). Nenhum mapa servido hoje (o 1) é `nofly` |
 | voo | `confirmado` | pelo item no slot 12 (`EQUIPIVTR_FLYSWORD`); sem teto. **Mana só nas asas** (B142, `testado`): as asas de Arqueiro/Anjo (`WINGMANWING_ESSENCE`) tiram `mp_launch` ao decolar e `mp_per_second` a cada segundo; sem a mana da decolagem a mana zera e não decola, e sem a do segundo pousa (`OBJECT_LANDING`) com a mana em zero (`angel_wing_item::OnUse`, `item_flysword.cpp:118-148`; `angel_wing_fly_filter::Heartbeat`, `fly_filter.cpp:42-48`; `DrainMana`, `player.cpp:10697-10712`). A espada voadora das outras classes não gasta mana: gasta o tempo de voo do item (`cls_flysword_item::OnFlying`) — `falta` descontar esse tempo. **Velocidade (B128, `testado`):** `fly_speed` do `ptemplate` + o `speed_increase` do item de voo (offset 20 do conteúdo gravado; `flysword_item::OnActivate`, `item_flysword.h:126-129`), teto `MAX_FLIGHT_SPEED` 20 (`playertemplate.h:1101-1110`), no `OWN_EXT_PROP`. Antes o item não somava: a Tsuko voava a 3 m/s com o de "15 m/s". Falta o `_en_percent.flight_speed` (`EnhanceFlySpeed`) |
 | teleporte de GM (`GOTO`) | `confirmado` | `y` do cliente é marcador; altura = chão + 0,5 m (`playercmd.cpp:4926`) |
-| painel de GM (Ctrl+G) | `testado` (2026-10-01, falta ver em jogo) | `bus_server/gm.rs`. Privilégio = `sec_level` > 0 (sem os bits por comando do `_gm_auth`); quem não é GM é ignorado calado. **Invencível** (205): `Efeitos::gm_invencivel`, sem prazo, dano zero (PvP inclusive), estado visível 49. **Invisível** (204): `Efeitos::gm_invisivel`, `PLAYER_LEAVE_WORLD` aos outros, fora da vista deles (o GM continua vendo todos), não golpeia (`DenyCmd(CMD_ATTACK)`), não é ferido (`target_faction = 0`); ao voltar, aparece para quem ele vê. Os monstros ainda o notam, como no original (o `WATCHING_YOU` não olha a invisibilidade de GM). **Ir até / chamar** (201/202): mapa e posição pelo roteador, `transportar` (troca de mapa inclusive). **Criar monstro** (208): só com `debug_command_mode = active`; `count` monstros a ±6 m (`CreateMinors`, `obj_interface.cpp:1990`), vida `life` s, sem ódio; `vis_id` e nome `falta`. **Criar item** (206) e **gerador** (207): `falta` |
+| painel de GM (Ctrl+G) | `testado` (2026-10-01, falta ver em jogo) | `bus_server/gm.rs`. B169: privilégio global reconciliado em sessões abertas; remoção limpa efeitos. Consumo de GM/GOTO/missões revalida conta/revisão/ban sob FOR SHARE (fora do mundo/tick). Cliente requer reentrada, sem recarga de auth online comprovada. Privilégio = `sec_level` > 0 (sem os bits por comando do `_gm_auth`); quem não é GM é ignorado calado. **Invencível** (205): `Efeitos::gm_invencivel`, sem prazo, dano zero (PvP inclusive), estado visível 49. **Invisível** (204): `Efeitos::gm_invisivel`, `PLAYER_LEAVE_WORLD` aos outros, fora da vista deles (o GM continua vendo todos), não golpeia (`DenyCmd(CMD_ATTACK)`), não é ferido (`target_faction = 0`); ao voltar, aparece para quem ele vê. Os monstros ainda o notam, como no original (o `WATCHING_YOU` não olha a invisibilidade de GM). **Ir até / chamar** (201/202): mapa e posição pelo roteador, `transportar` (troca de mapa inclusive). **Criar monstro** (208): só com `debug_command_mode = active`; `count` monstros a ±6 m (`CreateMinors`, `obj_interface.cpp:1990`), vida `life` s, sem ódio; `vis_id` e nome `falta`. **Criar item** (206) e **gerador** (207): `falta` |
 | sentar, gestos, roupa, zona segura | `confirmado` | O **modo roupa persiste** (B83): o `SWITCH_FASHION_MODE` grava o `charactermode` em `characters.character_mode` — pares `(chave, valor)` de `int32`, chave 1, e nada quando desligado (`GetPlayerCharMode`, `gs/player.cpp:12585-12612`) —, o login o relê, e ele viaja cru no `RoleInfo` da lista de personagens, que é de onde a **tela de seleção** decide desenhar roupa ou armadura (`CECLoginPlayer::Load`, `EC_LoginPlayer.cpp:172-189`). `voando` continua sem persistir, de propósito: quem relogar entra no chão **Sentado**, o `sit_down_filter` dobra a regeneração de vida e mana a partir do 2º batimento (`STAYIN_BONUS` 100, `gs/config.h:103`; igual no `gs` 1.2.6, VA 0x812ff22) — `testado` (B118) |
 | grupo | `testado` | estado de grupo no mundo (convite, aceite, recusa, saída) |
 | teleporte e troca de mapa | `testado` (B51) | `LongJump` (`player.cpp:8617`): mesmo mapa → posição, `NOTIFY_HOSTPOS` (14, 22 bytes: `pos, tag, line`) e o mundo em volta; outro mapa **do mesmo processo** → o roteador tira o jogador do mapa de origem (some da vista, sessão e entidade) e o põe no destino: `NOTIFY_HOSTPOS` com o `tag` novo (o cliente descarrega e carrega o mundo, `JumpToInstance`), chão por baixo, grava mapa e posição na hora, e streaming completo (`global_message.cpp:111-117`). Disparado por prêmio de missão (`m_ulTransWldId`) e por missão com `m_bTransTo`. Mapa de outro processo `falta`; o grupo se desfaz na troca |
@@ -880,10 +883,23 @@ para o 1.2.6 e o 1.5.5; só os layouts mudam (spec 04).
 
 ## 9. Persistência
 
-- **Autosave a cada 60 s** por mundo: `save_status` com nível, cultivo, exp, SP, vida, mana,
-  moedas, mundo e posição, mais os quatro atributos com `potential_points` e as listas de
-  missão. Falha vira `warn!`
-  com contagem — não "sucesso" (B36f).
+- Consulta administrativa não grava. B170: queda do barramento salva/retira a entidade;
+  propriedade da conexão impede limpeza antiga/duplicata de encerrar outra sessão.
+  Saída não confirmada conserva fotografia fora da simulação, sessão/rota reservadas e
+  `em_transicao`; reentrada bloqueada e repetição a cada 1 s. Confirmação libera e responde.
+- **Autosave a cada 60 s:** fotografia única de status, chi, atributos/pontos, modo roupa,
+  waypoints e listas de missão; gravação atômica no CharacterRepository. Controle/carimbo
+  compartilhados entre mapas rejeitam fotografias anteriores a comandos/saída/troca/entrada.
+  Banco fora do tick/world lock. Estado de missão alterado/modo roupa deixam de lançar fotografia atrasada; contexto
+  sem alteração não grava nem atrasa a resposta. Pares opacos de charactermode preservados.
+- **Transferência B170:** destino só publicado após fotografia confirmada; erro antes
+  do commit restaura origem, confirmação incerta conserva reserva e repete destino.
+  Queda/logout durante recuperação termina com saída salva, sem sessão fantasma.
+- **Parcial:** fencing/revisão persistidos e recuperação após queda do GS, eventos/equipes,
+  itens/habilidades/mascotes/durabilidade/munição/configuração do link ainda exigem
+  coordenação de todos os produtores. Sem autorização de edição offline/ban/desconexão.
+  Contrato em docs/admin/ARQUITETURA_E_CONTRATOS.md; B170: workspace 942/4 (2 ignorados),
+  correções verificadas no GS 261/0 (2 ignorados) e canal final 15/0.
 - Movimento **não** grava por pacote.
 - Operações de `com_contexto` (missão, abate, coleta, loja, aprender) gravam na hora: bolsas
   antes de responder, estado e listas numa tarefa.

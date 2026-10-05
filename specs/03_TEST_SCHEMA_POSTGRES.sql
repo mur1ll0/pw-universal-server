@@ -2,6 +2,7 @@
 -- ESPECIFICAÇÃO DE BANCO DE DADOS: PostgreSQL Schema test
 -- Projeto: PW-Universal-Server
 -- Isolamento de testes de integração e unitários do schema public.
+-- Contas/registro revistos em 2026-10-05, base a010ff7 + B168 sem commit.
 -- =============================================================================
 
 CREATE SCHEMA IF NOT EXISTS test;
@@ -28,7 +29,19 @@ CREATE TABLE IF NOT EXISTS test.accounts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_test_accounts_username_lower ON test.accounts(LOWER(username));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_usuario_lower ON test.accounts(LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_test_accounts_email ON test.accounts(email);
+
+-- B167: registro isolado para comandos administrativos recuperáveis.
+CREATE TABLE IF NOT EXISTS test.comandos_administrativos (
+    operacao_id VARCHAR(64) PRIMARY KEY,
+    administrador_id INTEGER NOT NULL,
+    realm_origem VARCHAR(32) NOT NULL,
+    conta_id INTEGER, -- B168: conta/ID/resultado de criação no mesmo commit.
+    impressao BYTEA NOT NULL CHECK (octet_length(impressao) = 32),
+    resultado JSONB NOT NULL,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 -- -----------------------------------------------------------------------------
 -- 2. TABELA DE REALMS
@@ -309,3 +322,19 @@ SELECT setval('test.accounts_id_seq', COALESCE((SELECT MAX(id) FROM test.account
 SELECT setval('test.characters_id_seq', COALESCE((SELECT MAX(id) FROM test.characters), 1));
 SELECT setval('test.class_templates_id_seq', COALESCE((SELECT MAX(id) FROM test.class_templates), 1));
 SELECT setval('test.class_template_items_id_seq', COALESCE((SELECT MAX(id) FROM test.class_template_items), 1));
+
+-- Coordenação global de GM (B169)
+-- B169: revisão global e recibos de reconciliação. Aplicar no search_path escolhido.
+-- Não modifica privilégios, contas ou personagens existentes.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS revisao_gm BIGINT NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS coordenacao_gm_revisao (
+    unico BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (unico),
+    revisao BIGINT NOT NULL DEFAULT 0
+);
+INSERT INTO coordenacao_gm_revisao(unico) VALUES(TRUE) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS coordenacao_gm_processos (
+    processo TEXT PRIMARY KEY,
+    encarnacao TEXT NOT NULL,
+    revisao BIGINT NOT NULL DEFAULT 0,
+    atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

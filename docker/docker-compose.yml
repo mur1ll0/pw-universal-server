@@ -63,14 +63,19 @@ services:
 
   pw-admin-api:
     build:
-      context: ../web-admin/backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: web-admin/backend/Dockerfile
     container_name: pw-admin-api
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
       REDIS_URL: redis://pw-dragonfly:6379
       PORT: 8000
+      # Acesso HTTP na rede local; em HTTPS use ADMIN_COOKIE_SECURE=true.
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
+      ADMIN_GATEWAYS: '{"realm_126":"pw-realm-126","realm_148":"pw-realm-148","realm_153":"pw-realm-153","realm_155":"pw-realm-155"}'
+      ADMIN_DAEMONS: '{"realm_126":[{"host":"pw-world-126","porta":29110}],"realm_155":[{"host":"pw-world-155","porta":29110}]}'
+      ADMIN_CHANNEL_SECRETS: '{"realm_126":"${ADMIN_SECRET_126:-}","realm_155":"${ADMIN_SECRET_155:-}"}'
     ports:
       - "8000:8000"
     volumes:
@@ -99,6 +104,8 @@ services:
     container_name: pw-realm-126
     restart: unless-stopped
     environment:
+      ADMIN_COORDENACAO_ID: link-126
+      ADMIN_COORDENACAO_ALVOS: "link-126,gs-126,link-155,gs-155"
       REALM_ID: realm_126
       GAME_VERSION: "1.2.6"
       GATEWAY_PORT: 29000
@@ -128,10 +135,13 @@ services:
     container_name: pw-world-126
     restart: unless-stopped
     environment:
+      ADMIN_COORDENACAO_ID: gs-126
+      ADMIN_COORDENACAO_ALVOS: "link-126,gs-126,link-155,gs-155"
       REALM_ID: realm_126
       GAME_VERSION: "1.2.6"
       WORLD_TAG: "1"
       BUS_LISTEN: 0.0.0.0:29100
+      ADMIN_SECRET: ${ADMIN_SECRET_126:-}
       CONFIG_DIR: /app/data/config
       # `pw_gs=debug` liga a linha "mundo: subcomando N de <roleid>", que é a prova de
       # que o caminho cliente → pw-link → barramento → pw-gs está fechado. Enquanto os
@@ -273,6 +283,8 @@ services:
     container_name: pw-realm-155
     restart: unless-stopped
     environment:
+      ADMIN_COORDENACAO_ID: link-155
+      ADMIN_COORDENACAO_ALVOS: "link-126,gs-126,link-155,gs-155"
       REALM_ID: realm_155
       GAME_VERSION: "1.5.5"
       GATEWAY_PORT: 29004
@@ -304,10 +316,13 @@ services:
     container_name: pw-world-155
     restart: unless-stopped
     environment:
+      ADMIN_COORDENACAO_ID: gs-155
+      ADMIN_COORDENACAO_ALVOS: "link-126,gs-126,link-155,gs-155"
       REALM_ID: realm_155
       GAME_VERSION: "1.5.5"
       WORLD_TAGS: "1,161,169"
       BUS_LISTEN: 0.0.0.0:29100
+      ADMIN_SECRET: ${ADMIN_SECRET_155:-}
       CONFIG_DIR: /app/data/config
       RUST_LOG: info,pw_gs=debug
       DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database

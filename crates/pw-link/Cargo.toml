@@ -23,3 +23,8 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 futures = "0.3"
 hex = { workspace = true }
+
+[dev-dependencies]
+sqlx = { workspace = true }
+hmac = { workspace = true }
+md-5 = { workspace = true }

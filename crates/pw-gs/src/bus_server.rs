@@ -330,6 +330,7 @@ enum QuemChegou {
 pub type EnvioAoCliente = mpsc::Sender<BusMessage>;
 
 /// Estado de um jogador que este servidor de mundo está atendendo.
+#[derive(Clone)]
 struct Sessao {
     localsid: u32,
     envio: EnvioAoCliente,
@@ -359,6 +360,8 @@ pub struct BusServer {
     /// Jogadores atendidos, por `roleid`. É o que permite ao mundo devolver uma
     /// mensagem a um jogador específico sem saber nada sobre conexões.
     sessoes: Arc<RwLock<HashMap<i32, Sessao>>>,
+    saidas_pendentes: Arc<RwLock<HashMap<i32, SaidaPendente>>>,
+    transferencias_pendentes: Arc<RwLock<HashMap<i32,(bool,Option<i32>)>>>,
     /// Para onde mandar o pedido de trocar de mapa — ligado por
     /// [`crate::mapas::RoteadorDeMapas::ligar_trocas`]. Vazio num mapa avulso.
     trocas: std::sync::OnceLock<mpsc::UnboundedSender<PedidoDeTroca>>,
@@ -386,9 +389,22 @@ pub struct PedidoDeTroca {
 }
 
 /// O que sai de um mapa e entra no outro na troca.
+#[derive(Clone)]
+struct SaidaPendente {
+    estado: crate::world::EstadoParaGravar,
+    sessao: Sessao,
+    resultado: Option<i32>,
+}
+
+#[derive(Clone)]
 pub struct JogadorEmTroca {
     sessao: Sessao,
     jogador: PlayerEntity,
+    pub(crate) mascote:Option<crate::mascote::Mascote>,
+}
+
+impl JogadorEmTroca {
+    pub(crate) fn envio(&self)->EnvioAoCliente {self.sessao.envio.clone()}
 }
 
 impl BusServer {
@@ -398,6 +414,8 @@ impl BusServer {
             world,
             sub: create_world_protocol(versao),
             sessoes: Arc::new(RwLock::new(HashMap::new())),
+            saidas_pendentes: Default::default(),
+            transferencias_pendentes: Default::default(),
             trocas: std::sync::OnceLock::new(),
             roteador: std::sync::OnceLock::new(),
             eu: std::sync::OnceLock::new(),
@@ -478,9 +496,10 @@ impl BusServer {
     /// Tira o jogador deste mapa para outro: some da vista de todos, larga sessão e entidade.
     pub(crate) async fn retirar_para_troca(&self, roleid: i32) -> Option<JogadorEmTroca> {
         self.tirar_da_vista_de_todos(roleid as i64).await;
-        let sessao = self.sessoes.write().await.remove(&roleid)?;
-        let jogador = self.world.write().await.remove_player(roleid)?;
-        Some(JogadorEmTroca { sessao, jogador })
+        let sessao = self.sessoes.read().await.get(&roleid)?.clone();
+        let (jogador,mascote)=self.world.write().await.congelar_para_troca(roleid)?;
+        self.transferencias_pendentes.write().await.insert(roleid,(false,None));
+        Some(JogadorEmTroca { sessao, jogador,mascote })
     }
 
     /// A outra metade da troca: o que o `gs` original faz ao receber um jogador de fora
@@ -491,10 +510,12 @@ impl BusServer {
         roleid: i32,
         vindo: JogadorEmTroca,
         pos: Vector3,
-    ) {
+    ) -> Result<(),(JogadorEmTroca,bool)> {
+        let original=vindo.clone();
         let JogadorEmTroca {
             sessao,
             mut jogador,
+            ..
         } = vindo;
         let (este, repo, chao, sem_voo) = {
             let m = self.world.read().await;
@@ -520,21 +541,16 @@ impl BusServer {
         jogador.visiveis.clear();
         jogador.target_id = None;
         let envio = sessao.envio.clone();
-        // Grava antes de o jogador existir no mapa novo: ninguém vê o estado novo sem o banco.
-        let g = (
-            jogador.level,
-            jogador.cultivation,
-            jogador.exp,
-            jogador.sp,
-            jogador.hp,
-            jogador.mp,
-            jogador.money,
-        );
-        if let Err(e) = repo
-            .save_status(roleid, g.0, g.1, g.2, g.3, g.4, g.5, g.6, este, &pos)
-            .await
-        {
-            warn!("mundo: não consegui gravar {roleid} no mapa {este}: {e}");
+        // Banco fora do mundo; se não confirmar, o roteador devolve a entidade à origem.
+        let estado=crate::world::EstadoParaGravar::do_jogador(&jogador,este,&repo);
+        match tokio::time::timeout(std::time::Duration::from_secs(3),repo.gravar_fotografia(&estado.fotografia)).await {
+            Ok(Ok(()))=>{},
+            Ok(Err(pw_storage::StorageError::ConfirmacaoDesconhecida(e)))=> {
+                warn!("transferência: confirmação de {roleid} desconhecida: {e}");
+                return Err((original,true));
+            },
+            Err(e)=> {warn!("transferência: timeout de {roleid}, confirmação desconhecida: {e}"); return Err((original,true));},
+            Ok(Err(e))=> {warn!("transferência: fotografia de {roleid} recusada antes do commit: {e}"); return Err((original,false));},
         }
         self.sessoes.write().await.insert(roleid, sessao);
         self.enviar_ao_jogador(roleid, self.sub.notify_hostpos(pos, este, 0).data)
@@ -547,11 +563,34 @@ impl BusServer {
         }
         info!("mundo: {roleid} chegou ao mapa {este} em {pos:?}");
         self.atualizar_visiveis(roleid, &envio, true).await;
+        Ok(())
     }
+
+    pub(crate) async fn concluir_troca_na_origem(&self,role:i32,mascote:Option<crate::mascote::Mascote>)->(bool,Option<i32>) {
+        self.world.write().await.concluir_troca(role,mascote);
+        self.sessoes.write().await.remove(&role);
+        self.transferencias_pendentes.write().await.remove(&role).unwrap_or((false,None))
+    }
+    pub(crate) async fn encerrar_apos_transferencia(&self,role:i32,envio:&EnvioAoCliente,resultado:Option<i32>) {
+        self.encerrar_sessao(role,envio,resultado).await;
+    }
+
+    pub(crate) async fn restaurar_troca(&self,role:i32,vindo:JogadorEmTroca) {
+        self.transferencias_pendentes.write().await.remove(&role);
+        let envio=vindo.sessao.envio.clone();
+        self.sessoes.write().await.insert(role,vindo.sessao);
+        self.world.write().await.restaurar_troca(vindo.jogador,vindo.mascote);
+        self.atualizar_visiveis(role,&envio,true).await;
+    }
+
 
     /// O mundo que este servidor atende.
     pub fn mundo(&self) -> &Arc<RwLock<WorldInstance>> {
         &self.world
+    }
+
+    pub(crate) async fn tem_sessao(&self, roleid: i32) -> bool {
+        self.sessoes.read().await.contains_key(&roleid)
     }
 
     /// A versão que este mundo fala.
@@ -1169,10 +1208,11 @@ impl BusServer {
                             if let BusMessage::EnterWorld { roleid, .. } = &msg {
                                 donos.push(*roleid);
                             }
-                            if let BusMessage::PlayerLogout { roleid, .. } = &msg {
-                                donos.retain(|r| r != roleid);
-                            }
+                            let saiu=if let BusMessage::PlayerLogout{roleid,..}=&msg {Some(*roleid)} else {None};
                             self.tratar(msg, &envio).await;
+                            if let Some(role)=saiu {
+                                if !self.pertence_a(role,&envio).await {donos.retain(|r|*r!=role);}
+                            }
                         }
                         Ok(None) => {
                             debug!("barramento: {par} desconectou");
@@ -1200,18 +1240,106 @@ impl BusServer {
 
         // A conexão caiu: os jogadores que vinham por ela não estão mais acessíveis.
         // Deixá-los registrados faria o mundo tentar responder num canal morto.
-        self.esquecer_sessoes(&donos).await;
+        self.esquecer_sessoes(&donos,&envio).await;
     }
 
-    /// Esquece as sessões destes jogadores — a conexão por onde vinham caiu.
-    pub(crate) async fn esquecer_sessoes(&self, roleids: &[i32]) {
-        let mut sessoes = self.sessoes.write().await;
-        for roleid in roleids {
-            sessoes.remove(roleid);
+    /// A queda só encerra personagens ainda pertencentes a esta conexão.
+    pub(crate) async fn esquecer_sessoes(&self, roleids: &[i32], envio:&EnvioAoCliente) {
+        for &role in roleids {
+            let controle=self.repo().await.controle_de_gravacao(role);
+            let _guarda=controle.alterar().await;
+            self.encerrar_sessao(role,envio,None).await;
         }
     }
 
+    pub(crate) async fn pertence_a(&self,role:i32,envio:&EnvioAoCliente)->bool {
+        self.sessoes.read().await.get(&role).map(|s|s.envio.same_channel(envio)).unwrap_or(false)
+    }
+
+    /// Original: player.cpp:9602-9694, WAITING_LOGOUT e user_save_data antes da resposta.
+    /// B170 mantém fotografia fora da simulação até o commit; banco nunca sob world lock.
+    async fn encerrar_sessao(&self,role:i32,envio:&EnvioAoCliente,resultado:Option<i32>) {
+        if !self.pertence_a(role,envio).await {return;}
+        if let Some(p)=self.transferencias_pendentes.write().await.get_mut(&role) {
+            *p=(true,resultado); // segue reservada até confirmar destino, depois salva a saída.
+            return;
+        }
+        let nova=!self.saidas_pendentes.read().await.contains_key(&role);
+        if nova {
+            self.tirar_da_vista_de_todos(role as i64).await;
+            self.golpe_na_fila.write().await.remove(&role);
+            let estado={
+                let mut mundo=self.world.write().await;
+                mundo.remove_player(role).map(|j| crate::world::EstadoParaGravar::do_jogador(&j,mundo.world_id,&mundo.char_repo))
+            };
+            let Some(estado)=estado else {
+                self.sessoes.write().await.remove(&role);
+                return;
+            };
+            let sessao=self.sessoes.read().await[&role].clone();
+            self.saidas_pendentes.write().await.insert(role,SaidaPendente{estado,sessao,resultado});
+        }
+        if !self.confirmar_saida(role).await && nova {
+            let este=self.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    let concluida=if let Some(r)=este.roteador.get().and_then(|r|r.upgrade()) {
+                        r.repetir_saida(&este,role).await
+                    } else {
+                        let controle=este.repo().await.controle_de_gravacao(role);
+                        let _guarda=controle.alterar().await;
+                        este.confirmar_saida(role).await
+                    };
+                    if concluida {break;}
+                }
+            });
+        }
+    }
+
+    pub(crate) async fn confirmar_saida(&self,role:i32)->bool {
+        let Some(p)=self.saidas_pendentes.read().await.get(&role).cloned() else {return true;};
+        let repo=self.repo().await;
+        let r=tokio::time::timeout(std::time::Duration::from_secs(3),repo.gravar_fotografia(&p.estado.fotografia)).await;
+        if !matches!(r,Ok(Ok(()))) {
+            warn!("saída: fotografia de {role} não confirmada, reentrada bloqueada: {r:?}");
+            return false;
+        }
+        self.saidas_pendentes.write().await.remove(&role);
+        self.sessoes.write().await.remove(&role);
+        if let Some(r)=self.roteador.get().and_then(|r|r.upgrade()) {
+            r.apagar_rota(role,self.world.read().await.world_id).await;
+        }
+        if let Some(result)=p.resultado {
+            let _=p.sessao.envio.try_send(BusMessage::PlayerLogout{result,roleid:role,provider_link_id:0,localsid:p.sessao.localsid});
+        }
+        info!("saída: personagem {role} salvo e retirado");
+        true
+    }
+
     pub(crate) async fn tratar(&self, msg: BusMessage, envio: &EnvioAoCliente) {
+        let role=match &msg {
+            BusMessage::EnterWorld{roleid,..}|BusMessage::PlayerLogout{roleid,..}|
+            BusMessage::ClientToGame{roleid,..}|BusMessage::GameToClient{roleid,..} => *roleid,
+            BusMessage::ChatSingleCast{dstroleid,..} => *dstroleid,
+        };
+        let controle=self.repo().await.controle_de_gravacao(role);
+        let _guarda=controle.alterar().await;
+        if matches!(&msg,BusMessage::EnterWorld{..}) {
+            if self.tem_sessao(role).await || self.world.read().await.players.contains_key(&(role as i64)) {
+                warn!("entrada: personagem {role} já presente ou com saída pendente; conexão recusada");
+                return;
+            }
+        } else {
+            let localsid=match &msg {
+                BusMessage::PlayerLogout{localsid,..}|BusMessage::ClientToGame{localsid,..}=>Some(*localsid),
+                _=>None,
+            };
+            if !self.sessoes.read().await.get(&role).map(|s|s.envio.same_channel(envio)
+                && localsid.map(|id|id==s.localsid).unwrap_or(true)).unwrap_or(false) {return;}
+        }
+        if matches!(&msg,BusMessage::ClientToGame{data,..} if data.get(..2)!=Some(&crate::comandos::ids::LOGOUT.to_le_bytes()))
+            && (self.saidas_pendentes.read().await.contains_key(&role) || self.transferencias_pendentes.read().await.contains_key(&role)) {return;}
         match msg {
             BusMessage::EnterWorld {
                 roleid, localsid, ..
@@ -1228,14 +1356,7 @@ impl BusServer {
             }
 
             BusMessage::PlayerLogout { roleid, .. } => {
-                // Antes de tirar do mundo: quem estava vendo este jogador precisa receber
-                // o `PLAYER_LEAVE_WORLD`, senão o avatar dele fica parado na tela dos
-                // outros. Era o `gateway.rs` que fazia isto; passou para cá junto com o
-                // resto da visibilidade entre jogadores (ver `atualizar_visiveis`).
-                self.tirar_da_vista_de_todos(roleid as i64).await;
-                self.sessoes.write().await.remove(&roleid);
-                self.world.write().await.remove_player(roleid);
-                info!("mundo: jogador {roleid} saiu");
+                self.encerrar_sessao(roleid,envio,None).await;
             }
 
             BusMessage::ClientToGame { roleid, data, .. } => {
@@ -1331,7 +1452,12 @@ impl BusServer {
         // O privilégio de GM não vem no `EnterWorld` nem no `CharacterDetails`; é uma
         // leitura por login, e daqui em diante viaja em todo `PLAYER_ENTER_SLICE` que
         // apresenta este jogador aos outros.
-        jogador.sec_level = repo.nivel_de_gm(roleid).await.clamp(0, 255) as u8;
+        let conta = pw_storage::AccountRepository::new(repo.pool().clone()).find_by_id(detalhes.account_id).await;
+        if let Ok(Some(conta)) = conta {
+            jogador.conta_id = conta.id;
+            jogador.revisao_gm = conta.revisao_gm;
+            jogador.sec_level = if conta.is_banned { 0 } else { conta.gm_privileges.clamp(0,32) as u8 };
+        }
         jogador.pontos_de_atributo = repo.pontos_de_atributo(roleid).await.unwrap_or(0);
         jogador.vagas_na_jaula = repo.vagas_da_jaula(roleid).await.unwrap_or(1);
         match repo.task_lists().carregar(roleid).await {
@@ -1673,48 +1799,9 @@ impl BusServer {
     /// pacote que o cliente espera. É a mesma divisão do servidor original, e é o que
     /// mantém o formato do cliente fora daqui.
     async fn sair(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
-        // Golpe que esperava o fim de uma conjuração não sobrevive à saída (B57).
-        self.golpe_na_fila.write().await.remove(&roleid);
-        let tipo = Logout::ler(payload)
-            .map(|l| l.tipo())
-            .unwrap_or(TipoDeSaida::SairDoJogo);
-
-        info!("mundo: jogador {roleid} pediu saída ({tipo:?})");
-
-        let localsid = self
-            .sessoes
-            .read()
-            .await
-            .get(&roleid)
-            .map(|s| s.localsid)
-            .unwrap_or(0);
-
-        // Tira do mundo antes de avisar: se a ordem fosse a outra, o link poderia
-        // derrubar a conexão e mandar o `PlayerLogout` de volta enquanto o personagem
-        // ainda estivesse na simulação.
-        //
-        // Antes disso, porém, quem o via precisa saber que ele foi embora — depois de
-        // `remove_player` não há mais como descobrir quem era.
-        self.tirar_da_vista_de_todos(roleid as i64).await;
-        self.world.write().await.remove_player(roleid);
-        self.sessoes.write().await.remove(&roleid);
-
-        let resultado = match tipo {
-            TipoDeSaida::SelecaoDePersonagem => 1,
-            _ => 0,
-        };
-
-        if envio
-            .try_send(BusMessage::PlayerLogout {
-                result: resultado,
-                roleid,
-                provider_link_id: 0,
-                localsid,
-            })
-            .is_err()
-        {
-            warn!("mundo: não consegui avisar a saída de {roleid} ao link");
-        }
+        let tipo=Logout::ler(payload).map(|l|l.tipo()).unwrap_or(TipoDeSaida::SairDoJogo);
+        let resultado=if matches!(tipo,TipoDeSaida::SelecaoDePersonagem) {1} else {0};
+        self.encerrar_sessao(roleid,envio,Some(resultado)).await;
     }
 
     /// `C2S::CALC_NETWORK_DELAY` (128) — o cliente quer medir a latência.
@@ -3329,11 +3416,9 @@ impl BusServer {
         // `EC_LoginPlayer.cpp:172-189`). Fora do fio do jogo, pela regra de nunca esperar o
         // banco no caminho do comando: são 8 bytes e ninguém depende do resultado.
         let repo = self.repo().await;
-        tokio::spawn(async move {
-            if let Err(e) = repo.salvar_modo_roupa(roleid, ativo).await {
-                warn!("mundo: não gravei o modo roupa de {roleid}: {e}");
-            }
-        });
+        if let Err(e) = repo.salvar_modo_roupa(roleid, ativo).await {
+            warn!("mundo: não gravei o modo roupa de {roleid}: {e}");
+        }
 
         let pacote = S2CGamedataSend::player_enable_fashion(roleid, ativo).data;
         self.responder(roleid, pacote.clone(), envio).await;
@@ -3628,11 +3713,10 @@ impl BusServer {
         };
         let destino = pw_core::Vector3::new(f(0), f(4), f(8));
 
-        let nivel_de_gm = self.repo().await.nivel_de_gm(roleid).await;
-        if nivel_de_gm <= 0 {
+        let Some((autorizacao, _)) = self.autorizar_gm_persistido(roleid).await else {
             warn!("mundo: {roleid} pediu teleporte para {destino:?} sem ser GM");
             return;
-        }
+        };
 
         // **O `y` do cliente não é a altura do chão.**
         //
@@ -3701,6 +3785,7 @@ impl BusServer {
         // caso em que a histerese de [`Self::atualizar_visiveis`] não atrapalha: a
         // distância percorrida é sempre maior do que o passo mínimo.
         self.atualizar_visiveis(roleid, envio, true).await;
+        let _ = autorizacao.rollback().await;
     }
 
     /// Manda o que entrou no alcance do jogador e retira o que saiu.

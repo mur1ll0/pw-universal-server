@@ -41,9 +41,40 @@ pub struct RoteadorDeMapas {
     padrao: i32,
     donos: RwLock<HashMap<i32, i32>>,
     repo: CharacterRepository,
+    /// Só transições de presença. Consulta administrativa nunca segura isto durante I/O.
+    presenca: RwLock<()>,
 }
 
 impl RoteadorDeMapas {
+    pub async fn iniciar_coordenacao_gm(self: &Arc<Self>, contas: pw_storage::AccountRepository,
+        processo: String) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+        let repo = contas.coordenacao_gm();
+        let encarnacao = hex::encode(pw_crypto::generate_login_challenge());
+        let mut conexao = repo.registrar(&processo,&encarnacao).await?;
+        let este = Arc::clone(self);
+        let tarefa = tokio::spawn(async move {
+            let mut intervalo = tokio::time::interval(std::time::Duration::from_secs(1));
+            loop {
+                intervalo.tick().await;
+                // Exclui entrada, saída, transferência e comandos enquanto reconcilia.
+                // I/O só sob guarda de coordenação; nenhum lock do mundo durante banco.
+                let _barreira = este.presenca.write().await;
+                let fotografia = tokio::time::timeout(std::time::Duration::from_secs(2),repo.fotografia()).await;
+                let f = match fotografia { Ok(Ok(f)) => Some(f), _ => None };
+                for mapa in este.mapas.values() { mapa.reconciliar_gm(f.as_ref()).await; }
+                if let Some(f) = f {
+                    if pw_storage::CoordenacaoGmRepository::confirmar(&mut conexao,&processo,&encarnacao,f.revisao).await.is_err() {
+                        // O jogo não cai por isso (MEMORIA_DA_REFORMA §6.2 item 3): efeitos GM
+                        // removidos e coordenação parada; comandos GM seguem conferidos no banco.
+                        tracing::error!("coordenação GM: conexão de fencing perdida; coordenação desligada até reiniciar o GS");
+                        for mapa in este.mapas.values() { mapa.reconciliar_gm(None).await; }
+                        break;
+                    }
+                } else { tracing::warn!("coordenação GM: banco indisponível, efeitos removidos, sem recibo"); }
+            }
+        });
+        Ok(tarefa)
+    }
     /// `mapas` na ordem da configuração; o primeiro é o padrão.
     pub fn new(mapas: Vec<(i32, Arc<BusServer>)>, repo: CharacterRepository) -> Self {
         assert!(!mapas.is_empty(), "um servidor de mundo sem mapa nenhum");
@@ -53,6 +84,7 @@ impl RoteadorDeMapas {
             padrao,
             donos: RwLock::new(HashMap::new()),
             repo,
+            presenca: RwLock::new(()),
         }
     }
 
@@ -83,7 +115,10 @@ impl RoteadorDeMapas {
         }
     }
 
-    async fn trocar(&self, p: crate::bus_server::PedidoDeTroca) {
+    async fn trocar(self: &Arc<Self>, p: crate::bus_server::PedidoDeTroca) {
+        let _transicao = self.presenca.write().await;
+        let controle=self.repo.controle_de_gravacao(p.roleid);
+        let _guarda=controle.alterar().await;
         let Some(destino) = self.mapas.get(&p.mundo) else {
             warn!(
                 "mundo: {} pediu o mapa {}, que este processo não serve ({:?})",
@@ -103,8 +138,37 @@ impl RoteadorDeMapas {
         let Some(vindo) = origem.retirar_para_troca(p.roleid).await else {
             return;
         };
-        self.donos.write().await.insert(p.roleid, p.mundo);
-        destino.receber_de_outro_mapa(p.roleid, vindo, p.pos).await;
+        let envio=vindo.envio();
+        let mascote=vindo.mascote.clone();
+        match destino.receber_de_outro_mapa(p.roleid,vindo,p.pos).await {
+            Ok(())=> {
+                let (saiu,resultado)=origem.concluir_troca_na_origem(p.roleid,mascote.clone()).await;
+                self.donos.write().await.insert(p.roleid,p.mundo);
+                if saiu {destino.encerrar_apos_transferencia(p.roleid,&envio,resultado).await;}
+            },
+            Err((vindo,false))=> {origem.restaurar_troca(p.roleid,vindo).await;},
+            Err((vindo,true))=> {
+                // Não restaurar por inferência: o commit pode ter ocorrido. Fotografia
+                // congelada e mesma sessão ficam reservadas até confirmar o mesmo destino.
+                let este=Arc::clone(self);
+                let origem=Arc::clone(origem);
+                let destino=Arc::clone(destino);
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        let _transicao=este.presenca.write().await;
+                        let controle=este.repo.controle_de_gravacao(p.roleid);
+                        let _guarda=controle.alterar().await;
+                        if destino.receber_de_outro_mapa(p.roleid,vindo.clone(),p.pos).await.is_ok() {
+                            let (saiu,resultado)=origem.concluir_troca_na_origem(p.roleid,mascote.clone()).await;
+                            este.donos.write().await.insert(p.roleid,p.mundo);
+                            if saiu {destino.encerrar_apos_transferencia(p.roleid,&envio,resultado).await;}
+                            break;
+                        }
+                    }
+                });
+            }
+        }
     }
 
     /// Os ids dos mapas servidos, em ordem.
@@ -112,6 +176,54 @@ impl RoteadorDeMapas {
         let mut v: Vec<i32> = self.mapas.keys().copied().collect();
         v.sort_unstable();
         v
+    }
+
+    /// Ausência é observação deste processo, nunca autorização para editar offline.
+    pub async fn consultar_administrativamente(&self, roleid: i32) -> serde_json::Value {
+        let Ok(_leitura) = self.presenca.try_read() else {
+            return serde_json::json!({"presenca":"em_transicao"});
+        };
+        let Some(mapa) = self.mapa_de(roleid).await else {
+            // A queda do link esquece sessões, mas pode deixar uma entidade residual
+            // (`atender`, abaixo). Ausência de roteamento não prova ausência em memória.
+            for servidor in self.mapas.values() {
+                if servidor.mundo().read().await.players.contains_key(&(roleid as i64)) {
+                    return serde_json::json!({"presenca":"inconsistente","motivo":"entidade_sem_roteamento"});
+                }
+            }
+            return serde_json::json!({"presenca":"ausente"});
+        };
+        let servidor = &self.mapas[&mapa];
+        let ficha = {
+            let mundo = servidor.mundo().read().await;
+            mundo.players.get(&(roleid as i64)).map(|j| crate::administracao::FichaViva::do_jogador(j, mapa))
+        };
+        if servidor.tem_sessao(roleid).await && ficha.is_some() {
+            serde_json::json!({"presenca":"online","ficha":ficha})
+        } else {
+            serde_json::json!({"presenca":"em_transicao"})
+        }
+    }
+
+    pub async fn resumo_administrativo(&self) -> serde_json::Value {
+        let Ok(_leitura) = self.presenca.try_read() else {
+            return serde_json::json!({"presenca":"em_transicao"});
+        };
+        let donos = self.donos.read().await.clone();
+        let mut mapas = Vec::new();
+        for mapa in self.mapas() {
+            let servidor = &self.mapas[&mapa];
+            let ids: Vec<i32> = {
+                let mundo = servidor.mundo().read().await;
+                mundo.players.keys().filter_map(|id| i32::try_from(*id).ok()).collect()
+            };
+            let mut online = 0;
+            for id in ids {
+                if donos.get(&id) == Some(&mapa) && servidor.tem_sessao(id).await { online += 1; }
+            }
+            mapas.push(serde_json::json!({"mapa":mapa,"jogadores_online":online}));
+        }
+        serde_json::json!({"presenca":"observada","mapas":mapas})
     }
 
     /// Mapa e posição de um jogador atendido por este processo (comandos de GM).
@@ -166,8 +278,13 @@ impl RoteadorDeMapas {
                             };
                             self.entregar(msg, &envio).await;
                             if let Some(r) = saiu {
-                                desta_conexao.retain(|x| *x != r);
-                                self.donos.write().await.remove(&r);
+                                let ainda_dona=if let Some(m)=self.mapa_de(r).await {
+                                    self.mapas[&m].pertence_a(r,&envio).await
+                                } else {false};
+                                if !ainda_dona {desta_conexao.retain(|x|*x!=r);}
+                                if let Some(m)=self.mapa_de(r).await {
+                                    if !self.mapas[&m].tem_sessao(r).await {self.donos.write().await.remove(&r);}
+                                }
                             }
                         }
                         Ok(None) => {
@@ -195,15 +312,22 @@ impl RoteadorDeMapas {
         }
 
         // A conexão caiu: cada mapa esquece as sessões que vinham por ela.
-        let mut donos = self.donos.write().await;
+        let _transicao = self.presenca.write().await;
         for roleid in desta_conexao {
-            if let Some(mapa) = donos.remove(&roleid).and_then(|m| self.mapas.get(&m)) {
-                mapa.esquecer_sessoes(&[roleid]).await;
+            if let Some(mapa)=self.mapa_de(roleid).await.and_then(|m|self.mapas.get(&m)) {
+                mapa.esquecer_sessoes(&[roleid],&envio).await;
             }
         }
     }
 
     async fn entregar(&self, msg: BusMessage, envio: &EnvioAoCliente) {
+        // Mesmo cabeçalho já decodificado por bus_server.rs::SubComando::ler;
+        // apenas reconhece logout para a guarda, sem novo layout/pacote de cliente.
+        let transicao = matches!(&msg, BusMessage::EnterWorld { .. } | BusMessage::PlayerLogout { .. })
+            || matches!(&msg, BusMessage::ClientToGame { data, .. }
+                if data.get(..2) == Some(&crate::comandos::ids::LOGOUT.to_le_bytes()));
+        let _presenca = if transicao { Some(self.presenca.write().await) } else { None };
+        let _comando = if !transicao { Some(self.presenca.read().await) } else { None };
         let roleid = match &msg {
             BusMessage::EnterWorld { roleid, .. }
             | BusMessage::PlayerLogout { roleid, .. }
@@ -213,6 +337,12 @@ impl RoteadorDeMapas {
         };
 
         let mapa = if matches!(msg, BusMessage::EnterWorld { .. }) {
+            if let Some(m)=self.mapa_de(roleid).await {
+                if self.mapas[&m].tem_sessao(roleid).await {
+                    warn!("entrada: {roleid} já possui sessão ou saída pendente; rejeitada duplicata");
+                    return;
+                }
+            }
             let mapa = self.mapa_para_entrar(roleid).await;
             self.donos.write().await.insert(roleid, mapa);
             mapa
@@ -227,6 +357,17 @@ impl RoteadorDeMapas {
         };
 
         self.mapas[&mapa].tratar(msg, envio).await;
+    }
+
+    pub(crate) async fn apagar_rota(&self,role:i32,mapa:i32) {
+        let mut donos=self.donos.write().await;
+        if donos.get(&role)==Some(&mapa) {donos.remove(&role);}
+    }
+    pub(crate) async fn repetir_saida(&self,mapa:&BusServer,role:i32)->bool {
+        let _transicao=self.presenca.write().await;
+        let controle=self.repo.controle_de_gravacao(role);
+        let _guarda=controle.alterar().await;
+        mapa.confirmar_saida(role).await
     }
 
     /// O mapa gravado do personagem, se este processo o serve; senão o padrão, com aviso.

@@ -27,6 +27,15 @@ TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw
 
 ## 2. Publicar no realm de teste (só quando o Murillo pediu)
 
+Antes do build, se a mudança tocou login, seleção, entrada, saída, salvamento, troca de
+mapa ou o schema: rode a conferência só de leitura do `public` (a suíte usa o schema
+`test`, já migrado, e não enxerga o banco real — incidente B172). Saída vazia = pode
+publicar; cada linha é um problema a resolver antes (migração, hash de senha).
+
+```bash
+docker exec -i pw-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At' < scripts/conferir_public_antes_de_publicar.sql
+```
+
 ```bash
 cd docker && docker compose build pw-world-155 pw-realm-155 \
   && docker compose up -d --remove-orphans pw-world-155 pw-realm-155

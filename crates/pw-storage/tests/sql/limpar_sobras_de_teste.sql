@@ -28,15 +28,27 @@
 -- minutos é tocado, e a suíte inteira leva bem menos que isso.
 --
 -- # Ordem
+DELETE FROM coordenacao_gm_processos
+ WHERE processo LIKE 'teste-%' AND atualizado_em < now() - interval '15 minutes';
 --
 -- `characters.account_id` apaga em cascata (e com ele itens, habilidades e missões),
 -- `characters.realm_id` **não** — por isso as contas vão primeiro, e o realm só sai quando
 -- não sobrou personagem nele. `class_templates` sai em cascata com o realm.
 --
 
+-- Sem FK no registro técnico durável. Expurgo somente para as contas descartáveis
+-- dos testes, com a mesma margem; nunca usar este SQL para registros reais.
+DELETE FROM comandos_administrativos
+ WHERE administrador_id IN (
+   SELECT id FROM accounts
+    WHERE (username ~* '^(gs|at|it)_[0-9]+(_[0-9]+)?$'
+           OR username ~* '^teste_[ab]_[0-9]+(_[0-9]+)?$')
+      AND created_at < now() - interval '15 minutes'
+ );
+
 DELETE FROM accounts
- WHERE (username ~ '^(gs|at|it)_[0-9]+(_[0-9]+)?$'
-        OR username ~ '^teste_[ab]_[0-9]+(_[0-9]+)?$')
+ WHERE (username ~* '^(gs|at|it)_[0-9]+(_[0-9]+)?$'
+        OR username ~* '^teste_[ab]_[0-9]+(_[0-9]+)?$')
    AND created_at < now() - interval '15 minutes';
 
 DELETE FROM realms r

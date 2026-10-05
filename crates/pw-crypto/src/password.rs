@@ -51,6 +51,20 @@ pub fn hash_raw_md5(password: &str) -> String {
     hex::encode(result)
 }
 
+/// `EvolvedPWClient/ElementClient/Network/gameclient.cpp:131-139`:
+/// algo=0 usa HMAC-MD5(chave=MD5(nome+senha), mensagem=desafio).
+/// O protocolo não fornece senha pura: Argon2/texto não são verificáveis aqui.
+pub fn verificar_resposta_pw(hash_armazenado: &str, desafio: &[u8], resposta: &[u8]) -> bool {
+    use hmac::{Hmac, Mac};
+    let Ok(chave) = hex::decode(hash_armazenado) else { return false; };
+    if chave.len() != 16 || desafio.len() != 16 || resposta.len() != 16 {
+        return false;
+    }
+    let mut mac = Hmac::<Md5>::new_from_slice(&chave).expect("HMAC aceita chave MD5");
+    mac.update(desafio);
+    mac.verify_slice(resposta).is_ok()
+}
+
 /// Verifica a senha suportando hashes modernos (Argon2id) e hashes legados (MD5) com sinalização de rehash automático
 pub fn verify_password(
     username: &str,

@@ -7,7 +7,7 @@
 > bloco novo entra como linha no §3.3 (o que olhar em jogo), no §5 (o que ficou faltando) e
 > no índice do §8 — não como parágrafo aqui.
 >
-> **Última atualização: 2026-09-26**, **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
+> **Última atualização: 2026-10-05**, base `a010ff7` + B165–B170 sem commit; **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
 > comandos do B77–B88, 14 e 64 conferidos e sobrescritos no 1.2.6, campos do v55 pelo
 > `libtask.so` e prefixos do v7 pelo `gs`; **B126** — IA de combate do monstro por estratégia
 > (conjurar de longe, série de golpes, afastar, fugir, fixo), eventos de vida 75/50/25 %, efeito
@@ -77,6 +77,26 @@ combinada com o Murillo:
 2. **1.2.6 com o que o 1.5.5 já resolveu** ← **estamos aqui** (painel em §5D). Desde o B101 o
    trabalho é guiado pelos testes do Murillo com a **Tsuko** (Feiticeira/Bárbaro 1.2.6).
 3. Depois: banco de dados (Contexto E), painel `pw-admin` (G), atualizador/launcher (H).
+
+**B172–B173 (2026-10-05):** login 126/155 recusado após publicar o painel (conferência de
+senha × hashes do `public`); corrigido nos dados em B173 (`admin`/`admin`, `testuser`/`testuser`
+como MD5(nome+senha)), migrações aplicadas, link/GS republicados — **falta ver em jogo**.
+Antes de publicar: `scripts/conferir_public_antes_de_publicar.sql`. Rumo do painel:
+`docs/admin/MEMORIA_DA_REFORMA.md` §6.2–6.3.
+
+**Frente adicional autorizada (B165–B170):** reforma do painel. E1 auditada; E2 com login
+PW/GM e interface única, visual pendente. E3: consultas protegidas e comandos recuperáveis;
+E4 parcial: senha B167 e criação global B168, com conta/ID/resultado atômicos, unicidade
+LOWER(username), concorrência/rollback/reinício/perda de resposta testados. B168: 47 Python,
+117 Rust focados e 4 Node passaram/0 falharam. Suíte completa com banco: 935/0, 2 ignorados.
+B169 coordena GM global nas sessões com revisão/recibos, mantendo conexões e exigindo
+reentrada do cliente. B170 corrige residual e ordena fotografias/saída/troca localmente. Próximo: fencing global,
+revisão/diário persistidos e demais produtores antes de ban/desconexão/E5; gold continua aguardando consumo da loja/concorrência. Memória central:
+`docs/admin/MEMORIA_DA_REFORMA.md`. Painel tem frontend E3 e alvos 126/155, mas mundos
+anteriores sem ADMIN_SECRET recusam o canal; B167–B169 locais, migrações só em test.
+B169: workspace 940/0, 2 ignorados; armazenamento após a última correção 14/0;
+49 Python/0 e 5 Node/0. Clientes originais, inspeção visual e imagem Linux pendentes.
+B170: workspace 942/4; após correções GS 261/0 (2 ignorados) e canal final 15/0.
 
 **O que o 1.5.5 faz hoje** (realm `realm_155`, porta 29004, cliente BR v156, `elements.data`
 v156, `tasks.data` 129, build 2569):
@@ -202,6 +222,13 @@ Pré-requisitos do cliente 1.5.5 que **não** são do servidor, e que custaram s
 
 ## 2. Como rodar, testar e publicar
 
+Referência B170 (2026-10-05): workspace **942 passaram, 4 falharam, 2 ignorados**.
+Após as correções: GS **261/0, 2 ignorados** (biblioteca 94/0, canal 15/0,
+subcomandos 152/0, 2 ignorados); canal novamente **15/0** após preservação de pares opacos.
+Suíte integral não repetida após as correções. Schema `test`; Redis não utilizado nesta
+rodada Rust. Referência anterior B169: workspace 940/0 (2 ignorados), armazenamento
+final 14/0, Python 49/0, Node 5/0; Redis descartável removido.
+
 ```bash
 # A suíte SÓ testa de verdade com esta variável. Sem ela, os testes de integração
 # passam sem verificar nada (memória pw_testes_precisam_do_banco).
@@ -314,14 +341,23 @@ continua no mundo 1; para testar o nascimento no 161, criar um novo.
 
 ### 3.3 Publicado ou feito, sem confirmação em jogo registrada
 
-Os itens abaixo passaram na suíte com o banco. **Todos estão publicados** nos realms 126 e 155
-desde 2026-09-26 11:10 (−03). Até o B86 o Murillo declarou o 1.5.5 jogável sem apontar defeito
+Os itens abaixo foram implementados/testados; a publicação é indicada por item. A base
+de 2026-09-26 está publicada nos realms 126 e 155 desde 11:10 (−03). Até o B86 o Murillo declarou o 1.5.5 jogável sem apontar defeito
 neles, mas não há relato item a item. Detalhe e roteiro de cada um no histórico.
 
 **1.5.5 (realm 155, e o que vale para os dois)**
 
 | item | o que olhar |
 | :--- | :--- |
+| B170 | **Local, sem publicação.** Sair/seleção/queda do link → fotografia final salva, entidade e rota removidas. Banco falhando → em transição/reentrada bloqueada; recuperando → saída concluída. Troca incerta não libera login; queda durante a recuperação termina a saída no destino. GS final 261/0, 2 ignorados; canal final 15/0. Workspace anterior 942/4, 2 ignorados, falhas corrigidas nas rodadas específicas. Fencing global/todos os produtores/reinício do GS pendentes; nenhuma edição offline habilitada. |
+| B171 | **Local.** Coordenação GM opcional: login não depende de `accounts.revisao_gm` (`#[sqlx(default)]`), registro falho não aborta link/GS, 148/153 fora da coordenação. Workspace 946/1 (falha intermitente de teste de corrida, muda a cada rodada, passa isolado), 2 ignorados. Publicar: migrações `scripts/2026_10_05_*.sql` no `public` primeiro; testar login/saída/troca em jogo. |
+| B172 | **Incidente.** Login recusado no 126 e no 155 após publicar B165–B171 (conferência de senha × hashes do `public`). Sem mudança de código; decisão com o Murillo; revisão de rumo do painel em `docs/admin/MEMORIA_DA_REFORMA.md` §6.2. |
+| B173 | **Corrigido, falta ver em jogo.** Contas padrão em MD5(nome+senha), migrações no `public` (backup antes), sem `process::exit` na perda do fencing, testes do painel em série. Workspace 946/1 (intermitente de ordem em `subcomandos_no_mundo`, 3/3 isolado), 2 ignorados. Link/GS 126/155 republicados. |
+| B169 | **Local, sem publicação.** Contas globais → selecionar conta → GM global → observar persistência salva/sessões pendentes → consultar ID até aplicação em todos os processos. Sessões mantidas; reentrada necessária para Ctrl+G/coroa. Revogação limpa efeitos e nega comandos nos GS 126/155. Processo indisponível mantém pendência; reinício/mesmo ID recupera. Workspace 940/0 (2 ignorados), armazenamento final 14/0, Python 49/0, Node 5/0; visual/jogo/Linux pendentes; roteiro no manual. |
+| B168 | **Local, sem publicação.** Contas globais → Criar conta global → usuário ASCII/ senha → esperar nome minúsculo, ID da conta e operação. Recarregar/relogin/outro realm → Consultar resultado mantém ID; repetir nome com outra caixa/nova operação recusa duplicação. Login da conta comum nos clientes 126/155 deve abrir seleção vazia, sem GM; painel recusa a conta. 47 Python + 117 Rust focados + 4 Node passaram; visual/jogo/Linux pendentes. Migrações só em test; roteiro/log/overlay em `docs/WEB_ADMIN_USER_GUIDE.md`. |
+| B167 | **Local, sem publicação.** Contas globais → buscar/selecionar conta → trocar senha → esperar salvo/ID; se timeout, consultar ID após recarregar/relogin, podendo usar outro realm. Senha antiga recusada/nova aceita no próximo login 126/155; sessões de jogo abertas mantidas. Hashes incompatíveis precisam de redefinição explícita antes de publicar link. Migração só em test; roteiro/logs em `docs/WEB_ADMIN_USER_GUIDE.md`, sem pacote novo no overlay. 41 Python + 110 Rust focados + 2 Node passaram; visual/em jogo pendentes. |
+| B166 | **Frontend E3 observado no painel em 2026-10-05; consultas vivas sem canal configurado e mundos anteriores.** Após futura publicação do painel e mundos: Personagens → buscar no realm → ficha viva online, persistida após logout; Atualizar acompanha posição/vida/mapa; alternar realm não mistura resultados; falha do GS mantém desconhecido. Mapas/contagem vivos somente com canal configurado. Edição indisponível, inclusive entidade residual após queda do link. Roteiro e logs em `docs/WEB_ADMIN_USER_GUIDE.md`; sem pacote novo/overlay. |
+| B165 | **Painel publicado em 2026-10-04, base para teste.** Roteiro em `docs/WEB_ADMIN_USER_GUIDE.md`: login GM, recusa de não-GM, alternância 126/155, recursos indisponíveis e logout. Inspeção visual pendente: nenhum navegador conectado à ferramenta. Sem mudança de pacote do cliente/overlay nesta fatia. |
 | B164 | (os dois) **não publicado.** Dois clientes em grupo, perto um do outro (< 100 m do monstro): (1) só um bate e mata → **os dois** recebem experiência na barra; um terceiro membro longe (> 100 m) não recebe. (2) Missão de caça **de equipe** (aceita pelo capitão): cada abate do grupo soma no contador dos dois; fora do grupo ela conta normalmente. (3) Missão de equipe com "capitão conclui, todos concluem": o capitão entrega no NPC → no outro cliente a missão aparece concluída/pronta para entregar. (4) NPC com "item de missão" (serviço 8): com a missão ativa, pedir o item → ele cai na bolsa de missão; sem a missão, mensagem de missão indisponível. Log: `recebeu da equipe de <id> o aviso 3 da missão <n>` e `pediu ao NPC os itens da missão <n>` |
 | B163 | (os dois) **não publicado.** No NPC Ferreiro/Refinador: (1) **Incrustar** uma pedra numa arma com furo vazio → a pedra some da bolsa, o dinheiro cai o `install_price`, o tooltip da arma mostra a pedra e o atributo; pedra de grau maior que a arma → mensagem de não incrustar (21). (2) **Remover pedras** → furos vazios no tooltip e o custo descontado. (3) **Refinar** com Pedra Celestial (11208) → janela mostra sucesso/falha; +1 no nome em caso de sucesso; nível ≥1 e falha volta a +0; clicar duas vezes em menos de 1 s → "em recarga". (4) **Furar** (só 1.5.5) com pedras 21043 → "furo feito" e um furo a mais; no 1.2.6 não há a opção. Log: `mundo: <id> incrustou/removeu as pedras de/refinou/furou o item <tid>` |
 | B159 | **não publicado.** Painel de GM (Ctrl+G), conta com `gm_privileges` > 0: **Invencível** → mensagem fixa do cliente e monstro/jogador não tiram vida; de novo desliga. **Invisível** → some da tela do outro cliente, não consegue golpear; de novo, reaparece para ele. **Ir até jogador** / **Chamar jogador** com o id (inclusive entre os mapas 1, 161 e 169). **Criar monstro** (id, aparência 0, quantidade, vida em s) → nascem a até 6 m. Log: `grep -E "GM [0-9]+"` |
@@ -622,6 +658,13 @@ portado. Falta ver em jogo.)
 - **Servidor 1.5.5 original numa VM 32-bit** (`pwserver_155v156`): o gabarito da versão
   certa (B44c).
 - Banco (E), `pw-admin` (G), atualizador/launcher (H) — memória `pw_roadmap_contextos`.
+- **Painel (B165–B170):** E3 com consultas/comandos recuperáveis; E4 com senha, criação e GM global coordenado (B169).
+  Faltam gold/ban/desban/desconexão e escritas E5–E9. Para edição offline,
+  corrigir entidade residual e coordenar login/autosave/logout/transferência com revisão.
+  B170: saída/fotografia/troca local testada; próximo: fencing/revisão/diário globais e
+  demais produtores antes de ban/desconexão/E5; gold
+  aguarda loja/concorrência. B167–B169 locais, migrações somente em `test`; painel atual
+  contém E3 e alvos 126/155, mas mundos anteriores sem chave recusam o canal. Visual E2/E3/E4 e jogo pendentes.
 
 ## 6. Regras que valem para qualquer mudança
 
@@ -824,3 +867,9 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 162 | 10-01 | monstro que "resetou" no 169: não há ódio infinito em masmorra; as quatro causas de desistência do original; `max_move_range` e o piso de 15 m divergem; motivo do reset não é registrado |
 | 163 | 10-02 | refinar (35), incrustar (10), remover pedras (11) e furar (47, só 1.5.5) portados nas duas versões; `EMBED_ITEM`/`CLEAR_TESSERA` corrigidos, `REFINE_RESULT` novo; `combined_services` do layout v7 renomeado |
 | 164 | 10-02 | experiência repartida pela equipe (`DispatchExp`/`ReceiveGroupExp`/`player_team::DispatchExp`), abate contado para missão de equipe, `AwardNotifyTeamMem` + `OnTaskForceSucc/Fail` e serviço 8 (item de missão pelo NPC), nas duas versões |
+| 165 | 10-04 | reforma do painel: E1 auditada; login PW/GM compartilhado, sessão revogável, UI única e consulta de realms/capacidades; 22 testes Python com banco + 24 Rust; E3–E9 pendentes |
+| 166 | 10-05 | painel E3: canal HMAC por realm, mapas/contagem reais e ficha viva/persistida; 37 Python + 6 canal + 3 mapas; regressão 152 passaram/2 ignorados; consultas sem escrita, não publicadas |
+| 167 | 10-05 | painel E3/E4: senha global idempotente/recuperável, registro/efeito atômicos e senha validada no link; 41 Python + 110 Rust focados + 2 Node; local, migração somente em test |
+| 168 | 10-05 | painel E4: criação global recuperável, conta/ID/resultado atômicos e unicidade por nome sem caixa; 47 Python + 117 Rust focados + 4 Node; local, migrações só em test |
+| 169 | 10-05 | painel E4: GM global recuperável, revisão/recibos e caches/efeitos coordenados; cliente exige reentrada; salvamento antes de ban/desconexão; local, migração só em test |
+| 170 | 10-05 | saída e queda do link com fotografia atômica; carimbo/exclusão locais contra autosave antigo; transferência recupera confirmação incerta; fencing global/reinício/demais produtores pendentes |

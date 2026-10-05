@@ -172,6 +172,28 @@ fn a_porta_do_barramento_nunca_e_publicada() {
     }
 }
 
+#[test]
+fn canal_administrativo_dos_mundos_permanece_interno() {
+    let mapa = servicos();
+    let mundos = rodando(&mapa, "pw-gs");
+    assert!(mundos.iter().any(|(_, s)| s.ambiente.contains_key("ADMIN_SECRET")));
+    for (nome, mundo) in mundos {
+        if !mundo.ambiente.contains_key("ADMIN_SECRET") {
+            continue;
+        }
+        // Política do canal em pw-gs/src/main.rs: ADMIN_LISTEN padrão 29110.
+        let porta = mundo.ambiente.get("ADMIN_LISTEN")
+            .map(|escuta| escuta.rsplit(':').next().unwrap()).unwrap_or("29110");
+        for (servico, configuracao) in &mapa {
+            for publicada in &configuracao.portas {
+                let destino = publicada.rsplit(':').next().unwrap().split('/').next().unwrap();
+                assert_ne!(destino, porta,
+                    "`{servico}` publica o canal administrativo do mundo `{nome}`");
+            }
+        }
+    }
+}
+
 /// Os destinos de um `GS_BUS`: `host:porta` só, ou `mundo=host:porta,mundo=host:porta`
 /// (ver `LinkGateway::com_barramento`).
 fn destinos(gs_bus: &str) -> Vec<(Option<i32>, String, String)> {

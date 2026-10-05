@@ -3,6 +3,8 @@
 > Verificada contra o código em 2026-09-14, commit `e6433ae`; tabela de versões e §5 revistas
 > em 2026-09-26 (B120). Índice das specs e regra de
 > manutenção: [`README.md`](README.md).
+> `pw-crypto` revisto em 2026-10-04, base `a010ff7` + B165 sem commit.
+> Canal do `pw-gs`, link, registro durável e coordenação global de GM revistos em 2026-10-05, base `a010ff7` + B167–B169 sem commit.
 
 ## 1. O que é
 
@@ -50,7 +52,8 @@ cliente original ──TCP──▶ pw-link (1 por realm, porta pública)
                            │  login, lista/criação de personagem, entrada no mundo,
                            │  fala, e parte do gameplay que ainda não migrou (gateway.rs)
                            │
-                           ├──barramento GNET interno (29100, nunca publicado)──▶ pw-gs (1 por mapa)
+                           ├──barramento GNET interno (29100, nunca publicado)──▶ pw-gs (1 por realm,
+                           │                                                     vários mapas)
                            │                                                     simulação: tick, spawns,
                            │                                                     visibilidade, IA, combate,
                            │                                                     itens, NPCs, autosave
@@ -69,14 +72,14 @@ parte do `gamedbd`, e o `pw-gs` o de `gs`.
 | crate | papel | estado |
 | :--- | :--- | :--- |
 | `pw-core` | tipos comuns: classes, raças, vetores, personagem, itens, fichas de equipamento | em uso |
-| `pw-crypto` | RC4 do elo com o cliente, hashes de senha, tickets de sessão | em uso |
+| `pw-crypto` | RC4 do elo com o cliente, hashes de senha, tickets de sessão; verificador local do painel `pw-validar-credenciais` (B165, 2026-10-04) | em uso |
 | `pw-wire` | os dois formatos de fio: GNET (big-endian, `CompactUINT`) e gamedata (little-endian, `pack(1)`) | em uso; conformidade contra o IR |
 | `pw-protocol` | opcodes, pacotes GNET, subcomandos S2C, `PorVersao`, `edition`, versão | em uso; ainda com `octets.rs`/`adapter.rs` duplicando o `pw-wire` |
 | `pw-bus` | barramento `pw-link`↔`pw-gs` (4 mensagens GNET reais) | em uso |
-| `pw-storage` | repositórios PostgreSQL (contas, personagens, itens, habilidades, missões, moldes, realms) e cache | em uso |
+| `pw-storage` | repositórios PostgreSQL e cache; comando administrativo/senha/criação/resultados na mesma transação global (B167/B168) | em uso; migrações novas aplicadas só em `test` |
 | `pw-data-loader` | leitores de `elements`/`tasks`/`npcgen`/`aipolicy`/`gshop`, `ptemplate.conf`, `.hmap`, `.sev` | em uso |
 | `pw-link` | daemon de link por realm (`gateway.rs`, `uplink.rs`) | em uso |
-| `pw-gs` | servidor de mundo (`bus_server.rs`, `world.rs`, `ai.rs`, `combat.rs`, `habilidades.rs`) | em uso |
+| `pw-gs` | servidor de mundo; canal opcional protegido, consultas, senha e criação global recuperáveis (`administracao.rs`; spec 06) | em uso; B167/B168 testados automaticamente, locais |
 | `pw-auth` | serviço de autenticação (porta interna 29200) | sobe no compose; **o `pw-link` não depende dele** — autentica direto pelo `pw-storage` |
 | `pw-delivery` | chat, amigos, correio, grupo | **não usado**: nenhum daemon depende dele; a fala está no `pw-link` e o grupo no `pw-gs` |
 | `pw-uniquename` | unicidade de nomes | **não usado** |
@@ -99,3 +102,8 @@ ver [`06_ADMIN_PANEL_AND_CPW_SPEC.md`](06_ADMIN_PANEL_AND_CPW_SPEC.md).
 | regra de jogo | `EvolvedPWServer/cgame/gs/*.cpp`; no 1.2.6, o `gs` 1.2.6 quando difere (roteiros de habilidade, `allow_forms`, tabelas do v7) |
 | formato de arquivo de dados | o carregador **do cliente** (`elementdataman::load_data`, `ATaskTempl::LoadBinary`) e o tamanho do arquivo |
 | como testar | `docs/COMO_TESTAR.md`, seção 2 do `ESTADO_E_RETOMADA.md` |
+
+Coordenação GM global B169: `pw-storage::CoordenacaoGmRepository` guarda revisão/recibos,
+links e GS reconciliam caches/efeitos sem banco no tick ou locks do mundo; comandos GM,
+GOTO e missões revalidam autorização. API/UI indicam persistência, aplicação nas sessões
+e reentrada necessária para o cliente. Contratos na spec 06; migração só em test.

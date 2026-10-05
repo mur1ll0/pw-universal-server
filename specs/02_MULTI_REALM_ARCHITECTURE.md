@@ -3,6 +3,7 @@
 > Verificada contra o código em 2026-09-14, commit `e6433ae`. Cobre `docker/`,
 > `crates/pw-link/`, `crates/pw-bus/`, `crates/pw-auth/` e
 > `crates/pw-protocol/src/{version,edition,codec,opcodes}.rs`.
+> Painel/canal e autenticação do link revistos em 2026-10-05, base `a010ff7` + B165–B170 sem commit.
 
 ## 1. Decisão: servidor polimórfico, cliente intocado
 
@@ -33,13 +34,13 @@ uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio
 | `pw-postgres` | 5432 | banco único de todos os realms |
 | `pw-dragonfly` | 6379 | cache |
 | `pw-auth` | — (29200 interna) | serviço de autenticação; hoje sem consumidor |
-| `pw-admin-api` | 8000 | painel (`web-admin/backend`), lê `data/` e `specs/elements_*` |
+| `pw-admin-api` | 8000 | painel autenticado; frontend E3 observado no contêiner, canais ausentes; senha global/resultado B167 locais; catálogo indisponível |
 
 ### 2.2 Por realm: um `pw-link` e um `pw-gs` com os mapas do realm
 
 | realm (`REALM_ID`) | `GAME_VERSION` | link (porta pública) | servidor de mundo (mapas) | dados |
 | :--- | :--- | :--- | :--- | :--- |
-| `realm_155` | 1.5.5 | `pw-realm-155` **29004** | `pw-world-155` (mapas **1 e 161**) | `data/realm_155/config` (cliente BR, v156) |
+| `realm_155` | 1.5.5 | `pw-realm-155` **29004** | `pw-world-155` (mapas **1, 161 e 169**) | `data/realm_155/config` (cliente BR, v156) |
 | `realm_126` | 1.2.6 | `pw-realm-126` 29000 | 1 → `pw-world-126` | `data/realm_126` |
 | `realm_153` | 1.5.3 | `pw-realm-153` 29001 | 1 → `pw-world-153` | abandonado |
 | `realm_148` | 1.4.8 | `pw-realm-148` 29002 | 1 → `pw-world-148` | nunca foi alvo |
@@ -64,6 +65,18 @@ uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio
   precisa de uma linha em `realms` e dos moldes em `class_templates`.
 
 ### 2.3 Regras cobradas por teste (`pw-bus/tests/topologia_do_compose.rs`)
+
+Canal administrativo opcional nos mundos 126/155: `ADMIN_LISTEN` padrão interno 29110,
+sem mapeamento ao host. `ADMIN_SECRET_126`/`ADMIN_SECRET_155` alimentam `ADMIN_SECRET` no GS
+e `ADMIN_CHANNEL_SECRETS` no painel; não há segredo padrão. `ADMIN_DAEMONS` aponta para
+os processos daquele realm; cada processo adicional deve constar explicitamente. Sem
+chave/canal, consultas vivas ficam desconhecidas. HMAC, GM/ban e limites na spec 06.
+Canal testado; o painel em execução contém código E3 e alvos 126/155 (inspeção B168),
+mas os mundos de 2026-10-03 sem ADMIN_SECRET recusam TCP 29110. B167/B168 locais,
+sem publicação; barramento de jogo permanece separado. Senha/criação global e recuperação pelo GS usam o mesmo
+canal; deduplicação/resultado são compartilhados entre realms no PostgreSQL (spec 06).
+O teste `canal_administrativo_dos_mundos_permanece_interno` proíbe expor a porta do canal
+por qualquer serviço do Compose. Cinco testes de topologia passaram em B166.
 
 - A porta do barramento **nunca** é publicada: ele não autentica, e quem o alcança manda
   `EnterWorld` por qualquer `roleid` (A26).
@@ -124,6 +137,22 @@ ao cliente (A4). **Hoje os 8 primeiros bytes vão zerados** — `falta`.
 participa) → `KeyExchange` (a cifra é opcional na prática, A58) → `OnlineAnnounce` →
 `RoleList`/`RoleList_Re` → `CreateRole`/`DeleteRole`/`UndoDeleteRole` (**checam o dono**,
 A29) → `SelectRole` → `EnterWorld` (72).
+
+**Senha efetivamente verificada (B167, testado automaticamente):** antes de autenticar,
+o link compara HMAC-MD5(chave=hash legado MD5(nome+senha), mensagem=desafio) em tempo constante,
+conforme `EvolvedPWClient/ElementClient/Network/gameclient.cpp:131-139`, também no fonte 1.5.3.
+Desafio é guardado por sessão e consumido ao autenticar; `Response` repetido não substitui
+identidade. Tokens e hashes Argon2/texto não são suportados pelo algo=0 anunciado. Hash
+legado gerado pelo painel usa nome em minúsculas; usar essa grafia no cliente. Senha alterada
+vale nos próximos logins de qualquer realm, mantendo sessões de jogo já abertas. Antes de
+publicar a validação, conferir contas de teste e redefinir explicitamente hashes incompatíveis:
+as sementes antigas não correspondiam ao MD5(nome+senha); só a inicialização nova foi corrigida.
+Nenhuma senha existente foi resetada e nenhum layout GNET foi alterado.
+
+**GM e ban:** link lê ambos ao autenticar; GM é copiado para a sessão e para `PlayerEntity`
+ao entrar no GS (`bus_server.rs:1338`, `gm.rs:45-56`), enquanto teleporte GM relê o banco.
+Ban não desconecta sessões abertas e seu vencimento não é consumido no link. Escritas
+administrativas desses campos continuam indisponíveis até coordenação global E4.
 
 Na entrada o link manda a carga inicial (ordem importa, B36e/B38): `INST_DATA_CHECKOUT`
 (com `id_inst` = mundo do personagem e os carimbos de `region.sev`/`precinct.sev` desse
@@ -197,3 +226,24 @@ Protocolos GNET **reais** do IR, não formato inventado. Quadro:
 
 Personagem pertence a `(account_id, realm_id)`. Conta é global; personagens, moldes e dados
 são por realm.
+
+## 7. Coordenação administrativa global de GM (B169)
+
+`ADMIN_COORDENACAO_ID` em cada link/GS e `ADMIN_COORDENACAO_ALVOS` iguais em todos,
+com todos os processos consumidores, inclusive indisponíveis. Compose inclui links/GS
+126/155 (148/153 saíram em 2026-10-05: fora da reforma; lá a mudança de GM só vale no
+próximo login). **Opcional:** sem a variável, ou sem as tabelas da migração, link e GS
+sobem sem coordenação (aviso no log) em vez de abortar; `accounts.revisao_gm` ausente
+lê 0 (`#[sqlx(default)]`), então o login não depende da migração. Comandos GM do jogo
+(`autorizar_gm_persistido`) ainda exigem a coluna.
+Revisão transacional e recibos no PostgreSQL, fencing de encarnação por conexão dedicada.
+GM não usa o barramento GNET sem autenticação; API → GS pelo canal HMAC existente.
+Link coordena login/seleção/fotografia e confirma depois de atualizar caches de sessões;
+GS coordena entrada/saída/transferência/consumo e limpa efeitos revogados. I/O fora do
+mundo/tick. Processo ausente ou recibo expirado deixa aplicação global pendente; reinício
+reconcilia e renova recibo, sem reaplicar o comando SQL. Perda do fencing desliga a coordenação (GM das sessões abertas negado/efeitos removidos), sem derrubar o processo (B173).
+GM cliente só recarrega na seleção: `SelectRole_Re.auth` em 155 `EC_GameSession.cpp:4581`,
+153 `:4513` (referência do 126); é necessária reentrada, sem novo pacote inventado.
+Sessões GM mantidas. B170 corrige entidade residual e salva saída/troca com revisão local;
+antes de desconectar/banir faltam fencing global, diário de recuperação e demais produtores. Contrato na spec 06 e
+`docs/admin/ARQUITETURA_E_CONTRATOS.md`. Migração somente em test; não publicado.

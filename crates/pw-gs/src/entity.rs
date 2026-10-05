@@ -127,6 +127,8 @@ pub struct PlayerEntity {
     ///
     /// Zero por omissão: negar privilégio é a resposta segura.
     pub sec_level: u8,
+    pub conta_id: i32,
+    pub revisao_gm: i64,
     /// As habilidades aprendidas, por id, com o **nível de cada uma**.
     ///
     /// Vive aqui porque o `CAST_SKILL` do cliente **não manda o nível** — quem tem de
@@ -1295,6 +1297,8 @@ impl PlayerEntity {
             // Quem preenche é `BusServer::colocar_no_mundo`, que tem o repositório à mão;
             // o `CharacterDetails` não traz o privilégio da conta.
             sec_level: 0,
+            conta_id: 0,
+            revisao_gm: 0,
             habilidades: p.skills.iter().map(|h| (h.skill_id, h.level)).collect(),
             proficiencias: p.skills.iter().filter(|h| h.ability > 0).map(|h| (h.skill_id, h.ability)).collect(),
             crc_aparencia: pw_core::stamp_de_aparencia(&pw_core::bytes_da_aparencia(

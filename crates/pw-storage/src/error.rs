@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum StorageError {
+    #[error("Confirmação de fotografia desconhecida: {0}")]
+    ConfirmacaoDesconhecida(String),
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 

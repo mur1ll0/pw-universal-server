@@ -13,6 +13,9 @@ pub struct AccountRecord {
     pub gold_balance: i64,
     pub silver_balance: i64,
     pub gm_privileges: i32,
+    /// Ausente antes de `scripts/2026_10_05_coordenacao_gm.sql`: lê 0 para o login não cair.
+    #[sqlx(default)]
+    pub revisao_gm: i64,
     pub is_banned: bool,
     pub ban_reason: Option<String>,
     pub ban_expires_at: Option<DateTime<Utc>>,
@@ -27,6 +30,12 @@ pub struct AccountRepository {
 }
 
 impl AccountRepository {
+    pub fn coordenacao_gm(&self) -> super::CoordenacaoGmRepository {
+        super::CoordenacaoGmRepository::new(self.pool.clone())
+    }
+    pub fn comandos_administrativos(&self) -> super::ComandoAdministrativoRepository {
+        super::ComandoAdministrativoRepository::new(self.pool.clone())
+    }
     pub fn new(pool: PostgresPool) -> Self {
         Self { pool }
     }
@@ -129,18 +138,23 @@ impl AccountRepository {
 
     /// Altera nível de privilégios de GM (0: Normal, 1..32: Níveis de GM)
     pub async fn set_gm_privileges(&self, account_id: AccountId, gm_level: i32) -> Result<()> {
+        let mut tx = self.pool.get_ref().begin().await?;
+        // Mesma ordem do comando administrativo: conta, depois singleton de revisão.
+        sqlx::query("SELECT id FROM accounts WHERE id=$1 FOR UPDATE").bind(account_id).execute(&mut *tx).await?;
+        let revisao: i64 = sqlx::query_scalar("UPDATE coordenacao_gm_revisao SET revisao=revisao+1 WHERE unico RETURNING revisao").fetch_one(&mut *tx).await?;
         sqlx::query(
             r#"
             UPDATE accounts 
-            SET gm_privileges = $1 
+            SET gm_privileges = $1, revisao_gm = $3
             WHERE id = $2
             "#,
         )
         .bind(gm_level)
         .bind(account_id)
-        .execute(self.pool.get_ref())
+        .bind(revisao)
+        .execute(&mut *tx)
         .await?;
-
+        tx.commit().await?;
         Ok(())
     }
 

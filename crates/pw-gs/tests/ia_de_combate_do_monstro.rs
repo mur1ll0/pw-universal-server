@@ -68,6 +68,8 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
+        conta_id: 0,
+        revisao_gm: 0,
         habilidades: Default::default(),
         proficiencias: Default::default(),
         crc_aparencia: 0,

@@ -497,7 +497,8 @@ impl BusServer {
             .await
             .unwrap_or_default();
 
-        let (r, para_mim, para_todos, subiu, mut bolsas, gravacao, ficha, teleporte, daimon, avisos) = {
+        let autorizacao_gm = self.autorizar_gm(roleid).await;
+        let (r, para_mim, para_todos, subiu, mut bolsas, gravacao, deve_gravar, ficha, teleporte, daimon, avisos) = {
             let mut guarda = self.world.write().await;
             let mundo = &mut *guarda;
             let dados = Arc::clone(&mundo.data_manager);
@@ -527,9 +528,12 @@ impl BusServer {
                 })
                 .collect();
             let p = mundo.players.get_mut(&(roleid as i64))?;
-            let gm = p.sec_level > 0;
+            let gm = autorizacao_gm.is_some();
             let dinheiro_antes = p.money;
             let jaula_antes = p.vagas_na_jaula;
+            let estado_antes=((p.level,p.cultivation,p.exp,p.sp,p.hp,p.mp,p.money,p.position),
+                (p.strength,p.agility,p.vitality,p.energy,p.pontos_de_atributo,p.vagas_na_jaula));
+            let listas_antes=p.missoes.blocos();
             let mut ctx = Contexto {
                 sub: self.sub.as_ref(),
                 p,
@@ -583,6 +587,9 @@ impl BusServer {
                 listas: p.missoes.blocos(),
                 jaula: (p.vagas_na_jaula != jaula_antes).then_some(p.vagas_na_jaula),
             };
+            let deve_gravar=estado_antes!=((p.level,p.cultivation,p.exp,p.sp,p.hp,p.mp,p.money,p.position),
+                (p.strength,p.agility,p.vitality,p.energy,p.pontos_de_atributo,p.vagas_na_jaula))
+                || listas_antes!=gravacao.listas;
             let ficha = (mudou || subiu_de_nivel).then(|| {
                 (
                     self.ficha_propria(p),
@@ -616,6 +623,7 @@ impl BusServer {
                 subiu_de_nivel,
                 [bolsa, bolsa_de_missao],
                 gravacao,
+                deve_gravar,
                 ficha,
                 teleporte,
                 daimon,
@@ -623,6 +631,9 @@ impl BusServer {
             )
         };
 
+        // O privilégio foi consumido no contexto sob o lock do mundo. Soltar a guarda
+        // antes das persistências evita reter o lock de conta durante I/O de itens/ficha.
+        if let Some(autorizacao) = autorizacao_gm { let _ = autorizacao.rollback().await; }
         for c in para_mim {
             self.enviar_ao_jogador(roleid, c).await;
         }
@@ -674,6 +685,8 @@ impl BusServer {
             }
         }
         let gravar = async move {
+            // Não atrasar resultado de contexto sem alteração (pergaminho: 99 tiques).
+            if !deve_gravar {return;}
             let g = gravacao;
             if let Err(e) = repo
                 .save_status(
@@ -728,7 +741,9 @@ impl BusServer {
                 .await;
             }
             None => {
-                tokio::spawn(gravar);
+                // B170: a fotografia de missão termina antes de liberar o comando;
+                // não pode reaparecer depois da fotografia final de saída.
+                gravar.await;
             }
         }
         Some((r, avisos))

@@ -73,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
     // 2. Conecta ao banco de dados PostgreSQL
     let storage_config = StorageConfig::default();
     let pg_pool = PostgresPool::new(&storage_config).await?;
+    let contas_admin = pw_storage::AccountRepository::new(pg_pool.clone());
     let char_repo = CharacterRepository::new(pg_pool);
 
     // 3. Um mundo por mapa, cada um com seu tick, todos sobre os mesmos dados.
@@ -90,6 +91,31 @@ async fn main() -> anyhow::Result<()> {
     }
     let roteador = Arc::new(RoteadorDeMapas::new(servidos, char_repo));
     roteador.ligar_trocas();
+    if let Ok(processo) = std::env::var("ADMIN_COORDENACAO_ID") {
+        // Opcional: sem as tabelas da migração (scripts/2026_10_05_coordenacao_gm.sql)
+        // o GS sobe sem coordenação GM em vez de abortar.
+        if let Err(e) = roteador.iniciar_coordenacao_gm(contas_admin.clone(), processo).await {
+            tracing::warn!("coordenação GM desligada (registro falhou: {e}); GS segue sem ela");
+        }
+    }
+
+    // Canal opcional, sem porta pública. Chave ausente não habilita acesso implícito.
+    if let Some(segredo) = std::env::var("ADMIN_SECRET").ok().filter(|s| !s.is_empty()) {
+        let chave = hex::decode(segredo).map_err(|_| anyhow::anyhow!("ADMIN_SECRET inválido"))?;
+        let servidor = Arc::new(pw_gs::administracao::ServidorAdministrativo::new(
+            realm_id.clone(), chave, Arc::clone(&roteador), contas_admin,
+        )?);
+        let endereco = std::env::var("ADMIN_LISTEN").unwrap_or_else(|_| "0.0.0.0:29110".into());
+        let escuta_admin = tokio::net::TcpListener::bind(&endereco).await?;
+        info!("pw-gs: canal administrativo protegido escutando em {endereco}");
+        tokio::spawn(async move {
+            if servidor.executar(escuta_admin).await.is_err() {
+                warn!("pw-gs: canal administrativo interrompido");
+            }
+        });
+    } else {
+        info!("pw-gs: canal administrativo desabilitado (sem ADMIN_SECRET)");
+    }
 
     // 4. Sobe a ponta de barramento. É por aqui que o `pw-link` entrega os subcomandos
     //    do mundo 3D.

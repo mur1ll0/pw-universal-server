@@ -82,6 +82,7 @@ pub struct CharacterRepository {
     skill_repo: SkillRepository,
     quest_repo: QuestRepository,
     template_repo: TemplateRepository,
+    controles_de_gravacao: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<RoleId, std::sync::Arc<ControleDeGravacao>>>>,
 }
 
 impl CharacterRepository {
@@ -105,7 +106,60 @@ impl CharacterRepository {
             skill_repo,
             quest_repo,
             template_repo,
+            controles_de_gravacao: Default::default(),
         }
+    }
+
+    /// Coordenação local compartilhada pelas cópias deste repositório nos mapas.
+    /// Não é lease entre processos e não autoriza edição offline (B170).
+    pub fn controle_de_gravacao(&self, role: RoleId) -> std::sync::Arc<ControleDeGravacao> {
+        self.controles_de_gravacao.lock().unwrap().entry(role)
+            .or_insert_with(|| std::sync::Arc::new(ControleDeGravacao::default())).clone()
+    }
+
+    /// Fotografia de status/atributos/chi/listas de missão no mesmo commit.
+    /// Fora do mundo/tick. Os demais repositórios ainda exigem fencing global antes de E5.
+    pub async fn gravar_fotografia(&self, e: &FotografiaPersonagem) -> Result<()> {
+        let mut tx = self.pool.get_ref().begin().await?;
+        sqlx::query("SET LOCAL lock_timeout='1500ms'").execute(&mut *tx).await?;
+        sqlx::query("SET LOCAL statement_timeout='2000ms'").execute(&mut *tx).await?;
+        // charactermode é uma lista de pares, não só bool (pw-core/character.rs:36–63).
+        // Alterar apenas a chave conhecida; conservar pares opacos e eventual cauda.
+        let anterior:Option<Vec<u8>>=sqlx::query_scalar("SELECT character_mode FROM characters WHERE id=$1 FOR UPDATE")
+            .bind(e.role_id).fetch_optional(&mut *tx).await?;
+        let anterior=anterior.ok_or_else(||StorageError::NotFound("personagem da fotografia".into()))?;
+        let conhecido=pw_core::charactermode_de_modo_roupa(true);
+        let mut pares=anterior.chunks_exact(8);
+        let mut modo=Vec::new();
+        for par in &mut pares {if par[..4]!=conhecido[..4] {modo.extend_from_slice(par);}}
+        if e.modo_roupa {modo.extend_from_slice(&conhecido);}
+        modo.extend_from_slice(pares.remainder());
+        let r = sqlx::query("UPDATE characters SET level=$2,cultivation=$3,exp=$4,sp=$5,
+            hp=$6,mp=$7,money=$8,world_id=$9,pos_x=$10,pos_y=$11,pos_z=$12,
+            ap=$13,max_ap=$14,strength=$15,agility=$16,vitality=$17,energy=$18,
+            potential_points=$19,character_mode=$20,waypoints=$21,updated_at=CURRENT_TIMESTAMP
+            WHERE id=$1")
+            .bind(e.role_id).bind(e.level).bind(e.cultivation).bind(e.exp).bind(e.sp)
+            .bind(e.hp).bind(e.mp).bind(e.money).bind(e.mundo)
+            .bind(e.posicao.x).bind(e.posicao.y).bind(e.posicao.z).bind(e.ap).bind(e.max_ap)
+            .bind(e.atributos.0).bind(e.atributos.1).bind(e.atributos.2).bind(e.atributos.3)
+            .bind(e.pontos_de_atributo).bind(modo)
+            .bind(e.waypoints.iter().flat_map(|v|v.to_le_bytes()).collect::<Vec<_>>())
+            .execute(&mut *tx).await?;
+        if r.rows_affected()!=1 { return Err(StorageError::NotFound("personagem da fotografia".into())); }
+        sqlx::query("INSERT INTO character_task_lists
+            (character_id,active,finished,finish_time,finish_count,storage,updated_at)
+            VALUES($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP) ON CONFLICT(character_id) DO UPDATE SET
+            active=EXCLUDED.active,finished=EXCLUDED.finished,finish_time=EXCLUDED.finish_time,
+            finish_count=EXCLUDED.finish_count,storage=EXCLUDED.storage,updated_at=CURRENT_TIMESTAMP")
+            .bind(e.role_id).bind(&e.missoes.ativa).bind(&e.missoes.concluidas)
+            .bind(&e.missoes.tempos).bind(&e.missoes.contagens).bind(&e.missoes.deposito)
+            .execute(&mut *tx).await?;
+        match tokio::time::timeout(std::time::Duration::from_secs(2),tx.commit()).await {
+            Ok(Ok(()))=>{},
+            r=>return Err(StorageError::ConfirmacaoDesconhecida(format!("{r:?}"))),
+        }
+        Ok(())
     }
 
     pub fn item_repo(&self) -> &ItemRepository {
@@ -1017,4 +1071,40 @@ impl CharacterRepository {
 
         Ok(m)
     }
+}
+
+/// Revisões em memória: invalidam fotografias anteriores e capturadas durante comandos.
+/// O banco não é consultado sob esta estrutura no tick. Escopo: clones do repositório no GS.
+#[derive(Default)]
+pub struct ControleDeGravacao {
+    porta: std::sync::Arc<tokio::sync::Mutex<()>>,
+    revisao: std::sync::atomic::AtomicU64,
+}
+impl ControleDeGravacao {
+    pub fn fotografar(&self) -> u64 {
+        self.revisao.fetch_add(1,std::sync::atomic::Ordering::SeqCst)+1
+    }
+    pub fn revisao(&self) -> u64 { self.revisao.load(std::sync::atomic::Ordering::SeqCst) }
+    pub async fn serializar(&self) -> tokio::sync::OwnedMutexGuard<()> { self.porta.clone().lock_owned().await }
+    pub async fn alterar(self: &std::sync::Arc<Self>) -> GuardaDeGravacao {
+        let guarda=self.serializar().await;
+        self.fotografar();
+        GuardaDeGravacao { controle:self.clone(), _guarda:guarda }
+    }
+}
+pub struct GuardaDeGravacao {
+    controle: std::sync::Arc<ControleDeGravacao>,
+    _guarda: tokio::sync::OwnedMutexGuard<()>,
+}
+impl Drop for GuardaDeGravacao {
+    fn drop(&mut self) { self.controle.fotografar(); }
+}
+#[derive(Debug,Clone)]
+pub struct FotografiaPersonagem {
+    pub role_id:i32, pub mundo:i32, pub level:i32, pub cultivation:i32,
+    pub exp:i64, pub sp:i64, pub hp:i32, pub mp:i32, pub money:i64,
+    pub posicao:Vector3, pub ap:i32, pub max_ap:i32,
+    pub atributos:(i32,i32,i32,i32), pub pontos_de_atributo:i32,
+    pub modo_roupa:bool, pub waypoints:Vec<u16>,
+    pub missoes:super::task_lists::ListasDeMissaoGravadas,
 }

@@ -1,6 +1,8 @@
 -- =============================================================================
 -- ESPECIFICAÇÃO DE BANCO DE DADOS: PostgreSQL 16 Multi-Realm (Normalizado)
 -- Projeto: PW-Universal-Server
+-- Contas/comandos revistos em 2026-10-05, base a010ff7 + B167/B168 sem commit.
+-- Registro novo aplicado somente em test; public aguarda implantação autorizada.
 -- =============================================================================
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -27,15 +29,34 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 -- Índices de Alta Performance para Autenticação e Busca
 CREATE INDEX IF NOT EXISTS idx_accounts_username_lower ON accounts(LOWER(username));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_usuario_lower ON accounts(LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email);
 
+-- E3/E4: resultado técnico e senha/criação na mesma transação PostgreSQL.
+-- B168: UNIQUE LOWER(username) corresponde à autenticação. Migração de public pendente;
+-- scripts/2026_10_05_criacao_contas.sql aborta duplicatas existentes sem alterá-las.
+-- ID global, sem FK/expurgo: preservar deduplicação mesmo após remoção de conta/realm.
+-- Ausência é desconhecida (transação concorrente pode ainda não ter confirmado).
+CREATE TABLE IF NOT EXISTS comandos_administrativos (
+    operacao_id VARCHAR(64) PRIMARY KEY,
+    administrador_id INTEGER NOT NULL,
+    realm_origem VARCHAR(32) NOT NULL,
+    conta_id INTEGER, -- B168: criação reserva sem ID; sucesso grava o ID alocado atomicamente.
+    impressao BYTEA NOT NULL CHECK (octet_length(impressao) = 32),
+    resultado JSONB NOT NULL,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- SEEDS: Contas Padrão Iniciais (Admin Master e Jogador Teste)
--- admin / admin (GM 32) -> Hash MD5("adminadmin") = 21232f297a57a5a743894a0e4a801fc3
--- testuser / 123456 (Player) -> Hash MD5("testuser123456") = 9cf0ea4cb360b37651a24d86b71f9cf7
+-- B167: sementes anteriores não correspondiam ao MD5(nome+senha) do cliente algo=0.
+-- Corrigir somente a criação inicial; ON CONFLICT preserva senhas de contas existentes.
+-- Formato único: MD5(nome+senha), chave do HMAC do cliente (gameclient.cpp:133-139).
+-- admin / admin (GM 32) -> MD5("adminadmin") = f6fdffe48c908deb0f4c3bd36c032e72
+-- testuser / testuser (Player) -> MD5("testusertestuser") = d70a0452418aeb8fb4030eae69ca2856
 INSERT INTO accounts (username, password_hash, email, gold_balance, gm_privileges)
 VALUES 
-('admin', '21232f297a57a5a743894a0e4a801fc3', 'admin@pwserver.local', 1000000, 32),
-('testuser', '9cf0ea4cb360b37651a24d86b71f9cf7', 'test@pwserver.local', 50000, 0)
+('admin', 'f6fdffe48c908deb0f4c3bd36c032e72', 'admin@pwserver.local', 1000000, 32),
+('testuser', 'd70a0452418aeb8fb4030eae69ca2856', 'test@pwserver.local', 50000, 0)
 ON CONFLICT (username) DO NOTHING;
 
 -- -----------------------------------------------------------------------------
@@ -357,3 +378,24 @@ CREATE INDEX IF NOT EXISTS idx_class_templates_realm ON class_templates(realm_id
 CREATE INDEX IF NOT EXISTS idx_template_items_tpl ON class_template_items(template_id);
 CREATE INDEX IF NOT EXISTS idx_template_skills_tpl ON class_template_skills(template_id);
 
+
+-- Coordenação global de GM (B169)
+-- B169: revisão global e recibos de reconciliação. Aplicar no search_path escolhido.
+-- Não modifica privilégios, contas ou personagens existentes.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS revisao_gm BIGINT NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS coordenacao_gm_revisao (
+    unico BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (unico),
+    revisao BIGINT NOT NULL DEFAULT 0
+);
+INSERT INTO coordenacao_gm_revisao(unico) VALUES(TRUE) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS coordenacao_gm_processos (
+    processo TEXT PRIMARY KEY,
+    encarnacao TEXT NOT NULL,
+    revisao BIGINT NOT NULL DEFAULT 0,
+    atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- B170 (2026-10-05): gravar_fotografia usa transação única de characters e
+-- character_task_lists (status/atributos/pontos/chi/modo roupa/waypoints/listas).
+-- Controle/carimbo de gravação é local ao GS; não introduz lease ou revisão no esquema.
+-- Nenhuma migração nova aplicada. Fencing e diário persistidos ainda são dependências.

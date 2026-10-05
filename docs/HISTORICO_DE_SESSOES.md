@@ -11344,3 +11344,431 @@ comparação lado a lado.
       o serviço 8) e, com banco, o membro que não bateu recebendo experiência.
     - Achado não corrigido: o convite de grupo não limita o tamanho (10 no 1.5.5, 6 no 1.2.6).
 
+
+165. **Sessão 2026-10-03/04: reforma do painel — auditoria E1 e base autenticada E2, publicada para teste.**
+
+    ### a. Pedido e auditoria
+    Executar `docs/admin/PROMPT_DE_INICIO.md` e preservar a memória central. Painel anterior
+    sem autorização (`a010ff7:web-admin/backend/main.py:34-41`), edições diretamente no banco
+    (`:792`), mapas apenas em cache (`:890`) e rates sem consumidor (`:1048`). Frontend
+    duplicado com SHA-256 idêntico, mas só `backend/static/` empacotado. Auditoria completa,
+    fontes de verdade e contratos em `docs/admin/ARQUITETURA_E_CONTRATOS.md`.
+
+    ### b. Entrega
+    FastAPI mantido e modularizado; UI única jade/dourada em português, sem CDN/framework.
+    Login exige conta PW GM não banida. Binário local de `pw-crypto` reutiliza `verify_password`
+    (`password.rs:57-112`, mesmo de `pw-auth/src/service.rs:98`), recebendo segredos por stdin,
+    sem rehash nem sessão de jogo. Sessão Redis com cookie HttpOnly/SameSite Strict, origem,
+    CSRF, revogação por conta/GM/ban/senha, timeout/limites de autenticação e corpo de login
+    limitado antes de acumulação, inclusive chunks. Rotas sem integração retornam 501 sem
+    escrita. Consulta de realms diferencia gateway, mundo desconhecido e contagem persistida.
+    Leitor antigo preservado mas não exposto: fallback pode buscar dados de outro realm.
+
+    ### c. Verificação
+    **Relatório de verificação — alegação limitada à base E2.**
+    - Comandos: `python -m unittest discover -s web-admin/backend/tests -p 'teste_*.py'`
+      (venv temporário Python 3.9, TEST_DATABASE_URL configurado, schema test/Redis isolado);
+      `cargo test --locked -p pw-crypto -p pw-bus -- --test-threads=2` com banco;
+      `node --check web-admin/backend/static/painel.js`; `rustfmt --check` do binário;
+      `docker compose -f docker/docker-compose.yml config --quiet`; build Docker do painel.
+    - Executados novamente após a última correção. Códigos de saída: 0.
+    - Saída: Python `Ran 22 tests / OK`; Rust 24 passaram, 0 falharam; imagem Linux compilada;
+      runtime sem rede: importação/assets e senha correta/incorreta, 3 verificações/0 falhas.
+    - Avisos: debug asyncio sobre tarefa lenta (~0,14 s) e logs das falhas de dependência
+      injetadas são esperados. Primeira rodada na sandbox falhou por PermissionError de
+      subprocesso; fora dela passou. Teste de chunks detectou leitura adicional pelo
+      middleware HTTP; limite movido para camada ASGI externa e suíte da base repetida.
+    - Veredito: PASS para os checks acima. Suíte integral do workspace e inspeção visual
+      não declaradas: nenhum navegador estava conectado à ferramenta de interface.
+
+    ### d. Publicação autorizada
+    Murillo confirmou publicar esta base parcial em 2026-10-04. Build de `pw-admin-api` e
+    `up -d --no-deps pw-admin-api`, sem reiniciar realms/mundos. Após startup completo:
+    página/interface nova 200, JavaScript 200, API anônima 401, IP LAN 192.168.1.13:8000
+    respondeu 200. Logs também mostram login e consultas 200, sem confirmação visual do
+    Murillo registrada. Sem commit/push. Prévia temporária encerrada e dados de teste limpos.
+
+    ### e. Retomada
+    E2 parcial até confirmação visual. E3–E9 continuam pendentes; E3 autorizada em 2026-10-05.
+    Próxima fatia: canal protegido e consulta básica viva por realm, sem edição de banco.
+    Specs 00/02/06, estado, manual e memória atualizados. Consumo sem contador disponível,
+    estimativa: análise ~20 mil, implementação/testes ~18 mil, checks/specs/docs ~8 mil;
+    total ~46 mil. Análise cara por saída inicial do estado e auditoria do backend monolítico.
+
+166. **Sessão 2026-10-05: painel E3 — canal protegido e consultas vivas por realm, sem escrita.**
+
+    ### a. Pedido e autoridade
+    Murillo pediu continuar a próxima etapa da reforma. E3 iniciou pela fatia de leitura
+    prevista em `docs/admin/ARQUITETURA_E_CONTRATOS.md`; fonte viva é `PlayerEntity` no GS,
+    presença exige roteamento, sessão e entidade. Não houve porte de regra ou pacote cliente.
+    Diagnóstico por teste: ao cair a conexão do link, `mapas.rs::atender` esquece dono/sessão
+    mas pode deixar entidade no mundo; ausência no roteador não prova offline.
+
+    ### b. Entrega
+    `pw-gs/src/administracao.rs`: TCP separado, opcional com chave de 32 bytes por realm,
+    quadro JSON limitado a 8192 bytes, HMAC-SHA256 com desafio novo por conexão e sentido
+    pedido/resposta. Revalida GM/ban, realm e correlação; timeout 3 s, até 32 conexões.
+    Compose recebe chaves explicitamente, sem padrão, e não expõe a porta interna 29110.
+    API consulta todos os daemons configurados daquele realm; falha de um impede atestar
+    ausência total. Roteador guarda entrada/logout/queda/troca; snapshot curto sem I/O
+    dentro do lock do mundo. EXP/alma/dinheiro são texto para preservar inteiros de 64 bits.
+
+    `painel/{canal,consultas}.py`: mapas/contagem reais, busca persistida limitada ao realm,
+    ficha viva quando exatamente um GS declara presença. Dados persistidos identificados;
+    transição, entidade residual, duplicidade, falha/timeout mantêm edição indisponível.
+    Página Personagens, busca/ficha e atualização; respostas atrasadas não cruzam realms.
+    Apenas leitura. Nenhuma escrita de jogo, edição offline ou resultado aplicado/salvo.
+
+    ### c. Verificação
+    **Relatório de verificação — alegação limitada às consultas E3 e regressões indicadas.**
+    - `python -m unittest discover -s web-admin/backend/tests -p 'teste_*.py'`: **37 passaram,
+      0 falharam**; TEST_DATABASE_URL/schema test, Redis isolado, verificador real e API
+      consultando binário real do GS com dados temporários. Repetido após build final do GS.
+    - `cargo test --locked -p pw-gs --test canal_administrativo --test varios_mapas --
+      --test-threads=2`: **6 + 3 passaram, 0 falharam**, com banco. Cobrem MAC/replay/tamanho,
+      realm/GM/ban, valores vivos versus SQL, entrada bloqueada concorrente, transferência,
+      logout e entidade residual na queda do link.
+    - Regressão `subcomandos_no_mundo`, também com banco: **152 passaram, 0 falharam,
+      2 ignorados** (~532 s). Última mudança de comportamento posterior foi proteção da
+      consulta contra entidade residual, coberta pela rodada final do canal.
+    - `cargo test --locked -p pw-bus --test topologia_do_compose`: **5 passaram, 0 falharam**,
+      incluindo proibição de expor a porta administrativa por qualquer serviço.
+    - Build nativo `pw-gs`, `node --check`, Compose `config --quiet`, formatação dos arquivos
+      novos Rust e `git diff --check`: saída 0. Aviso pré-existente de compatibilidade futura
+      do `sqlx-postgres 0.7.4`; logs de dependências indisponíveis injetadas são esperados.
+    - Veredito PASS para esses checks; **suíte integral, imagem Linux da E3, inspeção visual
+      e confirmação nos clientes não declaradas**. Nenhum navegador conectado para UI.
+
+    ### d. Pendências e retomada
+    E3 parcial: comandos idempotentes/recuperáveis ainda faltam. Próxima fatia combina essa
+    infraestrutura com contas E4, verificando consumo real de senha/GM/gold/ban pelo link/GS.
+    Antes de E5: saída residual, exclusão com login e revisão de autosave/logout/transferência.
+    Ausência observada nunca autoriza editar offline. Roteiro visual/log/overlay no manual.
+    E3 não publicada; base E2 permanece no painel. Sem commit/push/publicação neste bloco.
+    Specs 00/02/05/06, índice, estado, contratos e memória atualizados.
+    Consumo estimado, sem contador disponível: análise ~5 mil; implementação/testes ~18 mil;
+    suíte/specs/docs ~7 mil; total ~30 mil. Maior custo: código e cenários de integração;
+    regressão longa teve saída filtrada, sem carregar o log inteiro no contexto.
+
+167. **Sessão 2026-10-05: painel E3/E4 — senha global idempotente, recuperável e consumida pelo link.**
+
+    ### a. Pedido e ambiente
+    Continuar B166 com comando recuperável e primeira operação E4, sem publicação.
+    `pw-admin-api` foi recriado pelo ambiente em 2026-10-05 e contém `canal.py` E3 com
+    SHA-256 igual ao B166 local; canais 126/155 estão ausentes e mundos são de 2026-10-03.
+    Isso corrige a memória antiga, sem declarar consultas vivas confirmadas.
+
+    ### b. Evidência e atomicidade antes da escrita
+    `AccountRepository` mantém conta global. `pw-link/gateway.rs:441-478` antes autenticava
+    apenas pelo nome/ban e ignorava `password_response`. Cliente original
+    `EvolvedPWClient/ElementClient/Network/gameclient.cpp:131-139` (igual no fonte 1.5.3)
+    usa HMAC-MD5, chave MD5(nome+senha), mensagem desafio. Gold é global, lido/debitado
+    em `character.rs:780-809`; loja envia saldo pelo fluxo `jogo.rs:2854-2926`.
+    GM é cacheado na sessão/entidade (`bus_server.rs:1338`, `gm.rs:45-56`), teleporte
+    relê o banco; ban somente no login, sem expiração ou desconexão ativa. Nenhuma
+    dessas observações autoriza escrita de personagem ou atualização online fictícia.
+
+    Definido registro PostgreSQL global: ID, administrador, conta, realm de origem,
+    impressão de parâmetros e resultado. Reserva/lock das contas em ordem crescente,
+    revalidação GM/ban, senha e resultado na mesma transação. Realm é rota, não escopo.
+    Mesmo ID/parâmetros recupera resultado; diferente é conflito. Rollback não deixa
+    efeito nem reserva. Ausência do registro é desconhecida, inclusive durante commit.
+    Sem expurgo automático, fila persistida ou histórico navegável; sem senha/hash de
+    login no registro. Banco fora do tick/locks do mundo.
+
+    ### c. Entrega local
+    API/UI de contas globais e senha ASCII imprimível 1–64 bytes (política administrativa),
+    canal protegido estendido com troca/resultado; UI guarda metadados pendentes sem senha,
+    preserva ID após conflito, recarrega após relogin e aceita recuperação por outro realm.
+    Link verifica prova de senha/desafio, recusa token/replay e novo Response autenticado.
+    Senha vale em novos logins; mantém sessões de jogo, revoga painel na próxima requisição.
+    Argon2/texto e sementes antigas incorretas exigem redefinição explícita para jogo.
+    Inicialização nova corrigida, sem reset de contas existentes nem layout GNET novo.
+    Migração `2026_10_05_comandos_administrativos.sql` aplicada somente em `test`;
+    `public` e contêineres preservados. Specs 00/01/02/06, schema 03, arquitetura,
+    manual, estado e memória central atualizados. Nenhuma escrita de personagem.
+
+    ### d. Provas e falhas corrigidas
+    41 Python passaram/0 falharam, com TEST_DATABASE_URL, schema test e Redis isolado:
+    API contra GS real, perda da resposta após commit, recuperação após reinício,
+    relogin, revogação, conflito, validação e proteção do realm/alvo. Primeira rodada:
+    22 falhas/5 erros (variável incorreta do verificador); segunda: 1 falha (FastAPI
+    ecoava senha na validação porque handler numérico não cobria RequestValidationError).
+    Configuração/handler corrigidos e rodada completa repetida: 41/0.
+    Rust focado: 110 passaram/0 falharam (8 canal, 4 atomicidade, 98 unidades de link,
+    GS/storage). Rollback ao falhar resultado, concorrência com revogação, registro
+    ausente em voo, deduplicação concorrente entre processos/realms e login 126/155.
+    Node: 2 passaram/0 falharam (ID após timeout/conflito, alvo/realm e relogin sem segredo).
+    Build nativo/JS/diff conferidos. Suíte workspace com banco: 928 passaram, 0 falharam,
+    2 ignorados; rodada focada após ajustes finais: 110/0. Registro test sem sobras;
+    public sem tabela nova. Renderização e jogo não verificados: nenhum navegador
+    conectado; imagem Linux desta entrega não verificada. Sem publicação/commit/push.
+
+    ### e. Pendências e próxima ação
+    E3 testada automaticamente; E4 parcial (busca/senha). Próximo: criação de conta
+    global pelo mesmo canal/registro, com alvo alocado/resultado atômicos e hash compatível.
+    Depois coordenação global de sessões para GM/ban/desconexão e gold concorrente com loja.
+    Antes de E5: residual após queda do link, exclusão login/offline e revisão de todos
+    os salvamentos (autosave/logout/transferência). Visual/jogo e implantação autorizada
+    continuam pendentes; o manual traz roteiro exato de tela/log/overlay para futura publicação.
+
+168. **Sessão 2026-10-05: painel E4 — criação global idempotente, recuperável e atômica.**
+
+    ### a. Pedido e evidência
+    Continuar B167 com criação de contas pela interface/API/canal/GS/banco, sem publicar.
+    AccountRepository::find_by_username usa LOWER(username), mas o índice antigo não
+    garantia unicidade dessa chave. Cliente `ElementClient/EC_LoginSwitch.cpp:329`
+    converte usuário para minúsculas; `:332-336` mostra a codificação e
+    `Network/gameclient.cpp:131-139` a prova algo=0 (MD5(nome+senha), HMAC-MD5/desafio).
+    Nomes ASCII `[A-Za-z0-9_]` 1–64 bytes e senha ASCII imprimível 1–64 são políticas
+    do painel, sem trim ou promessa de codificação não validada. Defaults existentes
+    em `specs/01_DATABASE_SCHEMA_POSTGRES.sql:19-22`: saldo/privilégio zero, sem ban.
+
+    ### b. Atomicidade e concorrência
+    Reserva do comando começa com conta_id NULL. Autorização GM/ban sob lock da conta
+    administradora, INSERT da conta, ID retornado e resultado compartilham commit.
+    UNIQUE LOWER(username) arbitra concorrência inclusive em AccountRepository e UPDATE;
+    falha de nome é durável, sem alterar senha anterior. ID global deduplica entre realms,
+    com impressão de tipo/dono/nome canônico/senha resumida. Caixa e rota equivalem;
+    outro parâmetro/dono/tipo conflita e preserva original. Rollback reverte conta/registro,
+    sem exigir sequência SERIAL contígua. Timeout/ausência continuam desconhecidos.
+    Nada aguarda banco em world.tick/locks do mundo; personagem permanece sem escrita.
+
+    ### c. Fatia entregue localmente
+    POST /api/realms/{realm}/contas, modelo estrito/CSRF/limites e criar_conta no GS.
+    Validação do resultado inclui tipo/nome/ID/alcance. UI cria, exibe ID/nome/defaults e
+    mantém metadados pendentes por administrador sem senha: recarregar/relogin/outro realm,
+    repetir pelo mesmo ID, conflito e recusa de autorização preservam original. Outro
+    tipo de escrita fica bloqueado enquanto pendente; legado de senha continua recuperável.
+    Migração `scripts/2026_10_05_criacao_contas.sql` aplicada somente em test; aborta
+    duplicatas antigas sem remover/renomear contas. public sem registro e índice novos.
+    Specs 00/01/02/06, schema test 03, manual, arquitetura, estado e memória atualizados.
+
+    ### d. Provas automatizadas
+    117 Rust focados passaram/0 falharam (94 link, 9 canal, 5 GS unidade, 9 storage):
+    concorrência do mesmo ID e de nomes entre administradores, dono/parâmetros/tipo,
+    defaults, rollback ao gravar resultado, revogação sob lock, canal/realm/nome e
+    consumo real das credenciais criadas pelos dispatchers 126/155 com GM 0.
+    47 Python passaram/0 falharam com TEST_DATABASE_URL/test e Redis descartável dedicado:
+    API contra GS real, reinício/relogin/outro realm, perda da resposta depois do commit,
+    timeout por lock seguido de mesma tentativa, duplicação/validação/autorização,
+    resultado de outro alvo e migração abortando duplicatas em tabelas temporárias.
+    Primeira tentativa Python usou intérprete sem asyncpg: 1 erro de importação; corrigida
+    usando o venv temporário já existente. 4 Node passaram/0 falharam: ID/segredo/tipo,
+    reload/relogin, conflito, autorização e recuperação. Sintaxe JS/build nativo passaram.
+    Suíte completa com TEST_DATABASE_URL: **935 passaram, 0 falharam, 2 ignorados**,
+    saída/código de saída verificados. Redis descartável removido; test sem registro/conta
+    B168 restantes, public sem tabela/índice novos. IDs da UI conferidos no HTML, sem duplicatas.
+
+    ### e. Ambiente e pendências
+    Conferência atual: API contém frontend E3 e ADMIN_DAEMONS 126/155; mundos criados
+    em 2026-10-03 sem ADMIN_SECRET recusam TCP 29110 a partir da API. Atualiza observação
+    anterior de alvos ausentes, sem declarar consulta viva. Sem commit/push/publicação
+    ou escrita em dados reais. Sem navegador conectado; inspeção visual, clientes originais
+    e imagem Linux pendentes. Roteiro exato de tela/log/overlay no manual do painel.
+    E4 continua parcial: coordenação global antes de GM/ban/desconexão; gold depois de
+    validar consumo e concorrência da loja. E5 exige corrigir residual e coordenar
+    login/saída/autosave/transferência com exclusão e revisão dos salvamentos.
+
+
+169. **Sessão 2026-10-05: painel E4 — coordenação global de GM, revisão recuperável e consumo nas sessões.**
+
+    ### a. Pedido e autoridade
+
+    Continuação de B167/B168 pelo código/memória atuais. Banco mantém GM/ban da conta,
+    link cacheia `sec_level` na conexão; GS cacheia privilégio e efeitos na entidade.
+    Fonte 155 `Network/EC_GameSession.cpp:4581` e 153 `CElementClient/Network/EC_GameSession.cpp:4513`
+    recarregam bits no SelectRole_Re. Sem pacote comprovado durante o jogo: cliente exige
+    reentrada, embora autoridade/caches do servidor mudem nas sessões abertas.
+
+    ### b. Contrato e implementação
+
+    UI/API/CSRF/canal HMAC/GS/comando recuperável, booleano GM 0/1, sem hierarquia nova.
+    Reserva, revalidação sob locks ordenados, GM/revisão/resultado no mesmo commit.
+    Revisão singleton ordenada por commit; encarnações exclusivas por conexão/advisory lock.
+    Fotografia consistente a cada 1 s; cada link/GS confirma somente após aplicar; recibo
+    vale 5 s. Compose declara todos os consumidores 126/148/153/155, inclusive desligados.
+    Reinício zera recibo e reconcilia; processo ausente mantém pendência. Perda de fencing
+    encerra daemon. Banco fora do tick/locks do mundo. Link coordena login/seleção/saída
+    e aguarda atualização de caches; GS coordena entrada/saída/transferência/comandos.
+    Remoção limpa invencibilidade/invisibilidade. Consumo GM/GOTO/missões revalida
+    conta/ban/revisão sob FOR SHARE: revogação não confirma SQL antes do consumo antigo.
+
+    Persistência salva com efeito ainda pendente não vira aplicação. Consulta global por
+    ID distingue aplicado, pendente, desconhecido e substituído por revisão posterior;
+    conta e recibos no mesmo snapshot evitam confirmar revisão pulada. Resultado terminal
+    durável, sem reaplicar; conflitos preservam original. Consultas concorrentes devolvem
+    o vencedor durável da confirmação, não a conclusão local que perdeu a disputa. UI conserva metadados sem
+    segredos em timeout/reload/relogin/outro realm. Não há histórico navegável.
+
+    ### c. Dependência descoberta
+
+    PlayerLogout (`bus_server.rs`) e `sair` removem entidade sem fotografia completa de
+    saída; autosave não tem revisão/exclusão contra login/transferência. Não forçar
+    desconexão GM sobre esse caminho: conexões mantidas, cliente informa reentrada.
+    Antes de ban/desconexão/E5, corrigir saída/salvamento, entidade residual após queda
+    do link e todos os produtores de gravação. Nenhuma edição de personagem habilitada.
+    Gold aguarda consumo da loja/concorrência. Contrato em ARQUITETURA_E_CONTRATOS.
+
+    ### d. Provas
+
+    Rodada Python final: 49 passaram/0 falharam; Node: 5 passaram/0 falharam. Sockets reais de links/GS
+    126/155 consumiram SelectRole_Re.auth e comando de invencibilidade; revogação limpou
+    efeito e negou novo comando; GS indisponível manteve pendência, reinício recuperou.
+    Canal Rust: 10 passaram/0 falharam; armazenamento: 14 passaram/0 falharam.
+    Workspace final com banco: 940 passaram, 0 falharam, 2 ignorados, incluindo proteção
+    de GOTO/missões. A suíte já iniciada usou o binário anterior de armazenamento (13
+    testes); após a última correção da disputa terminal, a suíte de armazenamento foi
+    repetida: 14/0, incluindo reprodução determinística das consultas concorrentes.
+    Python final executado com binários nativos recompilados após essa correção e com
+    login/saída concorrentes. Regressão intermediária detectou 2 falhas GOTO: os testes concedem GM após entrar;
+    guarda foi ajustada para preservar consulta atual no banco, com FOR SHARE durante
+    consumo, sem exigir cache já reconciliado. Ambos passaram no teste focado e na suíte
+    completa final. CUA sem navegador e criação de iab indisponível. Sintaxe JS, Compose
+    e diff conferidos; Redis descartável B169 removido ao fechar o bloco.
+
+    Falhas iniciais: compilação mostrou fixtures sem campos novos; atualizadas. Teste
+    GS teve falha só na limpeza de personagem reatribuído; corrigida. Dragonfly isolado
+    encerrou com 128 MiB (mínimo 256), causando 47 erros de preparo; recriado com 512 MiB,
+    rodada Python passou. Tentativa inicial com variável de verificador incorreta foi
+    interrompida; variável correta PW_VALIDADOR_CREDENCIAIS usada nas rodadas válidas.
+
+    ### e. Implantação e pendências
+
+    Migração scripts/2026_10_05_coordenacao_gm.sql aplicada exclusivamente em test;
+    public preservado, sem novas tabelas/revisão. Sem commit, push ou publicação.
+    Mundos de 2026-10-03 ainda recusam TCP 29110 a partir do painel, conferido novamente.
+    Imagem Linux, inspeção visual e clientes originais pendentes. Memória aponta para
+    salvamento/saída/exclusão antes de ban/desconexão/E5; reforma continua parcial.
+
+    ### f. Consumo por etapa
+
+    Contador real da sessão, até o marcador de fechamento: análise 432.820 tokens
+    (63.028 sem entradas em cache); implementação/testes 6.657.407 (155.007 sem cache);
+    suíte/specs/docs 7.664.314 (231.738 sem cache). Total 14.754.541, dos quais
+    14.304.768 são entradas reutilizadas do cache. A etapa final acumulou contexto e
+    repetiu verificações após corrigir a regressão GOTO e a corrida de confirmação.
+
+170. **Sessão 2026-10-05: base local de saída/salvamento, remoção de residual e transferência com confirmação incerta.**
+
+    ### a. Pedido e evidência
+
+    Continuar E4 pela dependência anterior a ban/desconexão/E5. Queda do barramento
+    em mapas.rs apagava dono/sessão e mantinha entidade; sair/PlayerLogout removiam
+    sem fotografia final. Autosave fazia quatro escritas separadas. Fonte 1.5.3
+    source_server_153/cgame/gs/player.cpp:9602–9694: WAITING_LOGOUT/user_save_data e
+    callback antes de responder; não inventar capacidade offline a partir de presença.
+
+    ### b. Implementação
+
+    Uma saída para C2S/PlayerLogout/queda; fotografia removida da simulação, sessão
+    reservada até confirmação. Uma transação para status/atributos/pontos/chi/modo
+    roupa/waypoints/listas de missão. Falha/timeout não libera reentrada; recuperação
+    automática repete fotografia. Conexão proprietária requerida para comandos/saída;
+    duplicata e limpeza antiga não tomam sessão nova. Sem banco no tick/world lock.
+    Controle/carimbo local compartilhado pelos clones de CharacterRepository entre
+    mapas exclui comandos/entrada/saída/troca/autosave e rejeita fotografia antiga.
+    Missão/modo roupa encerram gravação antes de liberar comando, sem tarefa atrasada.
+    Transferência congela origem: confirma destino antes de publicar; erro pré-commit
+    restaura origem, confirmação incerta conserva reserva e repete destino. Queda ou
+    logout durante recuperação termina com fotografia de saída, sem ressuscitar link.
+
+    ### c. Verificação
+
+    Canal com banco: 15 passaram, 0 falharam. Cobertura 126/155, queda, duplicata,
+    autosave anterior a logout/reentrada/troca, rollback da segunda escrita, falha
+    transitória de saída, confirmação incerta no commit e queda durante recuperação.
+    Trigger de teste por personagem provoca falha imediata ou diferida no commit;
+    prova recuperação conservadora, não simula perda de resposta de COMMIT já aceito.
+    Primeira tentativa do workspace não compilou duas asserções de fixture que
+    acessavam campos da fotografia antiga; ajustadas ao invólucro. Rodada válida
+    intermediária interrompida antes dos testes GS para acrescentar a propriedade por
+    localsid (mesma conexão serve várias sessões). Resultado da rodada seguinte abaixo. Não contar
+    tentativa sem compilação ou rodada interrompida como suíte aprovada.
+    Rodada completa: 942 passaram, 4 falharam, 2 ignorados. Uma falha revelou o
+    rastreamento da conexão retirando personagem após logout recusado por localsid;
+    corrigido no roteador e GS avulso, canal novamente 15/0. Uma fixture descartava a
+    conexão do alvo que exigia online; conserva a conexão. Duas falhas de pergaminho
+    surgiram ao aguardar gravação sem alteração de estado depois de 99 tiques (4,95 s):
+    fotografia de contexto sem mudança não é escrita, conservando resposta sem I/O
+    extra; repetição do pergaminho 2/0. GS biblioteca: 94/0. Regressão final de todos
+    os subcomandos/canal/biblioteca: 261 passaram, 0 falharam, 2 ignorados (94 biblioteca,
+    15 canal, 152 subcomandos + 2 ignorados). Não tratar a rodada completa como 0 falhas.
+    Fotografia conserva pares desconhecidos de charactermode e altera apenas a chave
+    conhecida (pw-core/character.rs:36–63); última rodada do canal 15/0 após essa mudança.
+    A suíte integral não foi repetida após as correções; todos os alvos alterados foram
+    verificados nas rodadas específicas acima.
+    Revisão da transferência: grupo e mascote congelados conservados até confirmação;
+    erro pré-commit restaura sem efetivar saída de grupo/recolhimento de mascote.
+
+    ### d. Limites e próximo passo
+
+    B170 é coordenação LOCAL, em memória. Não há lease/revisão persistida por personagem
+    nem diário durável de saída/troca; reinício do GS pode perder fotografia não confirmada.
+    Falta coordenar eventos/equipes e produtores assíncronos de itens, habilidades,
+    mascotes, durabilidade, munição/configuração do link. Nenhuma edição offline/ban/
+    desconexão liberada. Próximo: fencing global + revisão/diário e todos os produtores.
+    Sem migração nova, commit, push, publicação ou dado real alterado; visual/jogo/Linux
+    pendentes. Memória central atualizada sem repetir o planejamento aprovado.
+
+    ### e. Consumo por etapa
+
+    Contador real até o marcador de fechamento; entradas em cache incluídas:
+    etapa 1: 442.471 tokens (42.727 sem entradas em cache).
+    etapa 2: 1.663.917 tokens (59.821 sem entradas em cache).
+    etapa 3: 8.389.713 tokens (279.633 sem entradas em cache).
+    Total: 10.496.101; cache: 10.113.920; sem cache: 382.181.
+    A etapa final cresceu com quatro regressões diagnosticadas, correções de rastreamento/
+    fixtures/contexto sem mudança e repetição dos alvos GS. Tempo de espera não é token;
+    as interações de acompanhamento reutilizaram contexto acumulado.
+
+171. **Sessão 2026-10-05 (Claude): coordenação GM opcional antes de publicar B165–B170.**
+    Análise de risco do código local antes da publicação. Achados: (1) `AccountRecord`
+    ganhou `revisao_gm` e é lido com `SELECT *`; o `public` não tinha a coluna (só o
+    `test`), então publicar antes da migração derrubava o login de todos; (2) Compose
+    definia `ADMIN_COORDENACAO_ID` em link/GS de 126/148/153/155 e o registro falho
+    abortava a partida (`main.rs` com `?`, `gateway.rs` idem). Correção: `#[sqlx(default)]`
+    em `revisao_gm`; registro falho só desliga a coordenação com aviso no log; 148/153
+    saíram de `ADMIN_COORDENACAO_ID/ALVOS` (fora da reforma, decisão do Murillo; lá GM
+    revogado vale no próximo login). Comandos GM do jogo seguem exigindo a coluna.
+    Teste novo `pw-storage/tests/coordenacao_opcional.rs` (conta sem a coluna carrega com
+    0): falha com `ColumnNotFound("revisao_gm")` sem o atributo, passa com ele.
+    Workspace com banco antes da correção: 946/0, 2 ignorados; depois: 946 passaram/1 falhou/2 ignorados em duas rodadas, cada uma
+    num teste diferente (canal_administrativo `esperar_presenca`; comandos_recuperaveis), ambos
+    passando isolados. Causas nos testes: sufixo por nanossegundo repetia no Windows (corrigido
+    com contador) e esperas de 1 s que contam locks no `pg_stat_activity` do banco inteiro
+    (comandos_recuperaveis.rs:513-519; interferência de testes paralelos, ainda intermitente).
+    Restam sem teste em jogo: login com HMAC-MD5 real, saída/salvamento/troca do B170,
+    pausa de até 2 s por segundo na presença do GS e `process::exit(1)` ao perder o
+    fencing. Nada commitado nem publicado; roteiro de publicação/teste entregue ao Murillo.
+
+172. **Sessão 2026-10-05 (Claude): login recusado após publicar B165–B171; revisão de rumo do painel.**
+    O Murillo publicou e testou: 1.2.6 mostra "LINK - Sucesso" e não abre a seleção; 1.5.5
+    acusa conta inexistente. Logs dos dois links: `Login rejeitado: resposta de senha
+    inválida` para `admin` e `testuser`. Causa: conferência HMAC-MD5 do B167 exige
+    `password_hash` = MD5(nome+senha); `public.accounts` tem `admin` = MD5("admin") e
+    `testuser` em formato que não é MD5(senha) nem MD5(nome+senha) para as senhas do seed;
+    o link anterior ao B167 não conferia senha. A tentativa de tornar a conferência
+    opcional por variável foi bloqueada pela política de segurança da sessão e desfeita;
+    código do link igual ao B171. Decisão pendente com o Murillo (MEMORIA_DA_REFORMA §6.1).
+    Revisão de rumo registrada na §6.2 da memória da reforma e limites novos no
+    `docs/admin/PROMPT_DE_INICIO.md`. Sem mudança de código nesta entrega.
+
+173. **Sessão 2026-10-05 (Claude): ajustes da revisão de rumo do painel (aprovados pelo Murillo).**
+    Contas padrão regravadas no `public` como `MD5(nome+senha)`: `admin`/`admin`
+    (`f6fdff…`, igual ao seed) e `testuser`/`testuser` (`d70a04…`); seed da spec 01
+    atualizado. O cliente usa exatamente MD5(nome digitado + senha) como chave do HMAC
+    (`EvolvedPWClient/ElementClient/Network/gameclient.cpp:133-139`). A conferência nova
+    `scripts/conferir_public_antes_de_publicar.sql` (só leitura) mostrou que as migrações
+    de 2026-10-05 não estavam no `public`: backup em
+    `data/_backups/pw_database_2026-10-05_antes_das_migracoes_do_painel.sql` e as três
+    aplicadas sem erro; conferência vazia depois. `process::exit(1)` ao perder o fencing
+    removido do link e do GS: a coordenação desliga, GM negado, jogo segue. Testes:
+    `comandos_recuperaveis` em série por trava estática e esperas de 5 s (antes 4 de 5
+    rodadas falhavam; depois 3/3), espera de presença do `canal_administrativo` 5 s.
+    Passo de conferência do `public` nas duas cópias da skill `pw-testar-e-publicar`.
+    Workspace com banco: 946 passaram, 1 falhou, 2 ignorados — a falha foi
+    `subcomandos_no_mundo::habilidade_desconhecida_nao_mexe_na_vida_de_ninguem` (lê só 3
+    respostas e exige o fechamento da conjuração entre elas; 3/3 isolado), intermitente
+    de ordem, padrão anterior à reforma. Link/GS 126 e 155 republicados. Falta o Murillo
+    confirmar login, saída, salvamento e troca de mapa em jogo.

@@ -36,6 +36,78 @@ const CABECALHO_DO_MONSTRO_DE_GM: usize = 16;
 const TETO_DO_NOME_DO_MONSTRO: usize = 18;
 
 impl BusServer {
+    /// Reconexão carrega SelectRole_Re::auth; não há recarga online comprovada.
+    /// Cliente 155 Network/EC_GameSession.cpp:4581; também fonte 153 no mesmo tratador.
+    pub async fn reconciliar_gm(&self, fotografia: Option<&pw_storage::FotografiaGm>) {
+        let reaparecer = {
+            let mut mundo = self.world.write().await;
+            let mut reaparecer = Vec::new();
+            for p in mundo.players.values_mut() {
+                let atual = fotografia.and_then(|f| f.contas.get(&p.conta_id));
+                let nivel = atual.map(|(_, g)| (*g).clamp(0, 32) as u8).unwrap_or(0);
+                if nivel == 0 {
+                    if p.efeitos.gm_invisivel {
+                        reaparecer.push(p.role_id);
+                    }
+                    p.efeitos.gm_invencivel = false;
+                    p.efeitos.gm_invisivel = false;
+                }
+                p.sec_level = nivel;
+                if let Some((r, _)) = atual {
+                    p.revisao_gm = *r;
+                }
+            }
+            reaparecer
+        };
+        for roleid in reaparecer {
+            self.aparecer_para_quem_vejo(roleid).await;
+        }
+    }
+    pub(super) async fn autorizar_gm(
+        &self,
+        roleid: i32,
+    ) -> Option<sqlx::Transaction<'static, sqlx::Postgres>> {
+        let revisao = {
+            let mundo = self.world.read().await;
+            let p = mundo.players.get(&(roleid as i64))?;
+            if p.sec_level == 0 {
+                return None;
+            }
+            p.revisao_gm
+        };
+        let (autorizacao, atual) = self.autorizar_gm_persistido(roleid).await?;
+        if atual != revisao {
+            return None;
+        }
+        Some(autorizacao)
+    }
+
+    /// GOTO já consultava GM no banco (B37), inclusive após concessão na sessão aberta.
+    /// Preserva esse consumo atual sem depender de um cache ainda não reconciliado.
+    pub(super) async fn autorizar_gm_persistido(
+        &self,
+        roleid: i32,
+    ) -> Option<(sqlx::Transaction<'static, sqlx::Postgres>, i64)> {
+        let repo = self.repo().await;
+        let mut autorizacao = repo.pool().get_ref().begin().await.ok()?;
+        sqlx::query("SET LOCAL lock_timeout='1500ms'")
+            .execute(&mut *autorizacao)
+            .await
+            .ok()?;
+        sqlx::query("SET LOCAL statement_timeout='2000ms'")
+            .execute(&mut *autorizacao)
+            .await
+            .ok()?;
+        // Banco fora do mundo; FOR SHARE retém autorização até acabar o consumo.
+        let (gm, ban, revisao): (i32,bool,i64) = sqlx::query_as(
+            "SELECT a.gm_privileges,a.is_banned,a.revisao_gm FROM accounts a JOIN characters c ON c.account_id=a.id WHERE c.id=$1 FOR SHARE OF a")
+            .bind(roleid).fetch_optional(&mut *autorizacao).await.ok()??;
+        if gm <= 0 || ban {
+            return None;
+        }
+        Some((autorizacao, revisao))
+    }
+
     /// Entrada de todos os comandos de GM do mundo.
     pub(super) async fn comando_de_gm(
         &self,
@@ -57,18 +129,25 @@ impl BusServer {
             warn!("mundo: {roleid} mandou o comando de GM {comando} sem ser GM");
             return;
         }
+        let Some(autorizacao) = self.autorizar_gm(roleid).await else {
+            return;
+        };
         match comando {
             ids::GM_INVINCIBLE => self.gm_alternar_invencivel(roleid, envio).await,
             ids::GM_INVISIBLE => self.gm_alternar_invisivel(roleid, envio).await,
             ids::GM_MOVETO_PLAYER => {
                 let Some(alvo) = ler_id(payload) else {
-                    return self.gm_tamanho_errado(roleid, comando, payload, envio).await;
+                    return self
+                        .gm_tamanho_errado(roleid, comando, payload, envio)
+                        .await;
                 };
                 self.gm_ir_ate(roleid, alvo).await;
             }
             ids::GM_CALLIN_PLAYER => {
                 let Some(alvo) = ler_id(payload) else {
-                    return self.gm_tamanho_errado(roleid, comando, payload, envio).await;
+                    return self
+                        .gm_tamanho_errado(roleid, comando, payload, envio)
+                        .await;
                 };
                 self.gm_chamar(roleid, alvo).await;
             }
@@ -83,7 +162,11 @@ impl BusServer {
             ids::GM_ACTIVE_SPAWNER => {
                 let (liga, gerador) = match payload {
                     [a, b0, b1, b2, b3] => (*a != 0, i32::from_le_bytes([*b0, *b1, *b2, *b3])),
-                    _ => return self.gm_tamanho_errado(roleid, comando, payload, envio).await,
+                    _ => {
+                        return self
+                            .gm_tamanho_errado(roleid, comando, payload, envio)
+                            .await
+                    }
                 };
                 warn!(
                     "mundo: GM {roleid} pediu para {} o gerador {gerador} — falta: os \
@@ -93,6 +176,7 @@ impl BusServer {
             }
             _ => {}
         }
+        let _ = autorizacao.rollback().await;
     }
 
     /// `if (size != sizeof(cmd)) error_cmd(S2C::ERR_FATAL_ERR)` (`DEFCMD`, `playercmd.cpp:4808`).
@@ -317,7 +401,9 @@ fn ler_monstro_de_gm(payload: &[u8]) -> Option<MonstroDeGm> {
     let i32_em = |i: usize| i32::from_le_bytes(payload[i..i + 4].try_into().unwrap());
     let i16_em = |i: usize| i16::from_le_bytes(payload[i..i + 2].try_into().unwrap());
     let nome_bytes = u32::from_le_bytes(payload[12..16].try_into().unwrap()) as usize;
-    if nome_bytes > TETO_DO_NOME_DO_MONSTRO || payload.len() != CABECALHO_DO_MONSTRO_DE_GM + nome_bytes {
+    if nome_bytes > TETO_DO_NOME_DO_MONSTRO
+        || payload.len() != CABECALHO_DO_MONSTRO_DE_GM + nome_bytes
+    {
         return None;
     }
     Some(MonstroDeGm {
@@ -344,7 +430,13 @@ mod tests {
         p.extend_from_slice(&[0x41, 0, 0x42, 0]);
         assert_eq!(
             ler_monstro_de_gm(&p),
-            Some(MonstroDeGm { monstro: 8340, aparencia: 0, quantidade: 3, vida_s: 60, nome_bytes: 4 })
+            Some(MonstroDeGm {
+                monstro: 8340,
+                aparencia: 0,
+                quantidade: 3,
+                vida_s: 60,
+                nome_bytes: 4
+            })
         );
         // `name_len` que não fecha com o tamanho: recusado.
         assert_eq!(ler_monstro_de_gm(&p[..18]), None);

@@ -912,6 +912,33 @@ impl WorldInstance {
         self.players.remove(&id)
     }
 
+    /// Congela a transferência sem efetivar saída de grupo/recolhimento antes do commit.
+    pub(crate) fn congelar_para_troca(&mut self,role:RoleId)->Option<(PlayerEntity,Option<crate::mascote::Mascote>)> {
+        let jogador=self.players.remove(&(role as i64))?;
+        self.grid.remove_entity(role as i64);
+        let id=self.mascotes.iter().find(|(_,m)|m.dono==role as i64).map(|(id,_)|*id);
+        let mascote=id.and_then(|id| {self.grid.remove_entity(id);self.mascotes.remove(&id)});
+        Some((jogador,mascote))
+    }
+    pub(crate) fn restaurar_troca(&mut self,jogador:PlayerEntity,mascote:Option<crate::mascote::Mascote>) {
+        self.add_player(jogador);
+        if let Some(m)=mascote {
+            self.grid.add_entity(m.corpo.id,m.corpo.position,false);
+            self.mascotes.insert(m.corpo.id,m);
+        }
+    }
+    pub(crate) fn concluir_troca(&mut self,role:RoleId,mascote:Option<crate::mascote::Mascote>) {
+        self.sair_do_grupo(role);
+        self.convites.remove(&role);
+        if let Some(m)=mascote {
+            let id=m.corpo.id;
+            self.estado_dos_mascotes.remove(&id);
+            self.emitir(EventoDoMundo::MonstroSumiu{id});
+            self.emitir(EventoDoMundo::MascoteRecolhido{id,dono:role,slot:m.slot,
+                pet_tid:m.info.pet_tid,motivo:0,info:m.para_a_jaula()});
+        }
+    }
+
     /// Move um jogador para a posição que ele reportou.
     ///
     /// Atualiza a entidade **e** a grade espacial — as duas, sempre. Mexer só na entidade
@@ -2644,41 +2671,7 @@ impl WorldInstance {
             return Vec::new();
         }
         self.autosave_timer_ms = 0;
-        let mundo = self.world_id;
-        self.players
-            .values()
-            .map(|player| {
-                let [a, b, c, d, e] = player.missoes.blocos();
-                EstadoParaGravar {
-                    role_id: player.role_id,
-                    mundo,
-                    level: player.level,
-                    cultivation: player.cultivation,
-                    exp: player.exp,
-                    sp: player.sp,
-                    hp: player.hp,
-                    mp: player.mp,
-                    money: player.money,
-                    posicao: player.position,
-                    ap: player.ap,
-                    max_ap: player.max_ap,
-                    atributos: (
-                        player.strength,
-                        player.agility,
-                        player.vitality,
-                        player.energy,
-                    ),
-                    pontos_de_atributo: player.pontos_de_atributo,
-                    missoes: pw_storage::ListasDeMissaoGravadas {
-                        ativa: a,
-                        concluidas: b,
-                        tempos: c,
-                        contagens: d,
-                        deposito: e,
-                    },
-                }
-            })
-            .collect()
+        self.players.values().map(|j| EstadoParaGravar::do_jogador(j,self.world_id,&self.char_repo)).collect()
     }
 }
 
@@ -2688,83 +2681,39 @@ pub const RECARGA_DO_AMULETO_DE_MANA: i32 = 25;
 
 /// A fotografia de um jogador para o autosave — o que o tique tira com o mundo trancado e o
 /// laço grava com ele solto.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EstadoParaGravar {
-    pub role_id: i32,
-    pub mundo: i32,
-    pub level: i32,
-    pub cultivation: i32,
-    pub exp: i64,
-    pub sp: i64,
-    pub hp: i32,
-    pub mp: i32,
-    pub money: i64,
-    pub posicao: pw_core::Vector3,
-    pub ap: i32,
-    pub max_ap: i32,
-    pub atributos: (i32, i32, i32, i32),
-    pub pontos_de_atributo: i32,
-    pub missoes: pw_storage::ListasDeMissaoGravadas,
+    pub fotografia: pw_storage::FotografiaPersonagem,
+    pub carimbo: u64,
+    pub controle: Arc<pw_storage::ControleDeGravacao>,
 }
-
-/// Grava o lote do autosave. Fora do lock do mundo, e de propósito: cada personagem custa
-/// quatro escritas, e elas já chegaram a levar segundos no banco de teste.
-pub async fn gravar_autosave(
-    repo: pw_storage::CharacterRepository,
-    lote: Vec<EstadoParaGravar>,
-    mundo: i32,
-) {
-    let total = lote.len();
-    let mut falhas = 0usize;
+impl EstadoParaGravar {
+    pub fn do_jogador(j: &PlayerEntity, mundo:i32, repo:&CharacterRepository) -> Self {
+        let [a,b,c,d,e]=j.missoes.blocos();
+        let controle=repo.controle_de_gravacao(j.role_id);
+        let carimbo=controle.fotografar();
+        Self { controle,carimbo, fotografia:pw_storage::FotografiaPersonagem {
+            role_id:j.role_id,mundo,level:j.level,cultivation:j.cultivation,
+            exp:j.exp,sp:j.sp,hp:j.hp,mp:j.mp,money:j.money,posicao:j.position,
+            ap:j.ap,max_ap:j.max_ap,atributos:(j.strength,j.agility,j.vitality,j.energy),
+            pontos_de_atributo:j.pontos_de_atributo,modo_roupa:j.modo_roupa,waypoints:j.waypoints.clone(),
+            missoes:pw_storage::ListasDeMissaoGravadas{ativa:a,concluidas:b,tempos:c,contagens:d,deposito:e},
+        }}
+    }
+}
+/// Uma transação por fotografia. Revisões locais rejeitam lotes anteriores a comandos,
+/// entrada, saída e transferência. Isto não é exclusão global para E5 (B170).
+pub async fn gravar_autosave(repo: CharacterRepository,lote:Vec<EstadoParaGravar>,mundo:i32) {
+    let mut gravados=0; let mut obsoletos=0; let mut falhas=0;
     for e in lote {
-        let r = repo
-            .save_status(
-                e.role_id,
-                e.level,
-                e.cultivation,
-                e.exp,
-                e.sp,
-                e.hp,
-                e.mp,
-                e.money,
-                e.mundo,
-                &e.posicao,
-            )
-            .await;
-        // A barra de chi anda junto (`_basic.ap`/`_base_prop.max_ap` do original).
-        let _ = repo.salvar_chi(e.role_id, e.ap, e.max_ap).await;
-        if let Err(err) = r {
-            falhas += 1;
-            warn!(
-                "autosave: não consegui gravar o personagem {}: {err}",
-                e.role_id
-            );
-        }
-        if let Err(err) = repo
-            .gravar_atributos(e.role_id, e.atributos, e.pontos_de_atributo)
-            .await
-        {
-            warn!(
-                "autosave: não consegui gravar os atributos de {}: {err}",
-                e.role_id
-            );
-        }
-        if let Err(err) = repo.task_lists().gravar(e.role_id, &e.missoes).await {
-            warn!(
-                "autosave: não consegui gravar as missões de {}: {err}",
-                e.role_id
-            );
+        let _guarda=e.controle.serializar().await;
+        if e.controle.revisao()!=e.carimbo { obsoletos+=1; continue; }
+        match tokio::time::timeout(std::time::Duration::from_secs(3),repo.gravar_fotografia(&e.fotografia)).await {
+            Ok(Ok(())) => {gravados+=1; e.controle.fotografar();},
+            erro => {falhas+=1; warn!("autosave: fotografia de {} não confirmada: {erro:?}",e.fotografia.role_id);}
         }
     }
-    // O `let _ =` que havia aqui engolia o erro, e a linha abaixo dizia "com sucesso" de
-    // qualquer jeito. O `UPDATE` vinha falhando havia semanas porque escrevia numa coluna
-    // `last_login_at` que a tabela `characters` não tem — ninguém viu, e nada de posição,
-    // experiência, dinheiro ou nível era salvo.
-    if falhas == 0 {
-        debug!("autosave: {total} jogadores gravados no mundo {mundo}");
-    } else {
-        warn!("autosave: {falhas} de {total} jogadores não foram gravados no mundo {mundo}");
-    }
+    debug!("autosave: mundo {mundo}, {gravados} gravados, {obsoletos} obsoletos, {falhas} falhas");
 }
 
 // ----------------------------------------------------------------------

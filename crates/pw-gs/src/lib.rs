@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod administracao;
 pub mod bus_server;
 pub mod comandos;
 pub mod combat;

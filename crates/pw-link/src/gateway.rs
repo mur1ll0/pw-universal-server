@@ -34,6 +34,8 @@ use pw_bus::BusMessage;
 /// `LinkGateway::broadcast_para_todos`.
 
 pub struct LinkGateway {
+    coordenacao_gm: tokio::sync::RwLock<()>,
+    sessoes_gm: tokio::sync::RwLock<HashMap<u64, (i32, i64, i32, tokio::sync::watch::Sender<Option<(i64,i32)>>)>>,
     pub realm_id: String,
     pub game_version: GameVersion,
     pub adapter: Arc<dyn ProtocolAdapter>,
@@ -169,6 +171,8 @@ impl LinkGateway {
         );
 
         Self {
+            coordenacao_gm: tokio::sync::RwLock::new(()),
+            sessoes_gm: tokio::sync::RwLock::new(HashMap::new()),
             realm_id,
             game_version,
             adapter,
@@ -256,6 +260,68 @@ impl LinkGateway {
     }
 
     pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
+        // Coordenação GM é opcional: sem a variável ou sem as tabelas da migração
+        // (scripts/2026_10_05_coordenacao_gm.sql), o link sobe e autentica como antes;
+        // só a propagação online de mudança de GM pelo painel fica desligada.
+        let registro = match std::env::var("ADMIN_COORDENACAO_ID") {
+            Ok(processo) => {
+                let repo = self.account_repo.coordenacao_gm();
+                let encarnacao = hex::encode(pw_crypto::generate_login_challenge());
+                match repo.registrar(&processo, &encarnacao).await {
+                    Ok(conexao) => Some((processo, repo, encarnacao, conexao)),
+                    Err(e) => {
+                        tracing::warn!("coordenação GM desligada (registro falhou: {e}); link segue sem ela");
+                        None
+                    }
+                }
+            }
+            Err(_) => None,
+        };
+        if let Some((processo, repo, encarnacao, conexao)) = registro {
+            let este = Arc::clone(&self);
+            tokio::spawn(async move {
+                let mut conexao = conexao;
+                let mut intervalo = tokio::time::interval(std::time::Duration::from_secs(1));
+                loop {
+                    intervalo.tick().await;
+                    let _barreira = este.coordenacao_gm.write().await;
+                    let fotografia = tokio::time::timeout(std::time::Duration::from_secs(2),repo.fotografia()).await;
+                    let revisao = match fotografia {
+                        Ok(Ok(f)) => {
+                            let sessoes = este.sessoes_gm.read().await;
+                            for (conta, _, _, atualizar) in sessoes.values() {
+                                let desejado = f.contas.get(conta).copied().unwrap_or((f.revisao,0));
+                                let _ = atualizar.send(Some(desejado));
+                            }
+                            Some(f)
+                        }
+                        _ => {
+                            for (_,_,_,atualizar) in este.sessoes_gm.read().await.values() { let _ = atualizar.send(None); }
+                            tracing::warn!("coordenação GM: banco indisponível; privilégios negados, sem recibo");
+                            None
+                        }
+                    };
+                    if let Some(f) = revisao {
+                        // Espera aplicação no cache de cada sessão, não apenas enqueue.
+                        // SelectRole_Re::auth só recarrega ao reentrar no cliente.
+                        let reconciliadas = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                            loop {
+                                if este.sessoes_gm.read().await.values().all(|(c,r,g,_)| f.contas.get(c).map(|(atual,gm)| (*atual,(*gm).clamp(0,32))).unwrap_or((f.revisao,0))==(*r,*g)) { break; }
+                                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                            }
+                        }).await.is_ok();
+                        if reconciliadas && pw_storage::CoordenacaoGmRepository::confirmar(&mut conexao,&processo,&encarnacao,f.revisao).await.is_err() {
+                            // Perda da conexão dedicada perde o fencing. O jogo não cai por isso
+                            // (MEMORIA_DA_REFORMA §6.2 item 3): GM das sessões abertas é negado e
+                            // a coordenação para; novos logins leem GM do banco, como antes.
+                            tracing::error!("coordenação GM: recibo indisponível; coordenação desligada até reiniciar o link");
+                            for (_,_,_,atualizar) in este.sessoes_gm.read().await.values() { let _ = atualizar.send(None); }
+                            break;
+                        }
+                    }
+                }
+            });
+        }
         let addr = format!("0.0.0.0:{}", self.listen_port);
         let listener = TcpListener::bind(&addr).await?;
         info!(
@@ -301,6 +367,7 @@ impl LinkGateway {
 
         // 1. Envia Challenge de Login inicial para o cliente
         let server_nonce = generate_login_challenge();
+        session.desafio_login = server_nonce.clone();
         // Os dois timestamps saem dos `.data` do realm — `gshop.data` e `gshop1.data`,
         // arquivos diferentes. Se algum não estiver presente, o timestamp fica zero e o
         // cliente vai recusar o login; o aviso abaixo diz exatamente isso, porque a
@@ -342,12 +409,23 @@ impl LinkGateway {
         ));
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<OutboundPacket>(256);
+        let (atualizar_gm, mut atualizacao_gm) = tokio::sync::watch::channel(None::<(i64,i32)>);
         tx.send(challenge_packet).await?;
         debug!("Challenge v{} enviado para a Sessão #{}", self.game_version, session_id);
 
         // 2. Loop concorrente de processamento e envio de pacotes
         loop {
             tokio::select! {
+                _ = atualizacao_gm.changed() => {
+                    let atualizacao = *atualizacao_gm.borrow_and_update();
+                    if let Some((revisao,nivel)) = atualizacao {
+                        session.revisao_gm = revisao;
+                        session.sec_level = nivel.clamp(0,32) as u8;
+                    } else { session.sec_level = 0; }
+                    if let Some(conta) = session.account_id {
+                        self.sessoes_gm.write().await.insert(session_id,(conta,session.revisao_gm,session.sec_level as i32,atualizar_gm.clone()));
+                    }
+                }
                 Some(out_pkt) = rx.recv() => {
                     if let Err(e) = framed.send(out_pkt).await {
                         warn!("Erro ao enviar pacote para Sessão #{}: {:?}", session_id, e);
@@ -357,9 +435,15 @@ impl LinkGateway {
                 msg = framed.next() => {
                     match msg {
                         Some(Ok(packet)) => {
+                            // Serializa autenticação/seleção com a fotografia e recibo do processo.
+                            // Nenhum lock do mundo está envolvido.
+                            let _coordenacao = self.coordenacao_gm.read().await;
                             if let Err(e) = self.dispatch_packet(&tx, &mut session, packet).await {
                                 warn!("Erro no dispatch da Sessão #{}: {:?}", session_id, e);
                                 break;
+                            }
+                            if let Some(conta) = session.account_id {
+                                self.sessoes_gm.write().await.insert(session_id, (conta,session.revisao_gm,session.sec_level as i32,atualizar_gm.clone()));
                             }
                         }
                         Some(Err(e)) => {
@@ -397,6 +481,7 @@ impl LinkGateway {
         }
 
         info!("Sessão #{} ({}) finalizada.", session_id, client_ip);
+        self.sessoes_gm.write().await.remove(&session_id);
         Ok(())
     }
 
@@ -439,6 +524,10 @@ impl LinkGateway {
 
         match packet {
             InboundPacket::Response(login) => {
+                if session.state != crate::session::SessionState::Handshaking {
+                    // Não substituir a identidade de uma sessão já autenticada/em jogo.
+                    return Ok(());
+                }
                 debug!(
                     "Recebida resposta de login para o usuário '{}' na Sessão #{}",
                     login.username, session.session_id
@@ -474,8 +563,20 @@ impl LinkGateway {
                     return Ok(());
                 }
 
+                // Cliente original gameclient.cpp:131-139; Challenge anuncia algo=0.
+                // Token/USB e hashes incompatíveis ficam recusados explicitamente.
+                if login.use_token || !pw_crypto::verificar_resposta_pw(
+                    &account.password_hash, &session.desafio_login, &login.password_response,
+                ) {
+                    warn!("Login rejeitado: resposta de senha inválida na Sessão #{}", session.session_id);
+                    tx.send(OutboundPacket::ErrorInfo(S2CErrorInfo::new(2, "Credenciais inválidas"))).await?;
+                    return Ok(());
+                }
+                session.desafio_login.clear();
+
                 session.set_authenticated(account.id, account.username.clone());
                 session.sec_level = account.gm_privileges.clamp(0, 32) as u8;
+                session.revisao_gm = account.revisao_gm;
                 let _ = self.account_repo.update_last_login(account.id, &session.client_ip).await;
 
                 // Envia OnlineAnnounce (Opcode 4) para transição de estado da GUI do cliente
@@ -1574,6 +1675,10 @@ mod testes_da_barreira_de_login {
         assert!(LinkGateway::exige_autenticacao(&chat));
     }
 }
+
+#[cfg(test)]
+#[path = "teste_login_senha.rs"]
+mod teste_login_senha;
 
 /// As cinco listas de missão de quem nunca teve nenhuma, como `pw_gs::missoes::ListasDeMissao`
 /// as serializa: lista ativa só com o cabeçalho (`m_Version` = 1, tempos absolutos), lista de

@@ -3858,7 +3858,7 @@ async fn uma_habilidade_de_ataque_machuca_o_outro_jogador() {
 async fn habilidade_desconhecida_nao_mexe_na_vida_de_ninguem() {
     let (mundo, addr, roleid, convidado) = cenario!();
     let mut link = entrar(&mundo, addr, roleid).await;
-    let _ = entrar(&mundo, addr, convidado).await;
+    let _link_convidado = entrar(&mundo, addr, convidado).await;
 
     let antes = mundo.read().await.players[&(convidado as i64)].hp;
 
@@ -5426,8 +5426,8 @@ async fn o_tique_devolve_o_autosave_em_vez_de_gravar_dentro_do_lock() {
 
     let lote = mundo.write().await.tick(60_000).await;
     assert_eq!(lote.len(), 1, "o minuto fechou e o lote tem o jogador");
-    assert_eq!(lote[0].role_id, roleid);
-    assert_eq!(lote[0].posicao.x, X, "a fotografia é a do mundo");
+    assert_eq!(lote[0].fotografia.role_id, roleid);
+    assert_eq!(lote[0].fotografia.posicao.x, X, "a fotografia é a do mundo");
 
     // E o tique não escreveu: o banco ainda tem a posição antiga.
     let depois = repo
