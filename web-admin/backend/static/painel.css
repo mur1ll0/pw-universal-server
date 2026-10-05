@@ -1,0 +1,163 @@
+@charset "UTF-8";
+:root{color-scheme:dark;--fundo:#101b1c;--superficie:#172526;--borda:#2a3a39;--texto:#e4e9e3;--suave:#9aaca5;--ouro:#c5aa70;--jade:#92c2aa;font-family:Segoe UI,Arial,sans-serif;font-size:14px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--fundo);color:var(--texto)}
+[hidden]{display:none!important}
+button,input,select{font:inherit}
+button,a,input,select{-webkit-tap-highlight-color:transparent}
+button{cursor:pointer}
+button:disabled{opacity:.55;cursor:wait}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--ouro);outline-offset:4px}
+a{color:inherit;text-decoration:none}
+h1,h2,p{margin:0}
+h2{font-size:20px;font-weight:500}
+small{display:block;color:var(--suave)}
+.entrada{min-height:100vh;display:grid;grid-template-columns:1.1fr 1fr;position:relative}
+.paisagem{position:absolute;inset:0 47.6% 0 0;background:url('/static/paisagem.svg') center/cover}
+.apresentacao{z-index:1;padding:48px 12%;display:flex;flex-direction:column;min-height:100vh}
+.marca{display:flex;align-items:center;gap:13px;font-family:Georgia,serif;letter-spacing:1.8px;font-size:14px;white-space:nowrap}
+.marca small{font-family:Segoe UI,Arial,sans-serif;letter-spacing:3px;font-size:9px;margin-top:6px;color:var(--ouro)}
+.manifesto{margin:auto 0;padding:70px 0}
+.sobretitulo{font-size:10px;font-weight:600;letter-spacing:2.5px;color:var(--ouro);margin-bottom:20px}
+.manifesto h1{font:normal clamp(44px,5.2vw,76px)/1.08 Georgia,serif;letter-spacing:-1px}
+.manifesto h1 em{color:#d6bd86;font-weight:normal}
+.manifesto>p:last-child{margin-top:28px;line-height:1.9;color:#afc4ba;font-size:16px}
+.assinatura{font-size:9px;letter-spacing:2px;color:#a0b8ad}
+.assinatura span{color:var(--ouro);margin:0 16px}
+.acesso{display:flex;flex-direction:column;justify-content:center;padding:70px 15% 30px;min-width:0;background:#122021}
+.formulario{margin:auto 0;max-width:410px}
+.formulario h2{font:normal 30px/1.3 Georgia,serif}
+.descricao{color:var(--suave);margin:16px 0 35px;line-height:1.7}
+.formulario label{display:block;margin:22px 0 10px;font-size:12px}
+input{width:100%;border:1px solid #354541;background:#192a29;border-radius:5px;padding:15px 14px;color:var(--texto);min-width:0}
+input::placeholder{color:#728b80}
+.campo-senha{display:flex;border:1px solid #354541;border-radius:5px;background:#192a29}
+.campo-senha input{border:0;background:transparent}
+.campo-senha button{background:none;border:0;color:var(--suave);font-size:11px;padding:0 14px}
+.botao{border-radius:5px;padding:12px 18px;display:inline-flex;align-items:center;justify-content:center;gap:22px;min-height:42px}
+.principal{background:#c6ac77;border:1px solid #c6ac77;color:#162622;font-weight:600;width:100%;margin-top:28px;padding:16px}
+.principal:hover{background:#d6bd88}
+.principal span{margin-left:auto}
+.nota-acesso{display:flex;gap:14px;align-items:center;border-top:1px solid var(--borda);margin-top:32px;padding-top:24px}
+.nota-acesso>span{font-size:26px;color:var(--ouro)}
+.nota-acesso p{font-size:11px;line-height:1.8;color:var(--suave)}
+.rodape-acesso{text-align:center;font-size:8px;letter-spacing:1.4px;color:#70867c;margin-top:50px}
+.rodape-acesso span{padding:0 8px}
+.erro{margin-top:16px;color:#e6a59b;font-size:12px;line-height:1.5}
+.portal{display:flex;min-height:100vh}
+.lateral{width:250px;flex-shrink:0;background:#132321;border-right:1px solid var(--borda);display:flex;flex-direction:column;padding:30px 22px;position:sticky;top:0;height:100vh}
+.lateral .marca{font-size:11px;letter-spacing:1px;gap:10px}
+.lateral .marca small{font-size:8px;letter-spacing:2px}
+.rotulo-nav{margin:52px 12px 15px;font-size:9px;color:#718f80;letter-spacing:2px}
+.nav{background:transparent;border:1px solid transparent;border-radius:5px;color:var(--suave);padding:14px 12px;display:flex;align-items:center;gap:12px;width:100%;text-align:left;font-size:12px;margin-bottom:8px}
+.nav span{font-size:20px}
+.nav:hover{background:#20362e}
+.nav.ativo{background:#243b31;border-color:#344c3d;color:#d6c18b}
+.progresso{display:flex;gap:10px;margin-top:auto;padding:35px 4px 25px;font-size:11px;color:#acb8ad;line-height:1.7}
+.progresso small{font-size:10px}
+.ponto{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--jade);margin-top:6px}
+.perfil{display:flex;align-items:center;gap:10px;padding-top:20px;border-top:1px solid var(--borda);min-width:0}
+.perfil>div:nth-child(2){overflow:hidden}
+.perfil strong{display:block;overflow:hidden;text-overflow:ellipsis;font-size:12px}
+.perfil small{font-size:10px;margin-top:5px}
+.avatar{border:1px solid #716447;color:var(--ouro);padding:10px 8px;border-radius:5px;font-size:10px}
+.perfil button{margin-left:auto;background:none;border:0;font-size:23px;color:var(--suave)}
+main{flex:1;min-width:0}
+.barra{height:80px;border-bottom:1px solid var(--borda);display:flex;justify-content:space-between;align-items:center;padding:0 44px;font-size:11px;color:var(--suave);gap:20px}
+.separador{padding:0 12px;color:#51695c}
+.barra label{display:flex;align-items:center;gap:12px}
+select{background:#1b2b29;color:var(--texto);border:1px solid var(--borda);padding:10px;border-radius:4px;max-width:280px}
+.conteudo{padding:42px 44px 20px;max-width:1500px;margin:auto}
+.titulo-pagina{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:30px}
+.titulo-pagina .sobretitulo{margin-bottom:12px}
+.titulo-pagina h1{font:normal 38px Georgia,serif}
+.titulo-pagina p:last-child{color:var(--suave);font-size:12px;line-height:1.6;margin-top:12px}
+.secundario{background:#1b2b28;color:var(--texto);border:1px solid #3b4c40;font-size:12px;white-space:nowrap}
+.secundario:hover{border-color:var(--ouro)}
+.faixa{min-height:190px;display:flex;align-items:center;justify-content:space-between;padding:35px;background:linear-gradient(90deg,#233d33e8,#183631d9),url('/static/paisagem.svg') center 70%/cover;border:1px solid #395141;border-radius:8px;margin-bottom:34px;gap:25px}
+.faixa .sobretitulo{font-size:9px;margin-bottom:14px}
+.faixa h2{font:normal 28px Georgia,serif}
+.faixa p:last-child{font-size:12px;color:#aec2b6;margin-top:12px}
+.faixa img{opacity:.55}
+.cabecalho-secao{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:18px}
+.cabecalho-secao h2{font-size:17px}
+.cabecalho-secao>span{font-size:10px;color:var(--suave)}
+#quantidade-realms{border:1px solid #385045;border-radius:4px;padding:2px 7px;color:var(--jade);font-size:11px;margin-left:8px}
+.lista-realms{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:16px}
+.cartao-realm,.cartao-conta{border:1px solid var(--borda);background:var(--superficie);padding:24px;border-radius:7px;color:var(--texto);text-align:left;transition:border-color .15s;min-width:0}
+.cartao-realm:hover,.cartao-conta:hover{border-color:#758a68}
+.cartao-realm.selecionado{border-color:var(--ouro);background:#22312a}
+.cartao-topo{display:flex;justify-content:space-between;align-items:center;margin-bottom:26px;gap:12px}
+.versao{font:normal 25px Georgia,serif;color:#d3bc85}
+.etiqueta{font-size:9px;letter-spacing:.4px;border:1px solid #385244;color:var(--jade);padding:5px 7px;border-radius:4px;white-space:nowrap}
+.etiqueta.neutro{border-color:#485047;color:#aab5aa}
+.cartao-realm h3{font-size:14px;font-weight:500;margin:0 0 8px}
+.cartao-realm .identificador{font-size:10px;color:var(--suave)}
+.cartao-rodape{border-top:1px solid var(--borda);margin-top:22px;padding-top:16px;display:flex;justify-content:space-between;font-size:10px;color:var(--suave)}
+.cartao-rodape span:last-child{color:var(--ouro)}
+.detalhes{border:1px solid var(--borda);background:var(--superficie);padding:25px;border-radius:7px;margin-top:26px}
+.link-botao{background:none;border:none;color:var(--ouro);font-size:11px;white-space:nowrap}
+.ficha{display:grid;grid-template-columns:repeat(4,1fr);gap:25px;margin:25px 0}
+.ficha dt{font-size:10px;color:var(--suave);margin-bottom:10px}
+.ficha dd{margin:0;font-size:15px}
+.ficha dl{margin:0}
+.nota{font-size:11px;color:var(--suave);line-height:1.8}
+.aviso{padding:15px 18px;border:1px solid #766849;background:#332e21;color:#e0c797;border-radius:5px;line-height:1.6;font-size:12px;margin-bottom:24px}
+.lista-capacidades{border:1px solid var(--borda);border-radius:7px;overflow:hidden;margin-bottom:20px}
+.recurso{display:flex;justify-content:space-between;align-items:center;gap:20px;background:var(--superficie);padding:24px;border-bottom:1px solid var(--borda)}
+.recurso:last-child{border-bottom:0}
+.recurso h3{font-size:14px;font-weight:500;margin:0 0 8px}
+.recurso p{font-size:11px;line-height:1.6;color:var(--suave)}
+footer{display:flex;align-items:center;gap:14px;font-size:9px;color:#779084;padding:35px 0 5px;letter-spacing:.5px}
+footer span{color:#7d7352}
+@media(min-width:1600px){.acesso{padding-left:20%;padding-right:20%}
+}
+@media(max-width:1050px){.lateral{width:210px;padding:24px 14px}
+.barra{padding:0 26px}
+.conteudo{padding:30px 26px}
+.acesso{padding-left:11%;padding-right:11%}
+.apresentacao{padding:40px 10%}
+.ficha{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:720px){.entrada{display:block}
+.paisagem{inset:0 0 auto;height:290px}
+.apresentacao{min-height:290px;padding:24px 28px}
+.manifesto{padding:24px 0}
+.manifesto h1{font-size:32px}
+.manifesto h1 br{display:none}
+.manifesto>p:last-child{font-size:12px;margin-top:14px}
+.manifesto .sobretitulo,.assinatura{display:none}
+.acesso{padding:38px 28px 24px}
+.formulario{max-width:none}
+.formulario h2{font-size:27px}
+.rodape-acesso{margin-top:34px}
+.portal{display:block}
+.lateral{width:100%;height:auto;position:relative;padding:15px 20px;display:grid;grid-template-columns:1fr auto;gap:16px}
+.lateral .rotulo-nav,.progresso{display:none}
+.lateral nav{grid-column:1/3;display:flex;order:3;gap:8px}
+.nav{margin:0;font-size:11px;padding:10px 8px}
+.perfil{padding:0;border:0}
+.perfil small,.avatar{display:none}
+.barra{height:auto;min-height:70px;padding:16px 20px;flex-wrap:wrap}
+.barra>span{display:none}
+.barra label{width:100%}
+.barra select{flex:1;max-width:none}
+.conteudo{padding:25px 20px}
+.titulo-pagina{align-items:start}
+.titulo-pagina h1{font-size:30px}
+.titulo-pagina .sobretitulo{font-size:8px;letter-spacing:1.5px}
+.secundario{padding:9px 12px;font-size:11px}
+.faixa{padding:25px;min-height:160px}
+.faixa h2{font-size:22px}
+.faixa img{display:none}
+.ficha{gap:20px}
+.cabecalho-secao{align-items:start}
+.recurso{padding:20px;align-items:start}
+.etiqueta{white-space:normal;text-align:center}
+.lateral .marca{font-size:10px}
+.lateral .marca img{width:30px;height:30px}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}
+}
+
+.busca-personagens{margin-bottom:18px}.busca-personagens label{display:block;font-size:12px;color:var(--suave);margin-bottom:12px}.busca-personagens>div{display:flex;gap:12px;max-width:650px}.lista-personagens{display:grid;gap:10px;margin-top:22px}.personagem{display:flex;align-items:center;gap:20px;border:1px solid var(--borda);border-radius:5px;background:var(--superficie);color:var(--texto);padding:18px;text-align:left}.personagem:hover{border-color:var(--ouro)}.personagem strong{font-weight:500}.personagem span{font-size:11px;color:var(--suave)}.personagem span:last-child{margin-left:auto;color:var(--ouro)}.ficha dd{overflow-wrap:anywhere}.ficha-personagem .nota{margin-top:15px}@media(max-width:720px){.lateral nav{flex-wrap:wrap}.nav{width:auto;flex:1}.personagem{flex-wrap:wrap;gap:10px}.personagem span:last-child{margin-left:0}}

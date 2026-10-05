@@ -1,4 +1,11 @@
-FROM python:3.11-slim
+FROM rust:slim-bookworm AS credenciais
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY tools ./tools
+RUN cargo build --release --locked -p pw-crypto --bin pw-validar-credenciais
+
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
@@ -7,10 +14,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY web-admin/backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY web-admin/backend/painel ./painel
+COPY web-admin/backend/static ./static
+COPY web-admin/backend/main.py .
+COPY --from=credenciais /build/target/release/pw-validar-credenciais /usr/local/bin/
 
 ENV PORT=8000
 EXPOSE 8000

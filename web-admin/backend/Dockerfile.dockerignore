@@ -1,0 +1,17 @@
+**
+!Cargo.toml
+!Cargo.lock
+!crates/
+!crates/**
+!tools/
+!tools/**
+!web-admin/
+!web-admin/backend/
+!web-admin/backend/main.py
+!web-admin/backend/requirements.txt
+!web-admin/backend/painel/
+!web-admin/backend/painel/**
+!web-admin/backend/static/
+!web-admin/backend/static/**
+**/__pycache__/
+**/target/
