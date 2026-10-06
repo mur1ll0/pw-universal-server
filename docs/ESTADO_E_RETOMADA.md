@@ -7,7 +7,7 @@
 > bloco novo entra como linha no §3.3 (o que olhar em jogo), no §5 (o que ficou faltando) e
 > no índice do §8 — não como parágrafo aqui.
 >
-> **Última atualização: 2026-10-06**, base `9fdd555` + B174–B184 sem commit; **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
+> **Última atualização: 2026-10-06**, base `e3ac943` (B174–B184 commitados em `28182a5` núcleo e `e3ac943` painel); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
 > comandos do B77–B88, 14 e 64 conferidos e sobrescritos no 1.2.6, campos do v55 pelo
 > `libtask.so` e prefixos do v7 pelo `gs`; **B126** — IA de combate do monstro por estratégia
 > (conjurar de longe, série de golpes, afastar, fugir, fixo), eventos de vida 75/50/25 %, efeito
