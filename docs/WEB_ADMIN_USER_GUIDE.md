@@ -1,10 +1,7 @@
-# Painel administrativo — reforma parcial (B165–B168)
+# Painel administrativo — reforma parcial (B165–B174)
 
-Atualizado em 2026-10-05. Painel em execução contém frontend E3 e alvos 126/155,
-mas os mundos anteriores não têm chave administrativa e recusam o canal. B167/B168
-(senha e criação global recuperáveis) somente locais,
-testado automaticamente, sem publicação. Etapas e pendências continuam na memória central em
-`docs/admin/MEMORIA_DA_REFORMA.md`.
+Atualizado em 2026-10-05 (B174): interface refeita e publicada; canal administrativo
+ativo nos realms 126 e 155. Etapas e pendências: `docs/admin/MEMORIA_DA_REFORMA.md`.
 
 ## Acesso e recursos disponíveis
 
@@ -12,14 +9,28 @@ Abra `http://localhost:8000` na máquina do servidor ou `http://<IP-do-servidor>
 na rede. Use sua conta PW e senha com privilégio GM. Conta banida ou sem GM não entra.
 O serviço usa as credenciais existentes, sem trocar senha/hash nem criar sessão de jogo.
 
-A base permite escolher realms configurados, consultar a porta de entrada e a contagem
-de personagens persistidos, atualizar a consulta e visualizar capacidades por versão.
-Gateway acessível significa que a porta TCP responde. Na base E2 publicada, mundo, mapas
-e jogadores online não são consultados ao GS; a interface indica essa ausência.
-
-O código local oferece consulta global de contas, criação e troca de senha. Demais operações de
-contas, edição de personagem, inventário, habilidades, mapas, rates e moldes ainda estão
-indisponíveis. As rotas antigas retornam indisponibilidade sem aplicar alterações.
+- **Visão geral:** um cartão por realm com estado (no ar/fora do ar), jogadores online ao
+  vivo, personagens e rates (EXP, SP, DROP, MOEDAS). Rates vêm do banco e ainda não são
+  aplicadas pelo mundo ("Não aplicadas"). Online "—" = realm sem canal administrativo.
+- **Seletor de realm (topo):** escolhe o realm; o menu lateral libera o painel do realm,
+  personagens, **Mapas** e **Rates** (moldes: "em breve").
+- **Personagens:** busque e abra a ficha. Embaixo dela: **Dinheiro**, **EXP / SP** e **Pontos livres**
+  (só dar), **Nível** (só sobe, até o teto do realm), **Atributos** (mudar força/agilidade/vitalidade/
+  energia já distribuídas — o total com os livres não muda — ou **Redistribuir** tudo de volta aos
+  pontos livres) e **Cultivo** (lista conforme a versão). Em jogo,
+  aplica na hora e o jogador vê; fora do jogo, grava no banco — só EXP/SP pedem o personagem em jogo.
+- **Mapas:** todos os mapas do realm (ligados primeiro), com filtro por número ou nome e por
+  status. Marque as linhas (ou "Selecionar todos", que pega só o que o filtro mostra) e use
+  **Ligar selecionados** / **Desligar selecionados**. Ligar carrega o mapa na hora ("Carregando…"
+  até subir); desligar pede confirmação, salva e devolve ao login quem está nele e descarrega.
+  "Sem dados": o servidor não tem os arquivos desse mapa. O estado sobrevive a reinício.
+- **Rates:** EXP, SP, DROP e MOEDAS de 0,1× a 99,9×. "Aplicar no realm" grava e passa a valer
+  no mundo na hora, sem reiniciar. Drop/moedas com fração: 1,5× = um sorteio garantido e 50%
+  de chance de outro. EXP/SP valem só para monstro abatido (missões não mudam).
+- **Contas globais (menu Geral):** cartões paginados com busca por usuário. Clicar numa conta
+  abre um popup junto do cartão com o resumo e as ações: **GM**, **Senha**, **Gold** (só dar, em gold), **Banir/Desbanir** e **Desconectar**. Clicar fora fecha; concluir também.
+  "+ Nova conta" abre a criação. Todo resultado aparece num alerta no centro da tela; se o
+  servidor ainda não confirmou, o alerta fica "Aplicando…" e o painel consulta sozinho.
 Não há histórico navegável de operações neste escopo.
 
 ## Roteiro para o Murillo
@@ -120,7 +131,8 @@ nova no overlay `d_rtdebug`: apenas observar os valores normais do personagem no
 ### Configuração
 
 O GS precisa de `ADMIN_SECRET` válido (32 bytes aleatórios em hexadecimal) e o painel da
-mesma chave por realm. Compose recebe `ADMIN_SECRET_126`/`ADMIN_SECRET_155`, sem padrão;
+mesma chave por realm. Compose recebe `ADMIN_SECRET_126`/`ADMIN_SECRET_155` de `docker/.env`
+(ignorado pelo git; trocar a chave = recriar `pw-world-*` e `pw-admin-api`), sem padrão;
 `ADMIN_DAEMONS` lista os processos do realm, sem publicar a porta interna 29110.
 Ativar E3 exige publicar também os mundos com o código novo, quando solicitado; atualizar
 somente o painel mantém consulta viva indisponível contra mundos antigos. Não registrar chaves.

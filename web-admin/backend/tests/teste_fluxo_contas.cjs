@@ -141,3 +141,36 @@ test("GM pendente persiste alvo/parâmetros entre reload, conflito e aplicação
   assert.equal(c.armazenamento.size,0);
   assert.match(c.elementos.get("resultado-comando").textContent,/Entre novamente/);
 });
+
+test("canal sem envio é falha definitiva: libera a operação e diz que nada mudou (B174)", async () => {
+  const c = await montar();
+  c.resposta(503, { estado: "falha", codigo: "canal_nao_enviado", mensagem: "Canal administrativo não configurado para este realm." });
+  c.avaliar('elemento("gm-habilitado").value = "true"');
+  await c.avaliar('executarComando(false, "definir_gm")');
+  assert.equal(c.armazenamento.size, 0, "nada foi enviado: não fica pendente");
+  assert.equal(c.avaliar("estado.comando"), null);
+  assert.match(c.elementos.get("resultado-comando").textContent, /Nada foi alterado/);
+});
+
+test("gold e ban (B175): corpo certo, recuperação e resultado de outro alvo não encerra", async () => {
+  const c = await montar();
+  c.avaliar('elemento("gold-valor").value = "12.5"');
+  await c.avaliar('executarComando(false, "ajustar_gold")');
+  const corpo = JSON.parse(c.pedidos[0].opcoes.body);
+  assert.equal(corpo.delta, 1250, "12,5 gold = 1250 unidades do cash");
+  assert.match(c.pedidos[0].caminho, /realm_126\/contas\/9\/gold$/);
+  c.resposta(200, { estado: "salvo", tipo: "ajustar_gold", conta_id: 10, saldo: "1250" });
+  await c.avaliar("executarComando(true)");
+  assert.equal(c.armazenamento.size, 1, "resultado de outra conta não encerra");
+  c.resposta(200, { estado: "salvo", tipo: "ajustar_gold", conta_id: 9, saldo: "1250" });
+  await c.avaliar("executarComando(true)");
+  assert.equal(c.armazenamento.size, 0);
+  assert.match(c.elementos.get("resultado-comando").textContent, /12,50 gold/);
+  c.avaliar("estado.conta={id:9,usuario:'alvo',banida:false}");
+  c.avaliar('elemento("ban-motivo").value = "  trapaça "');
+  c.resposta(202, { estado: "desconhecido" });
+  await c.avaliar('executarComando(false, "definir_ban")');
+  const ban = JSON.parse(c.pedidos.at(-1).opcoes.body);
+  assert.deepEqual([ban.banida, ban.motivo], [true, "trapaça"]);
+  assert.equal(c.avaliar("lerComando().motivo"), "trapaça", "motivo guardado para repetir igual");
+});

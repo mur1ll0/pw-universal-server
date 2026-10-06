@@ -9,14 +9,17 @@
 | peça | estado atual |
 | :--- | :--- |
 | API | FastAPI modular em `backend/painel/`; `main.py` só cria a aplicação |
-| Frontend | Fonte única em `backend/static/`: HTML, CSS, JavaScript e SVG locais, português, sem CDN/build |
+| Frontend | `backend/static/` (HTML/CSS/JS/SVG locais, sem CDN/build, CSP só `self`). Design próprio escuro (B174): menu lateral com "Geral" (Visão geral, Contas globais) e "Realm" (painel, personagens; mapas/rates/moldes marcados "em breve"); seletor de realm no topo; home com cartões por realm (online ao vivo, personagens, rates); conteúdo na largura toda; contas em cartões paginados (12) com busca; clicar no cartão abre um popup ancorado (resumo + ações GM, Senha, Gold, Banir/Desbanir, Desconectar) que fecha ao clicar fora ou ao concluir; criação em modal; todo resultado num alerta padrão (sucesso/erro/aguardando, estilo SweetAlert) e operação sem confirmação é consultada sozinha a cada 1,5 s, até ~45 s (B175) |
 | Login | Conta PW com `gm_privileges > 0`, sem ban; `pw-validar-credenciais` reutiliza `pw_crypto::verify_password` |
 | Sessão | Redis, prazo fixo de 8 h; cookie HttpOnly/SameSite Strict, Secure configurável; origem e CSRF nas escritas |
 | Revogação | Conta, GM, ban e impressão do hash revalidados por requisição; logout e novo login invalidam o token anterior do navegador |
-| Realms | `realms`, contagem persistida em `characters`; TCP exclusivamente no alvo correto, `ADMIN_GATEWAYS` para hosts Docker |
+| Realms | `realms`, contagem persistida em `characters`; TCP exclusivamente no alvo correto, `ADMIN_GATEWAYS` para hosts Docker. `/api/realms` traz `rates` gravadas (`realms.double_{exp,sp,drop,gold}_multiplier`) e `canal_administrativo`; `/estado` traz `taxas` em memória do GS (só se todos os daemons concordam) |
+| Personagem E5 | `POST /api/realms/{id}/personagens/{pid}/editar {operacao_id` + **um** de `dinheiro` 1–2·10⁹ (dar, B180), `exp`/`sp` (dar), `pontos` 1–10 000 (dar), `nivel` ≥ 2 (só sobe), `cultivo` 0–255, `atributos` [força, agilidade, vitalidade, energia] 0–100 000 ou `redistribuir: true` (B184)`}` → `editar_personagem` no GS (regra, limites por realm/versão e códigos em spec 05 §7.11): `aplicado` (online) ou `salvo` (offline; EXP/SP só online); falhas `precisa_estar_online`, `em_transicao`, `personagem_inexistente`, `nivel_invalido`, `cultivo_invalido`, `atributos_invalidos`, `sem_mudanca`, `operacao_em_conflito`. Ficha com linhas Dinheiro, EXP/SP, Pontos livres, Nível, Atributos (os quatro preenchidos, "Pontos livres depois" ao vivo, Aplicar e Redistribuir) e Cultivo (lista pela versão); sem confirmação o painel consulta o resultado pelo mesmo ID (B179, B182, B184) |
+| Mapas E7 | Tela Mapas (B183): **todos** os mapas da versão — `GET /api/realms/{id}/catalogo-mapas`, do `gs.conf` original com nomes do `instance.txt` do pwadmin 1.5.5 (`painel/catalogo_mapas.json`, gerado por `scripts/gerar_catalogo_de_mapas.py`; 126: 43, 155: 79; o 126 usa os nomes do 155 pela mesma chave, não conferidos no cliente 1.2.6) — juntos ao `/estado` (`mapas` com `ligado`/`carregando`, `carregaveis`). Lista com ligados primeiro, filtro por número/nome/chave e por status, seleção por linha, selecionar todos (os visíveis)/desmarcar todos, Ligar/Desligar selecionados (um pedido por mapa, confirmação ao desligar, acompanha a carga sozinha até ~45 s); "Sem dados" quando nenhum GS sabe montar. `POST /api/realms/{id}/mapas/{mapa} {ligado}` → `definir_mapa` a cada GS; se todos respondem `mapa_nao_servido`, de novo só ao primeiro com `carregar`. Regra em spec 05 §7.10 (B177, B183) |
+| Rates E7 | `POST /api/realms/{id}/rates {exp,sp,drop,moedas}` (0,1–99,9) → `definir_taxas` a todos os GS do realm: grava em `realms` e vale na hora (regra em spec 05 §7.9). Tela Rates do realm com 4 campos; o painel do realm mostra "Em vigor" quando o gravado = o que o GS usa (B176) |
 | Estado vivo | Consulta autenticada aos daemons configurados; mapas reais e contagem de sessões com entidade e roteamento; falha/transição não vira zero jogadores |
 | Personagens | Busca persistida por realm e ficha viva quando exatamente um GS declara presença; origem e limitações explícitas; edição indisponível |
-| Contas E4 | Busca global; criação, senha e GM via GS, recuperáveis; GM coordena caches/efeitos globais, cliente requer reentrada; gold/ban/desconexão pendentes |
+| Contas E4 | `/api/contas?busca&pagina&por_pagina` (1–48, padrão 12; `_`/`%` literais) com `total`, personagens, criação e último login; criação, senha, GM, gold e ban via GS, recuperáveis, roteados pelo realm selecionado com canal ou pelo primeiro que tenha; GM coordena caches/efeitos globais, cliente requer reentrada. **Gold** (B175; só dar desde B180): `POST …/contas/{id}/gold {delta ≥ 1}` em unidades do cash (100 = 1 gold), soma atômica; valor ≤ 0 recusado em todas as camadas (`valor_invalido`), depois `atualizar_cash` em todos os GS reenvia `PLAYER_CASH` (253) a quem está online. **Ban** (B175): `POST …/contas/{id}/ban {banida, motivo≤120}` grava `is_banned`/`ban_reason`, sem expiração (o link não lê `ban_expires_at`), recusa banir a própria conta (`proprio_administrador`); ao banir, desconecta em todos os realms. **Desconectar** (B175): `POST /api/contas/{id}/desconectar` manda `desconectar` a todos os GS com canal; cada um salva pelo caminho do logout e o link recebe `PlayerLogout` com `result` 2 (cliente volta ao login, `EC_GameSession.cpp:5420-5426`); idempotente, sem registro durável. Limitação: sessão parada na seleção de personagem não está em GS nenhum e não é desconectada (o próximo login de conta banida é recusado) |
 | Capacidades | Configuração consultável; consulta viva depende do canal ativo; protocolos 126/155 presentes; outras versões não validadas |
 | Docker | Porta 8000; contexto raiz, ignore específico e estágio Rust do verificador |
 | Manual e contratos | `docs/WEB_ADMIN_USER_GUIDE.md`; `docs/admin/ARQUITETURA_E_CONTRATOS.md` |
@@ -58,16 +61,18 @@ exclusão offline/persistência (E5), restante de contas (E4), subsistemas (E6),
 mapas/rates (E7), moldes (E8), extensões/fechamento (E9).
 Base publicada em `pw-admin-api` em 2026-10-04, por pedido explícito do Murillo.
 Página/assets HTTP 200 e API anônima 401 verificados; realms/mundos não foram reiniciados.
-Em 2026-10-05, o painel em execução contém frontend E3 e alvos 126/155 configurados,
-porém os mundos de 2026-10-03 não têm ADMIN_SECRET e recusam TCP 29110.
-Consultas vivas não foram confirmadas nesse ambiente. B167–B169 permanecem locais; sem migração
-de `public`, publicação ou verificação da imagem Linux de B167/B168.
+Em 2026-10-05 (B173–B174): B165–B174 publicados (link/GS 126/155 e painel), migrações no
+`public`, chaves `ADMIN_SECRET_126/155` geradas em `docker/.env` (ignorado pelo git). Canal
+dos dois GS escutando; GM concedido e removido pela API real, aplicado nos 4 processos.
 
 ### Canal E3 — consultas, senha e criação global recuperável, testado automaticamente
 
 TCP separado do barramento: `ADMIN_LISTEN` padrão `0.0.0.0:29110`, sem porta publicada.
 Ativado somente com `ADMIN_SECRET` de 32 bytes em hexadecimal; sem chave, desabilitado.
-Compose usa `ADMIN_SECRET_126`/`ADMIN_SECRET_155` sem valor padrão. API recebe mapa
+Compose usa `ADMIN_SECRET_126`/`ADMIN_SECRET_155` sem valor padrão, lidos de `docker/.env`.
+Pedido que não saiu do painel (sem chave, conexão recusada antes do envio) responde 503
+`estado: falha`, `codigo: canal_nao_enviado` — nada aplicado, repetir é seguro; antes do B174
+virava "resultado desconhecido". Só tempo esgotado ou queda após o envio é desconhecido. API recebe mapa
 `ADMIN_CHANNEL_SECRETS` e lista de alvos por realm em `ADMIN_DAEMONS`; processos adicionais
 precisam constar nessa lista. A consulta não descobre processos ausentes da configuração.
 

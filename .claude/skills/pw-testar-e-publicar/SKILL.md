@@ -58,6 +58,16 @@ cd docker && docker compose build pw-world-155 pw-realm-155 2>&1 | tail -5 \
   && docker compose up -d --remove-orphans pw-world-155 pw-realm-155 2>&1 | tail -5
 ```
 
+Depois de todo `up`, confira que nenhum contêiner ficou para trás (B178: um `up` interrompido
+deixou os dois `pw-world-*` em `Dead` e cópias `<hash>_pw-world-*` em `Created`; o painel mostrava
+"Consultando o mundo…"). Publicando um serviço só, use `--no-deps`. Saída vazia = ok:
+
+```bash
+docker ps -a --format '{{.Names}} {{.Status}}' | grep -E '^([0-9a-f]+_)?pw-' | grep -vE ' Up '
+```
+
+Se aparecer algo: `docker rm -f` nos `<hash>_pw-*` e `docker compose up -d --no-build <serviço>`.
+
 O `tail -5` não é enfeite: o build despeja centenas de linhas de compilação que ninguém lê.
 Se o build falhar, aí sim `| grep -E "^error" -A 5`.
 

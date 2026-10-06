@@ -51,6 +51,16 @@ docker logs --tail 40 pw-world-155   # "N monstros, N NPCs e N recursos", terren
 docker logs --tail 40 pw-realm-155       # "Gateway pw-link escutando na porta 29004"
 ```
 
+Depois de todo `up`, confira que nenhum contêiner ficou para trás (B178: um `up` interrompido
+deixou os dois `pw-world-*` em `Dead` e cópias `<hash>_pw-world-*` em `Created`; o painel mostrava
+"Consultando o mundo…"). Publicando um serviço só, use `--no-deps`. Saída vazia = ok:
+
+```bash
+docker ps -a --format '{{.Names}} {{.Status}}' | grep -E '^([0-9a-f]+_)?pw-' | grep -vE ' Up '
+```
+
+Se aparecer algo: `docker rm -f` nos `<hash>_pw-*` e `docker compose up -d --no-build <serviço>`.
+
 ## 3. Ler um teste em jogo
 
 ```bash

@@ -1,6 +1,11 @@
 """Consultas somente de leitura com origem explícita e alvo validado no banco."""
 from fastapi import HTTPException, Path, Query, Request
 from .canal import CanalIndisponivel, consultar_daemons
+import json
+import pathlib
+
+# Gerado por scripts/gerar_catalogo_de_mapas.py (B183); lido uma vez.
+CATALOGO_DE_MAPAS = json.loads((pathlib.Path(__file__).parent / "catalogo_mapas.json").read_text(encoding="utf-8"))
 
 
 def registrar_consultas(app):
@@ -20,11 +25,27 @@ def registrar_consultas(app):
             mapas = [mapa for resposta in respostas for mapa in resposta["mapas"]]
             if len({mapa["mapa"] for mapa in mapas}) != len(mapas):
                 raise CanalIndisponivel("Mais de um daemon declarou o mesmo mapa; roteamento ambíguo.")
+            # Rates em memória (E7): só afirma se todos os daemons do realm concordam.
+            taxas = [resposta.get("taxas") for resposta in respostas]
+            # Mapas que algum processo sabe montar (B183): o painel só oferece ligar esses.
+            carregaveis = sorted({m for resposta in respostas for m in resposta.get("carregaveis", [])})
             return {"realm_id": realm_id, "estado": "consultado", "origem": "viva", "mapas": mapas,
-                    "jogadores_online": sum(mapa["jogadores_online"] for mapa in mapas)}
+                    "carregaveis": carregaveis,
+                    "jogadores_online": sum(mapa["jogadores_online"] for mapa in mapas),
+                    "taxas": taxas[0] if taxas and all(t == taxas[0] for t in taxas) else None}
         except CanalIndisponivel as erro:
             return {"realm_id": realm_id, "estado": "desconhecido", "jogadores_online": None,
                     "mapas": [], "aviso": str(erro)}
+
+    @app.get("/api/realms/{realm_id}/catalogo-mapas")
+    async def catalogo_de_mapas(realm_id: str):
+        """Todos os mapas da versão do realm (B183), do `gs.conf` original com os nomes do
+        pwadmin — `scripts/gerar_catalogo_de_mapas.py`. Versão sem catálogo: lista vazia."""
+        async with app.state.seguranca.pool.acquire() as conexao:
+            versao = await conexao.fetchval("SELECT version FROM realms WHERE id=$1", realm_id)
+        if versao is None:
+            raise HTTPException(404, "Realm não encontrado.")
+        return {"realm_id": realm_id, "versao": versao, "mapas": CATALOGO_DE_MAPAS.get(versao, [])}
 
     @app.get("/api/realms/{realm_id}/personagens")
     async def buscar_personagens(realm_id: str, busca: str = Query("", max_length=64)):

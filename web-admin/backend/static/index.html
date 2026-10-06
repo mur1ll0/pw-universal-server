@@ -3,91 +3,351 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#102421">
+  <meta name="theme-color" content="#0d1117">
   <title>Perfect World · Administração</title>
   <link rel="icon" href="/static/selo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/painel.css">
   <script src="/static/painel.js" defer></script>
 </head>
 <body>
+  <!-- Entrada -->
   <section id="entrada" class="entrada">
-    <div class="paisagem" aria-hidden="true"></div>
-    <div class="apresentacao">
-      <div class="marca"><img src="/static/selo.svg" alt="" width="44" height="44"><span>PERFECT WORLD <small>ADMINISTRAÇÃO</small></span></div>
-      <div class="manifesto"><p class="sobretitulo">OS MUNDOS SOB SEU CUIDADO</p><h1>Um portal.<br>Todos os seus<br><em>mundos.</em></h1><p>Administre seus realms de Perfect World<br>em um só lugar.</p></div>
-      <p class="assinatura">PW UNIVERSAL SERVER <span>◆</span> PORTAL GM</p>
-    </div>
-    <div class="acesso">
-      <div class="formulario">
-        <p class="sobretitulo">BEM-VINDO AO PORTAL</p><h2>Entrar na administração</h2>
-        <p class="descricao">Use sua conta de Perfect World com privilégio GM para continuar.</p>
-        <form id="formulario-login">
-          <label for="usuario">Conta PW</label><input id="usuario" name="usuario" autocomplete="username" required maxlength="64" placeholder="Seu nome de usuário">
-          <label for="senha">Senha</label><div class="campo-senha"><input id="senha" name="senha" type="password" autocomplete="current-password" required maxlength="256" placeholder="Sua senha"><button id="mostrar-senha" type="button" aria-pressed="false">Mostrar</button></div>
-          <p id="erro-login" class="erro" role="alert" hidden></p>
-          <button id="entrar" class="botao principal" type="submit">Entrar no portal <span aria-hidden="true">→</span></button>
-        </form>
-        <div class="nota-acesso"><span aria-hidden="true">◇</span><p>Acesso reservado a administradores GM.<br>As permissões são verificadas pela sua conta PW.</p></div>
-      </div>
-      <p class="rodape-acesso">PERFECT WORLD <span>·</span> PAINEL DE ADMINISTRAÇÃO</p>
-    </div>
+    <form id="formulario-login" class="cartao-entrada" autocomplete="on">
+      <img src="/static/selo.svg" alt="" class="selo-entrada">
+      <h1>Administração</h1>
+      <p class="texto-suave">Conta do jogo com acesso GM</p>
+      <label class="campo">
+        <span>Usuário</span>
+        <input id="usuario" name="usuario" autocomplete="username" required maxlength="64" spellcheck="false">
+      </label>
+      <label class="campo">
+        <span>Senha</span>
+        <span class="campo-senha">
+          <input id="senha" name="senha" type="password" autocomplete="current-password" required maxlength="64">
+          <button id="mostrar-senha" type="button" class="botao-texto" aria-pressed="false">Mostrar</button>
+        </span>
+      </label>
+      <p id="erro-login" class="alerta alerta-erro" role="alert" hidden></p>
+      <button id="entrar" type="submit" class="botao botao-primario botao-largo">Entrar</button>
+    </form>
   </section>
 
+  <!-- Portal -->
   <div id="portal" class="portal" hidden>
-    <aside class="lateral">
-      <a class="marca" href="/"><img src="/static/selo.svg" alt="" width="38" height="38"><span>PERFECT WORLD <small>ADMINISTRAÇÃO</small></span></a>
-      <p class="rotulo-nav">SEU AMBIENTE</p>
-      <nav aria-label="Navegação principal">
-        <button class="nav ativo" data-pagina="mundos" aria-current="page"><span aria-hidden="true">◈</span> Visão dos realms</button>
-        <button class="nav" data-pagina="capacidades"><span aria-hidden="true">◇</span> Recursos disponíveis</button>
-        <button class="nav" data-pagina="personagens"><span aria-hidden="true">♙</span> Personagens</button>
-        <button class="nav" data-pagina="contas"><span aria-hidden="true">♧</span> Contas globais</button>
-      </nav>
-      <div class="progresso"><span class="ponto"></span><div>Reforma em andamento<small>Integrações liberadas por etapa</small></div></div>
-      <div class="perfil"><div class="avatar" aria-hidden="true">GM</div><div><strong id="nome-usuario"></strong><small>Administrador</small></div><button id="sair" aria-label="Sair da administração" title="Sair">↪</button></div>
-    </aside>
-    <main>
-      <header class="barra"><span>Portal GM <span class="separador">/</span> Administração</span><label for="realm-selecionado">Realm <select id="realm-selecionado" aria-label="Realm selecionado"></select></label></header>
-      <div class="conteudo">
-        <div class="titulo-pagina"><div><p class="sobretitulo">ADMINISTRAÇÃO DO SERVIDOR</p><h1 id="titulo-pagina">Seus mundos</h1><p id="subtitulo-pagina">Escolha um realm para acompanhar sua configuração e seus recursos.</p></div><button id="atualizar" class="botao secundario">↻ Atualizar</button></div>
-        <p id="aviso" class="aviso" role="status" aria-live="polite" hidden></p>
-        <section id="pagina-mundos">
-          <div class="faixa"><div><p class="sobretitulo">PERFECT WORLD UNIVERSAL</p><h2>Cada mundo, sua própria história.</h2><p>Versões diferentes. Um ambiente de administração.</p></div><img src="/static/selo.svg" alt="" width="100" height="100"></div>
-          <div class="cabecalho-secao"><h2>Realms configurados <span id="quantidade-realms"></span></h2><span id="ultima-atualizacao"></span></div>
-          <div id="lista-realms" class="lista-realms" aria-live="polite"></div>
-          <section id="detalhes-realm" class="detalhes" hidden><div class="cabecalho-secao"><h2 id="nome-realm"></h2><button id="ver-recursos" class="link-botao">Ver recursos →</button></div><div id="ficha-realm" class="ficha"></div><p class="nota">A conexão do gateway indica acesso à porta de entrada. O estado dos mundos e dos jogadores depende da consulta autenticada ao daemon; falha ou canal ausente aparece como desconhecido.</p></section>
-        </section>
-        <section id="pagina-capacidades" hidden><div class="cabecalho-secao"><h2 id="titulo-recursos">Recursos do realm</h2></div><div id="lista-capacidades" class="lista-capacidades"></div><p class="nota">Consulta de contas e troca de senha global em Contas. Demais operações de contas, personagens, mapas, rates e moldes serão liberadas quando suas integrações estiverem prontas.</p></section>
-        <section id="pagina-personagens" hidden>
-          <form id="busca-personagens" class="busca-personagens"><label for="nome-personagem">Buscar neste realm</label><div><input id="nome-personagem" maxlength="64" placeholder="Nome do personagem"><button class="botao secundario" type="submit">Buscar</button></div></form>
-          <p class="nota">A lista usa nomes e níveis persistidos. Abra um personagem para consultar sua ficha e verificar a origem dos dados.</p>
-          <p id="aviso-personagens" class="aviso" role="status" hidden></p>
-          <div id="lista-personagens" class="lista-personagens" aria-live="polite"></div>
-          <section id="ficha-personagem" class="detalhes" hidden><div class="cabecalho-secao"><h2 id="titulo-personagem"></h2><span id="origem-personagem" class="etiqueta"></span></div><p id="presenca-personagem" class="nota"></p><div id="dados-personagem" class="ficha"></div><p id="observacao-personagem" class="nota"></p><p class="nota">Consulta somente de leitura. Edição ainda indisponível.</p></section>
-        </section>
-        <section id="pagina-contas" hidden>
-          <form id="busca-contas" class="busca-personagens"><label for="nome-conta">Buscar conta global</label><div><input id="nome-conta" maxlength="64" placeholder="Usuário PW"><button class="botao secundario" type="submit">Buscar</button></div></form>
-          <p class="nota">Contas, GM, gold e banimento são compartilhados por todos os realms.</p>
-          <section class="detalhes"><h2>Criar conta global</h2>
-            <p class="nota">Usuário com letras ASCII, números ou _, de 1 a 64 caracteres, salvo em minúsculas. Conta comum, sem GM e com saldos iniciais zero; disponível nos dois clientes.</p>
-            <form id="criacao-conta" class="busca-personagens">
-              <label for="usuario-novo">Usuário</label><div><input id="usuario-novo" autocomplete="off" maxlength="64" pattern="[A-Za-z0-9_]{1,64}" required></div>
-              <label for="senha-criacao">Senha (1 a 64 caracteres ASCII imprimíveis)</label><div><input id="senha-criacao" type="password" autocomplete="new-password" maxlength="64" required><button id="aplicar-criacao" class="botao principal" type="submit">Criar conta global</button></div>
-            </form>
-          </section>
-          <div id="lista-contas" class="lista-personagens" aria-live="polite"></div>
-          <section class="detalhes"><h2 id="alvo-senha">Selecione uma conta</h2>
-            <p class="nota">A nova senha vale para novos logins em todos os realms. Sessões de jogo abertas permanecem conectadas. Sessões do painel da conta alterada serão encerradas na próxima requisição.</p>
-            <form id="troca-senha" class="busca-personagens"><label for="nova-senha">Nova senha (1 a 64 caracteres ASCII imprimíveis)</label><div><input id="nova-senha" type="password" autocomplete="new-password" maxlength="64" required><button id="aplicar-senha" class="botao principal" type="submit" disabled>Trocar senha global</button></div></form>
-            <form id="gestao-gm" class="busca-personagens"><label for="gm-habilitado">Privilégio GM global</label><div><select id="gm-habilitado"><option value="false">Sem GM</option><option value="true">Administrador / GM</option></select><button id="aplicar-gm" class="botao principal" type="submit" disabled>Aplicar GM global</button></div></form>
-            <p class="nota">GM é aplicado nas sessões de todos os realms, mantendo as conexões. Entre novamente para atualizar o painel de GM e a aparência no cliente. Remover seu próprio GM também encerra seu acesso ao painel. A aplicação nas sessões fica pendente enquanto algum processo estiver indisponível.</p>
-            <p id="resultado-comando" class="nota" role="status" aria-live="polite"></p>
-            <button id="recuperar-comando" class="botao secundario" type="button" hidden>Consultar resultado</button>
-          </section>
-        </section>
-        <footer>PW Universal Server <span>◆</span> Administração de realms</footer>
+    <aside id="lateral" class="lateral" aria-label="Navegação">
+      <div class="marca">
+        <img src="/static/selo.svg" alt="" class="marca-selo">
+        <div><strong>Perfect World</strong><span>Administração</span></div>
       </div>
-    </main>
+
+      <nav class="grupo-nav" aria-label="Geral">
+        <p class="rotulo-grupo">Geral</p>
+        <button class="nav" type="button" data-pagina="inicio"><span class="icone" aria-hidden="true">◈</span>Visão geral</button>
+        <button class="nav" type="button" data-pagina="contas"><span class="icone" aria-hidden="true">☰</span>Contas globais</button>
+      </nav>
+
+      <nav id="grupo-realm" class="grupo-nav" aria-label="Realm selecionado" hidden>
+        <p class="rotulo-grupo">Realm · <span id="rotulo-realm-nav"></span></p>
+        <button class="nav" type="button" data-pagina="realm"><span class="icone" aria-hidden="true">◎</span>Painel do realm</button>
+        <button class="nav" type="button" data-pagina="personagens"><span class="icone" aria-hidden="true">♙</span>Personagens</button>
+        <button class="nav" type="button" data-pagina="mapas"><span class="icone" aria-hidden="true">▦</span>Mapas</button>
+        <button class="nav" type="button" data-pagina="rates"><span class="icone" aria-hidden="true">%</span>Rates</button>
+        <button class="nav nav-futuro" type="button" data-pagina="moldes"><span class="icone" aria-hidden="true">⚔</span>Moldes<span class="selo-breve">em breve</span></button>
+      </nav>
+
+      <div class="lateral-rodape">
+        <span class="ponto ponto-ok" aria-hidden="true"></span>
+        <span id="nome-usuario" class="usuario-lateral"></span>
+      </div>
+    </aside>
+    <div id="cortina" class="cortina" hidden></div>
+
+    <div class="principal">
+      <header class="topo">
+        <button id="menu" type="button" class="botao-icone so-celular" aria-label="Abrir menu" aria-controls="lateral">☰</button>
+        <div class="topo-titulo">
+          <h1 id="titulo-pagina">Visão geral</h1>
+          <p id="subtitulo-pagina" class="subtitulo"></p>
+        </div>
+        <div class="topo-acoes">
+          <label class="seletor-realm">
+            <span class="so-leitor">Realm</span>
+            <select id="realm-selecionado" aria-label="Trocar de realm"></select>
+          </label>
+          <button id="atualizar" type="button" class="botao botao-secundario" title="Atualizar dados">↻<span class="so-largo"> Atualizar</span></button>
+          <button id="sair" type="button" class="botao botao-fantasma">Sair</button>
+        </div>
+      </header>
+
+      <div class="conteudo">
+        <p id="aviso" class="alerta alerta-aviso" role="status" hidden></p>
+        <div id="faixa-comando" class="alerta alerta-info faixa-comando" hidden>
+          <span id="texto-faixa-comando"></span>
+          <button id="abrir-pendente" type="button" class="botao botao-secundario botao-pequeno">Ver operação</button>
+        </div>
+
+        <!-- Visão geral -->
+        <section id="pagina-inicio" class="pagina">
+          <div class="grade-numeros">
+            <article class="numero"><span>Realms</span><strong id="total-realms">—</strong></article>
+            <article class="numero"><span>Jogadores online</span><strong id="total-online">—</strong></article>
+            <article class="numero"><span>Personagens</span><strong id="total-personagens">—</strong></article>
+            <article class="numero"><span>Contas</span><strong id="total-contas">—</strong></article>
+          </div>
+          <div class="cabecalho-secao">
+            <h2>Realms do ambiente</h2>
+            <span id="ultima-atualizacao" class="texto-suave"></span>
+          </div>
+          <div id="lista-realms" class="grade-realms"></div>
+        </section>
+
+        <!-- Painel do realm -->
+        <section id="pagina-realm" class="pagina" hidden>
+          <div class="grade-numeros" id="ficha-realm"></div>
+          <div class="grade-duas">
+            <article class="painel">
+              <header class="painel-topo"><h2>Rates</h2><span id="estado-rates" class="etiqueta etiqueta-neutra" title="Valores do banco; o mundo ainda não os aplica">Não aplicadas</span></header>
+              <div id="rates-realm" class="grade-rates"></div>
+                          </article>
+            <article class="painel">
+              <header class="painel-topo"><h2>Mapas no ar</h2></header>
+              <ul id="lista-mapas" class="lista-simples"></ul>
+            </article>
+          </div>
+          <article class="painel">
+            <header class="painel-topo"><h2>Recursos deste realm</h2></header>
+            <div id="lista-capacidades" class="lista-recursos"></div>
+          </article>
+        </section>
+
+        <!-- Personagens -->
+        <section id="pagina-personagens" class="pagina" hidden>
+          <form id="busca-personagens" class="barra-busca" role="search">
+            <input id="nome-personagem" type="search" placeholder="Nome do personagem" maxlength="64" aria-label="Nome do personagem">
+            <button type="submit" class="botao botao-primario">Buscar</button>
+          </form>
+          <p id="aviso-personagens" class="alerta alerta-aviso" hidden></p>
+          <div class="grade-duas grade-personagens">
+            <div id="lista-personagens" class="lista-personagens"></div>
+            <article id="ficha-personagem" class="painel" hidden>
+              <header class="painel-topo">
+                <div><h2 id="titulo-personagem"></h2><p id="presenca-personagem" class="texto-suave"></p></div>
+                <span id="origem-personagem" class="etiqueta"></span>
+              </header>
+              <div id="dados-personagem" class="grade-ficha"></div>
+              <p id="observacao-personagem" class="texto-suave"></p>
+              <div class="edicao-personagem">
+                <form id="form-dinheiro" class="linha-edicao">
+                  <span class="rotulo-edicao">Dinheiro</span>
+                  <input id="din-valor" type="number" min="1" max="2000000000" step="1" placeholder="Moedas a dar" aria-label="Moedas a dar">
+                  <button type="submit" class="botao botao-primario">Dar</button>
+                </form>
+                <form id="form-exp" class="linha-edicao">
+                  <span class="rotulo-edicao">EXP / SP</span>
+                  <input id="exp-valor" type="number" min="0" max="2000000000" step="1" placeholder="EXP" aria-label="EXP a dar">
+                  <input id="sp-valor" type="number" min="0" max="2000000000" step="1" placeholder="SP" aria-label="SP a dar">
+                  <button type="submit" class="botao botao-primario">Dar</button>
+                </form>
+                <form id="form-pontos" class="linha-edicao">
+                  <span class="rotulo-edicao">Pontos livres</span>
+                  <input id="pontos-valor" type="number" min="1" max="10000" step="1" placeholder="Pontos a dar" aria-label="Pontos de atributo a dar">
+                  <button type="submit" class="botao botao-primario">Dar</button>
+                </form>
+                <form id="form-nivel" class="linha-edicao">
+                  <span class="rotulo-edicao">Nível</span>
+                  <input id="nivel-valor" type="number" min="2" step="1" placeholder="Novo nível (só sobe)" aria-label="Novo nível">
+                  <button type="submit" class="botao botao-primario">Subir</button>
+                </form>
+                <form id="form-atributos" class="linha-edicao">
+                  <span class="rotulo-edicao">Atributos</span>
+                  <input id="attr-forca" type="number" min="0" max="100000" step="1" placeholder="Força" aria-label="Força" title="Força">
+                  <input id="attr-agilidade" type="number" min="0" max="100000" step="1" placeholder="Agilidade" aria-label="Agilidade" title="Agilidade">
+                  <input id="attr-vitalidade" type="number" min="0" max="100000" step="1" placeholder="Vitalidade" aria-label="Vitalidade" title="Vitalidade">
+                  <input id="attr-energia" type="number" min="0" max="100000" step="1" placeholder="Energia" aria-label="Energia" title="Energia">
+                  <button type="submit" class="botao botao-primario">Aplicar</button>
+                  <button id="redistribuir-atributos" type="button" class="botao botao-secundario">Redistribuir</button>
+                </form>
+                <p id="sobra-atributos" class="dica"></p>
+                <form id="form-cultivo" class="linha-edicao">
+                  <span class="rotulo-edicao">Cultivo</span>
+                  <select id="cultivo-valor" aria-label="Novo cultivo"></select>
+                  <button type="submit" class="botao botao-primario">Definir</button>
+                </form>
+                <p id="dica-edicao" class="dica"></p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- Contas globais -->
+        <section id="pagina-contas" class="pagina" hidden>
+          <div class="barra-ferramentas">
+            <form id="busca-contas" class="barra-busca" role="search">
+              <input id="nome-conta" type="search" placeholder="Buscar por usuário" maxlength="64" aria-label="Buscar conta por usuário">
+              <button type="submit" class="botao botao-primario">Buscar</button>
+            </form>
+            <button id="nova-conta" type="button" class="botao botao-secundario">+ Nova conta</button>
+          </div>
+          <p id="resumo-contas" class="texto-suave"></p>
+          <div id="lista-contas" class="grade-contas"></div>
+          <nav class="paginacao" aria-label="Páginas de contas">
+            <button id="pagina-anterior" type="button" class="botao botao-fantasma">‹ Anterior</button>
+            <span id="indicador-pagina" class="texto-suave"></span>
+            <button id="pagina-seguinte" type="button" class="botao botao-fantasma">Próxima ›</button>
+          </nav>
+        </section>
+
+        <!-- Mapas do realm -->
+        <section id="pagina-mapas" class="pagina" hidden>
+          <div class="barra-ferramentas barra-mapas">
+            <div class="barra-busca">
+              <input id="filtro-mapa" type="search" placeholder="Número ou nome do mapa" maxlength="64" aria-label="Filtrar por número ou nome">
+              <select id="filtro-status-mapa" aria-label="Filtrar por status">
+                <option value="todos">Todos</option>
+                <option value="ligados">Ligados</option>
+                <option value="desligados">Desligados</option>
+              </select>
+            </div>
+            <div class="acoes-mapas">
+              <button id="marcar-mapas" type="button" class="botao botao-secundario">Selecionar todos</button>
+              <button id="desmarcar-mapas" type="button" class="botao botao-secundario">Desmarcar todos</button>
+              <button id="ligar-mapas" type="button" class="botao botao-primario">Ligar selecionados</button>
+              <button id="desligar-mapas" type="button" class="botao botao-secundario texto-perigo">Desligar selecionados</button>
+            </div>
+          </div>
+          <p id="resumo-mapas" class="dica"></p>
+          <div id="lista-mapas-admin" class="lista-mapas" role="list"></div>
+        </section>
+
+        <!-- Rates do realm -->
+        <section id="pagina-rates" class="pagina" hidden>
+          <form id="form-rates" class="painel formulario-rates">
+            <div class="grade-campos-rates">
+              <label class="campo-rate"><span>EXP</span><input id="rate-exp" type="number" min="0.1" max="99.9" step="0.1" required><em>×</em></label>
+              <label class="campo-rate"><span>SP</span><input id="rate-sp" type="number" min="0.1" max="99.9" step="0.1" required><em>×</em></label>
+              <label class="campo-rate"><span>DROP</span><input id="rate-drop" type="number" min="0.1" max="99.9" step="0.1" required><em>×</em></label>
+              <label class="campo-rate"><span>MOEDAS</span><input id="rate-moedas" type="number" min="0.1" max="99.9" step="0.1" required><em>×</em></label>
+            </div>
+            <div class="rodape-rates">
+              <span id="origem-rates" class="dica"></span>
+              <button id="salvar-rates" type="submit" class="botao botao-primario">Aplicar no realm</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Funções ainda não implementadas -->
+        <section id="pagina-futura" class="pagina" hidden>
+          <article class="painel vazio">
+            <p class="icone-vazio" aria-hidden="true">⌛</p>
+            <h2 id="titulo-futura"></h2>
+            <p id="texto-futura" class="texto-suave"></p>
+          </article>
+        </section>
+      </div>
+    </div>
+
+    <!-- Popup de ações da conta (ancorado no cartão clicado) -->
+    <div id="popover-conta" class="popover" role="dialog" aria-labelledby="gaveta-usuario" hidden>
+      <header class="popover-topo">
+        <span id="gaveta-avatar" class="avatar" aria-hidden="true"></span>
+        <div class="popover-nome">
+          <h3 id="gaveta-usuario"></h3>
+          <p id="gaveta-meta" class="dica"></p>
+        </div>
+        <button id="fechar-gaveta" type="button" class="botao-icone botao-icone-pequeno" aria-label="Fechar">✕</button>
+      </header>
+
+      <section class="painel-aba" data-painel="resumo">
+        <dl id="dados-conta" class="mini-dados"></dl>
+        <div class="menu-acoes">
+          <button class="acao" type="button" data-aba="gm"><span aria-hidden="true">★</span>GM</button>
+          <button class="acao" type="button" data-aba="senha"><span aria-hidden="true">🔑</span>Senha</button>
+          <button class="acao" type="button" data-aba="gold"><span aria-hidden="true">◎</span>Gold</button>
+          <button class="acao" type="button" data-aba="ban"><span aria-hidden="true">⛔</span><span id="rotulo-ban">Banir</span></button>
+          <button class="acao acao-larga" type="button" data-aba="desconectar"><span aria-hidden="true">⏏</span>Desconectar</button>
+        </div>
+      </section>
+
+      <section class="painel-aba" data-painel="gm" hidden>
+        <form id="gestao-gm" class="formulario">
+          <button type="button" class="voltar" data-aba="resumo">‹ GM</button>
+          <select id="gm-habilitado" aria-label="Privilégio de GM">
+            <option value="true">Com GM</option>
+            <option value="false">Sem GM</option>
+          </select>
+          <p class="dica">O jogador precisa reentrar no jogo</p>
+          <button id="aplicar-gm" type="submit" class="botao botao-primario botao-largo">Aplicar</button>
+        </form>
+      </section>
+
+      <section class="painel-aba" data-painel="senha" hidden>
+        <form id="troca-senha" class="formulario">
+          <button type="button" class="voltar" data-aba="resumo">‹ Senha</button>
+          <p id="alvo-senha" class="dica" hidden></p>
+          <input id="nova-senha" type="password" autocomplete="new-password" maxlength="64" placeholder="Nova senha" aria-label="Nova senha">
+          <button id="aplicar-senha" type="submit" class="botao botao-primario botao-largo">Trocar senha</button>
+        </form>
+      </section>
+
+      <section class="painel-aba" data-painel="gold" hidden>
+        <form id="ajuste-gold" class="formulario">
+          <button type="button" class="voltar" data-aba="resumo">‹ Dar gold</button>
+          <input id="gold-valor" type="number" min="0.01" step="0.01" max="21474836" inputmode="decimal" placeholder="Quantidade de gold" aria-label="Quantidade de gold">
+          <button id="aplicar-gold" type="submit" class="botao botao-primario botao-largo">Dar gold</button>
+        </form>
+      </section>
+
+      <section class="painel-aba" data-painel="ban" hidden>
+        <form id="gestao-ban" class="formulario">
+          <button type="button" class="voltar" data-aba="resumo">‹ <span id="titulo-ban">Banir</span></button>
+          <input id="ban-motivo" maxlength="120" placeholder="Motivo (opcional)" aria-label="Motivo do banimento">
+          <p id="dica-ban" class="dica">Sai do jogo agora e não entra mais</p>
+          <button id="aplicar-ban" type="submit" class="botao botao-perigo botao-largo">Banir conta</button>
+        </form>
+      </section>
+
+      <section class="painel-aba" data-painel="desconectar" hidden>
+        <div class="formulario">
+          <button type="button" class="voltar" data-aba="resumo">‹ Desconectar</button>
+          <p class="dica">Salva os personagens e volta à tela de login</p>
+          <button id="aplicar-desconectar" type="button" class="botao botao-perigo botao-largo">Desconectar agora</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- Criação de conta -->
+    <div id="modal-criacao" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-criacao" hidden>
+      <form id="criacao-conta" class="modal-caixa formulario">
+        <header class="painel-topo">
+          <h2 id="titulo-criacao">Nova conta</h2>
+          <button id="fechar-criacao" type="button" class="botao-icone" aria-label="Fechar">✕</button>
+        </header>
+        <label class="campo">
+          <span>Usuário</span>
+          <input id="usuario-novo" maxlength="64" autocomplete="off" spellcheck="false" placeholder="letras, números e _">
+        </label>
+        <label class="campo">
+          <span>Senha</span>
+          <input id="senha-criacao" type="password" maxlength="64" autocomplete="new-password">
+        </label>
+        <p class="dica">Vale em todos os realms</p>
+        <button id="aplicar-criacao" type="submit" class="botao botao-primario botao-largo">Criar conta</button>
+      </form>
+    </div>
+
+    <!-- Alerta padrão (sucesso, erro, aguardando) -->
+    <div id="operacao" class="alerta-fundo" role="alertdialog" aria-modal="true" aria-labelledby="alerta-titulo" aria-describedby="resultado-comando" hidden>
+      <div class="alerta-caixa">
+        <div id="alerta-icone" class="alerta-icone" aria-hidden="true"></div>
+        <h3 id="alerta-titulo"></h3>
+        <p id="resultado-comando"></p>
+        <div class="alerta-acoes">
+          <button id="recuperar-comando" type="button" class="botao botao-secundario" hidden>Consultar agora</button>
+          <button id="confirmar-alerta" type="button" class="botao botao-perigo" hidden>Confirmar</button>
+          <button id="fechar-operacao" type="button" class="botao botao-primario">OK</button>
+        </div>
+      </div>
+    </div>
   </div>
 </body>
 </html>

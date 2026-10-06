@@ -107,10 +107,23 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                 if erro == "timeout":
                     await leitor.read()
                     return
-                dados = ({"presenca": "observada", "mapas": mundos or []} if pedido["consulta"]["tipo"] == "mundos"
-                         else {"presenca": presenca, "ficha": ficha})
+                consulta = pedido["consulta"]
+                estado_resposta = "consultado"
+                if consulta["tipo"] == "mundos":
+                    dados = {"presenca": "observada", "mapas": mundos or [], "carregaveis": [1, 105]}
+                elif consulta["tipo"] == "definir_mapa":
+                    # Como o GS (B183): mapa que não serve só é aceito com `carregar`.
+                    if consulta.get("carregar"):
+                        estado_resposta = "aplicado"
+                        dados = {"estado": "aplicado", "tipo": "definir_mapa", "mapa": consulta["mapa"],
+                                 "ligado": consulta["ligado"], "carregando": consulta["ligado"], "desconectados": 0}
+                    else:
+                        estado_resposta = "falha"
+                        dados = {"codigo": "mapa_nao_servido", "mapa": consulta["mapa"]}
+                else:
+                    dados = {"presenca": presenca, "ficha": ficha}
                 resposta = json.dumps({"operacao_id": pedido["operacao_id"], "realm_id": "outro" if erro == "realm" else realm,
-                                       "estado": "consultado", "dados": dados}).encode()
+                                       "estado": estado_resposta, "dados": dados}).encode()
                 await enviar(resposta)
                 escritor.write(b"0" * 32 if erro == "assinatura" else hmac.digest(chave, desafio + b"resposta" + resposta, "sha256"))
                 await escritor.drain()
@@ -182,9 +195,12 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.cliente.post(caminho, json={**pedido, "senha": senha}, headers=cabecalhos)).status_code, 422)
         self.assertEqual((await self.cliente.post(caminho, json={**pedido, "gm": 32}, headers=cabecalhos)).status_code, 422)
         self.assertEqual((await self.cliente.post("/api/realms/inexistente/contas", json=pedido, headers=cabecalhos)).status_code, 404)
-        desconhecido = await self.cliente.post(caminho, json=pedido, headers=cabecalhos)
-        self.assertEqual(desconhecido.status_code, 202, desconhecido.text)
-        self.assertEqual(desconhecido.json()["operacao_id"], pedido["operacao_id"])
+        # Canal sem chave: nada sai do painel -> falha definitiva, repetir é seguro (B174).
+        nao_enviado = await self.cliente.post(caminho, json=pedido, headers=cabecalhos)
+        self.assertEqual(nao_enviado.status_code, 503, nao_enviado.text)
+        self.assertEqual(nao_enviado.json()["estado"], "falha")
+        self.assertEqual(nao_enviado.json()["codigo"], "canal_nao_enviado")
+        self.assertEqual(nao_enviado.json()["operacao_id"], pedido["operacao_id"])
         await self.modificar_conta("gm_privileges", 0)
         self.assertEqual((await self.cliente.post(caminho, json=pedido, headers=cabecalhos)).status_code, 401)
 
@@ -318,9 +334,20 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         resposta = await self.cliente.get("/api/contas", params={"busca": self.usuario})
         self.assertEqual(resposta.status_code, 200)
         self.assertEqual(resposta.json()["alcance"], "global")
-        self.assertEqual(resposta.json()["contas"], [{"id": self.conta_id, "usuario": self.usuario,
-                         "gm": 1, "banida": False, "gold": "0"}])
+        conta, = resposta.json()["contas"]
+        self.assertEqual({c: conta[c] for c in ("id", "usuario", "gm", "banida", "gold", "personagens")},
+                         {"id": self.conta_id, "usuario": self.usuario, "gm": 1, "banida": False,
+                          "gold": "0", "personagens": 0})
+        self.assertEqual((resposta.json()["total"], resposta.json()["pagina"]), (1, 1))
         self.assertNotIn(self.hash, resposta.text)
+        # Paginação (B174) e "_" literal na busca, não curinga do ILIKE.
+        pagina = await self.cliente.get("/api/contas", params={"por_pagina": 1, "pagina": 1})
+        self.assertEqual(len(pagina.json()["contas"]), 1)
+        self.assertGreaterEqual(pagina.json()["total"], 1)
+        self.assertEqual((await self.cliente.get("/api/contas", params={"por_pagina": 49})).status_code, 422)
+        curinga = await self.cliente.get("/api/contas", params={"busca": self.usuario.replace(self.usuario[1], "_", 1)})
+        if "_" not in self.usuario:
+            self.assertEqual(curinga.json()["total"], 0)
 
     async def test_senha_api_exige_csrf_valida_payload_e_realm_antes_do_envio(self):
         realm, _ = await self.criar_personagem()
@@ -336,7 +363,8 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.cliente.post(caminho.replace(realm, "realm_inexistente"), json=pedido, headers=cabecalhos)).status_code, 404)
         self.assertEqual((await self.cliente.post(caminho.replace(str(self.conta_id), "2147483648"), json=pedido, headers=cabecalhos)).status_code, 422)
         resposta = await self.cliente.post(caminho, json=pedido, headers=cabecalhos)
-        self.assertEqual(resposta.status_code, 202)
+        self.assertEqual(resposta.status_code, 503)  # canal sem chave: nada enviado (B174)
+        self.assertEqual(resposta.json()["codigo"], "canal_nao_enviado")
         self.assertEqual(resposta.json()["operacao_id"], pedido["operacao_id"])
         async with self.pool.acquire() as conexao:
             self.assertEqual(await conexao.fetchval("SELECT password_hash FROM accounts WHERE id=$1", self.conta_id), self.hash)
@@ -534,7 +562,7 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                 resposta = await self.cliente.get(f"/api/realms/{realm}/estado")
                 self.assertEqual(resposta.status_code, 200, resposta.text)
                 self.assertEqual(resposta.json()["estado"], "consultado")
-                self.assertEqual(resposta.json()["mapas"], [{"mapa": 1, "jogadores_online": 0}, {"mapa": 161, "jogadores_online": 0}])
+                self.assertEqual(resposta.json()["mapas"], [{"mapa": 1, "jogadores_online": 0, "ligado": True}, {"mapa": 161, "jogadores_online": 0, "ligado": True}])
                 self.assertEqual((await self.detalhe(realm, personagem))["presenca"], "ausente_nos_daemons")
             finally:
                 if processo.returncode is None:
@@ -706,10 +734,113 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         for valor in (1, "true", None):
             self.assertEqual((await self.cliente.post(caminho, json={**pedido, "habilitado": valor}, headers={"X-CSRF-Token": csrf})).status_code, 422)
         resposta = await self.cliente.post(caminho, json=pedido, headers={"X-CSRF-Token": csrf})
-        self.assertEqual(resposta.status_code, 202)
-        self.assertEqual(resposta.json()["estado"], "desconhecido")
+        self.assertEqual(resposta.status_code, 503)  # canal sem chave: nada enviado (B174)
+        self.assertEqual(resposta.json()["estado"], "falha")
         await self.modificar_conta("gm_privileges", 0)
         self.assertEqual((await self.cliente.post(caminho, json=pedido, headers={"X-CSRF-Token": csrf})).status_code, 401)
+
+    async def test_gold_ban_e_desconectar_validam_antes_do_envio(self):
+        """E4 (B175): CSRF, valores estritos e canal ausente = falha definitiva (nada enviado)."""
+        realm, _ = await self.criar_personagem()
+        base = f"/api/realms/{realm}/contas/{self.conta_id}"
+        gold = {"operacao_id": uuid.uuid4().hex, "delta": 500}
+        self.assertEqual((await self.cliente.post(f"{base}/gold", json=gold)).status_code, 403)
+        csrf = {"X-CSRF-Token": (await self.cliente.get("/api/sessao")).json()["csrf"]}
+        for delta in (0, -500, "500", 1.5, 2_147_483_648):
+            self.assertEqual((await self.cliente.post(f"{base}/gold", json={**gold, "delta": delta}, headers=csrf)).status_code, 422)
+        resposta = await self.cliente.post(f"{base}/gold", json=gold, headers=csrf)
+        self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"))
+        ban = {"operacao_id": uuid.uuid4().hex, "banida": True, "motivo": "teste"}
+        for invalido in ({"banida": "sim"}, {"motivo": "a" * 121}, {"motivo": "linha" + chr(10) + "quebrada"}):
+            self.assertEqual((await self.cliente.post(f"{base}/ban", json={**ban, **invalido}, headers=csrf)).status_code, 422)
+        resposta = await self.cliente.post(f"{base}/ban", json=ban, headers=csrf)
+        self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"))
+        caminho = f"/api/contas/{self.conta_id}/desconectar"
+        self.assertEqual((await self.cliente.post(caminho)).status_code, 403)
+        self.assertEqual((await self.cliente.post(caminho, headers=csrf)).status_code, 503)
+        # Nada foi gravado: a conta segue sem ban e com o mesmo saldo.
+        async with self.pool.acquire() as conexao:
+            banida, saldo = await conexao.fetchrow("SELECT is_banned, gold_balance FROM accounts WHERE id=$1", self.conta_id)
+        self.assertEqual((banida, saldo), (False, 0))
+
+    async def test_rates_validam_limites_e_sem_canal_nada_grava(self):
+        """E7 (B176): NUMERIC(3,1) = 0,1 a 99,9; sem canal, falha sem tocar em realms."""
+        realm, _ = await self.criar_personagem()
+        caminho = f"/api/realms/{realm}/rates"
+        pedido = {"exp": 2.0, "sp": 1.5, "drop": 1.5, "moedas": 3.0}
+        self.assertEqual((await self.cliente.post(caminho, json=pedido)).status_code, 403)
+        csrf = {"X-CSRF-Token": (await self.cliente.get("/api/sessao")).json()["csrf"]}
+        for invalido in ({"exp": 0}, {"sp": 100}, {"drop": "x"}, {"outra": 1.0}):
+            self.assertEqual((await self.cliente.post(caminho, json={**pedido, **invalido}, headers=csrf)).status_code, 422)
+        resposta = await self.cliente.post(caminho, json=pedido, headers=csrf)
+        self.assertEqual((resposta.status_code, resposta.json()["estado"]), (503, "falha"))
+        async with self.pool.acquire() as conexao:
+            exp = await conexao.fetchval("SELECT double_exp_multiplier FROM realms WHERE id=$1", realm)
+        self.assertEqual(float(exp), 1.0)
+
+    async def test_catalogo_de_mapas_por_versao(self):
+        """B183: todos os mapas da versão do realm, do gs.conf original (126: 43; 155: 79)."""
+        realm, _ = await self.criar_personagem()
+        dados = (await self.cliente.get(f"/api/realms/{realm}/catalogo-mapas")).json()
+        self.assertEqual((dados["versao"], len(dados["mapas"])), ("1.2.6", 43))
+        self.assertEqual(dados["mapas"][0], {"mapa": 1, "chave": "gs01", "pasta": "world", "instancia": False, "nome": "Mundo"})
+        async with self.pool.acquire() as conexao:
+            await conexao.execute("UPDATE realms SET version='1.5.5' WHERE id=$1", realm)
+        dados = (await self.cliente.get(f"/api/realms/{realm}/catalogo-mapas")).json()
+        self.assertEqual(len(dados["mapas"]), 79)
+        self.assertIn({"mapa": 161, "chave": "is61", "pasta": "a61", "instancia": True, "nome": "Vale Celestial (Inicial 1.5.3)"}, dados["mapas"])
+        self.assertEqual((await self.cliente.get("/api/realms/inexistente/catalogo-mapas")).status_code, 404)
+
+    async def test_ligar_mapa_nao_servido_vai_ao_primeiro_daemon_com_carregar(self):
+        """B183: nenhum daemon serve o mapa → o primeiro recebe `carregar` e monta; o estado
+        traz os mapas que algum daemon sabe montar."""
+        realm, _ = await self.criar_personagem()
+        await self.ativar_daemon(realm, mundos=[{"mapa": 1, "jogadores_online": 0, "ligado": True}])
+        csrf = {"X-CSRF-Token": (await self.cliente.get("/api/sessao")).json()["csrf"]}
+        resposta = await self.cliente.post(f"/api/realms/{realm}/mapas/105", json={"ligado": True}, headers=csrf)
+        self.assertEqual(resposta.status_code, 200, resposta.text)
+        self.assertEqual((resposta.json()["carregando"], resposta.json()["mapa"]), (True, 105))
+        definir = [p["consulta"] for p in self.pedidos_admin if p["consulta"]["tipo"] == "definir_mapa"]
+        self.assertEqual([c.get("carregar", False) for c in definir], [False, True])
+        estado = (await self.cliente.get(f"/api/realms/{realm}/estado")).json()
+        self.assertEqual(estado["carregaveis"], [1, 105])
+
+    async def test_mapas_exigem_csrf_booleano_e_canal(self):
+        """E7 (B177): ligar/desligar mapa — CSRF, booleano estrito, sem canal não muda nada."""
+        realm, _ = await self.criar_personagem()
+        caminho = f"/api/realms/{realm}/mapas/1"
+        self.assertEqual((await self.cliente.post(caminho, json={"ligado": False})).status_code, 403)
+        csrf = {"X-CSRF-Token": (await self.cliente.get("/api/sessao")).json()["csrf"]}
+        for invalido in ({"ligado": "false"}, {"ligado": 0}, {}, {"ligado": False, "extra": 1}):
+            self.assertEqual((await self.cliente.post(caminho, json=invalido, headers=csrf)).status_code, 422)
+        self.assertEqual((await self.cliente.post(f"/api/realms/{realm}/mapas/0", json={"ligado": False}, headers=csrf)).status_code, 422)
+        resposta = await self.cliente.post(caminho, json={"ligado": False}, headers=csrf)
+        self.assertEqual((resposta.status_code, resposta.json()["estado"]), (503, "falha"))
+        async with self.pool.acquire() as conexao:
+            config = await conexao.fetchval("SELECT config->'mapas_desligados' FROM realms WHERE id=$1", realm)
+        self.assertIsNone(config)
+
+    async def test_editar_personagem_valida_antes_do_envio(self):
+        """E5 (B179, B182): um só de dinheiro, exp/sp, pontos, nível ou cultivo; limites; CSRF; sem canal nada muda."""
+        realm, personagem = await self.criar_personagem()
+        caminho = f"/api/realms/{realm}/personagens/{personagem}/editar"
+        base = {"operacao_id": uuid.uuid4().hex}
+        self.assertEqual((await self.cliente.post(caminho, json={**base, "dinheiro": 10})).status_code, 403)
+        csrf = {"X-CSRF-Token": (await self.cliente.get("/api/sessao")).json()["csrf"]}
+        for invalido in ({}, {"dinheiro": 0}, {"dinheiro": -10}, {"dinheiro": 5, "exp": 1}, {"exp": -1},
+                         {"dinheiro": 2_000_000_001}, {"dinheiro": "10"}, {"sp": 1.5},
+                         # B182: um só tipo por operação; pontos 1–10 000, nível ≥ 2, cultivo 0–255.
+                         {"pontos": 0}, {"pontos": 10_001}, {"nivel": 1}, {"cultivo": -1}, {"cultivo": 256},
+                         {"pontos": 1, "nivel": 5}, {"cultivo": 3, "exp": 1}, {"dinheiro": 1, "pontos": 1},
+                         # B184: quatro atributos 0–100 000; redistribuir só `true`; um tipo só.
+                         {"atributos": [1, 2, 3]}, {"atributos": [1, 2, 3, 4, 5]}, {"atributos": [1, 2, 3, -1]},
+                         {"atributos": [1, 2, 3, 100_001]}, {"redistribuir": False}, {"redistribuir": True, "pontos": 1},
+                         {"atributos": [5, 5, 5, 5], "redistribuir": True}):
+            self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
+        for valido in ({"dinheiro": 10}, {"pontos": 5}, {"nivel": 30}, {"cultivo": 0},
+                       {"atributos": [5, 5, 5, 5]}, {"redistribuir": True}):
+            resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
+            self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
 
     @staticmethod
     def inteiro_gnet(valor):

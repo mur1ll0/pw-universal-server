@@ -3,6 +3,8 @@ import asyncio
 import json
 import os
 
+from .canal import CanalIndisponivel, configuracao
+
 
 async def consultar_gateway(host, porta):
     escritor = None
@@ -31,18 +33,29 @@ def capacidades(versao):
          "detalhe": "Aguarda canal administrativo autenticado com o servidor de mundo."},
         {"id": "edicao", "nome": "Edição de personagens", "estado": "indisponivel",
          "detalhe": "Aguarda coordenação com entrada, autosave e saída do jogo."},
-        {"id": "mapas_rates", "nome": "Controle de mapas e rates", "estado": "indisponivel",
-         "detalhe": "Aguarda aplicação efetiva pelo servidor de mundo."},
+        {"id": "rates", "nome": "Rates de EXP, SP, drop e moedas", "estado": "implementado" if alvo else "nao_validado",
+         "detalhe": "Lidas pelo servidor de mundo na partida e trocadas na hora pelo painel."},
+        {"id": "mapas", "nome": "Ligar e desligar mapas", "estado": "implementado" if alvo else "nao_validado",
+         "detalhe": "Desligar salva e desconecta quem está no mapa e recusa novas entradas."},
         {"id": "dados", "nome": "Catálogo e ícones do realm", "estado": "indisponivel",
          "detalhe": "O leitor existente ainda precisa de validação de origem antes de ser exposto."},
     ]
+
+
+def tem_canal(realm_id):
+    try:
+        configuracao(realm_id)
+        return True
+    except CanalIndisponivel:
+        return False
 
 
 async def listar_realms(pool):
     alvos = json.loads(os.getenv("ADMIN_GATEWAYS", "{}"))
     async with pool.acquire() as conexao:
         registros = await conexao.fetch(
-            "SELECT r.id, r.name, r.version, r.host, r.port, "
+            "SELECT r.id, r.name, r.version, r.host, r.port, r.double_exp_multiplier, "
+            "r.double_sp_multiplier, r.double_drop_multiplier, r.double_gold_multiplier, "
             "(SELECT COUNT(*) FROM characters c WHERE c.realm_id=r.id AND NOT c.is_deleted) AS personagens "
             "FROM realms r WHERE r.id NOT LIKE 't\\_%' ESCAPE '\\' ORDER BY r.id"
         )
@@ -55,6 +68,14 @@ async def listar_realms(pool):
             "porta": registro["port"], "gateway": estado, "mundo": "desconhecido",
             "jogadores_online": None, "personagens_persistidos": registro["personagens"],
             "origem": "banco e teste TCP do gateway", "capacidades": capacidades(registro["version"]),
+            "canal_administrativo": tem_canal(registro["id"]),
+            # Colunas realms.double_*_multiplier (gravadas). O que vale no mundo vem da
+            # consulta viva (`/estado` → `taxas`); a UI compara as duas.
+            "rates": {"exp": float(registro["double_exp_multiplier"]),
+                      "sp": float(registro["double_sp_multiplier"]),
+                      "drop": float(registro["double_drop_multiplier"]),
+                      "moedas": float(registro["double_gold_multiplier"]),
+                      },
         }
 
     limite = asyncio.Semaphore(8)

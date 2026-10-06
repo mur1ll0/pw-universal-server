@@ -1,0 +1,860 @@
+{
+ "1.5.5": [
+  {
+   "mapa": 1,
+   "chave": "gs01",
+   "pasta": "world",
+   "instancia": false,
+   "nome": "Mundo"
+  },
+  {
+   "mapa": 101,
+   "chave": "is01",
+   "pasta": "a01",
+   "instancia": false,
+   "nome": "Cidade das Feras Sombrias"
+  },
+  {
+   "mapa": 102,
+   "chave": "is02",
+   "pasta": "a02",
+   "instancia": false,
+   "nome": "Passagem Secreta"
+  },
+  {
+   "mapa": 105,
+   "chave": "is05",
+   "pasta": "a05",
+   "instancia": true,
+   "nome": "Caverna do Fogo (DG-19)"
+  },
+  {
+   "mapa": 106,
+   "chave": "is06",
+   "pasta": "a06",
+   "instancia": true,
+   "nome": "Toca dos Lobos (DG-19)"
+  },
+  {
+   "mapa": 107,
+   "chave": "is07",
+   "pasta": "a07",
+   "instancia": true,
+   "nome": "Caverna do Escorpiao (DG-19)"
+  },
+  {
+   "mapa": 108,
+   "chave": "is08",
+   "pasta": "a08",
+   "instancia": true,
+   "nome": "Tumulo do Heroi (DG-29)"
+  },
+  {
+   "mapa": 109,
+   "chave": "is09",
+   "pasta": "a09",
+   "instancia": true,
+   "nome": "Residencia de Hades (DG-39)"
+  },
+  {
+   "mapa": 110,
+   "chave": "is10",
+   "pasta": "a10",
+   "instancia": true,
+   "nome": "Saloes Congelados (DG-49)"
+  },
+  {
+   "mapa": 111,
+   "chave": "is11",
+   "pasta": "a11",
+   "instancia": true,
+   "nome": "Vale dos Desastres (DG-59)"
+  },
+  {
+   "mapa": 112,
+   "chave": "is12",
+   "pasta": "a12",
+   "instancia": false,
+   "nome": "Ruinas da Selva"
+  },
+  {
+   "mapa": 113,
+   "chave": "is13",
+   "pasta": "a13",
+   "instancia": false,
+   "nome": "Terra Fantasma"
+  },
+  {
+   "mapa": 114,
+   "chave": "is14",
+   "pasta": "a14",
+   "instancia": true,
+   "nome": "Portao Desalmado (DG-69)"
+  },
+  {
+   "mapa": 115,
+   "chave": "is15",
+   "pasta": "a15",
+   "instancia": true,
+   "nome": "Caverna do Tesouro (DG-79)"
+  },
+  {
+   "mapa": 116,
+   "chave": "is16",
+   "pasta": "a16",
+   "instancia": true,
+   "nome": "Terra dos Sonhos (DG-89)"
+  },
+  {
+   "mapa": 117,
+   "chave": "is17",
+   "pasta": "a17",
+   "instancia": true,
+   "nome": "Terra Demoniaca (DG-89)"
+  },
+  {
+   "mapa": 118,
+   "chave": "is18",
+   "pasta": "a18",
+   "instancia": false,
+   "nome": "Palacio dos Dragoes"
+  },
+  {
+   "mapa": 119,
+   "chave": "is19",
+   "pasta": "a19",
+   "instancia": false,
+   "nome": "Ilha Uivante"
+  },
+  {
+   "mapa": 120,
+   "chave": "is20",
+   "pasta": "a20",
+   "instancia": false,
+   "nome": "Ilha da Serpente"
+  },
+  {
+   "mapa": 121,
+   "chave": "is21",
+   "pasta": "a21",
+   "instancia": false,
+   "nome": "Paraiso"
+  },
+  {
+   "mapa": 122,
+   "chave": "is22",
+   "pasta": "a22",
+   "instancia": false,
+   "nome": "Reino das Trevas"
+  },
+  {
+   "mapa": 123,
+   "chave": "is23",
+   "pasta": "a23",
+   "instancia": true,
+   "nome": "Purgatorio Celeste (DG-99)"
+  },
+  {
+   "mapa": 124,
+   "chave": "is24",
+   "pasta": "a24",
+   "instancia": true,
+   "nome": "Arcadia Infernal (DG-99)"
+  },
+  {
+   "mapa": 125,
+   "chave": "is25",
+   "pasta": "a25",
+   "instancia": true,
+   "nome": "Cidade do Brado de Batalha"
+  },
+  {
+   "mapa": 126,
+   "chave": "is26",
+   "pasta": "a26",
+   "instancia": true,
+   "nome": "Nirvana"
+  },
+  {
+   "mapa": 127,
+   "chave": "is27",
+   "pasta": "a27",
+   "instancia": true,
+   "nome": "Vale da Lua"
+  },
+  {
+   "mapa": 128,
+   "chave": "is28",
+   "pasta": "a28",
+   "instancia": true,
+   "nome": "Vale Primordial"
+  },
+  {
+   "mapa": 129,
+   "chave": "is29",
+   "pasta": "a29",
+   "instancia": true,
+   "nome": "Cidade do Gelo"
+  },
+  {
+   "mapa": 131,
+   "chave": "is31",
+   "pasta": "a31",
+   "instancia": true,
+   "nome": "Palacio do Crepusculo"
+  },
+  {
+   "mapa": 132,
+   "chave": "is32",
+   "pasta": "a32",
+   "instancia": false,
+   "nome": "Cubo do Destino"
+  },
+  {
+   "mapa": 133,
+   "chave": "is33",
+   "pasta": "a33",
+   "instancia": false,
+   "nome": "Chrono World"
+  },
+  {
+   "mapa": 134,
+   "chave": "is34",
+   "pasta": "a34",
+   "instancia": false,
+   "nome": "Capela"
+  },
+  {
+   "mapa": 135,
+   "chave": "is35",
+   "pasta": "a35",
+   "instancia": true,
+   "nome": "Quartel General"
+  },
+  {
+   "mapa": 137,
+   "chave": "is37",
+   "pasta": "a37",
+   "instancia": false,
+   "nome": "Morai"
+  },
+  {
+   "mapa": 138,
+   "chave": "is38",
+   "pasta": "a38",
+   "instancia": true,
+   "nome": "Vale da Fenix"
+  },
+  {
+   "mapa": 139,
+   "chave": "is39",
+   "pasta": "a39",
+   "instancia": true,
+   "nome": "Universo Infinito"
+  },
+  {
+   "mapa": 140,
+   "chave": "is40",
+   "pasta": "a40",
+   "instancia": false,
+   "nome": "Morai (DG Atuim)"
+  },
+  {
+   "mapa": 141,
+   "chave": "is41",
+   "pasta": "a41",
+   "instancia": true,
+   "nome": "Universo Infinito"
+  },
+  {
+   "mapa": 142,
+   "chave": "is42",
+   "pasta": "a42",
+   "instancia": true,
+   "nome": "Ravina do Deus da Guerra (Cross)"
+  },
+  {
+   "mapa": 143,
+   "chave": "is43",
+   "pasta": "a43",
+   "instancia": true,
+   "nome": "Base das Nacoes"
+  },
+  {
+   "mapa": 144,
+   "chave": "is44",
+   "pasta": "a44",
+   "instancia": true,
+   "nome": "Guerra das Nacoes Capturar a Bandeira"
+  },
+  {
+   "mapa": 145,
+   "chave": "is45",
+   "pasta": "a45",
+   "instancia": true,
+   "nome": "Guerra das Nacoes Conquista do Cristal"
+  },
+  {
+   "mapa": 146,
+   "chave": "is46",
+   "pasta": "a46",
+   "instancia": true,
+   "nome": "Guerra das Nacoes Batalha Na Ponte"
+  },
+  {
+   "mapa": 147,
+   "chave": "is47",
+   "pasta": "a47",
+   "instancia": true,
+   "nome": "Vale do Por do Sol"
+  },
+  {
+   "mapa": 148,
+   "chave": "is48",
+   "pasta": "a48",
+   "instancia": true,
+   "nome": "Liceu do Cultivo"
+  },
+  {
+   "mapa": 149,
+   "chave": "is49",
+   "pasta": "a49",
+   "instancia": true,
+   "nome": "Covil do Dragao"
+  },
+  {
+   "mapa": 150,
+   "chave": "is50",
+   "pasta": "a50",
+   "instancia": false,
+   "nome": "Campo de Reflexao"
+  },
+  {
+   "mapa": 161,
+   "chave": "is61",
+   "pasta": "a61",
+   "instancia": true,
+   "nome": "Vale Celestial (Inicial 1.5.3)"
+  },
+  {
+   "mapa": 162,
+   "chave": "is62",
+   "pasta": "a62",
+   "instancia": true,
+   "nome": "Residencia Astral (Inicial 1.5.1)"
+  },
+  {
+   "mapa": 163,
+   "chave": "is63",
+   "pasta": "a63",
+   "instancia": false,
+   "nome": "Mundo Primitivo"
+  },
+  {
+   "mapa": 166,
+   "chave": "is66",
+   "pasta": "a66",
+   "instancia": true,
+   "nome": "Palacio Rio da Prata"
+  },
+  {
+   "mapa": 167,
+   "chave": "is67",
+   "pasta": "a67",
+   "instancia": true,
+   "nome": "Catedral"
+  },
+  {
+   "mapa": 168,
+   "chave": "is68",
+   "pasta": "a68",
+   "instancia": false,
+   "nome": "Mundo Primitivo (Modo Historia)"
+  },
+  {
+   "mapa": 169,
+   "chave": "is69",
+   "pasta": "a69",
+   "instancia": true,
+   "nome": "Caverna das Sombras (DG-19)"
+  },
+  {
+   "mapa": 170,
+   "chave": "is70",
+   "pasta": "a70",
+   "instancia": false,
+   "nome": "Cubo do Destino (Teste)"
+  },
+  {
+   "mapa": 171,
+   "chave": "is71",
+   "pasta": "a71",
+   "instancia": true,
+   "nome": "Vale dos Dragoes"
+  },
+  {
+   "mapa": 172,
+   "chave": "is72",
+   "pasta": "a72",
+   "instancia": true,
+   "nome": "Torre do Martirio"
+  },
+  {
+   "mapa": 173,
+   "chave": "is73",
+   "pasta": "a72",
+   "instancia": true,
+   "nome": "Torre do Martirio"
+  },
+  {
+   "mapa": 174,
+   "chave": "is74",
+   "pasta": "a72",
+   "instancia": true,
+   "nome": "Torre do Martirio"
+  },
+  {
+   "mapa": 175,
+   "chave": "is75",
+   "pasta": "a72",
+   "instancia": true,
+   "nome": "Torre do Martirio"
+  },
+  {
+   "mapa": 176,
+   "chave": "is76",
+   "pasta": "a76",
+   "instancia": true,
+   "nome": "is76"
+  },
+  {
+   "mapa": 177,
+   "chave": "is77",
+   "pasta": "a77",
+   "instancia": false,
+   "nome": "is77"
+  },
+  {
+   "mapa": 180,
+   "chave": "is80",
+   "pasta": "a80",
+   "instancia": true,
+   "nome": "is80"
+  },
+  {
+   "mapa": 181,
+   "chave": "is81",
+   "pasta": "a80",
+   "instancia": true,
+   "nome": "is81"
+  },
+  {
+   "mapa": 182,
+   "chave": "is82",
+   "pasta": "a80",
+   "instancia": true,
+   "nome": "is82"
+  },
+  {
+   "mapa": 183,
+   "chave": "is83",
+   "pasta": "a80",
+   "instancia": true,
+   "nome": "is83"
+  },
+  {
+   "mapa": 201,
+   "chave": "arena01",
+   "pasta": "b01",
+   "instancia": false,
+   "nome": "Teatro Sangrento"
+  },
+  {
+   "mapa": 202,
+   "chave": "arena02",
+   "pasta": "b02",
+   "instancia": false,
+   "nome": "Arena das Feras"
+  },
+  {
+   "mapa": 203,
+   "chave": "arena03",
+   "pasta": "b03",
+   "instancia": false,
+   "nome": "Arena das Plumas"
+  },
+  {
+   "mapa": 204,
+   "chave": "arena04",
+   "pasta": "b04",
+   "instancia": false,
+   "nome": "Artes Marciais"
+  },
+  {
+   "mapa": 211,
+   "chave": "ms01",
+   "pasta": "m01",
+   "instancia": false,
+   "nome": "ms01"
+  },
+  {
+   "mapa": 213,
+   "chave": "rand03",
+   "pasta": "random03",
+   "instancia": true,
+   "nome": "Labirinto I"
+  },
+  {
+   "mapa": 214,
+   "chave": "rand04",
+   "pasta": "random04",
+   "instancia": true,
+   "nome": "Labirinto II"
+  },
+  {
+   "mapa": 230,
+   "chave": "bg01",
+   "pasta": "b30",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 3 - PvP"
+  },
+  {
+   "mapa": 231,
+   "chave": "bg02",
+   "pasta": "b31",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 3 - PvE"
+  },
+  {
+   "mapa": 232,
+   "chave": "bg03",
+   "pasta": "b32",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 2 - PvP"
+  },
+  {
+   "mapa": 233,
+   "chave": "bg04",
+   "pasta": "b33",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 2 - PvE"
+  },
+  {
+   "mapa": 234,
+   "chave": "bg05",
+   "pasta": "b34",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 1 - PvP"
+  },
+  {
+   "mapa": 235,
+   "chave": "bg06",
+   "pasta": "b35",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 1 - PvE"
+  }
+ ],
+ "1.2.6": [
+  {
+   "mapa": 1,
+   "chave": "gs01",
+   "pasta": "world",
+   "instancia": false,
+   "nome": "Mundo"
+  },
+  {
+   "mapa": 101,
+   "chave": "is01",
+   "pasta": "a01",
+   "instancia": false,
+   "nome": "Cidade das Feras Sombrias"
+  },
+  {
+   "mapa": 102,
+   "chave": "is02",
+   "pasta": "a02",
+   "instancia": false,
+   "nome": "Passagem Secreta"
+  },
+  {
+   "mapa": 105,
+   "chave": "is05",
+   "pasta": "a05",
+   "instancia": true,
+   "nome": "Caverna do Fogo (DG-19)"
+  },
+  {
+   "mapa": 106,
+   "chave": "is06",
+   "pasta": "a06",
+   "instancia": true,
+   "nome": "Toca dos Lobos (DG-19)"
+  },
+  {
+   "mapa": 107,
+   "chave": "is07",
+   "pasta": "a07",
+   "instancia": true,
+   "nome": "Caverna do Escorpiao (DG-19)"
+  },
+  {
+   "mapa": 108,
+   "chave": "is08",
+   "pasta": "a08",
+   "instancia": true,
+   "nome": "Tumulo do Heroi (DG-29)"
+  },
+  {
+   "mapa": 109,
+   "chave": "is09",
+   "pasta": "a09",
+   "instancia": true,
+   "nome": "Residencia de Hades (DG-39)"
+  },
+  {
+   "mapa": 110,
+   "chave": "is10",
+   "pasta": "a10",
+   "instancia": true,
+   "nome": "Saloes Congelados (DG-49)"
+  },
+  {
+   "mapa": 111,
+   "chave": "is11",
+   "pasta": "a11",
+   "instancia": true,
+   "nome": "Vale dos Desastres (DG-59)"
+  },
+  {
+   "mapa": 112,
+   "chave": "is12",
+   "pasta": "a12",
+   "instancia": false,
+   "nome": "Ruinas da Selva"
+  },
+  {
+   "mapa": 113,
+   "chave": "is13",
+   "pasta": "a13",
+   "instancia": false,
+   "nome": "Terra Fantasma"
+  },
+  {
+   "mapa": 114,
+   "chave": "is14",
+   "pasta": "a14",
+   "instancia": true,
+   "nome": "Portao Desalmado (DG-69)"
+  },
+  {
+   "mapa": 115,
+   "chave": "is15",
+   "pasta": "a15",
+   "instancia": true,
+   "nome": "Caverna do Tesouro (DG-79)"
+  },
+  {
+   "mapa": 116,
+   "chave": "is16",
+   "pasta": "a16",
+   "instancia": true,
+   "nome": "Terra dos Sonhos (DG-89)"
+  },
+  {
+   "mapa": 117,
+   "chave": "is17",
+   "pasta": "a17",
+   "instancia": true,
+   "nome": "Terra Demoniaca (DG-89)"
+  },
+  {
+   "mapa": 118,
+   "chave": "is18",
+   "pasta": "a18",
+   "instancia": false,
+   "nome": "Palacio dos Dragoes"
+  },
+  {
+   "mapa": 119,
+   "chave": "is19",
+   "pasta": "a19",
+   "instancia": false,
+   "nome": "Ilha Uivante"
+  },
+  {
+   "mapa": 120,
+   "chave": "is20",
+   "pasta": "a20",
+   "instancia": false,
+   "nome": "Ilha da Serpente"
+  },
+  {
+   "mapa": 121,
+   "chave": "is21",
+   "pasta": "a21",
+   "instancia": false,
+   "nome": "Paraiso"
+  },
+  {
+   "mapa": 122,
+   "chave": "is22",
+   "pasta": "a22",
+   "instancia": false,
+   "nome": "Reino das Trevas"
+  },
+  {
+   "mapa": 123,
+   "chave": "is23",
+   "pasta": "a23",
+   "instancia": true,
+   "nome": "Purgatorio Celeste (DG-99)"
+  },
+  {
+   "mapa": 124,
+   "chave": "is24",
+   "pasta": "a24",
+   "instancia": true,
+   "nome": "Arcadia Infernal (DG-99)"
+  },
+  {
+   "mapa": 125,
+   "chave": "is25",
+   "pasta": "a25",
+   "instancia": true,
+   "nome": "Cidade do Brado de Batalha"
+  },
+  {
+   "mapa": 126,
+   "chave": "is26",
+   "pasta": "a26",
+   "instancia": true,
+   "nome": "Nirvana"
+  },
+  {
+   "mapa": 127,
+   "chave": "is27",
+   "pasta": "a27",
+   "instancia": true,
+   "nome": "Vale da Lua"
+  },
+  {
+   "mapa": 128,
+   "chave": "is28",
+   "pasta": "a28",
+   "instancia": true,
+   "nome": "Vale Primordial"
+  },
+  {
+   "mapa": 129,
+   "chave": "is29",
+   "pasta": "a29",
+   "instancia": true,
+   "nome": "Cidade do Gelo"
+  },
+  {
+   "mapa": 131,
+   "chave": "is31",
+   "pasta": "a31",
+   "instancia": true,
+   "nome": "Palacio do Crepusculo"
+  },
+  {
+   "mapa": 132,
+   "chave": "is32",
+   "pasta": "a32",
+   "instancia": true,
+   "nome": "Cubo do Destino"
+  },
+  {
+   "mapa": 133,
+   "chave": "is33",
+   "pasta": "a33",
+   "instancia": false,
+   "nome": "Chrono World"
+  },
+  {
+   "mapa": 134,
+   "chave": "is34",
+   "pasta": "a34",
+   "instancia": false,
+   "nome": "Capela"
+  },
+  {
+   "mapa": 201,
+   "chave": "arena01",
+   "pasta": "b01",
+   "instancia": false,
+   "nome": "Teatro Sangrento"
+  },
+  {
+   "mapa": 202,
+   "chave": "arena02",
+   "pasta": "b01",
+   "instancia": false,
+   "nome": "Arena das Feras"
+  },
+  {
+   "mapa": 203,
+   "chave": "arena03",
+   "pasta": "b01",
+   "instancia": false,
+   "nome": "Arena das Plumas"
+  },
+  {
+   "mapa": 204,
+   "chave": "arena04",
+   "pasta": "b01",
+   "instancia": false,
+   "nome": "Artes Marciais"
+  },
+  {
+   "mapa": 205,
+   "chave": "arena05",
+   "pasta": "b05",
+   "instancia": true,
+   "nome": "Nirvana (Antigo)"
+  },
+  {
+   "mapa": 230,
+   "chave": "bg01",
+   "pasta": "b30",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 3 - PvP"
+  },
+  {
+   "mapa": 231,
+   "chave": "bg02",
+   "pasta": "b31",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 3 - PvE"
+  },
+  {
+   "mapa": 232,
+   "chave": "bg03",
+   "pasta": "b32",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 2 - PvP"
+  },
+  {
+   "mapa": 233,
+   "chave": "bg04",
+   "pasta": "b33",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 2 - PvE"
+  },
+  {
+   "mapa": 234,
+   "chave": "bg05",
+   "pasta": "b34",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 1 - PvP"
+  },
+  {
+   "mapa": 235,
+   "chave": "bg06",
+   "pasta": "b35",
+   "instancia": true,
+   "nome": "Guerra Territorial Nivel 1 - PvE"
+  }
+ ]
+}

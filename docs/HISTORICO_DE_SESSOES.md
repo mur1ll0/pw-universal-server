@@ -11772,3 +11772,214 @@ comparação lado a lado.
     respostas e exige o fechamento da conjuração entre elas; 3/3 isolado), intermitente
     de ordem, padrão anterior à reforma. Link/GS 126 e 155 republicados. Falta o Murillo
     confirmar login, saída, salvamento e troca de mapa em jogo.
+
+174. **Sessão 2026-10-05 (Claude): GM pelo painel corrigido e interface do painel refeita.**
+    Murillo confirmou em jogo login, saída e jogo após B173. GM pelo painel mostrava
+    "resultado desconhecido": a API devolvia 202 sem nenhum comando no banco; os dois GS
+    registravam `canal administrativo desabilitado (sem ADMIN_SECRET)`. Chaves de 32 bytes
+    geradas em `docker/.env` (ignorado), mundos 126/155 recriados (canal escutando em 29110).
+    Painel: `CanalNaoEnviado` (sem chave, conexão recusada ou falha antes de escrever o
+    pedido) vira 503 `estado: falha`, `codigo: canal_nao_enviado`; só falha depois do envio
+    continua "desconhecido". GM concedido ao `testuser` pela API real (rota 126) → `aplicado`
+    em link/GS 126 e 155; removido pela rota 155 → `aplicado`; contas voltaram a 0/32.
+    Interface refeita do zero (`static/index.html`, `painel.css`, `painel.js`), design
+    próprio por decisão do Murillo: menu lateral Geral (Visão geral, Contas globais) e Realm
+    (painel, personagens; mapas/rates/moldes "em breve"), seletor de realm no topo, home com
+    cartões por realm (online ao vivo, personagens, rates do banco marcadas "Não
+    aplicadas"), contas em cartões paginados com busca e gaveta de ações (Resumo, GM,
+    Senha; Gold/Banimento/Desconectar "em breve"), criação em modal, resultado em aviso
+    flutuante. API: `/api/realms` com `rates` e `canal_administrativo`; `/api/contas` com
+    `pagina`/`por_pagina` (1–48), `total`, personagens, datas; `_`/`%` literais na busca.
+    Lógica de comando recuperável mantida (mesmas funções e IDs). Testes: Node 6/0 (novo:
+    canal não enviado); Python do painel 49/0 com banco e Redis;
+    inspeção visual no navegador embutido (home, realm 1.5.5, contas, gaveta, aba GM).
+
+175. **Sessão 2026-10-05 (Claude): usabilidade do painel e E4 completa (gold, ban, desconectar).**
+    Pedido do Murillo após a B174. Interface: conteúdo sem limite de largura; a gaveta de
+    conta virou um popup de 300 px ancorado no cartão (resumo + ações), fecha ao clicar fora
+    ou ao concluir; alerta padrão único (sucesso/erro/aviso/aguardando) no estilo SweetAlert,
+    feito à mão porque a CSP do painel só aceita `self`; operação sem confirmação é
+    consultada sozinha a cada 1,5 s até ~45 s. E4: `ajustar_gold` (soma atômica em
+    `accounts.gold_balance`, nunca negativa, mesma forma do débito da loja em
+    `character.rs::gastar_cash_da_conta`) e `definir_ban` (sem expiração; o link recusa conta
+    banida em `gateway.rs:560` e não lê `ban_expires_at`; recusa banir a si mesmo) como
+    comandos duráveis com o mesmo preâmbulo do `trocar_senha` (`reservar_operacao_de_conta`).
+    GS: `desconectar` e `atualizar_cash` no canal; `expulsar_pelo_painel` reusa o caminho do
+    logout (trava de gravação, `encerrar_sessao`, fotografia salva) com `PlayerLogout.result`
+    2, que o cliente trata como "volta ao login" (`EC_GameSession.cpp:5420-5426`,
+    `EC_GameRun.cpp:1945-1978`); `reenviar_cash` manda `PLAYER_CASH` (253). Painel: rotas
+    `/gold`, `/ban` e `/api/contas/{id}/desconectar`; `transmitir` manda a mesma ação a todos
+    os GS com canal. Testes: storage `comandos_recuperaveis` 16/0 (2 novos), GS
+    `canal_administrativo` 2 novos (desconectar nas duas versões; cash com o valor do banco),
+    Python 1 novo, Node 7/0. Workspace com banco 951/0 (2 ignorados), Python do painel 50/0.
+    Ponta a ponta pela API real (rotas 126 e 155): gold +10/−10, débito acima do saldo →
+    `saldo_insuficiente`, ban/desban gravados, autobanimento recusado, desconectar sem
+    ninguém online → 0; conta de teste restaurada. Visual: popup e alerta conferidos. Limitação: sessão parada na seleção de personagem não é
+    desconectada. Roteiro em jogo: dar 10 gold ao `testuser` online e abrir a Loja Gold
+    (saldo novo sem relogar); Desconectar → cliente volta ao login, log
+    `admin: desconectar conta`; Banir → sai e o login seguinte acusa conta banida; Desbanir →
+    entra de novo.
+
+176. **Sessão 2026-10-05 (Claude): E7 — rates de EXP, SP, drop e moedas aplicadas pelo mundo.**
+    Decisão do Murillo: fator com fração = sorteios inteiros + chance da fração (1,5 = 1 + 50%);
+    EXP e SP independentes. Evidência no original: `world_param` (`worldmanager.h:95`),
+    fator de `IncExp` só no abate (`player.cpp:2813-2829`, `2906-2922`; missão por
+    `ReceiveTaskExp` fica de fora), `item_more_times` repete o bloco de itens e
+    `money_more_times` multiplica as rodadas de dinheiro (`npc.cpp:2663-2696`). Novo
+    `pw-gs/src/taxas.rs`; rates no `RoteadorDeMapas` (um realm por processo), lidas na
+    partida, trocadas pelo canal `definir_taxas` (grava em `realms`, aplica na hora, arredonda
+    a uma casa); abate em `bus_server/jogo.rs`, queda em `economia::gerar_queda`; o resumo
+    dos mundos traz as rates em memória. Achado: `realms.double_*` é `NUMERIC(3,1)` e o
+    `RealmRepository` decodificava `f32` — `get_realm` falhava sempre; corrigido com `::float4`
+    nas consultas. Painel: rota `POST /api/realms/{id}/rates`, tela Rates (4 campos), selo
+    "Em vigor"/"Diferente no mundo" no painel do realm. Testes: unidade `taxas` 3/0; abate
+    real com EXP 3× e SP 2,5× = exatamente o triplo/2,5× do abate de referência
+    (`subcomandos_no_mundo::rates_de_exp_e_sp_do_realm_multiplicam_o_abate`); canal grava,
+    vale na hora, recusa 0× e relê do banco; Python 1 novo; Node 7/0. Workspace com banco 956/0 (2 ignorados), Python do
+    painel 51/0. Ponta a ponta no 155 pela API real: 2/1,5/1,5/3 gravado e em vigor no GS, 0× recusado, de volta a 1×. Roteiro em jogo: Rates
+    do 1.5.5 → EXP 5×, matar um monstro (EXP 5× maior no chat), voltar a 1×.
+
+177. **Sessão 2026-10-05 (Claude): E7 — ligar e desligar mapas pelo painel.**
+    Estado em `realms.config.mapas_desligados` (JSONB; `RealmRepository::definir_mapa_desligado`
+    numa só instrução, preserva as outras chaves e os mapas de outros processos), lido na
+    partida. Canal `definir_mapa`: grava primeiro; ao desligar, com a guarda de presença em
+    escrita, cada personagem do mapa sai por `expulsar_pelo_painel` (B175: salvo, `PlayerLogout`
+    result 2). Entrada para mapa desligado: recusada com o mesmo `PlayerLogout` — o link já
+    registrou a sessão antes do `EnterWorld` (`gateway.rs:858-859`); troca para ele: recusada,
+    jogador fica na origem. Resumo dos mundos traz `ligado` por mapa. Painel: rota
+    `POST /api/realms/{id}/mapas/{mapa}` (aplica o daemon que serve o mapa), tela Mapas com
+    cartões e confirmação ao desligar (diálogo de confirmação no alerta padrão). Testes:
+    canal (desliga com jogador dentro → result 2 e entidade fora; `config` preserva
+    `max_level`; nova entrada recusada; releitura do banco; religa e entra; mapa não servido),
+    `varios_mapas` (troca para mapa desligado recusada, outro mapa no ar) 4/0, Python 1 novo,
+    Node 7/0. Workspace com banco: 955/3 (2 ignorados) — 1 era expectativa minha (resumo dos
+    mapas ganhou `ligado`; corrigida, canal 19/0) e 2 intermitentes de ordem de mensagem em
+    `subcomandos_no_mundo` (roupa, convite; convite falhou 1 em 6 isolado), que montam um
+    `BusServer` sem roteador e não passam pelo código desta fatia. Python 51/1 → o teste com GS
+    real tinha a mesma expectativa; corrigido, passa. Ponta a ponta no 155: desligar 169 →
+    banco `[169]` com `max_level` preservado e GS reporta desligado; mapa 7 → 404; religar → `[]`. Limitação: o tique do mapa desligado segue rodando. Roteiro em jogo: Mapas do
+    1.5.5 → desligar o mapa onde o personagem está (volta ao login), tentar entrar (recusado),
+    religar e entrar.
+
+178. **Sessão 2026-10-06 (Claude): "Consultando o mundo…" sem fim — GS 126/155 mortos.**
+    Relato do Murillo: a tela de Mapas ficava em "Consultando o mundo…". `/estado` dos dois
+    realms: `desconhecido`, "tempo de consulta ao daemon esgotado". `pw-world-126/155` em
+    `Dead` (encerrados às 03:47 UTC, código 137) e cópias `<hash>_pw-world-*` paradas em
+    `Created` — um `docker compose up` dos mundos interrompido no meio. O `pw-admin-api` não
+    depende dos mundos no compose, então o rebuild só do painel não explica; autor não
+    identificado (outro processo no Docker). Corrigido: contêineres presos removidos e mundos
+    subidos com `--no-build`; os links 126/155 reiniciaram junto (quem estava em jogo reentra).
+    Painel: a consulta viva sem resposta deixava as telas em "Consultando…" para sempre; agora
+    `situacaoDoMundo` distingue consultando/sem canal/sem resposta e mostra o motivo com
+    "Tentar de novo" (Mapas, Rates, Painel do realm; selo "Mundo sem resposta"); em transição
+    reconsulta sozinho uma vez em 2 s. Skill `pw-testar-e-publicar` (duas cópias): publicar um
+    serviço com `--no-deps` e conferir depois de todo `up` que nenhum `pw-*` ficou fora de `Up`.
+    Node 7/0; tela de Mapas do 1.2.6 conferida.
+
+179. **Sessão 2026-10-06 (Claude): E5, primeira fatia — dinheiro e EXP/SP do personagem pelo painel.**
+    Reaproveita o caminho da recompensa de missão, que o cliente já aceita: `Jogador::dar_dinheiro`
+    (`task_deliver_money`, 159), `tirar_dinheiro` (`spend_money`), `dar_exp` (`ganhar_exp` +
+    `task_deliver_exp`, 158, já com subida de nível), dentro do `com_contexto`, que grava.
+    `RoteadorDeMapas::editar_personagem` segura a guarda de presença em leitura e a trava de
+    gravação; online → mapa dono; offline → só dinheiro, `ajustar_dinheiro_offline` (soma
+    atômica, nunca negativa, teto 2e9); EXP offline → `precisa_estar_online`; saída pendente →
+    `em_transicao`. Canal `editar_personagem` com ID deduplicado em `comandos_administrativos`
+    (`reservar_operacao_de_personagem` / `gravar_resultado_de_personagem`). Painel: rota
+    `POST /api/realms/{id}/personagens/{pid}/editar`, linhas Dinheiro e EXP/SP na ficha, consulta
+    do resultado pelo mesmo ID quando sem confirmação. Testes: canal (online: dinheiro chega
+    no 159, memória e banco; mesmo ID não reaplica; conflito; EXP chega no 158; offline:
+    dinheiro gravado, EXP recusada, débito acima recusado, edição inválida), Python 1 novo,
+    Node 7/0. Workspace com banco 959/0 (2 ignorados), Python do painel 53/0. Ponta a ponta no
+    155 (personagem 4515, offline): +100 salvo no banco, EXP recusada (409), −100 de volta a 0.
+    Roteiro em jogo: Personagens → ficha → Dar 1000 de dinheiro com o personagem em
+    jogo (aparece na bolsa e no chat), Dar EXP suficiente para subir de nível.
+
+180. **Sessão 2026-10-06 (Claude): gold e dinheiro só podem ser dados, nunca tirados.**
+    Decisão do Murillo: tirar arrisca valor negativo. Removido em todas as camadas: GS (canal
+    recusa `delta`/`dinheiro` ≤ 0; `EdicaoDePersonagem::Dinheiro` só chama `dar_dinheiro`),
+    armazenamento (`ajustar_gold` → `valor_invalido`; `ajustar_dinheiro_offline` ignora ≤ 0),
+    API (`ge=1`) e interface (sem seletor Dar/Tirar; botões "Dar gold"/"Dar"). Testes:
+    `comandos_recuperaveis` 16/0, `canal_administrativo` 20/0, Node 7/0, Python 2/0 (casos
+    negativos agora recusados). Não publicado nos contêineres (Murillo publica).
+
+181. **Sessão 2026-10-06 (Claude): build dos servidores no Docker sem os 68 GB de contexto.**
+    O `Dockerfile.core` usa a raiz do repositório como contexto e não tinha `.dockerignore`:
+    cada build enviava ao Docker `target/` (63 GB) e `data/` (4,6 GB), que não usa. Criado
+    `docker/Dockerfile.core.dockerignore` com lista de liberação espelhando os `COPY`
+    (Cargo.toml/lock, `crates/`, `tools/` e os arquivos de `specs/` que os `include_str!` do
+    binário embutem; `docs/evidencias/` só aparece em testes). Outros ganhos identificados e
+    não feitos (decisão do Murillo, custo): cache do cargo no build e compilar os binários uma
+    vez só para todas as imagens; e o painel recompila o verificador de senha a cada mudança
+    em `crates/`.
+
+182. **Sessão 2026-10-06 (Claude): painel E5 — pontos livres, nível direto e cultivo.**
+    Evidência de atualização online, uma por edição: **pontos** — `ADD_STATUS_POINT` (51) faz
+    o cliente trocar `iStatusPt` por `remain` e pedir a ficha (`EC_HostMsg.cpp:1610-1625`);
+    mandado com os quatro atributos em zero. **Nível** — `LEVEL_UP` (37) faz o cliente somar 1
+    ao nível e pedir a ficha (`EC_HostPlayer.cpp:4163-4171`); o `LevelUp` do original manda um
+    por nível, +5 pontos (`player.cpp:2627-2660`); `SELF_INFO_00` grava nível/EXP/vida
+    absolutos (`EC_HostMsg.cpp:1322-1331`). Só sobe: o original não tem caminho que desça fora
+    do renascimento. **Cultivo** — `SetSecLevel` → `TASK_DELIVER_LEVEL2` (160), difundido a
+    quem vê com ele incluído (`player.cpp:4865-4872`); o nosso `definir_cultivo` só mandava ao
+    próprio — corrigido (vale também para o prêmio de missão). Valores: 1.5.5 0–8, 20–22,
+    30–32 (`GetLevel2Name`, `EC_GameRun.cpp:3483-3493`); 1.2.6 0–8 (o `gs` 1.2.6 tem
+    `SetSecLevel` mas não `GodEvilConvert`).
+    Código: `progressao::subir_ate` e `cultivo_valido`; `EdicaoDePersonagem::{PontosLivres,
+    Nivel, Cultivo}`; roteador confere teto de nível/cultivo antes da guarda; offline
+    `dar_pontos_offline`, `subir_nivel_offline` (um `UPDATE`: +5·salto, EXP zera no teto),
+    `definir_cultivo_offline`; canal exige um só tipo por operação; impressão só inclui as
+    chaves novas quando presentes (B179 pendente não vira conflito). Painel: linhas Pontos
+    livres, Nível e Cultivo (lista pela versão). Spec 06 dizia "Dinheiro (dar/tirar)" desde o
+    B180 — corrigida.
+    Testes: `editar_pontos_nivel_e_cultivo_online_e_offline_126_e_155` (22 bytes do 51, três
+    37, 160, gravação, recusas) e o do B179: 2/0; Python 53/0; Node 7/0; workspace com banco 960/0, 2 ignorados
+    (na 1ª rodada `o_guia_selvagem_do_126_entrega_a_missao_inicial_1177` falhou uma vez e passou
+    sozinho e na 2ª — intermitente sob paralelismo, não toca cultivo).
+    Não publicado.
+
+183. **Sessão 2026-10-06 (Claude): tela Mapas com todos os mapas; ligar carrega, desligar descarrega.**
+    Pedido do Murillo: listar todos os mapas do realm, filtrar por número/nome e status, ligados
+    primeiro, seleção individual e em lote, ligar/desligar selecionados. O GS só carregava os
+    mapas do `WORLD_TAGS` (155: 1, 161, 169; 126: 1). Decisões do Murillo (perguntadas): ligar
+    **carrega o mapa na hora** (em vez de valer ao reiniciar ou só liberar acesso); nomes do
+    `instance.txt` do pwadmin 1.5.5 também no 1.2.6.
+    Evidência: lista e números do `gs.conf` original (`world_servers`/`instance_servers`, cada
+    `[World_X]`/`[Instance_X]` com `tag` e `base_path`) — 1.5.5 `pwserver_155v156`, 79 mapas;
+    1.2.6 `files1.2.6`, 43. Nomes: `F:\PW\1.5.5\home155\pwadmin\instance.txt` (`chave=nome`, em
+    português; 7 chaves do 155 sem nome). `scripts/gerar_catalogo_de_mapas.py` →
+    `web-admin/backend/painel/catalogo_mapas.json`.
+    GS: `RoteadorDeMapas.mapas` em `std::sync::RwLock` (acesso por `mapa()`/`todos()`, nunca
+    segurado em `await`); `BusServer` guarda o `AbortHandle` do tique e `descarregar()` aborta
+    e fecha o canal de eventos (sem isso o laço de eventos segurava o `BusServer` para sempre);
+    `definir_mapa(.., carregar)` grava `mapas_ligados`/`mapas_desligados` numa instrução
+    (`RealmRepository::definir_estado_do_mapa`), monta em `spawn_blocking` fora da guarda e
+    insere sob ela; desligar expulsa e descarrega (com saída pendente, fica carregado e
+    bloqueado); entrada no padrão descarregado ou em mapa desligado é recusada; partida carrega
+    `(WORLD_TAGS ∪ ligados com dados) − desligados`; `mundos` traz `carregando` e `carregaveis`.
+    Painel: rota `catalogo-mapas`; `definir_mapa` em duas fases (todos → se ninguém serve, só o
+    primeiro com `carregar`); tela nova em lista com filtro, seleção, ações em lote e
+    acompanhamento da carga.
+    Testes: `desligar_descarrega_e_ligar_carrega_o_mapa_na_hora` (substitui o do B177) e canal
+    21/0; `varios_mapas` 4/0; Python 55/0 (catálogo por versão e duas fases); Node 7/0;
+    workspace 959/1 (2 ignorados): a falha foi `o_botao_de_roupa_alterna_e_avisa_os_dois_lados`,
+    intermitente conhecido, que passou sozinho. `conferir_public_antes_de_publicar.sql`: vazio. Tela não vista no
+    navegador. Não publicado.
+
+184. **Sessão 2026-10-06 (Claude): E5 fechada — modificar e redistribuir atributos.**
+    Pedido do Murillo: modificar os atributos já distribuídos e redistribuir. Evidência: o
+    "lavar pontos" do original é `RegroupPropPoint` (`player.cpp:14920-14940`, chamado pelo
+    NPC em `serviceprovider.cpp:3672`): `player_template::__Rollback` tira até o piso (5 nos
+    quatro no 1.5.5, `playertemplate.cpp:618-641`; 3 em vitalidade/energia no 1.2.6, já
+    portado no B152 como `piso_da_restauracao`), devolve ao livre, conserva o total (assert do
+    próprio original), reaplica equipamento e manda `PlayerGetProperty` (`OWN_EXT_PROP`); o
+    cliente grava atributos e pontos livres absolutos (`EC_HostMsg.cpp:1583-1584`).
+    Código: `PlayerEntity::definir_atributos` compõe `restaurar_atributos` (B152) e
+    `distribuir_pontos`; `EdicaoDePersonagem::Atributos(Option<[i32; 4]>)` (`None` =
+    redistribuir), online com `recalcular_equipamento`; offline
+    `CharacterRepository::definir_atributos_offline` (um `UPDATE` com piso e total); canal
+    `atributos`/`redistribuir` (impressão só com as chaves presentes); painel com a linha
+    Atributos (quatro campos, "Pontos livres depois", Aplicar, Redistribuir). Decisão de
+    desenho: o total é conservado — subir além dele pede "Dar pontos livres" (B182) antes.
+    Testes: `modificar_e_redistribuir_atributos_online_e_offline_126_e_155` (OWN_EXT_PROP,
+    recusas, piso por versão, gravação após o logout) e canal 22/0; Python 55/0 (validação);
+    Node 7/0; workspace com banco 961/0, 2 ignorados. Não publicado.

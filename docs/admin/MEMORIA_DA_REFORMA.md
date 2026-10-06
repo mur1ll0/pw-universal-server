@@ -1,8 +1,8 @@
 # Memória central da reforma do pw-admin
 
-Atualizada em 2026-10-05 (B172). Estado: **login 126/155 corrigido nos dados em B173, falta ver em jogo (§6.1)**; **E1 auditada; E2 publicada/testada automaticamente,
-parcial até inspeção visual; E3 com consultas/comando recuperável testados; E4 parcial (senha, criação e GM global coordenado)**.
-B165–B170, sem commit. B167–B170 locais; migrações aplicadas somente no schema test.
+Atualizada em 2026-10-05 (B175). Estado: **E1–E3 testadas; E4 testada (contas completas), falta
+confirmar em jogo; E5–E9 planejadas**. B165–B173 commitados (`dc0b117`, `9fdd555`); B174–B175
+locais e publicados nos contêineres 126/155; migrações aplicadas no `public` (B173).
 Base consultada: commit `a010ff7`. Responsável pelas decisões de produto: Murillo.
 
 Este arquivo é o ponto de retomada da reforma. Guarda decisões, estado das etapas,
@@ -74,7 +74,6 @@ login e retornam 501 sem mutação; não há seed de moldes nem escrita administ
 | Rates/mapas/templates do painel não comandam corretamente os daemons | `specs/06_ADMIN_PANEL_AND_CPW_SPEC.md`, §1 | não confundir gravação de configuração com aplicação |
 | Fontes dos moldes usados são arquivos do realm | `specs/06_ADMIN_PANEL_AND_CPW_SPEC.md`, §1 | resolver `ptemplate.conf`/`clsconfig`/banco conforme função de cada dado |
 
-Referências acima são pontos de entrada; os números de linha podem mudar.
 Auditoria E1 concluída. Docker consultado: quatro realms/mundos e painel anterior ativos.
 E2 usa sessão Redis e verificador Rust compartilhado; catálogo não é exposto porque os
 fallbacks podem buscar elements/ícones de outro realm (`elements_decoder.py:500-514,774-790`).
@@ -127,10 +126,10 @@ Cada etapa pode ser dividida em subtarefas aqui, mantendo o arquivo curto.
 | E1 — auditoria e arquitetura | testado | auditoria e fontes de verdade em `ARQUITETURA_E_CONTRATOS.md`; FastAPI mantido, UI modular sem CDN/framework, verificador compartilhado em Rust |
 | E2 — base, login e interface | parcial | publicada em 2026-10-04; 22 testes Python + 24 Rust e 3 verificações Linux passaram; inspeção visual aguarda Murillo |
 | E3 — canal administrativo e consulta viva | testado | consultas B166 e comando transacional/resultado recuperável B167; deduplicação global, conflito, rollback e reinício testados; falta confirmação visual |
-| E4 — contas | parcial | busca, senha, criação e GM global recuperáveis; caches/efeitos GM coordenados; gold/ban/desban/desconexão pendentes; confirmar nos clientes originais |
-| E5 — personagem e persistência | planejado | ficha e progressão online/offline, atualização nos dois clientes; autosave/logout/relogin não desfazem edição; consultas mostram valores reais |
+| E4 — contas | testado | busca, criação, senha, GM, gold, ban/desban e desconectar (B175); testes Rust/Python/Node; falta o Murillo confirmar em jogo |
+| E5 — personagem e persistência | testado | dinheiro e EXP/SP (B179); pontos livres, nível e cultivo (B182); modificar/redistribuir atributos (B184); falta ver em jogo; ficha e progressão online/offline, atualização nos dois clientes; autosave/logout/relogin não desfazem edição; consultas mostram valores reais |
 | E6 — inventário e subsistemas | planejado | itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
-| E7 — mapas e rates | planejado | desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
+| E7 — mapas e rates | testado | rates (B176), mapas (B177) e lista completa com carga/descarga em execução (B183); falta ver em jogo; desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
 | E8 — moldes de classe | planejado | leitura/edição das fontes consumidas; personagem novo usa alteração; recálculo separado preserva progressão conforme contrato |
 | E9 — extensões e fechamento | planejado | pontos de extensão documentados para editores futuros; interface revisada, manual atualizado, verificações finais e pendências claras |
 
@@ -156,27 +155,16 @@ quando aplicável. Não terminar com todas as telas prontas e operações sem in
 
 ## 6. Retomada imediata
 
-**Etapa ativa:** E4 parcial. Ajustes da revisão de rumo feitos em B173 (§6.3); falta o Murillo
-confirmar o login em jogo antes da próxima fatia.
+**Etapa ativa:** E5 testada (B179, B182, B184); próxima E6.
 **B165–B171 (resumo; detalhes no histórico):** B165 E1 auditoria · B166 E2/E3 login do painel e
 consulta viva · B167 senha + HMAC-MD5 no link · B168 criação de conta · B169 GM global coordenado
 (revisão/recibos/fencing em 8 processos) · B170 saída/salvamento/troca do GS reescritos ·
 B171 coordenação opcional (login sem a coluna, registro falho não aborta, 148/153 fora).
 
-### 6.1 Incidente 2026-10-05 (B172): login recusado no 126 e no 155
+### 6.1 Incidente B172 (resolvido em B173)
 
-Publicado B165–B171 com as migrações. Os dois links registram
-`Login rejeitado: resposta de senha inválida` para `admin` e `testuser` (GM e não GM).
-Causa: B167 passou a conferir a resposta do cliente por HMAC com chave `MD5(nome+senha)`
-(`gameclient.cpp:131-139`), mas o `public.accounts` guarda `admin` como `MD5(senha)`
-(`21232f…` = MD5("admin")) e `testuser` num formato que não é nenhum dos dois; antes do B167
-o link não conferia senha. A própria memória avisava ("Argon2/texto/seeds incompatíveis
-exigem redefinição explícita antes de publicar B167"), mas nada impedia a publicação.
-Desligar a conferência foi bloqueado pela política de segurança da sessão.
-**Resolvido em B173 (decisão do Murillo):** contas padrão `admin`/`admin` e
-`testuser`/`testuser`, regravadas como `MD5(nome+senha)`; conferência de senha mantida.
-As migrações também não tinham sido aplicadas no `public`: aplicadas em B173, com backup
-`data/_backups/pw_database_2026-10-05_antes_das_migracoes_do_painel.sql`.
+Login recusado no 126/155: o B167 exige `MD5(nome+senha)` e o `public` tinha `MD5(senha)`.
+Contas padrão regravadas, migrações aplicadas com backup (histórico 172–173).
 
 ### 6.2 Revisão de rumo (análise Claude, 2026-10-05)
 
@@ -217,17 +205,40 @@ Mudanças **aprovadas pelo Murillo em 2026-10-05** (estado em §6.3):
 7. **Limites de esforço:** duas rodadas de correção da mesma corrida → parar e perguntar;
    suíte inteira só no fim do bloco, em segundo plano, filtrada.
 
-### 6.3 Estado dos ajustes (B173)
+### 6.3 Ajustes da §6.2 (B173): todos feitos
 
-| item 6.2 | estado |
-| :--- | :--- |
-| 1 portão | `scripts/conferir_public_antes_de_publicar.sql` (leitura; vazio = ok) e passo na skill `pw-testar-e-publicar` |
-| 2 consistência | aprovado; vale para E4–E6 |
-| 3 sem `process::exit` | feito: perda do fencing desliga a coordenação (link `gateway.rs`, GS `mapas.rs`) |
-| 4 formato de senha | já era `MD5(nome+senha)` no painel (`administracao.rs:218,248`); seed da spec 01 → testuser/testuser |
-| 5 testes | `comandos_recuperaveis` em série (trava `SERIE`), esperas de 5 s; `canal_administrativo` espera 5 s |
-| 6 ordem | (i) login: dados corrigidos, falta jogo · (ii) commits · (iii)–(v) a seguir |
+Conferência do `public` antes de publicar (`scripts/conferir_public_antes_de_publicar.sql` + skill),
+sem `process::exit`, senha só em `MD5(nome+senha)`, testes de corrida em série; commits
+`dc0b117`/`9fdd555`. Modelo de consistência da §6.2 item 2 vale para E4–E6.
 
-**Próxima ação executável:** Murillo confirma o login e o roteiro de saída/salvamento em jogo;
-depois E4 simples: gold, ban/desban, desconectar (uma fatia, roteiro de tela ao fim).
-**Retomada:** próximo B174 (conferir antes); não publicar/commitar sem pedido.
+### 6.4 B174–B175 — GM pelo painel, interface nova e E4 completa
+
+Chaves do canal em `docker/.env`; "não enviado" = falha 503. Design próprio sem CDN, largura
+total, popup de conta, alerta padrão, acompanhamento automático; gold, ban/desban, desconectar.
+
+### 6.6 B176–B177 — E7 rates e mapas
+
+Rates: fração = sorteios inteiros + chance; EXP e SP independentes; GS lê `realms` na partida e
+troca na hora (spec 05 §7.9; colunas `NUMERIC(3,1)` lidas com `::float4`). Mapas: spec 05 §7.10.
+
+### 6.8 B178–B182 — E5 em fatias
+
+B178: GS mortos após `up` interrompido (painel diz "sem resposta"). B179: dinheiro e EXP/SP.
+**B180: só dar gold/dinheiro, nunca tirar.** B182: pontos livres, nível, cultivo. Spec 05 §7.11.
+
+### 6.10 B183 — mapas em execução e tela Mapas completa
+
+Decisões do Murillo: ligar = **carregar na hora** (desligar descarrega); nomes do pwadmin 1.5.5
+também no 1.2.6. Catálogo do `gs.conf` original; `realms.config.mapas_ligados`; regra em
+spec 05 §7.10. Mexe na entrada/troca: portão §6.2 item 1 (roteiro em jogo antes do próximo B).
+
+### 6.11 B184 — E5 fechada: atributos
+
+Modificar os quatro com o total conservado ou redistribuir tudo (piso da versão), online/offline;
+spec 05 §7.11. Saída/relogin não desfazem edição (testes conferem o banco após o logout).
+
+**Próxima ação:** Murillo confere em jogo (roteiros B179, B182, B183 — portão §6.2 — e B184).
+Depois a E6: inventário/equipamentos, habilidades,
+missões, posição, aparência e mascotes — cada um com o S2C que atualiza a ficha online achado
+no original, senão só offline ou "reentrar". Depois E8 (moldes) e E9. Próximo B: B185.
+Não publicar/commitar sem pedido.
