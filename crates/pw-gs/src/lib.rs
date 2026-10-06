@@ -17,6 +17,7 @@ pub mod npc;
 pub mod politica;
 pub mod progressao;
 pub mod refino;
+pub mod taxas;
 pub mod server;
 pub mod world;
 

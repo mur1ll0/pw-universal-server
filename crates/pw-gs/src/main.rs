@@ -76,21 +76,37 @@ async fn main() -> anyhow::Result<()> {
     let contas_admin = pw_storage::AccountRepository::new(pg_pool.clone());
     let char_repo = CharacterRepository::new(pg_pool);
 
-    // 3. Um mundo por mapa, cada um com seu tick, todos sobre os mesmos dados.
-    let mut servidos = Vec::with_capacity(mapas.len());
-    for mapa in &mapas {
+    // 3. Um mundo por mapa, cada um com seu tick, todos sobre os mesmos dados. Os mapas
+    //    são o `WORLD_TAGS` mais os ligados pelo painel, menos os desligados (B183,
+    //    `realms.config`); o primeiro do `WORLD_TAGS` continua sendo o padrão.
+    let realms_repo = contas_admin.realms();
+    let ligados = realms_repo.mapas_ligados(&realm_id).await.unwrap_or_else(|e| {
+        tracing::warn!("mapas ligados pelo painel ilegíveis ({e}); só WORLD_TAGS");
+        Vec::new()
+    });
+    let desligados = realms_repo.mapas_desligados(&realm_id).await.unwrap_or_default();
+    let mut efetivos = mapas.clone();
+    for m in ligados {
+        if !efetivos.contains(&m) && data_manager.pastas_de_mapa.contains_key(&m) {
+            efetivos.push(m);
+        }
+    }
+    efetivos.retain(|m| !desligados.contains(m));
+    info!("mapas carregados na partida: {efetivos:?} (desligados pelo painel: {desligados:?})");
+    let mut servidos = Vec::with_capacity(efetivos.len());
+    for mapa in &efetivos {
         let mut mundo = WorldInstance::new(*mapa, Arc::clone(&data_manager), char_repo.clone());
-        // `_world_limit.nofly` do `gs.conf` da versão (B133).
-        let catalogo = if game_version == GameVersion::V1_2_6 {
-            pw_data_loader::limites::CatalogoDeLimites::V126
-        } else {
-            pw_data_loader::limites::CatalogoDeLimites::V155
-        };
-        mundo.sem_voo = pw_data_loader::limites::sem_voo(catalogo, *mapa);
+        mundo.sem_voo = pw_gs::mapas::sem_voo_do_mapa(game_version, *mapa);
         servidos.push(RoteadorDeMapas::preparar_mapa(mundo, game_version).await);
     }
-    let roteador = Arc::new(RoteadorDeMapas::new(servidos, char_repo));
+    let roteador = Arc::new(RoteadorDeMapas::com_padrao(mapas[0], servidos, char_repo));
+    roteador.permitir_carga(pw_gs::mapas::CargaDeMapas {
+        dados: Arc::clone(&data_manager),
+        versao: game_version,
+    });
     roteador.ligar_trocas();
+    roteador.carregar_taxas(&contas_admin.realms(), &realm_id).await;
+    roteador.carregar_mapas_desligados(&contas_admin.realms(), &realm_id).await;
     if let Ok(processo) = std::env::var("ADMIN_COORDENACAO_ID") {
         // Opcional: sem as tabelas da migração (scripts/2026_10_05_coordenacao_gm.sql)
         // o GS sobe sem coordenação GM em vez de abortar.

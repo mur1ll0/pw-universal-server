@@ -950,6 +950,40 @@ impl PlayerEntity {
         devolvidos
     }
 
+    /// Painel (E5, B184): põe os quatro atributos em `alvo` (força, agilidade, vitalidade,
+    /// energia), ou — `None` — redistribui tudo (todos ao piso). O total (atributos + pontos
+    /// livres) não muda: é [`Self::restaurar_atributos`] (o `RegroupPropPoint`, que tira até o
+    /// piso e devolve ao livre) seguido de [`Self::distribuir_pontos`] (o `SetStatusPoint`).
+    /// Um atributo já abaixo do piso não pode descer mais; a soma não passa do total.
+    /// `Err` sem mudar nada; `Ok(false)` quando já estava assim.
+    pub fn definir_atributos(
+        &mut self,
+        alvo: Option<[i32; 4]>,
+        piso: (i32, i32, i32, i32),
+        classes: &TabelaDeClasses,
+        base: Option<&TabelaDeBase>,
+    ) -> Result<bool, &'static str> {
+        let atual = [self.strength, self.agility, self.vitality, self.energy];
+        let pisos = [piso.0, piso.1, piso.2, piso.3];
+        let minimo: Vec<i32> = atual.iter().zip(pisos).map(|(a, p)| (*a).min(p)).collect();
+        let alvo = alvo.unwrap_or([minimo[0], minimo[1], minimo[2], minimo[3]]);
+        let total = atual.iter().map(|v| *v as i64).sum::<i64>() + self.pontos_de_atributo.max(0) as i64;
+        if alvo.iter().zip(&minimo).any(|(a, m)| a < m) || alvo.iter().map(|v| *v as i64).sum::<i64>() > total {
+            return Err("atributos_invalidos");
+        }
+        if alvo == atual {
+            return Ok(false);
+        }
+        let tirar = |i: usize| (atual[i] - alvo[i]).max(0);
+        self.restaurar_atributos((tirar(0), tirar(1), tirar(2), tirar(3)), piso, classes, base);
+        let por = |i: usize| (alvo[i] - atual[i]).max(0) as u32;
+        // `distribuir_pontos` recebe na ordem do pacote: vitalidade, energia, força, agilidade.
+        if !self.distribuir_pontos((por(2), por(3), por(0), por(1)), classes, base) {
+            return Err("atributos_invalidos");
+        }
+        Ok(true)
+    }
+
     /// Como este jogador aparece para os outros.
     ///
     /// O `dir` vai zerado: a grade espacial guarda posição, não direção — a mesma lacuna

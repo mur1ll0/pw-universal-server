@@ -258,3 +258,31 @@ async fn teleporte_para_outro_mapa_passa_o_jogador_e_avisa_o_cliente() {
     let mapa: i32 = sqlx::query_scalar("SELECT world_id FROM characters WHERE id = $1").bind(c.no_161).fetch_one(pool.get_ref()).await.unwrap();
     assert_eq!(mapa, 1, "o mapa novo não foi gravado — relogar voltaria ao 161");
 }
+
+/// E7 (B177): troca para um mapa desligado pelo painel é recusada e o jogador fica onde
+/// está; o outro mapa do mesmo processo segue no ar.
+#[tokio::test]
+async fn troca_para_mapa_desligado_e_recusada_e_o_jogador_fica() {
+    let Some(c) = montar().await else { return };
+    c.roteador.ligar_trocas();
+    let url = std::env::var("TEST_DATABASE_URL").unwrap();
+    let pool = PostgresPool::new(&StorageConfig { database_url: url, max_connections: 1, min_connections: 1, ..Default::default() }).await.unwrap();
+    let realm = format!("t_mapas_{}", c.no_161);
+    sqlx::query("INSERT INTO realms(id,name,version,host,port) VALUES($1,'Mapas teste','1.5.5','127.0.0.1',1) ON CONFLICT DO NOTHING")
+        .bind(&realm).execute(pool.get_ref()).await.unwrap();
+    let realms = pw_storage::RealmRepository::new(pool.clone());
+    let r = c.roteador.definir_mapa(&realms, &realm, 1, false, false).await;
+    assert_eq!(r["estado"], "aplicado", "{r}");
+
+    let mut link = BusClient::conectar(c.addr).await.unwrap();
+    link.enviar(entrar(c.no_161)).await.unwrap();
+    let (m1, m161, b) = (Arc::clone(&c.mundo_1), Arc::clone(&c.mundo_161), c.no_161 as i64);
+    assert!(ate(|| { let m = Arc::clone(&m161); async move { m.read().await.players.contains_key(&b) } }).await,
+        "o 161 segue no ar e recebe o jogador");
+    c.roteador.transportar(c.no_161, 1, pw_core::Vector3::new(-319.667, 220.007, -900.309)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(m161.read().await.players.contains_key(&b) && !m1.read().await.players.contains_key(&b),
+        "a troca para o mapa desligado não pode acontecer");
+    assert_eq!(c.roteador.mapa_de(c.no_161).await, Some(161));
+    sqlx::query("DELETE FROM realms WHERE id=$1").bind(&realm).execute(pool.get_ref()).await.unwrap();
+}

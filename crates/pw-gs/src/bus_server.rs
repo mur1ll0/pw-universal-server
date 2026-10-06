@@ -62,6 +62,7 @@ mod armazem;
 mod gm;
 mod habilidades;
 mod jogo;
+pub use jogo::EdicaoDePersonagem;
 mod mascote;
 mod pedras_e_refino;
 mod producao;
@@ -173,6 +174,11 @@ fn atraso_do_golpe(attack_speed_s: f32) -> u8 {
 /// Zero é a saída voluntária. Expulsão e queda de conexão têm outros códigos, e o dia em
 /// que existirem entram aqui como constantes próprias em vez de números soltos.
 const SAIDA_VOLUNTARIA: i16 = 0;
+
+/// `PlayerLogout.result` da desconexão pelo painel. O cliente trata 0 como "fechar o
+/// jogo", 1 como "voltar à seleção" e qualquer outro valor como "voltar à tela de login"
+/// (`EC_GameSession.cpp:5420-5426`, `EC_GameRun.cpp:1945-1978`).
+pub(crate) const SAIDA_PELO_PAINEL: i32 = 2;
 
 /// `move_mode` do `OBJECT_MOVE` para quem anda no chão. É o mesmo valor que o cliente
 /// manda no `PLAYER_MOVE` de um jogador a pé.
@@ -370,6 +376,8 @@ pub struct BusServer {
     roteador: std::sync::OnceLock<std::sync::Weak<crate::mapas::RoteadorDeMapas>>,
     /// Referência fraca a si mesmo, para tarefas que terminam depois do comando (a coleta).
     eu: std::sync::OnceLock<std::sync::Weak<BusServer>>,
+    /// O laço de tique deste mapa (`RoteadorDeMapas::preparar_mapa`), para descarregar.
+    tique: std::sync::OnceLock<tokio::task::AbortHandle>,
     /// Golpe normal que chegou com uma conjuração em curso, esperando a vez: `roleid → alvo`.
     ///
     /// No original a habilidade é a **sessão corrente** enquanto roda, e o `NORMAL_ATTACK`
@@ -419,6 +427,7 @@ impl BusServer {
             trocas: std::sync::OnceLock::new(),
             roteador: std::sync::OnceLock::new(),
             eu: std::sync::OnceLock::new(),
+            tique: std::sync::OnceLock::new(),
             golpe_na_fila: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -429,6 +438,25 @@ impl BusServer {
     }
 
     /// Liga este mapa ao roteador que executa as trocas de mapa.
+    /// Guarda o laço de tique deste mapa (só a primeira vez vale).
+    pub(crate) fn guardar_tique(&self, tique: tokio::task::AbortHandle) {
+        let _ = self.tique.set(tique);
+    }
+
+    /// Descarrega o mapa (painel, B183): para o tique e fecha o canal de eventos. Quem chama
+    /// garante que não há jogador nele; o resto sai da memória quando o último `Arc` cai.
+    pub(crate) async fn descarregar(&self) {
+        if let Some(t) = self.tique.get() {
+            t.abort();
+        }
+        self.world.write().await.fechar_canal_de_eventos();
+    }
+
+    /// Ninguém no mapa (nem entidade residual): pode descarregar.
+    pub(crate) async fn vazio(&self) -> bool {
+        self.world.read().await.players.is_empty()
+    }
+
     pub fn ligar_trocas(&self, envio: mpsc::UnboundedSender<PedidoDeTroca>) {
         let _ = self.trocas.set(envio);
     }
@@ -1250,6 +1278,29 @@ impl BusServer {
             let _guarda=controle.alterar().await;
             self.encerrar_sessao(role,envio,None).await;
         }
+    }
+
+    /// Painel (E4, B175): encerra a sessão pelo mesmo caminho do logout — trava de
+    /// gravação, entidade fora do mundo, fotografia salva antes de liberar — e o link
+    /// devolve o cliente à tela de login. Quem chama segura a guarda de presença.
+    pub(crate) async fn expulsar_pelo_painel(&self,role:i32)->bool {
+        let Some(envio)=self.sessoes.read().await.get(&role).map(|s| s.envio.clone()) else {return false};
+        let controle=self.repo().await.controle_de_gravacao(role);
+        let _guarda=controle.alterar().await;
+        self.encerrar_sessao(role,&envio,Some(SAIDA_PELO_PAINEL)).await;
+        true
+    }
+
+    /// Rates do realm (E7): do roteador deste processo; sem roteador (testes de um mapa só), 1×.
+    pub(crate) fn taxas(&self) -> crate::taxas::Taxas {
+        self.roteador.get().and_then(|r| r.upgrade()).map(|r| r.taxas()).unwrap_or_default()
+    }
+
+    /// Painel (E4, B175): reenvia o `PLAYER_CASH` depois de o gold da conta mudar no banco.
+    pub(crate) async fn reenviar_cash(&self,role:i32)->bool {
+        let Some(envio)=self.sessoes.read().await.get(&role).map(|s| s.envio.clone()) else {return false};
+        self.saldo(role,&envio).await;
+        true
     }
 
     pub(crate) async fn pertence_a(&self,role:i32,envio:&EnvioAoCliente)->bool {

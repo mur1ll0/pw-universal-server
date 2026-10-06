@@ -239,6 +239,13 @@ async fn personagem_com_missao(pool: &PostgresPool, versao: GameVersion) -> (i32
 async fn montar(
     versao: GameVersion,
 ) -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i32, i32)> {
+    montar_com_servidor(versao).await.map(|(m, a, r, c, _)| (m, a, r, c))
+}
+
+/// O mesmo cenário, devolvendo também o servidor (para ligar um roteador com rates).
+async fn montar_com_servidor(
+    versao: GameVersion,
+) -> Option<(Arc<RwLock<WorldInstance>>, std::net::SocketAddr, i32, i32, Arc<BusServer>)> {
     let url = match std::env::var("TEST_DATABASE_URL") {
         Ok(u) if !u.trim().is_empty() => u,
         _ => {
@@ -567,7 +574,7 @@ async fn montar(
     servidor.ligar_eventos_do_mundo().await;
     tokio::spawn(Arc::clone(&servidor).executar(escuta));
 
-    Some((mundo, addr, roleid, convidado))
+    Some((mundo, addr, roleid, convidado, servidor))
 }
 
 macro_rules! cenario {
@@ -9821,4 +9828,42 @@ async fn o_membro_da_equipe_que_nao_bateu_recebe_a_experiencia() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(recebeu, "o membro que não bateu não recebeu experiência");
+}
+
+/// Mata o `MONSTRO` no golpe normal e devolve (exp, sp) do `RECEIVE_EXP` (36).
+async fn matar_e_ler_exp(mundo: &Arc<RwLock<WorldInstance>>, addr: std::net::SocketAddr, roleid: i32) -> (i32, i32) {
+    let mut link = entrar(mundo, addr, roleid).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID,
+        data: subcomando(ids::SELECT_TARGET, &(MONSTRO as i32).to_le_bytes()) }).await.unwrap();
+    receber(&mut link, 2).await;
+    for _ in 0..500 {
+        link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID,
+            data: subcomando(ids::NORMAL_ATTACK, &[0u8]) }).await.unwrap();
+        receber(&mut link, 3).await;
+        let vida = mundo.read().await.monsters[&MONSTRO].0.hp;
+        tickar_ate(mundo, |m| m.monsters[&MONSTRO].0.hp < vida).await;
+        if mundo.read().await.monsters[&MONSTRO].0.hp == 0 { break; }
+        mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
+    }
+    assert_eq!(mundo.read().await.monsters[&MONSTRO].0.hp, 0, "o monstro não morreu");
+    let exp = esperar_comando(&mut link, 36).await;
+    (i32_em(&exp, 2), i32_em(&exp, 6))
+}
+
+/// E7 (B176): rates de EXP e SP do realm, independentes, aplicadas no abate como o fator
+/// de `IncExp` (`player.cpp:2906-2922`), truncadas (`player.cpp:2835-2836`).
+#[tokio::test]
+async fn rates_de_exp_e_sp_do_realm_multiplicam_o_abate() {
+    let Some((mundo, addr, roleid, _, _)) = montar_com_servidor(GameVersion::V1_5_5).await else { return };
+    let (exp, sp) = matar_e_ler_exp(&mundo, addr, roleid).await;
+    assert!(exp > 0, "o abate de referência tem de dar EXP");
+
+    let Some((mundo, addr, roleid, _, servidor)) = montar_com_servidor(GameVersion::V1_5_5).await else { return };
+    let repo = mundo.read().await.char_repo.clone();
+    let roteador = Arc::new(pw_gs::RoteadorDeMapas::new(vec![(1, Arc::clone(&servidor))], repo));
+    servidor.ligar_roteador(Arc::downgrade(&roteador));
+    let taxas = pw_gs::taxas::Taxas { exp: 3.0, sp: 2.5, drop: 1.0, moedas: 1.0 };
+    roteador.definir_taxas(taxas);
+    let (exp_x, sp_x) = matar_e_ler_exp(&mundo, addr, roleid).await;
+    assert_eq!((exp_x, sp_x), ((exp as f64 * 3.0) as i32, (sp as f64 * 2.5) as i32));
 }

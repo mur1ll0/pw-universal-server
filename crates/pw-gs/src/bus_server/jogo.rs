@@ -382,12 +382,14 @@ impl Jogador for Contexto<'_> {
         self.para_mim.push(S2CGamedataSend::pet_room_capacity(self.p.vagas_na_jaula).data);
     }
 
+    /// `gplayer_dispatcher::task_deliver_level2` difunde a quem vê o jogador, ele incluído
+    /// (`AutoBroadcastCSMsg(..., -1)`, `player.cpp:4865-4872`): os outros veem o título novo.
     fn definir_cultivo(&mut self, nivel: u32) {
         self.p.cultivation = nivel as i32;
         self.mudou = true;
-        let roleid = self.p.role_id;
-        self.para_mim
-            .push(S2CGamedataSend::task_deliver_level2(roleid, nivel as i32).data);
+        let pacote = S2CGamedataSend::task_deliver_level2(self.p.role_id, nivel as i32).data;
+        self.para_mim.push(pacote.clone());
+        self.para_todos.push(pacote);
     }
     fn avisar(&mut self, comando: Vec<u8>) {
         self.para_mim.push(comando);
@@ -445,7 +447,104 @@ struct Gravacao {
     jaula: Option<u32>,
 }
 
+/// Edição de personagem pelo painel (E5, B179).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EdicaoDePersonagem {
+    /// Dinheiro a dar ao personagem (só positivo: o painel não tira, B180).
+    Dinheiro(i64),
+    /// EXP e SP a somar (só online: pode subir de nível).
+    Experiencia { exp: i64, sp: i64 },
+    /// Pontos de atributo livres a dar (B182).
+    PontosLivres(i64),
+    /// Nível alvo, maior que o atual (B182: só sobe).
+    Nivel(i32),
+    /// Cultivo (`level2`) novo, validado por versão (B182).
+    Cultivo(i32),
+    /// Força, agilidade, vitalidade e energia novas, com o total conservado; `None` =
+    /// redistribuir tudo aos pontos livres (B184, [`PlayerEntity::definir_atributos`]).
+    Atributos(Option<[i32; 4]>),
+}
+
 impl BusServer {
+    /// Painel (E5): aplica a edição com o jogador no mundo, pelos mesmos caminhos da
+    /// recompensa de missão (`Jogador::dar_dinheiro` → `task_deliver_money`,
+    /// `tirar_dinheiro` → `spend_money`, `dar_exp` → `ganhar_exp` + `task_deliver_exp`,
+    /// que já sobe de nível), e grava como `com_contexto` grava. `None`: não está neste mapa.
+    pub(crate) async fn editar_pelo_painel(&self, roleid: i32, edicao: EdicaoDePersonagem) -> Option<serde_json::Value> {
+        let resultado = self.com_contexto(roleid, |ctx| {
+            let antes = (ctx.p.money, ctx.p.level);
+            let mut erro = None;
+            match edicao {
+                EdicaoDePersonagem::Dinheiro(d) => ctx.dar_dinheiro(d.clamp(0, u32::MAX as i64) as u32),
+                EdicaoDePersonagem::Experiencia { exp, sp } => {
+                    ctx.dar_exp(exp.clamp(0, i32::MAX as i64) as u32, sp.clamp(0, i32::MAX as i64) as u32)
+                }
+                // Os quatro em zero e o `remain` novo: o cliente troca os pontos livres e
+                // pede a ficha (`OnMsgHstAddStatusPt`, `EC_HostMsg.cpp:1610-1625`).
+                EdicaoDePersonagem::PontosLivres(n) => {
+                    ctx.p.pontos_de_atributo = (ctx.p.pontos_de_atributo as i64 + n.max(0))
+                        .min(i32::MAX as i64) as i32;
+                    ctx.mudou = true;
+                    let restantes = ctx.p.pontos_de_atributo.max(0) as u32;
+                    ctx.para_mim.push(S2CGamedataSend::add_status_point(0, 0, 0, 0, restantes).data);
+                }
+                // Um `LEVEL_UP` por nível, como o laço do `LevelUp` (`player.cpp:2645-2650`):
+                // o cliente soma 1 a cada um e pede a ficha (`EC_HostPlayer.cpp:4163-4171`);
+                // EXP e vida vêm absolutas no `SELF_INFO_00` que o `com_contexto` manda.
+                EdicaoDePersonagem::Nivel(alvo) => {
+                    let subiu = progressao::subir_ate(ctx.p, alvo, ctx.dados);
+                    if subiu == 0 {
+                        erro = Some("nivel_invalido");
+                    } else {
+                        ctx.mudou = true;
+                        ctx.subiu_de_nivel = true;
+                        let pacote = S2CGamedataSend::level_up(ctx.p.role_id).data;
+                        for _ in 0..subiu {
+                            ctx.para_mim.push(pacote.clone());
+                            ctx.para_todos.push(pacote.clone());
+                        }
+                    }
+                }
+                EdicaoDePersonagem::Cultivo(v) => ctx.definir_cultivo(v.max(0) as u32),
+                // `RegroupPropPoint` (`player.cpp:14920-14940`): devolve, gasta e refaz; a ficha
+                // (`OWN_EXT_PROP`, atributos e pontos livres absolutos, `EC_HostMsg.cpp:1583-1584`)
+                // vai depois, com o equipamento reaplicado (`RefreshEquipment`).
+                EdicaoDePersonagem::Atributos(alvo) => {
+                    let base = Some(&ctx.dados.base_das_classes).filter(|b| !b.is_empty());
+                    match ctx.p.definir_atributos(alvo, ctx.sub.piso_da_restauracao(), &ctx.dados.classes, base) {
+                        Ok(true) => ctx.mudou = true,
+                        Ok(false) => erro = Some("sem_mudanca"),
+                        Err(e) => erro = Some(e),
+                    }
+                }
+            }
+            serde_json::json!({
+                "erro": erro,
+                "dinheiro": ctx.p.money.to_string(), "dinheiro_antes": antes.0.to_string(),
+                "nivel": ctx.p.level, "nivel_antes": antes.1,
+                "exp": ctx.p.exp.to_string(), "sp": ctx.p.sp.to_string(),
+                "pontos_livres": ctx.p.pontos_de_atributo, "cultivo": ctx.p.cultivation,
+                "forca": ctx.p.strength, "agilidade": ctx.p.agility,
+                "vitalidade": ctx.p.vitality, "energia": ctx.p.energy,
+            })
+        })
+        .await?;
+        if matches!(edicao, EdicaoDePersonagem::Atributos(_)) && resultado["erro"].is_null() {
+            self.recalcular_equipamento(roleid, true).await;
+        }
+        Some(resultado)
+    }
+
+    /// Piso dos atributos da versão (`WorldProtocol::piso_da_restauracao`).
+    pub(crate) fn piso_da_restauracao(&self) -> (i32, i32, i32, i32) {
+        self.sub.piso_da_restauracao()
+    }
+
+    /// `player_template::GetMaxLevel` deste realm (limite do nível direto pelo painel).
+    pub(crate) async fn nivel_maximo(&self) -> i32 {
+        progressao::nivel_maximo(&self.world.read().await.data_manager)
+    }
+
     /// Roda `f` sobre o jogador com as bolsas carregadas, manda os comandos e grava.
     ///
     /// `None` quando o jogador não está neste mundo.
@@ -2430,6 +2529,7 @@ impl BusServer {
         };
 
         let dados_do_abate = self.world.read().await.data_manager.clone();
+        let taxas = self.taxas();
         for parte in partes {
             let (quem, exp, sp, equipe) = match parte {
                 progressao::ParteDoAbate::Sozinho { id, exp, sp } => (id as i32, exp, sp, None),
@@ -2437,6 +2537,8 @@ impl BusServer {
                     (id as i32, exp, sp, Some((monstro, nivel, sorteio)))
                 }
             };
+            // Rates de EXP/SP do realm: no abate, como o fator de `IncExp` (`taxas.rs`).
+            let (exp, sp) = taxas.aplicar_exp(exp, sp);
             self.com_contexto(quem, |ctx| {
                 if exp + sp > 0 {
                     ctx.ganhar_exp(exp, sp);
@@ -2474,7 +2576,7 @@ impl BusServer {
         let (Some(modelo), Some(nivel_do_dono)) = (modelo, nivel_do_dono) else {
             return;
         };
-        let queda = economia::gerar_queda(&modelo, nivel_do_dono, &dados, &mut rand::thread_rng());
+        let queda = economia::gerar_queda(&modelo, nivel_do_dono, &dados, &self.taxas(), &mut rand::thread_rng());
         let mut criados = Vec::new();
         {
             let mut mundo = self.world.write().await;

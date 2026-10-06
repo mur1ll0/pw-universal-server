@@ -662,6 +662,88 @@ sessão de golpe contra jogador (o golpe normal não mira jogador), marca no gol
 | restauração de atributos (serviço 33, B152) | `testado` nas duas versões | `resetprop_executor/provider` (`serviceprovider.cpp:3527-3690`; `gs` 1.2.6 VA 0x810fc0a/0x810fdde, serviço 33 em VA 0x8105491): pedido `{u32 index, i32 item_id}` (8 B); item 0 ou fora da bolsa, recusa calada; `index` fora da lista do NPC (`NPC_RESETPROP_SERVICE`, filtrada como `npcgenerator.cpp:750-780`), 14; item diferente do da opção ou ausente, 5. `RegroupPropPoint` → `__Rollback` (`player.cpp:14920`, `playertemplate.cpp:618-642`): tira até o delta de cada atributo sem descer do piso — **1.5.5: 5 nos quatro; 1.2.6: força/agilidade 5, vitalidade/energia 3** (`gs` 1.2.6 VA 0x80e7684, antes da correção de 2013; `WorldProtocol::piso_da_restauracao`) — e devolve aos pontos livres; nada a tirar, 82 e o item fica. Com sucesso, `OWN_EXT_PROP`, um item a menos e `HOST_USE_ITEM` (91) |
 | produção (serviço 12, B145) | `testado` nas duas versões | `produce_executor` + `produce_provider::TryServe` (`serviceprovider.cpp:1451-1624`): pedido `{skill, id, count}` (12 B); receita existente, não de melhoria, da habilidade pedida e com o nível `require_level`; sem a taxa, 16; habilidade/receita fora do `NPC_MAKE_SERVICE` do NPC, 20. `session_produce` (`actsession.cpp:657-700`): `PRODUCE_START(use_time, count, receita)` (8 B), um item a cada `use_time` tiques, `PRODUCE_END`; `CANCEL_ACTION` encerra. `ProduceItem` (`player.cpp:16404-16641`): taxa, slot livre (7), `RandUniform() > null_prob` → alvo pela probabilidade, materiais (25); saindo item, exp/SP com a punição do nível 150 e proficiência +2 (habilidade abaixo do nível da receita) ou +1 (igual) até o `GetMaxAbility` do stub (10…200 nas 158–161/1402; `SKILL_ABILITY` 187), `SPEND_MONEY`, materiais com `PLAYER_DROP_ITEM` tipo 7, item gerado e `PRODUCE_ONCE` (14 B no 1.5.5, **10 B no 1.2.6**); sem item, `PRODUCE_NULL` (210). Aprender o próximo nível de uma habilidade de produção exige a proficiência cheia (`SkillWrapper::Learn`, `skillwrapper.cpp:84-89`). A proficiência fica em `character_skills.ability` e no `SKILL_DATA`. `falta`: as produções 2–5 (síntese com materiais escolhidos, melhoria, herança — `produce2..5_executor`), a decomposição (13), o nome do fabricante no item (`IMT_PRODUCE`) e a lista `ADDON_LIST_PRODUCE` (o item sai com a geração de drop) |
 
+## 7.9 Rates do realm (`taxas.rs`) — `testado` (B176, falta ver em jogo)
+
+Fonte: `realms.double_{exp,sp,drop,gold}_multiplier` (`NUMERIC(3,1)`, 0,1–99,9), lidas pelo
+roteador na partida (`RoteadorDeMapas::carregar_taxas`, valor inválido → 1× com aviso) e
+trocadas na hora pelo canal administrativo (`definir_taxas`, grava e aplica, arredonda a
+uma casa). Original: `world_param` (`worldmanager.h:95`).
+- **EXP / SP:** só no abate (incluindo a parte de equipe), antes de `ganhar_exp` e do
+  `RECEIVE_EXP`, como o fator de `IncExp` (`player.cpp:2906-2922`); truncado
+  (`player.cpp:2835-2836`). EXP de missão (`ReceiveTaskExp`) não passa. Fatores
+  **independentes** (o original acopla SP ao fator de EXP) — decisão do Murillo.
+- **Drop:** o bloco de itens inteiro repete `sorteios(drop)` vezes, cada um com o seu teste
+  de `drop_adj` (`item_more_times`, `npc.cpp:2663-2685`).
+- **Moedas:** rodadas de dinheiro × `sorteios(moedas)` (`money_more_times`, `npc.cpp:2691-2696`).
+- **Fração:** `sorteios(f)` = parte inteira + 1 com a chance da fração (1,5 = 1 garantido + 50%
+  de outro) — o original só tem ×2; regra decidida pelo Murillo.
+
+## 7.10 Mapas ligados e desligados pelo painel (`mapas.rs`) — `testado` (B177, B183; falta ver em jogo)
+
+**Ligado = carregado e aceitando entrada.** O conjunto de mapas do `RoteadorDeMapas` muda em
+execução (B183): `std::sync::RwLock<HashMap>`, nunca segurado durante `await`.
+Estado em `realms.config` (JSONB): `mapas_desligados` e `mapas_ligados` (os ligados pelo
+painel além do `WORLD_TAGS`), trocados numa só instrução (`definir_estado_do_mapa`, preserva
+as outras chaves). **Partida:** carrega `(WORLD_TAGS ∪ mapas_ligados com dados) −
+mapas_desligados`; o primeiro do `WORLD_TAGS` segue padrão mesmo descarregado.
+**Ligar** (`definir_mapa`): carregado → só libera a entrada; não carregado → grava, marca
+`carregando` e monta numa tarefa (`WorldInstance::new` + `init_spawns` em `spawn_blocking`,
+fora da guarda de presença; só a inserção pega a guarda em escrita); a resposta volta na hora
+com `carregando: true` e o resumo (`mundos`) lista o mapa com `carregando` até subir. Só monta
+mapa com dados no `GameDataManager` (`pastas_de_mapa`: `world`, `aNN`, `bNN`); senão
+`mapa_sem_dados`. Mapa que o processo não carrega só é aceito com `carregar: true` — o painel
+manda isso só ao primeiro processo do realm quando todos responderam `mapa_nao_servido`.
+**Desligar:** grava, guarda de presença em escrita, cada personagem sai por
+`expulsar_pelo_painel` (logout salvo, `PlayerLogout` result 2 → login), e o mapa é
+descarregado (`BusServer::descarregar`: aborta o tique e fecha o canal de eventos, que é o que
+segurava o laço de eventos vivo). Se alguém não saiu (saída pendente), o mapa fica carregado e
+bloqueado. Desligado durante a carga: o mapa montado é descartado. Enquanto desligado,
+`EnterWorld` para ele (ou para o padrão descarregado) é recusado com o mesmo `PlayerLogout`
+(o link registra a sessão antes do `EnterWorld`, `pw-link/src/gateway.rs:858-859`) e a troca
+de mapa para ele é recusada. Personagem gravado num mapa desligado não vai ao padrão: é
+recusado. `mundos` traz também `carregaveis` (mapas com dados).
+Limitações: instâncias do `gs.conf` que dividem pasta (`is73–75` em `a72`, `is81–83` em `a80`)
+e `m01`/`random03`/`random04` não têm dados no carregador — aparecem "sem dados"; cada mapa é
+um mundo único compartilhado (o original cria cópias por entrada em `instance_servers`).
+
+## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184; falta ver em jogo)
+
+`RoteadorDeMapas::editar_personagem`, com a guarda de presença em leitura (a entrada pega em
+escrita) e a trava de gravação do personagem. Só dar (B180: tirar arriscaria valor
+negativo). **Online:** o mapa dono aplica pelo mesmo caminho da recompensa de missão
+(`Jogador::dar_dinheiro` → `task_deliver_money` 159, `dar_exp` → `ganhar_exp` + `task_deliver_exp` 158, que já
+sobe de nível) e o `com_contexto` grava. **Offline:** só dinheiro, soma atômica no banco
+(`CharacterRepository::ajustar_dinheiro_offline`, nunca negativa, teto 2 000 000 000); EXP/SP
+exigem o personagem em jogo (subir de nível depende da entidade). Saída pendente = em
+transição (repetir). ID da operação deduplicado em `comandos_administrativos` (reserva antes,
+resultado depois; reserva sem resultado = desconhecido). Limitação: um GS por realm (o
+deploy atual); com vários, o offline precisaria confirmar ausência em todos.
+
+**B182 — pontos, nível e cultivo** (um tipo por operação; online grava pelo `com_contexto`,
+offline com `UPDATE` atômico no banco):
+
+| edição | online (o que o cliente recebe) | offline | limite |
+| :--- | :--- | :--- | :--- |
+| pontos livres (dar) | `ADD_STATUS_POINT` (51) com os 4 em zero e `remain` novo: o cliente troca os pontos livres e pede a ficha (`EC_HostMsg.cpp:1610-1625`) | `potential_points += n` | 1–10 000 por operação (política do painel) |
+| nível (só sobe) | `progressao::subir_ate`: o passo do `LevelUp` sem gastar EXP (`player.cpp:2645-2660`) — +5 pontos por nível, atributos refeitos, vida/mana cheias, EXP zera no teto; um `LEVEL_UP` (37) por nível a si e a quem vê (o cliente soma 1 a cada, `EC_HostPlayer.cpp:4163-4171`); `SELF_INFO_00` e `OWN_EXT_PROP` acertam o resto | nível, +5 pontos por nível, EXP zera no teto; vida/mana como estão | > nível atual, ≤ `GetMaxLevel` do realm; descer não existe no original fora do renascimento (`player_reincarnation.cpp:119-125`) |
+| cultivo | `SetSecLevel` → `TASK_DELIVER_LEVEL2` (160) difundido a quem vê, ele incluído (`player.cpp:4865-4872`; antes do B182 só ia ao próprio) | `cultivation = v` | 1.5.5: 0–8, 20–22, 30–32 (`GetLevel2Name`, `EC_GameRun.cpp:3483-3493`); 1.2.6: 0–8 (o `gs` 1.2.6 não tem `GodEvilConvert`) |
+
+**B184 — atributos já distribuídos.** `atributos: [força, agilidade, vitalidade, energia]`
+(modificar) ou `redistribuir: true` (todos ao piso). O total (atributos + pontos livres) é
+conservado: `PlayerEntity::definir_atributos` = `restaurar_atributos` (o `RegroupPropPoint`,
+`player.cpp:14920-14940`: tira até o piso e devolve ao livre) + `distribuir_pontos` (o
+`SetStatusPoint`). Piso por versão (`piso_da_restauracao`: 1.5.5 5 nos quatro,
+`playertemplate.cpp:618-641`; 1.2.6 3 em vitalidade e energia); atributo já abaixo do piso
+não desce. Para subir além do total, dar pontos livres antes. Online: recalcula, reaplica o
+equipamento (`recalcular_equipamento`, o `RefreshEquipment`) e manda `OWN_EXT_PROP` (50), que
+grava atributos e pontos livres absolutos no cliente (`EC_HostMsg.cpp:1583-1584`). Offline:
+um `UPDATE` com as mesmas condições (`definir_atributos_offline`). Falhas:
+`atributos_invalidos`, `sem_mudanca`, `atributos_invalidos_ou_personagem_inexistente`.
+
+Falhas novas: `nivel_invalido` (com `nivel_maximo`), `nivel_invalido_ou_personagem_inexistente`
+(offline), `cultivo_invalido`. A impressão de deduplicação só inclui `pontos`/`nivel`/`cultivo`
+quando presentes (operação B179 pendente continua com a mesma impressão).
+
 ## 8. Itens e economia
 
 **Cobertura de versão (B93):** o cenário geral de `subcomandos_no_mundo.rs` é

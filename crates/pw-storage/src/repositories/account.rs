@@ -30,6 +30,10 @@ pub struct AccountRepository {
 }
 
 impl AccountRepository {
+    /// Rates e configuração dos realms (E7), no mesmo pool.
+    pub fn realms(&self) -> super::RealmRepository {
+        super::RealmRepository::new(self.pool.clone())
+    }
     pub fn coordenacao_gm(&self) -> super::CoordenacaoGmRepository {
         super::CoordenacaoGmRepository::new(self.pool.clone())
     }

@@ -607,6 +607,12 @@ impl WorldInstance {
         self.eventos = Some(envio);
     }
 
+    /// Fecha a saída de eventos: o laço que os entrega (`ligar_eventos_do_mundo`) termina e
+    /// solta o `BusServer` — sem isso um mapa descarregado nunca sairia da memória.
+    pub fn fechar_canal_de_eventos(&mut self) {
+        self.eventos = None;
+    }
+
     /// Publica um evento, se houver quem escute.
     ///
     /// Nunca bloqueia o tick: a fila cheia significa que a ponta de rede não está dando

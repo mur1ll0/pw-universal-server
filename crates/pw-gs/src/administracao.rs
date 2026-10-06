@@ -35,7 +35,46 @@ pub enum Consulta {
     TrocarSenha { conta_id: i32, senha: String },
     CriarConta { usuario: String, senha: String },
     DefinirGm { conta_id: i32, habilitado: bool },
+    /// Gold em unidades do cash (100 = 1 gold na Loja Gold). Só positivo: o painel dá,
+    /// não tira (decisão do Murillo, B180 — tirar arrisca saldo negativo).
+    AjustarGold { conta_id: i32, delta: i64 },
+    DefinirBan { conta_id: i32, banida: bool, #[serde(default)] motivo: Option<String> },
+    Desconectar { conta_id: i32 },
+    AtualizarCash { conta_id: i32 },
+    /// Rates do realm (E7): grava em `realms` e passa a valer na hora neste processo.
+    DefinirTaxas { exp: f64, sp: f64, drop: f64, moedas: f64 },
+    /// Liga/desliga um mapa deste realm (E7). Só o processo que serve o mapa aplica; com
+    /// `carregar`, este processo também aceita um mapa que não carrega (B183: ligar monta).
+    DefinirMapa { mapa: i32, ligado: bool, #[serde(default)] carregar: bool },
+    /// Edição de personagem (E5): um só de `dinheiro` (dar), `exp`/`sp` (somar, só online),
+    /// `pontos` (dar pontos livres), `nivel` (alvo, só sobe) ou `cultivo` (B182).
+    EditarPersonagem {
+        personagem_id: i32,
+        #[serde(default)] dinheiro: Option<i64>,
+        #[serde(default)] exp: Option<i64>,
+        #[serde(default)] sp: Option<i64>,
+        #[serde(default)] pontos: Option<i64>,
+        #[serde(default)] nivel: Option<i64>,
+        #[serde(default)] cultivo: Option<i64>,
+        /// Força, agilidade, vitalidade e energia novas (B184).
+        #[serde(default)] atributos: Option<Vec<i64>>,
+        /// `true`: devolve todos os atributos aos pontos livres (B184).
+        #[serde(default)] redistribuir: Option<bool>,
+    },
 }
+
+/// Teto de uma edição de dinheiro/EXP pelo painel: cabe no `u32`/`i32` dos pacotes
+/// (`task_deliver_money`, `task_deliver_exp`) e no teto de dinheiro do mundo.
+const TETO_DA_EDICAO: i64 = 2_000_000_000;
+/// Teto de pontos livres por operação: política do painel, não regra do jogo (B182).
+const TETO_DE_PONTOS_POR_EDICAO: i64 = 10_000;
+/// Teto de um atributo pelo painel: política, não regra do jogo (B184).
+const TETO_DE_ATRIBUTO: i64 = 100_000;
+
+/// Teto de um ajuste de gold: o `PLAYER_CASH` leva `i32` (`bus_server.rs::saldo`).
+const TETO_DO_AJUSTE_DE_GOLD: i64 = i32::MAX as i64;
+/// Motivo do banimento: texto curto para `accounts.ban_reason`.
+const TETO_DO_MOTIVO: usize = 120;
 
 #[derive(Debug, Serialize)]
 pub struct FichaViva {
@@ -196,6 +235,121 @@ impl ServidorAdministrativo {
                         tracing::info!(operacao=%pedido.operacao_id,conta=conta_id,
                             estado=%resultado["estado"],"admin: definir_gm global");
                         resultado
+                    }
+                    Consulta::AjustarGold { conta_id, delta }
+                        if conta_id > 0 && delta > 0 && delta <= TETO_DO_AJUSTE_DE_GOLD =>
+                    {
+                        let impressao = Sha256::digest(serde_json::to_vec(&json!({
+                            "tipo":"ajustar_gold","conta_id":conta_id,"delta":delta,
+                            "administrador_id":pedido.administrador_id
+                        }))?);
+                        let resultado = self.contas.comandos_administrativos()
+                            .ajustar_gold(&pedido.operacao_id, pedido.administrador_id, &self.realm,
+                                conta_id, delta, &impressao).await?;
+                        tracing::info!(operacao=%pedido.operacao_id, conta=conta_id, delta,
+                            estado=%resultado["estado"], "admin: ajustar_gold global");
+                        resultado
+                    }
+                    Consulta::DefinirBan { conta_id, banida, motivo }
+                        if conta_id > 0 && motivo.as_ref().is_none_or(|m| {
+                            m.chars().count() <= TETO_DO_MOTIVO && !m.chars().any(char::is_control)
+                        }) =>
+                    {
+                        let impressao = Sha256::digest(serde_json::to_vec(&json!({
+                            "tipo":"definir_ban","conta_id":conta_id,"banida":banida,"motivo":motivo,
+                            "administrador_id":pedido.administrador_id
+                        }))?);
+                        let resultado = self.contas.comandos_administrativos()
+                            .definir_ban(&pedido.operacao_id, pedido.administrador_id, &self.realm,
+                                conta_id, banida, motivo.as_deref(), &impressao).await?;
+                        tracing::info!(operacao=%pedido.operacao_id, conta=conta_id, banida,
+                            estado=%resultado["estado"], "admin: definir_ban global");
+                        resultado
+                    }
+                    Consulta::Desconectar { conta_id } if conta_id > 0 => {
+                        let resultado = self.roteador.desconectar_conta(conta_id).await;
+                        tracing::info!(conta=conta_id, desconectados=%resultado["desconectados"],
+                            "admin: desconectar conta");
+                        resultado
+                    }
+                    Consulta::AtualizarCash { conta_id } if conta_id > 0 => {
+                        self.roteador.atualizar_cash_da_conta(conta_id).await
+                    }
+                    Consulta::DefinirTaxas { exp, sp, drop, moedas } => {
+                        let taxas = crate::taxas::Taxas { exp, sp, drop, moedas }.arredondadas();
+                        if !taxas.validas() {
+                            json!({"codigo":"taxas_invalidas"})
+                        } else {
+                            self.contas.realms()
+                                .update_multipliers(&self.realm, taxas.exp as f32, taxas.sp as f32, taxas.drop as f32, taxas.moedas as f32)
+                                .await?;
+                            self.roteador.definir_taxas(taxas);
+                            tracing::info!(?taxas, administrador = pedido.administrador_id,
+                                "admin: rates do realm {} trocadas", self.realm);
+                            json!({"estado":"aplicado","tipo":"definir_taxas","taxas":taxas})
+                        }
+                    }
+                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir } if personagem_id > 0 => {
+                        use crate::bus_server::EdicaoDePersonagem as E;
+                        let dentro = |v: i64| v.abs() <= TETO_DA_EDICAO;
+                        let tipos = [dinheiro.is_some(), exp.or(sp).is_some(), pontos.is_some(), nivel.is_some(), cultivo.is_some(),
+                            atributos.is_some(), redistribuir.is_some()]
+                            .iter().filter(|t| **t).count();
+                        // Atributos: quatro valores entre 0 e o teto da política (B184).
+                        let quatro = atributos.as_deref().and_then(|v| {
+                            (v.len() == 4 && v.iter().all(|x| (0..=TETO_DE_ATRIBUTO).contains(x)))
+                                .then(|| [v[0] as i32, v[1] as i32, v[2] as i32, v[3] as i32])
+                        });
+                        let edicao = if tipos != 1 { None }
+                            else if atributos.is_some() { quatro.map(|q| E::Atributos(Some(q))) }
+                            else if redistribuir.is_some() { (redistribuir == Some(true)).then_some(E::Atributos(None)) }
+                            else { match (dinheiro, exp, sp, pontos, nivel, cultivo) {
+                            // Só dar (B180): dinheiro negativo é edição inválida.
+                            (Some(d), ..) if d > 0 && dentro(d) => Some(E::Dinheiro(d)),
+                            (None, e, s, None, None, None) if e.or(s).is_some() => {
+                                let (e, s) = (e.unwrap_or(0), s.unwrap_or(0));
+                                (e >= 0 && s >= 0 && e + s > 0 && dentro(e) && dentro(s)).then_some(E::Experiencia { exp: e, sp: s })
+                            }
+                            (.., Some(p), None, None) if (1..=TETO_DE_PONTOS_POR_EDICAO).contains(&p) => Some(E::PontosLivres(p)),
+                            // Teto de nível e cultivo da versão: o roteador confere (dependem do realm).
+                            (.., Some(n), None) if (2..=i32::MAX as i64).contains(&n) => Some(E::Nivel(n as i32)),
+                            (.., Some(c)) if (0..=255).contains(&c) => Some(E::Cultivo(c as i32)),
+                            _ => None,
+                        }};
+                        match edicao {
+                            None => json!({"codigo":"edicao_invalida"}),
+                            Some(edicao) => {
+                                let mut parametros = json!({
+                                    "tipo":"editar_personagem","personagem_id":personagem_id,
+                                    "dinheiro":dinheiro,"exp":exp,"sp":sp,
+                                    "administrador_id":pedido.administrador_id
+                                });
+                                // Chaves do B182 só quando presentes: a impressão de uma
+                                // operação B179 pendente continua a mesma.
+                                for (chave, v) in [("pontos", pontos), ("nivel", nivel), ("cultivo", cultivo)] {
+                                    if let Some(v) = v { parametros[chave] = json!(v); }
+                                }
+                                if let Some(a) = &atributos { parametros["atributos"] = json!(a); }
+                                if let Some(r) = redistribuir { parametros["redistribuir"] = json!(r); }
+                                let impressao = Sha256::digest(serde_json::to_vec(&parametros)?);
+                                let repo = self.contas.comandos_administrativos();
+                                match repo.reservar_operacao_de_personagem(&pedido.operacao_id, pedido.administrador_id, &self.realm, &impressao).await? {
+                                    Some(anterior) => anterior,
+                                    None => {
+                                        let mut r = self.roteador.editar_personagem(personagem_id, edicao).await;
+                                        r["tipo"] = json!("editar_personagem");
+                                        r["personagem_id"] = json!(personagem_id);
+                                        repo.gravar_resultado_de_personagem(&pedido.operacao_id, &r).await?;
+                                        tracing::info!(operacao=%pedido.operacao_id, personagem=personagem_id,
+                                            ?edicao, estado=%r["estado"], "admin: editar personagem");
+                                        r
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Consulta::DefinirMapa { mapa, ligado, carregar } => {
+                        self.roteador.definir_mapa(&self.contas.realms(), &self.realm, mapa, ligado, carregar).await
                     }
                     Consulta::Mundos => self.roteador.resumo_administrativo().await,
                     Consulta::Personagem { personagem_id } if personagem_id > 0 => {

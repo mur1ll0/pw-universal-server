@@ -848,6 +848,108 @@ impl CharacterRepository {
 
     /// Debita `valor` do cash da conta **só se houver saldo**, numa instrução só (duas
     /// compras simultâneas de personagens da mesma conta não passam do saldo). Devolve o
+    /// Dinheiro de personagem offline (E5, B179): soma atômica, nunca negativa, com o teto
+    /// do mundo (`TETO_DE_DINHEIRO` = 2 000 000 000, `bus_server/jogo.rs`). Quem chama
+    /// garante que o personagem não está no mundo (guarda de presença + trava de gravação).
+    pub async fn ajustar_dinheiro_offline(&self, role_id: RoleId, delta: i64) -> Result<Option<i64>> {
+        if delta <= 0 {
+            return Ok(None); // só dar (B180)
+        }
+        let v = sqlx::query_scalar::<_, i64>(
+            "UPDATE characters SET money = LEAST(money + $2, 2000000000) \
+             WHERE id = $1 AND NOT is_deleted AND money + $2 >= 0 RETURNING money",
+        )
+        .bind(role_id)
+        .bind(delta)
+        .fetch_optional(self.pool.get_ref())
+        .await?;
+        Ok(v)
+    }
+
+
+    /// Painel (E5, B182), offline: soma pontos de atributo livres. `None` = não existe.
+    pub async fn dar_pontos_offline(&self, role_id: RoleId, n: i64) -> Result<Option<i32>> {
+        if n <= 0 {
+            return Ok(None);
+        }
+        let v = sqlx::query_scalar::<_, i32>(
+            "UPDATE characters SET potential_points = LEAST(potential_points::bigint + $2, 2147483647)::int,              updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND NOT is_deleted RETURNING potential_points",
+        )
+        .bind(role_id)
+        .bind(n)
+        .fetch_optional(self.pool.get_ref())
+        .await?;
+        Ok(v)
+    }
+
+    /// Painel (E5, B182), offline: sobe ao nível `alvo` como o `LevelUp` sem gastar
+    /// experiência — cinco pontos livres por nível (`player.cpp:2647`) e EXP zerada no teto.
+    /// O `SET` do PostgreSQL lê a linha antiga, então `alvo - level` é o salto. Vida e mana
+    /// ficam como estão (a entrada recalcula os máximos). `Ok(None)`: não existe ou o alvo
+    /// não é maior que o nível atual.
+    pub async fn subir_nivel_offline(&self, role_id: RoleId, alvo: i32, maximo: i32) -> Result<Option<(i32, i32)>> {
+        if alvo > maximo {
+            return Ok(None);
+        }
+        let v = sqlx::query_as::<_, (i32, i32)>(
+            "UPDATE characters SET level = $2,              potential_points = LEAST(potential_points::bigint + 5 * ($2 - level), 2147483647)::int,              exp = CASE WHEN $2 >= $3 THEN 0 ELSE exp END, updated_at = CURRENT_TIMESTAMP              WHERE id = $1 AND NOT is_deleted AND level < $2 RETURNING level, potential_points",
+        )
+        .bind(role_id)
+        .bind(alvo)
+        .bind(maximo)
+        .fetch_optional(self.pool.get_ref())
+        .await?;
+        Ok(v)
+    }
+
+    /// Painel (E5, B184), offline: atributos novos com o total (atributos + livres) conservado,
+    /// como `PlayerEntity::definir_atributos`. `alvo` `None` = redistribuir (cada um ao menor
+    /// entre o piso e o atual). Cada um ≥ menor(piso, atual) e a soma ≤ o total; o `SET` lê a
+    /// linha antiga. `Ok(None)`: não existe ou valores inválidos. Devolve força, agilidade,
+    /// vitalidade, energia e pontos livres.
+    pub async fn definir_atributos_offline(&self, role_id: RoleId, alvo: Option<[i32; 4]>,
+        piso: (i32, i32, i32, i32)) -> Result<Option<[i32; 5]>> {
+        let v = sqlx::query_as::<_, (i32, i32, i32, i32, i32)>(
+            "WITH n AS (SELECT id, \
+                coalesce($2, LEAST($6, strength)) f, coalesce($3, LEAST($7, agility)) a, \
+                coalesce($4, LEAST($8, vitality)) v, coalesce($5, LEAST($9, energy)) e, \
+                strength::bigint + agility + vitality + energy + GREATEST(potential_points, 0) total \
+              FROM characters WHERE id = $1 AND NOT is_deleted \
+                AND coalesce($2, $6, 0) >= LEAST($6, strength) AND coalesce($3, $7, 0) >= LEAST($7, agility) \
+                AND coalesce($4, $8, 0) >= LEAST($8, vitality) AND coalesce($5, $9, 0) >= LEAST($9, energy) \
+              FOR UPDATE) \
+             UPDATE characters c SET strength = n.f, agility = n.a, vitality = n.v, energy = n.e, \
+                potential_points = (n.total - n.f - n.a - n.v - n.e)::int, updated_at = CURRENT_TIMESTAMP \
+             FROM n WHERE c.id = n.id AND n.f::bigint + n.a + n.v + n.e <= n.total \
+             RETURNING c.strength, c.agility, c.vitality, c.energy, c.potential_points",
+        )
+        .bind(role_id)
+        .bind(alvo.map(|a| a[0]))
+        .bind(alvo.map(|a| a[1]))
+        .bind(alvo.map(|a| a[2]))
+        .bind(alvo.map(|a| a[3]))
+        .bind(piso.0)
+        .bind(piso.1)
+        .bind(piso.2)
+        .bind(piso.3)
+        .fetch_optional(self.pool.get_ref())
+        .await?;
+        Ok(v.map(|(f, a, vi, e, p)| [f, a, vi, e, p]))
+    }
+
+    /// Painel (E5, B182), offline: grava o cultivo (`level2`), já validado pela versão.
+    pub async fn definir_cultivo_offline(&self, role_id: RoleId, cultivo: i32) -> Result<bool> {
+        let r = sqlx::query(
+            "UPDATE characters SET cultivation = $2, updated_at = CURRENT_TIMESTAMP              WHERE id = $1 AND NOT is_deleted",
+        )
+        .bind(role_id)
+        .bind(cultivo)
+        .execute(self.pool.get_ref())
+        .await?;
+        Ok(r.rows_affected() == 1)
+    }
+
+
     /// saldo novo, ou `None` sem saldo.
     pub async fn gastar_cash_da_conta(&self, role_id: RoleId, valor: i64) -> Result<Option<i64>> {
         let v = sqlx::query_scalar::<_, i64>(

@@ -536,3 +536,56 @@ async fn gm_consultas_concorrentes_devolvem_o_mesmo_vencedor_duravel() {
     sqlx::query("DELETE FROM coordenacao_gm_processos WHERE processo=$1").bind(&processos[0]).execute(pool.get_ref()).await.unwrap();
     limpar(&pool,admin,alvo).await;
 }
+
+/// E4 (B175): gold da conta — soma atômica, nunca negativo, repetição devolve o mesmo
+/// resultado sem somar de novo, parâmetro diferente com o mesmo ID é conflito.
+#[tokio::test]
+async fn gold_soma_atomica_repeticao_idempotente_e_saldo_nunca_negativo() {
+    let (_serie, pool, admin, alvo, id) = montar().await;
+    let repo = AccountRepository::new(pool.clone()).comandos_administrativos();
+    let saldo = |pool: PostgresPool| async move {
+        sqlx::query_scalar::<_, i64>("SELECT gold_balance FROM accounts WHERE id=$1")
+            .bind(alvo).fetch_one(pool.get_ref()).await.unwrap()
+    };
+    let antes = saldo(pool.clone()).await;
+    let r = repo.ajustar_gold(&id, admin, "realm_126", alvo, 1500, &[7; 32]).await.unwrap();
+    assert_eq!(r["estado"], "salvo");
+    assert_eq!(r["saldo"], (antes + 1500).to_string());
+    // Mesmo ID e parâmetros: devolve o resultado gravado, não soma outra vez.
+    let repetido = repo.ajustar_gold(&id, admin, "realm_155", alvo, 1500, &[7; 32]).await.unwrap();
+    assert_eq!(repetido, r);
+    assert_eq!(saldo(pool.clone()).await, antes + 1500);
+    // Mesmo ID com outro valor: conflito, saldo intacto.
+    let conflito = repo.ajustar_gold(&id, admin, "realm_126", alvo, 9, &[8; 32]).await.unwrap();
+    assert_eq!(conflito["codigo"], "operacao_em_conflito");
+    // Só dar (B180): valor negativo ou zero é recusado, saldo intacto.
+    for (n, delta) in [(9u8, -1i64), (10, 0)] {
+        let falha = repo.ajustar_gold(&format!("{id}-neg{n}"), admin, "realm_126", alvo, delta, &[n; 32]).await.unwrap();
+        assert_eq!(falha["codigo"], "valor_invalido");
+    }
+    assert_eq!(saldo(pool.clone()).await, antes + 1500);
+    limpar(&pool, admin, alvo).await;
+}
+
+/// E4 (B175): banimento global — o administrador não se bane; ban grava motivo,
+/// desban limpa; conta inexistente é falha.
+#[tokio::test]
+async fn ban_e_desban_globais_sem_autobanimento() {
+    let (_serie, pool, admin, alvo, id) = montar().await;
+    let repo = AccountRepository::new(pool.clone()).comandos_administrativos();
+    let proprio = repo.definir_ban(&format!("{id}-p"), admin, "realm_126", admin, true, None, &[1; 32]).await.unwrap();
+    assert_eq!(proprio["codigo"], "proprio_administrador");
+    let ban = repo.definir_ban(&id, admin, "realm_126", alvo, true, Some("teste"), &[2; 32]).await.unwrap();
+    assert_eq!((ban["estado"].as_str(), ban["banida"].as_bool()), (Some("salvo"), Some(true)));
+    let (banida, motivo): (bool, Option<String>) = sqlx::query_as("SELECT is_banned, ban_reason FROM accounts WHERE id=$1")
+        .bind(alvo).fetch_one(pool.get_ref()).await.unwrap();
+    assert_eq!((banida, motivo.as_deref()), (true, Some("teste")));
+    let desban = repo.definir_ban(&format!("{id}-d"), admin, "realm_155", alvo, false, None, &[3; 32]).await.unwrap();
+    assert_eq!(desban["banida"], false);
+    let (banida, motivo): (bool, Option<String>) = sqlx::query_as("SELECT is_banned, ban_reason FROM accounts WHERE id=$1")
+        .bind(alvo).fetch_one(pool.get_ref()).await.unwrap();
+    assert_eq!((banida, motivo), (false, None));
+    let inexistente = repo.definir_ban(&format!("{id}-x"), admin, "realm_126", i32::MAX, true, None, &[4; 32]).await.unwrap();
+    assert_eq!(inexistente["codigo"], "conta_inexistente");
+    limpar(&pool, admin, alvo).await;
+}

@@ -1,0 +1,28 @@
+# Contexto do Dockerfile.core (B181): o build usa a raiz do repositório como contexto, e
+# sem este arquivo o Docker recebia tudo a cada build — target/ (~63 GB de compilações
+# locais) e data/ (~4,6 GB de dados de jogo) que o build não usa.
+#
+# Lista de liberação: espelha os COPY do Dockerfile.core. Um include_str! novo apontando
+# para fora desta lista quebra o build só no Docker — acrescente o arquivo aqui E no
+# Dockerfile.core.
+**
+
+!Cargo.toml
+!Cargo.lock
+!crates/
+!crates/**
+!tools/
+!tools/**
+
+!specs/elements_layouts/
+!specs/elements_layouts/**
+!specs/elements_155/realm_155_overrides.json
+!specs/elements_155/realm_155_v159_overrides.json
+!specs/mapas/
+!specs/mapas/**
+!specs/habilidades_155/habilidades.json
+!specs/habilidades_126/habilidades.json
+!specs/addons_155/addons.json
+
+# Mesmo dentro das pastas liberadas, nada de saída de compilação.
+**/target

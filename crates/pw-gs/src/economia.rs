@@ -61,9 +61,14 @@ fn sortear_indice(r: f32, probs: impl Iterator<Item = f32>) -> usize {
 }
 
 /// Gera o drop de um monstro morto por um jogador de `nivel_do_dono`.
-pub fn gerar_queda<R: Rng>(m: &TemplateDeMonstro, nivel_do_dono: i32, dados: &GameDataManager, rng: &mut R) -> Queda {
+///
+/// Rates (E7): `item_more_times` repete o bloco inteiro de itens, cada vez com o seu
+/// teste de `drop_adj` (`npc.cpp:2663-2685`); `money_more_times` multiplica as rodadas de
+/// dinheiro (`npc.cpp:2691-2696`). Fator com fração: `Taxas::sorteios`.
+pub fn gerar_queda<R: Rng>(m: &TemplateDeMonstro, nivel_do_dono: i32, dados: &GameDataManager, taxas: &crate::taxas::Taxas, rng: &mut R) -> Queda {
     let ajuste = dados.progressao.ajuste(nivel_do_dono - m.nivel);
     let mut q = Queda { itens: Vec::new(), montes_de_dinheiro: Vec::new() };
+    for _ in 0..crate::taxas::Taxas::sorteios(taxas.drop, rng) {
     if rng.gen::<f32>() <= ajuste.item {
         for rodada in 0..m.rodadas_de_drop.max(0) {
             let quantos = sortear_indice(rng.gen(), m.chance_de_quantos.iter().copied());
@@ -79,9 +84,11 @@ pub fn gerar_queda<R: Rng>(m: &TemplateDeMonstro, nivel_do_dono: i32, dados: &Ga
             }
         }
     }
+    }
     let (baixo, alto) = (m.dinheiro_medio - m.dinheiro_variacao, m.dinheiro_medio + m.dinheiro_variacao);
     if alto > 0 {
-        for _ in 0..m.rodadas_de_drop.max(0) {
+        let vezes = m.rodadas_de_drop.max(0) as u32 * crate::taxas::Taxas::sorteios(taxas.moedas, rng);
+        for _ in 0..vezes {
             let valor = if baixo >= alto { baixo } else { rng.gen_range(baixo..=alto) };
             if valor > 0 && rng.gen::<f32>() < CHANCE_DE_DINHEIRO {
                 let d = (valor as f32 * ajuste.dinheiro + 0.5) as i32;

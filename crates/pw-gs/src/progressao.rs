@@ -45,6 +45,40 @@ pub fn receber_exp(p: &mut PlayerEntity, exp: i64, sp: i64, dados: &GameDataMana
     subir_de_nivel(p, &dados.progressao, maximo, dados)
 }
 
+/// Nível direto pelo painel (E5, B182): o passo do `LevelUp` (`player.cpp:2645-2660`) sem
+/// gastar experiência — nível + 1 e cinco pontos por nível, atributos refeitos e vida e
+/// mana cheias. Só sobe (o original não tem caminho que desça nível, salvo o renascimento,
+/// `player_reincarnation.cpp:119-125`). No teto a experiência zera, como no `LevelUp`.
+/// Devolve quantos níveis subiu (0 = alvo inválido).
+pub fn subir_ate(p: &mut PlayerEntity, alvo: i32, dados: &GameDataManager) -> i32 {
+    let maximo = nivel_maximo(dados);
+    if alvo <= p.level || alvo > maximo {
+        return 0;
+    }
+    let subiu = alvo - p.level;
+    p.level = alvo;
+    p.pontos_de_atributo += PONTOS_POR_NIVEL * subiu;
+    if p.level >= maximo {
+        p.exp = 0;
+    }
+    let base = Some(&dados.base_das_classes).filter(|b| !b.is_empty());
+    p.recalcular_por_nivel(&dados.classes, base);
+    p.hp = p.max_hp;
+    p.mp = p.max_mp;
+    subiu
+}
+
+/// Cultivo (`level2`) que o cliente sabe mostrar. 1.5.5: 0–8, 20–22 (deus) e 30–32 (demônio)
+/// — fora disso `GetLevel2Name` cai no `ASSERT` (`EC_GameRun.cpp:3483-3493`). 1.2.6: só 0–8;
+/// o `gs` 1.2.6 (com símbolos) tem `gplayer_imp::SetSecLevel` mas não `GodEvilConvert`, que
+/// é quem troca 22↔32 no 1.5.5 (`player.cpp:20781-20784`).
+pub fn cultivo_valido(versao: pw_protocol::GameVersion, v: i32) -> bool {
+    match versao {
+        pw_protocol::GameVersion::V1_2_6 => (0..=8).contains(&v),
+        _ => (0..=8).contains(&v) || (20..=22).contains(&v) || (30..=32).contains(&v),
+    }
+}
+
 fn subir_de_nivel(p: &mut PlayerEntity, tabela: &TabelaDeProgressao, maximo: i32, dados: &GameDataManager) -> i32 {
     let mut subiu = 0;
     loop {

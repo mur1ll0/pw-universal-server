@@ -268,4 +268,157 @@ impl ComandoAdministrativoRepository {
         transacao.commit().await?;
         Ok(resultado)
     }
+
+    /// Reserva comum das operações de conta (E4, B175): mesma sequência do `trocar_senha`
+    /// — ID reservado, contas travadas em ordem, administrador autorizado sob o lock —
+    /// para o efeito e o resultado entrarem no MESMO commit.
+    async fn reservar_operacao_de_conta(
+        &self,
+        id: &str,
+        administrador: i32,
+        realm: &str,
+        conta: i32,
+        impressao: &[u8],
+    ) -> Result<std::result::Result<(sqlx::Transaction<'static, sqlx::Postgres>, bool), Value>> {
+        let mut tx = self.pool.get_ref().begin().await?;
+        sqlx::query("SET LOCAL lock_timeout='1500ms'").execute(&mut *tx).await?;
+        sqlx::query("SET LOCAL statement_timeout='2000ms'").execute(&mut *tx).await?;
+        let inserido = sqlx::query(
+            "INSERT INTO comandos_administrativos(operacao_id,administrador_id,realm_origem,conta_id,impressao,resultado)              VALUES($1,$2,$3,$4,$5,'{}') ON CONFLICT DO NOTHING",
+        ).bind(id).bind(administrador).bind(realm).bind(conta).bind(impressao)
+         .execute(&mut *tx).await?.rows_affected() == 1;
+        let contas: Vec<(i32, i32, bool)> = sqlx::query_as(
+            "SELECT id,gm_privileges,is_banned FROM accounts WHERE id IN ($1,$2) ORDER BY id FOR UPDATE",
+        ).bind(administrador).bind(conta).fetch_all(&mut *tx).await?;
+        if !contas.iter().any(|(id, gm, ban)| *id == administrador && *gm > 0 && !ban) {
+            tx.rollback().await?;
+            return Ok(Err(json!({"estado":"falha", "codigo":"administrador_recusado"})));
+        }
+        if !inserido {
+            let (dono, alvo_anterior, anterior, resultado): (i32, Option<i32>, Vec<u8>, Value) = sqlx::query_as(
+                "SELECT administrador_id,conta_id,impressao,resultado FROM comandos_administrativos WHERE operacao_id=$1",
+            ).bind(id).fetch_one(&mut *tx).await?;
+            tx.rollback().await?;
+            return Ok(Err(
+                if dono == administrador && alvo_anterior == Some(conta) && anterior == impressao {
+                    resultado
+                } else {
+                    json!({"estado":"falha", "codigo":"operacao_em_conflito"})
+                },
+            ));
+        }
+        let existe = contas.iter().any(|(id, _, _)| *id == conta);
+        Ok(Ok((tx, existe)))
+    }
+
+    async fn concluir_operacao_de_conta(
+        mut tx: sqlx::Transaction<'static, sqlx::Postgres>,
+        id: &str,
+        resultado: Value,
+    ) -> Result<Value> {
+        sqlx::query("UPDATE comandos_administrativos SET resultado=$2 WHERE operacao_id=$1")
+            .bind(id).bind(&resultado).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(resultado)
+    }
+
+    /// Gold da conta (`accounts.gold_balance`, o cash da Loja Gold que o GS lê a cada
+    /// `QUERY_CASH_INFO`, `bus_server.rs::saldo`). Soma atômica que nunca deixa o saldo
+    /// negativo, a mesma forma do débito da loja (`character.rs::gastar_cash_da_conta`).
+    pub async fn ajustar_gold(
+        &self,
+        id: &str,
+        administrador: i32,
+        realm: &str,
+        conta: i32,
+        delta: i64,
+        impressao: &[u8],
+    ) -> Result<Value> {
+        let (mut tx, existe) = match self.reservar_operacao_de_conta(id, administrador, realm, conta, impressao).await? {
+            Ok(reserva) => reserva,
+            Err(pronto) => return Ok(pronto),
+        };
+        let resultado = if delta <= 0 {
+            // Só dar (B180); o canal já recusa, isto é a última barreira.
+            json!({"estado":"falha", "codigo":"valor_invalido", "conta_id":conta})
+        } else if !existe {
+            json!({"estado":"falha", "codigo":"conta_inexistente", "conta_id":conta})
+        } else {
+            let saldo: Option<i64> = sqlx::query_scalar(
+                "UPDATE accounts SET gold_balance=gold_balance+$2 WHERE id=$1 AND gold_balance+$2 >= 0 RETURNING gold_balance",
+            ).bind(conta).bind(delta).fetch_optional(&mut *tx).await?;
+            match saldo {
+                Some(saldo) => json!({"estado":"salvo", "tipo":"ajustar_gold", "conta_id":conta,
+                    "delta":delta, "saldo":saldo.to_string(), "alcance":"global"}),
+                None => json!({"estado":"falha", "codigo":"saldo_insuficiente", "conta_id":conta}),
+            }
+        };
+        Self::concluir_operacao_de_conta(tx, id, resultado).await
+    }
+
+    /// Banimento global, permanente até o desban (o link recusa conta banida no login,
+    /// `pw-link/src/gateway.rs`; não há expiração lida pelo link, então o painel não a oferece).
+    pub async fn definir_ban(
+        &self,
+        id: &str,
+        administrador: i32,
+        realm: &str,
+        conta: i32,
+        banida: bool,
+        motivo: Option<&str>,
+        impressao: &[u8],
+    ) -> Result<Value> {
+        if conta == administrador && banida {
+            return Ok(json!({"estado":"falha", "codigo":"proprio_administrador"}));
+        }
+        let (mut tx, existe) = match self.reservar_operacao_de_conta(id, administrador, realm, conta, impressao).await? {
+            Ok(reserva) => reserva,
+            Err(pronto) => return Ok(pronto),
+        };
+        let resultado = if !existe {
+            json!({"estado":"falha", "codigo":"conta_inexistente", "conta_id":conta})
+        } else {
+            sqlx::query("UPDATE accounts SET is_banned=$2, ban_reason=$3, ban_expires_at=NULL WHERE id=$1")
+                .bind(conta).bind(banida).bind(if banida { motivo } else { None })
+                .execute(&mut *tx).await?;
+            json!({"estado":"salvo", "tipo":"definir_ban", "conta_id":conta, "banida":banida,
+                "alcance":"global"})
+        };
+        Self::concluir_operacao_de_conta(tx, id, resultado).await
+    }
+
+    /// Reserva o ID de uma operação de personagem (E5, B179) sem travar conta: o efeito
+    /// online acontece na memória do GS, fora desta transação. Devolve o resultado já
+    /// gravado quando o ID existe (repetição) ou conflito se os parâmetros mudaram.
+    /// Reserva sem resultado (`{}`) = efeito em andamento ou perdido: desconhecido.
+    pub async fn reservar_operacao_de_personagem(
+        &self,
+        id: &str,
+        administrador: i32,
+        realm: &str,
+        impressao: &[u8],
+    ) -> Result<Option<Value>> {
+        let inserido = sqlx::query(
+            "INSERT INTO comandos_administrativos(operacao_id,administrador_id,realm_origem,conta_id,impressao,resultado) \
+             VALUES($1,$2,$3,NULL,$4,'{}') ON CONFLICT DO NOTHING",
+        ).bind(id).bind(administrador).bind(realm).bind(impressao)
+         .execute(self.pool.get_ref()).await?.rows_affected() == 1;
+        if inserido {
+            return Ok(None);
+        }
+        let (dono, anterior, resultado): (i32, Vec<u8>, Value) = sqlx::query_as(
+            "SELECT administrador_id,impressao,resultado FROM comandos_administrativos WHERE operacao_id=$1",
+        ).bind(id).fetch_one(self.pool.get_ref()).await?;
+        Ok(Some(if dono == administrador && anterior == impressao {
+            if resultado == json!({}) { json!({"estado":"desconhecido","codigo":"em_andamento"}) } else { resultado }
+        } else {
+            json!({"estado":"falha","codigo":"operacao_em_conflito"})
+        }))
+    }
+
+    pub async fn gravar_resultado_de_personagem(&self, id: &str, resultado: &Value) -> Result<()> {
+        sqlx::query("UPDATE comandos_administrativos SET resultado=$2 WHERE operacao_id=$1")
+            .bind(id).bind(resultado).execute(self.pool.get_ref()).await?;
+        Ok(())
+    }
 }

@@ -128,6 +128,13 @@ impl Cenario {
         }
         let mundo = Arc::clone(mapas[0].1.mundo());
         let roteador = Arc::new(RoteadorDeMapas::new(mapas, repo));
+        // Carga em execução (B183): 1, 161 e 105 "têm dados" (pasta inexistente: os
+        // leitores de terreno toleram a ausência e o mapa sobe vazio).
+        let mut dados = GameDataManager::new();
+        for t in [1, 161, 105] {
+            dados.pastas_de_mapa.insert(t, std::env::temp_dir().join("pw_teste_mapa_sem_pasta"));
+        }
+        roteador.permitir_carga(pw_gs::mapas::CargaDeMapas { dados: Arc::new(dados), versao });
         roteador.ligar_trocas();
         let escuta = BusListener::bind("127.0.0.1:0").await.unwrap();
         let bus = escuta.local_addr().unwrap();
@@ -492,7 +499,7 @@ async fn consulta_ve_memoria_viva_e_mapas_reais_sem_escrever_banco() {
     let resposta = c.pedir(&c.realm, json!({"tipo":"mundos"})).await;
     assert_eq!(
         resposta["dados"]["mapas"],
-        json!([{"mapa":1,"jogadores_online":1},{"mapa":161,"jogadores_online":0}])
+        json!([{"mapa":1,"jogadores_online":1,"ligado":true},{"mapa":161,"jogadores_online":0,"ligado":true}])
     );
     c.encerrar().await;
 }
@@ -778,4 +785,364 @@ async fn confirmacao_incerta_de_transferencia_nao_libera_login_nem_ressuscita_li
     let d=repo.get_details_por_role(c.personagem).await.unwrap().unwrap();
     assert_eq!((d.world_id,d.money),(161,852));
     c.encerrar().await;
+}
+
+/// Lê do link até chegar a mensagem pedida (o mundo manda muita coisa ao entrar).
+async fn esperar_do_mundo(bus: &mut pw_bus::transport::BusConnection, quer: impl Fn(&BusMessage) -> bool) -> BusMessage {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let m = bus.receber().await.unwrap().expect("o link caiu");
+            if quer(&m) { return m; }
+        }
+    }).await.expect("o mundo não mandou a mensagem esperada")
+}
+
+/// E4 (B175): desconectar pelo painel salva e tira a entidade como o logout, e o link
+/// recebe `PlayerLogout` com result 2 — o cliente volta à tela de login
+/// (`EC_GameSession.cpp:5420-5426`). Nas duas versões; conta sem ninguém online = 0.
+#[tokio::test]
+async fn desconectar_pelo_painel_salva_e_devolve_ao_login_126_e_155() {
+    for versao in [GameVersion::V1_2_6, GameVersion::V1_5_5] {
+        let c = Cenario::montar_versao(versao).await;
+        let mut bus = c.entrar().await;
+        c.esperar_presenca("online").await;
+        let r = c.pedir(&c.realm, json!({"tipo":"desconectar","conta_id":c.conta})).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["desconectados"].as_i64()), (Some("aplicado"), Some(1)), "{r}");
+        let saida = esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::PlayerLogout { .. })).await;
+        assert!(matches!(saida, BusMessage::PlayerLogout { result: 2, roleid, .. } if roleid == c.personagem), "{saida:?}");
+        c.esperar_presenca("ausente").await;
+        assert!(!c.mundo.read().await.players.contains_key(&(c.personagem as i64)));
+        let de_novo = c.pedir(&c.realm, json!({"tipo":"desconectar","conta_id":c.conta})).await;
+        assert_eq!(de_novo["dados"]["desconectados"], 0);
+        c.encerrar().await;
+    }
+}
+
+/// E4 (B175): depois de o gold mudar, o mundo reenvia o saldo a quem está online.
+#[tokio::test]
+async fn atualizar_cash_reenvia_o_saldo_a_quem_esta_online() {
+    let c = Cenario::montar().await;
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let r = c.pedir(&c.realm, json!({"tipo":"atualizar_cash","conta_id":c.conta})).await;
+    assert_eq!(r["dados"]["atualizados"], 1, "{r}");
+    // `PLAYER_CASH` (253) com um `int` (`s2c.rs::player_cash`): 2 B de comando + 4 B.
+    let cash = esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { roleid, data, .. }
+        if *roleid == c.personagem && data.len() == 6 && data[..2] == 253u16.to_le_bytes())).await;
+    let saldo: i64 = sqlx::query_scalar("SELECT gold_balance FROM accounts WHERE id=$1")
+        .bind(c.conta).fetch_one(c.pool.get_ref()).await.unwrap();
+    let BusMessage::GameToClient { data, .. } = cash else { unreachable!() };
+    assert_eq!(i32::from_le_bytes(data[2..6].try_into().unwrap()) as i64, saldo.clamp(0, i32::MAX as i64));
+    c.encerrar().await;
+}
+
+/// E7 (B176): rates do realm pelo canal — gravadas em `realms`, valendo na hora no
+/// processo (o resumo dos mundos mostra as rates em memória) e recusadas fora dos limites.
+#[tokio::test]
+async fn rates_do_realm_gravam_no_banco_e_valem_na_hora() {
+    let c = Cenario::montar().await;
+    let r = c.pedir(&c.realm, json!({"tipo":"definir_taxas","exp":2.0,"sp":1.5,"drop":1.5,"moedas":3.0})).await;
+    assert_eq!(r["estado"], "aplicado", "{r}");
+    let banco: (f32, f32, f32, f32) = sqlx::query_as("SELECT double_exp_multiplier::float4,double_sp_multiplier::float4,double_drop_multiplier::float4,double_gold_multiplier::float4 FROM realms WHERE id=$1")
+        .bind(&c.realm).fetch_one(c.pool.get_ref()).await.unwrap();
+    assert_eq!(banco, (2.0, 1.5, 1.5, 3.0));
+    assert_eq!(c.roteador.taxas(), pw_gs::taxas::Taxas { exp: 2.0, sp: 1.5, drop: 1.5, moedas: 3.0 });
+    let resumo = c.pedir(&c.realm, json!({"tipo":"mundos"})).await;
+    assert_eq!(resumo["dados"]["taxas"]["moedas"], 3.0, "{resumo}");
+    let invalida = c.pedir(&c.realm, json!({"tipo":"definir_taxas","exp":0.0,"sp":1.0,"drop":1.0,"moedas":1.0})).await;
+    assert_eq!(invalida["dados"]["codigo"], "taxas_invalidas");
+    assert_eq!(c.roteador.taxas().exp, 2.0, "valor recusado não muda o que vale");
+    // Reinício: um processo novo lê as rates do banco.
+    c.roteador.definir_taxas(pw_gs::taxas::Taxas::default());
+    c.roteador.carregar_taxas(&AccountRepository::new(c.pool.clone()).realms(), &c.realm).await;
+    assert_eq!(c.roteador.taxas().drop, 1.5);
+    c.encerrar().await;
+}
+
+/// E7 (B177, B183): desligar um mapa tira (salvando) quem está nele, recusa novas entradas
+/// com `PlayerLogout` result 2 e **descarrega** o mapa; o estado vai para
+/// `realms.config.mapas_desligados`/`mapas_ligados` sem apagar as outras chaves. Religar um
+/// mapa descarregado só com `carregar` (o painel manda a um processo só): monta em segundo
+/// plano e devolve o acesso. Mapa sem dados é recusado; a partida relê o desligado.
+#[tokio::test]
+async fn desligar_descarrega_e_ligar_carrega_o_mapa_na_hora() {
+    let c = Cenario::montar().await;
+    let mapa = c.roteador.mapas()[0];
+    sqlx::query("UPDATE realms SET config='{\"max_level\":105}'::jsonb WHERE id=$1").bind(&c.realm).execute(c.pool.get_ref()).await.unwrap();
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let config = || async {
+        sqlx::query_scalar::<_, Value>("SELECT config FROM realms WHERE id=$1").bind(&c.realm).fetch_one(c.pool.get_ref()).await.unwrap()
+    };
+    let carregados = || async {
+        let r = c.pedir(&c.realm, json!({"tipo":"mundos"})).await;
+        r["dados"]["mapas"].as_array().unwrap().iter()
+            .map(|m| (m["mapa"].as_i64().unwrap() as i32, m["carregando"].as_bool().unwrap_or(false)))
+            .collect::<Vec<_>>()
+    };
+    let esperar_carregado = |alvo: i32| async move {
+        for _ in 0..100 {
+            if carregados().await.contains(&(alvo, false)) { return; }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("o mapa {alvo} não terminou de carregar");
+    };
+
+    let r = c.pedir(&c.realm, json!({"tipo":"definir_mapa","mapa":mapa,"ligado":false})).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["desconectados"].as_i64(), r["dados"]["descarregado"].as_bool()),
+        (Some("aplicado"), Some(1), Some(true)), "{r}");
+    let saida = esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::PlayerLogout { .. })).await;
+    assert!(matches!(saida, BusMessage::PlayerLogout { result: 2, .. }), "{saida:?}");
+    c.esperar_presenca("ausente").await;
+    assert_eq!(config().await, json!({"max_level":105,"mapas_desligados":[mapa],"mapas_ligados":[]}), "outras chaves preservadas");
+    assert!(!carregados().await.iter().any(|(m, _)| *m == mapa), "descarregado");
+    assert!(!c.roteador.mapas().contains(&mapa));
+
+    // Entrada no padrão desligado: recusada na hora.
+    let mut de_novo = c.entrar().await;
+    let recusa = esperar_do_mundo(&mut de_novo, |m| matches!(m, BusMessage::PlayerLogout { .. })).await;
+    assert!(matches!(recusa, BusMessage::PlayerLogout { result: 2, .. }), "{recusa:?}");
+    drop(de_novo);
+    drop(bus);
+
+    // Descarregado, só aceita ligar com `carregar`; então monta e devolve o acesso.
+    let r = c.pedir(&c.realm, json!({"tipo":"definir_mapa","mapa":mapa,"ligado":true})).await;
+    assert_eq!(r["dados"]["codigo"], "mapa_nao_servido", "{r}");
+    let r = c.pedir(&c.realm, json!({"tipo":"definir_mapa","mapa":mapa,"ligado":true,"carregar":true})).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["carregando"].as_bool()), (Some("aplicado"), Some(true)), "{r}");
+    esperar_carregado(mapa).await;
+    assert_eq!(config().await["mapas_desligados"], json!([]));
+    assert_eq!(config().await["mapas_ligados"], json!([mapa]));
+    let _bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+
+    // Um mapa fora do `WORLD_TAGS`, com dados: carrega e descarrega sem ninguém nele.
+    let r = c.pedir(&c.realm, json!({"tipo":"definir_mapa","mapa":105,"ligado":true,"carregar":true})).await;
+    assert_eq!(r["estado"], "aplicado", "{r}");
+    esperar_carregado(105).await;
+    let r = c.pedir(&c.realm, json!({"tipo":"definir_mapa","mapa":105,"ligado":false})).await;
+    assert_eq!((r["dados"]["desconectados"].as_i64(), r["dados"]["descarregado"].as_bool()), (Some(0), Some(true)), "{r}");
+    assert!(!c.roteador.mapas().contains(&105));
+    let resumo = c.pedir(&c.realm, json!({"tipo":"mundos"})).await;
+    assert_eq!(resumo["dados"]["carregaveis"], json!([1, 105, 161]), "{resumo}");
+
+    let sem_dados = c.pedir(&c.realm, json!({"tipo":"definir_mapa","mapa":999,"ligado":true,"carregar":true})).await;
+    assert_eq!(sem_dados["dados"]["codigo"], "mapa_sem_dados");
+    let fora = c.pedir(&c.realm, json!({"tipo":"definir_mapa","mapa":999_999,"ligado":false})).await;
+    assert_eq!(fora["dados"]["codigo"], "mapa_nao_servido");
+
+    // A partida relê o desligado do banco.
+    sqlx::query("UPDATE realms SET config=jsonb_set(config,'{mapas_desligados}',to_jsonb(ARRAY[$2::int])) WHERE id=$1").bind(&c.realm).bind(161).execute(c.pool.get_ref()).await.unwrap();
+    c.roteador.carregar_mapas_desligados(&AccountRepository::new(c.pool.clone()).realms(), &c.realm).await;
+    assert!(!c.roteador.mapa_ligado(161));
+    c.encerrar().await;
+}
+
+/// E5 (B179): edição de personagem pelo painel. Online: o mapa aplica na memória, avisa o
+/// cliente pelos pacotes da recompensa de missão (159 dinheiro, 158 EXP) e grava; o mesmo
+/// ID não aplica de novo. Offline: só dinheiro, no banco; EXP exige o personagem online.
+#[tokio::test]
+async fn editar_personagem_online_e_offline_pelo_canal() {
+    let c = Cenario::montar().await;
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let antes = c.mundo.read().await.players[&(c.personagem as i64)].money;
+
+    let pedido = json!({"tipo":"editar_personagem","personagem_id":c.personagem,"dinheiro":500});
+    let r = c.pedir_com_id(&c.realm, &format!("e5-din-1-{}", c.personagem), c.conta, pedido.clone()).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("aplicado"), Some("online")), "{r}");
+    assert_eq!(r["dados"]["dinheiro"], (antes + 500).to_string());
+    esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 159u16.to_le_bytes())).await;
+    assert_eq!(c.mundo.read().await.players[&(c.personagem as i64)].money, antes + 500);
+    // Mesmo ID: devolve o resultado gravado, não dá o dinheiro de novo.
+    let repetido = c.pedir_com_id(&c.realm, &format!("e5-din-1-{}", c.personagem), c.conta, pedido).await;
+    assert_eq!(repetido["dados"]["dinheiro"], (antes + 500).to_string());
+    assert_eq!(c.mundo.read().await.players[&(c.personagem as i64)].money, antes + 500);
+    let conflito = c.pedir_com_id(&c.realm, &format!("e5-din-1-{}", c.personagem), c.conta,
+        json!({"tipo":"editar_personagem","personagem_id":c.personagem,"dinheiro":7})).await;
+    assert_eq!(conflito["dados"]["codigo"], "operacao_em_conflito");
+    // Gravado pelo contexto, como a recompensa de missão.
+    let gravado: i64 = sqlx::query_scalar("SELECT money FROM characters WHERE id=$1").bind(c.personagem)
+        .fetch_one(c.pool.get_ref()).await.unwrap();
+    assert_eq!(gravado, antes + 500);
+
+    let exp_antes = c.mundo.read().await.players[&(c.personagem as i64)].exp;
+    let r = c.pedir_com_id(&c.realm, &format!("e5-exp-1-{}", c.personagem), c.conta,
+        json!({"tipo":"editar_personagem","personagem_id":c.personagem,"exp":10,"sp":3})).await;
+    assert_eq!(r["estado"], "aplicado", "{r}");
+    esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 158u16.to_le_bytes())).await;
+    assert!(c.mundo.read().await.players[&(c.personagem as i64)].exp >= exp_antes + 10
+        || c.mundo.read().await.players[&(c.personagem as i64)].level > 1, "a EXP não entrou");
+
+    drop(bus);
+    c.esperar_presenca("ausente").await;
+    let r = c.pedir_com_id(&c.realm, &format!("e5-din-off-{}", c.personagem), c.conta,
+        json!({"tipo":"editar_personagem","personagem_id":c.personagem,"dinheiro":100})).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("salvo"), Some("offline")), "{r}");
+    assert_eq!(r["dados"]["dinheiro"], (antes + 600).to_string());
+    let r = c.pedir_com_id(&c.realm, &format!("e5-exp-off-{}", c.personagem), c.conta,
+        json!({"tipo":"editar_personagem","personagem_id":c.personagem,"exp":10})).await;
+    assert_eq!(r["dados"]["codigo"], "precisa_estar_online");
+    // Só dar (B180): tirar dinheiro é edição inválida, online ou offline.
+    let r = c.pedir_com_id(&c.realm, &format!("e5-din-neg-{}", c.personagem), c.conta,
+        json!({"tipo":"editar_personagem","personagem_id":c.personagem,"dinheiro":-100})).await;
+    assert_eq!(r["dados"]["codigo"], "edicao_invalida");
+    let invalida = c.pedir_com_id(&c.realm, &format!("e5-inv-{}", c.personagem), c.conta,
+        json!({"tipo":"editar_personagem","personagem_id":c.personagem,"dinheiro":5,"exp":1})).await;
+    assert_eq!(invalida["dados"]["codigo"], "edicao_invalida");
+    sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e5-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}
+
+/// E5 (B182): pontos livres, nível direto e cultivo. Online o mapa aplica e avisa o
+/// cliente — `ADD_STATUS_POINT` (51) com os quatro em zero, um `LEVEL_UP` (37) por nível,
+/// `TASK_DELIVER_LEVEL2` (160) — e grava; offline grava no banco. Nível só sobe; cultivo
+/// conforme a versão (20–22/30–32 só no 1.5.5).
+#[tokio::test]
+async fn editar_pontos_nivel_e_cultivo_online_e_offline_126_e_155() {
+    for versao in [GameVersion::V1_2_6, GameVersion::V1_5_5] {
+        let c = Cenario::montar_versao(versao).await;
+        let id = |s: &str| format!("e5b-{s}-{}", c.personagem);
+        let editar = |campos: Value| {
+            let mut p = json!({"tipo":"editar_personagem","personagem_id":c.personagem});
+            for (k, v) in campos.as_object().unwrap() { p[k] = v.clone(); }
+            p
+        };
+        let jogador = |m: &WorldInstance| {
+            let p = &m.players[&(c.personagem as i64)];
+            (p.level, p.pontos_de_atributo, p.cultivation)
+        };
+        let mut bus = c.entrar().await;
+        c.esperar_presenca("online").await;
+        let (nivel, pontos, _) = jogador(&*c.mundo.read().await);
+
+        let r = c.pedir_com_id(&c.realm, &id("pts"), c.conta, editar(json!({"pontos":7}))).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("aplicado"), Some("online")), "{r}");
+        let m = esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 51u16.to_le_bytes())).await;
+        let BusMessage::GameToClient { data, .. } = m else { unreachable!() };
+        assert_eq!(data.len(), 22, "ADD_STATUS_POINT tem 22 bytes");
+        assert_eq!(&data[2..18], &[0u8; 16], "os quatro atributos em zero");
+        assert_eq!(u32::from_le_bytes(data[18..22].try_into().unwrap()) as i32, pontos + 7);
+
+        let r = c.pedir_com_id(&c.realm, &id("niv"), c.conta, editar(json!({"nivel": nivel + 3}))).await;
+        assert_eq!(r["estado"], "aplicado", "{r}");
+        for _ in 0..3 {
+            esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 37u16.to_le_bytes())).await;
+        }
+        assert_eq!(jogador(&*c.mundo.read().await).0, nivel + 3);
+        assert_eq!(jogador(&*c.mundo.read().await).1, pontos + 7 + 15, "cinco pontos por nível");
+        let r = c.pedir_com_id(&c.realm, &id("niv-baixo"), c.conta, editar(json!({"nivel": nivel + 1}))).await;
+        assert_eq!(r["dados"]["codigo"], "nivel_invalido", "nível só sobe: {r}");
+
+        let r = c.pedir_com_id(&c.realm, &id("cul"), c.conta, editar(json!({"cultivo": 5}))).await;
+        assert_eq!(r["estado"], "aplicado", "{r}");
+        esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 160u16.to_le_bytes())).await;
+        assert_eq!(jogador(&*c.mundo.read().await).2, 5);
+        let r = c.pedir_com_id(&c.realm, &id("cul-deus"), c.conta, editar(json!({"cultivo": 22}))).await;
+        if versao == GameVersion::V1_2_6 {
+            assert_eq!(r["dados"]["codigo"], "cultivo_invalido", "{r}");
+        } else {
+            assert_eq!(r["estado"], "aplicado", "{r}");
+        }
+        let r = c.pedir_com_id(&c.realm, &id("cul-9"), c.conta, editar(json!({"cultivo": 9}))).await;
+        assert_eq!(r["dados"]["codigo"], "cultivo_invalido");
+        let r = c.pedir_com_id(&c.realm, &id("dois"), c.conta, editar(json!({"pontos": 1, "nivel": 90}))).await;
+        assert_eq!(r["dados"]["codigo"], "edicao_invalida");
+
+        drop(bus);
+        c.esperar_presenca("ausente").await;
+        let gravado: (i32, i32, i32) = sqlx::query_as("SELECT level, potential_points, cultivation FROM characters WHERE id=$1")
+            .bind(c.personagem).fetch_one(c.pool.get_ref()).await.unwrap();
+        let cultivo_online = if versao == GameVersion::V1_2_6 { 5 } else { 22 };
+        assert_eq!(gravado, (nivel + 3, pontos + 22, cultivo_online), "o contexto gravou");
+
+        let r = c.pedir_com_id(&c.realm, &id("pts-off"), c.conta, editar(json!({"pontos":4}))).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("salvo"), Some("offline")), "{r}");
+        assert_eq!(r["dados"]["pontos_livres"], pontos + 26);
+        let r = c.pedir_com_id(&c.realm, &id("niv-off"), c.conta, editar(json!({"nivel": nivel + 5}))).await;
+        assert_eq!(r["estado"], "salvo", "{r}");
+        assert_eq!((r["dados"]["nivel"].as_i64(), r["dados"]["pontos_livres"].as_i64()),
+            (Some((nivel + 5) as i64), Some((pontos + 36) as i64)));
+        let r = c.pedir_com_id(&c.realm, &id("niv-off-baixo"), c.conta, editar(json!({"nivel": nivel + 5}))).await;
+        assert_eq!(r["dados"]["codigo"], "nivel_invalido_ou_personagem_inexistente");
+        let r = c.pedir_com_id(&c.realm, &id("niv-teto"), c.conta, editar(json!({"nivel": 100_000}))).await;
+        assert_eq!(r["dados"]["codigo"], "nivel_invalido");
+        let r = c.pedir_com_id(&c.realm, &id("cul-off"), c.conta, editar(json!({"cultivo": 8}))).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["cultivo"].as_i64()), (Some("salvo"), Some(8)), "{r}");
+        sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e5b-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+        c.encerrar().await;
+    }
+}
+
+/// E5 (B184): modificar os atributos já distribuídos e redistribuir, com o total (atributos +
+/// pontos livres) conservado e o piso da versão (`piso_da_restauracao`: 1.2.6 3 em vitalidade e
+/// energia, 1.5.5 5 nos quatro). Online o mapa aplica e manda a ficha (`OWN_EXT_PROP` 50);
+/// offline grava no banco com as mesmas condições.
+#[tokio::test]
+async fn modificar_e_redistribuir_atributos_online_e_offline_126_e_155() {
+    for versao in [GameVersion::V1_2_6, GameVersion::V1_5_5] {
+        let c = Cenario::montar_versao(versao).await;
+        let id = |s: &str| format!("e5c-{s}-{}", c.personagem);
+        let editar = |campos: Value| {
+            let mut p = json!({"tipo":"editar_personagem","personagem_id":c.personagem});
+            for (k, v) in campos.as_object().unwrap() { p[k] = v.clone(); }
+            p
+        };
+        // Partida conhecida: 10 em cada e 20 livres (total 60).
+        sqlx::query("UPDATE characters SET strength=10, agility=10, vitality=10, energy=10, potential_points=20 WHERE id=$1")
+            .bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+        let piso = if versao == GameVersion::V1_2_6 { [5, 5, 3, 3] } else { [5, 5, 5, 5] };
+        let mut bus = c.entrar().await;
+        c.esperar_presenca("online").await;
+        let atributos = || async {
+            let m = c.roteador.consultar_administrativamente(c.personagem).await;
+            assert_eq!(m["presenca"], "online", "{m}");
+            let mundo = c.mundo.read().await;
+            let p = &mundo.players[&(c.personagem as i64)];
+            [p.strength, p.agility, p.vitality, p.energy, p.pontos_de_atributo]
+        };
+        assert_eq!(atributos().await, [10, 10, 10, 10, 20]);
+
+        // Tira da força, põe na vitalidade e gasta livres: 6+12+30+10 = 58, sobram 2.
+        let r = c.pedir_com_id(&c.realm, &id("mod"), c.conta, editar(json!({"atributos":[6, 12, 30, 10]}))).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["pontos_livres"].as_i64()), (Some("aplicado"), Some(2)), "{r}");
+        let m = esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 50u16.to_le_bytes())).await;
+        assert!(matches!(m, BusMessage::GameToClient { .. }));
+        assert_eq!(atributos().await, [6, 12, 30, 10, 2]);
+        // Soma acima do total, abaixo do piso, ou igual ao atual: recusados sem mudar nada.
+        for (n, alvo, codigo) in [(1, json!([6, 12, 30, 13]), "atributos_invalidos"),
+                                  (2, json!([4, 12, 30, 10]), "atributos_invalidos"),
+                                  (3, json!([6, 12, 30, 10]), "sem_mudanca")] {
+            let r = c.pedir_com_id(&c.realm, &id(&format!("rec{n}")), c.conta, editar(json!({"atributos": alvo}))).await;
+            assert_eq!(r["dados"]["codigo"], codigo, "{r}");
+        }
+        assert_eq!(atributos().await, [6, 12, 30, 10, 2]);
+
+        // Redistribuir: todos ao piso, o resto aos livres.
+        let r = c.pedir_com_id(&c.realm, &id("red"), c.conta, editar(json!({"redistribuir": true}))).await;
+        assert_eq!(r["estado"], "aplicado", "{r}");
+        let livres = 60 - piso.iter().sum::<i32>();
+        assert_eq!(atributos().await, [piso[0], piso[1], piso[2], piso[3], livres]);
+        let r = c.pedir_com_id(&c.realm, &id("dois"), c.conta, editar(json!({"redistribuir": true, "pontos": 1}))).await;
+        assert_eq!(r["dados"]["codigo"], "edicao_invalida");
+        let r = c.pedir_com_id(&c.realm, &id("tres"), c.conta, editar(json!({"atributos": [1, 2, 3]}))).await;
+        assert_eq!(r["dados"]["codigo"], "edicao_invalida");
+
+        drop(bus);
+        c.esperar_presenca("ausente").await;
+        let gravado: (i32, i32, i32, i32, i32) = sqlx::query_as("SELECT strength, agility, vitality, energy, potential_points FROM characters WHERE id=$1")
+            .bind(c.personagem).fetch_one(c.pool.get_ref()).await.unwrap();
+        assert_eq!(gravado, (piso[0], piso[1], piso[2], piso[3], livres), "o contexto gravou");
+
+        let r = c.pedir_com_id(&c.realm, &id("mod-off"), c.conta, editar(json!({"atributos":[20, 10, 10, 10]}))).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("salvo"), Some("offline")), "{r}");
+        assert_eq!((r["dados"]["forca"].as_i64(), r["dados"]["pontos_livres"].as_i64()), (Some(20), Some(10)));
+        let r = c.pedir_com_id(&c.realm, &id("rec-off"), c.conta, editar(json!({"atributos":[20, 10, 10, 21]}))).await;
+        assert_eq!(r["dados"]["codigo"], "atributos_invalidos_ou_personagem_inexistente", "{r}");
+        let r = c.pedir_com_id(&c.realm, &id("red-off"), c.conta, editar(json!({"redistribuir": true}))).await;
+        assert_eq!(r["estado"], "salvo", "{r}");
+        assert_eq!(r["dados"]["pontos_livres"].as_i64(), Some(livres as i64));
+        sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e5c-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+        c.encerrar().await;
+    }
 }

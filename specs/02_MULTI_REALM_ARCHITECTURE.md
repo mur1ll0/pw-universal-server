@@ -45,7 +45,8 @@ uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio
 | `realm_153` | 1.5.3 | `pw-realm-153` 29001 | 1 → `pw-world-153` | abandonado |
 | `realm_148` | 1.4.8 | `pw-realm-148` 29002 | 1 → `pw-world-148` | nunca foi alvo |
 
-- **Um servidor de mundo por realm, com vários mapas** (`WORLD_TAGS=1,161`). Os dados são
+- **Um servidor de mundo por realm, com vários mapas** (`WORLD_TAGS=1,161`; o painel liga e
+  desliga mapas em execução e a partida soma/tira os de `realms.config` — spec 05 §7.10, B183). Os dados são
   carregados uma vez e cada mapa é um `WorldInstance` com seu próprio tick — o equivalente
   do `./gs gs01 gs.conf gmserver.conf gsalias.conf is61` do original, que carrega uma vez e
   faz `fork()` de um processo por mapa (`cgame/gs/start.cpp:185-234`). No `EnterWorld` o
