@@ -523,6 +523,7 @@ impl RoteadorDeMapas {
             E::Cultivo(v) if !crate::progressao::cultivo_valido(bus.versao(), v) => {
                 return serde_json::json!({"estado":"falha","codigo":"cultivo_invalido"});
             }
+            E::Posicao { mapa, x, y, z } => return self.mover_pelo_painel(roleid, mapa, x, y, z).await,
             _ => {}
         }
         let _comando = self.presenca.read().await;
@@ -546,6 +547,8 @@ impl RoteadorDeMapas {
         }
         match edicao {
             E::Experiencia { .. } => serde_json::json!({"estado":"falha","codigo":"precisa_estar_online"}),
+            // Já tratada no começo (`mover_pelo_painel`).
+            E::Posicao { .. } => serde_json::json!({"estado":"falha","codigo":"edicao_invalida"}),
             E::PontosLivres(n) => Self::offline(roleid, "pontos", self.repo.dar_pontos_offline(roleid, n).await,
                 |p| serde_json::json!({"pontos_livres": p})),
             E::Nivel(alvo) => match self.repo.subir_nivel_offline(roleid, alvo, maximo).await {
@@ -571,6 +574,53 @@ impl RoteadorDeMapas {
                     serde_json::json!({"estado":"falha","codigo":"banco_indisponivel"})
                 }
             },
+        }
+    }
+
+    /// Painel (E6, B185): leva o personagem a `(x, y, z)` do `mapa`. Destino: mapa carregado e
+    /// ligado neste processo (senão `mapa_indisponivel`), `(x, z)` dentro do terreno dele
+    /// (`fora_do_mapa`); `y` ausente = o chão, e abaixo do chão sobe para ele — a regra de quem
+    /// chega a um mapa (`if (pos.y < height) pos.y = height`, `global_message.cpp:100-101`).
+    /// Online: o mesmo `transportar` do GM e da missão — no mapa `NOTIFY_HOSTPOS`; noutro, a
+    /// troca de mapa, que grava na hora (a troca roda depois, na fila: resposta `troca: true`).
+    /// Offline: grava mapa e posição sob a guarda de presença e a trava de gravação.
+    async fn mover_pelo_painel(&self, roleid: i32, mapa: i32, x: f32, y: Option<f32>, z: f32) -> serde_json::Value {
+        let Some(destino) = self.mapa(mapa).filter(|_| self.mapa_ligado(mapa)) else {
+            return serde_json::json!({"estado":"falha","codigo":"mapa_indisponivel","mapa":mapa});
+        };
+        let y = match (destino.chao_em(x, z).await, y) {
+            (Err(()), _) => return serde_json::json!({"estado":"falha","codigo":"fora_do_mapa","mapa":mapa}),
+            (Ok(Some(chao)), Some(y)) => y.max(chao),
+            (Ok(Some(chao)), None) => chao,
+            (Ok(None), Some(y)) => y,
+            (Ok(None), None) => return serde_json::json!({"estado":"falha","codigo":"altura_obrigatoria","mapa":mapa}),
+        };
+        let pos = pw_core::Vector3::new(x, y, z);
+        let _comando = self.presenca.read().await;
+        let controle = self.repo.controle_de_gravacao(roleid);
+        let _guarda = controle.alterar().await;
+        let posicao = serde_json::json!({"mapa": mapa, "x": x, "y": y, "z": z});
+        if let Some(atual) = self.mapa_de(roleid).await {
+            let Some(origem) = self.mapa(atual) else {
+                return serde_json::json!({"estado":"falha","codigo":"em_transicao"});
+            };
+            if !origem.tem_sessao(roleid).await {
+                return serde_json::json!({"estado":"falha","codigo":"em_transicao"});
+            }
+            origem.transportar(roleid, mapa, pos).await;
+            tracing::info!(roleid, de = atual, mapa, ?pos, "painel: personagem movido (online)");
+            return serde_json::json!({"estado":"aplicado","presenca":"online","posicao":posicao,"troca":atual != mapa});
+        }
+        match self.repo.gravar_posicao_offline(roleid, mapa, pos).await {
+            Ok(true) => {
+                tracing::info!(roleid, mapa, ?pos, "painel: personagem movido (offline)");
+                serde_json::json!({"estado":"salvo","presenca":"offline","posicao":posicao})
+            }
+            Ok(false) => serde_json::json!({"estado":"falha","codigo":"personagem_inexistente"}),
+            Err(e) => {
+                tracing::warn!("painel: posição offline de {roleid} não gravou: {e}");
+                serde_json::json!({"estado":"falha","codigo":"banco_indisponivel"})
+            }
         }
     }
 

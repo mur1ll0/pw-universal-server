@@ -17,7 +17,8 @@ O serviço usa as credenciais existentes, sem trocar senha/hash nem criar sessã
 - **Personagens:** busque e abra a ficha. Embaixo dela: **Dinheiro**, **EXP / SP** e **Pontos livres**
   (só dar), **Nível** (só sobe, até o teto do realm), **Atributos** (mudar força/agilidade/vitalidade/
   energia já distribuídas — o total com os livres não muda — ou **Redistribuir** tudo de volta aos
-  pontos livres) e **Cultivo** (lista conforme a versão). Em jogo,
+  pontos livres), **Posição** (escolha o mapa entre os ligados e as coordenadas; Y vazio = chão) e
+  **Cultivo** (lista conforme a versão). Em jogo,
   aplica na hora e o jogador vê; fora do jogo, grava no banco — só EXP/SP pedem o personagem em jogo.
 - **Mapas:** todos os mapas do realm (ligados primeiro), com filtro por número ou nome e por
   status. Marque as linhas (ou "Selecionar todos", que pega só o que o filtro mostra) e use

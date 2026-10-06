@@ -835,10 +835,15 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          # B184: quatro atributos 0–100 000; redistribuir só `true`; um tipo só.
                          {"atributos": [1, 2, 3]}, {"atributos": [1, 2, 3, 4, 5]}, {"atributos": [1, 2, 3, -1]},
                          {"atributos": [1, 2, 3, 100_001]}, {"redistribuir": False}, {"redistribuir": True, "pontos": 1},
-                         {"atributos": [5, 5, 5, 5], "redistribuir": True}):
+                         {"atributos": [5, 5, 5, 5], "redistribuir": True},
+                         # B185: posição com mapa ≥ 1, x/z obrigatórios, ±100 000, sem campo extra.
+                         {"posicao": {"mapa": 0, "x": 1.0, "z": 1.0}}, {"posicao": {"mapa": 1, "x": 1.0}},
+                         {"posicao": {"mapa": 1, "x": 200_000.0, "z": 1.0}}, {"posicao": {"mapa": 1, "x": 1.0, "z": 1.0, "w": 1}},
+                         {"posicao": {"mapa": 1, "x": "1", "z": 1.0}}, {"posicao": {"mapa": 1, "x": 1.0, "z": 1.0}, "pontos": 1}):
             self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
         for valido in ({"dinheiro": 10}, {"pontos": 5}, {"nivel": 30}, {"cultivo": 0},
-                       {"atributos": [5, 5, 5, 5]}, {"redistribuir": True}):
+                       {"atributos": [5, 5, 5, 5]}, {"redistribuir": True},
+                       {"posicao": {"mapa": 1, "x": -319.5, "z": -900.0}}, {"posicao": {"mapa": 161, "x": 1, "y": 2.5, "z": 3}}):
             resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
             self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
 

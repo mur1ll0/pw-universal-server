@@ -937,6 +937,22 @@ impl CharacterRepository {
         Ok(v.map(|(f, a, vi, e, p)| [f, a, vi, e, p]))
     }
 
+    /// Painel (E6, B185), offline: mapa e posição. Devolve se o personagem existe.
+    pub async fn gravar_posicao_offline(&self, role_id: RoleId, mapa: i32, pos: pw_core::Vector3) -> Result<bool> {
+        let r = sqlx::query(
+            "UPDATE characters SET world_id = $2, pos_x = $3, pos_y = $4, pos_z = $5, \
+             updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND NOT is_deleted",
+        )
+        .bind(role_id)
+        .bind(mapa)
+        .bind(pos.x)
+        .bind(pos.y)
+        .bind(pos.z)
+        .execute(self.pool.get_ref())
+        .await?;
+        Ok(r.rows_affected() == 1)
+    }
+
     /// Painel (E5, B182), offline: grava o cultivo (`level2`), já validado pela versão.
     pub async fn definir_cultivo_offline(&self, role_id: RoleId, cultivo: i32) -> Result<bool> {
         let r = sqlx::query(

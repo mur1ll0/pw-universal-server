@@ -605,6 +605,7 @@ async function consultarPersonagem(realmId, id) {
     elemento("form-exp").querySelector?.("button")?.toggleAttribute?.("disabled", !online);
     preencherCultivos(estado.selecionado?.versao, ficha.cultivo);
     preencherAtributos(ficha);
+    preencherPosicao(ficha);
   } catch (erro) {
     if (estado.ficha !== consulta || !estado.sessao) return;
     elemento("aviso-personagens").textContent = erro.message;
@@ -641,6 +642,9 @@ const MOTIVOS_EDICAO = {
   atributos_invalidos: "Algum atributo ficaria abaixo do mínimo ou a soma passa do total (atributos + livres).",
   atributos_invalidos_ou_personagem_inexistente: "Algum atributo ficaria abaixo do mínimo ou a soma passa do total (ou o personagem não existe).",
   sem_mudanca: "Os atributos já estão assim.",
+  mapa_indisponivel: "O mapa de destino não está ligado neste realm.",
+  fora_do_mapa: "Essas coordenadas ficam fora do terreno do mapa.",
+  altura_obrigatoria: "Este mapa não tem terreno carregado: informe o Y.",
   em_transicao: "O personagem está entrando ou saindo agora; tente de novo em instantes.",
   personagem_inexistente: "O personagem não existe mais.",
   operacao_em_conflito: "Esta operação já foi usada com outros valores.",
@@ -724,6 +728,41 @@ function editarAtributos() {
 }
 function redistribuirAtributos() {
   editarPersonagem({ redistribuir: true }, "Atributos devolvidos aos pontos livres");
+}
+
+/* Posição (E6, B185): destino entre os mapas ligados do realm; x/y/z começam na posição
+   atual. Y vazio = o chão do destino (o GS sobe para o chão o que estiver abaixo). */
+function preencherPosicao(ficha) {
+  const realm = estado.selecionado;
+  if (!realm) return;
+  if (!estado.catalogoMapas[realm.id]) carregarCatalogoDeMapas(realm);
+  const nomes = new Map((estado.catalogoMapas[realm.id] || []).map((m) => [m.mapa, m.nome]));
+  const ligados = (estado.online[realm.id]?.mapas || []).filter((m) => m.ligado !== false && !m.carregando)
+    .map((m) => m.mapa).sort((a, b) => a - b);
+  if (!ligados.includes(Number(ficha.mapa))) ligados.unshift(Number(ficha.mapa));
+  const lista = elemento("pos-mapa");
+  lista.replaceChildren();
+  for (const mapa of ligados) {
+    const opcao = criar("option", "", nomes.has(mapa) ? `${mapa} · ${nomes.get(mapa)}` : `Mapa ${mapa}`);
+    opcao.value = String(mapa);
+    opcao.selected = mapa === Number(ficha.mapa);
+    lista.append(opcao);
+  }
+  elemento("pos-x").value = String(Number(ficha.posicao.x).toFixed(1));
+  elemento("pos-y").value = String(Number(ficha.posicao.y).toFixed(1));
+  elemento("pos-z").value = String(Number(ficha.posicao.z).toFixed(1));
+}
+function editarPosicao() {
+  const mapa = Number(elemento("pos-mapa").value);
+  const [x, z] = ["pos-x", "pos-z"].map((id) => Number(elemento(id).value));
+  const textoY = elemento("pos-y").value.trim();
+  const y = textoY === "" ? null : Number(textoY);
+  const valido = (v) => Number.isFinite(v) && Math.abs(v) <= 100_000;
+  if (!Number.isInteger(mapa) || mapa < 1 || !valido(x) || !valido(z) || (y !== null && !valido(y))) {
+    alerta("erro", "Valor inválido", "Informe o mapa e as coordenadas X e Z (Y vazio = chão)."); return;
+  }
+  const posicao = { mapa, x, z, ...(y === null ? {} : { y }) };
+  editarPersonagem({ posicao }, `Mover para o mapa ${mapa} (${x.toFixed(0)}, ${z.toFixed(0)})`);
 }
 
 function editarPontos() {
@@ -1231,6 +1270,7 @@ elemento("form-nivel").addEventListener("submit", (evento) => { evento.preventDe
 elemento("form-atributos").addEventListener("submit", (evento) => { evento.preventDefault(); editarAtributos(); });
 elemento("redistribuir-atributos").addEventListener("click", () => redistribuirAtributos());
 for (const id of CAMPOS_DE_ATRIBUTO) elemento(id).addEventListener("input", () => atualizarSobraDeAtributos());
+elemento("form-posicao").addEventListener("submit", (evento) => { evento.preventDefault(); editarPosicao(); });
 elemento("form-cultivo").addEventListener("submit", (evento) => { evento.preventDefault(); editarCultivo(); });
 elemento("criacao-conta").addEventListener("submit", (evento) => { evento.preventDefault(); executarComando(false, "criar_conta"); });
 elemento("recuperar-comando").addEventListener("click", () => { pararAcompanhamento(); executarComando(true); });

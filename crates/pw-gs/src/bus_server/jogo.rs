@@ -463,6 +463,8 @@ pub enum EdicaoDePersonagem {
     /// Força, agilidade, vitalidade e energia novas, com o total conservado; `None` =
     /// redistribuir tudo aos pontos livres (B184, [`PlayerEntity::definir_atributos`]).
     Atributos(Option<[i32; 4]>),
+    /// Mapa e posição (E6, B185); `y` `None` = o chão em `(x, z)`.
+    Posicao { mapa: i32, x: f32, y: Option<f32>, z: f32 },
 }
 
 impl BusServer {
@@ -506,6 +508,9 @@ impl BusServer {
                     }
                 }
                 EdicaoDePersonagem::Cultivo(v) => ctx.definir_cultivo(v.max(0) as u32),
+                // Tratada no roteador (`RoteadorDeMapas::editar_personagem`): o teleporte
+                // troca de mapa fora do contexto do jogador.
+                EdicaoDePersonagem::Posicao { .. } => erro = Some("edicao_invalida"),
                 // `RegroupPropPoint` (`player.cpp:14920-14940`): devolve, gasta e refaz; a ficha
                 // (`OWN_EXT_PROP`, atributos e pontos livres absolutos, `EC_HostMsg.cpp:1583-1584`)
                 // vai depois, com o equipamento reaplicado (`RefreshEquipment`).

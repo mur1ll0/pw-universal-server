@@ -54,6 +54,16 @@ class EstadoDoMapa(BaseModel):
     ligado: bool
 
 
+class PosicaoPedida(BaseModel):
+    """E6 (B185): mapa e coordenadas; `y` ausente = o chão (o GS confere mapa e terreno).
+    ±100 000 é política do painel (os mapas cabem em ±50 000)."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    mapa: int = Field(ge=1, le=2_147_483_647)
+    x: float = Field(ge=-100_000, le=100_000, allow_inf_nan=False)
+    y: Optional[float] = Field(default=None, ge=-100_000, le=100_000, allow_inf_nan=False)
+    z: float = Field(ge=-100_000, le=100_000, allow_inf_nan=False)
+
+
 class EdicaoPersonagem(BaseModel):
     """E5: um só de dinheiro (dar), exp/sp (somar), pontos (dar pontos livres), nivel (alvo,
     só sobe) ou cultivo (B182). Tetos: pacotes de recompensa de missão (u32/i32), teto de
@@ -71,6 +81,7 @@ class EdicaoPersonagem(BaseModel):
     cultivo: Optional[int] = Field(default=None, ge=0, le=255)
     atributos: Optional[list[Annotated[int, Field(ge=0, le=100_000)]]] = Field(default=None, min_length=4, max_length=4)
     redistribuir: Optional[Literal[True]] = None
+    posicao: Optional[PosicaoPedida] = None
 
 
 def somar_desconexoes(resultado):
@@ -220,12 +231,14 @@ def registrar_contas(app):
         """E5 (B179, B182): online aplica no jogo; offline grava no banco o que não exige a
         entidade (tudo menos EXP/SP). Quem decide online/offline é o GS."""
         experiencia = bool(pedido.exp or pedido.sp)
-        simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir")
+        simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao")
                    if getattr(pedido, k) is not None]
         if len(simples) + experiencia != 1:
-            raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo ou atributos.")
+            raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo, atributos ou posição.")
         consulta = {"tipo": "editar_personagem", "personagem_id": personagem_id}
-        if simples:
+        if simples == ["posicao"]:
+            consulta["posicao"] = pedido.posicao.model_dump(exclude_none=True)
+        elif simples:
             consulta[simples[0]] = getattr(pedido, simples[0])
         else:
             consulta.update({k: v for k, v in (("exp", pedido.exp), ("sp", pedido.sp)) if v})

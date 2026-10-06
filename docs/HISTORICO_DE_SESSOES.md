@@ -11983,3 +11983,22 @@ comparação lado a lado.
     Testes: `modificar_e_redistribuir_atributos_online_e_offline_126_e_155` (OWN_EXT_PROP,
     recusas, piso por versão, gravação após o logout) e canal 22/0; Python 55/0 (validação);
     Node 7/0; workspace com banco 961/0, 2 ignorados. Não publicado.
+
+185. **Sessão 2026-10-06 (Claude): E6 primeira fatia — mover o personagem pelo painel.**
+    O Murillo escolheu começar a E6 por posição e deu exceção ao portão §6.2 (o roteiro do
+    B183 em jogo segue pendente): a fatia não mexe em entrada, saída nem troca, só usa o
+    `transportar` que o GM e as missões já usam.
+    Evidência: chegada a outro mapa sobe `y` para o chão (`global_message.cpp:100-101`, já
+    portado em `receber_de_outro_mapa`); o mesmo mapa usa `NOTIFY_HOSTPOS` + parada a quem vê
+    (caminho do GM, `gm.rs`).
+    Código: `EdicaoDePersonagem::Posicao`; `RoteadorDeMapas::mover_pelo_painel` (destino
+    carregado e ligado, `BusServer::chao_em` confere o terreno, sem terreno exige `y`);
+    offline `CharacterRepository::gravar_posicao_offline`; canal `posicao` com
+    `PosicaoPedida` (`deny_unknown_fields`, ±100 000); painel com a linha Posição. O log do
+    canal passa a dizer o motivo da recusa (`erro = ...`) — achado do teste: campo
+    desconhecido fecha a conexão sem resposta, como sempre foi.
+    Testes: `mover_personagem_online_e_offline_pelo_canal` (mesmo mapa, troca para o 161 com
+    gravação, recusas, offline) e canal 23/0; Python 55/0; Node 7/0; workspace 962/1 (2
+    ignorados): falhou `gm_e_consumido_e_revogado_em_sessoes_vivas_126_e_155`, que passou nas 3
+    rodadas seguidas do arquivo (23/0) — intermitente sob a suíte paralela; entra na lista.
+    Não publicado.

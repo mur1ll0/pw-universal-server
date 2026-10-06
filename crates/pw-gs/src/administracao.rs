@@ -60,6 +60,8 @@ pub enum Consulta {
         #[serde(default)] atributos: Option<Vec<i64>>,
         /// `true`: devolve todos os atributos aos pontos livres (B184).
         #[serde(default)] redistribuir: Option<bool>,
+        /// Mapa e posição (E6, B185).
+        #[serde(default)] posicao: Option<PosicaoPedida>,
     },
 }
 
@@ -68,6 +70,20 @@ pub enum Consulta {
 const TETO_DA_EDICAO: i64 = 2_000_000_000;
 /// Teto de pontos livres por operação: política do painel, não regra do jogo (B182).
 const TETO_DE_PONTOS_POR_EDICAO: i64 = 10_000;
+/// Destino pedido pelo painel (B185); `y` ausente = o chão.
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PosicaoPedida {
+    pub mapa: i32,
+    pub x: f32,
+    #[serde(default)]
+    pub y: Option<f32>,
+    pub z: f32,
+}
+
+/// Teto de coordenada pelo painel: política (os mapas do PW cabem em ±50 000), não regra.
+const TETO_DE_COORDENADA: f32 = 100_000.0;
+
 /// Teto de um atributo pelo painel: política, não regra do jogo (B184).
 const TETO_DE_ATRIBUTO: i64 = 100_000;
 
@@ -172,8 +188,10 @@ impl ServidorAdministrativo {
                 // Limite por conexão, incluindo banco; nunca dentro do world.tick.
                 let resultado =
                     tokio::time::timeout(Duration::from_secs(3), servidor.atender(socket)).await;
-                if !matches!(resultado, Ok(Ok(()))) {
-                    tracing::debug!("admin: consulta recusada ou conexão interrompida");
+                match resultado {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => tracing::debug!(erro = %e, "admin: consulta recusada ou conexão interrompida"),
+                    Err(_) => tracing::debug!("admin: consulta sem resposta em 3 s"),
                 }
             });
         }
@@ -289,18 +307,23 @@ impl ServidorAdministrativo {
                             json!({"estado":"aplicado","tipo":"definir_taxas","taxas":taxas})
                         }
                     }
-                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir } if personagem_id > 0 => {
+                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao } if personagem_id > 0 => {
                         use crate::bus_server::EdicaoDePersonagem as E;
                         let dentro = |v: i64| v.abs() <= TETO_DA_EDICAO;
                         let tipos = [dinheiro.is_some(), exp.or(sp).is_some(), pontos.is_some(), nivel.is_some(), cultivo.is_some(),
-                            atributos.is_some(), redistribuir.is_some()]
+                            atributos.is_some(), redistribuir.is_some(), posicao.is_some()]
                             .iter().filter(|t| **t).count();
                         // Atributos: quatro valores entre 0 e o teto da política (B184).
                         let quatro = atributos.as_deref().and_then(|v| {
                             (v.len() == 4 && v.iter().all(|x| (0..=TETO_DE_ATRIBUTO).contains(x)))
                                 .then(|| [v[0] as i32, v[1] as i32, v[2] as i32, v[3] as i32])
                         });
+                        let coordenada = |v: f32| v.is_finite() && v.abs() <= TETO_DE_COORDENADA;
                         let edicao = if tipos != 1 { None }
+                            else if let Some(p) = posicao {
+                                (p.mapa > 0 && coordenada(p.x) && coordenada(p.z) && p.y.map_or(true, coordenada))
+                                    .then_some(E::Posicao { mapa: p.mapa, x: p.x, y: p.y, z: p.z })
+                            }
                             else if atributos.is_some() { quatro.map(|q| E::Atributos(Some(q))) }
                             else if redistribuir.is_some() { (redistribuir == Some(true)).then_some(E::Atributos(None)) }
                             else { match (dinheiro, exp, sp, pontos, nivel, cultivo) {
@@ -331,6 +354,7 @@ impl ServidorAdministrativo {
                                 }
                                 if let Some(a) = &atributos { parametros["atributos"] = json!(a); }
                                 if let Some(r) = redistribuir { parametros["redistribuir"] = json!(r); }
+                                if let Some(p) = posicao { parametros["posicao"] = json!(p); }
                                 let impressao = Sha256::digest(serde_json::to_vec(&parametros)?);
                                 let repo = self.contas.comandos_administrativos();
                                 match repo.reservar_operacao_de_personagem(&pedido.operacao_id, pedido.administrador_id, &self.realm, &impressao).await? {
@@ -510,4 +534,16 @@ pub async fn escrever_quadro(socket: &mut TcpStream, corpo: &[u8]) -> anyhow::Re
     socket.write_u32(corpo.len() as u32).await?;
     socket.write_all(corpo).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod testes_de_formato {
+    use super::*;
+
+    /// B185: o pedido de posição passa pela leitura do canal (enum com `tag` interno).
+    #[test]
+    fn pedido_de_posicao_e_lido() {
+        let r: Result<PedidoAdministrativo, _> = serde_json::from_str(r#"{"operacao_id":"x","realm_id":"r","administrador_id":1,"consulta":{"tipo":"editar_personagem","personagem_id":1,"posicao":{"mapa":1,"x":120.5,"y":30.0,"z":-80.0}}}"#);
+        assert!(r.is_ok(), "{:?}", r.err());
+    }
 }

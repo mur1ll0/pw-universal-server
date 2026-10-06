@@ -168,6 +168,14 @@
                   <button id="redistribuir-atributos" type="button" class="botao botao-secundario">Redistribuir</button>
                 </form>
                 <p id="sobra-atributos" class="dica"></p>
+                <form id="form-posicao" class="linha-edicao">
+                  <span class="rotulo-edicao">Posição</span>
+                  <select id="pos-mapa" aria-label="Mapa de destino"></select>
+                  <input id="pos-x" type="number" step="any" placeholder="X" aria-label="Coordenada X" title="X">
+                  <input id="pos-y" type="number" step="any" placeholder="Y (chão)" aria-label="Coordenada Y (vazio = chão)" title="Y — vazio usa o chão">
+                  <input id="pos-z" type="number" step="any" placeholder="Z" aria-label="Coordenada Z" title="Z">
+                  <button type="submit" class="botao botao-primario">Mover</button>
+                </form>
                 <form id="form-cultivo" class="linha-edicao">
                   <span class="rotulo-edicao">Cultivo</span>
                   <select id="cultivo-valor" aria-label="Novo cultivo"></select>

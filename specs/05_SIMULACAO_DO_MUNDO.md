@@ -706,7 +706,7 @@ Limitações: instâncias do `gs.conf` que dividem pasta (`is73–75` em `a72`, 
 e `m01`/`random03`/`random04` não têm dados no carregador — aparecem "sem dados"; cada mapa é
 um mundo único compartilhado (o original cria cópias por entrada em `instance_servers`).
 
-## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184; falta ver em jogo)
+## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184, B185; falta ver em jogo)
 
 `RoteadorDeMapas::editar_personagem`, com a guarda de presença em leitura (a entrada pega em
 escrita) e a trava de gravação do personagem. Só dar (B180: tirar arriscaria valor
@@ -739,6 +739,17 @@ equipamento (`recalcular_equipamento`, o `RefreshEquipment`) e manda `OWN_EXT_PR
 grava atributos e pontos livres absolutos no cliente (`EC_HostMsg.cpp:1583-1584`). Offline:
 um `UPDATE` com as mesmas condições (`definir_atributos_offline`). Falhas:
 `atributos_invalidos`, `sem_mudanca`, `atributos_invalidos_ou_personagem_inexistente`.
+
+**B185 (E6) — posição.** `posicao: {mapa, x, y?, z}`, tratada no roteador
+(`mover_pelo_painel`), não no contexto do jogador. Destino: mapa carregado e ligado neste
+processo (`mapa_indisponivel`); `(x, z)` dentro do terreno do destino (`fora_do_mapa`); `y`
+ausente = o chão, e abaixo do chão sobe para ele (`if (pos.y < height) pos.y = height`,
+`global_message.cpp:100-101`); mapa sem terreno carregado exige `y` (`altura_obrigatoria`).
+Online: o `transportar` do GM e da missão — mesmo mapa `NOTIFY_HOSTPOS` + parada para quem vê;
+outro mapa, pedido de troca na fila (`troca: true`), que grava mapa e posição ao chegar.
+Offline: `gravar_posicao_offline` sob a guarda de presença e a trava de gravação. Coordenadas
+±100 000 são política do painel. Pedido fora do contrato JSON (campo desconhecido) fecha a
+conexão sem resposta, como os demais; o painel valida antes.
 
 Falhas novas: `nivel_invalido` (com `nivel_maximo`), `nivel_invalido_ou_personagem_inexistente`
 (offline), `cultivo_invalido`. A impressão de deduplicação só inclui `pontos`/`nivel`/`cultivo`

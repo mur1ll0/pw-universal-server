@@ -228,6 +228,8 @@ button, input, select { font: inherit; color: inherit; }
 .linha-edicao { display: grid; grid-template-columns: 90px minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 #form-exp.linha-edicao { grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1fr) auto; }
 #form-atributos.linha-edicao { grid-template-columns: 90px repeat(4, minmax(0, 1fr)) auto auto; }
+#form-posicao.linha-edicao { grid-template-columns: 90px minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)) auto; }
+@media (max-width: 640px) { #form-posicao.linha-edicao { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 640px) { #form-atributos.linha-edicao { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .rotulo-edicao { font-size: 13px; font-weight: 600; color: var(--texto-2); }
 .linha-edicao input, .linha-edicao select {

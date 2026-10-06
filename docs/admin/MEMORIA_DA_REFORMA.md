@@ -128,7 +128,7 @@ Cada etapa pode ser dividida em subtarefas aqui, mantendo o arquivo curto.
 | E3 — canal administrativo e consulta viva | testado | consultas B166 e comando transacional/resultado recuperável B167; deduplicação global, conflito, rollback e reinício testados; falta confirmação visual |
 | E4 — contas | testado | busca, criação, senha, GM, gold, ban/desban e desconectar (B175); testes Rust/Python/Node; falta o Murillo confirmar em jogo |
 | E5 — personagem e persistência | testado | dinheiro e EXP/SP (B179); pontos livres, nível e cultivo (B182); modificar/redistribuir atributos (B184); falta ver em jogo; ficha e progressão online/offline, atualização nos dois clientes; autosave/logout/relogin não desfazem edição; consultas mostram valores reais |
-| E6 — inventário e subsistemas | planejado | itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
+| E6 — inventário e subsistemas | em andamento | posição (B185) testada; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
 | E7 — mapas e rates | testado | rates (B176), mapas (B177) e lista completa com carga/descarga em execução (B183); falta ver em jogo; desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
 | E8 — moldes de classe | planejado | leitura/edição das fontes consumidas; personagem novo usa alteração; recálculo separado preserva progressão conforme contrato |
 | E9 — extensões e fechamento | planejado | pontos de extensão documentados para editores futuros; interface revisada, manual atualizado, verificações finais e pendências claras |
@@ -155,7 +155,7 @@ quando aplicável. Não terminar com todas as telas prontas e operações sem in
 
 ## 6. Retomada imediata
 
-**Etapa ativa:** E5 testada (B179, B182, B184); próxima E6.
+**Etapa ativa:** E6 em andamento (B185 posição); E5 testada.
 **B165–B171 (resumo; detalhes no histórico):** B165 E1 auditoria · B166 E2/E3 login do painel e
 consulta viva · B167 senha + HMAC-MD5 no link · B168 criação de conta · B169 GM global coordenado
 (revisão/recibos/fencing em 8 processos) · B170 saída/salvamento/troca do GS reescritos ·
@@ -237,8 +237,14 @@ spec 05 §7.10. Mexe na entrada/troca: portão §6.2 item 1 (roteiro em jogo ant
 Modificar os quatro com o total conservado ou redistribuir tudo (piso da versão), online/offline;
 spec 05 §7.11. Saída/relogin não desfazem edição (testes conferem o banco após o logout).
 
-**Próxima ação:** Murillo confere em jogo (roteiros B179, B182, B183 — portão §6.2 — e B184).
-Depois a E6: inventário/equipamentos, habilidades,
+### 6.12 B185 — E6 primeira fatia: posição
+
+Exceção ao portão §6.2 dada pelo Murillo (2026-10-06): seguir sem o roteiro do B183 em jogo,
+porque a fatia não mexe em entrada/saída/troca (usa o `transportar` existente). Mover online
+(mesmo mapa ou troca) e offline; spec 05 §7.11.
+
+**Próxima ação:** Murillo confere em jogo (B179, B182, B183 — portão §6.2 pendente —, B184 e
+B185). E6 continua: inventário/equipamentos, habilidades,
 missões, posição, aparência e mascotes — cada um com o S2C que atualiza a ficha online achado
-no original, senão só offline ou "reentrar". Depois E8 (moldes) e E9. Próximo B: B185.
+no original, senão só offline ou "reentrar". Depois E8 (moldes) e E9. Próximo B: B186.
 Não publicar/commitar sem pedido.

@@ -1146,3 +1146,50 @@ async fn modificar_e_redistribuir_atributos_online_e_offline_126_e_155() {
         c.encerrar().await;
     }
 }
+
+/// E6 (B185): mover o personagem. Online pelo `transportar` (o do GM): no mesmo mapa a posição
+/// muda na hora; noutro, a troca de mapa leva o jogador e grava. Destino só em mapa carregado
+/// e ligado; sem terreno a altura é obrigatória. Offline grava mapa e posição.
+#[tokio::test]
+async fn mover_personagem_online_e_offline_pelo_canal() {
+    let c = Cenario::montar().await;
+    let id = |s: &str| format!("e6p-{s}-{}", c.personagem);
+    let mover = |p: Value| json!({"tipo":"editar_personagem","personagem_id":c.personagem,"posicao":p});
+    let _bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let ficha = || async { c.roteador.consultar_administrativamente(c.personagem).await };
+
+    let r = c.pedir_com_id(&c.realm, &id("mesmo"), c.conta, mover(json!({"mapa":1,"x":120.5,"y":30.0,"z":-80.0}))).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["troca"].as_bool()), (Some("aplicado"), Some(false)), "{r}");
+    let f = ficha().await;
+    assert_eq!((f["ficha"]["mapa"].as_i64(), f["ficha"]["posicao"]["x"].as_f64()), (Some(1), Some(120.5)), "{f}");
+
+    let r = c.pedir_com_id(&c.realm, &id("outro"), c.conta, mover(json!({"mapa":161,"x":10.0,"y":5.0,"z":20.0}))).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["troca"].as_bool()), (Some("aplicado"), Some(true)), "{r}");
+    let mut chegou = false;
+    for _ in 0..100 {
+        if c.roteador.mapa_de(c.personagem).await == Some(161) { chegou = true; break; }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(chegou, "a troca para o 161 não aconteceu");
+    let gravado: (i32, f32) = sqlx::query_as("SELECT world_id, pos_x FROM characters WHERE id=$1")
+        .bind(c.personagem).fetch_one(c.pool.get_ref()).await.unwrap();
+    assert_eq!(gravado, (161, 10.0), "a troca grava na hora");
+
+    for (n, p, codigo) in [(1, json!({"mapa":1,"x":1.0,"z":1.0}), "altura_obrigatoria"),
+                           (2, json!({"mapa":999,"x":1.0,"y":1.0,"z":1.0}), "mapa_indisponivel"),
+                           (3, json!({"mapa":1,"x":1.0e9,"y":1.0,"z":1.0}), "edicao_invalida")] {
+        let r = c.pedir_com_id(&c.realm, &id(&format!("rec{n}")), c.conta, mover(p)).await;
+        assert_eq!(r["dados"]["codigo"], codigo, "{n}: {r}");
+    }
+
+    drop(_bus);
+    c.esperar_presenca("ausente").await;
+    let r = c.pedir_com_id(&c.realm, &id("off"), c.conta, mover(json!({"mapa":1,"x":-319.5,"y":220.0,"z":-900.25}))).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("salvo"), Some("offline")), "{r}");
+    let gravado: (i32, f32, f32, f32) = sqlx::query_as("SELECT world_id, pos_x, pos_y, pos_z FROM characters WHERE id=$1")
+        .bind(c.personagem).fetch_one(c.pool.get_ref()).await.unwrap();
+    assert_eq!(gravado, (1, -319.5, 220.0, -900.25));
+    sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6p-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}

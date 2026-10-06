@@ -521,6 +521,16 @@ impl BusServer {
         self.atualizar_visiveis(roleid, &envio, true).await;
     }
 
+    /// Painel (E6, B185): a altura do chão em `(x, z)` neste mapa. `Ok(None)`: o mapa não tem
+    /// terreno carregado (não há como conferir); `Err(())`: fora da grade do terreno.
+    pub(crate) async fn chao_em(&self, x: f32, z: f32) -> Result<Option<f32>, ()> {
+        let m = self.world.read().await;
+        if !m.terreno.tem_dados() {
+            return Ok(None);
+        }
+        m.terreno.altura_em(x, z).map(Some).ok_or(())
+    }
+
     /// Tira o jogador deste mapa para outro: some da vista de todos, larga sessão e entidade.
     pub(crate) async fn retirar_para_troca(&self, roleid: i32) -> Option<JogadorEmTroca> {
         self.tirar_da_vista_de_todos(roleid as i64).await;
