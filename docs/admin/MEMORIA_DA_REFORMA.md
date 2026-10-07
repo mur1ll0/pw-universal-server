@@ -1,9 +1,9 @@
 # Memória central da reforma do pw-admin
 
-Atualizada em 2026-10-05 (B175). Estado: **E1–E3 testadas; E4 testada (contas completas), falta
-confirmar em jogo; E5–E9 planejadas**. B165–B173 commitados (`dc0b117`, `9fdd555`); B174–B175
-locais e publicados nos contêineres 126/155; migrações aplicadas no `public` (B173).
-Base consultada: commit `a010ff7`. Responsável pelas decisões de produto: Murillo.
+Atualizada em 2026-10-07 (B190). Estado: **E1–E5 testadas; E6 em andamento (tela nova de
+personagens B190; fila B191–B199 em §6.14); E7 testada; E8–E9 planejadas**. Commitado até
+`253633d` (B189); B190 local. Nada de B176–B190 confirmado em jogo.
+Responsável pelas decisões de produto: Murillo.
 
 Este arquivo é o ponto de retomada da reforma. Guarda decisões, estado das etapas,
 evidências curtas e próximo passo. Specs descrevem o sistema implementado; o histórico
@@ -52,6 +52,12 @@ correspondentes ao realm. Pode substituir o frontend e reorganizar o backend.
 - **Editores futuros:** nesta reforma, somente preparar arquitetura para `elements`,
   `npcgen`, `tasks`, modelos, animações e texturas. Não implementar editores completos,
   launcher ou distribuição de patches como parte deste escopo.
+- **Tela de personagens (2026-10-07):** cartões só do realm selecionado (todas as contas);
+  tela do personagem com janelas como as do jogo; estatísticas editáveis = as de hoje (nada
+  novo; tirar dinheiro/EXP continua proibido). Ação online sem S2C comprovado: recusar
+  ("precisa estar offline") **e** oferecer botão explícito "desconectar e aplicar". Edição de
+  item livre nos **valores**, não no **formato** (octets legíveis pelo cliente). 1.2.6 sem
+  reenvio de lista de habilidades aceito em jogo → remover/descer habilidade só offline.
 - **Autonomia:** alterar painel e integrações necessárias em Rust, banco e Docker, mantendo
   as regras do projeto. Não parar a cada etapa para revisão; perguntar quando uma decisão
   de produto relevante estiver indefinida. Commit/push/publicação só por pedido explícito.
@@ -59,26 +65,10 @@ correspondentes ao realm. Pode substituir o frontend e reorganizar o backend.
 
 ## 2. Evidência inicial e limitações
 
-Auditoria e contratos em `docs/admin/ARQUITETURA_E_CONTRATOS.md` (E1). As linhas do antigo
-`main.py` abaixo são da base `a010ff7`, anterior à substituição. Rotas pendentes agora exigem
-login e retornam 501 sem mutação; não há seed de moldes nem escrita administrativa direta.
-
-| fato consultado | origem | implicação |
-| :--- | :--- | :--- |
-| API FastAPI e frontend estático; painel sem revisão recente | `specs/06_ADMIN_PANEL_AND_CPW_SPEC.md`, §1 | auditar antes de escolher o que reaproveitar |
-| Edição de ficha escreve diretamente no banco | `web-admin/backend/main.py:792` | inadequada para personagem online |
-| Autosave copia estado em memória a cada 60 s | `crates/pw-gs/src/world.rs:2640` | banco isolado pode ser sobrescrito |
-| Gravação do autosave fica fora do lock do mundo | `crates/pw-gs/src/world.rs:2710` | manter banco fora do caminho crítico e coordenar escritas |
-| GM altera estado em memória e responde ao cliente | `crates/pw-gs/src/bus_server/gm.rs:120` | há operações existentes a aproveitar, não uma API admin pronta |
-| Barramento atual transporta mensagens de jogo | `crates/pw-bus/src/message.rs:49` | canal administrativo ainda precisa de desenho e implementação |
-| Rates/mapas/templates do painel não comandam corretamente os daemons | `specs/06_ADMIN_PANEL_AND_CPW_SPEC.md`, §1 | não confundir gravação de configuração com aplicação |
-| Fontes dos moldes usados são arquivos do realm | `specs/06_ADMIN_PANEL_AND_CPW_SPEC.md`, §1 | resolver `ptemplate.conf`/`clsconfig`/banco conforme função de cada dado |
-
-Auditoria E1 concluída. Docker consultado: quatro realms/mundos e painel anterior ativos.
-E2 usa sessão Redis e verificador Rust compartilhado; catálogo não é exposto porque os
-fallbacks podem buscar elements/ícones de outro realm (`elements_decoder.py:500-514,774-790`).
-Há pendências anteriores de teste/publicação do jogo no estado geral; não assumir que o
-contêiner executa o mesmo commit do código em disco.
+Auditoria E1 concluída: fatos, origens e implicações em `docs/admin/ARQUITETURA_E_CONTRATOS.md`
+(edição antiga direto no banco, autosave de 60 s fora do lock, barramento sem autenticação,
+rates/mapas/moldes sem comando real). Rotas pendentes exigem login e retornam 501 sem mutação.
+Não assumir que o contêiner executa o mesmo commit do código em disco.
 
 ## 3. Direção técnica e restrições
 
@@ -128,7 +118,7 @@ Cada etapa pode ser dividida em subtarefas aqui, mantendo o arquivo curto.
 | E3 — canal administrativo e consulta viva | testado | consultas B166 e comando transacional/resultado recuperável B167; deduplicação global, conflito, rollback e reinício testados; falta confirmação visual |
 | E4 — contas | testado | busca, criação, senha, GM, gold, ban/desban e desconectar (B175); testes Rust/Python/Node; falta o Murillo confirmar em jogo |
 | E5 — personagem e persistência | testado | dinheiro e EXP/SP (B179); pontos livres, nível e cultivo (B182); modificar/redistribuir atributos (B184); falta ver em jogo; ficha e progressão online/offline, atualização nos dois clientes; autosave/logout/relogin não desfazem edição; consultas mostram valores reais |
-| E6 — inventário e subsistemas | em andamento | posição (B185), itens ver/buscar/dar (B186) e remover (B187) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
+| E6 — inventário e subsistemas | em andamento | posição (B185), itens ver/buscar/dar (B186), remover (B187), ícones (B188), dica parte 1 (B189) e tela nova de personagens (B190) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
 | E7 — mapas e rates | testado | rates (B176), mapas (B177) e lista completa com carga/descarga em execução (B183); falta ver em jogo; desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
 | E8 — moldes de classe | planejado | leitura/edição das fontes consumidas; personagem novo usa alteração; recálculo separado preserva progressão conforme contrato |
 | E9 — extensões e fechamento | planejado | pontos de extensão documentados para editores futuros; interface revisada, manual atualizado, verificações finais e pendências claras |
@@ -155,7 +145,7 @@ quando aplicável. Não terminar com todas as telas prontas e operações sem in
 
 ## 6. Retomada imediata
 
-**Etapa ativa:** E6 em andamento (B185 posição, B186–B189 itens); E5 testada.
+**Etapa ativa:** E6 em andamento (B185 posição, B186–B189 itens, B190 tela nova); E5 testada.
 **B165–B171 (resumo; detalhes no histórico):** B165 E1 auditoria · B166 E2/E3 login do painel e
 consulta viva · B167 senha + HMAC-MD5 no link · B168 criação de conta · B169 GM global coordenado
 (revisão/recibos/fencing em 8 processos) · B170 saída/salvamento/troca do GS reescritos ·
@@ -228,22 +218,32 @@ pelo Murillo em 2026-10-06. Regras: spec 05 §7.10–7.11.
 Dar = prêmio de missão em lotes de uma pilha, tudo ou nada; remover online (bolsa/missão,
 `PLAYER_DROP_ITEM` motivo GM) ou offline (todos). Nomes do `elements.data`. Spec 05 §7.11.
 
-**Inventário como o do jogo (decisões do Murillo, 2026-10-06):** ordem ícones e grade (B188,
-feito) → tooltip com o texto do item → arrastar **online e offline** → editar propriedades com
-**edição livre a qualquer momento** (sem os limites do jogo). Ícones/textos: atlas e configs do
-cliente 1.5.5 servem as duas versões (atlas em `data/icones/`).
-**A investigar antes de editar propriedades (ideia do Murillo):** transformar os octets do item
-(durabilidade, refino, gemas, efeitos — hoje um binário por versão) em colunas próprias na
-tabela de itens, para editar sem mexer em binário. Critério: **não perder desempenho no jogo**
-(o GS lê/grava a bolsa a cada operação e manda os octets ao cliente); se colunas custarem
-montar o binário a cada envio ou não cobrirem tudo, manter os octets e só decodificá-los no
-painel.
+**Inventário como o do jogo (decisões do Murillo, 2026-10-06):** grade com ícones (B188) →
+dica (B189 parte 1) → arrastar online e offline → editar propriedades com **edição livre**.
+Atlas e textos do cliente 1.5.5 servem as duas versões (`data/icones/`, `data/textos/`).
 
-B188 ícones e grade; B189 dica parte 1 (textos do cliente em `data/textos/`; efeitos ainda como
-id+parâmetros; frases `ITEMDESC_*` só até o índice 112, depois o BR diverge do fonte).
+### 6.14 B190 e a fila aprovada (análise de 2026-10-07)
 
-**Próxima ação:** Murillo confere (B179, B182, B183 — portão §6.2 pendente —, B184–B189); depois
-dica parte 2 (texto dos efeitos, `FormatPropDesc`) e arrastar. E6 continua com: inventário/equipamentos, habilidades,
-missões, posição, aparência e mascotes — cada um com o S2C que atualiza a ficha online achado
-no original, senão só offline ou "reentrar". Depois E8 (moldes) e E9. Próximo B: B190.
-Não publicar/commitar sem pedido.
+**Octets × colunas (ideia do Murillo) — decidido: manter os octets.** `character_items` já é
+híbrida: colunas espelho (durabilidade, refino, furos/pedras, vínculo, fabricante) + `extra_data`;
+a verdade são os octets (o refino da coluna é recalculado deles, `pedras_e_refino.rs:354`) e o
+cliente recebe os bytes gravados. Colunas não cobrem o item (efeitos em lista variável, essência
+por família, decodificação só com o molde do `elements`; ovo, voador, gênio fora do equipamento)
+e custariam montar os octets a cada leitura/envio. Edição: o painel manda edição estruturada, o
+GS decodifica com `ConteudoDeEquipamento`, regrava os octets e as colunas espelho no mesmo upsert.
+
+**B190 (testado):** cartões (nome, conta, classe pelo `fixed_msg.txt` do cliente, nível) com
+busca por personagem ou conta e paginação; tela do personagem com janelas recolhíveis. Spec 06.
+
+**Fila:** B191 arrastar (online pelos tratadores do cliente já portados — troca/mover na bolsa,
+troca no corpo, equipar, bolsa→corpo, 6 do armazém; a aparência a quem vê já sai em
+`jogo.rs:2185`; offline as mesmas funções sobre a bolsa do banco) → B192 dica parte 2
+(`AddOneAddOnPropDesc`, `EC_IvtrEquip.cpp:971-2610`: 157 casos, 65 frases; 47 ≤ 112 seguras) →
+B193 as 18 frases > 112 conferidas no binário → B194 modal de edição do item (online reenvia a
+ficha do item; conferir aceitação em slot ocupado e aparência com refino) → B195–B196
+habilidades (atlas `Skill`/`Pet` etc., `EC_GameUIMan.cpp:585-642`; lista reenviada aceita em jogo
+no fonte 1.5.5, `EC_HostMsg.cpp:3525-3570`) → B197 mascotes (`PET_ROOM`, `EC_HostMsg.cpp:5390`)
+→ B198 missões → B199 aparência (rosto: `PLAYER_CHG_FACE`, `EC_GPDataType.h:1084`).
+
+**Próxima ação:** B191. Murillo confere em jogo B179–B190 (B183 = portão §6.2). Não
+publicar/commitar sem pedido.

@@ -9,6 +9,16 @@ import pathlib
 # Gerado por scripts/gerar_catalogo_de_mapas.py (B183); lido uma vez.
 CATALOGO_DE_MAPAS = json.loads((pathlib.Path(__file__).parent / "catalogo_mapas.json").read_text(encoding="utf-8"))
 
+# Nome da classe como o cliente escreve (B190): `CECGameRun::GetProfName` (`EC_GameRun.cpp:3448`)
+# lê `FIXMSG_PROF_*` do `fixed_msg.txt`; no `configs.pck` 1.5.5 BR as posições 32–39, 229–230 e
+# 282–283 batem com a enumeração (`EC_FixedMsg.h:62-70, 298, 300, 362-363`). O 1.2.6 usa 0–7.
+NOMES_DAS_CLASSES = ["Guerreiro", "Mago", "Espirit.", "Feiticeira", "Bárbaro", "Merc.", "Arqueiro",
+                     "Sacer.", "Arcano", "Místico", "Retalh.", "Torment."]
+
+
+def nome_da_classe(classe):
+    return NOMES_DAS_CLASSES[classe] if 0 <= classe < len(NOMES_DAS_CLASSES) else f"Classe {classe}"
+
 
 def registrar_consultas(app):
     async def validar_realm(realm_id):
@@ -104,15 +114,27 @@ def registrar_consultas(app):
         return {"realm_id": realm_id, "itens": dados.get("itens", [])}
 
     @app.get("/api/realms/{realm_id}/personagens")
-    async def buscar_personagens(realm_id: str, busca: str = Query("", max_length=64)):
+    async def buscar_personagens(realm_id: str, busca: str = Query("", max_length=64),
+                                 pagina: int = Query(1, ge=1, le=100_000),
+                                 por_pagina: int = Query(12, ge=1, le=48)):
+        """B190: personagens do realm de todas as contas, por nome do personagem ou da conta."""
         await validar_realm(realm_id)
+        # Curingas do ILIKE escapados, como na busca de contas.
+        padrao = "%" + busca.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+        filtro = ("FROM characters c JOIN accounts a ON a.id=c.account_id WHERE c.realm_id=$1 "
+                  "AND NOT c.is_deleted AND (c.name ILIKE $2 ESCAPE '!' OR a.username ILIKE $2 ESCAPE '!')")
         async with app.state.seguranca.pool.acquire() as conexao:
+            total = await conexao.fetchval(f"SELECT count(*) {filtro}", realm_id, padrao)
             registros = await conexao.fetch(
-                "SELECT id,name,cls,level FROM characters WHERE realm_id=$1 AND NOT is_deleted "
-                "AND name ILIKE $2 ORDER BY id LIMIT 50", realm_id, f"%{busca}%",
+                f"SELECT c.id,c.name,c.cls,c.level,c.gender,a.id AS conta_id,a.username {filtro} "
+                "ORDER BY c.id LIMIT $3 OFFSET $4", realm_id, padrao, por_pagina, (pagina - 1) * por_pagina,
             )
-        return {"realm_id": realm_id, "origem": "persistida",
-                "personagens": [{"id": r["id"], "nome": r["name"], "classe": r["cls"], "nivel": r["level"]} for r in registros]}
+        return {"realm_id": realm_id, "origem": "persistida", "total": total, "pagina": pagina,
+                "por_pagina": por_pagina,
+                "personagens": [{"id": r["id"], "nome": r["name"], "classe": r["cls"],
+                                 "classe_nome": nome_da_classe(r["cls"]), "nivel": r["level"],
+                                 "sexo": "f" if r["gender"] == 1 else "m",
+                                 "conta_id": r["conta_id"], "usuario": r["username"]} for r in registros]}
 
     @app.get("/api/realms/{realm_id}/personagens/{personagem_id}")
     async def consultar_personagem(realm_id: str, requisicao: Request,
@@ -159,4 +181,6 @@ def registrar_consultas(app):
                 raise CanalIndisponivel("Presença não reconhecida na resposta do daemon.")
         except CanalIndisponivel as erro:
             resultado["aviso"] = str(erro)
+        if isinstance(resultado["ficha"].get("classe"), int):
+            resultado["ficha"]["classe_nome"] = nome_da_classe(resultado["ficha"]["classe"])
         return resultado

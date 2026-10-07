@@ -12100,3 +12100,47 @@ comparação lado a lado.
     contêiner (`/app/painel/…`) dava `IndexError: 3` na importação. Agora só os níveis que
     existem; conferido com a imagem nova num contêiner descartável (importa, acha
     `/app/data/icones` e `/app/data/textos`, recorta o ícone e monta a dica). Painel 59/0.
+
+190. **Sessão 2026-10-07: análise da E6 restante e tela nova de personagens (cartões + tela com janelas).**
+
+    ### a. Sintoma / pedido
+    Terminar a E6 (dica parte 2, arrastar, editar item livre, habilidades, mascotes, missões,
+    aparência) e fazer a tela nova de edição de personagem. Primeiro uma análise; o Murillo
+    decidiu: tela nova primeiro; cartões só do realm; estatísticas editáveis = as de hoje; ação
+    online sem S2C = recusar + botão "desconectar e aplicar"; edição livre nos valores, não no
+    formato; 1.2.6 sem reenvio de habilidades aceito → remover/descer só offline. Fila aprovada
+    B191–B199 (memória da reforma §6.14).
+
+    ### b. Evidência
+    - Octets × colunas: `character_items` já tem colunas espelho; a verdade são os octets
+      (`pedras_e_refino.rs:354` recalcula o refino deles); decodificar exige o molde
+      (`ConteudoDeEquipamento::ler(bytes, &modelo)`). Decisão: manter octets.
+    - Dica parte 2: `AddOneAddOnPropDesc` (`EC_IvtrEquip.cpp:971-2610`) tem 157 casos e 65
+      frases `ITEMDESC_*`; 47 com índice ≤ 112, 18 acima (PDEF 301, EVASION 321, ACCURACY2 317,
+      resistências 219–223, PPEN/MPEN 344–345, entre outras), a conferir no binário.
+    - Arrastar: tratadores do cliente já portados em `bus_server.rs:5280-5700` e armazém em
+      `bus_server.rs:1663-1669`; aparência a quem vê em `jogo.rs:2185`.
+    - Habilidades: lista reenviada aceita em jogo no fonte 1.5.5 (`EC_HostMsg.cpp:3525-3570`).
+    - Nomes de classe: `GetProfName` (`EC_GameRun.cpp:3448`) → `FIXMSG_PROF_*`; no
+      `fixed_msg.txt` (UTF-16) do `configs.pck` 1.5.5 BR, 287 entradas, e as 12 posições
+      (32–39, 229–230, 282–283) batem com `EC_FixedMsg.h`.
+    - Roupas: slots 13–16, 25, 29 (`EC_IvtrTypes.h:56-85`).
+
+    ### c. Correção
+    - `painel/consultas.py`: `/personagens` paginado (`pagina`, `por_pagina` 1–48), todas as
+      contas do realm, busca por personagem ou conta (`_`/`%` literais), com `total`,
+      `usuario`, `conta_id`, `sexo`, `classe_nome`; a ficha também traz `classe_nome`.
+    - `static/`: Personagens em cartões com paginação; tela do personagem com janelas
+      recolhíveis (Estatísticas com as edições E5, Equipamento, Roupas, Inventário com
+      dar/remover, Armazém, Bolsa de missão; Habilidades/Mascotes/Missões "em breve"); Voltar.
+    - Spec 06, manual, estado, memória da reforma (§2 resumida para caber em 250 linhas).
+
+    ### d. Provas
+    Painel Python 60/0 (duas rodadas; uma rodada anterior teve 1 erro que não se repetiu),
+    Node 7/0. Teste novo `test_lista_de_personagens_em_cartoes_b190`. Prévia local no schema
+    `test` (conta e personagens de teste, apagados depois): 15 personagens → "Página 1 de 2";
+    cartão abre a tela com "Guerreiro · Nv. 10 · conta …"; janelas com grade simulada. Sem
+    mudança no Rust. Não publicado.
+
+    ### e. O que continua faltando
+    B191–B199 (memória da reforma §6.14). Nada de B176–B190 visto em jogo.

@@ -5,7 +5,7 @@ const estado = {
   sessao: null, realms: [], selecionado: null, pagina: "inicio", carregando: false,
   geracao: 0, busca: 0, ficha: 0, personagemId: null,
   conta: null, cartao: null, comando: null, enviando: false, buscaContas: 0,
-  paginaContas: 1, porPagina: 12, totalContas: 0, aba: "resumo", online: {},
+  paginaContas: 1, paginaPersonagens: 1, personagemAberto: null, porPagina: 12, totalContas: 0, aba: "resumo", online: {},
   acompanhamento: null, tentativas: 0,
   catalogoMapas: {}, mapasMarcados: new Set(), realmDosMarcados: null,
 };
@@ -94,6 +94,8 @@ function mostrarEntrada() {
   elemento("nome-usuario").textContent = "";
   elemento("lista-personagens").replaceChildren();
   elemento("ficha-personagem").hidden = true;
+  elemento("consulta-personagens").hidden = false;
+  estado.paginaPersonagens = 1;
 }
 
 /* ---------------- Navegação ---------------- */
@@ -393,6 +395,8 @@ function selecionar(id, irPara = "realm") {
   estado.personagemId = null;
   elemento("lista-personagens").replaceChildren();
   elemento("ficha-personagem").hidden = true;
+  elemento("consulta-personagens").hidden = false;
+  estado.paginaPersonagens = 1;
   elemento("aviso-personagens").hidden = true;
   estado.selecionado = estado.realms.find((realm) => realm.id === id) || null;
   elemento("realm-selecionado").value = estado.selecionado?.id || "";
@@ -539,36 +543,64 @@ function renderizarRealm() {
 
 /* ---------------- Personagens ---------------- */
 
-async function buscarPersonagens() {
+/* Personagens em cartões (B190): todas as contas do realm, busca por personagem ou conta,
+   paginação como a de Contas. Clicar abre a tela do personagem; "Voltar" retorna à consulta. */
+async function buscarPersonagens(pagina = estado.paginaPersonagens) {
   const realm = estado.selecionado;
   if (!realm) return;
   const busca = ++estado.busca;
-  estado.ficha++;
-  estado.personagemId = null;
-  elemento("ficha-personagem").hidden = true;
-  elemento("lista-personagens").replaceChildren();
+  estado.paginaPersonagens = Math.max(1, pagina);
+  fecharTelaPersonagem();
   elemento("aviso-personagens").hidden = true;
   try {
-    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens?busca=${encodeURIComponent(elemento("nome-personagem").value)}`);
+    const termo = encodeURIComponent(elemento("nome-personagem").value.trim());
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens?busca=${termo}&pagina=${estado.paginaPersonagens}&por_pagina=${estado.porPagina}`);
     if (estado.busca !== busca || estado.selecionado?.id !== realm.id || !estado.sessao) return;
-    if (!dados.personagens.length) elemento("lista-personagens").append(criar("p", "nota-vazia", "Nenhum personagem encontrado."));
-    for (const personagem of dados.personagens) {
-      const botao = criar("button", "personagem");
-      botao.type = "button";
-      const nome = criar("div");
-      nome.append(criar("strong", "", personagem.nome));
-      botao.append(nome, criar("span", "", `Nv. ${personagem.nivel} · #${personagem.id}`));
-      botao.addEventListener("click", () => {
-        document.querySelectorAll(".personagem").forEach((b) => b.classList.toggle("selecionado", b === botao));
-        consultarPersonagem(realm.id, personagem.id);
-      });
-      elemento("lista-personagens").append(botao);
-    }
+    const lista = elemento("lista-personagens");
+    lista.replaceChildren();
+    for (const personagem of dados.personagens) lista.append(cartaoPersonagem(realm, personagem));
+    if (!dados.personagens.length) lista.append(criar("p", "nota-vazia", "Nenhum personagem encontrado."));
+    const total = dados.total ?? dados.personagens.length;
+    const paginas = Math.max(1, Math.ceil(total / estado.porPagina));
+    elemento("resumo-personagens").textContent = `${fmt(total)} personage${total === 1 ? "m" : "ns"}`;
+    elemento("indicador-personagens").textContent = `Página ${estado.paginaPersonagens} de ${paginas}`;
+    elemento("personagens-anterior").disabled = estado.paginaPersonagens <= 1;
+    elemento("personagens-seguinte").disabled = estado.paginaPersonagens >= paginas;
   } catch (erro) {
     if (estado.busca !== busca || !estado.sessao) return;
     elemento("aviso-personagens").textContent = erro.message;
     elemento("aviso-personagens").hidden = false;
   }
+}
+
+function cartaoPersonagem(realm, personagem) {
+  const botao = criar("button", "cartao-conta cartao-personagem");
+  botao.type = "button";
+  const avatar = criar("span", `avatar ${corAvatar(personagem.classe)}`, personagem.nome.slice(0, 1));
+  const nome = criar("div");
+  nome.append(criar("div", "nome", personagem.nome), criar("div", "id", `${personagem.usuario} · #${personagem.id}`));
+  const rodape = criar("div", "rodape");
+  rodape.append(criar("span", "etiqueta etiqueta-neutra", personagem.classe_nome || `Classe ${personagem.classe}`),
+    criar("span", "gold", `Nv. ${personagem.nivel}`));
+  botao.append(avatar, nome, rodape);
+  botao.addEventListener("click", () => {
+    estado.personagemAberto = personagem;
+    consultarPersonagem(realm.id, personagem.id);
+  });
+  return botao;
+}
+
+function fecharTelaPersonagem() {
+  estado.ficha++;
+  estado.personagemId = null;
+  esconderDica();
+  elemento("ficha-personagem").hidden = true;
+  elemento("consulta-personagens").hidden = false;
+}
+
+function abrirTelaPersonagem() {
+  elemento("consulta-personagens").hidden = true;
+  elemento("ficha-personagem").hidden = false;
 }
 
 async function consultarPersonagem(realmId, id) {
@@ -578,13 +610,14 @@ async function consultarPersonagem(realmId, id) {
     if (estado.ficha !== consulta || estado.selecionado?.id !== realmId || !estado.sessao) return;
     const ficha = dados.ficha;
     elemento("titulo-personagem").textContent = ficha.nome;
+    const conta = estado.personagemAberto?.id === id ? ` · conta ${estado.personagemAberto.usuario}` : "";
     const presencas = { online: "Online agora", ausente_nos_daemons: "Offline", em_transicao: "Entrando ou saindo", desconhecida: "Presença desconhecida" };
-    elemento("presenca-personagem").textContent = `#${ficha.id} · ${presencas[dados.presenca] || "Presença desconhecida"}`;
+    elemento("presenca-personagem").textContent = `${ficha.classe_nome || `Classe ${ficha.classe}`} · Nv. ${ficha.nivel}${conta} · #${ficha.id} · ${presencas[dados.presenca] || "Presença desconhecida"}`;
     elemento("origem-personagem").textContent = dados.origem === "viva" ? "Ao vivo" : "Salvo no banco";
     elemento("origem-personagem").className = `etiqueta ${dados.origem === "viva" ? "" : "etiqueta-neutra"}`;
     elemento("observacao-personagem").textContent = dados.aviso || "";
     const inteiro = (valor) => BigInt(valor).toLocaleString("pt-BR");
-    const campos = [["Nível", ficha.nivel], ["Classe", ficha.classe], ["Cultivo", ficha.cultivo],
+    const campos = [["Nível", ficha.nivel], ["Classe", ficha.classe_nome || ficha.classe], ["Cultivo", ficha.cultivo],
       ["EXP", inteiro(ficha.exp)], ["Alma", inteiro(ficha.alma)], ["Dinheiro", inteiro(ficha.dinheiro)],
       ["Vida", ficha.vida], ["Mana", ficha.mana], ["Pontos livres", ficha.pontos],
       ["Força", ficha.forca], ["Agilidade", ficha.agilidade], ["Vitalidade", ficha.vitalidade],
@@ -596,7 +629,7 @@ async function consultarPersonagem(realmId, id) {
       campo.append(criar("dt", "", rotulo), criar("dd", "", valor));
       elemento("dados-personagem").append(campo);
     }
-    elemento("ficha-personagem").hidden = false;
+    abrirTelaPersonagem();
     estado.personagemId = id;
     const online = dados.presenca === "online";
     elemento("dica-edicao").textContent = online
@@ -861,36 +894,48 @@ function esconderDica() {
   elemento("dica-item").hidden = true;
 }
 
+/* Equipamento e roupas (B190): as roupas são slots do próprio equipamento —
+   `EQUIPIVTR_FASHION_BODY/LEG/FOOT/WRIST` 13–16, `_HEAD` 25 e `_WEAPON` 29 (`EC_IvtrTypes.h:56-85`). */
+const SLOTS_DE_ROUPA = [13, 14, 15, 16, 25, 29];
+const JANELAS_DE_ITENS = { bolsa: "janela-bolsa", armazem: "janela-armazem", missao: "janela-missao" };
+function gradeDeItens(chave, rotulo, slots, porSlot, sexo) {
+  const grade = criar("div", "grade-itens");
+  for (const s of slots) {
+    const legenda = chave === "equipamento" ? (SLOTS_DE_EQUIPAMENTO[s] || `Slot ${s}`) : "";
+    grade.append(celulaDeItem(chave, rotulo, porSlot.get(s), sexo, legenda));
+  }
+  return grade;
+}
+const intervalo = (n) => Array.from({ length: n }, (_, i) => i);
+function alvosDeItens() {
+  return ["janela-equipamento", "janela-roupas", ...Object.values(JANELAS_DE_ITENS)].map(elemento);
+}
 async function carregarInventario(realm, id) {
-  const alvo = elemento("recipientes-itens");
   cancelarRemocao();
   dicas.clear();
   esconderDica();
-  alvo.replaceChildren(criar("p", "nota-vazia", "Carregando itens…"));
+  for (const alvo of alvosDeItens()) alvo.replaceChildren(criar("p", "nota-vazia", "Carregando itens…"));
   try {
     const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/inventario`);
     if (estado.personagemId !== id) return;
-    alvo.replaceChildren();
     const sexo = dados.sexo === "f" ? "f" : "m";
     for (const [chave, rotulo] of RECIPIENTES) {
       const itens = dados.recipientes?.[chave] || [];
       const porSlot = new Map(itens.map((i) => [i.slot, i]));
-      const caixa = criar("section", `recipiente recipiente-${chave}`);
-      caixa.append(criar("h4", "", `${rotulo} (${itens.length})`));
-      const grade = criar("div", "grade-itens");
       const maior = itens.reduce((m, i) => Math.max(m, i.slot + 1), 0);
-      const total = chave === "equipamento"
-        ? Math.max(30, maior)
-        : Math.max(32, Math.ceil(maior / 8) * 8);
-      for (let s = 0; s < total; s++) {
-        const legenda = chave === "equipamento" ? (SLOTS_DE_EQUIPAMENTO[s] || `Slot ${s}`) : "";
-        grade.append(celulaDeItem(chave, rotulo, porSlot.get(s), sexo, legenda));
+      if (chave === "equipamento") {
+        const corpo = intervalo(Math.max(30, maior)).filter((s) => !SLOTS_DE_ROUPA.includes(s));
+        elemento("janela-equipamento").replaceChildren(gradeDeItens(chave, rotulo, corpo, porSlot, sexo));
+        elemento("janela-roupas").replaceChildren(gradeDeItens(chave, rotulo, SLOTS_DE_ROUPA, porSlot, sexo));
+        continue;
       }
-      caixa.append(grade);
-      alvo.append(caixa);
+      const total = Math.max(32, Math.ceil(maior / 8) * 8);
+      const alvo = elemento(JANELAS_DE_ITENS[chave]);
+      alvo.replaceChildren(criar("p", "texto-suave", `${itens.length} ite${itens.length === 1 ? "m" : "ns"}`),
+        gradeDeItens(chave, rotulo, intervalo(total), porSlot, sexo));
     }
   } catch (erro) {
-    alvo.replaceChildren(criar("p", "nota-vazia", `Itens indisponíveis: ${erro.message}`));
+    for (const alvo of alvosDeItens()) alvo.replaceChildren(criar("p", "nota-vazia", `Itens indisponíveis: ${erro.message}`));
   }
 }
 
@@ -898,7 +943,7 @@ async function carregarInventario(realm, id) {
    Em jogo só bolsa e bolsa de missão; equipamento e armazém só com o personagem offline. */
 function escolherParaRemover(chave, rotulo, item, linha) {
   estado.remocao = { recipiente: chave, slot: item.slot, id: item.id, maximo: item.quantidade, nome: item.nome || `Item ${item.id}` };
-  for (const outra of document.querySelectorAll?.(".recipiente .escolhido") || []) outra.classList.remove("escolhido");
+  for (const outra of document.querySelectorAll?.(".celula-item.escolhido") || []) outra.classList.remove("escolhido");
   linha.classList.add("escolhido");
   elemento("remover-qual").textContent = `${estado.remocao.nome} · ${rotulo}, slot ${item.slot} (×${fmt(item.quantidade)})`;
   elemento("remover-quantidade").max = String(item.quantidade);
@@ -1430,7 +1475,20 @@ elemento("atualizar").addEventListener("click", atualizar);
 elemento("realm-selecionado").addEventListener("change", (evento) => selecionar(evento.target.value));
 elemento("menu").addEventListener("click", abrirMenu);
 elemento("cortina").addEventListener("click", fecharMenu);
-elemento("busca-personagens").addEventListener("submit", (evento) => { evento.preventDefault(); buscarPersonagens(); });
+elemento("busca-personagens").addEventListener("submit", (evento) => { evento.preventDefault(); buscarPersonagens(1); });
+elemento("personagens-anterior").addEventListener("click", () => buscarPersonagens(estado.paginaPersonagens - 1));
+elemento("personagens-seguinte").addEventListener("click", () => buscarPersonagens(estado.paginaPersonagens + 1));
+elemento("voltar-personagens").addEventListener("click", () => {
+  fecharTelaPersonagem();
+  if (!elemento("lista-personagens").children?.length) buscarPersonagens();
+});
+/* Janelas da tela do personagem: o botão da barra recolhe e expande o corpo. */
+document.querySelectorAll(".botao-janela").forEach((botao) => botao.addEventListener("click", () => {
+  const janela = botao.closest(".janela");
+  const recolhida = janela.classList.toggle("recolhida");
+  botao.textContent = recolhida ? "+" : "–";
+  botao.setAttribute("aria-label", recolhida ? "Expandir" : "Recolher");
+}));
 elemento("busca-contas").addEventListener("submit", (evento) => { evento.preventDefault(); buscarContas(1); });
 elemento("pagina-anterior").addEventListener("click", () => buscarContas(estado.paginaContas - 1));
 elemento("pagina-seguinte").addEventListener("click", () => buscarContas(estado.paginaContas + 1));

@@ -122,20 +122,37 @@
 
         <!-- Personagens -->
         <section id="pagina-personagens" class="pagina" hidden>
-          <form id="busca-personagens" class="barra-busca" role="search">
-            <input id="nome-personagem" type="search" placeholder="Nome do personagem" maxlength="64" aria-label="Nome do personagem">
-            <button type="submit" class="botao botao-primario">Buscar</button>
-          </form>
           <p id="aviso-personagens" class="alerta alerta-aviso" hidden></p>
-          <div class="grade-duas grade-personagens">
-            <div id="lista-personagens" class="lista-personagens"></div>
-            <article id="ficha-personagem" class="painel" hidden>
-              <header class="painel-topo">
-                <div><h2 id="titulo-personagem"></h2><p id="presenca-personagem" class="texto-suave"></p></div>
-                <span id="origem-personagem" class="etiqueta"></span>
-              </header>
+          <div id="consulta-personagens">
+            <div class="barra-ferramentas">
+              <form id="busca-personagens" class="barra-busca" role="search">
+                <input id="nome-personagem" type="search" placeholder="Personagem ou conta" maxlength="64" aria-label="Buscar por personagem ou conta">
+                <button type="submit" class="botao botao-primario">Buscar</button>
+              </form>
+              <span id="resumo-personagens" class="texto-suave"></span>
+            </div>
+            <div id="lista-personagens" class="grade-contas"></div>
+            <nav class="paginacao" aria-label="Páginas de personagens">
+              <button id="personagens-anterior" type="button" class="botao botao-fantasma">‹ Anterior</button>
+              <span id="indicador-personagens" class="texto-suave"></span>
+              <button id="personagens-seguinte" type="button" class="botao botao-fantasma">Próxima ›</button>
+            </nav>
+          </div>
+          <div id="ficha-personagem" class="tela-personagem" hidden>
+            <header class="topo-personagem">
+              <button id="voltar-personagens" type="button" class="botao botao-secundario">‹ Voltar</button>
+              <div class="nome-personagem">
+                <h2 id="titulo-personagem"></h2>
+                <p id="presenca-personagem" class="texto-suave"></p>
+              </div>
+              <span id="origem-personagem" class="etiqueta"></span>
+            </header>
+            <p id="observacao-personagem" class="texto-suave"></p>
+            <div class="mesa-janelas">
+            <section class="janela janela-larga" data-janela="estatisticas">
+              <header class="barra-janela"><h3>Estatísticas</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <div class="corpo-janela">
               <div id="dados-personagem" class="grade-ficha"></div>
-              <p id="observacao-personagem" class="texto-suave"></p>
               <div class="edicao-personagem">
                 <form id="form-dinheiro" class="linha-edicao">
                   <span class="rotulo-edicao">Dinheiro</span>
@@ -183,8 +200,19 @@
                 </form>
                 <p id="dica-edicao" class="dica"></p>
               </div>
-              <div class="itens-personagem">
-                <h3 class="titulo-bloco">Itens</h3>
+              </div>
+            </section>
+            <section class="janela" data-janela="equipamento">
+              <header class="barra-janela"><h3>Equipamento</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <div class="corpo-janela"><div id="janela-equipamento"></div></div>
+            </section>
+            <section class="janela" data-janela="roupas">
+              <header class="barra-janela"><h3>Roupas</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <div class="corpo-janela"><div id="janela-roupas"></div></div>
+            </section>
+            <section class="janela janela-larga" data-janela="inventario">
+              <header class="barra-janela"><h3>Inventário</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <div class="corpo-janela itens-personagem">
                 <form id="form-item" class="linha-edicao">
                   <span class="rotulo-edicao">Dar item</span>
                   <input id="item-busca" type="search" maxlength="64" placeholder="Nome ou ID do item" aria-label="Buscar item por nome ou ID" autocomplete="off">
@@ -200,10 +228,31 @@
                   <button type="submit" class="botao botao-secundario texto-perigo">Remover</button>
                   <button id="remover-cancelar" type="button" class="botao botao-secundario">Cancelar</button>
                 </form>
-                <div id="recipientes-itens" class="grade-recipientes"></div>
-                <div id="dica-item" class="dica-item" role="tooltip" hidden></div>
+                <div id="janela-bolsa"></div>
               </div>
-            </article>
+            </section>
+            <section class="janela" data-janela="armazem">
+              <header class="barra-janela"><h3>Armazém</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <div class="corpo-janela"><div id="janela-armazem"></div></div>
+            </section>
+            <section class="janela" data-janela="missao">
+              <header class="barra-janela"><h3>Bolsa de missão</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <div class="corpo-janela"><div id="janela-missao"></div></div>
+            </section>
+            <section class="janela janela-futura" data-janela="habilidades">
+              <header class="barra-janela"><h3>Habilidades</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <div class="corpo-janela"><p class="nota-vazia">Em breve.</p></div>
+            </section>
+            <section class="janela janela-futura" data-janela="mascotes">
+              <header class="barra-janela"><h3>Mascotes</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <div class="corpo-janela"><p class="nota-vazia">Em breve.</p></div>
+            </section>
+            <section class="janela janela-futura" data-janela="missoes">
+              <header class="barra-janela"><h3>Missões</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <div class="corpo-janela"><p class="nota-vazia">Em breve.</p></div>
+            </section>
+            </div>
+            <div id="dica-item" class="dica-item" role="tooltip" hidden></div>
           </div>
         </section>
 

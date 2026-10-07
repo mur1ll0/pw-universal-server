@@ -14,7 +14,10 @@ O serviço usa as credenciais existentes, sem trocar senha/hash nem criar sessã
   aplicadas pelo mundo ("Não aplicadas"). Online "—" = realm sem canal administrativo.
 - **Seletor de realm (topo):** escolhe o realm; o menu lateral libera o painel do realm,
   personagens, **Mapas** e **Rates** (moldes: "em breve").
-- **Personagens:** busque e abra a ficha. Embaixo dela: **Dinheiro**, **EXP / SP** e **Pontos livres**
+- **Personagens:** cartões com nome, conta, classe e nível (12 por página); a busca acha pelo
+  nome do personagem ou da conta. Clique no cartão para abrir a tela do personagem, com janelas
+  (Estatísticas, Equipamento, Roupas, Inventário, Armazém, Bolsa de missão; o "–" recolhe) e
+  **‹ Voltar** para a lista. Na janela Estatísticas: **Dinheiro**, **EXP / SP** e **Pontos livres**
   (só dar), **Nível** (só sobe, até o teto do realm), **Atributos** (mudar força/agilidade/vitalidade/
   energia já distribuídas — o total com os livres não muda — ou **Redistribuir** tudo de volta aos
   pontos livres), **Posição** (escolha o mapa entre os ligados e as coordenadas; Y vazio = chão) e

@@ -526,6 +526,27 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resposta.status_code, 200)
         self.assertEqual([p["id"] for p in resposta.json()["personagens"]], [personagem])
 
+    async def test_lista_de_personagens_em_cartoes_b190(self):
+        """B190: conta, classe pelo nome do cliente, busca pela conta e paginação."""
+        realm, personagem = await self.criar_personagem()
+        async with self.pool.acquire() as conexao:
+            await conexao.execute("INSERT INTO characters(account_id,realm_id,name,race,cls,gender) "
+                                  "VALUES($1,$2,'Outra_Mistica',0,9,1)", self.conta_id, realm)
+        dados = (await self.cliente.get(f"/api/realms/{realm}/personagens?por_pagina=1")).json()
+        self.assertEqual((dados["total"], dados["pagina"], len(dados["personagens"])), (2, 1, 1))
+        primeiro = dados["personagens"][0]
+        self.assertEqual({c: primeiro[c] for c in ("id", "classe", "classe_nome", "sexo", "usuario")},
+                         {"id": personagem, "classe": 0, "classe_nome": "Guerreiro", "sexo": "m",
+                          "usuario": self.usuario})
+        segunda = (await self.cliente.get(f"/api/realms/{realm}/personagens?por_pagina=1&pagina=2")).json()
+        self.assertEqual(segunda["personagens"][0]["classe_nome"], "Místico")
+        pela_conta = (await self.cliente.get(f"/api/realms/{realm}/personagens?busca={self.usuario}")).json()
+        self.assertEqual(pela_conta["total"], 2)
+        # "_" é literal, não curinga.
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/personagens?busca=a_m")).json()["total"], 1)
+        ficha = (await self.cliente.get(f"/api/realms/{realm}/personagens/{personagem}")).json()["ficha"]
+        self.assertEqual(ficha["classe_nome"], "Guerreiro")
+
     async def test_api_python_consulta_binario_gs_real_com_banco_isolado(self):
         realm, personagem = await self.criar_personagem()
         with socket.socket() as porta:
