@@ -70,6 +70,16 @@ fn conferir(nome: &str) {
     aplicar(&mut volta, &EdicaoDeItem { refino: Some(0), pedras: Some(vec![]), ..Default::default() }, &d).unwrap();
     let c = ConteudoDeEquipamento::ler(&volta.octets, &ficha).unwrap();
     assert!(c.furos.is_empty() && c.addons.iter().all(|a| a.id() != addon_de_refino && a.tipo & 0x8000 == 0));
+    // B196: a durabilidade mora na coluna; uma peça quebrada (coluna 0) editada por outro campo
+    // não ganha de volta a durabilidade antiga que ficou nos octetos.
+    let mut quebrada = ItemRecord::new(1, ContainerType::Equipment, 0, arma, 1);
+    quebrada.octets = ConteudoDeEquipamento::novo(ficha.clone(), 5000, 6000).escrever();
+    quebrada.durability = 0;
+    quebrada.max_durability = 6000;
+    aplicar(&mut quebrada, &EdicaoDeItem { fabricante: Some("X".into()), ..Default::default() }, &d).unwrap();
+    let c = ConteudoDeEquipamento::ler(&quebrada.octets, &ficha).unwrap();
+    assert_eq!((c.durabilidade, c.durabilidade_maxima, quebrada.durability), (0, 6000, 0), "{nome}: segue quebrada");
+
     let copia = item.clone();
     assert_eq!(aplicar(&mut item, &EdicaoDeItem { pedras: Some(vec![999_999]), ..Default::default() }, &d), Err("pedra_inexistente"));
     assert_eq!(item, copia, "{nome}: recusa não muda nada");

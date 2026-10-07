@@ -39,7 +39,8 @@ pub(super) fn bloco_do_equipamento(item: &ItemRecord, dados: &GameDataManager) -
     let octetos = if item.octets.is_empty() {
         ConteudoDeEquipamento::novo(ficha.clone(), item.durability as i32, item.max_durability as i32).escrever()
     } else {
-        item.octets.clone()
+        // A durabilidade da coluna: quem regrava o bloco não devolve a antiga aos octetos.
+        BusServer::octetos_atuais(item)
     };
     Some((octetos, ficha))
 }

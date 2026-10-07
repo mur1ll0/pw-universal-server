@@ -12337,3 +12337,43 @@ comparação lado a lado.
     ### e. O que continua faltando
     B196 ensinar/subir/remover/editar nível; descrição da habilidade (os `%d` do `skillstr`
     dependem dos números do stub); habilidades de mascote; nada visto em jogo.
+
+196. **Sessão 2026-10-07: habilidades pelo painel — ensinar, subir, descer e remover, online e offline.**
+
+    ### a. Sintoma / pedido
+    E6 (d): habilidades — ensinar, subir, remover, editar nível. Decisão de 2026-10-07: no 1.2.6
+    remover/descer só offline.
+
+    ### b. Evidência
+    - `OnMsgHstLearnSkill` (`EC_HostMsg.cpp`): existente com `level > 0` → `LevelUp` (+1) e
+      `SetLevel`; `level 0` → `RemoveNormalSkill`; nova → `new CECSkill(id, level)`.
+    - O original esquece com `learn_skill(id, 0)` (`serviceprovider.cpp:2872`) e aprende um nível
+      por vez; o `SKILL_DATA` com o personagem em jogo (ramo da conversão Deus/Demônio,
+      `EC_HostMsg.cpp:3525-3610`) não foi necessário.
+    - O aprender do GS (`jogo.rs`) mexe em `p.habilidades` e grava com `learn_or_upgrade`.
+
+    ### c. Correção
+    `EdicaoDePersonagem::Habilidade`, `habilidade_pelo_painel` (online), `habilidade_offline`,
+    `SkillRepository::esquecer`; canal `habilidade {id, nivel}`; API `HabilidadePedida` (id no mapa
+    do cliente, `max_level` do stub) e `GET /api/habilidades`; janela com Ensinar e a linha de nível.
+
+    ### d. Provas
+    `habilidade_online_e_offline_126_e_155` 1/0 (nova `(7,3)`; subir `(7,4),(7,5)`; igual =
+    `sem_mudanca`; 1.2.6 descer = `precisa_estar_offline`; 1.5.5 descer `(7,0),(7,2)` e remover
+    `(7,0)`; offline sobe e remove no banco). Painel Python 66/0, Node 9/0. Suíte do workspace (`--no-fail-fast`): **976 passaram, 2
+    falharam, 2 ignorados** — `nao_da_para_entrar_num_grupo_sem_convite` (intermitente conhecido, passou
+    sozinho) e `queda_do_link_salva_e_remove_a_entidade` (só sob a carga da suíte inteira; o arquivo
+    `canal_administrativo` passou 29/0 em 3 rodadas seguidas).
+
+    **Correção junto (relato do Murillo: itens quebrados da Tsuko exibidos com a durabilidade
+    máxima):** a durabilidade mora na coluna `character_items.durability` (`gastar_durabilidade` e
+    `reparar` gravam só nela) e o envio ao cliente já remendava os octetos com ela; o painel
+    (`detalhe_item` da dica e do modal) e os que regravam o bloco (edição B194, refino, pedras)
+    liam os octetos crus. Medido no `public` (Tsuko 11455, `realm_126` — a única Tsuko): peças
+    vestidas com coluna e octetos diferentes (ex.: slot 4, coluna 7975/8000, octetos 8000/8000).
+    Agora todos passam por `BusServer::octetos_atuais`. Regressão em `tests/item_editado.rs`
+    (peça quebrada editada segue 0/6000). `item_editado` 2/0, `canal_administrativo` 29/0.
+
+    ### e. O que continua faltando
+    Ver em jogo (o cliente BR e o 1.2.6); bônus de passiva comum (não portado no GS);
+    habilidades de mascote (B197).

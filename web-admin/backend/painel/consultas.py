@@ -130,6 +130,18 @@ def registrar_consultas(app):
              "icone": (cliente.get(r["skill_id"]) or {}).get("icone", ""),
              "nivel_maximo": (cliente.get(r["skill_id"]) or {}).get("nivel_maximo")} for r in registros]}
 
+    @app.get("/api/habilidades")
+    async def buscar_habilidades(busca: str = Query(..., min_length=1, max_length=64)):
+        """E6 (B196): até 30 habilidades do cliente por nome (`skillstr.txt`) ou id, para ensinar."""
+        try:
+            nomes, cliente = nomes_das_habilidades(), habilidades_do_cliente()
+        except OSError:
+            raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
+        termo = busca.strip().lower()
+        achadas = [i for i in sorted(cliente) if termo == str(i) or termo in nomes.get(i, "").lower()][:30]
+        return {"habilidades": [{"id": i, "nome": nomes.get(i, f"Habilidade {i}"), "icone": cliente[i]["icone"],
+                                 "nivel_maximo": cliente[i]["nivel_maximo"], "classe": cliente[i]["classe"]} for i in achadas]}
+
     @app.get("/api/realms/{realm_id}/itens")
     async def buscar_itens(realm_id: str, requisicao: Request, busca: str = Query(..., min_length=1, max_length=64)):
         """E6 (B186): até 30 itens do elements.data do realm por nome ou id."""

@@ -2,6 +2,7 @@
 from typing import Annotated, Literal, Optional
 from fastapi import HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
+from .textos import habilidades_do_cliente
 from pydantic import BaseModel, ConfigDict, Field
 from .canal import (CanalIndisponivel, CanalNaoEnviado, aplicar_no_realm, comandar, resposta_do_primeiro,
                     respostas_do_realm, transmitir)
@@ -130,6 +131,14 @@ class ItemEditadoPedido(BaseModel):
     edicao: EdicaoItem
 
 
+class HabilidadePedida(BaseModel):
+    """E6 (B196): `nivel` 0 remove; senão define o nível. O teto é o `max_level` do stub do cliente
+    (`painel/habilidades_do_cliente.json`), conferido na rota."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    id: int = Field(ge=1, le=65_535)
+    nivel: int = Field(ge=0, le=255)
+
+
 class EdicaoPersonagem(BaseModel):
     """E5: um só de dinheiro (dar), exp/sp (somar), pontos (dar pontos livres), nivel (alvo,
     só sobe) ou cultivo (B182). Tetos: pacotes de recompensa de missão (u32/i32), teto de
@@ -152,6 +161,7 @@ class EdicaoPersonagem(BaseModel):
     remover_item: Optional[RemocaoPedida] = None
     mover_item: Optional[MovimentoPedido] = None
     editar_item: Optional[ItemEditadoPedido] = None
+    habilidade: Optional[HabilidadePedida] = None
 
 
 def somar_desconexoes(resultado):
@@ -302,13 +312,22 @@ def registrar_contas(app):
         entidade (tudo menos EXP/SP). Quem decide online/offline é o GS."""
         experiencia = bool(pedido.exp or pedido.sp)
         simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao", "item",
-                               "remover_item", "mover_item", "editar_item") if getattr(pedido, k) is not None]
+                               "remover_item", "mover_item", "editar_item", "habilidade") if getattr(pedido, k) is not None]
         if len(simples) + experiencia != 1:
             raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo, atributos ou posição.")
         consulta = {"tipo": "editar_personagem", "personagem_id": personagem_id}
         if simples == ["editar_item"] and not pedido.editar_item.edicao.model_dump(exclude_none=True):
             raise HTTPException(422, "Informe ao menos um campo do item.")
-        if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"], ["editar_item"]):
+        if simples == ["habilidade"]:
+            try:
+                conhecida = habilidades_do_cliente().get(pedido.habilidade.id)
+            except OSError:
+                raise HTTPException(503, "Dados de habilidade do cliente indisponíveis.")
+            if conhecida is None:
+                raise HTTPException(422, "Habilidade que o cliente não conhece.")
+            if conhecida.get("nivel_maximo") and pedido.habilidade.nivel > conhecida["nivel_maximo"]:
+                raise HTTPException(422, f"Nível acima do máximo da habilidade ({conhecida['nivel_maximo']}).")
+        if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"], ["editar_item"], ["habilidade"]):
             consulta[simples[0]] = getattr(pedido, simples[0]).model_dump(exclude_none=True)
         elif simples:
             consulta[simples[0]] = getattr(pedido, simples[0])

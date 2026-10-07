@@ -1499,3 +1499,66 @@ async fn editar_item_online_e_offline() {
     sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6e-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
     c.encerrar().await;
 }
+
+/// Os `LEARN_SKILL` (95: id i32, nível i32) que o mundo mandou ao personagem até `fim` chegar.
+async fn aprendizados(bus: &mut pw_bus::transport::BusConnection, fim: usize) -> Vec<(i32, i32)> {
+    let mut vistos = Vec::new();
+    while vistos.len() < fim {
+        let m = esperar_do_mundo(bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 95u16.to_le_bytes())).await;
+        let BusMessage::GameToClient { data, .. } = m else { unreachable!() };
+        vistos.push((i32::from_le_bytes(data[2..6].try_into().unwrap()), i32::from_le_bytes(data[6..10].try_into().unwrap())));
+    }
+    vistos
+}
+
+/// E6 (B196): ensinar, subir, descer e remover habilidade. Online pelo `LEARN_SKILL` (95): nova
+/// num pacote, subir um por nível, remover = nível 0, descer = 0 e o nível novo; no 1.2.6
+/// remover/descer só offline. Offline grava no banco.
+#[tokio::test]
+async fn habilidade_online_e_offline_126_e_155() {
+    for versao in [GameVersion::V1_2_6, GameVersion::V1_5_5] {
+        let c = Cenario::montar_versao(versao).await;
+        let id = |s: &str| format!("e6h-{s}-{}", c.personagem);
+        let pedir = |hab: u32, nivel: u8| json!({"tipo":"editar_personagem","personagem_id":c.personagem,"habilidade":{"id":hab,"nivel":nivel}});
+        let nivel_no_banco = || async {
+            sqlx::query_scalar::<_, i16>("SELECT level FROM character_skills WHERE character_id=$1 AND skill_id=7")
+                .bind(c.personagem).fetch_optional(c.pool.get_ref()).await.unwrap()
+        };
+        sqlx::query("DELETE FROM character_skills WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+
+        let mut bus = c.entrar().await;
+        c.esperar_presenca("online").await;
+        let r = c.pedir_com_id(&c.realm, &id("ensina"), c.conta, pedir(7, 3)).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["nivel_antes"].as_u64()), (Some("aplicado"), Some(0)), "{r}");
+        assert_eq!(aprendizados(&mut bus, 1).await, vec![(7, 3)], "nova: um pacote no nível");
+        let r = c.pedir_com_id(&c.realm, &id("sobe"), c.conta, pedir(7, 5)).await;
+        assert_eq!(r["estado"], "aplicado", "{r}");
+        assert_eq!(aprendizados(&mut bus, 2).await, vec![(7, 4), (7, 5)], "um pacote por nível");
+        assert_eq!(nivel_no_banco().await, Some(5));
+        let r = c.pedir_com_id(&c.realm, &id("igual"), c.conta, pedir(7, 5)).await;
+        assert_eq!(r["dados"]["codigo"], "sem_mudanca", "{r}");
+        let r = c.pedir_com_id(&c.realm, &id("desce"), c.conta, pedir(7, 2)).await;
+        if versao == GameVersion::V1_2_6 {
+            assert_eq!(r["dados"]["codigo"], "precisa_estar_offline", "{r}");
+        } else {
+            assert_eq!(r["estado"], "aplicado", "{r}");
+            assert_eq!(aprendizados(&mut bus, 2).await, vec![(7, 0), (7, 2)], "descer = remover e criar");
+            let r = c.pedir_com_id(&c.realm, &id("remove"), c.conta, pedir(7, 0)).await;
+            assert_eq!(r["estado"], "aplicado", "{r}");
+            assert_eq!(aprendizados(&mut bus, 1).await, vec![(7, 0)], "remover = nível 0");
+            assert_eq!(nivel_no_banco().await, None);
+        }
+
+        drop(bus);
+        c.esperar_presenca("ausente").await;
+        let r = c.pedir_com_id(&c.realm, &id("off-sobe"), c.conta, pedir(7, 4)).await;
+        assert_eq!(r["estado"], "salvo", "{r}");
+        let r = c.pedir_com_id(&c.realm, &id("off-remove"), c.conta, pedir(7, 0)).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["nivel_antes"].as_u64()), (Some("salvo"), Some(4)), "{r}");
+        assert_eq!(nivel_no_banco().await, None);
+        let r = c.pedir_com_id(&c.realm, &id("off-nada"), c.conta, pedir(7, 0)).await;
+        assert_eq!(r["dados"]["codigo"], "sem_mudanca", "{r}");
+        sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6h-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+        c.encerrar().await;
+    }
+}

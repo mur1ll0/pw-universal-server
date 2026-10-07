@@ -59,6 +59,16 @@ impl SkillRepository {
         Ok(())
     }
 
+    /// Esquece a habilidade (painel, B196). `true` se havia.
+    pub async fn esquecer(&self, character_id: RoleId, skill_id: u32) -> Result<bool> {
+        let r = sqlx::query("DELETE FROM character_skills WHERE character_id = $1 AND skill_id = $2")
+            .bind(character_id)
+            .bind(skill_id as i32)
+            .execute(self.pool.get_ref())
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Aprende ou sobe o nível de uma habilidade (UPSERT)
     pub async fn learn_or_upgrade(&self, character_id: RoleId, skill_id: u32, level: u8) -> Result<()> {
         sqlx::query(

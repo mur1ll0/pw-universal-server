@@ -706,7 +706,7 @@ Limitações: instâncias do `gs.conf` que dividem pasta (`is73–75` em `a72`, 
 e `m01`/`random03`/`random04` não têm dados no carregador — aparecem "sem dados"; cada mapa é
 um mundo único compartilhado (o original cria cópias por entrada em `instance_servers`).
 
-## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184–B187, B191, B194; falta ver em jogo)
+## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184–B187, B191, B194, B196; falta ver em jogo)
 
 `RoteadorDeMapas::editar_personagem`, com a guarda de presença em leitura (a entrada pega em
 escrita) e a trava de gravação do personagem. Só dar (B180: tirar arriscaria valor
@@ -808,11 +808,23 @@ cores. Limites de formato: 5 furos, 32 efeitos, id de efeito em 13 bits com até
 mesmo upsert. **Online:** grava e manda `OWN_ITEM_INFO` (40), que o cliente aplica sobre o item já
 no slot (`EC_HostMsg.cpp:1454-1500`; no corpo refaz a aparência do próprio jogador) e, no corpo,
 `recalcular_equipamento`; armazém = `precisa_estar_offline`. **Offline:** grava. Falhas:
-`slot_mudou`, `nao_e_equipamento`, `sem_refino_nem_furos`, `pedra_inexistente`,
+A durabilidade de partida é a da coluna (`octetos_atuais`, B196), não a velha dos octetos. Falhas: `slot_mudou`, `nao_e_equipamento`, `sem_refino_nem_furos`, `pedra_inexistente`,
 `refino_sem_addon`, `formato_invalido`. Não editáveis: o id do modelo (o `OWN_ITEM_INFO` não o
 troca) e o vínculo (o `state` sai sempre 0 — `proc_type` não modelado). `falta`: o
 `_modify_mask << 16` no id do equipamento visto pelos outros (`equip_item.cpp:25-30`; o GS manda
 só os 16 bits baixos), então o brilho do refino não aparece para quem vê.
+
+**B196 (E6) — habilidades.** `habilidade: {id, nivel}`: `nivel` 0 remove, senão define o nível
+(ensinar, subir, descer). O banco (`character_skills`) é a fonte, como no aprender do jogo (que
+grava com `learn_or_upgrade` e põe em `p.habilidades`). **Online** pelo `LEARN_SKILL` (95), que o
+cliente trata assim (`OnMsgHstLearnSkill`, `EC_HostMsg.cpp`): habilidade nova é criada no nível
+do pacote; existente sobe **um** nível por pacote (`CECSkill::LevelUp`) — então um pacote por
+nível, como o aprender; `level 0` remove (`RemoveNormalSkill`), o mesmo que o original manda ao
+esquecer (`serviceprovider.cpp:2872`); descer = 0 e o nível novo (o atalho da habilidade sai da
+barra). No 1.2.6 descer e remover online = `precisa_estar_offline` (cliente não conferido).
+**Offline**: `learn_or_upgrade` ou `esquecer` sob a guarda e a trava. `sem_mudanca` quando o nível
+já é esse. O teto é o `max_level` do stub do cliente, conferido pela API. Limitação: bônus de
+passiva comum não está portado no GS, então nada a recalcular hoje.
 
 Falhas novas: `nivel_invalido` (com `nivel_maximo`), `nivel_invalido_ou_personagem_inexistente`
 (offline), `cultivo_invalido`. A impressão de deduplicação só inclui `pontos`/`nivel`/`cultivo`

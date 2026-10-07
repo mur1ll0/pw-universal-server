@@ -540,6 +540,12 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((lista[0]["icone"], lista[0]["nivel_maximo"]), ("bba2bbf72e646473", 10))
         self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/personagens/999999999/habilidades")).status_code, 404)
 
+    async def test_busca_de_habilidades_b196(self):
+        await self.criar_personagem()
+        dados = (await self.cliente.get("/api/habilidades?busca=Ataque do Tigre")).json()["habilidades"]
+        self.assertEqual((dados[0]["id"], dados[0]["nivel_maximo"]), (1, 10))
+        self.assertEqual((await self.cliente.get("/api/habilidades?busca=1")).json()["habilidades"][0]["id"], 1)
+
     async def test_lista_de_personagens_em_cartoes_b190(self):
         """B190: conta, classe pelo nome do cliente, busca pela conta e paginação."""
         realm, personagem = await self.criar_personagem()
@@ -927,7 +933,11 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"fabricante": "x" * 21}}},
                          {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"quantidade": 0}}},
                          {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"cor": 1}}},
-                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"requisitos": {"nivel": 1}}}}):
+                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"requisitos": {"nivel": 1}}}},
+                         # B196: habilidade que o cliente conhece, nível até o máximo do stub (a 1 vai a 10).
+                         {"habilidade": {"id": 1, "nivel": 11}}, {"habilidade": {"id": 0, "nivel": 1}},
+                         {"habilidade": {"id": 1}}, {"habilidade": {"id": 60000, "nivel": 1}},
+                         {"habilidade": {"id": 1, "nivel": 1}, "pontos": 1}):
             self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
         for valido in ({"dinheiro": 10}, {"pontos": 5}, {"nivel": 30}, {"cultivo": 0},
                        {"atributos": [5, 5, 5, 5]}, {"redistribuir": True},
@@ -939,7 +949,8 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                        {"editar_item": {"recipiente": "equipamento", "slot": 0, "id": 3003, "edicao": {
                            "quantidade": 1, "durabilidade": 0, "refino": 12, "pedras": [0, 0], "fabricante": "",
                            "efeitos": [{"id": 999, "args": [5]}], "requisitos": {"nivel": 1, "classes": 65535, "forca": 0,
-                           "agilidade": 0, "vitalidade": 0, "energia": 0}}}}):
+                           "agilidade": 0, "vitalidade": 0, "energia": 0}}}},
+                       {"habilidade": {"id": 1, "nivel": 10}}, {"habilidade": {"id": 1, "nivel": 0}}):
             resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
             self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
 

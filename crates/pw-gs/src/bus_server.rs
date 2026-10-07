@@ -5118,6 +5118,24 @@ impl BusServer {
     /// [`pw_core::ESCALA_DA_DURABILIDADE`]) e vai como está. Quando o item tem bloco
     /// gravado, a durabilidade **do bloco** é regravada com a da coluna: é a coluna que o
     /// servidor desgasta a cada golpe, e o bloco é o que o cliente lê (B61).
+    /// A durabilidade mora na **coluna** (`character_items.durability`): o desgaste e o conserto
+    /// gravam só nela (`gastar_durabilidade`, `reparar`), e os octetos ficam com o valor de quando
+    /// o bloco foi escrito. Todo leitor do bloco remenda os 8 bytes da durabilidade com a coluna
+    /// antes de usar — o envio ao cliente, a dica do painel, a edição e o refino/pedras (B196;
+    /// sem isso o painel mostrava a peça quebrada com a durabilidade antiga, muitas vezes a máxima).
+    pub(crate) fn remendar_durabilidade(octetos: &mut [u8], item: &pw_core::ItemRecord) {
+        if item.max_durability > 0 {
+            pw_core::escrever_durabilidade(octetos, item.durability as i32, item.max_durability as i32);
+        }
+    }
+
+    /// Os octetos com a durabilidade da coluna ([`Self::remendar_durabilidade`]).
+    pub(crate) fn octetos_atuais(item: &pw_core::ItemRecord) -> Vec<u8> {
+        let mut o = item.octets.clone();
+        Self::remendar_durabilidade(&mut o, item);
+        o
+    }
+
     fn info_de(
         onde: u8,
         item: &pw_core::ItemRecord,
@@ -5154,13 +5172,7 @@ impl BusServer {
                 octetos = crate::entity::Daimon::novo(&iniciais).bloco();
             }
         }
-        if item.max_durability > 0 {
-            pw_core::escrever_durabilidade(
-                &mut octetos,
-                item.durability as i32,
-                item.max_durability as i32,
-            );
-        }
+        Self::remendar_durabilidade(&mut octetos, item);
         S2CGamedataSend::item_info(
             onde,
             item.slot as u8,

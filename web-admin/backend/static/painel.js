@@ -1036,12 +1036,76 @@ async function carregarHabilidades(realm, id) {
         celula.append(criar("span", "sem-icone", h.nome.slice(0, 2)));
       }
       celula.append(criar("span", "qtd-item", String(h.nivel)));
+      celula.addEventListener("click", () => escolherHabilidade(h, celula));
       grade.append(celula);
     }
     alvo.replaceChildren(criar("p", "texto-suave", `${lista.length} habilidade${lista.length === 1 ? "" : "s"}`), grade);
   } catch (erro) {
     alvo.replaceChildren(criar("p", "nota-vazia", `Habilidades indisponíveis: ${erro.message}`));
   }
+}
+
+/* Editar habilidade (B196): clicar na habilidade abre a linha de nível (Aplicar define o nível —
+   subir ou descer —, Remover tira); "Ensinar" busca no cliente e dá no nível escolhido. O GS manda
+   o `LEARN_SKILL` em jogo; no 1.2.6 descer e remover pedem o personagem fora do jogo. */
+function escolherHabilidade(h, celula) {
+  estado.habilidade = h;
+  for (const outra of document.querySelectorAll?.("#janela-habilidades .escolhido") || []) outra.classList.remove("escolhido");
+  celula.classList.add("escolhido");
+  elemento("hab-qual").textContent = `${h.nome} (ID ${h.id})`;
+  elemento("hab-nivel").value = String(h.nivel);
+  elemento("hab-nivel").max = String(h.nivel_maximo || 255);
+  elemento("form-habilidade").hidden = false;
+}
+async function aplicarHabilidade(nivel) {
+  const h = estado.habilidade;
+  if (!h) return;
+  const n = Math.trunc(Number(nivel));
+  if (!Number.isFinite(n) || n < 0 || n > (h.nivel_maximo || 255)) {
+    alerta("erro", "Nível inválido", `De 1 a ${h.nivel_maximo || 255}.`); return;
+  }
+  const r = await editarPersonagem({ habilidade: { id: h.id, nivel: n } },
+    n ? `${h.nome}: nível ${n}` : `${h.nome}: removida`);
+  if (r === "aplicado" || r === "salvo") { elemento("form-habilidade").hidden = true; estado.habilidade = null; }
+}
+let buscaDeHabilidade = 0;
+async function buscarHabilidade() {
+  const texto = elemento("hab-busca").value.trim();
+  const lista = elemento("hab-resultados");
+  estado.habilidadeEscolhida = null;
+  elemento("hab-escolhida").textContent = "";
+  if (texto.length < 2 && !/^\d+$/.test(texto)) { lista.hidden = true; return; }
+  const minha = ++buscaDeHabilidade;
+  try {
+    const dados = await api(`/api/habilidades?busca=${encodeURIComponent(texto)}`);
+    if (minha !== buscaDeHabilidade) return;
+    lista.replaceChildren();
+    for (const h of dados.habilidades) {
+      const linha = criar("li");
+      linha.append(criar("span", "", h.nome), criar("small", "", `ID ${h.id} · até nível ${h.nivel_maximo ?? "?"}`));
+      linha.addEventListener("click", () => {
+        estado.habilidadeEscolhida = h;
+        for (const outra of lista.children) outra.classList?.remove("escolhido");
+        linha.classList.add("escolhido");
+        elemento("hab-nivel-novo").max = String(h.nivel_maximo || 255);
+        elemento("hab-escolhida").textContent = `Escolhida: ${h.nome} (ID ${h.id}, até nível ${h.nivel_maximo ?? "?"}).`;
+      });
+      lista.append(linha);
+    }
+    if (!dados.habilidades.length) lista.append(criar("li", "dica", "Nenhuma habilidade com esse nome."));
+    lista.hidden = false;
+  } catch (erro) {
+    lista.replaceChildren(criar("li", "dica", erro.message));
+    lista.hidden = false;
+  }
+}
+async function ensinarHabilidade() {
+  const texto = elemento("hab-busca").value.trim();
+  const h = estado.habilidadeEscolhida || (/^\d+$/.test(texto) ? { id: Number(texto), nome: `Habilidade ${texto}` } : null);
+  if (!h) { alerta("erro", "Escolha a habilidade", "Busque pelo nome e clique nela, ou digite o ID."); return; }
+  const n = Math.trunc(Number(elemento("hab-nivel-novo").value));
+  if (!Number.isFinite(n) || n < 1 || n > (h.nivel_maximo || 255)) { alerta("erro", "Nível inválido", `De 1 a ${h.nivel_maximo || 255}.`); return; }
+  await editarPersonagem({ habilidade: { id: h.id, nivel: n } }, `${h.nome}: nível ${n}`);
 }
 
 /* Remover (B187): clicar no item abre a barra com a quantidade (a pilha inteira por padrão).
@@ -1747,6 +1811,14 @@ for (const id of CAMPOS_DE_ATRIBUTO) elemento(id).addEventListener("input", () =
 elemento("form-posicao").addEventListener("submit", (evento) => { evento.preventDefault(); editarPosicao(); });
 elemento("form-remover").addEventListener("submit", (evento) => { evento.preventDefault(); removerItem(); });
 elemento("form-editar-item").addEventListener("submit", (evento) => { evento.preventDefault(); salvarEdicaoDeItem(); });
+elemento("form-habilidade").addEventListener("submit", (evento) => { evento.preventDefault(); aplicarHabilidade(elemento("hab-nivel").value); });
+elemento("hab-remover").addEventListener("click", () => aplicarHabilidade(0));
+elemento("form-ensinar").addEventListener("submit", (evento) => { evento.preventDefault(); ensinarHabilidade(); });
+let esperaDaHabilidade = null;
+elemento("hab-busca").addEventListener("input", () => {
+  if (esperaDaHabilidade) clearTimeout(esperaDaHabilidade);
+  esperaDaHabilidade = temTempo ? setTimeout(buscarHabilidade, 300) : null;
+});
 elemento("fechar-item").addEventListener("click", fecharEdicaoDeItem);
 elemento("ei-novo-efeito").addEventListener("click", () => elemento("ei-efeitos").append(linhaDeEfeito()));
 elemento("ei-remover").addEventListener("click", () => {

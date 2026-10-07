@@ -241,7 +241,24 @@
             </section>
             <section class="janela" data-janela="habilidades">
               <header class="barra-janela"><h3>Habilidades</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
-              <div class="corpo-janela"><div id="janela-habilidades"></div></div>
+              <div class="corpo-janela">
+                <form id="form-ensinar" class="linha-edicao">
+                  <span class="rotulo-edicao">Ensinar</span>
+                  <input id="hab-busca" type="search" maxlength="64" placeholder="Nome ou ID da habilidade" aria-label="Buscar habilidade por nome ou ID" autocomplete="off">
+                  <input id="hab-nivel-novo" type="number" min="1" max="255" step="1" value="1" aria-label="Nível" title="Nível">
+                  <button type="submit" class="botao botao-primario">Ensinar</button>
+                </form>
+                <ul id="hab-resultados" class="resultados-item" hidden></ul>
+                <p id="hab-escolhida" class="dica"></p>
+                <form id="form-habilidade" class="linha-edicao" hidden>
+                  <span class="rotulo-edicao">Nível</span>
+                  <span id="hab-qual" class="nome-remocao"></span>
+                  <input id="hab-nivel" type="number" min="1" max="255" step="1" aria-label="Nível novo" title="Nível novo">
+                  <button type="submit" class="botao botao-primario">Aplicar</button>
+                  <button id="hab-remover" type="button" class="botao botao-secundario texto-perigo">Remover</button>
+                </form>
+                <div id="janela-habilidades"></div>
+              </div>
             </section>
             <section class="janela janela-futura" data-janela="mascotes">
               <header class="barra-janela"><h3>Mascotes</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>

@@ -493,6 +493,8 @@ pub enum EdicaoDePersonagem {
     /// Arrastar (E6, B191): o item `tid` do slot `slot_de` de `de` para o `slot_para` de `para`,
     /// trocando com o que estiver lá (pilhas inteiras, como as trocas do jogo).
     MoverItem { de: ContainerType, slot_de: u16, tid: u32, para: ContainerType, slot_para: u16 },
+    /// Habilidade (E6, B196): `nivel` 0 remove; senão define o nível (ensinar, subir ou descer).
+    Habilidade { id: u32, nivel: u8 },
 }
 
 /// `TRASHBOX_BASE_SIZE` (`gs/config.h:17`) — o armazém do personagem (o mesmo de `armazem.rs`).
@@ -555,6 +557,9 @@ impl BusServer {
         if let EdicaoDePersonagem::MoverItem { de, slot_de, tid, para, slot_para } = edicao {
             return self.mover_item_pelo_painel(roleid, de, slot_de, tid, para, slot_para).await;
         }
+        if let EdicaoDePersonagem::Habilidade { id, nivel } = edicao {
+            return self.habilidade_pelo_painel(roleid, id, nivel).await;
+        }
         let resultado = self.com_contexto(roleid, |ctx| {
             let antes = (ctx.p.money, ctx.p.level);
             let mut erro = None;
@@ -592,7 +597,8 @@ impl BusServer {
                 EdicaoDePersonagem::Cultivo(v) => ctx.definir_cultivo(v.max(0) as u32),
                 // Tratada no roteador (`RoteadorDeMapas::editar_personagem`): o teleporte
                 // troca de mapa fora do contexto do jogador.
-                EdicaoDePersonagem::Posicao { .. } | EdicaoDePersonagem::MoverItem { .. } => erro = Some("edicao_invalida"),
+                EdicaoDePersonagem::Posicao { .. } | EdicaoDePersonagem::MoverItem { .. }
+                | EdicaoDePersonagem::Habilidade { .. } => erro = Some("edicao_invalida"),
                 // Prêmio de missão (`Jogador::dar_item`): gerado como drop
                 // (`DeliverCommonItem`, `task/taskman.cpp:281-303`) e avisado com
                 // `TASK_DELIVER_ITEM`; item de missão vai à bolsa de missão. Antes, numa cópia,
@@ -710,11 +716,13 @@ impl BusServer {
             "preco": dados.precos.get(&i.item_id).map(|p| p.0), "vinculo": i.bind_status,
             "missao": dados.e_item_de_missao(i.item_id),
         });
+        // A durabilidade da coluna, não a dos octetos (`BusServer::remendar_durabilidade`).
+        let octetos = BusServer::octetos_atuais(&i);
         let conteudo = dados.equipamentos.ficha(i.item_id)
-            .filter(|_| !i.octets.is_empty())
-            .and_then(|f| pw_core::ConteudoDeEquipamento::ler(&i.octets, &f));
+            .filter(|_| !octetos.is_empty())
+            .and_then(|f| pw_core::ConteudoDeEquipamento::ler(&octetos, &f));
         let Some(c) = conteudo else { return j };
-        let req = pw_core::equipamento::Requisitos::do_bloco(&i.octets);
+        let req = pw_core::equipamento::Requisitos::do_bloco(&octetos);
         let pedras: Vec<serde_json::Value> = c.furos.iter().map(|&p| serde_json::json!({
             "id": p, "nome": if p > 0 { nome(p as u32) } else { String::new() },
             "icone": if p > 0 { icone_em_hex(&dados, p as u32) } else { String::new() },
@@ -902,6 +910,80 @@ impl BusServer {
         r.map_err(|_| "banco_indisponivel")?;
         tracing::info!(roleid, ?de, slot_de, ?para, slot_para, tid, "painel: item arrastado (offline)");
         Ok(())
+    }
+
+    /// Painel (E6, B196), online: ensinar, subir, descer ou remover uma habilidade pelo
+    /// `LEARN_SKILL` (o que o aprender do jogo manda), mantendo a memória (`p.habilidades`) e o
+    /// banco (`learn_or_upgrade`) como o aprender. O cliente (`OnMsgHstLearnSkill`,
+    /// `EC_HostMsg.cpp`): habilidade nova é criada no nível dito; existente sobe **um** nível por
+    /// pacote (`CECSkill::LevelUp`) — então um pacote por nível, como o aprender; `level 0` remove
+    /// (`RemoveNormalSkill`), o mesmo que o original manda ao esquecer
+    /// (`serviceprovider.cpp:2872`). Descer = remover e criar no nível novo (o atalho da
+    /// habilidade sai da barra, como no esquecer). No 1.2.6 remover e descer só offline (decisão
+    /// de 2026-10-07: o cliente 1.2.6 não foi conferido).
+    pub(crate) async fn habilidade_pelo_painel(&self, roleid: i32, id: u32, nivel: u8) -> Option<serde_json::Value> {
+        let so_sobe = self.versao() == GameVersion::V1_2_6;
+        let feito = self
+            .com_contexto(roleid, |ctx| {
+                let atual = ctx.p.habilidades.get(&id).copied().unwrap_or(0);
+                if nivel == atual {
+                    return Err("sem_mudanca");
+                }
+                if nivel < atual && so_sobe {
+                    return Err("precisa_estar_offline");
+                }
+                let pacote = |n: u8| S2CGamedataSend::learn_skill(id as i32, n as i32).data;
+                if nivel == 0 {
+                    ctx.p.habilidades.remove(&id);
+                    ctx.para_mim.push(pacote(0));
+                } else if atual == 0 {
+                    ctx.p.habilidades.insert(id, nivel);
+                    ctx.para_mim.push(pacote(nivel));
+                } else if nivel > atual {
+                    ctx.p.habilidades.insert(id, nivel);
+                    for n in atual + 1..=nivel {
+                        ctx.para_mim.push(pacote(n));
+                    }
+                } else {
+                    ctx.p.habilidades.insert(id, nivel);
+                    ctx.para_mim.push(pacote(0));
+                    ctx.para_mim.push(pacote(nivel));
+                }
+                ctx.mudou = true;
+                Ok(atual)
+            })
+            .await?;
+        let antes = match feito {
+            Ok(a) => a,
+            Err(e) => return Some(serde_json::json!({"erro": e})),
+        };
+        if let Err(e) = self.gravar_habilidade(roleid, id, nivel).await {
+            warn!("painel: habilidade {id} de {roleid} aplicada no jogo e não gravada: {e}");
+        }
+        info!(roleid, id, antes, nivel, "painel: habilidade editada (online)");
+        Some(serde_json::json!({"erro": null, "habilidade": id, "nivel": nivel, "nivel_antes": antes}))
+    }
+
+    /// Grava o nível (0 = apaga) — o mesmo para online e offline.
+    pub(crate) async fn gravar_habilidade(&self, roleid: i32, id: u32, nivel: u8) -> Result<(), String> {
+        let base = self.repo().await;
+        let repo = base.skill_repo();
+        let r = if nivel == 0 { repo.esquecer(roleid, id).await.map(|_| ()) } else { repo.learn_or_upgrade(roleid, id, nivel).await };
+        r.map_err(|e| e.to_string())
+    }
+
+    /// Painel (E6, B196), offline: grava sob a guarda de presença e a trava de gravação.
+    pub(crate) async fn habilidade_offline(&self, roleid: i32, id: u32, nivel: u8) -> Result<u8, &'static str> {
+        let base = self.repo().await;
+        let repo = base.skill_repo();
+        let atual = repo.list_skills(roleid).await.map_err(|_| "banco_indisponivel")?
+            .iter().find(|s| s.skill_id == id).map(|s| s.level).unwrap_or(0);
+        if atual == nivel {
+            return Err("sem_mudanca");
+        }
+        self.gravar_habilidade(roleid, id, nivel).await.map_err(|_| "banco_indisponivel")?;
+        info!(roleid, id, atual, nivel, "painel: habilidade editada (offline)");
+        Ok(atual)
     }
 
     /// Piso dos atributos da versão (`WorldProtocol::piso_da_restauracao`).

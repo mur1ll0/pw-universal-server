@@ -70,6 +70,8 @@ pub enum Consulta {
         #[serde(default)] mover_item: Option<MovimentoPedido>,
         /// Editar as propriedades de um item (E6, B194).
         #[serde(default)] editar_item: Option<ItemEditadoPedido>,
+        /// Habilidade `{id, nivel}` (E6, B196): nível 0 remove.
+        #[serde(default)] habilidade: Option<HabilidadePedida>,
     },
     /// Inventário de um personagem, com nomes (E6, B186). Só leitura.
     Inventario { personagem_id: i32 },
@@ -136,6 +138,14 @@ pub struct ItemEditadoPedido {
     pub slot: u16,
     pub id: u32,
     pub edicao: crate::bus_server::item_editado::EdicaoDeItem,
+}
+
+/// Habilidade (B196): `nivel` 0 remove; o teto pelo stub do cliente é conferido pela API.
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HabilidadePedida {
+    pub id: u32,
+    pub nivel: u8,
 }
 
 /// O que o pedido de edição de personagem pede: uma edição do personagem ou de um item.
@@ -397,12 +407,12 @@ impl ServidorAdministrativo {
                     Consulta::BuscarItens { texto } if texto.chars().count() <= 64 => {
                         self.roteador.buscar_itens(&texto).await
                     }
-                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item, editar_item } if personagem_id > 0 => {
+                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item, editar_item, habilidade } if personagem_id > 0 => {
                         use crate::bus_server::EdicaoDePersonagem as E;
                         let dentro = |v: i64| v.abs() <= TETO_DA_EDICAO;
                         let tipos = [dinheiro.is_some(), exp.or(sp).is_some(), pontos.is_some(), nivel.is_some(), cultivo.is_some(),
                             atributos.is_some(), redistribuir.is_some(), posicao.is_some(), item.is_some(), remover_item.is_some(),
-                            mover_item.is_some(), editar_item.is_some()]
+                            mover_item.is_some(), editar_item.is_some(), habilidade.is_some()]
                             .iter().filter(|t| **t).count();
                         // Atributos: quatro valores entre 0 e o teto da política (B184).
                         let quatro = atributos.as_deref().and_then(|v| {
@@ -411,6 +421,9 @@ impl ServidorAdministrativo {
                         });
                         let coordenada = |v: f32| v.is_finite() && v.abs() <= TETO_DE_COORDENADA;
                         let edicao = if tipos != 1 { None }
+                            else if let Some(h) = habilidade {
+                                (h.id > 0 && h.id < 0x10000).then_some(E::Habilidade { id: h.id, nivel: h.nivel })
+                            }
                             else if let Some(m) = &mover_item {
                                 match (recipiente_do_painel(&m.de), recipiente_do_painel(&m.para)) {
                                     (Some(de), Some(para)) if m.id > 0 && m.slot_de < 256 && m.slot_para < 256 =>
@@ -472,6 +485,7 @@ impl ServidorAdministrativo {
                                 if let Some(r) = &remover_item { parametros["remover_item"] = json!(r); }
                                 if let Some(m) = &mover_item { parametros["mover_item"] = json!(m); }
                                 if let Some(m) = &editar_item { parametros["editar_item"] = json!(m); }
+                                if let Some(h) = habilidade { parametros["habilidade"] = json!(h); }
                                 let impressao = Sha256::digest(serde_json::to_vec(&parametros)?);
                                 let repo = self.contas.comandos_administrativos();
                                 match repo.reservar_operacao_de_personagem(&pedido.operacao_id, pedido.administrador_id, &self.realm, &impressao).await? {
