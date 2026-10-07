@@ -650,6 +650,71 @@ impl BusServer {
         serde_json::json!({"estado":"consultado","personagem_id":roleid,"recipientes":recipientes})
     }
 
+    /// Painel (E6, B189): o item de um slot com o que a dica do cliente mostra — o registro e,
+    /// para equipamento, o bloco de dados da instância lido por `ConteudoDeEquipamento::ler`
+    /// (o layout que o cliente lê em `CECIvtrEquip::SetItemInfo`, `EC_IvtrEquip.cpp:176-262`):
+    /// requisitos, durabilidade, valores da arma/armadura/ornamento, furos com as pedras,
+    /// efeitos (id + parâmetros, `addon_data`) e fabricante.
+    pub(crate) async fn detalhe_do_item(&self, roleid: i32, recipiente: ContainerType, slot: u16) -> serde_json::Value {
+        let repo = self.itens().await;
+        let itens = match repo.list_by_container(roleid, recipiente).await {
+            Ok(v) => v,
+            Err(_) => return serde_json::json!({"codigo":"banco_indisponivel"}),
+        };
+        let Some(i) = itens.into_iter().find(|i| i.slot == slot) else {
+            return serde_json::json!({"codigo":"slot_vazio"});
+        };
+        let dados = self.world.read().await.data_manager.clone();
+        let nome = |t: u32| dados.nomes_de_itens.get(&t).cloned().unwrap_or_default();
+        let mut j = serde_json::json!({
+            "estado": "consultado", "slot": i.slot, "id": i.item_id, "nome": nome(i.item_id),
+            "icone": icone_em_hex(&dados, i.item_id), "quantidade": i.count, "pilha": dados.limite_de_pilha(i.item_id),
+            "preco": dados.precos.get(&i.item_id).map(|p| p.0), "vinculo": i.bind_status,
+            "missao": dados.e_item_de_missao(i.item_id),
+        });
+        let conteudo = dados.equipamentos.ficha(i.item_id)
+            .filter(|_| !i.octets.is_empty())
+            .and_then(|f| pw_core::ConteudoDeEquipamento::ler(&i.octets, &f));
+        let Some(c) = conteudo else { return j };
+        let req = pw_core::equipamento::Requisitos::do_bloco(&i.octets);
+        let pedras: Vec<serde_json::Value> = c.furos.iter().map(|&p| serde_json::json!({
+            "id": p, "nome": if p > 0 { nome(p as u32) } else { String::new() },
+            "icone": if p > 0 { icone_em_hex(&dados, p as u32) } else { String::new() },
+        })).collect();
+        let fabricante: Vec<u16> = c.fabricante.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
+        let mut equip = serde_json::json!({
+            "durabilidade": c.durabilidade, "durabilidade_maxima": c.durabilidade_maxima,
+            "requisitos": req.map(|r| serde_json::json!({"nivel": r.nivel, "classes": r.classes, "forca": r.forca,
+                "vitalidade": r.vitalidade, "agilidade": r.agilidade, "energia": r.energia})),
+            "furos": pedras,
+            // Sincronizado no refino (`pedras_e_refino.rs`, `refino::nivel_de_refino`).
+            "refino": i.refine_level,
+            "efeitos": c.addons.iter().map(|a| serde_json::json!({"id": a.id(), "tipo": a.tipo, "args": a.args})).collect::<Vec<_>>(),
+            "fabricante": String::from_utf16_lossy(&fabricante).trim_end_matches('\0').to_string(),
+            "origem": c.origem as u8,
+        });
+        match &c.ficha {
+            pw_core::FichaDoEquipamento::Arma(a) => equip["arma"] = serde_json::json!({
+                "nivel": a.nivel_da_arma, "dano": [a.dano_minimo, a.dano_maximo],
+                "dano_magico": [a.dano_magico_minimo, a.dano_magico_maximo],
+                "velocidade": a.velocidade_de_ataque, "alcance": a.alcance, "alcance_curto": c.alcance_curto,
+                "tipo": a.tipo_de_arma, "municao": a.municao_exigida,
+            }),
+            pw_core::FichaDoEquipamento::Armadura(a) => equip["armadura"] = serde_json::json!({
+                "defesa": a.defesa, "evasao": a.evasao, "hp": a.hp_extra, "mp": a.mp_extra, "resistencias": a.resistencias,
+            }),
+            pw_core::FichaDoEquipamento::Decoracao(d) => equip["ornamento"] = serde_json::json!({
+                "dano": d.dano, "dano_magico": d.dano_magico, "defesa": d.defesa, "evasao": d.evasao, "resistencias": d.resistencias,
+            }),
+            pw_core::FichaDoEquipamento::Municao(m) => equip["municao"] = serde_json::json!({
+                "dano_extra": m.dano_extra, "dano_extra_percentual": m.dano_extra_percentual,
+                "nivel_da_arma": [m.nivel_minimo_da_arma, m.nivel_maximo_da_arma],
+            }),
+        }
+        j["equipamento"] = equip;
+        j
+    }
+
     /// Painel (E6, B186): até 30 itens cujo nome contém `texto` (sem caixa) ou cujo id é ele.
     pub(crate) async fn buscar_itens(&self, texto: &str) -> serde_json::Value {
         let dados = self.world.read().await.data_manager.clone();

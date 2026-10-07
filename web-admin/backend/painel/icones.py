@@ -20,7 +20,9 @@ def _pasta_padrao():
     # Contêiner: /app/painel/icones.py com ../data montado em /app/data. Repositório:
     # web-admin/backend/painel/icones.py, com data/ na raiz.
     aqui = Path(__file__).resolve()
-    for candidata in (aqui.parents[1] / "data" / "icones", aqui.parents[3] / "data" / "icones"):
+    # `parents[3]` só existe no repositório (no contêiner o arquivo está em /app/painel).
+    niveis = [n for n in (1, 3) if n < len(aqui.parents)]
+    for candidata in (aqui.parents[n] / "data" / "icones" for n in niveis):
         if candidata.is_dir():
             return candidata
     return aqui.parents[1] / "data" / "icones"

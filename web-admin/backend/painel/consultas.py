@@ -1,6 +1,7 @@
 """Consultas somente de leitura com origem explícita e alvo validado no banco."""
 from fastapi import HTTPException, Path, Query, Request, Response
 from .icones import png_do_icone
+from .dica import linhas_da_dica
 from .canal import CanalIndisponivel, consultar_daemons, resposta_do_primeiro
 import json
 import pathlib
@@ -81,6 +82,20 @@ def registrar_consultas(app):
             genero = await conexao.fetchval("SELECT gender FROM characters WHERE realm_id=$1 AND id=$2", realm_id, personagem_id)
         return {"realm_id": realm_id, "personagem_id": personagem_id, "sexo": "f" if genero else "m",
                 "recipientes": dados.get("recipientes", {})}
+
+    @app.get("/api/realms/{realm_id}/personagens/{personagem_id}/itens/{recipiente}/{slot}/dica")
+    async def dica_do_item(realm_id: str, requisicao: Request,
+                           personagem_id: int = Path(..., ge=1, le=2_147_483_647),
+                           recipiente: str = Path(..., pattern="^(bolsa|missao|equipamento|armazem)$"),
+                           slot: int = Path(..., ge=0, le=255)):
+        """E6 (B189): a dica do item do slot, montada como o cliente (`painel/dica.py`)."""
+        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "detalhe_item", "personagem_id": personagem_id,
+                                                                "recipiente": recipiente, "slot": slot})
+        try:
+            linhas = linhas_da_dica(dados)
+        except OSError:
+            raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
+        return {"realm_id": realm_id, "item": dados, "linhas": linhas}
 
     @app.get("/api/realms/{realm_id}/itens")
     async def buscar_itens(realm_id: str, requisicao: Request, busca: str = Query(..., min_length=1, max_length=64)):

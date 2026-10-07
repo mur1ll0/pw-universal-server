@@ -12067,3 +12067,36 @@ comparação lado a lado.
     a olho (a espada certa); a grade não foi vista no navegador (prévia estática aberta para o
     Murillo). Workspace 965/1 (2 ignorados): a falha era do meu teste do B186, que comparava a
     busca campo a campo sem o `icone` novo — corrigido; canal 25/0 em duas rodadas. Não publicado.
+
+189. **Sessão 2026-10-06 (Claude): E6 — dica de item, parte 1.**
+    Evidência: o cliente carrega `Configs\fixed_msg.txt`, `item_desc.txt`, `item_ext_desc.txt`
+    (`EC_Game.cpp:517-525`), `item_ext_prop.txt` e `item_color.txt` (`:2022-2088`); a cor do
+    nome é `l_aNameCols[item_color]` (`:136-150, 2389-2410`); cada tipo monta a dica em
+    `GetNormalDesc` (arma: `EC_IvtrWeapon.cpp:271-400`), com as frases `ITEMDESC_*`
+    (`EC_FixedMsg.h:375`, 355 nomes) e o bloco da instância (`m_Essence`, lido em
+    `CECIvtrEquip::SetItemInfo`, `EC_IvtrEquip.cpp:176-262`). Os 4 textos tirados do
+    `configs.pck` 1.5.5 BR (já em português, UTF-16; `item_color` em texto simples) para
+    `data/textos/`. **Achado:** as frases batem com a enumeração até o índice 112
+    ("Feito por %s", "Distância da fragilidade"); depois o arquivo BR diverge (129 = "Ataque
+    Auxiliar", 153 = "Beijo") — o fonte do cliente não é o do binário (memória do projeto);
+    só as conferidas são usadas.
+    Código: GS `detalhe_item` (`BusServer::detalhe_do_item`, `ConteudoDeEquipamento::ler`,
+    refino pela coluna sincronizada no refino); canal `DetalheItem`; painel `textos.py`,
+    `dica.py`, `item_desc_indices.json` (gerado por `scripts/gerar_textos_de_itens.py`), rota
+    `…/itens/{recipiente}/{slot}/dica` e balão ao passar o mouse com as cores `^RRGGBB`.
+    Parte 2: texto dos efeitos (`FormatPropDesc`, por tipo do `item_ext_prop.txt`) e restrição
+    de classe.
+    Testes: `detalhe_do_item_para_a_dica` e canal 26/0; `teste_dica` 2/0 com os textos reais
+    (arma com furo, refino, durabilidade 0 em vermelho, requisitos, fabricante, preço;
+    descrição da carruagem); Python 57/0; Node 7/0; workspace 965/2 (2 ignorados): os
+    intermitentes do `subcomandos_no_mundo` (`habilidade_desconhecida`, `o_guia_selvagem…1177`,
+    já vistos no B182). A suíte estava ~3× mais lenta nesta sessão (máquina carregada: o
+    `equipamento_gerado` levou 201 s sozinho): uma rodada travou só com o `cargo` vivo e outra
+    bateu no limite de 15 min — rodar com `timeout` folgado (40 min). Bloco de equipamento
+    real não exercitado ponta a ponta nesta sessão (o leitor já é usado pelo refino e pelas
+    pedras). Não publicado.
+    **Correção (2026-10-07, relato do Murillo: `pw-admin-api` reiniciando):** `icones.py` (B188) e
+    `textos.py` procuravam a pasta de dados em `parents[3]`, que só existe no repositório — no
+    contêiner (`/app/painel/…`) dava `IndexError: 3` na importação. Agora só os níveis que
+    existem; conferido com a imagem nova num contêiner descartável (importa, acha
+    `/app/data/icones` e `/app/data/textos`, recorta o ícone e monta a dica). Painel 59/0.

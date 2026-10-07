@@ -661,6 +661,14 @@ impl RoteadorDeMapas {
         }
     }
 
+    /// Painel (E6, B189): o item de um slot com os dados da dica.
+    pub async fn detalhe_do_item(&self, roleid: i32, recipiente: pw_core::ContainerType, slot: u16) -> serde_json::Value {
+        match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
+            Some(bus) => bus.detalhe_do_item(roleid, recipiente, slot).await,
+            None => serde_json::json!({"codigo":"sem_mapa"}),
+        }
+    }
+
     /// Painel (E6, B186): busca de itens por nome ou id no `elements.data` do realm.
     pub async fn buscar_itens(&self, texto: &str) -> serde_json::Value {
         match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {

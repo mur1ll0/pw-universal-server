@@ -800,15 +800,72 @@ function celulaDeItem(chave, rotulo, item, sexo, legenda) {
       celula.append(criar("span", "sem-icone", nome.slice(0, 2)));
     }
     if (item.quantidade > 1) celula.append(criar("span", "qtd-item", fmt(item.quantidade)));
+    celula.addEventListener("mouseenter", () => mostrarDica(chave, item, celula));
+    celula.addEventListener("mouseleave", () => esconderDica());
     celula.addEventListener("click", () => escolherParaRemover(chave, rotulo, item, celula));
   } else if (legenda) {
     celula.append(criar("span", "rotulo-slot", legenda));
   }
   return celula;
 }
+/* Dica (B189): pedida ao passar o mouse e guardada até a grade recarregar. Cada linha vem com
+   os códigos de cor do cliente (`^RRGGBB`), pintados aqui. */
+const dicas = new Map();
+let dicaPedida = 0;
+function linhaColorida(texto) {
+  const p = criar("p");
+  let cor = "ffffff";
+  for (const parte of texto.split(/(\^[0-9a-fA-F]{6})/)) {
+    if (/^\^[0-9a-fA-F]{6}$/.test(parte)) { cor = parte.slice(1); continue; }
+    if (!parte) continue;
+    const span = criar("span", "", parte);
+    span.style.color = `#${cor}`;
+    p.append(span);
+  }
+  return p;
+}
+async function mostrarDica(chave, item, celula) {
+  const realm = estado.selecionado;
+  const id = estado.personagemId;
+  if (!realm || !id) return;
+  const caixa = elemento("dica-item");
+  const marca = `${realm.id}:${id}:${chave}:${item.slot}:${item.id}`;
+  const minha = ++dicaPedida;
+  let linhas = dicas.get(marca);
+  if (!linhas) {
+    caixa.replaceChildren(linhaColorida(`^ffffff${item.nome || `Item ${item.id}`}`), linhaColorida("^b0b0b0…"));
+    posicionarDica(caixa, celula);
+    try {
+      const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/itens/${chave}/${item.slot}/dica`);
+      linhas = dados.linhas;
+      dicas.set(marca, linhas);
+    } catch (erro) {
+      linhas = [`^ffffff${item.nome || `Item ${item.id}`}`, `^ff0000${erro.message}`];
+    }
+    if (minha !== dicaPedida) return;
+  }
+  caixa.replaceChildren(...linhas.map(linhaColorida));
+  posicionarDica(caixa, celula);
+}
+function posicionarDica(caixa, celula) {
+  caixa.hidden = false;
+  const r = celula.getBoundingClientRect?.();
+  if (!r) return;
+  const largura = caixa.offsetWidth || 300;
+  const x = r.right + 8 + largura > (window.innerWidth || 1200) ? r.left - largura - 8 : r.right + 8;
+  caixa.style.left = `${Math.max(4, x)}px`;
+  caixa.style.top = `${Math.max(4, r.top)}px`;
+}
+function esconderDica() {
+  dicaPedida++;
+  elemento("dica-item").hidden = true;
+}
+
 async function carregarInventario(realm, id) {
   const alvo = elemento("recipientes-itens");
   cancelarRemocao();
+  dicas.clear();
+  esconderDica();
   alvo.replaceChildren(criar("p", "nota-vazia", "Carregando itens…"));
   try {
     const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/inventario`);

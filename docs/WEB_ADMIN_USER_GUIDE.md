@@ -19,7 +19,8 @@ O serviço usa as credenciais existentes, sem trocar senha/hash nem criar sessã
   energia já distribuídas — o total com os livres não muda — ou **Redistribuir** tudo de volta aos
   pontos livres), **Posição** (escolha o mapa entre os ligados e as coordenadas; Y vazio = chão) e
   **Cultivo** (lista conforme a versão). Abaixo, **Itens**: bolsa, equipamento, armazém e bolsa de
-  missão em grade, com o ícone de cada item (passe o mouse para ver nome, quantidade e ID); em **Dar item**, digite parte do nome (ou o ID), clique no item da lista,
+  missão em grade, com o ícone de cada item; passe o mouse para ver a dica do jogo (nome na cor,
+  valores, durabilidade, requisitos, pedras, efeitos, preço e descrição); em **Dar item**, digite parte do nome (ou o ID), clique no item da lista,
   escolha a quantidade e Dar — se não couber tudo, nada é dado. Para **remover**, clique no item
   num dos recipientes, ajuste a quantidade e confirme (equipamento e armazém só com o personagem
   fora do jogo). Em jogo,

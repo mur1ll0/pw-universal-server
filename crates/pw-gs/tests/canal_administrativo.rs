@@ -1304,3 +1304,23 @@ async fn remover_item_online_e_offline() {
     sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6r-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
     c.encerrar().await;
 }
+
+/// E6 (B189): o detalhe de um slot para a dica — registro com nome, quantidade, pilha;
+/// slot vazio e recipiente desconhecido recusados.
+#[tokio::test]
+async fn detalhe_do_item_para_a_dica() {
+    let c = Cenario::montar().await;
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    sqlx::query("INSERT INTO character_items(character_id, container_type, slot, item_id, count) VALUES($1,0::smallint,3::smallint,3001,7)")
+        .bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    let pedir = |rec: &str, slot: u16| json!({"tipo":"detalhe_item","personagem_id":c.personagem,"recipiente":rec,"slot":slot});
+    let r = c.pedir(&c.realm, pedir("bolsa", 3)).await;
+    assert_eq!(r["estado"], "consultado", "{r}");
+    assert_eq!((r["dados"]["id"].as_u64(), r["dados"]["nome"].as_str(), r["dados"]["quantidade"].as_u64(), r["dados"]["pilha"].as_u64()),
+        (Some(3001), Some("Poção de teste"), Some(7), Some(100)), "{r}");
+    assert!(r["dados"]["equipamento"].is_null(), "item comum não tem bloco de equipamento");
+    assert_eq!(c.pedir(&c.realm, pedir("bolsa", 4)).await["dados"]["codigo"], "slot_vazio");
+    assert_eq!(c.pedir(&c.realm, pedir("bau", 3)).await["dados"]["codigo"], "recipiente_invalido");
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}

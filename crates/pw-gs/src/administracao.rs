@@ -71,6 +71,8 @@ pub enum Consulta {
     Inventario { personagem_id: i32 },
     /// Itens do `elements.data` por nome ou id (E6, B186). Só leitura.
     BuscarItens { texto: String },
+    /// O item de um slot com os dados da dica (E6, B189). Só leitura.
+    DetalheItem { personagem_id: i32, recipiente: String, slot: u16 },
 }
 
 /// Teto de uma edição de dinheiro/EXP pelo painel: cabe no `u32`/`i32` dos pacotes
@@ -107,6 +109,17 @@ pub struct RemocaoPedida {
     pub id: u32,
     #[serde(default)]
     pub quantidade: Option<u32>,
+}
+
+/// Nome do recipiente no painel → tipo no banco (B187).
+fn recipiente_do_painel(nome: &str) -> Option<pw_core::ContainerType> {
+    match nome {
+        "bolsa" => Some(pw_core::ContainerType::Inventory),
+        "missao" => Some(pw_core::ContainerType::TaskInventory),
+        "equipamento" => Some(pw_core::ContainerType::Equipment),
+        "armazem" => Some(pw_core::ContainerType::Storehouse),
+        _ => None,
+    }
 }
 
 /// Teto de quantidade de um item por operação: política do painel (B186).
@@ -341,6 +354,12 @@ impl ServidorAdministrativo {
                     Consulta::Inventario { personagem_id } if personagem_id > 0 => {
                         self.roteador.inventario_do_painel(personagem_id).await
                     }
+                    Consulta::DetalheItem { personagem_id, recipiente, slot } if personagem_id > 0 => {
+                        match recipiente_do_painel(&recipiente) {
+                            Some(r) => self.roteador.detalhe_do_item(personagem_id, r, slot).await,
+                            None => json!({"codigo":"recipiente_invalido"}),
+                        }
+                    }
                     Consulta::BuscarItens { texto } if texto.chars().count() <= 64 => {
                         self.roteador.buscar_itens(&texto).await
                     }
@@ -358,13 +377,7 @@ impl ServidorAdministrativo {
                         let coordenada = |v: f32| v.is_finite() && v.abs() <= TETO_DE_COORDENADA;
                         let edicao = if tipos != 1 { None }
                             else if let Some(r) = &remover_item {
-                                let recipiente = match r.recipiente.as_str() {
-                                    "bolsa" => Some(pw_core::ContainerType::Inventory),
-                                    "missao" => Some(pw_core::ContainerType::TaskInventory),
-                                    "equipamento" => Some(pw_core::ContainerType::Equipment),
-                                    "armazem" => Some(pw_core::ContainerType::Storehouse),
-                                    _ => None,
-                                };
+                                let recipiente = recipiente_do_painel(&r.recipiente);
                                 recipiente.filter(|_| r.id > 0 && r.slot < 256 && r.quantidade.map_or(true, |q| (1..=TETO_DE_QUANTIDADE).contains(&q)))
                                     .map(|recipiente| E::RemoverItem { recipiente, slot: r.slot, tid: r.id, quantidade: r.quantidade })
                             }

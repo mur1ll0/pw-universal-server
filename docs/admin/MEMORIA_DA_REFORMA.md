@@ -155,7 +155,7 @@ quando aplicável. Não terminar com todas as telas prontas e operações sem in
 
 ## 6. Retomada imediata
 
-**Etapa ativa:** E6 em andamento (B185 posição, B186–B188 itens); E5 testada.
+**Etapa ativa:** E6 em andamento (B185 posição, B186–B189 itens); E5 testada.
 **B165–B171 (resumo; detalhes no histórico):** B165 E1 auditoria · B166 E2/E3 login do painel e
 consulta viva · B167 senha + HMAC-MD5 no link · B168 criação de conta · B169 GM global coordenado
 (revisão/recibos/fencing em 8 processos) · B170 saída/salvamento/troca do GS reescritos ·
@@ -205,15 +205,11 @@ Mudanças **aprovadas pelo Murillo em 2026-10-05** (estado em §6.3):
 Incidente B172 (senha `MD5(senha)` no `public`) resolvido; conferência do `public` antes de
 publicar, sem `process::exit`, senha só em `MD5(nome+senha)`; commits `dc0b117`/`9fdd555`.
 
-### 6.4 B174–B175 — GM pelo painel, interface nova e E4 completa
+### 6.4 B174–B177 — interface nova, E4 e E7
 
-Chaves do canal em `docker/.env`; "não enviado" = falha 503. Design próprio sem CDN, largura
-total, popup de conta, alerta padrão, acompanhamento automático; gold, ban/desban, desconectar.
-
-### 6.6 B176–B177 — E7 rates e mapas
-
-Rates: fração = sorteios inteiros + chance; EXP e SP independentes; GS lê `realms` na partida e
-troca na hora (spec 05 §7.9; colunas `NUMERIC(3,1)` lidas com `::float4`). Mapas: spec 05 §7.10.
+Design próprio sem CDN, popup de conta, alerta padrão, acompanhamento automático; gold, ban,
+desconectar (E4). Rates com fração = sorteios inteiros + chance, EXP/SP independentes; mapas
+(E7). Regras: spec 05 §7.9–7.10.
 
 ### 6.8 B178–B182 — E5 em fatias
 
@@ -243,8 +239,11 @@ tabela de itens, para editar sem mexer em binário. Critério: **não perder des
 montar o binário a cada envio ou não cobrirem tudo, manter os octets e só decodificá-los no
 painel.
 
-**Próxima ação:** Murillo confere em jogo (B179, B182, B183 — portão §6.2 pendente —, B184–B188);
-depois o tooltip (texto do item). E6 continua com: inventário/equipamentos, habilidades,
+B188 ícones e grade; B189 dica parte 1 (textos do cliente em `data/textos/`; efeitos ainda como
+id+parâmetros; frases `ITEMDESC_*` só até o índice 112, depois o BR diverge do fonte).
+
+**Próxima ação:** Murillo confere (B179, B182, B183 — portão §6.2 pendente —, B184–B189); depois
+dica parte 2 (texto dos efeitos, `FormatPropDesc`) e arrastar. E6 continua com: inventário/equipamentos, habilidades,
 missões, posição, aparência e mascotes — cada um com o S2C que atualiza a ficha online achado
-no original, senão só offline ou "reentrar". Depois E8 (moldes) e E9. Próximo B: B189.
+no original, senão só offline ou "reentrar". Depois E8 (moldes) e E9. Próximo B: B190.
 Não publicar/commitar sem pedido.
