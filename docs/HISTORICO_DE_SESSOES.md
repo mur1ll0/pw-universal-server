@@ -12228,3 +12228,38 @@ comparação lado a lado.
     ### e. O que continua faltando
     29 tipos com frase > 112 e a habilidade (55, `CECSkill::GetDesc`) — B193; cor vermelha dos
     requisitos não atendidos (nível/atributos); conjunto, afiador e gravação.
+
+193. **Sessão 2026-10-07: frases da dica além do índice 112 conferidas no ElementClient BR.**
+
+    ### a. Sintoma / pedido
+    Após o B192, 29 tipos de efeito usavam frases `ITEMDESC_*` além do 112, onde o
+    `item_desc.txt` BR diverge do cabeçalho do fonte (o BR tem 412 frases, o enum 355; a partir do
+    123 o BR intercala ações, emoções…). A busca por sentido era ambígua ("Metal %d" no 217 ×
+    "=+Resistência a Metal" no 355): o binário decide.
+
+    ### b. Evidência (ELEMENTCLIENT.EXE 1.5.5 BR, sem empacotador)
+    - `AddOneAddOnPropDesc`: `byPropType & ebx` (`ebx = 0xff`, `0x51e2f4`), `cmp 0xd4`, índice de
+      bytes em `0x522ac4`, saltos em `0x522884` (`0x51e337`); afiador desviado (`call 0x52e760`);
+      `default` em `0x522849` usa a chave 104 (`ERRORPROP`).
+    - A chave da frase sai em três formas: `mov [esp+X], chave|ebx` + `call 0x4f2e00`;
+      `mov [esp+X], chave` + `call 0x58a200`; `push chave` + `jmp` ao bloco comum ou
+      `call 0x522bc0`. No caso 61 o compilador reutiliza `ebx` (0xff) como a chave 255.
+    - Resultado: 118 tipos com as chaves iguais às do fonte (confirma a faixa ≤ 112 no binário);
+      15 frases com posição nova (`ATK_DEGREE` 202 "Nível de Ataque", `DEF_DEGREE` 203,
+      `TOTAL_DEFENCE_ADD` 255 "Resistência Elemental", `PROFVIEW` 261, `SOULPOWER` 264 "Força da
+      Alma", resistências 269–273 "Dano de … reduzido em %", `PENETRATION` 276 "Nível de Matança",
+      `RESILIENCE` 277 "Nível de Guardião", `VIGOUR` 321 "Espírito", `PPEN`/`MPEN` 397/398);
+      tipos 161–174 (astrolábio) vão ao `default` no BR. Caso 89 conferido à mão (`0x3f` em
+      `0x521ea3`).
+
+    ### c. Correção
+    `scripts/conferir_efeitos_no_binario.py` → `painel/efeitos_no_binario_br.json`; o gerador do
+    B192 usa o mapa (156/157 tipos com texto; 161–174 com `erro`); `textos.frases()` só a
+    enumeração até 112 mais as conferidas; `dica.texto_do_efeito` trata `erro` como o `default:`.
+
+    ### d. Provas
+    Painel Python 63/0 (Força da Alma, Nível de Ataque, Nível de Matança, Resistência Elemental,
+    Penet. Física, tipo 161 = Atributo de erro, `PDEF` fora da tabela, habilidade crua).
+
+    ### e. O que continua faltando
+    Habilidade (55): `CECSkill::GetDesc` precisa dos textos de habilidade (B195). Nada visto em jogo.

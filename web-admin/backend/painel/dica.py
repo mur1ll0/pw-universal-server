@@ -13,8 +13,9 @@ do fonte.
 
 Parte 2 (B192): o texto de cada efeito como `AddOneAddOnPropDesc` (`EC_IvtrEquip.cpp:971-2610`)
 o escreve para o item do jogador (ramo não local), pela tabela gerada em
-`efeitos_do_cliente.json`; o tipo vem do `item_ext_prop.txt`. Tipos com frase além do índice 112
-e a habilidade (caso 55, `CECSkill::GetDesc`) ainda saem como id e parâmetros (B193). E a
+`efeitos_do_cliente.json`; o tipo vem do `item_ext_prop.txt`. B193: as frases além do índice 112
+com a posição conferida no binário BR, e os tipos que o BR não tem saem como o `default:` dele.
+Só a habilidade (caso 55, `CECSkill::GetDesc`) ainda sai como id e parâmetros. E a
 linha de classe (`AddProfReqDesc`, `EC_IvtrItem.cpp:646-664`). Ordem da arma
 (`EC_IvtrWeapon.cpp:375-460`): classe, requisitos, efeitos, pedras, preço, fabricante, descrição.
 """
@@ -79,8 +80,9 @@ def texto_do_efeito(efeito):
     if 100 <= byte <= 115:
         return []  # afiador: `IsSharpenerProperty`, descrito por `AddSharpenerDesc`
     caso = textos.efeitos_do_cliente().get(str(byte))
-    if caso is None:
-        return [_printf(textos.frases().get("ITEMDESC_ERRORPROP", ""), idprop)]  # `default:`
+    if caso is None or caso.get("erro"):
+        # `default:` — também os tipos que o cliente BR não tem (B193, `efeitos_no_binario_br.json`).
+        return [_printf(textos.frases().get("ITEMDESC_ERRORPROP", ""), idprop)]
     if not caso["seguro"]:
         return None
     linhas, linha = [], ""

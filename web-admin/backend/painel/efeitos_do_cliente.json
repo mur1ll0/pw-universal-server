@@ -902,7 +902,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "60": {
 "partes": [
@@ -913,7 +913,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "61": {
 "partes": [
@@ -924,7 +924,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "62": {
 "partes": [
@@ -935,7 +935,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "63": {
 "partes": [
@@ -946,7 +946,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "64": {
 "partes": [
@@ -957,7 +957,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "65": {
 "partes": [
@@ -968,7 +968,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "66": {
 "partes": [
@@ -979,7 +979,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "67": {
 "partes": [
@@ -990,7 +990,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "68": {
 "partes": [
@@ -1001,7 +1001,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "69": {
 "partes": [
@@ -1023,7 +1023,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "71": {
 "partes": [
@@ -1034,7 +1034,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "72": {
 "partes": [
@@ -1201,7 +1201,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "85": {
 "partes": [
@@ -1273,7 +1273,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "91": {
 "partes": [
@@ -1284,7 +1284,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "92": {
 "partes": [
@@ -1425,7 +1425,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "200": {
 "partes": [],
@@ -1747,7 +1747,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "138": {
 "partes": [
@@ -1758,7 +1758,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "139": {
 "partes": [
@@ -1769,7 +1769,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "140": {
 "partes": [
@@ -1780,7 +1780,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "141": {
 "partes": [
@@ -1791,7 +1791,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "142": {
 "partes": [
@@ -1824,7 +1824,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "145": {
 "partes": [
@@ -1835,7 +1835,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "146": {
 "partes": [
@@ -1849,230 +1849,74 @@ true
 "seguro": true
 },
 "161": {
-"partes": [
-[
-"ITEMDESC_PHYDMGEXTRA",
-null,
-"p0",
-true
-]
-],
-"seguro": true
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "162": {
-"partes": [
-[
-"ITEMDESC_MAGICDMGEXTRA",
-null,
-"p0",
-true
-]
-],
-"seguro": true
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "163": {
-"partes": [
-[
-"ITEMDESC_PDEF",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": false
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "164": {
-"partes": [
-[
-"ITEMDESC_ALLMAGICDEF",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": true
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "165": {
-"partes": [
-[
-"ITEMDESC_ADDHP",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": true
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "166": {
-"partes": [
-[
-"ITEMDESC_VIGOUR",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": false
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "167": {
-"partes": [
-[
-"ITEMDESC_GOLDDEFENCE",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": true
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "168": {
-"partes": [
-[
-"ITEMDESC_WOODDEFENCE",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": true
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "169": {
-"partes": [
-[
-"ITEMDESC_WATERDEFENCE",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": true
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "170": {
-"partes": [
-[
-"ITEMDESC_FIREDEFENCE",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": true
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "171": {
-"partes": [
-[
-"ITEMDESC_EARTHDEFENCE",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": true
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "172": {
-"partes": [
-[
-"ITEMDESC_ACCURACY2",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": false
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "173": {
-"partes": [
-[
-"ITEMDESC_EVASION",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": false
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "174": {
-"partes": [
-[
-"ITEMDESC_ADDMP",
-null,
-null,
-false
-],
-[
-null,
-" %+d",
-"p0",
-true
-]
-],
-"seguro": true
+"partes": [],
+"seguro": true,
+"erro": true
 },
 "175": {
 "partes": [
@@ -2089,7 +1933,7 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 },
 "176": {
 "partes": [
@@ -2106,6 +1950,6 @@ null,
 true
 ]
 ],
-"seguro": false
+"seguro": true
 }
 }

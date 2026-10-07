@@ -52,6 +52,12 @@ def frases():
     corpo = _ler("item_desc.txt").split("#_begin", 1)[1]
     lista = [_desfazer_escape(m.group(1)) for m in _FRASE.finditer(corpo)]
     indices = json.loads((Path(__file__).parent / "item_desc_indices.json").read_text(encoding="utf-8"))
+    # Além do 112 o arquivo BR diverge do cabeçalho: valem só as posições conferidas no binário
+    # (B193, `efeitos_no_binario_br.json`); as outras ficam fora em vez de pegar a frase errada.
+    binario = Path(__file__).parent / "efeitos_no_binario_br.json"
+    conferidas = json.loads(binario.read_text(encoding="utf-8"))["frases"] if binario.exists() else {}
+    indices = {nome: i for nome, i in indices.items() if i <= 112}
+    indices.update(conferidas)
     return {nome: lista[i] for nome, i in indices.items() if i < len(lista)}
 
 

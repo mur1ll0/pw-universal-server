@@ -11,7 +11,11 @@ cliente; `quebra` é o `bRet` (termina a linha). Expressões: `p0`, `p1`, `-p0`,
 `-p0*0.05` (float), `f(p0)` (os bits do int como float), `vp(pN)` (`VisualizeFloatPercent`,
 `EC_IvtrItem.h:370`). Os casos de refino (200–212) não escrevem linha (só acumulam) e saem vazios.
 `seguro` é falso quando alguma frase passa do índice 112 do `item_desc.txt` BR (onde o arquivo
-diverge do cabeçalho do fonte; B189) ou quando o caso não se reduz às partes acima.
+diverge do cabeçalho do fonte; B189) sem posição conferida no binário, ou quando o caso não se
+reduz às partes acima. Com `painel/efeitos_no_binario_br.json` (B193,
+`scripts/conferir_efeitos_no_binario.py`): as frases além do 112 que o binário BR confirma contam
+como seguras, e os tipos que o binário manda ao `default:` saem com `erro: true` (o cliente BR
+escreve `ITEMDESC_ERRORPROP`). Rodar este gerador antes do conferidor e depois de novo.
 
 Uso: python scripts/gerar_efeitos_de_itens.py
 """
@@ -23,6 +27,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 FONTE = pathlib.Path(r"F:\PW\1.5.5\EvolvedPWClient\ElementClient\EC_IvtrEquip.cpp")
 INDICES = REPO / "web-admin" / "backend" / "painel" / "item_desc_indices.json"
 SAIDA = REPO / "web-admin" / "backend" / "painel" / "efeitos_do_cliente.json"
+BINARIO = REPO / "web-admin" / "backend" / "painel" / "efeitos_no_binario_br.json"
 ULTIMO_SEGURO = 112
 
 EXPRESSOES = {
@@ -112,6 +117,8 @@ def main():
     corpo = "\n".join(linhas[1029:2609])  # o `switch` começa na linha 1030
     corpo = re.sub(r"//[^\n]*", "", corpo)
     indices = json.loads(INDICES.read_text(encoding="utf-8"))
+    binario = json.loads(BINARIO.read_text(encoding="utf-8")) if BINARIO.exists() else {}
+    conferidas, no_default = binario.get("frases", {}), set(binario.get("no_default", []))
     tabela = {}
     for caso in re.split(r"\n\s*case\s+", corpo)[1:]:
         m = re.match(r"(\d+)\s*:", caso)
@@ -120,8 +127,11 @@ def main():
         t = nao_local(caso[m.end():]).split("break;")[0]
         partes = partes_do_caso(t)
         frases = [p[0] for p in partes or [] if p[0]]
-        seguro = partes is not None and all(indices.get(f, 10**6) <= ULTIMO_SEGURO for f in frases)
-        tabela[m.group(1)] = {"partes": partes or [], "seguro": seguro}
+        seguro = partes is not None and all(indices.get(f, 10**6) <= ULTIMO_SEGURO or f in conferidas for f in frases)
+        if int(m.group(1)) in no_default:
+            tabela[m.group(1)] = {"partes": [], "seguro": True, "erro": True}
+        else:
+            tabela[m.group(1)] = {"partes": partes or [], "seguro": seguro}
     SAIDA.write_text(json.dumps(tabela, ensure_ascii=False, indent=0), encoding="utf-8")
     seguros = sum(1 for v in tabela.values() if v["seguro"])
     print(f"{len(tabela)} tipos; {seguros} seguros; não seguros: "
