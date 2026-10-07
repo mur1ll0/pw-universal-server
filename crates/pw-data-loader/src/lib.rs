@@ -21,6 +21,7 @@ pub mod precinct;
 pub mod servicos;
 pub mod precos;
 pub mod receitas;
+pub mod posicoes;
 pub mod refino;
 pub mod progressao;
 pub mod ptemplate;

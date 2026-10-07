@@ -706,7 +706,7 @@ Limitações: instâncias do `gs.conf` que dividem pasta (`is73–75` em `a72`, 
 e `m01`/`random03`/`random04` não têm dados no carregador — aparecem "sem dados"; cada mapa é
 um mundo único compartilhado (o original cria cópias por entrada em `instance_servers`).
 
-## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184–B187; falta ver em jogo)
+## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184–B187, B191; falta ver em jogo)
 
 `RoteadorDeMapas::editar_personagem`, com a guarda de presença em leitura (a entrada pega em
 escrita) e a trava de gravação do personagem. Só dar (B180: tirar arriscaria valor
@@ -776,6 +776,23 @@ avisa como "GM removeu" com o nome (`EC_HostMsg.cpp:1786-1788`) e tira do pacote
 (`remover_item_offline`). O valor 0 de `DROP_TYPE_GM` vem do 1.5.5; no 1.2.6 não foi conferido
 no binário (só muda a mensagem do cliente). Equipar/mover fica para a interface de inventário.
 
+**B191 (E6) — arrastar.** `mover_item: {de, slot_de, id, para, slot_para}` troca o item `id` do
+slot de origem com o que estiver no destino (pilhas inteiras, como as trocas do jogo). Pares que o
+jogo move (`movimento_valido`): bolsa↔bolsa, corpo↔corpo, bolsa↔corpo, armazém↔armazém,
+bolsa↔armazém, missão↔missão (senão `movimento_invalido`); slots dentro de bolsa/missão 32
+(`gs/config.h:12-15`), armazém 16, corpo < 64 (`slot_invalido`); mesmo slot = `sem_mudanca`;
+item diferente na origem = `slot_mudou`; peça que não cabe no slot do corpo = `posicao_invalida`.
+**Online** só bolsa e corpo, pelos tratadores do cliente — `EXG_IVTR_ITEM` (44), `EXG_EQUIP_ITEM`,
+`EQUIP_ITEM` (vestir/tirar) —, que gravam em transação, avisam o cliente, refazem o equipamento e
+mandam a aparência a quem vê; o cliente aplica esses comandos sem tê-los pedido
+(`EC_HostMsg.cpp:1742-1758`, `:1861-1935`). Antes, `motivo_para_nao_vestir`/`troca_no_corpo_cabe`
+conferem o que o tratador recusaria (posição, requisito → `requisito`, Forma Sombria →
+`equipamento_travado`), para não mandar ao jogador um erro que ele não causou; depois relê o
+destino (`nao_aplicado` se não chegou). Armazém (o cliente só tem a cópia dele com a sessão de NPC
+aberta, `armazem_aberto`) e missão (sem comando de troca) online = `precisa_estar_offline`.
+**Offline:** `swap_slots`/`move_between_containers` em transação, com a posição conferida;
+requisitos de nível/classe/atributos só online (dependem dos atributos com o equipamento).
+
 Falhas novas: `nivel_invalido` (com `nivel_maximo`), `nivel_invalido_ou_personagem_inexistente`
 (offline), `cultivo_invalido`. A impressão de deduplicação só inclui `pontos`/`nivel`/`cultivo`
 quando presentes (operação B179 pendente continua com a mesma impressão).
@@ -838,7 +855,7 @@ banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
 | :--- | :--- | :--- |
 | repositório de itens | `testado` | transacionado; troca de slot preserva os octetos do item (A37) |
 | equipar | `confirmado` | com bloco de dados (spec 04 §5) |
-| requisito de equipamento | `testado` (B148, 1.5.5 e 1.2.6) | `EquipItem` → `CanActivate` → `equip_item::VerifyRequirement` (`gs/player.cpp:8476-8493`, `gs/item/equip_item.cpp:60-80`): vestir (15) e mover para o corpo (18) só passam se o jogador atende o nível, o bit da **classe** (`1 << (classe & 0x0F)` na máscara `race` da `prerequisition`) e força/vitalidade/agilidade/energia de `_cur_prop` (`atributos_efetivos`), e se a durabilidade não é zero; senão `ERR_ITEM_CANNOT_EQUIP` (8) e os dois slots destravados (`BusServer::pode_vestir`, `pw_core::Requisitos`). Requisitos do bloco gravado, ou do que o `item_info` monta do modelo quando o item não tem bloco. Antes, o servidor vestia qualquer coisa (relato do 1.2.6: peça de outra classe comprada no NPC, vermelha no cliente, entrava no corpo). `falta`: posição (`CheckEquipPostion`, sem `equip_mask`), reputação, nível histórico, `VerifyRequirement` de roupa e de item de voo |
+| requisito de equipamento | `testado` (B148, 1.5.5 e 1.2.6) | `EquipItem` → `CanActivate` → `equip_item::VerifyRequirement` (`gs/player.cpp:8476-8493`, `gs/item/equip_item.cpp:60-80`): vestir (15) e mover para o corpo (18) só passam se o jogador atende o nível, o bit da **classe** (`1 << (classe & 0x0F)` na máscara `race` da `prerequisition`) e força/vitalidade/agilidade/energia de `_cur_prop` (`atributos_efetivos`), e se a durabilidade não é zero; senão `ERR_ITEM_CANNOT_EQUIP` (8) e os dois slots destravados (`BusServer::pode_vestir`, `pw_core::Requisitos`). Requisitos do bloco gravado, ou do que o `item_info` monta do modelo quando o item não tem bloco. Antes, o servidor vestia qualquer coisa (relato do 1.2.6: peça de outra classe comprada no NPC, vermelha no cliente, entrava no corpo). **B191 (`testado`, 1.5.5 e 1.2.6):** posição (`CheckEquipPostion`, `gs/item.h:294-297`) ao vestir/mover para o corpo (`player.cpp:8150`) e na troca dentro do corpo (`:8008-8045`), pela máscara da família (`pw_data_loader::posicoes`); sem tabela carregada não confere. `falta`: reputação, nível histórico, amuleto de HP/MP que não sai (`ERR_ITEM_CANNOT_UNEQUIP`, `:8100-8124`, código não conferido no 1.2.6) e troca do amuleto vestido, habilidade dinâmica repetida (`:8158-8168`), `VerifyRequirement` de roupa e de item de voo |
 | equipamento comprado e fabricado | `testado` (B151, 1.5.5 e 1.2.6) | Um gerador, três variantes (`pw_gs::geracao::Geracao`), como o original: **drop** (`generate_item_for_drop`: `NORMAL`, `ADDON_LIST_DROP` = `addons`, furos `drop_probability_socket`, durabilidade gasta `min(RandNormal(drop), máx)` salvo `proc_type & 0x1000`, tag `IMT_DROP` 2); **fabricação** (`ProduceItem` → `generate_item_from_player`, `player.cpp:16499-16515`, `itemdataman.cpp:1239-1246`: `NORMAL(0)`, `ADDON_LIST_PRODUCE` = `rands`, furos `make_probability_socket`, durabilidade **cheia**, tag `IMT_PRODUCE` 4 + nome do fabricante em UTF-16LE até 40 B); **loja** (`get_item_for_sell`, `itemdataman.cpp:1352-1379`, usado pelo NPC e pela Loja Gold `player.cpp:15873, 15941`: `SPECIFIC(0)` = mínimo das faixas, índice 0 nos sorteios → sem furo, sem addon, durabilidade cheia `durability_min`, tag `IMT_SHOP` 3). A máscara de classes (`character_combo_id & 0xFFFF`) vai na `prerequisition` do bloco nos três. Durabilidade: `generate_item_temp.h:292-310`. Depois da compra o cliente pede os blocos com `GET_ITEM_INFO_LIST` (53, spec 04 §6); sem resposta o item ficava vermelho e sem tooltip. Falta: roupa comprada/fabricada ainda com tag 0 |
 | empilhar na bolsa | `testado` | `CECInventory::MergeItem` (`EC_Inventory.cpp:179-215`): completa pilhas na ordem dos slots, o resto no primeiro vazio; limite `pile_num_max`. O cliente confere o slot e a quantidade devolvidos |
 | conteúdo da roupa (B129) | `testado` | `FASHION_ESSENCE` entra com 10 B: `int require_level`, `u16 color` (`RandNormal(0, 0x7FFF)`), `u16 gender`, etiqueta de 2 B (`generate_fashion_item`, `generate_item_temp.h:1642-1712`; mesma ordem no `gs` 1.2.6, VA 0x81f6fdc). `GameDataManager::conteudo_da_roupa`, usado pelo `empilhar_gerado` (Loja Gold, prêmio, drop) e pela compra no NPC. Sem ele o cliente lia `gender` 0 (masculino) e recusava a roupa feminina |

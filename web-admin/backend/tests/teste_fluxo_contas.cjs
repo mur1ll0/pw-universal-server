@@ -174,3 +174,19 @@ test("gold e ban (B175): corpo certo, recuperação e resultado de outro alvo n�
   assert.deepEqual([ban.banida, ban.motivo], [true, "trapaça"]);
   assert.equal(c.avaliar("lerComando().motivo"), "trapaça", "motivo guardado para repetir igual");
 });
+
+test("arrastar (B191) manda mover_item e, com o personagem em jogo, oferece desconectar e aplicar", async () => {
+  const c = await montar();
+  c.avaliar("estado.personagemId=5; estado.personagemAberto={id:5,nome:'Heroi',usuario:'alvo',conta_id:9}");
+  c.resposta(200, { estado: "salvo", item: 3003 });
+  await c.avaliar("moverItem({recipiente:'bolsa',slot:2,id:3003,nome:'Espada'}, 'equipamento', 0)");
+  const corpo = JSON.parse(c.pedidos[0].opcoes.body);
+  assert.ok(c.pedidos[0].caminho.endsWith("/realms/realm_126/personagens/5/editar"));
+  assert.deepEqual(corpo.mover_item, { de: "bolsa", slot_de: 2, id: 3003, para: "equipamento", slot_para: 0 });
+  c.resposta(200, { estado: "falha", codigo: "precisa_estar_offline" });
+  c.avaliar("moverItem({recipiente:'armazem',slot:1,id:3001,nome:'Poção'}, 'bolsa', 4)");
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(c.elementos.get("confirmar-alerta").hidden, false, "pergunta antes de desconectar");
+  assert.match(c.elementos.get("confirmar-alerta").textContent, /Desconectar e aplicar/);
+});

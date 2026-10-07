@@ -556,6 +556,10 @@ impl RoteadorDeMapas {
                 Ok(n) => serde_json::json!({"estado":"salvo","presenca":"offline","item":tid,"removidos":n,"slot":slot}),
                 Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
             },
+            E::MoverItem { de, slot_de, tid, para, slot_para } => match bus.mover_item_offline(roleid, de, slot_de, tid, para, slot_para).await {
+                Ok(()) => serde_json::json!({"estado":"salvo","presenca":"offline","item":tid,"de":slot_de,"para":slot_para}),
+                Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
+            },
             E::Item { tid, quantidade } => match bus.dar_item_offline(roleid, tid, quantidade).await {
                 Ok((entrou, slot)) => serde_json::json!({"estado":"salvo","presenca":"offline","item":tid,"entrou":entrou,"slot":slot}),
                 Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),

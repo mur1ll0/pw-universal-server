@@ -234,6 +234,9 @@ button, input, select { font: inherit; color: inherit; }
   background: var(--fundo-2); display: grid; place-items: center; overflow: hidden; }
 .celula-item.ocupada { cursor: pointer; border-color: var(--borda-forte); background: #111; }
 .celula-item.ocupada:hover, .celula-item.escolhido { outline: 2px solid var(--ouro); outline-offset: -1px; }
+.celula-item.ocupada[draggable="true"] { cursor: grab; }
+.celula-item.arrastando { opacity: .4; }
+.celula-item.alvo-arrasto { outline: 2px dashed var(--azul); outline-offset: -1px; background: var(--azul-suave); }
 .celula-item img { width: 32px; height: 32px; image-rendering: pixelated; }
 .qtd-item { position: absolute; right: 2px; bottom: 0; font: 600 10px/1.2 var(--fonte-numero); color: #fff;
   text-shadow: 0 0 2px #000, 0 0 2px #000; }

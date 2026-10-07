@@ -267,6 +267,8 @@ pub struct GameDataManager {
     pub pedras: std::collections::HashMap<u32, (u32, u32, u32)>,
     /// Refino, pedras, talismãs e furos de acessório — ver [`crate::refino`] (B163).
     pub refino: crate::refino::DadosDeRefino,
+    /// `equip_mask` de 32 bits de cada item que entra no corpo — ver [`crate::posicoes`] (B191).
+    pub posicoes: HashMap<u32, u32>,
     /// Recarga, conjuração e custo de aprender de cada habilidade — ver
     /// [`crate::habilidades`]. Só o 1.5.5 tem tabela; nas outras versões fica vazia.
     pub habilidades: crate::habilidades::TabelaDeHabilidades,
@@ -537,6 +539,7 @@ impl GameDataManager {
                 })
                 .collect();
             self.refino = crate::refino::carregar(g);
+            self.posicoes = crate::posicoes::carregar(g);
             self.ovos_de_pet = crate::pet::carregar_ovos(g);
             self.modelos_de_mascote = crate::pet::carregar_modelos(g);
             self.comidas_de_mascote = crate::pet::carregar_comidas(g);
@@ -616,6 +619,17 @@ impl GameDataManager {
     /// `None` quando o realm não tem o item nas tabelas: quem chama decide, e recusar a
     /// venda é melhor do que cobrar um número inventado.
     /// Quantas unidades cabem num slot. Item sem `pile_num_max` conhecido empilha 1.
+    /// `CheckEquipPostion` (`gs/item.h:294-297`): o item pode ir ao slot `slot` do corpo?
+    /// `None` quando a tabela de posições não foi carregada (sem `elements` genérico) — quem
+    /// chama decide; não há como afirmar nem negar sem o dado.
+    pub fn cabe_no_slot(&self, item_id: u32, slot: usize) -> Option<bool> {
+        if self.posicoes.is_empty() {
+            return None;
+        }
+        let mascara = self.posicoes.get(&item_id).copied().unwrap_or(0);
+        Some(crate::posicoes::cabe_no_slot(mascara, slot))
+    }
+
     pub fn limite_de_pilha(&self, item_id: u32) -> u32 {
         self.pilhas.get(&item_id).copied().unwrap_or(1).max(1)
     }

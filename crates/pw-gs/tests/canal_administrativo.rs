@@ -124,6 +124,10 @@ impl Cenario {
         dados.pilhas.insert(3001, 100);
         dados.pilhas.insert(3002, 10);
         dados.itens_de_missao.insert(3002);
+        // B191: 3003 é uma arma (máscara `0x1`, só o slot 0 do corpo); o resto não entra no corpo.
+        dados.nomes_de_itens.insert(3003, "Espada de teste".into());
+        dados.pilhas.insert(3003, 1);
+        dados.posicoes.insert(3003, 0x1);
         let itens_de_teste = Arc::new(dados);
         let mut mapas = Vec::new();
         for tag in [1, 161] {
@@ -1322,5 +1326,78 @@ async fn detalhe_do_item_para_a_dica() {
     assert_eq!(c.pedir(&c.realm, pedir("bolsa", 4)).await["dados"]["codigo"], "slot_vazio");
     assert_eq!(c.pedir(&c.realm, pedir("bau", 3)).await["dados"]["codigo"], "recipiente_invalido");
     sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}
+
+/// E6 (B191): arrastar. Online pelos tratadores do cliente (troca na bolsa, vestir, tirar),
+/// com a posição no corpo (`CheckEquipPostion`) conferida antes; armazém e bolsa de missão só
+/// offline. Offline, a mesma troca no banco em transação. Nenhum item some nem duplica.
+#[tokio::test]
+async fn arrastar_item_online_e_offline() {
+    let c = Cenario::montar().await;
+    let id = |s: &str| format!("e6m-{s}-{}", c.personagem);
+    let mover = |de: &str, sd: u16, tid: u32, para: &str, sp: u16| json!({"tipo":"editar_personagem",
+        "personagem_id":c.personagem,"mover_item":{"de":de,"slot_de":sd,"id":tid,"para":para,"slot_para":sp}});
+    let onde = |inv: &Value, rec: &str, slot: u64| inv["dados"]["recipientes"][rec].as_array().unwrap().iter()
+        .find(|i| i["slot"].as_u64() == Some(slot)).map(|i| i["id"].as_u64().unwrap());
+    let soma = |inv: &Value, tid: u64| ["bolsa", "equipamento", "armazem", "missao"].iter()
+        .flat_map(|r| inv["dados"]["recipientes"][*r].as_array().unwrap().clone())
+        .filter(|i| i["id"].as_u64() == Some(tid)).map(|i| i["quantidade"].as_u64().unwrap()).sum::<u64>();
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    // Bolsa: 30 poções no 0 e a espada no 1; armazém: 1 poção no 2; missão: a carta no 0.
+    for (tipo, slot, tid, n) in [(0i32, 0i32, 3001i32, 30i32), (0, 1, 3003, 1), (2, 2, 3001, 1), (5, 0, 3002, 1)] {
+        sqlx::query("INSERT INTO character_items(character_id, container_type, slot, item_id, count) VALUES($1,$2::smallint,$3::smallint,$4,$5)")
+            .bind(c.personagem).bind(tipo).bind(slot).bind(tid).bind(n).execute(c.pool.get_ref()).await.unwrap();
+    }
+
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let r = c.pedir_com_id(&c.realm, &id("on-bolsa"), c.conta, mover("bolsa", 0, 3001, "bolsa", 5)).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("aplicado"), Some("online")), "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("on-vestir"), c.conta, mover("bolsa", 1, 3003, "equipamento", 0)).await;
+    assert_eq!(r["estado"], "aplicado", "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("on-tirar"), c.conta, mover("equipamento", 0, 3003, "bolsa", 7)).await;
+    assert_eq!(r["estado"], "aplicado", "{r}");
+    for (n, pedido, codigo) in [
+        (1, mover("bolsa", 7, 3003, "equipamento", 3), "posicao_invalida"),
+        (2, mover("bolsa", 5, 3001, "equipamento", 0), "posicao_invalida"),
+        (3, mover("armazem", 2, 3001, "bolsa", 8), "precisa_estar_offline"),
+        (4, mover("bolsa", 0, 3001, "bolsa", 9), "slot_mudou"),
+        (5, mover("bolsa", 5, 3001, "bolsa", 5), "sem_mudanca"),
+        (6, mover("bolsa", 5, 3001, "bolsa", 40), "slot_invalido"),
+        (7, mover("missao", 0, 3002, "bolsa", 9), "movimento_invalido"),
+        (8, mover("bau", 0, 3001, "bolsa", 9), "edicao_invalida"),
+    ] {
+        let r = c.pedir_com_id(&c.realm, &id(&format!("on{n}")), c.conta, pedido).await;
+        assert_eq!(r["dados"]["codigo"], codigo, "{n}: {r}");
+    }
+    // O cliente recebeu o `EXG_IVTR_ITEM` (44, `s2c.rs` `exg_ivtr_item`: u16 id, u8, u8) da primeira troca.
+    esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data.len() == 4 && data[..2] == 44u16.to_le_bytes() && data[2..4] == [0, 5])).await;
+    let inv = c.pedir(&c.realm, json!({"tipo":"inventario","personagem_id":c.personagem})).await;
+    assert_eq!((onde(&inv, "bolsa", 5), onde(&inv, "bolsa", 7), onde(&inv, "equipamento", 0)), (Some(3001), Some(3003), None), "{inv}");
+
+    drop(bus);
+    c.esperar_presenca("ausente").await;
+    let r = c.pedir_com_id(&c.realm, &id("off-arm"), c.conta, mover("armazem", 2, 3001, "bolsa", 8)).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("salvo"), Some("offline")), "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("off-vestir"), c.conta, mover("bolsa", 7, 3003, "equipamento", 0)).await;
+    assert_eq!(r["estado"], "salvo", "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("off-missao"), c.conta, mover("missao", 0, 3002, "missao", 3)).await;
+    assert_eq!(r["estado"], "salvo", "{r}");
+    for (n, pedido, codigo) in [
+        // Trocaria a espada pela poção: a poção não entra no slot 0.
+        (1, mover("bolsa", 8, 3001, "equipamento", 0), "posicao_invalida"),
+        (2, mover("equipamento", 0, 3003, "equipamento", 5), "posicao_invalida"),
+        (3, mover("equipamento", 0, 3003, "armazem", 1), "movimento_invalido"),
+    ] {
+        let r = c.pedir_com_id(&c.realm, &id(&format!("off{n}")), c.conta, pedido).await;
+        assert_eq!(r["dados"]["codigo"], codigo, "{n}: {r}");
+    }
+    let inv = c.pedir(&c.realm, json!({"tipo":"inventario","personagem_id":c.personagem})).await;
+    assert_eq!((onde(&inv, "bolsa", 8), onde(&inv, "equipamento", 0), onde(&inv, "missao", 3), onde(&inv, "armazem", 2)),
+        (Some(3001), Some(3003), Some(3002), None), "{inv}");
+    assert_eq!((soma(&inv, 3001), soma(&inv, 3003), soma(&inv, 3002)), (31, 1, 1), "nada some nem duplica: {inv}");
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6m-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
     c.encerrar().await;
 }

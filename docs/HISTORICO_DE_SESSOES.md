@@ -12144,3 +12144,51 @@ comparação lado a lado.
 
     ### e. O que continua faltando
     B191–B199 (memória da reforma §6.14). Nada de B176–B190 visto em jogo.
+
+191. **Sessão 2026-10-07: arrastar itens pelo painel, online e offline, e posição no corpo (`CheckEquipPostion`) portada.**
+
+    ### a. Sintoma / pedido
+    E6 (b): mover na bolsa/armazém, equipar e desequipar arrastando, online e offline, pelos
+    mesmos caminhos do jogo; S2C dos movimentos e aparência para quem vê.
+
+    ### b. Evidência
+    - O cliente aplica `EXG_IVTR_ITEM`, `EXG_EQUIP_ITEM` e `EQUIP_ITEM` sem conferir pedido
+      (`EC_HostMsg.cpp:1742-1758`, `:1861-1935`); os tratadores do GS já os mandavam, gravando
+      em transação (`swap_slots`, `move_between_containers`) e difundindo a aparência.
+    - Armazém online depende da sessão de NPC (`armazem_aberto`, `armazem.rs`); sem ela o
+      cliente não tem a cópia do armazém → só offline.
+    - O GS não conferia a posição (`CheckEquipPostion`, `gs/item.h:294-297`; uso em
+      `player.cpp:8008-8045`, `:8150`): uma espada ia ao slot da cabeça. A máscara é gravada
+      por família no `generate_*` (`generate_item_temp.h`; constantes `itemdataman.h:340-366`;
+      essência → gerador `itemdataman.cpp:1355-1605`). Bit `i` = slot `i`.
+    - Medido nos `elements` reais: 126 = 3.582 itens com posição (armaduras 1.036/1.036,
+      acessórios 561, roupas 142); 155 = 11.034 (armaduras 2.520, das quais 156 abrem o slot 22
+      `EQUIP_INDEX_TWEAK`, `item.h:218`; acessórios 969; roupas 3.016).
+    - `ERR_ITEM_CANNOT_UNEQUIP` = 96 no 1.5.5 (`protocol.h:776`); não conferido no 1.2.6, por isso
+      a regra do amuleto ficou fora.
+
+    ### c. Correção
+    - `pw-data-loader/src/posicoes.rs`: máscara por item e `cabe_no_slot`;
+      `GameDataManager::posicoes`/`cabe_no_slot` (`None` sem tabela → não confere).
+    - GS: `motivo_para_nao_vestir` (posição + requisito, sem avisar o cliente) usado pelo
+      `pode_vestir`; `troca_no_corpo_cabe` na troca dentro do corpo (erro 8 + destravar).
+    - `EdicaoDePersonagem::MoverItem`, `movimento_valido`, `mover_item_pelo_painel` (online, pelos
+      tratadores, confere antes e relê depois), `mover_item_offline` (transação); canal
+      `mover_item {de, slot_de, id, para, slot_para}`; API Python `MovimentoPedido`.
+    - Painel: HTML5 drag-and-drop entre as janelas; "Desconectar e aplicar" para
+      `precisa_estar_offline` (desconectar da E4 + espera ausência + repete offline).
+    - Specs 03, 05 §7.11 e tabela do equipamento, 06; manual; estado; memória.
+
+    ### d. Provas
+    `posicoes_no_corpo` 2/0 (dados reais 126 e 155) e unitário de máscara 1/0;
+    `arrastar_item_online_e_offline` 1/0 (online troca na bolsa com `EXG_IVTR_ITEM` 44, veste, tira;
+    posição, slot, par e offline; somas por item conservadas); `requisito_de_vestir_no_{126,155}`
+    2/0 com os casos de posição pelo caminho do cliente; `subcomandos_no_mundo` 152/1 (o
+    intermitente `o_guia_selvagem…1177`, que passou 2× sozinho) depois de dar máscara aos itens
+    sintéticos de 3 testes de vestir; painel Python 60/0, Node 7/0. Suíte do workspace: ver item
+    do estado (rodada no fim do bloco).
+
+    ### e. O que continua faltando
+    Amuleto HP/MP que não sai e troca do vestido, habilidade dinâmica repetida, reputação;
+    arrastar não divide nem junta pilhas (troca inteira, como as trocas do jogo); requisitos no
+    offline. Nada visto em jogo.

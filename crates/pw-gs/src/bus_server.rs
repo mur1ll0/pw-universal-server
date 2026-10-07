@@ -5295,6 +5295,18 @@ impl BusServer {
         {
             return;
         }
+        // `CheckEquipPostion` nas duas direções (`gs/player.cpp:8008-8045`, B191).
+        if onde == ContainerType::Equipment && !self.troca_no_corpo_cabe(roleid, p.a as u16, p.b as u16).await {
+            info!("mundo: {roleid} tentou trocar {} e {} do corpo fora de posição", p.a, p.b);
+            for d in [
+                S2CGamedataSend::error_message(8).data, // `ERR_ITEM_CANNOT_EQUIP`
+                S2CGamedataSend::unfreeze_ivtr_slot(1, p.a as u16).data,
+                S2CGamedataSend::unfreeze_ivtr_slot(1, p.b as u16).data,
+            ] {
+                self.responder(roleid, d, envio).await;
+            }
+            return;
+        }
 
         let itens = self.itens().await;
         if let Err(e) = itens.swap_slots(roleid, onde, p.a as u16, p.b as u16).await {
@@ -5645,25 +5657,51 @@ impl BusServer {
     /// octetos), do bloco que o `item_info` monta do modelo — o mesmo que o cliente lê. Só vale
     /// para equipamento com ficha (arma, armadura, acessório, munição); roupa e item de voo têm
     /// `VerifyRequirement` próprio (`fashion_item.cpp:11`, `item_flysword`), ainda não portado.
-    /// **Falta** também a posição (`CheckEquipPostion`, sem `equip_mask` carregado) e a
-    /// reputação (`get_item_reputation_limit`); o nível é o atual, não o histórico.
+    /// A posição (`CheckEquipPostion`) é conferida desde o B191, pela máscara da família.
+    /// **Falta** a reputação (`get_item_reputation_limit`), o amuleto de HP/MP que não sai
+    /// (`ERR_ITEM_CANNOT_UNEQUIP`, `player.cpp:8100-8124`) e a habilidade dinâmica repetida
+    /// (`:8158-8168`); o nível é o atual, não o histórico.
     async fn pode_vestir(&self, roleid: i32, idx_bolsa: u8, idx_corpo: u8, envio: &EnvioAoCliente) -> bool {
         /// `ERR_ITEM_CANNOT_EQUIP` (`common/protocol.h:688`).
         const ERR_ITEM_CANNOT_EQUIP: i32 = 8;
+        let Some(motivo) = self.motivo_para_nao_vestir(roleid, idx_bolsa, idx_corpo).await else {
+            return true;
+        };
+        info!("mundo: {roleid} não pode vestir o slot {idx_bolsa} da bolsa no {idx_corpo} ({motivo})");
+        for d in [
+            S2CGamedataSend::error_message(ERR_ITEM_CANNOT_EQUIP).data,
+            S2CGamedataSend::unfreeze_ivtr_slot(0, idx_bolsa as u16).data,
+            S2CGamedataSend::unfreeze_ivtr_slot(1, idx_corpo as u16).data,
+        ] {
+            self.responder(roleid, d, envio).await;
+        }
+        false
+    }
+
+    /// O que impede o item do slot `idx_bolsa` de ir ao `idx_corpo`, sem avisar o cliente
+    /// (o painel consulta antes, B191). `None` = pode (bolsa vazia é tirar a peça).
+    ///
+    /// - **Posição** (`CheckEquipPostion`, `gs/player.cpp:8150`; B191): a máscara da família
+    ///   ([`pw_data_loader::posicoes`]) tem de abrir o slot → `"posicao_invalida"`.
+    /// - **Requisitos**: nível, classe e atributos do bloco e durabilidade → `"requisito"`.
+    pub(crate) async fn motivo_para_nao_vestir(&self, roleid: i32, idx_bolsa: u8, idx_corpo: u8) -> Option<&'static str> {
         let itens = self.itens().await;
         let Ok(Some(item)) = itens
             .get_item_by_slot(roleid, ContainerType::Inventory, idx_bolsa as u16)
             .await
         else {
-            return true; // bolsa vazia: é tirar a peça, sem requisito.
+            return None;
         };
         let (dados, nivel, classe, atributos) = {
             let mundo = self.world.read().await;
-            let Some(p) = mundo.players.get(&(roleid as i64)) else { return false };
+            let Some(p) = mundo.players.get(&(roleid as i64)) else { return Some("fora_do_mapa") };
             (Arc::clone(&mundo.data_manager), p.level, p.cls as i32, p.atributos_efetivos())
         };
+        if dados.cabe_no_slot(item.item_id, idx_corpo as usize) == Some(false) {
+            return Some("posicao_invalida");
+        }
         let Some(ficha) = dados.equipamentos.ficha(item.item_id) else {
-            return true;
+            return None;
         };
         let bloco = if item.octets.len() >= 12 {
             item.octets.clone()
@@ -5674,17 +5712,26 @@ impl BusServer {
         let quebrado = item.max_durability > 0 && item.durability == 0;
         let atende = pw_core::Requisitos::do_bloco(&bloco).is_some_and(|r| r.atende(nivel, classe, atributos));
         if atende && !quebrado {
-            return true;
+            None
+        } else {
+            info!("mundo: {roleid} não atende o requisito de {} (nível {nivel}, classe {classe})", item.item_id);
+            Some("requisito")
         }
-        info!("mundo: {roleid} tentou vestir {} sem atender o requisito (nível {nivel}, classe {classe})", item.item_id);
-        for d in [
-            S2CGamedataSend::error_message(ERR_ITEM_CANNOT_EQUIP).data,
-            S2CGamedataSend::unfreeze_ivtr_slot(0, idx_bolsa as u16).data,
-            S2CGamedataSend::unfreeze_ivtr_slot(1, idx_corpo as u16).data,
-        ] {
-            self.responder(roleid, d, envio).await;
+    }
+
+    /// A troca dentro do corpo (`gs/player.cpp:8004-8050`): cada peça tem de caber no slot
+    /// para onde vai (`CheckEquipPostion`), senão `ERR_ITEM_CANNOT_EQUIP`. `true` = pode.
+    pub(crate) async fn troca_no_corpo_cabe(&self, roleid: i32, a: u16, b: u16) -> bool {
+        let itens = self.itens().await;
+        let dados = self.world.read().await.data_manager.clone();
+        for (de, para) in [(a, b), (b, a)] {
+            if let Ok(Some(item)) = itens.get_item_by_slot(roleid, ContainerType::Equipment, de).await {
+                if dados.cabe_no_slot(item.item_id, para as usize) == Some(false) {
+                    return false;
+                }
+            }
         }
-        false
+        true
     }
 
     /// `C2S::MOVE_ITEM_TO_EQUIP` (18) — mover da bolsa direto para um slot do corpo.

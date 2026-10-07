@@ -490,6 +490,41 @@ pub enum EdicaoDePersonagem {
     /// Tirar `quantidade` (`None` = tudo) do item `tid` do `slot` de `recipiente` (E6, B187).
     /// Online só bolsa e bolsa de missão; equipamento e armazém só offline.
     RemoverItem { recipiente: ContainerType, slot: u16, tid: u32, quantidade: Option<u32> },
+    /// Arrastar (E6, B191): o item `tid` do slot `slot_de` de `de` para o `slot_para` de `para`,
+    /// trocando com o que estiver lá (pilhas inteiras, como as trocas do jogo).
+    MoverItem { de: ContainerType, slot_de: u16, tid: u32, para: ContainerType, slot_para: u16 },
+}
+
+/// `TRASHBOX_BASE_SIZE` (`gs/config.h:17`) — o armazém do personagem (o mesmo de `armazem.rs`).
+const TAMANHO_DO_ARMAZEM: usize = 16;
+
+/// Os pares de recipientes que o jogo move entre si (B191) e o tamanho de cada um: bolsa e
+/// bolsa de missão `ITEM_LIST_BASE_SIZE`/`TASKITEM_LIST_SIZE` 32 (`gs/config.h:12-15`), armazém
+/// 16, corpo até o bit 63 da máscara (a posição é conferida à parte). Bolsa de missão só com
+/// ela mesma; armazém com ele mesmo e com a bolsa; corpo com ele mesmo e com a bolsa.
+pub(crate) fn movimento_valido(de: ContainerType, slot_de: u16, para: ContainerType, slot_para: u16) -> Result<(), &'static str> {
+    use ContainerType::*;
+    let tamanho = |c: ContainerType| match c {
+        Inventory => Some(TAMANHO_DA_BOLSA),
+        TaskInventory => Some(TAMANHO_DA_BOLSA_DE_MISSAO),
+        Storehouse => Some(TAMANHO_DO_ARMAZEM),
+        Equipment => Some(64),
+        _ => None,
+    };
+    let par = matches!((de, para), (Inventory, Inventory) | (Equipment, Equipment) | (Inventory, Equipment)
+        | (Equipment, Inventory) | (Storehouse, Storehouse) | (Inventory, Storehouse) | (Storehouse, Inventory)
+        | (TaskInventory, TaskInventory));
+    if !par {
+        return Err("movimento_invalido");
+    }
+    match (tamanho(de), tamanho(para)) {
+        (Some(a), Some(b)) if (slot_de as usize) < a && (slot_para as usize) < b => {}
+        _ => return Err("slot_invalido"),
+    }
+    if de == para && slot_de == slot_para {
+        return Err("sem_mudanca");
+    }
+    Ok(())
 }
 
 /// `DROP_TYPE_GM` = 0 (`common/protocol.h:927-929`): o cliente avisa "GM removeu" com o nome do
@@ -517,6 +552,9 @@ impl BusServer {
     /// `tirar_dinheiro` → `spend_money`, `dar_exp` → `ganhar_exp` + `task_deliver_exp`,
     /// que já sobe de nível), e grava como `com_contexto` grava. `None`: não está neste mapa.
     pub(crate) async fn editar_pelo_painel(&self, roleid: i32, edicao: EdicaoDePersonagem) -> Option<serde_json::Value> {
+        if let EdicaoDePersonagem::MoverItem { de, slot_de, tid, para, slot_para } = edicao {
+            return self.mover_item_pelo_painel(roleid, de, slot_de, tid, para, slot_para).await;
+        }
         let resultado = self.com_contexto(roleid, |ctx| {
             let antes = (ctx.p.money, ctx.p.level);
             let mut erro = None;
@@ -554,7 +592,7 @@ impl BusServer {
                 EdicaoDePersonagem::Cultivo(v) => ctx.definir_cultivo(v.max(0) as u32),
                 // Tratada no roteador (`RoteadorDeMapas::editar_personagem`): o teleporte
                 // troca de mapa fora do contexto do jogador.
-                EdicaoDePersonagem::Posicao { .. } => erro = Some("edicao_invalida"),
+                EdicaoDePersonagem::Posicao { .. } | EdicaoDePersonagem::MoverItem { .. } => erro = Some("edicao_invalida"),
                 // Prêmio de missão (`Jogador::dar_item`): gerado como drop
                 // (`DeliverCommonItem`, `task/taskman.cpp:281-303`) e avisado com
                 // `TASK_DELIVER_ITEM`; item de missão vai à bolsa de missão. Antes, numa cópia,
@@ -772,6 +810,98 @@ impl BusServer {
         let n = tirar_conferindo(&mut bolsa, slot as usize, tid, quantidade)?;
         bolsa.gravar(&repo).await.map_err(|_| "banco_indisponivel")?;
         Ok(n)
+    }
+
+    /// Painel (E6, B191), online: arrastar pelos mesmos tratadores do cliente — troca na bolsa
+    /// (`EXG_IVTR_ITEM`), troca no corpo (`EXG_EQUIP_ITEM`) e vestir/tirar (`EQUIP_ITEM`), que
+    /// gravam no banco em transação, avisam o cliente e refazem o equipamento (a aparência vai a
+    /// quem vê). O cliente aplica esses comandos sem ter pedido nada (`EC_HostMsg.cpp:1742-1758`,
+    /// `:1861-1935`). Antes, confere o que o tratador recusaria — para devolver o motivo ao painel
+    /// sem mandar ao jogador um erro que ele não causou — e depois relê o destino. Armazém
+    /// (só com a sessão de NPC aberta, e o cliente só tem a cópia dele depois de abrir) e bolsa
+    /// de missão (sem comando de troca no cliente) só offline. `None`: não está neste mapa.
+    pub(crate) async fn mover_item_pelo_painel(&self, roleid: i32, de: ContainerType, slot_de: u16, tid: u32,
+        para: ContainerType, slot_para: u16) -> Option<serde_json::Value> {
+        use ContainerType::*;
+        let envio = self.envio_de(roleid).await?;
+        let travado = {
+            let mundo = self.world.read().await;
+            mundo.players.get(&(roleid as i64))?.efeitos.equipamento_travado()
+        };
+        let erro = |e: &str| Some(serde_json::json!({"erro": e}));
+        if let Err(e) = movimento_valido(de, slot_de, para, slot_para) {
+            return erro(e);
+        }
+        if !matches!((de, para), (Inventory, Inventory) | (Equipment, Equipment) | (Inventory, Equipment) | (Equipment, Inventory)) {
+            return erro("precisa_estar_offline");
+        }
+        let repo = self.itens().await;
+        match repo.get_item_by_slot(roleid, de, slot_de).await {
+            Ok(Some(i)) if i.item_id == tid => {}
+            Ok(_) => return erro("slot_mudou"),
+            Err(_) => return erro("banco_indisponivel"),
+        }
+        let (a, b) = (slot_de as u8, slot_para as u8);
+        match (de, para) {
+            (Inventory, Inventory) => self.trocar_slots(roleid, &[a, b], Inventory, &envio).await,
+            (Equipment, Equipment) => {
+                if travado {
+                    return erro("equipamento_travado");
+                }
+                if !self.troca_no_corpo_cabe(roleid, slot_de, slot_para).await {
+                    return erro("posicao_invalida");
+                }
+                self.trocar_slots(roleid, &[a, b], Equipment, &envio).await
+            }
+            // `EQUIP_ITEM` troca o slot da bolsa com o do corpo: vestir de um lado, tirar do outro.
+            _ => {
+                let (bolsa, corpo) = if de == Inventory { (a, b) } else { (b, a) };
+                if travado {
+                    return erro("equipamento_travado");
+                }
+                if let Some(motivo) = self.motivo_para_nao_vestir(roleid, bolsa, corpo).await {
+                    return erro(motivo);
+                }
+                self.equipar(roleid, &[bolsa, corpo], &envio).await
+            }
+        }
+        let chegou = matches!(repo.get_item_by_slot(roleid, para, slot_para).await, Ok(Some(i)) if i.item_id == tid);
+        tracing::info!(roleid, ?de, slot_de, ?para, slot_para, tid, chegou, "painel: item arrastado (online)");
+        Some(serde_json::json!({"erro": if chegou { None } else { Some("nao_aplicado") },
+            "item": tid, "de": slot_de, "para": slot_para}))
+    }
+
+    /// Painel (E6, B191), offline: a mesma troca no banco (`swap_slots` ou
+    /// `move_between_containers`, em transação — nada fica gravado pela metade), com o item
+    /// conferido no slot de origem e a posição no corpo (`CheckEquipPostion`) de cada peça que
+    /// entra nele. Requisitos de nível/classe/atributos só online (dependem dos atributos com o
+    /// equipamento). Quem chama segura a guarda de presença e a trava de gravação.
+    pub(crate) async fn mover_item_offline(&self, roleid: i32, de: ContainerType, slot_de: u16, tid: u32,
+        para: ContainerType, slot_para: u16) -> Result<(), &'static str> {
+        movimento_valido(de, slot_de, para, slot_para)?;
+        let repo = self.itens().await;
+        let origem = repo.get_item_by_slot(roleid, de, slot_de).await.map_err(|_| "banco_indisponivel")?;
+        if origem.as_ref().map(|i| i.item_id) != Some(tid) {
+            return Err("slot_mudou");
+        }
+        let destino = repo.get_item_by_slot(roleid, para, slot_para).await.map_err(|_| "banco_indisponivel")?;
+        let dados = self.world.read().await.data_manager.clone();
+        let cabe = |item: &Option<pw_core::ItemRecord>, slot: u16| {
+            item.as_ref().map_or(true, |i| dados.cabe_no_slot(i.item_id, slot as usize) != Some(false))
+        };
+        if (para == ContainerType::Equipment && !cabe(&origem, slot_para))
+            || (de == ContainerType::Equipment && !cabe(&destino, slot_de))
+        {
+            return Err("posicao_invalida");
+        }
+        let r = if de == para {
+            repo.swap_slots(roleid, de, slot_de, slot_para).await
+        } else {
+            repo.move_between_containers(roleid, de, slot_de, para, slot_para).await
+        };
+        r.map_err(|_| "banco_indisponivel")?;
+        tracing::info!(roleid, ?de, slot_de, ?para, slot_para, tid, "painel: item arrastado (offline)");
+        Ok(())
     }
 
     /// Piso dos atributos da versão (`WorldProtocol::piso_da_restauracao`).

@@ -896,14 +896,22 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          {"remover_item": {"recipiente": "bolsa", "slot": 256, "id": 1}},
                          {"remover_item": {"recipiente": "bolsa", "slot": 0, "id": 0}},
                          {"remover_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "quantidade": 0}},
-                         {"remover_item": {"recipiente": "bolsa", "slot": 0}}):
+                         {"remover_item": {"recipiente": "bolsa", "slot": 0}},
+                         # B191: arrastar com recipientes conhecidos, slots 0–255, id ≥ 1, sem extra.
+                         {"mover_item": {"de": "bau", "slot_de": 0, "id": 1, "para": "bolsa", "slot_para": 1}},
+                         {"mover_item": {"de": "bolsa", "slot_de": 0, "id": 1, "para": "bolsa", "slot_para": 256}},
+                         {"mover_item": {"de": "bolsa", "slot_de": 0, "id": 0, "para": "bolsa", "slot_para": 1}},
+                         {"mover_item": {"de": "bolsa", "slot_de": 0, "id": 1, "para": "bolsa"}},
+                         {"mover_item": {"de": "bolsa", "slot_de": 0, "id": 1, "para": "bolsa", "slot_para": 1, "quantidade": 1}},
+                         {"mover_item": {"de": "bolsa", "slot_de": 0, "id": 1, "para": "bolsa", "slot_para": 1}, "pontos": 1}):
             self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
         for valido in ({"dinheiro": 10}, {"pontos": 5}, {"nivel": 30}, {"cultivo": 0},
                        {"atributos": [5, 5, 5, 5]}, {"redistribuir": True},
                        {"posicao": {"mapa": 1, "x": -319.5, "z": -900.0}}, {"posicao": {"mapa": 161, "x": 1, "y": 2.5, "z": 3}},
                        {"item": {"id": 3001, "quantidade": 150}},
                        {"remover_item": {"recipiente": "armazem", "slot": 4, "id": 3001}},
-                       {"remover_item": {"recipiente": "bolsa", "slot": 0, "id": 3001, "quantidade": 5}}):
+                       {"remover_item": {"recipiente": "bolsa", "slot": 0, "id": 3001, "quantidade": 5}},
+                       {"mover_item": {"de": "bolsa", "slot_de": 1, "id": 3003, "para": "equipamento", "slot_para": 0}}):
             resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
             self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
 

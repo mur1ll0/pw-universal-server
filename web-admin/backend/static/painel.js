@@ -675,14 +675,20 @@ const MOTIVOS_EDICAO = {
   cultivo_invalido: "Cultivo que esta versão não tem.",
   atributos_invalidos: "Algum atributo ficaria abaixo do mínimo ou a soma passa do total (atributos + livres).",
   atributos_invalidos_ou_personagem_inexistente: "Algum atributo ficaria abaixo do mínimo ou a soma passa do total (ou o personagem não existe).",
-  sem_mudanca: "Os atributos já estão assim.",
+  sem_mudanca: "Nada mudaria.",
   mapa_indisponivel: "O mapa de destino não está ligado neste realm.",
   fora_do_mapa: "Essas coordenadas ficam fora do terreno do mapa.",
   altura_obrigatoria: "Este mapa não tem terreno carregado: informe o Y.",
   bolsa_cheia: "Não cabe tudo na bolsa (nada foi dado).",
   slot_mudou: "O item mudou de lugar desde a consulta; atualize a ficha.",
   quantidade_invalida: "Quantidade maior que a pilha.",
-  precisa_estar_offline: "Equipamento e armazém só com o personagem fora do jogo.",
+  precisa_estar_offline: "Isto só com o personagem fora do jogo.",
+  posicao_invalida: "Esta peça não vai nesse slot.",
+  requisito: "O personagem não atende o requisito da peça (nível, classe ou atributos).",
+  movimento_invalido: "O jogo não move itens entre esses dois lugares.",
+  slot_invalido: "Slot fora do recipiente.",
+  equipamento_travado: "O equipamento está trancado (Forma Sombria).",
+  nao_aplicado: "O jogo não confirmou a troca; atualize a ficha.",
   item_inexistente: "Este realm não tem esse item.",
   em_transicao: "O personagem está entrando ou saindo agora; tente de novo em instantes.",
   personagem_inexistente: "O personagem não existe mais.",
@@ -720,12 +726,41 @@ async function editarPersonagem(corpo, descricao) {
       consultarPersonagem(realm.id, id);
     } else if (dados.estado === "desconhecido") {
       alerta("aviso", "Sem confirmação", `Operação ${operacao}: o servidor não confirmou. Confira a ficha antes de repetir.`);
+    } else if (dados.codigo === "precisa_estar_offline") {
+      estado.enviando = false;
+      desconectarEAplicar(corpo, descricao);
     } else {
       alerta("erro", "Não aplicado", MOTIVOS_EDICAO[dados.codigo] || dados.mensagem || dados.codigo);
     }
   } catch (erro) {
+    if (erro.resultado?.codigo === "precisa_estar_offline") { estado.enviando = false; desconectarEAplicar(corpo, descricao); return; }
     alerta("erro", "Não aplicado", MOTIVOS_EDICAO[erro.resultado?.codigo] || erro.message);
   } finally { estado.enviando = false; }
+}
+
+/* Online sem pacote comprovado (decisão de 2026-10-07): recusa e oferece desconectar a conta
+   (o mesmo desconectar da E4, que salva) e aplicar com o personagem fora do jogo. */
+async function desconectarEAplicar(corpo, descricao) {
+  const realm = estado.selecionado;
+  const id = estado.personagemId;
+  const conta = estado.personagemAberto?.id === id ? estado.personagemAberto : null;
+  if (!realm || !id || !conta) { alerta("erro", "Não aplicado", MOTIVOS_EDICAO.precisa_estar_offline); return; }
+  const sim = await confirmar("Personagem em jogo",
+    `${MOTIVOS_EDICAO.precisa_estar_offline} Desconectar a conta ${conta.usuario} e aplicar?`, "Desconectar e aplicar");
+  if (!sim || estado.personagemId !== id) return;
+  alerta("carregando", "Desconectando…", `Salvando ${conta.nome}.`);
+  try {
+    await api(`/api/contas/${conta.conta_id}/desconectar`, { method: "POST" });
+    // Espera o GS declarar a ausência (a saída grava antes de soltar o personagem).
+    for (let i = 0; i < 20 && temTempo; i++) {
+      const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}`);
+      if (dados.presenca === "ausente_nos_daemons") { await editarPersonagem(corpo, descricao); return; }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    alerta("aviso", "Ainda em jogo", "A conta não saiu a tempo; nada foi alterado. Tente de novo.");
+  } catch (erro) {
+    alerta("erro", "Não aplicado", erro.message);
+  }
 }
 
 function editarDinheiro() {
@@ -816,8 +851,9 @@ const SLOTS_DE_EQUIPAMENTO = ["Arma", "Cabeça", "Colar", "Manto", "Peito", "Cin
   "Alto-falante", "Amuleto HP", "Amuleto MP", "Bolso", "Gênio", "Certificado", "Moda: cabeça", "Ficha de força",
   "Habilidade 1", "Habilidade 2", "Moda: arma", "—", "—", "Carta 1", "Carta 2", "Carta 3", "Carta 4", "Carta 5", "Carta 6",
   "Astrolábio"];
-function celulaDeItem(chave, rotulo, item, sexo, legenda) {
+function celulaDeItem(chave, rotulo, item, sexo, legenda, slot) {
   const celula = criar("div", `celula-item ${item ? "ocupada" : ""}`);
+  prepararArrasto(celula, chave, slot, item);
   if (legenda) celula.title = legenda;
   if (item) {
     const nome = item.nome || `Item ${item.id}`;
@@ -841,6 +877,42 @@ function celulaDeItem(chave, rotulo, item, sexo, legenda) {
   }
   return celula;
 }
+/* Arrastar (B191): HTML5 drag-and-drop entre as janelas. Soltar num slot troca com o que estiver
+   lá, pelos mesmos caminhos do jogo (o GS confere par, posição no corpo e requisitos). */
+let arrasto = null;
+function prepararArrasto(celula, chave, slot, item) {
+  if (item) {
+    celula.draggable = true;
+    celula.addEventListener("dragstart", (evento) => {
+      arrasto = { recipiente: chave, slot: item.slot, id: item.id, nome: item.nome || `Item ${item.id}` };
+      evento.dataTransfer?.setData?.("text/plain", arrasto.nome);
+      if (evento.dataTransfer) evento.dataTransfer.effectAllowed = "move";
+      esconderDica();
+      celula.classList.add("arrastando");
+    });
+    celula.addEventListener("dragend", () => { celula.classList.remove("arrastando"); arrasto = null; });
+  }
+  celula.addEventListener("dragover", (evento) => {
+    if (!arrasto) return;
+    evento.preventDefault();
+    celula.classList.add("alvo-arrasto");
+  });
+  celula.addEventListener("dragleave", () => celula.classList.remove("alvo-arrasto"));
+  celula.addEventListener("drop", (evento) => {
+    evento.preventDefault();
+    celula.classList.remove("alvo-arrasto");
+    const origem = arrasto;
+    arrasto = null;
+    if (!origem || (origem.recipiente === chave && origem.slot === slot)) return;
+    moverItem(origem, chave, slot);
+  });
+}
+function moverItem(origem, para, slot) {
+  const nomes = Object.fromEntries(RECIPIENTES);
+  editarPersonagem({ mover_item: { de: origem.recipiente, slot_de: origem.slot, id: origem.id, para, slot_para: slot } },
+    `${origem.nome}: ${nomes[origem.recipiente]} ${origem.slot} → ${nomes[para]} ${slot}`);
+}
+
 /* Dica (B189): pedida ao passar o mouse e guardada até a grade recarregar. Cada linha vem com
    os códigos de cor do cliente (`^RRGGBB`), pintados aqui. */
 const dicas = new Map();
@@ -902,7 +974,7 @@ function gradeDeItens(chave, rotulo, slots, porSlot, sexo) {
   const grade = criar("div", "grade-itens");
   for (const s of slots) {
     const legenda = chave === "equipamento" ? (SLOTS_DE_EQUIPAMENTO[s] || `Slot ${s}`) : "";
-    grade.append(celulaDeItem(chave, rotulo, porSlot.get(s), sexo, legenda));
+    grade.append(celulaDeItem(chave, rotulo, porSlot.get(s), sexo, legenda, s));
   }
   return grade;
 }

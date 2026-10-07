@@ -1,8 +1,8 @@
 # Memória central da reforma do pw-admin
 
-Atualizada em 2026-10-07 (B190). Estado: **E1–E5 testadas; E6 em andamento (tela nova de
-personagens B190; fila B191–B199 em §6.14); E7 testada; E8–E9 planejadas**. Commitado até
-`253633d` (B189); B190 local. Nada de B176–B190 confirmado em jogo.
+Atualizada em 2026-10-07 (B191). Estado: **E1–E5 testadas; E6 em andamento (tela nova B190,
+arrastar B191; fila B192–B199 em §6.14); E7 testada; E8–E9 planejadas**. Commitado até
+`fa44ed8` (B190); B191 local. Nada de B176–B191 confirmado em jogo.
 Responsável pelas decisões de produto: Murillo.
 
 Este arquivo é o ponto de retomada da reforma. Guarda decisões, estado das etapas,
@@ -118,7 +118,7 @@ Cada etapa pode ser dividida em subtarefas aqui, mantendo o arquivo curto.
 | E3 — canal administrativo e consulta viva | testado | consultas B166 e comando transacional/resultado recuperável B167; deduplicação global, conflito, rollback e reinício testados; falta confirmação visual |
 | E4 — contas | testado | busca, criação, senha, GM, gold, ban/desban e desconectar (B175); testes Rust/Python/Node; falta o Murillo confirmar em jogo |
 | E5 — personagem e persistência | testado | dinheiro e EXP/SP (B179); pontos livres, nível e cultivo (B182); modificar/redistribuir atributos (B184); falta ver em jogo; ficha e progressão online/offline, atualização nos dois clientes; autosave/logout/relogin não desfazem edição; consultas mostram valores reais |
-| E6 — inventário e subsistemas | em andamento | posição (B185), itens ver/buscar/dar (B186), remover (B187), ícones (B188), dica parte 1 (B189) e tela nova de personagens (B190) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
+| E6 — inventário e subsistemas | em andamento | posição (B185), itens ver/buscar/dar (B186), remover (B187), ícones (B188), dica parte 1 (B189), tela nova (B190) e arrastar (B191) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
 | E7 — mapas e rates | testado | rates (B176), mapas (B177) e lista completa com carga/descarga em execução (B183); falta ver em jogo; desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
 | E8 — moldes de classe | planejado | leitura/edição das fontes consumidas; personagem novo usa alteração; recálculo separado preserva progressão conforme contrato |
 | E9 — extensões e fechamento | planejado | pontos de extensão documentados para editores futuros; interface revisada, manual atualizado, verificações finais e pendências claras |
@@ -190,37 +190,16 @@ Mudanças **aprovadas pelo Murillo em 2026-10-05** (estado em §6.3):
 7. **Limites de esforço:** duas rodadas de correção da mesma corrida → parar e perguntar;
    suíte inteira só no fim do bloco, em segundo plano, filtrada.
 
-### 6.3 Ajustes da §6.2 (B173): todos feitos
+### 6.3–6.13 Blocos fechados (B173–B189; regras nas specs 05 §7.9–7.11 e 06)
 
-Incidente B172 (senha `MD5(senha)` no `public`) resolvido; conferência do `public` antes de
-publicar, sem `process::exit`, senha só em `MD5(nome+senha)`; commits `dc0b117`/`9fdd555`.
+B173 ajustes da §6.2 (sem `process::exit`, senha só `MD5(nome+senha)`). B174–B177 interface
+própria, E4 (gold, ban, desconectar) e E7 (rates, mapas). B178–B182 E5 (**B180: só dar
+gold/dinheiro, nunca tirar**). B183 mapas em execução (portão §6.2). B184 atributos. B185 posição
+(exceção ao portão em 2026-10-06). B186–B187 dar (lotes de uma pilha, tudo ou nada) e remover.
+B188–B189 ícones e dica parte 1.
 
-### 6.4 B174–B177 — interface nova, E4 e E7
-
-Design próprio sem CDN, popup de conta, alerta padrão, acompanhamento automático; gold, ban,
-desconectar (E4). Rates com fração = sorteios inteiros + chance, EXP/SP independentes; mapas
-(E7). Regras: spec 05 §7.9–7.10.
-
-### 6.8 B178–B182 — E5 em fatias
-
-B178: GS mortos após `up` interrompido (painel diz "sem resposta"). B179: dinheiro e EXP/SP.
-**B180: só dar gold/dinheiro, nunca tirar.** B182: pontos livres, nível, cultivo. Spec 05 §7.11.
-
-### 6.10 B183–B185 — mapas em execução, atributos, posição
-
-B183 mapas carregados/descarregados em execução e catálogo do `gs.conf` (decisões: carregar na
-hora; nomes do pwadmin também no 126; mexe em entrada/troca = portão §6.2). B184 atributos
-(total conservado, piso da versão): E5 testada. B185 posição (E6), com exceção ao portão dada
-pelo Murillo em 2026-10-06. Regras: spec 05 §7.10–7.11.
-
-### 6.13 B186–B187 — E6: itens (ver, buscar, dar, remover)
-
-Dar = prêmio de missão em lotes de uma pilha, tudo ou nada; remover online (bolsa/missão,
-`PLAYER_DROP_ITEM` motivo GM) ou offline (todos). Nomes do `elements.data`. Spec 05 §7.11.
-
-**Inventário como o do jogo (decisões do Murillo, 2026-10-06):** grade com ícones (B188) →
-dica (B189 parte 1) → arrastar online e offline → editar propriedades com **edição livre**.
-Atlas e textos do cliente 1.5.5 servem as duas versões (`data/icones/`, `data/textos/`).
+**Inventário como o do jogo (2026-10-06):** ícones → dica → arrastar → edição **livre**; atlas e
+textos do cliente 1.5.5 servem as duas versões (`data/icones/`, `data/textos/`).
 
 ### 6.14 B190 e a fila aprovada (análise de 2026-10-07)
 
@@ -235,9 +214,7 @@ GS decodifica com `ConteudoDeEquipamento`, regrava os octets e as colunas espelh
 **B190 (testado):** cartões (nome, conta, classe pelo `fixed_msg.txt` do cliente, nível) com
 busca por personagem ou conta e paginação; tela do personagem com janelas recolhíveis. Spec 06.
 
-**Fila:** B191 arrastar (online pelos tratadores do cliente já portados — troca/mover na bolsa,
-troca no corpo, equipar, bolsa→corpo, 6 do armazém; a aparência a quem vê já sai em
-`jogo.rs:2185`; offline as mesmas funções sobre a bolsa do banco) → B192 dica parte 2
+**Fila:** B192 dica parte 2
 (`AddOneAddOnPropDesc`, `EC_IvtrEquip.cpp:971-2610`: 157 casos, 65 frases; 47 ≤ 112 seguras) →
 B193 as 18 frases > 112 conferidas no binário → B194 modal de edição do item (online reenvia a
 ficha do item; conferir aceitação em slot ocupado e aparência com refino) → B195–B196
@@ -245,5 +222,11 @@ habilidades (atlas `Skill`/`Pet` etc., `EC_GameUIMan.cpp:585-642`; lista reenvia
 no fonte 1.5.5, `EC_HostMsg.cpp:3525-3570`) → B197 mascotes (`PET_ROOM`, `EC_HostMsg.cpp:5390`)
 → B198 missões → B199 aparência (rosto: `PLAYER_CHG_FACE`, `EC_GPDataType.h:1084`).
 
-**Próxima ação:** B191. Murillo confere em jogo B179–B190 (B183 = portão §6.2). Não
-publicar/commitar sem pedido.
+**B191 (testado):** arrastar = troca de pilhas inteiras; online pelos tratadores do cliente
+(bolsa e corpo; posição, requisito e trava conferidos antes, destino relido), offline em transação
+(posição sim, requisito não); armazém/missão online → "Desconectar e aplicar". Portado junto o
+`CheckEquipPostion` (`pw_data_loader::posicoes`), que passa a valer no equipar do jogo. Falta:
+amuleto HP/MP que não sai, habilidade dinâmica repetida, reputação.
+
+**Próxima ação:** B192 (dica parte 2). Murillo confere em jogo B179–B191 (B183 = portão §6.2).
+Não publicar/commitar sem pedido.

@@ -80,6 +80,17 @@ class RemocaoPedida(BaseModel):
     quantidade: Optional[int] = Field(default=None, ge=1, le=100_000)
 
 
+class MovimentoPedido(BaseModel):
+    """E6 (B191): arrastar o item `id` do `slot_de` de `de` para o `slot_para` de `para`,
+    trocando com o que estiver lá. Pares, limites e posição no corpo: quem confere é o GS."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    de: Literal["bolsa", "missao", "equipamento", "armazem"]
+    slot_de: int = Field(ge=0, le=255)
+    id: int = Field(ge=1, le=2_147_483_647)
+    para: Literal["bolsa", "missao", "equipamento", "armazem"]
+    slot_para: int = Field(ge=0, le=255)
+
+
 class EdicaoPersonagem(BaseModel):
     """E5: um só de dinheiro (dar), exp/sp (somar), pontos (dar pontos livres), nivel (alvo,
     só sobe) ou cultivo (B182). Tetos: pacotes de recompensa de missão (u32/i32), teto de
@@ -100,6 +111,7 @@ class EdicaoPersonagem(BaseModel):
     posicao: Optional[PosicaoPedida] = None
     item: Optional[ItemPedido] = None
     remover_item: Optional[RemocaoPedida] = None
+    mover_item: Optional[MovimentoPedido] = None
 
 
 def somar_desconexoes(resultado):
@@ -250,11 +262,11 @@ def registrar_contas(app):
         entidade (tudo menos EXP/SP). Quem decide online/offline é o GS."""
         experiencia = bool(pedido.exp or pedido.sp)
         simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao", "item",
-                               "remover_item") if getattr(pedido, k) is not None]
+                               "remover_item", "mover_item") if getattr(pedido, k) is not None]
         if len(simples) + experiencia != 1:
             raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo, atributos ou posição.")
         consulta = {"tipo": "editar_personagem", "personagem_id": personagem_id}
-        if simples in (["posicao"], ["item"], ["remover_item"]):
+        if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"]):
             consulta[simples[0]] = getattr(pedido, simples[0]).model_dump(exclude_none=True)
         elif simples:
             consulta[simples[0]] = getattr(pedido, simples[0])

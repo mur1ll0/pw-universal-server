@@ -17,7 +17,9 @@ O serviço usa as credenciais existentes, sem trocar senha/hash nem criar sessã
 - **Personagens:** cartões com nome, conta, classe e nível (12 por página); a busca acha pelo
   nome do personagem ou da conta. Clique no cartão para abrir a tela do personagem, com janelas
   (Estatísticas, Equipamento, Roupas, Inventário, Armazém, Bolsa de missão; o "–" recolhe) e
-  **‹ Voltar** para a lista. Na janela Estatísticas: **Dinheiro**, **EXP / SP** e **Pontos livres**
+  **‹ Voltar** para a lista. **Arraste** itens entre bolsa, equipamento, roupas, armazém e bolsa de
+  missão para trocar de lugar ou vestir/tirar (com o personagem em jogo, armazém e missão pedem
+  "Desconectar e aplicar"). Na janela Estatísticas: **Dinheiro**, **EXP / SP** e **Pontos livres**
   (só dar), **Nível** (só sobe, até o teto do realm), **Atributos** (mudar força/agilidade/vitalidade/
   energia já distribuídas — o total com os livres não muda — ou **Redistribuir** tudo de volta aos
   pontos livres), **Posição** (escolha o mapa entre os ligados e as coordenadas; Y vazio = chão) e

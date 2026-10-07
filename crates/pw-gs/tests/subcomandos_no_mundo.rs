@@ -271,9 +271,15 @@ async fn montar_com_servidor(
         pw_data_loader::precos::ReparoDoItem { taxa: 1000, irreparavel: false },
     );
     dados.asas.insert(ASA_DE_ARQUEIRO as u32, (30, 7));
+    // Posição no corpo (B191): com a tabela não vazia, peça sem máscara não entra. 4123 é a arma
+    // dos testes de vestir (slot 0, `0x1`); o item reparável vai à cabeça (slot 1, `0x2`).
+    dados.posicoes.insert(4123, 0x1);
+    dados.posicoes.insert(ITEM_REPARAVEL as u32, 0x2);
     // Requisito de vestir (B148): duas armas de nível 1, uma de todas as classes menos a 0 (a
     // do personagem de teste) e outra de todas.
     for (id, classes) in [(9101u32, 0xFFFE), (9102, 0xFFFF)] {
+        // Arma: máscara `0x1`, só o slot 0 do corpo (B191, `generate_item_temp.h:267`).
+        dados.posicoes.insert(id, 0x1);
         dados.equipamentos.armas.insert(
             id,
             pw_data_loader::armas::TemplateDeArma {
@@ -9032,6 +9038,24 @@ async fn conferir_requisito_de_vestir(versao: GameVersion) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
     assert_eq!(corpo.map(|i| i.item_id), Some(permitida), "a arma da própria classe foi ao corpo");
+
+    // B191 — posição (`CheckEquipPostion`, `gs/player.cpp:8150` e `:8041`): a arma (máscara
+    // `0x1`) não vai ao slot 1 (cabeça) nem vinda da bolsa nem trocada dentro do corpo.
+    let mut outra = peca(roleid, pw_core::ContainerType::Inventory, 22, permitida as i32, durabilidade, durabilidade);
+    outra.octets = vec![];
+    itens.upsert_item(&outra).await.unwrap();
+    itens.delete_item_by_slot(roleid, pw_core::ContainerType::Equipment, 1).await.ok();
+    for (comando, corpo) in [(ids::EQUIP_ITEM, [22u8, 1u8]), (ids::EXG_EQUIP_ITEM, [0u8, 1u8])] {
+        link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(comando, &corpo) })
+            .await
+            .unwrap();
+        let erro = esperar_comando(&mut link, 25).await;
+        assert_eq!(i32_em(&erro, 2), 8, "ERR_ITEM_CANNOT_EQUIP fora de posição ({comando})");
+    }
+    let cabeca = itens.get_item_by_slot(roleid, pw_core::ContainerType::Equipment, 1).await.unwrap();
+    assert!(cabeca.is_none(), "nada foi à cabeça");
+    let arma = itens.get_item_by_slot(roleid, pw_core::ContainerType::Equipment, 0).await.unwrap();
+    assert_eq!(arma.map(|i| i.item_id), Some(permitida), "a arma continua no slot 0");
 }
 
 #[tokio::test]

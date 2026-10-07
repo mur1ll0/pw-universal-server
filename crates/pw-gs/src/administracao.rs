@@ -66,6 +66,8 @@ pub enum Consulta {
         #[serde(default)] item: Option<ItemPedido>,
         /// Tirar item de um slot (E6, B187).
         #[serde(default)] remover_item: Option<RemocaoPedida>,
+        /// Arrastar um item (E6, B191).
+        #[serde(default)] mover_item: Option<MovimentoPedido>,
     },
     /// Inventário de um personagem, com nomes (E6, B186). Só leitura.
     Inventario { personagem_id: i32 },
@@ -109,6 +111,18 @@ pub struct RemocaoPedida {
     pub id: u32,
     #[serde(default)]
     pub quantidade: Option<u32>,
+}
+
+/// Arrastar (B191): o item `id` do `slot_de` de `de` para o `slot_para` de `para`, trocando com o
+/// que estiver lá. Recipientes como em [`RemocaoPedida`].
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MovimentoPedido {
+    pub de: String,
+    pub slot_de: u16,
+    pub id: u32,
+    pub para: String,
+    pub slot_para: u16,
 }
 
 /// Nome do recipiente no painel → tipo no banco (B187).
@@ -363,11 +377,12 @@ impl ServidorAdministrativo {
                     Consulta::BuscarItens { texto } if texto.chars().count() <= 64 => {
                         self.roteador.buscar_itens(&texto).await
                     }
-                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item } if personagem_id > 0 => {
+                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item } if personagem_id > 0 => {
                         use crate::bus_server::EdicaoDePersonagem as E;
                         let dentro = |v: i64| v.abs() <= TETO_DA_EDICAO;
                         let tipos = [dinheiro.is_some(), exp.or(sp).is_some(), pontos.is_some(), nivel.is_some(), cultivo.is_some(),
-                            atributos.is_some(), redistribuir.is_some(), posicao.is_some(), item.is_some(), remover_item.is_some()]
+                            atributos.is_some(), redistribuir.is_some(), posicao.is_some(), item.is_some(), remover_item.is_some(),
+                            mover_item.is_some()]
                             .iter().filter(|t| **t).count();
                         // Atributos: quatro valores entre 0 e o teto da política (B184).
                         let quatro = atributos.as_deref().and_then(|v| {
@@ -376,6 +391,13 @@ impl ServidorAdministrativo {
                         });
                         let coordenada = |v: f32| v.is_finite() && v.abs() <= TETO_DE_COORDENADA;
                         let edicao = if tipos != 1 { None }
+                            else if let Some(m) = &mover_item {
+                                match (recipiente_do_painel(&m.de), recipiente_do_painel(&m.para)) {
+                                    (Some(de), Some(para)) if m.id > 0 && m.slot_de < 256 && m.slot_para < 256 =>
+                                        Some(E::MoverItem { de, slot_de: m.slot_de, tid: m.id, para, slot_para: m.slot_para }),
+                                    _ => None,
+                                }
+                            }
                             else if let Some(r) = &remover_item {
                                 let recipiente = recipiente_do_painel(&r.recipiente);
                                 recipiente.filter(|_| r.id > 0 && r.slot < 256 && r.quantidade.map_or(true, |q| (1..=TETO_DE_QUANTIDADE).contains(&q)))
@@ -422,6 +444,7 @@ impl ServidorAdministrativo {
                                 if let Some(p) = posicao { parametros["posicao"] = json!(p); }
                                 if let Some(i) = item { parametros["item"] = json!(i); }
                                 if let Some(r) = &remover_item { parametros["remover_item"] = json!(r); }
+                                if let Some(m) = &mover_item { parametros["mover_item"] = json!(m); }
                                 let impressao = Sha256::digest(serde_json::to_vec(&parametros)?);
                                 let repo = self.contas.comandos_administrativos();
                                 match repo.reservar_operacao_de_personagem(&pedido.operacao_id, pedido.administrador_id, &self.realm, &impressao).await? {
