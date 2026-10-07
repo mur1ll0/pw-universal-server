@@ -1,5 +1,6 @@
 """Consultas somente de leitura com origem explícita e alvo validado no banco."""
-from fastapi import HTTPException, Path, Query, Request
+from fastapi import HTTPException, Path, Query, Request, Response
+from .icones import png_do_icone
 from .canal import CanalIndisponivel, consultar_daemons, resposta_do_primeiro
 import json
 import pathlib
@@ -37,6 +38,18 @@ def registrar_consultas(app):
             return {"realm_id": realm_id, "estado": "desconhecido", "jogadores_online": None,
                     "mapas": [], "aviso": str(erro)}
 
+    @app.get("/api/icones/{sexo}/{titulo}.png")
+    async def icone(sexo: str = Path(..., pattern="^[mf]$"), titulo: str = Path(..., pattern="^[0-9a-f]{2,256}$")):
+        """B188: o ícone do item (arquivo em bytes GBK, em hexadecimal, como o GS manda),
+        recortado do atlas do cliente; `m`/`f` = atlas masculino/feminino."""
+        try:
+            png = png_do_icone(sexo, titulo)
+        except (OSError, ValueError):
+            raise HTTPException(503, "Atlas de ícones indisponível.")
+        if png is None:
+            raise HTTPException(404, "Ícone não está no atlas.")
+        return Response(content=png, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+
     @app.get("/api/realms/{realm_id}/catalogo-mapas")
     async def catalogo_de_mapas(realm_id: str):
         """Todos os mapas da versão do realm (B183), do `gs.conf` original com os nomes do
@@ -62,7 +75,12 @@ def registrar_consultas(app):
     async def inventario(realm_id: str, requisicao: Request, personagem_id: int = Path(..., ge=1, le=2_147_483_647)):
         """E6 (B186): bolsa, equipamento, armazém e bolsa de missão, com nomes do elements.data."""
         dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "inventario", "personagem_id": personagem_id})
-        return {"realm_id": realm_id, "personagem_id": personagem_id, "recipientes": dados.get("recipientes", {})}
+        # Atlas de ícones por sexo (B188): `IconList_IvtrM`/`F` pelo `gender` do personagem
+        # (`EC_GameUIMan.cpp:591-594`; 0 = masculino).
+        async with app.state.seguranca.pool.acquire() as conexao:
+            genero = await conexao.fetchval("SELECT gender FROM characters WHERE realm_id=$1 AND id=$2", realm_id, personagem_id)
+        return {"realm_id": realm_id, "personagem_id": personagem_id, "sexo": "f" if genero else "m",
+                "recipientes": dados.get("recipientes", {})}
 
     @app.get("/api/realms/{realm_id}/itens")
     async def buscar_itens(realm_id: str, requisicao: Request, busca: str = Query(..., min_length=1, max_length=64)):

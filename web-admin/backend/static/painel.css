@@ -230,6 +230,17 @@ button, input, select { font: inherit; color: inherit; }
 #form-remover.linha-edicao { grid-template-columns: 90px minmax(0, 1fr) 110px auto auto; }
 .nome-remocao { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recipiente li.clicavel { cursor: pointer; border-radius: 4px; }
+.grade-recipientes:has(.grade-itens) { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+.grade-itens { display: grid; grid-template-columns: repeat(8, 36px); gap: 3px; }
+.celula-item { position: relative; width: 36px; height: 36px; border: 1px solid var(--borda-forte); border-radius: 4px;
+  background: var(--fundo-2); display: grid; place-items: center; overflow: hidden; }
+.celula-item.ocupada { cursor: pointer; border-color: var(--borda-forte); background: #111; }
+.celula-item.ocupada:hover, .celula-item.escolhido { outline: 2px solid var(--ouro); outline-offset: -1px; }
+.celula-item img { width: 32px; height: 32px; image-rendering: pixelated; }
+.qtd-item { position: absolute; right: 2px; bottom: 0; font: 600 10px/1.2 var(--fonte-numero); color: #fff;
+  text-shadow: 0 0 2px #000, 0 0 2px #000; }
+.sem-icone { font-size: 11px; color: var(--texto-2); }
+.rotulo-slot { font-size: 8px; line-height: 1; color: var(--texto-3); text-align: center; padding: 1px; }
 .recipiente li.clicavel:hover, .recipiente li.escolhido { background: var(--ouro-suave); }
 .resultados-item { list-style: none; margin: 0; padding: 0; border: 1px solid var(--borda); border-radius: var(--raio); max-height: 240px; overflow-y: auto; }
 .resultados-item li { padding: 8px 12px; cursor: pointer; border-top: 1px solid var(--borda); display: flex; justify-content: space-between; gap: 12px; }

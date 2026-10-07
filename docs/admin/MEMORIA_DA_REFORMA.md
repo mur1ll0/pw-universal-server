@@ -155,16 +155,11 @@ quando aplicável. Não terminar com todas as telas prontas e operações sem in
 
 ## 6. Retomada imediata
 
-**Etapa ativa:** E6 em andamento (B185 posição, B186–B187 itens); E5 testada.
+**Etapa ativa:** E6 em andamento (B185 posição, B186–B188 itens); E5 testada.
 **B165–B171 (resumo; detalhes no histórico):** B165 E1 auditoria · B166 E2/E3 login do painel e
 consulta viva · B167 senha + HMAC-MD5 no link · B168 criação de conta · B169 GM global coordenado
 (revisão/recibos/fencing em 8 processos) · B170 saída/salvamento/troca do GS reescritos ·
 B171 coordenação opcional (login sem a coluna, registro falho não aborta, 148/153 fora).
-
-### 6.1 Incidente B172 (resolvido em B173)
-
-Login recusado no 126/155: o B167 exige `MD5(nome+senha)` e o `public` tinha `MD5(senha)`.
-Contas padrão regravadas, migrações aplicadas com backup (histórico 172–173).
 
 ### 6.2 Revisão de rumo (análise Claude, 2026-10-05)
 
@@ -207,9 +202,8 @@ Mudanças **aprovadas pelo Murillo em 2026-10-05** (estado em §6.3):
 
 ### 6.3 Ajustes da §6.2 (B173): todos feitos
 
-Conferência do `public` antes de publicar (`scripts/conferir_public_antes_de_publicar.sql` + skill),
-sem `process::exit`, senha só em `MD5(nome+senha)`, testes de corrida em série; commits
-`dc0b117`/`9fdd555`. Modelo de consistência da §6.2 item 2 vale para E4–E6.
+Incidente B172 (senha `MD5(senha)` no `public`) resolvido; conferência do `public` antes de
+publicar, sem `process::exit`, senha só em `MD5(nome+senha)`; commits `dc0b117`/`9fdd555`.
 
 ### 6.4 B174–B175 — GM pelo painel, interface nova e E4 completa
 
@@ -238,12 +232,19 @@ pelo Murillo em 2026-10-06. Regras: spec 05 §7.10–7.11.
 Dar = prêmio de missão em lotes de uma pilha, tudo ou nada; remover online (bolsa/missão,
 `PLAYER_DROP_ITEM` motivo GM) ou offline (todos). Nomes do `elements.data`. Spec 05 §7.11.
 
-**Pedido do Murillo (2026-10-06), a desenhar antes de codificar:** inventário como o do jogo —
-ícones (estão no `surfaces.pck` do cliente, não em `data/`), todo o texto do item, mover
-arrastando — e editar propriedades do item (durabilidade, refino, gemas, efeitos).
+**Inventário como o do jogo (decisões do Murillo, 2026-10-06):** ordem ícones e grade (B188,
+feito) → tooltip com o texto do item → arrastar **online e offline** → editar propriedades com
+**edição livre a qualquer momento** (sem os limites do jogo). Ícones/textos: atlas e configs do
+cliente 1.5.5 servem as duas versões (atlas em `data/icones/`).
+**A investigar antes de editar propriedades (ideia do Murillo):** transformar os octets do item
+(durabilidade, refino, gemas, efeitos — hoje um binário por versão) em colunas próprias na
+tabela de itens, para editar sem mexer em binário. Critério: **não perder desempenho no jogo**
+(o GS lê/grava a bolsa a cada operação e manda os octets ao cliente); se colunas custarem
+montar o binário a cada envio ou não cobrirem tudo, manter os octets e só decodificá-los no
+painel.
 
-**Próxima ação:** Murillo confere em jogo (B179, B182, B183 — portão §6.2 pendente —, B184–B187)
-e decide o desenho acima. E6 continua com: inventário/equipamentos, habilidades,
+**Próxima ação:** Murillo confere em jogo (B179, B182, B183 — portão §6.2 pendente —, B184–B188);
+depois o tooltip (texto do item). E6 continua com: inventário/equipamentos, habilidades,
 missões, posição, aparência e mascotes — cada um com o S2C que atualiza a ficha online achado
-no original, senão só offline ou "reentrar". Depois E8 (moldes) e E9. Próximo B: B188.
+no original, senão só offline ou "reentrar". Depois E8 (moldes) e E9. Próximo B: B189.
 Não publicar/commitar sem pedido.

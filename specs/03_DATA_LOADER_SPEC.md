@@ -487,3 +487,10 @@ mapas e `.sev` **não vêm do cliente** (B11, B12).
 `elements.data` que declara `pile_num_max` e `ID` (o mesmo critério de `pilhas`), para o painel.
 Medido: 126 (v7) 7.896 itens, todos com nome; 155 (v156) 26.188, 24.806 com nome (o arquivo
 traz `Name` vazio nos outros). Teste `nomes_de_itens_do_realm.rs`.
+
+**Ícones de itens (B188):** `GameDataManager::icones_de_itens` — o `file_icon` de cada item,
+só o nome depois da última `\` e antes do NUL, **em bytes GBK** (126: 7.855 de 7.896 itens; 155:
+25.974 de 26.188). O cliente acha a célula do atlas `Surfaces\IconSet\IconList_Ivtr{M,F}.dds`
+pelo nome em minúsculas (`EC_GameUIMan.cpp:588-640, 6204-6208`); a caixa só baixa depois de
+decodificar o GBK, então o servidor guarda bytes e o painel decodifica. Atlas em `data/icones/`
+(fora do git), extraído do `surfaces.pck` do cliente 1.5.5 com `tools/pw-pck-extract`.

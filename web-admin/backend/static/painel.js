@@ -774,7 +774,38 @@ function editarPosicao() {
 /* Itens (E6, B186): os quatro recipientes do banco com nomes, e dar item com busca por nome
    ou ID (lista de até 30). A entrega segue o prêmio de missão: lotes de uma pilha, item de
    missão na bolsa de missão; não dá nada se não couber tudo. */
+/* Grade de itens (B188): ícones recortados do atlas do cliente, oito por linha; o equipamento
+   com o nome de cada slot (`EQUIPIVTR_*`, `EC_IvtrTypes.h:56-95`). Tamanho da grade: o maior
+   slot ocupado, arredondado para cima em linhas de 8, no mínimo 32 (bolsa, missão, armazém). */
 const RECIPIENTES = [["bolsa", "Bolsa"], ["equipamento", "Equipamento"], ["armazem", "Armazém"], ["missao", "Bolsa de missão"]];
+const SLOTS_DE_EQUIPAMENTO = ["Arma", "Cabeça", "Colar", "Manto", "Peito", "Cinto", "Pernas", "Pés", "Pulsos",
+  "Anel 1", "Anel 2", "Munição", "Voo", "Moda: corpo", "Moda: pernas", "Moda: pés", "Moda: pulsos", "Runa", "Tomo",
+  "Alto-falante", "Amuleto HP", "Amuleto MP", "Bolso", "Gênio", "Certificado", "Moda: cabeça", "Ficha de força",
+  "Habilidade 1", "Habilidade 2", "Moda: arma", "—", "—", "Carta 1", "Carta 2", "Carta 3", "Carta 4", "Carta 5", "Carta 6",
+  "Astrolábio"];
+function celulaDeItem(chave, rotulo, item, sexo, legenda) {
+  const celula = criar("div", `celula-item ${item ? "ocupada" : ""}`);
+  if (legenda) celula.title = legenda;
+  if (item) {
+    const nome = item.nome || `Item ${item.id}`;
+    celula.title = `${legenda ? `${legenda}: ` : ""}${nome}${item.quantidade > 1 ? ` ×${item.quantidade}` : ""} (ID ${item.id}, slot ${item.slot})`;
+    if (item.icone) {
+      const img = criar("img");
+      img.src = `/api/icones/${sexo}/${item.icone}.png`;
+      img.alt = nome;
+      img.width = 32; img.height = 32;
+      img.addEventListener("error", () => img.replaceWith(criar("span", "sem-icone", nome.slice(0, 2))));
+      celula.append(img);
+    } else {
+      celula.append(criar("span", "sem-icone", nome.slice(0, 2)));
+    }
+    if (item.quantidade > 1) celula.append(criar("span", "qtd-item", fmt(item.quantidade)));
+    celula.addEventListener("click", () => escolherParaRemover(chave, rotulo, item, celula));
+  } else if (legenda) {
+    celula.append(criar("span", "rotulo-slot", legenda));
+  }
+  return celula;
+}
 async function carregarInventario(realm, id) {
   const alvo = elemento("recipientes-itens");
   cancelarRemocao();
@@ -783,21 +814,22 @@ async function carregarInventario(realm, id) {
     const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/inventario`);
     if (estado.personagemId !== id) return;
     alvo.replaceChildren();
+    const sexo = dados.sexo === "f" ? "f" : "m";
     for (const [chave, rotulo] of RECIPIENTES) {
       const itens = dados.recipientes?.[chave] || [];
-      const caixa = criar("section", "recipiente");
+      const porSlot = new Map(itens.map((i) => [i.slot, i]));
+      const caixa = criar("section", `recipiente recipiente-${chave}`);
       caixa.append(criar("h4", "", `${rotulo} (${itens.length})`));
-      const lista = criar("ol");
-      if (!itens.length) lista.append(criar("li", "dica", "Vazio"));
-      for (const item of itens) {
-        const linha = criar("li", "clicavel");
-        linha.addEventListener("click", () => escolherParaRemover(chave, rotulo, item, linha));
-        const nome = criar("span", "", item.nome || `Item ${item.id}`);
-        nome.title = `ID ${item.id}`;
-        linha.append(criar("small", "", String(item.slot)), nome, criar("span", "", `×${fmt(item.quantidade)}`));
-        lista.append(linha);
+      const grade = criar("div", "grade-itens");
+      const maior = itens.reduce((m, i) => Math.max(m, i.slot + 1), 0);
+      const total = chave === "equipamento"
+        ? Math.max(30, maior)
+        : Math.max(32, Math.ceil(maior / 8) * 8);
+      for (let s = 0; s < total; s++) {
+        const legenda = chave === "equipamento" ? (SLOTS_DE_EQUIPAMENTO[s] || `Slot ${s}`) : "";
+        grade.append(celulaDeItem(chave, rotulo, porSlot.get(s), sexo, legenda));
       }
-      caixa.append(lista);
+      caixa.append(grade);
       alvo.append(caixa);
     }
   } catch (erro) {
@@ -809,7 +841,7 @@ async function carregarInventario(realm, id) {
    Em jogo só bolsa e bolsa de missão; equipamento e armazém só com o personagem offline. */
 function escolherParaRemover(chave, rotulo, item, linha) {
   estado.remocao = { recipiente: chave, slot: item.slot, id: item.id, maximo: item.quantidade, nome: item.nome || `Item ${item.id}` };
-  for (const outra of document.querySelectorAll?.(".recipiente li.escolhido") || []) outra.classList.remove("escolhido");
+  for (const outra of document.querySelectorAll?.(".recipiente .escolhido") || []) outra.classList.remove("escolhido");
   linha.classList.add("escolhido");
   elemento("remover-qual").textContent = `${estado.remocao.nome} · ${rotulo}, slot ${item.slot} (×${fmt(item.quantidade)})`;
   elemento("remover-quantidade").max = String(item.quantidade);

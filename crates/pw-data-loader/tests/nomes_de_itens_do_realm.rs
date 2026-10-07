@@ -14,7 +14,11 @@ fn conferir(realm: &str) {
     let com_nome = nomes.values().filter(|n| !n.is_empty()).count();
     assert!(nomes.len() > 1000 && com_nome * 100 >= nomes.len() * 90, "{realm}: {com_nome} de {} com nome", nomes.len());
     assert!(nomes.values().all(|n| !n.contains('\0')), "{realm}: nome com NUL");
-    println!("{realm}: {} itens, {com_nome} com nome", nomes.len());
+    // B188: arquivo do ícone (bytes GBK, sem pasta e sem NUL) para quase todo item.
+    let icones = pw_data_loader::servicos::icones_de_itens(&g);
+    assert!(icones.len() * 100 >= nomes.len() * 90, "{realm}: {} de {} com ícone", icones.len(), nomes.len());
+    assert!(icones.values().all(|t| !t.contains(&0) && !t.contains(&b'\\')), "{realm}: título de ícone com NUL ou pasta");
+    println!("{realm}: {} itens, {com_nome} com nome, {} com ícone", nomes.len(), icones.len());
 }
 
 #[test]

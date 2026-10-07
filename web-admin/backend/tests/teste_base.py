@@ -778,6 +778,22 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
             exp = await conexao.fetchval("SELECT double_exp_multiplier FROM realms WHERE id=$1", realm)
         self.assertEqual(float(exp), 1.0)
 
+    async def test_icone_recortado_do_atlas_do_cliente(self):
+        """B188: PNG 32×32 do atlas (data/icones); hexadecimal do nome GBK; 404 fora do atlas."""
+        await self.criar_personagem()
+        titulo = "钢刀.dds".encode("gbk").hex()
+        resposta = await self.cliente.get(f"/api/icones/m/{titulo}.png")
+        if resposta.status_code == 503:
+            self.skipTest("atlas de ícones ausente em data/icones")
+        self.assertEqual((resposta.status_code, resposta.headers["content-type"]), (200, "image/png"), resposta.text)
+        self.assertEqual(resposta.content[:8], bytes.fromhex("89504e470d0a1a0a"))
+        self.assertEqual(int.from_bytes(resposta.content[16:20], "big"), 32)
+        self.assertEqual((await self.cliente.get(f"/api/icones/m/{'nao-existe'.encode().hex()}.png")).status_code, 404)
+        self.assertEqual((await self.cliente.get(f"/api/icones/x/{titulo}.png")).status_code, 422)
+        self.assertEqual((await self.cliente.get("/api/icones/m/zz.png")).status_code, 422)
+        self.cliente.cookies.clear()
+        self.assertEqual((await self.cliente.get(f"/api/icones/m/{titulo}.png")).status_code, 401)
+
     async def test_inventario_e_busca_de_itens_exigem_canal_e_parametros(self):
         """B186: leitura pelo primeiro GS; sem canal 503; busca exige 1–64 caracteres."""
         realm, personagem = await self.criar_personagem()

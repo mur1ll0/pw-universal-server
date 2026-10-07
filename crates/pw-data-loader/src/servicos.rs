@@ -227,6 +227,35 @@ pub fn nomes_de_itens(g: &GenericElementsData) -> HashMap<u32, String> {
     t
 }
 
+/// O arquivo do ícone de cada item (B188): o `file_icon` do registro, só o nome depois da última
+/// `\\` e antes do primeiro NUL, **em bytes GBK** (o cliente acha a célula do atlas
+/// `IconList_Ivtr{M,F}` por esse nome em minúsculas, `EC_GameUIMan.cpp:6204-6208`). Fica em
+/// bytes: a caixa só pode ser baixada depois de decodificar o GBK, cujo segundo byte pode cair
+/// em A–Z.
+pub fn icones_de_itens(g: &GenericElementsData) -> HashMap<u32, Vec<u8>> {
+    let mut t = HashMap::new();
+    for registros in g.tables.values() {
+        let Some(primeiro) = registros.first() else { continue };
+        if !primeiro.contains_key("pile_num_max") || !primeiro.contains_key("ID") {
+            continue;
+        }
+        for r in registros {
+            let id = i(r, "ID");
+            let bruto: &[u8] = match r.get("file_icon") {
+                Some(crate::generic_elements::FieldValue::Raw(b)) => b,
+                Some(crate::generic_elements::FieldValue::Text(s)) => s.as_bytes(),
+                _ => continue,
+            };
+            let bruto = bruto.split(|b| *b == 0).next().unwrap_or(&[]);
+            let titulo = bruto.rsplit(|b| *b == b'\\').next().unwrap_or(&[]);
+            if id > 0 && !titulo.is_empty() {
+                t.entry(id as u32).or_insert_with(|| titulo.to_vec());
+            }
+        }
+    }
+    t
+}
+
 /// `pile_num_max` de todo item que o declara.
 pub fn pilhas(g: &GenericElementsData) -> HashMap<u32, u32> {
     let mut t = HashMap::new();

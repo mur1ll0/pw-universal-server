@@ -1215,7 +1215,7 @@ async fn dar_item_e_ver_inventario_online_e_offline() {
     sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
 
     let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"poção"})).await;
-    assert_eq!(busca["dados"]["itens"], json!([{"id":3001,"nome":"Poção de teste","pilha":100,"missao":false}]), "{busca}");
+    assert_eq!(busca["dados"]["itens"], json!([{"id":3001,"nome":"Poção de teste","pilha":100,"missao":false,"icone":""}]), "{busca}");
     let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"3002"})).await;
     assert_eq!(busca["dados"]["itens"][0]["id"], 3002);
 

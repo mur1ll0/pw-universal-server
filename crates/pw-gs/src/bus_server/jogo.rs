@@ -428,6 +428,11 @@ impl Jogador for Contexto<'_> {
     }
 }
 
+/// O arquivo do ícone do item em hexadecimal (bytes GBK); o painel decodifica e recorta o atlas.
+fn icone_em_hex(dados: &GameDataManager, tid: u32) -> String {
+    dados.icones_de_itens.get(&tid).map(hex::encode).unwrap_or_default()
+}
+
 /// Guarda `quantidade` de `tid` em lotes de uma pilha, gerando cada um como drop. `false`
 /// quando algum lote não coube inteiro (quem chama testa numa cópia antes).
 fn empilhar_em_lotes(bolsa: &mut Bolsa, tid: u32, quantidade: u32, dados: &GameDataManager) -> bool {
@@ -638,6 +643,7 @@ impl BusServer {
             let lista: Vec<serde_json::Value> = itens.iter().map(|i| serde_json::json!({
                 "slot": i.slot, "id": i.item_id, "quantidade": i.count,
                 "nome": dados.nomes_de_itens.get(&i.item_id).cloned().unwrap_or_default(),
+                "icone": icone_em_hex(&dados, i.item_id),
             })).collect();
             recipientes.insert(nome.into(), serde_json::Value::Array(lista));
         }
@@ -656,6 +662,7 @@ impl BusServer {
         achados.truncate(30);
         let itens: Vec<serde_json::Value> = achados.iter().map(|(t, n)| serde_json::json!({
             "id": t, "nome": n, "pilha": dados.limite_de_pilha(*t), "missao": dados.e_item_de_missao(*t),
+            "icone": icone_em_hex(&dados, *t),
         })).collect();
         serde_json::json!({"estado":"consultado","itens":itens})
     }

@@ -12043,3 +12043,27 @@ comparação lado a lado.
     estouravam sob a carga paralela — "no entry found" na espera de 1,5 s da entrada. Esperas
     levadas a 5 s, como o `esperar_presenca` no B172 (§6.2 item 5); depois 3 rodadas de 25/0.
     Não publicado.
+
+188. **Sessão 2026-10-06 (Claude): E6 — ícones dos itens e grade de inventário.**
+    Decisões do Murillo: ordem ícones+grade → tooltip → arrastar (online e offline) → editar
+    propriedades (edição livre); clientes 1.5.5 (`F:\PW\1.5.5\1.5.5 BR\...\element`) e 1.2.6
+    (`F:\Games\perfectworld_126\element`); investigar depois colunas no lugar dos octets.
+    Evidência: o cliente carrega os ícones de inventário de um **arquivo agrupado**,
+    `Surfaces\IconSet\IconList_Ivtr{M,F}.{dds,txt}` por sexo (`EC_GameUIMan.cpp:588-640`); o
+    `.txt` traz largura, altura, linhas, colunas e o nome de cada célula; o item acha a célula
+    pelo nome do `file_icon` em minúsculas (`:6204-6208`). O 1.2.6 tinha o `surfaces.pck`
+    extraído (atlas 64×53, DDS DXT1 2048²); o 1.5.5 não — os 4 arquivos foram tirados do
+    `surfaces.pck` com `tools/pw-pck-extract` (atlas 128×69, DXT1 4096², sem mipmaps).
+    Cobertura medida pelo nome em minúsculas: atlas 1.5.5 cobre 98,3% dos ícones do realm 155 e
+    96,1% dos do 126 (o atlas do 1.2.6 dá os mesmos 96,1% no 126 e 37,9% no 155) → atlas único do
+    1.5.5 em `data/icones/` (fora do git).
+    Código: `servicos::icones_de_itens` (bytes GBK do título, sem pasta/NUL) e
+    `GameDataManager::icones_de_itens`; inventário e busca mandam `icone` em hexadecimal;
+    painel `painel/icones.py` (índice GBK, DXT1 e PNG à mão com `zlib`, cache) e rota
+    `/api/icones/{m|f}/{hex}.png`; inventário devolve `sexo` (pelo `gender`); grade de 8
+    colunas com ícones, quantidade e rótulos dos slots de equipamento (`EQUIPIVTR_*`).
+    Testes: `nomes_de_itens_do_realm` (126 7.855 e 155 25.974 itens com ícone); Python 57/0
+    (PNG 32×32 do `钢刀.dds` recortado do atlas real, 404/422/401); Node 7/0; ícone conferido
+    a olho (a espada certa); a grade não foi vista no navegador (prévia estática aberta para o
+    Murillo). Workspace 965/1 (2 ignorados): a falha era do meu teste do B186, que comparava a
+    busca campo a campo sem o `icone` novo — corrigido; canal 25/0 em duas rodadas. Não publicado.

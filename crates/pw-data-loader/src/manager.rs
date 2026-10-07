@@ -249,6 +249,8 @@ pub struct GameDataManager {
     pub pilhas: HashMap<u32, u32>,
     /// Nome de cada item (painel, B186).
     pub nomes_de_itens: HashMap<u32, String>,
+    /// Arquivo do ícone de cada item, em bytes GBK (painel, B188).
+    pub icones_de_itens: HashMap<u32, Vec<u8>>,
     /// As minas (`MINE_ESSENCE`) com as regras de carga do original — ver [`crate::minas`].
     pub minas: crate::minas::TabelaDeMinas,
     /// Aljavas → munição (`generate_quiver`).
@@ -519,6 +521,7 @@ impl GameDataManager {
             self.servicos_de_npc = crate::servicos::carregar(g);
             self.pilhas = crate::servicos::pilhas(g);
             self.nomes_de_itens = crate::servicos::nomes_de_itens(g);
+            self.icones_de_itens = crate::servicos::icones_de_itens(g);
             self.minas = crate::minas::carregar(g);
             self.aljavas = crate::armas::carregar_aljavas(g);
             self.cartas = crate::cartas::carregar(g);
