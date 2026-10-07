@@ -130,6 +130,19 @@ def registrar_consultas(app):
              "icone": (cliente.get(r["skill_id"]) or {}).get("icone", ""),
              "nivel_maximo": (cliente.get(r["skill_id"]) or {}).get("nivel_maximo")} for r in registros]}
 
+    @app.get("/api/realms/{realm_id}/personagens/{personagem_id}/mascotes")
+    async def mascotes_do_personagem(realm_id: str, requisicao: Request,
+                                     personagem_id: int = Path(..., ge=1, le=2_147_483_647)):
+        """E6 (B197): a jaula (registro de cada mascote, modelo, ícone; qual está invocado)."""
+        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "mascotes", "personagem_id": personagem_id})
+        try:
+            nomes = nomes_das_habilidades()
+        except OSError:
+            nomes = {}
+        for m in dados.get("mascotes", []):
+            m["habilidades"] = [{"id": i, "nivel": n, "nome": nomes.get(i, f"Habilidade {i}")} for i, n in m.get("habilidades", [])]
+        return {"realm_id": realm_id, "mascotes": dados.get("mascotes", [])}
+
     @app.get("/api/habilidades")
     async def buscar_habilidades(busca: str = Query(..., min_length=1, max_length=64)):
         """E6 (B196): até 30 habilidades do cliente por nome (`skillstr.txt`) ou id, para ensinar."""

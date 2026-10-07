@@ -260,9 +260,27 @@
                 <div id="janela-habilidades"></div>
               </div>
             </section>
-            <section class="janela janela-futura" data-janela="mascotes">
+            <section class="janela" data-janela="mascotes">
               <header class="barra-janela"><h3>Mascotes</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
-              <div class="corpo-janela"><p class="nota-vazia">Em breve.</p></div>
+              <div class="corpo-janela">
+                <div id="janela-mascotes" class="lista-mascotes"></div>
+                <form id="form-mascote" class="grupo-campos" hidden>
+                  <legend id="mascote-qual"></legend>
+                  <div class="grade-campos">
+                    <label class="campo"><span>Nível</span><input id="pet-nivel" type="number" min="1" step="1"></label>
+                    <label class="campo"><span>EXP</span><input id="pet-exp" type="number" min="0" step="1"></label>
+                    <label class="campo"><span>Lealdade</span><input id="pet-lealdade" type="number" min="0" max="999" step="1"></label>
+                    <label class="campo"><span>Fome (0–11)</span><input id="pet-fome" type="number" min="0" max="11" step="1"></label>
+                    <label class="campo"><span>Pontos</span><input id="pet-pontos" type="number" min="0" step="1"></label>
+                    <label class="campo"><span>Nome</span><input id="pet-nome" maxlength="8" autocomplete="off"></label>
+                  </div>
+                  <label class="campo"><span>Habilidades (id:nível, até 8)</span><input id="pet-habilidades" autocomplete="off" placeholder="ex.: 501:3, 502:1"></label>
+                  <div class="acoes-modal">
+                    <button id="pet-libertar" type="button" class="botao botao-secundario texto-perigo">Libertar</button>
+                    <button type="submit" class="botao botao-primario">Salvar</button>
+                  </div>
+                </form>
+              </div>
             </section>
             <section class="janela janela-futura" data-janela="missoes">
               <header class="barra-janela"><h3>Missões</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>

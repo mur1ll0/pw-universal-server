@@ -697,6 +697,43 @@ impl RoteadorDeMapas {
         }
     }
 
+    /// Painel (E6, B197): a jaula. Pelo mapa dono quando o personagem está em jogo (é ele que sabe
+    /// qual mascote está invocado); senão pelo padrão.
+    pub async fn mascotes_do_painel(&self, roleid: i32) -> serde_json::Value {
+        let dono = match self.mapa_de(roleid).await { Some(m) => self.mapa(m), None => None };
+        match dono.or_else(|| self.mapa(self.padrao)).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
+            Some(bus) => bus.mascotes_do_painel(roleid).await,
+            None => serde_json::json!({"codigo":"sem_mapa"}),
+        }
+    }
+
+    /// Painel (E6, B197): editar ou libertar um mascote da jaula, com a guarda de presença e a
+    /// trava de gravação. Regras em [`crate::bus_server::mascote_editado`].
+    pub async fn editar_mascote(&self, roleid: i32, slot: u16, tid: i32,
+        e: &crate::bus_server::mascote_editado::EdicaoDeMascote) -> serde_json::Value {
+        let Some(bus) = self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) else {
+            return serde_json::json!({"estado":"falha","codigo":"sem_mapa"});
+        };
+        let _comando = self.presenca.read().await;
+        let controle = self.repo.controle_de_gravacao(roleid);
+        let _guarda = controle.alterar().await;
+        if let Some(mapa) = self.mapa_de(roleid).await {
+            let feito = match self.mapa(mapa) { Some(s) => s.mascote_pelo_painel(roleid, slot, tid, e).await, None => None };
+            return match feito {
+                Some(d) if !d["erro"].is_null() => serde_json::json!({"estado":"falha","codigo":d["erro"]}),
+                Some(_) => serde_json::json!({"estado":"aplicado","presenca":"online","mapa":mapa,"slot":slot}),
+                None => serde_json::json!({"estado":"falha","codigo":"em_transicao"}),
+            };
+        }
+        match bus.mascote_no_banco(roleid, slot, tid, e).await {
+            Ok(r) => {
+                tracing::info!(roleid, slot, tid, libertado = r.is_none(), "painel: mascote editado (offline)");
+                serde_json::json!({"estado":"salvo","presenca":"offline","slot":slot})
+            }
+            Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
+        }
+    }
+
     /// Painel (E6, B189): o item de um slot com os dados da dica.
     pub async fn detalhe_do_item(&self, roleid: i32, recipiente: pw_core::ContainerType, slot: u16) -> serde_json::Value {
         match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {

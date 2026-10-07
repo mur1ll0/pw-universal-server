@@ -508,3 +508,11 @@ button, input, select { font: inherit; color: inherit; }
 .linha-efeito input { padding: 6px 8px; background: var(--fundo-2); border: 1px solid var(--borda-forte); border-radius: 6px; color: var(--texto); }
 .linha-efeito small { grid-column: 1 / -1; color: var(--azul); }
 .acoes-modal { display: flex; justify-content: space-between; gap: 8px; }
+
+/* Mascotes (B197) */
+.lista-mascotes { display: grid; gap: 6px; }
+.cartao-mascote { display: grid; grid-template-columns: 36px 1fr auto; gap: 8px; align-items: center; padding: 6px 8px;
+  border: 1px solid var(--borda); border-radius: var(--raio); background: var(--fundo-2); cursor: pointer; color: var(--texto); text-align: left; }
+.cartao-mascote:hover, .cartao-mascote.escolhido { border-color: var(--ouro); }
+.cartao-mascote small { display: block; color: var(--texto-3); }
+

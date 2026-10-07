@@ -1,8 +1,8 @@
 # Memória central da reforma do pw-admin
 
-Atualizada em 2026-10-07 (B196). Estado: **E1–E5 testadas; E6 em andamento (tela nova B190,
-arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades ver/editar B195–B196; fila B197–B199 em §6.14); E7 testada; E8–E9 planejadas**.
-Commitado até `d5866e8` (B195); B196 local. Nada de B176–B196 confirmado em jogo.
+Atualizada em 2026-10-07 (B197). Estado: **E1–E5 testadas; E6 em andamento (tela nova B190,
+arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197; fila B198–B199 em §6.14); E7 testada; E8–E9 planejadas**.
+Commitado até `3070756` (B196); B197 local. Nada de B176–B197 confirmado em jogo.
 Responsável pelas decisões de produto: Murillo.
 
 Este arquivo é o ponto de retomada da reforma. Guarda decisões, estado das etapas,
@@ -118,7 +118,7 @@ Cada etapa pode ser dividida em subtarefas aqui, mantendo o arquivo curto.
 | E3 — canal administrativo e consulta viva | testado | consultas B166 e comando transacional/resultado recuperável B167; deduplicação global, conflito, rollback e reinício testados; falta confirmação visual |
 | E4 — contas | testado | busca, criação, senha, GM, gold, ban/desban e desconectar (B175); testes Rust/Python/Node; falta o Murillo confirmar em jogo |
 | E5 — personagem e persistência | testado | dinheiro e EXP/SP (B179); pontos livres, nível e cultivo (B182); modificar/redistribuir atributos (B184); falta ver em jogo; ficha e progressão online/offline, atualização nos dois clientes; autosave/logout/relogin não desfazem edição; consultas mostram valores reais |
-| E6 — inventário e subsistemas | em andamento | posição (B185), itens ver/buscar/dar (B186), remover (B187), ícones (B188), dica parte 1 (B189), tela nova (B190) e arrastar (B191), dica parte 2 (B192–B193), editar item (B194), habilidades ver e editar (B195–B196) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
+| E6 — inventário e subsistemas | em andamento | posição (B185), itens ver/buscar/dar (B186), remover (B187), ícones (B188), dica parte 1 (B189), tela nova (B190) e arrastar (B191), dica parte 2 (B192–B193), editar item (B194), habilidades ver e editar (B195–B196), mascotes (B197) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
 | E7 — mapas e rates | testado | rates (B176), mapas (B177) e lista completa com carga/descarga em execução (B183); falta ver em jogo; desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
 | E8 — moldes de classe | planejado | leitura/edição das fontes consumidas; personagem novo usa alteração; recálculo separado preserva progressão conforme contrato |
 | E9 — extensões e fechamento | planejado | pontos de extensão documentados para editores futuros; interface revisada, manual atualizado, verificações finais e pendências claras |
@@ -211,37 +211,16 @@ por família, decodificação só com o molde do `elements`; ovo, voador, gênio
 e custariam montar os octets a cada leitura/envio. Edição: o painel manda edição estruturada, o
 GS decodifica com `ConteudoDeEquipamento`, regrava os octets e as colunas espelho no mesmo upsert.
 
-**B190 (testado):** cartões (nome, conta, classe pelo `fixed_msg.txt` do cliente, nível) com
-busca por personagem ou conta e paginação; tela do personagem com janelas recolhíveis. Spec 06.
+**Feitos (todos `testado`, detalhes no histórico e nas specs 05 §7.11 e 06):** B190 cartões e tela
+com janelas · B191 arrastar + `CheckEquipPostion` portado · B192–B193 dica: efeitos gerados do fonte e
+frases além do 112 conferidas no binário BR (`scripts/gerar_efeitos_de_itens.py`,
+`scripts/conferir_efeitos_no_binario.py`) · B194 editar item (octetos no GS; online `OWN_ITEM_INFO`;
+fora: modelo, vínculo; falta o brilho do refino para quem vê) · B195–B196 habilidades ver/editar
+(online `LEARN_SKILL`; 1.2.6 descer/remover offline) · durabilidade: a coluna é a verdade
+(`octetos_atuais`) · B197 mascotes (ver, editar o `pet_data`, libertar; online `PET_ROOM`/`FREE_PET`;
+invocado não se edita; dar = dar o ovo).
 
-**B192 (testado):** efeitos pela tabela gerada do fonte (`scripts/gerar_efeitos_de_itens.py`,
-127/157 tipos seguros), linha de classe, ordem da arma.
+**Fila:** B198 missões → B199 aparência (rosto: `PLAYER_CHG_FACE`, `EC_GPDataType.h:1084`).
 
-**B193 (testado):** `scripts/conferir_efeitos_no_binario.py` desmonta o `switch` no ElementClient
-BR: 15 frases além do 112 com posição real, tipos 161–174 = `default` (ERRORPROP) no BR; só a
-habilidade (55) segue crua — depende dos textos de habilidade (B195).
-
-**Fila:** B194 modal de edição do item (online reenvia a
-ficha do item; conferir aceitação em slot ocupado e aparência com refino) → B195–B196
-habilidades (atlas `Skill`/`Pet` etc., `EC_GameUIMan.cpp:585-642`; lista reenviada aceita em jogo
-no fonte 1.5.5, `EC_HostMsg.cpp:3525-3570`) → B197 mascotes (`PET_ROOM`, `EC_HostMsg.cpp:5390`)
-→ B198 missões → B199 aparência (rosto: `PLAYER_CHG_FACE`, `EC_GPDataType.h:1084`).
-
-**B191 (testado):** arrastar = troca de pilhas inteiras; online pelos tratadores do cliente
-(bolsa e corpo; posição, requisito e trava conferidos antes, destino relido), offline em transação
-(posição sim, requisito não); armazém/missão online → "Desconectar e aplicar". Portado junto o
-`CheckEquipPostion` (`pw_data_loader::posicoes`), que passa a valer no equipar do jogo. Falta:
-amuleto HP/MP que não sai, habilidade dinâmica repetida, reputação.
-
-**B194 (testado):** modal de edição livre; octetos editados no GS (rabo pelo `alterar_rabo`,
-cabeçalho por remendo, essência intacta, bloco relido inteiro); online `OWN_ITEM_INFO`. Fora:
-id do modelo e vínculo (`state` = 0). Falta: brilho do refino para quem vê (`_modify_mask`).
-
-**B195 (testado):** habilidades do banco (fonte do GS) com nome do `skillstr.txt` e ícone do stub
-do cliente (`scripts/gerar_habilidades_do_cliente.py`, 99,8% no atlas); atlas `Skill` DXT1 e `Pet` DXT3.
-
-**B196 (testado):** `habilidade {id, nivel}`; online `LEARN_SKILL` (nova num pacote, subir um por
-nível, 0 remove — o esquecer do original —, descer = 0 + novo); 1.2.6 descer/remover offline.
-
-**Próxima ação:** B197 (mascotes). Murillo confere em jogo B179–B196 (B183 = portão §6.2).
+**Próxima ação:** B198 (missões). Murillo confere em jogo B179–B197 (B183 = portão §6.2).
 Não publicar/commitar sem pedido.

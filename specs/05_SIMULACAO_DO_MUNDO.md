@@ -706,7 +706,7 @@ Limitações: instâncias do `gs.conf` que dividem pasta (`is73–75` em `a72`, 
 e `m01`/`random03`/`random04` não têm dados no carregador — aparecem "sem dados"; cada mapa é
 um mundo único compartilhado (o original cria cópias por entrada em `instance_servers`).
 
-## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184–B187, B191, B194, B196; falta ver em jogo)
+## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184–B187, B191, B194, B196, B197; falta ver em jogo)
 
 `RoteadorDeMapas::editar_personagem`, com a guarda de presença em leitura (a entrada pega em
 escrita) e a trava de gravação do personagem. Só dar (B180: tirar arriscaria valor
@@ -825,6 +825,19 @@ barra). No 1.2.6 descer e remover online = `precisa_estar_offline` (cliente não
 **Offline**: `learn_or_upgrade` ou `esquecer` sob a guarda e a trava. `sem_mudanca` quando o nível
 já é esse. O teto é o `max_level` do stub do cliente, conferido pela API. Limitação: bônus de
 passiva comum não está portado no GS, então nada a recalcular hoje.
+
+**B197 (E6) — mascotes** (`bus_server/mascote_editado.rs`). A jaula é o item `PetCorral` cujos
+octetos são o `pet_data` de 192 bytes (`InfoPet`). Consulta `mascotes`: cada registro com o nome e
+o ícone do modelo (`PET_ESSENCE` `Name`/`file_icon`, `servicos::nomes_e_icones_da_tabela`; atlas
+`IconList_Pet`, `DlgHostPet.cpp:180-185` — 1.2.6 460/461, 1.5.5 781/789 no atlas) e qual está
+invocado (`world.mascote_de`). Edição `mascote: {slot, tid, edicao: {nivel?, exp?, lealdade?, fome?,
+pontos?, nome?, habilidades? [[id, nível]] ≤ 8, libertar?}}`: limites do formato — lealdade
+0–999 (`HONOR_POINT_MAX`, `petman.h:102`), fome 0–11 (`HUNGER_LEVEL_COUNT`, `EC_PetCorral.h`),
+nível até o `level_max` do modelo (`PetLevelUpExp.exp[nível-1]`), nome até 16 bytes UTF-16. Online:
+grava e manda `PET_ROOM` (239) do slot (`UpdatePets`) ou `FREE_PET` (232) ao libertar (`FreePet`,
+`petman.cpp:1505-1520`); o mascote invocado = `mascote_invocado`. Offline: grava. Dar mascote =
+dar o ovo (B186) e o jogador choca. Falhas: `slot_mudou`, `formato_invalido`,
+`nivel_do_mascote_invalido`, `valores_invalidos`, `nome_invalido`, `habilidades_invalidas`.
 
 Falhas novas: `nivel_invalido` (com `nivel_maximo`), `nivel_invalido_ou_personagem_inexistente`
 (offline), `cultivo_invalido`. A impressão de deduplicação só inclui `pontos`/`nivel`/`cultivo`

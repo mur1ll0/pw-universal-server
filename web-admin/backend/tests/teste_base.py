@@ -937,7 +937,15 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          # B196: habilidade que o cliente conhece, nível até o máximo do stub (a 1 vai a 10).
                          {"habilidade": {"id": 1, "nivel": 11}}, {"habilidade": {"id": 0, "nivel": 1}},
                          {"habilidade": {"id": 1}}, {"habilidade": {"id": 60000, "nivel": 1}},
-                         {"habilidade": {"id": 1, "nivel": 1}, "pontos": 1}):
+                         {"habilidade": {"id": 1, "nivel": 1}, "pontos": 1},
+                         # B197: mascote — formato do pet_data e habilidades conhecidas.
+                         {"mascote": {"slot": 0, "tid": 1, "edicao": {}}},
+                         {"mascote": {"slot": 0, "tid": 1, "edicao": {"fome": 12}}},
+                         {"mascote": {"slot": 0, "tid": 1, "edicao": {"lealdade": 1000}}},
+                         {"mascote": {"slot": 0, "tid": 1, "edicao": {"nome": "123456789"}}},
+                         {"mascote": {"slot": 0, "tid": 1, "edicao": {"habilidades": [[60000, 1]]}}},
+                         {"mascote": {"slot": 0, "tid": 1, "edicao": {"habilidades": [[1, 11]]}}},
+                         {"mascote": {"slot": 0, "tid": 1, "edicao": {"libertar": False}}}):
             self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
         for valido in ({"dinheiro": 10}, {"pontos": 5}, {"nivel": 30}, {"cultivo": 0},
                        {"atributos": [5, 5, 5, 5]}, {"redistribuir": True},
@@ -950,7 +958,9 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                            "quantidade": 1, "durabilidade": 0, "refino": 12, "pedras": [0, 0], "fabricante": "",
                            "efeitos": [{"id": 999, "args": [5]}], "requisitos": {"nivel": 1, "classes": 65535, "forca": 0,
                            "agilidade": 0, "vitalidade": 0, "energia": 0}}}},
-                       {"habilidade": {"id": 1, "nivel": 10}}, {"habilidade": {"id": 1, "nivel": 0}}):
+                       {"habilidade": {"id": 1, "nivel": 10}}, {"habilidade": {"id": 1, "nivel": 0}},
+                       {"mascote": {"slot": 0, "tid": 8000, "edicao": {"nivel": 5, "fome": 11, "nome": "Rex", "habilidades": [[1, 3]]}}},
+                       {"mascote": {"slot": 1, "tid": 8001, "edicao": {"libertar": True}}}):
             resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
             self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
 

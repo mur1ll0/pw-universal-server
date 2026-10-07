@@ -641,6 +641,7 @@ async function consultarPersonagem(realmId, id) {
     preencherPosicao(ficha);
     carregarInventario(estado.selecionado, id);
     carregarHabilidades(estado.selecionado, id);
+    carregarMascotes(estado.selecionado, id);
   } catch (erro) {
     if (estado.ficha !== consulta || !estado.sessao) return;
     elemento("aviso-personagens").textContent = erro.message;
@@ -690,6 +691,8 @@ const MOTIVOS_EDICAO = {
   slot_invalido: "Slot fora do recipiente.",
   equipamento_travado: "O equipamento está trancado (Forma Sombria).",
   nao_aplicado: "O jogo não confirmou a troca; atualize a ficha.",
+  mascote_invocado: "O mascote está invocado; recolha-o no jogo antes de editar.",
+  nivel_do_mascote_invalido: "Nível acima do máximo do modelo do mascote.",
   item_inexistente: "Este realm não tem esse item.",
   em_transicao: "O personagem está entrando ou saindo agora; tente de novo em instantes.",
   personagem_inexistente: "O personagem não existe mais.",
@@ -1106,6 +1109,80 @@ async function ensinarHabilidade() {
   const n = Math.trunc(Number(elemento("hab-nivel-novo").value));
   if (!Number.isFinite(n) || n < 1 || n > (h.nivel_maximo || 255)) { alerta("erro", "Nível inválido", `De 1 a ${h.nivel_maximo || 255}.`); return; }
   await editarPersonagem({ habilidade: { id: h.id, nivel: n } }, `${h.nome}: nível ${n}`);
+}
+
+/* Mascotes (B197): a jaula com o ícone do modelo (`IconList_Pet`), nível e qual está invocado.
+   Clicar abre a edição dos campos do registro; "Libertar" tira da jaula. Em jogo o GS manda
+   `PET_ROOM`/`FREE_PET`; o mascote invocado não se edita por fora. */
+async function carregarMascotes(realm, id) {
+  const alvo = elemento("janela-mascotes");
+  elemento("form-mascote").hidden = true;
+  estado.mascote = null;
+  alvo.replaceChildren(criar("p", "nota-vazia", "Carregando mascotes…"));
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/mascotes`);
+    if (estado.personagemId !== id) return;
+    alvo.replaceChildren();
+    for (const m of dados.mascotes || []) {
+      const cartao = criar("button", "cartao-mascote");
+      cartao.type = "button";
+      const icone = criar("span", "celula-item ocupada");
+      if (m.icone) {
+        const img = criar("img"); img.src = `/api/icones/mascote/${m.icone}.png`; img.alt = m.modelo || "";
+        img.width = 32; img.height = 32;
+        img.addEventListener("error", () => img.replaceWith(criar("span", "sem-icone", (m.nome || "?").slice(0, 2))));
+        icone.append(img);
+      }
+      const texto = criar("span");
+      texto.append(document.createTextNode(m.nome || m.modelo || `Mascote ${m.tid}`),
+        criar("small", "", `${m.modelo || `Modelo ${m.tid}`} · slot ${m.slot}`));
+      const lado = criar("span", m.invocado ? "etiqueta" : "etiqueta etiqueta-neutra", m.invocado ? "Invocado" : `Nv. ${m.nivel}`);
+      cartao.append(icone, texto, lado);
+      cartao.addEventListener("click", () => escolherMascote(m, cartao));
+      alvo.append(cartao);
+    }
+    if (!(dados.mascotes || []).length) alvo.append(criar("p", "nota-vazia", "Jaula vazia."));
+  } catch (erro) {
+    alvo.replaceChildren(criar("p", "nota-vazia", `Mascotes indisponíveis: ${erro.message}`));
+  }
+}
+function escolherMascote(m, cartao) {
+  estado.mascote = m;
+  for (const outro of document.querySelectorAll?.("#janela-mascotes .escolhido") || []) outro.classList.remove("escolhido");
+  cartao.classList.add("escolhido");
+  elemento("mascote-qual").textContent = `${m.nome || m.modelo} (slot ${m.slot}${m.invocado ? ", invocado — recolha antes de editar" : ""})`;
+  for (const [campo, alvo] of [["nivel", "pet-nivel"], ["exp", "pet-exp"], ["lealdade", "pet-lealdade"], ["fome", "pet-fome"], ["pontos", "pet-pontos"]]) {
+    elemento(alvo).value = String(m[campo] ?? 0);
+  }
+  if (m.nivel_maximo) elemento("pet-nivel").max = String(m.nivel_maximo);
+  elemento("pet-nome").value = m.nome || "";
+  elemento("pet-habilidades").value = (m.habilidades || []).map((h) => `${h.id}:${h.nivel}`).join(", ");
+  elemento("form-mascote").hidden = false;
+}
+async function salvarMascote(libertar = false) {
+  const m = estado.mascote;
+  if (!m) return;
+  let edicao;
+  if (libertar) {
+    const sim = await confirmar("Libertar mascote", `${m.nome || m.modelo} sai da jaula.`, "Libertar");
+    if (!sim) return;
+    edicao = { libertar: true };
+  } else {
+    edicao = {};
+    for (const [campo, alvo] of [["nivel", "pet-nivel"], ["exp", "pet-exp"], ["lealdade", "pet-lealdade"], ["fome", "pet-fome"], ["pontos", "pet-pontos"]]) {
+      const v = Math.trunc(Number(elemento(alvo).value));
+      if (v !== (m[campo] ?? 0)) edicao[campo] = v;
+    }
+    const nome = elemento("pet-nome").value.trim();
+    if (nome && nome !== (m.nome || "")) edicao.nome = nome;
+    const habilidades = elemento("pet-habilidades").value.split(",").map((x) => x.trim()).filter(Boolean)
+      .map((x) => x.split(":").map((v) => Math.trunc(Number(v))));
+    if (JSON.stringify(habilidades) !== JSON.stringify((m.habilidades || []).map((h) => [h.id, h.nivel]))) edicao.habilidades = habilidades;
+    if (!Object.keys(edicao).length) { alerta("aviso", "Nada mudou", "Altere algum campo antes de salvar."); return; }
+  }
+  const r = await editarPersonagem({ mascote: { slot: m.slot, tid: m.tid, edicao } },
+    `${m.nome || m.modelo}: ${libertar ? "libertado" : Object.keys(edicao).join(", ")}`);
+  if (r === "aplicado" || r === "salvo") elemento("form-mascote").hidden = true;
 }
 
 /* Remover (B187): clicar no item abre a barra com a quantidade (a pilha inteira por padrão).
@@ -1814,6 +1891,8 @@ elemento("form-editar-item").addEventListener("submit", (evento) => { evento.pre
 elemento("form-habilidade").addEventListener("submit", (evento) => { evento.preventDefault(); aplicarHabilidade(elemento("hab-nivel").value); });
 elemento("hab-remover").addEventListener("click", () => aplicarHabilidade(0));
 elemento("form-ensinar").addEventListener("submit", (evento) => { evento.preventDefault(); ensinarHabilidade(); });
+elemento("form-mascote").addEventListener("submit", (evento) => { evento.preventDefault(); salvarMascote(false); });
+elemento("pet-libertar").addEventListener("click", () => salvarMascote(true));
 let esperaDaHabilidade = null;
 elemento("hab-busca").addEventListener("input", () => {
   if (esperaDaHabilidade) clearTimeout(esperaDaHabilidade);

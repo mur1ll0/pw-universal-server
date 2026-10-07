@@ -232,6 +232,29 @@ pub fn nomes_de_itens(g: &GenericElementsData) -> HashMap<u32, String> {
 /// `IconList_Ivtr{M,F}` por esse nome em minúsculas, `EC_GameUIMan.cpp:6204-6208`). Fica em
 /// bytes: a caixa só pode ser baixada depois de decodificar o GBK, cujo segundo byte pode cair
 /// em A–Z.
+/// Nome e arquivo do ícone (bytes GBK, como em [`icones_de_itens`]) dos registros de uma tabela
+/// sem `pile_num_max` — o `PET_ESSENCE` (B197): o cliente desenha o mascote com o `file_icon` do
+/// modelo no atlas `IconList_Pet` (`DlgHostPet.cpp:180-185`).
+pub fn nomes_e_icones_da_tabela(g: &GenericElementsData, tabela: &str) -> HashMap<u32, (String, Vec<u8>)> {
+    let mut t = HashMap::new();
+    for r in g.get(tabela) {
+        let id = i(r, "ID");
+        if id <= 0 {
+            continue;
+        }
+        let nome = r.get("Name").and_then(|v| v.as_text()).unwrap_or("").trim_end_matches('\0').trim().to_string();
+        let bruto: &[u8] = match r.get("file_icon") {
+            Some(crate::generic_elements::FieldValue::Raw(b)) => b,
+            Some(crate::generic_elements::FieldValue::Text(s)) => s.as_bytes(),
+            _ => &[],
+        };
+        let bruto = bruto.split(|b| *b == 0).next().unwrap_or(&[]);
+        let titulo = bruto.rsplit(|b| *b == b'\\').next().unwrap_or(&[]).to_vec();
+        t.insert(id as u32, (nome, titulo));
+    }
+    t
+}
+
 pub fn icones_de_itens(g: &GenericElementsData) -> HashMap<u32, Vec<u8>> {
     let mut t = HashMap::new();
     for registros in g.tables.values() {

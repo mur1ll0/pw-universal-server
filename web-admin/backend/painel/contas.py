@@ -139,6 +139,28 @@ class HabilidadePedida(BaseModel):
     nivel: int = Field(ge=0, le=255)
 
 
+class EdicaoMascote(BaseModel):
+    """E6 (B197): limites do formato do `pet_data` — lealdade 0–999 (`HONOR_POINT_MAX`), fome 0–11
+    (`HUNGER_LEVEL_COUNT`), nome até 8 letras (16 bytes UTF-16), até 8 habilidades `[id, nível]`.
+    O teto do nível é o do modelo (GS); o das habilidades, o do stub do cliente (rota)."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    nivel: Optional[int] = Field(default=None, ge=1, le=32_767)
+    exp: Optional[int] = Field(default=None, ge=0, le=2_147_483_647)
+    lealdade: Optional[int] = Field(default=None, ge=0, le=999)
+    fome: Optional[int] = Field(default=None, ge=0, le=11)
+    pontos: Optional[int] = Field(default=None, ge=0, le=2_147_483_647)
+    nome: Optional[str] = Field(default=None, min_length=1, max_length=8)
+    habilidades: Optional[list[Annotated[list[int], Field(min_length=2, max_length=2)]]] = Field(default=None, max_length=8)
+    libertar: Optional[Literal[True]] = None
+
+
+class MascotePedido(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    slot: int = Field(ge=0, le=255)
+    tid: int = Field(ge=1, le=2_147_483_647)
+    edicao: EdicaoMascote
+
+
 class EdicaoPersonagem(BaseModel):
     """E5: um só de dinheiro (dar), exp/sp (somar), pontos (dar pontos livres), nivel (alvo,
     só sobe) ou cultivo (B182). Tetos: pacotes de recompensa de missão (u32/i32), teto de
@@ -162,6 +184,7 @@ class EdicaoPersonagem(BaseModel):
     mover_item: Optional[MovimentoPedido] = None
     editar_item: Optional[ItemEditadoPedido] = None
     habilidade: Optional[HabilidadePedida] = None
+    mascote: Optional[MascotePedido] = None
 
 
 def somar_desconexoes(resultado):
@@ -312,7 +335,7 @@ def registrar_contas(app):
         entidade (tudo menos EXP/SP). Quem decide online/offline é o GS."""
         experiencia = bool(pedido.exp or pedido.sp)
         simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao", "item",
-                               "remover_item", "mover_item", "editar_item", "habilidade") if getattr(pedido, k) is not None]
+                               "remover_item", "mover_item", "editar_item", "habilidade", "mascote") if getattr(pedido, k) is not None]
         if len(simples) + experiencia != 1:
             raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo, atributos ou posição.")
         consulta = {"tipo": "editar_personagem", "personagem_id": personagem_id}
@@ -327,7 +350,19 @@ def registrar_contas(app):
                 raise HTTPException(422, "Habilidade que o cliente não conhece.")
             if conhecida.get("nivel_maximo") and pedido.habilidade.nivel > conhecida["nivel_maximo"]:
                 raise HTTPException(422, f"Nível acima do máximo da habilidade ({conhecida['nivel_maximo']}).")
-        if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"], ["editar_item"], ["habilidade"]):
+        if simples == ["mascote"]:
+            edicao = pedido.mascote.edicao
+            if not edicao.model_dump(exclude_none=True):
+                raise HTTPException(422, "Informe ao menos um campo do mascote.")
+            try:
+                cliente = habilidades_do_cliente()
+            except OSError:
+                raise HTTPException(503, "Dados de habilidade do cliente indisponíveis.")
+            for hid, nivel in edicao.habilidades or []:
+                maximo = (cliente.get(hid) or {}).get("nivel_maximo")
+                if hid not in cliente or nivel < 1 or (maximo and nivel > maximo):
+                    raise HTTPException(422, f"Habilidade {hid} desconhecida ou nível {nivel} fora do máximo.")
+        if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"], ["editar_item"], ["habilidade"], ["mascote"]):
             consulta[simples[0]] = getattr(pedido, simples[0]).model_dump(exclude_none=True)
         elif simples:
             consulta[simples[0]] = getattr(pedido, simples[0])

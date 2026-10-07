@@ -12377,3 +12377,36 @@ comparação lado a lado.
     ### e. O que continua faltando
     Ver em jogo (o cliente BR e o 1.2.6); bônus de passiva comum (não portado no GS);
     habilidades de mascote (B197).
+
+197. **Sessão 2026-10-07: mascotes pelo painel — ver a jaula, editar o registro e libertar, online e offline.**
+
+    ### a. Sintoma / pedido
+    E6 (e): mascotes (jaula, ovos, dados do mascote).
+
+    ### b. Evidência
+    - A jaula: item `PetCorral` com o `pet_data` de 192 bytes (`InfoPet::para_bytes`/`do_bloco`),
+      gravado pelo GS (`gravar_mascote`) e avisado por slot com `PET_ROOM` (`avisar_slot_da_jaula`).
+    - Cliente: `PET_ROOM` → `UpdatePets` (`EC_HostMsg.cpp:5390-5400`); `FREE_PET` → `FreePet` +
+      atalho (`:5253-5268`); `GAIN_PET` → `AddPet` (`:5236-5250`). Ícone: `PET_ESSENCE.file_icon`
+      no `IconList_Pet` (`DlgHostPet.cpp:180-185`).
+    - Formato: fome 0–11 (`HUNGER_LEVEL_COUNT`, `EC_PetCorral.h:61-75`), lealdade 0–999
+      (`HONOR_POINT_MAX`, `petman.h:102`; níveis `honor_level_list`, `petman.cpp:292`), EXP indexada
+      por nível (`PetLevelUpExp.exp[nível-1]`, `DlgHostPet.cpp:140-142`).
+
+    ### c. Correção
+    `servicos::nomes_e_icones_da_tabela` + `GameDataManager::mascotes_do_elements`;
+    `bus_server/mascote_editado.rs` (`EdicaoDeMascote`, `aplicar`, `mascotes_do_painel`,
+    `mascote_pelo_painel`, `mascote_no_banco`); roteador `mascotes_do_painel`/`editar_mascote`;
+    canal `mascotes` e `mascote` (reserva/deduplicação); API `EdicaoMascote`/`MascotePedido` e rota
+    `…/mascotes`; janela Mascotes.
+
+    ### d. Provas
+    `mascotes_do_elements` 2/0 (126: 461 modelos, 460 com ícone no atlas; 155: 789, 781);
+    unitário `aplicar` 1/0; `mascotes_ver_editar_e_libertar` 1/0 (ver; online `PET_ROOM` do slot 0;
+    libertar com `FREE_PET`; `slot_mudou`; fome 12 recusada; offline grava e a jaula relida mostra
+    nível 9, lealdade 500, fome 3, nome "Rex"). Painel Python 66/0, Node 9/0. Suíte do workspace com o banco (`--no-fail-fast`):
+    **982 passaram, 0 falharam, 2 ignorados** (inclui a correção da durabilidade).
+
+    ### e. O que continua faltando
+    Ver em jogo; recusa do mascote invocado sem teste automatizado (exige invocar); dar mascote
+    direto (hoje pelo ovo); evolução/atributos derivados do mascote não editáveis.

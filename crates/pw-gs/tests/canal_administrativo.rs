@@ -1562,3 +1562,55 @@ async fn habilidade_online_e_offline_126_e_155() {
         c.encerrar().await;
     }
 }
+
+/// E6 (B197): a jaula. Ver lê o registro de 192 bytes; editar online grava e manda `PET_ROOM`
+/// (239) com o slot; libertar manda `FREE_PET` (232) e apaga; fome fora de 0–11 é inválida;
+/// offline grava.
+#[tokio::test]
+async fn mascotes_ver_editar_e_libertar() {
+    let c = Cenario::montar().await;
+    let id = |s: &str| format!("e6p-m{s}-{}", c.personagem);
+    let pedir = |slot: u16, tid: i32, e: Value| json!({"tipo":"editar_personagem","personagem_id":c.personagem,
+        "mascote":{"slot":slot,"tid":tid,"edicao":e}});
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    for (slot, tid) in [(0i32, 8000i32), (1, 8001)] {
+        let mut info = pw_core::InfoPet::default();
+        info.pet_tid = tid;
+        info.level = 5;
+        sqlx::query("INSERT INTO character_items(character_id, container_type, slot, item_id, count, extra_data) VALUES($1,4::smallint,$2::smallint,$3,1,$4)")
+            .bind(c.personagem).bind(slot).bind(tid).bind(info.para_bytes()).execute(c.pool.get_ref()).await.unwrap();
+    }
+    let jaula = c.pedir(&c.realm, json!({"tipo":"mascotes","personagem_id":c.personagem})).await;
+    assert_eq!(jaula["dados"]["mascotes"].as_array().unwrap().iter().map(|m| (m["slot"].as_u64().unwrap(), m["nivel"].as_i64().unwrap())).collect::<Vec<_>>(),
+        vec![(0, 5), (1, 5)], "{jaula}");
+
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let r = c.pedir_com_id(&c.realm, &id("on"), c.conta, pedir(0, 8000, json!({"nivel": 9, "lealdade": 500, "nome": "Rex"}))).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("aplicado"), Some("online")), "{r}");
+    let m = esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 239u16.to_le_bytes())).await;
+    let BusMessage::GameToClient { data, .. } = m else { unreachable!() };
+    assert_eq!((u16::from_le_bytes([data[2], data[3]]), i32::from_le_bytes(data[4..8].try_into().unwrap())), (1, 0), "um slot, o 0");
+    let r = c.pedir_com_id(&c.realm, &id("libera"), c.conta, pedir(1, 8001, json!({"libertar": true}))).await;
+    assert_eq!(r["estado"], "aplicado", "{r}");
+    esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 232u16.to_le_bytes())).await;
+    for (n, pedido, codigo) in [(1, pedir(0, 8001, json!({"nivel": 3})), "slot_mudou"),
+                                (2, pedir(0, 8000, json!({"fome": 12})), "edicao_invalida"),
+                                (3, pedir(0, 8000, json!({})), "edicao_invalida")] {
+        let r = c.pedir_com_id(&c.realm, &id(&format!("on{n}")), c.conta, pedido).await;
+        assert_eq!(r["dados"]["codigo"], codigo, "{n}: {r}");
+    }
+
+    drop(bus);
+    c.esperar_presenca("ausente").await;
+    let r = c.pedir_com_id(&c.realm, &id("off"), c.conta, pedir(0, 8000, json!({"fome": 3}))).await;
+    assert_eq!(r["estado"], "salvo", "{r}");
+    let jaula = c.pedir(&c.realm, json!({"tipo":"mascotes","personagem_id":c.personagem})).await;
+    let lista = jaula["dados"]["mascotes"].as_array().unwrap();
+    assert_eq!(lista.len(), 1, "{jaula}");
+    assert_eq!((lista[0]["nivel"].as_i64(), lista[0]["lealdade"].as_i64(), lista[0]["fome"].as_i64(), lista[0]["nome"].as_str()),
+        (Some(9), Some(500), Some(3), Some("Rex")), "{jaula}");
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6p-m%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}
