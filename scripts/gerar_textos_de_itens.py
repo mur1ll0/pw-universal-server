@@ -18,7 +18,8 @@ import sys
 REPO = pathlib.Path(__file__).resolve().parent.parent
 CABECALHO = pathlib.Path(r"F:\PW\1.5.5\EvolvedPWClient\ElementClient\EC_FixedMsg.h")
 CONFIGS = pathlib.Path(r"F:\PW\1.5.5\1.5.5 BR\Perfect World 1.5.5 BR\element\configs.pck")
-TEXTOS = ["item_desc.txt", "item_ext_desc.txt", "item_color.txt", "item_ext_prop.txt"]
+# `skillstr.txt` (B195): nomes das habilidades, chave `id × 10` (`EC_Skill.cpp:213-215`).
+TEXTOS = ["item_desc.txt", "item_ext_desc.txt", "item_color.txt", "item_ext_prop.txt", "skillstr.txt"]
 
 
 def indices_itemdesc():

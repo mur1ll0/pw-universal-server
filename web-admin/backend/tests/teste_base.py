@@ -526,6 +526,20 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resposta.status_code, 200)
         self.assertEqual([p["id"] for p in resposta.json()["personagens"]], [personagem])
 
+    async def test_habilidades_do_personagem_b195(self):
+        """B195: as aprendidas do banco, com o nome do skillstr.txt e o ícone do stub do cliente."""
+        realm, personagem = await self.criar_personagem()
+        async with self.pool.acquire() as conexao:
+            await conexao.execute("INSERT INTO character_skills(character_id,skill_id,level) VALUES($1,1,7),($1,2,1)", personagem)
+        resposta = await self.cliente.get(f"/api/realms/{realm}/personagens/{personagem}/habilidades")
+        self.assertEqual(resposta.status_code, 200)
+        lista = resposta.json()["habilidades"]
+        self.assertEqual([(h["id"], h["nivel"]) for h in lista], [(1, 7), (2, 1)])
+        if lista[0]["nome"] != "Habilidade 1":  # com data/textos presente
+            self.assertEqual(lista[0]["nome"], "Ataque do Tigre")
+            self.assertEqual((lista[0]["icone"], lista[0]["nivel_maximo"]), ("bba2bbf72e646473", 10))
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/personagens/999999999/habilidades")).status_code, 404)
+
     async def test_lista_de_personagens_em_cartoes_b190(self):
         """B190: conta, classe pelo nome do cliente, busca pela conta e paginação."""
         realm, personagem = await self.criar_personagem()
@@ -903,7 +917,17 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          {"mover_item": {"de": "bolsa", "slot_de": 0, "id": 0, "para": "bolsa", "slot_para": 1}},
                          {"mover_item": {"de": "bolsa", "slot_de": 0, "id": 1, "para": "bolsa"}},
                          {"mover_item": {"de": "bolsa", "slot_de": 0, "id": 1, "para": "bolsa", "slot_para": 1, "quantidade": 1}},
-                         {"mover_item": {"de": "bolsa", "slot_de": 0, "id": 1, "para": "bolsa", "slot_para": 1}, "pontos": 1}):
+                         {"mover_item": {"de": "bolsa", "slot_de": 0, "id": 1, "para": "bolsa", "slot_para": 1}, "pontos": 1},
+                         # B194: editar item — ao menos um campo; limites do formato do bloco.
+                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {}}},
+                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"refino": 13}}},
+                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"pedras": [0, 0, 0, 0, 0, 0]}}},
+                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"efeitos": [{"id": 8192}]}}},
+                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"efeitos": [{"id": 1, "args": [1, 2, 3, 4]}]}}},
+                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"fabricante": "x" * 21}}},
+                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"quantidade": 0}}},
+                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"cor": 1}}},
+                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"requisitos": {"nivel": 1}}}}):
             self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
         for valido in ({"dinheiro": 10}, {"pontos": 5}, {"nivel": 30}, {"cultivo": 0},
                        {"atributos": [5, 5, 5, 5]}, {"redistribuir": True},
@@ -911,7 +935,11 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                        {"item": {"id": 3001, "quantidade": 150}},
                        {"remover_item": {"recipiente": "armazem", "slot": 4, "id": 3001}},
                        {"remover_item": {"recipiente": "bolsa", "slot": 0, "id": 3001, "quantidade": 5}},
-                       {"mover_item": {"de": "bolsa", "slot_de": 1, "id": 3003, "para": "equipamento", "slot_para": 0}}):
+                       {"mover_item": {"de": "bolsa", "slot_de": 1, "id": 3003, "para": "equipamento", "slot_para": 0}},
+                       {"editar_item": {"recipiente": "equipamento", "slot": 0, "id": 3003, "edicao": {
+                           "quantidade": 1, "durabilidade": 0, "refino": 12, "pedras": [0, 0], "fabricante": "",
+                           "efeitos": [{"id": 999, "args": [5]}], "requisitos": {"nivel": 1, "classes": 65535, "forca": 0,
+                           "agilidade": 0, "vitalidade": 0, "energia": 0}}}}):
             resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
             self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
 

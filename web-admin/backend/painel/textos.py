@@ -114,6 +114,26 @@ def nome_da_classe(classe):
     return NOMES_DAS_CLASSES[classe] if 0 <= classe < len(NOMES_DAS_CLASSES) else f"Classe {classe}"
 
 
+@functools.lru_cache(maxsize=1)
+def nomes_das_habilidades():
+    """`skillstr.txt` (`CECGame::Init`, `EC_Game.cpp:529`, com índice): `id "texto"`; o nome da
+    habilidade é a chave `id × 10` (`CECSkill::GetNameDisplay`, `EC_Skill.cpp:213-215`). B195."""
+    corpo = _ler("skillstr.txt").split("#_index", 1)[-1]
+    tabela = {}
+    for m in re.finditer(r'(?m)^\s*(\d+)\s+"((?:[^"\\]|\\.)*)"', corpo):
+        chave = int(m.group(1))
+        if chave % 10 == 0:
+            tabela.setdefault(chave // 10, _desfazer_escape(m.group(2)))
+    return tabela
+
+
+@functools.lru_cache(maxsize=1)
+def habilidades_do_cliente():
+    """`{id: {icone, nivel_maximo, classe}}` dos stubs do cliente (`scripts/gerar_habilidades_do_cliente.py`)."""
+    bruto = json.loads((Path(__file__).parent / "habilidades_do_cliente.json").read_text(encoding="utf-8"))
+    return {int(k): v for k, v in bruto.items()}
+
+
 def nomes_das_classes():
     return NOMES_DAS_CLASSES
 

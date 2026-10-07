@@ -34,7 +34,7 @@ const DESCARTE_POR_USO: u8 = 11;
 
 /// O conteúdo de equipamento de um item da bolsa, com a família e o grau. Item sem octetos
 /// gravados (anterior ao B151) sai do molde, como o `OWN_ITEM_INFO` o mostra.
-fn bloco_do_equipamento(item: &ItemRecord, dados: &GameDataManager) -> Option<(Vec<u8>, pw_core::FichaDoEquipamento)> {
+pub(super) fn bloco_do_equipamento(item: &ItemRecord, dados: &GameDataManager) -> Option<(Vec<u8>, pw_core::FichaDoEquipamento)> {
     let ficha = dados.equipamentos.ficha(item.item_id)?;
     let octetos = if item.octets.is_empty() {
         ConteudoDeEquipamento::novo(ficha.clone(), item.durability as i32, item.max_durability as i32).escrever()
@@ -48,7 +48,7 @@ fn bloco_do_equipamento(item: &ItemRecord, dados: &GameDataManager) -> Option<(V
 /// arma e armadura —, `item/item_stone.cpp:26-45`) ou, sem octetos, os que `generate_stone`
 /// sortearia (`generate_item_temp.h:839-910`: um addon de `id_addon_damage` e um de
 /// `id_addon_defence`).
-fn addons_da_pedra(item: &ItemRecord, pedra: &Pedra, familia: Familia, dados: &GameDataManager) -> Vec<AddonDoItem> {
+pub(super) fn addons_da_pedra(item: &ItemRecord, pedra: &Pedra, familia: Familia, dados: &GameDataManager) -> Vec<AddonDoItem> {
     let lista = match familia {
         Familia::Arma => 0,
         Familia::Armadura => 1,
@@ -299,7 +299,7 @@ impl BusServer {
 }
 
 /// As pedras gravadas no bloco, para a coluna `sockets` do banco.
-fn furos_de(bloco: &[u8], ficha: &pw_core::FichaDoEquipamento) -> Vec<u32> {
+pub(super) fn furos_de(bloco: &[u8], ficha: &pw_core::FichaDoEquipamento) -> Vec<u32> {
     ConteudoDeEquipamento::ler(bloco, ficha).map(|c| c.furos.iter().map(|&f| f.max(0) as u32).collect()).unwrap_or_default()
 }
 

@@ -592,6 +592,34 @@ impl RoteadorDeMapas {
         }
     }
 
+    /// Painel (E6, B194): edita as propriedades de um item, com a guarda de presença e a trava
+    /// de gravação como as demais edições. Online pelo mapa dono (grava e reenvia a ficha do
+    /// item); offline grava no banco. Regras em [`crate::bus_server::item_editado`].
+    pub async fn editar_item(&self, roleid: i32, recipiente: pw_core::ContainerType, slot: u16, tid: u32,
+        e: &crate::bus_server::item_editado::EdicaoDeItem) -> serde_json::Value {
+        let Some(bus) = self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) else {
+            return serde_json::json!({"estado":"falha","codigo":"sem_mapa"});
+        };
+        let _comando = self.presenca.read().await;
+        let controle = self.repo.controle_de_gravacao(roleid);
+        let _guarda = controle.alterar().await;
+        if let Some(mapa) = self.mapa_de(roleid).await {
+            let editado = match self.mapa(mapa) { Some(s) => s.editar_item_pelo_painel(roleid, recipiente, slot, tid, e).await, None => None };
+            return match editado {
+                Some(d) if !d["erro"].is_null() => serde_json::json!({"estado":"falha","codigo":d["erro"]}),
+                Some(_) => serde_json::json!({"estado":"aplicado","presenca":"online","mapa":mapa,"item":tid,"slot":slot}),
+                None => serde_json::json!({"estado":"falha","codigo":"em_transicao"}),
+            };
+        }
+        match bus.editar_item_no_banco(roleid, recipiente, slot, tid, e).await {
+            Ok(_) => {
+                tracing::info!(roleid, ?recipiente, slot, tid, "painel: item editado (offline)");
+                serde_json::json!({"estado":"salvo","presenca":"offline","item":tid,"slot":slot})
+            }
+            Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
+        }
+    }
+
     /// Painel (E6, B185): leva o personagem a `(x, y, z)` do `mapa`. Destino: mapa carregado e
     /// ligado neste processo (senão `mapa_indisponivel`), `(x, z)` dentro do terreno dele
     /// (`fora_do_mapa`); `y` ausente = o chão, e abaixo do chão sobe para ele — a regra de quem

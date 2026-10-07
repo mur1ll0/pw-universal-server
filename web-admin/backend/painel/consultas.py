@@ -2,7 +2,7 @@
 from fastapi import HTTPException, Path, Query, Request, Response
 from .icones import png_do_icone
 from .dica import linhas_da_dica
-from .textos import nome_da_classe
+from .textos import habilidades_do_cliente, nome_da_classe, nomes_das_habilidades
 from .canal import CanalIndisponivel, consultar_daemons, resposta_do_primeiro
 import json
 import pathlib
@@ -42,7 +42,8 @@ def registrar_consultas(app):
                     "mapas": [], "aviso": str(erro)}
 
     @app.get("/api/icones/{sexo}/{titulo}.png")
-    async def icone(sexo: str = Path(..., pattern="^[mf]$"), titulo: str = Path(..., pattern="^[0-9a-f]{2,256}$")):
+    async def icone(sexo: str = Path(..., pattern="^(m|f|habilidade|mascote)$"),
+                    titulo: str = Path(..., pattern="^[0-9a-f]{2,256}$")):
         """B188: o ícone do item (arquivo em bytes GBK, em hexadecimal, como o GS manda),
         recortado do atlas do cliente; `m`/`f` = atlas masculino/feminino."""
         try:
@@ -101,7 +102,33 @@ def registrar_consultas(app):
             linhas = linhas_da_dica(dados, versao=dono["version"] if dono else None, classe=dono["cls"] if dono else None)
         except OSError:
             raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
-        return {"realm_id": realm_id, "item": dados, "linhas": linhas}
+        # Nomes das classes da versão, para a edição do item (B194): 8 no 1.2.x, 12 no 1.5.5.
+        total = 8 if dono and str(dono["version"]).startswith("1.2") else 12
+        return {"realm_id": realm_id, "item": dados, "linhas": linhas,
+                "classes": [nome_da_classe(i) for i in range(total)]}
+
+    @app.get("/api/realms/{realm_id}/personagens/{personagem_id}/habilidades")
+    async def habilidades_do_personagem(realm_id: str, personagem_id: int = Path(..., ge=1, le=2_147_483_647)):
+        """E6 (B195): as habilidades aprendidas. O banco é a fonte que o GS usa — aprender grava
+        nele e a entrada no mundo lê dele (`SKILL_DATA`) —, online ou offline. Nome do
+        `skillstr.txt` e ícone do stub do cliente."""
+        await validar_realm(realm_id)
+        async with app.state.seguranca.pool.acquire() as conexao:
+            existe = await conexao.fetchval("SELECT 1 FROM characters WHERE realm_id=$1 AND id=$2 AND NOT is_deleted",
+                                            realm_id, personagem_id)
+            if not existe:
+                raise HTTPException(404, "Personagem não encontrado neste realm.")
+            registros = await conexao.fetch("SELECT skill_id, level, ability FROM character_skills "
+                                            "WHERE character_id=$1 ORDER BY skill_id", personagem_id)
+        try:
+            nomes, cliente = nomes_das_habilidades(), habilidades_do_cliente()
+        except OSError:
+            nomes, cliente = {}, {}
+        return {"realm_id": realm_id, "origem": "persistida", "habilidades": [
+            {"id": r["skill_id"], "nivel": r["level"], "proficiencia": r["ability"],
+             "nome": nomes.get(r["skill_id"], f"Habilidade {r['skill_id']}"),
+             "icone": (cliente.get(r["skill_id"]) or {}).get("icone", ""),
+             "nivel_maximo": (cliente.get(r["skill_id"]) or {}).get("nivel_maximo")} for r in registros]}
 
     @app.get("/api/realms/{realm_id}/itens")
     async def buscar_itens(realm_id: str, requisicao: Request, busca: str = Query(..., min_length=1, max_length=64)):

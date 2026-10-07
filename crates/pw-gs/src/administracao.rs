@@ -68,6 +68,8 @@ pub enum Consulta {
         #[serde(default)] remover_item: Option<RemocaoPedida>,
         /// Arrastar um item (E6, B191).
         #[serde(default)] mover_item: Option<MovimentoPedido>,
+        /// Editar as propriedades de um item (E6, B194).
+        #[serde(default)] editar_item: Option<ItemEditadoPedido>,
     },
     /// Inventário de um personagem, com nomes (E6, B186). Só leitura.
     Inventario { personagem_id: i32 },
@@ -123,6 +125,24 @@ pub struct MovimentoPedido {
     pub id: u32,
     pub para: String,
     pub slot_para: u16,
+}
+
+/// Editar um item (B194): o item `id` do `slot` de `recipiente` e o que mudar
+/// ([`crate::bus_server::item_editado::EdicaoDeItem`]).
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemEditadoPedido {
+    pub recipiente: String,
+    pub slot: u16,
+    pub id: u32,
+    pub edicao: crate::bus_server::item_editado::EdicaoDeItem,
+}
+
+/// O que o pedido de edição de personagem pede: uma edição do personagem ou de um item.
+#[derive(Debug)]
+enum AlvoDaEdicao {
+    Personagem(crate::bus_server::EdicaoDePersonagem),
+    Item(pw_core::ContainerType, u16, u32, crate::bus_server::item_editado::EdicaoDeItem),
 }
 
 /// Nome do recipiente no painel → tipo no banco (B187).
@@ -377,12 +397,12 @@ impl ServidorAdministrativo {
                     Consulta::BuscarItens { texto } if texto.chars().count() <= 64 => {
                         self.roteador.buscar_itens(&texto).await
                     }
-                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item } if personagem_id > 0 => {
+                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item, editar_item } if personagem_id > 0 => {
                         use crate::bus_server::EdicaoDePersonagem as E;
                         let dentro = |v: i64| v.abs() <= TETO_DA_EDICAO;
                         let tipos = [dinheiro.is_some(), exp.or(sp).is_some(), pontos.is_some(), nivel.is_some(), cultivo.is_some(),
                             atributos.is_some(), redistribuir.is_some(), posicao.is_some(), item.is_some(), remover_item.is_some(),
-                            mover_item.is_some()]
+                            mover_item.is_some(), editar_item.is_some()]
                             .iter().filter(|t| **t).count();
                         // Atributos: quatro valores entre 0 e o teto da política (B184).
                         let quatro = atributos.as_deref().and_then(|v| {
@@ -426,9 +446,15 @@ impl ServidorAdministrativo {
                             (.., Some(c)) if (0..=255).contains(&c) => Some(E::Cultivo(c as i32)),
                             _ => None,
                         }};
-                        match edicao {
+                        let alvo = match (&editar_item, tipos) {
+                            (Some(m), 1) => recipiente_do_painel(&m.recipiente)
+                                .filter(|_| m.id > 0 && m.slot < 256 && m.edicao.valida().is_ok() && m.edicao != Default::default())
+                                .map(|r| AlvoDaEdicao::Item(r, m.slot, m.id, m.edicao.clone())),
+                            _ => edicao.map(AlvoDaEdicao::Personagem),
+                        };
+                        match alvo {
                             None => json!({"codigo":"edicao_invalida"}),
-                            Some(edicao) => {
+                            Some(alvo) => {
                                 let mut parametros = json!({
                                     "tipo":"editar_personagem","personagem_id":personagem_id,
                                     "dinheiro":dinheiro,"exp":exp,"sp":sp,
@@ -445,17 +471,21 @@ impl ServidorAdministrativo {
                                 if let Some(i) = item { parametros["item"] = json!(i); }
                                 if let Some(r) = &remover_item { parametros["remover_item"] = json!(r); }
                                 if let Some(m) = &mover_item { parametros["mover_item"] = json!(m); }
+                                if let Some(m) = &editar_item { parametros["editar_item"] = json!(m); }
                                 let impressao = Sha256::digest(serde_json::to_vec(&parametros)?);
                                 let repo = self.contas.comandos_administrativos();
                                 match repo.reservar_operacao_de_personagem(&pedido.operacao_id, pedido.administrador_id, &self.realm, &impressao).await? {
                                     Some(anterior) => anterior,
                                     None => {
-                                        let mut r = self.roteador.editar_personagem(personagem_id, edicao).await;
+                                        let mut r = match &alvo {
+                                            AlvoDaEdicao::Personagem(edicao) => self.roteador.editar_personagem(personagem_id, *edicao).await,
+                                            AlvoDaEdicao::Item(r, slot, id, e) => self.roteador.editar_item(personagem_id, *r, *slot, *id, e).await,
+                                        };
                                         r["tipo"] = json!("editar_personagem");
                                         r["personagem_id"] = json!(personagem_id);
                                         repo.gravar_resultado_de_personagem(&pedido.operacao_id, &r).await?;
                                         tracing::info!(operacao=%pedido.operacao_id, personagem=personagem_id,
-                                            ?edicao, estado=%r["estado"], "admin: editar personagem");
+                                            ?alvo, estado=%r["estado"], "admin: editar personagem");
                                         r
                                     }
                                 }

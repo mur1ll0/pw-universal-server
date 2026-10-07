@@ -91,6 +91,45 @@ class MovimentoPedido(BaseModel):
     slot_para: int = Field(ge=0, le=255)
 
 
+class RequisitosItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    nivel: int = Field(ge=0, le=32_767)
+    classes: int = Field(ge=0, le=0xFFFF)
+    forca: int = Field(ge=0, le=32_767)
+    agilidade: int = Field(ge=0, le=32_767)
+    vitalidade: int = Field(ge=0, le=32_767)
+    energia: int = Field(ge=0, le=32_767)
+
+
+class EfeitoItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    id: int = Field(ge=1, le=0x1FFF)
+    args: list[int] = Field(default_factory=list, max_length=3)
+
+
+class EdicaoItem(BaseModel):
+    """E6 (B194): edição livre nos valores, não no formato — limites do bloco do item (i16 nos
+    requisitos, 5 furos, 32 efeitos, nome de 20 caracteres, refino 0–12). Quem confere o
+    resto (item é equipamento, pedra existe, bloco fecha) é o GS."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    quantidade: Optional[int] = Field(default=None, ge=1, le=2_147_483_647)
+    durabilidade: Optional[int] = Field(default=None, ge=0, le=2_147_483_647)
+    durabilidade_maxima: Optional[int] = Field(default=None, ge=0, le=2_147_483_647)
+    requisitos: Optional[RequisitosItem] = None
+    fabricante: Optional[str] = Field(default=None, max_length=20)
+    efeitos: Optional[list[EfeitoItem]] = Field(default=None, max_length=32)
+    refino: Optional[int] = Field(default=None, ge=0, le=12)
+    pedras: Optional[list[Annotated[int, Field(ge=0, le=2_147_483_647)]]] = Field(default=None, max_length=5)
+
+
+class ItemEditadoPedido(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    recipiente: Literal["bolsa", "missao", "equipamento", "armazem"]
+    slot: int = Field(ge=0, le=255)
+    id: int = Field(ge=1, le=2_147_483_647)
+    edicao: EdicaoItem
+
+
 class EdicaoPersonagem(BaseModel):
     """E5: um só de dinheiro (dar), exp/sp (somar), pontos (dar pontos livres), nivel (alvo,
     só sobe) ou cultivo (B182). Tetos: pacotes de recompensa de missão (u32/i32), teto de
@@ -112,6 +151,7 @@ class EdicaoPersonagem(BaseModel):
     item: Optional[ItemPedido] = None
     remover_item: Optional[RemocaoPedida] = None
     mover_item: Optional[MovimentoPedido] = None
+    editar_item: Optional[ItemEditadoPedido] = None
 
 
 def somar_desconexoes(resultado):
@@ -262,11 +302,13 @@ def registrar_contas(app):
         entidade (tudo menos EXP/SP). Quem decide online/offline é o GS."""
         experiencia = bool(pedido.exp or pedido.sp)
         simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao", "item",
-                               "remover_item", "mover_item") if getattr(pedido, k) is not None]
+                               "remover_item", "mover_item", "editar_item") if getattr(pedido, k) is not None]
         if len(simples) + experiencia != 1:
             raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo, atributos ou posição.")
         consulta = {"tipo": "editar_personagem", "personagem_id": personagem_id}
-        if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"]):
+        if simples == ["editar_item"] and not pedido.editar_item.edicao.model_dump(exclude_none=True):
+            raise HTTPException(422, "Informe ao menos um campo do item.")
+        if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"], ["editar_item"]):
             consulta[simples[0]] = getattr(pedido, simples[0]).model_dump(exclude_none=True)
         elif simples:
             consulta[simples[0]] = getattr(pedido, simples[0])

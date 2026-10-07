@@ -81,7 +81,45 @@ async fn criacao_valida_nome_no_daemon_e_deduplica_variacao_de_caixa() {
     c.encerrar().await;
 }
 
+/// A vez de cada teste no banco (B194). `entrada_em_andamento_nao_parece_offline` trava a tabela
+/// `characters` inteira; com o arquivo em paralelo isso estoura o prazo das consultas dos outros
+/// testes ("unexpected end of file" em testes variados). O exclusivo só entra com **nenhum**
+/// cenário ativo e, enquanto roda, os novos esperam; um teste que monta dois cenários nunca fica
+/// preso no meio (o exclusivo não entra enquanto houver um ativo).
+static VEZ: std::sync::Mutex<(usize, bool)> = std::sync::Mutex::new((0, false));
+
+struct Vez {
+    exclusiva: bool,
+}
+
+impl Vez {
+    async fn pegar(exclusiva: bool) -> Self {
+        loop {
+            {
+                let mut v = VEZ.lock().unwrap();
+                if exclusiva && v.0 == 0 && !v.1 {
+                    v.1 = true;
+                    return Self { exclusiva };
+                }
+                if !exclusiva && !v.1 {
+                    v.0 += 1;
+                    return Self { exclusiva };
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+
+impl Drop for Vez {
+    fn drop(&mut self) {
+        let mut v = VEZ.lock().unwrap();
+        if self.exclusiva { v.1 = false } else { v.0 -= 1 }
+    }
+}
+
 struct Cenario {
+    _vez: Vez,
     pool: PostgresPool,
     realm: String,
     conta: i32,
@@ -97,6 +135,16 @@ impl Cenario {
     async fn montar() -> Self { Self::montar_versao(GameVersion::V1_2_6).await }
 
     async fn montar_versao(versao: GameVersion) -> Self {
+        Self::montar_com(versao, false).await
+    }
+
+    /// Para o teste que trava a tabela inteira: roda sozinho no arquivo.
+    async fn montar_exclusivo() -> Self {
+        Self::montar_com(GameVersion::V1_2_6, true).await
+    }
+
+    async fn montar_com(versao: GameVersion, exclusiva: bool) -> Self {
+        let vez = Vez::pegar(exclusiva).await;
         let url = std::env::var("TEST_DATABASE_URL")
             .expect("TEST_DATABASE_URL obrigatória; sem banco é falha");
         let pool = PostgresPool::new(&StorageConfig {
@@ -169,6 +217,7 @@ impl Cenario {
             servidor.executar(escuta).await.unwrap();
         });
         Self {
+            _vez: vez,
             pool,
             realm,
             conta,
@@ -327,6 +376,7 @@ async fn senha_global_deduplica_concorrencia_conflito_e_resultado_apos_reinicio(
         servidor.executar(escuta).await.unwrap();
     });
     let c2 = Cenario {
+        _vez: Vez::pegar(false).await,
         admin: endereco,
         realm: "outro_realm".into(),
         tarefas: vec![],
@@ -518,7 +568,7 @@ async fn consulta_ve_memoria_viva_e_mapas_reais_sem_escrever_banco() {
 
 #[tokio::test]
 async fn entrada_em_andamento_nao_parece_offline() {
-    let c = Cenario::montar().await;
+    let c = Cenario::montar_exclusivo().await;
     let mut transacao = c.pool.get_ref().begin().await.unwrap();
     sqlx::query("LOCK TABLE characters IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *transacao)
@@ -1399,5 +1449,53 @@ async fn arrastar_item_online_e_offline() {
     assert_eq!((soma(&inv, 3001), soma(&inv, 3003), soma(&inv, 3002)), (31, 1, 1), "nada some nem duplica: {inv}");
     sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
     sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6m-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}
+
+/// E6 (B194): editar o item. Online grava e reenvia a ficha (`OWN_ITEM_INFO` 40) com a quantidade
+/// nova; armazém só offline; campo de equipamento em item comum = `nao_e_equipamento`; slot
+/// conferido pelo id; offline grava.
+#[tokio::test]
+async fn editar_item_online_e_offline() {
+    let c = Cenario::montar().await;
+    let id = |s: &str| format!("e6e-{s}-{}", c.personagem);
+    let editar = |rec: &str, slot: u16, tid: u32, e: Value| json!({"tipo":"editar_personagem",
+        "personagem_id":c.personagem,"editar_item":{"recipiente":rec,"slot":slot,"id":tid,"edicao":e}});
+    let qtd = |inv: &Value, rec: &str, slot: u64| inv["dados"]["recipientes"][rec].as_array().unwrap().iter()
+        .find(|i| i["slot"].as_u64() == Some(slot)).map(|i| i["quantidade"].as_u64().unwrap());
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    for (tipo, slot, n) in [(0i32, 2i32, 10i32), (2, 1, 4)] {
+        sqlx::query("INSERT INTO character_items(character_id, container_type, slot, item_id, count) VALUES($1,$2::smallint,$3::smallint,3001,$4)")
+            .bind(c.personagem).bind(tipo).bind(slot).bind(n).execute(c.pool.get_ref()).await.unwrap();
+    }
+
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let r = c.pedir_com_id(&c.realm, &id("on"), c.conta, editar("bolsa", 2, 3001, json!({"quantidade": 777}))).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("aplicado"), Some("online")), "{r}");
+    let m = esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 40u16.to_le_bytes())).await;
+    let BusMessage::GameToClient { data, .. } = m else { unreachable!() };
+    // `OWN_ITEM_INFO`: id 2, pacote 1, slot 1, tipo 4, validade 4, estado 4, quantidade 4.
+    assert_eq!((data[2], data[3], u32::from_le_bytes(data[16..20].try_into().unwrap())), (0, 2, 777), "bolsa, slot 2, 777");
+    for (n, pedido, codigo) in [
+        (1, editar("armazem", 1, 3001, json!({"quantidade": 5})), "precisa_estar_offline"),
+        (2, editar("bolsa", 2, 3001, json!({"durabilidade": 5})), "nao_e_equipamento"),
+        (3, editar("bolsa", 2, 3002, json!({"quantidade": 5})), "slot_mudou"),
+        (4, editar("bolsa", 2, 3001, json!({"refino": 13})), "edicao_invalida"),
+        (5, editar("bolsa", 2, 3001, json!({})), "edicao_invalida"),
+        // Campo desconhecido fecha a conexão sem resposta (contrato do canal); a API recusa antes.
+    ] {
+        let r = c.pedir_com_id(&c.realm, &id(&format!("on{n}")), c.conta, pedido).await;
+        assert_eq!(r["dados"]["codigo"], codigo, "{n}: {r}");
+    }
+
+    drop(bus);
+    c.esperar_presenca("ausente").await;
+    let r = c.pedir_com_id(&c.realm, &id("off"), c.conta, editar("armazem", 1, 3001, json!({"quantidade": 9}))).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("salvo"), Some("offline")), "{r}");
+    let inv = c.pedir(&c.realm, json!({"tipo":"inventario","personagem_id":c.personagem})).await;
+    assert_eq!((qtd(&inv, "bolsa", 2), qtd(&inv, "armazem", 1)), (Some(777), Some(9)), "{inv}");
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6e-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
     c.encerrar().await;
 }

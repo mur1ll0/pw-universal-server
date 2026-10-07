@@ -65,6 +65,7 @@ mod jogo;
 pub use jogo::EdicaoDePersonagem;
 mod mascote;
 mod pedras_e_refino;
+pub mod item_editado;
 mod producao;
 mod restauracao;
 mod renascer;

@@ -706,7 +706,7 @@ Limitações: instâncias do `gs.conf` que dividem pasta (`is73–75` em `a72`, 
 e `m01`/`random03`/`random04` não têm dados no carregador — aparecem "sem dados"; cada mapa é
 um mundo único compartilhado (o original cria cópias por entrada em `instance_servers`).
 
-## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184–B187, B191; falta ver em jogo)
+## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184–B187, B191, B194; falta ver em jogo)
 
 `RoteadorDeMapas::editar_personagem`, com a guarda de presença em leitura (a entrada pega em
 escrita) e a trava de gravação do personagem. Só dar (B180: tirar arriscaria valor
@@ -792,6 +792,27 @@ destino (`nao_aplicado` se não chegou). Armazém (o cliente só tem a cópia de
 aberta, `armazem_aberto`) e missão (sem comando de troca) online = `precisa_estar_offline`.
 **Offline:** `swap_slots`/`move_between_containers` em transação, com a posição conferida;
 requisitos de nível/classe/atributos só online (dependem dos atributos com o equipamento).
+
+**B194 (E6) — editar o item (edição livre nos valores, não no formato).** `editar_item:
+{recipiente, slot, id, edicao: {quantidade?, durabilidade?, durabilidade_maxima?, requisitos?:
+{nivel, classes, forca, agilidade, vitalidade, energia}, fabricante?, efeitos?: [{id, args}],
+refino?, pedras?: [id por furo]}}` (`bus_server/item_editado.rs`). Os octetos continuam a verdade:
+o rabo (furos, máscara das pedras, efeitos) muda pelo `alterar_rabo` do refino/pedras, o cabeçalho
+por remendo (requisitos 6 × i16 com vitalidade antes de agilidade; durabilidade; nome do
+fabricante) e a essência fica byte a byte; o bloco tem de se reler inteiro (`formato_invalido`).
+`efeitos` troca só os sem origem (pedra/conjunto/gravação ficam); `refino` 0–12 põe o efeito de
+refino com `base × refine_factor[n] + 0.1` (`equip_item.cpp:208-223`; acima de 12 não há fator —
+só pela lista crua); `pedras` refaz os furos com os efeitos embutidos da pedra e a máscara de
+cores. Limites de formato: 5 furos, 32 efeitos, id de efeito em 13 bits com até 3 parâmetros
+(`itemdataman.h`), nome até 40 bytes. Colunas espelho (durabilidade, refino, furos) gravadas no
+mesmo upsert. **Online:** grava e manda `OWN_ITEM_INFO` (40), que o cliente aplica sobre o item já
+no slot (`EC_HostMsg.cpp:1454-1500`; no corpo refaz a aparência do próprio jogador) e, no corpo,
+`recalcular_equipamento`; armazém = `precisa_estar_offline`. **Offline:** grava. Falhas:
+`slot_mudou`, `nao_e_equipamento`, `sem_refino_nem_furos`, `pedra_inexistente`,
+`refino_sem_addon`, `formato_invalido`. Não editáveis: o id do modelo (o `OWN_ITEM_INFO` não o
+troca) e o vínculo (o `state` sai sempre 0 — `proc_type` não modelado). `falta`: o
+`_modify_mask << 16` no id do equipamento visto pelos outros (`equip_item.cpp:25-30`; o GS manda
+só os 16 bits baixos), então o brilho do refino não aparece para quem vê.
 
 Falhas novas: `nivel_invalido` (com `nivel_maximo`), `nivel_invalido_ou_personagem_inexistente`
 (offline), `cultivo_invalido`. A impressão de deduplicação só inclui `pontos`/`nivel`/`cultivo`

@@ -12263,3 +12263,77 @@ comparação lado a lado.
 
     ### e. O que continua faltando
     Habilidade (55): `CECSkill::GetDesc` precisa dos textos de habilidade (B195). Nada visto em jogo.
+
+194. **Sessão 2026-10-07: editar as propriedades do item pelo painel (edição livre nos valores, não no formato).**
+
+    ### a. Sintoma / pedido
+    E6 (c): durabilidade, refino, gemas, efeitos, vínculo etc., livres; octets mantidos (B190).
+
+    ### b. Evidência
+    - Rabo: `ConteudoDeEquipamento::alterar_rabo` (o `OnRefreshItem`, `equip_item.cpp:83-97`);
+      refino = efeito de refino com `arg[1]` = nível e `arg[0] = base × refine_factor[n] + 0.1`
+      (`equip_item.cpp:208-223`, 13 fatores); pedras pelo `incrustar`/`addons_da_pedra`.
+    - Limites de formato: 5 furos e 32 efeitos (`itemdataman.h`), id em 13 bits e até 3 parâmetros
+      (`(type & 0x6000) >> 13`), requisitos i16, nome 40 bytes. No cliente furos e efeitos são
+      vetores dinâmicos (`m_aHoles`, `m_aProps`, `EC_IvtrEquip.cpp:205-236`).
+    - Online: `OnMsgHstOwnItemInfo` (`EC_HostMsg.cpp:1454-1500`) aplica quantidade, estado e bloco
+      no item já no slot; no corpo `UpdateEquipSkins`; não troca o id do modelo.
+    - Vínculo: o `state` do `item_info` sai sempre 0 (`s2c.rs`) — não modelado, fica fora.
+    - Lacuna antiga achada: `equip_item::GetIdModify` = `_modify_mask << 16` vai no id que os
+      outros veem; o GS manda só os 16 bits baixos (`bus_server.rs:4785`).
+
+    ### c. Correção
+    `bus_server/item_editado.rs` (`EdicaoDeItem`, `aplicar`, online `editar_item_pelo_painel`,
+    `editar_item_no_banco`); `RoteadorDeMapas::editar_item`; canal `editar_item` com reserva e
+    deduplicação do `editar_personagem` (`AlvoDaEdicao`); auxiliares das pedras `pub(super)`. API
+    `EdicaoItem`/`ItemEditadoPedido`; a dica devolve `classes`; modal Editar item no painel.
+
+    ### d. Provas
+    Unitários 3/0 (validação, fabricante, ordem dos requisitos); `item_editado` 2/0 com o
+    `elements` real do 155 e do 126 (arma refinável: quantidade, durabilidade, requisitos,
+    fabricante, efeito livre, refino +5, pedra embutida; essência byte a byte; volta a 0 sem
+    pedras; recusa não muda nada); `editar_item_online_e_offline` 1/0 (`OWN_ITEM_INFO` com 777,
+    armazém online recusado, `nao_e_equipamento`, `slot_mudou`, refino 13 inválido, offline
+    salvo). Painel Python 63/0, Node 9/0; prévia local do modal (campos, efeito de pedra oculto,
+    pedido só com o que mudou, fecha ao gravar).
+    **Teste do canal intermitente corrigido:** `entrada_em_andamento_nao_parece_offline` trava a
+    tabela `characters` inteira (`LOCK TABLE … ACCESS EXCLUSIVE`); com o arquivo em paralelo as
+    consultas dos outros testes estouravam o prazo ("unexpected end of file" em testes variados;
+    2 de 3 rodadas falhavam). Agora ele roda sozinho (`Cenario::montar_exclusivo`, vez exclusiva
+    só com nenhum cenário ativo — sem travar o teste que monta dois): `canal_administrativo` 28/0
+    em 3 rodadas seguidas. Suíte do workspace com o banco (`--no-fail-fast`): **976 passaram, 1 falhou, 2
+    ignorados** — a falha é o intermitente conhecido `habilidade_desconhecida…`, que passou 2× sozinho.
+
+    ### e. O que continua faltando
+    Vínculo (`proc_type`), id do modelo, brilho do refino para quem vê, campos da essência
+    (dano/defesa base). Nada visto em jogo.
+
+195. **Sessão 2026-10-07: janela Habilidades do personagem (ver), com ícones e nomes do cliente.**
+
+    ### a. Sintoma / pedido
+    E6 (d), parte ver; Parte 2: ícones de habilidade e mascote como os de item.
+
+    ### b. Evidência
+    - Ícone: `GNET::ElementSkill::GetIcon(id)` = o `icon` do stub `ElementSkill/skillNNN.h`
+      (`SkillStub (N)`, 3.316 stubs), título em minúsculas no atlas `IconList_Skill`
+      (`DlgChariot.cpp:554-559`); nomes GBK.
+    - Nome: `skillstr.txt` (`EC_Game.cpp:529`), chave `id × 10` (`CECSkill::GetNameDisplay`,
+      `EC_Skill.cpp:213-215`); BR em UTF-16 com `#_index`.
+    - Atlas no `surfaces.pck` 1.5.5: `iconlist_skill` DXT1 2048×1024 (24 × 64 de 32 px),
+      `iconlist_pet` **DXT3** 512×1024 (18 × 16).
+    - Habilidades aprendidas: `character_skills` é a fonte do GS (aprender grava,
+      `jogo.rs:3851`; a entrada lê para o `SKILL_DATA`, `bus_server.rs:4981-4995`).
+
+    ### c. Correção
+    `scripts/gerar_habilidades_do_cliente.py` → `painel/habilidades_do_cliente.json` (3.309/3.316
+    com ícone no atlas); `icones.py` genérico por conjunto (DXT1 + DXT3), rota
+    `/api/icones/{m|f|habilidade|mascote}/…`; `textos.nomes_das_habilidades`/`habilidades_do_cliente`;
+    rota `…/habilidades`; janela Habilidades. `skillstr.txt` incluído em `gerar_textos_de_itens.py`.
+
+    ### d. Provas
+    Painel Python 65/0 (rota com nome "Ataque do Tigre", ícone e nível máximo, 404; recorte DXT1 e
+    DXT3), Node 9/0; ícones recortados conferidos à vista (Ataque do Tigre; garça com alfa).
+
+    ### e. O que continua faltando
+    B196 ensinar/subir/remover/editar nível; descrição da habilidade (os `%d` do `skillstr`
+    dependem dos números do stub); habilidades de mascote; nada visto em jogo.

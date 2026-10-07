@@ -190,3 +190,16 @@ test("arrastar (B191) manda mover_item e, com o personagem em jogo, oferece desc
   assert.equal(c.elementos.get("confirmar-alerta").hidden, false, "pergunta antes de desconectar");
   assert.match(c.elementos.get("confirmar-alerta").textContent, /Desconectar e aplicar/);
 });
+
+test("editar item (B194) manda só o que mudou e recusa sem mudança", async () => {
+  const c = await montar();
+  c.avaliar("estado.personagemId=5; estado.itemEmEdicao={chave:'bolsa',rotulo:'Bolsa',item:{slot:3,id:3001,quantidade:10},atual:{nome:'Poção',quantidade:10,equipamento:null}}");
+  c.avaliar("elemento('ei-quantidade').value='10'");
+  await c.avaliar("salvarEdicaoDeItem()");
+  assert.equal(c.pedidos.length, 0, "sem mudança não envia");
+  c.avaliar("elemento('ei-quantidade').value='250'");
+  c.resposta(200, { estado: "salvo" });
+  await c.avaliar("salvarEdicaoDeItem()");
+  const corpo = JSON.parse(c.pedidos[0].opcoes.body);
+  assert.deepEqual(corpo.editar_item, { recipiente: "bolsa", slot: 3, id: 3001, edicao: { quantidade: 250 } });
+});

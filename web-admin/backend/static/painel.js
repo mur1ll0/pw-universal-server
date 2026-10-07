@@ -640,6 +640,7 @@ async function consultarPersonagem(realmId, id) {
     preencherAtributos(ficha);
     preencherPosicao(ficha);
     carregarInventario(estado.selecionado, id);
+    carregarHabilidades(estado.selecionado, id);
   } catch (erro) {
     if (estado.ficha !== consulta || !estado.sessao) return;
     elemento("aviso-personagens").textContent = erro.message;
@@ -724,6 +725,7 @@ async function editarPersonagem(corpo, descricao) {
         `${descricao}.${dados.dinheiro ? ` Dinheiro agora: ${BigInt(dados.dinheiro).toLocaleString("pt-BR")}.` : ""}${subiu}`);
       for (const campo of ["din-valor", "exp-valor", "sp-valor", "pontos-valor", "nivel-valor"]) elemento(campo).value = "";
       consultarPersonagem(realm.id, id);
+      return dados.estado;
     } else if (dados.estado === "desconhecido") {
       alerta("aviso", "Sem confirmação", `Operação ${operacao}: o servidor não confirmou. Confira a ficha antes de repetir.`);
     } else if (dados.codigo === "precisa_estar_offline") {
@@ -871,7 +873,7 @@ function celulaDeItem(chave, rotulo, item, sexo, legenda, slot) {
     if (item.quantidade > 1) celula.append(criar("span", "qtd-item", fmt(item.quantidade)));
     celula.addEventListener("mouseenter", () => mostrarDica(chave, item, celula));
     celula.addEventListener("mouseleave", () => esconderDica());
-    celula.addEventListener("click", () => escolherParaRemover(chave, rotulo, item, celula));
+    celula.addEventListener("click", () => abrirEdicaoDeItem(chave, rotulo, item, celula));
   } else if (legenda) {
     celula.append(criar("span", "rotulo-slot", legenda));
   }
@@ -1011,8 +1013,151 @@ async function carregarInventario(realm, id) {
   }
 }
 
+/* Habilidades (B195): as aprendidas, do banco (a fonte do GS), com o nome do `skillstr.txt` e o
+   ícone do atlas `IconList_Skill` do cliente; o nível no canto, como na janela do jogo. */
+async function carregarHabilidades(realm, id) {
+  const alvo = elemento("janela-habilidades");
+  alvo.replaceChildren(criar("p", "nota-vazia", "Carregando habilidades…"));
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/habilidades`);
+    if (estado.personagemId !== id) return;
+    const lista = dados.habilidades || [];
+    const grade = criar("div", "grade-itens");
+    for (const h of lista) {
+      const celula = criar("div", "celula-item ocupada");
+      celula.title = `${h.nome} · nível ${h.nivel}${h.nivel_maximo ? `/${h.nivel_maximo}` : ""} (ID ${h.id})`;
+      if (h.icone) {
+        const img = criar("img");
+        img.src = `/api/icones/habilidade/${h.icone}.png`;
+        img.alt = h.nome; img.width = 32; img.height = 32;
+        img.addEventListener("error", () => img.replaceWith(criar("span", "sem-icone", h.nome.slice(0, 2))));
+        celula.append(img);
+      } else {
+        celula.append(criar("span", "sem-icone", h.nome.slice(0, 2)));
+      }
+      celula.append(criar("span", "qtd-item", String(h.nivel)));
+      grade.append(celula);
+    }
+    alvo.replaceChildren(criar("p", "texto-suave", `${lista.length} habilidade${lista.length === 1 ? "" : "s"}`), grade);
+  } catch (erro) {
+    alvo.replaceChildren(criar("p", "nota-vazia", `Habilidades indisponíveis: ${erro.message}`));
+  }
+}
+
 /* Remover (B187): clicar no item abre a barra com a quantidade (a pilha inteira por padrão).
    Em jogo só bolsa e bolsa de missão; equipamento e armazém só com o personagem offline. */
+/* Editar item (B194): o modal abre com o detalhe do slot (a mesma consulta da dica) e manda
+   só os campos que mudaram; o GS confere o formato e regrava o bloco. "Remover…" leva à barra
+   de remoção do B187. */
+const CAMPOS_DE_REQUISITO = [["nivel", "ei-req-nivel"], ["forca", "ei-req-forca"], ["agilidade", "ei-req-agilidade"],
+  ["vitalidade", "ei-req-vitalidade"], ["energia", "ei-req-energia"]];
+const ORIGEM_DO_EFEITO = 0x8000 | 0x10000 | 0x20000;
+function linhaDeEfeito(efeito = { id: "", args: [] }) {
+  const linha = criar("div", "linha-efeito");
+  const id = criar("input");
+  id.type = "number"; id.min = "1"; id.max = "8191"; id.value = efeito.id; id.placeholder = "id"; id.setAttribute("aria-label", "Id do efeito");
+  const args = criar("input");
+  args.value = (efeito.args || []).join(", "); args.placeholder = "parâmetros (até 3)"; args.setAttribute("aria-label", "Parâmetros do efeito");
+  const tirar = criar("button", "botao-icone", "✕");
+  tirar.type = "button"; tirar.setAttribute("aria-label", "Tirar efeito");
+  tirar.addEventListener("click", () => linha.remove());
+  linha.append(id, args, tirar);
+  if (efeito.texto) linha.append(criar("small", "", efeito.texto));
+  return linha;
+}
+async function abrirEdicaoDeItem(chave, rotulo, item, celula) {
+  const realm = estado.selecionado;
+  const id = estado.personagemId;
+  if (!realm || !id) return;
+  esconderDica();
+  for (const outra of document.querySelectorAll?.(".celula-item.escolhido") || []) outra.classList.remove("escolhido");
+  celula.classList.add("escolhido");
+  let dados;
+  try {
+    dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/itens/${chave}/${item.slot}/dica`);
+  } catch (erro) { alerta("erro", "Item indisponível", erro.message); return; }
+  if (estado.personagemId !== id) return;
+  const atual = dados.item || {};
+  const equip = atual.equipamento || null;
+  estado.itemEmEdicao = { chave, rotulo, item, atual };
+  elemento("titulo-item").textContent = atual.nome || `Item ${item.id}`;
+  elemento("resumo-item").textContent = `${rotulo}, slot ${item.slot} · ID ${item.id}`;
+  elemento("ei-quantidade").value = String(atual.quantidade ?? item.quantidade);
+  elemento("ei-equipamento").hidden = !equip;
+  if (equip) {
+    elemento("ei-durabilidade").value = String(equip.durabilidade ?? 0);
+    elemento("ei-durabilidade-max").value = String(equip.durabilidade_maxima ?? 0);
+    elemento("ei-fabricante").value = equip.fabricante || "";
+    const refino = elemento("ei-refino");
+    refino.replaceChildren(...Array.from({ length: 13 }, (_, n) => {
+      const o = criar("option", "", n ? `+${n}` : "Sem refino"); o.value = String(n); return o;
+    }));
+    refino.value = String(equip.refino || 0);
+    const req = equip.requisitos || {};
+    for (const [campo, alvo] of CAMPOS_DE_REQUISITO) elemento(alvo).value = String(req[campo] ?? 0);
+    const classes = elemento("ei-classes");
+    classes.replaceChildren(...(dados.classes || []).map((nome, i) => {
+      const rotuloClasse = criar("label");
+      const caixa = criar("input"); caixa.type = "checkbox"; caixa.value = String(i);
+      caixa.checked = ((req.classes ?? 0xFFFF) & (1 << i)) !== 0;
+      rotuloClasse.append(caixa, document.createTextNode(nome));
+      return rotuloClasse;
+    }));
+    elemento("ei-pedras").value = (equip.furos || []).map((f) => f.id || 0).join(", ");
+    elemento("ei-efeitos").replaceChildren(...(equip.efeitos || [])
+      .filter((e) => !((e.tipo || 0) & ORIGEM_DO_EFEITO)).map((e) => linhaDeEfeito(e)));
+  }
+  elemento("modal-item").hidden = false;
+}
+function fecharEdicaoDeItem() {
+  elemento("modal-item").hidden = true;
+  estado.itemEmEdicao = null;
+}
+const inteiro = (alvo) => Math.trunc(Number(elemento(alvo).value));
+function lerEfeitos() {
+  const lista = [];
+  for (const linha of elemento("ei-efeitos").children) {
+    const [id, args] = linha.querySelectorAll("input");
+    if (!id.value) continue;
+    lista.push({ id: Math.trunc(Number(id.value)),
+      args: args.value.split(/[,\s]+/).filter(Boolean).map((v) => Math.trunc(Number(v))) });
+  }
+  return lista;
+}
+async function salvarEdicaoDeItem() {
+  const em = estado.itemEmEdicao;
+  if (!em) return;
+  const atual = em.atual;
+  const equip = atual.equipamento || null;
+  const edicao = {};
+  const q = inteiro("ei-quantidade");
+  if (q !== (atual.quantidade ?? em.item.quantidade)) edicao.quantidade = q;
+  if (equip) {
+    const d = inteiro("ei-durabilidade"), m = inteiro("ei-durabilidade-max");
+    if (d !== equip.durabilidade) edicao.durabilidade = d;
+    if (m !== equip.durabilidade_maxima) edicao.durabilidade_maxima = m;
+    const r = inteiro("ei-refino");
+    if (r !== (equip.refino || 0)) edicao.refino = r;
+    const fabricante = elemento("ei-fabricante").value;
+    if (fabricante !== (equip.fabricante || "")) edicao.fabricante = fabricante;
+    const req = Object.fromEntries(CAMPOS_DE_REQUISITO.map(([campo, alvo]) => [campo, inteiro(alvo)]));
+    req.classes = [...elemento("ei-classes").querySelectorAll("input")].reduce((m, c) => (c.checked ? m | (1 << Number(c.value)) : m),
+      (equip.requisitos?.classes ?? 0) & ~((1 << elemento("ei-classes").children.length) - 1));
+    const antes = equip.requisitos || {};
+    if (["nivel", "classes", "forca", "agilidade", "vitalidade", "energia"].some((c) => req[c] !== (antes[c] ?? 0))) edicao.requisitos = req;
+    const pedras = elemento("ei-pedras").value.split(/[,\s]+/).filter(Boolean).map((v) => Math.trunc(Number(v)));
+    if (pedras.join(",") !== (equip.furos || []).map((f) => f.id || 0).join(",")) edicao.pedras = pedras;
+    const efeitos = lerEfeitos();
+    const efeitosAntes = (equip.efeitos || []).filter((e) => !((e.tipo || 0) & ORIGEM_DO_EFEITO)).map((e) => ({ id: e.id, args: e.args || [] }));
+    if (JSON.stringify(efeitos) !== JSON.stringify(efeitosAntes)) edicao.efeitos = efeitos;
+  }
+  if (!Object.keys(edicao).length) { alerta("aviso", "Nada mudou", "Altere algum campo antes de salvar."); return; }
+  const nome = atual.nome || `Item ${em.item.id}`;
+  const resultado = await editarPersonagem({ editar_item: { recipiente: em.chave, slot: em.item.slot, id: em.item.id, edicao } },
+    `${nome}: ${Object.keys(edicao).join(", ")}`);
+  if (resultado === "aplicado" || resultado === "salvo") fecharEdicaoDeItem();
+}
+
 function escolherParaRemover(chave, rotulo, item, linha) {
   estado.remocao = { recipiente: chave, slot: item.slot, id: item.id, maximo: item.quantidade, nome: item.nome || `Item ${item.id}` };
   for (const outra of document.querySelectorAll?.(".celula-item.escolhido") || []) outra.classList.remove("escolhido");
@@ -1601,6 +1746,16 @@ elemento("redistribuir-atributos").addEventListener("click", () => redistribuirA
 for (const id of CAMPOS_DE_ATRIBUTO) elemento(id).addEventListener("input", () => atualizarSobraDeAtributos());
 elemento("form-posicao").addEventListener("submit", (evento) => { evento.preventDefault(); editarPosicao(); });
 elemento("form-remover").addEventListener("submit", (evento) => { evento.preventDefault(); removerItem(); });
+elemento("form-editar-item").addEventListener("submit", (evento) => { evento.preventDefault(); salvarEdicaoDeItem(); });
+elemento("fechar-item").addEventListener("click", fecharEdicaoDeItem);
+elemento("ei-novo-efeito").addEventListener("click", () => elemento("ei-efeitos").append(linhaDeEfeito()));
+elemento("ei-remover").addEventListener("click", () => {
+  const em = estado.itemEmEdicao;
+  if (!em) return;
+  const celula = document.querySelector?.(".celula-item.escolhido");
+  fecharEdicaoDeItem();
+  if (celula) escolherParaRemover(em.chave, em.rotulo, em.item, celula);
+});
 elemento("remover-cancelar").addEventListener("click", () => cancelarRemocao());
 elemento("form-item").addEventListener("submit", (evento) => { evento.preventDefault(); darItem(); });
 let esperaDaBusca = null;

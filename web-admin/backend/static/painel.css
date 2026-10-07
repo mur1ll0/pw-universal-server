@@ -495,3 +495,16 @@ button, input, select { font: inherit; color: inherit; }
   .barra-ferramentas { align-items: stretch; flex-direction: column; }
   .barra-busca { max-width: none; }
 }
+
+/* Editar item (B194) */
+.modal-larga { max-width: 620px; max-height: calc(100vh - 32px); overflow-y: auto; overflow-x: hidden; }
+.grade-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.grupo-campos { display: grid; gap: 12px; border: 1px solid var(--borda); border-radius: var(--raio); padding: 12px; margin: 0; }
+.grupo-campos legend { padding: 0 6px; font-size: 12px; color: var(--ouro); }
+.grade-classes { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.grade-classes label { display: inline-flex; align-items: center; gap: 4px; color: var(--texto); font-weight: 400; }
+.lista-efeitos { display: grid; gap: 6px; }
+.linha-efeito { display: grid; grid-template-columns: 90px 1fr 32px; gap: 6px; align-items: center; }
+.linha-efeito input { padding: 6px 8px; background: var(--fundo-2); border: 1px solid var(--borda-forte); border-radius: 6px; color: var(--texto); }
+.linha-efeito small { grid-column: 1 / -1; color: var(--azul); }
+.acoes-modal { display: flex; justify-content: space-between; gap: 8px; }

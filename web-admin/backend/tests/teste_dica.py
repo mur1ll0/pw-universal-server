@@ -61,6 +61,16 @@ class TesteDica(unittest.TestCase):
         self.assertIsNone(texto(445), "habilidade (55) ainda crua")
         self.assertNotIn("ITEMDESC_PDEF", textos.frases(), "além do 112 sem conferência: fora")
 
+    def test_habilidades_e_atlas_dxt1_e_dxt3(self):
+        """B195: nome pela chave id×10 do skillstr.txt; ícones de habilidade (DXT1) e mascote (DXT3)."""
+        from painel import icones
+        self.assertEqual(textos.nomes_das_habilidades()[1], "Ataque do Tigre")
+        png = icones.png_do_icone("habilidade", textos.habilidades_do_cliente()[1]["icone"])
+        assinatura = bytes([0x89]) + b"PNG"
+        self.assertTrue(png and png.startswith(assinatura), "ícone do Ataque do Tigre recortado")
+        primeiro = (icones.PASTA / "iconlist_pet.txt").read_bytes().splitlines()[4].strip()
+        self.assertTrue(icones.png_do_icone("mascote", primeiro.hex()).startswith(assinatura), "DXT3")
+
     def test_classe_que_cobre_todas_some(self):
         self.assertIsNone(dica._linha_de_classe(0xFFF, "1.5.5", 0))
         self.assertIsNone(dica._linha_de_classe(0xFF, "1.2.6", 0), "o 1.2.6 tem 8 classes")

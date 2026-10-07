@@ -239,9 +239,9 @@
               <header class="barra-janela"><h3>Bolsa de missão</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
               <div class="corpo-janela"><div id="janela-missao"></div></div>
             </section>
-            <section class="janela janela-futura" data-janela="habilidades">
+            <section class="janela" data-janela="habilidades">
               <header class="barra-janela"><h3>Habilidades</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
-              <div class="corpo-janela"><p class="nota-vazia">Em breve.</p></div>
+              <div class="corpo-janela"><div id="janela-habilidades"></div></div>
             </section>
             <section class="janela janela-futura" data-janela="mascotes">
               <header class="barra-janela"><h3>Mascotes</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
@@ -409,6 +409,49 @@
         </label>
         <p class="dica">Vale em todos os realms</p>
         <button id="aplicar-criacao" type="submit" class="botao botao-primario botao-largo">Criar conta</button>
+      </form>
+    </div>
+
+    <!-- Editar item (B194): edição livre nos valores, não no formato -->
+    <div id="modal-item" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-item" hidden>
+      <form id="form-editar-item" class="modal-caixa modal-larga formulario">
+        <header class="painel-topo">
+          <h2 id="titulo-item">Item</h2>
+          <button id="fechar-item" type="button" class="botao-icone" aria-label="Fechar">✕</button>
+        </header>
+        <p id="resumo-item" class="dica"></p>
+        <div class="grade-campos">
+          <label class="campo"><span>Quantidade</span><input id="ei-quantidade" type="number" min="1" step="1"></label>
+        </div>
+        <fieldset id="ei-equipamento" class="grupo-campos">
+          <legend>Equipamento</legend>
+          <div class="grade-campos">
+            <label class="campo"><span>Durabilidade</span><input id="ei-durabilidade" type="number" min="0" step="1"></label>
+            <label class="campo"><span>Durabilidade máx.</span><input id="ei-durabilidade-max" type="number" min="0" step="1"></label>
+            <label class="campo"><span>Refino</span><select id="ei-refino"></select></label>
+            <label class="campo"><span>Fabricante</span><input id="ei-fabricante" maxlength="20" autocomplete="off"></label>
+          </div>
+          <p class="dica">Durabilidade em unidades internas (o jogo mostra ÷100).</p>
+          <div class="grade-campos">
+            <label class="campo"><span>Nível exigido</span><input id="ei-req-nivel" type="number" min="0" max="32767" step="1"></label>
+            <label class="campo"><span>Força</span><input id="ei-req-forca" type="number" min="0" max="32767" step="1"></label>
+            <label class="campo"><span>Agilidade</span><input id="ei-req-agilidade" type="number" min="0" max="32767" step="1"></label>
+            <label class="campo"><span>Vitalidade</span><input id="ei-req-vitalidade" type="number" min="0" max="32767" step="1"></label>
+            <label class="campo"><span>Energia</span><input id="ei-req-energia" type="number" min="0" max="32767" step="1"></label>
+          </div>
+          <div class="campo"><span>Classes que podem usar</span><div id="ei-classes" class="grade-classes"></div></div>
+          <label class="campo"><span>Pedras (id por furo; 0 = vazio)</span><input id="ei-pedras" placeholder="ex.: 0, 0" autocomplete="off"></label>
+          <div class="campo">
+            <span>Efeitos (id e parâmetros)</span>
+            <div id="ei-efeitos" class="lista-efeitos"></div>
+            <button id="ei-novo-efeito" type="button" class="botao botao-secundario botao-pequeno">+ Efeito</button>
+          </div>
+          <p class="dica">Efeitos de pedra, conjunto e gravação não aparecem aqui e ficam como estão.</p>
+        </fieldset>
+        <div class="acoes-modal">
+          <button id="ei-remover" type="button" class="botao botao-secundario texto-perigo">Remover…</button>
+          <button type="submit" class="botao botao-primario">Salvar</button>
+        </div>
       </form>
     </div>
 
