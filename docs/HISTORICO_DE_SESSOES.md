@@ -12002,3 +12002,44 @@ comparação lado a lado.
     ignorados): falhou `gm_e_consumido_e_revogado_em_sessoes_vivas_126_e_155`, que passou nas 3
     rodadas seguidas do arquivo (23/0) — intermitente sob a suíte paralela; entra na lista.
     Não publicado.
+
+186. **Sessão 2026-10-06 (Claude): E6 — itens, parte 1: ver, buscar e dar.**
+    Recorte (a parte mais sensível da E6): ver os recipientes e dar item; remover e equipar
+    ficam para a parte 2. Evidência: o prêmio de missão `DeliverCommonItem`
+    (`task/taskman.cpp:281-303`) gera o item como drop (já portado, B60) e entrega **no máximo
+    uma pilha** (`count > pile_limit` → corta); o painel entrega em lotes de uma pilha, cada um
+    com `TASK_DELIVER_ITEM` (156), e simula todos numa cópia antes (tudo ou nada). Achado no
+    teste: `Bolsa::empilhar` só abre um slot novo por chamada — dar 150 de pilha 100 de uma vez
+    entregava 100.
+    Código: `servicos::nomes_de_itens` + `GameDataManager::nomes_de_itens`;
+    `EdicaoDePersonagem::Item`; `BusServer::{inventario_do_painel, buscar_itens, item_existe,
+    dar_item_offline}`; `empilhar_em_lotes`; canal `inventario`, `buscar_itens` e `item`;
+    painel com rotas `inventario`/`itens` (primeiro GS do realm) e o bloco Itens.
+    Testes: `dar_item_e_ver_inventario_online_e_offline` e canal 24/0;
+    `nomes_de_itens_do_realm` (126 7.896/7.896 com nome; 155 24.806/26.188 — `Name` vazio no
+    próprio arquivo); Python 56/0; Node 7/0; workspace 964/1 (2 ignorados): falhou
+    `o_primeiro_teste_do_guerreiro_126_da_a_arma` (entrega de item de missão), que passou 3/3
+    sozinho e no arquivo inteiro (153/0) — intermitente do `subcomandos_no_mundo` sob a suíte
+    paralela. Não publicado.
+
+187. **Sessão 2026-10-06 (Claude): E6 — itens, parte 2: remover.**
+    Evidência: o original avisa remoção pelo servidor com `PLAYER_DROP_ITEM` e o motivo; há
+    `DROP_TYPE_GM` = 0 (`common/protocol.h:927-929`), que o cliente trata com a mensagem
+    `FIXMSG_GM_REMOVESPECITEM` e tira do pacote (`EC_HostMsg.cpp:1773-1810`). No 1.2.6 o
+    `count` do 46 é u16 (layout v126, B90); o valor do motivo GM no 1.2.6 não foi conferido.
+    Código: `EdicaoDePersonagem::RemoverItem` (online bolsa/missão; equipamento/armazém
+    `precisa_estar_offline`), `tirar_conferindo` (id confere o slot), `remover_item_offline`;
+    canal `remover_item` (`RemocaoPedida`); painel com a barra Remover (clicar no item,
+    quantidade, confirmação).
+    Pedido do Murillo para depois (desenhar antes): inventário como o do jogo (ícones do
+    `surfaces.pck`, textos, arrastar) e edição de propriedades do item.
+    Testes: `remover_item_online_e_offline` (46 com motivo 0, recusas, offline no armazém) e
+    canal 25/0; Python 56/0 (na primeira rodada o teste de GM com binários reais falhou e
+    passou sozinho e na segunda rodada — intermitente); Node 7/0; workspace 964/2 (2
+    ignorados): `habilidade_desconhecida` (intermitente conhecido) e
+    `consulta_acompanha_troca_de_mapa_e_logout`. Rodando o `canal_administrativo` 3 vezes, caía
+    um teste diferente a cada vez (inclusive testes que esta fatia não toca): com 6 testes a mais
+    no arquivo desde o B182, esperas antigas de 1–2 s (entrada, troca de mapa, GM, saída)
+    estouravam sob a carga paralela — "no entry found" na espera de 1,5 s da entrada. Esperas
+    levadas a 5 s, como o `esperar_presenca` no B172 (§6.2 item 5); depois 3 rodadas de 25/0.
+    Não publicado.

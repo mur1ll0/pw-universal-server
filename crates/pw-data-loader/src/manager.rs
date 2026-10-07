@@ -247,6 +247,8 @@ pub struct GameDataManager {
     pub pontos_do_mundo: crate::world_targets::PontosDoMundo,
     /// `pile_num_max` de cada item.
     pub pilhas: HashMap<u32, u32>,
+    /// Nome de cada item (painel, B186).
+    pub nomes_de_itens: HashMap<u32, String>,
     /// As minas (`MINE_ESSENCE`) com as regras de carga do original — ver [`crate::minas`].
     pub minas: crate::minas::TabelaDeMinas,
     /// Aljavas → munição (`generate_quiver`).
@@ -516,6 +518,7 @@ impl GameDataManager {
             self.progressao = crate::progressao::TabelaDeProgressao::carregar(g);
             self.servicos_de_npc = crate::servicos::carregar(g);
             self.pilhas = crate::servicos::pilhas(g);
+            self.nomes_de_itens = crate::servicos::nomes_de_itens(g);
             self.minas = crate::minas::carregar(g);
             self.aljavas = crate::armas::carregar_aljavas(g);
             self.cartas = crate::cartas::carregar(g);

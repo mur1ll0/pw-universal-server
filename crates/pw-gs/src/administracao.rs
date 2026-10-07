@@ -62,7 +62,15 @@ pub enum Consulta {
         #[serde(default)] redistribuir: Option<bool>,
         /// Mapa e posição (E6, B185).
         #[serde(default)] posicao: Option<PosicaoPedida>,
+        /// Dar item (E6, B186): `{id, quantidade}`.
+        #[serde(default)] item: Option<ItemPedido>,
+        /// Tirar item de um slot (E6, B187).
+        #[serde(default)] remover_item: Option<RemocaoPedida>,
     },
+    /// Inventário de um personagem, com nomes (E6, B186). Só leitura.
+    Inventario { personagem_id: i32 },
+    /// Itens do `elements.data` por nome ou id (E6, B186). Só leitura.
+    BuscarItens { texto: String },
 }
 
 /// Teto de uma edição de dinheiro/EXP pelo painel: cabe no `u32`/`i32` dos pacotes
@@ -80,6 +88,29 @@ pub struct PosicaoPedida {
     pub y: Option<f32>,
     pub z: f32,
 }
+
+/// Item pedido pelo painel (B186).
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemPedido {
+    pub id: u32,
+    pub quantidade: u32,
+}
+
+/// Remoção pedida pelo painel (B187): `recipiente` é `bolsa`, `missao`, `equipamento` ou
+/// `armazem`; `quantidade` ausente = a pilha inteira; `id` confere o item do slot.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemocaoPedida {
+    pub recipiente: String,
+    pub slot: u16,
+    pub id: u32,
+    #[serde(default)]
+    pub quantidade: Option<u32>,
+}
+
+/// Teto de quantidade de um item por operação: política do painel (B186).
+const TETO_DE_QUANTIDADE: u32 = 100_000;
 
 /// Teto de coordenada pelo painel: política (os mapas do PW cabem em ±50 000), não regra.
 const TETO_DE_COORDENADA: f32 = 100_000.0;
@@ -307,11 +338,17 @@ impl ServidorAdministrativo {
                             json!({"estado":"aplicado","tipo":"definir_taxas","taxas":taxas})
                         }
                     }
-                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao } if personagem_id > 0 => {
+                    Consulta::Inventario { personagem_id } if personagem_id > 0 => {
+                        self.roteador.inventario_do_painel(personagem_id).await
+                    }
+                    Consulta::BuscarItens { texto } if texto.chars().count() <= 64 => {
+                        self.roteador.buscar_itens(&texto).await
+                    }
+                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item } if personagem_id > 0 => {
                         use crate::bus_server::EdicaoDePersonagem as E;
                         let dentro = |v: i64| v.abs() <= TETO_DA_EDICAO;
                         let tipos = [dinheiro.is_some(), exp.or(sp).is_some(), pontos.is_some(), nivel.is_some(), cultivo.is_some(),
-                            atributos.is_some(), redistribuir.is_some(), posicao.is_some()]
+                            atributos.is_some(), redistribuir.is_some(), posicao.is_some(), item.is_some(), remover_item.is_some()]
                             .iter().filter(|t| **t).count();
                         // Atributos: quatro valores entre 0 e o teto da política (B184).
                         let quatro = atributos.as_deref().and_then(|v| {
@@ -320,6 +357,21 @@ impl ServidorAdministrativo {
                         });
                         let coordenada = |v: f32| v.is_finite() && v.abs() <= TETO_DE_COORDENADA;
                         let edicao = if tipos != 1 { None }
+                            else if let Some(r) = &remover_item {
+                                let recipiente = match r.recipiente.as_str() {
+                                    "bolsa" => Some(pw_core::ContainerType::Inventory),
+                                    "missao" => Some(pw_core::ContainerType::TaskInventory),
+                                    "equipamento" => Some(pw_core::ContainerType::Equipment),
+                                    "armazem" => Some(pw_core::ContainerType::Storehouse),
+                                    _ => None,
+                                };
+                                recipiente.filter(|_| r.id > 0 && r.slot < 256 && r.quantidade.map_or(true, |q| (1..=TETO_DE_QUANTIDADE).contains(&q)))
+                                    .map(|recipiente| E::RemoverItem { recipiente, slot: r.slot, tid: r.id, quantidade: r.quantidade })
+                            }
+                            else if let Some(i) = item {
+                                (i.id > 0 && (1..=TETO_DE_QUANTIDADE).contains(&i.quantidade))
+                                    .then_some(E::Item { tid: i.id, quantidade: i.quantidade })
+                            }
                             else if let Some(p) = posicao {
                                 (p.mapa > 0 && coordenada(p.x) && coordenada(p.z) && p.y.map_or(true, coordenada))
                                     .then_some(E::Posicao { mapa: p.mapa, x: p.x, y: p.y, z: p.z })
@@ -355,6 +407,8 @@ impl ServidorAdministrativo {
                                 if let Some(a) = &atributos { parametros["atributos"] = json!(a); }
                                 if let Some(r) = redistribuir { parametros["redistribuir"] = json!(r); }
                                 if let Some(p) = posicao { parametros["posicao"] = json!(p); }
+                                if let Some(i) = item { parametros["item"] = json!(i); }
+                                if let Some(r) = &remover_item { parametros["remover_item"] = json!(r); }
                                 let impressao = Sha256::digest(serde_json::to_vec(&parametros)?);
                                 let repo = self.contas.comandos_administrativos();
                                 match repo.reservar_operacao_de_personagem(&pedido.operacao_id, pedido.administrador_id, &self.realm, &impressao).await? {

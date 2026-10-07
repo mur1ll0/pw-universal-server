@@ -482,3 +482,8 @@ cliente encerrar ("wrong config data").
 
 O pacote de servidor e os `.data` do cliente precisam ser da mesma família: `npcgen.data`,
 mapas e `.sev` **não vêm do cliente** (B11, B12).
+
+**Nomes de itens (B186):** `GameDataManager::nomes_de_itens` — o `Name` de todo registro do
+`elements.data` que declara `pile_num_max` e `ID` (o mesmo critério de `pilhas`), para o painel.
+Medido: 126 (v7) 7.896 itens, todos com nome; 155 (v156) 26.188, 24.806 com nome (o arquivo
+traz `Name` vazio nos outros). Teste `nomes_de_itens_do_realm.rs`.

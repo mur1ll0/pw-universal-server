@@ -224,6 +224,25 @@ button, input, select { font: inherit; color: inherit; }
 .recurso strong { font-size: 14px; font-weight: 600; }
 
 /* Edição de personagem (E5) */
+.itens-personagem { display: grid; gap: 10px; padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--borda); }
+.titulo-bloco { font-size: 15px; }
+#form-item.linha-edicao { grid-template-columns: 90px minmax(0, 1fr) 110px auto; }
+#form-remover.linha-edicao { grid-template-columns: 90px minmax(0, 1fr) 110px auto auto; }
+.nome-remocao { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recipiente li.clicavel { cursor: pointer; border-radius: 4px; }
+.recipiente li.clicavel:hover, .recipiente li.escolhido { background: var(--ouro-suave); }
+.resultados-item { list-style: none; margin: 0; padding: 0; border: 1px solid var(--borda); border-radius: var(--raio); max-height: 240px; overflow-y: auto; }
+.resultados-item li { padding: 8px 12px; cursor: pointer; border-top: 1px solid var(--borda); display: flex; justify-content: space-between; gap: 12px; }
+.resultados-item li:first-child { border-top: 0; }
+.resultados-item li:hover, .resultados-item li.escolhido { background: var(--ouro-suave); }
+.resultados-item small, .recipiente small { color: var(--texto-3); }
+.grade-recipientes { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.recipiente { border: 1px solid var(--borda); border-radius: var(--raio); padding: 10px 12px; }
+.recipiente h4 { font-size: 13px; color: var(--texto-2); margin-bottom: 6px; }
+.recipiente ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+.recipiente li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; }
+.recipiente li span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) { #form-item.linha-edicao { grid-template-columns: 1fr 90px; } #form-item .rotulo-edicao { grid-column: 1 / -1; } }
 .edicao-personagem { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--borda); }
 .linha-edicao { display: grid; grid-template-columns: 90px minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 #form-exp.linha-edicao { grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1fr) auto; }

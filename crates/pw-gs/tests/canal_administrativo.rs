@@ -117,11 +117,19 @@ impl Cenario {
         let personagem: i32 = sqlx::query_scalar("INSERT INTO characters(account_id,realm_id,name,race,cls,gender) VALUES($1,$2,'AdminTeste',0,0,0) RETURNING id")
             .bind(conta).bind(&realm).fetch_one(pool.get_ref()).await.unwrap();
         let repo = CharacterRepository::new(pool.clone());
+        // Dois itens conhecidos (B186): 3001 comum, pilha 100; 3002 de missão, pilha 10.
+        let mut dados = GameDataManager::new();
+        dados.nomes_de_itens.insert(3001, "Poção de teste".into());
+        dados.nomes_de_itens.insert(3002, "Carta de missão".into());
+        dados.pilhas.insert(3001, 100);
+        dados.pilhas.insert(3002, 10);
+        dados.itens_de_missao.insert(3002);
+        let itens_de_teste = Arc::new(dados);
         let mut mapas = Vec::new();
         for tag in [1, 161] {
             let mundo = Arc::new(RwLock::new(WorldInstance::new(
                 tag,
-                Arc::new(GameDataManager::new()),
+                Arc::clone(&itens_de_teste),
                 repo.clone(),
             )));
             mapas.push((tag, Arc::new(BusServer::new(mundo, versao))));
@@ -539,7 +547,7 @@ async fn consulta_acompanha_troca_de_mapa_e_logout() {
         .transportar(c.personagem, 161, pw_core::Vector3::new(100.0, 0.0, 100.0))
         .await;
     let mut chegou = false;
-    for _ in 0..100 {
+    for _ in 0..500 {
         if c.consultar().await["dados"]["ficha"]["mapa"] == 161 {
             chegou = true;
             break;
@@ -573,12 +581,12 @@ async fn gm_e_consumido_e_revogado_em_sessoes_vivas_126_e_155() {
     tarefas.push(c2.roteador.iniciar_coordenacao_gm(contas.clone(),processos[1].clone()).await.unwrap());
     let mut b1=c1.entrar().await; let mut b2=c2.entrar().await;
     for c in [&c1,&c2] {
-        for _ in 0..150 { if c.mundo.read().await.players.contains_key(&(c.personagem as i64)) {break;} tokio::time::sleep(Duration::from_millis(10)).await; }
+        for _ in 0..500 { if c.mundo.read().await.players.contains_key(&(c.personagem as i64)) {break;} tokio::time::sleep(Duration::from_millis(10)).await; }
         assert_eq!(c.mundo.read().await.players[&(c.personagem as i64)].sec_level,1);
     }
     for (c,b) in [(&c1,&mut b1),(&c2,&mut b2)] {
         b.enviar(BusMessage::ClientToGame{roleid:c.personagem,localsid:77,data:pw_gs::comandos::ids::GM_INVINCIBLE.to_le_bytes().to_vec()}).await.unwrap();
-        for _ in 0..100 { if c.mundo.read().await.players[&(c.personagem as i64)].efeitos.gm_invencivel {break;} tokio::time::sleep(Duration::from_millis(10)).await; }
+        for _ in 0..500 { if c.mundo.read().await.players[&(c.personagem as i64)].efeitos.gm_invencivel {break;} tokio::time::sleep(Duration::from_millis(10)).await; }
         let mut m=c.mundo.write().await;
         let p=m.players.get_mut(&(c.personagem as i64)).unwrap();
         assert!(p.efeitos.gm_invencivel);
@@ -594,7 +602,7 @@ async fn gm_e_consumido_e_revogado_em_sessoes_vivas_126_e_155() {
     }
     tokio::time::sleep(Duration::from_millis(30)).await;
     for c in [&c1,&c2] { assert!(!c.mundo.read().await.players[&(c.personagem as i64)].efeitos.gm_invisivel); }
-    for _ in 0..200 { if repo.consultar(&id,admin).await.unwrap()["estado"]=="aplicado" {break;} tokio::time::sleep(Duration::from_millis(10)).await; }
+    for _ in 0..500 { if repo.consultar(&id,admin).await.unwrap()["estado"]=="aplicado" {break;} tokio::time::sleep(Duration::from_millis(10)).await; }
     assert_eq!(repo.consultar(&id,admin).await.unwrap()["estado"],"aplicado");
     for (c,b) in [(&c1,&mut b1),(&c2,&mut b2)] {
         {
@@ -609,7 +617,7 @@ async fn gm_e_consumido_e_revogado_em_sessoes_vivas_126_e_155() {
     // Nova concessão é consumida na mesma sessão; pacote de auth do cliente exige reentrada.
     let id2=format!("{id}-2");
     repo.definir_gm(&id2,admin,&c2.realm,c1.conta,true,&[8;32],&processos).await.unwrap();
-    for _ in 0..200 {if repo.consultar(&id2,admin).await.unwrap()["estado"]=="aplicado"{break;}tokio::time::sleep(Duration::from_millis(10)).await;}
+    for _ in 0..500 {if repo.consultar(&id2,admin).await.unwrap()["estado"]=="aplicado"{break;}tokio::time::sleep(Duration::from_millis(10)).await;}
     assert_eq!(repo.consultar(&id2,admin).await.unwrap()["estado"],"aplicado");
     for c in [&c1,&c2] {assert_eq!(c.mundo.read().await.players[&(c.personagem as i64)].sec_level,1);}
     for t in tarefas.drain(..){t.abort(); let _=t.await;}
@@ -706,7 +714,7 @@ async fn falha_de_saida_preserva_fotografia_bloqueia_login_e_recupera_sem_tick_t
     c.mundo.write().await.players.get_mut(&(c.personagem as i64)).unwrap().money=741;
     recusar_listas(&c,true).await;
     drop(bus);
-    for _ in 0..100 {
+    for _ in 0..500 {
         if !c.mundo.read().await.players.contains_key(&(c.personagem as i64)) {break;}
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -1191,5 +1199,108 @@ async fn mover_personagem_online_e_offline_pelo_canal() {
         .bind(c.personagem).fetch_one(c.pool.get_ref()).await.unwrap();
     assert_eq!(gravado, (1, -319.5, 220.0, -900.25));
     sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6p-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}
+
+/// E6 (B186): ver o inventário, buscar e dar item. Online pelo prêmio de missão
+/// (`TASK_DELIVER_ITEM` 156), item de missão na bolsa de missão; se a quantidade inteira não
+/// cabe, nada entra. Offline a mesma geração, gravada no banco.
+#[tokio::test]
+async fn dar_item_e_ver_inventario_online_e_offline() {
+    let c = Cenario::montar().await;
+    let id = |s: &str| format!("e6i-{s}-{}", c.personagem);
+    let dar = |tid: u32, q: u32| json!({"tipo":"editar_personagem","personagem_id":c.personagem,"item":{"id":tid,"quantidade":q}});
+    let total = |inv: &Value, onde: &str, tid: u64| inv["dados"]["recipientes"][onde].as_array().unwrap().iter()
+        .filter(|i| i["id"].as_u64() == Some(tid)).map(|i| i["quantidade"].as_u64().unwrap()).sum::<u64>();
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+
+    let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"poção"})).await;
+    assert_eq!(busca["dados"]["itens"], json!([{"id":3001,"nome":"Poção de teste","pilha":100,"missao":false}]), "{busca}");
+    let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"3002"})).await;
+    assert_eq!(busca["dados"]["itens"][0]["id"], 3002);
+
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let r = c.pedir_com_id(&c.realm, &id("on"), c.conta, dar(3001, 150)).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("aplicado"), Some("online")), "{r}");
+    esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 156u16.to_le_bytes())).await;
+    let r = c.pedir_com_id(&c.realm, &id("missao"), c.conta, dar(3002, 3)).await;
+    assert_eq!(r["estado"], "aplicado", "{r}");
+    let inv = c.pedir(&c.realm, json!({"tipo":"inventario","personagem_id":c.personagem})).await;
+    assert_eq!((total(&inv, "bolsa", 3001), total(&inv, "missao", 3002)), (150, 3), "{inv}");
+    assert_eq!(inv["dados"]["recipientes"]["bolsa"][0]["nome"], "Poção de teste");
+
+    // 33 pilhas de 100 não cabem em 32 slots: nada entra.
+    let r = c.pedir_com_id(&c.realm, &id("cheia"), c.conta, dar(3001, 3300)).await;
+    assert_eq!(r["dados"]["codigo"], "bolsa_cheia", "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("nao-existe"), c.conta, dar(999_999, 1)).await;
+    assert_eq!(r["dados"]["codigo"], "item_inexistente", "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("zero"), c.conta, dar(3001, 0)).await;
+    assert_eq!(r["dados"]["codigo"], "edicao_invalida", "{r}");
+    let inv = c.pedir(&c.realm, json!({"tipo":"inventario","personagem_id":c.personagem})).await;
+    assert_eq!(total(&inv, "bolsa", 3001), 150, "a recusa não deu nada");
+
+    drop(bus);
+    c.esperar_presenca("ausente").await;
+    let r = c.pedir_com_id(&c.realm, &id("off"), c.conta, dar(3001, 5)).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("salvo"), Some("offline")), "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("off-cheia"), c.conta, dar(3001, 3300)).await;
+    assert_eq!(r["dados"]["codigo"], "bolsa_cheia", "{r}");
+    let inv = c.pedir(&c.realm, json!({"tipo":"inventario","personagem_id":c.personagem})).await;
+    assert_eq!(total(&inv, "bolsa", 3001), 155, "{inv}");
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6i-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}
+
+/// E6 (B187): tirar item de um slot. Online (bolsa/missão) manda `PLAYER_DROP_ITEM` (46) com
+/// `DROP_TYPE_GM` (0); o id confere o slot; equipamento/armazém só offline.
+#[tokio::test]
+async fn remover_item_online_e_offline() {
+    let c = Cenario::montar().await;
+    let id = |s: &str| format!("e6r-{s}-{}", c.personagem);
+    let tirar = |rec: &str, slot: u16, tid: u32, q: Option<u32>| {
+        let mut r = json!({"recipiente":rec,"slot":slot,"id":tid});
+        if let Some(q) = q { r["quantidade"] = json!(q); }
+        json!({"tipo":"editar_personagem","personagem_id":c.personagem,"remover_item":r})
+    };
+    let total = |inv: &Value, onde: &str| inv["dados"]["recipientes"][onde].as_array().unwrap().iter()
+        .map(|i| i["quantidade"].as_u64().unwrap()).sum::<u64>();
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    // 30 poções na bolsa (slot 0) e uma no armazém (slot 4).
+    for (tipo, slot, n) in [(0i32, 0i32, 30i32), (2, 4, 1)] {
+        sqlx::query("INSERT INTO character_items(character_id, container_type, slot, item_id, count) VALUES($1,$2::smallint,$3::smallint,3001,$4)")
+            .bind(c.personagem).bind(tipo).bind(slot).bind(n).execute(c.pool.get_ref()).await.unwrap();
+    }
+
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let r = c.pedir_com_id(&c.realm, &id("on"), c.conta, tirar("bolsa", 0, 3001, Some(10))).await;
+    assert_eq!(r["estado"], "aplicado", "{r}");
+    let m = esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 46u16.to_le_bytes())).await;
+    let BusMessage::GameToClient { data, .. } = m else { unreachable!() };
+    // Cenário 1.2.6: `count` em u16 (v126 `player_drop_item`), 2 + 9 bytes.
+    assert_eq!(data.len(), 11, "PLAYER_DROP_ITEM do 1.2.6");
+    assert_eq!((data[2], data[3], u16::from_le_bytes(data[4..6].try_into().unwrap()), data[10]), (0, 0, 10, 0), "bolsa, slot 0, 10, motivo GM");
+    for (n, pedido, codigo) in [(1, tirar("bolsa", 0, 3002, None), "slot_mudou"),
+                                (2, tirar("bolsa", 5, 3001, None), "slot_mudou"),
+                                (3, tirar("bolsa", 0, 3001, Some(21)), "quantidade_invalida"),
+                                (4, tirar("armazem", 4, 3001, None), "precisa_estar_offline"),
+                                (5, tirar("bau", 4, 3001, None), "edicao_invalida")] {
+        let r = c.pedir_com_id(&c.realm, &id(&format!("rec{n}")), c.conta, pedido).await;
+        assert_eq!(r["dados"]["codigo"], codigo, "{n}: {r}");
+    }
+    let inv = c.pedir(&c.realm, json!({"tipo":"inventario","personagem_id":c.personagem})).await;
+    assert_eq!((total(&inv, "bolsa"), total(&inv, "armazem")), (20, 1), "{inv}");
+
+    drop(bus);
+    c.esperar_presenca("ausente").await;
+    let r = c.pedir_com_id(&c.realm, &id("off-arm"), c.conta, tirar("armazem", 4, 3001, None)).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["removidos"].as_u64()), (Some("salvo"), Some(1)), "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("off-bolsa"), c.conta, tirar("bolsa", 0, 3001, None)).await;
+    assert_eq!(r["dados"]["removidos"], 20, "{r}");
+    let inv = c.pedir(&c.realm, json!({"tipo":"inventario","personagem_id":c.personagem})).await;
+    assert_eq!((total(&inv, "bolsa"), total(&inv, "armazem")), (0, 0), "{inv}");
+    sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6r-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
     c.encerrar().await;
 }

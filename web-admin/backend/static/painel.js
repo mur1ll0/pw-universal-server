@@ -606,6 +606,7 @@ async function consultarPersonagem(realmId, id) {
     preencherCultivos(estado.selecionado?.versao, ficha.cultivo);
     preencherAtributos(ficha);
     preencherPosicao(ficha);
+    carregarInventario(estado.selecionado, id);
   } catch (erro) {
     if (estado.ficha !== consulta || !estado.sessao) return;
     elemento("aviso-personagens").textContent = erro.message;
@@ -645,6 +646,11 @@ const MOTIVOS_EDICAO = {
   mapa_indisponivel: "O mapa de destino não está ligado neste realm.",
   fora_do_mapa: "Essas coordenadas ficam fora do terreno do mapa.",
   altura_obrigatoria: "Este mapa não tem terreno carregado: informe o Y.",
+  bolsa_cheia: "Não cabe tudo na bolsa (nada foi dado).",
+  slot_mudou: "O item mudou de lugar desde a consulta; atualize a ficha.",
+  quantidade_invalida: "Quantidade maior que a pilha.",
+  precisa_estar_offline: "Equipamento e armazém só com o personagem fora do jogo.",
+  item_inexistente: "Este realm não tem esse item.",
   em_transicao: "O personagem está entrando ou saindo agora; tente de novo em instantes.",
   personagem_inexistente: "O personagem não existe mais.",
   operacao_em_conflito: "Esta operação já foi usada com outros valores.",
@@ -763,6 +769,110 @@ function editarPosicao() {
   }
   const posicao = { mapa, x, z, ...(y === null ? {} : { y }) };
   editarPersonagem({ posicao }, `Mover para o mapa ${mapa} (${x.toFixed(0)}, ${z.toFixed(0)})`);
+}
+
+/* Itens (E6, B186): os quatro recipientes do banco com nomes, e dar item com busca por nome
+   ou ID (lista de até 30). A entrega segue o prêmio de missão: lotes de uma pilha, item de
+   missão na bolsa de missão; não dá nada se não couber tudo. */
+const RECIPIENTES = [["bolsa", "Bolsa"], ["equipamento", "Equipamento"], ["armazem", "Armazém"], ["missao", "Bolsa de missão"]];
+async function carregarInventario(realm, id) {
+  const alvo = elemento("recipientes-itens");
+  cancelarRemocao();
+  alvo.replaceChildren(criar("p", "nota-vazia", "Carregando itens…"));
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/inventario`);
+    if (estado.personagemId !== id) return;
+    alvo.replaceChildren();
+    for (const [chave, rotulo] of RECIPIENTES) {
+      const itens = dados.recipientes?.[chave] || [];
+      const caixa = criar("section", "recipiente");
+      caixa.append(criar("h4", "", `${rotulo} (${itens.length})`));
+      const lista = criar("ol");
+      if (!itens.length) lista.append(criar("li", "dica", "Vazio"));
+      for (const item of itens) {
+        const linha = criar("li", "clicavel");
+        linha.addEventListener("click", () => escolherParaRemover(chave, rotulo, item, linha));
+        const nome = criar("span", "", item.nome || `Item ${item.id}`);
+        nome.title = `ID ${item.id}`;
+        linha.append(criar("small", "", String(item.slot)), nome, criar("span", "", `×${fmt(item.quantidade)}`));
+        lista.append(linha);
+      }
+      caixa.append(lista);
+      alvo.append(caixa);
+    }
+  } catch (erro) {
+    alvo.replaceChildren(criar("p", "nota-vazia", `Itens indisponíveis: ${erro.message}`));
+  }
+}
+
+/* Remover (B187): clicar no item abre a barra com a quantidade (a pilha inteira por padrão).
+   Em jogo só bolsa e bolsa de missão; equipamento e armazém só com o personagem offline. */
+function escolherParaRemover(chave, rotulo, item, linha) {
+  estado.remocao = { recipiente: chave, slot: item.slot, id: item.id, maximo: item.quantidade, nome: item.nome || `Item ${item.id}` };
+  for (const outra of document.querySelectorAll?.(".recipiente li.escolhido") || []) outra.classList.remove("escolhido");
+  linha.classList.add("escolhido");
+  elemento("remover-qual").textContent = `${estado.remocao.nome} · ${rotulo}, slot ${item.slot} (×${fmt(item.quantidade)})`;
+  elemento("remover-quantidade").max = String(item.quantidade);
+  elemento("remover-quantidade").value = String(item.quantidade);
+  elemento("form-remover").hidden = false;
+}
+function cancelarRemocao() {
+  estado.remocao = null;
+  elemento("form-remover").hidden = true;
+}
+async function removerItem() {
+  const r = estado.remocao;
+  if (!r) return;
+  const quantidade = Math.trunc(Number(elemento("remover-quantidade").value));
+  if (!Number.isFinite(quantidade) || quantidade < 1 || quantidade > r.maximo) { alerta("erro", "Valor inválido", `De 1 a ${fmt(r.maximo)}.`); return; }
+  const sim = await confirmar("Remover item?", `${fmt(quantidade)} × ${r.nome}. Não há como desfazer.`, "Remover");
+  if (!sim) { fecharAlerta(); return; }
+  cancelarRemocao();
+  await editarPersonagem({ remover_item: { recipiente: r.recipiente, slot: r.slot, id: r.id, quantidade } },
+    `Removido ${fmt(quantidade)} × ${r.nome}`);
+}
+
+let buscaDeItem = 0;
+async function buscarItem() {
+  const realm = estado.selecionado;
+  const texto = elemento("item-busca").value.trim();
+  const lista = elemento("item-resultados");
+  estado.itemEscolhido = null;
+  elemento("item-escolhido").textContent = "";
+  if (!realm || texto.length < 2) { lista.hidden = true; return; }
+  const minha = ++buscaDeItem;
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/itens?busca=${encodeURIComponent(texto)}`);
+    if (minha !== buscaDeItem) return;
+    lista.replaceChildren();
+    for (const item of dados.itens) {
+      const linha = criar("li");
+      linha.append(criar("span", "", item.nome || `Item ${item.id}`),
+        criar("small", "", `ID ${item.id} · pilha ${item.pilha}${item.missao ? " · missão" : ""}`));
+      linha.addEventListener("click", () => escolherItem(item, linha));
+      lista.append(linha);
+    }
+    if (!dados.itens.length) lista.append(criar("li", "dica", "Nenhum item com esse nome."));
+    lista.hidden = false;
+  } catch (erro) {
+    lista.replaceChildren(criar("li", "dica", erro.message));
+    lista.hidden = false;
+  }
+}
+function escolherItem(item, linha) {
+  estado.itemEscolhido = item;
+  for (const outra of elemento("item-resultados").children) outra.classList?.remove("escolhido");
+  linha.classList.add("escolhido");
+  elemento("item-escolhido").textContent = `Escolhido: ${item.nome || "Item"} (ID ${item.id}, pilha ${item.pilha}${item.missao ? ", vai à bolsa de missão" : ""}).`;
+}
+async function darItem() {
+  const texto = elemento("item-busca").value.trim();
+  const id = estado.itemEscolhido?.id ?? (/^\d+$/.test(texto) ? Number(texto) : null);
+  const quantidade = Math.trunc(Number(elemento("item-quantidade").value));
+  if (!id) { alerta("erro", "Escolha o item", "Busque pelo nome e clique no item, ou digite o ID."); return; }
+  if (!Number.isFinite(quantidade) || quantidade < 1 || quantidade > 100_000) { alerta("erro", "Valor inválido", "Quantidade de 1 a 100.000."); return; }
+  const nome = estado.itemEscolhido?.nome || `item ${id}`;
+  await editarPersonagem({ item: { id, quantidade } }, `Dado ${quantidade.toLocaleString("pt-BR")} × ${nome}`);
 }
 
 function editarPontos() {
@@ -1271,6 +1381,14 @@ elemento("form-atributos").addEventListener("submit", (evento) => { evento.preve
 elemento("redistribuir-atributos").addEventListener("click", () => redistribuirAtributos());
 for (const id of CAMPOS_DE_ATRIBUTO) elemento(id).addEventListener("input", () => atualizarSobraDeAtributos());
 elemento("form-posicao").addEventListener("submit", (evento) => { evento.preventDefault(); editarPosicao(); });
+elemento("form-remover").addEventListener("submit", (evento) => { evento.preventDefault(); removerItem(); });
+elemento("remover-cancelar").addEventListener("click", () => cancelarRemocao());
+elemento("form-item").addEventListener("submit", (evento) => { evento.preventDefault(); darItem(); });
+let esperaDaBusca = null;
+elemento("item-busca").addEventListener("input", () => {
+  if (esperaDaBusca) clearTimeout(esperaDaBusca);
+  esperaDaBusca = temTempo ? setTimeout(buscarItem, 300) : null;
+});
 elemento("form-cultivo").addEventListener("submit", (evento) => { evento.preventDefault(); editarCultivo(); });
 elemento("criacao-conta").addEventListener("submit", (evento) => { evento.preventDefault(); executarComando(false, "criar_conta"); });
 elemento("recuperar-comando").addEventListener("click", () => { pararAcompanhamento(); executarComando(true); });

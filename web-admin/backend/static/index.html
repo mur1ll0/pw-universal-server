@@ -183,6 +183,25 @@
                 </form>
                 <p id="dica-edicao" class="dica"></p>
               </div>
+              <div class="itens-personagem">
+                <h3 class="titulo-bloco">Itens</h3>
+                <form id="form-item" class="linha-edicao">
+                  <span class="rotulo-edicao">Dar item</span>
+                  <input id="item-busca" type="search" maxlength="64" placeholder="Nome ou ID do item" aria-label="Buscar item por nome ou ID" autocomplete="off">
+                  <input id="item-quantidade" type="number" min="1" max="100000" step="1" value="1" aria-label="Quantidade" title="Quantidade">
+                  <button type="submit" class="botao botao-primario">Dar</button>
+                </form>
+                <ul id="item-resultados" class="resultados-item" hidden></ul>
+                <p id="item-escolhido" class="dica"></p>
+                <form id="form-remover" class="linha-edicao" hidden>
+                  <span class="rotulo-edicao">Remover</span>
+                  <span id="remover-qual" class="nome-remocao"></span>
+                  <input id="remover-quantidade" type="number" min="1" step="1" aria-label="Quantidade a remover" title="Quantidade a remover">
+                  <button type="submit" class="botao botao-secundario texto-perigo">Remover</button>
+                  <button id="remover-cancelar" type="button" class="botao botao-secundario">Cancelar</button>
+                </form>
+                <div id="recipientes-itens" class="grade-recipientes"></div>
+              </div>
             </article>
           </div>
         </section>

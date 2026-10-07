@@ -1,6 +1,6 @@
 """Consultas somente de leitura com origem explícita e alvo validado no banco."""
 from fastapi import HTTPException, Path, Query, Request
-from .canal import CanalIndisponivel, consultar_daemons
+from .canal import CanalIndisponivel, consultar_daemons, resposta_do_primeiro
 import json
 import pathlib
 
@@ -46,6 +46,29 @@ def registrar_consultas(app):
         if versao is None:
             raise HTTPException(404, "Realm não encontrado.")
         return {"realm_id": realm_id, "versao": versao, "mapas": CATALOGO_DE_MAPAS.get(versao, [])}
+
+    async def consultar_primeiro(realm_id, requisicao, consulta):
+        """Leitura que qualquer GS do realm responde igual (banco + elements.data): o primeiro."""
+        await validar_realm(realm_id)
+        try:
+            estado, dados = await resposta_do_primeiro(realm_id, requisicao.state.administrador["conta_id"], consulta)
+        except CanalIndisponivel as erro:
+            raise HTTPException(503, str(erro))
+        if estado != "consultado":
+            raise HTTPException(503, str(dados.get("codigo") or "Consulta recusada pelo servidor de mundo."))
+        return dados
+
+    @app.get("/api/realms/{realm_id}/personagens/{personagem_id}/inventario")
+    async def inventario(realm_id: str, requisicao: Request, personagem_id: int = Path(..., ge=1, le=2_147_483_647)):
+        """E6 (B186): bolsa, equipamento, armazém e bolsa de missão, com nomes do elements.data."""
+        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "inventario", "personagem_id": personagem_id})
+        return {"realm_id": realm_id, "personagem_id": personagem_id, "recipientes": dados.get("recipientes", {})}
+
+    @app.get("/api/realms/{realm_id}/itens")
+    async def buscar_itens(realm_id: str, requisicao: Request, busca: str = Query(..., min_length=1, max_length=64)):
+        """E6 (B186): até 30 itens do elements.data do realm por nome ou id."""
+        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "buscar_itens", "texto": busca})
+        return {"realm_id": realm_id, "itens": dados.get("itens", [])}
 
     @app.get("/api/realms/{realm_id}/personagens")
     async def buscar_personagens(realm_id: str, busca: str = Query("", max_length=64)):

@@ -206,6 +206,27 @@ fn destinos(r: Option<&Record>) -> Vec<DestinoDeTeleporte> {
         .collect()
 }
 
+/// Nome de todo item (`Name` dos registros que declaram `pile_num_max`, o mesmo critério de
+/// [`pilhas`]): o painel mostra e busca itens por ele (B186).
+pub fn nomes_de_itens(g: &GenericElementsData) -> HashMap<u32, String> {
+    let mut t = HashMap::new();
+    for registros in g.tables.values() {
+        let Some(primeiro) = registros.first() else { continue };
+        if !primeiro.contains_key("pile_num_max") || !primeiro.contains_key("ID") {
+            continue;
+        }
+        for r in registros {
+            let id = i(r, "ID");
+            let nome = r.get("Name").and_then(|v| v.as_text()).unwrap_or("")
+                .trim_end_matches('\0').trim().to_string();
+            if id > 0 {
+                t.entry(id as u32).or_insert(nome);
+            }
+        }
+    }
+    t
+}
+
 /// `pile_num_max` de todo item que o declara.
 pub fn pilhas(g: &GenericElementsData) -> HashMap<u32, u32> {
     let mut t = HashMap::new();

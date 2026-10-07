@@ -778,6 +778,16 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
             exp = await conexao.fetchval("SELECT double_exp_multiplier FROM realms WHERE id=$1", realm)
         self.assertEqual(float(exp), 1.0)
 
+    async def test_inventario_e_busca_de_itens_exigem_canal_e_parametros(self):
+        """B186: leitura pelo primeiro GS; sem canal 503; busca exige 1–64 caracteres."""
+        realm, personagem = await self.criar_personagem()
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/itens")).status_code, 422)
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/itens?busca=" + "x" * 65)).status_code, 422)
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/personagens/0/inventario")).status_code, 422)
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/itens?busca=po")).status_code, 503)
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/personagens/{personagem}/inventario")).status_code, 503)
+        self.assertEqual((await self.cliente.get(f"/api/realms/inexistente/itens?busca=po")).status_code, 404)
+
     async def test_catalogo_de_mapas_por_versao(self):
         """B183: todos os mapas da versão do realm, do gs.conf original (126: 43; 155: 79)."""
         realm, _ = await self.criar_personagem()
@@ -839,11 +849,24 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          # B185: posição com mapa ≥ 1, x/z obrigatórios, ±100 000, sem campo extra.
                          {"posicao": {"mapa": 0, "x": 1.0, "z": 1.0}}, {"posicao": {"mapa": 1, "x": 1.0}},
                          {"posicao": {"mapa": 1, "x": 200_000.0, "z": 1.0}}, {"posicao": {"mapa": 1, "x": 1.0, "z": 1.0, "w": 1}},
-                         {"posicao": {"mapa": 1, "x": "1", "z": 1.0}}, {"posicao": {"mapa": 1, "x": 1.0, "z": 1.0}, "pontos": 1}):
+                         {"posicao": {"mapa": 1, "x": "1", "z": 1.0}}, {"posicao": {"mapa": 1, "x": 1.0, "z": 1.0}, "pontos": 1},
+                         # B186: item com id ≥ 1 e quantidade 1–100 000, sem campo extra.
+                         {"item": {"id": 0, "quantidade": 1}}, {"item": {"id": 1, "quantidade": 0}},
+                         {"item": {"id": 1, "quantidade": 100_001}}, {"item": {"id": 1}},
+                         {"item": {"id": 1, "quantidade": 1, "slot": 2}}, {"item": {"id": 1, "quantidade": 1}, "pontos": 1},
+                         # B187: remover com recipiente conhecido, slot 0–255, id ≥ 1.
+                         {"remover_item": {"recipiente": "bau", "slot": 0, "id": 1}},
+                         {"remover_item": {"recipiente": "bolsa", "slot": 256, "id": 1}},
+                         {"remover_item": {"recipiente": "bolsa", "slot": 0, "id": 0}},
+                         {"remover_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "quantidade": 0}},
+                         {"remover_item": {"recipiente": "bolsa", "slot": 0}}):
             self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
         for valido in ({"dinheiro": 10}, {"pontos": 5}, {"nivel": 30}, {"cultivo": 0},
                        {"atributos": [5, 5, 5, 5]}, {"redistribuir": True},
-                       {"posicao": {"mapa": 1, "x": -319.5, "z": -900.0}}, {"posicao": {"mapa": 161, "x": 1, "y": 2.5, "z": 3}}):
+                       {"posicao": {"mapa": 1, "x": -319.5, "z": -900.0}}, {"posicao": {"mapa": 161, "x": 1, "y": 2.5, "z": 3}},
+                       {"item": {"id": 3001, "quantidade": 150}},
+                       {"remover_item": {"recipiente": "armazem", "slot": 4, "id": 3001}},
+                       {"remover_item": {"recipiente": "bolsa", "slot": 0, "id": 3001, "quantidade": 5}}):
             resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
             self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
 

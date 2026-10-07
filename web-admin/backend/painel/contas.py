@@ -64,6 +64,22 @@ class PosicaoPedida(BaseModel):
     z: float = Field(ge=-100_000, le=100_000, allow_inf_nan=False)
 
 
+class ItemPedido(BaseModel):
+    """E6 (B186): item a dar; 1–100 000 por operação é política do painel."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    id: int = Field(ge=1, le=2_147_483_647)
+    quantidade: int = Field(ge=1, le=100_000)
+
+
+class RemocaoPedida(BaseModel):
+    """E6 (B187): tirar do slot; `id` confere o item; sem quantidade = a pilha inteira."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    recipiente: Literal["bolsa", "missao", "equipamento", "armazem"]
+    slot: int = Field(ge=0, le=255)
+    id: int = Field(ge=1, le=2_147_483_647)
+    quantidade: Optional[int] = Field(default=None, ge=1, le=100_000)
+
+
 class EdicaoPersonagem(BaseModel):
     """E5: um só de dinheiro (dar), exp/sp (somar), pontos (dar pontos livres), nivel (alvo,
     só sobe) ou cultivo (B182). Tetos: pacotes de recompensa de missão (u32/i32), teto de
@@ -82,6 +98,8 @@ class EdicaoPersonagem(BaseModel):
     atributos: Optional[list[Annotated[int, Field(ge=0, le=100_000)]]] = Field(default=None, min_length=4, max_length=4)
     redistribuir: Optional[Literal[True]] = None
     posicao: Optional[PosicaoPedida] = None
+    item: Optional[ItemPedido] = None
+    remover_item: Optional[RemocaoPedida] = None
 
 
 def somar_desconexoes(resultado):
@@ -231,13 +249,13 @@ def registrar_contas(app):
         """E5 (B179, B182): online aplica no jogo; offline grava no banco o que não exige a
         entidade (tudo menos EXP/SP). Quem decide online/offline é o GS."""
         experiencia = bool(pedido.exp or pedido.sp)
-        simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao")
-                   if getattr(pedido, k) is not None]
+        simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao", "item",
+                               "remover_item") if getattr(pedido, k) is not None]
         if len(simples) + experiencia != 1:
             raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo, atributos ou posição.")
         consulta = {"tipo": "editar_personagem", "personagem_id": personagem_id}
-        if simples == ["posicao"]:
-            consulta["posicao"] = pedido.posicao.model_dump(exclude_none=True)
+        if simples in (["posicao"], ["item"], ["remover_item"]):
+            consulta[simples[0]] = getattr(pedido, simples[0]).model_dump(exclude_none=True)
         elif simples:
             consulta[simples[0]] = getattr(pedido, simples[0])
         else:

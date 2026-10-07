@@ -524,6 +524,9 @@ impl RoteadorDeMapas {
                 return serde_json::json!({"estado":"falha","codigo":"cultivo_invalido"});
             }
             E::Posicao { mapa, x, y, z } => return self.mover_pelo_painel(roleid, mapa, x, y, z).await,
+            E::Item { tid, .. } if !bus.item_existe(tid).await => {
+                return serde_json::json!({"estado":"falha","codigo":"item_inexistente","item":tid});
+            }
             _ => {}
         }
         let _comando = self.presenca.read().await;
@@ -549,6 +552,14 @@ impl RoteadorDeMapas {
             E::Experiencia { .. } => serde_json::json!({"estado":"falha","codigo":"precisa_estar_online"}),
             // Já tratada no começo (`mover_pelo_painel`).
             E::Posicao { .. } => serde_json::json!({"estado":"falha","codigo":"edicao_invalida"}),
+            E::RemoverItem { recipiente, slot, tid, quantidade } => match bus.remover_item_offline(roleid, recipiente, slot, tid, quantidade).await {
+                Ok(n) => serde_json::json!({"estado":"salvo","presenca":"offline","item":tid,"removidos":n,"slot":slot}),
+                Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
+            },
+            E::Item { tid, quantidade } => match bus.dar_item_offline(roleid, tid, quantidade).await {
+                Ok((entrou, slot)) => serde_json::json!({"estado":"salvo","presenca":"offline","item":tid,"entrou":entrou,"slot":slot}),
+                Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
+            },
             E::PontosLivres(n) => Self::offline(roleid, "pontos", self.repo.dar_pontos_offline(roleid, n).await,
                 |p| serde_json::json!({"pontos_livres": p})),
             E::Nivel(alvo) => match self.repo.subir_nivel_offline(roleid, alvo, maximo).await {
@@ -639,6 +650,22 @@ impl RoteadorDeMapas {
                 tracing::warn!("painel: {o_que} offline de {roleid} não gravou: {e}");
                 serde_json::json!({"estado":"falha","codigo":"banco_indisponivel"})
             }
+        }
+    }
+
+    /// Painel (E6, B186): inventário de um personagem deste realm (do banco, com nomes).
+    pub async fn inventario_do_painel(&self, roleid: i32) -> serde_json::Value {
+        match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
+            Some(bus) => bus.inventario_do_painel(roleid).await,
+            None => serde_json::json!({"codigo":"sem_mapa"}),
+        }
+    }
+
+    /// Painel (E6, B186): busca de itens por nome ou id no `elements.data` do realm.
+    pub async fn buscar_itens(&self, texto: &str) -> serde_json::Value {
+        match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
+            Some(bus) => bus.buscar_itens(texto).await,
+            None => serde_json::json!({"codigo":"sem_mapa"}),
         }
     }
 

@@ -428,6 +428,21 @@ impl Jogador for Contexto<'_> {
     }
 }
 
+/// Guarda `quantidade` de `tid` em lotes de uma pilha, gerando cada um como drop. `false`
+/// quando algum lote não coube inteiro (quem chama testa numa cópia antes).
+fn empilhar_em_lotes(bolsa: &mut Bolsa, tid: u32, quantidade: u32, dados: &GameDataManager) -> bool {
+    let pilha = dados.limite_de_pilha(tid);
+    let mut resta = quantidade;
+    while resta > 0 {
+        let lote = resta.min(pilha);
+        match bolsa.empilhar_gerado(tid, lote, dados) {
+            Some(e) if e.entrou == lote => resta -= lote,
+            _ => return false,
+        }
+    }
+    true
+}
+
 /// O que se grava de um jogador depois de uma operação.
 struct Gravacao {
     roleid: i32,
@@ -465,6 +480,30 @@ pub enum EdicaoDePersonagem {
     Atributos(Option<[i32; 4]>),
     /// Mapa e posição (E6, B185); `y` `None` = o chão em `(x, z)`.
     Posicao { mapa: i32, x: f32, y: Option<f32>, z: f32 },
+    /// Dar `quantidade` do item `tid` (E6, B186), pelo caminho do prêmio de missão.
+    Item { tid: u32, quantidade: u32 },
+    /// Tirar `quantidade` (`None` = tudo) do item `tid` do `slot` de `recipiente` (E6, B187).
+    /// Online só bolsa e bolsa de missão; equipamento e armazém só offline.
+    RemoverItem { recipiente: ContainerType, slot: u16, tid: u32, quantidade: Option<u32> },
+}
+
+/// `DROP_TYPE_GM` = 0 (`common/protocol.h:927-929`): o cliente avisa "GM removeu" com o nome do
+/// item (`GP_DROP_GM` → `FIXMSG_GM_REMOVESPECITEM`, `EC_HostMsg.cpp:1786-1788`).
+const MOTIVO_GM: u8 = 0;
+
+/// O que o painel tira de um slot: confere que é o item esperado (o slot pode ter mudado desde
+/// a consulta) e tira até `quantidade`. `Err` sem mudar nada.
+fn tirar_conferindo(bolsa: &mut Bolsa, slot: usize, tid: u32, quantidade: Option<u32>) -> Result<u32, &'static str> {
+    match bolsa.slots.get(slot) {
+        Some(Some(i)) if i.item_id == tid => {
+            let n = quantidade.unwrap_or(i.count);
+            if n == 0 || n > i.count {
+                return Err("quantidade_invalida");
+            }
+            Ok(bolsa.tirar_do_slot(slot, n))
+        }
+        _ => Err("slot_mudou"),
+    }
 }
 
 impl BusServer {
@@ -511,6 +550,47 @@ impl BusServer {
                 // Tratada no roteador (`RoteadorDeMapas::editar_personagem`): o teleporte
                 // troca de mapa fora do contexto do jogador.
                 EdicaoDePersonagem::Posicao { .. } => erro = Some("edicao_invalida"),
+                // Prêmio de missão (`Jogador::dar_item`): gerado como drop
+                // (`DeliverCommonItem`, `task/taskman.cpp:281-303`) e avisado com
+                // `TASK_DELIVER_ITEM`; item de missão vai à bolsa de missão. Antes, numa cópia,
+                // confere que a quantidade inteira cabe — senão não dá nada.
+                // `PLAYER_DROP_ITEM` com `DROP_TYPE_GM`: o cliente tira do pacote e avisa.
+                EdicaoDePersonagem::RemoverItem { recipiente, slot, tid, quantidade } => {
+                    let comum = match recipiente {
+                        ContainerType::Inventory => Some(true),
+                        ContainerType::TaskInventory => Some(false),
+                        _ => None,
+                    };
+                    match comum {
+                        None => erro = Some("precisa_estar_offline"),
+                        Some(comum) => match tirar_conferindo(ctx.bolsa_de(comum), slot as usize, tid, quantidade) {
+                            Ok(n) => {
+                                ctx.mudou = true;
+                                let pacote = ctx.sub.player_drop_item(
+                                    recipiente.pacote_do_cliente().unwrap_or(0), slot as u8, n, tid as i32, MOTIVO_GM);
+                                ctx.para_mim.push(pacote.data);
+                            }
+                            Err(e) => erro = Some(e),
+                        },
+                    }
+                }
+                // Uma entrega do original é no máximo uma pilha (`count > pile_limit` → corta,
+                // `taskman.cpp:289-292`): o painel entrega em lotes de uma pilha.
+                EdicaoDePersonagem::Item { tid, quantidade } => {
+                    let comum = !ctx.dados.e_item_de_missao(tid);
+                    let pilha = ctx.dados.limite_de_pilha(tid);
+                    if empilhar_em_lotes(&mut ctx.bolsa_de(comum).clone(), tid, quantidade, ctx.dados) {
+                        let mut resta = quantidade;
+                        while resta > 0 {
+                            let lote = resta.min(pilha);
+                            ctx.dar_item(tid, lote, comum, 0);
+                            resta -= lote;
+                        }
+                        ctx.mudou = true;
+                    } else {
+                        erro = Some("bolsa_cheia");
+                    }
+                }
                 // `RegroupPropPoint` (`player.cpp:14920-14940`): devolve, gasta e refaz; a ficha
                 // (`OWN_EXT_PROP`, atributos e pontos livres absolutos, `EC_HostMsg.cpp:1583-1584`)
                 // vai depois, com o equipamento reaplicado (`RefreshEquipment`).
@@ -538,6 +618,88 @@ impl BusServer {
             self.recalcular_equipamento(roleid, true).await;
         }
         Some(resultado)
+    }
+
+    /// Painel (E6, B186): bolsa, equipamento, armazém e bolsa de missão, do banco — a mesma
+    /// fonte que `com_contexto` relê a cada operação —, com o nome de cada item.
+    pub(crate) async fn inventario_do_painel(&self, roleid: i32) -> serde_json::Value {
+        let repo = self.itens().await;
+        let dados = self.world.read().await.data_manager.clone();
+        let mut recipientes = serde_json::Map::new();
+        for (nome, tipo) in [("bolsa", ContainerType::Inventory), ("equipamento", ContainerType::Equipment),
+                             ("armazem", ContainerType::Storehouse), ("missao", ContainerType::TaskInventory)] {
+            let itens = match repo.list_by_container(roleid, tipo).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("painel: inventário de {roleid} ilegível ({e})");
+                    return serde_json::json!({"codigo":"banco_indisponivel"});
+                }
+            };
+            let lista: Vec<serde_json::Value> = itens.iter().map(|i| serde_json::json!({
+                "slot": i.slot, "id": i.item_id, "quantidade": i.count,
+                "nome": dados.nomes_de_itens.get(&i.item_id).cloned().unwrap_or_default(),
+            })).collect();
+            recipientes.insert(nome.into(), serde_json::Value::Array(lista));
+        }
+        serde_json::json!({"estado":"consultado","personagem_id":roleid,"recipientes":recipientes})
+    }
+
+    /// Painel (E6, B186): até 30 itens cujo nome contém `texto` (sem caixa) ou cujo id é ele.
+    pub(crate) async fn buscar_itens(&self, texto: &str) -> serde_json::Value {
+        let dados = self.world.read().await.data_manager.clone();
+        let alvo = texto.trim().to_lowercase();
+        let id: Option<u32> = alvo.parse().ok();
+        let mut achados: Vec<(u32, &String)> = dados.nomes_de_itens.iter()
+            .filter(|(t, n)| Some(**t) == id || (!alvo.is_empty() && n.to_lowercase().contains(&alvo)))
+            .map(|(t, n)| (*t, n)).collect();
+        achados.sort_by_key(|(t, _)| (Some(*t) != id, *t));
+        achados.truncate(30);
+        let itens: Vec<serde_json::Value> = achados.iter().map(|(t, n)| serde_json::json!({
+            "id": t, "nome": n, "pilha": dados.limite_de_pilha(*t), "missao": dados.e_item_de_missao(*t),
+        })).collect();
+        serde_json::json!({"estado":"consultado","itens":itens})
+    }
+
+    /// Item conhecido do `elements.data` deste realm.
+    pub(crate) async fn item_existe(&self, tid: u32) -> bool {
+        self.world.read().await.data_manager.nomes_de_itens.contains_key(&tid)
+    }
+
+    /// Painel (E6, B186), offline: a mesma geração do prêmio de missão, na bolsa (ou na de
+    /// missão) lida do banco e gravada de volta. Quem chama segura a guarda de presença e a
+    /// trava de gravação do personagem. Não dá nada se a quantidade inteira não couber.
+    pub(crate) async fn dar_item_offline(&self, roleid: i32, tid: u32, quantidade: u32) -> Result<(u32, usize), &'static str> {
+        let dados = self.world.read().await.data_manager.clone();
+        let comum = !dados.e_item_de_missao(tid);
+        let (tipo, tamanho) = if comum {
+            (ContainerType::Inventory, TAMANHO_DA_BOLSA)
+        } else {
+            (ContainerType::TaskInventory, TAMANHO_DA_BOLSA_DE_MISSAO)
+        };
+        let repo = self.itens().await;
+        let itens = repo.list_by_container(roleid, tipo).await.map_err(|_| "banco_indisponivel")?;
+        let mut bolsa = Bolsa::nova(roleid, tipo, tamanho, itens);
+        if !empilhar_em_lotes(&mut bolsa.clone(), tid, quantidade, &dados)
+            || !empilhar_em_lotes(&mut bolsa, tid, quantidade, &dados)
+        {
+            return Err("bolsa_cheia");
+        }
+        bolsa.gravar(&repo).await.map_err(|_| "banco_indisponivel")?;
+        Ok((quantidade, bolsa.primeiro_slot_com(tid).unwrap_or(0)))
+    }
+
+    /// Painel (E6, B187), offline: tira do slot do recipiente lido do banco e grava só esse
+    /// slot. Quem chama segura a guarda de presença e a trava de gravação do personagem.
+    pub(crate) async fn remover_item_offline(&self, roleid: i32, recipiente: ContainerType, slot: u16,
+        tid: u32, quantidade: Option<u32>) -> Result<u32, &'static str> {
+        let repo = self.itens().await;
+        let itens = repo.list_by_container(roleid, recipiente).await.map_err(|_| "banco_indisponivel")?;
+        // Tamanho folgado: `gravar` só toca o slot alterado.
+        let tamanho = itens.iter().map(|i| i.slot as usize + 1).max().unwrap_or(0).max(slot as usize + 1);
+        let mut bolsa = Bolsa::nova(roleid, recipiente, tamanho, itens);
+        let n = tirar_conferindo(&mut bolsa, slot as usize, tid, quantidade)?;
+        bolsa.gravar(&repo).await.map_err(|_| "banco_indisponivel")?;
+        Ok(n)
     }
 
     /// Piso dos atributos da versão (`WorldProtocol::piso_da_restauracao`).

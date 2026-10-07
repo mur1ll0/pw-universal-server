@@ -128,7 +128,7 @@ Cada etapa pode ser dividida em subtarefas aqui, mantendo o arquivo curto.
 | E3 — canal administrativo e consulta viva | testado | consultas B166 e comando transacional/resultado recuperável B167; deduplicação global, conflito, rollback e reinício testados; falta confirmação visual |
 | E4 — contas | testado | busca, criação, senha, GM, gold, ban/desban e desconectar (B175); testes Rust/Python/Node; falta o Murillo confirmar em jogo |
 | E5 — personagem e persistência | testado | dinheiro e EXP/SP (B179); pontos livres, nível e cultivo (B182); modificar/redistribuir atributos (B184); falta ver em jogo; ficha e progressão online/offline, atualização nos dois clientes; autosave/logout/relogin não desfazem edição; consultas mostram valores reais |
-| E6 — inventário e subsistemas | em andamento | posição (B185) testada; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
+| E6 — inventário e subsistemas | em andamento | posição (B185), itens ver/buscar/dar (B186) e remover (B187) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
 | E7 — mapas e rates | testado | rates (B176), mapas (B177) e lista completa com carga/descarga em execução (B183); falta ver em jogo; desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
 | E8 — moldes de classe | planejado | leitura/edição das fontes consumidas; personagem novo usa alteração; recálculo separado preserva progressão conforme contrato |
 | E9 — extensões e fechamento | planejado | pontos de extensão documentados para editores futuros; interface revisada, manual atualizado, verificações finais e pendências claras |
@@ -155,7 +155,7 @@ quando aplicável. Não terminar com todas as telas prontas e operações sem in
 
 ## 6. Retomada imediata
 
-**Etapa ativa:** E6 em andamento (B185 posição); E5 testada.
+**Etapa ativa:** E6 em andamento (B185 posição, B186–B187 itens); E5 testada.
 **B165–B171 (resumo; detalhes no histórico):** B165 E1 auditoria · B166 E2/E3 login do painel e
 consulta viva · B167 senha + HMAC-MD5 no link · B168 criação de conta · B169 GM global coordenado
 (revisão/recibos/fencing em 8 processos) · B170 saída/salvamento/troca do GS reescritos ·
@@ -226,25 +226,24 @@ troca na hora (spec 05 §7.9; colunas `NUMERIC(3,1)` lidas com `::float4`). Mapa
 B178: GS mortos após `up` interrompido (painel diz "sem resposta"). B179: dinheiro e EXP/SP.
 **B180: só dar gold/dinheiro, nunca tirar.** B182: pontos livres, nível, cultivo. Spec 05 §7.11.
 
-### 6.10 B183 — mapas em execução e tela Mapas completa
+### 6.10 B183–B185 — mapas em execução, atributos, posição
 
-Decisões do Murillo: ligar = **carregar na hora** (desligar descarrega); nomes do pwadmin 1.5.5
-também no 1.2.6. Catálogo do `gs.conf` original; `realms.config.mapas_ligados`; regra em
-spec 05 §7.10. Mexe na entrada/troca: portão §6.2 item 1 (roteiro em jogo antes do próximo B).
+B183 mapas carregados/descarregados em execução e catálogo do `gs.conf` (decisões: carregar na
+hora; nomes do pwadmin também no 126; mexe em entrada/troca = portão §6.2). B184 atributos
+(total conservado, piso da versão): E5 testada. B185 posição (E6), com exceção ao portão dada
+pelo Murillo em 2026-10-06. Regras: spec 05 §7.10–7.11.
 
-### 6.11 B184 — E5 fechada: atributos
+### 6.13 B186–B187 — E6: itens (ver, buscar, dar, remover)
 
-Modificar os quatro com o total conservado ou redistribuir tudo (piso da versão), online/offline;
-spec 05 §7.11. Saída/relogin não desfazem edição (testes conferem o banco após o logout).
+Dar = prêmio de missão em lotes de uma pilha, tudo ou nada; remover online (bolsa/missão,
+`PLAYER_DROP_ITEM` motivo GM) ou offline (todos). Nomes do `elements.data`. Spec 05 §7.11.
 
-### 6.12 B185 — E6 primeira fatia: posição
+**Pedido do Murillo (2026-10-06), a desenhar antes de codificar:** inventário como o do jogo —
+ícones (estão no `surfaces.pck` do cliente, não em `data/`), todo o texto do item, mover
+arrastando — e editar propriedades do item (durabilidade, refino, gemas, efeitos).
 
-Exceção ao portão §6.2 dada pelo Murillo (2026-10-06): seguir sem o roteiro do B183 em jogo,
-porque a fatia não mexe em entrada/saída/troca (usa o `transportar` existente). Mover online
-(mesmo mapa ou troca) e offline; spec 05 §7.11.
-
-**Próxima ação:** Murillo confere em jogo (B179, B182, B183 — portão §6.2 pendente —, B184 e
-B185). E6 continua: inventário/equipamentos, habilidades,
+**Próxima ação:** Murillo confere em jogo (B179, B182, B183 — portão §6.2 pendente —, B184–B187)
+e decide o desenho acima. E6 continua com: inventário/equipamentos, habilidades,
 missões, posição, aparência e mascotes — cada um com o S2C que atualiza a ficha online achado
-no original, senão só offline ou "reentrar". Depois E8 (moldes) e E9. Próximo B: B186.
+no original, senão só offline ou "reentrar". Depois E8 (moldes) e E9. Próximo B: B188.
 Não publicar/commitar sem pedido.

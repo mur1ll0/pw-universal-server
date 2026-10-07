@@ -706,7 +706,7 @@ Limitações: instâncias do `gs.conf` que dividem pasta (`is73–75` em `a72`, 
 e `m01`/`random03`/`random04` não têm dados no carregador — aparecem "sem dados"; cada mapa é
 um mundo único compartilhado (o original cria cópias por entrada em `instance_servers`).
 
-## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184, B185; falta ver em jogo)
+## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184–B187; falta ver em jogo)
 
 `RoteadorDeMapas::editar_personagem`, com a guarda de presença em leitura (a entrada pega em
 escrita) e a trava de gravação do personagem. Só dar (B180: tirar arriscaria valor
@@ -750,6 +750,31 @@ outro mapa, pedido de troca na fila (`troca: true`), que grava mapa e posição 
 Offline: `gravar_posicao_offline` sob a guarda de presença e a trava de gravação. Coordenadas
 ±100 000 são política do painel. Pedido fora do contrato JSON (campo desconhecido) fecha a
 conexão sem resposta, como os demais; o painel valida antes.
+
+**B186 (E6) — itens, parte 1: ver e dar.** `inventario` (consulta só de leitura) lê bolsa,
+equipamento, armazém e bolsa de missão do banco — a fonte que o `com_contexto` relê a cada
+operação — com o nome do `elements.data` (`GameDataManager::nomes_de_itens`: o `Name` dos
+registros com `pile_num_max`, mesmo critério de `pilhas`; 126 7.896/7.896 com nome, 155
+24.806/26.188 — o arquivo traz `Name` vazio no resto). `buscar_itens` acha até 30 por nome ou
+id. **Dar** `item: {id, quantidade}`: o prêmio de missão (`Jogador::dar_item`, gerado como drop,
+`DeliverCommonItem`, `task/taskman.cpp:281-303`, `TASK_DELIVER_ITEM` 156); item de missão vai à
+bolsa de missão. O original entrega no máximo uma pilha por vez (`count > pile_limit` → corta,
+`taskman.cpp:289-292`): o painel entrega em lotes de uma pilha, cada um com seu 156, e antes
+simula todos numa cópia — se não cabe tudo, `bolsa_cheia` e nada entra. Offline: a mesma
+geração na bolsa lida do banco e gravada de volta (`dar_item_offline`), sob a guarda de
+presença e a trava de gravação. Item que o realm não tem: `item_inexistente`. Remover item e
+equipar ficam para a parte 2.
+
+**B187 (E6) — itens, parte 2: remover.** `remover_item: {recipiente, slot, id, quantidade?}`
+(`bolsa`, `missao`, `equipamento`, `armazem`; sem quantidade = a pilha inteira). O `id` confere o
+item do slot (`slot_mudou` se mudou desde a consulta); quantidade acima da pilha =
+`quantidade_invalida`. Online só bolsa e bolsa de missão: tira do slot e manda
+`PLAYER_DROP_ITEM` (46) com `DROP_TYPE_GM` = 0 (`common/protocol.h:927-929`), que o cliente
+avisa como "GM removeu" com o nome (`EC_HostMsg.cpp:1786-1788`) e tira do pacote. Equipamento
+(exigiria aparência para quem vê) e armazém (sem pacote conferido no cliente) online =
+`precisa_estar_offline`. Offline: tira do recipiente lido do banco e grava só o slot
+(`remover_item_offline`). O valor 0 de `DROP_TYPE_GM` vem do 1.5.5; no 1.2.6 não foi conferido
+no binário (só muda a mensagem do cliente). Equipar/mover fica para a interface de inventário.
 
 Falhas novas: `nivel_invalido` (com `nivel_maximo`), `nivel_invalido_ou_personagem_inexistente`
 (offline), `cultivo_invalido`. A impressão de deduplicação só inclui `pontos`/`nivel`/`cultivo`
