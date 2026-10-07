@@ -78,6 +78,40 @@ def cores():
     return tabela
 
 
+@functools.lru_cache(maxsize=1)
+def tipos_de_efeito():
+    """`item_ext_prop.txt` → {id do efeito: tipo} (`LoadItemExtProps`, `EC_Game.cpp:2022-2060`):
+    blocos `tipo { id id … }`; o `AScriptFile` pula os comentários `/* */` e `//`."""
+    texto = re.sub(r"/\*.*?\*/", " ", _ler("item_ext_prop.txt"), flags=re.S)
+    texto = re.sub(r"//[^\n]*", " ", texto)
+    tabela = {}
+    for m in re.finditer(r"(\d+)\s*\{([^}]*)\}", texto):
+        for idprop in re.findall(r"\d+", m.group(2)):
+            tabela.setdefault(int(idprop), int(m.group(1)) & 0xFF)  # colisão: fica o primeiro (`put`)
+    return tabela
+
+
+@functools.lru_cache(maxsize=1)
+def efeitos_do_cliente():
+    """Texto de cada tipo de efeito, gerado por `scripts/gerar_efeitos_de_itens.py` (B192)."""
+    return json.loads((Path(__file__).parent / "efeitos_do_cliente.json").read_text(encoding="utf-8"))
+
+
+# Nome da classe como o cliente escreve (B190): `CECGameRun::GetProfName` (`EC_GameRun.cpp:3448`)
+# lê `FIXMSG_PROF_*` do `fixed_msg.txt`; no `configs.pck` 1.5.5 BR as posições 32–39, 229–230 e
+# 282–283 batem com a enumeração (`EC_FixedMsg.h:62-70, 298, 300, 362-363`). O 1.2.6 usa 0–7.
+NOMES_DAS_CLASSES = ["Guerreiro", "Mago", "Espirit.", "Feiticeira", "Bárbaro", "Merc.", "Arqueiro",
+                     "Sacer.", "Arcano", "Místico", "Retalh.", "Torment."]
+
+
+def nome_da_classe(classe):
+    return NOMES_DAS_CLASSES[classe] if 0 <= classe < len(NOMES_DAS_CLASSES) else f"Classe {classe}"
+
+
+def nomes_das_classes():
+    return NOMES_DAS_CLASSES
+
+
 def cor_do_nome(tid):
     i = cores().get(tid, 0)
     return CORES_DO_NOME[i if 0 <= i < 10 else 0]

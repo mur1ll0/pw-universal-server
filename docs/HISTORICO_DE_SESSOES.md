@@ -12185,10 +12185,46 @@ comparação lado a lado.
     posição, slot, par e offline; somas por item conservadas); `requisito_de_vestir_no_{126,155}`
     2/0 com os casos de posição pelo caminho do cliente; `subcomandos_no_mundo` 152/1 (o
     intermitente `o_guia_selvagem…1177`, que passou 2× sozinho) depois de dar máscara aos itens
-    sintéticos de 3 testes de vestir; painel Python 60/0, Node 7/0. Suíte do workspace: ver item
-    do estado (rodada no fim do bloco).
+    sintéticos de 3 testes de vestir; painel Python 60/0, Node 7/0. Suíte do workspace com o
+    banco: **971 passaram, 0 falharam, 2 ignorados**.
 
     ### e. O que continua faltando
     Amuleto HP/MP que não sai e troca do vestido, habilidade dinâmica repetida, reputação;
     arrastar não divide nem junta pilhas (troca inteira, como as trocas do jogo); requisitos no
     offline. Nada visto em jogo.
+
+192. **Sessão 2026-10-07: dica do item, parte 2 — texto de cada efeito como o cliente e linha de classe.**
+
+    ### a. Sintoma / pedido
+    E6 (a): os efeitos saíam como "Efeito id (args)"; faltava a restrição de classe.
+
+    ### b. Evidência
+    - `AddOneAddOnPropDesc` (`EC_IvtrEquip.cpp:971-2610`): `switch` pelo tipo do
+      `item_ext_prop.txt` (`LoadItemExtProps`, `EC_Game.cpp:2022-2060`); item do jogador tem
+      `bLocal = false` (`:243`), então vale o ramo não local; `color = -1` e o laço pinta de
+      azul-claro e pula pedra/conjunto/gravação (`BuildAddOnPropDesc`, `:2610-2630`); afiador
+      100–115 (`IsSharpenerProperty`, `EC_IvtrItem.cpp:320`) e refino 200–212 não escrevem linha;
+      tipo desconhecido = `ITEMDESC_ERRORPROP` (índice 104). `VisualizeFloatPercent`
+      (`EC_IvtrItem.h:370`).
+    - Classe: `AddProfReqDesc` (`EC_IvtrItem.cpp:646-664`), some se a máscara cobre
+      `(1 << NUM_PROFESSION) - 1` (12, `ExpTypes.h:20`); `ITEMDESC_PROFESSIONREQ` = 92.
+    - Ordem da arma (`EC_IvtrWeapon.cpp:375-460`): classe, requisitos, efeitos, pedras, preço,
+      afiador, gravação, fabricante, conjunto, descrição — o B189 tinha pedras antes dos efeitos e
+      fabricante antes do preço.
+
+    ### c. Correção
+    - `scripts/gerar_efeitos_de_itens.py` → `painel/efeitos_do_cliente.json` (157 tipos, 127
+      seguros); `textos.tipos_de_efeito` (2.441 efeitos, 170 tipos), `textos.efeitos_do_cliente`;
+      nomes das classes movidos para `textos.py`.
+    - `dica.texto_do_efeito` (expressões `p0`, `-p1`, `p0/2`, float, `vp`), `_linha_de_classe`;
+      a rota da dica passa versão e classe do personagem.
+
+    ### d. Provas
+    Painel Python 62/0 (teste da arma com efeito real 341 → "Ataque físico +25", tipo 63 cru,
+    afiador e pedra sem linha, classe vermelha antes do nível, ordem; floats/percentuais
+    "Intervalo de Ataque 0.20 segundos", "Alcance +0.50", "Def Metal 5%"/"Def Fogo -3%";
+    desconhecido; classe que cobre todas some no 1.5.5 e no 1.2.6). Só painel; sem Rust.
+
+    ### e. O que continua faltando
+    29 tipos com frase > 112 e a habilidade (55, `CECSkill::GetDesc`) — B193; cor vermelha dos
+    requisitos não atendidos (nível/atributos); conjunto, afiador e gravação.

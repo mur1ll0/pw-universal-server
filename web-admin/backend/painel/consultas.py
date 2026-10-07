@@ -2,6 +2,7 @@
 from fastapi import HTTPException, Path, Query, Request, Response
 from .icones import png_do_icone
 from .dica import linhas_da_dica
+from .textos import nome_da_classe
 from .canal import CanalIndisponivel, consultar_daemons, resposta_do_primeiro
 import json
 import pathlib
@@ -9,15 +10,6 @@ import pathlib
 # Gerado por scripts/gerar_catalogo_de_mapas.py (B183); lido uma vez.
 CATALOGO_DE_MAPAS = json.loads((pathlib.Path(__file__).parent / "catalogo_mapas.json").read_text(encoding="utf-8"))
 
-# Nome da classe como o cliente escreve (B190): `CECGameRun::GetProfName` (`EC_GameRun.cpp:3448`)
-# lê `FIXMSG_PROF_*` do `fixed_msg.txt`; no `configs.pck` 1.5.5 BR as posições 32–39, 229–230 e
-# 282–283 batem com a enumeração (`EC_FixedMsg.h:62-70, 298, 300, 362-363`). O 1.2.6 usa 0–7.
-NOMES_DAS_CLASSES = ["Guerreiro", "Mago", "Espirit.", "Feiticeira", "Bárbaro", "Merc.", "Arqueiro",
-                     "Sacer.", "Arcano", "Místico", "Retalh.", "Torment."]
-
-
-def nome_da_classe(classe):
-    return NOMES_DAS_CLASSES[classe] if 0 <= classe < len(NOMES_DAS_CLASSES) else f"Classe {classe}"
 
 
 def registrar_consultas(app):
@@ -101,8 +93,12 @@ def registrar_consultas(app):
         """E6 (B189): a dica do item do slot, montada como o cliente (`painel/dica.py`)."""
         dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "detalhe_item", "personagem_id": personagem_id,
                                                                 "recipiente": recipiente, "slot": slot})
+        # Versão (quantas classes há) e classe do personagem (a cor da linha de classe), B192.
+        async with app.state.seguranca.pool.acquire() as conexao:
+            dono = await conexao.fetchrow("SELECT r.version, c.cls FROM characters c JOIN realms r ON r.id=c.realm_id "
+                                          "WHERE c.realm_id=$1 AND c.id=$2", realm_id, personagem_id)
         try:
-            linhas = linhas_da_dica(dados)
+            linhas = linhas_da_dica(dados, versao=dono["version"] if dono else None, classe=dono["cls"] if dono else None)
         except OSError:
             raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
         return {"realm_id": realm_id, "item": dados, "linhas": linhas}

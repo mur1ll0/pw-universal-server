@@ -1,0 +1,2111 @@
+{
+"0": {
+"partes": [
+[
+"ITEMDESC_ADDPHYDAMAGE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"1": {
+"partes": [
+[
+"ITEMDESC_MAXPHYDAMAGE",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"2": {
+"partes": [
+[
+"ITEMDESC_PHYDMGEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"3": {
+"partes": [
+[
+"ITEMDESC_ADDMAGICDAMAGE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"4": {
+"partes": [
+[
+"ITEMDESC_MAXMAGICDAMAGE",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"5": {
+"partes": [
+[
+"ITEMDESC_MAGICDMGEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"6": {
+"partes": [
+[
+"ITEMDESC_PHYDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+],
+[
+"ITEMDESC_ADDPHYDAMAGE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"-p1",
+true
+]
+],
+"seguro": true
+},
+"7": {
+"partes": [
+[
+"ITEMDESC_ADDPHYDAMAGE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+],
+[
+"ITEMDESC_PHYDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"-p1",
+true
+]
+],
+"seguro": true
+},
+"8": {
+"partes": [
+[
+"ITEMDESC_ADDMAGICDAMAGE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+],
+[
+"ITEMDESC_ALLMAGICDEF",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"-p1",
+true
+]
+],
+"seguro": true
+},
+"9": {
+"partes": [
+[
+"ITEMDESC_ATKTIME",
+null,
+"-p0*0.05",
+true
+]
+],
+"seguro": true
+},
+"10": {
+"partes": [
+[
+"ITEMDESC_ADDATKDIST",
+null,
+"f(p0)",
+true
+]
+],
+"seguro": true
+},
+"11": {
+"partes": [
+[
+"ITEMDESC_CASTTIME",
+null,
+"-p0",
+true
+]
+],
+"seguro": true
+},
+"12": {
+"partes": [
+[
+"ITEMDESC_PHYDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"13": {
+"partes": [
+[
+"ITEMDESC_PHYDEFEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"14": {
+"partes": [
+[
+"ITEMDESC_ALLMAGICDEF",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"15": {
+"partes": [
+[
+"ITEMDESC_GOLDDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"16": {
+"partes": [
+[
+"ITEMDESC_GOLDDEFEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"17": {
+"partes": [
+[
+"ITEMDESC_WOODDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"18": {
+"partes": [
+[
+"ITEMDESC_WOODDEFEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"19": {
+"partes": [
+[
+"ITEMDESC_WATERDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"20": {
+"partes": [
+[
+"ITEMDESC_WATERDEFEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"21": {
+"partes": [
+[
+"ITEMDESC_FIREDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"22": {
+"partes": [
+[
+"ITEMDESC_FIREDEFEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"23": {
+"partes": [
+[
+"ITEMDESC_EARTHDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"24": {
+"partes": [
+[
+"ITEMDESC_EARTHDEFEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"25": {
+"partes": [
+[
+"ITEMDESC_GOLDDEFEXTRA",
+null,
+"vp(p0)",
+true
+],
+[
+"ITEMDESC_FIREDEFEXTRA",
+null,
+"-vp(p1)",
+true
+]
+],
+"seguro": true
+},
+"26": {
+"partes": [
+[
+"ITEMDESC_WOODDEFEXTRA",
+null,
+"vp(p0)",
+true
+],
+[
+"ITEMDESC_GOLDDEFEXTRA",
+null,
+"-vp(p1)",
+true
+]
+],
+"seguro": true
+},
+"27": {
+"partes": [
+[
+"ITEMDESC_WATERDEFEXTRA",
+null,
+"vp(p0)",
+true
+],
+[
+"ITEMDESC_EARTHDEFEXTRA",
+null,
+"-vp(p1)",
+true
+]
+],
+"seguro": true
+},
+"28": {
+"partes": [
+[
+"ITEMDESC_FIREDEFEXTRA",
+null,
+"vp(p0)",
+true
+],
+[
+"ITEMDESC_WATERDEFEXTRA",
+null,
+"-vp(p1)",
+true
+]
+],
+"seguro": true
+},
+"29": {
+"partes": [
+[
+"ITEMDESC_EARTHDEFEXTRA",
+null,
+"vp(p0)",
+true
+],
+[
+"ITEMDESC_WOODDEFEXTRA",
+null,
+"-vp(p1)",
+true
+]
+],
+"seguro": true
+},
+"30": {
+"partes": [
+[
+"ITEMDESC_GOLDDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+],
+[
+"ITEMDESC_FIREDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"-p1",
+true
+]
+],
+"seguro": true
+},
+"31": {
+"partes": [
+[
+"ITEMDESC_WOODDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+],
+[
+"ITEMDESC_GOLDDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"-p1",
+true
+]
+],
+"seguro": true
+},
+"32": {
+"partes": [
+[
+"ITEMDESC_WATERDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+],
+[
+"ITEMDESC_EARTHDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"-p1",
+true
+]
+],
+"seguro": true
+},
+"33": {
+"partes": [
+[
+"ITEMDESC_FIREDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+],
+[
+"ITEMDESC_WATERDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"-p1",
+true
+]
+],
+"seguro": true
+},
+"34": {
+"partes": [
+[
+"ITEMDESC_EARTHDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+],
+[
+"ITEMDESC_WOODDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"-p1",
+true
+]
+],
+"seguro": true
+},
+"35": {
+"partes": [
+[
+"ITEMDESC_ADDHP",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"36": {
+"partes": [
+[
+"ITEMDESC_ADDMP",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"37": {
+"partes": [
+[
+"ITEMDESC_HPEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"38": {
+"partes": [
+[
+"ITEMDESC_MPEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"39": {
+"partes": [
+[
+"ITEMDESC_HPRECOVER",
+null,
+"p0/2",
+true
+]
+],
+"seguro": true
+},
+"40": {
+"partes": [
+[
+"ITEMDESC_MPRECOVER",
+null,
+"p0/2",
+true
+]
+],
+"seguro": true
+},
+"41": {
+"partes": [
+[
+"ITEMDESC_STRENGTH",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"42": {
+"partes": [
+[
+"ITEMDESC_AGILITY",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"43": {
+"partes": [
+[
+"ITEMDESC_ENERGY",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"44": {
+"partes": [
+[
+"ITEMDESC_VITALITY",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"45": {
+"partes": [
+[
+"ITEMDESC_DEADLYSTRIKE",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"46": {
+"partes": [
+[
+"ITEMDESC_ATKRATING",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"47": {
+"partes": [
+[
+"ITEMDESC_ATKRATINGEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"48": {
+"partes": [
+[
+"ITEMDESC_RUNSPEED",
+null,
+"f(p0)",
+true
+]
+],
+"seguro": true
+},
+"49": {
+"partes": [
+[
+"ITEMDESC_RUNSPEEDEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"50": {
+"partes": [
+[
+"ITEMDESC_DODGE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"51": {
+"partes": [
+[
+"ITEMDESC_DODGEEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"52": {
+"partes": [
+[
+"ITEMDESC_ENDURANCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"53": {
+"partes": [
+[
+"ITEMDESC_ENDURANCEEXTRA",
+null,
+"vp(p0)",
+true
+]
+],
+"seguro": true
+},
+"54": {
+"partes": [
+[
+"ITEMDESC_PHYRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"55": {
+"partes": [],
+"seguro": false
+},
+"56": {
+"partes": [
+[
+"ITEMDESC_REQEXTRA",
+null,
+"-vp(p0)",
+true
+]
+],
+"seguro": true
+},
+"57": {
+"partes": [
+[
+"ITEMDESC_RANDOMPROP",
+null,
+null,
+true
+]
+],
+"seguro": true
+},
+"58": {
+"partes": [
+[
+"ITEMDESC_EXP",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"59": {
+"partes": [
+[
+"ITEMDESC_ATK_DEGREE",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"60": {
+"partes": [
+[
+"ITEMDESC_DEF_DEGREE",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"61": {
+"partes": [
+[
+"ITEMDESC_TOTAL_DEFENCE_ADD",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"62": {
+"partes": [
+[
+"ITEMDESC_PROFVIEW",
+null,
+null,
+true
+]
+],
+"seguro": false
+},
+"63": {
+"partes": [
+[
+"ITEMDESC_SOULPOWER",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"64": {
+"partes": [
+[
+"ITEMDESC_GOLDRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"65": {
+"partes": [
+[
+"ITEMDESC_WOODRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"66": {
+"partes": [
+[
+"ITEMDESC_WATERRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"67": {
+"partes": [
+[
+"ITEMDESC_FIRERESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"68": {
+"partes": [
+[
+"ITEMDESC_EARTHRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"69": {
+"partes": [
+[
+"ITEMDESC_ALLMAGICRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"70": {
+"partes": [
+[
+"ITEMDESC_ATK_DEGREE",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"71": {
+"partes": [
+[
+"ITEMDESC_DEF_DEGREE",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"72": {
+"partes": [
+[
+"ITEMDESC_DEADLYSTRIKE",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"73": {
+"partes": [
+[
+"ITEMDESC_ADDHP",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"74": {
+"partes": [
+[
+"ITEMDESC_ADDMP",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"75": {
+"partes": [
+[
+"ITEMDESC_ATKRATINGEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"76": {
+"partes": [
+[
+"ITEMDESC_PHYDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"77": {
+"partes": [
+[
+"ITEMDESC_ALLMAGICDEF",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"78": {
+"partes": [
+[
+"ITEMDESC_PHYRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"79": {
+"partes": [
+[
+"ITEMDESC_ALLMAGICRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"80": {
+"partes": [
+[
+"ITEMDESC_CASTTIME",
+null,
+"-p0",
+true
+]
+],
+"seguro": true
+},
+"81": {
+"partes": [
+[
+"ITEMDESC_ADDATKDIST",
+null,
+"f(p0)",
+true
+]
+],
+"seguro": true
+},
+"82": {
+"partes": [
+[
+"ITEMDESC_MPRECOVER",
+null,
+"p0/2",
+true
+]
+],
+"seguro": true
+},
+"83": {
+"partes": [
+[
+"ITEMDESC_PHYDEFEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"84": {
+"partes": [
+[
+"ITEMDESC_TOTAL_DEFENCE_ADD",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"85": {
+"partes": [
+[
+"ITEMDESC_HPRECOVER",
+null,
+"p0/2",
+true
+]
+],
+"seguro": true
+},
+"86": {
+"partes": [
+[
+"ITEMDESC_DODGE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"87": {
+"partes": [
+[
+"ITEMDESC_MAXPHYDAMAGE",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"88": {
+"partes": [
+[
+"ITEMDESC_MAXMAGICDAMAGE",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"89": {
+"partes": [
+[
+"ITEMDESC_REQEXTRA",
+null,
+"-vp(p0)",
+true
+]
+],
+"seguro": true
+},
+"90": {
+"partes": [
+[
+"ITEMDESC_PENETRATION",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"91": {
+"partes": [
+[
+"ITEMDESC_RESILIENCE",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"92": {
+"partes": [
+[
+"ITEMDESC_PHYDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+],
+[
+"ITEMDESC_ALLMAGICDEF",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p1",
+true
+]
+],
+"seguro": true
+},
+"93": {
+"partes": [
+[
+"ITEMDESC_ADDHP",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"94": {
+"partes": [
+[
+"ITEMDESC_ADDHP",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"95": {
+"partes": [
+[
+"ITEMDESC_STRENGTH",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"96": {
+"partes": [
+[
+"ITEMDESC_AGILITY",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"97": {
+"partes": [
+[
+"ITEMDESC_ENERGY",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"98": {
+"partes": [
+[
+"ITEMDESC_VITALITY",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"99": {
+"partes": [
+[
+"ITEMDESC_ADDMP",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"160": {
+"partes": [
+[
+"ITEMDESC_VIGOUR",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": false
+},
+"200": {
+"partes": [],
+"seguro": true
+},
+"201": {
+"partes": [],
+"seguro": true
+},
+"202": {
+"partes": [],
+"seguro": true
+},
+"203": {
+"partes": [],
+"seguro": true
+},
+"204": {
+"partes": [],
+"seguro": true
+},
+"205": {
+"partes": [],
+"seguro": true
+},
+"206": {
+"partes": [],
+"seguro": true
+},
+"207": {
+"partes": [],
+"seguro": true
+},
+"208": {
+"partes": [],
+"seguro": true
+},
+"209": {
+"partes": [],
+"seguro": true
+},
+"210": {
+"partes": [],
+"seguro": true
+},
+"211": {
+"partes": [],
+"seguro": true
+},
+"212": {
+"partes": [],
+"seguro": true
+},
+"120": {
+"partes": [
+[
+"ITEMDESC_GOLDDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"121": {
+"partes": [
+[
+"ITEMDESC_WOODDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"122": {
+"partes": [
+[
+"ITEMDESC_WATERDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"123": {
+"partes": [
+[
+"ITEMDESC_FIREDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"124": {
+"partes": [
+[
+"ITEMDESC_EARTHDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"125": {
+"partes": [
+[
+"ITEMDESC_ATKRATING",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"126": {
+"partes": [
+[
+"ITEMDESC_DODGE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"127": {
+"partes": [
+[
+"ITEMDESC_ADDMP",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"128": {
+"partes": [
+[
+"ITEMDESC_VITALITY",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"129": {
+"partes": [
+[
+"ITEMDESC_STRENGTH",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"130": {
+"partes": [
+[
+"ITEMDESC_AGILITY",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"131": {
+"partes": [
+[
+"ITEMDESC_ENERGY",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"132": {
+"partes": [
+[
+"ITEMDESC_ADDHP",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"133": {
+"partes": [
+[
+"ITEMDESC_PHYDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"134": {
+"partes": [
+[
+"ITEMDESC_ALLMAGICDEF",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"135": {
+"partes": [
+[
+"ITEMDESC_ADDPHYDAMAGE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"136": {
+"partes": [
+[
+"ITEMDESC_ADDMAGICDAMAGE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"137": {
+"partes": [
+[
+"ITEMDESC_GOLDRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"138": {
+"partes": [
+[
+"ITEMDESC_WOODRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"139": {
+"partes": [
+[
+"ITEMDESC_WATERRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"140": {
+"partes": [
+[
+"ITEMDESC_FIRERESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"141": {
+"partes": [
+[
+"ITEMDESC_EARTHRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"142": {
+"partes": [
+[
+"ITEMDESC_ALLMAGICRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"143": {
+"partes": [
+[
+"ITEMDESC_DEADLYSTRIKE",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"144": {
+"partes": [
+[
+"ITEMDESC_ATK_DEGREE",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"145": {
+"partes": [
+[
+"ITEMDESC_DEF_DEGREE",
+null,
+"p0",
+true
+]
+],
+"seguro": false
+},
+"146": {
+"partes": [
+[
+"ITEMDESC_PHYRESIST",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"161": {
+"partes": [
+[
+"ITEMDESC_PHYDMGEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"162": {
+"partes": [
+[
+"ITEMDESC_MAGICDMGEXTRA",
+null,
+"p0",
+true
+]
+],
+"seguro": true
+},
+"163": {
+"partes": [
+[
+"ITEMDESC_PDEF",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": false
+},
+"164": {
+"partes": [
+[
+"ITEMDESC_ALLMAGICDEF",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"165": {
+"partes": [
+[
+"ITEMDESC_ADDHP",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"166": {
+"partes": [
+[
+"ITEMDESC_VIGOUR",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": false
+},
+"167": {
+"partes": [
+[
+"ITEMDESC_GOLDDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"168": {
+"partes": [
+[
+"ITEMDESC_WOODDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"169": {
+"partes": [
+[
+"ITEMDESC_WATERDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"170": {
+"partes": [
+[
+"ITEMDESC_FIREDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"171": {
+"partes": [
+[
+"ITEMDESC_EARTHDEFENCE",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"172": {
+"partes": [
+[
+"ITEMDESC_ACCURACY2",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": false
+},
+"173": {
+"partes": [
+[
+"ITEMDESC_EVASION",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": false
+},
+"174": {
+"partes": [
+[
+"ITEMDESC_ADDMP",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": true
+},
+"175": {
+"partes": [
+[
+"ITEMDESC_PPEN",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": false
+},
+"176": {
+"partes": [
+[
+"ITEMDESC_MPEN",
+null,
+null,
+false
+],
+[
+null,
+" %+d",
+"p0",
+true
+]
+],
+"seguro": false
+}
+}
