@@ -2,7 +2,7 @@
 
 Atualizada em 2026-10-07 (B198). Estado: **E1–E5 testadas; E6 em andamento (tela nova B190,
 arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197, missões B198; fila B199 em §6.14); E7 testada; E8–E9 planejadas**.
-Commitado até `ed81a9f` (B197); B198 local. Nada de B176–B198 confirmado em jogo.
+Commitado até `c541bcb` (B198). Nada de B176–B198 confirmado em jogo.
 Responsável pelas decisões de produto: Murillo.
 
 Este arquivo é o ponto de retomada da reforma. Guarda decisões, estado das etapas,
