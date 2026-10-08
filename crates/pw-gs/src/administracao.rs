@@ -15,6 +15,9 @@ use tokio::{
 };
 
 pub const LIMITE_QUADRO: usize = 8192;
+/// Teto da resposta (B198): as listas de missão com nomes passam dos 8 KiB do pedido (até 175
+/// ativas e uma página de 200 concluídas). O pedido continua com o teto de 8 KiB.
+pub const LIMITE_RESPOSTA: usize = 65_536;
 type Assinatura = Hmac<Sha256>;
 
 #[derive(Deserialize, Serialize)]
@@ -74,7 +77,13 @@ pub enum Consulta {
         #[serde(default)] habilidade: Option<HabilidadePedida>,
         /// Mascote da jaula `{slot, tid, edicao}` (E6, B197).
         #[serde(default)] mascote: Option<MascotePedido>,
+        /// Missão `{acao, id, sub?}` (E6, B198).
+        #[serde(default)] missao: Option<crate::bus_server::missao_editada::EdicaoDeMissao>,
     },
+    /// As listas de missão (E6, B198): ativas e uma página das concluídas. Só leitura.
+    Missoes { personagem_id: i32, #[serde(default)] pagina: u32, #[serde(default)] busca: Option<String> },
+    /// Missões de topo do `tasks.data` por nome ou id (E6, B198). Só leitura.
+    BuscarMissoes { texto: String },
     /// Inventário de um personagem, com nomes (E6, B186). Só leitura.
     Inventario { personagem_id: i32 },
     /// A jaula de mascotes (E6, B197). Só leitura.
@@ -167,6 +176,7 @@ enum AlvoDaEdicao {
     Personagem(crate::bus_server::EdicaoDePersonagem),
     Item(pw_core::ContainerType, u16, u32, crate::bus_server::item_editado::EdicaoDeItem),
     Mascote(u16, i32, crate::bus_server::mascote_editado::EdicaoDeMascote),
+    Missao(crate::bus_server::missao_editada::EdicaoDeMissao),
 }
 
 /// Nome do recipiente no painel → tipo no banco (B187).
@@ -412,6 +422,13 @@ impl ServidorAdministrativo {
                     Consulta::Mascotes { personagem_id } if personagem_id > 0 => {
                         self.roteador.mascotes_do_painel(personagem_id).await
                     }
+                    Consulta::Missoes { personagem_id, pagina, busca } if personagem_id > 0 && pagina < 100
+                        && busca.as_ref().map_or(true, |b| b.chars().count() <= 64) => {
+                        self.roteador.missoes_do_painel(personagem_id, pagina as usize, busca.as_deref()).await
+                    }
+                    Consulta::BuscarMissoes { texto } if texto.chars().count() <= 64 => {
+                        self.roteador.buscar_missoes(&texto).await
+                    }
                     Consulta::Inventario { personagem_id } if personagem_id > 0 => {
                         self.roteador.inventario_do_painel(personagem_id).await
                     }
@@ -424,12 +441,12 @@ impl ServidorAdministrativo {
                     Consulta::BuscarItens { texto } if texto.chars().count() <= 64 => {
                         self.roteador.buscar_itens(&texto).await
                     }
-                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item, editar_item, habilidade, mascote } if personagem_id > 0 => {
+                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item, editar_item, habilidade, mascote, missao } if personagem_id > 0 => {
                         use crate::bus_server::EdicaoDePersonagem as E;
                         let dentro = |v: i64| v.abs() <= TETO_DA_EDICAO;
                         let tipos = [dinheiro.is_some(), exp.or(sp).is_some(), pontos.is_some(), nivel.is_some(), cultivo.is_some(),
                             atributos.is_some(), redistribuir.is_some(), posicao.is_some(), item.is_some(), remover_item.is_some(),
-                            mover_item.is_some(), editar_item.is_some(), habilidade.is_some(), mascote.is_some()]
+                            mover_item.is_some(), editar_item.is_some(), habilidade.is_some(), mascote.is_some(), missao.is_some()]
                             .iter().filter(|t| **t).count();
                         // Atributos: quatro valores entre 0 e o teto da política (B184).
                         let quatro = atributos.as_deref().and_then(|v| {
@@ -477,6 +494,7 @@ impl ServidorAdministrativo {
                             _ => None,
                         }};
                         let alvo = match (&editar_item, &mascote, tipos) {
+                            _ if missao.is_some() => missao.filter(|m| tipos == 1 && m.valida()).map(AlvoDaEdicao::Missao),
                             (Some(m), _, 1) => recipiente_do_painel(&m.recipiente)
                                 .filter(|_| m.id > 0 && m.slot < 256 && m.edicao.valida().is_ok() && m.edicao != Default::default())
                                 .map(|r| AlvoDaEdicao::Item(r, m.slot, m.id, m.edicao.clone())),
@@ -506,6 +524,7 @@ impl ServidorAdministrativo {
                                 if let Some(m) = &editar_item { parametros["editar_item"] = json!(m); }
                                 if let Some(h) = habilidade { parametros["habilidade"] = json!(h); }
                                 if let Some(p) = &mascote { parametros["mascote"] = json!(p); }
+                                if let Some(m) = &missao { parametros["missao"] = json!(m); }
                                 let impressao = Sha256::digest(serde_json::to_vec(&parametros)?);
                                 let repo = self.contas.comandos_administrativos();
                                 match repo.reservar_operacao_de_personagem(&pedido.operacao_id, pedido.administrador_id, &self.realm, &impressao).await? {
@@ -515,6 +534,7 @@ impl ServidorAdministrativo {
                                             AlvoDaEdicao::Personagem(edicao) => self.roteador.editar_personagem(personagem_id, *edicao).await,
                                             AlvoDaEdicao::Item(r, slot, id, e) => self.roteador.editar_item(personagem_id, *r, *slot, *id, e).await,
                                             AlvoDaEdicao::Mascote(slot, tid, e) => self.roteador.editar_mascote(personagem_id, *slot, *tid, e).await,
+                                            AlvoDaEdicao::Missao(e) => self.roteador.editar_missao(personagem_id, *e).await,
                                         };
                                         r["tipo"] = json!("editar_personagem");
                                         r["personagem_id"] = json!(personagem_id);
@@ -671,9 +691,18 @@ pub fn conferir_assinatura(
 }
 
 pub async fn ler_quadro(socket: &mut TcpStream) -> anyhow::Result<Vec<u8>> {
+    ler_quadro_ate(socket, LIMITE_QUADRO).await
+}
+
+/// O lado de quem pede: a resposta pode ter até [`LIMITE_RESPOSTA`].
+pub async fn ler_resposta(socket: &mut TcpStream) -> anyhow::Result<Vec<u8>> {
+    ler_quadro_ate(socket, LIMITE_RESPOSTA).await
+}
+
+async fn ler_quadro_ate(socket: &mut TcpStream, limite: usize) -> anyhow::Result<Vec<u8>> {
     let tamanho = socket.read_u32().await? as usize;
     anyhow::ensure!(
-        tamanho > 0 && tamanho <= LIMITE_QUADRO,
+        tamanho > 0 && tamanho <= limite,
         "quadro administrativo fora do limite"
     );
     let mut corpo = vec![0; tamanho];
@@ -683,7 +712,7 @@ pub async fn ler_quadro(socket: &mut TcpStream) -> anyhow::Result<Vec<u8>> {
 
 pub async fn escrever_quadro(socket: &mut TcpStream, corpo: &[u8]) -> anyhow::Result<()> {
     anyhow::ensure!(
-        !corpo.is_empty() && corpo.len() <= LIMITE_QUADRO,
+        !corpo.is_empty() && corpo.len() <= LIMITE_RESPOSTA,
         "resposta administrativa fora do limite"
     );
     socket.write_u32(corpo.len() as u32).await?;

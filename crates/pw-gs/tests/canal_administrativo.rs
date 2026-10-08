@@ -3,7 +3,7 @@ use pw_bus::{BusClient, BusListener, BusMessage};
 use pw_data_loader::GameDataManager;
 use pw_gs::{
     administracao::{
-        assinar, conferir_assinatura, escrever_quadro, ler_quadro, ServidorAdministrativo,
+        assinar, conferir_assinatura, escrever_quadro, ler_quadro, ler_resposta, ServidorAdministrativo,
     },
     BusServer, RoteadorDeMapas, WorldInstance,
 };
@@ -176,6 +176,22 @@ impl Cenario {
         dados.nomes_de_itens.insert(3003, "Espada de teste".into());
         dados.pilhas.insert(3003, 1);
         dados.posicoes.insert(3003, 0x1);
+        // B198: 5001 de NPC, nível 90 e sem desistência; 5002 direta, 50 moedas, com registro.
+        let mut npc = pw_data_loader::tasks::TaskTemplate::vazia(5001);
+        npc.name = "Missão do NPC de teste".into();
+        npc.metodo = pw_gs::missoes::metodo::FALAR_COM_NPC;
+        npc.tipo_de_conclusao = pw_gs::missoes::conclusao::NO_NPC;
+        npc.min_level = 90;
+        let mut direta = pw_data_loader::tasks::TaskTemplate::vazia(5002);
+        direta.name = "Missão direta de teste".into();
+        direta.metodo = pw_gs::missoes::metodo::FALAR_COM_NPC;
+        direta.tipo_de_conclusao = pw_gs::missoes::conclusao::DIRETA;
+        direta.rewards.money = 50;
+        direta.precisa_registro = true;
+        for t in [npc, direta] {
+            dados.tasks.de_topo.push(t.id);
+            dados.tasks.tasks.insert(t.id, t);
+        }
         let itens_de_teste = Arc::new(dados);
         let mut mapas = Vec::new();
         for tag in [1, 161] {
@@ -252,7 +268,7 @@ impl Cenario {
             .write_all(&assinar(&CHAVE, &desafio, b"pedido", &corpo))
             .await
             .unwrap();
-        let resposta = ler_quadro(&mut socket).await.unwrap();
+        let resposta = ler_resposta(&mut socket).await.unwrap();
         let mut assinatura = [0; 32];
         socket.read_exact(&mut assinatura).await.unwrap();
         conferir_assinatura(&CHAVE, &desafio, b"resposta", &resposta, &assinatura).unwrap();
@@ -1613,4 +1629,92 @@ async fn mascotes_ver_editar_e_libertar() {
     sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
     sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6p-m%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
     c.encerrar().await;
+}
+
+/// Os avisos de missão (`TASK_VAR_DATA` 106: `cmd u16, size u32, reason u8, task u16, …`) que o
+/// mundo mandar até `n`: `(razão, missão)`.
+async fn avisos_de_missao(bus: &mut pw_bus::transport::BusConnection, n: usize) -> Vec<(u8, u16)> {
+    let mut vistos = Vec::new();
+    while vistos.len() < n {
+        let m = esperar_do_mundo(bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 106u16.to_le_bytes())).await;
+        let BusMessage::GameToClient { data, .. } = m else { unreachable!() };
+        vistos.push((data[6], u16::from_le_bytes([data[7], data[8]])));
+    }
+    vistos
+}
+
+/// E6 (B198): missões. Dar é livre (nível 1 numa de nível 90) e manda `NEW` (1); concluir força o
+/// sucesso — a de NPC fica finalizada (`FINISHED` 5), a direta premia (`COMPLETE` 2) e vai às
+/// concluídas —; cancelar apaga com `GIVE_UP` (3), no 1.2.6 só offline; esquecer só offline e deixa
+/// refazer. Offline, um prêmio em dinheiro exige o personagem em jogo e nada é gravado.
+#[tokio::test]
+async fn missoes_ver_dar_concluir_cancelar_e_esquecer() {
+    for versao in [GameVersion::V1_2_6, GameVersion::V1_5_5] {
+        let c = Cenario::montar_versao(versao).await;
+        let id = |s: &str| format!("e6q-{s}-{}", c.personagem);
+        let pedir = |acao: &str, missao: u32| json!({"tipo":"editar_personagem","personagem_id":c.personagem,
+            "missao":{"acao":acao,"id":missao}});
+        let ver = || async {
+            let r = c.pedir(&c.realm, json!({"tipo":"missoes","personagem_id":c.personagem})).await;
+            let d = &r["dados"];
+            let ativas: Vec<(u64, bool)> = d["ativas"].as_array().unwrap().iter()
+                .map(|a| (a["id"].as_u64().unwrap(), a["finalizada"].as_bool().unwrap())).collect();
+            let concluidas: Vec<u64> = d["concluidas"].as_array().unwrap().iter().map(|a| a["id"].as_u64().unwrap()).collect();
+            (ativas, concluidas, d["origem"].as_str().unwrap_or("").to_string())
+        };
+        sqlx::query("DELETE FROM character_task_lists WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+        let busca = c.pedir(&c.realm, json!({"tipo":"buscar_missoes","texto":"direta"})).await;
+        assert_eq!(busca["dados"]["missoes"][0]["id"], 5002, "{busca}");
+
+        let mut bus = c.entrar().await;
+        c.esperar_presenca("online").await;
+        let r = c.pedir_com_id(&c.realm, &id("da1"), c.conta, pedir("dar", 5001)).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("aplicado"), Some("online")), "{r}");
+        assert_eq!(avisos_de_missao(&mut bus, 1).await, vec![(1, 5001)]);
+        let r = c.pedir_com_id(&c.realm, &id("da1b"), c.conta, pedir("dar", 5001)).await;
+        assert_eq!(r["dados"]["codigo"], "missao_ja_ativa", "{r}");
+        let r = c.pedir_com_id(&c.realm, &id("da2"), c.conta, pedir("dar", 5002)).await;
+        assert_eq!(r["estado"], "aplicado", "{r}");
+        assert_eq!(avisos_de_missao(&mut bus, 1).await, vec![(1, 5002)]);
+        let r = c.pedir_com_id(&c.realm, &id("co1"), c.conta, pedir("concluir", 5001)).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["concluida"].as_bool()), (Some("aplicado"), Some(false)), "{r}");
+        assert_eq!(avisos_de_missao(&mut bus, 1).await, vec![(5, 5001)]);
+        let r = c.pedir_com_id(&c.realm, &id("co2"), c.conta, pedir("concluir", 5002)).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["concluida"].as_bool()), (Some("aplicado"), Some(true)), "{r}");
+        assert_eq!(avisos_de_missao(&mut bus, 2).await, vec![(5, 5002), (2, 5002)]);
+        assert_eq!(ver().await, (vec![(5001, true)], vec![5002], "em_jogo".to_string()));
+        let r = c.pedir_com_id(&c.realm, &id("ca1"), c.conta, pedir("cancelar", 5001)).await;
+        if versao == GameVersion::V1_2_6 {
+            assert_eq!(r["dados"]["codigo"], "precisa_estar_offline", "{r}");
+        } else {
+            assert_eq!(r["estado"], "aplicado", "{r}");
+            assert_eq!(avisos_de_missao(&mut bus, 1).await, vec![(3, 5001)]);
+        }
+        let r = c.pedir_com_id(&c.realm, &id("es1"), c.conta, pedir("esquecer", 5002)).await;
+        assert_eq!(r["dados"]["codigo"], "precisa_estar_offline", "{r}");
+
+        drop(bus);
+        c.esperar_presenca("ausente").await;
+        let dinheiro: i64 = sqlx::query_scalar("SELECT money FROM characters WHERE id=$1").bind(c.personagem).fetch_one(c.pool.get_ref()).await.unwrap();
+        assert_eq!(dinheiro, 50, "o prêmio da direta foi gravado na saída");
+        if versao == GameVersion::V1_2_6 {
+            let r = c.pedir_com_id(&c.realm, &id("off-ca1"), c.conta, pedir("cancelar", 5001)).await;
+            assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("salvo"), Some("offline")), "{r}");
+        }
+        assert_eq!(ver().await, (vec![], vec![5002], "persistida".to_string()));
+        let r = c.pedir_com_id(&c.realm, &id("off-es"), c.conta, pedir("esquecer", 5002)).await;
+        assert_eq!(r["estado"], "salvo", "{r}");
+        let r = c.pedir_com_id(&c.realm, &id("off-es2"), c.conta, pedir("esquecer", 5002)).await;
+        assert_eq!(r["dados"]["codigo"], "sem_registro", "{r}");
+        let r = c.pedir_com_id(&c.realm, &id("off-da"), c.conta, pedir("dar", 5002)).await;
+        assert_eq!(r["estado"], "salvo", "{r}");
+        let r = c.pedir_com_id(&c.realm, &id("off-co"), c.conta, pedir("concluir", 5002)).await;
+        assert_eq!(r["dados"]["codigo"], "precisa_estar_online", "prêmio em dinheiro: {r}");
+        assert_eq!(ver().await, (vec![(5002, false)], vec![], "persistida".to_string()), "a recusa não gravou");
+        let r = c.pedir_com_id(&c.realm, &id("off-x"), c.conta, pedir("concluir", 70000)).await;
+        assert_eq!(r["dados"]["codigo"], "edicao_invalida", "{r}");
+        sqlx::query("DELETE FROM character_task_lists WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+        sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6q-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+        c.encerrar().await;
+    }
 }

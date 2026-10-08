@@ -12410,3 +12410,53 @@ comparação lado a lado.
     ### e. O que continua faltando
     Ver em jogo; recusa do mascote invocado sem teste automatizado (exige invocar); dar mascote
     direto (hoje pelo ovo); evolução/atributos derivados do mascote não editáveis.
+
+198. **Sessão 2026-10-07: missões pelo painel — ver, dar (livre), concluir (forçar sucesso), cancelar (apagar) e esquecer a conclusão, online e offline.**
+
+    ### a. Sintoma / pedido
+    E6: missões. Decisões do Murillo (2026-10-07): concluir = forçar o sucesso (1.a); dar = livre,
+    sem pré-requisitos; cancelar = apagar com `GIVE_UP` (3.a); offline sem prêmio que exija a
+    entidade; esquecer a conclusão para refazer deve existir.
+
+    ### b. Evidência
+    - Todos os avisos vão no `TASK_VAR_DATA` (106) → `OnServerNotify` (`EC_HostMsg.cpp:3958-3963`);
+      o cliente refaz na cópia dele (`Task/TaskProcess.cpp:2705-2815` do cliente 1.5.5): `NEW` só
+      confere `CheckBudget` e chama `DeliverTask` (`:2705-2756`) — por isso dar livre funciona;
+      `COMPLETE` aplica o estado e o `RecursiveAward` (`:2757-2794`); `GIVE_UP` faz `ClearTask`
+      (`:2795-2803`); `FINISHED` marca finalizada (`:2805`).
+    - Servidor: `OnTaskForceSucc` (`task/TaskServer.cpp:58-72`) → `OnSetFinished`
+      (`TaskTempl.inl:2184-2204`); `GiveUpOneTask` (`TaskTempl.inl:2170-2182`, `bForce` sem uso);
+      `GIVE_UP` + `ClearTask(.., true)` da desistência com `m_bClearAsGiveUp`
+      (`TaskProcess.cpp:1909-1922`). O original não tem comando de GM para missão (fora de `task/`
+      só `serviceprovider.cpp:1154` e `item_taskdice.cpp:35` chamam `OnTaskCheckDeliver`).
+    - 1.2.6: `NEW` 14 bytes e `COMPLETE` 10 batem com a captura (B101–B102); `GIVE_UP` não foi
+      capturado → cancelar online no 1.2.6 fica offline (regra de 2026-10-07).
+
+    ### c. Correção
+    Motor: `dar_pelo_painel`, `concluir_pelo_painel`, `apagar_pelo_painel` e
+    `ListasDeMissao::esquecer_conclusao`; o fim do `CheckDeliverTask` virou `entregar_e_avisar`
+    (o aceitar normal usa o mesmo). `bus_server/missao_editada.rs`: `EdicaoDeMissao`,
+    `listas_em_json`, `JogadorOffline` (bolsas do banco; prêmio que exige a entidade recusa tudo com
+    `precisa_estar_online`), `missoes_do_painel`, `buscar_missoes`, `missao_pelo_painel`,
+    `missao_no_banco`. Roteador `missoes_do_painel`/`buscar_missoes`/`editar_missao`; canal
+    `missoes`, `buscar_missoes` e `missao` (`AlvoDaEdicao::Missao`, deduplicação). **Teto da
+    resposta do canal 64 KiB** (`LIMITE_RESPOSTA`; pedido segue em 8 KiB; `ler_resposta` no Rust,
+    `canal.py` com o mesmo teto). API: `…/personagens/{pid}/missoes?pagina&busca`,
+    `/api/realms/{id}/missoes?busca`, `MissaoPedida`. Janela Missões (ativas com etapa recuada,
+    concluídas paginadas com filtro e Esquecer, Dar com escolha de etapa, Concluir/Cancelar).
+
+    ### d. Provas
+    Unitário `o_painel_da_conclui_apaga_e_esquece_missoes` (dar livre nível 1 numa de nível 90;
+    de NPC fica pronta; direta premia 50 e registra; apagar não registra; `GIVE_UP` 9 bytes;
+    esquecer deixa refazer) e `a_edicao_de_missao_e_lida_e_conferida`; motor 18/0.
+    `missoes_ver_dar_concluir_cancelar_e_esquecer` 1/0 nas duas versões (online `NEW`, `FINISHED`,
+    `FINISHED`+`COMPLETE`, `GIVE_UP` só no 1.5.5; dinheiro 50 gravado na saída; offline cancelar no
+    1.2.6, esquecer, dar; concluir com prêmio em dinheiro offline = `precisa_estar_online` sem
+    gravar). `canal_administrativo` 31/0. Painel Python 67/0, Node 10/0. Prévia visual com daemon
+    falso (janela, busca com etapas, Concluir → "Gravado"). Suíte do workspace com o banco
+    (`--no-fail-fast`): **983 passaram, 2 falharam, 2 ignorados — as 2 falhas são os intermitentes conhecidos de grupo (convite, 400 ms) e roupa; repetidos isolados: roupa passou, convite passou 2 de 3**.
+
+    ### e. O que continua faltando
+    Ver em jogo (1.5.5 e 1.2.6). `GIVE_UP` no cliente 1.2.6 (captura ou binário) para liberar
+    cancelar online. Dar uma etapa solta (só a principal), editar abates/tempo de uma entrada, o
+    depósito de missões. Offline grava bolsas e listas em duas escritas (não é uma transação).

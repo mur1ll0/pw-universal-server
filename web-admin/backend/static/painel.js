@@ -642,6 +642,7 @@ async function consultarPersonagem(realmId, id) {
     carregarInventario(estado.selecionado, id);
     carregarHabilidades(estado.selecionado, id);
     carregarMascotes(estado.selecionado, id);
+    carregarMissoes(estado.selecionado, id);
   } catch (erro) {
     if (estado.ficha !== consulta || !estado.sessao) return;
     elemento("aviso-personagens").textContent = erro.message;
@@ -671,7 +672,16 @@ function preencherCultivos(versao, atual) {
 }
 
 const MOTIVOS_EDICAO = {
-  precisa_estar_online: "EXP e SP só com o personagem em jogo.",
+  precisa_estar_online: "Isto só com o personagem em jogo (EXP, SP ou prêmio de missão).",
+  missao_inexistente: "Este realm não tem essa missão.",
+  nao_e_topo: "Só a missão principal (não uma etapa).",
+  escolha_a_submissao: "Esta missão pede que se escolha a etapa.",
+  missao_ja_ativa: "O personagem já tem essa missão.",
+  lista_cheia: "A lista de missões do personagem está cheia.",
+  missao_ausente: "A missão não está mais na lista; atualize.",
+  ja_finalizada: "A missão já está pronta para entregar.",
+  missao_ativa: "A missão está ativa; cancele antes de esquecer.",
+  sem_registro: "A missão não está nas concluídas.",
   nivel_invalido: "O nível novo tem de ser maior que o atual e até o teto do realm.",
   nivel_invalido_ou_personagem_inexistente: "O nível novo tem de ser maior que o atual (ou o personagem não existe).",
   cultivo_invalido: "Cultivo que esta versão não tem.",
@@ -1183,6 +1193,128 @@ async function salvarMascote(libertar = false) {
   const r = await editarPersonagem({ mascote: { slot: m.slot, tid: m.tid, edicao } },
     `${m.nome || m.modelo}: ${libertar ? "libertado" : Object.keys(edicao).join(", ")}`);
   if (r === "aplicado" || r === "salvo") elemento("form-mascote").hidden = true;
+}
+
+/* Missões (B198): ativas (topo e filha atual) e concluídas, com o nome do tasks.data. Dar é livre
+   (sem pré-requisitos); concluir força o sucesso (missão de NPC fica pronta para entregar, a direta
+   premia); cancelar apaga sem prêmio de falha; esquecer tira das concluídas para refazer (só fora
+   do jogo — o painel oferece desconectar). */
+const PAGINA_DE_CONCLUIDAS = 200;
+let buscaDeMissao = 0;
+function rotuloDaMissao(m) { return m.nome || `Missão ${m.id}`; }
+async function carregarMissoes(realm, id, pagina = estado.paginaDeMissoes || 0) {
+  const ativas = elemento("missoes-ativas");
+  const concluidas = elemento("missoes-concluidas");
+  elemento("form-missao").hidden = true;
+  estado.missao = null;
+  estado.paginaDeMissoes = pagina;
+  ativas.replaceChildren(criar("p", "nota-vazia", "Carregando missões…"));
+  const filtro = elemento("mis-filtro").value.trim();
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/missoes?pagina=${pagina}`
+      + (filtro ? `&busca=${encodeURIComponent(filtro)}` : ""));
+    if (estado.personagemId !== id) return;
+    ativas.replaceChildren();
+    const porId = new Map((dados.ativas || []).map((m) => [m.id, m]));
+    for (const m of dados.ativas || []) {
+      const linha = criar("button", m.pai ? "linha-missao filha" : "linha-missao");
+      linha.type = "button";
+      const texto = criar("span");
+      const abates = (m.abates || []).map(([feitos, pedidos]) => `${feitos}/${pedidos}`).join(" · ");
+      texto.append(document.createTextNode(rotuloDaMissao(m)),
+        criar("small", "", `ID ${m.id}${m.pai ? ` · de ${rotuloDaMissao(porId.get(m.pai) || { id: m.pai })}` : ""}${abates ? ` · abates ${abates}` : ""}`));
+      const situacao = m.finalizada ? (m.sucesso ? ["Pronta", "etiqueta"] : ["Falhou", "etiqueta etiqueta-erro"]) : ["Em curso", "etiqueta etiqueta-neutra"];
+      linha.append(texto, criar("span", situacao[1], situacao[0]));
+      linha.addEventListener("click", () => escolherMissao(m, linha));
+      ativas.append(linha);
+    }
+    if (!(dados.ativas || []).length) ativas.append(criar("p", "nota-vazia", "Nenhuma missão ativa."));
+    concluidas.replaceChildren();
+    for (const m of dados.concluidas || []) {
+      const linha = criar("div", "linha-missao");
+      const texto = criar("span");
+      texto.append(document.createTextNode(rotuloDaMissao(m)), criar("small", "", `ID ${m.id}${m.vezes ? ` · ${m.vezes}×` : ""}`));
+      const esquecer = criar("button", "botao botao-secundario", "Esquecer");
+      esquecer.type = "button";
+      esquecer.title = "Tirar das concluídas para poder refazer";
+      esquecer.addEventListener("click", () => acaoDeMissao("esquecer", m));
+      linha.append(texto, criar("span", m.falhou ? "etiqueta etiqueta-erro" : "etiqueta etiqueta-ouro", m.falhou ? "Falhou" : "Concluída"), esquecer);
+      concluidas.append(linha);
+    }
+    const total = dados.total_concluidas || 0;
+    if (!total) concluidas.append(criar("p", "nota-vazia", filtro ? "Nenhuma concluída com esse filtro." : "Nenhuma missão concluída."));
+    const paginas = Math.max(1, Math.ceil(total / PAGINA_DE_CONCLUIDAS));
+    elemento("mis-total").textContent = `(${total})`;
+    elemento("mis-pagina").textContent = `${pagina + 1} de ${paginas}`;
+    elemento("mis-anterior").disabled = pagina <= 0;
+    elemento("mis-proxima").disabled = pagina + 1 >= paginas;
+    elemento("paginacao-missoes").hidden = paginas <= 1;
+  } catch (erro) {
+    ativas.replaceChildren(criar("p", "nota-vazia", `Missões indisponíveis: ${erro.message}`));
+  }
+}
+function escolherMissao(m, linha) {
+  estado.missao = m;
+  for (const outra of document.querySelectorAll?.("#missoes-ativas .escolhido") || []) outra.classList.remove("escolhido");
+  linha.classList.add("escolhido");
+  elemento("mis-qual").textContent = `${rotuloDaMissao(m)} (ID ${m.id})`;
+  elemento("mis-concluir").disabled = !!m.finalizada;
+  elemento("mis-cancelar").disabled = !!m.pai;
+  elemento("mis-cancelar").title = m.pai ? "Cancele a missão principal" : "";
+  elemento("form-missao").hidden = false;
+}
+async function acaoDeMissao(acao, m) {
+  if (!m) return;
+  const nome = rotuloDaMissao(m);
+  if (acao === "cancelar" && !(await confirmar("Cancelar missão", `${nome} sai da lista, com as etapas, sem prêmio.`, "Cancelar missão"))) return;
+  if (acao === "esquecer" && !(await confirmar("Esquecer conclusão", `${nome} sai das concluídas e pode ser feita de novo.`, "Esquecer"))) return;
+  const corpo = { acao, id: m.id };
+  if (acao === "dar" && m.sub) corpo.sub = m.sub;
+  const texto = { dar: "dada", concluir: "concluída", cancelar: "cancelada", esquecer: "esquecida" }[acao];
+  await editarPersonagem({ missao: corpo }, `${nome}: ${texto}`);
+}
+async function buscarMissao() {
+  const realm = estado.selecionado;
+  const texto = elemento("mis-busca").value.trim();
+  const lista = elemento("mis-resultados");
+  estado.missaoEscolhida = null;
+  elemento("mis-escolhida").textContent = "";
+  elemento("mis-sub").hidden = true;
+  if (!realm || (texto.length < 2 && !/^\d+$/.test(texto))) { lista.hidden = true; return; }
+  const minha = ++buscaDeMissao;
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/missoes?busca=${encodeURIComponent(texto)}`);
+    if (minha !== buscaDeMissao) return;
+    lista.replaceChildren();
+    for (const m of dados.missoes || []) {
+      const linha = criar("li");
+      const [minimo, maximo] = m.nivel || [0, 0];
+      linha.append(criar("span", "", rotuloDaMissao(m)),
+        criar("small", "", `ID ${m.id}${minimo ? ` · nível ${minimo}${maximo ? `–${maximo}` : "+"}` : ""}${m.filhas ? ` · ${m.filhas} etapas` : ""}`));
+      linha.addEventListener("click", () => {
+        estado.missaoEscolhida = m;
+        for (const outra of lista.children) outra.classList?.remove("escolhido");
+        linha.classList.add("escolhido");
+        const sub = elemento("mis-sub");
+        sub.replaceChildren(...(m.escolha || []).map((s) => { const o = criar("option", "", rotuloDaMissao(s)); o.value = String(s.id); return o; }));
+        sub.hidden = !(m.escolha || []).length;
+        elemento("mis-escolhida").textContent = `Escolhida: ${rotuloDaMissao(m)} (ID ${m.id})${sub.hidden ? "" : " — escolha a etapa"}.`;
+      });
+      lista.append(linha);
+    }
+    if (!(dados.missoes || []).length) lista.append(criar("li", "dica", "Nenhuma missão com esse nome."));
+    lista.hidden = false;
+  } catch (erro) {
+    lista.replaceChildren(criar("li", "dica", erro.message));
+    lista.hidden = false;
+  }
+}
+async function darMissao() {
+  const texto = elemento("mis-busca").value.trim();
+  const m = estado.missaoEscolhida || (/^\d+$/.test(texto) ? { id: Number(texto) } : null);
+  if (!m) { alerta("erro", "Escolha a missão", "Busque pelo nome e clique nela, ou digite o ID."); return; }
+  const sub = elemento("mis-sub");
+  await acaoDeMissao("dar", { ...m, sub: sub.hidden ? undefined : Number(sub.value) });
 }
 
 /* Remover (B187): clicar no item abre a barra com a quantidade (a pilha inteira por padrão).
@@ -1893,6 +2025,20 @@ elemento("hab-remover").addEventListener("click", () => aplicarHabilidade(0));
 elemento("form-ensinar").addEventListener("submit", (evento) => { evento.preventDefault(); ensinarHabilidade(); });
 elemento("form-mascote").addEventListener("submit", (evento) => { evento.preventDefault(); salvarMascote(false); });
 elemento("pet-libertar").addEventListener("click", () => salvarMascote(true));
+elemento("form-dar-missao").addEventListener("submit", (evento) => { evento.preventDefault(); darMissao(); });
+elemento("mis-concluir").addEventListener("click", () => acaoDeMissao("concluir", estado.missao));
+elemento("mis-cancelar").addEventListener("click", () => acaoDeMissao("cancelar", estado.missao));
+elemento("form-filtro-missoes").addEventListener("submit", (evento) => {
+  evento.preventDefault();
+  if (estado.selecionado && estado.personagemId) carregarMissoes(estado.selecionado, estado.personagemId, 0);
+});
+elemento("mis-anterior").addEventListener("click", () => carregarMissoes(estado.selecionado, estado.personagemId, (estado.paginaDeMissoes || 0) - 1));
+elemento("mis-proxima").addEventListener("click", () => carregarMissoes(estado.selecionado, estado.personagemId, (estado.paginaDeMissoes || 0) + 1));
+let esperaDaMissao = null;
+elemento("mis-busca").addEventListener("input", () => {
+  if (esperaDaMissao) clearTimeout(esperaDaMissao);
+  esperaDaMissao = temTempo ? setTimeout(buscarMissao, 300) : null;
+});
 let esperaDaHabilidade = null;
 elemento("hab-busca").addEventListener("input", () => {
   if (esperaDaHabilidade) clearTimeout(esperaDaHabilidade);

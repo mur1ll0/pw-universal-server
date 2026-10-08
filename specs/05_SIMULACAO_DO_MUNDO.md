@@ -706,7 +706,7 @@ Limitações: instâncias do `gs.conf` que dividem pasta (`is73–75` em `a72`, 
 e `m01`/`random03`/`random04` não têm dados no carregador — aparecem "sem dados"; cada mapa é
 um mundo único compartilhado (o original cria cópias por entrada em `instance_servers`).
 
-## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184–B187, B191, B194, B196, B197; falta ver em jogo)
+## 7.11 Edição de personagem pelo painel — `testado` (B179, B182, B184–B187, B191, B194, B196–B198; falta ver em jogo)
 
 `RoteadorDeMapas::editar_personagem`, com a guarda de presença em leitura (a entrada pega em
 escrita) e a trava de gravação do personagem. Só dar (B180: tirar arriscaria valor
@@ -838,6 +838,30 @@ grava e manda `PET_ROOM` (239) do slot (`UpdatePets`) ou `FREE_PET` (232) ao lib
 `petman.cpp:1505-1520`); o mascote invocado = `mascote_invocado`. Offline: grava. Dar mascote =
 dar o ovo (B186) e o jogador choca. Falhas: `slot_mudou`, `formato_invalido`,
 `nivel_do_mascote_invalido`, `valores_invalidos`, `nome_invalido`, `habilidades_invalidas`.
+
+**B198 (E6) — missões** (`bus_server/missao_editada.rs`). Consulta `missoes {personagem_id, pagina,
+busca?}`: as listas da memória quando o personagem está no mapa (a verdade em jogo), senão as do
+banco (`character_task_lists`); ativas com o pai, o estado e os abates; concluídas em páginas de 200
+filtradas por nome ou id. `buscar_missoes`: até 30 missões **de topo** por nome ou id, com as etapas
+de uma missão `m_bChooseOne`. Edição `missao: {acao, id, sub?}`. Cada ação usa o aviso que o original
+manda para ela, no `TASK_VAR_DATA` (106), e o cliente refaz na cópia dele (`EC_HostMsg.cpp:3958-3963`
+→ `Task/TaskProcess.cpp:2705-2815` do cliente 1.5.5); não há pacote que reenvie a lista em jogo:
+
+| ação | no motor (`missoes.rs`) | aviso ao cliente | limites de formato |
+| :--- | :--- | :--- | :--- |
+| `dar` (livre, decisão de 2026-10-07) | `dar_pelo_painel`: `DeliverTask` sem `CheckPrerequisite` e sem retirar os itens exigidos — o cliente, ao receber `NEW`, também só confere `CheckBudget` (`TaskProcess.cpp:2705-2756` do cliente) | `NEW` (1) | só missão de topo (`nao_e_topo`); `CheckBudget` (`missao_ja_ativa`, `lista_cheia`) e `CheckRecordListSpace`; etapa obrigatória numa `m_bChooseOne` (`escolha_a_submissao`) |
+| `concluir` (forçar sucesso) | `concluir_pelo_painel`: o `OnTaskForceSucc` (`TaskServer.cpp:58-72`) → `OnSetFinished` sem reavisar a equipe; o bit de sucesso é posto antes (o `DeliverAward` ainda o tira por tempo vencido ou pai falho) | `FINISHED` (5); conclusão direta segue com o prêmio e `COMPLETE` (2); a de NPC fica pronta e o jogador entrega no NPC | entrada ativa (`missao_ausente`), não finalizada (`ja_finalizada`) |
+| `cancelar` (apagar) | `apagar_pelo_painel`: `ClearTask(pEntry, true)` + o aviso da desistência com `m_bClearAsGiveUp` (`TaskProcess.cpp:1909-1922`): sem prêmio de falha, sem registro nas concluídas, sem conferir `m_bCanGiveUp`; itens de missão saem como no original | `GIVE_UP` (3), só a base | só a principal |
+| `esquecer` | `ListasDeMissao::esquecer_conclusao`: tira o id das concluídas, da hora (frequência) e da contagem — o que o `CheckPrerequisite` consulta para recusar repetir | nenhum (o cliente só recebe as concluídas no `TASK_DATA`) | não ativa (`missao_ativa`); `sem_registro` |
+
+**Online** pelo `com_contexto` + `com_motor` (avisos, prêmios e gravação como em jogo). `esquecer`
+online = `precisa_estar_offline` nas duas versões; `cancelar` online no 1.2.6 também (`GIVE_UP` não
+foi capturado nem conferido no cliente 1.2.6; `NEW` 14 bytes e `COMPLETE` 10 bytes batem com a
+captura, B101–B102). **Offline** o motor roda sobre as listas e as bolsas do banco
+(`JogadorOffline`): itens de missão entram e saem; prêmio que precisa da entidade (dinheiro, EXP, SP,
+reputação, cultivo, chi, jaula, teleporte, monstros) recusa a operação inteira com
+`precisa_estar_online`, sem gravar; grava bolsas e listas sob a guarda de presença e a trava de
+gravação (não é uma transação só: falha entre as duas gravações é limitação documentada).
 
 Falhas novas: `nivel_invalido` (com `nivel_maximo`), `nivel_invalido_ou_personagem_inexistente`
 (offline), `cultivo_invalido`. A impressão de deduplicação só inclui `pontos`/`nivel`/`cultivo`

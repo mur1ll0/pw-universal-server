@@ -1,4 +1,5 @@
 """Consultas somente de leitura com origem explícita e alvo validado no banco."""
+from typing import Optional
 from fastapi import HTTPException, Path, Query, Request, Response
 from .icones import png_do_icone
 from .dica import linhas_da_dica
@@ -154,6 +155,32 @@ def registrar_consultas(app):
         achadas = [i for i in sorted(cliente) if termo == str(i) or termo in nomes.get(i, "").lower()][:30]
         return {"habilidades": [{"id": i, "nome": nomes.get(i, f"Habilidade {i}"), "icone": cliente[i]["icone"],
                                  "nivel_maximo": cliente[i]["nivel_maximo"], "classe": cliente[i]["classe"]} for i in achadas]}
+
+    @app.get("/api/realms/{realm_id}/personagens/{personagem_id}/missoes")
+    async def missoes_do_personagem(realm_id: str, requisicao: Request,
+                                    personagem_id: int = Path(..., ge=1, le=2_147_483_647),
+                                    pagina: int = Query(0, ge=0, le=99),
+                                    busca: Optional[str] = Query(None, max_length=64)):
+        """E6 (B198): missões ativas (com o pai e o estado) e uma página de 200 concluídas, com o
+        nome do tasks.data. Em jogo o GS lê a memória; fora, o banco."""
+        await validar_realm(realm_id)
+        async with app.state.seguranca.pool.acquire() as conexao:
+            existe = await conexao.fetchval("SELECT 1 FROM characters WHERE realm_id=$1 AND id=$2 AND NOT is_deleted",
+                                            realm_id, personagem_id)
+        if not existe:
+            raise HTTPException(404, "Personagem não encontrado neste realm.")
+        consulta = {"tipo": "missoes", "personagem_id": personagem_id, "pagina": pagina}
+        if busca and busca.strip():
+            consulta["busca"] = busca.strip()
+        dados = await consultar_primeiro(realm_id, requisicao, consulta)
+        return {"realm_id": realm_id, **{k: dados.get(k) for k in
+                ("ativas", "concluidas", "total_concluidas", "pagina", "por_pagina", "origem")}}
+
+    @app.get("/api/realms/{realm_id}/missoes")
+    async def buscar_missoes(realm_id: str, requisicao: Request, busca: str = Query(..., min_length=1, max_length=64)):
+        """E6 (B198): até 30 missões de topo do tasks.data do realm por nome ou id."""
+        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "buscar_missoes", "texto": busca})
+        return {"realm_id": realm_id, "missoes": dados.get("missoes", [])}
 
     @app.get("/api/realms/{realm_id}/itens")
     async def buscar_itens(realm_id: str, requisicao: Request, busca: str = Query(..., min_length=1, max_length=64)):

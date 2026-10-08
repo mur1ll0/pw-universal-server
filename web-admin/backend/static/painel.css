@@ -516,3 +516,20 @@ button, input, select { font: inherit; color: inherit; }
 .cartao-mascote:hover, .cartao-mascote.escolhido { border-color: var(--ouro); }
 .cartao-mascote small { display: block; color: var(--texto-3); }
 
+/* Missões (B198) */
+.titulo-lista { margin: 12px 0 6px; font-size: 13px; color: var(--texto-2); font-weight: 600; }
+.lista-missoes { display: grid; gap: 4px; max-height: 320px; overflow-y: auto; }
+.linha-missao { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 6px 8px;
+  border: 1px solid var(--borda); border-radius: var(--raio); background: var(--fundo-2); color: var(--texto); text-align: left; }
+button.linha-missao { cursor: pointer; grid-template-columns: 1fr auto; }
+button.linha-missao:hover, .linha-missao.escolhido { border-color: var(--ouro); }
+.linha-missao.filha { margin-left: 20px; }
+.linha-missao small { display: block; color: var(--texto-3); }
+.linha-missao .botao { padding: 4px 10px; }
+#form-dar-missao.linha-edicao { grid-template-columns: 90px minmax(0, 1fr) auto auto; }
+#form-missao.linha-edicao { grid-template-columns: minmax(0, 1fr) auto auto; }
+#form-filtro-missoes.linha-edicao { grid-template-columns: minmax(0, 1fr) auto; }
+#mis-sub { max-width: 220px; }
+@media (max-width: 640px) { #form-dar-missao.linha-edicao { grid-template-columns: 1fr auto; } #form-dar-missao .rotulo-edicao { grid-column: 1 / -1; } }
+#paginacao-missoes { margin-top: 8px; color: var(--texto-2); }
+

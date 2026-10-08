@@ -131,6 +131,15 @@ class ItemEditadoPedido(BaseModel):
     edicao: EdicaoItem
 
 
+class MissaoPedida(BaseModel):
+    """E6 (B198): `dar` (livre, sem pré-requisitos), `concluir` (força o sucesso), `cancelar`
+    (apaga) ou `esquecer` (tira das concluídas, só offline). O id vai num u16 nos avisos."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    acao: Literal["dar", "concluir", "cancelar", "esquecer"]
+    id: int = Field(ge=1, le=65_535)
+    sub: Optional[int] = Field(default=None, ge=1, le=65_535)
+
+
 class HabilidadePedida(BaseModel):
     """E6 (B196): `nivel` 0 remove; senão define o nível. O teto é o `max_level` do stub do cliente
     (`painel/habilidades_do_cliente.json`), conferido na rota."""
@@ -185,6 +194,7 @@ class EdicaoPersonagem(BaseModel):
     editar_item: Optional[ItemEditadoPedido] = None
     habilidade: Optional[HabilidadePedida] = None
     mascote: Optional[MascotePedido] = None
+    missao: Optional[MissaoPedida] = None
 
 
 def somar_desconexoes(resultado):
@@ -335,7 +345,7 @@ def registrar_contas(app):
         entidade (tudo menos EXP/SP). Quem decide online/offline é o GS."""
         experiencia = bool(pedido.exp or pedido.sp)
         simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao", "item",
-                               "remover_item", "mover_item", "editar_item", "habilidade", "mascote") if getattr(pedido, k) is not None]
+                               "remover_item", "mover_item", "editar_item", "habilidade", "mascote", "missao") if getattr(pedido, k) is not None]
         if len(simples) + experiencia != 1:
             raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo, atributos ou posição.")
         consulta = {"tipo": "editar_personagem", "personagem_id": personagem_id}
@@ -362,7 +372,7 @@ def registrar_contas(app):
                 maximo = (cliente.get(hid) or {}).get("nivel_maximo")
                 if hid not in cliente or nivel < 1 or (maximo and nivel > maximo):
                     raise HTTPException(422, f"Habilidade {hid} desconhecida ou nível {nivel} fora do máximo.")
-        if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"], ["editar_item"], ["habilidade"], ["mascote"]):
+        if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"], ["editar_item"], ["habilidade"], ["mascote"], ["missao"]):
             consulta[simples[0]] = getattr(pedido, simples[0]).model_dump(exclude_none=True)
         elif simples:
             consulta[simples[0]] = getattr(pedido, simples[0])

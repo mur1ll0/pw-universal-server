@@ -117,7 +117,7 @@ const DESGASTE_AO_APANHAR: i32 = 25;
 /// (`EC_HostMsg.cpp:974-981`).
 pub(super) const NENHUMA_PECA: u8 = 0x7f;
 
-fn agora() -> u32 {
+pub(super) fn agora() -> u32 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as u32)
@@ -2891,7 +2891,7 @@ impl BusServer {
     }
 
     /// Roda uma operação do motor sobre as listas do jogador do contexto.
-    fn com_motor<R>(
+    pub(super) fn com_motor<R>(
         ctx: &mut Contexto,
         dados: &GameDataManager,
         op: impl FnOnce(&mut Motor<Contexto>) -> R,

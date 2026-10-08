@@ -33,9 +33,13 @@ def configuracao(realm_id):
         raise CanalNaoEnviado("Canal administrativo não configurado para este realm.")
 
 
+# Teto da resposta do daemon (B198, `LIMITE_RESPOSTA` em administracao.rs); o pedido segue em 8 KiB.
+LIMITE_RESPOSTA = 65536
+
+
 async def ler_quadro(leitor):
     tamanho = struct.unpack("!I", await leitor.readexactly(4))[0]
-    if not 0 < tamanho <= 8192:
+    if not 0 < tamanho <= LIMITE_RESPOSTA:
         raise CanalIndisponivel("Resposta administrativa fora do limite.")
     return await leitor.readexactly(tamanho)
 

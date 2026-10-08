@@ -120,6 +120,14 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                     else:
                         estado_resposta = "falha"
                         dados = {"codigo": "mapa_nao_servido", "mapa": consulta["mapa"]}
+                elif consulta["tipo"] == "missoes":
+                    # B198: resposta acima dos 8 KiB do pedido (até 64 KiB, `LIMITE_RESPOSTA`).
+                    dados = {"ativas": [{"id": 5001, "nome": "Missão", "pai": None, "finalizada": False}],
+                             "concluidas": [{"id": i, "nome": "Concluída de teste " * 2, "falhou": False, "vezes": 0}
+                                            for i in range(200)],
+                             "total_concluidas": 450, "pagina": consulta["pagina"], "por_pagina": 200, "origem": "persistida"}
+                elif consulta["tipo"] == "buscar_missoes":
+                    dados = {"missoes": [{"id": 5002, "nome": "Missão direta", "nivel": [1, 150], "filhas": 0, "escolha": []}]}
                 else:
                     dados = {"presenca": presenca, "ficha": ficha}
                 resposta = json.dumps({"operacao_id": pedido["operacao_id"], "realm_id": "outro" if erro == "realm" else realm,
@@ -540,6 +548,22 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((lista[0]["icone"], lista[0]["nivel_maximo"]), ("bba2bbf72e646473", 10))
         self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/personagens/999999999/habilidades")).status_code, 404)
 
+    async def test_missoes_do_personagem_b198(self):
+        """B198: a rota repassa página e busca, aceita resposta acima de 8 KiB e recusa personagem de fora."""
+        realm, personagem = await self.criar_personagem()
+        await self.ativar_daemon(realm)
+        resposta = await self.cliente.get(f"/api/realms/{realm}/personagens/{personagem}/missoes?pagina=1&busca=%20lobo%20")
+        self.assertEqual(resposta.status_code, 200, resposta.text)
+        dados = resposta.json()
+        self.assertEqual((len(dados["concluidas"]), dados["total_concluidas"], dados["pagina"]), (200, 450, 1))
+        self.assertEqual(self.pedidos_admin[-1]["consulta"],
+                         {"tipo": "missoes", "personagem_id": personagem, "pagina": 1, "busca": "lobo"})
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/personagens/999999999/missoes")).status_code, 404)
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/personagens/{personagem}/missoes?pagina=100")).status_code, 422)
+        busca = (await self.cliente.get(f"/api/realms/{realm}/missoes?busca=direta")).json()
+        self.assertEqual(busca["missoes"][0]["id"], 5002)
+        self.assertEqual(self.pedidos_admin[-1]["consulta"], {"tipo": "buscar_missoes", "texto": "direta"})
+
     async def test_busca_de_habilidades_b196(self):
         await self.criar_personagem()
         dados = (await self.cliente.get("/api/habilidades?busca=Ataque do Tigre")).json()["habilidades"]
@@ -945,7 +969,11 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          {"mascote": {"slot": 0, "tid": 1, "edicao": {"nome": "123456789"}}},
                          {"mascote": {"slot": 0, "tid": 1, "edicao": {"habilidades": [[60000, 1]]}}},
                          {"mascote": {"slot": 0, "tid": 1, "edicao": {"habilidades": [[1, 11]]}}},
-                         {"mascote": {"slot": 0, "tid": 1, "edicao": {"libertar": False}}}):
+                         {"mascote": {"slot": 0, "tid": 1, "edicao": {"libertar": False}}},
+                         # B198: missão com ação conhecida, id 1–65 535, sem campo extra, uma edição só.
+                         {"missao": {"acao": "apagar", "id": 1}}, {"missao": {"acao": "dar", "id": 0}},
+                         {"missao": {"acao": "dar", "id": 70000}}, {"missao": {"acao": "dar"}},
+                         {"missao": {"acao": "dar", "id": 1, "x": 1}}, {"missao": {"acao": "dar", "id": 1}, "pontos": 1}):
             self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
         for valido in ({"dinheiro": 10}, {"pontos": 5}, {"nivel": 30}, {"cultivo": 0},
                        {"atributos": [5, 5, 5, 5]}, {"redistribuir": True},
@@ -960,7 +988,9 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                            "agilidade": 0, "vitalidade": 0, "energia": 0}}}},
                        {"habilidade": {"id": 1, "nivel": 10}}, {"habilidade": {"id": 1, "nivel": 0}},
                        {"mascote": {"slot": 0, "tid": 8000, "edicao": {"nivel": 5, "fome": 11, "nome": "Rex", "habilidades": [[1, 3]]}}},
-                       {"mascote": {"slot": 1, "tid": 8001, "edicao": {"libertar": True}}}):
+                       {"mascote": {"slot": 1, "tid": 8001, "edicao": {"libertar": True}}},
+                       {"missao": {"acao": "dar", "id": 1173, "sub": 1175}}, {"missao": {"acao": "concluir", "id": 5001}},
+                       {"missao": {"acao": "cancelar", "id": 5001}}, {"missao": {"acao": "esquecer", "id": 5002}}):
             resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
             self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
 

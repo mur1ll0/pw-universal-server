@@ -734,6 +734,48 @@ impl RoteadorDeMapas {
         }
     }
 
+    /// Painel (E6, B198): as listas de missão. Pelo mapa dono quando o personagem está em jogo (a
+    /// memória é a verdade); senão pelo padrão, do banco.
+    pub async fn missoes_do_painel(&self, roleid: i32, pagina: usize, busca: Option<&str>) -> serde_json::Value {
+        let dono = match self.mapa_de(roleid).await { Some(m) => self.mapa(m), None => None };
+        match dono.or_else(|| self.mapa(self.padrao)).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
+            Some(bus) => bus.missoes_do_painel(roleid, pagina, busca).await,
+            None => serde_json::json!({"codigo":"sem_mapa"}),
+        }
+    }
+
+    /// Painel (E6, B198): missões de topo do `tasks.data` do realm por nome ou id.
+    pub async fn buscar_missoes(&self, texto: &str) -> serde_json::Value {
+        match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
+            Some(bus) => bus.buscar_missoes(texto).await,
+            None => serde_json::json!({"codigo":"sem_mapa"}),
+        }
+    }
+
+    /// Painel (E6, B198): dar, concluir, cancelar ou esquecer uma missão, com a guarda de presença
+    /// e a trava de gravação. Regras em [`crate::bus_server::missao_editada`].
+    pub async fn editar_missao(&self, roleid: i32, e: crate::bus_server::missao_editada::EdicaoDeMissao) -> serde_json::Value {
+        let Some(bus) = self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) else {
+            return serde_json::json!({"estado":"falha","codigo":"sem_mapa"});
+        };
+        let _comando = self.presenca.read().await;
+        let controle = self.repo.controle_de_gravacao(roleid);
+        let _guarda = controle.alterar().await;
+        if let Some(mapa) = self.mapa_de(roleid).await {
+            let feito = match self.mapa(mapa) { Some(s) => s.missao_pelo_painel(roleid, e).await, None => None };
+            return match feito {
+                Some(d) if !d["erro"].is_null() => serde_json::json!({"estado":"falha","codigo":d["erro"],"missao":e.id}),
+                Some(d) => serde_json::json!({"estado":"aplicado","presenca":"online","mapa":mapa,"missao":e.id,
+                    "acao":e.acao,"concluida":d["concluida"]}),
+                None => serde_json::json!({"estado":"falha","codigo":"em_transicao"}),
+            };
+        }
+        match bus.missao_no_banco(roleid, e).await {
+            Ok(concluida) => serde_json::json!({"estado":"salvo","presenca":"offline","missao":e.id,"acao":e.acao,"concluida":concluida}),
+            Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo,"missao":e.id}),
+        }
+    }
+
     /// Painel (E6, B189): o item de um slot com os dados da dica.
     pub async fn detalhe_do_item(&self, roleid: i32, recipiente: pw_core::ContainerType, slot: u16) -> serde_json::Value {
         match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {

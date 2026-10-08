@@ -282,9 +282,36 @@
                 </form>
               </div>
             </section>
-            <section class="janela janela-futura" data-janela="missoes">
+            <section class="janela" data-janela="missoes">
               <header class="barra-janela"><h3>Missões</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
-              <div class="corpo-janela"><p class="nota-vazia">Em breve.</p></div>
+              <div class="corpo-janela">
+                <form id="form-dar-missao" class="linha-edicao">
+                  <span class="rotulo-edicao">Dar</span>
+                  <input id="mis-busca" type="search" maxlength="64" placeholder="Nome ou ID da missão" aria-label="Buscar missão por nome ou ID" autocomplete="off">
+                  <select id="mis-sub" aria-label="Etapa" hidden></select>
+                  <button type="submit" class="botao botao-primario">Dar</button>
+                </form>
+                <ul id="mis-resultados" class="resultados-item" hidden></ul>
+                <p id="mis-escolhida" class="dica"></p>
+                <h4 class="titulo-lista">Ativas</h4>
+                <div id="missoes-ativas" class="lista-missoes"></div>
+                <div id="form-missao" class="linha-edicao" hidden>
+                  <span id="mis-qual" class="nome-remocao"></span>
+                  <button id="mis-concluir" type="button" class="botao botao-primario">Concluir</button>
+                  <button id="mis-cancelar" type="button" class="botao botao-secundario texto-perigo">Cancelar</button>
+                </div>
+                <h4 class="titulo-lista">Concluídas <span id="mis-total"></span></h4>
+                <form id="form-filtro-missoes" class="linha-edicao">
+                  <input id="mis-filtro" type="search" maxlength="64" placeholder="Filtrar por nome ou ID" aria-label="Filtrar concluídas" autocomplete="off">
+                  <button type="submit" class="botao botao-secundario">Filtrar</button>
+                </form>
+                <div id="missoes-concluidas" class="lista-missoes"></div>
+                <div id="paginacao-missoes" class="paginacao" hidden>
+                  <button id="mis-anterior" type="button" class="botao botao-secundario" aria-label="Página anterior">‹</button>
+                  <span id="mis-pagina"></span>
+                  <button id="mis-proxima" type="button" class="botao botao-secundario" aria-label="Próxima página">›</button>
+                </div>
+              </div>
             </section>
             </div>
             <div id="dica-item" class="dica-item" role="tooltip" hidden></div>

@@ -203,3 +203,17 @@ test("editar item (B194) manda só o que mudou e recusa sem mudança", async () 
   const corpo = JSON.parse(c.pedidos[0].opcoes.body);
   assert.deepEqual(corpo.editar_item, { recipiente: "bolsa", slot: 3, id: 3001, edicao: { quantidade: 250 } });
 });
+
+test("missões (B198): dar manda a etapa escolhida e concluir manda o id da ativa", async () => {
+  const c = await montar();
+  c.avaliar("estado.personagemId=5; estado.missaoEscolhida={id:1173,nome:'Teste do Guerreiro'}");
+  c.avaliar("elemento('mis-sub').hidden=false; elemento('mis-sub').value='1175'");
+  c.resposta(200, { estado: "aplicado", missao: 1173 });
+  await c.avaliar("darMissao()");
+  assert.ok(c.pedidos[0].caminho.endsWith("/realms/realm_126/personagens/5/editar"));
+  assert.deepEqual(JSON.parse(c.pedidos[0].opcoes.body).missao, { acao: "dar", id: 1173, sub: 1175 });
+  const antes = c.pedidos.length;
+  c.resposta(200, { estado: "salvo", missao: 5001 });
+  await c.avaliar("acaoDeMissao('concluir', {id:5001,nome:'Missão'})");
+  assert.deepEqual(JSON.parse(c.pedidos[antes].opcoes.body).missao, { acao: "concluir", id: 5001 });
+});

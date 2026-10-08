@@ -1,8 +1,8 @@
 # Memória central da reforma do pw-admin
 
-Atualizada em 2026-10-07 (B197). Estado: **E1–E5 testadas; E6 em andamento (tela nova B190,
-arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197; fila B198–B199 em §6.14); E7 testada; E8–E9 planejadas**.
-Commitado até `3070756` (B196); B197 local. Nada de B176–B197 confirmado em jogo.
+Atualizada em 2026-10-07 (B198). Estado: **E1–E5 testadas; E6 em andamento (tela nova B190,
+arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197, missões B198; fila B199 em §6.14); E7 testada; E8–E9 planejadas**.
+Commitado até `ed81a9f` (B197); B198 local. Nada de B176–B198 confirmado em jogo.
 Responsável pelas decisões de produto: Murillo.
 
 Este arquivo é o ponto de retomada da reforma. Guarda decisões, estado das etapas,
@@ -118,7 +118,7 @@ Cada etapa pode ser dividida em subtarefas aqui, mantendo o arquivo curto.
 | E3 — canal administrativo e consulta viva | testado | consultas B166 e comando transacional/resultado recuperável B167; deduplicação global, conflito, rollback e reinício testados; falta confirmação visual |
 | E4 — contas | testado | busca, criação, senha, GM, gold, ban/desban e desconectar (B175); testes Rust/Python/Node; falta o Murillo confirmar em jogo |
 | E5 — personagem e persistência | testado | dinheiro e EXP/SP (B179); pontos livres, nível e cultivo (B182); modificar/redistribuir atributos (B184); falta ver em jogo; ficha e progressão online/offline, atualização nos dois clientes; autosave/logout/relogin não desfazem edição; consultas mostram valores reais |
-| E6 — inventário e subsistemas | em andamento | posição (B185), itens ver/buscar/dar (B186), remover (B187), ícones (B188), dica parte 1 (B189), tela nova (B190) e arrastar (B191), dica parte 2 (B192–B193), editar item (B194), habilidades ver e editar (B195–B196), mascotes (B197) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
+| E6 — inventário e subsistemas | em andamento | posição (B185), itens ver/buscar/dar (B186), remover (B187), ícones (B188), dica parte 1 (B189), tela nova (B190) e arrastar (B191), dica parte 2 (B192–B193), editar item (B194), habilidades ver e editar (B195–B196), mascotes (B197), missões (B198) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
 | E7 — mapas e rates | testado | rates (B176), mapas (B177) e lista completa com carga/descarga em execução (B183); falta ver em jogo; desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
 | E8 — moldes de classe | planejado | leitura/edição das fontes consumidas; personagem novo usa alteração; recálculo separado preserva progressão conforme contrato |
 | E9 — extensões e fechamento | planejado | pontos de extensão documentados para editores futuros; interface revisada, manual atualizado, verificações finais e pendências claras |
@@ -218,9 +218,11 @@ frases além do 112 conferidas no binário BR (`scripts/gerar_efeitos_de_itens.p
 fora: modelo, vínculo; falta o brilho do refino para quem vê) · B195–B196 habilidades ver/editar
 (online `LEARN_SKILL`; 1.2.6 descer/remover offline) · durabilidade: a coluna é a verdade
 (`octetos_atuais`) · B197 mascotes (ver, editar o `pet_data`, libertar; online `PET_ROOM`/`FREE_PET`;
-invocado não se edita; dar = dar o ovo).
+invocado não se edita; dar = dar o ovo) · B198 missões (ver; dar livre `NEW`; concluir = forçar sucesso
+`FINISHED`/`COMPLETE`; cancelar = apagar `GIVE_UP`, 1.2.6 offline; esquecer só offline; offline recusa prêmio
+que exige a entidade; resposta do canal até 64 KiB).
 
-**Fila:** B198 missões → B199 aparência (rosto: `PLAYER_CHG_FACE`, `EC_GPDataType.h:1084`).
+**Fila:** B199 aparência (rosto: `PLAYER_CHG_FACE`, `EC_GPDataType.h:1084`).
 
-**Próxima ação:** B198 (missões). Murillo confere em jogo B179–B197 (B183 = portão §6.2).
+**Próxima ação:** B199 (aparência). Murillo confere em jogo B179–B198 (B183 = portão §6.2).
 Não publicar/commitar sem pedido.

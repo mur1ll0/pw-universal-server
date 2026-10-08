@@ -61,7 +61,7 @@ const MAX_SUB_TAGS: usize = 32;
 const DIFERENCA_MAXIMA_DE_NIVEL: u32 = 8;
 /// `MAX_PLAYER_LEV` e `_lev_co` (`TaskProcess.cpp:22-175`).
 const MAX_NIVEL_DO_COEFICIENTE: u32 = 150;
-const SEM: u8 = 0xff;
+pub const SEM: u8 = 0xff;
 
 /// `TLIST_STATE_UPDATE_TIME_MARK` — os tempos da lista estão em hora absoluta.
 const LISTA_COM_TEMPO_ABSOLUTO: u8 = 1;
@@ -440,6 +440,19 @@ impl ListasDeMissao {
                 }
             }
         }
+    }
+
+    /// Painel (B198): tira a missão `id` dos três registros que o `CheckPrerequisite` consulta
+    /// para recusar repetir — a lista de concluídas (`CheckFnshLst`), a hora da última
+    /// (frequência, `TaskFinishTimeList`) e a contagem (`TaskFinishCountList`) —, para que ela
+    /// possa ser refeita. `false` se não havia nada.
+    pub fn esquecer_conclusao(&mut self, id: u32) -> bool {
+        let id = id as u16;
+        let antes = self.concluidas.len() + self.tempos.len() + self.contagens.len();
+        self.concluidas.retain(|c| c.id != id);
+        self.tempos.retain(|t| t.0 != id);
+        self.contagens.retain(|t| t.0 != id);
+        antes != self.concluidas.len() + self.tempos.len() + self.contagens.len()
     }
 
     fn vezes_concluida(&self, id: u32) -> u8 {
@@ -1395,6 +1408,13 @@ impl<'a, J: Jogador> Motor<'a, J> {
         if !t.item_nao_retirado {
             self.tirar_itens_exigidos(t);
         }
+        self.entregar_e_avisar(t, sub, capitao, agora);
+        0
+    }
+
+    /// O fim do `CheckDeliverTask` (`TaskProcess.cpp:1812-1844`): `DeliverTask`, a hora da
+    /// frequência, o `TASK_SVR_NOTIFY_NEW` e o teleporte de quem recebe.
+    fn entregar_e_avisar(&mut self, t: &'a TaskTemplate, sub: Option<&'a TaskTemplate>, capitao: u32, agora: u32) {
         let mut tags = Etiquetas { uniao: sub.map(|s| s.id as u16).unwrap_or(0), tags: Vec::new() };
         self.entregar(t, None, capitao, agora, sub, &mut tags, SEM);
         if t.frequencia != 0 && !t.limite_de_conta && !t.limite_de_personagem {
@@ -1405,7 +1425,6 @@ impl<'a, J: Jogador> Motor<'a, J> {
         if let Some((mundo, pos)) = t.teleporte_ao_receber {
             self.j.teleportar(mundo, pos);
         }
-        0
     }
 
     // ------------------------------------------------------------------ prêmio
@@ -2400,6 +2419,75 @@ impl<'a, J: Jogador> Motor<'a, J> {
         self.ao_finalizar(t, idx);
         true
     }
+
+    // ------------------------------------------------------------------ painel (B198)
+
+    fn entrada_valida(&self, id: u32) -> Option<usize> {
+        (0..self.listas.ativa.quantidade as usize)
+            .find(|&i| self.listas.ativa.e[i].valida && self.listas.ativa.e[i].id as u32 == id)
+    }
+
+    /// Painel (B198): dar a missão de topo `id` **sem os pré-requisitos** (decisão do Murillo,
+    /// 2026-10-07). É o que o cliente também faz ao receber `TASK_SVR_NOTIFY_NEW`: só o
+    /// `CheckBudget` e o `DeliverTask` na cópia dele (`Task/TaskProcess.cpp:2705-2756` do cliente
+    /// 1.5.5). Ficam os limites de **formato**: missão de topo (o aviso leva o modelo de topo),
+    /// vaga na lista (`CheckBudget`, `TaskTempl.inl:31-52`) e nos registros
+    /// (`CheckRecordListSpace`, `TaskProcess.cpp:818-826`), e a submissão escolhida quando a
+    /// missão é `m_bChooseOne`. Os itens exigidos não são retirados.
+    pub fn dar_pelo_painel(&mut self, id: u32, sub_id: u32) -> Result<(), &'static str> {
+        let t = self.t(id).ok_or("missao_inexistente")?;
+        if t.parent.is_some() {
+            return Err("nao_e_topo");
+        }
+        let sub = if t.escolhe_um_filho {
+            Some(self.t(sub_id).filter(|s| s.parent == Some(t.id)).ok_or("escolha_a_submissao")?)
+        } else {
+            None
+        };
+        match self.verificar_espaco(t) {
+            0 => {}
+            erro::MESMA_MISSAO => return Err("missao_ja_ativa"),
+            _ => return Err("lista_cheia"),
+        }
+        if self.verificar_registros(t) != 0 {
+            return Err("lista_cheia");
+        }
+        let agora = self.j.agora();
+        self.entregar_e_avisar(t, sub, 0, agora);
+        Ok(())
+    }
+
+    /// Painel (B198): forçar o sucesso da entrada `id` — o `OnTaskForceSucc` que o capitão manda
+    /// ao membro (`TaskServer.cpp:58-72`): `OnSetFinished` sem reavisar a equipe
+    /// (`TaskTempl.inl:2184-2204`). Conclusão direta entrega o prêmio na hora; a de NPC fica
+    /// finalizada (`TASK_SVR_NOTIFY_FINISHED`) e o jogador a entrega no NPC. O bit de sucesso é
+    /// posto antes; o `DeliverAward` ainda o tira se o tempo-limite venceu ou um pai falhou, como
+    /// no original. Devolve `true` se a entrada saiu da lista (concluída).
+    pub fn concluir_pelo_painel(&mut self, id: u32) -> Result<bool, &'static str> {
+        let idx = self.entrada_valida(id).ok_or("missao_ausente")?;
+        let t = self.t(id).ok_or("missao_inexistente")?;
+        if self.listas.ativa.e[idx].finalizada() {
+            return Err("ja_finalizada");
+        }
+        self.listas.ativa.e[idx].estado |= estado::SUCESSO;
+        self.ao_finalizar_avisando(t, idx, false);
+        Ok(self.entrada_valida(id).is_none())
+    }
+
+    /// Painel (B198): apagar a missão de topo `id` com as filhas — o `ClearTask(pEntry, true)` e o
+    /// `TASK_SVR_NOTIFY_GIVE_UP` da desistência com `m_bClearAsGiveUp` (`TaskProcess.cpp:1909-1922`),
+    /// que o cliente aplica limpando a cópia dele (`Task/TaskProcess.cpp:2795-2803` do cliente).
+    /// Sem prêmio de falha e sem registro nas concluídas; os itens de missão saem como no original.
+    pub fn apagar_pelo_painel(&mut self, id: u32) -> Result<(), &'static str> {
+        let idx = self.entrada_valida(id).ok_or("missao_ausente")?;
+        let t = self.t(id).ok_or("missao_inexistente")?;
+        if t.parent.is_some() || self.listas.ativa.e[idx].pai != SEM {
+            return Err("nao_e_topo");
+        }
+        self.limpar_missao(idx, true);
+        self.j.avisar(S2CGamedataSend::task_notify_base(aviso::DESISTENCIA, t.id as u16).data);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -2499,6 +2587,53 @@ mod tests {
 
         let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 };
         assert_eq!(m.aceitar(32201, 0, false), erro::NAO_REPETE);
+    }
+
+    /// B198: dar livre, forçar o sucesso, apagar e esquecer — os avisos que o cliente refaz.
+    #[test]
+    fn o_painel_da_conclui_apaga_e_esquece_missoes() {
+        let mut npc = modelo(10);
+        npc.metodo = metodo::FALAR_COM_NPC;
+        npc.tipo_de_conclusao = conclusao::NO_NPC;
+        npc.min_level = 90;
+        npc.pode_desistir = false;
+        let mut direta = modelo(20);
+        direta.metodo = metodo::FALAR_COM_NPC;
+        direta.tipo_de_conclusao = conclusao::DIRETA;
+        direta.rewards.money = 50;
+        direta.precisa_registro = true;
+        let d = dados(vec![npc, direta]);
+        let mut l = ListasDeMissao::default();
+        let mut j = JogadorDeTeste { nivel: 1, ..Default::default() };
+        let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 };
+        // Nível 1 numa missão de nível 90: dar é livre.
+        assert_eq!(m.dar_pelo_painel(10, 0), Ok(()));
+        assert_eq!(m.dar_pelo_painel(10, 0), Err("missao_ja_ativa"));
+        assert_eq!(m.dar_pelo_painel(99, 0), Err("missao_inexistente"));
+        assert_eq!(m.dar_pelo_painel(20, 0), Ok(()));
+        // De NPC: fica finalizada e espera a entrega.
+        assert_eq!(m.concluir_pelo_painel(10), Ok(false));
+        assert_eq!(m.concluir_pelo_painel(10), Err("ja_finalizada"));
+        // Direta: prêmio na hora e registro nas concluídas.
+        assert_eq!(m.concluir_pelo_painel(20), Ok(true));
+        assert_eq!(m.concluir_pelo_painel(20), Err("missao_ausente"));
+        // Apagar não confere `m_bCanGiveUp`, não premia e não registra.
+        assert_eq!(m.apagar_pelo_painel(10), Ok(()));
+        assert_eq!(l.ativa.quantidade, 0);
+        assert_eq!(l.procurar_concluida(10), -1);
+        assert_eq!(l.procurar_concluida(20), 0);
+        assert_eq!(j.dinheiro, 50);
+        let razoes: Vec<u8> = j.avisos.iter().map(|a| a[6]).collect();
+        assert_eq!(razoes, [aviso::NOVA, aviso::NOVA, aviso::FINALIZADA, aviso::FINALIZADA, aviso::CONCLUIDA, aviso::DESISTENCIA]);
+        // GIVE_UP é só a base: 2 + 4 + 3.
+        assert_eq!(j.avisos.last().unwrap().len(), 2 + 4 + 3);
+        // Esquecer deixa refazer.
+        let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 };
+        assert_eq!(m.aceitar(20, 0, false), erro::NAO_REPETE);
+        assert!(l.esquecer_conclusao(20));
+        assert!(!l.esquecer_conclusao(20));
+        let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 };
+        assert_eq!(m.aceitar(20, 0, false), 0);
     }
 
     fn aceitar(d: &TasksData, j: &mut JogadorDeTeste, id: u32) -> u32 {
