@@ -96,6 +96,7 @@ impl WorldProtocol for V153Protocol {
 
     fn own_ext_prop(
         &self,
+        graus: crate::packets::s2c::GrausDaFicha,
         status_point: u32,
         atributos: (i32, i32, i32, i32),
         max_hp: i32,
@@ -111,7 +112,7 @@ impl WorldProtocol for V153Protocol {
         resistencias: [i32; 5],
         defesa: (i32, i32),
     ) -> crate::packets::s2c::S2CGamedataSend {
-        self.0.own_ext_prop(status_point, atributos, max_hp, max_mp, max_ap, regen, velocidades, ataque, magico, resistencias, defesa)
+        self.0.own_ext_prop(graus, status_point, atributos, max_hp, max_mp, max_ap, regen, velocidades, ataque, magico, resistencias, defesa)
     }
 
     fn enter_sanctuary(&self, id: i32) -> crate::packets::s2c::S2CGamedataSend {

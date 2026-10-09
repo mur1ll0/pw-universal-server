@@ -298,6 +298,7 @@ pub trait WorldProtocol: Send + Sync {
     #[allow(clippy::too_many_arguments)]
     fn own_ext_prop(
         &self,
+        graus: crate::packets::s2c::GrausDaFicha,
         status_point: u32,
         atributos: (i32, i32, i32, i32),
         max_hp: i32,

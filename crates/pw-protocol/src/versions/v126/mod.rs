@@ -607,6 +607,8 @@ impl WorldProtocol for V126Protocol {
 
     fn own_ext_prop(
         &self,
+        // O `OWN_EXT_PROP` do 1.2.6 vai de `status_point` direto ao `ROLEEXTPROP_BASE`: sem o bloco.
+        graus: crate::packets::s2c::GrausDaFicha,
         status_point: u32,
         atributos: (i32, i32, i32, i32),
         max_hp: i32,
@@ -654,9 +656,10 @@ impl WorldProtocol for V126Protocol {
         s.write_i32_le(damage_high);
         s.write_i32_le(attack_speed);
         s.write_f32_le(attack_range);
-        for _ in 0..5 {
-            s.write_i32_le(0); // addon_damage[i].low
-            s.write_i32_le(0); // addon_damage[i].high
+        // B211: só o `addon_damage` das pedras (o bloco de graus não existe no 1.2.6).
+        for d in graus.dano_elemental {
+            s.write_i32_le(d); // addon_damage[i].low
+            s.write_i32_le(d); // addon_damage[i].high
         }
         s.write_i32_le(magico.0); // damage_magic_low
         s.write_i32_le(magico.1); // damage_magic_high

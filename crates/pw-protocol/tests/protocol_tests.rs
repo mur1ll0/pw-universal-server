@@ -634,7 +634,7 @@ fn test_inst_data_checkout_gshop_e_gshop2_sao_valores_diferentes() {
 #[test]
 fn test_own_ext_prop_tem_196_bytes_e_os_atributos_no_lugar() {
     let p = S2CGamedataSend::own_ext_prop(
-        3,
+        Default::default(), 3,
         (10, 20, 15, 12), // vitalidade, energia, força, agilidade
         130,
         280,
@@ -1212,4 +1212,26 @@ fn o_info_player_1_leva_efeitos_visiveis_voo_e_grupo() {
     assert_eq!(b.len(), a + 24);
     let estado = i32::from_le_bytes(b[24..28].try_into().unwrap());
     assert_eq!(estado & 0x350, 0x350, "extend, voo, grupo e líder");
+}
+
+/// B209: os 11 graus do `cmd_own_ext_prop` (`EC_GPDataType.h:1865-1878`) vão depois do
+/// `status_point`, na ordem de `PlayerGetProperty` (`gs/player.cpp:8587-8594`), sem mudar os 196 B.
+#[test]
+fn own_ext_prop_leva_os_graus_na_ordem_do_original() {
+    use pw_protocol::packets::s2c::GrausDaFicha;
+    let g = GrausDaFicha {
+        attack_degree: 1, defend_degree: 2, crit_rate: 3, crit_damage_bonus: 4, invisible_degree: 5,
+        anti_invisible_degree: 6, penetration: 7, resilience: 8, vigour: 9, anti_defense_degree: 10,
+        anti_resistance_degree: 11,
+        dano_elemental: [21, 22, 23, 24, 25],
+    };
+    let p = S2CGamedataSend::own_ext_prop(g, 0, (0, 0, 0, 0), 0, 0, 0, (0, 0), (0.0, 0.0, 0.0, 0.0), (0, 0, 0, 0, 0.0), (0, 0), [0; 5], (0, 0));
+    assert_eq!(p.data.len(), 2 + 196);
+    let lidos: Vec<i32> = p.data[6..6 + 44].chunks(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect();
+    assert_eq!(lidos, (1..=11).collect::<Vec<_>>());
+    // B211: `addon_damage[5]` (baixo, alto) depois de `attack_rate, damage_low/high, attack_speed,
+    // attack_range` no `ROLEEXTPROP_ATK`: 2 + 4 + 44 + 32 (BASE) + 16 (MOVE) + 20.
+    let ini = 2 + 4 + 44 + 32 + 16 + 20;
+    let elem: Vec<i32> = p.data[ini..ini + 40].chunks(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect();
+    assert_eq!(elem, [21, 21, 22, 22, 23, 23, 24, 24, 25, 25]);
 }

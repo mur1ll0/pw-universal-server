@@ -42,6 +42,11 @@ pub mod opcode {
     pub const C2S_GAMEDATA_SEND: u32 = 75;
     /// `PROTOCOL_CHATSINGLECAST` — `gamed` → `glinkd`: uma fala para um jogador.
     pub const CHAT_SINGLE_CAST: u32 = 94;
+    /// `PROTOCOL_SETCUSTOMDATA` — o cliente manda ao `glinkd`; com o personagem em jogo, o
+    /// link o repassa ao `gamed` dono, que guarda o bilhete de rosto (B199).
+    pub const SET_CUSTOM_DATA: u32 = 100;
+    /// `PROTOCOL_SETCUSTOMDATA_RE` — a resposta, do `gamed` ao link e do link ao cliente.
+    pub const SET_CUSTOM_DATA_RE: u32 = 101;
 }
 
 /// Uma mensagem entre daemons.
@@ -88,6 +93,22 @@ pub enum BusMessage {
         msg: Vec<u8>,
         data: Vec<u8>,
     },
+    /// `SetCustomData` (100): a aparência nova que o cliente mandou ao fim da troca de rosto
+    /// (`CECCustomizeHostPolicy::OnOK`, `EC_CustomizePolicy.cpp:73-85`). No original quem
+    /// confere o bilhete é o `gdeliveryd` (`setcustomdata.hpp`); aqui o link repassa ao GS
+    /// dono, que tem a sessão cosmética.
+    SetCustomData {
+        roleid: i32,
+        localsid: u32,
+        custom_data: Vec<u8>,
+    },
+    /// `SetCustomData_Re` (101): `result` (0 ou `ERR_NOFACETICKET` 201) e o carimbo novo.
+    SetCustomDataRe {
+        result: i32,
+        crc: u32,
+        roleid: i32,
+        localsid: u32,
+    },
 }
 
 impl BusMessage {
@@ -98,6 +119,8 @@ impl BusMessage {
             BusMessage::EnterWorld { .. } => opcode::ENTER_WORLD,
             BusMessage::PlayerLogout { .. } => opcode::PLAYER_LOGOUT,
             BusMessage::ChatSingleCast { .. } => opcode::CHAT_SINGLE_CAST,
+            BusMessage::SetCustomData { .. } => opcode::SET_CUSTOM_DATA,
+            BusMessage::SetCustomDataRe { .. } => opcode::SET_CUSTOM_DATA_RE,
         }
     }
 
@@ -108,7 +131,9 @@ impl BusMessage {
             BusMessage::ClientToGame { roleid, .. }
             | BusMessage::GameToClient { roleid, .. }
             | BusMessage::EnterWorld { roleid, .. }
-            | BusMessage::PlayerLogout { roleid, .. } => *roleid,
+            | BusMessage::PlayerLogout { roleid, .. }
+            | BusMessage::SetCustomData { roleid, .. }
+            | BusMessage::SetCustomDataRe { roleid, .. } => *roleid,
             BusMessage::ChatSingleCast { dstroleid, .. } => *dstroleid,
         }
     }
@@ -165,6 +190,17 @@ impl BusMessage {
                 w.octets(msg);
                 w.octets(data);
             }
+            BusMessage::SetCustomData { roleid, localsid, custom_data } => {
+                w.i32(*roleid);
+                w.u32(*localsid);
+                w.octets(custom_data);
+            }
+            BusMessage::SetCustomDataRe { result, crc, roleid, localsid } => {
+                w.i32(*result);
+                w.u32(*crc);
+                w.i32(*roleid);
+                w.u32(*localsid);
+            }
         }
     }
 
@@ -208,6 +244,17 @@ impl BusMessage {
                 dstlocalsid: r.u32()?,
                 msg: r.octets()?.to_vec(),
                 data: r.octets()?.to_vec(),
+            },
+            opcode::SET_CUSTOM_DATA => BusMessage::SetCustomData {
+                roleid: r.i32()?,
+                localsid: r.u32()?,
+                custom_data: r.octets()?.to_vec(),
+            },
+            opcode::SET_CUSTOM_DATA_RE => BusMessage::SetCustomDataRe {
+                result: r.i32()?,
+                crc: r.u32()?,
+                roleid: r.i32()?,
+                localsid: r.u32()?,
             },
             opcode::PLAYER_LOGOUT => BusMessage::PlayerLogout {
                 result: r.i32()?,
@@ -253,6 +300,8 @@ mod tests {
             msg: "Morra!".encode_utf16().flat_map(|u| u.to_le_bytes()).collect(),
             data: vec![],
         });
+        ida_e_volta(BusMessage::SetCustomData { roleid: 7, localsid: 8, custom_data: vec![1; 176] });
+        ida_e_volta(BusMessage::SetCustomDataRe { result: 201, crc: 0xABCD, roleid: 7, localsid: 8 });
         ida_e_volta(BusMessage::GameToClient {
             roleid: -1,
             localsid: 0,

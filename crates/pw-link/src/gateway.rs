@@ -19,6 +19,9 @@ use tokio_util::codec::Framed;
 use tracing::{debug, info, warn};
 
 use crate::session::ClientSession;
+
+/// `ERR_NOFACETICKET` (`share/rpc/errcode.h:161`).
+const ERRO_SEM_BILHETE_DE_ROSTO: i32 = 201;
 use crate::uplink::{BusUplink, EnvioAoCliente};
 use pw_bus::BusMessage;
 
@@ -1046,7 +1049,7 @@ impl LinkGateway {
                         let equipamentos = &self.data_manager.equipamentos;
                         for (onde, lista) in [(0u8, &details.inventory), (1u8, &details.equipment)] {
                             for item in lista {
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info(
+                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::item_info_com_proc_type(
                                     onde,
                                     item.slot as u8,
                                     item.item_id as i32,
@@ -1055,6 +1058,7 @@ impl LinkGateway {
                                     item.count,
                                     &item.octets,
                                     equipamentos.ficha(item.item_id),
+                                    self.data_manager.proc_type_da_instancia(item.item_id, item.bind_status != 0),
                                 ))).await?;
                             }
                         }
@@ -1382,13 +1386,39 @@ impl LinkGateway {
             }
 
             InboundPacket::SetCustomData(req) => {
-                debug!("Salvando CustomData ({} bytes) para o personagem ID {}", req.data.len(), req.role_id);
-                tx.send(OutboundPacket::SetCustomDataRe(S2CSetCustomDataRe {
-                    result: 0,
-                    crc: 0,
-                    role_id: req.role_id,
-                    localsid: req.localsid,
-                })).await?;
+                // B199 — `SetCustomData::Process` (`cnet/gdeliveryd/setcustomdata.hpp`). Em
+                // jogo só vale com o bilhete de rosto, que aqui é o GS dono que guarda (a sessão
+                // cosmética do serviço 24): o link repassa e a resposta volta pelo barramento
+                // (`uplink.rs`). Fora do jogo (tela de seleção), só para personagem criado há
+                // menos de dois dias. Antes do B199 o link respondia sucesso e descartava os
+                // dados: o rosto trocado em jogo voltava ao antigo ao reentrar.
+                let em_jogo = session.state == crate::session::SessionState::InWorld
+                    && session.role_id == Some(req.role_id);
+                let uplink = if em_jogo { self.uplink_da_sessao(session) } else { None };
+                if let Some(uplink) = uplink {
+                    uplink.enviar(BusMessage::SetCustomData {
+                        roleid: req.role_id,
+                        localsid: session.localsid,
+                        custom_data: req.data.clone(),
+                    });
+                } else {
+                    let conta = session.account_id.unwrap_or(0);
+                    let gravou = !em_jogo
+                        && pw_core::formato_de_aparencia_valido(&req.data)
+                        && self
+                            .char_repo
+                            .gravar_aparencia_de_personagem_novo(req.role_id, conta, &self.realm_id, &req.data)
+                            .await
+                            .unwrap_or(false);
+                    info!("SetCustomData fora do jogo de {} ({} bytes): {}", req.role_id, req.data.len(),
+                        if gravou { "gravado" } else { "recusado (ERR_NOFACETICKET)" });
+                    tx.send(OutboundPacket::SetCustomDataRe(S2CSetCustomDataRe {
+                        result: if gravou { 0 } else { ERRO_SEM_BILHETE_DE_ROSTO },
+                        crc: if gravou { pw_core::stamp_de_aparencia(&req.data) as u32 } else { 0 },
+                        role_id: req.role_id,
+                        localsid: req.localsid,
+                    })).await?;
+                }
             }
 
             InboundPacket::PlayerBaseInfo(req) => {

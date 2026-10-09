@@ -242,7 +242,7 @@ fn own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante() {
     let p155 = create_world_protocol(GameVersion::V1_5_5);
 
     let d126 = p126.own_ext_prop(
-        0, (10, 10, 10, 10), 100, 100, 99, (2, 2),
+        Default::default(), 0, (10, 10, 10, 10), 100, 100, 99, (2, 2),
         (2.0, 4.9, 3.0, 5.0),
         (40, 5, 10, 22, 3.8),
         (0, 0),
@@ -251,7 +251,7 @@ fn own_ext_prop_tem_152_bytes_no_126_e_196_do_153_em_diante() {
     ).data;
 
     let d155 = p155.own_ext_prop(
-        0, (10, 10, 10, 10), 100, 100, 99, (2, 2),
+        Default::default(), 0, (10, 10, 10, 10), 100, 100, 99, (2, 2),
         (2.0, 4.9, 3.0, 5.0),
         (40, 5, 10, 22, 3.8),
         (0, 0),
@@ -338,7 +338,7 @@ fn entrada_126_propriedades_conferem_os_campos_representados_no_trait() {
     let p = create_world_protocol(GameVersion::V1_2_6);
     // Atq. Mágico 1–1 e resistências 2 em todas: os sete i32 de `original[112..140]`.
     // O trait passou a recebê-los no B77, então o pacote inteiro é conferido.
-    let pacote = p.own_ext_prop(5, (5, 5, 5, 5), 119, 49, 0, (5, 1),
+    let pacote = p.own_ext_prop(Default::default(), 5, (5, 5, 5, 5), 119, 49, 0, (5, 1),
         (2.0, 4.9, 3.0, 5.0), (40, 6, 10, 22, 3.8), (1, 1), [2; 5], (3, 40));
     let corpo = &pacote.data[2..];
     assert_eq!(corpo.len(), 152);

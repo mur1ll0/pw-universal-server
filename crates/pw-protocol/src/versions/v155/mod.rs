@@ -112,6 +112,7 @@ impl WorldProtocol for V155Protocol {
 
     fn own_ext_prop(
         &self,
+        graus: crate::packets::s2c::GrausDaFicha,
         status_point: u32,
         atributos: (i32, i32, i32, i32),
         max_hp: i32,
@@ -129,6 +130,7 @@ impl WorldProtocol for V155Protocol {
     ) -> S2CGamedataSend {
         // 196 bytes no 1.5.5
         S2CGamedataSend::own_ext_prop(
+            graus,
             status_point,
             atributos,
             max_hp,

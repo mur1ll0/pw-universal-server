@@ -245,6 +245,20 @@ pub mod estado_do_jogador {
     pub const LIDER_DO_GRUPO: i32 = 0x0000_0200;
 }
 
+/// O registro de aparência que os clientes gravam: `PLAYER_CUSTOMIZEDATA` (`EC_Player.h:210-245`),
+/// com a versão no primeiro `DWORD`. `0x10007000` (`CUSTOMIZE_DATA_VERSION_1`) tem 172 bytes — o
+/// do cliente 1.2.6 —; `0x10007001` acrescenta o `idThirdEye` (176 bytes) — o do 1.5.5, que também
+/// lê o antigo (`PLAYER_CUSTOMIZEDATA::From`). Medido nos personagens do `public` em 2026-10-08
+/// (4 no `realm_126`, 3 no `realm_155`). Outro tamanho ou versão não é aparência que um cliente
+/// saiba ler: não se grava.
+pub fn formato_de_aparencia_valido(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    let versao = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    matches!((versao, bytes.len()), (0x1000_7000, 172) | (0x1000_7001, 176))
+}
+
 /// O carimbo da aparência de um personagem — o `custom_crc` do original.
 ///
 /// Viaja em dois lugares que **precisam concordar**: o `crc_c` da `info_player_1` (o
@@ -516,4 +530,24 @@ pub struct VistaDoJogador {
     /// Em grupo / líder do grupo: `STATE_TEAM`/`STATE_TEAMLEADER` (`gs/playerteam.h:226-379`).
     pub em_grupo: bool,
     pub lider_do_grupo: bool,
+}
+
+#[cfg(test)]
+mod testes_da_aparencia {
+    use super::*;
+
+    /// B199: só as duas versões que os clientes gravam, cada uma com o seu tamanho.
+    #[test]
+    fn o_formato_da_aparencia_e_o_dos_clientes() {
+        let mut v1 = vec![0u8; 172];
+        v1[..4].copy_from_slice(&0x1000_7000u32.to_le_bytes());
+        let mut v2 = vec![0u8; 176];
+        v2[..4].copy_from_slice(&0x1000_7001u32.to_le_bytes());
+        assert!(formato_de_aparencia_valido(&v1) && formato_de_aparencia_valido(&v2));
+        let mut trocado = v2.clone();
+        trocado[..4].copy_from_slice(&0x1000_7000u32.to_le_bytes());
+        assert!(!formato_de_aparencia_valido(&trocado), "versão 1 com 176 bytes");
+        assert!(!formato_de_aparencia_valido(&v2[..175]));
+        assert!(!formato_de_aparencia_valido(&[]));
+    }
 }

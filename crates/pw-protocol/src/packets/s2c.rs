@@ -466,6 +466,29 @@ pub struct S2CGamedataSend {
     pub data: Vec<u8>,
 }
 
+/// B209 — o bloco do `cmd_own_ext_prop` entre `status_point` e `ROLEEXTPROP` (`EC_GPDataType.h:1865-1878`,
+/// os 11 primeiros; os `// NEW` do fonte não estão no binário, que quer 196 B), com os valores de
+/// `gplayer_imp::PlayerGetProperty` (`gs/player.cpp:8587-8594`): `crit_rate = _crit_rate +
+/// _base_crit_rate` (%), `vigour = GetVigour()` (`min(_vigour_base + _vigour_en, 1500)`,
+/// `actobject.h:2095-2099`). O 1.2.6 não tem o bloco.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GrausDaFicha {
+    pub attack_degree: i32,
+    pub defend_degree: i32,
+    pub crit_rate: i32,
+    pub crit_damage_bonus: i32,
+    pub invisible_degree: i32,
+    pub anti_invisible_degree: i32,
+    pub penetration: i32,
+    pub resilience: i32,
+    pub vigour: i32,
+    pub anti_defense_degree: i32,
+    pub anti_resistance_degree: i32,
+    /// B211 — `ROLEEXTPROP_ATK.addon_damage[5]` (baixo = alto): o `_en_point.addon_damage` das
+    /// pedras (`STONE_MAGIC_DMG_ADDON`, `playertemplate.h:987-988`). Vai nas duas versões.
+    pub dano_elemental: [i32; 5],
+}
+
 impl S2CGamedataSend {
     pub fn new(data: Vec<u8>) -> Self {
         Self { data }
@@ -677,6 +700,7 @@ impl S2CGamedataSend {
     /// `ROLEEXTPROP` = `bs`(32) + `mv`(16) + `ak`(68) + `df`(28) + `max_ap`(4).
     #[allow(clippy::too_many_arguments)]
     pub fn own_ext_prop(
+        graus: GrausDaFicha,
         status_point: u32,
         atributos: (i32, i32, i32, i32),
         max_hp: i32,
@@ -701,17 +725,13 @@ impl S2CGamedataSend {
         let mut s = OctetsStream::new();
         s.write_u16_le(50);                 // CMD_S2C_OWN_EXT_PROP = 50
         s.write_u32_le(status_point);       // size_t status_point
-        s.write_i32_le(0);                  // attack_degree
-        s.write_i32_le(0);                  // defend_degree
-        s.write_i32_le(0);                  // crit_rate
-        s.write_i32_le(0);                  // crit_damage_bonus
-        s.write_i32_le(0);                  // invisible_degree
-        s.write_i32_le(0);                  // anti_invisible_degree
-        s.write_i32_le(0);                  // penetration
-        s.write_i32_le(0);                  // resilience
-        s.write_i32_le(0);                  // vigour
-        s.write_i32_le(0);                  // anti_defense_degree
-        s.write_i32_le(0);                  // anti_resistance_degree
+        // B209: os 11 campos na ordem de `gplayer_imp::PlayerGetProperty` (`gs/player.cpp:8587-8594`).
+        let g = graus;
+        for v in [g.attack_degree, g.defend_degree, g.crit_rate, g.crit_damage_bonus, g.invisible_degree,
+            g.anti_invisible_degree, g.penetration, g.resilience, g.vigour, g.anti_defense_degree, g.anti_resistance_degree]
+        {
+            s.write_i32_le(v);
+        }
 
         // ROLEEXTPROP_BASE
         s.write_i32_le(vitality);
@@ -735,9 +755,9 @@ impl S2CGamedataSend {
         s.write_i32_le(damage_high);
         s.write_i32_le(attack_speed);
         s.write_f32_le(attack_range);
-        for _ in 0..5 {
-            s.write_i32_le(0);              // addon_damage[i].damage_low
-            s.write_i32_le(0);              // addon_damage[i].damage_high
+        for d in graus.dano_elemental {
+            s.write_i32_le(d);              // addon_damage[i].damage_low
+            s.write_i32_le(d);              // addon_damage[i].damage_high
         }
         s.write_i32_le(magico.0);           // damage_magic_low
         s.write_i32_le(magico.1);           // damage_magic_high
@@ -1172,6 +1192,36 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `CHANGE_FACE_START` (201) — `player_cosmetic_begin { u16 index }` (`common/protocol.h:2505-2509`):
+    /// o slot do bilhete; o cliente o congela e abre a tela de rosto (`EC_HostMsg.cpp:4962-4983`).
+    /// Mesmo id nos IR 1.5.3 e 1.5.5 (`gamedata_15x.json`). B199.
+    pub fn change_face_start(index: u16) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(201);
+        stream.write_u16_le(index);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `CHANGE_FACE_END` (202) — `player_cosmetic_end { u16 index }` (`protocol.h:2511-2515`):
+    /// descongela o bilhete e fecha a tela (`EC_HostMsg.cpp:4985-5004`). B199.
+    pub fn change_face_end(index: u16) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(202);
+        stream.write_u16_le(index);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_CHG_FACE` (203) — `cosmetic_success { u16 crc; int id }` (`protocol.h:2517-2522`,
+    /// `cmd_player_chg_face`, `EC_GPDataType.h:3270-3274`): o carimbo novo; quem vê pede a
+    /// aparência (`EC_ElsePlayer.cpp:2418-2424`), o próprio só guarda o carimbo. B199.
+    pub fn player_chg_face(crc: u16, id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(203);
+        stream.write_u16_le(crc);
+        stream.write_i32_le(id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `MATTER_PICKUP` (152) — `{ int matter_id; int who; }`, difundido a quem vê o item
     /// (`gmatter_dispatcher::matter_pickup`, `matter.cpp:72`).
     pub fn matter_pickup(matter_id: i32, who: i32) -> Self {
@@ -1281,13 +1331,31 @@ impl S2CGamedataSend {
         raw_octets: &[u8],
         ficha: Option<pw_core::FichaDoEquipamento>,
     ) -> Self {
+        Self::item_info_com_proc_type(by_package, by_slot, item_id, cur_endurance, max_endurance, count, raw_octets, ficha, 0)
+    }
+
+    /// [`Self::item_info`] com o `proc_type` da instância no campo `state`
+    /// (`self_item_info::proc_type`, `common/protocol.h:1310-1326`) — vínculo, "não vende",
+    /// "não troca". B201.
+    #[allow(clippy::too_many_arguments)]
+    pub fn item_info_com_proc_type(
+        by_package: u8,
+        by_slot: u8,
+        item_id: i32,
+        cur_endurance: i32,
+        max_endurance: i32,
+        count: u32,
+        raw_octets: &[u8],
+        ficha: Option<pw_core::FichaDoEquipamento>,
+        proc_type: i32,
+    ) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(40);              // CMD_S2C_OWN_ITEM_INFO = 40
         stream.write_u8(by_package);          // byPackage
         stream.write_u8(by_slot);             // bySlot
         stream.write_i32_le(item_id);         // type (tid)
         stream.write_i32_le(0);               // expire_date
-        stream.write_i32_le(0);               // state
+        stream.write_i32_le(proc_type);       // state = proc_type
         stream.write_u32_le(count);           // count
         stream.write_u16_le(0);               // crc
 

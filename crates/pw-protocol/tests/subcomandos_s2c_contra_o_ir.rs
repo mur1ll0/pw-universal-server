@@ -109,7 +109,10 @@ const INTENCAO: &[(&str, &str)] = &[
     ("error_message", "ERROR_MESSAGE"),
     ("purchase_item", "PURCHASE_ITEM"),
     ("item_to_money", "ITEM_TO_MONEY"),
-    ("item_info", "OWN_ITEM_INFO"),
+    ("item_info_com_proc_type", "OWN_ITEM_INFO"),
+    ("change_face_start", "CHANGE_FACE_START"),
+    ("change_face_end", "CHANGE_FACE_END"),
+    ("player_chg_face", "PLAYER_CHG_FACE"),
     ("exg_ivtr_item", "EXG_IVTR_ITEM"),
     ("move_ivtr_item", "MOVE_IVTR_ITEM"),
     ("exg_equip_item", "EXG_EQUIP_ITEM"),
@@ -217,6 +220,8 @@ const INTENCAO: &[(&str, &str)] = &[
 
 /// Funções que não escrevem cabeçalho porque **delegam** a outra que escreve.
 const DELEGAM: &[&str] = &[
+    // B201: o `item_info` sem `proc_type` delega ao `item_info_com_proc_type`.
+    "item_info",
     "task_dyn_time_mark",
     "task_dyn_data",
     "task_notify_new",

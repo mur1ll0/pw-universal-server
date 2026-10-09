@@ -250,6 +250,22 @@ async fn entregar(msg: BusMessage, sessoes: &RwLock<HashMap<i32, EnvioAoCliente>
             }
         }
 
+        BusMessage::SetCustomDataRe { result, crc, roleid, localsid } => {
+            // B199: o GS conferiu o bilhete de rosto e gravou (ou recusou); o link entrega ao
+            // cliente o `SetCustomData_Re` (101), como o `gdeliveryd`.
+            let sessoes = sessoes.read().await;
+            let Some(envio) = sessoes.get(&roleid) else { return };
+            let resposta = OutboundPacket::SetCustomDataRe(pw_protocol::packets::s2c::S2CSetCustomDataRe {
+                result,
+                crc,
+                role_id: roleid,
+                localsid,
+            });
+            if envio.try_send(resposta).is_err() {
+                warn!("barramento: não consegui entregar o SetCustomData_Re a {roleid}");
+            }
+        }
+
         outra => {
             // Sobram `EnterWorld` e `ClientToGame`, que são o sentido de entrada. Recebê-
             // los aqui significa que alguém ligou dois links um no outro.
