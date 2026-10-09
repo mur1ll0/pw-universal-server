@@ -7,7 +7,7 @@
 //! volta para os atributos ([`crate::entity::Equipamento::dos_itens`]).
 
 use pw_core::{AddonDoItem, ConteudoDeEquipamento, FichaDoEquipamento};
-use pw_data_loader::addons::{Familia, ModeloDeGeracao, Sorteio};
+use pw_data_loader::addons::{Familia, ModeloDeGeracao};
 use pw_data_loader::GameDataManager;
 use rand::Rng;
 
@@ -29,24 +29,16 @@ fn rand_select(probs: &[f32]) -> usize {
     0
 }
 
-/// Os bits de um `float` guardados num `int` (parâmetro de porcentagem do `EQUIPMENT_ADDON`).
-fn como_float(v: i32) -> f32 {
-    f32::from_bits(v as u32)
-}
-
-/// `itemdataman::generate_addon` + `GenerateParam` do tratador. `None` para tratador sem
-/// porte — o addon não é gerado.
+/// `itemdataman::generate_addon` + `GenerateParam` do tratador
+/// ([`pw_data_loader::addons::DadosDoAddon::gerar_com`], todos os tipos de parâmetro desde o B209).
+/// `None` para id sem tratador.
 pub(crate) fn gerar_addon(dados: &GameDataManager, id: u32) -> Option<AddonDoItem> {
     let a = dados.addons.por_id.get(&id)?;
-    let p = a.params;
-    let args = match a.sorteio()? {
-        Sorteio::Ponto => vec![p[0]],
-        Sorteio::EntreDois => vec![rand_normal(p[0], p[1])],
-        Sorteio::Porcento => vec![(como_float(p[0]) * 100.0 + 0.1) as i32],
-        Sorteio::EntreDoisPorcento => vec![rand_normal((como_float(p[0]) * 100.0 + 0.1) as i32, (como_float(p[1]) * 100.0 + 0.1) as i32)],
-        Sorteio::Refino => vec![p[0], 0],
-        Sorteio::DoisComoEstao => vec![p[0], p[1]],
-    };
+    let mut rng = rand::thread_rng();
+    let args = a.gerar_com(&mut |x, y| rand_normal(x, y), &mut |x: f32, y: f32| {
+        let (lo, hi) = (x.min(y), x.max(y));
+        if hi > lo { rng.gen_range(lo..=hi) } else { lo }
+    })?;
     Some(AddonDoItem::novo(id, args))
 }
 
@@ -121,10 +113,36 @@ fn resistencias_de(faixas: &[(i32, i32); 5], fixo: bool, g: &Geracao) -> [i32; 5
 
 /// `addon_update_ess_data` → `ApplyAtGeneration` dos tratadores de essência.
 fn aplicar_na_essencia(dados: &GameDataManager, ficha: &mut FichaDoEquipamento, a: &AddonDoItem) {
+    aplicar_na_essencia_com(dados, ficha, a, 1);
+}
+
+/// O `ApplyAtGeneration` com sinal: `-1` desfaz o que o efeito pôs na essência. O painel o usa
+/// quando um efeito de essência entra ou sai da lista de um item pronto (B204).
+pub(crate) fn aplicar_na_essencia_com(dados: &GameDataManager, ficha: &mut FichaDoEquipamento, a: &AddonDoItem, sinal: i32) {
     let Some(t) = dados.addons.por_id.get(&a.id()).map(|x| x.tratador.as_str()) else { return };
-    let v = a.args.first().copied().unwrap_or(0);
-    let v2 = a.args.get(1).copied().unwrap_or(0);
+    let v = a.args.first().copied().unwrap_or(0) * sinal;
+    let v2 = a.args.get(1).copied().unwrap_or(0) * sinal;
     let escola = |t: &str| t.split('<').nth(1).and_then(|s| s.trim_end_matches('>').parse::<usize>().ok()).filter(|i| *i < 5);
+    // B209: `IAERA2/IAERA3(x,y)` e `IDMRA(x,y)`: `resistance[x] += a0; resistance[y] -= a1`
+    // (`item_addon_armor.cpp:148-190`, `item_addon_decoration.cpp:71-89`).
+    // B211 — as essências de **escala** (`ApplyAtGeneration` multiplica por `1 + p`, `p` em
+    // `float`; `item_addon_armor.cpp:85-146`, `:217-240`; `item_addon_decoration.cpp:91-128`).
+    // O original só as aplica na geração; tirar pelo painel divide de volta, arredondando — a
+    // truncagem do `(int)` pode deixar 1 de diferença.
+    let fa = |i: usize| a.args.get(i).map(|v| f32::from_bits(*v as u32)).unwrap_or(0.0);
+    let escalar = |v: &mut i32, p: f32| {
+        if sinal > 0 {
+            *v = (*v as f32 * (1.0 + p)) as i32;
+        } else if (1.0 + p).abs() > 1e-6 {
+            *v = (*v as f32 / (1.0 + p)).round() as i32;
+        }
+    };
+    let par = |t: &str, prefixos: &[&str]| -> Option<(usize, usize)> {
+        let resto = prefixos.iter().find_map(|p| t.strip_prefix(p))?.trim_end_matches(')');
+        let (x, y) = resto.split_once(',')?;
+        let (x, y) = (x.trim().parse::<usize>().ok()?, y.trim().parse::<usize>().ok()?);
+        (x < 5 && y < 5).then_some((x, y))
+    };
     match ficha {
         FichaDoEquipamento::Arma(w) => match t {
             "enhance_weapon_damage_addon" => {
@@ -153,6 +171,34 @@ fn aplicar_na_essencia(dados: &GameDataManager, ficha: &mut FichaDoEquipamento, 
                 if let Some(i) = escola(t) {
                     r.resistencias[i] += v;
                 }
+            } else if t == "item_armor_enhance_all_resistance" {
+                // `item_addon_armor.cpp:29-55`.
+                for x in &mut r.resistencias {
+                    *x += v;
+                }
+            } else if t == "item_armor_specific_addon" {
+                // `ess->defense += arg0` (`item_addon_armor.cpp:192-215`).
+                r.defesa += v;
+            } else if let Some((x, y)) = par(t, &["IAERA2(", "IAERA3("]) {
+                r.resistencias[x] += v;
+                r.resistencias[y] -= v2;
+            } else if let Some((x, y)) = par(t, &["IAERA("]) {
+                // `item_armor_enhance_resistance_addon`: `resistance[x] × (1 + a0)`, `resistance[y] × (1 − a1)`.
+                escalar(&mut r.resistencias[x], fa(0));
+                escalar(&mut r.resistencias[y], -fa(1));
+            } else if let Some(i) = t.strip_prefix("item_armor_scale_enhance_resistance<").and_then(|s| s.trim_end_matches('>').parse::<usize>().ok()) {
+                // `if(fabs(p) > 10) return 0;`
+                if i < 5 && fa(0).abs() <= 10.0 {
+                    escalar(&mut r.resistencias[i], fa(0));
+                }
+            } else if let Some(campo) = t.strip_prefix("IA_EA_ESS_SCALE<offsetof(armor_essence,") {
+                match campo.trim_end_matches(")>") {
+                    "hp_enhance" => escalar(&mut r.hp_extra, fa(0)),
+                    "mp_enhance" => escalar(&mut r.mp_extra, fa(0)),
+                    "defense" => escalar(&mut r.defesa, fa(0)),
+                    "armor" => escalar(&mut r.evasao, fa(0)),
+                    _ => {}
+                }
             }
         }
         FichaDoEquipamento::Decoracao(d) => {
@@ -169,6 +215,18 @@ fn aplicar_na_essencia(dados: &GameDataManager, ficha: &mut FichaDoEquipamento, 
                 if let Some(i) = escola(t) {
                     d.resistencias[i] += v;
                 }
+            } else if t == "item_decoration_scale_enhance_damage" || t == "item_decoration_scale_enhance_magic_damage" {
+                // As duas mexem no `magic_damage` — inclusive a "de dano" (`item_addon_decoration.cpp:110-128`,
+                // `ess->magic_damage = (int)(ess->magic_damage * (1.f+p))`): como no original.
+                escalar(&mut d.dano_magico, fa(0));
+            } else if t == "item_decoration_enhance_all_resistance" {
+                // `item_addon_decoration.cpp:152-175`.
+                for x in &mut d.resistencias {
+                    *x += v;
+                }
+            } else if let Some((x, y)) = par(t, &["IDMRA("]) {
+                d.resistencias[x] += v;
+                d.resistencias[y] -= v2;
             } else if t == "item_decoration_specific_damage_addon" {
                 d.dano += v;
                 d.defesa -= v2;
@@ -273,4 +331,55 @@ pub fn gerar_equipamento_de(dados: &GameDataManager, tid: u32, g: Geracao) -> Op
         Geracao::Producao { fabricante } => (pw_core::OrigemDoItem::Producao, fabricante),
     };
     Some(c)
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    /// B209: as essências aditivas de resistência (`IDMRA`, `IAERA3`, todas as resistências) somam
+    /// e, com o sinal −1 do painel (B204), desfazem exatamente — no `elements.data` do `realm_155`.
+    #[test]
+    fn essencias_de_resistencia_somam_e_desfazem() {
+        let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_155/config");
+        if !pasta.join("elements.data").exists() {
+            eprintln!("AVISO: sem o elements.data do realm_155 — este teste NÃO verificou nada.");
+            return;
+        }
+        let mut dados = GameDataManager::new();
+        dados.load_from_directory(&pasta);
+        let id_de = |t: &str| dados.addons.por_id.iter().find(|(_, a)| a.tratador == t).map(|(i, _)| *i).unwrap();
+        for (familia, tratador, esperado) in [
+            (Familia::Decoracao, "IDMRA(0,3)", [10, 0, 0, -5, 0]),
+            (Familia::Armadura, "IAERA3(0,3)", [10, 0, 0, -5, 0]),
+            (Familia::Armadura, "item_armor_enhance_all_resistance", [10; 5]),
+        ] {
+            let tid = *dados.geracao.iter().find(|(_, m)| m.familia == familia).map(|(t, _)| t).unwrap();
+            let original = dados.equipamentos.ficha(tid).unwrap();
+            let mut ficha = original.clone();
+            let addon = AddonDoItem::novo(id_de(tratador), vec![10, 5]);
+            let res = |f: &FichaDoEquipamento| match f {
+                FichaDoEquipamento::Armadura(r) => r.resistencias,
+                FichaDoEquipamento::Decoracao(d) => d.resistencias,
+                _ => unreachable!(),
+            };
+            aplicar_na_essencia_com(&dados, &mut ficha, &addon, 1);
+            let d: Vec<i32> = res(&ficha).iter().zip(res(&original)).map(|(a, b)| a - b).collect();
+            assert_eq!(d, esperado, "{tratador}");
+            aplicar_na_essencia_com(&dados, &mut ficha, &addon, -1);
+            assert_eq!(ficha, original, "{tratador}: tirar desfaz");
+        }
+        // B211: escala — `item_armor_scale_enhance_resistance<0>` × 1,5 e de volta.
+        let tid = *dados.geracao.iter().find(|(_, m)| m.familia == Familia::Armadura).map(|(t, _)| t).unwrap();
+        let mut ficha = dados.equipamentos.ficha(tid).unwrap();
+        if let FichaDoEquipamento::Armadura(r) = &mut ficha {
+            r.resistencias[0] = 100;
+        }
+        let original = ficha.clone();
+        let addon = AddonDoItem::novo(id_de("item_armor_scale_enhance_resistance<0>"), vec![0.5f32.to_bits() as i32]);
+        aplicar_na_essencia_com(&dados, &mut ficha, &addon, 1);
+        assert!(matches!(&ficha, FichaDoEquipamento::Armadura(r) if r.resistencias[0] == 150));
+        aplicar_na_essencia_com(&dados, &mut ficha, &addon, -1);
+        assert_eq!(ficha, original, "escala: tirar desfaz");
+    }
 }

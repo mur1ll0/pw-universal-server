@@ -38,6 +38,7 @@ fn main() {
             fator_de_curta_distancia: 1.0,
             anti_defesa: 0,
             anti_resistencia: 0,
+            penetracao: 0,
             atacante_e_jogador_ou_pet: true,
             camada: None,
             roubo_de_vida: 0,

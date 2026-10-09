@@ -13,7 +13,8 @@
 //!
 //! O bloco novo tem de ser lido inteiro por `ConteudoDeEquipamento::ler` (o `SetItemInfo` do
 //! cliente, `EC_IvtrEquip.cpp:176-262`), senão nada muda (`formato_invalido`). Limites de
-//! **formato**: até 5 furos (`ELEMENTDATAMAN_MAX_NUM_HOLES`) e 32 efeitos
+//! **formato**: até 4 furos (`MAX_SOCKET_COUNT`, `gs/config.h:27` — `equip_item::Load` recusa mais,
+//! `equip_item.h:397`; B206) e 32 efeitos
 //! (`ELEMENTDATAMAN_MAX_NUM_ADDONS`, `template/itemdataman.h`), id de efeito em 13 bits e até 3
 //! parâmetros (`(type & 0x6000) >> 13`), requisitos em i16, nome até 40 bytes
 //! (`MAX_USERNAME_LENGTH`). Refino 0–12: o bônus de cada nível é `base × refine_factor[nível]`
@@ -31,8 +32,35 @@ use crate::refino::{self, FATOR_DE_REFINO};
 use pw_core::{AddonDoItem, ConteudoDeEquipamento, ItemRecord};
 use pw_data_loader::GameDataManager;
 
-/// `ELEMENTDATAMAN_MAX_NUM_HOLES` e `_MAX_NUM_ADDONS` (`gs/template/itemdataman.h`).
-pub const MAXIMO_DE_FUROS: usize = 5;
+/// `MAX_SOCKET_COUNT` (`gs/config.h:27`): o `equip_item::Load` do original recusa um item com mais
+/// (`if(count > MAX_SOCKET_COUNT) throw -103`, `equip_item.h:397`). Até o B206 aqui estava 5 (o
+/// `ELEMENTDATAMAN_MAX_NUM_HOLES` do gerador), o que deixava o painel gravar um item ilegível.
+/// `ELEMENTDATAMAN_MAX_NUM_ADDONS` (`gs/template/itemdataman.h`) para os efeitos.
+pub const MAXIMO_DE_FUROS: usize = 4;
+
+/// B209 — se o efeito `id` com os `args` pode entrar numa peça da `familia` deste realm:
+/// - `efeito_inexistente`: o id não está no `EQUIPMENT_ADDON` do realm ou não tem tratador
+///   (o 1.2.6 não tem nível de ataque, penetração, resiliência nem vigor);
+/// - `efeito_de_outra_familia`: a família da peça não está nas do efeito
+///   ([`pw_data_loader::addons::TabelaDeAddons::ligar_familias`]);
+/// - `efeito_valor_invalido`: número de argumentos diferente do id, ou valor de efeito fixo fora
+///   do que o `GenerateParam` daria ([`pw_data_loader::addons::DadosDoAddon::aceita`]).
+pub fn validar_efeito<'a>(dados: &'a GameDataManager, familia: Option<pw_data_loader::addons::Familia>, id: u32, args: &[i32])
+    -> Result<&'a pw_data_loader::addons::DadosDoAddon, &'static str> {
+    let a = dados.addons.por_id.get(&id).filter(|a| a.sorteio().is_some()).ok_or("efeito_inexistente")?;
+    if familia.is_some_and(|f| !a.serve_em(f)) {
+        return Err("efeito_de_outra_familia");
+    }
+    if !a.aceita(args) {
+        return Err("efeito_valor_invalido");
+    }
+    Ok(a)
+}
+
+/// A família da peça (`WEAPON/ARMOR/DECORATION_ESSENCE`); `None` fora das três.
+pub fn familia_do_item(dados: &GameDataManager, item_id: u32) -> Option<pw_data_loader::addons::Familia> {
+    dados.geracao.get(&item_id).map(|m| m.familia)
+}
 pub const MAXIMO_DE_EFEITOS: usize = 32;
 /// Os bits de origem do efeito: pedra, conjunto, gravação (`SetItemInfo`, `EC_IvtrEquip.cpp:240-242`).
 const EFEITO_COM_ORIGEM: u32 = 0x8000 | 0x10000 | 0x20000;
@@ -154,6 +182,17 @@ pub fn aplicar(item: &mut ItemRecord, e: &EdicaoDeItem, dados: &GameDataManager)
     }
     if e.mexe_no_bloco() {
         let (bloco, ficha) = bloco_do_equipamento(item, dados).ok_or("nao_e_equipamento")?;
+        // B209: só o que entra ou muda é conferido; um efeito que o item já tinha, igual, fica
+        // (os gravados antes do B209 com valor fora do id continuam até serem reabertos).
+        if let Some(lista) = &e.efeitos {
+            let familia = familia_do_item(dados, item.item_id);
+            let velhos = ConteudoDeEquipamento::ler(&bloco, &ficha).map(|c| c.addons).unwrap_or_default();
+            for x in lista {
+                if !velhos.iter().any(|a| a.id() == x.id && a.args == x.args) {
+                    validar_efeito(dados, familia, x.id, &x.args)?;
+                }
+            }
+        }
         let alvo = dados.refino.equipamentos.get(&item.item_id).copied();
         if (e.pedras.is_some() || e.refino.is_some()) && alvo.is_none() {
             return Err("sem_refino_nem_furos");
@@ -204,6 +243,35 @@ pub fn aplicar(item: &mut ItemRecord, e: &EdicaoDeItem, dados: &GameDataManager)
         .ok_or("formato_invalido")?;
         if let Some(erro) = erro {
             return Err(erro);
+        }
+        // B204 — os efeitos de **essência** (`essence_addon`: `enhance_weapon_*`, `IA_EA_ESS`,
+        // `IA_ED_ESS`, resistências da armadura/acessório) só agem na geração (`ApplyAtGeneration`,
+        // `item_addon_weapon.cpp:1-140`); posto num item pronto, o original mostraria a linha e não
+        // mudaria nada. O painel aplica à essência o que entra e desfaz o que sai
+        // (`geracao::aplicar_na_essencia_com`), mudando só os bytes dos campos tocados.
+        if let Some(lista) = &e.efeitos {
+            let velhos: Vec<AddonDoItem> = ConteudoDeEquipamento::ler(&bloco, &ficha)
+                .map(|c| c.addons.into_iter().filter(|a| a.tipo & EFEITO_COM_ORIGEM == 0).collect())
+                .unwrap_or_default();
+            let antes = ConteudoDeEquipamento::ler(&b, &ficha).ok_or("formato_invalido")?;
+            let mut depois = antes.clone();
+            for a in &velhos {
+                crate::geracao::aplicar_na_essencia_com(dados, &mut depois.ficha, a, -1);
+            }
+            for x in lista {
+                crate::geracao::aplicar_na_essencia_com(dados, &mut depois.ficha, &AddonDoItem::novo(x.id, x.args.clone()), 1);
+            }
+            if depois.ficha != antes.ficha {
+                let (x, y) = (antes.escrever(), depois.escrever());
+                if x.len() != y.len() || x.len() != b.len() {
+                    return Err("formato_invalido");
+                }
+                for i in 0..x.len() {
+                    if x[i] != y[i] {
+                        b[i] = y[i];
+                    }
+                }
+            }
         }
         if let Some(r) = &e.requisitos {
             escrever_requisitos(&mut b, r);
@@ -279,15 +347,106 @@ impl BusServer {
 #[cfg(test)]
 mod testes {
     use super::*;
+    use pw_data_loader::addons::Familia;
+
+    fn dados_do(realm: &str) -> Option<GameDataManager> {
+        let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config"));
+        if !pasta.join("elements.data").exists() {
+            eprintln!("AVISO: sem o elements.data do {realm} — este teste NÃO verificou nada.");
+            return None;
+        }
+        let mut dados = GameDataManager::new();
+        dados.load_from_directory(&pasta);
+        Some(dados)
+    }
+
+    /// B209: as três recusas com os ids do teste da RT, no `elements.data` de cada realm.
+    #[test]
+    fn efeito_valida_familia_valor_e_existencia_por_realm() {
+        let Some(d) = dados_do("realm_155") else { return };
+        let (arma, armadura) = (Some(Familia::Arma), Some(Familia::Armadura));
+        // 1317 Acerto (DOUBLE_POINT 118–118, editável): qualquer valor, na arma.
+        assert!(validar_efeito(&d, arma, 1317, &[118]).is_ok());
+        assert!(validar_efeito(&d, arma, 1317, &[999]).is_ok());
+        assert_eq!(validar_efeito(&d, arma, 1317, &[1, 2]).err(), Some("efeito_valor_invalido"));
+        // 831 é essência de arma: num elmo, recusado.
+        assert_eq!(validar_efeito(&d, armadura, 831, &[94]).err(), Some("efeito_de_outra_familia"));
+        // 286 velocidade (PERCENT 0,05 → 5) na armadura (bota).
+        assert_eq!(d.addons.por_id[&286].valor_do_id(), Some(vec![5]));
+        assert!(validar_efeito(&d, armadura, 286, &[5]).is_ok());
+        // 332 conjuração: só as essências de armadura o sorteiam (família pelo id).
+        assert_eq!(d.addons.por_id[&332].valor_do_id(), Some(vec![3]));
+        assert_eq!(validar_efeito(&d, arma, 332, &[3]).err(), Some("efeito_de_outra_familia"));
+        // 2029 nível de ataque = +1.
+        assert_eq!(d.addons.por_id[&2029].valor_do_id(), Some(vec![1]));
+        assert_eq!(validar_efeito(&d, arma, 8191, &[1]).err(), Some("efeito_inexistente"));
+        // Um `item_skill_addon` qualquer: fixo, só o valor do id.
+        let (hab, a) = d.addons.por_id.iter().find(|(_, a)| a.tratador == "item_skill_addon").map(|(i, a)| (*i, a.clone())).unwrap();
+        let v = a.valor_do_id().unwrap();
+        assert!(validar_efeito(&d, None, hab, &v).is_ok());
+        assert_eq!(validar_efeito(&d, None, hab, &[v[0], v[1] + 1]).err(), Some("efeito_valor_invalido"));
+
+        // B211: o que age no jogo (o painel avisa o resto).
+        let age = |id: u32| { let a = &d.addons.por_id[&id]; crate::entity::efeito_tem_porte(&a.tratador, &a.valor_do_id().unwrap(), &d.habilidades) };
+        assert!(age(1317) && age(286) && age(332) && age(2029) && age(831));
+        let nao: Vec<&str> = d.addons.por_id.values()
+            .filter(|a| a.edicao() != pw_data_loader::addons::Edicao::ForaDaBusca)
+            .filter(|a| !a.valor_do_id().is_some_and(|v| crate::entity::efeito_tem_porte(&a.tratador, &v, &d.habilidades)))
+            .map(|a| a.tratador.as_str()).collect();
+        let mut tipos: Vec<&str> = nao.clone();
+        tipos.sort();
+        tipos.dedup();
+        eprintln!("ids da busca que não agem: {} ({} tratadores): {:?}", nao.len(), tipos.len(), &tipos[..tipos.len().min(25)]);
+
+        // 1.2.6: o EQUIPMENT_ADDON v7 não tem nível de ataque nem penetração.
+        let Some(d126) = dados_do("realm_126") else { return };
+        assert_eq!(validar_efeito(&d126, arma, 2029, &[1]).err(), Some("efeito_inexistente"));
+        assert!(!d126.addons.por_id.values().any(|a| a.tratador.contains("penetration") || a.tratador.contains("_degree")));
+        assert!(validar_efeito(&d126, arma, 1317, &[118]).is_ok());
+    }
+
+    /// B204: o 831 (`enhance_weapon_max_magic_addon`, efeito de essência) posto numa arma pronta
+    /// soma no ataque mágico máximo da essência; tirado, volta ao que era — e o resto do bloco não
+    /// muda. Com o `elements.data` do `realm_155`.
+    #[test]
+    fn efeito_de_essencia_entra_e_sai_da_essencia() {
+        let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_155/config");
+        if !pasta.join("elements.data").exists() {
+            eprintln!("AVISO: sem o elements.data do realm_155 — este teste NÃO verificou nada.");
+            return;
+        }
+        let mut dados = GameDataManager::new();
+        dados.load_from_directory(&pasta);
+        assert_eq!(dados.addons.por_id.get(&831).map(|a| a.tratador.as_str()), Some("enhance_weapon_max_magic_addon"));
+        let (tid, c) = dados.geracao.keys().copied().filter(|t| dados.equipamentos.armas.contains_key(t)).find_map(|t| {
+            crate::geracao::gerar_equipamento_de(&dados, t, crate::geracao::Geracao::Loja).map(|c| (t, c))
+        }).expect("uma arma gerável");
+        let magia = |b: &[u8]| match ConteudoDeEquipamento::ler(b, &dados.equipamentos.ficha(tid).unwrap()).unwrap().ficha {
+            pw_core::FichaDoEquipamento::Arma(a) => a.dano_magico_maximo,
+            _ => unreachable!(),
+        };
+        let mut item = ItemRecord {
+            id: None, character_id: 1, container_type: pw_core::ContainerType::Inventory, slot: 0, item_id: tid,
+            count: 1, max_count: 1, refine_level: 0, sockets_count: 0, sockets: vec![], durability: c.durabilidade.max(0) as u32,
+            max_durability: c.durabilidade_maxima.max(0) as u32, bind_status: 0, octets: c.escrever(), custom_attributes: serde_json::json!({}),
+        };
+        let original = item.octets.clone();
+        let antes = magia(&item.octets);
+        aplicar(&mut item, &EdicaoDeItem { efeitos: Some(vec![EfeitoEditado { id: 831, args: vec![50] }]), ..Default::default() }, &dados).unwrap();
+        assert_eq!(magia(&item.octets), antes + 50, "o efeito entrou na essência");
+        aplicar(&mut item, &EdicaoDeItem { efeitos: Some(vec![]), ..Default::default() }, &dados).unwrap();
+        assert_eq!(magia(&item.octets), antes, "tirado, desfaz");
+        assert_eq!(item.octets, original, "o bloco volta byte a byte");
+    }
 
     #[test]
     fn a_validacao_recusa_o_que_o_formato_nao_comporta() {
-        let ok = EdicaoDeItem { refino: Some(12), pedras: Some(vec![0; 5]), ..Default::default() };
+        let ok = EdicaoDeItem { refino: Some(12), pedras: Some(vec![0; 4]), ..Default::default() };
         assert_eq!(ok.valida(), Ok(()));
         for (e, codigo) in [
             (EdicaoDeItem { quantidade: Some(0), ..Default::default() }, "quantidade_invalida"),
             (EdicaoDeItem { refino: Some(13), ..Default::default() }, "refino_invalido"),
-            (EdicaoDeItem { pedras: Some(vec![0; 6]), ..Default::default() }, "pedras_invalidas"),
+            (EdicaoDeItem { pedras: Some(vec![0; 5]), ..Default::default() }, "pedras_invalidas"),
             (EdicaoDeItem { efeitos: Some(vec![EfeitoEditado { id: 0x2000, args: vec![] }]), ..Default::default() }, "efeitos_invalidos"),
             (EdicaoDeItem { efeitos: Some(vec![EfeitoEditado { id: 1, args: vec![1, 2, 3, 4] }]), ..Default::default() }, "efeitos_invalidos"),
             (EdicaoDeItem { fabricante: Some("x".repeat(21)), ..Default::default() }, "fabricante_invalido"),

@@ -68,6 +68,8 @@ mod pedras_e_refino;
 pub mod item_editado;
 pub mod mascote_editado;
 pub mod missao_editada;
+mod rosto;
+mod portal;
 mod producao;
 mod restauracao;
 mod renascer;
@@ -417,6 +419,19 @@ pub struct JogadorEmTroca {
 impl JogadorEmTroca {
     pub(crate) fn envio(&self)->EnvioAoCliente {self.sessao.envio.clone()}
 }
+
+
+/// `ERR_ITEM_CANNOT_EQUIP` (`common/protocol.h:688`).
+const ERR_ITEM_CANNOT_EQUIP: i32 = 8;
+/// `ERR_ITEM_CANNOT_UNEQUIP` (`common/protocol.h:776`, 96 no 1.5.5; não conferido no cliente
+/// 1.2.6, onde vai o `ERR_ITEM_CANNOT_EQUIP`). B202.
+const ERR_ITEM_CANNOT_UNEQUIP: i32 = 96;
+/// `EQUIP_INDEX_HP_ADDON` e `EQUIP_INDEX_MP_ADDON` (`gs/item.h:216-217`). B202.
+const SLOTS_DE_AMULETO: [u8; 2] = [20, 21];
+/// `EQUIP_INDEX_DYNSKILL0` e `1` (`gs/item.h:223-224`). B202.
+const SLOTS_DE_HABILIDADE_DINAMICA: [u8; 2] = [27, 28];
+/// `DROP_TYPE_TAKEOUT` (`common/protocol.h:927-943`, 3º do enum). B202.
+const DESCARTE_AO_TIRAR: u8 = 2;
 
 impl BusServer {
     /// Monta o servidor de mundo para a versão daquele realm.
@@ -781,6 +796,10 @@ impl BusServer {
                 // comando (`gplayer_imp::OnDamage` → `be_damaged(..., index, ...)`,
                 // `player.cpp:9552-9570`). Sem peça no slot sorteado vai `0x7f`, e o cliente
                 // não desgasta nada (`EC_HostMsg.cpp:974-981`).
+                // B211: o rebote da habilidade do equipamento (`filter_Activatereboundskill`).
+                if dano > 0 {
+                    self.rebote_do_item(roleid, atacante).await;
+                }
                 let peca = self.desgastar_peca(roleid).await;
                 self.enviar_ao_jogador(
                     roleid,
@@ -1384,7 +1403,8 @@ impl BusServer {
     pub(crate) async fn tratar(&self, msg: BusMessage, envio: &EnvioAoCliente) {
         let role=match &msg {
             BusMessage::EnterWorld{roleid,..}|BusMessage::PlayerLogout{roleid,..}|
-            BusMessage::ClientToGame{roleid,..}|BusMessage::GameToClient{roleid,..} => *roleid,
+            BusMessage::ClientToGame{roleid,..}|BusMessage::GameToClient{roleid,..}|
+            BusMessage::SetCustomData{roleid,..}|BusMessage::SetCustomDataRe{roleid,..} => *roleid,
             BusMessage::ChatSingleCast{dstroleid,..} => *dstroleid,
         };
         let controle=self.repo().await.controle_de_gravacao(role);
@@ -1396,7 +1416,8 @@ impl BusServer {
             }
         } else {
             let localsid=match &msg {
-                BusMessage::PlayerLogout{localsid,..}|BusMessage::ClientToGame{localsid,..}=>Some(*localsid),
+                BusMessage::PlayerLogout{localsid,..}|BusMessage::ClientToGame{localsid,..}|
+                BusMessage::SetCustomData{localsid,..}=>Some(*localsid),
                 _=>None,
             };
             if !self.sessoes.read().await.get(&role).map(|s|s.envio.same_channel(envio)
@@ -1438,6 +1459,12 @@ impl BusServer {
             }
             BusMessage::ChatSingleCast { dstroleid, .. } => {
                 warn!("mundo: recebi um ChatSingleCast (94) para {dstroleid} — sentido invertido");
+            }
+            BusMessage::SetCustomData { roleid, localsid, custom_data } => {
+                self.aparencia_nova(roleid, localsid, custom_data, envio).await;
+            }
+            BusMessage::SetCustomDataRe { roleid, .. } => {
+                warn!("mundo: recebi um SetCustomData_Re (101) de {roleid} — sentido invertido");
             }
         }
     }
@@ -1704,6 +1731,7 @@ impl BusServer {
             ids::MOVE_ITEM_TO_EQUIP => self.mover_para_equipar(roleid, &cmd.payload, envio).await,
             ids::SIT_DOWN => self.postura(roleid, true, envio).await,
             ids::STAND_UP => self.postura(roleid, false, envio).await,
+            ids::ENTER_INSTANCE => self.portal_de_regiao(roleid, &cmd.payload, envio).await,
             ids::CANCEL_ACTION => {
                 // `CANCEL_ACTION` (`playercmd.cpp:2136-2153`) põe `session_cancel_action` na
                 // fila — que tira o golpe que estava na fila (máscara exclusiva) — e tenta
@@ -1712,6 +1740,8 @@ impl BusServer {
                 // `HasNextSession` a encerra (`actobject.cpp:180-189`). B53 deixava o
                 // cancelamento sem efeito: Esc não parava o ataque (teste de 2026-09-17).
                 debug!("mundo: {roleid} mandou CANCEL_ACTION");
+                // E a troca de rosto (`session_cosmetic::EndSession`), B199.
+                self.cancelar_troca_de_rosto(roleid, envio).await;
                 // `CANCEL_ACTION` encerra também a produção (`session_produce::TerminateSession`).
                 self.encerrar_producao(roleid, 0).await;
                 if let Some(s) = self
@@ -2305,6 +2335,11 @@ impl BusServer {
             envio,
         )
         .await;
+
+        // B209: a habilidade do equipamento presa ao golpe, se acertou (`filter_Activateskill`).
+        if !matches!(resultado, crate::combat::Resultado::Errou) {
+            self.habilidades_do_item_no_golpe(roleid, alvo).await;
+        }
 
         // Munição e durabilidade são persistidas depois do fio. Os SQLs decrementam o valor
         // atual de forma atômica; tarefas sobrepostas não perdem golpe. `gastar_arma` ainda
@@ -2924,6 +2959,18 @@ impl BusServer {
             .map(|ms| ms.clamp(0, u16::MAX as i32) as u16)
             .or_else(|| Habilidade::conhecida(c.skill_id).map(|h| h.conjuracao_ms))
             .unwrap_or(TEMPO_DE_CONJURACAO_MS);
+        // B209: `Skill::FirstRun` (`cskill/skill/skill.cpp:809-815`) — fora das de carga, o tempo
+        // cai pelo `prayspeed` (passivas e addons de conjuração), até 99.
+        let conjuracao_ms = {
+            let mundo = self.world.read().await;
+            let de_carga = mundo.data_manager.habilidades.get(c.skill_id.max(0) as u32).is_some_and(|h| h.e_de_carga());
+            match mundo.players.get(&(roleid as i64)).map(|p| p.velocidade_de_conjuracao()) {
+                Some(pray) if pray != 0 && !de_carga => {
+                    (conjuracao_ms as f32 * 0.01 * (100 - pray.min(99)) as f32 + 0.01).clamp(0.0, u16::MAX as f32) as u16
+                }
+                _ => conjuracao_ms,
+            }
+        };
         let cast_pkt =
             S2CGamedataSend::object_cast_skill(roleid, alvo as i32, c.skill_id, conjuracao_ms, 1)
                 .data;
@@ -4547,6 +4594,7 @@ impl BusServer {
             servico::REFINAR => self.refinar(roleid, c, envio).await,
             servico::FURAR => self.furar(roleid, c, envio).await,
             servico::RESTAURAR_PET => self.restaurar_mascote_em_ovo(roleid, c, envio).await,
+            servico::TROCAR_ROSTO => self.iniciar_troca_de_rosto(roleid, c, envio).await,
 
             outro => {
                 debug!("mundo: {roleid} pediu o serviço de NPC {outro}, ainda não tratado");
@@ -4756,7 +4804,8 @@ impl BusServer {
                 .list_by_container(id, ContainerType::Equipment)
                 .await
                 .unwrap_or_default();
-            let (mascara, ids) = Self::mascara_de_equipamento(&equipado);
+            let fichas = self.world.read().await.data_manager.clone();
+            let (mascara, ids) = Self::mascara_de_equipamento_com(&equipado, Some(&fichas.equipamentos));
             let crc = pw_core::carimbo::carimbo_do_equipamento(mascara, &ids);
             let pacote = self.sub.equip_data(id, crc, mascara, &ids).data;
             debug!(
@@ -4771,9 +4820,27 @@ impl BusServer {
     ///
     /// Devolve os ids **ordenados por slot**, que é a ordem em que o cliente os consome.
     /// Ver a documentação de [`Self::equipamento_de_outro`] para as fontes no cliente.
+    #[cfg(test)]
     pub(crate) fn mascara_de_equipamento(equipado: &[pw_core::ItemRecord]) -> (u64, Vec<i32>) {
+        Self::mascara_de_equipamento_com(equipado, None)
+    }
+
+    /// Como [`Self::mascara_de_equipamento`], com o `_modify_mask` de cada peça nos 16 bits altos:
+    /// o original manda `type | GetIdModify()` = `id | (_modify_mask << 16)` (`equip_item.cpp:24-30`).
+    /// O `_modify_mask` é o brilho das pedras incrustadas (`AfterChipChanged`,
+    /// `equip_item.cpp:989-1044`) e da afiação (`Sharpen`, `:388-389`); vai gravado nos octetos
+    /// ([`pw_core::ConteudoDeEquipamento::mascara_das_pedras`]). O cliente o lê como `stone*` da
+    /// arma, armadura, pulso, calça e bota (`EC_Player.cpp:4207-4231`) e toca o efeito das pedras
+    /// (`AddWeaponStones`, `:9349-9380`). Nos slots de moda os bits altos são a cor
+    /// (`:4204-4209`, ainda não modelada) e no duende (23) o refino dele: ficam só os 16 baixos. B200.
+    pub(crate) fn mascara_de_equipamento_com(
+        equipado: &[pw_core::ItemRecord],
+        fichas: Option<&pw_data_loader::armaduras::TabelasDeEquipamento>,
+    ) -> (u64, Vec<i32>) {
         /// `SIZE_ALL_EQUIPIVTR` do `EC_IvtrTypes.h` — o tamanho do array `m_aNewEquips`.
         const TOTAL_DE_SLOTS: u16 = 40;
+        /// `EQUIPIVTR_FASHION_*` (13–16, 25, 29) e `EQUIPIVTR_GOBLIN` (23), `EC_IvtrTypes.h:56-86`.
+        const SEM_MASCARA: [u16; 7] = [13, 14, 15, 16, 23, 25, 29];
 
         let mut por_slot: std::collections::BTreeMap<u16, i32> = std::collections::BTreeMap::new();
         for item in equipado {
@@ -4784,8 +4851,14 @@ impl BusServer {
                 );
                 continue;
             }
-            // 16 bits baixos: o id do item. Os altos são cor de moda, que ainda não temos.
-            por_slot.insert(item.slot, (item.item_id as i32) & 0xffff);
+            let base = (item.item_id as i32) & 0xffff;
+            let mascara = fichas
+                .filter(|_| !SEM_MASCARA.contains(&item.slot))
+                .and_then(|f| f.ficha(item.item_id))
+                .and_then(|ficha| pw_core::ConteudoDeEquipamento::ler(&Self::octetos_atuais(item), &ficha))
+                .map(|c| c.mascara_das_pedras)
+                .unwrap_or(0);
+            por_slot.insert(item.slot, base | ((mascara as i32) << 16));
         }
 
         let mut mascara = 0u64;
@@ -5175,7 +5248,7 @@ impl BusServer {
             }
         }
         Self::remendar_durabilidade(&mut octetos, item);
-        S2CGamedataSend::item_info(
+        S2CGamedataSend::item_info_com_proc_type(
             onde,
             item.slot as u8,
             item.item_id as i32,
@@ -5184,6 +5257,7 @@ impl BusServer {
             item.count,
             &octetos,
             dados.equipamentos.ficha(item.item_id),
+            dados.proc_type_da_instancia(item.item_id, item.bind_status != 0),
         )
         .data
     }
@@ -5601,6 +5675,37 @@ impl BusServer {
         }
 
         let itens = self.itens().await;
+        // B202 — `PlayerEquipItem` (`player.cpp:8097-8124`): o amuleto de HP/MP vestido não volta
+        // à bolsa. Tirar = `ERR_ITEM_CANNOT_UNEQUIP`; vestir outro por cima **destrói** o vestido
+        // (`player_drop_item(IL_EQUIPMENT, …, DROP_TYPE_TAKEOUT)`) e o novo entra no slot vazio.
+        if SLOTS_DE_AMULETO.contains(&idx_corpo) {
+            if let Ok(Some(vestido)) = itens.get_item_by_slot(roleid, ContainerType::Equipment, idx_corpo as u16).await {
+                let na_bolsa = itens.get_item_by_slot(roleid, ContainerType::Inventory, idx_bolsa as u16).await.ok().flatten();
+                if na_bolsa.is_none() {
+                    info!("mundo: {roleid} tentou tirar o amuleto do slot {idx_corpo}");
+                    let erro = if self.versao() == GameVersion::V1_2_6 { ERR_ITEM_CANNOT_EQUIP } else { ERR_ITEM_CANNOT_UNEQUIP };
+                    for d in [
+                        S2CGamedataSend::error_message(erro).data,
+                        S2CGamedataSend::unfreeze_ivtr_slot(0, idx_bolsa as u16).data,
+                        S2CGamedataSend::unfreeze_ivtr_slot(1, idx_corpo as u16).data,
+                    ] {
+                        self.responder(roleid, d, envio).await;
+                    }
+                    return;
+                }
+                if let Err(e) = itens.delete_item_by_slot(roleid, ContainerType::Equipment, idx_corpo as u16).await {
+                    warn!("mundo: não tirei o amuleto vestido de {roleid}: {e:?}");
+                    return;
+                }
+                info!("mundo: {roleid} trocou o amuleto {} do slot {idx_corpo} (o vestido some)", vestido.item_id);
+                self.responder(
+                    roleid,
+                    self.sub.player_drop_item(1, idx_corpo, 1, vestido.item_id as i32, DESCARTE_AO_TIRAR).data,
+                    envio,
+                )
+                .await;
+            }
+        }
         if let Err(e) = itens
             .move_between_containers(
                 roleid,
@@ -5642,6 +5747,7 @@ impl BusServer {
             self.mandar_info(roleid, 0, idx_bolsa, envio).await;
         }
         if no_corpo.is_some() {
+            self.vincular_ao_vestir(roleid, idx_corpo).await;
             self.mandar_info(roleid, 1, idx_corpo, envio).await;
         }
 
@@ -5660,6 +5766,32 @@ impl BusServer {
         self.recalcular_equipamento(roleid, true).await;
     }
 
+    /// B201: a peça `ITEM_PROC_TYPE_BIND2` vincula ao ser vestida (`gs/player.cpp:8182-8191`,
+    /// e na entrada para o que já estava no corpo, `:398-416`): `bind_status` = 1 no banco. O
+    /// `proc_type` que o cliente recebe sai de [`GameDataManager::proc_type_da_instancia`].
+    /// `true` se vinculou agora.
+    pub(crate) async fn vincular_ao_vestir(&self, roleid: i32, idx_corpo: u8) -> bool {
+        let dados = self.world.read().await.data_manager.clone();
+        let itens = self.itens().await;
+        let Ok(Some(mut peca)) = itens.get_item_by_slot(roleid, ContainerType::Equipment, idx_corpo as u16).await else {
+            return false;
+        };
+        if peca.bind_status != 0 || !dados.vincula_ao_vestir(peca.item_id) {
+            return false;
+        }
+        peca.bind_status = 1;
+        match itens.upsert_item(&peca).await {
+            Ok(_) => {
+                info!(roleid, item = peca.item_id, slot = idx_corpo, "mundo: peça vinculada ao vestir");
+                true
+            }
+            Err(e) => {
+                warn!("mundo: não gravei o vínculo de {} de {roleid}: {e}", peca.item_id);
+                false
+            }
+        }
+    }
+
     /// `EquipItem` → `CanActivate` → `equip_item::VerifyRequirement` (`gs/player.cpp:8476-8493`,
     /// `gs/item/equip_item.cpp:60-80`): o item da bolsa só vai ao corpo se o jogador atende o
     /// nível, a **classe** e os quatro atributos da `prerequisition` e se a durabilidade não
@@ -5673,12 +5805,10 @@ impl BusServer {
     /// para equipamento com ficha (arma, armadura, acessório, munição); roupa e item de voo têm
     /// `VerifyRequirement` próprio (`fashion_item.cpp:11`, `item_flysword`), ainda não portado.
     /// A posição (`CheckEquipPostion`) é conferida desde o B191, pela máscara da família.
-    /// **Falta** a reputação (`get_item_reputation_limit`), o amuleto de HP/MP que não sai
-    /// (`ERR_ITEM_CANNOT_UNEQUIP`, `player.cpp:8100-8124`) e a habilidade dinâmica repetida
-    /// (`:8158-8168`); o nível é o atual, não o histórico.
+    /// Desde o B202 também a reputação (`get_item_reputation_limit`) e a habilidade dinâmica
+    /// repetida (`player.cpp:8158-8168`); o amuleto de HP/MP fica no [`Self::equipar`]. O nível é
+    /// o atual, não o histórico.
     async fn pode_vestir(&self, roleid: i32, idx_bolsa: u8, idx_corpo: u8, envio: &EnvioAoCliente) -> bool {
-        /// `ERR_ITEM_CANNOT_EQUIP` (`common/protocol.h:688`).
-        const ERR_ITEM_CANNOT_EQUIP: i32 = 8;
         let Some(motivo) = self.motivo_para_nao_vestir(roleid, idx_bolsa, idx_corpo).await else {
             return true;
         };
@@ -5707,13 +5837,29 @@ impl BusServer {
         else {
             return None;
         };
-        let (dados, nivel, classe, atributos) = {
+        let (dados, nivel, classe, atributos, reputacao) = {
             let mundo = self.world.read().await;
             let Some(p) = mundo.players.get(&(roleid as i64)) else { return Some("fora_do_mapa") };
-            (Arc::clone(&mundo.data_manager), p.level, p.cls as i32, p.atributos_efetivos())
+            (Arc::clone(&mundo.data_manager), p.level, p.cls as i32, p.atributos_efetivos(), p.reputacao)
         };
         if dados.cabe_no_slot(item.item_id, idx_corpo as usize) == Some(false) {
             return Some("posicao_invalida");
+        }
+        // B202 — `CheckEquipDynSkillByIndex` (`EQUIP_MASK64_DYNSKILL_ALL` 0x18000000, slots 27 e
+        // 28, `gs/item.h:188`, `:223-224`): o mesmo item não vai aos dois (`player.cpp:8158-8168`).
+        if SLOTS_DE_HABILIDADE_DINAMICA.contains(&idx_corpo) {
+            for outro in SLOTS_DE_HABILIDADE_DINAMICA.iter().filter(|s| **s != idx_corpo) {
+                if let Ok(Some(vestido)) = itens.get_item_by_slot(roleid, ContainerType::Equipment, *outro as u16).await {
+                    if vestido.item_id == item.item_id {
+                        return Some("habilidade_repetida");
+                    }
+                }
+            }
+        }
+        // B202 — `VerifyRequirement` (`equip_item.cpp:60-66`): reputação abaixo da exigida.
+        if dados.reputacao_exigida.get(&item.item_id).is_some_and(|r| reputacao < *r) {
+            info!("mundo: {roleid} sem reputação para {} ({reputacao})", item.item_id);
+            return Some("reputacao");
         }
         let Some(ficha) = dados.equipamentos.ficha(item.item_id) else {
             return None;
@@ -5786,6 +5932,10 @@ impl BusServer {
             envio,
         )
         .await;
+        // O original avisa a peça que acabou de vincular (`notify_equip_item`, `player.cpp:8182-8200`).
+        if self.vincular_ao_vestir(roleid, p.b).await {
+            self.mandar_info(roleid, 1, p.b, envio).await;
+        }
         self.responder(
             roleid,
             S2CGamedataSend::unfreeze_ivtr_slot(0, p.a as u16).data,
@@ -6061,6 +6211,32 @@ mod tests {
     fn payload_curto_demais_nao_vira_subcomando() {
         assert_eq!(SubComando::ler(&[]), None);
         assert_eq!(SubComando::ler(&[0x0F]), None);
+    }
+
+    /// B200: o `_modify_mask` gravado nos octetos (o brilho das pedras) vai nos 16 bits altos
+    /// do id (`equip_item.cpp:24-30`), menos nos slots de moda e no duende; sem fichas, como antes.
+    #[test]
+    fn o_brilho_das_pedras_vai_nos_bits_altos_do_id() {
+        let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_155/config");
+        let Ok(bytes) = std::fs::read(pasta.join("elements.data")) else {
+            eprintln!("AVISO: sem o elements.data do realm_155 — este teste NÃO verificou nada.");
+            return;
+        };
+        let e = pw_data_loader::generic_elements::load_elements_data_auto(&bytes).unwrap();
+        let fichas = pw_data_loader::armaduras::TabelasDeEquipamento::carregar(&e);
+        let (id, ficha) = (1..60_000u32).find_map(|i| fichas.ficha(i).map(|f| (i, f))).expect("alguma ficha");
+        let mut c = pw_core::ConteudoDeEquipamento::novo(ficha, 100, 100);
+        c.mascara_das_pedras = 0x0312;
+        let mut arma = equipado(0, id);
+        arma.durability = 100;
+        arma.max_durability = 100;
+        arma.octets = c.escrever();
+        let mut moda = arma.clone();
+        moda.slot = 13;
+        let (_, ids) = BusServer::mascara_de_equipamento_com(&[arma.clone(), moda], Some(&fichas));
+        assert_eq!(ids, vec![(id as i32 & 0xffff) | (0x0312 << 16), id as i32 & 0xffff]);
+        let (_, sem) = BusServer::mascara_de_equipamento(&[arma]);
+        assert_eq!(sem, vec![id as i32 & 0xffff]);
     }
 
     /// Ajuda a montar linhas de equipamento sem repetir o struct inteiro.

@@ -300,3 +300,61 @@ fn o_tipo_maior_do_remedio_separa_as_familias_de_recarga() {
     // poção de mana, e era nela que a divisão por hp/mp o punha.
     assert_eq!(d.quanto_o_remedio_restaura_no_tempo(1817), Some((0, 0, 0, 0, 15000)));
 }
+
+/// B209: conjunto (`set_equip_addon<N, BASE>`, `item_addon.cpp:1194-1232`) — o efeito base de
+/// cada id da lista do `SUITE_ESSENCE` só age com N peças vestidas (`ActivateSetAddon`,
+/// `actobject.h:526-535`). Procura no `realm_155` um conjunto cujo efeito tem porte.
+#[test]
+fn o_conjunto_age_com_n_pecas_vestidas() {
+    let Some(d) = realm() else { return };
+    let peca = |slot: u16, item_id: u32| ItemRecord {
+        id: None, character_id: 1, container_type: ContainerType::Equipment, slot, item_id, count: 1, max_count: 1,
+        refine_level: 0, sockets_count: 0, sockets: Vec::new(), durability: 100, max_durability: 100, bind_status: 0,
+        octets: Vec::new(), custom_attributes: serde_json::Value::Null,
+    };
+    // peças de cada lista (o mesmo `Vec` de efeitos = o mesmo conjunto).
+    let mut por_lista: std::collections::BTreeMap<Vec<u32>, Vec<u32>> = Default::default();
+    for (item, lista) in &d.addons.conjuntos {
+        por_lista.entry(lista.clone()).or_default().push(*item);
+    }
+    let mut testados = 0;
+    for (lista, mut pecas) in por_lista {
+        pecas.sort();
+        for id in &lista {
+            let Some(a) = d.addons.por_id.get(id) else { continue };
+            let Some((n, base)) = pw_data_loader::addons::conjunto_de(&a.tratador) else { continue };
+            let args = a.valor_do_id().unwrap();
+            if !BonusDeAddons::default().somar(base, &args) || pecas.len() < n as usize || n < 2 {
+                continue;
+            }
+            let vestir = |k: usize| -> Vec<ItemRecord> { pecas.iter().take(k).enumerate().map(|(i, t)| peca(i as u16 + 1, *t)).collect() };
+            let sem = Equipamento::dos_itens_com_addons(&vestir(n as usize - 1), &d.equipamentos, Some(&d.addons));
+            let com = Equipamento::dos_itens_com_addons(&vestir(n as usize), &d.equipamentos, Some(&d.addons));
+            assert_ne!(sem.addons, com.addons, "conjunto {pecas:?}, efeito {id} ({}) com {n} peças", a.tratador);
+            testados += 1;
+            break;
+        }
+    }
+    eprintln!("conjuntos conferidos: {testados}");
+    assert!(testados > 10, "poucos conjuntos com efeito portado: {testados}");
+}
+
+/// B209: `enhance_defense_scale_addon` (`EPSA_EQ_addon`, `_base_param_percent.defense` da peça)
+/// multiplica a defesa da própria armadura no `armor_item::UpdateData` (`equip_item.cpp:1323-1333`).
+#[test]
+fn a_escala_da_peca_multiplica_a_defesa_dela() {
+    let Some(d) = realm() else { return };
+    let id_escala = *d.addons.por_id.iter().find(|(_, a)| a.tratador == "enhance_defense_scale_addon").map(|(i, _)| i).unwrap();
+    let tid = *d.geracao.iter().find(|(t, m)| m.familia == pw_data_loader::addons::Familia::Armadura && m.defesa.0 > 50
+        && pw_gs::geracao::gerar_equipamento_de(&d, **t, pw_gs::geracao::Geracao::Loja).is_some()).map(|(t, _)| t).unwrap();
+    let mut c = pw_gs::geracao::gerar_equipamento_de(&d, tid, pw_gs::geracao::Geracao::Loja).unwrap();
+    let item = |octets: Vec<u8>| ItemRecord {
+        id: None, character_id: 1, container_type: ContainerType::Equipment, slot: 1, item_id: tid, count: 1, max_count: 1,
+        refine_level: 0, sockets_count: 0, sockets: Vec::new(), durability: 100, max_durability: 100, bind_status: 0,
+        octets, custom_attributes: serde_json::Value::Null,
+    };
+    let antes = Equipamento::dos_itens_com_addons(&[item(c.escrever())], &d.equipamentos, Some(&d.addons)).defesa;
+    c.addons.push(pw_core::AddonDoItem::novo(id_escala, vec![50]));
+    let depois = Equipamento::dos_itens_com_addons(&[item(c.escrever())], &d.equipamentos, Some(&d.addons)).defesa;
+    assert_eq!(depois, (antes as f32 * 1.5 + 0.5) as i32, "{antes} → {depois}");
+}

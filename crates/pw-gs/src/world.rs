@@ -874,6 +874,7 @@ impl WorldInstance {
                 template_id: inst.template_id,
                 position: pos,
                 renascer_s: inst.respawn_sec,
+                renasce: inst.renasce,
             };
             self.grid.add_entity(mid, matter.position, false);
             self.matters.insert(mid, matter);
@@ -1166,8 +1167,11 @@ impl WorldInstance {
                 p.coleta = None;
             }
         }
-        let falta = m.renascer_s.saturating_mul(1000).max(1);
-        self.minas_colhidas.push((m.clone(), falta));
+        // `mine_spawner::Reclaim`: sem `bAutoRevive` a mina não volta (B205).
+        if m.renasce {
+            let falta = m.renascer_s.saturating_mul(1000).max(1);
+            self.minas_colhidas.push((m.clone(), falta));
+        }
         Some(m)
     }
 
@@ -1180,6 +1184,8 @@ impl WorldInstance {
             let base = Some(&dados.base_das_classes).filter(|b| !b.is_empty());
             p.passivas_de_forma =
                 crate::efeitos::passivas_de_forma(&dados.habilidades, &p.habilidades);
+            p.passivas_comuns = crate::efeitos::passivas_comuns(
+                &dados.habilidades, &p.habilidades, p.equipamento.arma.map(|a| a.classe).unwrap_or(0));
             p.recalcular_por_nivel(&dados.classes, base);
             p.hp = p.hp.min(p.max_hp);
             p.mp = p.mp.min(p.max_mp);
@@ -1412,7 +1418,11 @@ impl WorldInstance {
             // mostra o Filhote de Mandrágora de volta ~15,5 s depois da morte, sem `disappear`.
             let corpo = match self.geradores.get(&id) {
                 Some(g) => {
-                    if m.respawn_delay_ms > 0 {
+                    // `mobs_spawner::Reclaim` (`npcgenerator.cpp:3312-3317`): sem `bAutoRevive`
+                    // o gerador não o recebe de volta — o chefe de masmorra fica morto (B205).
+                    if !g.renasce {
+                        m.respawn_timer_ms = 0;
+                    } else if m.respawn_delay_ms > 0 {
                         let s = rand::Rng::gen_range(
                             &mut rand::thread_rng(),
                             g.renascer_min_s..=g.renascer_max_s.max(g.renascer_min_s),

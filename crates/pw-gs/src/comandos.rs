@@ -145,6 +145,10 @@ pub mod ids {
     /// o estado é o servidor, e o cliente só pede a troca. Sem tratamento, o botão não
     /// fazia nada e nem aparecia no log — era o `outro =>` silencioso do `match`.
     pub const SWITCH_FASHION_MODE: u16 = 85;
+    /// `ENTER_INSTANCE` (cliente) = `REGION_TRANSPORT` (servidor, `common/protocol.h:4770`):
+    /// `{int region_index; int target_tag}`, mandado ao pisar numa caixa de transporte do
+    /// `region.sev` (`EC_World.cpp:2360-2373`). B208.
+    pub const ENTER_INSTANCE: u16 = 86;
     /// `SRV::C2S::CMD::team_invite` — 6 bytes, `id` no deslocamento 2.
     pub const TEAM_INVITE: u16 = 27;
     /// `SRV::C2S::CMD::team_agree_invite`

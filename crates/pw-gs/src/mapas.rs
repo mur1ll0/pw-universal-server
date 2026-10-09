@@ -156,6 +156,12 @@ impl RoteadorDeMapas {
         self.carregando.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// B208: um portal pode levar a `mapa` — ligado pelo painel e servido por este processo (o
+    /// que o [`Self::trocar`] exige; sem isto a troca seria recusada em silêncio).
+    pub fn aceita_destino(&self, mapa: i32) -> bool {
+        self.mapa_ligado(mapa) && self.serve(mapa)
+    }
+
     pub fn mapa_ligado(&self, mapa: i32) -> bool {
         !self.desligados.read().unwrap_or_else(|e| e.into_inner()).contains(&mapa)
     }
@@ -784,10 +790,18 @@ impl RoteadorDeMapas {
         }
     }
 
-    /// Painel (E6, B186): busca de itens por nome ou id no `elements.data` do realm.
-    pub async fn buscar_itens(&self, texto: &str) -> serde_json::Value {
+    /// Painel (B209): como os efeitos pedidos entram na peça `item_id` (dados do realm).
+    pub async fn efeitos_para_item(&self, item_id: u32, ids: &[u32]) -> serde_json::Value {
         match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
-            Some(bus) => bus.buscar_itens(texto).await,
+            Some(bus) => bus.efeitos_para_item(item_id, ids).await,
+            None => serde_json::json!({"codigo":"sem_mapa"}),
+        }
+    }
+
+    /// Painel (E6, B186): busca de itens por nome ou id no `elements.data` do realm.
+    pub async fn buscar_itens(&self, texto: &str, categoria: Option<&str>) -> serde_json::Value {
+        match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
+            Some(bus) => bus.buscar_itens(texto, categoria).await,
             None => serde_json::json!({"codigo":"sem_mapa"}),
         }
     }
@@ -909,7 +923,9 @@ impl RoteadorDeMapas {
             BusMessage::EnterWorld { roleid, .. }
             | BusMessage::PlayerLogout { roleid, .. }
             | BusMessage::ClientToGame { roleid, .. }
-            | BusMessage::GameToClient { roleid, .. } => *roleid,
+            | BusMessage::GameToClient { roleid, .. }
+            | BusMessage::SetCustomData { roleid, .. }
+            | BusMessage::SetCustomDataRe { roleid, .. } => *roleid,
             BusMessage::ChatSingleCast { dstroleid, .. } => *dstroleid,
         };
 

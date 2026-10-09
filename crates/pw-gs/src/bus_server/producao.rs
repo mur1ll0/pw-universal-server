@@ -206,7 +206,7 @@ impl BusServer {
                 let exp = (rt.exp.max(0) as f32 * a.exp + 0.5) as i64;
                 let sp = (rt.sp.max(0) as f32 * a.sp + 0.5) as i64;
                 if exp + sp > 0 {
-                    ctx.ganhar_exp(exp, sp);
+                    ctx.receber_exp(exp, sp);
                     ctx.para_mim.push(ctx.sub.receive_exp(exp as i32, sp as i32).data);
                 }
             }

@@ -89,7 +89,11 @@ pub enum Consulta {
     /// A jaula de mascotes (E6, B197). Só leitura.
     Mascotes { personagem_id: i32 },
     /// Itens do `elements.data` por nome ou id (E6, B186). Só leitura.
-    BuscarItens { texto: String },
+    /// `categoria: "pedra"` limita aos `STONE_ESSENCE` (B206).
+    BuscarItens { texto: String, #[serde(default)] categoria: Option<String> },
+    /// B209: para a peça `item_id`, como cada efeito pedido entra (valor do id, edição, faixa,
+    /// família, se existe no realm). Até 200 ids. Só leitura.
+    EfeitosParaItem { item_id: u32, ids: Vec<u32> },
     /// O item de um slot com os dados da dica (E6, B189). Só leitura.
     DetalheItem { personagem_id: i32, recipiente: String, slot: u16 },
 }
@@ -438,8 +442,12 @@ impl ServidorAdministrativo {
                             None => json!({"codigo":"recipiente_invalido"}),
                         }
                     }
-                    Consulta::BuscarItens { texto } if texto.chars().count() <= 64 => {
-                        self.roteador.buscar_itens(&texto).await
+                    Consulta::EfeitosParaItem { item_id, ids } if ids.len() <= 200 => {
+                        self.roteador.efeitos_para_item(item_id, &ids).await
+                    }
+                    Consulta::BuscarItens { texto, categoria } if texto.chars().count() <= 64
+                        && categoria.as_deref().map_or(true, |c| c == "pedra") => {
+                        self.roteador.buscar_itens(&texto, categoria.as_deref()).await
                     }
                     Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item, editar_item, habilidade, mascote, missao } if personagem_id > 0 => {
                         use crate::bus_server::EdicaoDePersonagem as E;

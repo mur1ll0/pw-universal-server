@@ -96,6 +96,9 @@ pub struct Golpe {
     /// aí a defesa do alvo entra inteira.
     pub anti_defesa: i32,
     pub anti_resistencia: i32,
+    /// `attack.penetration = _penetration` (`actobject.cpp:1490`): no NPC atingido o dano vai
+    /// × `1 + 3p/(p + 300)` (`gnpc_imp::AdjustDamage`, `npc.cpp:1770`; `playertemplate.h:485-488`). B209.
+    pub penetracao: i32,
     /// `attack->ainfo.attacker.IsPlayer() || IsPet()` — só nesse caso a distância atenua.
     pub atacante_e_jogador_ou_pet: bool,
     /// `attacker_layer`: a camada de quem bate (`FillAttackMsg`, `actobject.cpp:1482`). Só o
@@ -170,6 +173,10 @@ pub struct Defesa {
     pub reducao_longe_habilidade: f32,
     pub reducao_perto_normal: f32,
     pub reducao_longe_normal: f32,
+    /// `_resilience` do jogador atingido: golpe de quem não é do lado humano vai
+    /// × `1 − r/(r + nível do atacante)` (`gplayer_imp::AdjustDamage`, `player.cpp:9647-9650`;
+    /// `playertemplate.h:490-493`). B209.
+    pub resiliencia: i32,
     /// A camada do alvo quando ele é NPC (`gnpc_imp`): liga o ajuste de
     /// [`ajuste_de_camada_no_npc`]. `None` para jogador.
     pub camada_de_npc: Option<Camada>,
@@ -209,6 +216,7 @@ impl Defesa {
             reducao_longe_habilidade: 0.0,
             reducao_perto_normal: 0.0,
             reducao_longe_normal: 0.0,
+            resiliencia: 0,
             camada_de_npc: None,
             ajuste_de_nivel: 1.0,
             reducao_de_dano: 0,
@@ -507,6 +515,13 @@ pub fn resolver(
         (Some(alvo), Some(atacante)) => defesa.ajuste_de_nivel * ajuste_de_camada_no_npc(atacante, alvo),
         _ => 1.0f32,
     };
+    // B209: penetração no NPC atingido; resiliência no jogador atingido por quem não é jogador.
+    if defesa.camada_de_npc.is_some() && golpe.penetracao > 0 {
+        ajuste *= 1.0 + 3.0 * golpe.penetracao as f32 / (golpe.penetracao + 300) as f32;
+    }
+    if defesa.camada_de_npc.is_none() && !golpe.atacante_e_jogador_ou_pet && defesa.resiliencia > 0 {
+        ajuste *= 1.0 - defesa.resiliencia as f32 / (defesa.resiliencia + golpe.nivel_do_atacante).max(1) as f32;
+    }
     let chance_efetiva = golpe.chance_de_critico - defesa.resistencia_a_critico;
     let critico = rolagens.critico < chance_efetiva;
     if critico {
@@ -600,6 +615,11 @@ impl CombatEngine {
             let (baixo, alto) = jogador.equipamento.arma.map(|a| a.dano).unwrap_or((0, 0));
             dano_magico[ESCOLA_DO_FOGO] += (f.fator * 0.5 * (baixo + alto) as f32) as i32;
         }
+        // B211 — `attack.magic_damage[i] = normalrand(addon_damage[i].low, .high)` (`actobject.cpp:838-842`):
+        // as pedras de dano por elemento (baixo = alto = o `_en_point`).
+        for (d, e) in dano_magico.iter_mut().zip(jogador.equipamento.addons.dano_elemental) {
+            *d += e;
+        }
         Golpe {
             nivel_do_atacante: jogador.level,
             taxa_de_ataque: jogador.attack_rate,
@@ -612,8 +632,10 @@ impl CombatEngine {
             grau_de_ataque: jogador.attack_degree,
             de_habilidade: false,
             fator_de_curta_distancia: 1.0,
-            anti_defesa: 0,
-            anti_resistencia: 0,
+            // B209: `_anti_defense_degree`/`_anti_resistance_degree`/`_penetration` dos addons.
+            anti_defesa: jogador.equipamento.addons.anti_defesa,
+            anti_resistencia: jogador.equipamento.addons.anti_resistencia,
+            penetracao: jogador.equipamento.addons.penetracao,
             atacante_e_jogador_ou_pet: true,
             // Voando é `LAYER_AIR`. Nadando (`LAYER_WATER`) ainda não é acompanhado.
             camada: Some(if jogador.voando { Camada::Ar } else { Camada::Chao }),
@@ -654,6 +676,7 @@ impl CombatEngine {
             fator_de_curta_distancia: 1.0,
             anti_defesa: 0,
             anti_resistencia: 0,
+            penetracao: 0,
             atacante_e_jogador_ou_pet: false,
             camada: None,
             roubo_de_vida: 0,
@@ -691,6 +714,7 @@ impl CombatEngine {
         d.reducao_de_dano = a.reducao_de_dano;
         d.reducao_de_dano_magico = a.reducao_de_dano_magico;
         d.esquiva_de_dano = jogador.efeitos.realce().esquiva_de_dano;
+        d.resiliencia = a.resiliencia;
         d
     }
 

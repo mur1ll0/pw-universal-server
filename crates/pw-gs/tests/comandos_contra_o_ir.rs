@@ -404,6 +404,7 @@ fn os_ids_dos_comandos_sao_os_do_ir() {
     );
     for (nome, id) in [
         ("GET_ITEM_INFO", pw_gs::comandos::ids::GET_ITEM_INFO),
+        ("ENTER_INSTANCE", pw_gs::comandos::ids::ENTER_INSTANCE),
         ("GET_IVTR_DETAIL", pw_gs::comandos::ids::GET_IVTR_DETAIL),
         ("EXG_IVTR_ITEM", pw_gs::comandos::ids::EXG_IVTR_ITEM),
         ("MOVE_IVTR_ITEM", pw_gs::comandos::ids::MOVE_IVTR_ITEM),

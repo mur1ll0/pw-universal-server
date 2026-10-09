@@ -304,6 +304,11 @@ pub enum Efeito {
     /// com `SetAmount(60 + 75 × nível)`, `SetValue(4 + 6 × nível)` e `SetTime(20000)`
     /// (`cskill/skills/skill249.h:257-262`).
     Wingshield,
+    /// `filter_Ironshield` (`cskill/skill/skillfilter.h:3922-3973`): `UNIQUE|BUFF|REMOVE_ON_DEATH|
+    /// HEARTBEAT`, `EnhanceScaleDefense(ratio × 100)`, `HSTATE_IRONSHIELD` 65 (`statedef.h:256`) e
+    /// `VSTATE_BLESSED`. A Aura de Aço (77) o aplica aos aliados em volta (`SetIronshield`,
+    /// `playerwrapper.cpp`).
+    Ironshield,
     /// `filter_Retort` (`cskill/skill/skillfilter.h:1450-1505`), a **Muralha de Espinhos**
     /// (306) do 1.2.6: todo golpe **físico corpo a corpo** que acerta devolve ao atacante
     /// `(int)(physic_damage × ratio)` — o dano bruto do golpe, antes da defesa — como um
@@ -420,6 +425,7 @@ impl Efeito {
             "Invincible" => Invincible,
             "Firearrow" => Firearrow,
             "Wingshield" => Wingshield,
+            "Ironshield" => Ironshield,
             "Retort" => Retort,
             "Retort2" => Retort2,
             "Fairyform" => Fairyform,
@@ -508,6 +514,7 @@ impl Efeito {
             // TRANSFERABLE_BUFF`, `HSTATE_WINGSHIELD` 69 e `VSTATE_WINGSHIELD` 29
             // (`cskill/skill/statedef.h:40,261`).
             Wingshield => f(Unico, true, 69, 29),
+            Ironshield => f(Unico, true, 65, VS_BLESSED),
             // `FILTER_MASK_UNIQUE | BUFF | HEARTBEAT | REMOVE_ON_DEATH | ADJUST_DAMAGE |
             // TRANSFERABLE_BUFF`; `VSTATE_RETORT` 3 e `HSTATE_RETORT` 4 / `HSTATE_RETORT2` 253
             // (`statedef.h:11,183,451`; o `gs` 1.2.6 empurra 3 e 4, VA 0x8310f8e).
@@ -636,16 +643,93 @@ pub struct Realce {
     pub roubo_de_vida: i32,
     pub esquiva_de_dano: i32,
     pub esquiva_de_maldicao: i32,
+    /// `EnhanceHPGen`/`EnhanceMPGen` (pontos por batimento) das passivas comuns. B203.
+    pub regen_vida: i32,
+    pub regen_mana: i32,
 }
 
 impl Realce {
-    /// Soma as passivas de forma (`EventChange`) a este realce.
+    /// Soma as passivas (de forma, `EventChange`, e comuns, B203) a este realce.
     pub fn somar(&mut self, p: &Realce) {
         self.dano += p.dano;
+        self.magia += p.magia;
         self.defesa += p.defesa;
+        self.precisao += p.precisao;
+        self.resistencia += p.resistencia;
         self.critico += p.critico;
         self.natacao += p.natacao;
+        self.regen_vida += p.regen_vida;
+        self.regen_mana += p.regen_mana;
     }
+}
+
+/// `WeaponClass` (`cskill/skill/skillwrapper.h:54-66`) — o `id_major_type` da arma (B203,
+/// conferido nos `elements` dos dois realms).
+pub mod classe_de_arma {
+    pub const ESPADA: i32 = 1;
+    pub const LANCA: i32 = 5;
+    pub const MACHADO: i32 = 9;
+    pub const ARCO: i32 = 13;
+    pub const PUNHO: i32 = 182;
+    pub const ADAGA: i32 = 23749;
+    pub const TALISMA: i32 = 25333;
+    pub const CIMITARRA: i32 = 44878;
+}
+
+/// As passivas comuns que o jogador conhece, somadas (B203): as `EVENT_RESET`, sempre
+/// (`SkillWrapper::EventReset`, `skillwrapper.cpp:612-630`), e as `EVENT_WIELD` com a arma vestida
+/// (`EventWield(player, weapon_class)`, `:652-670`), aplicadas na entrada (`:1261-1264`). O
+/// `TakeEffect` de cada uma, no nível dela, com os setters do `playerwrapper.cpp`:
+/// `Adddefence` (`:1809`, `EnhanceScaleDefense(100 × m)`), `Addresistance` (`:1819`, as cinco
+/// resistências `× 100`), `Inccrit` (`:1346`, `EnhanceCrit`), `Inchpgen`/`Incmpgen` (`:1495`,
+/// `:1335`, pontos), `Incswim` (`:2272`), e os de arma, que só valem com a classe certa
+/// (`intarg != WEAPONCLASS_* → false`): `Incsword`/`Incspear`/`Inchammer`/`Incbow`/`Incboxing`/
+/// `Incdagger`/`Incscimitar` (`EnhanceScaleDamage(inc × 100)`, `:754-930`, `:2436`),
+/// `Inctalisman` (`EnhanceScaleMagicDamage`, `:896`) e `Inchitrate` (arco, `EnhanceScaleAttack`,
+/// `:1357`). **Falta**: o dano de habilidade por elemento (`SetIncgold…earth` →
+/// `SetSkillInc`), `Addskilldamage`, a redução por distância, a invisibilidade, `Incrange`,
+/// `Incfeather`, `Immunedrop`, `Reduceresurrectexplost` e as `EVENT_ENTER` — ignorados.
+pub fn passivas_comuns(
+    tabela: &pw_data_loader::habilidades::TabelaDeHabilidades,
+    conhecidas: &std::collections::HashMap<u32, u8>,
+    classe_da_arma: i32,
+) -> Realce {
+    use pw_data_loader::habilidades::{EVENT_RESET, EVENT_WIELD};
+    let mut r = Realce::default();
+    for (&id, &nivel) in conhecidas {
+        let Some(h) = tabela.get(id) else { continue };
+        let evento = h.eventflag.unwrap_or(0);
+        if evento != EVENT_RESET && !(evento == EVENT_WIELD && classe_da_arma > 0) {
+            continue;
+        }
+        for (_, setter, e) in h.efeito_passivo.as_deref().unwrap_or_default() {
+            let Some(v) = expr::avaliar(e, &|n| (n == "L").then_some(nivel as f64)) else {
+                continue;
+            };
+            let v = v as f32;
+            let da_arma = |c: i32| classe_da_arma == c;
+            use classe_de_arma::*;
+            match setter.as_str() {
+                "Adddefence" => r.defesa += (v * 100.0) as i32,
+                "Addresistance" => r.resistencia += (v * 100.0) as i32,
+                "Inccrit" => r.critico += v as i32,
+                "Inchpgen" => r.regen_vida += v as i32,
+                "Incmpgen" => r.regen_mana += v as i32,
+                "Incswim" => r.natacao += (100.0 * v) as i32,
+                "Incsword" if da_arma(ESPADA) => r.dano += (v * 100.0) as i32,
+                "Incspear" if da_arma(LANCA) => r.dano += (v * 100.0) as i32,
+                "Inchammer" if da_arma(MACHADO) => r.dano += (v * 100.0) as i32,
+                "Incbow" if da_arma(ARCO) => r.dano += (v * 100.0) as i32,
+                "Incboxing" if da_arma(PUNHO) => r.dano += (v * 100.0) as i32,
+                "Incdagger" if da_arma(ADAGA) => r.dano += (v * 100.0) as i32,
+                "Incscimitar" if da_arma(CIMITARRA) => r.dano += (v * 100.0) as i32,
+                "Inctalisman" if da_arma(TALISMA) => r.magia += (v * 100.0) as i32,
+                "Inchitrate" if da_arma(ARCO) => r.precisao += (100.0 * v) as i32,
+                _ => {}
+            }
+        }
+    }
+    r
 }
 
 /// As passivas `EVENT_CHANGE` que o jogador conhece, somadas (`SkillWrapper::EventChange`,
@@ -992,7 +1076,7 @@ impl Efeitos {
                 Decattack => r.dano -= k,
                 Incmagic => r.magia += k,
                 Decmagic => r.magia -= k,
-                Incdefence => r.defesa += k,
+                Incdefence | Ironshield => r.defesa += k,
                 Decdefence => r.defesa -= k,
                 Incresist => r.resistencia += k,
                 Decresist => r.resistencia -= k,
@@ -1394,6 +1478,23 @@ pub fn variaveis<'a>(
 
 #[cfg(test)]
 mod testes {
+    /// B203: as passivas comuns do catálogo 1.5.5 — 2446 (`EVENT_RESET`, defesa e resistência
+    /// `0,08·L`), 1188 (mana `2·L` por batimento), 1371 (`EVENT_WIELD`, espada `0,06·L`), 1263
+    /// (adaga 0,15 e crítico 2 com qualquer arma) e 11 (`Incgold`, sem porte: ignorada).
+    #[test]
+    fn as_passivas_comuns_somam_o_que_o_take_effect_manda() {
+        use std::collections::HashMap;
+        let tabela = pw_data_loader::habilidades::TabelaDeHabilidades::do_155();
+        let conhecidas: HashMap<u32, u8> = [(2446, 2), (1188, 3), (1371, 3), (1263, 1), (11, 5)].into_iter().collect();
+        let com_espada = passivas_comuns(&tabela, &conhecidas, classe_de_arma::ESPADA);
+        assert_eq!((com_espada.defesa, com_espada.resistencia, com_espada.regen_mana), (16, 16, 6));
+        assert_eq!((com_espada.dano, com_espada.critico), (18, 2), "espada da 1371; crítico da 1263 com arma");
+        let com_adaga = passivas_comuns(&tabela, &conhecidas, classe_de_arma::ADAGA);
+        assert_eq!((com_adaga.dano, com_adaga.critico), (15, 2));
+        let sem_arma = passivas_comuns(&tabela, &conhecidas, 0);
+        assert_eq!((sem_arma.dano, sem_arma.critico, sem_arma.defesa), (0, 0, 16), "sem arma, só as EVENT_RESET");
+    }
+
     use super::*;
 
     /// B67 — a lista de efeitos garantidos saiu do fonte e está ordenada (a busca é binária).
@@ -1483,6 +1584,18 @@ mod testes {
         let nomes: Vec<_> = ap.iter().map(|a| (a.nome.as_str(), a.tempo_s)).collect();
         // Slow falhou (95 ≥ 90), e o Fix logo depois herdou o 0; o último Fix rolou 0 < 8.
         assert_eq!(nomes, vec![("Fallen", 15), ("Fix", 4)]);
+    }
+
+    /// B207: a Aura de Aço (77) aplica o `filter_Ironshield`: buff, ícone 65, defesa `+ratio×100`%.
+    #[test]
+    fn o_ironshield_soma_defesa() {
+        let e = Efeito::do_setter("Ironshield").expect("portado");
+        let mut f = Efeitos::default();
+        assert!(f.adicionar(filtro(e, 1800, 35)));
+        assert_eq!(f.realce().defesa, 35);
+        let ficha = e.ficha();
+        assert!(!ficha.maldicao);
+        assert_eq!(ficha.icone, 65);
     }
 
     fn filtro(e: Efeito, s: i32, razao: i32) -> Filtro {

@@ -555,6 +555,105 @@ impl BusServer {
         true
     }
 
+    /// B209 — a habilidade que o equipamento dá (`item_skill_addon`/`_2`, não durativa): o
+    /// `filter_Activateskill`/`2` (`cskill/skill/skillfilter.cpp:433-478`, `:530-560`) a prende a
+    /// cada golpe que não traz habilidade presa: `dobless` → `BlessMe` em quem bate; `doenchant` →
+    /// `attached_skill`, que o alvo roda (`StateAttack`) se o golpe acertou (`HandleAttackMsg`). A
+    /// chance é a `Probability` do próprio roteiro (5% nas de atordoar/lentidão do `realm_155`).
+    /// Um de cada tipo (`asid`/`asid2`): o último vestido. Durativas (`time_type` 2,
+    /// `IsDurative`) ainda não têm porte.
+    pub(super) async fn habilidades_do_item_no_golpe(&self, roleid: i32, alvo: i64) {
+        let (p, dados) = {
+            let mundo = self.world.read().await;
+            let Some(p) = mundo.players.get(&(roleid as i64)).cloned() else { return };
+            (p, Arc::clone(&mundo.data_manager))
+        };
+        let mut escolhidas: [Option<(i32, i32)>; 2] = [None, None];
+        for &(id, nivel, tipo) in &p.equipamento.habilidades_do_item {
+            escolhidas[(tipo as usize).min(1)] = Some((id, nivel));
+        }
+        if escolhidas.iter().all(|x| x.is_none()) {
+            return;
+        }
+        let quem = Conjurador::do_jogador(&p);
+        let golpe = CombatEngine::golpe_de_jogador(&p);
+        let mut nao_portados: Vec<String> = Vec::new();
+        let mut avisar: Vec<(Alvo, Mudanca)> = Vec::new();
+        let mut morreu = false;
+        for (sid, nivel) in escolhidas.into_iter().flatten() {
+            let Some(h) = dados.habilidades.get(sid.max(0) as u32) else { continue };
+            if h.time_type == Some(2) {
+                nao_portados.push(format!("habilidade de item durativa {sid}"));
+                continue;
+            }
+            if let Some(passos) = h.em_si.as_ref().filter(|_| h.dobless) {
+                let m = self.rodar_roteiro(Alvo::Jogador(roleid as i64), passos, nivel, &quem, &golpe, &mut nao_portados).await;
+                avisar.push((Alvo::Jogador(roleid as i64), m));
+            }
+            if let Some(passos) = h.no_alvo.as_ref().filter(|_| h.doenchant) {
+                let m = self.rodar_roteiro(Alvo::Monstro(alvo), passos, nivel, &quem, &golpe, &mut nao_portados).await;
+                morreu |= m.morreu;
+                avisar.push((Alvo::Monstro(alvo), m));
+            }
+        }
+        if !nao_portados.is_empty() {
+            debug!("mundo: habilidade do item de {roleid} — sem porte: {}", nao_portados.join(", "));
+        }
+        for (a, m) in avisar {
+            if m.efeitos {
+                self.avisar_efeitos(a.id(), m.atributos).await;
+            }
+        }
+        if morreu {
+            let morte = S2CGamedataSend::npc_died(alvo as i32, roleid).data;
+            if let Some(envio) = self.envio_de(roleid).await {
+                self.responder(roleid, morte.clone(), &envio).await;
+            }
+            self.transmitir_a_outros(roleid, morte).await;
+            self.monstro_morreu(alvo).await;
+        }
+    }
+
+    /// B211 — `filter_Activatereboundskill::AdjustDamage` (`cskill/skill/skillfilter.cpp:481-520`):
+    /// ao levar dano, com `rand() % 100 < chance`, a habilidade do equipamento roda o `StateAttack`
+    /// em quem a veste se o alcance é "em si" (`IsSelf`; `tipo_de_area` 5), senão vai como
+    /// maldição a quem bateu. Vale o último rebote vestido (`asid`). A recarga da habilidade
+    /// (`TestCoolDown`) não é conferida: as do `realm_155` têm recarga 0.
+    pub(super) async fn rebote_do_item(&self, roleid: i32, atacante: i64) {
+        let (p, dados) = {
+            let mundo = self.world.read().await;
+            let Some(p) = mundo.players.get(&(roleid as i64)).cloned() else { return };
+            (p, Arc::clone(&mundo.data_manager))
+        };
+        let Some(&(sid, nivel, chance)) = p.equipamento.rebotes_do_item.last() else { return };
+        if (rand::random::<u32>() % 100) as i32 >= chance {
+            return;
+        }
+        let Some(h) = dados.habilidades.get(sid.max(0) as u32) else { return };
+        let Some(passos) = h.no_alvo.as_ref() else { return };
+        let alvo = if h.tipo_de_area == Some(AREA_EM_SI) { Alvo::Jogador(roleid as i64) } else { Alvo::Monstro(atacante) };
+        let quem = Conjurador::do_jogador(&p);
+        let golpe = CombatEngine::golpe_de_jogador(&p);
+        let mut nao_portados: Vec<String> = Vec::new();
+        let m = self.rodar_roteiro(alvo, passos, nivel, &quem, &golpe, &mut nao_portados).await;
+        if !nao_portados.is_empty() {
+            debug!("mundo: rebote do item {sid} de {roleid} — sem porte: {}", nao_portados.join(", "));
+        }
+        if m.efeitos {
+            self.avisar_efeitos(alvo.id(), m.atributos).await;
+        }
+        if m.morreu {
+            if let Alvo::Monstro(id) = alvo {
+                let morte = S2CGamedataSend::npc_died(id as i32, roleid).data;
+                if let Some(envio) = self.envio_de(roleid).await {
+                    self.responder(roleid, morte.clone(), &envio).await;
+                }
+                self.transmitir_a_outros(roleid, morte).await;
+                self.monstro_morreu(id).await;
+            }
+        }
+    }
+
     /// O efeito de uma habilidade do mascote, ao fim do canto (`SkillWrapper::NpcEnd` →
     /// `NpcRun` → `PlayerWrapper::SetPerform`, `skillwrapper.cpp:1006-1024`,
     /// `playerwrapper.cpp:170-420`), com o mascote como conjurador:

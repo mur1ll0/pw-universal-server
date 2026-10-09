@@ -68,6 +68,9 @@ pub mod servico {
     pub const APRENDER_HABILIDADE_DE_MASCOTE: i32 = 38;
     /// `GP_NPCSEV_RESTOREPET` — reverter mascote em ovo na Gerente de Mascotes.
     pub const RESTAURAR_PET: i32 = 29;
+    /// `GP_NPCSEV_FACECHANGE` (`EC_GPDataType.h:100`) — troca de rosto com o bilhete:
+    /// `SERVICE_INSERTER(cosmetic_provider, cosmetic_executor, 24)` (`serviceprovider.cpp:8745`). B199.
+    pub const TROCAR_ROSTO: i32 = 24;
     /// `resetprop_provider`/`resetprop_executor` — restauração de atributos ("Reverter
     /// Atributos") com o item da opção: `SERVICE_INSERTER(..., 33)` (`serviceprovider.cpp:8754`);
     /// 33 também no `gs` 1.2.6 (`push 0x21` antes do `service_inserter`, VA 0x8105491).

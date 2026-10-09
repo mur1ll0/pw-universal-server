@@ -53,7 +53,14 @@ fn conferir(nome: &str) {
     };
     aplicar(&mut item, &e, &d).unwrap_or_else(|c| panic!("{nome}: {c}"));
     let c = ConteudoDeEquipamento::ler(&item.octets, &ficha).expect("o bloco editado se relê inteiro");
-    assert_eq!(essencia(&item.octets), antes, "{nome}: a essência fica byte a byte");
+    // B204: um efeito de essência (`ApplyAtGeneration`) muda o campo dele na essência; o resto fica
+    // byte a byte. O 999 é `enhance_weapon_max_damage_addon`: `damage_high` (offset 20) + 5.
+    let mut esperado = antes.clone();
+    if d.addons.por_id.get(&999).map(|a| a.tratador.as_str()) == Some("enhance_weapon_max_damage_addon") {
+        let v = i32::from_le_bytes(esperado[20..24].try_into().unwrap()) + 5;
+        esperado[20..24].copy_from_slice(&v.to_le_bytes());
+    }
+    assert_eq!(essencia(&item.octets), esperado, "{nome}: só o efeito de essência muda a essência");
     assert_eq!((item.count, c.durabilidade, c.durabilidade_maxima, item.max_durability), (3, 100, 99_900, 99_900));
     let r = Requisitos::do_bloco(&item.octets).unwrap();
     assert_eq!((r.nivel, r.classes, r.forca, r.agilidade, r.vitalidade, r.energia), (7, 3, 11, 22, 33, 44), "{nome}: requisitos");

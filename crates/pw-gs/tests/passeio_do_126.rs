@@ -62,6 +62,7 @@ fn feiticeira_nivel_1() -> PlayerEntity {
         montaria: None,
         forma_enviada: None,
         passivas_de_forma: Default::default(),
+        passivas_comuns: Default::default(),
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
@@ -77,6 +78,7 @@ fn feiticeira_nivel_1() -> PlayerEntity {
         contador_hp: 0,
         contador_mp: 0,
         recargas: std::collections::HashMap::new(),
+        bilhete_de_rosto: None,
         pecas: [None; pw_gs::entity::PECAS_VESTIDAS],
         equip_visivel: None,
         voo_gasta_mana: None,
@@ -482,4 +484,59 @@ fn meditar_dobra_a_regeneracao_a_partir_do_segundo_batimento() {
     // Fora de combate: `hp_gen × 4` = 32 oitavos = 4 por batimento; sentado, 8 a partir do 2º.
     assert_eq!(ganho(false, 3), vec![4, 4, 4]);
     assert_eq!(ganho(true, 3), vec![4, 8, 8]);
+}
+
+/// B211 — o monstro de água passeia **na água** (`CNPCRambleInWaterAgent`, `NPCMoveAgent.cpp:62-86`):
+/// as Sereias Ecoantes (1692) do mapa 1 não sobem acima da água. Até o B210 passeavam com o
+/// agente de chão, que assenta no piso do `movemap`. E a cidade da Névoa Sombria (o Ancião
+/// 45355, o Teletransportador Rayga 44724) está no `npcgen` do `pwserver_155v156`.
+#[test]
+fn a_sereia_passeia_na_agua_e_nao_sobe_na_cidade() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_155/config");
+    if !dir.join("world").exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+        return;
+    }
+    let mut d = GameDataManager::new();
+    d.load_from_directory(&dir);
+    let w = dir.join("world");
+    let ter = Terreno::ler(1, &w);
+    let mov = MapaDeMovimento::ler(1, &w);
+    let agua = pw_data_loader::MapaDeAgua::ler(1, &w);
+    let espaco = pw_data_loader::MapaDoEspaco::ler(1, &w);
+    let chao = |x: f32, z: f32| ter.altura_em(x, z);
+    let mapa = Mapa { terreno: &chao, movimento: &mov, espaco: Some(&espaco), agua: Some(&agua) };
+    for npc in [45355u32, 44724] {
+        assert!(d.map_spawns[&1].instances.iter().any(|s| s.template_id == npc && (s.pos.x - 3546.0).hypot(s.pos.z - 3052.0) < 60.0),
+            "NPC {npc} na cidade da Névoa Sombria");
+    }
+    let sereias: Vec<_> = d.map_spawns[&1].instances.iter().filter(|s| s.template_id == 1692).take(12).cloned().collect();
+    assert!(!sereias.is_empty(), "sereias no mapa 1");
+    let mut j = feiticeira_nivel_1();
+    j.position = sereias[0].pos;
+    let jogadores: HashMap<i64, PlayerEntity> = [(1i64, j)].into_iter().collect();
+    let (mut passos, mut acima) = (0, 0);
+    for s in &sereias {
+        let modelo = d.monstros.get(s.template_id).unwrap();
+        let (pos, _) = s.posicao_no_mapa(&ter, &mov);
+        let mut m = MonsterEntity::do_template(1, modelo, pos, 30_000);
+        assert_eq!(m.habitat, pw_gs::ai::Habitat::Agua);
+        let mut ai = MonsterAi::new();
+        for _ in 0..(120_000 / 50) {
+            if let Some(AcaoDoMonstro::Andou { destino, .. }) = ai.tick_no_mapa(&mut m, &jogadores, 50, &mapa) {
+                passos += 1;
+                let (t, a) = (ter.altura_em(destino.x, destino.z).unwrap_or(0.0), agua.altura_em(destino.x, destino.z));
+                // Entre `terreno + 0,2` e `água − 0,2` (onde o terreno passa da água, no terreno + 0,2).
+                if destino.y > a.max(t + 0.2) + 0.5 {
+                    acima += 1;
+                    if acima <= 3 {
+                        eprintln!("ACIMA: y={:.1} água={a:.1} terreno={t:.1} em ({:.1},{:.1})", destino.y, destino.x, destino.z);
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("sereias: {} · passos {passos} · acima da água {acima}", sereias.len());
+    assert!(passos > 0, "as sereias passeiam");
+    assert_eq!(acima, 0);
 }

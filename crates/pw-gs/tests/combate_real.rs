@@ -30,6 +30,7 @@ fn golpe() -> Golpe {
         fator_de_curta_distancia: 1.0,
         anti_defesa: 0,
         anti_resistencia: 0,
+        penetracao: 0,
         atacante_e_jogador_ou_pet: false,
         camada: None,
         roubo_de_vida: 0,
@@ -501,6 +502,7 @@ fn jogador() -> PlayerEntity {
         montaria: None,
         forma_enviada: None,
         passivas_de_forma: Default::default(),
+        passivas_comuns: Default::default(),
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
@@ -516,6 +518,7 @@ fn jogador() -> PlayerEntity {
         contador_hp: 0,
         contador_mp: 0,
         recargas: std::collections::HashMap::new(),
+        bilhete_de_rosto: None,
         pecas: [None; pw_gs::entity::PECAS_VESTIDAS],
         equip_visivel: None,
         voo_gasta_mana: None,
@@ -741,4 +744,31 @@ fn a_tabela_de_punicao_do_realm_reduz_o_dano_em_monstro_acima() {
         assert!((t.ajuste(0).ataque - 1.0).abs() < 1e-6, "{realm}: no mesmo nível deveria ser 1");
         assert!(t.ajuste(-30).ataque < 1.0, "{realm}: 30 níveis abaixo sem punição");
     }
+}
+
+/// B209: penetração no NPC atingido (`npc.cpp:1770`: × `1 + 3p/(p+300)`) e resiliência no
+/// jogador atingido por monstro (`player.cpp:9647-9650`: × `1 − r/(r + nível do atacante)`).
+#[test]
+fn penetracao_no_monstro_e_resiliencia_no_jogador() {
+    let mut g = golpe();
+    g.atacante_e_jogador_ou_pet = true;
+    g.camada = Some(pw_gs::combat::Camada::Chao);
+    let mut no_npc = defesa();
+    no_npc.camada_de_npc = Some(pw_gs::combat::Camada::Chao);
+    let base = resolver(&g, &no_npc, 1.0, false, certeiro()).dano();
+    g.penetracao = 300; // 3·300/600 = 1,5 → ×2,5
+    let com = resolver(&g, &no_npc, 1.0, false, certeiro()).dano();
+    assert!((com as f32 / base as f32 - 2.5).abs() < 0.01, "{base} → {com}");
+
+    // monstro nível 50 em jogador com resiliência 50: × 0,5.
+    let m = golpe();
+    let mut jogador = defesa();
+    let base = resolver(&m, &jogador, 1.0, false, certeiro()).dano();
+    jogador.resiliencia = 50;
+    let com = resolver(&m, &jogador, 1.0, false, certeiro()).dano();
+    assert!((com as f32 / base as f32 - 0.5).abs() < 0.01, "{base} → {com}");
+    // golpe de jogador não sofre a resiliência.
+    let mut pvp = golpe();
+    pvp.atacante_e_jogador_ou_pet = true;
+    assert_eq!(resolver(&pvp, &jogador, 1.0, false, certeiro()).dano(), base);
 }

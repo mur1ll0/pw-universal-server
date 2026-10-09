@@ -150,12 +150,36 @@ pub(crate) struct Contexto<'a> {
 }
 
 impl Contexto<'_> {
+    /// B203: as habilidades mudaram — refaz as passivas comuns, a ficha, e manda o
+    /// `OWN_EXT_PROP` quando algo nela mudou.
+    pub fn refazer_passivas(&mut self) {
+        let novas = crate::efeitos::passivas_comuns(
+            &self.dados.habilidades, &self.p.habilidades, self.p.equipamento.arma.map(|a| a.classe).unwrap_or(0));
+        if novas == self.p.passivas_comuns {
+            return;
+        }
+        self.p.passivas_comuns = novas;
+        let base = Some(&self.dados.base_das_classes).filter(|b| !b.is_empty());
+        self.p.recalcular_por_nivel(&self.dados.classes, base);
+        self.p.hp = self.p.hp.min(self.p.max_hp);
+        self.p.mp = self.p.mp.min(self.p.max_mp);
+        self.para_mim.push(BusServer::ficha_de(self.sub, self.p));
+    }
+
     fn bolsa_de(&mut self, comum: bool) -> &mut Bolsa {
         if comum {
             &mut self.bolsa
         } else {
             &mut self.bolsa_de_missao
         }
+    }
+
+    /// `ReceiveExp` (abate, mina, produção): antes de tudo `exp += (int)(exp × _exp_addon × 0,01
+    /// + 0,1)` (`player.cpp:2898-2903`; `enhance_exp_addon`, B209). O `ReceiveTaskExp` não tem isso.
+    pub fn receber_exp(&mut self, exp: i64, sp: i64) {
+        let pct = self.p.equipamento.addons.experiencia_pct;
+        let exp = if pct != 0 { exp + (exp as f32 * pct as f32 * 0.01 + 0.1) as i64 } else { exp };
+        self.ganhar_exp(exp, sp);
     }
 
     /// `ReceiveExp`/`ReceiveTaskExp` + `IncExp`: aplica e anota a subida de nível.
@@ -761,19 +785,46 @@ impl BusServer {
         j
     }
 
+    /// Painel (B209): para cada id pedido, o que a edição do item precisa — `args` (o valor do
+    /// id: `GenerateParam` com o máximo da faixa), `editavel`, `faixa` do 1º argumento,
+    /// `porcento`, `busca` (falso para refino, pedra e temporário) e `recusa` (o código que a
+    /// gravação daria nesta peça: `efeito_inexistente`, `efeito_de_outra_familia`), ou `null`.
+    pub(crate) async fn efeitos_para_item(&self, item_id: u32, ids: &[u32]) -> serde_json::Value {
+        use pw_data_loader::addons::Edicao;
+        let dados = self.world.read().await.data_manager.clone();
+        let familia = super::item_editado::familia_do_item(&dados, item_id);
+        let efeitos: Vec<serde_json::Value> = ids.iter().map(|&id| {
+            let Some(a) = dados.addons.por_id.get(&id).filter(|a| a.sorteio().is_some()) else {
+                return serde_json::json!({"id": id, "recusa": "efeito_inexistente"});
+            };
+            let args = a.valor_do_id().unwrap_or_default();
+            let recusa = super::item_editado::validar_efeito(&dados, familia, id, &args).err();
+            serde_json::json!({
+                "id": id, "args": args, "editavel": a.edicao() == Edicao::Editavel,
+                "busca": a.edicao() != Edicao::ForaDaBusca, "faixa": a.faixa().map(|(x, y)| [x, y]),
+                "porcento": a.em_porcento(), "recusa": recusa,
+                "age": crate::entity::efeito_tem_porte(&a.tratador, &args, &dados.habilidades),
+            })
+        }).collect();
+        serde_json::json!({"estado":"consultado","efeitos":efeitos})
+    }
+
     /// Painel (E6, B186): até 30 itens cujo nome contém `texto` (sem caixa) ou cujo id é ele.
-    pub(crate) async fn buscar_itens(&self, texto: &str) -> serde_json::Value {
+    pub(crate) async fn buscar_itens(&self, texto: &str, categoria: Option<&str>) -> serde_json::Value {
         let dados = self.world.read().await.data_manager.clone();
         let alvo = texto.trim().to_lowercase();
         let id: Option<u32> = alvo.parse().ok();
+        // B206: `pedra` = só o que o `STONE_ESSENCE` tem (`dados.refino.pedras`), para o furo.
+        let so_pedras = categoria == Some("pedra");
         let mut achados: Vec<(u32, &String)> = dados.nomes_de_itens.iter()
+            .filter(|(t, _)| !so_pedras || dados.refino.pedras.contains_key(*t))
             .filter(|(t, n)| Some(**t) == id || (!alvo.is_empty() && n.to_lowercase().contains(&alvo)))
             .map(|(t, n)| (*t, n)).collect();
         achados.sort_by_key(|(t, _)| (Some(*t) != id, *t));
         achados.truncate(30);
         let itens: Vec<serde_json::Value> = achados.iter().map(|(t, n)| serde_json::json!({
             "id": t, "nome": n, "pilha": dados.limite_de_pilha(*t), "missao": dados.e_item_de_missao(*t),
-            "icone": icone_em_hex(&dados, *t),
+            "icone": icone_em_hex(&dados, *t), "grau": dados.refino.pedras.get(t).map(|p| p.grau),
         })).collect();
         serde_json::json!({"estado":"consultado","itens":itens})
     }
@@ -950,6 +1001,7 @@ impl BusServer {
                     ctx.para_mim.push(pacote(nivel));
                 }
                 ctx.mudou = true;
+                ctx.refazer_passivas();
                 Ok(atual)
             })
             .await?;
@@ -1324,8 +1376,24 @@ impl BusServer {
 
     /// [`Self::ficha_propria`] para quem só tem o protocolo (o [`Contexto`]).
     pub(crate) fn ficha_de(sub: &dyn WorldProtocol, p: &PlayerEntity) -> Vec<u8> {
+        let b = &p.equipamento.addons;
+        // B209: o `_vigour_base` (`SetVigourBase`) não tem modelo: só o `_vigour_en` dos addons.
+        let graus = pw_protocol::packets::s2c::GrausDaFicha {
+            attack_degree: p.attack_degree,
+            defend_degree: p.defend_degree,
+            crit_rate: (p.crit_rate * 100.0).round() as i32,
+            crit_damage_bonus: p.crit_damage_bonus,
+            penetration: b.penetracao,
+            resilience: b.resiliencia,
+            vigour: b.vigor.min(1500),
+            anti_defense_degree: b.anti_defesa,
+            anti_resistance_degree: b.anti_resistencia,
+            dano_elemental: b.dano_elemental,
+            ..Default::default()
+        };
         sub
             .own_ext_prop(
+                graus,
                 p.pontos_de_atributo.max(0) as u32,
                 p.atributos_efetivos(),
                 p.max_hp,
@@ -1549,10 +1617,10 @@ impl BusServer {
             .com_contexto(roleid, |ctx| {
                 if mina.gasta_ferramenta && mina.ferramenta > 0 {
                     for (slot, n) in ctx.bolsa.tirar(mina.ferramenta as u32, 1) {
-                        // `DROP_TYPE_USE` = 10 (`common/protocol.h:931-943`).
+                        // `DROP_TYPE_USE` = 11 (`common/protocol.h:927-943`; `player.cpp:1494`).
                         ctx.para_mim.push(
                             ctx.sub
-                                .player_drop_item(0, slot as u8, n, mina.ferramenta, 10)
+                                .player_drop_item(0, slot as u8, n, mina.ferramenta, super::rosto::DESCARTE_POR_USO)
                                 .data,
                         );
                     }
@@ -1599,7 +1667,7 @@ impl BusServer {
                     let exp = (mina.exp.max(0) as f32 * a.exp + 0.5) as i64;
                     let sp = (mina.sp.max(0) as f32 * a.sp + 0.5) as i64;
                     if exp + sp > 0 {
-                        ctx.ganhar_exp(exp, sp);
+                        ctx.receber_exp(exp, sp);
                         // `ReceiveExp(exp, sp)` → `_runner->receive_exp` (`player.cpp:2924`).
                         ctx.para_mim.push(ctx.sub.receive_exp(exp as i32, sp as i32).data);
                     }
@@ -2317,7 +2385,7 @@ impl BusServer {
             // `CalcEquipmentInfo` (`gs/player.cpp:8316-8321`): máscara, ids e carimbo do
             // equipamento visível; se mudou, quem vê recebe só a diferença
             // (`equipment_info_changed`).
-            let visivel = Self::mascara_de_equipamento(&itens);
+            let visivel = Self::mascara_de_equipamento_com(&itens, Some(&dados.equipamentos));
             p.crc_equipamento = pw_core::carimbo::carimbo_do_equipamento(visivel.0, &visivel.1);
             let troca = p
                 .equip_visivel
@@ -2386,6 +2454,9 @@ impl BusServer {
                 );
             }
             let base = Some(&dados.base_das_classes).filter(|b| !b.is_empty());
+            // B203: as passivas de arma dependem da arma que entra agora.
+            p.passivas_comuns = crate::efeitos::passivas_comuns(
+                &dados.habilidades, &p.habilidades, e.arma.map(|a| a.classe).unwrap_or(0));
             p.vestir(e, &dados.classes, base);
             debug!(
                 "mundo: {roleid} equipado — dano {}..{}, alcance {:.1}, golpe {:.2} s, defesa {}, evasão {}",
@@ -2992,7 +3063,7 @@ impl BusServer {
             let (exp, sp) = taxas.aplicar_exp(exp, sp);
             self.com_contexto(quem, |ctx| {
                 if exp + sp > 0 {
-                    ctx.ganhar_exp(exp, sp);
+                    ctx.receber_exp(exp, sp);
                     // `_runner->receive_exp(exp, sp)` depois do `IncExp` (`player.cpp:2924`).
                     ctx.para_mim.push(self.sub.receive_exp(exp as i32, sp as i32).data);
                 }
@@ -3903,6 +3974,7 @@ impl BusServer {
                 ctx.p.habilidades.insert(id, proximo as u8);
                 ctx.mudou = true;
                 ctx.para_mim.push(S2CGamedataSend::learn_skill(skill_id, proximo).data);
+                ctx.refazer_passivas();
                 Some(proximo)
             })
             .await
@@ -3941,7 +4013,7 @@ impl BusServer {
 
     /// `GP_NPCSEV_HATCHPET` (28) — chocar/incubar ovo de mascote na Gerente de Mascotes.
     /// Payload: `egg_index: i32, egg_id: i32` (`hatch_pet_service_executor`, `serviceprovider.cpp:3160`).
-    /// Deduz as moedas (`money_hatched`), remove o ovo da bolsa (`DROP_TYPE_USE` = 10) e
+    /// Deduz as moedas (`money_hatched`), remove o ovo da bolsa (`DROP_TYPE_USE` = 11) e
     /// responde `GAIN_PET` (231) com a struct `info_pet` (192 bytes).
     pub(super) async fn incubar_mascote(&self, roleid: i32, conteudo: &[u8]) {
         let mut r = Reader::new(conteudo);
@@ -4059,7 +4131,7 @@ impl BusServer {
                 }
                 ctx.para_mim.push(
                     ctx.sub
-                        .player_drop_item(0, slot_idx as u8, 1, egg_id, 10)
+                        .player_drop_item(0, slot_idx as u8, 1, egg_id, super::rosto::DESCARTE_POR_USO)
                         .data,
                 );
 

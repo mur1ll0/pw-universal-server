@@ -77,6 +77,7 @@ fn feiticeira_nivel_1() -> PlayerEntity {
         montaria: None,
         forma_enviada: None,
         passivas_de_forma: Default::default(),
+        passivas_comuns: Default::default(),
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
@@ -92,6 +93,7 @@ fn feiticeira_nivel_1() -> PlayerEntity {
         contador_hp: 0,
         contador_mp: 0,
         recargas: std::collections::HashMap::new(),
+        bilhete_de_rosto: None,
         pecas: [None; pw_gs::entity::PECAS_VESTIDAS],
         equip_visivel: None,
         voo_gasta_mana: None,
@@ -207,4 +209,51 @@ fn a_regeneracao_soma_vitalidade_e_energia() {
     p.recalcular_por_nivel(&d.classes, Some(&d.base_das_classes));
     assert_eq!(p.hp_gen - vida, 2, "10 de vitalidade = +2");
     assert_eq!(p.mp_gen - mana, 9, "90 de energia = +9");
+}
+
+/// B209: os addons de atributo simples entram no recálculo como `_en_percent`/`_en_point`:
+/// velocidade % e em ponto (`playertemplate.h:1077-1093`), vida %, resistência por elemento,
+/// regeneração, e a conjuração vira `prayspeed` (`skillwrapper.cpp:1160-1162`).
+#[test]
+fn os_addons_de_atributo_simples_entram_na_ficha() {
+    let Some(d) = realm_126() else { return };
+    let mut p = feiticeira_nivel_1();
+    p.recalcular_por_nivel(&d.classes, Some(&d.base_das_classes));
+    let (corre, anda, vida, metal, regen) = (p.move_speed, p.walk_speed, p.max_hp, p.def_metal, p.hp_gen);
+    let b = &mut p.equipamento.addons;
+    assert!(b.somar("enhance_speed_addon", &[5]));
+    assert!(b.somar("enhance_speed_addon_point", &[1.0f32.to_bits() as i32]));
+    assert!(b.somar("enhance_hp_scale_addon", &[10]));
+    assert!(b.somar("enhance_resistance0_addon", &[20]));
+    assert!(b.somar("enhance_hpgen_addon", &[3]));
+    assert!(b.somar("reduce_cast_time_addon", &[3]));
+    assert!(b.somar("IDMRA(0,3)", &[10, 5]), "essência: já na essência, não fica sem porte");
+    p.recalcular_por_nivel(&d.classes, Some(&d.base_das_classes));
+    assert!((p.move_speed - (corre * 1.05 + 1.0)).abs() < 1e-3, "{} → {}", corre, p.move_speed);
+    assert!((p.walk_speed - (anda * 1.05 + 1.0)).abs() < 1e-3);
+    assert!(p.max_hp > vida && p.def_metal > metal);
+    assert_eq!(p.hp_gen, regen + 3);
+    assert_eq!(p.velocidade_de_conjuracao(), 3);
+    // Ponto acima de 5 zera (o original trata como valor inválido).
+    p.equipamento.addons.velocidade_ponto = 6.0;
+    p.recalcular_por_nivel(&d.classes, Some(&d.base_das_classes));
+    assert!((p.move_speed - corre * 1.05).abs() < 1e-3);
+}
+
+/// B209: dano máximo em ponto (`_en_point.damage_high`) só mexe no máximo; a regeneração %
+/// entra no `Result2` (`playertemplate.h:874-894`).
+#[test]
+fn dano_maximo_em_ponto_e_regeneracao_em_porcento() {
+    let Some(d) = realm_126() else { return };
+    let mut p = feiticeira_nivel_1();
+    p.recalcular_por_nivel(&d.classes, Some(&d.base_das_classes));
+    let (min, max, regen) = (p.attack_min, p.attack_max, p.hp_gen);
+    assert!(p.equipamento.addons.somar("enhance_max_damage_addon_2", &[30]));
+    assert!(p.equipamento.addons.somar("enhance_hpgen_scale_addon", &[100]));
+    assert!(p.equipamento.addons.somar("enhance_exp_addon", &[10]));
+    p.recalcular_por_nivel(&d.classes, Some(&d.base_das_classes));
+    assert_eq!(p.attack_min, min);
+    assert!(p.attack_max > max);
+    assert_eq!(p.hp_gen, regen * 2);
+    assert_eq!(p.equipamento.addons.experiencia_pct, 10);
 }

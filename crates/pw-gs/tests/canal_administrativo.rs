@@ -1285,7 +1285,12 @@ async fn dar_item_e_ver_inventario_online_e_offline() {
     sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
 
     let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"poção"})).await;
-    assert_eq!(busca["dados"]["itens"], json!([{"id":3001,"nome":"Poção de teste","pilha":100,"missao":false,"icone":""}]), "{busca}");
+    assert_eq!(busca["dados"]["itens"], json!([{"id":3001,"nome":"Poção de teste","pilha":100,"missao":false,"icone":"","grau":null}]), "{busca}");
+    // B206: `categoria: "pedra"` só devolve `STONE_ESSENCE` (o cenário não tem nenhuma); outra categoria é recusada.
+    let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"poção","categoria":"pedra"})).await;
+    assert_eq!(busca["dados"]["itens"], json!([]), "{busca}");
+    let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"poção","categoria":"arma"})).await;
+    assert_eq!(busca["dados"]["codigo"], "alvo_invalido", "{busca}");
     let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"3002"})).await;
     assert_eq!(busca["dados"]["itens"][0]["id"], 3002);
 

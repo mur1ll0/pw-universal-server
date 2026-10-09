@@ -43,6 +43,8 @@ const ITEM_DE_LOJA: i32 = 4123;
 const ITEM_DE_MISSAO: i32 = 2106;
 /// Um ovo de montaria (`pet_class` 0) no cenário.
 const OVO_DE_MONTARIA: i32 = 41073;
+/// O bilhete de troca de rosto 4411 (`FACETICKET_ESSENCE`, nos dois realms). B199.
+const BILHETE_DE_ROSTO: i32 = 4411;
 /// `shop_price` daquele item no cenário — o que a loja tem de cobrar por unidade.
 const PRECO_DO_ITEM_DE_LOJA: i32 = 137;
 /// O que o vendedor cobra por ele: 137 × 1,05 + 0,5 = 144 → `AdjustVendorFee` → 150
@@ -411,6 +413,8 @@ async fn montar_com_servidor(
     // O cenário não carrega `elements.data`: o que os testes de item de missão e de ovo de
     // mascote precisam entra aqui à mão, como os preços da loja e as missões acima.
     dados.itens_de_missao.insert(ITEM_DE_MISSAO as u32);
+    // B199: o bilhete de rosto 4411 (`FACETICKET_ESSENCE` dos dois realms, nível 0).
+    dados.bilhetes_de_rosto.insert(BILHETE_DE_ROSTO as u32, 0);
     dados.ovos_de_pet.insert(
         OVO_DE_MONTARIA as u32,
         pw_data_loader::pet::DadosDoOvoDePet {
@@ -492,7 +496,7 @@ async fn montar_com_servidor(
     for (id, tratador, p0) in [(1497u32, "refine_damage", 12), (300, "enhance_damage_addon", 9)] {
         dados.addons.por_id.insert(
             id,
-            pw_data_loader::addons::DadosDoAddon { tratador: tratador.into(), num_params: 1, params: [p0, 0, 0] },
+            pw_data_loader::addons::DadosDoAddon { tratador: tratador.into(), num_params: 1, params: [p0, 0, 0], familias: None },
         );
     }
     dados.habilidades.por_id.insert(
@@ -4501,6 +4505,7 @@ async fn o_minerio_do_mapa_entra_pelo_comando_de_materia_e_sai_pela_lista() {
                 template_id: TID_DO_MINERIO,
                 position: perto,
                 renascer_s: 15,
+                renasce: true,
             },
         );
         m.grid.add_entity(MINERIO, perto, false);
@@ -8774,6 +8779,7 @@ async fn o_golpe_interrompe_a_coleta() {
                 template_id: 999_999,
                 position: Vector3::new(1.0, 0.0, 1.0),
                 renascer_s: 30,
+                renasce: true,
             },
         );
         m.players.get_mut(&(roleid as i64)).unwrap().coleta = Some(MINA);
@@ -9890,4 +9896,223 @@ async fn rates_de_exp_e_sp_do_realm_multiplicam_o_abate() {
     roteador.definir_taxas(taxas);
     let (exp_x, sp_x) = matar_e_ler_exp(&mundo, addr, roleid).await;
     assert_eq!((exp_x, sp_x), ((exp as f64 * 3.0) as i32, (sp as f64 * 2.5) as i32));
+}
+
+/// Recebe do mundo até `quer` dizer que basta; devolve os subcomandos e as respostas
+/// `SetCustomData_Re` vistas, na ordem.
+async fn colher(link: &mut pw_bus::transport::BusConnection, mut quer: impl FnMut(&[(u16, Vec<u8>)], &[(i32, u32)]) -> bool)
+    -> (Vec<(u16, Vec<u8>)>, Vec<(i32, u32)>) {
+    let (mut cmds, mut res) = (Vec::new(), Vec::new());
+    for _ in 0..300 {
+        if quer(&cmds, &res) {
+            return (cmds, res);
+        }
+        let m = tokio::time::timeout(Duration::from_secs(5), link.receber()).await
+            .unwrap_or_else(|_| panic!("nada chegou; vieram {:?} e {res:?}", cmds.iter().map(|c: &(u16, Vec<u8>)| c.0).collect::<Vec<_>>()))
+            .unwrap().expect("conexão fechou");
+        match m {
+            BusMessage::GameToClient { data, .. } => cmds.push((cmd_de(&data), data)),
+            BusMessage::SetCustomDataRe { result, crc, .. } => res.push((result, crc)),
+            _ => {}
+        }
+    }
+    panic!("a condição não veio em 300 mensagens");
+}
+
+/// B199: a troca de rosto. Sem bilhete o `SetCustomData` é recusado (`ERR_NOFACETICKET` 201);
+/// o serviço 24 abre a sessão (`CHANGE_FACE_START` 201 com o slot); `CANCEL_ACTION` fecha
+/// (`CHANGE_FACE_END` 202) sem gastar; com a sessão aberta, a aparência é gravada, o carimbo
+/// novo vai no `SetCustomData_Re` e no `PLAYER_CHG_FACE` (203), um bilhete sai com
+/// `DROP_TYPE_USE` (11), arma a recarga 8 e fecha a sessão.
+#[tokio::test]
+async fn trocar_o_rosto_com_o_bilhete_grava_e_avisa() {
+    for versao in [GameVersion::V1_5_5, GameVersion::V1_2_6] {
+        let (mundo, addr, roleid, _convidado) = cenario!(versao);
+        let mut link = entrar(&mundo, addr, roleid).await;
+        let (repo, itens) = {
+            let m = mundo.read().await;
+            (m.char_repo.clone(), m.char_repo.item_repo().clone())
+        };
+        itens.upsert_item(&pw_core::ItemRecord {
+            id: None, character_id: roleid, container_type: pw_core::ContainerType::Inventory, slot: 9,
+            item_id: BILHETE_DE_ROSTO as u32, count: 2, max_count: 10, refine_level: 0, sockets_count: 0,
+            sockets: vec![], durability: 0, max_durability: 0, bind_status: 0, octets: vec![],
+            custom_attributes: serde_json::json!({}),
+        }).await.expect("guardar o bilhete");
+        let (versao_do_registro, tamanho) = if versao == GameVersion::V1_2_6 { (0x1000_7000u32, 172) } else { (0x1000_7001, 176) };
+        let mut aparencia = vec![7u8; tamanho];
+        aparencia[..4].copy_from_slice(&versao_do_registro.to_le_bytes());
+        let mandar = |dados: Vec<u8>| BusMessage::SetCustomData { roleid, localsid: LOCALSID, custom_data: dados };
+        let abrir = BusMessage::ClientToGame { roleid, localsid: LOCALSID,
+            data: pedido_ao_npc(24, &[9u32.to_le_bytes(), BILHETE_DE_ROSTO.to_le_bytes()].concat()) };
+
+        link.enviar(mandar(aparencia.clone())).await.unwrap();
+        let (_, res) = colher(&mut link, |_, r| !r.is_empty()).await;
+        assert_eq!(res, vec![(201, 0)], "{versao:?}: sem bilhete");
+
+        link.enviar(abrir.clone()).await.unwrap();
+        let inicio = esperar_comando(&mut link, 201).await;
+        assert_eq!((inicio.len(), u16::from_le_bytes([inicio[2], inicio[3]])), (4, 9), "{versao:?}: CHANGE_FACE_START com o slot");
+        link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CANCEL_ACTION, &[]) }).await.unwrap();
+        let fim = esperar_comando(&mut link, 202).await;
+        assert_eq!(u16::from_le_bytes([fim[2], fim[3]]), 9);
+
+        link.enviar(abrir).await.unwrap();
+        esperar_comando(&mut link, 201).await;
+        link.enviar(mandar(aparencia.clone())).await.unwrap();
+        let (cmds, res) = colher(&mut link, |c, r| !r.is_empty() && c.iter().any(|x| x.0 == 202)).await;
+        let carimbo = pw_core::stamp_de_aparencia(&aparencia);
+        assert_eq!(res, vec![(0, carimbo as u32)], "{versao:?}");
+        let chg = &cmds.iter().find(|c| c.0 == 203).expect("PLAYER_CHG_FACE").1;
+        assert_eq!(chg.len(), 2 + 6);
+        assert_eq!((u16::from_le_bytes([chg[2], chg[3]]), i32_em(chg, 4)), (carimbo, roleid));
+        let descarte = &cmds.iter().find(|c| c.0 == 46).expect("PLAYER_DROP_ITEM").1;
+        assert_eq!(*descarte.last().unwrap(), 11, "DROP_TYPE_USE");
+        let recarga = &cmds.iter().find(|c| c.0 == 198).expect("SET_COOLDOWN").1;
+        assert_eq!(i32_em(recarga, 2), 8);
+        let gravada = repo.get_details_por_role(roleid).await.ok().flatten().map(|d| pw_core::bytes_da_aparencia(&d.custom_appearance));
+        assert_eq!(gravada.as_deref(), Some(&aparencia[..]), "{versao:?}: custom_data gravado");
+        let restante = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 9).await.unwrap().map(|i| i.count);
+        assert_eq!(restante, Some(1), "um bilhete gasto");
+    }
+}
+
+/// B201: vestir uma peça `ITEM_PROC_TYPE_BIND2` grava o vínculo e o `OWN_ITEM_INFO` do corpo sai
+/// com o `proc_type` vinculado (`BIND` e os "não" ligados, `BIND2` desligado, `player.cpp:8182-8191`)
+/// no campo `state` (offset 2+1+1+4+4 = 12).
+#[tokio::test]
+async fn vestir_peca_que_vincula_grava_o_vinculo_e_avisa_o_state() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    {
+        // Só neste mundo: a arma da loja passa a vincular ao vestir (`ITEM_PROC_TYPE_BIND2`).
+        let mut m = mundo.write().await;
+        let mut d = (*m.data_manager).clone();
+        d.proc_types.insert(ITEM_DE_LOJA as u32, 0x0040);
+        m.data_manager = Arc::new(d);
+    }
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens.upsert_item(&pw_core::ItemRecord {
+        id: None, character_id: roleid, container_type: pw_core::ContainerType::Inventory, slot: 9,
+        item_id: ITEM_DE_LOJA as u32, count: 1, max_count: 1, refine_level: 0, sockets_count: 0, sockets: vec![],
+        durability: 900, max_durability: 1000, bind_status: 0, octets: vec![], custom_attributes: serde_json::json!({}),
+    }).await.expect("guardar a arma");
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::EQUIP_ITEM, &[9u8, 0u8]) }).await.unwrap();
+    let resp = receber(&mut link, 5).await;
+    let cmds: Vec<(u16, Vec<u8>)> = resp.iter().map(|v| (cmd_de(v), v.clone())).collect();
+    let do_corpo = resp.iter().find(|v| cmd_de(v) == 40 && v[2] == 1).unwrap_or_else(|| panic!("item_info do corpo; veio {cmds:?}"));
+    let estado = i32_em(do_corpo, 12);
+    assert_eq!(estado, 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x8000, "proc_type vinculado: {estado:#x}");
+    let peca = itens.get_item_by_slot(roleid, pw_core::ContainerType::Equipment, 0).await.unwrap().expect("equipada");
+    assert_eq!((peca.item_id, peca.bind_status), (ITEM_DE_LOJA as u32, 1));
+}
+
+/// B202 — as três regras de vestir que faltavam (`PlayerEquipItem`, `player.cpp:8097-8168`;
+/// `VerifyRequirement`, `equip_item.cpp:60-66`): o amuleto de HP/MP não sai para a bolsa
+/// (`ERR_ITEM_CANNOT_UNEQUIP` 96 no 1.5.5, 8 no 1.2.6) e vestir outro destrói o vestido
+/// (`DROP_TYPE_TAKEOUT` 2); o mesmo item não vai aos dois slots de habilidade dinâmica; e peça com
+/// reputação acima da do jogador não vai ao corpo.
+#[tokio::test]
+async fn amuleto_habilidade_dinamica_e_reputacao_ao_vestir() {
+    for versao in [GameVersion::V1_5_5, GameVersion::V1_2_6] {
+        let (mundo, addr, roleid, _convidado) = cenario!(versao);
+        let mut link = entrar(&mundo, addr, roleid).await;
+        {
+            let mut m = mundo.write().await;
+            let mut d = (*m.data_manager).clone();
+            d.posicoes.insert(7001, 1 << 20);
+            d.posicoes.insert(7002, 1 << 20);
+            d.posicoes.insert(7003, (1 << 27) | (1 << 28));
+            d.posicoes.insert(7004, 0x1);
+            d.reputacao_exigida.insert(7004, 100);
+            m.data_manager = Arc::new(d);
+        }
+        let itens = mundo.read().await.char_repo.item_repo().clone();
+        let por = |c: pw_core::ContainerType, slot: u16, tid: i32| {
+            let mut i = peca(roleid, c, slot, tid, 100, 100);
+            i.octets = vec![];
+            i
+        };
+        use pw_core::ContainerType::{Equipment, Inventory};
+        itens.upsert_item(&por(Equipment, 20, 7001)).await.unwrap();
+        itens.delete_item_by_slot(roleid, Inventory, 10).await.ok();
+        let vestir = |a: u8, b: u8| BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::EQUIP_ITEM, &[a, b]) };
+
+        // Tirar o amuleto para a bolsa vazia: recusado.
+        link.enviar(vestir(10, 20)).await.unwrap();
+        let erro = esperar_comando(&mut link, 25).await;
+        let esperado = if versao == GameVersion::V1_2_6 { 8 } else { 96 };
+        assert_eq!(i32_em(&erro, 2), esperado, "{versao:?}: amuleto não sai");
+        assert_eq!(itens.get_item_by_slot(roleid, Equipment, 20).await.unwrap().map(|i| i.item_id), Some(7001));
+
+        // Vestir outro por cima: o vestido some (não volta à bolsa).
+        itens.upsert_item(&por(Inventory, 10, 7002)).await.unwrap();
+        link.enviar(vestir(10, 20)).await.unwrap();
+        let descarte = esperar_comando(&mut link, 46).await;
+        assert!(descarte.windows(4).any(|w| w == 7001i32.to_le_bytes()), "{versao:?}: o descarte é do amuleto vestido");
+        assert_eq!(*descarte.last().unwrap(), 2, "{versao:?}: DROP_TYPE_TAKEOUT");
+        let corpo = loop {
+            let c = itens.get_item_by_slot(roleid, Equipment, 20).await.unwrap();
+            if c.as_ref().is_some_and(|i| i.item_id == 7002) { break c; }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(corpo.map(|i| i.item_id), Some(7002));
+        assert!(itens.get_item_by_slot(roleid, Inventory, 10).await.unwrap().is_none(), "o amuleto velho não voltou à bolsa");
+
+        // Habilidade dinâmica repetida.
+        itens.upsert_item(&por(Equipment, 27, 7003)).await.unwrap();
+        itens.upsert_item(&por(Inventory, 11, 7003)).await.unwrap();
+        link.enviar(vestir(11, 28)).await.unwrap();
+        let erro = esperar_comando(&mut link, 25).await;
+        assert_eq!(i32_em(&erro, 2), 8, "{versao:?}: mesma habilidade dinâmica nos dois slots");
+        assert!(itens.get_item_by_slot(roleid, Equipment, 28).await.unwrap().is_none());
+
+        // Reputação.
+        itens.upsert_item(&por(Inventory, 12, 7004)).await.unwrap();
+        link.enviar(vestir(12, 0)).await.unwrap();
+        let erro = esperar_comando(&mut link, 25).await;
+        assert_eq!(i32_em(&erro, 2), 8, "{versao:?}: reputação");
+        assert_ne!(itens.get_item_by_slot(roleid, Equipment, 0).await.unwrap().map(|i| i.item_id), Some(7004));
+    }
+}
+
+/// B208 — portal de região (C2S 86 `ENTER_INSTANCE`/`REGION_TRANSPORT`, `player.cpp:12633-12660`,
+/// `city_region.cpp:73-97`): dentro da caixa e com o destino dela, o jogador vai ao alvo
+/// (+0,05 em y); fora da caixa, com outro destino ou com índice inexistente, `ERR_CANNOT_ENTER_INSTANCE`
+/// (52) e nada muda. O cenário serve um mapa só: a caixa leva ao próprio mapa.
+#[tokio::test]
+async fn o_portal_de_regiao_leva_ao_alvo_e_recusa_fora_da_caixa() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let este = {
+        let mut m = mundo.write().await;
+        let este = m.world_id;
+        let mut d = (*m.data_manager).clone();
+        d.caixas_de_transporte.insert(este, vec![pw_data_loader::regioes::CaixaDeTransporte {
+            destino: este, origem: este, nivel_minimo: 0, pos: [0.0, 0.0, 0.0], exts: [5.0, 5.0, 5.0], alvo: [40.0, 0.0, 30.0],
+        }]);
+        m.data_manager = Arc::new(d);
+        este
+    };
+    let portal = |indice: i32, destino: i32| BusMessage::ClientToGame {
+        roleid, localsid: LOCALSID, data: subcomando(ids::ENTER_INSTANCE, &[indice.to_le_bytes(), destino.to_le_bytes()].concat()),
+    };
+    for (indice, destino) in [(0, este + 1), (1, este)] {
+        link.enviar(portal(indice, destino)).await.unwrap();
+        let erro = esperar_comando(&mut link, 25).await;
+        assert_eq!(i32_em(&erro, 2), 52, "índice {indice}, destino {destino}");
+    }
+    link.enviar(portal(0, este)).await.unwrap();
+    let chegou = {
+        let m = Arc::clone(&mundo);
+        ate_async(move || {
+            let m = Arc::clone(&m);
+            async move { m.read().await.players.get(&(roleid as i64)).is_some_and(|p| (p.position.x - 40.0).abs() < 0.01 && (p.position.z - 30.0).abs() < 0.01) }
+        }).await
+    };
+    assert!(chegou, "foi ao alvo da caixa");
+    // Agora fora da caixa: recusado.
+    link.enviar(portal(0, este)).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 52, "fora da caixa");
 }

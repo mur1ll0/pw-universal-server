@@ -427,6 +427,10 @@ pub struct MonsterAi {
     renovar_odio: bool,
     /// O `cruise` do passeio.
     passeio: Option<Passeio>,
+    /// O passeio do monstro de água ou de ar (B211): `CNPCRambleInWaterAgent`/`OnAirAgent`
+    /// (`NPCMoveAgent.cpp:62-86`) — meta no cubo de raio do passeio e o agente de perseguição
+    /// do ambiente.
+    passeio_no_espaco: Option<crate::navegacao::SeguirNoEspaco>,
     /// A estratégia, as habilidades e os eventos de vida (sem perfil: corpo a corpo puro).
     pub perfil: Option<PerfilDeCombate>,
     combate: Combate,
@@ -570,6 +574,7 @@ impl MonsterAi {
             odio_restante: 0,
             renovar_odio: false,
             passeio: None,
+            passeio_no_espaco: None,
             perfil: None,
             combate: Combate::Nenhum,
             tarefa_alvo: None,
@@ -873,6 +878,7 @@ impl MonsterAi {
         self.no_espaco = None;
         self.perseguindo = None;
         self.passeio = None;
+        self.passeio_no_espaco = None;
         self.volta = None;
         self.patrulha = None;
         self.state = MonsterState::Idle;
@@ -1467,6 +1473,7 @@ impl MonsterAi {
         self.state = MonsterState::Chasing;
         if !matches!(self.sessao, Sessao::Perseguindo) {
             self.passeio = None;
+            self.passeio_no_espaco = None;
             self.volta = None;
             self.sessao = Sessao::Perseguindo;
             self.espera_ms = 0; // o original dá o primeiro passo ao abrir a sessão
@@ -1525,6 +1532,7 @@ impl MonsterAi {
         self.espera_ms = PASSO_DE_FUGA_MS;
         self.seguir = None;
         self.passeio = None;
+        self.passeio_no_espaco = None;
         self.volta = None;
         self.sessao = Sessao::Perseguindo;
         self.state = MonsterState::Chasing;
@@ -1874,6 +1882,7 @@ impl MonsterAi {
         } else {
             self.centro_do_passeio = Some((lider, Self::PERTO_DO_LIDER, 6));
             self.passeio = None;
+            self.passeio_no_espaco = None;
             self.comecar_passeio(monster);
         }
     }
@@ -1970,6 +1979,7 @@ impl MonsterAi {
                 self.espera_ms = Self::PASSO_DE_PATRULHA_MS;
                 if passos_restantes <= 0 {
                     self.passeio = None;
+                    self.passeio_no_espaco = None;
                     self.sessao = Sessao::Nenhuma;
                     self.state = MonsterState::Idle;
                     return (!self.parado)
@@ -2418,6 +2428,9 @@ impl MonsterAi {
         passo: f32,
         mapa: &Mapa,
     ) -> Option<AcaoDoMonstro> {
+        if monster.habitat != Habitat::Chao {
+            return self.passear_no_espaco(monster, passo, mapa);
+        }
         let de = V3::new(monster.position.x, monster.position.y, monster.position.z);
         let (casa, raio, _) =
             self.centro_do_passeio.unwrap_or((monster.spawn_center, Self::RAIO_DO_PASSEIO, 0));
@@ -2465,6 +2478,58 @@ impl MonsterAi {
             MODO_ANDAR,
         );
         self.passeio = Some(p);
+        acao
+    }
+
+    /// B211 — o passeio do monstro de água ou de ar. O original cria o `CNPCRambleInWaterAgent` /
+    /// `CNPCRambleOnAirAgent` pelo ambiente (`NPCMoveAgent.cpp:62-86`), que é o
+    /// `CNPCRambleAgent` (`NPCMove.h:499-588`): a meta é o centro mais um deslocamento uniforme
+    /// de ±raio em **x, y e z** (`GeneratePosInMoveRange`), levantada a 2 m do terreno
+    /// (`ClampUpTerrain(goal, 2.0)`, `CMap.h:121-126`), e quem anda é o agente de perseguição do
+    /// ambiente (`CreateNPCChaseAgent`), o mesmo da perseguição no espaço (B133/B136: fica entre
+    /// `terreno + 0,2` e `água − 0,2`). Até o B210 todo monstro passeava com o agente de chão, que
+    /// assenta no piso do `movemap` — debaixo da cidade da Névoa Sombria, o deck a 281 m, e as
+    /// Sereias Ecoantes (água a 216 m) subiam para dentro da estrutura.
+    fn passear_no_espaco(&mut self, monster: &mut MonsterEntity, passo: f32, mapa: &Mapa) -> Option<AcaoDoMonstro> {
+        use crate::navegacao::{Ambiente, SeguirNoEspaco};
+        let amb = if monster.habitat == Habitat::Agua { Ambiente::Agua } else { Ambiente::Ar };
+        let de = V3::new(monster.position.x, monster.position.y, monster.position.z);
+        let mut s = match self.passeio_no_espaco.take() {
+            Some(s) => s,
+            None => {
+                let (casa, raio, _) = self.centro_do_passeio.unwrap_or((monster.spawn_center, Self::RAIO_DO_PASSEIO, 0));
+                let mut rng = rand::thread_rng();
+                let mut meta = V3::new(
+                    casa.x - raio + rng.gen_range(0.0..=2.0 * raio),
+                    casa.y - raio + rng.gen_range(0.0..=2.0 * raio),
+                    casa.z - raio + rng.gen_range(0.0..=2.0 * raio),
+                );
+                if let Some(t) = (mapa.terreno)(meta.x, meta.z) {
+                    meta.y = meta.y.max(t + 2.0);
+                }
+                let d2 = (meta.x - de.x).powi(2) + (meta.y - de.y).powi(2) + (meta.z - de.z).powi(2);
+                let mut s = SeguirNoEspaco::default();
+                s.comecar(amb, de, meta, passo, 0.0, d2, mapa);
+                s
+            }
+        };
+        if s.chegou() || !s.andar(passo, mapa) {
+            return self.fim_do_passeio(monster);
+        }
+        let alvo = s.posicao();
+        let alvo = Vector3::new(alvo.x, alvo.y, alvo.z);
+        if s.chegou() {
+            let (dx, dz) = (alvo.x - monster.position.x, alvo.z - monster.position.z);
+            let m = (dx * dx + dz * dz).sqrt();
+            if m > 0.0 {
+                self.direcao = direcao_do_vetor(dx / m, dz / m);
+            }
+            monster.position = alvo;
+            self.parado = false;
+            return self.fim_do_passeio(monster);
+        }
+        let acao = self.ir_para(monster, V3::new(alvo.x, alvo.y, alvo.z), Self::PASSO_DE_PATRULHA_MS, monster.andar(), MODO_ANDAR);
+        self.passeio_no_espaco = Some(s);
         acao
     }
 

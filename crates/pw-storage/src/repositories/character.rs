@@ -953,6 +953,36 @@ impl CharacterRepository {
         Ok(r.rows_affected() == 1)
     }
 
+    /// B199: grava a aparência nova (`custom_data`) do personagem em jogo, depois que o GS
+    /// conferiu o bilhete de rosto. O formato já foi conferido por quem chama.
+    pub async fn gravar_aparencia(&self, role_id: RoleId, dados: &[u8]) -> Result<bool> {
+        let r = sqlx::query(
+            "UPDATE characters SET custom_data = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND NOT is_deleted",
+        )
+        .bind(role_id)
+        .bind(dados)
+        .execute(self.pool.get_ref())
+        .await?;
+        Ok(r.rows_affected() == 1)
+    }
+
+    /// B199: a aparência mandada **fora do jogo** (tela de seleção). O `gdeliveryd` só aceita
+    /// para personagem criado há menos de dois dias (`newrole = time(NULL) - create_time <
+    /// 86400*2`, `cnet/gdeliveryd/setcustomdata.hpp`); senão `ERR_NOFACETICKET`. Confere também
+    /// que o personagem é da conta e do realm da sessão.
+    pub async fn gravar_aparencia_de_personagem_novo(&self, role_id: RoleId, conta: i32, realm: &str, dados: &[u8]) -> Result<bool> {
+        let r = sqlx::query(
+            "UPDATE characters SET custom_data = $4, updated_at = CURRENT_TIMESTAMP              WHERE id = $1 AND account_id = $2 AND realm_id = $3 AND NOT is_deleted              AND created_at > CURRENT_TIMESTAMP - INTERVAL '2 days'",
+        )
+        .bind(role_id)
+        .bind(conta)
+        .bind(realm)
+        .bind(dados)
+        .execute(self.pool.get_ref())
+        .await?;
+        Ok(r.rows_affected() == 1)
+    }
+
     /// Painel (E5, B182), offline: grava o cultivo (`level2`), já validado pela versão.
     pub async fn definir_cultivo_offline(&self, role_id: RoleId, cultivo: i32) -> Result<bool> {
         let r = sqlx::query(
