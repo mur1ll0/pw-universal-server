@@ -74,6 +74,10 @@ pub struct SpawnInstance {
     /// negativo dá `-iRefresh + 3` (`npcgenerator.cpp:3841-3855`).
     pub renascer_min_s: u32,
     pub renascer_max_s: u32,
+    /// `bAutoRevive` da área (`NPCGENFILEAREA`/`NPCGENFILERESAREA`): falso = morto/colhido não
+    /// renasce (`SetRespawn(area.bAutoRevive)` → `Reclaim` devolve falso,
+    /// `gs/npcgenerator.cpp:3312-3317`, `:4945-4950`). É o chefe de masmorra. B205.
+    pub renasce: bool,
 }
 
 /// Quantos o gerador põe no mundo: no grupo e no chefe (`iGroupType` 1 e 2) o gerador 0 é o
@@ -420,6 +424,7 @@ impl NpcGenData {
         struct AreaPendente {
             id_ctrl: i32,
             b_init_gen: bool,
+            renasce: bool,
             tipo: TipoDeArea,
             pos: Vector3,
             /// `vExts` do `NPCGENFILEAREA`: o **tamanho** da caixa da área, não o raio. O
@@ -447,6 +452,7 @@ impl NpcGenData {
         struct ResAreaPendente {
             id_ctrl: i32,
             b_init_gen: bool,
+            renasce: bool,
             pos: Vector3,
             /// `fExtX`/`fExtZ`. Eram lidos e descartados, e todo recurso de uma área nascia
             /// no mesmo ponto — o "Eufórbio todo junto" do teste de 2026-09-12.
@@ -478,7 +484,7 @@ impl NpcGenData {
             let _npc_type = cursor.read_i32::<LittleEndian>()?;
             let grp_type = cursor.read_i32::<LittleEndian>()?;
             let b_init_gen = cursor.read_u8()? != 0;
-            let _b_auto_revive = cursor.read_u8()? != 0;
+            let b_auto_revive = cursor.read_u8()? != 0;
             let _b_valid_once = cursor.read_u8()? != 0;
             let _dw_gen_id = cursor.read_u32::<LittleEndian>()?;
             let id_ctrl = if version >= 7 {
@@ -543,6 +549,7 @@ impl NpcGenData {
             areas_pendentes.push(AreaPendente {
                 id_ctrl,
                 b_init_gen,
+                renasce: b_auto_revive,
                 tipo: TipoDeArea::do_arquivo(area_type),
                 pos: Vector3::new(pos_x, pos_y, pos_z),
                 exts: Vector3::new(ext_x, ext_y, ext_z),
@@ -561,7 +568,7 @@ impl NpcGenData {
             let ext_z = cursor.read_f32::<LittleEndian>()?;
             let num_res = cursor.read_i32::<LittleEndian>()? as usize;
             let b_init_gen = cursor.read_u8()? != 0;
-            let _b_auto_revive = cursor.read_u8()? != 0;
+            let b_auto_revive = cursor.read_u8()? != 0;
             let _b_valid_once = cursor.read_u8()? != 0;
             let _dw_gen_id = cursor.read_u32::<LittleEndian>()?;
             if version >= 6 {
@@ -591,6 +598,7 @@ impl NpcGenData {
             res_areas_pendentes.push(ResAreaPendente {
                 id_ctrl,
                 b_init_gen,
+                renasce: b_auto_revive,
                 pos: Vector3::new(pos_x, pos_y, pos_z),
                 // O original monta a caixa do recurso com `{fExtX, 0, fExtZ}`
                 // (`npcgenerator.cpp:3900`): sem altura, porque recurso é sempre no chão.
@@ -718,6 +726,7 @@ impl NpcGenData {
                         corpo_s: tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower).0,
                         renascer_min_s: tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower).1,
                         renascer_max_s: tempos_do_gerador(g.dead_time, g.refresh, g.refresh_lower).2,
+                        renasce: area.renasce,
                     };
                     if let Some(n) = controlador {
                         controladores.entry(n).or_default().ativos.push(npc_nid);
@@ -762,6 +771,7 @@ impl NpcGenData {
                         corpo_s: 0,
                         renascer_min_s: 0,
                         renascer_max_s: 0,
+                        renasce: area.renasce,
                     };
                     grid.insert(spawn.clone());
                     instances.push(spawn);
@@ -799,6 +809,7 @@ impl NpcGenData {
                 corpo_s: 0,
                 renascer_min_s: 0,
                 renascer_max_s: 0,
+                renasce: true,
             };
             grid.insert(spawn.clone());
             instances.push(spawn);
@@ -838,6 +849,7 @@ impl NpcGenData {
                         corpo_s,
                         renascer_min_s,
                         renascer_max_s,
+                        renasce: area.renasce,
                     });
                 }
             }
@@ -910,6 +922,7 @@ mod tests {
             corpo_s: 0,
             renascer_min_s: 0,
             renascer_max_s: 0,
+            renasce: true,
         }
     }
 

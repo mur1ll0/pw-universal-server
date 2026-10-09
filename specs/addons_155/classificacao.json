@@ -1,0 +1,2110 @@
+{
+ "fonte": "EvolvedPWServer/cgame/gs/item/item_addon*.cpp",
+ "tratadores": {
+  "IAERA(0,3)": {
+   "classe": "item_armor_enhance_resistance_addon",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:114",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA(1,0)": {
+   "classe": "item_armor_enhance_resistance_addon",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:114",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA(2,4)": {
+   "classe": "item_armor_enhance_resistance_addon",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:114",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA(3,2)": {
+   "classe": "item_armor_enhance_resistance_addon",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:114",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA(4,1)": {
+   "classe": "item_armor_enhance_resistance_addon",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:114",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA2(0,3)": {
+   "classe": "item_armor_enhance_resistance_addon_2",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:147",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA2(1,0)": {
+   "classe": "item_armor_enhance_resistance_addon_2",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:147",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA2(2,4)": {
+   "classe": "item_armor_enhance_resistance_addon_2",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:147",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA2(3,2)": {
+   "classe": "item_armor_enhance_resistance_addon_2",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:147",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA2(4,1)": {
+   "classe": "item_armor_enhance_resistance_addon_2",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:147",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA3(0,3)": {
+   "classe": "item_armor_enhance_resistance_addon_3",
+   "familia_no_fonte": "armadura",
+   "ids": 15,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:171",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA3(1,0)": {
+   "classe": "item_armor_enhance_resistance_addon_3",
+   "familia_no_fonte": "armadura",
+   "ids": 15,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:171",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA3(2,4)": {
+   "classe": "item_armor_enhance_resistance_addon_3",
+   "familia_no_fonte": "armadura",
+   "ids": 15,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:171",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA3(3,2)": {
+   "classe": "item_armor_enhance_resistance_addon_3",
+   "familia_no_fonte": "armadura",
+   "ids": 15,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:171",
+   "tipo": "ESSENCIA"
+  },
+  "IAERA3(4,1)": {
+   "classe": "item_armor_enhance_resistance_addon_3",
+   "familia_no_fonte": "armadura",
+   "ids": 15,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:171",
+   "tipo": "ESSENCIA"
+  },
+  "IA_EA_ESS<offsetof(armor_essence,armor)>": {
+   "classe": "IA_EA_ESS",
+   "familia_no_fonte": "armadura",
+   "ids": 14,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:4",
+   "tipo": "ESSENCIA"
+  },
+  "IA_EA_ESS<offsetof(armor_essence,defense)>": {
+   "classe": "IA_EA_ESS",
+   "familia_no_fonte": "armadura",
+   "ids": 24,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:4",
+   "tipo": "ESSENCIA"
+  },
+  "IA_EA_ESS<offsetof(armor_essence,hp_enhance)>": {
+   "classe": "IA_EA_ESS",
+   "familia_no_fonte": "armadura",
+   "ids": 15,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:4",
+   "tipo": "ESSENCIA"
+  },
+  "IA_EA_ESS<offsetof(armor_essence,mp_enhance)>": {
+   "classe": "IA_EA_ESS",
+   "familia_no_fonte": "armadura",
+   "ids": 15,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:4",
+   "tipo": "ESSENCIA"
+  },
+  "IA_EA_ESS_SCALE<offsetof(armor_essence,hp_enhance)>": {
+   "classe": "IA_EA_ESS_SCALE",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:217",
+   "tipo": "ESSENCIA"
+  },
+  "IA_EA_ESS_SCALE<offsetof(armor_essence,mp_enhance)>": {
+   "classe": "IA_EA_ESS_SCALE",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:217",
+   "tipo": "ESSENCIA"
+  },
+  "IA_ED_ESS<offsetof(decoration_essence,armor)>": {
+   "classe": "IA_ED_ESS",
+   "familia_no_fonte": "acessorio",
+   "ids": 18,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:2",
+   "tipo": "ESSENCIA"
+  },
+  "IA_ED_ESS<offsetof(decoration_essence,damage)>": {
+   "classe": "IA_ED_ESS",
+   "familia_no_fonte": "acessorio",
+   "ids": 17,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:2",
+   "tipo": "ESSENCIA"
+  },
+  "IA_ED_ESS<offsetof(decoration_essence,defense)>": {
+   "classe": "IA_ED_ESS",
+   "familia_no_fonte": "acessorio",
+   "ids": 18,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:2",
+   "tipo": "ESSENCIA"
+  },
+  "IA_ED_ESS<offsetof(decoration_essence,magic_damage)>": {
+   "classe": "IA_ED_ESS",
+   "familia_no_fonte": "acessorio",
+   "ids": 17,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:2",
+   "tipo": "ESSENCIA"
+  },
+  "IDMRA(0,3)": {
+   "classe": "item_decoration_magic_resistance_addon",
+   "familia_no_fonte": "acessorio",
+   "ids": 18,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:70",
+   "tipo": "ESSENCIA"
+  },
+  "IDMRA(1,0)": {
+   "classe": "item_decoration_magic_resistance_addon",
+   "familia_no_fonte": "acessorio",
+   "ids": 18,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:70",
+   "tipo": "ESSENCIA"
+  },
+  "IDMRA(2,4)": {
+   "classe": "item_decoration_magic_resistance_addon",
+   "familia_no_fonte": "acessorio",
+   "ids": 18,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:70",
+   "tipo": "ESSENCIA"
+  },
+  "IDMRA(3,2)": {
+   "classe": "item_decoration_magic_resistance_addon",
+   "familia_no_fonte": "acessorio",
+   "ids": 18,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:70",
+   "tipo": "ESSENCIA"
+  },
+  "IDMRA(4,1)": {
+   "classe": "item_decoration_magic_resistance_addon",
+   "familia_no_fonte": "acessorio",
+   "ids": 18,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:70",
+   "tipo": "ESSENCIA"
+  },
+  "SET_ADDON_MACRO(2,enhance_agi_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_agi_addon_1arg)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_attack_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_attack_degree)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_attack_speed_addon)": {
+   "classe": "enhance_attack_speed_addon",
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:768",
+   "tipo": "PROPRIO"
+  },
+  "SET_ADDON_MACRO(2,enhance_crit_rate)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "SET_ADDON_MACRO(2,enhance_defend_degree)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 30,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_defense_addon_2)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 4,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_eng_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_eng_addon_1arg)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_hp_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 14,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_penetration)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_speed_addon_point)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [
+    "conjunto",
+    "float"
+   ],
+   "onde": "item_addon.cpp:356",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_str_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "SET_ADDON_MACRO(2,enhance_str_addon_1arg)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(2,reduce_cast_time_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:814",
+   "tipo": "PERCENT"
+  },
+  "SET_ADDON_MACRO(3,enhance_agi_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "SET_ADDON_MACRO(3,enhance_all_magic_damage_reduce_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:695",
+   "tipo": "PERCENT"
+  },
+  "SET_ADDON_MACRO(3,enhance_all_resistance_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:609",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(3,enhance_attack_speed_addon)": {
+   "classe": "enhance_attack_speed_addon",
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:768",
+   "tipo": "PROPRIO"
+  },
+  "SET_ADDON_MACRO(3,enhance_crit_rate)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 33,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "SET_ADDON_MACRO(3,enhance_damage_reduce_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "SET_ADDON_MACRO(3,enhance_defend_degree)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(3,enhance_eng_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "SET_ADDON_MACRO(3,enhance_resilience)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 14,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(3,enhance_soulpower_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:1119",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(3,enhance_str_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "SET_ADDON_MACRO(3,reduce_cast_time_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:814",
+   "tipo": "PERCENT"
+  },
+  "SET_ADDON_MACRO(4,enhance_attack_degree)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 30,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(4,enhance_damage_reduce_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 5,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "SET_ADDON_MACRO(4,enhance_defend_degree)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 13,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(4,enhance_mp_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(4,enhance_penetration)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 6,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(4,enhance_vit_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "SET_ADDON_MACRO(5,enhance_attack_degree)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(5,enhance_attack_speed_addon)": {
+   "classe": "enhance_attack_speed_addon",
+   "familia_no_fonte": null,
+   "ids": 9,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:768",
+   "tipo": "PROPRIO"
+  },
+  "SET_ADDON_MACRO(5,enhance_defend_degree)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 29,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(5,enhance_hp_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(5,enhance_penetration)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 8,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(5,reduce_cast_time_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:814",
+   "tipo": "PERCENT"
+  },
+  "SET_ADDON_MACRO(6,enhance_attack_degree)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 33,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(6,enhance_crit_rate)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "SET_ADDON_MACRO(6,enhance_defend_degree)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 6,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(6,enhance_hp_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(6,enhance_resilience)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "SET_ADDON_MACRO(8,enhance_penetration)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "conjunto"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "STONE_MAGIC_DMG_ADDON(0)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [
+    "pedra"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "STONE_MAGIC_DMG_ADDON(1)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [
+    "pedra"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "STONE_MAGIC_DMG_ADDON(2)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [
+    "pedra"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "STONE_MAGIC_DMG_ADDON(3)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [
+    "pedra"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "STONE_MAGIC_DMG_ADDON(4)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [
+    "pedra"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "STONE_MAGIC_RES_ADDON(0)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [
+    "pedra"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "STONE_MAGIC_RES_ADDON(1)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [
+    "pedra"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "STONE_MAGIC_RES_ADDON(2)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [
+    "pedra"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "STONE_MAGIC_RES_ADDON(3)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [
+    "pedra"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "STONE_MAGIC_RES_ADDON(4)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [
+    "pedra"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_agi_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_all_resistance_addon_2arg)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 5,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:609",
+   "tipo": "DOUBLE_POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_attack_addon_2)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 4,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_attack_degree)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_crit_rate)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_damage_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 8,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:503",
+   "tipo": "POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_defend_degree)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_defense_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 5,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:470",
+   "tipo": "DOUBLE_POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_eng_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_hp_addon_2)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 8,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_magic_damage_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 8,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:525",
+   "tipo": "POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_max_damage_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 6,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:470",
+   "tipo": "POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_max_magic_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 6,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:470",
+   "tipo": "POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_mount_speed_addon)": {
+   "classe": "enhance_mount_speed_addon",
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:1150",
+   "tipo": "PROPRIO"
+  },
+  "TEMPORARY_ADDON_MACRO(enhance_str_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "TEMPORARY_ADDON_MACRO(reduce_cast_time_addon)": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [
+    "temporario"
+   ],
+   "onde": "item_addon.cpp:814",
+   "tipo": "PERCENT"
+  },
+  "empty_addon": {
+   "classe": "empty_addon",
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon.h:434",
+   "tipo": "ESSENCIA"
+  },
+  "enhance_agi_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 64,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_agi_addon_1arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_all_magic_damage_reduce_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 6,
+   "marcas": [],
+   "onde": "item_addon.cpp:695",
+   "tipo": "PERCENT"
+  },
+  "enhance_all_magic_damage_reduce_addon_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon.cpp:695",
+   "tipo": "DOUBLE_PERCENT"
+  },
+  "enhance_all_resistance_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 42,
+   "marcas": [],
+   "onde": "item_addon.cpp:609",
+   "tipo": "POINT"
+  },
+  "enhance_all_resistance_addon_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 8,
+   "marcas": [],
+   "onde": "item_addon.cpp:609",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_all_resistance_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 19,
+   "marcas": [],
+   "onde": "item_addon.cpp:666",
+   "tipo": "PERCENT"
+  },
+  "enhance_all_resistance_scale_addon_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:666",
+   "tipo": "DOUBLE_PERCENT"
+  },
+  "enhance_anti_def_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_anti_resist_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_armor_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 15,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "POINT"
+  },
+  "enhance_armor_addon_2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 8,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_armor_addon_2_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_armor_range_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 21,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_armor_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "DOUBLE_PERCENT"
+  },
+  "enhance_armor_scale_addon_single": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "PERCENT"
+  },
+  "enhance_attack_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 23,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_attack_addon_2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 31,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_attack_degree": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 56,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_attack_degree_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_attack_range_addon_2arg": {
+   "classe": "enhance_attack_range_addon_2arg",
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon.cpp:743",
+   "tipo": "PROPRIO"
+  },
+  "enhance_attack_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_attack_scale_addon_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_PERCENT"
+  },
+  "enhance_attack_speed_addon": {
+   "classe": "enhance_attack_speed_addon",
+   "familia_no_fonte": null,
+   "ids": 8,
+   "marcas": [],
+   "onde": "item_addon.cpp:768",
+   "tipo": "PROPRIO"
+  },
+  "enhance_crit_rate": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 25,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_crit_rate_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_PERCENT"
+  },
+  "enhance_damage_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 17,
+   "marcas": [],
+   "onde": "item_addon.cpp:503",
+   "tipo": "POINT"
+  },
+  "enhance_damage_addon_2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 23,
+   "marcas": [],
+   "onde": "item_addon.cpp:547",
+   "tipo": "POINT"
+  },
+  "enhance_damage_addon_2_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:547",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_damage_addon_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:503",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_damage_reduce_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 26,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_damage_reduce_addon_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_PERCENT"
+  },
+  "enhance_damage_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "PERCENT"
+  },
+  "enhance_damage_scale_addon_2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 18,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_defend_degree": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 55,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_defend_degree_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 4,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_defense_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 15,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_defense_addon_1arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 24,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "POINT"
+  },
+  "enhance_defense_addon_2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 18,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_defense_addon_2_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_defense_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "DOUBLE_PERCENT"
+  },
+  "enhance_defense_scale_addon_2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 9,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_defense_scale_addon_2_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_PERCENT"
+  },
+  "enhance_durability_addon": {
+   "classe": "enhance_durability_addon",
+   "familia_no_fonte": null,
+   "ids": 11,
+   "marcas": [],
+   "onde": "item_addon.cpp:258",
+   "tipo": "ESSENCIA"
+  },
+  "enhance_eng_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 64,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_eng_addon_1arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_exp_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 11,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_hp_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 42,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_hp_addon_2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 58,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_hp_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_hpgen_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_hpgen_addon_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_magic_damage_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 16,
+   "marcas": [],
+   "onde": "item_addon.cpp:525",
+   "tipo": "POINT"
+  },
+  "enhance_magic_damage_addon_2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 23,
+   "marcas": [],
+   "onde": "item_addon.cpp:578",
+   "tipo": "POINT"
+  },
+  "enhance_magic_damage_addon_2_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:578",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_magic_damage_addon_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:525",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_magic_damage_reduce0_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_magic_damage_reduce1_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_magic_damage_reduce2_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_magic_damage_reduce3_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_magic_damage_reduce4_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_magic_damage_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 18,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_magic_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "PERCENT"
+  },
+  "enhance_max_damage_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "POINT"
+  },
+  "enhance_max_damage_addon_2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_max_damage_addon_2_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_max_magic_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "POINT"
+  },
+  "enhance_max_magic_addon_2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_max_magic_addon_2_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_mp_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 21,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_mp_addon_2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 48,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_mp_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_mpgen_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 12,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_mpgen_addon_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_penetration": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 17,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_resilience": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 14,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_resistance0_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 6,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_resistance0_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 9,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_resistance1_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 6,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_resistance1_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 9,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_resistance2_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 6,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_resistance2_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 9,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_resistance3_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 6,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_resistance3_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 9,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_resistance4_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 6,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_resistance4_scale_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 9,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "PERCENT"
+  },
+  "enhance_soulpower_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon.cpp:1119",
+   "tipo": "POINT"
+  },
+  "enhance_speed_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon.cpp:322",
+   "tipo": "PERCENT"
+  },
+  "enhance_speed_addon_point": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 10,
+   "marcas": [
+    "float"
+   ],
+   "onde": "item_addon.cpp:356",
+   "tipo": "POINT"
+  },
+  "enhance_str_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 64,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_str_addon_1arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_vigour": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 15,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_vit_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 67,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "DOUBLE_POINT"
+  },
+  "enhance_vit_addon_1arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "enhance_weapon_attack_range": {
+   "classe": "enhance_weapon_attack_range",
+   "familia_no_fonte": "arma",
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon_weapon.cpp:121",
+   "tipo": "ESSENCIA"
+  },
+  "enhance_weapon_damage_addon": {
+   "classe": "enhance_weapon_damage_addon",
+   "familia_no_fonte": "arma",
+   "ids": 38,
+   "marcas": [],
+   "onde": "item_addon_weapon.cpp:3",
+   "tipo": "ESSENCIA"
+  },
+  "enhance_weapon_magic_addon": {
+   "classe": "enhance_weapon_magic_addon",
+   "familia_no_fonte": "arma",
+   "ids": 23,
+   "marcas": [],
+   "onde": "item_addon_weapon.cpp:74",
+   "tipo": "ESSENCIA"
+  },
+  "enhance_weapon_max_damage_addon": {
+   "classe": "enhance_weapon_max_damage_addon",
+   "familia_no_fonte": "arma",
+   "ids": 33,
+   "marcas": [],
+   "onde": "item_addon_weapon.cpp:28",
+   "tipo": "ESSENCIA"
+  },
+  "enhance_weapon_max_magic_addon": {
+   "classe": "enhance_weapon_max_magic_addon",
+   "familia_no_fonte": "arma",
+   "ids": 18,
+   "marcas": [],
+   "onde": "item_addon_weapon.cpp:98",
+   "tipo": "ESSENCIA"
+  },
+  "enhance_weapon_speed_addon": {
+   "classe": "enhance_weapon_speed_addon",
+   "familia_no_fonte": "arma",
+   "ids": 2,
+   "marcas": [],
+   "onde": "item_addon_weapon.cpp:50",
+   "tipo": "ESSENCIA"
+  },
+  "item_addon_random": {
+   "classe": "item_addon_random",
+   "familia_no_fonte": null,
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon.cpp:724",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_enhance_all_resistance": {
+   "classe": "item_armor_enhance_all_resistance",
+   "familia_no_fonte": "armadura",
+   "ids": 13,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:29",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_enhance_resistance<0>": {
+   "classe": "item_armor_enhance_resistance",
+   "familia_no_fonte": "armadura",
+   "ids": 20,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:57",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_enhance_resistance<1>": {
+   "classe": "item_armor_enhance_resistance",
+   "familia_no_fonte": "armadura",
+   "ids": 20,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:57",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_enhance_resistance<2>": {
+   "classe": "item_armor_enhance_resistance",
+   "familia_no_fonte": "armadura",
+   "ids": 20,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:57",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_enhance_resistance<3>": {
+   "classe": "item_armor_enhance_resistance",
+   "familia_no_fonte": "armadura",
+   "ids": 20,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:57",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_enhance_resistance<4>": {
+   "classe": "item_armor_enhance_resistance",
+   "familia_no_fonte": "armadura",
+   "ids": 20,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:57",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_scale_enhance_resistance<0>": {
+   "classe": "item_armor_scale_enhance_resistance",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:84",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_scale_enhance_resistance<1>": {
+   "classe": "item_armor_scale_enhance_resistance",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:84",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_scale_enhance_resistance<2>": {
+   "classe": "item_armor_scale_enhance_resistance",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:84",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_scale_enhance_resistance<3>": {
+   "classe": "item_armor_scale_enhance_resistance",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:84",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_scale_enhance_resistance<4>": {
+   "classe": "item_armor_scale_enhance_resistance",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:84",
+   "tipo": "ESSENCIA"
+  },
+  "item_armor_specific_addon": {
+   "classe": "item_armor_specific_addon",
+   "familia_no_fonte": "armadura",
+   "ids": 5,
+   "marcas": [],
+   "onde": "item_addon_armor.cpp:192",
+   "tipo": "ESSENCIA"
+  },
+  "item_decoration_enchance_resistance<0>": {
+   "classe": "item_decoration_enchance_resistance",
+   "familia_no_fonte": "acessorio",
+   "ids": 21,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:129",
+   "tipo": "ESSENCIA"
+  },
+  "item_decoration_enchance_resistance<1>": {
+   "classe": "item_decoration_enchance_resistance",
+   "familia_no_fonte": "acessorio",
+   "ids": 21,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:129",
+   "tipo": "ESSENCIA"
+  },
+  "item_decoration_enchance_resistance<2>": {
+   "classe": "item_decoration_enchance_resistance",
+   "familia_no_fonte": "acessorio",
+   "ids": 21,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:129",
+   "tipo": "ESSENCIA"
+  },
+  "item_decoration_enchance_resistance<3>": {
+   "classe": "item_decoration_enchance_resistance",
+   "familia_no_fonte": "acessorio",
+   "ids": 21,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:129",
+   "tipo": "ESSENCIA"
+  },
+  "item_decoration_enchance_resistance<4>": {
+   "classe": "item_decoration_enchance_resistance",
+   "familia_no_fonte": "acessorio",
+   "ids": 21,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:129",
+   "tipo": "ESSENCIA"
+  },
+  "item_decoration_enhance_all_resistance": {
+   "classe": "item_decoration_enhance_all_resistance",
+   "familia_no_fonte": "acessorio",
+   "ids": 3,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:152",
+   "tipo": "ESSENCIA"
+  },
+  "item_decoration_scale_enhance_damage": {
+   "classe": "item_decoration_scale_enhance_damage",
+   "familia_no_fonte": "acessorio",
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:110",
+   "tipo": "ESSENCIA"
+  },
+  "item_decoration_scale_enhance_magic_damage": {
+   "classe": "item_decoration_scale_enhance_magic_damage",
+   "familia_no_fonte": "acessorio",
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:91",
+   "tipo": "ESSENCIA"
+  },
+  "item_decoration_specific_damage_addon": {
+   "classe": "item_decoration_specific_damage_addon",
+   "familia_no_fonte": "acessorio",
+   "ids": 17,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:27",
+   "tipo": "ESSENCIA"
+  },
+  "item_decoration_specific_magic_damage_addon": {
+   "classe": "item_decoration_specific_magic_damage_addon",
+   "familia_no_fonte": "acessorio",
+   "ids": 17,
+   "marcas": [],
+   "onde": "item_addon_decoration.cpp:46",
+   "tipo": "ESSENCIA"
+  },
+  "item_rebound_skill_addon": {
+   "classe": "item_rebound_skill_addon",
+   "familia_no_fonte": null,
+   "ids": 4,
+   "marcas": [],
+   "onde": "item_addon.cpp:941",
+   "tipo": "PROPRIO"
+  },
+  "item_rebound_skill_addon2": {
+   "classe": "item_rebound_skill_addon2",
+   "familia_no_fonte": null,
+   "ids": 4,
+   "marcas": [],
+   "onde": "item_addon.cpp:983",
+   "tipo": "PROPRIO"
+  },
+  "item_skill_addon": {
+   "classe": "item_skill_addon",
+   "familia_no_fonte": null,
+   "ids": 72,
+   "marcas": [],
+   "onde": "item_addon.cpp:856",
+   "tipo": "PROPRIO"
+  },
+  "item_skill_addon_2": {
+   "classe": "item_skill_addon_2",
+   "familia_no_fonte": null,
+   "ids": 6,
+   "marcas": [],
+   "onde": "item_addon.cpp:898",
+   "tipo": "PROPRIO"
+  },
+  "query_other_property_addon": {
+   "classe": "query_other_property_addon",
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon.cpp:1025",
+   "tipo": "PROPRIO"
+  },
+  "reduce_cast_time_addon": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 23,
+   "marcas": [],
+   "onde": "item_addon.cpp:814",
+   "tipo": "PERCENT"
+  },
+  "reduce_cast_time_addon_2arg": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 7,
+   "marcas": [],
+   "onde": "item_addon.cpp:814",
+   "tipo": "DOUBLE_PERCENT"
+  },
+  "reduce_require_addon": {
+   "classe": "reduce_require_addon",
+   "familia_no_fonte": null,
+   "ids": 9,
+   "marcas": [],
+   "onde": "item_addon.cpp:295",
+   "tipo": "ESSENCIA"
+  },
+  "refine_armor": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 21,
+   "marcas": [
+    "refino"
+   ],
+   "onde": "item_addon.cpp:470",
+   "tipo": "POINT"
+  },
+  "refine_damage": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 63,
+   "marcas": [
+    "refino"
+   ],
+   "onde": "item_addon.cpp:503",
+   "tipo": "POINT"
+  },
+  "refine_defense": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 21,
+   "marcas": [
+    "refino"
+   ],
+   "onde": "item_addon.cpp:470",
+   "tipo": "POINT"
+  },
+  "refine_defense_resistance": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [
+    "refino"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "refine_magic_damage": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 21,
+   "marcas": [
+    "refino"
+   ],
+   "onde": "item_addon.cpp:525",
+   "tipo": "POINT"
+  },
+  "refine_max_hp": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 62,
+   "marcas": [
+    "refino"
+   ],
+   "onde": "item_addon.cpp:390",
+   "tipo": "POINT"
+  },
+  "refine_resistance": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 21,
+   "marcas": [
+    "refino"
+   ],
+   "onde": "item_addon.cpp:609",
+   "tipo": "POINT"
+  },
+  "scale_enhance_damage2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "DOUBLE_PERCENT"
+  },
+  "scale_enhance_magic_damage2": {
+   "classe": null,
+   "familia_no_fonte": null,
+   "ids": 1,
+   "marcas": [],
+   "onde": "item_addon.cpp:470",
+   "tipo": "DOUBLE_PERCENT"
+  }
+ }
+}

@@ -18,6 +18,7 @@ pub mod habilidades;
 pub mod minas;
 pub mod pet;
 pub mod precinct;
+pub mod regioes;
 pub mod servicos;
 pub mod precos;
 pub mod receitas;

@@ -127,6 +127,25 @@ pub fn carregar_itens_de_missao(g: &GenericElementsData) -> HashSet<u32> {
     set
 }
 
+/// O `proc_type` de cada item do `elements.data` (todo registro com `ID` e `proc_type`): o valor
+/// inicial da instância (`idata.proc_type`, `gs/item.cpp:95-105`). B201.
+pub fn carregar_proc_types(g: &GenericElementsData) -> HashMap<u32, i32> {
+    let mut mapa = HashMap::new();
+    for registros in g.tables.values() {
+        let Some(primeiro) = registros.first() else { continue };
+        if !primeiro.contains_key("proc_type") || !primeiro.contains_key("ID") {
+            continue;
+        }
+        for r in registros {
+            let (id, proc) = (i(r, "ID"), i(r, "proc_type"));
+            if id > 0 && proc != 0 {
+                mapa.insert(id as u32, proc);
+            }
+        }
+    }
+    mapa
+}
+
 /// Lista de NPCs da cena com serviços ilimitados (`distance_service & 1 != 0`).
 pub fn carregar_scene_service_npcs(g: &GenericElementsData) -> Vec<(i32, i32)> {
     let mut lista = Vec::new();

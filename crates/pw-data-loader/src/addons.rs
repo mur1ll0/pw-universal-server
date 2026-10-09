@@ -3,6 +3,10 @@
 //!
 //! - Quem trata cada id: `specs/addons_155/addons.json`, extraído de
 //!   `gs/item/item_addon.cpp` (`INSERT_ADDON(id, tratador)`).
+//! - Como cada tratador gera os argumentos e de que família é: `specs/addons_155/classificacao.json`,
+//!   de `classificar_addons.py` (B209), que resolve macros, `typedef`s e heranças até
+//!   `arg_addon<T>` (`item_addon.cpp:50-235`), uma classe de essência (`essence_addon`, com a
+//!   família no `if(datatype != DT_xxx_ESSENCE) return -1`) ou uma classe com `GenerateParam` próprio.
 //! - Os parâmetros brutos: `EQUIPMENT_ADDON` (`num_params`, `param1..3`,
 //!   `gs/template/exptypes.h:122-134`). Parâmetro de porcentagem vem como os bits de um
 //!   `float` guardados num `int` (`arg_addon<PERCENT>::GenerateParam`, `item_addon.cpp:103-110`).
@@ -12,12 +16,39 @@
 use crate::generic_elements::{FieldValue, GenericElementsData, Record};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 const ADDONS_155_JSON: &str = include_str!("../../../specs/addons_155/addons.json");
+const CLASSIFICACAO_JSON: &str = include_str!("../../../specs/addons_155/classificacao.json");
 
 #[derive(Deserialize)]
 struct Arquivo {
     tratadores: HashMap<String, String>,
+}
+
+/// Um tratador resolvido no fonte (`classificacao.json`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClasseDoTratador {
+    /// `POINT`, `DOUBLE_POINT`, `PERCENT`, `DOUBLE_PERCENT`, `SECOND`, `DOUBLE_SECOND`,
+    /// `DOUBLE_FIX_POINT`, `TRIPLE_POINT`, `ESSENCIA` ou `PROPRIO`.
+    pub tipo: String,
+    /// A classe com `GenerateParam` próprio (essência ou própria); `None` em `arg_addon<T>`.
+    pub classe: Option<String>,
+    /// `arma`, `armadura` ou `acessorio`, do `DT_xxx_ESSENCE` da classe de essência.
+    pub familia_no_fonte: Option<String>,
+    /// `conjunto` (`set_equip_addon`), `refino`, `pedra`, `temporario`, `float` (o `Activate` lê o
+    /// argumento como `float`: `enhance_speed_addon_point`).
+    pub marcas: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct Classificacao {
+    tratadores: HashMap<String, ClasseDoTratador>,
+}
+
+fn classificacao() -> &'static HashMap<String, ClasseDoTratador> {
+    static C: OnceLock<HashMap<String, ClasseDoTratador>> = OnceLock::new();
+    C.get_or_init(|| serde_json::from_str::<Classificacao>(CLASSIFICACAO_JSON).map(|c| c.tratadores).unwrap_or_default())
 }
 
 /// Como `GenerateParam` trata os parâmetros de um addon.
@@ -25,54 +56,219 @@ struct Arquivo {
 pub enum Sorteio {
     /// `arg_addon<POINT>`: 1 parâmetro, como está.
     Ponto,
-    /// `arg_addon<DOUBLE_POINT>` e as essências: `RandNormal(arg0, arg1)`, 1 parâmetro.
+    /// `arg_addon<DOUBLE_POINT>` e as essências de inteiro: `RandNormal(arg0, arg1)`, 1 parâmetro.
     EntreDois,
     /// `arg_addon<PERCENT>`: `(int)(float × 100 + 0,1)`, 1 parâmetro.
     Porcento,
     /// `arg_addon<DOUBLE_PERCENT>`: `RandNormal(p0×100, p1×100)`, 1 parâmetro.
     EntreDoisPorcento,
+    /// `arg_addon<SECOND>`: `(int)(float × 20 + 0,1)`, 1 parâmetro.
+    Segundo,
+    /// `arg_addon<DOUBLE_SECOND>`: `RandNormal(p0×20, p1×20)`, 1 parâmetro.
+    EntreDoisSegundos,
+    /// `enhance_weapon_speed_addon`/`enhance_attack_speed_addon`: `(int)(float × 20)`
+    /// (`item_addon_weapon.cpp:50-60`, `item_addon.cpp:768-780`), 1 parâmetro.
+    VinteAvos,
+    /// Um `float` sorteado entre os dois, gravado como `float` (`IA_EA_ESS_SCALE`,
+    /// `item_armor_scale_enhance_resistance`: `abase::Rand`; `reduce_require_addon`,
+    /// `enhance_attack_range_addon_2arg`: `RandNormal`), 1 parâmetro.
+    FloatEntreDois,
+    /// `arg_addon<TRIPLE_POINT>`/`item_armor_enhance_resistance_addon_2`:
+    /// `RandNormal(a0 ± a2)`, `RandNormal(a1 ± a2)`, 2 parâmetros.
+    TresPontos,
     /// `refine_addon_template`: o parâmetro do tratador base e o nível (0), 2 parâmetros.
     Refino,
-    /// 2 parâmetros como estão (`item_decoration_specific_*`).
-    DoisComoEstao,
+    /// Os `n` primeiros parâmetros como estão (`return n` sem mexer: `item_skill_addon`,
+    /// `IDMRA`, `IAERA3`, `item_decoration_specific_*`, `DOUBLE_FIX_POINT`…).
+    ComoEstao(usize),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// O que o painel pode fazer com o valor do efeito (B209).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edicao {
+    /// Um inteiro somado direto (`POINT`, `DOUBLE_POINT`, `PERCENT`, `DOUBLE_PERCENT` e as
+    /// essências de inteiro): qualquer valor; o padrão vem do id.
+    Editavel,
+    /// Codificação própria (float, argumentos de significados diferentes, habilidade,
+    /// conjunto): só o que o `GenerateParam` daria.
+    Fixo,
+    /// Refino (vem do nível), pedra (vem do furo), temporário (precisa da data): fora da busca.
+    ForaDaBusca,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct DadosDoAddon {
     pub tratador: String,
     pub num_params: i32,
     pub params: [i32; 3],
+    /// Arma, armadura, acessório em que o efeito pode entrar (B209, [`TabelaDeAddons::ligar_familias`]);
+    /// `None` = todas.
+    pub familias: Option<[bool; 3]>,
+}
+
+fn como_float(v: i32) -> f32 {
+    f32::from_bits(v as u32)
 }
 
 impl DadosDoAddon {
-    /// O sorteio que o tratador faz; `None` para tratador sem porte (o addon não é gerado).
+    pub fn classe(&self) -> Option<&'static ClasseDoTratador> {
+        classificacao().get(&self.tratador)
+    }
+
+    fn marca(&self, m: &str) -> bool {
+        self.classe().is_some_and(|c| c.marcas.iter().any(|x| x == m))
+    }
+
+    /// O sorteio que o tratador faz; `None` para tratador desconhecido (o addon não é gerado).
     pub fn sorteio(&self) -> Option<Sorteio> {
         use Sorteio::*;
-        let t = self.tratador.as_str();
-        Some(match t {
-            "enhance_hp_addon" | "enhance_mp_addon" | "enhance_attack_degree" | "enhance_defend_degree"
-            | "enhance_all_resistance_addon" | "enhance_attack_addon" | "enhance_defense_addon_1arg"
-            | "enhance_defense_addon_2" | "enhance_damage_addon_2" | "enhance_magic_damage_addon_2"
-            | "enhance_armor_addon" | "enhance_penetration" | "enhance_resilience" | "enhance_damage_addon"
-            | "enhance_magic_damage_addon" => Ponto,
-            "enhance_str_addon" | "enhance_agi_addon" | "enhance_vit_addon" | "enhance_eng_addon"
-            | "enhance_hp_addon_2" | "enhance_mp_addon_2" | "enhance_attack_addon_2" | "enhance_defense_addon"
-            | "enhance_armor_range_addon" | "enhance_weapon_damage_addon" | "enhance_weapon_max_damage_addon"
-            | "enhance_weapon_magic_addon" | "enhance_weapon_max_magic_addon" => EntreDois,
-            "enhance_crit_rate" | "enhance_damage_reduce_addon" | "reduce_cast_time_addon"
-            | "enhance_all_resistance_scale_addon" | "enhance_damage_scale_addon_2" | "enhance_magic_damage_scale_addon" => Porcento,
-            "item_decoration_specific_damage_addon" | "item_decoration_specific_magic_damage_addon" => DoisComoEstao,
-            _ if t.starts_with("refine_") => Refino,
-            _ if t.starts_with("IA_EA_ESS<") || t.starts_with("IA_ED_ESS<") => EntreDois,
-            _ if t.starts_with("item_armor_enhance_resistance<") || t.starts_with("item_decoration_enchance_resistance<") => EntreDois,
-            _ => return None,
+        if self.tratador.starts_with("refine_") {
+            return Some(Refino);
+        }
+        let c = self.classe()?;
+        Some(match c.tipo.as_str() {
+            "POINT" => Ponto,
+            "DOUBLE_POINT" => EntreDois,
+            "PERCENT" => Porcento,
+            "DOUBLE_PERCENT" => EntreDoisPorcento,
+            "SECOND" => Segundo,
+            "DOUBLE_SECOND" => EntreDoisSegundos,
+            "DOUBLE_FIX_POINT" => ComoEstao(2),
+            "TRIPLE_POINT" => TresPontos,
+            _ => match c.classe.as_deref()? {
+                "IA_EA_ESS" | "IA_ED_ESS" | "item_armor_enhance_all_resistance" | "item_armor_enhance_resistance"
+                | "item_decoration_enchance_resistance" | "item_decoration_enhance_all_resistance"
+                | "enhance_weapon_damage_addon" | "enhance_weapon_max_damage_addon" | "enhance_weapon_magic_addon"
+                | "enhance_weapon_max_magic_addon" => EntreDois,
+                "IA_EA_ESS_SCALE" | "item_armor_scale_enhance_resistance" | "reduce_require_addon"
+                | "enhance_attack_range_addon_2arg" => FloatEntreDois,
+                "enhance_weapon_speed_addon" | "enhance_attack_speed_addon" => VinteAvos,
+                "item_armor_enhance_resistance_addon_2" => TresPontos,
+                "item_armor_enhance_resistance_addon" | "item_armor_enhance_resistance_addon_3" | "item_armor_specific_addon"
+                | "item_decoration_specific_damage_addon" | "item_decoration_specific_magic_damage_addon"
+                | "item_decoration_magic_resistance_addon" | "item_skill_addon" | "item_skill_addon_2" => ComoEstao(2),
+                "item_rebound_skill_addon" | "item_rebound_skill_addon2" => ComoEstao(3),
+                "enhance_durability_addon" | "enhance_durability_addon_point" | "enhance_weapon_attack_range"
+                | "item_decoration_scale_enhance_damage" | "item_decoration_scale_enhance_magic_damage"
+                | "query_other_property_addon" | "enhance_mount_speed_addon" => ComoEstao(1),
+                "empty_addon" => ComoEstao(self.num_params.clamp(0, 3) as usize),
+                "item_addon_random" => ComoEstao(0),
+                _ => return None,
+            },
         })
+    }
+
+    /// `GenerateParam` com as escolhas dadas (`int` entre dois e `float` entre dois). O GS passa
+    /// o sorteio; o painel, o máximo (o "valor do id").
+    pub fn gerar_com(&self, int: &mut dyn FnMut(i32, i32) -> i32, flt: &mut dyn FnMut(f32, f32) -> f32) -> Option<Vec<i32>> {
+        use Sorteio::*;
+        let p = self.params;
+        let pc = |v: i32| (como_float(v) * 100.0 + 0.1) as i32;
+        let sg = |v: i32| (como_float(v) * 20.0 + 0.1) as i32;
+        let mut args = match self.sorteio()? {
+            Ponto => vec![p[0]],
+            EntreDois => vec![int(p[0], p[1])],
+            Porcento => vec![pc(p[0])],
+            EntreDoisPorcento => vec![int(pc(p[0]), pc(p[1]))],
+            Segundo => vec![sg(p[0])],
+            EntreDoisSegundos => vec![int((como_float(p[0]) * 20.0) as i32, (como_float(p[1]) * 20.0) as i32)],
+            VinteAvos => {
+                let v = como_float(p[0]);
+                // `enhance_attack_speed_addon`: `if(speed <= -1 || speed > 1) return -1;`
+                if v <= -1.0 || v > 1.0 {
+                    return None;
+                }
+                vec![(v * 20.0) as i32]
+            }
+            FloatEntreDois => vec![flt(como_float(p[0]), como_float(p[1])).to_bits() as i32],
+            TresPontos => vec![int(p[0] - p[2], p[0] + p[2]), int(p[1] - p[2], p[1] + p[2])],
+            Refino => vec![p[0], 0],
+            ComoEstao(n) => p[..n.min(3)].to_vec(),
+        };
+        // `temporary_addon_template`: `data.arg[1] = 0xFFFF` (a data de expirar), 2 parâmetros
+        // (`item_addon.cpp:1318-1329`).
+        if self.marca("temporario") {
+            args.truncate(1);
+            args.push(0xFFFF);
+        }
+        Some(args)
+    }
+
+    /// O valor do id: o `GenerateParam` com o máximo de cada faixa.
+    pub fn valor_do_id(&self) -> Option<Vec<i32>> {
+        self.gerar_com(&mut |a, b| a.max(b), &mut |a: f32, b: f32| a.max(b))
+    }
+
+    fn valor_minimo(&self) -> Option<Vec<i32>> {
+        self.gerar_com(&mut |a, b| a.min(b), &mut |a: f32, b: f32| a.min(b))
+    }
+
+    /// A faixa do primeiro argumento (`min`, `max`) que o `GenerateParam` sortearia.
+    pub fn faixa(&self) -> Option<(i32, i32)> {
+        Some((*self.valor_minimo()?.first()?, *self.valor_do_id()?.first()?))
+    }
+
+    pub fn edicao(&self) -> Edicao {
+        if self.tratador.starts_with("refine_") || self.marca("refino") || self.marca("pedra") || self.marca("temporario") {
+            return Edicao::ForaDaBusca;
+        }
+        if self.marca("conjunto") || self.marca("float") {
+            return Edicao::Fixo;
+        }
+        let tipo = self.classe().map(|c| c.tipo.as_str()).unwrap_or("");
+        match (tipo, self.sorteio()) {
+            ("POINT" | "DOUBLE_POINT" | "PERCENT" | "DOUBLE_PERCENT", _) | (_, Some(Sorteio::EntreDois)) => Edicao::Editavel,
+            _ => Edicao::Fixo,
+        }
+    }
+
+    /// `true` quando o valor é uma porcentagem inteira (`PERCENT`, `DOUBLE_PERCENT`).
+    pub fn em_porcento(&self) -> bool {
+        matches!(self.sorteio(), Some(Sorteio::Porcento | Sorteio::EntreDoisPorcento))
+    }
+
+    /// Os argumentos que o painel pode gravar: editável = o número de argumentos do id, com
+    /// qualquer valor; fixo = cada argumento dentro do que o `GenerateParam` daria.
+    pub fn aceita(&self, args: &[i32]) -> bool {
+        let (Some(min), Some(max)) = (self.valor_minimo(), self.valor_do_id()) else { return false };
+        if args.len() != max.len() {
+            return false;
+        }
+        if self.edicao() == Edicao::Editavel {
+            return true;
+        }
+        let float = matches!(self.sorteio(), Some(Sorteio::FloatEntreDois));
+        args.iter().zip(min.iter().zip(&max)).all(|(&v, (&a, &b))| {
+            if float {
+                let (v, a, b) = (como_float(v), como_float(a), como_float(b));
+                v >= a.min(b) && v <= a.max(b)
+            } else {
+                v >= a.min(b) && v <= a.max(b)
+            }
+        })
+    }
+
+    /// O efeito pode entrar numa peça desta família.
+    pub fn serve_em(&self, familia: Familia) -> bool {
+        self.familias.map_or(true, |f| f[familia as usize])
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct TabelaDeAddons {
     pub por_id: HashMap<u32, DadosDoAddon>,
+    /// B209 — `set_addon_manager::LoadTemplate` (`gs/item/set_addon.cpp:5-48`): cada peça
+    /// (`SUITE_ESSENCE.equipments[12]`) com a lista de efeitos do conjunto (`addons[11]`), que o
+    /// `equip_item::OnActivate` ativa junto com os da peça (`_extra_addon`, `equip_item.cpp:703-735`).
+    pub conjuntos: HashMap<u32, Vec<u32>>,
+}
+
+/// `set_equip_addon<N, BASE>` (`item_addon.cpp:1194-1232`): `(N, tratador base)` de um tratador
+/// `SET_ADDON_MACRO(N,BASE)`.
+pub fn conjunto_de(tratador: &str) -> Option<(i32, &str)> {
+    let resto = tratador.strip_prefix("SET_ADDON_MACRO(")?.strip_suffix(')')?;
+    let (n, base) = resto.split_once(',')?;
+    Some((n.trim().parse().ok()?, base.trim()))
 }
 
 impl TabelaDeAddons {
@@ -87,17 +283,65 @@ impl TabelaDeAddons {
                 let i = |n: &str| r.get(n).and_then(|v| v.as_i32()).unwrap_or(0);
                 let id = i("ID") as u32;
                 let tratador = tratadores.get(&id)?.clone();
-                Some((id, DadosDoAddon { tratador, num_params: i("num_params"), params: [i("param1"), i("param2"), i("param3")] }))
+                Some((id, DadosDoAddon { tratador, num_params: i("num_params"), params: [i("param1"), i("param2"), i("param3")], familias: None }))
             })
             .collect();
-        Self { por_id }
+        let mut conjuntos: HashMap<u32, Vec<u32>> = HashMap::new();
+        for r in elements.get("SUITE_ESSENCE") {
+            let i = |n: &str| r.get(n).and_then(|v| v.as_i32()).unwrap_or(0);
+            let lista: Vec<u32> = (1..=11).map(|k| i(&format!("addons_{k}_id"))).filter(|id| *id > 0).map(|id| id as u32).collect();
+            if lista.is_empty() {
+                continue;
+            }
+            for k in 1..=12 {
+                let peca = i(&format!("equipments_{k}_id"));
+                if peca > 0 {
+                    conjuntos.entry(peca as u32).or_default().extend(lista.iter().copied());
+                }
+            }
+        }
+        Self { por_id, conjuntos }
+    }
+
+    /// B209 — a família de cada efeito, nesta ordem de evidência:
+    /// 1. essência: a do `DT_xxx_ESSENCE` da classe (o `GenerateParam` devolve -1 nas outras);
+    /// 2. as famílias cujas essências deste realm sorteiam o id (`addons`, `rands`, `uniques`);
+    /// 3. a união das famílias dos outros ids do mesmo tratador neste realm;
+    /// 4. sem evidência: todas.
+    pub fn ligar_familias(&mut self, geracao: &TabelaDeGeracao) {
+        let mut por_id: HashMap<u32, [bool; 3]> = HashMap::new();
+        for m in geracao.values() {
+            for (id, _) in m.addons.iter().chain(&m.addons_da_producao).chain(&m.unicos) {
+                if *id > 0 {
+                    por_id.entry(*id).or_default()[m.familia as usize] = true;
+                }
+            }
+        }
+        let mut por_tratador: HashMap<String, [bool; 3]> = HashMap::new();
+        for (id, a) in &self.por_id {
+            if let Some(f) = por_id.get(id) {
+                let u = por_tratador.entry(a.tratador.clone()).or_default();
+                for k in 0..3 {
+                    u[k] |= f[k];
+                }
+            }
+        }
+        for (id, a) in self.por_id.iter_mut() {
+            let fonte = a.classe().and_then(|c| c.familia_no_fonte.as_deref()).and_then(|f| match f {
+                "arma" => Some([true, false, false]),
+                "armadura" => Some([false, true, false]),
+                "acessorio" => Some([false, false, true]),
+                _ => None,
+            });
+            a.familias = fonte.or_else(|| por_id.get(id).copied()).or_else(|| por_tratador.get(&a.tratador).copied());
+        }
     }
 }
 
 /// A família do equipamento gerado.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Familia {
-    Arma,
+    Arma = 0,
     Armadura,
     Decoracao,
 }
@@ -219,5 +463,38 @@ mod testes {
         let a: Arquivo = serde_json::from_str(ADDONS_155_JSON).unwrap();
         assert!(a.tratadores.len() > 2900);
         assert_eq!(a.tratadores["1497"], "refine_damage");
+    }
+
+    fn addon(id: u32, num: i32, params: [i32; 3]) -> DadosDoAddon {
+        let a: Arquivo = serde_json::from_str(ADDONS_155_JSON).unwrap();
+        DadosDoAddon { tratador: a.tratadores[&id.to_string()].clone(), num_params: num, params, familias: None }
+    }
+
+    /// B209: o valor do id e a edição pelo tipo de parâmetro, com os ids do teste da RT.
+    #[test]
+    fn valor_do_id_e_edicao_pelo_tipo_de_parametro() {
+        assert!(classificacao().len() > 240, "todos os tratadores classificados");
+        // 1317 `enhance_attack_addon_2` = DOUBLE_POINT 118–118.
+        let acerto = addon(1317, 2, [118, 118, 0]);
+        assert_eq!((acerto.valor_do_id(), acerto.edicao(), acerto.faixa()), (Some(vec![118]), Edicao::Editavel, Some((118, 118))));
+        assert!(acerto.aceita(&[999]) && !acerto.aceita(&[1, 2]));
+        // 286 `enhance_speed_addon` = PERCENT 0,05 → 5.
+        let corrida = addon(286, 1, [0.05f32.to_bits() as i32, 0, 0]);
+        assert_eq!((corrida.valor_do_id(), corrida.edicao(), corrida.em_porcento()), (Some(vec![5]), Edicao::Editavel, true));
+        // 332 `reduce_cast_time_addon` = PERCENT 0,03 → 3.
+        assert_eq!(addon(332, 1, [0.03f32.to_bits() as i32, 0, 0]).valor_do_id(), Some(vec![3]));
+        // 2029 `enhance_attack_degree` = POINT 1.
+        assert_eq!(addon(2029, 1, [1, 0, 0]).valor_do_id(), Some(vec![1]));
+        // 831: essência de arma, editável, família pelo fonte.
+        let a831 = addon(831, 2, [94, 94, 0]);
+        assert_eq!(a831.edicao(), Edicao::Editavel);
+        assert_eq!(a831.classe().and_then(|c| c.familia_no_fonte.as_deref()), Some("arma"));
+        // `item_skill_addon`: dois argumentos como estão, fixo.
+        let hab = DadosDoAddon { tratador: "item_skill_addon".into(), num_params: 2, params: [100, 3, 0], familias: None };
+        assert_eq!((hab.valor_do_id(), hab.edicao()), (Some(vec![100, 3]), Edicao::Fixo));
+        assert!(hab.aceita(&[100, 3]) && !hab.aceita(&[100, 9]));
+        // Todo tratador classificado tem sorteio.
+        let sem: Vec<&String> = classificacao().keys().filter(|t| DadosDoAddon { tratador: (*t).clone(), ..Default::default() }.sorteio().is_none()).collect();
+        assert!(sem.is_empty(), "sem sorteio: {sem:?}");
     }
 }

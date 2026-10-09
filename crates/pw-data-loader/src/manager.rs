@@ -108,6 +108,15 @@ impl fmt::Display for RelatorioDeCarga {
     }
 }
 
+/// `ITEM_PROC_TYPE_*` (`gs/item.h:309-326`) usados no vínculo. B201.
+pub const PROC_SEM_SOLTAR: i32 = 0x0001;
+pub const PROC_SEM_JOGAR: i32 = 0x0002;
+pub const PROC_SEM_VENDER: i32 = 0x0004;
+pub const PROC_SEM_TROCAR: i32 = 0x0010;
+pub const PROC_VINCULA_AO_VESTIR: i32 = 0x0040;
+pub const PROC_VINCULADO: i32 = 0x8000;
+
+
 /// Gerenciador Central de Dados de Jogo (Carregado na inicialização do World Server)
 #[derive(Debug, Clone, Default)]
 pub struct GameDataManager {
@@ -230,6 +239,9 @@ pub struct GameDataManager {
     /// local do cliente tem, ele rejeita a instância e o mundo nunca termina de carregar
     /// (achado em 2026-09-03, cliente 1.5.5 real: "regionset timestamp error").
     pub region_timestamps: HashMap<i32, u32>,
+    /// As caixas de transporte de `<mapa>/region.sev` (os portais de região, B208), na ordem do
+    /// índice que o cliente manda no `ENTER_INSTANCE`. Ver [`crate::regioes`].
+    pub caixas_de_transporte: HashMap<i32, Vec<crate::regioes::CaixaDeTransporte>>,
     /// `dwTimeStamp` de `<mapa>/precinct.sev`, mesma história do campo acima.
     pub precinct_timestamps: HashMap<i32, u32>,
     /// Os distritos de cada mapa, com o ponto de cidade onde se renasce — ver
@@ -274,6 +286,14 @@ pub struct GameDataManager {
     /// Recarga, conjuração e custo de aprender de cada habilidade — ver
     /// [`crate::habilidades`]. Só o 1.5.5 tem tabela; nas outras versões fica vazia.
     pub habilidades: crate::habilidades::TabelaDeHabilidades,
+    /// A reputação que a peça exige para ser vestida (`require_reputation` de `WEAPON_`,
+    /// `ARMOR_` e `DECORATION_ESSENCE`, `get_item_reputation_limit`, `itemdataman.cpp:1911-1930`);
+    /// só os não nulos. O v7 (1.2.6) não tem o campo: fica vazio. B202.
+    pub reputacao_exigida: HashMap<u32, i32>,
+    /// O `proc_type` do molde de cada item (só os não nulos). B201.
+    pub proc_types: HashMap<u32, i32>,
+    /// Os bilhetes de troca de rosto (`FACETICKET_ESSENCE`): id → `require_level`. B199.
+    pub bilhetes_de_rosto: HashMap<u32, i32>,
     /// Templates de ovos de mascote (`PET_EGG_ESSENCE`).
     pub ovos_de_pet: HashMap<u32, crate::pet::DadosDoOvoDePet>,
     /// Os modelos de mascote (`pet_dataman`), com as fórmulas de atributo — ver
@@ -533,6 +553,7 @@ impl GameDataManager {
             self.cartas_de_general = crate::cartas_de_general::carregar(g);
             self.addons = crate::addons::TabelaDeAddons::carregar(g);
             self.geracao = crate::addons::carregar_geracao(g);
+            self.addons.ligar_familias(&self.geracao);
             self.pedras = g
                 .get("STONE_ESSENCE")
                 .iter()
@@ -544,6 +565,23 @@ impl GameDataManager {
             self.refino = crate::refino::carregar(g);
             self.posicoes = crate::posicoes::carregar(g);
             self.ovos_de_pet = crate::pet::carregar_ovos(g);
+            self.proc_types = crate::pet::carregar_proc_types(g);
+            self.reputacao_exigida = ["WEAPON_ESSENCE", "ARMOR_ESSENCE", "DECORATION_ESSENCE"]
+                .iter()
+                .flat_map(|t| g.get(t).iter())
+                .filter_map(|r| {
+                    let i = |n: &str| r.get(n).and_then(|v| v.as_i32()).unwrap_or(0);
+                    (i("ID") > 0 && i("require_reputation") > 0).then(|| (i("ID") as u32, i("require_reputation")))
+                })
+                .collect();
+            self.bilhetes_de_rosto = g
+                .get("FACETICKET_ESSENCE")
+                .iter()
+                .filter_map(|r| {
+                    let i = |n: &str| r.get(n).and_then(|v| v.as_i32()).unwrap_or(0);
+                    (i("ID") > 0).then(|| (i("ID") as u32, i("require_level")))
+                })
+                .collect();
             self.modelos_de_mascote = crate::pet::carregar_modelos(g);
             self.comidas_de_mascote = crate::pet::carregar_comidas(g);
             self.itens_de_missao = crate::pet::carregar_itens_de_missao(g);
@@ -741,6 +779,31 @@ impl GameDataManager {
             campo("mp_add_time"),
             campo("cool_time"),
         ))
+    }
+
+    /// O `proc_type` da instância (o `state` do `OWN_ITEM_INFO`, `self_item_info::proc_type`,
+    /// `common/protocol.h:1310-1326`): o do molde e, se a peça está vinculada (`bind_status`), o
+    /// que o original faz ao vestir uma peça `ITEM_PROC_TYPE_BIND2` — liga `NODROP`, `NOTHROW`,
+    /// `NOSELL`, `NOTRADE` e `BIND` e desliga o `BIND2` (`gs/player.cpp:8182-8191`; bits em
+    /// `gs/item.h:309-326`). O cliente mostra "vinculado" pelo `BIND`. B201.
+    pub fn proc_type_da_instancia(&self, item_id: u32, vinculado: bool) -> i32 {
+        let molde = self.proc_types.get(&item_id).copied().unwrap_or(0);
+        if vinculado {
+            (molde | PROC_SEM_SOLTAR | PROC_SEM_JOGAR | PROC_SEM_VENDER | PROC_SEM_TROCAR | PROC_VINCULADO) & !PROC_VINCULA_AO_VESTIR
+        } else {
+            molde
+        }
+    }
+
+    /// O molde vincula a peça ao vesti-la (`ITEM_PROC_TYPE_BIND2`). B201.
+    pub fn vincula_ao_vestir(&self, item_id: u32) -> bool {
+        self.proc_types.get(&item_id).is_some_and(|p| p & PROC_VINCULA_AO_VESTIR != 0)
+    }
+
+    /// O `require_level` de um `FACETICKET_ESSENCE` (o bilhete de troca de rosto); `None` se o
+    /// item não é um. Os layouts v7 (1.2.6) e v156/v159 (1.5.5) têm o campo. B199.
+    pub fn nivel_do_bilhete_de_rosto(&self, item_id: u32) -> Option<i32> {
+        self.bilhetes_de_rosto.get(&item_id).copied()
     }
 
     /// O `cool_time` (ms) de um `REVIVESCROLL_ESSENCE` — o que o `ResurrectByItem` arma na
@@ -1042,9 +1105,15 @@ impl GameDataManager {
             match ler_timestamp_region_sev(&data) {
                 Ok(ts) => {
                     self.region_timestamps.insert(world_id, ts);
-                    rel.lidos.push(region_nome);
+                    rel.lidos.push(region_nome.clone());
                 }
                 Err(e) => rel.falhou(&region_nome, e),
+            }
+            match crate::regioes::ler_caixas_de_transporte(&data) {
+                Ok(c) => {
+                    self.caixas_de_transporte.insert(world_id, c);
+                }
+                Err(e) => rel.falhou(&format!("{region_nome} (caixas de transporte)"), e),
             }
         }
 
@@ -1244,5 +1313,21 @@ mod testes_do_gshop {
         assert_eq!(m.gshop.timestamp, 0);
         assert_eq!(m.gshop2.timestamp, 0);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod testes_do_vinculo {
+    use super::*;
+
+    /// B201: vinculada, a peça `BIND2` vira `BIND` com os quatro "não" (`player.cpp:8182-8191`).
+    #[test]
+    fn o_proc_type_vinculado_segue_o_original() {
+        let mut d = GameDataManager::new();
+        d.proc_types.insert(10, PROC_VINCULA_AO_VESTIR | 0x0100);
+        assert!(d.vincula_ao_vestir(10) && !d.vincula_ao_vestir(11));
+        assert_eq!(d.proc_type_da_instancia(10, false), 0x0140);
+        assert_eq!(d.proc_type_da_instancia(10, true), 0x0100 | 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x8000);
+        assert_eq!(d.proc_type_da_instancia(11, false), 0);
     }
 }

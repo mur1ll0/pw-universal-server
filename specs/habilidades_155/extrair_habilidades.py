@@ -393,10 +393,15 @@ def extrair(caminho):
     h["eventflag"] = escalar(texto, "eventflag") or 0
     if h["eventflag"] == EVENT_CHANGE:
         h["ao_mudar_de_forma"] = roteiro(texto, "TakeEffect")
+    elif h["eventflag"] in (EVENT_RESET, EVENT_WIELD, EVENT_ENTER):
+        # B203: as passivas comuns — `EventReset` (sempre), `EventWield` (com a classe da arma) e
+        # `EventEnter` (por mundo), `skillwrapper.cpp:612-730`, aplicadas na entrada (`:1261-1264`).
+        h["efeito_passivo"] = roteiro(texto, "TakeEffect")
     return h
 
 
 EVENT_CHANGE = 4  # `cskill/skill/skill.h`, `EVENT_CHANGE`
+EVENT_RESET, EVENT_WIELD, EVENT_ENTER = 1, 2, 8  # `cskill/skill/skill.h:74-77`
 
 
 def main():

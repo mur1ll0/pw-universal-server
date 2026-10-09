@@ -125,10 +125,18 @@ pub struct HabilidadeDoServidor {
     /// (`UndoEffect` = o mesmo com `enable` falso). As da raposa: 323 e 324 (B122).
     #[serde(default)]
     pub ao_mudar_de_forma: Option<Vec<(String, String, String)>>,
+    /// O `TakeEffect` das passivas comuns — `EVENT_RESET` (sempre), `EVENT_WIELD` (com a classe da
+    /// arma) e `EVENT_ENTER` (por mundo), `skillwrapper.cpp:612-730`. B203.
+    #[serde(default)]
+    pub efeito_passivo: Option<Vec<(String, String, String)>>,
 }
 
 /// `EVENT_CHANGE` (`cskill/skill/skill.h:76`).
 pub const EVENT_CHANGE: i32 = 4;
+/// `EVENT_RESET`, `EVENT_WIELD` e `EVENT_ENTER` (`cskill/skill/skill.h:74-77`). B203.
+pub const EVENT_RESET: i32 = 1;
+pub const EVENT_WIELD: i32 = 2;
+pub const EVENT_ENTER: i32 = 8;
 
 /// `GetPraydistance` = `arma × attack_range + fixo[nível]` (`GetRange()`,
 /// `playerwrapper.h:95`).
@@ -445,6 +453,7 @@ mod tests {
             em_si: None,
             eventflag: None,
             ao_mudar_de_forma: None,
+            efeito_passivo: None,
         };
         assert_eq!(h.recarga_armada_ms(1), Some(2000));
     }

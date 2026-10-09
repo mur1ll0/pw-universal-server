@@ -58,12 +58,12 @@ fn o_realm_126_carrega_sem_falha() {
     assert!(falhas.is_empty(), "{falhas:?}");
 }
 
-/// As três falhas do 155 são dos próprios arquivos: `a46/npcgen.data` e `a50/precinct.sev`
-/// terminam antes do que declaram.
+/// O 155 carrega sem falha: os dois arquivos vazios do `home155` (`a46/npcgen.data`,
+/// `a50/precinct.sev`) foram trocados pelos do `pwserver_155v156` no B211.
 #[test]
-fn o_realm_155_carrega_so_com_as_falhas_dos_arquivos_truncados() {
+fn o_realm_155_carrega_sem_falhas() {
     let Some((falhas, _)) = conferir("realm_155") else { return };
-    assert!(falhas.iter().all(|f| f.contains("a46/npcgen.data") || f.contains("a50/precinct.sev")), "{falhas:?}");
+    assert!(falhas.is_empty(), "{falhas:?}");
 }
 
 /// B102 — o catálogo do realm (`data/<realm>/catalogo/`) vale no lugar do embutido: layout do

@@ -349,6 +349,14 @@ def main(caminho_gs: str) -> None:
             m["allow_forms"] = forma
         m["eventflag"] = evento
         m.pop("ao_mudar_de_forma", None)
+        m.pop("efeito_passivo", None)
+        if evento in (1, 2, 8):
+            # B203: o `TakeEffect` das passivas comuns (`EVENT_RESET` 1, `EVENT_WIELD` 2,
+            # `EVENT_ENTER` 8, `cskill/skill/skill.h:74-77`), executado no `gs` 1.2.6.
+            rot, sit = gerador.gerar(funcoes[int(sid)].get("TakeEffect"), m.get("max_level") or 1,
+                                     base.get("efeito_passivo"))
+            m["efeito_passivo"] = rot
+            situacoes["efeito_passivo " + sit.split(" (")[0]] += 1
         if evento == EVENT_CHANGE:
             # O `TakeEffect` que o `SkillWrapper::EventChange` roda ao entrar na forma de classe.
             rot, sit = gerador.gerar(funcoes[int(sid)].get("TakeEffect"), m.get("max_level") or 1,
