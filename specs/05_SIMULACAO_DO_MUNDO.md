@@ -61,7 +61,12 @@ habilidades, itens, `sec_level`.
   `iRefreshLower` e 15 s + `iRefresh` (`BASE_REBORN_TIME`, `npcgenerator.cpp:3355`,
   `3841-3855`), contado da volta ao gerador, **num ponto novo da área** (`Reborn` →
   `GeneratePos`/`GenDir`) e anunciado com `NPC_ENTER_WORLD` (16) a quem está a 120 m — o corpo
-  "levanta" noutro lugar, como no original. **Filtros (B132):** toda morte de monstro (golpe
+  "levanta" noutro lugar, como no original. **Área sem `bAutoRevive` não renasce** (B205): o
+  `SetRespawn(area.bAutoRevive)` (`npcgenerator.cpp:3734`) faz o `Reclaim` devolver falso
+  (`:3312-3317`; minas `:4945-4950`) — é o chefe de masmorra. Medido no `realm_155`: as 38 criaturas
+  da Caverna das Sombras (a69, entre elas os 6 Cavaleiros Negros 45818) e parte das de outras
+  masmorras; o mundo aberto (a01) e todo o `realm_126` renascem. `falta`: o ciclo da instância
+  (o original recria a masmorra quando ela fecha); aqui ela só volta ao recarregar o mapa (B183). **Filtros (B132):** toda morte de monstro (golpe
   normal, habilidade, dano no tempo, `matar_monstro`) passa por `Efeitos::ao_morrer`
   (`gnpc_imp::OnDeath`), e o renascimento tira as maldições (`Efeitos::ao_renascer`,
   `gnpc_imp::Reborn` → `ClearSpecFilter(FILTER_MASK_DEBUFF)`, `npc.cpp:1978`) — antes o
@@ -103,7 +108,7 @@ Regras de `gs/aipolicy.cpp`, `gs/ainpc.cpp`, `gs/npcsession.cpp`:
 | vida do monstro (B128) | `testado`. `gnpc_imp::OnHeartbeat` (`npc.cpp:1946-1958`): em combate regenera `hp_regenerate` por batimento; **fora de combate enche a vida inteira** (quando `hp_regenerate ≠ 0`). Antes do B128 o monstro nunca recuperava vida |
 | voltar | sem alvo, corre ao nascimento, passo de 1 s (`ai_returnhome_task` → `session_npc_patrol`, `follow_target` com alcance 0,8 m); acaba a **1,2 passo** de casa; se ao fim estiver a mais de **10 m** (`GetReturnHomeRange`), `ReturnHome`: parada em casa com `MOVE_MODE_RETURN` (7) e velocidade 0x500 (B99) |
 | desvio de obstáculo (monstro de chão) | `navegacao.rs`, porte de `cgame/gs/pathfinding`: perseguir e voltar = `CNPCDisperseChaseOnGroundAgent` sobre o `CNPCChaseOnGroundNoBlockAgent` (`CHASE_WITHOUT_BLOCK`): reta se o `.rmap` deixa; senão reta até o último pixel livre + busca gulosa `CPf2DBfs` (Manhattan, 8 vizinhos) em fatias de 20/40/60 pixels (50/90/120 bloqueado) pela distância inicial, teto 300/600/900; meta **dispersa** ±60° a `alcance` do alvo (`CChaseInfo` guarda a direção). Condutor = `session_npc_follow_target::Run`: recomeça ao chegar (alcance × 0,6) ou se o alvo se afastar > 7 m (> 4 m sem bloqueio); 3 chegadas ou agente desistindo encerram a sessão. Passear = `CNPCRambleOnGroundAgent`: meta no disco de 10 m, alcançável e de preferência em reta, e o `CNPCChaseOnGroundAgent` (lista aberta de 30 nós, 200 pixels, previsão diagonal). No mapa 161: reta 24% dos passos dentro de obstáculo, agente 0% (B99). Água/ar: ainda reta |
-| passear | só com jogador a menos de `RAIO_DE_ATIVIDADE` 120 m (renovado por 20 batimentos de 1 s), com `patroll_mode`, sem ódio: anda (`walk_speed`, passo de 1 s) até ponto a **10 m** do nascimento, no máximo 8 passos; 10% de emendar outro |
+| passear | só com jogador a menos de `RAIO_DE_ATIVIDADE` 120 m (renovado por 20 batimentos de 1 s), com `patroll_mode`, sem ódio: anda (`walk_speed`, passo de 1 s) até ponto a **10 m** do nascimento, no máximo 8 passos; 10% de emendar outro. **Monstro de água ou de ar (B211)** passeia com o `CNPCRambleInWaterAgent`/`OnAirAgent` (`NPCMoveAgent.cpp:62-86`): meta = centro + deslocamento uniforme de ±raio em x, y e z (`GeneratePosInMoveRange`, `NPCMove.h:556-588`), `ClampUpTerrain(meta, 2)`, e o agente de perseguição do ambiente (`SeguirNoEspaco`, entre `terreno + 0,2` e `água − 0,2`). Antes andava com o de chão e subia ao piso do `movemap` |
 | patrulhar a rota (B136) | `testado`. Gerador com `iPathID` que existe no `path.sev` (spec 03 §3.6f, ≥ 2 pontos): sem tarefa e fora de combate, **em vez** do passeio, o próximo ponto vira um `ai_patrol_task` (`aipolicy.cpp:320-335`; laço pelo `iLoopType`: 0 para no fim, 1 vai e volta, 2 recomeça — `patrol_agent.h:52-99`). A `session_npc_patrol` (`npcsession.cpp:883-994`) dá **um passo por segundo** (`NPC_PATROL_TIME`), `walk_speed` (ou `run_speed` com o `iSpeedFlag`), com o agente de chão (meta 0,8 m); perto do ponto (`1,44 × passo²`, meta seguinte 1,8 m) ou com o agente na meta pega o seguinte, e dura até 120 passos. Sem sair do lugar, vai de uma vez ao ponto (`ReturnHome(_target, 0)`). Também para sem ninguém a 120 m (`_idle_mode`). No `RollBack` volta ao **ponto atual da rota**, não ao gerador (`aipolicy.cpp:214-220`). Diferença conhecida: no original o passo da patrulha do monstro de ar/água sai sem a máscara de ambiente (`mode \| _is_run ? RUN : WALK`, precedência), aqui sai com ela; o de ar/água patrulha em reta |
 | grupo e chefe (B136) | `testado`. Área com `iGroupType` 1 (`group_spawner`) ou 2 (`boss_spawner`): o gerador 0 é o **líder** (uma cópia); os outros nascem no círculo de 7 m em volta dele (`sctab`, `npcgenerator.cpp:5232-5251`) e têm `lider`. O subordinado sem tarefa, com o líder vivo, faz o `ai_follow_master` (`aipolicy.cpp:1519-1583`, distância **horizontal**): ≥ 20 m (`MAX_MASTER_MINOR_RANGE` 400 ao quadrado) vai de uma vez para até 7 m dele (`ReturnHome`, parada `MOVE_MODE_RETURN`); ≥ 8 m corre atrás dele (500 ms, até ficar a menos de 7 m); perto, passeia em volta dele (raio 7, 6 passos). Com o líder vivo não volta para casa (`GetReturnHomeRange` 1e20); com o líder morto, age como monstro solto. O chefe (2) repassa o primeiro da lista de ódio, quando muda, aos subordinados (`TryForwardAggro` → `GM_MSG_TRANSFER_AGGRO`; `aggro_minor_policy::AggroTransfer` troca a lista inteira). O subordinado morto **só renasce com o líder**, em volta dele, se o corpo já sumiu (`group_spawner::OnHeartbeat`/`Reclaim`). Ex.: Carniçal Sanguinário (3885, rota 486539715 em laço) com 2 Fantasmas Malignos (1579) no mapa 1 do 1.2.6 |
 | fase do batimento | **sorteada por monstro** (`MonsterAi::new`): o batimento de 1 s e o passo de patrulha começam em pontos diferentes do segundo, porque o original não bate em todos ao mesmo tempo — o coletor pega `tamanho / TICK_PER_SEC` objetos por tique (`objmanager.h:213-229`, `worldmanager.h:262`) e cada NPC nasce com `idle_timer_count = Rand(0, NPC_IDLE_HEARTBEAT)` (`npcgenerator.cpp:2014`). Sem isso, dez monstros davam o passo no mesmo quadro e o cliente tocava dez sons de passo sobrepostos (B58) |
@@ -258,10 +263,54 @@ janela do personagem mostra em verde, `DlgCharacter.cpp:442-470` — B54)
 resistências, graus, crítico, `%` de dano/mágico/resistência). **Refino e pedras** são addons
 da mesma lista (`refine_*` com o valor já multiplicado pelo nível; pedra com `0x8000`), então
 entram pelo mesmo caminho. Com o `realm_155`: 5.231 peças com addon em 9.000 sorteios, 3.553
-com bônus somado. `falta`: serviços de refinar/incrustar/fazer furo, addons de habilidade
-(`item_skill_addon`), de conjunto (`SET_ADDON_MACRO`), redução de conjuração, penetração e o
-índice de velocidade aleatório da arma (`WEAPON_SUB_TYPE.probability_fastest`) — sem porte
-vão ao log `veste addons sem porte`.
+com bônus somado.
+
+**B209 — `confirmado` em jogo (2026-10-08, Tsuko no 1.5.5: "os atributos agora parecem funcionar").** O drop gera os argumentos de **todos** os tratadores
+(spec 03 §3.10c). Somam ao vestir, além dos acima: os `_1arg`/`_2arg` dos mesmos campos;
+penetração, resiliência, vigor (`GetVigour` = `min(_vigour_base + _vigour_en, 1500)`; sem modelo do
+`_vigour_base`, só os addons), anti-defesa e anti-resistência (vão à ficha, spec 04 — o combate ainda
+não os usa); `_en_percent` de vida, mana, precisão, defesa e velocidade (`enhance_speed_addon`), por
+elemento (`enhance_resistanceN_scale_addon`) e `_en_point` por elemento e de regeneração; velocidade em
+ponto (`enhance_speed_addon_point`: `base × (100 + %)/100 + ponto`, ponto acima de 3 vira 3 e acima de 5
+vira 0, `playertemplate.h:1077-1093`); **conjuração** (`reduce_cast_time_addon*` → `DecPrayTime`): o
+`prayspeed` (passivas + addons, `PlayerEntity::velocidade_de_conjuracao`) reduz o tempo das habilidades
+que não são de carga para `(int)(t × 0,01 × (100 − prayspeed) + 0,01)`, `prayspeed` até 99
+(`cskill/skill/skill.cpp:809-815`, `skillwrapper.cpp:1154-1163`). Essências aditivas na geração e no
+painel: `IDMRA`/`IAERA2`/`IAERA3` (`resistance[x] += a0; resistance[y] -= a1`), todas as resistências
+de armadura e acessório, `item_armor_specific_addon` (defesa).
+
+**B210 — `testado` (falta ver em jogo).**
+
+| efeito | regra (fonte) |
+| :--- | :--- |
+| conjunto (`SET_ADDON_MACRO(N,BASE)`, 311 ids) | `set_addon_manager::LoadTemplate` (`set_addon.cpp:5-48`) liga a cada peça do `SUITE_ESSENCE` (`equipments[12]`) a lista `addons[11]`, ativada junto com os efeitos da peça (`equip_item.cpp:703-735`); `ActivateSetAddon(id)` conta as peças vestidas por id (`actobject.h:526-535`) e o `BASE` age **uma vez** quando a conta chega a N (`item_addon.cpp:1194-1232`). `TabelaDeAddons::conjuntos` + contador em `Equipamento::dos_itens_com_addons`; argumentos da lista = valor do id (o original sorteia uma vez ao carregar; os do `realm_155` têm faixa única). 94 conjuntos conferidos |
+| habilidade do item (`item_skill_addon`/`_2`, não durativa) | `ActivateSkill` põe o `filter_Activateskill`/`2` (`skillwrapper.cpp`, `skillfilter.cpp:433-478`): a cada golpe normal que acerta, `dobless` → roteiro `em_si` em quem bate, `doenchant` → roteiro `no_alvo` no alvo (a `Probability` do roteiro dá a chance, 5% nas do `realm_155`). Um de cada tipo, o último vestido (`Equipamento::habilidades_do_item`, `habilidades_do_item_no_golpe`) |
+| penetração | no monstro atingido: dano × `1 + 3p/(p + 300)` (`npc.cpp:1770`, `playertemplate.h:485-488`) |
+| resiliência | no jogador atingido por monstro: × `1 − r/(r + nível do atacante)` (`player.cpp:9647-9650`); golpe de jogador não sofre |
+| anti-defesa/anti-resistência | os dos addons entram no `Golpe` do jogador (já tinham a regra) |
+| escala da peça (`enhance_damage/magic/defense/armor_scale_addon*`, `EPSA_EQ`) | o `_base_param_percent` da própria peça multiplica dano/mágico (arma) ou defesa/evasão (armadura) no `UpdateData` (`equip_item.cpp:956-968`, `1323-1333`) |
+| dano máximo em ponto (`enhance_max_damage/magic_addon*`) | só no máximo |
+| experiência % (`enhance_exp_addon`) | `exp += (int)(exp × % × 0,01 + 0,1)` no `ReceiveExp` (abate, mina, produção; não em missão — `player.cpp:2898-2903`) |
+| regeneração % (`enhance_hpgen/mpgen_scale_addon`) | `Result2(base + vit/5 + ponto, %, 0)` (`playertemplate.h:874-894`) |
+| velocidade de ataque (`enhance_attack_speed_addon`) | `_en_point.attack_speed -= arg` (ticks), no `Result(attack_speed, en_point, en_percent)` (`playertemplate.h:955-968`) |
+
+**B211 — `testado` (falta ver em jogo).**
+
+| efeito | regra (fonte) |
+| :--- | :--- |
+| pedras (`STONE_MAGIC_DMG_ADDON(x)`, `STONE_MAGIC_RES_ADDON(x)`, 120 ids) | `_en_point.addon_damage[x]` / `resistance[x]` (`item_addon.cpp:2509-2510`); o golpe normal leva `magic_damage[i]` entre `addon_damage[i]` baixo e alto (`actobject.cpp:838-842`, `playertemplate.h:987-988`) e a ficha os manda no `ROLEEXTPROP_ATK` (spec 04) |
+| rebote (`item_rebound_skill_addon*`) | `filter_Activatereboundskill::AdjustDamage` (`skillfilter.cpp:481-520`): ao levar dano de monstro, com a chance do efeito, o roteiro `no_alvo` da habilidade em si (alcance "em si", `tipo_de_area` 5) ou no atacante. Só as de roteiro (1573 limpar maldição + correr, 1575 regenerar + chi); recarga e período do `2` sem porte |
+| essências de escala (`IA_EA_ESS_SCALE`, `item_armor_scale_enhance_resistance`, `IAERA`, `item_decoration_scale_*`) | `ApplyAtGeneration` × `(1 + p)` em `float` (`item_addon_armor.cpp:85-146`, `:217-240`; `item_addon_decoration.cpp:91-128` — as duas de acessório mexem no **mágico**, como no original); tirar pelo painel divide e arredonda (±1 da truncagem) |
+| `scale_enhance_damage2`/`magic2` | escala da peça, como os `EPSA_EQ` do B210 |
+| alcance (`enhance_attack_range_addon_2arg`) | `+ _en_point.attack_range` (`playertemplate.h:946-954`) |
+
+`falta` (43 ids que a busca ainda oferece, marcados "ainda não age no jogo" no painel): habilidade de
+item durativa e as sem roteiro (o efeito está no código da habilidade, que não temos); poder da alma
+(`enhance_soulpower_addon`); durabilidade e requisito que só agem ao gerar (`enhance_durability_addon`,
+`reduce_require_addon`, `item_addon_random`); `query_other_property_addon`; `empty_addon` (nada, também no
+original). Fora da busca: velocidade de montaria (temporário). E ainda: `_vigour_base`, o índice de
+velocidade aleatório da arma (`WEAPON_SUB_TYPE.probability_fastest`), os serviços de refinar/incrustar/
+fazer furo. Sem porte vão ao log `veste addons sem porte`.
 
 ### 5.1.0 A habilidade tem duas fases — `testado` (B67)
 
@@ -584,7 +633,15 @@ sessão de golpe contra jogador (o golpe normal não mira jogador), marca no gol
   classe só valem as habilidades cujo `allow_forms` tem o bit `1 << GetForm()`
   (`skill.cpp:128`): 313–318 só na raposa, 312 nas duas, as comuns só fora; a recusa é
   `ERR_SKILL_NOT_AVAILABLE` (20). **Passivas de forma** (`SkillWrapper::EventChange`,
-  `skillwrapper.cpp:589-610`, B122): na forma de classe (raposa, Forma Sombria) valem as passivas
+  `skillwrapper.cpp:589-610`, B122). **Aura de Aço (77, B207):** o `filter_Ironshield` (`skillfilter.h:3922-3973`) está portado — buff único, ícone 65 (`HSTATE_IRONSHIELD`), `VSTATE_BLESSED`, defesa `+ratio×100`% —; antes saía como não portado e a habilidade era conjurada sem efeito (não era bloqueio de classe: `cls` 0 e `restrict_weapons` inclui 0, sem arma). **Passivas comuns** (B203, `efeitos::passivas_comuns`): as
+  `EVENT_RESET` valem sempre e as `EVENT_WIELD` com a classe da arma vestida (`id_major_type` =
+  `WeaponClass`), pelo `TakeEffect` do catálogo (`efeito_passivo`) no nível conhecido —
+  `Adddefence`/`Addresistance` (defesa/resistências `+100 × m`%), `Inccrit`, `Inchpgen`/`Incmpgen`
+  (pontos por batimento), `Incswim`, `Inc<arma>` (dano `+100 × inc`% com a arma certa),
+  `Inctalisman` (magia), `Inchitrate` (arco, precisão); somadas em `PlayerEntity::passivas_comuns`,
+  refeitas ao vestir, no `refazer_atributos` e ao aprender. `falta`: dano de habilidade por
+  elemento (`SetSkillInc`), `Addskilldamage`, redução por distância, invisibilidade, `Incrange`,
+  `Incfeather`, `Immunedrop`, `Reduceresurrectexplost` e as `EVENT_ENTER`. Na forma de classe (raposa, Forma Sombria) valem as passivas
   `EVENT_CHANGE` que o jogador conhece, pelo `TakeEffect` (`ao_mudar_de_forma` do catálogo) no nível
   dele — `Incswim` → nado +`100 × inc`% (`EnhanceSwimSpeed`; o `UpdateSpeed` refaz o nado com teto de
   15, `playertemplate.h:1104-1108`), `Incfight` → dano +`100 × inc`% (`EnhanceScaleDamage`),
@@ -656,7 +713,8 @@ sessão de golpe contra jogador (o golpe normal não mira jogador), marca no gol
 | painel de GM (Ctrl+G) | `testado` (2026-10-01, falta ver em jogo) | `bus_server/gm.rs`. B169: privilégio global reconciliado em sessões abertas; remoção limpa efeitos. Consumo de GM/GOTO/missões revalida conta/revisão/ban sob FOR SHARE (fora do mundo/tick). Cliente requer reentrada, sem recarga de auth online comprovada. Privilégio = `sec_level` > 0 (sem os bits por comando do `_gm_auth`); quem não é GM é ignorado calado. **Invencível** (205): `Efeitos::gm_invencivel`, sem prazo, dano zero (PvP inclusive), estado visível 49. **Invisível** (204): `Efeitos::gm_invisivel`, `PLAYER_LEAVE_WORLD` aos outros, fora da vista deles (o GM continua vendo todos), não golpeia (`DenyCmd(CMD_ATTACK)`), não é ferido (`target_faction = 0`); ao voltar, aparece para quem ele vê. Os monstros ainda o notam, como no original (o `WATCHING_YOU` não olha a invisibilidade de GM). **Ir até / chamar** (201/202): mapa e posição pelo roteador, `transportar` (troca de mapa inclusive). **Criar monstro** (208): só com `debug_command_mode = active`; `count` monstros a ±6 m (`CreateMinors`, `obj_interface.cpp:1990`), vida `life` s, sem ódio; `vis_id` e nome `falta`. **Criar item** (206) e **gerador** (207): `falta` |
 | sentar, gestos, roupa, zona segura | `confirmado` | O **modo roupa persiste** (B83): o `SWITCH_FASHION_MODE` grava o `charactermode` em `characters.character_mode` — pares `(chave, valor)` de `int32`, chave 1, e nada quando desligado (`GetPlayerCharMode`, `gs/player.cpp:12585-12612`) —, o login o relê, e ele viaja cru no `RoleInfo` da lista de personagens, que é de onde a **tela de seleção** decide desenhar roupa ou armadura (`CECLoginPlayer::Load`, `EC_LoginPlayer.cpp:172-189`). `voando` continua sem persistir, de propósito: quem relogar entra no chão **Sentado**, o `sit_down_filter` dobra a regeneração de vida e mana a partir do 2º batimento (`STAYIN_BONUS` 100, `gs/config.h:103`; igual no `gs` 1.2.6, VA 0x812ff22) — `testado` (B118) |
 | grupo | `testado` | estado de grupo no mundo (convite, aceite, recusa, saída) |
-| teleporte e troca de mapa | `testado` (B51) | `LongJump` (`player.cpp:8617`): mesmo mapa → posição, `NOTIFY_HOSTPOS` (14, 22 bytes: `pos, tag, line`) e o mundo em volta; outro mapa **do mesmo processo** → o roteador tira o jogador do mapa de origem (some da vista, sessão e entidade) e o põe no destino: `NOTIFY_HOSTPOS` com o `tag` novo (o cliente descarrega e carrega o mundo, `JumpToInstance`), chão por baixo, grava mapa e posição na hora, e streaming completo (`global_message.cpp:111-117`). Disparado por prêmio de missão (`m_ulTransWldId`) e por missão com `m_bTransTo`. Mapa de outro processo `falta`; o grupo se desfaz na troca |
+| teleporte e troca de mapa | `testado` (B51) | `LongJump` (`player.cpp:8617`): mesmo mapa → posição, `NOTIFY_HOSTPOS` (14, 22 bytes: `pos, tag, line`) e o mundo em volta; outro mapa **do mesmo processo** → o roteador tira o jogador do mapa de origem (some da vista, sessão e entidade) e o põe no destino: `NOTIFY_HOSTPOS` com o `tag` novo (o cliente descarrega e carrega o mundo, `JumpToInstance`), chão por baixo, grava mapa e posição na hora, e streaming completo (`global_message.cpp:111-117`). Disparado por prêmio de missão (`m_ulTransWldId`), por missão com `m_bTransTo` e pelo **portal de região** (B208). Mapa de outro processo `falta`; o grupo se desfaz na troca |
+| portal de região (B208) | `confirmado` (saída da Caverna das Sombras, 1.5.5, Murillo, 2026-10-08; portão §6.2 cumprido) | C2S 86 (`ENTER_INSTANCE` no cliente, `REGION_TRANSPORT` no servidor) `{i32 indice, i32 destino}`, que o cliente manda ao pisar numa caixa de transporte do `region.sev` (`EC_World.cpp:2360-2373`) — a entrada e a saída das masmorras; o "altar" do começo da Caverna das Sombras é a caixa 0, para o mapa 161. `RegionTransport` (`player.cpp:12633-12660`, `city_region.cpp:73-97`): recusa com `ERR_CANNOT_ENTER_INSTANCE` (52) morto, caixa inexistente, caixa de outro mapa, jogador fora dela (`pos ± exts`) ou destino diferente; e aqui também destino desligado ou não servido. Passando, `LongJump(alvo + 0,05 y, destino)` pelo `transportar`. `falta`: o `CheckDeny(CMD_MOVE)` (sentado, preso) e **Masmorra por grupo (`falta`, para implementar no futuro):** no original cada masmorra (instância, `cgame/gs/instance/`) é **uma cópia por grupo**: entrar pelo portal cria ou reaproveita a cópia daquele grupo, os monstros nascem nela, e quando a cópia fecha (todos saem e o prazo vence) ela é reciclada — ao entrar de novo, tudo volta ao início. Aqui cada masmorra é **um mapa único e compartilhado** (o `WORLD_TAGS` do GS): todos os jogadores e grupos dividem os mesmos monstros, e o que não renasce (`bAutoRevive` falso, B205) só volta ao recarregar o mapa (desligar/ligar pelo painel, B183) ou reiniciar o GS. Implementar: cópias de `WorldInstance` por grupo (ou por jogador sem grupo) para os mapas `instancia: true` do catálogo, criadas na entrada pelo portal (B208), com prazo e reciclagem conferidos em `instance/*_manager.cpp`, e o roteamento de mensagens por cópia. |
 | coleta de recurso (C2S 54) | `testado` (B51) | `GATHER_MATERIAL` → confere coletores (30), ferramenta e missão de entrada (31), nível (51), distância `gather_dist` 4–20 m (2) (`matter.cpp:265-382`); tempo `Rand(time_min, time_max)` s; `PLAYER_GATHER_START` (126) a todos. Andar interrompe (`PLAYER_GATHER_STOP` 127). No fim: sucesso por `material_gain_ratio`; material por probabilidade, `num1` ou `num2` com `probability2`, limitado à pilha; `HOST_OBTAIN_ITEM` (99); o que não cabe vai ao chão do jogador; exp e SP da mina pelo `GetExpPunishment(nível − nível da mina)` e `+ 0,5`, com `RECEIVE_EXP` (`matter.cpp:439-446`, `player.cpp:2813-2829`; B144); a mina some (`OBJECT_DISAPPEAR`) e renasce em `max(dwRefreshTime, 15)` s. **Colher pode acordar monstro**: os `npcgen_1..4` do `MINE_ESSENCE` (`(monstro, quantidade, raio, vida em s)`) nascem no lugar da matéria — é assim que a Flor de Safira (44566), que **não produz material nenhum**, entrega a missão 31779: ela solta o Guardião de Almas (44608), agressivo, e é dele que cai o Estame com 80 % (B76). A missão só conta o item pelo `CheckMining` quando o método é "coletar N itens" (`TaskTempl.inl:2105-2145`), que não é o caso dessa. **Recarga** de 500 ms com `ERR_MINE_GATHER_IS_COOLING` (187) só no 1.5.5 (`playercmd.cpp:2345-2379`; o `gs` 1.2.6 não tem — `WorldProtocol::recarga_da_coleta_ms`). **Golpe interrompe** (normal, habilidade de monstro, PvP), salvo mina `uninterruptable` (`gather_interrupt_filter`, `skill_filter.cpp:37-46`; `EventoDoMundo::ColetaInterrompida`) (B144). `falta`: os `aggros_*` da matéria |
 | bolsa do item colhido para missão | `confirmado no fonte` (2026-09-29) | Mina com `task_out` entrega o item pela missão (`OnTaskMining` → `ATaskTempl::CheckMining`, `TaskTempl.inl:2105-2145`): `ITEM_WANTED.m_bCommonItem` verdadeiro → `DeliverCommonItem` → **bolsa comum** (`taskman.cpp:281-297`); falso → `DeliverTaskItem` → bolsa de missão (`:313-326`). No `realm_155`, `TASKNORMALMATTER_ESSENCE` vem sempre com `comum` (2958/2958) e `TASKMATTER_ESSENCE` nunca (731/731) — exemplo `comum_por_tipo`. Ex.: os cristais da Maestria Elemental (44378–44382, missões 31797–31801, minas 44568–44572) vão para a bolsa comum, como no original. O material próprio da mina (`materials`) vai **sempre** à bolsa comum, qualquer que seja o tipo (`_inventory.Push`, `obtain_item(..., where 0)`, `player.cpp:1526-1532`) — alinhado no B150; antes ia à de missão quando era item de missão |
 | restauração de atributos (serviço 33, B152) | `testado` nas duas versões | `resetprop_executor/provider` (`serviceprovider.cpp:3527-3690`; `gs` 1.2.6 VA 0x810fc0a/0x810fdde, serviço 33 em VA 0x8105491): pedido `{u32 index, i32 item_id}` (8 B); item 0 ou fora da bolsa, recusa calada; `index` fora da lista do NPC (`NPC_RESETPROP_SERVICE`, filtrada como `npcgenerator.cpp:750-780`), 14; item diferente do da opção ou ausente, 5. `RegroupPropPoint` → `__Rollback` (`player.cpp:14920`, `playertemplate.cpp:618-642`): tira até o delta de cada atributo sem descer do piso — **1.5.5: 5 nos quatro; 1.2.6: força/agilidade 5, vitalidade/energia 3** (`gs` 1.2.6 VA 0x80e7684, antes da correção de 2013; `WorldProtocol::piso_da_restauracao`) — e devolve aos pontos livres; nada a tirar, 82 e o item fica. Com sucesso, `OWN_EXT_PROP`, um item a menos e `HOST_USE_ITEM` (91) |
@@ -803,16 +861,28 @@ fabricante) e a essência fica byte a byte; o bloco tem de se reler inteiro (`fo
 `efeitos` troca só os sem origem (pedra/conjunto/gravação ficam); `refino` 0–12 põe o efeito de
 refino com `base × refine_factor[n] + 0.1` (`equip_item.cpp:208-223`; acima de 12 não há fator —
 só pela lista crua); `pedras` refaz os furos com os efeitos embutidos da pedra e a máscara de
-cores. Limites de formato: 5 furos, 32 efeitos, id de efeito em 13 bits com até 3 parâmetros
-(`itemdataman.h`), nome até 40 bytes. Colunas espelho (durabilidade, refino, furos) gravadas no
+cores. Limites de formato: **4 furos** (`MAX_SOCKET_COUNT`, `gs/config.h:27`: o `equip_item::Load`
+recusa mais, `equip_item.h:397`; até o B206 o painel aceitava 5), 32 efeitos, id de efeito em 13 bits
+com até 3 parâmetros (`itemdataman.h`), nome até 40 bytes. **Efeito de essência** (`essence_addon`:
+`enhance_weapon_*`, `IA_EA_ESS`, `IA_ED_ESS`, resistências — B204): só age na geração
+(`ApplyAtGeneration`, `item_addon_weapon.cpp`), então a edição aplica à essência o que entra na
+lista e desfaz o que sai (`geracao::aplicar_na_essencia_com`), mudando só os bytes dos campos
+tocados — o 831 (+ataque mágico máx da arma) passa a contar na ficha. **B209:** cada efeito que
+entra ou muda (um igual ao que o item já tinha passa) é conferido em `item_editado::validar_efeito`
+com os dados do realm: `efeito_inexistente` (fora do `EQUIPMENT_ADDON` do realm — o 1.2.6 não tem
+nível de ataque nem penetração), `efeito_de_outra_familia` (`DadosDoAddon::familias` × a família da
+peça pelo `dados.geracao`; o 831 num elmo, o 332 numa arma) e `efeito_valor_invalido` (número de
+argumentos diferente do id, ou valor de efeito fixo fora do `GenerateParam`). Os editáveis aceitam
+qualquer valor (Def +80, MP +999). As peças já gravadas com valor fixo errado ficam; ao reabrir no
+painel, a linha volta ao valor do id e salvar corrige. Consulta `efeitos_para_item {item_id, ids}`
+(até 200): para cada id, `args` (valor do id), `editavel`, `faixa`, `porcento`, `busca` e `recusa`. Colunas espelho (durabilidade, refino, furos) gravadas no
 mesmo upsert. **Online:** grava e manda `OWN_ITEM_INFO` (40), que o cliente aplica sobre o item já
 no slot (`EC_HostMsg.cpp:1454-1500`; no corpo refaz a aparência do próprio jogador) e, no corpo,
 `recalcular_equipamento`; armazém = `precisa_estar_offline`. **Offline:** grava. Falhas:
 A durabilidade de partida é a da coluna (`octetos_atuais`, B196), não a velha dos octetos. Falhas: `slot_mudou`, `nao_e_equipamento`, `sem_refino_nem_furos`, `pedra_inexistente`,
 `refino_sem_addon`, `formato_invalido`. Não editáveis: o id do modelo (o `OWN_ITEM_INFO` não o
-troca) e o vínculo (o `state` sai sempre 0 — `proc_type` não modelado). `falta`: o
-`_modify_mask << 16` no id do equipamento visto pelos outros (`equip_item.cpp:25-30`; o GS manda
-só os 16 bits baixos), então o brilho do refino não aparece para quem vê.
+troca) e o vínculo pelo painel (o `state` agora sai do `proc_type`, B201, mas a edição não o
+muda). O brilho das pedras editadas chega a quem vê pelo `_modify_mask` no id (B200).
 
 **B196 (E6) — habilidades.** `habilidade: {id, nivel}`: `nivel` 0 remove, senão define o nível
 (ensinar, subir, descer). O banco (`character_skills`) é a fonte, como no aprender do jogo (que
@@ -823,8 +893,8 @@ nível, como o aprender; `level 0` remove (`RemoveNormalSkill`), o mesmo que o o
 esquecer (`serviceprovider.cpp:2872`); descer = 0 e o nível novo (o atalho da habilidade sai da
 barra). No 1.2.6 descer e remover online = `precisa_estar_offline` (cliente não conferido).
 **Offline**: `learn_or_upgrade` ou `esquecer` sob a guarda e a trava. `sem_mudanca` quando o nível
-já é esse. O teto é o `max_level` do stub do cliente, conferido pela API. Limitação: bônus de
-passiva comum não está portado no GS, então nada a recalcular hoje.
+já é esse. O teto é o `max_level` do stub do cliente, conferido pela API. Online, a passiva comum
+editada refaz a ficha e manda o `OWN_EXT_PROP` (B203, `Contexto::refazer_passivas`).
 
 **B197 (E6) — mascotes** (`bus_server/mascote_editado.rs`). A jaula é o item `PetCorral` cujos
 octetos são o `pet_data` de 192 bytes (`InfoPet`). Consulta `mascotes`: cada registro com o nome e
@@ -925,6 +995,9 @@ banco); toda operação que mexe nele passa por `com_contexto` e grava na hora.
 | :--- | :--- | :--- |
 | repositório de itens | `testado` | transacionado; troca de slot preserva os octetos do item (A37) |
 | equipar | `confirmado` | com bloco de dados (spec 04 §5) |
+| amuleto HP/MP, habilidade dinâmica, reputação (B202) | `testado` (1.5.5 e 1.2.6) | `PlayerEquipItem` (`player.cpp:8097-8168`): o amuleto dos slots 20/21 (`EQUIP_INDEX_HP/MP_ADDON`) não volta à bolsa — tirar = `ERR_ITEM_CANNOT_UNEQUIP` (96 no 1.5.5; 8 no 1.2.6, que não foi conferido) — e vestir outro por cima **destrói** o vestido (`PLAYER_DROP_ITEM` com `DROP_TYPE_TAKEOUT` 2); o mesmo item não vai aos dois slots de habilidade dinâmica (27/28, `EQUIP_MASK64_DYNSKILL_ALL`) → 8; `VerifyRequirement` recusa reputação abaixo do `require_reputation` (`equip_item.cpp:60-66`; só o 1.5.5 tem o campo) → 8. No painel: `habilidade_repetida`, `reputacao` |
+| vínculo ao vestir (B201) | `testado` | peça `ITEM_PROC_TYPE_BIND2` vestida (15 ou 18) grava `bind_status` = 1 e o `OWN_ITEM_INFO` do slot sai com o `proc_type` vinculado (`player.cpp:8182-8200`). `falta`: vincular na entrada o que já estava no corpo (`:398-416`) e as recusas de vender/soltar/trocar item vinculado do lado do servidor |
+| troca de rosto (B199) | `testado` (1.5.5 e 1.2.6) | `bus_server/rosto.rs`: serviço 24 `{u32 slot, i32 tid}` (`cosmetic_executor`, `serviceprovider.cpp:2880-2958`: bilhete no slot, `FACETICKET_ESSENCE`, nível) → `CHANGE_FACE_START`; `CANCEL_ACTION` fecha (`CHANGE_FACE_END`); o `SetCustomData` repassado pelo link só grava com o bilhete e o formato do cliente (`0x10007000`/172 ou `0x10007001`/176, `pw_core::formato_de_aparencia_valido`) → `SetCustomData_Re` com o carimbo, um bilhete gasto (`DROP_TYPE_USE` 11), recarga 8 de 1 s, `PLAYER_CHG_FACE` a quem vê (`CosmeticSuccess`, `player.cpp:12969-12990`). Diferença: não prende o jogador em `PLAYER_STATE_COSMETIC` |
 | requisito de equipamento | `testado` (B148, 1.5.5 e 1.2.6) | `EquipItem` → `CanActivate` → `equip_item::VerifyRequirement` (`gs/player.cpp:8476-8493`, `gs/item/equip_item.cpp:60-80`): vestir (15) e mover para o corpo (18) só passam se o jogador atende o nível, o bit da **classe** (`1 << (classe & 0x0F)` na máscara `race` da `prerequisition`) e força/vitalidade/agilidade/energia de `_cur_prop` (`atributos_efetivos`), e se a durabilidade não é zero; senão `ERR_ITEM_CANNOT_EQUIP` (8) e os dois slots destravados (`BusServer::pode_vestir`, `pw_core::Requisitos`). Requisitos do bloco gravado, ou do que o `item_info` monta do modelo quando o item não tem bloco. Antes, o servidor vestia qualquer coisa (relato do 1.2.6: peça de outra classe comprada no NPC, vermelha no cliente, entrava no corpo). **B191 (`testado`, 1.5.5 e 1.2.6):** posição (`CheckEquipPostion`, `gs/item.h:294-297`) ao vestir/mover para o corpo (`player.cpp:8150`) e na troca dentro do corpo (`:8008-8045`), pela máscara da família (`pw_data_loader::posicoes`); sem tabela carregada não confere. `falta`: reputação, nível histórico, amuleto de HP/MP que não sai (`ERR_ITEM_CANNOT_UNEQUIP`, `:8100-8124`, código não conferido no 1.2.6) e troca do amuleto vestido, habilidade dinâmica repetida (`:8158-8168`), `VerifyRequirement` de roupa e de item de voo |
 | equipamento comprado e fabricado | `testado` (B151, 1.5.5 e 1.2.6) | Um gerador, três variantes (`pw_gs::geracao::Geracao`), como o original: **drop** (`generate_item_for_drop`: `NORMAL`, `ADDON_LIST_DROP` = `addons`, furos `drop_probability_socket`, durabilidade gasta `min(RandNormal(drop), máx)` salvo `proc_type & 0x1000`, tag `IMT_DROP` 2); **fabricação** (`ProduceItem` → `generate_item_from_player`, `player.cpp:16499-16515`, `itemdataman.cpp:1239-1246`: `NORMAL(0)`, `ADDON_LIST_PRODUCE` = `rands`, furos `make_probability_socket`, durabilidade **cheia**, tag `IMT_PRODUCE` 4 + nome do fabricante em UTF-16LE até 40 B); **loja** (`get_item_for_sell`, `itemdataman.cpp:1352-1379`, usado pelo NPC e pela Loja Gold `player.cpp:15873, 15941`: `SPECIFIC(0)` = mínimo das faixas, índice 0 nos sorteios → sem furo, sem addon, durabilidade cheia `durability_min`, tag `IMT_SHOP` 3). A máscara de classes (`character_combo_id & 0xFFFF`) vai na `prerequisition` do bloco nos três. Durabilidade: `generate_item_temp.h:292-310`. Depois da compra o cliente pede os blocos com `GET_ITEM_INFO_LIST` (53, spec 04 §6); sem resposta o item ficava vermelho e sem tooltip. Falta: roupa comprada/fabricada ainda com tag 0 |
 | empilhar na bolsa | `testado` | `CECInventory::MergeItem` (`EC_Inventory.cpp:179-215`): completa pilhas na ordem dos slots, o resto no primeiro vazio; limite `pile_num_max`. O cliente confere o slot e a quantidade devolvidos |

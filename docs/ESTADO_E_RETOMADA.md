@@ -7,7 +7,7 @@
 > bloco novo entra como linha no §3.3 (o que olhar em jogo), no §5 (o que ficou faltando) e
 > no índice do §8 — não como parágrafo aqui.
 >
-> **Última atualização: 2026-10-07**, base B198 commitado (`c541bcb`); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
+> **Última atualização: 2026-10-08**, B199–B211 commitados em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
 > comandos do B77–B88, 14 e 64 conferidos e sobrescritos no 1.2.6, campos do v55 pelo
 > `libtask.so` e prefixos do v7 pelo `gs`; **B126** — IA de combate do monstro por estratégia
 > (conjurar de longe, série de golpes, afastar, fugir, fixo), eventos de vida 75/50/25 %, efeito
@@ -89,7 +89,7 @@ Antes de publicar: `scripts/conferir_public_antes_de_publicar.sql`. Rumo do pain
 senha, criação, GM, gold só dar, ban, desconectar), E7 (rates B176, mapas B177) e E5 parcial
 (dinheiro, EXP/SP B179; pontos livres, nível e cultivo B182; atributos B184 — E5 fechada); mapas carregados e descarregados
 pelo painel em execução, com lista de todos os mapas da versão (B183). Nada disso confirmado em jogo
-ainda. E6 em andamento: posição (B185), itens ver/dar (B186) e remover (B187); inventário como o do jogo em andamento (B188 ícones e grade, B189 dica parte 1); **B190 tela nova de personagens** (cartões + tela com janelas); **B191 arrastar** online/offline (e a posição no corpo, `CheckEquipPostion`, agora vale também no jogo). **B192–B193 dica parte 2** (texto dos efeitos como o cliente — frases além do 112 conferidas no binário BR —, linha de classe); **B194 editar item** (modal, edição livre nos valores); **B195 habilidades: ver** (janela com ícones e nomes do cliente); **B196 habilidades: editar** (ensinar, subir, descer, remover); **B197 mascotes** (ver, editar, libertar); **B198 missões** (ver, dar livre, concluir forçando o sucesso, cancelar apagando, esquecer a conclusão). Fila aprovada em 2026-10-07 (memória da reforma §6.14): dica parte 2 → B194 editar item → B195–B196 habilidades → B197 mascotes → B198 missões → B199 aparência; depois E8, E9.
+ainda. E6 em andamento: posição (B185), itens ver/dar (B186) e remover (B187); inventário como o do jogo em andamento (B188 ícones e grade, B189 dica parte 1); **B190 tela nova de personagens** (cartões + tela com janelas); **B191 arrastar** online/offline (e a posição no corpo, `CheckEquipPostion`, agora vale também no jogo). **B192–B193 dica parte 2** (texto dos efeitos como o cliente — frases além do 112 conferidas no binário BR —, linha de classe); **B194 editar item** (modal, edição livre nos valores); **B195 habilidades: ver** (janela com ícones e nomes do cliente); **B196 habilidades: editar** (ensinar, subir, descer, remover); **B197 mascotes** (ver, editar, libertar); **B198 missões** (ver, dar livre, concluir forçando o sucesso, cancelar apagando, esquecer a conclusão). Fila aprovada em 2026-10-07 (memória da reforma §6.14): dica parte 2 → B194 editar item → B195–B196 habilidades → B197 mascotes → B198 missões; aparência fica no cliente (decisão de 2026-10-08, sem editor no painel); depois E8, E9.
 B169: workspace 940/0, 2 ignorados; armazenamento após a última correção 14/0;
 49 Python/0 e 5 Node/0. Clientes originais, inspeção visual e imagem Linux pendentes.
 B170: workspace 942/4; após correções GS 261/0 (2 ignorados) e canal final 15/0.
@@ -173,7 +173,9 @@ carregados uma vez; o roteador entrega cada jogador ao mapa gravado (spec 02 §2
 
 Base: o pacote de servidor `F:\PW\1.5.5\home155\gamed\config` (76 pastas de mapa,
 `npcgen.data`, `aipolicy.data`, `.sev`, `gs.conf`, `ptemplate.conf`, `global_api.lua` com
-`--102`). Por cima, os 11 `.data` do cliente BR (`elements.data` v156, `tasks.data` 129,
+`--102`); desde o B211 os `npcgen.data` de `world`, `a46`, `a61`, `a63`, `a76`, `a77` e o
+`a50/precinct.sev` vêm do `pwserver_155v156` (a build v156: o `world` do `home155` não tinha a cidade
+da Névoa Sombria); antigos guardados fora do repositório. Por cima, os 11 `.data` do cliente BR (`elements.data` v156, `tasks.data` 129,
 `gshop*.data` …). Mapas de altura `.hmap` por mapa. (B13, B42c, B48.)
 
 Não há mais realm com os `.data` do cliente EN (v159): a pasta foi apagada no B55. O layout
@@ -327,6 +329,9 @@ continua no mundo 1; para testar o nascimento no 161, criar um novo.
 - Loja de NPC cobra `max(shop_price, price)` do `elements.data`; item sem preço não é
   vendido; durabilidade do arquivo (B42h).
 
+**Efeitos de equipamento (B209, 2026-10-08):** com a Tsuko no 1.5.5, os atributos dos efeitos postos pelo
+painel passaram a contar ("parecem funcionar") — valor do id, família e realm na edição, `OWN_EXT_PROP` com graus.
+
 ### 3.2 Implementado e testado na suíte, sem confirmação em jogo registrada
 
 - Grupo com estado (convite, aceite, recusa, saída) (A45, B21e).
@@ -365,6 +370,20 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 | B187 | **Commitado, não publicado.** Ficha → Itens: clicar num item abre a barra **Remover** (quantidade, confirmação). Online, na bolsa ou na bolsa de missão: o item some da bolsa na hora e o jogo mostra a mensagem de que o GM removeu o item (com o nome). Equipamento e armazém com o personagem online: recusado ("só fora do jogo"); offline grava. Se o item mudou de lugar desde a consulta, o painel recusa e pede para atualizar. Log: `grep "admin: editar personagem"` |
 | B188 | **Commitado, não publicado.** Ficha → Itens: bolsa, equipamento, armazém e bolsa de missão em **grade com os ícones do jogo** (8 por linha; equipamento com o nome de cada slot). Passar o mouse mostra nome, quantidade, ID e slot; clicar abre a barra Remover. Personagem feminino usa o atlas feminino. Item sem ícone no atlas mostra as duas primeiras letras. Antes de publicar o painel: `data/icones/` precisa existir no host (atlas extraído do `surfaces.pck` 1.5.5; está fora do git). |
 | B197 | **Local, não publicado; mexe no GS (canal).** Personagem com mascotes na jaula, **em jogo**, janela de mascotes do cliente aberta: no painel, janela Mascotes → cartões com ícone, nome, modelo, nível; clicar num mascote **recolhido** → nível/lealdade/nome → Salvar → o cliente mostra os valores novos na hora; Libertar → some da jaula do cliente. Mascote **invocado** → "recolha-o antes de editar". Offline: editar e entrar → valores novos. Log: `painel: mascote editado (online|offline)`. |
+| — | **Confirmado em jogo pelo Murillo (2026-10-08):** 1.5.5 (Tsuko) — dar, mover, equipar e desequipar itens pelo painel online e offline; editar item (durabilidade, refino, requisitos); dar dinheiro; subir/descer nível de habilidade; ensinar habilidade (Aura de Aço nv 5). 1.2.6 (WB) — dar EXP/SP, subir nível, cultivo, posição, pontos livres, dar missão. |
+| B211 | **Local, falta ver em jogo (reiniciar o `pw-world-155`: os `npcgen` são montados, o código precisa de rebuild).** 1) Mapa 1, cidade da Névoa Sombria (3546, 281, 3052; chega-se pela missão "Retornar à Pan Gu" das classes 10/11 ou pelo teleportador): o Ancião da Névoa Sombria, o Oficial, os Guardas e o Teletransportador Rayga (que leva de volta ao Vale Celestial, 161) estão lá; sem Sereias na estrutura. 2) Sereias e outros monstros de água passeiam dentro d'água; os de ar, no ar. 3) Pedra de dano por elemento na arma → o golpe normal causa dano daquele elemento e a ficha mostra o "dano adicional"; pedra de resistência → a resistência sobe. 4) Peça com rebote (Feitiço da Purificação/Infinito) → ao apanhar, às vezes limpa maldição e acelera / regenera. 5) Painel: efeitos que ainda não agem aparecem com "ainda não age no jogo". Histórico 211 |
+| B210 | **Local, falta ver em jogo.** Conjuntos: vestir N peças de um conjunto (ver a dica do cliente) soma o bônus de N peças, tirar uma o desfaz; arma com habilidade de item (ex.: atordoar 5%) → de vez em quando o monstro fica atordoado no golpe normal (log `habilidade do item` só se faltar porte); peça com escala de defesa → a defesa dela sobe pela %; experiência % → abate dá mais exp; velocidade de ataque do item → golpe mais rápido. Histórico 210 |
+| B209 | **Atributos confirmados em jogo (2026-10-08, Tsuko no 1.5.5).** Efeitos de equipamento (1.5.5, RT): no modal Editar item, a busca só oferece o que existe no realm e serve na peça, com o valor do id ("Acerto +118"); linha fixa travada; Def +80/MP +999 continuam; Acerto 1317 entra +118; nível de ataque (2029 = +1) e penetração aparecem na ficha (`OWN_EXT_PROP`); bota com 286 → +5% de velocidade; armadura com 332 → conjuração 3% mais curta; 831 não aparece num elmo. 1.2.6: a busca não oferece nível de ataque nem penetração. Histórico 209 |
+| B208 | **Confirmado em jogo (2026-10-08): a Tsuko saiu da Caverna das Sombras pelo altar; portão §6.2 cumprido.** Falta conferir: entrar numa masmorra por portal do mundo, a recusa com o 161 desligado, e o `CheckDeny(CMD_MOVE)` (sentado/preso não deveria passar). Na Caverna das Sombras, andar até o altar do começo do mapa: a Tsuko vai ao mapa 161 (log `mundo: portal de região`, `de=169 para=161`). Sair e entrar de novo no jogo: continua no 161. Parar fora do altar não faz nada; se o 161 estiver desligado pelo painel, o cliente mostra o erro de não poder entrar (log `portal recusado`, motivo). Os portais do mundo para as masmorras também passam a funcionar quando o mapa da masmorra é servido. |
+| B204 | **Local.** Editar uma arma e pôr o efeito 831 (ataque mágico máx): a ficha mostra o ataque mágico maior depois de salvar (online, com a arma vestida). Tirar o efeito volta ao valor antigo. |
+| B205 | **Local.** Caverna das Sombras: matar o Cavaleiro Negro — ele não volta. Monstro do mundo aberto continua renascendo. |
+| B206 | **Local.** Editar item: cada efeito mostra a descrição; "Buscar efeito" pelo texto acrescenta a linha; Furos 0–4 muda a lista de pedras; "Buscar pedra" põe a pedra no primeiro furo vazio. 5 furos = recusado. |
+| B207 | **Local.** Tsuko sem arma: Aura de Aço → ícone da aura e defesa maior nela e nos aliados em volta por 30 min. |
+| B199 | **Local, não publicado; mexe no link, no barramento e no GS.** Com um bilhete de troca de rosto (4411/5382/9709/26653) na bolsa, falar com o NPC de rosto e usar: a tela de rosto abre (log `troca de rosto aberta`). Cancelar → fecha, o bilhete fica. Mudar o rosto e confirmar → um bilhete some, o outro cliente vê o rosto novo; sair e entrar → o rosto novo continua (log `aparência nova gravada`). Na seleção de personagem, um personagem criado hoje pode personalizar; um antigo não. |
+| B200 | **Local.** Arma com duas pedras de nível 7+ (ou armadura com pedras 5+): o outro cliente vê o efeito das pedras. |
+| B201 | **Local.** Vestir uma peça "vincula ao equipar": a dica passa a dizer vinculado e não deixa vender/trocar no cliente. |
+| B202 | **Local.** Amuleto HP/MP: tirar para a bolsa → recusado; vestir outro por cima → o velho some. Mesmo item de habilidade nos dois slots → recusado. Peça com reputação acima da sua → recusada (1.5.5). |
+| B203 | **Local.** Personagem com passiva de defesa/mana (ex.: 2446, 1188) ou de arma (ex.: 1371 com espada): a ficha mostra a defesa, a regeneração e o dano maiores; trocar a arma de classe tira o bônus de arma. |
 | B198 | **Commitado (`c541bcb`), não publicado; mexe no GS (canal) e no painel.** Personagem **em jogo** com a janela de missões do cliente aberta: no painel, janela Missões → as ativas do cliente aparecem (etapa recuada, abates). **Dar**: buscar pelo nome, clicar, Dar → a missão aparece na lista do cliente na hora (missão de etapa: escolher a etapa). **Concluir** numa missão de NPC → no cliente fica pronta; ir ao NPC e entregar. Concluir numa de conclusão direta → prêmio e some da lista. **Cancelar** (1.5.5) → some do cliente sem prêmio; no 1.2.6 → "desconectar e aplicar". **Esquecer** numa concluída → "desconectar e aplicar"; depois de entrar, a missão pode ser pega de novo no NPC. Log: `painel: missão (online|offline)`; offline com prêmio em dinheiro/EXP → `precisa_estar_online`. |
 | B196 | **Commitado, não publicado; mexe no GS (canal).** Personagem **em jogo** (1.5.5), janela de habilidades do cliente aberta (K): no painel, Ensinar uma habilidade nível 3 → aparece no cliente na hora; clicar nela → nível 5 → Aplicar → o cliente mostra 5; nível 2 → Aplicar → volta a 2 (o atalho dela sai da barra); Remover → some. No **1.2.6**, subir/ensinar funcionam em jogo; descer/remover pedem "Desconectar e aplicar". Offline: tudo grava e aparece ao entrar. Log: `painel: habilidade editada (online|offline)`. |
 | B195 | **Commitado, não publicado (só painel).** Abrir um personagem → janela **Habilidades**: os ícones das habilidades aprendidas, com o nível no canto; passar o mouse mostra nome (como no cliente BR) e nível/máximo. Comparar com a janela de habilidades do cliente (tecla K). |
@@ -679,6 +698,29 @@ portado. Falta ver em jogo.)
 - **Servidor 1.5.5 original numa VM 32-bit** (`pwserver_155v156`): o gabarito da versão
   certa (B44c).
 - Banco (E), `pw-admin` (G), atualizador/launcher (H) — memória `pw_roadmap_contextos`.
+- **Masmorra por grupo (`falta`, para implementar no futuro):** no original cada masmorra (instância, `cgame/gs/instance/`) é **uma cópia por grupo**: entrar pelo portal cria ou reaproveita a cópia daquele grupo, os monstros nascem nela, e quando a cópia fecha (todos saem e o prazo vence) ela é reciclada — ao entrar de novo, tudo volta ao início. Aqui cada masmorra é **um mapa único e compartilhado** (o `WORLD_TAGS` do GS): todos os jogadores e grupos dividem os mesmos monstros, e o que não renasce (`bAutoRevive` falso, B205) só volta ao recarregar o mapa (desligar/ligar pelo painel, B183) ou reiniciar o GS. Implementar: cópias de `WorldInstance` por grupo (ou por jogador sem grupo) para os mapas `instancia: true` do catálogo, criadas na entrada pelo portal (B208), com prazo e reciclagem conferidos em `instance/*_manager.cpp`, e o roteamento de mensagens por cópia.
+- **Efeitos de equipamento — B209 (fatias 1–3, atributos confirmados em jogo) e B210** (conjuntos,
+  habilidade do item no golpe, penetração/resiliência no combate, escala da peça, dano máximo,
+  experiência %, regeneração %, velocidade de ataque; B211 pedras por elemento, rebote, essências de
+  escala, alcance; histórico 209–211). **Falta (43 ids, o painel avisa):** habilidade de item durativa e
+  as sem roteiro, poder da alma, durabilidade/requisito/aleatório da geração, `query_other_property`;
+  velocidade de montaria; `_vigour_base`.
+  Diagnóstico original abaixo.
+- **Efeitos de equipamento (diagnóstico de 2026-10-08, teste da RT no 1.5.5):** dos 2.911 ids de
+  `EQUIPMENT_ADDON`, o GS soma 925 ao vestir, 210 são refino e 493 essência (B204); **1.283 ids de 180
+  tratadores não fazem nada** (`addons_sem_porte` no log) — entre eles `enhance_speed_addon` (286–290,
+  velocidade), `reduce_cast_time_addon` (332…, conjuração), os de conjunto (`SET_ADDON_MACRO`),
+  penetração, resiliência, vigor, `item_skill_addon` (72). O `OWN_EXT_PROP` do 1.5.5 manda **zero fixo** em
+  nível de ataque/defesa, crítico, penetração, resiliência e vigor (`versions/v155/mod.rs`), então mesmo os
+  somados (nível de ataque) não aparecem na ficha. **Cada id tem valor próprio** no `param1..3` do
+  `EQUIPMENT_ADDON`, às vezes em float (286 = 0,05 → 5%, `arg_addon<PERCENT>`; 1317 = 118 fixo) e
+  muitos servem só a uma família (o 831 é de arma; posto num elmo não age nem no original). O painel deixava
+  digitar qualquer valor e qualquer id em qualquer peça.
+- **Faltas do B199–B203:** estado `PLAYER_STATE_COSMETIC` (andar/lutar com a tela de rosto aberta);
+  ids 201–203 e o erro 96 no cliente 1.2.6; vincular na entrada o que já estava no corpo e recusas de
+  vender/soltar/trocar vinculado no servidor; cor de moda nos bits altos do id; passivas comuns sem
+  modelo (dano por elemento, `Addskilldamage`, redução por distância, invisibilidade, `Incrange`,
+  `Incfeather`, `EVENT_ENTER`).
 - **Painel (B165–B182):** ver em jogo os roteiros B175–B179 e B182; depois E5 (inventário,
   habilidades, missões, posição, aparência, mascotes — cada um com o S2C que atualiza a ficha
   online, senão só offline), E6 subsistemas, E8 moldes de classe, E9 fechamento.
@@ -906,4 +948,17 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 195 | 10-07 | painel E6: habilidades — ver (banco, `skillstr.txt`, ícones do stub do cliente), atlas `Skill`/`Pet` (DXT1/DXT3) |
 | 196 | 10-07 | painel E6: habilidades — ensinar, subir, descer, remover; online pelo `LEARN_SKILL` (um por nível; 0 remove), 1.2.6 descer/remover só offline |
 | 197 | 10-07 | painel E6: mascotes — ver a jaula (ícone do `PET_ESSENCE`), editar o `pet_data` (limites do formato), libertar; online `PET_ROOM`/`FREE_PET` |
+| 208 | 10-08 | portais de região: C2S 86 e caixas do `region.sev` — sair da masmorra pelo altar; masmorra por grupo anotada como falta |
+| 204 | 10-08 | efeito de essência pelo painel aplicado à essência (o 831 conta) |
+| 205 | 10-08 | `bAutoRevive` do `npcgen`: masmorra não renasce (Caverna das Sombras) |
+| 206 | 10-08 | painel: descrição/busca de efeitos, busca de pedras, Furos 0–4; limite de 4 furos (`MAX_SOCKET_COUNT`) |
+| 207 | 10-08 | Aura de Aço: `filter_Ironshield` portado |
+| 199 | 10-08 | troca de rosto em jogo gravada: serviço 24, sessão cosmética, `SetCustomData` pelo GS (barramento 100/101), regra dos 2 dias fora do jogo; `DROP_TYPE_USE` 11 corrigido |
+| 200 | 10-08 | brilho das pedras para quem vê: `_modify_mask << 16` no id do equipamento (não há brilho de refino no cliente) |
+| 201 | 10-08 | vínculo: `proc_type` da instância no `OWN_ITEM_INFO`; vestir `BIND2` vincula |
+| 202 | 10-08 | vestir: amuleto HP/MP não sai e é destruído ao trocar; habilidade dinâmica repetida; reputação |
+| 203 | 10-08 | passivas comuns `EVENT_RESET`/`EVENT_WIELD` (catálogos com `efeito_passivo`) |
 | 198 | 10-07 | painel E6: missões — ver, dar livre (`NEW`), concluir forçando o sucesso (`FINISHED`/`COMPLETE`), cancelar apagando (`GIVE_UP`; 1.2.6 só offline), esquecer a conclusão (offline); resposta do canal até 64 KiB |
+| 211 | 10-08 | `npcgen` do mapa 1 (e 5 outros) do `pwserver_155v156`: cidade da Névoa Sombria; passeio de água/ar; pedras por elemento, rebote, essências de escala, alcance; painel avisa o que não age |
+| 210 | 10-08 | efeitos: conjuntos (`SUITE_ESSENCE`), habilidade do item no golpe, penetração/resiliência, escala da peça, exp %, regeneração %, velocidade de ataque |
+| 209 | 10-08 | efeitos de equipamento: valor do id, família e realm na edição; `OWN_EXT_PROP` com graus; velocidade, conjuração e resistências dos addons |

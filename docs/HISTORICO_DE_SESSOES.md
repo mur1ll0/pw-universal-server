@@ -12460,3 +12460,335 @@ comparação lado a lado.
     Ver em jogo (1.5.5 e 1.2.6). `GIVE_UP` no cliente 1.2.6 (captura ou binário) para liberar
     cancelar online. Dar uma etapa solta (só a principal), editar abates/tempo de uma entrada, o
     depósito de missões. Offline grava bolsas e listas em duas escritas (não é uma transação).
+
+199. **Sessão 2026-10-08: a troca de rosto em jogo passa a ser gravada (bilhete, sessão cosmética, `SetCustomData`).**
+
+    ### a. Sintoma / pedido
+    Aparência fica no cliente (decisão de 2026-10-08), mas o link respondia sucesso ao
+    `SetCustomData` e descartava os dados: ao reentrar voltava o rosto antigo. O GS também não
+    tratava o serviço de troca de rosto.
+
+    ### b. Evidência
+    - Original: serviço 24 `GP_NPCSEV_FACECHANGE` (`EC_GPDataType.h:100`, `serviceprovider.cpp:2880-2958`,
+      `SERVICE_INSERTER(…, 24)` `:8745`), pedido `{u32 inv_index, i32 item_type}` (`EC_SendC2SCmds.cpp:3940-3962`);
+      `session_cosmetic` → `player_cosmetic_begin` (201); `gdeliveryd/setcustomdata.hpp`: em jogo só
+      com bilhete, fora só personagem < 2 dias, senão `ERR_NOFACETICKET` (201, `errcode.h:161`);
+      `CosmeticSuccess` (`player.cpp:12969-12990`): gasta o bilhete (`DROP_TYPE_USE` 11), recarga
+      `COOLDOWN_INDEX_FACETICKET` (8, 1.000 ms), `cosmetic_success` (203) a quem vê, fecha (202).
+    - Cliente: o próprio só guarda o carimbo (`EC_HostMsg.cpp:7003-7008`), quem vê pede os dados
+      (`EC_ElsePlayer.cpp:2418-2424`); cancelar = `CANCEL_ACTION` (`EC_CustomizePolicy.cpp:86-93`).
+    - Formato gravado no `public`: 1.2.6 `0x10007000`/172 (4), 1.5.5 `0x10007001`/176 (3).
+
+    ### c. Correção
+    `pw-bus`: `SetCustomData` (100) e `SetCustomData_Re` (101); link: em jogo repassa ao GS, fora
+    grava só personagem novo da conta/realm (`gravar_aparencia_de_personagem_novo`); GS
+    `bus_server/rosto.rs` (serviço 24, `CANCEL_ACTION`, `aparencia_nova`); `pw_core::formato_de_aparencia_valido`;
+    `GameDataManager::bilhetes_de_rosto`; S2C 201/202/203. De passagem: o descarte da ferramenta de
+    mina e do ovo ia com 10 (`DROP_TYPE_RESURRECT`); agora 11 (`player.cpp:1494`).
+
+    ### d. Provas
+    `trocar_o_rosto_com_o_bilhete_grava_e_avisa` 1/0 (1.5.5 e 1.2.6: sem bilhete 201; 201 com o slot;
+    cancelar 202; gravar: `Re` 0 + carimbo, 203, 46 tipo 11, 198 índice 8, `custom_data` no banco, um
+    bilhete gasto); `aparencia_fora_do_jogo` 1/0 (novo grava; 3 dias, outra conta, outro realm não);
+    `os_dois_realms_tem_bilhetes_de_rosto` 1/0 (126: 3, 155: 4); `pw-bus` 22/0 (opcodes e campos
+    contra o IR).
+
+    ### e. O que continua faltando
+    Ver em jogo; o estado `PLAYER_STATE_COSMETIC` (andar/lutar com a tela aberta); cliente 1.2.6 não
+    conferido para 201–203.
+
+200. **Sessão 2026-10-08: o brilho das pedras chega a quem vê (`_modify_mask` no id do equipamento).**
+
+    ### a. Sintoma / pedido
+    Pendência "brilho do refino para quem vê".
+
+    ### b. Evidência
+    O `_modify_mask` não leva refino: byte baixo = pedras (`AfterChipChanged`, `equip_item.cpp:989-1044`),
+    alto = afiação (`:388-389`). O cliente 1.5.5 não tem brilho de refino para outros jogadores (só o
+    duende); usa os bits altos como `stone*` (`EC_Player.cpp:4207-4231`, `AddWeaponStones` `:9349-9380`).
+    A pendência estava descrita errada.
+
+    ### c. Correção
+    `mascara_de_equipamento_com`: `id | (mascara_das_pedras << 16)` lido dos octetos, fora de moda e
+    duende, no `EQUIP_DATA` e na diferença de equipamento.
+
+    ### d. Provas
+    `o_brilho_das_pedras_vai_nos_bits_altos_do_id` 1/0 (ficha real do 155) + os testes de máscara.
+
+    ### e. O que continua faltando
+    Cor de moda nos bits altos; ver em jogo.
+
+201. **Sessão 2026-10-08: o vínculo do item (`proc_type`) chega ao cliente e vestir peça `BIND2` vincula.**
+
+    ### a/b. Pedido e evidência
+    O `state` do `OWN_ITEM_INFO` saía 0; é o `proc_type` (`common/protocol.h:1310-1326`); bits em
+    `gs/item.h:309-326`; vestir `BIND2` liga `NODROP|NOTHROW|NOSELL|NOTRADE|BIND` e desliga `BIND2`
+    (`player.cpp:8182-8191`).
+
+    ### c. Correção
+    `GameDataManager::proc_types` (todo registro com `proc_type`), `proc_type_da_instancia`
+    (molde + `bind_status`), `item_info_com_proc_type` no GS e no link, `vincular_ao_vestir` nos
+    comandos 15 e 18.
+
+    ### d. Provas
+    `o_proc_type_vinculado_segue_o_original` 1/0; `vestir_peca_que_vincula_grava_o_vinculo_e_avisa_o_state`
+    1/0 (`state` = 0x8017, `bind_status` 1) e o teste de equipar antigo.
+
+    ### e. O que continua faltando
+    Vincular na entrada o que já estava no corpo; recusas do servidor para vender/soltar/trocar
+    vinculado.
+
+202. **Sessão 2026-10-08: três regras de vestir — amuleto HP/MP, habilidade dinâmica repetida e reputação.**
+
+    ### b. Evidência
+    `PlayerEquipItem` (`player.cpp:8097-8168`): slots 20/21 (`item.h:216-217`) — tirar dá
+    `ERR_ITEM_CANNOT_UNEQUIP` (96, `protocol.h:776`), vestir por cima destrói o vestido
+    (`DROP_TYPE_TAKEOUT`); slots 27/28 (`EQUIP_MASK64_DYNSKILL_ALL` 0x18000000) não repetem item;
+    `VerifyRequirement` (`equip_item.cpp:60-66`) com `require_reputation` (só no v156/v159).
+
+    ### c. Correção
+    `motivo_para_nao_vestir` (`habilidade_repetida`, `reputacao`), `equipar` (amuleto),
+    `GameDataManager::reputacao_exigida`; mensagens no painel.
+
+    ### d. Provas
+    `amuleto_habilidade_dinamica_e_reputacao_ao_vestir` 1/0 nas duas versões (96 no 1.5.5, 8 no
+    1.2.6) e `requisito_de_vestir_no_{126,155}` 2/0.
+
+    ### e. O que continua faltando
+    Código 96 no cliente 1.2.6 não conferido (vai 8); nível histórico no requisito.
+
+203. **Sessão 2026-10-08: passivas comuns (`EVENT_RESET` e `EVENT_WIELD`) no GS.**
+
+    ### b. Evidência
+    `SkillWrapper::EventReset/EventWield` (`skillwrapper.cpp:612-690`), aplicadas na entrada
+    (`:1261-1264`); setters em `playerwrapper.cpp` (`Adddefence` 1809, `Addresistance` 1819,
+    `Inccrit` 1346, `Inchpgen` 1495, `Incmpgen` 1335, `Incswim` 2272, armas 754-930/2436,
+    `Inchitrate` 1357); `WeaponClass` (`skillwrapper.h:54-66`) = `id_major_type` (conferido nos dois
+    realms).
+
+    ### c. Correção
+    Extratores 1.5.5 e 1.2.6 gravam `efeito_passivo` (diff só acrescenta o campo: 119 e 45
+    passivas); `efeitos::passivas_comuns`, `PlayerEntity::passivas_comuns`, `ArmaEmUso::classe`,
+    regeneração somada; refeitas ao vestir, no `refazer_atributos`, ao aprender e na edição do painel
+    (`Contexto::refazer_passivas` manda o `OWN_EXT_PROP`).
+
+    ### d. Provas
+    `as_passivas_comuns_somam_o_que_o_take_effect_manda` 1/0 (2446 nível 2: defesa e resistência
+    16; 1188 nível 3: mana 6; 1371 nível 3 com espada: dano 18; 1263: crítico 2 com arma, 0 sem);
+    `a_classe_da_arma_e_o_tipo_maior` 1/0. Painel Python 67/0, Node 10/0. Suíte do workspace com o
+    banco (`--no-fail-fast`): **992 passaram, 3 falharam, 2 ignorados; as 3 corrigidas/repetidas: os 2 testes de codificador contra o IR (faltava declarar 201–203 e o item_info_com_proc_type; 5/0 depois) e o desligar_descarrega_e_ligar_carrega_o_mapa_na_hora (rodou junto com a suíte Python; canal inteiro 31/0 sozinho)**.
+
+    ### e. O que continua faltando
+    Dano de habilidade por elemento (`SetSkillInc`), `Addskilldamage`, redução por distância,
+    invisibilidade, `Incrange`, `Incfeather`, `Immunedrop`, `Reduceresurrectexplost`, `EVENT_ENTER`.
+    Ver em jogo B199–B203.
+
+204. **Sessão 2026-10-08: efeito de essência posto pelo painel passa a contar (aplicado à essência).**
+
+    ### a. Sintoma (teste do Murillo)
+    O efeito 831 (ataque mágico) e um de defesa no elmo apareciam na dica e não mudavam a ficha.
+
+    ### b. Causa
+    831 = `enhance_weapon_max_magic_addon`, um `essence_addon` (`item_addon_weapon.cpp:84-101`): só
+    `ApplyAtGeneration` (soma na essência ao gerar), nada ao vestir. Pôr na lista de um item pronto não
+    muda nada também no original. O GS os ignora ao vestir (`BonusDeAddons::somar`, "já estão na essência").
+
+    ### c. Correção
+    `item_editado::aplicar`: com `efeitos`, desfaz na essência os de essência que saem e aplica os que entram
+    (`geracao::aplicar_na_essencia_com` com sinal), copiando só os bytes que mudam.
+
+    ### d. Provas
+    `efeito_de_essencia_entra_e_sai_da_essencia` 1/0 (arma real do 155: +50 no máx mágico; tirado, o bloco
+    volta byte a byte).
+
+205. **Sessão 2026-10-08: área do `npcgen` sem `bAutoRevive` não renasce (Caverna das Sombras).**
+
+    ### a. Sintoma
+    O Cavaleiro Negro da Caverna das Sombras renasceu depois de morto.
+
+    ### b. Causa
+    O leitor lia e descartava o `bAutoRevive`; o original faz `SetRespawn(area.bAutoRevive)`
+    (`npcgenerator.cpp:3734`, `:3904`) e o `Reclaim` não devolve ao gerador (`:3312-3317`, minas `:4945-4950`).
+
+    ### c. Correção
+    `SpawnInstance::renasce`, `MatterEntity::renasce`; `matar_monstro` e `colher_mina` não armam o
+    renascimento. Exemplos `sem_renascer` e `tipos_do_npcgen`.
+
+    ### d. Provas
+    `a_caverna_das_sombras_nao_renasce_e_o_mundo_aberto_renasce` 1/0 (a69: 38 criaturas, todas sem
+    renascer, 6 Cavaleiros Negros 45818; a01 renasce todo). Medido: o `realm_126` inteiro renasce; no 155 só
+    masmorras/instâncias têm áreas sem renascer. Achado à parte: `a46/npcgen.data` não é lido (já conhecido, spec 03).
+
+    ### e. O que continua faltando
+    O ciclo da instância: a masmorra só volta inteira ao recarregar o mapa (B183) ou o GS.
+
+206. **Sessão 2026-10-08: painel — descrição e busca de efeitos, busca de pedras e campo de furos; limite de 4 furos.**
+
+    ### a. Pedido
+    Ver a descrição do efeito ao editar; buscar pedras e efeitos sem saber o id; editar a quantidade de furos.
+
+    ### b. Evidência
+    A descrição é a mesma da dica (`texto_do_efeito`, `item_ext_prop.txt` → tipo → frase; 2.061 de 2.441
+    ids descritos). Furos: `MAX_SOCKET_COUNT` 4 (`gs/config.h:27`); `equip_item::Load` recusa mais
+    (`equip_item.h:397`) — o painel aceitava 5.
+
+    ### c. Correção
+    API `GET /api/efeitos?busca`, `GET /api/efeitos/{id}?args`, `GET …/pedras?busca`; canal `buscar_itens`
+    com `categoria: "pedra"` (e o `grau`); a dica traz `texto` por efeito; modal com descrição viva, busca de
+    efeito, campo Furos (0–4) e busca de pedra; `MAXIMO_DE_FUROS` = 4 (GS e API).
+
+    ### d. Provas
+    `test_efeitos_e_pedras_para_editar_item_b206` 1/0; canal `buscar_itens` com categoria 31/0; validação do
+    item com 4/5 furos. Painel Python 68/0, Node 10/0.
+
+207. **Sessão 2026-10-08: Aura de Aço (77) — o `filter_Ironshield` portado.**
+
+    ### a. Sintoma
+    Tsuko (Tormentador) sem arma conjurava a Aura de Aço e o efeito nunca vinha.
+
+    ### b. Causa
+    Não é bloqueio de classe: a 77 tem `cls` 0 e `restrict_weapons` com 0 (sem arma). O roteiro aplica
+    `SetIronshield`, que o GS não conhecia (saía em "não portados").
+
+    ### c. Correção
+    `Efeito::Ironshield` (`skillfilter.h:3922-3973`): `UNIQUE|BUFF`, ícone 65, `VSTATE_BLESSED`, defesa
+    `+ratio×100`%.
+
+    ### d. Provas
+    `o_ironshield_soma_defesa` 1/0. Suíte do workspace com o banco (`--no-fail-fast`): **996 passaram, 2 falharam, 2 ignorados; as 2 (editar_item_no_126/155) esperavam a essência intacta com o efeito 999, que é de essência — ajustado ao B204, 2/0**.
+
+    ### e. Testado pelo Murillo em jogo (2026-10-08)
+    **Confirmado em jogo pelo Murillo (2026-10-08):** 1.5.5 (Tsuko) — dar, mover, equipar e desequipar itens pelo painel online e offline; editar item (durabilidade, refino, requisitos); dar dinheiro; subir/descer nível de habilidade; ensinar habilidade (Aura de Aço nv 5). 1.2.6 (WB) — dar EXP/SP, subir nível, cultivo, posição, pontos livres, dar missão.
+
+208. **Sessão 2026-10-08: portais de região — sair (e entrar) das masmorras pelo altar.**
+
+    ### a. Sintoma (teste do Murillo)
+    Na Caverna das Sombras, depois de matar a raposa, a Tsuko precisava voltar ao início pelo "Olho
+    que me guia"; ao chegar no altar do começo do mapa nada acontecia.
+
+    ### b. Causa
+    O altar é a caixa de transporte 0 do `a69/region.sev` (−388, 34, 173; 10 × 7,5 × 5), para o mapa
+    161 em (856, 58, 364); o objeto 44 do `npcgen` é o modelo dele. O cliente manda o C2S 86 ao pisar
+    nela (`EC_World.cpp:2360-2373`); o GS não tratava o 86 e do `region.sev` só lia o carimbo.
+
+    ### c. Correção
+    `pw-data-loader/src/regioes.rs` (caixas, fechando no último byte) e
+    `GameDataManager::caixas_de_transporte`; `ids::ENTER_INSTANCE` (86); `bus_server/portal.rs` com as
+    recusas do `RegionTransport` (`player.cpp:12633-12660`, `city_region.cpp:73-97`) e
+    `ERR_CANNOT_ENTER_INSTANCE` (52); `RoteadorDeMapas::aceita_destino`. O GS do 1.5.5 serve 1, 161 e 169
+    (`WORLD_TAGS`), então a saída da Caverna funciona com a configuração atual.
+
+    ### d. Provas
+    `a_saida_da_caverna_das_sombras_leva_ao_161` 1/0; `todo_region_sev_dos_realms_se_le_inteiro` 1/0
+    (126: 42 arquivos, 135 caixas; 155: 75, 281); `o_portal_de_regiao_leva_ao_alvo_e_recusa_fora_da_caixa`
+    1/0; `comandos_contra_o_ir` 18/0 (86 = `ENTER_INSTANCE`).
+
+    ### e. O que continua faltando
+    Mexe em troca de mapa: **portão §6.2** — **cumprido**: o Murillo saiu da Caverna das Sombras pelo altar
+    (1.5.5, 2026-10-08). Falta: entrar por portal do mundo, a recusa com o destino desligado (só testada na
+    suíte), `CheckDeny(CMD_MOVE)`, o erro 52 no cliente 1.2.6.
+    **Masmorra por grupo (`falta`, para implementar no futuro):** no original cada masmorra (instância, `cgame/gs/instance/`) é **uma cópia por grupo**: entrar pelo portal cria ou reaproveita a cópia daquele grupo, os monstros nascem nela, e quando a cópia fecha (todos saem e o prazo vence) ela é reciclada — ao entrar de novo, tudo volta ao início. Aqui cada masmorra é **um mapa único e compartilhado** (o `WORLD_TAGS` do GS): todos os jogadores e grupos dividem os mesmos monstros, e o que não renasce (`bAutoRevive` falso, B205) só volta ao recarregar o mapa (desligar/ligar pelo painel, B183) ou reiniciar o GS. Implementar: cópias de `WorldInstance` por grupo (ou por jogador sem grupo) para os mapas `instancia: true` do catálogo, criadas na entrada pelo portal (B208), com prazo e reciclagem conferidos em `instance/*_manager.cpp`, e o roteamento de mensagens por cópia.
+
+209. **Sessão 2026-10-08: efeitos de equipamento com o valor do id, por família e por realm.**
+    Pedido do Murillo (`docs/admin/PROMPT_B209_EFEITOS.md`) depois do teste da RT no 1.5.5: Acerto 999,
+    nível de ataque 30, conjuração 50 e movimento 50 postos pelo painel não apareciam; o 831 num elmo.
+    ### a. Classificação (primeira entrega, aprovada como proposta)
+    `specs/addons_155/classificar_addons.py` → `classificacao.json`: os 243 tratadores resolvidos até o
+    tipo de parâmetro (`arg_addon<T>`, `item_addon.cpp:50-235`), a classe de essência (família pelo
+    `DT_xxx_ESSENCE` do `GenerateParam`) ou a classe própria. 2.911 ids: 1.760 editáveis (inteiro somado
+    direto: `POINT`, `DOUBLE_POINT`, `PERCENT`, `DOUBLE_PERCENT`, essência de inteiro), 738 fixos
+    (conjunto, float, habilidade, dois argumentos), 413 fora da busca (refino, pedra, temporário).
+    Achado: `enhance_speed_addon_point` é `arg_addon<POINT>` mas o `Activate` lê float (`:356-388`) —
+    marca `float`, fixo. Família dos não-essência: pelas listas do `elements.data` do realm (638 ids),
+    senão pelo tratador (450), senão todas (821) — o **332** (conjuração) só é sorteado pelo
+    `ARMOR_ESSENCE`, então numa arma é recusado. 1.2.6: os 1.649 ids do v7 têm os mesmos parâmetros e
+    nenhum de nível de ataque/penetração/resiliência/vigor (ELF do `gs` 1.2.6 sem esses tratadores).
+    Correção do diagnóstico: o 2029 (nível de ataque) vale **+1** (`POINT`, `p1 = 1`).
+    ### b. Fatia 1 — valor do id, validação e busca
+    `DadosDoAddon::gerar_com/valor_do_id/faixa/edicao/aceita` e `TabelaDeAddons::ligar_familias`
+    (spec 03 §3.10c); o drop passa a gerar todos os tipos. `item_editado::validar_efeito`:
+    `efeito_inexistente`, `efeito_de_outra_familia`, `efeito_valor_invalido` (só o que entra ou muda).
+    Canal `efeitos_para_item`; painel `GET /api/realms/{id}/efeitos?item&busca|ids`, linha com
+    "Editável · valor do id" ou "Fixo pelo id" e campo travado (spec 06).
+    ### c. Fatia 2 — `OWN_EXT_PROP` do 1.5.5
+    Os 11 `int` depois do `status_point` iam zero; agora `GrausDaFicha` na ordem de
+    `PlayerGetProperty` (`gs/player.cpp:8587-8594`), tamanho igual (196 B). O 1.2.6 não tem o bloco.
+    ### d. Fatia 3 — atributo simples
+    Velocidade % e em ponto (`playertemplate.h:1077-1093`), conjuração (`DecPrayTime` →
+    `prayspeed`, `skill.cpp:809-815`; o `Realce.conjuracao` das passivas existia mas não era aplicado),
+    `_en_percent` de vida/mana/precisão/defesa, resistência por elemento (ponto e %), regeneração,
+    penetração/resiliência/vigor/anti-* (só ficha), apelidos `_1arg`/`_2arg`; essências aditivas
+    `IDMRA`/`IAERA2`/`IAERA3`/todas as resistências/`item_armor_specific_addon` (spec 05 §5.1).
+    ### e. Provas
+    data-loader 2/0 (`valor_do_id_e_edicao_pelo_tipo_de_parametro`, todo tratador com sorteio);
+    `item_editado` 5/0 (recusas com o `elements` dos dois realms); `ficha_do_126` 3/0
+    (`os_addons_de_atributo_simples_entram_na_ficha`); `geracao::testes` 1/0 (essências somam e
+    desfazem); `pw-protocol` 120/0 (`own_ext_prop_leva_os_graus_na_ordem_do_original`); painel 69/0,
+    Node 10/0. Suíte inteira com o banco: **1.006/0**, 2 ignorados.
+    ### f. O que continua faltando
+    Conjuntos (`set_equip_addon`, fatia 4) e `item_skill_addon` (fatia 5) — perguntar antes; escalas
+    de essência e `EPSA_EQ`, dano máximo em ponto, experiência %, regeneração %, pedras de dano por
+    elemento, velocidade de ataque/montaria; penetração/resiliência/vigor no combate; `_vigour_base`.
+
+210. **Sessão 2026-10-08: o que faltava dos efeitos de equipamento.**
+    O Murillo testou o B209 com a Tsuko no 1.5.5: "os atributos agora parecem funcionar" — fatias 1–3
+    confirmadas. Pediu para verificar o que falta e implementar.
+    ### a. Conjuntos (311 ids)
+    `set_addon_manager::LoadTemplate` (`gs/item/set_addon.cpp:5-48`): cada peça do `SUITE_ESSENCE`
+    (`equipments[12]`) recebe a lista `addons[11]`, ativada no `equip_item::OnActivate` com os efeitos da
+    peça (`equip_item.cpp:703-735`); `ActivateSetAddon(id)` conta por id (`actobject.h:526-535`) e o
+    `set_equip_addon<N,BASE>` ativa o `BASE` quando a conta chega a N (`item_addon.cpp:1194-1232`).
+    `TabelaDeAddons::conjuntos` + contador em `Equipamento::dos_itens_com_addons`.
+    ### b. Habilidade do item (68 de 85 ids)
+    `item_skill_addon` → `SkillWrapper::ActivateSkill`: não durativa → `filter_Activateskill`, que a prende a
+    cada golpe sem habilidade presa (`skillfilter.cpp:433-478`): `dobless` → `BlessMe` em quem bate,
+    `doenchant` → `attached_skill` no alvo se acertou. As do `realm_155` são tipo 6, `time_type` 0, com
+    `Probability 5`. `Equipamento::habilidades_do_item` + `habilidades_do_item_no_golpe` no `golpear`.
+    Durativas (4) e de rebote (8) ficam.
+    ### c. Combate e atributos
+    Penetração no monstro atingido (`npc.cpp:1770`, × `1 + 3p/(p+300)`), resiliência no jogador atingido
+    por monstro (`player.cpp:9647-9650`, × `1 − r/(r + nível)`), anti-defesa/resistência dos addons no
+    `Golpe`; escala da peça (`EPSA_EQ`, `UpdateData`, `equip_item.cpp:956-968`/`1323-1333`); dano máximo em
+    ponto; experiência % no `ReceiveExp` (`player.cpp:2898-2903`; abate, mina, produção — não missão);
+    regeneração % (`Result2`, `playertemplate.h:874-894`); velocidade de ataque (`_en_point.attack_speed`,
+    `playertemplate.h:955-968`).
+    ### d. Provas
+    `o_conjunto_age_com_n_pecas_vestidas` (94 conjuntos do `realm_155`), `a_escala_da_peca_multiplica_a_defesa_dela`,
+    `penetracao_no_monstro_e_resiliencia_no_jogador`, `dano_maximo_em_ponto_e_regeneracao_em_porcento`.
+    Suíte inteira com o banco: **1.010/0**, 2 ignorados (numa rodada anterior o convite de grupo falhou 2× e passou isolado — intermitente conhecido).
+    ### e. O que continua faltando
+    Habilidade de item durativa e de rebote; essências de escala; pedras de dano por elemento (dano por
+    elemento no combate); velocidade de montaria; `_vigour_base`.
+
+211. **Sessão 2026-10-08: a cidade da Névoa Sombria, o passeio de água e o resto dos efeitos.**
+    Relato do Murillo (RT, 1.5.5): a missão do Lerne Feyan levou ao mapa 1 e não havia volta para o 161;
+    no mapa 1 apareceu num "dirigível" com Sereias Ecoantes (nível 42) dentro da estrutura; depois, pelo
+    teleportador, voltou, mas não achou o Ancião da Névoa Sombria.
+    ### a. A missão e a volta
+    A 32344 "Retornar à Pan Gu" (classes 10/11, nível 20) teleporta para (3546, 281, 3052) no mapa 1 —
+    certo pelo `tasks.data`. A volta é a 32345 "Teleporte: Vale Celestial" (161), dada pelos teleportadores
+    das cidades (2171, 2187, 2202, 25533, 29195) e pelo **Teletransportador Rayga (44724)**, que fica na
+    própria cidade de chegada — e que não nascia.
+    ### b. Causa: `npcgen` antigo
+    O `world/npcgen.data` do realm era o do `home155` (2.872.138 B), anterior às classes 10/11: sem a cidade
+    da Névoa Sombria (Ancião 45355, Oficial 44728, Guardas 44742/44743, Rayga 44724) e com uma área de
+    Sereias (1692, caixa de 601 × 200 × 219 m) no mar onde a cidade fica. O `pwserver_155v156` — a build v156
+    dos nossos `.data` (estado §1.4) — tem o `npcgen` com a cidade (4.273.236 B, 44.646 entidades). Trocados
+    os 6 que diferiam (`world`, `a46` vazio, `a61`, `a63`, `a76`, `a77`) e o `a50/precinct.sev` vazio; os 77
+    fecham no último byte; a pasta carrega sem falha (os testes que cobravam as 3 falhas passaram a cobrar
+    zero). `aipolicy.data`: mesmas 3.136 políticas, ficou o do `home155`.
+    ### c. Passeio de água e de ar
+    Medido em (3550, 3036): água 216, terreno 207, piso do `movemap` 281 (o deck). O original nasce o
+    monstro da área "caixa" com `y` sorteado e só limitado pelo terreno (`box_gen_pos`, `npcgenerator.cpp:
+    4327-4346`) — o nosso já fazia — mas **passeia** com o agente do ambiente: `CNPCRambleInWaterAgent` /
+    `OnAirAgent` (`NPCMoveAgent.cpp:62-86`, `NPCMove.h:499-588`). O nosso usava o de chão para todos, que
+    assenta no piso do `movemap` — debaixo do deck, a sereia subia para 281. Agora `MonsterAi::passear_no_espaco`.
+    ### d. Efeitos
+    Pedras por elemento (`addon_damage` no golpe normal e na ficha das duas versões), rebote (1573/1575),
+    essências de escala (na geração e no painel, com divisão arredondada ao tirar), `scale_enhance_*2`,
+    alcance. Painel: `age` na consulta, "ainda não age no jogo" na linha. Sobram 43 ids (ver spec 05 §5.1).
+    ### e. Provas
+    `a_sereia_passeia_na_agua_e_nao_sobe_na_cidade` (12 sereias, 46 passos, 0 acima da água; e o Ancião e o
+    Rayga na cidade), `essencias_de_resistencia_somam_e_desfazem` (com escala), `own_ext_prop_leva_os_graus…`
+    (com `addon_damage`), `efeito_valida_familia_valor_e_existencia_por_realm` (o que age), testes de carga
+    sem falha; painel 69/0, Node 10/0. Suíte inteira com o banco: **1.010 passaram, 1 falhou** (`o_guia_selvagem…1177`, intermitente conhecido — passou isolado), 2 ignorados.

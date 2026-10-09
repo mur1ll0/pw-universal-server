@@ -1,8 +1,8 @@
 # Memória central da reforma do pw-admin
 
-Atualizada em 2026-10-07 (B198). Estado: **E1–E5 testadas; E6 em andamento (tela nova B190,
-arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197, missões B198; fila B199 em §6.14); E7 testada; E8–E9 planejadas**.
-Commitado até `c541bcb` (B198). Nada de B176–B198 confirmado em jogo.
+Atualizada em 2026-10-08 (B199–B211). Estado: **E1–E5 testadas; E6 em andamento (tela nova B190,
+arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197, missões B198; aparência fica no cliente, §6.14); E7 testada; E8–E9 planejadas**.
+Commitado até B211 (blocos `50c5d3a`, `d0ee485`, `2d57f7e`, `4630bb4`, `cecfaac` e a documentação). Nada de B176–B198 confirmado em jogo.
 Responsável pelas decisões de produto: Murillo.
 
 Este arquivo é o ponto de retomada da reforma. Guarda decisões, estado das etapas,
@@ -215,14 +215,32 @@ GS decodifica com `ConteudoDeEquipamento`, regrava os octets e as colunas espelh
 com janelas · B191 arrastar + `CheckEquipPostion` portado · B192–B193 dica: efeitos gerados do fonte e
 frases além do 112 conferidas no binário BR (`scripts/gerar_efeitos_de_itens.py`,
 `scripts/conferir_efeitos_no_binario.py`) · B194 editar item (octetos no GS; online `OWN_ITEM_INFO`;
-fora: modelo, vínculo; falta o brilho do refino para quem vê) · B195–B196 habilidades ver/editar
+fora: modelo, vínculo) · B195–B196 habilidades ver/editar
 (online `LEARN_SKILL`; 1.2.6 descer/remover offline) · durabilidade: a coluna é a verdade
 (`octetos_atuais`) · B197 mascotes (ver, editar o `pet_data`, libertar; online `PET_ROOM`/`FREE_PET`;
 invocado não se edita; dar = dar o ovo) · B198 missões (ver; dar livre `NEW`; concluir = forçar sucesso
 `FINISHED`/`COMPLETE`; cancelar = apagar `GIVE_UP`, 1.2.6 offline; esquecer só offline; offline recusa prêmio
 que exige a entidade; resposta do canal até 64 KiB).
 
-**Fila:** B199 aparência (rosto: `PLAYER_CHG_FACE`, `EC_GPDataType.h:1084`).
+**Aparência (decisão do Murillo, 2026-10-08): não haverá editor de rosto/cabelo/corpo no painel** — fica no
+cliente, que tem o modelo 3D. Evidência que pesou: o próprio jogador ignora dados de personalização em jogo
+(`CECHostPlayer::OnMsgPlayerCustomData` vazio, `EC_HostMsg.cpp:5932-5934`; só carrega no login,
+`EC_HostPlayer.cpp:983-992`). Roupas seguem pelo arrastar. A troca de rosto em jogo passou a ser gravada (B199).
 
-**Próxima ação:** B199 (aparência). Murillo confere em jogo B179–B198 (B183 = portão §6.2).
+**Pendências de jogo resolvidas em 2026-10-08 (fora do painel):** B199 troca de rosto · B200 brilho das
+pedras para quem vê (não existe brilho de refino no cliente) · B201 vínculo (`proc_type`) · B202 amuleto
+HP/MP, habilidade dinâmica e reputação ao vestir · B203 passivas comuns. Depois do teste do Murillo: B204 efeito
+de essência pelo painel conta · B205 masmorra não renasce (`bAutoRevive`) · B206 busca/descrição de efeitos,
+busca de pedras, Furos 0–4 · B207 Aura de Aço (`Ironshield`) · B208 portais de região (sair da masmorra pelo
+altar, confirmado em jogo; masmorra por grupo ficou como falta no estado §5) · B209 efeitos com o valor do id,
+por família e por realm (busca pelo GS `efeitos_para_item`, recusas `efeito_inexistente`/`_de_outra_familia`/
+`_valor_invalido`, `OWN_EXT_PROP` com graus, velocidade/conjuração/resistências; atributos confirmados em jogo) ·
+B210 conjuntos, habilidade do item no golpe, penetração/resiliência, escala da peça, exp %, regeneração % ·
+B211 `npcgen` do v156 (cidade da Névoa Sombria), passeio de água/ar, pedras, rebote, escalas; painel avisa o
+que não age. Detalhes no histórico e na spec 05.
+
+**Confirmado em jogo pelo Murillo (2026-10-08):** 1.5.5 (Tsuko) — dar, mover, equipar e desequipar itens pelo painel online e offline; editar item (durabilidade, refino, requisitos); dar dinheiro; subir/descer nível de habilidade; ensinar habilidade (Aura de Aço nv 5). 1.2.6 (WB) — dar EXP/SP, subir nível, cultivo, posição, pontos livres, dar missão.
+
+**Próxima ação:** Murillo confere em jogo B179–B198 (B183 = portão §6.2); depois ajustes visuais de
+usabilidade do painel (conversa a abrir).
 Não publicar/commitar sem pedido.

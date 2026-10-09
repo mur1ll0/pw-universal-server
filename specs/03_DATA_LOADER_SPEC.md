@@ -44,8 +44,8 @@ em nenhum realm, por falta do sistema: `domain.data`,
 `extra_drops.sev`, `task_npc.data`, `global_api.lua`, `ExtDataID.dat`, `precinct.clt`,
 `rare_item.conf`. Na raiz do `realm_126`, `npcgen.data`/`precinct.sev` são cópias idênticas das
 de `world/` (as lidas); o `region.sev` da raiz (6.856 B) difere do de `world/` (8.860 B), e vale o
-de `world/`. `realm_155`: 3 falhas dos próprios arquivos — `a46/npcgen.data` e `a50/precinct.sev`
-terminam antes do que declaram.
+de `world/`. `realm_155`: **sem falhas** desde o B211 (as 3 eram `a46/npcgen.data` e `a50/precinct.sev`
+com 0 bytes no `home155`; vieram do `pwserver_155v156`).
 
 ## 3. Os arquivos
 
@@ -90,6 +90,10 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 | `EQUIPMENT_ADDON` + `specs/addons_155/addons.json` | `addons.rs` (`addons`) | parâmetros e tratador de cada addon (B53) |
 | `WEAPON/ARMOR/DECORATION_ESSENCE` (faixas, `addons`/`uniques`, probabilidades de furo e de nº de addons) | `addons.rs` (`geracao`) | sorteio do equipamento no drop (B53) |
 | `STONE_ESSENCE` | `manager.rs` (`pedras`) | addon da pedra na arma/armadura/acessório (B53) |
+| `npcgen.data` `bAutoRevive` (área e área de recurso) | `SpawnInstance::renasce` | falso = não renasce (`SetRespawn`, B205); `examples/sem_renascer.rs` lista por mapa; `tests/renascer_do_npcgen.rs`: a69 38/38 sem renascer, a01 todo renasce |
+| `FACETICKET_ESSENCE` (`require_level`) | `GameDataManager::bilhetes_de_rosto` | o bilhete da troca de rosto (B199; `tests/bilhetes_de_rosto_do_realm.rs`: 126 = 3 — 4411, 5382, 9709 —, 155 = 4, todos nível 0) |
+| `proc_type` de todo registro com `ID` | `GameDataManager::proc_types`, `proc_type_da_instancia`, `vincula_ao_vestir` | o valor inicial da instância (`gs/item.cpp:95-105`); vinculada (`bind_status`) = `\| NODROP\|NOTHROW\|NOSELL\|NOTRADE\|BIND`, `& !BIND2` (`player.cpp:8182-8191`) (B201) |
+| `require_reputation` de `WEAPON/ARMOR/DECORATION_ESSENCE` | `GameDataManager::reputacao_exigida` | `get_item_reputation_limit` (`itemdataman.cpp:1911-1930`); o v7 (1.2.6) não tem o campo (B202). O `id_major_type` da arma é o `WeaponClass` das passivas de arma (1, 5, 9, 13, 182 nos dois realms; 23749, 25333, 44878, 44879 no 155) (B203) |
 | essências que entram no corpo + `ARMOR/DECORATION/FASHION_SUB_TYPE` (`equip_mask`, `equip_fashion_mask`), `POKER_SUB_TYPE` (`equip_mask_1/2`) | `posicoes.rs` (`GameDataManager::posicoes`, `cabe_no_slot`) | `equip_mask` de 32 bits por item como o `generate_*` grava (`generate_item_temp.h`, constantes em `itemdataman.h:340-366`; essência → gerador em `itemdataman.cpp:1355-1605`), conferido por `CheckEquipPostion` (B191, `testado` em `tests/posicoes_no_corpo.rs`: 126 = 3.582 itens com posição, armaduras 1.036/1.036, acessórios 561, roupas 142; 155 = 11.034, armaduras 2.520 — 156 delas abrem o slot 22 `EQUIP_INDEX_TWEAK` —, acessórios 969, roupas 3.016) |
 | `WEAPON/ARMOR/DECORATION_ESSENCE` (`level`, `levelup_addon`, `material_need`, `id_sub_type`), `STONE_ESSENCE` (grau, cor, `install_price`, `uninstall_price`, addons), `REFINE_TICKET_ESSENCE`, `DECORATION_SUB_TYPE.equip_mask`, `EQUIP_MAKE_HOLE_CONFIG` 2013 | `refino.rs` (`GameDataManager::refino`) | refino, incrustar, remover pedras e furar (B163, `testado` em `tests/refino_do_realm.rs`: 155 = 190 pedras, 24 só de acessório, 55 talismãs, 5.101 refináveis; 126 = 125 pedras, 19 talismãs, 2.709 refináveis, sem a tabela de furos e sem o item 21043). Todo `levelup_addon` dos dois realms tem tratador `refine_*` |
 | `NPC_ESSENCE` → `NPC_TASK_MATTER_SERVICE` (B164) | `servicos.rs` (`itens_de_missao`, `missoes_com_item`) | serviço 8: 16 × `{id_task, 4 × {id_matter, num_matter}}`; 155 = 18 NPCs/21 missões, 126 = 14/16 (`tests/servicos_do_realm.rs`) |
@@ -334,6 +338,13 @@ Estão na pasta do realm e não são pendência nossa, com uma exceção:
 `PRECINCTFILEHEADER5` (`dwVersion, iNumPrecinct, dwTimeStamp`@8) — `el_region.h`,
 `el_precinct.h`. O carimbo vai no `INST_DATA_CHECKOUT`. Versões < 4 recusadas.
 
+**Caixas de transporte (B208, `regioes.rs`, `GameDataManager::caixas_de_transporte`):** depois do
+cabeçalho, registros `i32 tipo` até completar as contagens — 0 = região (`i32 n` + `n × f32[3]`),
+1 = caixa (`i32 destino`, `i32 origem` v ≥ 3, `i32 nível` v ≥ 5, `f32[3] pos`, `f32[3] exts`,
+`f32[3] alvo`), `el_region.cpp:293-330` (servidor) = `EL_Region.cpp` (cliente); o índice é a ordem
+de leitura. Fecha no último byte: 126 = 42 arquivos, 135 caixas; 155 = 75 arquivos, 281 caixas
+(`tests/caixas_de_transporte_do_realm.rs`; `empty/` tem versão < 4 e fica de fora).
+
 O `precinct.sev` é lido inteiro (`precinct.rs`, `GameDataManager::distritos`): por distrito,
 `iNumPoint`, prioridade, mapa do ponto, mapa do distrito (v ≥ 4), domínio (v ≥ 6), proteção PK
 (v ≥ 7), ponto de cidade e vértices (`CELPrecinct::Load`, `el_precinct.cpp:219-266`); recusa
@@ -432,7 +443,8 @@ por `specs/habilidades_155/extrair_habilidades.py` e embutido com `include_str!`
 que depende de mais que o nível ou stub com `TODO fix` — tratado como desconhecido. Desde o B53:
 `arrowcost`, `tipo_de_area` (`range.type`), `doenchant`, `dobless`, `raio`,
 `distancia_de_ataque`, `angulo`, `precisao` (por nível), `distancia_de_efeito` (formato do
-alcance) e os roteiros `no_alvo` (`StateAttack`, 2.304) e `em_si` (`BlessMe`, 266) como
+alcance), `efeito_passivo` (o `TakeEffect` das passivas comuns `EVENT_RESET`/`WIELD`/`ENTER`,
+B203: 119 lidas das 128 no 1.5.5, 45 no 1.2.6 executadas no `gs`) e os roteiros `no_alvo` (`StateAttack`, 2.304) e `em_si` (`BlessMe`, 266) como
 `[quem, setter, expressão]` — expressão com `L`, `P_X`, `V_X`, `A_X`, `S_X`, `INT(...)`, `?:`,
 avaliada pelo servidor (`pw_gs::efeitos::expr`). Carregado para `elements.data` v156/v159
 (`GameDataManager::habilidades`).
@@ -466,9 +478,32 @@ conta com a ficha nível 1 dá 32 antes da resistência).
 ### 3.10c Tratadores de addon — `specs/addons_155/addons.json` (`addons.rs`)
 
 Extraído de `cgame/gs/item/item_addon.cpp` (`INSERT_ADDON(id, tratador)`, fora de comentário)
-por `specs/addons_155/extrair_addons.py`: 2.911 ids, 245 tratadores. O tratador decide o
-sorteio dos parâmetros (`Sorteio`: ponto, entre dois, porcento, refino...) e o efeito
-(`BonusDeAddons`, spec 05 §5.1).
+por `specs/addons_155/extrair_addons.py`: 2.911 ids, 243 tratadores distintos. O tratador decide o
+sorteio dos parâmetros (`Sorteio`) e o efeito (`BonusDeAddons`, spec 05 §5.1).
+
+**Classificação (B209) — `specs/addons_155/classificacao.json`**, de `classificar_addons.py`, que resolve
+macros (`IDMRA`, `IAERA*`, `SET_ADDON_MACRO`, `STONE_*`, `TEMPORARY_ADDON_MACRO`), `typedef`s e heranças
+de `item_addon*.cpp|h` até `arg_addon<T>` (`item_addon.cpp:50-235`), uma classe de essência (família no
+`if(datatype != DT_xxx_ESSENCE) return -1`) ou uma classe com `GenerateParam` próprio. Por tratador:
+`tipo`, `classe`, `familia_no_fonte`, `marcas` (`conjunto`, `refino`, `pedra`, `temporario`, `float` =
+o `Activate` lê o argumento como float). Todos os 243 resolvidos. Em `DadosDoAddon`:
+
+| função | o que dá |
+| :--- | :--- |
+| `sorteio()` / `gerar_com()` | o `GenerateParam` de **todos** os tipos (`POINT`, `DOUBLE_POINT`, `PERCENT` ×100+0,1, `DOUBLE_PERCENT`, `SECOND` ×20, `VinteAvos` da velocidade de ataque, float entre dois, `TRIPLE_POINT`, refino, `n` como estão; temporário põe `0xFFFF` no 2º); o drop usa o sorteio, o painel o máximo |
+| `valor_do_id()`, `faixa()` | o `GenerateParam` com o máximo / mínimo de cada faixa |
+| `edicao()` | `Editavel` (`POINT`, `DOUBLE_POINT`, `PERCENT`, `DOUBLE_PERCENT` e essência de inteiro: 1.760 ids), `Fixo` (conjunto, float, próprios: 738), `ForaDaBusca` (refino, pedra, temporário: 413) |
+| `aceita(args)` | editável: o número de argumentos do id; fixo: cada argumento dentro do mínimo–máximo |
+| `familias` | `TabelaDeAddons::ligar_familias` (depois do `carregar_geracao`): essência pela família do fonte; senão as famílias cujas `WEAPON/ARMOR/DECORATION_ESSENCE` do realm sorteiam o id (`addons`, `rands`, `uniques`); senão a união do tratador no realm; senão todas |
+
+`TabelaDeAddons::conjuntos` (B210): peça → efeitos do conjunto, do `SUITE_ESSENCE` (`equipments_N_id`,
+1–12; `addons_N_id`, 1–11; `set_addon.cpp:5-48`); `conjunto_de(tratador)` dá `(N, base)` de
+`SET_ADDON_MACRO(N,BASE)`.
+
+O que existe num realm é o `EQUIPMENT_ADDON` dele com tratador: o v7 do 1.2.6 tem 1.649 ids, os mesmos
+parâmetros do 1.5.5, e **nenhum** de nível de ataque/defesa, penetração, resiliência, vigor ou
+anti-defesa/resistência. `crates/pw-data-loader/examples/addons_por_familia.rs` lista id, parâmetros e
+famílias de um realm.
 
 ### 3.11 `global_api.lua`
 
@@ -479,10 +514,16 @@ cliente encerrar ("wrong config data").
 
 | realm | base do servidor | `.data` do cliente | elements | tasks |
 | :--- | :--- | :--- | :--- | :--- |
-| `realm_155` | `F:\PW\1.5.5\home155\gamed\config` | cliente BR | v156 (55.442.775 B) | 129 |
+| `realm_155` | `F:\PW\1.5.5\home155\gamed\config`; desde o B211 os `npcgen.data` de `world`, `a46`, `a61`, `a63`, `a76`, `a77` e o `a50/precinct.sev` do `F:\PW\1.5.5\pwserver_155v156\home\pwserver\gamed\config` (a build v156) | cliente BR | v156 (55.442.775 B) | 129 |
 
 O pacote de servidor e os `.data` do cliente precisam ser da mesma família: `npcgen.data`,
-mapas e `.sev` **não vêm do cliente** (B11, B12).
+mapas e `.sev` **não vêm do cliente** (B11, B12). **B211:** o `world/npcgen.data` do `home155`
+(2.872.138 B) é anterior às classes 10/11 do v156 — sem a cidade da Névoa Sombria (Ancião 45355,
+Teletransportador Rayga 44724) e com Sereias Ecoantes no mar onde ela fica; o do `pwserver_155v156`
+(4.273.236 B, 44.646 entidades) tem a cidade. Os 77 `npcgen` do v156 fecham no último byte
+(`conferir_npcgen`); o `aipolicy.data` dos dois tem as mesmas 3.136 políticas e ficou o do `home155`.
+`examples/spawns_perto.rs` lista os spawns de um raio (com controlador); `agua_no_ponto.rs`, água,
+terreno e piso.
 
 **Nomes de itens (B186):** `GameDataManager::nomes_de_itens` — o `Name` de todo registro do
 `elements.data` que declara `pile_num_max` e `ID` (o mesmo critério de `pilhas`), para o painel.

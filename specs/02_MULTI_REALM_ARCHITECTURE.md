@@ -213,6 +213,8 @@ Protocolos GNET **reais** do IR, não formato inventado. Quadro:
 | `EnterWorld` | 72 | link → mundo | `roleid`, `provider_link_id`, `locktime`, `timeout`, `settime`, `localsid` |
 | `S2CGamedataSend` | 74 | mundo → link | `roleid`, `localsid`, `data` |
 | `C2SGamedataSend` | 75 | link → mundo | `roleid`, `localsid`, `data` |
+| `SetCustomData` | 100 | link → mundo | `roleid`, `localsid`, `custom_data` — a aparência da troca de rosto **em jogo**: o GS dono tem o bilhete (no original é o `gdeliveryd`, `setcustomdata.hpp`). Fora do jogo o link responde sozinho: grava só personagem da conta/realm criado há menos de 2 dias, senão `ERR_NOFACETICKET` (201) (B199) |
+| `SetCustomData_Re` | 101 | mundo → link | `result`, `CRC`, `roleid`, `localsid` — o link entrega ao cliente (B199) |
 | `ChatSingleCast` | 94 | mundo → link | `channel`, `emotion`, `srcroleid`, `dstroleid`, `dstlocalsid`, `msg` (UTF-16LE), `data` — a fala de monstro (B127); o link a entrega como `ChatMessage` (80) |
 
 - O link repassa **todo** `GamedataSend` do cliente ao mundo, sem interpretar, e ainda trata
