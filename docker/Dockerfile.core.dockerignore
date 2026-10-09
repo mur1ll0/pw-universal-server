@@ -23,6 +23,7 @@
 !specs/habilidades_155/habilidades.json
 !specs/habilidades_126/habilidades.json
 !specs/addons_155/addons.json
+!specs/addons_155/classificacao.json
 
 # Mesmo dentro das pastas liberadas, nada de saída de compilação.
 **/target

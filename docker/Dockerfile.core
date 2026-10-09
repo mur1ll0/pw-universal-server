@@ -39,6 +39,7 @@ COPY specs/habilidades_155/habilidades.json ./specs/habilidades_155/habilidades.
 COPY specs/habilidades_126/habilidades.json ./specs/habilidades_126/habilidades.json
 # O tratador de cada addon, extraído do item_addon.cpp — `pw_data_loader::addons` o embute.
 COPY specs/addons_155/addons.json ./specs/addons_155/addons.json
+COPY specs/addons_155/classificacao.json ./specs/addons_155/classificacao.json
 
 # Argumento para definir qual binário compilar
 ARG CRATE_NAME=pw-auth
