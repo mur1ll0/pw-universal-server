@@ -126,6 +126,14 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                              "concluidas": [{"id": i, "nome": "Concluída de teste " * 2, "falhou": False, "vezes": 0}
                                             for i in range(200)],
                              "total_concluidas": 450, "pagina": consulta["pagina"], "por_pagina": 200, "origem": "persistida"}
+                elif consulta["tipo"] == "efeitos_para_item":
+                    # B209: 831 serve (editável); 1317 é de outra família; o resto não existe.
+                    dados = {"efeitos": [
+                        {"id": i, "args": [50], "editavel": True, "busca": True, "faixa": [50, 50], "porcento": False, "recusa": None,
+                         "age": True}
+                        if i == 831 else {"id": i, "args": [118], "editavel": True, "busca": True, "faixa": [118, 118],
+                                          "porcento": False, "recusa": "efeito_de_outra_familia"}
+                        if i == 1317 else {"id": i, "recusa": "efeito_inexistente"} for i in consulta["ids"]]}
                 elif consulta["tipo"] == "buscar_missoes":
                     dados = {"missoes": [{"id": 5002, "nome": "Missão direta", "nivel": [1, 150], "filhas": 0, "escolha": []}]}
                 else:
@@ -564,6 +572,35 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(busca["missoes"][0]["id"], 5002)
         self.assertEqual(self.pedidos_admin[-1]["consulta"], {"tipo": "buscar_missoes", "texto": "direta"})
 
+    async def test_efeitos_e_pedras_para_editar_item_b206(self):
+        """B206: busca de efeitos pelo texto do cliente, descrição com parâmetros e busca de pedras pelo GS."""
+        realm, _ = await self.criar_personagem()
+        await self.ativar_daemon(realm)
+        d = (await self.cliente.get("/api/efeitos/831?args=50")).json()
+        if d["linhas"]:  # com data/textos presente
+            self.assertEqual(d["linhas"], ["Ataque Mágico Máx +50"])
+            achados = (await self.cliente.get("/api/efeitos?busca=ataque mágico máx")).json()["efeitos"]
+            self.assertIn(831, [e["id"] for e in achados])
+            self.assertEqual((await self.cliente.get("/api/efeitos?busca=831")).json()["efeitos"][0]["id"], 831)
+        self.assertEqual((await self.cliente.get("/api/efeitos/831?args=x")).status_code, 422)
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/pedras?busca=rubi")).status_code, 200)
+        self.assertEqual(self.pedidos_admin[-1]["consulta"], {"tipo": "buscar_itens", "texto": "rubi", "categoria": "pedra"})
+
+    async def test_efeitos_pela_peca_com_o_valor_do_id_b209(self):
+        """B209: a busca pede ao GS os ids candidatos para a peça e mostra só os que servem, com o texto
+        do valor do id; `ids` devolve a informação das linhas sem filtro."""
+        realm, _ = await self.criar_personagem()
+        await self.ativar_daemon(realm)
+        info = (await self.cliente.get(f"/api/realms/{realm}/efeitos?item=11&ids=831,1317")).json()["efeitos"]
+        self.assertEqual(self.pedidos_admin[-1]["consulta"], {"tipo": "efeitos_para_item", "item_id": 11, "ids": [831, 1317]})
+        self.assertEqual([(e["id"], e["recusa"]) for e in info], [(831, None), (1317, "efeito_de_outra_familia")])
+        achados = (await self.cliente.get(f"/api/realms/{realm}/efeitos?item=11&busca=831")).json()["efeitos"]
+        self.assertEqual([e["id"] for e in achados], [831])
+        if achados[0]["texto"]:  # com data/textos presente
+            self.assertEqual(achados[0]["texto"], "Ataque Mágico Máx +50")
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/efeitos?item=11&ids=a")).status_code, 422)
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/efeitos?item=11")).json()["efeitos"], [])
+
     async def test_busca_de_habilidades_b196(self):
         await self.criar_personagem()
         dados = (await self.cliente.get("/api/habilidades?busca=Ataque do Tigre")).json()["habilidades"]
@@ -951,7 +988,7 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          # B194: editar item — ao menos um campo; limites do formato do bloco.
                          {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {}}},
                          {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"refino": 13}}},
-                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"pedras": [0, 0, 0, 0, 0, 0]}}},
+                         {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"pedras": [0, 0, 0, 0, 0]}}},
                          {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"efeitos": [{"id": 8192}]}}},
                          {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"efeitos": [{"id": 1, "args": [1, 2, 3, 4]}]}}},
                          {"editar_item": {"recipiente": "bolsa", "slot": 0, "id": 1, "edicao": {"fabricante": "x" * 21}}},

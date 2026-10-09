@@ -507,6 +507,9 @@ button, input, select { font: inherit; color: inherit; }
 .linha-efeito { display: grid; grid-template-columns: 90px 1fr 32px; gap: 6px; align-items: center; }
 .linha-efeito input { padding: 6px 8px; background: var(--fundo-2); border: 1px solid var(--borda-forte); border-radius: 6px; color: var(--texto); }
 .linha-efeito small { grid-column: 1 / -1; color: var(--azul); }
+.linha-efeito small:empty { display: none; }
+.linha-efeito small.faixa-efeito { color: var(--texto-2, var(--texto)); opacity: .8; }
+.linha-efeito input[readonly] { opacity: .7; cursor: not-allowed; }
 .acoes-modal { display: flex; justify-content: space-between; gap: 8px; }
 
 /* Mascotes (B197) */

@@ -97,6 +97,23 @@ def texto_do_efeito(efeito):
     return linhas
 
 
+_CATALOGO_DE_EFEITOS = None
+
+
+def catalogo_de_efeitos():
+    """B206: `[(id, texto)]` de todo efeito que o cliente descreve (`item_ext_prop.txt` → tipo →
+    frase), com parâmetros 0, para a busca na edição do item. Calculado uma vez."""
+    global _CATALOGO_DE_EFEITOS
+    if _CATALOGO_DE_EFEITOS is None:
+        lista = []
+        for idprop in sorted(textos.tipos_de_efeito()):
+            linhas = texto_do_efeito({"id": idprop, "args": [0, 0, 0]})
+            if linhas:
+                lista.append((idprop, " ".join(linhas)))
+        _CATALOGO_DE_EFEITOS = lista
+    return _CATALOGO_DE_EFEITOS
+
+
 def _linha_de_classe(classes, versao, classe):
     """`AddProfReqDesc`: some se a máscara cobre todas as classes da versão (`(1 << NUM_PROFESSION)
     - 1`, 12 no 1.5.5 `ExpTypes.h:20`; 8 no 1.2.6, classes 0–7); branca se a classe do personagem

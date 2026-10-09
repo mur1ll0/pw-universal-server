@@ -120,7 +120,8 @@ class EdicaoItem(BaseModel):
     fabricante: Optional[str] = Field(default=None, max_length=20)
     efeitos: Optional[list[EfeitoItem]] = Field(default=None, max_length=32)
     refino: Optional[int] = Field(default=None, ge=0, le=12)
-    pedras: Optional[list[Annotated[int, Field(ge=0, le=2_147_483_647)]]] = Field(default=None, max_length=5)
+    # Até 4 furos: `MAX_SOCKET_COUNT` (`gs/config.h:27`), B206.
+    pedras: Optional[list[Annotated[int, Field(ge=0, le=2_147_483_647)]]] = Field(default=None, max_length=4)
 
 
 class ItemEditadoPedido(BaseModel):

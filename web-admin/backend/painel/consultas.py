@@ -2,7 +2,7 @@
 from typing import Optional
 from fastapi import HTTPException, Path, Query, Request, Response
 from .icones import png_do_icone
-from .dica import linhas_da_dica
+from .dica import catalogo_de_efeitos, linhas_da_dica, texto_do_efeito
 from .textos import habilidades_do_cliente, nome_da_classe, nomes_das_habilidades
 from .canal import CanalIndisponivel, consultar_daemons, resposta_do_primeiro
 import json
@@ -101,6 +101,9 @@ def registrar_consultas(app):
                                           "WHERE c.realm_id=$1 AND c.id=$2", realm_id, personagem_id)
         try:
             linhas = linhas_da_dica(dados, versao=dono["version"] if dono else None, classe=dono["cls"] if dono else None)
+            # B206: a descrição de cada efeito, para a edição do item mostrar o mesmo que a dica.
+            for efeito in ((dados.get("equipamento") or {}).get("efeitos") or []):
+                efeito["texto"] = " ".join(texto_do_efeito(efeito) or [])
         except OSError:
             raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
         # Nomes das classes da versão, para a edição do item (B194): 8 no 1.2.x, 12 no 1.5.5.
@@ -181,6 +184,71 @@ def registrar_consultas(app):
         """E6 (B198): até 30 missões de topo do tasks.data do realm por nome ou id."""
         dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "buscar_missoes", "texto": busca})
         return {"realm_id": realm_id, "missoes": dados.get("missoes", [])}
+
+    @app.get("/api/efeitos")
+    async def buscar_efeitos(busca: str = Query(..., min_length=1, max_length=64)):
+        """B206: até 30 efeitos de item pelo texto que o cliente mostra ou pelo id."""
+        try:
+            catalogo = catalogo_de_efeitos()
+        except OSError:
+            raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
+        alvo = busca.strip().lower()
+        achados = [(i, t) for i, t in catalogo if str(i) == alvo or alvo in t.lower()]
+        achados.sort(key=lambda x: (str(x[0]) != alvo, x[0]))
+        return {"efeitos": [{"id": i, "texto": t} for i, t in achados[:30]]}
+
+    @app.get("/api/efeitos/{idprop}")
+    async def descrever_efeito(idprop: int = Path(..., ge=1, le=8191),
+                               args: str = Query("", max_length=64, pattern=r"^[-0-9, ]*$")):
+        """B206: a descrição de um efeito com os parâmetros dados (`1, 2`), como a dica."""
+        valores = [int(v) for v in args.replace(" ", "").split(",") if v not in ("", "-")][:3]
+        try:
+            linhas = texto_do_efeito({"id": idprop, "args": valores})
+        except OSError:
+            raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
+        return {"id": idprop, "linhas": linhas or []}
+
+    @app.get("/api/realms/{realm_id}/efeitos")
+    async def efeitos_para_item(realm_id: str, requisicao: Request, item: int = Query(..., ge=1, le=2_147_483_647),
+                                busca: Optional[str] = Query(None, min_length=1, max_length=64),
+                                ids: Optional[str] = Query(None, max_length=1200, pattern=r"^[0-9,]*$")):
+        """B209: efeitos para a peça `item` do realm, com o valor do id e a edição que o GS dá.
+
+        `busca`: até 30 efeitos que o cliente descreve com o texto (ou o id), filtrados pelo GS —
+        só os que existem no realm, servem na família da peça e não são de refino/pedra/temporário.
+        `ids`: a informação de cada id pedido (as linhas que o item já tem), sem filtro."""
+        if busca:
+            try:
+                catalogo = catalogo_de_efeitos()
+            except OSError:
+                raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
+            alvo = busca.strip().lower()
+            candidatos = [i for i, t in catalogo if str(i) == alvo or alvo in t.lower()]
+            if alvo.isdigit() and int(alvo) not in candidatos and 1 <= int(alvo) <= 8191:
+                candidatos.insert(0, int(alvo))
+            candidatos.sort(key=lambda i: (str(i) != alvo, i))
+        else:
+            candidatos = [int(v) for v in (ids or "").split(",") if v and 1 <= int(v) <= 8191]
+        candidatos = candidatos[:200]
+        if not candidatos:
+            return {"realm_id": realm_id, "efeitos": []}
+        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "efeitos_para_item", "item_id": item, "ids": candidatos})
+        lista = dados.get("efeitos", [])
+        if busca:
+            lista = [e for e in lista if not e.get("recusa") and e.get("busca")][:30]
+        for e in lista:
+            if e.get("args") is not None:
+                try:
+                    e["texto"] = " ".join(texto_do_efeito({"id": e["id"], "args": e["args"]}) or [])
+                except OSError:
+                    e["texto"] = ""
+        return {"realm_id": realm_id, "efeitos": lista}
+
+    @app.get("/api/realms/{realm_id}/pedras")
+    async def buscar_pedras(realm_id: str, requisicao: Request, busca: str = Query(..., min_length=1, max_length=64)):
+        """B206: até 30 pedras (`STONE_ESSENCE`) do realm por nome ou id, com o grau."""
+        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "buscar_itens", "texto": busca, "categoria": "pedra"})
+        return {"realm_id": realm_id, "pedras": dados.get("itens", [])}
 
     @app.get("/api/realms/{realm_id}/itens")
     async def buscar_itens(realm_id: str, requisicao: Request, busca: str = Query(..., min_length=1, max_length=64)):

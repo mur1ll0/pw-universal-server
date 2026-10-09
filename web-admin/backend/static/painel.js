@@ -697,6 +697,8 @@ const MOTIVOS_EDICAO = {
   precisa_estar_offline: "Isto só com o personagem fora do jogo.",
   posicao_invalida: "Esta peça não vai nesse slot.",
   requisito: "O personagem não atende o requisito da peça (nível, classe ou atributos).",
+  reputacao: "O personagem não tem a reputação que a peça exige.",
+  habilidade_repetida: "O mesmo item de habilidade já está no outro slot de habilidade.",
   movimento_invalido: "O jogo não move itens entre esses dois lugares.",
   slot_invalido: "Slot fora do recipiente.",
   equipamento_travado: "O equipamento está trancado (Forma Sombria).",
@@ -1325,6 +1327,57 @@ async function darMissao() {
 const CAMPOS_DE_REQUISITO = [["nivel", "ei-req-nivel"], ["forca", "ei-req-forca"], ["agilidade", "ei-req-agilidade"],
   ["vitalidade", "ei-req-vitalidade"], ["energia", "ei-req-energia"]];
 const ORIGEM_DO_EFEITO = 0x8000 | 0x10000 | 0x20000;
+/* B206: a descrição do efeito como a dica do cliente, refeita enquanto se digita. */
+let esperaDaDescricao = new WeakMap();
+async function descreverEfeito(linha) {
+  const [id, args] = linha.querySelectorAll("input");
+  const alvo = linha.querySelector(".descricao-efeito");
+  const n = Math.trunc(Number(id.value));
+  if (!alvo) return;
+  if (!(n >= 1 && n <= 8191)) { alvo.textContent = ""; return; }
+  try {
+    const d = await api(`/api/efeitos/${n}?args=${encodeURIComponent(args.value.replace(/[^-0-9, ]/g, ""))}`);
+    alvo.textContent = (d.linhas || []).join(" ") || "Efeito sem descrição no cliente.";
+  } catch (_) { alvo.textContent = ""; }
+}
+function agendarDescricao(linha) {
+  if (esperaDaDescricao.get(linha)) clearTimeout(esperaDaDescricao.get(linha));
+  esperaDaDescricao.set(linha, temTempo ? setTimeout(() => descreverEfeito(linha), 300) : null);
+}
+/* B209: o GS diz, para a peça aberta, o valor do id, se o valor é editável, a faixa e se o efeito
+   serve (`/api/realms/{realm}/efeitos?item=…&ids=…`). Fixo: o campo trava com o valor do id. */
+function aplicarInfoDoEfeito(linha, info) {
+  const [, args] = linha.querySelectorAll("input");
+  const nota = linha.querySelector(".faixa-efeito");
+  if (!info || !nota) return;
+  if (info.recusa) {
+    args.readOnly = false;
+    nota.textContent = info.recusa === "efeito_inexistente" ? "Não existe neste realm."
+      : "Não serve nesta peça (é de outra família).";
+    return;
+  }
+  const valor = (info.args || []).join(", ");
+  const unidade = info.porcento ? "%" : "";
+  const faixa = info.faixa ? (info.faixa[0] === info.faixa[1] ? `${info.faixa[0]}${unidade}`
+    : `${info.faixa[0]}–${info.faixa[1]}${unidade}`) : "";
+  args.readOnly = !info.editavel;
+  if (!info.editavel && args.value !== valor) { args.value = valor; agendarDescricao(linha); }
+  if (info.editavel && !args.value) { args.value = valor; agendarDescricao(linha); }
+  nota.textContent = (info.editavel ? `Editável${unidade ? " (em %)" : ""} · valor do id: ${faixa}`
+    : `Fixo pelo id: ${valor}`) + (info.age === false ? " · ainda não age no jogo" : "");
+}
+async function informarEfeitos(linhas) {
+  const em = estado.itemEmEdicao;
+  const realm = estado.selecionado;
+  const ids = linhas.map((l) => Math.trunc(Number(l.querySelector("input").value))).filter((n) => n >= 1 && n <= 8191);
+  if (!em || !realm || !ids.length) return;
+  try {
+    const d = await api(`/api/realms/${encodeURIComponent(realm.id)}/efeitos?item=${em.item.id}&ids=${[...new Set(ids)].join(",")}`);
+    const porId = new Map((d.efeitos || []).map((e) => [e.id, e]));
+    for (const l of linhas) aplicarInfoDoEfeito(l, porId.get(Math.trunc(Number(l.querySelector("input").value))));
+  } catch (_) { /* sem o GS: a linha fica livre, o GS recusa ao gravar */ }
+}
+let esperaDaInfo = new WeakMap();
 function linhaDeEfeito(efeito = { id: "", args: [] }) {
   const linha = criar("div", "linha-efeito");
   const id = criar("input");
@@ -1335,7 +1388,17 @@ function linhaDeEfeito(efeito = { id: "", args: [] }) {
   tirar.type = "button"; tirar.setAttribute("aria-label", "Tirar efeito");
   tirar.addEventListener("click", () => linha.remove());
   linha.append(id, args, tirar);
-  if (efeito.texto) linha.append(criar("small", "", efeito.texto));
+  const descricao = criar("small", "descricao-efeito", efeito.texto || "");
+  linha.append(descricao, criar("small", "faixa-efeito", ""));
+  id.addEventListener("input", () => {
+    args.value = ""; args.readOnly = false;
+    agendarDescricao(linha);
+    if (esperaDaInfo.get(linha)) clearTimeout(esperaDaInfo.get(linha));
+    esperaDaInfo.set(linha, temTempo ? setTimeout(() => informarEfeitos([linha]), 300) : null);
+  });
+  args.addEventListener("input", () => agendarDescricao(linha));
+  if (!efeito.texto && efeito.id) agendarDescricao(linha);
+  if (efeito.editavel !== undefined) aplicarInfoDoEfeito(linha, efeito);
   return linha;
 }
 async function abrirEdicaoDeItem(chave, rotulo, item, celula) {
@@ -1377,8 +1440,14 @@ async function abrirEdicaoDeItem(chave, rotulo, item, celula) {
       return rotuloClasse;
     }));
     elemento("ei-pedras").value = (equip.furos || []).map((f) => f.id || 0).join(", ");
-    elemento("ei-efeitos").replaceChildren(...(equip.efeitos || [])
-      .filter((e) => !((e.tipo || 0) & ORIGEM_DO_EFEITO)).map((e) => linhaDeEfeito(e)));
+    elemento("ei-furos").value = String((equip.furos || []).length);
+    elemento("ei-busca-pedra").value = "";
+    elemento("ei-resultados-pedra").hidden = true;
+    elemento("ei-busca-efeito").value = "";
+    elemento("ei-resultados-efeito").hidden = true;
+    const linhas = (equip.efeitos || []).filter((e) => !((e.tipo || 0) & ORIGEM_DO_EFEITO)).map((e) => linhaDeEfeito(e));
+    elemento("ei-efeitos").replaceChildren(...linhas);
+    informarEfeitos(linhas);
   }
   elemento("modal-item").hidden = false;
 }
@@ -2046,6 +2115,65 @@ elemento("hab-busca").addEventListener("input", () => {
 });
 elemento("fechar-item").addEventListener("click", fecharEdicaoDeItem);
 elemento("ei-novo-efeito").addEventListener("click", () => elemento("ei-efeitos").append(linhaDeEfeito()));
+/* B206: furos (0–4, `MAX_SOCKET_COUNT`) redimensionam a lista de pedras; a busca de pedra põe o id
+   no primeiro furo vazio; a busca de efeito acrescenta a linha com o id. */
+function lerPedras() {
+  return elemento("ei-pedras").value.split(/[,\s]+/).filter(Boolean).map((v) => Math.trunc(Number(v)) || 0);
+}
+elemento("ei-furos").addEventListener("input", () => {
+  const n = Math.max(0, Math.min(4, Math.trunc(Number(elemento("ei-furos").value)) || 0));
+  const pedras = lerPedras().slice(0, n);
+  while (pedras.length < n) pedras.push(0);
+  elemento("ei-pedras").value = pedras.join(", ");
+});
+function listaDeBusca(alvo, itens, rotulo, detalhe, escolher) {
+  alvo.replaceChildren();
+  for (const x of itens) {
+    const li = criar("li");
+    li.append(criar("span", "", rotulo(x)), criar("small", "", detalhe(x)));
+    li.addEventListener("click", () => { escolher(x); alvo.hidden = true; });
+    alvo.append(li);
+  }
+  if (!itens.length) alvo.append(criar("li", "dica", "Nada encontrado."));
+  alvo.hidden = false;
+}
+let esperaDaPedra = null;
+elemento("ei-busca-pedra").addEventListener("input", () => {
+  if (esperaDaPedra) clearTimeout(esperaDaPedra);
+  esperaDaPedra = temTempo ? setTimeout(async () => {
+    const texto = elemento("ei-busca-pedra").value.trim();
+    const realm = estado.selecionado;
+    if (!realm || !texto) { elemento("ei-resultados-pedra").hidden = true; return; }
+    try {
+      const d = await api(`/api/realms/${encodeURIComponent(realm.id)}/pedras?busca=${encodeURIComponent(texto)}`);
+      listaDeBusca(elemento("ei-resultados-pedra"), d.pedras || [], (p) => p.nome || `Pedra ${p.id}`,
+        (p) => `ID ${p.id}${p.grau ? ` · grau ${p.grau}` : ""}`, (p) => {
+          const pedras = lerPedras();
+          const vazio = pedras.indexOf(0);
+          if (vazio < 0) { alerta("aviso", "Sem furo vazio", "Aumente os furos ou troque um id na lista."); return; }
+          pedras[vazio] = p.id;
+          elemento("ei-pedras").value = pedras.join(", ");
+        });
+    } catch (erro) { alerta("erro", "Busca de pedras", erro.message); }
+  }, 300) : null;
+});
+let esperaDoEfeito = null;
+elemento("ei-busca-efeito").addEventListener("input", () => {
+  if (esperaDoEfeito) clearTimeout(esperaDoEfeito);
+  esperaDoEfeito = temTempo ? setTimeout(async () => {
+    const texto = elemento("ei-busca-efeito").value.trim();
+    if (!texto) { elemento("ei-resultados-efeito").hidden = true; return; }
+    try {
+      const em = estado.itemEmEdicao;
+      if (!em || !estado.selecionado) return;
+      // B209: só o que serve nesta peça e neste realm, com o valor do id ("Acerto +118").
+      const d = await api(`/api/realms/${encodeURIComponent(estado.selecionado.id)}/efeitos?item=${em.item.id}&busca=${encodeURIComponent(texto)}`);
+      listaDeBusca(elemento("ei-resultados-efeito"), d.efeitos || [], (e) => e.texto || `Efeito ${e.id}`,
+        (e) => `ID ${e.id}${e.editavel ? "" : " · fixo"}${e.age === false ? " · não age" : ""}`,
+        (e) => elemento("ei-efeitos").append(linhaDeEfeito(e)));
+    } catch (erro) { alerta("erro", "Busca de efeitos", erro.message); }
+  }, 300) : null;
+});
 elemento("ei-remover").addEventListener("click", () => {
   const em = estado.itemEmEdicao;
   if (!em) return;

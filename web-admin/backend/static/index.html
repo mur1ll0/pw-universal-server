@@ -502,11 +502,18 @@
             <label class="campo"><span>Energia</span><input id="ei-req-energia" type="number" min="0" max="32767" step="1"></label>
           </div>
           <div class="campo"><span>Classes que podem usar</span><div id="ei-classes" class="grade-classes"></div></div>
-          <label class="campo"><span>Pedras (id por furo; 0 = vazio)</span><input id="ei-pedras" placeholder="ex.: 0, 0" autocomplete="off"></label>
+          <div class="grade-campos">
+            <label class="campo"><span>Furos (0–4)</span><input id="ei-furos" type="number" min="0" max="4" step="1"></label>
+            <label class="campo"><span>Pedras (id por furo; 0 = vazio)</span><input id="ei-pedras" placeholder="ex.: 0, 0" autocomplete="off"></label>
+          </div>
+          <label class="campo"><span>Buscar pedra</span><input id="ei-busca-pedra" type="search" maxlength="64" placeholder="Nome ou ID da pedra" autocomplete="off"></label>
+          <ul id="ei-resultados-pedra" class="resultados-item" hidden></ul>
           <div class="campo">
             <span>Efeitos (id e parâmetros)</span>
             <div id="ei-efeitos" class="lista-efeitos"></div>
-            <button id="ei-novo-efeito" type="button" class="botao botao-secundario botao-pequeno">+ Efeito</button>
+            <input id="ei-busca-efeito" type="search" maxlength="64" placeholder="Buscar efeito pelo texto (ex.: ataque mágico) ou ID" aria-label="Buscar efeito" autocomplete="off">
+            <ul id="ei-resultados-efeito" class="resultados-item" hidden></ul>
+            <button id="ei-novo-efeito" type="button" class="botao botao-secundario botao-pequeno">+ Efeito vazio</button>
           </div>
           <p class="dica">Efeitos de pedra, conjunto e gravação não aparecem aqui e ficam como estão.</p>
         </fieldset>
