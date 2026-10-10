@@ -12792,3 +12792,35 @@ comparação lado a lado.
     Rayga na cidade), `essencias_de_resistencia_somam_e_desfazem` (com escala), `own_ext_prop_leva_os_graus…`
     (com `addon_damage`), `efeito_valida_familia_valor_e_existencia_por_realm` (o que age), testes de carga
     sem falha; painel 69/0, Node 10/0. Suíte inteira com o banco: **1.010 passaram, 1 falhou** (`o_guia_selvagem…1177`, intermitente conhecido — passou isolado), 2 ignorados.
+
+212. **Sessão 2026-10-10: painel E7 (rates e mapas) confirmado em jogo no 1.2.6.**
+    O Murillo testou com o WB no 1.2.6: alterar as rates pelo painel reflete no jogo. Ligou pela tela Mapas
+    o 108 e, ao entrar pelo portal, o cliente mostrou "Não é possível acessar instância". O log do
+    `pw-world-126` mostrou o 108 carregado (16:59:43, 40 monstros, 3 NPCs, 72 ms) e o portal índice 7 em
+    (1672, 1933) recusado com `destino 102`, `destino_indisponivel`: o portal levava a outro mapa, que
+    estava desligado. Ligando o mapa certo, a entrada funcionou — E7 confirmada (B176, B177, B183). Sem
+    mudança de código.
+
+213. **Sessão 2026-10-10: painel — o efeito de habilidade do item aparece como no cliente.**
+    Relato do Murillo (WB, 1.2.6): o efeito 1286 do Punho da Luz Fixa (8292) aparecia como "Efeito sem
+    descrição no cliente"; no jogo, "Mordaz: Aumenta seu poder de ataque físico.".
+    Causa: o 1286 é `item_skill_addon` (habilidade 205, nível 1), tipo 55 no `item_ext_prop`; o catálogo de
+    efeitos do painel (B192) tinha o 55 sem partes (`seguro: false`). O cliente descreve o 55 com
+    `CECSkill::GetDesc(p0, 1)` (`EC_IvtrEquip.cpp:1829-1836`) → `GetIntroduction` do stub com o formato
+    `skillstr` `id × 10 + 1` (`ElementSkill/skill.h:370-376`); conferido nos 71 stubs das habilidades que os
+    efeitos de item dão (1.2.6 e 1.5.5): nenhuma introdução tem parâmetro, então o formato é o texto
+    (2051 = "Mordaz: …"). Painel: `introducoes_das_habilidades`, `habilidade_do_efeito`; selo ✦ (ou ícone
+    da habilidade) e borda dourada na linha, "✦" na busca. A habilidade 205 não tem ícone no atlas do
+    cliente. Teste `test_efeito_de_habilidade_do_item_b213`; o do B193 que cobrava o 55 cru foi
+    atualizado. Painel 70/0 (o `test_gm_global_api_links_gs_reais…` falhou uma vez na rodada e passou
+    isolado — depende dos contêineres), Node 10/0. Limite: a busca por **texto** não acha efeito de
+    habilidade (o catálogo é montado sem parâmetros e o id da habilidade vem do GS); pelo id acha.
+
+214. **Sessão 2026-10-10: painel — buscar habilidades de item para pôr nos efeitos.**
+    Pedido do Murillo depois do B213. O catálogo da busca é montado do `item_ext_prop` sem parâmetros, e o
+    id da habilidade de cada efeito do tipo 55 é o 1º argumento, que só o GS tem. Na primeira busca de cada
+    realm, `consultas.efeitos_de_habilidade` pede ao GS `efeitos_para_item` com os 86 ids do tipo 55 e
+    `item_id` 0 (sem família) e guarda `{id: (texto, nome)}`; a busca casa o texto ("mordaz") e o nome
+    ("garra") e manda os achados à consulta da peça, que filtra a família. Lista: "✦ texto — habilidade
+    nome". Teste `test_busca_acha_habilidade_do_item_pelo_texto_e_pelo_nome_b214` (o mapa é pedido uma vez).
+    Painel 71/0, Node 10/0.

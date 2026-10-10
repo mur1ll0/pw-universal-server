@@ -1,7 +1,7 @@
 # Memória central da reforma do pw-admin
 
 Atualizada em 2026-10-08 (B199–B211). Estado: **E1–E5 testadas; E6 em andamento (tela nova B190,
-arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197, missões B198; aparência fica no cliente, §6.14); E7 testada; E8–E9 planejadas**.
+arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197, missões B198; aparência fica no cliente, §6.14); E7 confirmada em jogo (2026-10-10); E8–E9 planejadas**.
 Commitado até B211 (blocos `50c5d3a`, `d0ee485`, `2d57f7e`, `4630bb4`, `cecfaac` e a documentação). Nada de B176–B198 confirmado em jogo.
 Responsável pelas decisões de produto: Murillo.
 
@@ -119,7 +119,7 @@ Cada etapa pode ser dividida em subtarefas aqui, mantendo o arquivo curto.
 | E4 — contas | testado | busca, criação, senha, GM, gold, ban/desban e desconectar (B175); testes Rust/Python/Node; falta o Murillo confirmar em jogo |
 | E5 — personagem e persistência | testado | dinheiro e EXP/SP (B179); pontos livres, nível e cultivo (B182); modificar/redistribuir atributos (B184); falta ver em jogo; ficha e progressão online/offline, atualização nos dois clientes; autosave/logout/relogin não desfazem edição; consultas mostram valores reais |
 | E6 — inventário e subsistemas | em andamento | posição (B185), itens ver/buscar/dar (B186), remover (B187), ícones (B188), dica parte 1 (B189), tela nova (B190) e arrastar (B191), dica parte 2 (B192–B193), editar item (B194), habilidades ver e editar (B195–B196), mascotes (B197), missões (B198) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
-| E7 — mapas e rates | testado | rates (B176), mapas (B177) e lista completa com carga/descarga em execução (B183); falta ver em jogo; desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
+| E7 — mapas e rates | confirmado | rates (B176), mapas (B177) e lista completa com carga/descarga em execução (B183); **confirmado em jogo pelo Murillo em 2026-10-10** (WB no 1.2.6: rates refletem no jogo; mapa ligado pelo painel e entrada pelo portal); desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
 | E8 — moldes de classe | planejado | leitura/edição das fontes consumidas; personagem novo usa alteração; recálculo separado preserva progressão conforme contrato |
 | E9 — extensões e fechamento | planejado | pontos de extensão documentados para editores futuros; interface revisada, manual atualizado, verificações finais e pendências claras |
 
