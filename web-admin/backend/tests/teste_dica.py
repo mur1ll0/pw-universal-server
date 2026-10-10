@@ -58,7 +58,7 @@ class TesteDica(unittest.TestCase):
         self.assertEqual(texto(2239), ["Resistência Elemental  +3%"], "tipo 61, TOTAL_DEFENCE_ADD → 255")
         self.assertEqual(texto(3193), ["Penet. Física +3"], "tipo 175, PPEN → 397")
         self.assertEqual(texto(3160), [textos.frase("ITEMDESC_ERRORPROP", 3160)], "tipo 161: o BR manda ao default")
-        self.assertIsNone(texto(445), "habilidade (55) ainda crua")
+        self.assertIsNotNone(texto(445), "habilidade (55): a introdução do skillstr desde o B213")
         self.assertNotIn("ITEMDESC_PDEF", textos.frases(), "além do 112 sem conferência: fora")
 
     def test_habilidades_e_atlas_dxt1_e_dxt3(self):
@@ -80,6 +80,16 @@ class TesteDica(unittest.TestCase):
         linhas = dica.linhas_da_dica({"id": 10042, "nome": "Carruagem", "quantidade": 3})
         self.assertEqual(linhas[1], "^ffffff×3")
         self.assertTrue(any("carruagem de cerco" in l for l in linhas), linhas)
+
+
+    def test_efeito_de_habilidade_do_item_b213(self):
+        """B213: o 1286 (`item_skill_addon`, tipo 55) do Punho da Luz Fixa dá a habilidade 205 (Garra):
+        o cliente escreve a introdução dela (`skillstr` 2051), e o painel marca a habilidade."""
+        from painel.dica import habilidade_do_efeito
+        efeito = {"id": 1286, "args": [205, 1]}
+        self.assertEqual(dica.texto_do_efeito(efeito), ["Mordaz: Aumenta seu poder de ataque físico."])
+        self.assertEqual(habilidade_do_efeito(efeito), {"id": 205, "nome": "Garra", "icone": ""})
+        self.assertIsNone(habilidade_do_efeito({"id": 831, "args": [50]}))
 
 
 if __name__ == "__main__":

@@ -133,7 +133,9 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          "age": True}
                         if i == 831 else {"id": i, "args": [118], "editavel": True, "busca": True, "faixa": [118, 118],
                                           "porcento": False, "recusa": "efeito_de_outra_familia"}
-                        if i == 1317 else {"id": i, "recusa": "efeito_inexistente"} for i in consulta["ids"]]}
+                        if i == 1317 else {"id": i, "args": [205, 1], "editavel": False, "busca": True, "faixa": [205, 205],
+                                           "porcento": False, "recusa": None, "age": True}
+                        if i == 1286 else {"id": i, "recusa": "efeito_inexistente"} for i in consulta["ids"]]}
                 elif consulta["tipo"] == "buscar_missoes":
                     dados = {"missoes": [{"id": 5002, "nome": "Missão direta", "nivel": [1, 150], "filhas": 0, "escolha": []}]}
                 else:
@@ -600,6 +602,23 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(achados[0]["texto"], "Ataque Mágico Máx +50")
         self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/efeitos?item=11&ids=a")).status_code, 422)
         self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/efeitos?item=11")).json()["efeitos"], [])
+
+    async def test_busca_acha_habilidade_do_item_pelo_texto_e_pelo_nome_b214(self):
+        """B214: a busca de efeitos acha o efeito de habilidade do item (tipo 55) pelo texto do cliente
+        e pelo nome da habilidade — o id da habilidade vem do GS, uma vez por realm."""
+        realm, _ = await self.criar_personagem()
+        await self.ativar_daemon(realm)
+        try:
+            from painel import textos
+            textos.introducoes_das_habilidades()
+        except OSError:
+            self.skipTest("textos do cliente ausentes em data/textos")
+        for busca in ("mordaz", "garra"):
+            achados = (await self.cliente.get(f"/api/realms/{realm}/efeitos?item=11&busca={busca}")).json()["efeitos"]
+            self.assertEqual([e["id"] for e in achados], [1286], busca)
+            self.assertEqual(achados[0]["habilidade"]["nome"], "Garra")
+        pedidos = [p["consulta"] for p in self.pedidos_admin if p["consulta"].get("item_id") == 0]
+        self.assertEqual(len(pedidos), 1, "o mapa das habilidades é pedido uma vez por realm")
 
     async def test_busca_de_habilidades_b196(self):
         await self.criar_personagem()

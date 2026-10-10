@@ -128,6 +128,22 @@ def nomes_das_habilidades():
 
 
 @functools.lru_cache(maxsize=1)
+def introducoes_das_habilidades():
+    """B213 — `skillstr.txt`, chave `id × 10 + 1`: o formato que `Skill::GetIntroduction` passa ao
+    stub (`ElementSkill/skill.h:370-376`, `table.Find(stub->id*10+1)`). É o texto que o cliente põe
+    no efeito de habilidade do item (tipo 55, `CECSkill::GetDesc(p0, 1)`, `EC_IvtrEquip.cpp:1829-1836`).
+    As 71 habilidades que os efeitos de item dão (1.2.6 e 1.5.5) têm `GetIntroduction` sem
+    parâmetros (`_snwprintf(buffer, length, format)`), então o formato já é o texto."""
+    corpo = _ler("skillstr.txt").split("#_index", 1)[-1]
+    tabela = {}
+    for m in re.finditer(r'(?m)^\s*(\d+)\s+"((?:[^"\\]|\\.)*)"', corpo):
+        chave = int(m.group(1))
+        if chave % 10 == 1:
+            tabela.setdefault(chave // 10, _desfazer_escape(m.group(2)))
+    return tabela
+
+
+@functools.lru_cache(maxsize=1)
 def habilidades_do_cliente():
     """`{id: {icone, nivel_maximo, classe}}` dos stubs do cliente (`scripts/gerar_habilidades_do_cliente.py`)."""
     bruto = json.loads((Path(__file__).parent / "habilidades_do_cliente.json").read_text(encoding="utf-8"))

@@ -1338,6 +1338,7 @@ async function descreverEfeito(linha) {
   try {
     const d = await api(`/api/efeitos/${n}?args=${encodeURIComponent(args.value.replace(/[^-0-9, ]/g, ""))}`);
     alvo.textContent = (d.linhas || []).join(" ") || "Efeito sem descrição no cliente.";
+    marcarHabilidadeDoEfeito(linha, d.habilidade);
   } catch (_) { alvo.textContent = ""; }
 }
 function agendarDescricao(linha) {
@@ -1377,6 +1378,27 @@ async function informarEfeitos(linhas) {
     for (const l of linhas) aplicarInfoDoEfeito(l, porId.get(Math.trunc(Number(l.querySelector("input").value))));
   } catch (_) { /* sem o GS: a linha fica livre, o GS recusa ao gravar */ }
 }
+/* B213: efeito que dá uma habilidade (`item_skill_addon`, tipo 55 do cliente) — ícone da habilidade
+   ou, sem ícone no cliente, o selo ✦; a dica diz qual habilidade é. */
+function seloDeHabilidade(h) {
+  const selo = criar("span", "selo-habilidade");
+  selo.title = `Habilidade do item: ${h.nome} (ID ${h.id})`;
+  if (h.icone) {
+    const img = criar("img");
+    img.src = `/api/icones/habilidade/${h.icone}.png`;
+    img.alt = h.nome; img.width = 20; img.height = 20;
+    img.addEventListener("error", () => img.replaceWith(document.createTextNode("✦")));
+    selo.append(img);
+  } else {
+    selo.textContent = "✦";
+  }
+  return selo;
+}
+function marcarHabilidadeDoEfeito(linha, h) {
+  linha.querySelector(".selo-habilidade")?.remove();
+  linha.classList.toggle("efeito-habilidade", Boolean(h));
+  if (h) linha.querySelector(".descricao-efeito")?.prepend(seloDeHabilidade(h));
+}
 let esperaDaInfo = new WeakMap();
 function linhaDeEfeito(efeito = { id: "", args: [] }) {
   const linha = criar("div", "linha-efeito");
@@ -1398,6 +1420,7 @@ function linhaDeEfeito(efeito = { id: "", args: [] }) {
   });
   args.addEventListener("input", () => agendarDescricao(linha));
   if (!efeito.texto && efeito.id) agendarDescricao(linha);
+  if (efeito.habilidade) marcarHabilidadeDoEfeito(linha, efeito.habilidade);
   if (efeito.editavel !== undefined) aplicarInfoDoEfeito(linha, efeito);
   return linha;
 }
@@ -2168,7 +2191,7 @@ elemento("ei-busca-efeito").addEventListener("input", () => {
       if (!em || !estado.selecionado) return;
       // B209: só o que serve nesta peça e neste realm, com o valor do id ("Acerto +118").
       const d = await api(`/api/realms/${encodeURIComponent(estado.selecionado.id)}/efeitos?item=${em.item.id}&busca=${encodeURIComponent(texto)}`);
-      listaDeBusca(elemento("ei-resultados-efeito"), d.efeitos || [], (e) => e.texto || `Efeito ${e.id}`,
+      listaDeBusca(elemento("ei-resultados-efeito"), d.efeitos || [], (e) => e.habilidade ? `✦ ${e.texto || `Efeito ${e.id}`} — habilidade ${e.habilidade.nome}` : (e.texto || `Efeito ${e.id}`),
         (e) => `ID ${e.id}${e.editavel ? "" : " · fixo"}${e.age === false ? " · não age" : ""}`,
         (e) => elemento("ei-efeitos").append(linhaDeEfeito(e)));
     } catch (erro) { alerta("erro", "Busca de efeitos", erro.message); }

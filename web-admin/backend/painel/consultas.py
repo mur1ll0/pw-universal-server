@@ -2,8 +2,8 @@
 from typing import Optional
 from fastapi import HTTPException, Path, Query, Request, Response
 from .icones import png_do_icone
-from .dica import catalogo_de_efeitos, linhas_da_dica, texto_do_efeito
-from .textos import habilidades_do_cliente, nome_da_classe, nomes_das_habilidades
+from .dica import TIPO_HABILIDADE_DO_ITEM, catalogo_de_efeitos, habilidade_do_efeito, linhas_da_dica, texto_do_efeito
+from .textos import habilidades_do_cliente, nome_da_classe, nomes_das_habilidades, tipos_de_efeito
 from .canal import CanalIndisponivel, consultar_daemons, resposta_do_primeiro
 import json
 import pathlib
@@ -104,6 +104,7 @@ def registrar_consultas(app):
             # B206: a descrição de cada efeito, para a edição do item mostrar o mesmo que a dica.
             for efeito in ((dados.get("equipamento") or {}).get("efeitos") or []):
                 efeito["texto"] = " ".join(texto_do_efeito(efeito) or [])
+                efeito["habilidade"] = habilidade_do_efeito(efeito)
         except OSError:
             raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
         # Nomes das classes da versão, para a edição do item (B194): 8 no 1.2.x, 12 no 1.5.5.
@@ -204,9 +205,29 @@ def registrar_consultas(app):
         valores = [int(v) for v in args.replace(" ", "").split(",") if v not in ("", "-")][:3]
         try:
             linhas = texto_do_efeito({"id": idprop, "args": valores})
+            habilidade = habilidade_do_efeito({"id": idprop, "args": valores})
         except OSError:
             raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
-        return {"id": idprop, "linhas": linhas or []}
+        return {"id": idprop, "linhas": linhas or [], "habilidade": habilidade}
+
+    # B214: `{realm: {id do efeito: (texto, nome da habilidade)}}` dos efeitos de habilidade do item
+    # (tipo 55). O id da habilidade é o 1º argumento do efeito, que só o GS tem (`EQUIPMENT_ADDON` do
+    # realm); pedido uma vez por realm. Só guarda quando o GS respondeu.
+    habilidades_por_realm = {}
+
+    async def efeitos_de_habilidade(realm_id, requisicao):
+        if realm_id not in habilidades_por_realm:
+            ids = sorted(i for i, b in tipos_de_efeito().items() if b == TIPO_HABILIDADE_DO_ITEM)[:200]
+            tabela = {}
+            if ids:
+                dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "efeitos_para_item", "item_id": 0, "ids": ids})
+                for e in dados.get("efeitos", []):
+                    if e.get("args") and not e.get("recusa") and e.get("busca"):
+                        h = habilidade_do_efeito({"id": e["id"], "args": e["args"]}) or {}
+                        texto = " ".join(texto_do_efeito({"id": e["id"], "args": e["args"]}) or [])
+                        tabela[e["id"]] = (texto, h.get("nome", ""))
+            habilidades_por_realm[realm_id] = tabela
+        return habilidades_por_realm[realm_id]
 
     @app.get("/api/realms/{realm_id}/efeitos")
     async def efeitos_para_item(realm_id: str, requisicao: Request, item: int = Query(..., ge=1, le=2_147_483_647),
@@ -224,6 +245,10 @@ def registrar_consultas(app):
                 raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
             alvo = busca.strip().lower()
             candidatos = [i for i, t in catalogo if str(i) == alvo or alvo in t.lower()]
+            # B214: habilidade do item — pelo texto do cliente ("Mordaz") ou pelo nome ("Garra").
+            for i, (texto, nome) in (await efeitos_de_habilidade(realm_id, requisicao)).items():
+                if i not in candidatos and (alvo in texto.lower() or alvo in nome.lower()):
+                    candidatos.append(i)
             if alvo.isdigit() and int(alvo) not in candidatos and 1 <= int(alvo) <= 8191:
                 candidatos.insert(0, int(alvo))
             candidatos.sort(key=lambda i: (str(i) != alvo, i))
@@ -240,6 +265,7 @@ def registrar_consultas(app):
             if e.get("args") is not None:
                 try:
                     e["texto"] = " ".join(texto_do_efeito({"id": e["id"], "args": e["args"]}) or [])
+                    e["habilidade"] = habilidade_do_efeito({"id": e["id"], "args": e["args"]})
                 except OSError:
                     e["texto"] = ""
         return {"realm_id": realm_id, "efeitos": lista}

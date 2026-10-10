@@ -69,6 +69,24 @@ def _printf(modelo, *args):
             return modelo
 
 
+# `case 55: //	附加技能` do `BuildAddOnPropDesc` (`EC_IvtrEquip.cpp:1829-1836`): o efeito que dá
+# uma habilidade (`item_skill_addon`), com o id dela no primeiro parâmetro.
+TIPO_HABILIDADE_DO_ITEM = 55
+
+
+def habilidade_do_efeito(efeito):
+    """B213: `{id, nome, icone}` da habilidade que o efeito dá (tipo 55), senão `None` — para o
+    painel mostrar o efeito com o ícone dela (ou um selo, quando o cliente não tem ícone)."""
+    idprop = int(efeito.get("id") or 0)
+    if textos.tipos_de_efeito().get(idprop) != TIPO_HABILIDADE_DO_ITEM:
+        return None
+    args = [int(a) for a in (efeito.get("args") or [])] + [0]
+    hid = args[0]
+    cliente = textos.habilidades_do_cliente().get(hid) or {}
+    return {"id": hid, "nome": textos.nomes_das_habilidades().get(hid, f"Habilidade {hid}"),
+            "icone": cliente.get("icone", "")}
+
+
 def texto_do_efeito(efeito):
     """Linhas do efeito como o cliente; `None` quando ainda não há texto conferido (sai cru)."""
     tipo = int(efeito.get("tipo") or 0)
@@ -79,6 +97,10 @@ def texto_do_efeito(efeito):
     byte = textos.tipos_de_efeito().get(idprop, 0xFF)
     if 100 <= byte <= 115:
         return []  # afiador: `IsSharpenerProperty`, descrito por `AddSharpenerDesc`
+    if byte == TIPO_HABILIDADE_DO_ITEM:
+        # `case 55`: `CECSkill::GetDesc(p0, 1, ...)` — a introdução da habilidade (B213).
+        texto = textos.introducoes_das_habilidades().get(args[0])
+        return [texto] if texto else [_printf(textos.frases().get("ITEMDESC_ERRORPROP", ""), idprop)]
     caso = textos.efeitos_do_cliente().get(str(byte))
     if caso is None or caso.get("erro"):
         # `default:` — também os tipos que o cliente BR não tem (B193, `efeitos_no_binario_br.json`).
