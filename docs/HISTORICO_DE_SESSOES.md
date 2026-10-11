@@ -12824,3 +12824,33 @@ comparação lado a lado.
     ("garra") e manda os achados à consulta da peça, que filtra a família. Lista: "✦ texto — habilidade
     nome". Teste `test_busca_acha_habilidade_do_item_pelo_texto_e_pelo_nome_b214` (o mapa é pedido uma vez).
     Painel 71/0, Node 10/0.
+
+215. **Sessão 2026-10-11: painel — fechamento da E6 (Daimon e edições em jogo).**
+    Pedido do Murillo: o que faltava da E6 — a janela do Daimon e as edições que ficavam "precisa estar
+    offline" (1.2.6 descer/remover habilidade e cancelar missão; esquecer missão; editar item do armazém).
+    ### a. Evidência de cada uma
+    - **Missões:** o cliente recria a interface de missões a cada `TASK_DATA` (`OnMsgHstTaskData`:
+      `A3DRELEASE`, `new CECTaskInterface`, `Init`, `EC_HostMsg.cpp:3891-3950`; igual no 1.5.3); efeitos de
+      quebra: `LoadConfigData` → `GetUIConfig` (a configuração já gravada, `EC_GameSession.cpp:3743-3749`) e o
+      Daimon recriado. Esquecer (as duas) e cancelar no 1.2.6 aplicam e reenviam as listas.
+    - **Habilidades 1.2.6:** `LEARN_SKILL` `level 0` → `RemoveNormalSkill` no 1.5.5 e no 1.5.3; o
+      `SKILL_DATA` em jogo também é tratado nos dois fontes (ramo `HostIsReady`, da troca Deus/Demônio, posterior
+      ao 1.2.6 — por isso não foi o escolhido). Binário 1.2.6 não conferido: falta ver em jogo.
+    - **Armazém:** o cliente pede o armazém só na primeira abertura da sessão (`m_bFirstTBOpen`,
+      `EC_HostMsg.cpp:2108-2118`); `OWN_ITEM_INFO` aceita o pacote do armazém (`IVTRTYPE_TRASHBOX` 3,
+      `EC_HostPlayer.cpp:1595-1606`) e ignora item que não está na cópia.
+    - **Daimon:** ficha do bloco do item (slot 23, `Daimon::ler`) e "dar EXP" pelo `receber_exp` (`InsertExp`,
+      `item_elf.cpp:692-750`) com o nível do dono; em jogo `ELF_EXP` ou a ficha do item (`daimon_recebe`
+      refatorado em `exp_ao_daimon`).
+    ### b. Código
+    `item_editado.rs` (armazém → `IL_TRASH_BOX`), `jogo.rs` (sem a trava do 1.2.6; `exp_ao_daimon`;
+    `EdicaoDePersonagem::DaimonExp`), `missao_editada.rs` (reenvio do `TASK_DATA`), `daimon_editado.rs` (novo),
+    `mapas.rs`/`administracao.rs` (consulta `daimon`, edição `daimon_exp`); painel: rota `/daimon`, campo
+    `daimon_exp`, janela Daimon.
+    ### c. Provas
+    Canal: `editar_item_online_e_offline` (armazém online, pacote 3), `habilidade_online_e_offline_126_e_155`
+    (desce/remove online nas duas), `missoes_ver_dar_concluir_cancelar_e_esquecer` (cancelar 1.2.6 e esquecer
+    online com `TASK_DATA` 105), `daimon_ver_e_dar_exp` (sem Daimon: `null`/`sem_daimon` em jogo e fora; o
+    cenário não tem `GOBLIN_ESSENCE`). Painel 72/0, Node 10/0. Suíte inteira com o banco: 1.008 passaram, 4
+    falharam (3 do canal por tempo sob carga — presença em 5 s e leitura do socket — e `o_primeiro_teste_do_guerreiro_126`,
+    intermitente conhecido); isolados, o canal deu 32/0 e o do guerreiro passou.

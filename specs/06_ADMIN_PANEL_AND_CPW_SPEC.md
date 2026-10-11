@@ -36,6 +36,12 @@ Ex.: 1286 do Punho da Luz Fixa (8292) → habilidade 205 "Garra": "Mordaz: Aumen
 físico.". `dica.habilidade_do_efeito` põe `habilidade {id, nome, icone}` na dica do item, em
 `/api/efeitos/{id}` e na busca; a linha ganha borda dourada e o ícone da habilidade (atlas do cliente)
 ou, sem ícone, o selo ✦ com a habilidade na dica; na busca, "✦" antes do texto.
+**B215 (fechamento da E6):** janela **Daimon** (`GET …/personagens/{pid}/daimon`, canal `daimon`): nome,
+nível, EXP/para subir, atributos, pontos livres, gênios, refino, vigor e habilidades; "Dar EXP" (`daimon_exp`
+1–2·10⁹) pela regra do jogo. Passam a valer **em jogo** (sem "Desconectar e aplicar"): editar item do
+armazém, descer/remover habilidade no 1.2.6, esquecer missão (as duas versões) e cancelar missão no 1.2.6
+(regras na spec 05 §7.11). Continuam só offline: remover e arrastar com equipamento/armazém fora dos pares
+do jogo (B187/B191).
 **B214:** a busca por texto acha os efeitos de habilidade do item pelo texto do cliente ("Mordaz") ou pelo
 nome da habilidade ("Garra"): na primeira busca de cada realm o painel pede ao GS (`efeitos_para_item`,
 `item_id` 0, sem filtro de família) o valor dos 86 ids do tipo 55 e guarda `{id: (texto, nome)}` em
