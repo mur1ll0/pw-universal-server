@@ -12903,3 +12903,71 @@ comparação lado a lado.
     o select de fundo transparente deixava a lista do sistema com o fundo claro padrão e o texto claro herdado.
     `painel.css` fixa `color-scheme: dark` no select e o fundo/cor de `option`/`optgroup`.
 
+
+217. **Sessão 2026-10-11: painel E8 — Templates de criação por realm, lidos pelo link a cada personagem novo; bandeja das janelas recolhidas.**
+
+    ### a. Pedido
+    E8 da reforma do painel: ler e editar, por realm e versão, as fontes que o servidor usa para
+    criar o personagem novo de cada classe; o personagem criado depois nasce com o valor novo.
+    Decisões do Murillo (2026-10-11): o nome é **Templates**; a tela é a ficha do personagem com
+    os valores iniciais (estatísticas, itens equipados e na bolsa, habilidades); sem mascotes,
+    Daimon, missões, armazém e bolsa de missão (vêm pelo jogo); só personagens novos — **sem
+    "aplicar aos existentes"** nesta etapa; semear no template as habilidades do 1.5.5. Pedido
+    junto: janela recolhida vai para um canto e as outras ocupam o espaço; ao restaurar volta ao
+    lugar (ficha e template).
+
+    ### b. Levantamento (o caminho real da criação)
+    - Original: `DBCreateRole` copia o molde inteiro da classe (`GetClsDetail` → `GRoleBase`,
+      `GRoleStatus`, bolsa, corpo, armazém; `cnet/gamedbd/dbcreaterole.hrp:46-60`, `:320-360`),
+      zera tempos/títulos/meridianos e troca nome, conta e aparência. Molde só por classe
+      (`GetDataRoleId`).
+    - Nosso: `CreateRole` → `gateway.rs:624` → `CharacterRepository::create_character`, que lê o
+      template do banco **a cada criação** (`class_templates`, `_items`, `_skills`). Problemas
+      achados: os atributos do template eram **ignorados** (constante `ATRIBUTO_INICIAL`); não
+      havia EXP nem pontos livres iniciais; o `realm_155` não tinha habilidade no template — vinham
+      de `default_skills()` no reparo da primeira carga, que também devolveria o kit do código a
+      quem o administrador tirasse tudo; o semeio genérico (`seed_defaults`) gravava 15/10/20/5 etc.,
+      sem evidência.
+
+    ### c. Correção
+    - Banco: `scripts/2026_10_11_templates_e8.sql` (aplicado no `public` e no `test`) — colunas
+      `initial_exp`, `initial_points`; as 28 habilidades do `realm_155` (as de `default_skills`).
+      Specs 01/03 do esquema atualizadas.
+    - Criação: `create_character` copia do template nível, cultivo, EXP, SP, pontos, atributos,
+      dinheiro, mapa/posição, itens e habilidades; vida/mana cheias pela conta da classe
+      (`pw_core::CalculoDeVidaEMana`, passada pelo link). Classe sem template: 5/5/5/5 e o reparo;
+      com template, o reparo da carga nunca age. Semeio com `pw_core::ATRIBUTO_INICIAL`.
+    - Storage: `EstatisticasDoTemplate`, `template_completo` (sem semear), `listar_completos`,
+      `definir_estatisticas`, `definir_item`, `remover_item`, `mover_item` (troca em transação),
+      `definir_habilidade`.
+    - GS: `crates/pw-gs/src/mapas/templates.rs` — consultas `templates` e `editar_template` no canal
+      (idempotente por `operacao_id`), com as recusas do vestir do jogo (máscara, slots 27/28,
+      reputação, requisitos do bloco de fábrica), pilha, item de missão, cultivo/nível da versão,
+      piso dos atributos, mapa carregado e terreno.
+    - Painel: rotas `GET …/templates` e `POST …/templates/{classe}/editar` (Pydantic estrito, uma
+      edição, habilidade do cliente da classe ou 255 até o nível máximo); `canal.py` aceita o tipo
+      `editar_template`; página **Templates** (cartões por classe, ficha com 5 janelas, modal de
+      estatísticas, modal do item, criar item/dar habilidade pelos modais da ficha, toast).
+      Janelas recolhidas vão à bandeja no canto inferior direito e voltam ao lugar.
+
+    ### d. Provas
+    - Storage: `atributos_ao_criar` reescrito (5 testes: semeado 5/5/5/5; editado → personagem com
+      nível 3, EXP 1234, pontos 11, atributos 6/7/8/9, vida/mana pela conta, bolsa, sem a arma,
+      habilidade 1 no nível 2; template vazio não é reparado; classe sem template é; mover troca)
+      e `template_de_classe::as_habilidades_do_template_sao_as_da_classe` — 23/0 nos 4 arquivos.
+    - Canal: `templates_editados_pelo_canal_valem_para_o_proximo_personagem` (15 recusas pelos
+      dados do realm, idempotência e conflito, edições válidas e o personagem criado depois).
+    - Painel: Python `test_templates_b217`; Node 13/0 (novo teste de templates).
+    - Vitrine local do `static/` com API simulada: 6 cartões no 1.2.6, bandeja (2 janelas
+      recolhidas, 3 na mesa; restaurar volta à ordem original), modal de estatísticas, toast.
+    - Suíte inteira com o banco (`--no-fail-fast`): **1.016 passaram, 2 falharam, 2 ignorados** —
+      as duas são as intermitentes conhecidas do `subcomandos_no_mundo` por tempo esgotado sob carga
+      (`nao_da_para_entrar_num_grupo_sem_convite`, `o_guia_selvagem…1177`); passaram isoladas, e o
+      arquivo sozinho deu 156/1 (a 1177 de novo, que passa isolada). Painel: Python **75/0** (com
+      `TEST_REDIS_URL` e `PW_VALIDADOR_CREDENCIAIS` definidos), Node **13/0**.
+
+    ### e. O que continua faltando
+    - Ver no painel e em jogo (roteiro no §3.3 do estado); nada publicado nos contêineres.
+    - "Aplicar aos existentes": fora por decisão; o contrato da memória da reforma continua valendo
+      se voltar.
+    - O semeio genérico ainda põe a Poção 1801 (nível 30) na bolsa dos realms sem template.

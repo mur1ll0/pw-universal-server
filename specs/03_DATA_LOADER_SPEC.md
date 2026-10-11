@@ -396,6 +396,18 @@ inventário + equipamento + armazém, Marshal **big-endian** (`cnet/gamedbd/clsc
 Molde por classe via `GetDataRoleId` (`gamedbmanager.cpp:208`): 0→16, 1→19, 2→20, 3→23,
 4→24, 5→27, 6→28, 7→31, 8→18, 9→17, 10→21, 11→22.
 
+**No servidor, o molde é o template do realm no banco** (`class_templates`, `class_template_items`,
+`class_template_skills`): o `DBCreateRole` original copia o molde inteiro
+(`cnet/gamedbd/dbcreaterole.hrp:46-60`, `:320-360`), e o `create_character` copia do template
+nível, cultivo, EXP, SP, pontos livres, os quatro atributos, dinheiro, mapa e posição, a bolsa,
+o corpo e as habilidades (B217; até então os atributos eram a constante 5 e as colunas eram
+ignoradas). Vida e mana são a conta da classe (`BaseDaClasse::vida_e_mana_maximas`) sobre o nível,
+a vitalidade e a energia do template. Classe sem template no realm: molde 5/5/5/5, nível 1, e o
+reparo do código (`default_skills`, kit de bolsa) na carga; classe **com** template nunca recebe
+o reparo. As habilidades iniciais do `realm_155` passaram do código para o template
+(`scripts/2026_10_11_templates_e8.sql`, as mesmas de `default_skills`). O painel edita os
+templates (spec 06, Templates E8).
+
 - Leitor: `specs/clsconfig_155/ler_clsconfig.py` (nome `cls<N>gender<M>`, `GRoleBase` e começo
   de `GRoleStatus`). Posições aplicadas ao banco por
   `scripts/2026_09_12_nascimento_no_mapa_161_155.sql` (todos no mapa 161, pacote

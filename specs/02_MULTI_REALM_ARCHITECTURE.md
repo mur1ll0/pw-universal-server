@@ -188,14 +188,17 @@ registrava `LoadConfigsFromServer, data read error (2)` em todo login (`element/
 barra com as habilidades iniciais e o rastreador de missões ligado), como o `gamedbd` faz ao
 criar o personagem.
 
-Personagem novo: posição, kit e equipamento vêm de `class_templates` do realm (espelho do
-`gamedbd/clsconfig` original, B43/B47); atributos **5/5/5/5** para toda classe (os moldes do
-`clsconfig`, B51); raça pela classe; vida e mana cheias pela conta de
-`BaseDaClasse::vida_e_mana_maximas`. Habilidades: as de `class_template_skills`, que no
-`realm_126` são as do `GRoleStatus.skills` de cada molde do `clsconfig` 1.2.6 (B108): a de
-ataque da classe (0: 1; 1: 81; 3: 299; 4: 102; 6: 234+235; 7: 113+125) e o Portal da Cidade
-(167) em todas, nível 1 (`scripts/2026_09_24_habilidades_do_clsconfig_126.sql`, aplicado).
-Molde sem habilidade nenhuma (o `realm_155`) cai no `default_skills()`, que também põe a 167.
+Personagem novo: tudo o que o molde dá vem do template do realm (`class_templates` +
+`_items` + `_skills`, espelho do `gamedbd/clsconfig` original, B43/B47), lido a cada criação:
+nível, cultivo, EXP, SP, pontos livres, atributos (5/5/5/5 no semeado, os moldes do
+`clsconfig`, B51), dinheiro, mapa e posição, bolsa, corpo e habilidades (B217 — antes os
+atributos eram fixos em 5); raça pela classe; vida e mana cheias pela conta de
+`BaseDaClasse::vida_e_mana_maximas` sobre o nível e os atributos do template. Habilidades no
+`realm_126`: as do `GRoleStatus.skills` de cada molde do `clsconfig` 1.2.6 (B108) — a de ataque
+da classe (0: 1; 1: 81; 3: 299; 4: 102; 6: 234+235; 7: 113+125) e o Portal da Cidade (167);
+no `realm_155`, as de `default_skills()` gravadas no template (`scripts/2026_10_11_templates_e8.sql`).
+O painel edita os templates (spec 06). Classe **sem** template: molde 5/5/5/5 e o reparo do
+código na carga (`default_skills()`, kit de bolsa); com template, o reparo nunca age.
 
 Ainda no link: fala (canal global por processo, sem raio), lista de amigos (sempre vazia),
 UI config e help states (gravados por personagem e só para o personagem da sessão, até

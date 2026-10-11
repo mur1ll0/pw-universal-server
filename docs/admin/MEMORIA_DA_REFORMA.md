@@ -1,7 +1,7 @@
 # Memória central da reforma do pw-admin
 
-Atualizada em 2026-10-11 (B199–B215). Estado: **E1–E5 testadas; E6 testada, fechada no B215 (tela nova B190,
-arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197, missões B198, Daimon e edições em jogo B215; aparência fica no cliente, §6.14); E7 confirmada em jogo (2026-10-10); E8–E9 planejadas**.
+Atualizada em 2026-10-11 (B199–B217). Estado: **E1–E5 testadas; E6 testada, fechada no B215 (tela nova B190,
+arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197, missões B198, Daimon e edições em jogo B215; aparência fica no cliente, §6.14); E7 confirmada em jogo (2026-10-10); E8 (Templates) testada no B217, falta ver em jogo; E9 planejada**.
 Commitado até B215 (`4df4376`; B199–B211 nos blocos `50c5d3a`, `d0ee485`, `2d57f7e`, `4630bb4`, `cecfaac` e a documentação). Nada de B176–B198 confirmado em jogo.
 Responsável pelas decisões de produto: Murillo.
 
@@ -120,7 +120,7 @@ Cada etapa pode ser dividida em subtarefas aqui, mantendo o arquivo curto.
 | E5 — personagem e persistência | testado | dinheiro e EXP/SP (B179); pontos livres, nível e cultivo (B182); modificar/redistribuir atributos (B184); falta ver em jogo; ficha e progressão online/offline, atualização nos dois clientes; autosave/logout/relogin não desfazem edição; consultas mostram valores reais |
 | E6 — inventário e subsistemas | testado (B215 fecha; falta ver em jogo) | posição (B185), itens ver/buscar/dar (B186), remover (B187), ícones (B188), dica parte 1 (B189), tela nova (B190) e arrastar (B191), dica parte 2 (B192–B193), editar item (B194), habilidades ver e editar (B195–B196), mascotes (B197), missões (B198) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
 | E7 — mapas e rates | confirmado | rates (B176), mapas (B177) e lista completa com carga/descarga em execução (B183); **confirmado em jogo pelo Murillo em 2026-10-10** (WB no 1.2.6: rates refletem no jogo; mapa ligado pelo painel e entrada pelo portal); desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
-| E8 — moldes de classe | planejado | leitura/edição das fontes consumidas; personagem novo usa alteração; recálculo separado preserva progressão conforme contrato |
+| E8 — Templates (moldes de classe) | testado (B217) | página "Templates": por realm, as classes da versão com estatísticas iniciais, bolsa, corpo e habilidades; edição pelo GS (canal `editar_template`, idempotente) gravada em `class_template*`, lida pelo link a cada criação; falta ver em jogo. **Decisões de 2026-10-11:** nome "Templates"; tela = a ficha do personagem com valores iniciais; sem mascotes, Daimon, missões, armazém e bolsa de missão (vêm pelo jogo); só personagens novos — **sem "aplicar aos existentes"** nesta etapa; habilidades do 1.5.5 semeadas no template (as de `default_skills`). Junto: janela recolhida vai à bandeja no canto e volta ao lugar ao restaurar |
 | E9 — extensões e fechamento | planejado | pontos de extensão documentados para editores futuros; interface revisada, manual atualizado, verificações finais e pendências claras |
 
 Priorizar uma fatia completa em cada etapa: interface → API → daemon → persistência/cliente
@@ -145,7 +145,7 @@ quando aplicável. Não terminar com todas as telas prontas e operações sem in
 
 ## 6. Retomada imediata
 
-**Etapa ativa:** E8 (moldes de classe) — a E6 fechou no B215; antes estava: E6 em andamento (B185 posição, B186–B189 itens, B190 tela nova); E5 testada.
+**Etapa ativa:** E9 (fechamento) — a E8 (Templates) ficou testada no B217, falta ver em jogo; a E6 fechou no B215; antes estava: E6 em andamento (B185 posição, B186–B189 itens, B190 tela nova); E5 testada.
 **B165–B171 (resumo; detalhes no histórico):** B165 E1 auditoria · B166 E2/E3 login do painel e
 consulta viva · B167 senha + HMAC-MD5 no link · B168 criação de conta · B169 GM global coordenado
 (revisão/recibos/fencing em 8 processos) · B170 saída/salvamento/troca do GS reescritos ·
