@@ -135,6 +135,21 @@ def registrar_consultas(app):
              "icone": (cliente.get(r["skill_id"]) or {}).get("icone", ""),
              "nivel_maximo": (cliente.get(r["skill_id"]) or {}).get("nivel_maximo")} for r in registros]}
 
+    @app.get("/api/realms/{realm_id}/personagens/{personagem_id}/daimon")
+    async def daimon_do_personagem(realm_id: str, requisicao: Request,
+                                   personagem_id: int = Path(..., ge=1, le=2_147_483_647)):
+        """E6 (B215): o Daimon vestido (slot 23) — a ficha do bloco do item, em jogo ou no banco."""
+        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "daimon", "personagem_id": personagem_id})
+        daimon = dados.get("daimon")
+        if daimon:
+            try:
+                nomes = nomes_das_habilidades()
+            except OSError:
+                nomes = {}
+            daimon["habilidades"] = [{"id": i, "nivel": n, "nome": nomes.get(i, f"Habilidade {i}")}
+                                     for i, n in daimon.get("habilidades", [])]
+        return {"realm_id": realm_id, "daimon": daimon, "origem": (daimon or {}).get("origem", dados.get("origem"))}
+
     @app.get("/api/realms/{realm_id}/personagens/{personagem_id}/mascotes")
     async def mascotes_do_personagem(realm_id: str, requisicao: Request,
                                      personagem_id: int = Path(..., ge=1, le=2_147_483_647)):

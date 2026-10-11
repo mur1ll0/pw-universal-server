@@ -303,15 +303,26 @@ pub fn aplicar(item: &mut ItemRecord, e: &EdicaoDeItem, dados: &GameDataManager)
 
 impl BusServer {
     /// Online: aplica, grava o slot e reenvia a ficha do item (`OWN_ITEM_INFO`). No corpo,
-    /// refaz o equipamento (atributos e o aviso de equipamento a quem vê). Armazém só offline (o
-    /// cliente só tem a cópia dele com a sessão de NPC aberta). `None`: não está neste mapa.
+    /// refaz o equipamento (atributos e o aviso de equipamento a quem vê). `None`: não está neste
+    /// mapa.
+    ///
+    /// **Armazém (B215):** o cliente pede o armazém só na **primeira** abertura da sessão
+    /// (`m_bFirstTBOpen` → `GET_TRASHBOX_INFO`, `EC_HostMsg.cpp:2108-2118`) e depois usa a cópia
+    /// dele; o `OWN_ITEM_INFO` com o pacote do armazém (`IVTRTYPE_TRASHBOX` 3, `GetPack`,
+    /// `EC_HostPlayer.cpp:1595-1606`; o `gs` 1.2.6 usa o mesmo 3, `push 3`, VA 0x8071c1b) atualiza
+    /// essa cópia. Sem cópia, o item não está nela e o cliente ignora (`GetItem` nulo,
+    /// `OnMsgHstOwnItemInfo`, `EC_HostMsg.cpp:1454-1470`) — e busca o armazém novo ao abrir.
     pub(crate) async fn editar_item_pelo_painel(&self, roleid: i32, recipiente: ContainerType, slot: u16, tid: u32,
         e: &EdicaoDeItem) -> Option<serde_json::Value> {
         let envio = self.envio_de(roleid).await?;
         if !self.world.read().await.players.contains_key(&(roleid as i64)) {
             return None;
         }
-        let Some(pacote) = recipiente.pacote_do_cliente() else {
+        let pacote = match recipiente {
+            ContainerType::Storehouse => Some(crate::comandos::IL_TRASH_BOX),
+            r => r.pacote_do_cliente(),
+        };
+        let Some(pacote) = pacote else {
             return Some(serde_json::json!({"erro": "precisa_estar_offline"}));
         };
         let item = match self.editar_item_no_banco(roleid, recipiente, slot, tid, e).await {

@@ -136,6 +136,11 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                         if i == 1317 else {"id": i, "args": [205, 1], "editavel": False, "busca": True, "faixa": [205, 205],
                                            "porcento": False, "recusa": None, "age": True}
                         if i == 1286 else {"id": i, "recusa": "efeito_inexistente"} for i in consulta["ids"]]}
+                elif consulta["tipo"] == "daimon":
+                    dados = {"daimon": {"item_id": 22181, "nome": "Primavera", "origem": "persistida", "nivel": 3,
+                                        "exp": 10, "exp_para_subir": 40, "pontos_livres": 2, "forca": 1, "agilidade": 0,
+                                        "vitalidade": 0, "energia": 0, "pontos_de_genio": 1, "genios": [0, 0, 0, 0, 0],
+                                        "refino": 0, "vigor": 20000, "habilidades": [[1, 2]], "equipamento": []}}
                 elif consulta["tipo"] == "buscar_missoes":
                     dados = {"missoes": [{"id": 5002, "nome": "Missão direta", "nivel": [1, 150], "filhas": 0, "escolha": []}]}
                 else:
@@ -620,6 +625,15 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         pedidos = [p["consulta"] for p in self.pedidos_admin if p["consulta"].get("item_id") == 0]
         self.assertEqual(len(pedidos), 1, "o mapa das habilidades é pedido uma vez por realm")
 
+    async def test_daimon_do_personagem_b215(self):
+        """B215: a ficha do Daimon vem do GS (consulta `daimon`), com o nome das habilidades do cliente."""
+        realm, personagem = await self.criar_personagem()
+        await self.ativar_daemon(realm)
+        dados = (await self.cliente.get(f"/api/realms/{realm}/personagens/{personagem}/daimon")).json()
+        self.assertEqual(self.pedidos_admin[-1]["consulta"], {"tipo": "daimon", "personagem_id": personagem})
+        self.assertEqual((dados["daimon"]["nivel"], dados["origem"], dados["daimon"]["habilidades"][0]["id"]), (3, "persistida", 1))
+        self.assertIn("nome", dados["daimon"]["habilidades"][0])
+
     async def test_busca_de_habilidades_b196(self):
         await self.criar_personagem()
         dados = (await self.cliente.get("/api/habilidades?busca=Ataque do Tigre")).json()["habilidades"]
@@ -1029,7 +1043,9 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          # B198: missão com ação conhecida, id 1–65 535, sem campo extra, uma edição só.
                          {"missao": {"acao": "apagar", "id": 1}}, {"missao": {"acao": "dar", "id": 0}},
                          {"missao": {"acao": "dar", "id": 70000}}, {"missao": {"acao": "dar"}},
-                         {"missao": {"acao": "dar", "id": 1, "x": 1}}, {"missao": {"acao": "dar", "id": 1}, "pontos": 1}):
+                         {"missao": {"acao": "dar", "id": 1, "x": 1}}, {"missao": {"acao": "dar", "id": 1}, "pontos": 1},
+                         # B215: EXP do Daimon de 1 a 2·10⁹, uma edição só.
+                         {"daimon_exp": 0}, {"daimon_exp": 2_000_000_001}, {"daimon_exp": 10, "pontos": 1}):
             self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
         for valido in ({"dinheiro": 10}, {"pontos": 5}, {"nivel": 30}, {"cultivo": 0},
                        {"atributos": [5, 5, 5, 5]}, {"redistribuir": True},
@@ -1046,7 +1062,8 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                        {"mascote": {"slot": 0, "tid": 8000, "edicao": {"nivel": 5, "fome": 11, "nome": "Rex", "habilidades": [[1, 3]]}}},
                        {"mascote": {"slot": 1, "tid": 8001, "edicao": {"libertar": True}}},
                        {"missao": {"acao": "dar", "id": 1173, "sub": 1175}}, {"missao": {"acao": "concluir", "id": 5001}},
-                       {"missao": {"acao": "cancelar", "id": 5001}}, {"missao": {"acao": "esquecer", "id": 5002}}):
+                       {"missao": {"acao": "cancelar", "id": 5001}}, {"missao": {"acao": "esquecer", "id": 5002}},
+                       {"daimon_exp": 5000}):
             resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
             self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
 

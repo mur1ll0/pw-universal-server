@@ -556,6 +556,10 @@ impl RoteadorDeMapas {
         }
         match edicao {
             E::Experiencia { .. } => serde_json::json!({"estado":"falha","codigo":"precisa_estar_online"}),
+            E::DaimonExp(n) => match bus.daimon_exp_offline(roleid, n).await {
+                Ok((antes, depois)) => serde_json::json!({"estado":"salvo","presenca":"offline","nivel_antes":antes,"nivel":depois}),
+                Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
+            },
             // Já tratada no começo (`mover_pelo_painel`).
             E::Posicao { .. } => serde_json::json!({"estado":"falha","codigo":"edicao_invalida"}),
             E::RemoverItem { recipiente, slot, tid, quantidade } => match bus.remover_item_offline(roleid, recipiente, slot, tid, quantidade).await {
@@ -705,6 +709,15 @@ impl RoteadorDeMapas {
 
     /// Painel (E6, B197): a jaula. Pelo mapa dono quando o personagem está em jogo (é ele que sabe
     /// qual mascote está invocado); senão pelo padrão.
+    /// Painel (E6, B215): o Daimon vestido — do mapa onde o dono está, senão do banco.
+    pub async fn daimon_do_painel(&self, roleid: i32) -> serde_json::Value {
+        let dono = match self.mapa_de(roleid).await { Some(m) => self.mapa(m), None => None };
+        match dono.or_else(|| self.mapa(self.padrao)).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
+            Some(bus) => bus.daimon_do_painel(roleid).await,
+            None => serde_json::json!({"codigo":"sem_mapa"}),
+        }
+    }
+
     pub async fn mascotes_do_painel(&self, roleid: i32) -> serde_json::Value {
         let dono = match self.mapa_de(roleid).await { Some(m) => self.mapa(m), None => None };
         match dono.or_else(|| self.mapa(self.padrao)).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {

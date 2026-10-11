@@ -59,6 +59,7 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, trace, warn};
 
 mod armazem;
+mod daimon_editado;
 mod gm;
 mod habilidades;
 mod jogo;

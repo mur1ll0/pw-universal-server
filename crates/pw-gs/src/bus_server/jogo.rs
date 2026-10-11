@@ -209,16 +209,20 @@ impl Contexto<'_> {
         if parte == 0 {
             return;
         }
+        self.exp_ao_daimon(parte);
+    }
+
+    /// `InsertExp` com o nível do dono como "nível de quem deu" e o aviso ao cliente: `ELF_EXP`
+    /// ou, subindo, a ficha inteira do item. `None`: sem Daimon vestido; `Some(ganhou)`.
+    pub fn exp_ao_daimon(&mut self, parte: u32) -> Option<bool> {
         let nivel = self.p.level.clamp(0, i16::MAX as i32) as i16;
         let tabela = &self.dados.progressao;
-        let Some(d) = self.p.daimon.as_mut() else {
-            return;
-        };
+        let d = self.p.daimon.as_mut()?;
         let (ganhou, subiu) = d.receber_exp(parte, nivel, nivel, |n| {
             tabela.exp_para_subir(n as i32).clamp(0, u32::MAX as i64) as u32
         });
         if !ganhou {
-            return;
+            return Some(false);
         }
         let (slot, item_id, bloco, exp_do_daimon) = (
             d.slot,
@@ -247,6 +251,7 @@ impl Contexto<'_> {
         } else if let Some(pacote) = self.sub.elf_exp(exp_do_daimon) {
             self.para_mim.push(pacote.data);
         }
+        Some(true)
     }
 
     pub fn ganhar_dinheiro(&mut self, n: i64) -> i64 {
@@ -519,6 +524,8 @@ pub enum EdicaoDePersonagem {
     MoverItem { de: ContainerType, slot_de: u16, tid: u32, para: ContainerType, slot_para: u16 },
     /// Habilidade (E6, B196): `nivel` 0 remove; senão define o nível (ensinar, subir ou descer).
     Habilidade { id: u32, nivel: u8 },
+    /// EXP a dar ao Daimon vestido (E6, B215), pela regra do `InsertExp`.
+    DaimonExp(i64),
 }
 
 /// `TRASHBOX_BASE_SIZE` (`gs/config.h:17`) — o armazém do personagem (o mesmo de `armazem.rs`).
@@ -592,6 +599,11 @@ impl BusServer {
                 EdicaoDePersonagem::Experiencia { exp, sp } => {
                     ctx.dar_exp(exp.clamp(0, i32::MAX as i64) as u32, sp.clamp(0, i32::MAX as i64) as u32)
                 }
+                EdicaoDePersonagem::DaimonExp(n) => match ctx.exp_ao_daimon(n.clamp(0, u32::MAX as i64) as u32) {
+                    None => erro = Some("sem_daimon"),
+                    Some(false) => erro = Some("sem_mudanca"),
+                    Some(true) => ctx.mudou = true,
+                },
                 // Os quatro em zero e o `remain` novo: o cliente troca os pontos livres e
                 // pede a ficha (`OnMsgHstAddStatusPt`, `EC_HostMsg.cpp:1610-1625`).
                 EdicaoDePersonagem::PontosLivres(n) => {
@@ -973,15 +985,14 @@ impl BusServer {
     /// habilidade sai da barra, como no esquecer). No 1.2.6 remover e descer só offline (decisão
     /// de 2026-10-07: o cliente 1.2.6 não foi conferido).
     pub(crate) async fn habilidade_pelo_painel(&self, roleid: i32, id: u32, nivel: u8) -> Option<serde_json::Value> {
-        let so_sobe = self.versao() == GameVersion::V1_2_6;
+        // B215: descer e remover online também no 1.2.6, pelo mesmo `LEARN_SKILL` do 1.5.5 —
+        // `level 0` → `RemoveNormalSkill` no `OnMsgHstLearnSkill` do 1.5.5 e do 1.5.3 (o binário
+        // 1.2.6 não foi conferido: falta ver em jogo).
         let feito = self
             .com_contexto(roleid, |ctx| {
                 let atual = ctx.p.habilidades.get(&id).copied().unwrap_or(0);
                 if nivel == atual {
                     return Err("sem_mudanca");
-                }
-                if nivel < atual && so_sobe {
-                    return Err("precisa_estar_offline");
                 }
                 let pacote = |n: u8| S2CGamedataSend::learn_skill(id as i32, n as i32).data;
                 if nivel == 0 {

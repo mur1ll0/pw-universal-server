@@ -510,6 +510,10 @@ button, input, select { font: inherit; color: inherit; }
 .linha-efeito small:empty { display: none; }
 .linha-efeito small.faixa-efeito { color: var(--texto-2, var(--texto)); opacity: .8; }
 .linha-efeito input[readonly] { opacity: .7; cursor: not-allowed; }
+.ficha-daimon { display: grid; gap: 4px; margin-bottom: 8px; }
+.titulo-daimon { font-weight: 600; margin: 0; }
+.linha-daimon { display: flex; justify-content: space-between; gap: 12px; margin: 0; }
+.linha-daimon span { color: var(--texto-2); }
 .linha-efeito.efeito-habilidade { border-left: 3px solid var(--dourado, #d4a83a); padding-left: 6px; }
 .selo-habilidade { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px;
   margin-right: 6px; vertical-align: middle; color: var(--dourado, #d4a83a); font-size: 14px; }

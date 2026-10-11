@@ -642,6 +642,7 @@ async function consultarPersonagem(realmId, id) {
     carregarInventario(estado.selecionado, id);
     carregarHabilidades(estado.selecionado, id);
     carregarMascotes(estado.selecionado, id);
+    carregarDaimon(estado.selecionado, id);
     carregarMissoes(estado.selecionado, id);
   } catch (erro) {
     if (estado.ficha !== consulta || !estado.sessao) return;
@@ -688,6 +689,7 @@ const MOTIVOS_EDICAO = {
   atributos_invalidos: "Algum atributo ficaria abaixo do mínimo ou a soma passa do total (atributos + livres).",
   atributos_invalidos_ou_personagem_inexistente: "Algum atributo ficaria abaixo do mínimo ou a soma passa do total (ou o personagem não existe).",
   sem_mudanca: "Nada mudaria.",
+  sem_daimon: "O personagem não tem Daimon vestido.",
   mapa_indisponivel: "O mapa de destino não está ligado neste realm.",
   fora_do_mapa: "Essas coordenadas ficam fora do terreno do mapa.",
   altura_obrigatoria: "Este mapa não tem terreno carregado: informe o Y.",
@@ -1062,7 +1064,7 @@ async function carregarHabilidades(realm, id) {
 
 /* Editar habilidade (B196): clicar na habilidade abre a linha de nível (Aplicar define o nível —
    subir ou descer —, Remover tira); "Ensinar" busca no cliente e dá no nível escolhido. O GS manda
-   o `LEARN_SKILL` em jogo; no 1.2.6 descer e remover pedem o personagem fora do jogo. */
+   o `LEARN_SKILL` em jogo, nas duas versões (no 1.2.6 desde o B215). */
 function escolherHabilidade(h, celula) {
   estado.habilidade = h;
   for (const outra of document.querySelectorAll?.("#janela-habilidades .escolhido") || []) outra.classList.remove("escolhido");
@@ -1126,6 +1128,40 @@ async function ensinarHabilidade() {
 /* Mascotes (B197): a jaula com o ícone do modelo (`IconList_Pet`), nível e qual está invocado.
    Clicar abre a edição dos campos do registro; "Libertar" tira da jaula. Em jogo o GS manda
    `PET_ROOM`/`FREE_PET`; o mascote invocado não se edita por fora. */
+/* E6 (B215): o Daimon vestido (slot 23) — a ficha do bloco do item, em jogo (memória) ou no banco;
+   "Dar EXP" segue a regra do jogo (`InsertExp`): sobe quantos níveis couberem, sem passar o dono. */
+async function carregarDaimon(realm, id) {
+  const alvo = elemento("janela-daimon");
+  elemento("form-daimon").hidden = true;
+  alvo.replaceChildren(criar("p", "nota-vazia", "Carregando Daimon…"));
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/daimon`);
+    if (estado.personagemId !== id) return;
+    const d = dados.daimon;
+    if (!d) { alvo.replaceChildren(criar("p", "nota-vazia", "Sem Daimon vestido.")); return; }
+    const linha = (rotulo, valor) => { const p = criar("p", "linha-daimon"); p.append(criar("span", "", rotulo), criar("strong", "", String(valor))); return p; };
+    const titulo = criar("p", "titulo-daimon", `${d.nome || `Daimon ${d.item_id}`} · nível ${d.nivel}`);
+    const origem = criar("small", "texto-suave", d.origem === "em_jogo" ? "em jogo" : "gravado");
+    alvo.replaceChildren(titulo, origem,
+      linha("EXP", `${Number(d.exp).toLocaleString("pt-BR")} / ${Number(d.exp_para_subir).toLocaleString("pt-BR")}`),
+      linha("Força · Agilidade · Vitalidade · Energia", `${d.forca} · ${d.agilidade} · ${d.vitalidade} · ${d.energia}`),
+      linha("Pontos de atributo livres", d.pontos_livres),
+      linha("Gênios (5)", (d.genios || []).join(" · ")),
+      linha("Pontos de gênio livres", d.pontos_de_genio),
+      linha("Refino · Vigor", `${d.refino} · ${d.vigor}`),
+      linha("Habilidades", (d.habilidades || []).map((h) => `${h.nome} ${h.nivel}`).join(", ") || "—"));
+    elemento("form-daimon").hidden = false;
+  } catch (erro) {
+    alvo.replaceChildren(criar("p", "nota-vazia", `Daimon indisponível: ${erro.message}`));
+  }
+}
+async function darExpAoDaimon() {
+  const n = Math.trunc(Number(elemento("daimon-exp").value));
+  if (!(n >= 1 && n <= 2000000000)) { alerta("erro", "EXP inválida", "De 1 a 2.000.000.000."); return; }
+  const r = await editarPersonagem({ daimon_exp: n }, `Daimon: +${n.toLocaleString("pt-BR")} de EXP`);
+  if (r && estado.selecionado) carregarDaimon(estado.selecionado, estado.personagemId);
+}
+
 async function carregarMascotes(realm, id) {
   const alvo = elemento("janela-mascotes");
   elemento("form-mascote").hidden = true;
@@ -2206,6 +2242,7 @@ elemento("ei-remover").addEventListener("click", () => {
 });
 elemento("remover-cancelar").addEventListener("click", () => cancelarRemocao());
 elemento("form-item").addEventListener("submit", (evento) => { evento.preventDefault(); darItem(); });
+elemento("form-daimon").addEventListener("submit", (evento) => { evento.preventDefault(); darExpAoDaimon(); });
 let esperaDaBusca = null;
 elemento("item-busca").addEventListener("input", () => {
   if (esperaDaBusca) clearTimeout(esperaDaBusca);

@@ -134,7 +134,7 @@ class ItemEditadoPedido(BaseModel):
 
 class MissaoPedida(BaseModel):
     """E6 (B198): `dar` (livre, sem pré-requisitos), `concluir` (força o sucesso), `cancelar`
-    (apaga) ou `esquecer` (tira das concluídas, só offline). O id vai num u16 nos avisos."""
+    (apaga) ou `esquecer` (tira das concluídas; online reenvia as listas, B215). O id vai num u16 nos avisos."""
     model_config = ConfigDict(extra="forbid", strict=True)
     acao: Literal["dar", "concluir", "cancelar", "esquecer"]
     id: int = Field(ge=1, le=65_535)
@@ -196,6 +196,8 @@ class EdicaoPersonagem(BaseModel):
     habilidade: Optional[HabilidadePedida] = None
     mascote: Optional[MascotePedido] = None
     missao: Optional[MissaoPedida] = None
+    # E6 (B215): EXP a dar ao Daimon vestido (regra do `InsertExp`, no GS).
+    daimon_exp: Optional[int] = Field(default=None, ge=1, le=2_000_000_000)
 
 
 def somar_desconexoes(resultado):
@@ -346,7 +348,8 @@ def registrar_contas(app):
         entidade (tudo menos EXP/SP). Quem decide online/offline é o GS."""
         experiencia = bool(pedido.exp or pedido.sp)
         simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao", "item",
-                               "remover_item", "mover_item", "editar_item", "habilidade", "mascote", "missao") if getattr(pedido, k) is not None]
+                               "remover_item", "mover_item", "editar_item", "habilidade", "mascote", "missao", "daimon_exp")
+                   if getattr(pedido, k) is not None]
         if len(simples) + experiencia != 1:
             raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo, atributos ou posição.")
         consulta = {"tipo": "editar_personagem", "personagem_id": personagem_id}

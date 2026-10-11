@@ -236,17 +236,27 @@ impl BusServer {
     /// Online: a ação pelo `com_contexto` (que manda os avisos, os prêmios e grava). `None`: não
     /// está neste mapa.
     pub(crate) async fn missao_pelo_painel(&self, roleid: i32, e: EdicaoDeMissao) -> Option<serde_json::Value> {
-        if e.acao == AcaoDeMissao::Esquecer
-            || e.acao == AcaoDeMissao::Cancelar && self.versao() == GameVersion::V1_2_6
-        {
-            if !self.world.read().await.players.contains_key(&(roleid as i64)) {
-                return None;
-            }
-            return Some(serde_json::json!({"erro": "precisa_estar_offline"}));
-        }
+        // B215 — esquecer (nas duas versões) e cancelar no 1.2.6 não têm aviso próprio ao cliente
+        // (as concluídas só chegam no `TASK_DATA`; o `GIVE_UP` do 1.2.6 não foi conferido). O cliente
+        // **recria** a interface de missões a cada `TASK_DATA` (`OnMsgHstTaskData`: `A3DRELEASE` +
+        // `new CECTaskInterface` + `Init` com as listas do pacote, `EC_HostMsg.cpp:3891-3950`; o mesmo
+        // no 1.5.3), então a edição vale e as listas inteiras vão de novo. Efeitos do reenvio: o
+        // `LoadConfigData` pede o `GetUIConfig` (a configuração já gravada) e o Daimon vestido é
+        // recriado.
+        let reenviar = e.acao == AcaoDeMissao::Esquecer
+            || e.acao == AcaoDeMissao::Cancelar && self.versao() == GameVersion::V1_2_6;
         let dados = self.world.read().await.data_manager.clone();
         let r = self
-            .com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| aplicar(m, &e)))
+            .com_contexto(roleid, |ctx| {
+                let r = Self::com_motor(ctx, &dados, |m| aplicar(m, &e));
+                if r.is_ok() && reenviar {
+                    let listas = ctx.p.missoes.blocos();
+                    let [a, b, c, d, f] = &listas;
+                    ctx.para_mim.push(ctx.sub.task_data_com_listas([a, b, c, d, f]).data);
+                    ctx.mudou = true;
+                }
+                r
+            })
             .await?;
         Some(match r {
             Ok(concluida) => {

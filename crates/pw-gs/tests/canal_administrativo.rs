@@ -1474,7 +1474,7 @@ async fn arrastar_item_online_e_offline() {
 }
 
 /// E6 (B194): editar o item. Online grava e reenvia a ficha (`OWN_ITEM_INFO` 40) com a quantidade
-/// nova; armazém só offline; campo de equipamento em item comum = `nao_e_equipamento`; slot
+/// nova; armazém online no pacote 3 (B215); campo de equipamento em item comum = `nao_e_equipamento`; slot
 /// conferido pelo id; offline grava.
 #[tokio::test]
 async fn editar_item_online_e_offline() {
@@ -1498,8 +1498,13 @@ async fn editar_item_online_e_offline() {
     let BusMessage::GameToClient { data, .. } = m else { unreachable!() };
     // `OWN_ITEM_INFO`: id 2, pacote 1, slot 1, tipo 4, validade 4, estado 4, quantidade 4.
     assert_eq!((data[2], data[3], u32::from_le_bytes(data[16..20].try_into().unwrap())), (0, 2, 777), "bolsa, slot 2, 777");
+    // B215: armazém online — grava e manda o `OWN_ITEM_INFO` no pacote do armazém (3).
+    let r = c.pedir_com_id(&c.realm, &id("arm"), c.conta, editar("armazem", 1, 3001, json!({"quantidade": 5}))).await;
+    assert_eq!(r["estado"], "aplicado", "{r}");
+    let m = esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 40u16.to_le_bytes())).await;
+    let BusMessage::GameToClient { data, .. } = m else { unreachable!() };
+    assert_eq!((data[2], data[3], u32::from_le_bytes(data[16..20].try_into().unwrap())), (3, 1, 5), "armazém, slot 1, 5");
     for (n, pedido, codigo) in [
-        (1, editar("armazem", 1, 3001, json!({"quantidade": 5})), "precisa_estar_offline"),
         (2, editar("bolsa", 2, 3001, json!({"durabilidade": 5})), "nao_e_equipamento"),
         (3, editar("bolsa", 2, 3002, json!({"quantidade": 5})), "slot_mudou"),
         (4, editar("bolsa", 2, 3001, json!({"refino": 13})), "edicao_invalida"),
@@ -1559,9 +1564,9 @@ async fn habilidade_online_e_offline_126_e_155() {
         let r = c.pedir_com_id(&c.realm, &id("igual"), c.conta, pedir(7, 5)).await;
         assert_eq!(r["dados"]["codigo"], "sem_mudanca", "{r}");
         let r = c.pedir_com_id(&c.realm, &id("desce"), c.conta, pedir(7, 2)).await;
-        if versao == GameVersion::V1_2_6 {
-            assert_eq!(r["dados"]["codigo"], "precisa_estar_offline", "{r}");
-        } else {
+        // B215: o 1.2.6 também desce e remove online (mesmo `LEARN_SKILL`).
+        let _ = versao;
+        {
             assert_eq!(r["estado"], "aplicado", "{r}");
             assert_eq!(aprendizados(&mut bus, 2).await, vec![(7, 0), (7, 2)], "descer = remover e criar");
             let r = c.pedir_com_id(&c.realm, &id("remove"), c.conta, pedir(7, 0)).await;
@@ -1648,6 +1653,34 @@ async fn avisos_de_missao(bus: &mut pw_bus::transport::BusConnection, n: usize) 
     vistos
 }
 
+/// E6 (B215): o Daimon. Sem Daimon vestido a consulta diz `null` e "dar EXP" recusa com
+/// `sem_daimon`, em jogo e fora dele; EXP fora dos limites é edição inválida. (A regra do
+/// `InsertExp` tem teste próprio; o cenário não tem `GOBLIN_ESSENCE`.)
+#[tokio::test]
+async fn daimon_ver_e_dar_exp() {
+    let c = Cenario::montar().await;
+    let id = |s: &str| format!("e6d-{s}-{}", c.personagem);
+    let dar = |n: i64| json!({"tipo":"editar_personagem","personagem_id":c.personagem,"daimon_exp":n});
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    let r = c.pedir(&c.realm, json!({"tipo":"daimon","personagem_id":c.personagem})).await;
+    assert!(r["dados"]["daimon"].is_null(), "{r}");
+    assert_eq!(r["dados"]["origem"], "persistida", "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("off"), c.conta, dar(1000)).await;
+    assert_eq!(r["dados"]["codigo"], "sem_daimon", "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("zero"), c.conta, dar(0)).await;
+    assert_eq!(r["dados"]["codigo"], "edicao_invalida", "{r}");
+    let bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let r = c.pedir(&c.realm, json!({"tipo":"daimon","personagem_id":c.personagem})).await;
+    assert_eq!((r["dados"]["daimon"].is_null(), r["dados"]["origem"].as_str()), (true, Some("em_jogo")), "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("on"), c.conta, dar(1000)).await;
+    assert_eq!(r["dados"]["codigo"], "sem_daimon", "{r}");
+    drop(bus);
+    c.esperar_presenca("ausente").await;
+    sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6d-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}
+
 /// E6 (B198): missões. Dar é livre (nível 1 numa de nível 90) e manda `NEW` (1); concluir força o
 /// sucesso — a de NPC fica finalizada (`FINISHED` 5), a direta premia (`COMPLETE` 2) e vai às
 /// concluídas —; cancelar apaga com `GIVE_UP` (3), no 1.2.6 só offline; esquecer só offline e deixa
@@ -1689,33 +1722,34 @@ async fn missoes_ver_dar_concluir_cancelar_e_esquecer() {
         assert_eq!(avisos_de_missao(&mut bus, 2).await, vec![(5, 5002), (2, 5002)]);
         assert_eq!(ver().await, (vec![(5001, true)], vec![5002], "em_jogo".to_string()));
         let r = c.pedir_com_id(&c.realm, &id("ca1"), c.conta, pedir("cancelar", 5001)).await;
+        assert_eq!(r["estado"], "aplicado", "{r}");
         if versao == GameVersion::V1_2_6 {
-            assert_eq!(r["dados"]["codigo"], "precisa_estar_offline", "{r}");
+            // B215: no 1.2.6 as listas inteiras vão de novo (`TASK_DATA` 105).
+            esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 105u16.to_le_bytes())).await;
         } else {
-            assert_eq!(r["estado"], "aplicado", "{r}");
             assert_eq!(avisos_de_missao(&mut bus, 1).await, vec![(3, 5001)]);
         }
+        // B215: esquecer online, nas duas versões, com o `TASK_DATA` reenviado.
         let r = c.pedir_com_id(&c.realm, &id("es1"), c.conta, pedir("esquecer", 5002)).await;
-        assert_eq!(r["dados"]["codigo"], "precisa_estar_offline", "{r}");
+        assert_eq!(r["estado"], "aplicado", "{r}");
+        esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 105u16.to_le_bytes())).await;
+        assert_eq!(ver().await, (vec![], vec![], "em_jogo".to_string()), "cancelada e esquecida");
 
         drop(bus);
         c.esperar_presenca("ausente").await;
         let dinheiro: i64 = sqlx::query_scalar("SELECT money FROM characters WHERE id=$1").bind(c.personagem).fetch_one(c.pool.get_ref()).await.unwrap();
         assert_eq!(dinheiro, 50, "o prêmio da direta foi gravado na saída");
-        if versao == GameVersion::V1_2_6 {
-            let r = c.pedir_com_id(&c.realm, &id("off-ca1"), c.conta, pedir("cancelar", 5001)).await;
-            assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("salvo"), Some("offline")), "{r}");
-        }
-        assert_eq!(ver().await, (vec![], vec![5002], "persistida".to_string()));
+        // O cancelar e o esquecer online (B215) foram gravados na saída.
+        assert_eq!(ver().await, (vec![], vec![], "persistida".to_string()));
         let r = c.pedir_com_id(&c.realm, &id("off-es"), c.conta, pedir("esquecer", 5002)).await;
-        assert_eq!(r["estado"], "salvo", "{r}");
-        let r = c.pedir_com_id(&c.realm, &id("off-es2"), c.conta, pedir("esquecer", 5002)).await;
         assert_eq!(r["dados"]["codigo"], "sem_registro", "{r}");
         let r = c.pedir_com_id(&c.realm, &id("off-da"), c.conta, pedir("dar", 5002)).await;
         assert_eq!(r["estado"], "salvo", "{r}");
         let r = c.pedir_com_id(&c.realm, &id("off-co"), c.conta, pedir("concluir", 5002)).await;
         assert_eq!(r["dados"]["codigo"], "precisa_estar_online", "prêmio em dinheiro: {r}");
         assert_eq!(ver().await, (vec![(5002, false)], vec![], "persistida".to_string()), "a recusa não gravou");
+        let r = c.pedir_com_id(&c.realm, &id("off-es3"), c.conta, pedir("esquecer", 5002)).await;
+        assert_eq!(r["dados"]["codigo"], "missao_ativa", "{r}");
         let r = c.pedir_com_id(&c.realm, &id("off-x"), c.conta, pedir("concluir", 70000)).await;
         assert_eq!(r["dados"]["codigo"], "edicao_invalida", "{r}");
         sqlx::query("DELETE FROM character_task_lists WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
