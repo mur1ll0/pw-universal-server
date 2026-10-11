@@ -141,6 +141,21 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                                         "exp": 10, "exp_para_subir": 40, "pontos_livres": 2, "forca": 1, "agilidade": 0,
                                         "vitalidade": 0, "energia": 0, "pontos_de_genio": 1, "genios": [0, 0, 0, 0, 0],
                                         "refino": 0, "vigor": 20000, "habilidades": [[1, 2]], "equipamento": []}}
+                elif consulta["tipo"] == "templates":
+                    # B217: o template do Guerreiro como o GS manda (itens com nome; habilidades só id).
+                    dados = {"estado": "consultado", "versao": "1.2.6", "nivel_maximo": 105,
+                             "piso": {"forca": 5, "agilidade": 5, "vitalidade": 3, "energia": 3},
+                             "templates": [{"classe": 0, "existe": True, "nome": "Guerreiro", "vida": 65, "mana": 30,
+                                            "estatisticas": {"nivel": 1, "cultivo": 0, "exp": 0, "sp": 0, "dinheiro": 0,
+                                                             "pontos": 0, "forca": 5, "agilidade": 5, "vitalidade": 5,
+                                                             "energia": 5, "mapa": 1, "x": 1.0, "y": 2.0, "z": 3.0},
+                                            "recipientes": {"bolsa": [{"slot": 0, "id": 2100, "quantidade": 5, "nome": "Poção",
+                                                                       "icone": "", "pilha": 100}], "equipamento": []},
+                                            "habilidades": [{"id": 1, "nivel": 1}, {"id": 167, "nivel": 1}]},
+                                           {"classe": 1, "existe": False}]}
+                elif consulta["tipo"] == "editar_template":
+                    estado_resposta = "salvo"
+                    dados = {"estado": "salvo", "tipo": "editar_template", "classe": consulta["classe"]}
                 elif consulta["tipo"] == "buscar_missoes":
                     dados = {"missoes": [{"id": 5002, "nome": "Missão direta", "nivel": [1, 150], "filhas": 0, "escolha": []}]}
                 else:
@@ -1095,6 +1110,58 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                        {"dar_mascote": {"ovo": 4501}}):
             resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
             self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
+
+    async def test_templates_b217(self):
+        """E8 (B217): consulta com nomes do cliente; edição com uma só operação, validada antes do
+        envio (recipientes do template, classe da habilidade, nível máximo), CSRF e canal."""
+        realm, _ = await self.criar_personagem()
+        await self.ativar_daemon(realm)
+        resposta = await self.cliente.get(f"/api/realms/{realm}/templates")
+        self.assertEqual(resposta.status_code, 200)
+        dados = resposta.json()
+        self.assertEqual((dados["versao"], dados["nivel_maximo"]), ("1.2.6", 105))
+        guerreiro = dados["templates"][0]
+        self.assertEqual([h["id"] for h in guerreiro["habilidades"]], [1, 167])
+        if guerreiro["habilidades"][0]["nome"] != "Habilidade 1":  # com data/textos presente
+            self.assertEqual(guerreiro["habilidades"][0]["nome"], "Ataque do Tigre")
+            self.assertEqual(guerreiro["habilidades"][1]["nivel_maximo"], 2)
+        self.assertFalse(dados["templates"][1]["existe"])
+
+        caminho = f"/api/realms/{realm}/templates/0/editar"
+        base = {"operacao_id": uuid.uuid4().hex}
+        estatisticas = {"nivel": 3, "cultivo": 0, "exp": 0, "sp": 0, "dinheiro": 100, "pontos": 0, "forca": 5,
+                        "agilidade": 5, "vitalidade": 5, "energia": 5, "mapa": 1, "x": 1.0, "z": 3.0}
+        self.assertEqual((await self.cliente.post(caminho, json={**base, "estatisticas": estatisticas})).status_code, 403)
+        csrf = {"X-CSRF-Token": (await self.cliente.get("/api/sessao")).json()["csrf"]}
+        for invalido in ({}, {"estatisticas": {**estatisticas, "nivel": 0}}, {"estatisticas": {**estatisticas, "dinheiro": -1}},
+                         {"estatisticas": {k: v for k, v in estatisticas.items() if k != "mapa"}},
+                         {"estatisticas": {**estatisticas, "extra": 1}}, {"estatisticas": {**estatisticas, "nivel": "3"}},
+                         {"item": {"recipiente": "armazem", "slot": 0, "id": 1, "quantidade": 1}},
+                         {"item": {"recipiente": "missao", "slot": 0, "id": 1, "quantidade": 1}},
+                         {"item": {"recipiente": "bolsa", "slot": 39, "id": 1, "quantidade": 1}},
+                         {"item": {"recipiente": "bolsa", "slot": 0, "id": 0, "quantidade": 1}},
+                         {"remover_item": {"recipiente": "bolsa"}},
+                         {"mover_item": {"de": "bolsa", "slot_de": 0, "para": "armazem", "slot_para": 1}},
+                         {"habilidade": {"id": 1, "nivel": 1}, "remover_item": {"recipiente": "bolsa", "slot": 0}},
+                         {"habilidade": {"id": 81, "nivel": 1}},      # do Mago
+                         {"habilidade": {"id": 167, "nivel": 3}},     # máximo 2
+                         {"habilidade": {"id": 65000, "nivel": 1}}):  # o cliente não conhece
+            self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
+        self.assertEqual((await self.cliente.post(f"/api/realms/{realm}/templates/12/editar",
+                                                  json={**base, "estatisticas": estatisticas}, headers=csrf)).status_code, 422)
+        antes = len(self.pedidos_admin)
+        for valido in ({"estatisticas": estatisticas}, {"estatisticas": {**estatisticas, "y": 4.5}},
+                       {"item": {"recipiente": "equipamento", "slot": 0, "id": 3004, "quantidade": 1}},
+                       {"remover_item": {"recipiente": "bolsa", "slot": 0}},
+                       {"mover_item": {"de": "bolsa", "slot_de": 0, "para": "equipamento", "slot_para": 0}},
+                       {"habilidade": {"id": 1, "nivel": 2}}, {"habilidade": {"id": 167, "nivel": 0}},
+                       {"habilidade": {"id": 81, "nivel": 0}}):
+            resposta = await self.cliente.post(caminho, json={"operacao_id": uuid.uuid4().hex, **valido}, headers=csrf)
+            self.assertEqual((resposta.status_code, resposta.json()["estado"]), (200, "salvo"), valido)
+        enviados = [p["consulta"] for p in self.pedidos_admin[antes:]]
+        self.assertEqual(len(enviados), 8)
+        self.assertEqual(enviados[0], {"tipo": "editar_template", "classe": 0, "estatisticas": estatisticas})
+        self.assertEqual(enviados[1]["estatisticas"]["y"], 4.5)
 
     @staticmethod
     def inteiro_gnet(valor):

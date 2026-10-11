@@ -97,7 +97,7 @@ pub struct BaseDaClasse {
 /// `gamed` restaura ao devolver pontos (`__Rollback`, `playertemplate.cpp:604-607`). Os
 /// `vitality`/`energy`/`strength`/`agility` do `ptemplate.conf` (Arqueiro 15/20/5/10) são
 /// lidos pelo `player_template` e **não** chegam ao personagem.
-pub const ATRIBUTO_INICIAL: i32 = 5;
+pub const ATRIBUTO_INICIAL: i32 = pw_core::ATRIBUTO_INICIAL;
 
 /// O arquivo inteiro.
 #[derive(Debug, Clone, Default)]

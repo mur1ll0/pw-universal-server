@@ -1846,3 +1846,93 @@ async fn criar_no_slot_dar_mascote_e_catalogos() {
     sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'b216-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
     c.encerrar().await;
 }
+
+/// E8 (B217): o painel lê e edita o template de criação pelo canal (operação idempotente), o
+/// GS confere com os dados do realm o que o cliente recusaria, e o personagem criado depois
+/// nasce com os valores novos.
+#[tokio::test]
+async fn templates_editados_pelo_canal_valem_para_o_proximo_personagem() {
+    let c = Cenario::montar().await;
+    let repo = CharacterRepository::new(c.pool.clone());
+    repo.template_repo().ensure_default_templates(&c.realm).await.unwrap();
+
+    // Consulta: as seis classes do 1.2.6, com os limites.
+    let r = c.pedir(&c.realm, json!({"tipo":"templates"})).await["dados"].clone();
+    assert_eq!(r["estado"], "consultado", "{r}");
+    let classes: Vec<i64> = r["templates"].as_array().unwrap().iter().map(|t| t["classe"].as_i64().unwrap()).collect();
+    assert_eq!(classes, vec![0, 1, 3, 4, 6, 7]);
+    assert_eq!(r["templates"][0]["estatisticas"]["forca"], 5);
+
+    let editar = |id: &'static str, edicao: Value| {
+        let mut consulta = json!({"tipo":"editar_template","classe":0});
+        for (k, v) in edicao.as_object().unwrap() { consulta[k] = v.clone(); }
+        let c = &c;
+        async move { c.pedir_com_id(&c.realm, id, c.conta, consulta).await["dados"].clone() }
+    };
+    let est = json!({"nivel":3,"cultivo":1,"exp":100,"sp":20,"dinheiro":500,"pontos":4,
+                     "forca":6,"agilidade":5,"vitalidade":7,"energia":5,"mapa":161,"x":10.0,"y":50.0,"z":-20.0});
+    let r = editar("tpl-est", json!({"estatisticas":est})).await;
+    assert_eq!(r["estado"], "salvo", "{r}");
+    // Mesmo id e mesmo pedido: o mesmo resultado, sem reaplicar; outro pedido: conflito.
+    assert_eq!(editar("tpl-est", json!({"estatisticas":est})).await["estado"], "salvo");
+    assert_eq!(editar("tpl-est", json!({"habilidade":{"id":81,"nivel":1}})).await["codigo"], "operacao_em_conflito");
+
+    // Recusas pelos dados do realm.
+    let mut ruim = est.clone();
+    ruim["nivel"] = json!(0);
+    assert_eq!(editar("tpl-r1", json!({"estatisticas":ruim})).await["codigo"], "nivel_invalido");
+    let mut ruim = est.clone();
+    ruim["forca"] = json!(2);
+    assert_eq!(editar("tpl-r2", json!({"estatisticas":ruim})).await["codigo"], "atributos_invalidos");
+    let mut ruim = est.clone();
+    ruim["mapa"] = json!(999);
+    assert_eq!(editar("tpl-r3", json!({"estatisticas":ruim})).await["codigo"], "mapa_indisponivel");
+    let mut ruim = est.clone();
+    ruim.as_object_mut().unwrap().remove("y");
+    assert_eq!(editar("tpl-r4", json!({"estatisticas":ruim})).await["codigo"], "altura_obrigatoria");
+    let mut ruim = est.clone();
+    ruim["cultivo"] = json!(20);
+    assert_eq!(editar("tpl-r5", json!({"estatisticas":ruim})).await["codigo"], "cultivo_invalido", "cultivo de deus não existe no 1.2.6");
+    let item = |r: &str, slot: u16, id: u32, q: u32| json!({"item":{"recipiente":r,"slot":slot,"id":id,"quantidade":q}});
+    assert_eq!(editar("tpl-r6", item("bolsa", 4, 9999, 1)).await["codigo"], "item_inexistente");
+    assert_eq!(editar("tpl-r7", item("bolsa", 4, 3002, 1)).await["codigo"], "recipiente_errado");
+    assert_eq!(editar("tpl-r8", item("bolsa", 4, 3001, 101)).await["codigo"], "quantidade_invalida");
+    assert_eq!(editar("tpl-r9", item("bolsa", 32, 3001, 1)).await["codigo"], "slot_invalido");
+    assert_eq!(editar("tpl-r10", item("equipamento", 0, 3001, 1)).await["codigo"], "posicao_invalida");
+    assert_eq!(editar("tpl-r11", item("armazem", 0, 3001, 1)).await["codigo"], "recipiente_errado");
+    assert_eq!(editar("tpl-r12", json!({"habilidade":{"id":9,"nivel":0}})).await["codigo"], "habilidade_ausente");
+    let r = c.pedir_com_id(&c.realm, "tpl-r13", c.conta, json!({"tipo":"editar_template","classe":2,"habilidade":{"id":1,"nivel":1}})).await["dados"].clone();
+    assert_eq!(r["codigo"], "classe_invalida", "o 1.2.6 não cria Espiritualista");
+    let r = c.pedir_com_id(&c.realm, "tpl-r14", c.conta,
+        json!({"tipo":"editar_template","classe":0,"habilidade":{"id":81,"nivel":1},"remover_item":{"recipiente":"bolsa","slot":0}})).await["dados"].clone();
+    assert_eq!(r["codigo"], "edicao_invalida", "uma edição por operação");
+
+    // Edições válidas: bolsa, corpo (a arma com molde no slot 0), habilidades.
+    assert_eq!(editar("tpl-i1", item("bolsa", 4, 3001, 50)).await["estado"], "salvo");
+    assert_eq!(editar("tpl-i2", item("equipamento", 0, 3004, 1)).await["estado"], "salvo");
+    assert_eq!(editar("tpl-i3", json!({"mover_item":{"de":"bolsa","slot_de":4,"para":"bolsa","slot_para":6}})).await["estado"], "salvo");
+    assert_eq!(editar("tpl-i4", json!({"remover_item":{"recipiente":"bolsa","slot":1}})).await["estado"], "salvo");
+    assert_eq!(editar("tpl-h1", json!({"habilidade":{"id":81,"nivel":2}})).await["estado"], "salvo");
+    assert_eq!(editar("tpl-h2", json!({"habilidade":{"id":167,"nivel":0}})).await["estado"], "salvo");
+
+    // A consulta mostra o template novo, com nome e ícone dos itens.
+    let r = c.pedir(&c.realm, json!({"tipo":"templates"})).await["dados"].clone();
+    let g = &r["templates"][0];
+    assert_eq!((g["estatisticas"]["nivel"].as_i64(), g["estatisticas"]["dinheiro"].as_i64()), (Some(3), Some(500)));
+    assert!(g["recipientes"]["bolsa"].as_array().unwrap().iter().any(|i| i["slot"] == 6 && i["nome"] == "Poção de teste"), "{g}");
+
+    // O personagem criado depois nasce com o template editado.
+    let id = repo.create_character(c.conta, &c.realm, "NovoDoTemplate", pw_core::Race::Human,
+        pw_core::CharacterClass::Blademaster, pw_core::Gender::Male, Vec::new(), None).await.unwrap();
+    let d = repo.get_details_por_role(id).await.unwrap().unwrap();
+    assert_eq!((d.level, d.cultivation, d.exp, d.sp, d.money, d.world_id), (3, 1, 100, 20, 500, 161));
+    assert_eq!((d.strength, d.agility, d.vitality, d.energy), (6, 5, 7, 5));
+    assert_eq!((d.position.x, d.position.y, d.position.z), (10.0, 50.0, -20.0));
+    assert_eq!(repo.pontos_de_atributo(id).await.unwrap(), 4);
+    assert!(d.inventory.iter().any(|i| i.slot == 6 && i.item_id == 3001 && i.count == 50));
+    assert!(!d.inventory.iter().any(|i| i.slot == 1), "o item removido do template não veio");
+    assert!(d.equipment.iter().any(|i| i.slot == 0 && i.item_id == 3004 && i.durability == 100 * 100));
+    let mut h: Vec<(u32, u8)> = d.skills.iter().map(|s| (s.skill_id, s.level)).collect();
+    h.sort();
+    assert_eq!(h, vec![(1, 1), (81, 2)]);
+}

@@ -209,6 +209,8 @@ CREATE TABLE IF NOT EXISTS test.class_templates (
     agility INT NOT NULL,
     vitality INT NOT NULL,
     energy INT NOT NULL,
+    initial_exp BIGINT DEFAULT 0 NOT NULL,
+    initial_points INT DEFAULT 0 NOT NULL,
     spawn_world_id INT NOT NULL,
     spawn_x REAL NOT NULL,
     spawn_y REAL NOT NULL,

@@ -313,6 +313,26 @@ def registrar_consultas(app):
         dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "buscar_itens", "texto": busca, "categoria": "pedra"})
         return {"realm_id": realm_id, "pedras": dados.get("itens", [])}
 
+    @app.get("/api/realms/{realm_id}/templates")
+    async def templates_do_realm(realm_id: str, requisicao: Request):
+        """E8 (B217): os templates de criação das classes da versão — valores iniciais, itens da
+        bolsa e do corpo (nome e ícone do elements.data, pelo GS) e habilidades (nome e ícone do
+        cliente). É o que o servidor copia para o personagem novo."""
+        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "templates"})
+        try:
+            nomes, cliente = nomes_das_habilidades(), habilidades_do_cliente()
+            classes = {t["classe"]: nome_da_classe(t["classe"]) for t in dados.get("templates", [])}
+        except OSError:
+            raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
+        for t in dados.get("templates", []):
+            t["classe_nome"] = classes.get(t["classe"]) or f"Classe {t['classe']}"
+            t["habilidades"] = [{**h, "nome": nomes.get(h["id"], f"Habilidade {h['id']}"),
+                                 "icone": (cliente.get(h["id"]) or {}).get("icone", ""),
+                                 "nivel_maximo": (cliente.get(h["id"]) or {}).get("nivel_maximo")}
+                                for h in t.get("habilidades", [])]
+        return {"realm_id": realm_id, "versao": dados.get("versao"), "nivel_maximo": dados.get("nivel_maximo"),
+                "piso": dados.get("piso"), "templates": dados.get("templates", [])}
+
     @app.get("/api/realms/{realm_id}/itens")
     async def buscar_itens(realm_id: str, requisicao: Request, busca: str = Query("", max_length=64),
                            categoria: Optional[str] = Query(None, pattern=r"^([a-z]{3,12}|slot:\d{1,2})$")):

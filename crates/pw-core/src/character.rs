@@ -313,6 +313,19 @@ pub fn bytes_da_aparencia(custom_appearance: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(custom_appearance).unwrap_or_default()
 }
 
+/// O valor de cada um dos quatro atributos no molde de **toda** classe: 5.
+///
+/// Os moldes do `clsconfig` do `gamedbd` (1.2.6 e 1.5.5) trazem 5/5/5/5 no `GRoleStatus.property`
+/// (`property.h:35-41`), e 5 é o piso que o `gamed` restaura ao devolver pontos
+/// (`__Rollback`, `playertemplate.cpp:604-607`). Desde a E8 (B217) a criação lê os atributos do
+/// template do realm (`class_templates`); esta constante vale para o template semeado e para
+/// a classe sem template.
+pub const ATRIBUTO_INICIAL: i32 = 5;
+
+/// A conta da vida e da mana **máximas** de uma classe: `(nível, vitalidade, energia) → (vida,
+/// mana)` — `BaseDaClasse::vida_e_mana_maximas` do realm, a mesma do mundo.
+pub type CalculoDeVidaEMana<'a> = &'a (dyn Fn(i32, i32, i32) -> (i32, i32) + Sync);
+
 /// Os quatro atributos com que um personagem nasce.
 ///
 /// No original saem do molde do `clsconfig` do `gamedbd`: **5/5/5/5 para toda classe**, e

@@ -18,11 +18,9 @@ const PAGINAS = {
   personagens: ["Personagens", ""],
   mapas: ["Mapas", ""],
   rates: ["Rates", ""],
-  moldes: ["Moldes", ""],
+  templates: ["Templates", ""],
 };
-const FUTURAS = {
-  moldes: "Editar os moldes de criação por classe.",
-};
+const FUTURAS = {};
 const CAMPOS_RATES = [["exp", "rate-exp"], ["sp", "rate-sp"], ["drop", "rate-drop"], ["moedas", "rate-moedas"]];
 const mesmasRates = (a, b) => !!a && !!b && CAMPOS_RATES.every(([c]) => Math.abs(Number(a[c]) - Number(b[c])) < 0.001);
 
@@ -116,10 +114,10 @@ function mostrarEntrada() {
 /* ---------------- Navegação ---------------- */
 
 function mudarPagina(pagina) {
-  if (!estado.selecionado && ["realm", "personagens", "mapas", "rates", "moldes"].includes(pagina)) pagina = "inicio";
+  if (!estado.selecionado && ["realm", "personagens", "mapas", "rates", "templates"].includes(pagina)) pagina = "inicio";
   estado.pagina = pagina;
   fecharConta();
-  for (const id of ["inicio", "realm", "personagens", "contas", "rates", "mapas"]) elemento(`pagina-${id}`).hidden = pagina !== id;
+  for (const id of ["inicio", "realm", "personagens", "contas", "rates", "mapas", "templates"]) elemento(`pagina-${id}`).hidden = pagina !== id;
   elemento("pagina-futura").hidden = !FUTURAS[pagina];
   const [titulo, sub] = PAGINAS[pagina];
   const realm = estado.selecionado;
@@ -138,6 +136,7 @@ function mudarPagina(pagina) {
   fecharMenu();
   if (pagina === "contas" && !elemento("lista-contas").children?.length) buscarContas();
   if (pagina === "personagens" && !estado.personagemId) buscarPersonagens();
+  if (pagina === "templates") carregarTemplates();
   if (pagina === "rates") preencherRates();
   if (pagina === "mapas") renderizarMapas();
 }
@@ -413,6 +412,11 @@ function selecionar(id, irPara = "realm") {
   elemento("consulta-personagens").hidden = false;
   estado.paginaPersonagens = 1;
   elemento("aviso-personagens").hidden = true;
+  estado.templates = null;
+  estado.templateAberto = null;
+  elemento("ficha-template").hidden = true;
+  elemento("consulta-templates").hidden = false;
+  elemento("lista-templates").replaceChildren();
   estado.selecionado = estado.realms.find((realm) => realm.id === id) || null;
   elemento("realm-selecionado").value = estado.selecionado?.id || "";
   document.querySelectorAll(".cartao-realm").forEach((cartao) => {
@@ -697,7 +701,7 @@ function fecharModal(id) {
   if (id === "modal-item") estado.itemEmEdicao = null;
 }
 const MODAIS_DA_FICHA = ["modal-estatisticas", "modal-item", "modal-criar-item", "modal-busca-habilidade", "modal-habilidade",
-  "modal-busca-mascote", "modal-mascote", "modal-daimon", "modal-missoes"];
+  "modal-busca-mascote", "modal-mascote", "modal-daimon", "modal-missoes", "modal-template-estatisticas", "modal-template-item"];
 
 /* Texto com os códigos de cor do cliente (`^RRGGBB`) pintado; sem código, a cor do painel. */
 function textoPintado(texto, classe = "") {
@@ -799,8 +803,8 @@ async function consultarPersonagem(realmId, id) {
 /* ---------------- Edição de personagem (E5) ---------------- */
 
 /* Cultivos que o cliente mostra: 0–8 em todas; 20–22 e 30–32 só no 1.5.5 (B182). */
-function preencherCultivos(versao, atual) {
-  const lista = elemento("cultivo-valor");
+function preencherCultivos(versao, atual, alvo = "cultivo-valor") {
+  const lista = elemento(alvo);
   const grupos = [["Base", [0, 1, 2, 3, 4, 5, 6, 7, 8]]];
   if (versao !== "1.2.6") grupos.push(["Deus", [20, 21, 22]], ["Demônio", [30, 31, 32]]);
   lista.replaceChildren();
@@ -1439,8 +1443,10 @@ function abrirCriarItem(destino) {
   categoria.replaceChildren(...opcoes.map(([v, n]) => { const o = criar("option", "", n); o.value = v; return o; }));
   categoria.value = destino.chave === "equipamento" ? `slot:${destino.slot}` : (destino.chave === "missao" ? "missao" : "");
   const nomes = Object.fromEntries(RECIPIENTES);
-  elemento("titulo-criar-item").textContent = destino.slot === undefined ? "Dar item" : "Criar item";
-  elemento("ci-destino").textContent = destino.slot === undefined
+  elemento("titulo-criar-item").textContent = destino.template ? "Pôr item no template" : destino.slot === undefined ? "Dar item" : "Criar item";
+  elemento("ci-destino").textContent = destino.template
+    ? `${destino.chave === "equipamento" ? `Corpo, ${destino.legenda}` : `Bolsa, slot ${destino.slot}`}: o personagem novo nasce com este item aqui.`
+    : destino.slot === undefined
     ? "Vai para a bolsa (item de missão, para a bolsa de missão), em lotes de uma pilha."
     : destino.chave === "equipamento"
       ? `${destino.legenda}: o item nasce na bolsa — depois arraste-o para o slot para vestir.`
@@ -1496,7 +1502,7 @@ function escolherParaCriar(item) {
   estado.itemParaCriar = item;
   const destino = estado.criacao || {};
   const quantidade = elemento("ci-quantidade");
-  const comSlot = destino.slot !== undefined && destino.chave !== "equipamento";
+  const comSlot = destino.template || (destino.slot !== undefined && destino.chave !== "equipamento");
   quantidade.max = String(comSlot ? item.pilha || 1 : 100000);
   if (Number(quantidade.value) > Number(quantidade.max)) quantidade.value = quantidade.max;
   const resumo = criar("span", "escolhido-linha");
@@ -1509,10 +1515,16 @@ async function criarItem() {
   const destino = estado.criacao || {};
   if (!item) { alerta("erro", "Escolha o item", "Busque e clique num item da lista."); return; }
   const quantidade = Math.trunc(Number(elemento("ci-quantidade").value));
-  const comSlot = destino.slot !== undefined && destino.chave !== "equipamento";
+  const comSlot = destino.template || (destino.slot !== undefined && destino.chave !== "equipamento");
   const maximo = comSlot ? (item.pilha || 1) : 100_000;
   if (!Number.isFinite(quantidade) || quantidade < 1 || quantidade > maximo) { alerta("erro", "Quantidade inválida", `De 1 a ${fmt(maximo)}.`); return; }
   const nome = semCores(item.nome) || `item ${item.id}`;
+  if (destino.template) {
+    const feito = await editarTemplate({ item: { recipiente: destino.chave, slot: destino.slot, id: item.id, quantidade } },
+      `${fmt(quantidade)} × ${nome} no template (${destino.chave === "equipamento" ? destino.legenda : `bolsa, slot ${destino.slot}`})`);
+    if (feito) fecharModal("modal-criar-item");
+    return;
+  }
   const pedido = { id: item.id, quantidade, ...(comSlot ? { recipiente: destino.chave, slot: destino.slot } : {}) };
   const nomes = Object.fromEntries(RECIPIENTES);
   const r = await editarPersonagem({ item: pedido },
@@ -1552,12 +1564,13 @@ async function carregarHabilidades(realm, id) {
 }
 /* `possuida`: a do personagem (nível atual, remover); senão, ensinar a do catálogo. */
 function abrirHabilidade(h, possuida) {
-  const atual = possuida ? h : (estado.habilidadesDaFicha || []).find((x) => x.id === h.id);
+  const atual = possuida ? h : habilidadesAtuais().find((x) => x.id === h.id);
+  const dono = modoTemplate() ? "o template" : "o personagem";
   estado.habilidade = { ...h, possuida: Boolean(atual), nivel: atual?.nivel };
   elemento("hab-qual").textContent = h.nome;
   elemento("hab-icone").replaceChildren(imagemDoIcone("habilidade", h.icone, h.nome));
   elemento("hab-detalhe").textContent = `ID ${h.id} · nível máximo ${h.nivel_maximo ?? "?"}`
-    + (atual ? ` · o personagem tem no nível ${atual.nivel}` : " · o personagem ainda não tem");
+    + (atual ? ` · ${dono} tem no nível ${atual.nivel}` : ` · ${dono} ainda não tem`);
   elemento("hab-nivel").max = String(h.nivel_maximo || 255);
   elemento("hab-nivel").value = String(atual?.nivel || 1);
   elemento("hab-remover").hidden = !atual;
@@ -1572,16 +1585,24 @@ async function aplicarHabilidade(nivel) {
   if (!Number.isFinite(n) || n < 0 || n > (h.nivel_maximo || 255) || (n === 0 && !h.possuida)) {
     alerta("erro", "Nível inválido", `De 1 a ${h.nivel_maximo || 255}.`); return;
   }
+  if (modoTemplate()) {
+    if (n === 0 && !(await confirmar("Tirar habilidade?", `${h.nome} deixa de vir com o personagem novo.`, "Tirar"))) return;
+    const feito = await editarTemplate({ habilidade: { id: h.id, nivel: n } },
+      n ? `${h.nome}: nível ${n} no template` : `${h.nome}: tirada do template`);
+    if (feito) { fecharModal("modal-habilidade"); estado.habilidade = null; }
+    return;
+  }
   if (n === 0 && !(await confirmar("Remover habilidade?", `${h.nome} sai das habilidades do personagem.`, "Remover"))) return;
   const r = await editarPersonagem({ habilidade: { id: h.id, nivel: n } },
     n ? `${h.nome}: ${h.possuida ? "nível" : "ensinada no nível"} ${n}` : `${h.nome}: removida`);
   if (r === "aplicado" || r === "salvo") { fecharModal("modal-habilidade"); estado.habilidade = null; }
 }
-async function abrirBuscaDeHabilidade() {
+async function abrirBuscaDeHabilidade(classe = "") {
   elemento("hb-busca").value = "";
   elemento("hb-resultados").replaceChildren(criar("p", "nota-vazia", "Digite o nome ou o ID, ou escolha a classe."));
-  await preencherGruposDeHabilidade(elemento("hb-classe"), "");
+  await preencherGruposDeHabilidade(elemento("hb-classe"), classe);
   abrirModal("modal-busca-habilidade");
+  if (classe !== "") buscarHabilidade();
 }
 /* Busca no catálogo de habilidades do cliente; `classe` é o `cls` do stub ("" = todas). */
 async function catalogoDeHabilidades(texto, classe) {
@@ -1603,7 +1624,7 @@ async function buscarHabilidade() {
   try {
     const lista = await catalogoDeHabilidades(texto, classe);
     if (minha !== buscaDeHabilidade) return;
-    const possuidas = new Map((estado.habilidadesDaFicha || []).map((h) => [h.id, h.nivel]));
+    const possuidas = new Map(habilidadesAtuais().map((h) => [h.id, h.nivel]));
     alvo.replaceChildren(...lista.map((h) => cartaoDeResultado(imagemDoIcone("habilidade", h.icone, h.nome), h.nome,
       `ID ${h.id} · até nível ${h.nivel_maximo ?? "?"}${possuidas.has(h.id) ? ` · tem nível ${possuidas.get(h.id)}` : ""}`,
       () => abrirHabilidade(h, false))));
@@ -2085,6 +2106,306 @@ function ligarFichaDoPersonagem() {
   preencherIcones();
 }
 
+/* ---------------- Templates (E8, B217) ----------------
+   O que o servidor copia para o personagem novo de cada classe (o molde do `clsconfig` do original,
+   aqui o template do realm no banco). Cartões por classe e a tela da classe com as janelas da
+   ficha: estatísticas iniciais, corpo, roupas, bolsa e habilidades. Mascotes, Daimon e missões
+   não entram (vêm pelo jogo). Toda edição vale para os personagens criados depois. */
+const modoTemplate = () => estado.pagina === "templates" && estado.templateAberto !== null && estado.templateAberto !== undefined;
+const templateAberto = () => (estado.templates?.templates || []).find((t) => t.classe === estado.templateAberto) || null;
+const habilidadesAtuais = () => (modoTemplate() ? templateAberto()?.habilidades : estado.habilidadesDaFicha) || [];
+const MOTIVOS_TEMPLATE = {
+  ...MOTIVOS_EDICAO,
+  nivel_invalido: "Nível fora de 1 até o máximo do realm.",
+  atributos_invalidos: "Algum atributo ficou abaixo do piso da versão.",
+  recipiente_errado: "O template só tem bolsa e corpo, e item de missão não entra.",
+  mapa_indisponivel: "Este mapa não está carregado no servidor do realm.",
+  posicao_invalida: "Esta peça não vai nesse slot.",
+  requisito: "A classe, o nível ou os atributos do template não atendem o requisito da peça.",
+  requisito_dos_itens: "Com esses valores, uma peça vestida deixaria de atender o requisito; tire-a antes.",
+  reputacao_dos_itens: "Uma peça vestida exige reputação, que o personagem novo não tem.",
+  reputacao: "A peça exige reputação, que o personagem novo não tem.",
+  slot_vazio: "O slot já está vazio; atualize.",
+  habilidade_ausente: "O template não tem essa habilidade.",
+  classe_invalida: "Esta versão não cria essa classe.",
+  template_inexistente: "O realm não tem template para essa classe.",
+};
+
+async function carregarTemplates() {
+  const realm = estado.selecionado;
+  if (!realm) return;
+  const aviso = elemento("aviso-templates");
+  aviso.hidden = true;
+  elemento("lista-templates").replaceChildren(criar("p", "nota-vazia", "Carregando templates…"));
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/templates`);
+    if (estado.selecionado?.id !== realm.id) return;
+    estado.templates = dados;
+    elemento("lista-templates").replaceChildren(...(dados.templates || []).map(cartaoTemplate));
+    if (modoTemplate()) desenharTemplate();
+  } catch (erro) {
+    elemento("lista-templates").replaceChildren();
+    aviso.textContent = `Templates indisponíveis: ${erro.message}`;
+    aviso.hidden = false;
+  }
+}
+
+function cartaoTemplate(t) {
+  const botao = criar("button", "cartao-conta cartao-personagem cartao-template");
+  botao.type = "button";
+  const nome = t.classe_nome || `Classe ${t.classe}`;
+  const avatar = criar("span", `avatar ${corAvatar(t.classe)}`, nome.slice(0, 1));
+  const texto = criar("div");
+  if (!t.existe) {
+    texto.append(criar("div", "nome", nome), criar("div", "id", "Sem template neste realm"));
+    botao.disabled = true;
+    botao.append(avatar, texto);
+    return botao;
+  }
+  const e = t.estatisticas;
+  const itens = (t.recipientes?.bolsa?.length || 0) + (t.recipientes?.equipamento?.length || 0);
+  texto.append(criar("div", "nome", nome), criar("div", "id", `Mapa ${e.mapa} · ${itens} itens · ${t.habilidades.length} habilidades`));
+  const rodape = criar("div", "rodape");
+  rodape.append(criar("span", "etiqueta etiqueta-neutra", `${e.forca}/${e.agilidade}/${e.vitalidade}/${e.energia}`),
+    criar("span", "gold", `Nv. ${e.nivel}`));
+  botao.append(avatar, texto, rodape);
+  botao.addEventListener("click", () => abrirTemplate(t.classe));
+  return botao;
+}
+
+function abrirTemplate(classe) {
+  estado.templateAberto = classe;
+  estado.sexoDaFicha = "m";
+  elemento("consulta-templates").hidden = true;
+  elemento("ficha-template").hidden = false;
+  desenharTemplate();
+}
+function fecharTemplate() {
+  estado.templateAberto = null;
+  esconderMenuDoSlot();
+  elemento("ficha-template").hidden = true;
+  elemento("consulta-templates").hidden = false;
+}
+
+function desenharTemplate() {
+  const t = templateAberto();
+  if (!t) { fecharTemplate(); return; }
+  const e = t.estatisticas;
+  elemento("titulo-template").textContent = t.classe_nome || `Classe ${t.classe}`;
+  elemento("resumo-template").textContent = `${estado.selecionado?.nome || ""} · versão ${estado.templates.versao} · nível máximo ${estado.templates.nivel_maximo}`;
+  const campos = [["nivel", "Nível", e.nivel], ["cultivo", "Cultivo", e.cultivo], ["exp", "EXP", fmt(e.exp)],
+    ["brilho", "Alma (SP)", fmt(e.sp)], ["moeda", "Dinheiro", fmt(e.dinheiro)], ["pontos", "Pontos livres", fmt(e.pontos)],
+    ["vida", "Vida (calculada)", fmt(t.vida)], ["mana", "Mana (calculada)", fmt(t.mana)],
+    ["forca", "Força", e.forca], ["agilidade", "Agilidade", e.agilidade], ["vitalidade", "Vitalidade", e.vitalidade],
+    ["energia", "Energia", e.energia], ["mapa", "Mapa", e.mapa],
+    ["posicao", "Posição", `${Number(e.x).toFixed(0)}, ${Number(e.y).toFixed(0)}, ${Number(e.z).toFixed(0)}`]];
+  elemento("dados-template").replaceChildren(...campos.map(([ico, rotulo, valor]) => {
+    const caixa = criar("div", `atributo atributo-${ico}`);
+    const texto = criar("div");
+    texto.append(criar("span", "", rotulo), criar("strong", "", String(valor)));
+    caixa.append(icone(ico), texto);
+    return caixa;
+  }));
+  const porSlot = (chave) => new Map((t.recipientes?.[chave] || []).map((i) => [i.slot, i]));
+  const corpo = porSlot("equipamento");
+  const maior = Math.max(30, ...[...corpo.keys()].map((s) => s + 1));
+  const grade = (chave, slots, mapa) => {
+    const g = criar("div", `grade-itens ${chave === "equipamento" ? "grade-corpo" : ""}`);
+    for (const s of slots) g.append(celulaDoTemplate(chave, s, mapa.get(s), chave === "equipamento" ? (SLOTS_DE_EQUIPAMENTO[s] || `Slot ${s}`) : ""));
+    return g;
+  };
+  elemento("tpl-equipamento").replaceChildren(grade("equipamento", intervalo(maior).filter((s) => !SLOTS_DE_ROUPA.includes(s)), corpo));
+  elemento("tpl-roupas").replaceChildren(grade("equipamento", SLOTS_DE_ROUPA, corpo));
+  const bolsa = porSlot("bolsa");
+  const resumo = criar("p", "resumo-grade");
+  resumo.append(criar("span", "", `${bolsa.size} de ${TAMANHOS.bolsa} ocupados`), criar("span", "texto-suave", "slot vazio: pôr item · arraste para mover"));
+  elemento("tpl-bolsa").replaceChildren(resumo, grade("bolsa", intervalo(TAMANHOS.bolsa), bolsa));
+  const habilidades = criar("div", "grade-itens grade-habilidades");
+  for (const h of t.habilidades) {
+    const celula = criar("button", "celula-item ocupada");
+    celula.type = "button";
+    celula.title = `${h.nome} · nível ${h.nivel}${h.nivel_maximo ? `/${h.nivel_maximo}` : ""} (ID ${h.id})`;
+    celula.append(imagemDoIcone("habilidade", h.icone, h.nome), criar("span", "qtd-item", String(h.nivel)));
+    celula.addEventListener("click", () => abrirHabilidade(h, true));
+    habilidades.append(celula);
+  }
+  const resumoH = criar("p", "resumo-grade");
+  resumoH.append(criar("span", "", `${t.habilidades.length} habilidade${t.habilidades.length === 1 ? "" : "s"}`), criar("span", "texto-suave", "clique para editar"));
+  elemento("tpl-habilidades").replaceChildren(resumoH, habilidades);
+  if (!t.habilidades.length) elemento("tpl-habilidades").append(criar("p", "nota-vazia", "O personagem novo nasce sem habilidades."));
+}
+
+/* Célula de item do template: dica simples (nome, quantidade, id); clique abre o modal da
+   quantidade; slot vazio, o menu "Criar item"; arrastar move/troca dentro do template. */
+let arrastoDoTemplate = null;
+function celulaDoTemplate(chave, slot, item, legenda) {
+  const celula = criar("div", `celula-item ${item ? "ocupada" : "vazia"}`);
+  if (legenda) celula.title = legenda;
+  if (item) {
+    const nome = item.nome || `Item ${item.id}`;
+    celula.title = `${legenda ? `${legenda}: ` : ""}${semCores(nome)}${item.quantidade > 1 ? ` ×${item.quantidade}` : ""} (ID ${item.id})`;
+    celula.append(imagemDoIcone("m", item.icone, nome));
+    if (item.quantidade > 1) celula.append(criar("span", "qtd-item", fmt(item.quantidade)));
+    celula.addEventListener("click", () => abrirItemDoTemplate(chave, item, legenda));
+    celula.draggable = true;
+    celula.addEventListener("dragstart", (evento) => {
+      arrastoDoTemplate = { chave, slot, nome: semCores(nome) };
+      evento.dataTransfer?.setData?.("text/plain", semCores(nome));
+      celula.classList.add("arrastando");
+    });
+    celula.addEventListener("dragend", () => { celula.classList.remove("arrastando"); arrastoDoTemplate = null; });
+  } else {
+    if (legenda) celula.append(criar("span", "rotulo-slot", legenda));
+    celula.addEventListener("click", (evento) => { evento.stopPropagation?.(); mostrarMenuDoSlot(celula, { template: true, chave, slot, legenda }); });
+  }
+  celula.addEventListener("dragover", (evento) => { if (arrastoDoTemplate) { evento.preventDefault(); celula.classList.add("alvo-arrasto"); } });
+  celula.addEventListener("dragleave", () => celula.classList.remove("alvo-arrasto"));
+  celula.addEventListener("drop", (evento) => {
+    evento.preventDefault();
+    celula.classList.remove("alvo-arrasto");
+    const origem = arrastoDoTemplate;
+    arrastoDoTemplate = null;
+    if (!origem || (origem.chave === chave && origem.slot === slot)) return;
+    const nomes = Object.fromEntries(RECIPIENTES);
+    editarTemplate({ mover_item: { de: origem.chave, slot_de: origem.slot, para: chave, slot_para: slot } },
+      `${origem.nome}: ${nomes[origem.chave]} ${origem.slot} → ${nomes[chave]} ${slot}`);
+  });
+  return celula;
+}
+
+function abrirItemDoTemplate(chave, item, legenda) {
+  estado.itemDoTemplate = { chave, ...item };
+  const nome = item.nome || `Item ${item.id}`;
+  elemento("tpl-item-icone").replaceChildren(imagemDoIcone("m", item.icone, nome));
+  elemento("tpl-item-nome").replaceChildren(textoPintado(nome));
+  const onde = chave === "equipamento" ? `corpo, ${legenda || `slot ${item.slot}`}` : `bolsa, slot ${item.slot}`;
+  elemento("tpl-item-detalhe").textContent = `ID ${item.id} · ${onde} · pilha até ${fmt(item.pilha || 1)}`;
+  const quantidade = elemento("tpl-item-quantidade");
+  quantidade.max = String(Math.max(1, item.pilha || 1));
+  quantidade.value = String(item.quantidade);
+  abrirModal("modal-template-item");
+}
+async function salvarItemDoTemplate() {
+  const i = estado.itemDoTemplate;
+  if (!i) return;
+  const quantidade = Math.trunc(Number(elemento("tpl-item-quantidade").value));
+  const maximo = Math.max(1, i.pilha || 1);
+  if (!Number.isFinite(quantidade) || quantidade < 1 || quantidade > maximo) { alerta("erro", "Quantidade inválida", `De 1 a ${fmt(maximo)}.`); return; }
+  const r = await editarTemplate({ item: { recipiente: i.chave, slot: i.slot, id: i.id, quantidade } },
+    `${semCores(i.nome) || `Item ${i.id}`}: quantidade ${fmt(quantidade)}`);
+  if (r) fecharModal("modal-template-item");
+}
+async function removerItemDoTemplate() {
+  const i = estado.itemDoTemplate;
+  if (!i) return;
+  const nome = semCores(i.nome) || `Item ${i.id}`;
+  if (!(await confirmar("Tirar do template?", `${nome} deixa de vir com o personagem novo.`, "Tirar"))) return;
+  const r = await editarTemplate({ remover_item: { recipiente: i.chave, slot: i.slot } }, `${nome}: tirado do template`);
+  if (r) fecharModal("modal-template-item");
+}
+
+function abrirEstatisticasDoTemplate() {
+  const t = templateAberto();
+  if (!t) return;
+  const e = t.estatisticas;
+  elemento("tpl-est-resumo").textContent = `${t.classe_nome} · vale para os personagens criados depois`;
+  for (const campo of ["nivel", "exp", "sp", "dinheiro", "pontos", "forca", "agilidade", "vitalidade", "energia"]) {
+    elemento(`tpl-${campo}`).value = String(e[campo]);
+  }
+  elemento("tpl-nivel").max = String(estado.templates.nivel_maximo || 1);
+  const piso = estado.templates.piso || {};
+  elemento("tpl-piso").textContent = `mínimo ${piso.forca}/${piso.agilidade}/${piso.vitalidade}/${piso.energia}`;
+  for (const [campo, minimo] of Object.entries(piso)) elemento(`tpl-${campo}`).min = String(minimo);
+  preencherCultivos(estado.templates.versao, e.cultivo, "tpl-cultivo");
+  // Mapa: os carregados agora no realm (o GS confere), com os nomes do catálogo.
+  const realm = estado.selecionado;
+  if (realm && !estado.catalogoMapas[realm.id]) carregarCatalogoDeMapas(realm);
+  const nomes = new Map((estado.catalogoMapas[realm?.id] || []).map((m) => [m.mapa, m.nome]));
+  const carregados = (estado.online[realm?.id]?.mapas || []).filter((m) => !m.carregando).map((m) => m.mapa).sort((a, b) => a - b);
+  if (!carregados.includes(Number(e.mapa))) carregados.unshift(Number(e.mapa));
+  elemento("tpl-mapa").replaceChildren(...carregados.map((mapa) => {
+    const opcao = criar("option", "", nomes.has(mapa) ? `${mapa} · ${nomes.get(mapa)}` : `Mapa ${mapa}`);
+    opcao.value = String(mapa);
+    opcao.selected = mapa === Number(e.mapa);
+    return opcao;
+  }));
+  elemento("tpl-x").value = Number(e.x).toFixed(1);
+  elemento("tpl-y").value = Number(e.y).toFixed(1);
+  elemento("tpl-z").value = Number(e.z).toFixed(1);
+  abrirModal("modal-template-estatisticas");
+}
+async function salvarEstatisticasDoTemplate() {
+  const inteiro = (id) => Math.trunc(Number(elemento(id).value));
+  const est = {};
+  for (const campo of ["nivel", "cultivo", "exp", "sp", "dinheiro", "pontos", "forca", "agilidade", "vitalidade", "energia", "mapa"]) {
+    est[campo] = inteiro(`tpl-${campo}`);
+  }
+  const [x, z] = ["tpl-x", "tpl-z"].map((id) => Number(elemento(id).value));
+  const textoY = elemento("tpl-y").value.trim();
+  const valido = (v) => Number.isFinite(v) && Math.abs(v) <= 100_000;
+  if (!Object.values(est).every((v) => Number.isInteger(v) && v >= 0) || est.nivel < 1 || !valido(x) || !valido(z)
+      || (textoY !== "" && !valido(Number(textoY)))) {
+    alerta("erro", "Valor inválido", "Confira os números (inteiros, sem negativos) e as coordenadas."); return;
+  }
+  const corpo = { estatisticas: { ...est, x, z, ...(textoY === "" ? {} : { y: Number(textoY) }) } };
+  const r = await editarTemplate(corpo, `Estatísticas iniciais: nível ${est.nivel}, mapa ${est.mapa}`);
+  if (r) fecharModal("modal-template-estatisticas");
+}
+
+/* Uma edição do template: operação idempotente (mesmo id na reconsulta), toast para todo
+   resultado, e a tela recarregada do servidor no sucesso. */
+async function editarTemplate(corpo, descricao) {
+  const realm = estado.selecionado;
+  const classe = estado.templateAberto;
+  if (!realm || classe === null || classe === undefined || estado.enviando) return false;
+  const operacao = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+  estado.enviando = true;
+  alerta("carregando", "Salvando…", descricao, { toast: true });
+  try {
+    let dados;
+    try {
+      dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/templates/${classe}/editar`,
+        { method: "POST", signal: AbortSignal.timeout(8000), body: JSON.stringify({ operacao_id: operacao, ...corpo }) });
+    } catch (erro) {
+      if (erro.resultado?.estado === "falha" || !erro.resultado || erro.resultado.detail) throw erro;
+      dados = { estado: "desconhecido" };
+    }
+    for (let i = 0; dados.estado === "desconhecido" && i < 10 && temTempo; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      try { dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/operacoes/${operacao}`); } catch (_) { /* de novo */ }
+    }
+    if (dados.estado === "salvo") {
+      alerta("ok", "Template salvo", `${descricao}. Vale para os personagens criados depois.`);
+      await carregarTemplates();
+      return true;
+    }
+    if (dados.estado === "desconhecido") {
+      alerta("aviso", "Sem confirmação", `Operação ${operacao}: o servidor não confirmou. Confira o template antes de repetir.`, { toast: true });
+    } else {
+      alerta("erro", "Não salvo", MOTIVOS_TEMPLATE[dados.codigo] || dados.mensagem || dados.codigo);
+    }
+  } catch (erro) {
+    const detalhe = erro.resultado?.detail;
+    const texto = Array.isArray(detalhe) ? "Valores fora dos limites." : (MOTIVOS_TEMPLATE[erro.resultado?.codigo] || erro.message);
+    alerta("erro", "Não salvo", texto);
+  } finally { estado.enviando = false; }
+  return false;
+}
+
+function ligarTemplates() {
+  elemento("voltar-templates").addEventListener("click", fecharTemplate);
+  elemento("abrir-estatisticas-template").addEventListener("click", abrirEstatisticasDoTemplate);
+  aoEnviar("form-template-estatisticas", salvarEstatisticasDoTemplate);
+  aoEnviar("form-template-item", salvarItemDoTemplate);
+  elemento("tpl-item-remover").addEventListener("click", () => removerItemDoTemplate());
+  elemento("abrir-item-template").addEventListener("click", () => {
+    const livre = intervalo(TAMANHOS.bolsa).find((s) => !(templateAberto()?.recipientes?.bolsa || []).some((i) => i.slot === s));
+    if (livre === undefined) { alerta("erro", "Bolsa cheia", "Tire um item do template antes."); return; }
+    abrirCriarItem({ template: true, chave: "bolsa", slot: livre, legenda: "" });
+  });
+  elemento("abrir-habilidade-template").addEventListener("click", () => abrirBuscaDeHabilidade(String(estado.templateAberto)));
+}
+
 /* ---------------- Contas globais ---------------- */
 
 const corAvatar = (id) => `c${(Number(id) % 6) + 1}`;
@@ -2540,13 +2861,37 @@ elemento("voltar-personagens").addEventListener("click", () => {
   fecharTelaPersonagem();
   if (!elemento("lista-personagens").children?.length) buscarPersonagens();
 });
-/* Janelas da tela do personagem: o botão da barra recolhe e expande o corpo. */
-document.querySelectorAll(".botao-janela").forEach((botao) => botao.addEventListener("click", () => {
+/* Janelas da ficha e do template (B217): recolher leva a janela à bandeja no canto da tela, e as
+   outras ocupam o espaço; restaurar devolve-a ao lugar de onde saiu (marcado por um espaço
+   reservado invisível). A bandeja fica dentro da tela, então some junto com ela. */
+function bandejaDe(tela) {
+  let bandeja = [...(tela.children || [])].find((filho) => filho.classList?.contains("bandeja-janelas"));
+  if (!bandeja) {
+    bandeja = criar("div", "bandeja-janelas");
+    bandeja.setAttribute("aria-label", "Janelas recolhidas");
+    tela.append(bandeja);
+  }
+  return bandeja;
+}
+function alternarJanela(botao) {
   const janela = botao.closest(".janela");
-  const recolhida = janela.classList.toggle("recolhida");
-  botao.textContent = recolhida ? "+" : "–";
-  botao.setAttribute("aria-label", recolhida ? "Expandir" : "Recolher");
-}));
+  const recolher = !janela.classList.contains("recolhida");
+  const tela = janela.closest(".tela-personagem");
+  if (recolher && tela) {
+    const lugar = criar("span", "lugar-janela");
+    lugar.hidden = true;
+    janela.before(lugar);
+    janela.lugarDeOrigem = lugar;
+    bandejaDe(tela).append(janela);
+  } else if (!recolher && janela.lugarDeOrigem) {
+    janela.lugarDeOrigem.replaceWith(janela);
+    janela.lugarDeOrigem = null;
+  }
+  janela.classList.toggle("recolhida", recolher);
+  botao.textContent = recolher ? "+" : "–";
+  botao.setAttribute("aria-label", recolher ? "Restaurar" : "Recolher");
+}
+document.querySelectorAll(".botao-janela").forEach((botao) => botao.addEventListener("click", () => alternarJanela(botao)));
 elemento("busca-contas").addEventListener("submit", (evento) => { evento.preventDefault(); buscarContas(1); });
 elemento("pagina-anterior").addEventListener("click", () => buscarContas(estado.paginaContas - 1));
 elemento("pagina-seguinte").addEventListener("click", () => buscarContas(estado.paginaContas + 1));
@@ -2581,6 +2926,7 @@ elemento("desmarcar-mapas").addEventListener("click", () => marcarMapasVisiveis(
 elemento("ligar-mapas").addEventListener("click", () => aplicarAosMarcados(true));
 elemento("desligar-mapas").addEventListener("click", () => aplicarAosMarcados(false));
 ligarFichaDoPersonagem();
+ligarTemplates();
 elemento("criacao-conta").addEventListener("submit", (evento) => { evento.preventDefault(); executarComando(false, "criar_conta"); });
 elemento("recuperar-comando").addEventListener("click", () => { pararAcompanhamento(); executarComando(true); });
 document.querySelectorAll(".nav").forEach((botao) => botao.addEventListener("click", () => mudarPagina(botao.dataset.pagina)));

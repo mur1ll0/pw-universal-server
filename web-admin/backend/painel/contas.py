@@ -186,6 +186,69 @@ class MascotePedido(BaseModel):
     edicao: EdicaoMascote
 
 
+class EstatisticasTemplate(BaseModel):
+    """E8 (B217): os valores iniciais do template (todos, de uma vez). Tetos de política do
+    painel, os mesmos da edição de personagem; nível máximo, cultivos da versão, piso dos
+    atributos, mapa e terreno quem confere é o GS. `y` ausente = o chão do mapa."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    nivel: int = Field(ge=1, le=1000)
+    cultivo: int = Field(ge=0, le=255)
+    exp: int = Field(ge=0, le=2_000_000_000)
+    sp: int = Field(ge=0, le=2_000_000_000)
+    dinheiro: int = Field(ge=0, le=2_000_000_000)
+    pontos: int = Field(ge=0, le=10_000)
+    forca: int = Field(ge=0, le=100_000)
+    agilidade: int = Field(ge=0, le=100_000)
+    vitalidade: int = Field(ge=0, le=100_000)
+    energia: int = Field(ge=0, le=100_000)
+    mapa: int = Field(ge=1, le=2_147_483_647)
+    x: float = Field(ge=-100_000, le=100_000, allow_inf_nan=False)
+    y: Optional[float] = Field(default=None, ge=-100_000, le=100_000, allow_inf_nan=False)
+    z: float = Field(ge=-100_000, le=100_000, allow_inf_nan=False)
+
+
+class ItemTemplate(BaseModel):
+    """E8: um item num slot do template — só bolsa (32) e corpo (39): o personagem novo não nasce
+    com armazém, bolsa de missão, mascote nem missão (decisão de 2026-10-11)."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    recipiente: Literal["bolsa", "equipamento"]
+    slot: int = Field(ge=0, le=38)
+    id: int = Field(ge=1, le=2_147_483_647)
+    quantidade: int = Field(ge=1, le=100_000)
+
+
+class SlotTemplate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    recipiente: Literal["bolsa", "equipamento"]
+    slot: int = Field(ge=0, le=38)
+
+
+class MoverTemplate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    de: Literal["bolsa", "equipamento"]
+    slot_de: int = Field(ge=0, le=38)
+    para: Literal["bolsa", "equipamento"]
+    slot_para: int = Field(ge=0, le=38)
+
+
+class EdicaoTemplate(BaseModel):
+    """E8 (B217): uma só edição do template por operação (idempotente pelo `operacao_id`)."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    operacao_id: str = Field(pattern=PADRAO_ID)
+    estatisticas: Optional[EstatisticasTemplate] = None
+    item: Optional[ItemTemplate] = None
+    remover_item: Optional[SlotTemplate] = None
+    mover_item: Optional[MoverTemplate] = None
+    habilidade: Optional[HabilidadePedida] = None
+
+    @model_validator(mode="after")
+    def uma_so(self):
+        if sum(v is not None for v in (self.estatisticas, self.item, self.remover_item, self.mover_item,
+                                       self.habilidade)) != 1:
+            raise ValueError("Informe uma só edição do template.")
+        return self
+
+
 class EdicaoPersonagem(BaseModel):
     """E5: um só de dinheiro (dar), exp/sp (somar), pontos (dar pontos livres), nivel (alvo,
     só sobe) ou cultivo (B182). Tetos: pacotes de recompensa de missão (u32/i32), teto de
@@ -403,6 +466,30 @@ def registrar_contas(app):
         resposta = await enviar(realm_id, requisicao.state.administrador["conta_id"], consulta,
                                 pedido.operacao_id)
         return resposta
+
+    @app.post("/api/realms/{realm_id}/templates/{classe}/editar")
+    async def editar_template(realm_id: str, pedido: EdicaoTemplate, requisicao: Request,
+                              classe: int = Path(..., ge=0, le=11)):
+        """E8 (B217): edita o template de criação da classe. O GS confere com os dados do realm
+        e grava; vale para os personagens criados depois (os existentes não mudam). Habilidade:
+        do catálogo do cliente, da classe ou de todas (255), até o nível máximo dela."""
+        if pedido.habilidade is not None and pedido.habilidade.nivel > 0:
+            try:
+                conhecida = habilidades_do_cliente().get(pedido.habilidade.id)
+            except OSError:
+                raise HTTPException(503, "Dados de habilidade do cliente indisponíveis.")
+            if conhecida is None:
+                raise HTTPException(422, "Habilidade que o cliente não conhece.")
+            if conhecida.get("classe") not in (classe, 255):
+                raise HTTPException(422, "Habilidade de outra classe.")
+            if conhecida.get("nivel_maximo") and pedido.habilidade.nivel > conhecida["nivel_maximo"]:
+                raise HTTPException(422, f"Nível acima do máximo da habilidade ({conhecida['nivel_maximo']}).")
+        consulta = {"tipo": "editar_template", "classe": classe}
+        for campo in ("estatisticas", "item", "remover_item", "mover_item", "habilidade"):
+            valor = getattr(pedido, campo)
+            if valor is not None:
+                consulta[campo] = valor.model_dump(exclude_none=True)
+        return await enviar(realm_id, requisicao.state.administrador["conta_id"], consulta, pedido.operacao_id)
 
     @app.post("/api/contas/{conta_id}/desconectar")
     async def desconectar(requisicao: Request, conta_id: int = Path(..., ge=1, le=2_147_483_647)):

@@ -66,6 +66,7 @@ mod habilidades;
 mod jogo;
 pub use jogo::EdicaoDePersonagem;
 pub(crate) use jogo::categoria_valida;
+pub(crate) use jogo::icone_em_hex;
 mod mascote;
 mod pedras_e_refino;
 pub mod item_editado;

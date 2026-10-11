@@ -112,6 +112,12 @@ async def comandar(realm_id, administrador_id, consulta, operacao_id=None):
                     and dados["personagem_id"] != consulta["personagem_id"]):
                 raise CanalIndisponivel("Resultado administrativo de outro personagem.")
             return resposta
+        # Template de criação (E8, B217): escopo do realm, sem conta; confere a classe.
+        if consulta["tipo"] == "editar_template" or dados.get("tipo") == "editar_template":
+            if (consulta["tipo"] == "editar_template" and "classe" in dados
+                    and dados["classe"] != consulta["classe"]):
+                raise CanalIndisponivel("Resultado administrativo de outro template.")
+            return resposta
         if resposta["estado"] in ("salvo", "pendente", "aplicado", "substituido"):
             tipo = dados.get("tipo")
             conta = dados.get("conta_id")

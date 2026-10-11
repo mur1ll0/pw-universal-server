@@ -244,48 +244,27 @@ impl CharacterRepository {
         cls: CharacterClass,
         gender: Gender,
         custom_data: Vec<u8>,
-        atributos: Option<pw_core::AtributosIniciais>,
+        // A conta da vida/mana máximas da classe no realm (`BaseDaClasse::vida_e_mana_maximas`).
+        // Sem ela (realm sem `ptemplate.conf`), a tabela por classe do código.
+        vida_e_mana: Option<pw_core::CalculoDeVidaEMana<'_>>,
     ) -> Result<RoleId> {
         // Busca template da classe no banco de dados
         let tpl_opt = self.template_repo.get_template_for_class(realm_id, cls as i32).await.unwrap_or(None);
 
-        let (spawn_x, spawn_y, spawn_z, init_lvl, init_cult, init_money, init_sp, world_id) = if let Some(ref tpl) = tpl_opt {
-            (
-                tpl.template.spawn_x,
-                tpl.template.spawn_y,
-                tpl.template.spawn_z,
-                tpl.template.initial_level,
-                tpl.template.initial_cultivation,
-                tpl.template.initial_money,
-                tpl.template.initial_sp,
-                tpl.template.spawn_world_id,
-            )
-        } else {
-            let (sx, sy, sz) = cls.default_spawn_position();
-            (sx, sy, sz, 1, 0, 0, 0, 1)
-        };
-
-        // Os quatro atributos vêm do `ptemplate.conf`, por classe — o Guerreiro nasce com
-        // vitalidade 20, força 15, agilidade 10, energia 5; o Mago com energia 20 e força
-        // 5. Até 2026-09-09 esta consulta não mencionava as colunas e todo personagem
-        // nascia com o `DEFAULT` do esquema, **10/10/10/10**, qualquer que fosse a classe.
-        //
-        // Sem o arquivo (realm que não o trouxe), continua valendo o padrão da coluna: é
-        // menos errado do que inventar um número por classe aqui.
-        let atr = atributos.unwrap_or_else(|| {
-            // Sem o `ptemplate.conf`, o padrão da coluna para os atributos e a tabela por
-            // classe para a vida — o mesmo que valia antes de 2026-09-11.
-            let (vida, mana) = cls.default_hp_mp();
-            pw_core::AtributosIniciais {
-                forca: 10,
-                agilidade: 10,
-                vitalidade: 10,
-                energia: 10,
-                vida,
-                mana,
-            }
+        // Tudo o que o molde dá sai do template do realm (E8, B217) — como o `DBCreateRole` do
+        // original copia o `GRoleStatus` do molde do `clsconfig` (`dbcreaterole.hrp:46-60`):
+        // nível, cultivo, EXP, SP, pontos livres, os quatro atributos, dinheiro, mapa e posição.
+        // Antes do B217 os atributos eram a constante 5 e as colunas do template eram ignoradas.
+        let a = pw_core::ATRIBUTO_INICIAL;
+        let e = tpl_opt.as_ref().map(|t| t.template.estatisticas()).unwrap_or_else(|| {
+            let (x, y, z) = cls.default_spawn_position();
+            pw_storage_estatisticas_sem_template(a, x, y, z)
         });
-        let (init_hp, init_mp) = (atr.vida, atr.mana);
+        // Vida e mana cheias para o nível e os atributos de nascimento, pela conta do mundo.
+        let (init_hp, init_mp) = match vida_e_mana {
+            Some(conta) => conta(e.nivel, e.vitalidade, e.energia),
+            None => cls.default_hp_mp(),
+        };
 
         let role_id = sqlx::query_scalar::<_, RoleId>(
             r#"
@@ -293,10 +272,10 @@ impl CharacterRepository {
                 account_id, realm_id, name, race, cls, gender, custom_data,
                 level, cultivation, money, sp, world_id,
                 pos_x, pos_y, pos_z, hp, mp,
-                strength, agility, vitality, energy
+                strength, agility, vitality, energy, exp, potential_points
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-                    $18, $19, $20, $21)
+                    $18, $19, $20, $21, $22, $23)
             RETURNING id
             "#,
         )
@@ -311,20 +290,22 @@ impl CharacterRepository {
         .bind(cls as i32)
         .bind(gender as i16)
         .bind(custom_data)
-        .bind(init_lvl)
-        .bind(init_cult)
-        .bind(init_money)
-        .bind(init_sp)
-        .bind(world_id)
-        .bind(spawn_x)
-        .bind(spawn_y)
-        .bind(spawn_z)
+        .bind(e.nivel)
+        .bind(e.cultivo)
+        .bind(e.dinheiro)
+        .bind(e.sp)
+        .bind(e.mapa)
+        .bind(e.x)
+        .bind(e.y)
+        .bind(e.z)
         .bind(init_hp)
         .bind(init_mp)
-        .bind(atr.forca)
-        .bind(atr.agilidade)
-        .bind(atr.vitalidade)
-        .bind(atr.energia)
+        .bind(e.forca)
+        .bind(e.agilidade)
+        .bind(e.vitalidade)
+        .bind(e.energia)
+        .bind(e.exp)
+        .bind(e.pontos)
         .fetch_one(self.pool.get_ref())
         .await
         .map_err(|e| match e {
@@ -519,8 +500,11 @@ impl CharacterRepository {
 
         let cls_enum = CharacterClass::from_u8(r.cls as u8).unwrap_or(CharacterClass::Blademaster);
 
-        // Se o personagem já existia no banco sem skills salvas, popula na tabela character_skills
-        if skills.is_empty() {
+        // Reparo (personagem antigo sem habilidades nem itens): só para classe **sem** template no
+        // realm. Com template, o personagem tem o que o template deu — mesmo que o painel o tenha
+        // deixado vazio (E8, B217); senão o código devolveria o kit que o administrador tirou.
+        let sem_template = !self.template_repo.existe(realm_id, r.cls as i32).await.unwrap_or(true);
+        if skills.is_empty() && sem_template {
             for (skill_id, level, _) in cls_enum.default_skills() {
                 let _ = self.skill_repo.learn_or_upgrade(role_id, skill_id as u32, level).await;
             }
@@ -535,7 +519,7 @@ impl CharacterRepository {
         // 2026-09-11 — aqui a arma ia para a **bolsa** em vez do slot de equipamento, e o
         // kit tinha a Poção Perfeita de Cura (1801), que exige nível 30 no `elements.data`
         // e não serve a personagem nenhum recém-criado.
-        if inventory.is_empty() && equipment.is_empty() {
+        if inventory.is_empty() && equipment.is_empty() && sem_template {
             let weapon_id = cls_enum.default_weapon_id() as u32;
             let starter_items = vec![
                 pw_core::ItemRecord {
@@ -1255,4 +1239,14 @@ pub struct FotografiaPersonagem {
     pub atributos:(i32,i32,i32,i32), pub pontos_de_atributo:i32,
     pub modo_roupa:bool, pub waypoints:Vec<u16>,
     pub missoes:super::task_lists::ListasDeMissaoGravadas,
+}
+
+/// Os valores de nascimento de uma classe sem template no realm: nível 1, nada de EXP, SP,
+/// dinheiro e pontos, os atributos do molde e a posição padrão da classe no mapa 1.
+fn pw_storage_estatisticas_sem_template(a: i32, x: f32, y: f32, z: f32) -> crate::repositories::template::EstatisticasDoTemplate {
+    crate::repositories::template::EstatisticasDoTemplate {
+        nivel: 1, cultivo: 0, exp: 0, sp: 0, dinheiro: 0, pontos: 0,
+        forca: a, agilidade: a, vitalidade: a, energia: a,
+        mapa: 1, x, y, z,
+    }
 }

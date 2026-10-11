@@ -339,6 +339,9 @@ CREATE TABLE IF NOT EXISTS class_templates (
     agility INT DEFAULT 10 NOT NULL,
     vitality INT DEFAULT 10 NOT NULL,
     energy INT DEFAULT 10 NOT NULL,
+    -- E8 (B217): EXP e pontos livres iniciais (`GRoleStatus.exp`/`pp` do molde do `clsconfig`).
+    initial_exp BIGINT DEFAULT 0 NOT NULL,
+    initial_points INT DEFAULT 0 NOT NULL,
     spawn_world_id INT DEFAULT 1 NOT NULL,
     spawn_x REAL NOT NULL,
     spawn_y REAL NOT NULL,

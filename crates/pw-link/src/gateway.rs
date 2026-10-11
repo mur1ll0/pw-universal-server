@@ -646,6 +646,14 @@ impl LinkGateway {
                 );
 
                 let raw_appearance_hex = hex::encode(&create_role.custom_appearance);
+                // A conta da vida/mana máximas da classe no realm: `ptemplate.conf` (ponto de
+                // partida, por nível) + `CHARRACTER_CLASS_CONFIG` (por vitalidade/energia). Os
+                // atributos, o nível e o resto saem do template do realm (E8, B217).
+                let base = self.data_manager.base_das_classes.get(create_role.cls as i32);
+                let cfg = self.data_manager.classes.get(create_role.cls as i32);
+                let conta = move |nivel: i32, vitalidade: i32, energia: i32| {
+                    base.map_or((0, 0), |b| b.vida_e_mana_maximas(cfg, nivel, vitalidade, energia))
+                };
                 let new_role_id_result = self
                     .char_repo
                     .create_character(
@@ -656,18 +664,8 @@ impl LinkGateway {
                         create_role.cls,
                         create_role.gender,
                         create_role.custom_appearance,
-                        // A ficha inicial da classe: os quatro atributos do
-                        // `ptemplate.conf` e a vida/mana cheias para eles, pela mesma conta
-                        // que o mundo usa. Sem o arquivo vai `None`, e o banco cai no padrão
-                        // da coluna.
-                        self.data_manager
-                            .base_das_classes
-                            .get(create_role.cls as i32)
-                            .map(|b| {
-                                b.ficha_inicial(
-                                    self.data_manager.classes.get(create_role.cls as i32),
-                                )
-                            }),
+                        // Sem o `ptemplate.conf` vai `None`, e a criação usa a tabela da classe.
+                        base.is_some().then_some(&conta as pw_core::CalculoDeVidaEMana<'_>),
                     )
                     .await;
 

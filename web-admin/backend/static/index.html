@@ -52,7 +52,7 @@
         <button class="nav" type="button" data-pagina="personagens"><span class="icone" aria-hidden="true">♙</span>Personagens</button>
         <button class="nav" type="button" data-pagina="mapas"><span class="icone" aria-hidden="true">▦</span>Mapas</button>
         <button class="nav" type="button" data-pagina="rates"><span class="icone" aria-hidden="true">%</span>Rates</button>
-        <button class="nav nav-futuro" type="button" data-pagina="moldes"><span class="icone" aria-hidden="true">⚔</span>Moldes<span class="selo-breve">em breve</span></button>
+        <button class="nav" type="button" data-pagina="templates"><span class="icone" aria-hidden="true">⚔</span>Templates</button>
       </nav>
 
       <div class="lateral-rodape">
@@ -260,6 +260,56 @@
           </form>
         </section>
 
+        <!-- E8 (B217): templates de criação por classe — o que o personagem novo recebe. -->
+        <section id="pagina-templates" class="pagina" hidden>
+          <p id="aviso-templates" class="alerta alerta-aviso" hidden></p>
+          <div id="consulta-templates">
+            <div class="barra-ferramentas">
+              <p class="texto-suave">Com o que cada classe nasce neste realm. A edição vale para os personagens criados depois; os que já existem não mudam.</p>
+            </div>
+            <div id="lista-templates" class="grade-contas"></div>
+          </div>
+          <div id="ficha-template" class="tela-personagem" hidden>
+            <header class="topo-personagem">
+              <button id="voltar-templates" type="button" class="botao botao-secundario">‹ Voltar</button>
+              <div class="nome-personagem">
+                <h2 id="titulo-template"></h2>
+                <p id="resumo-template" class="texto-suave"></p>
+              </div>
+              <span class="etiqueta etiqueta-neutra">Template</span>
+            </header>
+            <p class="texto-suave">Personagens novos desta classe nascem assim. Mascotes, Daimon e missões vêm pelo jogo, não pelo template.</p>
+            <div class="mesa-janelas">
+            <section class="janela" data-janela="estatisticas">
+              <header class="barra-janela"><h3><span class="ico" data-icone="usuario"></span>Estatísticas iniciais</h3>
+                <div class="acoes-janela"><button id="abrir-estatisticas-template" type="button" class="botao-barra"><span class="ico" data-icone="editar"></span>Editar</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+              <div class="corpo-janela">
+                <div id="dados-template" class="grade-atributos"></div>
+                <p class="dica">Vida e mana não se editam: são a conta da classe sobre o nível, a vitalidade e a energia.</p>
+              </div>
+            </section>
+            <section class="janela" data-janela="equipamento">
+              <header class="barra-janela"><h3><span class="ico" data-icone="escudo"></span>Equipamento</h3><div class="acoes-janela"><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+              <div class="corpo-janela"><div id="tpl-equipamento"></div></div>
+            </section>
+            <section class="janela" data-janela="roupas">
+              <header class="barra-janela"><h3><span class="ico" data-icone="roupa"></span>Roupas</h3><div class="acoes-janela"><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+              <div class="corpo-janela"><div id="tpl-roupas"></div></div>
+            </section>
+            <section class="janela" data-janela="inventario">
+              <header class="barra-janela"><h3><span class="ico" data-icone="bolsa"></span>Inventário</h3>
+                <div class="acoes-janela"><button id="abrir-item-template" type="button" class="botao-barra"><span class="ico" data-icone="mais"></span>Pôr item</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+              <div class="corpo-janela"><div id="tpl-bolsa"></div></div>
+            </section>
+            <section class="janela" data-janela="habilidades">
+              <header class="barra-janela"><h3><span class="ico" data-icone="livro"></span>Habilidades iniciais</h3>
+                <div class="acoes-janela"><button id="abrir-habilidade-template" type="button" class="botao-barra"><span class="ico" data-icone="mais"></span>Dar habilidade</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+              <div class="corpo-janela"><div id="tpl-habilidades"></div></div>
+            </section>
+            </div>
+          </div>
+        </section>
+
         <!-- Funções ainda não implementadas -->
         <section id="pagina-futura" class="pagina" hidden>
           <article class="painel vazio">
@@ -438,6 +488,70 @@
             </div>
           </form>
         </div>
+      </div>
+    </div>
+
+    <!-- E8 (B217): estatísticas iniciais do template (todas de uma vez) -->
+    <div id="modal-template-estatisticas" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-tpl-estatisticas" hidden>
+      <div class="modal-caixa modal-ampla">
+        <header class="modal-topo">
+          <span class="ico-titulo" data-icone="usuario"></span>
+          <div class="modal-titulos"><h2 id="titulo-tpl-estatisticas">Estatísticas iniciais</h2><p id="tpl-est-resumo" class="dica"></p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <form id="form-template-estatisticas" class="modal-corpo grade-blocos">
+          <section class="bloco-edicao bloco-largo">
+            <h4><span class="ico" data-icone="nivel"></span>Progressão</h4>
+            <div class="grade-quatro">
+              <label class="campo-icone"><span class="ico" data-icone="nivel"></span><span>Nível</span><input id="tpl-nivel" type="number" min="1" step="1" required></label>
+              <label class="campo-icone"><span class="ico" data-icone="cultivo"></span><span>Cultivo</span><select id="tpl-cultivo" aria-label="Cultivo inicial"></select></label>
+              <label class="campo-icone"><span class="ico" data-icone="exp"></span><span>EXP</span><input id="tpl-exp" type="number" min="0" max="2000000000" step="1" required></label>
+              <label class="campo-icone"><span class="ico" data-icone="brilho"></span><span>Alma (SP)</span><input id="tpl-sp" type="number" min="0" max="2000000000" step="1" required></label>
+              <label class="campo-icone"><span class="ico" data-icone="moeda"></span><span>Dinheiro</span><input id="tpl-dinheiro" type="number" min="0" max="2000000000" step="1" required></label>
+              <label class="campo-icone"><span class="ico" data-icone="pontos"></span><span>Pontos livres</span><input id="tpl-pontos" type="number" min="0" max="10000" step="1" required></label>
+            </div>
+          </section>
+          <section class="bloco-edicao bloco-largo">
+            <h4><span class="ico" data-icone="forca"></span>Atributos <small id="tpl-piso" class="texto-suave"></small></h4>
+            <div class="grade-quatro">
+              <label class="campo-icone"><span class="ico" data-icone="forca"></span><span>Força</span><input id="tpl-forca" type="number" min="0" max="100000" step="1" required></label>
+              <label class="campo-icone"><span class="ico" data-icone="agilidade"></span><span>Agilidade</span><input id="tpl-agilidade" type="number" min="0" max="100000" step="1" required></label>
+              <label class="campo-icone"><span class="ico" data-icone="vitalidade"></span><span>Vitalidade</span><input id="tpl-vitalidade" type="number" min="0" max="100000" step="1" required></label>
+              <label class="campo-icone"><span class="ico" data-icone="energia"></span><span>Energia</span><input id="tpl-energia" type="number" min="0" max="100000" step="1" required></label>
+            </div>
+          </section>
+          <section class="bloco-edicao bloco-largo">
+            <h4><span class="ico" data-icone="posicao"></span>Nascimento</h4>
+            <div class="grade-posicao">
+              <label class="campo-icone"><span class="ico" data-icone="mapa"></span><span>Mapa</span><select id="tpl-mapa" aria-label="Mapa de nascimento"></select></label>
+              <label class="campo-icone"><span>X</span><input id="tpl-x" type="number" step="any" required aria-label="Coordenada X"></label>
+              <label class="campo-icone"><span>Y</span><input id="tpl-y" type="number" step="any" placeholder="chão" aria-label="Coordenada Y (vazio = chão)"></label>
+              <label class="campo-icone"><span>Z</span><input id="tpl-z" type="number" step="any" required aria-label="Coordenada Z"></label>
+            </div>
+            <div class="acoes-bloco">
+              <p class="dica">Y vazio usa o chão do mapa. Vale para os personagens criados depois.</p>
+              <button type="submit" class="botao botao-primario">Salvar</button>
+            </div>
+          </section>
+        </form>
+      </div>
+    </div>
+
+    <!-- E8 (B217): item do template (quantidade e remover) -->
+    <div id="modal-template-item" class="modal" role="dialog" aria-modal="true" aria-labelledby="tpl-item-nome" hidden>
+      <div class="modal-caixa">
+        <header class="modal-topo">
+          <span id="tpl-item-icone" class="figura-resultado"></span>
+          <div class="modal-titulos"><h2 id="tpl-item-nome"></h2><p id="tpl-item-detalhe" class="dica"></p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <form id="form-template-item" class="modal-corpo">
+          <label class="campo-icone"><span>Quantidade</span><input id="tpl-item-quantidade" type="number" min="1" step="1" required></label>
+          <div class="acoes-bloco">
+            <button id="tpl-item-remover" type="button" class="botao botao-perigo">Tirar do template</button>
+            <button type="submit" class="botao botao-primario">Salvar</button>
+          </div>
+        </form>
       </div>
     </div>
 

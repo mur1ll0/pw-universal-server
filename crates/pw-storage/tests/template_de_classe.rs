@@ -236,3 +236,29 @@ async fn o_molde_traz_a_configuracao_inicial_e_a_asa_dos_alados() {
         assert_eq!(asa, Some((2096,)), "classe {cls} sem a Asa no slot 12");
     }
 }
+
+/// E8 (B217): as habilidades iniciais do 1.5.5 moram no template (`scripts/2026_10_11_templates_e8.sql`)
+/// e são as que o código dava na primeira carga (`default_skills`) — editáveis pelo painel sem
+/// mudar o que o personagem novo recebe enquanto ninguém edita.
+#[tokio::test]
+async fn as_habilidades_do_template_sao_as_da_classe() {
+    let Some(p) = pool().await else { return };
+    let linhas: Vec<(i32, i32)> = sqlx::query_as(
+        "SELECT t.cls, s.skill_id FROM class_template_skills s JOIN class_templates t ON t.id = s.template_id
+          WHERE t.realm_id = $1 ORDER BY 1, 2",
+    )
+    .bind(REALM)
+    .fetch_all(p.get_ref())
+    .await
+    .expect("ler as habilidades do molde");
+    if linhas.is_empty() {
+        eprintln!("pulado: o realm {REALM} não tem habilidades no molde neste banco (migração do B217)");
+        return;
+    }
+    for cls in todas_as_classes() {
+        let mut esperado: Vec<i32> = cls.default_skills().iter().map(|(id, _, _)| *id as i32).collect();
+        esperado.sort();
+        let tem: Vec<i32> = linhas.iter().filter(|(c, _)| *c == cls as i32).map(|(_, s)| *s).collect();
+        assert_eq!(tem, esperado, "habilidades do molde de {cls:?}");
+    }
+}

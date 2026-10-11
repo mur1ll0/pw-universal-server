@@ -34,6 +34,9 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
+mod templates;
+pub use templates::{EdicaoDeTemplate, EstatisticasPedidas, HabilidadeDoTemplate, ItemDoTemplate, MoverNoTemplate, SlotDoTemplate};
+
 /// Os mapas deste processo, e de qual mapa é cada jogador.
 pub struct RoteadorDeMapas {
     /// Os mapas carregados. Muda pelo painel (B183): ligar carrega, desligar descarrega.

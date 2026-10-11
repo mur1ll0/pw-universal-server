@@ -248,3 +248,50 @@ test("dar mascote (B216) manda o ovo; sucesso e erro saem como toast, sem botão
   assert.match(c.elementos.get("resultado-comando").textContent, /jaula/);
   assert.equal(c.avaliar("estado.alertaModal"), false, "erro também é toast");
 });
+
+test("templates (B217): item, habilidade e estatísticas vão à rota do template, com id de operação; falha é toast", async () => {
+  const c = await montar();
+  const abrir = "estado.pagina='templates'; estado.templateAberto=0; estado.templates={versao:'1.2.6',nivel_maximo:105," +
+    "piso:{forca:5,agilidade:5,vitalidade:3,energia:3},templates:[{classe:0,existe:true,classe_nome:'Guerreiro',vida:65,mana:30," +
+    "estatisticas:{nivel:1,cultivo:0,exp:0,sp:0,dinheiro:0,pontos:0,forca:5,agilidade:5,vitalidade:5,energia:5,mapa:1,x:1,y:2,z:3}," +
+    "recipientes:{bolsa:[],equipamento:[]},habilidades:[{id:1,nivel:1,nome:'Ataque'}]}]}";
+  c.avaliar(abrir);
+  c.avaliar("estado.criacao={template:true,chave:'equipamento',slot:0,legenda:'Arma'}; estado.itemParaCriar={id:3003,nome:'Espada',pilha:1}");
+  c.avaliar("elemento('ci-quantidade').value='2'");
+  await c.avaliar("criarItem()");
+  assert.equal(c.pedidos.length, 0, "acima da pilha não envia");
+  c.avaliar("elemento('ci-quantidade').value='1'");
+  c.resposta(200, { estado: "salvo", classe: 0 });
+  await c.avaliar("criarItem()");
+  assert.ok(c.pedidos[0].caminho.endsWith("/realm_126/templates/0/editar"));
+  const corpo = JSON.parse(c.pedidos[0].opcoes.body);
+  assert.deepEqual(corpo.item, { recipiente: "equipamento", slot: 0, id: 3003, quantidade: 1 }, "no template a peça vai direto ao corpo");
+  assert.match(corpo.operacao_id, /^[0-9a-f]{32}$/);
+
+  c.avaliar(abrir);
+  c.avaliar("estado.habilidade={id:167,nome:'Portal',nivel_maximo:2,possuida:false}");
+  await c.avaliar("aplicarHabilidade(2)");
+  const habilidade = c.pedidos.filter((p) => p.opcoes?.body).at(-1);
+  assert.ok(habilidade.caminho.endsWith("/templates/0/editar"));
+  assert.deepEqual(JSON.parse(habilidade.opcoes.body).habilidade, { id: 167, nivel: 2 });
+
+  c.avaliar(abrir);
+  for (const [campo, valor] of Object.entries({ nivel: "3", cultivo: "0", exp: "10", sp: "0", dinheiro: "500", pontos: "2",
+    forca: "6", agilidade: "5", vitalidade: "5", energia: "5", mapa: "1", x: "10.5", y: "", z: "-4" })) {
+    c.elementos.get(`tpl-${campo}`) ?? c.avaliar(`elemento('tpl-${campo}')`);
+    c.avaliar(`elemento('tpl-${campo}').value=${JSON.stringify(valor)}`);
+  }
+  c.resposta(200, { estado: "falha", codigo: "requisito_dos_itens", item: 3003 });
+  await c.avaliar("salvarEstatisticasDoTemplate()");
+  const est = JSON.parse(c.pedidos.filter((p) => p.opcoes?.body).at(-1).opcoes.body).estatisticas;
+  assert.deepEqual(est, { nivel: 3, cultivo: 0, exp: 10, sp: 0, dinheiro: 500, pontos: 2, forca: 6, agilidade: 5,
+    vitalidade: 5, energia: 5, mapa: 1, x: 10.5, z: -4 }, "Y vazio não vai (o chão)");
+  assert.match(c.elementos.get("resultado-comando").textContent, /peça vestida/);
+  assert.equal(c.avaliar("estado.alertaModal"), false, "erro é toast");
+
+  // Fora da página de templates, a habilidade volta a ser do personagem.
+  c.avaliar("estado.pagina='personagens'; estado.personagemId=5; estado.habilidade={id:1,nome:'A',nivel_maximo:10,possuida:true}");
+  c.resposta(200, { estado: "salvo" });
+  await c.avaliar("aplicarHabilidade(3)");
+  assert.ok(c.pedidos.filter((p) => p.opcoes?.body).at(-1).caminho.endsWith("/personagens/5/editar"));
+});

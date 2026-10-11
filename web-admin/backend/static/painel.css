@@ -679,3 +679,14 @@ button, input, select { font: inherit; color: inherit; }
 select { color-scheme: dark; }
 select option, select optgroup { background-color: var(--superficie-2); color: var(--texto); }
 select option:checked { background-color: var(--ouro-suave); color: var(--ouro); }
+
+/* E8 (B217): cartões dos templates e bandeja das janelas recolhidas (ficha e template). */
+.cartao-template:disabled { opacity: .55; cursor: default; }
+.bandeja-janelas { position: fixed; right: 20px; bottom: 20px; z-index: 40; display: flex; flex-wrap: wrap-reverse;
+  justify-content: flex-end; gap: 8px; max-width: min(760px, calc(100vw - 40px)); pointer-events: none; }
+.bandeja-janelas:empty { display: none; }
+.bandeja-janelas .janela { height: auto; width: 230px; pointer-events: auto; box-shadow: 0 10px 28px rgba(0, 0, 0, .45); }
+.bandeja-janelas .barra-janela { padding: 8px 10px; }
+.bandeja-janelas .barra-janela h3 { font-size: 13px; }
+.bandeja-janelas .botao-barra { display: none; }
+@media (max-width: 720px) { .bandeja-janelas { right: 12px; bottom: 12px; } .bandeja-janelas .janela { width: 180px; } }

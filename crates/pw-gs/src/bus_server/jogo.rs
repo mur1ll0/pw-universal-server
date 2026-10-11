@@ -503,7 +503,7 @@ pub(crate) fn categoria_valida(c: &str) -> bool {
     CATEGORIAS_DE_ITEM.contains(&c) || c.strip_prefix("slot:").and_then(|n| n.parse::<u32>().ok()).is_some_and(|n| n < 32)
 }
 
-fn icone_em_hex(dados: &GameDataManager, tid: u32) -> String {
+pub(crate) fn icone_em_hex(dados: &GameDataManager, tid: u32) -> String {
     dados.icones_de_itens.get(&tid).map(hex::encode).unwrap_or_default()
 }
 
@@ -930,6 +930,11 @@ impl BusServer {
             "categoria": categoria_de(*t),
         })).collect();
         serde_json::json!({"estado":"consultado","itens":itens})
+    }
+
+    /// Os dados do realm (`elements.data` e companhia), iguais em todos os mapas do processo.
+    pub(crate) async fn dados_do_realm(&self) -> Arc<GameDataManager> {
+        self.world.read().await.data_manager.clone()
     }
 
     /// Item conhecido do `elements.data` deste realm.

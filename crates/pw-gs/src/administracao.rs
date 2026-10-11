@@ -46,6 +46,19 @@ pub enum Consulta {
     AtualizarCash { conta_id: i32 },
     /// Rates do realm (E7): grava em `realms` e passa a valer na hora neste processo.
     DefinirTaxas { exp: f64, sp: f64, drop: f64, moedas: f64 },
+    /// E8 (B217): os templates de criação do realm, por classe da versão.
+    Templates,
+    /// E8 (B217): uma edição do template da `classe` — um só de `estatisticas` (os valores
+    /// iniciais), `item` (pôr num slot da bolsa ou do corpo), `remover_item`, `mover_item` ou
+    /// `habilidade` (nível 0 remove). Vale para os personagens criados depois.
+    EditarTemplate {
+        classe: i32,
+        #[serde(default)] estatisticas: Option<crate::mapas::EstatisticasPedidas>,
+        #[serde(default)] item: Option<crate::mapas::ItemDoTemplate>,
+        #[serde(default)] remover_item: Option<crate::mapas::SlotDoTemplate>,
+        #[serde(default)] mover_item: Option<crate::mapas::MoverNoTemplate>,
+        #[serde(default)] habilidade: Option<crate::mapas::HabilidadeDoTemplate>,
+    },
     /// Liga/desliga um mapa deste realm (E7). Só o processo que serve o mapa aplica; com
     /// `carregar`, este processo também aceita um mapa que não carrega (B183: ligar monta).
     DefinirMapa { mapa: i32, ligado: bool, #[serde(default)] carregar: bool },
@@ -594,6 +607,34 @@ impl ServidorAdministrativo {
                                     }
                                 }
                             }
+                        }
+                    }
+                    Consulta::Templates => self.roteador.consultar_templates(&self.realm).await,
+                    Consulta::EditarTemplate { classe, estatisticas, item, remover_item, mover_item, habilidade } => {
+                        use crate::mapas::EdicaoDeTemplate as T;
+                        let parametros = json!({
+                            "tipo":"editar_template","classe":classe,"estatisticas":estatisticas,"item":item,
+                            "remover_item":remover_item,"mover_item":mover_item,"habilidade":habilidade,
+                            "administrador_id":pedido.administrador_id
+                        });
+                        let mut edicoes = [estatisticas.map(T::Estatisticas), item.map(T::Item), remover_item.map(T::RemoverItem),
+                                           mover_item.map(T::MoverItem), habilidade.map(T::Habilidade)]
+                            .into_iter().flatten();
+                        match (edicoes.next(), edicoes.next()) {
+                            (Some(edicao), None) => {
+                                let impressao = Sha256::digest(serde_json::to_vec(&parametros)?);
+                                let repo = self.contas.comandos_administrativos();
+                                match repo.reservar_operacao_de_personagem(&pedido.operacao_id, pedido.administrador_id, &self.realm, &impressao).await? {
+                                    Some(anterior) => anterior,
+                                    None => {
+                                        let mut r = self.roteador.editar_template(&self.realm, classe, &edicao).await;
+                                        r["tipo"] = json!("editar_template");
+                                        repo.gravar_resultado_de_personagem(&pedido.operacao_id, &r).await?;
+                                        r
+                                    }
+                                }
+                            }
+                            _ => json!({"codigo":"edicao_invalida"}),
                         }
                     }
                     Consulta::DefinirMapa { mapa, ligado, carregar } => {
