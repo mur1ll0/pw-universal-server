@@ -74,7 +74,7 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
 | `NPC_ESSENCE` → `NPC_TASK_OUT_SERVICE`, `NPC_TASK_IN_SERVICE`, `NPC_SKILL_SERVICE` | `servicos.rs` (`servicos_de_npc`) | que missões o NPC entrega/recebe e que habilidades ensina, ordenadas para busca binária (`general_id_provider`) |
 | `NPC_ESSENCE` → `NPC_RESETPROP_SERVICE` (B152) | `servicos.rs` (`restauracao_de_atributos`) | 15 × `{id_object_need, strength, agility, vital, energy}` (20 B a partir de +0x44, 368 B nas duas versões; `id_resetprop_service` em +0x32c do `NPC_ESSENCE` v7, conferido no `gs` 1.2.6 VA 0x80ef74b); sem item ou com delta negativo fica fora (`npcgenerator.cpp:762-778`). Serviços 10226/10227: as 15 opções, a última o 12764 (100 em cada) |
 | `NPC_ESSENCE` → `NPC_PETNAME_SERVICE`, `NPC_PETFORGETSKILL_SERVICE`, `NPC_PETLEARNSKILL_SERVICE` (B112) | `servicos.rs` (`renomear_mascote`, `esquecer_habilidade_de_mascote` = `(price, id_object_need)`; `habilidades_de_mascote` ordenadas) | serviços 36/37/38 (`npcgenerator.cpp:783-826`). Nos dois realms a Rilay (11534) cobra 0 moedas e o item 12403 (renomear) / 11690 (esquecer) |
-| todas as tabelas com `pile_num_max` | `servicos::pilhas` (`limite_de_pilha`) | empilhamento na bolsa |
+| todas as tabelas de item (`pile_num_max`, ou `price` + `shop_price` — B216) | `servicos::pilhas` (`limite_de_pilha`) | empilhamento na bolsa |
 | `PLAYER_LEVELEXP_CONFIG` (id 202), `PARAM_ADJUST_CONFIG`, `PLAYER_SECONDLEVEL_CONFIG` | `progressao.rs` | curva de exp, ajuste por diferença de nível (exp, SP, dinheiro, item), perda na morte por cultivo (`playertemplate.cpp:311-419`) |
 | `CHARRACTER_CLASS_CONFIG` | `classes.rs` | velocidades, cadência, alcance, regeneração — **sobrescrevem o `ptemplate.conf`** (`gs/playertemplate.cpp:293-301`); agora também no v7 |
 | `MEDICINE_ESSENCE` | `quanto_o_remedio_restaura`, `quanto_o_remedio_restaura_no_tempo`, `tipo_maior_do_remedio` | poções. O `id_major_type` dá a classe do item (`set_to_classid`, `gs/template/setclassid.cpp:81-101`): **1794** cura, **1802** mana, **1810** vida e mana, **1815**/**2038** antídotos — e a família de recarga do `cool_time` (B71). Ambos chegam agora pelo catálogo v7 |
@@ -526,7 +526,14 @@ Teletransportador Rayga 44724) e com Sereias Ecoantes no mar onde ela fica; o do
 terreno e piso.
 
 **Nomes de itens (B186):** `GameDataManager::nomes_de_itens` — o `Name` de todo registro do
-`elements.data` que declara `pile_num_max` e `ID` (o mesmo critério de `pilhas`), para o painel.
+`elements.data` de uma **tabela de item** (o mesmo critério de `pilhas`), para o painel. **B216:** tabela
+de item = declara `ID` e `pile_num_max` ou, sem ele, `price` e `shop_price` (`servicos::e_tabela_de_item`).
+O segundo caso é só o `FLYSWORD_ESSENCE` do 1.2.6 (o layout v7 não tem `pile_num_max`; o 1.5.5 não tem
+nenhum): sem ele os 241 itens de voo do 1.2.6 ficavam sem nome, ícone e pilha (o voo 15732 do Tsuko).
+Pilha do voo = 1 (`limite_de_pilha` sem o campo). Também por esse critério: `tabelas_dos_itens` (a tabela
+de cada id, para a categoria da busca do painel) e, do `PET_ESSENCE`, `ambientes_dos_mascotes`
+(`inhabit_type`: 0 terra, 1 água, 2 ar, 3 terra+água, 4 terra+ar, 5 água+ar, 6 todos —
+`npcgenerator.cpp:114-135`). Teste `o_voo_15732_tem_nome_icone_e_pilha_nos_dois_realms`.
 Medido: 126 (v7) 7.896 itens, todos com nome; 155 (v156) 26.188, 24.806 com nome (o arquivo
 traz `Name` vazio nos outros). Teste `nomes_de_itens_do_realm.rs`.
 

@@ -36,6 +36,38 @@ Ex.: 1286 do Punho da Luz Fixa (8292) → habilidade 205 "Garra": "Mordaz: Aumen
 físico.". `dica.habilidade_do_efeito` põe `habilidade {id, nome, icone}` na dica do item, em
 `/api/efeitos/{id}` e na busca; a linha ganha borda dourada e o ícone da habilidade (atlas do cliente)
 ou, sem ícone, o selo ✦ com a habilidade na dica; na busca, "✦" antes do texto.
+**B216 (reforma visual da ficha, falta ver no painel):** as dez janelas (Estatísticas, Equipamento, Roupas,
+Inventário, Armazém, Bolsa de missão, Habilidades, Mascotes, Daimon, Missões ativas) têm **o mesmo tamanho**
+(grade `minmax(420px, 1fr)`, 500 px de altura, rolagem interna) e ícones/textos maiores (células com
+`aspect-ratio`, 8 por linha; corpo 6 por linha com o nome do slot). Ícones de traço próprios em
+`painel.js` (`ICONES`, `[data-icone]`; a CSP só permite `self`). Tudo que edita abre **modal** pelo botão
+da barra: **Estatísticas** só mostra (um campo de cada, com ícone) e "Editar" abre o modal com Dinheiro,
+EXP/SP, Pontos livres, Nível, Cultivo, Atributos e Posição. **Slot vazio** (bolsa, armazém, missão, corpo) →
+menu "Criar item" → modal com busca por nome/ID e **categoria** (`GET …/itens?busca&categoria`; texto vazio
+com categoria); bolsa/armazém/missão criam uma pilha no slot (`item {id, quantidade, recipiente, slot}`), o
+slot do corpo filtra `slot:N` e o item nasce na bolsa para arrastar; "Dar item" (barra do Inventário) é o
+prêmio de missão de antes. **Editar item:** modal largo com a prévia da dica do jogo e a quantidade à esquerda
+e os blocos com ícone (durabilidade e refino, requisitos com classes em chips, furos e pedras, efeitos) em duas
+colunas; Remover no rodapé; item que não é equipamento abre estreito. **Habilidades:** "Dar habilidade" →
+busca por nome/ID e **classe** (`GET /api/habilidades?busca&classe` — `cls` do stub: 0–11 as classes, 127
+"sem classe (monstros e mascotes)", 255 "vida e especiais", 258; com classe, até 60; nomes por
+`GET /api/classes?versao`, 8 no 1.2.x e 12 no 1.5.5) → modal do nível (ensinar); clicar numa aprendida abre o
+mesmo modal (nível, remover). **Mascotes:** "Dar mascote" → busca nos ovos do realm por nome/ID, **tipo**
+(montaria, combate, seguidor, invocação, planta, evolução) e **ambiente** (terrestre, aquático, voador)
+(`GET /api/realms/{id}/mascotes?busca&tipo&ambiente`) → modal do mascote com "Dar mascote"
+(`dar_mascote {ovo}`); clicar num da jaula abre o modal de edição, com as habilidades em lista (ícone, nível,
+tirar) e busca para dar habilidade (grupo padrão 127); a API devolve ícone e nível máximo de cada habilidade.
+**Daimon:** "Dar EXP" em modal. **Missões:** a janela lista **só as ativas**, com o nome pintado pelos códigos
+`^RRGGBB` do `tasks.data` como o jogo (sem código, a cor do painel); "Editar" abre o modal com duas abas —
+ativas e concluídas filtradas pelo mesmo texto (nome ou ID; Concluir/Cancelar/Esquecer em cada linha) e
+"Dar missão" (busca e etapa). **Resultado de toda operação = toast** no canto (estilo SweetAlert, some sozinho
+em 2,6 s no sucesso e 5 s no erro/aviso, barra de tempo, clique fecha; sem OK); modal só para confirmação
+(remover, cancelar, libertar, desconectar e aplicar), o carregamento das contas e o aviso com "Consultar
+agora". **Correções do relato do Tsuko (1.2.6):** voo 15732 sem ícone/descrição (tabela de item, spec 03) e
+anel 310 sem descrição (bloco do molde no detalhe, spec 05 §7.11); a dica do voo segue o
+`CECIvtrFlySword::GetNormalDesc` (`EC_IvtrFlySword.cpp:137-210`: nível, voo simples e acelerado `%+.2f`,
+tempo ativo, classes, nível exigido, preço; a linha de aprimoramento `ITEMDESC_FLYSWORD_*` fica fora — índices
+283/284 não conferidos no BR).
 **B215 (fechamento da E6):** janela **Daimon** (`GET …/personagens/{pid}/daimon`, canal `daimon`): nome,
 nível, EXP/para subir, atributos, pontos livres, gênios, refino, vigor e habilidades; "Dar EXP" (`daimon_exp`
 1–2·10⁹) pela regra do jogo. Passam a valer **em jogo** (sem "Desconectar e aplicar"): editar item do

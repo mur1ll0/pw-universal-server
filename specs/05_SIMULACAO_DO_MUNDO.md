@@ -823,6 +823,31 @@ geração na bolsa lida do banco e gravada de volta (`dar_item_offline`), sob a 
 presença e a trava de gravação. Item que o realm não tem: `item_inexistente`. Remover item e
 equipar ficam para a parte 2.
 
+**B216 — criar item no slot e dar mascote** (`bus_server/criacao_pelo_painel.rs`, em jogo e fora).
+`item: {id, quantidade, recipiente, slot}` (recipiente `bolsa`, `missao` ou `armazem`; o corpo não):
+uma pilha **gerada como o drop** (`empilhar_gerado` num recipiente de um slot: equipamento sorteado,
+voo, roupa, ovo) gravada no slot vazio pedido. O `TASK_DELIVER_ITEM` não serve para isso: o cliente
+refaz a entrega com o próprio `MergeItem` e descarta o comando se o slot não bater
+(`EC_HostMsg.cpp:1181-1216`); em jogo vai o **recipiente inteiro** (`own_ivtr_from_items`, o mesmo do
+login), que o cliente aplica sem ter pedido (`ResetItems`, `OnMsgHstIvtrInfo`, `EC_HostMsg.cpp:2471-2520`)
+— pacote 0 bolsa, 2 missão, 3 armazém. Tamanhos de `gs/config.h:12-17` (32/32/16). Falhas:
+`slot_invalido`, `slot_ocupado`, `recipiente_errado` (item de missão só na bolsa de missão e o resto só
+nas outras — onde o `DeliverCommonItem`/`DeliverTaskItem` os guarda), `quantidade_invalida` (0 ou acima
+da pilha), `item_inexistente`. `dar_mascote: {ovo}`: a incubação do jogo (`incubar_mascote`,
+`serviceprovider.cpp:3160-3240`) sem custo e sem o ovo — `essencia_do_ovo` (a mesma da incubação), a
+mesma recusa de classe (`classe_nao_permitida`), o primeiro slot livre abaixo das vagas da jaula
+(`jaula_cheia`; offline as vagas do banco, `vagas_da_jaula`), `ovo_inexistente`; em jogo `GAIN_PET` (231).
+Consultas: `buscar_itens` com `categoria` (`arma`, `armadura`, `ornamento`, `roupa`, `voo`, `municao`,
+`pocao`, `material`, `pedra`, `refino`, `missao`, `mascote`, `habilidade`, `daimon`, `outros` — pela
+tabela do item, `categoria_da_tabela`; ou `slot:N` = o que veste no slot N pela máscara de posição, o
+critério do vestir), texto vazio com categoria lista a categoria, até 60, e cada item traz `categoria`;
+`buscar_mascotes {texto, classe_de_mascote 0–5 (pet_class), ambiente terra|agua|ar}` — até 60 ovos com
+o mascote, ícone, tipo, ambiente, nível e habilidades. **Detalhe do item (B216):** equipamento sem octetos
+gravados sai com o bloco do molde (`bloco_do_equipamento`, o que o `OWN_ITEM_INFO` manda; o anel 310 do
+Tsuko vinha só com o nome), e o item de voo traz `voo` (o `IVTR_ESSENCE_FLYSWORD`, `EC_IvtrTypes.h:269-280`:
+tempo, tempo máximo, nível, refino, classes, nível exigido, tempo por elemento, velocidades). Teste
+`criar_no_slot_dar_mascote_e_catalogos`.
+
 **B187 (E6) — itens, parte 2: remover.** `remover_item: {recipiente, slot, id, quantidade?}`
 (`bolsa`, `missao`, `equipamento`, `armazem`; sem quantidade = a pilha inteira). O `id` confere o
 item do slot (`slot_mudou` se mudou desde a consulta); quantidade acima da pilha =

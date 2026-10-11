@@ -12854,3 +12854,52 @@ comparação lado a lado.
     cenário não tem `GOBLIN_ESSENCE`). Painel 72/0, Node 10/0. Suíte inteira com o banco: 1.008 passaram, 4
     falharam (3 do canal por tempo sob carga — presença em 5 s e leitura do socket — e `o_primeiro_teste_do_guerreiro_126`,
     intermitente conhecido); isolados, o canal deu 32/0 e o do guerreiro passou.
+
+216. **Sessão 2026-10-11: painel — reforma visual da ficha do personagem; voo e anel do Tsuko (1.2.6).**
+    Pedido do Murillo: a tela de Personagens "funcional mas feia e bagunçada" — janelas do mesmo tamanho,
+    estatísticas em cartão com ícones e edição em modal, criar item clicando no slot vazio (busca por nome,
+    ID e categoria), modal de item mais largo, ícones e textos maiores, dar habilidade/mascote por busca com
+    filtros, missões só ativas com as cores do jogo e edição em modal, e todo resultado em toast sem OK. E dois
+    defeitos do teste no 1.2.6 (Tsuko): o voo 15732 sem ícone nem descrição e o Anel de Diamante 310 sem
+    descrição. Decisão dele (pergunta desta sessão): o slot vazio do corpo não veste direto — filtra o que cabe
+    e o item nasce na bolsa.
+    ### a. Os dois defeitos
+    - **Voo 15732:** no `elements.data` do 1.2.6 o `FLYSWORD_ESSENCE` não tem `pile_num_max` (o v7 não tem o
+      campo), e nomes, ícones e pilhas só indexavam tabelas com ele — os 241 voos do 1.2.6 ficavam sem nome e
+      ícone. Critério novo de tabela de item: `pile_num_max` **ou** `price` + `shop_price` (medido: no 1.2.6
+      acrescenta só o `FLYSWORD_ESSENCE`; no 1.5.5, nada). A dica do voo não existia: o detalhe do item agora
+      traz `voo` (`IVTR_ESSENCE_FLYSWORD`, `EC_IvtrTypes.h:269-280`) e `dica.py` segue o
+      `CECIvtrFlySword::GetNormalDesc` (`EC_IvtrFlySword.cpp:137-210`); a linha de aprimoramento fica fora
+      (índices 283/284 do `item_desc` não conferidos no BR).
+    - **Anel 310:** o registro não tem octetos (`extra_data` nulo, item anterior ao B151). O cliente recebe o
+      bloco do molde (`item_info_com_proc_type` com `ConteudoDeEquipamento::novo`), mas o detalhe do painel só
+      lia octetos gravados — a dica saía só com o nome. Passa a usar `bloco_do_equipamento`, o mesmo do refino.
+    ### b. Criar item no slot e dar mascote (GS)
+    - O `TASK_DELIVER_ITEM` não aceita slot escolhido: o cliente refaz com `MergeItem` e descarta se o slot não
+      bater (`EC_HostMsg.cpp:1181-1216`). O que ele aceita sem pedir é o recipiente inteiro
+      (`OWN_IVTR_DATA` → `ResetItems`, `EC_HostMsg.cpp:2471-2520`, também no armazém). Então
+      `criar_item_no_slot`: gera como o drop num recipiente de um slot, grava no slot e, em jogo, reenvia o
+      recipiente (`own_ivtr_from_items`, o do login). Tamanhos de `gs/config.h:12-17`.
+    - `dar_mascote {ovo}`: a incubação (`incubar_mascote`) sem custo nem ovo; `essencia_do_ovo` extraída e usada
+      pelos dois; `GAIN_PET` em jogo.
+    - Catálogos: `buscar_itens` com categoria (tabela do item) ou `slot:N` (máscara de posição); `buscar_mascotes`
+      por `pet_class` e `inhabit_type` (ambientes do `npcgenerator.cpp:114-135`).
+    ### c. Painel
+    `index.html` (janelas e 9 modais), `painel.js` (bloco da ficha reescrito: ícones `ICONES`, modais, criar item,
+    busca de habilidade por classe, mascote com editor de habilidades, missões com cores; `alerta` vira toast),
+    `painel.css` (regras antigas da ficha retiradas, bloco B216). API: `/api/classes`, `/api/realms/{r}/mascotes`,
+    `categoria` em `/itens`, `classe` em `/api/habilidades`, `item {recipiente, slot}` e `dar_mascote` na edição;
+    habilidades de mascote com ícone e nível máximo. Visto na prévia local (contêiner temporário na porta 8010,
+    com o GS ainda antigo): janelas, modais de estatísticas, item, criar item, habilidade, mascote e missões.
+    O venv de teste do painel estava danificado (`fastapi/__init__.py` e o `pip` apagados) e foi recriado.
+    ### d. Provas
+    Data-loader `o_voo_15732_tem_nome_icone_e_pilha_nos_dois_realms`; canal `detalhe_do_item_para_a_dica` (arma
+    sem octetos com o bloco) e `criar_no_slot_dar_mascote_e_catalogos` (bolsa/missão/armazém online com o
+    recipiente 0/2/3, seis recusas, mascote online com 231, criação offline gerada, jaula cheia, categorias e
+    `slot:N`, tipo/ambiente). Painel 74/0, Node 12/0 (dois novos: criar no slot/no corpo e dar mascote com toast).
+    Suíte inteira: 1014/0 com o banco (`--no-fail-fast`; a primeira rodada parou em `dar_item_e_ver_inventario_online_e_offline`, que comparava a busca sem o campo `categoria` novo e esperava recusa de `arma` — teste atualizado: `arma` vale, `bau` é recusada).
+    ### e. Ajuste depois do teste do Murillo
+    As listas abertas dos `select` (classe, categoria, tipo, ambiente) saíam com texto branco em fundo branco:
+    o select de fundo transparente deixava a lista do sistema com o fundo claro padrão e o texto claro herdado.
+    `painel.css` fixa `color-scheme: dark` no select e o fundo/cor de `option`/`optgroup`.
+

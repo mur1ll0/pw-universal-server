@@ -249,3 +249,11 @@ Não publicar/commitar sem pedido.
 em jogo, sem "desconectar e aplicar": editar item do armazém (`OWN_ITEM_INFO` no pacote 3), descer/remover
 habilidade no 1.2.6 (`LEARN_SKILL` nível 0, binário 1.2.6 não conferido), esquecer missão e cancelar no 1.2.6
 (reenvio do `TASK_DATA`, que o cliente usa para recriar a interface de missões). Regras na spec 05 §7.11.
+
+**B216 (2026-10-11) — reforma visual da ficha (pedido do Murillo):** janelas do mesmo tamanho, edição só em
+modais (estatísticas, item, criar item, habilidade, mascote, Daimon, missões), toast no lugar do alerta com OK,
+ícones de traço próprios. Novidades do GS: criar item no slot vazio (recipiente inteiro reenviado em jogo — o
+`TASK_DELIVER_ITEM` não aceita slot escolhido), dar mascote pela incubação sem custo, busca de itens por
+categoria/`slot:N` e catálogo de mascotes por tipo/ambiente. Decisão do Murillo (2026-10-11): o slot vazio do
+corpo não veste direto — filtra o que cabe nele e o item nasce na bolsa. Corrige o voo 15732 e o anel 310 do
+Tsuko. Specs 03, 05 §7.11 e 06.
