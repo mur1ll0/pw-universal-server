@@ -458,6 +458,51 @@ impl Jogador for Contexto<'_> {
 }
 
 /// O arquivo do ícone do item em hexadecimal (bytes GBK); o painel decodifica e recorta o atlas.
+/// A essência (`pe_essence`) de um ovo sem bloco gravado, do molde (`PET_EGG_ESSENCE`): a da
+/// incubação e a do painel (B216).
+pub(super) fn essencia_do_ovo(o: &pw_data_loader::pet::DadosDoOvoDePet) -> pw_core::PeEssence {
+    let mut e = pw_core::PeEssence::default();
+    e.require_level = o.req_level;
+    e.require_class = o.req_class;
+    e.honor_point = o.honor_point;
+    e.pet_tid = o.id_pet as i32;
+    e.pet_egg_tid = o.id as i32;
+    e.pet_class = o.pet_class;
+    e.level = o.level;
+    e.exp = o.exp;
+    e.skill_point = o.skill_point;
+    e.skills = o.skills.clone();
+    e
+}
+
+/// As categorias da busca de itens do painel (B216), pela tabela do `elements.data` do item.
+pub(crate) const CATEGORIAS_DE_ITEM: [&str; 15] = ["arma", "armadura", "ornamento", "roupa", "voo", "municao",
+    "pocao", "material", "pedra", "refino", "missao", "mascote", "habilidade", "daimon", "outros"];
+pub(crate) fn categoria_da_tabela(tabela: &str) -> &'static str {
+    match tabela {
+        "WEAPON_ESSENCE" => "arma",
+        "ARMOR_ESSENCE" => "armadura",
+        "DECORATION_ESSENCE" => "ornamento",
+        "FASHION_ESSENCE" => "roupa",
+        "FLYSWORD_ESSENCE" | "WINGMANWING_ESSENCE" => "voo",
+        "PROJECTILE_ESSENCE" => "municao",
+        "MEDICINE_ESSENCE" | "AUTOHP_ESSENCE" | "AUTOMP_ESSENCE" => "pocao",
+        "MATERIAL_ESSENCE" | "FACTION_MATERIAL_ESSENCE" | "ELEMENT_ESSENCE" => "material",
+        "STONE_ESSENCE" => "pedra",
+        "REFINE_TICKET_ESSENCE" | "DAMAGERUNE_ESSENCE" | "ARMORRUNE_ESSENCE" | "SHARPENER_ESSENCE" => "refino",
+        "TASKMATTER_ESSENCE" | "TASKNORMALMATTER_ESSENCE" | "TASKDICE_ESSENCE" => "missao",
+        "PET_EGG_ESSENCE" | "PET_FOOD_ESSENCE" | "PET_FACETICKET_ESSENCE" => "mascote",
+        "SKILLTOME_ESSENCE" | "SKILLMATTER_ESSENCE" => "habilidade",
+        "GOBLIN_ESSENCE" | "GOBLIN_EQUIP_ESSENCE" | "GOBLIN_EXPPILL_ESSENCE" => "daimon",
+        _ => "outros",
+    }
+}
+/// Categoria válida no canal: uma de [`CATEGORIAS_DE_ITEM`] ou `slot:N` (o que veste no slot N
+/// do corpo, pela máscara de posição — o mesmo critério do vestir).
+pub(crate) fn categoria_valida(c: &str) -> bool {
+    CATEGORIAS_DE_ITEM.contains(&c) || c.strip_prefix("slot:").and_then(|n| n.parse::<u32>().ok()).is_some_and(|n| n < 32)
+}
+
 fn icone_em_hex(dados: &GameDataManager, tid: u32) -> String {
     dados.icones_de_itens.get(&tid).map(hex::encode).unwrap_or_default()
 }
@@ -514,8 +559,11 @@ pub enum EdicaoDePersonagem {
     Atributos(Option<[i32; 4]>),
     /// Mapa e posição (E6, B185); `y` `None` = o chão em `(x, z)`.
     Posicao { mapa: i32, x: f32, y: Option<f32>, z: f32 },
-    /// Dar `quantidade` do item `tid` (E6, B186), pelo caminho do prêmio de missão.
-    Item { tid: u32, quantidade: u32 },
+    /// Dar `quantidade` do item `tid` (E6, B186), pelo caminho do prêmio de missão; com
+    /// `destino` (B216), uma pilha gerada no slot vazio escolhido (`criacao_pelo_painel`).
+    Item { tid: u32, quantidade: u32, destino: Option<(ContainerType, u16)> },
+    /// O mascote do ovo (B216), pela incubação sem custo (`criacao_pelo_painel`).
+    DarMascote(u32),
     /// Tirar `quantidade` (`None` = tudo) do item `tid` do `slot` de `recipiente` (E6, B187).
     /// Online só bolsa e bolsa de missão; equipamento e armazém só offline.
     RemoverItem { recipiente: ContainerType, slot: u16, tid: u32, quantidade: Option<u32> },
@@ -591,6 +639,23 @@ impl BusServer {
         if let EdicaoDePersonagem::Habilidade { id, nivel } = edicao {
             return self.habilidade_pelo_painel(roleid, id, nivel).await;
         }
+        // B216: gravam no banco e avisam o cliente (recipiente inteiro / `GAIN_PET`).
+        let criado = match edicao {
+            EdicaoDePersonagem::Item { tid, quantidade, destino: Some((recipiente, slot)) } => {
+                Some(self.criar_item_no_slot(roleid, tid, quantidade, recipiente, slot, true).await)
+            }
+            EdicaoDePersonagem::DarMascote(ovo) => Some(self.dar_mascote(roleid, ovo, true).await),
+            _ => None,
+        };
+        if let Some(r) = criado {
+            if !self.world.read().await.players.contains_key(&(roleid as i64)) {
+                return None;
+            }
+            return Some(match r {
+                Ok(mut v) => { v["erro"] = serde_json::Value::Null; v }
+                Err(codigo) => serde_json::json!({"erro": codigo}),
+            });
+        }
         let resultado = self.com_contexto(roleid, |ctx| {
             let antes = (ctx.p.money, ctx.p.level);
             let mut erro = None;
@@ -634,7 +699,8 @@ impl BusServer {
                 // Tratada no roteador (`RoteadorDeMapas::editar_personagem`): o teleporte
                 // troca de mapa fora do contexto do jogador.
                 EdicaoDePersonagem::Posicao { .. } | EdicaoDePersonagem::MoverItem { .. }
-                | EdicaoDePersonagem::Habilidade { .. } => erro = Some("edicao_invalida"),
+                | EdicaoDePersonagem::Habilidade { .. } | EdicaoDePersonagem::DarMascote(_)
+                | EdicaoDePersonagem::Item { destino: Some(_), .. } => erro = Some("edicao_invalida"),
                 // Prêmio de missão (`Jogador::dar_item`): gerado como drop
                 // (`DeliverCommonItem`, `task/taskman.cpp:281-303`) e avisado com
                 // `TASK_DELIVER_ITEM`; item de missão vai à bolsa de missão. Antes, numa cópia,
@@ -661,7 +727,7 @@ impl BusServer {
                 }
                 // Uma entrega do original é no máximo uma pilha (`count > pile_limit` → corta,
                 // `taskman.cpp:289-292`): o painel entrega em lotes de uma pilha.
-                EdicaoDePersonagem::Item { tid, quantidade } => {
+                EdicaoDePersonagem::Item { tid, quantidade, destino: None } => {
                     let comum = !ctx.dados.e_item_de_missao(tid);
                     let pilha = ctx.dados.limite_de_pilha(tid);
                     if empilhar_em_lotes(&mut ctx.bolsa_de(comum).clone(), tid, quantidade, ctx.dados) {
@@ -752,12 +818,25 @@ impl BusServer {
             "preco": dados.precos.get(&i.item_id).map(|p| p.0), "vinculo": i.bind_status,
             "missao": dados.e_item_de_missao(i.item_id),
         });
-        // A durabilidade da coluna, não a dos octetos (`BusServer::remendar_durabilidade`).
-        let octetos = BusServer::octetos_atuais(&i);
-        let conteudo = dados.equipamentos.ficha(i.item_id)
-            .filter(|_| !octetos.is_empty())
-            .and_then(|f| pw_core::ConteudoDeEquipamento::ler(&octetos, &f));
-        let Some(c) = conteudo else { return j };
+        // Item de voo (B216): o bloco `IVTR_ESSENCE_FLYSWORD` (`EC_IvtrTypes.h:269-280`) — o
+        // gravado ou, sem ele, o do molde (`conteudo_do_item_de_voo`, como o `info_de` manda).
+        if let Some(molde) = dados.conteudo_do_item_de_voo(i.item_id) {
+            let b = if i.octets.len() >= 28 { i.octets.clone() } else { molde };
+            let i32_ = |o: usize| i32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+            let f32_ = |o: usize| f32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+            j["voo"] = serde_json::json!({
+                "tempo": i32_(0), "tempo_maximo": i32_(4),
+                "nivel_exigido": i16::from_le_bytes([b[8], b[9]]), "nivel": b[10], "refino": b[11],
+                "classes": i32_(12), "tempo_por_elemento": i32_(16),
+                "velocidade": f32_(20), "velocidade_acelerada": f32_(24),
+            });
+            return j;
+        }
+        // A durabilidade da coluna, não a dos octetos (`BusServer::remendar_durabilidade`); sem
+        // octetos gravados, o bloco do molde — o mesmo que o `OWN_ITEM_INFO` manda ao cliente
+        // (`bloco_do_equipamento`; o anel 310 do Tsuko, B216).
+        let Some((octetos, c)) = super::pedras_e_refino::bloco_do_equipamento(&i, &dados)
+            .and_then(|(o, f)| pw_core::ConteudoDeEquipamento::ler(&o, &f).map(|c| (o, c))) else { return j };
         let req = pw_core::equipamento::Requisitos::do_bloco(&octetos);
         let pedras: Vec<serde_json::Value> = c.furos.iter().map(|&p| serde_json::json!({
             "id": p, "nome": if p > 0 { nome(p as u32) } else { String::new() },
@@ -827,16 +906,28 @@ impl BusServer {
         let alvo = texto.trim().to_lowercase();
         let id: Option<u32> = alvo.parse().ok();
         // B206: `pedra` = só o que o `STONE_ESSENCE` tem (`dados.refino.pedras`), para o furo.
-        let so_pedras = categoria == Some("pedra");
+        // B216: as outras categorias pela tabela do item; `slot:N`, o que veste no slot N; com
+        // categoria, o texto vazio lista a categoria. Até 60.
+        let categoria_de = |t: u32| dados.tabelas_dos_itens.get(&t).map_or("outros", |x| categoria_da_tabela(x));
+        let na_categoria = |t: u32| match categoria {
+            None => true,
+            Some("pedra") => dados.refino.pedras.contains_key(&t),
+            Some(c) => match c.strip_prefix("slot:").and_then(|n| n.parse::<u32>().ok()) {
+                Some(n) => dados.posicoes.get(&t).is_some_and(|m| m & (1 << n) != 0),
+                None => categoria_de(t) == c,
+            },
+        };
+        let lista_tudo = alvo.is_empty() && categoria.is_some();
         let mut achados: Vec<(u32, &String)> = dados.nomes_de_itens.iter()
-            .filter(|(t, _)| !so_pedras || dados.refino.pedras.contains_key(*t))
-            .filter(|(t, n)| Some(**t) == id || (!alvo.is_empty() && n.to_lowercase().contains(&alvo)))
+            .filter(|(t, _)| na_categoria(**t))
+            .filter(|(t, n)| lista_tudo || Some(**t) == id || (!alvo.is_empty() && n.to_lowercase().contains(&alvo)))
             .map(|(t, n)| (*t, n)).collect();
         achados.sort_by_key(|(t, _)| (Some(*t) != id, *t));
-        achados.truncate(30);
+        achados.truncate(60);
         let itens: Vec<serde_json::Value> = achados.iter().map(|(t, n)| serde_json::json!({
             "id": t, "nome": n, "pilha": dados.limite_de_pilha(*t), "missao": dados.e_item_de_missao(*t),
             "icone": icone_em_hex(&dados, *t), "grau": dados.refino.pedras.get(t).map(|p| p.grau),
+            "categoria": categoria_de(*t),
         })).collect();
         serde_json::json!({"estado":"consultado","itens":itens})
     }
@@ -4023,6 +4114,7 @@ impl BusServer {
     }
 
     /// `GP_NPCSEV_HATCHPET` (28) — chocar/incubar ovo de mascote na Gerente de Mascotes.
+    /// (A essência do ovo sem bloco gravado: [`essencia_do_ovo`].)
     /// Payload: `egg_index: i32, egg_id: i32` (`hatch_pet_service_executor`, `serviceprovider.cpp:3160`).
     /// Deduz as moedas (`money_hatched`), remove o ovo da bolsa (`DROP_TYPE_USE` = 11) e
     /// responde `GAIN_PET` (231) com a struct `info_pet` (192 bytes).
@@ -4100,32 +4192,10 @@ impl BusServer {
                 // Obtém ou gera a essência oficial (pe_essence) do ovo
                 let ess = if item.octets.len() >= pw_core::TAMANHO_PE_ESSENCE_BASE {
                     pw_core::PeEssence::de_bytes(&item.octets).unwrap_or_else(|| {
-                        let mut e = pw_core::PeEssence::default();
-                        e.require_level = ovo_info.req_level;
-                        e.require_class = ovo_info.req_class;
-                        e.honor_point = ovo_info.honor_point;
-                        e.pet_tid = ovo_info.id_pet as i32;
-                        e.pet_egg_tid = ovo_info.id as i32;
-                        e.pet_class = ovo_info.pet_class;
-                        e.level = ovo_info.level;
-                        e.exp = ovo_info.exp;
-                        e.skill_point = ovo_info.skill_point;
-                        e.skills = ovo_info.skills.clone();
-                        e
+                        essencia_do_ovo(ovo_info)
                     })
                 } else {
-                    let mut e = pw_core::PeEssence::default();
-                    e.require_level = ovo_info.req_level;
-                    e.require_class = ovo_info.req_class;
-                    e.honor_point = ovo_info.honor_point;
-                    e.pet_tid = ovo_info.id_pet as i32;
-                    e.pet_egg_tid = ovo_info.id as i32;
-                    e.pet_class = ovo_info.pet_class;
-                    e.level = ovo_info.level;
-                    e.exp = ovo_info.exp;
-                    e.skill_point = ovo_info.skill_point;
-                    e.skills = ovo_info.skills.clone();
-                    e
+                    essencia_do_ovo(ovo_info)
                 };
 
                 // Confere restrição de classe

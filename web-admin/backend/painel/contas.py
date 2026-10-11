@@ -3,7 +3,7 @@ from typing import Annotated, Literal, Optional
 from fastapi import HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 from .textos import habilidades_do_cliente
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .canal import (CanalIndisponivel, CanalNaoEnviado, aplicar_no_realm, comandar, resposta_do_primeiro,
                     respostas_do_realm, transmitir)
 
@@ -66,10 +66,25 @@ class PosicaoPedida(BaseModel):
 
 
 class ItemPedido(BaseModel):
-    """E6 (B186): item a dar; 1–100 000 por operação é política do painel."""
+    """E6 (B186): item a dar; 1–100 000 por operação é política do painel. B216: com `recipiente`
+    e `slot`, uma pilha criada no slot vazio da bolsa, da bolsa de missão ou do armazém."""
     model_config = ConfigDict(extra="forbid", strict=True)
     id: int = Field(ge=1, le=2_147_483_647)
     quantidade: int = Field(ge=1, le=100_000)
+    recipiente: Optional[Literal["bolsa", "missao", "armazem"]] = None
+    slot: Optional[int] = Field(default=None, ge=0, le=255)
+
+    @model_validator(mode="after")
+    def destino_completo(self):
+        if (self.recipiente is None) != (self.slot is None):
+            raise ValueError("recipiente e slot vão juntos")
+        return self
+
+
+class MascoteDadoPedido(BaseModel):
+    """B216: dar o mascote de um ovo (`PET_EGG_ESSENCE`)."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    ovo: int = Field(ge=1, le=2_147_483_647)
 
 
 class RemocaoPedida(BaseModel):
@@ -198,6 +213,7 @@ class EdicaoPersonagem(BaseModel):
     missao: Optional[MissaoPedida] = None
     # E6 (B215): EXP a dar ao Daimon vestido (regra do `InsertExp`, no GS).
     daimon_exp: Optional[int] = Field(default=None, ge=1, le=2_000_000_000)
+    dar_mascote: Optional[MascoteDadoPedido] = None
 
 
 def somar_desconexoes(resultado):
@@ -348,7 +364,8 @@ def registrar_contas(app):
         entidade (tudo menos EXP/SP). Quem decide online/offline é o GS."""
         experiencia = bool(pedido.exp or pedido.sp)
         simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao", "item",
-                               "remover_item", "mover_item", "editar_item", "habilidade", "mascote", "missao", "daimon_exp")
+                               "remover_item", "mover_item", "editar_item", "habilidade", "mascote", "missao", "daimon_exp",
+                               "dar_mascote")
                    if getattr(pedido, k) is not None]
         if len(simples) + experiencia != 1:
             raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo, atributos ou posição.")
@@ -376,7 +393,8 @@ def registrar_contas(app):
                 maximo = (cliente.get(hid) or {}).get("nivel_maximo")
                 if hid not in cliente or nivel < 1 or (maximo and nivel > maximo):
                     raise HTTPException(422, f"Habilidade {hid} desconhecida ou nível {nivel} fora do máximo.")
-        if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"], ["editar_item"], ["habilidade"], ["mascote"], ["missao"]):
+        if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"], ["editar_item"], ["habilidade"], ["mascote"], ["missao"],
+                       ["dar_mascote"]):
             consulta[simples[0]] = getattr(pedido, simples[0]).model_dump(exclude_none=True)
         elif simples:
             consulta[simples[0]] = getattr(pedido, simples[0])

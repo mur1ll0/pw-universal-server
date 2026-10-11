@@ -1,5 +1,5 @@
 """Consultas somente de leitura com origem explícita e alvo validado no banco."""
-from typing import Optional
+from typing import Literal, Optional
 from fastapi import HTTPException, Path, Query, Request, Response
 from .icones import png_do_icone
 from .dica import TIPO_HABILIDADE_DO_ITEM, catalogo_de_efeitos, habilidade_do_efeito, linhas_da_dica, texto_do_efeito
@@ -150,28 +150,50 @@ def registrar_consultas(app):
                                      for i, n in daimon.get("habilidades", [])]
         return {"realm_id": realm_id, "daimon": daimon, "origem": (daimon or {}).get("origem", dados.get("origem"))}
 
+    def _habilidades_com_nome(pares):
+        """`[id, nível]` → nome (`skillstr`), ícone e nível máximo do stub do cliente (B216)."""
+        try:
+            nomes, cliente = nomes_das_habilidades(), habilidades_do_cliente()
+        except OSError:
+            nomes, cliente = {}, {}
+        return [{"id": i, "nivel": n, "nome": nomes.get(i, f"Habilidade {i}"),
+                 "icone": (cliente.get(i) or {}).get("icone", ""),
+                 "nivel_maximo": (cliente.get(i) or {}).get("nivel_maximo")} for i, n in pares]
+
     @app.get("/api/realms/{realm_id}/personagens/{personagem_id}/mascotes")
     async def mascotes_do_personagem(realm_id: str, requisicao: Request,
                                      personagem_id: int = Path(..., ge=1, le=2_147_483_647)):
         """E6 (B197): a jaula (registro de cada mascote, modelo, ícone; qual está invocado)."""
         dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "mascotes", "personagem_id": personagem_id})
-        try:
-            nomes = nomes_das_habilidades()
-        except OSError:
-            nomes = {}
         for m in dados.get("mascotes", []):
-            m["habilidades"] = [{"id": i, "nivel": n, "nome": nomes.get(i, f"Habilidade {i}")} for i, n in m.get("habilidades", [])]
+            m["habilidades"] = _habilidades_com_nome(m.get("habilidades", []))
         return {"realm_id": realm_id, "mascotes": dados.get("mascotes", [])}
 
+    @app.get("/api/classes")
+    async def classes_da_versao(versao: str = Query("1.5.5", pattern=r"^\d\.\d\.\d$")):
+        """B216: os nomes das classes do cliente (8 no 1.2.x, 12 no 1.5.5), para os filtros."""
+        try:
+            total = 8 if versao.startswith("1.2") else 12
+            return {"classes": [nome_da_classe(i) for i in range(total)]}
+        except OSError:
+            raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
+
     @app.get("/api/habilidades")
-    async def buscar_habilidades(busca: str = Query(..., min_length=1, max_length=64)):
-        """E6 (B196): até 30 habilidades do cliente por nome (`skillstr.txt`) ou id, para ensinar."""
+    async def buscar_habilidades(busca: str = Query("", max_length=64),
+                                 classe: Optional[int] = Query(None, ge=0, le=1023)):
+        """E6 (B196): até 30 habilidades do cliente por nome (`skillstr.txt`) ou id, para ensinar.
+        B216: `classe` filtra pelo `cls` do stub do cliente (0–11 as classes; 127, 255 e 258 os
+        grupos sem classe); com ela o texto pode ser vazio, e vêm até 60."""
+        if not busca.strip() and classe is None:
+            raise HTTPException(422, "Informe o nome, o ID ou a classe.")
         try:
             nomes, cliente = nomes_das_habilidades(), habilidades_do_cliente()
         except OSError:
             raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
         termo = busca.strip().lower()
-        achadas = [i for i in sorted(cliente) if termo == str(i) or termo in nomes.get(i, "").lower()][:30]
+        achadas = [i for i in sorted(cliente)
+                   if (classe is None or cliente[i].get("classe") == classe)
+                   and (not termo or termo == str(i) or termo in nomes.get(i, "").lower())][:60 if classe is not None else 30]
         return {"habilidades": [{"id": i, "nome": nomes.get(i, f"Habilidade {i}"), "icone": cliente[i]["icone"],
                                  "nivel_maximo": cliente[i]["nivel_maximo"], "classe": cliente[i]["classe"]} for i in achadas]}
 
@@ -292,10 +314,32 @@ def registrar_consultas(app):
         return {"realm_id": realm_id, "pedras": dados.get("itens", [])}
 
     @app.get("/api/realms/{realm_id}/itens")
-    async def buscar_itens(realm_id: str, requisicao: Request, busca: str = Query(..., min_length=1, max_length=64)):
-        """E6 (B186): até 30 itens do elements.data do realm por nome ou id."""
-        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "buscar_itens", "texto": busca})
+    async def buscar_itens(realm_id: str, requisicao: Request, busca: str = Query("", max_length=64),
+                           categoria: Optional[str] = Query(None, pattern=r"^([a-z]{3,12}|slot:\d{1,2})$")):
+        """E6 (B186): até 30 itens do elements.data do realm por nome ou id. B216: `categoria` (a
+        tabela do item, ou `slot:N` = o que veste no slot N); com ela o texto pode ser vazio."""
+        if not busca.strip() and not categoria:
+            raise HTTPException(422, "Informe o nome, o ID ou a categoria.")
+        consulta = {"tipo": "buscar_itens", "texto": busca}
+        if categoria:
+            consulta["categoria"] = categoria
+        dados = await consultar_primeiro(realm_id, requisicao, consulta)
         return {"realm_id": realm_id, "itens": dados.get("itens", [])}
+
+    @app.get("/api/realms/{realm_id}/mascotes")
+    async def buscar_mascotes(realm_id: str, requisicao: Request, busca: str = Query("", max_length=64),
+                              tipo: Optional[int] = Query(None, ge=0, le=5),
+                              ambiente: Optional[Literal["terra", "agua", "ar"]] = Query(None)):
+        """B216: até 60 ovos de mascote do realm por nome/ID, tipo (`pet_class`) e ambiente."""
+        consulta = {"tipo": "buscar_mascotes", "texto": busca}
+        if tipo is not None:
+            consulta["classe_de_mascote"] = tipo
+        if ambiente:
+            consulta["ambiente"] = ambiente
+        dados = await consultar_primeiro(realm_id, requisicao, consulta)
+        for m in dados.get("mascotes", []):
+            m["habilidades"] = _habilidades_com_nome(m.get("habilidades", []))
+        return {"realm_id": realm_id, "mascotes": dados.get("mascotes", [])}
 
     @app.get("/api/realms/{realm_id}/personagens")
     async def buscar_personagens(realm_id: str, busca: str = Query("", max_length=64),

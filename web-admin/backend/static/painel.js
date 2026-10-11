@@ -56,17 +56,32 @@ function aviso(mensagem) {
 /* ---------------- Alerta padrão (sucesso, erro, aguardando) ---------------- */
 
 let fecharAlertaEm = null;
-function alerta(tipo, titulo, texto) {
+/* B216: sucesso, erro e aviso simples saem como toast no canto (somem sozinhos, sem OK, com a
+   barra de tempo; clique fecha), como o toast do SweetAlert. Modal só para confirmação, para o
+   carregamento das contas e para o aviso que oferece "Consultar agora". */
+function alerta(tipo, titulo, texto, opcoes = {}) {
+  const comRecuperar = tipo === "aviso" && !!estado.comando && !opcoes.toast;
+  const modal = opcoes.modal ?? (comRecuperar || (tipo === "carregando" && !opcoes.toast));
+  estado.alertaModal = modal;
+  elemento("operacao").classList.toggle("modo-toast", !modal);
   elemento("alerta-icone").className = `alerta-icone ${tipo}`;
   elemento("alerta-titulo").textContent = titulo;
   elemento("resultado-comando").textContent = texto;
-  elemento("fechar-operacao").hidden = tipo === "carregando";
-  elemento("recuperar-comando").hidden = !(tipo === "aviso" && estado.comando);
+  elemento("fechar-operacao").hidden = tipo === "carregando" || !modal;
+  elemento("recuperar-comando").hidden = !comRecuperar;
+  if (!modal) elemento("confirmar-alerta").hidden = true;
   elemento("operacao").hidden = false;
   if (fecharAlertaEm && temTempo) clearTimeout(fecharAlertaEm);
-  fecharAlertaEm = tipo === "ok" && temTempo ? setTimeout(fecharAlerta, 2200) : null;
+  const duracao = modal || tipo === "carregando" ? 0 : (tipo === "ok" ? 2600 : 5000);
+  const barra = elemento("alerta-tempo");
+  if (barra?.style) {
+    barra.style.animation = "none";
+    void barra.offsetWidth;
+    barra.style.animation = duracao ? `esvaziar ${duracao}ms linear forwards` : "none";
+  }
+  fecharAlertaEm = duracao && temTempo ? setTimeout(fecharAlerta, duracao) : null;
 }
-function fecharAlerta() { elemento("operacao").hidden = true; elemento("confirmar-alerta").hidden = true; }
+function fecharAlerta() { elemento("operacao").hidden = true; elemento("confirmar-alerta").hidden = true; estado.alertaModal = false; }
 
 function mostrarEntrada() {
   estado.buscaContas++;
@@ -256,7 +271,7 @@ function marcarMapasVisiveis(marcar) {
 
 let resolverConfirmacao = null;
 function confirmar(titulo, texto, rotulo) {
-  alerta("aviso", titulo, texto);
+  alerta("aviso", titulo, texto, { modal: true });
   elemento("confirmar-alerta").textContent = rotulo;
   elemento("confirmar-alerta").hidden = false;
   elemento("fechar-operacao").textContent = "Cancelar";
@@ -603,6 +618,132 @@ function abrirTelaPersonagem() {
   elemento("ficha-personagem").hidden = false;
 }
 
+/* ---------------- Ícones (B216) ----------------
+   Traço de 24×24 desenhado aqui (sem biblioteca: a CSP só permite 'self'). `[data-icone]` no HTML
+   é preenchido na carga; `icone(nome)` serve ao que o JS monta. */
+const ICONES = {
+  usuario: "M12 4a4 4 0 1 0 0 8a4 4 0 1 0 0-8M4 21c0-4 3.6-6 8-6s8 2 8 6",
+  grupo: "M9 5a3 3 0 1 0 0 6a3 3 0 1 0 0-6M17 7a2.5 2.5 0 1 0 0 5M3 20c0-3.3 2.7-5 6-5s6 1.7 6 5M15 15c3 0 6 1.4 6 4.5",
+  editar: "M4 20h4L19 9l-4-4L4 16zM14 6l4 4",
+  mais: "M12 5v14M5 12h14",
+  busca: "M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14M20 20l-4-4",
+  filtro: "M3 5h18l-7 8v6l-4 2v-8z",
+  lixeira: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  nivel: "M12 3l2.6 5.6 6.1.6-4.6 4.1 1.3 6-5.4-3.1-5.4 3.1 1.3-6L3.3 9.2l6.1-.6z",
+  escudo: "M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z",
+  cultivo: "M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9L7 7M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1",
+  exp: "M3 17l6-6 4 4 8-8M15 7h6v6",
+  brilho: "M12 3l1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7-4.7-1.8 4.7-1.8zM19 15l.8 2.2 2.2.8-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z",
+  moeda: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 7v10M15 9.5c0-1.4-1.3-2-3-2s-3 .8-3 2 1.3 1.8 3 2.2 3 .9 3 2.3-1.3 2-3 2-3-.7-3-2",
+  vida: "M12 20s-7-4.4-9-9.2C1.8 7.7 3.9 4.5 7.2 4.5c2 0 3.6 1.1 4.8 2.8 1.2-1.7 2.8-2.8 4.8-2.8 3.3 0 5.4 3.2 4.2 6.3C19 15.6 12 20 12 20z",
+  mana: "M12 3s6 6.6 6 11a6 6 0 0 1-12 0c0-4.4 6-11 6-11z",
+  pontos: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 8v8M8 12h8",
+  forca: "M6 7v10M3 9v6M18 7v10M21 9v6M6 12h12",
+  agilidade: "M3 8h11a3 3 0 1 0-3-3M3 12h16a3 3 0 1 1-3 3M3 16h7",
+  vitalidade: "M3 12h4l3-8 4 16 3-8h4",
+  energia: "M13 2L4 14h7l-1 8 9-12h-7z",
+  mapa: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15",
+  posicao: "M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21zM12 7a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5",
+  camadas: "M12 3l9 5-9 5-9-5zM3 13l9 5 9-5",
+  chave: "M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
+  refino: "M12 19V5M5 12l7-7 7 7",
+  gema: "M6 3h12l4 6-10 12L2 9zM2 9h20M12 21L8 9l4-6 4 6z",
+  martelo: "M14 5l5 5-3 3-5-5zM11 8l-8 8 3 3 8-8",
+  furo: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 10a2 2 0 1 0 0 4a2 2 0 1 0 0-4",
+  etiqueta: "M3 12V4h8l10 10-8 8zM7.5 7.5h.01",
+  fome: "M7 3v8M5 3v5a2 2 0 0 0 4 0V3M7 11v10M17 3c-2 1-3 3-3 6s1 4 3 4v8",
+  medalha: "M12 13a5 5 0 1 0 0-10a5 5 0 1 0 0 10M8.5 12L7 21l5-3 5 3-1.5-9",
+  pergaminho: "M8 4h11v13a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-1h11v1a3 3 0 0 0 3 3M8 4a3 3 0 0 0-3 3v9M11 8h5M11 12h5",
+  livro: "M4 5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2zM4 19V5",
+  pata: "M8 5a1.7 1.7 0 1 0 0 3.4a1.7 1.7 0 1 0 0-3.4M16 5a1.7 1.7 0 1 0 0 3.4a1.7 1.7 0 1 0 0-3.4M5 10a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2M19 10a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2M12 12c-3 0-5 3.5-5 5.5S9 20 12 20s5-.5 5-2.5S15 12 12 12z",
+  caixa: "M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10",
+  bolsa: "M6 8h12l1 12H5zM9 8V6a3 3 0 0 1 6 0v2",
+  roupa: "M8 3l-5 4 3 3 2-1v12h8V9l2 1 3-3-5-4c-.5 1.5-2 2.5-4 2.5S8.5 4.5 8 3z",
+  olho: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
+  check: "M5 12l5 5 9-10",
+  fechar: "M6 6l12 12M18 6L6 18",
+  relogio: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 7v5l3 2",
+};
+function icone(nome, classe = "ico") {
+  const caixa = criar("span", classe);
+  caixa.setAttribute("aria-hidden", "true");
+  if (typeof document.createElementNS !== "function" || !ICONES[nome]) return caixa;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  const traco = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  traco.setAttribute("d", ICONES[nome]);
+  svg.append(traco);
+  caixa.append(svg);
+  return caixa;
+}
+function preencherIcones(raiz = document) {
+  for (const alvo of raiz.querySelectorAll?.("[data-icone]") || []) {
+    if (alvo.firstChild) continue;
+    const feito = icone(alvo.dataset.icone, "");
+    if (feito.firstChild) alvo.append(feito.firstChild);
+  }
+}
+
+/* Modais (B216): `.fechar-modal` e o fundo fecham o modal de onde vieram. */
+function abrirModal(id) {
+  esconderMenuDoSlot();
+  esconderDica();
+  elemento(id).hidden = false;
+  const foco = elemento(id).querySelector?.("input:not([disabled]):not([readonly]), select");
+  if (foco && temTempo) setTimeout(() => foco.focus?.(), 30);
+}
+function fecharModal(id) {
+  elemento(id).hidden = true;
+  if (id === "modal-item") estado.itemEmEdicao = null;
+}
+const MODAIS_DA_FICHA = ["modal-estatisticas", "modal-item", "modal-criar-item", "modal-busca-habilidade", "modal-habilidade",
+  "modal-busca-mascote", "modal-mascote", "modal-daimon", "modal-missoes"];
+
+/* Texto com os códigos de cor do cliente (`^RRGGBB`) pintado; sem código, a cor do painel. */
+function textoPintado(texto, classe = "") {
+  const caixa = criar("span", classe);
+  let cor = null;
+  for (const parte of String(texto || "").split(/(\^[0-9a-fA-F]{6})/)) {
+    if (/^\^[0-9a-fA-F]{6}$/.test(parte)) { cor = parte.slice(1); continue; }
+    if (!parte) continue;
+    const span = criar("span", "", parte);
+    if (cor) span.style.color = `#${cor}`;
+    caixa.append(span);
+  }
+  return caixa;
+}
+const semCores = (texto) => String(texto || "").replace(/\^[0-9a-fA-F]{6}/g, "");
+
+/* Ícone recortado do atlas do cliente (`/api/icones/<conjunto>/<arquivo>.png`) ou as iniciais. */
+function imagemDoIcone(conjunto, arquivo, nome, classe = "") {
+  if (!arquivo) return criar("span", `sem-icone ${classe}`, semCores(nome).slice(0, 2));
+  const img = criar("img", classe);
+  img.src = `/api/icones/${conjunto}/${arquivo}.png`;
+  img.alt = semCores(nome);
+  img.addEventListener("error", () => img.replaceWith(criar("span", `sem-icone ${classe}`, semCores(nome).slice(0, 2))));
+  return img;
+}
+
+/* Classes do cliente para os filtros de habilidade (`/api/classes`), por versão. */
+const classesPorVersao = {};
+async function classesDoRealm() {
+  const versao = estado.selecionado?.versao || "1.5.5";
+  if (!classesPorVersao[versao]) {
+    try { classesPorVersao[versao] = (await api(`/api/classes?versao=${encodeURIComponent(versao)}`)).classes || []; }
+    catch (_) { return []; }
+  }
+  return classesPorVersao[versao];
+}
+/* Grupos de habilidade pelo `cls` do stub do cliente: as classes, e os três grupos sem classe. */
+async function preencherGruposDeHabilidade(select, padrao = "") {
+  const opcoes = [["", "Todas as classes"], ...(await classesDoRealm()).map((n, i) => [String(i), n]),
+    ["127", "Sem classe (monstros e mascotes)"], ["255", "Vida e especiais"], ["258", "Grupo 258"]];
+  select.replaceChildren(...opcoes.map(([v, n]) => { const o = criar("option", "", n); o.value = v; return o; }));
+  select.value = padrao;
+}
+
+/* ---------------- Ficha: estatísticas ---------------- */
+
 async function consultarPersonagem(realmId, id) {
   const consulta = ++estado.ficha;
   try {
@@ -617,24 +758,28 @@ async function consultarPersonagem(realmId, id) {
     elemento("origem-personagem").className = `etiqueta ${dados.origem === "viva" ? "" : "etiqueta-neutra"}`;
     elemento("observacao-personagem").textContent = dados.aviso || "";
     const inteiro = (valor) => BigInt(valor).toLocaleString("pt-BR");
-    const campos = [["Nível", ficha.nivel], ["Classe", ficha.classe_nome || ficha.classe], ["Cultivo", ficha.cultivo],
-      ["EXP", inteiro(ficha.exp)], ["Alma", inteiro(ficha.alma)], ["Dinheiro", inteiro(ficha.dinheiro)],
-      ["Vida", ficha.vida], ["Mana", ficha.mana], ["Pontos livres", ficha.pontos],
-      ["Força", ficha.forca], ["Agilidade", ficha.agilidade], ["Vitalidade", ficha.vitalidade],
-      ["Energia", ficha.energia], ["Mapa", ficha.mapa],
-      ["Posição", `${ficha.posicao.x.toFixed(0)}, ${ficha.posicao.y.toFixed(0)}, ${ficha.posicao.z.toFixed(0)}`]];
-    elemento("dados-personagem").replaceChildren();
-    for (const [rotulo, valor] of campos) {
-      const campo = criar("dl");
-      campo.append(criar("dt", "", rotulo), criar("dd", "", valor));
-      elemento("dados-personagem").append(campo);
-    }
+    // Um campo de cada; força a energia em linha com os ícones do jogo.
+    const campos = [["nivel", "Nível", ficha.nivel], ["escudo", "Classe", ficha.classe_nome || ficha.classe],
+      ["cultivo", "Cultivo", ficha.cultivo], ["exp", "EXP", inteiro(ficha.exp)], ["brilho", "Alma (SP)", inteiro(ficha.alma)],
+      ["moeda", "Dinheiro", inteiro(ficha.dinheiro)], ["vida", "Vida", fmt(ficha.vida)], ["mana", "Mana", fmt(ficha.mana)],
+      ["pontos", "Pontos livres", fmt(ficha.pontos)], ["forca", "Força", fmt(ficha.forca)], ["agilidade", "Agilidade", fmt(ficha.agilidade)],
+      ["vitalidade", "Vitalidade", fmt(ficha.vitalidade)], ["energia", "Energia", fmt(ficha.energia)], ["mapa", "Mapa", ficha.mapa],
+      ["posicao", "Posição", `${ficha.posicao.x.toFixed(0)}, ${ficha.posicao.y.toFixed(0)}, ${ficha.posicao.z.toFixed(0)}`]];
+    elemento("dados-personagem").replaceChildren(...campos.map(([ico, rotulo, valor]) => {
+      const caixa = criar("div", `atributo atributo-${ico}`);
+      const texto = criar("div");
+      texto.append(criar("span", "", rotulo), criar("strong", "", String(valor)));
+      caixa.append(icone(ico), texto);
+      return caixa;
+    }));
     abrirTelaPersonagem();
     estado.personagemId = id;
     const online = dados.presenca === "online";
+    estado.personagemOnline = online;
     elemento("dica-edicao").textContent = online
-      ? "Em jogo: aplica na hora e o jogador vê a mudança."
+      ? "Em jogo: as edições valem na hora e o jogador vê a mudança."
       : "Fora do jogo: grava no banco; EXP/SP só com o personagem em jogo.";
+    elemento("est-resumo").textContent = `${ficha.nome} · ${online ? "em jogo" : "fora do jogo"}`;
     elemento("form-exp").querySelector?.("button")?.toggleAttribute?.("disabled", !online);
     preencherCultivos(estado.selecionado?.versao, ficha.cultivo);
     preencherAtributos(ficha);
@@ -695,6 +840,8 @@ const MOTIVOS_EDICAO = {
   altura_obrigatoria: "Este mapa não tem terreno carregado: informe o Y.",
   bolsa_cheia: "Não cabe tudo na bolsa (nada foi dado).",
   slot_mudou: "O item mudou de lugar desde a consulta; atualize a ficha.",
+  slot_ocupado: "O slot já tem um item; atualize a ficha.",
+  recipiente_errado: "Item de missão só vai à bolsa de missão, e os outros só à bolsa ou ao armazém.",
   quantidade_invalida: "Quantidade maior que a pilha.",
   precisa_estar_offline: "Isto só com o personagem fora do jogo.",
   posicao_invalida: "Esta peça não vai nesse slot.",
@@ -707,6 +854,9 @@ const MOTIVOS_EDICAO = {
   nao_aplicado: "O jogo não confirmou a troca; atualize a ficha.",
   mascote_invocado: "O mascote está invocado; recolha-o no jogo antes de editar.",
   nivel_do_mascote_invalido: "Nível acima do máximo do modelo do mascote.",
+  ovo_inexistente: "Este realm não tem esse ovo de mascote.",
+  jaula_cheia: "A jaula do personagem não tem vaga livre.",
+  classe_nao_permitida: "A classe do personagem não pode ter este mascote.",
   item_inexistente: "Este realm não tem esse item.",
   em_transicao: "O personagem está entrando ou saindo agora; tente de novo em instantes.",
   personagem_inexistente: "O personagem não existe mais.",
@@ -721,7 +871,7 @@ async function editarPersonagem(corpo, descricao) {
   if (!realm || !id || estado.enviando) return;
   const operacao = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
   estado.enviando = true;
-  alerta("carregando", "Aplicando…", descricao);
+  alerta("carregando", "Aplicando…", descricao, { toast: true });
   try {
     let dados;
     try {
@@ -744,15 +894,15 @@ async function editarPersonagem(corpo, descricao) {
       consultarPersonagem(realm.id, id);
       return dados.estado;
     } else if (dados.estado === "desconhecido") {
-      alerta("aviso", "Sem confirmação", `Operação ${operacao}: o servidor não confirmou. Confira a ficha antes de repetir.`);
+      alerta("aviso", "Sem confirmação", `Operação ${operacao}: o servidor não confirmou. Confira a ficha antes de repetir.`, { toast: true });
     } else if (dados.codigo === "precisa_estar_offline") {
       estado.enviando = false;
-      desconectarEAplicar(corpo, descricao);
+      return desconectarEAplicar(corpo, descricao);
     } else {
       alerta("erro", "Não aplicado", MOTIVOS_EDICAO[dados.codigo] || dados.mensagem || dados.codigo);
     }
   } catch (erro) {
-    if (erro.resultado?.codigo === "precisa_estar_offline") { estado.enviando = false; desconectarEAplicar(corpo, descricao); return; }
+    if (erro.resultado?.codigo === "precisa_estar_offline") { estado.enviando = false; return desconectarEAplicar(corpo, descricao); }
     alerta("erro", "Não aplicado", MOTIVOS_EDICAO[erro.resultado?.codigo] || erro.message);
   } finally { estado.enviando = false; }
 }
@@ -767,16 +917,16 @@ async function desconectarEAplicar(corpo, descricao) {
   const sim = await confirmar("Personagem em jogo",
     `${MOTIVOS_EDICAO.precisa_estar_offline} Desconectar a conta ${conta.usuario} e aplicar?`, "Desconectar e aplicar");
   if (!sim || estado.personagemId !== id) return;
-  alerta("carregando", "Desconectando…", `Salvando ${conta.nome}.`);
+  alerta("carregando", "Desconectando…", `Salvando ${conta.nome}.`, { toast: true });
   try {
     await api(`/api/contas/${conta.conta_id}/desconectar`, { method: "POST" });
     // Espera o GS declarar a ausência (a saída grava antes de soltar o personagem).
     for (let i = 0; i < 20 && temTempo; i++) {
       const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}`);
-      if (dados.presenca === "ausente_nos_daemons") { await editarPersonagem(corpo, descricao); return; }
+      if (dados.presenca === "ausente_nos_daemons") return await editarPersonagem(corpo, descricao);
       await new Promise((r) => setTimeout(r, 1000));
     }
-    alerta("aviso", "Ainda em jogo", "A conta não saiu a tempo; nada foi alterado. Tente de novo.");
+    alerta("aviso", "Ainda em jogo", "A conta não saiu a tempo; nada foi alterado. Tente de novo.", { toast: true });
   } catch (erro) {
     alerta("erro", "Não aplicado", erro.message);
   }
@@ -857,45 +1007,65 @@ function editarPosicao() {
   const posicao = { mapa, x, z, ...(y === null ? {} : { y }) };
   editarPersonagem({ posicao }, `Mover para o mapa ${mapa} (${x.toFixed(0)}, ${z.toFixed(0)})`);
 }
+function editarPontos() {
+  const valor = Math.trunc(Number(elemento("pontos-valor").value));
+  if (!Number.isFinite(valor) || valor < 1 || valor > 10_000) { alerta("erro", "Valor inválido", "Informe de 1 a 10.000 pontos."); return; }
+  editarPersonagem({ pontos: valor }, `Dados ${valor.toLocaleString("pt-BR")} pontos livres`);
+}
+function editarNivel() {
+  const valor = Math.trunc(Number(elemento("nivel-valor").value));
+  if (!Number.isFinite(valor) || valor < 2) { alerta("erro", "Valor inválido", "Informe o nível novo."); return; }
+  editarPersonagem({ nivel: valor }, `Nível ${valor}`);
+}
+function editarCultivo() {
+  const valor = Number(elemento("cultivo-valor").value);
+  if (!Number.isInteger(valor)) return;
+  editarPersonagem({ cultivo: valor }, `Cultivo ${valor}`);
+}
 
-/* Itens (E6, B186): os quatro recipientes do banco com nomes, e dar item com busca por nome
-   ou ID (lista de até 30). A entrega segue o prêmio de missão: lotes de uma pilha, item de
-   missão na bolsa de missão; não dá nada se não couber tudo. */
-/* Grade de itens (B188): ícones recortados do atlas do cliente, oito por linha; o equipamento
-   com o nome de cada slot (`EQUIPIVTR_*`, `EC_IvtrTypes.h:56-95`). Tamanho da grade: o maior
-   slot ocupado, arredondado para cima em linhas de 8, no mínimo 32 (bolsa, missão, armazém). */
+/* ---------------- Itens (E6, B186–B194; B216) ----------------
+   Grade de itens (B188): ícones recortados do atlas do cliente, oito por linha; o equipamento com
+   o nome de cada slot (`EQUIPIVTR_*`, `EC_IvtrTypes.h:56-95`). Tamanhos de `gs/config.h:12-17`:
+   bolsa e bolsa de missão 32, armazém 16 (ou mais, se o banco tiver slot acima). */
 const RECIPIENTES = [["bolsa", "Bolsa"], ["equipamento", "Equipamento"], ["armazem", "Armazém"], ["missao", "Bolsa de missão"]];
+const TAMANHOS = { bolsa: 32, armazem: 16, missao: 32 };
 const SLOTS_DE_EQUIPAMENTO = ["Arma", "Cabeça", "Colar", "Manto", "Peito", "Cinto", "Pernas", "Pés", "Pulsos",
   "Anel 1", "Anel 2", "Munição", "Voo", "Moda: corpo", "Moda: pernas", "Moda: pés", "Moda: pulsos", "Runa", "Tomo",
   "Alto-falante", "Amuleto HP", "Amuleto MP", "Bolso", "Gênio", "Certificado", "Moda: cabeça", "Ficha de força",
   "Habilidade 1", "Habilidade 2", "Moda: arma", "—", "—", "Carta 1", "Carta 2", "Carta 3", "Carta 4", "Carta 5", "Carta 6",
   "Astrolábio"];
 function celulaDeItem(chave, rotulo, item, sexo, legenda, slot) {
-  const celula = criar("div", `celula-item ${item ? "ocupada" : ""}`);
+  const celula = criar("div", `celula-item ${item ? "ocupada" : "vazia"}`);
   prepararArrasto(celula, chave, slot, item);
   if (legenda) celula.title = legenda;
   if (item) {
     const nome = item.nome || `Item ${item.id}`;
-    celula.title = `${legenda ? `${legenda}: ` : ""}${nome}${item.quantidade > 1 ? ` ×${item.quantidade}` : ""} (ID ${item.id}, slot ${item.slot})`;
-    if (item.icone) {
-      const img = criar("img");
-      img.src = `/api/icones/${sexo}/${item.icone}.png`;
-      img.alt = nome;
-      img.width = 32; img.height = 32;
-      img.addEventListener("error", () => img.replaceWith(criar("span", "sem-icone", nome.slice(0, 2))));
-      celula.append(img);
-    } else {
-      celula.append(criar("span", "sem-icone", nome.slice(0, 2)));
-    }
+    celula.title = `${legenda ? `${legenda}: ` : ""}${semCores(nome)}${item.quantidade > 1 ? ` ×${item.quantidade}` : ""} (ID ${item.id}, slot ${item.slot})`;
+    celula.append(imagemDoIcone(sexo, item.icone, nome));
     if (item.quantidade > 1) celula.append(criar("span", "qtd-item", fmt(item.quantidade)));
     celula.addEventListener("mouseenter", () => mostrarDica(chave, item, celula));
     celula.addEventListener("mouseleave", () => esconderDica());
     celula.addEventListener("click", () => abrirEdicaoDeItem(chave, rotulo, item, celula));
-  } else if (legenda) {
-    celula.append(criar("span", "rotulo-slot", legenda));
+  } else {
+    if (legenda) celula.append(criar("span", "rotulo-slot", legenda));
+    celula.addEventListener("click", (evento) => { evento.stopPropagation?.(); mostrarMenuDoSlot(celula, { chave, rotulo, slot, legenda }); });
   }
   return celula;
 }
+/* Slot vazio (B216): o menu "Criar item" ancorado na célula. */
+function mostrarMenuDoSlot(celula, destino) {
+  esconderDica();
+  estado.slotDoMenu = destino;
+  const menu = elemento("menu-slot");
+  menu.hidden = false;
+  const r = celula.getBoundingClientRect?.();
+  if (!r) return;
+  const largura = menu.offsetWidth || 160;
+  menu.style.left = `${Math.max(8, Math.min(r.left, (window.innerWidth || 1200) - largura - 8))}px`;
+  menu.style.top = `${r.bottom + 4}px`;
+}
+function esconderMenuDoSlot() { elemento("menu-slot").hidden = true; }
+
 /* Arrastar (B191): HTML5 drag-and-drop entre as janelas. Soltar num slot troca com o que estiver
    lá, pelos mesmos caminhos do jogo (o GS confere par, posição no corpo e requisitos). */
 let arrasto = null;
@@ -903,7 +1073,7 @@ function prepararArrasto(celula, chave, slot, item) {
   if (item) {
     celula.draggable = true;
     celula.addEventListener("dragstart", (evento) => {
-      arrasto = { recipiente: chave, slot: item.slot, id: item.id, nome: item.nome || `Item ${item.id}` };
+      arrasto = { recipiente: chave, slot: item.slot, id: item.id, nome: semCores(item.nome) || `Item ${item.id}` };
       evento.dataTransfer?.setData?.("text/plain", arrasto.nome);
       if (evento.dataTransfer) evento.dataTransfer.effectAllowed = "move";
       esconderDica();
@@ -928,7 +1098,7 @@ function prepararArrasto(celula, chave, slot, item) {
 }
 function moverItem(origem, para, slot) {
   const nomes = Object.fromEntries(RECIPIENTES);
-  editarPersonagem({ mover_item: { de: origem.recipiente, slot_de: origem.slot, id: origem.id, para, slot_para: slot } },
+  return editarPersonagem({ mover_item: { de: origem.recipiente, slot_de: origem.slot, id: origem.id, para, slot_para: slot } },
     `${origem.nome}: ${nomes[origem.recipiente]} ${origem.slot} → ${nomes[para]} ${slot}`);
 }
 
@@ -951,7 +1121,7 @@ function linhaColorida(texto) {
 async function mostrarDica(chave, item, celula) {
   const realm = estado.selecionado;
   const id = estado.personagemId;
-  if (!realm || !id) return;
+  if (!realm || !id || !elemento("menu-slot").hidden) return;
   const caixa = elemento("dica-item");
   const marca = `${realm.id}:${id}:${chave}:${item.slot}:${item.id}`;
   const minha = ++dicaPedida;
@@ -990,7 +1160,7 @@ function esconderDica() {
 const SLOTS_DE_ROUPA = [13, 14, 15, 16, 25, 29];
 const JANELAS_DE_ITENS = { bolsa: "janela-bolsa", armazem: "janela-armazem", missao: "janela-missao" };
 function gradeDeItens(chave, rotulo, slots, porSlot, sexo) {
-  const grade = criar("div", "grade-itens");
+  const grade = criar("div", `grade-itens ${chave === "equipamento" ? "grade-corpo" : ""}`);
   for (const s of slots) {
     const legenda = chave === "equipamento" ? (SLOTS_DE_EQUIPAMENTO[s] || `Slot ${s}`) : "";
     grade.append(celulaDeItem(chave, rotulo, porSlot.get(s), sexo, legenda, s));
@@ -1002,14 +1172,15 @@ function alvosDeItens() {
   return ["janela-equipamento", "janela-roupas", ...Object.values(JANELAS_DE_ITENS)].map(elemento);
 }
 async function carregarInventario(realm, id) {
-  cancelarRemocao();
   dicas.clear();
   esconderDica();
+  esconderMenuDoSlot();
   for (const alvo of alvosDeItens()) alvo.replaceChildren(criar("p", "nota-vazia", "Carregando itens…"));
   try {
     const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/inventario`);
     if (estado.personagemId !== id) return;
     const sexo = dados.sexo === "f" ? "f" : "m";
+    estado.sexoDaFicha = sexo;
     for (const [chave, rotulo] of RECIPIENTES) {
       const itens = dados.recipientes?.[chave] || [];
       const porSlot = new Map(itens.map((i) => [i.slot, i]));
@@ -1020,346 +1191,19 @@ async function carregarInventario(realm, id) {
         elemento("janela-roupas").replaceChildren(gradeDeItens(chave, rotulo, SLOTS_DE_ROUPA, porSlot, sexo));
         continue;
       }
-      const total = Math.max(32, Math.ceil(maior / 8) * 8);
-      const alvo = elemento(JANELAS_DE_ITENS[chave]);
-      alvo.replaceChildren(criar("p", "texto-suave", `${itens.length} ite${itens.length === 1 ? "m" : "ns"}`),
-        gradeDeItens(chave, rotulo, intervalo(total), porSlot, sexo));
+      const total = Math.max(TAMANHOS[chave], Math.ceil(maior / 8) * 8);
+      const resumo = criar("p", "resumo-grade");
+      resumo.append(criar("span", "", `${itens.length} de ${TAMANHOS[chave]} ocupados`), criar("span", "texto-suave", "slot vazio: criar item"));
+      elemento(JANELAS_DE_ITENS[chave]).replaceChildren(resumo, gradeDeItens(chave, rotulo, intervalo(total), porSlot, sexo));
     }
   } catch (erro) {
     for (const alvo of alvosDeItens()) alvo.replaceChildren(criar("p", "nota-vazia", `Itens indisponíveis: ${erro.message}`));
   }
 }
 
-/* Habilidades (B195): as aprendidas, do banco (a fonte do GS), com o nome do `skillstr.txt` e o
-   ícone do atlas `IconList_Skill` do cliente; o nível no canto, como na janela do jogo. */
-async function carregarHabilidades(realm, id) {
-  const alvo = elemento("janela-habilidades");
-  alvo.replaceChildren(criar("p", "nota-vazia", "Carregando habilidades…"));
-  try {
-    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/habilidades`);
-    if (estado.personagemId !== id) return;
-    const lista = dados.habilidades || [];
-    const grade = criar("div", "grade-itens");
-    for (const h of lista) {
-      const celula = criar("div", "celula-item ocupada");
-      celula.title = `${h.nome} · nível ${h.nivel}${h.nivel_maximo ? `/${h.nivel_maximo}` : ""} (ID ${h.id})`;
-      if (h.icone) {
-        const img = criar("img");
-        img.src = `/api/icones/habilidade/${h.icone}.png`;
-        img.alt = h.nome; img.width = 32; img.height = 32;
-        img.addEventListener("error", () => img.replaceWith(criar("span", "sem-icone", h.nome.slice(0, 2))));
-        celula.append(img);
-      } else {
-        celula.append(criar("span", "sem-icone", h.nome.slice(0, 2)));
-      }
-      celula.append(criar("span", "qtd-item", String(h.nivel)));
-      celula.addEventListener("click", () => escolherHabilidade(h, celula));
-      grade.append(celula);
-    }
-    alvo.replaceChildren(criar("p", "texto-suave", `${lista.length} habilidade${lista.length === 1 ? "" : "s"}`), grade);
-  } catch (erro) {
-    alvo.replaceChildren(criar("p", "nota-vazia", `Habilidades indisponíveis: ${erro.message}`));
-  }
-}
-
-/* Editar habilidade (B196): clicar na habilidade abre a linha de nível (Aplicar define o nível —
-   subir ou descer —, Remover tira); "Ensinar" busca no cliente e dá no nível escolhido. O GS manda
-   o `LEARN_SKILL` em jogo, nas duas versões (no 1.2.6 desde o B215). */
-function escolherHabilidade(h, celula) {
-  estado.habilidade = h;
-  for (const outra of document.querySelectorAll?.("#janela-habilidades .escolhido") || []) outra.classList.remove("escolhido");
-  celula.classList.add("escolhido");
-  elemento("hab-qual").textContent = `${h.nome} (ID ${h.id})`;
-  elemento("hab-nivel").value = String(h.nivel);
-  elemento("hab-nivel").max = String(h.nivel_maximo || 255);
-  elemento("form-habilidade").hidden = false;
-}
-async function aplicarHabilidade(nivel) {
-  const h = estado.habilidade;
-  if (!h) return;
-  const n = Math.trunc(Number(nivel));
-  if (!Number.isFinite(n) || n < 0 || n > (h.nivel_maximo || 255)) {
-    alerta("erro", "Nível inválido", `De 1 a ${h.nivel_maximo || 255}.`); return;
-  }
-  const r = await editarPersonagem({ habilidade: { id: h.id, nivel: n } },
-    n ? `${h.nome}: nível ${n}` : `${h.nome}: removida`);
-  if (r === "aplicado" || r === "salvo") { elemento("form-habilidade").hidden = true; estado.habilidade = null; }
-}
-let buscaDeHabilidade = 0;
-async function buscarHabilidade() {
-  const texto = elemento("hab-busca").value.trim();
-  const lista = elemento("hab-resultados");
-  estado.habilidadeEscolhida = null;
-  elemento("hab-escolhida").textContent = "";
-  if (texto.length < 2 && !/^\d+$/.test(texto)) { lista.hidden = true; return; }
-  const minha = ++buscaDeHabilidade;
-  try {
-    const dados = await api(`/api/habilidades?busca=${encodeURIComponent(texto)}`);
-    if (minha !== buscaDeHabilidade) return;
-    lista.replaceChildren();
-    for (const h of dados.habilidades) {
-      const linha = criar("li");
-      linha.append(criar("span", "", h.nome), criar("small", "", `ID ${h.id} · até nível ${h.nivel_maximo ?? "?"}`));
-      linha.addEventListener("click", () => {
-        estado.habilidadeEscolhida = h;
-        for (const outra of lista.children) outra.classList?.remove("escolhido");
-        linha.classList.add("escolhido");
-        elemento("hab-nivel-novo").max = String(h.nivel_maximo || 255);
-        elemento("hab-escolhida").textContent = `Escolhida: ${h.nome} (ID ${h.id}, até nível ${h.nivel_maximo ?? "?"}).`;
-      });
-      lista.append(linha);
-    }
-    if (!dados.habilidades.length) lista.append(criar("li", "dica", "Nenhuma habilidade com esse nome."));
-    lista.hidden = false;
-  } catch (erro) {
-    lista.replaceChildren(criar("li", "dica", erro.message));
-    lista.hidden = false;
-  }
-}
-async function ensinarHabilidade() {
-  const texto = elemento("hab-busca").value.trim();
-  const h = estado.habilidadeEscolhida || (/^\d+$/.test(texto) ? { id: Number(texto), nome: `Habilidade ${texto}` } : null);
-  if (!h) { alerta("erro", "Escolha a habilidade", "Busque pelo nome e clique nela, ou digite o ID."); return; }
-  const n = Math.trunc(Number(elemento("hab-nivel-novo").value));
-  if (!Number.isFinite(n) || n < 1 || n > (h.nivel_maximo || 255)) { alerta("erro", "Nível inválido", `De 1 a ${h.nivel_maximo || 255}.`); return; }
-  await editarPersonagem({ habilidade: { id: h.id, nivel: n } }, `${h.nome}: nível ${n}`);
-}
-
-/* Mascotes (B197): a jaula com o ícone do modelo (`IconList_Pet`), nível e qual está invocado.
-   Clicar abre a edição dos campos do registro; "Libertar" tira da jaula. Em jogo o GS manda
-   `PET_ROOM`/`FREE_PET`; o mascote invocado não se edita por fora. */
-/* E6 (B215): o Daimon vestido (slot 23) — a ficha do bloco do item, em jogo (memória) ou no banco;
-   "Dar EXP" segue a regra do jogo (`InsertExp`): sobe quantos níveis couberem, sem passar o dono. */
-async function carregarDaimon(realm, id) {
-  const alvo = elemento("janela-daimon");
-  elemento("form-daimon").hidden = true;
-  alvo.replaceChildren(criar("p", "nota-vazia", "Carregando Daimon…"));
-  try {
-    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/daimon`);
-    if (estado.personagemId !== id) return;
-    const d = dados.daimon;
-    if (!d) { alvo.replaceChildren(criar("p", "nota-vazia", "Sem Daimon vestido.")); return; }
-    const linha = (rotulo, valor) => { const p = criar("p", "linha-daimon"); p.append(criar("span", "", rotulo), criar("strong", "", String(valor))); return p; };
-    const titulo = criar("p", "titulo-daimon", `${d.nome || `Daimon ${d.item_id}`} · nível ${d.nivel}`);
-    const origem = criar("small", "texto-suave", d.origem === "em_jogo" ? "em jogo" : "gravado");
-    alvo.replaceChildren(titulo, origem,
-      linha("EXP", `${Number(d.exp).toLocaleString("pt-BR")} / ${Number(d.exp_para_subir).toLocaleString("pt-BR")}`),
-      linha("Força · Agilidade · Vitalidade · Energia", `${d.forca} · ${d.agilidade} · ${d.vitalidade} · ${d.energia}`),
-      linha("Pontos de atributo livres", d.pontos_livres),
-      linha("Gênios (5)", (d.genios || []).join(" · ")),
-      linha("Pontos de gênio livres", d.pontos_de_genio),
-      linha("Refino · Vigor", `${d.refino} · ${d.vigor}`),
-      linha("Habilidades", (d.habilidades || []).map((h) => `${h.nome} ${h.nivel}`).join(", ") || "—"));
-    elemento("form-daimon").hidden = false;
-  } catch (erro) {
-    alvo.replaceChildren(criar("p", "nota-vazia", `Daimon indisponível: ${erro.message}`));
-  }
-}
-async function darExpAoDaimon() {
-  const n = Math.trunc(Number(elemento("daimon-exp").value));
-  if (!(n >= 1 && n <= 2000000000)) { alerta("erro", "EXP inválida", "De 1 a 2.000.000.000."); return; }
-  const r = await editarPersonagem({ daimon_exp: n }, `Daimon: +${n.toLocaleString("pt-BR")} de EXP`);
-  if (r && estado.selecionado) carregarDaimon(estado.selecionado, estado.personagemId);
-}
-
-async function carregarMascotes(realm, id) {
-  const alvo = elemento("janela-mascotes");
-  elemento("form-mascote").hidden = true;
-  estado.mascote = null;
-  alvo.replaceChildren(criar("p", "nota-vazia", "Carregando mascotes…"));
-  try {
-    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/mascotes`);
-    if (estado.personagemId !== id) return;
-    alvo.replaceChildren();
-    for (const m of dados.mascotes || []) {
-      const cartao = criar("button", "cartao-mascote");
-      cartao.type = "button";
-      const icone = criar("span", "celula-item ocupada");
-      if (m.icone) {
-        const img = criar("img"); img.src = `/api/icones/mascote/${m.icone}.png`; img.alt = m.modelo || "";
-        img.width = 32; img.height = 32;
-        img.addEventListener("error", () => img.replaceWith(criar("span", "sem-icone", (m.nome || "?").slice(0, 2))));
-        icone.append(img);
-      }
-      const texto = criar("span");
-      texto.append(document.createTextNode(m.nome || m.modelo || `Mascote ${m.tid}`),
-        criar("small", "", `${m.modelo || `Modelo ${m.tid}`} · slot ${m.slot}`));
-      const lado = criar("span", m.invocado ? "etiqueta" : "etiqueta etiqueta-neutra", m.invocado ? "Invocado" : `Nv. ${m.nivel}`);
-      cartao.append(icone, texto, lado);
-      cartao.addEventListener("click", () => escolherMascote(m, cartao));
-      alvo.append(cartao);
-    }
-    if (!(dados.mascotes || []).length) alvo.append(criar("p", "nota-vazia", "Jaula vazia."));
-  } catch (erro) {
-    alvo.replaceChildren(criar("p", "nota-vazia", `Mascotes indisponíveis: ${erro.message}`));
-  }
-}
-function escolherMascote(m, cartao) {
-  estado.mascote = m;
-  for (const outro of document.querySelectorAll?.("#janela-mascotes .escolhido") || []) outro.classList.remove("escolhido");
-  cartao.classList.add("escolhido");
-  elemento("mascote-qual").textContent = `${m.nome || m.modelo} (slot ${m.slot}${m.invocado ? ", invocado — recolha antes de editar" : ""})`;
-  for (const [campo, alvo] of [["nivel", "pet-nivel"], ["exp", "pet-exp"], ["lealdade", "pet-lealdade"], ["fome", "pet-fome"], ["pontos", "pet-pontos"]]) {
-    elemento(alvo).value = String(m[campo] ?? 0);
-  }
-  if (m.nivel_maximo) elemento("pet-nivel").max = String(m.nivel_maximo);
-  elemento("pet-nome").value = m.nome || "";
-  elemento("pet-habilidades").value = (m.habilidades || []).map((h) => `${h.id}:${h.nivel}`).join(", ");
-  elemento("form-mascote").hidden = false;
-}
-async function salvarMascote(libertar = false) {
-  const m = estado.mascote;
-  if (!m) return;
-  let edicao;
-  if (libertar) {
-    const sim = await confirmar("Libertar mascote", `${m.nome || m.modelo} sai da jaula.`, "Libertar");
-    if (!sim) return;
-    edicao = { libertar: true };
-  } else {
-    edicao = {};
-    for (const [campo, alvo] of [["nivel", "pet-nivel"], ["exp", "pet-exp"], ["lealdade", "pet-lealdade"], ["fome", "pet-fome"], ["pontos", "pet-pontos"]]) {
-      const v = Math.trunc(Number(elemento(alvo).value));
-      if (v !== (m[campo] ?? 0)) edicao[campo] = v;
-    }
-    const nome = elemento("pet-nome").value.trim();
-    if (nome && nome !== (m.nome || "")) edicao.nome = nome;
-    const habilidades = elemento("pet-habilidades").value.split(",").map((x) => x.trim()).filter(Boolean)
-      .map((x) => x.split(":").map((v) => Math.trunc(Number(v))));
-    if (JSON.stringify(habilidades) !== JSON.stringify((m.habilidades || []).map((h) => [h.id, h.nivel]))) edicao.habilidades = habilidades;
-    if (!Object.keys(edicao).length) { alerta("aviso", "Nada mudou", "Altere algum campo antes de salvar."); return; }
-  }
-  const r = await editarPersonagem({ mascote: { slot: m.slot, tid: m.tid, edicao } },
-    `${m.nome || m.modelo}: ${libertar ? "libertado" : Object.keys(edicao).join(", ")}`);
-  if (r === "aplicado" || r === "salvo") elemento("form-mascote").hidden = true;
-}
-
-/* Missões (B198): ativas (topo e filha atual) e concluídas, com o nome do tasks.data. Dar é livre
-   (sem pré-requisitos); concluir força o sucesso (missão de NPC fica pronta para entregar, a direta
-   premia); cancelar apaga sem prêmio de falha; esquecer tira das concluídas para refazer (só fora
-   do jogo — o painel oferece desconectar). */
-const PAGINA_DE_CONCLUIDAS = 200;
-let buscaDeMissao = 0;
-function rotuloDaMissao(m) { return m.nome || `Missão ${m.id}`; }
-async function carregarMissoes(realm, id, pagina = estado.paginaDeMissoes || 0) {
-  const ativas = elemento("missoes-ativas");
-  const concluidas = elemento("missoes-concluidas");
-  elemento("form-missao").hidden = true;
-  estado.missao = null;
-  estado.paginaDeMissoes = pagina;
-  ativas.replaceChildren(criar("p", "nota-vazia", "Carregando missões…"));
-  const filtro = elemento("mis-filtro").value.trim();
-  try {
-    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/missoes?pagina=${pagina}`
-      + (filtro ? `&busca=${encodeURIComponent(filtro)}` : ""));
-    if (estado.personagemId !== id) return;
-    ativas.replaceChildren();
-    const porId = new Map((dados.ativas || []).map((m) => [m.id, m]));
-    for (const m of dados.ativas || []) {
-      const linha = criar("button", m.pai ? "linha-missao filha" : "linha-missao");
-      linha.type = "button";
-      const texto = criar("span");
-      const abates = (m.abates || []).map(([feitos, pedidos]) => `${feitos}/${pedidos}`).join(" · ");
-      texto.append(document.createTextNode(rotuloDaMissao(m)),
-        criar("small", "", `ID ${m.id}${m.pai ? ` · de ${rotuloDaMissao(porId.get(m.pai) || { id: m.pai })}` : ""}${abates ? ` · abates ${abates}` : ""}`));
-      const situacao = m.finalizada ? (m.sucesso ? ["Pronta", "etiqueta"] : ["Falhou", "etiqueta etiqueta-erro"]) : ["Em curso", "etiqueta etiqueta-neutra"];
-      linha.append(texto, criar("span", situacao[1], situacao[0]));
-      linha.addEventListener("click", () => escolherMissao(m, linha));
-      ativas.append(linha);
-    }
-    if (!(dados.ativas || []).length) ativas.append(criar("p", "nota-vazia", "Nenhuma missão ativa."));
-    concluidas.replaceChildren();
-    for (const m of dados.concluidas || []) {
-      const linha = criar("div", "linha-missao");
-      const texto = criar("span");
-      texto.append(document.createTextNode(rotuloDaMissao(m)), criar("small", "", `ID ${m.id}${m.vezes ? ` · ${m.vezes}×` : ""}`));
-      const esquecer = criar("button", "botao botao-secundario", "Esquecer");
-      esquecer.type = "button";
-      esquecer.title = "Tirar das concluídas para poder refazer";
-      esquecer.addEventListener("click", () => acaoDeMissao("esquecer", m));
-      linha.append(texto, criar("span", m.falhou ? "etiqueta etiqueta-erro" : "etiqueta etiqueta-ouro", m.falhou ? "Falhou" : "Concluída"), esquecer);
-      concluidas.append(linha);
-    }
-    const total = dados.total_concluidas || 0;
-    if (!total) concluidas.append(criar("p", "nota-vazia", filtro ? "Nenhuma concluída com esse filtro." : "Nenhuma missão concluída."));
-    const paginas = Math.max(1, Math.ceil(total / PAGINA_DE_CONCLUIDAS));
-    elemento("mis-total").textContent = `(${total})`;
-    elemento("mis-pagina").textContent = `${pagina + 1} de ${paginas}`;
-    elemento("mis-anterior").disabled = pagina <= 0;
-    elemento("mis-proxima").disabled = pagina + 1 >= paginas;
-    elemento("paginacao-missoes").hidden = paginas <= 1;
-  } catch (erro) {
-    ativas.replaceChildren(criar("p", "nota-vazia", `Missões indisponíveis: ${erro.message}`));
-  }
-}
-function escolherMissao(m, linha) {
-  estado.missao = m;
-  for (const outra of document.querySelectorAll?.("#missoes-ativas .escolhido") || []) outra.classList.remove("escolhido");
-  linha.classList.add("escolhido");
-  elemento("mis-qual").textContent = `${rotuloDaMissao(m)} (ID ${m.id})`;
-  elemento("mis-concluir").disabled = !!m.finalizada;
-  elemento("mis-cancelar").disabled = !!m.pai;
-  elemento("mis-cancelar").title = m.pai ? "Cancele a missão principal" : "";
-  elemento("form-missao").hidden = false;
-}
-async function acaoDeMissao(acao, m) {
-  if (!m) return;
-  const nome = rotuloDaMissao(m);
-  if (acao === "cancelar" && !(await confirmar("Cancelar missão", `${nome} sai da lista, com as etapas, sem prêmio.`, "Cancelar missão"))) return;
-  if (acao === "esquecer" && !(await confirmar("Esquecer conclusão", `${nome} sai das concluídas e pode ser feita de novo.`, "Esquecer"))) return;
-  const corpo = { acao, id: m.id };
-  if (acao === "dar" && m.sub) corpo.sub = m.sub;
-  const texto = { dar: "dada", concluir: "concluída", cancelar: "cancelada", esquecer: "esquecida" }[acao];
-  await editarPersonagem({ missao: corpo }, `${nome}: ${texto}`);
-}
-async function buscarMissao() {
-  const realm = estado.selecionado;
-  const texto = elemento("mis-busca").value.trim();
-  const lista = elemento("mis-resultados");
-  estado.missaoEscolhida = null;
-  elemento("mis-escolhida").textContent = "";
-  elemento("mis-sub").hidden = true;
-  if (!realm || (texto.length < 2 && !/^\d+$/.test(texto))) { lista.hidden = true; return; }
-  const minha = ++buscaDeMissao;
-  try {
-    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/missoes?busca=${encodeURIComponent(texto)}`);
-    if (minha !== buscaDeMissao) return;
-    lista.replaceChildren();
-    for (const m of dados.missoes || []) {
-      const linha = criar("li");
-      const [minimo, maximo] = m.nivel || [0, 0];
-      linha.append(criar("span", "", rotuloDaMissao(m)),
-        criar("small", "", `ID ${m.id}${minimo ? ` · nível ${minimo}${maximo ? `–${maximo}` : "+"}` : ""}${m.filhas ? ` · ${m.filhas} etapas` : ""}`));
-      linha.addEventListener("click", () => {
-        estado.missaoEscolhida = m;
-        for (const outra of lista.children) outra.classList?.remove("escolhido");
-        linha.classList.add("escolhido");
-        const sub = elemento("mis-sub");
-        sub.replaceChildren(...(m.escolha || []).map((s) => { const o = criar("option", "", rotuloDaMissao(s)); o.value = String(s.id); return o; }));
-        sub.hidden = !(m.escolha || []).length;
-        elemento("mis-escolhida").textContent = `Escolhida: ${rotuloDaMissao(m)} (ID ${m.id})${sub.hidden ? "" : " — escolha a etapa"}.`;
-      });
-      lista.append(linha);
-    }
-    if (!(dados.missoes || []).length) lista.append(criar("li", "dica", "Nenhuma missão com esse nome."));
-    lista.hidden = false;
-  } catch (erro) {
-    lista.replaceChildren(criar("li", "dica", erro.message));
-    lista.hidden = false;
-  }
-}
-async function darMissao() {
-  const texto = elemento("mis-busca").value.trim();
-  const m = estado.missaoEscolhida || (/^\d+$/.test(texto) ? { id: Number(texto) } : null);
-  if (!m) { alerta("erro", "Escolha a missão", "Busque pelo nome e clique nela, ou digite o ID."); return; }
-  const sub = elemento("mis-sub");
-  await acaoDeMissao("dar", { ...m, sub: sub.hidden ? undefined : Number(sub.value) });
-}
-
-/* Remover (B187): clicar no item abre a barra com a quantidade (a pilha inteira por padrão).
-   Em jogo só bolsa e bolsa de missão; equipamento e armazém só com o personagem offline. */
-/* Editar item (B194): o modal abre com o detalhe do slot (a mesma consulta da dica) e manda
-   só os campos que mudaram; o GS confere o formato e regrava o bloco. "Remover…" leva à barra
-   de remoção do B187. */
+/* Editar item (B194; B216 no modal largo): abre com o detalhe do slot (a mesma consulta da dica),
+   mostra a dica como o jogo e manda só os campos que mudaram; o GS confere o formato e regrava o
+   bloco. Remover (B187) fica no rodapé: em jogo só bolsa e bolsa de missão. */
 const CAMPOS_DE_REQUISITO = [["nivel", "ei-req-nivel"], ["forca", "ei-req-forca"], ["agilidade", "ei-req-agilidade"],
   ["vitalidade", "ei-req-vitalidade"], ["energia", "ei-req-energia"]];
 const ORIGEM_DO_EFEITO = 0x8000 | 0x10000 | 0x20000;
@@ -1422,7 +1266,7 @@ function seloDeHabilidade(h) {
   if (h.icone) {
     const img = criar("img");
     img.src = `/api/icones/habilidade/${h.icone}.png`;
-    img.alt = h.nome; img.width = 20; img.height = 20;
+    img.alt = h.nome; img.width = 24; img.height = 24;
     img.addEventListener("error", () => img.replaceWith(document.createTextNode("✦")));
     selo.append(img);
   } else {
@@ -1442,8 +1286,9 @@ function linhaDeEfeito(efeito = { id: "", args: [] }) {
   id.type = "number"; id.min = "1"; id.max = "8191"; id.value = efeito.id; id.placeholder = "id"; id.setAttribute("aria-label", "Id do efeito");
   const args = criar("input");
   args.value = (efeito.args || []).join(", "); args.placeholder = "parâmetros (até 3)"; args.setAttribute("aria-label", "Parâmetros do efeito");
-  const tirar = criar("button", "botao-icone", "✕");
-  tirar.type = "button"; tirar.setAttribute("aria-label", "Tirar efeito");
+  const tirar = criar("button", "botao-icone botao-icone-pequeno");
+  tirar.append(icone("lixeira"));
+  tirar.type = "button"; tirar.setAttribute("aria-label", "Tirar efeito"); tirar.title = "Tirar efeito";
   tirar.addEventListener("click", () => linha.remove());
   linha.append(id, args, tirar);
   const descricao = criar("small", "descricao-efeito", efeito.texto || "");
@@ -1475,9 +1320,14 @@ async function abrirEdicaoDeItem(chave, rotulo, item, celula) {
   const atual = dados.item || {};
   const equip = atual.equipamento || null;
   estado.itemEmEdicao = { chave, rotulo, item, atual };
-  elemento("titulo-item").textContent = atual.nome || `Item ${item.id}`;
-  elemento("resumo-item").textContent = `${rotulo}, slot ${item.slot} · ID ${item.id}`;
+  elemento("titulo-item").replaceChildren(textoPintado(atual.nome || `Item ${item.id}`));
+  elemento("resumo-item").textContent = `${rotulo}, slot ${item.slot} · ID ${item.id}${atual.pilha > 1 ? ` · pilha de ${fmt(atual.pilha)}` : ""}`;
+  elemento("ei-icone").replaceChildren(imagemDoIcone(estado.sexoDaFicha || "m", atual.icone || item.icone, atual.nome || ""));
+  elemento("ei-previa").replaceChildren(...(dados.linhas || []).map(linhaColorida));
   elemento("ei-quantidade").value = String(atual.quantidade ?? item.quantidade);
+  elemento("ei-quantidade").max = String(atual.pilha || 100000);
+  elemento("remover-quantidade").max = String(item.quantidade);
+  elemento("remover-quantidade").value = String(item.quantidade);
   elemento("ei-equipamento").hidden = !equip;
   if (equip) {
     elemento("ei-durabilidade").value = String(equip.durabilidade ?? 0);
@@ -1492,7 +1342,7 @@ async function abrirEdicaoDeItem(chave, rotulo, item, celula) {
     for (const [campo, alvo] of CAMPOS_DE_REQUISITO) elemento(alvo).value = String(req[campo] ?? 0);
     const classes = elemento("ei-classes");
     classes.replaceChildren(...(dados.classes || []).map((nome, i) => {
-      const rotuloClasse = criar("label");
+      const rotuloClasse = criar("label", "chip");
       const caixa = criar("input"); caixa.type = "checkbox"; caixa.value = String(i);
       caixa.checked = ((req.classes ?? 0xFFFF) & (1 << i)) !== 0;
       rotuloClasse.append(caixa, document.createTextNode(nome));
@@ -1508,12 +1358,9 @@ async function abrirEdicaoDeItem(chave, rotulo, item, celula) {
     elemento("ei-efeitos").replaceChildren(...linhas);
     informarEfeitos(linhas);
   }
-  elemento("modal-item").hidden = false;
+  abrirModal("modal-item");
 }
-function fecharEdicaoDeItem() {
-  elemento("modal-item").hidden = true;
-  estado.itemEmEdicao = null;
-}
+function fecharEdicaoDeItem() { fecharModal("modal-item"); }
 const inteiro = (alvo) => Math.trunc(Number(elemento(alvo).value));
 function lerEfeitos() {
   const lista = [];
@@ -1552,97 +1399,690 @@ async function salvarEdicaoDeItem() {
     const efeitosAntes = (equip.efeitos || []).filter((e) => !((e.tipo || 0) & ORIGEM_DO_EFEITO)).map((e) => ({ id: e.id, args: e.args || [] }));
     if (JSON.stringify(efeitos) !== JSON.stringify(efeitosAntes)) edicao.efeitos = efeitos;
   }
-  if (!Object.keys(edicao).length) { alerta("aviso", "Nada mudou", "Altere algum campo antes de salvar."); return; }
-  const nome = atual.nome || `Item ${em.item.id}`;
+  if (!Object.keys(edicao).length) { alerta("aviso", "Nada mudou", "Altere algum campo antes de salvar.", { toast: true }); return; }
+  const nome = semCores(atual.nome) || `Item ${em.item.id}`;
   const resultado = await editarPersonagem({ editar_item: { recipiente: em.chave, slot: em.item.slot, id: em.item.id, edicao } },
     `${nome}: ${Object.keys(edicao).join(", ")}`);
   if (resultado === "aplicado" || resultado === "salvo") fecharEdicaoDeItem();
 }
-
-function escolherParaRemover(chave, rotulo, item, linha) {
-  estado.remocao = { recipiente: chave, slot: item.slot, id: item.id, maximo: item.quantidade, nome: item.nome || `Item ${item.id}` };
-  for (const outra of document.querySelectorAll?.(".celula-item.escolhido") || []) outra.classList.remove("escolhido");
-  linha.classList.add("escolhido");
-  elemento("remover-qual").textContent = `${estado.remocao.nome} · ${rotulo}, slot ${item.slot} (×${fmt(item.quantidade)})`;
-  elemento("remover-quantidade").max = String(item.quantidade);
-  elemento("remover-quantidade").value = String(item.quantidade);
-  elemento("form-remover").hidden = false;
-}
-function cancelarRemocao() {
-  estado.remocao = null;
-  elemento("form-remover").hidden = true;
-}
+/* Remover (B187): do rodapé do modal, com a quantidade (a pilha inteira por padrão). */
 async function removerItem() {
-  const r = estado.remocao;
-  if (!r) return;
+  const em = estado.itemEmEdicao;
+  if (!em) return;
+  const maximo = em.item.quantidade;
+  const nome = semCores(em.atual.nome) || `Item ${em.item.id}`;
   const quantidade = Math.trunc(Number(elemento("remover-quantidade").value));
-  if (!Number.isFinite(quantidade) || quantidade < 1 || quantidade > r.maximo) { alerta("erro", "Valor inválido", `De 1 a ${fmt(r.maximo)}.`); return; }
-  const sim = await confirmar("Remover item?", `${fmt(quantidade)} × ${r.nome}. Não há como desfazer.`, "Remover");
+  if (!Number.isFinite(quantidade) || quantidade < 1 || quantidade > maximo) { alerta("erro", "Valor inválido", `De 1 a ${fmt(maximo)}.`); return; }
+  const sim = await confirmar("Remover item?", `${fmt(quantidade)} × ${nome}. Não há como desfazer.`, "Remover");
   if (!sim) { fecharAlerta(); return; }
-  cancelarRemocao();
-  await editarPersonagem({ remover_item: { recipiente: r.recipiente, slot: r.slot, id: r.id, quantidade } },
-    `Removido ${fmt(quantidade)} × ${r.nome}`);
+  fecharEdicaoDeItem();
+  await editarPersonagem({ remover_item: { recipiente: em.chave, slot: em.item.slot, id: em.item.id, quantidade } },
+    `Removido ${fmt(quantidade)} × ${nome}`);
 }
 
-let buscaDeItem = 0;
-async function buscarItem() {
+/* Criar item (B216): o slot vazio da bolsa, do armazém ou da bolsa de missão recebe uma pilha
+   gerada como o drop (`item` com `recipiente`/`slot`); o do corpo filtra pelo que veste nele
+   (`slot:N`) e o item nasce na bolsa, para arrastar. "Dar item" (sem slot) é o prêmio de missão:
+   qualquer quantidade, em lotes de uma pilha. */
+const CATEGORIAS_DE_ITEM = [["", "Todas as categorias"], ["arma", "Armas"], ["armadura", "Armaduras"], ["ornamento", "Ornamentos"],
+  ["roupa", "Roupas"], ["voo", "Voo"], ["municao", "Munição"], ["pocao", "Poções e amuletos"], ["material", "Materiais"],
+  ["pedra", "Pedras"], ["refino", "Refino"], ["missao", "Itens de missão"], ["mascote", "Mascotes"], ["habilidade", "Livros de habilidade"],
+  ["daimon", "Daimon"], ["outros", "Outros"]];
+const NOMES_DE_CATEGORIA = Object.fromEntries(CATEGORIAS_DE_ITEM);
+function abrirCriarItem(destino) {
+  estado.criacao = destino;
+  estado.itemParaCriar = null;
+  const categoria = elemento("ci-categoria");
+  const opcoes = destino.chave === "equipamento"
+    ? [[`slot:${destino.slot}`, `Veste em: ${destino.legenda}`], ...CATEGORIAS_DE_ITEM]
+    : CATEGORIAS_DE_ITEM;
+  categoria.replaceChildren(...opcoes.map(([v, n]) => { const o = criar("option", "", n); o.value = v; return o; }));
+  categoria.value = destino.chave === "equipamento" ? `slot:${destino.slot}` : (destino.chave === "missao" ? "missao" : "");
+  const nomes = Object.fromEntries(RECIPIENTES);
+  elemento("titulo-criar-item").textContent = destino.slot === undefined ? "Dar item" : "Criar item";
+  elemento("ci-destino").textContent = destino.slot === undefined
+    ? "Vai para a bolsa (item de missão, para a bolsa de missão), em lotes de uma pilha."
+    : destino.chave === "equipamento"
+      ? `${destino.legenda}: o item nasce na bolsa — depois arraste-o para o slot para vestir.`
+      : `${nomes[destino.chave]}, slot ${destino.slot}: uma pilha nasce neste slot.`;
+  elemento("ci-busca").value = "";
+  elemento("ci-quantidade").value = "1";
+  elemento("ci-escolhido").replaceChildren(criar("span", "texto-suave", "Escolha um item da lista."));
+  elemento("ci-resultados").replaceChildren();
+  abrirModal("modal-criar-item");
+  if (categoria.value) buscarParaCriar();
+}
+let buscaDeCriacao = 0;
+async function buscarParaCriar() {
   const realm = estado.selecionado;
-  const texto = elemento("item-busca").value.trim();
-  const lista = elemento("item-resultados");
-  estado.itemEscolhido = null;
-  elemento("item-escolhido").textContent = "";
-  if (!realm || texto.length < 2) { lista.hidden = true; return; }
-  const minha = ++buscaDeItem;
+  const texto = elemento("ci-busca").value.trim();
+  const categoria = elemento("ci-categoria").value;
+  const alvo = elemento("ci-resultados");
+  if (!realm || (!categoria && texto.length < 2 && !/^\d+$/.test(texto))) {
+    alvo.replaceChildren(criar("p", "nota-vazia", "Digite o nome ou o ID, ou escolha uma categoria."));
+    return;
+  }
+  const minha = ++buscaDeCriacao;
+  alvo.replaceChildren(criar("p", "nota-vazia", "Buscando…"));
   try {
-    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/itens?busca=${encodeURIComponent(texto)}`);
-    if (minha !== buscaDeItem) return;
-    lista.replaceChildren();
-    for (const item of dados.itens) {
-      const linha = criar("li");
-      linha.append(criar("span", "", item.nome || `Item ${item.id}`),
-        criar("small", "", `ID ${item.id} · pilha ${item.pilha}${item.missao ? " · missão" : ""}`));
-      linha.addEventListener("click", () => escolherItem(item, linha));
-      lista.append(linha);
-    }
-    if (!dados.itens.length) lista.append(criar("li", "dica", "Nenhum item com esse nome."));
-    lista.hidden = false;
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/itens?busca=${encodeURIComponent(texto)}`
+      + (categoria ? `&categoria=${encodeURIComponent(categoria)}` : ""));
+    if (minha !== buscaDeCriacao) return;
+    alvo.replaceChildren(...(dados.itens || []).map((item) => cartaoDeResultado(
+      imagemDoIcone(estado.sexoDaFicha || "m", item.icone, item.nome || ""), item.nome || `Item ${item.id}`,
+      `ID ${item.id} · ${NOMES_DE_CATEGORIA[item.categoria] || item.categoria || "—"} · pilha ${fmt(item.pilha)}${item.missao ? " · missão" : ""}`,
+      (cartao) => escolherParaCriar(item, cartao))));
+    if (!(dados.itens || []).length) alvo.append(criar("p", "nota-vazia", "Nenhum item encontrado."));
   } catch (erro) {
-    lista.replaceChildren(criar("li", "dica", erro.message));
-    lista.hidden = false;
+    alvo.replaceChildren(criar("p", "nota-vazia", erro.message));
   }
 }
-function escolherItem(item, linha) {
-  estado.itemEscolhido = item;
-  for (const outra of elemento("item-resultados").children) outra.classList?.remove("escolhido");
-  linha.classList.add("escolhido");
-  elemento("item-escolhido").textContent = `Escolhido: ${item.nome || "Item"} (ID ${item.id}, pilha ${item.pilha}${item.missao ? ", vai à bolsa de missão" : ""}).`;
+/* Um cartão clicável de resultado de busca (ícone, nome pintado, detalhe). */
+function cartaoDeResultado(figura, nome, detalhe, escolher) {
+  const cartao = criar("button", "cartao-resultado");
+  cartao.type = "button";
+  const texto = criar("span", "texto-resultado");
+  texto.append(textoPintado(nome, "nome-resultado"), criar("small", "", detalhe));
+  cartao.append(criar("span", "figura-resultado"), texto);
+  cartao.firstChild.append(figura);
+  cartao.addEventListener("click", () => {
+    for (const outro of cartao.parentNode?.children || []) outro.classList?.remove("escolhido");
+    cartao.classList.add("escolhido");
+    escolher(cartao);
+  });
+  return cartao;
 }
-async function darItem() {
-  const texto = elemento("item-busca").value.trim();
-  const id = estado.itemEscolhido?.id ?? (/^\d+$/.test(texto) ? Number(texto) : null);
-  const quantidade = Math.trunc(Number(elemento("item-quantidade").value));
-  if (!id) { alerta("erro", "Escolha o item", "Busque pelo nome e clique no item, ou digite o ID."); return; }
-  if (!Number.isFinite(quantidade) || quantidade < 1 || quantidade > 100_000) { alerta("erro", "Valor inválido", "Quantidade de 1 a 100.000."); return; }
-  const nome = estado.itemEscolhido?.nome || `item ${id}`;
-  await editarPersonagem({ item: { id, quantidade } }, `Dado ${quantidade.toLocaleString("pt-BR")} × ${nome}`);
+function escolherParaCriar(item) {
+  estado.itemParaCriar = item;
+  const destino = estado.criacao || {};
+  const quantidade = elemento("ci-quantidade");
+  const comSlot = destino.slot !== undefined && destino.chave !== "equipamento";
+  quantidade.max = String(comSlot ? item.pilha || 1 : 100000);
+  if (Number(quantidade.value) > Number(quantidade.max)) quantidade.value = quantidade.max;
+  const resumo = criar("span", "escolhido-linha");
+  resumo.append(imagemDoIcone(estado.sexoDaFicha || "m", item.icone, item.nome || ""), textoPintado(item.nome || `Item ${item.id}`),
+    criar("small", "texto-suave", `ID ${item.id}${comSlot ? ` · até ${fmt(item.pilha)} (uma pilha)` : ""}`));
+  elemento("ci-escolhido").replaceChildren(resumo);
+}
+async function criarItem() {
+  const item = estado.itemParaCriar;
+  const destino = estado.criacao || {};
+  if (!item) { alerta("erro", "Escolha o item", "Busque e clique num item da lista."); return; }
+  const quantidade = Math.trunc(Number(elemento("ci-quantidade").value));
+  const comSlot = destino.slot !== undefined && destino.chave !== "equipamento";
+  const maximo = comSlot ? (item.pilha || 1) : 100_000;
+  if (!Number.isFinite(quantidade) || quantidade < 1 || quantidade > maximo) { alerta("erro", "Quantidade inválida", `De 1 a ${fmt(maximo)}.`); return; }
+  const nome = semCores(item.nome) || `item ${item.id}`;
+  const pedido = { id: item.id, quantidade, ...(comSlot ? { recipiente: destino.chave, slot: destino.slot } : {}) };
+  const nomes = Object.fromEntries(RECIPIENTES);
+  const r = await editarPersonagem({ item: pedido },
+    comSlot ? `Criado ${fmt(quantidade)} × ${nome} em ${nomes[destino.chave]}, slot ${destino.slot}` : `Dado ${fmt(quantidade)} × ${nome}`);
+  if (r === "aplicado" || r === "salvo") fecharModal("modal-criar-item");
 }
 
-function editarPontos() {
-  const valor = Math.trunc(Number(elemento("pontos-valor").value));
-  if (!Number.isFinite(valor) || valor < 1 || valor > 10_000) { alerta("erro", "Valor inválido", "Informe de 1 a 10.000 pontos."); return; }
-  editarPersonagem({ pontos: valor }, `Dados ${valor.toLocaleString("pt-BR")} pontos livres`);
+/* ---------------- Habilidades (B195–B196; B216) ----------------
+   As aprendidas, do banco (a fonte do GS), com o nome do `skillstr.txt` e o ícone do atlas
+   `IconList_Skill`; o nível no canto, como na janela do jogo. Clicar abre o modal do nível
+   (subir, descer ou remover); "Dar habilidade" busca no cliente por nome, ID e classe. O GS manda
+   o `LEARN_SKILL` em jogo, nas duas versões. */
+async function carregarHabilidades(realm, id) {
+  const alvo = elemento("janela-habilidades");
+  alvo.replaceChildren(criar("p", "nota-vazia", "Carregando habilidades…"));
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/habilidades`);
+    if (estado.personagemId !== id) return;
+    const lista = dados.habilidades || [];
+    estado.habilidadesDaFicha = lista;
+    const grade = criar("div", "grade-itens grade-habilidades");
+    for (const h of lista) {
+      const celula = criar("button", "celula-item ocupada");
+      celula.type = "button";
+      celula.title = `${h.nome} · nível ${h.nivel}${h.nivel_maximo ? `/${h.nivel_maximo}` : ""} (ID ${h.id})`;
+      celula.append(imagemDoIcone("habilidade", h.icone, h.nome), criar("span", "qtd-item", String(h.nivel)));
+      celula.addEventListener("click", () => abrirHabilidade(h, true));
+      grade.append(celula);
+    }
+    const resumo = criar("p", "resumo-grade");
+    resumo.append(criar("span", "", `${lista.length} habilidade${lista.length === 1 ? "" : "s"}`), criar("span", "texto-suave", "clique para editar"));
+    alvo.replaceChildren(resumo, grade);
+    if (!lista.length) alvo.append(criar("p", "nota-vazia", "Nenhuma habilidade aprendida."));
+  } catch (erro) {
+    alvo.replaceChildren(criar("p", "nota-vazia", `Habilidades indisponíveis: ${erro.message}`));
+  }
+}
+/* `possuida`: a do personagem (nível atual, remover); senão, ensinar a do catálogo. */
+function abrirHabilidade(h, possuida) {
+  const atual = possuida ? h : (estado.habilidadesDaFicha || []).find((x) => x.id === h.id);
+  estado.habilidade = { ...h, possuida: Boolean(atual), nivel: atual?.nivel };
+  elemento("hab-qual").textContent = h.nome;
+  elemento("hab-icone").replaceChildren(imagemDoIcone("habilidade", h.icone, h.nome));
+  elemento("hab-detalhe").textContent = `ID ${h.id} · nível máximo ${h.nivel_maximo ?? "?"}`
+    + (atual ? ` · o personagem tem no nível ${atual.nivel}` : " · o personagem ainda não tem");
+  elemento("hab-nivel").max = String(h.nivel_maximo || 255);
+  elemento("hab-nivel").value = String(atual?.nivel || 1);
+  elemento("hab-remover").hidden = !atual;
+  elemento("hab-aplicar").textContent = atual ? "Aplicar nível" : "Ensinar";
+  fecharModal("modal-busca-habilidade");
+  abrirModal("modal-habilidade");
+}
+async function aplicarHabilidade(nivel) {
+  const h = estado.habilidade;
+  if (!h) return;
+  const n = Math.trunc(Number(nivel));
+  if (!Number.isFinite(n) || n < 0 || n > (h.nivel_maximo || 255) || (n === 0 && !h.possuida)) {
+    alerta("erro", "Nível inválido", `De 1 a ${h.nivel_maximo || 255}.`); return;
+  }
+  if (n === 0 && !(await confirmar("Remover habilidade?", `${h.nome} sai das habilidades do personagem.`, "Remover"))) return;
+  const r = await editarPersonagem({ habilidade: { id: h.id, nivel: n } },
+    n ? `${h.nome}: ${h.possuida ? "nível" : "ensinada no nível"} ${n}` : `${h.nome}: removida`);
+  if (r === "aplicado" || r === "salvo") { fecharModal("modal-habilidade"); estado.habilidade = null; }
+}
+async function abrirBuscaDeHabilidade() {
+  elemento("hb-busca").value = "";
+  elemento("hb-resultados").replaceChildren(criar("p", "nota-vazia", "Digite o nome ou o ID, ou escolha a classe."));
+  await preencherGruposDeHabilidade(elemento("hb-classe"), "");
+  abrirModal("modal-busca-habilidade");
+}
+/* Busca no catálogo de habilidades do cliente; `classe` é o `cls` do stub ("" = todas). */
+async function catalogoDeHabilidades(texto, classe) {
+  const params = new URLSearchParams();
+  if (texto) params.set("busca", texto);
+  if (classe !== "") params.set("classe", classe);
+  return (await api(`/api/habilidades?${params}`)).habilidades || [];
+}
+let buscaDeHabilidade = 0;
+async function buscarHabilidade() {
+  const texto = elemento("hb-busca").value.trim();
+  const classe = elemento("hb-classe").value;
+  const alvo = elemento("hb-resultados");
+  if (classe === "" && texto.length < 2 && !/^\d+$/.test(texto)) {
+    alvo.replaceChildren(criar("p", "nota-vazia", "Digite o nome ou o ID, ou escolha a classe."));
+    return;
+  }
+  const minha = ++buscaDeHabilidade;
+  try {
+    const lista = await catalogoDeHabilidades(texto, classe);
+    if (minha !== buscaDeHabilidade) return;
+    const possuidas = new Map((estado.habilidadesDaFicha || []).map((h) => [h.id, h.nivel]));
+    alvo.replaceChildren(...lista.map((h) => cartaoDeResultado(imagemDoIcone("habilidade", h.icone, h.nome), h.nome,
+      `ID ${h.id} · até nível ${h.nivel_maximo ?? "?"}${possuidas.has(h.id) ? ` · tem nível ${possuidas.get(h.id)}` : ""}`,
+      () => abrirHabilidade(h, false))));
+    if (!lista.length) alvo.append(criar("p", "nota-vazia", "Nenhuma habilidade encontrada."));
+  } catch (erro) {
+    alvo.replaceChildren(criar("p", "nota-vazia", erro.message));
+  }
 }
 
-function editarNivel() {
-  const valor = Math.trunc(Number(elemento("nivel-valor").value));
-  if (!Number.isFinite(valor) || valor < 2) { alerta("erro", "Valor inválido", "Informe o nível novo."); return; }
-  editarPersonagem({ nivel: valor }, `Nível ${valor}`);
+/* ---------------- Daimon (E6, B215) ----------------
+   O Daimon vestido (slot 23) — a ficha do bloco do item, em jogo (memória) ou no banco; "Dar EXP"
+   segue a regra do jogo (`InsertExp`): sobe quantos níveis couberem, sem passar o dono. */
+async function carregarDaimon(realm, id) {
+  const alvo = elemento("janela-daimon");
+  elemento("abrir-daimon-exp").hidden = true;
+  alvo.replaceChildren(criar("p", "nota-vazia", "Carregando Daimon…"));
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/daimon`);
+    if (estado.personagemId !== id) return;
+    const d = dados.daimon;
+    if (!d) { alvo.replaceChildren(criar("p", "nota-vazia", "Sem Daimon vestido.")); return; }
+    const linha = (ico, rotulo, valor) => {
+      const caixa = criar("div", "atributo");
+      const texto = criar("div");
+      texto.append(criar("span", "", rotulo), criar("strong", "", String(valor)));
+      caixa.append(icone(ico), texto);
+      return caixa;
+    };
+    const titulo = criar("p", "titulo-daimon");
+    titulo.append(textoPintado(d.nome || `Daimon ${d.item_id}`), criar("span", "etiqueta etiqueta-neutra", d.origem === "em_jogo" ? "em jogo" : "gravado"));
+    const grade = criar("div", "grade-atributos");
+    grade.append(linha("nivel", "Nível", d.nivel),
+      linha("exp", "EXP", `${Number(d.exp).toLocaleString("pt-BR")} / ${Number(d.exp_para_subir).toLocaleString("pt-BR")}`),
+      linha("forca", "Força", d.forca), linha("agilidade", "Agilidade", d.agilidade),
+      linha("vitalidade", "Vitalidade", d.vitalidade), linha("energia", "Energia", d.energia),
+      linha("pontos", "Pontos livres", d.pontos_livres), linha("brilho", "Gênios", (d.genios || []).join(" · ")),
+      linha("pontos", "Pontos de gênio", d.pontos_de_genio), linha("refino", "Refino", d.refino), linha("vitalidade", "Vigor", d.vigor));
+    const habilidades = criar("p", "dica", `Habilidades: ${(d.habilidades || []).map((h) => `${h.nome} ${h.nivel}`).join(", ") || "—"}`);
+    alvo.replaceChildren(titulo, grade, habilidades);
+    elemento("abrir-daimon-exp").hidden = false;
+  } catch (erro) {
+    alvo.replaceChildren(criar("p", "nota-vazia", `Daimon indisponível: ${erro.message}`));
+  }
+}
+async function darExpAoDaimon() {
+  const n = Math.trunc(Number(elemento("daimon-exp").value));
+  if (!(n >= 1 && n <= 2000000000)) { alerta("erro", "EXP inválida", "De 1 a 2.000.000.000."); return; }
+  const r = await editarPersonagem({ daimon_exp: n }, `Daimon: +${n.toLocaleString("pt-BR")} de EXP`);
+  if (r === "aplicado" || r === "salvo") fecharModal("modal-daimon");
 }
 
-function editarCultivo() {
-  const valor = Number(elemento("cultivo-valor").value);
-  if (!Number.isInteger(valor)) return;
-  editarPersonagem({ cultivo: valor }, `Cultivo ${valor}`);
+/* ---------------- Mascotes (B197; B216) ----------------
+   A jaula com o ícone do modelo (`IconList_Pet`), nível e qual está invocado. Clicar abre o modal
+   de edição (campos do registro e as habilidades por busca); "Libertar" tira da jaula. "Dar
+   mascote" busca nos ovos do realm por nome, ID, tipo e ambiente e dá pela incubação do jogo. Em
+   jogo o GS manda `PET_ROOM`/`FREE_PET`/`GAIN_PET`; o mascote invocado não se edita por fora. */
+const TIPOS_DE_MASCOTE = ["Montaria", "Combate", "Seguidor", "Invocação", "Planta", "Evolução"];
+const AMBIENTES = ["Terrestre", "Aquático", "Voador", "Terra e água", "Terra e ar", "Água e ar", "Todos"];
+async function carregarMascotes(realm, id) {
+  const alvo = elemento("janela-mascotes");
+  alvo.replaceChildren(criar("p", "nota-vazia", "Carregando mascotes…"));
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/mascotes`);
+    if (estado.personagemId !== id) return;
+    alvo.replaceChildren();
+    for (const m of dados.mascotes || []) {
+      const cartao = criar("button", "cartao-mascote");
+      cartao.type = "button";
+      const figura = criar("span", "figura-resultado");
+      figura.append(imagemDoIcone("mascote", m.icone, m.nome || m.modelo || "?"));
+      const texto = criar("span", "texto-resultado");
+      texto.append(textoPintado(m.nome || m.modelo || `Mascote ${m.tid}`, "nome-resultado"),
+        criar("small", "", `${TIPOS_DE_MASCOTE[m.classe] || "Mascote"} · ${semCores(m.modelo) || `Modelo ${m.tid}`} · slot ${m.slot}`));
+      const lado = criar("span", m.invocado ? "etiqueta" : "etiqueta etiqueta-neutra", m.invocado ? "Invocado" : `Nv. ${m.nivel}`);
+      cartao.append(figura, texto, lado);
+      cartao.addEventListener("click", () => abrirMascote(m));
+      alvo.append(cartao);
+    }
+    if (!(dados.mascotes || []).length) alvo.append(criar("p", "nota-vazia", "Jaula vazia."));
+  } catch (erro) {
+    alvo.replaceChildren(criar("p", "nota-vazia", `Mascotes indisponíveis: ${erro.message}`));
+  }
+}
+const CAMPOS_DO_MASCOTE = [["nivel", "pet-nivel"], ["exp", "pet-exp"], ["lealdade", "pet-lealdade"], ["fome", "pet-fome"], ["pontos", "pet-pontos"]];
+/* `m` da jaula (editar) ou, com `novo`, o ovo do catálogo (dar). */
+async function abrirMascote(m, novo = false) {
+  estado.mascote = novo ? null : m;
+  estado.ovoParaDar = novo ? m : null;
+  elemento("mascote-qual").replaceChildren(textoPintado(m.nome || m.modelo || `Mascote ${m.tid || m.mascote}`));
+  elemento("pet-icone").replaceChildren(imagemDoIcone("mascote", m.icone, m.nome || m.modelo || "?"));
+  elemento("mascote-detalhe").textContent = novo
+    ? `${TIPOS_DE_MASCOTE[m.tipo] || "Mascote"} · ${AMBIENTES[m.ambiente] || "—"} · ovo ${m.ovo} (${semCores(m.nome_do_ovo) || "—"}) · nível ${m.nivel}`
+    : `${TIPOS_DE_MASCOTE[m.classe] || "Mascote"} · ${semCores(m.modelo) || `Modelo ${m.tid}`} · slot ${m.slot}${m.invocado ? " · invocado — recolha antes de editar" : ""}`;
+  for (const [campo, alvo] of CAMPOS_DO_MASCOTE) {
+    elemento(alvo).value = String(novo ? (campo === "nivel" ? m.nivel : 0) : (m[campo] ?? 0));
+    elemento(alvo).disabled = novo;
+  }
+  elemento("pet-nivel").max = String((!novo && m.nivel_maximo) || 999);
+  elemento("pet-nome").value = novo ? "" : (m.nome || "");
+  elemento("pet-nome").disabled = novo;
+  estado.habilidadesDoMascote = (m.habilidades || []).map((h) => ({ ...h }));
+  desenharHabilidadesDoMascote(novo);
+  elemento("pet-hab-adicionar").hidden = novo;
+  elemento("pet-hab-resultados").replaceChildren();
+  elemento("pet-hab-busca").value = "";
+  elemento("pet-libertar").hidden = novo;
+  elemento("pet-salvar").textContent = novo ? "Dar mascote" : "Salvar";
+  if (!novo) await preencherGruposDeHabilidade(elemento("pet-hab-classe"), "127");
+  fecharModal("modal-busca-mascote");
+  abrirModal("modal-mascote");
+}
+/* As habilidades do mascote (até 8): ícone, nome, nível editável e tirar. */
+function desenharHabilidadesDoMascote(somenteLeitura = false) {
+  const lista = estado.habilidadesDoMascote || [];
+  elemento("pet-hab-total").textContent = `${lista.length} de 8`;
+  elemento("pet-hab-lista").replaceChildren(...lista.map((h, i) => {
+    const linha = criar("div", "linha-hab-mascote");
+    const nivel = criar("input");
+    nivel.type = "number"; nivel.min = "1"; nivel.max = String(h.nivel_maximo || 255); nivel.value = String(h.nivel);
+    nivel.disabled = somenteLeitura; nivel.setAttribute("aria-label", `Nível de ${h.nome}`);
+    nivel.addEventListener("input", () => { h.nivel = Math.trunc(Number(nivel.value)) || 1; });
+    const nome = criar("span", "texto-resultado");
+    nome.append(criar("span", "nome-resultado", h.nome || `Habilidade ${h.id}`), criar("small", "", `ID ${h.id}`));
+    const figura = criar("span", "figura-resultado");
+    figura.append(imagemDoIcone("habilidade", h.icone, h.nome || "?"));
+    linha.append(figura, nome, nivel);
+    if (!somenteLeitura) {
+      const tirar = criar("button", "botao-icone botao-icone-pequeno");
+      tirar.type = "button"; tirar.title = "Tirar"; tirar.setAttribute("aria-label", `Tirar ${h.nome}`);
+      tirar.append(icone("lixeira"));
+      tirar.addEventListener("click", () => { lista.splice(i, 1); desenharHabilidadesDoMascote(); });
+      linha.append(tirar);
+    }
+    return linha;
+  }));
+  if (!lista.length) elemento("pet-hab-lista").append(criar("p", "nota-vazia", "Sem habilidades."));
+}
+let buscaDeHabilidadeDoMascote = 0;
+async function buscarHabilidadeDoMascote() {
+  const texto = elemento("pet-hab-busca").value.trim();
+  const classe = elemento("pet-hab-classe").value;
+  const alvo = elemento("pet-hab-resultados");
+  if (classe === "" && texto.length < 2 && !/^\d+$/.test(texto)) { alvo.replaceChildren(); return; }
+  const minha = ++buscaDeHabilidadeDoMascote;
+  try {
+    const lista = await catalogoDeHabilidades(texto, classe);
+    if (minha !== buscaDeHabilidadeDoMascote) return;
+    alvo.replaceChildren(...lista.map((h) => cartaoDeResultado(imagemDoIcone("habilidade", h.icone, h.nome), h.nome,
+      `ID ${h.id} · até nível ${h.nivel_maximo ?? "?"}`, () => {
+        const atuais = estado.habilidadesDoMascote || [];
+        if (atuais.some((x) => x.id === h.id)) { alerta("aviso", "Já tem", `${h.nome} já está nas habilidades do mascote.`, { toast: true }); return; }
+        if (atuais.length >= 8) { alerta("aviso", "Sem espaço", "O mascote tem no máximo 8 habilidades.", { toast: true }); return; }
+        atuais.push({ id: h.id, nivel: 1, nome: h.nome, icone: h.icone, nivel_maximo: h.nivel_maximo });
+        desenharHabilidadesDoMascote();
+      })));
+    if (!lista.length) alvo.append(criar("p", "nota-vazia", "Nenhuma habilidade encontrada."));
+  } catch (erro) { alvo.replaceChildren(criar("p", "nota-vazia", erro.message)); }
+}
+async function salvarMascote(libertar = false) {
+  const ovo = estado.ovoParaDar;
+  if (ovo && !libertar) {
+    const r = await editarPersonagem({ dar_mascote: { ovo: ovo.ovo } }, `Mascote dado: ${semCores(ovo.nome) || `ovo ${ovo.ovo}`}`);
+    if (r === "aplicado" || r === "salvo") fecharModal("modal-mascote");
+    return;
+  }
+  const m = estado.mascote;
+  if (!m) return;
+  let edicao;
+  if (libertar) {
+    const sim = await confirmar("Libertar mascote", `${semCores(m.nome || m.modelo)} sai da jaula.`, "Libertar");
+    if (!sim) return;
+    edicao = { libertar: true };
+  } else {
+    edicao = {};
+    for (const [campo, alvo] of CAMPOS_DO_MASCOTE) {
+      const v = Math.trunc(Number(elemento(alvo).value));
+      if (v !== (m[campo] ?? 0)) edicao[campo] = v;
+    }
+    const nome = elemento("pet-nome").value.trim();
+    if (nome && nome !== (m.nome || "")) edicao.nome = nome;
+    const habilidades = (estado.habilidadesDoMascote || []).map((h) => [h.id, h.nivel]);
+    if (JSON.stringify(habilidades) !== JSON.stringify((m.habilidades || []).map((h) => [h.id, h.nivel]))) edicao.habilidades = habilidades;
+    if (!Object.keys(edicao).length) { alerta("aviso", "Nada mudou", "Altere algum campo antes de salvar.", { toast: true }); return; }
+  }
+  const r = await editarPersonagem({ mascote: { slot: m.slot, tid: m.tid, edicao } },
+    `${semCores(m.nome || m.modelo)}: ${libertar ? "libertado" : Object.keys(edicao).join(", ")}`);
+  if (r === "aplicado" || r === "salvo") fecharModal("modal-mascote");
+}
+function abrirBuscaDeMascote() {
+  elemento("mb-busca").value = "";
+  elemento("mb-tipo").value = "";
+  elemento("mb-ambiente").value = "";
+  elemento("mb-resultados").replaceChildren(criar("p", "nota-vazia", "Digite o nome ou o ID, ou escolha o tipo ou o ambiente."));
+  abrirModal("modal-busca-mascote");
+}
+let buscaDeMascote = 0;
+async function buscarMascote() {
+  const realm = estado.selecionado;
+  const texto = elemento("mb-busca").value.trim();
+  const tipo = elemento("mb-tipo").value;
+  const ambiente = elemento("mb-ambiente").value;
+  const alvo = elemento("mb-resultados");
+  if (!realm || (!tipo && !ambiente && texto.length < 2 && !/^\d+$/.test(texto))) {
+    alvo.replaceChildren(criar("p", "nota-vazia", "Digite o nome ou o ID, ou escolha o tipo ou o ambiente."));
+    return;
+  }
+  const params = new URLSearchParams();
+  if (texto) params.set("busca", texto);
+  if (tipo) params.set("tipo", tipo);
+  if (ambiente) params.set("ambiente", ambiente);
+  const minha = ++buscaDeMascote;
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/mascotes?${params}`);
+    if (minha !== buscaDeMascote) return;
+    alvo.replaceChildren(...(dados.mascotes || []).map((o) => cartaoDeResultado(
+      imagemDoIcone("mascote", o.icone, o.nome || "?"), o.nome || `Mascote ${o.mascote}`,
+      `${TIPOS_DE_MASCOTE[o.tipo] || "—"} · ${AMBIENTES[o.ambiente] || "—"} · nível ${o.nivel} · ovo ${o.ovo}`,
+      () => abrirMascote(o, true))));
+    if (!(dados.mascotes || []).length) alvo.append(criar("p", "nota-vazia", "Nenhum mascote encontrado."));
+  } catch (erro) { alvo.replaceChildren(criar("p", "nota-vazia", erro.message)); }
+}
+
+/* ---------------- Missões (B198; B216) ----------------
+   A janela mostra só as ativas, com o nome pintado como o jogo (`^RRGGBB` do tasks.data). "Editar"
+   abre o modal: busca nas ativas e concluídas (concluir, cancelar, esquecer) e dar missão nova. Dar
+   é livre (sem pré-requisitos); concluir força o sucesso (missão de NPC fica pronta para entregar,
+   a direta premia); cancelar apaga sem prêmio de falha; esquecer tira das concluídas. */
+const PAGINA_DE_CONCLUIDAS = 200;
+let buscaDeMissao = 0;
+function rotuloDaMissao(m) { return m.nome || `Missão ${m.id}`; }
+function situacaoDaMissao(m) {
+  return m.finalizada ? (m.sucesso ? ["Pronta", "etiqueta"] : ["Falhou", "etiqueta etiqueta-erro"]) : ["Em curso", "etiqueta etiqueta-neutra"];
+}
+function linhaDeMissao(m, porId, comAcoes) {
+  const linha = criar("div", m.pai ? "linha-missao filha" : "linha-missao");
+  const texto = criar("span", "texto-resultado");
+  const abates = (m.abates || []).map(([feitos, pedidos]) => `${feitos}/${pedidos}`).join(" · ");
+  texto.append(textoPintado(rotuloDaMissao(m), "nome-resultado"),
+    criar("small", "", `ID ${m.id}${m.pai ? ` · etapa de ${semCores(rotuloDaMissao(porId.get(m.pai) || { id: m.pai }))}` : ""}${abates ? ` · abates ${abates}` : ""}`));
+  const [rotulo, classe] = situacaoDaMissao(m);
+  linha.append(texto, criar("span", classe, rotulo));
+  if (comAcoes) {
+    const acoes = criar("span", "acoes-linha");
+    const concluir = criar("button", "botao botao-secundario botao-pequeno", "Concluir");
+    concluir.type = "button"; concluir.disabled = !!m.finalizada;
+    concluir.addEventListener("click", () => acaoDeMissao("concluir", m));
+    acoes.append(concluir);
+    if (!m.pai) {
+      const cancelar = criar("button", "botao botao-secundario botao-pequeno texto-perigo", "Cancelar");
+      cancelar.type = "button";
+      cancelar.addEventListener("click", () => acaoDeMissao("cancelar", m));
+      acoes.append(cancelar);
+    }
+    linha.append(acoes);
+  }
+  return linha;
+}
+async function carregarMissoes(realm, id, pagina = estado.paginaDeMissoes || 0) {
+  const cartao = elemento("missoes-ativas");
+  const ativas = elemento("mm-ativas");
+  const concluidas = elemento("missoes-concluidas");
+  estado.paginaDeMissoes = pagina;
+  cartao.replaceChildren(criar("p", "nota-vazia", "Carregando missões…"));
+  const filtro = elemento("mis-filtro").value.trim();
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/missoes?pagina=${pagina}`
+      + (filtro ? `&busca=${encodeURIComponent(filtro)}` : ""));
+    if (estado.personagemId !== id) return;
+    const todas = dados.ativas || [];
+    const porId = new Map(todas.map((m) => [m.id, m]));
+    cartao.replaceChildren(...todas.map((m) => linhaDeMissao(m, porId, false)));
+    if (!todas.length) cartao.append(criar("p", "nota-vazia", "Nenhuma missão ativa."));
+    // No modal: as ativas pelo mesmo filtro (nome ou ID), as concluídas pelo servidor.
+    const termo = semCores(filtro).toLowerCase();
+    const filtradas = termo ? todas.filter((m) => String(m.id) === termo || semCores(rotuloDaMissao(m)).toLowerCase().includes(termo)) : todas;
+    ativas.replaceChildren(...filtradas.map((m) => linhaDeMissao(m, porId, true)));
+    if (!filtradas.length) ativas.append(criar("p", "nota-vazia", termo ? "Nenhuma ativa com esse filtro." : "Nenhuma missão ativa."));
+    elemento("mis-total-ativas").textContent = `(${filtradas.length})`;
+    concluidas.replaceChildren();
+    for (const m of dados.concluidas || []) {
+      const linha = criar("div", "linha-missao");
+      const texto = criar("span", "texto-resultado");
+      texto.append(textoPintado(rotuloDaMissao(m), "nome-resultado"), criar("small", "", `ID ${m.id}${m.vezes ? ` · ${m.vezes}×` : ""}`));
+      const esquecer = criar("button", "botao botao-secundario botao-pequeno", "Esquecer");
+      esquecer.type = "button";
+      esquecer.title = "Tirar das concluídas para poder refazer";
+      esquecer.addEventListener("click", () => acaoDeMissao("esquecer", m));
+      linha.append(texto, criar("span", m.falhou ? "etiqueta etiqueta-erro" : "etiqueta etiqueta-ouro", m.falhou ? "Falhou" : "Concluída"), esquecer);
+      concluidas.append(linha);
+    }
+    const total = dados.total_concluidas || 0;
+    if (!total) concluidas.append(criar("p", "nota-vazia", filtro ? "Nenhuma concluída com esse filtro." : "Nenhuma missão concluída."));
+    const paginas = Math.max(1, Math.ceil(total / PAGINA_DE_CONCLUIDAS));
+    elemento("mis-total").textContent = `(${total})`;
+    elemento("mis-pagina").textContent = `${pagina + 1} de ${paginas}`;
+    elemento("mis-anterior").disabled = pagina <= 0;
+    elemento("mis-proxima").disabled = pagina + 1 >= paginas;
+    elemento("paginacao-missoes").hidden = paginas <= 1;
+  } catch (erro) {
+    cartao.replaceChildren(criar("p", "nota-vazia", `Missões indisponíveis: ${erro.message}`));
+  }
+}
+async function acaoDeMissao(acao, m) {
+  if (!m) return;
+  const nome = semCores(rotuloDaMissao(m));
+  if (acao === "cancelar" && !(await confirmar("Cancelar missão", `${nome} sai da lista, com as etapas, sem prêmio.`, "Cancelar missão"))) return;
+  if (acao === "esquecer" && !(await confirmar("Esquecer conclusão", `${nome} sai das concluídas e pode ser feita de novo.`, "Esquecer"))) return;
+  const corpo = { acao, id: m.id };
+  if (acao === "dar" && m.sub) corpo.sub = m.sub;
+  const texto = { dar: "dada", concluir: "concluída", cancelar: "cancelada", esquecer: "esquecida" }[acao];
+  return editarPersonagem({ missao: corpo }, `${nome}: ${texto}`);
+}
+function trocarAbaDeMissao(aba) {
+  for (const botao of document.querySelectorAll?.("[data-aba-missao]") || []) botao.classList.toggle("ativa", botao.dataset.abaMissao === aba);
+  for (const painel of document.querySelectorAll?.("[data-painel-missao]") || []) painel.hidden = painel.dataset.painelMissao !== aba;
+}
+function abrirMissoes() {
+  trocarAbaDeMissao("lista");
+  abrirModal("modal-missoes");
+}
+async function buscarMissao() {
+  const realm = estado.selecionado;
+  const texto = elemento("mis-busca").value.trim();
+  const lista = elemento("mis-resultados");
+  estado.missaoEscolhida = null;
+  elemento("mis-escolhida").textContent = "";
+  elemento("mis-sub").hidden = true;
+  if (!realm || (texto.length < 2 && !/^\d+$/.test(texto))) { lista.replaceChildren(); return; }
+  const minha = ++buscaDeMissao;
+  try {
+    const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/missoes?busca=${encodeURIComponent(texto)}`);
+    if (minha !== buscaDeMissao) return;
+    lista.replaceChildren(...(dados.missoes || []).map((m) => {
+      const [minimo, maximo] = m.nivel || [0, 0];
+      return cartaoDeResultado(icone("pergaminho"), rotuloDaMissao(m),
+        `ID ${m.id}${minimo ? ` · nível ${minimo}${maximo ? `–${maximo}` : "+"}` : ""}${m.filhas ? ` · ${m.filhas} etapas` : ""}`, () => {
+          estado.missaoEscolhida = m;
+          const sub = elemento("mis-sub");
+          sub.replaceChildren(...(m.escolha || []).map((s) => { const o = criar("option", "", semCores(rotuloDaMissao(s))); o.value = String(s.id); return o; }));
+          sub.hidden = !(m.escolha || []).length;
+          elemento("mis-escolhida").textContent = `Escolhida: ${semCores(rotuloDaMissao(m))} (ID ${m.id})${sub.hidden ? "" : " — escolha a etapa"}.`;
+        });
+    }));
+    if (!(dados.missoes || []).length) lista.append(criar("p", "nota-vazia", "Nenhuma missão com esse nome."));
+  } catch (erro) {
+    lista.replaceChildren(criar("p", "nota-vazia", erro.message));
+  }
+}
+async function darMissao() {
+  const texto = elemento("mis-busca").value.trim();
+  const m = estado.missaoEscolhida || (/^\d+$/.test(texto) ? { id: Number(texto) } : null);
+  if (!m) { alerta("erro", "Escolha a missão", "Busque pelo nome e clique nela, ou digite o ID."); return; }
+  const sub = elemento("mis-sub");
+  return acaoDeMissao("dar", { ...m, sub: sub.hidden ? undefined : Number(sub.value) });
+}
+
+/* Liga a ficha (B216): botões das barras, modais, buscas com espera e o menu do slot vazio. */
+function aoDigitar(id, funcao) {
+  let espera = null;
+  elemento(id).addEventListener("input", () => {
+    if (espera) clearTimeout(espera);
+    espera = temTempo ? setTimeout(funcao, 300) : null;
+  });
+}
+function aoEnviar(id, funcao) {
+  elemento(id).addEventListener("submit", (evento) => { evento.preventDefault(); funcao(); });
+}
+/* B206: furos (0–4, `MAX_SOCKET_COUNT`) redimensionam a lista de pedras; a busca de pedra põe o id
+   no primeiro furo vazio; a busca de efeito acrescenta a linha com o id. */
+function lerPedras() {
+  return elemento("ei-pedras").value.split(/[,\s]+/).filter(Boolean).map((v) => Math.trunc(Number(v)) || 0);
+}
+function listaDeBusca(alvo, itens, rotulo, detalhe, escolher) {
+  alvo.replaceChildren();
+  for (const x of itens) {
+    const li = criar("li");
+    li.append(criar("span", "", rotulo(x)), criar("small", "", detalhe(x)));
+    li.addEventListener("click", () => { escolher(x); alvo.hidden = true; });
+    alvo.append(li);
+  }
+  if (!itens.length) alvo.append(criar("li", "dica", "Nada encontrado."));
+  alvo.hidden = false;
+}
+async function buscarPedra() {
+  const texto = elemento("ei-busca-pedra").value.trim();
+  const realm = estado.selecionado;
+  if (!realm || !texto) { elemento("ei-resultados-pedra").hidden = true; return; }
+  try {
+    const d = await api(`/api/realms/${encodeURIComponent(realm.id)}/pedras?busca=${encodeURIComponent(texto)}`);
+    listaDeBusca(elemento("ei-resultados-pedra"), d.pedras || [], (p) => semCores(p.nome) || `Pedra ${p.id}`,
+      (p) => `ID ${p.id}${p.grau ? ` · grau ${p.grau}` : ""}`, (p) => {
+        const pedras = lerPedras();
+        const vazio = pedras.indexOf(0);
+        if (vazio < 0) { alerta("aviso", "Sem furo vazio", "Aumente os furos ou troque um id na lista.", { toast: true }); return; }
+        pedras[vazio] = p.id;
+        elemento("ei-pedras").value = pedras.join(", ");
+      });
+  } catch (erro) { alerta("erro", "Busca de pedras", erro.message); }
+}
+async function buscarEfeito() {
+  const texto = elemento("ei-busca-efeito").value.trim();
+  if (!texto) { elemento("ei-resultados-efeito").hidden = true; return; }
+  try {
+    const em = estado.itemEmEdicao;
+    if (!em || !estado.selecionado) return;
+    // B209: só o que serve nesta peça e neste realm, com o valor do id ("Acerto +118").
+    const d = await api(`/api/realms/${encodeURIComponent(estado.selecionado.id)}/efeitos?item=${em.item.id}&busca=${encodeURIComponent(texto)}`);
+    listaDeBusca(elemento("ei-resultados-efeito"), d.efeitos || [], (e) => e.habilidade ? `✦ ${e.texto || `Efeito ${e.id}`} — habilidade ${e.habilidade.nome}` : (e.texto || `Efeito ${e.id}`),
+      (e) => `ID ${e.id}${e.editavel ? "" : " · fixo"}${e.age === false ? " · não age" : ""}`,
+      (e) => elemento("ei-efeitos").append(linhaDeEfeito(e)));
+  } catch (erro) { alerta("erro", "Busca de efeitos", erro.message); }
+}
+function ligarFichaDoPersonagem() {
+  aoEnviar("form-dinheiro", editarDinheiro);
+  aoEnviar("form-exp", editarExp);
+  aoEnviar("form-pontos", editarPontos);
+  aoEnviar("form-nivel", editarNivel);
+  aoEnviar("form-cultivo", editarCultivo);
+  aoEnviar("form-atributos", editarAtributos);
+  aoEnviar("form-posicao", editarPosicao);
+  elemento("redistribuir-atributos").addEventListener("click", () => redistribuirAtributos());
+  for (const id of CAMPOS_DE_ATRIBUTO) elemento(id).addEventListener("input", () => atualizarSobraDeAtributos());
+  elemento("abrir-estatisticas").addEventListener("click", () => abrirModal("modal-estatisticas"));
+
+  aoEnviar("form-editar-item", salvarEdicaoDeItem);
+  elemento("ei-remover").addEventListener("click", () => removerItem());
+  elemento("ei-novo-efeito").addEventListener("click", () => elemento("ei-efeitos").append(linhaDeEfeito()));
+  elemento("ei-furos").addEventListener("input", () => {
+    const n = Math.max(0, Math.min(4, Math.trunc(Number(elemento("ei-furos").value)) || 0));
+    const pedras = lerPedras().slice(0, n);
+    while (pedras.length < n) pedras.push(0);
+    elemento("ei-pedras").value = pedras.join(", ");
+  });
+  aoDigitar("ei-busca-pedra", buscarPedra);
+  aoDigitar("ei-busca-efeito", buscarEfeito);
+
+  elemento("menu-criar-item").addEventListener("click", () => { const d = estado.slotDoMenu; esconderMenuDoSlot(); if (d) abrirCriarItem(d); });
+  elemento("abrir-dar-item").addEventListener("click", () => abrirCriarItem({ chave: "bolsa" }));
+  aoEnviar("form-criar-item", criarItem);
+  aoDigitar("ci-busca", buscarParaCriar);
+  elemento("ci-categoria").addEventListener("change", () => buscarParaCriar());
+
+  elemento("abrir-dar-habilidade").addEventListener("click", () => abrirBuscaDeHabilidade());
+  aoDigitar("hb-busca", buscarHabilidade);
+  elemento("hb-classe").addEventListener("change", () => buscarHabilidade());
+  aoEnviar("form-habilidade", () => aplicarHabilidade(elemento("hab-nivel").value));
+  elemento("hab-remover").addEventListener("click", () => aplicarHabilidade(0));
+
+  elemento("abrir-dar-mascote").addEventListener("click", () => abrirBuscaDeMascote());
+  aoDigitar("mb-busca", buscarMascote);
+  elemento("mb-tipo").addEventListener("change", () => buscarMascote());
+  elemento("mb-ambiente").addEventListener("change", () => buscarMascote());
+  aoEnviar("form-mascote", () => salvarMascote(false));
+  elemento("pet-libertar").addEventListener("click", () => salvarMascote(true));
+  aoDigitar("pet-hab-busca", buscarHabilidadeDoMascote);
+  elemento("pet-hab-classe").addEventListener("change", () => buscarHabilidadeDoMascote());
+
+  elemento("abrir-daimon-exp").addEventListener("click", () => { elemento("daimon-exp").value = ""; abrirModal("modal-daimon"); });
+  aoEnviar("form-daimon", darExpAoDaimon);
+
+  elemento("abrir-missoes").addEventListener("click", () => abrirMissoes());
+  for (const botao of document.querySelectorAll?.("[data-aba-missao]") || []) botao.addEventListener("click", () => trocarAbaDeMissao(botao.dataset.abaMissao));
+  aoEnviar("form-filtro-missoes", () => { if (estado.selecionado && estado.personagemId) carregarMissoes(estado.selecionado, estado.personagemId, 0); });
+  elemento("mis-anterior").addEventListener("click", () => carregarMissoes(estado.selecionado, estado.personagemId, (estado.paginaDeMissoes || 0) - 1));
+  elemento("mis-proxima").addEventListener("click", () => carregarMissoes(estado.selecionado, estado.personagemId, (estado.paginaDeMissoes || 0) + 1));
+  aoDigitar("mis-busca", buscarMissao);
+  aoEnviar("form-dar-missao", darMissao);
+
+  for (const id of MODAIS_DA_FICHA) {
+    const modal = elemento(id);
+    modal.addEventListener("mousedown", (evento) => { if (evento.target === modal) fecharModal(id); });
+    for (const botao of modal.querySelectorAll?.(".fechar-modal") || []) botao.addEventListener("click", () => fecharModal(id));
+  }
+  document.addEventListener?.("mousedown", (evento) => {
+    const menu = elemento("menu-slot");
+    if (!menu.hidden && !menu.contains(evento.target)) esconderMenuDoSlot();
+  });
+  document.addEventListener?.("scroll", () => esconderMenuDoSlot(), true);
+  preencherIcones();
 }
 
 /* ---------------- Contas globais ---------------- */
@@ -2123,6 +2563,8 @@ elemento("fechar-gaveta").addEventListener("click", fecharConta);
 elemento("fechar-operacao").addEventListener("click", () => { responderConfirmacao(false); fecharAlerta(); });
 elemento("confirmar-alerta").addEventListener("click", () => responderConfirmacao(true));
 elemento("operacao").addEventListener("click", (evento) => {
+  // Toast: um clique fecha; modal: só o fundo, e só se há OK.
+  if (!estado.alertaModal) { if (!elemento("confirmar-alerta").hidden) return; fecharAlerta(); return; }
   if (evento.target === elemento("operacao") && !elemento("fechar-operacao").hidden) fecharAlerta();
 });
 elemento("abrir-pendente").addEventListener("click", () => { atualizarComando(true); });
@@ -2132,123 +2574,13 @@ elemento("ajuste-gold").addEventListener("submit", (evento) => { evento.preventD
 elemento("gestao-ban").addEventListener("submit", (evento) => { evento.preventDefault(); executarComando(false, "definir_ban"); });
 elemento("aplicar-desconectar").addEventListener("click", desconectarConta);
 elemento("form-rates").addEventListener("submit", (evento) => { evento.preventDefault(); salvarRates(); });
-elemento("form-dinheiro").addEventListener("submit", (evento) => { evento.preventDefault(); editarDinheiro(); });
-elemento("form-exp").addEventListener("submit", (evento) => { evento.preventDefault(); editarExp(); });
 elemento("filtro-mapa").addEventListener("input", () => renderizarMapas());
 elemento("filtro-status-mapa").addEventListener("change", () => renderizarMapas());
 elemento("marcar-mapas").addEventListener("click", () => marcarMapasVisiveis(true));
 elemento("desmarcar-mapas").addEventListener("click", () => marcarMapasVisiveis(false));
 elemento("ligar-mapas").addEventListener("click", () => aplicarAosMarcados(true));
 elemento("desligar-mapas").addEventListener("click", () => aplicarAosMarcados(false));
-elemento("form-pontos").addEventListener("submit", (evento) => { evento.preventDefault(); editarPontos(); });
-elemento("form-nivel").addEventListener("submit", (evento) => { evento.preventDefault(); editarNivel(); });
-elemento("form-atributos").addEventListener("submit", (evento) => { evento.preventDefault(); editarAtributos(); });
-elemento("redistribuir-atributos").addEventListener("click", () => redistribuirAtributos());
-for (const id of CAMPOS_DE_ATRIBUTO) elemento(id).addEventListener("input", () => atualizarSobraDeAtributos());
-elemento("form-posicao").addEventListener("submit", (evento) => { evento.preventDefault(); editarPosicao(); });
-elemento("form-remover").addEventListener("submit", (evento) => { evento.preventDefault(); removerItem(); });
-elemento("form-editar-item").addEventListener("submit", (evento) => { evento.preventDefault(); salvarEdicaoDeItem(); });
-elemento("form-habilidade").addEventListener("submit", (evento) => { evento.preventDefault(); aplicarHabilidade(elemento("hab-nivel").value); });
-elemento("hab-remover").addEventListener("click", () => aplicarHabilidade(0));
-elemento("form-ensinar").addEventListener("submit", (evento) => { evento.preventDefault(); ensinarHabilidade(); });
-elemento("form-mascote").addEventListener("submit", (evento) => { evento.preventDefault(); salvarMascote(false); });
-elemento("pet-libertar").addEventListener("click", () => salvarMascote(true));
-elemento("form-dar-missao").addEventListener("submit", (evento) => { evento.preventDefault(); darMissao(); });
-elemento("mis-concluir").addEventListener("click", () => acaoDeMissao("concluir", estado.missao));
-elemento("mis-cancelar").addEventListener("click", () => acaoDeMissao("cancelar", estado.missao));
-elemento("form-filtro-missoes").addEventListener("submit", (evento) => {
-  evento.preventDefault();
-  if (estado.selecionado && estado.personagemId) carregarMissoes(estado.selecionado, estado.personagemId, 0);
-});
-elemento("mis-anterior").addEventListener("click", () => carregarMissoes(estado.selecionado, estado.personagemId, (estado.paginaDeMissoes || 0) - 1));
-elemento("mis-proxima").addEventListener("click", () => carregarMissoes(estado.selecionado, estado.personagemId, (estado.paginaDeMissoes || 0) + 1));
-let esperaDaMissao = null;
-elemento("mis-busca").addEventListener("input", () => {
-  if (esperaDaMissao) clearTimeout(esperaDaMissao);
-  esperaDaMissao = temTempo ? setTimeout(buscarMissao, 300) : null;
-});
-let esperaDaHabilidade = null;
-elemento("hab-busca").addEventListener("input", () => {
-  if (esperaDaHabilidade) clearTimeout(esperaDaHabilidade);
-  esperaDaHabilidade = temTempo ? setTimeout(buscarHabilidade, 300) : null;
-});
-elemento("fechar-item").addEventListener("click", fecharEdicaoDeItem);
-elemento("ei-novo-efeito").addEventListener("click", () => elemento("ei-efeitos").append(linhaDeEfeito()));
-/* B206: furos (0–4, `MAX_SOCKET_COUNT`) redimensionam a lista de pedras; a busca de pedra põe o id
-   no primeiro furo vazio; a busca de efeito acrescenta a linha com o id. */
-function lerPedras() {
-  return elemento("ei-pedras").value.split(/[,\s]+/).filter(Boolean).map((v) => Math.trunc(Number(v)) || 0);
-}
-elemento("ei-furos").addEventListener("input", () => {
-  const n = Math.max(0, Math.min(4, Math.trunc(Number(elemento("ei-furos").value)) || 0));
-  const pedras = lerPedras().slice(0, n);
-  while (pedras.length < n) pedras.push(0);
-  elemento("ei-pedras").value = pedras.join(", ");
-});
-function listaDeBusca(alvo, itens, rotulo, detalhe, escolher) {
-  alvo.replaceChildren();
-  for (const x of itens) {
-    const li = criar("li");
-    li.append(criar("span", "", rotulo(x)), criar("small", "", detalhe(x)));
-    li.addEventListener("click", () => { escolher(x); alvo.hidden = true; });
-    alvo.append(li);
-  }
-  if (!itens.length) alvo.append(criar("li", "dica", "Nada encontrado."));
-  alvo.hidden = false;
-}
-let esperaDaPedra = null;
-elemento("ei-busca-pedra").addEventListener("input", () => {
-  if (esperaDaPedra) clearTimeout(esperaDaPedra);
-  esperaDaPedra = temTempo ? setTimeout(async () => {
-    const texto = elemento("ei-busca-pedra").value.trim();
-    const realm = estado.selecionado;
-    if (!realm || !texto) { elemento("ei-resultados-pedra").hidden = true; return; }
-    try {
-      const d = await api(`/api/realms/${encodeURIComponent(realm.id)}/pedras?busca=${encodeURIComponent(texto)}`);
-      listaDeBusca(elemento("ei-resultados-pedra"), d.pedras || [], (p) => p.nome || `Pedra ${p.id}`,
-        (p) => `ID ${p.id}${p.grau ? ` · grau ${p.grau}` : ""}`, (p) => {
-          const pedras = lerPedras();
-          const vazio = pedras.indexOf(0);
-          if (vazio < 0) { alerta("aviso", "Sem furo vazio", "Aumente os furos ou troque um id na lista."); return; }
-          pedras[vazio] = p.id;
-          elemento("ei-pedras").value = pedras.join(", ");
-        });
-    } catch (erro) { alerta("erro", "Busca de pedras", erro.message); }
-  }, 300) : null;
-});
-let esperaDoEfeito = null;
-elemento("ei-busca-efeito").addEventListener("input", () => {
-  if (esperaDoEfeito) clearTimeout(esperaDoEfeito);
-  esperaDoEfeito = temTempo ? setTimeout(async () => {
-    const texto = elemento("ei-busca-efeito").value.trim();
-    if (!texto) { elemento("ei-resultados-efeito").hidden = true; return; }
-    try {
-      const em = estado.itemEmEdicao;
-      if (!em || !estado.selecionado) return;
-      // B209: só o que serve nesta peça e neste realm, com o valor do id ("Acerto +118").
-      const d = await api(`/api/realms/${encodeURIComponent(estado.selecionado.id)}/efeitos?item=${em.item.id}&busca=${encodeURIComponent(texto)}`);
-      listaDeBusca(elemento("ei-resultados-efeito"), d.efeitos || [], (e) => e.habilidade ? `✦ ${e.texto || `Efeito ${e.id}`} — habilidade ${e.habilidade.nome}` : (e.texto || `Efeito ${e.id}`),
-        (e) => `ID ${e.id}${e.editavel ? "" : " · fixo"}${e.age === false ? " · não age" : ""}`,
-        (e) => elemento("ei-efeitos").append(linhaDeEfeito(e)));
-    } catch (erro) { alerta("erro", "Busca de efeitos", erro.message); }
-  }, 300) : null;
-});
-elemento("ei-remover").addEventListener("click", () => {
-  const em = estado.itemEmEdicao;
-  if (!em) return;
-  const celula = document.querySelector?.(".celula-item.escolhido");
-  fecharEdicaoDeItem();
-  if (celula) escolherParaRemover(em.chave, em.rotulo, em.item, celula);
-});
-elemento("remover-cancelar").addEventListener("click", () => cancelarRemocao());
-elemento("form-item").addEventListener("submit", (evento) => { evento.preventDefault(); darItem(); });
-elemento("form-daimon").addEventListener("submit", (evento) => { evento.preventDefault(); darExpAoDaimon(); });
-let esperaDaBusca = null;
-elemento("item-busca").addEventListener("input", () => {
-  if (esperaDaBusca) clearTimeout(esperaDaBusca);
-  esperaDaBusca = temTempo ? setTimeout(buscarItem, 300) : null;
-});
-elemento("form-cultivo").addEventListener("submit", (evento) => { evento.preventDefault(); editarCultivo(); });
+ligarFichaDoPersonagem();
 elemento("criacao-conta").addEventListener("submit", (evento) => { evento.preventDefault(); executarComando(false, "criar_conta"); });
 elemento("recuperar-comando").addEventListener("click", () => { pararAcompanhamento(); executarComando(true); });
 document.querySelectorAll(".nav").forEach((botao) => botao.addEventListener("click", () => mudarPagina(botao.dataset.pagina)));
@@ -2256,14 +2588,17 @@ document.querySelectorAll(".acao, .voltar").forEach((botao) => botao.addEventLis
 // Clique fora do popup fecha (exceto enquanto o alerta está aberto por cima).
 document.addEventListener?.("mousedown", (evento) => {
   const popover = elemento("popover-conta");
-  if (popover.hidden || !elemento("operacao").hidden) return;
+  if (popover.hidden || (!elemento("operacao").hidden && estado.alertaModal)) return;
   if (!popover.contains(evento.target) && !estado.cartao?.contains(evento.target)) fecharConta();
 });
 if (typeof window !== "undefined") window.addEventListener("resize", fecharConta);
 document.addEventListener?.("scroll", fecharConta, true);
 document.addEventListener?.("keydown", (evento) => {
   if (evento.key !== "Escape") return;
-  if (!elemento("operacao").hidden && !elemento("fechar-operacao").hidden) fecharAlerta();
+  const aberto = MODAIS_DA_FICHA.filter((id) => !elemento(id).hidden).pop();
+  if (!elemento("operacao").hidden && estado.alertaModal && !elemento("fechar-operacao").hidden) fecharAlerta();
+  else if (!elemento("menu-slot").hidden) esconderMenuDoSlot();
+  else if (aberto) fecharModal(aberto);
   else if (!elemento("modal-criacao").hidden) elemento("modal-criacao").hidden = true;
   else if (!elemento("popover-conta").hidden) fecharConta();
   else fecharMenu();

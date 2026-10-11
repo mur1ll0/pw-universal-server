@@ -574,7 +574,15 @@ impl RoteadorDeMapas {
                 Ok(()) => serde_json::json!({"estado":"salvo","presenca":"offline","item":tid,"de":slot_de,"para":slot_para}),
                 Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
             },
-            E::Item { tid, quantidade } => match bus.dar_item_offline(roleid, tid, quantidade).await {
+            E::Item { tid, quantidade, destino: Some((recipiente, slot)) } => match bus.criar_item_no_slot(roleid, tid, quantidade, recipiente, slot, false).await {
+                Ok(mut v) => { v["estado"] = serde_json::json!("salvo"); v["presenca"] = serde_json::json!("offline"); v }
+                Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
+            },
+            E::DarMascote(ovo) => match bus.dar_mascote(roleid, ovo, false).await {
+                Ok(mut v) => { v["estado"] = serde_json::json!("salvo"); v["presenca"] = serde_json::json!("offline"); v }
+                Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
+            },
+            E::Item { tid, quantidade, destino: None } => match bus.dar_item_offline(roleid, tid, quantidade).await {
                 Ok((entrou, slot)) => serde_json::json!({"estado":"salvo","presenca":"offline","item":tid,"entrou":entrou,"slot":slot}),
                 Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
             },
@@ -812,6 +820,14 @@ impl RoteadorDeMapas {
     }
 
     /// Painel (E6, B186): busca de itens por nome ou id no `elements.data` do realm.
+    /// Painel (B216): o catálogo de mascotes (ovos), por nome/id, tipo e ambiente.
+    pub async fn buscar_mascotes(&self, texto: &str, tipo: Option<i32>, ambiente: Option<&str>) -> serde_json::Value {
+        match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
+            Some(bus) => bus.buscar_mascotes(texto, tipo, ambiente).await,
+            None => serde_json::json!({"codigo":"sem_mapa"}),
+        }
+    }
+
     pub async fn buscar_itens(&self, texto: &str, categoria: Option<&str>) -> serde_json::Value {
         match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
             Some(bus) => bus.buscar_itens(texto, categoria).await,

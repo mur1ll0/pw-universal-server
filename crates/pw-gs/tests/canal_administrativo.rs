@@ -176,6 +176,22 @@ impl Cenario {
         dados.nomes_de_itens.insert(3003, "Espada de teste".into());
         dados.pilhas.insert(3003, 1);
         dados.posicoes.insert(3003, 0x1);
+        // B216: o ovo 4501 (montaria, todas as classes) dá o mascote 8100; 3004 é arma e veste no 0.
+        dados.ovos_de_pet.insert(4501, pw_data_loader::pet::DadosDoOvoDePet {
+            id: 4501, id_pet: 8100, money_hatched: 1000, money_restored: 0, honor_point: 0, level: 1, exp: 0,
+            skill_point: 0, req_level: 0, req_class: -1, pet_class: 0, skills: Vec::new(),
+        });
+        dados.tabelas_dos_itens.insert(3004, "WEAPON_ESSENCE".into());
+        dados.posicoes.insert(3004, 0x1);
+        // B216: 3004 é uma arma com molde (ficha), para o detalhe sem octetos gravados.
+        dados.nomes_de_itens.insert(3004, "Arma com molde".into());
+        dados.pilhas.insert(3004, 1);
+        dados.equipamentos.armas.insert(3004, pw_data_loader::armas::TemplateDeArma {
+            id: 3004, tipo_maior: 1, classes_permitidas: 0xFFFF, nivel_exigido: 1, forca_exigida: 0,
+            agilidade_exigida: 0, vitalidade_exigida: 0, energia_exigida: 0, reputacao_exigida: 0,
+            municao_exigida: 0, nivel: 1, velocidade_em_ticks: 20, modo_de_alcance: 1, dano_minimo: 1,
+            dano_maximo: 2, dano_magico_minimo: 0, dano_magico_maximo: 0, alcance: 2.0, durabilidade: 100,
+        });
         // B198: 5001 de NPC, nível 90 e sem desistência; 5002 direta, 50 moedas, com registro.
         let mut npc = pw_data_loader::tasks::TaskTemplate::vazia(5001);
         npc.name = "Missão do NPC de teste".into();
@@ -1285,11 +1301,14 @@ async fn dar_item_e_ver_inventario_online_e_offline() {
     sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
 
     let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"poção"})).await;
-    assert_eq!(busca["dados"]["itens"], json!([{"id":3001,"nome":"Poção de teste","pilha":100,"missao":false,"icone":"","grau":null}]), "{busca}");
-    // B206: `categoria: "pedra"` só devolve `STONE_ESSENCE` (o cenário não tem nenhuma); outra categoria é recusada.
+    assert_eq!(busca["dados"]["itens"], json!([{"id":3001,"nome":"Poção de teste","pilha":100,"missao":false,"icone":"","grau":null,"categoria":"outros"}]), "{busca}");
+    // B206: `categoria: "pedra"` só devolve `STONE_ESSENCE` (o cenário não tem nenhuma); B216: as categorias
+    // da tabela do item e `slot:N` valem, e uma que não existe é recusada.
     let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"poção","categoria":"pedra"})).await;
     assert_eq!(busca["dados"]["itens"], json!([]), "{busca}");
     let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"poção","categoria":"arma"})).await;
+    assert_eq!(busca["dados"]["itens"], json!([]), "{busca}");
+    let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"poção","categoria":"bau"})).await;
     assert_eq!(busca["dados"]["codigo"], "alvo_invalido", "{busca}");
     let busca = c.pedir(&c.realm, json!({"tipo":"buscar_itens","texto":"3002"})).await;
     assert_eq!(busca["dados"]["itens"][0]["id"], 3002);
@@ -1394,6 +1413,12 @@ async fn detalhe_do_item_para_a_dica() {
     assert_eq!((r["dados"]["id"].as_u64(), r["dados"]["nome"].as_str(), r["dados"]["quantidade"].as_u64(), r["dados"]["pilha"].as_u64()),
         (Some(3001), Some("Poção de teste"), Some(7), Some(100)), "{r}");
     assert!(r["dados"]["equipamento"].is_null(), "item comum não tem bloco de equipamento");
+    // B216 (anel 310 do Tsuko): equipamento sem octetos gravados sai com o bloco do molde, como o
+    // `OWN_ITEM_INFO` o manda ao cliente — antes a dica vinha só com o nome.
+    sqlx::query("INSERT INTO character_items(character_id, container_type, slot, item_id, count, durability, max_durability) VALUES($1,0::smallint,5::smallint,3004,1,6400,6400)")
+        .bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    let r = c.pedir(&c.realm, pedir("bolsa", 5)).await;
+    assert_eq!(r["dados"]["equipamento"]["durabilidade_maxima"], 6400, "{r}");
     assert_eq!(c.pedir(&c.realm, pedir("bolsa", 4)).await["dados"]["codigo"], "slot_vazio");
     assert_eq!(c.pedir(&c.realm, pedir("bau", 3)).await["dados"]["codigo"], "recipiente_invalido");
     sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
@@ -1756,4 +1781,68 @@ async fn missoes_ver_dar_concluir_cancelar_e_esquecer() {
         sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e6q-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
         c.encerrar().await;
     }
+}
+
+/// B216: criar item no slot vazio escolhido (bolsa, bolsa de missão e armazém; em jogo o recipiente
+/// inteiro vai de novo ao cliente, `OWN_IVTR_DATA` 42), dar mascote (em jogo `GAIN_PET` 231) e os
+/// catálogos por categoria e por tipo/ambiente.
+#[tokio::test]
+async fn criar_no_slot_dar_mascote_e_catalogos() {
+    let c = Cenario::montar().await;
+    let id = |s: &str| format!("b216-{s}-{}", c.personagem);
+    let criar = |tid: u32, q: u32, rec: &str, slot: u16| json!({"tipo":"editar_personagem","personagem_id":c.personagem,
+        "item":{"id":tid,"quantidade":q,"recipiente":rec,"slot":slot}});
+    let dar_pet = |ovo: u32| json!({"tipo":"editar_personagem","personagem_id":c.personagem,"dar_mascote":{"ovo":ovo}});
+    let pacote = |m: BusMessage| match m { BusMessage::GameToClient { data, .. } => data[2], _ => unreachable!() };
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    for (n, pedido, onde) in [("bolsa", criar(3001, 5, "bolsa", 7), 0u8), ("missao", criar(3002, 1, "missao", 3), 2),
+                              ("armazem", criar(3001, 1, "armazem", 2), 3)] {
+        let r = c.pedir_com_id(&c.realm, &id(n), c.conta, pedido).await;
+        assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("aplicado"), Some("online")), "{n}: {r}");
+        let m = esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 42u16.to_le_bytes())).await;
+        assert_eq!(pacote(m), onde, "{n}: o recipiente certo vai ao cliente");
+    }
+    for (n, pedido, codigo) in [(1, criar(3001, 1, "bolsa", 7), "slot_ocupado"), (2, criar(3002, 1, "bolsa", 8), "recipiente_errado"),
+                                (3, criar(3001, 101, "bolsa", 8), "quantidade_invalida"), (4, criar(3001, 1, "armazem", 16), "slot_invalido"),
+                                (5, criar(3001, 1, "equipamento", 0), "edicao_invalida"), (6, dar_pet(9999), "ovo_inexistente")] {
+        let r = c.pedir_com_id(&c.realm, &id(&format!("e{n}")), c.conta, pedido).await;
+        assert_eq!(r["dados"]["codigo"], codigo, "{n}: {r}");
+    }
+    let r = c.pedir_com_id(&c.realm, &id("pet-on"), c.conta, dar_pet(4501)).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["slot"].as_u64()), (Some("aplicado"), Some(0)), "{r}");
+    esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 231u16.to_le_bytes())).await;
+
+    drop(bus);
+    c.esperar_presenca("ausente").await;
+    let r = c.pedir_com_id(&c.realm, &id("off"), c.conta, criar(3004, 1, "bolsa", 9)).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["slot"].as_u64()), (Some("salvo"), Some(9)), "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("pet-off"), c.conta, dar_pet(4501)).await;
+    assert_eq!(r["dados"]["codigo"], "jaula_cheia", "uma vaga na jaula do cenário: {r}");
+    let inv = c.pedir(&c.realm, json!({"tipo":"inventario","personagem_id":c.personagem})).await;
+    // (Ao entrar, o personagem novo recebe os itens de iniciante: só os do teste contam.)
+    let onde = |rec: &str| inv["dados"]["recipientes"][rec].as_array().unwrap().iter()
+        .map(|i| (i["slot"].as_u64().unwrap(), i["id"].as_u64().unwrap(), i["quantidade"].as_u64().unwrap()))
+        .filter(|(_, t, _)| (3001..=3004).contains(t)).collect::<Vec<_>>();
+    assert_eq!((onde("bolsa"), onde("missao"), onde("armazem")), (vec![(7, 3001, 5), (9, 3004, 1)], vec![(3, 3002, 1)], vec![(2, 3001, 1)]), "{inv}");
+    let det = c.pedir(&c.realm, json!({"tipo":"detalhe_item","personagem_id":c.personagem,"recipiente":"bolsa","slot":9})).await;
+    assert!(det["dados"]["equipamento"].is_object(), "a arma nasce gerada: {det}");
+    let jaula = c.pedir(&c.realm, json!({"tipo":"mascotes","personagem_id":c.personagem})).await;
+    assert_eq!(jaula["dados"]["mascotes"][0]["tid"], 8100, "{jaula}");
+
+    let busca = |t: &str, cat: &str| json!({"tipo":"buscar_itens","texto":t,"categoria":cat});
+    let ids = |r: &Value| r["dados"]["itens"].as_array().unwrap().iter().map(|i| i["id"].as_u64().unwrap()).collect::<Vec<_>>();
+    assert_eq!(ids(&c.pedir(&c.realm, busca("", "arma")).await), vec![3004]);
+    assert!(ids(&c.pedir(&c.realm, busca("", "slot:0")).await).contains(&3004));
+    assert!(!ids(&c.pedir(&c.realm, busca("", "slot:1")).await).contains(&3004));
+    let pets = |extra: Value| { let mut q = json!({"tipo":"buscar_mascotes","texto":""}); for (k, v) in extra.as_object().unwrap() { q[k] = v.clone(); } q };
+    let ovos = |r: &Value| r["dados"]["mascotes"].as_array().unwrap().iter().map(|m| m["ovo"].as_u64().unwrap()).collect::<Vec<_>>();
+    assert_eq!(ovos(&c.pedir(&c.realm, pets(json!({"classe_de_mascote": 0, "ambiente": "terra"}))).await), vec![4501]);
+    assert!(ovos(&c.pedir(&c.realm, pets(json!({"ambiente": "ar"}))).await).is_empty());
+    assert!(ovos(&c.pedir(&c.realm, pets(json!({"classe_de_mascote": 1}))).await).is_empty());
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'b216-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
 }

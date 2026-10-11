@@ -634,6 +634,27 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((dados["daimon"]["nivel"], dados["origem"], dados["daimon"]["habilidades"][0]["id"]), (3, "persistida", 1))
         self.assertIn("nome", dados["daimon"]["habilidades"][0])
 
+    async def test_catalogos_por_categoria_classe_e_tipo_b216(self):
+        """B216: itens por categoria (texto vazio permitido com ela), habilidades por classe do stub e
+        o catálogo de mascotes (tipo e ambiente vão ao GS como `classe_de_mascote`/`ambiente`)."""
+        realm, _ = await self.criar_personagem()
+        await self.ativar_daemon(realm)
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/itens?categoria=slot:12")).status_code, 200)
+        self.assertEqual(self.pedidos_admin[-1]["consulta"], {"tipo": "buscar_itens", "texto": "", "categoria": "slot:12"})
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/itens?busca=")).status_code, 422)
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/itens?categoria=Arma!")).status_code, 422)
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/mascotes?busca=lobo&tipo=1&ambiente=ar")).status_code, 200)
+        self.assertEqual(self.pedidos_admin[-1]["consulta"],
+                         {"tipo": "buscar_mascotes", "texto": "lobo", "classe_de_mascote": 1, "ambiente": "ar"})
+        self.assertEqual((await self.cliente.get(f"/api/realms/{realm}/mascotes?ambiente=lava")).status_code, 422)
+        guerreiro = (await self.cliente.get("/api/habilidades?classe=0")).json()["habilidades"]
+        self.assertTrue(guerreiro and all(h["classe"] == 0 for h in guerreiro))
+        self.assertIn(1, [h["id"] for h in guerreiro])
+        self.assertEqual((await self.cliente.get("/api/habilidades")).status_code, 422)
+        classes = (await self.cliente.get("/api/classes?versao=1.2.6")).json()["classes"]
+        self.assertEqual((len(classes), classes[0]), (8, "Guerreiro"))
+        self.assertEqual(len((await self.cliente.get("/api/classes")).json()["classes"]), 12)
+
     async def test_busca_de_habilidades_b196(self):
         await self.criar_personagem()
         dados = (await self.cliente.get("/api/habilidades?busca=Ataque do Tigre")).json()["habilidades"]
@@ -1045,7 +1066,13 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          {"missao": {"acao": "dar", "id": 70000}}, {"missao": {"acao": "dar"}},
                          {"missao": {"acao": "dar", "id": 1, "x": 1}}, {"missao": {"acao": "dar", "id": 1}, "pontos": 1},
                          # B215: EXP do Daimon de 1 a 2·10⁹, uma edição só.
-                         {"daimon_exp": 0}, {"daimon_exp": 2_000_000_001}, {"daimon_exp": 10, "pontos": 1}):
+                         {"daimon_exp": 0}, {"daimon_exp": 2_000_000_001}, {"daimon_exp": 10, "pontos": 1},
+                         # B216: item no slot (recipiente e slot juntos, sem o corpo); dar mascote com ovo.
+                         {"item": {"id": 3001, "quantidade": 1, "recipiente": "bolsa"}},
+                         {"item": {"id": 3001, "quantidade": 1, "slot": 3}},
+                         {"item": {"id": 3001, "quantidade": 1, "recipiente": "equipamento", "slot": 0}},
+                         {"item": {"id": 3001, "quantidade": 1, "recipiente": "bolsa", "slot": 256}},
+                         {"dar_mascote": {"ovo": 0}}, {"dar_mascote": {}}, {"dar_mascote": {"ovo": 1}, "pontos": 1}):
             self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
         for valido in ({"dinheiro": 10}, {"pontos": 5}, {"nivel": 30}, {"cultivo": 0},
                        {"atributos": [5, 5, 5, 5]}, {"redistribuir": True},
@@ -1063,7 +1090,9 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                        {"mascote": {"slot": 1, "tid": 8001, "edicao": {"libertar": True}}},
                        {"missao": {"acao": "dar", "id": 1173, "sub": 1175}}, {"missao": {"acao": "concluir", "id": 5001}},
                        {"missao": {"acao": "cancelar", "id": 5001}}, {"missao": {"acao": "esquecer", "id": 5002}},
-                       {"daimon_exp": 5000}):
+                       {"daimon_exp": 5000},
+                       {"item": {"id": 3001, "quantidade": 5, "recipiente": "armazem", "slot": 2}},
+                       {"dar_mascote": {"ovo": 4501}}):
             resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
             self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
 

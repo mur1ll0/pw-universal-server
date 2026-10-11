@@ -149,181 +149,55 @@
             </header>
             <p id="observacao-personagem" class="texto-suave"></p>
             <div class="mesa-janelas">
-            <section class="janela janela-larga" data-janela="estatisticas">
-              <header class="barra-janela"><h3>Estatísticas</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+            <!-- B216: janelas do mesmo tamanho; editar e dar abrem modais pelo botão da barra. -->
+            <section class="janela" data-janela="estatisticas">
+              <header class="barra-janela"><h3><span class="ico" data-icone="usuario"></span>Estatísticas</h3>
+                <div class="acoes-janela"><button id="abrir-estatisticas" type="button" class="botao-barra"><span class="ico" data-icone="editar"></span>Editar</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela">
-              <div id="dados-personagem" class="grade-ficha"></div>
-              <div class="edicao-personagem">
-                <form id="form-dinheiro" class="linha-edicao">
-                  <span class="rotulo-edicao">Dinheiro</span>
-                  <input id="din-valor" type="number" min="1" max="2000000000" step="1" placeholder="Moedas a dar" aria-label="Moedas a dar">
-                  <button type="submit" class="botao botao-primario">Dar</button>
-                </form>
-                <form id="form-exp" class="linha-edicao">
-                  <span class="rotulo-edicao">EXP / SP</span>
-                  <input id="exp-valor" type="number" min="0" max="2000000000" step="1" placeholder="EXP" aria-label="EXP a dar">
-                  <input id="sp-valor" type="number" min="0" max="2000000000" step="1" placeholder="SP" aria-label="SP a dar">
-                  <button type="submit" class="botao botao-primario">Dar</button>
-                </form>
-                <form id="form-pontos" class="linha-edicao">
-                  <span class="rotulo-edicao">Pontos livres</span>
-                  <input id="pontos-valor" type="number" min="1" max="10000" step="1" placeholder="Pontos a dar" aria-label="Pontos de atributo a dar">
-                  <button type="submit" class="botao botao-primario">Dar</button>
-                </form>
-                <form id="form-nivel" class="linha-edicao">
-                  <span class="rotulo-edicao">Nível</span>
-                  <input id="nivel-valor" type="number" min="2" step="1" placeholder="Novo nível (só sobe)" aria-label="Novo nível">
-                  <button type="submit" class="botao botao-primario">Subir</button>
-                </form>
-                <form id="form-atributos" class="linha-edicao">
-                  <span class="rotulo-edicao">Atributos</span>
-                  <input id="attr-forca" type="number" min="0" max="100000" step="1" placeholder="Força" aria-label="Força" title="Força">
-                  <input id="attr-agilidade" type="number" min="0" max="100000" step="1" placeholder="Agilidade" aria-label="Agilidade" title="Agilidade">
-                  <input id="attr-vitalidade" type="number" min="0" max="100000" step="1" placeholder="Vitalidade" aria-label="Vitalidade" title="Vitalidade">
-                  <input id="attr-energia" type="number" min="0" max="100000" step="1" placeholder="Energia" aria-label="Energia" title="Energia">
-                  <button type="submit" class="botao botao-primario">Aplicar</button>
-                  <button id="redistribuir-atributos" type="button" class="botao botao-secundario">Redistribuir</button>
-                </form>
-                <p id="sobra-atributos" class="dica"></p>
-                <form id="form-posicao" class="linha-edicao">
-                  <span class="rotulo-edicao">Posição</span>
-                  <select id="pos-mapa" aria-label="Mapa de destino"></select>
-                  <input id="pos-x" type="number" step="any" placeholder="X" aria-label="Coordenada X" title="X">
-                  <input id="pos-y" type="number" step="any" placeholder="Y (chão)" aria-label="Coordenada Y (vazio = chão)" title="Y — vazio usa o chão">
-                  <input id="pos-z" type="number" step="any" placeholder="Z" aria-label="Coordenada Z" title="Z">
-                  <button type="submit" class="botao botao-primario">Mover</button>
-                </form>
-                <form id="form-cultivo" class="linha-edicao">
-                  <span class="rotulo-edicao">Cultivo</span>
-                  <select id="cultivo-valor" aria-label="Novo cultivo"></select>
-                  <button type="submit" class="botao botao-primario">Definir</button>
-                </form>
+                <div id="dados-personagem" class="grade-atributos"></div>
                 <p id="dica-edicao" class="dica"></p>
-              </div>
               </div>
             </section>
             <section class="janela" data-janela="equipamento">
-              <header class="barra-janela"><h3>Equipamento</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <header class="barra-janela"><h3><span class="ico" data-icone="escudo"></span>Equipamento</h3><div class="acoes-janela"><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela"><div id="janela-equipamento"></div></div>
             </section>
             <section class="janela" data-janela="roupas">
-              <header class="barra-janela"><h3>Roupas</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <header class="barra-janela"><h3><span class="ico" data-icone="roupa"></span>Roupas</h3><div class="acoes-janela"><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela"><div id="janela-roupas"></div></div>
             </section>
-            <section class="janela janela-larga" data-janela="inventario">
-              <header class="barra-janela"><h3>Inventário</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
-              <div class="corpo-janela itens-personagem">
-                <form id="form-item" class="linha-edicao">
-                  <span class="rotulo-edicao">Dar item</span>
-                  <input id="item-busca" type="search" maxlength="64" placeholder="Nome ou ID do item" aria-label="Buscar item por nome ou ID" autocomplete="off">
-                  <input id="item-quantidade" type="number" min="1" max="100000" step="1" value="1" aria-label="Quantidade" title="Quantidade">
-                  <button type="submit" class="botao botao-primario">Dar</button>
-                </form>
-                <ul id="item-resultados" class="resultados-item" hidden></ul>
-                <p id="item-escolhido" class="dica"></p>
-                <form id="form-remover" class="linha-edicao" hidden>
-                  <span class="rotulo-edicao">Remover</span>
-                  <span id="remover-qual" class="nome-remocao"></span>
-                  <input id="remover-quantidade" type="number" min="1" step="1" aria-label="Quantidade a remover" title="Quantidade a remover">
-                  <button type="submit" class="botao botao-secundario texto-perigo">Remover</button>
-                  <button id="remover-cancelar" type="button" class="botao botao-secundario">Cancelar</button>
-                </form>
-                <div id="janela-bolsa"></div>
-              </div>
+            <section class="janela" data-janela="inventario">
+              <header class="barra-janela"><h3><span class="ico" data-icone="bolsa"></span>Inventário</h3>
+                <div class="acoes-janela"><button id="abrir-dar-item" type="button" class="botao-barra"><span class="ico" data-icone="mais"></span>Dar item</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+              <div class="corpo-janela"><div id="janela-bolsa"></div></div>
             </section>
             <section class="janela" data-janela="armazem">
-              <header class="barra-janela"><h3>Armazém</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <header class="barra-janela"><h3><span class="ico" data-icone="caixa"></span>Armazém</h3><div class="acoes-janela"><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela"><div id="janela-armazem"></div></div>
             </section>
             <section class="janela" data-janela="missao">
-              <header class="barra-janela"><h3>Bolsa de missão</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
+              <header class="barra-janela"><h3><span class="ico" data-icone="pergaminho"></span>Bolsa de missão</h3><div class="acoes-janela"><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela"><div id="janela-missao"></div></div>
             </section>
             <section class="janela" data-janela="habilidades">
-              <header class="barra-janela"><h3>Habilidades</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
-              <div class="corpo-janela">
-                <form id="form-ensinar" class="linha-edicao">
-                  <span class="rotulo-edicao">Ensinar</span>
-                  <input id="hab-busca" type="search" maxlength="64" placeholder="Nome ou ID da habilidade" aria-label="Buscar habilidade por nome ou ID" autocomplete="off">
-                  <input id="hab-nivel-novo" type="number" min="1" max="255" step="1" value="1" aria-label="Nível" title="Nível">
-                  <button type="submit" class="botao botao-primario">Ensinar</button>
-                </form>
-                <ul id="hab-resultados" class="resultados-item" hidden></ul>
-                <p id="hab-escolhida" class="dica"></p>
-                <form id="form-habilidade" class="linha-edicao" hidden>
-                  <span class="rotulo-edicao">Nível</span>
-                  <span id="hab-qual" class="nome-remocao"></span>
-                  <input id="hab-nivel" type="number" min="1" max="255" step="1" aria-label="Nível novo" title="Nível novo">
-                  <button type="submit" class="botao botao-primario">Aplicar</button>
-                  <button id="hab-remover" type="button" class="botao botao-secundario texto-perigo">Remover</button>
-                </form>
-                <div id="janela-habilidades"></div>
-              </div>
-            </section>
-            <section class="janela" data-janela="daimon">
-              <header class="barra-janela"><h3>Daimon</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
-              <div class="corpo-janela">
-                <div id="janela-daimon" class="ficha-daimon"></div>
-                <form id="form-daimon" class="grupo-campos" hidden>
-                  <div class="grade-campos">
-                    <label class="campo"><span>Dar EXP ao Daimon</span><input id="daimon-exp" type="number" min="1" max="2000000000" step="1" required></label>
-                  </div>
-                  <div class="acoes-modal"><span></span><button type="submit" class="botao">Dar EXP</button></div>
-                </form>
-              </div>
+              <header class="barra-janela"><h3><span class="ico" data-icone="livro"></span>Habilidades</h3>
+                <div class="acoes-janela"><button id="abrir-dar-habilidade" type="button" class="botao-barra"><span class="ico" data-icone="mais"></span>Dar habilidade</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+              <div class="corpo-janela"><div id="janela-habilidades"></div></div>
             </section>
             <section class="janela" data-janela="mascotes">
-              <header class="barra-janela"><h3>Mascotes</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
-              <div class="corpo-janela">
-                <div id="janela-mascotes" class="lista-mascotes"></div>
-                <form id="form-mascote" class="grupo-campos" hidden>
-                  <legend id="mascote-qual"></legend>
-                  <div class="grade-campos">
-                    <label class="campo"><span>Nível</span><input id="pet-nivel" type="number" min="1" step="1"></label>
-                    <label class="campo"><span>EXP</span><input id="pet-exp" type="number" min="0" step="1"></label>
-                    <label class="campo"><span>Lealdade</span><input id="pet-lealdade" type="number" min="0" max="999" step="1"></label>
-                    <label class="campo"><span>Fome (0–11)</span><input id="pet-fome" type="number" min="0" max="11" step="1"></label>
-                    <label class="campo"><span>Pontos</span><input id="pet-pontos" type="number" min="0" step="1"></label>
-                    <label class="campo"><span>Nome</span><input id="pet-nome" maxlength="8" autocomplete="off"></label>
-                  </div>
-                  <label class="campo"><span>Habilidades (id:nível, até 8)</span><input id="pet-habilidades" autocomplete="off" placeholder="ex.: 501:3, 502:1"></label>
-                  <div class="acoes-modal">
-                    <button id="pet-libertar" type="button" class="botao botao-secundario texto-perigo">Libertar</button>
-                    <button type="submit" class="botao botao-primario">Salvar</button>
-                  </div>
-                </form>
-              </div>
+              <header class="barra-janela"><h3><span class="ico" data-icone="pata"></span>Mascotes</h3>
+                <div class="acoes-janela"><button id="abrir-dar-mascote" type="button" class="botao-barra"><span class="ico" data-icone="mais"></span>Dar mascote</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+              <div class="corpo-janela"><div id="janela-mascotes" class="lista-mascotes"></div></div>
+            </section>
+            <section class="janela" data-janela="daimon">
+              <header class="barra-janela"><h3><span class="ico" data-icone="brilho"></span>Daimon</h3>
+                <div class="acoes-janela"><button id="abrir-daimon-exp" type="button" class="botao-barra" hidden><span class="ico" data-icone="exp"></span>Dar EXP</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+              <div class="corpo-janela"><div id="janela-daimon" class="ficha-daimon"></div></div>
             </section>
             <section class="janela" data-janela="missoes">
-              <header class="barra-janela"><h3>Missões</h3><button type="button" class="botao-janela" aria-label="Recolher">–</button></header>
-              <div class="corpo-janela">
-                <form id="form-dar-missao" class="linha-edicao">
-                  <span class="rotulo-edicao">Dar</span>
-                  <input id="mis-busca" type="search" maxlength="64" placeholder="Nome ou ID da missão" aria-label="Buscar missão por nome ou ID" autocomplete="off">
-                  <select id="mis-sub" aria-label="Etapa" hidden></select>
-                  <button type="submit" class="botao botao-primario">Dar</button>
-                </form>
-                <ul id="mis-resultados" class="resultados-item" hidden></ul>
-                <p id="mis-escolhida" class="dica"></p>
-                <h4 class="titulo-lista">Ativas</h4>
-                <div id="missoes-ativas" class="lista-missoes"></div>
-                <div id="form-missao" class="linha-edicao" hidden>
-                  <span id="mis-qual" class="nome-remocao"></span>
-                  <button id="mis-concluir" type="button" class="botao botao-primario">Concluir</button>
-                  <button id="mis-cancelar" type="button" class="botao botao-secundario texto-perigo">Cancelar</button>
-                </div>
-                <h4 class="titulo-lista">Concluídas <span id="mis-total"></span></h4>
-                <form id="form-filtro-missoes" class="linha-edicao">
-                  <input id="mis-filtro" type="search" maxlength="64" placeholder="Filtrar por nome ou ID" aria-label="Filtrar concluídas" autocomplete="off">
-                  <button type="submit" class="botao botao-secundario">Filtrar</button>
-                </form>
-                <div id="missoes-concluidas" class="lista-missoes"></div>
-                <div id="paginacao-missoes" class="paginacao" hidden>
-                  <button id="mis-anterior" type="button" class="botao botao-secundario" aria-label="Página anterior">‹</button>
-                  <span id="mis-pagina"></span>
-                  <button id="mis-proxima" type="button" class="botao botao-secundario" aria-label="Próxima página">›</button>
-                </div>
-              </div>
+              <header class="barra-janela"><h3><span class="ico" data-icone="pergaminho"></span>Missões ativas</h3>
+                <div class="acoes-janela"><button id="abrir-missoes" type="button" class="botao-barra"><span class="ico" data-icone="editar"></span>Editar</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+              <div class="corpo-janela"><div id="missoes-ativas" class="lista-missoes"></div></div>
             </section>
             </div>
             <div id="dica-item" class="dica-item" role="tooltip" hidden></div>
@@ -486,54 +360,330 @@
       </form>
     </div>
 
-    <!-- Editar item (B194): edição livre nos valores, não no formato -->
-    <div id="modal-item" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-item" hidden>
-      <form id="form-editar-item" class="modal-caixa modal-larga formulario">
-        <header class="painel-topo">
-          <h2 id="titulo-item">Item</h2>
-          <button id="fechar-item" type="button" class="botao-icone" aria-label="Fechar">✕</button>
+    <!-- B216: menu do slot vazio -->
+    <div id="menu-slot" class="menu-slot" role="menu" hidden>
+      <button id="menu-criar-item" type="button" role="menuitem"><span class="ico" data-icone="mais"></span>Criar item</button>
+    </div>
+
+    <!-- B216: editar estatísticas -->
+    <div id="modal-estatisticas" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-estatisticas" hidden>
+      <div class="modal-caixa modal-ampla">
+        <header class="modal-topo">
+          <span class="ico-titulo" data-icone="usuario"></span>
+          <div class="modal-titulos"><h2 id="titulo-estatisticas">Editar estatísticas</h2><p id="est-resumo" class="dica"></p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
         </header>
-        <p id="resumo-item" class="dica"></p>
-        <div class="grade-campos">
-          <label class="campo"><span>Quantidade</span><input id="ei-quantidade" type="number" min="1" step="1"></label>
+        <div class="modal-corpo grade-blocos">
+          <form id="form-dinheiro" class="bloco-edicao">
+            <h4><span class="ico" data-icone="moeda"></span>Dinheiro</h4>
+            <div class="linha-bloco">
+              <input id="din-valor" type="number" min="1" max="2000000000" step="1" placeholder="Moedas a dar" aria-label="Moedas a dar">
+              <button type="submit" class="botao botao-primario">Dar</button>
+            </div>
+          </form>
+          <form id="form-exp" class="bloco-edicao">
+            <h4><span class="ico" data-icone="exp"></span>EXP e SP <small class="texto-suave">só em jogo</small></h4>
+            <div class="linha-bloco">
+              <input id="exp-valor" type="number" min="0" max="2000000000" step="1" placeholder="EXP" aria-label="EXP a dar">
+              <input id="sp-valor" type="number" min="0" max="2000000000" step="1" placeholder="SP" aria-label="SP a dar">
+              <button type="submit" class="botao botao-primario">Dar</button>
+            </div>
+          </form>
+          <form id="form-pontos" class="bloco-edicao">
+            <h4><span class="ico" data-icone="pontos"></span>Pontos livres</h4>
+            <div class="linha-bloco">
+              <input id="pontos-valor" type="number" min="1" max="10000" step="1" placeholder="Pontos a dar" aria-label="Pontos de atributo a dar">
+              <button type="submit" class="botao botao-primario">Dar</button>
+            </div>
+          </form>
+          <form id="form-nivel" class="bloco-edicao">
+            <h4><span class="ico" data-icone="nivel"></span>Nível <small class="texto-suave">só sobe</small></h4>
+            <div class="linha-bloco">
+              <input id="nivel-valor" type="number" min="2" step="1" placeholder="Novo nível" aria-label="Novo nível">
+              <button type="submit" class="botao botao-primario">Subir</button>
+            </div>
+          </form>
+          <form id="form-cultivo" class="bloco-edicao">
+            <h4><span class="ico" data-icone="cultivo"></span>Cultivo</h4>
+            <div class="linha-bloco">
+              <select id="cultivo-valor" aria-label="Novo cultivo"></select>
+              <button type="submit" class="botao botao-primario">Definir</button>
+            </div>
+          </form>
+          <form id="form-atributos" class="bloco-edicao bloco-largo">
+            <h4><span class="ico" data-icone="forca"></span>Atributos</h4>
+            <div class="grade-quatro">
+              <label class="campo-icone"><span class="ico" data-icone="forca"></span><span>Força</span><input id="attr-forca" type="number" min="0" max="100000" step="1"></label>
+              <label class="campo-icone"><span class="ico" data-icone="agilidade"></span><span>Agilidade</span><input id="attr-agilidade" type="number" min="0" max="100000" step="1"></label>
+              <label class="campo-icone"><span class="ico" data-icone="vitalidade"></span><span>Vitalidade</span><input id="attr-vitalidade" type="number" min="0" max="100000" step="1"></label>
+              <label class="campo-icone"><span class="ico" data-icone="energia"></span><span>Energia</span><input id="attr-energia" type="number" min="0" max="100000" step="1"></label>
+            </div>
+            <div class="acoes-bloco">
+              <p id="sobra-atributos" class="dica"></p>
+              <button id="redistribuir-atributos" type="button" class="botao botao-secundario">Redistribuir</button>
+              <button type="submit" class="botao botao-primario">Aplicar</button>
+            </div>
+          </form>
+          <form id="form-posicao" class="bloco-edicao bloco-largo">
+            <h4><span class="ico" data-icone="posicao"></span>Posição</h4>
+            <div class="grade-posicao">
+              <label class="campo-icone"><span class="ico" data-icone="mapa"></span><span>Mapa</span><select id="pos-mapa" aria-label="Mapa de destino"></select></label>
+              <label class="campo-icone"><span>X</span><input id="pos-x" type="number" step="any" aria-label="Coordenada X"></label>
+              <label class="campo-icone"><span>Y</span><input id="pos-y" type="number" step="any" placeholder="chão" aria-label="Coordenada Y (vazio = chão)"></label>
+              <label class="campo-icone"><span>Z</span><input id="pos-z" type="number" step="any" aria-label="Coordenada Z"></label>
+            </div>
+            <div class="acoes-bloco">
+              <p class="dica">Y vazio usa o chão do destino.</p>
+              <button type="submit" class="botao botao-primario">Mover</button>
+            </div>
+          </form>
         </div>
-        <fieldset id="ei-equipamento" class="grupo-campos">
-          <legend>Equipamento</legend>
-          <div class="grade-campos">
-            <label class="campo"><span>Durabilidade</span><input id="ei-durabilidade" type="number" min="0" step="1"></label>
-            <label class="campo"><span>Durabilidade máx.</span><input id="ei-durabilidade-max" type="number" min="0" step="1"></label>
-            <label class="campo"><span>Refino</span><select id="ei-refino"></select></label>
-            <label class="campo"><span>Fabricante</span><input id="ei-fabricante" maxlength="20" autocomplete="off"></label>
+      </div>
+    </div>
+
+    <!-- Editar item (B194; B216: mais largo, prévia da dica e campos com ícone) -->
+    <div id="modal-item" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-item" hidden>
+      <form id="form-editar-item" class="modal-caixa modal-ampla">
+        <header class="modal-topo">
+          <span id="ei-icone" class="icone-grande"></span>
+          <div class="modal-titulos"><h2 id="titulo-item">Item</h2><p id="resumo-item" class="dica"></p></div>
+          <button id="fechar-item" type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <div class="modal-corpo edicao-item">
+          <aside class="previa-item">
+            <h4><span class="ico" data-icone="olho"></span>No jogo</h4>
+            <div id="ei-previa" class="dica-embutida"></div>
+            <label class="campo-icone"><span class="ico" data-icone="camadas"></span><span>Quantidade</span><input id="ei-quantidade" type="number" min="1" step="1"></label>
+          </aside>
+          <div class="campos-item">
+            <fieldset id="ei-equipamento" class="campos-equipamento">
+              <section class="bloco-edicao">
+                <h4><span class="ico" data-icone="chave"></span>Durabilidade e refino</h4>
+                <div class="grade-dois">
+                  <label class="campo-icone"><span class="ico" data-icone="chave"></span><span>Durabilidade</span><input id="ei-durabilidade" type="number" min="0" step="1"></label>
+                  <label class="campo-icone"><span class="ico" data-icone="chave"></span><span>Máxima</span><input id="ei-durabilidade-max" type="number" min="0" step="1"></label>
+                  <label class="campo-icone"><span class="ico" data-icone="refino"></span><span>Refino</span><select id="ei-refino"></select></label>
+                  <label class="campo-icone"><span class="ico" data-icone="martelo"></span><span>Fabricante</span><input id="ei-fabricante" maxlength="20" autocomplete="off"></label>
+                </div>
+                <p class="dica">Durabilidade em unidades internas (o jogo mostra ÷100).</p>
+              </section>
+              <section class="bloco-edicao">
+                <h4><span class="ico" data-icone="usuario"></span>Requisitos</h4>
+                <div class="grade-dois">
+                  <label class="campo-icone"><span class="ico" data-icone="nivel"></span><span>Nível</span><input id="ei-req-nivel" type="number" min="0" max="32767" step="1"></label>
+                  <label class="campo-icone"><span class="ico" data-icone="forca"></span><span>Força</span><input id="ei-req-forca" type="number" min="0" max="32767" step="1"></label>
+                  <label class="campo-icone"><span class="ico" data-icone="agilidade"></span><span>Agilidade</span><input id="ei-req-agilidade" type="number" min="0" max="32767" step="1"></label>
+                  <label class="campo-icone"><span class="ico" data-icone="vitalidade"></span><span>Vitalidade</span><input id="ei-req-vitalidade" type="number" min="0" max="32767" step="1"></label>
+                  <label class="campo-icone"><span class="ico" data-icone="energia"></span><span>Energia</span><input id="ei-req-energia" type="number" min="0" max="32767" step="1"></label>
+                </div>
+                <div class="campo"><span><span class="ico" data-icone="grupo"></span>Classes que podem usar</span><div id="ei-classes" class="grade-classes"></div></div>
+              </section>
+              <section class="bloco-edicao">
+                <h4><span class="ico" data-icone="gema"></span>Furos e pedras</h4>
+                <div class="grade-dois">
+                  <label class="campo-icone"><span class="ico" data-icone="furo"></span><span>Furos (0–4)</span><input id="ei-furos" type="number" min="0" max="4" step="1"></label>
+                  <label class="campo-icone"><span class="ico" data-icone="gema"></span><span>Pedras (id por furo)</span><input id="ei-pedras" placeholder="ex.: 0, 0" autocomplete="off"></label>
+                </div>
+                <label class="campo-busca"><span class="ico" data-icone="busca"></span><input id="ei-busca-pedra" type="search" maxlength="64" placeholder="Buscar pedra por nome ou ID" autocomplete="off"></label>
+                <ul id="ei-resultados-pedra" class="resultados-item" hidden></ul>
+              </section>
+              <section class="bloco-edicao bloco-largo">
+                <h4><span class="ico" data-icone="brilho"></span>Efeitos <small class="texto-suave">id e parâmetros</small></h4>
+                <div id="ei-efeitos" class="lista-efeitos"></div>
+                <div class="linha-bloco">
+                  <label class="campo-busca"><span class="ico" data-icone="busca"></span><input id="ei-busca-efeito" type="search" maxlength="64" placeholder="Buscar efeito pelo texto (ex.: ataque mágico) ou ID" aria-label="Buscar efeito" autocomplete="off"></label>
+                  <button id="ei-novo-efeito" type="button" class="botao botao-secundario"><span class="ico" data-icone="mais"></span>Efeito vazio</button>
+                </div>
+                <ul id="ei-resultados-efeito" class="resultados-item" hidden></ul>
+                <p class="dica">Efeitos de pedra, conjunto e gravação não aparecem aqui e ficam como estão.</p>
+              </section>
+            </fieldset>
           </div>
-          <p class="dica">Durabilidade em unidades internas (o jogo mostra ÷100).</p>
-          <div class="grade-campos">
-            <label class="campo"><span>Nível exigido</span><input id="ei-req-nivel" type="number" min="0" max="32767" step="1"></label>
-            <label class="campo"><span>Força</span><input id="ei-req-forca" type="number" min="0" max="32767" step="1"></label>
-            <label class="campo"><span>Agilidade</span><input id="ei-req-agilidade" type="number" min="0" max="32767" step="1"></label>
-            <label class="campo"><span>Vitalidade</span><input id="ei-req-vitalidade" type="number" min="0" max="32767" step="1"></label>
-            <label class="campo"><span>Energia</span><input id="ei-req-energia" type="number" min="0" max="32767" step="1"></label>
+        </div>
+        <footer class="modal-rodape">
+          <div class="remocao">
+            <label class="campo-icone compacto" title="Quantidade a remover"><span class="ico" data-icone="lixeira"></span><input id="remover-quantidade" type="number" min="1" step="1" aria-label="Quantidade a remover"></label>
+            <button id="ei-remover" type="button" class="botao botao-secundario texto-perigo">Remover</button>
           </div>
-          <div class="campo"><span>Classes que podem usar</span><div id="ei-classes" class="grade-classes"></div></div>
-          <div class="grade-campos">
-            <label class="campo"><span>Furos (0–4)</span><input id="ei-furos" type="number" min="0" max="4" step="1"></label>
-            <label class="campo"><span>Pedras (id por furo; 0 = vazio)</span><input id="ei-pedras" placeholder="ex.: 0, 0" autocomplete="off"></label>
-          </div>
-          <label class="campo"><span>Buscar pedra</span><input id="ei-busca-pedra" type="search" maxlength="64" placeholder="Nome ou ID da pedra" autocomplete="off"></label>
-          <ul id="ei-resultados-pedra" class="resultados-item" hidden></ul>
-          <div class="campo">
-            <span>Efeitos (id e parâmetros)</span>
-            <div id="ei-efeitos" class="lista-efeitos"></div>
-            <input id="ei-busca-efeito" type="search" maxlength="64" placeholder="Buscar efeito pelo texto (ex.: ataque mágico) ou ID" aria-label="Buscar efeito" autocomplete="off">
-            <ul id="ei-resultados-efeito" class="resultados-item" hidden></ul>
-            <button id="ei-novo-efeito" type="button" class="botao botao-secundario botao-pequeno">+ Efeito vazio</button>
-          </div>
-          <p class="dica">Efeitos de pedra, conjunto e gravação não aparecem aqui e ficam como estão.</p>
-        </fieldset>
-        <div class="acoes-modal">
-          <button id="ei-remover" type="button" class="botao botao-secundario texto-perigo">Remover…</button>
           <button type="submit" class="botao botao-primario">Salvar</button>
-        </div>
+        </footer>
       </form>
+    </div>
+
+    <!-- B216: criar item (slot vazio) e dar item -->
+    <div id="modal-criar-item" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-criar-item" hidden>
+      <form id="form-criar-item" class="modal-caixa modal-ampla">
+        <header class="modal-topo">
+          <span class="ico-titulo" data-icone="mais"></span>
+          <div class="modal-titulos"><h2 id="titulo-criar-item">Criar item</h2><p id="ci-destino" class="dica"></p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <div class="modal-corpo">
+          <div class="barra-filtros">
+            <label class="campo-busca"><span class="ico" data-icone="busca"></span><input id="ci-busca" type="search" maxlength="64" placeholder="Nome ou ID do item" aria-label="Buscar item" autocomplete="off"></label>
+            <label class="campo-icone"><span class="ico" data-icone="filtro"></span><select id="ci-categoria" aria-label="Categoria"></select></label>
+          </div>
+          <div id="ci-resultados" class="grade-resultados"></div>
+        </div>
+        <footer class="modal-rodape">
+          <div id="ci-escolhido" class="escolhido-resumo"><span class="texto-suave">Escolha um item da lista.</span></div>
+          <div class="linha-bloco">
+            <label class="campo-icone compacto" title="Quantidade"><span class="ico" data-icone="camadas"></span><input id="ci-quantidade" type="number" min="1" max="100000" step="1" value="1" aria-label="Quantidade"></label>
+            <button id="ci-criar" type="submit" class="botao botao-primario">Criar</button>
+          </div>
+        </footer>
+      </form>
+    </div>
+
+    <!-- B216: dar habilidade (busca) -->
+    <div id="modal-busca-habilidade" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-busca-habilidade" hidden>
+      <div class="modal-caixa modal-ampla">
+        <header class="modal-topo">
+          <span class="ico-titulo" data-icone="livro"></span>
+          <div class="modal-titulos"><h2 id="titulo-busca-habilidade">Dar habilidade</h2><p class="dica">Clique numa habilidade para escolher o nível.</p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <div class="modal-corpo">
+          <div class="barra-filtros">
+            <label class="campo-busca"><span class="ico" data-icone="busca"></span><input id="hb-busca" type="search" maxlength="64" placeholder="Nome ou ID da habilidade" aria-label="Buscar habilidade" autocomplete="off"></label>
+            <label class="campo-icone"><span class="ico" data-icone="grupo"></span><select id="hb-classe" aria-label="Classe"></select></label>
+          </div>
+          <div id="hb-resultados" class="grade-resultados"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- B216: editar / ensinar habilidade -->
+    <div id="modal-habilidade" class="modal" role="dialog" aria-modal="true" aria-labelledby="hab-qual" hidden>
+      <form id="form-habilidade" class="modal-caixa modal-media">
+        <header class="modal-topo">
+          <span id="hab-icone" class="icone-grande"></span>
+          <div class="modal-titulos"><h2 id="hab-qual">Habilidade</h2><p id="hab-detalhe" class="dica"></p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <div class="modal-corpo">
+          <label class="campo-icone"><span class="ico" data-icone="nivel"></span><span>Nível</span><input id="hab-nivel" type="number" min="1" max="255" step="1" aria-label="Nível"></label>
+        </div>
+        <footer class="modal-rodape">
+          <button id="hab-remover" type="button" class="botao botao-secundario texto-perigo">Remover</button>
+          <button id="hab-aplicar" type="submit" class="botao botao-primario">Aplicar</button>
+        </footer>
+      </form>
+    </div>
+
+    <!-- B216: dar mascote (busca) -->
+    <div id="modal-busca-mascote" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-busca-mascote" hidden>
+      <div class="modal-caixa modal-ampla">
+        <header class="modal-topo">
+          <span class="ico-titulo" data-icone="pata"></span>
+          <div class="modal-titulos"><h2 id="titulo-busca-mascote">Dar mascote</h2><p class="dica">Os mascotes dos ovos do realm. Clique num para ver e dar.</p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <div class="modal-corpo">
+          <div class="barra-filtros">
+            <label class="campo-busca"><span class="ico" data-icone="busca"></span><input id="mb-busca" type="search" maxlength="64" placeholder="Nome ou ID (do ovo ou do mascote)" aria-label="Buscar mascote" autocomplete="off"></label>
+            <label class="campo-icone"><span class="ico" data-icone="filtro"></span><select id="mb-tipo" aria-label="Tipo">
+              <option value="">Todos os tipos</option><option value="0">Montaria</option><option value="1">Combate</option>
+              <option value="2">Seguidor</option><option value="3">Invocação</option><option value="4">Planta</option><option value="5">Evolução</option>
+            </select></label>
+            <label class="campo-icone"><span class="ico" data-icone="mapa"></span><select id="mb-ambiente" aria-label="Ambiente">
+              <option value="">Qualquer ambiente</option><option value="terra">Terrestre</option><option value="agua">Aquático</option><option value="ar">Voador</option>
+            </select></label>
+          </div>
+          <div id="mb-resultados" class="grade-resultados"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mascote (B197; B216: modal, habilidades por busca) -->
+    <div id="modal-mascote" class="modal" role="dialog" aria-modal="true" aria-labelledby="mascote-qual" hidden>
+      <form id="form-mascote" class="modal-caixa modal-ampla">
+        <header class="modal-topo">
+          <span id="pet-icone" class="icone-grande"></span>
+          <div class="modal-titulos"><h2 id="mascote-qual">Mascote</h2><p id="mascote-detalhe" class="dica"></p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <div class="modal-corpo grade-blocos">
+          <section class="bloco-edicao">
+            <h4><span class="ico" data-icone="pata"></span>Dados</h4>
+            <div class="grade-dois">
+              <label class="campo-icone"><span class="ico" data-icone="nivel"></span><span>Nível</span><input id="pet-nivel" type="number" min="1" step="1"></label>
+              <label class="campo-icone"><span class="ico" data-icone="exp"></span><span>EXP</span><input id="pet-exp" type="number" min="0" step="1"></label>
+              <label class="campo-icone"><span class="ico" data-icone="medalha"></span><span>Lealdade</span><input id="pet-lealdade" type="number" min="0" max="999" step="1"></label>
+              <label class="campo-icone"><span class="ico" data-icone="fome"></span><span>Fome (0–11)</span><input id="pet-fome" type="number" min="0" max="11" step="1"></label>
+              <label class="campo-icone"><span class="ico" data-icone="pontos"></span><span>Pontos</span><input id="pet-pontos" type="number" min="0" step="1"></label>
+              <label class="campo-icone"><span class="ico" data-icone="etiqueta"></span><span>Nome</span><input id="pet-nome" maxlength="8" autocomplete="off"></label>
+            </div>
+          </section>
+          <section class="bloco-edicao">
+            <h4><span class="ico" data-icone="livro"></span>Habilidades <small id="pet-hab-total" class="texto-suave"></small></h4>
+            <div id="pet-hab-lista" class="lista-hab-mascote"></div>
+            <div id="pet-hab-adicionar" class="barra-filtros">
+              <label class="campo-busca"><span class="ico" data-icone="busca"></span><input id="pet-hab-busca" type="search" maxlength="64" placeholder="Buscar habilidade para dar" aria-label="Buscar habilidade do mascote" autocomplete="off"></label>
+              <label class="campo-icone"><span class="ico" data-icone="grupo"></span><select id="pet-hab-classe" aria-label="Grupo da habilidade"></select></label>
+            </div>
+            <div id="pet-hab-resultados" class="grade-resultados compacta"></div>
+          </section>
+        </div>
+        <footer class="modal-rodape">
+          <button id="pet-libertar" type="button" class="botao botao-secundario texto-perigo">Libertar</button>
+          <button id="pet-salvar" type="submit" class="botao botao-primario">Salvar</button>
+        </footer>
+      </form>
+    </div>
+
+    <!-- B216: dar EXP ao Daimon -->
+    <div id="modal-daimon" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-daimon" hidden>
+      <form id="form-daimon" class="modal-caixa modal-media">
+        <header class="modal-topo">
+          <span class="ico-titulo" data-icone="brilho"></span>
+          <div class="modal-titulos"><h2 id="titulo-daimon">Dar EXP ao Daimon</h2><p class="dica">Sobe quantos níveis couberem, sem passar o dono.</p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <div class="modal-corpo">
+          <label class="campo-icone"><span class="ico" data-icone="exp"></span><span>EXP</span><input id="daimon-exp" type="number" min="1" max="2000000000" step="1" required></label>
+        </div>
+        <footer class="modal-rodape"><span></span><button type="submit" class="botao botao-primario">Dar EXP</button></footer>
+      </form>
+    </div>
+
+    <!-- Missões (B198; B216: modal com busca nas ativas e concluídas, e dar missão) -->
+    <div id="modal-missoes" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-missoes" hidden>
+      <div class="modal-caixa modal-ampla">
+        <header class="modal-topo">
+          <span class="ico-titulo" data-icone="pergaminho"></span>
+          <div class="modal-titulos"><h2 id="titulo-missoes">Missões</h2><p class="dica">Concluir força o sucesso; cancelar apaga sem prêmio; esquecer tira das concluídas para refazer.</p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <nav class="abas-modal" role="tablist">
+          <button type="button" class="aba-modal ativa" data-aba-missao="lista" role="tab"><span class="ico" data-icone="busca"></span>Ativas e concluídas</button>
+          <button type="button" class="aba-modal" data-aba-missao="dar" role="tab"><span class="ico" data-icone="mais"></span>Dar missão</button>
+        </nav>
+        <div class="modal-corpo" data-painel-missao="lista">
+          <form id="form-filtro-missoes" class="barra-filtros">
+            <label class="campo-busca"><span class="ico" data-icone="busca"></span><input id="mis-filtro" type="search" maxlength="64" placeholder="Buscar nas ativas e concluídas (nome ou ID)" aria-label="Buscar missões do personagem" autocomplete="off"></label>
+            <button type="submit" class="botao botao-secundario">Buscar</button>
+          </form>
+          <h4 class="titulo-lista">Ativas <span id="mis-total-ativas"></span></h4>
+          <div id="mm-ativas" class="lista-missoes"></div>
+          <h4 class="titulo-lista">Concluídas <span id="mis-total"></span></h4>
+          <div id="missoes-concluidas" class="lista-missoes"></div>
+          <div id="paginacao-missoes" class="paginacao" hidden>
+            <button id="mis-anterior" type="button" class="botao botao-secundario" aria-label="Página anterior">‹</button>
+            <span id="mis-pagina"></span>
+            <button id="mis-proxima" type="button" class="botao botao-secundario" aria-label="Próxima página">›</button>
+          </div>
+        </div>
+        <div class="modal-corpo" data-painel-missao="dar" hidden>
+          <form id="form-dar-missao" class="barra-filtros">
+            <label class="campo-busca"><span class="ico" data-icone="busca"></span><input id="mis-busca" type="search" maxlength="64" placeholder="Nome ou ID da missão" aria-label="Buscar missão por nome ou ID" autocomplete="off"></label>
+            <select id="mis-sub" aria-label="Etapa" hidden></select>
+            <button type="submit" class="botao botao-primario">Dar</button>
+          </form>
+          <p id="mis-escolhida" class="dica"></p>
+          <div id="mis-resultados" class="lista-missoes"></div>
+        </div>
+      </div>
     </div>
 
     <!-- Alerta padrão (sucesso, erro, aguardando) -->
@@ -542,6 +692,7 @@
         <div id="alerta-icone" class="alerta-icone" aria-hidden="true"></div>
         <h3 id="alerta-titulo"></h3>
         <p id="resultado-comando"></p>
+        <div class="alerta-tempo" aria-hidden="true"><span id="alerta-tempo"></span></div>
         <div class="alerta-acoes">
           <button id="recuperar-comando" type="button" class="botao botao-secundario" hidden>Consultar agora</button>
           <button id="confirmar-alerta" type="button" class="botao botao-perigo" hidden>Confirmar</button>

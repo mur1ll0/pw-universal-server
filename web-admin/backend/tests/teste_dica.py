@@ -82,6 +82,20 @@ class TesteDica(unittest.TestCase):
         self.assertTrue(any("carruagem de cerco" in l for l in linhas), linhas)
 
 
+    def test_item_de_voo_b216(self):
+        """B216 (voo 15732 do Tsuko): ordem do `CECIvtrFlySword::GetNormalDesc` — nível, velocidades
+        `%+.2f`, tempo ativo, classes (máscara 24 = 2 classes do 1.2.6) e nível exigido."""
+        voo = {"tempo": 450, "tempo_maximo": 900, "nivel_exigido": 1, "nivel": 4, "refino": 0,
+               "classes": 24, "tempo_por_elemento": 15, "velocidade": 15.0, "velocidade_acelerada": 15.0}
+        linhas = dica.linhas_da_dica({"id": 15732, "nome": "Voo", "voo": voo}, versao="1.2.6", classe=3)
+        corpo = [l[7:] for l in linhas[1:5]]
+        self.assertEqual(corpo[0], textos.frase("ITEMDESC_LEVEL", 4))
+        self.assertTrue(corpo[1].endswith("+15.00"), corpo)
+        self.assertTrue(corpo[2].endswith("+15.00"), corpo)
+        self.assertEqual(corpo[3], textos.frase("ITEMDESC_REMAINTIME", 450, 900))
+        self.assertTrue(linhas[5].startswith("^ffffff"), "classe 3 está na máscara 24")
+        self.assertEqual(linhas[6], "^ffffff" + textos.frase("ITEMDESC_LEVELREQ", 1))
+
     def test_efeito_de_habilidade_do_item_b213(self):
         """B213: o 1286 (`item_skill_addon`, tipo 55) do Punho da Luz Fixa dá a habilidade 205 (Garra):
         o cliente escreve a introdução dela (`skillstr` 2051), e o painel marca a habilidade."""

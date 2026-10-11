@@ -165,6 +165,24 @@ def linhas_da_dica(item, versao=None, classe=None):
     if (item.get("quantidade") or 1) > 1:
         linhas.append(f"{BRANCO}×{item['quantidade']}")
 
+    # Item de voo (B216): `CECIvtrFlySword::GetNormalDesc` (`EC_IvtrFlySword.cpp:137-210`) — nível,
+    # velocidades (`%+.2f`), tempo ativo, classes e nível exigido; depois preço e descrição. A linha
+    # de aprimoramento (`ITEMDESC_FLYSWORD_*`, índices 283/284) fica fora: posição não conferida no BR.
+    voo = item.get("voo")
+    if voo:
+        linhas.append(BRANCO + t("ITEMDESC_LEVEL", voo["nivel"]))
+        if voo.get("velocidade"):
+            linhas.append(BRANCO + t("ITEMDESC_ADDFLYSPEED", float(voo["velocidade"])))
+        if voo.get("velocidade_acelerada"):
+            linhas.append(BRANCO + t("ITEMDESC_ADDFLYSPEED2", float(voo["velocidade_acelerada"])))
+        if voo.get("tempo_maximo"):
+            linhas.append(BRANCO + t("ITEMDESC_REMAINTIME", voo["tempo"], voo["tempo_maximo"]))
+        classes = _linha_de_classe(voo.get("classes"), versao, classe)
+        if classes:
+            linhas.append(classes)
+        if voo.get("nivel_exigido"):
+            linhas.append(BRANCO + t("ITEMDESC_LEVELREQ", voo["nivel_exigido"]))
+
     arma = equip.get("arma")
     if arma:
         linhas.append(BRANCO + t("ITEMDESC_LEVEL", arma["nivel"]))

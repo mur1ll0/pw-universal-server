@@ -265,6 +265,10 @@ pub struct GameDataManager {
     pub icones_de_itens: HashMap<u32, Vec<u8>>,
     /// Nome e ícone (GBK) dos modelos de mascote (`PET_ESSENCE`, B197).
     pub mascotes_do_elements: HashMap<u32, (String, Vec<u8>)>,
+    /// A tabela do `elements.data` de cada item (B216, a categoria da busca do painel).
+    pub tabelas_dos_itens: HashMap<u32, String>,
+    /// `inhabit_type` de cada modelo de mascote (B216).
+    pub ambientes_dos_mascotes: HashMap<u32, i32>,
     /// As minas (`MINE_ESSENCE`) com as regras de carga do original — ver [`crate::minas`].
     pub minas: crate::minas::TabelaDeMinas,
     /// Aljavas → munição (`generate_quiver`).
@@ -547,6 +551,8 @@ impl GameDataManager {
             self.nomes_de_itens = crate::servicos::nomes_de_itens(g);
             self.icones_de_itens = crate::servicos::icones_de_itens(g);
             self.mascotes_do_elements = crate::servicos::nomes_e_icones_da_tabela(g, "PET_ESSENCE");
+            self.tabelas_dos_itens = crate::servicos::tabelas_dos_itens(g);
+            self.ambientes_dos_mascotes = crate::servicos::ambientes_dos_mascotes(g);
             self.minas = crate::minas::carregar(g);
             self.aljavas = crate::armas::carregar_aljavas(g);
             self.cartas = crate::cartas::carregar(g);

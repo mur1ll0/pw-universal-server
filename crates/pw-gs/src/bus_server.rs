@@ -59,11 +59,13 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, trace, warn};
 
 mod armazem;
+mod criacao_pelo_painel;
 mod daimon_editado;
 mod gm;
 mod habilidades;
 mod jogo;
 pub use jogo::EdicaoDePersonagem;
+pub(crate) use jogo::categoria_valida;
 mod mascote;
 mod pedras_e_refino;
 pub mod item_editado;

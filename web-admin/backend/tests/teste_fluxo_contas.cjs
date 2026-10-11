@@ -217,3 +217,34 @@ test("missões (B198): dar manda a etapa escolhida e concluir manda o id da ativ
   await c.avaliar("acaoDeMissao('concluir', {id:5001,nome:'Missão'})");
   assert.deepEqual(JSON.parse(c.pedidos[antes].opcoes.body).missao, { acao: "concluir", id: 5001 });
 });
+
+test("criar item (B216): slot da bolsa manda recipiente e slot; slot do corpo e 'Dar item' mandam só id e quantidade", async () => {
+  const c = await montar();
+  c.avaliar("estado.personagemId=5; estado.criacao={chave:'bolsa',slot:7}; estado.itemParaCriar={id:3001,nome:'^ffffffPoção',pilha:100}");
+  c.avaliar("elemento('ci-quantidade').value='101'");
+  await c.avaliar("criarItem()");
+  assert.equal(c.pedidos.length, 0, "acima da pilha não envia");
+  c.avaliar("elemento('ci-quantidade').value='5'");
+  c.resposta(200, { estado: "salvo", item: 3001, slot: 7 });
+  await c.avaliar("criarItem()");
+  assert.deepEqual(JSON.parse(c.pedidos[0].opcoes.body).item, { id: 3001, quantidade: 5, recipiente: "bolsa", slot: 7 });
+  c.avaliar("estado.criacao={chave:'equipamento',slot:0,legenda:'Arma'}; estado.itemParaCriar={id:3003,nome:'Espada',pilha:1}");
+  c.avaliar("elemento('ci-quantidade').value='1'");
+  await c.avaliar("criarItem()");
+  const postagens = c.pedidos.filter((p) => p.opcoes?.body);
+  assert.deepEqual(JSON.parse(postagens.at(-1).opcoes.body).item, { id: 3003, quantidade: 1 }, "no corpo nasce na bolsa");
+});
+
+test("dar mascote (B216) manda o ovo; sucesso e erro saem como toast, sem botão OK", async () => {
+  const c = await montar();
+  c.avaliar("estado.personagemId=5; estado.ovoParaDar={ovo:4501,nome:'Lobo'}");
+  c.resposta(200, { estado: "salvo", slot: 0 });
+  await c.avaliar("salvarMascote(false)");
+  assert.deepEqual(JSON.parse(c.pedidos[0].opcoes.body).dar_mascote, { ovo: 4501 });
+  assert.equal(c.avaliar("estado.alertaModal"), false, "sucesso é toast");
+  assert.equal(c.elementos.get("fechar-operacao").hidden, true, "toast não tem OK");
+  c.resposta(200, { estado: "falha", codigo: "jaula_cheia" });
+  await c.avaliar("salvarMascote(false)");
+  assert.match(c.elementos.get("resultado-comando").textContent, /jaula/);
+  assert.equal(c.avaliar("estado.alertaModal"), false, "erro também é toast");
+});

@@ -81,6 +81,8 @@ pub enum Consulta {
         #[serde(default)] missao: Option<crate::bus_server::missao_editada::EdicaoDeMissao>,
         /// EXP a dar ao Daimon vestido (E6, B215).
         #[serde(default)] daimon_exp: Option<i64>,
+        /// Dar mascote (B216).
+        #[serde(default)] dar_mascote: Option<MascoteDadoPedido>,
     },
     /// O Daimon vestido do personagem (E6, B215). Só leitura.
     Daimon { personagem_id: i32 },
@@ -95,6 +97,9 @@ pub enum Consulta {
     /// Itens do `elements.data` por nome ou id (E6, B186). Só leitura.
     /// `categoria: "pedra"` limita aos `STONE_ESSENCE` (B206).
     BuscarItens { texto: String, #[serde(default)] categoria: Option<String> },
+    /// B216: ovos de mascote por nome/id, `classe_de_mascote` (0–5, o `pet_class`) e `ambiente`
+    /// (`terra`, `agua`, `ar`).
+    BuscarMascotes { texto: String, #[serde(default)] classe_de_mascote: Option<i32>, #[serde(default)] ambiente: Option<String> },
     /// B209: para a peça `item_id`, como cada efeito pedido entra (valor do id, edição, faixa,
     /// família, se existe no realm). Até 200 ids. Só leitura.
     EfeitosParaItem { item_id: u32, ids: Vec<u32> },
@@ -119,11 +124,23 @@ pub struct PosicaoPedida {
 }
 
 /// Item pedido pelo painel (B186).
-#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ItemPedido {
     pub id: u32,
     pub quantidade: u32,
+    /// B216: criar no slot vazio de `bolsa`, `missao` ou `armazem` (os dois ou nenhum).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipiente: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<u16>,
+}
+
+/// Dar mascote (B216): o do ovo `ovo` (`PET_EGG_ESSENCE`).
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MascoteDadoPedido {
+    pub ovo: u32,
 }
 
 /// Remoção pedida pelo painel (B187): `recipiente` é `bolsa`, `missao`, `equipamento` ou
@@ -452,17 +469,22 @@ impl ServidorAdministrativo {
                     Consulta::EfeitosParaItem { item_id, ids } if ids.len() <= 200 => {
                         self.roteador.efeitos_para_item(item_id, &ids).await
                     }
+                    Consulta::BuscarMascotes { texto, classe_de_mascote: tipo, ambiente } if texto.chars().count() <= 64
+                        && tipo.map_or(true, |t| (0..6).contains(&t))
+                        && ambiente.as_deref().map_or(true, |a| ["terra", "agua", "ar"].contains(&a)) => {
+                        self.roteador.buscar_mascotes(&texto, tipo, ambiente.as_deref()).await
+                    }
                     Consulta::BuscarItens { texto, categoria } if texto.chars().count() <= 64
-                        && categoria.as_deref().map_or(true, |c| c == "pedra") => {
+                        && categoria.as_deref().map_or(true, crate::bus_server::categoria_valida) => {
                         self.roteador.buscar_itens(&texto, categoria.as_deref()).await
                     }
-                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item, editar_item, habilidade, mascote, missao, daimon_exp } if personagem_id > 0 => {
+                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item, editar_item, habilidade, mascote, missao, daimon_exp, dar_mascote } if personagem_id > 0 => {
                         use crate::bus_server::EdicaoDePersonagem as E;
                         let dentro = |v: i64| v.abs() <= TETO_DA_EDICAO;
                         let tipos = [dinheiro.is_some(), exp.or(sp).is_some(), pontos.is_some(), nivel.is_some(), cultivo.is_some(),
                             atributos.is_some(), redistribuir.is_some(), posicao.is_some(), item.is_some(), remover_item.is_some(),
                             mover_item.is_some(), editar_item.is_some(), habilidade.is_some(), mascote.is_some(), missao.is_some(),
-                            daimon_exp.is_some()]
+                            daimon_exp.is_some(), dar_mascote.is_some()]
                             .iter().filter(|t| **t).count();
                         // Atributos: quatro valores entre 0 e o teto da política (B184).
                         let quatro = atributos.as_deref().and_then(|v| {
@@ -472,6 +494,7 @@ impl ServidorAdministrativo {
                         let coordenada = |v: f32| v.is_finite() && v.abs() <= TETO_DE_COORDENADA;
                         let edicao = if tipos != 1 { None }
                             else if let Some(x) = daimon_exp { (x > 0 && dentro(x)).then_some(E::DaimonExp(x)) }
+                            else if let Some(m) = dar_mascote { (m.ovo > 0).then_some(E::DarMascote(m.ovo)) }
                             else if let Some(h) = habilidade {
                                 (h.id > 0 && h.id < 0x10000).then_some(E::Habilidade { id: h.id, nivel: h.nivel })
                             }
@@ -487,9 +510,16 @@ impl ServidorAdministrativo {
                                 recipiente.filter(|_| r.id > 0 && r.slot < 256 && r.quantidade.map_or(true, |q| (1..=TETO_DE_QUANTIDADE).contains(&q)))
                                     .map(|recipiente| E::RemoverItem { recipiente, slot: r.slot, tid: r.id, quantidade: r.quantidade })
                             }
-                            else if let Some(i) = item {
-                                (i.id > 0 && (1..=TETO_DE_QUANTIDADE).contains(&i.quantidade))
-                                    .then_some(E::Item { tid: i.id, quantidade: i.quantidade })
+                            else if let Some(i) = &item {
+                                let destino = match (&i.recipiente, i.slot) {
+                                    (None, None) => Some(None),
+                                    (Some(r), Some(s)) => recipiente_do_painel(r)
+                                        .filter(|r| *r != pw_core::ContainerType::Equipment && s < 256)
+                                        .map(|r| Some((r, s))),
+                                    _ => None,
+                                };
+                                destino.filter(|_| i.id > 0 && (1..=TETO_DE_QUANTIDADE).contains(&i.quantidade))
+                                    .map(|destino| E::Item { tid: i.id, quantidade: i.quantidade, destino })
                             }
                             else if let Some(p) = posicao {
                                 (p.mapa > 0 && coordenada(p.x) && coordenada(p.z) && p.y.map_or(true, coordenada))
@@ -535,7 +565,7 @@ impl ServidorAdministrativo {
                                 if let Some(a) = &atributos { parametros["atributos"] = json!(a); }
                                 if let Some(r) = redistribuir { parametros["redistribuir"] = json!(r); }
                                 if let Some(p) = posicao { parametros["posicao"] = json!(p); }
-                                if let Some(i) = item { parametros["item"] = json!(i); }
+                                if let Some(i) = &item { parametros["item"] = json!(i); }
                                 if let Some(r) = &remover_item { parametros["remover_item"] = json!(r); }
                                 if let Some(m) = &mover_item { parametros["mover_item"] = json!(m); }
                                 if let Some(m) = &editar_item { parametros["editar_item"] = json!(m); }
@@ -543,6 +573,7 @@ impl ServidorAdministrativo {
                                 if let Some(p) = &mascote { parametros["mascote"] = json!(p); }
                                 if let Some(m) = &missao { parametros["missao"] = json!(m); }
                                 if let Some(x) = daimon_exp { parametros["daimon_exp"] = json!(x); }
+                                if let Some(m) = dar_mascote { parametros["dar_mascote"] = json!(m); }
                                 let impressao = Sha256::digest(serde_json::to_vec(&parametros)?);
                                 let repo = self.contas.comandos_administrativos();
                                 match repo.reservar_operacao_de_personagem(&pedido.operacao_id, pedido.administrador_id, &self.realm, &impressao).await? {

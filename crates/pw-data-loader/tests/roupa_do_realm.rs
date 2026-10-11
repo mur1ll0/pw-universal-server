@@ -38,3 +38,16 @@ fn o_gato_de_presas_afiadas_da_o_ovo_10765_com_conteudo() {
         assert!(d.gerar_octetos_do_ovo(10765).is_some_and(|o| !o.is_empty()), "{realm}");
     }
 }
+
+/// B216 (Tsuko, 1.2.6): o `FLYSWORD_ESSENCE` do 1.2.6 não tem `pile_num_max`, e o critério de
+/// "tabela de item" o deixava de fora — o voo 15732 ficava sem nome e sem ícone no painel.
+#[test]
+fn o_voo_15732_tem_nome_icone_e_pilha_nos_dois_realms() {
+    for realm in ["realm_126", "realm_155"] {
+        let Some(d) = dados(realm) else { continue };
+        assert!(d.nomes_de_itens.get(&15732).is_some_and(|n| !n.is_empty()), "{realm}: nome");
+        assert!(d.icones_de_itens.contains_key(&15732), "{realm}: ícone");
+        assert_eq!(d.limite_de_pilha(15732), 1, "{realm}: voo não empilha");
+        assert_eq!(d.conteudo_do_item_de_voo(15732).map(|b| b.len()), Some(30), "{realm}: bloco do voo");
+    }
+}

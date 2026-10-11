@@ -206,13 +206,23 @@ fn destinos(r: Option<&Record>) -> Vec<DestinoDeTeleporte> {
         .collect()
 }
 
-/// Nome de todo item (`Name` dos registros que declaram `pile_num_max`, o mesmo critério de
+/// Tabela de item: a que declara `pile_num_max` ou, sem ele, `price` e `shop_price`. O segundo
+/// caso é só o `FLYSWORD_ESSENCE` do 1.2.6, cujo layout não tem o campo de pilha (o item de
+/// voo não empilha; `limite_de_pilha` = 1) — sem ele, os 241 itens de voo do 1.2.6 ficavam sem
+/// nome, ícone e pilha no painel (relato do Tsuko, item 15732, B216).
+fn e_tabela_de_item(primeiro: &crate::generic_elements::Record) -> bool {
+    primeiro.contains_key("ID")
+        && (primeiro.contains_key("pile_num_max")
+            || (primeiro.contains_key("price") && primeiro.contains_key("shop_price")))
+}
+
+/// Nome de todo item (`Name` dos registros de [`e_tabela_de_item`], o mesmo critério de
 /// [`pilhas`]): o painel mostra e busca itens por ele (B186).
 pub fn nomes_de_itens(g: &GenericElementsData) -> HashMap<u32, String> {
     let mut t = HashMap::new();
     for registros in g.tables.values() {
         let Some(primeiro) = registros.first() else { continue };
-        if !primeiro.contains_key("pile_num_max") || !primeiro.contains_key("ID") {
+        if !e_tabela_de_item(primeiro) {
             continue;
         }
         for r in registros {
@@ -255,11 +265,39 @@ pub fn nomes_e_icones_da_tabela(g: &GenericElementsData, tabela: &str) -> HashMa
     t
 }
 
+/// A tabela do `elements.data` de cada item (`WEAPON_ESSENCE`, `FLYSWORD_ESSENCE`…), pelo mesmo
+/// critério de [`nomes_de_itens`]: o painel agrupa a busca de itens por ela (B216).
+pub fn tabelas_dos_itens(g: &GenericElementsData) -> HashMap<u32, String> {
+    let mut t = HashMap::new();
+    for (tabela, registros) in &g.tables {
+        let Some(primeiro) = registros.first() else { continue };
+        if !e_tabela_de_item(primeiro) {
+            continue;
+        }
+        for r in registros {
+            let id = i(r, "ID");
+            if id > 0 {
+                t.entry(id as u32).or_insert_with(|| tabela.clone());
+            }
+        }
+    }
+    t
+}
+
+/// `inhabit_type` de cada modelo de mascote (`PET_ESSENCE`): 0 terra, 1 água, 2 ar, 3 terra e
+/// água, 4 terra e ar, 5 água e ar, 6 todos — os ambientes do `npcgenerator.cpp:114-135`.
+pub fn ambientes_dos_mascotes(g: &GenericElementsData) -> HashMap<u32, i32> {
+    g.get("PET_ESSENCE").iter()
+        .filter(|r| i(r, "ID") > 0)
+        .map(|r| (i(r, "ID") as u32, i(r, "inhabit_type")))
+        .collect()
+}
+
 pub fn icones_de_itens(g: &GenericElementsData) -> HashMap<u32, Vec<u8>> {
     let mut t = HashMap::new();
     for registros in g.tables.values() {
         let Some(primeiro) = registros.first() else { continue };
-        if !primeiro.contains_key("pile_num_max") || !primeiro.contains_key("ID") {
+        if !e_tabela_de_item(primeiro) {
             continue;
         }
         for r in registros {
@@ -284,7 +322,7 @@ pub fn pilhas(g: &GenericElementsData) -> HashMap<u32, u32> {
     let mut t = HashMap::new();
     for registros in g.tables.values() {
         let Some(primeiro) = registros.first() else { continue };
-        if !primeiro.contains_key("pile_num_max") || !primeiro.contains_key("ID") {
+        if !e_tabela_de_item(primeiro) {
             continue;
         }
         for r in registros {
