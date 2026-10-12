@@ -574,6 +574,11 @@ sessão de golpe contra jogador (o golpe normal não mira jogador), marca no gol
   `stop_skill` (`actsession.cpp:558-574`). Mandando o 123 antes, o cliente retomava o golpe
   normal antes de a habilidade ter efeito. O 88 é enviado só ao conjurador
   (`gs/player.cpp:4066-4073`, B98); os demais recebem o 143 do lançamento.
+- **Habilidade instantânea (C2S 80, B220) — `testado`**: `session_instant_skill` →
+  `SkillWrapper::InstantSkill` (`gs/playercmd.cpp:2093-2116`, `cskill/skill/skillwrapper.cpp:356-389`):
+  recarga conferida, efeito na hora (`aplicar_conjuracao`) e só o `OBJECT_CAST_INSTANT_SKILL` (178) a
+  todos. **Não** manda `OBJECT_CAST_SKILL` (85), `SKILL_PERFORM` (88) nem `HOST_STOP_SKILL` (123): o
+  85 abre o trabalho de feitiço no cliente e **parava o personagem andando** (Traje de Flores 762).
 - **Cancelamento de conjuração por ESC e movimento (B67) — `testado`**: ESC (`CANCEL_ACTION`, C2S 42)
   e movimento do jogador (`PLAYER_MOVE`, C2S 0) cancelam qualquer conjuração em andamento
   (`p.conjuracao.take()`). O servidor envia `SELF_SKILL_INTERRUPTED` (opcode 87, reason 2) para o
@@ -633,7 +638,21 @@ sessão de golpe contra jogador (o golpe normal não mira jogador), marca no gol
   classe só valem as habilidades cujo `allow_forms` tem o bit `1 << GetForm()`
   (`skill.cpp:128`): 313–318 só na raposa, 312 nas duas, as comuns só fora; a recusa é
   `ERR_SKILL_NOT_AVAILABLE` (20). **Passivas de forma** (`SkillWrapper::EventChange`,
-  `skillwrapper.cpp:589-610`, B122). **Aura de Aço (77, B207):** o `filter_Ironshield` (`skillfilter.h:3922-3973`) está portado — buff único, ícone 65 (`HSTATE_IRONSHIELD`), `VSTATE_BLESSED`, defesa `+ratio×100`% —; antes saía como não portado e a habilidade era conjurada sem efeito (não era bloqueio de classe: `cls` 0 e `restrict_weapons` inclui 0, sem arma). **Passivas comuns** (B203, `efeitos::passivas_comuns`): as
+  `skillwrapper.cpp:589-610`, B122). **Traje de Flores (762, B220):** `filter_Swiftform` (`skillfilter.h:4841-4876`,
+  `skillfilter.cpp:415-431`) — velocidade `+(int)(100 × amount)`% (dupla, como o x87: 15/25/34 nos
+  níveis 1–3), ícone 81, estado visível 32 no 1.5.5 / 31 no 1.2.6 (as flores); único, bênção, sai com
+  a morte. **Filtros da Feiticeira (B220):** `Jingji` (Barreira de Espinhos 310: todo golpe recebido ×
+  `max(1 − value, 0,01)` e os espinhos do `Retort`, com o mesmo `_filter_id` — um tira o outro; ícone
+  77, estado 31/30), `Canti` (Ferir 320: dano recebido × `1 + ratio`, ícone 79), `Noregain`
+  (Enfraquecer 321: `ImpairScaleHPGen/MPGen(2000)` → regeneração 0, ícone 78, estado 23), `Apleak`
+  (Devastar 322: ícone 80; as três de `FILTER_SPIRITCURSE` se substituem — a perda de chi de quem
+  apanha, PvP, desde o B221), `Magicleak` (Alma da Raposa 318: drena `amount/tempo` de mana por
+  segundo em lotes de 3 s, ícone 16, estado 15), `Reducewood` (○Enxame 635: resistência de madeira
+  −`ratio × 100`%, `Merge` vazio — o segundo não muda o primeiro; ícone 54), `Freemove` (○Traje de
+  Flores 764: imune a lento/preso/atordoado/sono, ícone 72) e o instantâneo `Hp2mp` (Harmonia 311:
+  troca as frações de vida e mana, só jogador). Unicidade pelo `_filter_id`
+  (`Efeito::mesmo_filtro`, `gs/filter_man.h:177-207`). Ícones e setters iguais no `gs` 1.2.6.
+  **Aura de Aço (77, B207):** o `filter_Ironshield` (`skillfilter.h:3922-3973`) está portado — buff único, ícone 65 (`HSTATE_IRONSHIELD`), `VSTATE_BLESSED`, defesa `+ratio×100`% —; antes saía como não portado e a habilidade era conjurada sem efeito (não era bloqueio de classe: `cls` 0 e `restrict_weapons` inclui 0, sem arma). **Passivas comuns** (B203, `efeitos::passivas_comuns`): as
   `EVENT_RESET` valem sempre e as `EVENT_WIELD` com a classe da arma vestida (`id_major_type` =
   `WeaponClass`), pelo `TakeEffect` do catálogo (`efeito_passivo`) no nível conhecido —
   `Adddefence`/`Addresistance` (defesa/resistências `+100 × m`%), `Inccrit`, `Inchpgen`/`Incmpgen`
@@ -685,6 +704,56 @@ sessão de golpe contra jogador (o golpe normal não mira jogador), marca no gol
   anda mais devagar. A cada 1 s o mundo desconta o tempo, aplica dano/cura e avisa:
   `UPDATE_EXT_STATE` (124), `ICON_STATE_NOTIFY` (125), vida, e para jogador a ficha e a
   velocidade. Morrer limpa tudo. Selado/atordoado não conjura.
+- **Bárbaro (B221) — `testado`**, setters e ícones conferidos no `gs` 1.2.6: `Giant` (Força Divina 83:
+  dano +`ratio × 100`%, ícone 66), `Devilstate` (Sangue Fervente 111: precisão +`amount`%, vida máxima
+  −`ratio`%, ícone 67), `Tigerform` (Rugido do Tigre 112: forma de classe como a raposa — sem tempo,
+  sobrevive à morte, equipamento trancado, lançar de novo desfaz; vida +`100 × probability`%,
+  velocidade +`100 × amount`%, dano +`100 × value`%; ícone 47 sem parâmetro; byte de forma 65 no 1.5.5
+  e **1** no 1.2.6, `ChangeShape(1)` fixo, VA 0x830afd0), `Toxicblade` (Presas Venenosas 155: golpe
+  físico + `ratio × 0,5 × (dano da arma)` de madeira, ícone 40), `Apgen` (Fúria Bestial 188: +`value`
+  de chi a cada golpe recebido, ícone 63 — o `Apleak` tira, os dois pelo `EF_DoDamage` da vítima, no
+  golpe de monstro e no PvP), `Repel` (Terra Dividida 107: `KnockBack` — o monstro de chão vai
+  `value` m para longe até o último ponto alcançável, `CNPCMoveMap::GetLastReachablePos`, e todos
+  recebem `OBJECT_STOP_MOVE` com `MOVE_MODE_KNOCK` 5; jogador não; o de água/ar pela reta de
+  voxel, B222), `Break`
+  (Ira do Tigre 149: a sessão do monstro acaba, o canto também) e `Assault` (Mordida Violenta 150,
+  Desafio do Tigre 185: `BeTaunted` — quem conjura vai ao topo do ódio com o do primeiro + `value`,
+  `aggro_list::AddToFrist`).
+- **Efeitos das plantas (B222) — `testado`**: `Incrementalhpgen` (Erva Vital 1501: cura `_health × 3`
+  a cada 3 s e o `_health` cresce `ratio × 3`, ícone 187), `Transportdamagetoleader` (a 1858 da planta da
+  Feiticeira: cada golpe na planta, com o dono a até `value` m, tira dele `golpe × ratio` — até 1 de vida,
+  `be_hurt`; o golpe é o `damage_entry × damage_adjust`, com defesa e crítico e **antes do grau**,
+  `Resultado::antes_do_grau`, B225),
+  `Removeaggro` (`RemoveRage`: tira `ratio` do ódio de quem lança e, com `value` 1, dá ao dono),
+  `Pullover2` (`PullOver`: puxa o monstro para quem lança, até `value` m com os corpos;
+  `MOVE_MODE_PULL` 9). O empurrão/puxão de monstro de água/ar usa a reta de voxel com o teste do
+  ambiente (`CGlobalSPMap::GetLastReachablePos`) — testado no mapa 1 do `realm_155` (B228). `P_Soulpower` (força da alma) entra no roteiro:
+  nível² + 50·nível + refino vestido (arma × 1,5, outras × 0,25, `UpdateBaseSoulPower`); o
+  `_soul_power_en` dos addons (`enhance_soulpower_addon`, B223). O `_pet_enhance` é zero no original:
+  nenhum stub chama `SetIncpet*`. **Auras (B227) — `testado`:** `Auracurse`/`Aurabless` (`filter_Aurabase`,
+  `skillfilter.h:8693-8756`): a cada 3 s (e no último segundo) o roteiro `no_alvo` da habilidade `value`
+  no nível `amount` vai a quem está a `ratio` m — maldição nos monstros (e põe o portador em combate),
+  bênção no grupo dentro do raio ou só no portador —, com `ENCHANT_RESULT` a quem vê; vale em jogador
+  (1358, 1806, 1816, 1854, 1862) e em mascote (o Sacrifício 1794 da planta 32907).
+- **Amuleto de dano (B226) — `testado`:** o `DAMAGERUNE_ESSENCE` vestido no slot 17 (`item_damage_rune`,
+  `gs/item/item_rune.cpp`; `EQUIP_INDEX_RUNE_SLOT`) reforça com `damage_increased` o tipo dele
+  (`damage_type` 0 físico, 1 mágico) quando o nível da arma está em `require_weapon_level_min..max`
+  (`GetPhysicRuneDamage`/`GetMagicRuneDamage`, `actobject.h:1365-1403`): no golpe normal somado ao dano
+  sorteado (`GenerateAttackDamage`), na habilidade ao bruto **antes** das porcentagens
+  (`GeneratePhysicDamage`/`GenerateMaigicDamage2`). Cada uso gasta 1 (`OnUseAttackRune`,
+  `player.cpp:13051-13060`; `gs` 1.2.6 VA 0x807cd3e): `PLAYER_DROP_ITEM(1, 17, id, 1, DROP_TYPE_RUNE 12)` e
+  a baixa no banco; o resultado leva a marca `AT_STATE_ATTACK_RUNE1/2` (0x1/0x2). O de defesa
+  (`ARMORRUNE_ESSENCE`, de usar) `falta`.
+- **Feiticeira 1.5.5, seita e nível alto (B221) — `testado`**: `Apgencont2` (646/654/2416: chi
+  `amount / tempo` por segundo em lotes de 3 s, ícone 102, estado 50 só com `showicon`), `Inccritresistance`
+  (1985/1987: pontos a menos no crítico de quem bate, ícone 205), `Insertvstate` (1828/2231: só o estado
+  e o ícone que o roteiro pede), `Invincible2` (Erupção 368/369: limpa as maldições e fica invencível),
+  `Palsy` (2236/2237: não age, ícone 255, estado 117), `Sealed2` (Encantar 1826/1929/1930: selado,
+  ícone 140), `Beastieform` (Encantar: no monstro só a velocidade — o `change_shape` de NPC é vazio,
+  `gimp.h:289`) e `Soulretort2` (Barreira Fulgurante 1829: devolve `físico × value` **também de longe**,
+  com chance, custo de mana e apagar ao disparar; sem `REMOVE_ON_DEATH`). A máscara de bênção/maldição
+  escolhida pelo roteiro (`value > 0,5`…) fica em `Filtro::mascara`. A planta invocada (1825/1867)
+  é a do §8.2 (B222).
 - `falta`: os ~300 efeitos sem porte (formas, invocação, escudos, recargas) — vão ao log
   `habilidade N — sem porte: ...`; imunidades do monstro; recarga comum (`commoncooldown`);
   Portal da Cidade (167) **no 1.5.5** (lá o `SetReturntown` está no `State2::Calculate`, que o
@@ -718,7 +787,7 @@ sessão de golpe contra jogador (o golpe normal não mira jogador), marca no gol
 | coleta de recurso (C2S 54) | `testado` (B51) | `GATHER_MATERIAL` → confere coletores (30), ferramenta e missão de entrada (31), nível (51), distância `gather_dist` 4–20 m (2) (`matter.cpp:265-382`); tempo `Rand(time_min, time_max)` s; `PLAYER_GATHER_START` (126) a todos. Andar interrompe (`PLAYER_GATHER_STOP` 127). No fim: sucesso por `material_gain_ratio`; material por probabilidade, `num1` ou `num2` com `probability2`, limitado à pilha; `HOST_OBTAIN_ITEM` (99); o que não cabe vai ao chão do jogador; exp e SP da mina pelo `GetExpPunishment(nível − nível da mina)` e `+ 0,5`, com `RECEIVE_EXP` (`matter.cpp:439-446`, `player.cpp:2813-2829`; B144); a mina some (`OBJECT_DISAPPEAR`) e renasce em `max(dwRefreshTime, 15)` s. **Colher pode acordar monstro**: os `npcgen_1..4` do `MINE_ESSENCE` (`(monstro, quantidade, raio, vida em s)`) nascem no lugar da matéria — é assim que a Flor de Safira (44566), que **não produz material nenhum**, entrega a missão 31779: ela solta o Guardião de Almas (44608), agressivo, e é dele que cai o Estame com 80 % (B76). A missão só conta o item pelo `CheckMining` quando o método é "coletar N itens" (`TaskTempl.inl:2105-2145`), que não é o caso dessa. **Recarga** de 500 ms com `ERR_MINE_GATHER_IS_COOLING` (187) só no 1.5.5 (`playercmd.cpp:2345-2379`; o `gs` 1.2.6 não tem — `WorldProtocol::recarga_da_coleta_ms`). **Golpe interrompe** (normal, habilidade de monstro, PvP), salvo mina `uninterruptable` (`gather_interrupt_filter`, `skill_filter.cpp:37-46`; `EventoDoMundo::ColetaInterrompida`) (B144). `falta`: os `aggros_*` da matéria |
 | bolsa do item colhido para missão | `confirmado no fonte` (2026-09-29) | Mina com `task_out` entrega o item pela missão (`OnTaskMining` → `ATaskTempl::CheckMining`, `TaskTempl.inl:2105-2145`): `ITEM_WANTED.m_bCommonItem` verdadeiro → `DeliverCommonItem` → **bolsa comum** (`taskman.cpp:281-297`); falso → `DeliverTaskItem` → bolsa de missão (`:313-326`). No `realm_155`, `TASKNORMALMATTER_ESSENCE` vem sempre com `comum` (2958/2958) e `TASKMATTER_ESSENCE` nunca (731/731) — exemplo `comum_por_tipo`. Ex.: os cristais da Maestria Elemental (44378–44382, missões 31797–31801, minas 44568–44572) vão para a bolsa comum, como no original. O material próprio da mina (`materials`) vai **sempre** à bolsa comum, qualquer que seja o tipo (`_inventory.Push`, `obtain_item(..., where 0)`, `player.cpp:1526-1532`) — alinhado no B150; antes ia à de missão quando era item de missão |
 | restauração de atributos (serviço 33, B152) | `testado` nas duas versões | `resetprop_executor/provider` (`serviceprovider.cpp:3527-3690`; `gs` 1.2.6 VA 0x810fc0a/0x810fdde, serviço 33 em VA 0x8105491): pedido `{u32 index, i32 item_id}` (8 B); item 0 ou fora da bolsa, recusa calada; `index` fora da lista do NPC (`NPC_RESETPROP_SERVICE`, filtrada como `npcgenerator.cpp:750-780`), 14; item diferente do da opção ou ausente, 5. `RegroupPropPoint` → `__Rollback` (`player.cpp:14920`, `playertemplate.cpp:618-642`): tira até o delta de cada atributo sem descer do piso — **1.5.5: 5 nos quatro; 1.2.6: força/agilidade 5, vitalidade/energia 3** (`gs` 1.2.6 VA 0x80e7684, antes da correção de 2013; `WorldProtocol::piso_da_restauracao`) — e devolve aos pontos livres; nada a tirar, 82 e o item fica. Com sucesso, `OWN_EXT_PROP`, um item a menos e `HOST_USE_ITEM` (91) |
-| produção (serviço 12, B145) | `testado` nas duas versões | `produce_executor` + `produce_provider::TryServe` (`serviceprovider.cpp:1451-1624`): pedido `{skill, id, count}` (12 B); receita existente, não de melhoria, da habilidade pedida e com o nível `require_level`; sem a taxa, 16; habilidade/receita fora do `NPC_MAKE_SERVICE` do NPC, 20. `session_produce` (`actsession.cpp:657-700`): `PRODUCE_START(use_time, count, receita)` (8 B), um item a cada `use_time` tiques, `PRODUCE_END`; `CANCEL_ACTION` encerra. `ProduceItem` (`player.cpp:16404-16641`): taxa, slot livre (7), `RandUniform() > null_prob` → alvo pela probabilidade, materiais (25); saindo item, exp/SP com a punição do nível 150 e proficiência +2 (habilidade abaixo do nível da receita) ou +1 (igual) até o `GetMaxAbility` do stub (10…200 nas 158–161/1402; `SKILL_ABILITY` 187), `SPEND_MONEY`, materiais com `PLAYER_DROP_ITEM` tipo 7, item gerado e `PRODUCE_ONCE` (14 B no 1.5.5, **10 B no 1.2.6**); sem item, `PRODUCE_NULL` (210). Aprender o próximo nível de uma habilidade de produção exige a proficiência cheia (`SkillWrapper::Learn`, `skillwrapper.cpp:84-89`). A proficiência fica em `character_skills.ability` e no `SKILL_DATA`. `falta`: as produções 2–5 (síntese com materiais escolhidos, melhoria, herança — `produce2..5_executor`), a decomposição (13), o nome do fabricante no item (`IMT_PRODUCE`) e a lista `ADDON_LIST_PRODUCE` (o item sai com a geração de drop) |
+| produção (serviço 12, B145) | `testado` nas duas versões | `produce_executor` + `produce_provider::TryServe` (`serviceprovider.cpp:1451-1624`): pedido `{skill, id, count}` (12 B); receita existente, não de melhoria, da habilidade pedida e com o nível `require_level`; sem a taxa, 16; habilidade/receita fora do `NPC_MAKE_SERVICE` do NPC, 20. `session_produce` (`actsession.cpp:657-700`): `PRODUCE_START(use_time, count, receita)` (8 B), um item a cada `use_time` tiques, `PRODUCE_END`; `CANCEL_ACTION` encerra. `ProduceItem` (`player.cpp:16404-16641`): taxa, slot livre (7), `RandUniform() > null_prob` → alvo pela probabilidade, materiais (25); saindo item, exp/SP com a punição do nível 150 e proficiência +2 (habilidade abaixo do nível da receita) ou +1 (igual) — **acima do nível da receita, nada**, nas duas versões (`player.cpp:16555-16566`; `gs` 1.2.6 VA 0x80813ad-0x80813e6, conferido no B220) — até o `GetMaxAbility` do stub (10…200 nas 158–161/1402; `SKILL_ABILITY` 187), `SPEND_MONEY`, materiais com `PLAYER_DROP_ITEM` tipo 7 **da versão** (9 B no 1.2.6, B220), item (o nome de quem fabricou vai até 40 B no 1.5.5 e **20 B no 1.2.6**, `WorldProtocol::tamanho_do_nome_do_fabricante`, VA 0x80811f6, B224) gerado e `PRODUCE_ONCE` (14 B no 1.5.5, **10 B no 1.2.6**); sem item, `PRODUCE_NULL` (210). Aprender o próximo nível de uma habilidade de produção exige a proficiência cheia (`SkillWrapper::Learn`, `skillwrapper.cpp:84-89`). A proficiência fica em `character_skills.ability` e no `SKILL_DATA`. `falta`: as produções 2–5 (síntese com materiais escolhidos, melhoria, herança — `produce2..5_executor`), a decomposição (13), o nome do fabricante no item (`IMT_PRODUCE`) e a lista `ADDON_LIST_PRODUCE` (o item sai com a geração de drop) |
 
 ## 7.9 Rates do realm (`taxas.rs`) — `testado` (B176, falta ver em jogo)
 
@@ -1190,7 +1259,15 @@ para o 1.2.6 e o 1.5.5; só os layouts mudam (spec 04).
 | gravar o bloco inteiro | `testado` (B112) | até o B112 o `InfoPet::do_bloco` lia 40 dos 192 B e cada gravação da jaula zerava nome e habilidades |
 | atordoado, preso, selado (B140) | `testado` | ver §6 (atordoado/dormindo) |
 | dano no tempo (B141) | `testado` | veneno/sangramento de monstro no mascote: a mesma conta do jogador→monstro (`SetToxic`/`SetBleeding`: `CalcMagic/PhysicDamage` com a defesa do mascote e a punição pelo nível de quem lança, só acima de 3 — `playerwrapper.cpp:1259-1295`); o tique tira vida e **não** dá ódio (`BeHurt` → `OnHurt`), nem o `Directhurt`; o estado e os ícones vão a quem vê (B140). Ex.: a 25 do Predador Venenoso (1114, dano mágico 248–303), `Toxic` 100 % por 15 s |
-| invisibilidade, água/ar, bênção de mascote em outro alvo | `falta` | |
+| área das habilidades de mascote (B222) | `testado` | o `NpcRun` monta os alvos como o do jogador: bola em si (2) e no alvo (3) pelo `GetRadius` — ataque e maldição nos monstros da área, bênção em bola nos jogadores da área, em si no próprio mascote; o resto, alvo único |
+| **planta invocada** (B222) | `testado` (1.5.5; sem teste em jogo) | `crate::planta` — `SetSummonplantpet` → `SummonPlantPet` + `plant_pet_manager` (`player.cpp:13450-13486`, `petman.cpp:2257-2560`): ovo `value`, `amount` plantas, nível da habilidade `ratio`, vida `time` (s, 0 sem fim), junto do alvo da habilidade (`target ? *target : XID(-1,-1)`, também no `BlessMe`). Só `id_type` 28913; a 1ª habilidade do ovo decide: ataque/maldição → **automática**, bênção → **passiva**; a 2ª é a da explosão. Corpo: `GenerateBaseProp2` + `CalcPetEnhance` — `5 × nível`% das parcelas do dono (`BaseParaMascote`: vida/mana antes da %, dano mágico alto, defesa, resistências, graus), conta em dupla como o x87; nasce cheia e com metade da mana; o `_pet_enhance` dos addons `falta`. Passou do `group_limit` do grupo, a mais antiga some (motivo 4). Não segue o dono; velocidade 0 não anda (a tarefa de habilidade conjura de onde está); some longe dele (h > 60, d ≥ 60 m, ou d < 6 m e h > 40 → motivo 2). Automática: alvo da invocação no topo (`AddToFirst`, 2), ódio +1 em todo monstro vivo na visão fora de combate (`GatherTarget`), +2 em quem bate no dono, topo +2 no alvo que o dono começa a atacar. Passiva: a automática pronta (recarga e mana) vai ao aliado mais próximo na visão — do grupo do dono ou o dono. Aviso de vida/mana ao dono quando muda (`PLANT_PET_HP_NOTIFY`). Morre: `NPC_DIED` a todos, motivo 0. Explosão (`SetPlantsuicide`, Dissolução 1398): a mais nova com habilidade de explosão a até `value` m do dono a lança no alvo na hora e some 0,5 s depois (motivo 3 na hora). Sair do jogo ou trocar de servidor: todas somem (motivo 2). Fora da jaula: não grava, sem fome, lealdade, experiência nem `PET_HP_NOTIFY` |
+| invisibilidade, água/ar do mascote de combate | `falta` | |
+
+**Ordem gravar → avisar (B224) — `testado`:** o `com_contexto` grava as bolsas **antes** de mandar os
+pacotes ao jogador. Quem ganha item (produção, missão, compra) pede o detalhe na hora
+(`c2s_CmdGetItemInfo`, `EC_HostMsg.cpp:1224-1236`) e o `GET_ITEM_INFO` lê do banco; gravando depois, o
+pedido chegava antes e ficava sem resposta — o equipamento aparecia sem bloco (durabilidade 0, classe
+vermelha, sem atributos) até relogar.
 
 ## 9. Persistência
 

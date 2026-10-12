@@ -12971,3 +12971,225 @@ comparação lado a lado.
     - "Aplicar aos existentes": fora por decisão; o contrato da memória da reforma continua valendo
       se voltar.
     - O semeio genérico ainda põe a Poção 1801 (nível 30) na bolsa dos realms sem template.
+
+220. **Sessão 2026-10-12: habilidade instantânea sem parar o personagem, Traje de Flores e filtros da Feiticeira, descarte da produção no 1.2.6.**
+
+    ### a. Sintoma / pedido
+
+    Murillo com a Tsuko no 1.2.6: a Traje de Flores (762) parava o personagem e não fazia nada
+    (nem flores nem velocidade); na costura os materiais não saíam da bolsa; costura nível 3 numa
+    receita de nível 2 não dava proficiência. Pediu para ver outros efeitos que faltam e o 1.5.5.
+
+    ### b. Causa, com a referência
+
+    - **Parar de andar:** o C2S 80 (`CAST_INSTANT_SKILL`) caía no mesmo caminho do 41 e mandava ao
+      próprio jogador o `OBJECT_CAST_SKILL` (85), que no cliente abre o trabalho de feitiço. O
+      original faz `session_instant_skill` → `SkillWrapper::InstantSkill` (`gs/playercmd.cpp:2093-2116`,
+      `cskill/skill/skillwrapper.cpp:356-389`): efeito na hora e só o `OBJECT_CAST_INSTANT_SKILL` (178,
+      `common/protocol_imp.h:2510-2519`, broadcast `gs/player.cpp:5014-5021`; o host só toca a animação,
+      `EC_HostMsg.cpp:6138-6158`). `gs` 1.2.6: `Make<object_cast_instant_skill>` VA 0x8091870.
+    - **Sem efeito:** o roteiro da 762 (1.2.6 e 1.5.5) faz `SetSwiftform`, sem porte (ia ao log
+      "sem porte"). `filter_Swiftform` (`skillfilter.h:4841-4876`, `skillfilter.cpp:415-431`):
+      `EnhanceSpeed((int)(100 × amount))`, ícone 81, `IncVisibleState(VSTATE_FOXFORM 32)`. O `gs` 1.2.6
+      (VA 0x830b29e) liga o estado **31**.
+    - **Estados visíveis no 1.2.6:** extraído o `IncVisibleState` de todo `filter_*::OnAttach` do `gs`
+      1.2.6: 0–28 batem; Wingshield 29→30, Firearrow 30→31, Jingji 31→30, Swiftform 32→31.
+    - **Materiais:** a produção (e refino, pedras de missão, renascer) chamavam
+      `S2CGamedataSend::player_drop_item` (11 B, contagem u32) em vez de `ctx.sub` — o 1.2.6 quer 9 B
+      (contagem u16, B116) e descartava calado; o servidor já tinha tirado os itens.
+    - **Proficiência:** original `player.cpp:16555-16566` e `gs` 1.2.6 VA 0x80813ad-0x80813e6: habilidade
+      < `recipe_level` → +2, igual → +1, **maior → nada**. Já era o nosso; não há ganho reduzido.
+
+    ### c. Correção
+
+    - `conjurar(…, instantanea)`: no C2S 80, recarga, `aplicar_conjuracao` e o 178 (codificador novo
+      `S2CGamedataSend::object_cast_instant_skill`, 13 B), sem 85/88/123.
+    - `Efeito::Swiftform` e mais sete filtros portados do `skillfilter.h` (setters iguais no `gs`
+      1.2.6): `Jingji` (310), `Magicleak` (318), `Canti` (320), `Noregain` (321), `Apleak` (322, sem a
+      perda de chi do PvP), `Reducewood` (635), `Freemove` (764), e o instantâneo `Hp2mp` (311).
+      Unicidade pelo `_filter_id` (`Efeito::mesmo_filtro`, `filter_man.h:177-207`). `Realce` ganhou
+      `regen_pct` e `resistencias[5]`; tique de mana negativo para o dreno.
+    - `estados_visiveis_do_126` no `WorldProtocol` 1.2.6 (`UPDATE_EXT_STATE` e `extend_state`).
+    - Os cinco `player_drop_item` diretos passaram a `ctx.sub`.
+
+    ### d. Provas
+
+    - `a_traje_de_flores_e_instantanea_e_acelera_no_126` (178 de 15 B, nenhum 85/88/123, velocidade
+      +15, ícone 81); `produzir_no_npc_155/126` agora conferem o 46 (13 B / 11 B) — com o banco.
+    - Unidade: `o_swiftform_acelera_e_acende_as_flores`, `os_filtros_da_feiticeira_seguem_o_skillfilter`,
+      `os_estados_do_155_vao_aos_numeros_do_gs_126`. Suíte com o banco (2 fios): **1021/3**; as 3 eram
+      testes que fixavam o comportamento antigo (C2S 80 esperando 85/88/123; o 46 do renascer no
+      layout do 1.5.5 também no 1.2.6; o bit 32 descartado no 1.2.6), corrigidos e passando isolados —
+      **1024/0** somando.
+
+    ### e. O que continua faltando
+
+    - Ver em jogo (roteiro no estado §3.3, B220). Não publicado.
+    - Bárbaro 1.2.6: `Giant`, `Repel`, `Devilstate`, `Tigerform`, `Break`, `Assault`, `Toxicblade`,
+      `Apgen`. Feiticeira 1.5.5: efeitos de seita/nível alto (1825–1930, 2236). `Apleak` no PvP.
+
+221. **Sessão 2026-10-12: efeitos do Bárbaro no 1.2.6, da Feiticeira 1.5.5 de seita e o chi do Devastar no PvP.**
+
+    ### a. Pedido
+
+    Implementar o que o B220 deixou: os efeitos do Bárbaro 1.2.6, os da Feiticeira 1.5.5 de seita
+    e nível alto e a perda de chi do Devastar.
+
+    ### b. Evidência
+
+    - Setters em `cskill/skill/playerwrapper.cpp` (Giant 2339, Repel 954, Devilstate 2399, Tigerform
+      1785, Break 2179, Assault 1728, Toxicblade 1682, Apgen 2261, Apgencont2 2835, Beastieform 3791,
+      Inccritresistance 4456, Insertvstate 3127, Invincible2 2080, Palsy 4848, Sealed2 3261,
+      Soulretort2 4596) e filtros em `skillfilter.h`/`.cpp` (faixas citadas no `Efeito`).
+    - `gs` 1.2.6 (com `tools/pw-ir/simbolos_gs.py`, novo): os oito setters do Bárbaro com os mesmos
+      campos do `PlayerWrapper`; ícones 66/67/63/40/47 e `VSTATE_BLESSED` iguais; o `Tigerform::OnAttach`
+      faz `ChangeShape(1)` fixo (VA 0x830afd0), como o da raposa.
+    - `KnockBack`: `gnpc_imp::KnockBack` (`npc.cpp:2281-2302`) + `CNPCMoveMap::GetLastReachablePos`
+      (`pathfinding/NPCMoveMap.cpp:518-583`). `BeTaunted`: `aggro_policy::BeTaunted` (`ainpc.h:231-243`)
+      e `aggro_list::AddToFrist`. `BreakCurAction` → `TryStopCurSession` (`actobject.cpp:1156-1163`).
+      `EF_DoDamage` roda na vítima a cada golpe (`actobject.cpp:755-757`).
+    - Unicidade e máscara: o `_filter_id` (`filter_man.h:177-207`); `value > 0,5` escolhe a máscara
+      em vários setters do 1.5.5.
+
+    ### c. Correção
+
+    - 12 efeitos novos em `efeitos.rs` (Giant, Devilstate, Tigerform, Toxicblade, Apgen, Apgencont2,
+      Beastieform, Inccritresistance, Insertvstate, Palsy, Sealed2, Soulretort2); `Filtro::mascara`;
+      `Tique::Chi`; `Realce::resistencia_a_critico`; `chi_ao_apanhar` (Apgen/Apleak) no dano de
+      monstro e no PvP; `espinhos_de_alma` e o `de_longe` levado do golpe do monstro aos espinhos.
+    - Por nome: `Repel` (`WorldInstance::empurrar_monstro`, `Mapa::ultimo_ponto_alcancavel`), `Break`
+      (`MonsterAi::interromper_sessao`), `Assault` (`MonsterAi::provocar`), `Invincible2`.
+    - Presas Venenosas no `golpe_de_jogador` (madeira); `byte_de_forma` do 1.2.6: forma de classe = 1.
+
+    ### d. Provas
+
+    - `o_rugido_do_tigre_no_155/126` (163 com 65 / 1; vida +10, velocidade +20, dano −20; desfaz),
+      `o_barbaro_empurra_e_provoca_no_126` (monstro de x 2,0 a x 8,3; 35 com modo 5; topo do ódio),
+      unidade `os_filtros_do_barbaro…`, `os_filtros_da_feiticeira_155…`, `a_forma_de_classe_do_126_e_sempre_1`.
+      Suíte com o banco (2 fios): **1030/0**.
+
+    ### e. O que continua faltando
+
+    - A planta invocada (`Summonplantpet`, 1825/1867): `plant_pet_manager` (`petman.cpp:2257-2430`),
+      `gpet_plant_imp`/`gpet_plant_policy` (`petnpc.cpp:1871-2080`), os três S2C de planta e os campos
+      `plant_group`/`group_limit` do `PET_ESSENCE` (já no layout v156, campos 47–48). Bloco próprio.
+    - Empurrão de monstro de água/ar (mapa do espaço); imunidades de monstro (`IMMUNEREPEL` etc.).
+
+222. **Sessão 2026-10-12: a planta invocada (Místico, Feiticeira de seita, classes novas) e o empurrão de monstro de água/ar.**
+
+    ### a. Pedido
+
+    O que o B221 deixou: a planta invocada (`Summonplantpet`) e a Terra Dividida em monstro de água/ar.
+
+    ### b. Evidência
+
+    - Dono: `gplayer_imp::SummonPlantPet` (`player.cpp:13450-13486`), `plant_pet_manager` (`petman.cpp:2257-2560`,
+      `petman.h:354-392`: limiares 15 s, motivos 0–4), `CalcPetEnhance` (`player.cpp:13488-13513`).
+    - Planta: `CreatePet2`/`CreatePetBase2` (`obj_interface.cpp`, `npcgenerator.cpp:2141-2250`), `GenerateBaseProp2`,
+      `gpet_plant_imp` (`InitSkill`, `MessageHandler` com `MASTER_ASK_HELP`, `PET_AUTO_ATTACK`, `PLANT_PET_SUICIDE`,
+      `NotifyMasterInHeartbeat`, `petnpc.cpp:1871-2016`) e `gpet_plant_policy::OnHeartbeat` (`:2019-2068`); `GatherTarget`
+      + `guard_agent::search_target` (`guardnpc.h:15-41`); `PetGetNearestTeammate` (`petnpc.cpp:361-392`).
+    - Cliente: 293 `cmd_summon_plant_pet` 12 B, 294 `cmd_plant_pet_disapper` 5 B, 295 `cmd_plant_pet_hp_notify` 20 B (IR e
+      `EC_HostMsg.cpp:5536-5557`). O 1.2.6 recusa ids > 260 (VA 0x584618).
+    - Dados: `PET_ESSENCE` v156 com `mp_a`, `mp_gen_a`, `attack_degree_a`, `defence_degree_a`, `plant_group` (47) e
+      `group_limit` (48); 38 ovos de planta no `realm_155` (exemplo `plantas`), quase todos com velocidade 0 e
+      habilidades em bola em si.
+    - Efeitos das plantas: `filter_Incrementalhpgen` (`skillfilter.h:11129-11185`), `filter_Transportdamagetoleader`
+      (`:12318-12377`) + `GM_MSG_DRAIN_HP_MP` (`actobject.cpp:399-418`), `SetRemoveaggro` + `aggro_list::RemoveRage`
+      (`aggrolist.cpp:129-144`), `SetPullover2` + `gnpc_imp::PullOver` (`npc.cpp:2304-2329`, `MOVE_MODE_PULL` 9).
+    - Força da alma: `UpdateBaseSoulPower` (`player_imp.h:3033-3044`) — a vida das plantas da Feiticeira de seita é
+      `20000 + (S_T0 − P_Soulpower) / 5` ms; sem a variável o `Time` falhava e a planta ficava sem fim.
+    - Empurrão no espaço: `CGlobalSPMap::GetLastReachablePos` (`GlobalSPMap.cpp:372-384`).
+
+    ### c. Correção
+
+    - `crate::planta` (novo): `Planta`, `corpo_da_planta`, `invocar_planta`, `remover_planta`, `explodir_planta`,
+      `batimento_das_plantas` (vida, explosão que some em 0,5 s, aviso de vida/mana, juntar alvo, cura da passiva).
+    - `Mascote::planta`; a IA ganha `e_planta`/`imovel`, `por_no_topo`, `ajudar_o_dono` e as cercas da planta; os
+      achadores do mascote da jaula ignoram plantas; troca de servidor e saída tiram as plantas.
+    - Habilidade de mascote com área (bola em si e no alvo): ataque/maldição nos monstros da área, bênção nos jogadores.
+    - `PlayerEntity::base_para_mascote`, `Equipamento::alma_do_refino` e `P_Soulpower`.
+    - Três S2C no `WorldProtocol` (`None` no 1.2.6). `MonsterAi::tirar_odio`, `WorldInstance::puxar_monstro` e o
+      empurrão genérico (chão/água/ar).
+
+    ### d. Provas
+
+    - `a_planta_nasce_respeita_o_grupo_e_some_no_fim_da_vida` (293 de 14 B, vida pela força da alma, passiva lança a
+      1858 no dono, limite do grupo → 294 motivo 4, fim da vida → motivo 1) e `a_planta_do_mistico_ataca_e_explode`
+      (automática com o alvo no topo, 143 da 1513 com a planta como atacante, Dissolução → 294 motivo 3 e some 0,5 s
+      depois). Unidade: corpo da planta (conta x87), tipo da 1ª habilidade, `Incrementalhpgen`, `tirar_odio`. IR: 293–295.
+      Suíte com o banco (2 fios): **1036/0**.
+
+    ### e. O que continua faltando
+
+    - Ver em jogo (estado §3.3, B222). `Auracurse` (1794). `_pet_enhance` e `_soul_power_en` dos addons. A conta do
+      `Transportdamagetoleader` com o dano antes dos ajustes. O empurrão de água/ar não tem teste com mapa do espaço.
+
+223. **Sessão 2026-10-12 (interrompida pelo limite de uso): força da alma dos addons; reforço de mascote conferido.**
+
+    - Feito: `enhance_soulpower_addon` (`item_addon.cpp:1119-1148`, ids 2362/2834) soma `BonusDeAddons::forca_da_alma`
+      ao `P_Soulpower` (passa a "agir no jogo" no painel). Compila; **sem teste nem suíte rodados**.
+    - Conferido: o `_pet_enhance` é sempre zero no 1.5.5 — nenhum stub de habilidade chama `SetIncpet*` (só declarados em
+      `playerwrapper.h`); o zero do `corpo_da_planta` é o original.
+    - Falta: `Auracurse`/`Aurabless` (cada 3 s o `RegionEnchant1`/`TeamEnchant` do roteiro de outra habilidade no raio —
+      1794→1795, 1854→1861 etc.); o `Transportdamagetoleader` com o dano antes do ajuste de grau (o `resolver` aplica o grau
+      em `combat.rs:535-541`; precisa devolver o valor antes dele); teste do empurrão de água/ar com mapa do espaço.
+
+224. **Sessão 2026-10-12: equipamento produzido aparecia sem bloco no cliente (Calça de Couro de Dragão da Tsuko).**
+
+    ### a. Sintoma
+    A calça costurada (8533, receita 1394) veio com durabilidade 0, restrição de classe em vermelho e nenhum atributo.
+
+    ### b. Causa
+    - Os octetos gravados estavam **certos** (106 B: cabeçalho, 12000/12000, marca `IMT_PRODUCE` com "Tsuko", essência
+      com defesa 93 e as resistências, 3 furos, addons 1585 `item_armor_enhance_resistance<2>` e 1462 energia — os mesmos
+      tratadores no `gs` 1.2.6, tabela extraída do `addon_inserter` do inicializador estático).
+    - O cliente, ao ganhar equipamento, pede o detalhe na hora (`EC_HostMsg.cpp:1224-1236`), e o `GET_ITEM_INFO` lê do
+      banco; o `com_contexto` mandava o `PRODUCE_ONCE` **antes** de gravar a bolsa. O pedido ficava sem resposta e o
+      cliente mostrava o item sem bloco. Provado: com a ordem antiga o teste novo não recebe o `OWN_ITEM_INFO`.
+    - De quebra: o `ProduceItem` do `gs` 1.2.6 corta o nome do fabricante em 20 B (VA 0x80811f6), não 40.
+
+    ### c. Correção
+    Bolsas gravadas antes dos avisos (`jogo.rs`, vale para todo item ganho); `WorldProtocol::tamanho_do_nome_do_fabricante`
+    (40 / 20 no 1.2.6).
+
+    ### d. Provas
+    `produzir_no_npc_155/126` agora pedem o detalhe logo depois do `PRODUCE_ONCE` e exigem o `OWN_ITEM_INFO` (falham com a
+    ordem antiga); unidade do corte do 1.2.6. Suíte: ver o fim deste item.
+
+    ### e. Falta
+    Ver em jogo. A calça já feita está certa no banco (relogar resolve).
+
+225. **Sessão 2026-10-12: o transporte de dano da planta com o golpe antes do grau.** O `resolver` expõe
+    `Resultado::antes_do_grau` (`total × ajuste`, `combat.rs:536` — o `damage_entry × damage_adjust` que o
+    `EF_AdjustDamage` vê, `actobject.cpp:723-756`); o golpe normal de monstro (`AcaoDoMonstro::Atacou`) e a
+    habilidade de monstro levam o valor até o mascote (`adiar_dano_com_grau`, `DanoAdiado::antes_do_grau`). Prova:
+    `o_dano_antes_do_grau_fica_sem_o_ajuste_de_grau` (com +50 de grau, 1000 antes e 1500 no fim).
+
+226. **Sessão 2026-10-12: amuleto de dano (Amuleto Bom de Evocação da Tsuko nunca gastava).**
+    - Causa: o `DAMAGERUNE_ESSENCE` não tinha porte nenhum.
+    - Original: `item_damage_rune::OnActivate` (`gs/item/item_rune.cpp:33-39`) liga o `_cur_rune`; o
+      `GetPhysicRuneDamage`/`GetMagicRuneDamage` (`actobject.h:1365-1403`) soma o reforço no tipo certo com a
+      arma na faixa e chama o `OnUseAttackRune` (`player.cpp:13051-13060`): `DecAmount` do slot 17 e
+      `player_drop_item(1, 17, id, 1, DROP_TYPE_RUNE)`. `gs` 1.2.6 igual (VA 0x807cd3e: `push 0x11`, `push 0xc`).
+    - Correção: `PlayerEntity::amuleto_de_dano` (lido no `recalcular_equipamento`), `reforco_do_amuleto`, a soma
+      no `jogador_ataca_monstro` e no `golpe_de_habilidade`, `gastar_amuleto` (aviso + `consume_item`) no golpe
+      normal e nas habilidades, marcas `AMULETO_FISICO/MAGICO`.
+    - No banco: a Tsuko tem o 1233 (mágico +30, arma 3–15) com 10 no slot 17 e a arma nível 6 — passa a gastar
+      nas habilidades mágicas. Prova: `o_amuleto_de_dano_vale_pelo_tipo_e_pelo_nivel_da_arma`.
+    - Falta: o amuleto de defesa (`ARMORRUNE_ESSENCE`).
+
+227. **Sessão 2026-10-12: auras.** `Efeito::Auracurse`/`Aurabless` (`filter_Aurabase`/`Auracurse`/`Aurabless`,
+    `skillfilter.h:8693-8756`, `SetAuracurse`/`SetAurabless`, `playerwrapper.cpp:3474-3482`): `Tique::Aura` a cada
+    3 s; o mundo emite `EventoDoMundo::Aura` (jogador e mascote) e o barramento roda o roteiro da habilidade
+    (`aplicar_aura`/`aplicar_aura_de_mascote`): maldição nos monstros do raio, bênção no grupo do raio ou no
+    portador, `ENCHANT_RESULT` a quem vê. Prova: `a_aura_de_maldicao_fere_quem_esta_no_raio` (1795 nível 1: −10
+    no monstro e o 139).
+
+228. **Sessão 2026-10-12: teste do empurrão no espaço.** `no_mapa_1_o_empurrao_no_ar_para_antes_do_bloqueio`
+    (mapa 1 do `realm_155`): a reta de voxel com o teste do ar para antes do bloqueio, num ponto livre do lado de
+    partida; reta livre chega ao fim. Suíte com o banco (2 fios), B224–B228: **1020/20** na rodada inteira —
+    19 do `canal_administrativo` (do painel, da outra frente) passam **34/0** sozinhos (contenção do pool, como
+    no B74/B80) e o `fabricar_equipamento_grava_o_fabricante_126` fixava o nome de 40 B (corrigido para os 20 B
+    do 1.2.6); no `subcomandos_no_mundo`, 3 falhas de tempo numa rodada de 745 s passam isoladas. Commit `9767e82`.
+
