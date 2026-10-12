@@ -13,6 +13,7 @@ pub mod mapas;
 pub mod mascote;
 pub mod missoes;
 pub mod navegacao;
+pub mod planta;
 pub mod npc;
 pub mod politica;
 pub mod progressao;

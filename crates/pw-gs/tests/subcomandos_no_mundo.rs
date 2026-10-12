@@ -543,6 +543,126 @@ async fn montar_com_servidor(
         .habilidades
         .por_id
         .insert(312, tabela.get(312).expect("stub 312").clone());
+    // Planta (B222): a Destruidor da Alma (1825) da Feiticeira 1.5.5 invoca o ovo 33538 → o
+    // Aprisionador de Alma 33537 (grupo 3, limite 1), com a 1858 (bênção em bola) — valores do
+    // `realm_155` (`cargo run -p pw-data-loader --example plantas`).
+    if versao == GameVersion::V1_5_5 {
+        for id in [1825, 1858, 1795] {
+            dados.habilidades.por_id.insert(id, tabela.get(id).expect("stub da planta").clone());
+        }
+        dados.modelos_de_mascote.insert(
+            33537,
+            pw_data_loader::pet::ModeloDeMascote {
+                tid: 33537,
+                classe: 4,
+                hp: [25.0, 0.0, 5.0],
+                hp_gen: [0.1, 0.0, 0.0],
+                dano: [0.0, 0.0, 1.0, 5.0],
+                velocidade: [0.0, 0.0],
+                ataque: [10.0, 0.0, 5.0],
+                esquiva: [0.0, 0.0, 0.0],
+                defesa: [0.0, 0.0, 0.0, 0.0],
+                resistencia: [10.0, 0.0, 0.0, 50.0],
+                corpo: 0.6,
+                alcance: 3.0,
+                atraso_do_dano: 10,
+                intervalo_do_golpe: 20,
+                visao: 15.0,
+                comida: 0,
+                habitat: 6,
+                imunidade: 17601,
+                nivel_maximo: 105,
+                nivel_exigido: 1,
+                mana: 0.0,
+                regen_mana: 0.0,
+                grau_de_ataque: 0.0,
+                grau_de_defesa: 0.0,
+                grupo_de_planta: 3,
+                limite_do_grupo: 1,
+            },
+        );
+        dados.ovos_de_pet.insert(
+            33538,
+            pw_data_loader::pet::DadosDoOvoDePet {
+                id: 33538,
+                id_pet: 33537,
+                money_hatched: 0,
+                money_restored: 0,
+                honor_point: 0,
+                level: 1,
+                exp: 0,
+                skill_point: 0,
+                req_level: 1,
+                req_class: 0xFFFF,
+                pet_class: 4,
+                skills: vec![(1858, 1)],
+            },
+        );
+    }
+    // Planta do Místico (B222): a Ferroada da Punição (1389) invoca o ovo 28921 → 28914, que
+    // ataca com a 1513 e explode com a 1505; a Dissolução (1398) a explode.
+    if versao == GameVersion::V1_5_5 {
+        for id in [1389, 1398, 1513, 1505] {
+            dados.habilidades.por_id.insert(id, tabela.get(id).expect("stub do Místico").clone());
+        }
+        dados.modelos_de_mascote.insert(
+            28914,
+            pw_data_loader::pet::ModeloDeMascote {
+                tid: 28914,
+                classe: 4,
+                hp: [8.0, 0.0, 5.0],
+                hp_gen: [0.1, 0.0, 0.0],
+                dano: [8.0, 0.0, 1.0, 5.0],
+                velocidade: [0.0, 0.0],
+                ataque: [10.0, 0.0, 5.0],
+                esquiva: [5.0, 0.0, 5.0],
+                defesa: [15.0, 1.0, 0.0, 5.0],
+                resistencia: [15.0, 1.0, 0.0, 5.0],
+                corpo: 0.6,
+                alcance: 3.0,
+                atraso_do_dano: 10,
+                intervalo_do_golpe: 20,
+                visao: 15.0,
+                comida: 0,
+                habitat: 6,
+                imunidade: 0,
+                nivel_maximo: 105,
+                nivel_exigido: 1,
+                mana: 0.0,
+                regen_mana: 0.0,
+                grau_de_ataque: 0.0,
+                grau_de_defesa: 0.0,
+                grupo_de_planta: 0,
+                limite_do_grupo: 1,
+            },
+        );
+        dados.ovos_de_pet.insert(
+            28921,
+            pw_data_loader::pet::DadosDoOvoDePet {
+                id: 28921,
+                id_pet: 28914,
+                money_hatched: 0,
+                money_restored: 0,
+                honor_point: 0,
+                level: 1,
+                exp: 0,
+                skill_point: 0,
+                req_level: 1,
+                req_class: 0xFFFF,
+                pet_class: 4,
+                skills: vec![(1513, 1), (1505, 1)],
+            },
+        );
+    }
+    // Bárbaro (B221): Rugido do Tigre, Terra Dividida, Mordida Violenta.
+    for id in [112, 107, 150] {
+        dados.habilidades.por_id.insert(id, tabela.get(id).expect("stub do Bárbaro").clone());
+    }
+    // Traje de Flores (B220): instantânea, `filter_Swiftform` em si.
+    dados
+        .habilidades
+        .por_id
+        .insert(762, tabela.get(762).expect("stub 762").clone());
     // Portal da Cidade (B122): no 1.2.6 o `StateAttack` da 167 faz `SetReturntown`.
     dados
         .habilidades
@@ -2773,7 +2893,16 @@ async fn conjurar_no_alvo_da_lista_e_nao_no_selecionado() {
     .await
     .unwrap();
 
-    let r = receber(&mut link, 4).await;
+    // B220: a instantânea responde o efeito e o `OBJECT_CAST_INSTANT_SKILL` (178), sem 85/88/123.
+    let mut r = Vec::new();
+    loop {
+        let v = receber(&mut link, 1).await.remove(0);
+        let fim = cmd_de(&v) == 178;
+        r.push(v);
+        if fim {
+            break;
+        }
+    }
     let res = r
         .iter()
         .find(|v| cmd_de(v) == 142)
@@ -6057,6 +6186,7 @@ async fn a_forma_sombria_tranca_o_equipamento_e_desfaz_a_forma_no_fim() {
             absorve: 0.0,
             escala_defesa: 60,
             fator_de_habilidade: 0.0,
+            mascara: None,
         });
         // Como se a entrada na forma já tivesse ido ao cliente.
         p.forma_enviada = Some(65);
@@ -8100,6 +8230,7 @@ async fn a_muralha_de_espinhos_devolve_o_golpe_do_monstro() {
             absorve: 0.0,
             escala_defesa: 0,
             fator_de_habilidade: 0.0,
+            mascara: None,
         });
         let (monstro, _) = m.monsters.get_mut(&MONSTRO).unwrap();
         monstro.attack_min = 200;
@@ -8200,6 +8331,7 @@ fn os_espinhos_so_devolvem_acima_de_um() {
         absorve: 0.0,
         escala_defesa: 0,
         fator_de_habilidade: 0.0,
+        mascara: None,
     });
     assert_eq!(e.espinhos(200, false), Some(40));
     assert_eq!(e.espinhos(9, false), None, "(int)(9 × 0,2) = 1 não passa de 1");
@@ -8226,6 +8358,7 @@ fn os_espinhos_do_retort2_usam_a_razao_de_habilidade() {
         absorve: 0.0,
         escala_defesa: 0,
         fator_de_habilidade: 0.06,
+        mascara: None,
     };
     let mut e = Efeitos::default();
     e.adicionar(filtro(Efeito::Retort2));
@@ -8486,6 +8619,7 @@ async fn o_tique_do_sangramento_nao_da_odio() {
             absorve: 0.0,
             escala_defesa: 0,
             fator_de_habilidade: 0.0,
+            mascara: None,
         });
         m.monsters.insert(id, (monstro, MonsterAi::new()));
     }
@@ -8528,6 +8662,12 @@ async fn o_veneno_no_mascote_tira_vida_sem_odio_e_aparece() {
         imunidade: 0,
         nivel_maximo: 150,
         nivel_exigido: 2,
+        mana: 0.0,
+        regen_mana: 0.0,
+        grau_de_ataque: 0.0,
+        grau_de_defesa: 0.0,
+        grupo_de_planta: 0,
+        limite_do_grupo: 0,
     };
     let pet = pw_gs::mascote::id_do_mascote(9);
     let vida_antes = {
@@ -8547,6 +8687,7 @@ async fn o_veneno_no_mascote_tira_vida_sem_odio_e_aparece() {
             absorve: 0.0,
             escala_defesa: 0,
             fator_de_habilidade: 0.0,
+            mascara: None,
         });
         let hp = mascote.corpo.hp;
         m.mascotes.insert(pet, mascote);
@@ -8794,7 +8935,7 @@ async fn o_golpe_interrompe_a_coleta() {
 /// B145 — produção no NPC (serviço 12): `PRODUCE_START`, um `PRODUCE_ONCE` com o item gerado,
 /// materiais retirados com `DROP_TYPE_PRODUCE`, taxa com `SPEND_MONEY`, proficiência com
 /// `SKILL_ABILITY` e `PRODUCE_END` (`produce_executor`, `session_produce`, `ProduceItem`).
-async fn conferir_producao(versao: GameVersion, tamanho_do_once: usize) {
+async fn conferir_producao(versao: GameVersion, tamanho_do_once: usize, tamanho_do_descarte: usize) {
     let Some((mundo, addr, roleid, _)) = montar(versao).await else { return };
     let mut link = entrar(&mundo, addr, roleid).await;
     let itens = mundo.read().await.char_repo.item_repo().clone();
@@ -8818,9 +8959,22 @@ async fn conferir_producao(versao: GameVersion, tamanho_do_once: usize) {
     let inicio = esperar_comando(&mut link, 100).await;
     assert_eq!(inicio.len(), 2 + 8, "PRODUCE_START");
     assert_eq!(i32_em(&inicio, 6), RECEITA);
+    // B220: o material sai com o `PLAYER_DROP_ITEM` **da versão** — no 1.2.6 a contagem é u16
+    // (9 B); com os 11 B do 1.5.5 o cliente 1.2.6 o descartava e a bolsa não mudava na tela.
+    let descarte = esperar_comando(&mut link, 46).await;
+    assert_eq!(descarte.len(), 2 + tamanho_do_descarte, "PLAYER_DROP_ITEM da produção");
+    assert_eq!(descarte[descarte.len() - 1], 7, "DROP_TYPE_PRODUCE");
     let feito = esperar_comando(&mut link, 101).await;
     assert_eq!(feito.len(), 2 + tamanho_do_once, "PRODUCE_ONCE");
     assert_eq!(i32_em(&feito, 2), ITEM_DE_LOJA);
+    // B224 — o cliente pede o detalhe na hora (`c2s_CmdGetItemInfo`); o item já tem de estar no
+    // banco. O `index` é o último byte do `PRODUCE_ONCE` nas duas versões.
+    let slot = feito[feito.len() - 1];
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::GET_ITEM_INFO, &[0, slot]) })
+        .await
+        .unwrap();
+    let info = esperar_comando(&mut link, 40).await;
+    assert_eq!((info[2], info[3], i32_em(&info, 4)), (0, slot, ITEM_DE_LOJA), "OWN_ITEM_INFO do item produzido");
     let proficiencia = esperar_comando(&mut link, 187).await;
     assert_eq!(i32_em(&proficiencia, 2), 158);
     assert_eq!(i32_em(&proficiencia, 6), 1, "nível igual ao da receita: +1");
@@ -8833,12 +8987,58 @@ async fn conferir_producao(versao: GameVersion, tamanho_do_once: usize) {
 
 #[tokio::test]
 async fn produzir_no_npc_155() {
-    conferir_producao(GameVersion::V1_5_5, 14).await;
+    conferir_producao(GameVersion::V1_5_5, 14, 11).await;
 }
 
 #[tokio::test]
 async fn produzir_no_npc_126() {
-    conferir_producao(GameVersion::V1_2_6, 10).await;
+    conferir_producao(GameVersion::V1_2_6, 10, 9).await;
+}
+
+/// B220 — a Traje de Flores (762) da Feiticeira 1.2.6 é **instantânea** (C2S 80): o efeito sai
+/// na hora e o único aviso é o `OBJECT_CAST_INSTANT_SKILL` (178, 15 B), sem o
+/// `OBJECT_CAST_SKILL` (85) que fazia o cliente parar de andar (`SkillWrapper::InstantSkill`).
+/// O `filter_Swiftform` dá +`(int)(100 × amount)`% de velocidade — 15 no nível 1 —, ícone 81 e,
+/// no 1.2.6, o estado visível 31 (`IncVisibleState(0x1f)`, VA 0x830b2f7).
+#[tokio::test]
+async fn a_traje_de_flores_e_instantanea_e_acelera_no_126() {
+    let Some((mundo, addr, roleid, _)) = montar(GameVersion::V1_2_6).await else { return };
+    let mut link = entrar(&mundo, addr, roleid).await;
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.habilidades.insert(762, 1);
+        p.max_mp = p.max_mp.max(500);
+        p.mp = p.max_mp;
+    }
+    let mut corpo = 762i32.to_le_bytes().to_vec();
+    corpo.push(0); // force_attack
+    corpo.push(0); // target_count
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::CAST_INSTANT_SKILL, &corpo) })
+        .await
+        .unwrap();
+    let mut vistos = Vec::new();
+    let aviso = loop {
+        let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_secs(3), link.receber()).await
+        else {
+            panic!("sem OBJECT_CAST_INSTANT_SKILL; vistos {vistos:?}");
+        };
+        vistos.push(cmd_de(&data));
+        if cmd_de(&data) == 178 {
+            break data;
+        }
+    };
+    assert!(!vistos.iter().any(|c| [85, 88, 123].contains(c)), "a instantânea não abre trabalho de feitiço: {vistos:?}");
+    assert_eq!(aviso.len(), 2 + 13, "OBJECT_CAST_INSTANT_SKILL");
+    assert_eq!(i32_em(&aviso, 2), roleid);
+    assert_eq!(i32_em(&aviso, 10), 762);
+    assert_eq!(aviso[14], 1, "nível");
+    let m = mundo.read().await;
+    let p = &m.players[&(roleid as i64)];
+    assert_eq!(p.efeitos.realce().velocidade, 15, "amount 0,05 + 0,1·1 → 15 %");
+    assert!(p.efeitos.icones().iter().any(|&(i, _)| i == 81), "ícone HSTATE_SWIFTFORM");
+    assert_eq!(p.efeitos.estados_visiveis()[1] & 1, 1, "VSTATE_FOXFORM 32 na numeração do 1.5.5");
 }
 
 
@@ -9186,7 +9386,12 @@ async fn conferir_fabricacao_de_equipamento(versao: GameVersion) {
     let c = pw_core::ConteudoDeEquipamento::ler(&item.octets, &ficha).expect("bloco da arma fabricada");
     assert_eq!(c.origem, pw_core::OrigemDoItem::Producao, "IMT_PRODUCE");
     assert!(!nome.is_empty());
-    assert_eq!(c.fabricante, pw_core::nome_do_fabricante(&nome), "o nome de quem fabricou, em UTF-16LE");
+    // B224: o `ProduceItem` do `gs` 1.2.6 corta o nome em 20 bytes (VA 0x80811f6).
+    let mut esperado = pw_core::nome_do_fabricante(&nome);
+    if versao == GameVersion::V1_2_6 {
+        esperado.truncate(20);
+    }
+    assert_eq!(c.fabricante, esperado, "o nome de quem fabricou, em UTF-16LE, até 20 B no 1.2.6");
     assert_eq!((c.durabilidade, c.durabilidade_maxima), (30_000, 30_000), "fabricado sai cheio");
     assert_eq!(c.furos.len(), 0, "make_probability_socket0 = 1.0");
     assert_eq!(pw_core::Requisitos::do_bloco(&item.octets).unwrap().classes, 0xFFFF);
@@ -9584,7 +9789,9 @@ async fn conferir_renascer_com_pergaminho(versao: GameVersion) {
     let recarga = esperar_comando_por(&mut link, 198, 10).await;
     assert_eq!((i32_em(&recarga, 2), i32_em(&recarga, 6)), (10, 1_800_000));
     let gasto = esperar_comando(&mut link, 46).await;
-    assert_eq!((gasto[3], i32_em(&gasto, 8), gasto[12]), (4, 3043, 10), "slot, item e DROP_TYPE_RESURRECT");
+    // B220: o 46 da versão — no 1.2.6 a contagem é u16 (9 B), no 1.5.5 u32 (11 B).
+    let tid = if versao == GameVersion::V1_2_6 { 6 } else { 8 };
+    assert_eq!((gasto[3], i32_em(&gasto, tid), gasto[gasto.len() - 1]), (4, 3043, 10), "slot, item e DROP_TYPE_RESURRECT");
     let revive = esperar_comando(&mut link, 29).await;
     assert_eq!(i16::from_le_bytes([revive[6], revive[7]]), 1, "tipo 1, no lugar");
     {
@@ -10115,4 +10322,274 @@ async fn o_portal_de_regiao_leva_ao_alvo_e_recusa_fora_da_caixa() {
     link.enviar(portal(0, este)).await.unwrap();
     let erro = esperar_comando(&mut link, 25).await;
     assert_eq!(i32_em(&erro, 2), 52, "fora da caixa");
+}
+
+/// B221 — Rugido do Tigre (112): `filter_Tigerform` — forma de classe sem tempo, vida máxima
+/// +`100 × probability`% (10 no nível 1), velocidade +`100 × amount`% (20) e dano +`100 × value`%
+/// (−20); `PLAYER_CHGSHAPE` com 65 no 1.5.5 (`ratio` 1 | `FORM_CLASS << 6`) e **1** no 1.2.6
+/// (`ChangeShape(1)`, VA 0x830afd0, embora o roteiro traga `Ratio` 154). Lançar de novo desfaz.
+async fn conferir_tigre(versao: GameVersion, byte_de_forma: u8) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
+    let mut dono = entrar(&mundo, addr, roleid).await;
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().mp = 10_000;
+    lancar(&mut dono, roleid, 112, roleid).await;
+    let forma = esperar_comando(&mut dono, 163).await;
+    assert_eq!(forma[6], byte_de_forma, "byte de forma do tigre");
+    {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        assert_eq!(p.efeitos.forma_atual(), 1, "FORM_CLASS");
+        let r = p.efeitos.realce();
+        assert_eq!((r.vida, r.velocidade, r.dano), (10, 20, -20));
+    }
+    {
+        let mut m = mundo.write().await;
+        m.players.get_mut(&(roleid as i64)).unwrap().recargas.clear();
+    }
+    lancar(&mut dono, roleid, 112, roleid).await;
+    let volta = esperar_comando(&mut dono, 163).await;
+    assert_eq!(volta[6], 0, "a 112 de novo desfaz o tigre");
+}
+
+#[tokio::test]
+async fn o_rugido_do_tigre_no_155() {
+    conferir_tigre(GameVersion::V1_5_5, 65).await;
+}
+
+#[tokio::test]
+async fn o_rugido_do_tigre_no_126() {
+    conferir_tigre(GameVersion::V1_2_6, 1).await;
+}
+
+/// B221 — Terra Dividida (107): `SetRepel` → `gnpc_imp::KnockBack`: o monstro vai `6 + 0,3·L` m
+/// para longe de quem conjura e todos recebem o `OBJECT_STOP_MOVE` com `MOVE_MODE_KNOCK` (5).
+/// Mordida Violenta (150): `SetAssault` → `BeTaunted`: quem conjura vai ao topo do ódio.
+#[tokio::test]
+async fn o_barbaro_empurra_e_provoca_no_126() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_2_6);
+    let mut dono = entrar(&mundo, addr, roleid).await;
+    let (antes, origem) = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.mp = 10_000;
+        // O `stop_move` vai a quem vê o monstro.
+        p.visiveis.insert(MONSTRO);
+        let origem = p.position;
+        let (monstro, ai) = m.monsters.get_mut(&MONSTRO).unwrap();
+        monstro.position = Vector3::new(origem.x + 2.0, origem.y, origem.z);
+        // A 107 tira ~875 de dano; morto o monstro não é empurrado.
+        monstro.max_hp = 1_000_000;
+        monstro.hp = 1_000_000;
+        ai.add_threat(999, 500);
+        (monstro.position, origem)
+    };
+    lancar(&mut dono, roleid, 107, MONSTRO as i32).await;
+    let parada = esperar_comando(&mut dono, 35).await;
+    assert_eq!(i32_em(&parada, 2), MONSTRO as i32);
+    assert_eq!(parada[parada.len() - 1], 5, "MOVE_MODE_KNOCK");
+    {
+        let m = mundo.read().await;
+        let depois = m.monsters[&MONSTRO].0.position;
+        assert!(depois.x > antes.x + 5.0, "empurrado para longe: {antes:?} → {depois:?} (de {origem:?})");
+    }
+    {
+        let mut m = mundo.write().await;
+        m.players.get_mut(&(roleid as i64)).unwrap().recargas.clear();
+        let p = m.players[&(roleid as i64)].position;
+        m.monsters.get_mut(&MONSTRO).unwrap().0.position = Vector3::new(p.x + 1.0, p.y, p.z);
+    }
+    lancar(&mut dono, roleid, 150, MONSTRO as i32).await;
+    let fim = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if mundo.read().await.monsters[&MONSTRO].1.get_highest_threat_target() == Some(roleid as i64) {
+            break;
+        }
+        assert!(std::time::Instant::now() < fim, "a Mordida Violenta não pôs quem conjura no topo do ódio");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// B222 — a planta invocada: a Destruidor da Alma (1825) põe o Aprisionador de Alma (33537) junto
+/// do alvo — `SUMMON_PLANT_PET` (293, 12 B) ao dono, com o tid e a vida (`20000 + …` ms do
+/// roteiro); a 1858 é bênção, então a planta é **passiva** e não anda (velocidade 0). Lançar de
+/// novo passa do `group_limit` 1: a mais antiga some com `PLANT_PET_DISAPPEAR` (294) motivo 4.
+/// Acabando a vida, motivo 1.
+#[tokio::test]
+async fn a_planta_nasce_respeita_o_grupo_e_some_no_fim_da_vida() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_5_5);
+    let mut dono = entrar(&mundo, addr, roleid).await;
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        // A 1825 custa 363 de mana: o teto do personagem de teste é bem menor.
+        p.max_mp = 10_000;
+        p.mp = 10_000;
+        // E 200 de chi (`apcost`), que se gasta a cada lançamento.
+        p.max_ap = 1_000;
+        p.ap = 1_000;
+        p.habilidades.insert(1825, 1);
+        let pos = p.position;
+        let (monstro, _) = m.monsters.get_mut(&MONSTRO).unwrap();
+        monstro.position = Vector3::new(pos.x + 3.0, pos.y, pos.z);
+        monstro.max_hp = 1_000_000;
+        monstro.hp = 1_000_000;
+    }
+    lancar(&mut dono, roleid, 1825, MONSTRO as i32).await;
+    let aviso = esperar_comando_por(&mut dono, 293, 6).await;
+    assert_eq!(aviso.len(), 2 + 12, "SUMMON_PLANT_PET");
+    assert_eq!(i32_em(&aviso, 2), 33537, "tid da planta");
+    let primeira = i32_em(&aviso, 6) as i64;
+    // O fim da execução da 1825 (`HOST_STOP_SKILL`) antes de lançar de novo, como o cliente.
+    esperar_comando_por(&mut dono, 123, 6).await;
+    {
+        let m = mundo.read().await;
+        let pl = &m.mascotes[&primeira];
+        assert!(pl.planta.is_some() && pl.dono == roleid as i64);
+        assert_eq!(pl.ai.agressividade, pw_gs::mascote::AGRESSIVIDADE_PASSIVA, "1858 é bênção");
+        assert!(pl.ai.imovel && pl.ai.e_planta);
+        assert!(m.mascote_de(roleid as i64).is_none(), "a planta não é o mascote da jaula");
+        // `Time` = 20000 + (S_T0 − P_Soulpower)/5 ms, força da alma = nível² + 50·nível (sem refino).
+        let l = m.players[&(roleid as i64)].level as f64;
+        let esperado = ((20000.0 - (l * l + 50.0 * l) / 5.0 + 0.00001) / 1000.0) as i32;
+        assert_eq!(pl.planta.as_ref().unwrap().vida_s, esperado, "vida da planta (s)");
+    }
+    // A passiva lança a 1858 no aliado mais próximo (o dono, sem grupo): o `BlessMe` põe nela o
+    // `Transportdamagetoleader` e a bênção em bola leva a lentidão aos jogadores da área.
+    let limite = std::time::Instant::now() + Duration::from_secs(6);
+    loop {
+        mundo.write().await.tick(500).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let m = mundo.read().await;
+        if m.mascotes.get(&primeira).is_some_and(|p| p.corpo.efeitos.transporte_ao_dono().is_some()) {
+            assert!(
+                m.players[&(roleid as i64)].efeitos.filtros.iter().any(|f| f.efeito == pw_gs::efeitos::Efeito::Slow),
+                "a lentidão da 1858 no dono"
+            );
+            break;
+        }
+        assert!(std::time::Instant::now() < limite, "a planta passiva não lançou a 1858");
+    }
+    {
+        let mut m = mundo.write().await;
+        m.players.get_mut(&(roleid as i64)).unwrap().recargas.clear();
+    }
+    lancar(&mut dono, roleid, 1825, MONSTRO as i32).await;
+    let sumiu = esperar_comando_por(&mut dono, 294, 6).await;
+    assert_eq!(sumiu.len(), 2 + 5, "PLANT_PET_DISAPPEAR");
+    assert_eq!(i32_em(&sumiu, 2) as i64, primeira);
+    assert_eq!(sumiu[6], pw_gs::planta::LIMITE_DO_GRUPO);
+    let segunda = i32_em(&esperar_comando_por(&mut dono, 293, 6).await, 6) as i64;
+    {
+        let mut m = mundo.write().await;
+        assert_eq!(m.plantas_de(roleid as i64), vec![segunda]);
+        m.mascotes.get_mut(&segunda).unwrap().planta.as_mut().unwrap().vida_s = 1;
+        m.tick(1000).await;
+    }
+    let fim = esperar_comando_por(&mut dono, 294, 6).await;
+    assert_eq!((i32_em(&fim, 2) as i64, fim[6]), (segunda, pw_gs::planta::VIDA_ACABOU));
+    assert!(mundo.read().await.plantas_de(roleid as i64).is_empty());
+}
+
+/// B222 — a planta automática do Místico: a Ferroada da Punição (1389) a invoca junto do alvo, e
+/// ela vem com o monstro no topo do ódio (`AddToFirst(alvo, 2)`) e o ataca com a 1513 — o
+/// `OBJECT_SKILL_ATTACK_RESULT` (143) com a planta como atacante. A Dissolução (1398) a faz
+/// explodir: o dono recebe o `PLANT_PET_DISAPPEAR` motivo 3 na hora e ela sai do mundo 0,5 s depois.
+#[tokio::test]
+async fn a_planta_do_mistico_ataca_e_explode() {
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_5_5);
+    let mut dono = entrar(&mundo, addr, roleid).await;
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.max_mp = 10_000;
+        p.mp = 10_000;
+        p.habilidades.insert(1389, 1);
+        p.habilidades.insert(1398, 1);
+        p.visiveis.insert(MONSTRO);
+        let pos = p.position;
+        let (monstro, _) = m.monsters.get_mut(&MONSTRO).unwrap();
+        monstro.position = Vector3::new(pos.x + 2.0, pos.y, pos.z);
+        monstro.max_hp = 1_000_000;
+        monstro.hp = 1_000_000;
+    }
+    lancar(&mut dono, roleid, 1389, MONSTRO as i32).await;
+    let planta = i32_em(&esperar_comando_por(&mut dono, 293, 6).await, 6) as i64;
+    {
+        let m = mundo.read().await;
+        let pl = &m.mascotes[&planta];
+        assert_eq!(pl.ai.agressividade, pw_gs::mascote::AGRESSIVIDADE_AUTOMATICA, "1513 é ataque");
+        assert_eq!(pl.ai.alvo(), Some(MONSTRO), "o alvo da invocação no topo do ódio");
+        assert!(pl.planta.as_ref().unwrap().suicida == Some((1505, 1)));
+    }
+    esperar_comando_por(&mut dono, 123, 6).await;
+    {
+        let mut m = mundo.write().await;
+        m.players.get_mut(&(roleid as i64)).unwrap().visiveis.insert(planta);
+    }
+    let fim = std::time::Instant::now() + Duration::from_secs(8);
+    let golpe = loop {
+        mundo.write().await.tick(500).await;
+        if let Ok(Ok(Some(BusMessage::GameToClient { data, .. }))) =
+            tokio::time::timeout(Duration::from_millis(100), dono.receber()).await
+        {
+            if cmd_de(&data) == 143 && i32_em(&data, 2) as i64 == planta {
+                break data;
+            }
+        }
+        assert!(std::time::Instant::now() < fim, "a planta não usou a 1513");
+    };
+    assert_eq!(i32_em(&golpe, 6), MONSTRO as i32);
+    assert_eq!(i32_em(&golpe, 10), 1513);
+    {
+        let mut m = mundo.write().await;
+        m.players.get_mut(&(roleid as i64)).unwrap().recargas.clear();
+    }
+    lancar(&mut dono, roleid, 1398, MONSTRO as i32).await;
+    let sumiu = esperar_comando_por(&mut dono, 294, 6).await;
+    assert_eq!((i32_em(&sumiu, 2) as i64, sumiu[6]), (planta, pw_gs::planta::EXPLODIU));
+    assert!(mundo.read().await.plantas_de(roleid as i64).is_empty(), "o dono a esquece na hora");
+    assert!(mundo.read().await.mascotes.contains_key(&planta), "ela ainda está no mundo");
+    mundo.write().await.tick(600).await;
+    assert!(!mundo.read().await.mascotes.contains_key(&planta), "0,5 s depois ela some");
+}
+
+/// B227 — a aura (`filter_Auracurse`, o Sacrifício 1794 → 1795): a cada 3 s o `DoAura` roda o
+/// roteiro da 1795 (`Directhurt` 10 + (L − 1) × 1000) nos monstros a até 20 m, e quem vê recebe o
+/// `ENCHANT_RESULT` (139) do portador no monstro.
+#[tokio::test]
+async fn a_aura_de_maldicao_fere_quem_esta_no_raio() {
+    use pw_gs::efeitos::{Efeito, Filtro};
+    let (mundo, addr, roleid, _convidado) = cenario!(GameVersion::V1_5_5);
+    let mut dono = entrar(&mundo, addr, roleid).await;
+    let antes = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        let pos = p.position;
+        p.efeitos.adicionar(Filtro {
+            efeito: Efeito::Auracurse,
+            restante_s: 12,
+            razao: 0,
+            fator: 20.0,
+            por_segundo: 1795,
+            contador: 0,
+            origem: 0,
+            icone: true,
+            absorve: 0.0,
+            escala_defesa: 1,
+            fator_de_habilidade: 0.0,
+            mascara: None,
+        });
+        let (monstro, _) = m.monsters.get_mut(&MONSTRO).unwrap();
+        monstro.position = Vector3::new(pos.x + 5.0, pos.y, pos.z);
+        monstro.max_hp = 1_000;
+        monstro.hp = 1_000;
+        monstro.hp
+    };
+    for _ in 0..3 {
+        mundo.write().await.tick(1000).await;
+    }
+    let enc = esperar_comando_por(&mut dono, 139, 6).await;
+    assert_eq!((i32_em(&enc, 2), i32_em(&enc, 6), i32_em(&enc, 10)), (roleid, MONSTRO as i32, 1795));
+    let depois = mundo.read().await.monsters[&MONSTRO].0.hp;
+    assert_eq!(antes - depois, 10, "Directhurt 10 da 1795 no nível 1");
 }

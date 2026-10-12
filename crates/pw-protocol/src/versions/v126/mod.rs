@@ -138,8 +138,15 @@ impl WorldProtocol for V126Protocol {
     /// `FORM_CLASS << 6` (VA 0x830b1a0: `push 1` antes do `object_interface::ChangeShape`) —, e
     /// o `gactive_imp::ChangeShape` 1.2.6 (VA 0x811d78a) guarda o valor inteiro como forma:
     /// `shape_form = shape & 0xff`, `_cur_form = shape`. O byte do cliente é só o `_shape`.
+    ///
+    /// O `filter_Tigerform::OnAttach` 1.2.6 faz o mesmo `ChangeShape(1)` (VA 0x830afd0), embora o
+    /// roteiro da 112 traga `Ratio` 154: toda forma de classe (`FORM_CLASS << 6`) vai como 1 (B221).
     fn byte_de_forma(&self, forma_155: u8) -> u8 {
-        forma_155 & 0x3f
+        if forma_155 & 0x40 != 0 {
+            1
+        } else {
+            forma_155 & 0x3f
+        }
     }
 
     /// `UPDATE_EXT_STATE` (124) do 1.2.6: `{int id; DWORD state}`, 8 bytes — o validador do
@@ -150,7 +157,7 @@ impl WorldProtocol for V126Protocol {
         let mut s = OctetsStream::new();
         s.write_u16_le(124);
         s.write_i32_le(id);
-        s.write_u32_le(estados[0]);
+        s.write_u32_le(estados_visiveis_do_126(estados));
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
@@ -461,6 +468,23 @@ impl WorldProtocol for V126Protocol {
         s.write_i32_le(mp);
         s.write_i32_le(max_mp);
         S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    /// O `ProduceItem` do `gs` 1.2.6 corta o nome em **20** bytes (`cmp [ebp-0x128], 0x14`, VA
+    /// 0x80811f6) — dez letras em UTF-16 (B224).
+    fn tamanho_do_nome_do_fabricante(&self) -> usize {
+        20
+    }
+
+    // 293–295 passam do teto de 260 do validador (VA 0x584618) e o 1.2.6 não tem planta.
+    fn summon_plant_pet(&self, _tid: i32, _id: i32, _vida_s: i32) -> Option<S2CGamedataSend> {
+        None
+    }
+    fn plant_pet_disappear(&self, _id: i32, _motivo: u8) -> Option<S2CGamedataSend> {
+        None
+    }
+    fn plant_pet_hp_notify(&self, _id: i32, _hf: f32, _hp: i32, _mf: f32, _mp: i32) -> Option<S2CGamedataSend> {
+        None
     }
 
     fn elf_exp(&self, _exp: i32) -> Option<S2CGamedataSend> {
@@ -795,7 +819,7 @@ impl V126Protocol {
         // 0x100/0x200 no `gs`), e os demais (`0x2` emote, `0x8` pária, `0x400` anúncio, `0x800`
         // facção, `0x1000` barraca, `0x10000` efeito, `0x100000` casal, `0x800000` cônjuge) são
         // de sistemas que o `pw-gs` não tem: vão zero (B143).
-        let estendido = v.estados_visiveis[0];
+        let estendido = estados_visiveis_do_126(v.estados_visiveis);
         if estendido != 0 {
             state |= 0x40;
         }
@@ -886,4 +910,54 @@ pub fn concluidas_no_formato_antigo(b: &[u8]) -> Vec<u8> {
         o.extend_from_slice(&(id | falhou << 15).to_le_bytes());
     }
     o
+}
+
+/// Os estados visíveis chegam ao protocolo na numeração do 1.5.5 (`cskill/skill/statedef.h`); o
+/// `gs` 1.2.6 numera alguns de outro jeito. Medido pelo `IncVisibleState` de cada
+/// `filter_*::OnAttach` do `gs` 1.2.6 (B220): de 0 a 17 os números batem (lento 4, preso 7,
+/// atordoado 5, sono 6, selado 8, venenos 10–14, bênção 1, maldição 2, azar 9, espinhos 3,
+/// poder 17, dreno de mana 15, sem regeneração 23); mudam só `Wingshield` (29 no 1.5.5 → **30**,
+/// VA 0x83163e1), `Jingji` (31 → **30**, VA 0x83176b5),
+/// `Firearrow` (30 → **31**, VA 0x83165d5) e `Swiftform` (`VSTATE_FOXFORM` 32 → **31**, VA
+/// 0x830b2f7). O resto acima de 31 não cabe no único `DWORD` do 1.2.6 e fica de fora, como lá.
+pub(crate) fn estados_visiveis_do_126(estados: [u32; 6]) -> u32 {
+    let liga = |n: usize| estados[n / 32] & (1 << (n % 32)) != 0;
+    let mut d = estados[0] & !((1 << 29) | (1 << 30) | (1 << 31));
+    if liga(29) || liga(31) {
+        d |= 1 << 30;
+    }
+    if liga(30) || liga(32) {
+        d |= 1 << 31;
+    }
+    d
+}
+
+#[cfg(test)]
+mod testes_dos_estados {
+    use super::estados_visiveis_do_126;
+
+    /// B221: toda forma de classe vai como 1 no 1.2.6 — raposa e tigre (`ChangeShape(1)`), mesmo
+    /// com o `Ratio` 154 do roteiro da 112.
+    #[test]
+    fn a_forma_de_classe_do_126_e_sempre_1() {
+        let p = super::V126Protocol;
+        use crate::versions::WorldProtocol;
+        assert_eq!(p.byte_de_forma(1 | 0x40), 1);
+        assert_eq!(p.byte_de_forma(154u8 | 0x40), 1);
+        assert_eq!(p.byte_de_forma(0), 0);
+        // B224: o nome do fabricante vai até 20 bytes no 1.2.6 (VA 0x80811f6).
+        assert_eq!(p.tamanho_do_nome_do_fabricante(), 20);
+    }
+
+    #[test]
+    fn os_estados_do_155_vao_aos_numeros_do_gs_126() {
+        // Bênção (1) e espinhos (3) iguais; asa 29 → 30; flecha 30 → 31; flores 32 → 31.
+        assert_eq!(estados_visiveis_do_126([(1 << 1) | (1 << 3), 0, 0, 0, 0, 0]), (1 << 1) | (1 << 3));
+        assert_eq!(estados_visiveis_do_126([1 << 29, 0, 0, 0, 0, 0]), 1 << 30);
+        assert_eq!(estados_visiveis_do_126([1 << 30, 0, 0, 0, 0, 0]), 1 << 31);
+        assert_eq!(estados_visiveis_do_126([1 << 31, 0, 0, 0, 0, 0]), 1 << 30, "Jingji 31 → 30");
+        assert_eq!(estados_visiveis_do_126([0, 1, 0, 0, 0, 0]), 1 << 31);
+        // O invencível do monstro (49) não existe no 1.2.6.
+        assert_eq!(estados_visiveis_do_126([0, 1 << 17, 0, 0, 0, 0]), 0);
+    }
 }

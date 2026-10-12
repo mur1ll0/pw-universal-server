@@ -106,7 +106,7 @@ impl BusServer {
                 ctx.para_mim.push(S2CGamedataSend::set_cooldown(RECARGA_DO_PERGAMINHO, ms).data);
                 ctx.bolsa.tirar_do_slot(slot, 1);
                 ctx.para_mim.push(
-                    S2CGamedataSend::player_drop_item(0, slot as u8, 1, id as i32, DESCARTE_AO_RENASCER).data,
+                    ctx.sub.player_drop_item(0, slot as u8, 1, id as i32, DESCARTE_AO_RENASCER).data,
                 );
                 Ok(id)
             })

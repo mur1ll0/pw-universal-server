@@ -159,3 +159,58 @@ fn no_mapa_1_o_agente_de_ar_desvia_do_espaco_bloqueado() {
     assert_eq!(atravessaram, 0, "o agente entrou em folha bloqueada");
     assert!(chegaram * 2 >= casos, "chegaram só {chegaram} de {casos}");
 }
+
+/// B228 — o empurrão de monstro de ar (`GetKnockBackPos` → `CGlobalSPMap::GetLastReachablePos`,
+/// `GlobalSPMap.cpp:372-384`): a reta de voxel com o teste do ambiente para **antes** do espaço
+/// bloqueado, num ponto livre do lado de onde partiu; com a reta livre, chega ao fim.
+#[test]
+fn no_mapa_1_o_empurrao_no_ar_para_antes_do_bloqueio() {
+    use pw_data_loader::{MapaDeAgua, MapaDoEspaco};
+    use pw_gs::navegacao::Ambiente;
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_155/config/world");
+    if !dir.join("airmap/spmap.conf").exists() {
+        eprintln!("pulado: sem world/airmap");
+        return;
+    }
+    let esp = MapaDoEspaco::ler(1, &dir);
+    let ter = Terreno::ler(1, &dir);
+    let agua = MapaDeAgua::ler(1, &dir);
+    let mov = MapaDeMovimento::vazio();
+    let chao = |x: f32, z: f32| ter.altura_em(x, z);
+    let mapa = Mapa { terreno: &chao, movimento: &mov, espaco: Some(&esp), agua: Some(&agua) };
+    let bloqueado = |p: V3| esp.no(esp.centro_do_voxel([p.x, p.y, p.z])).is_some_and(|n| n.estado != 0);
+    let no_ar = |p: V3| chao(p.x, p.z).is_some_and(|h| p.y > h + 2.0) && !bloqueado(p);
+    let centro = |v: V3| {
+        let c = esp.centro_do_voxel([v.x, v.y, v.z]);
+        V3::new(c[0] as f32, c[1] as f32, c[2] as f32)
+    };
+    let (mut bloqueios, mut livres) = (0, 0);
+    'busca: for x in (-4000..4000).step_by(50) {
+        for z in (-5500..5500).step_by(50) {
+            let Some(h) = chao(x as f32, z as f32) else { continue };
+            for dy in [3.0f32, 6.0, 10.0] {
+                let b = V3::new(x as f32, h + dy, z as f32);
+                let (de, ate) = (centro(V3::new(b.x - 12.0, b.y, b.z)), centro(V3::new(b.x + 12.0, b.y, b.z)));
+                if !no_ar(de) || !no_ar(ate) {
+                    continue;
+                }
+                let fim = mapa.ultimo_ponto_no_espaco(de, ate, Ambiente::Ar);
+                if bloqueado(b) && bloqueios < 20 {
+                    bloqueios += 1;
+                    assert!(fim.x < b.x, "passou do bloqueio: de {de:?} ate {ate:?} fim {fim:?}");
+                    assert!(!bloqueado(fim), "parou dentro do bloqueio: {fim:?}");
+                } else if !bloqueado(b) && livres < 20 {
+                    // Reta toda no ar sem bloqueio no meio: chega ao voxel do fim.
+                    if (0..=24).all(|k| no_ar(V3::new(de.x + k as f32, de.y, de.z))) {
+                        livres += 1;
+                        assert_eq!((fim.x, fim.z), (ate.x, ate.z), "reta livre não chegou ao fim");
+                    }
+                }
+                if bloqueios >= 20 && livres >= 20 {
+                    break 'busca;
+                }
+            }
+        }
+    }
+    assert!(bloqueios > 0 && livres > 0, "achei {bloqueios} bloqueios e {livres} retas livres");
+}

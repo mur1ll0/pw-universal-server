@@ -66,6 +66,8 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         forma_enviada: None,
         passivas_de_forma: Default::default(),
         passivas_comuns: Default::default(),
+        base_para_mascote: Default::default(),
+        amuleto_de_dano: None,
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
@@ -811,6 +813,7 @@ fn atordoar_o_monstro_cancela_o_canto() {
         absorve: 0.0,
         escala_defesa: 0,
         fator_de_habilidade: 0.0,
+        mascara: None,
     });
     ai.tick(&mut m, &p, 50, &sem_mapa);
     assert!(!ai.conjurando(), "o canto continuou atordoado");

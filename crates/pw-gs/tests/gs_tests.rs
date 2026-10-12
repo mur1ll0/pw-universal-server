@@ -90,6 +90,8 @@ fn test_combat_engine_damage_calculation() {
         forma_enviada: None,
         passivas_de_forma: Default::default(),
         passivas_comuns: Default::default(),
+        base_para_mascote: Default::default(),
+        amuleto_de_dano: None,
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,

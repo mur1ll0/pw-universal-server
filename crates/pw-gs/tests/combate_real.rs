@@ -503,6 +503,8 @@ fn jogador() -> PlayerEntity {
         forma_enviada: None,
         passivas_de_forma: Default::default(),
         passivas_comuns: Default::default(),
+        base_para_mascote: Default::default(),
+        amuleto_de_dano: None,
         operacao_de_pet: 0,
         modo_roupa: false,
         sec_level: 0,
@@ -771,4 +773,41 @@ fn penetracao_no_monstro_e_resiliencia_no_jogador() {
     let mut pvp = golpe();
     pvp.atacante_e_jogador_ou_pet = true;
     assert_eq!(resolver(&pvp, &jogador, 1.0, false, certeiro()).dano(), base);
+}
+
+/// B225 — o `damage_entry × damage_adjust` antes do grau, que o `filter_Transportdamagetoleader`
+/// vê (`actobject.cpp:723-756`): com 50 de grau a mais o dano final sai × 1,5, o valor antes não.
+#[test]
+fn o_dano_antes_do_grau_fica_sem_o_ajuste_de_grau() {
+    let mut g = golpe();
+    g.dano_fisico = 0;
+    g.dano_magico[3] = 1000;
+    g.grau_de_ataque = 50;
+    let d = defesa();
+    let r = resolver(&g, &d, 5.0, false, certeiro());
+    let antes = r.antes_do_grau().expect("acertou");
+    assert!((antes - 1000.0).abs() < 0.01, "antes do grau: {antes}");
+    assert_eq!(r.dano(), 1500, "(1000 + 0,5) × 1,5 truncado");
+}
+
+/// B226 — o amuleto de dano (`GetPhysicRuneDamage`/`GetMagicRuneDamage`, `actobject.h:1365-1403`):
+/// reforça só o tipo dele e só com a arma dentro da faixa de nível; o Amuleto Bom de Evocação
+/// (1233 no `realm_126`: mágico, +30, arma 3–15).
+#[test]
+fn o_amuleto_de_dano_vale_pelo_tipo_e_pelo_nivel_da_arma() {
+    let mut p = jogador();
+    p.amuleto_de_dano = Some(pw_gs::entity::AmuletoDeDano {
+        tid: 1233,
+        magico: true,
+        nivel_min: 3,
+        nivel_max: 15,
+        reforco: 30,
+        quantidade: 5,
+    });
+    assert_eq!(p.reforco_do_amuleto(true), 0, "sem arma o nível é 0");
+    p.equipamento.arma = Some(pw_gs::entity::ArmaEmUso { nivel: 8, ..Default::default() });
+    assert_eq!(p.reforco_do_amuleto(true), 30);
+    assert_eq!(p.reforco_do_amuleto(false), 0, "o mágico não reforça o físico");
+    p.equipamento.arma = Some(pw_gs::entity::ArmaEmUso { nivel: 16, ..Default::default() });
+    assert_eq!(p.reforco_do_amuleto(true), 0, "arma acima da faixa");
 }

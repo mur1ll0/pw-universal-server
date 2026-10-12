@@ -253,7 +253,7 @@ impl Rolagens {
 /// O original manda o **mesmo** pacote ao cliente para [`Self::Errou`] e
 /// [`Self::SemEfeito`] (`_runner->dodge_attack`); a distinção existe aqui porque as
 /// causas são diferentes e confundi-las esconde bug.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Resultado {
     /// A rolagem de acerto falhou. Só acontece em ataque físico.
     Errou,
@@ -269,6 +269,10 @@ pub enum Resultado {
         vida_roubada: i32,
         /// `_damage_dodge_rate` zerou o dano (`AT_STATE_DODGE_DAMAGE`, `actobject.cpp:717-721`).
         esquivou_dano: bool,
+        /// A soma do `damage_entry` × `damage_adjust` — já com defesa, crítico, camada e vigor e
+        /// **antes** do grau de ataque/defesa: o que o `EF_AdjustDamage` dos filtros vê
+        /// (`actobject.cpp:723-756`). O `filter_Transportdamagetoleader` usa este (B225).
+        antes_do_grau: f32,
     },
 }
 
@@ -280,11 +284,23 @@ pub mod marca {
     pub const CRITICO: i32 = 0x0010;
     /// `AT_STATE_ATTACK_RETORT` / `MOD_RETORT`: golpe devolvido (espinhos).
     pub const REVIDE: i32 = 0x0020;
+    /// `AT_STATE_ATTACK_RUNE1` / `RUNE2` (`gs/actobject.h:436-437`): o golpe usou o amuleto físico
+    /// ou o mágico (B226).
+    pub const AMULETO_FISICO: i32 = 0x0001;
+    pub const AMULETO_MAGICO: i32 = 0x0002;
     /// `AT_STATE_DODGE_DAMAGE` / `MOD_DODGE_DAMAGE`.
     pub const ESQUIVA_DE_DANO: i32 = 0x0400;
 }
 
 impl Resultado {
+    /// O dano antes do grau (ver [`Resultado::Acertou::antes_do_grau`]); `None` sem acerto.
+    pub fn antes_do_grau(&self) -> Option<f32> {
+        match self {
+            Resultado::Acertou { antes_do_grau, .. } => Some(*antes_do_grau),
+            _ => None,
+        }
+    }
+
     /// A vida roubada pelo golpe (0 sem roubo ou sem acerto).
     pub fn vida_roubada(&self) -> i32 {
         match self {
@@ -549,6 +565,7 @@ pub fn resolver(
         // `int(hp_steal_rate × 0,01 × int_damage)` (`actobject.cpp:777-782`).
         vida_roubada: if golpe.roubo_de_vida > 0 { (golpe.roubo_de_vida as f32 * 0.01 * dano as f32) as i32 } else { 0 },
         esquivou_dano,
+        antes_do_grau: total * ajuste,
     }
 }
 
@@ -614,6 +631,17 @@ impl CombatEngine {
         {
             let (baixo, alto) = jogador.equipamento.arma.map(|a| a.dano).unwrap_or((0, 0));
             dano_magico[ESCOLA_DO_FOGO] += (f.fator * 0.5 * (baixo + alto) as f32) as i32;
+        }
+        // `filter_Toxicblade::TranslateSendAttack` (`skillfilter.h:2406-2477`): o mesmo, na madeira
+        // (`magic_damage[1]`) — as Presas Venenosas (155) do Bárbaro.
+        if let Some(f) = jogador
+            .efeitos
+            .filtros
+            .iter()
+            .find(|f| f.efeito == crate::efeitos::Efeito::Toxicblade)
+        {
+            let (baixo, alto) = jogador.equipamento.arma.map(|a| a.dano).unwrap_or((0, 0));
+            dano_magico[1] += (f.fator * 0.5 * (baixo + alto) as f32) as i32;
         }
         // B211 — `attack.magic_damage[i] = normalrand(addon_damage[i].low, .high)` (`actobject.cpp:838-842`):
         // as pedras de dano por elemento (baixo = alto = o `_en_point`).
@@ -701,10 +729,12 @@ impl CombatEngine {
         let mut d = Defesa::simples(
             com_realce(monstro.armor, r.evasao),
             com_realce(monstro.def_phys, r.defesa),
-            monstro.resistances.map(|x| com_realce(x, r.resistencia)),
+            std::array::from_fn(|i| com_realce(monstro.resistances[i], r.resistencia + r.resistencias[i])),
             monstro.defend_degree,
         );
         d.camada_de_npc = Some(Camada::do_habitat(monstro.habitat));
+        // `filter_Inccritresistance` → `_crit_resistance` (`actobject.cpp:739`).
+        d.resistencia_a_critico += r.resistencia_a_critico;
         d
     }
 
@@ -713,7 +743,9 @@ impl CombatEngine {
         let a = &jogador.equipamento.addons;
         d.reducao_de_dano = a.reducao_de_dano;
         d.reducao_de_dano_magico = a.reducao_de_dano_magico;
-        d.esquiva_de_dano = jogador.efeitos.realce().esquiva_de_dano;
+        let r = jogador.efeitos.realce();
+        d.esquiva_de_dano = r.esquiva_de_dano;
+        d.resistencia_a_critico += r.resistencia_a_critico;
         d.resiliencia = a.resiliencia;
         d
     }
@@ -740,8 +772,12 @@ impl CombatEngine {
         distancia: f32,
         tabela: &pw_data_loader::progressao::TabelaDeProgressao,
     ) -> Resultado {
+        // `GenerateAttackDamage`: `Rand(damage_low, damage_high) + GetPhysicRuneDamage()`
+        // (`actobject.h:1472-1477`) — o amuleto físico, depois da escala (B226).
+        let mut golpe = Self::golpe_de_jogador(jogador);
+        golpe.dano_fisico += jogador.reforco_do_amuleto(false);
         resolver(
-            &Self::golpe_de_jogador(jogador),
+            &golpe,
             &Self::defesa_do_monstro_contra(monstro, jogador.level, tabela),
             distancia,
             false,
@@ -770,7 +806,9 @@ impl CombatEngine {
         } else {
             (jogador.dano_bruto, jogador.bonus_de_dano_pct)
         };
-        let bruto = sortear_dano_fisico(faixa.0, faixa.1);
+        // `low += GetPhysicRuneDamage()` / `GetMagicRuneDamage()` antes da escala
+        // (`actobject.h:1430`, `:1455`) — o amuleto de dano (B226).
+        let bruto = sortear_dano_fisico(faixa.0, faixa.1) + jogador.reforco_do_amuleto(d.base == "magico");
         let pct = 100 + bonus + (ratio * 100.0) as i32;
         let valor =
             (((bruto as f32 * 0.01 * pct as f32) as i32 + plus).max(0) as f32 * d.fator) as i32;

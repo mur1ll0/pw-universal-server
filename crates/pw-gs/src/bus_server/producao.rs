@@ -234,7 +234,7 @@ impl BusServer {
         for &(m, n) in &rt.materiais {
             for (slot, saiu) in ctx.bolsa.tirar(m, n) {
                 ctx.para_mim.push(
-                    S2CGamedataSend::player_drop_item(0, slot as u8, saiu, m as i32, DESCARTE_DA_PRODUCAO).data,
+                    ctx.sub.player_drop_item(0, slot as u8, saiu, m as i32, DESCARTE_DA_PRODUCAO).data,
                 );
             }
         }
@@ -247,7 +247,9 @@ impl BusServer {
         // furos e addons das tabelas de fabricação, durabilidade cheia e o nome de quem fez, que o
         // tooltip mostra (B151 — antes saía como drop: 245/300 e sem fabricante).
         let dados = ctx.dados;
-        let geracao = crate::geracao::Geracao::Producao { fabricante: pw_core::nome_do_fabricante(&ctx.p.name) };
+        let mut fabricante = pw_core::nome_do_fabricante(&ctx.p.name);
+        fabricante.truncate(ctx.sub.tamanho_do_nome_do_fabricante());
+        let geracao = crate::geracao::Geracao::Producao { fabricante };
         match ctx.bolsa.empilhar_gerado_de(item_id as u32, rt.quantidade.max(1), dados, geracao) {
             Some(e) => {
                 let pacote = ctx.sub.produce_once(item_id, e.entrou, e.no_slot, 0, e.slot as u8);

@@ -190,6 +190,16 @@ pub struct ModeloDeMascote {
     pub imunidade: i32,
     pub nivel_maximo: i32,
     pub nivel_exigido: i32,
+    /// `mp_a`, `mp_gen_a`, `attack_degree_a`, `defence_degree_a` (`pet_dataman::LoadTemplate`,
+    /// `petdataman.cpp:79-82`): só o `GenerateBaseProp2` (invocação e planta) os usa.
+    pub mana: f32,
+    pub regen_mana: f32,
+    pub grau_de_ataque: f32,
+    pub grau_de_defesa: f32,
+    /// `plant_group` / `group_limit` (`petdataman.cpp:137-138`): quantas plantas do mesmo grupo
+    /// o dono pode ter (`plant_pet_manager::ActivePlant`, `petman.cpp:2303-2317`). B222.
+    pub grupo_de_planta: i32,
+    pub limite_do_grupo: i32,
 }
 
 /// Os atributos de base de um mascote num nível: `pet_dataman::GenerateBaseProp`
@@ -231,6 +241,20 @@ impl ModeloDeMascote {
     }
     pub fn esquiva(&self, n: i32) -> i32 {
         (self.esquiva[0] * (n as f32 - self.esquiva[1] * self.nivel_exigido as f32 + self.esquiva[2])) as i32
+    }
+    /// `CalcMP`, `CalcMPGEN`, `CalcAttackDegree`, `CalcDefendDegree` (`petdataman.h:55-76`):
+    /// `(int)(a × (nível + 5))`.
+    pub fn mana_maxima(&self, n: i32) -> i32 {
+        (self.mana * (n + 5) as f32) as i32
+    }
+    pub fn regeneracao_de_mana(&self, n: i32) -> i32 {
+        (self.regen_mana * (n + 5) as f32) as i32
+    }
+    pub fn grau_de_ataque_no(&self, n: i32) -> i32 {
+        (self.grau_de_ataque * (n + 5) as f32) as i32
+    }
+    pub fn grau_de_defesa_no(&self, n: i32) -> i32 {
+        (self.grau_de_defesa * (n + 5) as f32) as i32
     }
     pub fn resistencia(&self, n: i32) -> i32 {
         (self.resistencia[0] * (self.resistencia[1] * (n as f32 - self.resistencia[2] * self.nivel_exigido as f32) + self.resistencia[3]))
@@ -308,6 +332,12 @@ pub fn carregar_modelos(g: &GenericElementsData) -> HashMap<u32, ModeloDeMascote
             imunidade: i(r, "immune_type"),
             nivel_maximo: i(r, "level_max"),
             nivel_exigido: i(r, "level_require"),
+            mana: f(r, "mp_a"),
+            regen_mana: f(r, "mp_gen_a"),
+            grau_de_ataque: f(r, "attack_degree_a"),
+            grau_de_defesa: f(r, "defence_degree_a"),
+            grupo_de_planta: i(r, "plant_group"),
+            limite_do_grupo: i(r, "group_limit"),
         };
         let luta = matches!(classe, 1 | 3 | 4 | 5);
         if luta

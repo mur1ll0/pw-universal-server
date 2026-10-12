@@ -342,6 +342,152 @@ pub enum Efeito {
     /// em VA 0x830b0f2). No [`Filtro`]: `razao` = mana, `escala_defesa` = defesa,
     /// `por_segundo` = precisão, `contador` = `_shape`.
     Foxform,
+    /// `filter_Swiftform` (`cskill/skill/skillfilter.h:4841-4876`, `skillfilter.cpp:415-431`), a
+    /// **Traje de Flores** (762) da Feiticeira: `UNIQUE|BUFF|REMOVE_ON_DEATH|HEARTBEAT`,
+    /// `EnhanceSpeed(_incspeed)` (andar e correr, `obj_interface.cpp:432-436`) com
+    /// `_incspeed = (int)(100 × amount)` e o tempo do roteiro (`SetSwiftform`,
+    /// `playerwrapper.cpp:2553-2557`), ícone `HSTATE_SWIFTFORM` 81 e o estado visível das
+    /// flores, `VSTATE_FOXFORM` 32 (`statedef.h:44`, `:274`). O `gs` 1.2.6 é o mesmo filtro
+    /// (`SetSwiftform` VA 0x8305f80: `amount` de +0x74, `time` de +0x80; máscara 0x16004;
+    /// `OnAttach` VA 0x830b29e: ícone 0x51), mas liga o estado **31** — a tradução dos bits é do
+    /// `WorldProtocol` 1.2.6. O roteiro da 762 dá 300 s e `amount` 0,05 + 0,1·L. A velocidade vai
+    /// na `razao`.
+    Swiftform,
+    /// `filter_Jingji` (`cskill/skill/skillfilter.h:4702-4783`), a **Barreira de Espinhos** (310)
+    /// da Feiticeira: `UNIQUE|BUFF|HEARTBEAT|REMOVE_ON_DEATH|ADJUST_DAMAGE|TRANSFERABLE_BUFF`, com o
+    /// `_filter_id` do `Retort` (`FILTER_RETORT`, `:4736`) — um substitui o outro. Todo golpe
+    /// recebido cai a `_reduce = 1 − value` (piso 0,01) e o físico corpo a corpo devolve
+    /// `(int)(bruto × ratio)` como os espinhos do `Retort`. Ícone `HSTATE_JINGJI` 77, estado
+    /// `VSTATE_JINGJI` 31 (30 no `gs` 1.2.6, VA 0x83176b5). `SetJingji(ratio, value,
+    /// time)` sem dado (`playerwrapper.cpp:1552-1556`; 1.2.6 VA 0x83022a0). No [`Filtro`]:
+    /// `fator` = ratio, `fator_de_habilidade` = `_reduce`.
+    Jingji,
+    /// `filter_Magicleak` (`skillfilter.h:1688-1746`), a **Alma da Raposa** (318): `DEBUFF|
+    /// REMOVE_ON_DEATH|HEARTBEAT|TRANSFERABLE_DEBUFF` (sem `UNIQUE`), `_damage = amount / tempo` e,
+    /// a cada 3 s (ou no fim), `DrainMana(_damage × _counter)`. Ícone `HSTATE_MAGICLEAK` 16, estado
+    /// `VSTATE_MAGICLEAK` 15 — os mesmos no `gs` 1.2.6 (`push 0x10`/`0xf`). `SetMagicleak` com dado
+    /// (`playerwrapper.cpp:1037-1051`; `amount` de +0x74 no 1.2.6, VA 0x830074c).
+    Magicleak,
+    /// `filter_Canti` (`skillfilter.h:4497-4553`), o **Ferir** (320): `UNIQUE|DEBUFF|HEARTBEAT|
+    /// REMOVE_ON_DEATH|ADJUST_DAMAGE|TRANSFERABLE_DEBUFF`, `FILTER_SPIRITCURSE` (o mesmo do
+    /// `Noregain` e do `Apleak`: as três maldições se substituem). Todo dano recebido × `1 +
+    /// ratio`. Ícone `HSTATE_CANTI` 79, sem estado. `SetCanti` só com `ratio > 0` e o dado
+    /// (`playerwrapper.cpp:2513-2523`; 1.2.6 VA 0x8305cac). `fator` = ratio.
+    Canti,
+    /// `filter_Noregain` (`skillfilter.h:4652-4700`), o **Enfraquecer** (321): `UNIQUE|DEBUFF|
+    /// REMOVE_ON_DEATH|HEARTBEAT|TRANSFERABLE_DEBUFF`, `FILTER_SPIRITCURSE`;
+    /// `ImpairScaleHPGen/MPGen(2000)` — o `Result2(…, −2000 %, 0)` dá negativo e o
+    /// `UpdatePlayerMPHPGen` corta em 0 (`playertemplate.h:880-894`): sem regeneração. Ícone
+    /// `HSTATE_NOREGAIN` 78, estado `VSTATE_NOREGAIN` 23 (iguais no 1.2.6, `push 0x4e`/`0x17`).
+    Noregain,
+    /// `filter_Apleak` (`skillfilter.h:4555-4604`), o **Devastar** (322): `UNIQUE|DEBUFF|
+    /// REMOVE_ON_DEATH|HEARTBEAT|DO_DAMAGE|TRANSFERABLE_DEBUFF`, `FILTER_SPIRITCURSE`; a cada golpe
+    /// que **a vítima recebe** (`EF_DoDamage`, `gs/actobject.cpp:757`) `ModifyAP(−value)`. Ícone
+    /// `HSTATE_APLEAK` 80 (`push 0x50` no 1.2.6). Monstro não tem chi: vale para o jogador
+    /// amaldiçoado no PvP ([`Efeitos::chi_ao_apanhar`], B221).
+    Apleak,
+    /// `filter_Reducewood` (`skillfilter.h:2806-2860`), o ○Enxame de Ferroadas (635): `MERGE|DEBUFF|
+    /// REMOVE_ON_DEATH|HEARTBEAT|TRANSFERABLE_DEBUFF` com `Merge` vazio — o novo é descartado e o
+    /// antigo fica como está (por isso [`Convivencia::Fraco`]). `ImpairScaleResistance(1, ratio)`:
+    /// resistência de **madeira** −`(int)(ratio × 100)`%. Ícone `HSTATE_REDUCEWOOD` 54 (`push 0x36`
+    /// no 1.2.6). `SetReducewood` com dado (`playerwrapper.cpp:1982-1992`; 1.2.6 VA 0x8303aba).
+    Reducewood,
+    /// `filter_Freemove` (`skillfilter.h:4400-4449`), a ○Traje de Flores (764): `WEAK|BUFF|HEARTBEAT|
+    /// REMOVE_ON_DEATH|TRANSFERABLE_BUFF`; imune a lento, preso, atordoado e sono
+    /// (`IncImmuneMask(IMMUNESLOW|FIX|DIZZY|SLEEP)`, que os `SetSlow/Fix/Dizzy/Sleep` consultam).
+    /// Ícone `HSTATE_FREEMOVE` 72 (`push 0x48` no 1.2.6, que liga a máscara pelo `SetImmuneMask`).
+    /// `SetFreemove(time)` sem dado (`playerwrapper.cpp:2405-2409`).
+    Freemove,
+    /// `filter_Giant` (`skillfilter.h:3975-4025`), a **Força Divina** (83) do Bárbaro: `UNIQUE|BUFF|
+    /// REMOVE_ON_DEATH|HEARTBEAT|TRANSFERABLE_BUFF`, `EnhanceScaleDamage((int)(ratio × 100))` — dano
+    /// +%. Ícone `HSTATE_GIANT` 66, `VSTATE_BLESSED` (`SetGiant` sem dado, `playerwrapper.cpp:2339`;
+    /// `gs` 1.2.6: `push 0x42`/`push 1`, VA 0x8315bcc).
+    Giant,
+    /// `filter_Devilstate` (`skillfilter.h:4027-4082`), o **Sangue Fervente** (111): `UNIQUE|BUFF|…`,
+    /// `ImpairScaleMaxHP(hpdec)` e `EnhanceScaleAttack(r)` — vida máxima −`ratio`%, precisão
+    /// +`amount`% (`SetDevilstate(amount × 100 + 0,00001, ratio × 100 + 0,00001)`,
+    /// `playerwrapper.cpp:2399`). Ícone 67, `VSTATE_BLESSED` (1.2.6 VA 0x8315dc2). `razao` = precisão,
+    /// `escala_defesa` = a vida tirada.
+    Devilstate,
+    /// `filter_Tigerform` (`skillfilter.h:3738-3782`, `skillfilter.cpp:361-387`), o **Rugido do
+    /// Tigre** (112): só `WEAK` (sem tempo, sobrevive à morte, como a raposa); lançar de novo na
+    /// forma desfaz (`SetTigerform`, `playerwrapper.cpp:1785-1798`). Na forma: `EventChange`,
+    /// equipamento trancado, vida máxima +`100 × probability`%, velocidade +`100 × amount`%, dano
+    /// +`100 × value`% (negativo: −20 % no nível 1) e `ChangeShape(ratio | FORM_CLASS << 6)` — no
+    /// `gs` 1.2.6 `ChangeShape(1)` fixo (VA 0x830afd0). Ícone `HSTATE_TIGERFORM` 47 sem parâmetro.
+    /// `razao` = velocidade, `por_segundo` = vida, `escala_defesa` = dano, `contador` = `_shape`.
+    Tigerform,
+    /// `filter_Toxicblade` (`skillfilter.h:2406-2477`), as **Presas Venenosas** (155): `MERGE|BUFF|
+    /// HEARTBEAT|REMOVE_ON_DEATH|TRANSLATE_SEND_MSG|TRANSFERABLE_BUFF`; todo golpe **físico** de quem
+    /// o tem soma `ratio × 0,5 × (dano baixo + alto da arma)` ao dano de **madeira**
+    /// (`magic_damage[1]`), como a flecha faz no fogo. `Merge`: o tempo e o `ratio` do novo. Ícone
+    /// `HSTATE_TOXICBLADE` 40 (1.2.6 `push 0x28`).
+    Toxicblade,
+    /// `filter_Apgen` (`skillfilter.h:3687-3736`), a **Fúria Bestial** (188): `UNIQUE|BUFF|…|DO_DAMAGE`;
+    /// a cada golpe **recebido** (`EF_DoDamage`, `gs/actobject.cpp:757`) `ModifyAP(value)`. Ícone
+    /// `HSTATE_APGEN` 63 (1.2.6 `push 0x3f`). `por_segundo` = o chi por golpe.
+    Apgen,
+    /// `filter_Apgencont2` (`skillfilter.h:5846-5910`), da seita (646, 654, 2416): `WEAK|
+    /// REMOVE_ON_DEATH|HEARTBEAT` e a máscara do `value` (> 0,5 bênção); `_ap = amount / tempo` e, a
+    /// cada 3 s, `ModifyAP(_ap × _counter)`. Ícone `HSTATE_APGENCONT` 102 sempre; `VSTATE_APGENCONT`
+    /// 50 só com `showicon` (`escala_defesa` = 1).
+    Apgencont2,
+    /// `filter_Beastieform` (`skillfilter.h:10061-10121`), o **Encantar** (1826, 1929, 1930):
+    /// `UNIQUE|DEBUFF|REMOVE_ON_DEATH|HEARTBEAT`; velocidade +`ratio × 100`% e a forma de fera. No
+    /// monstro — o único alvo de maldição no `pw-gs` — o `change_shape` é vazio (`gimp.h:289`): fica a
+    /// velocidade. Sem ícone.
+    Beastieform,
+    /// `filter_Inccritresistance` (`skillfilter.h:11989-12036`, 1985/1987): `UNIQUE|BUFF|…`,
+    /// `EnhanceCritResistance(value)` — tira pontos da chance de crítico de quem bate
+    /// (`actobject.cpp:739`). Ícone 205. `por_segundo` = os pontos.
+    Inccritresistance,
+    /// `filter_Insertvstate` (`skillfilter.h:7768-7819`, 1828, 2231): só o visual — estado `amount`
+    /// (`contador`), ícone `ratio` (`por_segundo`), máscara do `value`; `HEARTBEAT|REMOVE_ON_DEATH`,
+    /// sem `UNIQUE`/`WEAK`/`MERGE` (`SetInsertvstate`, `playerwrapper.cpp:3127-3135`).
+    Insertvstate,
+    /// `filter_Palsy` (`skillfilter.h:14858-14889`, 2236/2237): `UNIQUE|HEARTBEAT|NOSAVE|
+    /// REMOVE_ON_DEATH` e a máscara do `value`; `IncIdleSealMode(MODE_INDEX_STUN)` — não age, como o
+    /// atordoado. Ícone 255, estado `VSTATE_PALSY` 117.
+    Palsy,
+    /// `filter_Sealed2` (`skillfilter.h:7943-7994`, 1826/1929/1930): `WEAK|HEARTBEAT|REMOVE_ON_DEATH` e
+    /// `DEBUFF` só com `value > 0,5`; `IncIdleSealMode(MODE_INDEX_SILENT)` — selado. Ícone 140;
+    /// `VSTATE_SEALED` 8 só com `showicon` (`escala_defesa` = 1).
+    Sealed2,
+    /// `filter_Soulretort2` (`skillfilter.h:12611-12710`, base `filter_Soulbase`), a **Barreira
+    /// Fulgurante** (1829): `MERGE|HEARTBEAT|ADJUST_DAMAGE|SAVE_DB_DATA` — nem bênção nem maldição e
+    /// **sem** `REMOVE_ON_DEATH`. Cada golpe recebido, com `rand() % 100 < trigger_prob` e mana para o
+    /// custo, devolve `(int)(físico × ratio)` como golpe mágico — **também de longe** (só não
+    /// devolve outro espinho, `AT_STATE_ALL_RETORT`); o `del_on_trigger` apaga o filtro ao disparar
+    /// (1) ou ao primeiro golpe (2). `SetSoulretort2(time, value, (int)probability, (int)ratio,
+    /// amount > 1,5 ? 2 : amount > 0,5 ? 1 : 0)` (`playerwrapper.cpp:4596-4606`). Ícone 215, estado
+    /// 102. `fator` = ratio, `por_segundo` = chance, `contador` = custo, `escala_defesa` = apagar.
+    Soulretort2,
+    /// `filter_Incrementalhpgen` (`skillfilter.h:11129-11185`), da planta Erva Vital (1501): `BUFF|
+    /// REMOVE_ON_DEATH|HEARTBEAT` (sem `UNIQUE`); a cada 3 s cura `_health × _counter` e o `_health`
+    /// cresce `_inc_each × _counter` (`SetIncrementalhpgen(time, (int)value, (int)ratio)`,
+    /// `playerwrapper.cpp:4308-4312`, sem dado). Ícone 187. `por_segundo` = `_health`,
+    /// `escala_defesa` = `_inc_each`. B222.
+    Incrementalhpgen,
+    /// `filter_Transportdamagetoleader` (`skillfilter.h:12318-12377`), da planta da Feiticeira
+    /// (1858): `UNIQUE|REMOVE_ON_DEATH|HEARTBEAT|ADJUST_DAMAGE`; cada golpe que a planta recebe,
+    /// com o dono a até `value` m, tira do **dono** `(dano × damage_adjust × ratio)` (o
+    /// `DrainLeaderHPMP` → `GM_MSG_DRAIN_HP_MP`: no máximo até 1 de vida, com `be_hurt`,
+    /// `actobject.cpp:399-418`). Sem ícone. `fator` = ratio, `fator_de_habilidade` = o alcance.
+    /// `parcial`: aqui o dano é o que cai na planta (o original usa o `damage_entry` do
+    /// `AdjustDamage`, antes do resto dos ajustes). B222.
+    Transportdamagetoleader,
+    /// `filter_Auracurse` (`skillfilter.h:8693-8756`, base `filter_Aurabase`): `UNIQUE|REMOVE_ON_DEATH|
+    /// HEARTBEAT`; a cada 3 s (e no último segundo) o `DoAura` faz o `RegionEnchant1` da habilidade
+    /// `value` no nível `amount`, raio `ratio`, com `helpful` 0 — o roteiro dela em cada inimigo do
+    /// raio — e põe o portador em combate. Sem ícone. `SetAuracurse` com dado (`playerwrapper.cpp:3474-3482`).
+    /// Sacrifício 1794 → 1795, Borrão Pontiagudo 1358/1718/1720, Prisão de Gelo 1806, Tornado de
+    /// Lâminas 1816, Olho Místico 1862. `fator` = raio, `por_segundo` = habilidade, `escala_defesa` =
+    /// nível. B227.
+    Auracurse,
+    /// `filter_Aurabless` (mesmo bloco): o `DoAura` com `helpful` 1 no grupo dentro do raio
+    /// (`TeamEnchant` → `SendMsgToTeam(msg, range, except_self)`, `obj_interface.cpp:1267-1283`) ou
+    /// só no portador sem grupo. A Bênção de Gaia 1854 → 1861.
+    Aurabless,
     /// `healing_potion_filter` / `mana_potion_filter` (`gs/potion_filter.h:6-130`): a poção
     /// não cura de uma vez — ela reparte o total pelo tempo e entrega **um pedaço por
     /// batimento de 1 s**. Não vem de roteiro de habilidade; quem cria é o uso do item.
@@ -430,6 +576,30 @@ impl Efeito {
             "Retort2" => Retort2,
             "Fairyform" => Fairyform,
             "Foxform" => Foxform,
+            "Swiftform" => Swiftform,
+            "Jingji" => Jingji,
+            "Magicleak" => Magicleak,
+            "Canti" => Canti,
+            "Noregain" => Noregain,
+            "Apleak" => Apleak,
+            "Reducewood" => Reducewood,
+            "Freemove" => Freemove,
+            "Giant" => Giant,
+            "Devilstate" => Devilstate,
+            "Tigerform" => Tigerform,
+            "Toxicblade" => Toxicblade,
+            "Apgen" => Apgen,
+            "Apgencont2" => Apgencont2,
+            "Beastieform" => Beastieform,
+            "Inccritresistance" => Inccritresistance,
+            "Insertvstate" => Insertvstate,
+            "Palsy" => Palsy,
+            "Sealed2" => Sealed2,
+            "Soulretort2" => Soulretort2,
+            "Incrementalhpgen" => Incrementalhpgen,
+            "Transportdamagetoleader" => Transportdamagetoleader,
+            "Auracurse" => Auracurse,
+            "Aurabless" => Aurabless,
             "Rebirth" => Rebirth,
             "Decregiondmg" => Decregiondmg,
             _ => return None,
@@ -515,6 +685,60 @@ impl Efeito {
             // (`cskill/skill/statedef.h:40,261`).
             Wingshield => f(Unico, true, 69, 29),
             Ironshield => f(Unico, true, 65, VS_BLESSED),
+            Swiftform => f(Unico, true, 81, 32),
+            Jingji => f(Unico, true, 77, 31),
+            Magicleak => f(Livre, false, 16, 15),
+            Canti => f(Unico, false, 79, 0),
+            Noregain => f(Unico, false, 78, 23),
+            Apleak => f(Unico, false, 80, 0),
+            Reducewood => f(Fraco, false, 54, 0),
+            Freemove => f(Fraco, true, 72, 0),
+            Giant => f(Unico, true, 66, VS_BLESSED),
+            Devilstate => f(Unico, true, 67, VS_BLESSED),
+            Tigerform => Ficha {
+                convivencia: Fraco,
+                bencao: false,
+                maldicao: false,
+                icone: 47,
+                visivel: 0,
+            },
+            Toxicblade => f(Fundir, true, 40, 0),
+            Apgen => f(Unico, true, 63, 0),
+            // Máscara e estado pelo roteiro (`Filtro::mascara`, `escala_defesa`).
+            Apgencont2 => f(Fraco, true, 102, 0),
+            Beastieform => f(Unico, false, 0, 0),
+            Inccritresistance => f(Unico, true, 205, 0),
+            Insertvstate => Ficha {
+                convivencia: Livre,
+                bencao: false,
+                maldicao: false,
+                icone: 0,
+                visivel: 0,
+            },
+            Palsy => f(Unico, false, 255, 117),
+            Sealed2 => f(Fraco, false, 140, 0),
+            Incrementalhpgen => f(Livre, true, 187, 0),
+            Auracurse | Aurabless => Ficha {
+                convivencia: Unico,
+                bencao: false,
+                maldicao: false,
+                icone: 0,
+                visivel: 0,
+            },
+            Transportdamagetoleader => Ficha {
+                convivencia: Unico,
+                bencao: false,
+                maldicao: false,
+                icone: 0,
+                visivel: 0,
+            },
+            Soulretort2 => Ficha {
+                convivencia: Fundir,
+                bencao: false,
+                maldicao: false,
+                icone: 215,
+                visivel: 102,
+            },
             // `FILTER_MASK_UNIQUE | BUFF | HEARTBEAT | REMOVE_ON_DEATH | ADJUST_DAMAGE |
             // TRANSFERABLE_BUFF`; `VSTATE_RETORT` 3 e `HSTATE_RETORT` 4 / `HSTATE_RETORT2` 253
             // (`statedef.h:11,183,451`; o `gs` 1.2.6 empurra 3 e 4, VA 0x8310f8e).
@@ -559,6 +783,16 @@ impl Efeito {
                 visivel: 0,
             },
         }
+    }
+
+    /// Mesmo `_filter_id`: o `Jingji` usa o `FILTER_RETORT` dos espinhos (`skillfilter.h:1481`,
+    /// `:4736`); `Canti`, `Noregain` e `Apleak` usam o `FILTER_SPIRITCURSE` (`:4538`, `:4585`,
+    /// `:4678`).
+    pub fn mesmo_filtro(self, outro: Efeito) -> bool {
+        use Efeito::*;
+        self == outro
+            || matches!((self, outro), (Retort | Retort2 | Jingji, Retort | Retort2 | Jingji))
+            || matches!((self, outro), (Canti | Noregain | Apleak, Canti | Noregain | Apleak))
     }
 
     /// Dano ao longo do tempo (`filter_Wounded`), com a classe de dano do
@@ -607,6 +841,19 @@ pub struct Filtro {
     /// devolvem (o `Value` do roteiro; a 306 do 1.5.5 dá `0,02·L`). O `filter_Retort` do
     /// 1.2.6 não distingue: usa o `ratio` nos dois (`skillfilter.h:1478-1484`, `:14644-14650`).
     pub fator_de_habilidade: f32,
+    /// A máscara de bênção/maldição quando o setter a escolhe pelo roteiro (`value > 0,5` →
+    /// `FILTER_MASK_BUFF` etc., `Apgencont2`/`Sealed2`/`Palsy`/`Insertvstate`); `None` = a da ficha.
+    pub mascara: Option<(bool, bool)>,
+}
+
+impl Filtro {
+    /// `FILTER_MASK_BUFF` / `FILTER_MASK_DEBUFF` deste filtro (o que o `ClearSpecFilter` olha).
+    pub fn bencao_e_maldicao(&self) -> (bool, bool) {
+        self.mascara.unwrap_or_else(|| {
+            let fi = self.efeito.ficha();
+            (fi.bencao, fi.maldicao)
+        })
+    }
 }
 
 /// O que um segundo de filtros faz ([`Efeitos::batida`]).
@@ -615,6 +862,11 @@ pub enum Tique {
     Dano { origem: i64, valor: i32 },
     Cura(i32),
     Mana(i32),
+    /// `ModifyAP` do `filter_Apgencont2`.
+    Chi(i32),
+    /// O `DoAura` de uma aura: lançar o roteiro de `habilidade` no `nivel` em quem está a `raio` m
+    /// (inimigos, ou o grupo quando `amigavel`).
+    Aura { habilidade: i32, nivel: i32, raio: f32, amigavel: bool },
 }
 
 /// Soma dos realces vivos — o `_en_percent` (e o `_crit_rate`) que os filtros mexem.
@@ -646,6 +898,15 @@ pub struct Realce {
     /// `EnhanceHPGen`/`EnhanceMPGen` (pontos por batimento) das passivas comuns. B203.
     pub regen_vida: i32,
     pub regen_mana: i32,
+    /// `_en_percent.hp_gen`/`mp_gen` dos filtros (`ImpairScaleHPGen/MPGen`): o `Noregain` tira
+    /// 2000 %, o que zera a regeneração.
+    pub regen_pct: i32,
+    /// `ImpairScaleResistance(escola, r)` — por escola (metal, madeira, água, fogo, terra),
+    /// além da `resistencia` comum. O `Reducewood` mexe na 1.
+    pub resistencias: [i32; 5],
+    /// `_crit_resistance` (`EnhanceCritResistance`): pontos a menos na chance de crítico de quem
+    /// bate.
+    pub resistencia_a_critico: i32,
 }
 
 impl Realce {
@@ -787,10 +1048,11 @@ impl Efeitos {
     /// `filter_man::AddFilter` com a convivência de cada efeito. `true` quando algo mudou.
     pub fn adicionar(&mut self, novo: Filtro) -> bool {
         let ficha = novo.efeito.ficha();
-        if let Some(i) = self.filtros.iter().position(|f| f.efeito == novo.efeito) {
+        // `filter_man::AddFilter` procura pelo `_filter_id` (`gs/filter_man.h:177-207`).
+        if let Some(i) = self.filtros.iter().position(|f| f.efeito.mesmo_filtro(novo.efeito)) {
             match ficha.convivencia {
                 Convivencia::Unico => {
-                    self.filtros.retain(|f| f.efeito != novo.efeito);
+                    self.filtros.retain(|f| !f.efeito.mesmo_filtro(novo.efeito));
                 }
                 Convivencia::Fraco => return false,
                 Convivencia::Fundir => {
@@ -809,6 +1071,14 @@ impl Efeitos {
                         velho.restante_s += novo.restante_s;
                         velho.por_segundo = (total / velho.restante_s.max(1)).max(1);
                         return true;
+                    } else if novo.efeito == Efeito::Soulretort2 {
+                        // `filter_Soulretort2::Merge`: mesmo `ratio`, fica o tempo maior; maior,
+                        // substitui tempo e `ratio`; menor, nada.
+                        if novo.fator == velho.fator {
+                            velho.restante_s = velho.restante_s.max(novo.restante_s);
+                        } else if novo.fator > velho.fator {
+                            *velho = novo;
+                        }
                     } else if novo.efeito == Efeito::Inchpsteal {
                         // `filter_Inchpsteal::Merge` (`skillfilter.h:8840-8854`): igual renova o
                         // tempo, maior substitui, menor não muda nada.
@@ -837,8 +1107,8 @@ impl Efeitos {
     pub fn batida(&mut self) -> (Vec<Tique>, bool) {
         let mut tiques = Vec::new();
         for f in &mut self.filtros {
-            // `filter_Foxform` não tem `FILTER_MASK_HEARTBEAT` nem tempo: nada a contar.
-            if f.efeito == Efeito::Foxform {
+            // `filter_Foxform`/`filter_Tigerform` não têm `FILTER_MASK_HEARTBEAT` nem tempo.
+            if matches!(f.efeito, Efeito::Foxform | Efeito::Tigerform) {
                 continue;
             }
             // `filter_Wounded::Heartbeat`, `filter_Hpgen/Mpgen::Heartbeat`: a cada 3 s, ou no
@@ -859,6 +1129,22 @@ impl Efeitos {
                 f.restante_s -= 1;
                 continue;
             }
+            // `filter_Aurabase::Heartbeat` (`skillfilter.h`): `_counter += tick`; com `_counter >= 3` ou
+            // `tick >= _timeout`, `DoAura()` e `_counter -= 3`; depois o tempo.
+            if matches!(f.efeito, Efeito::Auracurse | Efeito::Aurabless) {
+                f.contador += 1;
+                if f.contador >= 3 || 1 >= f.restante_s {
+                    tiques.push(Tique::Aura {
+                        habilidade: f.por_segundo,
+                        nivel: f.escala_defesa,
+                        raio: f.fator,
+                        amigavel: f.efeito == Efeito::Aurabless,
+                    });
+                    f.contador -= 3;
+                }
+                f.restante_s -= 1;
+                continue;
+            }
             // `filter_Wingshield::Heartbeat`: a cada 3 s injeta `_mpgen` **inteiro**, não o
             // acumulado (`skillfilter.h:4207-4218`).
             if f.efeito == Efeito::Wingshield {
@@ -873,15 +1159,26 @@ impl Efeitos {
                 continue;
             }
             let acumula = f.efeito.dano_no_tempo().is_some()
-                || matches!(f.efeito, Efeito::Hpgen | Efeito::Mpgen);
+                || matches!(
+                    f.efeito,
+                    Efeito::Hpgen | Efeito::Mpgen | Efeito::Magicleak | Efeito::Apgencont2 | Efeito::Incrementalhpgen
+                );
             if acumula {
                 f.contador += 1;
                 if f.contador >= 3 || 1 >= f.restante_s {
                     let v = f.por_segundo * f.contador;
+                    // `filter_Incrementalhpgen::Heartbeat`: `_health += _inc_each × _counter`.
+                    if f.efeito == Efeito::Incrementalhpgen {
+                        f.por_segundo += f.escala_defesa * f.contador;
+                    }
                     f.contador -= 3;
                     match f.efeito {
-                        Efeito::Hpgen => tiques.push(Tique::Cura(v)),
+                        Efeito::Hpgen | Efeito::Incrementalhpgen => tiques.push(Tique::Cura(v)),
                         Efeito::Mpgen => tiques.push(Tique::Mana(v)),
+                        // `filter_Magicleak::Heartbeat`: `DrainMana(_damage × _counter)`.
+                        Efeito::Magicleak => tiques.push(Tique::Mana(-v)),
+                        // `filter_Apgencont2::Heartbeat`: `ModifyAP(_ap × _counter)`.
+                        Efeito::Apgencont2 => tiques.push(Tique::Chi(v)),
                         _ => tiques.push(Tique::Dano {
                             origem: f.origem,
                             valor: v,
@@ -951,11 +1248,11 @@ impl Efeitos {
     pub fn limpar(&mut self, bencaos: bool) -> bool {
         let antes = self.filtros.len();
         self.filtros.retain(|f| {
-            let fi = f.efeito.ficha();
+            let (bencao, maldicao) = f.bencao_e_maldicao();
             if bencaos {
-                !fi.bencao
+                !bencao
             } else {
-                !fi.maldicao
+                !maldicao
             }
         });
         antes != self.filtros.len()
@@ -966,7 +1263,7 @@ impl Efeitos {
     /// `Foxform` é só `WEAK` (`:4611`) e fica até a 312 ser lançada de novo.
     pub fn ao_morrer(&mut self) {
         self.filtros
-            .retain(|f| matches!(f.efeito, Efeito::Fairyform | Efeito::Foxform));
+            .retain(|f| matches!(f.efeito, Efeito::Fairyform | Efeito::Foxform | Efeito::Tigerform | Efeito::Soulretort2));
         self.invencivel_s = 0;
     }
 
@@ -996,7 +1293,7 @@ impl Efeitos {
     pub fn forma(&self) -> Option<(u8, u8)> {
         self.filtros.iter().find_map(|f| match f.efeito {
             Efeito::Fairyform => Some((1, FORMA_DE_CLASSE)),
-            Efeito::Foxform => Some((f.contador as u8, FORMA_DE_CLASSE)),
+            Efeito::Foxform | Efeito::Tigerform => Some((f.contador as u8, FORMA_DE_CLASSE)),
             _ => None,
         })
     }
@@ -1019,7 +1316,35 @@ impl Efeitos {
     /// trocar, mover para o corpo e descartar peça são recusados com
     /// `ERR_EQUIPMENT_IS_LOCKED` (`gs/player.cpp:7874, 7991, 8077, 8258`).
     pub fn equipamento_travado(&self) -> bool {
-        self.tem(Efeito::Fairyform) || self.tem(Efeito::Foxform)
+        self.tem(Efeito::Fairyform) || self.tem(Efeito::Foxform) || self.tem(Efeito::Tigerform)
+    }
+
+    /// `SetTigerform` na forma de classe: `RemoveFilter(FILTER_TIGERFORM)` — na raposa não há tigre
+    /// a tirar e nada muda (`playerwrapper.cpp:1787-1792`).
+    pub fn desfazer_tigre(&mut self) -> bool {
+        let antes = self.filtros.len();
+        self.filtros.retain(|f| f.efeito != Efeito::Tigerform);
+        antes != self.filtros.len()
+    }
+
+    /// `filter_Transportdamagetoleader`: `(ratio, alcance)`.
+    pub fn transporte_ao_dono(&self) -> Option<(f32, f32)> {
+        self.filtros
+            .iter()
+            .find(|f| f.efeito == Efeito::Transportdamagetoleader)
+            .map(|f| (f.fator, f.fator_de_habilidade))
+    }
+
+    /// O chi que cada golpe recebido mexe (`EF_DoDamage`): `filter_Apgen` dá, `filter_Apleak` tira.
+    pub fn chi_ao_apanhar(&self) -> i32 {
+        self.filtros
+            .iter()
+            .map(|f| match f.efeito {
+                Efeito::Apgen => f.por_segundo,
+                Efeito::Apleak => -f.por_segundo,
+                _ => 0,
+            })
+            .sum()
     }
 
     /// `filter_Retort(2)::AdjustDamage`: quanto do golpe **físico corpo a corpo** (dano bruto
@@ -1035,7 +1360,35 @@ impl Efeitos {
         let f = self
             .filtros
             .iter()
-            .find(|f| matches!(f.efeito, Efeito::Retort | Efeito::Retort2))?;
+            .find(|f| matches!(f.efeito, Efeito::Retort | Efeito::Retort2 | Efeito::Jingji))?;
+        self.espinhos_do_filtro(f, fisico, de_habilidade)
+    }
+
+    /// `filter_Soulbase::AdjustDamage` + `filter_Soulretort2::DoSoulAdjustDamage`
+    /// (`skillfilter.h:12611-12710`): `del_on_trigger` 2 apaga já; `rand() % 100 >= trigger_prob`
+    /// ou sem mana para o custo, nada; senão devolve `(int)(físico × ratio)` (> 1), drena o custo e,
+    /// com `del_on_trigger` 1, apaga. Vale de longe também. Devolve o dano e a mana gasta.
+    pub fn espinhos_de_alma(&mut self, fisico: i32, dado: i32, mana: i32) -> Option<(i32, i32)> {
+        let i = self.filtros.iter().position(|f| f.efeito == Efeito::Soulretort2)?;
+        let f = self.filtros[i].clone();
+        if f.escala_defesa == 2 {
+            self.filtros.remove(i);
+        }
+        if dado >= f.por_segundo || (f.contador > 0 && mana < f.contador) {
+            return None;
+        }
+        let dano = (fisico as f32 * f.fator) as i32;
+        if dano <= 1 {
+            return None;
+        }
+        if f.escala_defesa == 1 {
+            self.filtros.retain(|g| g.efeito != Efeito::Soulretort2);
+        }
+        Some((dano, f.contador.max(0)))
+    }
+
+    fn espinhos_do_filtro(&self, f: &Filtro, fisico: i32, de_habilidade: bool) -> Option<i32> {
+        // `filter_Jingji::AdjustDamage` devolve igual ao `Retort`, com o `ratio` (`skillfilter.h:4743-4768`).
         let razao = if de_habilidade && f.efeito == Efeito::Retort2 {
             f.fator_de_habilidade
         } else {
@@ -1045,9 +1398,15 @@ impl Efeitos {
         (dano > 1).then_some(dano)
     }
 
+    /// `filter_Freemove` ligado: a máscara `IMMUNESLOW|FIX|DIZZY|SLEEP` recusa esses quatro
+    /// (`SetSlow/Fix/Dizzy/Sleep`, `playerwrapper.cpp`, `GetImmuneMask()`).
+    pub fn imune_a(&self, e: Efeito) -> bool {
+        self.tem(Efeito::Freemove) && matches!(e, Efeito::Slow | Efeito::Fix | Efeito::Dizzy | Efeito::Sleep)
+    }
+
     /// `MODE_INDEX_STUN`/`SLEEP`: não age.
     pub fn sem_acao(&self) -> bool {
-        self.tem(Efeito::Dizzy) || self.tem(Efeito::Sleep)
+        self.tem(Efeito::Dizzy) || self.tem(Efeito::Sleep) || self.tem(Efeito::Palsy)
     }
     /// `MODE_INDEX_ROOT`: não anda.
     pub fn preso(&self) -> bool {
@@ -1055,7 +1414,7 @@ impl Efeitos {
     }
     /// `MODE_INDEX_SILENT`: não conjura.
     pub fn selado(&self) -> bool {
-        self.sem_acao() || self.tem(Efeito::Sealed)
+        self.sem_acao() || self.tem(Efeito::Sealed) || self.tem(Efeito::Sealed2)
     }
     pub fn invencivel(&self) -> bool {
         self.invencivel_s > 0 || self.tem(Efeito::Invincible) || self.gm_invencivel || self.gm_invisivel
@@ -1094,6 +1453,23 @@ impl Efeitos {
                 Inchp => r.vida += k,
                 Dechp => r.vida -= k,
                 Incsmite => r.critico += f.por_segundo,
+                Swiftform => r.velocidade += k,
+                Jingji => r.dano_recebido *= f.fator_de_habilidade,
+                Canti => r.dano_recebido *= 1.0 + f.fator,
+                Noregain => r.regen_pct -= 2000,
+                Reducewood => r.resistencias[1] -= k,
+                Giant => r.dano += k,
+                Devilstate => {
+                    r.precisao += k;
+                    r.vida -= f.escala_defesa;
+                }
+                Tigerform => {
+                    r.velocidade += k;
+                    r.vida += f.por_segundo;
+                    r.dano += f.escala_defesa;
+                }
+                Beastieform => r.velocidade += k,
+                Inccritresistance => r.resistencia_a_critico += f.por_segundo,
                 Fairyform => {
                     r.velocidade += k;
                     r.defesa += f.escala_defesa;
@@ -1125,7 +1501,13 @@ impl Efeitos {
             s[ESTADO_VISIVEL_INVENCIVEL / 32] |= 1 << (ESTADO_VISIVEL_INVENCIVEL % 32);
         }
         for f in &self.filtros {
-            let v = f.efeito.ficha().visivel as usize;
+            let v = match f.efeito {
+                Efeito::Insertvstate => f.contador.max(0) as usize,
+                // `if(_insertvstate) IncVisibleState(...)`.
+                Efeito::Apgencont2 if f.escala_defesa != 0 => 50,
+                Efeito::Sealed2 if f.escala_defesa != 0 => 8,
+                e => e.ficha().visivel as usize,
+            };
             if v > 0 && v < 192 {
                 s[v / 32] |= 1 << (v % 32);
             }
@@ -1141,11 +1523,15 @@ impl Efeitos {
             if !f.icone {
                 continue;
             }
-            let h = f.efeito.ficha().icone;
+            let h = if f.efeito == Efeito::Insertvstate {
+                f.por_segundo.clamp(0, u16::MAX as i32) as u16
+            } else {
+                f.efeito.ficha().icone
+            };
             if h != 0 && !out.iter().any(|(x, _)| *x == h) {
                 // A raposa entra sem parâmetro (`InsertTeamVisibleState(HSTATE_FOXFORM)`):
                 // [`SEM_PARAMETRO`] faz o `ICON_STATE_NOTIFY` mandar o ícone sem tempo.
-                let param = if f.efeito == Efeito::Foxform {
+                let param = if matches!(f.efeito, Efeito::Foxform | Efeito::Tigerform) {
                     pw_protocol::packets::s2c::SEM_PARAMETRO
                 } else {
                     f.restante_s
@@ -1598,6 +1984,190 @@ mod testes {
         assert_eq!(ficha.icone, 65);
     }
 
+    /// B220: Traje de Flores (762) — `filter_Swiftform`, velocidade `+100 × amount`%, ícone 81,
+    /// estado 32 (1.5.5).
+    #[test]
+    fn o_swiftform_acelera_e_acende_as_flores() {
+        let e = Efeito::do_setter("Swiftform").expect("portado");
+        let mut f = Efeitos::default();
+        assert!(f.adicionar(filtro(e, 300, 15)));
+        assert_eq!(f.realce().velocidade, 15);
+        assert_eq!(f.icones(), vec![(81, 300)]);
+        assert_eq!(f.estados_visiveis()[1], 1, "VSTATE_FOXFORM 32");
+    }
+
+    /// B220: os filtros da Feiticeira — `Jingji` (310), `Canti`/`Noregain`/`Apleak` (320–322),
+    /// `Magicleak` (318), `Reducewood` (635) e `Freemove` (764).
+    #[test]
+    fn os_filtros_da_feiticeira_seguem_o_skillfilter() {
+        // Barreira de Espinhos: reduz o recebido, devolve como os espinhos e tira o `Retort`.
+        let mut f = Efeitos::default();
+        assert!(f.adicionar(filtro(Efeito::Retort, 600, 10)));
+        let mut j = filtro(Efeito::Jingji, 600, 0);
+        j.fator = 0.2;
+        j.fator_de_habilidade = 0.7;
+        assert!(f.adicionar(j));
+        assert_eq!(f.filtros.len(), 1, "FILTER_RETORT: o Jingji substitui o Retort");
+        assert!((f.realce().dano_recebido - 0.7).abs() < 1e-6);
+        assert_eq!(f.espinhos(100, false), Some(20));
+
+        // As três maldições de espírito se substituem; o Canti aumenta o dano recebido.
+        let mut f = Efeitos::default();
+        assert!(f.adicionar(filtro(Efeito::Noregain, 10, 0)));
+        assert_eq!(f.realce().regen_pct, -2000);
+        let mut c = filtro(Efeito::Canti, 10, 0);
+        c.fator = 0.25;
+        assert!(f.adicionar(c));
+        assert_eq!(f.filtros.len(), 1, "FILTER_SPIRITCURSE");
+        assert_eq!(f.realce().regen_pct, 0);
+        assert!((f.realce().dano_recebido - 1.25).abs() < 1e-6);
+        assert!(f.adicionar(filtro(Efeito::Apleak, 10, 0)));
+        assert_eq!(f.filtros.len(), 1);
+
+        // Reducewood: só a madeira; o segundo não muda o primeiro (`Merge` vazio).
+        let mut f = Efeitos::default();
+        assert!(f.adicionar(filtro(Efeito::Reducewood, 10, 30)));
+        assert!(!f.adicionar(filtro(Efeito::Reducewood, 99, 90)));
+        assert_eq!(f.realce().resistencias, [0, -30, 0, 0, 0]);
+
+        // Freemove: imune a lento, preso, atordoado e sono.
+        let mut f = Efeitos::default();
+        assert!(f.adicionar(filtro(Efeito::Freemove, 10, 0)));
+        assert!(f.imune_a(Efeito::Dizzy) && f.imune_a(Efeito::Slow));
+        assert!(!f.imune_a(Efeito::Toxic));
+
+        // Magicleak: drena o acumulado de 3 s.
+        let mut f = Efeitos::default();
+        let mut m = filtro(Efeito::Magicleak, 9, 0);
+        m.por_segundo = 10;
+        assert!(f.adicionar(m));
+        let mut drenado = Vec::new();
+        for _ in 0..3 {
+            drenado.extend(f.batida().0);
+        }
+        assert_eq!(drenado, vec![Tique::Mana(-30)]);
+    }
+
+    /// B221: os filtros do Bárbaro — Força Divina, Sangue Fervente, Rugido do Tigre, Fúria Bestial.
+    #[test]
+    fn os_filtros_do_barbaro_seguem_o_skillfilter() {
+        let mut f = Efeitos::default();
+        assert!(f.adicionar(filtro(Efeito::Giant, 1800, 12)));
+        let mut d = filtro(Efeito::Devilstate, 600, 110);
+        d.escala_defesa = 25;
+        assert!(f.adicionar(d));
+        let r = f.realce();
+        assert_eq!((r.dano, r.precisao, r.vida), (12, 110, -25));
+
+        // Tigre: forma de classe sem tempo, vida/velocidade/dano, sobrevive à morte, desfaz.
+        let mut f = Efeitos::default();
+        let mut t = filtro(Efeito::Tigerform, i32::MAX, 20);
+        t.contador = 1;
+        t.por_segundo = 10;
+        t.escala_defesa = -20;
+        assert!(f.adicionar(t));
+        let r = f.realce();
+        assert_eq!((r.velocidade, r.vida, r.dano), (20, 10, -20));
+        assert_eq!(f.forma(), Some((1, FORMA_DE_CLASSE)));
+        assert!(f.equipamento_travado());
+        assert_eq!(f.icones(), vec![(47, pw_protocol::packets::s2c::SEM_PARAMETRO)]);
+        f.ao_morrer();
+        assert_eq!(f.forma_atual(), FORMA_DE_CLASSE, "WEAK: o tigre não sai com a morte");
+        assert!(f.batida().0.is_empty() && f.forma().is_some(), "sem batimento");
+        assert!(f.desfazer_tigre() && f.forma().is_none());
+
+        // Fúria Bestial dá chi a cada golpe recebido; Devastar tira.
+        let mut f = Efeitos::default();
+        let mut g = filtro(Efeito::Apgen, 15, 0);
+        g.por_segundo = 5;
+        assert!(f.adicionar(g));
+        let mut l = filtro(Efeito::Apleak, 15, 0);
+        l.por_segundo = 2;
+        assert!(f.adicionar(l));
+        assert_eq!(f.chi_ao_apanhar(), 3);
+    }
+
+    /// B221: os filtros da Feiticeira 1.5.5 (seita/nível alto).
+    #[test]
+    fn os_filtros_da_feiticeira_155_seguem_o_skillfilter() {
+        // Apgencont2: chi a cada 3 s; estado 50 só com `showicon`; máscara pelo roteiro.
+        let mut f = Efeitos::default();
+        let mut c = filtro(Efeito::Apgencont2, 3, 0);
+        c.por_segundo = 33;
+        c.mascara = Some((false, false));
+        assert!(f.adicionar(c));
+        assert_eq!(f.estados_visiveis()[1], 0);
+        assert!(!f.limpar(true), "sem BUFF o Dispersar não tira");
+        let mut chi = Vec::new();
+        for _ in 0..3 {
+            chi.extend(f.batida().0);
+        }
+        assert_eq!(chi, vec![Tique::Chi(99)]);
+
+        // Palsy não age; Sealed2 sela; Insertvstate acende o estado e o ícone pedidos.
+        let mut f = Efeitos::default();
+        assert!(f.adicionar(filtro(Efeito::Palsy, 3, 0)));
+        assert!(f.sem_acao() && f.selado());
+        let mut f = Efeitos::default();
+        let mut s2 = filtro(Efeito::Sealed2, 7, 0);
+        s2.mascara = Some((false, false));
+        assert!(f.adicionar(s2));
+        assert!(f.selado() && !f.sem_acao());
+        assert_eq!(f.icones(), vec![(140, 7)]);
+        let mut f = Efeitos::default();
+        let mut iv = filtro(Efeito::Insertvstate, 11, 0);
+        iv.contador = 112;
+        iv.por_segundo = 227;
+        assert!(f.adicionar(iv));
+        assert_eq!(f.estados_visiveis()[3], 1 << (112 - 96));
+        assert_eq!(f.icones(), vec![(227, 11)]);
+
+        // Inccritresistance: pontos de resistência a crítico.
+        let mut f = Efeitos::default();
+        let mut cr = filtro(Efeito::Inccritresistance, 7, 0);
+        cr.por_segundo = 5;
+        assert!(f.adicionar(cr));
+        assert_eq!(f.realce().resistencia_a_critico, 5);
+
+        // Soulretort2 da 1829: 100 % de chance, sem custo, não se apaga; também de longe.
+        let mut f = Efeitos::default();
+        let mut sr = filtro(Efeito::Soulretort2, 15, 0);
+        sr.fator = 1.0;
+        sr.por_segundo = 100;
+        assert!(f.adicionar(sr));
+        assert_eq!(f.espinhos_de_alma(300, 99, 0), Some((300, 0)));
+        assert_eq!(f.filtros.len(), 1);
+        f.ao_morrer();
+        assert_eq!(f.filtros.len(), 1, "sem REMOVE_ON_DEATH");
+        // Com custo e sem mana, não dispara; `del_on_trigger` 1 apaga ao disparar.
+        f.filtros[0].contador = 50;
+        assert_eq!(f.espinhos_de_alma(300, 0, 10), None);
+        f.filtros[0].escala_defesa = 1;
+        assert_eq!(f.espinhos_de_alma(300, 0, 60), Some((300, 50)));
+        assert!(f.filtros.is_empty());
+    }
+
+    /// B222: a Erva Vital (1501) cura cada vez mais; a planta da Feiticeira passa o golpe ao dono.
+    #[test]
+    fn os_filtros_das_plantas() {
+        let mut f = Efeitos::default();
+        let mut c = filtro(Efeito::Incrementalhpgen, 12, 0);
+        c.por_segundo = 10;
+        c.escala_defesa = 5;
+        assert!(f.adicionar(c));
+        let mut curas = Vec::new();
+        for _ in 0..6 {
+            curas.extend(f.batida().0);
+        }
+        // 3 × 10 = 30; o `_health` sobe 5 × 3 = 15 → 25; 3 × 25 = 75.
+        assert_eq!(curas, vec![Tique::Cura(30), Tique::Cura(75)]);
+        let mut t = filtro(Efeito::Transportdamagetoleader, 60, 0);
+        t.fator = 0.3;
+        t.fator_de_habilidade = 45.0;
+        assert!(f.adicionar(t));
+        assert_eq!(f.transporte_ao_dono(), Some((0.3, 45.0)));
+    }
+
     fn filtro(e: Efeito, s: i32, razao: i32) -> Filtro {
         Filtro {
             efeito: e,
@@ -1611,6 +2181,7 @@ mod testes {
             absorve: 0.0,
             escala_defesa: 0,
             fator_de_habilidade: 0.0,
+            mascara: None,
         }
     }
 
@@ -1655,6 +2226,7 @@ mod testes {
             absorve: 0.0,
             escala_defesa: 0,
             fator_de_habilidade: 0.0,
+            mascara: None,
         });
         let mut total = 0;
         for _ in 0..5 {

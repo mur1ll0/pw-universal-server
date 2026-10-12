@@ -193,6 +193,7 @@ fn a_barreira_de_asa_absorve_dano_e_devolve_mana() {
         absorve: 135.0,
         escala_defesa: 0,
         fator_de_habilidade: 0.0,
+        mascara: None,
     });
 
     // Ícone 69 (HSTATE_WINGSHIELD) e estado visível 29 (VSTATE_WINGSHIELD).
@@ -241,6 +242,7 @@ fn a_barreira_de_asa_absorve_dano_e_devolve_mana() {
         absorve: 135.0,
         escala_defesa: 0,
         fator_de_habilidade: 0.0,
+        mascara: None,
     });
     let mut manas = Vec::new();
     for _ in 0..6 {
@@ -277,6 +279,7 @@ fn a_flecha_fulgurante_adiciona_icone_70_e_dano_de_fogo_ao_ataque() {
         absorve: 0.0,
         escala_defesa: 0,
         fator_de_habilidade: 0.0,
+        mascara: None,
     };
     j.efeitos.adicionar(filtro);
 
@@ -439,6 +442,7 @@ fn a_forma_sombria_transforma_tranca_o_equipamento_e_acaba_no_tempo() {
         absorve: 0.0,
         escala_defesa: 60,
         fator_de_habilidade: 0.0,
+        mascara: None,
     });
     assert_eq!(e.forma(), Some((1, 1)));
     assert!(e.equipamento_travado());
@@ -660,6 +664,7 @@ fn as_passivas_de_forma_valem_so_na_forma_de_classe() {
         absorve: 0.0,
         escala_defesa: 0,
         fator_de_habilidade: 0.0,
+        mascara: None,
     });
     p.recalcular_por_nivel(&r.classes, Some(&r.base));
     assert!(

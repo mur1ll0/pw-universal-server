@@ -720,7 +720,15 @@ impl BusServer {
                     self.enviar_ao_jogador(monstro as i32, pacote).await;
                 }
             }
+            EventoDoMundo::Aura { portador, habilidade, nivel, raio, amigavel } => {
+                self.aplicar_aura(portador, habilidade, nivel, raio, amigavel).await
+            }
             ev @ (EventoDoMundo::MascoteApareceu { .. }
+            | EventoDoMundo::PlantaApareceu { .. }
+            | EventoDoMundo::PlantaSumiu { .. }
+            | EventoDoMundo::PlantaMorreu { .. }
+            | EventoDoMundo::VidaDaPlanta { .. }
+            | EventoDoMundo::DrenoNoDono { .. }
             | EventoDoMundo::MascoteRecolhido { .. }
             | EventoDoMundo::MascoteMorreu { .. }
             | EventoDoMundo::GolpeEntreCriaturas { .. }
@@ -1789,7 +1797,8 @@ impl BusServer {
             | ids::GM_ACTIVE_SPAWNER
             | ids::GM_GENERATE_MOB => self.comando_de_gm(roleid, cmd.id, &cmd.payload, envio).await,
             ids::CAST_SKILL | ids::CAST_INSTANT_SKILL => {
-                self.conjurar(roleid, &cmd.payload, envio).await
+                self.conjurar(roleid, &cmd.payload, envio, cmd.id == ids::CAST_INSTANT_SKILL)
+                    .await
             }
             ids::ENTER_SANCTUARY => {
                 debug!("mundo: {roleid} entrou em zona segura");
@@ -2264,6 +2273,10 @@ impl BusServer {
             distancia,
             &mundo.data_manager.progressao,
         );
+        // B226 — o amuleto físico entrou no dano (`GetPhysicRuneDamage`): gasta uma carga, acertando
+        // ou não (o `FillAttackMsg` gera o dano antes do acerto), e o golpe leva a marca
+        // `AT_STATE_ATTACK_RUNE1` (0x1, `actobject.h:436`).
+        let usou_amuleto = atacante.reforco_do_amuleto(false) > 0;
         let (dano, critico) = (resultado.dano() as i64, resultado.foi_critico());
         // `GM_MSG_HP_STEAL` sai do `HandleAttackMsg` na chegada do golpe, antes do dano adiado
         // (`actobject.cpp:777-782`): `IncHP` e o `hp_steal` (279) a quem bateu
@@ -2331,10 +2344,14 @@ impl BusServer {
         // 1. O resultado do golpe, com o `attack_state` do `OnDamage` (crítico, esquiva de
         // dano — `actobject.cpp:728-766`; bits em [`combat::marca`]).
         let _ = critico;
+        if usou_amuleto {
+            self.gastar_amuleto(roleid).await;
+        }
+        let marca = resultado.marca() | if usou_amuleto { combat::marca::AMULETO_FISICO } else { 0 };
         self.responder(
             roleid,
             self.sub
-                .host_attack_result(alvo as i32, saturar(dano), resultado.marca(), velocidade)
+                .host_attack_result(alvo as i32, saturar(dano), marca, velocidade)
                 .data,
             envio,
         )
@@ -2826,7 +2843,15 @@ impl BusServer {
     /// a tabela de skills, então por ora uma habilidade causa o mesmo que um golpe básico
     /// — o que é honesto enquanto o número certo não estiver disponível, e melhor do que
     /// os 150 fixos.
-    async fn conjurar(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
+    ///
+    /// `instantanea` (C2S 80): `session_instant_skill` → `SkillWrapper::InstantSkill`
+    /// (`gs/playercmd.cpp:2093-2116`, `actsession.cpp:1414-1436`, `cskill/skill/
+    /// skillwrapper.cpp:356-389`) — sem tempo de conjuração: o efeito sai na hora
+    /// (`InstantRun`) e o único aviso é o `OBJECT_CAST_INSTANT_SKILL` (178) a todos. Nem o
+    /// `OBJECT_CAST_SKILL` (85), que no cliente abre o trabalho de feitiço e **para o
+    /// movimento**, nem o `SKILL_PERFORM`/`HOST_STOP_SKILL` (B220: a Traje de Flores 762 parava
+    /// a Tsuko no 1.2.6).
+    async fn conjurar(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente, instantanea: bool) {
         let Some(c) = CastSkill::ler(payload) else {
             warn!("mundo: cast_skill de {roleid} com payload curto");
             return;
@@ -2975,6 +3000,19 @@ impl BusServer {
                 _ => conjuracao_ms,
             }
         };
+        if instantanea {
+            self.aplicar_conjuracao(roleid, c.skill_id, alvo, envio, 1.0).await;
+            let pacote = S2CGamedataSend::object_cast_instant_skill(
+                roleid,
+                c.alvos.first().copied().unwrap_or(0),
+                c.skill_id,
+                nivel_conjurado.clamp(0, u8::MAX as i32) as u8,
+            )
+            .data;
+            self.responder(roleid, pacote.clone(), envio).await;
+            self.transmitir_a_outros(roleid, pacote).await;
+            return;
+        }
         let cast_pkt =
             S2CGamedataSend::object_cast_skill(roleid, alvo as i32, c.skill_id, conjuracao_ms, 1)
                 .data;
@@ -3291,6 +3329,36 @@ impl BusServer {
         self.fechar_conjuracao_e_soltar_fila(roleid, envio).await;
     }
 
+    /// `gplayer_imp::OnUseAttackRune` (`gs/player.cpp:13051-13060`; `gs` 1.2.6 VA 0x807cd3e): o
+    /// amuleto de dano perde 1 — `DecAmount(EQUIP_INDEX_RUNE_SLOT, 1)` e `player_drop_item(
+    /// IL_EQUIPMENT, 17, id, 1, DROP_TYPE_RUNE)` (12). Acabando, deixa de reforçar. B226.
+    pub(super) async fn gastar_amuleto(&self, roleid: i32) {
+        let tid = {
+            let mut mundo = self.world.write().await;
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            let Some(a) = p.amuleto_de_dano.as_mut() else { return };
+            a.quantidade = a.quantidade.saturating_sub(1);
+            let tid = a.tid;
+            if a.quantidade == 0 {
+                p.amuleto_de_dano = None;
+            }
+            tid
+        };
+        self.enviar_ao_jogador(
+            roleid,
+            self.sub
+                .player_drop_item(1, crate::entity::SLOT_DO_AMULETO_DE_DANO as u8, 1, tid as i32, DESCARTE_DO_AMULETO)
+                .data,
+        )
+        .await;
+        let repo = self.itens().await;
+        tokio::spawn(async move {
+            if let Err(e) = repo.consume_item(roleid, ContainerType::Equipment, crate::entity::SLOT_DO_AMULETO_DE_DANO, 1).await {
+                warn!("mundo: não consegui gastar o amuleto de dano de {roleid}: {e}");
+            }
+        });
+    }
+
     /// O efeito da habilidade em si (dano, cura, estados), entre o `SKILL_PERFORM` e o
     /// `HOST_STOP_SKILL` — ver [`Self::concluir_conjuracao`].
     async fn aplicar_conjuracao(
@@ -3415,6 +3483,12 @@ impl BusServer {
             .get(skill_id.max(0) as u32)
             .and_then(|h| h.dano.clone())
             .and_then(|d| CombatEngine::golpe_de_habilidade(&atacante, &d, nivel, carga));
+        let magica = mundo
+            .data_manager
+            .habilidades
+            .get(skill_id.max(0) as u32)
+            .and_then(|h| h.dano.as_ref().map(|d| d.base == "magico"));
+        let amuleto = magica.is_some_and(|m| atacante.reforco_do_amuleto(m) > 0) && do_stub.is_some();
         let dano = if let Some(g) = do_stub {
             combat::resolver(
                 &g,
@@ -3467,6 +3541,14 @@ impl BusServer {
         }
         drop(mundo);
         let _ = (template, exp, sp);
+        if amuleto {
+            self.gastar_amuleto(roleid).await;
+        }
+        let marca_do_amuleto = match (amuleto, magica) {
+            (true, Some(true)) => combat::marca::AMULETO_MAGICO,
+            (true, _) => combat::marca::AMULETO_FISICO,
+            _ => SEM_MARCACAO,
+        };
 
         self.responder(
             roleid,
@@ -3475,7 +3557,7 @@ impl BusServer {
                     alvo as i32,
                     skill_id,
                     saturar(dano),
-                    SEM_MARCACAO,
+                    marca_do_amuleto,
                     VELOCIDADE_PADRAO,
                     SECAO_UNICA,
                 )
@@ -3639,6 +3721,11 @@ impl BusServer {
                 // `TranslateRecvAttack` dos filtros de invencível): GM invencível não perde vida.
                 let tirado = crate::efeitos::dano_recebido(&mut vitima.efeitos, valor);
                 vitima.hp = (vitima.hp - tirado).max(0);
+                // `EF_DoDamage`: o chi do `Apgen`/`Apleak` de quem apanhou (B221).
+                let chi = vitima.efeitos.chi_ao_apanhar();
+                if chi != 0 {
+                    vitima.mexer_no_chi(chi);
+                }
             }
             (
                 vitima.hp,
@@ -6313,3 +6400,6 @@ mod tests {
         assert!(ids.is_empty());
     }
 }
+
+/// `DROP_TYPE_RUNE` (`common/protocol.h:941`; `push 0xc` no `gs` 1.2.6, VA 0x807cd88).
+const DESCARTE_DO_AMULETO: u8 = 12;

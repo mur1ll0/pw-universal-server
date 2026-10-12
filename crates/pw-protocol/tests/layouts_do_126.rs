@@ -385,7 +385,8 @@ fn entrada_155_preserva_a_sequencia_e_os_bytes_anteriores() {
 #[test]
 fn os_estados_e_icones_do_126_tem_o_tamanho_do_validador() {
     let p = create_world_protocol(GameVersion::V1_2_6);
-    let d = p.update_ext_state(7, [1 << 3, 5, 0, 0, 0, 0]).data;
+    // Os bits acima de 31 não cabem; o 32 (flores) vira o 31 do `gs` 1.2.6 (B220) — por isso 4.
+    let d = p.update_ext_state(7, [1 << 3, 4, 0, 0, 0, 0]).data;
     assert_eq!(d.len() - 2, 8);
     assert_eq!(u32::from_le_bytes([d[6], d[7], d[8], d[9]]), 1 << 3);
     let d = p.icon_state_notify(7, &[(4, 600), (75, pw_protocol::packets::s2c::SEM_PARAMETRO)]).data;

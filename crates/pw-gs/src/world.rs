@@ -138,6 +138,18 @@ pub enum EventoDoMundo {
     /// Mascote de combate — ver [`crate::mascote`]. Entrou no mundo: o dono recebe o
     /// `SUMMON_PET` e o `PET_AI_STATE`, e quem está perto o vê entrar.
     MascoteApareceu { id: i64, dono: RoleId },
+    /// Uma planta nasceu (B222): quem vê recebe a entrada do NPC; o dono, `SUMMON_PLANT_PET`.
+    PlantaApareceu { id: i64, dono: RoleId, tid: i32, vida_s: i32 },
+    /// A planta saiu do dono (`PLANT_PET_DISAPPEAR` com o motivo, `crate::planta`).
+    PlantaSumiu { id: i64, dono: RoleId, motivo: u8 },
+    /// A planta morreu à vista de todos (`NPC_DIED` + some) e o dono ouve o motivo 0.
+    PlantaMorreu { id: i64, dono: RoleId, matador: i64 },
+    /// `be_hurt` do `GM_MSG_DRAIN_HP_MP` (a planta passou parte do golpe ao dono, B222).
+    DrenoNoDono { roleid: RoleId, atacante: i64, dano: i32 },
+    /// O `DoAura` de uma aura do jogador (B227): o barramento roda o roteiro da habilidade.
+    Aura { portador: i64, habilidade: i32, nivel: i32, raio: f32, amigavel: bool },
+    /// `PLANT_PET_HP_NOTIFY` ao dono.
+    VidaDaPlanta { id: i64, dono: RoleId, fator_hp: f32, hp: i32, fator_mp: f32, mp: i32 },
     /// Saiu do mundo sem morrer (o dono recolheu, morreu, saiu ou se afastou demais):
     /// `RECALL_PET` ao dono, e o registro volta à jaula.
     MascoteRecolhido {
@@ -381,7 +393,9 @@ pub struct WorldInstance {
     vida_informada: HashMap<i64, (i32, i32)>,
     /// Os mascotes de combate no mundo, pelo id de NPC deles (`MERGE_PET_ID`).
     pub mascotes: HashMap<i64, crate::mascote::Mascote>,
-    proximo_mascote: u32,
+    pub(crate) proximo_mascote: u32,
+    /// A ordem de invocação das plantas (o `group_limit` tira a mais antiga, B222).
+    pub(crate) ordem_das_plantas: u64,
     /// A agressividade e o modo que cada dono deixou (`_cur_pet_aggro_state` e
     /// `_cur_pet_stay_state`, que começam automático e seguir, `petman.cpp:1283-1284`).
     estado_dos_mascotes: HashMap<i64, (u8, u8)>,
@@ -412,6 +426,12 @@ pub struct DanoAdiado {
     /// Dano físico bruto do golpe corpo a corpo que acertou o jogador — o que os espinhos
     /// devolvem quando o dano cai ([`crate::efeitos::Efeitos::espinhos`]); 0 sem isso.
     pub fisico: i32,
+    /// `short_range > 0` (monstro de longe): os espinhos do `Retort`/`Jingji` não valem, os da
+    /// alma (`Soulretort2`) valem.
+    pub de_longe: bool,
+    /// O dano antes do grau ([`crate::combat::Resultado::antes_do_grau`]), para os filtros do
+    /// mascote que olham o `damage_entry` (B225).
+    pub antes_do_grau: Option<f32>,
 }
 
 /// `Reborn`: o monstro volta vivo em `pos`, com a vida cheia, sem filtros de maldição nem
@@ -482,6 +502,7 @@ impl WorldInstance {
             vida_informada: HashMap::new(),
             mascotes: HashMap::new(),
             proximo_mascote: 0,
+            ordem_das_plantas: 0,
             estado_dos_mascotes: HashMap::new(),
             danos_adiados: Vec::new(),
             variaveis_globais: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -618,7 +639,7 @@ impl WorldInstance {
     /// Nunca bloqueia o tick: a fila cheia significa que a ponta de rede não está dando
     /// conta, e parar a simulação inteira por isso seria trocar um problema de um jogador
     /// por um problema de todos.
-    fn emitir(&self, evento: EventoDoMundo) {
+    pub(crate) fn emitir(&self, evento: EventoDoMundo) {
         let Some(canal) = self.eventos.as_ref() else {
             return;
         };
@@ -910,6 +931,7 @@ impl WorldInstance {
     pub fn remove_player(&mut self, role_id: RoleId) -> Option<PlayerEntity> {
         // Sem o dono, o mascote some (`QueryTarget(leader)` falha → `GM_MSG_PET_DISAPPEAR`).
         self.recolher_mascote(role_id as i64, 0);
+        self.remover_plantas_de(role_id as i64);
         let id = role_id as i64;
         self.grid.remove_entity(id);
         // Sair do mundo é sair do grupo. Sem isto o grupo guardaria um membro que não
@@ -921,9 +943,11 @@ impl WorldInstance {
 
     /// Congela a transferência sem efetivar saída de grupo/recolhimento antes do commit.
     pub(crate) fn congelar_para_troca(&mut self,role:RoleId)->Option<(PlayerEntity,Option<crate::mascote::Mascote>)> {
+        // `PreSwitchServer` (`petman.cpp:2430-2440`): as plantas somem com `PLANT_OUT_OF_RANGE`.
+        self.remover_plantas_de(role as i64);
         let jogador=self.players.remove(&(role as i64))?;
         self.grid.remove_entity(role as i64);
-        let id=self.mascotes.iter().find(|(_,m)|m.dono==role as i64).map(|(id,_)|*id);
+        let id=self.mascotes.iter().find(|(_,m)|m.dono==role as i64&&m.planta.is_none()).map(|(id,_)|*id);
         let mascote=id.and_then(|id| {self.grid.remove_entity(id);self.mascotes.remove(&id)});
         Some((jogador,mascote))
     }
@@ -1202,6 +1226,7 @@ impl WorldInstance {
             .filter(|(_, p)| !p.efeitos.filtros.is_empty() || p.efeitos.invencivel_s > 0)
             .map(|(id, _)| *id)
             .collect();
+        let mut auras = Vec::new();
         for id in ids {
             let Some(p) = self.players.get_mut(&id) else {
                 continue;
@@ -1237,8 +1262,19 @@ impl WorldInstance {
                         vida_mudou = true;
                     }
                     Tique::Mana(v) => {
-                        p.mp = (p.mp + v).min(p.max_mp);
+                        // O `Magicleak` drena (negativo): `DrainMana` não passa de zero.
+                        p.mp = (p.mp + v).clamp(0, p.max_mp);
                         vida_mudou = true;
+                    }
+                    // `filter_Apgencont2` → `ModifyAP` (a barra vai no `SELF_INFO_00`).
+                    Tique::Chi(v) => vida_mudou |= p.mexer_no_chi(v),
+                    // `DoAura`: a de maldição põe em combate (`EnterCombatState`); o roteiro vai pelo
+                    // barramento (B227).
+                    Tique::Aura { habilidade, nivel, raio, amigavel } => {
+                        if !amigavel {
+                            p.combate_s = p.combate_s.max(crate::progressao::COMBATE_AO_ATACAR_S);
+                        }
+                        auras.push(EventoDoMundo::Aura { portador: p.role_id as i64, habilidade, nivel, raio, amigavel });
                     }
                 }
             }
@@ -1280,6 +1316,9 @@ impl WorldInstance {
                     atributos: acabou,
                 });
             }
+        }
+        for ev in auras {
+            self.emitir(ev);
         }
 
         let ids: Vec<i64> = self
@@ -1325,7 +1364,7 @@ impl WorldInstance {
                         m.hp = (m.hp + v as i64).min(m.max_hp);
                         mudou = true;
                     }
-                    Tique::Mana(_) => {}
+                    Tique::Mana(_) | Tique::Chi(_) | Tique::Aura { .. } => {}
                 }
             }
             for (atacante, dano) in danos_no_tempo {
@@ -1368,6 +1407,7 @@ impl WorldInstance {
             .filter(|(_, m)| !m.corpo.is_dead && !m.corpo.efeitos.filtros.is_empty())
             .map(|(id, _)| *id)
             .collect();
+        let mut auras_de_mascote = Vec::new();
         for id in ids {
             let Some(m) = self.mascotes.get_mut(&id) else {
                 continue;
@@ -1382,7 +1422,11 @@ impl WorldInstance {
                         m.corpo.hp = (m.corpo.hp + v as i64).min(m.corpo.max_hp);
                         mudou = true;
                     }
-                    Tique::Mana(_) => {}
+                    // A aura no mascote — o Sacrifício (1794) da planta 32907 (B227).
+                    Tique::Aura { habilidade, nivel, raio, amigavel } => {
+                        auras_de_mascote.push(EventoDoMundo::Aura { portador: id, habilidade, nivel, raio, amigavel });
+                    }
+                    Tique::Mana(_) | Tique::Chi(_) => {}
                 }
             }
             for (origem, valor) in danos {
@@ -1396,6 +1440,9 @@ impl WorldInstance {
                     atributos: acabou,
                 });
             }
+        }
+        for ev in auras_de_mascote {
+            self.emitir(ev);
         }
     }
 
@@ -1676,9 +1723,24 @@ impl WorldInstance {
         atraso_ms: u32,
         no_jogador: bool,
     ) {
+        self.adiar_dano_com_grau(alvo, atacante, dano, None, atraso_ms, no_jogador);
+    }
+
+    /// O [`Self::adiar_dano`] levando o dano antes do grau (B225).
+    pub fn adiar_dano_com_grau(
+        &mut self,
+        alvo: i64,
+        atacante: i64,
+        dano: i64,
+        antes_do_grau: Option<f32>,
+        atraso_ms: u32,
+        no_jogador: bool,
+    ) {
         if atraso_ms == 0 {
             if no_jogador {
                 self.aplicar_dano_no_jogador(alvo, atacante, dano);
+            } else if self.mascotes.contains_key(&alvo) {
+                self.aplicar_dano_no_mascote_com(alvo, atacante, dano, true, antes_do_grau);
             } else {
                 self.aplicar_dano_no_monstro(alvo, atacante, dano);
             }
@@ -1691,6 +1753,8 @@ impl WorldInstance {
             falta_ms: atraso_ms,
             no_jogador,
             fisico: 0,
+            de_longe: false,
+            antes_do_grau,
         });
     }
 
@@ -1718,10 +1782,11 @@ impl WorldInstance {
         atacante: i64,
         dano: i64,
         fisico: i32,
+        de_longe: bool,
         atraso_ms: u32,
     ) {
         if atraso_ms == 0 {
-            self.golpe_no_jogador(alvo, atacante, dano, fisico);
+            self.golpe_no_jogador(alvo, atacante, dano, fisico, de_longe);
             return;
         }
         self.danos_adiados.push(DanoAdiado {
@@ -1731,6 +1796,8 @@ impl WorldInstance {
             falta_ms: atraso_ms,
             no_jogador: true,
             fisico,
+            de_longe,
+            antes_do_grau: None,
         });
     }
 
@@ -1739,9 +1806,9 @@ impl WorldInstance {
     /// devolvido é `_parent.Attack(attacker, ret)` com `attack_attr = MAGIC_ATTACK` e
     /// `attack_rate` 1000: acerta sempre e passa pela defesa física do monstro com o nível de
     /// quem devolve (`AttackJudgement`, `actobject.cpp:481-560`).
-    fn golpe_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64, fisico: i32) {
+    fn golpe_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64, fisico: i32, de_longe: bool) {
         self.golpe_interrompe_coleta(alvo);
-        self.devolver_espinhos(alvo, atacante, fisico, false);
+        self.devolver_espinhos_de(alvo, atacante, fisico, false, de_longe);
         self.aplicar_dano_no_jogador(alvo, atacante, dano);
     }
 
@@ -1759,16 +1826,153 @@ impl WorldInstance {
         }
     }
 
+    /// `gnpc_imp::KnockBack` (`gs/npc.cpp:2281-2302`), do `SetRepel` (Terra Dividida 107, B221):
+    /// o monstro vai `distancia` metros para longe de `origem`, até o último ponto alcançável
+    /// (`GetKnockBackPos`), vira a direção e todos recebem o `stop_move(pos, 0x0f00, 1,
+    /// MOVE_MODE_KNOCK)`. Jogador não é empurrado (`SetRepel` recusa `IsPlayerClass`).
+    pub fn empurrar_monstro(&mut self, id: i64, origem: pw_core::Vector3, distancia: f32) {
+        let Some((m, _)) = self.monsters.get(&id).filter(|(m, _)| !m.is_dead) else { return };
+        let aqui = m.position;
+        let o = (aqui.x - origem.x, aqui.y - origem.y, aqui.z - origem.z);
+        let q = o.0 * o.0 + o.1 * o.1 + o.2 * o.2;
+        if q <= 1e-6 {
+            return;
+        }
+        let k = distancia / q.sqrt();
+        let alvo = pw_core::Vector3::new(aqui.x + o.0 * k, aqui.y + o.1 * k, aqui.z + o.2 * k);
+        self.deslocar_monstro(id, alvo, MOVE_MODE_KNOCK);
+    }
+
+    /// `gnpc_imp::PullOver` (`gs/npc.cpp:2304-2329`), do `SetPullover2` (B222): o monstro vai
+    /// `distancia` metros **para** `origem` (sem passar dela), pelo mesmo `GetKnockBackPos`, e todos
+    /// recebem o `stop_move(pos, 0x0f00, 1, MOVE_MODE_PULL)`.
+    pub fn puxar_monstro(&mut self, id: i64, origem: pw_core::Vector3, distancia: f32) {
+        let Some((m, _)) = self.monsters.get(&id).filter(|(m, _)| !m.is_dead) else { return };
+        let aqui = m.position;
+        let o = (origem.x - aqui.x, origem.y - aqui.y, origem.z - aqui.z);
+        let q = o.0 * o.0 + o.1 * o.1 + o.2 * o.2;
+        if q <= 1e-6 || distancia <= 0.0 {
+            return;
+        }
+        let d = if distancia * distancia > q { q.sqrt() } else { distancia };
+        let k = d / q.sqrt();
+        let alvo = pw_core::Vector3::new(aqui.x + o.0 * k, aqui.y + o.1 * k, aqui.z + o.2 * k);
+        self.deslocar_monstro(id, alvo, MOVE_MODE_PULL);
+    }
+
+    /// `path_finding::GetKnockBackPos` (`pathfinding.cpp:67-97`) + `StepMove` + o `stop_move`. O
+    /// de chão para no último ponto alcançável do `movemap` (`CNPCMoveMap::GetLastReachablePos`);
+    /// o de água e o de ar, no da reta de voxel com o teste do ambiente (`CGlobalSPMap::
+    /// GetLastReachablePos` → `CanGoStraightForward(..., IsPosOnAir/IsPosInWater)`,
+    /// `GlobalSPMap.cpp:372-384`, B222).
+    fn deslocar_monstro(&mut self, id: i64, alvo: pw_core::Vector3, modo: u8) {
+        let Some((m, _)) = self.monsters.get(&id) else { return };
+        let aqui = m.position;
+        let habitat = m.habitat;
+        let terreno = &self.terreno;
+        let chao = |x: f32, z: f32| terreno.altura_em(x, z);
+        let mapa = crate::navegacao::Mapa {
+            terreno: &chao,
+            movimento: &self.movimento,
+            espaco: Some(&self.espaco),
+            agua: Some(&self.agua),
+        };
+        let de = crate::navegacao::V3::new(aqui.x, aqui.y, aqui.z);
+        let ate = crate::navegacao::V3::new(alvo.x, alvo.y, alvo.z);
+        let fim = match habitat {
+            crate::ai::Habitat::Chao => mapa.ultimo_ponto_alcancavel(de, ate),
+            crate::ai::Habitat::Agua => mapa.ultimo_ponto_no_espaco(de, ate, crate::navegacao::Ambiente::Agua),
+            crate::ai::Habitat::Ar => mapa.ultimo_ponto_no_espaco(de, ate, crate::navegacao::Ambiente::Ar),
+        };
+        let pos = pw_core::Vector3::new(fim.x, fim.y, fim.z);
+        let Some((m, ai)) = self.monsters.get_mut(&id) else { return };
+        m.position = pos;
+        ai.empurrado();
+        self.grid.update_position(id, pos);
+        // `stop_move(_parent->pos, 0x0f00, 1, modo)` — 0x0f00 = 15 m/s × 256.
+        self.emitir(EventoDoMundo::MonstroParou {
+            id,
+            posicao: pos,
+            velocidade: 15.0,
+            direcao: 1,
+            modo,
+        });
+    }
+
+    /// `GM_MSG_DRAIN_HP_MP` no dono (`actobject.cpp:399-418`): tira `min(dano, vida − 1)` e manda o
+    /// `be_hurt(atacante)`; só com o dono a até `alcance` m da planta e dano > 1.
+    fn drenar_o_dono(&mut self, dono: i64, atacante: i64, de: pw_core::Vector3, dano: i32, alcance: f32) {
+        if dano <= 1 {
+            return;
+        }
+        let Some(p) = self.players.get_mut(&dono).filter(|p| p.hp > 0) else { return };
+        if p.position.distance(&de) > alcance {
+            return;
+        }
+        let tirado = dano.min(p.hp - 1).max(0);
+        p.hp -= tirado;
+        self.emitir(EventoDoMundo::DrenoNoDono { roleid: dono as RoleId, atacante, dano: tirado });
+        self.emitir(EventoDoMundo::EstadoMudou { roleid: dono as RoleId });
+    }
+
+    /// `ERROR_MESSAGE` ao jogador (o `_runner->error_message` do dono).
+    pub fn avisar_erro_ao_jogador(&self, jogador: i64, erro: i32) {
+        self.emitir(EventoDoMundo::ErroDoMascote { dono: jogador as RoleId, erro });
+    }
+
+    /// A planta lançou uma habilidade fora da IA (a explosão): o canto a quem vê e o efeito na
+    /// hora, pelo mesmo caminho da habilidade de mascote.
+    pub fn planta_lancou(&mut self, planta: i64, dono: i64, skill: i32, nivel: i32, alvo: Option<i64>) {
+        self.emitir(EventoDoMundo::MascoteConjurou {
+            id: planta,
+            alvo: alvo.unwrap_or(planta),
+            skill,
+            nivel,
+            tempo_ms: 0,
+        });
+        self.emitir(EventoDoMundo::MascoteUsouHabilidade {
+            id: planta,
+            dono: dono as RoleId,
+            skill,
+            nivel,
+            alvo,
+        });
+    }
+
     /// Os espinhos do jogador `alvo` contra quem o golpeou — monstro ou jogador, golpe normal
     /// ou de habilidade (`de_habilidade`, o `msg.skill_id` do original). `fisico` é o dano
     /// físico **bruto** do golpe (antes da defesa); zero quando o golpe não é físico, é de
     /// longe (`short_range > 0`) ou não acertou — aí nada volta.
     pub fn devolver_espinhos(&mut self, alvo: i64, atacante: i64, fisico: i32, de_habilidade: bool) {
+        self.devolver_espinhos_de(alvo, atacante, fisico, de_habilidade, false);
+    }
+
+    /// Os dois `AdjustDamage` que devolvem golpe: o do `Retort`/`Retort2`/`Jingji` (só corpo a
+    /// corpo) e o do `filter_Soulretort2` (também de longe; chance, custo de mana e apagar ao
+    /// disparar — [`crate::efeitos::Efeitos::espinhos_de_alma`]). Cada um é um golpe à parte.
+    pub fn devolver_espinhos_de(&mut self, alvo: i64, atacante: i64, fisico: i32, de_habilidade: bool, de_longe: bool) {
         if fisico <= 1 || alvo == atacante {
             return;
         }
+        let mut espinhos = Vec::new();
+        if let Some(p) = self.players.get_mut(&alvo).filter(|p| p.hp > 0) {
+            if !de_longe {
+                espinhos.extend(p.efeitos.espinhos(fisico, de_habilidade));
+            }
+            let dado = rand::random::<u32>() as i32 % 100;
+            if let Some((d, mana)) = p.efeitos.espinhos_de_alma(fisico, dado, p.mp) {
+                // `DrainMana(_mp_cost_per_trigger)`.
+                p.mp = (p.mp - mana).max(0);
+                espinhos.push(d);
+            }
+        }
+        for espinho in espinhos {
+            self.devolver_um_espinho(alvo, atacante, espinho);
+        }
+    }
+
+    fn devolver_um_espinho(&mut self, alvo: i64, atacante: i64, espinho: i32) {
         let devolvido = self.players.get(&alvo).filter(|p| p.hp > 0).and_then(|p| {
-            let espinho = p.efeitos.espinhos(fisico, de_habilidade)?;
             // `FillAttackMsg` do jogador (`actobject.cpp:1473-1497`) põe o nível, o crítico, o
             // grau de ataque e a penetração dele; o resto é o que o `filter_Retort` monta.
             let mut golpe = crate::combat::CombatEngine::golpe_de_jogador(p);
@@ -1884,6 +2088,12 @@ impl WorldInstance {
         }
         let dano = crate::efeitos::dano_recebido(&mut player.efeitos, dano as i32);
         player.hp = (player.hp - dano).max(0);
+        // `EF_DoDamage` (`actobject.cpp:757`): `filter_Apgen` dá chi, `filter_Apleak` tira (B221);
+        // a barra vai no `SELF_INFO_00` do `EstadoMudou` abaixo.
+        let chi = player.efeitos.chi_ao_apanhar();
+        if chi != 0 {
+            player.mexer_no_chi(chi);
+        }
         let role_id = player.role_id;
         if levantou {
             self.emitir(EventoDoMundo::Levantou { roleid: role_id });
@@ -1952,7 +2162,9 @@ impl WorldInstance {
         });
         for d in vencidos {
             if d.no_jogador {
-                self.golpe_no_jogador(d.alvo, d.atacante, d.dano, d.fisico);
+                self.golpe_no_jogador(d.alvo, d.atacante, d.dano, d.fisico, d.de_longe);
+            } else if self.mascotes.contains_key(&d.alvo) {
+                self.aplicar_dano_no_mascote_com(d.alvo, d.atacante, d.dano, true, d.antes_do_grau);
             } else {
                 self.aplicar_dano_no_monstro(d.alvo, d.atacante, d.dano);
             }
@@ -2251,6 +2463,7 @@ impl WorldInstance {
             absorve: 0.0,
             escala_defesa: 0,
             fator_de_habilidade: 0.0,
+            mascara: None,
         };
         p.efeitos.adicionar(filtro);
     }
@@ -2408,12 +2621,12 @@ impl WorldInstance {
                         nivel: h.nivel,
                     });
                 }
-                Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano, fisico, marca }) => {
+                Some(crate::ai::AcaoDoMonstro::Atacou { alvo, dano, fisico, de_longe, antes_do_grau, marca }) => {
                     // Quem bateu vai junto: sem o id, o `HOST_ATTACKED` saía com
                     // `idAttacker = 0` e o cliente não achava o atacante
                     // (`ISPLAYERID`/`ISNPCID` são falsos para zero, `EC_HostMsg.cpp:968-1006`)
                     // — o jogador perdia vida sem ver o monstro bater (B59).
-                    attacks_to_process.push((monster.id, alvo, dano, fisico, marca));
+                    attacks_to_process.push((monster.id, alvo, dano, fisico, de_longe, marca, antes_do_grau));
                 }
                 Some(crate::ai::AcaoDoMonstro::Andou {
                     destino,
@@ -2631,7 +2844,7 @@ impl WorldInstance {
         // (`actobject.cpp:1758-1776`), o mesmo número que o cliente usa como duração da
         // animação do golpe. Aplicar na hora fazia a vida cair antes de o monstro sequer
         // parar de correr na tela (relato de 2026-09-18, B62).
-        for (monstro_id, player_id, damage, fisico, marca) in attacks_to_process {
+        for (monstro_id, player_id, damage, fisico, de_longe, marca, antes_do_grau) in attacks_to_process {
             let atraso = self
                 .monsters
                 .get(&monstro_id)
@@ -2651,7 +2864,7 @@ impl WorldInstance {
                     dano: damage,
                     velocidade,
                 });
-                self.adiar_dano(player_id, monstro_id, damage as i64, atraso, false);
+                self.adiar_dano_com_grau(player_id, monstro_id, damage as i64, antes_do_grau, atraso, false);
                 continue;
             }
             // `PlayerBeAttacked` → `GM_MSG_MASTER_ASK_HELP` (`player.cpp:9519`).
@@ -2677,7 +2890,7 @@ impl WorldInstance {
                 max_hp,
                 marca,
             });
-            self.adiar_golpe_no_jogador(player_id, monstro_id, damage as i64, fisico, atraso);
+            self.adiar_golpe_no_jogador(player_id, monstro_id, damage as i64, fisico, de_longe, atraso);
         }
 
         // 3. Autosave periódico (a cada 60 s): aqui só se **tira a fotografia**, com o mundo
@@ -2876,13 +3089,13 @@ pub mod erro_de_mascote {
 impl WorldInstance {
     /// O mascote de combate ativo de um dono.
     pub fn mascote_de(&self, dono: i64) -> Option<&crate::mascote::Mascote> {
-        self.mascotes.values().find(|m| m.dono == dono)
+        self.mascotes.values().find(|m| m.dono == dono && m.planta.is_none())
     }
 
     fn id_do_mascote_de(&self, dono: i64) -> Option<i64> {
         self.mascotes
             .iter()
-            .find(|(_, m)| m.dono == dono)
+            .find(|(_, m)| m.dono == dono && m.planta.is_none())
             .map(|(id, _)| *id)
     }
 
@@ -3003,7 +3216,7 @@ impl WorldInstance {
         .ok()
     }
 
-    fn tirar_mascote(&mut self, id: i64) -> Option<crate::mascote::Mascote> {
+    pub(crate) fn tirar_mascote(&mut self, id: i64) -> Option<crate::mascote::Mascote> {
         let m = self.mascotes.remove(&id)?;
         self.grid.remove_entity(id);
         for p in self.players.values_mut() {
@@ -3216,12 +3429,28 @@ impl WorldInstance {
                 m.ai.dono_atacou(alvo, max_hp);
             }
         }
+        // `plant_pet_manager::NotifyStartAttack` (`petman.cpp:2441-2453`): a automática põe o alvo
+        // no topo com 2 (`GM_MSG_PET_AUTO_ATTACK`).
+        for id in self.plantas_de(dono as i64) {
+            if let Some(m) = self.mascotes.get_mut(&id).filter(|m| m.ai.agressividade == crate::mascote::AGRESSIVIDADE_AUTOMATICA) {
+                m.ai.por_no_topo(alvo, 2);
+            }
+        }
     }
 
     fn mascote_do_dono_ajuda(&mut self, dono: i64, atacante: i64) {
         if let Some(id) = self.id_do_mascote_de(dono) {
             if let Some(m) = self.mascotes.get_mut(&id).filter(|m| !m.ornamental) {
                 m.ai.dono_apanhou(atacante);
+            }
+        }
+        // `PlayerBeAttacked` (`petman.cpp:2455-2467`) → `GM_MSG_MASTER_ASK_HELP`: a automática
+        // ganha 2 de ódio em quem bateu.
+        if self.monsters.contains_key(&atacante) {
+            for id in self.plantas_de(dono) {
+                if let Some(m) = self.mascotes.get_mut(&id).filter(|m| m.ai.agressividade == crate::mascote::AGRESSIVIDADE_AUTOMATICA) {
+                    m.ai.ajudar_o_dono(atacante);
+                }
             }
         }
     }
@@ -3286,6 +3515,11 @@ impl WorldInstance {
     }
 
     fn aplicar_dano_no_mascote(&mut self, alvo: i64, atacante: i64, dano: i64, com_odio: bool) {
+        self.aplicar_dano_no_mascote_com(alvo, atacante, dano, com_odio, None);
+    }
+
+    /// `antes_do_grau`: o `damage_entry × damage_adjust` do golpe, quando se sabe (B225).
+    fn aplicar_dano_no_mascote_com(&mut self, alvo: i64, atacante: i64, dano: i64, com_odio: bool, antes_do_grau: Option<f32>) {
         let Some(m) = self.mascotes.get_mut(&alvo) else {
             return;
         };
@@ -3295,11 +3529,21 @@ impl WorldInstance {
         }
         let dano = crate::efeitos::dano_recebido(&mut m.corpo.efeitos, dano as i32) as i64;
         m.corpo.hp = (m.corpo.hp - dano).max(0);
+        // `filter_Transportdamagetoleader::AdjustDamage` (só no golpe): o dono perto paga parte.
+        let transporte = if com_odio { m.corpo.efeitos.transporte_ao_dono().map(|t| (t, m.dono, m.corpo.position)) } else { None };
         // Apanhar dá ódio de quem bateu, salvo congelado (`HandleAttackMsg`) — o golpe, não o
         // `BeHurt` do tique nem do dano direto.
         if com_odio {
             m.ai.apanhou(atacante, dano);
         }
+        if let Some(((ratio, alcance), dono, pos)) = transporte {
+            // `(soma do damage_entry) × damage_adjust × _ratio` (`skillfilter.h:12363`): o golpe
+            // depois da defesa e do crítico, antes do grau. Sem o valor (caminho que não o traz),
+            // o dano que caiu.
+            let base = antes_do_grau.unwrap_or(dano as f32);
+            self.drenar_o_dono(dono, atacante, pos, (base * ratio) as i32, alcance);
+        }
+        let Some(m) = self.mascotes.get_mut(&alvo) else { return };
         if m.corpo.hp == 0 {
             if let Some(f) = m.corpo.efeitos.renascer(rand::random::<u32>() as i32 % 100) {
                 m.corpo.hp = ((m.corpo.max_hp as f32 * f) as i64).max(1);
@@ -3312,6 +3556,15 @@ impl WorldInstance {
             }
         }
         if m.corpo.hp > 0 {
+            return;
+        }
+        // A planta: `gpet_plant_imp::NotifyDeathToMaster` → `PlantDeath` (`petman.cpp:2469-2484`):
+        // some e o dono ouve `PLANT_DEATH`, sem jaula.
+        if m.planta.is_some() {
+            m.corpo.is_dead = true;
+            let dono = m.dono as RoleId;
+            self.tirar_mascote(alvo);
+            self.emitir(EventoDoMundo::PlantaMorreu { id: alvo, dono, matador: atacante });
             return;
         }
         // `gpet_imp::OnDeath` → `NotifyDeathToMaster` → `OnPetDeath` + `PetDeath`
@@ -3340,6 +3593,7 @@ impl WorldInstance {
         if self.mascotes.is_empty() {
             return;
         }
+        self.batimento_das_plantas(delta_ms);
         let dados = Arc::clone(&self.data_manager);
         // Os alvos possíveis: o que cada mascote odeia, com posição e corpo.
         let mut alvos: HashMap<i64, (pw_core::Vector3, bool, MonsterEntity)> = HashMap::new();
@@ -3359,6 +3613,10 @@ impl WorldInstance {
             .collect();
         let mut trocas = Vec::new();
         for (id, m) in self.mascotes.iter_mut() {
+            // A planta fica onde nasceu.
+            if m.planta.is_some() {
+                continue;
+            }
             let Some(c) = camadas.get(&m.dono).copied() else { continue };
             if c == m.camada_do_dono {
                 continue;
@@ -3424,6 +3682,12 @@ impl WorldInstance {
                 acoes.push((*id, a));
             }
             if let Some(modelo) = dados.modelos_de_mascote.get(&(m.info.pet_tid as u32)) {
+                // A planta regenera igual, mas avisa o dono pelo dela (`batimento_das_plantas`)
+                // e não tem fome nem jaula.
+                if m.planta.is_some() {
+                    m.batimento(modelo, delta_ms);
+                    continue;
+                }
                 let antes = m.batimentos();
                 if m.batimento(modelo, delta_ms) {
                     avisos.push((
@@ -3513,6 +3777,10 @@ impl WorldInstance {
                     });
                     self.adiar_dano(alvo, id, dano as i64, atraso, false);
                 }
+                A::Reposicionar | A::Sumir if self.mascotes.get(&id).is_some_and(|m| m.planta.is_some()) => {
+                    // `gpet_plant_imp::PetRelocatePos(true)` → `PlantDisappear` (`PLANT_OUT_OF_RANGE`).
+                    self.remover_planta(id, crate::planta::FORA_DO_ALCANCE);
+                }
                 A::Reposicionar => {
                     let Some(dono) = self.mascotes.get(&id).map(|m| m.dono) else {
                         continue;
@@ -3575,12 +3843,13 @@ impl WorldInstance {
                     habilidade: h,
                     alvo,
                 } => {
-                    let Some((dono, slot)) =
-                        self.mascotes.get(&id).map(|m| (m.dono as RoleId, m.slot))
+                    let Some((dono, slot, planta)) =
+                        self.mascotes.get(&id).map(|m| (m.dono as RoleId, m.slot, m.planta.is_some()))
                     else {
                         continue;
                     };
-                    if h.recarga_ms > 0 {
+                    // A recarga da planta não vai à jaula do dono (ela não tem slot).
+                    if h.recarga_ms > 0 && !planta {
                         self.emitir(EventoDoMundo::RecargaDoMascote {
                             dono,
                             slot,
@@ -3597,7 +3866,7 @@ impl WorldInstance {
                     });
                 }
                 A::HabilidadeEmRecarga => {
-                    if let Some(dono) = self.mascotes.get(&id).map(|m| m.dono as RoleId) {
+                    if let Some(dono) = self.mascotes.get(&id).filter(|m| m.planta.is_none()).map(|m| m.dono as RoleId) {
                         self.emitir(EventoDoMundo::ErroDoMascote {
                             dono,
                             erro: crate::mascote::ERRO_HABILIDADE_EM_RECARGA,
@@ -3608,3 +3877,7 @@ impl WorldInstance {
         }
     }
 }
+
+/// `C2S::MOVE_MODE_KNOCK` / `MOVE_MODE_PULL` (`common/protocol.h:4528`, `:4532`).
+const MOVE_MODE_KNOCK: u8 = 0x05;
+const MOVE_MODE_PULL: u8 = 0x09;

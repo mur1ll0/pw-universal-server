@@ -209,6 +209,23 @@ pub trait WorldProtocol: Send + Sync {
         None
     }
 
+    /// Até quantos bytes do nome de quem fabricou vão na marca do item produzido: o
+    /// `MAX_USERNAME_LENGTH` 40 do 1.5.5 (`player.cpp:16509-16513`). O 1.2.6 sobrescreve (B224).
+    fn tamanho_do_nome_do_fabricante(&self) -> usize {
+        pw_core::TAMANHO_MAXIMO_DO_NOME
+    }
+
+    /// Os avisos da planta invocada (293–295, B222). Só o 1.5.5 tem planta; o 1.2.6 sobrescreve.
+    fn summon_plant_pet(&self, tid: i32, id: i32, vida_s: i32) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::summon_plant_pet(tid, id, vida_s))
+    }
+    fn plant_pet_disappear(&self, id: i32, motivo: u8) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::plant_pet_disappear(id, motivo))
+    }
+    fn plant_pet_hp_notify(&self, id: i32, hp_factor: f32, hp: i32, mp_factor: f32, mp: i32) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::plant_pet_hp_notify(id, hp_factor, hp, mp_factor, mp))
+    }
+
     /// ELF_EXP (283): clientes anteriores ao comando podem omitir a notificação.
     fn elf_exp(&self, exp: i32) -> Option<S2CGamedataSend> {
         Some(S2CGamedataSend::elf_exp(exp))

@@ -2086,6 +2086,62 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `OBJECT_CAST_INSTANT_SKILL` (178) — `cmd_object_cast_instant_skill { int caster; int
+    /// target; int skill; u8 level }`, 13 bytes (`EC_GPDataType.h:3105-3111`; o servidor escreve
+    /// `id, target.id, skill, level`, `common/protocol_imp.h:2510-2519`). É a única coisa que a
+    /// habilidade **instantânea** manda (`SkillWrapper::InstantSkill`, `cskill/skill/
+    /// skillwrapper.cpp:378-381`, a todos pelo `AutoBroadcastCSMsg`, `gs/player.cpp:5014-5021`):
+    /// o cliente só toca a animação (`PlaySkillCastAction`, `EC_HostMsg.cpp:6138-6158`), sem
+    /// trabalho de feitiço — quem conjura **continua andando**. O `gs` 1.2.6 monta igual
+    /// (`Make<object_cast_instant_skill>::From`, VA 0x8091870: `push 0xb2`, três `int` e o byte).
+    /// `target` 0 quando o pedido não traz alvo.
+    pub fn object_cast_instant_skill(caster: i32, target: i32, skill_id: i32, skill_level: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(178);
+        stream.write_i32_le(caster);
+        stream.write_i32_le(target);
+        stream.write_i32_le(skill_id);
+        stream.write_u8(skill_level);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `SUMMON_PLANT_PET` (293) — `cmd_summon_plant_pet { int plant_tid; int plant_nid; int
+    /// life_time }`, 12 B (`EC_GPDataType.h`; o servidor escreve `player_summon_plant_pet`,
+    /// `common/protocol.h:3261-3267`). O cliente põe a planta no `PetCorral`
+    /// (`CECPetCorral::PlantPetEnter`, `EC_HostMsg.cpp:5536-5541`). `life_time` 0 = sem fim.
+    pub fn summon_plant_pet(plant_tid: i32, plant_id: i32, life_time: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(293);
+        stream.write_i32_le(plant_tid);
+        stream.write_i32_le(plant_id);
+        stream.write_i32_le(life_time);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLANT_PET_DISAPPEAR` (294) — `cmd_plant_pet_disapper { int plant_nid; char reason }`,
+    /// 5 B (`common/protocol.h:3269-3274`): 0 morte, 1 vida acabou, 2 fora do alcance, 3
+    /// explodiu, 4 limite do grupo (`plant_pet_manager`, `gs/petman.h:363-370`).
+    pub fn plant_pet_disappear(plant_id: i32, reason: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(294);
+        stream.write_i32_le(plant_id);
+        stream.write_u8(reason);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLANT_PET_HP_NOTIFY` (295) — `cmd_plant_pet_hp_notify { int plant_nid; float hp_factor;
+    /// int cur_hp; float mp_factor; int cur_mp }`, 20 B (`common/protocol.h:3276-3283`).
+    pub fn plant_pet_hp_notify(plant_id: i32, hp_factor: f32, hp: i32, mp_factor: f32, mp: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(295);
+        stream.write_i32_le(plant_id);
+        stream.write_f32_le(hp_factor);
+        stream.write_i32_le(hp);
+        stream.write_f32_le(mp_factor);
+        stream.write_i32_le(mp);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// Cria o comando SKILL_PERFORM (Comando 88) liberando o jogador do estado de conjuração
     pub fn skill_perform() -> Self {
         let mut stream = OctetsStream::new();

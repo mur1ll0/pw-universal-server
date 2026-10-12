@@ -106,6 +106,11 @@ pub enum AcaoDoMonstro {
         alvo: i64,
         dano: i32,
         fisico: i32,
+        /// `short_range > 0`: o monstro de longe (`attack_range > 6`, `short_range_mode`,
+        /// `npcgenerator.cpp:1972`).
+        de_longe: bool,
+        /// O dano antes do grau (B225), para os filtros do alvo que olham o `damage_entry`.
+        antes_do_grau: Option<f32>,
         /// O `attack_state` do golpe ([`crate::combat::Resultado::marca`]).
         marca: i32,
     },
@@ -790,6 +795,65 @@ impl MonsterAi {
         ia
     }
 
+    /// `object_interface::BeTaunted` → `aggro_policy::BeTaunted` (`ainpc.h:231-243`) com o
+    /// `aggro_list::AddToFrist` (`aggrolist.cpp`): lista vazia, `rage` (ou 3 com zero); senão quem
+    /// provoca fica com o ódio do primeiro **mais** `rage` — vai ao topo — e o `_cur_time` volta ao
+    /// `aggro_time`. É o `SetAssault` (Mordida Violenta 150, Desafio do Tigre 185 — B221). Voltando
+    /// para casa não aceita, como o `add_threat`.
+    pub fn provocar(&mut self, quem: i64, rage: i64) {
+        if matches!(self.sessao, Sessao::Voltando) {
+            return;
+        }
+        let rage = rage.max(0);
+        let novo = match self.get_highest_threat_target() {
+            None => {
+                if rage == 0 {
+                    3
+                } else {
+                    rage
+                }
+            }
+            Some(primeiro) => self.aggro_table.get(&primeiro).copied().unwrap_or(0) + rage,
+        };
+        self.aggro_table.insert(quem, novo);
+        self.renovar_odio = true;
+    }
+
+    /// `object_interface::BreakCurAction` → `TryStopCurSession` (`obj_interface.cpp:2819-2823`,
+    /// `actobject.cpp:1156-1163`): a sessão em curso acaba — o canto de habilidade também, sem aviso
+    /// ao cliente (`session_npc_skill::EndSession`, `npcsession.cpp:749-761`). A Ira do Tigre (149).
+    pub fn interromper_sessao(&mut self) {
+        if matches!(self.combate, Combate::Conjurando { .. } | Combate::Serie(_) | Combate::Afastando { .. }) {
+            self.combate = Combate::Nenhum;
+        }
+    }
+
+    /// `aggro_list::RemoveRage(src, dest, ratio)` (`aggrolist.cpp:129-144`): tira `(int)(ódio de src
+    /// × ratio)` de `src` e, se `dest` é outro, dá a ele. Do `SetRemoveaggro` (B222).
+    pub fn tirar_odio(&mut self, src: i64, dest: i64, ratio: f32) {
+        let Some(&r) = self.aggro_table.get(&src) else { return };
+        let tirado = (r as f32 * ratio) as i64;
+        if tirado == 0 {
+            return;
+        }
+        let resto = (r - tirado).max(0);
+        if resto == 0 {
+            self.aggro_table.remove(&src);
+        } else {
+            self.aggro_table.insert(src, resto);
+        }
+        if src != dest {
+            *self.aggro_table.entry(dest).or_insert(0) += tirado;
+        }
+    }
+
+    /// Depois do `KnockBack` o monstro está noutro lugar: o caminho em curso não vale mais
+    /// (`StepMove` muda a posição por fora da sessão de andar).
+    pub fn empurrado(&mut self) {
+        self.seguir = None;
+        self.parado = true;
+    }
+
     /// Está conjurando (a sessão de habilidade ocupa o monstro).
     pub fn conjurando(&self) -> bool {
         matches!(self.combate, Combate::Conjurando { .. })
@@ -1373,6 +1437,7 @@ impl MonsterAi {
         // Golpe que erra é resultado legítimo, e o `dano()` devolve zero nele.
         let mut fisico = 0;
         let mut marca = 0;
+        let mut antes_do_grau = None;
         let dano = match (alvo.jogador, alvo.mascote) {
             (Some(p), _) => {
                 let golpe = crate::combat::CombatEngine::golpe_de_monstro(monster);
@@ -1386,28 +1451,33 @@ impl MonsterAi {
                 // `AdjustDamage` só roda no golpe que acertou, e os espinhos saem com
                 // `short_range > 0` — o monstro de longe, `attack_range > 6`
                 // (`short_range_mode`, `npcgenerator.cpp:1972`; `monstros.rs`).
-                if matches!(r, crate::combat::Resultado::Acertou { .. })
-                    && monster.attack_range <= 6.0
-                {
+                // B221: o físico vai sempre que acertou — os espinhos de alma (`Soulretort2`)
+                // valem de longe; o `de_longe` separa os do `Retort`.
+                if matches!(r, crate::combat::Resultado::Acertou { .. }) {
                     fisico = golpe.dano_fisico;
                 }
                 marca = r.marca();
                 r.dano()
             }
-            (None, Some(m)) => crate::combat::resolver(
-                &crate::combat::CombatEngine::golpe_de_monstro(monster),
-                &crate::combat::CombatEngine::defesa_do_monstro(m),
-                alvo.distancia,
-                false,
-                crate::combat::Rolagens::sortear(),
-            )
-            .dano(),
+            (None, Some(m)) => {
+                let r = crate::combat::resolver(
+                    &crate::combat::CombatEngine::golpe_de_monstro(monster),
+                    &crate::combat::CombatEngine::defesa_do_monstro(m),
+                    alvo.distancia,
+                    false,
+                    crate::combat::Rolagens::sortear(),
+                );
+                antes_do_grau = r.antes_do_grau();
+                r.dano()
+            }
             (None, None) => 0,
         };
         Some(AcaoDoMonstro::Atacou {
             alvo: alvo.id,
             dano,
             fisico,
+            de_longe: monster.attack_range > 6.0,
+            antes_do_grau,
             marca,
         })
     }
@@ -2567,4 +2637,21 @@ impl MonsterAi {
 /// `a3dvector_to_dir` (`common/types.h:99`): o ângulo no plano XZ em 256 passos.
 pub fn direcao_do_vetor(x: f32, z: f32) -> u8 {
     ((z.atan2(x) as f64 * (128.0 / std::f64::consts::PI)) as i32 as u32 & 0xFF) as u8
+}
+
+#[cfg(test)]
+mod testes_do_odio_b222 {
+    use super::MonsterAi;
+
+    /// `aggro_list::RemoveRage`: tira a fração de quem lança e dá ao destino (o dono).
+    #[test]
+    fn tirar_odio_passa_ao_destino() {
+        let mut ai = MonsterAi::new();
+        ai.add_threat(10, 100);
+        ai.tirar_odio(10, 20, 0.4);
+        assert_eq!(ai.aggro_table.get(&10), Some(&60));
+        assert_eq!(ai.aggro_table.get(&20), Some(&40));
+        ai.tirar_odio(10, 10, 1.0);
+        assert!(!ai.aggro_table.contains_key(&10), "zerado sai da lista");
+    }
 }

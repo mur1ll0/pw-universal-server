@@ -10,6 +10,35 @@ impl BusServer {
     pub(super) async fn evento_de_mascote(&self, ev: EventoDoMundo) {
         match ev {
             EventoDoMundo::MascoteApareceu { id, dono } => self.anunciar_mascote(id, dono).await,
+            // B222 — a planta: a entrada do NPC a quem vê (como o mascote) e, ao dono, o
+            // `SUMMON_PLANT_PET` em vez da jaula (`plant_pet_manager::ActivePlant`, `petman.cpp:2334`).
+            EventoDoMundo::PlantaApareceu { id, dono, tid, vida_s } => {
+                self.anunciar_mascote(id, dono).await;
+                if let Some(p) = self.sub.summon_plant_pet(tid, id as i32, vida_s) {
+                    self.enviar_ao_jogador(dono, p.data).await;
+                }
+            }
+            EventoDoMundo::PlantaSumiu { id, dono, motivo } => {
+                if let Some(p) = self.sub.plant_pet_disappear(id as i32, motivo) {
+                    self.enviar_ao_jogador(dono, p.data).await;
+                }
+            }
+            EventoDoMundo::PlantaMorreu { id, dono, matador } => {
+                self.transmitir_a_outros(0, S2CGamedataSend::npc_died(id as i32, matador as i32).data).await;
+                self.transmitir_a_outros(0, S2CGamedataSend::object_disappear(id as i32).data).await;
+                if let Some(p) = self.sub.plant_pet_disappear(id as i32, crate::planta::MORREU) {
+                    self.enviar_ao_jogador(dono, p.data).await;
+                }
+            }
+            EventoDoMundo::DrenoNoDono { roleid, atacante, dano } => {
+                // `_runner->be_hurt(attacker, info, dec, false)`.
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::be_hurt(atacante as i32, dano, false).data).await;
+            }
+            EventoDoMundo::VidaDaPlanta { id, dono, fator_hp, hp, fator_mp, mp } => {
+                if let Some(p) = self.sub.plant_pet_hp_notify(id as i32, fator_hp, hp, fator_mp, mp) {
+                    self.enviar_ao_jogador(dono, p.data).await;
+                }
+            }
             EventoDoMundo::MascoteRecolhido { dono, slot, pet_tid, motivo, info, .. } => {
                 // `RecallPetWithoutFree` → `recall_pet(índice, pet_tid, motivo)`
                 // (`petman.cpp:1375`).
@@ -83,11 +112,15 @@ impl BusServer {
             let Some(m) = mundo.mascotes.get(&id) else { return };
             let (pos, tid, vis, dir, nome) = (m.corpo.position, m.info.pet_tid, m.vis_tid, m.ai.direcao, m.nome.clone());
             let ambiente = m.corpo.habitat.estado_de_ambiente();
-            let dono_pacotes = vec![
-                self.sub.summon_pet(m.slot as i32, m.info.pet_tid, id as i32, 0).data,
-                self.sub.pet_ai_state(m.ai.agressividade, m.ai.movimento).data,
-                self.sub.pet_hp_notify(m.slot as i32, m.fator_de_vida(), m.corpo.hp as i32, 0.0, 0).data,
-            ];
+            let dono_pacotes = if m.planta.is_some() {
+                Vec::new()
+            } else {
+                vec![
+                    self.sub.summon_pet(m.slot as i32, m.info.pet_tid, id as i32, 0).data,
+                    self.sub.pet_ai_state(m.ai.agressividade, m.ai.movimento).data,
+                    self.sub.pet_hp_notify(m.slot as i32, m.fator_de_vida(), m.corpo.hp as i32, 0.0, 0).data,
+                ]
+            };
             let ids: Vec<i64> = mundo
                 .players
                 .iter()

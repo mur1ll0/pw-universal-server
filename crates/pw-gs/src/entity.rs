@@ -14,6 +14,38 @@ pub struct ActiveBuff {
     pub value: i32,
 }
 
+/// `EQUIP_INDEX_RUNE_SLOT` (`gs/item.h:213`; `push 0x11` no `OnUseAttackRune` do `gs` 1.2.6, VA
+/// 0x807cd47): o slot do amuleto de dano.
+pub const SLOT_DO_AMULETO_DE_DANO: u16 = 17;
+
+/// O amuleto de dano vestido (`DAMAGERUNE_ESSENCE`, o `_cur_rune` do `item_damage_rune::OnActivate`,
+/// `gs/item/item_rune.cpp:33-39`): `damage_type` 0 físico / 1 mágico, a faixa de nível da arma e o
+/// reforço (`damage_increased`). B226.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AmuletoDeDano {
+    pub tid: u32,
+    pub magico: bool,
+    pub nivel_min: i32,
+    pub nivel_max: i32,
+    pub reforco: i32,
+    pub quantidade: u32,
+}
+
+/// As parcelas do dono que o `gplayer_imp::CalcPetEnhance` (`gs/player.cpp:13488-13513`) soma à
+/// planta/invocação, cada uma × `5 × nível da habilidade`%: `_base_prop.max_hp + GetVitHP(vit dos
+/// addons) + _en_point.max_hp` (a vida antes da porcentagem), o mesmo na mana, o dano mágico alto
+/// (arma + `_en_point` + base), defesa e resistências antes da porcentagem e os graus.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BaseParaMascote {
+    pub vida: i32,
+    pub mana: i32,
+    pub dano_magico: i32,
+    pub defesa: i32,
+    pub resistencias: [i32; 5],
+    pub grau_de_ataque: i32,
+    pub grau_de_defesa: i32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayerEntity {
     pub role_id: RoleId,
@@ -109,6 +141,10 @@ pub struct PlayerEntity {
     /// As passivas comuns conhecidas, somadas ([`crate::efeitos::passivas_comuns`], B203):
     /// valem sempre, as de arma com a classe da arma vestida.
     pub passivas_comuns: crate::efeitos::Realce,
+    /// O que o `CalcPetEnhance` lê do dono para a planta (B222) — ver [`BaseParaMascote`].
+    pub base_para_mascote: BaseParaMascote,
+    /// O amuleto de dano no slot 17, se houver (B226).
+    pub amuleto_de_dano: Option<AmuletoDeDano>,
     /// O marcador da operação de mascote aberta — o `session_pet_operation` do original
     /// (`gs/actsession.h:1203-1246`). Cada `SUMMON_PET`/`RECALL_PET` novo incrementa, e a
     /// tarefa que conclui a canalização só age se o marcador ainda for o dela; é assim que
@@ -377,7 +413,7 @@ pub struct SessaoDeAtaque {
 }
 
 /// A arma empunhada, como `WeaponItemEnhance` a deixa em `_cur_item` (`actobject.h:1111`).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ArmaEmUso {
     /// `weapon_type` 1 (longo alcance) ou 2 (corpo a corpo de agilidade): o dano da arma
     /// cresce com a agilidade; 0, com a força (`UpdateAttack`, `playertemplate.h:925-936`).
@@ -400,6 +436,9 @@ pub struct ArmaEmUso {
 /// (`refine_*`, `SetAddOnEmbedded`, `equip_item.cpp:319-330`, `876-905`).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct BonusDeAddons {
+    /// `_soul_power_en` (`enhance_soulpower_addon`, `item_addon.cpp:1119-1148`: `EnhanceSoulPower(arg[0])`;
+    /// ids 2362 e o conjunto 2834). B223.
+    pub forca_da_alma: i32,
     /// `_en_point.str/agi/vit/eng`.
     pub forca: i32,
     pub agilidade: i32,
@@ -567,6 +606,7 @@ impl BonusDeAddons {
             "enhance_attack_scale_addon" | "enhance_attack_scale_addon_2arg" => self.precisao_pct += v,
             "enhance_defense_scale_addon_2" | "enhance_defense_scale_addon_2_2arg" => self.defesa_pct += v,
             "enhance_exp_addon" => self.experiencia_pct += v,
+            "enhance_soulpower_addon" => self.forca_da_alma += v,
             // B211 — pedras: `EPSA_addon<int, POINT_OFF + offsetof(enhanced_param, addon_damage|resistance)
             // + sizeof(int) × x, POINT>` (`item_addon.cpp:2509-2510`).
             t if t.starts_with("STONE_MAGIC_DMG_ADDON(") || t.starts_with("STONE_MAGIC_RES_ADDON(") => {
@@ -648,6 +688,9 @@ pub struct Equipamento {
     /// `_en_point.flight_speed` do item de voo vestido: o `speed_increase` gravado no
     /// conteúdo dele (`flysword_item::OnActivate`, `gs/item/item_flysword.h:126-129`). Em m/s.
     pub velocidade_de_voo: f32,
+    /// A parte do refino na força da alma (`UpdateBaseSoulPower`, `player_imp.h:3033-3044`):
+    /// `refine_cost[nível]` × 1,5 na arma (slot 0) e × 0,25 nas outras peças, cada uma truncada.
+    pub alma_do_refino: i32,
     /// O tipo da munição **ativa** no slot 11, se alguma: `projectile_equip_item::
     /// VerifyRequirement` (`gs/item/equip_item.cpp:1251-1271`) — arma ativa, tipo igual ao
     /// `require_projectile` dela e o `weapon_level` na faixa da flecha. Só ativa ela soma o
@@ -739,6 +782,12 @@ impl Equipamento {
         // B209 — `ActivateSetAddon(id)` (`actobject.h:526-535`): quantas peças vestidas trazem
         // cada efeito de conjunto (o da peça e o da lista do `SUITE_ESSENCE`), com os argumentos.
         let mut de_conjunto: std::collections::BTreeMap<u32, (i32, Vec<i32>)> = Default::default();
+        // `const int refine_cost[13]` (`player_imp.h:3036`).
+        const CUSTO_DO_REFINO: [i32; 13] = [0, 1, 5, 15, 40, 100, 230, 445, 850, 1600, 2970, 5495, 10140];
+        for item in itens {
+            let custo = CUSTO_DO_REFINO[(item.refine_level as usize).min(12)] as f32;
+            e.alma_do_refino += (custo * if item.slot == 0 { 1.5 } else { 0.25 }) as i32;
+        }
         for item in itens {
             // Peça acabada não vale nada: `equip_item::VerifyRequirement` só ativa o item
             // com `_base_limit.durability > 0` (`gs/item/equip_item.cpp:60-80`), e é por
@@ -941,6 +990,19 @@ impl PlayerEntity {
         r.conjuracao + self.passivas_comuns.conjuracao + self.equipamento.addons.conjuracao
     }
 
+    /// `GetPhysicRuneDamage`/`GetMagicRuneDamage` (`gs/actobject.h:1365-1403`): o reforço do
+    /// amuleto do tipo pedido quando o nível da arma (`_cur_item.weapon_level`; 0 sem arma) está na
+    /// faixa dele; 0 senão. Quem usa o valor gasta uma carga (`OnUseAttackRune`).
+    pub fn reforco_do_amuleto(&self, magico: bool) -> i32 {
+        let Some(a) = self.amuleto_de_dano.filter(|a| a.quantidade > 0 && a.nivel_min != 0) else { return 0 };
+        let nivel = self.equipamento.arma.map(|w| w.nivel).unwrap_or(0);
+        if a.magico == magico && (a.nivel_min..=a.nivel_max).contains(&nivel) {
+            a.reforco
+        } else {
+            0
+        }
+    }
+
     pub fn recalcular_por_nivel(&mut self, classes: &TabelaDeClasses, base: Option<&TabelaDeBase>) {
         let Some(a) = atributos_de_nivel(
             self.cls as i32,
@@ -998,8 +1060,9 @@ impl PlayerEntity {
             // B203: `EnhanceHPGen`/`EnhanceMPGen` das passivas somam pontos (`_en_point`).
             // `Result2(..., en_percent.hp_gen, 0)` (`playertemplate.h:874-894`; B209).
             let result2 = |base: i32, pct: i32| ((base as f32 * 0.01 * (pct + 100) as f32 + 0.5) as i32).max(0);
-            self.hp_gen = result2(vida + vit / 5 + r.regen_vida, b.regen_vida_pct);
-            self.mp_gen = result2(mana + eng / 10 + r.regen_mana, b.regen_mana_pct);
+            // `Noregain`: `ImpairScaleHPGen/MPGen(2000)` no mesmo `en_percent` (B220).
+            self.hp_gen = result2(vida + vit / 5 + r.regen_vida, b.regen_vida_pct + r.regen_pct);
+            self.mp_gen = result2(mana + eng / 10 + r.regen_mana, b.regen_mana_pct + r.regen_pct);
         }
 
         // `UpdateAttack` (`playertemplate.h:916-990`).
@@ -1073,7 +1136,7 @@ impl PlayerEntity {
                 resultado(
                     a.resistencia,
                     *x + b.resistencia + b.resistencias[i],
-                    res_pct + r.resistencia + b.resistencia_pct + b.resistencias_pct[i],
+                    res_pct + r.resistencia + r.resistencias[i] + b.resistencia_pct + b.resistencias_pct[i],
                 ) + res_pontos
             })
             .collect();
@@ -1096,6 +1159,18 @@ impl PlayerEntity {
         // `_attack_degree`/`_defend_degree` dos addons.
         self.attack_degree = b.grau_de_ataque;
         self.defend_degree = b.grau_de_defesa;
+        // B222: as parcelas do `CalcPetEnhance`, antes das porcentagens.
+        self.base_para_mascote = BaseParaMascote {
+            vida: a.max_hp + e.vida + b.vida,
+            mana: a.max_mp + e.mana + b.mana,
+            dano_magico: a.dano_magico + magico_extra + b.dano_magico_maximo + magico_max,
+            defesa: a.defesa + e.defesa + b.defesa,
+            resistencias: std::array::from_fn(|i| {
+                a.resistencia + e.resistencias.get(i).copied().unwrap_or(0) + b.resistencia + b.resistencias[i]
+            }),
+            grau_de_ataque: b.grau_de_ataque,
+            grau_de_defesa: b.grau_de_defesa,
+        };
         if let Some(cfg) = cfg {
             self.armor = resultado(cfg.evasao_base(agi), e.evasao + b.evasao, r.evasao);
             // `(base.attack + base_attack + en_point.attack) × (100 + en_percent.attack)%`.
@@ -1585,6 +1660,8 @@ impl PlayerEntity {
             forma_enviada: None,
             passivas_de_forma: Default::default(),
             passivas_comuns: Default::default(),
+            base_para_mascote: Default::default(),
+            amuleto_de_dano: None,
             operacao_de_pet: 0,
             // A escolha sobrevive ao logout: vem do `charactermode` do banco, como o
             // `SetPlayerCharMode` do original faz no login (B83).

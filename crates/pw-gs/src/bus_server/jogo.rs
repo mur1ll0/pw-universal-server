@@ -1343,6 +1343,16 @@ impl BusServer {
         // O privilégio foi consumido no contexto sob o lock do mundo. Soltar a guarda
         // antes das persistências evita reter o lock de conta durante I/O de itens/ficha.
         if let Some(autorizacao) = autorizacao_gm { let _ = autorizacao.rollback().await; }
+        // B224 — as bolsas **antes** dos avisos: quem recebe um item novo (o `PRODUCE_ONCE`, o
+        // `TASK_DELIVER_ITEM`, a compra) pede o detalhe na hora (`c2s_CmdGetItemInfo`,
+        // `EC_HostMsg.cpp:1224-1236`), e o `GET_ITEM_INFO` lê do banco. Gravando depois, o pedido
+        // chegava antes e ficava sem resposta: a Calça de Couro de Dragão costurada pela Tsuko
+        // aparecia sem bloco (durabilidade 0, classe vermelha, sem atributos) até relogar.
+        for b in &mut bolsas {
+            if let Err(e) = b.gravar(&itens_repo).await {
+                warn!("mundo: não consegui gravar a bolsa de {roleid}: {e}");
+            }
+        }
         for c in para_mim {
             self.enviar_ao_jogador(roleid, c).await;
         }
@@ -1370,12 +1380,7 @@ impl BusServer {
             }
         }
 
-        // Grava: bolsas primeiro (são o que o próximo pedido vai ler), o resto numa tarefa.
-        for b in &mut bolsas {
-            if let Err(e) = b.gravar(&itens_repo).await {
-                warn!("mundo: não consegui gravar a bolsa de {roleid}: {e}");
-            }
-        }
+        // As bolsas já foram gravadas acima; o resto numa tarefa.
         if let Some((slot, bloco)) = daimon {
             match itens_repo
                 .get_item_by_slot(roleid, ContainerType::Equipment, slot)
@@ -2500,6 +2505,24 @@ impl BusServer {
                 .filter(|antes| *antes != visivel)
                 .map(|antes| diferenca_de_equipamento(&antes, &visivel));
             let crc = p.crc_equipamento;
+            // B226 — o amuleto de dano do slot 17 (`item_damage_rune::OnActivate`): o que o
+            // `DAMAGERUNE_ESSENCE` dele diz, com a pilha que está vestida.
+            p.amuleto_de_dano = itens
+                .iter()
+                .find(|i| i.slot == crate::entity::SLOT_DO_AMULETO_DE_DANO && i.count > 0)
+                .and_then(|i| {
+                    let g = dados.elements_generic.as_ref()?;
+                    let r = g.get("DAMAGERUNE_ESSENCE").iter().find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(i.item_id as i32))?;
+                    let v = |c: &str| r.get(c).and_then(|x| x.as_i32()).unwrap_or(0);
+                    Some(crate::entity::AmuletoDeDano {
+                        tid: i.item_id as u32,
+                        magico: v("damage_type") != 0,
+                        nivel_min: v("require_weapon_level_min"),
+                        nivel_max: v("require_weapon_level_max"),
+                        reforco: v("damage_increased"),
+                        quantidade: i.count,
+                    })
+                });
             p.pecas = [None; crate::entity::PECAS_VESTIDAS];
             for item in &itens {
                 let slot = item.slot as usize;

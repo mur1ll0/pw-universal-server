@@ -184,6 +184,9 @@ pub struct Mascote {
     ///   bênção/maldição, comando, ódio, ataque automático e pedido de ajuda, e não se anuncia
     ///   aos monstros (`PeepEnemy` vazio). Só segue o dono.
     pub ornamental: bool,
+    /// Planta invocada (`PET_CLASS_PLANT`, B222): fora da jaula, com vida contada e o grupo —
+    /// ver [`crate::planta`]. `None` no mascote de combate e no ornamental.
+    pub planta: Option<crate::planta::Planta>,
     pub combate_avisado: bool,
     pub batimentos_sem_aviso: u32,
     batimento_ms: u32,
@@ -211,6 +214,7 @@ impl Mascote {
             nome,
             vida_avisada: -1,
             ornamental: modelo.classe == pw_core::PET_CLASS_FOLLOW,
+            planta: None,
             combate_avisado: false,
             batimentos_sem_aviso: 0,
             batimento_ms: 0,
@@ -252,6 +256,11 @@ impl Mascote {
         self.batimentos_dados += 1;
         if self.corpo.hp < self.corpo.max_hp {
             self.corpo.hp = (self.corpo.hp + regeneracao(modelo, self.corpo.level)).min(self.corpo.max_hp);
+        }
+        // `GenHPandMP` também na mana: só a planta tem (`GenerateBaseProp2`, `max_mp/2` ao nascer).
+        if self.corpo.mp < self.corpo.max_mp {
+            let m = modelo.regeneracao_de_mana(self.corpo.level.max(1)).max(0);
+            self.corpo.mp = (self.corpo.mp + m).min(self.corpo.max_mp);
         }
         self.batimentos_sem_aviso += 1;
         let combate = self.ai.em_combate();
@@ -561,6 +570,13 @@ pub struct HabilidadeDoMascote {
     pub mana: i32,
 }
 
+impl TarefaDeHabilidade {
+    /// `AddAutoCastSkill(alvo)` — com as duas perseguições do `ai_skill_task_2`.
+    pub fn nova(habilidade: HabilidadeDoMascote, alvo: Option<i64>) -> Self {
+        Self { habilidade, alvo, rastros: 2 }
+    }
+}
+
 impl HabilidadeDoMascote {
     pub fn recarga(&self) -> i32 {
         self.id + COOLINGID_BEGIN
@@ -648,6 +664,12 @@ pub struct MascoteAi {
     /// De quem é a sessão de movimento em curso: cada tarefa (golpe, habilidade, seguir o dono,
     /// ficar no ponto) cria a sua `session_npc_follow_target`, com agente novo (B136).
     sessao_de: Option<Meta>,
+    /// Planta (`gpet_plant_policy`, B222): as cercas são as dela e ela nunca segue o dono.
+    pub e_planta: bool,
+    /// Velocidade zero (`speed_a` 0 no `PET_ESSENCE` de quase todas as plantas): o
+    /// `follow_target` não sai do lugar. A tarefa de habilidade conta as duas perseguições e
+    /// conjura de onde está (`ai_skill_task_2`).
+    pub imovel: bool,
 }
 
 /// O que a sessão de movimento do mascote persegue.
@@ -688,7 +710,34 @@ impl MascoteAi {
             altura_ao_seguir: 0.0,
             golpeando: false,
             sessao_de: None,
+            e_planta: false,
+            imovel: false,
         }
+    }
+
+    /// `aggro_policy::AddToFirst(quem, rage)` (`aggro_list::AddToFrist`): lista vazia, `rage` (3
+    /// com zero); senão o primeiro mais `rage`. O `GM_MSG_PET_AUTO_ATTACK` da planta automática
+    /// com rage 2 (`gpet_plant_imp::MessageHandler`, `petnpc.cpp:1931-1955`; `ActivePlant`,
+    /// `petman.cpp:2336-2340`).
+    pub fn por_no_topo(&mut self, quem: i64, rage: i64) {
+        let topo = self.odio.values().copied().max();
+        let novo = match topo {
+            None => {
+                if rage == 0 {
+                    3
+                } else {
+                    rage
+                }
+            }
+            Some(t) => t + rage,
+        };
+        self.odio.insert(quem, novo);
+    }
+
+    /// `AddAggro(quem, 2, 2)` do `GM_MSG_MASTER_ASK_HELP` da planta automática
+    /// (`petnpc.cpp:1913-1930`): o dono apanhou.
+    pub fn ajudar_o_dono(&mut self, quem: i64) {
+        *self.odio.entry(quem).or_insert(0) += 2;
     }
 
     /// A recarga pronta (`gpet_imp::CheckCoolDown`)?
@@ -824,7 +873,13 @@ impl MascoteAi {
             self.batimento_ms -= 1000;
             let d2 = (corpo.position.x - dono.x).powi(2) + (corpo.position.z - dono.z).powi(2);
             let h = (corpo.position.y - dono.y).abs();
-            if self.em_combate() {
+            if self.e_planta {
+                // `gpet_plant_policy::OnHeartbeat` (`petnpc.cpp:2058-2068`): longe demais, a planta
+                // some (`PetRelocatePos(true)`).
+                if h > 60.0 || d2 >= 3600.0 || (d2 < 36.0 && h > 40.0) {
+                    return Some(AcaoDoMascote::Sumir);
+                }
+            } else if self.em_combate() {
                 if h > 60.0 || d2 >= 3600.0 || (d2 < 36.0 && h > 40.0) {
                     return Some(AcaoDoMascote::Reposicionar);
                 }
@@ -948,7 +1003,7 @@ impl MascoteAi {
         // `session_npc_follow_target::SetTarget(dono, 0.8, 62, 1.0)` (`aipolicy.cpp:1828-1838`):
         // a sessão acaba com parada quando a distância (3D, `squared_distance`) fica abaixo de
         // 0,8 m; até lá o agente persegue com meta de 1,0 m. Sem sessão, o mascote fica parado.
-        if !self.seguindo {
+        if !self.seguindo || self.e_planta {
             return (!self.parado).then(|| AcaoDoMascote::Moveu(self.parar(corpo, MODO_CORRER)));
         }
         let d3 = ((corpo.position.x - dono.x).powi(2) + (corpo.position.y - dono.y).powi(2) + (corpo.position.z - dono.z).powi(2)).sqrt();
@@ -1068,7 +1123,7 @@ impl MascoteAi {
     /// de `WORK_MOVE` (`CECNPC::MoveTo`, `EC_NPC.cpp:1048-1053`); parar a cada passo que
     /// alcançava a meta fazia o som do mascote recomeçar enquanto ele seguia o dono (B114).
     fn mover_ate(&mut self, corpo: &mut MonsterEntity, meta: Vector3, alcance: f32, mapa: &Mapa) -> Option<AcaoDoMascote> {
-        if self.espera_ms > 0 {
+        if self.espera_ms > 0 || self.imovel {
             return None;
         }
         // Preso (`SetSealMode(root)`): `if(_imp->IsRootMode()) return 0` no `follow_target`
@@ -1322,6 +1377,12 @@ mod tests {
             imunidade: 0,
             nivel_maximo: 150,
             nivel_exigido: 2,
+            mana: 0.0,
+            regen_mana: 0.0,
+            grau_de_ataque: 0.0,
+            grau_de_defesa: 0.0,
+            grupo_de_planta: 0,
+            limite_do_grupo: 0,
         }
     }
 
@@ -1550,6 +1611,7 @@ mod tests {
             absorve: 0.0,
             escala_defesa: 0,
             fator_de_habilidade: 0.0,
+            mascara: None,
         }
     }
 

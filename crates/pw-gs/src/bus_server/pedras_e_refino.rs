@@ -363,11 +363,11 @@ fn refinar_item(
     }
     // `RemoveItems(material_id, material_need, DROP_TYPE_USE, true)`.
     for (slot, n) in ctx.bolsa.tirar(refino::PEDRA_CELESTIAL, alvo.material as u32) {
-        ctx.para_mim.push(S2CGamedataSend::player_drop_item(0, slot as u8, n, refino::PEDRA_CELESTIAL as i32, DESCARTE_POR_USO).data);
+        ctx.para_mim.push(ctx.sub.player_drop_item(0, slot as u8, n, refino::PEDRA_CELESTIAL as i32, DESCARTE_POR_USO).data);
     }
     if let Some(rt) = talisma_id {
         ctx.bolsa.tirar_do_slot(talisma as usize, 1);
-        ctx.para_mim.push(S2CGamedataSend::player_drop_item(0, talisma as u8, 1, rt as i32, DESCARTE_POR_USO).data);
+        ctx.para_mim.push(ctx.sub.player_drop_item(0, talisma as u8, 1, rt as i32, DESCARTE_POR_USO).data);
     }
     ctx.mudou = true;
     Some((resultado, antes))
@@ -400,7 +400,7 @@ fn furar_item(ctx: &mut jogo::Contexto, indice: usize, mut item: ItemRecord) -> 
             continue;
         }
         for (slot, saiu) in ctx.bolsa.tirar(m, n) {
-            ctx.para_mim.push(S2CGamedataSend::player_drop_item(0, slot as u8, saiu, m as i32, DESCARTE_DE_MISSAO).data);
+            ctx.para_mim.push(ctx.sub.player_drop_item(0, slot as u8, saiu, m as i32, DESCARTE_DE_MISSAO).data);
         }
     }
     ctx.para_mim.push(S2CGamedataSend::error_message(erro::FURO_FEITO).data);

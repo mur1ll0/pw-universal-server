@@ -120,6 +120,59 @@ pub struct Mapa<'a> {
 }
 
 impl Mapa<'_> {
+    /// `CNPCMoveMap::GetLastReachablePos` (`pathfinding/NPCMoveMap.cpp:518-583`), o do
+    /// `GetKnockBackPos` de chão (`pathfinding.cpp:67-79`): anda de `de` a `ate` em passos de 1 m
+    /// no eixo maior e para no último ponto alcançável; chegando ao fim, fica no fim. O laço só
+    /// olha o `x` (com `x` igual, já fica no fim, como no original). A altura vai ao chão
+    /// (`Get3DPosOnGround`).
+    pub fn ultimo_ponto_alcancavel(&self, de: V3, ate: V3) -> V3 {
+        let (dx, dz) = (ate.x - de.x, ate.z - de.z);
+        let (adx, adz) = (dx.abs(), dz.abs());
+        let (mut px, mut pz) = if adx > adz { (1.0, adz / adx) } else { (adx / adz, 1.0) };
+        if dx < 0.0 {
+            px = -px;
+        }
+        if dz < 0.0 {
+            pz = -pz;
+        }
+        let (mut cur, mut ultimo) = (de, de);
+        let mut no_fim = true;
+        let alcancavel = |p: V3| self.alcancavel(self.pixel(p));
+        if dx > 0.0 {
+            while cur.x < ate.x {
+                if !alcancavel(cur) {
+                    no_fim = false;
+                    break;
+                }
+                ultimo = cur;
+                cur.x += px;
+                cur.z += pz;
+            }
+        } else {
+            while cur.x > ate.x {
+                if !alcancavel(cur) {
+                    no_fim = false;
+                    break;
+                }
+                ultimo = cur;
+                cur.x += px;
+                cur.z += pz;
+            }
+        }
+        let mut fim = if no_fim { ate } else { ultimo };
+        if let Some(h) = (self.terreno)(fim.x, fim.z) {
+            fim.y = h;
+        }
+        fim
+    }
+
+    /// `CGlobalSPMap::GetLastReachablePos` (`GlobalSPMap.cpp:372-384`): a reta de voxel com o
+    /// teste do ambiente; o ponto é o voxel onde parou (`vStopPos.Set(posStop…)`).
+    pub fn ultimo_ponto_no_espaco(&self, de: V3, ate: V3, amb: Ambiente) -> V3 {
+        let (_, parou) = self.reta_no_espaco(de, ate, Some(amb));
+        V3::new(parou[0] as f32, parou[1] as f32, parou[2] as f32)
+    }
+
     fn pixel(&self, p: V3) -> Pixel {
         self.movimento.pixel_de(p.x, p.z)
     }
