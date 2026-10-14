@@ -205,6 +205,15 @@ def registrar_estudio(app):
         return await _repassar("PUT", f"/admin/{v}/estudio/tabelas/{_tabela(tabela)}/{max(0, indice)}",
                                {"rascunho": rascunho}, dados={"campos": dados["campos"]})
 
+    @app.get("/api/realms/{realm}/estudio/espacos/{espaco}")
+    async def estudio_buscar(realm: str, espaco: str, requisicao: Request, rascunho: int | None = None,
+                             busca: str = "", limite: int = 30):
+        v = await _versao_do_realm(requisicao, realm)
+        if espaco not in ("ESSENCE", "CONFIG", "FACE", "RECIPE", "ADDON", "TALK"):
+            raise HTTPException(404, "Espaço inválido.")
+        return await _repassar("GET", f"/admin/{v}/estudio/espacos/{espaco}", {
+            "rascunho": rascunho, "busca": busca[:100], "limite": max(1, min(limite, 200))})
+
     @app.post("/api/realms/{realm}/estudio/tabelas/{tabela}/{indice}/clonar")
     async def estudio_clonar(realm: str, tabela: str, indice: int, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)

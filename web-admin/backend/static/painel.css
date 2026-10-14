@@ -754,3 +754,12 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .estudio-campos label { font-size: 12px; color: var(--texto-3); word-break: break-all; }
 .estudio-campos .campo.mudou { border-color: var(--ouro); }
 .estudio-cabecalho-ficha { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.estudio-entrada { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.estudio-entrada .campo { flex: 1 1 120px; min-width: 90px; }
+.estudio-ref { font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+.estudio-ref a { color: var(--ouro); }
+.estudio-grupo { border-top: 1px solid var(--borda); padding: 8px 0; }
+.estudio-grupo summary { cursor: pointer; font-weight: 500; }
+.estudio-grupo .recursos-tabela td { padding: 4px 6px; }
+.estudio-seletor { flex-basis: 100%; border: 1px solid var(--borda); border-radius: 8px; padding: 6px; background: var(--superficie-2); }
+.estudio-seletor .estudio-lista { max-height: 220px; }

@@ -134,8 +134,12 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["metodo"], p["caminho"]), ("PUT", "/admin/1.5.5/estudio/tabelas/WEAPON_ESSENCE/3"))
         self.assertEqual(json.loads(p["corpo"]), {"campos": {"price": 10}})
+        r = await self.cliente.get("/api/realms/realm_126/estudio/espacos/ESSENCE", params={"busca": "espada"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/espacos/ESSENCE")
         # Tabela fora do padrão, realm inexistente e edição sem campos não chegam ao pw-recursos.
         antes = len(RecursosFalso.pedidos)
+        self.assertEqual((await self.cliente.get("/api/realms/realm_126/estudio/espacos/XYZ")).status_code, 404)
         self.assertEqual((await self.cliente.get("/api/realms/realm_126/estudio/tabelas/x;y")).status_code, 404)
         self.assertEqual((await self.cliente.get("/api/realms/nao_existe/estudio/tabelas")).status_code, 404)
         r = await self.cliente.put("/api/realms/realm_126/estudio/tabelas/WEAPON_ESSENCE/3", params={"rascunho": 9},

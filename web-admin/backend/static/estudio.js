@@ -123,6 +123,118 @@ async function abrirFichaDoEstudio(indice) {
   document.querySelectorAll("#estudio-registros button").forEach((b, i) => b.classList.toggle("ativo", estudio.registros[i]?.indice === indice));
 }
 
+/* Agrupa campos repetidos (`drop_matters_1_id`, `drop_matters_1_probability`, … ou `id_tasks_1`, …)
+   em tabelas: prefixo + número da linha + sufixo da coluna (B238, ESTUDIO §5 "campos repetidos em lista"). */
+function agruparCamposDoEstudio(campos) {
+  const grupos = new Map();
+  const soltos = [];
+  for (const c of campos) {
+    let m = c.nome.match(/^(.*?)_(\d+)_(.+)$/);
+    let chave, linha, coluna;
+    if (m) { [, chave, linha, coluna] = m; }
+    else if ((m = c.nome.match(/^(.*\D)_?(\d+)$/)) && !/^ID$/.test(c.nome)) { [, chave, linha] = m; coluna = "valor"; }
+    if (chave === undefined) { soltos.push(c); continue; }
+    if (!grupos.has(chave)) grupos.set(chave, { linhas: new Map(), colunas: [] });
+    const g = grupos.get(chave);
+    if (!g.colunas.includes(coluna)) g.colunas.push(coluna);
+    if (!g.linhas.has(linha)) g.linhas.set(linha, {});
+    g.linhas.get(linha)[coluna] = c;
+  }
+  // Grupo de uma linha só não é lista: volta para os soltos.
+  for (const [chave, g] of [...grupos]) {
+    if (g.linhas.size < 2) { for (const l of g.linhas.values()) soltos.push(...Object.values(l)); grupos.delete(chave); }
+  }
+  return { soltos, grupos };
+}
+
+function entradaDoCampo(c, editavel, entradas) {
+  const caixa = criar("div", "estudio-entrada");
+  const entrada = criar("input", "campo");
+  entrada.disabled = !editavel || c.nome === "ID";
+  entrada.setAttribute("aria-label", c.nome);
+  if (c.tipo === "int32") { entrada.type = "number"; entrada.step = "1"; }
+  else if (c.tipo === "float") { entrada.type = "number"; entrada.step = "any"; }
+  else entrada.maxLength = c.tipo === "wstring" ? c.tamanho / 2 : c.tamanho;
+  entrada.value = c.valor ?? "";
+  entrada.addEventListener("input", () => entrada.classList.toggle("mudou", entrada.value !== String(c.valor ?? "")));
+  caixa.appendChild(entrada);
+  entradas.push([c, entrada]);
+  if (c.cita) {
+    const ref = criar("span", "estudio-ref");
+    if (c.referencia?.ausente) {
+      ref.textContent = "id inexistente";
+      ref.classList.add("texto-erro");
+    } else if (c.referencia) {
+      const link = criar("a", "", `${c.referencia.nome || "(sem nome)"} · ${c.referencia.tabela}`);
+      link.href = "#";
+      link.addEventListener("click", (e) => { e.preventDefault(); abrirRegistroDoEstudio(c.referencia.tabela, c.referencia.indice); });
+      ref.appendChild(link);
+    }
+    if (editavel) {
+      const buscar = criar("button", "botao botao-fantasma botao-pequeno", "Buscar");
+      buscar.type = "button";
+      buscar.title = `Escolher um registro do espaço ${c.cita}`;
+      buscar.addEventListener("click", () => seletorDeReferencia(c.cita, entrada));
+      ref.appendChild(buscar);
+    }
+    caixa.appendChild(ref);
+  } else if (c.duvidoso) {
+    const d = criar("span", "estudio-ref texto-suave", "?");
+    d.title = "Parece citar um id, mas falta evidência no fonte ou nos dados (specs/estudio/referencias.json, duvidosos).";
+    caixa.appendChild(d);
+  }
+  return caixa;
+}
+
+function seletorDeReferencia(espaco, entrada) {
+  const caixa = entrada.parentElement;
+  const aberto = caixa.querySelector(".estudio-seletor");
+  if (aberto) { aberto.remove(); return; }
+  const painel = criar("div", "estudio-seletor");
+  const busca = criar("input", "campo");
+  busca.placeholder = `Buscar no espaço ${espaco}: id ou parte do nome`;
+  busca.setAttribute("aria-label", `Buscar no espaço ${espaco}`);
+  const lista = criar("ul", "estudio-lista");
+  painel.append(busca, lista);
+  caixa.appendChild(painel);
+  busca.focus();
+  let espera = null;
+  busca.addEventListener("input", () => {
+    clearTimeout(espera);
+    espera = setTimeout(async () => {
+      const texto = busca.value.trim();
+      lista.replaceChildren();
+      if (!texto) return;
+      let achados;
+      try { achados = await api(rotaEstudio(`espacos/${espaco}`, { busca: texto, limite: 30 })); }
+      catch (erro) { lista.appendChild(criar("li", "texto-erro", erro.message)); return; }
+      if (!achados.length) lista.appendChild(criar("li", "texto-suave", "Nada encontrado."));
+      for (const x of achados) {
+        const li = criar("li");
+        const b = criar("button");
+        b.type = "button";
+        b.append(criar("span", "", x.nome || "(sem nome)"), criar("small", "", `${x.id} · ${x.tabela}`));
+        b.addEventListener("click", () => {
+          entrada.value = x.id;
+          entrada.dispatchEvent(new Event("input"));
+          painel.remove();
+        });
+        li.appendChild(b);
+        lista.appendChild(li);
+      }
+    }, 300);
+  });
+  busca.addEventListener("keydown", (e) => { if (e.key === "Escape") painel.remove(); });
+}
+
+async function abrirRegistroDoEstudio(tabela, indice) {
+  Object.assign(estudio, { tabela, pagina: 0 });
+  elemento("estudio-busca-texto").value = "";
+  desenharTabelasDoEstudio();
+  await listarRegistrosDoEstudio();
+  await abrirFichaDoEstudio(indice);
+}
+
 function desenharFichaDoEstudio() {
   const area = elemento("estudio-ficha");
   area.replaceChildren();
@@ -130,7 +242,7 @@ function desenharFichaDoEstudio() {
   if (!f) { area.appendChild(criar("p", "texto-suave", "Escolha uma tabela e um registro.")); return; }
   const editavel = !!estudio.rascunho;
   const topo = criar("div", "estudio-cabecalho-ficha");
-  topo.appendChild(criar("h3", "", `${f.tabela} · id ${f.id ?? "—"} (registro ${f.indice})`));
+  topo.appendChild(criar("h3", "", `${f.nome || f.tabela} · id ${f.id ?? "—"}`));
   const acoes = criar("div", "recursos-linha");
   const salvar = criar("button", "botao botao-primario botao-pequeno", "Salvar no rascunho");
   const clonar = criar("button", "botao botao-secundario botao-pequeno", "Novo (clonar)");
@@ -140,26 +252,59 @@ function desenharFichaDoEstudio() {
   if (!f.espaco) clonar.title = "Tabela sem espaço de id conhecido: não aceita registro novo.";
   topo.appendChild(acoes);
   area.appendChild(topo);
+  area.appendChild(criar("p", "texto-suave", `${f.tabela} · registro ${f.indice}${f.espaco ? ` · espaço ${f.espaco}` : ""}`));
   if (!editavel) area.appendChild(criar("p", "texto-suave", "Somente leitura: escolha um rascunho no alto da página para editar."));
 
-  const grade = criar("div", "estudio-campos");
   const entradas = [];
-  for (const c of f.campos) {
-    const id = `estudio-campo-${c.nome}`;
+  const { soltos, grupos } = agruparCamposDoEstudio(f.campos);
+  const grade = criar("div", "estudio-campos");
+  for (const c of soltos) {
     const rotulo = criar("label", "", `${c.nome} · ${c.tipo}${c.tipo.endsWith("string") ? ` (${c.tipo === "wstring" ? c.tamanho / 2 : c.tamanho})` : ""}`);
-    rotulo.htmlFor = id;
-    const entrada = criar("input", "campo");
-    entrada.id = id;
-    entrada.disabled = !editavel || c.nome === "ID";
-    if (c.tipo === "int32") { entrada.type = "number"; entrada.step = "1"; }
-    else if (c.tipo === "float") { entrada.type = "number"; entrada.step = "any"; }
-    else entrada.maxLength = c.tipo === "wstring" ? c.tamanho / 2 : c.tamanho;
-    entrada.value = c.valor ?? "";
-    entrada.addEventListener("input", () => entrada.classList.toggle("mudou", entrada.value !== String(c.valor ?? "")));
-    entradas.push([c, entrada]);
-    grade.append(rotulo, entrada);
+    grade.append(rotulo, entradaDoCampo(c, editavel, entradas));
   }
   area.appendChild(grade);
+
+  for (const [chave, g] of grupos) {
+    const bloco = criar("details", "estudio-grupo");
+    const linhas = [...g.linhas.entries()];
+    const preenchidas = linhas.filter(([, l]) => Object.values(l).some((c) => c.valor && c.valor !== 0)).length;
+    bloco.appendChild(criar("summary", "", `${chave} · ${linhas.length} linhas (${preenchidas} preenchidas)`));
+    bloco.open = preenchidas > 0 && preenchidas <= 40;
+    const tabela = criar("table", "recursos-tabela");
+    const cab = criar("tr");
+    cab.appendChild(criar("th", "", "#"));
+    for (const col of g.colunas) cab.appendChild(criar("th", "", col));
+    tabela.appendChild(cab);
+    for (const [n, l] of linhas) {
+      const tr = criar("tr");
+      tr.appendChild(criar("td", "texto-suave", n));
+      for (const col of g.colunas) {
+        const td = criar("td");
+        if (l[col]) td.appendChild(entradaDoCampo(l[col], editavel, entradas));
+        tr.appendChild(td);
+      }
+      tabela.appendChild(tr);
+    }
+    bloco.appendChild(tabela);
+    area.appendChild(bloco);
+  }
+
+  const usado = criar("details", "estudio-grupo");
+  usado.appendChild(criar("summary", "", `Usado por · ${f.usado_por.length}${f.usado_por.length === 100 ? "+" : ""}`));
+  usado.open = f.usado_por.length > 0 && f.usado_por.length <= 20;
+  const lista = criar("ul", "estudio-lista");
+  for (const u of f.usado_por) {
+    const li = criar("li");
+    const b = criar("button");
+    b.type = "button";
+    b.append(criar("span", "", `${u.nome || "(sem nome)"} · ${u.tabela}`), criar("small", "", `${u.campo} · id ${u.id ?? "—"}`));
+    b.addEventListener("click", () => abrirRegistroDoEstudio(u.tabela, u.indice));
+    li.appendChild(b);
+    lista.appendChild(li);
+  }
+  if (!f.usado_por.length) lista.appendChild(criar("li", "texto-suave", f.espaco ? "Nenhum registro cita este." : "Tabela sem espaço de id conhecido."));
+  usado.appendChild(lista);
+  area.appendChild(usado);
 
   salvar.addEventListener("click", () => {
     const campos = {};
