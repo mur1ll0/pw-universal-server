@@ -14,7 +14,7 @@
 
 use anyhow::{bail, Context, Result};
 use pw_recursos::assinatura::Chave;
-use pw_recursos::conferir::{self, Origem};
+use pw_atualizador::cliente::{self, Origem, Servidor};
 use pw_recursos::fonte::ExtratorPython;
 use pw_recursos::importar::{self, Importacao};
 use pw_storage::{PostgresPool, RecursosRepository, StorageConfig};
@@ -181,14 +181,20 @@ async fn main() -> Result<()> {
                 Some(p) => p.clone(),
                 None => Chave::carregar_ou_criar(&caminho_da_chave())?.0.publica_hex(),
             };
-            let c = conferir::conferir(&origem, versao, &destino, &publica)?;
+            // A prova é a própria instalação do launcher numa pasta vazia (um caminho só, B234).
+            let http = matches!(origem, Origem::Http(_));
+            let serv = Servidor::new(origem, publica);
+            let c = cliente::instalar(&serv, versao, &destino, &mut |_| {})?;
+            if http {
+                cliente::conferir_range(&serv, versao)?;
+            }
             println!(
                 "conferido: {} pacotes, {} arquivos, {:.1} MB extraídos em {}; Range {}",
                 c.pacotes,
                 c.arquivos,
                 c.bytes as f64 / 1_048_576.0,
                 destino.display(),
-                if c.range_conferido { "ok (206)" } else { "não testado (origem é pasta)" }
+                if http { "ok (206)" } else { "não testado (origem é pasta)" }
             );
         }
         outro => bail!("comando desconhecido: {outro} (servir, importar, conferir, limpar, chave)"),

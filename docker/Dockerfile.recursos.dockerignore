@@ -7,3 +7,6 @@
 !crates/**
 !tools/
 !tools/**
+
+# O launcher (Tauri) compila fora do Docker; o target dele tem GB (B234).
+tools/pw-launcher/target

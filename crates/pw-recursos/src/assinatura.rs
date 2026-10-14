@@ -4,8 +4,8 @@
 //! A chave pública vai embutida no launcher; quem não tem a privada não consegue fazer o
 //! launcher aceitar um manifesto — nem num servidor falso, nem em HTTP sem TLS.
 
-use anyhow::{bail, Context, Result};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use anyhow::{Context, Result};
+use ed25519_dalek::{Signer, SigningKey};
 use std::fs;
 use std::path::Path;
 
@@ -55,19 +55,8 @@ impl Chave {
     }
 }
 
-/// Confere `assinatura` (64 bytes) de `dados` com a chave pública em hex.
-pub fn verificar(publica_hex: &str, dados: &[u8], assinatura: &[u8]) -> Result<()> {
-    let publica: [u8; 32] = hex::decode(publica_hex.trim())
-        .ok()
-        .and_then(|v| v.try_into().ok())
-        .context("chave pública não tem 32 bytes em hex")?;
-    let publica = VerifyingKey::from_bytes(&publica).context("chave pública inválida")?;
-    let assinatura: [u8; 64] = assinatura.try_into().ok().context("assinatura não tem 64 bytes")?;
-    if publica.verify(dados, &Signature::from_bytes(&assinatura)).is_err() {
-        bail!("assinatura não confere");
-    }
-    Ok(())
-}
+/// A conferência é a do launcher (um caminho só).
+pub use pw_atualizador::assinatura::verificar;
 
 #[cfg(test)]
 mod testes {

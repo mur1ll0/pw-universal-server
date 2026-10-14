@@ -152,6 +152,16 @@ fn excluido(partes_minusculas: &[String]) -> Option<&'static str> {
     {
         return Some("instalador avulso");
     }
+    // Scripts do BR que mudam o `increaseUserVa` do Windows 32 bits por `bcdedit`: mexem no
+    // sistema, não no cliente (decisão do Murillo, B233).
+    if partes_minusculas.len() == 1
+        && matches!(
+            nome.as_str(),
+            "enablemoremem_vista_win7_32bit.bat" | "disablemoremem_vista_win7_32bit.bat"
+        )
+    {
+        return Some("ajuste de memória do Windows 32 bits (bcdedit)");
+    }
     if topo == "data" {
         // Sobras de edição no data\ do 1.2.6 (decisão do Murillo, B233): cópias, exportações,
         // arquivos compactados e anotações. O data\ do 1.5.5 BR não tem nenhuma.
@@ -593,6 +603,9 @@ mod testes {
         assert!(excluido(&partes("logs\\ec.txt")).is_some());
         assert!(excluido(&partes("360inst_wanmeigj.exe")).is_some());
         assert!(excluido(&partes("gt_updater.exe")).is_some());
+        assert!(excluido(&partes("enablemoremem_vista_win7_32bit.bat")).is_some());
+        assert!(excluido(&partes("disablemoremem_vista_win7_32bit.bat")).is_some());
+        assert!(excluido(&partes("elementclient.bat")).is_none());
         assert!(excluido(&partes("data\\BCK\\elements.data")).is_some());
         assert!(excluido(&partes("data\\Data Export\\x.txt")).is_some());
         assert!(excluido(&partes("data\\tasks\\a.data")).is_some());

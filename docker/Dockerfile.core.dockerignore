@@ -27,3 +27,6 @@
 
 # Mesmo dentro das pastas liberadas, nada de saída de compilação.
 **/target
+
+# O launcher (Tauri) compila fora do Docker; o target dele tem GB (B234).
+tools/pw-launcher/target

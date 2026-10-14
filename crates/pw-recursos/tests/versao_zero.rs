@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use pw_recursos::assinatura::Chave;
-use pw_recursos::conferir::{conferir, Origem};
+use pw_atualizador::cliente::{self as launcher, Origem, Servidor};
 use pw_recursos::fonte::{FonteDePacote, ResultadoDoPacote};
 use pw_recursos::importar::{importar, Importacao};
 use pw_recursos::nomes;
@@ -150,10 +150,11 @@ async fn importa_registra_serve_e_confere_a_versao_zero() {
         objetos.ler(&r.sha256, r.tamanho as usize).unwrap();
     }
 
-    // Conferência pela pasta.
+    // Instalação (o núcleo do launcher) pela pasta.
     let destino = pasta_limpa("destino");
-    let c = conferir(&Origem::Pasta(dados.clone()), LINHA, &destino, &publica).unwrap();
-    assert_eq!((c.arquivos, c.range_conferido), (8, false));
+    let pela_pasta = Servidor::new(Origem::Pasta(dados.clone()), publica.clone());
+    let c = launcher::instalar(&pela_pasta, LINHA, &destino, &mut |_| {}).unwrap();
+    assert_eq!((c.arquivos, c.pacotes), (8, 5));
     let no_disco = |gbk: &[u8]| destino.join(nomes::nome_no_disco(gbk).unwrap());
     assert_eq!(fs::read(no_disco(b"Configs\\Repetido.txt")).unwrap(), b"vale o pacote");
     assert_eq!(fs::read(no_disco(&nome_longo())).unwrap(), vec![42u8; 3000]);
@@ -164,33 +165,104 @@ async fn importa_registra_serve_e_confere_a_versao_zero() {
     );
     let lista = fs::read(no_disco(b"userdata\\server\\serverlist.txt")).unwrap();
     assert!(lista.starts_with(&utf16("pw-universal\r\nUniversal 1.5.5\t")));
+    assert!(launcher::instalar(&pela_pasta, LINHA, &destino, &mut |_| {}).is_err(), "já instalado");
 
-    // Conferência por HTTP, com Range.
+    // Por HTTP: lista de versões, instalação e Range.
     let escuta = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endereco = escuta.local_addr().unwrap();
     let rotas = pw_recursos::servir::rotas(dados.clone());
     tokio::spawn(async move { axum::serve(escuta, rotas).await });
+    let base = format!("http://{endereco}");
     let destino_http = pasta_limpa("destino_http");
-    let (d2, p2) = (destino_http.clone(), publica.clone());
-    let c = tokio::task::spawn_blocking(move || {
-        conferir(&Origem::Http(format!("http://{endereco}")), LINHA, &d2, &p2)
+    let (d2, p2, b2) = (destino_http.clone(), publica.clone(), base.clone());
+    tokio::task::spawn_blocking(move || {
+        let serv = Servidor::new(Origem::Http(b2), p2);
+        assert_eq!(serv.versoes().unwrap(), vec![LINHA.to_string()]);
+        let c = launcher::instalar(&serv, LINHA, &d2, &mut |_| {}).unwrap();
+        assert_eq!(c.arquivos, 8);
+        launcher::conferir_range(&serv, LINHA).unwrap();
+
+        // Verificar e reparar: um arquivo com o mesmo tamanho e outro conteúdo, outro apagado.
+        let a = d2.join(nomes::nome_no_disco(b"configs\\a.txt").unwrap());
+        fs::write(&a, b"do configX").unwrap();
+        let ecm = d2.join(nomes::nome_no_disco(&gbk("models\\players\\形象\\白虎\\白虎.ecm")).unwrap());
+        fs::remove_file(&ecm).unwrap();
+        assert_eq!(launcher::verificar(&d2, false, &mut |_| {}).unwrap().len(), 1, "rápido: só tamanho");
+        assert_eq!(launcher::verificar(&d2, true, &mut |_| {}).unwrap().len(), 2);
+        assert_eq!(launcher::reparar(&serv, &d2, &mut |_| {}).unwrap(), 2);
+        assert!(launcher::verificar(&d2, true, &mut |_| {}).unwrap().is_empty());
+        assert_eq!(fs::read(&a).unwrap(), b"do configs");
+        assert!(launcher::atualizar(&serv, &d2, &mut |_| {}).unwrap().is_none(), "já na atual");
     })
     .await
-    .unwrap()
     .unwrap();
-    assert_eq!((c.arquivos, c.range_conferido), (8, true));
 
-    // Manifesto adulterado: a assinatura recusa.
-    let manifesto = dados.join(LINHA).join("atualizacao").join("0").join("manifesto.json");
+    // Versão 1 montada à mão (o P3 publicará neste formato): troca um arquivo, tira o cursor e
+    // acrescenta um. O launcher baixa só os objetos novos e apaga o que saiu.
+    let atualizacao = dados.join(LINHA).join("atualizacao");
+    let mut m: pw_recursos::manifesto::Manifesto =
+        serde_json::from_slice(&fs::read(atualizacao.join("0").join("manifesto.json")).unwrap()).unwrap();
+    let objetos = pw_recursos::objetos::Objetos::new(dados.join(LINHA).join("objetos"), 3);
+    let novo_arquivo = |caminho: &[u8], conteudo: &[u8]| {
+        let sha = pw_recursos::objetos::sha256(conteudo);
+        objetos.gravar(&sha, conteudo).unwrap();
+        pw_recursos::manifesto::Arquivo {
+            caminho_gbk: hex::encode(caminho),
+            sha256: hex::encode(sha),
+            tamanho: conteudo.len() as u64,
+            pacote: "configs".into(),
+        }
+    };
+    let trocado = novo_arquivo(b"configs\\a.txt", b"versao 1 do a");
+    let acrescentado = novo_arquivo(b"configs\\novo.txt", b"novo");
+    let cursor = hex::encode(gbk("cursors\\七夕鼠标.cur"));
+    m.arquivos.retain(|a| a.caminho_gbk != cursor && a.caminho_gbk != trocado.caminho_gbk);
+    m.arquivos.push(trocado);
+    m.arquivos.push(acrescentado);
+    m.numero = 1;
+    let m_bytes = serde_json::to_vec(&m).unwrap();
+    fs::create_dir_all(atualizacao.join("1")).unwrap();
+    fs::write(atualizacao.join("1").join("manifesto.json"), &m_bytes).unwrap();
+    fs::write(atualizacao.join("1").join("manifesto.json.sig"), hex::encode(chave.assinar(&m_bytes))).unwrap();
+    let v = pw_recursos::manifesto::Versao {
+        formato: 1,
+        versao_cliente: LINHA.into(),
+        atual: 1,
+        minima: 0,
+        manifesto: "1/manifesto.json".into(),
+        manifesto_sha256: hex::encode(pw_recursos::objetos::sha256(&m_bytes)),
+    };
+    let v_bytes = serde_json::to_vec(&v).unwrap();
+    fs::write(atualizacao.join("versao.json"), &v_bytes).unwrap();
+    fs::write(atualizacao.join("versao.json.sig"), hex::encode(chave.assinar(&v_bytes))).unwrap();
+
+    let (d3, p3, b3) = (destino_http.clone(), publica.clone(), base.clone());
+    tokio::task::spawn_blocking(move || {
+        let serv = Servidor::new(Origem::Http(b3), p3);
+        let r = launcher::atualizar(&serv, &d3, &mut |_| {}).unwrap().expect("havia atualização");
+        assert_eq!((r.numero, r.arquivos, r.removidos), (1, 2, 1));
+        assert_eq!(fs::read(d3.join(nomes::nome_no_disco(b"configs\\a.txt").unwrap())).unwrap(), b"versao 1 do a");
+        assert_eq!(fs::read(d3.join(nomes::nome_no_disco(b"configs\\novo.txt").unwrap())).unwrap(), b"novo");
+        assert!(!d3.join(nomes::nome_no_disco(&gbk("cursors\\七夕鼠标.cur")).unwrap()).exists());
+        assert!(launcher::verificar(&d3, true, &mut |_| {}).unwrap().is_empty());
+        assert!(launcher::atualizar(&serv, &d3, &mut |_| {}).unwrap().is_none());
+        assert_eq!(launcher::ler_estado(&d3).unwrap().unwrap().numero, Some(1));
+    })
+    .await
+    .unwrap();
+
+    // Manifesto adulterado: a instalação recusa antes de baixar qualquer pacote.
+    let manifesto = atualizacao.join("1").join("manifesto.json");
     let mut m = fs::read(&manifesto).unwrap();
     let i = m.iter().position(|&b| b == b'"').unwrap();
     m.insert(i, b' ');
     fs::write(&manifesto, m).unwrap();
-    let erro = conferir(&Origem::Pasta(dados.clone()), LINHA, &pasta_limpa("destino3"), &publica).unwrap_err();
+    let destino3 = pasta_limpa("destino3");
+    let erro = launcher::instalar(&pela_pasta, LINHA, &destino3, &mut |_| {}).unwrap_err();
     assert!(format!("{erro:#}").contains("SHA-256 do manifesto"), "{erro:#}");
 
     assert!(repo.apagar_versao_zero(LINHA).await.unwrap());
-    for p in [cliente, dados, destino, destino_http] {
+    for p in [cliente, dados, destino, destino_http, destino3] {
         let _ = fs::remove_dir_all(p);
     }
 }

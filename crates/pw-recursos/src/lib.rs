@@ -4,14 +4,13 @@
 //! launcher usa. Spec: `specs/07_RECURSOS_DO_CLIENTE.md`.
 
 pub mod assinatura;
-pub mod conferir;
 pub mod fonte;
 pub mod importar;
-pub mod manifesto;
-pub mod nomes;
 pub mod objetos;
 pub mod servir;
-pub mod tar_gnu;
+
+// Formatos e nomes são os mesmos do launcher: moram no pw-atualizador (B234).
+pub use pw_atualizador::{manifesto, nomes, tar_gnu};
 
 use pw_storage::RegistroDeRecurso;
 

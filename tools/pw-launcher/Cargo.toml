@@ -1,0 +1,23 @@
+[package]
+name = "pw-launcher"
+version = "0.1.0"
+edition = "2021"
+description = "Launcher do pw-universal (P2, B234): instalar, atualizar, reparar e jogar"
+
+# Fora do workspace da raiz: o Tauri só compila no Windows com WebView2 e não deve entrar no
+# build do Docker nem no `cargo test --workspace`. Compilar: `cargo build --release` nesta pasta.
+[workspace]
+
+[dependencies]
+pw-atualizador = { path = "../../crates/pw-atualizador" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[profile.release]
+strip = true
+lto = true

@@ -15,6 +15,7 @@ members = [
     "crates/pw-delivery",
     "crates/pw-gs",
     "crates/pw-recursos",
+    "crates/pw-atualizador",
     "tools/pw-patch-tool",
     "tools/pw-rpcgen",
     "tools/pw-pcapdiff",
