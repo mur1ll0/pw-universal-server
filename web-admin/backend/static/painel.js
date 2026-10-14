@@ -20,6 +20,7 @@ const PAGINAS = {
   rates: ["Rates", ""],
   templates: ["Templates", ""],
   recursos: ["Recursos do cliente", "Versões do cliente distribuídas pelo launcher"],
+  estudio: ["Estúdio", ""],
 };
 const CAMPOS_RATES = [["exp", "rate-exp"], ["sp", "rate-sp"], ["drop", "rate-drop"], ["moedas", "rate-moedas"]];
 const mesmasRates = (a, b) => !!a && !!b && CAMPOS_RATES.every(([c]) => Math.abs(Number(a[c]) - Number(b[c])) < 0.001);
@@ -114,10 +115,10 @@ function mostrarEntrada() {
 /* ---------------- Navegação ---------------- */
 
 function mudarPagina(pagina) {
-  if (!estado.selecionado && ["realm", "personagens", "mapas", "rates", "templates"].includes(pagina)) pagina = "inicio";
+  if (!estado.selecionado && ["realm", "personagens", "mapas", "rates", "templates", "estudio"].includes(pagina)) pagina = "inicio";
   estado.pagina = pagina;
   fecharConta();
-  for (const id of ["inicio", "realm", "personagens", "contas", "rates", "mapas", "templates", "recursos"]) elemento(`pagina-${id}`).hidden = pagina !== id;
+  for (const id of ["inicio", "realm", "personagens", "contas", "rates", "mapas", "templates", "recursos", "estudio"]) elemento(`pagina-${id}`).hidden = pagina !== id;
   const [titulo, sub] = PAGINAS[pagina];
   const realm = estado.selecionado;
   elemento("titulo-pagina").textContent = pagina === "realm" && realm ? realm.nome : titulo;
@@ -133,6 +134,7 @@ function mudarPagina(pagina) {
   if (pagina === "personagens" && !estado.personagemId) buscarPersonagens();
   if (pagina === "templates") carregarTemplates();
   if (pagina === "recursos") carregarRecursos(); // static/recursos.js (B235)
+  if (pagina === "estudio") carregarEstudio(); // static/estudio.js (B237)
   if (pagina === "rates") preencherRates();
   if (pagina === "mapas") renderizarMapas();
 }

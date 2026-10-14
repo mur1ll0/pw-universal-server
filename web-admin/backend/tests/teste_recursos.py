@@ -116,6 +116,33 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((r.status_code, r.content), (200, b"conteudo"))
         self.assertIn("attachment", r.headers["content-disposition"])
 
+    async def test_estudio_usa_a_versao_do_realm(self):
+        """B237: /api/realms/{realm}/estudio/... vai para /admin/<versão do realm>/estudio/..."""
+        await self.entrar()
+        csrf = await self.csrf()
+        r = await self.cliente.get("/api/realms/realm_126/estudio")
+        self.assertEqual(r.json(), {"versao": "1.2.6"})
+        r = await self.cliente.get("/api/realms/realm_126/estudio/tabelas/WEAPON_ESSENCE",
+                                   params={"busca": "espada", "rascunho": 9})
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual(p["caminho"], "/admin/1.2.6/estudio/tabelas/WEAPON_ESSENCE")
+        self.assertEqual((p["consulta"]["busca"], p["consulta"]["rascunho"]), (["espada"], ["9"]))
+        r = await self.cliente.put("/api/realms/realm_155/estudio/tabelas/WEAPON_ESSENCE/3", params={"rascunho": 9},
+                                   headers=csrf, json={"campos": {"price": 10}})
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["metodo"], p["caminho"]), ("PUT", "/admin/1.5.5/estudio/tabelas/WEAPON_ESSENCE/3"))
+        self.assertEqual(json.loads(p["corpo"]), {"campos": {"price": 10}})
+        # Tabela fora do padrão, realm inexistente e edição sem campos não chegam ao pw-recursos.
+        antes = len(RecursosFalso.pedidos)
+        self.assertEqual((await self.cliente.get("/api/realms/realm_126/estudio/tabelas/x;y")).status_code, 404)
+        self.assertEqual((await self.cliente.get("/api/realms/nao_existe/estudio/tabelas")).status_code, 404)
+        r = await self.cliente.put("/api/realms/realm_126/estudio/tabelas/WEAPON_ESSENCE/3", params={"rascunho": 9},
+                                   headers=csrf, json={"campos": {}})
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(len(RecursosFalso.pedidos), antes)
+
     async def test_versao_invalida_e_servico_sem_segredo(self):
         await self.entrar()
         r = await self.cliente.get("/api/recursos/1$5/alteracoes")

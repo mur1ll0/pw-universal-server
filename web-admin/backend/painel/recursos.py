@@ -146,3 +146,73 @@ def registrar_recursos(app):
         dados = await requisicao.json()
         return await _repassar("POST", f"/admin/{_versao(versao)}/alteracoes/{alteracao}/reverter", dados={
             "autor": _autor(requisicao), "operacao_id": _operacao(dados)})
+
+
+# ------------------------------------------------------------------ Estúdio (S1, B237)
+# O Estúdio é do realm (`docs/admin/ESTUDIO_DO_PAINEL.md` §0): a versão do realm decide o
+# arquivo e o layout. As edições ficam nos rascunhos da versão de cliente do realm.
+
+TABELA = re.compile(r"^[A-Z0-9_]{1,64}$")
+REALM = re.compile(r"^[A-Za-z0-9_]{1,32}$")
+
+
+async def _versao_do_realm(requisicao, realm):
+    if not REALM.match(realm):
+        raise HTTPException(404, "Realm inválido.")
+    async with requisicao.app.state.seguranca.pool.acquire() as conexao:
+        versao = await conexao.fetchval("SELECT version FROM realms WHERE id=$1", realm)
+    if not versao:
+        raise HTTPException(404, "Realm inexistente.")
+    return _versao(versao)
+
+
+def _tabela(tabela):
+    if not TABELA.match(tabela):
+        raise HTTPException(404, "Tabela inválida.")
+    return tabela
+
+
+def registrar_estudio(app):
+    @app.get("/api/realms/{realm}/estudio")
+    async def estudio_versao(realm: str, requisicao: Request):
+        return {"versao": await _versao_do_realm(requisicao, realm)}
+
+    @app.get("/api/realms/{realm}/estudio/tabelas")
+    async def estudio_tabelas(realm: str, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/tabelas", {"rascunho": rascunho})
+
+    @app.get("/api/realms/{realm}/estudio/tabelas/{tabela}")
+    async def estudio_listar(realm: str, tabela: str, requisicao: Request, rascunho: int | None = None,
+                             busca: str = "", pagina: int = 0, por_pagina: int = 50):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/tabelas/{_tabela(tabela)}", {
+            "rascunho": rascunho, "busca": busca[:100], "pagina": max(0, pagina),
+            "por_pagina": max(1, min(por_pagina, 200))})
+
+    @app.get("/api/realms/{realm}/estudio/tabelas/{tabela}/{indice}")
+    async def estudio_ficha(realm: str, tabela: str, indice: int, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/tabelas/{_tabela(tabela)}/{max(0, indice)}",
+                               {"rascunho": rascunho})
+
+    @app.put("/api/realms/{realm}/estudio/tabelas/{tabela}/{indice}")
+    async def estudio_editar(realm: str, tabela: str, indice: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        dados = await requisicao.json()
+        if not isinstance(dados.get("campos"), dict) or not dados["campos"]:
+            raise HTTPException(422, "Nenhum campo alterado.")
+        return await _repassar("PUT", f"/admin/{v}/estudio/tabelas/{_tabela(tabela)}/{max(0, indice)}",
+                               {"rascunho": rascunho}, dados={"campos": dados["campos"]})
+
+    @app.post("/api/realms/{realm}/estudio/tabelas/{tabela}/{indice}/clonar")
+    async def estudio_clonar(realm: str, tabela: str, indice: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("POST", f"/admin/{v}/estudio/tabelas/{_tabela(tabela)}/{max(0, indice)}/clonar",
+                               {"rascunho": rascunho})
+
+    @app.delete("/api/realms/{realm}/estudio/tabelas/{tabela}/{indice}")
+    async def estudio_remover(realm: str, tabela: str, indice: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("DELETE", f"/admin/{v}/estudio/tabelas/{_tabela(tabela)}/{max(0, indice)}",
+                               {"rascunho": rascunho})

@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/static/painel.css">
   <script src="/static/painel.js" defer></script>
   <script src="/static/recursos.js" defer></script>
+  <script src="/static/estudio.js" defer></script>
 </head>
 <body>
   <!-- Entrada -->
@@ -55,6 +56,7 @@
         <button class="nav" type="button" data-pagina="mapas"><span class="icone" data-icone="mapa" aria-hidden="true"></span>Mapas</button>
         <button class="nav" type="button" data-pagina="rates"><span class="icone" data-icone="porcentagem" aria-hidden="true"></span>Rates</button>
         <button class="nav" type="button" data-pagina="templates"><span class="icone" data-icone="espada" aria-hidden="true"></span>Templates</button>
+        <button class="nav" type="button" data-pagina="estudio"><span class="icone" data-icone="espada" aria-hidden="true"></span>Estúdio</button>
       </nav>
 
       <div class="lateral-rodape">
@@ -264,6 +266,39 @@
         </section>
 
         <!-- E8 (B217): templates de criação por classe — o que o personagem novo recebe. -->
+        <!-- Estúdio (S1, B237): editor do elements.data do realm, no rascunho do cliente -->
+        <section id="pagina-estudio" class="pagina" hidden>
+          <div class="barra-ferramentas recursos-topo">
+            <div class="recursos-linha">
+              <label class="texto-suave" for="estudio-rascunho">Rascunho</label>
+              <select id="estudio-rascunho" class="campo"></select>
+              <form id="estudio-novo" class="recursos-linha">
+                <input id="estudio-novo-descricao" class="campo" maxlength="500" placeholder="Descrição de um rascunho novo" aria-label="Descrição do rascunho novo">
+                <button class="botao botao-secundario botao-pequeno" type="submit">Criar</button>
+              </form>
+            </div>
+            <span id="estudio-situacao" class="texto-suave"></span>
+          </div>
+          <p id="estudio-aviso" class="alerta alerta-aviso" hidden></p>
+          <div class="estudio-grade">
+            <aside class="recursos-cartao estudio-tabelas">
+              <input id="estudio-filtro-tabela" class="campo" placeholder="Filtrar tabelas" aria-label="Filtrar tabelas">
+              <ul id="estudio-tabelas" class="estudio-lista"></ul>
+            </aside>
+            <section class="recursos-cartao estudio-registros">
+              <form id="estudio-busca" class="recursos-linha">
+                <input id="estudio-busca-texto" class="campo" placeholder="Buscar por id ou nome" aria-label="Buscar registro">
+                <button class="botao botao-secundario botao-pequeno" type="submit">Buscar</button>
+              </form>
+              <ul id="estudio-registros" class="estudio-lista"></ul>
+              <div id="estudio-paginas" class="recursos-linha"></div>
+            </section>
+            <section class="recursos-cartao estudio-ficha">
+              <div id="estudio-ficha" class="texto-suave">Escolha uma tabela e um registro.</div>
+            </section>
+          </div>
+        </section>
+
         <!-- Recursos do cliente (P3, B235): versões publicadas, rascunhos, publicar, reverter -->
         <section id="pagina-recursos" class="pagina" hidden>
           <div class="barra-ferramentas recursos-topo">
