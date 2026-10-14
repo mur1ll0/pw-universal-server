@@ -8,6 +8,7 @@
   <link rel="icon" href="/static/selo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/painel.css">
   <script src="/static/painel.js" defer></script>
+  <script src="/static/recursos.js" defer></script>
 </head>
 <body>
   <!-- Entrada -->
@@ -44,6 +45,7 @@
         <p class="rotulo-grupo">Geral</p>
         <button class="nav" type="button" data-pagina="inicio"><span class="icone" data-icone="casa" aria-hidden="true"></span>Visão geral</button>
         <button class="nav" type="button" data-pagina="contas"><span class="icone" data-icone="grupo" aria-hidden="true"></span>Contas globais</button>
+        <button class="nav" type="button" data-pagina="recursos"><span class="icone" data-icone="servidor" aria-hidden="true"></span>Recursos do cliente</button>
       </nav>
 
       <nav id="grupo-realm" class="grupo-nav" aria-label="Realm selecionado" hidden>
@@ -262,6 +264,46 @@
         </section>
 
         <!-- E8 (B217): templates de criação por classe — o que o personagem novo recebe. -->
+        <!-- Recursos do cliente (P3, B235): versões publicadas, rascunhos, publicar, reverter -->
+        <section id="pagina-recursos" class="pagina" hidden>
+          <div class="barra-ferramentas recursos-topo">
+            <div id="recursos-versoes" class="recursos-versoes" role="tablist" aria-label="Versão do cliente"></div>
+            <span id="recursos-situacao" class="texto-suave"></span>
+          </div>
+          <p id="recursos-aviso" class="alerta alerta-aviso" hidden></p>
+
+          <article class="recursos-cartao">
+            <header class="recursos-cabecalho">
+              <h3>Rascunhos</h3>
+              <form id="recursos-novo" class="recursos-linha">
+                <input id="recursos-novo-descricao" class="campo" maxlength="500" placeholder="O que esta alteração faz (ex.: troca o ícone da espada)" aria-label="Descrição do rascunho">
+                <button class="botao botao-secundario botao-pequeno" type="submit">Novo rascunho</button>
+              </form>
+            </header>
+            <div id="recursos-rascunhos"></div>
+            <div class="recursos-publicar">
+              <label class="recursos-marca"><input id="recursos-obrigar" type="checkbox"> Obrigar todos a atualizar (versão mínima = a nova)</label>
+              <button id="recursos-publicar" class="botao botao-primario" type="button" disabled>Publicar selecionados</button>
+            </div>
+          </article>
+
+          <article class="recursos-cartao">
+            <header class="recursos-cabecalho">
+              <h3>Arquivos da versão publicada</h3>
+              <form id="recursos-busca" class="recursos-linha">
+                <input id="recursos-busca-texto" class="campo" placeholder="Buscar pelo caminho (ex.: data\elements.data, gfx\)" aria-label="Buscar arquivo">
+                <button class="botao botao-secundario botao-pequeno" type="submit">Buscar</button>
+              </form>
+            </header>
+            <div id="recursos-arquivos" class="texto-suave">Busque um caminho para ver, baixar ou trocar o arquivo.</div>
+          </article>
+
+          <article class="recursos-cartao">
+            <header class="recursos-cabecalho"><h3>Histórico</h3></header>
+            <div id="recursos-historico"></div>
+          </article>
+        </section>
+
         <section id="pagina-templates" class="pagina" hidden>
           <p id="aviso-templates" class="alerta alerta-aviso" hidden></p>
           <div id="consulta-templates">

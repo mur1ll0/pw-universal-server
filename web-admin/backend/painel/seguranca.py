@@ -16,6 +16,16 @@ COOKIE = "pw_admin_sessao"
 TEMPO_SESSAO = 8 * 60 * 60
 
 
+LIMITE_ARQUIVO_DE_RECURSO = 512 << 20
+
+
+def eh_envio_de_recurso(escopo):
+    partes = escopo["path"].strip("/").split("/")
+    # api / recursos / <versao> / rascunhos / <id> / arquivo
+    return (escopo["method"] == "PUT" and len(partes) == 6 and partes[:2] == ["api", "recursos"]
+            and partes[3] == "rascunhos" and partes[5] == "arquivo")
+
+
 class LimitarEntrada:
     """Limita antes de acumular o corpo, inclusive sem Content-Length."""
     def __init__(self, app):
@@ -27,12 +37,15 @@ class LimitarEntrada:
             await self.app(escopo, receber, enviar)
             return
         corpo = bytearray()
+        # Só o envio de arquivo para um rascunho dos recursos do cliente passa de 8 KiB (B235):
+        # o mesmo teto do pw-recursos (admin::MAIOR_ARQUIVO).
+        limite = LIMITE_ARQUIVO_DE_RECURSO if eh_envio_de_recurso(escopo) else 8192
         while True:
             mensagem = await receber()
             if mensagem["type"] == "http.disconnect":
                 return
             trecho = mensagem.get("body", b"")
-            if len(corpo) + len(trecho) > 8192:
+            if len(corpo) + len(trecho) > limite:
                 await JSONResponse({"detail": "Dados excedem o tamanho permitido."},
                                    status_code=413, headers={"X-Content-Type-Options": "nosniff",
                                                             "Cache-Control": "no-store"})(escopo, receber, enviar)

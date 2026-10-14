@@ -719,3 +719,24 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .bandeja-janelas .barra-janela h3 { font-size: 13px; }
 .bandeja-janelas .botao-barra { display: none; }
 @media (max-width: 720px) { .bandeja-janelas { right: 12px; bottom: 12px; } .bandeja-janelas .janela { width: 180px; } }
+
+/* ---------------- Recursos do cliente (B235) ---------------- */
+.recursos-topo { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.recursos-versoes { display: flex; gap: 6px; flex-wrap: wrap; }
+.recursos-cartao { background: var(--superficie); border: 1px solid var(--borda); border-radius: 12px; padding: 16px; margin-top: 16px; }
+.recursos-cabecalho { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.recursos-cabecalho h3 { margin: 0; font-size: 16px; }
+.recursos-linha { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.recursos-linha .campo { min-width: 0; flex: 1 1 220px; }
+.recursos-rascunho { border: 1px solid var(--borda); border-radius: 10px; padding: 12px; margin-bottom: 12px; background: var(--superficie-2); }
+.recursos-rascunho > header { justify-content: space-between; margin-bottom: 8px; }
+.recursos-item { margin-top: 10px; }
+.recursos-marca { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.recursos-publicar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.recursos-tabela { width: 100%; border-collapse: collapse; font-size: 13px; }
+.recursos-tabela th, .recursos-tabela td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--borda); vertical-align: middle; }
+.recursos-tabela th { color: var(--texto-3); font-weight: 500; }
+.recursos-caminho { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+.recursos-historico-item { border-bottom: 1px solid var(--borda); padding: 8px 0; }
+.recursos-historico-item summary { cursor: pointer; }
+.recursos-historico-item .recursos-tabela { margin: 8px 0; }
