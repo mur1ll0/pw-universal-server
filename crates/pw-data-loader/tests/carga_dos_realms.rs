@@ -421,3 +421,26 @@ fn as_missoes_que_ampliam_a_jaula() {
         assert_eq!(fora, 0, "{realm}: vagas acima de MAX_PET_CAPACITY");
     }
 }
+
+/// B218 — a versão tem Daimon? Pelo layout do `elements.data`: o v7 (1.2.6, gerado do `gs`
+/// 1.2.6) não tem `GOBLIN_ESSENCE`; o v156 (1.5.5) tem. O painel esconde a janela no 1.2.6.
+#[test]
+fn so_o_155_tem_daimon() {
+    let raiz = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for (realm, esperado) in [("realm_126", false), ("realm_155", true)] {
+        let elements = raiz.join(format!("data/{realm}/config/elements.data"));
+        if !elements.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", elements.display());
+            continue;
+        }
+        let pasta = std::env::temp_dir().join(format!("pw_daimon_{realm}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&pasta);
+        std::fs::create_dir_all(&pasta).unwrap();
+        std::fs::copy(&elements, pasta.join("elements.data")).unwrap();
+        let mut d = GameDataManager::new();
+        let rel = d.load_from_directory(&pasta);
+        assert!(d.elements_generic.is_some(), "{realm}: {rel}");
+        assert_eq!(d.versao_tem_daimon(), esperado, "{realm}");
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+}

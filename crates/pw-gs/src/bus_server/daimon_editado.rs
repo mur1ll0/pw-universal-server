@@ -54,6 +54,10 @@ impl BusServer {
             let vivo = mundo.players.get(&(roleid as i64)).map(|p| p.daimon.clone());
             (mundo.data_manager.clone(), vivo)
         };
+        if !dados.versao_tem_daimon() {
+            // 1.2.6: o `elements.data` v7 não tem `GOBLIN_ESSENCE` — a versão não tem Daimon (B218).
+            return serde_json::json!({"daimon": null, "existe_na_versao": false});
+        }
         let (d, origem) = match vivo {
             Some(d) => (d, "em_jogo"),
             None => {
@@ -65,8 +69,9 @@ impl BusServer {
             }
         };
         match d {
-            None => serde_json::json!({"daimon": null, "origem": origem}),
+            None => serde_json::json!({"daimon": null, "origem": origem, "existe_na_versao": true}),
             Some(d) => serde_json::json!({
+                "existe_na_versao": true,
                 "daimon": ficha_do_daimon(&d, dados.nomes_de_itens.get(&d.item_id), exp_para_subir(&d, &dados), origem),
             }),
         }

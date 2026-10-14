@@ -861,6 +861,14 @@ impl GameDataManager {
         Some(f("speed_a") + f("speed_b") * (nivel.max(1) - 1) as f32)
     }
 
+    /// A versão do realm tem Daimon? Sai do layout do `elements.data`: o v156/v159 declara a
+    /// tabela `GOBLIN_ESSENCE` (o `elf_item`, `gs/item.h:219`); o v7, gerado do `gs` 1.2.6, não
+    /// tem nenhuma tabela `GOBLIN_*` (`specs/elements_layouts/v7.json`). O painel esconde a
+    /// janela do Daimon quando é `false` (B218).
+    pub fn versao_tem_daimon(&self) -> bool {
+        self.elements_generic.as_ref().map_or(false, |g| g.tables.contains_key("GOBLIN_ESSENCE"))
+    }
+
     /// O `exp_factor` e as habilidades iniciais de um Daimon (`GOBLIN_ESSENCE`).
     ///
     /// O `exp_factor` multiplica a curva de experiência do jogador para dar a do Daimon

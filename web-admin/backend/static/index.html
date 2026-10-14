@@ -42,17 +42,17 @@
 
       <nav class="grupo-nav" aria-label="Geral">
         <p class="rotulo-grupo">Geral</p>
-        <button class="nav" type="button" data-pagina="inicio"><span class="icone" aria-hidden="true">◈</span>Visão geral</button>
-        <button class="nav" type="button" data-pagina="contas"><span class="icone" aria-hidden="true">☰</span>Contas globais</button>
+        <button class="nav" type="button" data-pagina="inicio"><span class="icone" data-icone="casa" aria-hidden="true"></span>Visão geral</button>
+        <button class="nav" type="button" data-pagina="contas"><span class="icone" data-icone="grupo" aria-hidden="true"></span>Contas globais</button>
       </nav>
 
       <nav id="grupo-realm" class="grupo-nav" aria-label="Realm selecionado" hidden>
         <p class="rotulo-grupo">Realm · <span id="rotulo-realm-nav"></span></p>
-        <button class="nav" type="button" data-pagina="realm"><span class="icone" aria-hidden="true">◎</span>Painel do realm</button>
-        <button class="nav" type="button" data-pagina="personagens"><span class="icone" aria-hidden="true">♙</span>Personagens</button>
-        <button class="nav" type="button" data-pagina="mapas"><span class="icone" aria-hidden="true">▦</span>Mapas</button>
-        <button class="nav" type="button" data-pagina="rates"><span class="icone" aria-hidden="true">%</span>Rates</button>
-        <button class="nav" type="button" data-pagina="templates"><span class="icone" aria-hidden="true">⚔</span>Templates</button>
+        <button class="nav" type="button" data-pagina="realm"><span class="icone" data-icone="servidor" aria-hidden="true"></span>Painel do realm</button>
+        <button class="nav" type="button" data-pagina="personagens"><span class="icone" data-icone="usuario" aria-hidden="true"></span>Personagens</button>
+        <button class="nav" type="button" data-pagina="mapas"><span class="icone" data-icone="mapa" aria-hidden="true"></span>Mapas</button>
+        <button class="nav" type="button" data-pagina="rates"><span class="icone" data-icone="porcentagem" aria-hidden="true"></span>Rates</button>
+        <button class="nav" type="button" data-pagina="templates"><span class="icone" data-icone="espada" aria-hidden="true"></span>Templates</button>
       </nav>
 
       <div class="lateral-rodape">
@@ -64,7 +64,7 @@
 
     <div class="principal">
       <header class="topo">
-        <button id="menu" type="button" class="botao-icone so-celular" aria-label="Abrir menu" aria-controls="lateral">☰</button>
+        <button id="menu" type="button" class="botao-icone so-celular" aria-label="Abrir menu" aria-controls="lateral"><span data-icone="menu"></span></button>
         <div class="topo-titulo">
           <h1 id="titulo-pagina">Visão geral</h1>
           <p id="subtitulo-pagina" class="subtitulo"></p>
@@ -74,7 +74,8 @@
             <span class="so-leitor">Realm</span>
             <select id="realm-selecionado" aria-label="Trocar de realm"></select>
           </label>
-          <button id="atualizar" type="button" class="botao botao-secundario" title="Atualizar dados">↻<span class="so-largo"> Atualizar</span></button>
+          <button id="atualizar" type="button" class="botao botao-secundario" title="Atualizar dados"><span data-icone="atualizar"></span><span class="so-largo"> Atualizar</span></button>
+          <button id="tema" type="button" class="botao-icone" title="Alternar tema claro/escuro" aria-label="Alternar tema claro/escuro"><span data-icone="tema"></span></button>
           <button id="sair" type="button" class="botao botao-fantasma">Sair</button>
         </div>
       </header>
@@ -309,15 +310,6 @@
             </div>
           </div>
         </section>
-
-        <!-- Funções ainda não implementadas -->
-        <section id="pagina-futura" class="pagina" hidden>
-          <article class="painel vazio">
-            <p class="icone-vazio" aria-hidden="true">⌛</p>
-            <h2 id="titulo-futura"></h2>
-            <p id="texto-futura" class="texto-suave"></p>
-          </article>
-        </section>
       </div>
     </div>
 
@@ -335,11 +327,11 @@
       <section class="painel-aba" data-painel="resumo">
         <dl id="dados-conta" class="mini-dados"></dl>
         <div class="menu-acoes">
-          <button class="acao" type="button" data-aba="gm"><span aria-hidden="true">★</span>GM</button>
-          <button class="acao" type="button" data-aba="senha"><span aria-hidden="true">🔑</span>Senha</button>
-          <button class="acao" type="button" data-aba="gold"><span aria-hidden="true">◎</span>Gold</button>
-          <button class="acao" type="button" data-aba="ban"><span aria-hidden="true">⛔</span><span id="rotulo-ban">Banir</span></button>
-          <button class="acao acao-larga" type="button" data-aba="desconectar"><span aria-hidden="true">⏏</span>Desconectar</button>
+          <button class="acao" type="button" data-aba="gm"><span data-icone="nivel" aria-hidden="true"></span>GM</button>
+          <button class="acao" type="button" data-aba="senha"><span data-icone="chave" aria-hidden="true"></span>Senha</button>
+          <button class="acao" type="button" data-aba="gold"><span data-icone="moeda" aria-hidden="true"></span>Gold</button>
+          <button class="acao" type="button" data-aba="ban"><span data-icone="bloqueio" aria-hidden="true"></span><span id="rotulo-ban">Banir</span></button>
+          <button class="acao acao-larga" type="button" data-aba="desconectar"><span data-icone="sair" aria-hidden="true"></span>Desconectar</button>
         </div>
       </section>
 

@@ -23,7 +23,39 @@
   --sombra: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
   --fonte: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
   --fonte-numero: "Segoe UI Variable Display", "Segoe UI", Inter, system-ui, sans-serif;
+  --texto-erro: #ffb3b4;
+  --texto-info: #b9d4ff;
+  --barra-topo: rgba(11, 15, 20, .85);
   color-scheme: dark;
+}
+
+/* Tema claro (B218): segue o sistema, ou o botão do topo (`data-tema` no <html>, lembrado no
+   navegador). Células de item, dica e ícones do jogo continuam escuros, como as janelas do cliente. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-tema="escuro"]) {
+    --fundo: #f4f1ea; --fundo-2: #ebe6db; --superficie: #ffffff; --superficie-2: #f7f4ee;
+    --borda: #ddd5c4; --borda-forte: #c9bea8;
+    --texto: #1d232b; --texto-2: #4c5866; --texto-3: #6f7a87;
+    --ouro: #b07d1a; --ouro-forte: #8a5e0c; --ouro-suave: rgba(176, 125, 26, .12);
+    --verde: #18895a; --verde-suave: rgba(24, 137, 90, .12);
+    --vermelho: #c9393b; --vermelho-suave: rgba(201, 57, 59, .1);
+    --azul: #2f6fd1; --azul-suave: rgba(47, 111, 209, .1);
+    --sombra: 0 1px 2px rgba(60, 45, 20, .08), 0 8px 24px rgba(60, 45, 20, .08);
+    --texto-erro: #9f2224; --texto-info: #1f4f9a; --barra-topo: rgba(244, 241, 234, .88);
+    color-scheme: light;
+  }
+}
+:root[data-tema="claro"] {
+  --fundo: #f4f1ea; --fundo-2: #ebe6db; --superficie: #ffffff; --superficie-2: #f7f4ee;
+  --borda: #ddd5c4; --borda-forte: #c9bea8;
+  --texto: #1d232b; --texto-2: #4c5866; --texto-3: #6f7a87;
+  --ouro: #b07d1a; --ouro-forte: #8a5e0c; --ouro-suave: rgba(176, 125, 26, .12);
+  --verde: #18895a; --verde-suave: rgba(24, 137, 90, .12);
+  --vermelho: #c9393b; --vermelho-suave: rgba(201, 57, 59, .1);
+  --azul: #2f6fd1; --azul-suave: rgba(47, 111, 209, .1);
+  --sombra: 0 1px 2px rgba(60, 45, 20, .08), 0 8px 24px rgba(60, 45, 20, .08);
+  --texto-erro: #9f2224; --texto-info: #1f4f9a; --barra-topo: rgba(244, 241, 234, .88);
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -103,9 +135,9 @@ button, input, select { font: inherit; color: inherit; }
 .ponto-erro { background: var(--vermelho); box-shadow: 0 0 0 3px var(--vermelho-suave); }
 
 .alerta { padding: 12px 14px; border-radius: var(--raio); font-size: 14px; border: 1px solid; }
-.alerta-erro { background: var(--vermelho-suave); border-color: rgba(242,105,107,.3); color: #ffb3b4; }
+.alerta-erro { background: var(--vermelho-suave); border-color: rgba(242,105,107,.3); color: var(--texto-erro); }
 .alerta-aviso { background: var(--ouro-suave); border-color: rgba(227,182,91,.3); color: var(--ouro-forte); margin-bottom: 16px; }
-.alerta-info { background: var(--azul-suave); border-color: rgba(106,167,255,.3); color: #b9d4ff; }
+.alerta-info { background: var(--azul-suave); border-color: rgba(106,167,255,.3); color: var(--texto-info); }
 .faixa-comando { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 
 /* ---------- Entrada ---------- */
@@ -148,7 +180,6 @@ button, input, select { font: inherit; color: inherit; }
 .nav.ativo { background: var(--superficie-2); color: var(--texto); box-shadow: inset 2px 0 0 var(--ouro); }
 .nav .icone { width: 18px; text-align: center; color: var(--texto-3); font-size: 14px; }
 .nav.ativo .icone { color: var(--ouro); }
-.nav-futuro { color: var(--texto-3); }
 .selo-breve {
   margin-left: auto; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
   color: var(--texto-3); border: 1px solid var(--borda-forte); border-radius: 999px; padding: 1px 7px;
@@ -162,7 +193,7 @@ button, input, select { font: inherit; color: inherit; }
 .principal { min-width: 0; display: flex; flex-direction: column; }
 .topo {
   position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px;
-  padding: 16px 28px; background: rgba(11,15,20,.85); backdrop-filter: blur(10px);
+  padding: 16px 28px; background: var(--barra-topo); backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--borda);
 }
 .topo-titulo { min-width: 0; flex: 1; }
@@ -321,10 +352,8 @@ button, input, select { font: inherit; color: inherit; }
 .nome-personagem { flex: 1; min-width: 0; }
 .nome-personagem h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #consulta-personagens { display: grid; gap: 12px; }
-.janela-futura .barra-janela h3 { color: var(--texto-3); }
 
 .vazio { justify-items: center; text-align: center; padding: 56px 20px; }
-.icone-vazio { font-size: 32px; color: var(--texto-3); }
 .vazio-pequeno { display: grid; gap: 4px; padding: 24px; text-align: center; background: var(--fundo-2); border-radius: var(--raio); }
 .nota-vazia { color: var(--texto-3); padding: 24px; text-align: center; grid-column: 1 / -1; }
 

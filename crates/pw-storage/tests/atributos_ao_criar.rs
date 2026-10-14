@@ -98,6 +98,27 @@ async fn criar(c: &Cenario, nome: &str, cls: CharacterClass) -> i32 {
         .expect("criar personagem")
 }
 
+/// B218 — o semeio genérico (realm sem template nenhum) só põe na bolsa itens de nível 0 nos
+/// dois realms: Portal da Cidade (2100) e as poções pequenas (1796, 1804). Até o B218 vinha a
+/// Poção Perfeita de Cura (1801), `require_level` 30 no `MEDICINE_ESSENCE` do 1.5.5.
+#[tokio::test]
+async fn o_semeio_generico_so_da_itens_de_nivel_zero() {
+    let Some(c) = montar().await else { return };
+    let itens: Vec<(i32, i32, i32)> = sqlx::query_as(
+        "SELECT t.cls, i.slot::int, i.item_id FROM class_templates t
+           JOIN class_template_items i ON i.template_id = t.id
+          WHERE t.realm_id = $1 AND i.container_type = 0 ORDER BY t.cls, i.slot",
+    )
+    .bind(&c.realm)
+    .fetch_all(c.pool.get_ref())
+    .await
+    .unwrap();
+    assert_eq!(itens.len(), 18, "seis classes × três itens: {itens:?}");
+    for (cls, slot, item) in &itens {
+        assert_eq!(*item, [2100, 1796, 1804][*slot as usize], "classe {cls}, slot {slot}");
+    }
+}
+
 #[tokio::test]
 async fn o_template_semeado_da_os_atributos_do_molde() {
     let Some(c) = montar().await else { return };

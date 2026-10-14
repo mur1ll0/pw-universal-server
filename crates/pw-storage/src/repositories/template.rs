@@ -325,10 +325,13 @@ impl TemplateRepository {
             }
 
             // 2. Itens Iniciais na Bolsa / Inventário (container_type = 0)
+            // Só itens com `require_level` 0 nos dois realms (`MEDICINE_ESSENCE`): até o B218 o
+            // slot 2 era a Poção Perfeita de Cura (1801), que exige nível 30 no `elements.data`
+            // 1.5.5 — o mesmo kit do `scripts/2026_09_11_template_de_classe_155.sql:108-112`.
             let bag_items = vec![
-                (0, 2100, 5),
-                (1, 1796, 10),
-                (2, 1801, 10),
+                (0, 2100, 5),  // Portal da Cidade (TOWNSCROLL_ESSENCE)
+                (1, 1796, 10), // Poção Pequena de Cura
+                (2, 1804, 10), // Poção Pequena do Espírito
             ];
 
             for (slot, item_id, count) in bag_items {

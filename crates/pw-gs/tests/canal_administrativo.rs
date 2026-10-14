@@ -1680,7 +1680,8 @@ async fn avisos_de_missao(bus: &mut pw_bus::transport::BusConnection, n: usize) 
 
 /// E6 (B215): o Daimon. Sem Daimon vestido a consulta diz `null` e "dar EXP" recusa com
 /// `sem_daimon`, em jogo e fora dele; EXP fora dos limites é edição inválida. (A regra do
-/// `InsertExp` tem teste próprio; o cenário não tem `GOBLIN_ESSENCE`.)
+/// `InsertExp` tem teste próprio; o cenário não tem `GOBLIN_ESSENCE`, então desde o B218 a consulta
+/// responde `existe_na_versao: false`, como o 1.2.6, e o painel esconde a janela.)
 #[tokio::test]
 async fn daimon_ver_e_dar_exp() {
     let c = Cenario::montar().await;
@@ -1689,7 +1690,7 @@ async fn daimon_ver_e_dar_exp() {
     sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
     let r = c.pedir(&c.realm, json!({"tipo":"daimon","personagem_id":c.personagem})).await;
     assert!(r["dados"]["daimon"].is_null(), "{r}");
-    assert_eq!(r["dados"]["origem"], "persistida", "{r}");
+    assert_eq!(r["dados"]["existe_na_versao"], false, "{r}");
     let r = c.pedir_com_id(&c.realm, &id("off"), c.conta, dar(1000)).await;
     assert_eq!(r["dados"]["codigo"], "sem_daimon", "{r}");
     let r = c.pedir_com_id(&c.realm, &id("zero"), c.conta, dar(0)).await;
@@ -1697,7 +1698,7 @@ async fn daimon_ver_e_dar_exp() {
     let bus = c.entrar().await;
     c.esperar_presenca("online").await;
     let r = c.pedir(&c.realm, json!({"tipo":"daimon","personagem_id":c.personagem})).await;
-    assert_eq!((r["dados"]["daimon"].is_null(), r["dados"]["origem"].as_str()), (true, Some("em_jogo")), "{r}");
+    assert_eq!((r["dados"]["daimon"].is_null(), r["dados"]["existe_na_versao"].as_bool()), (true, Some(false)), "{r}");
     let r = c.pedir_com_id(&c.realm, &id("on"), c.conta, dar(1000)).await;
     assert_eq!(r["dados"]["codigo"], "sem_daimon", "{r}");
     drop(bus);
@@ -1863,11 +1864,15 @@ async fn templates_editados_pelo_canal_valem_para_o_proximo_personagem() {
     assert_eq!(classes, vec![0, 1, 3, 4, 6, 7]);
     assert_eq!(r["templates"][0]["estatisticas"]["forca"], 5);
 
+    // Ids únicos por rodada (o personagem do cenário), como os outros testes: a tabela
+    // `comandos_administrativos` guarda o id entre rodadas e um id fixo dava conflito (B218).
+    let op = |id: &str| format!("{id}-{}", c.personagem);
     let editar = |id: &'static str, edicao: Value| {
         let mut consulta = json!({"tipo":"editar_template","classe":0});
         for (k, v) in edicao.as_object().unwrap() { consulta[k] = v.clone(); }
         let c = &c;
-        async move { c.pedir_com_id(&c.realm, id, c.conta, consulta).await["dados"].clone() }
+        let id = op(id);
+        async move { c.pedir_com_id(&c.realm, &id, c.conta, consulta).await["dados"].clone() }
     };
     let est = json!({"nivel":3,"cultivo":1,"exp":100,"sp":20,"dinheiro":500,"pontos":4,
                      "forca":6,"agilidade":5,"vitalidade":7,"energia":5,"mapa":161,"x":10.0,"y":50.0,"z":-20.0});
@@ -1901,9 +1906,9 @@ async fn templates_editados_pelo_canal_valem_para_o_proximo_personagem() {
     assert_eq!(editar("tpl-r10", item("equipamento", 0, 3001, 1)).await["codigo"], "posicao_invalida");
     assert_eq!(editar("tpl-r11", item("armazem", 0, 3001, 1)).await["codigo"], "recipiente_errado");
     assert_eq!(editar("tpl-r12", json!({"habilidade":{"id":9,"nivel":0}})).await["codigo"], "habilidade_ausente");
-    let r = c.pedir_com_id(&c.realm, "tpl-r13", c.conta, json!({"tipo":"editar_template","classe":2,"habilidade":{"id":1,"nivel":1}})).await["dados"].clone();
+    let r = c.pedir_com_id(&c.realm, &op("tpl-r13"), c.conta, json!({"tipo":"editar_template","classe":2,"habilidade":{"id":1,"nivel":1}})).await["dados"].clone();
     assert_eq!(r["codigo"], "classe_invalida", "o 1.2.6 não cria Espiritualista");
-    let r = c.pedir_com_id(&c.realm, "tpl-r14", c.conta,
+    let r = c.pedir_com_id(&c.realm, &op("tpl-r14"), c.conta,
         json!({"tipo":"editar_template","classe":0,"habilidade":{"id":81,"nivel":1},"remover_item":{"recipiente":"bolsa","slot":0}})).await["dados"].clone();
     assert_eq!(r["codigo"], "edicao_invalida", "uma edição por operação");
 

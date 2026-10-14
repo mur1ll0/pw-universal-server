@@ -148,7 +148,9 @@ def registrar_consultas(app):
                 nomes = {}
             daimon["habilidades"] = [{"id": i, "nivel": n, "nome": nomes.get(i, f"Habilidade {i}")}
                                      for i, n in daimon.get("habilidades", [])]
-        return {"realm_id": realm_id, "daimon": daimon, "origem": (daimon or {}).get("origem", dados.get("origem"))}
+        # B218: o 1.2.6 não tem Daimon (o GS diz pelo layout do `elements.data`); a ficha esconde a janela.
+        return {"realm_id": realm_id, "daimon": daimon, "existe_na_versao": dados.get("existe_na_versao", True),
+                "origem": (daimon or {}).get("origem", dados.get("origem"))}
 
     def _habilidades_com_nome(pares):
         """`[id, nível]` → nome (`skillstr`), ícone e nível máximo do stub do cliente (B216)."""
@@ -424,7 +426,7 @@ def registrar_consultas(app):
                 resultado.update(origem="viva", presenca="online", ficha=online[0]["ficha"])
             elif all(resposta.get("presenca") == "ausente" for resposta in respostas):
                 resultado["presenca"] = "ausente_nos_daemons"
-                resultado["aviso"] = "Dados persistidos; ausência observada não autoriza edição offline."
+                resultado["aviso"] = "Fora do jogo: dados do banco. A edição é gravada pelo GS, que recusa o login enquanto grava."
             else:
                 raise CanalIndisponivel("Presença não reconhecida na resposta do daemon.")
         except CanalIndisponivel as erro:

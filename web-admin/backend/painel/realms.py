@@ -22,23 +22,37 @@ async def consultar_gateway(host, porta):
                 pass
 
 
-def capacidades(versao):
+def capacidades(versao, canal=False):
+    """O que o painel faz neste realm hoje (B218: textos do que existe, não de etapas antigas).
+
+    `canal`: há canal administrativo configurado para o realm (consulta viva e edição passam por ele).
+    """
     alvo = versao in ("1.2.6", "1.5.5")
+    vivo = alvo and canal
+    pelo_gs = "implementado" if vivo else ("indisponivel" if alvo else "nao_validado")
+    sem_canal = "Sem canal administrativo configurado para este realm." if alvo else "Versão fora dos alvos validados desta reforma."
     return [
         {"id": "configuracao", "nome": "Configuração do realm", "estado": "disponivel",
          "detalhe": "Identificação e contagem de personagens persistidos no banco."},
         {"id": "protocolo", "nome": "Protocolo do cliente", "estado": "implementado" if alvo else "nao_validado",
          "detalhe": "WorldProtocol presente no servidor." if alvo else "Versão fora dos alvos validados desta reforma."},
-        {"id": "consulta_viva", "nome": "Personagens e mapas ao vivo", "estado": "indisponivel",
-         "detalhe": "Aguarda canal administrativo autenticado com o servidor de mundo."},
-        {"id": "edicao", "nome": "Edição de personagens", "estado": "indisponivel",
-         "detalhe": "Aguarda coordenação com entrada, autosave e saída do jogo."},
+        {"id": "consulta_viva", "nome": "Personagens e mapas ao vivo", "estado": pelo_gs,
+         "detalhe": "Ficha, inventário, habilidades, mascotes, missões e mapas lidos do GS (em jogo: a memória; fora: o banco)." if vivo else sem_canal},
+        {"id": "edicao", "nome": "Edição de personagens", "estado": pelo_gs,
+         "detalhe": "Pelo GS: vale na hora com o personagem em jogo; fora do jogo é gravada sob trava que recusa o login." if vivo else sem_canal},
         {"id": "rates", "nome": "Rates de EXP, SP, drop e moedas", "estado": "implementado" if alvo else "nao_validado",
          "detalhe": "Lidas pelo servidor de mundo na partida e trocadas na hora pelo painel."},
         {"id": "mapas", "nome": "Ligar e desligar mapas", "estado": "implementado" if alvo else "nao_validado",
          "detalhe": "Desligar salva e desconecta quem está no mapa e recusa novas entradas."},
-        {"id": "dados", "nome": "Catálogo e ícones do realm", "estado": "indisponivel",
-         "detalhe": "O leitor existente ainda precisa de validação de origem antes de ser exposto."},
+        {"id": "templates", "nome": "Templates de criação", "estado": pelo_gs,
+         "detalhe": "Com o que cada classe nasce; vale para os personagens criados depois." if vivo else sem_canal},
+        {"id": "dados", "nome": "Catálogo, textos e ícones",
+         "estado": "implementado" if versao == "1.5.5" else ("parcial" if alvo else "nao_validado"),
+         "detalhe": ("Nomes e valores dos .data do realm pelo GS; textos e ícones do cliente 1.5.5 BR."
+                     if versao == "1.5.5" else
+                     "Nomes e valores dos .data do realm pelo GS; textos e ícones do cliente 1.5.5 BR, não conferidos no cliente desta versão.")},
+        {"id": "editores_de_dados", "nome": "Editores de elements, tasks e npcgen", "estado": "indisponivel",
+         "detalhe": "Fora desta reforma: só leitura. Contrato em docs/admin/EXTENSOES_E_EDITORES_FUTUROS.md."},
     ]
 
 
@@ -67,7 +81,8 @@ async def listar_realms(pool):
             "id": registro["id"], "nome": registro["name"], "versao": registro["version"],
             "porta": registro["port"], "gateway": estado, "mundo": "desconhecido",
             "jogadores_online": None, "personagens_persistidos": registro["personagens"],
-            "origem": "banco e teste TCP do gateway", "capacidades": capacidades(registro["version"]),
+            "origem": "banco e teste TCP do gateway",
+            "capacidades": capacidades(registro["version"], tem_canal(registro["id"])),
             "canal_administrativo": tem_canal(registro["id"]),
             # Colunas realms.double_*_multiplier (gravadas). O que vale no mundo vem da
             # consulta viva (`/estado` → `taxas`); a UI compara as duas.

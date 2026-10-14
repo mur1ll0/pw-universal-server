@@ -20,7 +20,6 @@ const PAGINAS = {
   rates: ["Rates", ""],
   templates: ["Templates", ""],
 };
-const FUTURAS = {};
 const CAMPOS_RATES = [["exp", "rate-exp"], ["sp", "rate-sp"], ["drop", "rate-drop"], ["moedas", "rate-moedas"]];
 const mesmasRates = (a, b) => !!a && !!b && CAMPOS_RATES.every(([c]) => Math.abs(Number(a[c]) - Number(b[c])) < 0.001);
 
@@ -118,15 +117,10 @@ function mudarPagina(pagina) {
   estado.pagina = pagina;
   fecharConta();
   for (const id of ["inicio", "realm", "personagens", "contas", "rates", "mapas", "templates"]) elemento(`pagina-${id}`).hidden = pagina !== id;
-  elemento("pagina-futura").hidden = !FUTURAS[pagina];
   const [titulo, sub] = PAGINAS[pagina];
   const realm = estado.selecionado;
   elemento("titulo-pagina").textContent = pagina === "realm" && realm ? realm.nome : titulo;
   elemento("subtitulo-pagina").textContent = sub || (realm ? (pagina === "realm" ? `Porta ${realm.porta}` : realm.nome) : "");
-  if (FUTURAS[pagina]) {
-    elemento("titulo-futura").textContent = `${titulo} · em breve`;
-    elemento("texto-futura").textContent = FUTURAS[pagina];
-  }
   document.querySelectorAll(".nav").forEach((botao) => {
     const ativo = botao.dataset.pagina === pagina;
     botao.classList.toggle("ativo", ativo);
@@ -174,6 +168,12 @@ async function reconsultar(realm) {
 
 /* ---------------- Mapas do realm (E7, B183) ---------------- */
 
+// "1 · Mundo" pelo catálogo da versão; sem catálogo (ainda carregando ou mapa fora dele), "Mapa N" (B218).
+function nomeDoMapa(realm, mapa) {
+  const achado = (estado.catalogoMapas[realm?.id] || []).find((m) => m.mapa === mapa);
+  return achado?.nome ? `${mapa} · ${achado.nome}` : `Mapa ${mapa}`;
+}
+
 // Catálogo da versão (gs.conf original + nomes do pwadmin), uma vez por realm.
 async function carregarCatalogoDeMapas(realm) {
   if (estado.catalogoMapas[realm.id]) return;
@@ -183,7 +183,11 @@ async function carregarCatalogoDeMapas(realm) {
   } catch (_) {
     estado.catalogoMapas[realm.id] = [];
   }
-  if (estado.selecionado?.id === realm.id && estado.pagina === "mapas") renderizarMapas();
+  if (estado.selecionado?.id !== realm.id) return;
+  if (estado.pagina === "mapas") renderizarMapas();
+  else if (estado.pagina === "realm") renderizarRealm();
+  else if (estado.pagina === "templates" && estado.templates && !modoTemplate())
+    elemento("lista-templates").replaceChildren(...(estado.templates.templates || []).map(cartaoTemplate));
 }
 
 // Catálogo + estado vivo: todo mapa do realm, com status. Ligado = carregado e aceitando
@@ -535,9 +539,10 @@ function renderizarRealm() {
   const mapas = elemento("lista-mapas");
   mapas.replaceChildren();
   if (vivo?.estado === "consultado" && vivo.mapas.length) {
+    if (!estado.catalogoMapas[realm.id]) carregarCatalogoDeMapas(realm);
     for (const mapa of vivo.mapas) {
       const item = criar("li");
-      item.append(criar("span", "", `Mapa ${mapa.mapa}`), criar("span", "etiqueta", `${fmt(mapa.jogadores_online)} online`));
+      item.append(criar("span", "", nomeDoMapa(realm, mapa.mapa)), criar("span", "etiqueta", `${fmt(mapa.jogadores_online)} online`));
       mapas.append(item);
     }
   } else if (situacaoDoMundo(realm) === "sem_resposta") {
@@ -547,7 +552,7 @@ function renderizarRealm() {
   } else {
     mapas.append(criar("li", "texto-suave", realm.canal_administrativo ? "Consultando…" : "Sem canal administrativo"));
   }
-  const nomes = { disponivel: ["Disponível", ""], implementado: ["Implementado", ""], nao_validado: ["Não validado", "etiqueta-neutra"], indisponivel: ["Em breve", "etiqueta-neutra"] };
+  const nomes = { disponivel: ["Disponível", ""], implementado: ["Implementado", ""], nao_validado: ["Não validado", "etiqueta-neutra"], parcial: ["Parcial", "etiqueta-neutra"], indisponivel: ["Indisponível", "etiqueta-neutra"] };
   const recursos = elemento("lista-capacidades");
   recursos.replaceChildren();
   for (const recurso of realm.capacidades) {
@@ -667,6 +672,16 @@ const ICONES = {
   check: "M5 12l5 5 9-10",
   fechar: "M6 6l12 12M18 6L6 18",
   relogio: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 7v5l3 2",
+  // B218: menu lateral, topo e popup de contas (antes glifos/emoji soltos).
+  casa: "M3 11l9-8 9 8M5 9v12h14V9M10 21v-6h4v6",
+  servidor: "M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01",
+  porcentagem: "M19 5L5 19M7 5a2 2 0 1 0 0 4a2 2 0 1 0 0-4M17 15a2 2 0 1 0 0 4a2 2 0 1 0 0-4",
+  espada: "M20 4l-9 9M20 4h-4M20 4v4M11 13l-3 3M5 14l5 5M7 17l-3 3",
+  menu: "M4 6h16M4 12h16M4 18h16",
+  atualizar: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
+  bloqueio: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M5.6 5.6l12.8 12.8",
+  sair: "M10 17l5-5-5-5M15 12H3M14 4h6v16h-6",
+  tema: "M12 3a9 9 0 1 0 9 9a7 7 0 0 1-9-9z",
 };
 function icone(nome, classe = "ico") {
   const caixa = criar("span", classe);
@@ -1639,11 +1654,15 @@ async function buscarHabilidade() {
    segue a regra do jogo (`InsertExp`): sobe quantos níveis couberem, sem passar o dono. */
 async function carregarDaimon(realm, id) {
   const alvo = elemento("janela-daimon");
+  const janela = alvo.closest(".janela");
+  if (janela) janela.hidden = false;
   elemento("abrir-daimon-exp").hidden = true;
   alvo.replaceChildren(criar("p", "nota-vazia", "Carregando Daimon…"));
   try {
     const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/daimon`);
     if (estado.personagemId !== id) return;
+    // B218: a versão sem Daimon (1.2.6 — o elements v7 não tem `GOBLIN_ESSENCE`) não mostra a janela.
+    if (dados.existe_na_versao === false) { if (janela) janela.hidden = true; return; }
     const d = dados.daimon;
     if (!d) { alvo.replaceChildren(criar("p", "nota-vazia", "Sem Daimon vestido.")); return; }
     const linha = (ico, rotulo, valor) => {
@@ -2164,7 +2183,8 @@ function cartaoTemplate(t) {
   }
   const e = t.estatisticas;
   const itens = (t.recipientes?.bolsa?.length || 0) + (t.recipientes?.equipamento?.length || 0);
-  texto.append(criar("div", "nome", nome), criar("div", "id", `Mapa ${e.mapa} · ${itens} itens · ${t.habilidades.length} habilidades`));
+  if (estado.selecionado && !estado.catalogoMapas[estado.selecionado.id]) carregarCatalogoDeMapas(estado.selecionado);
+  texto.append(criar("div", "nome", nome), criar("div", "id", `${nomeDoMapa(estado.selecionado, e.mapa)} · ${itens} itens · ${t.habilidades.length} habilidades`));
   const rodape = criar("div", "rodape");
   rodape.append(criar("span", "etiqueta etiqueta-neutra", `${e.forca}/${e.agilidade}/${e.vitalidade}/${e.energia}`),
     criar("span", "gold", `Nv. ${e.nivel}`));
@@ -2853,6 +2873,22 @@ elemento("sair").addEventListener("click", async () => {
 elemento("atualizar").addEventListener("click", atualizar);
 elemento("realm-selecionado").addEventListener("change", (evento) => selecionar(evento.target.value));
 elemento("menu").addEventListener("click", abrirMenu);
+
+/* Tema (B218): claro/escuro pelo sistema; o botão fixa a escolha neste navegador. */
+function temaEfetivo() {
+  const fixado = document.documentElement.dataset.tema;
+  if (fixado) return fixado;
+  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "claro" : "escuro";
+}
+try {
+  const salvo = localStorage.getItem("pw-painel-tema");
+  if (salvo === "claro" || salvo === "escuro") document.documentElement.dataset.tema = salvo;
+} catch (_) { /* sem armazenamento: segue o sistema */ }
+elemento("tema").addEventListener("click", () => {
+  const novo = temaEfetivo() === "escuro" ? "claro" : "escuro";
+  document.documentElement.dataset.tema = novo;
+  try { localStorage.setItem("pw-painel-tema", novo); } catch (_) { /* só nesta página */ }
+});
 elemento("cortina").addEventListener("click", fecharMenu);
 elemento("busca-personagens").addEventListener("submit", (evento) => { evento.preventDefault(); buscarPersonagens(1); });
 elemento("personagens-anterior").addEventListener("click", () => buscarPersonagens(estado.paginaPersonagens - 1));
