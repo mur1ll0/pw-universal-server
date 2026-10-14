@@ -12972,6 +12972,128 @@ comparação lado a lado.
       se voltar.
     - O semeio genérico ainda põe a Poção 1801 (nível 30) na bolsa dos realms sem template.
 
+218. **Sessão 2026-10-11: painel E9 — fechamento da reforma: extensões para os editores futuros, manual do GM, interface revista, Daimon só no 1.5.5, semeio sem a Poção 1801.**
+
+    ### a. Pedido
+    E9 da reforma (`docs/admin/MEMORIA_DA_REFORMA.md`): pontos de extensão documentados para os
+    editores futuros (`elements`, `npcgen`, `tasks`, modelos, animações, texturas — só preparar),
+    interface revisada, manual atualizado, verificações finais e pendências claras. Decisões do
+    Murillo (2026-10-11): contrato proposto para os **6** editores; manual reescrito em `.md` para o
+    GM; na interface, textos desatualizados, glifos → `ICONES`, nomes de mapa e limpeza de restos;
+    pendências que entram: Poção 1801 no semeio, Daimon no 1.2.6, tema claro e correção da
+    memória/spec.
+
+    ### b. Levantamento (com evidência)
+    - **Nenhum escritor de `.data`** no `pw-data-loader` (a única escrita é o `escrever_gshop` de
+      teste, `manager.rs:1194`). Dados lidos só na partida (`pw-gs/src/main.rs:63`,
+      `pw-link/src/gateway.rs:138`); ligar mapa em execução reaproveita o que está em memória
+      (`mapas.rs:271-274`) — toda edição de arquivo exige reiniciar GS e link.
+    - O cliente lê `elements.data` e `tasks.data` próprios (`EC_Game.cpp:574`,
+      `EC_TaskInterface.cpp:165`) e só **registra** o MD5 no log (`EC_Game.cpp:565-585`): editar só no
+      servidor dessincroniza em silêncio. `npcgen.data` não aparece no fonte do cliente (o `npcgen`
+      de `elementdataman.cpp:2073` é campo de configuração). Contêineres de realm/mundo montam
+      `config/` como `:ro` (`docker-compose.yml:116,148…`).
+    - Canal já expõe ao painel `buscar_itens`, `buscar_mascotes`, `efeitos_para_item`,
+      `detalhe_item`, `buscar_missoes`, `templates` (`administracao.rs:50-120`).
+    - Revisão no navegador (contêiner temporário `pw-admin-vitrine`, porta 8001, código atual montado
+      sobre a imagem do painel, ligado ao banco e aos GS reais; só leitura): capacidades com
+      "Em breve" em edição/catálogo (`realms.py:25-43`); aviso da ficha offline "ausência observada
+      não autoriza edição offline" (`consultas.py:427`); `FUTURAS`/`pagina-futura` sem uso;
+      glifos/emoji no menu, topo e popup de contas; "Mapa 1" sem nome no painel do realm e nos
+      cartões de template; janela Daimon no 1.2.6; só tema escuro; 375 px sem rolagem horizontal.
+    - Os intermitentes da memória §6.2 (`comandos_recuperaveis`, `canal_administrativo`) já tinham
+      sido resolvidos no B172 (espera filtrada pela consulta; 5 s) — a memória estava errada.
+
+    ### c. O que mudou
+    - `docs/admin/EXTENSOES_E_EDITORES_FUTUROS.md` (novo): base comum, caminho de escrita proposto
+      (rascunho → reler pelo carregador e ida e volta byte a byte → troca atômica com cópia →
+      `aguarda_reinicio`/`aguarda_distribuicao`), canal `dados_listar`/`dados_rascunho`/`dados_publicar`
+      e rotas, o bloqueio do `:ro`, e uma ficha por editor (fonte, leitor, falta, contrato, riscos);
+      modelos/texturas pelo índice do `pw-pck-extract` e distribuição pelo patcher.
+    - `docs/WEB_ADMIN_USER_GUIDE.md` reescrito para o GM; `HOW_TO_RUN…` §4 aponta para ele.
+    - Daimon por versão: `GameDataManager::versao_tem_daimon` (tabela `GOBLIN_ESSENCE` no layout:
+      v156 tem, v7 não); `daimon_do_painel` responde `existe_na_versao`; a API repassa; a ficha esconde
+      a janela.
+    - Semeio genérico (`TemplateRepository::seed_defaults`): 2100 + 1796 + **1804** no lugar da 1801
+      (`MEDICINE_ESSENCE.require_level`: 1801 = 30 no 155, 0 no 126; 1796/1804 = 0 nos dois; o mesmo
+      kit de `scripts/2026_09_11_template_de_classe_155.sql:108-112`).
+    - Interface: `capacidades(versao, canal)` com o que existe (+ Templates e "Editores de elements,
+      tasks e npcgen" indisponível; rótulos Parcial/Indisponível, sem "Em breve"); aviso offline novo;
+      ícones de traço (`casa`, `servidor`, `porcentagem`, `espada`, `menu`, `atualizar`, `bloqueio`,
+      `sair`, `tema`); `nomeDoMapa` ("1 · Mundo"); tema claro (tokens sob `prefers-color-scheme` e
+      `data-tema`, botão de lua, `localStorage` com `try/catch`); removidos `FUTURAS`, `pagina-futura`,
+      `.nav-futuro`, `.janela-futura`, `.icone-vazio`, `elements_decoder.py`, `skills_canon.json`, os
+      volumes do compose que só ele usava, `web-admin/backend/specs/` vazio e o
+      `PROMPT_PROXIMA_SESSAO_E8.md` obsoleto.
+    - Specs 03 (tabelas por versão) e 06 (Capacidades, Manual, Interface E9, Templates, Falta);
+      `ARQUITETURA_E_CONTRATOS.md`; memória da reforma (E9 testada, reforma fechada no código).
+    - Teste: `canal_administrativo::templates_editados…` com ids de operação únicos por rodada.
+
+    ### d. Provas
+    - `pw-data-loader::carga_dos_realms::so_o_155_tem_daimon` 1/0;
+      `pw-storage::atributos_ao_criar` 6/0 (novo `o_semeio_generico_so_da_itens_de_nivel_zero`).
+    - Vitrine: menu, topo e popup com SVG; "1 · Mundo"; capacidades novas; tema claro na ficha e nas
+      contas; volta ao escuro.
+    - Suíte inteira com o banco (`--no-fail-fast`, 2 fios), 1ª rodada: 1.019/1 — a falha era
+      `daimon_ver_e_dar_exp`, efeito esperado do B218 (o cenário não tem `GOBLIN_ESSENCE`; o teste
+      passou a conferir `existe_na_versao: false`). Rodando o arquivo `canal_administrativo` apareceu
+      outra falha, anterior ao B218: `templates_editados…` (B217) usava ids de operação fixos
+      (`"tpl-est"`…), que a tabela `comandos_administrativos` guarda entre rodadas → `operacao_em_conflito`
+      a partir da 2ª. Ids agora com o personagem do cenário, como os outros testes: o arquivo passou
+      **34/0 duas vezes seguidas**. 2ª rodada da suíte: **1.019 passaram, 1 falhou, 2 ignorados** — a
+      falha é a intermitente conhecida `nao_da_para_entrar_num_grupo_sem_convite`, que passa isolada (1/0).
+    - Painel: Python **75/0** (com `TEST_REDIS_URL` e `PW_VALIDADOR_CREDENCIAIS`), Node **13/0**.
+
+    ### e. O que continua faltando
+    - Ver em jogo E4–E6 e E8 e o roteiro do B218 (estado §3.3); nada commitado nem publicado.
+    - Editores de dados: só o contrato; primeiro passo é um escritor com ida e volta byte a byte e um
+      volume gravável no Docker.
+    - Textos/nomes de mapa do 1.2.6 conferidos no cliente 1.2.6; recarga dos dados sem reiniciar.
+
+219. **Sessão 2026-10-12: plano — editar modelos e animações, versionar toda edição e atualizador próprio (sem código).**
+
+    ### a. Pedido
+    Continuar a análise do B218: como editar modelos e animações (o usuário informa a pasta do cliente?),
+    como versionar toda edição de `.data`, modelo e animação (o que mudou e como) para servir ao patcher, e
+    — decisão do Murillo no meio da análise — planejar um **atualizador próprio** em vez do `.cup` oficial,
+    já que o projeto terá patcher e launcher próprios.
+
+    ### b. Evidência
+    - `elements.data`/`tasks.data` do servidor = do cliente (MD5 `44e36f71…`/`ac773dd0…` no 155 BR;
+      `de943d87…` no 126).
+    - `AFileImage::Init` (`AngelicaFile/Source/AFileImage.cpp:87-135`) lê o pacote primeiro (pacote pelo
+      prefixo da pasta, `AFilePackMan.cpp:218-235`) e só vai ao disco sem a entrada ou com o pacote
+      fechado: os soltos do B6a funcionam porque `models`/`litmodels` > 2 GB não abrem. O README do
+      `pw-pck-extract` dizia o contrário — corrigido. Ordem a conferir no binário.
+    - Escrita de pacote no fonte: `AFilePackage::AppendFile/ReplaceFile/RemoveFile/SaveEntries`
+      (`AFilePackage.cpp:995-1275, 1825`), usada pelo atualizador oficial (`PackDLL.cpp:344-439`).
+    - Formatos com leitor e escritor no fonte: `.ecm` texto (`EC_Model.cpp:146-151, 4308, 4909`), `.smd`
+      `ASMD` v8, `.bon` `ASKE` v6, `.ski` `ASKI` v9, `.stck` `STCK` v1, `.phy` `APHY` v1
+      (`Angelica3D`, `Save` em cada um).
+    - Atualizador oficial: `version.txt` + `ec_patch_<de>-<para>.cup` (`PackUPdater.cpp:32-36`); `.cup` =
+      pacote com `v-<n>.inc` (md5 + caminho em base64; `-` apaga), `pid` e arquivos
+      (`CupReader.cpp:206-330`); `.inc` assinado com RSA/MD5 e chave pública embutida
+      (`EC_Signature.cpp:23-70`).
+    - `pw-patch-tool create-patch` é simulado (`main.rs:100-125`: 14,5 MB, 8 arquivos e SHA de arquivo vazio fixos).
+
+    ### c. O que foi feito
+    - `docs/admin/RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md` (novo): cliente de referência importado uma
+      vez por linha, com índice de cada solto e de cada entrada de pacote (não a pasta de cada GM nem
+      upload do cliente); fluxo exportar conjunto → editar fora → enviar com validação de cabeçalho e
+      leitura até o último byte → alteração; serviço `pw-recursos` (Rust), não o GS; registro de
+      alterações no PostgreSQL (linhas, base, alterações, itens com SHA antes/depois e resumo por campo,
+      versões) com objetos imutáveis por SHA-256 e desfazer por alteração inversa; atualizador próprio
+      (manifestos e mudanças assinados com Ed25519, objetos por conteúdo, `Range`, reparar, regravar
+      entrada de `.pck`); comparação com o `.cup`; fases F1–F7; 5 decisões abertas.
+    - Correções: README do `pw-pck-extract`; spec 06 §2 (estado real do patcher e decisão); ponteiros em
+      `EXTENSOES_E_EDITORES_FUTUROS.md`; estado §5D e §8; memória da reforma.
+
+    ### d. Provas
+    - Só leitura de fonte e MD5 de arquivos; nenhum código mudou.
+
+    ### e. O que continua faltando
+    - As 5 decisões do §6 do documento; conferir no binário 2569 a ordem pacote × solto antes do F3.
+
 220. **Sessão 2026-10-12: habilidade instantânea sem parar o personagem, Traje de Flores e filtros da Feiticeira, descarte da produção no 1.2.6.**
 
     ### a. Sintoma / pedido
@@ -13193,3 +13315,141 @@ comparação lado a lado.
     no B74/B80) e o `fabricar_equipamento_grava_o_fabricante_126` fixava o nome de 40 B (corrigido para os 20 B
     do 1.2.6); no `subcomandos_no_mundo`, 3 falhas de tempo numa rodada de 745 s passam isoladas. Commit `9767e82`.
 
+229. **Sessão 2026-10-13: plano revisto — cliente sem `.pck` (`sepfile`), assinaturas e launcher com Estúdio (sem código).**
+
+    ### a. Pedido
+    Launcher do pw-universal que baixa a `element` da versão escolhida e se atualiza pelo servidor do
+    Docker; perguntas: (1) cliente só com arquivos extraídos é viável e perde desempenho? (2) onde assinar
+    as versões (liberdade dada); (3) editor completo de `elements`/recursos no painel web ou num aplicativo
+    Windows no launcher.
+
+    ### b. Evidência
+    - Pacote faltando = erro e saída, salvo com `sepfile` (`ElementClient.cpp:1263-1276`,
+      `EC_CommandLine.cpp:138-141`); lista de pastas em `CCommon/elementpckdir.h:4-21`. A string `sepfile`
+      está no binário BR 2569 (UTF-16, `0x9cb268`) e no 1.2.6 (ASCII).
+    - Entradas por pacote (BR): models 139.333, litmodels 113.862 (já soltos desde o B6a), gfx 27.860,
+      building 15.478, surfaces 9.503, sfx 2.890, textures 1.748, configs 111. Tamanho real × pacote:
+      gfx 739/339 MB, building 2.478/1.761, textures 545/251, surfaces 501/249.
+
+    ### c. O que foi feito
+    - §7 em `docs/admin/RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md`: cliente só com soltos (desempenho:
+      `fopen` por arquivo no lugar de descompactar zlib; ~+2 GB; teste e medição no §7.5); Ed25519 no
+      `pw-recursos` com a pública no launcher e troca por lista assinada; painel web × Estúdio (5 problemas
+      do web; recomendação: launcher com Jogar/Estúdio, servidor como fonte da verdade, painel para
+      governança; Tauri sugerido); fases G0–G6 (sai o escritor de `.pck`); riscos.
+
+    ### d. Provas
+    - Só leitura de fonte, do binário e dos índices dos pacotes; nenhum código mudou.
+
+    ### e. O que continua faltando
+    - Teste do `sepfile` em jogo (§7.5): cópia preparada em `F:\PW\1.5.5\1.5.5 BR sepfile\element` (13
+      pacotes extraídos; 1 entrada do `building.pck` já corrompida no original); falta o Murillo jogar e medir.
+    - 1º teste do Murillo: sem `sepfile` parou em `configs.pck` (previsto); com `sepfile` passou dos pacotes e
+      parou em `Models\Players\形象\白虎\白虎.ecm` — o `fopen` ANSI procura o nome pela ACP do Windows (1252:
+      `ÐÎÏó`), e o extrator gravava em chinês. `pw_pck_extract.py` passou a gravar pelos bytes com
+      `decode("mbcs")` (`nome_no_disco`); cópia refeita com os 15 pacotes (3 entradas corrompidas nos pacotes
+      originais: `building	extures	90.dds`, `赤灵尊神.bon`, `litmodels43\9\litmodel_2727.bmd`).
+      Consequência no §7.7: o nome no disco depende da ACP de cada jogador; o manifesto guarda os bytes GBK.
+    - 2º teste: passou dos pacotes e dos `.data`, caiu antes do login — minidump `+0x3DD1DD` lendo 0 em
+      `CECServerList::FindGroup` → `GetGroup(0)` com a lista de grupos vazia: a `serverlist.txt` não tem linha
+      de grupo (só linhas com tabulação). Linha `pw-universal` posta no topo da cópia de teste; falta o 3º teste
+      (§7.7 do documento).
+    - Decisões (2026-10-13): Tauri; ordem servidor → Estúdio `elements` → Jogar; onde fica o editor de dados
+      em análise (preferência pelo painel web; limite: arquivos do cliente e dados do mapa no `npcgen`).
+
+230. **Sessão 2026-10-14: cliente solto confirmado em jogo; decisão de instalar por zip e de pôr os editores no painel web (sem código).**
+
+    ### a. Pedido
+    O Murillo rodou o 3º teste (cliente sem `.pck` × BR com pacotes): mesma memória, mesmo FPS. Decide
+    hospedar um zip da `element` que o launcher baixa, extrai e apaga; pergunta os próximos passos e se o
+    Estúdio fica no launcher ou no painel.
+
+    ### b. Resultado e análise
+    - §7.1 confirmada em jogo (com a linha de grupo na `serverlist.txt` do 2º teste).
+    - O zip precisa guardar os **bytes GBK** dos nomes (o nome no disco depende da ACP do jogador, §7.7) e o
+      launcher extrair com código próprio pela ACP; o zip sai dos `.pck` originais, não de uma pasta extraída.
+    - Com o zip, o servidor passa a ter todos os arquivos da linha — some a objeção principal ao editor web.
+      Recomendação: `elements`/`tasks`/`gshop`/`npcgen`/trocar arquivo no **painel web**; testar pelo
+      **canal de teste** do launcher; modelos e animações pelo Blender; sem Estúdio no launcher.
+
+    ### c. O que foi feito
+    - §8 em `docs/admin/RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md` (decisão, regras do zip, editores, P1–P6);
+      estado §5D e §8.
+
+    ### d. O que continua faltando
+    - Murillo confirmou os editores no painel e a ordem P1 → P2. Pergunta seguinte: editor 3D no painel sem
+      Blender — §8.3: viável em níveis (N1 ver, N2 animar, N3 editar dados do modelo, N4 glTF), não modelar do
+      zero (N5); formatos em Rust no servidor, WebGL no navegador; efeitos `.gfx` adiados (~51 mil linhas).
+    - Blender (§8.4): extensão "PW Universal" + conversor único em Rust (jogo ↔ glTF + metadados) + atalho
+      `pwuniversal://` pelo launcher. Montaria: encaixes `HH_Ride`/`CC_Ride` (`EC_Player.cpp:2770-2777`), peles pelo
+      nome do osso (`A3DSkin.cpp:232-238`), trilhas pelo índice da junta (`A3DSkinModelAct.cpp:379`) — ossos novos no
+      fim não quebram as animações. Monstro: `MONSTER_ESSENCE` (287 campos, 85 de drop) no painel; modelo sobre um
+      esqueleto existente, armadura como pele adicional. Os dois cenários viáveis; P6 refeito em P6a–P6d.
+    - Testar o `sepfile` no cliente 1.2.6; começar o P1.
+
+231. **Sessão 2026-10-14: análise do Estúdio no painel web (sem código).**
+
+    ### a. Pedido
+    (1) O cliente completo fica no servidor e por isso o painel pode editar tudo? (2) Estúdio com Elementos,
+    Missões, Mapas; categorias com lista paginada, novo por clonagem, ficha visual, categoria de arma em modal,
+    modelo 3D ao lado com importação do Blender e ajustes automáticos, animações listadas e corrigíveis
+    ("monstro não ataca"), drops com busca, conversa e serviços de NPC — viável? como implementar?
+
+    ### b. Evidência
+    - `elements` v156: 231 tabelas (v7: 119); `WEAPON_ESSENCE` 250 campos (`file_model_right/left`, `file_matter`);
+      `WEAPON_SUB_TYPE` 12 campos com `action_type` → conjunto de ataque do jogador (`EC_Player.cpp:4600`);
+      `NPC_ESSENCE` 47 com ids de serviço; 30 `NPC_*_SERVICE` (forja `NPC_MAKE_SERVICE` 268); `TALK_PROC`.
+    - Habilidades: 3.318 `ElementSkill/skillNNN.h` compilados no `elementskill.dll`.
+    - Nome da ação pedida: base de `Configsctions_npc.txt` (`EC_NPC.cpp:295`; monstro: 站立, 普攻1, 普攻2,
+      魔攻1, 技能1, 死亡, 受伤叠加…) + 起/落 nos ataques + ambiente no mascote (`EC_NPCModel.cpp:599-620`).
+
+    ### c. O que foi feito
+    - `docs/admin/ESTUDIO_DO_PAINEL.md` (novo): cliente no `pw-recursos`; inventário; viabilidade item a item
+      (categoria nova de arma limitada aos `action_type` existentes; habilidades parciais; terreno fora);
+      arquitetura (FastAPI na frente, `pw-recursos` Rust/axum, GS só para o mundo vivo); telas por catálogo sobre o
+      layout; integridade (índice de referências, ids reservados, travas); 3D com three.js e diagnóstico de
+      ações; tecnologia; fases S1–S7; decisões abertas. Estado §5D e §8.
+    ### d. Revisão com as decisões do Murillo (mesma data)
+    - Svelte; Estúdio como item do menu do realm; qualquer GM; versões `1.5.5` e `1.2.6` (sem "BR").
+    - Ids: sem faixa — o carregador do cliente indexa em espaços (`elementdataman.cpp`, `add_id_index`:
+      ESSENCE 135 tabelas, CONFIG 55, FACE 11, RECIPE 10, ADDON 2, TALK 1) e um id repetido sobrescreve em
+      silêncio; regra: maior do espaço + 1, publicação recusa repetido.
+    - Mapa interativo: minimapa do cliente em peças `Surfaces\MiniMaps\<mapa>\RRCC.dds` (DXT1 256×256; mundo 368
+      peças) e a conta de `DlgMiniMap.cpp:1052-1061` (2 m por pixel, origem no centro); altura pelo GS.
+    - Missões: lista, vista em cadeia, ficha por abas (quem dá/recebe sincroniza os serviços de NPC).
+    - As 231 tabelas classificadas: telas próprias (armas, armaduras, consumíveis, monstros, NPCs, serviços,
+      receitas, mascotes, voo, Daimon, minas) e editor de tabela simples para o resto.
+    - Realms 1.4.8 e 1.5.3 removidos: contêineres, serviços do compose, `ADMIN_GATEWAYS`, linhas de `realms` e
+      12 `class_templates` (+52 itens, 50 habilidades); sem personagens; `data/realm_148|153` no disco.
+    - Cópia de teste do 1.2.6 sem pacotes: `F:\Games\perfectworld_126 sepfile\element` — 15 pacotes extraídos,
+      0 falhas (models 18.321, litmodels 24.122…); `elementclient_sepfile.bat` e o de controle; `serverlist.txt`
+      mantida (sem linha de grupo, como no 1.2.6 original).
+    - Futuro (pedido de 2026-10-14): editor de mapa completo — §8 do `ESTUDIO_DO_PAINEL.md`. Evidência: arquivos do
+      mapa no cliente (`.trn2`, 88 `.t2bk`, `.t2mk`, `.t2lm`, `.t2hc`, `.ecwld`/`.ecbsd`, `.cld`), dez tipos de
+      recurso da cena (`EC_SceneBlock.cpp:1044-1072`: árvore, água, construção, área, grama, efeito, modelo,
+      criatura, curva, som), rotinas de edição do Lar (`DlgAutoWater`, `DlgAutoOutdoor*`) e do pré-processador de
+      mapas aleatórios. Ponto crítico: relevo, água e o que bloqueia existem no cliente e no servidor (`.hmap`,
+      `movemap`, `watermap`, `airmap`) — o editor regera os do servidor e publica os dois juntos. Níveis M1–M5.
+
+232. **Sessão 2026-10-14: 1.2.6 sem pacotes confirmado; pacote de instalação; editor da Loja Gold (sem código).**
+
+    ### a. Pedido
+    O Murillo rodou o teste do 1.2.6 (controle deu o erro esperado; com `sepfile` funcionou com bom desempenho);
+    pediu para documentar, ver como compactar e carregar o cliente no servidor, documentar um editor visual da
+    `gshop` com ícones, commitar o pendente e gerar o prompt da próxima sessão.
+
+    ### b. Evidência
+    - Logs do 1.2.6 com `sepfile`: só pacotes ausentes no `AF.log`, sessão fechada normalmente, sem dump; o
+      `LoadWorld (line: 544)` aparece igual no 1.2.6 com pacotes.
+    - `GSHOP_ITEM`/`GSHOP_MAIN_TYPE` em `ElementClient/CCommon/globaldataman.h:140-175`; leitor `gshop.rs`.
+
+    ### c. O que foi feito
+    - `RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md` §8.5 (1.2.6 confirmado) e §8.6 (pacote por pasta em `.tar.zst`,
+      nomes GBK em cabeçalho GNU, manifesto assinado, extração em fluxo; carga pelo `pw-recursos importar` a partir
+      da instalação original com `.pck`).
+    - `ESTUDIO_DO_PAINEL.md` §4.6: editor da Loja Gold (árvore de categorias, vitrine em grade com ícones e selos,
+      painel da oferta com as 4 opções de compra, brinde, limite; aviso do `goods_index`; campos do 1.2.6).
+    - **Colisão de numeração com o Codex:** ele commitou B220–B228 em 2026-10-12 (`9767e82`, `8c0a55b`) enquanto
+      os meus itens desta frente usavam 220–222; renumerados para **229–231** (histórico, índice do estado e os
+      documentos `RECURSOS…`, `ESTUDIO…`, spec 02, `pw-pck-extract`). Os commits dele não tocaram nos meus arquivos.
+    - Commits do pendente (B218, B219, B229–B232).

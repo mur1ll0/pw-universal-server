@@ -1,7 +1,7 @@
 # Memória central da reforma do pw-admin
 
-Atualizada em 2026-10-11 (B199–B217). Estado: **E1–E5 testadas; E6 testada, fechada no B215 (tela nova B190,
-arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197, missões B198, Daimon e edições em jogo B215; aparência fica no cliente, §6.14); E7 confirmada em jogo (2026-10-10); E8 (Templates) testada no B217, falta ver em jogo; E9 planejada**.
+Atualizada em 2026-10-11 (B199–B218). Estado: **E1–E5 testadas; E6 testada, fechada no B215 (tela nova B190,
+arrastar B191, dica parte 2 B192–B193, editar item B194, habilidades B195–B196, mascotes B197, missões B198, Daimon e edições em jogo B215; aparência fica no cliente, §6.14); E7 confirmada em jogo (2026-10-10); E8 (Templates) testada no B217, falta ver em jogo; E9 testada no B218 — **reforma fechada no código; falta ver em jogo E4–E6 e E8**, e nada de B218 commitado/publicado**.
 Commitado até B215 (`4df4376`; B199–B211 nos blocos `50c5d3a`, `d0ee485`, `2d57f7e`, `4630bb4`, `cecfaac` e a documentação). Nada de B176–B198 confirmado em jogo.
 Responsável pelas decisões de produto: Murillo.
 
@@ -121,7 +121,7 @@ Cada etapa pode ser dividida em subtarefas aqui, mantendo o arquivo curto.
 | E6 — inventário e subsistemas | testado (B215 fecha; falta ver em jogo) | posição (B185), itens ver/buscar/dar (B186), remover (B187), ícones (B188), dica parte 1 (B189), tela nova (B190) e arrastar (B191), dica parte 2 (B192–B193), editar item (B194), habilidades ver e editar (B195–B196), mascotes (B197), missões (B198) testados; itens/equipamentos, habilidades, missões, posição, aparência e mascotes; sem duplicação de itens ou formatos inválidos; condições de reconexão explícitas |
 | E7 — mapas e rates | confirmado | rates (B176), mapas (B177) e lista completa com carga/descarga em execução (B183); **confirmado em jogo pelo Murillo em 2026-10-10** (WB no 1.2.6: rates refletem no jogo; mapa ligado pelo painel e entrada pelo portal); desligar desconecta/salva jogadores e bloqueia entradas; religar restaura acesso; quatro rates alteram resultados reais e sobrevivem a reinício |
 | E8 — Templates (moldes de classe) | testado (B217) | página "Templates": por realm, as classes da versão com estatísticas iniciais, bolsa, corpo e habilidades; edição pelo GS (canal `editar_template`, idempotente) gravada em `class_template*`, lida pelo link a cada criação; falta ver em jogo. **Decisões de 2026-10-11:** nome "Templates"; tela = a ficha do personagem com valores iniciais; sem mascotes, Daimon, missões, armazém e bolsa de missão (vêm pelo jogo); só personagens novos — **sem "aplicar aos existentes"** nesta etapa; habilidades do 1.5.5 semeadas no template (as de `default_skills`). Junto: janela recolhida vai à bandeja no canto e volta ao lugar ao restaurar |
-| E9 — extensões e fechamento | planejado | pontos de extensão documentados para editores futuros; interface revisada, manual atualizado, verificações finais e pendências claras |
+| E9 — extensões e fechamento | testado (B218) | extensões em `docs/admin/EXTENSOES_E_EDITORES_FUTUROS.md` (contrato proposto para os 6 editores — decisão de 2026-10-11); interface revista no navegador (capacidades e aviso offline atualizados, ícones `ICONES` no menu/topo/contas, nomes de mapa, tema claro, Daimon escondido no 1.2.6, restos removidos); manual reescrito (`docs/WEB_ADMIN_USER_GUIDE.md`); semeio genérico sem a Poção 1801; pendências no estado §5D |
 
 Priorizar uma fatia completa em cada etapa: interface → API → daemon → persistência/cliente
 quando aplicável. Não terminar com todas as telas prontas e operações sem integração.
@@ -145,7 +145,7 @@ quando aplicável. Não terminar com todas as telas prontas e operações sem in
 
 ## 6. Retomada imediata
 
-**Etapa ativa:** E9 (fechamento) — a E8 (Templates) ficou testada no B217, falta ver em jogo; a E6 fechou no B215; antes estava: E6 em andamento (B185 posição, B186–B189 itens, B190 tela nova); E5 testada.
+**Etapa ativa:** nenhuma — **a reforma fechou no B218 (E9)**. O que impede marcá-la `confirmado`: ver em jogo E4–E6 e E8 (roteiros no estado §3.3) e publicar. Fila depois da reforma: estado §5D. Antes: E9 (fechamento) — a E8 (Templates) ficou testada no B217; a E6 fechou no B215; antes estava: E6 em andamento (B185 posição, B186–B189 itens, B190 tela nova); E5 testada.
 **B165–B171 (resumo; detalhes no histórico):** B165 E1 auditoria · B166 E2/E3 login do painel e
 consulta viva · B167 senha + HMAC-MD5 no link · B168 criação de conta · B169 GM global coordenado
 (revisão/recibos/fencing em 8 processos) · B170 saída/salvamento/troca do GS reescritos ·
@@ -161,9 +161,10 @@ Diagnóstico, com evidência:
   cada rodada descobria uma corrida nova e abria outra camada.
 - **Testes que não pegam o que importa.** A suíte roda no schema `test` (já migrado) e
   não detectou nem o `revisao_gm` ausente no `public` nem o formato de hash das contas
-  reais. Dois arquivos de teste são intermitentes sob paralelismo
-  (`comandos_recuperaveis.rs:513-519` conta locks do banco inteiro com prazo de 1 s;
-  `canal_administrativo.rs:218-225` espera presença por 1 s).
+  reais. Dois arquivos de teste eram intermitentes sob paralelismo (conta de locks do banco
+  inteiro com prazo de 1 s; espera de presença de 1 s) — **resolvidos no B172**: a espera filtra a
+  própria consulta (`comandos_recuperaveis.rs:520-526`) e o prazo é 5 s (`canal_administrativo.rs:317-326`).
+  Os intermitentes de hoje são outros: `subcomandos_no_mundo` sob carga (B217/B218).
 - **Árvore sem commit** com 6+ blocos misturando painel e núcleo do GS/link.
 
 Mudanças **aprovadas pelo Murillo em 2026-10-05** (estado em §6.3):
@@ -257,3 +258,13 @@ modais (estatísticas, item, criar item, habilidade, mascote, Daimon, missões),
 categoria/`slot:N` e catálogo de mascotes por tipo/ambiente. Decisão do Murillo (2026-10-11): o slot vazio do
 corpo não veste direto — filtra o que cabe nele e o item nasce na bolsa. Corrige o voo 15732 e o anel 310 do
 Tsuko. Specs 03, 05 §7.11 e 06.
+
+**B218 (2026-10-11) — E9, fechamento:** decisões do Murillo: contrato proposto para os 6 editores futuros
+(`docs/admin/EXTENSOES_E_EDITORES_FUTUROS.md`: nenhum escritor de `.data` existe; o cliente lê `elements`/`tasks`
+próprios e só registra o MD5; `npcgen` é só do servidor; modelos/texturas são do patcher; dados lidos só na
+partida); manual reescrito em `.md` para o GM; interface: textos desatualizados, glifos → `ICONES`, nomes de mapa,
+limpeza de restos (`elements_decoder.py`, `skills_canon.json`, volumes do compose, `pagina-futura`); pendências na
+E9: Poção 1801 fora do semeio, Daimon escondido no 1.2.6 (o v7 não tem `GOBLIN_ESSENCE`) e tema claro.
+
+**B219 (2026-10-12) — depois da reforma, só plano:** recursos do cliente, versionamento de toda edição e
+atualizador próprio (decisão do Murillo: **não** usar o `.cup`) em `docs/admin/RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md`.

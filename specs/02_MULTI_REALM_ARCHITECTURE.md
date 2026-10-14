@@ -42,8 +42,7 @@ uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio
 | :--- | :--- | :--- | :--- | :--- |
 | `realm_155` | 1.5.5 | `pw-realm-155` **29004** | `pw-world-155` (mapas **1, 161 e 169**) | `data/realm_155/config` (cliente BR, v156) |
 | `realm_126` | 1.2.6 | `pw-realm-126` 29000 | 1 → `pw-world-126` | `data/realm_126` |
-| `realm_153` | 1.5.3 | `pw-realm-153` 29001 | 1 → `pw-world-153` | abandonado |
-| `realm_148` | 1.4.8 | `pw-realm-148` 29002 | 1 → `pw-world-148` | nunca foi alvo |
+| `realm_148`, `realm_153` | 1.4.8, 1.5.3 | — | — | **removidos no B231** (contêineres, serviços do compose e linhas de `realms`/`class_templates`; sem personagens). `data/realm_148` e `data/realm_153` ficaram no disco, sem uso |
 
 - **Um servidor de mundo por realm, com vários mapas** (`WORLD_TAGS=1,161`; o painel liga e
   desliga mapas em execução e a partida soma/tira os de `realms.config` — spec 05 §7.10, B183). Os dados são

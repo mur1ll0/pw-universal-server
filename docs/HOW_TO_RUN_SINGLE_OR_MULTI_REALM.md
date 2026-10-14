@@ -103,17 +103,12 @@ Para rodar os dois servidores ao mesmo tempo na mesma máquina:
 3. **Mapeamento de Portas e Clientes**:
    - **Cliente 1.2.6 (`ElementClient.exe`)**: Conecta em `127.0.0.1:29000`
    - **Cliente 1.5.3 (`ElementClient.exe`)**: Conecta em `127.0.0.1:29001`
-   - **Painel Web de Administração (`pw-admin-web`)**: Acesse no navegador em `http://localhost:8000` (API) ou abrindo `web-admin/frontend/index.html`.
+   - **Painel Web de Administração (`pw-admin-web`)**: Acesse no navegador em `http://localhost:8000` (API) (a interface é servida pelo próprio painel).
 
 ---
 
-## 4. Como Usar o Painel Web Administrativo (`pw-admin-web`)
+## 4. Painel Web Administrativo (`pw-admin-api`)
 
-1. Abra `web-admin/frontend/index.html` no seu navegador favorito (Chrome, Firefox, Edge).
-2. O painel se conectará automaticamente à API local (`http://localhost:8000`).
-3. **Operações Disponíveis**:
-   - **Criar Contas**: Clique no botão "+ Criar Nova Conta", defina o usuário, senha e nível de GM.
-   - **Dar Gold/CUBI**: Na lista de contas, clique no botão `+ Gold` e informe a quantidade. O saldo é creditado instantaneamente.
-   - **Double EXP / Eventos**: Acesse a aba *Double Eventos*, ajuste o multiplicador (ex: `2.0x`) e clique em *Aplicar*. O servidor atualiza o ganho de EXP sem precisar reiniciar o jogo.
-   - **Teletransporte de Emergência**: Na aba *Personagens*, pesquise o boneco e clique em *Teleportar CDD* para resgatá-lo para a Cidade do Dragão.
-   - **Transmissão Amarela de Sistema**: Na aba *Anúncios*, digite o aviso e transmita para todos os jogadores do Realm selecionado.
+Abra `http://<host>:8000` no navegador e entre com uma conta do jogo que tenha GM. O uso de
+cada página está em `docs/WEB_ADMIN_USER_GUIDE.md`; os contratos, em
+`docs/admin/ARQUITETURA_E_CONTRATOS.md` e `specs/06_ADMIN_PANEL_AND_CPW_SPEC.md`.

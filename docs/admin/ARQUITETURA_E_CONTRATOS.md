@@ -19,7 +19,7 @@ As linhas de `main.py` abaixo referem-se à base `a010ff7`, anterior à substitu
 | Rates e anúncio | `main.py:1048-1073` | Rates gravados em `realms`, sem consumo no GS; anúncio publicado em canal do delivery que não roda. E7; sem sucesso simulado. |
 | Moldes | `main.py:94-102,1224`; `specs/06` anterior | Startup inseria moldes genéricos para três realms; edição não corresponde às fontes do GS. Startup não escreve mais moldes. E8 rastreará cada campo consumido. |
 | Frontend | `main.py:1405-1419`; Dockerfile anterior | `backend/static/index.html` era servido e empacotado; cópia em `frontend/` tinha SHA-256 idêntico. Fonte única em `backend/static/`. |
-| Dados e ícones | `elements_decoder.py:500-514,774-790` | Fallbacks podem buscar dados de outro realm. Preservado como referência, sem importação/rotas públicas até validação de origem e fechamento do arquivo. |
+| Dados e ícones | `elements_decoder.py:500-514,774-790` (removido no B218) | Fallbacks podiam buscar dados de outro realm. Nunca importado pela API nova; saiu no B218 com os volumes do compose. Nomes e valores vêm do GS; extensões em `EXTENSOES_E_EDITORES_FUTUROS.md`. |
 | Barramento | `crates/pw-bus/src/message.rs:49`; `specs/02` §2.3 | Transporte de jogo sem autenticação. Canal administrativo separado e protegido é necessário. |
 
 ## Escolhas implementadas na E2
@@ -229,6 +229,12 @@ não confirmada. Ausência observada NÃO autoriza edição offline; ban/descone
 bloqueados por essas dependências. Testes: workspace 942/4 (2 ignorados); após correções GS 261/0 (2 ignorados),
 canal final 15/0 após conservar pares opacos de charactermode. Integral não repetida
 após correções; referências detalhadas no B170/estado/memória.
+
+## Extensões (E9, B218)
+
+Editores futuros de `elements`, `tasks`, `npcgen`, modelos, animações e texturas: fonte de verdade,
+leitor, o que falta, caminho de escrita (rascunho → validação pelo carregador → troca atômica →
+reinício/distribuição) e riscos em `docs/admin/EXTENSOES_E_EDITORES_FUTUROS.md`. Nada implementado.
 
 ## Contrato de destino para escritas E4–E8
 
