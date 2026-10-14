@@ -1600,6 +1600,7 @@ dependencies = [
  "hex",
  "md-5",
  "pw-atualizador",
+ "pw-data-loader",
  "pw-storage",
  "rayon",
  "serde",
