@@ -21,10 +21,13 @@ independente de onde essa entrada específica estivesse fisicamente armazenada.
 Esse é um bug do binário do client (fechado, sem como recompilar igual ao que foi
 distribuído) — não tem conserto do lado do servidor. A saída viável é ler esses
 pacotes por fora (aqui, em Python, sem o limite de 32 bits) e colocar os arquivos
-que faltam como **arquivos soltos** no diretório do client — o sistema de arquivos
-do client (`AFile`) sempre procura em disco antes do pacote, então um arquivo solto
-com o caminho certo é achado primeiro e nunca chega a precisar abrir o `.pck`
-quebrado pra aquele arquivo específico.
+que faltam como **arquivos soltos** no diretório do client. Funciona **porque o pacote
+não abre**: pelo fonte, `AFileImage::Init` (`AngelicaFile/Source/AFileImage.cpp:87-135`)
+lê **do pacote primeiro** (escolhido pelo prefixo da pasta, `AFilePackMan::GetFilePck`) e
+só vai ao disco quando a entrada não existe no pacote ou o pacote não abriu. Num pacote
+que abre (`gfx.pck`, `configs.pck`…), um arquivo solto **não** substitui a entrada que já
+está lá — correção do B219 (antes este texto dizia que o disco vinha sempre antes; falta
+conferir a ordem no binário, ver `docs/admin/RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md`).
 
 Ver o cabeçalho de `pw_pck_extract.py` pra o formato completo (structs, constantes
 de máscara, tudo achado por leitura de código + inspeção binária, sem chute).
@@ -42,6 +45,12 @@ python pw_pck_extract.py get-all <pacote.pck> <pasta-de-saida>   # cuidado, pode
 `<pacote.pck>` pode ser passado com ou sem o `.pkx` ao lado — o script acha sozinho
 (mesmo nome, extensão `.pkx`) e trata os dois como um pacote lógico só quando o
 `.pkx` existir. Funciona igual pra pacotes menores que 2GB sem `.pkx` nenhum.
+
+**Nomes no disco (B229):** os soltos são gravados com os bytes GBK do nome convertidos pela
+página de código ANSI do Windows (`bytes.decode("mbcs")`), que é como o `fopen` do cliente os
+procura — num Windows em português (ACP 1252) `形象` vira `ÐÎÏó`. Até o B219 o nome saía em
+chinês e o cliente não o achava. `PW_NOMES=cp936` volta ao nome chinês (só para inspecionar).
+Extraia **na máquina onde o cliente vai rodar**, ou com a mesma página de código.
 
 `get-matching` é o mais útil na prática: extrai TODAS as entradas cujo nome bate
 com um pedaço de texto, preservando a estrutura de pastas — pega um modelo inteiro

@@ -209,6 +209,9 @@ class FileEntry:
     offset: int
     length: int
     compressed_length: int
+    # Os bytes do nome como estão no pacote (GBK). B229: é com estes bytes que o cliente
+    # abre o arquivo solto — `fopen` (ANSI) os converte pela página de código do Windows.
+    name_bytes: bytes = b""
 
 
 @dataclass
@@ -294,7 +297,8 @@ def read_index(pkg: LogicalPackageFile) -> PackageIndex:
             "<260sIIII", entry_bytes
         )
         name = name_raw.split(b"\x00", 1)[0].decode("cp936", errors="replace").replace("/", "\\")
-        entries.append(FileEntry(name=name, offset=off64, length=length, compressed_length=clength))
+        entries.append(FileEntry(name=name, offset=off64, length=length, compressed_length=clength,
+                                 name_bytes=name_raw.split(b"\x00", 1)[0].replace(b"/", b"\\")))
 
     return PackageIndex(entries=entries, encrypted=encrypted, description=description)
 
@@ -370,7 +374,7 @@ def cmd_get_matching(pck_path: str, needle: str, out_dir: str) -> None:
                 failed.append((e, str(ex)))
                 print(f"  FALHOU  {e.name}: {ex}", file=sys.stderr)
                 continue
-            dest = os.path.join(out_dir, e.name.replace("\\", os.sep))
+            dest = os.path.join(out_dir, nome_no_disco(e).replace("\\", os.sep))
             os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
             with open(dest, "wb") as f:
                 f.write(data)
@@ -378,6 +382,21 @@ def cmd_get_matching(pck_path: str, needle: str, out_dir: str) -> None:
         print(f"extraí {len(matches) - len(failed)}/{len(matches)} arquivo(s) batendo com {needle!r} em {out_dir}")
         if failed:
             print(f"  {len(failed)} falharam (entrada corrompida no pacote de origem, não no extrator — ver mensagens acima)")
+
+
+def nome_no_disco(e: FileEntry) -> str:
+    """Nome do arquivo solto como o **cliente** o procura nesta máquina (B229).
+
+    O cliente monta o caminho com os bytes GBK do pacote e o abre com `fopen` (ANSI,
+    `AFileImage.cpp:127`): o Windows converte esses bytes pela página de código ANSI do
+    sistema (`CP_ACP`). Num Windows em português (ACP 1252), `形象` vira `ÐÎÏó` — gravar o
+    nome em chinês (como até o B219) deixa o arquivo invisível para o cliente. O codec
+    `mbcs` do Python faz a mesma conversão (`MultiByteToWideChar(CP_ACP)`). Fora do
+    Windows, ou com `PW_NOMES=cp936`, sai o nome chinês de antes (só para inspeção).
+    """
+    if os.environ.get("PW_NOMES") == "cp936" or os.name != "nt" or not e.name_bytes:
+        return e.name
+    return e.name_bytes.decode("mbcs")
 
 
 def cmd_get_all(pck_path: str, out_dir: str) -> None:
@@ -395,7 +414,7 @@ def cmd_get_all(pck_path: str, out_dir: str) -> None:
                 failed.append((e, str(ex)))
                 print(f"FALHOU ({i}/{total}) {e.name}: {ex}", file=sys.stderr)
                 continue
-            dest = os.path.join(out_dir, e.name.replace("\\", os.sep))
+            dest = os.path.join(out_dir, nome_no_disco(e).replace("\\", os.sep))
             os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
             with open(dest, "wb") as f:
                 f.write(data)

@@ -73,21 +73,16 @@ services:
       PORT: 8000
       # Acesso HTTP na rede local; em HTTPS use ADMIN_COOKIE_SECURE=true.
       ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
-      ADMIN_GATEWAYS: '{"realm_126":"pw-realm-126","realm_148":"pw-realm-148","realm_153":"pw-realm-153","realm_155":"pw-realm-155"}'
+      ADMIN_GATEWAYS: '{"realm_126":"pw-realm-126","realm_155":"pw-realm-155"}'
       ADMIN_DAEMONS: '{"realm_126":[{"host":"pw-world-126","porta":29110}],"realm_155":[{"host":"pw-world-155","porta":29110}]}'
       ADMIN_CHANNEL_SECRETS: '{"realm_126":"${ADMIN_SECRET_126:-}","realm_155":"${ADMIN_SECRET_155:-}"}'
     ports:
       - "8000:8000"
     volumes:
+      # Ícones (`data/icones`) e textos do cliente (`data/textos`). Os `.data` do realm o painel
+      # não lê: nomes e valores vêm do GS pelo canal administrativo (B218 tirou os volumes do
+      # `elements_decoder.py`, que não era importado).
       - ../data:/app/data:ro
-      # Catálogo de layouts de elements.data (specs/elements_layouts/*.json) e as
-      # correções conhecidas por realm (specs/elements_155/realm_155_overrides.json) --
-      # o `elements_decoder.py` carrega isso em tempo de execução (ver
-      # `_load_realm_elements_generic`/`HAS_GENERIC_READER`). Mesmo padrão de volume
-      # read-only já usado pro `data/` acima; sem isto o decodificador cai de volta pro
-      # comportamento antigo (só v7/1.2.6), sem quebrar, mas sem decodificar builds novas.
-      - ../specs/elements_layouts:/app/specs/elements_layouts:ro
-      - ../specs/elements_155:/app/specs/elements_155:ro
     depends_on:
       - pw-postgres
       - pw-dragonfly
@@ -151,116 +146,6 @@ services:
       REDIS_URL: redis://pw-dragonfly:6379
     volumes:
       - ../data/realm_126/config:/app/data/config:ro
-    depends_on:
-      pw-postgres:
-        condition: service_healthy
-      pw-dragonfly:
-        condition: service_started
-
-  # ============================================================================
-  # 4. REALM 2: PERFECT WORLD TIDES / GENESIS (Versão 1.4.8)
-  # ============================================================================
-  pw-realm-148:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.core
-      args:
-        CRATE_NAME: pw-link
-    container_name: pw-realm-148
-    restart: unless-stopped
-    environment:
-      REALM_ID: realm_148
-      GAME_VERSION: "1.4.8"
-      GATEWAY_PORT: 29002
-      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
-      REDIS_URL: redis://pw-dragonfly:6379
-      GS_BUS: pw-world-148:29100
-    ports:
-      - "29002:29002" # Porta pública do cliente 1.4.8
-    volumes:
-      - ../data/realm_148/config:/app/data/config:ro
-    depends_on:
-      - pw-auth
-      - pw-world-148
-
-  # Servidor de mundo do realm 1.4.8. Sem `ports:` — barramento interno (ver 1.2.6).
-  pw-world-148:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.core
-      args:
-        CRATE_NAME: pw-gs
-    container_name: pw-world-148
-    restart: unless-stopped
-    environment:
-      REALM_ID: realm_148
-      GAME_VERSION: "1.4.8"
-      WORLD_TAG: "1"
-      BUS_LISTEN: 0.0.0.0:29100
-      CONFIG_DIR: /app/data/config
-      # `pw_gs=debug` liga a linha "mundo: subcomando N de <roleid>", que é a prova de
-      # que o caminho cliente → pw-link → barramento → pw-gs está fechado. Enquanto os
-      # subcomandos não forem tratados aqui, é o único sinal de que eles chegam.
-      RUST_LOG: info,pw_gs=debug
-      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
-      REDIS_URL: redis://pw-dragonfly:6379
-    volumes:
-      - ../data/realm_148/config:/app/data/config:ro
-    depends_on:
-      pw-postgres:
-        condition: service_healthy
-      pw-dragonfly:
-        condition: service_started
-
-  # ============================================================================
-  # 5. REALM 3: PERFECT WORLD ECLIPSE (Versão 1.5.3)
-  # ============================================================================
-  pw-realm-153:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.core
-      args:
-        CRATE_NAME: pw-link
-    container_name: pw-realm-153
-    restart: unless-stopped
-    environment:
-      REALM_ID: realm_153
-      GAME_VERSION: "1.5.3"
-      GATEWAY_PORT: 29001
-      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
-      REDIS_URL: redis://pw-dragonfly:6379
-      GS_BUS: pw-world-153:29100
-    ports:
-      - "29001:29001" # Porta pública do cliente 1.5.3
-    volumes:
-      - ../data/realm_153/config:/app/data/config:ro
-    depends_on:
-      - pw-auth
-      - pw-world-153
-
-  # Servidor de mundo do realm 1.5.3. Sem `ports:` — barramento interno (ver 1.2.6).
-  pw-world-153:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.core
-      args:
-        CRATE_NAME: pw-gs
-    container_name: pw-world-153
-    restart: unless-stopped
-    environment:
-      REALM_ID: realm_153
-      GAME_VERSION: "1.5.3"
-      WORLD_TAG: "1"
-      BUS_LISTEN: 0.0.0.0:29100
-      CONFIG_DIR: /app/data/config
-      # `pw_gs=debug` liga a linha "mundo: subcomando N de <roleid>", que é a prova de
-      # que o caminho cliente → pw-link → barramento → pw-gs está fechado. Enquanto os
-      # subcomandos não forem tratados aqui, é o único sinal de que eles chegam.
-      RUST_LOG: info,pw_gs=debug
-      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
-      REDIS_URL: redis://pw-dragonfly:6379
-    volumes:
-      - ../data/realm_153/config:/app/data/config:ro
     depends_on:
       pw-postgres:
         condition: service_healthy
