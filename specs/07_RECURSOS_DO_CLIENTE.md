@@ -160,12 +160,24 @@ Motor `crates/pw-recursos/src/estudio.rs` sobre `pw_data_loader::elements_editav
 | `GET tabelas/{T}/{i}?rascunho=` | a ficha: campos com tipo, tamanho, deslocamento e valor (`string` GBK sai legível) |
 | `PUT tabelas/{T}/{i}?rascunho=` `{campos}` | edita; recusa tipo errado, texto que não cabe, campo inexistente |
 | `POST tabelas/{T}/{i}/clonar?rascunho=` | registro novo com o próximo id do espaço |
-| `DELETE tabelas/{T}/{i}?rascunho=` | remove; recusado se algum campo `int32` de outro registro tem o id (conservador) |
+| `DELETE tabelas/{T}/{i}?rascunho=` | remove; recusado se algum campo do índice de referências (ou duvidoso) de outro registro cita o id |
+| `GET espacos/{E}?busca=&limite=&rascunho=` | registros do espaço com id exato ou nome contendo a busca (seletor de referência) |
 
 Cada edição grava o arquivo inteiro como objeto (zstd 3) e o item `data\elements.data` (destino `ambos`) do
 rascunho, com `resumo = {campos: [{tabela, id, campo, antes, depois}], registros: [{tabela, id, acao, base}]}` —
 o "antes" é sempre o do publicado; voltar ao valor publicado tira a linha; arquivo igual ao publicado tira o item.
 Uma edição por rascunho de cada vez (trava em memória); os arquivos lidos ficam em cache pelo SHA-256.
+
+**Índice de referências (S2, B238):** `specs/estudio/referencias.json`, gerado por
+`specs/estudio/gerar_referencias.py` com **duas evidências por campo** — o membro do `ExpTypes.h` do cliente 1.5.5
+(achatado como o layout: `nome_i_membro`) tem nome de id ou comentário que diz "ID", e ≥ 95% dos valores não nulos
+dos `elements` de `realm_126` e `realm_155` existem como id no espaço. Pela cobertura só `ESSENCE`/`ADDON` (ids
+altos); `RECIPE`/`TALK` exigem a palavra (配方, 对话) ou destino declarado com evidência (forja: `NPC_MAKE_SERVICE`
+`pages_N_id_goods_N` → `RECIPE`); ficam de fora estratégia, quantidade, nível, classe, máscara, controlador de mapa,
+habilidade e missão (não são registros do `elements`). Resultado: **2.813 campos em 70 tabelas** (`ESSENCE` 2.325,
+`RECIPE` 261, `ADDON` 225, `TALK` 2); **2.007 duvidosos** com o motivo. A ficha traz `cita`, `referencia`
+(`{tabela, indice, id, nome}` ou `{ausente}`) e `usado_por` (até 100); remover bloqueia por índice + duvidosos. Na
+tela, campos repetidos viram tabela e a referência tem link e busca embutida.
 
 ## 7. Testes
 

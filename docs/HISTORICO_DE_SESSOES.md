@@ -13716,3 +13716,51 @@ comparação lado a lado.
     ### e. Falta
     - O Murillo testar a página Estúdio (roteiro na resposta) e reiniciar o realm depois de publicar.
     - S1: diferenças lado a lado na publicação; marcar "aguarda reinício". S2: telas próprias e índice de referências.
+
+238. **Sessão 2026-10-14: Estúdio S2, primeira parte — índice de referências do `elements`.**
+
+    ### a. Pedido
+    Commitar o B237 (feito: `d334cf8`, `0a16a8f`, `996a433`, `eaf329e`) e seguir com a próxima etapa: S2 do
+    `ESTUDIO_DO_PAINEL.md` (telas de Armas/Armaduras/Consumíveis/Monstros + índice de referências). Começou pelo
+    índice, que é a base das telas, do "usado por" e da remoção segura.
+
+    ### b. Evidência e método
+    - Cobertura sozinha engana: números pequenos (nível, durabilidade, classe, estratégia) caem em qualquer espaço —
+      a 1ª passada pôs `id_strategy` em `FACE`, `num_drop_after_damaged` em `FACE`, `gender_id` e `has_guid` em
+      `ESSENCE`, serviços em `ADDON` por empate. Cada um foi conferido e virou regra.
+    - Fonte: `EvolvedPWClient/ElementClient/CCommon/ExpTypes.h` (GBK), membros achatados como o layout (`nome_i_membro`,
+      `i` a partir de 1); os nomes do layout vêm do `.cfg` do sELedit, e só os campos que o v156 do BR tem a mais que o
+      fonte ficam sem par (`unk`, `hiddens_*`, `id_building`…).
+    - Regras finais (`specs/estudio/gerar_referencias.py`): nome de id (`id` como palavra) ou comentário com "ID"; sem
+      "ID" no comentário, mediana dos valores ≥ 100; ≥ 95% dos valores não nulos no espaço nos dois realms; pela
+      cobertura só `ESSENCE`/`ADDON` (empate → `ESSENCE`); `RECIPE`/`TALK` por palavra ou destino declarado (forja);
+      exclusões por comentário (estratégia, quantidade, nível, parte, classe, região, grupo, transformação, máscara,
+      "se/sim-não", sexo, controlador, estação de viagem, modelo, textura) e por nome (`controller`, `skill`, `task`);
+      empate sem comentário e tabela sem espaço conhecido citando os próprios tipos → duvidoso. Os ids do `TALK_PROC`
+      vêm de `id_talk`.
+    - Conferido à mão numa amostra: drops do monstro, tipos de item, addons/raros/únicos, serviços do NPC, itens da
+      loja, materiais e produtos de receita, conversa dos serviços de conversa/transporte, receitas da forja.
+
+    ### c. O que foi feito
+    - `specs/estudio/gerar_referencias.py` e `specs/estudio/referencias.json`: **2.813 campos em 70 tabelas**
+      (`ESSENCE` 2.325, `RECIPE` 261, `ADDON` 225, `TALK` 2), **2.007 duvidosos** com motivo.
+    - `pw-recursos::estudio`: catálogo embutido; ficha com `cita`, `referencia` (nome/tabela/índice ou `ausente`) e
+      `usado_por`; remoção bloqueada pelo índice + duvidosos (substitui o "qualquer `int32` igual"); `buscar_no_espaco`
+      e rota `GET /admin/{v}/estudio/espacos/{E}`; o Docker copia o `referencias.json`.
+    - Painel: repasse `/api/realms/{realm}/estudio/espacos/{E}`; ficha agrupa campos repetidos em tabelas
+      recolhíveis (drops, páginas, materiais), mostra a referência com link e busca embutida (sem `prompt`), marca
+      duvidosos com "?", e lista "usado por" com links.
+
+    ### d. Provas
+    - `pw-recursos/tests/estudio.rs` (banco + HTTP, `elements` real do 1.2.6): o drop do monstro cita `ESSENCE` e tem
+      nome, sem id inexistente; `WEAPON_MAJOR_TYPE` 0 é usado por armas pelo `id_major_type`; a busca no espaço acha a
+      arma pelo id; espaço inválido 404; o resto do fluxo do B237 continua (remoção do tipo recusada, agora pelo índice).
+    - Painel: `teste_recursos.py` 6/6 (com o repasse da busca por espaço).
+    - Publicado em `pw-recursos` e `pw-admin-api`, com os dados reais: o monstro 5 ("Lacaio Minotauro") tem 33
+      referências com nome nas duas versões (drops "Poção Refinada de Cura"…), ficha em 0,06 s (1.2.6) e 0,34 s (1.5.5);
+      o tipo "Espadas" aparece usado por 100+ armas. O `id_type` do monstro mostra "Flechas do Monstro Búfalo": é o nome
+      do `MONSTER_TYPE` 2066 nos próprios dados (conferido; não há id repetido em nenhum espaço nos dois realms).
+
+    ### e. Falta
+    - Telas próprias do S2 com rótulos em português (catálogo de interface `specs/estudio/<versao>/<TABELA>.json`) e
+      ícones; revisar os 2.007 duvidosos por grupo (muitos são campos do v156 sem par no fonte).

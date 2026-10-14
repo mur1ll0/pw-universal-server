@@ -210,6 +210,11 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > ficha genérica, rascunho com diferenças campo a campo, publicar (que agora grava também no `config` do realm).
 > Faltam do S1: diferenças lado a lado na publicação; o índice de referências é do S2 (hoje a remoção usa uma
 > busca conservadora por `int32` igual ao id). Descrição atual: `specs/07_RECURSOS_DO_CLIENTE.md` §6b.
+>
+> **B238:** índice de referências do S2 feito (`specs/estudio/referencias.json`, 2.813 campos com evidência do
+> `ExpTypes.h` e dos dados; 2.007 duvidosos listados) — referência com nome e link, "usado por", remoção bloqueada
+> pelo índice, busca por espaço e campos repetidos (drops, páginas, materiais) em tabela. Faltam do S2 as telas
+> próprias com rótulos em português (Armas, Armaduras, Consumíveis, Monstros) e os ícones.
 
 | fase | entrega |
 | :--- | :--- |
