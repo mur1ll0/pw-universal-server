@@ -241,11 +241,16 @@ services:
       RUST_LOG: info
       # 8101 = API administrativa (B235): sem `ports:` — só o painel, pela rede interna, a alcança.
       PW_RECURSOS_SEGREDO: ${RECURSOS_SEGREDO:-}
+      # Publicar um item de destino servidor/ambos (ex.: o elements editado no Estúdio) grava
+      # o arquivo no config do realm da versão (B237). O realm precisa ser reiniciado depois.
+      PW_RECURSOS_REALMS: '{"1.2.6":["/realms/realm_126"],"1.5.5":["/realms/realm_155"]}'
     ports:
       - "8100:8100"
     volumes:
       - ../data/clientes:/dados
       - pw_recursos_chave:/chave
+      - ../data/realm_126/config:/realms/realm_126
+      - ../data/realm_155/config:/realms/realm_155
     depends_on:
       pw-postgres:
         condition: service_healthy

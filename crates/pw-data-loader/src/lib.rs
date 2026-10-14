@@ -10,6 +10,7 @@ pub mod dyn_tasks;
 pub mod collision;
 pub mod elements;
 pub mod generic_elements;
+pub mod elements_editavel;
 pub mod gshop;
 pub mod manager;
 pub mod monstros;

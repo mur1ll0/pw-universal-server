@@ -20,10 +20,20 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Resultado de uma publicação: o número e os arquivos gravados nos realms.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Publicacao {
+    pub numero: u32,
+    pub aplicados: Vec<String>,
+}
+
 pub struct Governanca {
     pub dados: PathBuf,
     pub repo: RecursosRepository,
     pub chave: Arc<Chave>,
+    /// Pastas `config` dos realms de cada versão de cliente (`PW_RECURSOS_REALMS`): publicar um
+    /// item de destino `servidor`/`ambos` grava o arquivo nelas (B237).
+    pub realms: BTreeMap<String, Vec<PathBuf>>,
 }
 
 /// Caminho resolvido contra o manifesto publicado: os bytes exatos (os do manifesto, se o
@@ -34,7 +44,7 @@ pub struct Caminho {
 }
 
 impl Governanca {
-    fn objetos(&self, versao: &str) -> Objetos {
+    pub(crate) fn objetos(&self, versao: &str) -> Objetos {
         Objetos::new(pasta_da_versao(&self.dados, versao).join("objetos"), 12)
     }
 
@@ -70,7 +80,7 @@ impl Governanca {
         Ok(Caminho { gbk, atual })
     }
 
-    async fn rascunho_da_versao(&self, versao: &str, alteracao: i64) -> Result<()> {
+    pub(crate) async fn rascunho_da_versao(&self, versao: &str, alteracao: i64) -> Result<()> {
         let a = self.repo.alteracao(alteracao).await?.context("alteração inexistente")?;
         if a.linha != versao {
             bail!("a alteração {alteracao} é da versão {}", a.linha);
@@ -156,7 +166,7 @@ impl Governanca {
         rascunhos: &[i64],
         autor: Option<i32>,
         minima: Option<i32>,
-    ) -> Result<u32> {
+    ) -> Result<Publicacao> {
         if rascunhos.is_empty() {
             bail!("nenhum rascunho escolhido");
         }
@@ -172,6 +182,7 @@ impl Governanca {
             m.arquivos.into_iter().map(|a| (a.caminho_gbk.clone(), a)).collect();
         let objetos = self.objetos(versao);
         let mut total_itens = 0;
+        let mut para_o_realm: Vec<ItemDeRecurso> = Vec::new();
         for id in &ids {
             self.rascunho_da_versao(versao, *id).await?;
             let itens = self.repo.itens(*id).await?;
@@ -180,6 +191,12 @@ impl Governanca {
             }
             for i in itens {
                 total_itens += 1;
+                if i.destino != "cliente" {
+                    para_o_realm.push(i.clone());
+                }
+                if i.destino == "servidor" {
+                    continue; // só do servidor: não entra no manifesto do cliente
+                }
                 let chave = hex::encode(&i.caminho);
                 let atual_sha = arquivos.get(&chave).map(|a| a.sha256.clone());
                 let antes = i.sha256_antes.as_ref().map(hex::encode);
@@ -261,7 +278,45 @@ impl Governanca {
         };
         gravar_assinado(&atualizacao.join("versao.json"), &serde_json::to_vec_pretty(&nova)?, &self.chave)?;
         tracing::info!("versão {versao} nº {numero} publicada: {} rascunhos, {total_itens} itens", ids.len());
-        Ok(numero)
+        let aplicados = self.aplicar_nos_realms(versao, &para_o_realm)?;
+        Ok(Publicacao { numero, aplicados })
+    }
+
+    /// Grava nos `config` dos realms da versão os itens de destino `servidor`/`ambos` (o "Ligação
+    /// com os realms" do §3): só arquivos de `data\` direto (`data\elements.data` → `elements.data`),
+    /// por troca atômica. O GS lê esses arquivos ao subir: o realm precisa ser reiniciado.
+    /// Remoção não apaga nada do realm (o servidor depende desses arquivos).
+    fn aplicar_nos_realms(&self, versao: &str, itens: &[ItemDeRecurso]) -> Result<Vec<String>> {
+        let mut aplicados = Vec::new();
+        let Some(pastas) = self.realms.get(versao) else {
+            if !itens.is_empty() {
+                tracing::warn!("versão {versao} sem PW_RECURSOS_REALMS: {} itens do servidor não aplicados", itens.len());
+            }
+            return Ok(aplicados);
+        };
+        let objetos = self.objetos(versao);
+        for i in itens {
+            let Some(depois) = &i.sha256_depois else { continue };
+            let nome = nomes::legivel(&i.caminho);
+            let arquivo = match nome.get(..5) {
+                Some(p) if p.eq_ignore_ascii_case("data\\") => &nome[5..],
+                _ => bail!("{nome}: só arquivos de data\\ vão para o realm"),
+            };
+            if arquivo.is_empty() || arquivo.contains(['\\', '/', ':']) || arquivo.starts_with('.') {
+                bail!("{nome}: nome inválido para o realm");
+            }
+            let sha: Sha256Bytes = depois.as_slice().try_into().context("sha256_depois")?;
+            let tamanho = i.tamanho.context("item sem tamanho")? as usize;
+            let dados = objetos.ler(&sha, tamanho)?;
+            for pasta in pastas {
+                let destino = pasta.join(arquivo.to_lowercase());
+                let tmp = pasta.join(format!(".{}.pw-tmp", arquivo.to_lowercase()));
+                std::fs::write(&tmp, &dados).with_context(|| format!("gravar {}", tmp.display()))?;
+                std::fs::rename(&tmp, &destino).with_context(|| format!("trocar {}", destino.display()))?;
+                aplicados.push(destino.display().to_string());
+            }
+        }
+        Ok(aplicados)
     }
 
     /// Cria um rascunho que desfaz uma alteração publicada. Devolve o id do rascunho.

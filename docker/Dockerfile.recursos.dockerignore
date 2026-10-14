@@ -8,5 +8,17 @@
 !tools/
 !tools/**
 
+# Os specs que o pw-data-loader embute (mesma lista do Dockerfile.core.dockerignore).
+!specs/elements_layouts/
+!specs/elements_layouts/**
+!specs/elements_155/realm_155_overrides.json
+!specs/elements_155/realm_155_v159_overrides.json
+!specs/mapas/
+!specs/mapas/**
+!specs/habilidades_155/habilidades.json
+!specs/habilidades_126/habilidades.json
+!specs/addons_155/addons.json
+!specs/addons_155/classificacao.json
+
 # O launcher (Tauri) compila fora do Docker; o target dele tem GB (B234).
 tools/pw-launcher/target

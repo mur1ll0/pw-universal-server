@@ -99,6 +99,9 @@ async fn main() -> Result<()> {
                     dados: dados.clone(),
                     repo: RecursosRepository::new(pool),
                     chave: Arc::new(chave),
+                    // `{"1.2.6": ["/realms/realm_126"], ...}`: onde publicar os `data\*.data` do servidor.
+                    realms: serde_json::from_str(&ambiente("PW_RECURSOS_REALMS", "{}"))
+                        .context("PW_RECURSOS_REALMS não é um JSON {versão: [pastas]}")?,
                 };
                 let porta_admin = ambiente("PW_RECURSOS_PORTA_ADMIN", "8101");
                 let escuta_admin = tokio::net::TcpListener::bind(format!("0.0.0.0:{porta_admin}")).await?;

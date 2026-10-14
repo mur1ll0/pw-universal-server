@@ -70,6 +70,7 @@ type R<T> = Result<T, Erro>;
 struct Estado {
     gov: Governanca,
     segredo: String,
+    estudio: crate::estudio::Estudio,
 }
 
 fn validar(versao: &str) -> R<()> {
@@ -225,8 +226,8 @@ struct PedidoPublicar {
 
 async fn publicar(State(e): State<Arc<Estado>>, Path(v): Path<String>, Json(p): Json<PedidoPublicar>) -> R<Json<Value>> {
     validar(&v)?;
-    let numero = e.gov.publicar(&v, &p.rascunhos, p.autor, p.minima).await?;
-    Ok(Json(json!({ "numero": numero })))
+    let r = e.gov.publicar(&v, &p.rascunhos, p.autor, p.minima).await?;
+    Ok(Json(json!({ "numero": r.numero, "aplicados": r.aplicados })))
 }
 
 #[derive(Deserialize)]
@@ -244,8 +245,97 @@ async fn reverter(
     Ok(Json(json!({ "rascunho": e.gov.reverter(&v, id, p.autor, &p.operacao_id).await? })))
 }
 
+// ------------------------------------------------------------------ Estúdio (S1, B237)
+
+#[derive(Deserialize)]
+struct QEstudio {
+    rascunho: Option<i64>,
+    busca: Option<String>,
+    pagina: Option<usize>,
+    por_pagina: Option<usize>,
+}
+
+fn tabela_valida(t: &str) -> R<()> {
+    if t.is_empty() || t.len() > 64 || !t.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_') {
+        return Err(Erro(StatusCode::NOT_FOUND, "tabela inválida".into()));
+    }
+    Ok(())
+}
+
+fn rascunho_obrigatorio(q: &QEstudio) -> R<i64> {
+    q.rascunho.ok_or(Erro(StatusCode::BAD_REQUEST, "escolha o rascunho onde a edição fica".into()))
+}
+
+async fn estudio_tabelas(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.tabelas(&e.gov, &v, q.rascunho).await?))
+}
+
+async fn estudio_listar(
+    State(e): State<Arc<Estado>>,
+    Path((v, tabela)): Path<(String, String)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    tabela_valida(&tabela)?;
+    let r = e
+        .estudio
+        .listar(&e.gov, &v, q.rascunho, &tabela, q.busca.as_deref().unwrap_or(""), q.pagina.unwrap_or(0), q.por_pagina.unwrap_or(50))
+        .await?;
+    Ok(Json(r))
+}
+
+async fn estudio_ficha(
+    State(e): State<Arc<Estado>>,
+    Path((v, tabela, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    tabela_valida(&tabela)?;
+    Ok(Json(e.estudio.ficha(&e.gov, &v, q.rascunho, &tabela, indice).await?))
+}
+
+#[derive(Deserialize)]
+struct PedidoEditar {
+    campos: serde_json::Map<String, Value>,
+}
+
+async fn estudio_editar(
+    State(e): State<Arc<Estado>>,
+    Path((v, tabela, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoEditar>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    tabela_valida(&tabela)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.editar(&e.gov, &v, r, &tabela, indice, p.campos).await?))
+}
+
+async fn estudio_clonar(
+    State(e): State<Arc<Estado>>,
+    Path((v, tabela, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    tabela_valida(&tabela)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.clonar(&e.gov, &v, r, &tabela, indice).await?))
+}
+
+async fn estudio_remover(
+    State(e): State<Arc<Estado>>,
+    Path((v, tabela, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    tabela_valida(&tabela)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.remover(&e.gov, &v, r, &tabela, indice).await?))
+}
+
 pub fn rotas(gov: Governanca, segredo: String) -> Router {
-    let estado = Arc::new(Estado { gov, segredo });
+    let estado = Arc::new(Estado { gov, segredo, estudio: Default::default() });
     Router::new()
         .route("/admin/versoes", get(versoes))
         .route("/admin/{v}/alteracoes", get(alteracoes))
@@ -257,6 +347,10 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/rascunhos/{id}/descartar", post(descartar))
         .route("/admin/{v}/publicar", post(publicar))
         .route("/admin/{v}/alteracoes/{id}/reverter", post(reverter))
+        .route("/admin/{v}/estudio/tabelas", get(estudio_tabelas))
+        .route("/admin/{v}/estudio/tabelas/{tabela}", get(estudio_listar))
+        .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}", get(estudio_ficha).put(estudio_editar).delete(estudio_remover))
+        .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}/clonar", post(estudio_clonar))
         .layer(DefaultBodyLimit::max(MAIOR_ARQUIVO))
         .route_layer(middleware::from_fn_with_state(estado.clone(), exigir_segredo))
         .with_state(estado)

@@ -99,7 +99,7 @@ async fn rascunho_publicar_atualizar_e_reverter() {
     tokio::spawn(async move { axum::serve(publico, rotas).await });
     let admin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_admin = format!("http://{}", admin.local_addr().unwrap());
-    let gov = Governanca { dados: dados.clone(), repo: RecursosRepository::new(pool.clone()), chave: Arc::new(chave) };
+    let gov = Governanca { dados: dados.clone(), repo: RecursosRepository::new(pool.clone()), chave: Arc::new(chave), realms: Default::default() };
     let rotas_admin = pw_recursos::admin::rotas(gov, SEGREDO.into());
     tokio::spawn(async move { axum::serve(admin, rotas_admin).await });
 

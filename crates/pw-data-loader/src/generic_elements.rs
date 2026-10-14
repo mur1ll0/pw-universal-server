@@ -52,9 +52,9 @@ const V159_LAYOUT_JSON: &str = include_str!("../../../specs/elements_layouts/v15
 
 /// `tag` gravado por `elementdataman::save_data` antes do nome da máquina exportadora
 /// (`gs/template/elementdataman.cpp:3608`).
-const TAG_DO_EXPORTADOR: u32 = 0xab76_89dd;
+pub(crate) const TAG_DO_EXPORTADOR: u32 = 0xab76_89dd;
 /// `tag2` gravado depois de `WAR_TANKCALLIN_ESSENCE` (`gs/template/elementdataman.cpp:3725`).
-const TAG_DEPOIS_DOS_TANQUES: u32 = 0xee35_679f;
+pub(crate) const TAG_DEPOIS_DOS_TANQUES: u32 = 0xee35_679f;
 
 #[derive(Error, Debug)]
 pub enum GenericElementsError {
@@ -275,14 +275,14 @@ fn read_wstr(buf: &[u8], off: usize, nchars: usize) -> Result<(String, usize)> {
     Ok((String::from_utf16_lossy(&u16s), off + size))
 }
 
-fn u32_em(buf: &[u8], off: usize) -> Result<u32> {
+pub(crate) fn u32_em(buf: &[u8], off: usize) -> Result<u32> {
     buf.get(off..off + 4)
         .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .ok_or(GenericElementsError::OutOfBounds(off + 4, buf.len()))
 }
 
 /// Avança `n × tamanho` bytes, recusando o que passaria do fim do arquivo.
-fn avancar(buf: &[u8], off: usize, n: u32, tamanho: usize) -> Result<usize> {
+pub(crate) fn avancar(buf: &[u8], off: usize, n: u32, tamanho: usize) -> Result<usize> {
     (n as usize)
         .checked_mul(tamanho)
         .and_then(|b| off.checked_add(b))
@@ -292,7 +292,7 @@ fn avancar(buf: &[u8], off: usize, n: u32, tamanho: usize) -> Result<usize> {
 
 /// `talk_proc::load` (`CCommon/ExpTypes.h:3872`): `id_talk`, `text[64]`, as janelas e, em
 /// cada uma, `id`, `id_parent`, o texto e as opções (`id` + `text[64]` + `param`).
-fn read_talk_proc_table(buf: &[u8], off: usize) -> Result<(Vec<Record>, usize)> {
+pub(crate) fn read_talk_proc_table(buf: &[u8], off: usize) -> Result<(Vec<Record>, usize)> {
     let count = u32_em(buf, off)?;
     let mut cur = off + 4;
     let mut talk_procs = Vec::with_capacity((count as usize).min(buf.len() / 136));
