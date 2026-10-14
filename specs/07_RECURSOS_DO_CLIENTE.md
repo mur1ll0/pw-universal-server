@@ -2,8 +2,8 @@
 
 > Como o servidor guarda o cliente de cada versão e o entrega ao launcher. Plano e decisões:
 > `docs/admin/RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md` (§3, §7.2, §7.7, §8, §8.6). Estado: **P1
-> (versão 0 + pacotes + HTTP) implementado no B233**; launcher (P2), governança no painel (P3) e
-> editores (P4+) faltam.
+> (versão 0 + pacotes + HTTP) no B233, confirmado em jogo nas duas versões; P2 (núcleo do launcher
+> `pw-atualizador` + app Tauri `tools/pw-launcher`) no B234**; governança no painel (P3) e editores (P4+) faltam.
 
 ## 1. Serviço
 
@@ -11,7 +11,7 @@
 | :--- | :--- |
 | crate | `crates/pw-recursos` (bin + lib) |
 | contêiner | `pw-recursos` (`docker/Dockerfile.recursos`: Rust + Python 3 + `tools/pw-pck-extract`) |
-| porta | **8100**, só leitura: `GET /atualizacao/<versao>/<resto>` (com `Range`, `ServeFile` do tower-http) e `GET /saude` |
+| porta | **8100**, só leitura: `GET /versoes` (lista JSON das versões com `versao.json`), `GET /atualizacao/<versao>/<resto>` (com `Range`, `ServeFile` do tower-http), `GET /atualizacao/<versao>/objetos/<sha256>` (um arquivo pelo conteúdo, zstd — reparo e atualização, B234) e `GET /saude` |
 | volume de dados | `data/clientes` → `/dados` (bind) |
 | chave | volume nomeado `pw_recursos_chave` → `/chave/assinatura_ed25519.key`, **montado só aqui** (o painel monta `../data` inteiro) |
 | banco | `recursos_linhas`, `recursos_base`, `recursos_alteracoes`, `recursos_alteracao_itens`, `recursos_versoes` (`scripts/2026_10_14_recursos_do_cliente.sql`; repositório `pw_storage::RecursosRepository`) |
@@ -50,7 +50,8 @@ dela já estão na ACP daquela máquina):
 3. Excluídos (§8.6): `.pck`/`.pkx`, `*.pck.files/`, `sPCK.exe`, `pwrepack.exe/.bat`,
    `extract_pck.bat`, `update5.rar` (na raiz), `*.log`, e as pastas `logs/`, `screenshots/`,
    `NovosModels/`. Decisões do Murillo (B233): os instaladores avulsos da raiz (`360inst_wanmeigj.exe`,
-   `gt_setup.exe`, `gt_updater.exe`, `dxwebsetup.exe`, `unitywebplayerdevelopment.exe`); em `data\`, as pastas
+   `gt_setup.exe`, `gt_updater.exe`, `dxwebsetup.exe`, `unitywebplayerdevelopment.exe`) e os
+   `enablemoremem`/`disablemoremem_vista_win7_32bit.bat` (mexem no `increaseUserVa` do Windows por `bcdedit`); em `data\`, as pastas
    `BCK`, `Data Export`, `Editados`, `tasks`, os `.rar`/`.zip`, `Notas.txt` e o `npcgen.data` — arquivo do
    servidor: nenhum `.cpp` do cliente o abre (a única ocorrência é um campo, `elementdataman.cpp:2073`).
 4. Nossos: `userdata\server\serverlist.txt` (UTF-16LE com BOM) ganha a linha de grupo
@@ -79,16 +80,38 @@ B233, sem passo manual); a pública vai embutida no launcher. Perder a chave = l
 aceitam mais atualização → **fazer backup do volume `pw_recursos_chave`** (`pw-recursos chave`
 mostra a pública). O `versao.json` é gravado por último: só aparece quando a versão está completa.
 
-## 5. Testes
+## 5. Launcher (P2, B234)
+
+| peça | onde | faz |
+| :--- | :--- | :--- |
+| núcleo | `crates/pw-atualizador` (lib, sem banco nem axum; também usado pelo `pw-recursos conferir`) | `Servidor::versoes`, `versao_remota` (assinaturas + SHA-256 do manifesto), `instalar`, `verificar`, `reparar`, `atualizar`, `jogar`, `conferir_range` |
+| app | `tools/pw-launcher` (Tauri 2, fora do workspace; `cargo build --release` na pasta) | janela `ui/index.html`; servidor, versão e pasta em `pw-launcher.json` ao lado do `.exe`; chave pública embutida de `chave_publica.txt` (trocar ao publicar com outra chave) |
+
+Na pasta do cliente (`element`), o launcher guarda só `.pw-atualizacao/`: `estado.json` (versão do
+cliente, número aplicado ou `null` durante a instalação, pacotes já extraídos), `manifesto.json` (o
+aplicado), `<pacote>.parcial` (download em curso) e `objetos/` (atualização em curso).
+
+- **Instalar:** pasta vazia (ou instalação interrompida do mesmo manifesto); recusa se a ACP não converte
+  algum nome (§7.7); por pacote: baixa para `.parcial` retomando com `Range`, confere tamanho e SHA-256,
+  extrai conferindo cada arquivo contra o manifesto, marca pronto. No fim confere tamanhos e grava o estado.
+- **Verificar:** rápido (existe e tem o tamanho) ou completo (SHA-256), em paralelo.
+- **Reparar:** verificação completa e cada divergente baixado de `objetos/<sha>`.
+- **Atualizar:** se `versao.json` aponta outro manifesto, baixa só os objetos novos/trocados para
+  `.pw-atualizacao/objetos/`, depois grava, apaga os removidos e só então troca manifesto e estado.
+- **Jogar:** executa a linha do `elementclient.bat` da versão (traz o `sepfile`) na pasta do cliente.
+
+## 6. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
 linha de grupo, `sepfile`, assinatura, fluxo do extrator, rotas) e `tests/versao_zero.rs` (com
 `TEST_DATABASE_URL`): instalação de mentira → importar → banco `test` → conferir por pasta e por
-HTTP com Range (206) → manifesto adulterado recusado.
+HTTP com Range (206) → verificar/reparar → atualização da versão 0 para uma 1 montada à mão → manifesto
+adulterado recusado. `cargo test -p pw-atualizador`: tar, nomes.
 
-## 6. Falta
+## 7. Falta
 
-- P2 launcher (extrair em fluxo, reparar, atualizar por arquivo, canal de teste GM).
+- Launcher: canal de teste para GM (depende dos rascunhos do P3), autoatualização do próprio launcher,
+  instalador `.msi` (CLI do Tauri), escolha de pasta por diálogo.
 - P3 governança no painel; envio do cliente original pelo painel para importar no servidor externo
   (pasta enviada arquivo a arquivo, retomável — decisão B233) e alterações/versões > 0.
 - Troca de chave (`chaves.json` assinado pela anterior, §7.2).

@@ -13525,3 +13525,49 @@ comparação lado a lado.
     ### e. Falta
     - O Murillo abrir o cliente das duas pastas extraídas (`elementclient.bat`) e logar.
     - P2 launcher; P3 painel (envio do cliente original, governança); troca de chave (`chaves.json`).
+
+234. **Sessão 2026-10-14: P1 confirmado em jogo; P2 — núcleo do launcher e app Tauri.**
+
+    ### a. Pedido
+    O Murillo jogou com as duas pastas instaladas pela prova do B233 (`… recursos\element`): **funcionaram**. Pediu
+    para tirar do 1.5.5 (cliente e servidor) o `enablemoremem_vista_win7_32bit.bat` e o
+    `disablemoremem_vista_win7_32bit.bat` e seguir para a próxima etapa (P2 do `RECURSOS…` §8.2: launcher).
+
+    ### b. Evidência
+    - Os dois `.bat` só rodam `bcdedit /set|/deletevalue increaseUserVa` (memória do Windows 32 bits): não são o cliente.
+    - Plano do launcher: `RECURSOS…` §4 (cliente do jogador), §7.4b (Tauri), §8.2 (P2) e §8.6 (pacotes, extração pela ACP).
+    - WebView2 155.0 instalado nesta máquina; Tauri 2 compila sem a CLI (a CLI só faz falta para o `.msi`).
+
+    ### c. O que foi feito
+    - `importar`: exclusão dos dois `.bat` (motivo "ajuste de memória do Windows 32 bits"); apagados também da pasta
+      de teste `F:\PW\1.5.5\1.5.5 BR recursos\element`; 1.5.5 reimportado com `--refazer` (a limpeza do fim do
+      `importar` apaga os objetos): 327.386 arquivos (2 a menos), 278 excluídos, 4 objetos sem uso apagados, 11 min 56 s.
+    - `crates/pw-atualizador` (novo, sem banco nem axum): `nomes`, `tar_gnu`, `manifesto` saíram do `pw-recursos`
+      (que os reexporta) e a conferência da assinatura também; `cliente`: `Servidor::{versoes, versao_remota, objeto}`,
+      `instalar` (por pacote, `.parcial` retomado com `Range`, SHA-256 do pacote e de cada arquivo, estado em
+      `.pw-atualizacao/`), `verificar` (rápido/completo, em paralelo), `reparar` (objetos um a um), `atualizar`
+      (diferença entre manifestos: baixa os objetos antes de mexer na pasta, depois grava, remove e troca o estado),
+      `jogar` (linha do `elementclient.bat`), `conferir_range`. O `pw-recursos conferir` passou a ser a própria
+      instalação do launcher numa pasta vazia (um caminho só).
+    - `pw-recursos servir`: `GET /versoes` e `GET /atualizacao/<versao>/objetos/<sha256>` (objeto zstd do volume).
+    - `tools/pw-launcher` (Tauri 2, fora do workspace): janela em português (servidor, versão, pasta; Jogar, Instalar /
+      atualizar, Verificar e reparar; barra de progresso por evento), configuração em `pw-launcher.json` ao lado do
+      `.exe`, chave pública embutida de `chave_publica.txt`. `.dockerignore` dos dois Dockerfiles exclui o `target`
+      dele.
+
+    ### d. Provas
+    - `cargo test -p pw-recursos -p pw-atualizador`: 16 + 6 de unidade e `versao_zero.rs` com `TEST_DATABASE_URL`, que
+      agora instala por pasta e por HTTP, lista as versões, confere o Range, verifica (rápido acha 1, completo acha 2),
+      repara 2 arquivos pelos objetos, aplica uma versão 1 montada à mão (2 arquivos novos/trocados, 1 removido; a
+      segunda chamada não faz nada) e recusa manifesto adulterado.
+    - Suíte inteira com o banco (2 fios): **1.057 passaram, 0 falharam**.
+    - `pw-launcher.exe` release: 10,9 MB, sem avisos (3 min 49 s na primeira compilação).
+    - Instalação pelo núcleo do launcher via HTTP na 8100 (`pw-recursos conferir`), pastas novas com estado:
+      `F:\Games\perfectworld_126 launcher\element` 61.234 arquivos em 104 s; `F:\PW\1.5.5\1.5.5 BR launcher\element`
+      327.386 em 521 s (antes 268 s: agora baixa cada pacote para `.parcial` e extrai depois — é o preço do download
+      retomável); `/versoes` = `["1.2.6","1.5.5"]`; Range 206. As pastas `… recursos` do B233 foram apagadas
+      (substituídas por estas).
+
+    ### e. Falta
+    - O Murillo instalar pelo launcher (roteiro na resposta da sessão) e jogar.
+    - Canal de teste para GM e autoatualização do launcher (dependem do P3); `.msi`; diálogo de pasta.

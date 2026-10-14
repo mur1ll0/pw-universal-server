@@ -7,7 +7,7 @@
 > bloco novo entra como linha no §3.3 (o que olhar em jogo), no §5 (o que ficou faltando) e
 > no índice do §8 — não como parágrafo aqui.
 >
-> **Última atualização: 2026-10-14** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`, falta o teste em jogo.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
+> **Última atualização: 2026-10-14** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234: launcher (P2), não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
 > comandos do B77–B88, 14 e 64 conferidos e sobrescritos no 1.2.6, campos do v55 pelo
 > `libtask.so` e prefixos do v7 pelo `gs`; **B126** — IA de combate do monstro por estratégia
 > (conjurar de longe, série de golpes, afastar, fugir, fixo), eventos de vida 75/50/25 %, efeito
@@ -366,10 +366,15 @@ Os itens abaixo foram implementados/testados; a publicação é indicada por ite
 de 2026-09-26 está publicada nos realms 126 e 155 desde 11:10 (−03). Até o B86 o Murillo declarou o 1.5.5 jogável sem apontar defeito
 neles, mas não há relato item a item. Detalhe e roteiro de cada um no histórico.
 
-- **B233 (P1 `pw-recursos`, 2026-10-14):** versão 0 importada dos `.pck` originais e servida na 8100; extraída por
+- **B233 (P1 `pw-recursos`, 2026-10-14) — confirmado em jogo pelo Murillo nas duas pastas:** versão 0 importada dos `.pck` originais e servida na 8100; extraída por
   HTTP com conferência de assinatura e hashes em `F:\Games\perfectworld_126 recursos\element` (61.234 arquivos) e
   `F:\PW\1.5.5\1.5.5 BR recursos\element` (327.388 arquivos). **A olhar:** abrir o cliente dessas pastas com o `elementclient.bat`
   (já traz `sepfile`), logar nos realms 126/155 e comparar com as cópias `sepfile` do B229–B232 (roteiro §7.5).
+- **B234 (P2 launcher, 2026-10-14):** `tools\pw-launcher\target\release\pw-launcher.exe` (Tauri). As pastas
+  `F:\Games\perfectworld_126 launcher\element` e `F:\PW\1.5.5\1.5.5 BR launcher\element` foram instaladas pelo núcleo do
+  launcher (com `.pw-atualizacao/`); as `… recursos` do B233 foram apagadas. **A olhar:** abrir o launcher, apontar
+  para cada pasta (a situação deve dizer "instalado, versão 0"), Verificar e reparar (0 reparados), Jogar; e instalar o
+  1.2.6 do zero numa pasta vazia, fechando o launcher no meio do download e abrindo de novo (deve retomar).
 
 **1.5.5 (realm 155, e o que vale para os dois)**
 
@@ -790,7 +795,10 @@ portado. Falta ver em jogo.)
   GNU com nome GBK) + manifesto e `versao.json` assinados (Ed25519, chave criada sozinha num volume só dele) + HTTP
   8100 com Range; `conferir` é o núcleo do launcher. 1.2.6: 61.234 arquivos, pacotes 2,8 GB, 4,5 min; 1.5.5: 327.388
   arquivos (18,9 GB), pacotes 8,5 GB, 12,7 min. Sem instaladores avulsos nem sobras do `data` do 1.2.6 (inclui o `npcgen.data`, que é do servidor). Faltam: o Murillo
-  rodar as duas pastas extraídas; **P2 launcher**; envio do cliente original pelo painel (P3) para o servidor externo.
+  rodar as duas pastas extraídas (feito: funcionaram); **P2 launcher**; envio do cliente original pelo painel (P3) para o servidor externo.
+  **B234 (P2):** núcleo `crates/pw-atualizador` (instalar retomável, verificar, reparar e atualizar por objeto, jogar) e
+  app Tauri `tools/pw-launcher`; rotas `/versoes` e `objetos/<sha>` no `pw-recursos`; `enable/disablemoremem*.bat` fora
+  do 1.5.5. Falta: o Murillo instalar pelo launcher; canal de teste GM e autoatualização (com o P3).
 
 ## 6. Regras que valem para qualquer mudança
 
@@ -1026,6 +1034,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 202 | 10-08 | vestir: amuleto HP/MP não sai e é destruído ao trocar; habilidade dinâmica repetida; reputação |
 | 203 | 10-08 | passivas comuns `EVENT_RESET`/`EVENT_WIELD` (catálogos com `efeito_passivo`) |
 | 198 | 10-07 | painel E6: missões — ver, dar livre (`NEW`), concluir forçando o sucesso (`FINISHED`/`COMPLETE`), cancelar apagando (`GIVE_UP`; 1.2.6 só offline), esquecer a conclusão (offline); resposta do canal até 64 KiB |
+| 234 | 10-14 | P2: núcleo do launcher `pw-atualizador`, app Tauri `pw-launcher`, rotas `/versoes` e objetos; `.bat` de memória fora do 1.5.5 |
 | 233 | 10-14 | P1: serviço `pw-recursos` (8100), versão 0 do 1.2.6 e do 1.5.5 importada, pacotes `.tar.zst` assinados, conferência por HTTP |
 | 232 | 10-14 | 1.2.6 solto confirmado; pacote `.tar.zst` por pasta e carga no servidor; editor da Loja Gold; commits |
 | 231 | 10-14 | análise do Estúdio no painel (inventário, viabilidade, arquitetura, tecnologia, S1–S7); sem código |
