@@ -33,6 +33,10 @@ Só vá ao `panicked at` de um teste específico depois de saber qual é:
   `a_consulta_de_jogador…` falham por contenção no pool do Postgres e passam isoladas (B74,
   B80). Com 2 fios a rodada inteira passa — é assim que vale a pena medir.
 - Referência (2026-09-24, B98): **674 testes, 0 falhas** com dois fios.
+- **Não rode a suíte junto com um build pesado** (Docker, launcher): os testes do mundo usam prazos
+  de tempo real e, com a CPU tomada, falham longe da causa. Foi o "intermitente" do Guerreiro 1.2.6
+  (B236): esperas de morte de monstro sem prazo real, corrigidas com `tickar_ate_o_monstro_morrer`.
+  Teste novo que espera algo do servidor do barramento usa prazo em tempo real e confere o retorno.
 - Teste que cria dado no banco começa com `comum::limpar_sobras_de_teste(&pool)`
   (`crates/pw-storage/tests/comum/mod.rs`): apaga sobras de execuções anteriores. Teste novo
   que cria realm ou conta usa esse módulo e os mesmos padrões de nome (`t_*`, e conta com

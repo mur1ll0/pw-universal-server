@@ -1527,6 +1527,26 @@ async fn stop_move_tambem_move_o_jogador_no_mundo() {
 ///
 /// O tick de produção roda sozinho a 20 TPS; aqui ele é chamado à mão, para o teste não
 /// depender de tempo de relógio.
+/// Até o monstro de teste morrer, com prazo de **tempo real** (B236). O golpe é tratado por
+/// outra tarefa do servidor do barramento; o `tickar_ate` só dá `yield_now` entre os ticks e,
+/// com a máquina carregada, esgotava as 400 voltas antes de o ataque rodar — devolvia `false`,
+/// o monstro seguia vivo e o teste falhava longe dali. Aqui dorme entre os ticks e falha no
+/// lugar certo se o monstro não morrer.
+async fn tickar_ate_o_monstro_morrer(mundo: &Arc<RwLock<WorldInstance>>) {
+    let limite = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        {
+            let mut m = mundo.write().await;
+            m.tick(50).await;
+            if m.monsters[&MONSTRO].0.hp == 0 {
+                return;
+            }
+        }
+        assert!(tokio::time::Instant::now() < limite, "o monstro de teste não morreu em 30 s");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 async fn tickar_ate<F>(mundo: &Arc<RwLock<WorldInstance>>, mut cond: F) -> bool
 where
     F: FnMut(&WorldInstance) -> bool,
@@ -2550,7 +2570,7 @@ async fn o_guia_selvagem_do_126_entrega_a_missao_inicial_1177() {
     })
     .await
     .unwrap();
-    tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.hp == 0).await;
+    tickar_ate_o_monstro_morrer(&mundo).await;
     // Captura original: `09 00 00 00 | 04 | 9a 04 | e7 0c 00 00 | nn 00`.
     let abate = loop {
         let a = esperar_comando(&mut link, 106).await;
@@ -2628,7 +2648,24 @@ async fn o_primeiro_teste_do_guerreiro_126_da_a_arma() {
     })
     .await
     .unwrap();
-    tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.hp == 0).await;
+    tickar_ate_o_monstro_morrer(&mundo).await;
+    // O crédito do abate roda no servidor do barramento (`monstro_morreu`,
+    // `bus_server/jogo.rs:3131`), fora do `tick` deste teste: "300 ms sem mensagem" não prova
+    // que ele já rodou. Espera a entrada ficar finalizada (`ao_finalizar`), com prazo, antes de
+    // ir ao NPC (B236).
+    let limite = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let finalizada = {
+            let m = mundo.read().await;
+            let p = &m.players[&(roleid as i64)];
+            p.missoes.ativa.indice(1175).is_some_and(|i| p.missoes.ativa.e[i].finalizada())
+        };
+        if finalizada {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < limite, "a 1175 não ficou finalizada depois do 10º abate");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     while tokio::time::timeout(Duration::from_millis(300), link.receber())
         .await
         .is_ok()
@@ -10047,7 +10084,7 @@ async fn o_membro_da_equipe_que_nao_bateu_recebe_a_experiencia() {
             .await
             .unwrap();
         receber(&mut link, 3).await;
-        tickar_ate(&mundo, |m| m.monsters[&MONSTRO].0.hp == 0).await;
+        tickar_ate_o_monstro_morrer(&mundo).await;
         if mundo.read().await.monsters[&MONSTRO].0.hp == 0 {
             morreu = true;
             break;

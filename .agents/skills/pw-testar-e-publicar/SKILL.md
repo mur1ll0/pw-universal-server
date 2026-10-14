@@ -16,6 +16,10 @@ TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw
 - Referência (2026-09-20, B69): **599 testes** (64/64 no arquivo de tempo sozinho); os de tempo do
   `pw-gs/tests/subcomandos_no_mundo.rs` podem falhar sob carga (rodar o arquivo sozinho). As duas antigas do 1.2.6 em
   `pw-data-loader/tests/loader_tests.rs` foram resolvidas. Qualquer falha é nova.
+- **Não rode a suíte junto com um build pesado** (Docker, launcher): os testes do mundo usam prazos de tempo
+  real e, com a CPU tomada, falham longe da causa. Foi o "intermitente" do Guerreiro 1.2.6 (B236): esperas de
+  morte de monstro sem prazo real, corrigidas com `tickar_ate_o_monstro_morrer`. Teste novo que espera algo do
+  servidor do barramento usa prazo em tempo real e confere o retorno.
 - Teste que cria dado no banco começa com `comum::limpar_sobras_de_teste(&pool)`
   (`crates/pw-storage/tests/comum/mod.rs`): apaga sobras de execuções anteriores. Teste novo
   que cria realm ou conta usa esse módulo e os mesmos padrões de nome (`t_*`, e conta com
