@@ -239,6 +239,13 @@ Sem histórico navegável, hierarquia adicional de administradores, correio em m
 launcher neste escopo. Logs técnicos sem credenciais; deduplicação é interna.
 Regras/layouts do jogo continuam no GS e no WorldProtocol.
 
+### Recursos do cliente (B235)
+
+Página "Recursos do cliente" (grupo Geral): rascunhos, envio de arquivo, publicar, reverter, histórico e busca
+na versão publicada do cliente. O painel só repassa ao `pw-recursos` (8101) — descrição em
+`specs/07_RECURSOS_DO_CLIENTE.md` §6. `LimitarEntrada` aceita até 512 MiB só em
+`PUT /api/recursos/{v}/rascunhos/{id}/arquivo`.
+
 ## 2. Patcher (`tools/pw-patch-tool/`) — protótipo
 
 CLI Rust de ~140 linhas (`docs/PW_PATCH_TOOL_GUIDE.md`):

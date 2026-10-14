@@ -13571,3 +13571,90 @@ comparação lado a lado.
     ### e. Falta
     - O Murillo instalar pelo launcher (roteiro na resposta da sessão) e jogar.
     - Canal de teste para GM e autoatualização do launcher (dependem do P3); `.msi`; diálogo de pasta.
+
+235. **Sessão 2026-10-14: launcher confirmado e mais simples de usar; P3 — rascunho, publicar e reverter pelo painel.**
+
+    ### a. Pedido
+    O Murillo testou o launcher do B234: baixou a versão, **Jogar funcionou nas duas** e Verificar também. Pediu: não
+    digitar pasta — o launcher grava uma pasta por versão; botão para escolher a pasta pela janela do Windows; ao trocar
+    a versão, carregar a pasta dela; na primeira vez, oferecer baixar ou apontar uma instalação existente; buscar as
+    versões sozinho ao abrir. Depois, seguir para a próxima etapa (P3 do `RECURSOS…` §8.2: governança no painel).
+
+    ### b. Decisões e evidência
+    - Pasta por versão em `pw-launcher.json` (`pastas`; a configuração do B234 migra sozinha). Situação lida só do
+      `versao.json` (leve; o manifesto do 1.5.5 tem 25 MB). "Já tenho instalado" adota a pasta: grava manifesto e
+      estado e repara o que divergir (arquivos a mais, como `.pck` de uma instalação original, ficam: com `sepfile` o
+      cliente não os abre, `AFileImage.cpp:94-104` só vale com o pacote aberto).
+    - P3: API administrativa na **8101 sem `ports:`** (só a rede interna), segredo `RECURSOS_SEGREDO` gerado em
+      `docker/.env`; o painel repassa com o GM da sessão como autor. Página no grupo Geral (é por versão de cliente,
+      não por realm). Versão N reaproveita os pacotes da 0 (`Pacote::numero`); o launcher pula o que mudou e baixa
+      por objeto.
+
+    ### c. O que foi feito
+    - `pw-atualizador`: `Servidor::versao_anunciada`, `adotar`; `instalar` aceita pacote de versão anterior (pula o
+      que não confere, completa por objeto; `Resumo::{pulados, por_objeto}`); `Pacote::numero`.
+    - `tools/pw-launcher`: `tauri-plugin-dialog`; comandos `iniciar`, `situacao`, `escolher_pasta`, `baixar`,
+      `continuar`, `usar_existente`, `reparar`, `jogar`, `abrir_no_explorer`, `trocar_servidor`; tela nova (abas de
+      versão, cartão com a situação e só os botões que cabem, configurações recolhidas).
+    - `pw-storage::RecursosRepository`: `versao_atual`, `criar_rascunho` (idempotente), `alteracao(es)`, `itens`,
+      `gravar_item` (trava por caminho com `pg_advisory_xact_lock`), `tirar_item`, `descartar`, `publicar`
+      (versão anterior tem de ser N-1).
+    - `pw-recursos`: `governanca.rs` (resolver caminho sem diferenciar maiúsculas, gravar/remover/tirar, publicar
+      N+1 assinado, reverter, conteúdo, busca), `admin.rs` (rotas do spec 07 §6, segredo em tempo constante, corpo até
+      512 MiB), `servir` sobe a 8101 quando há segredo; `Objetos::{tamanho, existe}`; `gravar_assinado` atômico.
+    - Painel: `painel/recursos.py` (repasse com `urllib` em thread, autor, `operacao_id`), exceção de 512 MiB no
+      `LimitarEntrada` só para o envio, página "Recursos do cliente" (`index.html`, `recursos.js`, `painel.css`).
+    - Docker: `RECURSOS_URL`/`RECURSOS_SEGREDO` no `pw-admin-api`, `PW_RECURSOS_SEGREDO` no `pw-recursos`.
+
+    ### d. Provas
+    - `cargo test -p pw-recursos -p pw-atualizador`: unidade + `versao_zero.rs` (agora também `adotar` e
+      `versao_anunciada`) + `governanca.rs` novo (401 sem segredo; rascunho idempotente; caminho digitado
+      `CONFIGS/A.TXT` vira `configs\a.txt`; conteúdo igual ao publicado recusado; 409 com o caminho em outro rascunho;
+      publicar v1 com mínima 1; o launcher atualiza uma pasta (2 trocados/acrescentados, 1 removido) e instala outra
+      do zero na v1 (2 por objeto, 2 pulados, verificação completa limpa); reverter → v2 com o conteúdo da 0).
+    - Painel, no contêiner da imagem `docker-pw-admin-api` com o repositório montado:
+      `python -m unittest discover -s tests -p 'teste_*.py'` → 80 testes, **73 ok**; os 7 erros são
+      `/r/target/debug/pw-gs` inexistente (testes que sobem o GS: o binário desta máquina é `.exe`). `teste_recursos.py`:
+      5/5.
+    - Publicado nos contêineres `pw-recursos` e `pw-admin-api`: do contêiner do painel, `GET /admin/versoes` com
+      segredo → 1.2.6 e 1.5.5 na versão 0; sem segredo → 401; a 8101 não abre no host.
+    - Suíte inteira com o banco (2 fios): **1.057 passaram, 1 falhou** — `o_primeiro_teste_do_guerreiro_126_da_a_arma`
+      (`pw-gs`, que estes blocos não tocam). Falhou também isolado 4 vezes seguidas e, ~15 min depois, **passou** tanto
+      no commit anterior (`a478035`, numa worktree) quanto na árvore atual: não é do B235. Causa achada no B236:
+      carga na máquina (builds rodando ao mesmo tempo), não horário nem sobras.
+    - `pw-launcher.exe` release 11,6 MB, sem avisos.
+
+    ### e. Falta
+    - O Murillo testar a tela nova do launcher e a página "Recursos do cliente" (roteiro na resposta).
+    - Arquivos de destino `servidor`/`ambos` publicados direto no realm; canal de teste GM no launcher;
+      autoatualização do launcher; envio do cliente original pelo painel; pacotes novos de tempos em tempos.
+
+236. **Sessão 2026-10-14: o teste intermitente do Guerreiro 1.2.6 (`o_primeiro_teste_do_guerreiro_126_da_a_arma`).**
+
+    ### a. Pedido
+    Investigar a falha vista no B235: o teste falhou isolado 4 vezes seguidas e passou ~15 min depois, sem mudança de
+    código (também visto no item 12021 deste histórico).
+
+    ### b. Causa (com evidência)
+    - Reproduzido de propósito: com 24 processos de carga na CPU, falha 3/3; com 12, o teste original falha 2/5.
+    - Diagnóstico no ponto da falha: entrada 1175 com 9 abates e estado 2 (não finalizada), e o **monstro com hp=1 e
+      lista de dano vazia** — ele nunca morreu. O `tickar_ate(|m| hp == 0)` desiste depois de 400 voltas e devolve
+      `false`, e o teste ignorava o retorno. As voltas só fazem `yield_now` e retomam a trava do mundo; o golpe é tratado
+      por outra tarefa do servidor do barramento e, com a máquina ocupada, não rodava antes de as 400 voltas acabarem.
+      O teste seguia, ia ao NPC com a missão não finalizada e falhava longe dali ("a Espada… não foi entregue").
+    - Não era regra de jogo, horário (`janela_vale`) nem sobras do banco. As falhas da tarde coincidiram com o build do
+      Docker e do launcher rodando ao mesmo tempo.
+
+    ### c. O que foi feito (só teste)
+    - `crates/pw-gs/tests/subcomandos_no_mundo.rs`: `tickar_ate_o_monstro_morrer` — prazo de 30 s em tempo real, dorme
+      10 ms entre os ticks e falha no lugar certo se o monstro não morrer; usado nos 3 pontos que esperavam a morte do
+      monstro de teste ignorando o retorno. No teste do Guerreiro, antes de ir ao NPC, espera a 1175 ficar finalizada
+      (prazo de 20 s) em vez de confiar em "300 ms sem mensagem".
+
+    ### d. Provas
+    - Com 12 processos de carga: corrigido **5/5**; original (stash) **3/5** — mesma máquina, mesma carga.
+    - Arquivo `subcomandos_no_mundo` inteiro (2 fios, máquina livre): **164 passaram, 0 falharam** (2 ignorados).
+    - Skill `pw-testar-e-publicar` (`.claude` e `.agents`): não rodar a suíte junto com build pesado; espera de
+      algo do servidor do barramento com prazo em tempo real.
+    - Com 24 processos o teste ainda cai antes, no `entrar` ("o jogador não entrou no mundo"), que tem prazo próprio:
+      carga acima do que a suíte suporta, não este defeito.

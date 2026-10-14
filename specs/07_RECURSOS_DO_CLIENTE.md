@@ -3,7 +3,8 @@
 > Como o servidor guarda o cliente de cada versão e o entrega ao launcher. Plano e decisões:
 > `docs/admin/RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md` (§3, §7.2, §7.7, §8, §8.6). Estado: **P1
 > (versão 0 + pacotes + HTTP) no B233, confirmado em jogo nas duas versões; P2 (núcleo do launcher
-> `pw-atualizador` + app Tauri `tools/pw-launcher`) no B234**; governança no painel (P3) e editores (P4+) faltam.
+> `pw-atualizador` + app Tauri `tools/pw-launcher`) no B234, confirmado em jogo; usabilidade do launcher e P3
+> (rascunho, publicar e reverter pelo painel) no B235**; editores (P4+) e o envio do cliente original pelo painel faltam.
 
 ## 1. Serviço
 
@@ -14,6 +15,7 @@
 | porta | **8100**, só leitura: `GET /versoes` (lista JSON das versões com `versao.json`), `GET /atualizacao/<versao>/<resto>` (com `Range`, `ServeFile` do tower-http), `GET /atualizacao/<versao>/objetos/<sha256>` (um arquivo pelo conteúdo, zstd — reparo e atualização, B234) e `GET /saude` |
 | volume de dados | `data/clientes` → `/dados` (bind) |
 | chave | volume nomeado `pw_recursos_chave` → `/chave/assinatura_ed25519.key`, **montado só aqui** (o painel monta `../data` inteiro) |
+| API administrativa | **8101**, sem `ports:` (só a rede interna; o painel a chama), segredo `PW_RECURSOS_SEGREDO` (de `RECURSOS_SEGREDO` no `docker/.env`) no cabeçalho `x-recursos-segredo`; sem segredo de 16+ caracteres fica desligada. Rotas no §6 |
 | banco | `recursos_linhas`, `recursos_base`, `recursos_alteracoes`, `recursos_alteracao_itens`, `recursos_versoes` (`scripts/2026_10_14_recursos_do_cliente.sql`; repositório `pw_storage::RecursosRepository`) |
 
 Comandos (`pw-recursos <comando>`; no Docker, `docker compose run --rm … pw-recursos <comando>`):
@@ -85,7 +87,18 @@ mostra a pública). O `versao.json` é gravado por último: só aparece quando a
 | peça | onde | faz |
 | :--- | :--- | :--- |
 | núcleo | `crates/pw-atualizador` (lib, sem banco nem axum; também usado pelo `pw-recursos conferir`) | `Servidor::versoes`, `versao_remota` (assinaturas + SHA-256 do manifesto), `instalar`, `verificar`, `reparar`, `atualizar`, `jogar`, `conferir_range` |
-| app | `tools/pw-launcher` (Tauri 2, fora do workspace; `cargo build --release` na pasta) | janela `ui/index.html`; servidor, versão e pasta em `pw-launcher.json` ao lado do `.exe`; chave pública embutida de `chave_publica.txt` (trocar ao publicar com outra chave) |
+| app | `tools/pw-launcher` (Tauri 2 + `tauri-plugin-dialog`, fora do workspace; `cargo build --release` na pasta) | janela `ui/index.html`; `pw-launcher.json` ao lado do `.exe` guarda o servidor, a última versão escolhida e **uma pasta por versão** (`pastas`); chave pública embutida de `chave_publica.txt` (trocar ao publicar com outra chave) |
+
+Tela (B235): ao abrir, busca as versões no servidor (abas) e mostra a situação da escolhida, lendo só o
+`versao.json` (`Servidor::versao_anunciada`, sem baixar o manifesto). Conforme a situação:
+
+| situação | botões |
+| :--- | :--- |
+| sem pasta / pasta sumiu / pasta sem o jogo | **Baixar o jogo** (janela de pastas do Windows; instala na escolhida se estiver vazia, senão em `PW Universal <versao>` dentro dela) e **Já tenho instalado** (escolhe a pasta `element`, ou a pasta acima dela; adota: grava manifesto e estado e repara o que divergir — `cliente::adotar`) |
+| download interrompido | **Continuar download** (retoma) e escolher outra pasta |
+| instalado | **Jogar** (ou **Atualizar** + "Jogar assim mesmo" quando o servidor tem versão nova), **Verificar arquivos**, **Abrir pasta** (Explorer), **Trocar pasta** |
+
+O endereço do servidor fica em "Configurações" (recolhido).
 
 Na pasta do cliente (`element`), o launcher guarda só `.pw-atualizacao/`: `estado.json` (versão do
 cliente, número aplicado ou `null` durante a instalação, pacotes já extraídos), `manifesto.json` (o
@@ -99,19 +112,55 @@ aplicado), `<pacote>.parcial` (download em curso) e `objetos/` (atualização em
 - **Atualizar:** se `versao.json` aponta outro manifesto, baixa só os objetos novos/trocados para
   `.pw-atualizacao/objetos/`, depois grava, apaga os removidos e só então troca manifesto e estado.
 - **Jogar:** executa a linha do `elementclient.bat` da versão (traz o `sepfile`) na pasta do cliente.
+- **Instalar a versão N > 0:** os pacotes continuam os da versão em que nasceram (`Pacote::numero`); o que
+  o pacote traz e a versão não usa mais (removido ou trocado) é pulado, e o que falta vem por objeto.
 
-## 6. Testes
+## 6. Governança: rascunho, publicar, reverter (P3, B235)
+
+Motor em `crates/pw-recursos/src/governanca.rs`, API em `admin.rs` (8101), repasse no painel em
+`web-admin/backend/painel/recursos.py` (`/api/recursos/…`, sessão GM + CSRF; o autor é o GM da sessão)
+e tela "Recursos do cliente" (grupo Geral; `static/recursos.js`).
+
+| rota (`/admin/…` no pw-recursos; `/api/recursos/…` no painel) | faz |
+| :--- | :--- |
+| `GET versoes` | `[{versao, atual, minima}]` |
+| `GET {v}/alteracoes?limite=` | histórico (rascunhos, publicadas com a versão, descartadas), com os itens |
+| `GET {v}/arquivos?busca=` / `GET {v}/arquivo?caminho=` | busca na versão publicada / baixa o conteúdo atual |
+| `POST {v}/rascunhos {descricao, operacao_id}` | cria (idempotente por `operacao_id`) |
+| `PUT {v}/rascunhos/{id}/arquivo?caminho=&destino=` (corpo = arquivo) | `substituir` ou `adicionar`; recusa conteúdo igual ao publicado |
+| `DELETE …/arquivo?caminho=` · `POST …/remover?caminho=` · `POST …/descartar` | tira do rascunho · marca remoção · descarta |
+| `POST {v}/publicar {rascunhos, minima}` | gera a versão N+1 assinada |
+| `POST {v}/alteracoes/{id}/reverter {operacao_id}` | rascunho com o inverso de uma publicada |
+
+Regras: o caminho é resolvido contra o manifesto publicado sem diferenciar maiúsculas (vale o byte que já
+existe); **um caminho só em um rascunho por vez** (409); ao publicar, cada item confere que o arquivo ainda
+está como estava quando entrou no rascunho; dois GMs publicando ao mesmo tempo: a versão anterior tem de
+ser N (trava `pg_advisory_xact_lock` + checagem), um perde. Publicar grava `atualizacao/<N+1>/manifesto.json`,
+registra no banco e só então troca o `versao.json` (gravação atômica, `.sig` antes). `minima` (opcional)
+obriga o launcher a atualizar. O envio de arquivo no painel aceita até 512 MiB (`LimitarEntrada` abre
+exceção só para essa rota; o resto continua 8 KiB).
+
+**Ainda não feito:** arquivos de destino `servidor`/`ambos` (elements, tasks, npcgen) não são copiados para
+o `data/<realm>/config` nem marcam reinício (§3 "Ligação com os realms") — hoje isso é manual.
+
+## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
 linha de grupo, `sepfile`, assinatura, fluxo do extrator, rotas) e `tests/versao_zero.rs` (com
 `TEST_DATABASE_URL`): instalação de mentira → importar → banco `test` → conferir por pasta e por
 HTTP com Range (206) → verificar/reparar → atualização da versão 0 para uma 1 montada à mão → manifesto
-adulterado recusado. `cargo test -p pw-atualizador`: tar, nomes.
+adulterado recusado; adotar uma pasta sem estado. `tests/governanca.rs`: API com segredo (401 sem),
+rascunho idempotente, trava por caminho (409), publicar v1 com mínima, o launcher atualiza uma pasta e
+instala outra do zero na v1 (2 por objeto, 2 pulados), reverter → v2 igual à 0. `cargo test -p
+pw-atualizador`: tar, nomes. Painel: `web-admin/backend/tests/teste_recursos.py` (5: sessão, CSRF, autor,
+segredo, limite de envio, download) — rodar no contêiner do painel (ver histórico B235).
 
-## 7. Falta
+## 8. Falta
 
-- Launcher: canal de teste para GM (depende dos rascunhos do P3), autoatualização do próprio launcher,
-  instalador `.msi` (CLI do Tauri), escolha de pasta por diálogo.
-- P3 governança no painel; envio do cliente original pelo painel para importar no servidor externo
-  (pasta enviada arquivo a arquivo, retomável — decisão B233) e alterações/versões > 0.
+- Launcher: canal de teste para GM (instalar um rascunho antes de publicar), autoatualização do próprio
+  launcher, instalador `.msi` (CLI do Tauri).
+- Publicar arquivo de destino `servidor`/`ambos` direto no realm (troca atômica + `aguarda_reinicio`).
+- Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
+  arquivo, retomável — decisão B233).
+- Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).
 - Troca de chave (`chaves.json` assinado pela anterior, §7.2).

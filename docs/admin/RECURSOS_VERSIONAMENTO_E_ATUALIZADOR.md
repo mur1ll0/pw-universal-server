@@ -636,3 +636,14 @@ cliente original será enviado pelo painel, arquivo a arquivo, e importado lá �
 Regras que a importação adotou (evidência na spec 07): pacote vale antes do solto (`AFileImage.cpp:94-104`); solto
 sem nome GBK fica fora (234 `Padrão (N).ini` no BR); as 3 entradas corrompidas nos `.pck` do BR ficam fora (como na
 cópia `sepfile` que funcionou). Tirados também, a pedido do Murillo: os instaladores avulsos da raiz do BR e, no `data` do 1.2.6, as pastas `BCK`, `Data Export`, `Editados`, `tasks`, os `.rar`, `Notas.txt` e o `npcgen.data` (do servidor). A geração dos pacotes passou de 37 para 7 min no 1.5.5 lendo os objetos em paralelo.
+
+### 8.8 P2 e P3 feitos (B234–B235, 2026-10-14)
+
+- **P2 (launcher):** núcleo `crates/pw-atualizador` + app Tauri `tools/pw-launcher`; confirmado em jogo pelo Murillo
+  (baixar, Jogar nas duas versões, Verificar). No B235 a tela ficou guiada pela situação de cada versão (pasta por
+  versão, janela de pastas do Windows, "Baixar o jogo" / "Já tenho instalado", atualização detectada ao abrir).
+- **P3 (governança):** rascunho → itens por caminho (trava: um rascunho por caminho) → publicar N+1 assinado →
+  reverter; API administrativa do `pw-recursos` na 8101 (rede interna + segredo) e página "Recursos do cliente" no
+  painel. A versão N reaproveita os pacotes da 0; o que mudou vai por objeto.
+- **Ainda do P3:** publicar `servidor`/`ambos` direto no realm (o "Ligação com os realms" do §3); canal de teste
+  GM no launcher; envio do cliente original pelo painel (servidor externo). Descrição atual: `specs/07` §5–§6.

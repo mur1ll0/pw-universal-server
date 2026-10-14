@@ -7,7 +7,7 @@
 > bloco novo entra como linha no §3.3 (o que olhar em jogo), no §5 (o que ficou faltando) e
 > no índice do §8 — não como parágrafo aqui.
 >
-> **Última atualização: 2026-10-14** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234: launcher (P2), não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
+> **Última atualização: 2026-10-14** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234 launcher (P2) em `a43042d`/`a478035`, confirmado; **B235: launcher mais simples + P3 (rascunho/publicar/reverter no painel), publicado nos contêineres, não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
 > comandos do B77–B88, 14 e 64 conferidos e sobrescritos no 1.2.6, campos do v55 pelo
 > `libtask.so` e prefixos do v7 pelo `gs`; **B126** — IA de combate do monstro por estratégia
 > (conjurar de longe, série de golpes, afastar, fugir, fixo), eventos de vida 75/50/25 %, efeito
@@ -370,11 +370,15 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
   HTTP com conferência de assinatura e hashes em `F:\Games\perfectworld_126 recursos\element` (61.234 arquivos) e
   `F:\PW\1.5.5\1.5.5 BR recursos\element` (327.388 arquivos). **A olhar:** abrir o cliente dessas pastas com o `elementclient.bat`
   (já traz `sepfile`), logar nos realms 126/155 e comparar com as cópias `sepfile` do B229–B232 (roteiro §7.5).
-- **B234 (P2 launcher, 2026-10-14):** `tools\pw-launcher\target\release\pw-launcher.exe` (Tauri). As pastas
+- **B234 (P2 launcher, 2026-10-14) — confirmado pelo Murillo (baixar, Jogar nas duas versões, Verificar):** `tools\pw-launcher\target\release\pw-launcher.exe` (Tauri). As pastas
   `F:\Games\perfectworld_126 launcher\element` e `F:\PW\1.5.5\1.5.5 BR launcher\element` foram instaladas pelo núcleo do
   launcher (com `.pw-atualizacao/`); as `… recursos` do B233 foram apagadas. **A olhar:** abrir o launcher, apontar
   para cada pasta (a situação deve dizer "instalado, versão 0"), Verificar e reparar (0 reparados), Jogar; e instalar o
   1.2.6 do zero numa pasta vazia, fechando o launcher no meio do download e abrindo de novo (deve retomar).
+- **B235 (launcher e P3, 2026-10-14):** launcher novo (mesmo `.exe`) com abas de versão, pasta por versão escolhida
+  pela janela do Windows, "Baixar o jogo" / "Já tenho instalado"; página **Recursos do cliente** no painel (grupo
+  Geral): rascunho → enviar arquivo → publicar → o launcher mostra "Atualização disponível". **A olhar:** roteiro na
+  resposta do B235 (histórico).
 
 **1.5.5 (realm 155, e o que vale para os dois)**
 
@@ -798,7 +802,12 @@ portado. Falta ver em jogo.)
   rodar as duas pastas extraídas (feito: funcionaram); **P2 launcher**; envio do cliente original pelo painel (P3) para o servidor externo.
   **B234 (P2):** núcleo `crates/pw-atualizador` (instalar retomável, verificar, reparar e atualizar por objeto, jogar) e
   app Tauri `tools/pw-launcher`; rotas `/versoes` e `objetos/<sha>` no `pw-recursos`; `enable/disablemoremem*.bat` fora
-  do 1.5.5. Falta: o Murillo instalar pelo launcher; canal de teste GM e autoatualização (com o P3).
+  do 1.5.5. Confirmado em jogo.
+  **B235 (P3 + usabilidade):** launcher com pasta por versão, diálogo do Windows, adotar instalação existente,
+  checagem leve de atualização; `pw-recursos` com API administrativa 8101 (só rede interna, segredo) — rascunho,
+  trava por caminho, publicar N+1 assinado, reverter; versão N reaproveita os pacotes da 0 (o resto por objeto);
+  página "Recursos do cliente" no painel. Falta: o Murillo testar; publicar `servidor`/`ambos` direto no realm;
+  canal de teste GM e autoatualização do launcher; envio do cliente original pelo painel; P4 (editor de elements).
 
 ## 6. Regras que valem para qualquer mudança
 
@@ -1034,6 +1043,8 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 202 | 10-08 | vestir: amuleto HP/MP não sai e é destruído ao trocar; habilidade dinâmica repetida; reputação |
 | 203 | 10-08 | passivas comuns `EVENT_RESET`/`EVENT_WIELD` (catálogos com `efeito_passivo`) |
 | 198 | 10-07 | painel E6: missões — ver, dar livre (`NEW`), concluir forçando o sucesso (`FINISHED`/`COMPLETE`), cancelar apagando (`GIVE_UP`; 1.2.6 só offline), esquecer a conclusão (offline); resposta do canal até 64 KiB |
+| 236 | 10-14 | teste intermitente do Guerreiro 126: era a espera da morte do monstro sem prazo real (carga na máquina); só teste |
+| 235 | 10-14 | launcher com pasta por versão e diálogo; P3: rascunho, publicar e reverter (API 8101 + página no painel) |
 | 234 | 10-14 | P2: núcleo do launcher `pw-atualizador`, app Tauri `pw-launcher`, rotas `/versoes` e objetos; `.bat` de memória fora do 1.5.5 |
 | 233 | 10-14 | P1: serviço `pw-recursos` (8100), versão 0 do 1.2.6 e do 1.5.5 importada, pacotes `.tar.zst` assinados, conferência por HTTP |
 | 232 | 10-14 | 1.2.6 solto confirmado; pacote `.tar.zst` por pasta e carga no servidor; editor da Loja Gold; commits |
