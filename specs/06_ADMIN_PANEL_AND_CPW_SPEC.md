@@ -246,6 +246,13 @@ na versão publicada do cliente. O painel só repassa ao `pw-recursos` (8101) �
 `specs/07_RECURSOS_DO_CLIENTE.md` §6. `LimitarEntrada` aceita até 512 MiB só em
 `PUT /api/recursos/{v}/rascunhos/{id}/arquivo`.
 
+### Estúdio (B237, fase S1)
+
+Item "Estúdio" no grupo do realm: escolher (ou criar) um rascunho da versão de cliente do realm; tabelas do
+`elements.data` com filtro, registros com busca e páginas, ficha genérica por tipo de campo, salvar no rascunho,
+clonar (id novo do espaço) e remover. Sem rascunho é somente leitura. Repasse em `/api/realms/{realm}/estudio/…`
+(a versão sai de `realms.version`); motor e regras em `specs/07_RECURSOS_DO_CLIENTE.md` §6b.
+
 ## 2. Patcher (`tools/pw-patch-tool/`) — protótipo
 
 CLI Rust de ~140 linhas (`docs/PW_PATCH_TOOL_GUIDE.md`):

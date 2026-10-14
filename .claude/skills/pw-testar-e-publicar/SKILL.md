@@ -20,7 +20,7 @@ TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw
   | grep -E "^test result:" | awk '{p+=$4; f+=$6} END {print "passaram:", p, "falharam:", f}'
 ```
 
-Duas linhas de saída, e o número que interessa. Para ver **quais** falharam, troque o filtro
+Duas linhas de saída, e o número que interessa. Guarde também a linha `panicked at` (`grep -E "panicked at|^test .* FAILED" -A1`): sem ela uma falha intermitente não tem diagnóstico (B237). Para ver **quais** falharam, troque o filtro
 por `grep -E "^test .* FAILED|^test result: FAILED"` — só os nomes, sem o rastro de pânico.
 Só vá ao `panicked at` de um teste específico depois de saber qual é:
 

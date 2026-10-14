@@ -205,6 +205,12 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 
 ## 6. Fases (depois do P1–P3 do outro documento)
 
+> **Estado (B237, 2026-10-14):** S1 feito para o `elements.data` — escritor com ida e volta byte a byte
+> (`pw_data_loader::elements_editavel`), ids por espaço (`specs/elements_layouts/espacos_de_id.json`), lista,
+> ficha genérica, rascunho com diferenças campo a campo, publicar (que agora grava também no `config` do realm).
+> Faltam do S1: diferenças lado a lado na publicação; o índice de referências é do S2 (hoje a remoção usa uma
+> busca conservadora por `int32` igual ao id). Descrição atual: `specs/07_RECURSOS_DO_CLIENTE.md` §6b.
+
 | fase | entrega |
 | :--- | :--- |
 | S1 | motor: menu Estúdio no realm, áreas, lista paginada, ficha genérica, rascunho, ids por espaço, diferenças, publicar |

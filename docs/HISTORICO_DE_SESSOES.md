@@ -13658,3 +13658,61 @@ comparação lado a lado.
       algo do servidor do barramento com prazo em tempo real.
     - Com 24 processos o teste ainda cai antes, no `entrar` ("o jogador não entrou no mundo"), que tem prazo próprio:
       carga acima do que a suíte suporta, não este defeito.
+
+237. **Sessão 2026-10-14: Estúdio S1 — editor do `elements.data` pelo painel; publicar grava no realm.**
+
+    ### a. Pedido
+    Commitar B235/B236 (feito: `07a30ab`, `72caa9c`, `7aea8d0`, `5a2a22d`) e seguir com a próxima etapa: P4 do
+    `RECURSOS…` (editor de `elements` com escritor de ida e volta, destino `ambos`) = fase S1 do `ESTUDIO_DO_PAINEL.md`.
+
+    ### b. Evidência
+    - O leitor genérico já percorria o arquivo como o `elementdataman::load_data`; em todos os layouts (119 tabelas do
+      v7, 231 do v156) a soma dos campos é o `record_size`, com só 4 tipos (`int32`, `float`, `wstring`, `string`).
+    - Espaços de id: 214 chamadas `add_id_index` em `EvolvedPWClient/ElementClient/CCommon/elementdataman.cpp`
+      (`ESSENCE` 135, `CONFIG` 55, `FACE` 11, `RECIPE` 10, `ADDON` 2, `TALK` 1); cobrem as 119 do v7 e 214 das 231 do
+      v156. As 17 restantes (15 `HOME_*`, `RED_PACKET_PAPER_ESSENCE`, `WISH_TRIBUTE_ESSENCE`) não estão no fonte 1.5.5,
+      e o fonte 1.7.2 **não está mais em disco** (o estado dizia que estava — corrigido no §1.4).
+    - Os `data\elements.data`, `tasks.data`, `gshop.data` e `aipolicy.data` da versão 0 do cliente são **idênticos**
+      (SHA-256) aos do `config` dos dois realms: editar o do cliente e gravar o mesmo no realm mantém os dois em dia.
+    - `realms.version` = nome da versão do cliente (`realm_126` → `1.2.6`, `realm_155` → `1.5.5`).
+
+    ### c. O que foi feito
+    - `pw-data-loader::elements_editavel` (`ElementsEditavel`): ler guardando bytes, gravar, `definir_campo`,
+      `clonar`, `remover`, `proximo_id`, `id_em_uso`; `espaco_de_id` lê `specs/elements_layouts/espacos_de_id.json`
+      (novo, gerado do fonte com a linha de cada chamada).
+    - `pw-recursos::estudio` + rotas `/admin/{v}/estudio/…` (tabelas, listar, ficha, editar, clonar, remover); cada
+      edição vira o item `data\elements.data` (destino `ambos`) do rascunho com o resumo campo a campo; remoção
+      recusada se um `int32` de outro registro tem o id; cache dos arquivos lidos por SHA-256; trava por rascunho.
+    - `governanca::publicar`: itens `servidor`/`ambos` gravados nos `config` dos realms da versão
+      (`PW_RECURSOS_REALMS`, troca atômica, só `data\` direto); `servidor` fica fora do manifesto do cliente; a resposta
+      traz `aplicados`.
+    - Docker: `Dockerfile.recursos` copia os `specs` que o `pw-data-loader` embute; `pw-recursos` monta
+      `data/realm_126/config` e `data/realm_155/config` e recebe `PW_RECURSOS_REALMS`.
+    - Painel: `/api/realms/{realm}/estudio/…` (`registrar_estudio`), página "Estúdio" no grupo do realm
+      (`static/estudio.js`, `index.html`, `painel.css`).
+
+    ### d. Provas
+    - `pw-data-loader/tests/elements_editavel.rs` (3): os dois `elements.data` reais voltam **idênticos**; editar
+      `Name`/`price`, clonar com o próximo id do espaço, id de monstro recusado na arma (mesmo espaço), relido pelo
+      leitor genérico com as mudanças e as outras tabelas iguais; remover o clone volta ao tamanho original; tabela do
+      Lar recusa registro novo.
+    - `pw-recursos/tests/estudio.rs` (banco + HTTP, `elements` real do 1.2.6): tabelas e espaço, lista e busca por id,
+      ficha; sem rascunho 400; duas edições do preço com o "antes" do publicado; tipo errado e campo inexistente 400;
+      clone com id maior; remover `WEAPON_MAJOR_TYPE` 0 recusado ("citado"); clone removido some do resumo; voltar ao
+      publicado tira o item; publicar → versão 1 e o arquivo do realm temporário relido com o preço novo.
+    - `cargo test -p pw-recursos -p pw-atualizador -p pw-data-loader`: **218 passaram, 0 falharam**.
+    - Painel (contêiner): `teste_recursos.py` 6/6 (inclui o repasse do Estúdio pela versão do realm).
+    - Publicado em `pw-recursos` e `pw-admin-api`: do contêiner do painel, `estudio/tabelas` do 1.2.6 = arquivo v7,
+      118 tabelas fixas (0,4 s na primeira leitura); do 1.5.5 = v156, 230 (0,7 s); `WEAPON_ESSENCE` com 1.491 e 2.741
+      registros e os nomes em português; `/realms/realm_126` e `/realms/realm_155` montados e graváveis.
+    - Suíte inteira com o banco (2 fios, máquina livre): **1.060 passaram, 2 falharam** —
+      `o_primeiro_teste_do_guerreiro_126_da_a_arma` (`subcomandos_no_mundo`) e
+      `editar_pontos_nivel_e_cultivo_online_e_offline_126_e_155` (`canal_administrativo`), ambos do `pw-gs`, que este
+      bloco não toca. Isolados passam, e os dois arquivos inteiros logo depois: **164/164** e **34/34**. O filtro só
+      guardava os nomes, então não há a mensagem: a correção do B236 resolveu a espera da morte do monstro, mas o
+      Guerreiro ainda falha às vezes dentro da suíte — causa não identificada. A skill passa a pedir a linha
+      `panicked at` junto com os nomes.
+
+    ### e. Falta
+    - O Murillo testar a página Estúdio (roteiro na resposta) e reiniciar o realm depois de publicar.
+    - S1: diferenças lado a lado na publicação; marcar "aguarda reinício". S2: telas próprias e índice de referências.

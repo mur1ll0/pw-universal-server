@@ -7,7 +7,7 @@
 > bloco novo entra como linha no §3.3 (o que olhar em jogo), no §5 (o que ficou faltando) e
 > no índice do §8 — não como parágrafo aqui.
 >
-> **Última atualização: 2026-10-14** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234 launcher (P2) em `a43042d`/`a478035`, confirmado; **B235: launcher mais simples + P3 (rascunho/publicar/reverter no painel), publicado nos contêineres, não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
+> **Última atualização: 2026-10-14** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234 launcher (P2) em `a43042d`/`a478035`, confirmado; B235/B236 commitados (`07a30ab`…`5a2a22d`); **B237: Estúdio S1 (editor do `elements.data` no painel) e publicar gravando no realm — publicado nos contêineres, não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
 > comandos do B77–B88, 14 e 64 conferidos e sobrescritos no 1.2.6, campos do v55 pelo
 > `libtask.so` e prefixos do v7 pelo `gs`; **B126** — IA de combate do monstro por estratégia
 > (conjurar de longe, série de golpes, afastar, fugir, fixo), eventos de vida 75/50/25 %, efeito
@@ -223,7 +223,7 @@ Pré-requisitos do cliente 1.5.5 que **não** são do servidor, e que custaram s
 | :--- | :--- | :--- |
 | `F:\PW\1.5.5\EvolvedPWClient` | fonte do cliente 1.5.5 (build 2457) | mapa, não verdade: o binário instalado é mais novo (memória `pw_client_155_fonte_vs_binario`) |
 | `F:\PW\1.5.5\EvolvedPWServer` | fonte do servidor 1.5.5 | as regras de jogo (`cgame/gs/`) e os carregadores de dados; para rodar o `pw-rpcgen` precisa das junções da memória `pw_ctx_a_155_funcional` |
-| `F:\PW\1.7.2\172Source` | fonte do servidor 1.7.2 | nomes de campos que os `.data` do 1.5.5 têm e o fonte 1.5.5 não (`aipolicy.data`, sistema de Lar do `tasks.data`) (B27f, B45) |
+| `F:\PW\1.7.2\172Source` | fonte do servidor 1.7.2 | nomes de campos que os `.data` do 1.5.5 têm e o fonte 1.5.5 não (`aipolicy.data`, sistema de Lar do `tasks.data`) (B27f, B45) **— não está mais em disco (conferido em 2026-10-14, B237; em `F:` só existe o `1.5.5`)** |
 | `F:\PW\1.5.5\pwserver_155v156` | servidor 1.5.5 compilado (Linux), mesma build v156 dos nossos dados | `gamedbd/clsconfig` = moldes de classe (B47); candidato a gabarito rodando numa VM 32-bit |
 | `F:\PW\1.5.5\home155` | outro pacote de servidor 1.5.5 (2023) | base do `realm_155`; tem outro `clsconfig` |
 | `D:\PROJETOS\PWPRIVATE\Tools\EDITOR DE ELEMENTS 1.5.5 ADMVAL\configs\CFG\` | 39 `.cfg` de `elements.data` (1.5.2 v123 a 1.5.7 v206) | origem de `specs/elements_155/PW_1.5.5_v1*.cfg` |
@@ -379,6 +379,10 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
   pela janela do Windows, "Baixar o jogo" / "Já tenho instalado"; página **Recursos do cliente** no painel (grupo
   Geral): rascunho → enviar arquivo → publicar → o launcher mostra "Atualização disponível". **A olhar:** roteiro na
   resposta do B235 (histórico).
+- **B237 (Estúdio S1, 2026-10-14):** painel → realm → **Estúdio**: escolher/criar rascunho, tabela, registro, editar,
+  salvar, clonar, remover; publicar em Recursos do cliente grava o `elements.data` no `config` do realm. **A olhar:**
+  editar o preço de uma arma no 1.2.6, publicar, **reiniciar `pw-world-126`/`pw-realm-126`**, conferir o preço na loja
+  do NPC em jogo e, pelo launcher, que o cliente atualizou (mesmo preço no tooltip).
 
 **1.5.5 (realm 155, e o que vale para os dois)**
 
@@ -808,6 +812,10 @@ portado. Falta ver em jogo.)
   trava por caminho, publicar N+1 assinado, reverter; versão N reaproveita os pacotes da 0 (o resto por objeto);
   página "Recursos do cliente" no painel. Falta: o Murillo testar; publicar `servidor`/`ambos` direto no realm;
   canal de teste GM e autoatualização do launcher; envio do cliente original pelo painel; P4 (editor de elements).
+  **B237 (P4 = Estúdio S1):** escritor do `elements` com ida e volta byte a byte (`pw_data_loader::elements_editavel`),
+  espaços de id do `add_id_index` (17 tabelas do v156 sem espaço conhecido: sem registro novo); API e página Estúdio;
+  publicar grava `servidor`/`ambos` no `config` do realm. Falta: o Murillo testar em jogo; "aguarda reinício";
+  diferenças lado a lado; S2 (telas próprias, índice de referências).
 
 ## 6. Regras que valem para qualquer mudança
 
@@ -1043,6 +1051,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 202 | 10-08 | vestir: amuleto HP/MP não sai e é destruído ao trocar; habilidade dinâmica repetida; reputação |
 | 203 | 10-08 | passivas comuns `EVENT_RESET`/`EVENT_WIELD` (catálogos com `efeito_passivo`) |
 | 198 | 10-07 | painel E6: missões — ver, dar livre (`NEW`), concluir forçando o sucesso (`FINISHED`/`COMPLETE`), cancelar apagando (`GIVE_UP`; 1.2.6 só offline), esquecer a conclusão (offline); resposta do canal até 64 KiB |
+| 237 | 10-14 | Estúdio S1: escritor do elements (ida e volta), ids por espaço, editor no painel; publicar grava no realm |
 | 236 | 10-14 | teste intermitente do Guerreiro 126: era a espera da morte do monstro sem prazo real (carga na máquina); só teste |
 | 235 | 10-14 | launcher com pasta por versão e diálogo; P3: rascunho, publicar e reverter (API 8101 + página no painel) |
 | 234 | 10-14 | P2: núcleo do launcher `pw-atualizador`, app Tauri `pw-launcher`, rotas `/versoes` e objetos; `.bat` de memória fora do 1.5.5 |

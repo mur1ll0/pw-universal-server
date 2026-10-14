@@ -16,6 +16,8 @@ TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw
 - Referência (2026-09-20, B69): **599 testes** (64/64 no arquivo de tempo sozinho); os de tempo do
   `pw-gs/tests/subcomandos_no_mundo.rs` podem falhar sob carga (rodar o arquivo sozinho). As duas antigas do 1.2.6 em
   `pw-data-loader/tests/loader_tests.rs` foram resolvidas. Qualquer falha é nova.
+- Guarde a linha `panicked at` junto com os nomes das falhas (`grep -E "panicked at|^test .* FAILED" -A1`): sem ela
+  uma falha intermitente não tem diagnóstico (B237).
 - **Não rode a suíte junto com um build pesado** (Docker, launcher): os testes do mundo usam prazos de tempo
   real e, com a CPU tomada, falham longe da causa. Foi o "intermitente" do Guerreiro 1.2.6 (B236): esperas de
   morte de monstro sem prazo real, corrigidas com `tickar_ate_o_monstro_morrer`. Teste novo que espera algo do

@@ -4,7 +4,8 @@
 > `docs/admin/RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md` (§3, §7.2, §7.7, §8, §8.6). Estado: **P1
 > (versão 0 + pacotes + HTTP) no B233, confirmado em jogo nas duas versões; P2 (núcleo do launcher
 > `pw-atualizador` + app Tauri `tools/pw-launcher`) no B234, confirmado em jogo; usabilidade do launcher e P3
-> (rascunho, publicar e reverter pelo painel) no B235**; editores (P4+) e o envio do cliente original pelo painel faltam.
+> (rascunho, publicar e reverter pelo painel) no B235; Estúdio S1 (editor genérico do `elements.data`) e a gravação
+> no realm ao publicar no B237**; telas próprias por área (S2+) e o envio do cliente original pelo painel faltam.
 
 ## 1. Serviço
 
@@ -140,8 +141,31 @@ registra no banco e só então troca o `versao.json` (gravação atômica, `.sig
 obriga o launcher a atualizar. O envio de arquivo no painel aceita até 512 MiB (`LimitarEntrada` abre
 exceção só para essa rota; o resto continua 8 KiB).
 
-**Ainda não feito:** arquivos de destino `servidor`/`ambos` (elements, tasks, npcgen) não são copiados para
-o `data/<realm>/config` nem marcam reinício (§3 "Ligação com os realms") — hoje isso é manual.
+**Gravação no realm (B237):** item de destino `servidor`/`ambos` publicado é gravado (troca atômica) em cada
+pasta de `PW_RECURSOS_REALMS` da versão (`{"1.2.6": ["/realms/realm_126"], "1.5.5": ["/realms/realm_155"]}`,
+montadas de `data/realm_*/config`); só arquivos de `data\` direto (`data\elements.data` → `elements.data`);
+`servidor` não entra no manifesto do cliente; remoção não apaga nada do realm. A resposta do publicar lista os
+`aplicados`. **O GS só lê esses arquivos ao subir: reinicie o realm** (o painel ainda não marca nem reinicia).
+
+## 6b. Estúdio, fase S1 (B237)
+
+Motor `crates/pw-recursos/src/estudio.rs` sobre `pw_data_loader::elements_editavel` (spec 03 §3.1); painel
+`/api/realms/{realm}/estudio/…` (a versão vem de `realms.version`) e a página "Estúdio" do grupo do realm
+(`static/estudio.js`).
+
+| rota (`/admin/{v}/estudio/…`) | faz |
+| :--- | :--- |
+| `GET tabelas?rascunho=` | tabelas do arquivo (registros, espaço de id) — do rascunho, ou do publicado |
+| `GET tabelas/{T}?busca=&pagina=&por_pagina=&rascunho=` | registros com id e `Name` (busca por id exato ou nome) |
+| `GET tabelas/{T}/{i}?rascunho=` | a ficha: campos com tipo, tamanho, deslocamento e valor (`string` GBK sai legível) |
+| `PUT tabelas/{T}/{i}?rascunho=` `{campos}` | edita; recusa tipo errado, texto que não cabe, campo inexistente |
+| `POST tabelas/{T}/{i}/clonar?rascunho=` | registro novo com o próximo id do espaço |
+| `DELETE tabelas/{T}/{i}?rascunho=` | remove; recusado se algum campo `int32` de outro registro tem o id (conservador) |
+
+Cada edição grava o arquivo inteiro como objeto (zstd 3) e o item `data\elements.data` (destino `ambos`) do
+rascunho, com `resumo = {campos: [{tabela, id, campo, antes, depois}], registros: [{tabela, id, acao, base}]}` —
+o "antes" é sempre o do publicado; voltar ao valor publicado tira a linha; arquivo igual ao publicado tira o item.
+Uma edição por rascunho de cada vez (trava em memória); os arquivos lidos ficam em cache pelo SHA-256.
 
 ## 7. Testes
 
@@ -159,7 +183,8 @@ segredo, limite de envio, download) — rodar no contêiner do painel (ver hist�
 
 - Launcher: canal de teste para GM (instalar um rascunho antes de publicar), autoatualização do próprio
   launcher, instalador `.msi` (CLI do Tauri).
-- Publicar arquivo de destino `servidor`/`ambos` direto no realm (troca atômica + `aguarda_reinicio`).
+- Marcar "aguarda reinício" no realm depois de publicar `servidor`/`ambos` (hoje o painel só lista os aplicados).
+- Estúdio S2+: telas próprias, catálogo de referências (substitui a busca conservadora de remoção), `tasks`/`npcgen`/`gshop`.
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).
