@@ -165,15 +165,75 @@ impl Estudio {
             bail!("registro {indice} inexistente em {tabela}");
         }
         let r = t.ler(indice)?;
+        let ids = mapa_de_ids(&e);
+        let cat = catalogo();
         let campos: Vec<Value> = t
             .campos()
             .into_iter()
-            .map(|(off, tam, f)| json!({
-                "nome": f.name, "tipo": f.field_type, "tamanho": tam, "deslocamento": off,
-                "valor": r.get(&f.name).map(|v| valor_json(f, v)),
-            }))
+            .map(|(off, tam, f)| {
+                let valor = r.get(&f.name);
+                let mut c = json!({
+                    "nome": f.name, "tipo": f.field_type, "tamanho": tam, "deslocamento": off,
+                    "valor": valor.map(|v| valor_json(f, v)),
+                });
+                if let Some(esp) = espaco_citado(tabela, &f.name) {
+                    c["cita"] = json!(esp);
+                    if let Some(FieldValue::Int(v)) = valor {
+                        if *v != 0 && *v != -1 {
+                            c["referencia"] = match ids.get(&(esp.to_string(), *v)) {
+                                Some(&(ti, ri)) => {
+                                    let alvo = &e.tabelas[ti];
+                                    json!({ "tabela": alvo.nome, "indice": ri, "id": v, "nome": nome_do_registro(alvo, ri) })
+                                }
+                                None => json!({ "ausente": true, "id": v }),
+                            };
+                        }
+                    }
+                } else if cat.duvidosos.contains(&(tabela.to_string(), f.name.clone())) {
+                    c["duvidoso"] = json!(true);
+                }
+                c
+            })
             .collect();
-        Ok(json!({ "tabela": tabela, "indice": indice, "id": t.id(indice), "espaco": espaco_de_id(tabela), "campos": campos }))
+        let usado_por = match (espaco_de_id(tabela), t.id(indice)) {
+            (Some(esp), Some(id)) => citantes(&e, &esp, id, (tabela, indice), false, 100),
+            _ => vec![],
+        };
+        Ok(json!({
+            "tabela": tabela, "indice": indice, "id": t.id(indice), "espaco": espaco_de_id(tabela),
+            "nome": nome_do_registro(t, indice), "campos": campos, "usado_por": usado_por,
+        }))
+    }
+
+    /// Registros de um espaço com o id exato ou o nome contendo `busca` (o seletor de referência).
+    pub async fn buscar_no_espaco(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        rascunho: Option<i64>,
+        espaco: &str,
+        busca: &str,
+        limite: usize,
+    ) -> Result<Value> {
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let busca = busca.trim().to_lowercase();
+        let mut achados = Vec::new();
+        'tabelas: for t in &e.tabelas {
+            if espaco_de_id(&t.nome).as_deref() != Some(espaco) {
+                continue;
+            }
+            for i in 0..t.registros.len() {
+                let id = t.id(i);
+                let nome = nome_do_registro(t, i);
+                if busca.is_empty() || id.is_some_and(|x| x.to_string() == busca) || nome.to_lowercase().contains(&busca) {
+                    achados.push(json!({ "tabela": t.nome, "indice": i, "id": id, "nome": nome }));
+                    if achados.len() >= limite.clamp(1, 200) {
+                        break 'tabelas;
+                    }
+                }
+            }
+        }
+        Ok(json!(achados))
     }
 
     /// Aplica `mudar` sobre o arquivo do rascunho e grava o resultado como o item do rascunho.
@@ -265,9 +325,17 @@ impl Estudio {
         let tabela = tabela.to_string();
         self.alterar(gov, versao, rascunho, move |e, resumo| {
             let id = e.tabela(&tabela)?.id(indice).context("registro sem ID")?;
-            let refs = referencias(e, &tabela, indice, id);
+            // Sem espaço conhecido nada no catálogo aponta para cá; os duvidosos ainda bloqueiam.
+            let espaco = espaco_de_id(&tabela).unwrap_or_default();
+            let refs = citantes(e, &espaco, id, (&tabela, indice), true, 50);
             if !refs.is_empty() {
-                bail!("o id {id} é citado por {} campo(s), ex.: {}", refs.len(), refs.iter().take(5).cloned().collect::<Vec<_>>().join(", "));
+                let ex: Vec<String> = refs
+                    .iter()
+                    .take(5)
+                    .map(|r| format!("{}#{}.{}{}", r["tabela"].as_str().unwrap_or(""), r["id"], r["campo"].as_str().unwrap_or(""),
+                        if r["duvidoso"] == true { " (duvidoso)" } else { "" }))
+                    .collect();
+                bail!("o id {id} é citado por {} campo(s), ex.: {}", refs.len(), ex.join(", "));
             }
             e.remover(&tabela, indice)?;
             resumo.registro(&tabela, id, "removido", None);
@@ -277,29 +345,106 @@ impl Estudio {
     }
 }
 
-/// Campos `int32` de outros registros cujo valor é `id` (conservador: um número igual por
-/// acaso também bloqueia; o índice de referências por catálogo é da fase S2).
-fn referencias(e: &ElementsEditavel, tabela: &str, indice: usize, id: i32) -> Vec<String> {
+// ------------------------------------------------------------------ índice de referências (S2, B238)
+
+/// `specs/estudio/referencias.json` (gerado por `gerar_referencias.py`): campo → espaço que ele cita,
+/// com duas evidências (comentário/nome do `ExpTypes.h` e ≥ 95% dos valores existindo no espaço). Os
+/// `duvidosos` (parecem id, falta evidência) não viram link, mas também bloqueiam remoção.
+struct Catalogo {
+    refs: HashMap<String, HashMap<String, String>>,
+    duvidosos: std::collections::HashSet<(String, String)>,
+}
+
+fn catalogo() -> &'static Catalogo {
+    #[derive(serde::Deserialize)]
+    struct Entrada {
+        espaco: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Duvidoso {
+        tabela: String,
+        campo: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Arquivo {
+        tabelas: HashMap<String, HashMap<String, Entrada>>,
+        duvidosos: Vec<Duvidoso>,
+    }
+    static C: std::sync::OnceLock<Catalogo> = std::sync::OnceLock::new();
+    C.get_or_init(|| {
+        let a: Arquivo = serde_json::from_str(include_str!("../../../specs/estudio/referencias.json")).expect("referencias.json");
+        Catalogo {
+            refs: a.tabelas.into_iter().map(|(t, cs)| (t, cs.into_iter().map(|(c, e)| (c, e.espaco)).collect())).collect(),
+            duvidosos: a.duvidosos.into_iter().map(|d| (d.tabela, d.campo)).collect(),
+        }
+    })
+}
+
+/// O espaço que o campo cita, se o catálogo sabe.
+pub fn espaco_citado(tabela: &str, campo: &str) -> Option<&'static str> {
+    catalogo().refs.get(tabela)?.get(campo).map(String::as_str)
+}
+
+fn nome_do_registro(t: &pw_data_loader::elements_editavel::TabelaEditavel, i: usize) -> String {
+    match t.ler(i).ok().and_then(|r| r.get("Name").cloned()) {
+        Some(FieldValue::Text(s)) => s,
+        _ => String::new(),
+    }
+}
+
+/// `(espaço, id)` → `(tabela, registro)` de todo o arquivo.
+fn mapa_de_ids(e: &ElementsEditavel) -> HashMap<(String, i32), (usize, usize)> {
+    let mut m = HashMap::new();
+    for (ti, t) in e.tabelas.iter().enumerate() {
+        let Some(espaco) = espaco_de_id(&t.nome) else { continue };
+        for i in 0..t.registros.len() {
+            if let Some(id) = t.id(i) {
+                m.entry((espaco.clone(), id)).or_insert((ti, i));
+            }
+        }
+    }
+    m
+}
+
+/// Registros cujos campos de referência (e, com `com_duvidosos`, os duvidosos) citam `id` no
+/// `espaco`. `excluir` = o próprio registro.
+fn citantes(e: &ElementsEditavel, espaco: &str, id: i32, excluir: (&str, usize), com_duvidosos: bool, limite: usize) -> Vec<Value> {
     let mut achados = Vec::new();
-    if id == 0 {
+    if id == 0 || id == -1 {
         return achados;
     }
     let alvo = id.to_le_bytes();
+    let cat = catalogo();
     for t in &e.tabelas {
-        let ints: Vec<(usize, String)> = t
+        let refs = cat.refs.get(&t.nome);
+        let campos: Vec<(usize, String, bool)> = t
             .campos()
             .into_iter()
-            .filter(|(off, _, f)| f.field_type == "int32" && !(*off == 0 && f.name == "ID"))
-            .map(|(off, _, f)| (off, f.name.clone()))
+            .filter(|(_, _, f)| f.field_type == "int32" && f.name != "ID")
+            .filter_map(|(off, _, f)| {
+                if refs.and_then(|r| r.get(&f.name)).is_some_and(|esp| esp == espaco) {
+                    Some((off, f.name.clone(), false))
+                } else if com_duvidosos && cat.duvidosos.contains(&(t.nome.clone(), f.name.clone())) {
+                    Some((off, f.name.clone(), true))
+                } else {
+                    None
+                }
+            })
             .collect();
+        if campos.is_empty() {
+            continue;
+        }
         for (i, r) in t.registros.iter().enumerate() {
-            if t.nome == tabela && i == indice {
+            if t.nome == excluir.0 && i == excluir.1 {
                 continue;
             }
-            for (off, nome) in &ints {
+            for (off, nome, duvidoso) in &campos {
                 if r[*off..*off + 4] == alvo {
-                    achados.push(format!("{}#{}.{}", t.nome, t.id(i).unwrap_or(-1), nome));
-                    if achados.len() >= 50 {
+                    achados.push(json!({
+                        "tabela": t.nome, "indice": i, "id": t.id(i), "nome": nome_do_registro(t, i),
+                        "campo": nome, "duvidoso": duvidoso,
+                    }));
+                    if achados.len() >= limite {
                         return achados;
                     }
                 }

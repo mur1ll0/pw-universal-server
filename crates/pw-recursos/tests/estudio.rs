@@ -125,6 +125,28 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let valor = |f: &Value, nome: &str| f["campos"].as_array().unwrap().iter().find(|c| c["nome"] == nome).unwrap()["valor"].clone();
         let (nome0, preco0) = (valor(&ficha, "Name"), valor(&ficha, "price"));
 
+        // Índice de referências (B238): drop do monstro com o nome do item; quem usa um tipo de arma;
+        // busca no espaço para o seletor.
+        let mut drop_com_nome = false;
+        for i in 0..40 {
+            let m = json_de(pedir("GET", &format!("estudio/tabelas/MONSTER_ESSENCE/{i}")).call().unwrap());
+            let campo = m["campos"].as_array().unwrap().iter().find(|c| c["nome"] == "drop_matters_1_id").unwrap().clone();
+            assert_eq!(campo["cita"], "ESSENCE");
+            if let Some(r) = campo.get("referencia") {
+                assert!(r.get("ausente").is_none(), "drop citando id inexistente no monstro {i}: {r}");
+                assert!(r["tabela"].as_str().unwrap().ends_with("ESSENCE"));
+                drop_com_nome = true;
+                break;
+            }
+        }
+        assert!(drop_com_nome, "nenhum dos 40 primeiros monstros tem drop");
+        let tipo = json_de(pedir("GET", "estudio/tabelas/WEAPON_MAJOR_TYPE/0").call().unwrap());
+        let usado = tipo["usado_por"].as_array().unwrap();
+        assert!(!usado.is_empty() && usado.iter().all(|u| u["campo"] == "id_major_type"), "{usado:?}");
+        let achados = json_de(pedir("GET", "estudio/espacos/ESSENCE").query("busca", &id0.to_string()).call().unwrap());
+        assert!(achados.as_array().unwrap().iter().any(|a| a["id"] == id0 && a["tabela"] == "WEAPON_ESSENCE"));
+        assert_eq!(erro_de(pedir("GET", "estudio/espacos/XYZ").call()).0, 404);
+
         // Sem rascunho a edição é recusada.
         assert_eq!(erro_de(pedir("PUT", "estudio/tabelas/WEAPON_ESSENCE/0").send_json(json!({"campos": {"price": 1}}))).0, 400);
         let r = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "estudio", "operacao_id": "t_p4_r1"})).unwrap())["id"].as_i64().unwrap();

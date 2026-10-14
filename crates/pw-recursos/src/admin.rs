@@ -334,6 +334,29 @@ async fn estudio_remover(
     Ok(Json(e.estudio.remover(&e.gov, &v, r, &tabela, indice).await?))
 }
 
+#[derive(Deserialize)]
+struct QBusca {
+    rascunho: Option<i64>,
+    busca: Option<String>,
+    limite: Option<usize>,
+}
+
+async fn estudio_buscar_no_espaco(
+    State(e): State<Arc<Estado>>,
+    Path((v, espaco)): Path<(String, String)>,
+    Query(q): Query<QBusca>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    if !matches!(espaco.as_str(), "ESSENCE" | "CONFIG" | "FACE" | "RECIPE" | "ADDON" | "TALK") {
+        return Err(Erro(StatusCode::NOT_FOUND, "espaço inválido".into()));
+    }
+    let r = e
+        .estudio
+        .buscar_no_espaco(&e.gov, &v, q.rascunho, &espaco, q.busca.as_deref().unwrap_or(""), q.limite.unwrap_or(30))
+        .await?;
+    Ok(Json(r))
+}
+
 pub fn rotas(gov: Governanca, segredo: String) -> Router {
     let estado = Arc::new(Estado { gov, segredo, estudio: Default::default() });
     Router::new()
@@ -351,6 +374,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/tabelas/{tabela}", get(estudio_listar))
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}", get(estudio_ficha).put(estudio_editar).delete(estudio_remover))
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}/clonar", post(estudio_clonar))
+        .route("/admin/{v}/estudio/espacos/{espaco}", get(estudio_buscar_no_espaco))
         .layer(DefaultBodyLimit::max(MAIOR_ARQUIVO))
         .route_layer(middleware::from_fn_with_state(estado.clone(), exigir_segredo))
         .with_state(estado)

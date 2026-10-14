@@ -9,6 +9,7 @@ COPY tools ./tools
 # O pw-data-loader (Estúdio, B237) embute layouts e tabelas de specs/ com include_str!: os
 # mesmos COPY do Dockerfile.core.
 COPY specs/elements_layouts ./specs/elements_layouts
+COPY specs/estudio/referencias.json ./specs/estudio/referencias.json
 COPY specs/elements_155/realm_155_overrides.json ./specs/elements_155/realm_155_overrides.json
 COPY specs/elements_155/realm_155_v159_overrides.json ./specs/elements_155/realm_155_v159_overrides.json
 COPY specs/mapas ./specs/mapas
