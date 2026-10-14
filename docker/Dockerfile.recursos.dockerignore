@@ -1,0 +1,9 @@
+# Contexto do Dockerfile.recursos (B233): só o que o build usa (ver Dockerfile.core.dockerignore).
+**
+
+!Cargo.toml
+!Cargo.lock
+!crates/
+!crates/**
+!tools/
+!tools/**

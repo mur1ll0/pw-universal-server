@@ -1,0 +1,28 @@
+# pw-recursos (B233): versão 0 dos clientes, pacotes de instalação assinados e o HTTP do
+# atualizador. Diferente do Dockerfile.core: a imagem leva Python 3 e o extrator de .pck já
+# validado (tools/pw-pck-extract), que a importação usa — o pw-recursos não lê .pck sozinho.
+FROM rust:slim-bookworm AS builder
+WORKDIR /build
+COPY Cargo.toml Cargo.lock* ./
+COPY crates ./crates
+COPY tools ./tools
+RUN cargo build --release -p pw-recursos
+
+FROM debian:bookworm-slim AS runner
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    python3 \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /build/target/release/pw-recursos /app/pw-recursos
+COPY tools/pw-pck-extract/pw_pck_extract.py /opt/pw-pck-extract/pw_pck_extract.py
+ENV TZ=America/Sao_Paulo \
+    PW_RECURSOS_DADOS=/dados \
+    PW_RECURSOS_PORTA=8100 \
+    PW_RECURSOS_CHAVE=/chave/assinatura_ed25519.key \
+    PW_PCK_EXTRACT=/opt/pw-pck-extract/pw_pck_extract.py \
+    PYTHON=python3
+EXPOSE 8100
+ENTRYPOINT ["/app/pw-recursos"]
+CMD ["servir"]

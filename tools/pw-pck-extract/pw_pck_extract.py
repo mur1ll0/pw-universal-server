@@ -427,6 +427,34 @@ def cmd_get_all(pck_path: str, out_dir: str) -> None:
             print(f"  {e.name}: {err}")
 
 
+def cmd_fluxo(pck_path: str) -> None:
+    """Entrega cada arquivo do pacote pela saída padrão, em binário, para o `pw-recursos
+    importar` (B233) — o nome vai em **bytes GBK** do índice, sem conversão nenhuma (§7.7 do
+    `RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md`: o nome no disco depende do Windows de cada
+    jogador, e só o launcher pode calculá-lo). Formato, tudo little-endian:
+
+        b"E" u32 len(nome) nome u64 len(dados) dados   -- um arquivo
+        b"F" u32 len(nome) nome u32 len(erro) erro      -- entrada corrompida no pacote (pulada)
+        b"Z" u32 total_de_entradas                      -- fim
+    """
+    saida = sys.stdout.buffer
+    with LogicalPackageFile(pck_path) as pkg:
+        idx = read_index(pkg)
+        for e in idx.entries:
+            try:
+                data = read_file_data(pkg, e, idx.encrypted)
+            except Exception as ex:
+                erro = str(ex).encode("utf-8", errors="replace")
+                saida.write(b"F" + struct.pack("<I", len(e.name_bytes)) + e.name_bytes
+                            + struct.pack("<I", len(erro)) + erro)
+                continue
+            saida.write(b"E" + struct.pack("<I", len(e.name_bytes)) + e.name_bytes
+                        + struct.pack("<Q", len(data)))
+            saida.write(data)
+        saida.write(b"Z" + struct.pack("<I", len(idx.entries)))
+    saida.flush()
+
+
 def main() -> None:
     # Muitos nomes dentro dos pacotes são em chinês (GBK/CP936); o console do
     # Windows normalmente não tem essa code page ativa. `errors="replace"` evita
@@ -460,8 +488,13 @@ def main() -> None:
     p_all.add_argument("pck")
     p_all.add_argument("out_dir")
 
+    p_fluxo = sub.add_parser("fluxo", help="saída binária (nome GBK + dados) para o pw-recursos importar")
+    p_fluxo.add_argument("pck")
+
     args = parser.parse_args()
-    if args.cmd == "list":
+    if args.cmd == "fluxo":
+        cmd_fluxo(args.pck)
+    elif args.cmd == "list":
         cmd_list(args.pck)
     elif args.cmd == "find":
         cmd_find(args.pck, args.needle)

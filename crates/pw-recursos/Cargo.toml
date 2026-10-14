@@ -1,0 +1,32 @@
+[package]
+name = "pw-recursos"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Recursos do cliente: versão 0 importada dos .pck, pacotes de instalação assinados e o servidor HTTP do atualizador (B233)"
+
+[dependencies]
+pw-storage = { path = "../pw-storage" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+axum = "0.8"
+tower-http = { version = "0.6", features = ["fs"] }
+tower = { version = "0.5", features = ["util"] }
+zstd = { version = "0.13", features = ["zstdmt"] }
+sha2 = "0.10"
+md-5 = "0.10"
+ed25519-dalek = "2"
+getrandom = "0.2"
+encoding_rs = "0.8"
+rayon = "1.10"
+ureq = "2"
+
+[dev-dependencies]
+sqlx = { workspace = true }

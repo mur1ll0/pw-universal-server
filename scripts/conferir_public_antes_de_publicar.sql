@@ -11,7 +11,8 @@ WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_schema='public' AND table_name='accounts' AND column_name=c)
 UNION ALL
 SELECT 'falta tabela public.' || t
-FROM unnest(ARRAY['comandos_administrativos','coordenacao_gm_revisao','coordenacao_gm_processos']) AS t
+FROM unnest(ARRAY['comandos_administrativos','coordenacao_gm_revisao','coordenacao_gm_processos',
+                    'recursos_linhas','recursos_base','recursos_alteracoes','recursos_alteracao_itens','recursos_versoes']) AS t
 WHERE NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=t)
 UNION ALL
 SELECT 'falta indice public.uq_accounts_usuario_lower'

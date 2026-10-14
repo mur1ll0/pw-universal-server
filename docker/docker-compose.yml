@@ -220,6 +220,32 @@ services:
       pw-dragonfly:
         condition: service_started
 
+  # ============================================================================
+  # RECURSOS DO CLIENTE (B233): versão 0 de cada cliente, pacotes de instalação e o HTTP
+  # do atualizador (`specs/07_RECURSOS_DO_CLIENTE.md`). Só leitura na rede: importar e
+  # publicar são de linha de comando, por `docker compose run --rm pw-recursos importar …`.
+  # A chave que assina os manifestos fica no volume `pw_recursos_chave`, montado só aqui
+  # (o painel monta `../data` inteiro e não deve enxergá-la).
+  # ============================================================================
+  pw-recursos:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.recursos
+    container_name: pw-recursos
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
+      RUST_LOG: info
+    ports:
+      - "8100:8100"
+    volumes:
+      - ../data/clientes:/dados
+      - pw_recursos_chave:/chave
+    depends_on:
+      pw-postgres:
+        condition: service_healthy
+
 volumes:
   pw_postgres_data:
   pw_dragonfly_data:
+  pw_recursos_chave:
