@@ -13348,7 +13348,7 @@ comparação lado a lado.
       parou em `Models\Players\形象\白虎\白虎.ecm` — o `fopen` ANSI procura o nome pela ACP do Windows (1252:
       `ÐÎÏó`), e o extrator gravava em chinês. `pw_pck_extract.py` passou a gravar pelos bytes com
       `decode("mbcs")` (`nome_no_disco`); cópia refeita com os 15 pacotes (3 entradas corrompidas nos pacotes
-      originais: `building	extures	90.dds`, `赤灵尊神.bon`, `litmodels43\9\litmodel_2727.bmd`).
+      originais: `building\textures\t\1790.dds`, `赤灵尊神.bon`, `litmodels\a43\9\litmodel_2727.bmd`).
       Consequência no §7.7: o nome no disco depende da ACP de cada jogador; o manifesto guarda os bytes GBK.
     - 2º teste: passou dos pacotes e dos `.data`, caiu antes do login — minidump `+0x3DD1DD` lendo 0 em
       `CECServerList::FindGroup` → `GetGroup(0)` com a lista de grupos vazia: a `serverlist.txt` não tem linha
@@ -13400,7 +13400,7 @@ comparação lado a lado.
       `WEAPON_SUB_TYPE` 12 campos com `action_type` → conjunto de ataque do jogador (`EC_Player.cpp:4600`);
       `NPC_ESSENCE` 47 com ids de serviço; 30 `NPC_*_SERVICE` (forja `NPC_MAKE_SERVICE` 268); `TALK_PROC`.
     - Habilidades: 3.318 `ElementSkill/skillNNN.h` compilados no `elementskill.dll`.
-    - Nome da ação pedida: base de `Configsctions_npc.txt` (`EC_NPC.cpp:295`; monstro: 站立, 普攻1, 普攻2,
+    - Nome da ação pedida: base de `Configs\actions_npc.txt` (`EC_NPC.cpp:295`; monstro: 站立, 普攻1, 普攻2,
       魔攻1, 技能1, 死亡, 受伤叠加…) + 起/落 nos ataques + ambiente no mascote (`EC_NPCModel.cpp:599-620`).
 
     ### c. O que foi feito
@@ -13453,3 +13453,71 @@ comparação lado a lado.
       os meus itens desta frente usavam 220–222; renumerados para **229–231** (histórico, índice do estado e os
       documentos `RECURSOS…`, `ESTUDIO…`, spec 02, `pw-pck-extract`). Os commits dele não tocaram nos meus arquivos.
     - Commits do pendente (B218, B219, B229–B232).
+
+233. **Sessão 2026-10-14: P1 dos recursos do cliente — serviço `pw-recursos`, versão 0 do 1.2.6 e do 1.5.5.**
+
+    ### a. Pedido
+    Passo P1 de `docs/admin/RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md` (§3, §7.2, §7.7, §8, §8.6): serviço Rust no
+    Docker com volume próprio, importação única dos `.pck` originais, pacotes `.tar.zst` por pasta com nome GBK,
+    manifesto assinado, HTTP com Range e a prova numa pasta limpa. Decisões do Murillo antes do código: porta
+    **8100** com `/atualizacao/…`; **zstd 12**; assinatura **sem passo manual** (chave criada sozinha no serviço,
+    opção B — ele perguntou se dava para simplificar como o MD5 do `.cup`; resposta: o `.cup` também era
+    assinado, e só hash não protege contra troca no caminho); importação **dentro do Docker** (pensando no
+    servidor externo: no P3 o cliente original será enviado pelo painel, arquivo a arquivo).
+
+    ### b. Evidência
+    - Pacote vale antes do solto: `AngelicaFile/Source/AFileImage.cpp:94-104` (pacote primeiro; disco só se não
+      achar). Nome do solto pelos bytes GBK via `fopen` ANSI: `AFileImage.cpp:127`.
+    - Linha de grupo da `serverlist.txt`: linha sem tabulação abre grupo (`EC_ServerList.cpp:151-157`); servidor
+      antes de grupo fica fora (`:146-147`). Arquivo em UTF-16LE com BOM (as duas instalações).
+    - Nomes `.pck` já trazem a pasta (`configs\…`, `help\script\…`).
+    - Medição antes do inteiro (xz/zlib da biblioteca padrão, sem zstd na máquina): `configs` 1.2.6 58 arquivos,
+      tar 1,9 MB → 0,1 MB; `configs` 1.5.5 109, 10,1 → 0,8 MB; `gfx` 1.5.5 27.858 arquivos, tar 760 → 157 MB (xz),
+      leitura 2,7 s. `.pck` do 1.5.5 somam 9,67 GB; do 1.2.6, 1,70 GB.
+    - Instalação BR tem 259.599 soltos (12,7 GB, quase todos `models`/`litmodels` repetidos dos pacotes) e 234
+      nomes sem GBK (`userdata\character\customize\00\Padrão (N).ini`, gravados pelo cliente pela ACP 1252).
+
+    ### c. O que foi feito
+    - `crates/pw-recursos` (spec nova `specs/07_RECURSOS_DO_CLIENTE.md`): `nomes` (GBK, chave sem caixa,
+      `MultiByteToWideChar(CP_ACP)`), `tar_gnu` (escritor/leitor próprio, nome em bytes, `././@LongLink`), `objetos`
+      (SHA-256 → zstd), `assinatura` (Ed25519), `fonte` (fluxo do extrator), `importar`, `conferir`, `servir` (axum +
+      `ServeFile`); binário `servir|importar|conferir|chave`.
+    - `tools/pw-pck-extract`: subcomando `fluxo` (nome GBK + dados pela saída padrão; `F` para entrada corrompida).
+    - Migração `scripts/2026_10_14_recursos_do_cliente.sql` (5 tabelas do §3, caminho `BYTEA`), aplicada em `test`
+      e `public`; `conferir_public_antes_de_publicar.sql` cobra as tabelas; `RecursosRepository` no `pw-storage`.
+    - Docker: `docker/Dockerfile.recursos` (+ `.dockerignore`), serviço `pw-recursos` (8100, `../data/clientes`,
+      volume `pw_recursos_chave` só nele — o painel monta `../data` inteiro). Chave pública atual:
+      `1b57739ff0051c5977e2f2fa5bb3d9fe79ba0d9bf9e5c9497169dd826e8c6d75`.
+
+    ### d. Provas
+    - `cargo test -p pw-recursos`: 15 de unidade + `tests/versao_zero.rs` com `TEST_DATABASE_URL` (instalação de
+      mentira → importar → banco `test` → conferir por pasta e HTTP com Range 206 → manifesto adulterado recusado).
+    - Suíte inteira com o banco (2 fios, rodando junto com a extração de 19 GB): **1.055 passaram, 1 falhou** —
+      `o_primeiro_teste_do_guerreiro_126_da_a_arma`, o intermitente conhecido do `subcomandos_no_mundo` (item 12021
+      deste histórico); passou isolado.
+    - Ponte real com o Python: `configs.pck` 1.2.6 → 58/58 nomes no disco iguais aos do `pw-pck-extract` (17 não-ASCII).
+    - **1.2.6:** 61.265 arquivos (2.498 soltos, 58.787 excluídos — quase tudo `*.pck.files`), 0 falhas, 0 fora do GBK;
+      26 pacotes, 2,83 GB (`maps` 1,49 GB); 5 min 27 s. Conferido por HTTP na 8100 em
+      `F:\Games\perfectworld_126 recursos\element`: 26 pacotes, 61.265 arquivos, 4,8 GB, Range 206, 2 min 6 s.
+    - **1.5.5:** 327.393 arquivos, 18,9 GB; 16 `.pck`; 3.524 soltos lidos, 255.588 soltos repetidos do pacote
+      (ignorados), 234 fora do GBK, 271 excluídos; nossos: linha de grupo e `sepfile`; 28 pacotes, 8,5 GB; 50 min 22 s
+      (720 s lendo `.pck`, 2.199 s gerando os pacotes). As **3 entradas corrompidas** nos `.pck` originais
+      (`building\textures\t\1790.dds`, `litmodels\a43\9\litmodel_2727.bmd`, `赤灵尊神.bon`, já vistas no B229) ficam
+      fora — mesmo estado da cópia `sepfile` que funcionou em jogo. Conferido por HTTP em `F:\PW\1.5.5\1.5.5 BR recursos\element`:
+      28 pacotes, 327.393 arquivos, 18,9 GB, Range 206, 6 min 19 s; `serverlist.txt` com `pw-universal` no topo; os 5
+      cursores de nome chinês saem pela ACP (`ÆßÏ¦Êó±ê.cur`), como o `fopen` do cliente os procura.
+
+    ### d2. Ajuste pedido pelo Murillo (mesmo dia)
+    - Fora da instalação: os instaladores avulsos da raiz do BR (`360inst_wanmeigj.exe`, `gt_setup.exe`,
+      `gt_updater.exe`, `dxwebsetup.exe`, `unitywebplayerdevelopment.exe`); no `data` do 1.2.6, as pastas `BCK`,
+      `Data Export`, `Editados`, `tasks`, os `.rar` (`tasks.rar`, `update1..5.rar`), `Notas.txt` e o `npcgen.data` —
+      nenhum `.cpp` do cliente abre esse arquivo (a única ocorrência é um campo, `elementdataman.cpp:2073`).
+    - Geração dos pacotes lê os objetos em paralelo (blocos de 64): 1.5.5 de 37 para 7 min.
+    - Reimportado com `--refazer`: 1.2.6 61.234 arquivos (31 a menos), pacotes 2,80 GB, 4 min 31 s; 1.5.5 327.388
+      (5 a menos), pacotes 8,48 GB, 12 min 44 s. Conferência por HTTP refeita nas pastas limpas: 1.2.6 em 81 s (data com só os 9 arquivos do cliente), 1.5.5 em 268 s, Range 206 nas duas.
+    - Corrigidos quatro trechos deste histórico e do estado em que \1, \17, \a e \t (nomes de caminho) tinham virado
+      caracteres de controle ao serem escritos por script (dois deles de sessões anteriores).
+
+    ### e. Falta
+    - O Murillo abrir o cliente das duas pastas extraídas (`elementclient.bat`) e logar.
+    - P2 launcher; P3 painel (envio do cliente original, governança); troca de chave (`chaves.json`).

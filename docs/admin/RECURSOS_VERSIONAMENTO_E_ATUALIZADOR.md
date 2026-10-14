@@ -620,3 +620,19 @@ versão local; o "reparar" usa a lista de arquivos.
 5. Conferência: extrair o pacote numa pasta limpa e rodar o cliente com `sepfile` (o mesmo teste do §7.5/§8.5).
 
 Tamanhos e tempos (pacote por pasta, total por versão) se medem no P1.
+
+### 8.7 P1 feito (B233, 2026-10-14)
+
+Serviço `pw-recursos` na porta 8100 — descrição atual em `specs/07_RECURSOS_DO_CLIENTE.md`. Decisões do Murillo:
+zstd **12**; assinatura **sem passo manual** (a chave nasce no serviço, num volume que só ele monta — não em
+`docker/segredos/`, porque o painel monta `../data` inteiro); importação **dentro do Docker** (no servidor externo, o
+cliente original será enviado pelo painel, arquivo a arquivo, e importado lá — P3).
+
+| versão | arquivos | dados | pacotes | importar | baixar e conferir (HTTP local) |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| 1.2.6 | 61.234 | 4,7 GB | 26, 2,80 GB | 4 min 31 s | 1 min 21 s |
+| 1.5.5 | 327.388 | 18,9 GB | 28, 8,48 GB | 12 min 44 s (1ª vez: 50 min) | 4 min 28 s |
+
+Regras que a importação adotou (evidência na spec 07): pacote vale antes do solto (`AFileImage.cpp:94-104`); solto
+sem nome GBK fica fora (234 `Padrão (N).ini` no BR); as 3 entradas corrompidas nos `.pck` do BR ficam fora (como na
+cópia `sepfile` que funcionou). Tirados também, a pedido do Murillo: os instaladores avulsos da raiz do BR e, no `data` do 1.2.6, as pastas `BCK`, `Data Export`, `Editados`, `tasks`, os `.rar`, `Notas.txt` e o `npcgen.data` (do servidor). A geração dos pacotes passou de 37 para 7 min no 1.5.5 lendo os objetos em paralelo.
