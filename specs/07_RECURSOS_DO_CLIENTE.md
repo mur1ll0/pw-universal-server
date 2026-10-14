@@ -23,6 +23,7 @@ Comandos (`pw-recursos <comando>`; no Docker, `docker compose run --rm … pw-re
 | `servir` (padrão) | HTTP na 8100 |
 | `importar --versao V --cliente <element original com .pck> [--refazer] [--nivel 12]` | monta a versão 0 (§3) |
 | `conferir --origem <http://host:8100 \| pasta> --versao V --destino <pasta vazia> [--chave-publica hex]` | prova: assinatura, extração pela ACP, hashes (o núcleo do launcher) |
+| `limpar --versao V` | apaga de `objetos/` todo objeto que nenhum registro da versão usa (base + antes/depois das alterações) e os temporários; roda sozinho no fim do `importar` |
 | `chave` | imprime a chave pública (cria o par se não existe) |
 
 ## 2. Nomes: bytes GBK, nunca texto
@@ -61,7 +62,8 @@ dela já estão na ACP daquela máquina):
    zstd nível 12 multinúcleo com checksum.
 7. Manifesto + `versao.json`, assinados (§4); relatório em `<dados>/<versao>/importacao_0.json`;
    banco numa transação (`recursos_linhas`, `recursos_base`, `recursos_versoes` nº 0).
-   Reimportar exige `--refazer`, e só se não houver versão > 0 nem alteração.
+   Reimportar exige `--refazer`, e só se não houver versão > 0 nem alteração. Ao fim, `limpar`: o que saiu da
+   versão (exclusões novas, arquivo trocado por um nosso) não fica no servidor.
 
 ## 4. Atualização por HTTP
 
@@ -79,7 +81,7 @@ mostra a pública). O `versao.json` é gravado por último: só aparece quando a
 
 ## 5. Testes
 
-`cargo test -p pw-recursos` — 15 de unidade (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
+`cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
 linha de grupo, `sepfile`, assinatura, fluxo do extrator, rotas) e `tests/versao_zero.rs` (com
 `TEST_DATABASE_URL`): instalação de mentira → importar → banco `test` → conferir por pasta e por
 HTTP com Range (206) → manifesto adulterado recusado.

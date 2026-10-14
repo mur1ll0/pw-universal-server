@@ -13515,6 +13515,10 @@ comparação lado a lado.
     - Geração dos pacotes lê os objetos em paralelo (blocos de 64): 1.5.5 de 37 para 7 min.
     - Reimportado com `--refazer`: 1.2.6 61.234 arquivos (31 a menos), pacotes 2,80 GB, 4 min 31 s; 1.5.5 327.388
       (5 a menos), pacotes 8,48 GB, 12 min 44 s. Conferência por HTTP refeita nas pastas limpas: 1.2.6 em 81 s (data com só os 9 arquivos do cliente), 1.5.5 em 268 s, Range 206 nas duas.
+    - Limpeza (pedido do Murillo: nada inútil no servidor): comando `limpar`, que roda também no fim do `importar`,
+      apaga de `objetos/` o que nenhum registro usa (consulta `objetos_em_uso`: base + antes/depois das alterações).
+      Resultado: 1.2.6 24 objetos (28,7 MB; os 31 arquivos tirados, alguns com o mesmo conteúdo);
+      1.5.5 7 objetos (16,8 MB: os 5 instaladores, o .bat e a serverlist originais trocados pelos nossos).
     - Corrigidos quatro trechos deste histórico e do estado em que \1, \17, \a e \t (nomes de caminho) tinham virado
       caracteres de controle ao serem escritos por script (dois deles de sessões anteriores).
 

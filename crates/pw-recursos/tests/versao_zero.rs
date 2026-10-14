@@ -132,6 +132,24 @@ async fn importa_registra_serve_e_confere_a_versao_zero() {
     let contagem: Vec<(String, i64)> = resumo.iter().map(|(o, n, _)| (o.clone(), *n)).collect();
     assert_eq!(contagem, vec![("nosso".into(), 2), ("pacote".into(), 4), ("solto".into(), 2)]);
 
+    // Limpeza: o .bat e a serverlist originais foram gravados como objetos e depois trocados
+    // pelos "nossos" — são os 2 objetos sem uso. O resto continua legível.
+    let em_uso: std::collections::HashSet<[u8; 32]> = repo
+        .objetos_em_uso(LINHA)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|v| v.try_into().unwrap())
+        .collect();
+    let distintos: std::collections::HashSet<_> = res.registros.iter().map(|r| r.sha256).collect();
+    assert_eq!(em_uso, distintos);
+    let objetos = pw_recursos::objetos::Objetos::new(dados.join(LINHA).join("objetos"), 3);
+    assert_eq!(objetos.limpar(&em_uso).unwrap().0, 2);
+    assert_eq!(objetos.limpar(&em_uso).unwrap().0, 0);
+    for r in &res.registros {
+        objetos.ler(&r.sha256, r.tamanho as usize).unwrap();
+    }
+
     // Conferência pela pasta.
     let destino = pasta_limpa("destino");
     let c = conferir(&Origem::Pasta(dados.clone()), LINHA, &destino, &publica).unwrap();

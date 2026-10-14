@@ -68,4 +68,63 @@ impl Objetos {
     pub fn raiz(&self) -> &Path {
         &self.raiz
     }
+
+    /// Apaga todo objeto fora de `em_uso` e os temporários que uma gravação interrompida
+    /// deixou. Devolve `(arquivos, bytes)` apagados. Só arquivos `<aa>/<64 hex>.zst` e
+    /// `<aa>/*.tmp*` são considerados: nada mais da pasta é tocado.
+    pub fn limpar(&self, em_uso: &std::collections::HashSet<Sha256Bytes>) -> io::Result<(u64, u64)> {
+        let (mut n, mut bytes) = (0u64, 0u64);
+        if !self.raiz.exists() {
+            return Ok((0, 0));
+        }
+        for sub in fs::read_dir(&self.raiz)? {
+            let sub = sub?;
+            if !sub.file_type()?.is_dir() {
+                continue;
+            }
+            for e in fs::read_dir(sub.path())? {
+                let e = e?;
+                let nome = e.file_name().to_string_lossy().into_owned();
+                let lixo = if let Some(h) = nome.strip_suffix(".zst") {
+                    match hex::decode(h).ok().and_then(|v| <Sha256Bytes>::try_from(v).ok()) {
+                        Some(sha) => !em_uso.contains(&sha),
+                        None => false,
+                    }
+                } else {
+                    nome.contains(".tmp")
+                };
+                if lixo && e.file_type()?.is_file() {
+                    bytes += e.metadata()?.len();
+                    fs::remove_file(e.path())?;
+                    n += 1;
+                }
+            }
+            // Pasta de prefixo vazia: remove (falha em silêncio se ainda tem algo).
+            let _ = fs::remove_dir(sub.path());
+        }
+        Ok((n, bytes))
+    }
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    #[test]
+    fn limpar_apaga_so_o_que_nao_esta_em_uso() {
+        let raiz = std::env::temp_dir().join(format!("pw_recursos_objetos_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&raiz);
+        let o = Objetos::new(&raiz, 3);
+        let (a, b) = (b"fica".to_vec(), b"sai".to_vec());
+        let (sa, sb) = (sha256(&a), sha256(&b));
+        o.gravar(&sa, &a).unwrap();
+        o.gravar(&sb, &b).unwrap();
+        fs::write(o.caminho(&sa).with_extension("tmp1_0"), b"x").unwrap();
+        let em_uso = [sa].into_iter().collect();
+        let (n, _) = o.limpar(&em_uso).unwrap();
+        assert_eq!(n, 2); // o objeto "sai" e o temporário
+        assert_eq!(o.ler(&sa, a.len()).unwrap(), a);
+        assert!(!o.caminho(&sb).exists());
+        let _ = fs::remove_dir_all(&raiz);
+    }
 }

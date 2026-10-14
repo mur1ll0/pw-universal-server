@@ -4,6 +4,7 @@
 //! pw-recursos servir                       HTTP /atualizacao/<versao>/… (porta 8100)
 //! pw-recursos importar --versao 1.5.5 --cliente <pasta element original, com .pck> [--refazer] [--nivel 12]
 //! pw-recursos conferir --origem <http://host:8100 | pasta dados> --versao 1.5.5 --destino <pasta vazia> [--chave-publica <hex>]
+//! pw-recursos limpar --versao 1.5.5        apaga objetos que nenhum registro usa (roda sozinho no fim do importar)
 //! pw-recursos chave                        mostra a chave pública (cria o par se não existe)
 //! ```
 //!
@@ -42,6 +43,22 @@ fn argumentos(lista: &[String]) -> Result<(HashMap<String, String>, Vec<String>)
 
 fn ambiente(nome: &str, padrao: &str) -> String {
     std::env::var(nome).unwrap_or_else(|_| padrao.to_string())
+}
+
+/// Apaga do volume os objetos da versão que nenhum registro usa mais (o que saiu numa
+/// reimportação ou numa exclusão) — B233, pedido do Murillo: nada inútil no servidor.
+async fn limpar(repo: &RecursosRepository, dados: &std::path::Path, versao: &str) -> Result<(u64, u64)> {
+    let em_uso: std::collections::HashSet<[u8; 32]> = repo
+        .objetos_em_uso(versao)
+        .await?
+        .into_iter()
+        .filter_map(|v| v.try_into().ok())
+        .collect();
+    if em_uso.is_empty() {
+        bail!("a versão {versao} não tem nenhum registro no banco: limpar apagaria tudo");
+    }
+    let objetos = pw_recursos::objetos::Objetos::new(importar::pasta_da_versao(dados, versao).join("objetos"), 0);
+    Ok(tokio::task::spawn_blocking(move || objetos.limpar(&em_uso)).await??)
 }
 
 fn caminho_da_chave() -> PathBuf {
@@ -146,6 +163,15 @@ async fn main() -> Result<()> {
             let total: u64 = r.pacotes.iter().map(|p| p.tamanho).sum();
             println!("pacotes de instalação: {} somando {:.1} MB; tempos {:?}", r.pacotes.len(), mb(total), r.segundos);
             println!("manifesto {}", hex::encode(resultado.manifesto_sha256));
+            let (n, bytes) = limpar(&repo, &dados, &versao).await?;
+            println!("objetos sem uso apagados: {n} ({:.1} MB)", mb(bytes));
+        }
+        "limpar" => {
+            let versao = args.get("versao").context("--versao obrigatório")?.clone();
+            importar::validar_versao(&versao)?;
+            let repo = RecursosRepository::new(PostgresPool::new(&StorageConfig::default()).await?);
+            let (n, bytes) = limpar(&repo, &dados, &versao).await?;
+            println!("objetos sem uso apagados em {versao}: {n} ({:.1} MB)", bytes as f64 / 1_048_576.0);
         }
         "conferir" => {
             let versao = args.get("versao").context("--versao obrigatório")?;
@@ -165,7 +191,7 @@ async fn main() -> Result<()> {
                 if c.range_conferido { "ok (206)" } else { "não testado (origem é pasta)" }
             );
         }
-        outro => bail!("comando desconhecido: {outro} (servir, importar, conferir, chave)"),
+        outro => bail!("comando desconhecido: {outro} (servir, importar, conferir, limpar, chave)"),
     }
     Ok(())
 }

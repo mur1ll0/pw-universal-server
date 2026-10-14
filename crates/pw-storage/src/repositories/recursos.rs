@@ -110,6 +110,22 @@ impl RecursosRepository {
         Ok(())
     }
 
+    /// Todo SHA-256 que a linha ainda usa: a base (versão 0) e os dois lados de cada item de
+    /// alteração (o "antes" serve para reverter). Objeto fora deste conjunto é lixo.
+    pub async fn objetos_em_uso(&self, linha: &str) -> Result<Vec<Vec<u8>>> {
+        Ok(sqlx::query_scalar(
+            "SELECT sha256 FROM recursos_base WHERE linha = $1
+             UNION
+             SELECT s FROM recursos_alteracao_itens i
+               JOIN recursos_alteracoes a ON a.id = i.alteracao,
+               LATERAL (VALUES (i.sha256_antes), (i.sha256_depois)) v(s)
+             WHERE a.linha = $1 AND s IS NOT NULL",
+        )
+        .bind(linha)
+        .fetch_all(self.pool.get_ref())
+        .await?)
+    }
+
     /// `(arquivos, bytes)` da versão 0 por origem — para conferir uma importação.
     pub async fn resumo_da_base(&self, linha: &str) -> Result<Vec<(String, i64, i64)>> {
         Ok(sqlx::query_as(
