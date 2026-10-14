@@ -30,4 +30,5 @@ rayon = "1.10"
 ureq = "2"
 
 [dev-dependencies]
+ureq = { version = "2", features = ["json"] }
 sqlx = { workspace = true }

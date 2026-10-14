@@ -86,7 +86,26 @@ async fn main() -> Result<()> {
             let porta = ambiente("PW_RECURSOS_PORTA", "8100");
             let escuta = tokio::net::TcpListener::bind(format!("0.0.0.0:{porta}")).await?;
             tracing::info!("pw-recursos servindo {} em :{porta}", dados.display());
-            axum::serve(escuta, pw_recursos::servir::rotas(dados)).await?;
+            let publico = axum::serve(escuta, pw_recursos::servir::rotas(dados.clone()));
+            // API administrativa (P3, B235): só com segredo, e só na rede interna do Docker.
+            let segredo = std::env::var("PW_RECURSOS_SEGREDO").unwrap_or_default();
+            if segredo.trim().len() < 16 {
+                tracing::warn!("PW_RECURSOS_SEGREDO ausente ou curto (< 16): API administrativa desligada");
+                publico.await?;
+            } else {
+                let pool = PostgresPool::new(&StorageConfig::default()).await?;
+                let (chave, _) = Chave::carregar_ou_criar(&caminho_da_chave())?;
+                let gov = pw_recursos::governanca::Governanca {
+                    dados: dados.clone(),
+                    repo: RecursosRepository::new(pool),
+                    chave: Arc::new(chave),
+                };
+                let porta_admin = ambiente("PW_RECURSOS_PORTA_ADMIN", "8101");
+                let escuta_admin = tokio::net::TcpListener::bind(format!("0.0.0.0:{porta_admin}")).await?;
+                tracing::info!("API administrativa em :{porta_admin}");
+                let admin = axum::serve(escuta_admin, pw_recursos::admin::rotas(gov, segredo.trim().to_string()));
+                tokio::try_join!(async { publico.await }, async { admin.await })?;
+            }
         }
         "chave" => {
             let (chave, criada) = Chave::carregar_ou_criar(&caminho_da_chave())?;

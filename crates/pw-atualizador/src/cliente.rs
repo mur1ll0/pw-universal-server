@@ -162,6 +162,19 @@ impl Servidor {
         Ok(VersaoRemota { versao: v, manifesto_bytes: m_bytes, manifesto, base })
     }
 
+    /// Só o `versao.json` (assinatura conferida): a consulta leve que o launcher faz ao abrir para
+    /// saber se há atualização, sem baixar o manifesto (25 MB no 1.5.5).
+    pub fn versao_anunciada(&self, versao: &str) -> Result<Versao> {
+        let v_bytes = self.origem.ler(versao, "versao.json")?;
+        assinatura::verificar(&self.chave_publica, &v_bytes, &self.assinatura_de(versao, "versao.json")?)
+            .context("versao.json")?;
+        let v: Versao = serde_json::from_slice(&v_bytes)?;
+        if v.versao_cliente != versao {
+            bail!("o servidor respondeu a versão {} quando se pediu {versao}", v.versao_cliente);
+        }
+        Ok(v)
+    }
+
     /// Um arquivo pelo SHA-256 (`objetos/<sha>`, zstd), conferido.
     pub fn objeto(&self, versao: &str, sha: &str, tamanho: u64) -> Result<Vec<u8>> {
         let comprimido = self.origem.ler(versao, &format!("objetos/{sha}"))?;
@@ -263,6 +276,17 @@ pub struct Resumo {
     pub arquivos: u64,
     pub bytes: u64,
     pub removidos: u64,
+    /// Arquivos do pacote que a versão não usa mais (ou trocou): não gravados.
+    pub pulados: u64,
+    /// Arquivos baixados um a um (os trocados depois da versão do pacote).
+    pub por_objeto: u64,
+}
+
+fn rel_do_pacote(base: &str, p: &crate::manifesto::Pacote) -> String {
+    match p.numero {
+        Some(n) => format!("{n}/{}", p.arquivo),
+        None => format!("{base}/{}", p.arquivo),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -323,11 +347,16 @@ fn extrair_pacote(
     let zst = zstd::stream::Decoder::new(fs::File::open(pacote)?)?;
     let mut tar = tar_gnu::Leitor::new(zst);
     while let Some((nome, dados)) = tar.proximo().with_context(|| format!("ler o pacote {nome_pacote}"))? {
+        // O pacote já teve o SHA-256 conferido contra o manifesto assinado. Numa versão N que
+        // reaproveita os pacotes da 0, um arquivo removido ou trocado depois vem no pacote com o
+        // conteúdo antigo: fica de fora aqui e o que faltar vem por objeto no fim da instalação.
         let Some(a) = esperados.get(&nome) else {
-            bail!("{nome_pacote} traz um arquivo fora do manifesto: {}", nomes::legivel(&nome));
+            resumo.pulados += 1;
+            continue;
         };
-        if a.pacote != nome_pacote || a.tamanho != dados.len() as u64 || sha256_hex(&dados) != a.sha256 {
-            bail!("{} não confere com o manifesto", nomes::legivel(&nome));
+        if a.tamanho != dados.len() as u64 || sha256_hex(&dados) != a.sha256 {
+            resumo.pulados += 1;
+            continue;
         }
         gravar_atomico(&no_disco(pasta, &a.caminho_gbk)?, &dados)?;
         resumo.arquivos += 1;
@@ -378,7 +407,7 @@ pub fn instalar(serv: &Servidor, versao: &str, pasta: &Path, ao_progredir: AoPro
         if e.pacotes_prontos.contains(&p.nome) {
             continue;
         }
-        let rel = format!("{}/{}", remota.base, p.arquivo);
+        let rel = rel_do_pacote(&remota.base, p);
         let parcial = pasta_estado(pasta).join(format!("{}.parcial", p.nome));
         baixar_pacote(serv, versao, &rel, &parcial, p.tamanho, &p.sha256, feito, ao_progredir, total)?;
         ao_progredir(Progresso { etapa: format!("extraindo {}", p.nome), feito: feito + p.tamanho, total });
@@ -389,7 +418,19 @@ pub fn instalar(serv: &Servidor, versao: &str, pasta: &Path, ao_progredir: AoPro
         e.pacotes_prontos.push(p.nome.clone());
         gravar_estado(pasta, &e)?;
     }
-    // Pacotes de uma instalação retomada foram extraídos antes: confere que nada falta.
+    // O que os pacotes não trouxeram (trocado ou acrescentado depois da versão do pacote) vem por
+    // objeto; numa instalação retomada, confere também o que foi extraído antes.
+    let faltam = verificar_com(pasta, &remota.manifesto, false, &mut |_| {})?;
+    let por_caminho: HashMap<&str, &Arquivo> =
+        remota.manifesto.arquivos.iter().map(|a| (a.caminho_gbk.as_str(), a)).collect();
+    for (i, d) in faltam.iter().enumerate() {
+        let a = por_caminho[d.caminho_gbk.as_str()];
+        ao_progredir(Progresso { etapa: format!("baixando {}", d.caminho), feito: i as u64, total: faltam.len() as u64 });
+        let dados = serv.objeto(versao, &a.sha256, a.tamanho)?;
+        gravar_atomico(&no_disco(pasta, &a.caminho_gbk)?, &dados)?;
+        resumo.por_objeto += 1;
+        resumo.arquivos += 1;
+    }
     let faltam = verificar_com(pasta, &remota.manifesto, false, &mut |_| {})?;
     if !faltam.is_empty() {
         bail!("{} arquivos faltando ou diferentes depois da instalação", faltam.len());
@@ -453,6 +494,33 @@ fn instalado(pasta: &Path) -> Result<(Estado, u32)> {
     let e = ler_estado(pasta)?.context("não há cliente instalado por este launcher nesta pasta")?;
     let n = e.numero.context("a instalação não terminou (use instalar para retomar)")?;
     Ok((e, n))
+}
+
+/// Adota um cliente que já está na pasta (instalado antes, copiado de outra máquina ou por outro
+/// launcher): grava o manifesto atual e o estado, e repara o que divergir. Devolve quantos
+/// arquivos precisaram ser baixados. Arquivos a mais na pasta (como `.pck` de uma instalação
+/// original) ficam onde estão — com `sepfile` o cliente não os abre.
+pub fn adotar(serv: &Servidor, versao: &str, pasta: &Path, ao_progredir: AoProgredir) -> Result<u64> {
+    match ler_estado(pasta)? {
+        Some(e) if e.versao_cliente != versao => bail!("a pasta tem o cliente {}, não o {versao}", e.versao_cliente),
+        Some(e) if e.numero.is_some() => return reparar(serv, pasta, ao_progredir),
+        _ => {}
+    }
+    ao_progredir(Progresso { etapa: "conferindo a versão no servidor".into(), feito: 0, total: 0 });
+    let remota = serv.versao_remota(versao)?;
+    conferir_nomes(pasta, &remota.manifesto)?;
+    gravar_atomico(&pasta_estado(pasta).join("manifesto.json"), &remota.manifesto_bytes)?;
+    gravar_estado(
+        pasta,
+        &Estado {
+            formato: 1,
+            versao_cliente: versao.into(),
+            numero: Some(remota.versao.atual),
+            manifesto_sha256: remota.versao.manifesto_sha256.clone(),
+            pacotes_prontos: vec![],
+        },
+    )?;
+    reparar(serv, pasta, ao_progredir)
 }
 
 /// Verificação completa e download, arquivo a arquivo, do que divergir.
@@ -536,7 +604,7 @@ pub fn conferir_range(serv: &Servidor, versao: &str) -> Result<()> {
     let Origem::Http(_) = serv.origem else { bail!("Range só se confere por HTTP") };
     let remota = serv.versao_remota(versao)?;
     let p = remota.manifesto.pacotes.first().context("manifesto sem pacotes")?;
-    let rel = format!("{}/{}", remota.base, p.arquivo);
+    let rel = rel_do_pacote(&remota.base, p);
     let mut inicio = vec![0u8; 16.min(p.tamanho as usize)];
     serv.origem.abrir_desde(versao, &rel, 0)?.0.read_exact(&mut inicio)?;
     let url = serv.origem.url(versao, &rel);

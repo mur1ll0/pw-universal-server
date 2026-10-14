@@ -403,6 +403,7 @@ fn gerar_pacote(
         tamanho,
         tamanho_tar: c.0,
         arquivos: registros.len() as u64,
+        numero: None,
     })
 }
 
@@ -422,12 +423,17 @@ impl<W: Write> Write for ContarEscrita<W> {
     }
 }
 
-fn gravar_assinado(caminho: &Path, dados: &[u8], chave: &Chave) -> Result<[u8; 64]> {
+/// Grava `dados` e `<caminho>.sig` (assinatura em hex). A assinatura vai antes, e o `.json` por
+/// troca atômica: quem lê nunca vê um `.json` novo com a assinatura velha.
+pub(crate) fn gravar_assinado(caminho: &Path, dados: &[u8], chave: &Chave) -> Result<[u8; 64]> {
     let assinatura = chave.assinar(dados);
-    fs::write(caminho, dados)?;
+    let mut tmp = caminho.as_os_str().to_owned();
+    tmp.push(".tmp");
+    fs::write(&tmp, dados)?;
     let mut sig = caminho.as_os_str().to_owned();
     sig.push(".sig");
     fs::write(PathBuf::from(sig), hex::encode(assinatura))?;
+    fs::rename(&tmp, caminho)?;
     Ok(assinatura)
 }
 

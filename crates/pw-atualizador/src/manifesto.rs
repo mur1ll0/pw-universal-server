@@ -44,6 +44,11 @@ pub struct Pacote {
     pub tamanho: u64,
     pub tamanho_tar: u64,
     pub arquivos: u64,
+    /// Versão em cuja pasta o pacote mora (`atualizacao/<versao>/<numero>/`). Ausente = a do
+    /// próprio manifesto. A versão N publicada pelo P3 (B235) reaproveita os pacotes da 0: o que
+    /// mudou depois vem por objeto (`objetos/<sha>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numero: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

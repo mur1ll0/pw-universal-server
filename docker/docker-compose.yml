@@ -76,6 +76,9 @@ services:
       ADMIN_GATEWAYS: '{"realm_126":"pw-realm-126","realm_155":"pw-realm-155"}'
       ADMIN_DAEMONS: '{"realm_126":[{"host":"pw-world-126","porta":29110}],"realm_155":[{"host":"pw-world-155","porta":29110}]}'
       ADMIN_CHANNEL_SECRETS: '{"realm_126":"${ADMIN_SECRET_126:-}","realm_155":"${ADMIN_SECRET_155:-}"}'
+      # API administrativa do pw-recursos (B235): versões do cliente, rascunhos, publicar.
+      RECURSOS_URL: http://pw-recursos:8101
+      RECURSOS_SEGREDO: ${RECURSOS_SEGREDO:-}
     ports:
       - "8000:8000"
     volumes:
@@ -236,6 +239,8 @@ services:
     environment:
       DATABASE_URL: postgresql://pw_admin:pw_secure_password_2026@pw-postgres:5432/pw_database
       RUST_LOG: info
+      # 8101 = API administrativa (B235): sem `ports:` — só o painel, pela rede interna, a alcança.
+      PW_RECURSOS_SEGREDO: ${RECURSOS_SEGREDO:-}
     ports:
       - "8100:8100"
     volumes:

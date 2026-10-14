@@ -4,143 +4,179 @@
 <meta charset="utf-8">
 <title>Perfect World — pw-universal</title>
 <style>
-  :root { --fundo:#0f1726; --painel:#18233a; --borda:#2a3a5c; --texto:#e6ebf5; --suave:#9aa8c4; --ouro:#e8b848; --erro:#ff7b7b; --ok:#7bd88f; }
+  :root { --fundo:#0f1726; --painel:#18233a; --borda:#2a3a5c; --texto:#e6ebf5; --suave:#9aa8c4; --ouro:#e8b848; --erro:#ff8a8a; --ok:#7bd88f; }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body { margin:0; font: 14px/1.45 "Segoe UI", system-ui, sans-serif; background: var(--fundo); color: var(--texto); }
-  main { max-width: 720px; margin: 0 auto; padding: 20px 16px; }
-  h1 { font-size: 20px; margin: 0 0 4px; color: var(--ouro); }
-  .sub { color: var(--suave); margin: 0 0 16px; }
-  .painel { background: var(--painel); border: 1px solid var(--borda); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
-  label { display:block; color: var(--suave); font-size: 12px; margin: 8px 0 4px; }
-  input, select { width:100%; padding: 7px 9px; background:#0c1322; color: var(--texto); border:1px solid var(--borda); border-radius:6px; font: inherit; }
-  .linha { display:flex; gap: 8px; }
-  .linha > * { flex: 1; }
+  main { max-width: 720px; margin: 0 auto; padding: 22px 18px; display:flex; flex-direction:column; min-height:100%; }
+  header { display:flex; align-items:baseline; justify-content:space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 21px; margin: 0; color: var(--ouro); letter-spacing: .3px; }
+  .versoes { display:flex; gap: 6px; flex-wrap: wrap; }
+  .versoes button { padding: 6px 14px; border-radius: 999px; }
+  .versoes button.ativa { background: var(--ouro); color:#1a1405; border-color: var(--ouro); font-weight:600; }
+  .cartao { background: var(--painel); border: 1px solid var(--borda); border-radius: 10px; padding: 18px; }
+  #titulo { font-size: 17px; font-weight: 600; margin: 0 0 4px; }
+  #detalhe { color: var(--suave); margin: 0 0 14px; word-break: break-all; }
   .botoes { display:flex; gap: 8px; flex-wrap: wrap; }
   button { padding: 9px 16px; border-radius: 6px; border: 1px solid var(--borda); background: #23324f; color: var(--texto); font: inherit; cursor: pointer; }
-  button.principal { background: var(--ouro); color: #1a1405; border-color: var(--ouro); font-weight: 600; }
+  button:hover:not(:disabled) { border-color: var(--ouro); }
+  button.principal { background: var(--ouro); color: #1a1405; border-color: var(--ouro); font-weight: 600; min-width: 140px; }
+  button.discreto { background: transparent; border-color: transparent; color: var(--suave); padding: 9px 8px; }
   button:disabled { opacity: .5; cursor: default; }
+  .progresso { margin-top: 16px; display:none; }
+  .progresso.visivel { display:block; }
   .barra { height: 10px; background:#0c1322; border-radius: 5px; overflow: hidden; border:1px solid var(--borda); }
   .barra > div { height: 100%; width: 0; background: var(--ouro); transition: width .2s; }
   #etapa { color: var(--suave); font-size: 12px; margin-top: 6px; min-height: 18px; word-break: break-all; }
-  #mensagem { margin-top: 8px; min-height: 20px; }
+  #mensagem { margin-top: 12px; min-height: 20px; }
   .erro { color: var(--erro); } .ok { color: var(--ok); }
-  #situacao { color: var(--suave); }
+  details { margin-top: auto; padding-top: 18px; color: var(--suave); font-size: 12px; }
+  details summary { cursor: pointer; }
+  .linha { display:flex; gap: 8px; margin-top: 8px; }
+  input { flex:1; padding: 7px 9px; background:#0c1322; color: var(--texto); border:1px solid var(--borda); border-radius:6px; font: inherit; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Perfect World — pw-universal</h1>
-  <p class="sub">Instala, atualiza, repara e abre o cliente da versão escolhida.</p>
+  <header>
+    <h1>Perfect World</h1>
+    <div class="versoes" id="versoes"></div>
+  </header>
 
-  <div class="painel">
-    <label for="servidor">Servidor de atualização</label>
-    <input id="servidor" placeholder="http://127.0.0.1:8100">
-    <div class="linha">
-      <div>
-        <label for="versao">Versão do cliente</label>
-        <select id="versao"></select>
-      </div>
-      <div style="flex:0 0 auto; align-self:end"><button id="recarregar">Buscar versões</button></div>
+  <section class="cartao">
+    <p id="titulo">Conectando ao servidor…</p>
+    <p id="detalhe"></p>
+    <div class="botoes" id="botoes"></div>
+    <div class="progresso" id="progresso">
+      <div class="barra"><div id="barra"></div></div>
+      <div id="etapa"></div>
     </div>
-    <label for="pasta">Pasta do cliente (a pasta <b>element</b>)</label>
-    <input id="pasta" placeholder="C:\Jogos\PW Universal 1.5.5\element">
-    <p id="situacao"></p>
-  </div>
-
-  <div class="painel">
-    <div class="botoes">
-      <button id="jogar" class="principal">Jogar</button>
-      <button id="instalar">Instalar / atualizar</button>
-      <button id="reparar">Verificar e reparar</button>
-    </div>
-    <div style="margin-top:12px" class="barra"><div id="barra"></div></div>
-    <div id="etapa"></div>
     <div id="mensagem"></div>
-  </div>
+  </section>
+
+  <details>
+    <summary>Configurações</summary>
+    <div class="linha">
+      <input id="servidor" placeholder="http://servidor:8100" aria-label="Servidor de atualização">
+      <button id="salvar-servidor">Salvar e reconectar</button>
+    </div>
+  </details>
 </main>
 <script>
   const { invoke } = window.__TAURI__.core;
   const { listen } = window.__TAURI__.event;
   const $ = (id) => document.getElementById(id);
+  let versao = '';
   let ocupado = false;
 
-  function config() {
-    return { servidor: $('servidor').value.trim(), versao: $('versao').value, pasta: $('pasta').value.trim() };
-  }
-  function mensagem(texto, classe) { const m = $('mensagem'); m.textContent = texto; m.className = classe || ''; }
+  function mensagem(texto, classe) { const m = $('mensagem'); m.textContent = texto || ''; m.className = classe || ''; }
+  function mb(n) { return (n / 1048576).toFixed(0) + ' MB'; }
   function travar(sim) {
     ocupado = sim;
-    for (const b of document.querySelectorAll('button')) b.disabled = sim;
+    document.querySelectorAll('button').forEach((b) => (b.disabled = sim));
+    $('progresso').classList.toggle('visivel', sim);
+    if (sim) { $('barra').style.width = '0'; $('etapa').textContent = ''; }
   }
-  function mb(n) { return (n / 1048576).toFixed(1) + ' MB'; }
-
-  async function salvar() { try { await invoke('salvar_config', { config: config() }); } catch (_) {} }
-
-  async function atualizarSituacao() {
-    const pasta = $('pasta').value.trim();
-    if (!pasta) { $('situacao').textContent = 'Escolha a pasta onde o cliente fica (ou vai ficar).'; return; }
-    try {
-      const e = await invoke('estado', { pasta });
-      if (!e) $('situacao').textContent = 'Nenhum cliente instalado por este launcher nesta pasta.';
-      else if (e.numero === null) $('situacao').textContent = `Instalação do ${e.versao_cliente} interrompida: "Instalar / atualizar" retoma de onde parou.`;
-      else $('situacao').textContent = `Cliente ${e.versao_cliente} instalado, versão ${e.numero}.`;
-    } catch (err) { $('situacao').textContent = String(err); }
+  function botao(texto, acao, classe) {
+    const b = document.createElement('button');
+    b.textContent = texto; if (classe) b.className = classe; b.onclick = acao;
+    $('botoes').appendChild(b);
   }
 
-  async function buscarVersoes(escolhida) {
-    const sel = $('versao');
-    sel.innerHTML = '';
-    try {
-      const lista = await invoke('versoes', { servidorUrl: $('servidor').value.trim() });
-      for (const v of lista) { const o = document.createElement('option'); o.value = o.textContent = v; sel.appendChild(o); }
-      if (escolhida && lista.includes(escolhida)) sel.value = escolhida;
-      mensagem(lista.length ? '' : 'O servidor não tem nenhuma versão publicada.', lista.length ? '' : 'erro');
-    } catch (err) { mensagem('Não foi possível falar com o servidor: ' + err, 'erro'); }
-  }
-
-  async function executar(comando, args) {
+  async function tarefa(comando, args) {
     if (ocupado) return;
     travar(true); mensagem('');
-    $('barra').style.width = '0';
-    await salvar();
-    try {
-      const r = await invoke(comando, args);
-      if (typeof r === 'string') mensagem(r, 'ok');
-      $('etapa').textContent = '';
-    } catch (err) { mensagem(String(err), 'erro'); }
+    try { const r = await invoke(comando, args); mensagem(r, 'ok'); }
+    catch (err) { mensagem(String(err), 'erro'); }
     travar(false);
-    atualizarSituacao();
+    await mostrar();
+  }
+
+  async function escolher(titulo) { return await invoke('escolher_pasta', { titulo }); }
+
+  async function baixarJogo() {
+    const pasta = await escolher(`Onde instalar o Perfect World ${versao}?`);
+    if (pasta) tarefa('baixar', { versao, escolhida: pasta });
+  }
+  async function usarExistente() {
+    const pasta = await escolher(`Pasta onde o Perfect World ${versao} já está (a pasta element)`);
+    if (pasta) tarefa('usar_existente', { versao, escolhida: pasta });
+  }
+  async function jogar() {
+    try { await invoke('jogar', { versao }); mensagem('Jogo aberto. Bom jogo!', 'ok'); }
+    catch (err) { mensagem(String(err), 'erro'); }
+  }
+
+  async function mostrar() {
+    $('botoes').innerHTML = '';
+    if (!versao) return;
+    let s;
+    try { s = await invoke('situacao', { versao }); }
+    catch (err) { $('titulo').textContent = 'Erro'; $('detalhe').textContent = String(err); return; }
+    const semServidor = s.erro_servidor ? ` (servidor fora do ar: ${s.erro_servidor})` : '';
+    if (s.estado === 'instalado') {
+      const atualizar = s.remota !== null && s.remota !== s.numero;
+      $('titulo').textContent = atualizar ? `Atualização disponível: versão ${s.remota}` : `Pronto para jogar`;
+      $('detalhe').textContent = `${s.pasta} — versão ${s.numero}${semServidor}`;
+      if (atualizar) { botao('Atualizar', () => tarefa('continuar', { versao }), 'principal'); botao('Jogar assim mesmo', jogar); }
+      else botao('Jogar', jogar, 'principal');
+      botao('Verificar arquivos', () => tarefa('reparar', { versao }));
+      botao('Abrir pasta', () => invoke('abrir_no_explorer', { versao }).catch((e) => mensagem(String(e), 'erro')), 'discreto');
+      botao('Trocar pasta', usarExistente, 'discreto');
+    } else if (s.estado === 'interrompida') {
+      $('titulo').textContent = 'Download interrompido';
+      $('detalhe').textContent = `${s.pasta} — continua de onde parou${semServidor}`;
+      botao('Continuar download', () => tarefa('continuar', { versao }), 'principal');
+      botao('Escolher outra pasta', baixarJogo, 'discreto');
+    } else {
+      const motivo = s.estado === 'pasta_sumiu' ? `A pasta ${s.pasta} não existe mais.`
+                   : s.estado === 'sem_cliente' ? `A pasta ${s.pasta} não tem este jogo.`
+                   : 'Primeira vez com esta versão neste computador.';
+      $('titulo').textContent = `Perfect World ${versao} ainda não está instalado`;
+      $('detalhe').textContent = motivo + semServidor;
+      botao('Baixar o jogo', baixarJogo, 'principal');
+      botao('Já tenho instalado', usarExistente);
+    }
+  }
+
+  function montarVersoes(lista, escolhida) {
+    const v = $('versoes'); v.innerHTML = '';
+    versao = lista.includes(escolhida) ? escolhida : (lista[0] || '');
+    for (const nome of lista) {
+      const b = document.createElement('button');
+      b.textContent = nome; if (nome === versao) b.className = 'ativa';
+      b.onclick = () => { if (ocupado) return; versao = nome; mensagem(''); montarVersoes(lista, nome); mostrar(); };
+      v.appendChild(b);
+    }
+  }
+
+  async function iniciar() {
+    $('titulo').textContent = 'Conectando ao servidor…'; $('detalhe').textContent = '';
+    const i = await invoke('iniciar');
+    $('servidor').value = i.servidor;
+    if (i.erro_servidor) {
+      $('titulo').textContent = 'Não foi possível falar com o servidor';
+      $('detalhe').textContent = i.erro_servidor;
+      $('botoes').innerHTML = ''; botao('Tentar de novo', iniciar, 'principal');
+      return;
+    }
+    if (!i.versoes.length) { $('titulo').textContent = 'O servidor não tem nenhuma versão publicada.'; return; }
+    montarVersoes(i.versoes, i.versao);
+    await mostrar();
   }
 
   listen('progresso', (ev) => {
     const p = ev.payload;
     const pct = p.total ? Math.min(100, (100 * p.feito) / p.total) : 0;
     $('barra').style.width = pct.toFixed(1) + '%';
-    const unidade = p.etapa.startsWith('verificando') || p.etapa.startsWith('reparando') ? `${p.feito} / ${p.total}` : `${mb(p.feito)} / ${mb(p.total)}`;
-    $('etapa').textContent = p.total ? `${p.etapa} — ${unidade} (${pct.toFixed(0)}%)` : p.etapa;
+    const contagem = /^(verificando|reparando)/.test(p.etapa) ? `${p.feito} / ${p.total} arquivos` : `${mb(p.feito)} / ${mb(p.total)}`;
+    $('etapa').textContent = p.total ? `${p.etapa} — ${contagem} (${pct.toFixed(0)}%)` : p.etapa;
   });
-
-  $('recarregar').onclick = () => buscarVersoes($('versao').value);
-  $('pasta').onchange = () => { salvar(); atualizarSituacao(); };
-  $('servidor').onchange = () => { salvar(); buscarVersoes($('versao').value); };
-  $('versao').onchange = salvar;
-  $('instalar').onclick = () => {
-    const c = config();
-    if (!c.versao || !c.pasta) { mensagem('Escolha a versão e a pasta.', 'erro'); return; }
-    executar('instalar_ou_atualizar', { servidorUrl: c.servidor, versao: c.versao, pasta: c.pasta });
-  };
-  $('reparar').onclick = () => executar('reparar', { servidorUrl: config().servidor, pasta: config().pasta });
-  $('jogar').onclick = async () => {
-    try { await invoke('jogar', { pasta: config().pasta }); mensagem('Jogo aberto.', 'ok'); }
+  $('salvar-servidor').onclick = async () => {
+    try { await invoke('trocar_servidor', { url: $('servidor').value }); await iniciar(); }
     catch (err) { mensagem(String(err), 'erro'); }
   };
-
-  (async () => {
-    const c = await invoke('carregar_config');
-    $('servidor').value = c.servidor; $('pasta').value = c.pasta;
-    await buscarVersoes(c.versao);
-    atualizarSituacao();
-  })();
+  iniciar();
 </script>
 </body>
 </html>

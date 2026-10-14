@@ -65,6 +65,19 @@ impl Objetos {
         Ok(dados)
     }
 
+    /// Tamanho do conteúdo, lido do cabeçalho do quadro zstd (o `bulk::compress` grava).
+    pub fn tamanho(&self, sha: &Sha256Bytes) -> io::Result<u64> {
+        let comprimido = fs::read(self.caminho(sha))?;
+        match zstd::zstd_safe::get_frame_content_size(&comprimido) {
+            Ok(Some(n)) => Ok(n),
+            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "objeto sem tamanho no quadro zstd")),
+        }
+    }
+
+    pub fn existe(&self, sha: &Sha256Bytes) -> bool {
+        self.caminho(sha).exists()
+    }
+
     pub fn raiz(&self) -> &Path {
         &self.raiz
     }

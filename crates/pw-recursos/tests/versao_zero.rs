@@ -193,6 +193,15 @@ async fn importa_registra_serve_e_confere_a_versao_zero() {
         assert!(launcher::verificar(&d2, true, &mut |_| {}).unwrap().is_empty());
         assert_eq!(fs::read(&a).unwrap(), b"do configs");
         assert!(launcher::atualizar(&serv, &d2, &mut |_| {}).unwrap().is_none(), "já na atual");
+        assert_eq!(serv.versao_anunciada(LINHA).unwrap().atual, 0);
+
+        // Adotar: cliente na pasta sem o estado do launcher, com um arquivo trocado.
+        fs::remove_dir_all(d2.join(launcher::PASTA_ESTADO)).unwrap();
+        fs::write(&a, b"do configX").unwrap();
+        assert!(launcher::ler_estado(&d2).unwrap().is_none());
+        assert_eq!(launcher::adotar(&serv, LINHA, &d2, &mut |_| {}).unwrap(), 1);
+        assert_eq!(launcher::ler_estado(&d2).unwrap().unwrap().numero, Some(0));
+        assert_eq!(fs::read(&a).unwrap(), b"do configs");
     })
     .await
     .unwrap();

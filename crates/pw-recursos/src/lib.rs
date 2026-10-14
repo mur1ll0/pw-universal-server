@@ -3,8 +3,10 @@
 //! (`.tar.zst` por pasta, nomes em bytes GBK), o manifesto assinado e o serviço HTTP que o
 //! launcher usa. Spec: `specs/07_RECURSOS_DO_CLIENTE.md`.
 
+pub mod admin;
 pub mod assinatura;
 pub mod fonte;
+pub mod governanca;
 pub mod importar;
 pub mod objetos;
 pub mod servir;
