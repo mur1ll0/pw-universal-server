@@ -143,8 +143,11 @@ exceção só para essa rota; o resto continua 8 KiB).
 
 **Gravação no realm (B237):** item de destino `servidor`/`ambos` publicado é gravado (troca atômica) em cada
 pasta de `PW_RECURSOS_REALMS` da versão (`{"1.2.6": ["/realms/realm_126"], "1.5.5": ["/realms/realm_155"]}`,
-montadas de `data/realm_*/config`); só arquivos de `data\` direto (`data\elements.data` → `elements.data`);
-`servidor` não entra no manifesto do cliente; remoção não apaga nada do realm. A resposta do publicar lista os
+montadas de `data/realm_*/config`); o nome do item diz onde (`governanca::caminho_no_realm`, B243):
+`data\<arquivo>` → `<arquivo>` na raiz do config, `servidor\<pasta>\…\<arquivo>` → `<pasta>/…/<arquivo>` (até 4
+partes, sem `..`, `:` nem vazias). Item `servidor` só é gravado se o arquivo do realm ainda tem o SHA do
+`sha256_antes` (senão a publicação falha: mudou por fora); `servidor` não entra no manifesto do cliente, e o
+"atual" dele para reverter é o arquivo do realm. Remoção não apaga nada do realm. A resposta do publicar lista os
 `aplicados`. **O GS só lê esses arquivos ao subir: reinicie o realm** (o painel ainda não marca nem reinicia).
 
 ## 6b. Estúdio, fase S1 (B237)
@@ -205,11 +208,27 @@ sem rótulo. O painel desenha também grupo que a lista dele não conhece, antes
 do cliente publicado — `CECInstance::Load`, `EC_Instance.cpp:60-110`: nome, id/world tag, caminho, linhas, colunas;
 o 1.5.5 tem campos a mais, pulados até o `}`), `GET mapas/{caminho}/pecas/{LLCC}.png` (`Surfaces\MiniMaps\<caminho>\LLCC.dds`,
 `DlgMiniMap.cpp:1155-1168`; DXT1/3/5 decodificado e PNG, em cache) e `GET mapas/{caminho}/criaturas` (`npcgen.data` do
-realm em `config/<caminho>/`, o mundo do 1.2.6 na raiz; pontos `[tipo, modelo, x, z, renascer_s, area_x, area_z]` e o
+realm em `config/<caminho>/`; o mundo cai na raiz do config só sem `world/npcgen.data`; pontos `[tipo, modelo, x, z, renascer_s, area_x, area_z]` e o
 nome de cada modelo no `elements` publicado). Conta do cliente (`DlgMiniMap.cpp:1045-1061`): 2 m por pixel, peças de
 256 px, `px = (x + colunas·512)/2`, `py = (linhas·512 − z)/2`. O índice dos arquivos do cliente fica em cache pelo
 SHA do manifesto. Painel: aba "Mapas" do Estúdio (`static/mapa.js`) com zoom/arrasto, peças carregadas sob demanda,
-pontos por tipo em canvas do tamanho da tela e clique que abre a ficha do modelo. Editar o `npcgen` é a próxima parte.
+pontos por tipo em canvas do tamanho da tela e clique que abre a ficha do modelo.
+
+**Edição do `npcgen` (S4, B243):** `pw_data_loader::npcgen_editavel` lê e grava o arquivo inteiro com ida e volta
+idêntica (`npcgendata.h:32-286`, `npcgendata.cpp:62-315`; `pack(1)`, `size_t` = 4: área 59/71 bytes (v≥7), gerador
+60/64 (v≥11), área de recurso 31/34 (v6)/42 (v≥7), recurso 20, objeto 19/23 (v9)/24 (v≥10), controlador 195/199
+(v≥8); contagens recalculadas ao gravar) — testado nos 117 `npcgen.data` dos dois realms (versões 4, 5, 6, 10, 11).
+Os campos editáveis são os das structs `AREA`/`NPCGEN`/`RESAREA`/`RES` pelo nome do fonte, só os que a versão do
+arquivo tem; objetos dinâmicos e controladores passam intactos. Rotas: `GET mapas/{c}/npcgen[?rascunho]` (uma linha por
+área: `[indice, tipo, x, z, ext_x, ext_z, primeiro_modelo, geradores, quantidade, nasce_ao_subir]`, tipo pelo
+`iNPCType` — 0 monstro, 1 NPC, `npcgendata.h:313-317` —, nomes dos modelos e os campos da versão),
+`GET|PUT|DELETE mapas/{c}/npcgen/{areas|recursos}/{i}` (`PUT {campos, filhos?}`: `filhos` substitui a lista — de 1 a
+64; os novos copiam o último) e `POST …/{i}/clonar` (cópia no fim; o `dwGenID` só o editor lê). Tudo num rascunho:
+item `servidor\<mapa>\npcgen.data` (`servidor\npcgen.data` só se o realm não tiver `world/npcgen.data`: a mesma ordem do GS, `manager.rs:616-621`; o `realm_126` tem os dois, idênticos, e vale o de `world/`), destino `servidor`,
+`sha256_antes` = o arquivo do realm (gravado também no volume, para reverter), resumo com a lista `mudancas`; voltar
+ao igual ao realm tira o item. Publicar grava no realm (o GS lê ao subir: reinicie). Painel: "Editar áreas" na aba Mapas
+desenha as caixas (`vExts`/`fExt` = tamanho, metade para cada lado), clique abre a área com os geradores, "Posicionar
+pelo clique", "+ gerador", salvar/clonar/remover; o `PUT` da área tem limite de 64 KiB no painel.
 
 ## 7. Testes
 
@@ -220,15 +239,19 @@ HTTP com Range (206) → verificar/reparar → atualização da versão 0 para u
 adulterado recusado; adotar uma pasta sem estado. `tests/governanca.rs`: API com segredo (401 sem),
 rascunho idempotente, trava por caminho (409), publicar v1 com mínima, o launcher atualiza uma pasta e
 instala outra do zero na v1 (2 por objeto, 2 pulados), reverter → v2 igual à 0. `cargo test -p
-pw-atualizador`: tar, nomes. Painel: `web-admin/backend/tests/teste_recursos.py` (5: sessão, CSRF, autor,
-segredo, limite de envio, download) — rodar no contêiner do painel (ver histórico B235).
+pw-atualizador`: tar, nomes. `tests/estudio.rs` (com banco, `elements` e `npcgen` reais do 1.2.6): Estúdio de ponta a
+ponta, mapas, e o `npcgen` editado (mover, 2 geradores, clonar, remover), publicado no realm (lido pelos dois
+carregadores) e revertido ao original (B243). `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
+arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (9) — rodar no contêiner da imagem do painel com
+`TEST_DATABASE_URL`/`TEST_REDIS_URL` (ver histórico B243).
 
 ## 8. Falta
 
 - Launcher: canal de teste para GM (instalar um rascunho antes de publicar), autoatualização do próprio
   launcher, instalador `.msi` (CLI do Tauri).
 - Marcar "aguarda reinício" no realm depois de publicar `servidor`/`ambos` (hoje o painel só lista os aplicados).
-- Estúdio S2+: telas próprias, catálogo de referências (substitui a busca conservadora de remoção), `tasks`/`npcgen`/`gshop`.
+- Estúdio: telas próprias, `tasks`/`gshop`; no mapa, `region`/`precinct`, teleportes, `task_npc`, objetos
+  dinâmicos e controladores do `npcgen`, altura do chão pelo GS.
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).

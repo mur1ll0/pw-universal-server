@@ -13892,3 +13892,53 @@ comparação lado a lado.
     - Editar o `npcgen` (escritor com ida e volta, mover/acrescentar/remover área, quantidade, renascer), `region`/
       `precinct`, teleportes (`world_targets`), `task_npc`, altura do chão pelo GS; reduzir o JSON das criaturas (2,8 MB
       no mundo do 1.2.6).
+
+243. **Sessão 2026-10-15: Estúdio S4, segunda parte — editar o `npcgen` no mapa.**
+
+    ### a. Pedido
+    Commitar o B242 (feito: `132c63b`, `66179c2`) e seguir: editar o `npcgen` pelo mapa do Estúdio, publicando no realm.
+
+    ### b. Evidência
+    - Formato: `npcgendata.h:32-286` (structs `AREA`, `NPCGEN`, `RESAREA`, `RES`, `DYNOBJ`, `CONTROLLER` em `pack(1)`,
+      `size_t` = 4 no binário de 32 bits) e o leitor `npcgendata.cpp:62-315` (cabeçalho com versão e 2/3/4 contagens;
+      campos novos por versão: área v≥7, gerador v≥11, área de recurso v6/v≥7, objeto v9/v≥10, controlador v≥8; ordem
+      áreas+geradores, áreas de recurso+recursos, objetos, controladores; `iNumGen` no byte 4 da área, `iNumRes` no 20
+      da área de recurso).
+    - `iNPCType`: `NPC_MONSTER = 0`, `NPC_SERVER = 1` (`npcgendata.h:313-317`). `dwGenID` não é lido pelo `gs`
+      (só aparece nas structs): clonar a área com o mesmo valor é seguro.
+    - `vExts`/`fExtX`/`fExtZ` são o **tamanho** da caixa (metade para cada lado), como já documentado em
+      `npcgen.rs::posicao_na_area`.
+
+    ### c. O que foi feito
+    - `pw-data-loader/src/npcgen_editavel.rs`: `NpcgenEditavel` (áreas com geradores, áreas de recurso com recursos,
+      objetos e controladores em bytes), `ler`/`gravar` com contagens recalculadas, tabelas de campos pelo nome do
+      fonte com deslocamento, tipo e versão mínima, `ler_campos`/`definir_campo`.
+    - `pw-recursos/governanca.rs`: `caminho_no_realm` (`data\<arquivo>` → raiz do config; `servidor\<pasta>\…\<arquivo>`
+      → subpasta, até 4 partes, sem `..`/`:`); `aplicar_nos_realms` grava em subpasta e, para item `servidor`, recusa se
+      o arquivo do realm não tem mais o SHA de `sha256_antes`; `ler_do_realm`; `reverter` usa o arquivo do realm como
+      "atual" dos itens `servidor`.
+    - `pw-recursos/estudio.rs` + `admin.rs`: `GET mapas/{c}/npcgen`, `GET|PUT|DELETE mapas/{c}/npcgen/{areas|recursos}/{i}`,
+      `POST …/clonar`. Item do rascunho `servidor\<mapa>\npcgen.data` (`servidor\npcgen.data` só sem `world/npcgen.data`, a ordem do GS em `manager.rs:616-621`; o `realm_126` tem os dois, idênticos — vale `world/`, e o item fica `servidor\world\npcgen.data`; conferido no contêiner: 12.885 áreas e 2.215 de recurso),
+      destino `servidor`, `sha256_antes` = arquivo do realm (também gravado no volume para reverter), resumo `mudancas`;
+      voltar ao igual ao realm tira o item.
+    - Painel: proxy das 5 rotas (`recursos.py`), limite de 64 KiB no `PUT` da área (`seguranca.py`); `mapa.js` ganhou
+      "Editar áreas": caixas das áreas (apagadas as que só nascem por controlador), clique abre a área com os geradores
+      em português (nome do fonte no `title`), "+ gerador", "Tirar gerador", "Posicionar pelo clique", salvar, clonar,
+      remover. Sem rascunho escolhido, só leitura.
+
+    ### d. Provas
+    - `npcgen_de_todos_os_mapas_volta_identico`: os 117 `npcgen.data` dos dois realms (versões 4: 1, 5: 10, 6: 3,
+      10: 56, 11: 47) relidos e regravados **byte a byte iguais**.
+    - `cargo test -p pw-recursos` com o banco: 14 de unidade (inclui `caminhos_no_realm`) + `estudio.rs` +
+      `governanca.rs` + `versao_zero.rs`, **17/17**. O `estudio.rs` agora edita o `npcgen` real da a01 do 1.2.6 (mover a
+      área 0, 2 geradores com o 2º copiado do último, clonar, remover, recusas 400/404), publica (v2, 1 aplicado, o
+      arquivo novo lido pelo `NpcgenEditavel` e pelo `NpcGenData` do GS) e reverte (o realm volta byte a byte ao original).
+    - Painel: `teste_recursos.py` **9/9** no contêiner da imagem `docker-pw-admin-api` com o repositório montado
+      (`-e TEST_DATABASE_URL=<DATABASE_URL do pw-admin-api> -e TEST_REDIS_URL=<REDIS_URL>`, rede `docker_default`,
+      `python -m unittest discover -s tests -p 'teste_recursos.py'`).
+    - Publicado nos contêineres `pw-recursos` e `pw-admin-api`.
+
+    ### e. Falta
+    - Ver em jogo: área movida/geradores mudados aparecendo depois de publicar e reiniciar o realm.
+    - `region`/`precinct`, teleportes, `task_npc`, objetos dinâmicos e controladores do `npcgen`, altura do chão pelo GS.
+    - Rascunho só de servidor ainda gera versão nova do cliente (manifesto igual): o launcher "atualiza" sem baixar nada.

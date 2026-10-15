@@ -233,6 +233,11 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > `CECInstance::Load`), peças do minimapa em PNG, criaturas do `npcgen` do realm com nome e link para a ficha.
 > Faltam: editar o `npcgen` (escritor com ida e volta), `region`/`precinct`, teleportes, `task_npc` e a altura do chão
 > pelo GS.
+>
+> **B243 (S4, 2ª parte):** edição do `npcgen` — escritor com ida e volta idêntica (117 arquivos), áreas de criatura
+> e de recurso editadas no mapa (campos, geradores, posição pelo clique, clonar, remover) num rascunho como item só
+> do servidor, publicado no realm e revertível (spec 07 §6b). Faltam: `region`/`precinct`, teleportes, `task_npc`,
+> objetos dinâmicos/controladores e a altura do chão pelo GS.
 
 | fase | entrega |
 | :--- | :--- |
