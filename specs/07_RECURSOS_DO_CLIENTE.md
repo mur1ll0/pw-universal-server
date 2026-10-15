@@ -201,6 +201,16 @@ serviços) e `RECIPE_*` (277 rótulos no total) e os grupos Serviços do NPC, P�
 Missões (antes de Requisitos: `id_skill_service` é serviço, não habilidade). Campo sem comentário no fonte segue
 sem rótulo. O painel desenha também grupo que a lista dele não conhece, antes de "Outros".
 
+**Mapas (S4, B242, só leitura):** `crates/pw-recursos/src/mapas.rs` e as rotas `GET mapas` (do `Configs\instance.txt`
+do cliente publicado — `CECInstance::Load`, `EC_Instance.cpp:60-110`: nome, id/world tag, caminho, linhas, colunas;
+o 1.5.5 tem campos a mais, pulados até o `}`), `GET mapas/{caminho}/pecas/{LLCC}.png` (`Surfaces\MiniMaps\<caminho>\LLCC.dds`,
+`DlgMiniMap.cpp:1155-1168`; DXT1/3/5 decodificado e PNG, em cache) e `GET mapas/{caminho}/criaturas` (`npcgen.data` do
+realm em `config/<caminho>/`, o mundo do 1.2.6 na raiz; pontos `[tipo, modelo, x, z, renascer_s, area_x, area_z]` e o
+nome de cada modelo no `elements` publicado). Conta do cliente (`DlgMiniMap.cpp:1045-1061`): 2 m por pixel, peças de
+256 px, `px = (x + colunas·512)/2`, `py = (linhas·512 − z)/2`. O índice dos arquivos do cliente fica em cache pelo
+SHA do manifesto. Painel: aba "Mapas" do Estúdio (`static/mapa.js`) com zoom/arrasto, peças carregadas sob demanda,
+pontos por tipo em canvas do tamanho da tela e clique que abre a ficha do modelo. Editar o `npcgen` é a próxima parte.
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,

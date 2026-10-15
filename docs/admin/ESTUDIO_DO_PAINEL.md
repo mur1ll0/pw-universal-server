@@ -228,6 +228,11 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B241 (S3, 2ª parte):** rótulos em português dos NPCs, dos 30 serviços e das receitas, com grupos próprios. Com
 > isso o S3 fica no nível do S2: ficha genérica com rótulos, listas, referências e ícones; telas com regras
 > próprias (loja em grade, forja com receitas, teleporte no mapa) ficam para depois do S4 (mapas).
+>
+> **B242 (S4, 1ª parte):** mapa interativo só de leitura — `instance.txt` (o `nRow`/`nCol` do §7 vem daqui,
+> `CECInstance::Load`), peças do minimapa em PNG, criaturas do `npcgen` do realm com nome e link para a ficha.
+> Faltam: editar o `npcgen` (escritor com ida e volta), `region`/`precinct`, teleportes, `task_npc` e a altura do chão
+> pelo GS.
 
 | fase | entrega |
 | :--- | :--- |

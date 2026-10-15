@@ -13858,3 +13858,37 @@ comparação lado a lado.
     ### e. Falta
     - S4 (mapas): minimapa interativo, `npcgen`, `region`/`precinct`, teleportes, `task_npc` — exige o servidor montar as
       peças do minimapa e levantar `nRow`/`nCol` de cada mapa (Estúdio §7).
+
+242. **Sessão 2026-10-15: Estúdio S4, primeira parte — mapa interativo (só leitura).**
+
+    ### a. Pedido
+    Commitar o B241 (feito: `92aa98e`, `5c05e53`) e seguir: S4 do Estúdio (mapas). Primeira parte: ver o mapa com as
+    criaturas; editar o `npcgen` vem depois (precisa de escritor com ida e volta).
+
+    ### b. Evidência
+    - Peças e conta: `DlgMiniMap.cpp:1045-1061` (2 m por pixel, peças de 256 px, origem no centro: `px = (x +
+      colunas·512)/2`, `py = (linhas·512 − z)/2`) e `:1155-1168` (`Surfaces\MiniMaps\<caminho>\LLCC.dds`, `"%02d%02d"`).
+    - `nRow`/`nCol` (pendência do Estúdio §7): `CECInstance::Load` (`EC_Instance.cpp:60-110`) lendo `Configs\instance.txt`
+      (`EC_GameRun.cpp:336`) — nome, id (world tag), caminho, linhas, colunas; o 1.5.5 traz limite de pulo, rotas e um `{}`.
+    - O `instance.txt` do 1.5.5 BR tem um nome **com quebra de linha dentro das aspas** ("Terra dos Imortais\r\n") e rota
+      vazia `""`; o cliente aceita — a 1ª versão do leitor (por linha) recusou (400), corrigido lendo o texto inteiro.
+    - `npcgen` do realm: `config/<caminho>/npcgen.data`; o mundo do 1.2.6 está na raiz do `config`, o do 1.5.5 em `world/`.
+
+    ### c. O que foi feito
+    - `crates/pw-recursos/src/mapas.rs`: leitor do `instance.txt` (UTF-16LE com BOM ou GBK), DXT1/3/5 → RGBA → PNG (crate
+      `png`); `Estudio::{mapas, peca, criaturas}` com índice dos arquivos do cliente em cache pelo SHA do manifesto e cache
+      das peças; rotas `/admin/{v}/estudio/mapas…`.
+    - Painel: repasse (`registrar_mapas`, PNG com `image/png`), aba "Mapas" no Estúdio (`static/mapa.js`): zoom na roda,
+      arrasto, peças sob demanda, pontos por tipo num canvas do tamanho da tela, clique → nome/posição/renascer e ficha.
+
+    ### d. Provas
+    - Unidade: `instance.txt` do 1.2.6, do 1.5.5 e o nome quebrado do BR; DXT1 de um bloco → PNG.
+    - `pw-recursos/tests/estudio.rs`: lista, PNG da peça, peça inexistente e caminho com `..` recusados, criaturas do
+      `npcgen` real da a01 do 1.2.6 com ≥ 90% de nomes. `cargo test -p pw-recursos`: 14/14. Painel: `teste_recursos.py` 8/8.
+    - Publicado, com os dados reais: 1.2.6 — 42 mapas com `npcgen`, mundo 11×8, 33.610 criaturas (33.608 com nome) em
+      0,2 s; 1.5.5 — 80 mapas, 44.646 criaturas (44.516 com nome) em 0,55 s; peças amostradas em PNG (~85 KB).
+
+    ### e. Falta
+    - Editar o `npcgen` (escritor com ida e volta, mover/acrescentar/remover área, quantidade, renascer), `region`/
+      `precinct`, teleportes (`world_targets`), `task_npc`, altura do chão pelo GS; reduzir o JSON das criaturas (2,8 MB
+      no mundo do 1.2.6).
