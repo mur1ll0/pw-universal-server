@@ -124,6 +124,12 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let ficha = json_de(pedir("GET", "estudio/tabelas/WEAPON_ESSENCE/0").call().unwrap());
         let valor = |f: &Value, nome: &str| f["campos"].as_array().unwrap().iter().find(|c| c["nome"] == nome).unwrap()["valor"].clone();
         let (nome0, preco0) = (valor(&ficha, "Name"), valor(&ficha, "price"));
+        // Rótulos, grupos e ícone (B239).
+        let campo = |f: &Value, nome: &str| f["campos"].as_array().unwrap().iter().find(|c| c["nome"] == nome).unwrap().clone();
+        assert_eq!((campo(&ficha, "price")["rotulo"].clone(), campo(&ficha, "price")["grupo"].clone()), (json!("Preço de venda ao NPC"), json!("Comércio")));
+        assert_eq!(campo(&ficha, "Name")["grupo"], "Identificação");
+        assert!(ficha["icone"].as_str().is_some_and(|h| !h.is_empty() && hex::decode(h).is_ok()), "a arma tem file_icon: {}", ficha["icone"]);
+        assert!(lista["registros"][0]["icone"].is_string());
 
         // Índice de referências (B238): drop do monstro com o nome do item; quem usa um tipo de arma;
         // busca no espaço para o seletor.

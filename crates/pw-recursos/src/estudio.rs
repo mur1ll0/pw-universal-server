@@ -149,7 +149,7 @@ impl Estudio {
                 None => String::new(),
             };
             if busca.is_empty() || id.is_some_and(|x| x.to_string() == busca) || nome.to_lowercase().contains(&busca) {
-                achados.push(json!({ "indice": i, "id": id, "nome": nome }));
+                achados.push(json!({ "indice": i, "id": id, "nome": nome, "icone": icone_do_registro(t, i) }));
             }
         }
         let total = achados.len();
@@ -176,6 +176,9 @@ impl Estudio {
                     "nome": f.name, "tipo": f.field_type, "tamanho": tam, "deslocamento": off,
                     "valor": valor.map(|v| valor_json(f, v)),
                 });
+                let (rotulo, grupo) = rotulo_e_grupo(&f.name);
+                c["rotulo"] = json!(rotulo);
+                c["grupo"] = json!(grupo);
                 if let Some(esp) = espaco_citado(tabela, &f.name) {
                     c["cita"] = json!(esp);
                     if let Some(FieldValue::Int(v)) = valor {
@@ -183,7 +186,7 @@ impl Estudio {
                             c["referencia"] = match ids.get(&(esp.to_string(), *v)) {
                                 Some(&(ti, ri)) => {
                                     let alvo = &e.tabelas[ti];
-                                    json!({ "tabela": alvo.nome, "indice": ri, "id": v, "nome": nome_do_registro(alvo, ri) })
+                                    json!({ "tabela": alvo.nome, "indice": ri, "id": v, "nome": nome_do_registro(alvo, ri), "icone": icone_do_registro(alvo, ri) })
                                 }
                                 None => json!({ "ausente": true, "id": v }),
                             };
@@ -201,7 +204,7 @@ impl Estudio {
         };
         Ok(json!({
             "tabela": tabela, "indice": indice, "id": t.id(indice), "espaco": espaco_de_id(tabela),
-            "nome": nome_do_registro(t, indice), "campos": campos, "usado_por": usado_por,
+            "nome": nome_do_registro(t, indice), "icone": icone_do_registro(t, indice), "campos": campos, "usado_por": usado_por,
         }))
     }
 
@@ -226,7 +229,7 @@ impl Estudio {
                 let id = t.id(i);
                 let nome = nome_do_registro(t, i);
                 if busca.is_empty() || id.is_some_and(|x| x.to_string() == busca) || nome.to_lowercase().contains(&busca) {
-                    achados.push(json!({ "tabela": t.nome, "indice": i, "id": id, "nome": nome }));
+                    achados.push(json!({ "tabela": t.nome, "indice": i, "id": id, "nome": nome, "icone": icone_do_registro(t, i) }));
                     if achados.len() >= limite.clamp(1, 200) {
                         break 'tabelas;
                     }
@@ -385,6 +388,66 @@ pub fn espaco_citado(tabela: &str, campo: &str) -> Option<&'static str> {
     catalogo().refs.get(tabela)?.get(campo).map(String::as_str)
 }
 
+/// Nome do arquivo do `file_icon` (bytes GBK, em hex) — o que a rota de ícones do painel
+/// (`/api/icones/<m|f>/<hex>.png`, B188) procura no atlas: a célula é só o nome do arquivo, como o
+/// cliente faz (`SetCover`, `EC_GameUIMan.cpp:6204-6208`). O corte é no texto decodificado: um 2º
+/// byte GBK pode ser 0x5C (`\`).
+fn icone_do_registro(t: &pw_data_loader::elements_editavel::TabelaEditavel, i: usize) -> Option<String> {
+    match t.ler(i).ok()?.get("file_icon")? {
+        FieldValue::Raw(b) if !b.is_empty() => {
+            let texto = nomes::legivel(b);
+            let arquivo = texto.rsplit(['\\', '/']).next().unwrap_or(&texto);
+            nomes::gbk_de_unicode(arquivo).map(hex::encode)
+        }
+        _ => None,
+    }
+}
+
+/// Rótulo em português e grupo da ficha (`specs/estudio/rotulos.json`, B239), pelo nome do campo
+/// com os índices de vetor trocados por `N`. Sem rótulo: `None` e grupo "Outros".
+pub fn rotulo_e_grupo(campo: &str) -> (Option<&'static str>, &'static str) {
+    #[derive(serde::Deserialize)]
+    struct Grupo {
+        nome: String,
+        padroes: Vec<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Arquivo {
+        campos: HashMap<String, String>,
+        grupos: Vec<Grupo>,
+    }
+    struct Rotulos {
+        campos: HashMap<String, String>,
+        grupos: Vec<(String, Vec<regex_lite::Regex>)>,
+        vetor: regex_lite::Regex,
+    }
+    static R: std::sync::OnceLock<Rotulos> = std::sync::OnceLock::new();
+    let r = R.get_or_init(|| {
+        let a: Arquivo = serde_json::from_str(include_str!("../../../specs/estudio/rotulos.json")).expect("rotulos.json");
+        Rotulos {
+            campos: a.campos,
+            grupos: a
+                .grupos
+                .into_iter()
+                .map(|g| (g.nome, g.padroes.iter().map(|p| regex_lite::Regex::new(p).expect("padrão de grupo")).collect()))
+                .collect(),
+            vetor: regex_lite::Regex::new(r"_\d+(_|$)").unwrap(),
+        }
+    });
+    // `drop_matters_12_id` → `drop_matters_N_id` (o mesmo que o gerador faz em Python).
+    let mut base = campo.to_string();
+    loop {
+        let novo = r.vetor.replace(&base, "_N$1").into_owned();
+        if novo == base {
+            break;
+        }
+        base = novo;
+    }
+    let rotulo = r.campos.get(&base).map(String::as_str);
+    let grupo = r.grupos.iter().find(|(_, ps)| ps.iter().any(|p| p.is_match(&base))).map_or("Outros", |(n, _)| n.as_str());
+    (rotulo, grupo)
+}
+
 fn nome_do_registro(t: &pw_data_loader::elements_editavel::TabelaEditavel, i: usize) -> String {
     match t.ler(i).ok().and_then(|r| r.get("Name").cloned()) {
         Some(FieldValue::Text(s)) => s,
@@ -498,5 +561,22 @@ impl Resumo {
             "campos": self.campos,
             "registros": self.registros,
         })
+    }
+}
+
+#[cfg(test)]
+mod testes {
+    use super::rotulo_e_grupo;
+
+    #[test]
+    fn rotulos_e_grupos_pelo_nome_com_n() {
+        assert_eq!(rotulo_e_grupo("drop_matters_12_id"), (Some("Item"), "Drops"));
+        assert_eq!(rotulo_e_grupo("magic_defences_3_high"), (Some("Defesa elemental máxima"), "Combate"));
+        assert_eq!(rotulo_e_grupo("skill_hp75_2_probability"), (Some("Chance"), "Habilidades"));
+        assert_eq!(rotulo_e_grupo("price"), (Some("Preço de venda ao NPC"), "Comércio"));
+        assert_eq!(rotulo_e_grupo("Name"), (Some("Nome"), "Identificação"));
+        assert_eq!(rotulo_e_grupo("unk1"), (None, "Outros"));
+        assert_eq!(rotulo_e_grupo("attack_speed").1, "Combate");
+        assert_eq!(rotulo_e_grupo("run_speed").1, "Comportamento");
     }
 }
