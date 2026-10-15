@@ -481,6 +481,24 @@ async fn estudio_editar_portal(
     Ok(Json(e.estudio.editar_portal(&e.gov, &v, &caminho, r, indice, p.campos).await?))
 }
 
+// ------------------------------------------------------------------ teleportes (S4, B245)
+
+async fn estudio_teleportes(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.teleportes(&e.gov, &v, &caminho, q.rascunho).await?))
+}
+
+async fn estudio_editar_teleporte(
+    State(e): State<Arc<Estado>>,
+    Path((v, id)): Path<(String, i32)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoCampos>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.editar_teleporte(&e.gov, &v, r, id, p.campos).await?))
+}
+
 // ------------------------------------------------------------------ conversas (S3, B240)
 
 async fn estudio_funcoes(State(e): State<Arc<Estado>>, Path(v): Path<String>) -> R<Json<Value>> {
@@ -575,6 +593,8 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/mapas/{caminho}/distritos/{indice}", put(estudio_editar_distrito))
         .route("/admin/{v}/estudio/mapas/{caminho}/portais", get(estudio_portais))
         .route("/admin/{v}/estudio/mapas/{caminho}/portais/{indice}", put(estudio_editar_portal))
+        .route("/admin/{v}/estudio/mapas/{caminho}/teleportes", get(estudio_teleportes))
+        .route("/admin/{v}/estudio/teleportes/{id}", put(estudio_editar_teleporte))
         .route(
             "/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{indice}",
             get(estudio_area).put(estudio_editar_area).delete(estudio_remover_area),

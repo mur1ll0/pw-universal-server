@@ -349,7 +349,7 @@ def registrar_mapas(app):
     @app.get("/api/realms/{realm}/estudio/mapas/{caminho}/{arquivo}")
     async def estudio_sev(realm: str, caminho: str, arquivo: str, requisicao: Request, rascunho: int | None = None):
         v = await _versao_do_realm(requisicao, realm)
-        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais"):
+        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais", "teleportes"):
             raise HTTPException(404, "Mapa inválido.")
         return await _repassar("GET", f"/admin/{v}/estudio/mapas/{caminho}/{arquivo}", {"rascunho": rascunho})
 
@@ -364,3 +364,13 @@ def registrar_mapas(app):
             raise HTTPException(422, "Nada a mudar.")
         return await _repassar("PUT", f"/admin/{v}/estudio/mapas/{caminho}/{arquivo}/{max(0, indice)}",
                                {"rascunho": rascunho}, dados={"campos": campos})
+
+    # Teleportes (B245): o world_targets.sev é um só para o realm; edita-se pelo id do destino.
+    @app.put("/api/realms/{realm}/estudio/teleportes/{id_destino}")
+    async def estudio_editar_teleporte(realm: str, id_destino: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        campos = (await requisicao.json()).get("campos")
+        if not isinstance(campos, dict) or not campos:
+            raise HTTPException(422, "Nada a mudar.")
+        return await _repassar("PUT", f"/admin/{v}/estudio/teleportes/{id_destino}", {"rascunho": rascunho},
+                               dados={"campos": campos})

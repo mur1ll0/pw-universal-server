@@ -187,3 +187,19 @@ fn precinct_e_region_de_todos_os_mapas_voltam_identicos() {
     println!("precinct.sev: {np}, region.sev: {nr}, caixas: {caixas}");
     assert!(np > 50 && nr > 50, "{np} {nr}");
 }
+
+/// B245: o `world_targets.sev` dos dois realms relido e regravado byte a byte.
+#[test]
+fn world_targets_volta_identico() {
+    use pw_data_loader::world_targets::PontosDoMundo;
+    for realm in ["realm_126", "realm_155"] {
+        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/world_targets.sev"));
+        let buf = std::fs::read(&p).unwrap();
+        let mut w = PontosDoMundo::load_from_bytes(&buf).unwrap();
+        assert!(w.gravar() == buf, "{realm}");
+        let id = w.lista[0].id;
+        assert!(w.definir_posicao(id, [1.0, 2.0, 3.0]) && !w.definir_posicao(-5, [0.0; 3]));
+        let relido = PontosDoMundo::load_from_bytes(&w.gravar()).unwrap();
+        assert_eq!((relido.get(id).unwrap().pos, relido.lista.len()), ([1.0, 2.0, 3.0], w.lista.len()));
+    }
+}

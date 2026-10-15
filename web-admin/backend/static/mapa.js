@@ -10,6 +10,8 @@ const mapa = {
   editar: false, ng: null, area: null, posicionando: false,
   // Distritos (precinct.sev) e portais (region.sev), B244.
   distritos: null, portais: null,
+  // Destinos de teleporte (world_targets.sev), B245.
+  teleportes: null,
 };
 const CORES_DO_MAPA = { monstro: "#ff6b6b", npc: "#ffd166", recurso: "#7bd88f", objeto: "#8ab4ff" };
 
@@ -62,6 +64,7 @@ async function abrirMapa(caminho) {
   mapa.ng = null;
   mapa.distritos = null;
   mapa.portais = null;
+  mapa.teleportes = null;
   fecharArea();
   desenharMapa();
   if (!m.npcgen) { elemento("mapa-situacao").textContent = "O realm não tem npcgen para este mapa."; return; }
@@ -210,7 +213,7 @@ function detalharPonto(ev) {
     if (mapa.editar) await carregarNpcgen();
     desenharMapa();
   });
-  for (const id of ["mapa-distritos", "mapa-portais"]) {
+  for (const id of ["mapa-distritos", "mapa-portais", "mapa-teleportes"]) {
     elemento(id).addEventListener("change", async () => { fecharArea(); await carregarCamadas(); desenharMapa(); });
   }
   elemento("estudio-rascunho").addEventListener("change", async () => {
@@ -486,7 +489,7 @@ async function acaoNaArea(acao, mensagem, reabrir) {
    (`EC_World.cpp:2360-2373`), então no servidor só o ponto de chegada é editável. O carimbo dos dois arquivos
    (conferido pelo cliente) nunca muda. */
 
-const COR_DO_DISTRITO = "#5ec8ff", COR_DO_PORTAL = "#e07bff";
+const COR_DO_DISTRITO = "#5ec8ff", COR_DO_PORTAL = "#e07bff", COR_DO_TELEPORTE = "#ffa94d";
 
 async function carregarCamadas() {
   const m = mapa.atual;
@@ -497,10 +500,12 @@ async function carregarCamadas() {
     try { return await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${nome}${q}`)); }
     catch (erro) { alerta("aviso", "Estúdio", `${nome}: ${erro.message}`, { toast: true }); return null; }
   };
-  const [d, p] = await Promise.all([carregar("mapa-distritos", "distritos"), carregar("mapa-portais", "portais")]);
+  const [d, p, t] = await Promise.all([carregar("mapa-distritos", "distritos"), carregar("mapa-portais", "portais"),
+    carregar("mapa-teleportes", "teleportes")]);
   if (mapa.atual !== m) return;
   mapa.distritos = d;
   mapa.portais = p;
+  mapa.teleportes = t;
 }
 
 function nomeDoMapa(id) {
@@ -538,6 +543,19 @@ function desenharCamadas(ctx) {
       }
     }
   }
+  if (mapa.teleportes) {
+    ctx.font = "11px sans-serif";
+    for (const t of mapa.teleportes.pontos) {
+      const [sx, sy] = paraTela(t.pos[0], t.pos[2]);
+      const sel = escolhido("teleportes", t.id);
+      ctx.fillStyle = sel ? "#ffffff" : COR_DO_TELEPORTE;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy - 6); ctx.lineTo(sx + 6, sy); ctx.lineTo(sx, sy + 6); ctx.lineTo(sx - 6, sy);
+      ctx.closePath();
+      ctx.fill();
+      if (mapa.escala > 0.12 && t.nome) ctx.fillText(t.nome, sx + 8, sy + 4);
+    }
+  }
   if (mapa.portais) {
     for (const c of mapa.portais.caixas) {
       if (c.origem !== m.id) continue;
@@ -564,10 +582,14 @@ function desenharCamadas(ctx) {
 }
 
 function escolherDistritoOuPortal(ev) {
-  if (!mapa.distritos && !mapa.portais) return false;
+  if (!mapa.distritos && !mapa.portais && !mapa.teleportes) return false;
   const m = mapa.atual;
   const r = elemento("mapa-tela").getBoundingClientRect();
   const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+  for (const t of mapa.teleportes?.pontos || []) {
+    const [sx, sy] = paraTela(t.pos[0], t.pos[2]);
+    if (Math.hypot(sx - mx, sy - my) < 9) { abrirDaCamada("teleportes", t.id); return true; }
+  }
   // Portal (caixa ou chegada perto), depois ponto de cidade perto, depois o distrito que contém o clique.
   for (const c of mapa.portais?.caixas || []) {
     if (c.origem !== m.id) continue;
@@ -613,8 +635,8 @@ function campoNumerico(rotulo, valor, editavel, pos) {
 function abrirDaCamada(camada, indice) {
   const ed = elemento("mapa-editor");
   ed.replaceChildren();
-  const fonte = camada === "distritos" ? mapa.distritos?.distritos : mapa.portais?.caixas;
-  const item = fonte && fonte.find((x) => x.indice === indice);
+  const fonte = camada === "distritos" ? mapa.distritos?.distritos : camada === "portais" ? mapa.portais?.caixas : mapa.teleportes?.pontos;
+  const item = fonte && fonte.find((x) => (camada === "teleportes" ? x.id : x.indice) === indice);
   if (!item) { fecharArea(); desenharMapa(); return; }
   mapa.area = { camada, indice };
   ed.hidden = false;
@@ -662,6 +684,31 @@ function abrirDaCamada(camada, indice) {
     ed.append(titulo, grade);
     if (item.marcas?.length) ed.appendChild(criar("div", "texto-suave", `Marcas do cliente: ${item.marcas.map((k) => k.nome).join(", ")}`));
     if (item.mapa_do_ponto !== m.id) ed.appendChild(criar("div", "texto-suave", "O ponto de renascer fica em outro mapa: \"Posicionar pelo clique\" usaria as coordenadas deste."));
+  } else if (camada === "teleportes") {
+    titulo.append(criar("strong", "", `Destino de teleporte ${item.id}${item.nome ? `: ${item.nome}` : ""}`),
+      criar("span", "texto-suave", ` · domínio ${item.dominio}`));
+    const [lx, ix] = campoNumerico("Chegada X", item.pos[0], editavel, "x");
+    const [ly, iy] = campoNumerico("Chegada Y (altura)", item.pos[1], editavel);
+    const [lz, iz] = campoNumerico("Chegada Z", item.pos[2], editavel, "z");
+    grade.append(lx, ly, lz);
+    corpo = () => {
+      const pos = [Number(ix.value), Number(iy.value), Number(iz.value)];
+      return pos.some((v, k) => v !== item.pos[k]) ? { pos } : {};
+    };
+    ed.append(titulo, grade);
+    const lista = criar("div", "texto-suave");
+    if (!item.usado_por.length) lista.textContent = "Nenhuma transportadora do elements leva a este destino.";
+    for (const u of item.usado_por) {
+      const linha = criar("div", "", `${u.nome} (serviço ${u.servico}) · preço ${u.preco} · nível ${u.nivel}${u.npcs.length ? " · NPCs: " : ""}`);
+      u.npcs.forEach((n, k) => {
+        const a = criar("a", "", (k ? ", " : "") + n.nome);
+        a.href = "#";
+        a.addEventListener("click", (e) => { e.preventDefault(); mostrarVistaDoEstudio("tabelas"); abrirRegistroDoEstudio("NPC_ESSENCE", n.indice); });
+        linha.appendChild(a);
+      });
+      lista.appendChild(linha);
+    }
+    ed.appendChild(lista);
   } else {
     titulo.append(criar("strong", "", `Portal #${indice}`),
       criar("span", "texto-suave", ` · leva a ${nomeDoMapa(item.destino)}${item.nivel_minimo > 1 ? ` · nível ${item.nivel_minimo}` : ""}`));
@@ -692,7 +739,10 @@ function abrirDaCamada(camada, indice) {
     const campos = corpo();
     if (!Object.keys(campos).length) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
     try {
-      const r = await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${camada}/${indice}?rascunho=${estudio.rascunho}`), { method: "PUT", body: JSON.stringify({ campos }) });
+      const rota = camada === "teleportes"
+        ? `/api/realms/${encodeURIComponent(estudio.realm)}/estudio/teleportes/${indice}?rascunho=${estudio.rascunho}`
+        : rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${camada}/${indice}?rascunho=${estudio.rascunho}`);
+      const r = await api(rota, { method: "PUT", body: JSON.stringify({ campos }) });
       alerta("ok", "Estúdio", "Salvo no rascunho." + (r.igual_ao_publicado ? " Ficou igual ao realm: o item saiu do rascunho." : ""), { toast: true });
       await carregarCamadas();
       abrirDaCamada(camada, indice);

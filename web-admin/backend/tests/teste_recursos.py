@@ -230,6 +230,12 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
                                    headers=csrf, json={"campos": {}})
         self.assertEqual(r.status_code, 422)
         self.assertEqual(len(RecursosFalso.pedidos), antes)
+        # Teleportes (B245): GET pelo mapa, PUT pelo id do destino.
+        await self.cliente.get("/api/realms/realm_126/estudio/mapas/world/teleportes", params={"rascunho": 5})
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/mapas/world/teleportes")
+        r = await self.cliente.put("/api/realms/realm_126/estudio/teleportes/1001", params={"rascunho": 5},
+                                   headers=csrf, json={"campos": {"pos": [1, 2, 3]}})
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.2.6/estudio/teleportes/1001"))
 
     async def test_versao_invalida_e_servico_sem_segredo(self):
         await self.entrar()

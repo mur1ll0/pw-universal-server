@@ -153,6 +153,13 @@ pub fn ler_precinct_clt(texto: &str) -> Result<Vec<DistritoDoCliente>> {
     Ok(saida)
 }
 
+/// Nomes dos destinos de teleporte do `maps\world\world_targets.txt` do cliente (`globaldata_load`,
+/// `globaldataman.cpp:450-466`): por linha `id "nome" mapa "x,y,z" domínio`.
+pub fn ler_world_targets_txt(texto: &str) -> std::collections::HashMap<i32, String> {
+    let f = fichas(texto);
+    f.chunks_exact(5).filter_map(|c| Some((c[0].parse::<i32>().ok()?, c[1].clone()))).collect()
+}
+
 // ------------------------------------------------------------------ DDS (DXT1/3/5) → PNG
 
 fn rgb565(c: u16) -> [u8; 3] {
@@ -307,6 +314,13 @@ version  7
         assert_eq!((d[0].nome.as_str(), d[0].id, d[0].vertices), ("Fechado", 1561, 5));
         assert_eq!(d[0].marcas, vec![("Porto".to_string(), [1.0, 2.0, 3.0])]);
         assert_eq!((d[1].nome.as_str(), d[1].id, d[1].vertices), ("Cidade", 7, 3));
+    }
+
+    #[test]
+    fn world_targets_txt_do_155_br() {
+        let t = "1001\t\"Vila Nevada\"\t1\t\"-2545.362,215.254,4116.355\"\t1\r\n1101\t\"Vila de Gelo\"\t1\t\"-1507.853,221.732,4240.106\"\t2\r\n";
+        let n = ler_world_targets_txt(t);
+        assert_eq!((n.len(), n[&1001].as_str(), n[&1101].as_str()), (2, "Vila Nevada", "Vila de Gelo"));
     }
 
     #[test]

@@ -10,11 +10,14 @@
 //!
 //! ```text
 //! u32 quantidade
-//! quantidade × { i32 id; i32 world_tag; f32 x; f32 y; f32 z; i32 ordem }   // 24 bytes
+//! quantidade × { i32 id; i32 world_id; A3DVECTOR3 pos; i32 domain_id }   // 24 bytes
 //! ```
 //!
-//! 92 registros, 2.212 bytes: `4 + 92 × 24`. O último campo é a ordem no arquivo (1, 2, 3…);
-//! guardamos por fidelidade, mas nada o usa.
+//! É o que o exportador do cliente grava a partir do `maps\world\world_targets.txt` com `globalsave`
+//! (`CCommon/globaldataman.cpp:793-803`; a leitura do texto, com o nome de cada ponto, em `:450-466`).
+//! 92 registros no `realm_155`, 2.212 bytes: `4 + 92 × 24`. O último campo é o **domínio** do ponto
+//! (`domain_id`), não a ordem: o B244 achou valores repetidos (1, 2, 3, 4, 6, 7, 7, 7, 7…); nada no
+//! servidor o usa.
 
 use std::collections::HashMap;
 use thiserror::Error;
@@ -34,14 +37,16 @@ pub struct PontoDoMundo {
     /// O mapa (`world_tag`) onde o ponto fica.
     pub mundo: i32,
     pub pos: [f32; 3],
-    /// A ordem em que o ponto aparece no arquivo.
-    pub ordem: i32,
+    /// `domain_id` (`globaldataman.cpp:803`).
+    pub dominio: i32,
 }
 
 /// Os pontos de destino, por id.
 #[derive(Debug, Clone, Default)]
 pub struct PontosDoMundo {
     pub por_id: HashMap<i32, PontoDoMundo>,
+    /// Na ordem do arquivo (para gravar de volta, B245).
+    pub lista: Vec<PontoDoMundo>,
 }
 
 impl PontosDoMundo {
@@ -71,6 +76,7 @@ impl PontosDoMundo {
             return Err(erro(&format!("{} bytes para {n} pontos (esperados {esperado})", b.len())));
         }
         let mut por_id = HashMap::with_capacity(n);
+        let mut lista = Vec::with_capacity(n);
         for k in 0..n {
             let o = 4 + k * REGISTRO;
             let i32_em = |d: usize| i32::from_le_bytes(b[o + d..o + d + 4].try_into().unwrap());
@@ -79,10 +85,35 @@ impl PontosDoMundo {
                 id: i32_em(0),
                 mundo: i32_em(4),
                 pos: [f32_em(8), f32_em(12), f32_em(16)],
-                ordem: i32_em(20),
+                dominio: i32_em(20),
             };
             por_id.insert(p.id, p);
+            lista.push(p);
         }
-        Ok(Self { por_id })
+        Ok(Self { por_id, lista })
+    }
+
+    /// O inverso de `load_from_bytes`, na ordem do arquivo.
+    pub fn gravar(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(4 + self.lista.len() * 24);
+        b.extend_from_slice(&(self.lista.len() as u32).to_le_bytes());
+        for p in &self.lista {
+            for v in [p.id, p.mundo] {
+                b.extend_from_slice(&v.to_le_bytes());
+            }
+            for c in p.pos {
+                b.extend_from_slice(&c.to_bits().to_le_bytes());
+            }
+            b.extend_from_slice(&p.dominio.to_le_bytes());
+        }
+        b
+    }
+
+    /// Troca a posição do ponto `id` (o mapa e o domínio ficam).
+    pub fn definir_posicao(&mut self, id: i32, pos: [f32; 3]) -> bool {
+        let Some(p) = self.lista.iter_mut().find(|p| p.id == id) else { return false };
+        p.pos = pos;
+        self.por_id.insert(id, *p);
+        true
     }
 }

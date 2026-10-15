@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -89,6 +89,8 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
     for f in ["precinct.sev", "region.sev"] {
         fs::copy(npcgen.with_file_name(f), realm.join("world").join(f)).expect("sev da a01 do realm_126");
     }
+    // world_targets.sev real do 1.2.6, na raiz do config (B245).
+    fs::copy(npcgen.parent().unwrap().parent().unwrap().join("world_targets.sev"), realm.join("world_targets.sev")).expect("world_targets do realm_126");
     let (chave, _) = Chave::carregar_ou_criar(&dados.join("_chave").join("k")).unwrap();
     let res = importar(&Importacao {
         versao: LINHA,
@@ -349,6 +351,28 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let lido = pw_data_loader::precinct::Distritos::ler(&precinct1).unwrap();
         assert_eq!((lido.lista[0].ponto_de_cidade, lido.lista[0].prioridade), ([100.5, 20.0, -30.25], 3));
         assert_eq!(pw_data_loader::regioes::ler_caixas_de_transporte(&region1).unwrap()[0].alvo, [1.5, 2.5, 3.5]);
+
+        // Teleportes (B245): destinos do mapa 1 com as transportadoras do elements; editar a posição de um.
+        let tp = json_de(pedir("GET", "estudio/mapas/world/teleportes").call().unwrap());
+        let pontos = tp["pontos"].as_array().unwrap().clone();
+        assert_eq!((tp["item"].as_str(), tp["mapa"].as_i64()), (Some("servidor\\world_targets.sev"), Some(1)));
+        assert!(pontos.len() > 5 && pontos.iter().all(|p| p["id"].as_i64().is_some()), "{}", pontos.len()); // no 1.2.6 os 49 ficam todos no mapa 1
+        let com_npc = pontos.iter().filter(|p| p["usado_por"].as_array().unwrap().iter().any(|u| !u["npcs"].as_array().unwrap().is_empty())).count();
+        assert!(com_npc * 2 >= pontos.len(), "{com_npc} de {} com NPC que leva", pontos.len());
+        let id = pontos[0]["id"].as_i64().unwrap();
+        let wt0 = fs::read(realm2.join("world_targets.sev")).unwrap();
+        let r5 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "teleporte", "operacao_id": "t_p4_r5"})).unwrap())["id"].as_i64().unwrap();
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/teleportes/{id}?rascunho={r5}")).send_json(json!({"campos": {"mundo": 2}}))).0, 400);
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/teleportes/999999?rascunho={r5}")).send_json(json!({"campos": {"pos": [1, 2, 3]}}))).0, 400);
+        pedir("PUT", &format!("estudio/teleportes/{id}?rascunho={r5}")).send_json(json!({"campos": {"pos": [10.0, 20.0, 30.0]}})).unwrap();
+        let tp2 = json_de(pedir("GET", &format!("estudio/mapas/world/teleportes?rascunho={r5}")).call().unwrap());
+        assert_eq!((tp2["no_rascunho"].as_bool(), tp2["pontos"][0]["pos"].clone()), (Some(true), json!([10.0, 20.0, 30.0])));
+        let p5 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r5]})).unwrap());
+        assert_eq!(p5["aplicados"].as_array().unwrap().len(), 1, "{p5}");
+        let wt1 = fs::read(realm2.join("world_targets.sev")).unwrap();
+        assert_eq!(wt1.len(), wt0.len());
+        let lido = pw_data_loader::world_targets::PontosDoMundo::load_from_bytes(&wt1).unwrap();
+        assert_eq!(lido.get(id as i32).unwrap().pos, [10.0, 20.0, 30.0]);
     })
     .await
     .unwrap();

@@ -1044,7 +1044,19 @@ impl Estudio {
         } else {
             format!("servidor\\{caminho}\\{nome_do_arquivo}")
         };
-        let do_realm = gov.ler_do_realm(versao, &nome)?.with_context(|| format!("{nome} do realm sumiu"))?;
+        self.item_do_realm(gov, versao, nome, rascunho).await
+    }
+
+    /// Um arquivo do `config` do realm pelo nome do item (`servidor\…`): bytes do realm e, se o rascunho já tem o
+    /// item, os dele.
+    async fn item_do_realm(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        nome: String,
+        rascunho: Option<i64>,
+    ) -> Result<(String, Vec<u8>, Option<(ItemDeRecurso, Vec<u8>)>)> {
+        let do_realm = gov.ler_do_realm(versao, &nome)?.with_context(|| format!("{nome} não existe no realm"))?;
         let mut do_rascunho = None;
         if let Some(r) = rascunho {
             gov.rascunho_da_versao(versao, r).await?;
@@ -1166,6 +1178,26 @@ impl Estudio {
         let trava = self.trava(rascunho);
         let _guarda = trava.lock().await;
         let (nome, do_realm, do_rascunho) = self.arquivo_do_mapa(gov, versao, caminho, nome_do_arquivo, Some(rascunho)).await?;
+        self.gravar_item_do_realm(gov, versao, rascunho, nome, do_realm, do_rascunho, mudar).await
+    }
+
+    /// O miolo de toda edição de arquivo do realm: confere que o realm não mudou, aplica `mudar`, guarda o
+    /// original no volume (para reverter) e grava o item `servidor` no rascunho — ou o tira, se voltou ao igual.
+    /// Quem chama segura a trava do rascunho.
+    #[allow(clippy::too_many_arguments)]
+    async fn gravar_item_do_realm<F>(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        rascunho: i64,
+        nome: String,
+        do_realm: Vec<u8>,
+        do_rascunho: Option<(ItemDeRecurso, Vec<u8>)>,
+        mudar: F,
+    ) -> Result<Value>
+    where
+        F: FnOnce(&[u8]) -> Result<(Vec<u8>, Value, Value)>,
+    {
         let sha_do_realm = sha256(&do_realm);
         let mut mudancas = Vec::new();
         if let Some((i, _)) = &do_rascunho {
@@ -1206,7 +1238,7 @@ impl Estudio {
             sha256_depois: Some(sha.to_vec()),
             tamanho: Some(tam_depois as i64),
             resumo: json!({
-                "caminho": nome, "mapa": caminho, "tamanho_antes": tam_antes, "tamanho_depois": tam_depois,
+                "caminho": nome, "tamanho_antes": tam_antes, "tamanho_depois": tam_depois,
                 "mudancas": mudancas,
             }),
         };
@@ -1459,6 +1491,104 @@ impl Estudio {
             }
             let mudanca = if mudou.is_empty() { Value::Null } else { json!({ "acao": "editado", "tipo": "portal", "indice": indice, "campos": mudou }) };
             Ok((r.gravar(), json!({ "indice": indice }), mudanca))
+        })
+        .await
+    }
+}
+
+// ------------------------------------------------------------------ teleportes (S4, B245)
+
+use pw_data_loader::world_targets::PontosDoMundo;
+
+/// Item do `world_targets.sev`: fica na raiz do `config` (`manager.rs:489`).
+const ITEM_DOS_TELEPORTES: &str = "servidor\\world_targets.sev";
+
+impl Estudio {
+    /// Id do mapa (world tag) pelo caminho, do `instance.txt` do cliente.
+    async fn id_do_mapa(&self, gov: &Governanca, versao: &str, caminho: &str) -> Result<i32> {
+        let bytes = self.arquivo_do_cliente(gov, versao, "configs\\instance.txt").await?;
+        let mapas = crate::mapas::ler_instancias(&crate::mapas::texto_do_arquivo(&bytes))?;
+        mapas.iter().find(|m| m.caminho == caminho).map(|m| m.id).with_context(|| format!("mapa {caminho} não está no instance.txt"))
+    }
+
+    /// Destinos de teleporte (`world_targets.sev`) que ficam no mapa, com nome e domínio do
+    /// `maps\world\world_targets.txt` do cliente (`globaldataman.cpp:450-466`) e as transportadoras
+    /// (`NPC_TRANSMIT_SERVICE.targets_N_idTarget`, `serviceprovider.cpp:683-700`) que levam a cada um, com preço,
+    /// nível e os NPCs que oferecem o serviço (`NPC_ESSENCE.id_transmit_service`).
+    pub async fn teleportes(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Value> {
+        if !caminho_de_mapa_valido(caminho) {
+            bail!("mapa inválido");
+        }
+        let id_mapa = self.id_do_mapa(gov, versao, caminho).await?;
+        let (nome, do_realm, do_rascunho) = self.item_do_realm(gov, versao, ITEM_DOS_TELEPORTES.to_string(), rascunho).await?;
+        let no_rascunho = do_rascunho.is_some();
+        let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
+        let w = PontosDoMundo::load_from_bytes(&bytes).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let nomes: HashMap<i32, String> = match self.arquivo_do_cliente(gov, versao, "maps\\world\\world_targets.txt").await {
+            Ok(b) => crate::mapas::ler_world_targets_txt(&crate::mapas::texto_do_arquivo(&b)),
+            Err(_) => HashMap::new(),
+        };
+        // Quem leva a cada destino.
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let mut npcs_do_servico: HashMap<i32, Vec<Value>> = HashMap::new();
+        if let Ok(t) = e.tabela("NPC_ESSENCE") {
+            for i in 0..t.registros.len() {
+                let Ok(r) = t.ler(i) else { continue };
+                if let Some(s) = r.get("id_transmit_service").and_then(|v| v.as_i32()).filter(|&s| s > 0) {
+                    npcs_do_servico.entry(s).or_default().push(json!({ "nome": nome_do_registro(t, i), "indice": i }));
+                }
+            }
+        }
+        let mut usado_por: HashMap<i32, Vec<Value>> = HashMap::new();
+        if let Ok(t) = e.tabela("NPC_TRANSMIT_SERVICE") {
+            for i in 0..t.registros.len() {
+                let Ok(r) = t.ler(i) else { continue };
+                let n = r.get("num_targets").and_then(|v| v.as_i32()).unwrap_or(0).clamp(0, 32);
+                let id_servico = t.id(i).unwrap_or(0);
+                for k in 0..n {
+                    let campo = |c: &str| r.get(&format!("targets_{k}_{c}")).and_then(|v| v.as_i32()).unwrap_or(0);
+                    usado_por.entry(campo("idTarget")).or_default().push(json!({
+                        "servico": id_servico, "indice": i, "nome": nome_do_registro(t, i),
+                        "preco": campo("fee"), "nivel": campo("required_level"),
+                        "npcs": npcs_do_servico.get(&id_servico).cloned().unwrap_or_default(),
+                    }));
+                }
+            }
+        }
+        let pontos: Vec<Value> = w
+            .lista
+            .iter()
+            .filter(|p| p.mundo == id_mapa)
+            .map(|p| json!({
+                "id": p.id, "nome": nomes.get(&p.id), "dominio": p.dominio, "pos": vetor_json(&p.pos),
+                "usado_por": usado_por.get(&p.id).cloned().unwrap_or_default(),
+            }))
+            .collect();
+        Ok(json!({ "item": nome, "mapa": id_mapa, "no_rascunho": no_rascunho, "total": w.lista.len(), "pontos": pontos }))
+    }
+
+    /// Troca a posição de um destino (o mapa e o domínio ficam; o cliente só usa a posição do `.txt` dele para
+    /// saber em que região o destino fica).
+    pub async fn editar_teleporte(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i32, campos: Map<String, Value>) -> Result<Value> {
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let (nome, do_realm, do_rascunho) = self.item_do_realm(gov, versao, ITEM_DOS_TELEPORTES.to_string(), Some(rascunho)).await?;
+        self.gravar_item_do_realm(gov, versao, rascunho, nome, do_realm, do_rascunho, move |base| {
+            let mut w = PontosDoMundo::load_from_bytes(base).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let mut mudou = Map::new();
+            for (k, v) in &campos {
+                if k != "pos" {
+                    bail!("só a posição do destino é editável: {k}");
+                }
+                let novo = vetor_do_json(v, "pos")?;
+                let antes = w.get(id).with_context(|| format!("destino {id} não existe"))?.pos;
+                if novo != antes {
+                    w.definir_posicao(id, novo);
+                    mudou.insert(k.clone(), json!([vetor_json(&antes), vetor_json(&novo)]));
+                }
+            }
+            let mudanca = if mudou.is_empty() { Value::Null } else { json!({ "acao": "editado", "tipo": "teleporte", "id": id, "campos": mudou }) };
+            Ok((w.gravar(), json!({ "id": id }), mudanca))
         })
         .await
     }
