@@ -133,8 +133,9 @@ async function abrirFichaDoEstudio(indice) {
   document.querySelectorAll("#estudio-registros button").forEach((b, i) => b.classList.toggle("ativo", estudio.registros[i]?.indice === indice));
 }
 
-const GRUPOS_DO_ESTUDIO = ["Identificação", "Requisitos", "Combate", "Comércio", "Durabilidade e fabricação",
-  "Efeitos", "Drops", "Comportamento", "Habilidades", "Visual", "Outros"];
+const GRUPOS_DO_ESTUDIO = ["Identificação", "Serviços do NPC", "Páginas", "Fabricação", "Teleporte", "Missões",
+  "Requisitos", "Combate", "Comércio", "Durabilidade e fabricação", "Efeitos", "Drops", "Comportamento", "Habilidades",
+  "Visual", "Outros"];
 
 /* Ícone do registro (o `file_icon` em hex GBK, rota de ícones do painel, B188/B239). */
 function iconeDoEstudio(hex, nome, classe = "estudio-icone") {
@@ -324,7 +325,11 @@ function desenharFichaDoEstudio() {
   const entradas = [];
   const { soltos, grupos } = agruparCamposDoEstudio(f.campos);
   let abertos = 0;
-  for (const nomeGrupo of GRUPOS_DO_ESTUDIO) {
+  // Grupo que o servidor mandou e esta lista não conhece aparece antes de "Outros" (nunca some).
+  const conhecidos = new Set(GRUPOS_DO_ESTUDIO);
+  const extras = [...new Set(f.campos.map((c) => c.grupo || "Outros"))].filter((g) => !conhecidos.has(g));
+  const ordem = [...GRUPOS_DO_ESTUDIO.slice(0, -1), ...extras, "Outros"];
+  for (const nomeGrupo of ordem) {
     const meus = soltos.filter((c) => (c.grupo || "Outros") === nomeGrupo);
     const listas = [...grupos].filter(([, g]) => (g.grupo || "Outros") === nomeGrupo);
     if (!meus.length && !listas.length) continue;

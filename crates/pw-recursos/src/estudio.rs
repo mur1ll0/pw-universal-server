@@ -603,6 +603,14 @@ mod testes {
         assert_eq!(rotulo_e_grupo("unk1"), (None, "Outros"));
         assert_eq!(rotulo_e_grupo("attack_speed").1, "Combate");
         assert_eq!(rotulo_e_grupo("run_speed").1, "Comportamento");
+        // NPCs, serviços e receitas (B241).
+        assert_eq!(rotulo_e_grupo("id_sell_service"), (Some("Serviço de loja"), "Serviços do NPC"));
+        assert_eq!(rotulo_e_grupo("id_skill_service").1, "Serviços do NPC", "antes de Habilidades");
+        assert_eq!(rotulo_e_grupo("pages_3_goods_12_id"), (Some("Item"), "Páginas"));
+        assert_eq!(rotulo_e_grupo("materials_4_num"), (Some("Quantidade"), "Fabricação"));
+        assert_eq!(rotulo_e_grupo("targets_2_idTarget"), (Some("Estação de destino"), "Teleporte"));
+        assert_eq!(rotulo_e_grupo("id_tasks_17"), (Some("Missão"), "Missões"));
+        assert_eq!(rotulo_e_grupo("hello_msg"), (Some("Saudação"), "Identificação"));
     }
 }
 

@@ -1,5 +1,5 @@
 {
- "_origem": "Rótulos em português e grupos da ficha do Estúdio (S2, B239), traduzidos do comentário de cada membro no ExpTypes.h do cliente 1.5.5 (EvolvedPWClient/ElementClient/CCommon/ExpTypes.h). Chave = nome do campo do layout com os índices de vetor trocados por N (drop_matters_N_id). Campo sem comentário no fonte (unk*, desc2, combined_switch...) fica sem rótulo: a ficha mostra o nome técnico em 'Outros'. Grupos: o primeiro padrão (regex sobre o nome com N) que casar decide.",
+ "_origem": "Rótulos em português e grupos da ficha do Estúdio (S2, B239; NPCs, serviços e receitas no B241), traduzidos do comentário de cada membro no ExpTypes.h do cliente 1.5.5 (EvolvedPWClient/ElementClient/CCommon/ExpTypes.h). Chave = nome do campo do layout com os índices de vetor trocados por N (drop_matters_N_id). Campo sem comentário no fonte (unk*, desc2, combined_switch...) fica sem rótulo: a ficha mostra o nome técnico em 'Outros'. Grupos: o primeiro padrão (regex sobre o nome com N) que casar decide.",
  "campos": {
   "ID": "ID",
   "Name": "Nome",
@@ -177,18 +177,268 @@
   "equip_location": "Partes cobertas (máscara)",
   "param1": "Parâmetro 1",
   "param2": "Parâmetro 2",
-  "param3": "Parâmetro 3"
+  "param3": "Parâmetro 3",
+  "attack_rule": "Pode ser atacado (0 não, 1 nome rosa, 2 nome vermelho)",
+  "bind_type": "Tipo de vínculo",
+  "build_info_N_fee": "Custo",
+  "build_info_N_id_buildup": "Objeto pronto",
+  "build_info_N_id_in_build": "Objeto em construção",
+  "build_info_N_id_object_need": "Item necessário",
+  "build_info_N_time_use": "Tempo de construção",
+  "combined_services": "Serviços simples (máscara)",
+  "combined_services2": "Serviços simples 2 (máscara: guerra de nações, assinatura…)",
+  "domain_related": "Ligado a território (0 não, 1 sim)",
+  "duration": "Tempo de uma fabricação",
+  "fail_probability": "Chance de falhar",
+  "fee": "Taxa",
+  "force_id": "Facção (força)",
+  "hello_msg": "Saudação",
+  "id_buy_service": "Serviço de compra",
+  "id_cross_server_service": "Serviço entre servidores",
+  "id_decompose_service": "Serviço de desmontar",
+  "id_decompose_skill": "Habilidade de desmontar",
+  "id_dialog": "Conversa",
+  "id_engrave_N": "Modelo de entalhe",
+  "id_engrave_service": "Serviço de entalhe",
+  "id_equipbind_service": "Serviço de vincular equipamento",
+  "id_equipdestroy_service": "Serviço de destruir equipamento",
+  "id_equipundestroy_service": "Serviço de desfazer destruição",
+  "id_force_service": "Serviço de facção",
+  "id_goblin_skill_service": "Serviço de habilidades do Daimon",
+  "id_goods_N": "Item incrustável",
+  "id_heal_service": "Serviço de cura",
+  "id_identify_service": "Serviço de identificar",
+  "id_install_service": "Serviço de incrustar",
+  "id_make_service": "Serviço de fabricar",
+  "id_make_skill": "Habilidade de fabricação",
+  "id_mine": "Mina associada",
+  "id_object_need": "Item necessário",
+  "id_object_need_N": "Item necessário",
+  "id_petforgetskill_service": "Serviço: mascote esquece habilidade",
+  "id_petlearnskill_service": "Serviço: mascote aprende habilidade",
+  "id_petname_service": "Serviço: renomear mascote",
+  "id_proxy_service": "Serviço de consignação",
+  "id_randprop_service": "Serviço de reforjar propriedades",
+  "id_repair_service": "Serviço de conserto",
+  "id_resetprop_service": "Serviço de redistribuir atributos",
+  "id_sell_service": "Serviço de loja",
+  "id_skill_service": "Serviço de ensinar habilidades",
+  "id_skills_N": "Habilidade ensinada",
+  "id_src_monster": "Atributos do monstro (substitui os do NPC)",
+  "id_storage_service": "Serviço de armazém",
+  "id_talk_service": "Serviço de conversa",
+  "id_task_in_service": "Serviço: concluir missões",
+  "id_task_matter_service": "Serviço: dar itens de missão",
+  "id_task_out_service": "Serviço: dar missões",
+  "id_tasks_N": "Missão",
+  "id_to_discover": "Estação de viagem a descobrir",
+  "id_transmit_service": "Serviço de teleporte",
+  "id_transport_service": "Serviço de transporte",
+  "id_uninstall_service": "Serviço de retirar incrustação",
+  "id_upgrade_equip": "Equipamento a evoluir",
+  "id_war_towerbuild_service": "Serviço de torres (guerra territorial)",
+  "materials_N_id": "Material",
+  "materials_N_num": "Quantidade",
+  "no_collision": "Sem colisão",
+  "num_targets": "Número de destinos",
+  "num_to_make": "Quantidade por fabricação",
+  "pages_N_goods_N_contrib_cost": "Custo em contribuição",
+  "pages_N_goods_N_force_contribution_cost": "Custo em mérito de facção",
+  "pages_N_goods_N_id": "Item",
+  "pages_N_id_goods_N": "Receita",
+  "pages_N_id_recipe": "Receita",
+  "pages_N_page_title": "Título da página (até 7)",
+  "pages_N_require_contrib": "Contribuição mínima",
+  "pages_N_require_force": "Facção exigida (0 nenhuma)",
+  "pages_N_require_force_reputation": "Reputação de facção mínima",
+  "produce_type": "Tipo de fabricação (0 normal, 1 síntese, 2 sorte, 3 evolução, 4 com prévia)",
+  "prop_entry_N_agility_delta": "Destreza (variação)",
+  "prop_entry_N_energy_delta": "Magia (variação)",
+  "prop_entry_N_id_object_need": "Item necessário",
+  "prop_entry_N_strength_delta": "Força (variação)",
+  "prop_entry_N_vital_delta": "Vitalidade (variação)",
+  "recipe_level": "Nível da receita",
+  "refresh_time": "Tempo de renascer",
+  "routes_N_fee": "Taxa",
+  "routes_N_id": "Rota",
+  "storage_deliver_per_day": "Missões do quadro por dia (0–255)",
+  "storage_id": "Quadro de missões",
+  "storage_open_item": "Item que abre o quadro",
+  "storage_refresh_count_max": "Missões por atualização (máx.)",
+  "storage_refresh_count_min": "Missões por atualização (mín.)",
+  "storage_refresh_item": "Item que atualiza o quadro",
+  "storage_refresh_per_day": "Atualizações por dia",
+  "targets_N_fee": "Taxa",
+  "targets_N_idTarget": "Estação de destino",
+  "targets_N_id_to_make": "Produto",
+  "targets_N_probability": "Chance",
+  "targets_N_required_level": "Nível exigido",
+  "tasks_N_id_task": "Missão",
+  "tasks_N_taks_matters_N_id_matter": "Item da missão",
+  "tasks_N_taks_matters_N_num_matter": "Quantidade",
+  "tax_rate": "Taxa (padrão 0,05)",
+  "upgrade_rate": "Fator do custo de herança (0,01–2)"
  },
  "grupos": [
-  {"nome": "Identificação", "padroes": ["^(ID|Name|realname|id_type|id_major_type|id_sub_type|desc|prop|level|show_level|file_icon)$"]},
-  {"nome": "Requisitos", "padroes": ["^require_", "^character_combo_id$"]},
-  {"nome": "Combate", "padroes": ["damage", "^attack", "^defen", "^armor", "magic_defences", "^life$", "^hp_", "^mp_", "^short_range_mode$", "^cool_time$", "^immune_type$"]},
-  {"nome": "Comércio", "padroes": ["^price$", "^shop_price$", "^repairfee$", "^decompose_", "^element_", "^pile_num_max$", "^proc_type$", "^has_guid$"]},
-  {"nome": "Durabilidade e fabricação", "padroes": ["^durability_", "probability_socket", "^material_need$", "^levelup_addon$", "^fixed_props$", "after_damaged$"]},
-  {"nome": "Efeitos", "padroes": ["^probability_addon", "^addons_", "^rands_", "^uniques_", "^hiddens_", "^probability_unique$", "^probability_hidden$"]},
-  {"nome": "Drops", "padroes": ["^probability_drop", "^drop_", "^money_", "^exp$", "^skillpoint$"]},
-  {"nome": "Comportamento", "padroes": ["^aggr", "^sight_range$", "^max_move_range$", "^patroll_mode$", "^stand_mode$", "^inhabit_type$", "faction", "strategy", "^highest_frequency$", "^no_auto_fight$", "^fixed_direction$", "^after_death$", "invisible_lvl$", "^role_in_war$", "_speed$"]},
-  {"nome": "Habilidades", "padroes": ["skill"]},
-  {"nome": "Visual", "padroes": ["^file_", "^id_hair", "^size$", "^equip_location$"]}
+  {
+   "nome": "Identificação",
+   "padroes": [
+    "^(ID|Name|realname|id_type|id_major_type|id_sub_type|desc|prop|level|show_level|file_icon)$",
+    "^(hello_msg|id_src_monster|refresh_time|tax_rate|domain_related|no_collision|attack_rule|force_id|id_dialog|id_mine|fee|id_object_need(_N)?)$"
+   ]
+  },
+  {
+   "nome": "Serviços do NPC",
+   "padroes": [
+    "^id_.*_service$",
+    "^combined_services"
+   ]
+  },
+  {
+   "nome": "Páginas",
+   "padroes": [
+    "^pages_"
+   ]
+  },
+  {
+   "nome": "Fabricação",
+   "padroes": [
+    "^materials_",
+    "^targets_N_(id_to_make|probability)$",
+    "^recipe_level$",
+    "^produce_type$",
+    "^num_to_make$",
+    "^duration$",
+    "^fail_probability$",
+    "^id_make_skill$",
+    "^id_decompose_skill$",
+    "^id_upgrade_equip$",
+    "^upgrade_",
+    "^id_goods_N$",
+    "^id_engrave_N$",
+    "^bind_type$"
+   ]
+  },
+  {
+   "nome": "Teleporte",
+   "padroes": [
+    "^targets_N_(fee|idTarget|required_level)$",
+    "^routes_",
+    "^num_targets$",
+    "^id_to_discover$"
+   ]
+  },
+  {
+   "nome": "Missões",
+   "padroes": [
+    "^id_tasks_",
+    "^tasks_",
+    "^storage_"
+   ]
+  },
+  {
+   "nome": "Requisitos",
+   "padroes": [
+    "^require_",
+    "^character_combo_id$"
+   ]
+  },
+  {
+   "nome": "Combate",
+   "padroes": [
+    "damage",
+    "^attack",
+    "^defen",
+    "^armor",
+    "magic_defences",
+    "^life$",
+    "^hp_",
+    "^mp_",
+    "^short_range_mode$",
+    "^cool_time$",
+    "^immune_type$"
+   ]
+  },
+  {
+   "nome": "Comércio",
+   "padroes": [
+    "^price$",
+    "^shop_price$",
+    "^repairfee$",
+    "^decompose_",
+    "^element_",
+    "^pile_num_max$",
+    "^proc_type$",
+    "^has_guid$"
+   ]
+  },
+  {
+   "nome": "Durabilidade e fabricação",
+   "padroes": [
+    "^durability_",
+    "probability_socket",
+    "^material_need$",
+    "^levelup_addon$",
+    "^fixed_props$",
+    "after_damaged$"
+   ]
+  },
+  {
+   "nome": "Efeitos",
+   "padroes": [
+    "^probability_addon",
+    "^addons_",
+    "^rands_",
+    "^uniques_",
+    "^hiddens_",
+    "^probability_unique$",
+    "^probability_hidden$"
+   ]
+  },
+  {
+   "nome": "Drops",
+   "padroes": [
+    "^probability_drop",
+    "^drop_",
+    "^money_",
+    "^exp$",
+    "^skillpoint$"
+   ]
+  },
+  {
+   "nome": "Comportamento",
+   "padroes": [
+    "^aggr",
+    "^sight_range$",
+    "^max_move_range$",
+    "^patroll_mode$",
+    "^stand_mode$",
+    "^inhabit_type$",
+    "faction",
+    "strategy",
+    "^highest_frequency$",
+    "^no_auto_fight$",
+    "^fixed_direction$",
+    "^after_death$",
+    "invisible_lvl$",
+    "^role_in_war$",
+    "_speed$"
+   ]
+  },
+  {
+   "nome": "Habilidades",
+   "padroes": [
+    "skill"
+   ]
+  },
+  {
+   "nome": "Visual",
+   "padroes": [
+    "^file_",
+    "^id_hair",
+    "^size$",
+    "^equip_location$"
+   ]
+  }
  ]
 }
