@@ -9,6 +9,7 @@ pub mod fonte;
 pub mod estudio;
 pub mod governanca;
 pub mod importar;
+pub mod mapas;
 pub mod objetos;
 pub mod servir;
 

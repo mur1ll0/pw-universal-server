@@ -357,6 +357,28 @@ async fn estudio_buscar_no_espaco(
     Ok(Json(r))
 }
 
+// ------------------------------------------------------------------ mapas (S4, B242)
+
+async fn estudio_mapas(State(e): State<Arc<Estado>>, Path(v): Path<String>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.mapas(&e.gov, &v).await?))
+}
+
+async fn estudio_peca(State(e): State<Arc<Estado>>, Path((v, caminho, peca)): Path<(String, String, String)>) -> R<Response> {
+    validar(&v)?;
+    let llcc = peca.strip_suffix(".png").unwrap_or(&peca);
+    let png = e.estudio.peca(&e.gov, &v, &caminho, llcc).await.map_err(|err| Erro(StatusCode::NOT_FOUND, format!("{err:#}")))?;
+    let mut h = HeaderMap::new();
+    h.insert(header::CONTENT_TYPE, "image/png".parse().unwrap());
+    h.insert(header::CACHE_CONTROL, "private, max-age=86400".parse().unwrap());
+    Ok((h, png.as_ref().clone()).into_response())
+}
+
+async fn estudio_criaturas(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.criaturas(&e.gov, &v, &caminho).await?))
+}
+
 // ------------------------------------------------------------------ conversas (S3, B240)
 
 async fn estudio_funcoes(State(e): State<Arc<Estado>>, Path(v): Path<String>) -> R<Json<Value>> {
@@ -443,6 +465,9 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}/clonar", post(estudio_clonar))
         .route("/admin/{v}/estudio/espacos/{espaco}", get(estudio_buscar_no_espaco))
         .route("/admin/{v}/estudio/funcoes", get(estudio_funcoes))
+        .route("/admin/{v}/estudio/mapas", get(estudio_mapas))
+        .route("/admin/{v}/estudio/mapas/{caminho}/pecas/{peca}", get(estudio_peca))
+        .route("/admin/{v}/estudio/mapas/{caminho}/criaturas", get(estudio_criaturas))
         .route("/admin/{v}/estudio/conversas", get(estudio_listar_conversas).post(estudio_nova_conversa))
         .route(
             "/admin/{v}/estudio/conversas/{indice}",

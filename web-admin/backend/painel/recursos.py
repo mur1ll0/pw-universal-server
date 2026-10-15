@@ -60,7 +60,11 @@ async def _repassar(metodo, caminho, consulta=None, dados=None, corpo=None, tipo
         return JSONResponse(json.loads(conteudo or b"null"), status_code=status)
     if status >= 400:
         return JSONResponse({"detail": "Falha no serviço de recursos do cliente."}, status_code=502)
-    saida = Response(conteudo, status_code=status, media_type="application/octet-stream")
+    tipo_original = cabecalhos.get("content-type", "")
+    saida = Response(conteudo, status_code=status,
+                     media_type="image/png" if tipo_original == "image/png" else "application/octet-stream")
+    if tipo_original == "image/png":
+        saida.headers["Cache-Control"] = "private, max-age=86400"
     if cabecalhos.get("content-disposition"):
         saida.headers["Content-Disposition"] = cabecalhos["content-disposition"]
     return saida
@@ -264,3 +268,28 @@ def registrar_conversas(app):
     async def estudio_remover_conversa(realm: str, indice: int, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
         return await _repassar("DELETE", f"/admin/{v}/estudio/conversas/{max(0, indice)}", {"rascunho": rascunho})
+
+
+MAPA = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+
+
+def registrar_mapas(app):
+    """Mapas do Estúdio, fase S4 (B242): lista, peças do minimapa (PNG) e criaturas do npcgen."""
+    @app.get("/api/realms/{realm}/estudio/mapas")
+    async def estudio_mapas(realm: str, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/mapas")
+
+    @app.get("/api/realms/{realm}/estudio/mapas/{caminho}/pecas/{peca}")
+    async def estudio_peca(realm: str, caminho: str, peca: str, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        if not MAPA.match(caminho) or not re.match(r"^\d{4}\.png$", peca):
+            raise HTTPException(404, "Peça inválida.")
+        return await _repassar("GET", f"/admin/{v}/estudio/mapas/{caminho}/pecas/{peca}")
+
+    @app.get("/api/realms/{realm}/estudio/mapas/{caminho}/criaturas")
+    async def estudio_criaturas(realm: str, caminho: str, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        if not MAPA.match(caminho):
+            raise HTTPException(404, "Mapa inválido.")
+        return await _repassar("GET", f"/admin/{v}/estudio/mapas/{caminho}/criaturas")

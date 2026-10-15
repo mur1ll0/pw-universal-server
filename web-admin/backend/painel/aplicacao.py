@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from .realms import listar_realms
 from .consultas import registrar_consultas
 from .contas import registrar_contas
-from .recursos import registrar_conversas, registrar_estudio, registrar_recursos
+from .recursos import registrar_conversas, registrar_estudio, registrar_mapas, registrar_recursos
 from .seguranca import COOKIE, TEMPO_SESSAO, LimitarEntrada, Seguranca
 
 REGISTRO = logging.getLogger("pw_admin")
@@ -107,6 +107,7 @@ def criar_aplicacao():
     registrar_recursos(app)
     registrar_estudio(app)
     registrar_conversas(app)
+    registrar_mapas(app)
 
     @app.api_route("/api/{caminho:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def operacao_indisponivel(caminho: str):

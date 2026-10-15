@@ -769,3 +769,12 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .estudio-subtitulo { margin: 10px 0 4px; font-size: 13px; color: var(--texto-2); font-weight: 500; }
 .estudio-janela { margin-top: 10px; }
 .estudio-texto-janela { width: 100%; margin: 8px 0; resize: vertical; font: inherit; }
+
+/* ---------------- Estúdio: mapas (B242) ---------------- */
+.estudio-vistas { margin-top: 12px; }
+.mapa-tela { position: relative; height: 68vh; overflow: hidden; background: #0b0f16; border: 1px solid var(--borda); border-radius: 10px; margin-top: 10px; cursor: grab; touch-action: none; }
+.mapa-tela:active { cursor: grabbing; }
+.mapa-pecas { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.mapa-pecas img { position: absolute; width: 256px; height: 256px; image-rendering: auto; user-select: none; pointer-events: none; }
+.mapa-pontos { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#mapa-detalhe { margin-top: 8px; min-height: 22px; }

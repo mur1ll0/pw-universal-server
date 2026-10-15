@@ -29,6 +29,7 @@ getrandom = "0.2"
 encoding_rs = "0.8"
 rayon = "1.10"
 regex-lite = "0.1"
+png = "0.17"
 ureq = "2"
 
 [dev-dependencies]

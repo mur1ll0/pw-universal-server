@@ -10,6 +10,7 @@
   <script src="/static/painel.js" defer></script>
   <script src="/static/recursos.js" defer></script>
   <script src="/static/estudio.js" defer></script>
+  <script src="/static/mapa.js" defer></script>
 </head>
 <body>
   <!-- Entrada -->
@@ -280,6 +281,25 @@
             <span id="estudio-situacao" class="texto-suave"></span>
           </div>
           <p id="estudio-aviso" class="alerta alerta-aviso" hidden></p>
+          <div class="recursos-linha estudio-vistas" role="tablist" aria-label="Vista do Estúdio">
+            <button id="estudio-vista-tabelas" class="botao botao-primario botao-pequeno" type="button" role="tab" aria-selected="true">Tabelas</button>
+            <button id="estudio-vista-mapas" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Mapas</button>
+          </div>
+          <section id="estudio-mapa" class="recursos-cartao" hidden>
+            <div class="recursos-linha">
+              <select id="mapa-escolha" class="campo" aria-label="Mapa"></select>
+              <label class="recursos-marca"><input type="checkbox" class="mapa-tipo" value="monstro" checked> Monstros</label>
+              <label class="recursos-marca"><input type="checkbox" class="mapa-tipo" value="npc" checked> NPCs</label>
+              <label class="recursos-marca"><input type="checkbox" class="mapa-tipo" value="recurso" checked> Recursos</label>
+              <label class="recursos-marca"><input type="checkbox" class="mapa-tipo" value="objeto"> Objetos</label>
+              <span id="mapa-situacao" class="texto-suave"></span>
+            </div>
+            <div id="mapa-tela" class="mapa-tela" tabindex="0" aria-label="Mapa: arraste para mover, roda para zoom">
+              <div id="mapa-pecas" class="mapa-pecas"></div>
+              <canvas id="mapa-pontos" class="mapa-pontos"></canvas>
+            </div>
+            <div id="mapa-detalhe" class="texto-suave">Clique numa criatura para ver os detalhes.</div>
+          </section>
           <div class="estudio-grade">
             <aside class="recursos-cartao estudio-tabelas">
               <input id="estudio-filtro-tabela" class="campo" placeholder="Filtrar tabelas" aria-label="Filtrar tabelas">

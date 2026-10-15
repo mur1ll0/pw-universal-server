@@ -29,6 +29,11 @@ pub struct Estudio {
     cache: Mutex<HashMap<Sha256Bytes, Arc<ElementsEditavel>>>,
     /// Uma edição por rascunho de cada vez.
     travas: Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>,
+    /// Índice dos arquivos do cliente publicado por versão: caminho em minúsculas → (sha, tamanho),
+    /// com o SHA do manifesto de onde saiu (B242).
+    arquivos_do_cliente: Mutex<HashMap<String, (String, Arc<HashMap<String, (Sha256Bytes, u64)>>)>>,
+    /// Peças do minimapa já convertidas em PNG.
+    pecas: Mutex<HashMap<(String, String, String), Arc<Vec<u8>>>>,
 }
 
 fn caminho_gbk() -> Vec<u8> {
@@ -824,5 +829,127 @@ impl Estudio {
             Ok(json!({ "removido": id }))
         })
         .await
+    }
+}
+
+// ------------------------------------------------------------------ mapas (S4, B242)
+
+fn caminho_de_mapa_valido(c: &str) -> bool {
+    !c.is_empty() && c.len() <= 32 && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+impl Estudio {
+    /// Um arquivo do cliente publicado, pelo caminho (sem diferenciar maiúsculas).
+    async fn arquivo_do_cliente(&self, gov: &Governanca, versao: &str, caminho: &str) -> Result<Vec<u8>> {
+        let v = gov.publicado(versao)?.0;
+        let indice = {
+            let atual = self.arquivos_do_cliente.lock().unwrap().get(versao).cloned();
+            match atual {
+                Some((sha, i)) if sha == v.manifesto_sha256 => i,
+                _ => {
+                    let (_, m) = gov.publicado(versao)?;
+                    let mut i = HashMap::with_capacity(m.arquivos.len());
+                    for a in &m.arquivos {
+                        let nome = nomes::legivel(&hex::decode(&a.caminho_gbk)?).to_lowercase();
+                        let sha: Sha256Bytes = hex::decode(&a.sha256)?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
+                        i.insert(nome, (sha, a.tamanho));
+                    }
+                    let i = Arc::new(i);
+                    self.arquivos_do_cliente.lock().unwrap().insert(versao.to_string(), (v.manifesto_sha256.clone(), i.clone()));
+                    i
+                }
+            }
+        };
+        let (sha, tamanho) = *indice.get(&caminho.to_lowercase()).with_context(|| format!("{caminho} não está no cliente {versao}"))?;
+        let objetos = gov.objetos(versao);
+        Ok(tokio::task::spawn_blocking(move || objetos.ler(&sha, tamanho as usize)).await??)
+    }
+
+    /// Mapas do `Configs\instance.txt` do cliente, com o que o realm tem de cada um.
+    pub async fn mapas(&self, gov: &Governanca, versao: &str) -> Result<Value> {
+        let bytes = self.arquivo_do_cliente(gov, versao, "configs\\instance.txt").await?;
+        let mapas = crate::mapas::ler_instancias(&crate::mapas::texto_do_arquivo(&bytes))?;
+        let pasta = gov.realms.get(versao).and_then(|p| p.first()).cloned();
+        Ok(json!(mapas
+            .iter()
+            .map(|m| {
+                let npcgen = pasta.as_ref().is_some_and(|p| self.caminho_do_npcgen(p, &m.caminho).is_some());
+                json!({ "nome": m.nome, "id": m.id, "caminho": m.caminho, "linhas": m.linhas, "colunas": m.colunas, "npcgen": npcgen })
+            })
+            .collect::<Vec<_>>()))
+    }
+
+    fn caminho_do_npcgen(&self, pasta: &std::path::Path, caminho: &str) -> Option<std::path::PathBuf> {
+        let dentro = pasta.join(caminho).join("npcgen.data");
+        if dentro.exists() {
+            return Some(dentro);
+        }
+        // O mundo do 1.2.6 guarda o npcgen na raiz do config.
+        let raiz = pasta.join("npcgen.data");
+        (caminho == "world" && raiz.exists()).then_some(raiz)
+    }
+
+    /// Uma peça do minimapa em PNG (`Surfaces\MiniMaps\<caminho>\LLCC.dds`).
+    pub async fn peca(&self, gov: &Governanca, versao: &str, caminho: &str, llcc: &str) -> Result<Arc<Vec<u8>>> {
+        if !caminho_de_mapa_valido(caminho) || llcc.len() != 4 || !llcc.bytes().all(|b| b.is_ascii_digit()) {
+            bail!("peça inválida");
+        }
+        let chave = (versao.to_string(), caminho.to_string(), llcc.to_string());
+        if let Some(p) = self.pecas.lock().unwrap().get(&chave) {
+            return Ok(p.clone());
+        }
+        let dds = self.arquivo_do_cliente(gov, versao, &format!("surfaces\\minimaps\\{caminho}\\{llcc}.dds")).await?;
+        let png = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+            let (l, a, px) = crate::mapas::dds_para_rgba(&dds)?;
+            crate::mapas::png(l, a, &px)
+        })
+        .await??;
+        let png = Arc::new(png);
+        let mut c = self.pecas.lock().unwrap();
+        if c.len() > 3000 {
+            c.clear();
+        }
+        c.insert(chave, png.clone());
+        Ok(png)
+    }
+
+    /// Criaturas do `npcgen.data` do realm para o mapa: tipo, modelo, posição, área e renascer, com o nome
+    /// do modelo no `elements` publicado.
+    pub async fn criaturas(&self, gov: &Governanca, versao: &str, caminho: &str) -> Result<Value> {
+        if !caminho_de_mapa_valido(caminho) {
+            bail!("mapa inválido");
+        }
+        let pasta = gov.realms.get(versao).and_then(|p| p.first()).context("a versão não tem realm configurado (PW_RECURSOS_REALMS)")?;
+        let arquivo = self.caminho_do_npcgen(pasta, caminho).with_context(|| format!("o realm não tem npcgen para {caminho}"))?;
+        let bytes = std::fs::read(&arquivo)?;
+        let gen = tokio::task::spawn_blocking(move || pw_data_loader::npcgen::NpcGenData::load_from_bytes(&bytes))
+            .await?
+            .map_err(|e| anyhow::anyhow!("npcgen: {e}"))?;
+        let (e, _) = self.atual(gov, versao, None).await?;
+        let ids = mapa_de_ids(&e);
+        let mut nomes_por_modelo: HashMap<u32, Value> = HashMap::new();
+        let mut pontos = Vec::with_capacity(gen.instances.len());
+        for s in &gen.instances {
+            let tipo = match s.spawn_type {
+                pw_data_loader::npcgen::SpawnType::Monster => "monstro",
+                pw_data_loader::npcgen::SpawnType::Npc => "npc",
+                pw_data_loader::npcgen::SpawnType::ResourceMine => "recurso",
+                pw_data_loader::npcgen::SpawnType::DynamicObject => "objeto",
+            };
+            nomes_por_modelo.entry(s.template_id).or_insert_with(|| match ids.get(&("ESSENCE".to_string(), s.template_id as i32)) {
+                Some(&(ti, ri)) if ti != CONVERSAS => json!({
+                    "nome": nome_do_registro(&e.tabelas[ti], ri), "tabela": e.tabelas[ti].nome, "indice": ri,
+                }),
+                _ => json!({ "nome": null }),
+            });
+            pontos.push(json!([tipo, s.template_id, (s.pos.x * 10.0).round() / 10.0, (s.pos.z * 10.0).round() / 10.0,
+                s.renascer_min_s, (s.extensao_da_area.x * 10.0).round() / 10.0, (s.extensao_da_area.z * 10.0).round() / 10.0]));
+        }
+        Ok(json!({
+            "arquivo": arquivo.file_name().and_then(|n| n.to_str()),
+            "colunas_dos_pontos": ["tipo", "modelo", "x", "z", "renascer_s", "area_x", "area_z"],
+            "pontos": pontos,
+            "modelos": nomes_por_modelo,
+        }))
     }
 }

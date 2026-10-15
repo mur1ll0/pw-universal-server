@@ -27,7 +27,16 @@ struct Pacotes(Vec<u8>);
 impl FonteDePacote for Pacotes {
     fn ler(&self, _pck: &Path, receber: &mut dyn FnMut(Vec<u8>, Vec<u8>) -> Result<()>) -> Result<ResultadoDoPacote> {
         receber(b"data\\elements.data".to_vec(), self.0.clone())?;
-        Ok(ResultadoDoPacote { entradas: 1, falhas: vec![] })
+        // Mapas (B242): o instance.txt (formato do 1.2.6) e uma peça DXT1 4×4 do minimapa.
+        receber(b"configs\\instance.txt".to_vec(), "\"world\"\r\n{\r\n1\t\t// ID\r\n\"world\"\r\n1, 1\r\n}\r\n".as_bytes().to_vec())?;
+        let mut dds = vec![0u8; 128];
+        dds[..4].copy_from_slice(b"DDS ");
+        dds[12..16].copy_from_slice(&4u32.to_le_bytes());
+        dds[16..20].copy_from_slice(&4u32.to_le_bytes());
+        dds[84..88].copy_from_slice(b"DXT1");
+        dds.extend([0x00, 0xF8, 0x1F, 0x00, 0, 0, 0, 0]);
+        receber(b"surfaces\\minimaps\\world\\0000.dds".to_vec(), dds)?;
+        Ok(ResultadoDoPacote { entradas: 3, falhas: vec![] })
     }
 }
 
@@ -71,6 +80,10 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
     let realm = pasta_limpa("realm");
     fs::create_dir_all(&realm).unwrap();
     fs::write(realm.join("elements.data"), &original).unwrap();
+    // npcgen real da instância a01 do 1.2.6, posto como o do "world" deste teste (B242).
+    let npcgen = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/a01/npcgen.data");
+    fs::create_dir_all(realm.join("world")).unwrap();
+    fs::copy(&npcgen, realm.join("world").join("npcgen.data")).expect("npcgen da a01 do realm_126");
     let (chave, _) = Chave::carregar_ou_criar(&dados.join("_chave").join("k")).unwrap();
     let res = importar(&Importacao {
         versao: LINHA,
@@ -130,6 +143,20 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(campo(&ficha, "Name")["grupo"], "Identificação");
         assert!(ficha["icone"].as_str().is_some_and(|h| !h.is_empty() && hex::decode(h).is_ok()), "a arma tem file_icon: {}", ficha["icone"]);
         assert!(lista["registros"][0]["icone"].is_string());
+
+        // Mapas (B242): lista do instance.txt, peça em PNG, criaturas do npcgen do realm com nome.
+        let mapas = json_de(pedir("GET", "estudio/mapas").call().unwrap());
+        assert_eq!(mapas, json!([{"nome": "world", "id": 1, "caminho": "world", "linhas": 1, "colunas": 1, "npcgen": true}]));
+        let mut png = Vec::new();
+        std::io::Read::read_to_end(&mut pedir("GET", "estudio/mapas/world/pecas/0000.png").call().unwrap().into_reader(), &mut png).unwrap();
+        assert!(png.starts_with(b"\x89PNG"));
+        assert_eq!(erro_de(pedir("GET", "estudio/mapas/world/pecas/9999.png").call()).0, 404);
+        assert_eq!(erro_de(pedir("GET", "estudio/mapas/..%2Fx/pecas/0000.png").call()).0, 404);
+        let cr = json_de(pedir("GET", "estudio/mapas/world/criaturas").call().unwrap());
+        let pontos = cr["pontos"].as_array().unwrap();
+        assert!(!pontos.is_empty());
+        let com_nome = pontos.iter().filter(|p| cr["modelos"][p[1].to_string()]["nome"].is_string()).count();
+        assert!(com_nome * 10 >= pontos.len() * 9, "{com_nome} de {} com nome", pontos.len());
 
         // Índice de referências (B238): drop do monstro com o nome do item; quem usa um tipo de arma;
         // busca no espaço para o seletor.

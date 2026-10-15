@@ -27,6 +27,12 @@ class RecursosFalso(BaseHTTPRequestHandler):
             "metodo": self.command, "caminho": partes.path, "consulta": parse_qs(partes.query),
             "segredo": self.headers.get("x-recursos-segredo"), "corpo": corpo,
         })
+        if "/pecas/" in partes.path:
+            self.send_response(200)
+            self.send_header("content-type", "image/png")
+            self.end_headers()
+            self.wfile.write(b"PNGFALSO")
+            return
         if partes.path.endswith("/arquivo") and self.command == "GET":
             self.send_response(200)
             self.send_header("content-type", "application/octet-stream")
@@ -163,6 +169,19 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 413)
         r = await self.cliente.get("/api/realms/realm_155/estudio/funcoes")
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/funcoes")
+
+    async def test_mapas_repassam_png_e_recusam_caminho_ruim(self):
+        """B242: a peça do minimapa sai como image/png; caminho e nome de peça fora do padrão não saem do painel."""
+        await self.entrar()
+        r = await self.cliente.get("/api/realms/realm_155/estudio/mapas/world/pecas/0102.png")
+        self.assertEqual((r.status_code, r.headers["content-type"], r.content), (200, "image/png", b"PNGFALSO"))
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/mapas/world/pecas/0102.png")
+        antes = len(RecursosFalso.pedidos)
+        self.assertEqual((await self.cliente.get("/api/realms/realm_155/estudio/mapas/world/pecas/12.png")).status_code, 404)
+        self.assertEqual((await self.cliente.get("/api/realms/realm_155/estudio/mapas/a.b/criaturas")).status_code, 404)
+        self.assertEqual(len(RecursosFalso.pedidos), antes)
+        r = await self.cliente.get("/api/realms/realm_126/estudio/mapas/a01/criaturas")
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/mapas/a01/criaturas")
 
     async def test_versao_invalida_e_servico_sem_segredo(self):
         await self.entrar()
