@@ -250,6 +250,9 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B246 (S4, 5ª parte):** rastreador de NPCs (`data\task_npc.data` do cliente) no mapa e no editor de área de NPC;
 > primeiro item do Estúdio que vai para o cliente (o launcher baixa). Falta do S4: objetos dinâmicos e controladores do
 > `npcgen` e a altura do chão pelo GS.
+>
+> **B247 (S4, 6ª parte):** objetos dinâmicos e controladores do `npcgen` (ligar ao subir, espera, horários de ligar e
+> desligar), com quem cita cada controlador. Falta do S4: a altura do chão pelo GS e o nome dos objetos dinâmicos.
 
 | fase | entrega |
 | :--- | :--- |

@@ -279,6 +279,22 @@ entra no manifesto da versão nova e o launcher baixa; não vai para o realm. Pa
 área, vermelho a mais de 20 m com linha até ela) e, no editor de área de NPC, a posição do rastreador de cada gerador e
 "Usar a posição da área no rastreador".
 
+**Objetos dinâmicos e controladores do `npcgen` (S4, B247):** campos pelo nome do fonte, `pack(1)`:
+objeto (`NPCGENFILEDYNOBJ`/`9`/`10`, `npcgendata.h:205-232`) `dwDynObjID`@0, `vPos`@4..16, `dir_0`/`dir_1`@16/17,
+`rad`@18, `idController`@19 (v≥9), `scale`@23 (v≥10); controlador (`NPCGENFILECTRL`/`8`, `:243-282`) `id`@0,
+`iControllerID`@4, `szName[128]`@8 (GBK, só leitura), `bActived`@136, `iWaitTime`@137, `iStopTime`@141,
+`bActiveTimeInvalid`@145, `bStopTimeInvalid`@146, `ActiveTime_*`@147 e `StopTime_*`@171 (`NPCCTRLTIME`: ano, mês 0-11,
+dia da semana 0-6 com 0 = domingo, dia, hora, minuto; -1 = qualquer), `iActiveTimeRange`@195 (v≥8). Tipo novo `u8` no
+`npcgen_editavel`. Conferido nos 117 arquivos dos dois realms: 238.648 controladores e 9.862 objetos com booleanos 0/1,
+horários nas faixas, ids de controlador únicos por arquivo; das 39.318 áreas com `idCtrl`, 1 cita controlador que não
+existe (a27 do 1.2.6, 422). A área cita o controlador pelo `id` interno; o `iControllerID` é o número do `aipolicy`
+(`npcgenerator.cpp:3969-4010`). Rotas: os tipos `objetos` e `controladores` em `GET|PUT|DELETE mapas/{c}/npcgen/{tipo}/{i}`
+e `…/clonar` (sem filhos); o resumo `GET npcgen` traz `objetos` `[indice, tipo, x, z, dwDynObjID, idController]`,
+`controladores` `[indice, id, iControllerID, nome, bActived, citado_por]` e `controladores_inexistentes_citados`. Regras: o
+`id` do controlador não muda (é a chave das citações); clonar dá `id` = maior + 1; remover controlador citado é recusado
+(lista quem cita). Painel: objetos como quadrados em "Editar áreas" (com "Objetos" marcado), lista de controladores com
+busca, editor com os horários em português e o controlador de cada área/objeto com link.
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -294,7 +310,8 @@ carregadores) e revertido ao original (B243); distritos e portais da a01 (recusa
 os dois, B244); teleportes do mundo do 1.2.6 com as transportadoras do `elements` e edição publicada (B245).
 Rastreador (B246): NPC da a01 sem entrada é acrescentado, `short` estourado recusado, publicado no manifesto (0 aplicados no
 realm) e baixado com a posição nova. `pw-data-loader`: `precinct_e_region_de_todos_os_mapas_voltam_identicos`,
-`world_targets_volta_identico`, `task_npc::testes`. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
+`world_targets_volta_identico`, `task_npc::testes`, `campos_de_objeto_e_controlador_nos_npcgen_reais`. Controladores
+(B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
 `TEST_DATABASE_URL`/`TEST_REDIS_URL` (ver histórico B243).
 
@@ -304,8 +321,8 @@ arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no
   launcher, instalador `.msi` (CLI do Tauri).
 - Marcar "aguarda reinício" no realm depois de publicar `servidor`/`ambos` (hoje o painel só lista os aplicados).
 - Estúdio: telas próprias, `tasks`/`gshop`; no mapa, polígonos de distrito e portais novos (exigem editar o
-  `.clt` do cliente junto), destinos de teleporte novos (exigem o `world_targets.txt` do cliente), objetos dinâmicos
-  e controladores do `npcgen`, altura do chão pelo GS.
+  `.clt` do cliente junto), destinos de teleporte novos (exigem o `world_targets.txt` do cliente), nome dos objetos
+  dinâmicos (`dwDynObjID` → arquivo do cliente), altura do chão pelo GS.
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).

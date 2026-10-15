@@ -14057,3 +14057,37 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: depois de atualizar pelo launcher, o nome do NPC numa missão leva ao ponto novo.
     - Objetos dinâmicos e controladores do `npcgen`, altura do chão pelo GS.
+
+247. **Sessão 2026-10-15: Estúdio S4, sexta parte — objetos dinâmicos e controladores do `npcgen`.**
+
+    ### a. Pedido
+    Commitar o B246 (feito: `c338690`, `35ec407`) e seguir: objetos dinâmicos e controladores.
+
+    ### b. Evidência
+    - Structs `pack(1)` de `npcgendata.h`: `NPCGENFILEDYNOBJ`/`9`/`10` (`:205-232`) e `NPCGENFILECTRL`/`8` (`:243-282`), com
+      `NPCCTRLTIME` (`:233-241`, faixas nos comentários). Os tamanhos batem com os que o leitor já usava (19/23/24 e
+      195/199).
+    - A área cita o controlador pelo `id` interno; o `iControllerID` é o número que o `aipolicy` passa ao `TriggerSpawn`
+      (`npcgenerator.cpp:3969-4010`; o nosso `npcgen.rs` faz o mesmo).
+    - Conferência nos 117 `npcgen.data`: 238.648 controladores e 9.862 objetos com booleanos 0/1 e horários nas faixas;
+      ids únicos; 1 referência pendurada em 39.318 (a27 do 1.2.6, área → controlador 422 inexistente).
+
+    ### c. O que foi feito
+    - `pw-data-loader/npcgen_editavel.rs`: `Tipo::U8`, `CAMPOS_DO_OBJETO`, `CAMPOS_DO_CONTROLADOR`, `nome_do_controlador`;
+      exemplo `ver_controladores` (diagnóstico).
+    - `pw-recursos`: tipos `objetos`/`controladores` nas rotas do `npcgen` (ler com nome e `usado_por`, editar sem filhos,
+      `id` do controlador imutável, clonar com id novo, remover recusado se citado); o resumo traz objetos, controladores
+      com contagem de citações e os citados inexistentes.
+    - Painel: objetos no mapa, lista de controladores com busca, editor genérico sem filhos, rótulos dos horários, link
+      área/objeto → controlador.
+
+    ### d. Provas
+    - `campos_de_objeto_e_controlador_nos_npcgen_reais` (117 arquivos).
+    - `cargo test -p pw-recursos` com o banco: **19/19**; controladores da a01 do 1.2.6 (346; o 456 citado não se remove;
+      `id` não muda; filhos recusados; `bActived` e `ActiveTime_iHours` editados; clone com id = maior + 1 e removido;
+      publicado; lido pelo `NpcgenEditavel` e pelo `NpcGenData` do GS).
+    - Painel: `teste_recursos.py` (resultado no relatório do bloco).
+
+    ### e. Falta
+    - Ver em jogo: controlador desligado ao subir → criaturas da área não nascem.
+    - Nome dos objetos dinâmicos (o `dwDynObjID` remete a arquivo do cliente) e a altura do chão pelo GS.
