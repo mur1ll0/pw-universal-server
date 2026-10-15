@@ -196,6 +196,11 @@ no índice como `TALK_PROC` (espaço TALK): o `id_dialog` dos serviços de conve
 `TALK_PROC` aparece na lista de tabelas e abre o editor (janelas com texto, origem e opções → janela ou função);
 o salvar da conversa aceita até 256 KiB (`LimitarEntrada`, só essa rota).
 
+**NPCs, serviços e receitas (S3, B241):** o `rotulos.json` ganhou os campos das tabelas `NPC_*` (NPC e os 30
+serviços) e `RECIPE_*` (277 rótulos no total) e os grupos Serviços do NPC, Páginas, Fabricação, Teleporte e
+Missões (antes de Requisitos: `id_skill_service` é serviço, não habilidade). Campo sem comentário no fonte segue
+sem rótulo. O painel desenha também grupo que a lista dele não conhece, antes de "Outros".
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,

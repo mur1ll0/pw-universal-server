@@ -13830,3 +13830,31 @@ comparação lado a lado.
     ### e. Falta
     - Rótulos dos NPCs, dos 30 serviços e das receitas (S3, 2ª parte); o GS precisa ser reiniciado para ler o
       `elements` novo, e o cliente atualizar pelo launcher.
+
+241. **Sessão 2026-10-14: Estúdio S3, segunda parte — rótulos dos NPCs, serviços e receitas.**
+
+    ### a. Pedido
+    Commitar o B240 (feito: `32e115a`, `cdb56b0`, `7bb1766`; mais o commit do `Cargo.lock` do B239) e seguir: os rótulos
+    em português que faltavam no S3.
+
+    ### b. Evidência
+    - Os 114 nomes distintos (com `N`) das tabelas `NPC_*` e `RECIPE_*` (v7 + v156) ainda sem rótulo, com o comentário de
+      cada membro no `ExpTypes.h` do cliente 1.5.5. Sem comentário (`unk*`, `cross_server_type`, `distance_service`,
+      `eliminate_require_item`, `require_item_count`, `require_level2`, `upgrade_addon_rate`…) fica o nome técnico.
+
+    ### c. O que foi feito
+    - `specs/estudio/rotulos.json`: 277 rótulos (90 novos) e os grupos Serviços do NPC, Páginas, Fabricação, Teleporte
+      e Missões, antes de Requisitos (o `id_skill_service` é serviço, não habilidade); campos gerais do NPC (saudação,
+      atributos do monstro, renascer, regra de ataque, taxa…) em Identificação.
+    - Painel: a ficha desenha os grupos novos e qualquer grupo desconhecido antes de "Outros" (antes, grupo fora da
+      lista fixa sumia).
+
+    ### d. Provas
+    - Teste de unidade dos rótulos/grupos com os casos do NPC; `cargo test -p pw-recursos`: 14/14.
+    - Publicado e medido com os dados reais (registro 0 de cada tabela `NPC_*`/`RECIPE_*` com registros): 1.2.6 — 29
+      tabelas, 1.464 campos, 67 sem rótulo (95%); 1.5.5 — 34 tabelas, 2.898 campos, 269 sem rótulo (91%), todos sem
+      comentário no fonte (sobretudo os `unk` das páginas de loja).
+
+    ### e. Falta
+    - S4 (mapas): minimapa interativo, `npcgen`, `region`/`precinct`, teleportes, `task_npc` — exige o servidor montar as
+      peças do minimapa e levantar `nRow`/`nCol` de cada mapa (Estúdio §7).

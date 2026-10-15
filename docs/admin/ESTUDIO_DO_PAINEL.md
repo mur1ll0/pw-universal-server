@@ -224,6 +224,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B240 (S3, 1ª parte):** conversas (`TALK_PROC`) editáveis — escritor com ida e volta, editor de janelas e opções
 > no painel, funções do `enum SERVICE_TYPE` com nome, índice TALK. Faltam do S3: rótulos dos NPCs, dos 30 serviços e
 > das receitas (a ficha genérica já os edita, com listas e referências).
+>
+> **B241 (S3, 2ª parte):** rótulos em português dos NPCs, dos 30 serviços e das receitas, com grupos próprios. Com
+> isso o S3 fica no nível do S2: ficha genérica com rótulos, listas, referências e ícones; telas com regras
+> próprias (loja em grade, forja com receitas, teleporte no mapa) ficam para depois do S4 (mapas).
 
 | fase | entrega |
 | :--- | :--- |
