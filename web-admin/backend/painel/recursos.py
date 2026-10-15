@@ -296,7 +296,7 @@ def registrar_mapas(app):
 
     # Edição do npcgen (B243): áreas de criatura ("areas") e de recurso ("recursos") num rascunho.
     def _mapa_e_tipo(caminho, tipo):
-        if not MAPA.match(caminho) or tipo not in ("areas", "recursos"):
+        if not MAPA.match(caminho) or tipo not in ("areas", "recursos", "objetos", "controladores"):
             raise HTTPException(404, "Área inválida.")
 
     @app.get("/api/realms/{realm}/estudio/mapas/{caminho}/npcgen")

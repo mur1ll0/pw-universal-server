@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -405,6 +405,41 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         std::io::Read::read_to_end(&mut novo.into_reader(), &mut b).unwrap();
         let lido = pw_data_loader::task_npc::Rastreador::ler(&b).unwrap();
         assert_eq!((lido.posicao(id_npc as u32), lido.npcs.len()), (Some([100, 5, -21]), esperado));
+
+        // Controladores e objetos dinâmicos do npcgen (B247): a a01 do 1.2.6 tem 346 controladores, as áreas citam o 456,
+        // e nenhum objeto.
+        let ng = json_de(pedir("GET", "estudio/mapas/world/npcgen").call().unwrap());
+        let ctrls = ng["controladores"].as_array().unwrap().clone();
+        assert_eq!((ctrls.len(), ng["objetos"].as_array().unwrap().len()), (346, 0));
+        let citado = ctrls.iter().find(|c| c[1] == 456).expect("controlador 456").clone();
+        assert!(citado[5].as_u64().unwrap() > 0, "{citado}");
+        let ic = citado[0].as_u64().unwrap();
+        let ficha = json_de(pedir("GET", &format!("estudio/mapas/world/npcgen/controladores/{ic}")).call().unwrap());
+        assert_eq!(ficha["campos"]["id"], 456);
+        assert!(!ficha["usado_por"].as_array().unwrap().is_empty());
+        assert_eq!(erro_de(pedir("GET", "estudio/mapas/world/npcgen/objetos/0").call()).0, 400);
+        let r7 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "controladores", "operacao_id": "t_p4_r7"})).unwrap())["id"].as_i64().unwrap();
+        let em7 = |rel: &str| format!("{rel}?rascunho={r7}");
+        let (s, msg) = erro_de(pedir("DELETE", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}"))).call());
+        assert!(s == 400 && msg.contains("citado"), "{s} {msg}");
+        assert_eq!(erro_de(pedir("PUT", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}"))).send_json(json!({"campos": {"id": 9}}))).0, 400);
+        assert_eq!(erro_de(pedir("PUT", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}"))).send_json(json!({"filhos": [{}]}))).0, 400);
+        let ativo = ficha["campos"]["bActived"].as_bool().unwrap();
+        pedir("PUT", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}")))
+            .send_json(json!({"campos": {"bActived": !ativo, "ActiveTime_iHours": 5}})).unwrap();
+        let f2 = json_de(pedir("GET", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}"))).call().unwrap());
+        assert_eq!((f2["campos"]["bActived"].as_bool(), f2["campos"]["ActiveTime_iHours"].as_i64()), (Some(!ativo), Some(5)));
+        let maior = ctrls.iter().map(|c| c[1].as_i64().unwrap()).max().unwrap();
+        let clone = json_de(pedir("POST", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}/clonar"))).call().unwrap())["resultado"]["indice"].as_u64().unwrap();
+        let fc = json_de(pedir("GET", &em7(&format!("estudio/mapas/world/npcgen/controladores/{clone}"))).call().unwrap());
+        assert_eq!(fc["campos"]["id"].as_i64(), Some(maior + 1), "o clone ganha id novo");
+        pedir("DELETE", &em7(&format!("estudio/mapas/world/npcgen/controladores/{clone}"))).call().unwrap();
+        let p7 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r7]})).unwrap());
+        assert_eq!(p7["aplicados"].as_array().unwrap().len(), 1, "{p7}");
+        let ed = pw_data_loader::npcgen_editavel::NpcgenEditavel::ler(&fs::read(realm2.join("world").join("npcgen.data")).unwrap()).unwrap();
+        let c = pw_data_loader::npcgen_editavel::ler_campos(&ed.controladores[ic as usize], pw_data_loader::npcgen_editavel::CAMPOS_DO_CONTROLADOR, ed.versao);
+        assert_eq!((c["bActived"].as_bool(), c["ActiveTime_iHours"].as_i64(), ed.controladores.len()), (Some(!ativo), Some(5), 346));
+        pw_data_loader::npcgen::NpcGenData::load_from_bytes(&fs::read(realm2.join("world").join("npcgen.data")).unwrap()).unwrap();
     })
     .await
     .unwrap();

@@ -64,6 +64,7 @@ async function abrirMapa(caminho) {
   elemento("mapa-situacao").textContent = "Carregando criaturas…";
   elemento("mapa-detalhe").textContent = "Clique numa criatura para ver os detalhes.";
   mapa.ng = null;
+  desenharListaDeControladores();
   mapa.distritos = null;
   mapa.portais = null;
   mapa.teleportes = null;
@@ -214,6 +215,7 @@ function detalharPonto(ev) {
     mapa.editar = e.target.checked;
     fecharArea();
     if (mapa.editar) await carregarNpcgen();
+    desenharListaDeControladores();
     desenharMapa();
   });
   for (const id of ["mapa-distritos", "mapa-portais", "mapa-teleportes", "mapa-rastreador"]) {
@@ -253,6 +255,15 @@ const ROTULOS_DO_NPCGEN = {
   iRefreshLower: "Renascer mínimo (s)",
   fExtX: "Largura (X)", fExtZ: "Profundidade (Z)", iResType: "Tipo de recurso", idTemplate: "Modelo",
   dwRefreshTime: "Renascer (s)", dwNumber: "Quantidade", fHeiOff: "Altura",
+  // Objeto dinâmico e controlador (B247; comentários de `npcgendata.h:205-282`).
+  dwDynObjID: "Objeto (id)", dir_0: "Direção 1", dir_1: "Direção 2", rad: "Raio", idController: "Controlador", scale: "Escala",
+  id: "Id (citado pelas áreas)", iControllerID: "Gatilho (id do aipolicy)", bActived: "Ligado ao subir",
+  iWaitTime: "Espera após ligar (s)", iStopTime: "Desliga após (s, 0 = nunca)", bActiveTimeInvalid: "Sem horário para ligar",
+  bStopTimeInvalid: "Sem horário para desligar", iActiveTimeRange: "Janela de ativação (s)",
+  ActiveTime_iYear: "Liga: ano (-1 qualquer)", ActiveTime_iMouth: "Liga: mês 0-11", ActiveTime_iWeek: "Liga: dia da semana (0 dom.)",
+  ActiveTime_iDay: "Liga: dia 1-31", ActiveTime_iHours: "Liga: hora", ActiveTime_iMinutes: "Liga: minuto",
+  StopTime_iYear: "Desliga: ano (-1 qualquer)", StopTime_iMouth: "Desliga: mês 0-11", StopTime_iWeek: "Desliga: dia da semana",
+  StopTime_iDay: "Desliga: dia 1-31", StopTime_iHours: "Desliga: hora", StopTime_iMinutes: "Desliga: minuto",
 };
 const CORES_DAS_AREAS = { monstro: "#ff6b6b", npc: "#ffd166", recurso: "#7bd88f" };
 
@@ -264,6 +275,7 @@ async function carregarNpcgen() {
     if (mapa.atual !== m) return;
     mapa.ng = ng;
     Object.assign(mapa.modelos, ng.modelos);
+    desenharListaDeControladores();
     elemento("mapa-situacao").textContent = `${ng.areas.length} áreas de criatura · ${ng.recursos.length} de recurso`
       + (ng.no_rascunho ? ` · com as mudanças do rascunho #${estudio.rascunho}` : " · como está no realm")
       + (estudio.rascunho ? "" : " · escolha um rascunho para editar");
@@ -275,6 +287,7 @@ function linhasDasAreas(tipos) {
   const saida = [];
   for (const a of ng.areas) if (tipos.has(a[1])) saida.push(["areas", a]);
   if (tipos.has("recurso")) for (const a of ng.recursos) saida.push(["recursos", a]);
+  if (tipos.has("objeto")) for (const a of ng.objetos || []) saida.push(["objetos", a]);
   return saida;
 }
 
@@ -283,6 +296,13 @@ function desenharAreas(ctx, tipos) {
   for (const [tipo, a] of linhasDasAreas(tipos)) {
     const [, classe, x, z, ex, ez] = a;
     const [sx, sy] = paraTela(x, z);
+    if (tipo === "objetos") {
+      // Objeto dinâmico (B247): quadrado no ponto.
+      const sel = mapa.area && mapa.area.tipo === "objetos" && mapa.area.indice === a[0];
+      ctx.fillStyle = sel ? "#ffffff" : CORES_DO_MAPA.objeto;
+      ctx.fillRect(sx - 4, sy - 4, 8, 8);
+      continue;
+    }
     // tamanho em metros → meia-medida (÷2) → pixels da tela (2 m por pixel: ÷2)
     const w = Math.max(4, ex / 4 * mapa.escala), h = Math.max(4, ez / 4 * mapa.escala);
     if (sx + w < 0 || sy + h < 0 || sx - w > tela.clientWidth || sy - h > tela.clientHeight) continue;
@@ -310,7 +330,7 @@ function escolherArea(ev) {
     const [sx, sy] = paraTela(a[2], a[3]);
     const d = Math.hypot(sx - mx, sy - my);
     const w = a[4] / 4 * mapa.escala, h = a[5] / 4 * mapa.escala;
-    const n = d <= 12 ? d : (Math.abs(sx - mx) <= w && Math.abs(sy - my) <= h ? 1000 + w * h : Infinity);
+    const n = d <= 12 ? d : tipo === "objetos" ? Infinity : (Math.abs(sx - mx) <= w && Math.abs(sy - my) <= h ? 1000 + w * h : Infinity);
     if (n < nota) { nota = n; melhor = [tipo, a[0]]; }
   }
   if (!melhor) { fecharArea(); elemento("mapa-detalhe").textContent = "Nenhuma área aqui."; desenharMapa(); return; }
@@ -381,22 +401,54 @@ function desenharEditorDeArea() {
   ed.hidden = false;
   const { tipo, indice, dados } = mapa.area;
   const recurso = tipo === "recursos";
+  // Objeto dinâmico e controlador (B247): registro sem filhos.
+  const simples = tipo === "objetos" || tipo === "controladores";
   const campos = mapa.ng.campos;
-  const camposDaArea = recurso ? campos.area_de_recurso : campos.area;
+  const camposDaArea = tipo === "objetos" ? campos.objeto : tipo === "controladores" ? campos.controlador
+    : recurso ? campos.area_de_recurso : campos.area;
   const camposDoFilho = recurso ? campos.recurso : campos.gerador;
   const chaveDoModelo = recurso ? "idTemplate" : "dwID";
   const editavel = !!estudio.rascunho;
   const nomeDoFilho = recurso ? "Recurso" : "Gerador";
 
   const titulo = criar("div", "recursos-linha");
-  titulo.append(criar("strong", "", `${recurso ? "Área de recurso" : "Área de criatura"} #${indice}`),
+  const NOMES_DO_TIPO = { areas: "Área de criatura", recursos: "Área de recurso", objetos: "Objeto dinâmico", controladores: "Controlador" };
+  titulo.append(criar("strong", "", `${NOMES_DO_TIPO[tipo]} #${indice}${dados.nome ? `: ${dados.nome}` : ""}`),
     criar("span", "texto-suave", editavel ? ` · rascunho #${estudio.rascunho}` : " · só leitura: escolha ou crie um rascunho no topo do Estúdio"));
   ed.appendChild(titulo);
 
   const area = criar("fieldset");
-  area.appendChild(criar("legend", "", "Área"));
+  area.appendChild(criar("legend", "", simples ? NOMES_DO_TIPO[tipo] : "Área"));
   area.appendChild(grupoDeCampos(camposDaArea, dados.campos, editavel));
   ed.appendChild(area);
+  // O id do controlador é o que as áreas citam: não se edita (clone para ter outro).
+  const idCtrl = area.querySelector('input[data-campo="id"]');
+  if (tipo === "controladores" && idCtrl) idCtrl.disabled = true;
+  if (tipo === "controladores") {
+    const usos = dados.usado_por || [];
+    const linha = criar("div", "texto-suave", usos.length ? `Citado por ${usos.length}: ` : "Nenhuma área ou objeto cita este controlador.");
+    usos.slice(0, 30).forEach(([t, i], k) => {
+      const a = criar("a", "", `${k ? ", " : ""}${t === "areas" ? "área" : t === "recursos" ? "área de recurso" : "objeto"} #${i}`);
+      a.href = "#";
+      a.addEventListener("click", (e) => { e.preventDefault(); abrirArea(t, i); });
+      linha.appendChild(a);
+    });
+    ed.appendChild(linha);
+  } else if (!simples || tipo === "objetos") {
+    // Área/objeto: o controlador citado, com link.
+    const c = dados.campos.idCtrl ?? dados.campos.idController;
+    if (c) {
+      const ctrl = (mapa.ng.controladores || []).find((x) => x[1] === c);
+      const linha = criar("div", "texto-suave", ctrl ? "Controlador: " : `Controlador ${c}: não existe no arquivo (referência pendurada; o GS trata como ligado).`);
+      if (ctrl) {
+        const a = criar("a", "", `${ctrl[3] || "(sem nome)"} (id ${ctrl[1]}, gatilho ${ctrl[2]}, ${ctrl[4] ? "ligado" : "desligado"} ao subir)`);
+        a.href = "#";
+        a.addEventListener("click", (e) => { e.preventDefault(); abrirArea("controladores", ctrl[0]); });
+        linha.appendChild(a);
+      }
+      ed.appendChild(linha);
+    }
+  }
 
   const filhos = criar("div");
   const desenharFilho = (valores, n) => {
@@ -424,8 +476,10 @@ function desenharEditorDeArea() {
     if (!recurso && dados.campos.iNPCType === 1) linhaDoRastreador(f, valores[chaveDoModelo], area);
     filhos.appendChild(f);
   };
-  dados.filhos.forEach(desenharFilho);
-  ed.appendChild(filhos);
+  if (!simples) {
+    dados.filhos.forEach(desenharFilho);
+    ed.appendChild(filhos);
+  }
 
   if (!editavel) return;
   const rota = `/${encodeURIComponent(mapa.atual.caminho)}/npcgen/${tipo}/${indice}?rascunho=${estudio.rascunho}`;
@@ -437,24 +491,30 @@ function desenharEditorDeArea() {
     botoes.appendChild(b);
     return b;
   };
-  botao(`+ ${nomeDoFilho.toLowerCase()} (cópia do último)`, "botao-secundario", () => {
-    const ultimos = [...filhos.querySelectorAll("fieldset[data-filho]")];
-    desenharFilho(ultimos.length ? valoresDosCampos(ultimos[ultimos.length - 1]) : {}, ultimos.length);
-  });
-  const pos = botao("Posicionar pelo clique", "botao-secundario", () => {
-    mapa.posicionando = !mapa.posicionando;
-    pos.textContent = mapa.posicionando ? "Clique no mapa…" : "Posicionar pelo clique";
-  });
+  if (!simples) {
+    botao(`+ ${nomeDoFilho.toLowerCase()} (cópia do último)`, "botao-secundario", () => {
+      const ultimos = [...filhos.querySelectorAll("fieldset[data-filho]")];
+      desenharFilho(ultimos.length ? valoresDosCampos(ultimos[ultimos.length - 1]) : {}, ultimos.length);
+    });
+  }
+  if (tipo !== "controladores") {
+    const pos = botao("Posicionar pelo clique", "botao-secundario", () => {
+      mapa.posicionando = !mapa.posicionando;
+      pos.textContent = mapa.posicionando ? "Clique no mapa…" : "Posicionar pelo clique";
+    });
+  }
+  const nomeCurto = NOMES_DO_TIPO[tipo].toLowerCase();
   botao("Salvar no rascunho", "botao-primario", () => acaoNaArea(async () => {
-    const corpo = { campos: valoresDosCampos(area), filhos: [...filhos.querySelectorAll("fieldset[data-filho]")].map(valoresDosCampos) };
+    const corpo = { campos: valoresDosCampos(area) };
+    if (!simples) corpo.filhos = [...filhos.querySelectorAll("fieldset[data-filho]")].map(valoresDosCampos);
     return api(rotaDoMapa(rota), { method: "PUT", body: JSON.stringify(corpo) });
-  }, () => "Área salva no rascunho.", () => indice));
-  botao("Clonar área", "botao-secundario", () => acaoNaArea(
+  }, () => "Salvo no rascunho.", () => indice));
+  botao("Clonar", "botao-secundario", () => acaoNaArea(
     () => api(rotaDoMapa(rota.replace("?", "/clonar?")), { method: "POST" }),
-    (r) => `Área clonada: #${r.resultado.indice} (mesma posição; mova-a).`, (r) => r.resultado.indice));
-  botao("Remover área", "botao-secundario texto-perigo", () => {
-    if (!confirm(`Remover a ${recurso ? "área de recurso" : "área"} #${indice}? As seguintes sobem um número.`)) return;
-    acaoNaArea(() => api(rotaDoMapa(rota), { method: "DELETE" }), () => "Área removida no rascunho.", () => null);
+    (r) => `Clonado: #${r.resultado.indice}${tipo === "controladores" ? " (id novo)" : " (mesma posição; mova-o)"}.`, (r) => r.resultado.indice));
+  botao("Remover", "botao-secundario texto-perigo", () => {
+    if (!confirm(`Remover ${nomeCurto} #${indice}? Os seguintes sobem um número.`)) return;
+    acaoNaArea(() => api(rotaDoMapa(rota), { method: "DELETE" }), () => "Removido no rascunho.", () => null);
   });
   ed.appendChild(botoes);
 }
@@ -833,4 +893,42 @@ async function linhaDoRastreador(fieldset, idNpc, campoDaArea) {
     } catch (erro) { alerta("erro", "Estúdio", erro.message); }
   });
   linha.appendChild(b);
+}
+
+
+/* Controladores do npcgen (B247): lista com busca por nome, id ou gatilho; clique abre o controlador no editor. */
+function desenharListaDeControladores() {
+  let caixa = elemento("mapa-controladores");
+  if (!caixa) {
+    caixa = criar("details", "mapa-editor");
+    caixa.id = "mapa-controladores";
+    elemento("mapa-editor").before(caixa);
+  }
+  caixa.replaceChildren();
+  const ng = mapa.ng;
+  caixa.hidden = !mapa.editar || !ng;
+  if (!ng) return;
+  const lista = ng.controladores || [];
+  const resumo = criar("summary", "", `Controladores do npcgen (${lista.length})`
+    + (ng.controladores_inexistentes_citados?.length ? ` · citados e inexistentes: ${ng.controladores_inexistentes_citados.join(", ")}` : ""));
+  const busca = criar("input", "campo");
+  busca.type = "search";
+  busca.placeholder = "Nome, id ou gatilho";
+  const saida = criar("div", "texto-suave");
+  const filtrar = () => {
+    const t = busca.value.trim().toLowerCase();
+    saida.replaceChildren();
+    const achados = lista.filter((c) => !t || String(c[1]) === t || String(c[2]) === t || (c[3] || "").toLowerCase().includes(t));
+    for (const c of achados.slice(0, 60)) {
+      const a = criar("a", "", `#${c[0]} ${c[3] || "(sem nome)"} · id ${c[1]} · gatilho ${c[2]} · ${c[4] ? "ligado" : "desligado"} · ${c[5]} citações`);
+      a.href = "#";
+      a.style.display = "block";
+      a.addEventListener("click", (e) => { e.preventDefault(); abrirArea("controladores", c[0]); });
+      saida.appendChild(a);
+    }
+    if (achados.length > 60) saida.appendChild(criar("div", "", `… e mais ${achados.length - 60}; refine a busca.`));
+  };
+  busca.addEventListener("input", filtrar);
+  caixa.append(resumo, busca, saida);
+  filtrar();
 }

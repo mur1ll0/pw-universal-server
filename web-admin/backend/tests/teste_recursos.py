@@ -200,6 +200,9 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/mapas/a01/npcgen/recursos/3/clonar")
         await self.cliente.get("/api/realms/realm_155/estudio/mapas/a01/npcgen", params={"rascunho": 4})
         self.assertEqual(RecursosFalso.pedidos[-1]["consulta"], {"rascunho": ["4"]})
+        # Objetos e controladores (B247) passam pela mesma rota.
+        await self.cliente.get("/api/realms/realm_155/estudio/mapas/a01/npcgen/controladores/7", params={"rascunho": 4})
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/mapas/a01/npcgen/controladores/7")
         antes = len(RecursosFalso.pedidos)
         r = await self.cliente.put("/api/realms/realm_126/estudio/mapas/world/npcgen/xyz/1", params={"rascunho": 4},
                                    headers=csrf, json={"campos": {"vPos_x": 1}})

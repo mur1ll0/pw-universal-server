@@ -169,6 +169,8 @@ pub enum Tipo {
     U32,
     F32,
     Bool,
+    /// `unsigned char` (`dir[2]`, `rad`, `scale` dos objetos dinâmicos, B247).
+    U8,
 }
 
 /// `(nome, tipo, deslocamento, versão mínima)` — os nomes seguem as structs de `npcgendata.h`.
@@ -203,11 +205,39 @@ pub const CAMPOS_DO_RECURSO: &[Campo] = &[
     ("dwNumber", Tipo::U32, 12, 1), ("fHeiOff", Tipo::F32, 16, 1),
 ];
 
+/// Objeto dinâmico (`NPCGENFILEDYNOBJ`/`9`/`10`, `npcgendata.h:205-232`, `pack(1)`).
+pub const CAMPOS_DO_OBJETO: &[Campo] = &[
+    ("dwDynObjID", Tipo::U32, 0, 1), ("vPos_x", Tipo::F32, 4, 1), ("vPos_y", Tipo::F32, 8, 1), ("vPos_z", Tipo::F32, 12, 1),
+    ("dir_0", Tipo::U8, 16, 1), ("dir_1", Tipo::U8, 17, 1), ("rad", Tipo::U8, 18, 1),
+    ("idController", Tipo::U32, 19, 9), ("scale", Tipo::U8, 23, 10),
+];
+
+/// Controlador (`NPCGENFILECTRL`/`8`, `npcgendata.h:243-282`, `pack(1)`). O nome (`szName[128]`, bytes 8..136, GBK)
+/// não está aqui: lê-se à parte (`nome_do_controlador`). Horários: ano [1900-2100], mês [0,11], dia da semana [0,6]
+/// (0 = domingo), dia [1,31], hora [0,23], minuto [0,59]; -1 = qualquer (`NPCCTRLTIME`, `:233-241`).
+pub const CAMPOS_DO_CONTROLADOR: &[Campo] = &[
+    ("id", Tipo::U32, 0, 1), ("iControllerID", Tipo::I32, 4, 1), ("bActived", Tipo::Bool, 136, 1),
+    ("iWaitTime", Tipo::I32, 137, 1), ("iStopTime", Tipo::I32, 141, 1), ("bActiveTimeInvalid", Tipo::Bool, 145, 1),
+    ("bStopTimeInvalid", Tipo::Bool, 146, 1),
+    ("ActiveTime_iYear", Tipo::I32, 147, 1), ("ActiveTime_iMouth", Tipo::I32, 151, 1), ("ActiveTime_iWeek", Tipo::I32, 155, 1),
+    ("ActiveTime_iDay", Tipo::I32, 159, 1), ("ActiveTime_iHours", Tipo::I32, 163, 1), ("ActiveTime_iMinutes", Tipo::I32, 167, 1),
+    ("StopTime_iYear", Tipo::I32, 171, 1), ("StopTime_iMouth", Tipo::I32, 175, 1), ("StopTime_iWeek", Tipo::I32, 179, 1),
+    ("StopTime_iDay", Tipo::I32, 183, 1), ("StopTime_iHours", Tipo::I32, 187, 1), ("StopTime_iMinutes", Tipo::I32, 191, 1),
+    ("iActiveTimeRange", Tipo::I32, 195, 8),
+];
+
+/// Os bytes do nome do controlador até o primeiro NUL (GBK, como o editor gravou).
+pub fn nome_do_controlador(b: &[u8]) -> &[u8] {
+    let n = &b[8..136.min(b.len())];
+    &n[..n.iter().position(|&c| c == 0).unwrap_or(n.len())]
+}
+
 /// Os campos de um registro como JSON `{nome: valor}`, só os que a versão tem.
 pub fn ler_campos(b: &[u8], campos: &[Campo], versao: u32) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     for &(nome, tipo, o, min) in campos {
-        if versao < min || o + 4 > b.len() && tipo != Tipo::Bool {
+        let largura = if matches!(tipo, Tipo::Bool | Tipo::U8) { 1 } else { 4 };
+        if versao < min || o + largura > b.len() {
             continue;
         }
         let v = match tipo {
@@ -215,6 +245,7 @@ pub fn ler_campos(b: &[u8], campos: &[Campo], versao: u32) -> serde_json::Map<St
             Tipo::U32 => serde_json::json!(u32::from_le_bytes(b[o..o + 4].try_into().unwrap())),
             Tipo::F32 => serde_json::json!(f32::from_le_bytes(b[o..o + 4].try_into().unwrap())),
             Tipo::Bool => serde_json::json!(b[o] != 0),
+            Tipo::U8 => serde_json::json!(b[o]),
         };
         m.insert(nome.to_string(), v);
     }
@@ -242,6 +273,7 @@ pub fn definir_campo(b: &mut [u8], campos: &[Campo], versao: u32, nome: &str, va
             b[o..o + 4].copy_from_slice(&v.to_le_bytes());
         }
         Tipo::Bool => b[o] = valor.as_bool().ok_or_else(erro)? as u8,
+        Tipo::U8 => b[o] = u8::try_from(valor.as_i64().ok_or_else(erro)?).map_err(|_| erro())?,
     }
     Ok(())
 }

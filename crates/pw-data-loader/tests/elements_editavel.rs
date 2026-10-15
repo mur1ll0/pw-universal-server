@@ -203,3 +203,56 @@ fn world_targets_volta_identico() {
         assert_eq!((relido.get(id).unwrap().pos, relido.lista.len()), ([1.0, 2.0, 3.0], w.lista.len()));
     }
 }
+
+/// B247: os campos de objeto dinâmico e de controlador caem no lugar certo em todos os npcgen dos dois realms —
+/// booleanos 0/1, horários nas faixas do `NPCCTRLTIME` (ou -1), e quase todo `idCtrl` de área num controlador que existe
+/// (há referência pendurada de verdade: a a27 do 1.2.6 tem área com o controlador 422, que não está no arquivo).
+#[test]
+fn campos_de_objeto_e_controlador_nos_npcgen_reais() {
+    use pw_data_loader::npcgen_editavel::{ler_campos, NpcgenEditavel, CAMPOS_DA_AREA, CAMPOS_DO_CONTROLADOR, CAMPOS_DO_OBJETO};
+    let (mut ctrls, mut objs, mut refs, mut pendurados) = (0, 0, 0, Vec::new());
+    for realm in ["realm_126", "realm_155"] {
+        let raiz = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config"));
+        let arquivos = std::fs::read_dir(&raiz).unwrap().filter_map(|e| e.ok()).map(|e| e.path().join("npcgen.data")).filter(|p| p.exists());
+        for p in arquivos {
+            let n = NpcgenEditavel::ler(&std::fs::read(&p).unwrap()).unwrap();
+            let v = n.versao;
+            let mut ids = std::collections::HashSet::new();
+            for c in &n.controladores {
+                let m = ler_campos(c, CAMPOS_DO_CONTROLADOR, v);
+                for b in ["bActived", "bActiveTimeInvalid", "bStopTimeInvalid"] {
+                    assert!(m[b].is_boolean() && (c[match b { "bActived" => 136, "bActiveTimeInvalid" => 145, _ => 146 }] <= 1), "{}: {b}", p.display());
+                }
+                for (k, (lo, hi)) in [("iMouth", (-1, 11)), ("iWeek", (-1, 6)), ("iHours", (-1, 23)), ("iMinutes", (-1, 59))] {
+                    for t in ["ActiveTime", "StopTime"] {
+                        let x = m[&format!("{t}_{k}")].as_i64().unwrap();
+                        assert!((lo..=hi).contains(&x), "{}: {t}_{k} = {x}", p.display());
+                    }
+                }
+                assert!(ids.insert(m["id"].as_u64().unwrap()), "{}: id de controlador repetido", p.display());
+                ctrls += 1;
+            }
+            for o in &n.objetos {
+                let m = ler_campos(o, CAMPOS_DO_OBJETO, v);
+                assert!(m["vPos_x"].as_f64().unwrap().abs() < 1e5, "{}", p.display());
+                if let Some(c) = m.get("idController").and_then(|x| x.as_u64()).filter(|&c| c != 0) {
+                    if !ids.contains(&c) {
+                        pendurados.push(format!("{} objeto→{c}", p.display()));
+                    }
+                }
+                objs += 1;
+            }
+            for a in &n.areas {
+                if let Some(c) = ler_campos(&a.bruto, CAMPOS_DA_AREA, v).get("idCtrl").and_then(|x| x.as_i64()).filter(|&c| c != 0) {
+                    if !ids.contains(&(c as u64)) {
+                        pendurados.push(format!("{} área→{c}", p.display()));
+                    }
+                    refs += 1;
+                }
+            }
+        }
+    }
+    println!("controladores {ctrls}, objetos {objs}, áreas com controlador {refs}, pendurados {}", pendurados.len());
+    assert!(ctrls > 100 && objs > 100 && refs > 100, "{ctrls} {objs} {refs}");
+    assert!(pendurados.len() * 50 < refs, "pendurados demais (deslocamento errado?): {pendurados:?}");
+}

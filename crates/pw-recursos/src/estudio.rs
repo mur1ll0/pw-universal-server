@@ -965,7 +965,8 @@ impl Estudio {
 // ------------------------------------------------------------------ edição do npcgen (S4, B243)
 
 use pw_data_loader::npcgen_editavel::{
-    self as ng, NpcgenEditavel, CAMPOS_DA_AREA, CAMPOS_DA_AREA_DE_RECURSO, CAMPOS_DO_GERADOR, CAMPOS_DO_RECURSO,
+    self as ng, NpcgenEditavel, CAMPOS_DA_AREA, CAMPOS_DA_AREA_DE_RECURSO, CAMPOS_DO_CONTROLADOR, CAMPOS_DO_GERADOR,
+    CAMPOS_DO_OBJETO, CAMPOS_DO_RECURSO,
 };
 
 /// Áreas de criatura (`AREA` + `NPCGEN`) ou de recurso (`RESAREA` + `RES`), `npcgendata.h:57-102`.
@@ -973,6 +974,10 @@ use pw_data_loader::npcgen_editavel::{
 pub enum TipoDeArea {
     Criatura,
     Recurso,
+    /// Objeto dinâmico (`NPCGENFILEDYNOBJ*`), sem filhos (B247).
+    Objeto,
+    /// Controlador (`NPCGENFILECTRL*`), sem filhos (B247).
+    Controlador,
 }
 
 impl TipoDeArea {
@@ -980,6 +985,8 @@ impl TipoDeArea {
         match s {
             "areas" => Ok(TipoDeArea::Criatura),
             "recursos" => Ok(TipoDeArea::Recurso),
+            "objetos" => Ok(TipoDeArea::Objeto),
+            "controladores" => Ok(TipoDeArea::Controlador),
             _ => bail!("tipo de área inválido: {s}"),
         }
     }
@@ -987,12 +994,16 @@ impl TipoDeArea {
         match self {
             TipoDeArea::Criatura => (CAMPOS_DA_AREA, CAMPOS_DO_GERADOR, "área", "gerador"),
             TipoDeArea::Recurso => (CAMPOS_DA_AREA_DE_RECURSO, CAMPOS_DO_RECURSO, "área de recurso", "recurso"),
+            TipoDeArea::Objeto => (CAMPOS_DO_OBJETO, &[], "objeto dinâmico", ""),
+            TipoDeArea::Controlador => (CAMPOS_DO_CONTROLADOR, &[], "controlador", ""),
         }
     }
     fn nome(self) -> &'static str {
         match self {
             TipoDeArea::Criatura => "área",
             TipoDeArea::Recurso => "área de recurso",
+            TipoDeArea::Objeto => "objeto dinâmico",
+            TipoDeArea::Controlador => "controlador",
         }
     }
 }
@@ -1003,6 +1014,29 @@ fn numero(m: &Map<String, Value>, k: &str) -> f64 {
 
 fn um_decimal(x: f64) -> f64 {
     (x * 10.0).round() / 10.0
+}
+
+/// Quem cita o controlador `id` (o `id` interno, não o `iControllerID`): áreas de criatura e de recurso pelo `idCtrl`,
+/// objetos pelo `idController` (`npcgendata.h`; o leitor do GS faz o mesmo em `npcgen.rs`).
+fn usos_do_controlador(n: &NpcgenEditavel, id: u32) -> Vec<Value> {
+    let v = n.versao;
+    let mut usos = Vec::new();
+    for (i, a) in n.areas.iter().enumerate() {
+        if ng::ler_campos(&a.bruto, CAMPOS_DA_AREA, v).get("idCtrl").and_then(Value::as_i64) == Some(id as i64) {
+            usos.push(json!(["areas", i]));
+        }
+    }
+    for (i, a) in n.areas_de_recurso.iter().enumerate() {
+        if ng::ler_campos(&a.bruto, CAMPOS_DA_AREA_DE_RECURSO, v).get("idCtrl").and_then(Value::as_i64) == Some(id as i64) {
+            usos.push(json!(["recursos", i]));
+        }
+    }
+    for (i, o) in n.objetos.iter().enumerate() {
+        if ng::ler_campos(o, CAMPOS_DO_OBJETO, v).get("idController").and_then(Value::as_u64) == Some(id as u64) {
+            usos.push(json!(["objetos", i]));
+        }
+    }
+    usos
 }
 
 /// Os campos que a versão do arquivo tem, `[[nome, tipo]]`, na ordem da struct.
@@ -1113,9 +1147,52 @@ impl Estudio {
                 um_decimal(numero(&c, "fExtX")), um_decimal(numero(&c, "fExtZ")), primeiro, a.recursos.len(), total,
                 c.get("bInitGen") == Some(&json!(true))]));
         }
+        // Objetos dinâmicos e controladores (B247). Os controladores levam quantas áreas/objetos os citam.
+        let objetos: Vec<Value> = n
+            .objetos
+            .iter()
+            .enumerate()
+            .map(|(i, o)| {
+                let c = ng::ler_campos(o, CAMPOS_DO_OBJETO, v);
+                json!([i, "objeto", um_decimal(numero(&c, "vPos_x")), um_decimal(numero(&c, "vPos_z")), c["dwDynObjID"], c.get("idController")])
+            })
+            .collect();
+        let mut citacoes: HashMap<i64, usize> = HashMap::new();
+        for a in &n.areas {
+            if let Some(c) = ng::ler_campos(&a.bruto, CAMPOS_DA_AREA, v).get("idCtrl").and_then(Value::as_i64).filter(|&c| c != 0) {
+                *citacoes.entry(c).or_default() += 1;
+            }
+        }
+        for a in &n.areas_de_recurso {
+            if let Some(c) = ng::ler_campos(&a.bruto, CAMPOS_DA_AREA_DE_RECURSO, v).get("idCtrl").and_then(Value::as_i64).filter(|&c| c != 0) {
+                *citacoes.entry(c).or_default() += 1;
+            }
+        }
+        for o in &n.objetos {
+            if let Some(c) = ng::ler_campos(o, CAMPOS_DO_OBJETO, v).get("idController").and_then(Value::as_i64).filter(|&c| c != 0) {
+                *citacoes.entry(c).or_default() += 1;
+            }
+        }
+        let controladores: Vec<Value> = n
+            .controladores
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let c = ng::ler_campos(b, CAMPOS_DO_CONTROLADOR, v);
+                let id = c["id"].as_i64().unwrap_or(0);
+                json!([i, id, c["iControllerID"], nomes::legivel(ng::nome_do_controlador(b)), c["bActived"], citacoes.get(&id).copied().unwrap_or(0)])
+            })
+            .collect();
+        let ids: std::collections::HashSet<i64> = controladores.iter().filter_map(|c| c[1].as_i64()).collect();
+        let pendurados: Vec<i64> = citacoes.keys().filter(|c| !ids.contains(c)).copied().collect();
         Ok(json!({
             "item": nome,
             "versao_do_arquivo": v,
+            "objetos": objetos,
+            "colunas_dos_objetos": ["indice", "tipo", "x", "z", "dwDynObjID", "idController"],
+            "controladores": controladores,
+            "colunas_dos_controladores": ["indice", "id", "iControllerID", "nome", "bActived", "citado_por"],
+            "controladores_inexistentes_citados": pendurados,
             "no_rascunho": no_rascunho,
             "colunas": ["indice", "tipo", "x", "z", "ext_x", "ext_z", "primeiro_modelo", "geradores", "quantidade", "nasce_ao_subir"],
             "areas": areas,
@@ -1126,6 +1203,8 @@ impl Estudio {
                 "gerador": campos_da_versao(CAMPOS_DO_GERADOR, v),
                 "area_de_recurso": campos_da_versao(CAMPOS_DA_AREA_DE_RECURSO, v),
                 "recurso": campos_da_versao(CAMPOS_DO_RECURSO, v),
+                "objeto": campos_da_versao(CAMPOS_DO_OBJETO, v),
+                "controlador": campos_da_versao(CAMPOS_DO_CONTROLADOR, v),
             },
         }))
     }
@@ -1136,16 +1215,25 @@ impl Estudio {
         let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
         let n = NpcgenEditavel::ler(&bytes).map_err(|e| anyhow::anyhow!("npcgen: {e}"))?;
         let (ca, cf, _, _) = tipo.campos();
+        let vazio = Vec::new();
         let (bruto, filhos) = match tipo {
             TipoDeArea::Criatura => n.areas.get(indice).map(|a| (&a.bruto, &a.geradores)),
             TipoDeArea::Recurso => n.areas_de_recurso.get(indice).map(|a| (&a.bruto, &a.recursos)),
+            TipoDeArea::Objeto => n.objetos.get(indice).map(|b| (b, &vazio)),
+            TipoDeArea::Controlador => n.controladores.get(indice).map(|b| (b, &vazio)),
         }
         .with_context(|| format!("{} {indice} não existe", tipo.nome()))?;
-        Ok(json!({
+        let mut r = json!({
             "indice": indice,
             "campos": ng::ler_campos(bruto, ca, n.versao),
             "filhos": filhos.iter().map(|f| ng::ler_campos(f, cf, n.versao)).collect::<Vec<_>>(),
-        }))
+        });
+        if tipo == TipoDeArea::Controlador {
+            let id = u32::from_le_bytes(bruto[0..4].try_into().unwrap());
+            r["nome"] = json!(nomes::legivel(ng::nome_do_controlador(bruto)));
+            r["usado_por"] = json!(usos_do_controlador(&n, id));
+        }
+        Ok(r)
     }
 
     /// Aplica uma mudança ao npcgen do mapa no rascunho; se o resultado volta a ser o do realm, o item sai.
@@ -1263,9 +1351,34 @@ impl Estudio {
         self.alterar_npcgen(gov, versao, caminho, rascunho, move |n| {
             let v = n.versao;
             let (ca, cf, onde_a, onde_f) = tipo.campos();
+            if matches!(tipo, TipoDeArea::Objeto | TipoDeArea::Controlador) {
+                if filhos.is_some() {
+                    bail!("{} não tem filhos", tipo.nome());
+                }
+                let bruto = match tipo {
+                    TipoDeArea::Objeto => n.objetos.get_mut(indice),
+                    _ => n.controladores.get_mut(indice),
+                }
+                .with_context(|| format!("{} {indice} não existe", tipo.nome()))?;
+                if tipo == TipoDeArea::Controlador
+                    && campos.get("id").is_some_and(|x| x.as_u64() != Some(u32::from_le_bytes(bruto[0..4].try_into().unwrap()) as u64))
+                {
+                    bail!("o id do controlador é o que as áreas citam (idCtrl): não se edita; clone para ter outro");
+                }
+                let antes = ng::ler_campos(bruto, ca, v);
+                for (k, valor) in &campos {
+                    ng::definir_campo(bruto, ca, v, k, valor, onde_a).map_err(|e| anyhow::anyhow!("{e}"))?;
+                }
+                let depois = ng::ler_campos(bruto, ca, v);
+                let mudados: Map<String, Value> =
+                    depois.iter().filter(|(k, x)| antes.get(*k) != Some(*x)).map(|(k, x)| (k.clone(), json!([antes[k], x]))).collect();
+                let mudanca = json!({ "acao": "editado", "tipo": tipo.nome(), "indice": indice, "campos": mudados });
+                return Ok((json!({ "indice": indice }), mudanca));
+            }
             let (bruto, lista, tam) = match tipo {
                 TipoDeArea::Criatura => n.areas.get_mut(indice).map(|a| (&mut a.bruto, &mut a.geradores, ng::tamanho_do_gerador(v))),
                 TipoDeArea::Recurso => n.areas_de_recurso.get_mut(indice).map(|a| (&mut a.bruto, &mut a.recursos, ng::TAMANHO_DO_RECURSO)),
+                _ => unreachable!(),
             }
             .with_context(|| format!("{} {indice} não existe", tipo.nome()))?;
             let antes = ng::ler_campos(bruto, ca, v);
@@ -1313,6 +1426,20 @@ impl Estudio {
                     n.areas_de_recurso.push(a);
                     n.areas_de_recurso.len() - 1
                 }
+                TipoDeArea::Objeto => {
+                    let a = n.objetos.get(indice).cloned().with_context(|| format!("objeto {indice} não existe"))?;
+                    n.objetos.push(a);
+                    n.objetos.len() - 1
+                }
+                TipoDeArea::Controlador => {
+                    // O `id` é a chave que as áreas citam: o clone ganha o maior + 1 (o `iControllerID`, que o
+                    // `aipolicy` usa, fica igual — mude-o se o clone for ligado por outro gatilho).
+                    let mut a = n.controladores.get(indice).cloned().with_context(|| format!("controlador {indice} não existe"))?;
+                    let maior = n.controladores.iter().map(|c| u32::from_le_bytes(c[0..4].try_into().unwrap())).max().unwrap_or(0);
+                    a[0..4].copy_from_slice(&(maior + 1).to_le_bytes());
+                    n.controladores.push(a);
+                    n.controladores.len() - 1
+                }
             };
             Ok((json!({ "indice": novo }), json!({ "acao": "clonada", "tipo": tipo.nome(), "indice": novo, "base": indice })))
         })
@@ -1338,6 +1465,25 @@ impl Estudio {
                     let a = n.areas_de_recurso.remove(indice);
                     let c = ng::ler_campos(&a.bruto, CAMPOS_DA_AREA_DE_RECURSO, n.versao);
                     (numero(&c, "vPos_x"), numero(&c, "vPos_z"))
+                }
+                TipoDeArea::Objeto => {
+                    if indice >= n.objetos.len() {
+                        bail!("objeto {indice} não existe");
+                    }
+                    let o = n.objetos.remove(indice);
+                    let c = ng::ler_campos(&o, CAMPOS_DO_OBJETO, n.versao);
+                    (numero(&c, "vPos_x"), numero(&c, "vPos_z"))
+                }
+                TipoDeArea::Controlador => {
+                    let c = n.controladores.get(indice).with_context(|| format!("controlador {indice} não existe"))?;
+                    let id = u32::from_le_bytes(c[0..4].try_into().unwrap());
+                    let usos = usos_do_controlador(n, id);
+                    if !usos.is_empty() {
+                        bail!("o controlador {id} é citado por {} área(s)/objeto(s) (ex.: {}); mude o idCtrl delas antes",
+                            usos.len(), usos.iter().take(3).map(|u| u.to_string()).collect::<Vec<_>>().join(", "));
+                    }
+                    n.controladores.remove(indice);
+                    (0.0, 0.0)
                 }
             };
             Ok((json!({ "removida": indice }),
