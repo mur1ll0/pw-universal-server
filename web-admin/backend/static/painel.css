@@ -763,3 +763,7 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .estudio-grupo .recursos-tabela td { padding: 4px 6px; }
 .estudio-seletor { flex-basis: 100%; border: 1px solid var(--borda); border-radius: 8px; padding: 6px; background: var(--superficie-2); }
 .estudio-seletor .estudio-lista { max-height: 220px; }
+.estudio-nome-com-icone { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.estudio-icone { width: 32px; height: 32px; border-radius: 6px; flex: none; }
+.estudio-icone-pequeno { width: 20px; height: 20px; border-radius: 4px; flex: none; font-size: 9px; }
+.estudio-subtitulo { margin: 10px 0 4px; font-size: 13px; color: var(--texto-2); font-weight: 500; }

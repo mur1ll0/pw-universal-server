@@ -98,7 +98,9 @@ async function listarRegistrosDoEstudio() {
     const li = criar("li");
     const b = criar("button", estudio.ficha?.indice === reg.indice ? "ativo" : "");
     b.type = "button";
-    b.append(criar("span", "", reg.nome || `(registro ${reg.indice})`), criar("small", "", reg.id ?? ""));
+    const nome = criar("span", "estudio-nome-com-icone");
+    nome.append(iconeDoEstudio(reg.icone, reg.nome, "estudio-icone-pequeno"), criar("span", "", reg.nome || `(registro ${reg.indice})`));
+    b.append(nome, criar("small", "", reg.id ?? ""));
     b.addEventListener("click", () => abrirFichaDoEstudio(reg.indice));
     li.appendChild(b);
     lista.appendChild(li);
@@ -123,6 +125,14 @@ async function abrirFichaDoEstudio(indice) {
   document.querySelectorAll("#estudio-registros button").forEach((b, i) => b.classList.toggle("ativo", estudio.registros[i]?.indice === indice));
 }
 
+const GRUPOS_DO_ESTUDIO = ["Identificação", "Requisitos", "Combate", "Comércio", "Durabilidade e fabricação",
+  "Efeitos", "Drops", "Comportamento", "Habilidades", "Visual", "Outros"];
+
+/* Ícone do registro (o `file_icon` em hex GBK, rota de ícones do painel, B188/B239). */
+function iconeDoEstudio(hex, nome, classe = "estudio-icone") {
+  return imagemDoIcone("m", hex || "", nome || "?", classe);
+}
+
 /* Agrupa campos repetidos (`drop_matters_1_id`, `drop_matters_1_probability`, … ou `id_tasks_1`, …)
    em tabelas: prefixo + número da linha + sufixo da coluna (B238, ESTUDIO §5 "campos repetidos em lista"). */
 function agruparCamposDoEstudio(campos) {
@@ -134,7 +144,7 @@ function agruparCamposDoEstudio(campos) {
     if (m) { [, chave, linha, coluna] = m; }
     else if ((m = c.nome.match(/^(.*\D)_?(\d+)$/)) && !/^ID$/.test(c.nome)) { [, chave, linha] = m; coluna = "valor"; }
     if (chave === undefined) { soltos.push(c); continue; }
-    if (!grupos.has(chave)) grupos.set(chave, { linhas: new Map(), colunas: [] });
+    if (!grupos.has(chave)) grupos.set(chave, { linhas: new Map(), colunas: [], grupo: c.grupo });
     const g = grupos.get(chave);
     if (!g.colunas.includes(coluna)) g.colunas.push(coluna);
     if (!g.linhas.has(linha)) g.linhas.set(linha, {});
@@ -151,7 +161,8 @@ function entradaDoCampo(c, editavel, entradas) {
   const caixa = criar("div", "estudio-entrada");
   const entrada = criar("input", "campo");
   entrada.disabled = !editavel || c.nome === "ID";
-  entrada.setAttribute("aria-label", c.nome);
+  entrada.setAttribute("aria-label", c.rotulo || c.nome);
+  entrada.title = `${c.nome} · ${c.tipo}`;
   if (c.tipo === "int32") { entrada.type = "number"; entrada.step = "1"; }
   else if (c.tipo === "float") { entrada.type = "number"; entrada.step = "any"; }
   else entrada.maxLength = c.tipo === "wstring" ? c.tamanho / 2 : c.tamanho;
@@ -165,8 +176,10 @@ function entradaDoCampo(c, editavel, entradas) {
       ref.textContent = "id inexistente";
       ref.classList.add("texto-erro");
     } else if (c.referencia) {
-      const link = criar("a", "", `${c.referencia.nome || "(sem nome)"} · ${c.referencia.tabela}`);
+      ref.appendChild(iconeDoEstudio(c.referencia.icone, c.referencia.nome, "estudio-icone-pequeno"));
+      const link = criar("a", "", c.referencia.nome || `(sem nome) · ${c.referencia.tabela}`);
       link.href = "#";
+      link.title = `${c.referencia.tabela} · id ${c.referencia.id}`;
       link.addEventListener("click", (e) => { e.preventDefault(); abrirRegistroDoEstudio(c.referencia.tabela, c.referencia.indice); });
       ref.appendChild(link);
     }
@@ -213,7 +226,9 @@ function seletorDeReferencia(espaco, entrada) {
         const li = criar("li");
         const b = criar("button");
         b.type = "button";
-        b.append(criar("span", "", x.nome || "(sem nome)"), criar("small", "", `${x.id} · ${x.tabela}`));
+        const nome = criar("span", "estudio-nome-com-icone");
+        nome.append(iconeDoEstudio(x.icone, x.nome, "estudio-icone-pequeno"), criar("span", "", x.nome || "(sem nome)"));
+        b.append(nome, criar("small", "", `${x.id} · ${x.tabela}`));
         b.addEventListener("click", () => {
           entrada.value = x.id;
           entrada.dispatchEvent(new Event("input"));
@@ -235,6 +250,47 @@ async function abrirRegistroDoEstudio(tabela, indice) {
   await abrirFichaDoEstudio(indice);
 }
 
+/* Tabela de um campo repetido: só as linhas preenchidas, mais duas vazias para acrescentar; "mostrar
+   todas" abre o resto (os 32 drops do monstro ficam legíveis). */
+function tabelaDoGrupoRepetido(g, editavel, entradas) {
+  const linhas = [...g.linhas.entries()];
+  const preenchida = ([, l]) => Object.values(l).some((c) => c.valor && c.valor !== 0 && c.valor !== "0");
+  const cheias = linhas.filter(preenchida);
+  const vazias = linhas.filter((x) => !preenchida(x));
+  const tabela = criar("table", "recursos-tabela");
+  const cab = criar("tr");
+  cab.appendChild(criar("th", "", "#"));
+  for (const col of g.colunas) {
+    const exemplo = linhas.find(([, l]) => l[col])?.[1][col];
+    cab.appendChild(criar("th", "", exemplo?.rotulo || col));
+  }
+  tabela.appendChild(cab);
+  const desenhar = ([n, l], oculta) => {
+    const tr = criar("tr");
+    if (oculta) tr.hidden = true;
+    tr.appendChild(criar("td", "texto-suave", n));
+    for (const col of g.colunas) {
+      const td = criar("td");
+      if (l[col]) td.appendChild(entradaDoCampo(l[col], editavel, entradas));
+      tr.appendChild(td);
+    }
+    tabela.appendChild(tr);
+    return tr;
+  };
+  for (const x of cheias) desenhar(x, false);
+  const ocultas = vazias.map((x, i) => desenhar(x, i >= (editavel ? 2 : 0)));
+  const envoltorio = criar("div");
+  envoltorio.appendChild(tabela);
+  const escondidas = ocultas.filter((tr) => tr.hidden);
+  if (escondidas.length) {
+    const mais = criar("button", "botao botao-fantasma botao-pequeno", `Mostrar todas as ${linhas.length} linhas`);
+    mais.type = "button";
+    mais.addEventListener("click", () => { escondidas.forEach((tr) => (tr.hidden = false)); mais.remove(); });
+    envoltorio.appendChild(mais);
+  }
+  return envoltorio;
+}
+
 function desenharFichaDoEstudio() {
   const area = elemento("estudio-ficha");
   area.replaceChildren();
@@ -242,7 +298,9 @@ function desenharFichaDoEstudio() {
   if (!f) { area.appendChild(criar("p", "texto-suave", "Escolha uma tabela e um registro.")); return; }
   const editavel = !!estudio.rascunho;
   const topo = criar("div", "estudio-cabecalho-ficha");
-  topo.appendChild(criar("h3", "", `${f.nome || f.tabela} · id ${f.id ?? "—"}`));
+  const titulo = criar("div", "estudio-nome-com-icone");
+  titulo.append(iconeDoEstudio(f.icone, f.nome || f.tabela), criar("h3", "", `${f.nome || f.tabela} · id ${f.id ?? "—"}`));
+  topo.appendChild(titulo);
   const acoes = criar("div", "recursos-linha");
   const salvar = criar("button", "botao botao-primario botao-pequeno", "Salvar no rascunho");
   const clonar = criar("button", "botao botao-secundario botao-pequeno", "Novo (clonar)");
@@ -257,35 +315,28 @@ function desenharFichaDoEstudio() {
 
   const entradas = [];
   const { soltos, grupos } = agruparCamposDoEstudio(f.campos);
-  const grade = criar("div", "estudio-campos");
-  for (const c of soltos) {
-    const rotulo = criar("label", "", `${c.nome} · ${c.tipo}${c.tipo.endsWith("string") ? ` (${c.tipo === "wstring" ? c.tamanho / 2 : c.tamanho})` : ""}`);
-    grade.append(rotulo, entradaDoCampo(c, editavel, entradas));
-  }
-  area.appendChild(grade);
-
-  for (const [chave, g] of grupos) {
+  let abertos = 0;
+  for (const nomeGrupo of GRUPOS_DO_ESTUDIO) {
+    const meus = soltos.filter((c) => (c.grupo || "Outros") === nomeGrupo);
+    const listas = [...grupos].filter(([, g]) => (g.grupo || "Outros") === nomeGrupo);
+    if (!meus.length && !listas.length) continue;
     const bloco = criar("details", "estudio-grupo");
-    const linhas = [...g.linhas.entries()];
-    const preenchidas = linhas.filter(([, l]) => Object.values(l).some((c) => c.valor && c.valor !== 0)).length;
-    bloco.appendChild(criar("summary", "", `${chave} · ${linhas.length} linhas (${preenchidas} preenchidas)`));
-    bloco.open = preenchidas > 0 && preenchidas <= 40;
-    const tabela = criar("table", "recursos-tabela");
-    const cab = criar("tr");
-    cab.appendChild(criar("th", "", "#"));
-    for (const col of g.colunas) cab.appendChild(criar("th", "", col));
-    tabela.appendChild(cab);
-    for (const [n, l] of linhas) {
-      const tr = criar("tr");
-      tr.appendChild(criar("td", "texto-suave", n));
-      for (const col of g.colunas) {
-        const td = criar("td");
-        if (l[col]) td.appendChild(entradaDoCampo(l[col], editavel, entradas));
-        tr.appendChild(td);
+    bloco.appendChild(criar("summary", "", `${nomeGrupo} · ${meus.length + listas.length}`));
+    bloco.open = abertos < 3 && nomeGrupo !== "Outros";
+    if (bloco.open) abertos += 1;
+    if (meus.length) {
+      const grade = criar("div", "estudio-campos");
+      for (const c of meus) {
+        const rotulo = criar("label", "", c.rotulo || c.nome);
+        rotulo.title = `${c.nome} · ${c.tipo}${c.tipo.endsWith("string") ? ` (${c.tipo === "wstring" ? c.tamanho / 2 : c.tamanho})` : ""}`;
+        grade.append(rotulo, entradaDoCampo(c, editavel, entradas));
       }
-      tabela.appendChild(tr);
+      bloco.appendChild(grade);
     }
-    bloco.appendChild(tabela);
+    for (const [chave, g] of listas) {
+      bloco.appendChild(criar("h4", "estudio-subtitulo", chave));
+      bloco.appendChild(tabelaDoGrupoRepetido(g, editavel, entradas));
+    }
     area.appendChild(bloco);
   }
 
@@ -313,7 +364,7 @@ function desenharFichaDoEstudio() {
       if (c.tipo === "int32" || c.tipo === "float") {
         const n = Number(e.value);
         if (e.value === "" || !Number.isFinite(n) || (c.tipo === "int32" && !Number.isInteger(n))) {
-          alerta("aviso", "Estúdio", `${c.nome}: número inválido.`, { toast: true });
+          alerta("aviso", "Estúdio", `${c.rotulo || c.nome}: número inválido.`, { toast: true });
           return;
         }
         campos[c.nome] = n;
