@@ -13985,3 +13985,36 @@ comparação lado a lado.
     - Ver em jogo: renascer na cidade no ponto novo; chegar pelo portal no ponto novo.
     - Polígonos de distrito e portais novos/movidos (exigem gerar o `.clt` do cliente junto), teleportes de NPC,
       `task_npc`, objetos dinâmicos/controladores do `npcgen`, altura do chão pelo GS.
+
+245. **Sessão 2026-10-15: Estúdio S4, quarta parte — teleportes no mapa.**
+
+    ### a. Pedido
+    Commitar o B244 (feito: `57dc115`, `0194146`) e seguir: teleportes (`world_targets.sev`).
+
+    ### b. Evidência
+    - Formato: o exportador do cliente (`CCommon/globaldataman.cpp:793-803`, linha de comando `globalsave`) grava
+      `u32 n` e, por ponto, `id`, `world_id`, `A3DVECTOR3 pos` e `domain_id` a partir do `maps\world\world_targets.txt`
+      (lido em `:450-466`: `id "nome" mundo "x,y,z" domínio`). O último campo é o **domínio**: os valores repetem
+      (1, 2, 3, 4, 6, 7, 7, 7, 7…), e o nosso leitor o chamava de "ordem" — corrigido.
+    - O GS lê o arquivo da raiz do `config` (`manager.rs:489`); a transportadora (`NPC_TRANSMIT_SERVICE.targets_N_*`)
+      cita o destino pelo id (`serviceprovider.cpp:683-700`, já em `servicos.rs`).
+    - O cliente usa a posição do `.txt` só para achar a região do destino (`EC_World.cpp:642-650`).
+
+    ### c. O que foi feito
+    - `pw-data-loader/world_targets.rs`: `dominio`, `lista` na ordem do arquivo, `gravar`, `definir_posicao`.
+    - `pw-recursos`: edição de arquivo do realm em três camadas (`item_do_realm`, `arquivo_do_mapa`,
+      `gravar_item_do_realm`); `mapas::ler_world_targets_txt`; `GET mapas/{c}/teleportes` (destinos do mapa, nome,
+      domínio, transportadoras com preço/nível/NPCs) e `PUT teleportes/{id}` (só `pos`).
+    - Painel: proxy, camada "Teleportes" com editor e links para as fichas dos NPCs.
+
+    ### d. Provas
+    - `world_targets_volta_identico`: os dois realms regravados byte a byte iguais; posição trocada e relida.
+    - `cargo test -p pw-recursos` com o banco: **19/19**; o `estudio.rs` lê os 49 destinos do 1.2.6 (todos no mapa 1),
+      ao menos metade com NPC que leva, recusa campo `mundo` e id inexistente, publica a posição nova e o leitor do GS
+      a lê.
+    - Painel: `teste_recursos.py` **10/10**.
+
+    ### e. Falta
+    - Ver em jogo: o transportador levando ao ponto novo.
+    - Destinos novos (exigem o `world_targets.txt` do cliente), `task_npc`, objetos dinâmicos/controladores, altura do
+      chão pelo GS.

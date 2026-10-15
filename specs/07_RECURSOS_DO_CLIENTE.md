@@ -247,6 +247,19 @@ destino só mudam junto com o cliente. O carimbo (`dwTimeStamp`) dos dois arquiv
 ponto de renascer, nomes das marcas com zoom) e "Portais" (caixa e linha até a chegada quando é no mesmo mapa); clique
 abre o editor com "Posicionar pelo clique".
 
+**Teleportes (S4, B245):** `world_targets.sev` na raiz do `config` (`manager.rs:489`), formato do exportador do
+cliente (`globaldataman.cpp:793-803`: `u32 n` + `n × {i32 id; i32 world_id; f32 pos[3]; i32 domain_id}`) — o último
+campo é o **domínio**, não a ordem (o leitor dizia "ordem"; corrigido, `PontoDoMundo::dominio`). `PontosDoMundo` guarda a
+`lista` na ordem do arquivo e grava de volta (`gravar`, idêntico nos dois realms). Rotas: `GET mapas/{c}/teleportes`
+(destinos cujo `world_id` é o id do mapa no `instance.txt`, nome do `maps\world\world_targets.txt` do cliente —
+`globaldataman.cpp:450-466` —, e em `usado_por` as transportadoras `NPC_TRANSMIT_SERVICE` que levam a cada um, com
+preço, nível e os NPCs que oferecem o serviço por `NPC_ESSENCE.id_transmit_service`) e
+`PUT teleportes/{id} {campos: {pos}}` (item `servidor\world_targets.sev`; só a posição — o mapa e o domínio ficam). O
+cliente usa a posição do `.txt` dele só para saber em que região o destino fica (`EC_World.cpp:642-650`). A edição de
+arquivo do realm ficou em três camadas: `item_do_realm` (nome do item → bytes do realm e do rascunho),
+`arquivo_do_mapa` (pasta do mapa pela ordem do GS) e `gravar_item_do_realm` (o miolo comum). Painel: camada
+"Teleportes" (losango laranja com nome), editor com as transportadoras e link para a ficha do NPC.
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -259,7 +272,8 @@ instala outra do zero na v1 (2 por objeto, 2 pulados), reverter → v2 igual à 
 pw-atualizador`: tar, nomes. `tests/estudio.rs` (com banco, `elements` e `npcgen` reais do 1.2.6): Estúdio de ponta a
 ponta, mapas, e o `npcgen` editado (mover, 2 geradores, clonar, remover), publicado no realm (lido pelos dois
 carregadores) e revertido ao original (B243); distritos e portais da a01 (recusas, carimbo intacto, publicar grava
-os dois, B244). `pw-data-loader`: `precinct_e_region_de_todos_os_mapas_voltam_identicos`. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
+os dois, B244); teleportes do mundo do 1.2.6 com as transportadoras do `elements` e edição publicada (B245).
+`pw-data-loader`: `precinct_e_region_de_todos_os_mapas_voltam_identicos`, `world_targets_volta_identico`. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
 `TEST_DATABASE_URL`/`TEST_REDIS_URL` (ver histórico B243).
 
@@ -269,8 +283,8 @@ arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no
   launcher, instalador `.msi` (CLI do Tauri).
 - Marcar "aguarda reinício" no realm depois de publicar `servidor`/`ambos` (hoje o painel só lista os aplicados).
 - Estúdio: telas próprias, `tasks`/`gshop`; no mapa, polígonos de distrito e portais novos (exigem editar o
-  `.clt` do cliente junto), teleportes de NPC, `task_npc`, objetos dinâmicos e controladores do `npcgen`, altura do
-  chão pelo GS.
+  `.clt` do cliente junto), destinos de teleporte novos (exigem o `world_targets.txt` do cliente), `task_npc`,
+  objetos dinâmicos e controladores do `npcgen`, altura do chão pelo GS.
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).

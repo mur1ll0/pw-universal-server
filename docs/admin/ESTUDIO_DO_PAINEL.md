@@ -242,6 +242,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B244 (S4, 3ª parte):** distritos (`precinct.sev`, com nomes e marcas do `precinct.clt` do cliente) e portais
 > (`region.sev`) no mapa; editáveis o ponto de renascer (e o mapa dele, prioridade, PK) e o ponto de chegada do portal.
 > Polígonos e portais novos ficam para quando o Estúdio editar também o `.clt` do cliente.
+>
+> **B245 (S4, 4ª parte):** destinos de teleporte (`world_targets.sev`) no mapa, com nome do cliente e as
+> transportadoras/NPCs que levam a cada um; posição editável. Falta do S4: `task_npc`, objetos dinâmicos e
+> controladores do `npcgen`, altura do chão pelo GS.
 
 | fase | entrega |
 | :--- | :--- |
