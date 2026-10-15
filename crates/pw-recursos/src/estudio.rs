@@ -1593,3 +1593,152 @@ impl Estudio {
         .await
     }
 }
+
+// ------------------------------------------------------------------ rastreador de NPCs (task_npc.data, S4, B246)
+
+use pw_data_loader::task_npc::Rastreador;
+
+/// O `task_npc.data` é do cliente (lido do disco, `EC_TaskInterface.cpp:166`).
+const CAMINHO_DO_RASTREADOR: &str = "data\\task_npc.data";
+
+impl Estudio {
+    /// Um arquivo do cliente pelo caminho (sem diferenciar maiúsculas): o caminho GBK exato do manifesto, o SHA e
+    /// tamanho publicados, os bytes atuais (do rascunho se ele já tem o item) e o item.
+    async fn item_do_cliente(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        caminho: &str,
+        rascunho: Option<i64>,
+    ) -> Result<(Vec<u8>, Sha256Bytes, usize, Vec<u8>, Option<ItemDeRecurso>)> {
+        let (_, m) = gov.publicado(versao)?;
+        let alvo = caminho.to_lowercase();
+        let a = m
+            .arquivos
+            .iter()
+            .find(|a| hex::decode(&a.caminho_gbk).map(|g| nomes::legivel(&g).to_lowercase() == alvo).unwrap_or(false))
+            .with_context(|| format!("{caminho} não está no cliente {versao}"))?;
+        let gbk = hex::decode(&a.caminho_gbk)?;
+        let sha: Sha256Bytes = hex::decode(&a.sha256)?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
+        let tamanho = a.tamanho as usize;
+        let objetos = gov.objetos(versao);
+        if let Some(r) = rascunho {
+            gov.rascunho_da_versao(versao, r).await?;
+            if let Some(i) = gov.repo.itens(r).await?.into_iter().find(|i| i.caminho == gbk) {
+                let s: Sha256Bytes = i.sha256_depois.clone().context("arquivo removido no rascunho")?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
+                let t = i.tamanho.unwrap_or(0) as usize;
+                let b = tokio::task::spawn_blocking(move || objetos.ler(&s, t)).await??;
+                return Ok((gbk, sha, tamanho, b, Some(i)));
+            }
+        }
+        let b = tokio::task::spawn_blocking(move || objetos.ler(&sha, tamanho)).await??;
+        Ok((gbk, sha, tamanho, b, None))
+    }
+
+    /// Edição de um arquivo do cliente no rascunho (item destino `cliente`: entra no manifesto e o launcher baixa);
+    /// volta ao publicado → o item sai. `mudar` devolve (bytes novos, resposta, mudança p/ o resumo).
+    async fn alterar_item_do_cliente<F>(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, mudar: F) -> Result<Value>
+    where
+        F: FnOnce(&[u8]) -> Result<(Vec<u8>, Value, Value)>,
+    {
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let (gbk, sha_publicado, tam_publicado, atual, item) = self.item_do_cliente(gov, versao, caminho, Some(rascunho)).await?;
+        let mut mudancas = item.as_ref().and_then(|i| i.resumo.get("mudancas")).and_then(Value::as_array).cloned().unwrap_or_default();
+        let (bytes, resposta, mudanca) = mudar(&atual)?;
+        let sha = sha256(&bytes);
+        if sha == sha_publicado {
+            gov.repo.tirar_item(rascunho, &gbk).await?;
+            return Ok(json!({ "resultado": resposta, "igual_ao_publicado": true }));
+        }
+        if !mudanca.is_null() {
+            mudancas.push(mudanca);
+            if mudancas.len() > 300 {
+                mudancas.drain(..mudancas.len() - 300);
+            }
+        }
+        let objetos = Objetos::new(gov.objetos(versao).raiz().to_path_buf(), NIVEL_DO_RASCUNHO);
+        let tamanho = bytes.len();
+        tokio::task::spawn_blocking(move || objetos.gravar(&sha, &bytes)).await??;
+        gov.repo
+            .gravar_item(&ItemDeRecurso {
+                alteracao: rascunho,
+                caminho: gbk,
+                destino: "cliente".into(),
+                acao: "substituir".into(),
+                sha256_antes: Some(sha_publicado.to_vec()),
+                sha256_depois: Some(sha.to_vec()),
+                tamanho: Some(tamanho as i64),
+                resumo: json!({ "caminho": caminho, "tamanho_antes": tam_publicado, "tamanho_depois": tamanho, "mudancas": mudancas }),
+            })
+            .await?;
+        Ok(json!({ "resultado": resposta, "igual_ao_publicado": false }))
+    }
+
+    /// NPCs das áreas de NPC do `npcgen` do mapa (`iNPCType` = 1) com a posição que o rastreador de missões do
+    /// cliente tem para cada um (`task_npc.data`) e a distância até a área mais perto. O cliente só consulta o
+    /// rastreador no mapa principal (`MAJOR_MAP` = 1, `DlgWorldMap.h:13`; `DlgNameLink.cpp:240`): nos outros mapas a
+    /// resposta diz `usado_pelo_cliente: false`.
+    pub async fn rastreador(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Value> {
+        let id_mapa = self.id_do_mapa(gov, versao, caminho).await?;
+        let (_, do_realm, do_rascunho) = self.npcgen_atual(gov, versao, caminho, rascunho).await?;
+        let ng = NpcgenEditavel::ler(&do_rascunho.map(|(_, b)| b).unwrap_or(do_realm)).map_err(|e| anyhow::anyhow!("npcgen: {e}"))?;
+        let (_, _, _, bytes, item) = self.item_do_cliente(gov, versao, CAMINHO_DO_RASTREADOR, rascunho).await?;
+        let r = Rastreador::ler(&bytes)?;
+        let mut areas_por_npc: std::collections::BTreeMap<u32, Vec<(usize, f64, f64)>> = Default::default();
+        for (i, a) in ng.areas.iter().enumerate() {
+            let c = ng::ler_campos(&a.bruto, CAMPOS_DA_AREA, ng.versao);
+            if numero(&c, "iNPCType") as i64 != 1 {
+                continue;
+            }
+            for g in &a.geradores {
+                let id = u32::from_le_bytes(g[0..4].try_into().unwrap());
+                areas_por_npc.entry(id).or_default().push((i, numero(&c, "vPos_x"), numero(&c, "vPos_z")));
+            }
+        }
+        let (e, _) = self.atual(gov, versao, None).await?;
+        let ids = mapa_de_ids(&e);
+        let npcs: Vec<Value> = areas_por_npc
+            .iter()
+            .map(|(&id, areas)| {
+                let pos = r.posicao(id);
+                let distancia = pos.map(|p| {
+                    areas.iter().map(|&(_, x, z)| ((p[0] as f64 - x).powi(2) + (p[2] as f64 - z).powi(2)).sqrt()).fold(f64::MAX, f64::min)
+                });
+                let nome = match ids.get(&("ESSENCE".to_string(), id as i32)) {
+                    Some(&(ti, ri)) if ti != CONVERSAS => json!(nome_do_registro(&e.tabelas[ti], ri)),
+                    _ => Value::Null,
+                };
+                json!({
+                    "id": id, "nome": nome, "rastreador": pos,
+                    "areas": areas.iter().map(|&(i, x, z)| json!([i, um_decimal(x), um_decimal(z)])).collect::<Vec<_>>(),
+                    "distancia": distancia.map(um_decimal),
+                })
+            })
+            .collect();
+        Ok(json!({ "item": CAMINHO_DO_RASTREADOR, "no_rascunho": item.is_some(), "total": r.npcs.len(),
+            "usado_pelo_cliente": id_mapa == 1, "npcs": npcs }))
+    }
+
+    /// Põe o NPC `id` no rastreador na posição dada (arredondada: o campo é `short`); acrescenta se não houver.
+    pub async fn editar_rastreador(&self, gov: &Governanca, versao: &str, rascunho: i64, id: u32, campos: Map<String, Value>) -> Result<Value> {
+        self.alterar_item_do_cliente(gov, versao, CAMINHO_DO_RASTREADOR, rascunho, move |base| {
+            let mut r = Rastreador::ler(base)?;
+            let mut mudanca = Value::Null;
+            for (k, v) in &campos {
+                if k != "pos" {
+                    bail!("só a posição do NPC no rastreador é editável: {k}");
+                }
+                let novo = vetor_do_json(v, "pos")?;
+                let antes = r.posicao(id);
+                let existia = r.definir_posicao(id, novo)?;
+                if r.posicao(id) != antes {
+                    mudanca = json!({ "acao": if existia { "editado" } else { "novo" }, "tipo": "rastreador", "id": id,
+                        "campos": { "pos": [antes, r.posicao(id)] } });
+                }
+            }
+            Ok((r.gravar(), json!({ "id": id, "pos": r.posicao(id) }), mudanca))
+        })
+        .await
+    }
+}

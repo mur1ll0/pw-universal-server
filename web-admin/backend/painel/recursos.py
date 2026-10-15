@@ -349,7 +349,7 @@ def registrar_mapas(app):
     @app.get("/api/realms/{realm}/estudio/mapas/{caminho}/{arquivo}")
     async def estudio_sev(realm: str, caminho: str, arquivo: str, requisicao: Request, rascunho: int | None = None):
         v = await _versao_do_realm(requisicao, realm)
-        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais", "teleportes"):
+        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais", "teleportes", "rastreador"):
             raise HTTPException(404, "Mapa inválido.")
         return await _repassar("GET", f"/admin/{v}/estudio/mapas/{caminho}/{arquivo}", {"rascunho": rascunho})
 
@@ -373,4 +373,14 @@ def registrar_mapas(app):
         if not isinstance(campos, dict) or not campos:
             raise HTTPException(422, "Nada a mudar.")
         return await _repassar("PUT", f"/admin/{v}/estudio/teleportes/{id_destino}", {"rascunho": rascunho},
+                               dados={"campos": campos})
+
+    # Rastreador de NPCs (B246): data\task_npc.data do cliente, pelo id do NPC.
+    @app.put("/api/realms/{realm}/estudio/rastreador/{id_npc}")
+    async def estudio_editar_rastreador(realm: str, id_npc: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        campos = (await requisicao.json()).get("campos")
+        if not isinstance(campos, dict) or not campos or id_npc < 0:
+            raise HTTPException(422, "Nada a mudar.")
+        return await _repassar("PUT", f"/admin/{v}/estudio/rastreador/{id_npc}", {"rascunho": rascunho},
                                dados={"campos": campos})

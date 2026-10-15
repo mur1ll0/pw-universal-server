@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -37,7 +37,10 @@ impl FonteDePacote for Pacotes {
         dds[84..88].copy_from_slice(b"DXT1");
         dds.extend([0x00, 0xF8, 0x1F, 0x00, 0, 0, 0, 0]);
         receber(b"surfaces\\minimaps\\world\\0000.dds".to_vec(), dds)?;
-        Ok(ResultadoDoPacote { entradas: 3, falhas: vec![] })
+        // Rastreador de NPCs do cliente (B246): o task_npc.data real do 1.2.6.
+        let tn = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/task_npc.data");
+        receber(b"data\\task_npc.data".to_vec(), fs::read(tn).expect("task_npc do realm_126"))?;
+        Ok(ResultadoDoPacote { entradas: 4, falhas: vec![] })
     }
 }
 
@@ -373,6 +376,35 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(wt1.len(), wt0.len());
         let lido = pw_data_loader::world_targets::PontosDoMundo::load_from_bytes(&wt1).unwrap();
         assert_eq!(lido.get(id as i32).unwrap().pos, [10.0, 20.0, 30.0]);
+
+        // Rastreador (B246): NPCs das áreas de NPC do npcgen com a posição do task_npc.data do cliente; editar
+        // gera item do cliente (destino "cliente") que entra no manifesto da versão publicada.
+        let rs = json_de(pedir("GET", "estudio/mapas/world/rastreador").call().unwrap());
+        assert_eq!((rs["item"].as_str(), rs["total"].as_u64()), (Some("data\\task_npc.data"), Some(765)));
+        let npcs = rs["npcs"].as_array().unwrap().clone();
+        assert!(!npcs.is_empty(), "a a01 tem NPCs");
+        let id_npc = npcs[0]["id"].as_u64().unwrap();
+        // NPC que o rastreador não tinha é acrescentado no fim.
+        let original_tn = pw_data_loader::task_npc::Rastreador::ler(&fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../data/realm_126/config/task_npc.data")).unwrap()).unwrap();
+        let esperado = 765 + !original_tn.npcs.iter().any(|n| n.id as u64 == id_npc) as usize;
+        assert_eq!(rs["usado_pelo_cliente"], true, "o world do teste é o mapa 1");
+        let r6 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "rastreador", "operacao_id": "t_p4_r6"})).unwrap())["id"].as_i64().unwrap();
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/rastreador/{id_npc}?rascunho={r6}")).send_json(json!({"campos": {"pos": [40000, 0, 0]}}))).0, 400);
+        pedir("PUT", &format!("estudio/rastreador/{id_npc}?rascunho={r6}")).send_json(json!({"campos": {"pos": [100.4, 5.0, -20.6]}})).unwrap();
+        let rs2 = json_de(pedir("GET", &format!("estudio/mapas/world/rastreador?rascunho={r6}")).call().unwrap());
+        let meu = rs2["npcs"].as_array().unwrap().iter().find(|n| n["id"].as_u64() == Some(id_npc)).unwrap().clone();
+        assert_eq!((rs2["no_rascunho"].as_bool(), meu["rastreador"].clone()), (Some(true), json!([100, 5, -21])));
+        let hist = json_de(pedir("GET", "alteracoes").call().unwrap());
+        let item = hist.as_array().unwrap().iter().find(|a| a["id"] == r6).unwrap()["lista"][0].clone();
+        assert_eq!((item["caminho"].as_str(), item["destino"].as_str()), (Some("data\\task_npc.data"), Some("cliente")));
+        let p6 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r6]})).unwrap());
+        assert_eq!(p6["aplicados"].as_array().unwrap().len(), 0, "item do cliente não vai para o realm: {p6}");
+        let novo = pedir("GET", "arquivo").query("caminho", "data\\task_npc.data").call().unwrap();
+        let mut b = Vec::new();
+        std::io::Read::read_to_end(&mut novo.into_reader(), &mut b).unwrap();
+        let lido = pw_data_loader::task_npc::Rastreador::ler(&b).unwrap();
+        assert_eq!((lido.posicao(id_npc as u32), lido.npcs.len()), (Some([100, 5, -21]), esperado));
     })
     .await
     .unwrap();

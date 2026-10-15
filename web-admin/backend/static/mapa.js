@@ -12,6 +12,8 @@ const mapa = {
   distritos: null, portais: null,
   // Destinos de teleporte (world_targets.sev), B245.
   teleportes: null,
+  // Rastreador de NPCs do cliente (task_npc.data), B246.
+  rastreador: null,
 };
 const CORES_DO_MAPA = { monstro: "#ff6b6b", npc: "#ffd166", recurso: "#7bd88f", objeto: "#8ab4ff" };
 
@@ -65,6 +67,7 @@ async function abrirMapa(caminho) {
   mapa.distritos = null;
   mapa.portais = null;
   mapa.teleportes = null;
+  mapa.rastreador = null;
   fecharArea();
   desenharMapa();
   if (!m.npcgen) { elemento("mapa-situacao").textContent = "O realm não tem npcgen para este mapa."; return; }
@@ -213,7 +216,7 @@ function detalharPonto(ev) {
     if (mapa.editar) await carregarNpcgen();
     desenharMapa();
   });
-  for (const id of ["mapa-distritos", "mapa-portais", "mapa-teleportes"]) {
+  for (const id of ["mapa-distritos", "mapa-portais", "mapa-teleportes", "mapa-rastreador"]) {
     elemento(id).addEventListener("change", async () => { fecharArea(); await carregarCamadas(); desenharMapa(); });
   }
   elemento("estudio-rascunho").addEventListener("change", async () => {
@@ -417,6 +420,8 @@ function desenharEditorDeArea() {
       acoes.appendChild(tirar);
     }
     f.appendChild(acoes);
+    // Área de NPC (`iNPCType` = 1): a posição do rastreador de missões do cliente para este NPC (B246).
+    if (!recurso && dados.campos.iNPCType === 1) linhaDoRastreador(f, valores[chaveDoModelo], area);
     filhos.appendChild(f);
   };
   dados.filhos.forEach(desenharFilho);
@@ -500,9 +505,11 @@ async function carregarCamadas() {
     try { return await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${nome}${q}`)); }
     catch (erro) { alerta("aviso", "Estúdio", `${nome}: ${erro.message}`, { toast: true }); return null; }
   };
-  const [d, p, t] = await Promise.all([carregar("mapa-distritos", "distritos"), carregar("mapa-portais", "portais"),
-    carregar("mapa-teleportes", "teleportes")]);
+  const [d, p, t, rs] = await Promise.all([carregar("mapa-distritos", "distritos"), carregar("mapa-portais", "portais"),
+    carregar("mapa-teleportes", "teleportes"), carregar("mapa-rastreador", "rastreador")]);
   if (mapa.atual !== m) return;
+  mapa.rastreador = rs;
+  if (rs && !rs.usado_pelo_cliente) alerta("aviso", "Estúdio", "O cliente só consulta o rastreador no mapa principal (mapa 1): neste mapa ele não é usado.", { toast: true });
   mapa.distritos = d;
   mapa.portais = p;
   mapa.teleportes = t;
@@ -541,6 +548,25 @@ function desenharCamadas(ctx) {
           ctx.fillText(mk.nome, sx + 3, sy - 3);
         }
       }
+    }
+  }
+  if (mapa.rastreador) {
+    // Ponto do rastreador; linha até a área mais perto quando está a mais de 20 m dela.
+    for (const n of mapa.rastreador.npcs) {
+      if (!n.rastreador) continue;
+      const [sx, sy] = paraTela(n.rastreador[0], n.rastreador[2]);
+      const longe = n.distancia > 20;
+      ctx.strokeStyle = ctx.fillStyle = longe ? "#ff4d4d" : "#9ef01a";
+      if (longe) {
+        const perto = n.areas.reduce((a, b) => (Math.hypot(b[1] - n.rastreador[0], b[2] - n.rastreador[2]) < Math.hypot(a[1] - n.rastreador[0], a[2] - n.rastreador[2]) ? b : a));
+        const [ax, ay] = paraTela(perto[1], perto[2]);
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ax, ay); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.beginPath();
+      ctx.arc(sx, sy, escolhido("rastreador", n.id) ? 5 : 3, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
   if (mapa.teleportes) {
@@ -582,13 +608,18 @@ function desenharCamadas(ctx) {
 }
 
 function escolherDistritoOuPortal(ev) {
-  if (!mapa.distritos && !mapa.portais && !mapa.teleportes) return false;
+  if (!mapa.distritos && !mapa.portais && !mapa.teleportes && !mapa.rastreador) return false;
   const m = mapa.atual;
   const r = elemento("mapa-tela").getBoundingClientRect();
   const mx = ev.clientX - r.left, my = ev.clientY - r.top;
   for (const t of mapa.teleportes?.pontos || []) {
     const [sx, sy] = paraTela(t.pos[0], t.pos[2]);
     if (Math.hypot(sx - mx, sy - my) < 9) { abrirDaCamada("teleportes", t.id); return true; }
+  }
+  for (const n of mapa.rastreador?.npcs || []) {
+    if (!n.rastreador) continue;
+    const [sx, sy] = paraTela(n.rastreador[0], n.rastreador[2]);
+    if (Math.hypot(sx - mx, sy - my) < 7) { abrirDaCamada("rastreador", n.id); return true; }
   }
   // Portal (caixa ou chegada perto), depois ponto de cidade perto, depois o distrito que contém o clique.
   for (const c of mapa.portais?.caixas || []) {
@@ -635,8 +666,10 @@ function campoNumerico(rotulo, valor, editavel, pos) {
 function abrirDaCamada(camada, indice) {
   const ed = elemento("mapa-editor");
   ed.replaceChildren();
-  const fonte = camada === "distritos" ? mapa.distritos?.distritos : camada === "portais" ? mapa.portais?.caixas : mapa.teleportes?.pontos;
-  const item = fonte && fonte.find((x) => (camada === "teleportes" ? x.id : x.indice) === indice);
+  const fonte = camada === "distritos" ? mapa.distritos?.distritos : camada === "portais" ? mapa.portais?.caixas
+    : camada === "teleportes" ? mapa.teleportes?.pontos : mapa.rastreador?.npcs;
+  const porId = camada === "teleportes" || camada === "rastreador";
+  const item = fonte && fonte.find((x) => (porId ? x.id : x.indice) === indice);
   if (!item) { fecharArea(); desenharMapa(); return; }
   mapa.area = { camada, indice };
   ed.hidden = false;
@@ -684,6 +717,20 @@ function abrirDaCamada(camada, indice) {
     ed.append(titulo, grade);
     if (item.marcas?.length) ed.appendChild(criar("div", "texto-suave", `Marcas do cliente: ${item.marcas.map((k) => k.nome).join(", ")}`));
     if (item.mapa_do_ponto !== m.id) ed.appendChild(criar("div", "texto-suave", "O ponto de renascer fica em outro mapa: \"Posicionar pelo clique\" usaria as coordenadas deste."));
+  } else if (camada === "rastreador") {
+    titulo.append(criar("strong", "", `Rastreador: ${item.nome || `NPC ${item.id}`}`),
+      criar("span", "texto-suave", ` · id ${item.id}${item.distancia != null ? ` · ${item.distancia} m da área mais perto` : ""}`));
+    const p0 = item.rastreador || [0, 0, 0];
+    const [lx, ix] = campoNumerico("X", p0[0], editavel, "x");
+    const [ly, iy] = campoNumerico("Y (altura)", p0[1], editavel);
+    const [lz, iz] = campoNumerico("Z", p0[2], editavel, "z");
+    grade.append(lx, ly, lz);
+    corpo = () => {
+      const pos = [Number(ix.value), Number(iy.value), Number(iz.value)];
+      return pos.some((v, k) => Math.round(v) !== p0[k]) ? { pos } : {};
+    };
+    ed.append(titulo, grade, criar("div", "texto-suave",
+      "Arquivo do cliente (data\\task_npc.data): o launcher entrega ao publicar. Coordenadas inteiras (short); o arquivo não guarda o mapa."));
   } else if (camada === "teleportes") {
     titulo.append(criar("strong", "", `Destino de teleporte ${item.id}${item.nome ? `: ${item.nome}` : ""}`),
       criar("span", "texto-suave", ` · domínio ${item.dominio}`));
@@ -739,8 +786,8 @@ function abrirDaCamada(camada, indice) {
     const campos = corpo();
     if (!Object.keys(campos).length) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
     try {
-      const rota = camada === "teleportes"
-        ? `/api/realms/${encodeURIComponent(estudio.realm)}/estudio/teleportes/${indice}?rascunho=${estudio.rascunho}`
+      const rota = porId
+        ? `/api/realms/${encodeURIComponent(estudio.realm)}/estudio/${camada}/${indice}?rascunho=${estudio.rascunho}`
         : rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${camada}/${indice}?rascunho=${estudio.rascunho}`);
       const r = await api(rota, { method: "PUT", body: JSON.stringify({ campos }) });
       alerta("ok", "Estúdio", "Salvo no rascunho." + (r.igual_ao_publicado ? " Ficou igual ao realm: o item saiu do rascunho." : ""), { toast: true });
@@ -752,4 +799,38 @@ function abrirDaCamada(camada, indice) {
   botoes.append(pos, salvar);
   ed.appendChild(botoes);
   desenharMapa();
+}
+
+/* Rastreador no editor de área de NPC (B246): mostra a posição que o task_npc.data do cliente tem para o NPC e
+   põe nele a posição da área (o centro, como está nos campos da tela). */
+async function linhaDoRastreador(fieldset, idNpc, campoDaArea) {
+  const linha = criar("div", "texto-suave", "Rastreador: carregando…");
+  fieldset.appendChild(linha);
+  try {
+    if (!mapa.rastreador) {
+      const q = estudio.rascunho ? `?rascunho=${estudio.rascunho}` : "";
+      mapa.rastreador = await api(rotaDoMapa(`/${encodeURIComponent(mapa.atual.caminho)}/rastreador${q}`));
+    }
+  } catch (erro) { linha.textContent = `Rastreador: ${erro.message}`; return; }
+  const n = mapa.rastreador.npcs.find((x) => x.id === idNpc);
+  linha.textContent = n?.rastreador
+    ? `Rastreador de missões: (${n.rastreador.join(", ")})${n.distancia != null ? ` · ${n.distancia} m da área mais perto` : ""} `
+    : "Rastreador de missões: este NPC não tem posição no task_npc.data do cliente. ";
+  if (!mapa.rastreador.usado_pelo_cliente) linha.textContent += "(O cliente só usa o rastreador no mapa principal.) ";
+  if (!estudio.rascunho) return;
+  const b = criar("button", "botao botao-pequeno botao-secundario", "Usar a posição da área no rastreador");
+  b.type = "button";
+  b.addEventListener("click", async () => {
+    const v = (c) => Number(campoDaArea.querySelector(`input[data-campo="${c}"]`)?.value || 0);
+    try {
+      await api(`/api/realms/${encodeURIComponent(estudio.realm)}/estudio/rastreador/${idNpc}?rascunho=${estudio.rascunho}`,
+        { method: "PUT", body: JSON.stringify({ campos: { pos: [v("vPos_x"), v("vPos_y"), v("vPos_z")] } }) });
+      alerta("ok", "Estúdio", "Rastreador atualizado no rascunho (arquivo do cliente).", { toast: true });
+      mapa.rastreador = null;
+      linha.remove();
+      linhaDoRastreador(fieldset, idNpc, campoDaArea);
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  });
+  linha.appendChild(b);
 }

@@ -35,6 +35,7 @@ pub mod espaco;
 pub mod limites;
 pub mod rotas;
 pub mod watermap;
+pub mod task_npc;
 pub mod world_targets;
 pub mod validator;
 
