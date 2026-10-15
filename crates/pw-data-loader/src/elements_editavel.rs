@@ -40,6 +40,8 @@ enum Pedaco {
     Cru(Vec<u8>),
     /// Uma tabela de registros de tamanho fixo (índice em `ElementsEditavel::tabelas`).
     Tabela(usize),
+    /// O `TALK_PROC`, estruturado em `ElementsEditavel::conversas` (B240).
+    Conversas,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +96,8 @@ pub struct ElementsEditavel {
     pub versao: u32,
     pedacos: Vec<Pedaco>,
     pub tabelas: Vec<TabelaEditavel>,
+    /// O `TALK_PROC` (`crate::conversas`), editável e gravado byte a byte.
+    pub conversas: Vec<crate::conversas::Conversa>,
     por_nome: HashMap<String, usize>,
 }
 
@@ -133,14 +137,21 @@ impl ElementsEditavel {
         let mut pedacos = vec![Pedaco::Cru(buf[..header.header_size].to_vec())];
         let mut tabelas = Vec::new();
         let mut por_nome = HashMap::new();
+        let mut conversas = Vec::new();
         let mut off = header.header_size;
         for t in &layout.tables {
             if t.variable_size {
                 if t.name != "TALK_PROC" {
                     return Err(GenericElementsError::UnhandledVariableTable(t.name.clone(), t.index));
                 }
-                let (_, fim) = read_talk_proc_table(buf, off)?;
-                pedacos.push(Pedaco::Cru(buf[off..fim].to_vec()));
+                let (cs, fim) = crate::conversas::ler(buf, off)?;
+                // O leitor genérico tem de concordar onde a tabela acaba.
+                let (_, fim_generico) = read_talk_proc_table(buf, off)?;
+                if fim != fim_generico {
+                    return Err(GenericElementsError::OutOfBounds(fim, fim_generico));
+                }
+                conversas = cs;
+                pedacos.push(Pedaco::Conversas);
                 off = fim;
                 continue;
             }
@@ -178,7 +189,7 @@ impl ElementsEditavel {
         if off != buf.len() {
             return Err(GenericElementsError::NaoTerminaNoFim { fim: off, tamanho: buf.len() });
         }
-        Ok(Self { versao: header.version, pedacos, tabelas, por_nome })
+        Ok(Self { versao: header.version, pedacos, tabelas, conversas, por_nome })
     }
 
     /// O arquivo inteiro de volta.
@@ -187,6 +198,7 @@ impl ElementsEditavel {
         for p in &self.pedacos {
             match p {
                 Pedaco::Cru(b) => saida.extend_from_slice(b),
+                Pedaco::Conversas => saida.extend_from_slice(&crate::conversas::gravar(&self.conversas)),
                 Pedaco::Tabela(i) => {
                     let t = &self.tabelas[*i];
                     saida.extend_from_slice(&(t.registros.len() as u32).to_le_bytes());

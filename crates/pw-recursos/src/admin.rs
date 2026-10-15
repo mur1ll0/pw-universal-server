@@ -357,6 +357,73 @@ async fn estudio_buscar_no_espaco(
     Ok(Json(r))
 }
 
+// ------------------------------------------------------------------ conversas (S3, B240)
+
+async fn estudio_funcoes(State(e): State<Arc<Estado>>, Path(v): Path<String>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.funcoes_de_conversa()))
+}
+
+async fn estudio_listar_conversas(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = e
+        .estudio
+        .listar_conversas(&e.gov, &v, q.rascunho, q.busca.as_deref().unwrap_or(""), q.pagina.unwrap_or(0), q.por_pagina.unwrap_or(50))
+        .await?;
+    Ok(Json(r))
+}
+
+async fn estudio_conversa(
+    State(e): State<Arc<Estado>>,
+    Path((v, indice)): Path<(String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.conversa(&e.gov, &v, q.rascunho, indice).await?))
+}
+
+#[derive(Deserialize)]
+struct PedidoConversa {
+    conversa: Value,
+}
+
+async fn estudio_salvar_conversa(
+    State(e): State<Arc<Estado>>,
+    Path((v, indice)): Path<(String, usize)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoConversa>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.salvar_conversa(&e.gov, &v, r, indice, p.conversa).await?))
+}
+
+#[derive(Deserialize)]
+struct QNovaConversa {
+    rascunho: Option<i64>,
+    base: Option<usize>,
+}
+
+async fn estudio_nova_conversa(
+    State(e): State<Arc<Estado>>,
+    Path(v): Path<String>,
+    Query(q): Query<QNovaConversa>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = q.rascunho.ok_or(Erro(StatusCode::BAD_REQUEST, "escolha o rascunho onde a edição fica".into()))?;
+    Ok(Json(e.estudio.nova_conversa(&e.gov, &v, r, q.base).await?))
+}
+
+async fn estudio_remover_conversa(
+    State(e): State<Arc<Estado>>,
+    Path((v, indice)): Path<(String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.remover_conversa(&e.gov, &v, r, indice).await?))
+}
+
 pub fn rotas(gov: Governanca, segredo: String) -> Router {
     let estado = Arc::new(Estado { gov, segredo, estudio: Default::default() });
     Router::new()
@@ -375,6 +442,12 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}", get(estudio_ficha).put(estudio_editar).delete(estudio_remover))
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}/clonar", post(estudio_clonar))
         .route("/admin/{v}/estudio/espacos/{espaco}", get(estudio_buscar_no_espaco))
+        .route("/admin/{v}/estudio/funcoes", get(estudio_funcoes))
+        .route("/admin/{v}/estudio/conversas", get(estudio_listar_conversas).post(estudio_nova_conversa))
+        .route(
+            "/admin/{v}/estudio/conversas/{indice}",
+            get(estudio_conversa).put(estudio_salvar_conversa).delete(estudio_remover_conversa),
+        )
         .layer(DefaultBodyLimit::max(MAIOR_ARQUIVO))
         .route_layer(middleware::from_fn_with_state(estado.clone(), exigir_segredo))
         .with_state(estado)

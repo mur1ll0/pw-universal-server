@@ -13,6 +13,7 @@
 !specs/elements_layouts/**
 !specs/estudio/referencias.json
 !specs/estudio/rotulos.json
+!specs/estudio/funcoes_de_conversa.json
 !specs/elements_155/realm_155_overrides.json
 !specs/elements_155/realm_155_v159_overrides.json
 !specs/mapas/

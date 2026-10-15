@@ -120,7 +120,9 @@ impl Estudio {
                 "registros": t.registros.len(),
                 "espaco": espaco_de_id(&t.nome),
                 "campos": t.campos().len(),
-            })).collect::<Vec<_>>(),
+            })).chain(std::iter::once(json!({
+                "nome": "TALK_PROC", "registros": e.conversas.len(), "espaco": "TALK", "campos": 0, "conversas": true,
+            }))).collect::<Vec<_>>(),
         }))
     }
 
@@ -184,6 +186,10 @@ impl Estudio {
                     if let Some(FieldValue::Int(v)) = valor {
                         if *v != 0 && *v != -1 {
                             c["referencia"] = match ids.get(&(esp.to_string(), *v)) {
+                                Some(&(CONVERSAS, ri)) => json!({
+                                    "tabela": "TALK_PROC", "indice": ri, "id": v,
+                                    "nome": pw_data_loader::conversas::texto(&e.conversas[ri].texto),
+                                }),
                                 Some(&(ti, ri)) => {
                                     let alvo = &e.tabelas[ti];
                                     json!({ "tabela": alvo.nome, "indice": ri, "id": v, "nome": nome_do_registro(alvo, ri), "icone": icone_do_registro(alvo, ri) })
@@ -221,6 +227,18 @@ impl Estudio {
         let (e, _) = self.atual(gov, versao, rascunho).await?;
         let busca = busca.trim().to_lowercase();
         let mut achados = Vec::new();
+        if espaco == "TALK" {
+            for (i, c) in e.conversas.iter().enumerate() {
+                let texto = pw_data_loader::conversas::texto(&c.texto);
+                if busca.is_empty() || c.id.to_string() == busca || texto.to_lowercase().contains(&busca) {
+                    achados.push(json!({ "tabela": "TALK_PROC", "indice": i, "id": c.id, "nome": texto }));
+                    if achados.len() >= limite.clamp(1, 200) {
+                        break;
+                    }
+                }
+            }
+            return Ok(json!(achados));
+        }
         'tabelas: for t in &e.tabelas {
             if espaco_de_id(&t.nome).as_deref() != Some(espaco) {
                 continue;
@@ -466,8 +484,15 @@ fn mapa_de_ids(e: &ElementsEditavel) -> HashMap<(String, i32), (usize, usize)> {
             }
         }
     }
+    // As conversas (`TALK_PROC`) são o espaço TALK (`add_id_index(ID_SPACE_TALK…)`).
+    for (i, c) in e.conversas.iter().enumerate() {
+        m.entry(("TALK".to_string(), c.id as i32)).or_insert((CONVERSAS, i));
+    }
     m
 }
+
+/// Marca, no índice de ids, um registro que é uma conversa (`e.conversas[i]`).
+const CONVERSAS: usize = usize::MAX;
 
 /// Registros cujos campos de referência (e, com `com_duvidosos`, os duvidosos) citam `id` no
 /// `espaco`. `excluir` = o próprio registro.
@@ -578,5 +603,218 @@ mod testes {
         assert_eq!(rotulo_e_grupo("unk1"), (None, "Outros"));
         assert_eq!(rotulo_e_grupo("attack_speed").1, "Combate");
         assert_eq!(rotulo_e_grupo("run_speed").1, "Comportamento");
+    }
+}
+
+// ------------------------------------------------------------------ conversas (S3, B240)
+
+/// Funções pré-definidas das opções (`specs/estudio/funcoes_de_conversa.json`, do `enum SERVICE_TYPE`).
+fn funcoes() -> &'static Vec<Value> {
+    static F: std::sync::OnceLock<Vec<Value>> = std::sync::OnceLock::new();
+    F.get_or_init(|| {
+        let v: Value =
+            serde_json::from_str(include_str!("../../../specs/estudio/funcoes_de_conversa.json")).expect("funcoes_de_conversa.json");
+        v["funcoes"].as_array().cloned().unwrap_or_default()
+    })
+}
+
+fn funcao(codigo: u32) -> Option<&'static Value> {
+    funcoes().iter().find(|f| f["codigo"].as_u64() == Some(codigo as u64))
+}
+
+fn conversa_json(c: &pw_data_loader::conversas::Conversa, indice: usize) -> Value {
+    use pw_data_loader::conversas::{texto, BIT_DE_FUNCAO};
+    json!({
+        "indice": indice,
+        "id": c.id,
+        "texto": texto(&c.texto),
+        "janelas": c.janelas.iter().map(|j| json!({
+            "id": j.id,
+            "id_pai": if j.id_pai == u32::MAX { json!(-1) } else { json!(j.id_pai) },
+            "texto": texto(&j.texto),
+            "opcoes": j.opcoes.iter().map(|o| {
+                let mut v = json!({ "id": o.id, "texto": texto(&o.texto), "param": o.param });
+                if o.id & BIT_DE_FUNCAO != 0 {
+                    v["funcao"] = funcao(o.id).map(|f| f["rotulo"].clone()).unwrap_or(json!("função desconhecida"));
+                }
+                v
+            }).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// A conversa que veio do painel, validada. Texto igual ao antigo mantém as unidades originais, para
+/// uma conversa salva sem mudança gravar os mesmos bytes.
+fn conversa_do_json(
+    v: &Value,
+    antiga: Option<&pw_data_loader::conversas::Conversa>,
+    id: u32,
+) -> Result<pw_data_loader::conversas::Conversa> {
+    use pw_data_loader::conversas::{texto, texto_fixo, texto_variavel, Conversa, Janela, Opcao, BIT_DE_FUNCAO};
+    let fixo = |novo: &str, velho: Option<&Vec<u16>>| -> Result<Vec<u16>> {
+        match velho {
+            Some(u) if texto(u) == novo => Ok(u.clone()),
+            _ => texto_fixo(novo).map_err(|e| anyhow::anyhow!("texto {novo:?}: {e}")),
+        }
+    };
+    let variavel = |novo: &str, velho: Option<&Vec<u16>>| -> Result<Vec<u16>> {
+        match velho {
+            Some(u) if texto(u) == novo => Ok(u.clone()),
+            _ => texto_variavel(novo).map_err(|e| anyhow::anyhow!(e)),
+        }
+    };
+    let janelas_v = v["janelas"].as_array().context("janelas")?;
+    if janelas_v.is_empty() {
+        bail!("a conversa precisa de ao menos uma janela");
+    }
+    let mut ids = std::collections::HashSet::new();
+    for j in janelas_v {
+        let jid = j["id"].as_u64().context("id da janela")? as u32;
+        if jid & BIT_DE_FUNCAO != 0 {
+            bail!("id de janela {jid} com o bit alto (reservado às funções)");
+        }
+        if !ids.insert(jid) {
+            bail!("id de janela repetido: {jid}");
+        }
+    }
+    let mut janelas = Vec::new();
+    for j in janelas_v {
+        let jid = j["id"].as_u64().unwrap() as u32;
+        let pai = match j["id_pai"].as_i64().context("id_pai")? {
+            -1 => u32::MAX,
+            p if p >= 0 && ids.contains(&(p as u32)) => p as u32,
+            p => bail!("janela {jid}: a janela pai {p} não existe"),
+        };
+        let velha = antiga.and_then(|a| a.janelas.iter().find(|x| x.id == jid));
+        let mut opcoes = Vec::new();
+        for (k, o) in j["opcoes"].as_array().context("opcoes")?.iter().enumerate() {
+            let oid = o["id"].as_u64().context("id da opção")? as u32;
+            if oid & BIT_DE_FUNCAO != 0 {
+                if funcao(oid).is_none() {
+                    bail!("janela {jid}: função {oid:#x} desconhecida");
+                }
+            } else if !ids.contains(&oid) {
+                bail!("janela {jid}: a opção aponta para a janela {oid}, que não existe");
+            }
+            let velha_o = velha.and_then(|x| x.opcoes.get(k));
+            opcoes.push(Opcao {
+                id: oid,
+                texto: fixo(o["texto"].as_str().unwrap_or(""), velha_o.map(|x| &x.texto))?,
+                param: o["param"].as_u64().unwrap_or(0) as u32,
+            });
+        }
+        janelas.push(Janela {
+            id: jid,
+            id_pai: pai,
+            texto: variavel(j["texto"].as_str().unwrap_or(""), velha.map(|x| &x.texto))?,
+            opcoes,
+        });
+    }
+    Ok(Conversa { id, texto: fixo(v["texto"].as_str().unwrap_or(""), antiga.map(|a| &a.texto))?, janelas })
+}
+
+impl Estudio {
+    pub fn funcoes_de_conversa(&self) -> Value {
+        json!(funcoes())
+    }
+
+    pub async fn listar_conversas(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        rascunho: Option<i64>,
+        busca: &str,
+        pagina: usize,
+        por_pagina: usize,
+    ) -> Result<Value> {
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let busca = busca.trim().to_lowercase();
+        let achados: Vec<Value> = e
+            .conversas
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| {
+                let t = pw_data_loader::conversas::texto(&c.texto).to_lowercase();
+                busca.is_empty() || c.id.to_string() == busca || t.contains(&busca)
+            })
+            .map(|(i, c)| json!({
+                "indice": i, "id": c.id, "nome": pw_data_loader::conversas::texto(&c.texto), "janelas": c.janelas.len(),
+            }))
+            .collect();
+        let por_pagina = por_pagina.clamp(1, 200);
+        let total = achados.len();
+        Ok(json!({
+            "total": total, "pagina": pagina, "por_pagina": por_pagina,
+            "registros": achados.into_iter().skip(pagina * por_pagina).take(por_pagina).collect::<Vec<_>>(),
+        }))
+    }
+
+    pub async fn conversa(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, indice: usize) -> Result<Value> {
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let c = e.conversas.get(indice).with_context(|| format!("conversa {indice} inexistente"))?;
+        let mut v = conversa_json(c, indice);
+        v["usado_por"] = json!(citantes(&e, "TALK", c.id as i32, ("TALK_PROC", indice), false, 100));
+        Ok(v)
+    }
+
+    pub async fn salvar_conversa(&self, gov: &Governanca, versao: &str, rascunho: i64, indice: usize, conversa: Value) -> Result<Value> {
+        self.alterar(gov, versao, rascunho, move |e, resumo| {
+            let antiga = e.conversas.get(indice).cloned().with_context(|| format!("conversa {indice} inexistente"))?;
+            let nova = conversa_do_json(&conversa, Some(&antiga), antiga.id)?;
+            let mudou = nova != antiga;
+            if mudou {
+                resumo.registro("TALK_PROC", antiga.id as i32, "editada", None);
+                e.conversas[indice] = nova;
+            }
+            Ok(json!({ "id": antiga.id, "mudou": mudou }))
+        })
+        .await
+    }
+
+    /// Conversa nova (cópia de `base`, ou uma janela com "Até logo") com o próximo id do espaço TALK.
+    pub async fn nova_conversa(&self, gov: &Governanca, versao: &str, rascunho: i64, base: Option<usize>) -> Result<Value> {
+        use pw_data_loader::conversas::{texto_fixo, texto_variavel, Conversa, Janela, Opcao};
+        self.alterar(gov, versao, rascunho, move |e, resumo| {
+            let id = e.conversas.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+            let base_id = base.and_then(|b| e.conversas.get(b)).map(|c| c.id as i32);
+            let mut c = match base {
+                Some(b) => e.conversas.get(b).cloned().with_context(|| format!("conversa {b} inexistente"))?,
+                None => Conversa {
+                    id,
+                    texto: texto_fixo("Conversa nova").unwrap(),
+                    janelas: vec![Janela {
+                        id: 1,
+                        id_pai: u32::MAX,
+                        texto: texto_variavel("Olá!").unwrap(),
+                        // TALK_EXIT = 0x80000012 (`enum SERVICE_TYPE`, ExpTypes.h:36-102)
+                        opcoes: vec![Opcao { id: 0x8000_0012, texto: texto_fixo("Até logo").unwrap(), param: 0 }],
+                    }],
+                },
+            };
+            c.id = id;
+            e.conversas.push(c);
+            resumo.registro("TALK_PROC", id as i32, "novo", base_id);
+            Ok(json!({ "indice": e.conversas.len() - 1, "id": id }))
+        })
+        .await
+    }
+
+    pub async fn remover_conversa(&self, gov: &Governanca, versao: &str, rascunho: i64, indice: usize) -> Result<Value> {
+        self.alterar(gov, versao, rascunho, move |e, resumo| {
+            let id = e.conversas.get(indice).with_context(|| format!("conversa {indice} inexistente"))?.id;
+            let refs = citantes(e, "TALK", id as i32, ("TALK_PROC", indice), true, 50);
+            if !refs.is_empty() {
+                bail!(
+                    "a conversa {id} é usada por {} registro(s), ex.: {}#{}",
+                    refs.len(),
+                    refs[0]["tabela"].as_str().unwrap_or(""),
+                    refs[0]["id"]
+                );
+            }
+            e.conversas.remove(indice);
+            resumo.registro("TALK_PROC", id as i32, "removido", None);
+            Ok(json!({ "removido": id }))
+        })
+        .await
     }
 }

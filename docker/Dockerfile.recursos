@@ -11,6 +11,7 @@ COPY tools ./tools
 COPY specs/elements_layouts ./specs/elements_layouts
 COPY specs/estudio/referencias.json ./specs/estudio/referencias.json
 COPY specs/estudio/rotulos.json ./specs/estudio/rotulos.json
+COPY specs/estudio/funcoes_de_conversa.json ./specs/estudio/funcoes_de_conversa.json
 COPY specs/elements_155/realm_155_overrides.json ./specs/elements_155/realm_155_overrides.json
 COPY specs/elements_155/realm_155_v159_overrides.json ./specs/elements_155/realm_155_v159_overrides.json
 COPY specs/mapas ./specs/mapas

@@ -78,3 +78,33 @@ fn tabelas_sem_espaco_conhecido_nao_aceitam_registro_novo() {
     }
     assert!(matches!(e.proximo_id("HOME_CONFIG"), Err(ErroDeEdicao::EspacoDesconhecido(_))));
 }
+
+#[test]
+fn conversas_ida_e_volta_e_edicao() {
+    use pw_data_loader::conversas::{self, BIT_DE_FUNCAO};
+    for realm in ["realm_126", "realm_155"] {
+        let buf = arquivo(realm);
+        let mut e = ElementsEditavel::ler(&buf, None).unwrap();
+        let n = e.conversas.len();
+        assert!(n > 100, "{realm}: {n} conversas");
+        let janelas: Vec<_> = e.conversas.iter().flat_map(|c| &c.janelas).collect();
+        let com_nul = janelas.iter().filter(|j| j.texto.last() == Some(&0)).count();
+        let vazias = janelas.iter().filter(|j| j.texto.is_empty()).count();
+        // Evidência do formato: o talk_text_len conta o NUL final.
+        assert_eq!(com_nul + vazias, janelas.len(), "{realm}: janelas sem NUL final");
+        let funcoes = janelas.iter().flat_map(|j| &j.opcoes).filter(|o| o.id & BIT_DE_FUNCAO != 0).count();
+        assert!(funcoes > 0);
+        assert!(e.gravar() == buf, "{realm}: conversas regravadas idênticas");
+
+        // Editar o texto de uma janela muda o tamanho e o arquivo continua fechando.
+        e.conversas[0].janelas[0].texto = conversas::texto_variavel("Olá, viajante!").unwrap();
+        e.conversas[0].texto = conversas::texto_fixo("Conversa de teste").unwrap();
+        let gravado = e.gravar();
+        let relido = ElementsEditavel::ler(&gravado, None).unwrap();
+        assert_eq!(conversas::texto(&relido.conversas[0].janelas[0].texto), "Olá, viajante!");
+        assert_eq!(conversas::texto(&relido.conversas[0].texto), "Conversa de teste");
+        assert_eq!(relido.conversas.len(), n);
+        assert!(load_elements_data(&gravado).is_ok(), "o leitor genérico também fecha no último byte");
+        assert!(conversas::texto_fixo(&"x".repeat(64)).is_err());
+    }
+}

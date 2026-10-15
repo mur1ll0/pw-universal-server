@@ -191,6 +191,40 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let v = json_de(pedir("PUT", &em("estudio/tabelas/WEAPON_ESSENCE/0")).send_json(json!({"campos": {"Name": nome0, "price": preco0}})).unwrap());
         assert_eq!(v["igual_ao_publicado"], true);
 
+        // Conversas (TALK_PROC, B240).
+        let t = json_de(pedir("GET", "estudio/tabelas").call().unwrap());
+        let talk = t["tabelas"].as_array().unwrap().iter().find(|x| x["nome"] == "TALK_PROC").unwrap().clone();
+        assert!(talk["registros"].as_u64().unwrap() > 100 && talk["conversas"] == true);
+        // O serviço de conversa cita a conversa pelo id_dialog, com o texto dela.
+        let servico = json_de(pedir("GET", "estudio/tabelas/NPC_TALK_SERVICE/0").call().unwrap());
+        let dialogo = servico["campos"].as_array().unwrap().iter().find(|c| c["nome"] == "id_dialog").unwrap().clone();
+        let r_dialogo = dialogo["referencia"].clone();
+        assert_eq!((dialogo["cita"].clone(), r_dialogo["tabela"].clone()), (json!("TALK"), json!("TALK_PROC")), "{dialogo}");
+        let ic = r_dialogo["indice"].as_u64().unwrap();
+        let conv = json_de(pedir("GET", &format!("estudio/conversas/{ic}")).call().unwrap());
+        assert!(!conv["janelas"].as_array().unwrap().is_empty());
+        assert!(!conv["usado_por"].as_array().unwrap().is_empty(), "o serviço a usa");
+        // Salvar igual: nada muda.
+        let igual = json_de(pedir("PUT", &em(&format!("estudio/conversas/{ic}"))).send_json(json!({"conversa": conv})).unwrap());
+        assert_eq!((igual["resultado"]["mudou"].clone(), igual["igual_ao_publicado"].clone()), (json!(false), json!(true)));
+        // Editar o texto da 1ª janela; opção para janela inexistente é recusada.
+        let mut nova = conv.clone();
+        nova["janelas"][0]["texto"] = json!("Texto do Estúdio");
+        pedir("PUT", &em(&format!("estudio/conversas/{ic}"))).send_json(json!({"conversa": nova})).unwrap();
+        let relida = json_de(pedir("GET", &em(&format!("estudio/conversas/{ic}"))).call().unwrap());
+        assert_eq!(relida["janelas"][0]["texto"], "Texto do Estúdio");
+        let mut ruim = relida.clone();
+        ruim["janelas"][0]["opcoes"] = json!([{"id": 99999, "texto": "x", "param": 0}]);
+        assert_eq!(erro_de(pedir("PUT", &em(&format!("estudio/conversas/{ic}"))).send_json(json!({"conversa": ruim}))).0, 400);
+        // Remover a conversa em uso é recusado; uma nova (id = maior + 1) some ao ser removida.
+        assert_eq!(erro_de(pedir("DELETE", &em(&format!("estudio/conversas/{ic}"))).call()).0, 400);
+        let criada = json_de(pedir("POST", &em("estudio/conversas")).call().unwrap())["resultado"].clone();
+        let lista_c = json_de(pedir("GET", &em("estudio/conversas")).query("busca", &criada["id"].to_string()).call().unwrap());
+        assert_eq!(lista_c["total"], 1);
+        pedir("DELETE", &em(&format!("estudio/conversas/{}", criada["indice"]))).call().unwrap();
+        let funcoes = json_de(pedir("GET", "estudio/funcoes").call().unwrap());
+        assert!(funcoes.as_array().unwrap().iter().any(|f| f["nome"] == "TALK_EXIT" && f["codigo"] == 0x8000_0012u32));
+
         // Editar de novo e publicar: o cliente ganha a versão 1 e o realm o arquivo novo.
         pedir("PUT", &em("estudio/tabelas/WEAPON_ESSENCE/0")).send_json(json!({"campos": {"price": 333}})).unwrap();
         let p = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r]})).unwrap());
@@ -198,9 +232,12 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(p["aplicados"].as_array().unwrap().len(), 1, "{p}");
         let no_realm = fs::read(realm2.join("elements.data")).unwrap();
         assert_ne!(no_realm, original2);
-        assert_eq!(no_realm.len(), original2.len());
+        // O tamanho muda com o texto da conversa (B240); o arquivo tem de continuar fechando.
+        assert_ne!(no_realm.len(), original2.len());
         let lido = load_elements_data(&no_realm).unwrap();
         assert_eq!(lido.get("WEAPON_ESSENCE")[0]["price"], FieldValue::Int(333));
+        let conversas = pw_data_loader::elements_editavel::ElementsEditavel::ler(&no_realm, None).unwrap().conversas;
+        assert_eq!(pw_data_loader::conversas::texto(&conversas[ic as usize].janelas[0].texto), "Texto do Estúdio");
         // O publicado agora é o novo: a ficha sem rascunho mostra 333.
         assert_eq!(valor(&json_de(pedir("GET", "estudio/tabelas/WEAPON_ESSENCE/0").call().unwrap()), "price"), json!(333));
     })
