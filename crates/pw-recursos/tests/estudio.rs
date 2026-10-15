@@ -1,6 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
-//! por referência, desfazer tudo volta ao publicado, publicar grava no realm.
+//! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
+//! editado num rascunho só do servidor, publicado e revertido (B243).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -267,6 +268,55 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(pw_data_loader::conversas::texto(&conversas[ic as usize].janelas[0].texto), "Texto do Estúdio");
         // O publicado agora é o novo: a ficha sem rascunho mostra 333.
         assert_eq!(valor(&json_de(pedir("GET", "estudio/tabelas/WEAPON_ESSENCE/0").call().unwrap()), "price"), json!(333));
+
+        // Edição do npcgen (B243): rascunho só do servidor, publicar grava no realm, reverter devolve.
+        let npcgen_original = fs::read(realm2.join("world").join("npcgen.data")).unwrap();
+        let r2 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "npcgen", "operacao_id": "t_p4_r2"})).unwrap())["id"].as_i64().unwrap();
+        let em2 = |rel: &str| format!("{rel}?rascunho={r2}");
+        let ng = json_de(pedir("GET", "estudio/mapas/world/npcgen").call().unwrap());
+        assert_eq!((ng["item"].as_str(), ng["no_rascunho"].as_bool()), (Some("servidor\\world\\npcgen.data"), Some(false)));
+        let areas = ng["areas"].as_array().unwrap().clone();
+        let n_areas = areas.len();
+        assert!(n_areas >= 2, "a01 tem áreas");
+        let a0 = json_de(pedir("GET", "estudio/mapas/world/npcgen/areas/0").call().unwrap());
+        let x0 = a0["campos"]["vPos_x"].as_f64().unwrap();
+        let tid0 = a0["filhos"][0]["dwID"].as_u64().unwrap();
+        assert_eq!(areas[0][6].as_u64(), Some(tid0));
+        // Sem rascunho é recusado; campo inexistente e tipo de área inválido também.
+        assert_eq!(erro_de(pedir("PUT", "estudio/mapas/world/npcgen/areas/0").send_json(json!({"campos": {"vPos_x": 1.0}}))).0, 400);
+        assert_eq!(erro_de(pedir("PUT", &em2("estudio/mapas/world/npcgen/areas/0")).send_json(json!({"campos": {"nada": 1}}))).0, 400);
+        assert_eq!(erro_de(pedir("GET", "estudio/mapas/world/npcgen/xyz/0").call()).0, 404);
+        assert_eq!(erro_de(pedir("PUT", &em2("estudio/mapas/world/npcgen/areas/0")).send_json(json!({"filhos": []}))).0, 400);
+        // Mover a área 0, pôr 2 geradores (o 2º copia o último e troca a quantidade), clonar e remover.
+        pedir("PUT", &em2("estudio/mapas/world/npcgen/areas/0"))
+            .send_json(json!({"campos": {"vPos_x": x0 + 10.0}, "filhos": [{}, {"dwNum": 3}]}))
+            .unwrap();
+        let clone = json_de(pedir("POST", &em2("estudio/mapas/world/npcgen/areas/1/clonar")).call().unwrap())["resultado"]["indice"].as_u64().unwrap();
+        assert_eq!(clone as usize, n_areas);
+        pedir("DELETE", &em2(&format!("estudio/mapas/world/npcgen/areas/{}", n_areas - 1))).call().unwrap();
+        let ng2 = json_de(pedir("GET", &em2("estudio/mapas/world/npcgen")).call().unwrap());
+        assert_eq!((ng2["no_rascunho"].as_bool(), ng2["areas"].as_array().unwrap().len()), (Some(true), n_areas));
+        let a0b = json_de(pedir("GET", &em2("estudio/mapas/world/npcgen/areas/0")).call().unwrap());
+        assert_eq!(a0b["filhos"].as_array().unwrap().len(), 2);
+        assert_eq!((a0b["filhos"][1]["dwID"].as_u64(), a0b["filhos"][1]["dwNum"].as_u64()), (Some(tid0), Some(3)));
+        assert_eq!(fs::read(realm2.join("world").join("npcgen.data")).unwrap(), npcgen_original, "o realm só muda ao publicar");
+        let hist = json_de(pedir("GET", "alteracoes").call().unwrap());
+        let item = hist.as_array().unwrap().iter().find(|a| a["id"] == r2).unwrap()["lista"][0].clone();
+        assert_eq!((item["caminho"].as_str(), item["destino"].as_str()), (Some("servidor\\world\\npcgen.data"), Some("servidor")));
+        assert_eq!(item["resumo"]["mudancas"].as_array().unwrap().len(), 3, "{item}");
+        // Publicar: o realm ganha o arquivo novo, que o carregador do GS lê.
+        let p2 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r2]})).unwrap());
+        assert_eq!((p2["numero"].as_i64(), p2["aplicados"].as_array().unwrap().len()), (Some(2), 1), "{p2}");
+        let novo = fs::read(realm2.join("world").join("npcgen.data")).unwrap();
+        assert_ne!(novo, npcgen_original);
+        let ed = pw_data_loader::npcgen_editavel::NpcgenEditavel::ler(&novo).unwrap();
+        assert_eq!((ed.areas.len(), ed.areas[0].geradores.len()), (n_areas, 2));
+        pw_data_loader::npcgen::NpcGenData::load_from_bytes(&novo).unwrap();
+        // Reverter: o rascunho devolve o arquivo antigo do realm.
+        let rv = json_de(pedir("POST", &format!("alteracoes/{r2}/reverter"))
+            .send_json(json!({"operacao_id": "t_p4_r3"})).unwrap())["rascunho"].as_i64().unwrap();
+        pedir("POST", "publicar").send_json(json!({"rascunhos": [rv]})).unwrap();
+        assert_eq!(fs::read(realm2.join("world").join("npcgen.data")).unwrap(), npcgen_original, "reverter devolve o npcgen");
     })
     .await
     .unwrap();

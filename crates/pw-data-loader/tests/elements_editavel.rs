@@ -108,3 +108,48 @@ fn conversas_ida_e_volta_e_edicao() {
         assert!(conversas::texto_fixo(&"x".repeat(64)).is_err());
     }
 }
+
+#[test]
+fn npcgen_de_todos_os_mapas_volta_identico() {
+    use pw_data_loader::npcgen_editavel::{definir_campo, ler_campos, NpcgenEditavel, CAMPOS_DA_AREA, CAMPOS_DO_GERADOR};
+    let mut por_versao = std::collections::BTreeMap::new();
+    let mut total = 0;
+    for realm in ["realm_126", "realm_155"] {
+        let raiz = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config"));
+        let mut arquivos: Vec<PathBuf> = std::fs::read_dir(&raiz)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path().join("npcgen.data"))
+            .filter(|p| p.exists())
+            .collect();
+        if raiz.join("npcgen.data").exists() {
+            arquivos.push(raiz.join("npcgen.data"));
+        }
+        assert!(arquivos.len() > 30, "{realm}: {} npcgen", arquivos.len());
+        for p in arquivos {
+            let buf = std::fs::read(&p).unwrap();
+            let n = NpcgenEditavel::ler(&buf).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            assert!(n.gravar() == buf, "{} não volta idêntico", p.display());
+            *por_versao.entry(n.versao).or_insert(0) += 1;
+            total += 1;
+        }
+    }
+    println!("npcgen por versão: {por_versao:?}, total {total}");
+    // Editar uma área do mundo do 1.5.5: posição, quantidade; acrescentar e tirar gerador mantém o arquivo coerente.
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_155/config/world/npcgen.data");
+    let buf = std::fs::read(&p).unwrap();
+    let mut n = NpcgenEditavel::ler(&buf).unwrap();
+    let v = n.versao;
+    let a = &mut n.areas[0];
+    definir_campo(&mut a.bruto, CAMPOS_DA_AREA, v, "vPos_x", &serde_json::json!(123.5), "area").unwrap();
+    definir_campo(&mut a.geradores[0], CAMPOS_DO_GERADOR, v, "dwNum", &serde_json::json!(7), "gerador").unwrap();
+    assert!(definir_campo(&mut a.bruto, CAMPOS_DA_AREA, v, "inexistente", &serde_json::json!(1), "area").is_err());
+    assert!(definir_campo(&mut a.geradores[0], CAMPOS_DO_GERADOR, v, "dwNum", &serde_json::json!(-1), "gerador").is_err());
+    let copia = a.geradores[0].clone();
+    a.geradores.push(copia);
+    let relido = NpcgenEditavel::ler(&n.gravar()).unwrap();
+    assert_eq!(ler_campos(&relido.areas[0].bruto, CAMPOS_DA_AREA, v)["vPos_x"], 123.5);
+    assert_eq!(ler_campos(&relido.areas[0].geradores[0], CAMPOS_DO_GERADOR, v)["dwNum"], 7);
+    assert_eq!(relido.areas[0].geradores.len(), n.areas[0].geradores.len());
+    assert!(pw_data_loader::npcgen::NpcGenData::load_from_bytes(&n.gravar()).is_ok(), "o leitor do GS também lê");
+}

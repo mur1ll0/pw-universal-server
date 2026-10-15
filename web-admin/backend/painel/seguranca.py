@@ -37,6 +37,17 @@ def eh_conversa_do_estudio(escopo):
             and partes[3:5] == ["estudio", "conversas"])
 
 
+LIMITE_AREA_DO_NPCGEN = 64 << 10
+
+
+def eh_area_do_npcgen(escopo):
+    """B243: salvar uma área do npcgen manda os campos dela e de todos os geradores (até 64)."""
+    partes = escopo["path"].strip("/").split("/")
+    # api / realms / <realm> / estudio / mapas / <caminho> / npcgen / <tipo> / <indice>
+    return (escopo["method"] == "PUT" and len(partes) == 9 and partes[:2] == ["api", "realms"]
+            and partes[3:5] == ["estudio", "mapas"] and partes[6] == "npcgen")
+
+
 class LimitarEntrada:
     """Limita antes de acumular o corpo, inclusive sem Content-Length."""
     def __init__(self, app):
@@ -51,7 +62,8 @@ class LimitarEntrada:
         # Só o envio de arquivo para um rascunho dos recursos do cliente passa de 8 KiB (B235):
         # o mesmo teto do pw-recursos (admin::MAIOR_ARQUIVO).
         limite = (LIMITE_ARQUIVO_DE_RECURSO if eh_envio_de_recurso(escopo)
-                  else LIMITE_CONVERSA if eh_conversa_do_estudio(escopo) else 8192)
+                  else LIMITE_CONVERSA if eh_conversa_do_estudio(escopo)
+                  else LIMITE_AREA_DO_NPCGEN if eh_area_do_npcgen(escopo) else 8192)
         while True:
             mensagem = await receber()
             if mensagem["type"] == "http.disconnect":

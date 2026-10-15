@@ -778,3 +778,10 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .mapa-pecas img { position: absolute; width: 256px; height: 256px; image-rendering: auto; user-select: none; pointer-events: none; }
 .mapa-pontos { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 #mapa-detalhe { margin-top: 8px; min-height: 22px; }
+.mapa-editor { margin-top: 10px; border-top: 1px solid var(--borda); padding-top: 10px; }
+.mapa-editor .mapa-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 10px; margin: 6px 0 10px; }
+.mapa-editor .mapa-campos label { display: flex; flex-direction: column; font-size: 12px; gap: 2px; }
+.mapa-editor .mapa-campos label.marca { flex-direction: row; align-items: center; gap: 6px; }
+.mapa-editor fieldset { border: 1px solid var(--borda); border-radius: 8px; padding: 6px 10px; margin: 0 0 8px; }
+.mapa-editor legend { font-size: 13px; padding: 0 4px; }
+.mapa-editor .recursos-linha { flex-wrap: wrap; gap: 6px; }

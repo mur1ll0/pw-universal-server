@@ -298,25 +298,40 @@ impl Governanca {
         for i in itens {
             let Some(depois) = &i.sha256_depois else { continue };
             let nome = nomes::legivel(&i.caminho);
-            let arquivo = match nome.get(..5) {
-                Some(p) if p.eq_ignore_ascii_case("data\\") => &nome[5..],
-                _ => bail!("{nome}: só arquivos de data\\ vão para o realm"),
-            };
-            if arquivo.is_empty() || arquivo.contains(['\\', '/', ':']) || arquivo.starts_with('.') {
-                bail!("{nome}: nome inválido para o realm");
-            }
+            let rel = caminho_no_realm(&nome)?;
             let sha: Sha256Bytes = depois.as_slice().try_into().context("sha256_depois")?;
             let tamanho = i.tamanho.context("item sem tamanho")? as usize;
             let dados = objetos.ler(&sha, tamanho)?;
             for pasta in pastas {
-                let destino = pasta.join(arquivo.to_lowercase());
-                let tmp = pasta.join(format!(".{}.pw-tmp", arquivo.to_lowercase()));
+                let destino = rel.iter().fold(pasta.clone(), |p, c| p.join(c));
+                // O arquivo do realm tem de ser o mesmo de quando o item entrou no rascunho (B243):
+                // senão alguém mudou por fora e a publicação o apagaria em silêncio.
+                // Só nos itens do servidor: o `elements.data` (ambos) já foi conferido pelo manifesto.
+                if let (true, Some(antes), Ok(atual)) = (i.destino == "servidor", &i.sha256_antes, std::fs::read(&destino)) {
+                    if crate::objetos::sha256(&atual).as_slice() != antes.as_slice() {
+                        bail!("{} mudou depois que o item entrou no rascunho; refaça o item", destino.display());
+                    }
+                }
+                let pasta_do_arquivo = destino.parent().context("caminho")?.to_path_buf();
+                std::fs::create_dir_all(&pasta_do_arquivo)?;
+                let tmp = pasta_do_arquivo.join(format!(".{}.pw-tmp", rel.last().unwrap()));
                 std::fs::write(&tmp, &dados).with_context(|| format!("gravar {}", tmp.display()))?;
                 std::fs::rename(&tmp, &destino).with_context(|| format!("trocar {}", destino.display()))?;
                 aplicados.push(destino.display().to_string());
             }
         }
         Ok(aplicados)
+    }
+
+    /// Lê o arquivo do realm (para o rascunho de um item só do servidor).
+    pub fn ler_do_realm(&self, versao: &str, nome_do_item: &str) -> Result<Option<Vec<u8>>> {
+        let pasta = self.realms.get(versao).and_then(|p| p.first()).context("a versão não tem realm (PW_RECURSOS_REALMS)")?;
+        let destino = caminho_no_realm(nome_do_item)?.iter().fold(pasta.clone(), |p, c| p.join(c));
+        match std::fs::read(&destino) {
+            Ok(b) => Ok(Some(b)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Cria um rascunho que desfaz uma alteração publicada. Devolve o id do rascunho.
@@ -338,7 +353,19 @@ impl Governanca {
             .await?;
         let objetos = self.objetos(versao);
         for i in itens {
-            let atual = atuais.get(&i.caminho);
+            // Item só do servidor: o "atual" é o arquivo do realm, não o do manifesto do cliente (B243).
+            let do_realm = if i.destino == "servidor" {
+                self.ler_do_realm(versao, &nomes::legivel(&i.caminho))?.map(|b| (crate::objetos::sha256(&b).to_vec(), b.len() as u64))
+            } else {
+                None
+            };
+            let atual_do_realm = do_realm.as_ref().map(|(sha, t)| Arquivo {
+                caminho_gbk: String::new(),
+                sha256: hex::encode(sha),
+                tamanho: *t,
+                pacote: String::new(),
+            });
+            let atual = if i.destino == "servidor" { atual_do_realm.as_ref() } else { atuais.get(&i.caminho).copied() };
             let sha_antes = atual.map(|x| hex::decode(&x.sha256)).transpose()?;
             let item = match &i.sha256_antes {
                 // O arquivo não existia antes: o inverso é removê-lo (se ainda existe).
@@ -405,5 +432,41 @@ impl Governanca {
             })
             .take(limite)
             .collect())
+    }
+}
+
+/// Onde um item do servidor vai dentro do `config` do realm: `data\<arquivo>` (um arquivo do cliente que o
+/// servidor também lê, como o `elements.data`) vai para a raiz; `servidor\<pasta>\…\<arquivo>` (só do
+/// servidor, como o `npcgen.data` de cada mapa, B243) vai para a subpasta. Cada parte só com letras, dígitos,
+/// `_`, `-` e `.`, sem começar por ponto.
+pub fn caminho_no_realm(nome: &str) -> Result<Vec<String>> {
+    let partes: Vec<&str> = nome.split('\\').collect();
+    let resto = match partes.first() {
+        Some(p) if p.eq_ignore_ascii_case("data") && partes.len() == 2 => &partes[1..],
+        Some(p) if p.eq_ignore_ascii_case("servidor") && partes.len() >= 2 && partes.len() <= 4 => &partes[1..],
+        _ => bail!(r"{nome}: só data\<arquivo> ou servidor\<pasta>\<arquivo> vão para o realm"),
+    };
+    let valida = |p: &str| {
+        !p.is_empty() && !p.starts_with('.') && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
+    };
+    if !resto.iter().all(|p| valida(p)) {
+        bail!("{nome}: nome inválido para o realm");
+    }
+    Ok(resto.iter().map(|p| p.to_lowercase()).collect())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::caminho_no_realm;
+
+    #[test]
+    fn caminhos_do_realm() {
+        assert_eq!(caminho_no_realm(r"data\elements.data").unwrap(), vec!["elements.data"]);
+        assert_eq!(caminho_no_realm(r"servidor\a01\npcgen.data").unwrap(), vec!["a01", "npcgen.data"]);
+        assert_eq!(caminho_no_realm(r"servidor\npcgen.data").unwrap(), vec!["npcgen.data"]);
+        assert!(caminho_no_realm(r"servidor\..\x").is_err());
+        assert!(caminho_no_realm(r"data\a\b").is_err());
+        assert!(caminho_no_realm(r"models\x.ecm").is_err());
+        assert!(caminho_no_realm(r"servidor\a:b\c").is_err());
     }
 }

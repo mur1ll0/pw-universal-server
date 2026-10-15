@@ -884,7 +884,7 @@ impl Estudio {
         if dentro.exists() {
             return Some(dentro);
         }
-        // O mundo do 1.2.6 guarda o npcgen na raiz do config.
+        // Sem `world/npcgen.data`, o da raiz do config (a ordem do GS, `manager.rs:616-621`).
         let raiz = pasta.join("npcgen.data");
         (caminho == "world" && raiz.exists()).then_some(raiz)
     }
@@ -951,5 +951,324 @@ impl Estudio {
             "pontos": pontos,
             "modelos": nomes_por_modelo,
         }))
+    }
+}
+
+// ------------------------------------------------------------------ edição do npcgen (S4, B243)
+
+use pw_data_loader::npcgen_editavel::{
+    self as ng, NpcgenEditavel, CAMPOS_DA_AREA, CAMPOS_DA_AREA_DE_RECURSO, CAMPOS_DO_GERADOR, CAMPOS_DO_RECURSO,
+};
+
+/// Áreas de criatura (`AREA` + `NPCGEN`) ou de recurso (`RESAREA` + `RES`), `npcgendata.h:57-102`.
+#[derive(Clone, Copy, PartialEq)]
+pub enum TipoDeArea {
+    Criatura,
+    Recurso,
+}
+
+impl TipoDeArea {
+    pub fn de(s: &str) -> Result<Self> {
+        match s {
+            "areas" => Ok(TipoDeArea::Criatura),
+            "recursos" => Ok(TipoDeArea::Recurso),
+            _ => bail!("tipo de área inválido: {s}"),
+        }
+    }
+    fn campos(self) -> (&'static [ng::Campo], &'static [ng::Campo], &'static str, &'static str) {
+        match self {
+            TipoDeArea::Criatura => (CAMPOS_DA_AREA, CAMPOS_DO_GERADOR, "área", "gerador"),
+            TipoDeArea::Recurso => (CAMPOS_DA_AREA_DE_RECURSO, CAMPOS_DO_RECURSO, "área de recurso", "recurso"),
+        }
+    }
+    fn nome(self) -> &'static str {
+        match self {
+            TipoDeArea::Criatura => "área",
+            TipoDeArea::Recurso => "área de recurso",
+        }
+    }
+}
+
+fn numero(m: &Map<String, Value>, k: &str) -> f64 {
+    m.get(k).and_then(Value::as_f64).unwrap_or(0.0)
+}
+
+fn um_decimal(x: f64) -> f64 {
+    (x * 10.0).round() / 10.0
+}
+
+/// Os campos que a versão do arquivo tem, `[[nome, tipo]]`, na ordem da struct.
+fn campos_da_versao(campos: &[ng::Campo], versao: u32) -> Value {
+    json!(campos.iter().filter(|c| versao >= c.3).map(|c| json!([c.0, c.1])).collect::<Vec<_>>())
+}
+
+impl Estudio {
+    /// O `npcgen.data` do mapa: nome do item (`servidor\<pasta>\npcgen.data`), bytes do realm, e os do
+    /// rascunho quando ele já tem o item.
+    async fn npcgen_atual(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        caminho: &str,
+        rascunho: Option<i64>,
+    ) -> Result<(String, Vec<u8>, Option<(ItemDeRecurso, Vec<u8>)>)> {
+        if !caminho_de_mapa_valido(caminho) {
+            bail!("mapa inválido");
+        }
+        let pasta = gov.realms.get(versao).and_then(|p| p.first()).context("a versão não tem realm configurado (PW_RECURSOS_REALMS)")?;
+        let arquivo = self.caminho_do_npcgen(pasta, caminho).with_context(|| format!("o realm não tem npcgen para {caminho}"))?;
+        let nome = if arquivo.parent() == Some(pasta.as_path()) {
+            "servidor\\npcgen.data".to_string() // o mundo sem `world/`, na raiz do config
+        } else {
+            format!("servidor\\{caminho}\\npcgen.data")
+        };
+        let do_realm = gov.ler_do_realm(versao, &nome)?.context("npcgen do realm sumiu")?;
+        let mut do_rascunho = None;
+        if let Some(r) = rascunho {
+            gov.rascunho_da_versao(versao, r).await?;
+            if let Some(i) = gov.repo.itens(r).await?.into_iter().find(|i| i.caminho == nome.as_bytes()) {
+                let sha: Sha256Bytes = i.sha256_depois.clone().context("npcgen removido no rascunho")?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
+                let objetos = gov.objetos(versao);
+                let tamanho = i.tamanho.unwrap_or(0) as usize;
+                let b = tokio::task::spawn_blocking(move || objetos.ler(&sha, tamanho)).await??;
+                do_rascunho = Some((i, b));
+            }
+        }
+        Ok((nome, do_realm, do_rascunho))
+    }
+
+    /// Resumo do npcgen para o mapa: uma linha por área, com o que a tela desenha.
+    pub async fn npcgen(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Value> {
+        let (nome, do_realm, do_rascunho) = self.npcgen_atual(gov, versao, caminho, rascunho).await?;
+        let no_rascunho = do_rascunho.is_some();
+        let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
+        let n = NpcgenEditavel::ler(&bytes).map_err(|e| anyhow::anyhow!("npcgen: {e}"))?;
+        let v = n.versao;
+        let (e, _) = self.atual(gov, versao, None).await?;
+        let ids = mapa_de_ids(&e);
+        let mut modelos: HashMap<i64, Value> = HashMap::new();
+        let mut nomear = |id: i64| {
+            modelos.entry(id).or_insert_with(|| match ids.get(&("ESSENCE".to_string(), id as i32)) {
+                Some(&(ti, ri)) if ti != CONVERSAS => json!({ "nome": nome_do_registro(&e.tabelas[ti], ri), "tabela": e.tabelas[ti].nome, "indice": ri }),
+                _ => json!({ "nome": null }),
+            });
+        };
+        let mut areas = Vec::with_capacity(n.areas.len());
+        for (i, a) in n.areas.iter().enumerate() {
+            let c = ng::ler_campos(&a.bruto, CAMPOS_DA_AREA, v);
+            let primeiro = a.geradores.first().map(|g| u32::from_le_bytes(g[0..4].try_into().unwrap()) as i64).unwrap_or(0);
+            let total: i64 = a.geradores.iter().map(|g| u32::from_le_bytes(g[4..8].try_into().unwrap()) as i64).sum();
+            for g in &a.geradores {
+                nomear(u32::from_le_bytes(g[0..4].try_into().unwrap()) as i64);
+            }
+            // NPC_MONSTER = 0, NPC_SERVER = 1 (`npcgendata.h:313-317`)
+            let tipo = if numero(&c, "iNPCType") as i64 == 1 { "npc" } else { "monstro" };
+            areas.push(json!([i, tipo, um_decimal(numero(&c, "vPos_x")), um_decimal(numero(&c, "vPos_z")),
+                um_decimal(numero(&c, "vExts_x")), um_decimal(numero(&c, "vExts_z")), primeiro, a.geradores.len(), total,
+                c.get("bInitGen") == Some(&json!(true))]));
+        }
+        let mut recursos = Vec::with_capacity(n.areas_de_recurso.len());
+        for (i, a) in n.areas_de_recurso.iter().enumerate() {
+            let c = ng::ler_campos(&a.bruto, CAMPOS_DA_AREA_DE_RECURSO, v);
+            let primeiro = a.recursos.first().map(|r| i32::from_le_bytes(r[4..8].try_into().unwrap()) as i64).unwrap_or(0);
+            let total: i64 = a.recursos.iter().map(|r| u32::from_le_bytes(r[12..16].try_into().unwrap()) as i64).sum();
+            for r in &a.recursos {
+                nomear(i32::from_le_bytes(r[4..8].try_into().unwrap()) as i64);
+            }
+            recursos.push(json!([i, "recurso", um_decimal(numero(&c, "vPos_x")), um_decimal(numero(&c, "vPos_z")),
+                um_decimal(numero(&c, "fExtX")), um_decimal(numero(&c, "fExtZ")), primeiro, a.recursos.len(), total,
+                c.get("bInitGen") == Some(&json!(true))]));
+        }
+        Ok(json!({
+            "item": nome,
+            "versao_do_arquivo": v,
+            "no_rascunho": no_rascunho,
+            "colunas": ["indice", "tipo", "x", "z", "ext_x", "ext_z", "primeiro_modelo", "geradores", "quantidade", "nasce_ao_subir"],
+            "areas": areas,
+            "recursos": recursos,
+            "modelos": modelos,
+            "campos": {
+                "area": campos_da_versao(CAMPOS_DA_AREA, v),
+                "gerador": campos_da_versao(CAMPOS_DO_GERADOR, v),
+                "area_de_recurso": campos_da_versao(CAMPOS_DA_AREA_DE_RECURSO, v),
+                "recurso": campos_da_versao(CAMPOS_DO_RECURSO, v),
+            },
+        }))
+    }
+
+    /// Uma área com seus geradores (ou recursos), campo a campo.
+    pub async fn area_do_npcgen(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>, tipo: TipoDeArea, indice: usize) -> Result<Value> {
+        let (_, do_realm, do_rascunho) = self.npcgen_atual(gov, versao, caminho, rascunho).await?;
+        let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
+        let n = NpcgenEditavel::ler(&bytes).map_err(|e| anyhow::anyhow!("npcgen: {e}"))?;
+        let (ca, cf, _, _) = tipo.campos();
+        let (bruto, filhos) = match tipo {
+            TipoDeArea::Criatura => n.areas.get(indice).map(|a| (&a.bruto, &a.geradores)),
+            TipoDeArea::Recurso => n.areas_de_recurso.get(indice).map(|a| (&a.bruto, &a.recursos)),
+        }
+        .with_context(|| format!("{} {indice} não existe", tipo.nome()))?;
+        Ok(json!({
+            "indice": indice,
+            "campos": ng::ler_campos(bruto, ca, n.versao),
+            "filhos": filhos.iter().map(|f| ng::ler_campos(f, cf, n.versao)).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Aplica uma mudança ao npcgen do mapa no rascunho; se o resultado volta a ser o do realm, o item sai.
+    async fn alterar_npcgen<F>(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, mudar: F) -> Result<Value>
+    where
+        F: FnOnce(&mut NpcgenEditavel) -> Result<(Value, Value)>,
+    {
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let (nome, do_realm, do_rascunho) = self.npcgen_atual(gov, versao, caminho, Some(rascunho)).await?;
+        let sha_do_realm = sha256(&do_realm);
+        let mut mudancas = Vec::new();
+        if let Some((i, _)) = &do_rascunho {
+            if i.sha256_antes.as_deref() != Some(sha_do_realm.as_slice()) {
+                bail!("o {nome} do realm mudou depois que entrou no rascunho; tire o item do rascunho e refaça");
+            }
+            mudancas = i.resumo.get("mudancas").and_then(Value::as_array).cloned().unwrap_or_default();
+        }
+        let base = do_rascunho.map(|(_, b)| b).unwrap_or_else(|| do_realm.clone());
+        let mut n = NpcgenEditavel::ler(&base).map_err(|e| anyhow::anyhow!("npcgen: {e}"))?;
+        let (resposta, mudanca) = mudar(&mut n)?;
+        let bytes = n.gravar();
+        let sha = sha256(&bytes);
+        if sha == sha_do_realm {
+            gov.repo.tirar_item(rascunho, nome.as_bytes()).await?;
+            return Ok(json!({ "resultado": resposta, "igual_ao_publicado": true }));
+        }
+        if !mudanca.is_null() {
+            mudancas.push(mudanca);
+            if mudancas.len() > 300 {
+                mudancas.drain(..mudancas.len() - 300);
+            }
+        }
+        // O arquivo do realm também entra no volume: é o que "reverter" devolve.
+        let objetos = Objetos::new(gov.objetos(versao).raiz().to_path_buf(), NIVEL_DO_RASCUNHO);
+        let (tam_antes, tam_depois) = (do_realm.len(), bytes.len());
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            if !objetos.existe(&sha_do_realm) {
+                objetos.gravar(&sha_do_realm, &do_realm)?;
+            }
+            Ok(objetos.gravar(&sha, &bytes)?)
+        })
+        .await??;
+        let item = ItemDeRecurso {
+            alteracao: rascunho,
+            caminho: nome.as_bytes().to_vec(),
+            destino: "servidor".into(),
+            acao: "substituir".into(),
+            sha256_antes: Some(sha_do_realm.to_vec()),
+            sha256_depois: Some(sha.to_vec()),
+            tamanho: Some(tam_depois as i64),
+            resumo: json!({
+                "caminho": nome, "mapa": caminho, "tamanho_antes": tam_antes, "tamanho_depois": tam_depois,
+                "mudancas": mudancas,
+            }),
+        };
+        gov.repo.gravar_item(&item).await?;
+        Ok(json!({ "resultado": resposta, "igual_ao_publicado": false }))
+    }
+
+    /// Troca campos da área e dos filhos (geradores/recursos). `filhos` substitui a lista inteira: os que
+    /// sobram ganham os campos dados; os novos partem de uma cópia do último; os que faltam saem.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn editar_area_do_npcgen(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        caminho: &str,
+        rascunho: i64,
+        tipo: TipoDeArea,
+        indice: usize,
+        campos: Map<String, Value>,
+        filhos: Option<Vec<Map<String, Value>>>,
+    ) -> Result<Value> {
+        self.alterar_npcgen(gov, versao, caminho, rascunho, move |n| {
+            let v = n.versao;
+            let (ca, cf, onde_a, onde_f) = tipo.campos();
+            let (bruto, lista, tam) = match tipo {
+                TipoDeArea::Criatura => n.areas.get_mut(indice).map(|a| (&mut a.bruto, &mut a.geradores, ng::tamanho_do_gerador(v))),
+                TipoDeArea::Recurso => n.areas_de_recurso.get_mut(indice).map(|a| (&mut a.bruto, &mut a.recursos, ng::TAMANHO_DO_RECURSO)),
+            }
+            .with_context(|| format!("{} {indice} não existe", tipo.nome()))?;
+            let antes = ng::ler_campos(bruto, ca, v);
+            for (k, valor) in &campos {
+                ng::definir_campo(bruto, ca, v, k, valor, onde_a).map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
+            let depois = ng::ler_campos(bruto, ca, v);
+            let mudados: Map<String, Value> =
+                depois.iter().filter(|(k, x)| antes.get(*k) != Some(*x)).map(|(k, x)| (k.clone(), json!([antes[k], x]))).collect();
+            let (n_antes, mut n_depois) = (lista.len(), lista.len());
+            if let Some(filhos) = filhos {
+                if filhos.is_empty() {
+                    bail!("a {} precisa de ao menos um {onde_f}; para tirá-la, remova a área", tipo.nome());
+                }
+                if filhos.len() > 64 {
+                    bail!("no máximo 64 {onde_f}s por área");
+                }
+                let modelo = lista.last().cloned().unwrap_or_else(|| vec![0u8; tam]);
+                lista.resize(filhos.len(), modelo);
+                for (f, mapa) in lista.iter_mut().zip(&filhos) {
+                    for (k, valor) in mapa {
+                        ng::definir_campo(f, cf, v, k, valor, onde_f).map_err(|e| anyhow::anyhow!("{e}"))?;
+                    }
+                }
+                n_depois = lista.len();
+            }
+            let mudanca = json!({ "acao": "editada", "tipo": tipo.nome(), "indice": indice, "campos": mudados,
+                "filhos_antes": n_antes, "filhos_depois": n_depois });
+            Ok((json!({ "indice": indice }), mudanca))
+        })
+        .await
+    }
+
+    /// Nova área no fim da lista, cópia de `indice` (o `dwGenID` não é usado pelo GS: só o editor o lê).
+    pub async fn clonar_area_do_npcgen(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, tipo: TipoDeArea, indice: usize) -> Result<Value> {
+        self.alterar_npcgen(gov, versao, caminho, rascunho, move |n| {
+            let novo = match tipo {
+                TipoDeArea::Criatura => {
+                    let a = n.areas.get(indice).cloned().with_context(|| format!("área {indice} não existe"))?;
+                    n.areas.push(a);
+                    n.areas.len() - 1
+                }
+                TipoDeArea::Recurso => {
+                    let a = n.areas_de_recurso.get(indice).cloned().with_context(|| format!("área de recurso {indice} não existe"))?;
+                    n.areas_de_recurso.push(a);
+                    n.areas_de_recurso.len() - 1
+                }
+            };
+            Ok((json!({ "indice": novo }), json!({ "acao": "clonada", "tipo": tipo.nome(), "indice": novo, "base": indice })))
+        })
+        .await
+    }
+
+    /// Tira a área (as seguintes sobem um índice).
+    pub async fn remover_area_do_npcgen(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, tipo: TipoDeArea, indice: usize) -> Result<Value> {
+        self.alterar_npcgen(gov, versao, caminho, rascunho, move |n| {
+            let (x, z) = match tipo {
+                TipoDeArea::Criatura => {
+                    if indice >= n.areas.len() {
+                        bail!("área {indice} não existe");
+                    }
+                    let a = n.areas.remove(indice);
+                    let c = ng::ler_campos(&a.bruto, CAMPOS_DA_AREA, n.versao);
+                    (numero(&c, "vPos_x"), numero(&c, "vPos_z"))
+                }
+                TipoDeArea::Recurso => {
+                    if indice >= n.areas_de_recurso.len() {
+                        bail!("área de recurso {indice} não existe");
+                    }
+                    let a = n.areas_de_recurso.remove(indice);
+                    let c = ng::ler_campos(&a.bruto, CAMPOS_DA_AREA_DE_RECURSO, n.versao);
+                    (numero(&c, "vPos_x"), numero(&c, "vPos_z"))
+                }
+            };
+            Ok((json!({ "removida": indice }),
+                json!({ "acao": "removida", "tipo": tipo.nome(), "indice": indice, "x": um_decimal(x), "z": um_decimal(z) })))
+        })
+        .await
     }
 }

@@ -293,3 +293,54 @@ def registrar_mapas(app):
         if not MAPA.match(caminho):
             raise HTTPException(404, "Mapa inválido.")
         return await _repassar("GET", f"/admin/{v}/estudio/mapas/{caminho}/criaturas")
+
+    # Edição do npcgen (B243): áreas de criatura ("areas") e de recurso ("recursos") num rascunho.
+    def _mapa_e_tipo(caminho, tipo):
+        if not MAPA.match(caminho) or tipo not in ("areas", "recursos"):
+            raise HTTPException(404, "Área inválida.")
+
+    @app.get("/api/realms/{realm}/estudio/mapas/{caminho}/npcgen")
+    async def estudio_npcgen(realm: str, caminho: str, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        if not MAPA.match(caminho):
+            raise HTTPException(404, "Mapa inválido.")
+        return await _repassar("GET", f"/admin/{v}/estudio/mapas/{caminho}/npcgen", {"rascunho": rascunho})
+
+    @app.get("/api/realms/{realm}/estudio/mapas/{caminho}/npcgen/{tipo}/{indice}")
+    async def estudio_area(realm: str, caminho: str, tipo: str, indice: int, requisicao: Request,
+                           rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        _mapa_e_tipo(caminho, tipo)
+        return await _repassar("GET", f"/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{max(0, indice)}",
+                               {"rascunho": rascunho})
+
+    @app.put("/api/realms/{realm}/estudio/mapas/{caminho}/npcgen/{tipo}/{indice}")
+    async def estudio_editar_area(realm: str, caminho: str, tipo: str, indice: int, rascunho: int,
+                                  requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        _mapa_e_tipo(caminho, tipo)
+        dados = await requisicao.json()
+        campos, filhos = dados.get("campos", {}), dados.get("filhos")
+        if not isinstance(campos, dict) or not (filhos is None or (isinstance(filhos, list)
+                                                                  and all(isinstance(f, dict) for f in filhos))):
+            raise HTTPException(422, "Área inválida.")
+        if not campos and filhos is None:
+            raise HTTPException(422, "Nada a mudar.")
+        return await _repassar("PUT", f"/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{max(0, indice)}",
+                               {"rascunho": rascunho}, dados={"campos": campos, "filhos": filhos})
+
+    @app.post("/api/realms/{realm}/estudio/mapas/{caminho}/npcgen/{tipo}/{indice}/clonar")
+    async def estudio_clonar_area(realm: str, caminho: str, tipo: str, indice: int, rascunho: int,
+                                  requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        _mapa_e_tipo(caminho, tipo)
+        return await _repassar("POST", f"/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{max(0, indice)}/clonar",
+                               {"rascunho": rascunho})
+
+    @app.delete("/api/realms/{realm}/estudio/mapas/{caminho}/npcgen/{tipo}/{indice}")
+    async def estudio_remover_area(realm: str, caminho: str, tipo: str, indice: int, rascunho: int,
+                                   requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        _mapa_e_tipo(caminho, tipo)
+        return await _repassar("DELETE", f"/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{max(0, indice)}",
+                               {"rascunho": rascunho})

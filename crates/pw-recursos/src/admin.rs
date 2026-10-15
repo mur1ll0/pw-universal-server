@@ -17,6 +17,7 @@
 //! POST   /admin/{v}/alteracoes/{id}/reverter {autor, operacao_id}
 //! ```
 
+use crate::estudio::TipoDeArea;
 use crate::governanca::Governanca;
 use crate::nomes;
 use axum::body::Bytes;
@@ -379,6 +380,68 @@ async fn estudio_criaturas(State(e): State<Arc<Estado>>, Path((v, caminho)): Pat
     Ok(Json(e.estudio.criaturas(&e.gov, &v, &caminho).await?))
 }
 
+// ------------------------------------------------------------------ edição do npcgen (S4, B243)
+
+fn tipo_de_area(t: &str) -> R<TipoDeArea> {
+    TipoDeArea::de(t).map_err(|err| Erro(StatusCode::NOT_FOUND, format!("{err:#}")))
+}
+
+async fn estudio_npcgen(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.npcgen(&e.gov, &v, &caminho, q.rascunho).await?))
+}
+
+async fn estudio_area(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho, tipo, indice)): Path<(String, String, String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let t = tipo_de_area(&tipo)?;
+    Ok(Json(e.estudio.area_do_npcgen(&e.gov, &v, &caminho, q.rascunho, t, indice).await?))
+}
+
+#[derive(Deserialize)]
+struct PedidoArea {
+    #[serde(default)]
+    campos: serde_json::Map<String, Value>,
+    filhos: Option<Vec<serde_json::Map<String, Value>>>,
+}
+
+async fn estudio_editar_area(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho, tipo, indice)): Path<(String, String, String, usize)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoArea>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let t = tipo_de_area(&tipo)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.editar_area_do_npcgen(&e.gov, &v, &caminho, r, t, indice, p.campos, p.filhos).await?))
+}
+
+async fn estudio_clonar_area(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho, tipo, indice)): Path<(String, String, String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let t = tipo_de_area(&tipo)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.clonar_area_do_npcgen(&e.gov, &v, &caminho, r, t, indice).await?))
+}
+
+async fn estudio_remover_area(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho, tipo, indice)): Path<(String, String, String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let t = tipo_de_area(&tipo)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.remover_area_do_npcgen(&e.gov, &v, &caminho, r, t, indice).await?))
+}
+
 // ------------------------------------------------------------------ conversas (S3, B240)
 
 async fn estudio_funcoes(State(e): State<Arc<Estado>>, Path(v): Path<String>) -> R<Json<Value>> {
@@ -468,6 +531,12 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/mapas", get(estudio_mapas))
         .route("/admin/{v}/estudio/mapas/{caminho}/pecas/{peca}", get(estudio_peca))
         .route("/admin/{v}/estudio/mapas/{caminho}/criaturas", get(estudio_criaturas))
+        .route("/admin/{v}/estudio/mapas/{caminho}/npcgen", get(estudio_npcgen))
+        .route(
+            "/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{indice}",
+            get(estudio_area).put(estudio_editar_area).delete(estudio_remover_area),
+        )
+        .route("/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{indice}/clonar", post(estudio_clonar_area))
         .route("/admin/{v}/estudio/conversas", get(estudio_listar_conversas).post(estudio_nova_conversa))
         .route(
             "/admin/{v}/estudio/conversas/{indice}",

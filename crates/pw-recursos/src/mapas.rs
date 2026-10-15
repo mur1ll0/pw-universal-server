@@ -6,7 +6,7 @@
 //! - **Peças:** `Surfaces\MiniMaps\<caminho>\LLCC.dds` (`DlgMiniMap.cpp:1155-1168`, `"%02d%02d"` = linha e
 //!   coluna), `linhas×2` por `colunas×2` peças de 256 px; cada célula de 1024 m vira 512 px (2 m por pixel) e
 //!   a origem fica no centro: `px = (x + colunas·512)/2`, `py = (linhas·512 − z)/2` (`DlgMiniMap.cpp:1045-1061`).
-//! - **Criaturas:** o `npcgen.data` do realm (`config/<caminho>/npcgen.data`; o mundo do 1.2.6 está na raiz).
+//! - **Criaturas:** o `npcgen.data` do realm (`config/<caminho>/npcgen.data`; sem `world/npcgen.data`, o da raiz — a ordem do GS, `manager.rs:616-621`).
 
 use anyhow::{bail, Context, Result};
 use serde::Serialize;

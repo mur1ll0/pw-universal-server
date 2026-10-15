@@ -183,6 +183,32 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         r = await self.cliente.get("/api/realms/realm_126/estudio/mapas/a01/criaturas")
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/mapas/a01/criaturas")
 
+    async def test_area_do_npcgen_repassa_e_recusa_o_que_nao_e_area(self):
+        """B243: salvar área do npcgen passa de 8 KiB (geradores) só na rota dela; tipo fora do padrão fica no painel."""
+        await self.entrar()
+        csrf = await self.csrf()
+        filhos = [{"dwID": 1000 + i, "dwNum": 2, "iRefresh": 30, "fOffsetTrn": 0.5, "bNeedHelp": False} for i in range(64)]
+        r = await self.cliente.put("/api/realms/realm_126/estudio/mapas/world/npcgen/areas/12", params={"rascunho": 4},
+                                   headers=csrf, json={"campos": {"vPos_x": 10.5}, "filhos": filhos})
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["metodo"], p["caminho"]), ("PUT", "/admin/1.2.6/estudio/mapas/world/npcgen/areas/12"))
+        self.assertEqual(p["consulta"], {"rascunho": ["4"]})
+        self.assertEqual(len(json.loads(p["corpo"])["filhos"]), 64)
+        r = await self.cliente.post("/api/realms/realm_155/estudio/mapas/a01/npcgen/recursos/3/clonar",
+                                    params={"rascunho": 4}, headers=csrf)
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/mapas/a01/npcgen/recursos/3/clonar")
+        await self.cliente.get("/api/realms/realm_155/estudio/mapas/a01/npcgen", params={"rascunho": 4})
+        self.assertEqual(RecursosFalso.pedidos[-1]["consulta"], {"rascunho": ["4"]})
+        antes = len(RecursosFalso.pedidos)
+        r = await self.cliente.put("/api/realms/realm_126/estudio/mapas/world/npcgen/xyz/1", params={"rascunho": 4},
+                                   headers=csrf, json={"campos": {"vPos_x": 1}})
+        self.assertEqual(r.status_code, 404)
+        r = await self.cliente.put("/api/realms/realm_126/estudio/mapas/world/npcgen/areas/1", params={"rascunho": 4},
+                                   headers=csrf, json={"campos": {}})
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(len(RecursosFalso.pedidos), antes)
+
     async def test_versao_invalida_e_servico_sem_segredo(self):
         await self.entrar()
         r = await self.cliente.get("/api/recursos/1$5/alteracoes")

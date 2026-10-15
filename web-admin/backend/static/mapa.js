@@ -6,6 +6,8 @@
 const mapa = {
   lista: [], atual: null, escala: 0.25, x: 0, y: 0, pontos: [], modelos: {}, pecas: new Map(),
   arrastando: null, desenhoPendente: false,
+  // Edição do npcgen (B243): resumo das áreas no rascunho, área aberta e "posicionar pelo clique".
+  editar: false, ng: null, area: null, posicionando: false,
 };
 const CORES_DO_MAPA = { monstro: "#ff6b6b", npc: "#ffd166", recurso: "#7bd88f", objeto: "#8ab4ff" };
 
@@ -55,6 +57,8 @@ async function abrirMapa(caminho) {
   mapa.y = (tela.clientHeight - altura * mapa.escala) / 2;
   elemento("mapa-situacao").textContent = "Carregando criaturas…";
   elemento("mapa-detalhe").textContent = "Clique numa criatura para ver os detalhes.";
+  mapa.ng = null;
+  fecharArea();
   desenharMapa();
   if (!m.npcgen) { elemento("mapa-situacao").textContent = "O realm não tem npcgen para este mapa."; return; }
   try {
@@ -66,6 +70,7 @@ async function abrirMapa(caminho) {
     for (const p of r.pontos) contagem[p[0]] = (contagem[p[0]] || 0) + 1;
     elemento("mapa-situacao").textContent = Object.entries(contagem).map(([t, n]) => `${n} ${t}`).join(" · ");
   } catch (erro) { elemento("mapa-situacao").textContent = erro.message; }
+  if (mapa.editar) await carregarNpcgen();
   desenharMapa();
 }
 
@@ -116,6 +121,7 @@ function desenharMapaAgora() {
   ctx.clearRect(0, 0, tela.clientWidth, tela.clientHeight);
   const tipos = new Set([...document.querySelectorAll(".mapa-tipo:checked")].map((c) => c.value));
   const raio = Math.max(2, Math.min(6, mapa.escala * 6));
+  if (mapa.editar && mapa.ng) { desenharAreas(ctx, tipos); return; }
   for (const p of mapa.pontos) {
     if (!tipos.has(p[0])) continue;
     const [sx, sy] = paraTela(p[2], p[3]);
@@ -183,7 +189,273 @@ function detalharPonto(ev) {
   tela.addEventListener("pointerup", (e) => {
     const a = mapa.arrastando;
     mapa.arrastando = null;
-    if (a && !a.moveu) detalharPonto(e);
+    if (a && !a.moveu) {
+      if (mapa.posicionando) posicionarPeloClique(e);
+      else if (mapa.editar) escolherArea(e);
+      else detalharPonto(e);
+    }
   });
   window.addEventListener("resize", desenharMapa);
+  elemento("mapa-editar").addEventListener("change", async (e) => {
+    mapa.editar = e.target.checked;
+    fecharArea();
+    if (mapa.editar) await carregarNpcgen();
+    desenharMapa();
+  });
+  elemento("estudio-rascunho").addEventListener("change", async () => {
+    if (!mapa.editar || !mapa.atual) return;
+    const aberta = mapa.area && { tipo: mapa.area.tipo, indice: mapa.area.indice };
+    await carregarNpcgen();
+    if (aberta) await abrirArea(aberta.tipo, aberta.indice); else desenharMapa();
+  });
 })();
+
+/* ---------------- Edição do npcgen (S4 parte 2, B243) ----------------
+   As áreas do npcgen do realm (`npcgendata.h:57-102`): área de criatura (AREA) com geradores (NPCGEN) e
+   área de recurso (RESAREA) com recursos (RES). A edição vai para o rascunho escolhido no topo do Estúdio
+   como item só do servidor (`servidor\<mapa>\npcgen.data`); publicar grava no realm, que precisa
+   reiniciar para ler. `vExts`/`fExtX`/`fExtZ` são o tamanho da caixa, metade para cada lado do centro. */
+
+const ROTULOS_DO_NPCGEN = {
+  iType: "Forma (0 no chão, 1 caixa)", vPos_x: "Posição X", vPos_y: "Posição Y", vPos_z: "Posição Z",
+  vDir_x: "Direção X", vDir_y: "Direção Y", vDir_z: "Direção Z", vExts_x: "Largura (X)", vExts_y: "Altura (Y)",
+  vExts_z: "Profundidade (Z)", iNPCType: "Tipo (0 monstro, 1 NPC)", iGroupType: "Tipo de grupo",
+  bInitGen: "Nasce ao subir", bAutoRevive: "Renasce", bValidOnce: "Só uma vez", dwGenID: "Id do editor",
+  idCtrl: "Controlador", iLifeTime: "Vida da área (s)", iMaxNum: "Máximo vivo",
+  dwID: "Modelo", dwNum: "Quantidade", iRefresh: "Renascer (s)", dwDiedTimes: "Mortes até sumir",
+  dwAggressive: "Agressivo", fOffsetWater: "Acima da água", fOffsetTrn: "Acima do chão", dwFaction: "Facção",
+  dwFacHelper: "Facções que ajuda", dwFacAccept: "Aceita ajuda de", bNeedHelp: "Pede ajuda",
+  bDefFaction: "Facção padrão", bDefFacHelper: "Ajuda padrão", bDefFacAccept: "Aceita padrão", iPathID: "Caminho",
+  iLoopType: "Laço do caminho", iSpeedFlag: "Corre no caminho", iDeadTime: "Corpo some (s)",
+  iRefreshLower: "Renascer mínimo (s)",
+  fExtX: "Largura (X)", fExtZ: "Profundidade (Z)", iResType: "Tipo de recurso", idTemplate: "Modelo",
+  dwRefreshTime: "Renascer (s)", dwNumber: "Quantidade", fHeiOff: "Altura",
+};
+const CORES_DAS_AREAS = { monstro: "#ff6b6b", npc: "#ffd166", recurso: "#7bd88f" };
+
+async function carregarNpcgen() {
+  const m = mapa.atual;
+  if (!m || !m.npcgen) { mapa.ng = null; return; }
+  try {
+    const ng = await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/npcgen${estudio.rascunho ? `?rascunho=${estudio.rascunho}` : ""}`));
+    if (mapa.atual !== m) return;
+    mapa.ng = ng;
+    Object.assign(mapa.modelos, ng.modelos);
+    elemento("mapa-situacao").textContent = `${ng.areas.length} áreas de criatura · ${ng.recursos.length} de recurso`
+      + (ng.no_rascunho ? ` · com as mudanças do rascunho #${estudio.rascunho}` : " · como está no realm")
+      + (estudio.rascunho ? "" : " · escolha um rascunho para editar");
+  } catch (erro) { mapa.ng = null; elemento("mapa-situacao").textContent = erro.message; }
+}
+
+function linhasDasAreas(tipos) {
+  const ng = mapa.ng;
+  const saida = [];
+  for (const a of ng.areas) if (tipos.has(a[1])) saida.push(["areas", a]);
+  if (tipos.has("recurso")) for (const a of ng.recursos) saida.push(["recursos", a]);
+  return saida;
+}
+
+function desenharAreas(ctx, tipos) {
+  const tela = elemento("mapa-tela");
+  for (const [tipo, a] of linhasDasAreas(tipos)) {
+    const [, classe, x, z, ex, ez] = a;
+    const [sx, sy] = paraTela(x, z);
+    const w = Math.max(4, ex / 2 * mapa.escala), h = Math.max(4, ez / 2 * mapa.escala);
+    if (sx + w < 0 || sy + h < 0 || sx - w > tela.clientWidth || sy - h > tela.clientHeight) continue;
+    const escolhida = mapa.area && mapa.area.tipo === tipo && mapa.area.indice === a[0];
+    ctx.strokeStyle = escolhida ? "#ffffff" : CORES_DAS_AREAS[classe];
+    ctx.lineWidth = escolhida ? 2.5 : 1;
+    ctx.globalAlpha = a[9] ? 1 : 0.45; // área que só nasce por controlador fica apagada
+    ctx.strokeRect(sx - w, sy - h, w * 2, h * 2);
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.beginPath();
+    ctx.arc(sx, sy, escolhida ? 4 : 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function escolherArea(ev) {
+  if (!mapa.ng) return;
+  const r = elemento("mapa-tela").getBoundingClientRect();
+  const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+  const tipos = new Set([...document.querySelectorAll(".mapa-tipo:checked")].map((c) => c.value));
+  // O centro mais perto (até 12 px) ganha; senão a menor caixa que contém o clique.
+  let melhor = null, nota = Infinity;
+  for (const [tipo, a] of linhasDasAreas(tipos)) {
+    const [sx, sy] = paraTela(a[2], a[3]);
+    const d = Math.hypot(sx - mx, sy - my);
+    const w = a[4] / 2 * mapa.escala, h = a[5] / 2 * mapa.escala;
+    const n = d <= 12 ? d : (Math.abs(sx - mx) <= w && Math.abs(sy - my) <= h ? 1000 + w * h : Infinity);
+    if (n < nota) { nota = n; melhor = [tipo, a[0]]; }
+  }
+  if (!melhor) { fecharArea(); elemento("mapa-detalhe").textContent = "Nenhuma área aqui."; desenharMapa(); return; }
+  abrirArea(melhor[0], melhor[1]);
+}
+
+function fecharArea() {
+  mapa.area = null;
+  mapa.posicionando = false;
+  const ed = elemento("mapa-editor");
+  ed.hidden = true;
+  ed.replaceChildren();
+}
+
+async function abrirArea(tipo, indice) {
+  const m = mapa.atual;
+  try {
+    const dados = await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/npcgen/${tipo}/${indice}${estudio.rascunho ? `?rascunho=${estudio.rascunho}` : ""}`));
+    mapa.area = { tipo, indice, dados };
+    desenharEditorDeArea();
+  } catch (erro) { fecharArea(); alerta("erro", "Estúdio", erro.message); }
+  desenharMapa();
+}
+
+function campoDoNpcgen(nome, tipo, valor, editavel) {
+  const rotulo = ROTULOS_DO_NPCGEN[nome] || nome;
+  const input = criar("input");
+  input.dataset.campo = nome;
+  input.dataset.tipo = tipo;
+  input.disabled = !editavel;
+  let label;
+  if (tipo === "bool") {
+    input.type = "checkbox";
+    input.checked = !!valor;
+    label = criar("label", "marca");
+    label.append(input, criar("span", "", rotulo));
+  } else {
+    input.type = "number";
+    input.className = "campo";
+    input.step = tipo === "f32" ? "any" : "1";
+    if (tipo === "u32") input.min = "0";
+    input.value = valor ?? 0;
+    label = criar("label");
+    label.append(criar("span", "", rotulo), input);
+  }
+  label.title = nome;
+  return label;
+}
+
+function valoresDosCampos(raiz) {
+  const saida = {};
+  for (const i of raiz.querySelectorAll(":scope > .mapa-campos input[data-campo]")) {
+    const t = i.dataset.tipo;
+    saida[i.dataset.campo] = t === "bool" ? i.checked : t === "f32" ? Number(i.value) : Math.trunc(Number(i.value));
+  }
+  return saida;
+}
+
+function grupoDeCampos(lista, valores, editavel) {
+  const g = criar("div", "mapa-campos");
+  for (const [nome, tipo] of lista) g.appendChild(campoDoNpcgen(nome, tipo, valores[nome], editavel));
+  return g;
+}
+
+function desenharEditorDeArea() {
+  const ed = elemento("mapa-editor");
+  ed.replaceChildren();
+  ed.hidden = false;
+  const { tipo, indice, dados } = mapa.area;
+  const recurso = tipo === "recursos";
+  const campos = mapa.ng.campos;
+  const camposDaArea = recurso ? campos.area_de_recurso : campos.area;
+  const camposDoFilho = recurso ? campos.recurso : campos.gerador;
+  const chaveDoModelo = recurso ? "idTemplate" : "dwID";
+  const editavel = !!estudio.rascunho;
+  const nomeDoFilho = recurso ? "Recurso" : "Gerador";
+
+  const titulo = criar("div", "recursos-linha");
+  titulo.append(criar("strong", "", `${recurso ? "Área de recurso" : "Área de criatura"} #${indice}`),
+    criar("span", "texto-suave", editavel ? ` · rascunho #${estudio.rascunho}` : " · só leitura: escolha ou crie um rascunho no topo do Estúdio"));
+  ed.appendChild(titulo);
+
+  const area = criar("fieldset");
+  area.appendChild(criar("legend", "", "Área"));
+  area.appendChild(grupoDeCampos(camposDaArea, dados.campos, editavel));
+  ed.appendChild(area);
+
+  const filhos = criar("div");
+  const desenharFilho = (valores, n) => {
+    const f = criar("fieldset");
+    f.dataset.filho = "1";
+    const modelo = mapa.modelos[String(valores[chaveDoModelo])] || {};
+    const legenda = criar("legend", "", `${nomeDoFilho} ${n + 1}: ${modelo.nome || `modelo ${valores[chaveDoModelo]}`}`);
+    f.appendChild(legenda);
+    f.appendChild(grupoDeCampos(camposDoFilho, valores, editavel));
+    const acoes = criar("div", "recursos-linha");
+    if (modelo.tabela) {
+      const link = criar("a", "", "abrir a ficha do modelo");
+      link.href = "#";
+      link.addEventListener("click", (e) => { e.preventDefault(); mostrarVistaDoEstudio("tabelas"); abrirRegistroDoEstudio(modelo.tabela, modelo.indice); });
+      acoes.appendChild(link);
+    }
+    if (editavel) {
+      const tirar = criar("button", "botao botao-secundario botao-pequeno texto-perigo", `Tirar ${nomeDoFilho.toLowerCase()}`);
+      tirar.type = "button";
+      tirar.addEventListener("click", () => { if (filhos.children.length > 1) f.remove(); else alerta("aviso", "Estúdio", "A área precisa de ao menos um; para tirá-la, remova a área.", { toast: true }); });
+      acoes.appendChild(tirar);
+    }
+    f.appendChild(acoes);
+    filhos.appendChild(f);
+  };
+  dados.filhos.forEach(desenharFilho);
+  ed.appendChild(filhos);
+
+  if (!editavel) return;
+  const rota = `/${encodeURIComponent(mapa.atual.caminho)}/npcgen/${tipo}/${indice}?rascunho=${estudio.rascunho}`;
+  const botoes = criar("div", "recursos-linha");
+  const botao = (texto, classe, acao) => {
+    const b = criar("button", `botao botao-pequeno ${classe}`, texto);
+    b.type = "button";
+    b.addEventListener("click", acao);
+    botoes.appendChild(b);
+    return b;
+  };
+  botao(`+ ${nomeDoFilho.toLowerCase()} (cópia do último)`, "botao-secundario", () => {
+    const ultimos = [...filhos.querySelectorAll("fieldset[data-filho]")];
+    desenharFilho(ultimos.length ? valoresDosCampos(ultimos[ultimos.length - 1]) : {}, ultimos.length);
+  });
+  const pos = botao("Posicionar pelo clique", "botao-secundario", () => {
+    mapa.posicionando = !mapa.posicionando;
+    pos.textContent = mapa.posicionando ? "Clique no mapa…" : "Posicionar pelo clique";
+  });
+  botao("Salvar no rascunho", "botao-primario", () => acaoNaArea(async () => {
+    const corpo = { campos: valoresDosCampos(area), filhos: [...filhos.querySelectorAll("fieldset[data-filho]")].map(valoresDosCampos) };
+    return api(rotaDoMapa(rota), { method: "PUT", body: JSON.stringify(corpo) });
+  }, () => "Área salva no rascunho.", () => indice));
+  botao("Clonar área", "botao-secundario", () => acaoNaArea(
+    () => api(rotaDoMapa(rota.replace("?", "/clonar?")), { method: "POST" }),
+    (r) => `Área clonada: #${r.resultado.indice} (mesma posição; mova-a).`, (r) => r.resultado.indice));
+  botao("Remover área", "botao-secundario texto-perigo", () => {
+    if (!confirm(`Remover a ${recurso ? "área de recurso" : "área"} #${indice}? As seguintes sobem um número.`)) return;
+    acaoNaArea(() => api(rotaDoMapa(rota), { method: "DELETE" }), () => "Área removida no rascunho.", () => null);
+  });
+  ed.appendChild(botoes);
+}
+
+function posicionarPeloClique(ev) {
+  const m = mapa.atual;
+  const r = elemento("mapa-tela").getBoundingClientRect();
+  const px = (ev.clientX - r.left - mapa.x) / mapa.escala, py = (ev.clientY - r.top - mapa.y) / mapa.escala;
+  // Inverso de paraTela: x = 2·px − colunas·512, z = linhas·512 − 2·py
+  const x = Math.round((2 * px - m.colunas * 512) * 10) / 10, z = Math.round((m.linhas * 512 - 2 * py) * 10) / 10;
+  const ed = elemento("mapa-editor");
+  const ix = ed.querySelector('input[data-campo="vPos_x"]'), iz = ed.querySelector('input[data-campo="vPos_z"]');
+  if (ix && iz) { ix.value = x; iz.value = z; }
+  mapa.posicionando = false;
+  const b = [...ed.querySelectorAll("button")].find((x) => x.textContent === "Clique no mapa…");
+  if (b) b.textContent = "Posicionar pelo clique";
+  alerta("ok", "Estúdio", `Posição (${x}, ${z}). Salve para gravar no rascunho.`, { toast: true });
+}
+
+async function acaoNaArea(acao, mensagem, reabrir) {
+  const tipo = mapa.area.tipo;
+  try {
+    const r = await acao();
+    alerta("ok", "Estúdio", mensagem(r) + (r.igual_ao_publicado ? " Ficou igual ao realm: o item saiu do rascunho." : ""), { toast: true });
+    await carregarNpcgen();
+    const alvo = reabrir(r);
+    if (alvo === null || alvo === undefined) { fecharArea(); desenharMapa(); } else await abrirArea(tipo, alvo);
+    if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+  } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+}
