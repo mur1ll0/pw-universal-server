@@ -220,6 +220,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > armadura, ornamento, remédio, material e monstro, do `ExpTypes.h`) e ícones na ficha, listas, busca e referências.
 > A ficha genérica com rótulos/grupos cobre as quatro telas do S2; tela própria com regras de cada área (categoria
 > em modal, visualizador 3D, "onde nasce") fica para depois do S3.
+>
+> **B240 (S3, 1ª parte):** conversas (`TALK_PROC`) editáveis — escritor com ida e volta, editor de janelas e opções
+> no painel, funções do `enum SERVICE_TYPE` com nome, índice TALK. Faltam do S3: rótulos dos NPCs, dos 30 serviços e
+> das receitas (a ficha genérica já os edita, com listas e referências).
 
 | fase | entrega |
 | :--- | :--- |

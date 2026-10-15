@@ -13796,3 +13796,37 @@ comparação lado a lado.
     ### e. Falta
     - Regras próprias por área (categoria em modal, visualizador 3D, "onde nasce"); próxima fase do Estúdio: S3 (NPCs,
       serviços, conversa, receitas).
+
+240. **Sessão 2026-10-14: Estúdio S3, primeira parte — conversas (`TALK_PROC`) editáveis.**
+
+    ### a. Pedido
+    Commitar o B239 (feito: `c9c54d1`, `7a545cb`, `cfbe3b2`) e seguir: S3 do Estúdio (NPCs, serviços, conversa,
+    receitas). Começou pelo `TALK_PROC`, que o escritor guardava cru e o §7 do Estúdio listava como pendência.
+
+    ### b. Evidência
+    - Formato: `talk_proc::save`/`load` simétricos (`EvolvedPWClient/ElementClient/CCommon/ExpTypes.h:3872`); opção de
+      136 B. Nos dois realms, toda janela não vazia termina em NUL: o `talk_text_len` conta o NUL.
+    - Funções das opções: `enum SERVICE_TYPE` (`ExpTypes.h:36-102`), `NPC_TALK = 0x80000000` e os seguintes de 1 em 1
+      (33 códigos: loja, compra, conserto, incrustar…, `TALK_RETURN` 0x80000011, `TALK_EXIT` 0x80000012…).
+
+    ### c. O que foi feito
+    - `pw_data_loader::conversas` (ler/gravar, textos UTF-16 crus, `texto_fixo`/`texto_variavel`); o `ElementsEditavel`
+      guarda o `TALK_PROC` estruturado (`conversas`) e confere o fim com o leitor genérico.
+    - `pw-recursos::estudio`: conversas no índice (espaço TALK → link `TALK_PROC`), na lista de tabelas e na busca;
+      listar/abrir/salvar (árvore inteira, validada; texto igual mantém os bytes)/nova (vazia ou cópia)/remover (recusada se
+      citada); `specs/estudio/funcoes_de_conversa.json` com rótulos; rotas `/admin/{v}/estudio/conversas…` e `funcoes`.
+    - Painel: repasse, exceção de 256 KiB no `LimitarEntrada` só para salvar conversa, editor (janelas com texto e origem,
+      opções com destino = janela ou função com nome, + janela/+ opção, usado por).
+
+    ### d. Provas
+    - `pw-data-loader/tests/elements_editavel.rs`: `TALK_PROC` dos dois realms regravado idêntico; NUL final em todas as
+      janelas não vazias; texto editado relido e os dois leitores fechando.
+    - `pw-recursos/tests/estudio.rs`: `TALK_PROC` na lista; `id_dialog` do `NPC_TALK_SERVICE` vira link para a conversa;
+      salvar igual não muda nada; editar texto; opção para janela inexistente 400; remover conversa em uso 400; nova e
+      removida; o texto editado chega ao arquivo publicado no realm. `cargo test -p pw-recursos`: 14/14.
+    - Painel: `teste_recursos.py` 7/7 (conversa de ~20 KB passa só na rota dela; campo comum com 20 KB → 413).
+    - Publicado: 3.323 conversas no 1.2.6 e 3.391 no 1.5.5; funções com nome; o serviço de conversa 0 aponta a conversa.
+
+    ### e. Falta
+    - Rótulos dos NPCs, dos 30 serviços e das receitas (S3, 2ª parte); o GS precisa ser reiniciado para ler o
+      `elements` novo, e o cliente atualizar pelo launcher.

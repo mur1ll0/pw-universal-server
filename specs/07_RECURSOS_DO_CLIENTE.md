@@ -187,6 +187,15 @@ rótulo inventado). A ficha traz `rotulo`/`grupo` por campo e `icone` (o `file_i
 listas, na busca e nas referências; o painel recorta pela rota de ícones (`/api/icones/m/<hex>.png`, B188).
 Listas grandes mostram só as linhas preenchidas (+2 vazias ao editar) e "mostrar todas".
 
+**Conversas (S3, B240):** `GET/POST conversas` (lista, nova vazia ou `?base=` cópia, id = maior do espaço TALK + 1),
+`GET/PUT/DELETE conversas/{i}` (árvore inteira; validação: ids de janela únicos e sem o bit alto, pai existente
+ou -1, opção para janela existente ou função conhecida, textos fixos até 63 caracteres; texto igual mantém as
+unidades originais; remover recusado se um serviço cita), `GET funcoes` (`specs/estudio/funcoes_de_conversa.json`,
+o `enum SERVICE_TYPE` do `ExpTypes.h:36-102`: `NPC_TALK = 0x80000000`… 33 códigos com rótulo). As conversas entram
+no índice como `TALK_PROC` (espaço TALK): o `id_dialog` dos serviços de conversa/transporte vira link. No painel,
+`TALK_PROC` aparece na lista de tabelas e abre o editor (janelas com texto, origem e opções → janela ou função);
+o salvar da conversa aceita até 256 KiB (`LimitarEntrada`, só essa rota).
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,

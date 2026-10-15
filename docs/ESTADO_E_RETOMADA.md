@@ -7,7 +7,7 @@
 > bloco novo entra como linha no §3.3 (o que olhar em jogo), no §5 (o que ficou faltando) e
 > no índice do §8 — não como parágrafo aqui.
 >
-> **Última atualização: 2026-10-14** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234 launcher (P2) em `a43042d`/`a478035`, confirmado; B235/B236 commitados (`07a30ab`…`5a2a22d`); B237 commitado (`d334cf8`…`eaf329e`); B238 commitado (`a78abf2`…`db76f83`); **B239: rótulos em português, grupos e ícones no Estúdio — publicado nos contêineres, não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
+> **Última atualização: 2026-10-14** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234 launcher (P2) em `a43042d`/`a478035`, confirmado; B235/B236 commitados (`07a30ab`…`5a2a22d`); B237 commitado (`d334cf8`…`eaf329e`); B238 commitado (`a78abf2`…`db76f83`); B239 commitado (`c9c54d1`…`cfbe3b2`); **B240: conversas (TALK_PROC) editáveis no Estúdio — publicado nos contêineres, não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
 > comandos do B77–B88, 14 e 64 conferidos e sobrescritos no 1.2.6, campos do v55 pelo
 > `libtask.so` e prefixos do v7 pelo `gs`; **B126** — IA de combate do monstro por estratégia
 > (conjurar de longe, série de golpes, afastar, fugir, fixo), eventos de vida 75/50/25 %, efeito
@@ -390,6 +390,10 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 - **B239 (rótulos e ícones):** a ficha vem em grupos com nomes em português e o ícone do item no alto, nas listas e
   nas referências. **A olhar:** uma arma e um monstro do 1.5.5 — grupos abertos, rótulos, ícones; listas de drop com só
   as linhas cheias.
+- **B240 (conversas):** no Estúdio, a tabela `TALK_PROC` lista as conversas; abrir uma mostra as janelas com o texto
+  e as opções (para outra janela ou função: loja, teleporte, encerrar…). **A olhar:** abrir um NPC que conversa →
+  serviço de conversa → link da conversa; mudar o texto de uma janela, salvar, publicar, reiniciar o realm e conferir o
+  texto novo ao falar com o NPC.
 
 **1.5.5 (realm 155, e o que vale para os dois)**
 
@@ -829,6 +833,8 @@ portado. Falta ver em jogo.)
   **B239 (S2, 2ª parte):** `specs/estudio/rotulos.json` (rótulos traduzidos do `ExpTypes.h`, grupos da ficha) e
   ícones (`file_icon` → rota de ícones do painel) na ficha, listas, busca e referências. Falta do S2: regras próprias por
   área (categoria em modal, 3D, onde nasce); próximo: S3 (NPCs, serviços, conversa, receitas).
+  **B240 (S3, 1ª parte):** `TALK_PROC` estruturado (`pw_data_loader::conversas`, ida e volta byte a byte), API e editor
+  de conversas no painel, funções do `enum SERVICE_TYPE` com nome. Falta do S3: rótulos de NPCs, serviços e receitas.
 
 ## 6. Regras que valem para qualquer mudança
 
@@ -1064,6 +1070,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 202 | 10-08 | vestir: amuleto HP/MP não sai e é destruído ao trocar; habilidade dinâmica repetida; reputação |
 | 203 | 10-08 | passivas comuns `EVENT_RESET`/`EVENT_WIELD` (catálogos com `efeito_passivo`) |
 | 198 | 10-07 | painel E6: missões — ver, dar livre (`NEW`), concluir forçando o sucesso (`FINISHED`/`COMPLETE`), cancelar apagando (`GIVE_UP`; 1.2.6 só offline), esquecer a conclusão (offline); resposta do canal até 64 KiB |
+| 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |
 | 238 | 10-14 | Estúdio S2: índice de referências do elements (ExpTypes.h + dados), usado por, busca por espaço, listas |
 | 237 | 10-14 | Estúdio S1: escritor do elements (ida e volta), ids por espaço, editor no painel; publicar grava no realm |
