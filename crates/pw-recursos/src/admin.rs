@@ -442,6 +442,45 @@ async fn estudio_remover_area(
     Ok(Json(e.estudio.remover_area_do_npcgen(&e.gov, &v, &caminho, r, t, indice).await?))
 }
 
+// ------------------------------------------------------------------ distritos e portais (S4, B244)
+
+async fn estudio_distritos(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.distritos(&e.gov, &v, &caminho, q.rascunho).await?))
+}
+
+async fn estudio_portais(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.portais(&e.gov, &v, &caminho, q.rascunho).await?))
+}
+
+#[derive(Deserialize)]
+struct PedidoCampos {
+    campos: serde_json::Map<String, Value>,
+}
+
+async fn estudio_editar_distrito(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoCampos>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.editar_distrito(&e.gov, &v, &caminho, r, indice, p.campos).await?))
+}
+
+async fn estudio_editar_portal(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoCampos>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.editar_portal(&e.gov, &v, &caminho, r, indice, p.campos).await?))
+}
+
 // ------------------------------------------------------------------ conversas (S3, B240)
 
 async fn estudio_funcoes(State(e): State<Arc<Estado>>, Path(v): Path<String>) -> R<Json<Value>> {
@@ -532,6 +571,10 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/mapas/{caminho}/pecas/{peca}", get(estudio_peca))
         .route("/admin/{v}/estudio/mapas/{caminho}/criaturas", get(estudio_criaturas))
         .route("/admin/{v}/estudio/mapas/{caminho}/npcgen", get(estudio_npcgen))
+        .route("/admin/{v}/estudio/mapas/{caminho}/distritos", get(estudio_distritos))
+        .route("/admin/{v}/estudio/mapas/{caminho}/distritos/{indice}", put(estudio_editar_distrito))
+        .route("/admin/{v}/estudio/mapas/{caminho}/portais", get(estudio_portais))
+        .route("/admin/{v}/estudio/mapas/{caminho}/portais/{indice}", put(estudio_editar_portal))
         .route(
             "/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{indice}",
             get(estudio_area).put(estudio_editar_area).delete(estudio_remover_area),

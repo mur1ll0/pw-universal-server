@@ -834,6 +834,20 @@ impl Estudio {
 
 // ------------------------------------------------------------------ mapas (S4, B242)
 
+/// A pasta que o GS carrega para o mapa (`manager.rs:616-621`): o mundo é `world/` se lá houver
+/// `npcgen.data`, senão a raiz do config; os outros, `config/<caminho>/`.
+fn pasta_do_mapa(pasta: &std::path::Path, caminho: &str) -> std::path::PathBuf {
+    if caminho == "world" && !pasta.join("world").join("npcgen.data").exists() {
+        return pasta.to_path_buf();
+    }
+    pasta.join(caminho)
+}
+
+fn caminho_no_mapa(pasta: &std::path::Path, caminho: &str, arquivo: &str) -> Option<std::path::PathBuf> {
+    let p = pasta_do_mapa(pasta, caminho).join(arquivo);
+    p.exists().then_some(p)
+}
+
 fn caminho_de_mapa_valido(c: &str) -> bool {
     !c.is_empty() && c.len() <= 32 && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
@@ -880,13 +894,7 @@ impl Estudio {
     }
 
     fn caminho_do_npcgen(&self, pasta: &std::path::Path, caminho: &str) -> Option<std::path::PathBuf> {
-        let dentro = pasta.join(caminho).join("npcgen.data");
-        if dentro.exists() {
-            return Some(dentro);
-        }
-        // Sem `world/npcgen.data`, o da raiz do config (a ordem do GS, `manager.rs:616-621`).
-        let raiz = pasta.join("npcgen.data");
-        (caminho == "world" && raiz.exists()).then_some(raiz)
+        caminho_no_mapa(pasta, caminho, "npcgen.data")
     }
 
     /// Uma peça do minimapa em PNG (`Surfaces\MiniMaps\<caminho>\LLCC.dds`).
@@ -1012,22 +1020,36 @@ impl Estudio {
         caminho: &str,
         rascunho: Option<i64>,
     ) -> Result<(String, Vec<u8>, Option<(ItemDeRecurso, Vec<u8>)>)> {
+        self.arquivo_do_mapa(gov, versao, caminho, "npcgen.data", rascunho).await
+    }
+
+    /// Um arquivo do servidor do mapa (`npcgen.data`, `precinct.sev`, `region.sev`): nome do item
+    /// (`servidor\<pasta>\<arquivo>`), bytes do realm, e os do rascunho quando ele já tem o item.
+    async fn arquivo_do_mapa(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        caminho: &str,
+        nome_do_arquivo: &str,
+        rascunho: Option<i64>,
+    ) -> Result<(String, Vec<u8>, Option<(ItemDeRecurso, Vec<u8>)>)> {
         if !caminho_de_mapa_valido(caminho) {
             bail!("mapa inválido");
         }
         let pasta = gov.realms.get(versao).and_then(|p| p.first()).context("a versão não tem realm configurado (PW_RECURSOS_REALMS)")?;
-        let arquivo = self.caminho_do_npcgen(pasta, caminho).with_context(|| format!("o realm não tem npcgen para {caminho}"))?;
+        let arquivo = caminho_no_mapa(pasta, caminho, nome_do_arquivo)
+            .with_context(|| format!("o realm não tem {nome_do_arquivo} para {caminho}"))?;
         let nome = if arquivo.parent() == Some(pasta.as_path()) {
-            "servidor\\npcgen.data".to_string() // o mundo sem `world/`, na raiz do config
+            format!("servidor\\{nome_do_arquivo}") // o mundo sem `world/`, na raiz do config
         } else {
-            format!("servidor\\{caminho}\\npcgen.data")
+            format!("servidor\\{caminho}\\{nome_do_arquivo}")
         };
-        let do_realm = gov.ler_do_realm(versao, &nome)?.context("npcgen do realm sumiu")?;
+        let do_realm = gov.ler_do_realm(versao, &nome)?.with_context(|| format!("{nome} do realm sumiu"))?;
         let mut do_rascunho = None;
         if let Some(r) = rascunho {
             gov.rascunho_da_versao(versao, r).await?;
             if let Some(i) = gov.repo.itens(r).await?.into_iter().find(|i| i.caminho == nome.as_bytes()) {
-                let sha: Sha256Bytes = i.sha256_depois.clone().context("npcgen removido no rascunho")?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
+                let sha: Sha256Bytes = i.sha256_depois.clone().context("arquivo removido no rascunho")?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
                 let objetos = gov.objetos(versao);
                 let tamanho = i.tamanho.unwrap_or(0) as usize;
                 let b = tokio::task::spawn_blocking(move || objetos.ler(&sha, tamanho)).await??;
@@ -1119,9 +1141,31 @@ impl Estudio {
     where
         F: FnOnce(&mut NpcgenEditavel) -> Result<(Value, Value)>,
     {
+        self.alterar_arquivo_do_mapa(gov, versao, caminho, "npcgen.data", rascunho, move |base| {
+            let mut n = NpcgenEditavel::ler(base).map_err(|e| anyhow::anyhow!("npcgen: {e}"))?;
+            let (resposta, mudanca) = mudar(&mut n)?;
+            Ok((n.gravar(), resposta, mudanca))
+        })
+        .await
+    }
+
+    /// Aplica uma mudança a um arquivo do servidor do mapa no rascunho (item destino `servidor`); se o
+    /// resultado volta a ser o do realm, o item sai. `mudar` devolve (bytes novos, resposta, mudança p/ o resumo).
+    async fn alterar_arquivo_do_mapa<F>(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        caminho: &str,
+        nome_do_arquivo: &str,
+        rascunho: i64,
+        mudar: F,
+    ) -> Result<Value>
+    where
+        F: FnOnce(&[u8]) -> Result<(Vec<u8>, Value, Value)>,
+    {
         let trava = self.trava(rascunho);
         let _guarda = trava.lock().await;
-        let (nome, do_realm, do_rascunho) = self.npcgen_atual(gov, versao, caminho, Some(rascunho)).await?;
+        let (nome, do_realm, do_rascunho) = self.arquivo_do_mapa(gov, versao, caminho, nome_do_arquivo, Some(rascunho)).await?;
         let sha_do_realm = sha256(&do_realm);
         let mut mudancas = Vec::new();
         if let Some((i, _)) = &do_rascunho {
@@ -1131,9 +1175,7 @@ impl Estudio {
             mudancas = i.resumo.get("mudancas").and_then(Value::as_array).cloned().unwrap_or_default();
         }
         let base = do_rascunho.map(|(_, b)| b).unwrap_or_else(|| do_realm.clone());
-        let mut n = NpcgenEditavel::ler(&base).map_err(|e| anyhow::anyhow!("npcgen: {e}"))?;
-        let (resposta, mudanca) = mudar(&mut n)?;
-        let bytes = n.gravar();
+        let (bytes, resposta, mudanca) = mudar(&base)?;
         let sha = sha256(&bytes);
         if sha == sha_do_realm {
             gov.repo.tirar_item(rascunho, nome.as_bytes()).await?;
@@ -1268,6 +1310,155 @@ impl Estudio {
             };
             Ok((json!({ "removida": indice }),
                 json!({ "acao": "removida", "tipo": tipo.nome(), "indice": indice, "x": um_decimal(x), "z": um_decimal(z) })))
+        })
+        .await
+    }
+}
+
+// ------------------------------------------------------------------ distritos e portais (S4, B244)
+
+use pw_data_loader::precinct::Distritos;
+use pw_data_loader::regioes::{RegioesEditavel, RegistroDeRegiao};
+
+fn vetor_do_json(v: &Value, onde: &str) -> Result<[f32; 3]> {
+    let a = v.as_array().filter(|a| a.len() == 3).with_context(|| format!("{onde}: esperava [x, y, z]"))?;
+    let mut s = [0f32; 3];
+    for (k, x) in a.iter().enumerate() {
+        let f = x.as_f64().filter(|f| f.is_finite() && f.abs() < 1.0e6).with_context(|| format!("{onde}: número inválido"))?;
+        s[k] = f as f32;
+    }
+    Ok(s)
+}
+
+fn vetor_json(v: &[f32; 3]) -> Value {
+    json!([v[0] as f64, v[1] as f64, v[2] as f64])
+}
+
+impl Estudio {
+    /// Distritos do `precinct.sev` do realm (ponto de renascer: `city_region::GetCityPos`), com nome, id e marcas
+    /// do `Maps\<caminho>\precinct.clt` do cliente quando os dois casam (mesma contagem e vértices por distrito).
+    pub async fn distritos(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Value> {
+        let (nome, do_realm, do_rascunho) = self.arquivo_do_mapa(gov, versao, caminho, "precinct.sev", rascunho).await?;
+        let no_rascunho = do_rascunho.is_some();
+        let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
+        let d = Distritos::ler(&bytes).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let clt = self
+            .arquivo_do_cliente(gov, versao, &format!("maps\\{caminho}\\precinct.clt"))
+            .await
+            .ok()
+            .and_then(|b| crate::mapas::ler_precinct_clt(&crate::mapas::texto_do_arquivo(&b)).ok())
+            .filter(|c| c.len() == d.lista.len() && c.iter().zip(&d.lista).all(|(a, b)| a.vertices == b.vertices.len()));
+        let lista: Vec<Value> = d
+            .lista
+            .iter()
+            .enumerate()
+            .map(|(i, x)| {
+                let c = clt.as_ref().map(|c| &c[i]);
+                json!({
+                    "indice": i,
+                    "nome": c.map(|c| c.nome.clone()),
+                    "id": c.map(|c| c.id),
+                    "mapa": x.mapa,
+                    "mapa_do_ponto": x.mapa_do_ponto,
+                    "prioridade": x.prioridade,
+                    "dominio": x.dominio,
+                    "protege_pk": x.protege_pk,
+                    "ponto": vetor_json(&x.ponto_de_cidade),
+                    "vertices": x.vertices.iter().map(|v| json!([v[0], v[2]])).collect::<Vec<_>>(),
+                    "marcas": c.map(|c| c.marcas.iter().map(|(n, p)| json!({ "nome": n, "x": p[0], "z": p[2] })).collect::<Vec<_>>()),
+                })
+            })
+            .collect();
+        Ok(json!({ "item": nome, "versao_do_arquivo": d.versao, "no_rascunho": no_rascunho, "nomes_do_cliente": clt.is_some(), "distritos": lista }))
+    }
+
+    /// Edita o ponto de renascer, o mapa dele, a prioridade e a proteção de PK de um distrito. Os vértices e o
+    /// carimbo (`dwTimeStamp`, conferido pelo cliente no `INST_DATA_CHECKOUT`) não mudam.
+    pub async fn editar_distrito(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, indice: usize, campos: Map<String, Value>) -> Result<Value> {
+        self.alterar_arquivo_do_mapa(gov, versao, caminho, "precinct.sev", rascunho, move |base| {
+            let mut d = Distritos::ler(base).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let v = d.versao;
+            let x = d.lista.get_mut(indice).with_context(|| format!("distrito {indice} não existe"))?;
+            let mut mudou = Map::new();
+            for (k, valor) in &campos {
+                match k.as_str() {
+                    "ponto" => {
+                        let novo = vetor_do_json(valor, "ponto")?;
+                        if novo != x.ponto_de_cidade {
+                            mudou.insert(k.clone(), json!([vetor_json(&x.ponto_de_cidade), vetor_json(&novo)]));
+                            x.ponto_de_cidade = novo;
+                        }
+                    }
+                    "mapa_do_ponto" | "prioridade" => {
+                        let n = valor.as_i64().and_then(|n| i32::try_from(n).ok()).with_context(|| format!("{k}: inteiro"))?;
+                        let alvo = if k == "mapa_do_ponto" { &mut x.mapa_do_ponto } else { &mut x.prioridade };
+                        if k == "mapa_do_ponto" && n <= 0 {
+                            bail!("mapa_do_ponto: id de mapa inválido");
+                        }
+                        if *alvo != n {
+                            mudou.insert(k.clone(), json!([*alvo, n]));
+                            *alvo = n;
+                        }
+                    }
+                    "protege_pk" => {
+                        if v < 7 {
+                            bail!("protege_pk só existe no precinct.sev versão 7 (este é {v})");
+                        }
+                        let b = valor.as_bool().context("protege_pk: verdadeiro ou falso")?;
+                        if x.protege_pk != b {
+                            mudou.insert(k.clone(), json!([x.protege_pk, b]));
+                            x.protege_pk = b;
+                        }
+                    }
+                    _ => bail!("campo do distrito não editável: {k}"),
+                }
+            }
+            let mudanca = if mudou.is_empty() { Value::Null } else { json!({ "acao": "editado", "tipo": "distrito", "indice": indice, "campos": mudou }) };
+            Ok((d.gravar(), json!({ "indice": indice }), mudanca))
+        })
+        .await
+    }
+
+    /// Portais (caixas de transporte) e regiões do `region.sev` do realm. Só o ponto de chegada é editável: o
+    /// cliente acha a caixa pela própria `region.clt` e manda só o índice (`EC_World.cpp:2360-2373`).
+    pub async fn portais(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Value> {
+        let (nome, do_realm, do_rascunho) = self.arquivo_do_mapa(gov, versao, caminho, "region.sev", rascunho).await?;
+        let no_rascunho = do_rascunho.is_some();
+        let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
+        let r = RegioesEditavel::ler(&bytes)?;
+        let (mut caixas, mut regioes) = (Vec::new(), Vec::new());
+        for reg in &r.registros {
+            match reg {
+                RegistroDeRegiao::Regiao(p) => regioes.push(json!(p.iter().map(|v| json!([v[0], v[2]])).collect::<Vec<_>>())),
+                RegistroDeRegiao::Caixa(k) => caixas.push(json!({
+                    "indice": caixas.len(), "destino": k.destino, "origem": k.origem, "nivel_minimo": k.nivel_minimo,
+                    "pos": vetor_json(&k.pos), "exts": vetor_json(&k.exts), "alvo": vetor_json(&k.alvo),
+                })),
+            }
+        }
+        Ok(json!({ "item": nome, "versao_do_arquivo": r.versao, "no_rascunho": no_rascunho, "caixas": caixas, "regioes": regioes }))
+    }
+
+    pub async fn editar_portal(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, indice: usize, campos: Map<String, Value>) -> Result<Value> {
+        self.alterar_arquivo_do_mapa(gov, versao, caminho, "region.sev", rascunho, move |base| {
+            let mut r = RegioesEditavel::ler(base)?;
+            let mut mudou = Map::new();
+            {
+                let mut caixas = r.caixas_mut();
+                let k = caixas.get_mut(indice).with_context(|| format!("portal {indice} não existe"))?;
+                for (nome, valor) in &campos {
+                    if nome != "alvo" {
+                        bail!("só o ponto de chegada (alvo) do portal é editável no servidor: {nome}");
+                    }
+                    let novo = vetor_do_json(valor, "alvo")?;
+                    if novo != k.alvo {
+                        mudou.insert(nome.clone(), json!([vetor_json(&k.alvo), vetor_json(&novo)]));
+                        k.alvo = novo;
+                    }
+                }
+            }
+            let mudanca = if mudou.is_empty() { Value::Null } else { json!({ "acao": "editado", "tipo": "portal", "indice": indice, "campos": mudou }) };
+            Ok((r.gravar(), json!({ "indice": indice }), mudanca))
         })
         .await
     }

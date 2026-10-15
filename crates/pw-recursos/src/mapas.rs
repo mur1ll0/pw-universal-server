@@ -107,6 +107,52 @@ pub fn ler_instancias(texto: &str) -> Result<Vec<Mapa>> {
     Ok(mapas)
 }
 
+// ------------------------------------------------------------------ precinct.clt do cliente (B244)
+
+/// Um distrito do `Maps\<caminho>\precinct.clt` do cliente: só o que o servidor não tem (nome, id, marcas).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DistritoDoCliente {
+    pub nome: String,
+    pub id: u32,
+    pub vertices: usize,
+    pub marcas: Vec<(String, [f32; 3])>,
+}
+
+/// `CELPrecinctSet::Load` / `CELPrecinct::Load(AWScriptFile*)` do cliente (`EL_Precinct.cpp:96-213`, `:397-421`):
+/// `version N [carimbo v≥5]` e, por distrito: nome, id (v≥2), pontos, marcas, prioridade, mapa do ponto, músicas,
+/// intervalo, laço, mapa (v≥4), domínio (v≥6), PK (v≥7), ponto de cidade, vértices, marcas (nome + xyz), som,
+/// músicas, som da noite (v≥3).
+pub fn ler_precinct_clt(texto: &str) -> Result<Vec<DistritoDoCliente>> {
+    let f = fichas(texto);
+    if f.first().map(String::as_str) != Some("version") {
+        bail!("precinct.clt sem 'version'");
+    }
+    let num = |k: usize| -> Result<f64> { f.get(k).and_then(|s| s.parse::<f64>().ok()).with_context(|| format!("precinct.clt: número na ficha {k}")) };
+    let v = num(1)? as u32;
+    let mut i = if v >= 5 { 3 } else { 2 };
+    let mut saida = Vec::new();
+    while i < f.len() {
+        let nome = f[i].clone();
+        i += 1;
+        let id = if v >= 2 { let x = num(i)? as u32; i += 1; x } else { 0 };
+        let (pontos, marcas, musicas) = (num(i)? as usize, num(i + 1)? as usize, num(i + 4)? as usize);
+        i += 7 + (v >= 4) as usize + (v >= 6) as usize + (v >= 7) as usize;
+        i += 3 + 3 * pontos;
+        let mut m = Vec::with_capacity(marcas);
+        for _ in 0..marcas {
+            let n = f.get(i).cloned().context("precinct.clt: marca")?;
+            m.push((n, [num(i + 1)? as f32, num(i + 2)? as f32, num(i + 3)? as f32]));
+            i += 4;
+        }
+        i += 1 + musicas + (v >= 3) as usize;
+        if i > f.len() {
+            bail!("precinct.clt: distrito {nome:?} truncado");
+        }
+        saida.push(DistritoDoCliente { nome, id, vertices: pontos, marcas: m });
+    }
+    Ok(saida)
+}
+
 // ------------------------------------------------------------------ DDS (DXT1/3/5) → PNG
 
 fn rgb565(c: u16) -> [u8; 3] {
@@ -224,6 +270,43 @@ mod testes {
         let br = "\"Terra dos Imortais\r\n\"\r\n{\r\n116\t\t//  ID\r\n\"a16\"\r\n1, 1\r\n1\r\n\"\"\r\n{}\r\n}\r\n";
         let m = ler_instancias(br).unwrap();
         assert_eq!((m[0].nome.as_str(), m[0].id, m[0].caminho.as_str()), ("Terra dos Imortais", 116, "a16"));
+    }
+
+    #[test]
+    fn precinct_clt_do_155_br() {
+        // Trecho do `maps\world\precinct.clt` do cliente 1.5.5 BR (versão 7), com uma marca inventada para o teste.
+        let t = "//  Element pricinct file (client version)
+
+version  7
+1442234257
+
+\"Fechado\"
+1561  5  1  0  1  1  60  1  1  0  0
+-696.291992, 218.964996, -1178.810059
+-4099.773438  0.100000  5636.250977
+-4099.694824  0.100000  4604.409180
+-3068.147705  0.100000  4604.448242
+-3066.735352  0.100000  5637.446777
+-4099.891113  0.100000  5636.623535
+\"Porto\" 1.0 2.0 3.0
+\"\"
+\"Music\\通用场景2.mp3\"
+\"\"
+
+\"Cidade\"
+7  3  0  2  1  0  60  1  1  0  1
+1, 2, 3
+0 0 0
+1 0 0
+1 0 1
+\"\"
+\"\"
+";
+        let d = ler_precinct_clt(t).unwrap();
+        assert_eq!(d.len(), 2);
+        assert_eq!((d[0].nome.as_str(), d[0].id, d[0].vertices), ("Fechado", 1561, 5));
+        assert_eq!(d[0].marcas, vec![("Porto".to_string(), [1.0, 2.0, 3.0])]);
+        assert_eq!((d[1].nome.as_str(), d[1].id, d[1].vertices), ("Cidade", 7, 3));
     }
 
     #[test]

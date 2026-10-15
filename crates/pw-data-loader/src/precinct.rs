@@ -189,6 +189,39 @@ impl Distritos {
         }
         escolhido
     }
+
+    /// O inverso de `ler` (B243/Estúdio): mesmos campos por versão, na mesma ordem
+    /// (`CELPrecinct::Load(FILE*)`, `el_precinct.cpp:219-266`). Os vértices não mudam pela edição
+    /// (a caixa de `contem` continua válida).
+    pub fn gravar(&self) -> Vec<u8> {
+        let mut b = Vec::new();
+        let i32_ = |b: &mut Vec<u8>, v: i32| b.extend_from_slice(&v.to_le_bytes());
+        b.extend_from_slice(&self.versao.to_le_bytes());
+        i32_(&mut b, self.lista.len() as i32);
+        if self.versao >= 5 {
+            b.extend_from_slice(&self.carimbo.to_le_bytes());
+        }
+        for d in &self.lista {
+            i32_(&mut b, d.vertices.len() as i32);
+            i32_(&mut b, d.prioridade);
+            i32_(&mut b, d.mapa_do_ponto);
+            if self.versao >= 4 {
+                i32_(&mut b, d.mapa);
+            }
+            if self.versao >= 6 {
+                i32_(&mut b, d.dominio);
+            }
+            if self.versao >= 7 {
+                b.push(d.protege_pk as u8);
+            }
+            for v in std::iter::once(&d.ponto_de_cidade).chain(d.vertices.iter()) {
+                for c in v {
+                    b.extend_from_slice(&c.to_bits().to_le_bytes());
+                }
+            }
+        }
+        b
+    }
 }
 
 #[cfg(test)]

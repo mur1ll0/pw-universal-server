@@ -344,3 +344,23 @@ def registrar_mapas(app):
         _mapa_e_tipo(caminho, tipo)
         return await _repassar("DELETE", f"/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{max(0, indice)}",
                                {"rascunho": rascunho})
+
+    # Distritos (precinct.sev) e portais (region.sev) do mapa (B244): ponto de renascer e ponto de chegada.
+    @app.get("/api/realms/{realm}/estudio/mapas/{caminho}/{arquivo}")
+    async def estudio_sev(realm: str, caminho: str, arquivo: str, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais"):
+            raise HTTPException(404, "Mapa inválido.")
+        return await _repassar("GET", f"/admin/{v}/estudio/mapas/{caminho}/{arquivo}", {"rascunho": rascunho})
+
+    @app.put("/api/realms/{realm}/estudio/mapas/{caminho}/{arquivo}/{indice}")
+    async def estudio_editar_sev(realm: str, caminho: str, arquivo: str, indice: int, rascunho: int,
+                                 requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais"):
+            raise HTTPException(404, "Mapa inválido.")
+        campos = (await requisicao.json()).get("campos")
+        if not isinstance(campos, dict) or not campos:
+            raise HTTPException(422, "Nada a mudar.")
+        return await _repassar("PUT", f"/admin/{v}/estudio/mapas/{caminho}/{arquivo}/{max(0, indice)}",
+                               {"rascunho": rascunho}, dados={"campos": campos})

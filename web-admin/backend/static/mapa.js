@@ -8,6 +8,8 @@ const mapa = {
   arrastando: null, desenhoPendente: false,
   // Edição do npcgen (B243): resumo das áreas no rascunho, área aberta e "posicionar pelo clique".
   editar: false, ng: null, area: null, posicionando: false,
+  // Distritos (precinct.sev) e portais (region.sev), B244.
+  distritos: null, portais: null,
 };
 const CORES_DO_MAPA = { monstro: "#ff6b6b", npc: "#ffd166", recurso: "#7bd88f", objeto: "#8ab4ff" };
 
@@ -58,6 +60,8 @@ async function abrirMapa(caminho) {
   elemento("mapa-situacao").textContent = "Carregando criaturas…";
   elemento("mapa-detalhe").textContent = "Clique numa criatura para ver os detalhes.";
   mapa.ng = null;
+  mapa.distritos = null;
+  mapa.portais = null;
   fecharArea();
   desenharMapa();
   if (!m.npcgen) { elemento("mapa-situacao").textContent = "O realm não tem npcgen para este mapa."; return; }
@@ -71,6 +75,7 @@ async function abrirMapa(caminho) {
     elemento("mapa-situacao").textContent = Object.entries(contagem).map(([t, n]) => `${n} ${t}`).join(" · ");
   } catch (erro) { elemento("mapa-situacao").textContent = erro.message; }
   if (mapa.editar) await carregarNpcgen();
+  await carregarCamadas();
   desenharMapa();
 }
 
@@ -121,16 +126,19 @@ function desenharMapaAgora() {
   ctx.clearRect(0, 0, tela.clientWidth, tela.clientHeight);
   const tipos = new Set([...document.querySelectorAll(".mapa-tipo:checked")].map((c) => c.value));
   const raio = Math.max(2, Math.min(6, mapa.escala * 6));
-  if (mapa.editar && mapa.ng) { desenharAreas(ctx, tipos); return; }
-  for (const p of mapa.pontos) {
-    if (!tipos.has(p[0])) continue;
-    const [sx, sy] = paraTela(p[2], p[3]);
-    if (sx < -10 || sy < -10 || sx > tela.clientWidth + 10 || sy > tela.clientHeight + 10) continue;
-    ctx.fillStyle = CORES_DO_MAPA[p[0]] || "#fff";
-    ctx.beginPath();
-    ctx.arc(sx, sy, raio, 0, Math.PI * 2);
-    ctx.fill();
+  if (mapa.editar && mapa.ng) desenharAreas(ctx, tipos);
+  else {
+    for (const p of mapa.pontos) {
+      if (!tipos.has(p[0])) continue;
+      const [sx, sy] = paraTela(p[2], p[3]);
+      if (sx < -10 || sy < -10 || sx > tela.clientWidth + 10 || sy > tela.clientHeight + 10) continue;
+      ctx.fillStyle = CORES_DO_MAPA[p[0]] || "#fff";
+      ctx.beginPath();
+      ctx.arc(sx, sy, raio, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
+  desenharCamadas(ctx);
 }
 
 function detalharPonto(ev) {
@@ -192,7 +200,7 @@ function detalharPonto(ev) {
     if (a && !a.moveu) {
       if (mapa.posicionando) posicionarPeloClique(e);
       else if (mapa.editar) escolherArea(e);
-      else detalharPonto(e);
+      else if (!escolherDistritoOuPortal(e)) detalharPonto(e);
     }
   });
   window.addEventListener("resize", desenharMapa);
@@ -202,8 +210,17 @@ function detalharPonto(ev) {
     if (mapa.editar) await carregarNpcgen();
     desenharMapa();
   });
+  for (const id of ["mapa-distritos", "mapa-portais"]) {
+    elemento(id).addEventListener("change", async () => { fecharArea(); await carregarCamadas(); desenharMapa(); });
+  }
   elemento("estudio-rascunho").addEventListener("change", async () => {
-    if (!mapa.editar || !mapa.atual) return;
+    if (!mapa.atual) return;
+    if (!mapa.editar) {
+      const aberto = mapa.area && mapa.area.camada ? { camada: mapa.area.camada, indice: mapa.area.indice } : null;
+      await carregarCamadas();
+      if (aberto) abrirDaCamada(aberto.camada, aberto.indice); else desenharMapa();
+      return;
+    }
     const aberta = mapa.area && { tipo: mapa.area.tipo, indice: mapa.area.indice };
     await carregarNpcgen();
     if (aberta) await abrirArea(aberta.tipo, aberta.indice); else desenharMapa();
@@ -260,7 +277,8 @@ function desenharAreas(ctx, tipos) {
   for (const [tipo, a] of linhasDasAreas(tipos)) {
     const [, classe, x, z, ex, ez] = a;
     const [sx, sy] = paraTela(x, z);
-    const w = Math.max(4, ex / 2 * mapa.escala), h = Math.max(4, ez / 2 * mapa.escala);
+    // tamanho em metros → meia-medida (÷2) → pixels da tela (2 m por pixel: ÷2)
+    const w = Math.max(4, ex / 4 * mapa.escala), h = Math.max(4, ez / 4 * mapa.escala);
     if (sx + w < 0 || sy + h < 0 || sx - w > tela.clientWidth || sy - h > tela.clientHeight) continue;
     const escolhida = mapa.area && mapa.area.tipo === tipo && mapa.area.indice === a[0];
     ctx.strokeStyle = escolhida ? "#ffffff" : CORES_DAS_AREAS[classe];
@@ -285,7 +303,7 @@ function escolherArea(ev) {
   for (const [tipo, a] of linhasDasAreas(tipos)) {
     const [sx, sy] = paraTela(a[2], a[3]);
     const d = Math.hypot(sx - mx, sy - my);
-    const w = a[4] / 2 * mapa.escala, h = a[5] / 2 * mapa.escala;
+    const w = a[4] / 4 * mapa.escala, h = a[5] / 4 * mapa.escala;
     const n = d <= 12 ? d : (Math.abs(sx - mx) <= w && Math.abs(sy - my) <= h ? 1000 + w * h : Infinity);
     if (n < nota) { nota = n; melhor = [tipo, a[0]]; }
   }
@@ -440,7 +458,8 @@ function posicionarPeloClique(ev) {
   // Inverso de paraTela: x = 2·px − colunas·512, z = linhas·512 − 2·py
   const x = Math.round((2 * px - m.colunas * 512) * 10) / 10, z = Math.round((m.linhas * 512 - 2 * py) * 10) / 10;
   const ed = elemento("mapa-editor");
-  const ix = ed.querySelector('input[data-campo="vPos_x"]'), iz = ed.querySelector('input[data-campo="vPos_z"]');
+  const ix = ed.querySelector('input[data-campo="vPos_x"], input[data-pos="x"]');
+  const iz = ed.querySelector('input[data-campo="vPos_z"], input[data-pos="z"]');
   if (ix && iz) { ix.value = x; iz.value = z; }
   mapa.posicionando = false;
   const b = [...ed.querySelectorAll("button")].find((x) => x.textContent === "Clique no mapa…");
@@ -458,4 +477,229 @@ async function acaoNaArea(acao, mensagem, reabrir) {
     if (alvo === null || alvo === undefined) { fecharArea(); desenharMapa(); } else await abrirArea(tipo, alvo);
     if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
   } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+}
+
+/* ---------------- Distritos e portais (S4 parte 3, B244) ----------------
+   Distrito (`precinct.sev`): renascer na cidade leva ao ponto de cidade do distrito onde se morreu
+   (`city_region::GetCityPos` → `CELPrecinctSet::IsPointIn`); nome, id e marcas vêm do `precinct.clt` do cliente.
+   Portal (`region.sev`): o cliente acha a caixa pela própria `region.clt` e manda só o índice
+   (`EC_World.cpp:2360-2373`), então no servidor só o ponto de chegada é editável. O carimbo dos dois arquivos
+   (conferido pelo cliente) nunca muda. */
+
+const COR_DO_DISTRITO = "#5ec8ff", COR_DO_PORTAL = "#e07bff";
+
+async function carregarCamadas() {
+  const m = mapa.atual;
+  if (!m) return;
+  const q = estudio.rascunho ? `?rascunho=${estudio.rascunho}` : "";
+  const carregar = async (id, nome) => {
+    if (!elemento(id).checked) return null;
+    try { return await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${nome}${q}`)); }
+    catch (erro) { alerta("aviso", "Estúdio", `${nome}: ${erro.message}`, { toast: true }); return null; }
+  };
+  const [d, p] = await Promise.all([carregar("mapa-distritos", "distritos"), carregar("mapa-portais", "portais")]);
+  if (mapa.atual !== m) return;
+  mapa.distritos = d;
+  mapa.portais = p;
+}
+
+function nomeDoMapa(id) {
+  const m = mapa.lista.find((x) => x.id === id);
+  return m ? `${m.nome} (${id})` : `mapa ${id}`;
+}
+
+function desenharCamadas(ctx) {
+  const m = mapa.atual;
+  const escolhido = (camada, i) => mapa.area && mapa.area.camada === camada && mapa.area.indice === i;
+  if (mapa.distritos) {
+    for (const d of mapa.distritos.distritos) {
+      if (d.mapa !== m.id || d.vertices.length < 2) continue;
+      const sel = escolhido("distritos", d.indice);
+      ctx.strokeStyle = sel ? "#ffffff" : COR_DO_DISTRITO;
+      ctx.lineWidth = sel ? 2.5 : 1;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      d.vertices.forEach(([x, z], k) => { const [sx, sy] = paraTela(x, z); if (k) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy); });
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (d.mapa_do_ponto === m.id) {
+        const [sx, sy] = paraTela(d.ponto[0], d.ponto[2]);
+        ctx.fillStyle = sel ? "#ffffff" : COR_DO_DISTRITO;
+        ctx.fillRect(sx - 4, sy - 4, 8, 8);
+      }
+      if (mapa.escala > 0.25) {
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.font = "11px sans-serif";
+        for (const mk of d.marcas || []) {
+          const [sx, sy] = paraTela(mk.x, mk.z);
+          ctx.fillText(mk.nome, sx + 3, sy - 3);
+        }
+      }
+    }
+  }
+  if (mapa.portais) {
+    for (const c of mapa.portais.caixas) {
+      if (c.origem !== m.id) continue;
+      const sel = escolhido("portais", c.indice);
+      const [sx, sy] = paraTela(c.pos[0], c.pos[2]);
+      // `exts` é meia-medida no region.sev (`el_region.h:184-192`).
+      const w = Math.max(4, c.exts[0] * mapa.escala / 2), h = Math.max(4, c.exts[2] * mapa.escala / 2);
+      ctx.strokeStyle = sel ? "#ffffff" : COR_DO_PORTAL;
+      ctx.lineWidth = sel ? 2.5 : 1.5;
+      ctx.strokeRect(sx - w, sy - h, w * 2, h * 2);
+      if (c.destino === m.id) {
+        const [ax, ay] = paraTela(c.alvo[0], c.alvo[2]);
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(ax, ay);
+        ctx.stroke();
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.beginPath();
+        ctx.arc(ax, ay, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+}
+
+function escolherDistritoOuPortal(ev) {
+  if (!mapa.distritos && !mapa.portais) return false;
+  const m = mapa.atual;
+  const r = elemento("mapa-tela").getBoundingClientRect();
+  const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+  // Portal (caixa ou chegada perto), depois ponto de cidade perto, depois o distrito que contém o clique.
+  for (const c of mapa.portais?.caixas || []) {
+    if (c.origem !== m.id) continue;
+    const [sx, sy] = paraTela(c.pos[0], c.pos[2]);
+    const w = Math.max(6, c.exts[0] * mapa.escala / 2), h = Math.max(6, c.exts[2] * mapa.escala / 2);
+    let perto = Math.abs(sx - mx) <= w && Math.abs(sy - my) <= h;
+    if (!perto && c.destino === m.id) { const [ax, ay] = paraTela(c.alvo[0], c.alvo[2]); perto = Math.hypot(ax - mx, ay - my) < 8; }
+    if (perto) { abrirDaCamada("portais", c.indice); return true; }
+  }
+  const lista = (mapa.distritos?.distritos || []).filter((d) => d.mapa === m.id);
+  for (const d of lista) {
+    if (d.mapa_do_ponto !== m.id) continue;
+    const [sx, sy] = paraTela(d.ponto[0], d.ponto[2]);
+    if (Math.hypot(sx - mx, sy - my) < 8) { abrirDaCamada("distritos", d.indice); return true; }
+  }
+  // Mundo: coordenadas do clique; o distrito de menor prioridade que o contém (`el_precinct.cpp:379-394`).
+  const x = 2 * (mx - mapa.x) / mapa.escala - m.colunas * 512, z = m.linhas * 512 - 2 * (my - mapa.y) / mapa.escala;
+  let melhor = null;
+  for (const d of lista) {
+    let dentro = false;
+    for (let i = 0, j = d.vertices.length - 1; i < d.vertices.length; j = i++) {
+      const [xi, zi] = d.vertices[i], [xj, zj] = d.vertices[j];
+      if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) dentro = !dentro;
+    }
+    if (dentro && (!melhor || d.prioridade <= melhor.prioridade)) melhor = d;
+  }
+  if (melhor) { abrirDaCamada("distritos", melhor.indice); return true; }
+  return false;
+}
+
+function campoNumerico(rotulo, valor, editavel, pos) {
+  const label = criar("label");
+  const input = criar("input", "campo");
+  input.type = "number";
+  input.step = "any";
+  input.value = valor;
+  input.disabled = !editavel;
+  if (pos) input.dataset.pos = pos;
+  label.append(criar("span", "", rotulo), input);
+  return [label, input];
+}
+
+function abrirDaCamada(camada, indice) {
+  const ed = elemento("mapa-editor");
+  ed.replaceChildren();
+  const fonte = camada === "distritos" ? mapa.distritos?.distritos : mapa.portais?.caixas;
+  const item = fonte && fonte.find((x) => x.indice === indice);
+  if (!item) { fecharArea(); desenharMapa(); return; }
+  mapa.area = { camada, indice };
+  ed.hidden = false;
+  const editavel = !!estudio.rascunho;
+  const m = mapa.atual;
+  const titulo = criar("div", "recursos-linha");
+  const grade = criar("div", "mapa-campos");
+  const entradas = {};
+  let corpo;
+  if (camada === "distritos") {
+    titulo.append(criar("strong", "", `Distrito #${indice}${item.nome ? `: ${item.nome}` : ""}`),
+      criar("span", "texto-suave", `${item.id != null ? ` · id ${item.id}` : ""} · ${nomeDoMapa(item.mapa)}${item.dominio ? ` · domínio ${item.dominio}` : ""}`));
+    const [lp, ip] = campoNumerico("Prioridade (menor ganha)", item.prioridade, editavel);
+    const lm = criar("label");
+    const sel = criar("select", "campo");
+    sel.disabled = !editavel;
+    for (const x of mapa.lista) { const o = criar("option", "", `${x.nome} (${x.id})`); o.value = x.id; sel.appendChild(o); }
+    if (!mapa.lista.some((x) => x.id === item.mapa_do_ponto)) { const o = criar("option", "", `mapa ${item.mapa_do_ponto}`); o.value = item.mapa_do_ponto; sel.appendChild(o); }
+    sel.value = item.mapa_do_ponto;
+    lm.append(criar("span", "", "Mapa do ponto de renascer"), sel);
+    const [lx, ix] = campoNumerico("Renascer X", item.ponto[0], editavel, "x");
+    const [ly, iy] = campoNumerico("Renascer Y (altura)", item.ponto[1], editavel);
+    const [lz, iz] = campoNumerico("Renascer Z", item.ponto[2], editavel, "z");
+    grade.append(lp, lm, lx, ly, lz);
+    Object.assign(entradas, { ip, sel, ix, iy, iz });
+    if (mapa.distritos.versao_do_arquivo >= 7) {
+      const lk = criar("label", "marca");
+      const ck = criar("input");
+      ck.type = "checkbox";
+      ck.checked = item.protege_pk;
+      ck.disabled = !editavel;
+      lk.append(ck, criar("span", "", "Protege de PK"));
+      grade.appendChild(lk);
+      entradas.ck = ck;
+    }
+    corpo = () => {
+      const c = {};
+      if (Number(ip.value) !== item.prioridade) c.prioridade = Math.trunc(Number(ip.value));
+      if (Number(sel.value) !== item.mapa_do_ponto) c.mapa_do_ponto = Number(sel.value);
+      const ponto = [Number(ix.value), Number(iy.value), Number(iz.value)];
+      if (ponto.some((v, k) => v !== item.ponto[k])) c.ponto = ponto;
+      if (entradas.ck && entradas.ck.checked !== item.protege_pk) c.protege_pk = entradas.ck.checked;
+      return c;
+    };
+    ed.append(titulo, grade);
+    if (item.marcas?.length) ed.appendChild(criar("div", "texto-suave", `Marcas do cliente: ${item.marcas.map((k) => k.nome).join(", ")}`));
+    if (item.mapa_do_ponto !== m.id) ed.appendChild(criar("div", "texto-suave", "O ponto de renascer fica em outro mapa: \"Posicionar pelo clique\" usaria as coordenadas deste."));
+  } else {
+    titulo.append(criar("strong", "", `Portal #${indice}`),
+      criar("span", "texto-suave", ` · leva a ${nomeDoMapa(item.destino)}${item.nivel_minimo > 1 ? ` · nível ${item.nivel_minimo}` : ""}`));
+    const [lx, ix] = campoNumerico("Chegada X", item.alvo[0], editavel, "x");
+    const [ly, iy] = campoNumerico("Chegada Y (altura)", item.alvo[1], editavel);
+    const [lz, iz] = campoNumerico("Chegada Z", item.alvo[2], editavel, "z");
+    grade.append(lx, ly, lz);
+    corpo = () => {
+      const alvo = [Number(ix.value), Number(iy.value), Number(iz.value)];
+      return alvo.some((v, k) => v !== item.alvo[k]) ? { alvo } : {};
+    };
+    ed.append(titulo, grade,
+      criar("div", "texto-suave", `Caixa em (${item.pos.map((v) => v.toFixed(1)).join(", ")}), meia-medida (${item.exts.map((v) => v.toFixed(1)).join(", ")}): o cliente decide pela region.clt dele, por isso posição, tamanho e destino não se editam aqui.`));
+    if (item.destino !== m.id) ed.appendChild(criar("div", "texto-suave", `A chegada fica em ${nomeDoMapa(item.destino)}: abra aquele mapa para posicionar pelo clique.`));
+  }
+  if (!editavel) {
+    titulo.appendChild(criar("span", "texto-suave", " · só leitura: escolha ou crie um rascunho no topo do Estúdio"));
+    desenharMapa();
+    return;
+  }
+  const botoes = criar("div", "recursos-linha");
+  const pos = criar("button", "botao botao-pequeno botao-secundario", "Posicionar pelo clique");
+  pos.type = "button";
+  pos.addEventListener("click", () => { mapa.posicionando = !mapa.posicionando; pos.textContent = mapa.posicionando ? "Clique no mapa…" : "Posicionar pelo clique"; });
+  const salvar = criar("button", "botao botao-pequeno botao-primario", "Salvar no rascunho");
+  salvar.type = "button";
+  salvar.addEventListener("click", async () => {
+    const campos = corpo();
+    if (!Object.keys(campos).length) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
+    try {
+      const r = await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${camada}/${indice}?rascunho=${estudio.rascunho}`), { method: "PUT", body: JSON.stringify({ campos }) });
+      alerta("ok", "Estúdio", "Salvo no rascunho." + (r.igual_ao_publicado ? " Ficou igual ao realm: o item saiu do rascunho." : ""), { toast: true });
+      await carregarCamadas();
+      abrirDaCamada(camada, indice);
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  });
+  botoes.append(pos, salvar);
+  ed.appendChild(botoes);
+  desenharMapa();
 }

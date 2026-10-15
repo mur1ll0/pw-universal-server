@@ -92,6 +92,106 @@ pub fn ler_caixas_de_transporte(data: &[u8]) -> std::io::Result<Vec<CaixaDeTrans
     Ok(caixas)
 }
 
+/// Um registro do `region.sev` na ordem do arquivo (B244, Estúdio): região (`i32 0`) ou caixa (`i32 1`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum RegistroDeRegiao {
+    Regiao(Vec<[f32; 3]>),
+    Caixa(CaixaDeTransporte),
+}
+
+/// O `region.sev` inteiro, para editar e gravar de volta byte a byte.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegioesEditavel {
+    pub versao: u32,
+    pub carimbo: u32,
+    pub registros: Vec<RegistroDeRegiao>,
+}
+
+impl RegioesEditavel {
+    /// Mesmo formato de `ler_caixas_de_transporte`, guardando as regiões e a ordem dos registros.
+    pub fn ler(data: &[u8]) -> std::io::Result<Self> {
+        let mut c = Cursor::new(data);
+        let u32_ = |c: &mut Cursor<&[u8]>| -> std::io::Result<u32> {
+            let mut b = [0u8; 4];
+            c.read_exact(&mut b)?;
+            Ok(u32::from_le_bytes(b))
+        };
+        let versao = u32_(&mut c)?;
+        if versao < 4 {
+            return Err(erro("region.sev versão < 4 não implementada"));
+        }
+        let n_regioes = u32_(&mut c)? as i32;
+        let n_caixas = u32_(&mut c)? as i32;
+        let carimbo = u32_(&mut c)?;
+        let v3 = |c: &mut Cursor<&[u8]>| -> std::io::Result<[f32; 3]> {
+            Ok([f32::from_bits(u32_(c)?), f32::from_bits(u32_(c)?), f32::from_bits(u32_(c)?)])
+        };
+        let (mut regioes, mut caixas, mut registros) = (0, 0, Vec::new());
+        while regioes < n_regioes || caixas < n_caixas {
+            match u32_(&mut c)? {
+                0 => {
+                    let pontos = u32_(&mut c)? as usize;
+                    if pontos > 100_000 {
+                        return Err(erro("região com pontos demais"));
+                    }
+                    registros.push(RegistroDeRegiao::Regiao((0..pontos).map(|_| v3(&mut c)).collect::<Result<_, _>>()?));
+                    regioes += 1;
+                }
+                1 => {
+                    let destino = u32_(&mut c)? as i32;
+                    let origem = u32_(&mut c)? as i32; // v ≥ 3 (só se lê v ≥ 4)
+                    let nivel_minimo = if versao >= 5 { u32_(&mut c)? as i32 } else { 1 };
+                    let (pos, exts, alvo) = (v3(&mut c)?, v3(&mut c)?, v3(&mut c)?);
+                    registros.push(RegistroDeRegiao::Caixa(CaixaDeTransporte { destino, origem, nivel_minimo, pos, exts, alvo }));
+                    caixas += 1;
+                }
+                _ => return Err(erro("region.sev com registro de tipo desconhecido")),
+            }
+        }
+        if c.position() as usize != data.len() {
+            return Err(erro("region.sev não fecha no último byte"));
+        }
+        Ok(Self { versao, carimbo, registros })
+    }
+
+    pub fn gravar(&self) -> Vec<u8> {
+        let mut b = Vec::new();
+        let u = |b: &mut Vec<u8>, v: u32| b.extend_from_slice(&v.to_le_bytes());
+        let v3 = |b: &mut Vec<u8>, v: &[f32; 3]| v.iter().for_each(|x| b.extend_from_slice(&x.to_bits().to_le_bytes()));
+        let n_reg = self.registros.iter().filter(|r| matches!(r, RegistroDeRegiao::Regiao(_))).count();
+        u(&mut b, self.versao);
+        u(&mut b, n_reg as u32);
+        u(&mut b, (self.registros.len() - n_reg) as u32);
+        u(&mut b, self.carimbo);
+        for r in &self.registros {
+            match r {
+                RegistroDeRegiao::Regiao(p) => {
+                    u(&mut b, 0);
+                    u(&mut b, p.len() as u32);
+                    p.iter().for_each(|v| v3(&mut b, v));
+                }
+                RegistroDeRegiao::Caixa(k) => {
+                    u(&mut b, 1);
+                    u(&mut b, k.destino as u32);
+                    u(&mut b, k.origem as u32);
+                    if self.versao >= 5 {
+                        u(&mut b, k.nivel_minimo as u32);
+                    }
+                    v3(&mut b, &k.pos);
+                    v3(&mut b, &k.exts);
+                    v3(&mut b, &k.alvo);
+                }
+            }
+        }
+        b
+    }
+
+    /// As caixas na ordem do índice que o cliente manda no `ENTER_INSTANCE`.
+    pub fn caixas_mut(&mut self) -> Vec<&mut CaixaDeTransporte> {
+        self.registros.iter_mut().filter_map(|r| if let RegistroDeRegiao::Caixa(k) = r { Some(k) } else { None }).collect()
+    }
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;

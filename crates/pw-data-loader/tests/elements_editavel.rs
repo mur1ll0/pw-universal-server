@@ -153,3 +153,37 @@ fn npcgen_de_todos_os_mapas_volta_identico() {
     assert_eq!(relido.areas[0].geradores.len(), n.areas[0].geradores.len());
     assert!(pw_data_loader::npcgen::NpcGenData::load_from_bytes(&n.gravar()).is_ok(), "o leitor do GS também lê");
 }
+
+/// B244: todo `precinct.sev` e `region.sev` dos dois realms relido e regravado byte a byte.
+#[test]
+fn precinct_e_region_de_todos_os_mapas_voltam_identicos() {
+    use pw_data_loader::precinct::Distritos;
+    use pw_data_loader::regioes::RegioesEditavel;
+    let (mut np, mut nr, mut caixas) = (0, 0, 0);
+    for realm in ["realm_126", "realm_155"] {
+        let raiz = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config"));
+        let mut pastas: Vec<PathBuf> = std::fs::read_dir(&raiz).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| {
+            // Só as pastas que o GS carrega (`manager.rs`: `world`, `aNN`, `bNN`); a `empty` do 1.5.5 tem arquivos de 8 bytes.
+            let n = p.file_name().unwrap().to_string_lossy().to_string();
+            p.is_dir() && (n == "world" || (n.len() == 3 && (n.starts_with('a') || n.starts_with('b')) && n[1..].bytes().all(|c| c.is_ascii_digit())))
+        }).collect();
+        pastas.push(raiz.clone());
+        for d in pastas {
+            if let Ok(buf) = std::fs::read(d.join("precinct.sev")) {
+                let p = Distritos::ler(&buf).unwrap_or_else(|e| panic!("{}: {e}", d.display()));
+                assert!(p.gravar() == buf, "{}/precinct.sev não volta idêntico", d.display());
+                np += 1;
+            }
+            if let Ok(buf) = std::fs::read(d.join("region.sev")) {
+                let mut r = RegioesEditavel::ler(&buf).unwrap_or_else(|e| panic!("{}: {e}", d.display()));
+                assert!(r.gravar() == buf, "{}/region.sev não volta idêntico", d.display());
+                let k = r.caixas_mut().len();
+                assert_eq!(k, pw_data_loader::regioes::ler_caixas_de_transporte(&buf).unwrap().len());
+                caixas += k;
+                nr += 1;
+            }
+        }
+    }
+    println!("precinct.sev: {np}, region.sev: {nr}, caixas: {caixas}");
+    assert!(np > 50 && nr > 50, "{np} {nr}");
+}

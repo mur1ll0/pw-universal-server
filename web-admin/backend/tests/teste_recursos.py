@@ -209,6 +209,28 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 422)
         self.assertEqual(len(RecursosFalso.pedidos), antes)
 
+    async def test_distritos_e_portais(self):
+        """B244: distritos/portais repassam com o rascunho; outro nome de arquivo e edição vazia ficam no painel."""
+        await self.entrar()
+        csrf = await self.csrf()
+        await self.cliente.get("/api/realms/realm_155/estudio/mapas/world/distritos", params={"rascunho": 5})
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], p["consulta"]), ("/admin/1.5.5/estudio/mapas/world/distritos", {"rascunho": ["5"]}))
+        r = await self.cliente.put("/api/realms/realm_126/estudio/mapas/a01/portais/2", params={"rascunho": 5},
+                                   headers=csrf, json={"campos": {"alvo": [1, 2, 3]}})
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["metodo"], p["caminho"]), ("PUT", "/admin/1.2.6/estudio/mapas/a01/portais/2"))
+        self.assertEqual(json.loads(p["corpo"]), {"campos": {"alvo": [1, 2, 3]}})
+        await self.cliente.get("/api/realms/realm_155/estudio/mapas/world/criaturas")
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/mapas/world/criaturas")
+        antes = len(RecursosFalso.pedidos)
+        self.assertEqual((await self.cliente.get("/api/realms/realm_155/estudio/mapas/world/tasks")).status_code, 404)
+        r = await self.cliente.put("/api/realms/realm_155/estudio/mapas/world/distritos/0", params={"rascunho": 5},
+                                   headers=csrf, json={"campos": {}})
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(len(RecursosFalso.pedidos), antes)
+
     async def test_versao_invalida_e_servico_sem_segredo(self):
         await self.entrar()
         r = await self.cliente.get("/api/recursos/1$5/alteracoes")

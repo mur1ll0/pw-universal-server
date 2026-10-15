@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -85,6 +85,10 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
     let npcgen = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/a01/npcgen.data");
     fs::create_dir_all(realm.join("world")).unwrap();
     fs::copy(&npcgen, realm.join("world").join("npcgen.data")).expect("npcgen da a01 do realm_126");
+    // precinct.sev (v6, 1 distrito) e region.sev (v5, 1 região, 1 portal) da mesma a01 (B244).
+    for f in ["precinct.sev", "region.sev"] {
+        fs::copy(npcgen.with_file_name(f), realm.join("world").join(f)).expect("sev da a01 do realm_126");
+    }
     let (chave, _) = Chave::carregar_ou_criar(&dados.join("_chave").join("k")).unwrap();
     let res = importar(&Importacao {
         versao: LINHA,
@@ -317,6 +321,34 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
             .send_json(json!({"operacao_id": "t_p4_r3"})).unwrap())["rascunho"].as_i64().unwrap();
         pedir("POST", "publicar").send_json(json!({"rascunhos": [rv]})).unwrap();
         assert_eq!(fs::read(realm2.join("world").join("npcgen.data")).unwrap(), npcgen_original, "reverter devolve o npcgen");
+
+        // Distritos e portais (B244): só ponto de renascer / chegada; carimbo intacto; publicar grava os dois.
+        let sev = |f: &str| fs::read(realm2.join("world").join(f)).unwrap();
+        let (precinct0, region0) = (sev("precinct.sev"), sev("region.sev"));
+        let r4 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "distritos", "operacao_id": "t_p4_r4"})).unwrap())["id"].as_i64().unwrap();
+        let em4 = |rel: &str| format!("{rel}?rascunho={r4}");
+        let d = json_de(pedir("GET", "estudio/mapas/world/distritos").call().unwrap());
+        assert_eq!((d["item"].as_str(), d["versao_do_arquivo"].as_u64(), d["distritos"].as_array().unwrap().len()),
+            (Some("servidor\\world\\precinct.sev"), Some(6), 1), "{d}");
+        assert!(d["distritos"][0]["vertices"].as_array().unwrap().len() >= 3);
+        let pt = json_de(pedir("GET", "estudio/mapas/world/portais").call().unwrap());
+        assert_eq!((pt["caixas"].as_array().unwrap().len(), pt["regioes"].as_array().unwrap().len()), (1, 1), "{pt}");
+        assert_eq!(erro_de(pedir("PUT", &em4("estudio/mapas/world/distritos/0")).send_json(json!({"campos": {"protege_pk": true}}))).0, 400, "v6 não tem PK");
+        assert_eq!(erro_de(pedir("PUT", &em4("estudio/mapas/world/portais/0")).send_json(json!({"campos": {"destino": 1}}))).0, 400);
+        assert_eq!(erro_de(pedir("PUT", &em4("estudio/mapas/world/distritos/0")).send_json(json!({"campos": {"ponto": [1, 2]}}))).0, 400);
+        pedir("PUT", &em4("estudio/mapas/world/distritos/0")).send_json(json!({"campos": {"ponto": [100.5, 20.0, -30.25], "prioridade": 3}})).unwrap();
+        pedir("PUT", &em4("estudio/mapas/world/portais/0")).send_json(json!({"campos": {"alvo": [1.5, 2.5, 3.5]}})).unwrap();
+        let d2 = json_de(pedir("GET", &em4("estudio/mapas/world/distritos")).call().unwrap());
+        assert_eq!((d2["distritos"][0]["ponto"].clone(), d2["distritos"][0]["prioridade"].clone()), (json!([100.5, 20.0, -30.25]), json!(3)));
+        let p4 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r4]})).unwrap());
+        assert_eq!(p4["aplicados"].as_array().unwrap().len(), 2, "{p4}");
+        let (precinct1, region1) = (sev("precinct.sev"), sev("region.sev"));
+        assert_eq!((precinct1.len(), region1.len()), (precinct0.len(), region0.len()));
+        assert_eq!(precinct1[8..12], precinct0[8..12], "carimbo do precinct intacto");
+        assert_eq!(region1[12..16], region0[12..16], "carimbo do region intacto");
+        let lido = pw_data_loader::precinct::Distritos::ler(&precinct1).unwrap();
+        assert_eq!((lido.lista[0].ponto_de_cidade, lido.lista[0].prioridade), ([100.5, 20.0, -30.25], 3));
+        assert_eq!(pw_data_loader::regioes::ler_caixas_de_transporte(&region1).unwrap()[0].alvo, [1.5, 2.5, 3.5]);
     })
     .await
     .unwrap();
