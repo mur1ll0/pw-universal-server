@@ -13942,3 +13942,46 @@ comparação lado a lado.
     - Ver em jogo: área movida/geradores mudados aparecendo depois de publicar e reiniciar o realm.
     - `region`/`precinct`, teleportes, `task_npc`, objetos dinâmicos e controladores do `npcgen`, altura do chão pelo GS.
     - Rascunho só de servidor ainda gera versão nova do cliente (manifesto igual): o launcher "atualiza" sem baixar nada.
+
+244. **Sessão 2026-10-15: Estúdio S4, terceira parte — distritos e portais no mapa.**
+
+    ### a. Pedido
+    Commitar o B243 (feito: `0353f5c`, `ed573fc`) e seguir para a próxima etapa do S4: `region`/`precinct`.
+
+    ### b. Evidência
+    - Servidor: `precinct.sev` (`el_precinct.cpp:219-266`, já lido por `precinct.rs`) e `region.sev`
+      (`el_region.cpp:111-125`, `:293-330`, lido por `regioes.rs`). O GS carrega os dois da pasta do mapa
+      (`manager.rs:1117-1136`), a mesma do `npcgen` (`manager.rs:616-621`).
+    - Cliente: carrega `Maps\<mapa>\precinct.clt` e `region.clt` (`EC_World.cpp:630-640`), em **texto**
+      (`CELPrecinct::Load(AWScriptFile*)`, `EL_Precinct.cpp:96-213`: nome, id, pontos, marcas, prioridade, destino,
+      músicas, intervalo, laço, mapa, domínio, PK, ponto de cidade, vértices, marcas com nome, som, músicas, som da noite).
+      O `ponto de cidade` do cliente não é usado por nenhum `.cpp` além do leitor.
+    - Portal: o cliente acha a caixa pela **própria** `region.clt` e manda `c2s_CmdEnterInstance(índice, destino)`
+      (`EC_World.cpp:2360-2373`). Logo, no servidor só o ponto de chegada (`m_vTarget`) é editável sem tocar no cliente.
+    - O `dwTimeStamp` dos dois `.sev` é conferido pelo cliente no `INST_DATA_CHECKOUT` (`manager.rs:236-240`): não pode mudar.
+    - A pasta `empty` do 1.5.5 não é mapa (arquivos de 8 bytes, `region.sev` versão 1); o GS só carrega `world`, `aNN`, `bNN`.
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `Distritos::gravar` (`precinct.rs`) e `RegioesEditavel` (`regioes.rs`, registros na ordem do
+      arquivo, `caixas_mut` na ordem do índice).
+    - `pw-recursos`: `arquivo_do_mapa`/`alterar_arquivo_do_mapa` generalizam o caminho do B243 (pasta do mapa pela ordem
+      do GS); `mapas::ler_precinct_clt`; rotas `GET distritos`, `PUT distritos/{i}` (ponto, mapa do ponto, prioridade,
+      PK só v7), `GET portais`, `PUT portais/{i}` (só `alvo`).
+    - Painel: proxy (`/api/realms/{r}/estudio/mapas/{c}/{distritos|portais}[/{i}]`), camadas "Distritos" e "Portais"
+      em `mapa.js`, editor com "Posicionar pelo clique" (envia só os campos mudados).
+    - **Corrigido do B243:** as caixas das áreas do `npcgen` saíam com o dobro do tamanho no mapa (a meia-medida não era
+      dividida pelos 2 m por pixel).
+
+    ### d. Provas
+    - `precinct_e_region_de_todos_os_mapas_voltam_identicos`: 115 `precinct.sev` e 115 `region.sev` (431 portais)
+      relidos e regravados byte a byte iguais.
+    - `ler_precinct_clt` com trecho do `maps\world\precinct.clt` do cliente 1.5.5 BR.
+    - `cargo test -p pw-recursos` com o banco: **18/18**; o `estudio.rs` edita o `precinct.sev` (v6) e o `region.sev`
+      (v5) da a01 do 1.2.6: PK recusado na v6, `destino` do portal recusado, ponto com 2 números recusado; publica
+      (2 aplicados), carimbos intactos, os leitores do GS leem o ponto e a chegada novos.
+    - Painel: `teste_recursos.py` **10/10**.
+
+    ### e. Falta
+    - Ver em jogo: renascer na cidade no ponto novo; chegar pelo portal no ponto novo.
+    - Polígonos de distrito e portais novos/movidos (exigem gerar o `.clt` do cliente junto), teleportes de NPC,
+      `task_npc`, objetos dinâmicos/controladores do `npcgen`, altura do chão pelo GS.

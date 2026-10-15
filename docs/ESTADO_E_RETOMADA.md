@@ -7,7 +7,7 @@
 > bloco novo entra como linha no §3.3 (o que olhar em jogo), no §5 (o que ficou faltando) e
 > no índice do §8 — não como parágrafo aqui.
 >
-> **Última atualização: 2026-10-15** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234 launcher (P2) em `a43042d`/`a478035`, confirmado; B235/B236 commitados (`07a30ab`…`5a2a22d`); B237 commitado (`d334cf8`…`eaf329e`); B238 commitado (`a78abf2`…`db76f83`); B239 commitado (`c9c54d1`…`cfbe3b2`); B240 commitado (`32e115a`…`7bb1766`); B241 commitado (`92aa98e`, `5c05e53`); B242 commitado (`132c63b`, `66179c2`); **B243: edição do `npcgen` pelo mapa do Estúdio (S4, 2ª parte) — publicado nos contêineres, não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
+> **Última atualização: 2026-10-15** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234 launcher (P2) em `a43042d`/`a478035`, confirmado; B235/B236 commitados (`07a30ab`…`5a2a22d`); B237 commitado (`d334cf8`…`eaf329e`); B238 commitado (`a78abf2`…`db76f83`); B239 commitado (`c9c54d1`…`cfbe3b2`); B240 commitado (`32e115a`…`7bb1766`); B241 commitado (`92aa98e`, `5c05e53`); B242 commitado (`132c63b`, `66179c2`); B243 commitado (`0353f5c`, `ed573fc`); **B244: distritos e portais no mapa do Estúdio (S4, 3ª parte) — publicado nos contêineres, não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
 > comandos do B77–B88, 14 e 64 conferidos e sobrescritos no 1.2.6, campos do v55 pelo
 > `libtask.so` e prefixos do v7 pelo `gs`; **B126** — IA de combate do monstro por estratégia
 > (conjurar de longe, série de golpes, afastar, fugir, fixo), eventos de vida 75/50/25 %, efeito
@@ -401,6 +401,10 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
   das áreas; clicar numa abre os campos e os geradores. Mudar a quantidade ou o modelo, ou "Posicionar pelo clique" e
   clicar no mapa, **Salvar no rascunho**; em Recursos do cliente, publicar o rascunho (item
   `servidor\<mapa>\npcgen.data`), **reiniciar o realm** e conferir no jogo. Reverter a alteração devolve o original.
+- **B244 (distritos e portais):** Mapas → marcar **Distritos** e **Portais**: polígonos tracejados azuis com um
+  quadrado no ponto de renascer; caixas roxas com linha até a chegada. Clicar abre o editor; com rascunho, mover o
+  ponto de renascer ("Posicionar pelo clique"), salvar, publicar, reiniciar o realm, morrer dentro do distrito e
+  "renascer na cidade": deve aparecer no ponto novo. Mesmo para a chegada de um portal.
 
 **1.5.5 (realm 155, e o que vale para os dois)**
 
@@ -849,6 +853,8 @@ portado. Falta ver em jogo.)
   **B243 (S4, 2ª parte):** `npcgen` editável (ida e volta idêntica nos 117 arquivos), áreas de criatura e de recurso
   editadas no mapa num rascunho só do servidor, publicadas no realm e revertíveis. Falta: `region`/`precinct`,
   teleportes, `task_npc`, objetos dinâmicos/controladores, altura do chão pelo GS.
+  **B244 (S4, 3ª parte):** distritos (`precinct.sev` + nomes do `precinct.clt`) e portais (`region.sev`) no mapa;
+  editáveis o ponto de renascer e o ponto de chegada (o resto exige editar o `.clt` do cliente junto).
 
 ## 6. Regras que valem para qualquer mudança
 
@@ -1086,6 +1092,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 198 | 10-07 | painel E6: missões — ver, dar livre (`NEW`), concluir forçando o sucesso (`FINISHED`/`COMPLETE`), cancelar apagando (`GIVE_UP`; 1.2.6 só offline), esquecer a conclusão (offline); resposta do canal até 64 KiB |
 | 242 | 10-14 | Estúdio S4: mapa interativo (instance.txt, minimapa DXT→PNG, criaturas do npcgen), só leitura |
 | 243 | 10-15 | Estúdio S4: editar o npcgen no mapa (escritor ida e volta, rascunho só do servidor, publicar/reverter no realm) |
+| 244 | 10-15 | Estúdio S4: distritos (precinct) e portais (region) no mapa; ponto de renascer e de chegada editáveis |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

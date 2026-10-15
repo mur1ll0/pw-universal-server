@@ -228,7 +228,24 @@ item `servidor\<mapa>\npcgen.data` (`servidor\npcgen.data` só se o realm não t
 `sha256_antes` = o arquivo do realm (gravado também no volume, para reverter), resumo com a lista `mudancas`; voltar
 ao igual ao realm tira o item. Publicar grava no realm (o GS lê ao subir: reinicie). Painel: "Editar áreas" na aba Mapas
 desenha as caixas (`vExts`/`fExt` = tamanho, metade para cada lado), clique abre a área com os geradores, "Posicionar
-pelo clique", "+ gerador", salvar/clonar/remover; o `PUT` da área tem limite de 64 KiB no painel.
+pelo clique", "+ gerador", salvar/clonar/remover; o `PUT` da área tem limite de 64 KiB no painel. (Até o B244 as
+caixas saíam com o dobro do tamanho: a meia-medida não era dividida pelos 2 m por pixel.)
+
+**Distritos e portais (S4, B244):** a mesma edição de arquivo do realm (`alterar_arquivo_do_mapa`, pasta do mapa pela
+ordem do GS) vale para `precinct.sev` e `region.sev`. Escritores: `Distritos::gravar` (`precinct.rs`, ordem de
+`CELPrecinct::Load(FILE*)`, `el_precinct.cpp:219-266`) e `RegioesEditavel` (`regioes.rs`, registros na ordem do
+arquivo: região tipo 0, caixa tipo 1) — ida e volta idêntica nos 115 `precinct.sev` e 115 `region.sev` dos dois
+realms (431 portais). Rotas: `GET mapas/{c}/distritos[?rascunho]` (polígono `[x, z]`, ponto de cidade, mapa do ponto,
+prioridade, domínio, PK; nome, id e marcas do `Maps\<c>\precinct.clt` do cliente — formato texto de
+`CELPrecinct::Load(AWScriptFile*)`, `EL_Precinct.cpp:96-213` — quando a contagem e os vértices de cada distrito batem),
+`PUT mapas/{c}/distritos/{i} {campos}` (`ponto`, `mapa_do_ponto`, `prioridade`, `protege_pk` só na v7),
+`GET mapas/{c}/portais` (caixas com destino, origem, nível, `pos`, `exts` meia-medida, `alvo`; regiões como
+polígonos) e `PUT mapas/{c}/portais/{i} {campos: {alvo}}` — **só o ponto de chegada**: o cliente acha a caixa pela
+própria `region.clt` e manda só o índice e o destino dela (`EC_World.cpp:2360-2373`), então posição, tamanho e
+destino só mudam junto com o cliente. O carimbo (`dwTimeStamp`) dos dois arquivos, que o cliente confere no
+`INST_DATA_CHECKOUT` (`manager.rs:236-240`), nunca muda. Painel: camadas "Distritos" (polígono tracejado, quadrado no
+ponto de renascer, nomes das marcas com zoom) e "Portais" (caixa e linha até a chegada quando é no mesmo mapa); clique
+abre o editor com "Posicionar pelo clique".
 
 ## 7. Testes
 
@@ -241,8 +258,9 @@ rascunho idempotente, trava por caminho (409), publicar v1 com mínima, o launch
 instala outra do zero na v1 (2 por objeto, 2 pulados), reverter → v2 igual à 0. `cargo test -p
 pw-atualizador`: tar, nomes. `tests/estudio.rs` (com banco, `elements` e `npcgen` reais do 1.2.6): Estúdio de ponta a
 ponta, mapas, e o `npcgen` editado (mover, 2 geradores, clonar, remover), publicado no realm (lido pelos dois
-carregadores) e revertido ao original (B243). `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
-arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (9) — rodar no contêiner da imagem do painel com
+carregadores) e revertido ao original (B243); distritos e portais da a01 (recusas, carimbo intacto, publicar grava
+os dois, B244). `pw-data-loader`: `precinct_e_region_de_todos_os_mapas_voltam_identicos`. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
+arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
 `TEST_DATABASE_URL`/`TEST_REDIS_URL` (ver histórico B243).
 
 ## 8. Falta
@@ -250,8 +268,9 @@ arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (9) — rodar no 
 - Launcher: canal de teste para GM (instalar um rascunho antes de publicar), autoatualização do próprio
   launcher, instalador `.msi` (CLI do Tauri).
 - Marcar "aguarda reinício" no realm depois de publicar `servidor`/`ambos` (hoje o painel só lista os aplicados).
-- Estúdio: telas próprias, `tasks`/`gshop`; no mapa, `region`/`precinct`, teleportes, `task_npc`, objetos
-  dinâmicos e controladores do `npcgen`, altura do chão pelo GS.
+- Estúdio: telas próprias, `tasks`/`gshop`; no mapa, polígonos de distrito e portais novos (exigem editar o
+  `.clt` do cliente junto), teleportes de NPC, `task_npc`, objetos dinâmicos e controladores do `npcgen`, altura do
+  chão pelo GS.
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).

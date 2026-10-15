@@ -238,6 +238,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > e de recurso editadas no mapa (campos, geradores, posição pelo clique, clonar, remover) num rascunho como item só
 > do servidor, publicado no realm e revertível (spec 07 §6b). Faltam: `region`/`precinct`, teleportes, `task_npc`,
 > objetos dinâmicos/controladores e a altura do chão pelo GS.
+>
+> **B244 (S4, 3ª parte):** distritos (`precinct.sev`, com nomes e marcas do `precinct.clt` do cliente) e portais
+> (`region.sev`) no mapa; editáveis o ponto de renascer (e o mapa dele, prioridade, PK) e o ponto de chegada do portal.
+> Polígonos e portais novos ficam para quando o Estúdio editar também o `.clt` do cliente.
 
 | fase | entrega |
 | :--- | :--- |
