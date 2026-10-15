@@ -14018,3 +14018,42 @@ comparação lado a lado.
     - Ver em jogo: o transportador levando ao ponto novo.
     - Destinos novos (exigem o `world_targets.txt` do cliente), `task_npc`, objetos dinâmicos/controladores, altura do
       chão pelo GS.
+
+246. **Sessão 2026-10-15: Estúdio S4, quinta parte — rastreador de NPCs (`task_npc.data`).**
+
+    ### a. Pedido
+    Commitar o B245 (feito: `2028129`, `3b9c2fb`) e seguir: `task_npc`.
+
+    ### b. Evidência
+    - Cliente: `TaskInterface::Init` chama `LoadNPCInfoFromPack("data\\task_npc.data")` (`EC_TaskInterface.cpp:166`),
+      que lê com `fopen` (`TaskTemplMan.cpp:2149-2185`) e desmonta em `UnmarshalNPCInfo` (`:2067-2103`): cabeçalho
+      `TASK_NPC_PACK_HEADER` (`:53-59`, versão `TASK_NPC_INFO_VERSION` = 1, `pack_size` = tamanho do arquivo) e
+      `NPC_INFO { u32 id; short x, y, z; }` (`TaskTempl.h:71-77`, antes do `#pragma pack(1)` da linha 221 → 12 bytes).
+      Uso: `GetTaskNPCInfo` nos nomes clicáveis (`DlgNameLink.cpp:243`, `EC_UIHelper.cpp:505`).
+    - Servidor: o `gs` tem o mesmo `LoadNPCInfoFromPack` mas nenhuma chamada a ele; a cópia em `config/` é sobra.
+    - Arquivos reais: 1.5.5 BR 18.876 bytes = 12 + 1.572 × 12; 1.2.6 9.192 = 12 + 765 × 12; as cópias do realm são
+      idênticas às do cliente publicado.
+    - **Ordem das coordenadas:** a 1ª versão leu x, altura, z e, publicada, mostrou 806 de 808 NPCs "a mais de 20 m" da
+      área — sinal de unidade/ordem errada. O cliente monta o ponto com `Set(pInfo->x, pInfo->z, pInfo->y)`
+      ("NOTICE: different sequence", `DlgNameLink.cpp:246-247`, `EC_UIHelper.cpp:508`): no arquivo vêm x, z, altura. Nos
+      arquivos reais a altura é sempre 0 e (0, 0, 0) é NPC sem posição (300/765 no 1.2.6, 1.057/1.572 no 1.5.5). Só o
+      mapa principal usa o rastreador (`MAJOR_MAP` = 1, `DlgWorldMap.h:13`). Corrigido antes de entregar.
+
+    ### c. O que foi feito
+    - `pw-data-loader/src/task_npc.rs`: `Rastreador` (ler, gravar idêntico, posição, troca/acréscimo com arredondamento
+      e recusa fora de `short`).
+    - `pw-recursos`: `item_do_cliente`/`alterar_item_do_cliente` (primeiro item `cliente` do Estúdio: caminho GBK exato do
+      manifesto, `sha256_antes` = publicado); `GET mapas/{c}/rastreador`, `PUT rastreador/{id}`.
+    - Painel: proxy, camada "Rastreador" e, no editor de área de NPC, a posição do rastreador por gerador com
+      "Usar a posição da área no rastreador".
+
+    ### d. Provas
+    - `task_npc::testes`: os dois arquivos voltam idênticos; troca, acréscimo, `short` estourado e byte a mais recusados.
+    - `cargo test -p pw-recursos` com o banco: **19/19**; o `estudio.rs` lê o rastreador (765), o 1º NPC da a01 do 1.2.6
+      **não estava** no arquivo e foi acrescentado, publica (0 aplicados no realm) e o `GET arquivo` da versão nova traz a
+      posição arredondada.
+    - Painel: `teste_recursos.py` **10/10**.
+
+    ### e. Falta
+    - Ver em jogo: depois de atualizar pelo launcher, o nome do NPC numa missão leva ao ponto novo.
+    - Objetos dinâmicos e controladores do `npcgen`, altura do chão pelo GS.

@@ -260,6 +260,25 @@ arquivo do realm ficou em três camadas: `item_do_realm` (nome do item → bytes
 `arquivo_do_mapa` (pasta do mapa pela ordem do GS) e `gravar_item_do_realm` (o miolo comum). Painel: camada
 "Teleportes" (losango laranja com nome), editor com as transportadoras e link para a ficha do NPC.
 
+**Rastreador de NPCs (S4, B246):** `data\task_npc.data` é **do cliente** — lido do disco por
+`ATaskTemplMan::LoadNPCInfoFromPack` (`EC_TaskInterface.cpp:166`, `TaskTemplMan.cpp:2149-2185`) e usado por
+`GetTaskNPCInfo` nos nomes clicáveis das missões (`DlgNameLink.cpp:243`); o `gs` original tem o leitor mas nunca o chama
+(a cópia no `config` do realm não serve). Formato (`TaskTemplMan.cpp:43-60`, `:2067-2103`; `TaskTempl.h:71-77`):
+cabeçalho `{u32 pack_size; i32 time_mark; u16 versão = 1; u16 npc_count}` e `npc_count × {u32 id; i16 x, y, z; 2 bytes de
+alinhamento}` (o `NPC_INFO` fica antes do `#pragma pack(1)`: 12 bytes) — conferido: 1.5.5 BR 1.572 NPCs / 18.876 bytes,
+1.2.6 765 / 9.192. **No arquivo as coordenadas vêm x, z, altura**: o cliente monta o ponto com
+`Set(pInfo->x, pInfo->z, pInfo->y)` ("different sequence", `DlgNameLink.cpp:246-247`); nos dois arquivos a altura é sempre
+0 e (0, 0, 0) é NPC sem posição (300 de 765 no 1.2.6, 1.057 de 1.572 no 1.5.5). O cliente só consulta o rastreador no
+mapa principal (`MAJOR_MAP` = 1, `DlgWorldMap.h:13`). `pw_data_loader::task_npc::Rastreador` lê, grava idêntico (os 2
+bytes de alinhamento têm lixo e são preservados) e expõe/troca a posição na ordem do mundo `[x, altura, z]` (arredonda;
+recusa fora de `short`; com id repetido vale o último, como o `m_NPCInfoMap` do cliente). Rotas:
+`GET mapas/{c}/rastreador` (NPCs das áreas `iNPCType` = 1 do `npcgen` do mapa, com a posição do rastreador e a distância
+até a área mais perto; `usado_pelo_cliente` só no mapa 1) e `PUT rastreador/{id} {campos: {pos}}`. É o primeiro item do Estúdio
+de destino **`cliente`** (`alterar_item_do_cliente`: caminho GBK exato do manifesto, `sha256_antes` = o publicado):
+entra no manifesto da versão nova e o launcher baixa; não vai para o realm. Painel: camada "Rastreador" (verde perto da
+área, vermelho a mais de 20 m com linha até ela) e, no editor de área de NPC, a posição do rastreador de cada gerador e
+"Usar a posição da área no rastreador".
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -273,7 +292,9 @@ pw-atualizador`: tar, nomes. `tests/estudio.rs` (com banco, `elements` e `npcgen
 ponta, mapas, e o `npcgen` editado (mover, 2 geradores, clonar, remover), publicado no realm (lido pelos dois
 carregadores) e revertido ao original (B243); distritos e portais da a01 (recusas, carimbo intacto, publicar grava
 os dois, B244); teleportes do mundo do 1.2.6 com as transportadoras do `elements` e edição publicada (B245).
-`pw-data-loader`: `precinct_e_region_de_todos_os_mapas_voltam_identicos`, `world_targets_volta_identico`. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
+Rastreador (B246): NPC da a01 sem entrada é acrescentado, `short` estourado recusado, publicado no manifesto (0 aplicados no
+realm) e baixado com a posição nova. `pw-data-loader`: `precinct_e_region_de_todos_os_mapas_voltam_identicos`,
+`world_targets_volta_identico`, `task_npc::testes`. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
 `TEST_DATABASE_URL`/`TEST_REDIS_URL` (ver histórico B243).
 
@@ -283,8 +304,8 @@ arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no
   launcher, instalador `.msi` (CLI do Tauri).
 - Marcar "aguarda reinício" no realm depois de publicar `servidor`/`ambos` (hoje o painel só lista os aplicados).
 - Estúdio: telas próprias, `tasks`/`gshop`; no mapa, polígonos de distrito e portais novos (exigem editar o
-  `.clt` do cliente junto), destinos de teleporte novos (exigem o `world_targets.txt` do cliente), `task_npc`,
-  objetos dinâmicos e controladores do `npcgen`, altura do chão pelo GS.
+  `.clt` do cliente junto), destinos de teleporte novos (exigem o `world_targets.txt` do cliente), objetos dinâmicos
+  e controladores do `npcgen`, altura do chão pelo GS.
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).

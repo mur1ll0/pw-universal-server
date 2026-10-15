@@ -246,6 +246,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B245 (S4, 4ª parte):** destinos de teleporte (`world_targets.sev`) no mapa, com nome do cliente e as
 > transportadoras/NPCs que levam a cada um; posição editável. Falta do S4: `task_npc`, objetos dinâmicos e
 > controladores do `npcgen`, altura do chão pelo GS.
+>
+> **B246 (S4, 5ª parte):** rastreador de NPCs (`data\task_npc.data` do cliente) no mapa e no editor de área de NPC;
+> primeiro item do Estúdio que vai para o cliente (o launcher baixa). Falta do S4: objetos dinâmicos e controladores do
+> `npcgen` e a altura do chão pelo GS.
 
 | fase | entrega |
 | :--- | :--- |
