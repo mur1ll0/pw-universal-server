@@ -13764,3 +13764,35 @@ comparação lado a lado.
     ### e. Falta
     - Telas próprias do S2 com rótulos em português (catálogo de interface `specs/estudio/<versao>/<TABELA>.json`) e
       ícones; revisar os 2.007 duvidosos por grupo (muitos são campos do v156 sem par no fonte).
+
+239. **Sessão 2026-10-14: Estúdio S2, segunda parte — rótulos em português, grupos da ficha e ícones.**
+
+    ### a. Pedido
+    Commitar o B238 (feito: `a78abf2`, `4a72cac`, `db76f83`) e seguir: o que faltava do S2 eram rótulos em português
+    e ícones nas telas de Armas, Armaduras, Consumíveis e Monstros.
+
+    ### b. Evidência
+    - Rótulos: o comentário de cada membro no `ExpTypes.h` do cliente 1.5.5. Levantados os 187 nomes distintos (vetores
+      com `N`) de `WEAPON/ARMOR/DECORATION/MEDICINE/MATERIAL/MONSTER_ESSENCE` (v7 + v156) e traduzidos (atributos com
+      os nomes do PW: 敏捷 Destreza, 灵力 Magia, 体力 Vitalidade). Sem comentário (`unk1`, `desc2`, `combined_switch`,
+      `drop_for_no_profit_time`…) fica o nome técnico — nada inventado.
+    - Ícones: a rota do painel (`/api/icones/m/<hex>.png`, B188) procura a **célula pelo nome do arquivo** (`SetCover`,
+      `EC_GameUIMan.cpp:6204-6208`); a 1ª versão mandava o caminho inteiro e recortou 0/30. Cortar no texto decodificado
+      (um 2º byte GBK pode ser `\`).
+
+    ### c. O que foi feito
+    - `specs/estudio/rotulos.json` (rótulos e grupos por padrão); `pw-recursos::estudio::rotulo_e_grupo` (o nome com
+      `N`, como o gerador), `rotulo`/`grupo` em cada campo da ficha, `icone` na ficha, listas, busca e referências.
+    - Painel (`estudio.js`): ficha em grupos recolhíveis com rótulos (nome técnico no `title`), listas dentro do grupo
+      delas com só as linhas preenchidas (+2 vazias ao editar) e "mostrar todas", ícones; Docker copia o `rotulos.json`.
+
+    ### d. Provas
+    - `cargo test -p pw-recursos`: 14 (unidade dos rótulos/grupos; `estudio.rs` com rótulo "Preço de venda ao NPC" no
+      grupo Comércio, `icone` na ficha e nas listas, além do resto).
+    - Publicado (`pw-recursos`, `pw-admin-api`) e conferido com os dados reais: monstro com 7 grupos; campos sem rótulo:
+      1 de 253 (1.2.6) e 7 de 287 (1.5.5); ícones de `WEAPON_ESSENCE` e `MEDICINE_ESSENCE`: **100/100 recortados** em cada
+      tabela das duas versões.
+
+    ### e. Falta
+    - Regras próprias por área (categoria em modal, visualizador 3D, "onde nasce"); próxima fase do Estúdio: S3 (NPCs,
+      serviços, conversa, receitas).

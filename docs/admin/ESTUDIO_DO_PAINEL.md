@@ -215,6 +215,11 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > `ExpTypes.h` e dos dados; 2.007 duvidosos listados) — referência com nome e link, "usado por", remoção bloqueada
 > pelo índice, busca por espaço e campos repetidos (drops, páginas, materiais) em tabela. Faltam do S2 as telas
 > próprias com rótulos em português (Armas, Armaduras, Consumíveis, Monstros) e os ícones.
+>
+> **B239:** rótulos em português e grupos da ficha (`specs/estudio/rotulos.json`, 187 nomes das tabelas de arma,
+> armadura, ornamento, remédio, material e monstro, do `ExpTypes.h`) e ícones na ficha, listas, busca e referências.
+> A ficha genérica com rótulos/grupos cobre as quatro telas do S2; tela própria com regras de cada área (categoria
+> em modal, visualizador 3D, "onde nasce") fica para depois do S3.
 
 | fase | entrega |
 | :--- | :--- |

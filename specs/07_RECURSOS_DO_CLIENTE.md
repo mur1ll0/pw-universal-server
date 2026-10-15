@@ -179,6 +179,14 @@ habilidade e missão (não são registros do `elements`). Resultado: **2.813 cam
 (`{tabela, indice, id, nome}` ou `{ausente}`) e `usado_por` (até 100); remover bloqueia por índice + duvidosos. Na
 tela, campos repetidos viram tabela e a referência tem link e busca embutida.
 
+**Rótulos, grupos e ícones (S2, B239):** `specs/estudio/rotulos.json` — rótulo em português de cada campo
+(chave = nome com os índices trocados por `N`), traduzido do comentário do `ExpTypes.h`, e os grupos da ficha
+(Identificação, Requisitos, Combate, Comércio, Durabilidade e fabricação, Efeitos, Drops, Comportamento,
+Habilidades, Visual; o resto em "Outros", com o nome técnico — campos sem comentário no fonte não ganham
+rótulo inventado). A ficha traz `rotulo`/`grupo` por campo e `icone` (o `file_icon` em hex GBK), também nas
+listas, na busca e nas referências; o painel recorta pela rota de ícones (`/api/icones/m/<hex>.png`, B188).
+Listas grandes mostram só as linhas preenchidas (+2 vazias ao editar) e "mostrar todas".
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
