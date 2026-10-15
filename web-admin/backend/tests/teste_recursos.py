@@ -147,6 +147,23 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 422)
         self.assertEqual(len(RecursosFalso.pedidos), antes)
 
+    async def test_conversa_grande_passa_so_na_rota_da_conversa(self):
+        """B240: salvar conversa manda a árvore inteira; o limite de 8 KiB vale para o resto."""
+        await self.entrar()
+        csrf = await self.csrf()
+        janelas = [{"id": i, "id_pai": -1, "texto": "x" * 400, "opcoes": []} for i in range(1, 50)]
+        r = await self.cliente.put("/api/realms/realm_126/estudio/conversas/7", params={"rascunho": 3}, headers=csrf,
+                                   json={"conversa": {"id": 9, "texto": "t", "janelas": janelas}})
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["metodo"], p["caminho"]), ("PUT", "/admin/1.2.6/estudio/conversas/7"))
+        self.assertEqual(len(json.loads(p["corpo"])["conversa"]["janelas"]), 49)
+        r = await self.cliente.put("/api/realms/realm_126/estudio/tabelas/WEAPON_ESSENCE/1", params={"rascunho": 3},
+                                   headers=csrf, json={"campos": {"Name": "x" * 20_000}})
+        self.assertEqual(r.status_code, 413)
+        r = await self.cliente.get("/api/realms/realm_155/estudio/funcoes")
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/funcoes")
+
     async def test_versao_invalida_e_servico_sem_segredo(self):
         await self.entrar()
         r = await self.cliente.get("/api/recursos/1$5/alteracoes")

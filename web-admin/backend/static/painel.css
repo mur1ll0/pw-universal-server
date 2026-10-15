@@ -767,3 +767,5 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .estudio-icone { width: 32px; height: 32px; border-radius: 6px; flex: none; }
 .estudio-icone-pequeno { width: 20px; height: 20px; border-radius: 4px; flex: none; font-size: 9px; }
 .estudio-subtitulo { margin: 10px 0 4px; font-size: 13px; color: var(--texto-2); font-weight: 500; }
+.estudio-janela { margin-top: 10px; }
+.estudio-texto-janela { width: 100%; margin: 8px 0; resize: vertical; font: inherit; }

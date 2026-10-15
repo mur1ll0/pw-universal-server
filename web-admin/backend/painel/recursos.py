@@ -225,3 +225,42 @@ def registrar_estudio(app):
         v = await _versao_do_realm(requisicao, realm)
         return await _repassar("DELETE", f"/admin/{v}/estudio/tabelas/{_tabela(tabela)}/{max(0, indice)}",
                                {"rascunho": rascunho})
+
+
+def registrar_conversas(app):
+    """Conversas (`TALK_PROC`) do Estúdio, fase S3 (B240)."""
+    @app.get("/api/realms/{realm}/estudio/funcoes")
+    async def estudio_funcoes(realm: str, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/funcoes")
+
+    @app.get("/api/realms/{realm}/estudio/conversas")
+    async def estudio_conversas(realm: str, requisicao: Request, rascunho: int | None = None, busca: str = "",
+                                pagina: int = 0, por_pagina: int = 50):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/conversas", {
+            "rascunho": rascunho, "busca": busca[:100], "pagina": max(0, pagina), "por_pagina": max(1, min(por_pagina, 200))})
+
+    @app.post("/api/realms/{realm}/estudio/conversas")
+    async def estudio_nova_conversa(realm: str, rascunho: int, requisicao: Request, base: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("POST", f"/admin/{v}/estudio/conversas", {"rascunho": rascunho, "base": base})
+
+    @app.get("/api/realms/{realm}/estudio/conversas/{indice}")
+    async def estudio_conversa(realm: str, indice: int, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/conversas/{max(0, indice)}", {"rascunho": rascunho})
+
+    @app.put("/api/realms/{realm}/estudio/conversas/{indice}")
+    async def estudio_salvar_conversa(realm: str, indice: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        dados = await requisicao.json()
+        if not isinstance(dados.get("conversa"), dict):
+            raise HTTPException(422, "Conversa inválida.")
+        return await _repassar("PUT", f"/admin/{v}/estudio/conversas/{max(0, indice)}", {"rascunho": rascunho},
+                               dados={"conversa": dados["conversa"]})
+
+    @app.delete("/api/realms/{realm}/estudio/conversas/{indice}")
+    async def estudio_remover_conversa(realm: str, indice: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("DELETE", f"/admin/{v}/estudio/conversas/{max(0, indice)}", {"rascunho": rascunho})

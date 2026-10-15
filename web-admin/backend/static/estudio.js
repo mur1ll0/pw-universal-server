@@ -89,7 +89,8 @@ async function listarRegistrosDoEstudio() {
   const busca = elemento("estudio-busca-texto").value.trim();
   let r;
   try {
-    r = await api(rotaEstudio(`tabelas/${estudio.tabela}`, { busca, pagina: estudio.pagina, por_pagina: estudio.porPagina }));
+    const caminho = estudio.tabela === "TALK_PROC" ? "conversas" : `tabelas/${estudio.tabela}`;
+    r = await api(rotaEstudio(caminho, { busca, pagina: estudio.pagina, por_pagina: estudio.porPagina }));
   } catch (erro) { avisoEstudio(erro.message); return; }
   Object.assign(estudio, { registros: r.registros, total: r.total });
   const lista = elemento("estudio-registros");
@@ -119,9 +120,16 @@ async function listarRegistrosDoEstudio() {
 }
 
 async function abrirFichaDoEstudio(indice) {
-  try { estudio.ficha = await api(rotaEstudio(`tabelas/${estudio.tabela}/${indice}`)); }
+  const conversa = estudio.tabela === "TALK_PROC";
+  try {
+    estudio.ficha = await api(rotaEstudio(conversa ? `conversas/${indice}` : `tabelas/${estudio.tabela}/${indice}`));
+    if (conversa) {
+      estudio.ficha.tabela = "TALK_PROC";
+      if (!estudio.funcoes) estudio.funcoes = await api(rotaEstudio("funcoes"));
+    }
+  }
   catch (erro) { avisoEstudio(erro.message); return; }
-  desenharFichaDoEstudio();
+  if (conversa) desenharConversaDoEstudio(); else desenharFichaDoEstudio();
   document.querySelectorAll("#estudio-registros button").forEach((b, i) => b.classList.toggle("ativo", estudio.registros[i]?.indice === indice));
 }
 
@@ -395,6 +403,168 @@ async function executarNoEstudio(acao, mensagem, reabrir, indiceNovo) {
   } catch (erro) {
     alerta("erro", "Estúdio", erro.message);
   }
+}
+
+/* ---------------- Conversas (TALK_PROC, S3, B240) ----------------
+   Uma conversa = janelas (texto + opções). Cada opção leva a outra janela da mesma conversa ou a uma
+   função pré-definida (bit alto do id, `enum SERVICE_TYPE` do cliente: loja, teleporte, encerrar…). */
+
+function desenharConversaDoEstudio() {
+  const area = elemento("estudio-ficha");
+  area.replaceChildren();
+  const c = structuredClone(estudio.ficha);
+  const editavel = !!estudio.rascunho;
+  const funcoes = estudio.funcoes || [];
+
+  const topo = criar("div", "estudio-cabecalho-ficha");
+  topo.appendChild(criar("h3", "", `Conversa · id ${c.id}`));
+  const acoes = criar("div", "recursos-linha");
+  const salvar = criar("button", "botao botao-primario botao-pequeno", "Salvar no rascunho");
+  const copiar = criar("button", "botao botao-secundario botao-pequeno", "Nova a partir desta");
+  const nova = criar("button", "botao botao-secundario botao-pequeno", "Nova vazia");
+  const remover = criar("button", "botao botao-fantasma botao-pequeno", "Remover");
+  for (const b of [salvar, copiar, nova, remover]) { b.type = "button"; b.disabled = !editavel; acoes.appendChild(b); }
+  topo.appendChild(acoes);
+  area.appendChild(topo);
+  if (!editavel) area.appendChild(criar("p", "texto-suave", "Somente leitura: escolha um rascunho no alto da página para editar."));
+
+  const titulo = criar("input", "campo");
+  titulo.maxLength = 63;
+  titulo.value = c.texto;
+  titulo.disabled = !editavel;
+  titulo.setAttribute("aria-label", "Título da conversa");
+  titulo.addEventListener("input", () => (c.texto = titulo.value));
+  const linhaTitulo = criar("div", "estudio-campos");
+  linhaTitulo.append(criar("label", "", "Título (até 63 caracteres)"), titulo);
+  area.appendChild(linhaTitulo);
+
+  const lista = criar("div");
+  area.appendChild(lista);
+  const destinos = () => [
+    ...c.janelas.map((j) => ({ valor: j.id, rotulo: `→ janela ${j.id}` })),
+    ...funcoes.map((f) => ({ valor: f.codigo, rotulo: `★ ${f.rotulo}` })),
+  ];
+
+  function redesenhar() {
+    lista.replaceChildren();
+    for (const [ji, j] of c.janelas.entries()) {
+      const cartao = criar("section", "recursos-rascunho estudio-janela");
+      const cab = criar("header", "recursos-linha");
+      cab.appendChild(criar("strong", "", `Janela ${j.id}`));
+      const pai = criar("select", "campo");
+      pai.disabled = !editavel;
+      pai.setAttribute("aria-label", `Janela de origem da janela ${j.id}`);
+      for (const [valor, rotulo] of [[-1, "início da conversa"], ...c.janelas.filter((x) => x.id !== j.id).map((x) => [x.id, `vem da janela ${x.id}`])]) {
+        const o = criar("option", "", rotulo); o.value = valor; pai.appendChild(o);
+      }
+      pai.value = j.id_pai;
+      pai.addEventListener("change", () => (j.id_pai = Number(pai.value)));
+      cab.appendChild(pai);
+      if (editavel && c.janelas.length > 1) {
+        const tirar = criar("button", "botao botao-fantasma botao-pequeno", "Remover janela");
+        tirar.type = "button";
+        tirar.addEventListener("click", () => {
+          if (c.janelas.some((x) => x.id !== j.id && (x.id_pai === j.id || x.opcoes.some((o) => o.id === j.id)))) {
+            alerta("aviso", "Estúdio", `Outra janela ou opção leva à janela ${j.id}: mude-a antes.`, { toast: true });
+            return;
+          }
+          c.janelas.splice(ji, 1);
+          redesenhar();
+        });
+        cab.appendChild(tirar);
+      }
+      cartao.appendChild(cab);
+
+      const texto = criar("textarea", "campo estudio-texto-janela");
+      texto.value = j.texto;
+      texto.disabled = !editavel;
+      texto.rows = 3;
+      texto.setAttribute("aria-label", `Texto da janela ${j.id}`);
+      texto.addEventListener("input", () => (j.texto = texto.value));
+      cartao.appendChild(texto);
+
+      const tabela = criar("table", "recursos-tabela");
+      const th = criar("tr");
+      for (const t of ["Opção (até 63)", "Leva a", "Parâmetro", ""]) th.appendChild(criar("th", "", t));
+      tabela.appendChild(th);
+      for (const [oi, o] of j.opcoes.entries()) {
+        const tr = criar("tr");
+        const tx = criar("input", "campo"); tx.maxLength = 63; tx.value = o.texto; tx.disabled = !editavel;
+        tx.setAttribute("aria-label", "Texto da opção");
+        tx.addEventListener("input", () => (o.texto = tx.value));
+        const dest = criar("select", "campo"); dest.disabled = !editavel;
+        dest.setAttribute("aria-label", "Destino da opção");
+        const opcoesDestino = destinos();
+        if (!opcoesDestino.some((d) => d.valor === o.id)) opcoesDestino.push({ valor: o.id, rotulo: `? ${o.id}` });
+        for (const d of opcoesDestino) { const op = criar("option", "", d.rotulo); op.value = d.valor; dest.appendChild(op); }
+        dest.value = o.id;
+        dest.addEventListener("change", () => (o.id = Number(dest.value)));
+        const par = criar("input", "campo"); par.type = "number"; par.min = "0"; par.value = o.param; par.disabled = !editavel;
+        par.setAttribute("aria-label", "Parâmetro da opção");
+        par.addEventListener("input", () => (o.param = Number(par.value) || 0));
+        const acoesO = criar("td");
+        if (editavel) {
+          const tirar = criar("button", "botao botao-fantasma botao-pequeno", "Tirar");
+          tirar.type = "button";
+          tirar.addEventListener("click", () => { j.opcoes.splice(oi, 1); redesenhar(); });
+          acoesO.appendChild(tirar);
+        }
+        for (const el of [tx, dest, par]) { const td = criar("td"); td.appendChild(el); tr.appendChild(td); }
+        tr.appendChild(acoesO);
+        tabela.appendChild(tr);
+      }
+      cartao.appendChild(tabela);
+      if (editavel) {
+        const maisOpcao = criar("button", "botao botao-fantasma botao-pequeno", "+ opção");
+        maisOpcao.type = "button";
+        maisOpcao.addEventListener("click", () => {
+          j.opcoes.push({ id: 0x80000012, texto: "Até logo", param: 0 }); // TALK_EXIT
+          redesenhar();
+        });
+        cartao.appendChild(maisOpcao);
+      }
+      lista.appendChild(cartao);
+    }
+    if (editavel) {
+      const maisJanela = criar("button", "botao botao-secundario botao-pequeno", "+ janela");
+      maisJanela.type = "button";
+      maisJanela.addEventListener("click", () => {
+        const id = Math.max(0, ...c.janelas.map((x) => x.id)) + 1;
+        c.janelas.push({ id, id_pai: c.janelas[0]?.id ?? -1, texto: "", opcoes: [{ id: 0x80000011, texto: "Voltar", param: 0 }] }); // TALK_RETURN
+        redesenhar();
+      });
+      lista.appendChild(maisJanela);
+    }
+  }
+  redesenhar();
+
+  const usado = criar("details", "estudio-grupo");
+  usado.appendChild(criar("summary", "", `Usado por · ${c.usado_por.length}`));
+  usado.open = c.usado_por.length > 0 && c.usado_por.length <= 20;
+  const ul = criar("ul", "estudio-lista");
+  for (const u of c.usado_por) {
+    const li = criar("li"); const b = criar("button"); b.type = "button";
+    b.append(criar("span", "", `${u.nome || "(sem nome)"} · ${u.tabela}`), criar("small", "", `${u.campo} · id ${u.id ?? "—"}`));
+    b.addEventListener("click", () => abrirRegistroDoEstudio(u.tabela, u.indice));
+    li.appendChild(b); ul.appendChild(li);
+  }
+  if (!c.usado_por.length) ul.appendChild(criar("li", "texto-suave", "Nenhum serviço usa esta conversa."));
+  usado.appendChild(ul);
+  area.appendChild(usado);
+
+  salvar.addEventListener("click", () => executarNoEstudio(
+    () => api(rotaEstudio(`conversas/${c.indice}`), { method: "PUT", body: JSON.stringify({ conversa: c }) }),
+    (r) => (r.resultado.mudou ? "Conversa salva no rascunho." : "Nada mudou."), c.indice));
+  copiar.addEventListener("click", () => executarNoEstudio(
+    () => api(rotaEstudio("conversas", { base: c.indice }), { method: "POST" }),
+    (r) => `Conversa nova com id ${r.resultado.id}.`, null, (r) => r.resultado.indice));
+  nova.addEventListener("click", () => executarNoEstudio(
+    () => api(rotaEstudio("conversas"), { method: "POST" }),
+    (r) => `Conversa nova com id ${r.resultado.id}.`, null, (r) => r.resultado.indice));
+  remover.addEventListener("click", async () => {
+    if (!(await confirmar("Remover a conversa?", `Conversa ${c.id}: a remoção fica no rascunho e só vale ao publicar.`, "Remover"))) return;
+    executarNoEstudio(() => api(rotaEstudio(`conversas/${c.indice}`), { method: "DELETE" }), () => "Conversa removida no rascunho.", null);
+  });
 }
 
 elemento("estudio-rascunho").addEventListener("change", async (e) => {

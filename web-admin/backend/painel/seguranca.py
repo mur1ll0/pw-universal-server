@@ -26,6 +26,17 @@ def eh_envio_de_recurso(escopo):
             and partes[3] == "rascunhos" and partes[5] == "arquivo")
 
 
+LIMITE_CONVERSA = 256 << 10
+
+
+def eh_conversa_do_estudio(escopo):
+    """B240: salvar uma conversa manda a árvore inteira (janelas e opções) em JSON."""
+    partes = escopo["path"].strip("/").split("/")
+    # api / realms / <realm> / estudio / conversas / <indice>
+    return (escopo["method"] == "PUT" and len(partes) == 6 and partes[:2] == ["api", "realms"]
+            and partes[3:5] == ["estudio", "conversas"])
+
+
 class LimitarEntrada:
     """Limita antes de acumular o corpo, inclusive sem Content-Length."""
     def __init__(self, app):
@@ -39,7 +50,8 @@ class LimitarEntrada:
         corpo = bytearray()
         # Só o envio de arquivo para um rascunho dos recursos do cliente passa de 8 KiB (B235):
         # o mesmo teto do pw-recursos (admin::MAIOR_ARQUIVO).
-        limite = LIMITE_ARQUIVO_DE_RECURSO if eh_envio_de_recurso(escopo) else 8192
+        limite = (LIMITE_ARQUIVO_DE_RECURSO if eh_envio_de_recurso(escopo)
+                  else LIMITE_CONVERSA if eh_conversa_do_estudio(escopo) else 8192)
         while True:
             mensagem = await receber()
             if mensagem["type"] == "http.disconnect":
