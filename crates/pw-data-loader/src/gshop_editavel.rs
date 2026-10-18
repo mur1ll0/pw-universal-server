@@ -279,3 +279,100 @@ mod testes {
         assert_eq!(vistos, 4);
     }
 }
+
+// ------------------------------------------------------------------ categorias (B257)
+
+/// `wchar[64]` cru com o texto `s` (63 caracteres no máximo, mais o NUL; o resto zerado).
+pub fn bloco_de_texto(s: &str) -> R<Vec<u8>> {
+    let u: Vec<u16> = s.encode_utf16().collect();
+    if u.len() + 1 > BLOCO / 2 || u.contains(&0) {
+        return Err(ErroDoGshop::Formato(format!("nome de categoria: no máximo {} caracteres", BLOCO / 2 - 1)));
+    }
+    let mut b = vec![0u8; BLOCO];
+    for (k, c) in u.iter().enumerate() {
+        b[2 * k..2 * k + 2].copy_from_slice(&c.to_le_bytes());
+    }
+    Ok(b)
+}
+
+impl GshopEditavel {
+    fn usa(&self, principal: i32, sub: Option<i32>) -> usize {
+        let (_, _, d_main) = self.campos().into_iter().find(|c| c.0 == "main_type").unwrap();
+        let (_, _, d_sub) = self.campos().into_iter().find(|c| c.0 == "sub_type").unwrap();
+        self.ofertas
+            .iter()
+            .filter(|o| {
+                let m = i32::from_le_bytes(o[d_main..d_main + 4].try_into().unwrap());
+                let s = i32::from_le_bytes(o[d_sub..d_sub + 4].try_into().unwrap());
+                m == principal && sub.is_none_or(|x| x == s)
+            })
+            .count()
+    }
+
+    /// Renomeia a categoria `c` (ou a subcategoria `sub` dela). Só reescreve o bloco se o texto muda.
+    pub fn renomear_categoria(&mut self, c: usize, sub: Option<usize>, nome: &str) -> R<()> {
+        let cat = self.categorias.get_mut(c).ok_or_else(|| ErroDoGshop::Formato(format!("categoria {c} não existe")))?;
+        let alvo = match sub {
+            None => &mut cat.nome,
+            Some(k) => cat.subcategorias.get_mut(k).ok_or_else(|| ErroDoGshop::Formato(format!("subcategoria {k} não existe")))?,
+        };
+        if ler_texto(alvo, TipoDoCampo::Utf16(64)) != nome {
+            *alvo = bloco_de_texto(nome)?;
+        }
+        Ok(())
+    }
+
+    /// Subcategoria nova no fim da categoria `c` (nenhuma oferta muda de índice). Devolve o índice dela.
+    pub fn nova_subcategoria(&mut self, c: usize, nome: &str) -> R<usize> {
+        let b = bloco_de_texto(nome)?;
+        let cat = self.categorias.get_mut(c).ok_or_else(|| ErroDoGshop::Formato(format!("categoria {c} não existe")))?;
+        cat.subcategorias.push(b);
+        Ok(cat.subcategorias.len() - 1)
+    }
+
+    /// Tira a **última** subcategoria da categoria `c`, se nenhuma oferta a usa (`main_type`/`sub_type` são índices:
+    /// tirar uma do meio mudaria as seguintes).
+    pub fn remover_ultima_subcategoria(&mut self, c: usize) -> R<()> {
+        let n = self.categorias.get(c).map(|x| x.subcategorias.len()).ok_or_else(|| ErroDoGshop::Formato(format!("categoria {c} não existe")))?;
+        if n == 0 {
+            return Err(ErroDoGshop::Formato("a categoria não tem subcategoria".into()));
+        }
+        let usos = self.usa(c as i32, Some(n as i32 - 1));
+        if usos > 0 {
+            return Err(ErroDoGshop::Formato(format!("{usos} oferta(s) usam a subcategoria {}", n - 1)));
+        }
+        self.categorias[c].subcategorias.pop();
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod testes_das_categorias {
+    use super::*;
+
+    #[test]
+    fn renomear_acrescentar_e_tirar_subcategoria() {
+        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/gshop.data");
+        let b = std::fs::read(p).unwrap();
+        let mut g = GshopEditavel::ler(&b).unwrap();
+        let nome0 = ler_texto(&g.categorias[0].nome, TipoDoCampo::Utf16(64));
+        g.renomear_categoria(0, None, &nome0).unwrap();
+        assert!(g.gravar() == b, "renomear com o mesmo nome não muda nada");
+        g.renomear_categoria(0, Some(0), "Sub do Estúdio").unwrap();
+        let k = g.nova_subcategoria(0, "Nova").unwrap();
+        let relido = GshopEditavel::ler(&g.gravar()).unwrap();
+        assert_eq!(ler_texto(&relido.categorias[0].subcategorias[0], TipoDoCampo::Utf16(64)), "Sub do Estúdio");
+        assert_eq!(ler_texto(&relido.categorias[0].subcategorias[k], TipoDoCampo::Utf16(64)), "Nova");
+        assert_eq!(relido.ofertas, g.ofertas, "as ofertas não mudam");
+        g.remover_ultima_subcategoria(0).unwrap();
+        assert!(g.renomear_categoria(0, None, &"x".repeat(64)).is_err());
+        // A última subcategoria que tem oferta não sai.
+        let com_oferta = (0..g.categorias.len()).find(|&c| {
+            let n = g.categorias[c].subcategorias.len();
+            n > 0 && g.usa(c as i32, Some(n as i32 - 1)) > 0
+        });
+        if let Some(c) = com_oferta {
+            assert!(g.remover_ultima_subcategoria(c).is_err());
+        }
+    }
+}

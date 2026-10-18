@@ -2710,3 +2710,34 @@ impl Estudio {
         .await
     }
 }
+
+impl Estudio {
+    /// Categorias da loja (B257): `acao` = `renomear` (`categoria`, `sub?`, `nome`), `nova` (subcategoria no fim de
+    /// `categoria`, com `nome`) ou `remover` (a última subcategoria de `categoria`, se nenhuma oferta a usa).
+    pub async fn categoria_da_loja(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, pedido: Value) -> Result<Value> {
+        self.alterar_loja(gov, versao, arquivo, rascunho, move |g| {
+            let c = pedido["categoria"].as_u64().context("categoria")? as usize;
+            let texto = |k: &str| pedido[k].as_str().map(str::to_string).with_context(|| format!("{k}: texto"));
+            let (resposta, mudanca) = match pedido["acao"].as_str() {
+                Some("renomear") => {
+                    let sub = pedido["sub"].as_u64().map(|x| x as usize);
+                    let nome = texto("nome")?;
+                    g.renomear_categoria(c, sub, &nome)?;
+                    (json!({ "categoria": c, "sub": sub }), json!({ "acao": "renomeada", "tipo": "categoria", "categoria": c, "sub": sub, "nome": nome }))
+                }
+                Some("nova") => {
+                    let nome = texto("nome")?;
+                    let k = g.nova_subcategoria(c, &nome)?;
+                    (json!({ "categoria": c, "sub": k }), json!({ "acao": "nova", "tipo": "subcategoria", "categoria": c, "sub": k, "nome": nome }))
+                }
+                Some("remover") => {
+                    g.remover_ultima_subcategoria(c)?;
+                    (json!({ "categoria": c }), json!({ "acao": "removida", "tipo": "subcategoria", "categoria": c }))
+                }
+                _ => bail!("acao: renomear, nova ou remover"),
+            };
+            Ok((resposta, mudanca))
+        })
+        .await
+    }
+}

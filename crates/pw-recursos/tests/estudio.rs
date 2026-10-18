@@ -631,6 +631,14 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let of1 = json_de(pedir("GET", &em11("estudio/loja/gshop.data/0")).call().unwrap());
         assert_eq!((of1["campos"]["buy_0_price"].as_u64(), of1["campos"]["szName"].as_str()), (Some(777), Some("Oferta do Estúdio")));
         assert_eq!(of1["campos"]["id"], of0["campos"]["id"]);
+        // Categorias (B257): renomear a 1ª subcategoria, acrescentar e tirar uma no fim; acao inválida → 400.
+        pedir("POST", &em11("estudio/loja/gshop.data/categorias")).send_json(json!({"acao": "renomear", "categoria": 0, "sub": 0, "nome": "Sub do Estúdio"})).unwrap();
+        pedir("POST", &em11("estudio/loja/gshop.data/categorias")).send_json(json!({"acao": "nova", "categoria": 0, "nome": "Temporária"})).unwrap();
+        pedir("POST", &em11("estudio/loja/gshop.data/categorias")).send_json(json!({"acao": "remover", "categoria": 0})).unwrap();
+        assert_eq!(erro_de(pedir("POST", &em11("estudio/loja/gshop.data/categorias")).send_json(json!({"acao": "x", "categoria": 0}))).0, 400);
+        let lj2 = json_de(pedir("GET", &em11("estudio/loja/gshop.data")).call().unwrap());
+        assert_eq!(lj2["categorias"][0]["subcategorias"][0], "Sub do Estúdio");
+        assert_eq!(lj2["categorias"][0]["subcategorias"].as_array().unwrap().len(), lj["categorias"][0]["subcategorias"].as_array().unwrap().len());
         let p11 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r11]})).unwrap());
         assert_eq!(p11["aplicados"].as_array().unwrap().len(), 1, "o realm recebe o gshop.data: {p11}");
         let no_realm = fs::read(realm2.join("gshop.data")).unwrap();

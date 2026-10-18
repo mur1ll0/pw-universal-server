@@ -488,6 +488,16 @@ def registrar_reinicio(app):
             raise HTTPException(422, "Pedido inválido.")
         return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}", {"rascunho": rascunho}, dados={"base": base})
 
+    @app.post("/api/realms/{realm}/estudio/loja/{arquivo}/categorias")
+    async def estudio_categoria_da_loja(realm: str, arquivo: str, rascunho: int, requisicao: Request):
+        """B257: renomear categoria/subcategoria, acrescentar ou tirar a última subcategoria."""
+        v = await _versao_do_realm(requisicao, realm)
+        dados = await requisicao.json()
+        if arquivo not in LOJA or dados.get("acao") not in ("renomear", "nova", "remover") or not isinstance(dados.get("categoria"), int):
+            raise HTTPException(422, "Pedido inválido.")
+        corpo = {k: dados[k] for k in ("acao", "categoria", "sub", "nome") if k in dados}
+        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}/categorias", {"rascunho": rascunho}, dados=corpo)
+
     @app.get("/api/realms/{realm}/estudio/loja/{arquivo}/{indice}")
     async def estudio_oferta(realm: str, arquivo: str, indice: int, requisicao: Request, rascunho: int | None = None):
         v = await _versao_do_realm(requisicao, realm)

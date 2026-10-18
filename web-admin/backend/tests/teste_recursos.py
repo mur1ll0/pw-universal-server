@@ -286,7 +286,13 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         r = await self.cliente.put("/api/realms/realm_155/estudio/loja/gshop.data/7", params={"rascunho": 5}, headers=csrf,
                                    json={"campos": {"buy_0_price": 100}})
         self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.5.5/estudio/loja/gshop.data/7"))
+        r = await self.cliente.post("/api/realms/realm_155/estudio/loja/gshop.data/categorias", params={"rascunho": 5}, headers=csrf,
+                                    json={"acao": "renomear", "categoria": 1, "sub": 2, "nome": "Novo"})
+        self.assertEqual((r.status_code, json.loads(RecursosFalso.pedidos[-1]["corpo"])["sub"]), (200, 2))
         antes3 = len(RecursosFalso.pedidos)
+        r = await self.cliente.post("/api/realms/realm_155/estudio/loja/gshop.data/categorias", params={"rascunho": 5}, headers=csrf,
+                                    json={"acao": "apagar_tudo", "categoria": 1})
+        self.assertEqual(r.status_code, 422)
         self.assertEqual((await self.cliente.get("/api/realms/realm_155/estudio/loja/elements.data")).status_code, 404)
         self.assertEqual(len(RecursosFalso.pedidos), antes3)
         # Alinhamento e alinhar (B253).

@@ -561,6 +561,17 @@ async fn estudio_loja(State(e): State<Arc<Estado>>, Path((v, arquivo)): Path<(St
     Ok(Json(e.estudio.loja(&e.gov, &v, &arquivo, q.rascunho).await?))
 }
 
+async fn estudio_categoria_da_loja(
+    State(e): State<Arc<Estado>>,
+    Path((v, arquivo)): Path<(String, String)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<Value>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.categoria_da_loja(&e.gov, &v, &arquivo, r, p).await?))
+}
+
 async fn estudio_oferta(State(e): State<Arc<Estado>>, Path((v, arquivo, indice)): Path<(String, String, usize)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
     validar(&v)?;
     Ok(Json(e.estudio.oferta(&e.gov, &v, &arquivo, q.rascunho, indice).await?))
@@ -804,6 +815,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/missoes", get(estudio_missoes))
         .route("/admin/{v}/estudio/missoes/{id}", get(estudio_missao).put(estudio_editar_missao))
         .route("/admin/{v}/estudio/loja/{arquivo}", get(estudio_loja).post(estudio_clonar_oferta))
+        .route("/admin/{v}/estudio/loja/{arquivo}/categorias", post(estudio_categoria_da_loja))
         .route("/admin/{v}/estudio/loja/{arquivo}/{indice}", get(estudio_oferta).put(estudio_editar_oferta).delete(estudio_remover_oferta))
         .route("/admin/{v}/estudio/mapas/{caminho}/alinhar", post(estudio_alinhar))
         .route("/admin/{v}/estudio/rastreador/{id}", put(estudio_editar_rastreador))

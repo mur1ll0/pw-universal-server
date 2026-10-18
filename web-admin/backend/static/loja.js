@@ -148,7 +148,62 @@ async function abrirOferta(indice) {
   area.appendChild(botoes);
 }
 
+/* Categorias (B257): renomear, acrescentar subcategoria no fim, tirar a última se nenhuma oferta a usa. */
+function abrirCategorias() {
+  const area = elemento("loja-oferta");
+  area.replaceChildren();
+  loja.aberta = null;
+  desenharListaDaLoja();
+  const editavel = !!estudio.rascunho;
+  area.appendChild(criar("strong", "", "Categorias da loja"));
+  if (!editavel) area.appendChild(criar("div", "texto-suave", "Só leitura: escolha ou crie um rascunho no topo do Estúdio."));
+  const pedir = async (corpo, msg) => {
+    try {
+      await api(rotaDaLoja("/categorias"), { method: "POST", body: JSON.stringify(corpo) });
+      alerta("ok", "Estúdio", msg, { toast: true });
+      await carregarLoja();
+      abrirCategorias();
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  };
+  const linha = (rotulo, valor, aoSalvar) => {
+    const l = criar("div", "recursos-linha");
+    const i = criar("input", "campo");
+    i.maxLength = 63;
+    i.value = valor;
+    i.disabled = !editavel;
+    l.append(criar("span", "", rotulo), i);
+    if (editavel) {
+      const b = criar("button", "botao botao-pequeno botao-secundario", "Renomear");
+      b.type = "button";
+      b.addEventListener("click", () => { if (i.value !== valor) aoSalvar(i.value); });
+      l.appendChild(b);
+    }
+    return l;
+  };
+  loja.dados.categorias.forEach((c, ci) => {
+    const fs = criar("fieldset");
+    fs.appendChild(criar("legend", "", `Categoria ${ci}`));
+    fs.appendChild(linha("Nome", c.nome, (nome) => pedir({ acao: "renomear", categoria: ci, nome }, "Categoria renomeada no rascunho.")));
+    c.subcategorias.forEach((s, k) => fs.appendChild(linha(`· ${k}`, s, (nome) => pedir({ acao: "renomear", categoria: ci, sub: k, nome }, "Subcategoria renomeada no rascunho."))));
+    if (editavel) {
+      const l = criar("div", "recursos-linha");
+      const nova = criar("button", "botao botao-pequeno botao-secundario", "+ subcategoria");
+      nova.type = "button";
+      nova.addEventListener("click", () => { const nome = window.prompt("Nome da subcategoria nova:", ""); if (nome) pedir({ acao: "nova", categoria: ci, nome }, "Subcategoria nova no rascunho."); });
+      const tirar = criar("button", "botao botao-pequeno botao-secundario texto-perigo", "Tirar a última");
+      tirar.type = "button";
+      tirar.disabled = !c.subcategorias.length;
+      tirar.addEventListener("click", () => { if (confirm("Tirar a última subcategoria? (recusado se alguma oferta a usa)")) pedir({ acao: "remover", categoria: ci }, "Subcategoria tirada no rascunho."); });
+      l.append(nova, tirar);
+      fs.appendChild(l);
+    }
+    area.appendChild(fs);
+  });
+}
+
 (function ligarLoja() {
+  elemento("loja-categorias").addEventListener("click", () => { if (loja.dados) abrirCategorias(); });
   elemento("estudio-vista-loja").addEventListener("click", () => mostrarVistaDoEstudio("loja"));
   elemento("loja-arquivo").addEventListener("change", () => { loja.aberta = null; elemento("loja-oferta").textContent = "Escolha uma oferta."; carregarLoja(); });
   elemento("loja-categoria").addEventListener("change", desenharListaDaLoja);
