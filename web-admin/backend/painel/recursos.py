@@ -469,3 +469,44 @@ def registrar_reinicio(app):
     async def estudio_alinhamento(realm: str, requisicao: Request, rascunho: int | None = None):
         v = await _versao_do_realm(requisicao, realm)
         return await _repassar("GET", f"/admin/{v}/estudio/alinhamento", {"rascunho": rascunho})
+
+    # Loja Gold (B254): data\gshop*.data, item "ambos" (o realm usa o mesmo arquivo do cliente).
+    LOJA = ("gshop.data", "gshop1.data", "gshop2.data")
+
+    @app.get("/api/realms/{realm}/estudio/loja/{arquivo}")
+    async def estudio_loja(realm: str, arquivo: str, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        if arquivo not in LOJA:
+            raise HTTPException(404, "Loja inválida.")
+        return await _repassar("GET", f"/admin/{v}/estudio/loja/{arquivo}", {"rascunho": rascunho})
+
+    @app.post("/api/realms/{realm}/estudio/loja/{arquivo}")
+    async def estudio_clonar_oferta(realm: str, arquivo: str, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        base = (await requisicao.json()).get("base")
+        if arquivo not in LOJA or not isinstance(base, int) or base < 0:
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}", {"rascunho": rascunho}, dados={"base": base})
+
+    @app.get("/api/realms/{realm}/estudio/loja/{arquivo}/{indice}")
+    async def estudio_oferta(realm: str, arquivo: str, indice: int, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        if arquivo not in LOJA:
+            raise HTTPException(404, "Loja inválida.")
+        return await _repassar("GET", f"/admin/{v}/estudio/loja/{arquivo}/{max(0, indice)}", {"rascunho": rascunho})
+
+    @app.put("/api/realms/{realm}/estudio/loja/{arquivo}/{indice}")
+    async def estudio_editar_oferta(realm: str, arquivo: str, indice: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        campos = (await requisicao.json()).get("campos")
+        if arquivo not in LOJA or not isinstance(campos, dict) or not campos:
+            raise HTTPException(422, "Nada a mudar.")
+        return await _repassar("PUT", f"/admin/{v}/estudio/loja/{arquivo}/{max(0, indice)}", {"rascunho": rascunho},
+                               dados={"campos": campos})
+
+    @app.delete("/api/realms/{realm}/estudio/loja/{arquivo}/{indice}")
+    async def estudio_remover_oferta(realm: str, arquivo: str, indice: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        if arquivo not in LOJA:
+            raise HTTPException(404, "Loja inválida.")
+        return await _repassar("DELETE", f"/admin/{v}/estudio/loja/{arquivo}/{max(0, indice)}", {"rascunho": rascunho})

@@ -24,14 +24,17 @@ function rotaDoMapa(resto) {
 }
 
 function mostrarVistaDoEstudio(vista) {
-  const mapas = vista === "mapas";
-  elemento("estudio-mapa").hidden = !mapas;
-  document.querySelector("#pagina-estudio .estudio-grade").hidden = mapas;
-  for (const [id, ativo] of [["estudio-vista-tabelas", !mapas], ["estudio-vista-mapas", mapas]]) {
-    elemento(id).className = `botao botao-pequeno ${ativo ? "botao-primario" : "botao-secundario"}`;
-    elemento(id).setAttribute("aria-selected", ativo ? "true" : "false");
+  // Vistas: tabelas, mapas (B242) e loja (B254).
+  elemento("estudio-mapa").hidden = vista !== "mapas";
+  elemento("estudio-loja").hidden = vista !== "loja";
+  document.querySelector("#pagina-estudio .estudio-grade").hidden = vista !== "tabelas";
+  for (const v of ["tabelas", "mapas", "loja"]) {
+    const id = `estudio-vista-${v}`;
+    elemento(id).className = `botao botao-pequeno ${v === vista ? "botao-primario" : "botao-secundario"}`;
+    elemento(id).setAttribute("aria-selected", v === vista ? "true" : "false");
   }
-  if (mapas) carregarMapas();
+  if (vista === "mapas") carregarMapas();
+  if (vista === "loja") carregarLoja();
 }
 
 async function carregarMapas() {

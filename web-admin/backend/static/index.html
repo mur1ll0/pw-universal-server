@@ -11,6 +11,7 @@
   <script src="/static/recursos.js" defer></script>
   <script src="/static/estudio.js" defer></script>
   <script src="/static/mapa.js" defer></script>
+  <script src="/static/loja.js" defer></script>
 </head>
 <body>
   <!-- Entrada -->
@@ -285,7 +286,24 @@
           <div class="recursos-linha estudio-vistas" role="tablist" aria-label="Vista do Estúdio">
             <button id="estudio-vista-tabelas" class="botao botao-primario botao-pequeno" type="button" role="tab" aria-selected="true">Tabelas</button>
             <button id="estudio-vista-mapas" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Mapas</button>
+            <button id="estudio-vista-loja" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Loja Gold</button>
           </div>
+          <section id="estudio-loja" class="recursos-cartao" hidden>
+            <div class="recursos-linha">
+              <select id="loja-arquivo" class="campo" aria-label="Loja">
+                <option value="gshop.data">Loja Gold (gshop.data)</option>
+                <option value="gshop1.data">gshop1.data</option>
+                <option value="gshop2.data">gshop2.data</option>
+              </select>
+              <select id="loja-categoria" class="campo" aria-label="Categoria"></select>
+              <input id="loja-busca" class="campo" type="search" placeholder="Nome, id do item ou índice" aria-label="Buscar oferta">
+              <span id="loja-situacao" class="texto-suave"></span>
+            </div>
+            <div class="loja-grade">
+              <div id="loja-lista" class="loja-lista"></div>
+              <div id="loja-oferta" class="mapa-editor">Escolha uma oferta.</div>
+            </div>
+          </section>
           <section id="estudio-mapa" class="recursos-cartao" hidden>
             <div class="recursos-linha">
               <select id="mapa-escolha" class="campo" aria-label="Mapa"></select>

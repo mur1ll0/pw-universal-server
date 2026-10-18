@@ -2216,6 +2216,15 @@ impl Estudio {
     where
         F: FnOnce(&[u8]) -> Result<(Vec<u8>, Value, Value)>,
     {
+        self.gravar_item_com_destino(gov, versao, caminho, rascunho, "cliente", mudar).await
+    }
+
+    /// O mesmo, com o destino do item: `cliente` (só o manifesto) ou `ambos` (o manifesto e o `config` do realm, como o
+    /// `elements.data` e o `gshop.data`, que o realm usa idênticos — B254).
+    async fn gravar_item_com_destino<F>(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, destino: &'static str, mudar: F) -> Result<Value>
+    where
+        F: FnOnce(&[u8]) -> Result<(Vec<u8>, Value, Value)>,
+    {
         let (gbk, sha_publicado, tam_publicado, atual, item) = self.item_do_cliente(gov, versao, caminho, Some(rascunho)).await?;
         let mut mudancas = item.as_ref().and_then(|i| i.resumo.get("mudancas")).and_then(Value::as_array).cloned().unwrap_or_default();
         let (bytes, resposta, mudanca) = mudar(&atual)?;
@@ -2237,7 +2246,7 @@ impl Estudio {
             .gravar_item(&ItemDeRecurso {
                 alteracao: rascunho,
                 caminho: gbk,
-                destino: "cliente".into(),
+                destino: destino.into(),
                 acao: "substituir".into(),
                 sha256_antes: Some(sha_publicado.to_vec()),
                 sha256_depois: Some(sha.to_vec()),
@@ -2443,5 +2452,140 @@ impl Estudio {
             feitos.push(json!({ "arquivo": sev, "antes": antes, "depois": depois }));
         }
         Ok(json!({ "alinhados": feitos }))
+    }
+}
+
+// ------------------------------------------------------------------ Loja Gold (gshop*.data, S7, B254)
+
+use pw_data_loader::gshop_editavel::{self as gs, GshopEditavel};
+
+/// `data\gshop.data` (a loja), `gshop1`/`gshop2` (as outras do 1.5.5). O realm usa o mesmo arquivo do cliente (o
+/// índice da oferta é o `goods_index` do `MALL_SHOPPING`, spec 03 §3.8): o item é `ambos`.
+fn caminho_da_loja(arquivo: &str) -> Result<String> {
+    if !matches!(arquivo, "gshop.data" | "gshop1.data" | "gshop2.data") {
+        bail!("loja inválida: {arquivo}");
+    }
+    Ok(format!("data\\{arquivo}"))
+}
+
+fn texto_do_bloco(b: &[u8]) -> String {
+    gs::ler_texto(b, gs::TipoDoCampo::Utf16(64))
+}
+
+impl Estudio {
+    /// A loja: categorias (8, com subcategorias) e uma linha por oferta `[indice, main_type, sub_type, id, num, nome,
+    /// buy_0_price, nome do item no elements]`.
+    pub async fn loja(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: Option<i64>) -> Result<Value> {
+        let caminho = caminho_da_loja(arquivo)?;
+        let (_, _, _, bytes, item) = self.item_do_cliente(gov, versao, &caminho, rascunho).await?;
+        let g = GshopEditavel::ler(&bytes)?;
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let ids = mapa_de_ids(&e);
+        let nome_do_item = |id: u32| match ids.get(&("ESSENCE".to_string(), id as i32)) {
+            Some(&(ti, ri)) if ti != CONVERSAS => Some(nome_do_registro(&e.tabelas[ti], ri)),
+            _ => None,
+        };
+        let campos = g.campos();
+        let pega = |o: &[u8], nome: &str| -> Value {
+            let (_, t, d) = campos.iter().find(|c| c.0 == nome).cloned().unwrap();
+            match t {
+                gs::TipoDoCampo::I32 => json!(i32::from_le_bytes(o[d..d + 4].try_into().unwrap())),
+                gs::TipoDoCampo::U32 => json!(u32::from_le_bytes(o[d..d + 4].try_into().unwrap())),
+                gs::TipoDoCampo::Utf16(n) => json!(gs::ler_texto(&o[d..d + 2 * n], t)),
+                gs::TipoDoCampo::Gbk(n) => json!(gs::ler_texto(&o[d..d + n], t)),
+            }
+        };
+        let ofertas: Vec<Value> = g
+            .ofertas
+            .iter()
+            .enumerate()
+            .map(|(i, o)| {
+                let id = u32::from_le_bytes(o[140..144].try_into().unwrap());
+                json!([i, pega(o, "main_type"), pega(o, "sub_type"), id, pega(o, "num"), pega(o, "szName"), pega(o, "buy_0_price"), nome_do_item(id)])
+            })
+            .collect();
+        let categorias: Vec<Value> = g
+            .categorias
+            .iter()
+            .map(|c| json!({ "nome": texto_do_bloco(&c.nome), "subcategorias": c.subcategorias.iter().map(|s| texto_do_bloco(s)).collect::<Vec<_>>() }))
+            .collect();
+        Ok(json!({
+            "arquivo": arquivo, "formato": format!("{:?}", g.formato), "carimbo": g.carimbo, "no_rascunho": item.is_some(),
+            "colunas": ["indice", "main_type", "sub_type", "id", "num", "szName", "buy_0_price", "item"],
+            "ofertas": ofertas, "categorias": categorias,
+            "campos": campos.iter().map(|(n, t, _)| json!([n, t])).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Uma oferta campo a campo, com o item que ela vende (link para a ficha).
+    pub async fn oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: Option<i64>, indice: usize) -> Result<Value> {
+        let caminho = caminho_da_loja(arquivo)?;
+        let (_, _, _, bytes, _) = self.item_do_cliente(gov, versao, &caminho, rascunho).await?;
+        let g = GshopEditavel::ler(&bytes)?;
+        let o = g.ofertas.get(indice).with_context(|| format!("oferta {indice} não existe"))?;
+        let campos = gs::ler_oferta(&g, o);
+        let id = campos["id"].as_u64().unwrap_or(0) as i32;
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let item = match mapa_de_ids(&e).get(&("ESSENCE".to_string(), id)) {
+            Some(&(ti, ri)) if ti != CONVERSAS => json!({ "nome": nome_do_registro(&e.tabelas[ti], ri), "tabela": e.tabelas[ti].nome, "indice": ri }),
+            _ => json!(null),
+        };
+        Ok(json!({ "indice": indice, "campos": campos, "item": item }))
+    }
+
+    /// Muda a loja no rascunho como item `ambos` (cliente e realm, o mesmo arquivo); o carimbo não muda.
+    async fn alterar_loja<F>(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, mudar: F) -> Result<Value>
+    where
+        F: FnOnce(&mut GshopEditavel) -> Result<(Value, Value)>,
+    {
+        let caminho = caminho_da_loja(arquivo)?;
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        self.gravar_item_com_destino(gov, versao, &caminho, rascunho, "ambos", move |base| {
+            let mut g = GshopEditavel::ler(base)?;
+            let (resposta, mudanca) = mudar(&mut g)?;
+            Ok((g.gravar(), resposta, mudanca))
+        })
+        .await
+    }
+
+    pub async fn editar_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, indice: usize, campos: Map<String, Value>) -> Result<Value> {
+        self.alterar_loja(gov, versao, arquivo, rascunho, move |g| {
+            let mut o = g.ofertas.get(indice).cloned().with_context(|| format!("oferta {indice} não existe"))?;
+            let antes = gs::ler_oferta(g, &o);
+            for (k, v) in &campos {
+                gs::definir_campo(g, &mut o, k, v)?;
+            }
+            let depois = gs::ler_oferta(g, &o);
+            let mudou: Map<String, Value> = depois.iter().filter(|(k, x)| antes.get(*k) != Some(*x)).map(|(k, x)| (k.clone(), json!([antes[k], x]))).collect();
+            g.ofertas[indice] = o;
+            let mudanca = if mudou.is_empty() { Value::Null } else { json!({ "acao": "editada", "tipo": "oferta", "indice": indice, "campos": mudou }) };
+            Ok((json!({ "indice": indice }), mudanca))
+        })
+        .await
+    }
+
+    /// Oferta nova no fim da lista (não muda o índice de ninguém), cópia do `base`.
+    pub async fn clonar_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, base: usize) -> Result<Value> {
+        self.alterar_loja(gov, versao, arquivo, rascunho, move |g| {
+            let o = g.ofertas.get(base).cloned().with_context(|| format!("oferta {base} não existe"))?;
+            g.ofertas.push(o);
+            let indice = g.ofertas.len() - 1;
+            Ok((json!({ "indice": indice }), json!({ "acao": "nova", "tipo": "oferta", "indice": indice, "base": base })))
+        })
+        .await
+    }
+
+    /// Tira a oferta (as seguintes sobem um índice; cliente e realm recebem o mesmo arquivo, então seguem casando).
+    pub async fn remover_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, indice: usize) -> Result<Value> {
+        self.alterar_loja(gov, versao, arquivo, rascunho, move |g| {
+            if indice >= g.ofertas.len() {
+                bail!("oferta {indice} não existe");
+            }
+            let o = g.ofertas.remove(indice);
+            let nome = gs::ler_texto(&o[g.campos().iter().find(|c| c.0 == "szName").map(|c| c.2).unwrap()..][..64], gs::TipoDoCampo::Utf16(32));
+            Ok((json!({ "removida": indice }), json!({ "acao": "removida", "tipo": "oferta", "indice": indice, "nome": nome })))
+        })
+        .await
     }
 }

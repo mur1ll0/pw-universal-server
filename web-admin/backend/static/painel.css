@@ -785,3 +785,8 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .mapa-editor fieldset { border: 1px solid var(--borda); border-radius: 8px; padding: 6px 10px; margin: 0 0 8px; }
 .mapa-editor legend { font-size: 13px; padding: 0 4px; }
 .mapa-editor .recursos-linha { flex-wrap: wrap; gap: 6px; }
+.loja-grade { display: grid; grid-template-columns: minmax(260px, 1fr) 2fr; gap: 12px; margin-top: 10px; }
+.loja-lista { max-height: 68vh; overflow: auto; border: 1px solid var(--borda); border-radius: 8px; }
+.loja-lista button { display: block; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-bottom: 1px solid var(--borda); background: transparent; color: inherit; cursor: pointer; font-size: 13px; }
+.loja-lista button[aria-current="true"] { background: var(--realce, rgba(255,255,255,0.08)); }
+@media (max-width: 800px) { .loja-grade { grid-template-columns: 1fr; } }

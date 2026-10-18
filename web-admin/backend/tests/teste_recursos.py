@@ -271,6 +271,15 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         await self.cliente.get("/api/realms/realm_126/estudio/mapas/world/altura", params={"x": 1.5, "z": -2})
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], p["consulta"]), ("/admin/1.2.6/estudio/mapas/world/altura", {"x": ["1.5"], "z": ["-2.0"]}))
+        # Loja Gold (B254).
+        await self.cliente.get("/api/realms/realm_155/estudio/loja/gshop1.data", params={"rascunho": 5})
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/loja/gshop1.data")
+        r = await self.cliente.put("/api/realms/realm_155/estudio/loja/gshop.data/7", params={"rascunho": 5}, headers=csrf,
+                                   json={"campos": {"buy_0_price": 100}})
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.5.5/estudio/loja/gshop.data/7"))
+        antes3 = len(RecursosFalso.pedidos)
+        self.assertEqual((await self.cliente.get("/api/realms/realm_155/estudio/loja/elements.data")).status_code, 404)
+        self.assertEqual(len(RecursosFalso.pedidos), antes3)
         # Alinhamento e alinhar (B253).
         await self.cliente.get("/api/realms/realm_126/estudio/alinhamento", params={"rascunho": 5})
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/alinhamento")

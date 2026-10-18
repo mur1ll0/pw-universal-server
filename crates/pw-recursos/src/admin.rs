@@ -554,6 +554,46 @@ async fn estudio_alinhar(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<
     Ok(Json(e.estudio.alinhar_com_o_cliente(&e.gov, &v, &caminho, r).await?))
 }
 
+// ------------------------------------------------------------------ Loja Gold (S7, B254)
+
+async fn estudio_loja(State(e): State<Arc<Estado>>, Path((v, arquivo)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.loja(&e.gov, &v, &arquivo, q.rascunho).await?))
+}
+
+async fn estudio_oferta(State(e): State<Arc<Estado>>, Path((v, arquivo, indice)): Path<(String, String, usize)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.oferta(&e.gov, &v, &arquivo, q.rascunho, indice).await?))
+}
+
+async fn estudio_editar_oferta(
+    State(e): State<Arc<Estado>>,
+    Path((v, arquivo, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoCampos>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.editar_oferta(&e.gov, &v, &arquivo, r, indice, p.campos).await?))
+}
+
+async fn estudio_clonar_oferta(
+    State(e): State<Arc<Estado>>,
+    Path((v, arquivo)): Path<(String, String)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoNovo>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.clonar_oferta(&e.gov, &v, &arquivo, r, p.base).await?))
+}
+
+async fn estudio_remover_oferta(State(e): State<Arc<Estado>>, Path((v, arquivo, indice)): Path<(String, String, usize)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.remover_oferta(&e.gov, &v, &arquivo, r, indice).await?))
+}
+
 // ------------------------------------------------------------------ teleportes (S4, B245)
 
 async fn estudio_teleportes(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
@@ -727,6 +767,8 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/mapas/{caminho}/rastreador", get(estudio_rastreador))
         .route("/admin/{v}/estudio/mapas/{caminho}/altura", get(estudio_altura))
         .route("/admin/{v}/estudio/alinhamento", get(estudio_alinhamento))
+        .route("/admin/{v}/estudio/loja/{arquivo}", get(estudio_loja).post(estudio_clonar_oferta))
+        .route("/admin/{v}/estudio/loja/{arquivo}/{indice}", get(estudio_oferta).put(estudio_editar_oferta).delete(estudio_remover_oferta))
         .route("/admin/{v}/estudio/mapas/{caminho}/alinhar", post(estudio_alinhar))
         .route("/admin/{v}/estudio/rastreador/{id}", put(estudio_editar_rastreador))
         .route(

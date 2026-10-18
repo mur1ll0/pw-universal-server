@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -89,7 +89,9 @@ impl FonteDePacote for Pacotes {
             }).collect(),
         };
         receber(b"maps\\world\\world_targets.txt".to_vec(), txt.gravar())?;
-        Ok(ResultadoDoPacote { entradas: 7, falhas: vec![] })
+        // A Loja Gold real do 1.2.6 (B254): o cliente e o realm usam o mesmo arquivo.
+        receber(b"data\\gshop.data".to_vec(), fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/gshop.data")).unwrap())?;
+        Ok(ResultadoDoPacote { entradas: 8, falhas: vec![] })
     }
 }
 
@@ -582,6 +584,34 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let de_novo = json_de(pedir("POST", &format!("estudio/mapas/world/alinhar?rascunho={r10}")).call().unwrap());
         assert!(de_novo["alinhados"].as_array().unwrap().is_empty(), "já alinhado: nada a fazer");
         pedir("POST", &format!("rascunhos/{r10}/descartar")).send_json(json!({})).unwrap();
+
+        // Loja Gold (B254): ofertas do gshop.data; editar preço e nome, clonar, remover; publicar grava o cliente e o
+        // realm (item "ambos") com o carimbo intacto.
+        let lj = json_de(pedir("GET", "estudio/loja/gshop.data").call().unwrap());
+        assert_eq!((lj["formato"].as_str(), lj["ofertas"].as_array().unwrap().len(), lj["categorias"].as_array().unwrap().len()), (Some("V126"), 668, 8), "{}", lj["formato"]);
+        let comitem = lj["ofertas"].as_array().unwrap().iter().filter(|o| o[7].is_string()).count();
+        assert!(comitem * 10 >= 668 * 9, "{comitem} ofertas com o item no elements");
+        assert_eq!(erro_de(pedir("GET", "estudio/loja/outra.data").call()).0, 400);
+        let of0 = json_de(pedir("GET", "estudio/loja/gshop.data/0").call().unwrap());
+        let carimbo0 = lj["carimbo"].as_u64().unwrap();
+        let r11 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "loja", "operacao_id": "t_p4_r11"})).unwrap())["id"].as_i64().unwrap();
+        let em11 = |rel: &str| format!("{rel}?rascunho={r11}");
+        assert_eq!(erro_de(pedir("PUT", &em11("estudio/loja/gshop.data/0")).send_json(json!({"campos": {"szName": "x".repeat(40)}}))).0, 400);
+        pedir("PUT", &em11("estudio/loja/gshop.data/0")).send_json(json!({"campos": {"buy_0_price": 777, "szName": "Oferta do Estúdio"}})).unwrap();
+        let cl = json_de(pedir("POST", &em11("estudio/loja/gshop.data")).send_json(json!({"base": 0})).unwrap());
+        assert_eq!(cl["resultado"]["indice"], 668);
+        pedir("DELETE", &em11("estudio/loja/gshop.data/668")).call().unwrap();
+        let of1 = json_de(pedir("GET", &em11("estudio/loja/gshop.data/0")).call().unwrap());
+        assert_eq!((of1["campos"]["buy_0_price"].as_u64(), of1["campos"]["szName"].as_str()), (Some(777), Some("Oferta do Estúdio")));
+        assert_eq!(of1["campos"]["id"], of0["campos"]["id"]);
+        let p11 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r11]})).unwrap());
+        assert_eq!(p11["aplicados"].as_array().unwrap().len(), 1, "o realm recebe o gshop.data: {p11}");
+        let no_realm = fs::read(realm2.join("gshop.data")).unwrap();
+        assert_eq!(no_realm, baixar("data\\gshop.data"), "cliente e realm com o mesmo arquivo");
+        let g = pw_data_loader::gshop_editavel::GshopEditavel::ler(&no_realm).unwrap();
+        assert_eq!((g.ofertas.len(), g.carimbo as u64), (668, carimbo0));
+        let loja_do_gs = pw_data_loader::gshop::GShopData::load_from_bytes(&no_realm).unwrap();
+        assert_eq!(loja_do_gs.ofertas[0].opcoes[0].preco, 777, "o leitor do GS vê o preço novo");
 
         // Altura do chão (B248): o realm do teste não tem .hmap — a rota responde sem altura; coordenada inválida é 400.
         let al = json_de(pedir("GET", "estudio/mapas/world/altura").query("x", "10").query("z", "-20").call().unwrap());
