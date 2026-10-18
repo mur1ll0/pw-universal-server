@@ -288,6 +288,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B258 (S7, 5ª parte):** comportamento dos monstros (`aipolicy.data`) só leitura — gatilhos, condições em árvore,
 > operações e os monstros que usam cada política. Falta do S7: editar o `aipolicy`, gravador completo do `tasks.data`,
 > textos.
+>
+> **B259 (S7, 6ª parte):** editar o comportamento no lugar — flags dos gatilhos e os parâmetros de tamanho fixo
+> (habilidade, timer, vida abaixo de, probabilidade…), item só do servidor. Falta: criar/remover gatilho e as falas
+> (tamanho variável), gravador completo do `tasks.data`, textos.
 
 | fase | entrega |
 | :--- | :--- |

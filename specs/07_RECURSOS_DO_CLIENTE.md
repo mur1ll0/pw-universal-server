@@ -376,7 +376,12 @@ B127), em cache por versão/SHA. `GET estudio/comportamentos?busca` (linhas `[id
 da política ou id/nome de monstro; até 500; `sem_politica` = ids citados por monstros que o arquivo não tem) e
 `GET estudio/comportamentos/{id}` (a `AiPolicy` serializada — gatilhos com `ativo`, `rodando`, `so_em_combate`,
 condição em árvore e operações com alvo — e os monstros que a usam por `MONSTER_ESSENCE.common_strategy`,
-`monstros.rs:169`). Painel: vista "Comportamento" (`static/comportamento.js`). Editar exige um gravador do formato.
+`monstros.rs:169`). Painel: vista "Comportamento" (`static/comportamento.js`). **Editar no lugar (B259):** item
+**`servidor`** (`servidor\aipolicy.data`; o cliente não o tem). A ficha traz `editaveis` por gatilho (`condicoes`
+por caminho na árvore — `""`, `"e"`, `"d"`… — e `operacoes` por índice, cada um com `[[campo, tipo]]`) e
+`PUT estudio/comportamentos/{id}?rascunho {gatilho, flags?, operacao?: {indice, valores}, condicao?: {caminho,
+valores}}` grava (campo inexistente → 400; relê antes). A leitura usa o rascunho quando há um. Painel: "Editar este
+gatilho" com as flags e os campos de cada operação/condição editável.
 
 **Missões (S7, B255 — só leitura):** o `tasks.data` do realm (o que o GS executa, `manager.rs:461`; 20,8 MB no 1.2.6,
 104 MB no 1.5.5) pelo leitor do GS (`pw_data_loader::tasks`), em cache por versão e SHA. Rotas:
@@ -422,7 +427,8 @@ falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668
 (B256): `descricao` → 400; nível mín. 5, exp 999 e nome novo na 1173 → visíveis no rascunho, o publicado não muda;
 publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos. Comportamento (B258): 293
 políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id
-inexistente → 400. Controladores
+inexistente → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
+"só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Controladores
 (B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. Altura (B248):
 sem `.hmap` responde `y` nulo; coordenada inválida 400. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com

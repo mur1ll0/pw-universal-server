@@ -14431,3 +14431,32 @@ comparação lado a lado.
 
     ### e. Falta
     - Editar o `aipolicy.data` (gravador do formato); gravador completo do `tasks.data`; textos.
+
+259. **Sessão 2026-10-18: Estúdio S7, sexta parte — editar o comportamento no lugar.**
+
+    ### a. Pedido
+    Commitar o B258 (feito: `e260662`, `1aa4a07`) e seguir — o gravador do `aipolicy`.
+
+    ### b. Decisão e evidência
+    - Mesma técnica do B256: o arquivo fica cru e só se trocam valores de tamanho fixo, com a codificação exata do leitor
+      (`ler_trigger`; `ler_parametro_de_tamanho_fixo` e `interpretar_parametro_de_condicao`, porte de `policytype.h`
+      1.7.2). Falas, invocação e brutos ficam de fora; criar ou remover gatilho exige um gravador completo.
+
+    ### c. O que foi feito
+    - `pw-data-loader/aipolicy.rs`: `Trigger::em`, `NoDeCondicao::parametro_em`, `Operacao::parametro_em`.
+    - `pw-data-loader/aipolicy_editavel.rs`: `campos_da_operacao`, `campos_da_condicao`, `no_pelo_caminho`,
+      `definir_flag`, `definir_operacao`, `definir_condicao`.
+    - `pw-recursos`: leitura com o rascunho, `editaveis` na ficha, `editar_comportamento` (item `servidor`); rota `PUT`.
+    - Painel: proxy; "Editar este gatilho" na ficha.
+
+    ### d. Provas
+    - `aipolicy_editavel::testes` nos dois realms: habilidade, vida e flag relidas; outra política igual; voltar devolve
+      o arquivo idêntico.
+    - `estudio.rs` com o banco: `skill` listado como editável; campo inexistente → 400; publicado no realm e relido.
+    - Painel `teste_recursos.py` **11/11**. Suítes `pw-recursos` + `pw-data-loader` com o banco: **233 passaram, 0 falharam**;
+      testes de política do `pw-gs`: **8/8** (o leitor ganhou campos).
+    - No contêiner: a política 5 (nos dois realms) tem 11 gatilhos, 13 operações e 9 condições editáveis.
+
+    ### e. Falta
+    - Ver em jogo: monstro usando a habilidade nova depois de publicar e reiniciar.
+    - Criar/remover gatilho, falas; gravador completo do `tasks.data`; textos.

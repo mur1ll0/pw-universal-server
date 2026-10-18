@@ -211,7 +211,12 @@ Porta de `cgame/gs/ai/policy.cpp` (`CPolicyDataManager::Load` e derivados), auto
 fonte **1.7.2**. Cabeçalho `F_POLICY_EXP_VERSION` (1.5.5 = 1, 3.144 políticas; 1.2.6 = 0,
 293). Parâmetros de condição trazem tamanho no fio; os de operação usam `sizeof` do alvo
 32 bits (tabela `tamanho_do_parametro`). **Interpretado no mundo desde o B127** —
-`pw_gs::politica` (spec 05 §4.1).
+`pw_gs::politica` (spec 05 §4.1). **Editável no lugar (B259):** o leitor registra onde começam o gatilho
+(`Trigger::em`: `versão u32, id u32, ativo, rodando, só em combate` de 1 byte) e o parâmetro de cada condição e operação
+(`parametro_em`, fora do JSON); `aipolicy_editavel.rs` troca as flags e os parâmetros de tamanho fixo com a mesma
+codificação do leitor — operação: tipo de ataque, habilidade/nível, id de gatilho, timer (id, período, contador),
+ajustar variável; condição: timer, vida abaixo de, probabilidade, raio, id, valor, faixa de dano. Testado nos dois
+realms: relido pelo leitor, outra política igual, voltar devolve o arquivo idêntico.
 
 ### 3.5 `ptemplate.conf` (`ptemplate.rs`)
 
