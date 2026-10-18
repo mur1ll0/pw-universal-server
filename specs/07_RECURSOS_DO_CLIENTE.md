@@ -303,6 +303,13 @@ daquele ponto (1.2.6: 211 `.hmap` em 42 pastas; 1.5.5: 532 em 82). Terreno em ca
 Painel: "Posicionar pelo clique" preenche também o Y (área do `npcgen`, renascer, chegada de portal, teleporte); o do
 rastreador fica 0, como nos arquivos reais.
 
+**Modelo dos objetos dinâmicos (S4, B250):** `configs\DynamicObjects.data` do cliente publicado, lido por
+`DataPathMan::Load` (`EC_Game.cpp:611-614`, `DataPathMan.cpp:9`, `:16-58`): `u32 'PMID'` (`0x504D4944`), `u32 n` e
+`n × {u32 id; u32 len; len bytes}` — caminho do `.ecm` em GBK; id ou caminho repetido é recusado, e o arquivo fecha no
+último byte (`mapas::ler_objetos_dinamicos`; o do 1.5.5 BR: 235 objetos, fecha; 1.2.6: 553 bytes). O resumo do
+`npcgen` ganhou a coluna `modelo` nos objetos e a ficha do objeto o `nome` (o caminho); o painel mostra o nome do arquivo
+sem `.ecm`, com o caminho na dica.
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -328,11 +335,12 @@ arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no
 
 - Launcher: canal de teste para GM (instalar um rascunho antes de publicar), autoatualização do próprio
   launcher, instalador `.msi` (CLI do Tauri).
-- Rascunho só de servidor ainda gera versão nova do cliente (manifesto igual). ("Aguarda reinício" e reiniciar pelo
-  painel: feitos no B249, spec 06.)
+- ("Aguarda reinício" e reiniciar pelo painel: feitos no B249, spec 06.) Rascunho só de servidor continua gerando
+  versão nova do cliente com o manifesto igual — **decisão do B250, mantido**: o launcher só baixa o manifesto e termina,
+  e a versão é o que guarda o `publicada_em` do aviso de reinício e o que o reverter usa.
 - Estúdio: telas próprias, `tasks`/`gshop`; no mapa, polígonos de distrito e portais novos (exigem editar o
   `.clt` do cliente junto), destinos de teleporte novos (exigem o `world_targets.txt` do cliente), nome dos objetos
-  dinâmicos (`dwDynObjID` → arquivo do cliente).
+  dinâmicos e controladores novos com nome (o `szName` do controlador é só leitura).
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).

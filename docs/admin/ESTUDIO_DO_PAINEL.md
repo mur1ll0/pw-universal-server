@@ -257,6 +257,9 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B248 (S4, 7ª parte):** altura do chão pelos `.hmap` do realm (leitor do GS) no "Posicionar pelo clique". Falta do
 > S4: nome dos objetos dinâmicos; distritos, portais e destinos de teleporte novos (exigem gerar os `.clt`/`.txt` do
 > cliente junto).
+>
+> **B250 (S4, 8ª parte):** modelo de cada objeto dinâmico pelo `configs\DynamicObjects.data` do cliente. Do S4 sobra só
+> criar distritos, portais e destinos novos (exige gerar os arquivos do cliente junto, com o mesmo carimbo).
 
 | fase | entrega |
 | :--- | :--- |

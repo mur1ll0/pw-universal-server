@@ -14153,3 +14153,29 @@ comparação lado a lado.
     ### e. Falta
     - Publicar o GS novo (`pw-world-126`/`pw-world-155`), que reinicia os realms — pedir ao Murillo.
     - Ver em jogo: reiniciar pelo painel com personagem online; ele volta salvo.
+
+250. **Sessão 2026-10-18: Estúdio S4, oitava parte — modelo dos objetos dinâmicos.**
+
+    ### a. Pedido
+    Commitar o B249 (feito: `f68f47a`, `4f1d5c6`; o GS novo segue sem publicar, à espera do Murillo) e seguir.
+
+    ### b. Evidência e decisão
+    - O cliente carrega `configs\DynamicObjects.data` em `CECGame::Init` (`EC_Game.cpp:611-614`) por
+      `DataPathMan::Load` (`DataPathMan.cpp:16-58`): marca `'PMID'` (`:9`), quantidade, e por objeto id, tamanho e o
+      caminho do `.ecm`. Arquivo real do 1.5.5 BR: 235 objetos, fecha no último byte.
+    - **Rascunho só de servidor gerando versão do cliente: mantido.** O custo é o launcher baixar um manifesto igual; a
+      versão guarda o `publicada_em` que o aviso de reinício (B249) usa e é a base do reverter.
+
+    ### c. O que foi feito
+    - `pw-recursos/mapas.rs`: `ler_objetos_dinamicos` (recusa marca errada, id repetido, caminho ≥ 256, sobra/falta).
+    - `estudio.rs`: `modelos_dos_objetos` (do cliente publicado); coluna `modelo` no resumo do `npcgen` e `nome` na ficha
+      do objeto. Painel: nome do arquivo no título, caminho na dica.
+
+    ### d. Provas
+    - `objetos_dinamicos_do_cliente` (unidade) e o arquivo real conferido (235, fecha).
+    - Suíte do `pw-recursos` com o banco: **20/20**; painel `teste_recursos.py` **11/11**.
+    - No contêiner: todos os objetos do mundo com modelo — 1.5.5 2.609/2.609, 1.2.6 1.153/1.153.
+
+    ### e. Falta
+    - Do S4: criar distritos, portais e destinos de teleporte novos (exige gerar `precinct.clt`, `region.clt` e
+      `world_targets.txt` do cliente junto, com o mesmo carimbo).
