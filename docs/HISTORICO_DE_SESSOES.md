@@ -14487,3 +14487,33 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: descrição de item trocada aparecendo no tooltip depois de o launcher baixar.
     - Criar/remover gatilho e falas do `aipolicy`; gravador completo do `tasks.data`.
+
+261. **Sessão 2026-10-18: Estúdio S7, oitava parte — aipolicy estrutural.**
+
+    ### a. Pedido
+    Commitar o B260 (feito: `b75a79e`, `0207757`) e seguir — falas e criar/remover gatilho no `aipolicy`.
+
+    ### b. Decisão e evidência
+    - Sem reserializar: o leitor registra a faixa de cada gatilho (`Trigger::em..fim`) e o começo da política
+      (`AiPolicy::em`); remover corta, duplicar copia logo depois com id novo, e a quantidade da política é corrigida.
+    - Fala: `uSize u32` + `uSize` bytes (`policy.cpp:550-552`, `:610-611`), enviada pelo GS como está (`op_say`,
+      `aitrigger.h:1844-1849`). Medido: todas as falas terminam em NUL (337 no 1.2.6, 5.964 no 1.5.5) — o gravador
+      mantém a convenção da fala antiga.
+    - Remover é recusado se outro gatilho o chama: `GetIndex` → -1 e `GetTriggerPtr(-1)` sem checagem no GS
+      (`policy_loader.cpp:237-238`). Subgatilhos (`bRun`) só existem via chamada (`:450`).
+    - O fonte 1.7.2 não está mais em `F:\PW\1.7.2`; usei o 1.5.5, que tem o mesmo leitor (cabeçalho de `aipolicy.rs`).
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `Trigger::fim`, `AiPolicy::em`; `aipolicy_editavel`: `citacoes`, `remover_gatilho`,
+      `duplicar_gatilho`, `definir_fala`.
+    - `pw-recursos`: `PUT estudio/comportamentos/{id}` aceita `fala`, `duplicar`, `remover`.
+    - Painel: proxy repassa as chaves novas; "Salvar fala", "Duplicar gatilho", "Remover gatilho".
+
+    ### d. Provas
+    - `aipolicy_editavel::testes` (2) nos dois realms: fala + duplicar + remover + voltar = arquivo idêntico; outra
+      política igual; gatilho citado recusado (verificado nos dois).
+    - `pw-recursos` com o banco **22/22**; painel `teste_recursos.py` **11/11**; `pw-data-loader` **214/214**; `cargo check --workspace --tests` ok.
+
+    ### e. Falta
+    - Ver em jogo: monstro dizendo a fala nova depois de publicar e reiniciar o realm.
+    - Trocar tipo de condição/operação do `aipolicy`; gravador completo do `tasks.data`.

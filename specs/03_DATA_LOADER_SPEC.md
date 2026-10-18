@@ -216,7 +216,15 @@ fonte **1.7.2**. Cabeçalho `F_POLICY_EXP_VERSION` (1.5.5 = 1, 3.144 políticas;
 (`parametro_em`, fora do JSON); `aipolicy_editavel.rs` troca as flags e os parâmetros de tamanho fixo com a mesma
 codificação do leitor — operação: tipo de ataque, habilidade/nível, id de gatilho, timer (id, período, contador),
 ajustar variável; condição: timer, vida abaixo de, probabilidade, raio, id, valor, faixa de dano. Testado nos dois
-realms: relido pelo leitor, outra política igual, voltar devolve o arquivo idêntico.
+realms: relido pelo leitor, outra política igual, voltar devolve o arquivo idêntico. **Edição estrutural (B261):**
+o leitor também registra `Trigger::fim` e `AiPolicy::em` (`versão, id, quantidade`); `remover_gatilho` corta
+`em..fim` e decrementa a quantidade (recusado se outro gatilho da política o cita por rodar/parar/ativar e não há outro
+com o mesmo id — o GS faria `GetTriggerPtr(-1)`, `policy_loader.cpp:237-238`); `duplicar_gatilho` copia a faixa logo
+depois da original com id novo (maior + 1, ou o pedido; repetido → erro); `definir_fala` reescreve `uSize u32` + UTF-16
+(`policy.cpp:550-552`, `:610-611`) e mantém o NUL final que a fala tinha — medido: **todas** as falas o têm (337 no
+1.2.6, 5.964 no 1.5.5). O GS envia os `uSize` bytes como estão (`op_say`, `aitrigger.h:1844-1849`). Política com id
+repetido no arquivo recusa edição estrutural. Testado nos dois realms: trocar fala + duplicar + remover + voltar
+devolve o arquivo idêntico; a outra política não muda; gatilho citado não se remove.
 
 ### 3.5 `ptemplate.conf` (`ptemplate.rs`)
 

@@ -296,6 +296,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B260 (S7, 7ª parte):** vista "Textos" — `item_desc.txt`, `item_ext_desc.txt` e `fixed_msg.txt` do cliente, com
 > busca, paginação, edição por entrada (Enter salva) e entrada nova na tabela indexada; item só do cliente. Falta do
 > S7: criar/remover gatilho e falas do `aipolicy`, gravador completo do `tasks.data`.
+>
+> **B261 (S7, 8ª parte):** comportamento — trocar a fala, duplicar e remover gatilho (edição estrutural por faixa de
+> bytes, sem reserializar). Falta do S7: gravador completo do `tasks.data` (criar/remover missão, textos de tamanho
+> variável) e mudar condições/operações de tipo no `aipolicy`.
 
 | fase | entrega |
 | :--- | :--- |

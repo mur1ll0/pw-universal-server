@@ -381,7 +381,10 @@ condição em árvore e operações com alvo — e os monstros que a usam por `M
 por caminho na árvore — `""`, `"e"`, `"d"`… — e `operacoes` por índice, cada um com `[[campo, tipo]]`) e
 `PUT estudio/comportamentos/{id}?rascunho {gatilho, flags?, operacao?: {indice, valores}, condicao?: {caminho,
 valores}}` grava (campo inexistente → 400; relê antes). A leitura usa o rascunho quando há um. Painel: "Editar este
-gatilho" com as flags e os campos de cada operação/condição editável.
+gatilho" com as flags e os campos de cada operação/condição editável. **Estrutura (B261):** o mesmo `PUT` aceita
+`fala: {indice, texto}` (operações `Fala`, `Fala2`, `SkillComFala`), e por último `duplicar: {novo_id?}` (resposta
+`resultado.novo_gatilho`) ou `remover: true` — ver spec 03 §aipolicy. Painel: "Salvar fala" por fala, "Duplicar
+gatilho" e "Remover gatilho" (com confirmação).
 
 **Textos do cliente (B260, S7):** `pw-recursos/src/textos.rs` lê e grava `configs\fixed_msg.txt`, `item_desc.txt` e
 `item_ext_desc.txt` — o cliente os carrega em `CECGame::Init` (`EC_Game.cpp:517-525`) por
@@ -440,7 +443,9 @@ falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668
 publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos. Comportamento (B258): 293
 políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id
 inexistente → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
-"só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Textos (B260): indexada com 2 e
+"só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
+gatilho duplicado (id novo na resposta) e o original removido, publicados — o realm tem a mesma quantidade de
+gatilhos, a cópia no lugar do original e a fala nova; operação inexistente → 400. Textos (B260): indexada com 2 e
 sequencial achada pela busca; arquivo fora da lista → 400; editar e acrescentar na indexada, acrescentar na sequencial
 e texto com aspas → 400; publicado não aplica nada no realm e o cliente baixa o arquivo novo. Controladores
 (B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. Altura (B248):
