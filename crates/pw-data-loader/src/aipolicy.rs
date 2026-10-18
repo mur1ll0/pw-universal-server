@@ -605,6 +605,9 @@ pub struct NoDeCondicao {
     pub tipo: Option<TipoDeCondicao>,
     pub tipo_cru: i32,
     pub parametro: ParametroDeCondicao,
+    /// Onde o parâmetro começa no arquivo (B259: editar no lugar, `aipolicy_editavel`).
+    #[serde(skip)]
+    pub parametro_em: usize,
     pub esquerda: Option<Box<NoDeCondicao>>,
     pub direita: Option<Box<NoDeCondicao>>,
 }
@@ -640,6 +643,9 @@ pub struct Operacao {
     pub tipo: Option<TipoDeOperacao>,
     pub tipo_cru: i32,
     pub parametro: ParametroDeOperacao,
+    /// Onde o parâmetro começa no arquivo (B259).
+    #[serde(skip)]
+    pub parametro_em: usize,
     pub alvo: AlvoDaOperacao,
 }
 
@@ -647,6 +653,9 @@ pub struct Operacao {
 /// quando a árvore dá verdadeiro.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Trigger {
+    /// Onde o gatilho começa no arquivo (B259): `versão u32, id u32, ativo, rodando, só em combate` (1 byte cada).
+    #[serde(skip)]
+    pub em: usize,
     /// A versão gravada no próprio trigger, que decide o formato dos parâmetros.
     pub versao: u32,
     pub id: u32,
@@ -828,6 +837,7 @@ impl AiPolicyData {
     /// diferem em **quais** operações têm parâmetro lido; o cabeçalho e a árvore são
     /// idênticos. Aqui isso vira uma pergunta só — [`Self::le_parametro_nesta_versao`].
     fn ler_trigger(l: &mut Leitor) -> Result<Trigger> {
+        let em = l.pos;
         let versao = l.u32()?;
         let id = l.u32()?;
         // Três `fread` de 1 byte, sem enchimento entre eles.
@@ -854,6 +864,7 @@ impl AiPolicyData {
                 });
             }
 
+            let parametro_em = l.pos;
             let parametro = if Self::le_parametro_nesta_versao(tipo_cru, versao) {
                 Self::ler_parametro_de_operacao(l, tipo_cru, versao)?
             } else {
@@ -877,6 +888,7 @@ impl AiPolicyData {
                 tipo: TipoDeOperacao::de_i32(tipo_cru),
                 tipo_cru,
                 parametro,
+                parametro_em,
                 alvo: AlvoDaOperacao {
                     tipo: TipoDeAlvo::de_i32(tipo_cru_do_alvo),
                     tipo_cru: tipo_cru_do_alvo,
@@ -885,7 +897,7 @@ impl AiPolicyData {
             });
         }
 
-        Ok(Trigger { versao, id, ativo, rodando, so_em_combate, nome, condicao, operacoes })
+        Ok(Trigger { em, versao, id, ativo, rodando, so_em_combate, nome, condicao, operacoes })
     }
 
     /// O `switch` que decide se `ReadOperationParam` é chamado, por versão de trigger.
@@ -1243,6 +1255,7 @@ impl AiPolicyData {
         }
 
         let tipo = TipoDeCondicao::de_i32(tipo_cru);
+        let parametro_em = l.pos;
         let bruto = l.fatia(tamanho as usize)?;
         let parametro = Self::interpretar_parametro_de_condicao(tipo, bruto);
 
@@ -1270,7 +1283,7 @@ impl AiPolicyData {
             }
         }
 
-        Ok(Some(NoDeCondicao { tipo, tipo_cru, parametro, esquerda, direita }))
+        Ok(Some(NoDeCondicao { tipo, tipo_cru, parametro, parametro_em, esquerda, direita }))
     }
 
     /// Dá forma aos bytes do parâmetro de condição. O tamanho já veio do arquivo, então

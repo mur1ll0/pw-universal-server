@@ -276,6 +276,10 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((RecursosFalso.pedidos[-1]["caminho"], RecursosFalso.pedidos[-1]["consulta"]["busca"]), ("/admin/1.5.5/estudio/comportamentos", ["lobo"]))
         await self.cliente.get("/api/realms/realm_155/estudio/comportamentos/12")
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/comportamentos/12")
+        r = await self.cliente.put("/api/realms/realm_155/estudio/comportamentos/12", params={"rascunho": 5}, headers=csrf,
+                                   json={"gatilho": 0, "flags": {"ativo": False}, "extra": 1})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(json.loads(RecursosFalso.pedidos[-1]["corpo"]), {"gatilho": 0, "flags": {"ativo": False}})
         # Missões (B255).
         await self.cliente.get("/api/realms/realm_126/estudio/missoes", params={"busca": "teste", "topo": "false"})
         p = RecursosFalso.pedidos[-1]

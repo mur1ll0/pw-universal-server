@@ -553,8 +553,18 @@ def registrar_reinicio(app):
         return await _repassar("GET", f"/admin/{v}/estudio/comportamentos", {"busca": busca[:100]})
 
     @app.get("/api/realms/{realm}/estudio/comportamentos/{id_politica}")
-    async def estudio_comportamento(realm: str, id_politica: int, requisicao: Request):
+    async def estudio_comportamento(realm: str, id_politica: int, requisicao: Request, rascunho: int | None = None):
         v = await _versao_do_realm(requisicao, realm)
         if id_politica <= 0:
             raise HTTPException(404, "Política inválida.")
-        return await _repassar("GET", f"/admin/{v}/estudio/comportamentos/{id_politica}")
+        return await _repassar("GET", f"/admin/{v}/estudio/comportamentos/{id_politica}", {"rascunho": rascunho})
+
+    # Editar política no lugar (B259): flags do gatilho e parâmetros de tamanho fixo; item "servidor".
+    @app.put("/api/realms/{realm}/estudio/comportamentos/{id_politica}")
+    async def estudio_editar_comportamento(realm: str, id_politica: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        dados = await requisicao.json()
+        if id_politica <= 0 or not isinstance(dados.get("gatilho"), int):
+            raise HTTPException(422, "Pedido inválido.")
+        corpo = {k: dados[k] for k in ("gatilho", "flags", "operacao", "condicao") if k in dados}
+        return await _repassar("PUT", f"/admin/{v}/estudio/comportamentos/{id_politica}", {"rascunho": rascunho}, dados=corpo)

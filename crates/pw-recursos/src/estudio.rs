@@ -2749,9 +2749,11 @@ use pw_data_loader::aipolicy::AiPolicyData;
 static POLITICAS: std::sync::OnceLock<Mutex<HashMap<(String, Sha256Bytes), Arc<AiPolicyData>>>> = std::sync::OnceLock::new();
 
 impl Estudio {
-    /// O `aipolicy.data` do realm (só do servidor: o cliente não o tem), pelo leitor do GS, em cache por versão/SHA.
-    async fn politicas_do_realm(&self, gov: &Governanca, versao: &str) -> Result<Arc<AiPolicyData>> {
-        let bytes = gov.ler_do_realm(versao, "servidor\\aipolicy.data")?.context("o realm não tem aipolicy.data")?;
+    /// O `aipolicy.data` do realm (só do servidor: o cliente não o tem), pelo leitor do GS, em cache por versão/SHA;
+    /// com o rascunho, o dele (B259).
+    async fn politicas_do_realm(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<Arc<AiPolicyData>> {
+        let (_, do_realm, do_rascunho) = self.item_do_realm(gov, versao, "servidor\\aipolicy.data".into(), rascunho).await?;
+        let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
         let sha = sha256(&bytes);
         let cache = POLITICAS.get_or_init(|| Mutex::new(HashMap::new()));
         if let Some(p) = cache.lock().unwrap().get(&(versao.to_string(), sha)) {
@@ -2781,7 +2783,7 @@ impl Estudio {
 
     /// Lista de políticas: `[id, gatilhos, monstros que usam]`, com busca por id (da política ou de um monstro que a usa).
     pub async fn comportamentos(&self, gov: &Governanca, versao: &str, busca: &str) -> Result<Value> {
-        let p = self.politicas_do_realm(gov, versao).await?;
+        let p = self.politicas_do_realm(gov, versao, None).await?;
         let usos = self.monstros_por_politica(gov, versao).await?;
         let busca = busca.trim().to_lowercase();
         let mut ids: Vec<u32> = p.policies.keys().copied().collect();
@@ -2801,10 +2803,71 @@ impl Estudio {
     }
 
     /// Uma política: os gatilhos (condição em árvore e operações, como o leitor do GS os vê) e os monstros que a usam.
-    pub async fn comportamento(&self, gov: &Governanca, versao: &str, id: u32) -> Result<Value> {
-        let p = self.politicas_do_realm(gov, versao).await?;
+    pub async fn comportamento(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: u32) -> Result<Value> {
+        let p = self.politicas_do_realm(gov, versao, rascunho).await?;
         let pol = p.policies.get(&id).with_context(|| format!("política {id} não existe"))?;
         let usos = self.monstros_por_politica(gov, versao).await?;
-        Ok(json!({ "politica": pol, "monstros": usos.get(&id).cloned().unwrap_or_default() }))
+        // B259: por gatilho, os campos editáveis de cada operação e de cada condição (caminho na árvore: "", "e", "d"…).
+        use pw_data_loader::aipolicy_editavel as ae;
+        fn condicoes(no: Option<&pw_data_loader::aipolicy::NoDeCondicao>, caminho: String, saida: &mut Map<String, Value>) {
+            let Some(no) = no else { return };
+            let c = ae::campos_da_condicao(&no.parametro);
+            if !c.is_empty() {
+                saida.insert(caminho.clone(), json!(c));
+            }
+            condicoes(no.esquerda.as_deref(), format!("{caminho}e"), saida);
+            condicoes(no.direita.as_deref(), format!("{caminho}d"), saida);
+        }
+        let editaveis: Vec<Value> = pol
+            .triggers
+            .iter()
+            .map(|t| {
+                let mut c = Map::new();
+                condicoes(t.condicao.as_ref(), String::new(), &mut c);
+                let ops: Map<String, Value> = t
+                    .operacoes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, o)| {
+                        let campos = ae::campos_da_operacao(&o.parametro);
+                        (!campos.is_empty()).then(|| (i.to_string(), json!(campos)))
+                    })
+                    .collect();
+                json!({ "condicoes": c, "operacoes": ops })
+            })
+            .collect();
+        Ok(json!({ "politica": pol, "monstros": usos.get(&id).cloned().unwrap_or_default(), "editaveis": editaveis }))
+    }
+
+    /// Edita um gatilho da política no rascunho (item `servidor\aipolicy.data`; o cliente não tem o arquivo):
+    /// `{gatilho, flags?: {ativo, rodando, so_em_combate}, operacao?: {indice, valores}, condicao?: {caminho, valores}}`.
+    pub async fn editar_comportamento(&self, gov: &Governanca, versao: &str, rascunho: i64, id: u32, pedido: Value) -> Result<Value> {
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let (nome, do_realm, do_rascunho) = self.item_do_realm(gov, versao, "servidor\\aipolicy.data".into(), Some(rascunho)).await?;
+        self.gravar_item_do_realm(gov, versao, rascunho, nome, do_realm, do_rascunho, move |base| {
+            let mut a = pw_data_loader::aipolicy_editavel::AiPolicyEditavel::ler(base).map_err(anyhow::Error::msg)?;
+            let g = pedido["gatilho"].as_u64().context("gatilho")? as usize;
+            if let Some(f) = pedido["flags"].as_object() {
+                for (k, v) in f {
+                    a.definir_flag(id, g, k, v.as_bool().with_context(|| format!("{k}: verdadeiro ou falso"))?).map_err(anyhow::Error::msg)?;
+                }
+            }
+            if let Some(o) = pedido["operacao"].as_object() {
+                let i = o.get("indice").and_then(Value::as_u64).context("operacao.indice")? as usize;
+                let v = o.get("valores").and_then(Value::as_object).context("operacao.valores")?;
+                a.definir_operacao(id, g, i, v).map_err(anyhow::Error::msg)?;
+            }
+            if let Some(c) = pedido["condicao"].as_object() {
+                let caminho = c.get("caminho").and_then(Value::as_str).unwrap_or("");
+                let v = c.get("valores").and_then(Value::as_object).context("condicao.valores")?;
+                a.definir_condicao(id, g, caminho, v).map_err(anyhow::Error::msg)?;
+            }
+            let novo = a.gravar();
+            pw_data_loader::aipolicy::AiPolicyData::load_from_bytes(&novo).map_err(|e| anyhow::anyhow!("o aipolicy.data editado não relê: {e}"))?;
+            let mudanca = json!({ "acao": "editado", "tipo": "politica", "id": id, "pedido": pedido });
+            Ok((novo, json!({ "id": id }), mudanca))
+        })
+        .await
     }
 }

@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254); missões (B255) e editar missão no lugar (B256); comportamento (B258).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254); missões (B255) e editar missão no lugar (B256); comportamento (B258) e editá-lo no lugar (B259).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -624,6 +624,26 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let por_monstro = json_de(pedir("GET", "estudio/comportamentos").query("busca", &pol["monstros"][0]["id"].to_string()).call().unwrap());
         assert!(por_monstro["linhas"].as_array().unwrap().iter().any(|l| l[0] == usada[0]), "busca pelo id do monstro");
         assert_eq!(erro_de(pedir("GET", "estudio/comportamentos/999999999").call()).0, 400);
+        // Editar no lugar (B259): uma operação de habilidade de alguma política; item "servidor", publicado no realm.
+        let politicas = pw_data_loader::aipolicy::AiPolicyData::load_from_bytes(&fs::read(realm2.join("aipolicy.data")).unwrap()).unwrap();
+        let mut ids: Vec<u32> = politicas.policies.keys().copied().collect();
+        ids.sort_unstable();
+        let (pid, ti, oi) = ids.iter().find_map(|&pid| politicas.policies[&pid].triggers.iter().enumerate().find_map(|(ti, t)| {
+            t.operacoes.iter().position(|o| matches!(o.parametro, pw_data_loader::aipolicy::ParametroDeOperacao::Skill { .. })).map(|oi| (pid, ti, oi))
+        })).expect("operação de habilidade");
+        let ficha = json_de(pedir("GET", &format!("estudio/comportamentos/{pid}")).call().unwrap());
+        assert_eq!(ficha["editaveis"][ti]["operacoes"][oi.to_string()][0][0], "skill", "{}", ficha["editaveis"][ti]);
+        let r13 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "aipolicy", "operacao_id": "t_p4_r13"})).unwrap())["id"].as_i64().unwrap();
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/comportamentos/{pid}?rascunho={r13}")).send_json(json!({"gatilho": ti, "operacao": {"indice": oi, "valores": {"voar": 1}}}))).0, 400);
+        pedir("PUT", &format!("estudio/comportamentos/{pid}?rascunho={r13}"))
+            .send_json(json!({"gatilho": ti, "flags": {"so_em_combate": true}, "operacao": {"indice": oi, "valores": {"skill": 4242, "nivel": 3}}})).unwrap();
+        let f2 = json_de(pedir("GET", &format!("estudio/comportamentos/{pid}?rascunho={r13}")).call().unwrap());
+        assert_eq!(f2["politica"]["triggers"][ti]["operacoes"][oi]["parametro"], json!({"Skill": {"skill": 4242, "nivel": 3}}));
+        let p13 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r13]})).unwrap());
+        assert_eq!(p13["aplicados"].as_array().unwrap().len(), 1, "{p13}");
+        let lido = pw_data_loader::aipolicy::AiPolicyData::load_from_bytes(&fs::read(realm2.join("aipolicy.data")).unwrap()).unwrap();
+        assert_eq!(lido.policies[&pid].triggers[ti].operacoes[oi].parametro, pw_data_loader::aipolicy::ParametroDeOperacao::Skill { skill: 4242, nivel: 3 });
+        assert!(lido.policies[&pid].triggers[ti].so_em_combate);
 
         // Loja Gold (B254): ofertas do gshop.data; editar preço e nome, clonar, remover; publicar grava o cliente e o
         // realm (item "ambos") com o carimbo intacto.
