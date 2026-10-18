@@ -27,6 +27,7 @@ async function carregarEstudio() {
   if (estudio.realm !== realm) Object.assign(estudio, { realm, rascunho: null, tabela: "", ficha: null, pagina: 0 });
   try {
     estudio.versao = (await api(`/api/realms/${encodeURIComponent(realm)}/estudio`)).versao;
+    verificarReinicio();
     await carregarRascunhosDoEstudio();
     await carregarTabelasDoEstudio();
   } catch (erro) {
@@ -595,3 +596,48 @@ elemento("estudio-novo").addEventListener("submit", async (e) => {
 });
 elemento("estudio-filtro-tabela").addEventListener("input", desenharTabelasDoEstudio);
 elemento("estudio-busca").addEventListener("submit", (e) => { e.preventDefault(); estudio.pagina = 0; listarRegistrosDoEstudio(); });
+
+/* ---------------- Aguarda reinício (B249) ----------------
+   O GS lê os arquivos do config (elements, npcgen, precinct, region, world_targets) uma vez, na partida. Se a última
+   publicação que gravou arquivo no realm é mais nova que a partida do GS, o realm ainda roda com os dados velhos. */
+async function verificarReinicio(antes) {
+  const caixa = elemento("estudio-reinicio");
+  const realm = estudio.realm;
+  let s;
+  try { s = await api(`/api/realms/${encodeURIComponent(realm)}/servidor`); }
+  catch (erro) { caixa.hidden = true; return null; }
+  if (estudio.realm !== realm) return null;
+  caixa.replaceChildren();
+  caixa.hidden = s.aguarda_reinicio !== true;
+  if (s.aguarda_reinicio === true) {
+    const quando = new Date(s.ultima.publicada_em * 1000).toLocaleString();
+    caixa.append(criar("span", "", `A versão ${s.ultima.numero} (${quando}) gravou arquivos no realm depois que o servidor de mundo subiu: `
+      + `reinicie para valer. ${s.jogadores_online ? `${s.jogadores_online} jogador(es) online serão desconectados (salvos).` : "Ninguém online."} `));
+    const b = criar("button", "botao botao-pequeno botao-primario", "Reiniciar o realm");
+    b.type = "button";
+    b.addEventListener("click", () => reiniciarRealm(s));
+    caixa.appendChild(b);
+  }
+  return s;
+}
+
+async function reiniciarRealm(situacao) {
+  const realm = estudio.realm;
+  const digitado = window.prompt(`Reiniciar o servidor de mundo de ${realm}? Todos são desconectados (o personagem é salvo) `
+    + "e o realm volta em alguns segundos. Digite o id do realm para confirmar:", "");
+  if (digitado === null) return;
+  try {
+    const r = await api(`/api/realms/${encodeURIComponent(realm)}/reiniciar`, { method: "POST", body: JSON.stringify({ confirmar: digitado.trim() }) });
+    alerta("ok", "Estúdio", `Reiniciando (${r.processos} processo(s), ${r.online} desconectado(s)). Acompanhando a volta…`, { toast: true });
+  } catch (erro) { alerta("erro", "Estúdio", erro.message); return; }
+  const antes = situacao.iniciado_em;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((ok) => setTimeout(ok, 3000));
+    const s = await verificarReinicio().catch(() => null);
+    if (s && s.iniciado_em && s.iniciado_em > antes) {
+      alerta("ok", "Estúdio", "O servidor de mundo voltou com os arquivos novos.", { toast: true });
+      return;
+    }
+  }
+  alerta("aviso", "Estúdio", "O servidor de mundo ainda não respondeu depois de 90 s; confira o contêiner.");
+}

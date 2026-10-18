@@ -14,6 +14,8 @@ import urllib.parse
 import urllib.request
 
 from fastapi import HTTPException, Request
+
+from .canal import CanalIndisponivel, aplicar_no_realm, consultar_daemons
 from fastapi.responses import JSONResponse, Response
 
 VERSAO = re.compile(r"^[A-Za-z0-9._-]{1,16}$")
@@ -393,3 +395,41 @@ def registrar_mapas(app):
             raise HTTPException(422, "Nada a mudar.")
         return await _repassar("PUT", f"/admin/{v}/estudio/rastreador/{id_npc}", {"rascunho": rascunho},
                                dados={"campos": campos})
+
+
+def registrar_reinicio(app):
+    """B249: "aguarda reinício" e reiniciar o servidor de mundo pelo painel. O GS lê os arquivos do `config` uma vez,
+    na partida; um item de servidor publicado só vale depois de reiniciar."""
+    async def situacao(realm, requisicao):
+        v = await _versao_do_realm(requisicao, realm)
+        status, _, corpo = await asyncio.to_thread(_pedir, "GET", f"/admin/{v}/servidor/ultima")
+        if status != 200:
+            raise HTTPException(503, "O serviço de recursos do cliente não respondeu.")
+        ultima = json.loads(corpo)
+        try:
+            respostas = await consultar_daemons(realm, requisicao.state.administrador["conta_id"], {"tipo": "mundos"})
+        except CanalIndisponivel as erro:
+            return {"versao": v, "ultima": ultima, "iniciado_em": None, "aguarda_reinicio": None, "aviso": str(erro)}
+        inicios = [r.get("iniciado_em") for r in respostas if isinstance(r.get("iniciado_em"), int)]
+        iniciado = min(inicios) if len(inicios) == len(respostas) and inicios else None
+        publicada = ultima.get("publicada_em")
+        aguarda = None if iniciado is None else bool(publicada and publicada > iniciado)
+        online = sum(m.get("jogadores_online", 0) for r in respostas for m in r.get("mapas", []))
+        return {"versao": v, "ultima": ultima, "iniciado_em": iniciado, "aguarda_reinicio": aguarda, "jogadores_online": online}
+
+    @app.get("/api/realms/{realm}/servidor")
+    async def servidor_do_realm(realm: str, requisicao: Request):
+        return await situacao(realm, requisicao)
+
+    @app.post("/api/realms/{realm}/reiniciar")
+    async def reiniciar_realm(realm: str, requisicao: Request):
+        """Desconecta todos (salvando) e encerra cada GS do realm; o Docker os sobe de novo."""
+        await _versao_do_realm(requisicao, realm)
+        dados = await requisicao.json()
+        if dados.get("confirmar") != realm:
+            raise HTTPException(422, "Confirme digitando o id do realm.")
+        resultado = await aplicar_no_realm(realm, requisicao.state.administrador["conta_id"], {"tipo": "reiniciar"})
+        if isinstance(resultado, str):
+            return JSONResponse({"estado": "falha", "mensagem": resultado}, status_code=503)
+        return {"estado": "aplicado", "realm": realm, "online": sum(d.get("online", 0) for d in resultado),
+                "processos": len(resultado)}

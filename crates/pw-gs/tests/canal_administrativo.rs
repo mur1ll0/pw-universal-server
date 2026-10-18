@@ -129,6 +129,8 @@ struct Cenario {
     mundo: Arc<RwLock<WorldInstance>>,
     roteador: Arc<RoteadorDeMapas>,
     tarefas: Vec<JoinHandle<()>>,
+    /// O "reiniciar" (B249) marca aqui em vez de encerrar o processo.
+    reiniciou: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Cenario {
@@ -236,6 +238,8 @@ impl Cenario {
         });
         let escuta = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let admin = escuta.local_addr().unwrap();
+        let reiniciou = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let marca = Arc::clone(&reiniciou);
         let servidor = Arc::new(
             ServidorAdministrativo::new(
                 realm.clone(),
@@ -243,7 +247,8 @@ impl Cenario {
                 Arc::clone(&roteador),
                 AccountRepository::new(pool.clone()),
             )
-            .unwrap(),
+            .unwrap()
+            .com_encerramento(move || marca.store(true, std::sync::atomic::Ordering::SeqCst)),
         );
         let tarefa_admin = tokio::spawn(async move {
             servidor.executar(escuta).await.unwrap();
@@ -259,6 +264,7 @@ impl Cenario {
             mundo,
             roteador,
             tarefas: vec![tarefa_bus, tarefa_admin],
+            reiniciou,
         }
     }
 
@@ -412,6 +418,7 @@ async fn senha_global_deduplica_concorrencia_conflito_e_resultado_apos_reinicio(
         admin: endereco,
         realm: "outro_realm".into(),
         tarefas: vec![],
+        reiniciou: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         pool: c.pool.clone(),
         conta: c.conta,
         personagem: c.personagem,
@@ -610,6 +617,25 @@ async fn entrada_em_andamento_nao_parece_offline() {
     c.esperar_presenca("em_transicao").await;
     transacao.rollback().await.unwrap();
     c.esperar_presenca("online").await;
+    c.encerrar().await;
+}
+
+/// B249: "reiniciar" responde com quantos estão online, desconecta todos pelo caminho do logout (salvando) e só
+/// então encerra o processo.
+#[tokio::test]
+async fn reiniciar_desconecta_todos_salvando_e_encerra() {
+    let c = Cenario::montar().await;
+    let _bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let r = c.pedir(&c.realm, json!({"tipo":"reiniciar"})).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["tipo"].as_str(), r["dados"]["online"].as_u64()), (Some("aplicado"), Some("reiniciar"), Some(1)), "{r}");
+    c.esperar_presenca("ausente").await;
+    assert!(!c.mundo.read().await.players.contains_key(&(c.personagem as i64)), "saiu do mundo");
+    let limite = tokio::time::Instant::now() + Duration::from_secs(10);
+    while !c.reiniciou.load(std::sync::atomic::Ordering::SeqCst) {
+        assert!(tokio::time::Instant::now() < limite, "não encerrou");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     c.encerrar().await;
 }
 

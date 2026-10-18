@@ -34,8 +34,10 @@ def registrar_consultas(app):
             taxas = [resposta.get("taxas") for resposta in respostas]
             # Mapas que algum processo sabe montar (B183): o painel só oferece ligar esses.
             carregaveis = sorted({m for resposta in respostas for m in resposta.get("carregaveis", [])})
+            # Partida de cada GS (B249): a mais antiga decide se algum ainda roda com dados velhos.
+            inicios = [r.get("iniciado_em") for r in respostas if isinstance(r.get("iniciado_em"), int)]
             return {"realm_id": realm_id, "estado": "consultado", "origem": "viva", "mapas": mapas,
-                    "carregaveis": carregaveis,
+                    "carregaveis": carregaveis, "iniciado_em": min(inicios) if inicios else None,
                     "jogadores_online": sum(mapa["jogadores_online"] for mapa in mapas),
                     "taxas": taxas[0] if taxas and all(t == taxas[0] for t in taxas) else None}
         except CanalIndisponivel as erro:

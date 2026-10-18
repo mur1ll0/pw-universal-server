@@ -179,14 +179,14 @@ async function publicarRecursos() {
   const obrigar = elemento("recursos-obrigar").checked;
   const texto = `Publica a versão ${atual.atual + 1} do cliente ${recursos.versao} com ${ids.map((i) => `#${i}`).join(", ")}. ` +
     (obrigar ? "O launcher vai exigir a atualização antes de jogar." : "Quem estiver na versão anterior ainda pode jogar.") +
-    " Arquivos de destino \"servidor\"/\"ambos\" (elements, tasks, npcgen) ainda precisam ser copiados para o realm e o realm reiniciado.";
+    " Arquivos de destino \"servidor\"/\"ambos\" (elements, npcgen, precinct, region, world_targets) são gravados no realm, que precisa ser reiniciado para lê-los (aviso no topo do Estúdio).";
   if (!(await confirmar("Publicar versão nova?", texto, "Publicar"))) return;
   executarRecurso(async () => {
     const r = await api(rotaRecursos("publicar"), { method: "POST", body: JSON.stringify({ rascunhos: ids, minima: obrigar ? atual.atual + 1 : null }) });
     recursos.selecionados.clear();
     elemento("recursos-obrigar").checked = false;
     return r;
-  }, "Versão publicada: o launcher já oferece a atualização.");
+  }, "Versão publicada: o launcher já oferece a atualização. Se havia arquivo do servidor, reinicie o realm pelo aviso no topo do Estúdio.");
 }
 
 function desenharHistorico() {

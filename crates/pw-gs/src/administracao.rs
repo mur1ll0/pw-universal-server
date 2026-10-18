@@ -62,6 +62,10 @@ pub enum Consulta {
     /// Liga/desliga um mapa deste realm (E7). Só o processo que serve o mapa aplica; com
     /// `carregar`, este processo também aceita um mapa que não carrega (B183: ligar monta).
     DefinirMapa { mapa: i32, ligado: bool, #[serde(default)] carregar: bool },
+    /// Reiniciar o servidor de mundo (B249): para que os arquivos do `config` publicados pelo Estúdio valham — o GS
+    /// os lê uma vez, ao montar o `GameDataManager`. Desconecta todos (salvando) e encerra o processo; o Docker o sobe
+    /// de novo (`restart: unless-stopped`) e o `pw-link` reconecta sozinho (`pw-link/src/uplink.rs:133`).
+    Reiniciar,
     /// Edição de personagem (E5): um só de `dinheiro` (dar), `exp`/`sp` (somar, só online),
     /// `pontos` (dar pontos livres), `nivel` (alvo, só sobe) ou `cultivo` (B182).
     EditarPersonagem {
@@ -304,6 +308,8 @@ pub struct ServidorAdministrativo {
     segredo: Vec<u8>,
     roteador: Arc<RoteadorDeMapas>,
     contas: AccountRepository,
+    /// O que "reiniciar" faz depois de desconectar todos: encerrar o processo (o teste troca por uma marca).
+    encerrar: Arc<dyn Fn() + Send + Sync>,
 }
 
 impl ServidorAdministrativo {
@@ -322,7 +328,14 @@ impl ServidorAdministrativo {
             segredo,
             roteador,
             contas,
+            encerrar: Arc::new(|| std::process::exit(0)),
         })
+    }
+
+    /// Troca o encerramento do "reiniciar" (testes).
+    pub fn com_encerramento(mut self, encerrar: impl Fn() + Send + Sync + 'static) -> Self {
+        self.encerrar = Arc::new(encerrar);
+        self
     }
 
     pub async fn executar(self: Arc<Self>, escuta: TcpListener) -> anyhow::Result<()> {
@@ -639,6 +652,21 @@ impl ServidorAdministrativo {
                     }
                     Consulta::DefinirMapa { mapa, ligado, carregar } => {
                         self.roteador.definir_mapa(&self.contas.realms(), &self.realm, mapa, ligado, carregar).await
+                    }
+                    Consulta::Reiniciar => {
+                        // A resposta sai antes: desconectar e salvar todos pode passar do tempo do canal.
+                        let online = self.roteador.quantos_online().await;
+                        let (roteador, encerrar) = (Arc::clone(&self.roteador), Arc::clone(&self.encerrar));
+                        let administrador = pedido.administrador_id;
+                        tokio::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                            let saiu = roteador.desconectar_todos().await;
+                            tracing::warn!(administrador, desconectados = saiu,
+                                "admin: reiniciar — todos salvos e desconectados; encerrando o processo");
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            encerrar();
+                        });
+                        json!({"estado":"aplicado","tipo":"reiniciar","online":online})
                     }
                     Consulta::Mundos => self.roteador.resumo_administrativo().await,
                     Consulta::Personagem { personagem_id } if personagem_id > 0 => {

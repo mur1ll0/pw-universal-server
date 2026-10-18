@@ -121,6 +121,15 @@ fn item_json(i: &pw_storage::ItemDeRecurso) -> Value {
     })
 }
 
+/// A última publicação que gravou arquivo no `config` do realm (B249): o painel a compara com o `iniciado_em` do GS.
+async fn ultima_do_servidor(State(e): State<Arc<Estado>>, Path(v): Path<String>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(match e.gov.repo.ultima_do_servidor(&v).await? {
+        Some((numero, quando)) => json!({ "numero": numero, "publicada_em": quando }),
+        None => json!({ "numero": null, "publicada_em": null }),
+    }))
+}
+
 async fn alteracoes(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<Limite>) -> R<Json<Value>> {
     validar(&v)?;
     let lista = e.gov.repo.alteracoes(&v, q.limite.unwrap_or(50).clamp(1, 500)).await?;
@@ -602,6 +611,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
     Router::new()
         .route("/admin/versoes", get(versoes))
         .route("/admin/{v}/alteracoes", get(alteracoes))
+        .route("/admin/{v}/servidor/ultima", get(ultima_do_servidor))
         .route("/admin/{v}/arquivos", get(arquivos))
         .route("/admin/{v}/arquivo", get(conteudo))
         .route("/admin/{v}/rascunhos", post(criar_rascunho))

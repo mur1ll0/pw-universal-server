@@ -1324,6 +1324,11 @@ impl BusServer {
         }
     }
 
+    /// Os personagens com sessão neste mapa (B249: reiniciar o realm desconecta todos).
+    pub(crate) async fn personagens_com_sessao(&self) -> Vec<i32> {
+        self.sessoes.read().await.keys().copied().collect()
+    }
+
     /// Painel (E4, B175): encerra a sessão pelo mesmo caminho do logout — trava de
     /// gravação, entidade fora do mundo, fotografia salva antes de liberar — e o link
     /// devolve o cliente à tela de login. Quem chama segura a guarda de presença.

@@ -20,6 +20,14 @@ pub struct AlteracaoDeRecurso {
     pub itens: i64,
 }
 
+/// A última versão publicada que levou arquivo ao `config` do realm (item `servidor`/`ambos`, B249): número e
+/// `publicada_em` em segundos Unix. O painel compara com o `iniciado_em` do GS para dizer "aguarda reinício".
+pub const SELECT_ULTIMA_DO_SERVIDOR: &str = "SELECT v.numero, EXTRACT(EPOCH FROM v.publicada_em)::BIGINT AS publicada_em
+     FROM recursos_versoes v
+     WHERE v.linha = $1 AND EXISTS (SELECT 1 FROM recursos_alteracao_itens i
+                                     WHERE i.alteracao = ANY(v.alteracoes) AND i.destino <> 'cliente')
+     ORDER BY v.numero DESC LIMIT 1";
+
 const SELECT_ALTERACAO: &str = "SELECT a.id, a.linha, a.autor, c.username AS autor_nome, a.criada_em,
         a.descricao, a.estado, a.reverte,
         (SELECT v.numero FROM recursos_versoes v WHERE v.linha = a.linha AND a.id = ANY(v.alteracoes)) AS versao,
@@ -176,6 +184,11 @@ impl RecursosRepository {
         .bind(linha)
         .fetch_optional(self.pool.get_ref())
         .await?)
+    }
+
+    /// A última versão que levou arquivo ao realm: (número, `publicada_em` em segundos Unix) — B249.
+    pub async fn ultima_do_servidor(&self, linha: &str) -> Result<Option<(i32, i64)>> {
+        Ok(sqlx::query_as(SELECT_ULTIMA_DO_SERVIDOR).bind(linha).fetch_optional(self.pool.get_ref()).await?)
     }
 
     /// Cria um rascunho (idempotente por `operacao_id`: repetir o pedido devolve o mesmo id).

@@ -60,6 +60,9 @@ pub struct RoteadorDeMapas {
     /// Fila de trocas e o próprio roteador, para ligar os mapas carregados depois.
     trocas: std::sync::OnceLock<mpsc::UnboundedSender<crate::bus_server::PedidoDeTroca>>,
     eu: std::sync::OnceLock<std::sync::Weak<RoteadorDeMapas>>,
+    /// Quando o processo montou o roteador (B249): o painel compara com a última publicação de arquivo do servidor
+    /// para dizer "aguarda reinício" — os dados do `config` são lidos uma vez, na partida.
+    iniciado_em: std::time::SystemTime,
 }
 
 /// Dados comuns e versão: o que `preparar_mapa` precisa para montar um mapa (B183).
@@ -130,6 +133,7 @@ impl RoteadorDeMapas {
             carregando: std::sync::Mutex::new(std::collections::HashSet::new()),
             trocas: std::sync::OnceLock::new(),
             eu: std::sync::OnceLock::new(),
+            iniciado_em: std::time::SystemTime::now(),
         }
     }
 
@@ -485,7 +489,9 @@ impl RoteadorDeMapas {
         let mut carregaveis: Vec<i32> = self.carga.get()
             .map(|c| c.dados.pastas_de_mapa.keys().copied().collect()).unwrap_or_default();
         carregaveis.sort_unstable();
-        serde_json::json!({"presenca":"observada","mapas":mapas,"taxas":self.taxas(),"carregaveis":carregaveis})
+        let iniciado_em = self.iniciado_em.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        serde_json::json!({"presenca":"observada","mapas":mapas,"taxas":self.taxas(),"carregaveis":carregaveis,
+            "iniciado_em":iniciado_em})
     }
 
     /// Personagens da conta atendidos por este processo, com o mapa dono de cada um.
@@ -505,6 +511,30 @@ impl RoteadorDeMapas {
 
     /// Painel (E4, B175): desconecta a conta deste processo. Guarda de presença em
     /// escrita, como o logout em `entregar`, para não cruzar com entrada/troca.
+    /// Quantos personagens têm sessão em algum mapa deste processo.
+    pub async fn quantos_online(&self) -> usize {
+        let mut n = 0;
+        for (_, m) in self.todos() {
+            n += m.personagens_com_sessao().await.len();
+        }
+        n
+    }
+
+    /// Reiniciar pelo painel (B249): todos saem pelo caminho do logout (`expulsar_pelo_painel`: trava de gravação,
+    /// fotografia salva antes de liberar), com a guarda de presença em escrita para ninguém entrar no meio.
+    pub async fn desconectar_todos(&self) -> usize {
+        let _transicao = self.presenca.write().await;
+        let mut desconectados = 0;
+        for (_, m) in self.todos() {
+            for role in m.personagens_com_sessao().await {
+                if m.expulsar_pelo_painel(role).await {
+                    desconectados += 1;
+                }
+            }
+        }
+        desconectados
+    }
+
     pub async fn desconectar_conta(&self, conta: i32) -> serde_json::Value {
         let _transicao = self.presenca.write().await;
         let mut desconectados = 0;

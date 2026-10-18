@@ -8,7 +8,7 @@ import os
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
 
 import teste_base as base
@@ -32,6 +32,14 @@ class RecursosFalso(BaseHTTPRequestHandler):
             self.send_header("content-type", "image/png")
             self.end_headers()
             self.wfile.write(b"PNGFALSO")
+            return
+        if partes.path.endswith("/servidor/ultima"):
+            resposta = json.dumps({"numero": 3, "publicada_em": 2000}).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(resposta)))
+            self.end_headers()
+            self.wfile.write(resposta)
             return
         if partes.path.endswith("/arquivo") and self.command == "GET":
             self.send_response(200)
@@ -249,6 +257,32 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         r = await self.cliente.put("/api/realms/realm_155/estudio/rastreador/2001", params={"rascunho": 5},
                                    headers=csrf, json={"campos": {"pos": [1, 2, 3]}})
         self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.5.5/estudio/rastreador/2001"))
+
+    async def test_aguarda_reinicio_e_reiniciar(self):
+        """B249: aguarda reinício = última publicação de servidor depois da partida do GS; reiniciar exige
+        confirmar o id do realm e manda "reiniciar" a todos os GS do realm."""
+        await self.entrar()
+        csrf = await self.csrf()
+        mundos = AsyncMock(return_value=[{"presenca": "observada", "mapas": [{"mapa": 1, "jogadores_online": 2}],
+                                          "iniciado_em": 1000}])
+        with patch("painel.recursos.consultar_daemons", mundos):
+            r = (await self.cliente.get("/api/realms/realm_126/servidor")).json()
+        self.assertEqual((r["aguarda_reinicio"], r["iniciado_em"], r["ultima"]["numero"], r["jogadores_online"]), (True, 1000, 3, 2))
+        mundos.return_value = [{"presenca": "observada", "mapas": [], "iniciado_em": 3000}]
+        with patch("painel.recursos.consultar_daemons", mundos):
+            r = (await self.cliente.get("/api/realms/realm_126/servidor")).json()
+        self.assertIs(r["aguarda_reinicio"], False)
+        aplicar = AsyncMock(return_value=[{"estado": "aplicado", "tipo": "reiniciar", "online": 2}])
+        with patch("painel.recursos.aplicar_no_realm", aplicar):
+            r = await self.cliente.post("/api/realms/realm_126/reiniciar", headers=csrf, json={"confirmar": "outro"})
+            self.assertEqual(r.status_code, 422)
+            aplicar.assert_not_called()
+            r = await self.cliente.post("/api/realms/realm_126/reiniciar", headers=csrf, json={"confirmar": "realm_126"})
+            self.assertEqual((r.status_code, r.json()["online"], r.json()["processos"]), (200, 2, 1))
+            self.assertEqual(aplicar.call_args.args[0], "realm_126")
+            self.assertEqual(aplicar.call_args.args[2], {"tipo": "reiniciar"})
+            r = await self.cliente.post("/api/realms/realm_126/reiniciar", json={"confirmar": "realm_126"})
+            self.assertEqual(r.status_code, 403, "sem CSRF")
 
     async def test_versao_invalida_e_servico_sem_segredo(self):
         await self.entrar()

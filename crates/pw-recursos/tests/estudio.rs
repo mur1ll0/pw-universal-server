@@ -313,9 +313,14 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let item = hist.as_array().unwrap().iter().find(|a| a["id"] == r2).unwrap()["lista"][0].clone();
         assert_eq!((item["caminho"].as_str(), item["destino"].as_str()), (Some("servidor\\world\\npcgen.data"), Some("servidor")));
         assert_eq!(item["resumo"]["mudancas"].as_array().unwrap().len(), 3, "{item}");
+        // "Aguarda reinício" (B249): a publicação do elements (v1, destino ambos) já conta como arquivo do servidor.
+        let u1 = json_de(pedir("GET", "servidor/ultima").call().unwrap());
+        assert_eq!(u1["numero"], 1, "{u1}");
         // Publicar: o realm ganha o arquivo novo, que o carregador do GS lê.
         let p2 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r2]})).unwrap());
         assert_eq!((p2["numero"].as_i64(), p2["aplicados"].as_array().unwrap().len()), (Some(2), 1), "{p2}");
+        let u2 = json_de(pedir("GET", "servidor/ultima").call().unwrap());
+        assert!(u2["numero"] == 2 && u2["publicada_em"].as_i64().unwrap() >= u1["publicada_em"].as_i64().unwrap(), "{u2}");
         let novo = fs::read(realm2.join("world").join("npcgen.data")).unwrap();
         assert_ne!(novo, npcgen_original);
         let ed = pw_data_loader::npcgen_editavel::NpcgenEditavel::ler(&novo).unwrap();
