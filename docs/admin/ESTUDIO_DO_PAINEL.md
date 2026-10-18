@@ -267,6 +267,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 >
 > **B252 (S4, 10ª parte):** destinos de teleporte em par com o `world_targets.txt` do cliente: nome, criar e remover
 > (recusado se uma transportadora usa). Do S4 sobram as regiões (zona segura) e alinhar os 4 mapas do 1.2.6.
+>
+> **B253 (S4, 11ª parte):** visão do alinhamento cliente × servidor de todos os mapas e "Alinhar o servidor com o
+> cliente" (refaz o `.sev` do realm a partir do `.clt`, num rascunho). Achado: 14 pares diferem, inclusive o da a61 do
+> 1.5.5. Com isso o S4 fica fechado, exceto as regiões (zona segura), de efeito ainda não medido.
 
 | fase | entrega |
 | :--- | :--- |

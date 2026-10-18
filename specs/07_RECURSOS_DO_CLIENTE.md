@@ -341,6 +341,21 @@ destino. Destino novo fica sem transportadora até a ficha do serviço listar o 
 `num_targets`). Painel: nome, "Novo destino (copiar este)", "Remover destino" (a rota genérica `POST …/{arquivo}` do
 painel aceita `teleportes`).
 
+**Alinhar o servidor com o cliente (S4, B253):** `PrecinctDoCliente::para_o_servidor`/`RegionDoCliente::para_o_servidor`
+geram o `.sev` a partir do `.clt` (os campos são os mesmos; a versão é a do `.sev` do realm, o carimbo o do cliente).
+O `.clt` guarda `%f` (6 casas), que nem sempre devolve o `float` exato que o `.sev` tem (o editor exporta os dois da
+memória), então a comparação é por **equivalência** (`clt::precinct_equivalente`/`region_equivalente`: carimbo,
+contagem e inteiros iguais, `float` a < 1e-3). Medido nos 200 pares dos dois clientes: **186 equivalentes, 14
+diferentes** — 1.2.6 `precinct` a12, a25, a27 e `region` a25, a27, a31; 1.5.5 BR `precinct` a25, a32, a40, a43,
+**a61** (o mapa onde todo personagem novo nasce: 27 distritos no cliente, 25 no realm), a70, b01, random03 — nesses do
+1.5.5 o carimbo é igual (o cliente não reclama), mas renascer usa os distritos do servidor. Rotas:
+`GET estudio/alinhamento[?rascunho]` (todos os mapas do `instance.txt`: por arquivo `equivalente`, carimbos e contagens) e
+`POST mapas/{c}/alinhar?rascunho` (refaz no rascunho, como item `servidor`, só os `.sev` que não são equivalentes; nada
+vai ao cliente). Painel: "Alinhar o servidor com o cliente" no editor de distrito/portal quando o par não casa. **Não
+aplicado a nenhum mapa** — qual lado vale (cliente BR ou pacote de servidor) é decisão do Murillo. Regiões (`[region]`,
+zona segura) seguem só leitura: no servidor elas só servem aos pontos de passagem (`ActivateRegionWayPoints`,
+`player.cpp:25193-25215`), efeito em jogo de editá-las ainda não medido.
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -361,7 +376,10 @@ realm) e baixado com a posição nova. `pw-data-loader`: `precinct_e_region_de_t
 gerados dos `.sev` da a01, renomear e redesenhar, criar distrito, editar/criar/remover portal → 4 itens no rascunho
 (2 `servidor`, 2 `cliente`), publicados, carimbos e sequência iguais, o polígono novo vale no `distrito_em` do GS.
 Destinos (B252): `.txt` gerado do `.sev` do 1.2.6; remover destino usado → 400; renomear e criar (id = maior + 1,
-posição a 3 casas) → publicados, ids alinhados nos dois. `world_targets::testes_do_txt` (os `.txt` reais; empate 0,0625). Controladores
+posição a 3 casas) → publicados, ids alinhados nos dois. `world_targets::testes_do_txt` (os `.txt` reais; empate 0,0625).
+Alinhar (B253): `precinct.clt` com um distrito a menos enviado ao rascunho → `alinhamento` acusa → `alinhar` refaz só o
+`precinct.sev` e o par volta a ser equivalente; de novo, nada a fazer. `clt::testes_do_servidor` (os 200 pares reais;
+falha se passar dos 14 diferentes conhecidos). Controladores
 (B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. Altura (B248):
 sem `.hmap` responde `y` nulo; coordenada inválida 400. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
@@ -374,8 +392,8 @@ arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no
 - ("Aguarda reinício" e reiniciar pelo painel: feitos no B249, spec 06.) Rascunho só de servidor continua gerando
   versão nova do cliente com o manifesto igual — **decisão do B250, mantido**: o launcher só baixa o manifesto e termina,
   e a versão é o que guarda o `publicada_em` do aviso de reinício e o que o reverter usa.
-- Estúdio: telas próprias, `tasks`/`gshop`; no mapa, regiões (`[region]`, a zona segura) editáveis, nome de
-  controlador (o `szName` é só leitura); alinhar os carimbos dos 4 mapas do 1.2.6 que divergem.
+- Estúdio: telas próprias, `tasks`/`gshop`; no mapa, regiões (`[region]`) editáveis, nome de controlador (o
+  `szName` é só leitura); decidir e aplicar o alinhamento dos 14 pares que diferem (ferramenta pronta, B253).
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).

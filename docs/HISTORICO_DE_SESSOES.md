@@ -14252,3 +14252,42 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: o destino novo na lista do NPC (depois de pô-lo numa transportadora) levando ao ponto.
     - Regiões (zona segura) editáveis; alinhar os 4 mapas do 1.2.6.
+
+253. **Sessão 2026-10-18: Estúdio S4, décima primeira parte — alinhar o servidor com o cliente.**
+
+    ### a. Pedido
+    Commitar o B252 (feito: `1c47646`, `ad52efd`) e seguir: regiões e o alinhamento dos 4 mapas do 1.2.6.
+
+    ### b. Evidência
+    - O cliente compara os carimbos do `region` **e** do `precinct` no `INST_DATA_CHECKOUT` e recusa a instância se algum
+      difere (`CECWorld::CheckOutInst`, `EC_World.cpp:2389-2409`); o nosso link o manda na entrada do mundo, com os
+      carimbos do `.sev` do realm (`pw-link/src/gateway.rs:870-925`).
+    - Regiões no servidor só servem aos pontos de passagem (`ActivateRegionWayPoints`, `player.cpp:25193-25215`):
+      editá-las ficou para depois.
+    - Gerar o `.sev` do `.clt` e comparar com o do realm: a 1ª comparação (byte a byte) deu 138 iguais e 62 diferentes; a
+      diferença dos "falsos" estava só nos bits finais dos `float` (o `.clt` tem 6 casas; um script de diagnóstico meu
+      leu errado o `.sev` v6 como se tivesse PK). Por equivalência (inteiros iguais, `float` a < 1e-3): **186 equivalentes,
+      14 diferentes** — além dos do 1.2.6, sete `precinct` do 1.5.5 BR com carimbo igual e conteúdo diferente, entre eles
+      a **a61** (27 distritos no cliente, 25 no realm; "Altar do Som" com outro polígono e outro ponto de renascer).
+
+    ### c. O que foi feito
+    - `pw-data-loader/clt.rs`: `para_o_servidor` (precinct e region), `precinct_equivalente`, `region_equivalente`;
+      `precinct.rs`: `Distrito::novo`.
+    - `pw-recursos`: `par_do_mapa`, `alinhamento` (todos os mapas), `alinhar_com_o_cliente` (só os não equivalentes,
+      item `servidor`); rotas `GET estudio/alinhamento`, `POST mapas/{c}/alinhar`.
+    - Painel: rota `GET …/estudio/alinhamento`, o `POST` genérico aceita `alinhar`; botão "Alinhar o servidor com o
+      cliente" no editor de distrito/portal quando o par não casa.
+
+    ### d. Provas
+    - `clt::testes_do_servidor`: os 200 pares reais (186 equivalentes; falha se passar dos 14 diferentes conhecidos).
+    - `estudio.rs` com o banco: `.clt` com um distrito a menos no rascunho → `alinhamento` acusa → `alinhar` refaz só o
+      `precinct.sev` → equivalente; repetir não faz nada.
+    - Painel `teste_recursos.py` **11/11**. Suítes `pw-recursos` + `pw-data-loader` com o banco: **229 passaram, 0 falharam**.
+    - No contêiner (cliente publicado × realm): 1.5.5 — 80 mapas, desalinhado só o `precinct` de a25, a32, a40, a43, a61,
+      a70, b01, random03 (este aparece duas vezes no `instance.txt`); 1.2.6 — 42 mapas, a12 (precinct), a25 e a27 (os
+      dois), a31 (region). A nc01 não entra: não está no `instance.txt` do 1.2.6.
+
+    ### e. Falta
+    - **Decisão do Murillo:** alinhar (o servidor passa a seguir o cliente) nos 14 pares — a61 do 1.5.5 e os 4 do 1.2.6
+      primeiro — e ver em jogo (instância do 1.2.6 carrega; renascer na a61).
+    - Regiões (zona segura) editáveis.

@@ -7,7 +7,7 @@
 > bloco novo entra como linha no §3.3 (o que olhar em jogo), no §5 (o que ficou faltando) e
 > no índice do §8 — não como parágrafo aqui.
 >
-> **Última atualização: 2026-10-15** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234 launcher (P2) em `a43042d`/`a478035`, confirmado; B235/B236 commitados (`07a30ab`…`5a2a22d`); B237 commitado (`d334cf8`…`eaf329e`); B238 commitado (`a78abf2`…`db76f83`); B239 commitado (`c9c54d1`…`cfbe3b2`); B240 commitado (`32e115a`…`7bb1766`); B241 commitado (`92aa98e`, `5c05e53`); B242 commitado (`132c63b`, `66179c2`); B243 commitado (`0353f5c`, `ed573fc`); B244 commitado (`57dc115`, `0194146`); B245 commitado (`2028129`, `3b9c2fb`); B246 commitado (`c338690`, `35ec407`); B247 commitado (`14abd7f`, `f54ef50`); B248 commitado (`3a8bd56`, `39bf94a`); B249 commitado (`f68f47a`, `4f1d5c6`) — **o GS novo (`pw-world-*`) ainda não publicado, falta o Murillo autorizar**; B250 commitado (`0da45ba`, `9783ac8`); B251 commitado (`d3b002b`, `b98b1c5`); **B252: destinos de teleporte em par com o `world_targets.txt` do cliente — publicado em `pw-recursos`/`pw-admin-api`, não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
+> **Última atualização: 2026-10-15** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234 launcher (P2) em `a43042d`/`a478035`, confirmado; B235/B236 commitados (`07a30ab`…`5a2a22d`); B237 commitado (`d334cf8`…`eaf329e`); B238 commitado (`a78abf2`…`db76f83`); B239 commitado (`c9c54d1`…`cfbe3b2`); B240 commitado (`32e115a`…`7bb1766`); B241 commitado (`92aa98e`, `5c05e53`); B242 commitado (`132c63b`, `66179c2`); B243 commitado (`0353f5c`, `ed573fc`); B244 commitado (`57dc115`, `0194146`); B245 commitado (`2028129`, `3b9c2fb`); B246 commitado (`c338690`, `35ec407`); B247 commitado (`14abd7f`, `f54ef50`); B248 commitado (`3a8bd56`, `39bf94a`); B249 commitado (`f68f47a`, `4f1d5c6`) — **o GS novo (`pw-world-*`) ainda não publicado, falta o Murillo autorizar**; B250 commitado (`0da45ba`, `9783ac8`); B251 commitado (`d3b002b`, `b98b1c5`); B252 commitado (`1c47646`, `ad52efd`); **B253: alinhamento cliente × servidor (`.sev` gerado do `.clt`) — publicado em `pw-recursos`/`pw-admin-api`, não commitado; nenhum mapa alinhado (decisão do Murillo).** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
 > comandos do B77–B88, 14 e 64 conferidos e sobrescritos no 1.2.6, campos do v55 pelo
 > `libtask.so` e prefixos do v7 pelo `gs`; **B126** — IA de combate do monstro por estratégia
 > (conjurar de longe, série de golpes, afastar, fugir, fixo), eventos de vida 75/50/25 %, efeito
@@ -431,6 +431,9 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 - **B252 (destinos novos):** Mapas → Teleportes → clicar num destino → "Novo destino (copiar este)" (posicione antes) →
   na ficha da transportadora (NPC_TRANSMIT_SERVICE) pôr o id novo num `targets_N_idTarget` e subir `num_targets` →
   publicar, reiniciar, atualizar → o NPC lista o destino com o nome novo e leva ao ponto.
+- **B253 (alinhar):** decidir se o servidor segue o cliente nos 14 pares que diferem (ver §5D e spec 07). Para um mapa:
+  Mapas → abrir o mapa → um distrito ou portal → "Alinhar o servidor com o cliente" → publicar → reiniciar. A a61 do
+  1.5.5 (onde se nasce) é a primeira candidata: o cliente BR tem 27 distritos, o realm 25.
 
 **1.5.5 (realm 155, e o que vale para os dois)**
 
@@ -721,10 +724,11 @@ capturas da VM 1.2.6 em `docs/evidencias/126/` (lidas com
 (validador de ids: ids > 260 são recusados, VA 0x584618); `docs/INVENTARIO_PROTOCOLO_126.md`
 (98 S2C e 46 C2S do `pw-gs`, com o que já foi conferido).
 
-**Achado do B251 (a conferir em jogo):** no 1.2.6 o carimbo do `region.clt` do cliente difere do `region.sev` do realm
-em **a27, a31 e nc01**, e o do `precinct` em **a12, a27 e nc01**; na a27 e na a31 até a sequência de portais difere.
-O cliente recusa a instância quando o carimbo do `region` que o servidor manda (`INST_DATA_CHECKOUT`) não bate com o
-dele (`manager.rs:236-240`, "regionset timestamp error") — suspeito para essas instâncias não carregarem no 1.2.6.
+**Achado do B251/B253 (a conferir em jogo):** no 1.2.6 o carimbo do `region.clt` do cliente difere do `region.sev`
+do realm em **a27, a31 e nc01**, e o do `precinct` em **a12, a27 e nc01**; na a27 e na a31 até a sequência de portais
+difere. O cliente compara **os dois** carimbos ao receber o `INST_DATA_CHECKOUT` e recusa a instância se algum difere
+(`CECWorld::CheckOutInst`, `EC_World.cpp:2389-2409`) — suspeito para essas instâncias não carregarem no 1.2.6. O B253
+deixou pronto, no Estúdio, refazer o `.sev` do realm a partir do `.clt` do cliente (não aplicado).
 
 | área | estado no 1.2.6 | o que falta | onde |
 | :--- | :--- | :--- | :--- |
@@ -1141,6 +1145,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 250 | 10-18 | Estúdio S4: modelo dos objetos dinâmicos (DynamicObjects.data do cliente) |
 | 251 | 10-18 | Estúdio S4: precinct.clt/region.clt do cliente (104 idênticos); distritos e portais novos em par |
 | 252 | 10-18 | Estúdio S4: destinos de teleporte em par com o world_targets.txt do cliente (nome, criar, remover) |
+| 253 | 10-18 | Estúdio S4: alinhamento cliente × servidor (.sev gerado do .clt); 14 pares diferem, a61 do 1.5.5 inclusive |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |
