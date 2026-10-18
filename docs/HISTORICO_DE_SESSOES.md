@@ -14219,3 +14219,36 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo (1.5.5): nome do distrito novo no cliente depois de atualizar pelo launcher; portal novo levando ao destino.
     - Destinos de teleporte novos (`world_targets.txt`), regiões (zona segura) editáveis, alinhar os 4 mapas do 1.2.6.
+
+252. **Sessão 2026-10-18: Estúdio S4, décima parte — destinos de teleporte em par com o cliente.**
+
+    ### a. Pedido
+    Commitar o B251 (feito: `d3b002b`, `b98b1c5`) e seguir: destinos de teleporte novos.
+
+    ### b. Evidência
+    - `world_targets.txt` medido nos dois clientes: UTF-16LE com BOM, CRLF, `id ⇥ "nome" ⇥ mundo ⇥ "x,y,z" ⇥ domínio`,
+      posição com 3 casas; ids iguais e na mesma ordem que o `world_targets.sev` do realm, posições iguais (o `.sev` é
+      gerado do `.txt` pelo `globalsave`, `globaldataman.cpp:793-803`).
+    - Por isso, editar a posição com o `.txt` alinhado grava no `.sev` o valor já arredondado a 3 casas (o `%.3f` do
+      MSVC; o B245 gravava a posição exata só no `.sev`).
+    - Dois casos de teste errados no caminho, de expectativa minha: `2.0005f32` e `2.0015f32` caem abaixo do empate; o
+      teste ficou com 0,0625, empate exato em binário (MSVC: 0.063; para o par: 0.062).
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `clt::formatar_com` (casas), `world_targets::{TxtDosDestinos, DestinoDoCliente}`,
+      `posicao_do_texto`.
+    - `pw-recursos`: `alterar_destinos` (par), `transportadoras` (quem leva a cada destino), `editar_teleporte` com
+      `nome`, `novo_teleporte`, `remover_teleporte` (recusa se usado); rotas `POST mapas/{c}/teleportes`,
+      `DELETE teleportes/{id}`.
+    - Painel: a rota genérica de `POST` aceita `teleportes`; editor com nome, "Novo destino (copiar este)" e "Remover".
+
+    ### d. Provas
+    - `world_targets_txt_dos_dois_clientes_volta_identico` (49 + 92, reais).
+    - `estudio.rs` com o banco: remover destino usado → 400 ("transportadora"); renomear e criar → publicados; ids
+      alinhados; posição `[100.12345, …]` → `100.123` nos dois.
+    - Painel `teste_recursos.py` **11/11**. Suítes `pw-recursos` + `pw-data-loader` com o banco: **228 passaram, 0 falharam**.
+    - No contêiner: mundo do 1.5.5 (65 destinos) e do 1.2.6 (49) alinhados com o `.txt` do cliente publicado.
+
+    ### e. Falta
+    - Ver em jogo: o destino novo na lista do NPC (depois de pô-lo numa transportadora) levando ao ponto.
+    - Regiões (zona segura) editáveis; alinhar os 4 mapas do 1.2.6.

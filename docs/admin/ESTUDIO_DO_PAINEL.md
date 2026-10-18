@@ -264,6 +264,9 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B251 (S4, 9ª parte):** `precinct.clt`/`region.clt` do cliente lidos e gravados (104 pares idênticos); distrito com
 > nome e polígono desenhado no mapa, criar e remover; portal com destino, caixa e tamanho, criar e remover — o `.sev` do
 > realm e o `.clt` do cliente no mesmo rascunho. Falta: destinos de teleporte novos (`world_targets.txt`) e regiões.
+>
+> **B252 (S4, 10ª parte):** destinos de teleporte em par com o `world_targets.txt` do cliente: nome, criar e remover
+> (recusado se uma transportadora usa). Do S4 sobram as regiões (zona segura) e alinhar os 4 mapas do 1.2.6.
 
 | fase | entrega |
 | :--- | :--- |

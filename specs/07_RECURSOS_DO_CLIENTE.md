@@ -329,6 +329,18 @@ o 1.5.5 BR casa nos 68 pares. Painel: no distrito, nome, "Redesenhar polígono" 
 desfazer/cancelar), "Novo distrito (copiar este)" e "Remover"; no portal, destino, nível, caixa e meia-medida,
 "Posicionar a caixa pelo clique", "Novo portal" e "Remover"; o corpo do distrito tem limite de 64 KiB no painel.
 
+**Destinos de teleporte em par com o cliente (S4, B252):** `world_targets::TxtDosDestinos` lê e grava o
+`maps\world\world_targets.txt` (UTF-16LE com BOM, CRLF, `id ⇥ "nome" ⇥ mundo ⇥ "x,y,z" ⇥ domínio`, posição em `%.3f`
+do MSVC — `clt::formatar_com`) — **idêntico nos clientes 1.2.6 (49) e 1.5.5 BR (92)**, e nos dois o `.txt` e o `.sev`
+têm os mesmos ids na mesma ordem e as mesmas posições (o `.sev` sai do `.txt` pelo `globalsave`). Edição em par
+(`alterar_destinos`): `world_targets.sev` item `servidor`, `.txt` item `cliente`; com os ids alinhados a posição vai aos
+dois **arredondada a 3 casas**, como o `globalsave` faria (sem o `.txt`, só o `.sev`, exata). Só alinhado: `nome`,
+`POST mapas/{c}/teleportes {base, campos: {nome, pos}}` (cópia do domínio do `base`, no mapa aberto, id = maior + 1) e
+`DELETE teleportes/{id}` — **recusado se alguma `NPC_TRANSMIT_SERVICE`** (no `elements` do rascunho) ainda leva ao
+destino. Destino novo fica sem transportadora até a ficha do serviço listar o id (`targets_N_idTarget`,
+`num_targets`). Painel: nome, "Novo destino (copiar este)", "Remover destino" (a rota genérica `POST …/{arquivo}` do
+painel aceita `teleportes`).
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -347,7 +359,9 @@ realm) e baixado com a posição nova. `pw-data-loader`: `precinct_e_region_de_t
 `world_targets_volta_identico`, `task_npc::testes`, `campos_de_objeto_e_controlador_nos_npcgen_reais`,
 `clt::testes` (os `.clt` reais dos dois clientes, fora do repositório: sem eles o teste avisa). Par (B251): com `.clt`
 gerados dos `.sev` da a01, renomear e redesenhar, criar distrito, editar/criar/remover portal → 4 itens no rascunho
-(2 `servidor`, 2 `cliente`), publicados, carimbos e sequência iguais, o polígono novo vale no `distrito_em` do GS. Controladores
+(2 `servidor`, 2 `cliente`), publicados, carimbos e sequência iguais, o polígono novo vale no `distrito_em` do GS.
+Destinos (B252): `.txt` gerado do `.sev` do 1.2.6; remover destino usado → 400; renomear e criar (id = maior + 1,
+posição a 3 casas) → publicados, ids alinhados nos dois. `world_targets::testes_do_txt` (os `.txt` reais; empate 0,0625). Controladores
 (B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. Altura (B248):
 sem `.hmap` responde `y` nulo; coordenada inválida 400. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
@@ -360,9 +374,8 @@ arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no
 - ("Aguarda reinício" e reiniciar pelo painel: feitos no B249, spec 06.) Rascunho só de servidor continua gerando
   versão nova do cliente com o manifesto igual — **decisão do B250, mantido**: o launcher só baixa o manifesto e termina,
   e a versão é o que guarda o `publicada_em` do aviso de reinício e o que o reverter usa.
-- Estúdio: telas próprias, `tasks`/`gshop`; no mapa, destinos de teleporte novos (exigem o `world_targets.txt` do
-  cliente), regiões (`[region]`, a zona segura) editáveis, nome de controlador (o `szName` é só leitura); alinhar os
-  carimbos dos 4 mapas do 1.2.6 que divergem.
+- Estúdio: telas próprias, `tasks`/`gshop`; no mapa, regiões (`[region]`, a zona segura) editáveis, nome de
+  controlador (o `szName` é só leitura); alinhar os carimbos dos 4 mapas do 1.2.6 que divergem.
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).
