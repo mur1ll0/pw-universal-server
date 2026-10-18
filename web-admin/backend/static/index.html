@@ -12,6 +12,7 @@
   <script src="/static/estudio.js" defer></script>
   <script src="/static/mapa.js" defer></script>
   <script src="/static/loja.js" defer></script>
+  <script src="/static/missoes.js" defer></script>
 </head>
 <body>
   <!-- Entrada -->
@@ -287,7 +288,21 @@
             <button id="estudio-vista-tabelas" class="botao botao-primario botao-pequeno" type="button" role="tab" aria-selected="true">Tabelas</button>
             <button id="estudio-vista-mapas" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Mapas</button>
             <button id="estudio-vista-loja" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Loja Gold</button>
+            <button id="estudio-vista-missoes" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Missões</button>
           </div>
+          <section id="estudio-missoes" class="recursos-cartao" hidden>
+            <div class="recursos-linha">
+              <input id="missoes-busca" class="campo" type="search" placeholder="Id ou nome da missão" aria-label="Buscar missão">
+              <label class="recursos-marca"><input type="checkbox" id="missoes-topo" checked> Só as de topo</label>
+              <button id="missoes-anterior" class="botao botao-pequeno botao-secundario" type="button">‹</button>
+              <button id="missoes-proxima" class="botao botao-pequeno botao-secundario" type="button">›</button>
+              <span id="missoes-situacao" class="texto-suave"></span>
+            </div>
+            <div class="loja-grade">
+              <div id="missoes-lista" class="loja-lista"></div>
+              <div id="missoes-ficha" class="mapa-editor">Escolha uma missão.</div>
+            </div>
+          </section>
           <section id="estudio-loja" class="recursos-cartao" hidden>
             <div class="recursos-linha">
               <select id="loja-arquivo" class="campo" aria-label="Loja">

@@ -594,6 +594,28 @@ async fn estudio_remover_oferta(State(e): State<Arc<Estado>>, Path((v, arquivo, 
     Ok(Json(e.estudio.remover_oferta(&e.gov, &v, &arquivo, r, indice).await?))
 }
 
+// ------------------------------------------------------------------ missões (S7, B255)
+
+#[derive(Deserialize)]
+struct QMissoes {
+    busca: Option<String>,
+    topo: Option<bool>,
+    pagina: Option<usize>,
+    por_pagina: Option<usize>,
+}
+
+async fn estudio_missoes(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QMissoes>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = e.estudio.missoes(&e.gov, &v, q.busca.as_deref().unwrap_or(""), q.topo.unwrap_or(true), q.pagina.unwrap_or(0),
+        q.por_pagina.unwrap_or(100).clamp(1, 500)).await?;
+    Ok(Json(r))
+}
+
+async fn estudio_missao(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, u32)>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.missao(&e.gov, &v, id).await?))
+}
+
 // ------------------------------------------------------------------ teleportes (S4, B245)
 
 async fn estudio_teleportes(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
@@ -767,6 +789,8 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/mapas/{caminho}/rastreador", get(estudio_rastreador))
         .route("/admin/{v}/estudio/mapas/{caminho}/altura", get(estudio_altura))
         .route("/admin/{v}/estudio/alinhamento", get(estudio_alinhamento))
+        .route("/admin/{v}/estudio/missoes", get(estudio_missoes))
+        .route("/admin/{v}/estudio/missoes/{id}", get(estudio_missao))
         .route("/admin/{v}/estudio/loja/{arquivo}", get(estudio_loja).post(estudio_clonar_oferta))
         .route("/admin/{v}/estudio/loja/{arquivo}/{indice}", get(estudio_oferta).put(estudio_editar_oferta).delete(estudio_remover_oferta))
         .route("/admin/{v}/estudio/mapas/{caminho}/alinhar", post(estudio_alinhar))

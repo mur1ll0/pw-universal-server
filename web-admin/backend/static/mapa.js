@@ -27,14 +27,16 @@ function mostrarVistaDoEstudio(vista) {
   // Vistas: tabelas, mapas (B242) e loja (B254).
   elemento("estudio-mapa").hidden = vista !== "mapas";
   elemento("estudio-loja").hidden = vista !== "loja";
+  elemento("estudio-missoes").hidden = vista !== "missoes";
   document.querySelector("#pagina-estudio .estudio-grade").hidden = vista !== "tabelas";
-  for (const v of ["tabelas", "mapas", "loja"]) {
+  for (const v of ["tabelas", "mapas", "loja", "missoes"]) {
     const id = `estudio-vista-${v}`;
     elemento(id).className = `botao botao-pequeno ${v === vista ? "botao-primario" : "botao-secundario"}`;
     elemento(id).setAttribute("aria-selected", v === vista ? "true" : "false");
   }
   if (vista === "mapas") carregarMapas();
   if (vista === "loja") carregarLoja();
+  if (vista === "missoes") carregarMissoes();
 }
 
 async function carregarMapas() {

@@ -510,3 +510,19 @@ def registrar_reinicio(app):
         if arquivo not in LOJA:
             raise HTTPException(404, "Loja inválida.")
         return await _repassar("DELETE", f"/admin/{v}/estudio/loja/{arquivo}/{max(0, indice)}", {"rascunho": rascunho})
+
+    # Missões (B255, só leitura): o tasks.data do realm.
+    @app.get("/api/realms/{realm}/estudio/missoes")
+    async def estudio_missoes(realm: str, requisicao: Request, busca: str = "", topo: bool = True, pagina: int = 0,
+                              por_pagina: int = 100):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/missoes", {
+            "busca": busca[:100], "topo": "true" if topo else "false", "pagina": max(0, pagina),
+            "por_pagina": max(1, min(por_pagina, 500))})
+
+    @app.get("/api/realms/{realm}/estudio/missoes/{id_missao}")
+    async def estudio_missao(realm: str, id_missao: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        if id_missao <= 0:
+            raise HTTPException(404, "Missão inválida.")
+        return await _repassar("GET", f"/admin/{v}/estudio/missoes/{id_missao}")

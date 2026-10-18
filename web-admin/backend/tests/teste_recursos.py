@@ -271,6 +271,12 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         await self.cliente.get("/api/realms/realm_126/estudio/mapas/world/altura", params={"x": 1.5, "z": -2})
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], p["consulta"]), ("/admin/1.2.6/estudio/mapas/world/altura", {"x": ["1.5"], "z": ["-2.0"]}))
+        # Missões (B255).
+        await self.cliente.get("/api/realms/realm_126/estudio/missoes", params={"busca": "teste", "topo": "false"})
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], p["consulta"]["topo"], p["consulta"]["busca"]), ("/admin/1.2.6/estudio/missoes", ["false"], ["teste"]))
+        await self.cliente.get("/api/realms/realm_126/estudio/missoes/1173")
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/missoes/1173")
         # Loja Gold (B254).
         await self.cliente.get("/api/realms/realm_155/estudio/loja/gshop1.data", params={"rascunho": 5})
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/loja/gshop1.data")

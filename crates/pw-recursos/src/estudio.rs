@@ -2589,3 +2589,99 @@ impl Estudio {
         .await
     }
 }
+
+// ------------------------------------------------------------------ missões (tasks.data, S7, B255 — só leitura)
+
+use pw_data_loader::tasks::TasksData;
+
+static MISSOES: std::sync::OnceLock<Mutex<HashMap<(String, Sha256Bytes), Arc<TasksData>>>> = std::sync::OnceLock::new();
+
+impl Estudio {
+    /// O `tasks.data` do realm (o que o GS executa; `manager.rs:461`), lido uma vez por versão e SHA.
+    async fn missoes_do_realm(&self, gov: &Governanca, versao: &str) -> Result<Arc<TasksData>> {
+        let bytes = gov.ler_do_realm(versao, "data\\tasks.data")?.context("o realm não tem tasks.data")?;
+        let sha = sha256(&bytes);
+        let cache = MISSOES.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Some(t) = cache.lock().unwrap().get(&(versao.to_string(), sha)) {
+            return Ok(t.clone());
+        }
+        let t = Arc::new(tokio::task::spawn_blocking(move || TasksData::load_from_bytes(&bytes)).await?.map_err(|e| anyhow::anyhow!("tasks.data: {e}"))?);
+        let mut c = cache.lock().unwrap();
+        c.retain(|(v, _), _| v != versao); // uma por versão: o 1.5.5 tem 104 MB
+        c.insert((versao.to_string(), sha), t.clone());
+        Ok(t)
+    }
+
+    /// Lista de missões: busca por id ou nome; `topo` = só as de topo (as outras se chegam pela árvore). Linha
+    /// `[id, nome, tipo, nível mín., nível máx., mãe, filhas, npc que entrega, npc que premia]`.
+    pub async fn missoes(&self, gov: &Governanca, versao: &str, busca: &str, topo: bool, pagina: usize, por_pagina: usize) -> Result<Value> {
+        let t = self.missoes_do_realm(gov, versao).await?;
+        let busca = busca.trim().to_lowercase();
+        let id_buscado: Option<u32> = busca.parse().ok();
+        let mut ids: Vec<u32> = if topo && busca.is_empty() { t.de_topo.clone() } else { t.tasks.keys().copied().collect() };
+        if !busca.is_empty() {
+            ids.retain(|id| Some(*id) == id_buscado || t.tasks[id].name.to_lowercase().contains(&busca));
+        }
+        ids.sort_unstable();
+        let total = ids.len();
+        let linhas: Vec<Value> = ids
+            .iter()
+            .skip(pagina * por_pagina)
+            .take(por_pagina)
+            .map(|id| {
+                let m = &t.tasks[id];
+                json!([m.id, m.name, m.tipo, m.min_level, m.max_level, m.parent, m.sub_tasks.len(), m.npc_que_entrega, m.npc_que_premia])
+            })
+            .collect();
+        Ok(json!({
+            "versao_do_arquivo": t.version, "missoes": t.tasks.len(), "de_topo": t.de_topo.len(), "total": total, "pagina": pagina,
+            "colunas": ["id", "nome", "tipo", "nivel_min", "nivel_max", "mae", "filhas", "npc_entrega", "npc_premio"], "linhas": linhas,
+        }))
+    }
+
+    /// Uma missão inteira (os campos do `TaskTemplate` do leitor do GS), com os nomes dos NPCs, itens e monstros que ela
+    /// cita (do `elements` publicado) e das missões mãe, filhas, pré-requisitos e exclusivas.
+    pub async fn missao(&self, gov: &Governanca, versao: &str, id: u32) -> Result<Value> {
+        let t = self.missoes_do_realm(gov, versao).await?;
+        let m = t.tasks.get(&id).with_context(|| format!("missão {id} não existe"))?;
+        let ficha = serde_json::to_value(m)?;
+        // Ids do espaço ESSENCE citados em qualquer lugar da ficha (NPCs, itens, monstros): todos os números que
+        // estejam em campos com "id", "npc", "item" ou "monstro" no nome.
+        let mut citados = std::collections::BTreeSet::new();
+        fn varrer(v: &Value, chave: &str, s: &mut std::collections::BTreeSet<i64>) {
+            match v {
+                Value::Object(o) => o.iter().for_each(|(k, x)| varrer(x, k, s)),
+                Value::Array(a) => a.iter().for_each(|x| varrer(x, chave, s)),
+                Value::Number(n) => {
+                    let k = chave.to_lowercase();
+                    if (k == "id" || k.contains("npc") || k.contains("item") || k.contains("monstro") || k.contains("brinde")) && !k.contains("quantidade") {
+                        if let Some(x) = n.as_i64().filter(|&x| x > 0) {
+                            s.insert(x);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        varrer(&ficha, "", &mut citados);
+        let (e, _) = self.atual(gov, versao, None).await?;
+        let ids = mapa_de_ids(&e);
+        let nomes: Map<String, Value> = citados
+            .iter()
+            .filter_map(|&x| match ids.get(&("ESSENCE".to_string(), x as i32)) {
+                Some(&(ti, ri)) if ti != CONVERSAS => Some((x.to_string(), json!({ "nome": nome_do_registro(&e.tabelas[ti], ri), "tabela": e.tabelas[ti].nome, "indice": ri }))),
+                _ => None,
+            })
+            .collect();
+        let nome_da_missao = |i: u32| json!({ "id": i, "nome": t.tasks.get(&i).map(|x| x.name.clone()) });
+        Ok(json!({
+            "ficha": ficha,
+            "nomes": nomes,
+            "mae": m.parent.map(nome_da_missao),
+            "filhas": m.sub_tasks.iter().map(|&i| nome_da_missao(i)).collect::<Vec<_>>(),
+            "pre_missoes": m.pre_tasks.iter().map(|&i| nome_da_missao(i)).collect::<Vec<_>>(),
+            "exclusivas": m.missoes_exclusivas.iter().map(|&i| nome_da_missao(i)).collect::<Vec<_>>(),
+            "nova_missao": (m.rewards.nova_missao > 0).then(|| nome_da_missao(m.rewards.nova_missao)),
+        }))
+    }
+}

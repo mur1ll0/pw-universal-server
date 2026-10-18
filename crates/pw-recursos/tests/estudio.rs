@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254); missões (B255).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -143,6 +143,8 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
     for f in ["precinct.sev", "region.sev"] {
         fs::copy(npcgen.with_file_name(f), realm.join("world").join(f)).expect("sev da a01 do realm_126");
     }
+    // tasks.data real do 1.2.6, na raiz do config (B255).
+    fs::copy(npcgen.parent().unwrap().parent().unwrap().join("tasks.data"), realm.join("tasks.data")).expect("tasks do realm_126");
     // world_targets.sev real do 1.2.6, na raiz do config (B245).
     fs::copy(npcgen.parent().unwrap().parent().unwrap().join("world_targets.sev"), realm.join("world_targets.sev")).expect("world_targets do realm_126");
     let (chave, _) = Chave::carregar_ou_criar(&dados.join("_chave").join("k")).unwrap();
@@ -584,6 +586,16 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let de_novo = json_de(pedir("POST", &format!("estudio/mapas/world/alinhar?rascunho={r10}")).call().unwrap());
         assert!(de_novo["alinhados"].as_array().unwrap().is_empty(), "já alinhado: nada a fazer");
         pedir("POST", &format!("rascunhos/{r10}/descartar")).send_json(json!({})).unwrap();
+
+        // Missões (B255, só leitura): o tasks.data do realm, com os nomes do elements.
+        let ms = json_de(pedir("GET", "estudio/missoes").call().unwrap());
+        assert_eq!((ms["missoes"].as_u64(), ms["de_topo"].as_u64(), ms["total"].as_u64()), (Some(7994), Some(2819), Some(2819)), "{}", ms["versao_do_arquivo"]);
+        let achou = json_de(pedir("GET", "estudio/missoes").query("busca", "1173").call().unwrap());
+        assert_eq!(achou["linhas"][0][0], 1173);
+        let mi = json_de(pedir("GET", "estudio/missoes/1173").call().unwrap());
+        assert_eq!(mi["ficha"]["npc_que_entrega"], 3517, "{}", mi["ficha"]["name"]);
+        assert!(mi["nomes"]["3517"]["nome"].is_string(), "o NPC 3517 tem nome: {}", mi["nomes"]);
+        assert_eq!(erro_de(pedir("GET", "estudio/missoes/999999999").call()).0, 400);
 
         // Loja Gold (B254): ofertas do gshop.data; editar preço e nome, clonar, remover; publicar grava o cliente e o
         // realm (item "ambos") com o carimbo intacto.
