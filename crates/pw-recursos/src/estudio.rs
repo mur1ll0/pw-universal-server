@@ -1506,6 +1506,7 @@ impl Estudio {
 
 use pw_data_loader::precinct::Distritos;
 use pw_data_loader::regioes::{RegioesEditavel, RegistroDeRegiao};
+use pw_data_loader::clt::{PrecinctDoCliente, RegionDoCliente, RegistroDoCliente};
 
 fn vetor_do_json(v: &Value, onde: &str) -> Result<[f32; 3]> {
     let a = v.as_array().filter(|a| a.len() == 3).with_context(|| format!("{onde}: esperava [x, y, z]"))?;
@@ -1522,29 +1523,121 @@ fn vetor_json(v: &[f32; 3]) -> Value {
 }
 
 impl Estudio {
-    /// Distritos do `precinct.sev` do realm (ponto de renascer: `city_region::GetCityPos`), com nome, id e marcas
-    /// do `Maps\<caminho>\precinct.clt` do cliente quando os dois casam (mesma contagem e vértices por distrito).
+    /// O `.clt` do cliente publicado para o mapa (`Maps\<caminho>\<arquivo>`), com o rascunho; `None` se a versão
+    /// não o tem.
+    async fn clt_do_mapa(&self, gov: &Governanca, versao: &str, caminho: &str, arquivo: &str, rascunho: Option<i64>) -> Option<Vec<u8>> {
+        self.item_do_cliente(gov, versao, &format!("maps\\{caminho}\\{arquivo}"), rascunho).await.ok().map(|t| t.3)
+    }
+
+    /// Edição em par (B251): o `.sev` do realm (item `servidor`) e o `.clt` do cliente (item `cliente`) no mesmo
+    /// rascunho, sob a mesma trava. `mudar` recebe os bytes atuais dos dois (o `.clt` pode faltar) e devolve os novos
+    /// (`None` = o `.clt` não muda).
+    #[allow(clippy::too_many_arguments)]
+    async fn alterar_sev_e_clt<F>(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        caminho: &str,
+        rascunho: i64,
+        sev: &str,
+        clt: &str,
+        mudar: F,
+    ) -> Result<Value>
+    where
+        F: FnOnce(&[u8], Option<&[u8]>) -> Result<(Vec<u8>, Option<Vec<u8>>, Value, Value)>,
+    {
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let (nome, do_realm, do_rascunho) = self.arquivo_do_mapa(gov, versao, caminho, sev, Some(rascunho)).await?;
+        let base = do_rascunho.as_ref().map(|(_, b)| b.clone()).unwrap_or_else(|| do_realm.clone());
+        let clt_atual = self.clt_do_mapa(gov, versao, caminho, clt, Some(rascunho)).await;
+        let (sev_novo, clt_novo, resposta, mudanca) = mudar(&base, clt_atual.as_deref())?;
+        let m2 = mudanca.clone();
+        let r1 = self.gravar_item_do_realm(gov, versao, rascunho, nome, do_realm, do_rascunho, move |_| Ok((sev_novo, resposta, mudanca))).await?;
+        let mut saida = r1.clone();
+        if let Some(c) = clt_novo {
+            let caminho_clt = format!("maps\\{caminho}\\{clt}");
+            let r2 = self.gravar_item_do_cliente(gov, versao, &caminho_clt, rascunho, move |_| Ok((c, Value::Null, m2))).await?;
+            saida["cliente_igual_ao_publicado"] = r2["igual_ao_publicado"].clone();
+        }
+        Ok(saida)
+    }
+}
+
+/// O `precinct.clt` casa com o `precinct.sev` (mesmo carimbo, mesma contagem, mesmo número de vértices por distrito)?
+fn precinct_alinhado(sev: &Distritos, clt: &PrecinctDoCliente) -> std::result::Result<(), String> {
+    if sev.versao >= 5 && sev.carimbo != clt.carimbo {
+        return Err(format!("carimbo do precinct.clt ({}) diferente do precinct.sev ({}): o cliente já recusa este mapa", clt.carimbo, sev.carimbo));
+    }
+    if sev.lista.len() != clt.distritos.len() {
+        return Err(format!("{} distritos no .clt e {} no .sev", clt.distritos.len(), sev.lista.len()));
+    }
+    if let Some(i) = sev.lista.iter().zip(&clt.distritos).position(|(a, b)| a.vertices.len() != b.vertices.len()) {
+        return Err(format!("o distrito {i} tem vértices diferentes no .clt e no .sev"));
+    }
+    Ok(())
+}
+
+/// O `region.clt` casa com o `region.sev` (mesmo carimbo e a mesma sequência de regiões e portais — é a ordem que
+/// dá o índice do portal no `ENTER_INSTANCE`)?
+fn region_alinhado(sev: &RegioesEditavel, clt: &RegionDoCliente) -> std::result::Result<(), String> {
+    if sev.carimbo != clt.carimbo {
+        return Err(format!("carimbo do region.clt ({}) diferente do region.sev ({}): o cliente já recusa este mapa", clt.carimbo, sev.carimbo));
+    }
+    let s: Vec<bool> = sev.registros.iter().map(|r| matches!(r, RegistroDeRegiao::Caixa(_))).collect();
+    if s != clt.sequencia() {
+        return Err(format!("a sequência de regiões/portais do .clt ({}) não é a do .sev ({})", clt.registros.len(), s.len()));
+    }
+    Ok(())
+}
+
+/// `[[x, z], …]` → vértices com a altura `y` (o polígono do distrito usa só x e z: `CELPrecinct::IsPointIn`).
+fn vertices_do_json(v: &Value, y: f32) -> Result<Vec<[f32; 3]>> {
+    let a = v.as_array().context("vertices: lista de [x, z]")?;
+    if a.len() < 3 || a.len() > 512 {
+        bail!("vertices: de 3 a 512 pontos");
+    }
+    a.iter()
+        .map(|p| {
+            let p = p.as_array().filter(|p| p.len() == 2).context("vertices: cada ponto é [x, z]")?;
+            let n = |k: usize| p[k].as_f64().filter(|x| x.is_finite() && x.abs() < 1.0e6).map(|x| x as f32).context("vertices: número inválido");
+            Ok([n(0)?, y, n(1)?])
+        })
+        .collect()
+}
+
+fn nome_do_json(v: &Value) -> Result<String> {
+    let s = v.as_str().context("nome: texto")?.trim().to_string();
+    if s.is_empty() || s.chars().count() > 60 || s.contains(['"', '\n', '\r']) {
+        bail!("nome: de 1 a 60 caracteres, sem aspas nem quebra de linha");
+    }
+    Ok(s)
+}
+
+impl Estudio {
+    /// Distritos do `precinct.sev` do realm (ponto de renascer: `city_region::GetCityPos`), com nome, id e marcas do
+    /// `Maps\<caminho>\precinct.clt` do cliente quando os dois estão alinhados (B251: só então nome, polígono, criar e
+    /// remover são permitidos — `alinhado_com_o_cliente` / `motivo`).
     pub async fn distritos(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Value> {
         let (nome, do_realm, do_rascunho) = self.arquivo_do_mapa(gov, versao, caminho, "precinct.sev", rascunho).await?;
         let no_rascunho = do_rascunho.is_some();
         let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
         let d = Distritos::ler(&bytes).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let clt = self
-            .arquivo_do_cliente(gov, versao, &format!("maps\\{caminho}\\precinct.clt"))
-            .await
-            .ok()
-            .and_then(|b| crate::mapas::ler_precinct_clt(&crate::mapas::texto_do_arquivo(&b)).ok())
-            .filter(|c| c.len() == d.lista.len() && c.iter().zip(&d.lista).all(|(a, b)| a.vertices == b.vertices.len()));
+        let clt = match self.clt_do_mapa(gov, versao, caminho, "precinct.clt", rascunho).await {
+            Some(b) => PrecinctDoCliente::ler(&b).map_err(|e| e.to_string()),
+            None => Err("o cliente não tem precinct.clt para este mapa".into()),
+        };
+        let alinhado = clt.as_ref().map_err(|e| e.clone()).and_then(|c| precinct_alinhado(&d, c).map(|_| c));
         let lista: Vec<Value> = d
             .lista
             .iter()
             .enumerate()
             .map(|(i, x)| {
-                let c = clt.as_ref().map(|c| &c[i]);
+                let c = alinhado.as_ref().ok().map(|c| &c.distritos[i]);
                 json!({
                     "indice": i,
                     "nome": c.map(|c| c.nome.clone()),
-                    "id": c.map(|c| c.id),
+                    "id": c.map(|c| c.id()),
                     "mapa": x.mapa,
                     "mapa_do_ponto": x.mapa_do_ponto,
                     "prioridade": x.prioridade,
@@ -1556,16 +1649,45 @@ impl Estudio {
                 })
             })
             .collect();
-        Ok(json!({ "item": nome, "versao_do_arquivo": d.versao, "no_rascunho": no_rascunho, "nomes_do_cliente": clt.is_some(), "distritos": lista }))
+        Ok(json!({
+            "item": nome, "versao_do_arquivo": d.versao, "no_rascunho": no_rascunho,
+            "nomes_do_cliente": alinhado.is_ok(), "alinhado_com_o_cliente": alinhado.is_ok(), "motivo": alinhado.err(),
+            "distritos": lista,
+        }))
     }
 
-    /// Edita o ponto de renascer, o mapa dele, a prioridade e a proteção de PK de um distrito. Os vértices e o
-    /// carimbo (`dwTimeStamp`, conferido pelo cliente no `INST_DATA_CHECKOUT`) não mudam.
+    /// Distritos em par: aplica `mudar` no `.sev` e, se alinhado, no `.clt`. `exige_cliente` = a operação mexe no que
+    /// só existe no cliente (nome, polígono, criar, remover) e é recusada sem o `.clt` alinhado.
+    async fn alterar_distritos<F>(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, exige_cliente: bool, mudar: F) -> Result<Value>
+    where
+        F: FnOnce(&mut Distritos, Option<&mut PrecinctDoCliente>) -> Result<(Value, Value)>,
+    {
+        self.alterar_sev_e_clt(gov, versao, caminho, rascunho, "precinct.sev", "precinct.clt", move |sev, clt| {
+            let mut d = Distritos::ler(sev).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let mut c = match clt.map(PrecinctDoCliente::ler) {
+                Some(Ok(c)) => match precinct_alinhado(&d, &c) {
+                    Ok(()) => Some(c),
+                    Err(m) if exige_cliente => bail!("precinct: {m}"),
+                    Err(_) => None,
+                },
+                Some(Err(e)) if exige_cliente => bail!("{e}"),
+                _ if exige_cliente => bail!("o cliente não tem precinct.clt para este mapa: nome, polígono, criar e remover exigem o arquivo do cliente"),
+                _ => None,
+            };
+            let (resposta, mudanca) = mudar(&mut d, c.as_mut())?;
+            Ok((d.gravar(), c.map(|c| c.gravar()), resposta, mudanca))
+        })
+        .await
+    }
+
+    /// Edita um distrito: ponto de renascer, mapa dele, prioridade, PK (no `.sev`, e no `.clt` se alinhado) e, só com o
+    /// `.clt` alinhado, `nome` e `vertices` (`[[x, z]…]`). O carimbo dos dois arquivos não muda.
     pub async fn editar_distrito(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, indice: usize, campos: Map<String, Value>) -> Result<Value> {
-        self.alterar_arquivo_do_mapa(gov, versao, caminho, "precinct.sev", rascunho, move |base| {
-            let mut d = Distritos::ler(base).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let exige = campos.contains_key("nome") || campos.contains_key("vertices");
+        self.alterar_distritos(gov, versao, caminho, rascunho, exige, move |d, mut c| {
             let v = d.versao;
             let x = d.lista.get_mut(indice).with_context(|| format!("distrito {indice} não existe"))?;
+            let mut cd = c.as_mut().map(|c| &mut c.distritos[indice]);
             let mut mudou = Map::new();
             for (k, valor) in &campos {
                 match k.as_str() {
@@ -1575,16 +1697,23 @@ impl Estudio {
                             mudou.insert(k.clone(), json!([vetor_json(&x.ponto_de_cidade), vetor_json(&novo)]));
                             x.ponto_de_cidade = novo;
                         }
+                        if let Some(cd) = cd.as_mut() {
+                            cd.ponto_de_cidade = novo;
+                        }
                     }
                     "mapa_do_ponto" | "prioridade" => {
                         let n = valor.as_i64().and_then(|n| i32::try_from(n).ok()).with_context(|| format!("{k}: inteiro"))?;
-                        let alvo = if k == "mapa_do_ponto" { &mut x.mapa_do_ponto } else { &mut x.prioridade };
                         if k == "mapa_do_ponto" && n <= 0 {
                             bail!("mapa_do_ponto: id de mapa inválido");
                         }
+                        let alvo = if k == "mapa_do_ponto" { &mut x.mapa_do_ponto } else { &mut x.prioridade };
                         if *alvo != n {
                             mudou.insert(k.clone(), json!([*alvo, n]));
                             *alvo = n;
+                        }
+                        // Na linha do .clt: prioridade no índice 3, mapa do ponto no 4 (`EL_Precinct.cpp:121-124`).
+                        if let Some(cd) = cd.as_mut() {
+                            cd.numeros[if k == "mapa_do_ponto" { 4 } else { 3 }] = n as i64;
                         }
                     }
                     "protege_pk" => {
@@ -1596,56 +1725,219 @@ impl Estudio {
                             mudou.insert(k.clone(), json!([x.protege_pk, b]));
                             x.protege_pk = b;
                         }
+                        if let Some(cd) = cd.as_mut() {
+                            if let Some(pk) = cd.numeros.get_mut(10) {
+                                *pk = b as i64;
+                            }
+                        }
+                    }
+                    "nome" => {
+                        let cd = cd.as_mut().context("nome exige o .clt")?;
+                        let novo = nome_do_json(valor)?;
+                        if novo != cd.nome {
+                            mudou.insert(k.clone(), json!([cd.nome, novo]));
+                            cd.nome = novo;
+                        }
+                    }
+                    "vertices" => {
+                        let cd = cd.as_mut().context("vertices exige o .clt")?;
+                        let y = x.vertices.first().map(|p| p[1]).unwrap_or(0.0);
+                        let novos = vertices_do_json(valor, y)?;
+                        if novos != x.vertices {
+                            mudou.insert(k.clone(), json!([x.vertices.len(), novos.len()]));
+                            x.definir_vertices(novos.clone());
+                            cd.vertices = novos;
+                        }
                     }
                     _ => bail!("campo do distrito não editável: {k}"),
                 }
             }
             let mudanca = if mudou.is_empty() { Value::Null } else { json!({ "acao": "editado", "tipo": "distrito", "indice": indice, "campos": mudou }) };
-            Ok((d.gravar(), json!({ "indice": indice }), mudanca))
+            Ok((json!({ "indice": indice }), mudanca))
         })
         .await
     }
 
-    /// Portais (caixas de transporte) e regiões do `region.sev` do realm. Só o ponto de chegada é editável: o
-    /// cliente acha a caixa pela própria `region.clt` e manda só o índice (`EC_World.cpp:2360-2373`).
+    /// Distrito novo, cópia do `base` (música, prioridade, mapas, PK) com `nome`, `vertices` e o ponto de renascer
+    /// (`ponto`, ou o do base). No `.clt` o id é o maior + 1 e as marcas do base não vêm. Exige o `.clt` alinhado.
+    pub async fn novo_distrito(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, base: usize, campos: Map<String, Value>) -> Result<Value> {
+        self.alterar_distritos(gov, versao, caminho, rascunho, true, move |d, c| {
+            let c = c.context("exige o .clt")?;
+            let mut x = d.lista.get(base).cloned().with_context(|| format!("distrito {base} não existe"))?;
+            let mut cd = c.distritos[base].clone();
+            let y = x.vertices.first().map(|p| p[1]).unwrap_or(0.0);
+            let vertices = vertices_do_json(campos.get("vertices").context("vertices")?, y)?;
+            x.definir_vertices(vertices.clone());
+            cd.vertices = vertices;
+            cd.nome = nome_do_json(campos.get("nome").context("nome")?)?;
+            cd.numeros[0] = c.distritos.iter().map(|d| d.id()).max().unwrap_or(0) + 1;
+            cd.marcas.clear();
+            if let Some(p) = campos.get("ponto") {
+                x.ponto_de_cidade = vetor_do_json(p, "ponto")?;
+            }
+            cd.ponto_de_cidade = x.ponto_de_cidade;
+            let (indice, id) = (d.lista.len(), cd.id());
+            d.lista.push(x);
+            c.distritos.push(cd);
+            Ok((json!({ "indice": indice, "id": id }), json!({ "acao": "novo", "tipo": "distrito", "indice": indice, "id": id, "base": base })))
+        })
+        .await
+    }
+
+    /// Tira o distrito dos dois arquivos (os seguintes sobem um índice). Exige o `.clt` alinhado.
+    pub async fn remover_distrito(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, indice: usize) -> Result<Value> {
+        self.alterar_distritos(gov, versao, caminho, rascunho, true, move |d, c| {
+            let c = c.context("exige o .clt")?;
+            if indice >= d.lista.len() {
+                bail!("distrito {indice} não existe");
+            }
+            d.lista.remove(indice);
+            let nome = c.distritos.remove(indice).nome;
+            Ok((json!({ "removido": indice }), json!({ "acao": "removido", "tipo": "distrito", "indice": indice, "nome": nome })))
+        })
+        .await
+    }
+
+    /// Portais (caixas de transporte) e regiões do `region.sev` do realm, com o nome das regiões do `region.clt`.
+    /// Sem o `.clt` alinhado (`alinhado_com_o_cliente`), só o ponto de chegada é editável: o cliente acha a caixa pela
+    /// própria `region.clt` e manda só o índice (`EC_World.cpp:2360-2373`).
     pub async fn portais(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Value> {
         let (nome, do_realm, do_rascunho) = self.arquivo_do_mapa(gov, versao, caminho, "region.sev", rascunho).await?;
         let no_rascunho = do_rascunho.is_some();
         let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
         let r = RegioesEditavel::ler(&bytes)?;
+        let clt = match self.clt_do_mapa(gov, versao, caminho, "region.clt", rascunho).await {
+            Some(b) => RegionDoCliente::ler(&b).map_err(|e| e.to_string()),
+            None => Err("o cliente não tem region.clt para este mapa".into()),
+        };
+        let alinhado = clt.as_ref().map_err(|e| e.clone()).and_then(|c| region_alinhado(&r, c).map(|_| c));
         let (mut caixas, mut regioes) = (Vec::new(), Vec::new());
-        for reg in &r.registros {
+        for (n, reg) in r.registros.iter().enumerate() {
             match reg {
-                RegistroDeRegiao::Regiao(p) => regioes.push(json!(p.iter().map(|v| json!([v[0], v[2]])).collect::<Vec<_>>())),
+                RegistroDeRegiao::Regiao(p) => {
+                    let nome = alinhado.as_ref().ok().and_then(|c| match &c.registros[n] {
+                        RegistroDoCliente::Regiao { nome, .. } => Some(nome.clone()),
+                        _ => None,
+                    });
+                    regioes.push(json!({ "nome": nome, "vertices": p.iter().map(|v| json!([v[0], v[2]])).collect::<Vec<_>>() }));
+                }
                 RegistroDeRegiao::Caixa(k) => caixas.push(json!({
                     "indice": caixas.len(), "destino": k.destino, "origem": k.origem, "nivel_minimo": k.nivel_minimo,
                     "pos": vetor_json(&k.pos), "exts": vetor_json(&k.exts), "alvo": vetor_json(&k.alvo),
                 })),
             }
         }
-        Ok(json!({ "item": nome, "versao_do_arquivo": r.versao, "no_rascunho": no_rascunho, "caixas": caixas, "regioes": regioes }))
+        Ok(json!({
+            "item": nome, "versao_do_arquivo": r.versao, "no_rascunho": no_rascunho,
+            "alinhado_com_o_cliente": alinhado.is_ok(), "motivo": alinhado.err(), "caixas": caixas, "regioes": regioes,
+        }))
     }
 
+    async fn alterar_portais<F>(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, exige_cliente: bool, mudar: F) -> Result<Value>
+    where
+        F: FnOnce(&mut RegioesEditavel, Option<&mut RegionDoCliente>) -> Result<(Value, Value)>,
+    {
+        self.alterar_sev_e_clt(gov, versao, caminho, rascunho, "region.sev", "region.clt", move |sev, clt| {
+            let mut r = RegioesEditavel::ler(sev)?;
+            let mut c = match clt.map(RegionDoCliente::ler) {
+                Some(Ok(c)) => match region_alinhado(&r, &c) {
+                    Ok(()) => Some(c),
+                    Err(m) if exige_cliente => bail!("region: {m}"),
+                    Err(_) => None,
+                },
+                Some(Err(e)) if exige_cliente => bail!("{e}"),
+                _ if exige_cliente => bail!("o cliente não tem region.clt para este mapa: destino, posição, tamanho, criar e remover exigem o arquivo do cliente"),
+                _ => None,
+            };
+            let (resposta, mudanca) = mudar(&mut r, c.as_mut())?;
+            Ok((r.gravar(), c.map(|c| c.gravar()), resposta, mudanca))
+        })
+        .await
+    }
+
+    /// Edita um portal: `alvo` (só no `.sev` se o `.clt` não está alinhado) e, com o `.clt` alinhado, `destino`,
+    /// `nivel_minimo` (v≥5), `pos` e `exts` (meia-medida) nos dois arquivos.
     pub async fn editar_portal(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, indice: usize, campos: Map<String, Value>) -> Result<Value> {
-        self.alterar_arquivo_do_mapa(gov, versao, caminho, "region.sev", rascunho, move |base| {
-            let mut r = RegioesEditavel::ler(base)?;
+        let exige = campos.keys().any(|k| k != "alvo");
+        self.alterar_portais(gov, versao, caminho, rascunho, exige, move |r, c| {
+            let v = r.versao;
             let mut mudou = Map::new();
-            {
-                let mut caixas = r.caixas_mut();
-                let k = caixas.get_mut(indice).with_context(|| format!("portal {indice} não existe"))?;
-                for (nome, valor) in &campos {
-                    if nome != "alvo" {
-                        bail!("só o ponto de chegada (alvo) do portal é editável no servidor: {nome}");
+            let mut caixas = r.caixas_mut();
+            let k = caixas.get_mut(indice).with_context(|| format!("portal {indice} não existe"))?;
+            let mut cp = c.and_then(|c| {
+                c.registros.iter_mut().filter_map(|x| match x {
+                    RegistroDoCliente::Portal { numeros, pos, exts, alvo } => Some((numeros, pos, exts, alvo)),
+                    _ => None,
+                }).nth(indice)
+            });
+            for (nome, valor) in &campos {
+                match nome.as_str() {
+                    "alvo" | "pos" | "exts" => {
+                        let novo = vetor_do_json(valor, "vetor")?;
+                        if nome == "exts" && novo.iter().any(|x| *x <= 0.0) {
+                            bail!("exts: meia-medida positiva");
+                        }
+                        let atual = match nome.as_str() { "alvo" => &mut k.alvo, "pos" => &mut k.pos, _ => &mut k.exts };
+                        if novo != *atual {
+                            mudou.insert(nome.clone(), json!([vetor_json(atual), vetor_json(&novo)]));
+                            *atual = novo;
+                        }
+                        if let Some((_, pos, exts, alvo)) = cp.as_mut() {
+                            *match nome.as_str() { "alvo" => &mut **alvo, "pos" => &mut **pos, _ => &mut **exts } = novo;
+                        }
                     }
-                    let novo = vetor_do_json(valor, "alvo")?;
-                    if novo != k.alvo {
-                        mudou.insert(nome.clone(), json!([vetor_json(&k.alvo), vetor_json(&novo)]));
-                        k.alvo = novo;
+                    "destino" | "nivel_minimo" => {
+                        let n = valor.as_i64().and_then(|n| i32::try_from(n).ok()).with_context(|| format!("{nome}: inteiro"))?;
+                        if nome == "destino" && n <= 0 {
+                            bail!("destino: id de mapa inválido");
+                        }
+                        if nome == "nivel_minimo" && v < 5 {
+                            bail!("nivel_minimo só existe no region versão 5");
+                        }
+                        let atual = if nome == "destino" { &mut k.destino } else { &mut k.nivel_minimo };
+                        if *atual != n {
+                            mudou.insert(nome.clone(), json!([*atual, n]));
+                            *atual = n;
+                        }
+                        // `[trans]`: destino no índice 0, nível no 2 (`EL_Region.cpp:254-270`).
+                        if let Some((numeros, ..)) = cp.as_mut() {
+                            numeros[if nome == "destino" { 0 } else { 2 }] = n as i64;
+                        }
                     }
+                    _ => bail!("campo do portal não editável: {nome}"),
                 }
             }
             let mudanca = if mudou.is_empty() { Value::Null } else { json!({ "acao": "editado", "tipo": "portal", "indice": indice, "campos": mudou }) };
-            Ok((r.gravar(), json!({ "indice": indice }), mudanca))
+            Ok((json!({ "indice": indice }), mudanca))
+        })
+        .await
+    }
+
+    /// Portal novo no fim dos dois arquivos (o índice novo é o mesmo nos dois), cópia do `base`. Exige o `.clt`.
+    pub async fn novo_portal(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, base: usize) -> Result<Value> {
+        self.alterar_portais(gov, versao, caminho, rascunho, true, move |r, c| {
+            let c = c.context("exige o .clt")?;
+            let k = **r.caixas_mut().get(base).with_context(|| format!("portal {base} não existe"))?;
+            let kc = c.registros.iter().filter(|x| matches!(x, RegistroDoCliente::Portal { .. })).nth(base).cloned().context("portal no .clt")?;
+            let indice = r.caixas_mut().len();
+            r.registros.push(RegistroDeRegiao::Caixa(k));
+            c.registros.push(kc);
+            Ok((json!({ "indice": indice }), json!({ "acao": "novo", "tipo": "portal", "indice": indice, "base": base })))
+        })
+        .await
+    }
+
+    /// Tira o portal dos dois arquivos (os seguintes sobem um índice nos dois). Exige o `.clt`.
+    pub async fn remover_portal(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, indice: usize) -> Result<Value> {
+        self.alterar_portais(gov, versao, caminho, rascunho, true, move |r, c| {
+            let c = c.context("exige o .clt")?;
+            let pos_sev = r.registros.iter().enumerate().filter(|(_, x)| matches!(x, RegistroDeRegiao::Caixa(_))).nth(indice).map(|(i, _)| i)
+                .with_context(|| format!("portal {indice} não existe"))?;
+            let pos_clt = c.registros.iter().enumerate().filter(|(_, x)| matches!(x, RegistroDoCliente::Portal { .. })).nth(indice).map(|(i, _)| i)
+                .context("portal no .clt")?;
+            r.registros.remove(pos_sev);
+            c.registros.remove(pos_clt);
+            Ok((json!({ "removido": indice }), json!({ "acao": "removido", "tipo": "portal", "indice": indice })))
         })
         .await
     }
@@ -1798,6 +2090,14 @@ impl Estudio {
     {
         let trava = self.trava(rascunho);
         let _guarda = trava.lock().await;
+        self.gravar_item_do_cliente(gov, versao, caminho, rascunho, mudar).await
+    }
+
+    /// O miolo de `alterar_item_do_cliente`, sem a trava (quem chama a segura) — B251, para editar em par com o `.sev`.
+    async fn gravar_item_do_cliente<F>(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, mudar: F) -> Result<Value>
+    where
+        F: FnOnce(&[u8]) -> Result<(Vec<u8>, Value, Value)>,
+    {
         let (gbk, sha_publicado, tam_publicado, atual, item) = self.item_do_cliente(gov, versao, caminho, Some(rascunho)).await?;
         let mut mudancas = item.as_ref().and_then(|i| i.resumo.get("mudancas")).and_then(Value::as_array).cloned().unwrap_or_default();
         let (bytes, resposta, mudanca) = mudar(&atual)?;

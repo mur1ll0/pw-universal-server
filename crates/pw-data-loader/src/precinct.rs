@@ -59,6 +59,19 @@ pub struct Distrito {
 }
 
 impl Distrito {
+    /// Troca os vértices e recalcula a caixa que `contem` usa (B251, Estúdio).
+    pub fn definir_vertices(&mut self, vertices: Vec<[f32; 3]>) {
+        let (mut esquerda, mut topo, mut direita, mut base) = (999999.0f32, 999999.0f32, -999999.0f32, -999999.0f32);
+        for v in &vertices {
+            esquerda = esquerda.min(v[0]);
+            direita = direita.max(v[0]);
+            topo = topo.min(v[2]);
+            base = base.max(v[2]);
+        }
+        (self.esquerda, self.topo, self.direita, self.base) = (esquerda, topo, direita, base);
+        self.vertices = vertices;
+    }
+
     /// `CELPrecinct::IsPointIn` (`el_precinct.cpp:290-306`): caixa, depois paridade dos
     /// cruzamentos de um raio para a direita.
     pub fn contem(&self, x: f32, z: f32) -> bool {

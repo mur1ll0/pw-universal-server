@@ -14,6 +14,8 @@ const mapa = {
   teleportes: null,
   // Rastreador de NPCs do cliente (task_npc.data), B246.
   rastreador: null,
+  // Desenho de polígono (B251): pontos [x, z] e o que fazer ao concluir; seletores do "posicionar pelo clique".
+  desenho: null, seletorDoClique: null,
 };
 const CORES_DO_MAPA = { monstro: "#ff6b6b", npc: "#ffd166", recurso: "#7bd88f", objeto: "#8ab4ff" };
 
@@ -205,7 +207,8 @@ function detalharPonto(ev) {
     const a = mapa.arrastando;
     mapa.arrastando = null;
     if (a && !a.moveu) {
-      if (mapa.posicionando) posicionarPeloClique(e);
+      if (mapa.desenho) pontoDoDesenho(e);
+      else if (mapa.posicionando) posicionarPeloClique(e);
       else if (mapa.editar) escolherArea(e);
       else if (!escolherDistritoOuPortal(e)) detalharPonto(e);
     }
@@ -530,11 +533,14 @@ function posicionarPeloClique(ev) {
   // Inverso de paraTela: x = 2·px − colunas·512, z = linhas·512 − 2·py
   const x = Math.round((2 * px - m.colunas * 512) * 10) / 10, z = Math.round((m.linhas * 512 - 2 * py) * 10) / 10;
   const ed = elemento("mapa-editor");
-  const ix = ed.querySelector('input[data-campo="vPos_x"], input[data-pos="x"]');
-  const iz = ed.querySelector('input[data-campo="vPos_z"], input[data-pos="z"]');
+  const sel = mapa.seletorDoClique || { x: 'input[data-campo="vPos_x"], input[data-pos="x"]', z: 'input[data-campo="vPos_z"], input[data-pos="z"]',
+    y: 'input[data-campo="vPos_y"], input[data-pos="y"]' };
+  mapa.seletorDoClique = null;
+  const ix = ed.querySelector(sel.x);
+  const iz = ed.querySelector(sel.z);
   if (ix && iz) { ix.value = x; iz.value = z; }
   // Altura do chão no ponto (B248), dos .hmap do realm: preenche o Y quando o editor tem um.
-  const iy = ed.querySelector('input[data-campo="vPos_y"], input[data-pos="y"]');
+  const iy = ed.querySelector(sel.y);
   if (iy && !iy.disabled) {
     api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/altura?x=${x}&z=${z}`))
       .then((r) => {
@@ -596,6 +602,15 @@ function nomeDoMapa(id) {
 
 function desenharCamadas(ctx) {
   const m = mapa.atual;
+  if (mapa.desenho && mapa.desenho.pontos.length) {
+    ctx.strokeStyle = ctx.fillStyle = "#ffe066";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    mapa.desenho.pontos.forEach(([x, z], k) => { const [sx, sy] = paraTela(x, z); if (k) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy); });
+    if (mapa.desenho.pontos.length > 2) ctx.closePath();
+    ctx.stroke();
+    for (const [x, z] of mapa.desenho.pontos) { const [sx, sy] = paraTela(x, z); ctx.fillRect(sx - 3, sy - 3, 6, 6); }
+  }
   const escolhido = (camada, i) => mapa.area && mapa.area.camada === camada && mapa.area.indice === i;
   if (mapa.distritos) {
     for (const d of mapa.distritos.distritos) {
@@ -788,7 +803,27 @@ function abrirDaCamada(camada, indice) {
       if (entradas.ck && entradas.ck.checked !== item.protege_pk) c.protege_pk = entradas.ck.checked;
       return c;
     };
+    const alinhado = mapa.distritos.alinhado_com_o_cliente;
+    if (alinhado) {
+      const ln = criar("label");
+      const nome = criar("input", "campo");
+      nome.maxLength = 60;
+      nome.value = item.nome || "";
+      nome.disabled = !editavel;
+      ln.append(criar("span", "", "Nome (cliente)"), nome);
+      grade.prepend(ln);
+      entradas.nome = nome;
+    }
+    const corpoBase = corpo;
+    corpo = () => {
+      const c = corpoBase();
+      if (entradas.nome && entradas.nome.value.trim() !== (item.nome || "")) c.nome = entradas.nome.value.trim();
+      if (mapa.poligonoNovo && mapa.poligonoNovo.indice === indice) c.vertices = mapa.poligonoNovo.pontos;
+      return c;
+    };
     ed.append(titulo, grade);
+    if (mapa.poligonoNovo && mapa.poligonoNovo.indice === indice) ed.appendChild(criar("div", "texto-suave", `Polígono novo com ${mapa.poligonoNovo.pontos.length} pontos: salve para gravar.`));
+    if (!alinhado) ed.appendChild(criar("div", "texto-suave", `Nome, polígono, criar e remover desligados: ${mapa.distritos.motivo || "o .clt do cliente não casa com o .sev"}.`));
     if (item.marcas?.length) ed.appendChild(criar("div", "texto-suave", `Marcas do cliente: ${item.marcas.map((k) => k.nome).join(", ")}`));
     if (item.mapa_do_ponto !== m.id) ed.appendChild(criar("div", "texto-suave", "O ponto de renascer fica em outro mapa: \"Posicionar pelo clique\" usaria as coordenadas deste."));
   } else if (camada === "rastreador") {
@@ -841,8 +876,36 @@ function abrirDaCamada(camada, indice) {
       const alvo = [Number(ix.value), Number(iy.value), Number(iz.value)];
       return alvo.some((v, k) => v !== item.alvo[k]) ? { alvo } : {};
     };
-    ed.append(titulo, grade,
-      criar("div", "texto-suave", `Caixa em (${item.pos.map((v) => v.toFixed(1)).join(", ")}), meia-medida (${item.exts.map((v) => v.toFixed(1)).join(", ")}): o cliente decide pela region.clt dele, por isso posição, tamanho e destino não se editam aqui.`));
+    const alinhado = mapa.portais.alinhado_com_o_cliente;
+    if (alinhado) {
+      const ld = criar("label");
+      const sel = criar("select", "campo");
+      sel.disabled = !editavel;
+      for (const x of mapa.lista) { const o = criar("option", "", `${x.nome} (${x.id})`); o.value = x.id; sel.appendChild(o); }
+      if (!mapa.lista.some((x) => x.id === item.destino)) { const o = criar("option", "", `mapa ${item.destino}`); o.value = item.destino; sel.appendChild(o); }
+      sel.value = item.destino;
+      ld.append(criar("span", "", "Destino"), sel);
+      grade.appendChild(ld);
+      const [ln, inv] = campoNumerico("Nível mínimo", item.nivel_minimo, editavel && mapa.portais.versao_do_arquivo >= 5);
+      grade.appendChild(ln);
+      const caixa = ["x", "y", "z"].map((e, k) => campoNumerico(`Caixa ${e.toUpperCase()}`, item.pos[k], editavel, `c${e}`));
+      const meia = ["x", "y", "z"].map((e, k) => campoNumerico(`Meia-medida ${e.toUpperCase()}`, item.exts[k], editavel));
+      for (const [l] of [...caixa, ...meia]) grade.appendChild(l);
+      const base = corpo;
+      corpo = () => {
+        const c = base();
+        if (Number(sel.value) !== item.destino) c.destino = Number(sel.value);
+        if (Number(inv.value) !== item.nivel_minimo) c.nivel_minimo = Math.trunc(Number(inv.value));
+        const pos = caixa.map(([, i]) => Number(i.value)), exts = meia.map(([, i]) => Number(i.value));
+        if (pos.some((v, k) => v !== item.pos[k])) c.pos = pos;
+        if (exts.some((v, k) => v !== item.exts[k])) c.exts = exts;
+        return c;
+      };
+      ed.append(titulo, grade, criar("div", "texto-suave", "Grava o region.sev do realm e o region.clt do cliente juntos (o índice do portal é a ordem nos dois)."));
+    } else {
+      ed.append(titulo, grade,
+        criar("div", "texto-suave", `Caixa em (${item.pos.map((v) => v.toFixed(1)).join(", ")}), meia-medida (${item.exts.map((v) => v.toFixed(1)).join(", ")}). Destino, posição, tamanho, criar e remover desligados: ${mapa.portais.motivo || "o region.clt do cliente não casa com o .sev"}.`));
+    }
     if (item.destino !== m.id) ed.appendChild(criar("div", "texto-suave", `A chegada fica em ${nomeDoMapa(item.destino)}: abra aquele mapa para posicionar pelo clique.`));
   }
   if (!editavel) {
@@ -871,7 +934,86 @@ function abrirDaCamada(camada, indice) {
     } catch (erro) { alerta("erro", "Estúdio", erro.message); }
   });
   botoes.append(pos, salvar);
+  const extra = (texto, classe, acao) => { const b = criar("button", `botao botao-pequeno ${classe}`, texto); b.type = "button"; b.addEventListener("click", acao); botoes.appendChild(b); return b; };
+  const rotaDaCamada = (resto = "") => rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${camada}${resto}?rascunho=${estudio.rascunho}`);
+  const depois = async (msg, reabrir) => {
+    alerta("ok", "Estúdio", msg, { toast: true });
+    mapa.poligonoNovo = null;
+    await carregarCamadas();
+    if (reabrir == null) { fecharArea(); desenharMapa(); } else abrirDaCamada(camada, reabrir);
+    if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+  };
+  if (camada === "distritos" && mapa.distritos.alinhado_com_o_cliente) {
+    extra("Redesenhar polígono", "botao-secundario", () => comecarDesenho((pontos) => { mapa.poligonoNovo = { indice, pontos }; abrirDaCamada(camada, indice); }));
+    extra("Novo distrito (copiar este)", "botao-secundario", () => comecarDesenho(async (pontos) => {
+      const nome = window.prompt("Nome do distrito novo (aparece no cliente):", "");
+      if (!nome) return;
+      const ponto = [Number(entradas.ix.value), Number(entradas.iy.value), Number(entradas.iz.value)];
+      try {
+        const r = await api(rotaDaCamada(), { method: "POST", body: JSON.stringify({ base: indice, campos: { nome, vertices: pontos, ponto } }) });
+        await depois(`Distrito novo #${r.resultado.indice} (id ${r.resultado.id}) no rascunho.`, r.resultado.indice);
+      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    }));
+    extra("Remover distrito", "botao-secundario texto-perigo", async () => {
+      if (!confirm(`Remover o distrito #${indice}${item.nome ? ` (${item.nome})` : ""} do servidor e do cliente? Os seguintes sobem um número.`)) return;
+      try { await api(rotaDaCamada(`/${indice}`), { method: "DELETE" }); await depois("Distrito removido no rascunho.", null); }
+      catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    });
+  }
+  if (camada === "portais" && mapa.portais.alinhado_com_o_cliente) {
+    extra("Posicionar a caixa pelo clique", "botao-secundario", () => {
+      mapa.seletorDoClique = { x: 'input[data-pos="cx"]', z: 'input[data-pos="cz"]', y: 'input[data-pos="cy"]' };
+      mapa.posicionando = true;
+      alerta("ok", "Estúdio", "Clique no mapa onde fica a caixa do portal.", { toast: true });
+    });
+    extra("Novo portal (copiar este)", "botao-secundario", async () => {
+      try { const r = await api(rotaDaCamada(), { method: "POST", body: JSON.stringify({ base: indice }) }); await depois(`Portal novo #${r.resultado.indice} (no mesmo lugar; mova-o).`, r.resultado.indice); }
+      catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    });
+    extra("Remover portal", "botao-secundario texto-perigo", async () => {
+      if (!confirm(`Remover o portal #${indice} do servidor e do cliente? Os seguintes sobem um número nos dois.`)) return;
+      try { await api(rotaDaCamada(`/${indice}`), { method: "DELETE" }); await depois("Portal removido no rascunho.", null); }
+      catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    });
+  }
   ed.appendChild(botoes);
+  desenharMapa();
+}
+
+/* Desenho de polígono (B251): cada clique no mapa acrescenta um vértice; a barra no editor conclui ou cancela. */
+function comecarDesenho(aoConcluir) {
+  mapa.desenho = { pontos: [], aoConcluir };
+  const barra = criar("div", "recursos-linha alerta alerta-aviso");
+  barra.id = "mapa-desenho";
+  const info = criar("span", "", "Clique no mapa para marcar os vértices (no mínimo 3).");
+  const concluir = criar("button", "botao botao-pequeno botao-primario", "Concluir");
+  const desfazer = criar("button", "botao botao-pequeno botao-secundario", "Desfazer ponto");
+  const cancelar = criar("button", "botao botao-pequeno botao-secundario", "Cancelar");
+  for (const b of [concluir, desfazer, cancelar]) b.type = "button";
+  concluir.addEventListener("click", () => {
+    const d = mapa.desenho;
+    if (!d || d.pontos.length < 3) { alerta("aviso", "Estúdio", "O polígono precisa de ao menos 3 pontos.", { toast: true }); return; }
+    mapa.desenho = null;
+    barra.remove();
+    d.aoConcluir(d.pontos);
+    desenharMapa();
+  });
+  desfazer.addEventListener("click", () => { mapa.desenho?.pontos.pop(); info.textContent = `${mapa.desenho?.pontos.length || 0} pontos.`; desenharMapa(); });
+  cancelar.addEventListener("click", () => { mapa.desenho = null; barra.remove(); desenharMapa(); });
+  barra.append(info, concluir, desfazer, cancelar);
+  elemento("mapa-desenho")?.remove();
+  elemento("mapa-editor").prepend(barra);
+  barra.dataset.info = "1";
+  mapa.desenhoInfo = info;
+}
+
+function pontoDoDesenho(ev) {
+  const m = mapa.atual;
+  const r = elemento("mapa-tela").getBoundingClientRect();
+  const px = (ev.clientX - r.left - mapa.x) / mapa.escala, py = (ev.clientY - r.top - mapa.y) / mapa.escala;
+  const x = Math.round((2 * px - m.colunas * 512) * 10) / 10, z = Math.round((m.linhas * 512 - 2 * py) * 10) / 10;
+  mapa.desenho.pontos.push([x, z]);
+  if (mapa.desenhoInfo) mapa.desenhoInfo.textContent = `${mapa.desenho.pontos.length} pontos (mínimo 3).`;
   desenharMapa();
 }
 

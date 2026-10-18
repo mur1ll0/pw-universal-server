@@ -241,6 +241,26 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
                                    headers=csrf, json={"campos": {}})
         self.assertEqual(r.status_code, 422)
         self.assertEqual(len(RecursosFalso.pedidos), antes)
+        # Distrito novo/removido e polígono grande (B251): passam de 8 KiB só nas rotas de distrito.
+        poligono = [[float(i), float(i * 2)] for i in range(500)]
+        r = await self.cliente.put("/api/realms/realm_155/estudio/mapas/world/distritos/3", params={"rascunho": 5},
+                                   headers=csrf, json={"campos": {"vertices": poligono}})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(json.loads(RecursosFalso.pedidos[-1]["corpo"])["campos"]["vertices"]), 500)
+        r = await self.cliente.post("/api/realms/realm_155/estudio/mapas/world/distritos", params={"rascunho": 5},
+                                    headers=csrf, json={"base": 0, "campos": {"nome": "X", "vertices": poligono}})
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["metodo"]), (200, "POST"))
+        self.assertEqual(json.loads(RecursosFalso.pedidos[-1]["corpo"])["base"], 0)
+        r = await self.cliente.delete("/api/realms/realm_155/estudio/mapas/world/portais/2", params={"rascunho": 5}, headers=csrf)
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.5.5/estudio/mapas/world/portais/2"))
+        antes2 = len(RecursosFalso.pedidos)
+        r = await self.cliente.post("/api/realms/realm_155/estudio/mapas/world/distritos", params={"rascunho": 5},
+                                    headers=csrf, json={"base": -1})
+        self.assertEqual(r.status_code, 422)
+        r = await self.cliente.post("/api/realms/realm_155/estudio/mapas/world/portais", params={"rascunho": 5},
+                                    headers=csrf, json={"base": 0, "campos": {"x": "y" * 20000}})
+        self.assertEqual(r.status_code, 413, "portal não tem a exceção de tamanho")
+        self.assertEqual(len(RecursosFalso.pedidos), antes2)
         # Teleportes (B245): GET pelo mapa, PUT pelo id do destino.
         await self.cliente.get("/api/realms/realm_126/estudio/mapas/world/teleportes", params={"rascunho": 5})
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/mapas/world/teleportes")

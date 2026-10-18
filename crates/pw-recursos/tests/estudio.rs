@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -23,6 +23,43 @@ fn elements_126() -> Vec<u8> {
     fs::read(&p).unwrap_or_else(|e| panic!("{}: {e} (os dados do realm são obrigatórios)", p.display()))
 }
 
+/// `precinct.clt`/`region.clt` alinhados com os `.sev` da a01 do 1.2.6 (B251): mesmo carimbo, mesma contagem e
+/// sequência, gerados com o gravador do cliente (os reais estão fora do repositório).
+fn clt_alinhados() -> (Vec<u8>, Vec<u8>) {
+    use pw_data_loader::clt::{DistritoDoCliente, PrecinctDoCliente, RegionDoCliente, RegistroDoCliente};
+    use pw_data_loader::regioes::{RegioesEditavel, RegistroDeRegiao};
+    let a01 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/a01");
+    let d = pw_data_loader::precinct::Distritos::ler(&fs::read(a01.join("precinct.sev")).unwrap()).unwrap();
+    let p = PrecinctDoCliente {
+        cabecalho: vec!["//  Element pricinct file (client version)".into(), "".into(), format!("version  {}", d.versao)],
+        versao: d.versao,
+        carimbo: d.carimbo,
+        distritos: d.lista.iter().enumerate().map(|(i, x)| DistritoDoCliente {
+            nome: format!("D{i}"),
+            numeros: vec![100 + i as i64, x.vertices.len() as i64, 0, x.prioridade as i64, x.mapa_do_ponto as i64, 0, 60, 1, x.mapa as i64, x.dominio as i64],
+            ponto_de_cidade: x.ponto_de_cidade,
+            vertices: x.vertices.clone(),
+            marcas: vec![],
+            som: String::new(),
+            musicas: vec![],
+            som_da_noite: Some(String::new()),
+        }).collect(),
+    };
+    let r = RegioesEditavel::ler(&fs::read(a01.join("region.sev")).unwrap()).unwrap();
+    let c = RegionDoCliente {
+        cabecalho: vec!["//  Element region file (client version)".into(), "".into(), format!("version  {}", r.versao)],
+        versao: r.versao,
+        carimbo: r.carimbo,
+        registros: r.registros.iter().map(|x| match x {
+            RegistroDeRegiao::Regiao(v) => RegistroDoCliente::Regiao { nome: "安全区".into(), tipo: 1, vertices: v.clone() },
+            RegistroDeRegiao::Caixa(k) => RegistroDoCliente::Portal {
+                numeros: vec![k.destino as i64, k.origem as i64, k.nivel_minimo as i64], pos: k.pos, exts: k.exts, alvo: k.alvo,
+            },
+        }).collect(),
+    };
+    (p.gravar(), c.gravar())
+}
+
 struct Pacotes(Vec<u8>);
 
 impl FonteDePacote for Pacotes {
@@ -40,7 +77,10 @@ impl FonteDePacote for Pacotes {
         // Rastreador de NPCs do cliente (B246): o task_npc.data real do 1.2.6.
         let tn = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/task_npc.data");
         receber(b"data\\task_npc.data".to_vec(), fs::read(tn).expect("task_npc do realm_126"))?;
-        Ok(ResultadoDoPacote { entradas: 4, falhas: vec![] })
+        let (precinct, region) = clt_alinhados();
+        receber(b"maps\\world\\precinct.clt".to_vec(), precinct)?;
+        receber(b"maps\\world\\region.clt".to_vec(), region)?;
+        Ok(ResultadoDoPacote { entradas: 6, falhas: vec![] })
     }
 }
 
@@ -344,7 +384,8 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let pt = json_de(pedir("GET", "estudio/mapas/world/portais").call().unwrap());
         assert_eq!((pt["caixas"].as_array().unwrap().len(), pt["regioes"].as_array().unwrap().len()), (1, 1), "{pt}");
         assert_eq!(erro_de(pedir("PUT", &em4("estudio/mapas/world/distritos/0")).send_json(json!({"campos": {"protege_pk": true}}))).0, 400, "v6 não tem PK");
-        assert_eq!(erro_de(pedir("PUT", &em4("estudio/mapas/world/portais/0")).send_json(json!({"campos": {"destino": 1}}))).0, 400);
+        // Com o region.clt alinhado (B251) o destino é editável; mapa 0 continua recusado.
+        assert_eq!(erro_de(pedir("PUT", &em4("estudio/mapas/world/portais/0")).send_json(json!({"campos": {"destino": 0}}))).0, 400);
         assert_eq!(erro_de(pedir("PUT", &em4("estudio/mapas/world/distritos/0")).send_json(json!({"campos": {"ponto": [1, 2]}}))).0, 400);
         pedir("PUT", &em4("estudio/mapas/world/distritos/0")).send_json(json!({"campos": {"ponto": [100.5, 20.0, -30.25], "prioridade": 3}})).unwrap();
         pedir("PUT", &em4("estudio/mapas/world/portais/0")).send_json(json!({"campos": {"alvo": [1.5, 2.5, 3.5]}})).unwrap();
@@ -445,6 +486,48 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let c = pw_data_loader::npcgen_editavel::ler_campos(&ed.controladores[ic as usize], pw_data_loader::npcgen_editavel::CAMPOS_DO_CONTROLADOR, ed.versao);
         assert_eq!((c["bActived"].as_bool(), c["ActiveTime_iHours"].as_i64(), ed.controladores.len()), (Some(!ativo), Some(5), 346));
         pw_data_loader::npcgen::NpcGenData::load_from_bytes(&fs::read(realm2.join("world").join("npcgen.data")).unwrap()).unwrap();
+
+        // Distritos e portais em par com o cliente (B251): nome, polígono, criar e remover gravam o .sev (realm) e o
+        // .clt (cliente) no mesmo rascunho, com os carimbos intactos.
+        let d0 = json_de(pedir("GET", "estudio/mapas/world/distritos").call().unwrap());
+        assert_eq!((d0["alinhado_com_o_cliente"].as_bool(), d0["distritos"][0]["nome"].as_str()), (Some(true), Some("D0")), "{d0}");
+        let p0 = json_de(pedir("GET", "estudio/mapas/world/portais").call().unwrap());
+        assert_eq!(p0["alinhado_com_o_cliente"], true, "{p0}");
+        let r8 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "par", "operacao_id": "t_p4_r8"})).unwrap())["id"].as_i64().unwrap();
+        let em8 = |rel: &str| format!("{rel}?rascunho={r8}");
+        assert_eq!(erro_de(pedir("PUT", &em8("estudio/mapas/world/distritos/0")).send_json(json!({"campos": {"vertices": [[0, 0], [1, 1]]}}))).0, 400, "menos de 3 pontos");
+        assert_eq!(erro_de(pedir("PUT", &em8("estudio/mapas/world/distritos/0")).send_json(json!({"campos": {"nome": "a\"b"}}))).0, 400);
+        pedir("PUT", &em8("estudio/mapas/world/distritos/0")).send_json(json!({"campos": {"nome": "Cidade Nova", "vertices": [[0, 0], [10, 0], [10, 10]]}})).unwrap();
+        let novo = json_de(pedir("POST", &em8("estudio/mapas/world/distritos")).send_json(json!({"base": 0, "campos": {"nome": "Outro", "vertices": [[0, 0], [5, 0], [5, 5], [0, 5]], "ponto": [1, 2, 3]}})).unwrap());
+        assert_eq!(novo["resultado"]["indice"], 1, "{novo}");
+        let d1 = json_de(pedir("GET", &em8("estudio/mapas/world/distritos")).call().unwrap());
+        assert_eq!((d1["alinhado_com_o_cliente"].as_bool(), d1["distritos"].as_array().unwrap().len()), (Some(true), 2), "{d1}");
+        assert_eq!((d1["distritos"][0]["nome"].as_str(), d1["distritos"][1]["nome"].as_str()), (Some("Cidade Nova"), Some("Outro")));
+        pedir("PUT", &em8("estudio/mapas/world/portais/0")).send_json(json!({"campos": {"destino": 101, "pos": [1.5, 2.0, 3.0]}})).unwrap();
+        let np = json_de(pedir("POST", &em8("estudio/mapas/world/portais")).send_json(json!({"base": 0})).unwrap());
+        assert_eq!(np["resultado"]["indice"], 1);
+        pedir("DELETE", &em8("estudio/mapas/world/portais/1")).call().unwrap();
+        let hist8 = json_de(pedir("GET", "alteracoes").call().unwrap());
+        let lista8 = hist8.as_array().unwrap().iter().find(|a| a["id"] == r8).unwrap()["lista"].as_array().unwrap().clone();
+        let mut caminhos: Vec<String> = lista8.iter().map(|i| format!("{} {}", i["destino"].as_str().unwrap(), i["caminho"].as_str().unwrap())).collect();
+        caminhos.sort();
+        assert_eq!(caminhos, ["cliente maps\\world\\precinct.clt", "cliente maps\\world\\region.clt",
+            "servidor servidor\\world\\precinct.sev", "servidor servidor\\world\\region.sev"]);
+        let p8 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r8]})).unwrap());
+        assert_eq!(p8["aplicados"].as_array().unwrap().len(), 2, "{p8}");
+        let baixar = |c: &str| { let mut b = Vec::new(); std::io::Read::read_to_end(&mut pedir("GET", "arquivo").query("caminho", c).call().unwrap().into_reader(), &mut b).unwrap(); b };
+        let pc = pw_data_loader::clt::PrecinctDoCliente::ler(&baixar("maps\\world\\precinct.clt")).unwrap();
+        let ps = pw_data_loader::precinct::Distritos::ler(&fs::read(realm2.join("world").join("precinct.sev")).unwrap()).unwrap();
+        assert_eq!((pc.distritos.len(), ps.lista.len(), pc.carimbo), (2, 2, ps.carimbo), "carimbo e contagem iguais");
+        assert_eq!((pc.distritos[1].nome.as_str(), pc.distritos[1].ponto_de_cidade, ps.lista[1].ponto_de_cidade), ("Outro", [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]));
+        assert_eq!(ps.lista[0].vertices.len(), 3);
+        assert!(ps.distrito_em(7.0, 2.0, ps.lista[0].mapa).is_some(), "o polígono novo vale no GS");
+        let rc = pw_data_loader::clt::RegionDoCliente::ler(&baixar("maps\\world\\region.clt")).unwrap();
+        let rs = pw_data_loader::regioes::RegioesEditavel::ler(&fs::read(realm2.join("world").join("region.sev")).unwrap()).unwrap();
+        assert_eq!(rc.carimbo, rs.carimbo);
+        assert_eq!(rc.sequencia(), rs.registros.iter().map(|x| matches!(x, pw_data_loader::regioes::RegistroDeRegiao::Caixa(_))).collect::<Vec<_>>());
+        let caixa = pw_data_loader::regioes::ler_caixas_de_transporte(&fs::read(realm2.join("world").join("region.sev")).unwrap()).unwrap()[0];
+        assert_eq!((caixa.destino, caixa.pos), (101, [1.5, 2.0, 3.0]));
 
         // Altura do chão (B248): o realm do teste não tem .hmap — a rota responde sem altura; coordenada inválida é 400.
         let al = json_de(pedir("GET", "estudio/mapas/world/altura").query("x", "10").query("z", "-20").call().unwrap());

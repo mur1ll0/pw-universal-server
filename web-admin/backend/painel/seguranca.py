@@ -44,8 +44,12 @@ def eh_area_do_npcgen(escopo):
     """B243: salvar uma área do npcgen manda os campos dela e de todos os geradores (até 64)."""
     partes = escopo["path"].strip("/").split("/")
     # api / realms / <realm> / estudio / mapas / <caminho> / npcgen / <tipo> / <indice>
-    return (escopo["method"] == "PUT" and len(partes) == 9 and partes[:2] == ["api", "realms"]
-            and partes[3:5] == ["estudio", "mapas"] and partes[6] == "npcgen")
+    if (escopo["method"] == "PUT" and len(partes) == 9 and partes[:2] == ["api", "realms"]
+            and partes[3:5] == ["estudio", "mapas"] and partes[6] == "npcgen"):
+        return True
+    # B251: polígono de distrito (até 512 vértices) ao editar ou criar.
+    return (escopo["method"] in ("PUT", "POST") and len(partes) in (7, 8) and partes[:2] == ["api", "realms"]
+            and partes[3:5] == ["estudio", "mapas"] and partes[6] == "distritos")
 
 
 class LimitarEntrada:

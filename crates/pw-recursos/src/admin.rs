@@ -490,6 +490,57 @@ async fn estudio_editar_portal(
     Ok(Json(e.estudio.editar_portal(&e.gov, &v, &caminho, r, indice, p.campos).await?))
 }
 
+// ------------------------------------------------------------------ distritos e portais novos (B251)
+
+#[derive(Deserialize)]
+struct PedidoNovo {
+    base: usize,
+    #[serde(default)]
+    campos: serde_json::Map<String, Value>,
+}
+
+async fn estudio_novo_distrito(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho)): Path<(String, String)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoNovo>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.novo_distrito(&e.gov, &v, &caminho, r, p.base, p.campos).await?))
+}
+
+async fn estudio_remover_distrito(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.remover_distrito(&e.gov, &v, &caminho, r, indice).await?))
+}
+
+async fn estudio_novo_portal(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho)): Path<(String, String)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoNovo>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.novo_portal(&e.gov, &v, &caminho, r, p.base).await?))
+}
+
+async fn estudio_remover_portal(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.remover_portal(&e.gov, &v, &caminho, r, indice).await?))
+}
+
 // ------------------------------------------------------------------ teleportes (S4, B245)
 
 async fn estudio_teleportes(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
@@ -630,10 +681,10 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/mapas/{caminho}/pecas/{peca}", get(estudio_peca))
         .route("/admin/{v}/estudio/mapas/{caminho}/criaturas", get(estudio_criaturas))
         .route("/admin/{v}/estudio/mapas/{caminho}/npcgen", get(estudio_npcgen))
-        .route("/admin/{v}/estudio/mapas/{caminho}/distritos", get(estudio_distritos))
-        .route("/admin/{v}/estudio/mapas/{caminho}/distritos/{indice}", put(estudio_editar_distrito))
-        .route("/admin/{v}/estudio/mapas/{caminho}/portais", get(estudio_portais))
-        .route("/admin/{v}/estudio/mapas/{caminho}/portais/{indice}", put(estudio_editar_portal))
+        .route("/admin/{v}/estudio/mapas/{caminho}/distritos", get(estudio_distritos).post(estudio_novo_distrito))
+        .route("/admin/{v}/estudio/mapas/{caminho}/distritos/{indice}", put(estudio_editar_distrito).delete(estudio_remover_distrito))
+        .route("/admin/{v}/estudio/mapas/{caminho}/portais", get(estudio_portais).post(estudio_novo_portal))
+        .route("/admin/{v}/estudio/mapas/{caminho}/portais/{indice}", put(estudio_editar_portal).delete(estudio_remover_portal))
         .route("/admin/{v}/estudio/mapas/{caminho}/teleportes", get(estudio_teleportes))
         .route("/admin/{v}/estudio/teleportes/{id}", put(estudio_editar_teleporte))
         .route("/admin/{v}/estudio/mapas/{caminho}/rastreador", get(estudio_rastreador))

@@ -433,3 +433,23 @@ def registrar_reinicio(app):
             return JSONResponse({"estado": "falha", "mensagem": resultado}, status_code=503)
         return {"estado": "aplicado", "realm": realm, "online": sum(d.get("online", 0) for d in resultado),
                 "processos": len(resultado)}
+
+    # Distritos e portais novos/removidos (B251): gravam o .sev do realm e o .clt do cliente juntos.
+    @app.post("/api/realms/{realm}/estudio/mapas/{caminho}/{arquivo}")
+    async def estudio_novo_sev(realm: str, caminho: str, arquivo: str, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais"):
+            raise HTTPException(404, "Mapa inválido.")
+        dados = await requisicao.json()
+        base, campos = dados.get("base"), dados.get("campos", {})
+        if not isinstance(base, int) or base < 0 or not isinstance(campos, dict):
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/mapas/{caminho}/{arquivo}", {"rascunho": rascunho},
+                               dados={"base": base, "campos": campos})
+
+    @app.delete("/api/realms/{realm}/estudio/mapas/{caminho}/{arquivo}/{indice}")
+    async def estudio_remover_sev(realm: str, caminho: str, arquivo: str, indice: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais"):
+            raise HTTPException(404, "Mapa inválido.")
+        return await _repassar("DELETE", f"/admin/{v}/estudio/mapas/{caminho}/{arquivo}/{max(0, indice)}", {"rascunho": rascunho})
