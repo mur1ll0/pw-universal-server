@@ -546,6 +546,39 @@ def registrar_reinicio(app):
             raise HTTPException(422, "Nada a mudar.")
         return await _repassar("PUT", f"/admin/{v}/estudio/missoes/{id_missao}", {"rascunho": rascunho}, dados={"campos": campos})
 
+    # Textos do cliente (B260): fixed_msg, item_desc, item_ext_desc (item "cliente").
+    TEXTOS = ("fixed_msg.txt", "item_desc.txt", "item_ext_desc.txt")
+
+    def _tabela_de_texto(arquivo: str) -> str:
+        if arquivo not in TEXTOS:
+            raise HTTPException(404, "Tabela de texto inválida.")
+        return arquivo
+
+    @app.get("/api/realms/{realm}/estudio/textos/{arquivo}")
+    async def estudio_textos(realm: str, arquivo: str, requisicao: Request, busca: str = "", pagina: int = 0,
+                             rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/textos/{_tabela_de_texto(arquivo)}",
+                               {"busca": busca[:200], "pagina": max(0, pagina), "rascunho": rascunho})
+
+    @app.put("/api/realms/{realm}/estudio/textos/{arquivo}/{chave}")
+    async def estudio_editar_texto(realm: str, arquivo: str, chave: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        dados = await requisicao.json()
+        if not isinstance(dados.get("texto"), str):
+            raise HTTPException(422, "Texto inválido.")
+        return await _repassar("PUT", f"/admin/{v}/estudio/textos/{_tabela_de_texto(arquivo)}/{chave}", {"rascunho": rascunho},
+                               dados={"texto": dados["texto"]})
+
+    @app.post("/api/realms/{realm}/estudio/textos/{arquivo}")
+    async def estudio_novo_texto(realm: str, arquivo: str, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        dados = await requisicao.json()
+        if not isinstance(dados.get("id"), int) or not isinstance(dados.get("texto"), str):
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/textos/{_tabela_de_texto(arquivo)}", {"rascunho": rascunho},
+                               dados={"id": dados["id"], "texto": dados["texto"]})
+
     # Comportamento dos monstros (B258, só leitura): o aipolicy.data do realm.
     @app.get("/api/realms/{realm}/estudio/comportamentos")
     async def estudio_comportamentos(realm: str, requisicao: Request, busca: str = ""):

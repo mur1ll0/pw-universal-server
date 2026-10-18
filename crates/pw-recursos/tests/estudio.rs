@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254); missões (B255) e editar missão no lugar (B256); comportamento (B258) e editá-lo no lugar (B259).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254); missões (B255) e editar missão no lugar (B256); comportamento (B258) e editá-lo no lugar (B259); textos do cliente (B260).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -93,7 +93,11 @@ impl FonteDePacote for Pacotes {
         receber(b"data\\gshop.data".to_vec(), fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/gshop.data")).unwrap())?;
         // tasks.data (B255/B256): o cliente e o realm usam o mesmo arquivo.
         receber(b"data\\tasks.data".to_vec(), fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/tasks.data")).unwrap())?;
-        Ok(ResultadoDoPacote { entradas: 9, falhas: vec![] })
+        // Tabelas de texto (B260): uma indexada e uma sequencial, no formato do cliente.
+        let utf16 = |t: &str| { let mut b = vec![0xFFu8, 0xFE]; t.encode_utf16().for_each(|c| b.extend_from_slice(&c.to_le_bytes())); b };
+        receber(b"configs\\item_ext_desc.txt".to_vec(), utf16("//  Element item extend descriptions.\n\n#_index\n#_begin\n\n10037  \"^ffcb4aUma invenção\"\n10042  \"Outra\"\n"))?;
+        receber(b"configs\\fixed_msg.txt".to_vec(), utf16("//  Element fixed notify messages.\n\n#_begin\n\n\"Ganhou %d moedas\"\n\"Ganhou %d de experiência\"\n"))?;
+        Ok(ResultadoDoPacote { entradas: 11, falhas: vec![] })
     }
 }
 
@@ -644,6 +648,24 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let lido = pw_data_loader::aipolicy::AiPolicyData::load_from_bytes(&fs::read(realm2.join("aipolicy.data")).unwrap()).unwrap();
         assert_eq!(lido.policies[&pid].triggers[ti].operacoes[oi].parametro, pw_data_loader::aipolicy::ParametroDeOperacao::Skill { skill: 4242, nivel: 3 });
         assert!(lido.policies[&pid].triggers[ti].so_em_combate);
+
+        // Textos do cliente (B260): listar, buscar, editar, acrescentar (só na indexada); item "cliente".
+        let tx = json_de(pedir("GET", "estudio/textos/item_ext_desc.txt").call().unwrap());
+        assert_eq!((tx["indexada"].as_bool(), tx["entradas"].as_u64()), (Some(true), Some(2)));
+        let fm = json_de(pedir("GET", "estudio/textos/fixed_msg.txt").query("busca", "experiência").call().unwrap());
+        assert_eq!((fm["indexada"].as_bool(), fm["linhas"][0][0].as_i64()), (Some(false), Some(1)));
+        assert_eq!(erro_de(pedir("GET", "estudio/textos/elements.data").call()).0, 400);
+        let r14 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "textos", "operacao_id": "t_p4_r14"})).unwrap())["id"].as_i64().unwrap();
+        pedir("PUT", &format!("estudio/textos/item_ext_desc.txt/10042?rascunho={r14}")).send_json(json!({"texto": "Descrição do Estúdio"})).unwrap();
+        pedir("POST", &format!("estudio/textos/item_ext_desc.txt?rascunho={r14}")).send_json(json!({"id": 50000, "texto": "Item novo"})).unwrap();
+        assert_eq!(erro_de(pedir("POST", &format!("estudio/textos/fixed_msg.txt?rascunho={r14}")).send_json(json!({"id": 9, "texto": "x"}))).0, 400, "sequencial não acrescenta");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/textos/item_ext_desc.txt/10042?rascunho={r14}")).send_json(json!({"texto": "com \"aspas\""}))).0, 400);
+        let tx2 = json_de(pedir("GET", &format!("estudio/textos/item_ext_desc.txt?rascunho={r14}")).call().unwrap());
+        assert_eq!(tx2["entradas"], 3);
+        let p14 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r14]})).unwrap());
+        assert_eq!(p14["aplicados"].as_array().unwrap().len(), 0, "texto é só do cliente: {p14}");
+        let lido = pw_recursos::textos::TabelaDeTextos::ler(&baixar("configs\\item_ext_desc.txt")).unwrap();
+        assert_eq!((lido.entrada(10042).unwrap().texto.as_str(), lido.entrada(50000).unwrap().texto.as_str()), ("Descrição do Estúdio", "Item novo"));
 
         // Loja Gold (B254): ofertas do gshop.data; editar preço e nome, clonar, remover; publicar grava o cliente e o
         // realm (item "ambos") com o carimbo intacto.

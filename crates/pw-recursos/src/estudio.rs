@@ -2871,3 +2871,53 @@ impl Estudio {
         .await
     }
 }
+
+// ------------------------------------------------------------------ textos do cliente (S7, B260)
+
+fn caminho_do_texto(arquivo: &str) -> Result<String> {
+    if !crate::textos::ARQUIVOS.contains(&arquivo) {
+        bail!("tabela de texto inválida: {arquivo}");
+    }
+    Ok(format!("configs\\{arquivo}"))
+}
+
+impl Estudio {
+    /// Uma tabela de texto do cliente (`crate::textos`): `[chave, texto]` paginado, busca por chave ou texto.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn textos(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: Option<i64>, busca: &str, pagina: usize, por_pagina: usize) -> Result<Value> {
+        let caminho = caminho_do_texto(arquivo)?;
+        let (_, _, _, bytes, item) = self.item_do_cliente(gov, versao, &caminho, rascunho).await?;
+        let t = crate::textos::TabelaDeTextos::ler(&bytes)?;
+        let busca = busca.trim().to_lowercase();
+        let n: Option<i64> = busca.parse().ok();
+        let achadas: Vec<&crate::textos::Entrada> = t
+            .entradas
+            .iter()
+            .filter(|e| busca.is_empty() || Some(e.chave) == n || e.texto.to_lowercase().contains(&busca))
+            .collect();
+        let linhas: Vec<Value> = achadas.iter().skip(pagina * por_pagina).take(por_pagina).map(|e| json!([e.chave, e.texto])).collect();
+        Ok(json!({ "arquivo": arquivo, "indexada": t.indexada, "entradas": t.entradas.len(), "total": achadas.len(), "pagina": pagina,
+            "no_rascunho": item.is_some(), "linhas": linhas }))
+    }
+
+    /// Troca o texto de uma entrada (`acao = definir`) ou acrescenta uma (`acrescentar`, só na indexada). Item `cliente`.
+    pub async fn editar_texto(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, chave: i64, texto: String, novo: bool) -> Result<Value> {
+        let caminho = caminho_do_texto(arquivo)?;
+        self.alterar_item_do_cliente(gov, versao, &caminho, rascunho, move |base| {
+            let mut t = crate::textos::TabelaDeTextos::ler(base)?;
+            let antes = t.entrada(chave).map(|e| e.texto.clone());
+            if novo {
+                t.acrescentar(chave, &texto)?;
+            } else {
+                t.definir(chave, &texto)?;
+            }
+            let mudanca = if antes.as_deref() == Some(texto.as_str()) {
+                Value::Null
+            } else {
+                json!({ "acao": if novo { "nova" } else { "editada" }, "tipo": "texto", "chave": chave, "antes": antes, "depois": texto })
+            };
+            Ok((t.gravar(), json!({ "chave": chave }), mudanca))
+        })
+        .await
+    }
+}

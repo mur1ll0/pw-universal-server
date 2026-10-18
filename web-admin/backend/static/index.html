@@ -14,6 +14,7 @@
   <script src="/static/loja.js" defer></script>
   <script src="/static/missoes.js" defer></script>
   <script src="/static/comportamento.js" defer></script>
+  <script src="/static/textos.js" defer></script>
 </head>
 <body>
   <!-- Entrada -->
@@ -291,7 +292,23 @@
             <button id="estudio-vista-loja" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Loja Gold</button>
             <button id="estudio-vista-missoes" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Missões</button>
             <button id="estudio-vista-comportamento" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Comportamento</button>
+            <button id="estudio-vista-textos" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Textos</button>
           </div>
+          <section id="estudio-textos" class="recursos-cartao" hidden>
+            <div class="recursos-linha">
+              <select id="textos-arquivo" class="campo" aria-label="Tabela de texto">
+                <option value="item_desc.txt">item_desc.txt (descrição dos itens)</option>
+                <option value="item_ext_desc.txt">item_ext_desc.txt (descrição estendida)</option>
+                <option value="fixed_msg.txt">fixed_msg.txt (mensagens fixas)</option>
+              </select>
+              <input id="textos-busca" class="campo" type="search" placeholder="Id ou trecho do texto" aria-label="Buscar texto">
+              <button id="textos-anterior" class="botao botao-pequeno botao-secundario" type="button">‹</button>
+              <button id="textos-proxima" class="botao botao-pequeno botao-secundario" type="button">›</button>
+              <span id="textos-situacao" class="texto-suave"></span>
+            </div>
+            <div id="textos-novo" class="recursos-linha"></div>
+            <div id="textos-lista"></div>
+          </section>
           <section id="estudio-comportamento" class="recursos-cartao" hidden>
             <div class="recursos-linha">
               <input id="comportamento-busca" class="campo" type="search" placeholder="Id da política, id ou nome do monstro" aria-label="Buscar política">

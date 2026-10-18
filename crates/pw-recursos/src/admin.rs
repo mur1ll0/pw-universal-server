@@ -662,6 +662,56 @@ async fn estudio_editar_comportamento(
     Ok(Json(e.estudio.editar_comportamento(&e.gov, &v, r, id, p).await?))
 }
 
+// ------------------------------------------------------------------ textos do cliente (S7, B260)
+
+#[derive(Deserialize)]
+struct QTextos {
+    rascunho: Option<i64>,
+    busca: Option<String>,
+    pagina: Option<usize>,
+    por_pagina: Option<usize>,
+}
+
+async fn estudio_textos(State(e): State<Arc<Estado>>, Path((v, arquivo)): Path<(String, String)>, Query(q): Query<QTextos>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = e.estudio.textos(&e.gov, &v, &arquivo, q.rascunho, q.busca.as_deref().unwrap_or(""), q.pagina.unwrap_or(0),
+        q.por_pagina.unwrap_or(100).clamp(1, 500)).await?;
+    Ok(Json(r))
+}
+
+#[derive(Deserialize)]
+struct PedidoTexto {
+    texto: String,
+}
+
+async fn estudio_editar_texto(
+    State(e): State<Arc<Estado>>,
+    Path((v, arquivo, chave)): Path<(String, String, i64)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoTexto>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.editar_texto(&e.gov, &v, &arquivo, r, chave, p.texto, false).await?))
+}
+
+#[derive(Deserialize)]
+struct PedidoTextoNovo {
+    id: i64,
+    texto: String,
+}
+
+async fn estudio_novo_texto(
+    State(e): State<Arc<Estado>>,
+    Path((v, arquivo)): Path<(String, String)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoTextoNovo>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.editar_texto(&e.gov, &v, &arquivo, r, p.id, p.texto, true).await?))
+}
+
 // ------------------------------------------------------------------ teleportes (S4, B245)
 
 async fn estudio_teleportes(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
@@ -837,6 +887,8 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/alinhamento", get(estudio_alinhamento))
         .route("/admin/{v}/estudio/missoes", get(estudio_missoes))
         .route("/admin/{v}/estudio/comportamentos", get(estudio_comportamentos))
+        .route("/admin/{v}/estudio/textos/{arquivo}", get(estudio_textos).post(estudio_novo_texto))
+        .route("/admin/{v}/estudio/textos/{arquivo}/{chave}", put(estudio_editar_texto))
         .route("/admin/{v}/estudio/comportamentos/{id}", get(estudio_comportamento).put(estudio_editar_comportamento))
         .route("/admin/{v}/estudio/missoes/{id}", get(estudio_missao).put(estudio_editar_missao))
         .route("/admin/{v}/estudio/loja/{arquivo}", get(estudio_loja).post(estudio_clonar_oferta))

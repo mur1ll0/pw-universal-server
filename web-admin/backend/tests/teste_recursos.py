@@ -280,6 +280,17 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
                                    json={"gatilho": 0, "flags": {"ativo": False}, "extra": 1})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(json.loads(RecursosFalso.pedidos[-1]["corpo"]), {"gatilho": 0, "flags": {"ativo": False}})
+        # Textos (B260).
+        await self.cliente.get("/api/realms/realm_155/estudio/textos/item_desc.txt", params={"busca": "espada"})
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/textos/item_desc.txt")
+        r = await self.cliente.get("/api/realms/realm_155/estudio/textos/elements.data")
+        self.assertEqual(r.status_code, 404)
+        r = await self.cliente.put("/api/realms/realm_155/estudio/textos/item_desc.txt/7", params={"rascunho": 5}, headers=csrf,
+                                   json={"texto": "Nova", "extra": 1})
+        self.assertEqual((r.status_code, json.loads(RecursosFalso.pedidos[-1]["corpo"])), (200, {"texto": "Nova"}))
+        r = await self.cliente.post("/api/realms/realm_155/estudio/textos/item_ext_desc.txt", params={"rascunho": 5}, headers=csrf,
+                                    json={"id": 9, "texto": "x"})
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.5.5/estudio/textos/item_ext_desc.txt"))
         # Missões (B255).
         await self.cliente.get("/api/realms/realm_126/estudio/missoes", params={"busca": "teste", "topo": "false"})
         p = RecursosFalso.pedidos[-1]
