@@ -649,6 +649,33 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(lido.policies[&pid].triggers[ti].operacoes[oi].parametro, pw_data_loader::aipolicy::ParametroDeOperacao::Skill { skill: 4242, nivel: 3 });
         assert!(lido.policies[&pid].triggers[ti].so_em_combate);
 
+        // Comportamento estrutural (B261): trocar a fala, duplicar e remover gatilho (o leitor do GS relê).
+        let pol_fala = {
+            let d = pw_data_loader::aipolicy::AiPolicyData::load_from_bytes(&fs::read(realm2.join("aipolicy.data")).unwrap()).unwrap();
+            let mut ids: Vec<u32> = d.policies.keys().copied().collect();
+            ids.sort_unstable();
+            ids.iter().find_map(|&pid| d.policies[&pid].triggers.iter().enumerate().find_map(|(ti, t)| t.operacoes.iter().position(|o|
+                matches!(o.parametro, pw_data_loader::aipolicy::ParametroDeOperacao::Fala { .. })).map(|oi| (pid, ti, oi, d.policies[&pid].triggers.len()))))
+        };
+        if let Some((pid, ti, oi, n)) = pol_fala {
+            let r15 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "falas", "operacao_id": "t_p4_r15"})).unwrap())["id"].as_i64().unwrap();
+            let rota = format!("estudio/comportamentos/{pid}?rascunho={r15}");
+            pedir("PUT", &rota).send_json(json!({"gatilho": ti, "fala": {"indice": oi, "texto": "Fala do Estúdio"}})).unwrap();
+            let dup = json_de(pedir("PUT", &rota).send_json(json!({"gatilho": ti, "duplicar": {}})).unwrap());
+            assert!(dup["resultado"]["novo_gatilho"].as_u64().is_some(), "{dup}");
+            assert_eq!(erro_de(pedir("PUT", &rota).send_json(json!({"gatilho": ti, "fala": {"indice": 999, "texto": "x"}}))).0, 400);
+            pedir("PUT", &rota).send_json(json!({"gatilho": ti, "remover": true})).unwrap();
+            let p15 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r15]})).unwrap());
+            assert_eq!(p15["aplicados"].as_array().unwrap().len(), 1, "{p15}");
+            let d = pw_data_loader::aipolicy::AiPolicyData::load_from_bytes(&fs::read(realm2.join("aipolicy.data")).unwrap()).unwrap();
+            let t = &d.policies[&pid].triggers;
+            assert_eq!(t.len(), n, "duplicou um e removeu o original: a mesma quantidade");
+            assert!(matches!(&t[ti].operacoes[oi].parametro, pw_data_loader::aipolicy::ParametroDeOperacao::Fala { texto, .. } if texto == "Fala do Estúdio"));
+            assert_eq!(t[ti].id, dup["resultado"]["novo_gatilho"].as_u64().unwrap() as u32, "a cópia ficou no lugar do original");
+        } else {
+            eprintln!("AVISO: o aipolicy do realm de teste não tem fala — a edição estrutural NÃO foi verificada aqui.");
+        }
+
         // Textos do cliente (B260): listar, buscar, editar, acrescentar (só na indexada); item "cliente".
         let tx = json_de(pedir("GET", "estudio/textos/item_ext_desc.txt").call().unwrap());
         assert_eq!((tx["indexada"].as_bool(), tx["entradas"].as_u64()), (Some(true), Some(2)));

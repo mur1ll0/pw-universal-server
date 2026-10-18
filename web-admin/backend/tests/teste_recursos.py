@@ -280,6 +280,9 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
                                    json={"gatilho": 0, "flags": {"ativo": False}, "extra": 1})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(json.loads(RecursosFalso.pedidos[-1]["corpo"]), {"gatilho": 0, "flags": {"ativo": False}})
+        await self.cliente.put("/api/realms/realm_155/estudio/comportamentos/12", params={"rascunho": 5}, headers=csrf,
+                               json={"gatilho": 1, "fala": {"indice": 0, "texto": "Oi"}, "duplicar": {}, "remover": True})
+        self.assertEqual(set(json.loads(RecursosFalso.pedidos[-1]["corpo"])), {"gatilho", "fala", "duplicar", "remover"})
         # Textos (B260).
         await self.cliente.get("/api/realms/realm_155/estudio/textos/item_desc.txt", params={"busca": "espada"})
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/textos/item_desc.txt")

@@ -656,6 +656,9 @@ pub struct Trigger {
     /// Onde o gatilho começa no arquivo (B259): `versão u32, id u32, ativo, rodando, só em combate` (1 byte cada).
     #[serde(skip)]
     pub em: usize,
+    /// Onde o gatilho termina (B261): o próximo começa aqui. `em..fim` é o gatilho inteiro.
+    #[serde(skip)]
+    pub fim: usize,
     /// A versão gravada no próprio trigger, que decide o formato dos parâmetros.
     pub versao: u32,
     pub id: u32,
@@ -674,6 +677,9 @@ pub struct Trigger {
 /// `MonsterTemplate::aipolicy_id`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiPolicy {
+    /// Onde a política começa no arquivo (B261): `versão u32, id u32, quantidade de gatilhos i32`.
+    #[serde(skip)]
+    pub em: usize,
     pub id: u32,
     pub versao: u32,
     pub triggers: Vec<Trigger>,
@@ -815,6 +821,7 @@ impl AiPolicyData {
 
     /// `CPolicyData::Load(FILE*)`.
     fn ler_politica(l: &mut Leitor) -> Result<AiPolicy> {
+        let em = l.pos;
         let versao = l.u32()?;
         let id = l.u32()?;
         if versao > F_POLICY_VERSION {
@@ -830,7 +837,7 @@ impl AiPolicyData {
             triggers.push(Self::ler_trigger(l)?);
         }
 
-        Ok(AiPolicy { id, versao, triggers })
+        Ok(AiPolicy { em, id, versao, triggers })
     }
 
     /// `CTriggerData::Load`. Os cinco ramos do original (`0`, `1`, `2`, `3`, `>= 4`) só
@@ -897,7 +904,7 @@ impl AiPolicyData {
             });
         }
 
-        Ok(Trigger { em, versao, id, ativo, rodando, so_em_combate, nome, condicao, operacoes })
+        Ok(Trigger { em, fim: l.pos, versao, id, ativo, rodando, so_em_combate, nome, condicao, operacoes })
     }
 
     /// O `switch` que decide se `ReadOperationParam` é chamado, por versão de trigger.

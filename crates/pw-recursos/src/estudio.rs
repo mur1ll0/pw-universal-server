@@ -2863,10 +2863,23 @@ impl Estudio {
                 let v = c.get("valores").and_then(Value::as_object).context("condicao.valores")?;
                 a.definir_condicao(id, g, caminho, v).map_err(anyhow::Error::msg)?;
             }
+            // Edição estrutural (B261): fala, depois duplicar ou remover (que mudam os índices; vêm por último).
+            if let Some(f) = pedido["fala"].as_object() {
+                let i = f.get("indice").and_then(Value::as_u64).context("fala.indice")? as usize;
+                let t = f.get("texto").and_then(Value::as_str).context("fala.texto")?;
+                a.definir_fala(id, g, i, t).map_err(anyhow::Error::msg)?;
+            }
+            let mut resposta = json!({ "id": id });
+            if !pedido["duplicar"].is_null() {
+                let novo_id = pedido["duplicar"]["novo_id"].as_u64().map(|x| u32::try_from(x)).transpose().context("duplicar.novo_id")?;
+                resposta["novo_gatilho"] = json!(a.duplicar_gatilho(id, g, novo_id).map_err(anyhow::Error::msg)?);
+            } else if pedido["remover"].as_bool() == Some(true) {
+                a.remover_gatilho(id, g).map_err(anyhow::Error::msg)?;
+            }
             let novo = a.gravar();
             pw_data_loader::aipolicy::AiPolicyData::load_from_bytes(&novo).map_err(|e| anyhow::anyhow!("o aipolicy.data editado não relê: {e}"))?;
             let mudanca = json!({ "acao": "editado", "tipo": "politica", "id": id, "pedido": pedido });
-            Ok((novo, json!({ "id": id }), mudanca))
+            Ok((novo, resposta, mudanca))
         })
         .await
     }

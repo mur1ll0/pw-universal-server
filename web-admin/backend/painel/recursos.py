@@ -599,5 +599,5 @@ def registrar_reinicio(app):
         dados = await requisicao.json()
         if id_politica <= 0 or not isinstance(dados.get("gatilho"), int):
             raise HTTPException(422, "Pedido inválido.")
-        corpo = {k: dados[k] for k in ("gatilho", "flags", "operacao", "condicao") if k in dados}
+        corpo = {k: dados[k] for k in ("gatilho", "flags", "operacao", "condicao", "fala", "duplicar", "remover") if k in dados}
         return await _repassar("PUT", f"/admin/{v}/estudio/comportamentos/{id_politica}", {"rascunho": rascunho}, dados=corpo)

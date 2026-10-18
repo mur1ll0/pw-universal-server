@@ -165,7 +165,39 @@ function editorDoGatilho(pol, t, ti, ed) {
     caixa.appendChild(linhaDeCampos(`Condição ${caminho || "raiz"} (${n?.tipo || n?.tipo_cru}):`, campos, valoresDe(n?.parametro, campos),
       (valores) => salvar({ condicao: { caminho, valores } }, "Condição salva no rascunho.")));
   }
-  caixa.appendChild(criar("div", "texto-suave", "Grava o aipolicy.data do realm (só do servidor). Só parâmetros de tamanho fixo; reinicie o realm depois de publicar."));
+  // Falas (B261): o texto muda de tamanho; o gravador mantém o NUL final do original.
+  t.operacoes.forEach((o, oi) => {
+    const p = o.parametro && typeof o.parametro === "object" ? o.parametro : {};
+    const fala = p.Fala || p.Fala2 || p.SkillComFala;
+    if (!fala) return;
+    const l = criar("div", "recursos-linha");
+    l.appendChild(criar("span", "", `Fala da operação ${oi + 1}:`));
+    const i = criar("input", "campo");
+    i.value = fala.texto || "";
+    i.style.flex = "1";
+    const b = criar("button", "botao botao-pequeno botao-secundario", "Salvar fala");
+    b.type = "button";
+    b.addEventListener("click", () => {
+      if (i.value === fala.texto) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
+      salvar({ fala: { indice: oi, texto: i.value } }, "Fala salva no rascunho.");
+    });
+    l.append(i, b);
+    caixa.appendChild(l);
+  });
+  // Estrutura (B261): duplicar (cópia logo depois, id novo) e remover (recusado se outro gatilho o chama).
+  const est = criar("div", "recursos-linha");
+  const dup = criar("button", "botao botao-pequeno botao-secundario", "Duplicar gatilho");
+  dup.type = "button";
+  dup.addEventListener("click", () => salvar({ duplicar: {} }, "Gatilho duplicado no rascunho."));
+  const rem = criar("button", "botao botao-pequeno botao-perigo", "Remover gatilho");
+  rem.type = "button";
+  rem.addEventListener("click", () => {
+    if (!confirm(`Remover o gatilho ${t.id} desta política (no rascunho)?`)) return;
+    salvar({ remover: true }, "Gatilho removido no rascunho.");
+  });
+  est.append(dup, rem);
+  caixa.appendChild(est);
+  caixa.appendChild(criar("div", "texto-suave", "Grava o aipolicy.data do realm (só do servidor); reinicie o realm depois de publicar."));
   return caixa;
 }
 
