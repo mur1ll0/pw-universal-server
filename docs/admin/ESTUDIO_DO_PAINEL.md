@@ -271,6 +271,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B253 (S4, 11ª parte):** visão do alinhamento cliente × servidor de todos os mapas e "Alinhar o servidor com o
 > cliente" (refaz o `.sev` do realm a partir do `.clt`, num rascunho). Achado: 14 pares diferem, inclusive o da a61 do
 > 1.5.5. Com isso o S4 fica fechado, exceto as regiões (zona segura), de efeito ainda não medido.
+>
+> **B254 (S7, 1ª parte):** Loja Gold — vista própria no Estúdio, ofertas por categoria, editar, clonar e remover; o
+> `gshop.data` vai ao cliente e ao realm juntos (item `ambos`). Falta do S7: categorias editáveis, missões
+> (`tasks.data`), comportamento (`aipolicy`) e textos.
 
 | fase | entrega |
 | :--- | :--- |

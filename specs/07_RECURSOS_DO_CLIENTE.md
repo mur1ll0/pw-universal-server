@@ -356,6 +356,17 @@ aplicado a nenhum mapa** — qual lado vale (cliente BR ou pacote de servidor) �
 zona segura) seguem só leitura: no servidor elas só servem aos pontos de passagem (`ActivateRegionWayPoints`,
 `player.cpp:25193-25215`), efeito em jogo de editá-las ainda não medido.
 
+**Loja Gold (S7, B254):** `data\gshop.data` (e `gshop1`/`gshop2` no 1.5.5) — o realm usa **o mesmo arquivo** do cliente
+(o índice da oferta é o `goods_index` do `MALL_SHOPPING`, spec 03 §3.8; o SHA do publicado é igual ao do `config` do
+realm nas duas versões), então a edição é um item **`ambos`** (`gravar_item_com_destino`), como o `elements`: publicar
+põe no manifesto e grava `config/gshop*.data`; o carimbo não muda. Rotas: `GET estudio/loja/{arquivo}` (8 categorias com
+subcategorias, linhas `[indice, main_type, sub_type, id, num, szName, buy_0_price, item]` com o nome do item no
+`elements`, e os campos do layout), `GET|PUT|DELETE estudio/loja/{arquivo}/{i}` (`PUT {campos}` pelos nomes de
+`gshop_editavel`) e `POST estudio/loja/{arquivo} {base}` (cópia no fim — ninguém muda de índice; remover sobe os
+seguintes, nos dois lados juntos). Painel: vista "Loja Gold" do Estúdio (`static/loja.js`): arquivo, categoria, busca,
+editor por grupos (identificação, 4 compras, descrição, brinde/donos/limite) com link para a ficha do item. Unidade do
+preço: a do arquivo, sem conversão.
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -379,7 +390,9 @@ Destinos (B252): `.txt` gerado do `.sev` do 1.2.6; remover destino usado → 400
 posição a 3 casas) → publicados, ids alinhados nos dois. `world_targets::testes_do_txt` (os `.txt` reais; empate 0,0625).
 Alinhar (B253): `precinct.clt` com um distrito a menos enviado ao rascunho → `alinhamento` acusa → `alinhar` refaz só o
 `precinct.sev` e o par volta a ser equivalente; de novo, nada a fazer. `clt::testes_do_servidor` (os 200 pares reais;
-falha se passar dos 14 diferentes conhecidos). Controladores
+falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668 ofertas, ≥ 90% com o item no
+`elements`) — preço e nome editados, clone e remoção, publicada: cliente e realm com o mesmo arquivo, carimbo igual, o
+`GShopData` do GS lê o preço novo. `gshop_editavel::testes` (os 4 arquivos dos realms idênticos). Controladores
 (B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. Altura (B248):
 sem `.hmap` responde `y` nulo; coordenada inválida 400. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
@@ -392,7 +405,7 @@ arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no
 - ("Aguarda reinício" e reiniciar pelo painel: feitos no B249, spec 06.) Rascunho só de servidor continua gerando
   versão nova do cliente com o manifesto igual — **decisão do B250, mantido**: o launcher só baixa o manifesto e termina,
   e a versão é o que guarda o `publicada_em` do aviso de reinício e o que o reverter usa.
-- Estúdio: telas próprias, `tasks`/`gshop`; no mapa, regiões (`[region]`) editáveis, nome de controlador (o
+- Estúdio: telas próprias, `tasks` (a Loja Gold é do B254); no mapa, regiões (`[region]`) editáveis, nome de controlador (o
   `szName` é só leitura); decidir e aplicar o alinhamento dos 14 pares que diferem (ferramenta pronta, B253).
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).

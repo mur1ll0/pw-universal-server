@@ -392,6 +392,12 @@ do cliente (idêntico ao do cliente BR e ao do pacote 1.2.6), não do `gshopsev.
 `realm_155` tem outra lista (2262 ofertas). Nenhum layout fechando (`gshopsev`, arquivos de
 teste): só o carimbo, loja vazia. Prova: `pw-data-loader/tests/gshop_do_realm.rs`.
 
+**Editável (B254):** `gshop_editavel.rs` guarda os registros crus e as 8 categorias e grava de volta **idêntico**
+(`gshop.data` do 1.2.6; `gshop`, `gshop1`, `gshop2` do 1.5.5); campos de `GSHOP_ITEM` pelo nome do fonte por layout
+(`campos_do_formato`: `local_id`, `main_type`, `sub_type`, `icon` `char[128]` GBK, `id`, `num`, `buy_k_*`, `desc`
+`wchar[512]`, `szName` `wchar[32]`, brinde, `owner_npcs_0..7`, `buy_times_limit(_mode)`; no 1.2.6 `status`@196). Texto só
+é reescrito (e o resto do campo zerado) quando muda.
+
 ### 3.9 `collision.clt` (`collision.rs`)
 
 Carregado por mapa; **não consultado** pela simulação (monstro atravessa obstáculos).

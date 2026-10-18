@@ -14291,3 +14291,36 @@ comparação lado a lado.
     - **Decisão do Murillo:** alinhar (o servidor passa a seguir o cliente) nos 14 pares — a61 do 1.5.5 e os 4 do 1.2.6
       primeiro — e ver em jogo (instância do 1.2.6 carrega; renascer na a61).
     - Regiões (zona segura) editáveis.
+
+254. **Sessão 2026-10-18: Estúdio S7, primeira parte — Loja Gold.**
+
+    ### a. Pedido
+    Commitar o B253 (feito: `e5d8319`, `104847a`; nenhum mapa alinhado, à espera da decisão) e seguir — com o S4
+    fechado, o S7 começou pela Loja Gold.
+
+    ### b. Evidência
+    - `GSHOP_ITEM` (`CCommon/globaldataman.h:97-138`, `pack(1)`): 1.5.5 VIP 1.436 B = 148 + 4·36 + 1.024 + 64 + 16 + 32 + 8;
+      1.2.6 1.288 B (`load_malldata` do `gs` 1.2.6: `buy[4]` de 12, `status`@196, `desc`@200, `szName`@1224), já medidos no
+      leitor do B125.
+    - O `gshop.data` publicado do cliente tem o mesmo SHA do `config/gshop.data` do realm nas duas versões: um arquivo só,
+      item `ambos`.
+
+    ### c. O que foi feito
+    - `pw-data-loader/gshop_editavel.rs` (registros crus, categorias, campos por layout, `definir_campo`, textos GBK/UTF-16);
+      `encoding_rs` no `pw-data-loader`.
+    - `pw-recursos`: `gravar_item_com_destino` (o item do cliente pode ser `ambos`), `loja`, `oferta`, `editar_oferta`,
+      `clonar_oferta`, `remover_oferta`; rotas `estudio/loja/{arquivo}[/{i}]`.
+    - Painel: proxy, vista "Loja Gold" (`static/loja.js`), `mostrarVistaDoEstudio` com três vistas.
+
+    ### d. Provas
+    - `gshop_editavel::testes`: os 4 arquivos dos realms voltam idênticos; preço e nome editados; nome que não cabe e
+      campo inexistente recusados.
+    - `estudio.rs` com o banco: a loja real do 1.2.6 (668 ofertas, 8 categorias, ≥ 90% com o item), nome grande → 400,
+      preço/nome/clone/remoção, publicada: realm = cliente, carimbo igual, o leitor do GS vê o preço novo.
+    - Painel `teste_recursos.py` **11/11**. Suítes `pw-recursos` + `pw-data-loader` com o banco: **230 passaram, 0 falharam**.
+    - No contêiner: 1.5.5 `gshop` 1.726, `gshop1` 205, `gshop2` 6 ofertas; 1.2.6 668 — **todas** com o item achado no
+      `elements` publicado.
+
+    ### e. Falta
+    - Ver em jogo: preço novo na Loja Gold e cobrado na compra.
+    - Categorias editáveis; missões, `aipolicy`, textos (resto do S7).
