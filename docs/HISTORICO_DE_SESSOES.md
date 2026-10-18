@@ -14349,3 +14349,37 @@ comparação lado a lado.
 
     ### e. Falta
     - Gravador do `tasks.data` (v55 e v129) com ida e volta idêntica, e então editar missões.
+
+256. **Sessão 2026-10-18: Estúdio S7, terceira parte — editar missões no lugar.**
+
+    ### a. Pedido
+    Commitar o B255 (feito: `ef7a7ba`, `c779028`) e seguir: o gravador do `tasks.data`.
+
+    ### b. Decisão e evidência
+    - Em vez de um gravador completo (listas e textos de tamanho variável, v55 e v129), o primeiro passo edita **no
+      lugar** os campos de tamanho fixo: o arquivo não muda de tamanho, a tabela de deslocamentos continua valendo e o
+      resto fica byte a byte igual — risco mínimo. Os deslocamentos são os que o leitor do GS já usa (v129 `v129::f`/`p`;
+      v55 os do `libtask.so` 1.2.6, spec 03 §3.2). O nome é `wchar[30]` em +4 com XOR pelo id (`tasks::texto`).
+    - O `tasks.data` do cliente publicado tem o mesmo SHA do realm nas duas versões: item `ambos`. (O cliente 1.2.6 publicado
+      carrega também um `Tasks.log` solto — lixo para a próxima limpeza.)
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `TaskTemplate::{bloco_fixo_em, premio_em}` (o leitor registra as posições); `tasks_editavel.rs`
+      (`campos`, `ler_campos`, `definir_campo`).
+    - `pw-recursos`: a leitura das missões passa a ser a do cliente publicado/rascunho; `editaveis` na ficha;
+      `editar_missao` (item `ambos`, relê antes de gravar); rota `PUT estudio/missoes/{id}`.
+    - Painel: proxy com rascunho e `PUT`; formulário "Editar" na ficha.
+
+    ### d. Provas
+    - `tasks_editavel::testes` nos dois realms (a 1173): valores novos relidos pelo leitor do GS, outra missão igual, o
+      tamanho não muda, voltar devolve o arquivo idêntico fora do campo do nome.
+    - `estudio.rs` com o banco: campo variável → 400; editar, ver no rascunho, publicado intacto; publicar → o realm lê as
+      7.994 com os valores novos.
+    - Painel `teste_recursos.py` **11/11**. Suítes `pw-recursos` + `pw-data-loader` com o banco: **231 passaram, 0 falharam**;
+      `pw-gs` compila com os campos novos do `TaskTemplate`.
+    - No contêiner: a 1173 com 16 campos editáveis nas duas versões. Os nomes trazem o código de cor do cliente no começo
+      (`^ffffffPrimeiro Teste`): ao renomear, manter o `^rrggbb`.
+
+    ### e. Falta
+    - Ver em jogo (prêmio novo entregue).
+    - Gravador completo do `tasks.data` (itens, monstros, descrição, criar/remover missão).

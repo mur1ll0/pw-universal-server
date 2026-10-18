@@ -374,7 +374,12 @@ entrega, npc que premia]`; busca por id ou nome; `topo` = só as de topo) e `GET
 `TaskTemplate` inteiro serializado, mais `nomes` — todo id citado em campo de id/NPC/item/monstro/brinde com o nome no
 `elements` publicado — e mãe, filhas, pré-missões, exclusivas e a missão dada no prêmio com nome). Painel: vista
 "Missões" (`static/missoes.js`), lista paginada, ficha por grupos (quem dá/premia, requisitos, objetivo, ao receber,
-prêmio, falha) e "Demais campos". Editar exige um gravador do `tasks.data` com ida e volta idêntica (ainda não existe).
+prêmio, falha) e "Demais campos". **Editar no lugar (B256):** o `tasks.data` do cliente publicado é o mesmo do realm
+(SHA igual nas duas versões), então a edição é um item **`ambos`** (`data\tasks.data`); a leitura passa a ser a do
+cliente publicado, ou do rascunho quando há um. `GET estudio/missoes/{id}` traz `editaveis` (`[nome, tipo]` da
+`tasks_editavel::campos`) e `PUT estudio/missoes/{id}?rascunho {campos}` grava (relê pelo leitor do GS antes; campo de
+tamanho variável → 400). Painel: formulário "Editar" na ficha da missão, com o aviso de que mudar o NPC que entrega
+não muda o `NPC_TASK_OUT_SERVICE` do `elements`.
 
 ## 7. Testes
 
@@ -402,7 +407,9 @@ Alinhar (B253): `precinct.clt` com um distrito a menos enviado ao rascunho → `
 falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668 ofertas, ≥ 90% com o item no
 `elements`) — preço e nome editados, clone e remoção, publicada: cliente e realm com o mesmo arquivo, carimbo igual, o
 `GShopData` do GS lê o preço novo. `gshop_editavel::testes` (os 4 arquivos dos realms idênticos). Missões (B255): o
-`tasks.data` real do 1.2.6 — 7.994 missões, 2.819 de topo, a 1173 com o NPC 3517 nomeado; id inexistente → 400. Controladores
+`tasks.data` real do 1.2.6 — 7.994 missões, 2.819 de topo, a 1173 com o NPC 3517 nomeado; id inexistente → 400. Editar
+(B256): `descricao` → 400; nível mín. 5, exp 999 e nome novo na 1173 → visíveis no rascunho, o publicado não muda;
+publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos. Controladores
 (B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. Altura (B248):
 sem `.hmap` responde `y` nulo; coordenada inválida 400. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com

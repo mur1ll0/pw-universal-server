@@ -140,6 +140,15 @@ Consumidores no mundo (os demais índices estão lidos e **não ligados**):
   `specs/tasks_155/layout129.tsv` e `award_layout.tsv` (sonda do MSVC, B45).
 - `profundidade` = `m_uDepth` (`CheckDepth`, `TaskTempl.h:2748-2771`), calculada após a leitura.
 
+**Editável no lugar (B256):** o leitor guarda em cada `TaskTemplate` onde começam o bloco fixo e o prêmio no arquivo
+(`bloco_fixo_em`, `premio_em`, fora do JSON). `tasks_editavel.rs` troca **campos de tamanho fixo** sem mudar o tamanho
+de nada (a tabela de deslocamentos continua valendo): nome (`wchar[30]` em +4, XOR com `id as u16`), prazo,
+frequência, pode desistir/repetir, entrega automática, NPC que entrega/premia, níveis mín./máx., espera e, no
+`AWARD_DATA`, dinheiro, exp, missão seguinte, SP e reputação — v129 pelas constantes `v129::f`/`v129::p`, v55 pelos
+deslocamentos do 1.2.6 acima. Testado nos dois realms (a 1173): o leitor relê os valores novos, outra missão não muda,
+voltar devolve o arquivo idêntico fora do campo do nome. Listas e textos de tamanho variável exigem um gravador
+completo (ainda não existe).
+
 ### 3.2b `dyn_tasks.data` — missões dinâmicas (`dyn_tasks.rs`)
 
 Só o cabeçalho: `DYN_TASK_PACK_HEADER` (`task/TaskTemplMan.cpp:45-51`), 12 bytes —

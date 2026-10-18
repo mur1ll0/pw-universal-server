@@ -278,6 +278,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 >
 > **B255 (S7, 2ª parte):** navegador de missões (só leitura): busca, árvore mãe/filhas, ficha com NPCs, itens e monstros
 > nomeados. Editar missões exige o gravador do `tasks.data` (ida e volta idêntica) — próximo passo do S7.
+>
+> **B256 (S7, 3ª parte):** editar missões no lugar — nome, níveis, NPCs, prazo, frequência, espera, flags e o prêmio
+> básico (campos de tamanho fixo; o arquivo não muda de tamanho). Listas (itens, monstros) e descrição exigem um gravador
+> completo do `tasks.data`.
 
 | fase | entrega |
 | :--- | :--- |
