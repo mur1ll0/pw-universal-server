@@ -310,6 +310,25 @@ rastreador fica 0, como nos arquivos reais.
 `npcgen` ganhou a coluna `modelo` nos objetos e a ficha do objeto o `nome` (o caminho); o painel mostra o nome do arquivo
 sem `.ecm`, com o caminho na dica.
 
+**Distritos e portais em par com o cliente (S4, B251):** `pw_data_loader::clt` lê e grava o `precinct.clt` e o
+`region.clt` do cliente (texto UTF-16LE com BOM, LF; `CELPrecinct::Load(AWScriptFile*)`, `EL_Precinct.cpp:96-213`;
+`CELRegion::Load`/`CELTransportBox::Load`, `EL_Region.cpp:70-100`, `:254-290`) — **ida e volta idêntica nos 104 pares**
+dos clientes 1.2.6 e 1.5.5 BR (formato do exportador: inteiros separados por dois espaços, ponto de cidade e vetores do
+portal com `", "`, vértices com dois espaços, linha em branco depois de cada registro; `%f` do MSVC, com empate
+arredondado para longe do zero: `287.8203125` → `287.820313`). Editar em par (`alterar_sev_e_clt`): o `.sev` vira
+item `servidor` e o `.clt` item `cliente` **no mesmo rascunho**, sob a mesma trava, e os carimbos não mudam. Só com o
+par **alinhado** (mesmo carimbo; no precinct, mesma contagem e vértices por distrito; no region, a mesma sequência de
+regiões e portais — é ela que dá o índice do portal) são permitidos: no distrito, `nome` e `vertices` (`[[x, z]…]`, 3 a
+512; a altura vem do 1º vértice antigo — o polígono usa só x e z), `POST distritos {base, campos: {nome, vertices,
+ponto?}}` (cópia do base, id no `.clt` = maior + 1, sem as marcas) e `DELETE distritos/{i}`; no portal, `destino`,
+`nivel_minimo` (v≥5), `pos`, `exts`, `POST portais {base}` (no fim dos dois) e `DELETE portais/{i}`. Fora disso continua
+o que é só do servidor (ponto de renascer, chegada). As respostas `GET distritos`/`portais` trazem
+`alinhado_com_o_cliente` e o `motivo`. **Desalinhados hoje:** no 1.2.6, os carimbos de `region` em a27, a31 e nc01 e de
+`precinct` em a12, a27 e nc01 diferem entre o cliente e o realm, e a sequência do region em a27 (6 × 1) e a31 (34 × 33);
+o 1.5.5 BR casa nos 68 pares. Painel: no distrito, nome, "Redesenhar polígono" (cliques no mapa, barra concluir/
+desfazer/cancelar), "Novo distrito (copiar este)" e "Remover"; no portal, destino, nível, caixa e meia-medida,
+"Posicionar a caixa pelo clique", "Novo portal" e "Remover"; o corpo do distrito tem limite de 64 KiB no painel.
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -325,7 +344,10 @@ carregadores) e revertido ao original (B243); distritos e portais da a01 (recusa
 os dois, B244); teleportes do mundo do 1.2.6 com as transportadoras do `elements` e edição publicada (B245).
 Rastreador (B246): NPC da a01 sem entrada é acrescentado, `short` estourado recusado, publicado no manifesto (0 aplicados no
 realm) e baixado com a posição nova. `pw-data-loader`: `precinct_e_region_de_todos_os_mapas_voltam_identicos`,
-`world_targets_volta_identico`, `task_npc::testes`, `campos_de_objeto_e_controlador_nos_npcgen_reais`. Controladores
+`world_targets_volta_identico`, `task_npc::testes`, `campos_de_objeto_e_controlador_nos_npcgen_reais`,
+`clt::testes` (os `.clt` reais dos dois clientes, fora do repositório: sem eles o teste avisa). Par (B251): com `.clt`
+gerados dos `.sev` da a01, renomear e redesenhar, criar distrito, editar/criar/remover portal → 4 itens no rascunho
+(2 `servidor`, 2 `cliente`), publicados, carimbos e sequência iguais, o polígono novo vale no `distrito_em` do GS. Controladores
 (B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. Altura (B248):
 sem `.hmap` responde `y` nulo; coordenada inválida 400. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
@@ -338,9 +360,9 @@ arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no
 - ("Aguarda reinício" e reiniciar pelo painel: feitos no B249, spec 06.) Rascunho só de servidor continua gerando
   versão nova do cliente com o manifesto igual — **decisão do B250, mantido**: o launcher só baixa o manifesto e termina,
   e a versão é o que guarda o `publicada_em` do aviso de reinício e o que o reverter usa.
-- Estúdio: telas próprias, `tasks`/`gshop`; no mapa, polígonos de distrito e portais novos (exigem editar o
-  `.clt` do cliente junto), destinos de teleporte novos (exigem o `world_targets.txt` do cliente), nome dos objetos
-  dinâmicos e controladores novos com nome (o `szName` do controlador é só leitura).
+- Estúdio: telas próprias, `tasks`/`gshop`; no mapa, destinos de teleporte novos (exigem o `world_targets.txt` do
+  cliente), regiões (`[region]`, a zona segura) editáveis, nome de controlador (o `szName` é só leitura); alinhar os
+  carimbos dos 4 mapas do 1.2.6 que divergem.
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).

@@ -14179,3 +14179,43 @@ comparação lado a lado.
     ### e. Falta
     - Do S4: criar distritos, portais e destinos de teleporte novos (exige gerar `precinct.clt`, `region.clt` e
       `world_targets.txt` do cliente junto, com o mesmo carimbo).
+
+251. **Sessão 2026-10-18: Estúdio S4, nona parte — distritos e portais novos, em par com o `.clt` do cliente.**
+
+    ### a. Pedido
+    Commitar o B250 (feito: `0da45ba`, `9783ac8`) e seguir: fechar o S4 com os escritores dos arquivos do cliente.
+
+    ### b. Evidência
+    - Formato: `CELPrecinct::Load(AWScriptFile*)` (`EL_Precinct.cpp:96-213`) e `CELRegion::Load`/
+      `CELTransportBox::Load` (`EL_Region.cpp:70-100`, `:254-290`); a disposição exata (espaços, vírgulas, linhas em
+      branco) foi medida nos 104 pares dos clientes 1.2.6 (`F:\Games\perfectworld_126`) e 1.5.5 BR.
+    - `%f` do MSVC: a primeira tentativa (Python, arredondamento para o par) errou `287.820313` → `287.820312`; o valor
+      em `float` é exatamente 287,8203125, e o MSVC arredonda o empate para longe do zero.
+    - O índice do portal é a ordem das caixas (`SetIndex(m_aTransBoxes.size())`), e o cliente acha a caixa pela própria
+      `region.clt` (`EC_World.cpp:2360-2373`): criar/remover/mover portal só vale nos dois arquivos, na mesma ordem.
+    - Conferência cliente × realm: 1.5.5 BR casa nos 68 pares (carimbo e sequência); **1.2.6 diverge** em a12, a27,
+      a31 e nc01 (carimbos) e em a27/a31 (sequência) — registrado no §5D como suspeito para essas instâncias.
+
+    ### c. O que foi feito
+    - `pw-data-loader/src/clt.rs`: `PrecinctDoCliente`, `RegionDoCliente`, `formatar` (`%f` do MSVC); `precinct.rs`:
+      `Distrito::definir_vertices` (recalcula a caixa do `contem`).
+    - `pw-recursos`: `gravar_item_do_cliente` (sem trava), `alterar_sev_e_clt` (os dois itens sob uma trava),
+      `precinct_alinhado`/`region_alinhado`; distrito com nome/vértices, `novo_distrito`, `remover_distrito`; portal
+      com destino/nível/pos/exts, `novo_portal`, `remover_portal`; rotas `POST|DELETE` de distritos e portais.
+    - Painel: proxy, limite de 64 KiB no distrito, desenho de polígono por cliques, botões de criar/remover, campos do
+      portal; sem par alinhado, o editor diz o motivo e só deixa o que é do servidor.
+
+    ### d. Provas
+    - `clt::testes`: `formatar` (empate, negativo, zero, `-0`, vai-um) e **104 `precinct.clt` + 104 `region.clt` idênticos**.
+    - `estudio.rs` com o banco (`.clt` gerados dos `.sev` da a01): renomear e redesenhar, criar distrito, editar/criar/
+      remover portal → 4 itens no rascunho, publicados, carimbos iguais, sequência igual, `distrito_em` acha o polígono
+      novo; a asserção do B244 ("destino recusado") virou "destino 0 recusado", porque com o `.clt` alinhado o destino é
+      editável.
+    - Painel: `teste_recursos.py` **11/11** (polígono de 500 pontos passa; portal com 20 KB → 413; base inválida → 422).
+    - Suítes `pw-recursos` + `pw-data-loader` com o banco: **227 passaram, 0 falharam**.
+    - No contêiner: mundo do 1.5.5, a69 do 1.5.5 e mundo do 1.2.6 alinhados (distritos e portais); a27 do 1.2.6
+      recusada com o motivo (carimbo do `.clt` 1186042129 × `.sev`), como esperado.
+
+    ### e. Falta
+    - Ver em jogo (1.5.5): nome do distrito novo no cliente depois de atualizar pelo launcher; portal novo levando ao destino.
+    - Destinos de teleporte novos (`world_targets.txt`), regiões (zona segura) editáveis, alinhar os 4 mapas do 1.2.6.

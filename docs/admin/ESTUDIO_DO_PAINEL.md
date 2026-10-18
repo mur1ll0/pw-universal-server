@@ -260,6 +260,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 >
 > **B250 (S4, 8ª parte):** modelo de cada objeto dinâmico pelo `configs\DynamicObjects.data` do cliente. Do S4 sobra só
 > criar distritos, portais e destinos novos (exige gerar os arquivos do cliente junto, com o mesmo carimbo).
+>
+> **B251 (S4, 9ª parte):** `precinct.clt`/`region.clt` do cliente lidos e gravados (104 pares idênticos); distrito com
+> nome e polígono desenhado no mapa, criar e remover; portal com destino, caixa e tamanho, criar e remover — o `.sev` do
+> realm e o `.clt` do cliente no mesmo rascunho. Falta: destinos de teleporte novos (`world_targets.txt`) e regiões.
 
 | fase | entrega |
 | :--- | :--- |

@@ -42,7 +42,8 @@ que produz o layout do `elements.data`. O resto — `npcgen`, `aipolicy`, `gshop
 **Estado da carga (B102):** `realm_126` carrega **sem falha** (132 arquivos). Não são lidos,
 em nenhum realm, por falta do sistema: `domain.data`,
 `extra_drops.sev`, `task_npc.data`, `global_api.lua`, `ExtDataID.dat`, `precinct.clt`,
-`rare_item.conf`. Na raiz do `realm_126`, `npcgen.data`/`precinct.sev` são cópias idênticas das
+`rare_item.conf` (os `.clt` e o `task_npc.data` são do **cliente**: o Estúdio os lê e grava — `clt.rs`, `task_npc.rs`,
+B246/B251, spec 07 §6b). Na raiz do `realm_126`, `npcgen.data`/`precinct.sev` são cópias idênticas das
 de `world/` (as lidas); o `region.sev` da raiz (6.856 B) difere do de `world/` (8.860 B), e vale o
 de `world/`. `realm_155`: **sem falhas** desde o B211 (as 3 eram `a46/npcgen.data` e `a50/precinct.sev`
 com 0 bytes no `home155`; vieram do `pwserver_155v156`).
