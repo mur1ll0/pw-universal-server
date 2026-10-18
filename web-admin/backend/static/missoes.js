@@ -6,6 +6,7 @@
 const missoes = { pagina: 0, por_pagina: 100, total: 0, aberta: null };
 
 function rotaDeMissoes(resto, q = {}) {
+  if (estudio.rascunho) q = { ...q, rascunho: estudio.rascunho };
   const p = new URLSearchParams(q).toString();
   return `/api/realms/${encodeURIComponent(estudio.realm)}/estudio/missoes${resto}${p ? `?${p}` : ""}`;
 }
@@ -130,8 +131,64 @@ async function abrirMissao(id) {
     resto.appendChild(linha);
   }
   area.appendChild(resto);
-  area.appendChild(criar("p", "texto-suave", "Só leitura nesta fase: a edição de missões precisa de um gravador do tasks.data com ida e volta idêntica."));
+  area.appendChild(formularioDaMissao(f, r.editaveis || []));
   document.querySelectorAll("#missoes-lista button").forEach((b) => b.setAttribute("aria-current", b.textContent.startsWith(`${id} `) ? "true" : "false"));
+}
+
+/* Edição no lugar (B256): só os campos de tamanho fixo (`tasks_editavel`); o resto da ficha é só leitura. */
+const ROTULOS_DA_MISSAO = {
+  name: "Nome", min_level: "Nível mínimo", max_level: "Nível máximo", npc_que_entrega: "NPC que entrega",
+  npc_que_premia: "NPC que premia", limite_de_tempo: "Prazo (s)", frequencia: "Frequência", espera: "Espera (s)",
+  pode_desistir: "Pode desistir", pode_repetir: "Pode repetir", entrega_automatica: "Entrega automática",
+  money: "Prêmio: dinheiro", exp: "Prêmio: experiência", sp: "Prêmio: SP", reputation: "Prêmio: reputação", nova_missao: "Prêmio: missão seguinte",
+};
+
+function valorDaFicha(f, nome) {
+  if (["money", "exp", "sp", "reputation", "nova_missao"].includes(nome)) return f.rewards?.[nome];
+  return f[nome];
+}
+
+function formularioDaMissao(f, editaveis) {
+  const fs = criar("fieldset");
+  fs.appendChild(criar("legend", "", estudio.rascunho ? `Editar (rascunho #${estudio.rascunho})` : "Editar (escolha ou crie um rascunho no topo do Estúdio)"));
+  const g = criar("div", "mapa-campos");
+  const entradas = {};
+  for (const [nome, tipo] of editaveis) {
+    const label = criar("label", tipo === "bool" ? "marca" : "");
+    const i = criar("input", tipo === "bool" ? "" : "campo");
+    const atual = valorDaFicha(f, nome);
+    if (tipo === "bool") { i.type = "checkbox"; i.checked = !!atual; label.append(i, criar("span", "", ROTULOS_DA_MISSAO[nome] || nome)); }
+    else {
+      if (tipo === "nome") { i.maxLength = 29; i.value = atual || ""; } else { i.type = "number"; i.step = "1"; if (tipo === "u32") i.min = "0"; i.value = atual ?? 0; }
+      label.append(criar("span", "", ROTULOS_DA_MISSAO[nome] || nome), i);
+    }
+    i.disabled = !estudio.rascunho;
+    label.title = nome;
+    g.appendChild(label);
+    entradas[nome] = { i, tipo, atual };
+  }
+  fs.appendChild(g);
+  fs.appendChild(criar("div", "texto-suave", "Só campos de tamanho fixo (o arquivo não muda de tamanho). Mudar o NPC que entrega não muda o serviço do NPC no elements (NPC_TASK_OUT_SERVICE): ajuste a ficha dele junto."));
+  if (estudio.rascunho) {
+    const b = criar("button", "botao botao-pequeno botao-primario", "Salvar no rascunho");
+    b.type = "button";
+    b.addEventListener("click", async () => {
+      const campos = {};
+      for (const [nome, { i, tipo, atual }] of Object.entries(entradas)) {
+        const v = tipo === "bool" ? i.checked : tipo === "nome" ? i.value : Math.trunc(Number(i.value));
+        if (v !== atual) campos[nome] = v;
+      }
+      if (!Object.keys(campos).length) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
+      try {
+        const r = await api(rotaDeMissoes(`/${f.id}`), { method: "PUT", body: JSON.stringify({ campos }) });
+        alerta("ok", "Estúdio", "Missão salva no rascunho (cliente e realm, o mesmo tasks.data)." + (r.igual_ao_publicado ? " Ficou igual ao publicado: o item saiu do rascunho." : ""), { toast: true });
+        await abrirMissao(f.id);
+        if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    });
+    fs.appendChild(b);
+  }
+  return fs;
 }
 
 (function ligarMissoes() {
@@ -141,4 +198,5 @@ async function abrirMissao(id) {
   elemento("missoes-topo").addEventListener("change", () => { missoes.pagina = 0; carregarMissoes(); });
   elemento("missoes-anterior").addEventListener("click", () => { if (missoes.pagina > 0) { missoes.pagina--; carregarMissoes(); } });
   elemento("missoes-proxima").addEventListener("click", () => { if ((missoes.pagina + 1) * missoes.por_pagina < missoes.total) { missoes.pagina++; carregarMissoes(); } });
+  elemento("estudio-rascunho").addEventListener("change", () => { if (!elemento("estudio-missoes").hidden && missoes.aberta) abrirMissao(missoes.aberta); });
 })();

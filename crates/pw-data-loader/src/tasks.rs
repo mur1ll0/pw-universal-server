@@ -393,6 +393,12 @@ pub struct TaskTemplate {
     /// `m_uDepth` — quantas entradas da lista ativa a missão ocupa
     /// (`ATaskTempl::CheckDepth`, `TaskTempl.h:2748-2771`). Calculado depois da leitura.
     pub profundidade: u8,
+    /// Onde começa o bloco fixo desta missão no arquivo (B256: editar no lugar, `tasks_editavel`).
+    #[serde(skip)]
+    pub bloco_fixo_em: usize,
+    /// Onde começa o `AWARD_DATA` do prêmio de sucesso no arquivo.
+    #[serde(skip)]
+    pub premio_em: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -871,6 +877,7 @@ fn dialogo_v55(l: &mut Leitor) -> Result<()> {
 }
 
 fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplate>) -> Result<u32> {
+    let bloco_fixo_em = l.o;
     let b = l.bytes(v55::FIXO)?;
     let id = u32_em(b, 0);
     if b[0x40] != 0 { l.pular(60)?; }
@@ -904,6 +911,7 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
         });
     }
     let coleta = itens_v55(l, u32_em(b, 0x1aa))?;
+    let premio_em = l.o;
     let rewards = premio_v55(l)?;
     let premio_de_falha = premio_v55(l)?;
     escala_v55(l, 20)?;
@@ -1045,6 +1053,8 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
     if filhos < 0 { return Err(TasksError::InvalidFormat); }
     let n = l.contador(filhos as u32, v55::FIXO)?;
     for _ in 0..n { tarefa.sub_tasks.push(missao_v55(l, Some(id), saida)?); }
+    tarefa.bloco_fixo_em = bloco_fixo_em;
+    tarefa.premio_em = premio_em;
     if saida.insert(id, tarefa).is_some() { return Err(TasksError::InvalidFormat); }
     Ok(id)
 }
@@ -1052,6 +1062,7 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
 /// `ATaskTempl::LoadBinary`: uma missão e, recursivamente, as submissões. Devolve o id.
 fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplate>) -> Result<u32> {
     use v129::f;
+    let bloco_fixo_em = l.o;
     let b = l.bytes(v129::FIXO)?;
     let id = u32_em(b, f::ID);
     let flag = |o: usize| b[o] != 0;
@@ -1139,6 +1150,7 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
     let n = l.contador(u32_em(b, f::HOME_ITEMS_WANTED), v129::HOME_ITEM_WANTED)?;
     l.pular(n * v129::HOME_ITEM_WANTED)?;
 
+    let premio_em = l.o;
     let rewards = premio(l)?;
     let premio_de_falha = premio(l)?;
     let degraus_de_razao = 4 * v129::MAX_AWARD_SCALES;
@@ -1255,6 +1267,8 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         tipo_de_premio_sucesso: u32_em(b, f::TIPO_DE_PREMIO_SUCESSO),
         tipo_de_premio_falha: u32_em(b, f::TIPO_DE_PREMIO_FALHA),
         profundidade: 1,
+        bloco_fixo_em,
+        premio_em,
     };
 
     let filhos = l.i32()?.max(0) as u32;
@@ -1391,6 +1405,8 @@ impl TaskTemplate {
             tipo_de_premio_sucesso: 0,
             tipo_de_premio_falha: 0,
             profundidade: 1,
+            bloco_fixo_em: 0,
+            premio_em: 0,
         }
     }
 }

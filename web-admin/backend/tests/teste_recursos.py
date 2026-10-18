@@ -275,8 +275,11 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         await self.cliente.get("/api/realms/realm_126/estudio/missoes", params={"busca": "teste", "topo": "false"})
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], p["consulta"]["topo"], p["consulta"]["busca"]), ("/admin/1.2.6/estudio/missoes", ["false"], ["teste"]))
-        await self.cliente.get("/api/realms/realm_126/estudio/missoes/1173")
-        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/missoes/1173")
+        await self.cliente.get("/api/realms/realm_126/estudio/missoes/1173", params={"rascunho": 5})
+        self.assertEqual((RecursosFalso.pedidos[-1]["caminho"], RecursosFalso.pedidos[-1]["consulta"]), ("/admin/1.2.6/estudio/missoes/1173", {"rascunho": ["5"]}))
+        r = await self.cliente.put("/api/realms/realm_126/estudio/missoes/1173", params={"rascunho": 5}, headers=csrf,
+                                   json={"campos": {"min_level": 3}})
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["metodo"]), (200, "PUT"))
         # Loja Gold (B254).
         await self.cliente.get("/api/realms/realm_155/estudio/loja/gshop1.data", params={"rascunho": 5})
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/loja/gshop1.data")

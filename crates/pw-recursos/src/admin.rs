@@ -598,6 +598,7 @@ async fn estudio_remover_oferta(State(e): State<Arc<Estado>>, Path((v, arquivo, 
 
 #[derive(Deserialize)]
 struct QMissoes {
+    rascunho: Option<i64>,
     busca: Option<String>,
     topo: Option<bool>,
     pagina: Option<usize>,
@@ -606,14 +607,25 @@ struct QMissoes {
 
 async fn estudio_missoes(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QMissoes>) -> R<Json<Value>> {
     validar(&v)?;
-    let r = e.estudio.missoes(&e.gov, &v, q.busca.as_deref().unwrap_or(""), q.topo.unwrap_or(true), q.pagina.unwrap_or(0),
+    let r = e.estudio.missoes(&e.gov, &v, q.rascunho, q.busca.as_deref().unwrap_or(""), q.topo.unwrap_or(true), q.pagina.unwrap_or(0),
         q.por_pagina.unwrap_or(100).clamp(1, 500)).await?;
     Ok(Json(r))
 }
 
-async fn estudio_missao(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, u32)>) -> R<Json<Value>> {
+async fn estudio_missao(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, u32)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
     validar(&v)?;
-    Ok(Json(e.estudio.missao(&e.gov, &v, id).await?))
+    Ok(Json(e.estudio.missao(&e.gov, &v, q.rascunho, id).await?))
+}
+
+async fn estudio_editar_missao(
+    State(e): State<Arc<Estado>>,
+    Path((v, id)): Path<(String, u32)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoCampos>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.editar_missao(&e.gov, &v, r, id, p.campos).await?))
 }
 
 // ------------------------------------------------------------------ teleportes (S4, B245)
@@ -790,7 +802,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/mapas/{caminho}/altura", get(estudio_altura))
         .route("/admin/{v}/estudio/alinhamento", get(estudio_alinhamento))
         .route("/admin/{v}/estudio/missoes", get(estudio_missoes))
-        .route("/admin/{v}/estudio/missoes/{id}", get(estudio_missao))
+        .route("/admin/{v}/estudio/missoes/{id}", get(estudio_missao).put(estudio_editar_missao))
         .route("/admin/{v}/estudio/loja/{arquivo}", get(estudio_loja).post(estudio_clonar_oferta))
         .route("/admin/{v}/estudio/loja/{arquivo}/{indice}", get(estudio_oferta).put(estudio_editar_oferta).delete(estudio_remover_oferta))
         .route("/admin/{v}/estudio/mapas/{caminho}/alinhar", post(estudio_alinhar))

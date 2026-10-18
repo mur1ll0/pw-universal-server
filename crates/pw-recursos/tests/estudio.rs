@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254); missões (B255).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254); missões (B255) e editar missão no lugar (B256).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -91,7 +91,9 @@ impl FonteDePacote for Pacotes {
         receber(b"maps\\world\\world_targets.txt".to_vec(), txt.gravar())?;
         // A Loja Gold real do 1.2.6 (B254): o cliente e o realm usam o mesmo arquivo.
         receber(b"data\\gshop.data".to_vec(), fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/gshop.data")).unwrap())?;
-        Ok(ResultadoDoPacote { entradas: 8, falhas: vec![] })
+        // tasks.data (B255/B256): o cliente e o realm usam o mesmo arquivo.
+        receber(b"data\\tasks.data".to_vec(), fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/tasks.data")).unwrap())?;
+        Ok(ResultadoDoPacote { entradas: 9, falhas: vec![] })
     }
 }
 
@@ -596,6 +598,19 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(mi["ficha"]["npc_que_entrega"], 3517, "{}", mi["ficha"]["name"]);
         assert!(mi["nomes"]["3517"]["nome"].is_string(), "o NPC 3517 tem nome: {}", mi["nomes"]);
         assert_eq!(erro_de(pedir("GET", "estudio/missoes/999999999").call()).0, 400);
+        // Editar no lugar (B256): campos de tamanho fixo; publicar grava o mesmo tasks.data no cliente e no realm.
+        assert!(mi["editaveis"].as_array().unwrap().iter().any(|c| c[0] == "min_level"));
+        let r12 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "missão", "operacao_id": "t_p4_r12"})).unwrap())["id"].as_i64().unwrap();
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"descricao": "x"}}))).0, 400);
+        pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"min_level": 5, "exp": 999, "name": "Primeiro Teste do Estúdio"}})).unwrap();
+        let mr = json_de(pedir("GET", &format!("estudio/missoes/1173?rascunho={r12}")).call().unwrap());
+        assert_eq!((mr["ficha"]["min_level"].as_u64(), mr["ficha"]["rewards"]["exp"].as_i64(), mr["ficha"]["name"].as_str()), (Some(5), Some(999), Some("Primeiro Teste do Estúdio")));
+        assert_eq!(json_de(pedir("GET", "estudio/missoes/1173").call().unwrap())["ficha"]["min_level"], mi["ficha"]["min_level"], "o publicado não muda");
+        let p12 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r12]})).unwrap());
+        assert_eq!(p12["aplicados"].as_array().unwrap().len(), 1, "{p12}");
+        let tr = fs::read(realm2.join("tasks.data")).unwrap();
+        let lido = pw_data_loader::tasks::TasksData::load_from_bytes(&tr).unwrap();
+        assert_eq!((lido.tasks[&1173].min_level, lido.tasks[&1173].rewards.exp, lido.tasks.len()), (5, 999, 7994));
 
         // Loja Gold (B254): ofertas do gshop.data; editar preço e nome, clonar, remover; publicar grava o cliente e o
         // realm (item "ambos") com o carimbo intacto.

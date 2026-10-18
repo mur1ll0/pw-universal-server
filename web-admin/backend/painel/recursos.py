@@ -514,15 +514,24 @@ def registrar_reinicio(app):
     # Missões (B255, só leitura): o tasks.data do realm.
     @app.get("/api/realms/{realm}/estudio/missoes")
     async def estudio_missoes(realm: str, requisicao: Request, busca: str = "", topo: bool = True, pagina: int = 0,
-                              por_pagina: int = 100):
+                              por_pagina: int = 100, rascunho: int | None = None):
         v = await _versao_do_realm(requisicao, realm)
         return await _repassar("GET", f"/admin/{v}/estudio/missoes", {
-            "busca": busca[:100], "topo": "true" if topo else "false", "pagina": max(0, pagina),
+            "rascunho": rascunho, "busca": busca[:100], "topo": "true" if topo else "false", "pagina": max(0, pagina),
             "por_pagina": max(1, min(por_pagina, 500))})
 
     @app.get("/api/realms/{realm}/estudio/missoes/{id_missao}")
-    async def estudio_missao(realm: str, id_missao: int, requisicao: Request):
+    async def estudio_missao(realm: str, id_missao: int, requisicao: Request, rascunho: int | None = None):
         v = await _versao_do_realm(requisicao, realm)
         if id_missao <= 0:
             raise HTTPException(404, "Missão inválida.")
-        return await _repassar("GET", f"/admin/{v}/estudio/missoes/{id_missao}")
+        return await _repassar("GET", f"/admin/{v}/estudio/missoes/{id_missao}", {"rascunho": rascunho})
+
+    # Editar missão no lugar (B256): campos de tamanho fixo; item "ambos" (data\tasks.data).
+    @app.put("/api/realms/{realm}/estudio/missoes/{id_missao}")
+    async def estudio_editar_missao(realm: str, id_missao: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        campos = (await requisicao.json()).get("campos")
+        if id_missao <= 0 or not isinstance(campos, dict) or not campos:
+            raise HTTPException(422, "Nada a mudar.")
+        return await _repassar("PUT", f"/admin/{v}/estudio/missoes/{id_missao}", {"rascunho": rascunho}, dados={"campos": campos})
