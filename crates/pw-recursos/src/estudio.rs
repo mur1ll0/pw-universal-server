@@ -1945,10 +1945,12 @@ impl Estudio {
 
 // ------------------------------------------------------------------ teleportes (S4, B245)
 
-use pw_data_loader::world_targets::PontosDoMundo;
+use pw_data_loader::world_targets::{PontosDoMundo, TxtDosDestinos};
 
 /// Item do `world_targets.sev`: fica na raiz do `config` (`manager.rs:489`).
 const ITEM_DOS_TELEPORTES: &str = "servidor\\world_targets.sev";
+/// O mesmo, no cliente (B252).
+const DESTINOS_NO_CLIENTE: &str = "maps\\world\\world_targets.txt";
 
 impl Estudio {
     /// Id do mapa (world tag) pelo caminho, do `instance.txt` do cliente.
@@ -1961,7 +1963,8 @@ impl Estudio {
     /// Destinos de teleporte (`world_targets.sev`) que ficam no mapa, com nome e domínio do
     /// `maps\world\world_targets.txt` do cliente (`globaldataman.cpp:450-466`) e as transportadoras
     /// (`NPC_TRANSMIT_SERVICE.targets_N_idTarget`, `serviceprovider.cpp:683-700`) que levam a cada um, com preço,
-    /// nível e os NPCs que oferecem o serviço (`NPC_ESSENCE.id_transmit_service`).
+    /// nível e os NPCs que oferecem o serviço (`NPC_ESSENCE.id_transmit_service`). B252: `alinhado_com_o_cliente` diz
+    /// se o `.txt` tem os mesmos ids na mesma ordem (só então nome, criar e remover).
     pub async fn teleportes(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Value> {
         if !caminho_de_mapa_valido(caminho) {
             bail!("mapa inválido");
@@ -1971,11 +1974,33 @@ impl Estudio {
         let no_rascunho = do_rascunho.is_some();
         let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
         let w = PontosDoMundo::load_from_bytes(&bytes).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let nomes: HashMap<i32, String> = match self.arquivo_do_cliente(gov, versao, "maps\\world\\world_targets.txt").await {
-            Ok(b) => crate::mapas::ler_world_targets_txt(&crate::mapas::texto_do_arquivo(&b)),
+        let txt = match self.item_do_cliente(gov, versao, DESTINOS_NO_CLIENTE, rascunho).await {
+            Ok(t) => TxtDosDestinos::ler(&t.3).map_err(|e| e.to_string()),
+            Err(_) => Err("o cliente não tem maps\\world\\world_targets.txt".to_string()),
+        };
+        let alinhado = txt.as_ref().map_err(|e| e.clone()).and_then(|t| destinos_alinhados(&w, t).map(|_| t));
+        let nomes: HashMap<i32, String> = match &txt {
+            Ok(t) => t.destinos.iter().map(|d| (d.id, d.nome.clone())).collect(),
             Err(_) => HashMap::new(),
         };
-        // Quem leva a cada destino.
+        let usado_por = self.transportadoras(gov, versao, rascunho).await?;
+        let pontos: Vec<Value> = w
+            .lista
+            .iter()
+            .filter(|p| p.mundo == id_mapa)
+            .map(|p| json!({
+                "id": p.id, "nome": nomes.get(&p.id), "dominio": p.dominio, "pos": vetor_json(&p.pos),
+                "usado_por": usado_por.get(&p.id).cloned().unwrap_or_default(),
+            }))
+            .collect();
+        Ok(json!({
+            "item": nome, "mapa": id_mapa, "no_rascunho": no_rascunho, "total": w.lista.len(), "pontos": pontos,
+            "alinhado_com_o_cliente": alinhado.is_ok(), "motivo": alinhado.err(),
+        }))
+    }
+
+    /// Quem leva a cada destino: as transportadoras do `elements` (do rascunho, se houver) e os NPCs delas.
+    async fn transportadoras(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<HashMap<i32, Vec<Value>>> {
         let (e, _) = self.atual(gov, versao, rascunho).await?;
         let mut npcs_do_servico: HashMap<i32, Vec<Value>> = HashMap::new();
         if let Ok(t) = e.tabela("NPC_ESSENCE") {
@@ -2002,43 +2027,136 @@ impl Estudio {
                 }
             }
         }
-        let pontos: Vec<Value> = w
-            .lista
-            .iter()
-            .filter(|p| p.mundo == id_mapa)
-            .map(|p| json!({
-                "id": p.id, "nome": nomes.get(&p.id), "dominio": p.dominio, "pos": vetor_json(&p.pos),
-                "usado_por": usado_por.get(&p.id).cloned().unwrap_or_default(),
-            }))
-            .collect();
-        Ok(json!({ "item": nome, "mapa": id_mapa, "no_rascunho": no_rascunho, "total": w.lista.len(), "pontos": pontos }))
+        Ok(usado_por)
     }
 
-    /// Troca a posição de um destino (o mapa e o domínio ficam; o cliente só usa a posição do `.txt` dele para
-    /// saber em que região o destino fica).
-    pub async fn editar_teleporte(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i32, campos: Map<String, Value>) -> Result<Value> {
+    /// Destinos em par (B252): `world_targets.sev` (item `servidor`) e `world_targets.txt` do cliente (item `cliente`)
+    /// no mesmo rascunho. Com o `.txt` alinhado a posição vai aos dois, arredondada a 3 casas como o `globalsave` faz;
+    /// sem ele, só o `.sev` (com a posição exata) e só a posição.
+    async fn alterar_destinos<F>(&self, gov: &Governanca, versao: &str, rascunho: i64, exige_cliente: bool, mudar: F) -> Result<Value>
+    where
+        F: FnOnce(&mut PontosDoMundo, Option<&mut TxtDosDestinos>) -> Result<(Value, Value)>,
+    {
         let trava = self.trava(rascunho);
         let _guarda = trava.lock().await;
         let (nome, do_realm, do_rascunho) = self.item_do_realm(gov, versao, ITEM_DOS_TELEPORTES.to_string(), Some(rascunho)).await?;
-        self.gravar_item_do_realm(gov, versao, rascunho, nome, do_realm, do_rascunho, move |base| {
-            let mut w = PontosDoMundo::load_from_bytes(base).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let base = do_rascunho.as_ref().map(|(_, b)| b.clone()).unwrap_or_else(|| do_realm.clone());
+        let mut w = PontosDoMundo::load_from_bytes(&base).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let txt = self.item_do_cliente(gov, versao, DESTINOS_NO_CLIENTE, Some(rascunho)).await.ok().map(|t| t.3);
+        let mut t = match txt.as_deref().map(TxtDosDestinos::ler) {
+            Some(Ok(t)) => match destinos_alinhados(&w, &t) {
+                Ok(()) => Some(t),
+                Err(m) if exige_cliente => bail!("world_targets: {m}"),
+                Err(_) => None,
+            },
+            Some(Err(e)) if exige_cliente => bail!("{e}"),
+            _ if exige_cliente => bail!("o cliente não tem maps\\world\\world_targets.txt: nome, criar e remover exigem o arquivo do cliente"),
+            _ => None,
+        };
+        let (resposta, mudanca) = mudar(&mut w, t.as_mut())?;
+        let (sev_novo, txt_novo, m2) = (w.gravar(), t.map(|t| t.gravar()), mudanca.clone());
+        let mut saida = self.gravar_item_do_realm(gov, versao, rascunho, nome, do_realm, do_rascunho, move |_| Ok((sev_novo, resposta, mudanca))).await?;
+        if let Some(b) = txt_novo {
+            let r2 = self.gravar_item_do_cliente(gov, versao, DESTINOS_NO_CLIENTE, rascunho, move |_| Ok((b, Value::Null, m2))).await?;
+            saida["cliente_igual_ao_publicado"] = r2["igual_ao_publicado"].clone();
+        }
+        Ok(saida)
+    }
+
+    /// Edita um destino: `pos` (nos dois, ou só no `.sev` sem o `.txt` alinhado) e `nome` (só o cliente tem; exige o
+    /// `.txt`). O mapa e o domínio ficam.
+    pub async fn editar_teleporte(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i32, campos: Map<String, Value>) -> Result<Value> {
+        let exige = campos.keys().any(|k| k != "pos");
+        self.alterar_destinos(gov, versao, rascunho, exige, move |w, mut t| {
             let mut mudou = Map::new();
             for (k, v) in &campos {
-                if k != "pos" {
-                    bail!("só a posição do destino é editável: {k}");
-                }
-                let novo = vetor_do_json(v, "pos")?;
-                let antes = w.get(id).with_context(|| format!("destino {id} não existe"))?.pos;
-                if novo != antes {
-                    w.definir_posicao(id, novo);
-                    mudou.insert(k.clone(), json!([vetor_json(&antes), vetor_json(&novo)]));
+                match k.as_str() {
+                    "pos" => {
+                        let mut novo = vetor_do_json(v, "pos")?;
+                        if t.is_some() {
+                            novo = TxtDosDestinos::posicao_do_texto(novo);
+                        }
+                        let antes = w.get(id).with_context(|| format!("destino {id} não existe"))?.pos;
+                        if novo != antes {
+                            w.definir_posicao(id, novo);
+                            mudou.insert(k.clone(), json!([vetor_json(&antes), vetor_json(&novo)]));
+                        }
+                        if let Some(d) = t.as_mut().and_then(|t| t.destinos.iter_mut().find(|d| d.id == id)) {
+                            d.pos = novo;
+                        }
+                    }
+                    "nome" => {
+                        let d = t.as_mut().and_then(|t| t.destinos.iter_mut().find(|d| d.id == id)).context("nome exige o .txt")?;
+                        let novo = nome_do_json(v)?;
+                        if novo.contains('\t') {
+                            bail!("nome: sem tabulação");
+                        }
+                        if novo != d.nome {
+                            mudou.insert(k.clone(), json!([d.nome, novo]));
+                            d.nome = novo;
+                        }
+                    }
+                    _ => bail!("campo do destino não editável: {k}"),
                 }
             }
             let mudanca = if mudou.is_empty() { Value::Null } else { json!({ "acao": "editado", "tipo": "teleporte", "id": id, "campos": mudou }) };
-            Ok((w.gravar(), json!({ "id": id }), mudanca))
+            Ok((json!({ "id": id }), mudanca))
         })
         .await
     }
+
+    /// Destino novo no fim dos dois arquivos: cópia do `base` (domínio) no mapa `mundo`, com `nome` e `pos`; o id é o
+    /// maior + 1. Fica sem transportadora até alguma `NPC_TRANSMIT_SERVICE` listá-lo (ficha do serviço).
+    pub async fn novo_teleporte(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, base: i32, campos: Map<String, Value>) -> Result<Value> {
+        let mundo = self.id_do_mapa(gov, versao, caminho).await?;
+        self.alterar_destinos(gov, versao, rascunho, true, move |w, t| {
+            let t = t.context("exige o .txt")?;
+            let b = *w.get(base).with_context(|| format!("destino {base} não existe"))?;
+            let nome = nome_do_json(campos.get("nome").context("nome")?)?;
+            if nome.contains('\t') {
+                bail!("nome: sem tabulação");
+            }
+            let pos = TxtDosDestinos::posicao_do_texto(vetor_do_json(campos.get("pos").context("pos")?, "pos")?);
+            let id = w.lista.iter().map(|p| p.id).max().unwrap_or(0) + 1;
+            let p = pw_data_loader::world_targets::PontoDoMundo { id, mundo, pos, dominio: b.dominio };
+            w.lista.push(p);
+            w.por_id.insert(id, p);
+            t.destinos.push(pw_data_loader::world_targets::DestinoDoCliente { id, nome, mundo, pos, dominio: b.dominio });
+            Ok((json!({ "id": id }), json!({ "acao": "novo", "tipo": "teleporte", "id": id, "base": base, "mundo": mundo })))
+        })
+        .await
+    }
+
+    /// Tira o destino dos dois arquivos; recusado se alguma transportadora (no `elements` do rascunho) ainda leva a ele.
+    pub async fn remover_teleporte(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i32) -> Result<Value> {
+        let usos = self.transportadoras(gov, versao, Some(rascunho)).await?.remove(&id).unwrap_or_default();
+        if !usos.is_empty() {
+            bail!("o destino {id} é usado por {} transportadora(s) (ex.: {}); tire-o delas antes", usos.len(),
+                usos.iter().take(3).map(|u| u["nome"].as_str().unwrap_or("?").to_string()).collect::<Vec<_>>().join(", "));
+        }
+        self.alterar_destinos(gov, versao, rascunho, true, move |w, t| {
+            let t = t.context("exige o .txt")?;
+            let antes = w.lista.len();
+            w.lista.retain(|p| p.id != id);
+            if w.lista.len() == antes {
+                bail!("destino {id} não existe");
+            }
+            w.por_id.remove(&id);
+            t.destinos.retain(|d| d.id != id);
+            Ok((json!({ "removido": id }), json!({ "acao": "removido", "tipo": "teleporte", "id": id })))
+        })
+        .await
+    }
+}
+
+/// O `.txt` do cliente tem os mesmos destinos que o `.sev`, na mesma ordem? (o `globalsave` gera um do outro).
+fn destinos_alinhados(w: &PontosDoMundo, t: &TxtDosDestinos) -> std::result::Result<(), String> {
+    let a: Vec<i32> = w.lista.iter().map(|p| p.id).collect();
+    let b: Vec<i32> = t.destinos.iter().map(|d| d.id).collect();
+    if a != b {
+        return Err(format!("o world_targets.txt ({} destinos) não tem os mesmos ids, na mesma ordem, que o .sev ({})", b.len(), a.len()));
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------ rastreador de NPCs (task_npc.data, S4, B246)

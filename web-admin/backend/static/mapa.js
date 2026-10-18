@@ -847,11 +847,27 @@ function abrirDaCamada(camada, indice) {
     const [ly, iy] = campoNumerico("Chegada Y (altura)", item.pos[1], editavel, "y");
     const [lz, iz] = campoNumerico("Chegada Z", item.pos[2], editavel, "z");
     grade.append(lx, ly, lz);
+    Object.assign(entradas, { ix, iy, iz });
+    const alinhadoTp = mapa.teleportes.alinhado_com_o_cliente;
+    if (alinhadoTp) {
+      const ln = criar("label");
+      const nome = criar("input", "campo");
+      nome.maxLength = 60;
+      nome.value = item.nome || "";
+      nome.disabled = !editavel;
+      ln.append(criar("span", "", "Nome (cliente)"), nome);
+      grade.prepend(ln);
+      entradas.nome = nome;
+    }
     corpo = () => {
+      const c = {};
       const pos = [Number(ix.value), Number(iy.value), Number(iz.value)];
-      return pos.some((v, k) => v !== item.pos[k]) ? { pos } : {};
+      if (pos.some((v, k) => v !== item.pos[k])) c.pos = pos;
+      if (entradas.nome && entradas.nome.value.trim() !== (item.nome || "")) c.nome = entradas.nome.value.trim();
+      return c;
     };
     ed.append(titulo, grade);
+    if (!alinhadoTp) ed.appendChild(criar("div", "texto-suave", `Nome, criar e remover desligados: ${mapa.teleportes.motivo || "o world_targets.txt do cliente não casa com o .sev"}.`));
     const lista = criar("div", "texto-suave");
     if (!item.usado_por.length) lista.textContent = "Nenhuma transportadora do elements leva a este destino.";
     for (const u of item.usado_por) {
@@ -958,6 +974,25 @@ function abrirDaCamada(camada, indice) {
       if (!confirm(`Remover o distrito #${indice}${item.nome ? ` (${item.nome})` : ""} do servidor e do cliente? Os seguintes sobem um número.`)) return;
       try { await api(rotaDaCamada(`/${indice}`), { method: "DELETE" }); await depois("Distrito removido no rascunho.", null); }
       catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    });
+  }
+  if (camada === "teleportes" && mapa.teleportes.alinhado_com_o_cliente) {
+    extra("Novo destino (copiar este)", "botao-secundario", async () => {
+      const nome = window.prompt("Nome do destino novo (aparece na lista da transportadora). A posição é a dos campos acima — posicione antes, se quiser:", "");
+      if (!nome) return;
+      const pos = [Number(entradas.ix.value), Number(entradas.iy.value), Number(entradas.iz.value)];
+      try {
+        const r = await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/teleportes?rascunho=${estudio.rascunho}`),
+          { method: "POST", body: JSON.stringify({ base: indice, campos: { nome, pos } }) });
+        await depois(`Destino novo ${r.resultado.id} no rascunho. Para alguém levar até ele, ponha o id ${r.resultado.id} numa transportadora (ficha NPC_TRANSMIT_SERVICE).`, r.resultado.id);
+      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    });
+    extra("Remover destino", "botao-secundario texto-perigo", async () => {
+      if (!confirm(`Remover o destino ${indice}${item.nome ? ` (${item.nome})` : ""} do servidor e do cliente?`)) return;
+      try {
+        await api(`/api/realms/${encodeURIComponent(estudio.realm)}/estudio/teleportes/${indice}?rascunho=${estudio.rascunho}`, { method: "DELETE" });
+        await depois("Destino removido no rascunho.", null);
+      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
     });
   }
   if (camada === "portais" && mapa.portais.alinhado_com_o_cliente) {

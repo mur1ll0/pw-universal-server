@@ -548,6 +548,30 @@ async fn estudio_teleportes(State(e): State<Arc<Estado>>, Path((v, caminho)): Pa
     Ok(Json(e.estudio.teleportes(&e.gov, &v, &caminho, q.rascunho).await?))
 }
 
+#[derive(Deserialize)]
+struct PedidoNovoDestino {
+    base: i32,
+    #[serde(default)]
+    campos: serde_json::Map<String, Value>,
+}
+
+async fn estudio_novo_teleporte(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho)): Path<(String, String)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoNovoDestino>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.novo_teleporte(&e.gov, &v, &caminho, r, p.base, p.campos).await?))
+}
+
+async fn estudio_remover_teleporte(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i32)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.remover_teleporte(&e.gov, &v, r, id).await?))
+}
+
 async fn estudio_editar_teleporte(
     State(e): State<Arc<Estado>>,
     Path((v, id)): Path<(String, i32)>,
@@ -685,8 +709,8 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/mapas/{caminho}/distritos/{indice}", put(estudio_editar_distrito).delete(estudio_remover_distrito))
         .route("/admin/{v}/estudio/mapas/{caminho}/portais", get(estudio_portais).post(estudio_novo_portal))
         .route("/admin/{v}/estudio/mapas/{caminho}/portais/{indice}", put(estudio_editar_portal).delete(estudio_remover_portal))
-        .route("/admin/{v}/estudio/mapas/{caminho}/teleportes", get(estudio_teleportes))
-        .route("/admin/{v}/estudio/teleportes/{id}", put(estudio_editar_teleporte))
+        .route("/admin/{v}/estudio/mapas/{caminho}/teleportes", get(estudio_teleportes).post(estudio_novo_teleporte))
+        .route("/admin/{v}/estudio/teleportes/{id}", put(estudio_editar_teleporte).delete(estudio_remover_teleporte))
         .route("/admin/{v}/estudio/mapas/{caminho}/rastreador", get(estudio_rastreador))
         .route("/admin/{v}/estudio/mapas/{caminho}/altura", get(estudio_altura))
         .route("/admin/{v}/estudio/rastreador/{id}", put(estudio_editar_rastreador))

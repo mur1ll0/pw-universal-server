@@ -40,11 +40,16 @@ type R<T> = Result<T, ErroDoClt>;
 
 /// `printf("%f")` do MSVC para um `float`.
 pub fn formatar(x: f32) -> String {
+    formatar_com(x, 6)
+}
+
+/// `printf("%.Nf")` do MSVC para um `float`: expansão decimal exata, empate para longe do zero.
+pub fn formatar_com(x: f32, casas: usize) -> String {
     let negativo = x.is_sign_negative();
     let exato = format!("{:.60}", (x as f64).abs());
     let (inteira, frac) = exato.split_once('.').unwrap_or((&exato, ""));
-    let mut digitos: Vec<u8> = inteira.bytes().chain(frac.bytes().take(6)).map(|c| c - b'0').collect();
-    if frac.as_bytes().get(6).is_some_and(|&c| c >= b'5') {
+    let mut digitos: Vec<u8> = inteira.bytes().chain(frac.bytes().take(casas)).map(|c| c - b'0').collect();
+    if frac.as_bytes().get(casas).is_some_and(|&c| c >= b'5') {
         let mut i = digitos.len();
         loop {
             if i == 0 {
@@ -60,12 +65,15 @@ pub fn formatar(x: f32) -> String {
             }
         }
     }
-    let n = digitos.len() - 6;
+    let n = digitos.len() - casas;
     let s: String = digitos.iter().map(|d| (d + b'0') as char).collect();
+    if casas == 0 {
+        return format!("{}{}", if negativo { "-" } else { "" }, s);
+    }
     format!("{}{}.{}", if negativo { "-" } else { "" }, &s[..n], &s[n..])
 }
 
-fn texto(b: &[u8], onde: &'static str) -> R<String> {
+pub(crate) fn texto(b: &[u8], onde: &'static str) -> R<String> {
     let corpo = b.strip_prefix(&[0xFF, 0xFE]).ok_or_else(|| ErroDoClt::Formato(onde, "sem BOM UTF-16LE".into()))?;
     if corpo.len() % 2 != 0 {
         return Err(ErroDoClt::Formato(onde, "UTF-16 com byte sobrando".into()));
@@ -74,7 +82,7 @@ fn texto(b: &[u8], onde: &'static str) -> R<String> {
     String::from_utf16(&u).map_err(|_| ErroDoClt::Formato(onde, "UTF-16 inválido".into()))
 }
 
-fn bytes(t: &str) -> Vec<u8> {
+pub(crate) fn bytes(t: &str) -> Vec<u8> {
     let mut b = vec![0xFF, 0xFE];
     for u in t.encode_utf16() {
         b.extend_from_slice(&u.to_le_bytes());
@@ -83,7 +91,7 @@ fn bytes(t: &str) -> Vec<u8> {
 }
 
 /// Fichas de uma linha: `"…"` inteira (com as aspas) ou palavras separadas por espaço/vírgula.
-fn fichas(l: &str) -> Vec<&str> {
+pub(crate) fn fichas(l: &str) -> Vec<&str> {
     let mut saida = Vec::new();
     let b = l.as_bytes();
     let mut i = 0;
@@ -105,7 +113,7 @@ fn fichas(l: &str) -> Vec<&str> {
     saida
 }
 
-fn sem_aspas(s: &str) -> String {
+pub(crate) fn sem_aspas(s: &str) -> String {
     s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(s).to_string()
 }
 

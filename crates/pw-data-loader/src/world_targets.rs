@@ -117,3 +117,87 @@ impl PontosDoMundo {
         true
     }
 }
+
+// ------------------------------------------------------------------ world_targets.txt do cliente (B252)
+
+/// Um destino do `maps\world\world_targets.txt` do cliente (`globaldata_load`, `globaldataman.cpp:450-466`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DestinoDoCliente {
+    pub id: i32,
+    pub nome: String,
+    pub mundo: i32,
+    pub pos: [f32; 3],
+    pub dominio: i32,
+}
+
+/// O `world_targets.txt` inteiro. Formato medido nos clientes 1.2.6 (49 destinos) e 1.5.5 BR (92): UTF-16LE com BOM,
+/// CRLF, uma linha por destino, `id ⇥ "nome" ⇥ mundo ⇥ "x,y,z" ⇥ domínio` com a posição em `%.3f` — é dela que o
+/// `globalsave` gera o `world_targets.sev` (`:793-803`), por isso o `.sev` tem os mesmos ids, na mesma ordem.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TxtDosDestinos {
+    pub destinos: Vec<DestinoDoCliente>,
+}
+
+impl TxtDosDestinos {
+    pub fn ler(b: &[u8]) -> Result<Self> {
+        let erro = |m: String| PontosError::Formato(format!("world_targets.txt: {m}"));
+        let t = crate::clt::texto(b, "world_targets.txt").map_err(|e| erro(e.to_string()))?;
+        let corpo = t.strip_suffix("\r\n").ok_or_else(|| erro("não termina em CRLF".into()))?;
+        let mut destinos = Vec::new();
+        for (n, l) in corpo.split("\r\n").enumerate() {
+            let campos: Vec<&str> = l.split('\t').collect();
+            if campos.len() != 5 {
+                return Err(erro(format!("linha {}: {} campos", n + 1, campos.len())));
+            }
+            let int = |s: &str| s.parse::<i32>().map_err(|_| erro(format!("linha {}: número {s:?}", n + 1)));
+            let pos_txt = crate::clt::sem_aspas(campos[3]);
+            let p: Vec<f32> = pos_txt.split(',').map(|x| x.parse::<f32>()).collect::<std::result::Result<_, _>>()
+                .map_err(|_| erro(format!("linha {}: posição {pos_txt:?}", n + 1)))?;
+            if p.len() != 3 || !campos[1].starts_with('"') || !campos[1].ends_with('"') {
+                return Err(erro(format!("linha {}: nome ou posição", n + 1)));
+            }
+            destinos.push(DestinoDoCliente {
+                id: int(campos[0])?,
+                nome: crate::clt::sem_aspas(campos[1]),
+                mundo: int(campos[2])?,
+                pos: [p[0], p[1], p[2]],
+                dominio: int(campos[4])?,
+            });
+        }
+        Ok(Self { destinos })
+    }
+
+    pub fn gravar(&self) -> Vec<u8> {
+        let f = |x: f32| crate::clt::formatar_com(x, 3);
+        let mut s = String::new();
+        for d in &self.destinos {
+            s.push_str(&format!("{}\t\"{}\"\t{}\t\"{},{},{}\"\t{}\r\n", d.id, d.nome, d.mundo, f(d.pos[0]), f(d.pos[1]), f(d.pos[2]), d.dominio));
+        }
+        crate::clt::bytes(&s)
+    }
+
+    /// A posição como o `globalsave` a passa ao `.sev`: o `float` do texto com 3 casas.
+    pub fn posicao_do_texto(pos: [f32; 3]) -> [f32; 3] {
+        pos.map(|x| crate::clt::formatar_com(x, 3).parse().unwrap_or(x))
+    }
+}
+
+#[cfg(test)]
+mod testes_do_txt {
+    use super::*;
+
+    #[test]
+    fn world_targets_txt_dos_dois_clientes_volta_identico() {
+        for p in [r"F:\Games\perfectworld_126\element\maps\world\world_targets.txt", r"F:\PW\1.5.5\1.5.5 BR launcher\element\maps\world\world_targets.txt"] {
+            let Ok(b) = std::fs::read(p) else {
+                eprintln!("AVISO: sem {p} — este teste NÃO verificou esse cliente.");
+                continue;
+            };
+            let t = TxtDosDestinos::ler(&b).unwrap();
+            assert!(t.gravar() == b, "{p} não volta idêntico");
+            assert!(t.destinos.len() > 40);
+        }
+        // 0,0625 é empate exato em binário: o MSVC vai para longe do zero (0.063), o "para o par" daria 0.062.
+        assert_eq!(TxtDosDestinos::posicao_do_texto([1.23456, 0.0625, -0.0625]), [1.235, 0.063, -0.063]);
+    }
+}

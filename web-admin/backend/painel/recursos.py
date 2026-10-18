@@ -438,11 +438,12 @@ def registrar_reinicio(app):
     @app.post("/api/realms/{realm}/estudio/mapas/{caminho}/{arquivo}")
     async def estudio_novo_sev(realm: str, caminho: str, arquivo: str, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
-        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais"):
+        # B252: destino de teleporte novo pelo mesmo caminho (base = id do destino a copiar).
+        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais", "teleportes"):
             raise HTTPException(404, "Mapa inválido.")
         dados = await requisicao.json()
         base, campos = dados.get("base"), dados.get("campos", {})
-        if not isinstance(base, int) or base < 0 or not isinstance(campos, dict):
+        if not isinstance(base, int) or (base < 0 and arquivo != "teleportes") or not isinstance(campos, dict):
             raise HTTPException(422, "Pedido inválido.")
         return await _repassar("POST", f"/admin/{v}/estudio/mapas/{caminho}/{arquivo}", {"rascunho": rascunho},
                                dados={"base": base, "campos": campos})
@@ -453,3 +454,9 @@ def registrar_reinicio(app):
         if not MAPA.match(caminho) or arquivo not in ("distritos", "portais"):
             raise HTTPException(404, "Mapa inválido.")
         return await _repassar("DELETE", f"/admin/{v}/estudio/mapas/{caminho}/{arquivo}/{max(0, indice)}", {"rascunho": rascunho})
+
+    # Destinos de teleporte novos/removidos (B252): world_targets.sev do realm e world_targets.txt do cliente juntos.
+    @app.delete("/api/realms/{realm}/estudio/teleportes/{id_destino}")
+    async def estudio_remover_teleporte(realm: str, id_destino: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("DELETE", f"/admin/{v}/estudio/teleportes/{id_destino}", {"rascunho": rascunho})

@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -80,7 +80,16 @@ impl FonteDePacote for Pacotes {
         let (precinct, region) = clt_alinhados();
         receber(b"maps\\world\\precinct.clt".to_vec(), precinct)?;
         receber(b"maps\\world\\region.clt".to_vec(), region)?;
-        Ok(ResultadoDoPacote { entradas: 6, falhas: vec![] })
+        // world_targets.txt alinhado com o .sev do 1.2.6 (B252): os mesmos ids, na mesma ordem.
+        let wt = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/world_targets.sev");
+        let w = pw_data_loader::world_targets::PontosDoMundo::load_from_bytes(&fs::read(wt).unwrap()).unwrap();
+        let txt = pw_data_loader::world_targets::TxtDosDestinos {
+            destinos: w.lista.iter().map(|p| pw_data_loader::world_targets::DestinoDoCliente {
+                id: p.id, nome: format!("T{}", p.id), mundo: p.mundo, pos: p.pos, dominio: p.dominio,
+            }).collect(),
+        };
+        receber(b"maps\\world\\world_targets.txt".to_vec(), txt.gravar())?;
+        Ok(ResultadoDoPacote { entradas: 7, falhas: vec![] })
     }
 }
 
@@ -486,6 +495,29 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let c = pw_data_loader::npcgen_editavel::ler_campos(&ed.controladores[ic as usize], pw_data_loader::npcgen_editavel::CAMPOS_DO_CONTROLADOR, ed.versao);
         assert_eq!((c["bActived"].as_bool(), c["ActiveTime_iHours"].as_i64(), ed.controladores.len()), (Some(!ativo), Some(5), 346));
         pw_data_loader::npcgen::NpcGenData::load_from_bytes(&fs::read(realm2.join("world").join("npcgen.data")).unwrap()).unwrap();
+
+        // Destinos de teleporte em par com o world_targets.txt (B252): renomear, criar, remover recusado se usado.
+        let tp0 = json_de(pedir("GET", "estudio/mapas/world/teleportes").call().unwrap());
+        assert_eq!(tp0["alinhado_com_o_cliente"], true, "{}", tp0["motivo"]);
+        let usado = tp0["pontos"].as_array().unwrap().iter().find(|p| !p["usado_por"].as_array().unwrap().is_empty()).unwrap()["id"].as_i64().unwrap();
+        let r9 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "destinos", "operacao_id": "t_p4_r9"})).unwrap())["id"].as_i64().unwrap();
+        let (s, msg) = erro_de(pedir("DELETE", &format!("estudio/teleportes/{usado}?rascunho={r9}")).call());
+        assert!(s == 400 && msg.contains("transportadora"), "{s} {msg}");
+        pedir("PUT", &format!("estudio/teleportes/{usado}?rascunho={r9}")).send_json(json!({"campos": {"nome": "Vila Renomeada"}})).unwrap();
+        let nd = json_de(pedir("POST", &format!("estudio/mapas/world/teleportes?rascunho={r9}"))
+            .send_json(json!({"base": usado, "campos": {"nome": "Destino Novo", "pos": [100.12345, 200.0, -300.5]}})).unwrap());
+        let id_novo = nd["resultado"]["id"].as_i64().unwrap();
+        let maior = tp0["pontos"].as_array().unwrap().iter().map(|p| p["id"].as_i64().unwrap()).max().unwrap();
+        assert!(id_novo > maior, "{id_novo} > {maior}");
+        let p9 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r9]})).unwrap());
+        assert_eq!(p9["aplicados"].as_array().unwrap().len(), 1, "{p9}");
+        let baixar = |c: &str| { let mut b = Vec::new(); std::io::Read::read_to_end(&mut pedir("GET", "arquivo").query("caminho", c).call().unwrap().into_reader(), &mut b).unwrap(); b };
+        let txt9 = pw_data_loader::world_targets::TxtDosDestinos::ler(&baixar("maps\\world\\world_targets.txt")).unwrap();
+        let sev9 = pw_data_loader::world_targets::PontosDoMundo::load_from_bytes(&fs::read(realm2.join("world_targets.sev")).unwrap()).unwrap();
+        assert_eq!(txt9.destinos.iter().map(|d| d.id).collect::<Vec<_>>(), sev9.lista.iter().map(|p| p.id).collect::<Vec<_>>(), "ids alinhados");
+        let novo_txt = txt9.destinos.iter().find(|d| d.id as i64 == id_novo).unwrap();
+        assert_eq!((novo_txt.nome.as_str(), novo_txt.pos, sev9.get(id_novo as i32).unwrap().pos), ("Destino Novo", [100.123, 200.0, -300.5], [100.123, 200.0, -300.5]));
+        assert_eq!(txt9.destinos.iter().find(|d| d.id as i64 == usado).unwrap().nome, "Vila Renomeada");
 
         // Distritos e portais em par com o cliente (B251): nome, polígono, criar e remover gravam o .sev (realm) e o
         // .clt (cliente) no mesmo rascunho, com os carimbos intactos.
