@@ -275,6 +275,9 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B254 (S7, 1ª parte):** Loja Gold — vista própria no Estúdio, ofertas por categoria, editar, clonar e remover; o
 > `gshop.data` vai ao cliente e ao realm juntos (item `ambos`). Falta do S7: categorias editáveis, missões
 > (`tasks.data`), comportamento (`aipolicy`) e textos.
+>
+> **B255 (S7, 2ª parte):** navegador de missões (só leitura): busca, árvore mãe/filhas, ficha com NPCs, itens e monstros
+> nomeados. Editar missões exige o gravador do `tasks.data` (ida e volta idêntica) — próximo passo do S7.
 
 | fase | entrega |
 | :--- | :--- |

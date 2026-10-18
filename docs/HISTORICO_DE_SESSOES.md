@@ -14324,3 +14324,28 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: preço novo na Loja Gold e cobrado na compra.
     - Categorias editáveis; missões, `aipolicy`, textos (resto do S7).
+
+255. **Sessão 2026-10-18: Estúdio S7, segunda parte — navegador de missões (só leitura).**
+
+    ### a. Pedido
+    Commitar o B254 (feito: `fbc82a9`, `778efa0`) e seguir: missões.
+
+    ### b. Decisão
+    - O `tasks.data` é o arquivo mais complexo do projeto (v129 no 1.5.5, v55 no 1.2.6; spec 03 §3.2). Seguindo o padrão
+      das fases anteriores, a 1ª parte é só leitura, sobre o leitor do GS (`TaskTemplate` já serializável); editar
+      precisa de um gravador com ida e volta idêntica, que ainda não existe.
+
+    ### c. O que foi feito
+    - `pw-recursos`: `missoes_do_realm` (cache por versão/SHA, uma por versão), `missoes` (lista paginada com busca e
+      "só de topo"), `missao` (ficha + nomes do `elements` de todo id citado + mãe/filhas/pré/exclusivas/nova missão).
+    - Painel: proxy; vista "Missões" (`static/missoes.js`) com lista, paginação e ficha por grupos com links.
+
+    ### d. Provas
+    - `estudio.rs` com o banco: o `tasks.data` real do 1.2.6 — 7.994 missões, 2.819 de topo; busca "1173"; a ficha da
+      1173 com o NPC 3517 nomeado; id inexistente → 400.
+    - Painel `teste_recursos.py` **11/11**. Suítes `pw-recursos` + `pw-data-loader` com o banco: **230 passaram, 0 falharam**.
+    - No contêiner: 1.5.5 com 31.837 missões (14.885 de topo), primeira leitura em 0,4 s; 1.2.6 com 7.994 (2.819), 0,1 s;
+      o `pw-recursos` fica em ~115 MiB.
+
+    ### e. Falta
+    - Gravador do `tasks.data` (v55 e v129) com ida e volta idêntica, e então editar missões.

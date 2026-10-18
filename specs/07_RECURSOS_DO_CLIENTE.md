@@ -367,6 +367,15 @@ seguintes, nos dois lados juntos). Painel: vista "Loja Gold" do Estúdio (`stati
 editor por grupos (identificação, 4 compras, descrição, brinde/donos/limite) com link para a ficha do item. Unidade do
 preço: a do arquivo, sem conversão.
 
+**Missões (S7, B255 — só leitura):** o `tasks.data` do realm (o que o GS executa, `manager.rs:461`; 20,8 MB no 1.2.6,
+104 MB no 1.5.5) pelo leitor do GS (`pw_data_loader::tasks`), em cache por versão e SHA. Rotas:
+`GET estudio/missoes?busca&topo&pagina&por_pagina` (linhas `[id, nome, tipo, nível mín., máx., mãe, filhas, npc que
+entrega, npc que premia]`; busca por id ou nome; `topo` = só as de topo) e `GET estudio/missoes/{id}` (o
+`TaskTemplate` inteiro serializado, mais `nomes` — todo id citado em campo de id/NPC/item/monstro/brinde com o nome no
+`elements` publicado — e mãe, filhas, pré-missões, exclusivas e a missão dada no prêmio com nome). Painel: vista
+"Missões" (`static/missoes.js`), lista paginada, ficha por grupos (quem dá/premia, requisitos, objetivo, ao receber,
+prêmio, falha) e "Demais campos". Editar exige um gravador do `tasks.data` com ida e volta idêntica (ainda não existe).
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -392,7 +401,8 @@ Alinhar (B253): `precinct.clt` com um distrito a menos enviado ao rascunho → `
 `precinct.sev` e o par volta a ser equivalente; de novo, nada a fazer. `clt::testes_do_servidor` (os 200 pares reais;
 falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668 ofertas, ≥ 90% com o item no
 `elements`) — preço e nome editados, clone e remoção, publicada: cliente e realm com o mesmo arquivo, carimbo igual, o
-`GShopData` do GS lê o preço novo. `gshop_editavel::testes` (os 4 arquivos dos realms idênticos). Controladores
+`GShopData` do GS lê o preço novo. `gshop_editavel::testes` (os 4 arquivos dos realms idênticos). Missões (B255): o
+`tasks.data` real do 1.2.6 — 7.994 missões, 2.819 de topo, a 1173 com o NPC 3517 nomeado; id inexistente → 400. Controladores
 (B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. Altura (B248):
 sem `.hmap` responde `y` nulo; coordenada inválida 400. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
