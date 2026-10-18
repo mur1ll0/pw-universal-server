@@ -282,6 +282,8 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B256 (S7, 3ª parte):** editar missões no lugar — nome, níveis, NPCs, prazo, frequência, espera, flags e o prêmio
 > básico (campos de tamanho fixo; o arquivo não muda de tamanho). Listas (itens, monstros) e descrição exigem um gravador
 > completo do `tasks.data`.
+>
+> **B257 (S7, 4ª parte):** categorias da Loja Gold (renomear, acrescentar no fim, tirar a última sem uso).
 
 | fase | entrega |
 | :--- | :--- |

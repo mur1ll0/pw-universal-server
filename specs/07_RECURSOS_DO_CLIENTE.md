@@ -365,7 +365,10 @@ subcategorias, linhas `[indice, main_type, sub_type, id, num, szName, buy_0_pric
 `gshop_editavel`) e `POST estudio/loja/{arquivo} {base}` (cópia no fim — ninguém muda de índice; remover sobe os
 seguintes, nos dois lados juntos). Painel: vista "Loja Gold" do Estúdio (`static/loja.js`): arquivo, categoria, busca,
 editor por grupos (identificação, 4 compras, descrição, brinde/donos/limite) com link para a ficha do item. Unidade do
-preço: a do arquivo, sem conversão.
+preço: a do arquivo, sem conversão. **Categorias (B257):** `POST estudio/loja/{arquivo}/categorias {acao, categoria,
+sub?, nome?}` — `renomear` (categoria ou subcategoria, `wchar[64]`: até 63 caracteres; mesmo nome não muda nada),
+`nova` (subcategoria no fim: nenhuma oferta muda de índice) e `remover` (só a **última** subcategoria e só se nenhuma
+oferta a usa — `main_type`/`sub_type` são índices). Painel: botão "Categorias" na vista Loja.
 
 **Missões (S7, B255 — só leitura):** o `tasks.data` do realm (o que o GS executa, `manager.rs:461`; 20,8 MB no 1.2.6,
 104 MB no 1.5.5) pelo leitor do GS (`pw_data_loader::tasks`), em cache por versão e SHA. Rotas:

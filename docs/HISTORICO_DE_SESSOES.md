@@ -14383,3 +14383,24 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo (prêmio novo entregue).
     - Gravador completo do `tasks.data` (itens, monstros, descrição, criar/remover missão).
+
+257. **Sessão 2026-10-18: Estúdio S7, quarta parte — categorias da Loja Gold.**
+
+    ### a. Pedido
+    Commitar o B256 (feito: `b578536`, `1c4202e`) e seguir; antes do gravador completo de missões, fechar a Loja.
+
+    ### b. Evidência
+    - As 8 categorias do `gshop.data` são `{wchar nome[64]; i32 nsub; nsub × wchar[64]}` (`globaldataman.cpp:614-660`); a
+      oferta aponta para elas pelo índice (`main_type`, `sub_type`) — por isso só se acrescenta no fim e só se tira a
+      última sem uso.
+
+    ### c. O que foi feito
+    - `gshop_editavel`: `bloco_de_texto`, `renomear_categoria`, `nova_subcategoria`, `remover_ultima_subcategoria`.
+    - `pw-recursos`: `categoria_da_loja` e `POST estudio/loja/{arquivo}/categorias`. Painel: proxy e editor "Categorias".
+
+    ### d. Provas
+    - `gshop_editavel::testes_das_categorias`: mesmo nome não muda o arquivo; renomear e acrescentar relidos; ofertas
+      intactas; nome grande recusado; última subcategoria com oferta não sai.
+    - `estudio.rs`: renomear, acrescentar e tirar no rascunho; ação inválida → 400; contagem de subcategorias de volta à
+      original.
+    - Suítes `pw-recursos` + `pw-data-loader` com o banco: **232 passaram, 0 falharam**; painel `teste_recursos.py` **11/11**.
