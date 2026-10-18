@@ -14091,3 +14091,29 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: controlador desligado ao subir → criaturas da área não nascem.
     - Nome dos objetos dinâmicos (o `dwDynObjID` remete a arquivo do cliente) e a altura do chão pelo GS.
+
+248. **Sessão 2026-10-15: Estúdio S4, sétima parte — altura do chão no "Posicionar pelo clique".**
+
+    ### a. Pedido
+    Commitar o B247 (feito: `14abd7f`, `f54ef50`), listar o que falta (entregue ao Murillo: fechar o S4, fases S5–S8,
+    "aguarda reinício", launcher, frentes de jogo §5) e seguir — o item escolhido foi a altura do chão.
+
+    ### b. Evidência
+    - O original substitui o Y pela altura do terreno (`playercmd.cpp:4926`; `npcgenerator.cpp:4319-4322`); o nosso
+      `pw_data_loader::Terreno` (`terreno.rs`) faz a mesma conta com os `.hmap` e o catálogo `specs/mapas/terreno_155.json`.
+    - Terreno nos realms: 1.2.6 211 `.hmap` em 42 pastas; 1.5.5 532 em 82.
+
+    ### c. O que foi feito
+    - `pw-recursos`: `Estudio::altura` (pasta do mapa pela ordem do GS, cache por versão/mapa) e `GET mapas/{c}/altura`.
+    - Painel: proxy; "Posicionar pelo clique" preenche o Y (`vPos_y` e os Y de renascer, portal e teleporte; o do rastreador
+      não, que é 0 nos arquivos reais).
+
+    ### d. Provas
+    - `cargo test -p pw-recursos` com o banco: **19/19** (realm de teste sem `.hmap` → `y` nulo; coordenada inválida 400).
+    - Painel: `teste_recursos.py` **10/10**, depois de um tropeço: a rota genérica `/mapas/{caminho}/{arquivo}` (B244),
+      declarada antes, capturava `/altura` (404); a da altura passou a ser declarada antes dela (o FastAPI usa a 1ª que casa).
+    - No contêiner: no destino "Vila Nevada" (−2545,362; 4116,355) o terreno dá **Y = 215,24** nos dois realms, e o
+      `world_targets.txt` do cliente traz 215,254 para o mesmo ponto — conferência independente da conta.
+
+    ### e. Falta
+    - Ver no painel e no jogo: o Y preenchido bate com o chão.

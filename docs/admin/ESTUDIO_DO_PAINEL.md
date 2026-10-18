@@ -253,6 +253,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 >
 > **B247 (S4, 6ª parte):** objetos dinâmicos e controladores do `npcgen` (ligar ao subir, espera, horários de ligar e
 > desligar), com quem cita cada controlador. Falta do S4: a altura do chão pelo GS e o nome dos objetos dinâmicos.
+>
+> **B248 (S4, 7ª parte):** altura do chão pelos `.hmap` do realm (leitor do GS) no "Posicionar pelo clique". Falta do
+> S4: nome dos objetos dinâmicos; distritos, portais e destinos de teleporte novos (exigem gerar os `.clt`/`.txt` do
+> cliente junto).
 
 | fase | entrega |
 | :--- | :--- |

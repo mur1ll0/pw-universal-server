@@ -295,6 +295,13 @@ e `…/clonar` (sem filhos); o resumo `GET npcgen` traz `objetos` `[indice, tipo
 (lista quem cita). Painel: objetos como quadrados em "Editar áreas" (com "Objetos" marcado), lista de controladores com
 busca, editor com os horários em português e o controlador de cada área/objeto com link.
 
+**Altura do chão (S4, B248):** `GET mapas/{c}/altura?x&z` → `{x, z, y, tem_terreno}`, pelos `.hmap` da pasta do mapa no
+realm com o leitor do GS (`pw_data_loader::Terreno`, a mesma conta do `GetHeightAt` do original: `playercmd.cpp:4926`,
+`npcgenerator.cpp:4319-4322`; catálogo em `specs/mapas/terreno_155.json`). `y` nulo quando o realm não tem o bloco
+daquele ponto (1.2.6: 211 `.hmap` em 42 pastas; 1.5.5: 532 em 82). Terreno em cache por (versão, mapa), até 8 mapas.
+Painel: "Posicionar pelo clique" preenche também o Y (área do `npcgen`, renascer, chegada de portal, teleporte); o do
+rastreador fica 0, como nos arquivos reais.
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -311,7 +318,8 @@ os dois, B244); teleportes do mundo do 1.2.6 com as transportadoras do `elements
 Rastreador (B246): NPC da a01 sem entrada é acrescentado, `short` estourado recusado, publicado no manifesto (0 aplicados no
 realm) e baixado com a posição nova. `pw-data-loader`: `precinct_e_region_de_todos_os_mapas_voltam_identicos`,
 `world_targets_volta_identico`, `task_npc::testes`, `campos_de_objeto_e_controlador_nos_npcgen_reais`. Controladores
-(B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
+(B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. Altura (B248):
+sem `.hmap` responde `y` nulo; coordenada inválida 400. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
 `TEST_DATABASE_URL`/`TEST_REDIS_URL` (ver histórico B243).
 
@@ -322,7 +330,7 @@ arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no
 - Marcar "aguarda reinício" no realm depois de publicar `servidor`/`ambos` (hoje o painel só lista os aplicados).
 - Estúdio: telas próprias, `tasks`/`gshop`; no mapa, polígonos de distrito e portais novos (exigem editar o
   `.clt` do cliente junto), destinos de teleporte novos (exigem o `world_targets.txt` do cliente), nome dos objetos
-  dinâmicos (`dwDynObjID` → arquivo do cliente), altura do chão pelo GS.
+  dinâmicos (`dwDynObjID` → arquivo do cliente).
 - Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
   arquivo, retomável — decisão B233).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).
