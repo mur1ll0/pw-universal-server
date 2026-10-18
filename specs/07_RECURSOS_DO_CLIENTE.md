@@ -148,7 +148,8 @@ montadas de `data/realm_*/config`); o nome do item diz onde (`governanca::caminh
 partes, sem `..`, `:` nem vazias). Item `servidor` só é gravado se o arquivo do realm ainda tem o SHA do
 `sha256_antes` (senão a publicação falha: mudou por fora); `servidor` não entra no manifesto do cliente, e o
 "atual" dele para reverter é o arquivo do realm. Remoção não apaga nada do realm. A resposta do publicar lista os
-`aplicados`. **O GS só lê esses arquivos ao subir: reinicie o realm** (o painel ainda não marca nem reinicia).
+`aplicados`. **O GS só lê esses arquivos ao subir: reinicie o realm** — o Estúdio mostra "aguarda reinício" e
+reinicia pelo painel (B249, spec 06; `GET /admin/{v}/servidor/ultima` dá a última versão que gravou no realm).
 
 ## 6b. Estúdio, fase S1 (B237)
 
@@ -327,7 +328,8 @@ arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no
 
 - Launcher: canal de teste para GM (instalar um rascunho antes de publicar), autoatualização do próprio
   launcher, instalador `.msi` (CLI do Tauri).
-- Marcar "aguarda reinício" no realm depois de publicar `servidor`/`ambos` (hoje o painel só lista os aplicados).
+- Rascunho só de servidor ainda gera versão nova do cliente (manifesto igual). ("Aguarda reinício" e reiniciar pelo
+  painel: feitos no B249, spec 06.)
 - Estúdio: telas próprias, `tasks`/`gshop`; no mapa, polígonos de distrito e portais novos (exigem editar o
   `.clt` do cliente junto), destinos de teleporte novos (exigem o `world_targets.txt` do cliente), nome dos objetos
   dinâmicos (`dwDynObjID` → arquivo do cliente).

@@ -14117,3 +14117,39 @@ comparação lado a lado.
 
     ### e. Falta
     - Ver no painel e no jogo: o Y preenchido bate com o chão.
+
+249. **Sessão 2026-10-17: "aguarda reinício" e reiniciar o realm pelo painel.**
+
+    ### a. Pedido
+    Commitar o B248 (feito: `3a8bd56`, `39bf94a`) e seguir — o item sugerido na lista do B248: marcar "aguarda
+    reinício" e reiniciar o realm, porque toda edição de mapa do Estúdio exigia reiniciar à mão.
+
+    ### b. Evidência
+    - O GS lê `npcgen`/`precinct`/`region`/`world_targets`/`elements` uma vez, ao montar o `GameDataManager`
+      (`manager.rs:616` em diante); religar um mapa (`definir_mapa`) usa o que está em memória — não serve.
+    - Os realms rodam nos contêineres `pw-world-*` com `restart: unless-stopped` (`docker-compose.yml`); o `pw-link` mantém
+      a conexão com o GS e reconecta sozinho (`pw-link/src/uplink.rs:133`).
+    - Desconectar pelo painel já usa o caminho do logout, que grava o personagem (`expulsar_pelo_painel`,
+      `bus_server.rs:1330`).
+    - `recursos_versoes.publicada_em` existe desde o B235.
+
+    ### c. O que foi feito
+    - `pw-gs`: consulta administrativa `reiniciar` (responde `online` e, em seguida, `desconectar_todos` + encerrar o
+      processo; o encerramento é injetável — `ServidorAdministrativo::com_encerramento` — para o teste); `iniciado_em` no
+      resumo `mundos`; `RoteadorDeMapas::quantos_online`/`desconectar_todos`, `BusServer::personagens_com_sessao`.
+    - `pw-storage`/`pw-recursos`: `ultima_do_servidor` e `GET /admin/{v}/servidor/ultima`.
+    - Painel: `iniciado_em` no `/estado`; `GET /api/realms/{id}/servidor` e `POST /api/realms/{id}/reiniciar`
+      (confirmar com o id do realm); aviso com botão no topo do Estúdio e acompanhamento da volta; o texto de confirmação
+      de "Publicar" corrigido (dizia que os arquivos de servidor "precisam ser copiados", o que é feito desde o B237).
+
+    ### d. Provas
+    - `canal_administrativo` com o banco: **35/35**, com o novo `reiniciar_desconecta_todos_salvando_e_encerra` (responde
+      1 online, o personagem sai do mundo e a presença vira "ausente", e só então o encerramento roda).
+    - `cargo test -p pw-recursos` com o banco: **19/19** (última do servidor = v1 depois do elements, v2 depois do npcgen).
+    - Painel: `teste_recursos.py` **11/11** (aguarda = publicação depois da partida; reiniciar recusa sem confirmação e sem
+      CSRF, manda `reiniciar` ao realm).
+    - Suíte inteira do `pw-gs` com o banco (2 fios): **482 passaram, 0 falharam**.
+
+    ### e. Falta
+    - Publicar o GS novo (`pw-world-126`/`pw-world-155`), que reinicia os realms — pedir ao Murillo.
+    - Ver em jogo: reiniciar pelo painel com personagem online; ele volta salvo.
