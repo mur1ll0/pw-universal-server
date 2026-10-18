@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -560,6 +560,28 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(rc.sequencia(), rs.registros.iter().map(|x| matches!(x, pw_data_loader::regioes::RegistroDeRegiao::Caixa(_))).collect::<Vec<_>>());
         let caixa = pw_data_loader::regioes::ler_caixas_de_transporte(&fs::read(realm2.join("world").join("region.sev")).unwrap()).unwrap()[0];
         assert_eq!((caixa.destino, caixa.pos), (101, [1.5, 2.0, 3.0]));
+
+        // Alinhar o servidor com o cliente (B253): um precinct.clt com um distrito a menos no rascunho → o alinhamento
+        // acusa; "alinhar" refaz o precinct.sev a partir do .clt (item servidor) e o par volta a ser equivalente.
+        let al0 = json_de(pedir("GET", "estudio/alinhamento").call().unwrap());
+        let w0 = al0.as_array().unwrap().iter().find(|m| m["caminho"] == "world").unwrap().clone();
+        assert_eq!(w0["desalinhado"], false, "{w0}");
+        let r10 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "alinhar", "operacao_id": "t_p4_r10"})).unwrap())["id"].as_i64().unwrap();
+        let mut pc = pw_data_loader::clt::PrecinctDoCliente::ler(&baixar("maps\\world\\precinct.clt")).unwrap();
+        let n_antes = pc.distritos.len();
+        pc.distritos.pop();
+        pedir("PUT", &format!("rascunhos/{r10}/arquivo")).query("caminho", "maps\\world\\precinct.clt").query("destino", "cliente")
+            .send_bytes(&pc.gravar()).unwrap();
+        let al1 = json_de(pedir("GET", &format!("estudio/alinhamento?rascunho={r10}")).call().unwrap());
+        let w1 = al1.as_array().unwrap().iter().find(|m| m["caminho"] == "world").unwrap().clone();
+        assert_eq!((w1["desalinhado"].as_bool(), w1["arquivos"]["precinct.sev"]["no_cliente"].as_u64()), (Some(true), Some(n_antes as u64 - 1)), "{w1}");
+        let feito = json_de(pedir("POST", &format!("estudio/mapas/world/alinhar?rascunho={r10}")).call().unwrap());
+        assert_eq!(feito["alinhados"].as_array().unwrap().len(), 1, "só o precinct: {feito}");
+        let al2 = json_de(pedir("GET", &format!("estudio/alinhamento?rascunho={r10}")).call().unwrap());
+        assert_eq!(al2.as_array().unwrap().iter().find(|m| m["caminho"] == "world").unwrap()["desalinhado"], false);
+        let de_novo = json_de(pedir("POST", &format!("estudio/mapas/world/alinhar?rascunho={r10}")).call().unwrap());
+        assert!(de_novo["alinhados"].as_array().unwrap().is_empty(), "já alinhado: nada a fazer");
+        pedir("POST", &format!("rascunhos/{r10}/descartar")).send_json(json!({})).unwrap();
 
         // Altura do chão (B248): o realm do teste não tem .hmap — a rota responde sem altura; coordenada inválida é 400.
         let al = json_de(pedir("GET", "estudio/mapas/world/altura").query("x", "10").query("z", "-20").call().unwrap());

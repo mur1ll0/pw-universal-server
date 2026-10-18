@@ -439,8 +439,11 @@ def registrar_reinicio(app):
     async def estudio_novo_sev(realm: str, caminho: str, arquivo: str, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
         # B252: destino de teleporte novo pelo mesmo caminho (base = id do destino a copiar).
-        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais", "teleportes"):
+        # B253: "alinhar" refaz o .sev do realm a partir do .clt do cliente (sem corpo).
+        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais", "teleportes", "alinhar"):
             raise HTTPException(404, "Mapa inválido.")
+        if arquivo == "alinhar":
+            return await _repassar("POST", f"/admin/{v}/estudio/mapas/{caminho}/alinhar", {"rascunho": rascunho})
         dados = await requisicao.json()
         base, campos = dados.get("base"), dados.get("campos", {})
         if not isinstance(base, int) or (base < 0 and arquivo != "teleportes") or not isinstance(campos, dict):
@@ -460,3 +463,9 @@ def registrar_reinicio(app):
     async def estudio_remover_teleporte(realm: str, id_destino: int, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
         return await _repassar("DELETE", f"/admin/{v}/estudio/teleportes/{id_destino}", {"rascunho": rascunho})
+
+    # Alinhamento cliente × servidor de todos os mapas (B253).
+    @app.get("/api/realms/{realm}/estudio/alinhamento")
+    async def estudio_alinhamento(realm: str, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/alinhamento", {"rascunho": rascunho})

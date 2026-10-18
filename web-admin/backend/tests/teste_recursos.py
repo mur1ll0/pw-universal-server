@@ -271,6 +271,11 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         await self.cliente.get("/api/realms/realm_126/estudio/mapas/world/altura", params={"x": 1.5, "z": -2})
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], p["consulta"]), ("/admin/1.2.6/estudio/mapas/world/altura", {"x": ["1.5"], "z": ["-2.0"]}))
+        # Alinhamento e alinhar (B253).
+        await self.cliente.get("/api/realms/realm_126/estudio/alinhamento", params={"rascunho": 5})
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/alinhamento")
+        r = await self.cliente.post("/api/realms/realm_126/estudio/mapas/a27/alinhar", params={"rascunho": 5}, headers=csrf)
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.2.6/estudio/mapas/a27/alinhar"))
         # Destino novo e removido (B252).
         r = await self.cliente.post("/api/realms/realm_126/estudio/mapas/world/teleportes", params={"rascunho": 5},
                                     headers=csrf, json={"base": 1001, "campos": {"nome": "N", "pos": [1, 2, 3]}})

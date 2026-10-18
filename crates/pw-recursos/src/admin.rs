@@ -541,6 +541,19 @@ async fn estudio_remover_portal(
     Ok(Json(e.estudio.remover_portal(&e.gov, &v, &caminho, r, indice).await?))
 }
 
+// ------------------------------------------------------------------ alinhar o servidor com o cliente (B253)
+
+async fn estudio_alinhamento(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.alinhamento(&e.gov, &v, q.rascunho).await?))
+}
+
+async fn estudio_alinhar(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.alinhar_com_o_cliente(&e.gov, &v, &caminho, r).await?))
+}
+
 // ------------------------------------------------------------------ teleportes (S4, B245)
 
 async fn estudio_teleportes(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
@@ -713,6 +726,8 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/teleportes/{id}", put(estudio_editar_teleporte).delete(estudio_remover_teleporte))
         .route("/admin/{v}/estudio/mapas/{caminho}/rastreador", get(estudio_rastreador))
         .route("/admin/{v}/estudio/mapas/{caminho}/altura", get(estudio_altura))
+        .route("/admin/{v}/estudio/alinhamento", get(estudio_alinhamento))
+        .route("/admin/{v}/estudio/mapas/{caminho}/alinhar", post(estudio_alinhar))
         .route("/admin/{v}/estudio/rastreador/{id}", put(estudio_editar_rastreador))
         .route(
             "/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{indice}",

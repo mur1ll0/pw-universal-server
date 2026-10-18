@@ -59,6 +59,13 @@ pub struct Distrito {
 }
 
 impl Distrito {
+    /// Um distrito novo (B253: gerar o `.sev` a partir do `precinct.clt` do cliente).
+    pub fn novo(prioridade: i32, mapa_do_ponto: i32, mapa: i32, dominio: i32, protege_pk: bool, ponto_de_cidade: [f32; 3], vertices: Vec<[f32; 3]>) -> Self {
+        let mut d = Self { prioridade, mapa_do_ponto, mapa, dominio, protege_pk, ponto_de_cidade, vertices: vec![], esquerda: 0.0, topo: 0.0, direita: 0.0, base: 0.0 };
+        d.definir_vertices(vertices);
+        d
+    }
+
     /// Troca os vértices e recalcula a caixa que `contem` usa (B251, Estúdio).
     pub fn definir_vertices(&mut self, vertices: Vec<[f32; 3]>) {
         let (mut esquerda, mut topo, mut direita, mut base) = (999999.0f32, 999999.0f32, -999999.0f32, -999999.0f32);

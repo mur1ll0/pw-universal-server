@@ -2363,3 +2363,85 @@ impl Estudio {
         }
     }
 }
+
+// ------------------------------------------------------------------ alinhar o servidor com o cliente (S4, B253)
+
+impl Estudio {
+    /// O par (`.clt` do cliente, `.sev` do realm) de um mapa: estado de `precinct` e `region` — equivalentes (o `.sev`
+    /// gerado do `.clt` casa com o do realm, `clt::precinct_equivalente`) ou não, com carimbos e contagens.
+    async fn par_do_mapa(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Value> {
+        let mut saida = Map::new();
+        for (clt, sev) in [("precinct.clt", "precinct.sev"), ("region.clt", "region.sev")] {
+            let Ok((_, do_realm, do_rascunho)) = self.arquivo_do_mapa(gov, versao, caminho, sev, rascunho).await else { continue };
+            let s = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
+            let Some(c) = self.clt_do_mapa(gov, versao, caminho, clt, rascunho).await else {
+                saida.insert(sev.into(), json!({ "cliente": false }));
+                continue;
+            };
+            let estado = if clt == "precinct.clt" {
+                let real = Distritos::ler(&s).map_err(|e| anyhow::anyhow!("{e}"))?;
+                let c = PrecinctDoCliente::ler(&c)?;
+                let gerado = c.para_o_servidor(real.versao);
+                json!({ "cliente": true, "equivalente": pw_data_loader::clt::precinct_equivalente(&gerado, &real),
+                    "carimbo_cliente": c.carimbo, "carimbo_servidor": real.carimbo, "no_cliente": c.distritos.len(), "no_servidor": real.lista.len() })
+            } else {
+                let real = RegioesEditavel::ler(&s)?;
+                let c = RegionDoCliente::ler(&c)?;
+                let gerado = c.para_o_servidor(real.versao);
+                json!({ "cliente": true, "equivalente": pw_data_loader::clt::region_equivalente(&gerado, &real),
+                    "carimbo_cliente": c.carimbo, "carimbo_servidor": real.carimbo, "no_cliente": c.registros.len(), "no_servidor": real.registros.len() })
+            };
+            saida.insert(sev.into(), estado);
+        }
+        Ok(Value::Object(saida))
+    }
+
+    /// Todos os mapas do `instance.txt` com o estado do par cliente × servidor.
+    pub async fn alinhamento(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<Value> {
+        let bytes = self.arquivo_do_cliente(gov, versao, "configs\\instance.txt").await?;
+        let mapas = crate::mapas::ler_instancias(&crate::mapas::texto_do_arquivo(&bytes))?;
+        let mut lista = Vec::new();
+        for m in mapas {
+            let par = self.par_do_mapa(gov, versao, &m.caminho, rascunho).await?;
+            if par.as_object().is_some_and(|o| !o.is_empty()) {
+                let desalinhado = par.as_object().unwrap().values().any(|e| e["cliente"] == true && e["equivalente"] == false);
+                lista.push(json!({ "caminho": m.caminho, "nome": m.nome, "id": m.id, "desalinhado": desalinhado, "arquivos": par }));
+            }
+        }
+        Ok(json!(lista))
+    }
+
+    /// Refaz no rascunho o `precinct.sev`/`region.sev` do mapa a partir do `.clt` do cliente (o cliente é o juiz: é o
+    /// `.clt` que ele usa para nomes, música e o índice do portal, e cujos carimbos ele confere no
+    /// `INST_DATA_CHECKOUT`, `EC_World.cpp:2389-2409`). Só os arquivos que não são equivalentes; a versão do `.sev`
+    /// fica a do realm. Nada vai ao cliente.
+    pub async fn alinhar_com_o_cliente(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64) -> Result<Value> {
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let mut feitos = Vec::new();
+        for (clt, sev) in [("precinct.clt", "precinct.sev"), ("region.clt", "region.sev")] {
+            let Ok((nome, do_realm, do_rascunho)) = self.arquivo_do_mapa(gov, versao, caminho, sev, Some(rascunho)).await else { continue };
+            let Some(c) = self.clt_do_mapa(gov, versao, caminho, clt, Some(rascunho)).await else { continue };
+            let base = do_rascunho.as_ref().map(|(_, b)| b.clone()).unwrap_or_else(|| do_realm.clone());
+            let (novo, antes, depois) = if clt == "precinct.clt" {
+                let real = Distritos::ler(&base).map_err(|e| anyhow::anyhow!("{e}"))?;
+                let g = PrecinctDoCliente::ler(&c)?.para_o_servidor(real.versao);
+                if pw_data_loader::clt::precinct_equivalente(&g, &real) {
+                    continue;
+                }
+                (g.gravar(), json!([real.carimbo, real.lista.len()]), json!([g.carimbo, g.lista.len()]))
+            } else {
+                let real = RegioesEditavel::ler(&base)?;
+                let g = RegionDoCliente::ler(&c)?.para_o_servidor(real.versao);
+                if pw_data_loader::clt::region_equivalente(&g, &real) {
+                    continue;
+                }
+                (g.gravar(), json!([real.carimbo, real.registros.len()]), json!([g.carimbo, g.registros.len()]))
+            };
+            let mudanca = json!({ "acao": "alinhado com o cliente", "tipo": sev, "antes_carimbo_e_registros": antes, "depois": depois });
+            self.gravar_item_do_realm(gov, versao, rascunho, nome, do_realm, do_rascunho, move |_| Ok((novo, json!({}), mudanca))).await?;
+            feitos.push(json!({ "arquivo": sev, "antes": antes, "depois": depois }));
+        }
+        Ok(json!({ "alinhados": feitos }))
+    }
+}

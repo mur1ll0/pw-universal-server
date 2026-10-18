@@ -823,7 +823,10 @@ function abrirDaCamada(camada, indice) {
     };
     ed.append(titulo, grade);
     if (mapa.poligonoNovo && mapa.poligonoNovo.indice === indice) ed.appendChild(criar("div", "texto-suave", `Polígono novo com ${mapa.poligonoNovo.pontos.length} pontos: salve para gravar.`));
-    if (!alinhado) ed.appendChild(criar("div", "texto-suave", `Nome, polígono, criar e remover desligados: ${mapa.distritos.motivo || "o .clt do cliente não casa com o .sev"}.`));
+    if (!alinhado) {
+      ed.appendChild(criar("div", "texto-suave", `Nome, polígono, criar e remover desligados: ${mapa.distritos.motivo || "o .clt do cliente não casa com o .sev"}.`));
+      ed.appendChild(botaoDeAlinhar());
+    }
     if (item.marcas?.length) ed.appendChild(criar("div", "texto-suave", `Marcas do cliente: ${item.marcas.map((k) => k.nome).join(", ")}`));
     if (item.mapa_do_ponto !== m.id) ed.appendChild(criar("div", "texto-suave", "O ponto de renascer fica em outro mapa: \"Posicionar pelo clique\" usaria as coordenadas deste."));
   } else if (camada === "rastreador") {
@@ -920,7 +923,8 @@ function abrirDaCamada(camada, indice) {
       ed.append(titulo, grade, criar("div", "texto-suave", "Grava o region.sev do realm e o region.clt do cliente juntos (o índice do portal é a ordem nos dois)."));
     } else {
       ed.append(titulo, grade,
-        criar("div", "texto-suave", `Caixa em (${item.pos.map((v) => v.toFixed(1)).join(", ")}), meia-medida (${item.exts.map((v) => v.toFixed(1)).join(", ")}). Destino, posição, tamanho, criar e remover desligados: ${mapa.portais.motivo || "o region.clt do cliente não casa com o .sev"}.`));
+        criar("div", "texto-suave", `Caixa em (${item.pos.map((v) => v.toFixed(1)).join(", ")}), meia-medida (${item.exts.map((v) => v.toFixed(1)).join(", ")}). Destino, posição, tamanho, criar e remover desligados: ${mapa.portais.motivo || "o region.clt do cliente não casa com o .sev"}.`),
+        botaoDeAlinhar());
     }
     if (item.destino !== m.id) ed.appendChild(criar("div", "texto-suave", `A chegada fica em ${nomeDoMapa(item.destino)}: abra aquele mapa para posicionar pelo clique.`));
   }
@@ -1122,4 +1126,26 @@ function desenharListaDeControladores() {
   busca.addEventListener("input", filtrar);
   caixa.append(resumo, busca, saida);
   filtrar();
+}
+
+/* Alinhar o servidor com o cliente (B253): refaz no rascunho o precinct.sev/region.sev do mapa a partir do .clt do
+   cliente — o cliente é o juiz (nomes, música, índice do portal e os carimbos que ele confere ao entrar). */
+function botaoDeAlinhar() {
+  const b = criar("button", "botao botao-pequeno botao-secundario", "Alinhar o servidor com o cliente");
+  b.type = "button";
+  b.disabled = !estudio.rascunho;
+  b.title = estudio.rascunho ? "Refaz o .sev do realm a partir do .clt do cliente, no rascunho" : "Escolha um rascunho";
+  b.addEventListener("click", async () => {
+    if (!confirm("Refazer o precinct.sev/region.sev deste mapa a partir do arquivo do cliente? Os distritos e portais do servidor passam a ser os do cliente (revise antes de publicar).")) return;
+    try {
+      const r = await api(rotaDoMapa(`/${encodeURIComponent(mapa.atual.caminho)}/alinhar?rascunho=${estudio.rascunho}`), { method: "POST" });
+      const feitos = r.alinhados.map((x) => `${x.arquivo}: ${x.antes[1]} → ${x.depois[1]} registros, carimbo ${x.antes[0]} → ${x.depois[0]}`);
+      alerta("ok", "Estúdio", feitos.length ? `Alinhado no rascunho — ${feitos.join("; ")}.` : "Já estava alinhado.", { toast: !feitos.length });
+      fecharArea();
+      await carregarCamadas();
+      desenharMapa();
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  });
+  return b;
 }

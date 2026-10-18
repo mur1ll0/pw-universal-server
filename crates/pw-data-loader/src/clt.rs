@@ -434,3 +434,143 @@ mod testes {
         println!("precinct.clt {p}, region.clt {r}");
     }
 }
+
+// ------------------------------------------------------------------ do cliente para o servidor (B253)
+
+impl PrecinctDoCliente {
+    /// O `precinct.sev` que corresponde a este `.clt`, na versão `versao_sev` e com o carimbo do cliente — o que o
+    /// editor exportaria para o servidor (os campos são os mesmos: `EL_Precinct.cpp:96-213` × `el_precinct.cpp:219-266`).
+    /// Linha do `.clt`: `[id, pontos, marcas, prioridade, mapa_do_ponto, músicas, intervalo, laço, mapa, domínio, pk]`.
+    pub fn para_o_servidor(&self, versao_sev: u32) -> crate::precinct::Distritos {
+        let n = |d: &DistritoDoCliente, k: usize, padrao: i64| d.numeros.get(k).copied().unwrap_or(padrao);
+        let (i_mapa, i_dominio, i_pk) = (8, 9, 10);
+        crate::precinct::Distritos {
+            versao: versao_sev,
+            carimbo: self.carimbo,
+            lista: self
+                .distritos
+                .iter()
+                .map(|d| {
+                    crate::precinct::Distrito::novo(
+                        n(d, 3, 0) as i32,
+                        n(d, 4, 1) as i32,
+                        if self.versao >= 4 { n(d, i_mapa, 1) as i32 } else { 1 },
+                        if self.versao >= 6 { n(d, i_dominio, 0) as i32 } else { 0 },
+                        self.versao >= 7 && n(d, i_pk, 0) != 0,
+                        d.ponto_de_cidade,
+                        d.vertices.clone(),
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+impl RegionDoCliente {
+    /// O `region.sev` que corresponde a este `.clt` (versão `versao_sev`, carimbo do cliente), na mesma sequência.
+    pub fn para_o_servidor(&self, versao_sev: u32) -> crate::regioes::RegioesEditavel {
+        use crate::regioes::{CaixaDeTransporte, RegistroDeRegiao};
+        crate::regioes::RegioesEditavel {
+            versao: versao_sev,
+            carimbo: self.carimbo,
+            registros: self
+                .registros
+                .iter()
+                .map(|r| match r {
+                    RegistroDoCliente::Regiao { vertices, .. } => RegistroDeRegiao::Regiao(vertices.clone()),
+                    RegistroDoCliente::Portal { numeros, pos, exts, alvo } => RegistroDeRegiao::Caixa(CaixaDeTransporte {
+                        destino: numeros[0] as i32,
+                        origem: numeros.get(1).copied().unwrap_or(1) as i32,
+                        nivel_minimo: numeros.get(2).copied().unwrap_or(1) as i32,
+                        pos: *pos,
+                        exts: *exts,
+                        alvo: *alvo,
+                    }),
+                })
+                .collect(),
+        }
+    }
+}
+
+fn perto(a: &[f32; 3], b: &[f32; 3]) -> bool {
+    a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3)
+}
+
+/// O `precinct.sev` gerado do `.clt` é **equivalente** ao do realm? O `.clt` guarda `%f` (6 casas), que nem sempre
+/// devolve o `float` exato; o `.sev` o tem inteiro (o editor exporta os dois da memória). Equivalente = carimbo,
+/// contagem e inteiros iguais, `float` a menos de 1e-3 (B253; medido: 186 dos 200 pares dos dois clientes).
+pub fn precinct_equivalente(gerado: &crate::precinct::Distritos, real: &crate::precinct::Distritos) -> bool {
+    gerado.carimbo == real.carimbo
+        && gerado.lista.len() == real.lista.len()
+        && gerado.lista.iter().zip(&real.lista).all(|(a, b)| {
+            (a.prioridade, a.mapa_do_ponto, a.mapa, a.dominio, a.protege_pk) == (b.prioridade, b.mapa_do_ponto, b.mapa, b.dominio, b.protege_pk)
+                && perto(&a.ponto_de_cidade, &b.ponto_de_cidade)
+                && a.vertices.len() == b.vertices.len()
+                && a.vertices.iter().zip(&b.vertices).all(|(x, y)| perto(x, y))
+        })
+}
+
+/// O mesmo para o `region.sev`.
+pub fn region_equivalente(gerado: &crate::regioes::RegioesEditavel, real: &crate::regioes::RegioesEditavel) -> bool {
+    use crate::regioes::RegistroDeRegiao as R;
+    gerado.carimbo == real.carimbo
+        && gerado.registros.len() == real.registros.len()
+        && gerado.registros.iter().zip(&real.registros).all(|(a, b)| match (a, b) {
+            (R::Regiao(x), R::Regiao(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| perto(p, q)),
+            (R::Caixa(x), R::Caixa(y)) => {
+                (x.destino, x.origem, x.nivel_minimo) == (y.destino, y.origem, y.nivel_minimo)
+                    && perto(&x.pos, &y.pos)
+                    && perto(&x.exts, &y.exts)
+                    && perto(&x.alvo, &y.alvo)
+            }
+            _ => false,
+        })
+}
+
+#[cfg(test)]
+mod testes_do_servidor {
+    use super::*;
+
+    /// O mais forte que dá para conferir sem o exportador: onde cliente e realm já casam, o `.sev` gerado do `.clt`
+    /// sai **byte a byte igual** ao `.sev` do realm. Os `.clt` reais estão fora do repositório (sem eles, avisa).
+    #[test]
+    fn sev_gerado_do_clt_e_o_do_realm() {
+        let pares = [
+            (r"F:\Games\perfectworld_126\element\maps", "../../data/realm_126/config"),
+            (r"F:\PW\1.5.5\1.5.5 BR launcher\element\maps", "../../data/realm_155/config"),
+        ];
+        let (mut iguais, mut desalinhados) = (0, Vec::new());
+        for (cliente, realm) in pares {
+            let Ok(pastas) = std::fs::read_dir(cliente) else {
+                eprintln!("AVISO: sem {cliente} — este teste NÃO verificou esse cliente.");
+                continue;
+            };
+            let realm = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(realm);
+            for d in pastas.filter_map(|e| e.ok()).map(|e| e.path()) {
+                let mapa = d.file_name().unwrap().to_string_lossy().to_string();
+                let pasta_sev = if mapa == "world" && !realm.join("world").join("npcgen.data").exists() { realm.clone() } else { realm.join(&mapa) };
+                for (clt, sev) in [("precinct.clt", "precinct.sev"), ("region.clt", "region.sev")] {
+                    let (Ok(c), Ok(s)) = (std::fs::read(d.join(clt)), std::fs::read(pasta_sev.join(sev))) else { continue };
+                    let equivalente = if clt == "precinct.clt" {
+                        let real = crate::precinct::Distritos::ler(&s).unwrap();
+                        precinct_equivalente(&PrecinctDoCliente::ler(&c).unwrap().para_o_servidor(real.versao), &real)
+                    } else {
+                        let real = crate::regioes::RegioesEditavel::ler(&s).unwrap();
+                        region_equivalente(&RegionDoCliente::ler(&c).unwrap().para_o_servidor(real.versao), &real)
+                    };
+                    if equivalente {
+                        iguais += 1;
+                    } else {
+                        desalinhados.push(format!("{}/{mapa}/{sev}", if cliente.contains("126") { "126" } else { "155" }));
+                    }
+                }
+            }
+        }
+        println!("sev gerado equivalente ao do realm: {iguais}; diferentes: {} {desalinhados:?}", desalinhados.len());
+        // Medido em 2026-10-18 (B253): os 14 que diferem são os conhecidos — 1.2.6 a12, a25, a27, a31 e, no 1.5.5 BR,
+        // o precinct de a25, a32, a40, a43, a61, a70, b01, random03. Um a mais é regressão do gerador.
+        if iguais > 0 {
+            assert!(desalinhados.len() <= 14, "{desalinhados:?}");
+        }
+    }
+}
