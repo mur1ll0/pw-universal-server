@@ -529,6 +529,16 @@ function posicionarPeloClique(ev) {
   const ix = ed.querySelector('input[data-campo="vPos_x"], input[data-pos="x"]');
   const iz = ed.querySelector('input[data-campo="vPos_z"], input[data-pos="z"]');
   if (ix && iz) { ix.value = x; iz.value = z; }
+  // Altura do chão no ponto (B248), dos .hmap do realm: preenche o Y quando o editor tem um.
+  const iy = ed.querySelector('input[data-campo="vPos_y"], input[data-pos="y"]');
+  if (iy && !iy.disabled) {
+    api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/altura?x=${x}&z=${z}`))
+      .then((r) => {
+        if (r.y == null) { alerta("aviso", "Estúdio", "Sem terreno do realm neste ponto: confira o Y à mão.", { toast: true }); return; }
+        iy.value = r.y;
+      })
+      .catch((erro) => alerta("aviso", "Estúdio", `Altura do chão: ${erro.message}`, { toast: true }));
+  }
   mapa.posicionando = false;
   const b = [...ed.querySelectorAll("button")].find((x) => x.textContent === "Clique no mapa…");
   if (b) b.textContent = "Posicionar pelo clique";
@@ -751,7 +761,7 @@ function abrirDaCamada(camada, indice) {
     sel.value = item.mapa_do_ponto;
     lm.append(criar("span", "", "Mapa do ponto de renascer"), sel);
     const [lx, ix] = campoNumerico("Renascer X", item.ponto[0], editavel, "x");
-    const [ly, iy] = campoNumerico("Renascer Y (altura)", item.ponto[1], editavel);
+    const [ly, iy] = campoNumerico("Renascer Y (altura)", item.ponto[1], editavel, "y");
     const [lz, iz] = campoNumerico("Renascer Z", item.ponto[2], editavel, "z");
     grade.append(lp, lm, lx, ly, lz);
     Object.assign(entradas, { ip, sel, ix, iy, iz });
@@ -795,7 +805,7 @@ function abrirDaCamada(camada, indice) {
     titulo.append(criar("strong", "", `Destino de teleporte ${item.id}${item.nome ? `: ${item.nome}` : ""}`),
       criar("span", "texto-suave", ` · domínio ${item.dominio}`));
     const [lx, ix] = campoNumerico("Chegada X", item.pos[0], editavel, "x");
-    const [ly, iy] = campoNumerico("Chegada Y (altura)", item.pos[1], editavel);
+    const [ly, iy] = campoNumerico("Chegada Y (altura)", item.pos[1], editavel, "y");
     const [lz, iz] = campoNumerico("Chegada Z", item.pos[2], editavel, "z");
     grade.append(lx, ly, lz);
     corpo = () => {
@@ -820,7 +830,7 @@ function abrirDaCamada(camada, indice) {
     titulo.append(criar("strong", "", `Portal #${indice}`),
       criar("span", "texto-suave", ` · leva a ${nomeDoMapa(item.destino)}${item.nivel_minimo > 1 ? ` · nível ${item.nivel_minimo}` : ""}`));
     const [lx, ix] = campoNumerico("Chegada X", item.alvo[0], editavel, "x");
-    const [ly, iy] = campoNumerico("Chegada Y (altura)", item.alvo[1], editavel);
+    const [ly, iy] = campoNumerico("Chegada Y (altura)", item.alvo[1], editavel, "y");
     const [lz, iz] = campoNumerico("Chegada Z", item.alvo[2], editavel, "z");
     grade.append(lx, ly, lz);
     corpo = () => {

@@ -517,6 +517,19 @@ async fn estudio_editar_rastreador(
     Ok(Json(e.estudio.editar_rastreador(&e.gov, &v, r, id, p.campos).await?))
 }
 
+// ------------------------------------------------------------------ altura do chão (S4, B248)
+
+#[derive(Deserialize)]
+struct QAltura {
+    x: f32,
+    z: f32,
+}
+
+async fn estudio_altura(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QAltura>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.altura(&e.gov, &v, &caminho, q.x, q.z).await?))
+}
+
 // ------------------------------------------------------------------ conversas (S3, B240)
 
 async fn estudio_funcoes(State(e): State<Arc<Estado>>, Path(v): Path<String>) -> R<Json<Value>> {
@@ -614,6 +627,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/mapas/{caminho}/teleportes", get(estudio_teleportes))
         .route("/admin/{v}/estudio/teleportes/{id}", put(estudio_editar_teleporte))
         .route("/admin/{v}/estudio/mapas/{caminho}/rastreador", get(estudio_rastreador))
+        .route("/admin/{v}/estudio/mapas/{caminho}/altura", get(estudio_altura))
         .route("/admin/{v}/estudio/rastreador/{id}", put(estudio_editar_rastreador))
         .route(
             "/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{indice}",

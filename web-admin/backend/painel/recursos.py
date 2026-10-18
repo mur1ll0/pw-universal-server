@@ -345,6 +345,15 @@ def registrar_mapas(app):
         return await _repassar("DELETE", f"/admin/{v}/estudio/mapas/{caminho}/npcgen/{tipo}/{max(0, indice)}",
                                {"rascunho": rascunho})
 
+    # Altura do chão (B248): os .hmap do mapa no realm, para "Posicionar pelo clique". Declarada antes da rota
+    # genérica /mapas/{caminho}/{arquivo}, que a capturaria (o FastAPI usa a primeira que casa).
+    @app.get("/api/realms/{realm}/estudio/mapas/{caminho}/altura")
+    async def estudio_altura(realm: str, caminho: str, x: float, z: float, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        if not MAPA.match(caminho) or not (abs(x) < 1e6 and abs(z) < 1e6):
+            raise HTTPException(404, "Mapa inválido.")
+        return await _repassar("GET", f"/admin/{v}/estudio/mapas/{caminho}/altura", {"x": x, "z": z})
+
     # Distritos (precinct.sev) e portais (region.sev) do mapa (B244): ponto de renascer e ponto de chegada.
     @app.get("/api/realms/{realm}/estudio/mapas/{caminho}/{arquivo}")
     async def estudio_sev(realm: str, caminho: str, arquivo: str, requisicao: Request, rascunho: int | None = None):

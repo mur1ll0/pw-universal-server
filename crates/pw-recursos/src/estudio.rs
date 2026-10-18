@@ -34,6 +34,8 @@ pub struct Estudio {
     arquivos_do_cliente: Mutex<HashMap<String, (String, Arc<HashMap<String, (Sha256Bytes, u64)>>)>>,
     /// Peças do minimapa já convertidas em PNG.
     pecas: Mutex<HashMap<(String, String, String), Arc<Vec<u8>>>>,
+    /// Terreno (`.hmap`) de cada mapa já lido, por (versão, caminho) — B248.
+    terrenos: Mutex<HashMap<(String, String), Arc<pw_data_loader::Terreno>>>,
 }
 
 fn caminho_gbk() -> Vec<u8> {
@@ -1886,5 +1888,37 @@ impl Estudio {
             Ok((r.gravar(), json!({ "id": id, "pos": r.posicao(id) }), mudanca))
         })
         .await
+    }
+}
+
+// ------------------------------------------------------------------ altura do chão (S4, B248)
+
+impl Estudio {
+    /// Altura do chão em (x, z) no mapa, pelos `.hmap` da pasta do mapa no realm — o mesmo leitor do GS
+    /// (`pw_data_loader::Terreno`, a conta de `GetHeightAt`: `playercmd.cpp:4926`, `npcgenerator.cpp:4319-4322`).
+    /// `y` nulo quando o realm não tem o bloco daquele ponto.
+    pub async fn altura(&self, gov: &Governanca, versao: &str, caminho: &str, x: f32, z: f32) -> Result<Value> {
+        if !caminho_de_mapa_valido(caminho) || !x.is_finite() || !z.is_finite() {
+            bail!("mapa ou coordenada inválidos");
+        }
+        let chave = (versao.to_string(), caminho.to_string());
+        let existente = self.terrenos.lock().unwrap().get(&chave).cloned();
+        let terreno = match existente {
+            Some(t) => t,
+            None => {
+                let id = self.id_do_mapa(gov, versao, caminho).await?;
+                let pasta = gov.realms.get(versao).and_then(|p| p.first()).context("a versão não tem realm configurado (PW_RECURSOS_REALMS)")?;
+                let dir = pasta_do_mapa(pasta, caminho);
+                let t = Arc::new(tokio::task::spawn_blocking(move || pw_data_loader::Terreno::ler(id, &dir)).await?);
+                let mut c = self.terrenos.lock().unwrap();
+                if c.len() >= 8 {
+                    c.clear(); // o mundo inteiro ocupa bastante: poucos mapas em memória
+                }
+                c.insert(chave, t.clone());
+                t
+            }
+        };
+        let y = terreno.altura_em(x, z);
+        Ok(json!({ "x": x, "z": z, "y": y.map(|y| (y * 100.0).round() / 100.0), "tem_terreno": terreno.tem_dados() }))
     }
 }

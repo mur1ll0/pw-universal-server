@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -440,6 +440,11 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let c = pw_data_loader::npcgen_editavel::ler_campos(&ed.controladores[ic as usize], pw_data_loader::npcgen_editavel::CAMPOS_DO_CONTROLADOR, ed.versao);
         assert_eq!((c["bActived"].as_bool(), c["ActiveTime_iHours"].as_i64(), ed.controladores.len()), (Some(!ativo), Some(5), 346));
         pw_data_loader::npcgen::NpcGenData::load_from_bytes(&fs::read(realm2.join("world").join("npcgen.data")).unwrap()).unwrap();
+
+        // Altura do chão (B248): o realm do teste não tem .hmap — a rota responde sem altura; coordenada inválida é 400.
+        let al = json_de(pedir("GET", "estudio/mapas/world/altura").query("x", "10").query("z", "-20").call().unwrap());
+        assert_eq!((al["y"].clone(), al["tem_terreno"].clone(), al["x"].as_f64()), (json!(null), json!(false), Some(10.0)));
+        assert_eq!(erro_de(pedir("GET", "estudio/mapas/world/altura").query("x", "abc").query("z", "1").call()).0, 400);
     })
     .await
     .unwrap();
