@@ -14460,3 +14460,30 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: monstro usando a habilidade nova depois de publicar e reiniciar.
     - Criar/remover gatilho, falas; gravador completo do `tasks.data`; textos.
+
+260. **Sessão 2026-10-18: Estúdio S7, sétima parte — textos do cliente.**
+
+    ### a. Pedido
+    Commitar o B259 (feito: `8a6b8d2`, `03b6472`) e seguir — as tabelas de texto.
+
+    ### b. Decisão e evidência
+    - `CECGame::Init` (`EC_Game.cpp:517-525`) carrega `fixed_msg.txt`, `item_desc.txt`, `item_ext_desc.txt` por
+      `CECStringTab::LoadWideStrings` (`EC_StringTab.cpp`): UTF-16LE com BOM, cabeçalho até `#_begin`, `#_index` torna
+      a tabela indexada (`id "texto"`), senão sequencial. Não há escape: aspas e quebra de linha são recusadas.
+    - Edição por linha (o arquivo fica como está); entrada nova só na indexada. Só do cliente: item `cliente`.
+
+    ### c. O que foi feito
+    - `pw-recursos/src/textos.rs` (`TabelaDeTextos`: `ler`, `gravar`, `entrada`, `definir`, `acrescentar`).
+    - `Estudio::textos` (busca + paginação) e `editar_texto`; rotas `GET`/`POST estudio/textos/{arquivo}`,
+      `PUT estudio/textos/{arquivo}/{chave}`.
+    - Painel: proxy com lista fechada dos três arquivos; vista "Textos" (`static/textos.js`).
+
+    ### d. Provas
+    - `textos::testes`: indexada e sequencial; os três arquivos reais do 1.5.5 BR voltam idênticos.
+    - `pw-recursos` com o banco **22/22** (estudio.rs: busca, 400 para arquivo fora da lista, sequencial não
+      acrescenta, aspas → 400, publicado não aplica no realm, cliente baixa o arquivo novo).
+    - Painel `teste_recursos.py` **11/11**.
+
+    ### e. Falta
+    - Ver em jogo: descrição de item trocada aparecendo no tooltip depois de o launcher baixar.
+    - Criar/remover gatilho e falas do `aipolicy`; gravador completo do `tasks.data`.

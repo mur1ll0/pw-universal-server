@@ -383,6 +383,18 @@ por caminho na árvore — `""`, `"e"`, `"d"`… — e `operacoes` por índice, 
 valores}}` grava (campo inexistente → 400; relê antes). A leitura usa o rascunho quando há um. Painel: "Editar este
 gatilho" com as flags e os campos de cada operação/condição editável.
 
+**Textos do cliente (B260, S7):** `pw-recursos/src/textos.rs` lê e grava `configs\fixed_msg.txt`, `item_desc.txt` e
+`item_ext_desc.txt` — o cliente os carrega em `CECGame::Init` (`EC_Game.cpp:517-525`) por
+`CECStringTab::LoadWideStrings` (`EC_StringTab.cpp`): UTF-16LE com BOM; cabeçalho até `#_begin`; `#_index` antes dele
+torna a tabela **indexada** (`id "texto"`; id repetido vale o primeiro) — senão **sequencial** (`"texto"`, a chave é a
+posição). Edição por linha: só a linha mudada é reescrita, o prefixo até a primeira aspa fica; texto com aspas ou
+quebra de linha → 400 (o leitor não tem escape); entrada nova só na indexada, antes das linhas vazias do fim. Os três
+arquivos do 1.5.5 BR voltam idênticos. Medido nos realms publicados: só `item_ext_desc` é indexada (1.2.6: 3.620
+entradas; 1.5.5: 16.941); `item_desc` (202; 412) e `fixed_msg` (173; 287) são sequenciais. Item **`cliente`** (`configs\<arquivo>`, não vai ao realm).
+`GET estudio/textos/{arquivo}?busca&pagina&por_pagina&rascunho` → `{indexada, entradas, total, linhas: [[chave,
+texto]]}` (busca por chave exata ou trecho do texto; 100 por página, até 500); `PUT estudio/textos/{arquivo}/{chave}
+{texto}` e `POST estudio/textos/{arquivo} {id, texto}` com `?rascunho`. Painel: vista "Textos" (`static/textos.js`).
+
 **Missões (S7, B255 — só leitura):** o `tasks.data` do realm (o que o GS executa, `manager.rs:461`; 20,8 MB no 1.2.6,
 104 MB no 1.5.5) pelo leitor do GS (`pw_data_loader::tasks`), em cache por versão e SHA. Rotas:
 `GET estudio/missoes?busca&topo&pagina&por_pagina` (linhas `[id, nome, tipo, nível mín., máx., mãe, filhas, npc que
@@ -428,7 +440,9 @@ falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668
 publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos. Comportamento (B258): 293
 políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id
 inexistente → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
-"só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Controladores
+"só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Textos (B260): indexada com 2 e
+sequencial achada pela busca; arquivo fora da lista → 400; editar e acrescentar na indexada, acrescentar na sequencial
+e texto com aspas → 400; publicado não aplica nada no realm e o cliente baixa o arquivo novo. Controladores
 (B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. Altura (B248):
 sem `.hmap` responde `y` nulo; coordenada inválida 400. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
