@@ -1149,6 +1149,8 @@ impl Estudio {
                 um_decimal(numero(&c, "fExtX")), um_decimal(numero(&c, "fExtZ")), primeiro, a.recursos.len(), total,
                 c.get("bInitGen") == Some(&json!(true))]));
         }
+        // Modelos dos objetos dinâmicos (B250), do `configs\DynamicObjects.data` do cliente.
+        let modelos_dos_objetos = self.modelos_dos_objetos(gov, versao).await;
         // Objetos dinâmicos e controladores (B247). Os controladores levam quantas áreas/objetos os citam.
         let objetos: Vec<Value> = n
             .objetos
@@ -1156,7 +1158,8 @@ impl Estudio {
             .enumerate()
             .map(|(i, o)| {
                 let c = ng::ler_campos(o, CAMPOS_DO_OBJETO, v);
-                json!([i, "objeto", um_decimal(numero(&c, "vPos_x")), um_decimal(numero(&c, "vPos_z")), c["dwDynObjID"], c.get("idController")])
+                let modelo = c["dwDynObjID"].as_u64().and_then(|id| modelos_dos_objetos.get(&(id as u32))).cloned();
+                json!([i, "objeto", um_decimal(numero(&c, "vPos_x")), um_decimal(numero(&c, "vPos_z")), c["dwDynObjID"], c.get("idController"), modelo])
             })
             .collect();
         let mut citacoes: HashMap<i64, usize> = HashMap::new();
@@ -1191,7 +1194,7 @@ impl Estudio {
             "item": nome,
             "versao_do_arquivo": v,
             "objetos": objetos,
-            "colunas_dos_objetos": ["indice", "tipo", "x", "z", "dwDynObjID", "idController"],
+            "colunas_dos_objetos": ["indice", "tipo", "x", "z", "dwDynObjID", "idController", "modelo"],
             "controladores": controladores,
             "colunas_dos_controladores": ["indice", "id", "iControllerID", "nome", "bActived", "citado_por"],
             "controladores_inexistentes_citados": pendurados,
@@ -1230,6 +1233,10 @@ impl Estudio {
             "campos": ng::ler_campos(bruto, ca, n.versao),
             "filhos": filhos.iter().map(|f| ng::ler_campos(f, cf, n.versao)).collect::<Vec<_>>(),
         });
+        if tipo == TipoDeArea::Objeto {
+            let id = u32::from_le_bytes(bruto[0..4].try_into().unwrap());
+            r["nome"] = json!(self.modelos_dos_objetos(gov, versao).await.get(&id));
+        }
         if tipo == TipoDeArea::Controlador {
             let id = u32::from_le_bytes(bruto[0..4].try_into().unwrap());
             r["nome"] = json!(nomes::legivel(ng::nome_do_controlador(bruto)));
@@ -1920,5 +1927,21 @@ impl Estudio {
         };
         let y = terreno.altura_em(x, z);
         Ok(json!({ "x": x, "z": z, "y": y.map(|y| (y * 100.0).round() / 100.0), "tem_terreno": terreno.tem_dados() }))
+    }
+}
+
+// ------------------------------------------------------------------ modelos dos objetos dinâmicos (S4, B250)
+
+impl Estudio {
+    /// `dwDynObjID` → caminho do modelo, do `configs\DynamicObjects.data` do cliente publicado. Vazio (com aviso no
+    /// log) se a versão não tem o arquivo ou ele não fecha.
+    async fn modelos_dos_objetos(&self, gov: &Governanca, versao: &str) -> HashMap<u32, String> {
+        match self.arquivo_do_cliente(gov, versao, "configs\\dynamicobjects.data").await {
+            Ok(b) => crate::mapas::ler_objetos_dinamicos(&b).unwrap_or_else(|e| {
+                tracing::warn!("{versao}: {e:#}");
+                HashMap::new()
+            }),
+            Err(_) => HashMap::new(),
+        }
     }
 }

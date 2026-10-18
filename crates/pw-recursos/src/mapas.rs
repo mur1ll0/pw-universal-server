@@ -160,6 +160,38 @@ pub fn ler_world_targets_txt(texto: &str) -> std::collections::HashMap<i32, Stri
     f.chunks_exact(5).filter_map(|c| Some((c[0].parse::<i32>().ok()?, c[1].clone()))).collect()
 }
 
+/// `configs\DynamicObjects.data` do cliente (B250): o modelo de cada objeto dinâmico do `npcgen` (`dwDynObjID`).
+/// `DataPathMan::Load` (`DataPathMan.cpp:9`, `:16-58`): `u32 'PMID'`, `u32 n` e `n × {u32 id; u32 len; len bytes}` —
+/// o caminho do modelo em GBK, sem NUL. O cliente recusa id ou caminho repetido; aqui também, e o arquivo fecha no
+/// último byte.
+pub fn ler_objetos_dinamicos(b: &[u8]) -> Result<std::collections::HashMap<u32, String>> {
+    const IDENTIFICA: u32 = (b'P' as u32) << 24 | (b'M' as u32) << 16 | (b'I' as u32) << 8 | b'D' as u32;
+    let u32_em = |o: usize| -> Result<u32> {
+        Ok(u32::from_le_bytes(b.get(o..o + 4).context("DynamicObjects.data truncado")?.try_into().unwrap()))
+    };
+    if u32_em(0)? != IDENTIFICA {
+        bail!("DynamicObjects.data sem a marca PMID");
+    }
+    let n = u32_em(4)? as usize;
+    let (mut o, mut saida) = (8, std::collections::HashMap::with_capacity(n));
+    for _ in 0..n {
+        let (id, len) = (u32_em(o)?, u32_em(o + 4)? as usize);
+        // `szBuffer[256]` no cliente.
+        if len >= 256 {
+            bail!("DynamicObjects.data: caminho de {len} bytes no id {id}");
+        }
+        let caminho = b.get(o + 8..o + 8 + len).context("DynamicObjects.data truncado")?;
+        if saida.insert(id, crate::nomes::legivel(caminho)).is_some() {
+            bail!("DynamicObjects.data: id {id} repetido");
+        }
+        o += 8 + len;
+    }
+    if o != b.len() {
+        bail!("DynamicObjects.data: terminou no byte {o} e tem {}", b.len());
+    }
+    Ok(saida)
+}
+
 // ------------------------------------------------------------------ DDS (DXT1/3/5) → PNG
 
 fn rgb565(c: u16) -> [u8; 3] {
@@ -321,6 +353,24 @@ version  7
         let t = "1001\t\"Vila Nevada\"\t1\t\"-2545.362,215.254,4116.355\"\t1\r\n1101\t\"Vila de Gelo\"\t1\t\"-1507.853,221.732,4240.106\"\t2\r\n";
         let n = ler_world_targets_txt(t);
         assert_eq!((n.len(), n[&1001].as_str(), n[&1101].as_str()), (2, "Vila Nevada", "Vila de Gelo"));
+    }
+
+    #[test]
+    fn objetos_dinamicos_do_cliente() {
+        let mut b = Vec::new();
+        b.extend(((b'P' as u32) << 24 | (b'M' as u32) << 16 | (b'I' as u32) << 8 | b'D' as u32).to_le_bytes());
+        b.extend(2u32.to_le_bytes());
+        for (id, c) in [(7u32, &b"models\\a\\porta.ecm"[..]), (9, b"models\\b.ecm")] {
+            b.extend(id.to_le_bytes());
+            b.extend((c.len() as u32).to_le_bytes());
+            b.extend(c);
+        }
+        let m = ler_objetos_dinamicos(&b).unwrap();
+        assert_eq!((m[&7].as_str(), m[&9].as_str()), ("models\\a\\porta.ecm", "models\\b.ecm"));
+        let mut sobra = b.clone();
+        sobra.push(0);
+        assert!(ler_objetos_dinamicos(&sobra).is_err());
+        assert!(ler_objetos_dinamicos(&b[..b.len() - 1]).is_err());
     }
 
     #[test]

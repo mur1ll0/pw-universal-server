@@ -413,7 +413,11 @@ function desenharEditorDeArea() {
 
   const titulo = criar("div", "recursos-linha");
   const NOMES_DO_TIPO = { areas: "Área de criatura", recursos: "Área de recurso", objetos: "Objeto dinâmico", controladores: "Controlador" };
-  titulo.append(criar("strong", "", `${NOMES_DO_TIPO[tipo]} #${indice}${dados.nome ? `: ${dados.nome}` : ""}`),
+  // Objeto dinâmico (B250): o modelo do DynamicObjects.data do cliente — o nome do arquivo, o caminho na dica.
+  const nomeCurtoDoRegistro = tipo === "objetos" && dados.nome ? dados.nome.split("\\").pop().replace(/\.ecm$/i, "") : dados.nome;
+  const forte = criar("strong", "", `${NOMES_DO_TIPO[tipo]} #${indice}${nomeCurtoDoRegistro ? `: ${nomeCurtoDoRegistro}` : ""}`);
+  if (dados.nome) forte.title = dados.nome;
+  titulo.append(forte,
     criar("span", "texto-suave", editavel ? ` · rascunho #${estudio.rascunho}` : " · só leitura: escolha ou crie um rascunho no topo do Estúdio"));
   ed.appendChild(titulo);
 
