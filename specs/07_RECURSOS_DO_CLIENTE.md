@@ -370,6 +370,14 @@ sub?, nome?}` — `renomear` (categoria ou subcategoria, `wchar[64]`: até 63 ca
 `nova` (subcategoria no fim: nenhuma oferta muda de índice) e `remover` (só a **última** subcategoria e só se nenhuma
 oferta a usa — `main_type`/`sub_type` são índices). Painel: botão "Categorias" na vista Loja.
 
+**Comportamento dos monstros (S7, B258 — só leitura):** o `aipolicy.data` do realm (só do servidor; o cliente não o
+tem) pelo leitor do GS (`pw_data_loader::aipolicy`, porte de `cgame/gs/ai/policy.cpp`, interpretado no mundo desde o
+B127), em cache por versão/SHA. `GET estudio/comportamentos?busca` (linhas `[id, gatilhos, monstros]`, busca por id
+da política ou id/nome de monstro; até 500; `sem_politica` = ids citados por monstros que o arquivo não tem) e
+`GET estudio/comportamentos/{id}` (a `AiPolicy` serializada — gatilhos com `ativo`, `rodando`, `so_em_combate`,
+condição em árvore e operações com alvo — e os monstros que a usam por `MONSTER_ESSENCE.common_strategy`,
+`monstros.rs:169`). Painel: vista "Comportamento" (`static/comportamento.js`). Editar exige um gravador do formato.
+
 **Missões (S7, B255 — só leitura):** o `tasks.data` do realm (o que o GS executa, `manager.rs:461`; 20,8 MB no 1.2.6,
 104 MB no 1.5.5) pelo leitor do GS (`pw_data_loader::tasks`), em cache por versão e SHA. Rotas:
 `GET estudio/missoes?busca&topo&pagina&por_pagina` (linhas `[id, nome, tipo, nível mín., máx., mãe, filhas, npc que
@@ -412,7 +420,9 @@ falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668
 `GShopData` do GS lê o preço novo. `gshop_editavel::testes` (os 4 arquivos dos realms idênticos). Missões (B255): o
 `tasks.data` real do 1.2.6 — 7.994 missões, 2.819 de topo, a 1173 com o NPC 3517 nomeado; id inexistente → 400. Editar
 (B256): `descricao` → 400; nível mín. 5, exp 999 e nome novo na 1173 → visíveis no rascunho, o publicado não muda;
-publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos. Controladores
+publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos. Comportamento (B258): 293
+políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id
+inexistente → 400. Controladores
 (B247): 346 na a01, o 456 citado não se remove, `id` não muda, clone com id novo, publicado e lido pelo GS. Altura (B248):
 sem `.hmap` responde `y` nulo; coordenada inválida 400. `pw-data-loader`: `npcgen_de_todos_os_mapas_volta_identico` (117
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com

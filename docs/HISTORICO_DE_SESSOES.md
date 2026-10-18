@@ -14404,3 +14404,30 @@ comparação lado a lado.
     - `estudio.rs`: renomear, acrescentar e tirar no rascunho; ação inválida → 400; contagem de subcategorias de volta à
       original.
     - Suítes `pw-recursos` + `pw-data-loader` com o banco: **232 passaram, 0 falharam**; painel `teste_recursos.py` **11/11**.
+
+258. **Sessão 2026-10-18: Estúdio S7, quinta parte — comportamento dos monstros (só leitura).**
+
+    ### a. Pedido
+    Commitar o B257 (feito: `b1dfe76`, `e9d5ed4`) e seguir — o `aipolicy` só leitura, menor que o gravador completo de
+    missões e completando a visão do S7.
+
+    ### b. Evidência
+    - `aipolicy.data` só do servidor (o cliente não o tem); o leitor do GS (`aipolicy.rs`, porte do `policy.cpp` 1.7.2,
+      spec 03 §3.4) já serializa `AiPolicy` → `Trigger` → `NoDeCondicao`/`Operacao`. O monstro aponta para a política
+      pelo `MONSTER_ESSENCE.common_strategy` (`monstros.rs:169`).
+
+    ### c. O que foi feito
+    - `pw-recursos`: `politicas_do_realm` (cache), `monstros_por_politica`, `comportamentos` (lista/busca),
+      `comportamento` (ficha); rotas `estudio/comportamentos[/{id}]`.
+    - Painel: proxy; vista "Comportamento" (`static/comportamento.js`) com gatilhos, condição em árvore, operações e
+      monstros com link.
+
+    ### d. Provas
+    - `estudio.rs` com o banco: 293 políticas no 1.2.6; política usada com gatilhos e monstros nomeados; busca pelo id do
+      monstro; id inexistente → 400.
+    - Painel `teste_recursos.py` **11/11**. Suítes `pw-recursos` + `pw-data-loader` com o banco: **232 passaram, 0 falharam**.
+    - No contêiner: 1.5.5 com 3.136 políticas (446 das 500 primeiras usadas por algum monstro; 1 id citado por monstro
+      sem política no arquivo); 1.2.6 com 293 (258 usadas; 2 ids citados sem política).
+
+    ### e. Falta
+    - Editar o `aipolicy.data` (gravador do formato); gravador completo do `tasks.data`; textos.

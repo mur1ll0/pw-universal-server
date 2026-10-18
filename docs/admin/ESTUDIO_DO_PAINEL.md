@@ -284,6 +284,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > completo do `tasks.data`.
 >
 > **B257 (S7, 4ª parte):** categorias da Loja Gold (renomear, acrescentar no fim, tirar a última sem uso).
+>
+> **B258 (S7, 5ª parte):** comportamento dos monstros (`aipolicy.data`) só leitura — gatilhos, condições em árvore,
+> operações e os monstros que usam cada política. Falta do S7: editar o `aipolicy`, gravador completo do `tasks.data`,
+> textos.
 
 | fase | entrega |
 | :--- | :--- |
