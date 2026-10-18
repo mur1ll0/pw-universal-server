@@ -13,6 +13,7 @@
   <script src="/static/mapa.js" defer></script>
   <script src="/static/loja.js" defer></script>
   <script src="/static/missoes.js" defer></script>
+  <script src="/static/comportamento.js" defer></script>
 </head>
 <body>
   <!-- Entrada -->
@@ -289,7 +290,18 @@
             <button id="estudio-vista-mapas" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Mapas</button>
             <button id="estudio-vista-loja" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Loja Gold</button>
             <button id="estudio-vista-missoes" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Missões</button>
+            <button id="estudio-vista-comportamento" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Comportamento</button>
           </div>
+          <section id="estudio-comportamento" class="recursos-cartao" hidden>
+            <div class="recursos-linha">
+              <input id="comportamento-busca" class="campo" type="search" placeholder="Id da política, id ou nome do monstro" aria-label="Buscar política">
+              <span id="comportamento-situacao" class="texto-suave"></span>
+            </div>
+            <div class="loja-grade">
+              <div id="comportamento-lista" class="loja-lista"></div>
+              <div id="comportamento-ficha" class="mapa-editor">Escolha uma política.</div>
+            </div>
+          </section>
           <section id="estudio-missoes" class="recursos-cartao" hidden>
             <div class="recursos-linha">
               <input id="missoes-busca" class="campo" type="search" placeholder="Id ou nome da missão" aria-label="Buscar missão">

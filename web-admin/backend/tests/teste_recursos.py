@@ -271,6 +271,11 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         await self.cliente.get("/api/realms/realm_126/estudio/mapas/world/altura", params={"x": 1.5, "z": -2})
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], p["consulta"]), ("/admin/1.2.6/estudio/mapas/world/altura", {"x": ["1.5"], "z": ["-2.0"]}))
+        # Comportamento (B258).
+        await self.cliente.get("/api/realms/realm_155/estudio/comportamentos", params={"busca": "lobo"})
+        self.assertEqual((RecursosFalso.pedidos[-1]["caminho"], RecursosFalso.pedidos[-1]["consulta"]["busca"]), ("/admin/1.5.5/estudio/comportamentos", ["lobo"]))
+        await self.cliente.get("/api/realms/realm_155/estudio/comportamentos/12")
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/comportamentos/12")
         # Missões (B255).
         await self.cliente.get("/api/realms/realm_126/estudio/missoes", params={"busca": "teste", "topo": "false"})
         p = RecursosFalso.pedidos[-1]

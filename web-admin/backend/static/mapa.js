@@ -28,8 +28,9 @@ function mostrarVistaDoEstudio(vista) {
   elemento("estudio-mapa").hidden = vista !== "mapas";
   elemento("estudio-loja").hidden = vista !== "loja";
   elemento("estudio-missoes").hidden = vista !== "missoes";
+  elemento("estudio-comportamento").hidden = vista !== "comportamento";
   document.querySelector("#pagina-estudio .estudio-grade").hidden = vista !== "tabelas";
-  for (const v of ["tabelas", "mapas", "loja", "missoes"]) {
+  for (const v of ["tabelas", "mapas", "loja", "missoes", "comportamento"]) {
     const id = `estudio-vista-${v}`;
     elemento(id).className = `botao botao-pequeno ${v === vista ? "botao-primario" : "botao-secundario"}`;
     elemento(id).setAttribute("aria-selected", v === vista ? "true" : "false");
@@ -37,6 +38,7 @@ function mostrarVistaDoEstudio(vista) {
   if (vista === "mapas") carregarMapas();
   if (vista === "loja") carregarLoja();
   if (vista === "missoes") carregarMissoes();
+  if (vista === "comportamento") carregarComportamentos();
 }
 
 async function carregarMapas() {

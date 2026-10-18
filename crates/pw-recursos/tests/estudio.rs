@@ -1,7 +1,7 @@
 //! Estúdio S1 de ponta a ponta (B237), com o `elements.data` real do 1.2.6: listar, ficha,
 //! editar (o resumo guarda o "antes" do publicado), clonar com id do espaço, remover recusado
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
-//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254); missões (B255) e editar missão no lugar (B256).
+//! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254); missões (B255) e editar missão no lugar (B256); comportamento (B258).
 
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
@@ -145,6 +145,8 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
     for f in ["precinct.sev", "region.sev"] {
         fs::copy(npcgen.with_file_name(f), realm.join("world").join(f)).expect("sev da a01 do realm_126");
     }
+    // aipolicy.data real do 1.2.6 (B258).
+    fs::copy(npcgen.parent().unwrap().parent().unwrap().join("aipolicy.data"), realm.join("aipolicy.data")).expect("aipolicy do realm_126");
     // tasks.data real do 1.2.6, na raiz do config (B255).
     fs::copy(npcgen.parent().unwrap().parent().unwrap().join("tasks.data"), realm.join("tasks.data")).expect("tasks do realm_126");
     // world_targets.sev real do 1.2.6, na raiz do config (B245).
@@ -611,6 +613,17 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let tr = fs::read(realm2.join("tasks.data")).unwrap();
         let lido = pw_data_loader::tasks::TasksData::load_from_bytes(&tr).unwrap();
         assert_eq!((lido.tasks[&1173].min_level, lido.tasks[&1173].rewards.exp, lido.tasks.len()), (5, 999, 7994));
+
+        // Comportamento (B258, só leitura): as políticas do realm e os monstros que as usam.
+        let cp = json_de(pedir("GET", "estudio/comportamentos").call().unwrap());
+        assert_eq!(cp["politicas"].as_u64(), Some(293), "{}", cp["versao_do_arquivo"]);
+        let usada = cp["linhas"].as_array().unwrap().iter().find(|l| l[2].as_u64().unwrap_or(0) > 0).expect("alguma política usada").clone();
+        let pol = json_de(pedir("GET", &format!("estudio/comportamentos/{}", usada[0])).call().unwrap());
+        assert_eq!(pol["politica"]["triggers"].as_array().unwrap().len() as u64, usada[1].as_u64().unwrap());
+        assert!(pol["monstros"][0]["nome"].is_string(), "{}", pol["monstros"]);
+        let por_monstro = json_de(pedir("GET", "estudio/comportamentos").query("busca", &pol["monstros"][0]["id"].to_string()).call().unwrap());
+        assert!(por_monstro["linhas"].as_array().unwrap().iter().any(|l| l[0] == usada[0]), "busca pelo id do monstro");
+        assert_eq!(erro_de(pedir("GET", "estudio/comportamentos/999999999").call()).0, 400);
 
         // Loja Gold (B254): ofertas do gshop.data; editar preço e nome, clonar, remover; publicar grava o cliente e o
         // realm (item "ambos") com o carimbo intacto.

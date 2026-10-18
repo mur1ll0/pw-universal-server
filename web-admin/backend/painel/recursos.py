@@ -545,3 +545,16 @@ def registrar_reinicio(app):
         if id_missao <= 0 or not isinstance(campos, dict) or not campos:
             raise HTTPException(422, "Nada a mudar.")
         return await _repassar("PUT", f"/admin/{v}/estudio/missoes/{id_missao}", {"rascunho": rascunho}, dados={"campos": campos})
+
+    # Comportamento dos monstros (B258, só leitura): o aipolicy.data do realm.
+    @app.get("/api/realms/{realm}/estudio/comportamentos")
+    async def estudio_comportamentos(realm: str, requisicao: Request, busca: str = ""):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/comportamentos", {"busca": busca[:100]})
+
+    @app.get("/api/realms/{realm}/estudio/comportamentos/{id_politica}")
+    async def estudio_comportamento(realm: str, id_politica: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        if id_politica <= 0:
+            raise HTTPException(404, "Política inválida.")
+        return await _repassar("GET", f"/admin/{v}/estudio/comportamentos/{id_politica}")

@@ -639,6 +639,18 @@ async fn estudio_editar_missao(
     Ok(Json(e.estudio.editar_missao(&e.gov, &v, r, id, p.campos).await?))
 }
 
+// ------------------------------------------------------------------ comportamento (aipolicy, S7, B258)
+
+async fn estudio_comportamentos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QBusca>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.comportamentos(&e.gov, &v, q.busca.as_deref().unwrap_or("")).await?))
+}
+
+async fn estudio_comportamento(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, u32)>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.comportamento(&e.gov, &v, id).await?))
+}
+
 // ------------------------------------------------------------------ teleportes (S4, B245)
 
 async fn estudio_teleportes(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
@@ -813,6 +825,8 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/mapas/{caminho}/altura", get(estudio_altura))
         .route("/admin/{v}/estudio/alinhamento", get(estudio_alinhamento))
         .route("/admin/{v}/estudio/missoes", get(estudio_missoes))
+        .route("/admin/{v}/estudio/comportamentos", get(estudio_comportamentos))
+        .route("/admin/{v}/estudio/comportamentos/{id}", get(estudio_comportamento))
         .route("/admin/{v}/estudio/missoes/{id}", get(estudio_missao).put(estudio_editar_missao))
         .route("/admin/{v}/estudio/loja/{arquivo}", get(estudio_loja).post(estudio_clonar_oferta))
         .route("/admin/{v}/estudio/loja/{arquivo}/categorias", post(estudio_categoria_da_loja))

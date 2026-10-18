@@ -2741,3 +2741,70 @@ impl Estudio {
         .await
     }
 }
+
+// ------------------------------------------------------------------ comportamento (aipolicy.data, S7, B258 — só leitura)
+
+use pw_data_loader::aipolicy::AiPolicyData;
+
+static POLITICAS: std::sync::OnceLock<Mutex<HashMap<(String, Sha256Bytes), Arc<AiPolicyData>>>> = std::sync::OnceLock::new();
+
+impl Estudio {
+    /// O `aipolicy.data` do realm (só do servidor: o cliente não o tem), pelo leitor do GS, em cache por versão/SHA.
+    async fn politicas_do_realm(&self, gov: &Governanca, versao: &str) -> Result<Arc<AiPolicyData>> {
+        let bytes = gov.ler_do_realm(versao, "servidor\\aipolicy.data")?.context("o realm não tem aipolicy.data")?;
+        let sha = sha256(&bytes);
+        let cache = POLITICAS.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Some(p) = cache.lock().unwrap().get(&(versao.to_string(), sha)) {
+            return Ok(p.clone());
+        }
+        let p = Arc::new(tokio::task::spawn_blocking(move || AiPolicyData::load_from_bytes(&bytes)).await?.map_err(|e| anyhow::anyhow!("aipolicy.data: {e}"))?);
+        let mut c = cache.lock().unwrap();
+        c.retain(|(v, _), _| v != versao);
+        c.insert((versao.to_string(), sha), p.clone());
+        Ok(p)
+    }
+
+    /// Monstros por política: `MONSTER_ESSENCE.common_strategy` (`monstros.rs:169`) do `elements` publicado.
+    async fn monstros_por_politica(&self, gov: &Governanca, versao: &str) -> Result<HashMap<u32, Vec<Value>>> {
+        let (e, _) = self.atual(gov, versao, None).await?;
+        let mut por: HashMap<u32, Vec<Value>> = HashMap::new();
+        if let Ok(t) = e.tabela("MONSTER_ESSENCE") {
+            for i in 0..t.registros.len() {
+                let Ok(r) = t.ler(i) else { continue };
+                if let Some(p) = r.get("common_strategy").and_then(|v| v.as_i32()).filter(|&p| p > 0) {
+                    por.entry(p as u32).or_default().push(json!({ "id": t.id(i), "nome": nome_do_registro(t, i), "indice": i }));
+                }
+            }
+        }
+        Ok(por)
+    }
+
+    /// Lista de políticas: `[id, gatilhos, monstros que usam]`, com busca por id (da política ou de um monstro que a usa).
+    pub async fn comportamentos(&self, gov: &Governanca, versao: &str, busca: &str) -> Result<Value> {
+        let p = self.politicas_do_realm(gov, versao).await?;
+        let usos = self.monstros_por_politica(gov, versao).await?;
+        let busca = busca.trim().to_lowercase();
+        let mut ids: Vec<u32> = p.policies.keys().copied().collect();
+        if !busca.is_empty() {
+            let n: Option<i64> = busca.parse().ok();
+            ids.retain(|id| {
+                Some(*id as i64) == n
+                    || usos.get(id).is_some_and(|ms| ms.iter().any(|m| m["id"].as_i64() == n || m["nome"].as_str().is_some_and(|s| s.to_lowercase().contains(&busca))))
+            });
+        }
+        ids.sort_unstable();
+        let linhas: Vec<Value> = ids.iter().take(500).map(|id| json!([id, p.policies[id].triggers.len(), usos.get(id).map_or(0, Vec::len)])).collect();
+        Ok(json!({
+            "versao_do_arquivo": p.versao, "politicas": p.policies.len(), "total": ids.len(), "linhas": linhas,
+            "sem_politica": usos.keys().filter(|id| !p.policies.contains_key(id)).count(),
+        }))
+    }
+
+    /// Uma política: os gatilhos (condição em árvore e operações, como o leitor do GS os vê) e os monstros que a usam.
+    pub async fn comportamento(&self, gov: &Governanca, versao: &str, id: u32) -> Result<Value> {
+        let p = self.politicas_do_realm(gov, versao).await?;
+        let pol = p.policies.get(&id).with_context(|| format!("política {id} não existe"))?;
+        let usos = self.monstros_por_politica(gov, versao).await?;
+        Ok(json!({ "politica": pol, "monstros": usos.get(&id).cloned().unwrap_or_default() }))
+    }
+}
