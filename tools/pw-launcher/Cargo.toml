@@ -1,24 +1,34 @@
 [package]
 name = "pw-launcher"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Launcher do pw-universal (P2, B234): instalar, atualizar, reparar e jogar"
 
-# Fora do workspace da raiz: o Tauri só compila no Windows com WebView2 e não deve entrar no
-# build do Docker nem no `cargo test --workspace`. Compilar: `cargo build --release` nesta pasta.
+# Fora do workspace da raiz: só compila para Windows e não deve entrar no build do Docker nem no
+# `cargo test --workspace`. Compilar com `compilar.ps1` nesta pasta (alvo win7, ver lá).
 [workspace]
 
 [dependencies]
 pw-atualizador = { path = "../../crates/pw-atualizador" }
-tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-tauri-plugin-dialog = "2"
+# Win32 puro (sem WebView2): roda do Windows 7 ao 11. A 0.52 importa cada função da DLL onde
+# ela existe desde o Windows 7 (ole32/shell32/user32/gdi32/comctl32), sem combase nem WinRT.
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Controls",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+embed-resource = "2"
 
 [profile.release]
 strip = true
 lto = true
+opt-level = "s"

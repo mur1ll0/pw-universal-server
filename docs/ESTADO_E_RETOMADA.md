@@ -447,7 +447,7 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
   outra), itens exigidos/entregues e prêmio em itens, clone de missão posto no `NPC_TASK_OUT_SERVICE` de um NPC (o NPC
   oferece), textos do cliente (tooltip do item, sem reiniciar), fala, gatilhos e tipos de operação do comportamento de um
   monstro (só o realm: o cliente não tem o `aipolicy`).
-- **B275 (launcher no Windows 7, 2026-10-19):** o launcher deixou o Tauri/WebView2 (exigia Windows 10: o exe nem abria
+- **B275 (launcher no Windows 7, 2026-10-19) — confirmado pelo Murillo num Windows 7 real:** o launcher deixou o Tauri/WebView2 (exigia Windows 10: o exe nem abria
   no 7) e virou janela Win32 nativa, mesmo comportamento. Compilar com `tools\pw-launcher\compilar.ps1` (64 bits) ou
   `compilar.ps1 -Bits 32`; exe em `tools\pw-launcher	arget_64-win7-windows-msvc
 elease\pw-launcher.exe` (ou
@@ -888,7 +888,7 @@ portado. Falta ver em jogo.)
   checagem leve de atualização; `pw-recursos` com API administrativa 8101 (só rede interna, segredo) — rascunho,
   trava por caminho, publicar N+1 assinado, reverter; versão N reaproveita os pacotes da 0 (o resto por objeto);
   página "Recursos do cliente" no painel. Falta: o Murillo testar; publicar `servidor`/`ambos` direto no realm;
-  canal de teste GM e autoatualização do launcher (B275: launcher Win32 para o Windows 7 — falta o Murillo abrir num 7 real); envio do cliente original pelo painel; P4 (editor de elements).
+  canal de teste GM e autoatualização do launcher (B275: launcher Win32, confirmado no Windows 7); envio do cliente original pelo painel; P4 (editor de elements).
   **B237 (P4 = Estúdio S1):** escritor do `elements` com ida e volta byte a byte (`pw_data_loader::elements_editavel`),
   espaços de id do `add_id_index` (17 tabelas do v156 sem espaço conhecido: sem registro novo); API e página Estúdio;
   publicar grava `servidor`/`ambos` no `config` do realm. Falta: o Murillo testar em jogo; "aguarda reinício";

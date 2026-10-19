@@ -14932,7 +14932,7 @@ comparação lado a lado.
       "Verificar arquivos" mostrou o progresso da thread ("verificando — 10240 / 327386 arquivos (3%)").
 
     ### e. Falta
-    - O Murillo abrir num Windows 7 real (64 e, se houver, 32 bits): janela, escolher pasta, baixar/verificar, Jogar.
+    - ~~O Murillo abrir num Windows 7 real~~ — **confirmado pelo Murillo em 2026-10-19: funcionou no Windows 7.**
     - Rede por TLS (`https://`) no 7 não testada (o `ureq` usa rustls próprio, não o SChannel).
 
 276. **Sessão 2026-10-19: Estúdio S5, quarta parte — trilhas, ações e animação.**

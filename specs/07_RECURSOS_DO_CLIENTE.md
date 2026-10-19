@@ -514,7 +514,7 @@ Windows 7). Agora: std recompilada para o alvo `*-win7-windows-msvc` (`-Zbuild-s
 componente `rust-src`), CRT estático (sem depender do Universal CRT/KB2999226), janela com
 user32/gdi32/comctl32 v6/shell32/ole32, pasta escolhida pela `SHBrowseForFolderW`, manifesto
 (`launcher.manifest`) com `supportedOS` do 7 ao 10 e `dpiAware`. Pânico vira caixa de erro (não some calado).
-Conferir depois de compilar: nenhum import de `combase`, `api-ms-win-*` nem das três funções acima.
+Confirmado pelo Murillo num Windows 7 real (2026-10-19). Conferir depois de compilar: nenhum import de `combase`, `api-ms-win-*` nem das três funções acima.
 
 ## 8. Falta
 
