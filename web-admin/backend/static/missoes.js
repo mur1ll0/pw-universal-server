@@ -131,7 +131,7 @@ async function abrirMissao(id) {
     resto.appendChild(linha);
   }
   area.appendChild(resto);
-  area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}, r.listas || [], r.vetores || []));
+  area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}, r.listas || [], r.vetores || [], r.grupos_do_premio));
   document.querySelectorAll("#missoes-lista button").forEach((b) => b.setAttribute("aria-current", b.textContent.startsWith(`${id} `) ? "true" : "false"));
 }
 
@@ -195,7 +195,43 @@ function editorDeVetor(nome, teto, registros) {
   return { caixa, valor: () => linhas };
 }
 
-function formularioDaMissao(f, editaveis, textos, listas, vetores) {
+/* Grupos de itens de prêmio (B265): cada grupo dá todos os itens ou sorteia um pelo peso. Tetos: 12 grupos, 64 itens. */
+function editorDeGrupos(rotulo, grupos, tetos) {
+  const caixa = criar("div", "missao-objeto");
+  const gs = grupos.map((g) => ({ sorteia_um: g.sorteia_um, itens: g.itens.map((i) => ({ ...i })) }));
+  const numero = (x, campo, passo) => {
+    const i = criar("input", "campo");
+    i.type = "number"; i.min = "0"; i.step = passo; i.value = x[campo] ?? 0; i.style.maxWidth = "100px";
+    i.disabled = !estudio.rascunho;
+    i.addEventListener("input", () => { x[campo] = passo === "1" ? Math.trunc(Number(i.value)) : Number(i.value); });
+    return i;
+  };
+  const botao = (texto, acao) => { const b = criar("button", "botao botao-pequeno botao-secundario", texto); b.type = "button"; b.addEventListener("click", acao); return b; };
+  const desenhar = () => {
+    caixa.replaceChildren(criar("strong", "", `${rotulo} (até ${tetos.grupos} grupos, ${tetos.itens} itens cada)`));
+    gs.forEach((g, gi) => {
+      const bloco = criar("div", "recursos-linha");
+      const marca = criar("input"); marca.type = "checkbox"; marca.checked = g.sorteia_um; marca.disabled = !estudio.rascunho;
+      marca.addEventListener("change", () => { g.sorteia_um = marca.checked; });
+      const l = criar("label", "recursos-marca"); l.append(marca, ` Grupo ${gi + 1}: sorteia um`);
+      bloco.appendChild(l);
+      if (estudio.rascunho) bloco.appendChild(botao("Remover grupo", () => { gs.splice(gi, 1); desenhar(); }));
+      caixa.appendChild(bloco);
+      g.itens.forEach((it, ii) => {
+        const linha = criar("div", "recursos-linha");
+        linha.append(" Item ", numero(it, "id", "1"), " Qtd. ", numero(it, "quantidade", "1"), " Peso ", numero(it, "probabilidade", "any"));
+        if (estudio.rascunho) linha.appendChild(botao("Remover", () => { g.itens.splice(ii, 1); desenhar(); }));
+        caixa.appendChild(linha);
+      });
+      if (estudio.rascunho && g.itens.length < tetos.itens) caixa.appendChild(botao("+ Item", () => { g.itens.push({ id: 0, comum: true, quantidade: 1, probabilidade: 1, validade: 0 }); desenhar(); }));
+    });
+    if (estudio.rascunho && gs.length < tetos.grupos) caixa.appendChild(botao("+ Grupo", () => { gs.push({ sorteia_um: false, itens: [] }); desenhar(); }));
+  };
+  desenhar();
+  return { caixa, valor: () => gs };
+}
+
+function formularioDaMissao(f, editaveis, textos, listas, vetores, tetosDosGrupos) {
   const fs = criar("fieldset");
   fs.appendChild(criar("legend", "", estudio.rascunho ? `Editar (rascunho #${estudio.rascunho})` : "Editar (escolha ou crie um rascunho no topo do Estúdio)"));
   const g = criar("div", "mapa-campos");
@@ -232,6 +268,13 @@ function formularioDaMissao(f, editaveis, textos, listas, vetores) {
     const e = editorDeVetor(nome, teto, f[nome] || []);
     fs.appendChild(e.caixa);
     entradas[nome] = { tipo: "vetor", atual: JSON.stringify(f[nome] || []), valor: e.valor };
+  }
+  if (tetosDosGrupos) {
+    for (const [nome, rotulo, grupos] of [["premio_grupos", "Prêmio em itens", f.rewards?.grupos_de_itens], ["falha_grupos", "Prêmio de falha em itens", f.premio_de_falha?.grupos_de_itens]]) {
+      const e = editorDeGrupos(rotulo, grupos || [], tetosDosGrupos);
+      fs.appendChild(e.caixa);
+      entradas[nome] = { tipo: "vetor", atual: JSON.stringify(grupos || []), valor: e.valor };
+    }
   }
   // Textos longos (B262): mudam o tamanho da missão; o servidor corrige a tabela de deslocamentos do tasks.data.
   for (const [nome, atual] of Object.entries(textos)) {

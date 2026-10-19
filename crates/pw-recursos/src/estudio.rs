@@ -2699,6 +2699,8 @@ impl Estudio {
             "listas": pw_data_loader::tasks::listas_fixas(t.version).iter().map(|l| json!([l.nome, l.capacidade])).collect::<Vec<_>>(),
             // B264: vetores variáveis (itens exigidos, entregues, monstros) — `[nome, teto do cliente]`.
             "vetores": pw_data_loader::tasks::vetores(t.version).iter().map(|v| json!([v.nome, v.teto])).collect::<Vec<_>>(),
+            // B265: tetos dos grupos de itens de prêmio.
+            "grupos_do_premio": json!({ "grupos": pw_data_loader::tasks::MAX_AWARD_CANDIDATES, "itens": pw_data_loader::tasks::MAX_ITEM_AWARD }),
         }))
     }
 
@@ -2719,12 +2721,17 @@ impl Estudio {
                 c.insert("itens_exigidos".into(), json!(m.itens_exigidos));
                 c.insert("itens_entregues".into(), json!(m.itens_entregues));
                 c.insert("monster_kills".into(), json!(m.monster_kills));
+                c.insert("premio_grupos".into(), json!(m.rewards.grupos_de_itens));
+                c.insert("falha_grupos".into(), json!(m.premio_de_falha.grupos_de_itens));
                 Some(c)
             };
             let antes = com_textos(&t).with_context(|| format!("missão {id} não existe"))?;
             // Textos longos (B262) mudam o tamanho e a tabela de deslocamentos: vão por último, depois dos fixos.
             let (variaveis, fixos): (Vec<_>, Vec<_>) = campos.iter().partition(|(k, _)| {
-                pw_data_loader::tasks_editavel::TEXTOS.contains(&k.as_str()) || pw_data_loader::tasks::vetores(t.dados.version).iter().any(|v| v.nome == k.as_str())
+                pw_data_loader::tasks_editavel::TEXTOS.contains(&k.as_str())
+                    || pw_data_loader::tasks::vetores(t.dados.version).iter().any(|v| v.nome == k.as_str())
+                    || k.as_str() == "premio_grupos"
+                    || k.as_str() == "falha_grupos"
             });
             for (k, v) in fixos {
                 if pw_data_loader::tasks::listas_fixas(t.dados.version).iter().any(|l| l.nome == k) {
@@ -2739,6 +2746,9 @@ impl Estudio {
             for (k, v) in variaveis {
                 if pw_data_loader::tasks_editavel::TEXTOS.contains(&k.as_str()) {
                     t.definir_texto(id, k, v.as_str().with_context(|| format!("{k}: texto"))?).map_err(anyhow::Error::msg)?;
+                } else if k == "premio_grupos" || k == "falha_grupos" {
+                    // B265: grupos de itens de prêmio (sucesso ou falha).
+                    t.definir_grupos_do_premio(id, k == "falha_grupos", v).map_err(anyhow::Error::msg)?;
                 } else {
                     t.definir_vetor(id, k, v).map_err(anyhow::Error::msg)?;
                 }

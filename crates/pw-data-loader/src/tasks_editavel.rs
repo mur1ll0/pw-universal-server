@@ -211,6 +211,53 @@ impl TasksEditavel {
         Ok(())
     }
 
+    /// Troca os grupos de itens de prêmio (de sucesso, ou de falha com `falha`): o trecho dos grupos é reescrito, o
+    /// contador corrigido no bloco do prêmio e a diferença somada na tabela de deslocamentos. `grupos` é o JSON de
+    /// `Vec<GrupoDeItens>`; teto de 12 grupos e 64 itens por grupo. O arquivo é relido.
+    pub fn definir_grupos_do_premio(&mut self, id: u32, falha: bool, grupos: &serde_json::Value) -> Result<(), String> {
+        use crate::tasks::{bytes_do_item, grupos_do_premio, GrupoDeItens, MAX_AWARD_CANDIDATES, MAX_ITEM_AWARD};
+        let versao = self.dados.version;
+        let grupos: Vec<GrupoDeItens> = serde_json::from_value(grupos.clone()).map_err(|e| format!("grupos: {e}"))?;
+        if grupos.len() > MAX_AWARD_CANDIDATES {
+            return Err(format!("no máximo {MAX_AWARD_CANDIDATES} grupos (TaskTempl.h:36)"));
+        }
+        let mut novo = Vec::new();
+        for g in &grupos {
+            if g.itens.len() > MAX_ITEM_AWARD {
+                return Err(format!("no máximo {MAX_ITEM_AWARD} itens por grupo (TaskInterface.h:142)"));
+            }
+            novo.push(g.sorteia_um as u8);
+            novo.extend_from_slice(&(g.itens.len() as u32).to_le_bytes());
+            for i in &g.itens {
+                if i.id == 0 || !i.probabilidade.is_finite() {
+                    return Err("item de prêmio com id e peso".into());
+                }
+                if versao == 55 && i.validade != 0 {
+                    return Err("o formato v55 não tem validade".into());
+                }
+                novo.extend(bytes_do_item(versao, i));
+            }
+        }
+        let t = self.dados.tasks.get(&id).ok_or_else(|| format!("missão {id} não existe"))?;
+        let (cont, bloco) = grupos_do_premio(versao);
+        let premio = if falha { t.premio_de_falha_em } else { t.premio_em };
+        let contador = premio + cont;
+        let antigos = u32::from_le_bytes(self.bytes[contador..contador + 4].try_into().unwrap()) as usize;
+        let registro = if versao == 55 { 13 } else { 17 };
+        let inicio = premio + bloco;
+        let mut fim = inicio;
+        for _ in 0..antigos {
+            let n = u32::from_le_bytes(self.bytes[fim + 1..fim + 5].try_into().unwrap()) as usize;
+            fim += 5 + n * registro;
+        }
+        let delta = novo.len() as i64 - (fim - inicio) as i64;
+        self.bytes.splice(inicio..fim, novo);
+        self.bytes[contador..contador + 4].copy_from_slice(&(grupos.len() as u32).to_le_bytes());
+        self.corrigir_tabela(inicio, delta)?;
+        self.dados = TasksData::load_from_bytes(&self.bytes).map_err(|e| format!("o tasks.data editado não relê: {e}"))?;
+        Ok(())
+    }
+
     /// Soma `delta` nos deslocamentos da tabela do cabeçalho das missões de topo que começam depois de `o`.
     fn corrigir_tabela(&mut self, o: usize, delta: i64) -> Result<(), String> {
         let quantas = u32::from_le_bytes(self.bytes[8..12].try_into().unwrap()) as usize;
@@ -352,6 +399,45 @@ mod testes {
             let (x, y) = (volta.gravar(), b.clone());
             assert!(x[..o] == y[..o] && x[o + BYTES_DO_NOME..] == y[o + BYTES_DO_NOME..], "{realm}: voltar devolve o resto idêntico");
             assert_eq!(TasksData::load_from_bytes(&x).unwrap().tasks[&id].name, TasksData::load_from_bytes(&y).unwrap().tasks[&id].name);
+        }
+    }
+
+    /// Nos dois realms: nenhuma missão passa dos tetos de grupos/itens de prêmio (medido); trocar os grupos do prêmio de
+    /// sucesso e do de falha de uma missão com prêmio em itens, relido, a última de topo igual, teto recusado; voltar =
+    /// arquivo idêntico.
+    #[test]
+    fn grupos_do_premio_mudam_e_voltam() {
+        use crate::tasks::{MAX_AWARD_CANDIDATES, MAX_ITEM_AWARD};
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let mut t = TasksEditavel::ler(&b).unwrap();
+            let mut acima = (0, 0);
+            for m in t.dados.tasks.values() {
+                for r in [&m.rewards, &m.premio_de_falha] {
+                    if r.grupos_de_itens.len() > MAX_AWARD_CANDIDATES { acima.0 += 1; }
+                    if r.grupos_de_itens.iter().any(|g| g.itens.len() > MAX_ITEM_AWARD) { acima.1 += 1; }
+                }
+            }
+            assert_eq!(acima, (0, 0), "{realm}: acima do teto (grupos, itens)");
+            let id = *t.dados.tasks.values().filter(|m| m.rewards.grupos_de_itens.iter().any(|g| !g.itens.is_empty()) && m.parent.is_none())
+                .map(|m| &m.id).min().expect("missão de topo com prêmio em itens");
+            let ultima = *t.dados.de_topo.last().unwrap();
+            let ultima_antes = serde_json::to_value(&t.dados.tasks[&ultima]).unwrap();
+            let sucesso = serde_json::to_value(&t.dados.tasks[&id].rewards.grupos_de_itens).unwrap();
+            let falha = serde_json::to_value(&t.dados.tasks[&id].premio_de_falha.grupos_de_itens).unwrap();
+            let item = serde_json::json!({"id": 777, "comum": true, "quantidade": 5, "probabilidade": 0.5, "validade": 0});
+            let novos = serde_json::json!([{"sorteia_um": true, "itens": [item, item]}, {"sorteia_um": false, "itens": [item]}]);
+            t.definir_grupos_do_premio(id, false, &novos).unwrap();
+            t.definir_grupos_do_premio(id, true, &serde_json::json!([{"sorteia_um": false, "itens": [item]}])).unwrap();
+            assert!(t.definir_grupos_do_premio(id, false, &serde_json::Value::Array(vec![serde_json::json!({"sorteia_um": false, "itens": []}); 13])).is_err());
+            let r = TasksData::load_from_bytes(&t.gravar()).unwrap();
+            let m = &r.tasks[&id];
+            assert_eq!((m.rewards.grupos_de_itens.len(), m.rewards.grupos_de_itens[0].itens.len(), m.premio_de_falha.grupos_de_itens[0].itens[0].id), (2, 2, 777), "{realm}");
+            assert_eq!(serde_json::to_value(&r.tasks[&ultima]).unwrap(), ultima_antes, "{realm}: a última de topo não muda");
+            t.definir_grupos_do_premio(id, false, &sucesso).unwrap();
+            t.definir_grupos_do_premio(id, true, &falha).unwrap();
+            assert!(t.gravar() == b, "{realm}: voltar devolve o arquivo idêntico");
         }
     }
 

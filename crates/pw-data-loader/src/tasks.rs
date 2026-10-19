@@ -406,6 +406,9 @@ pub struct TaskTemplate {
     /// Onde começam os vetores de `tasks::vetores` (B264): itens exigidos, itens entregues, monstros a matar.
     #[serde(skip)]
     pub vetores_em: [usize; 3],
+    /// Onde começa o `AWARD_DATA` do prêmio de falha (B265), logo depois do de sucesso e seus vetores.
+    #[serde(skip)]
+    pub premio_de_falha_em: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -761,6 +764,16 @@ pub fn bytes_do_monstro(version: u32, m: &MonstroPedido) -> Vec<u8> {
     b
 }
 
+/// Os grupos de itens de prêmio (`AWARD_ITEMS_CAND`, B265): contador `m_ulCandItems` no bloco do prêmio, e os grupos
+/// logo depois dele — cada um `bool m_bRandChoose`, `u32 m_ulAwardItems` e os itens (`LoadAwardCandBin`,
+/// `TaskTempl.cpp:732-760`). Teto: `MAX_AWARD_CANDIDATES = 12` grupos (`TaskTempl.h:36`) e `MAX_ITEM_AWARD = 64` itens
+/// por grupo (`TaskInterface.h:142`). Devolve `(contador no prêmio, tamanho do bloco do prêmio)`.
+pub fn grupos_do_premio(version: u32) -> (usize, usize) {
+    if version == 55 { (67, v55::PREMIO) } else { (v129::p::CAND_ITEMS, v129::PREMIO) }
+}
+pub const MAX_AWARD_CANDIDATES: usize = 12;
+pub const MAX_ITEM_AWARD: usize = 64;
+
 fn lista_fixa(b: &[u8], version: u32, nome: &str) -> Vec<u32> {
     let l = listas_fixas(version).iter().find(|l| l.nome == nome).expect("lista fixa conhecida");
     lista_u32(b, l.inicio, u32_em(b, l.contador), l.capacidade)
@@ -1011,6 +1024,7 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
     let coleta = itens_v55(l, u32_em(b, 0x1aa))?;
     let premio_em = l.o;
     let rewards = premio_v55(l)?;
+    let premio_de_falha_em = l.o;
     let premio_de_falha = premio_v55(l)?;
     escala_v55(l, 20)?;
     escala_v55(l, 20)?;
@@ -1156,6 +1170,7 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
     tarefa.premio_em = premio_em;
     tarefa.textos_em = textos_em;
     tarefa.vetores_em = vetores_em;
+    tarefa.premio_de_falha_em = premio_de_falha_em;
     if saida.insert(id, tarefa).is_some() { return Err(TasksError::InvalidFormat); }
     Ok(id)
 }
@@ -1256,6 +1271,7 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
 
     let premio_em = l.o;
     let rewards = premio(l)?;
+    let premio_de_falha_em = l.o;
     let premio_de_falha = premio(l)?;
     let degraus_de_razao = 4 * v129::MAX_AWARD_SCALES;
     escala(l, degraus_de_razao)?;
@@ -1376,6 +1392,7 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         premio_em,
         textos_em,
         vetores_em,
+        premio_de_falha_em,
     };
 
     let filhos = l.i32()?.max(0) as u32;
@@ -1516,6 +1533,7 @@ impl TaskTemplate {
             premio_em: 0,
             textos_em: 0,
             vetores_em: [0; 3],
+            premio_de_falha_em: 0,
         }
     }
 }
