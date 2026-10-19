@@ -307,6 +307,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 >
 > **B263 (S7, 10ª parte):** missões — pré-missões, exclusivas e classes (listas de capacidade fixa, no lugar). Falta do
 > S7: criar/remover missão, vetores variáveis (itens, monstros), diálogos; tipo de condição/operação no `aipolicy`.
+>
+> **B264 (S7, 11ª parte):** missões — itens exigidos, itens entregues e monstros a matar (vetores variáveis, com o teto
+> do cliente: 10 itens, 3 monstros). Falta do S7: criar/remover missão, prêmios em itens, diálogos; tipo de
+> condição/operação no `aipolicy`.
 
 | fase | entrega |
 | :--- | :--- |

@@ -14577,3 +14577,32 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: missão 1173 só liberada depois da 1174 (com o realm reiniciado).
     - Criar/remover missão; vetores variáveis (itens, monstros); diálogos.
+
+264. **Sessão 2026-10-18: Estúdio S7, 11ª parte — vetores das missões.**
+
+    ### a. Pedido
+    Commitar o B263 (feito: `87ac53f`, `e4f2936`) e seguir.
+
+    ### b. Decisão e evidência
+    - Itens exigidos, itens entregues e monstros a matar: vetores variáveis com contador no bloco fixo. Mesma técnica
+      dos textos (B262): reescrever o vetor, corrigir o contador e a tabela de deslocamentos.
+    - Teto do cliente: `MAX_ITEM_WANTED = 10`, `MAX_MONSTER_WANTED = 3`, este "limitado pelo tamanho do
+      `ActiveTaskEntry`" (`TaskInterface.h:139-141`). Medido: nenhuma missão dos dois realms passa disso.
+    - Os gravadores de registro (`bytes_do_item`, `bytes_do_monstro`) reproduzem byte a byte todos os registros dos dois
+      arquivos — a prova de que a ordem dos campos é a do leitor. v55 não tem validade nem DPS/DPH: valor ≠ 0 → erro.
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `VetorDaMissao`, `vetores`, `bytes_do_item`, `bytes_do_monstro`, `TaskTemplate::vetores_em`;
+      `TasksEditavel::{definir_vetor, corrigir_tabela}` (o texto passou a usar a mesma correção).
+    - `pw-recursos`: `vetores` na ficha; `campos` aceita os três vetores (junto com os textos, depois dos fixos).
+    - Painel: editor por linhas ("+ Linha", "Remover") no formulário da missão.
+
+    ### d. Provas
+    - `tasks_editavel::testes` nos dois realms: teto medido, registros reproduzidos, três vetores trocados (mais itens,
+      sem monstros), relido, última de topo igual, teto e item sem id recusados, voltar = arquivo idêntico.
+    - `pw-recursos` com o banco **22/22**: 4 monstros → 400; item entregue publicado e lido no realm.
+    - `pw-data-loader` **217/217**; `cargo check --workspace --tests` ok.
+
+    ### e. Falta
+    - Ver em jogo: aceitar a 1173 e receber o item entregue novo (realm reiniciado, cliente atualizado).
+    - Criar/remover missão; itens de prêmio (`AWARD_DATA` com grupos); diálogos.

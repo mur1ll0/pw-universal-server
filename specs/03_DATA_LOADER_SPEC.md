@@ -157,9 +157,14 @@ exclusivas e classes não são vetores variáveis — são arrays de capacidade 
 (`tasks::listas_fixas`, uma tabela para o leitor e o editor: v129 `m_ulPremise_Tasks[20]`, `m_Occupations[12]`,
 `m_ulMutexTasks[5]`, `TaskTempl.h:30-31`, `:2235-2282`; v55 5/8/5 medidos). `definir_lista` grava contador + valores
 e zera as vagas livres — medido: as vagas livres são zero em **todas** as missões dos dois realms. Pré-missão e
-exclusiva têm que existir; repetida, a própria missão ou acima da capacidade → erro. Criar/remover missão e os
-vetores variáveis de verdade (itens, monstros, diálogos) continuam sem gravador (ids citados no `elements`, no
-`task_npc` e entre missões).
+exclusiva têm que existir; repetida, a própria missão ou acima da capacidade → erro. **Vetores (B264):** itens
+exigidos, itens entregues e monstros a matar são vetores variáveis com o contador no bloco fixo (`tasks::vetores`;
+`TaskTemplate::vetores_em` guarda onde cada um começa). `definir_vetor` reescreve o vetor inteiro com
+`bytes_do_item`/`bytes_do_monstro` (v129: 17/30 bytes; v55: 13/22, sem validade nem DPS/DPH — valor ≠ 0 nesses campos
+→ erro), corrige o contador e a tabela de deslocamentos (`corrigir_tabela`, a mesma dos textos). Teto do cliente:
+`MAX_ITEM_WANTED = 10`, `MAX_MONSTER_WANTED = 3` ("limitado pelo `ActiveTaskEntry`", `TaskInterface.h:139-141`) —
+medido: nenhuma missão dos dois realms passa disso, e os dois gravadores reproduzem byte a byte **todos** os registros
+dos dois arquivos. Criar/remover missão, os demais vetores e os diálogos continuam sem gravador.
 
 ### 3.2b `dyn_tasks.data` — missões dinâmicas (`dyn_tasks.rs`)
 
