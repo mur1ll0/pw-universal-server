@@ -300,6 +300,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B261 (S7, 8ª parte):** comportamento — trocar a fala, duplicar e remover gatilho (edição estrutural por faixa de
 > bytes, sem reserializar). Falta do S7: gravador completo do `tasks.data` (criar/remover missão, textos de tamanho
 > variável) e mudar condições/operações de tipo no `aipolicy`.
+>
+> **B262 (S7, 9ª parte):** missões — editar descrição, texto de aceitar, de recusar e tributo (tamanho variável; a
+> tabela de deslocamentos do `tasks.data` é corrigida). Falta do S7: criar/remover missão e as listas de tamanho
+> variável (itens, monstros, pré-missões), diálogos (`talk_proc`); mudar tipo de condição/operação no `aipolicy`.
 
 | fase | entrega |
 | :--- | :--- |

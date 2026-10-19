@@ -146,8 +146,14 @@ de nada (a tabela de deslocamentos continua valendo): nome (`wchar[30]` em +4, X
 frequência, pode desistir/repetir, entrega automática, NPC que entrega/premia, níveis mín./máx., espera e, no
 `AWARD_DATA`, dinheiro, exp, missão seguinte, SP e reputação — v129 pelas constantes `v129::f`/`v129::p`, v55 pelos
 deslocamentos do 1.2.6 acima. Testado nos dois realms (a 1173): o leitor relê os valores novos, outra missão não muda,
-voltar devolve o arquivo idêntico fora do campo do nome. Listas e textos de tamanho variável exigem um gravador
-completo (ainda não existe).
+voltar devolve o arquivo idêntico fora do campo do nome. **Textos longos (B262):** o leitor guarda também
+`textos_em` (v55 e v129): descrição, aceitar, recusar (`LoadDescriptionBin`) e tributo (`LoadTributeBin`), cada um
+`u32 len` (= `wcslen`, **sem** NUL) + `len` unidades UTF-16 em XOR com `(namechar)m_ID` (`TaskTempl.cpp:4816-4883`,
+gravação `SaveDescriptionBin`/`SaveTributeBin` `:4940-5010`, `convert_txt` `:629`). `definir_texto` reescreve o texto
+e soma a diferença em toda entrada da tabela de deslocamentos que começa depois dele; o arquivo é relido. Testado nos
+dois realms: descrição maior e tributo vazio numa missão de topo do meio, texto de aceitar numa submissão; o leitor
+relê, a última missão de topo não muda; voltar devolve o arquivo idêntico. Criar/remover missão e as listas de
+tamanho variável continuam sem gravador (ids citados no `elements`, no `task_npc` e entre missões).
 
 ### 3.2b `dyn_tasks.data` — missões dinâmicas (`dyn_tasks.rs`)
 

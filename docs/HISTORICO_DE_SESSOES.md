@@ -14517,3 +14517,36 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: monstro dizendo a fala nova depois de publicar e reiniciar o realm.
     - Trocar tipo de condição/operação do `aipolicy`; gravador completo do `tasks.data`.
+
+262. **Sessão 2026-10-18: Estúdio S7, nona parte — textos longos das missões.**
+
+    ### a. Pedido
+    Commitar o B261 (feito: `ad60670`, `447a5d8`) e seguir — o `tasks.data` com tamanho variável.
+
+    ### b. Decisão e evidência
+    - Primeiro passo do gravador variável: os quatro textos longos. `LoadDescriptionBin`/`LoadTributeBin`
+      (`TaskTempl.cpp:4816-4883`) e `SaveDescriptionBin`/`SaveTributeBin` (`:4940-5010`): `size_t len` = `wcslen`
+      (sem NUL) + `len` unidades em XOR com `(namechar)m_ID` (`convert_txt`, `:629`). Ordem: descrição, aceitar,
+      recusar, tributo.
+    - O arquivo continua cru: o texto é reescrito e a diferença entra em toda entrada da tabela de deslocamentos do
+      cabeçalho que começa depois dele (a tabela é o gabarito do leitor).
+    - Criar/remover missão fica de fora: ids citados no `elements` (serviços), no `task_npc` e entre missões.
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `TaskTemplate::textos_em` (v55 e v129); `tasks_editavel::{TEXTOS, textos_da_missao,
+      TasksEditavel::textos, definir_texto}`.
+    - `pw-recursos`: a ficha traz `textos`; o `PUT` aceita as quatro chaves em `campos` (depois dos fixos);
+      `missoes_e_bytes` evita reler o arquivo.
+    - Painel: caixas de texto no formulário da missão.
+
+    ### d. Provas
+    - `tasks_editavel::testes` nos dois realms: descrição maior, tributo vazio (topo do meio) e texto de aceitar
+      (submissão); relido; última missão de topo igual; voltar = arquivo idêntico.
+    - `pw-recursos` com o banco **22/22**: descrição longa publicada no realm e lida pelo leitor do GS (7.994 missões).
+    - `pw-data-loader` **215/215**; `cargo check --workspace --tests` ok; no contêiner, a 1173 traz os quatro textos nos
+      dois realms e a descrição bate com a do leitor.
+
+    ### e. Falta
+    - Ver em jogo: descrição nova na janela da missão (cliente baixa o tasks.data; o realm precisa reiniciar para o
+      GS reler).
+    - Criar/remover missão; listas de tamanho variável; diálogos.

@@ -410,7 +410,9 @@ prêmio, falha) e "Demais campos". **Editar no lugar (B256):** o `tasks.data` do
 cliente publicado, ou do rascunho quando há um. `GET estudio/missoes/{id}` traz `editaveis` (`[nome, tipo]` da
 `tasks_editavel::campos`) e `PUT estudio/missoes/{id}?rascunho {campos}` grava (relê pelo leitor do GS antes; campo de
 tamanho variável → 400). Painel: formulário "Editar" na ficha da missão, com o aviso de que mudar o NPC que entrega
-não muda o `NPC_TASK_OUT_SERVICE` do `elements`.
+não muda o `NPC_TASK_OUT_SERVICE` do `elements`. **Textos (B262):** a ficha traz `textos` (`descricao`, `ok`, `nao`,
+`tributo`, decifrados) e o mesmo `PUT` aceita essas chaves em `campos` (gravadas depois dos fixos; mudam o tamanho e
+a tabela de deslocamentos — spec 03). Painel: uma caixa de texto por texto longo no formulário da missão.
 
 ## 7. Testes
 
@@ -439,8 +441,9 @@ falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668
 `elements`) — preço e nome editados, clone e remoção, publicada: cliente e realm com o mesmo arquivo, carimbo igual, o
 `GShopData` do GS lê o preço novo. `gshop_editavel::testes` (os 4 arquivos dos realms idênticos). Missões (B255): o
 `tasks.data` real do 1.2.6 — 7.994 missões, 2.819 de topo, a 1173 com o NPC 3517 nomeado; id inexistente → 400. Editar
-(B256): `descricao` → 400; nível mín. 5, exp 999 e nome novo na 1173 → visíveis no rascunho, o publicado não muda;
-publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos. Comportamento (B258): 293
+(B256): campo inexistente → 400; a ficha traz `textos` (B262); nível mín. 5, exp 999 e nome novo na 1173 → visíveis no rascunho, o publicado não muda;
+publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos, com a descrição longa nova
+(B262). Comportamento (B258): 293
 políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id
 inexistente → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
 "só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
