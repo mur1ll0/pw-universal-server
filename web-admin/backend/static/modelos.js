@@ -78,11 +78,28 @@ async function abrirModelo(caminho, habitat = null) {
   if (f.tipo === "ecm") {
     // B277: o modelo do jogo — diagnóstico das ações que o cliente pede (monstro; B281: mascote, com o habitat).
     ficha.appendChild(criar("div", "texto-suave", `${caminho} · versão ${f.versao} · ${f.combinadas.length} ações combinadas · tabela do cliente com ${f.tabela_de_acoes} nomes`));
-    const abre = criar("a", "", `Abrir o modelo (${f.smd.split("\\").pop()}) — ver e tocar as ações`);
+    const abre = criar("a", "", `Abrir só o .smd (${f.smd.split("\\").pop()})`);
     abre.href = "#";
     abre.addEventListener("click", (ev) => { ev.preventDefault(); abrirModelo(f.smd); });
     ficha.appendChild(abre);
     if (!f.smd_lido) ficha.appendChild(criar("div", "texto-suave", "O .smd citado não foi lido: as ações-base não puderam ser conferidas."));
+    // B282: o modelo como o jogo o monta — o .smd do .ecm, sem as peles dele, com a pele <.ecm>.ski (EC_NPC.cpp:186-222).
+    const tela = criar("canvas", "modelo-tela");
+    tela.width = 640; tela.height = 480;
+    tela.style.width = "100%"; tela.style.maxWidth = "640px"; tela.style.background = "#20242a"; tela.style.borderRadius = "6px";
+    ficha.appendChild(tela);
+    const baixar = criar("a", "", "Baixar GLB (Blender)");
+    ficha.appendChild(baixar);
+    if ((f.bases_do_smd || []).length) {
+      const linha = criar("div", "recursos-linha");
+      const acoes = criar("select", "campo");
+      acoes.appendChild(new Option("(parado, pose de ligação)", ""));
+      for (const a of f.bases_do_smd) acoes.appendChild(new Option(a, a));
+      acoes.addEventListener("change", () => carregarGlb(tela, caminho, acoes.value || null, baixar));
+      linha.append(criar("span", "texto-suave", "Ação do .smd: "), acoes);
+      ficha.appendChild(linha);
+    }
+    carregarGlb(tela, caminho, null, baixar);
     const perfil = criar("div", "recursos-linha");
     const sel = criar("select", "campo");
     sel.appendChild(new Option("diagnóstico como monstro", ""));

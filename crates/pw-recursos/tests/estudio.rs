@@ -804,6 +804,12 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let fe2 = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &ecm_cam).query("rascunho", &r16.to_string()).call().unwrap());
         let estado2 = fe2["diagnostico_de_monstro"].as_array().unwrap().iter().find(|x| x["pedido"] == "普攻1落").map(|x| x["estado"].as_str().unwrap().to_string());
         assert!(!estado2.unwrap().contains("sem ação combinada"), "{fe2}");
+        // B282: o GLB do .ecm monta o modelo como o jogo — o .smd do .ecm com a pele <.ecm>.ski (caixa.ski) e o esqueleto.
+        let mut ge = Vec::new();
+        std::io::Read::read_to_end(&mut pedir("GET", "estudio/modelos/glb").query("caminho", &ecm_cam).call().unwrap().into_reader(), &mut ge).unwrap();
+        let nje = u32::from_le_bytes(ge[12..16].try_into().unwrap()) as usize;
+        let doce: Value = serde_json::from_slice(&ge[20..20 + nje]).unwrap();
+        assert_eq!((doce["meshes"].as_array().map(|x| x.len()), doce["skins"].as_array().map(|x| x.len())), (Some(1), Some(1)), "{doce}");
         // B281: com habitat 0 (chão), o diagnóstico de mascote pede os nomes com `_地面` — o .ecm sintético não os tem.
         let fm2 = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &ecm_cam).query("habitat", "0").call().unwrap());
         let dm = fm2["diagnostico_de_mascote"].as_array().unwrap();

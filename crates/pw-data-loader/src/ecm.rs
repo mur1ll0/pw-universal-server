@@ -19,12 +19,14 @@ pub struct Ecm {
     pub versao: u32,
     pub smd: String,
     pub acoes: Vec<AcaoCombinada>,
+    /// `AddiSkinPath:` (B282) — relativas a `Models\` (`EC_Model.cpp:678-689`, só no editor).
+    pub peles_adicionais: Vec<String>,
 }
 
 pub fn ler(b: &[u8]) -> Option<Ecm> {
     let corpo = b.strip_prefix(b"MOXT").unwrap_or(b);
     let texto = crate::ski::gbk(corpo);
-    let mut e = Ecm { versao: 0, smd: String::new(), acoes: Vec::new() };
+    let mut e = Ecm { versao: 0, smd: String::new(), acoes: Vec::new(), peles_adicionais: Vec::new() };
     let mut viu_versao = false;
     for linha in texto.lines() {
         let linha = linha.trim_end_matches('\r');
@@ -39,6 +41,8 @@ pub fn ler(b: &[u8]) -> Option<Ecm> {
             }
         } else if let Some(v) = linha.strip_prefix("CombineActName: ") {
             e.acoes.push(AcaoCombinada { nome: v.to_string(), bases: Vec::new() });
+        } else if let Some(v) = linha.strip_prefix("AddiSkinPath: ") {
+            e.peles_adicionais.push(v.trim().to_string());
         } else if let Some(v) = linha.strip_prefix("BaseActName: ") {
             if let Some(a) = e.acoes.last_mut() {
                 a.bases.push(v.to_string());

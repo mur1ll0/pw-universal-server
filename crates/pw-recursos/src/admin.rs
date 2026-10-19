@@ -349,9 +349,38 @@ struct QModelo {
 
 async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QModelo>) -> R<Response> {
     validar(&v)?;
-    if q.caminho.to_lowercase().ends_with(".smd") {
+    let ext = q.caminho.to_lowercase();
+    if ext.ends_with(".smd") || ext.ends_with(".ecm") {
         // B274: o modelo inteiro — as peles lidas, com as texturas de cada uma, e o esqueleto (sem ele, fica parado).
-        let (nome, cabeca, peles, esqueleto) = ler_smd(&e, &v, &q.caminho)?;
+        // B282: um `.ecm` monta o modelo como o jogo (`CECNPC::LoadNPCModel`, `EC_NPC.cpp:186-222`): o `.smd` dele SEM
+        // as peles do `.smd` (`LSF_NOSKIN`) e a pele `<.ecm com extensão .ski>`; sem ela, as `AddiSkinPath`
+        // (`"Models\" + caminho`, `EC_Model.cpp:678-689`) e, por fim, as do `.smd`.
+        let (nome, cabeca, peles, esqueleto) = if ext.ends_with(".ecm") {
+            let (nome_ecm, dados) = e.gov.conteudo(&v, &q.caminho)?;
+            let m = pw_data_loader::ecm::ler(&dados).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("{nome_ecm}: .ecm ilegível")))?;
+            let (_, cabeca, peles_do_smd, esqueleto) = ler_smd(&e, &v, &m.smd)?;
+            let ler_pele = |c: &str| e.gov.conteudo(&v, c).map_err(|x| x.to_string()).and_then(|(n, b)| pw_data_loader::ski::Ski::ler(&b).map(|s| (n, s)).map_err(|x| x.to_string()));
+            let irma = format!("{}.ski", nome_ecm.rsplit_once('.').map_or(nome_ecm.as_str(), |x| x.0));
+            let mut peles: Vec<(String, Result<pw_data_loader::ski::Ski, String>)> = Vec::new();
+            match ler_pele(&irma) {
+                Ok((n, s)) => peles.push((n, Ok(s))),
+                Err(_) => {
+                    for a in &m.peles_adicionais {
+                        let c = format!("Models\\{a}");
+                        match ler_pele(&c) {
+                            Ok((n, s)) => peles.push((n, Ok(s))),
+                            Err(x) => peles.push((c, Err(x))),
+                        }
+                    }
+                    if !peles.iter().any(|p| p.1.is_ok()) {
+                        peles.extend(peles_do_smd);
+                    }
+                }
+            }
+            (nome_ecm, cabeca, peles, esqueleto)
+        } else {
+            ler_smd(&e, &v, &q.caminho)?
+        };
         let lidas: Vec<(String, pw_data_loader::ski::Ski)> = peles.into_iter().filter_map(|(cp, s)| s.ok().map(|s| (cp, s))).collect();
         if lidas.is_empty() && esqueleto.is_err() {
             // B278: sem pele lida (o .smd não cita nenhuma — p.ex. corpo de jogador, cuja pele vem do equipamento — ou as
