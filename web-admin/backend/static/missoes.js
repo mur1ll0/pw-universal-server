@@ -168,7 +168,7 @@ async function abrirMissao(id) {
     });
     area.appendChild(rm);
   }
-  area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}, r.listas || [], r.vetores || [], r.grupos_do_premio, r.dialogos || []));
+  area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}, r.listas || [], r.vetores || [], r.grupos_do_premio, r.dialogos || [], r.funcoes_de_opcao || []));
   document.querySelectorAll("#missoes-lista button").forEach((b) => b.setAttribute("aria-current", b.textContent.startsWith(`${id} `) ? "true" : "false"));
 }
 
@@ -271,9 +271,20 @@ function editorDeGrupos(rotulo, grupos, tetos) {
 /* Diálogos (B266): título e opções são text[64] (até 63 caracteres); o texto da janela tem tamanho livre. */
 const ROTULOS_DOS_DIALOGOS = { entrega: "Ao oferecer", nao_qualificado: "Sem requisitos", entrega_de_item: "Ao entregar item", execucao: "Durante", premio: "Ao premiar" };
 
-function editorDeDialogos(dialogos) {
+function editorDeDialogos(dialogos, funcoes, idDaMissao) {
   const caixa = criar("div");
   const mudancas = [];
+  // B270: estrutura — cada ação vai sozinha para o servidor e a ficha é redesenhada.
+  const acao = async (corpo, msg) => {
+    try {
+      await api(rotaDeMissoes(`/${idDaMissao}`), { method: "PUT", body: JSON.stringify({ campos: { dialogos: [corpo] } }) });
+      alerta("ok", "Estúdio", msg, { toast: true });
+      await abrirMissao(idDaMissao);
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  };
+  const botao = (texto, fn, perigo) => { const b = criar("button", `botao botao-pequeno ${perigo ? "botao-perigo" : "botao-secundario"}`, texto); b.type = "button"; b.disabled = !estudio.rascunho; b.addEventListener("click", fn); return b; };
+  const nomeDaFuncao = (id) => { const f = funcoes.find(([n]) => (id & 0x7fffffff) === n); return f ? f[1] : `função ${id & 0x7fffffff}`; };
   const campo = (valor, longo, onde) => {
     const i = criar(longo ? "textarea" : "input", "campo");
     i.value = valor;
@@ -289,15 +300,33 @@ function editorDeDialogos(dialogos) {
     const t = criar("div", "recursos-linha");
     t.append("Título ", campo(d.texto, false, { dialogo: di }));
     det.appendChild(t);
+    if (!d.janelas.length) {
+      det.appendChild(botao("Criar janela inicial", () => { const tx = prompt("Texto da janela inicial:"); if (tx) acao({ dialogo: di, acao: "criar_raiz", texto: tx }, "Janela criada no rascunho."); }));
+    }
     d.janelas.forEach((j, ji) => {
       const jb = criar("div", "missao-objeto");
       jb.appendChild(criar("div", "texto-suave", `Janela ${j.id}${j.pai !== 0xffffffff ? ` (de ${j.pai})` : ""}`));
       jb.appendChild(campo(j.texto, true, { dialogo: di, janela: ji }));
       j.opcoes.forEach((o, oi) => {
         const l = criar("div", "recursos-linha");
-        l.append(`Opção → ${o.id} `, campo(o.texto, false, { dialogo: di, janela: ji, opcao: oi }));
+        const alvo = o.id & 0x80000000 ? nomeDaFuncao(o.id >>> 0) : `janela ${o.id}`;
+        l.append(`Opção → ${alvo} `, campo(o.texto, false, { dialogo: di, janela: ji, opcao: oi }),
+          botao("Remover", () => { if (confirm(o.id & 0x80000000 ? "Remover a opção?" : "Remover a opção e a janela que ela abre (com as filhas)?")) acao({ dialogo: di, janela: ji, opcao: oi, acao: "remover_opcao" }, "Opção removida no rascunho."); }, true));
         jb.appendChild(l);
       });
+      const nova = criar("div", "recursos-linha");
+      const tx = criar("input", "campo"); tx.maxLength = 63; tx.placeholder = "texto da opção nova"; tx.disabled = !estudio.rascunho;
+      const sel = criar("select", "campo"); sel.disabled = !estudio.rascunho;
+      sel.appendChild(new Option("abre janela nova", "janela"));
+      for (const [n, nome] of funcoes) sel.appendChild(new Option(nome, String(n)));
+      nova.append(tx, sel, botao("+ Opção", () => {
+        if (!tx.value) { alerta("aviso", "Estúdio", "Escreva o texto da opção.", { toast: true }); return; }
+        let destino;
+        if (sel.value === "janela") { const tj = prompt("Texto da janela que a opção abre:"); if (!tj) return; destino = { janela: tj }; }
+        else destino = { funcao: Number(sel.value) };
+        acao({ dialogo: di, janela: ji, acao: "nova_opcao", texto: tx.value, destino }, "Opção acrescentada no rascunho.");
+      }));
+      jb.appendChild(nova);
       det.appendChild(jb);
     });
     caixa.appendChild(det);
@@ -305,7 +334,7 @@ function editorDeDialogos(dialogos) {
   return { caixa, valor: () => mudancas.filter((m) => m.i.value !== m.valor).map((m) => ({ ...m.onde, texto: m.i.value })) };
 }
 
-function formularioDaMissao(f, editaveis, textos, listas, vetores, tetosDosGrupos, dialogos) {
+function formularioDaMissao(f, editaveis, textos, listas, vetores, tetosDosGrupos, dialogos, funcoes) {
   const fs = criar("fieldset");
   fs.appendChild(criar("legend", "", estudio.rascunho ? `Editar (rascunho #${estudio.rascunho})` : "Editar (escolha ou crie um rascunho no topo do Estúdio)"));
   const g = criar("div", "mapa-campos");
@@ -351,7 +380,7 @@ function formularioDaMissao(f, editaveis, textos, listas, vetores, tetosDosGrupo
     }
   }
   if (dialogos.length) {
-    const e = editorDeDialogos(dialogos);
+    const e = editorDeDialogos(dialogos, funcoes, f.id);
     fs.appendChild(e.caixa);
     entradas.dialogos = { tipo: "dialogos", valor: e.valor };
   }

@@ -615,11 +615,13 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"monster_kills": quatro}}))).0, 400, "teto de 3");
         assert_eq!(mi["grupos_do_premio"]["grupos"], 12, "B265");
         assert_eq!((mi["dialogos"].as_array().unwrap().len(), mi["dialogos"][0]["nome"].as_str()), (5, Some("entrega")), "B266");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"dialogos": [{"dialogo": 0, "janela": 0, "acao": "nova_opcao", "texto": "x", "destino": {"funcao": 99}}]}}))).0, 400, "B270: função desconhecida");
         assert_eq!(erro_de(pedir("POST", &format!("estudio/missoes/1173/clonar?rascunho={r12}")).send_json(json!({"novo": 70000}))).0, 400, "B267: id > 65535");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"dialogos": [{"dialogo": 0, "texto": "x".repeat(64)}]}}))).0, 400, "text[64]");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"pre_tasks": [999999999]}}))).0, 400);
         pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"min_level": 5, "exp": 999, "name": "Primeiro Teste do Estúdio",
-            "pre_tasks": [1174], "dialogos": [{"dialogo": 0, "texto": "Título do Estúdio"}], "itens_entregues": [{"id": 3044, "comum": true, "quantidade": 3, "probabilidade": 1.0, "validade": 0}],
+            "pre_tasks": [1174], "dialogos": [{"dialogo": 0, "texto": "Título do Estúdio"},
+                {"dialogo": 0, "janela": 0, "acao": "nova_opcao", "texto": "Conte mais", "destino": {"janela": "Janela do Estúdio"}}], "itens_entregues": [{"id": 3044, "comum": true, "quantidade": 3, "probabilidade": 1.0, "validade": 0}],
             "premio_grupos": [{"sorteia_um": false, "itens": [{"id": 3045, "comum": true, "quantidade": 2, "probabilidade": 1.0, "validade": 0}]}], "descricao": "Descrição longa do Estúdio, que muda o tamanho da missão e a tabela de deslocamentos", "tributo": ""}})).unwrap();
         let origem_do_clone = {
             let d = pw_data_loader::tasks::TasksData::load_from_bytes(&fs::read(realm2.join("tasks.data")).unwrap()).unwrap();
@@ -657,6 +659,7 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(lido.tasks[&1173].rewards.grupos_de_itens[0].itens[0].id, 3045, "B265: prêmio em item publicado");
         let ed = pw_data_loader::tasks_editavel::TasksEditavel::ler(&tr).unwrap();
         assert_eq!(ed.dialogos(1173).unwrap()[0].texto, "Título do Estúdio", "B266: título do diálogo publicado");
+        assert_eq!(ed.dialogos(1173).unwrap()[0].janelas.last().unwrap().texto, "Janela do Estúdio", "B270: janela nova publicada");
 
         // Comportamento (B258, só leitura): as políticas do realm e os monstros que as usam.
         let cp = json_de(pedir("GET", "estudio/comportamentos").call().unwrap());

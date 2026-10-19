@@ -488,6 +488,139 @@ impl TasksEditavel {
         Ok(())
     }
 
+    fn bytes_da_opcao(id_da_missao: u32, id: u32, texto: &str, param: u32) -> Result<Vec<u8>, String> {
+        let mut u: Vec<u16> = texto.encode_utf16().collect();
+        if u.len() >= TEXTO_FIXO || texto.contains('\0') {
+            return Err(format!("texto da opção: até {} caracteres, sem NUL", TEXTO_FIXO - 1));
+        }
+        u.resize(TEXTO_FIXO, 0);
+        let mut b = id.to_le_bytes().to_vec();
+        b.extend(u.iter().flat_map(|x| (x ^ id_da_missao as u16).to_le_bytes()));
+        b.extend_from_slice(&param.to_le_bytes());
+        Ok(b)
+    }
+
+    fn bytes_da_janela(id_da_missao: u32, id: u32, pai: u32, texto: &str) -> Result<Vec<u8>, String> {
+        if texto.contains('\0') || texto.encode_utf16().count() > 8000 {
+            return Err("texto da janela: sem NUL, até 8000 unidades".into());
+        }
+        let mut u: Vec<u16> = texto.encode_utf16().collect();
+        u.push(0); // `talk_text_len` conta o NUL (medido, B266)
+        let mut b = id.to_le_bytes().to_vec();
+        b.extend_from_slice(&pai.to_le_bytes());
+        b.extend_from_slice(&(u.len() as u32).to_le_bytes());
+        b.extend(u.iter().flat_map(|x| (x ^ id_da_missao as u16).to_le_bytes()));
+        b.extend_from_slice(&0u32.to_le_bytes()); // num_option
+        Ok(b)
+    }
+
+    fn inserir(&mut self, o: usize, b: Vec<u8>) -> Result<(), String> {
+        let n = b.len() as i64;
+        self.bytes.splice(o..o, b);
+        self.corrigir_tabela(o, n)
+    }
+
+    fn somar_u32(&mut self, o: usize, delta: i64) {
+        let v = (u32_de(&self.bytes, o) as i64 + delta) as u32;
+        self.bytes[o..o + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    /// Acrescenta uma opção no fim da janela (B270). `NovaJanela(texto)` cria a janela filha (id = maior do diálogo + 1,
+    /// pai = esta janela; no fim do diálogo) e a opção aponta para ela, com `param` 0; `Funcao(f)` usa o id
+    /// `0x80000000 | f`, com `param` = o id da missão por padrão (medido: é o que `NPC_TALK`, `GIVE/COMPLETE_TASK`,
+    /// `GIVE_TASK_MATTER` e `GIVEUP_TASK` levam na maioria; `TALK_RETURN`/`TALK_EXIT` levam 0). O arquivo é relido.
+    pub fn acrescentar_opcao(&mut self, id: u32, dialogo: usize, janela: usize, texto: &str, destino: DestinoDaOpcao, param: Option<u32>) -> Result<(), String> {
+        let ds = self.dialogos(id).ok_or_else(|| format!("missão {id} não existe"))?;
+        let d = ds.get(dialogo).ok_or_else(|| format!("diálogo {dialogo} não existe"))?;
+        let j = d.janelas.get(janela).ok_or_else(|| format!("janela {janela} não existe"))?;
+        let (id_da_opcao, param, nova) = match destino {
+            DestinoDaOpcao::NovaJanela(t) => {
+                let nid = d.janelas.iter().map(|x| x.id).max().unwrap_or(0) + 1;
+                (nid, param.unwrap_or(0), Some((nid, t)))
+            }
+            DestinoDaOpcao::Funcao(f) => {
+                if !FUNCOES_DE_OPCAO.iter().any(|x| x.0 == f) {
+                    return Err(format!("função {f} desconhecida (use uma de FUNCOES_DE_OPCAO)"));
+                }
+                (0x8000_0000 | f, param.unwrap_or(if f == 17 || f == 18 { 0 } else { id }), None)
+            }
+        };
+        let opcao = Self::bytes_da_opcao(id, id_da_opcao, texto, param)?;
+        let janela_nova = match &nova {
+            Some((nid, t)) => Some(Self::bytes_da_janela(id, *nid, j.id, t)?),
+            None => None,
+        };
+        // A janela nova vai no fim do diálogo (depois da última janela); a opção, no fim da janela. Primeiro a que está
+        // mais adiante no arquivo, para a outra posição continuar valendo.
+        let fim_do_dialogo = fim_da_janela(&self.bytes, d.janelas.last().unwrap());
+        let fim_desta = fim_da_janela(&self.bytes, j);
+        let num_opcoes = j.texto_em + 4 + 2 * u32_de(&self.bytes, j.texto_em) as usize;
+        let num_janelas = d.texto_em + 2 * TEXTO_FIXO;
+        if let Some(b) = janela_nova {
+            self.inserir(fim_do_dialogo, b)?;
+            self.somar_u32(num_janelas, 1);
+        }
+        self.inserir(fim_desta, opcao)?;
+        self.somar_u32(num_opcoes, 1);
+        self.dados = TasksData::load_from_bytes(&self.bytes).map_err(|e| format!("o tasks.data editado não relê: {e}"))?;
+        Ok(())
+    }
+
+    /// Cria a janela raiz (pai −1) de um diálogo que não tem nenhuma (B270); id 1, o mais comum nas raízes (medido).
+    pub fn criar_janela_raiz(&mut self, id: u32, dialogo: usize, texto: &str) -> Result<(), String> {
+        let ds = self.dialogos(id).ok_or_else(|| format!("missão {id} não existe"))?;
+        let d = ds.get(dialogo).ok_or_else(|| format!("diálogo {dialogo} não existe"))?;
+        if !d.janelas.is_empty() {
+            return Err("o diálogo já tem janelas: acrescente uma opção que abra janela nova".into());
+        }
+        let b = Self::bytes_da_janela(id, 1, u32::MAX, texto)?;
+        let num_janelas = d.texto_em + 2 * TEXTO_FIXO;
+        self.inserir(num_janelas + 4, b)?;
+        self.somar_u32(num_janelas, 1);
+        self.dados = TasksData::load_from_bytes(&self.bytes).map_err(|e| format!("o tasks.data editado não relê: {e}"))?;
+        Ok(())
+    }
+
+    /// Remove uma opção (B270). Se ela abre uma janela, a janela e as descendentes saem junto (medido: cada janela filha
+    /// é aberta por exatamente uma opção). A janela raiz sai com `remover_opcao` só por meio das filhas; para esvaziar
+    /// o diálogo, remova as opções. O arquivo é relido.
+    pub fn remover_opcao(&mut self, id: u32, dialogo: usize, janela: usize, opcao: usize) -> Result<(), String> {
+        let ds = self.dialogos(id).ok_or_else(|| format!("missão {id} não existe"))?;
+        let d = ds.get(dialogo).ok_or_else(|| format!("diálogo {dialogo} não existe"))?;
+        let j = d.janelas.get(janela).ok_or_else(|| format!("janela {janela} não existe"))?;
+        let op = j.opcoes.get(opcao).ok_or_else(|| format!("opção {opcao} não existe"))?;
+        // Faixas a cortar: a opção e, se ela abre janela, a janela e as descendentes.
+        let mut cortes = vec![(op.texto_em - 4, op.texto_em - 4 + OPCAO)];
+        let mut sai: Vec<u32> = Vec::new();
+        if op.id & 0x8000_0000 == 0 {
+            sai.push(op.id);
+            let mut k = 0;
+            while k < sai.len() {
+                let pai = sai[k];
+                sai.extend(d.janelas.iter().filter(|x| x.pai == pai).map(|x| x.id));
+                k += 1;
+            }
+            for x in d.janelas.iter().filter(|x| sai.contains(&x.id)) {
+                cortes.push((x.texto_em - 8, fim_da_janela(&self.bytes, x)));
+            }
+        }
+        cortes.sort_unstable();
+        let num_opcoes = j.texto_em + 4 + 2 * u32_de(&self.bytes, j.texto_em) as usize;
+        let num_janelas = d.texto_em + 2 * TEXTO_FIXO;
+        for &(a, b) in cortes.iter().rev() {
+            self.bytes.drain(a..b);
+            self.corrigir_tabela(a, -((b - a) as i64))?;
+        }
+        // Os contadores ficam antes de todos os cortes (a opção vem depois de `num_opcoes`; as janelas cortadas,
+        // depois de `num_janelas`).
+        self.somar_u32(num_opcoes, -1);
+        if !sai.is_empty() {
+            self.somar_u32(num_janelas, -(sai.len() as i64));
+        }
+        self.dados = TasksData::load_from_bytes(&self.bytes).map_err(|e| format!("o tasks.data editado não relê: {e}"))?;
+        Ok(())
+    }
+
     /// Soma `delta` nos deslocamentos da tabela do cabeçalho das missões de topo que começam depois de `o`.
     fn corrigir_tabela(&mut self, o: usize, delta: i64) -> Result<(), String> {
         let quantas = u32::from_le_bytes(self.bytes[8..12].try_into().unwrap()) as usize;
@@ -652,6 +785,32 @@ pub struct Opcao {
 
 const OPCAO: usize = 136;
 const TEXTO_FIXO: usize = 64;
+
+/// As funções de opção (`SERVICE_TYPE`, `CCommon/ExpTypes.h:36-80`): id com o bit alto + o índice do enum. As que
+/// aparecem nos `tasks.data` dos dois realms (medido em `medir_ids_dos_dialogos`).
+pub const FUNCOES_DE_OPCAO: [(u32, &str); 7] = [
+    (0, "NPC_TALK"),
+    (6, "NPC_GIVE_TASK"),
+    (7, "NPC_COMPLETE_TASK"),
+    (8, "NPC_GIVE_TASK_MATTER"),
+    (17, "TALK_RETURN"),
+    (18, "TALK_EXIT"),
+    (21, "TALK_GIVEUP_TASK"),
+];
+
+/// O que a opção nova faz: abre uma janela filha nova (com esse texto) ou chama uma função de `FUNCOES_DE_OPCAO`.
+#[derive(Debug, Clone)]
+pub enum DestinoDaOpcao {
+    NovaJanela(String),
+    Funcao(u32),
+}
+
+/// Onde termina a janela (depois das opções).
+fn fim_da_janela(bytes: &[u8], j: &Janela) -> usize {
+    let n = u32_de(bytes, j.texto_em) as usize;
+    let o = j.texto_em + 4 + 2 * n;
+    o + 4 + OPCAO * u32_de(bytes, o) as usize
+}
 
 fn decifrar(bytes: &[u8], chave: u16) -> String {
     let u: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) ^ chave).take_while(|&u| u != 0).collect();
@@ -934,6 +1093,94 @@ mod testes {
                     assert_eq!(serde_json::to_value(&r.tasks[&id]).unwrap(), serde_json::to_value(&original.tasks[&id]).unwrap(), "{realm}: {id}");
                 }
             }
+        }
+    }
+
+    /// Nos dois realms (B270): acrescentar uma opção que abre janela nova e uma de função numa janela de um diálogo do
+    /// meio; relido; o diálogo tem a janela nova com o pai certo e as opções novas; remover as duas devolve o arquivo
+    /// idêntico; criar a raiz de um diálogo vazio e remover tudo de novo também; função desconhecida recusada.
+    #[test]
+    fn estrutura_dos_dialogos() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let mut t = TasksEditavel::ler(&b).unwrap();
+            let meio = t.dados.de_topo.len() / 2;
+            let (id, di) = t.dados.de_topo[meio..].iter().find_map(|&id| {
+                t.dialogos(id).unwrap().iter().position(|d| d.janelas.len() >= 2).map(|di| (id, di))
+            }).expect("diálogo com 2+ janelas");
+            let ultima = *t.dados.de_topo.last().unwrap();
+            let ultima_antes = serde_json::to_value(&t.dados.tasks[&ultima]).unwrap();
+            let n_opcoes = t.dialogos(id).unwrap()[di].janelas[0].opcoes.len();
+            assert!(t.acrescentar_opcao(id, di, 0, "x", DestinoDaOpcao::Funcao(99), None).is_err());
+            t.acrescentar_opcao(id, di, 0, "Conte mais", DestinoDaOpcao::NovaJanela("Uma janela nova do Estúdio".into()), None).unwrap();
+            t.acrescentar_opcao(id, di, 0, "Até logo", DestinoDaOpcao::Funcao(18), None).unwrap();
+            let r = TasksData::load_from_bytes(&t.gravar()).unwrap();
+            assert_eq!(serde_json::to_value(&r.tasks[&ultima]).unwrap(), ultima_antes, "{realm}: a última de topo não muda");
+            let d = &t.dialogos(id).unwrap()[di];
+            let j0 = &d.janelas[0];
+            assert_eq!(j0.opcoes.len(), n_opcoes + 2, "{realm}");
+            let nova = d.janelas.last().unwrap();
+            assert_eq!((nova.texto.as_str(), nova.pai, j0.opcoes[n_opcoes].id), ("Uma janela nova do Estúdio", j0.id, nova.id), "{realm}");
+            assert_eq!((j0.opcoes[n_opcoes + 1].id, j0.opcoes[n_opcoes + 1].param), (0x8000_0000 | 18, 0));
+            t.remover_opcao(id, di, 0, n_opcoes + 1).unwrap();
+            t.remover_opcao(id, di, 0, n_opcoes).unwrap();
+            assert!(t.gravar() == b, "{realm}: remover o que entrou = arquivo idêntico");
+            // Diálogo vazio: criar a raiz com uma opção e uma janela filha, e tirar tudo.
+            let (id2, di2) = t.dados.de_topo.iter().find_map(|&id| t.dialogos(id).unwrap().iter().position(|d| d.janelas.is_empty()).map(|di| (id, di))).unwrap();
+            t.criar_janela_raiz(id2, di2, "Olá!").unwrap();
+            assert!(t.criar_janela_raiz(id2, di2, "de novo").is_err());
+            t.acrescentar_opcao(id2, di2, 0, "Mais", DestinoDaOpcao::NovaJanela("Filha".into()), None).unwrap();
+            assert_eq!(t.dialogos(id2).unwrap()[di2].janelas.len(), 2);
+            t.remover_opcao(id2, di2, 0, 0).unwrap();
+            assert_eq!(t.dialogos(id2).unwrap()[di2].janelas.len(), 1, "{realm}: a filha saiu com a opção");
+        }
+    }
+
+    /// Medida (B270): ids das janelas (bit alto?, sequência a partir de quê?), pai da raiz, e para onde as opções
+    /// apontam (janela do mesmo diálogo, bit alto = função, outro).
+    #[test]
+    fn medir_ids_dos_dialogos() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let t = TasksEditavel::ler(&b).unwrap();
+            let (mut janelas, mut bit_alto, mut raiz_menos_um, mut primeira) = (0, 0, 0, std::collections::BTreeMap::new());
+            let (mut opcoes, mut para_janela, mut funcao, mut outras, mut pai_existe, mut filhas) = (0, 0, 0, 0, 0, 0);
+            let mut funcoes = std::collections::BTreeMap::new();
+            for m in t.dados.tasks.values() {
+                for d in dialogos_da_missao(&b, m) {
+                    let ids: Vec<u32> = d.janelas.iter().map(|j| j.id).collect();
+                    if let Some(j) = d.janelas.first() { *primeira.entry(j.id).or_insert(0) += 1; }
+                    for j in &d.janelas {
+                        janelas += 1;
+                        if j.id & 0x8000_0000 != 0 { bit_alto += 1; }
+                        if j.pai == u32::MAX { raiz_menos_um += 1; } else { filhas += 1; if ids.contains(&j.pai) { pai_existe += 1; } }
+                        for o in &j.opcoes {
+                            opcoes += 1;
+                            if o.id & 0x8000_0000 != 0 { funcao += 1; *funcoes.entry(o.id & 0x7fff_ffff).or_insert(0) += 1; }
+                            else if ids.contains(&o.id) { para_janela += 1; } else { outras += 1; }
+                        }
+                    }
+                }
+            }
+            let top: Vec<_> = primeira.iter().take(5).collect();
+            eprintln!("{realm}: janelas {janelas} (bit alto {bit_alto}; raiz com pai -1 {raiz_menos_um}; filhas {filhas}, com pai existente {pai_existe}); primeira janela ids {top:?}");
+            eprintln!("{realm}: opções {opcoes}: para janela {para_janela}, função {funcao} {:?}, outras {outras}", funcoes.iter().take(8).collect::<Vec<_>>());
+            // param por tipo: zero, igual ao id da missão, ou outro.
+            let mut param: std::collections::BTreeMap<String, (u32, u32, u32)> = std::collections::BTreeMap::new();
+            for m in t.dados.tasks.values() {
+                for d in dialogos_da_missao(&b, m) {
+                    for j in &d.janelas {
+                        for o in &j.opcoes {
+                            let k = if o.id & 0x8000_0000 != 0 { format!("f{}", o.id & 0x7fff_ffff) } else { "janela".into() };
+                            let e = param.entry(k).or_default();
+                            if o.param == 0 { e.0 += 1 } else if o.param == m.id { e.1 += 1 } else { e.2 += 1 }
+                        }
+                    }
+                }
+            }
+            eprintln!("{realm}: param (zero, = id da missão, outro): {param:?}");
         }
     }
 

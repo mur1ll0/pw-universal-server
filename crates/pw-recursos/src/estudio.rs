@@ -2731,6 +2731,8 @@ impl Estudio {
             "editaveis": pw_data_loader::tasks_editavel::campos(t.version).iter().map(|c| json!([c.0, c.2])).collect::<Vec<_>>(),
             "textos": textos,
             "dialogos": dialogos,
+            // B270: as funções de opção (`SERVICE_TYPE`).
+            "funcoes_de_opcao": pw_data_loader::tasks_editavel::FUNCOES_DE_OPCAO.iter().map(|(n, nome)| json!([n, nome])).collect::<Vec<_>>(),
             // B263: listas de capacidade fixa (pré-missões, exclusivas, classes) — `[nome, capacidade]`.
             "listas": pw_data_loader::tasks::listas_fixas(t.version).iter().map(|l| json!([l.nome, l.capacidade])).collect::<Vec<_>>(),
             // B264: vetores variáveis (itens exigidos, entregues, monstros) — `[nome, teto do cliente]`.
@@ -2785,13 +2787,31 @@ impl Estudio {
                 if pw_data_loader::tasks_editavel::TEXTOS.contains(&k.as_str()) {
                     t.definir_texto(id, k, v.as_str().with_context(|| format!("{k}: texto"))?).map_err(anyhow::Error::msg)?;
                 } else if k == "dialogos" {
-                    // B266: `[{dialogo, janela?, opcao?, texto}]` — título, texto de janela ou de opção.
+                    // B266: `[{dialogo, janela?, opcao?, texto}]` — título, texto de janela ou de opção. B270: `acao` =
+                    // `nova_opcao` (`texto`, `destino: {janela: texto} | {funcao: n}`, `param?`), `remover_opcao`
+                    // (`janela`, `opcao`) ou `criar_raiz` (`texto`). Aplicadas na ordem.
+                    use pw_data_loader::tasks_editavel::DestinoDaOpcao;
                     for x in v.as_array().context("dialogos: lista")? {
                         let d = x["dialogo"].as_u64().context("dialogos[].dialogo")? as usize;
                         let j = x["janela"].as_u64().map(|x| x as usize);
                         let o = x["opcao"].as_u64().map(|x| x as usize);
-                        let texto = x["texto"].as_str().context("dialogos[].texto")?;
-                        t.definir_texto_do_dialogo(id, d, j, o, texto).map_err(anyhow::Error::msg)?;
+                        let texto = || x["texto"].as_str().context("dialogos[].texto");
+                        let r = match x["acao"].as_str() {
+                            None => t.definir_texto_do_dialogo(id, d, j, o, texto()?),
+                            Some("nova_opcao") => {
+                                let destino = if let Some(tj) = x["destino"]["janela"].as_str() {
+                                    DestinoDaOpcao::NovaJanela(tj.to_string())
+                                } else {
+                                    DestinoDaOpcao::Funcao(x["destino"]["funcao"].as_u64().context("destino: {janela} ou {funcao}")? as u32)
+                                };
+                                let param = x["param"].as_u64().map(|p| p as u32);
+                                t.acrescentar_opcao(id, d, j.context("janela")?, texto()?, destino, param)
+                            }
+                            Some("remover_opcao") => t.remover_opcao(id, d, j.context("janela")?, o.context("opcao")?),
+                            Some("criar_raiz") => t.criar_janela_raiz(id, d, texto()?),
+                            Some(a) => bail!("ação de diálogo desconhecida: {a}"),
+                        };
+                        r.map_err(anyhow::Error::msg)?;
                     }
                 } else if k == "premio_grupos" || k == "falha_grupos" {
                     // B265: grupos de itens de prêmio (sucesso ou falha).
