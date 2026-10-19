@@ -344,6 +344,14 @@ function desenharFichaDoEstudio() {
         const rotulo = criar("label", "", c.rotulo || c.nome);
         rotulo.title = `${c.nome} · ${c.tipo}${c.tipo.endsWith("string") ? ` (${c.tipo === "wstring" ? c.tamanho / 2 : c.tamanho})` : ""}`;
         grade.append(rotulo, entradaDoCampo(c, editavel, entradas));
+        // B279: campo de modelo (`file_model`… com um .ecm/.smd/.ski) abre o Modelos — no .ecm, com o diagnóstico das
+        // ações que o cliente pede.
+        if (typeof c.valor === "string" && /\.(ecm|smd|ski)$/i.test(c.valor.trim()) && typeof abrirModelo === "function") {
+          const ir = criar("a", "estudio-link-modelo", /\.ecm$/i.test(c.valor.trim()) ? "↗ ver o modelo e o diagnóstico de ações" : "↗ ver o modelo");
+          ir.href = "#";
+          ir.addEventListener("click", (ev) => { ev.preventDefault(); mostrarVistaDoEstudio("modelos"); abrirModelo(c.valor.trim()); });
+          grade.append(criar("span"), ir);
+        }
       }
       bloco.appendChild(grade);
     }
