@@ -311,6 +311,9 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B264 (S7, 11ª parte):** missões — itens exigidos, itens entregues e monstros a matar (vetores variáveis, com o teto
 > do cliente: 10 itens, 3 monstros). Falta do S7: criar/remover missão, prêmios em itens, diálogos; tipo de
 > condição/operação no `aipolicy`.
+>
+> **B265 (S7, 12ª parte):** missões — prêmio em itens (grupos de sucesso e de falha, "sorteia um", até 12 grupos de 64
+> itens). Falta do S7: criar/remover missão, diálogos; tipo de condição/operação no `aipolicy`.
 
 | fase | entrega |
 | :--- | :--- |

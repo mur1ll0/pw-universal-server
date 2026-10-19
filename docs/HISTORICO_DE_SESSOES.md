@@ -14606,3 +14606,31 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: aceitar a 1173 e receber o item entregue novo (realm reiniciado, cliente atualizado).
     - Criar/remover missão; itens de prêmio (`AWARD_DATA` com grupos); diálogos.
+
+265. **Sessão 2026-10-18: Estúdio S7, 12ª parte — prêmio em itens das missões.**
+
+    ### a. Pedido
+    Commitar o B264 (feito: `ae8cd03`, `5c78bec`) e seguir.
+
+    ### b. Decisão e evidência
+    - `AWARD_ITEMS_CAND`: `bool m_bRandChoose`, `u32 m_ulAwardItems` e os itens, logo depois do bloco do prêmio
+      (`LoadAwardCandBin`, `TaskTempl.cpp:732-760`); contador `m_ulCandItems` no bloco do prêmio. Mesma técnica dos
+      vetores (B264): reescrever o trecho, corrigir o contador e a tabela de deslocamentos.
+    - Tetos: `MAX_AWARD_CANDIDATES = 12` (`TaskTempl.h:36`), `MAX_ITEM_AWARD = 64` (`TaskInterface.h:142`). Medido:
+      nenhuma missão dos dois realms passa.
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `TaskTemplate::premio_de_falha_em`, `grupos_do_premio`, `MAX_AWARD_CANDIDATES`,
+      `MAX_ITEM_AWARD`; `TasksEditavel::definir_grupos_do_premio`.
+    - `pw-recursos`: `grupos_do_premio` na ficha; `campos` aceita `premio_grupos` e `falha_grupos`.
+    - Painel: editor de grupos de prêmio (sucesso e falha).
+
+    ### d. Provas
+    - `tasks_editavel::testes` nos dois realms: tetos medidos; grupos de sucesso e falha trocados, relidos; última de
+      topo igual; 13 grupos recusados; voltar = arquivo idêntico.
+    - `pw-recursos` com o banco **22/22**: prêmio em item publicado e lido no realm.
+    - `pw-data-loader` **218/218**; `cargo check --workspace --tests` ok.
+
+    ### e. Falta
+    - Ver em jogo: concluir a 1173 e receber o item de prêmio novo (realm reiniciado, cliente atualizado).
+    - Criar/remover missão; diálogos (`talk_proc`).

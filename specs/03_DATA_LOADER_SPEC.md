@@ -164,7 +164,13 @@ exigidos, itens entregues e monstros a matar são vetores variáveis com o conta
 → erro), corrige o contador e a tabela de deslocamentos (`corrigir_tabela`, a mesma dos textos). Teto do cliente:
 `MAX_ITEM_WANTED = 10`, `MAX_MONSTER_WANTED = 3` ("limitado pelo `ActiveTaskEntry`", `TaskInterface.h:139-141`) —
 medido: nenhuma missão dos dois realms passa disso, e os dois gravadores reproduzem byte a byte **todos** os registros
-dos dois arquivos. Criar/remover missão, os demais vetores e os diálogos continuam sem gravador.
+dos dois arquivos. **Prêmio em itens (B265):** os grupos `AWARD_ITEMS_CAND` vêm logo depois do bloco do prêmio
+(sucesso em `premio_em`, falha em `premio_de_falha_em`), cada um `bool m_bRandChoose`, `u32 n` e `n` itens
+(`LoadAwardCandBin`, `TaskTempl.cpp:732-760`); o contador `m_ulCandItems` fica no bloco do prêmio
+(`tasks::grupos_do_premio`: v129 `p::CAND_ITEMS`, v55 +67). `definir_grupos_do_premio` reescreve o trecho dos grupos,
+o contador e a tabela de deslocamentos. Teto: `MAX_AWARD_CANDIDATES = 12` (`TaskTempl.h:36`), `MAX_ITEM_AWARD = 64`
+(`TaskInterface.h:142`) — medido: nenhuma missão dos dois realms passa. Criar/remover missão, os demais vetores e os
+diálogos continuam sem gravador.
 
 ### 3.2b `dyn_tasks.data` — missões dinâmicas (`dyn_tasks.rs`)
 
