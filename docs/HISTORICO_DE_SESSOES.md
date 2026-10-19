@@ -14722,3 +14722,28 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: missão removida some do NPC (sem citação no elements, ela já não era oferecida).
     - Clonar com submissões; criar/remover janela ou opção; tipo de condição/operação no `aipolicy`.
+
+269. **Sessão 2026-10-19: Estúdio S7, 16ª parte — clonar missão com as submissões.**
+
+    ### a. Pedido
+    Commitar o B268 (feito: `69a2009`, `f1a03c1`) e seguir.
+
+    ### b. Decisão e evidência
+    - Mesma técnica do B267, por nó da árvore: cada um com a própria chave de cifra (`antigo ^ novo`), o parentesco do
+      B267 (`TaskTempl.h:2461-2464`, medido) remapeado, e pré-missão, exclusiva e missão seguinte remapeadas quando
+      apontam para dentro da árvore (para a cópia ser coerente consigo mesma).
+    - Ids consecutivos em pré-ordem — a ordem em que o leitor percorre o arquivo.
+
+    ### c. O que foi feito
+    - `pw-data-loader/tasks_editavel::clonar_missao` generalizado; teste `clonar_arvore_e_remover`.
+    - `pw-recursos`/painel: o clone deixa de exigir "sem submissões".
+
+    ### d. Provas
+    - Nos dois realms, numa missão com netas: mesma forma de árvore com os ids novos, mesmos textos, diálogos e
+      pré-missões (remapeadas); id ocupado e submissão sozinha recusados; remover o clone = arquivo idêntico.
+    - `pw-recursos` com o banco **22/22**: a 1173 (com submissões) clonada e removida com a árvore.
+    - `pw-data-loader` **224/224**; `cargo check --workspace --tests` ok.
+
+    ### e. Falta
+    - Ver em jogo: clone de uma missão com etapas, posto num NPC, aceito e avançado.
+    - Criar/remover janela ou opção de diálogo; tipo de condição/operação no `aipolicy`.

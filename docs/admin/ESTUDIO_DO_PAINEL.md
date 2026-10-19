@@ -323,6 +323,9 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 >
 > **B268 (S7, 15ª parte):** remover missão de topo (com a árvore), recusada se o `elements` ou outra missão a cita. Falta
 > do S7: clonar com submissões, criar/remover janela ou opção; tipo de condição/operação no `aipolicy`.
+>
+> **B269 (S7, 16ª parte):** clonar missão com as submissões (ids consecutivos, parentesco e referências internas
+> remapeados). Falta do S7: criar/remover janela ou opção; tipo de condição/operação no `aipolicy`.
 
 | fase | entrega |
 | :--- | :--- |

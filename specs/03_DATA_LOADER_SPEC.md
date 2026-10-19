@@ -190,8 +190,13 @@ clone tem a ficha, os textos e os diálogos da origem com o id novo; a origem e 
 todos os deslocamentos e −tamanho nos que vinham depois); recusa submissão e missão citada por outra fora da árvore
 (`citacoes_da_missao`: pré-missão, exclusiva, missão seguinte do prêmio de sucesso ou falha, membro de equipe). As
 citações no `elements` são conferidas no `pw-recursos`. Testado nos dois realms: clonar + remover o clone = arquivo
-idêntico; uma de topo com filhas, não citada, sai com a árvore e as outras ficam iguais. Clonar com submissões e
-criar/remover janela ou opção continuam sem gravador.
+idêntico; uma de topo com filhas, não citada, sai com a árvore e as outras ficam iguais. **Clonar com a árvore
+(B269):** `clonar_missao` aceita missão de topo com submissões — ids consecutivos a partir do pedido, em pré-ordem (a
+ordem do arquivo), todos livres e ≤ 65535; cada nó tem os textos recifrados com a própria chave, o parentesco
+remapeado (a raiz sem mãe nem irmãs) e as pré-missões, exclusivas e missão seguinte (sucesso e falha; prêmio +13 no
+v129, +8 no v55) que apontam para dentro da árvore remapeadas. Testado nos dois realms numa missão com netas: mesma
+forma de árvore, mesmos textos, diálogos e pré-missões (remapeadas); remover o clone = arquivo idêntico.
+Criar/remover janela ou opção continua sem gravador.
 
 ### 3.2b `dyn_tasks.data` — missões dinâmicas (`dyn_tasks.rs`)
 
