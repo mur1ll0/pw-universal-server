@@ -15174,3 +15174,31 @@ comparação lado a lado.
 
     ### e. Falta
     - Nomes de habilidade (nome nativo); copiar ação de outro modelo do mesmo esqueleto; Voo e Minas.
+
+282. **Sessão 2026-10-19: Estúdio S5 — correção: só o esqueleto aparecia.**
+
+    ### a. Pedido
+    Murillo: "apenas carrega o esqueleto e animação; o modelo e a textura não estão carregando".
+
+    ### b. Diagnóstico (medido no contêiner)
+    - No 1.5.5 os `.smd` de monstro têm a pele e o GLB sai com malha e imagens; no **1.2.6** o `.smd` não cita pele
+      (ou cita uma que falta) e o GLB saía só com o esqueleto (o comportamento do B278).
+    - Causa: o jogo **não usa as peles do `.smd`**. `CECNPC::LoadNPCModel` (`EC_NPC.cpp:186-222`) carrega o `.ecm` com
+      `LSF_NOSKIN` e põe a pele `<.ecm>.ski`. No 1.2.6 o `.smd` é compartilhado por variantes (p.ex. `暴牙牛喽罗.smd` e os
+      `.ecm` `水牛怪喽罗`, `望月牛喽罗`…), cada uma com a sua `.ski` ao lado do `.ecm`. As `AddiSkinPath` do `.ecm` só o
+      editor carrega (`EC_Model.cpp:678-689`).
+
+    ### c. Correção
+    - `pw-data-loader/ecm`: `peles_adicionais` (`AddiSkinPath`).
+    - `pw-recursos`: GLB de `.ecm` = `.smd` do `.ecm` + pele `<.ecm>.ski` (senão `Models\` + `AddiSkinPath`, senão as
+      do `.smd`), com ação e texturas como no `.smd`.
+    - Painel: a ficha do `.ecm` mostra o modelo com o seletor de ações; "Abrir só o .smd" continua.
+
+    ### d. Provas
+    - `pw-recursos` com o banco **22/22** (GLB do `.ecm` sintético com malha e `skin`); `pw-data-loader` **241/241**;
+      painel **11/11**.
+    - Contêiner: pelo `.ecm`, **120/120** monstros (60 por realm) saem com malha e textura, 0 erros — antes, no 1.2.6,
+      os `.smd` desses monstros saíam só com o esqueleto.
+
+    ### e. Falta
+    - Murillo conferir no painel um monstro do 1.2.6 pelo `.ecm` (ou pela ficha do `MONSTER_ESSENCE`).

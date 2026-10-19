@@ -510,7 +510,11 @@ o do rascunho) e traz `bases_do_smd`. Painel: em cada pedido do diagnóstico que
 copiar e a ação-base. **Mascote (B281):** a ficha do `.ecm` aceita `habitat` (0–6) e traz `diagnostico_de_mascote`
 (os nomes com `_地面`/`_水中`/`_空中`, spec 03 §3.10d). Painel: seletor "diagnóstico como monstro / como mascote
 (habitat)"; da ficha de um registro com `inhabit_type` e `id_type` 28752 ou `inhabit_type` 6, o link do modelo já abre
-como mascote no habitat dele.
+como mascote no habitat dele. **Modelo a partir do `.ecm` (B282):** `GET estudio/modelos/glb?caminho=<.ecm>&acao?` monta
+o modelo como o jogo: o `.smd` do `.ecm` (esqueleto e ações) com a pele `<.ecm>.ski`; sem ela, as `AddiSkinPath`
+(`Models\` + caminho) e por fim as peles do `.smd` (spec 03 §3.10d). A ficha do `.ecm` mostra esse modelo (malha,
+textura, esqueleto) com o seletor das ações do `.smd` e o "Baixar GLB"; o `.smd` sozinho continua acessível ("Abrir só o
+.smd").
 
 ## 7. Testes
 
@@ -554,7 +558,7 @@ pele, e o GLB tem `skin` com 2 juntas (o osso e o esqueleto) e pesos (B274); sem
 (B276); um `.ecm` sintético vem primeiro e o diagnóstico acerta os três casos — combinada sem base, base ausente no
 `.smd`, combinada que falta (B277); criar `普攻1落` clonando `普攻1起` no rascunho tira a falta do diagnóstico lido
 com o rascunho, e nome repetido ou fora do GBK → 400 (B280); com `habitat=0` o diagnóstico de mascote pede só `_地面`
-e acusa as faltas (B281). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
+e acusa as faltas (B281); o GLB do `.ecm` sintético tem malha (a `caixa.ski` ao lado) e `skin` (B282). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
 não usa → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
 "só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
 gatilho duplicado (id novo na resposta) e o original removido, publicados — o realm tem a mesma quantidade de

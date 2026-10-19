@@ -700,7 +700,13 @@ clonagens releem com uma ação a mais e a cópia com as mesmas ações-base. **
 pedem cada ação com `_` + ambiente (`GetActionEnvString`, `:580-596`: `地面`, `水中`, `空中`; o ambiente vem do estado
 que o servidor manda — voando, nadando ou no chão, `EC_NPC.cpp:411-417`). `ecm::ambientes_do_habitat` pela ordem do
 comentário do `inhabit_type` (`ExpTypes.h:2866`: 0 chão, 1 água, 2 ar, 3 chão+água, 4 chão+ar, 5 água+ar, 6 os três) e
-`ecm::pedidos_de_mascote` = os pedidos de monstro × os ambientes do habitat.
+`ecm::pedidos_de_mascote` = os pedidos de monstro × os ambientes do habitat. **De onde vem a pele (B282):** o jogo
+carrega o modelo de um NPC/monstro **sem** as peles do `.smd` (`LSF_NOSKIN`) e põe a pele `<caminho do .ecm com
+extensão .ski>` (mais o `<nome>二级.ski` de baixa resolução, se existir) — `CECNPC::LoadNPCModel`, `EC_NPC.cpp:186-222`;
+sem ela, `Models\error\error.ski`. As `AddiSkinPath:` do `.ecm` (`ecm::Ecm::peles_adicionais`) são relativas a
+`Models\` e só o editor as carrega (`EC_Model.cpp:678-689`, `#ifdef GFX_EDITOR`). No 1.2.6 o `.smd` é compartilhado
+por várias variantes (p.ex. `暴牙牛喽罗.smd` sem pele, com `水牛怪喽罗.ecm`/`.ski` ao lado) — por isso o `.smd` sozinho
+não tem malha.
 
 ### 3.11 `global_api.lua`
 
