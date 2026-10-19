@@ -804,6 +804,10 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let fe2 = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &ecm_cam).query("rascunho", &r16.to_string()).call().unwrap());
         let estado2 = fe2["diagnostico_de_monstro"].as_array().unwrap().iter().find(|x| x["pedido"] == "普攻1落").map(|x| x["estado"].as_str().unwrap().to_string());
         assert!(!estado2.unwrap().contains("sem ação combinada"), "{fe2}");
+        // B281: com habitat 0 (chão), o diagnóstico de mascote pede os nomes com `_地面` — o .ecm sintético não os tem.
+        let fm2 = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &ecm_cam).query("habitat", "0").call().unwrap());
+        let dm = fm2["diagnostico_de_mascote"].as_array().unwrap();
+        assert!(dm.iter().all(|x| x["pedido"].as_str().unwrap().ends_with("_地面")) && dm.iter().all(|x| x["estado"] != "ok"), "{fm2}");
         // B274: o modelo inteiro — ficha com esqueleto e pele, GLB com skin.
         let smd = ml["linhas"][1]["caminho"].as_str().unwrap().to_string();
         let fm = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &smd).call().unwrap());

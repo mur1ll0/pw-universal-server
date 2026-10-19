@@ -30,52 +30,73 @@ async function carregarModelos() {
   if (!r.linhas.length) area.appendChild(criar("div", "texto-suave", "Nenhum modelo."));
 }
 
-async function abrirModelo(caminho) {
+const HABITATS = ["chão", "água", "ar", "chão + água", "chão + ar", "água + ar", "chão, água e ar"];
+
+/* Tabela de diagnóstico (B277/B281) com o "Criar" do B280 em cada falta. */
+function tabelaDeDiagnostico(f, caminho, titulo, lista, habitat) {
+  const tab = criar("table", "tabela-simples");
+  tab.appendChild(criar("caption", "", titulo));
+  for (const d of lista) {
+    const tr = criar("tr");
+    tr.append(criar("td", "", d.pedido), criar("td", d.estado === "ok" ? "texto-suave" : "", d.estado === "ok" ? "ok" : `⚠ ${d.estado}`));
+    // B280: corrigir — ação combinada nova clonando uma existente, opcionalmente com outra ação-base do .smd.
+    if (d.estado !== "ok" && estudio.rascunho && f.combinadas.length) {
+      const td = criar("td");
+      const origem = criar("select", "campo");
+      for (const c of f.combinadas) origem.appendChild(new Option(`copiar ${c.nome}`, c.nome));
+      const base = criar("select", "campo");
+      base.appendChild(new Option("(mesma ação-base)", ""));
+      for (const b of f.bases_do_smd || []) base.appendChild(new Option(`base ${b}`, b));
+      const b = criar("button", "botao botao-pequeno botao-secundario", "Criar");
+      b.type = "button";
+      b.addEventListener("click", async () => {
+        try {
+          await api(rotaDeModelos("/acao", { rascunho: estudio.rascunho }), { method: "POST", body: JSON.stringify({ caminho, origem: origem.value, nova: d.pedido, base: base.value || undefined }) });
+          alerta("ok", "Estúdio", `Ação ${d.pedido} criada no rascunho.`, { toast: true });
+          if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+          abrirModelo(caminho, habitat);
+        } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      });
+      td.append(origem, base, b);
+      tr.appendChild(td);
+    }
+    tab.appendChild(tr);
+  }
+  return tab;
+}
+
+async function abrirModelo(caminho, habitat = null) {
   const ficha = elemento("modelos-ficha");
   ficha.textContent = "Carregando…";
   let f;
-  const q = estudio.rascunho ? { caminho, rascunho: estudio.rascunho } : { caminho };
+  const q = { caminho };
+  if (estudio.rascunho) q.rascunho = estudio.rascunho;
+  if (habitat !== null && habitat !== undefined) q.habitat = habitat;
   try { f = await api(rotaDeModelos("/ficha", q)); } catch (erro) { ficha.textContent = erro.message; return; }
   ficha.replaceChildren();
   ficha.appendChild(criar("h3", "", caminho.split("\\").pop()));
   if (f.tipo === "ecm") {
-    // B277: o modelo do jogo — diagnóstico das ações que o cliente pede a um monstro.
+    // B277: o modelo do jogo — diagnóstico das ações que o cliente pede (monstro; B281: mascote, com o habitat).
     ficha.appendChild(criar("div", "texto-suave", `${caminho} · versão ${f.versao} · ${f.combinadas.length} ações combinadas · tabela do cliente com ${f.tabela_de_acoes} nomes`));
     const abre = criar("a", "", `Abrir o modelo (${f.smd.split("\\").pop()}) — ver e tocar as ações`);
     abre.href = "#";
     abre.addEventListener("click", (ev) => { ev.preventDefault(); abrirModelo(f.smd); });
     ficha.appendChild(abre);
     if (!f.smd_lido) ficha.appendChild(criar("div", "texto-suave", "O .smd citado não foi lido: as ações-base não puderam ser conferidas."));
-    const tab = criar("table", "tabela-simples");
-    tab.appendChild(criar("caption", "", "Diagnóstico de monstro (nomes de Configs\actions_npc.txt + 起/落 nos ataques)"));
-    for (const d of f.diagnostico_de_monstro) {
-      const tr = criar("tr");
-      tr.append(criar("td", "", d.pedido), criar("td", d.estado === "ok" ? "texto-suave" : "", d.estado === "ok" ? "ok" : `⚠ ${d.estado}`));
-      // B280: corrigir — ação combinada nova clonando uma existente, opcionalmente com outra ação-base do .smd.
-      if (d.estado !== "ok" && estudio.rascunho && f.combinadas.length) {
-        const td = criar("td");
-        const origem = criar("select", "campo");
-        for (const c of f.combinadas) origem.appendChild(new Option(`copiar ${c.nome}`, c.nome));
-        const base = criar("select", "campo");
-        base.appendChild(new Option("(mesma ação-base)", ""));
-        for (const b of f.bases_do_smd || []) base.appendChild(new Option(`base ${b}`, b));
-        const b = criar("button", "botao botao-pequeno botao-secundario", "Criar");
-        b.type = "button";
-        b.addEventListener("click", async () => {
-          try {
-            await api(rotaDeModelos("/acao", { rascunho: estudio.rascunho }), { method: "POST", body: JSON.stringify({ caminho, origem: origem.value, nova: d.pedido, base: base.value || undefined }) });
-            alerta("ok", "Estúdio", `Ação ${d.pedido} criada no rascunho.`, { toast: true });
-            if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-            abrirModelo(caminho);
-          } catch (erro) { alerta("erro", "Estúdio", erro.message); }
-        });
-        td.append(origem, base, b);
-        tr.appendChild(td);
-      }
-      tab.appendChild(tr);
-    }
+    const perfil = criar("div", "recursos-linha");
+    const sel = criar("select", "campo");
+    sel.appendChild(new Option("diagnóstico como monstro", ""));
+    HABITATS.forEach((h, i) => sel.appendChild(new Option(`como mascote invocado/de combate — habitat ${i}: ${h}`, String(i))));
+    sel.value = f.habitat === null || f.habitat === undefined ? "" : String(f.habitat);
+    sel.addEventListener("change", () => abrirModelo(caminho, sel.value === "" ? null : Number(sel.value)));
+    perfil.append(criar("span", "texto-suave", "Perfil: "), sel);
+    ficha.appendChild(perfil);
     if (!estudio.rascunho) ficha.appendChild(criar("div", "texto-suave", "Escolha um rascunho no alto do Estúdio para corrigir as ações que faltam."));
-    ficha.appendChild(tab);
+    if (f.diagnostico_de_mascote) {
+      ficha.appendChild(tabelaDeDiagnostico(f, caminho, `Diagnóstico de mascote — habitat ${f.habitat} (${HABITATS[f.habitat] || "?"}): nomes + _地面/_水中/_空中`, f.diagnostico_de_mascote, f.habitat));
+    } else {
+      ficha.appendChild(tabelaDeDiagnostico(f, caminho, "Diagnóstico de monstro (nomes de Configs\\actions_npc.txt + 起/落 nos ataques)", f.diagnostico_de_monstro, null));
+    }
     const lista = criar("ul");
     for (const c of f.combinadas) lista.appendChild(criar("li", "", `${c.nome} ← ${c.bases.length ? c.bases.join(", ") : "(sem ação-base)"}${c.bases_ausentes.length ? ` — ausentes no .smd: ${c.bases_ausentes.join(", ")}` : ""}`));
     ficha.appendChild(criar("div", "texto-suave", "Ações combinadas do .ecm (← ações-base do .smd):"));

@@ -165,6 +165,35 @@ pub fn clonar_acao(b: &[u8], origem: &str, nova: &str, base: Option<&str>) -> Re
     Ok([if marca { b"MOXT".as_slice() } else { b"" }, &saida.concat()].concat())
 }
 
+/// Os ambientes de um habitat de mascote (`inhabit_type`, `ExpTypes.h:2866`: 0 chão, 1 água, 2 ar, 3 chão+água, 4
+/// chão+ar, 5 água+ar, 6 os três), com as palavras que o cliente acrescenta ao nome da ação (`GetActionEnvString`,
+/// `EC_NPCModel.cpp:580-596`: `地面`, `水中`, `空中`).
+pub fn ambientes_do_habitat(habitat: u32) -> &'static [&'static str] {
+    match habitat {
+        0 => &["地面"],
+        1 => &["水中"],
+        2 => &["空中"],
+        3 => &["地面", "水中"],
+        4 => &["地面", "空中"],
+        5 => &["水中", "空中"],
+        _ => &["地面", "水中", "空中"],
+    }
+}
+
+/// Os nomes pedidos a um mascote invocado, de combate ou evolutivo (B281): os de monstro com `_<ambiente>` para cada
+/// ambiente do habitat (`GetActionName`: nome base, `起`/`落` e depois `_` + ambiente, `EC_NPCModel.cpp:599-620`). O
+/// sufixo só vale para invocado (`id_type == 28752`, `EC_Pet.cpp:285-288`) e para `inhabit_type == 6` (combate e
+/// evolutivo, `EC_NPCModel.cpp:588-590`); os outros mascotes pedem os nomes de monstro.
+pub fn pedidos_de_mascote(tabela: &[String], habitat: u32) -> Vec<(usize, String, Option<String>)> {
+    let mut r = Vec::new();
+    for (i, nome, alt) in pedidos_de_monstro(tabela) {
+        for amb in ambientes_do_habitat(habitat) {
+            r.push((i, format!("{nome}_{amb}"), alt.as_ref().map(|a| format!("{a}_{amb}"))));
+        }
+    }
+    r
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -259,5 +288,7 @@ mod testes {
         let p = pedidos_de_monstro(&t);
         assert!(p.iter().any(|x| x.1 == "普攻1起") && p.iter().any(|x| x.1 == "普攻2落") && p.iter().any(|x| x.1 == "站立"));
         assert!(!p.iter().any(|x| x.1 == "技能1"), "ACT_SKILL1 não é tocada");
+        let m = pedidos_de_mascote(&t, 4);
+        assert!(m.iter().any(|x| x.1 == "普攻1起_地面") && m.iter().any(|x| x.1 == "站立_空中") && !m.iter().any(|x| x.1.ends_with("_水中")), "habitat 4 = chão + ar");
     }
 }

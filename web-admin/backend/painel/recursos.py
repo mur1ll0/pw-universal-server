@@ -605,9 +605,10 @@ def registrar_reinicio(app):
         return await _repassar("GET", f"/admin/{v}/estudio/modelos", {"busca": busca[:200]})
 
     @app.get("/api/realms/{realm}/estudio/modelos/ficha")
-    async def estudio_modelo(realm: str, caminho: str, requisicao: Request, rascunho: int | None = None):
+    async def estudio_modelo(realm: str, caminho: str, requisicao: Request, rascunho: int | None = None, habitat: int | None = None):
         v = await _versao_do_realm(requisicao, realm)
-        return await _repassar("GET", f"/admin/{v}/estudio/modelos/ficha", {"caminho": caminho[:500], "rascunho": rascunho})
+        return await _repassar("GET", f"/admin/{v}/estudio/modelos/ficha", {"caminho": caminho[:500], "rascunho": rascunho,
+                               "habitat": habitat if habitat is not None and 0 <= habitat <= 6 else None})
 
     # Ação combinada nova no .ecm, clonando outra (B280).
     @app.post("/api/realms/{realm}/estudio/modelos/acao")

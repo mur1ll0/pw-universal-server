@@ -160,6 +160,8 @@ struct QCaminho {
     destino: Option<String>,
     /// B280: a ficha do `.ecm` lê o rascunho quando há um.
     rascunho: Option<i64>,
+    /// B281: habitat do mascote (`inhabit_type` 0–6) para o diagnóstico de mascote.
+    habitat: Option<u32>,
 }
 
 async fn conteudo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Response> {
@@ -275,7 +277,7 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
             json!({ "nome": a.nome, "bases": a.bases, "bases_ausentes": faltam })
         }).collect();
         let tabela = e.gov.conteudo(&v, "configs\\actions_npc.txt").ok().map(|(_, b)| pw_data_loader::ecm::tabela_de_nomes(&b)).unwrap_or_default();
-        let diagnostico: Vec<Value> = pw_data_loader::ecm::pedidos_de_monstro(&tabela).into_iter().map(|(i, pedido, alternativa)| {
+        let diagnosticar = |pedidos: Vec<(usize, String, Option<String>)>| -> Vec<Value> { pedidos.into_iter().map(|(i, pedido, alternativa)| {
             // Ferido: o motor tenta o nome e, sem a combinada, a alternativa (`EC_NPCModel.cpp:692-702`).
             let achada = m.acoes.iter().find(|a| a.nome == pedido).or_else(|| alternativa.as_ref().and_then(|x| m.acoes.iter().find(|a| &a.nome == x)));
             let so_base = bases_do_smd.as_ref().is_some_and(|b| b.contains(&pedido) || alternativa.as_ref().is_some_and(|x| b.contains(x)));
@@ -289,9 +291,13 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
                 Some(_) => "ok",
             };
             json!({ "indice": i, "pedido": pedido, "alternativa": alternativa, "estado": estado })
-        }).collect();
+        }).collect() };
+        let diagnostico = diagnosticar(pw_data_loader::ecm::pedidos_de_monstro(&tabela));
+        // B281: mascote (invocado, de combate ou evolutivo) — os nomes com o ambiente do habitat.
+        let de_mascote = q.habitat.filter(|h| *h <= 6).map(|h| diagnosticar(pw_data_loader::ecm::pedidos_de_mascote(&tabela, h)));
         return Ok(Json(json!({ "caminho": nome, "tipo": "ecm", "versao": m.versao, "smd": smd_caminho.unwrap_or(m.smd), "smd_lido": bases_do_smd.is_some(),
-            "combinadas": combinadas, "bases_do_smd": bases_do_smd.clone().unwrap_or_default(), "tabela_de_acoes": tabela.len(), "diagnostico_de_monstro": diagnostico })));
+            "combinadas": combinadas, "bases_do_smd": bases_do_smd.clone().unwrap_or_default(), "tabela_de_acoes": tabela.len(), "diagnostico_de_monstro": diagnostico,
+            "habitat": q.habitat, "diagnostico_de_mascote": de_mascote })));
     }
     if q.caminho.to_lowercase().ends_with(".smd") {
         let (nome, c, peles, esqueleto) = ler_smd(&e, &v, &q.caminho)?;

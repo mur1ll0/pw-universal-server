@@ -349,7 +349,12 @@ function desenharFichaDoEstudio() {
         if (typeof c.valor === "string" && /\.(ecm|smd|ski)$/i.test(c.valor.trim()) && typeof abrirModelo === "function") {
           const ir = criar("a", "estudio-link-modelo", /\.ecm$/i.test(c.valor.trim()) ? "↗ ver o modelo e o diagnóstico de ações" : "↗ ver o modelo");
           ir.href = "#";
-          ir.addEventListener("click", (ev) => { ev.preventDefault(); mostrarVistaDoEstudio("modelos"); abrirModelo(c.valor.trim()); });
+          // B281: mascote que recebe o sufixo de ambiente — invocado (`id_type` 28752, `EC_Pet.cpp:285-288`) ou
+          // `inhabit_type` 6 (`EC_NPCModel.cpp:588-590`) — abre com o diagnóstico de mascote do seu habitat.
+          const valor = (n) => (f.campos.find((x) => x.nome === n) || {}).valor;
+          const habitat = valor("inhabit_type");
+          const comSufixo = typeof habitat === "number" && (valor("id_type") === 28752 || habitat === 6);
+          ir.addEventListener("click", (ev) => { ev.preventDefault(); mostrarVistaDoEstudio("modelos"); abrirModelo(c.valor.trim(), comSufixo ? habitat : null); });
           grade.append(criar("span"), ir);
         }
       }
