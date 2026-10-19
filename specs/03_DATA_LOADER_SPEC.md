@@ -281,7 +281,15 @@ depois da original com id novo (maior + 1, ou o pedido; repetido → erro); `def
 (`policy.cpp:550-552`, `:610-611`) e mantém o NUL final que a fala tinha — medido: **todas** as falas o têm (337 no
 1.2.6, 5.964 no 1.5.5). O GS envia os `uSize` bytes como estão (`op_say`, `aitrigger.h:1844-1849`). Política com id
 repetido no arquivo recusa edição estrutural. Testado nos dois realms: trocar fala + duplicar + remover + voltar
-devolve o arquivo idêntico; a outra política não muda; gatilho citado não se remove.
+devolve o arquivo idêntico; a outra política não muda; gatilho citado não se remove. **Tipos (B271):** o leitor
+registra `Trigger::operacoes_em`. Medido (`medir_condicoes`): cada tipo de condição tem **um** tamanho de parâmetro no
+arquivo; operadores (com filhas) 5-7, 9-15; folhas em dois papéis que nunca se misturam — condição (0-4, 8, 18-20, 22,
+24, 25) e valor (16, 17, 21, 23, 26, 27, debaixo de aritmética/comparação). `trocar_tipo_da_condicao` só troca folha por
+folha do mesmo papel que já apareça no arquivo (o 1.2.6 só tem 0-8), com parâmetro zerado do tamanho visto.
+`trocar_tipo_da_operacao`/`acrescentar_operacao` aceitam só tipos que aparecem no arquivo, com o parâmetro zerado no
+tamanho de `tamanho_do_parametro` (respeitando `le_parametro_nesta_versao`; falas vazias com NUL) e, para
+rodar/parar/ativar gatilho, um id de gatilho da política (zero cairia em `GetTriggerPtr(-1)`); `remover_operacao`
+recusa a última do gatilho. Testado nos dois realms: trocar e voltar = arquivo idêntico; outra política igual.
 
 ### 3.5 `ptemplate.conf` (`ptemplate.rs`)
 

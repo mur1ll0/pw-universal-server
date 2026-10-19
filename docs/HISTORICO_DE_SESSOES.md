@@ -14772,3 +14772,35 @@ comparação lado a lado.
 
     ### e. Falta
     - Ver em jogo: opção nova no diálogo do NPC (cliente atualizado).
+
+271. **Sessão 2026-10-19: Estúdio S7, 18ª parte — tipos no `aipolicy`; S7 concluído.**
+
+    ### a. Pedido
+    "comite e conclua o S7" (B270 commitado: `436bbd5`, `a3955ad`). Este bloco fecha o que faltava.
+
+    ### b. Decisão e evidência
+    - Medido nos dois realms: um tamanho de parâmetro por tipo de condição; operadores 5-7 e 9-15; folhas de
+      **condição** (0-4, 8, 18-20, 22, 24, 25) e de **valor** (16, 17, 21, 23, 26, 27 — debaixo de aritmética/comparação),
+      sem mistura. Troca só entre folhas do mesmo papel e tipos que o próprio arquivo usa (o 1.2.6 só tem 0-8).
+    - Operação: tamanho do parâmetro pela tabela do leitor (`tamanho_do_parametro`, `le_parametro_nesta_versao`), falas
+      vazias com NUL (B261); rodar/parar/ativar gatilho exigem gatilho existente (zero → `GetTriggerPtr(-1)`).
+    - Fora do S7, por decisão: renomear gatilho (nome GBK, rótulo de editor), criar/remover operadores na árvore de
+      condições, criar gatilho do zero (duplicar + editar cobre).
+
+    ### c. O que foi feito
+    - `pw-data-loader/aipolicy`: `Trigger::operacoes_em`; tabelas de tamanho públicas. `aipolicy_editavel`: `catalogo`,
+      `trocar_tipo_da_condicao`, `trocar_tipo_da_operacao`, `acrescentar_operacao`, `remover_operacao`; testes
+      `medir_condicoes` e `trocar_tipos_e_operacoes`.
+    - `pw-recursos`: `tipos` na ficha; o `PUT` aceita as quatro chaves novas. Painel: seletores de tipo, "+ Operação",
+      "Remover".
+    - Docs: S7 marcado como concluído em `ESTUDIO_DO_PAINEL.md`; o que testar em jogo do S7 no ESTADO.
+
+    ### d. Provas
+    - Nos dois realms: folha e operação trocadas, operação de rodar gatilho acrescentada e removida, relido, outra
+      política igual, voltar = arquivo idêntico; papel errado, tipo ausente, gatilho inexistente, última operação
+      recusados.
+    - `pw-recursos` com o banco **22/22**; painel **11/11**; `pw-data-loader` **228/228** (B270 e B271 juntos);
+      `pw-gs` política **5/5**; `cargo check --workspace --tests` ok.
+
+    ### e. Falta
+    - Ver em jogo (lista no ESTADO); próximo do Estúdio: S5, S6 ou S8.

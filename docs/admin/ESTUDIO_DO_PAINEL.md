@@ -329,6 +329,13 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 >
 > **B270 (S7, 17ª parte):** diálogos — acrescentar opção (abre janela nova ou chama função), remover opção (com a
 > janela que ela abre) e criar a janela inicial. Falta do S7: tipo de condição/operação no `aipolicy`.
+>
+> **B271 (S7, 18ª parte — fim do S7):** comportamento — trocar o tipo de operação e de condição (folha, mesmo papel),
+> acrescentar e remover operação. **S7 concluído (B254-B271):** Loja Gold (ofertas e categorias), missões (navegar;
+> campos fixos, textos, listas, vetores, prêmio em itens, diálogos e sua estrutura; clonar e remover, com a árvore),
+> comportamento (navegar; flags e parâmetros, falas, duplicar/remover gatilho, tipos e operações) e textos do cliente.
+> O que ficou de fora, por decisão: renomear gatilho (nome GBK, só rótulo de editor), condição operador (criar/remover
+> nós da árvore) e criar gatilho do zero (duplicar e editar cobre o caso).
 
 | fase | entrega |
 | :--- | :--- |
@@ -338,7 +345,7 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 | S4 | Mapas: minimapa interativo, `npcgen` (NPCs, monstros, recursos), `region`/`precinct`, teleportes, `task_npc` |
 | S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas |
 | S6 | glTF e extensão do Blender |
-| S7 | Missões (§4.4); Loja Gold (§4.6); Comportamento (`aipolicy`); Textos |
+| S7 | Missões (§4.4); Loja Gold (§4.6); Comportamento (`aipolicy`); Textos — **concluído (B254-B271)** |
 | S8 | Habilidades: números e textos; depois `elementskill.dll` + efeitos no GS |
 
 ## 7. A levantar antes das fases

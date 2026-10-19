@@ -384,7 +384,11 @@ valores}}` grava (campo inexistente → 400; relê antes). A leitura usa o rascu
 gatilho" com as flags e os campos de cada operação/condição editável. **Estrutura (B261):** o mesmo `PUT` aceita
 `fala: {indice, texto}` (operações `Fala`, `Fala2`, `SkillComFala`), e por último `duplicar: {novo_id?}` (resposta
 `resultado.novo_gatilho`) ou `remover: true` — ver spec 03 §aipolicy. Painel: "Salvar fala" por fala, "Duplicar
-gatilho" e "Remover gatilho" (com confirmação).
+gatilho" e "Remover gatilho" (com confirmação). **Tipos (B271):** o `PUT` aceita ainda, aplicados antes das edições de
+valor, `tipo_da_condicao: {caminho, tipo}`, `tipo_da_operacao: {indice, tipo, id_gatilho?}`, `operacao_nova: {tipo,
+id_gatilho?}` e `remover_operacao: indice`; a ficha traz `tipos` (`condicoes: [[tipo, nome, é_valor]]`,
+`operacoes: [[tipo, nome]]`, só os que o arquivo usa). Painel: seletor de tipo por operação e por folha de condição,
+"+ Operação" e "Remover".
 
 **Textos do cliente (B260, S7):** `pw-recursos/src/textos.rs` lê e grava `configs\fixed_msg.txt`, `item_desc.txt` e
 `item_ext_desc.txt` — o cliente os carrega em `CECGame::Init` (`EC_Game.cpp:517-525`) por
@@ -469,7 +473,8 @@ janela nova publicada (B270); nível mín. 5, exp 999 e nome novo na 1173 → vi
 publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos, com a descrição longa nova
 (B262). Comportamento (B258): 293
 políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id
-inexistente → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
+inexistente → 400. Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
+não usa → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
 "só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
 gatilho duplicado (id novo na resposta) e o original removido, publicados — o realm tem a mesma quantidade de
 gatilhos, a cópia no lugar do original e a fala nova; operação inexistente → 400. Textos (B260): indexada com 2 e
