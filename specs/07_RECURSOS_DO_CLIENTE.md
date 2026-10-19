@@ -97,9 +97,39 @@ Tela (B235; Win32 no B275, versões numa caixa de seleção em vez de abas): ao 
 | :--- | :--- |
 | sem pasta / pasta sumiu / pasta sem o jogo | **Baixar o jogo** (janela de pastas do Windows; instala na escolhida se estiver vazia, senão em `PW Universal <versao>` dentro dela) e **Já tenho instalado** (escolhe a pasta `element`, ou a pasta acima dela; adota: grava manifesto e estado e repara o que divergir — `cliente::adotar`) |
 | download interrompido | **Continuar download** (retoma) e escolher outra pasta |
-| instalado | **Jogar** (ou **Atualizar** + "Jogar assim mesmo" quando o servidor tem versão nova), **Verificar arquivos**, **Abrir pasta** (Explorer), **Trocar pasta** |
+| instalado | **Jogar** (ou **Atualizar** + "Jogar assim mesmo" quando o servidor tem versão nova), **Verificar arquivos**, **Abrir pasta** (Explorer), **Trocar pasta**; no alto, **Opções do jogo…** |
 
-O endereço do servidor fica em "Configurações" (recolhido).
+O endereço do servidor fica no rodapé ("Servidor de atualização" + "Salvar e reconectar"); sem esquema
+vira `http://` (`192.168.1.13:8100` → `http://192.168.1.13:8100`).
+
+**Endereço do jogo pelo servidor de atualização (B278).** Os serviços do pw-universal rodam na mesma
+máquina; por isso o host do servidor de atualização é também o do jogo. Na `serverlist.txt` publicada os
+servidores nossos apontam para `127.0.0.1`, que quer dizer "a máquina do servidor de atualização". O
+launcher (`tools/pw-launcher/src/local.rs`) troca, em `userdata\server\serverlist.txt` (UTF-16LE com BOM;
+linha `nome<TAB>portas:endereço[:linha][<TAB>zona]`, `EC_ServerList.cpp:75-160`) e no
+`CurrentServerAddress=porta:ip` do `userdata\currentserver.ini` (`EC_ServerList.cpp:497-536`), o endereço
+que for `127.0.0.1`/`localhost` ou um host que ele mesmo pôs antes (`hosts_jogo` no `pw-launcher.json`)
+pelo host atual. Linhas com outro endereço (servidores de terceiros) ficam. Quando: depois de
+instalar/atualizar/adotar/reparar, antes de **Jogar** e ao salvar o servidor (em todas as versões com
+pasta). Mudou o IP: trocar o servidor de atualização no launcher basta.
+
+**Opções do jogo (B278).** Janela com modo (janela/tela cheia), resolução (as da placa acima de 400x400,
+`DlgSettingSystem.cpp:290-293`, mais a atual), widescreen (só a partir de 800x600,
+`DlgSettingSystem.cpp:483-494`), qualidade 0–4 e volumes de som e música 0–100 (faixas do
+`setting_system.dtf:33,42-43`). Grava em `userdata\systemsettings.ini` as chaves que o cliente lê
+(`EC_Configs.cpp:403-431`; padrões quando faltam: 800x600, tela cheia, sem widescreen, `Level` 0, volumes
+50): `RenderWid`, `RenderHei`, `FullScreen`, `WideScreen`, `SoundVol`, `MusicVol` e, com o `Level`, as
+chaves que o diálogo do cliente muda junto (`DlgSettingSystem.cpp:326-440`: `Sight`, `WaterEffect`,
+`SimpleTerrain`, `Tree/Grass/CloudDetail`, `Shadow`, `MipMapBias`, `FullGlow`, `SpaceWarp`, `SunFlare`,
+`AdvancedWaterUD`, supondo a placa capaz). O resto do arquivo é preservado. O 1.2.6 grava as mesmas chaves
+(arquivo dele conferido; sem `ScaleUI`).
+
+**Arquivos do jogador (B278, `pw_atualizador::cliente::do_jogador`).** Tudo sob `userdata\` é do
+jogador: o próprio cliente reescreve opções, servidor escolhido e layout por personagem, e o launcher
+ajusta a `serverlist.txt`. **Verificar/Reparar** só repõem o que faltar (conteúdo diferente não é
+estrago). **Atualizar** troca um arquivo do jogador só se ele ainda for o da versão antiga (e só apaga
+nessa condição); a `serverlist.txt` é exceção (`segue_o_servidor`): segue sempre o servidor, e o launcher
+reaplica o endereço depois.
 
 Na pasta do cliente (`element`), o launcher guarda só `.pw-atualizacao/`: `estado.json` (versão do
 cliente, número aplicado ou `null` durante a instalação, pacotes já extraídos), `manifesto.json` (o
@@ -451,7 +481,15 @@ triângulos, ou `erro`), e o GLB junta as peles (com as texturas de cada uma) e 
 **Ações (B276):** a ficha do `.smd` traz `lista_de_acoes` (`nome`, `inicio_ms`, `fim_ms`, `stck`) e
 `acoes_descartadas`; `GET estudio/modelos/glb?caminho&acao=<nome>` traz a animação dessa ação (trilhas do `.bon` v5 ou
 o `.stck`; ação inexistente ou descartada → 400). Painel: seletor de ação na ficha; o visualizador toca a animação em
-laço, com a pele deformada na CPU a cada quadro.
+laço, com a pele deformada na CPU a cada quadro. **Diagnóstico (B277):** a lista traz também os `.ecm` (primeiro); a
+ficha do `.ecm` traz o `.smd`, as ações combinadas (com as ações-base ausentes no `.smd`) e `diagnostico_de_monstro`:
+para cada nome pedido (tabela `configs\actions_npc.txt` **do próprio cliente da versão** + `起`/`落`), `ok`, "sem ação
+combinada no .ecm", "só existe como ação-base no .smd" (o motor 1.5.5 só toca combinadas, `EC_Model.h:577-583`),
+"ação combinada sem ação-base (não anima)" ou "ação-base ausente no .smd" (spec 03 §3.10d). Medido em 40 monstros por
+realm: no 1.2.6 a única falta é `受伤叠加`, presente só como ação-base (o caso que o comentário de
+`EC_NPCModel.cpp:693-697` descreve); no 1.5.5, 38/40 sem ferido e um modelo (`白虎boss`) sem guarda, movimento e
+ataques combinados.
+Painel: tabela do diagnóstico e o link para abrir o `.smd` e tocar as ações.
 
 ## 7. Testes
 
@@ -492,7 +530,8 @@ inexistente → 400. Modelos (B272): um `.ski` sintético (com `MOXB`) aparece n
 textura, material e 1 triângulo, o GLB tem cabeçalho e tamanho certos; caminho que não é `.ski` → 400; a textura DXT1 na pasta `textures` (minúscula) é achada e vai no GLB como PNG
 ligada ao material (B273); um `.smd` sintético com `.bon` de um osso vem primeiro na lista, a ficha traz o osso e a
 pele, e o GLB tem `skin` com 2 juntas (o osso e o esqueleto) e pesos (B274); sem ações na ficha, e pedir uma → 400
-(B276). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
+(B276); um `.ecm` sintético vem primeiro e o diagnóstico acerta os três casos — combinada sem base, base ausente no
+`.smd`, combinada que falta (B277). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
 não usa → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
 "só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
 gatilho duplicado (id novo na resposta) e o original removido, publicados — o realm tem a mesma quantidade de

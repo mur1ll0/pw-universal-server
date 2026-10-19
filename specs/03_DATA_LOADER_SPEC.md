@@ -678,6 +678,19 @@ animação glTF por ação — canais de translação `(x, y, −z)` e rotação
 Testado em 40 modelos (20 v5, 20 v6): no meio da 1ª ação a malha deformada mantém a escala da de repouso (nenhum
 fora de 0,5–2×) — convenção errada a faria "explodir".
 
+**`.ecm` e diagnóstico de ações (B277, `ecm.rs`):** o `.ecm` é texto (`MOXT`, GBK): `Version`, `SkinModelPath` (o
+`.smd`), e as ações combinadas — o que o cliente toca pelo nome (`CECModel::PlayActionByName` → `GetComActByName`,
+`EC_Model.cpp:3075-3085`) —, cada uma com `CombineActName` e as ações-base do `.smd` (`BaseActName`,
+`A3DCombinedAction::Load`, `A3DCombinedAction.cpp:142-…`). Lido por chave de linha (os campos entre elas variam com a
+versão). Combinada sem ação-base não anima. Medido no 1.5.5 BR: 8.499 `.ecm` leem; 157.808 de 158.056 ações-base
+citadas (99,8%) existem no `.smd`. Nomes pedidos a um monstro (`GetActionName`, `EC_NPCModel.cpp:599-620`): a tabela
+`Configs\actions_npc.txt` (`CECStringTab`, GBK sequencial; índices do enum de `EC_NPC.h:94-120`), só as que o código de
+NPC toca: de pé, ócio, guarda, andar, ataques 1 e 2 com `起`/`落` (`IsAttackAction`, `EC_NPC.cpp:1282`), correr, morrer e
+ferido — este com alternativa: o motor tenta `受伤叠加` e, sem a combinada, `受伤` (`ACT_WOUNDED2`,
+`EC_NPCModel.cpp:692-702`). `ACT_SKILL1`/`ACT_MAGIC1` (mapeados a −1, `:901-910`) e os pulos (só modelo de jogador) não
+são pedidos — a 1ª versão do diagnóstico os pedia e acusava 6 faltas em **todos** os 40 monstros medidos por realm, o
+que mostrou a regra errada. Mascote (`_地面`/`_水中`/`_空中`) e habilidade (nome nativo) não tratados.
+
 ### 3.11 `global_api.lua`
 
 Primeira linha `--<N>` = `lua_version` do `SERVER_TIME`. 1.5.5: **102**; divergência faz o

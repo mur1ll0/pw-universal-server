@@ -14960,9 +14960,86 @@ comparação lado a lado.
     - `bon::testes`: **9.849/9.849** `.bon` (v5 e v6); `smd::testes`: 5.163 com ações; `stck::testes`: **73.818**
       `.stck`; `glb::testes::modelos_animados`: 40 modelos, nenhum fora da escala.
     - `pw-recursos` com o banco **22/22**; `pw-data-loader` **237/237**. No contêiner: 25/25 modelos de `npcs` do 1.5.5 animados; no 1.2.6, 34 de 40
-      `.smd` são v5 **sem ações** no `.smd` (devem estar no `.ecm` — próxima parte) e os 6 com ações animam. No
+      `.smd` da amostra são v5 **sem ações** e os 6 com ações animam. **Corrigido no B277:** os sem ações são objetos
+      parados (p.ex. `安魂塔`, cujo `.ecm` v14 tem as ações combinadas com `BaseActCount: 0` — o próprio jogo não os
+      anima); os **40 monstros** (`怪物`) medidos no 1.2.6 têm ações no `.smd`. No
       navegador, um NPC real do 1.5.5 (`祝融灵祭`, ação 休闲, 5,7 s, 86 canais) toca: 1,40 m em repouso, pose coerente, o
       braço muda de posição entre duas capturas.
 
     ### e. Falta
-    - Ações do `.ecm` (o 1.2.6 depende disso) e o diagnóstico das ações que o cliente pede; Mascotes, Voo, Minas.
+    - Ações do `.ecm` e o diagnóstico das ações que o cliente pede; Mascotes, Voo, Minas.
+
+277. **Sessão 2026-10-19: Estúdio S5, quinta parte — `.ecm` e diagnóstico de ações.**
+
+    ### a. Pedido
+    Commitar o B276 (já commitado: `17104cd`, `a6c56a9`) e seguir.
+
+    ### b. Decisão e evidência
+    - Correção do B276: a hipótese "as ações do 1.2.6 estão no `.ecm`" estava errada — os 40 monstros (`怪物`) do
+      1.2.6 têm ações no `.smd`; os sem ação eram objetos parados (o `.ecm` de `安魂塔` tem as combinadas com
+      `BaseActCount: 0`).
+    - O cliente toca a ação **combinada** do `.ecm` pelo nome (`PlayActionByName` → `GetComActByName`); ela aponta para
+      ações-base do `.smd`. Nomes pedidos a monstro: `actions_npc.txt` (`CECStringTab`) + `起`/`落` nos ataques
+      (`GetActionName`, `IsAttackAction`). A tabela vem do cliente de cada versão.
+    - `.ecm` lido por chave de linha; medido: 8.499 leem, 99,8% das ações-base citadas existem no `.smd`.
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `ecm.rs` (`ler`, `tabela_de_nomes`, `pedidos_de_monstro`).
+    - `pw-recursos`: `.ecm` na lista e ficha com combinadas e `diagnostico_de_monstro`.
+    - Painel: ficha do `.ecm` com a tabela do diagnóstico e o link para o `.smd`.
+
+    ### d. Provas
+    - `ecm::testes`: 8.499 `.ecm`, 157.808/158.056 ações-base no `.smd`; a tabela e os nomes com `起`/`落`.
+    - `pw-recursos` com o banco **22/22** (`.ecm` sintético: os três casos do diagnóstico); `pw-data-loader`
+      **239/239**; `cargo check --workspace --tests` ok.
+    - **Regra corrigida pela medida:** a 1ª versão pedia toda a seção de monstro da tabela e acusava as mesmas 6 faltas
+      (技能1, 跳跃起/落/循环, 魔攻1, 受伤叠加) em **todos** os 40 monstros de cada realm — sinal de regra errada. O fonte:
+      `ACT_SKILL1`/`ACT_MAGIC1` mapeiam a −1 (`EC_NPCModel.cpp:901-910`), pulo só em modelo de jogador, ferido tem a
+      alternativa `受伤` (`:692-702`). Depois da correção: 1.2.6 — só `受伤叠加`, e ele existe como ação-base no `.smd`
+      (o caso do comentário `:693-697`); 1.5.5 — 38/40 sem ferido, e `白虎boss` sem guarda, movimento e ataques.
+
+    ### e. Falta
+    - Habilidades (nome nativo) e mascotes (`_地面`…); ligar à ficha do monstro (`file_model`); corrigir ação faltante.
+
+278. **Sessão 2026-10-19: launcher — endereço do jogo pelo servidor de atualização e opções de vídeo/som.**
+
+    ### a. Pedido
+    O Murillo instalou pelo notebook (servidor no PC de mesa, `192.168.1.13`) e o jogo não abria: a
+    `serverlist.txt` aponta `127.0.0.1`. Pediu que o IP do servidor de atualização sirva também para o jogo
+    (mudar o IP num lugar só) e uma forma de configurar janela/tela cheia, widescreen, resolução, qualidade e
+    volume pelo launcher.
+
+    ### b. Evidência
+    - `serverlist.txt`: UTF-16LE com BOM (o `a_fgetc` pula), `nome<TAB>portas:endereço[:linha][<TAB>zona][<TAB>&1|&2]`,
+      linha sem tabulação é grupo (`EC_ServerList.cpp:75-160`). `currentserver.ini`: `CurrentServerAddress=porta:ip`
+      lido/gravado por `GetPrivateProfileString`/`WritePrivateProfileString` (`EC_ServerList.cpp:497-536`).
+    - `systemsettings.ini`: chaves e padrões em `CECConfigs::LoadSystemSettings` (`EC_Configs.cpp:403-431`); o
+      preset do `Level` em `CDlgSettingSystem::OnCommandTotal` (`DlgSettingSystem.cpp:326-440`); resoluções >400x400
+      (`:290-293`); widescreen só ≥800x600 (`:483-494`); faixas no `setting_system.dtf:33,42-43` (qualidade 4 passos,
+      música e som 100). O 1.2.6 grava as mesmas chaves (arquivo dele, sem `ScaleUI`).
+    - Os três arquivos estão no manifesto publicado (com todo o `userdata` da máquina de origem): o "Verificar"
+      repunha a versão publicada, desfazendo endereço e opções.
+
+    ### c. O que foi feito
+    - `pw-atualizador`: `do_jogador` (tudo sob `userdata\`) — verificar/reparar só repõem o que falta; atualizar
+      só troca/apaga arquivo do jogador se ele ainda for o da versão antiga; `segue_o_servidor` (a `serverlist.txt`
+      sempre segue o servidor; o launcher reaplica o endereço).
+    - `tools/pw-launcher/src/local.rs`: host da URL, troca do endereço (só `127.0.0.1`/`localhost` e hosts postos
+      antes, guardados em `hosts_jogo` no `pw-launcher.json`), ler/gravar opções preservando o resto do arquivo.
+      `main.rs`: URL sem esquema vira `http://`; endereço aplicado depois de instalar/atualizar/adotar/reparar, antes
+      de Jogar e ao salvar o servidor (todas as versões com pasta). `opcoes.rs`: janela "Opções do jogo".
+
+    ### d. Provas
+    - `cargo test` do launcher: 4/4 (`local.rs`: as duas listas reais, troca de IP, ida e volta das opções).
+    - `pw-atualizador` + `pw-recursos` com o banco: **29 passaram, 0 falharam**.
+    - Exe win7 64 e 32 bits: imports só de DLLs/funções do Windows 7.
+    - Na cópia do `userdata` do 1.5.5: salvar `192.168.1.13:8100` → `29003:192.168.1.13`, `29004:192.168.1.13`,
+      `CurrentServerAddress=29004:192.168.1.13`, BOM `FF FE`, URL gravada `http://192.168.1.13:8100`; depois
+      `http://26.38.197.69:8100/` → as duas linhas e o `currentserver.ini` com `26.38.197.69`.
+
+    ### e. Falta
+    - Ver a janela de opções na tela e o notebook conectar (o `pw-recursos` estava sendo recriado).
+    - Sem o servidor de atualização o launcher não lista versões (nem Jogar nem Opções); usar as pastas
+      conhecidas quando ele estiver fora fica para depois.
+    - O manifesto publicado traz o `userdata` pessoal da máquina de origem (`accounts.txt`, `GMLog`, `Layout`,
+      `character`): excluir no import.

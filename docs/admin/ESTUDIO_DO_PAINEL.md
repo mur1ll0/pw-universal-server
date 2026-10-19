@@ -353,6 +353,11 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B276 (S5, 4ª parte):** trilhas (`.bon` v5 e `.stck`) e ações do `.smd`; o visualizador toca a ação escolhida. O 1.2.6
 > (todo em `.bon` v5) passa a ter esqueleto e animação. Falta do S5: ações do `.ecm` e o diagnóstico ("o monstro não
 > ataca" = falta a ação pedida); Mascotes, Voo, Minas.
+>
+> **B277 (S5, 5ª parte):** o `.ecm` (o modelo do jogo) e o diagnóstico de monstro — cada ação que o cliente pede,
+> conferida contra as ações combinadas e as ações-base do `.smd`. Falta do S5: nomes de habilidade e de mascote
+> (`_地面`…), ligar o diagnóstico à ficha do monstro (`MONSTER_ESSENCE.file_model`), corrigir uma ação faltante
+> (ligar/copiar/importar); Mascotes, Voo, Minas.
 
 | fase | entrega |
 | :--- | :--- |
@@ -360,7 +365,7 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 | S2 | escritor do `elements` (v7 e v156) + telas de Armas, Armaduras, Consumíveis, Monstros (drops) + índice de referências |
 | S3 | NPCs, Serviços (30 tipos) e Conversa (`TALK_PROC`); Receitas |
 | S4 | Mapas: minimapa interativo, `npcgen` (NPCs, monstros, recursos), `region`/`precinct`, teleportes, `task_npc` |
-| S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas — **em andamento** (B272: `.ski` → GLB, visualizador; B273: texturas; B274: esqueleto e modelo `.smd`; B276: trilhas, ações e animação) |
+| S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas — **em andamento** (B272: `.ski` → GLB, visualizador; B273: texturas; B274: esqueleto e modelo `.smd`; B276: trilhas, ações e animação; B277: `.ecm` e diagnóstico) |
 | S6 | glTF e extensão do Blender |
 | S7 | Missões (§4.4); Loja Gold (§4.6); Comportamento (`aipolicy`); Textos — **concluído (B254-B271)** |
 | S8 | Habilidades: números e textos; depois `elementskill.dll` + efeitos no GS |
