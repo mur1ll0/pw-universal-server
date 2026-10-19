@@ -14694,3 +14694,31 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: pôr o clone no serviço de um NPC, publicar, reiniciar e aceitá-lo.
     - Remover missão (checar citações no `elements`, `task_npc` e entre missões); clonar com submissões.
+
+268. **Sessão 2026-10-19: Estúdio S7, 15ª parte — remover missão.**
+
+    ### a. Pedido
+    Commitar o B267 (feito: `d8466ae`, `4f71d6d`) e seguir.
+
+    ### b. Decisão e evidência
+    - Remover só missão de topo, com a árvore (a submissão é parte da mãe). Bytes cortados e a entrada da tabela
+      retirada; deslocamentos corrigidos.
+    - Recusar se citada: no `tasks.data` (pré-missão, exclusiva, missão seguinte do prêmio, membro de equipe) e no
+      `elements` — campos com "task" no nome, levantados no layout v156 (`id_tasks_N` dos serviços de NPC,
+      `tasks_N_id_task` do serviço de item, `task_lists_N_id` do TASKDICE, `list_N_task_id` do AUTOTASK_DISPLAY,
+      `task_N` do WIKI_TABOO), com a regra larga: falso positivo só recusa.
+
+    ### c. O que foi feito
+    - `pw-data-loader/tasks_editavel`: `citacoes_da_missao`, `remover_missao_valida`, `remover_missao`.
+    - `pw-recursos`: `campo_de_missao`, `citantes_de_missao`, `Estudio::remover_missao`; rota `DELETE`.
+    - Painel: proxy e "Remover missão".
+
+    ### d. Provas
+    - `tasks_editavel::testes` nos dois realms: clonar + remover = arquivo idêntico; citada e submissão recusadas; uma
+      de topo com filhas sai com a árvore e as outras ficam iguais.
+    - `pw-recursos` com o banco **22/22**: citada → 400; o clone sai e volta com o mesmo id. Painel **11/11**.
+    - `pw-data-loader` **223/223**; `cargo check --workspace --tests` ok.
+
+    ### e. Falta
+    - Ver em jogo: missão removida some do NPC (sem citação no elements, ela já não era oferecida).
+    - Clonar com submissões; criar/remover janela ou opção; tipo de condição/operação no `aipolicy`.

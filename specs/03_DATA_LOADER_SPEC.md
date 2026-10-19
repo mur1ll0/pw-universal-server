@@ -185,8 +185,13 @@ dados — o único deslocamento que bate em todas as missões: v129 1131/1135/11
 `clonar_missao` copia uma missão de topo **sem submissões** para o fim do arquivo, troca o id, recifra esses textos com
 XOR `antigo ^ novo`, zera o parentesco e acrescenta a entrada na tabela (todos os deslocamentos +4). Id novo ≤ 65535:
 o cliente guarda o id de missão em `unsigned short` (`TaskProcess.h:115`, `:273-275`). Testado nos dois realms: o
-clone tem a ficha, os textos e os diálogos da origem com o id novo; a origem e as outras não mudam. Remover missão,
-clonar com submissões e criar/remover janela ou opção continuam sem gravador.
+clone tem a ficha, os textos e os diálogos da origem com o id novo; a origem e as outras não mudam. **Remover
+(B268):** `remover_missao` tira uma missão de topo e a árvore dela (bytes cortados, entrada da tabela retirada, −4 em
+todos os deslocamentos e −tamanho nos que vinham depois); recusa submissão e missão citada por outra fora da árvore
+(`citacoes_da_missao`: pré-missão, exclusiva, missão seguinte do prêmio de sucesso ou falha, membro de equipe). As
+citações no `elements` são conferidas no `pw-recursos`. Testado nos dois realms: clonar + remover o clone = arquivo
+idêntico; uma de topo com filhas, não citada, sai com a árvore e as outras ficam iguais. Clonar com submissões e
+criar/remover janela ou opção continuam sem gravador.
 
 ### 3.2b `dyn_tasks.data` — missões dinâmicas (`dyn_tasks.rs`)
 
