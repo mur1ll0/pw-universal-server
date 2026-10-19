@@ -177,8 +177,16 @@ caracteres — `convert_talk_text` `:637-653`). Fecha: nas missões de topo sem 
 de filhas e a próxima missão (conferido nos dois realms). Medido: `talk_text_len` **conta o NUL** em todas as janelas
 (12.502 no 1.2.6, 33.124 no 1.5.5); os `text[64]` vêm zerados depois do NUL em ~97% (resíduo em 1.976/56.304 e
 2.511/200.965). `definir_texto_do_dialogo` troca título, texto de janela (tamanho variável, NUL incluído, tabela de
-deslocamentos corrigida) ou opção (até 63 caracteres, resto zerado). Criar/remover missão, janela ou opção e os demais
-vetores continuam sem gravador.
+deslocamentos corrigida) ou opção (até 63 caracteres, resto zerado). **Clonar missão (B267):** parentesco no bloco
+fixo (`m_ulParent`, `m_ulPrevSibling`, `m_ulNextSibling`, `m_ulFirstChild`, `TaskTempl.h:2461-2464`) localizado nos
+dados — o único deslocamento que bate em todas as missões: v129 1131/1135/1139/1143 (a mãe confere com `f::PAI`), v55
+518/522/526/530 (`tasks_editavel::parentesco`). Os textos cifrados com o id são só nome (`wchar[30]`), assinatura (se
+`+64`), os quatro textos longos e os cinco diálogos (os únicos `convert_txt`/`convert_talk_text` de `TaskTempl.cpp`).
+`clonar_missao` copia uma missão de topo **sem submissões** para o fim do arquivo, troca o id, recifra esses textos com
+XOR `antigo ^ novo`, zera o parentesco e acrescenta a entrada na tabela (todos os deslocamentos +4). Id novo ≤ 65535:
+o cliente guarda o id de missão em `unsigned short` (`TaskProcess.h:115`, `:273-275`). Testado nos dois realms: o
+clone tem a ficha, os textos e os diálogos da origem com o id novo; a origem e as outras não mudam. Remover missão,
+clonar com submissões e criar/remover janela ou opção continuam sem gravador.
 
 ### 3.2b `dyn_tasks.data` — missões dinâmicas (`dyn_tasks.rs`)
 

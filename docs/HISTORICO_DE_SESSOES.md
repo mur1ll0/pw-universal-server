@@ -14662,3 +14662,35 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: falar com o NPC da 1173 e ver o título novo (cliente atualizado).
     - Criar/remover missão, janela ou opção; tipo de condição/operação no `aipolicy`.
+
+267. **Sessão 2026-10-19: Estúdio S7, 14ª parte — clonar missão.**
+
+    ### a. Pedido
+    Commitar o B266 (feito: `872b492`, `c03acdc`) e seguir.
+
+    ### b. Decisão e evidência
+    - Os únicos textos cifrados com o id (`convert_txt`/`convert_talk_text` em `TaskTempl.cpp`): nome (`:3842`),
+      assinatura (`:3881`), quatro textos longos (`:4827-4895`), cinco diálogos (`:4739-4751`). Trocar o id = XOR com
+      `antigo ^ novo` nessas faixas.
+    - Parentesco (`TaskTempl.h:2461-2464`) localizado nos dados: v129 1131/1135/1139/1143 (controle: `f::PAI` = 1131),
+      v55 518/522/526/530 — único deslocamento que bate em 5.175 (1.2.6) / 16.952 (1.5.5) mães.
+    - Id ≤ 65535: `unsigned short` na missão ativa e na lista de concluídas (`TaskProcess.h:115`, `:273-275`).
+    - Escopo: missão de topo sem submissões (clonar árvore exige renumerar e religar filhas).
+
+    ### c. O que foi feito
+    - `pw-data-loader/tasks_editavel`: `parentesco`, `MAIOR_ID_DE_MISSAO`, `TasksEditavel::clonar_missao`; testes
+      `medir_parentesco` e `clonar_missao_de_topo`.
+    - `pw-recursos`: `POST estudio/missoes/{id}/clonar`.
+    - Painel: proxy (id 1..65535) e "Clonar missão" na ficha, com o aviso do serviço do NPC.
+    - Corrigido no caminho: um `"data\tasks.data"` (tabulação) gerado por heredoc — virou `"data\\tasks.data"`.
+
+    ### d. Provas
+    - `tasks_editavel::testes` nos dois realms: clone com a ficha, textos e diálogos da origem; origem e outras iguais;
+      id existente, > 65535 e com submissões recusados.
+    - `pw-recursos` com o banco **22/22**: 1173 (com submissões) → 400; clone publicado (7.995 missões) com o nome da
+      origem. Painel **11/11**.
+    - `pw-data-loader` **222/222**; `cargo check --workspace --tests` ok.
+
+    ### e. Falta
+    - Ver em jogo: pôr o clone no serviço de um NPC, publicar, reiniciar e aceitá-lo.
+    - Remover missão (checar citações no `elements`, `task_npc` e entre missões); clonar com submissões.

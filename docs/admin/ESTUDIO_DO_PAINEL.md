@@ -317,6 +317,9 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 >
 > **B266 (S7, 13ª parte):** missões — os cinco diálogos (título, texto das janelas e das opções). Falta do S7:
 > criar/remover missão, janela ou opção; tipo de condição/operação no `aipolicy`.
+>
+> **B267 (S7, 14ª parte):** clonar missão de topo sem submissões (id novo até 65535; textos recifrados). Falta do S7:
+> remover missão, clonar com submissões, criar/remover janela ou opção; tipo de condição/operação no `aipolicy`.
 
 | fase | entrega |
 | :--- | :--- |

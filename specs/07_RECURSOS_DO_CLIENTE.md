@@ -422,7 +422,10 @@ traz `grupos_do_premio` (tetos) e `campos` aceita `premio_grupos` e `falha_grupo
 Painel: editor de grupos ("sorteia um", itens com id, quantidade e peso). **Diálogos (B266):** a ficha traz
 `dialogos` (os cinco, com `nome`, `id_talk`, `texto`, `janelas[{id, pai, texto, opcoes[{id, texto, param}]}]`) e
 `campos.dialogos = [{dialogo, janela?, opcao?, texto}]` troca título, janela ou opção. Painel: um bloco recolhível por
-diálogo, com título, texto de cada janela e de cada opção.
+diálogo, com título, texto de cada janela e de cada opção. **Clonar (B267):** `POST
+estudio/missoes/{id}/clonar?rascunho {novo?}` (padrão: maior id + 1) → `resultado.id`; só missão de topo sem
+submissões. A missão nova não é oferecida em jogo até entrar no `NPC_TASK_OUT_SERVICE` de um NPC (Tabelas). Painel:
+"Clonar missão" na ficha (proxy recusa id fora de 1..65535).
 
 ## 7. Testes
 
@@ -452,7 +455,8 @@ falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668
 `GShopData` do GS lê o preço novo. `gshop_editavel::testes` (os 4 arquivos dos realms idênticos). Missões (B255): o
 `tasks.data` real do 1.2.6 — 7.994 missões, 2.819 de topo, a 1173 com o NPC 3517 nomeado; id inexistente → 400. Editar
 (B256): campo inexistente → 400; a ficha traz `textos` (B262) e `listas` (B263); pré-missão inexistente → 400;
-pré-missão 1174 publicada (B263); 4 monstros → 400 e item entregue publicado (B264); prêmio em item publicado (B265); 5 diálogos na ficha, título de 64 → 400, título publicado (B266); nível mín. 5, exp 999 e nome novo na 1173 → visíveis no rascunho, o publicado não muda;
+pré-missão 1174 publicada (B263); 4 monstros → 400 e item entregue publicado (B264); prêmio em item publicado (B265); 5 diálogos na ficha, título de 64 → 400, título publicado (B266); clonar com id > 65535 ou com submissões → 400,
+clone de uma missão de topo publicado (7.995 missões) com o nome da origem (B267); nível mín. 5, exp 999 e nome novo na 1173 → visíveis no rascunho, o publicado não muda;
 publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos, com a descrição longa nova
 (B262). Comportamento (B258): 293
 políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id
