@@ -278,7 +278,7 @@ impl TipoDeOperacao {
 /// devolvem o `sizeof` da struct C++, que **não** é quanto se lê do arquivo — eles têm
 /// leitor próprio e nunca chegam ao caminho genérico. O que importa deles aqui é só não
 /// ser zero, que é o que faz o original entrar no `switch` em vez de pular o parâmetro.
-fn tamanho_do_parametro(tipo: i32, versao: u32) -> Option<usize> {
+pub fn tamanho_do_parametro(tipo: i32, versao: u32) -> Option<usize> {
     Some(match tipo {
         14 if versao < 1 => 4,    // O_ACTIVE_CONTROLLER sem bStop
         15 if versao < 4 => 8,    // O_SET_GLOBAL_VERSION3
@@ -407,7 +407,7 @@ impl TipoDeAlvo {
 ///
 /// Recebe o tipo cru porque 17 a 20 não têm nome no fonte e mesmo assim ocupam bytes —
 /// ignorá-los desalinharia o arquivo inteiro.
-fn tamanho_do_parametro_de_alvo(tipo_cru: i32) -> usize {
+pub fn tamanho_do_parametro_de_alvo(tipo_cru: i32) -> usize {
     match tipo_cru {
         6 | 14 | 15 | 16 => 4,
         18 => 12,
@@ -659,6 +659,9 @@ pub struct Trigger {
     /// Onde o gatilho termina (B261): o próximo começa aqui. `em..fim` é o gatilho inteiro.
     #[serde(skip)]
     pub fim: usize,
+    /// Onde fica a quantidade de operações (B271), logo depois da árvore de condições.
+    #[serde(skip)]
+    pub operacoes_em: usize,
     /// A versão gravada no próprio trigger, que decide o formato dos parâmetros.
     pub versao: u32,
     pub id: u32,
@@ -855,6 +858,7 @@ impl AiPolicyData {
 
         let condicao = Self::ler_arvore_de_condicoes(l, 0)?;
 
+        let operacoes_em = l.pos;
         let quantidade = l.i32()?;
         if !(0..=100_000).contains(&quantidade) {
             return Err(AiPolicyError::ContagemAbsurda { campo: "operações", valor: quantidade });
@@ -904,7 +908,7 @@ impl AiPolicyData {
             });
         }
 
-        Ok(Trigger { em, fim: l.pos, versao, id, ativo, rodando, so_em_combate, nome, condicao, operacoes })
+        Ok(Trigger { em, fim: l.pos, operacoes_em, versao, id, ativo, rodando, so_em_combate, nome, condicao, operacoes })
     }
 
     /// O `switch` que decide se `ReadOperationParam` é chamado, por versão de trigger.
@@ -912,7 +916,7 @@ impl AiPolicyData {
     /// - versões 0 e 1: só os nove tipos até `o_active_controller`;
     /// - versões 2 e 3: os mesmos nove mais `o_set_global` e `o_revise_global`;
     /// - versão >= 4: todos (o `switch` some, `ReadOperationParam` é chamado direto).
-    fn le_parametro_nesta_versao(tipo_cru: i32, versao: u32) -> bool {
+    pub fn le_parametro_nesta_versao(tipo_cru: i32, versao: u32) -> bool {
         if versao >= 4 {
             return true;
         }

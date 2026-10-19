@@ -708,6 +708,13 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
             assert!(dup["resultado"]["novo_gatilho"].as_u64().is_some(), "{dup}");
             assert_eq!(erro_de(pedir("PUT", &rota).send_json(json!({"gatilho": ti, "fala": {"indice": 999, "texto": "x"}}))).0, 400);
             pedir("PUT", &rota).send_json(json!({"gatilho": ti, "remover": true})).unwrap();
+            // B271: operação nova (atacar) e removida; tipo inexistente no arquivo → 400.
+            let ficha = json_de(pedir("GET", &rota).call().unwrap());
+            assert!(ficha["tipos"]["operacoes"].as_array().unwrap().iter().any(|t| t[0] == 0), "B271: catálogo");
+            pedir("PUT", &rota).send_json(json!({"gatilho": ti, "operacao_nova": {"tipo": 0}})).unwrap();
+            let nops = json_de(pedir("GET", &rota).call().unwrap())["politica"]["triggers"][ti]["operacoes"].as_array().unwrap().len();
+            pedir("PUT", &rota).send_json(json!({"gatilho": ti, "remover_operacao": nops - 1})).unwrap();
+            assert_eq!(erro_de(pedir("PUT", &rota).send_json(json!({"gatilho": ti, "operacao_nova": {"tipo": 9999}}))).0, 400);
             let p15 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r15]})).unwrap());
             assert_eq!(p15["aplicados"].as_array().unwrap().len(), 1, "{p15}");
             let d = pw_data_loader::aipolicy::AiPolicyData::load_from_bytes(&fs::read(realm2.join("aipolicy.data")).unwrap()).unwrap();

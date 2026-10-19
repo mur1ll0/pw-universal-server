@@ -81,13 +81,13 @@ async function abrirComportamento(id) {
     }
     faz.appendChild(ol);
     fs.appendChild(faz);
-    fs.appendChild(editorDoGatilho(pol, t, ti, (r.editaveis || [])[ti] || { condicoes: {}, operacoes: {} }));
+    fs.appendChild(editorDoGatilho(pol, t, ti, (r.editaveis || [])[ti] || { condicoes: {}, operacoes: {} }, r.tipos || { condicoes: [], operacoes: [] }));
     area.appendChild(fs);
   });
 }
 
 /* Edição no lugar (B259): flags do gatilho e os parâmetros de tamanho fixo de cada operação e condição. */
-function editorDoGatilho(pol, t, ti, ed) {
+function editorDoGatilho(pol, t, ti, ed, tipos) {
   const caixa = criar("details");
   caixa.appendChild(criar("summary", "", estudio.rascunho ? "Editar este gatilho" : "Editar (escolha um rascunho no topo do Estúdio)"));
   if (!estudio.rascunho) return caixa;
@@ -184,6 +184,61 @@ function editorDoGatilho(pol, t, ti, ed) {
     l.append(i, b);
     caixa.appendChild(l);
   });
+  // Tipos (B271): trocar o tipo de uma operação ou de uma folha de condição (mesmo papel), acrescentar e remover
+  // operação. Só os tipos que este arquivo já usa; rodar/parar/ativar gatilho pedem o id de um gatilho da política.
+  const seletor = (lista, atual) => {
+    const s = criar("select", "campo");
+    for (const [n, nome] of lista) { const o = new Option(`${nome} (${n})`, String(n)); o.selected = n === atual; s.appendChild(o); }
+    return s;
+  };
+  const pedirGatilho = (tipo) => {
+    if (tipo < 4 || tipo > 6) return undefined;
+    const v = prompt(`Id do gatilho (desta política: ${pol.triggers.map((x) => x.id).join(", ")}):`);
+    return v ? Math.trunc(Number(v)) : null;
+  };
+  t.operacoes.forEach((o, oi) => {
+    const l = criar("div", "recursos-linha");
+    const s = seletor(tipos.operacoes, o.tipo_cru);
+    const b = criar("button", "botao botao-pequeno botao-secundario", "Trocar tipo");
+    b.type = "button";
+    b.addEventListener("click", () => {
+      const tipo = Number(s.value); const g = pedirGatilho(tipo); if (g === null) return;
+      salvar({ tipo_da_operacao: { indice: oi, tipo, id_gatilho: g } }, "Tipo da operação trocado no rascunho (parâmetro zerado: ajuste os campos).");
+    });
+    const rm = criar("button", "botao botao-pequeno botao-perigo", "Remover");
+    rm.type = "button";
+    rm.disabled = t.operacoes.length <= 1;
+    rm.addEventListener("click", () => { if (confirm("Remover esta operação?")) salvar({ remover_operacao: oi }, "Operação removida no rascunho."); });
+    l.append(`Operação ${oi + 1}: `, s, b, rm);
+    caixa.appendChild(l);
+  });
+  const nova = criar("div", "recursos-linha");
+  const sn = seletor(tipos.operacoes, -1);
+  const bn = criar("button", "botao botao-pequeno botao-secundario", "+ Operação");
+  bn.type = "button";
+  bn.addEventListener("click", () => {
+    const tipo = Number(sn.value); const g = pedirGatilho(tipo); if (g === null) return;
+    salvar({ operacao_nova: { tipo, id_gatilho: g } }, "Operação acrescentada no rascunho.");
+  });
+  nova.append("Nova operação: ", sn, bn);
+  caixa.appendChild(nova);
+  const folhas = [];
+  const andar = (n, caminho, pai) => {
+    if (!n) return;
+    if (!n.esquerda && !n.direita) folhas.push([caminho, n, pai !== null && pai >= 9 && pai <= 15]);
+    andar(n.esquerda, caminho + "e", n.tipo_cru); andar(n.direita, caminho + "d", n.tipo_cru);
+  };
+  andar(t.condicao, "", null);
+  for (const [caminho, n, valor] of folhas) {
+    if ((n.tipo_cru >= 5 && n.tipo_cru <= 7) || (n.tipo_cru >= 9 && n.tipo_cru <= 15)) continue;
+    const l = criar("div", "recursos-linha");
+    const s = seletor(tipos.condicoes.filter(([, , v]) => v === valor).map(([x, nome]) => [x, nome]), n.tipo_cru);
+    const b = criar("button", "botao botao-pequeno botao-secundario", "Trocar tipo");
+    b.type = "button";
+    b.addEventListener("click", () => salvar({ tipo_da_condicao: { caminho, tipo: Number(s.value) } }, "Tipo da condição trocado no rascunho (parâmetro zerado: ajuste os campos)."));
+    l.append(`Condição ${caminho || "raiz"} (${valor ? "valor" : "condição"}): `, s, b);
+    caixa.appendChild(l);
+  }
   // Estrutura (B261): duplicar (cópia logo depois, id novo) e remover (recusado se outro gatilho o chama).
   const est = criar("div", "recursos-linha");
   const dup = criar("button", "botao botao-pequeno botao-secundario", "Duplicar gatilho");

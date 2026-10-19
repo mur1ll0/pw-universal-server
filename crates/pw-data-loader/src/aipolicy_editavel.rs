@@ -17,6 +17,14 @@
 //! `GetIndex` daria -1 e o `GetTriggerPtr(-1)` do GS não confere (`policy_loader.cpp:237-238`).
 
 use crate::aipolicy::{AiPolicyData, NoDeCondicao, ParametroDeCondicao, ParametroDeOperacao, TipoDeOperacao, Trigger};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Papel de uma folha da árvore de condições (B271): debaixo de aritmética/comparação (tipos 9..=15) é **valor**;
+/// senão, **condição**. Medido (`medir_condicoes`): nenhum tipo de folha aparece nos dois papéis; condição = 0-4, 8,
+/// 18-20, 22, 24, 25; valor = 16, 17, 21, 23, 26, 27; com filhas = 5-7, 9-15.
+fn e_operador(tipo: i32) -> bool {
+    matches!(tipo, 5..=7 | 9..=15)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -145,6 +153,143 @@ impl AiPolicyEditavel {
         }
         let em = no.parametro_em;
         self.escrever(em, &campos, valores)
+    }
+
+    /// O que o próprio arquivo mostra (B271): por tipo de folha de condição, `(tamanho do parâmetro, é valor?)` —
+    /// medido, um tamanho só por tipo; e os tipos de operação que aparecem.
+    pub fn catalogo(&self) -> (BTreeMap<i32, (usize, bool)>, BTreeSet<i32>) {
+        let mut folhas = BTreeMap::new();
+        fn andar(n: &NoDeCondicao, b: &[u8], pai: Option<i32>, f: &mut BTreeMap<i32, (usize, bool)>) {
+            if n.esquerda.is_none() && n.direita.is_none() && !e_operador(n.tipo_cru) {
+                let t = i32::from_le_bytes(b[n.parametro_em - 4..n.parametro_em].try_into().unwrap()) as usize;
+                f.entry(n.tipo_cru).or_insert((t, pai.is_some_and(|x| (9..=15).contains(&x))));
+            }
+            for x in [&n.esquerda, &n.direita].into_iter().flatten() {
+                andar(x, b, Some(n.tipo_cru), f);
+            }
+        }
+        let mut ops = BTreeSet::new();
+        for p in self.dados.policies.values() {
+            for t in &p.triggers {
+                if let Some(c) = &t.condicao {
+                    andar(c, &self.bytes, None, &mut folhas);
+                }
+                ops.extend(t.operacoes.iter().map(|o| o.tipo_cru));
+            }
+        }
+        (folhas, ops)
+    }
+
+    /// Troca o tipo de uma folha da árvore de condições (B271): só para um tipo do mesmo papel (condição ou valor) que
+    /// já apareça no arquivo; o parâmetro vira zeros do tamanho que esse tipo tem no arquivo. Operadores (com filhas)
+    /// não mudam. O arquivo é relido.
+    pub fn trocar_tipo_da_condicao(&mut self, politica: u32, indice: usize, caminho: &str, novo: i32) -> Result<(), String> {
+        let (folhas, _) = self.catalogo();
+        let t = self.gatilho(politica, indice)?;
+        let no = no_pelo_caminho(t.condicao.as_ref(), caminho).ok_or_else(|| format!("condição {caminho:?} não existe"))?;
+        if no.esquerda.is_some() || no.direita.is_some() || e_operador(no.tipo_cru) {
+            return Err("só condição sem filhas (folha) troca de tipo".into());
+        }
+        let pai = if caminho.is_empty() { None } else { no_pelo_caminho(t.condicao.as_ref(), &caminho[..caminho.len() - 1]).map(|x| x.tipo_cru) };
+        let e_valor = pai.is_some_and(|x| (9..=15).contains(&x));
+        let &(tamanho, valor) = folhas.get(&novo).ok_or_else(|| format!("o tipo de condição {novo} não aparece neste arquivo"))?;
+        if valor != e_valor {
+            return Err(format!("o tipo {novo} é {} e este nó é {}", if valor { "valor" } else { "condição" }, if e_valor { "valor" } else { "condição" }));
+        }
+        let o = no.parametro_em;
+        let antigo = i32::from_le_bytes(self.bytes[o - 4..o].try_into().unwrap()) as usize;
+        self.bytes.splice(o..o + antigo, vec![0u8; tamanho]);
+        self.bytes[o - 8..o - 4].copy_from_slice(&novo.to_le_bytes());
+        self.bytes[o - 4..o].copy_from_slice(&(tamanho as i32).to_le_bytes());
+        self.reler()
+    }
+
+    /// Os bytes de uma operação nova do tipo `tipo` no gatilho de versão `versao`: tipo, parâmetro zerado (as falas,
+    /// vazias com o NUL — medido no B261) e, para rodar/parar/ativar gatilho, o `id` (que tem que existir na política).
+    fn bytes_da_operacao(tipo: i32, versao: u32, id_gatilho: Option<u32>, alvo: &[u8]) -> Result<Vec<u8>, String> {
+        let mut b = tipo.to_le_bytes().to_vec();
+        if AiPolicyData::le_parametro_nesta_versao(tipo, versao) {
+            let fala = |b: &mut Vec<u8>| {
+                b.extend_from_slice(&2u32.to_le_bytes());
+                b.extend_from_slice(&[0, 0]);
+                if versao >= 17 {
+                    b.extend_from_slice(&0u32.to_le_bytes());
+                }
+            };
+            match tipo {
+                2 => fala(&mut b),
+                // SkillComFala: quatro u32 e a fala; Falar2: a fala e quatro u32 (`ler_parametro_de_operacao`).
+                t if TipoDeOperacao::de_i32(t) == Some(TipoDeOperacao::SkillComFala) => { b.extend_from_slice(&[0; 16]); fala(&mut b) }
+                t if TipoDeOperacao::de_i32(t) == Some(TipoDeOperacao::Falar2) => { fala(&mut b); b.extend_from_slice(&[0; 16]) }
+                4..=6 => b.extend_from_slice(&id_gatilho.ok_or("rodar/parar/ativar gatilho precisa do id de um gatilho da política")?.to_le_bytes()),
+                _ => b.extend(vec![0u8; crate::aipolicy::tamanho_do_parametro(tipo, versao).ok_or_else(|| format!("operação {tipo} sem tamanho conhecido"))?]),
+            }
+        }
+        b.extend_from_slice(alvo);
+        Ok(b)
+    }
+
+    fn validar_tipo_de_operacao(&self, politica: u32, tipo: i32, id_gatilho: Option<u32>) -> Result<(), String> {
+        let (_, ops) = self.catalogo();
+        if !ops.contains(&tipo) {
+            return Err(format!("o tipo de operação {tipo} não aparece neste arquivo"));
+        }
+        if (4..=6).contains(&tipo) {
+            let id = id_gatilho.ok_or("rodar/parar/ativar gatilho precisa de `id_gatilho`")?;
+            if !self.dados.policies[&politica].triggers.iter().any(|t| t.id == id) {
+                return Err(format!("a política não tem o gatilho {id}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Onde a operação `op` começa e termina, e o trecho do alvo (os bytes depois do parâmetro).
+    fn faixa_da_operacao(&self, t: &Trigger, op: usize) -> Result<(usize, usize, Vec<u8>), String> {
+        let o = t.operacoes.get(op).ok_or_else(|| format!("operação {op} não existe"))?;
+        let inicio = o.parametro_em - 4;
+        let fim = t.operacoes.get(op + 1).map(|x| x.parametro_em - 4).unwrap_or(t.fim);
+        let n = 4 + crate::aipolicy::tamanho_do_parametro_de_alvo(o.alvo.tipo_cru);
+        Ok((inicio, fim, self.bytes[fim - n..fim].to_vec()))
+    }
+
+    /// Troca o tipo da operação (B271): parâmetro novo zerado (ou o gatilho, nas de gatilho); o alvo fica.
+    pub fn trocar_tipo_da_operacao(&mut self, politica: u32, indice: usize, op: usize, tipo: i32, id_gatilho: Option<u32>) -> Result<(), String> {
+        self.validar_tipo_de_operacao(politica, tipo, id_gatilho)?;
+        let t = self.gatilho(politica, indice)?.clone();
+        let (inicio, fim, alvo) = self.faixa_da_operacao(&t, op)?;
+        let b = Self::bytes_da_operacao(tipo, t.versao, id_gatilho, &alvo)?;
+        self.bytes.splice(inicio..fim, b);
+        self.reler()
+    }
+
+    /// Acrescenta uma operação no fim do gatilho (B271), com o alvo da última (ou alvo 0 sem parâmetro).
+    pub fn acrescentar_operacao(&mut self, politica: u32, indice: usize, tipo: i32, id_gatilho: Option<u32>) -> Result<(), String> {
+        self.validar_tipo_de_operacao(politica, tipo, id_gatilho)?;
+        let t = self.gatilho(politica, indice)?.clone();
+        let alvo = match t.operacoes.len() {
+            0 => 0i32.to_le_bytes().to_vec(),
+            n => self.faixa_da_operacao(&t, n - 1)?.2,
+        };
+        let b = Self::bytes_da_operacao(tipo, t.versao, id_gatilho, &alvo)?;
+        self.bytes.splice(t.fim..t.fim, b);
+        let o = t.operacoes_em;
+        let n = i32::from_le_bytes(self.bytes[o..o + 4].try_into().unwrap()) + 1;
+        self.bytes[o..o + 4].copy_from_slice(&n.to_le_bytes());
+        self.reler()
+    }
+
+    /// Remove uma operação (B271); a última do gatilho fica (um gatilho sem nada a fazer não é editado aqui).
+    pub fn remover_operacao(&mut self, politica: u32, indice: usize, op: usize) -> Result<(), String> {
+        let t = self.gatilho(politica, indice)?.clone();
+        if t.operacoes.len() <= 1 {
+            return Err("o gatilho precisa de ao menos uma operação (remova o gatilho)".into());
+        }
+        let (inicio, fim, _) = self.faixa_da_operacao(&t, op)?;
+        self.bytes.drain(inicio..fim);
+        let o = t.operacoes_em;
+        let n = i32::from_le_bytes(self.bytes[o..o + 4].try_into().unwrap()) - 1;
+        self.bytes[o..o + 4].copy_from_slice(&n.to_le_bytes());
+        self.reler()
     }
 
     fn reler(&mut self) -> Result<(), String> {
@@ -297,6 +442,100 @@ mod testes {
             v.definir_condicao(cp, ct, "", &m(json!({ "fracao": fracao }))).unwrap();
             v.definir_flag(pid, ti, "ativo", ativo).unwrap();
             assert!(v.gravar() == b, "{realm}: voltar devolve o arquivo idêntico");
+        }
+    }
+
+    /// Nos dois realms (B271): trocar o tipo de uma folha de condição (mesmo papel) e de uma operação, acrescentar uma
+    /// de rodar gatilho e removê-la; relido pelo leitor do GS; a outra política igual; papel errado, tipo que não aparece
+    /// no arquivo, gatilho inexistente e remover a última operação recusados; voltar = arquivo idêntico.
+    #[test]
+    fn trocar_tipos_e_operacoes() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/aipolicy.data"));
+            let b = std::fs::read(&p).unwrap();
+            let mut a = AiPolicyEditavel::ler(&b).unwrap();
+            let mut ids: Vec<u32> = a.dados.policies.keys().copied().filter(|x| !a.dados.ids_repetidos.contains(x)).collect();
+            ids.sort_unstable();
+            // Uma folha de condição na raiz: HpLess (1) → Random (3), os dois de 4 bytes; e volta.
+            let (cp, ct) = ids.iter().find_map(|&pid| a.dados.policies[&pid].triggers.iter().position(|t| t.condicao.as_ref().is_some_and(|c| c.tipo_cru == 1 && c.esquerda.is_none())).map(|ti| (pid, ti))).unwrap();
+            let antes_c = a.dados.policies[&cp].triggers[ct].condicao.as_ref().unwrap().parametro.clone();
+            a.trocar_tipo_da_condicao(cp, ct, "", 2).unwrap(); // StartAttack: 0 bytes
+            assert_eq!(a.dados.policies[&cp].triggers[ct].condicao.as_ref().unwrap().tipo_cru, 2, "{realm}");
+            assert!(a.trocar_tipo_da_condicao(cp, ct, "", 999).is_err());
+            // Uma operação de habilidade (1) com 2+ operações no gatilho → atacar (0) e volta.
+            let (op_p, op_t, op_i) = ids.iter().find_map(|&pid| a.dados.policies[&pid].triggers.iter().enumerate().find_map(|(ti, t)| {
+                (t.operacoes.len() >= 2).then(|| t.operacoes.iter().position(|o| o.tipo_cru == 1)).flatten().map(|oi| (pid, ti, oi))
+            })).unwrap();
+            let outra = *ids.iter().find(|&&x| x != op_p && x != cp).unwrap();
+            let outra_antes = serde_json::to_value(&a.dados.policies[&outra]).unwrap();
+            let op_antes = a.dados.policies[&op_p].triggers[op_t].operacoes[op_i].parametro.clone();
+            a.trocar_tipo_da_operacao(op_p, op_t, op_i, 0, None).unwrap();
+            assert_eq!(a.dados.policies[&op_p].triggers[op_t].operacoes[op_i].tipo_cru, 0);
+            let gid = a.dados.policies[&op_p].triggers[op_t].id;
+            assert!(a.acrescentar_operacao(op_p, op_t, 4, None).is_err(), "gatilho obrigatório");
+            assert!(a.acrescentar_operacao(op_p, op_t, 4, Some(987_654)).is_err(), "gatilho inexistente");
+            a.acrescentar_operacao(op_p, op_t, 4, Some(gid)).unwrap();
+            let n = a.dados.policies[&op_p].triggers[op_t].operacoes.len();
+            assert_eq!(a.dados.policies[&op_p].triggers[op_t].operacoes[n - 1].parametro, ParametroDeOperacao::IdDeTrigger(gid));
+            let r = AiPolicyData::load_from_bytes(&a.gravar()).unwrap();
+            assert_eq!(serde_json::to_value(&r.policies[&outra]).unwrap(), outra_antes, "{realm}: a outra não muda");
+            // Volta.
+            a.remover_operacao(op_p, op_t, n - 1).unwrap();
+            a.trocar_tipo_da_operacao(op_p, op_t, op_i, 1, None).unwrap();
+            if let ParametroDeOperacao::Skill { skill, nivel } = op_antes {
+                let m = serde_json::json!({ "skill": skill, "nivel": nivel });
+                a.definir_operacao(op_p, op_t, op_i, m.as_object().unwrap()).unwrap();
+            }
+            a.trocar_tipo_da_condicao(cp, ct, "", 1).unwrap();
+            if let ParametroDeCondicao::HpAbaixoDe(f) = antes_c {
+                a.definir_condicao(cp, ct, "", serde_json::json!({ "fracao": f }).as_object().unwrap()).unwrap();
+            }
+            assert!(a.gravar() == b, "{realm}: voltar devolve o arquivo idêntico");
+            // A única operação de um gatilho não sai.
+            if let Some((pp, tt)) = ids.iter().find_map(|&pid| a.dados.policies[&pid].triggers.iter().position(|t| t.operacoes.len() == 1).map(|ti| (pid, ti))) {
+                assert!(a.remover_operacao(pp, tt, 0).is_err());
+            }
+        }
+    }
+
+    /// Medida (B271): por tipo de condição, os tamanhos de parâmetro vistos e se o nó tem filhas.
+    #[test]
+    fn medir_condicoes() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/aipolicy.data"));
+            let b = std::fs::read(&p).unwrap();
+            let a = AiPolicyEditavel::ler(&b).unwrap();
+            let mut m: std::collections::BTreeMap<i32, (std::collections::BTreeSet<usize>, usize, usize)> = Default::default();
+            fn andar(n: &NoDeCondicao, b: &[u8], m: &mut std::collections::BTreeMap<i32, (std::collections::BTreeSet<usize>, usize, usize)>) {
+                let t = i32::from_le_bytes(b[n.parametro_em - 4..n.parametro_em].try_into().unwrap()) as usize;
+                let e = m.entry(n.tipo_cru).or_default();
+                e.0.insert(t);
+                if n.esquerda.is_some() || n.direita.is_some() { e.1 += 1 } else { e.2 += 1 }
+                if let Some(x) = &n.esquerda { andar(x, b, m) }
+                if let Some(x) = &n.direita { andar(x, b, m) }
+            }
+            for pol in a.dados.policies.values() {
+                for t in &pol.triggers {
+                    if let Some(c) = &t.condicao { andar(c, &b, &mut m) }
+                }
+            }
+            eprintln!("{realm}: tipo -> (tamanhos, com filhas, folhas): {m:?}");
+            // Papel das folhas: debaixo de aritmética/comparação (9..=15) = valor; senão = condição.
+            let mut papel: std::collections::BTreeMap<i32, (usize, usize)> = Default::default();
+            fn papel_de(n: &NoDeCondicao, pai: Option<i32>, p: &mut std::collections::BTreeMap<i32, (usize, usize)>) {
+                if n.esquerda.is_none() && n.direita.is_none() {
+                    let e = p.entry(n.tipo_cru).or_default();
+                    if pai.is_some_and(|x| (9..=15).contains(&x)) { e.0 += 1 } else { e.1 += 1 }
+                }
+                if let Some(x) = &n.esquerda { papel_de(x, Some(n.tipo_cru), p) }
+                if let Some(x) = &n.direita { papel_de(x, Some(n.tipo_cru), p) }
+            }
+            for pol in a.dados.policies.values() {
+                for t in &pol.triggers {
+                    if let Some(c) = &t.condicao { papel_de(c, None, &mut papel) }
+                }
+            }
+            eprintln!("{realm}: folha -> (como valor, como condição): {papel:?}");
         }
     }
 

@@ -3002,7 +3002,33 @@ impl Estudio {
                 json!({ "condicoes": c, "operacoes": ops })
             })
             .collect();
-        Ok(json!({ "politica": pol, "monstros": usos.get(&id).cloned().unwrap_or_default(), "editaveis": editaveis }))
+        // B271: os tipos que este arquivo usa — folhas de condição por papel (valor = debaixo de aritmética/comparação) e
+        // operações —, para trocar tipo e acrescentar operação.
+        let mut folhas: std::collections::BTreeMap<i32, bool> = Default::default();
+        let mut ops: std::collections::BTreeSet<i32> = Default::default();
+        fn andar(n: &pw_data_loader::aipolicy::NoDeCondicao, pai: Option<i32>, f: &mut std::collections::BTreeMap<i32, bool>) {
+            if n.esquerda.is_none() && n.direita.is_none() && !matches!(n.tipo_cru, 5..=7 | 9..=15) {
+                f.entry(n.tipo_cru).or_insert(pai.is_some_and(|x| (9..=15).contains(&x)));
+            }
+            for x in [&n.esquerda, &n.direita].into_iter().flatten() {
+                andar(x, Some(n.tipo_cru), f);
+            }
+        }
+        for q in p.policies.values() {
+            for t in &q.triggers {
+                if let Some(c) = &t.condicao {
+                    andar(c, None, &mut folhas);
+                }
+                ops.extend(t.operacoes.iter().map(|o| o.tipo_cru));
+            }
+        }
+        let nome_c = |t: i32| pw_data_loader::aipolicy::TipoDeCondicao::de_i32(t).map(|x| format!("{x:?}")).unwrap_or_else(|| format!("tipo {t}"));
+        let nome_o = |t: i32| pw_data_loader::aipolicy::TipoDeOperacao::de_i32(t).map(|x| format!("{x:?}")).unwrap_or_else(|| format!("tipo {t}"));
+        let tipos = json!({
+            "condicoes": folhas.iter().map(|(t, v)| json!([t, nome_c(*t), v])).collect::<Vec<_>>(),
+            "operacoes": ops.iter().map(|t| json!([t, nome_o(*t)])).collect::<Vec<_>>(),
+        });
+        Ok(json!({ "politica": pol, "monstros": usos.get(&id).cloned().unwrap_or_default(), "editaveis": editaveis, "tipos": tipos }))
     }
 
     /// Edita um gatilho da política no rascunho (item `servidor\aipolicy.data`; o cliente não tem o arquivo):
@@ -3014,6 +3040,26 @@ impl Estudio {
         self.gravar_item_do_realm(gov, versao, rascunho, nome, do_realm, do_rascunho, move |base| {
             let mut a = pw_data_loader::aipolicy_editavel::AiPolicyEditavel::ler(base).map_err(anyhow::Error::msg)?;
             let g = pedido["gatilho"].as_u64().context("gatilho")? as usize;
+            // B271: trocas de tipo e operações novas/removidas vêm primeiro (as edições de valor abaixo valem para o
+            // tipo novo).
+            let id_gatilho = |x: &Value| x["id_gatilho"].as_u64().map(|v| v as u32);
+            if let Some(c) = pedido["tipo_da_condicao"].as_object() {
+                let caminho = c.get("caminho").and_then(Value::as_str).unwrap_or("");
+                let tipo = c.get("tipo").and_then(Value::as_i64).context("tipo_da_condicao.tipo")? as i32;
+                a.trocar_tipo_da_condicao(id, g, caminho, tipo).map_err(anyhow::Error::msg)?;
+            }
+            if let Some(o) = pedido.get("tipo_da_operacao").filter(|x| x.is_object()) {
+                let i = o["indice"].as_u64().context("tipo_da_operacao.indice")? as usize;
+                let tipo = o["tipo"].as_i64().context("tipo_da_operacao.tipo")? as i32;
+                a.trocar_tipo_da_operacao(id, g, i, tipo, id_gatilho(o)).map_err(anyhow::Error::msg)?;
+            }
+            if let Some(o) = pedido.get("operacao_nova").filter(|x| x.is_object()) {
+                let tipo = o["tipo"].as_i64().context("operacao_nova.tipo")? as i32;
+                a.acrescentar_operacao(id, g, tipo, id_gatilho(o)).map_err(anyhow::Error::msg)?;
+            }
+            if let Some(i) = pedido["remover_operacao"].as_u64() {
+                a.remover_operacao(id, g, i as usize).map_err(anyhow::Error::msg)?;
+            }
             if let Some(f) = pedido["flags"].as_object() {
                 for (k, v) in f {
                     a.definir_flag(id, g, k, v.as_bool().with_context(|| format!("{k}: verdadeiro ou falso"))?).map_err(anyhow::Error::msg)?;
