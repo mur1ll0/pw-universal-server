@@ -650,7 +650,7 @@ cabeçalho de 96 bytes (`'ASKE'`, versão ≤ 6, ossos, juntas, ganchos, quadros
 bytes — `A3DBone.h:96-104` sem `#pragma pack`: flags + 3 de enchimento, mãe, primeira junta, filhas, `matRelative`,
 `matBoneInit` — e os índices das filhas), tipos e dados das juntas (nome + 12 bytes; os 4 tipos leem igual) e ganchos
 (nome + 72 bytes). **Medido no 1.5.5 BR:** 7.620 `.bon` v6 fecham no último byte; 2.229 são v5, com trilhas de
-animação embutidas nas juntas (`LoadBoneTrack`) — recusados com o motivo até o leitor de trilhas (próxima parte).
+animação embutidas nas juntas (`LoadBoneTrack`) — lidas desde o B276 (abaixo).
 **Semântica das matrizes, pelo fonte e medida:** a matriz da pele é `BoneInitTM × UpToRoot` (`A3DSkinModel.cpp:1341-1342`,
 `:1743`) e o `UpToRoot` vem da animação (`A3DBone.cpp:245-263`), então `matBoneInit` = inversa da pose de ligação;
 `matRelative` é uma pose de repouso que coincide com a de ligação em só 28% dos ossos (63.187/222.996, medido).
@@ -663,6 +663,20 @@ da mãe) + um nó raiz "esqueleto" (o índice `n` que `A3DSkin::BindSkeleton` re
 o 4º peso = `1 − soma`, `A3DMorphSkinMesh.cpp:313-325`; malha rígida presa ao osso com peso 1, `A3DRigidMesh.cpp:367`).
 Testado em 274 modelos reais: 710/733 malhas casam com o esqueleto, e **as 8.245 juntas** reproduzem a pose de
 ligação (mundo pelos nós × inversa ≈ identidade).
+
+**Trilhas e ações (B276, `trilha.rs`, `stck.rs`, `smd.rs`):** trilha = `A3DTrackData<T>` (`A3DTrackData.h`): 12 bytes
+(chaves, segmentos, FPS), chaves (`A3DVECTOR3` ou `A3DQUATERNION` `x, y, z, w`), segmentos de 16 bytes (ms inicial e
+final, chave inicial e final); um osso = posição + rotação (`LoadBoneTrack`, `A3DTrackMan.cpp:203`); tempo → chave por
+`GetFloorKeyIndex`. `.bon` v5: a trilha vem depois de cada junta. `.stck` (`A3DSklTrackSet::Load`, `:150-200`): `MOXB`,
+`'STCK'` v1, 16 bytes (trilhas, quadros, FPS) e por trilha `id` + trilha. O `id` é o **índice da junta** — cada osso
+usa a da sua primeira junta (`A3DSkinModelAct.cpp:612`). Ações no `.smd` depois das peles: física (string), pasta das
+trilhas (v ≥ 8; antes `tcks_<título>`), e por ação o nome, os quadros (v < 6 por `FILEACTIONDATA` + juntas; v ≥ 6
+`f32` × 2) e, v ≥ 7, o `.stck`; tempo = quadro × 1000 / fps do esqueleto (`FrameToTime`); `.smd` < 7 com `.bon` v6 →
+o motor descarta as ações. **Medido no 1.5.5 BR:** os **9.849** `.bon` fecham (v5: 2.229, v6: 7.620), os **5.163**
+`.smd` leem com as ações, os **73.818** `.stck` fecham (2,2 milhões de trilhas). `glb::do_modelo_animado`: uma
+animação glTF por ação — canais de translação `(x, y, −z)` e rotação `(−x, −y, z, w)` por osso, tempos desde 0 s.
+Testado em 40 modelos (20 v5, 20 v6): no meio da 1ª ação a malha deformada mantém a escala da de repouso (nenhum
+fora de 0,5–2×) — convenção errada a faria "explodir".
 
 ### 3.11 `global_api.lua`
 

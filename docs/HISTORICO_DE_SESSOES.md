@@ -14934,3 +14934,35 @@ comparação lado a lado.
     ### e. Falta
     - O Murillo abrir num Windows 7 real (64 e, se houver, 32 bits): janela, escolher pasta, baixar/verificar, Jogar.
     - Rede por TLS (`https://`) no 7 não testada (o `ureq` usa rustls próprio, não o SChannel).
+
+276. **Sessão 2026-10-19: Estúdio S5, quarta parte — trilhas, ações e animação.**
+
+    ### a. Pedido
+    Continuar depois do B274 (`93d71ac`, `a31d6a6`). Nota: o commit de código do B274 levou junto as remoções de
+    arquivos do Tauri que o Codex tinha feito na árvore (B275, launcher Win32); o resto do B275 segue não commitado
+    pelo Codex. Daqui em diante os commits do Estúdio listam só os caminhos alterados.
+
+    ### b. Decisão e evidência
+    - Trilha = `A3DTrackData<T>`; osso = posição + rotação (`LoadBoneTrack`); `.bon` v5 traz uma por junta; `.stck`
+      (`A3DSklTrackSet::Load`) traz `id` + trilha. O `id` é o índice da junta (cada osso usa a da 1ª junta,
+      `A3DSkinModelAct.cpp:612`). Ações do `.smd` (`A3DSkinModelActionCore::Load`), tempo por `FrameToTime`.
+    - Quatérnio `x, y, z, w` (`A3DQuaternion.h`), `QuadToMatrix` = D3DX; no glTF: rotação `(−x, −y, z, w)`, translação
+      `(x, y, −z)`.
+    - Prova de convenção sem depender do olho: a malha deformada no meio da ação mantém a escala (40 modelos).
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `trilha.rs`, `stck.rs`; `bon.rs` lê as trilhas v5; `smd.rs` lê física, pasta das trilhas e
+      ações; `glb::do_modelo_animado` (canais por osso, LINEAR).
+    - `pw-recursos`: ações na ficha do `.smd`; `glb?acao=`.
+    - Painel: seletor de ação; visualizador com avaliação dos canais e pele na CPU, em laço.
+
+    ### d. Provas
+    - `bon::testes`: **9.849/9.849** `.bon` (v5 e v6); `smd::testes`: 5.163 com ações; `stck::testes`: **73.818**
+      `.stck`; `glb::testes::modelos_animados`: 40 modelos, nenhum fora da escala.
+    - `pw-recursos` com o banco **22/22**; `pw-data-loader` **237/237**. No contêiner: 25/25 modelos de `npcs` do 1.5.5 animados; no 1.2.6, 34 de 40
+      `.smd` são v5 **sem ações** no `.smd` (devem estar no `.ecm` — próxima parte) e os 6 com ações animam. No
+      navegador, um NPC real do 1.5.5 (`祝融灵祭`, ação 休闲, 5,7 s, 86 canais) toca: 1,40 m em repouso, pose coerente, o
+      braço muda de posição entre duas capturas.
+
+    ### e. Falta
+    - Ações do `.ecm` (o 1.2.6 depende disso) e o diagnóstico das ações que o cliente pede; Mascotes, Voo, Minas.

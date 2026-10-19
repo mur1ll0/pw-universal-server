@@ -448,6 +448,10 @@ traz `texturas_achadas` (o caminho onde o cliente acharia cada textura, ou nulo)
 **Modelo inteiro (B274):** a lista traz `.smd` (primeiro) e `.ski`; para um `.smd` a ficha traz `tipo: "modelo"`, as
 ações, o esqueleto (`ossos [[nome, mãe]]`, juntas, ganchos, FPS, ou `erro` — p.ex. `.bon` v5) e cada pele (malhas e
 triângulos, ou `erro`), e o GLB junta as peles (com as texturas de cada uma) e o esqueleto (`skin`, spec 03 §3.10d).
+**Ações (B276):** a ficha do `.smd` traz `lista_de_acoes` (`nome`, `inicio_ms`, `fim_ms`, `stck`) e
+`acoes_descartadas`; `GET estudio/modelos/glb?caminho&acao=<nome>` traz a animação dessa ação (trilhas do `.bon` v5 ou
+o `.stck`; ação inexistente ou descartada → 400). Painel: seletor de ação na ficha; o visualizador toca a animação em
+laço, com a pele deformada na CPU a cada quadro.
 
 ## 7. Testes
 
@@ -487,7 +491,8 @@ políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pel
 inexistente → 400. Modelos (B272): um `.ski` sintético (com `MOXB`) aparece na busca, a ficha traz versão,
 textura, material e 1 triângulo, o GLB tem cabeçalho e tamanho certos; caminho que não é `.ski` → 400; a textura DXT1 na pasta `textures` (minúscula) é achada e vai no GLB como PNG
 ligada ao material (B273); um `.smd` sintético com `.bon` de um osso vem primeiro na lista, a ficha traz o osso e a
-pele, e o GLB tem `skin` com 2 juntas (o osso e o esqueleto) e pesos (B274). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
+pele, e o GLB tem `skin` com 2 juntas (o osso e o esqueleto) e pesos (B274); sem ações na ficha, e pedir uma → 400
+(B276). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
 não usa → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
 "só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
 gatilho duplicado (id novo na resposta) e o original removido, publicados — o realm tem a mesma quantidade de
