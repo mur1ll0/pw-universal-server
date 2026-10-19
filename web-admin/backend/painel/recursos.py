@@ -610,9 +610,9 @@ def registrar_reinicio(app):
         return await _repassar("GET", f"/admin/{v}/estudio/modelos/ficha", {"caminho": caminho[:500]})
 
     @app.get("/api/realms/{realm}/estudio/modelos/glb")
-    async def estudio_modelo_glb(realm: str, caminho: str, requisicao: Request):
+    async def estudio_modelo_glb(realm: str, caminho: str, requisicao: Request, acao: str | None = None):
         v = await _versao_do_realm(requisicao, realm)
-        return await _repassar("GET", f"/admin/{v}/estudio/modelos/glb", {"caminho": caminho[:500]})
+        return await _repassar("GET", f"/admin/{v}/estudio/modelos/glb", {"caminho": caminho[:500], "acao": acao[:200] if acao else None})
 
     # Comportamento dos monstros (B258, só leitura): o aipolicy.data do realm.
     @app.get("/api/realms/{realm}/estudio/comportamentos")

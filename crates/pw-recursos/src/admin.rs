@@ -268,7 +268,19 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
                 Err(motivo) => json!({ "caminho": cp, "erro": motivo }),
             })
             .collect();
-        return Ok(Json(json!({ "caminho": nome, "tipo": "modelo", "versao": c.versao, "acoes": c.acoes, "esqueleto": esq, "peles": peles })));
+        // B276: as ações (nome e intervalo em ms pelo FPS do esqueleto; o motor as descarta com .smd < 7 e .bon v6).
+        let fps = esqueleto.as_ref().map_or(0, |b| b.fps);
+        let descartadas = c.versao < 7 && esqueleto.as_ref().is_ok_and(|b| b.versao >= 6);
+        let acoes: Vec<Value> = c
+            .lista_de_acoes
+            .iter()
+            .map(|a| {
+                let ms = |q: f32| if fps > 0 { q * 1000.0 / fps as f32 } else { 0.0 };
+                json!({ "nome": a.nome, "inicio_ms": ms(a.quadro_inicial), "fim_ms": ms(a.quadro_final), "stck": a.stck })
+            })
+            .collect();
+        return Ok(Json(json!({ "caminho": nome, "tipo": "modelo", "versao": c.versao, "acoes": c.acoes, "lista_de_acoes": acoes,
+            "acoes_descartadas": descartadas, "esqueleto": esq, "peles": peles })));
     }
     let (nome, s) = ler_ski(&e, &v, &q.caminho)?;
     let mut malhas: Vec<Value> = s.malhas_de_pele.iter().map(|m| json!({ "nome": m.nome, "tipo": "pele", "vertices": m.vertices.len(), "triangulos": m.indices.len() / 3, "textura": m.textura, "material": m.material })).collect();
@@ -283,11 +295,17 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
 }
 
 /// O GLB do `.ski` (`pw_data_loader::glb`), para o visualizador e para levar ao Blender.
-async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Response> {
+#[derive(Deserialize)]
+struct QModelo {
+    caminho: String,
+    acao: Option<String>,
+}
+
+async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QModelo>) -> R<Response> {
     validar(&v)?;
     if q.caminho.to_lowercase().ends_with(".smd") {
         // B274: o modelo inteiro — as peles lidas, com as texturas de cada uma, e o esqueleto (sem ele, fica parado).
-        let (nome, _, peles, esqueleto) = ler_smd(&e, &v, &q.caminho)?;
+        let (nome, cabeca, peles, esqueleto) = ler_smd(&e, &v, &q.caminho)?;
         let lidas: Vec<(String, pw_data_loader::ski::Ski)> = peles.into_iter().filter_map(|(cp, s)| s.ok().map(|s| (cp, s))).collect();
         if lidas.is_empty() {
             return Err(Erro(StatusCode::BAD_REQUEST, format!("{nome}: nenhuma pele lida")));
@@ -301,6 +319,30 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
             .map(|lista| Box::new(move |i: usize| lista.get(i).and_then(|t| t.as_ref()).map(|t| pw_data_loader::glb::Textura { png: t.png.clone(), transparente: t.transparente })) as Box<dyn Fn(usize) -> Option<pw_data_loader::glb::Textura>>)
             .collect();
         let lista: Vec<pw_data_loader::glb::PeleDoModelo> = lidas.iter().zip(&fornecedores).map(|((_, s), f)| pw_data_loader::glb::PeleDoModelo { ski: s, textura: f.as_ref() }).collect();
+        // B276: com `acao`, a animação dela — trilhas embutidas no .bon v5 ou o .stck da ação (pasta das trilhas: a do
+        // .smd v8, ou `tcks_<título>`).
+        if let (Some(nome_acao), Ok(b)) = (q.acao.as_deref(), esqueleto.as_ref()) {
+            let a = cabeca.lista_de_acoes.iter().find(|a| a.nome == nome_acao).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("ação {nome_acao} não existe")))?;
+            if b.fps <= 0 || (cabeca.versao < 7 && b.versao >= 6) {
+                return Err(Erro(StatusCode::BAD_REQUEST, "o motor descarta as ações deste modelo (.smd < 7 com .bon v6)".into()));
+            }
+            let stck;
+            let trilhas: Vec<(i32, &pw_data_loader::trilha::TrilhaDeOsso)> = if b.versao < 6 {
+                b.trilhas.iter().enumerate().map(|(i, t)| (i as i32, t)).collect()
+            } else {
+                let arquivo = a.stck.clone().ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "a ação não cita .stck".into()))?;
+                let titulo = nome.rsplit('\\').next().and_then(|x| x.rsplit_once('.')).map_or("", |x| x.0).to_string();
+                let pasta = if cabeca.versao >= 8 { cabeca.pasta_das_trilhas.clone() } else { format!("tcks_{titulo}") };
+                let caminho = ao_lado(&nome, &format!("{pasta}\\{arquivo}"));
+                let (_, bytes) = e.gov.conteudo(&v, &caminho).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))?;
+                stck = pw_data_loader::stck::ler(&bytes).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))?;
+                stck.trilhas.iter().map(|(j, t)| (*j, t)).collect()
+            };
+            let fps = b.fps as f32;
+            let anim = pw_data_loader::glb::AnimacaoDoModelo { nome: a.nome.clone(), trilhas, inicio_ms: a.quadro_inicial * 1000.0 / fps, fim_ms: a.quadro_final * 1000.0 / fps };
+            let glb = pw_data_loader::glb::do_modelo_animado(&lista, b, &anim, &nome);
+            return glb_como_resposta(&nome, glb);
+        }
         let glb = pw_data_loader::glb::do_modelo(&lista, esqueleto.as_ref().ok(), &nome);
         return glb_como_resposta(&nome, glb);
     }

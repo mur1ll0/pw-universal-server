@@ -148,6 +148,7 @@ impl FonteDePacote for Pacotes {
         smd.extend_from_slice(&[0u8; 60]);
         u(&mut smd, 9); smd.extend_from_slice(b"caixa.bon");
         u(&mut smd, 9); smd.extend_from_slice(b"caixa.ski");
+        u(&mut smd, 0); u(&mut smd, 0); // física e pasta das trilhas (v8), vazias; 0 ações
         receber(b"models\\teste\\caixa.smd".to_vec(), smd)?;
         Ok(ResultadoDoPacote { entradas: 15, falhas: vec![] })
     }
@@ -792,6 +793,9 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let docm: Value = serde_json::from_slice(&gm[20..20 + nj]).unwrap();
         assert_eq!(docm["skins"][0]["joints"].as_array().map(|x| x.len()), Some(2), "um osso + o esqueleto: {docm}");
         assert!(docm["meshes"][0]["primitives"][0]["attributes"]["WEIGHTS_0"].is_u64());
+        // B276: a ação (o .smd sintético não tem nenhuma) — pedir uma que não existe → 400.
+        assert_eq!(fm["lista_de_acoes"].as_array().map(|x| x.len()), Some(0), "{fm}");
+        assert_eq!(erro_de(pedir("GET", "estudio/modelos/glb").query("caminho", &smd).query("acao", "andar").call()).0, 400);
         let caminho = ml["linhas"][1]["caminho"].as_str().unwrap().to_string();
         let fi = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &caminho).call().unwrap());
         assert_eq!((fi["versao"].as_u64(), fi["texturas"][0].as_str(), fi["materiais"][0]["nome"].as_str(), fi["malhas"][0]["triangulos"].as_u64()),

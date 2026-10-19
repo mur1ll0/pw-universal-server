@@ -3,7 +3,13 @@
 //! `A3DSkinModelMan::LoadModelFromFile` (`Angelica3D/Source/A3DSkinModelMan.cpp`): marca `MOXB` do `AFile`,
 //! `A3DSKINMODELFILEHEADER` (`A3DSkinModel.h:48-57`, 84 bytes: `'ASMD'`, versão ≤ 8, peles, ações, cabides,
 //! propriedades, 60 reservados), o nome do esqueleto e o de cada pele (strings `i32` + bytes), relativos à pasta do
-//! `.smd` (`strPath + "\\" + strFile`). O resto (ações, cabides, propriedades) não é lido aqui.
+//! `.smd` (`strPath + "\\" + strFile`). B276: depois das peles, o arquivo de física (string), a pasta das trilhas
+//! (string a partir da v8; antes, `tcks_<título>`) e as ações (`A3DSkinModelActionCore::Load`,
+//! `A3DSkinModelAct.cpp:140-215`): nome; v < 6 — `FILEACTIONDATA` (12 bytes: grupo, juntas, flags) + juntas ×
+//! `FILEJOINTACTION` (20 bytes: junta, quadro inicial e final `f32`, laços, velocidade), os quadros da 1ª; v ≥ 6 —
+//! `FILEACTIONDATA6` (quadro inicial e final `f32`); v ≥ 7 — o `.stck` (relativo à pasta das trilhas). Tempo =
+//! `quadro × 1000 / fps` do esqueleto (`FrameToTime`, `:301-307`). Com `.smd` v < 7 e esqueleto v ≥ 6 o motor descarta
+//! as ações (`LoadModelFromFile`). Cabides e propriedades não são lidos.
 
 #[derive(Debug, thiserror::Error)]
 pub enum SmdError {
@@ -26,6 +32,18 @@ pub struct CabecaDoSmd {
     /// O nome do `.bon` como está no arquivo (relativo à pasta do `.smd`); vazio = sem esqueleto.
     pub esqueleto: String,
     pub peles: Vec<String>,
+    /// B276: a pasta das trilhas (relativa à do `.smd`) e as ações (se o arquivo as tem inteiras).
+    pub pasta_das_trilhas: String,
+    pub lista_de_acoes: Vec<Acao>,
+}
+
+/// Uma ação do modelo: quadros (a converter em ms com o FPS do esqueleto) e, v ≥ 7, o `.stck` dela.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Acao {
+    pub nome: String,
+    pub quadro_inicial: f32,
+    pub quadro_final: f32,
+    pub stck: Option<String>,
 }
 
 pub fn cabeca(b: &[u8]) -> Result<CabecaDoSmd, SmdError> {
@@ -60,7 +78,37 @@ pub fn cabeca(b: &[u8]) -> Result<CabecaDoSmd, SmdError> {
     };
     let esqueleto = texto(&mut o)?;
     let peles = (0..n_peles).map(|_| texto(&mut o)).collect::<Result<_, _>>()?;
-    Ok(CabecaDoSmd { versao, acoes, esqueleto, peles })
+    let _fisica = texto(&mut o)?;
+    let pasta_das_trilhas = if versao >= 8 { texto(&mut o)? } else { String::new() };
+    let f32_ = |o: &mut usize| -> Result<f32, SmdError> { Ok(f32::from_bits(u32_(o)?)) };
+    let mut lista_de_acoes = Vec::with_capacity(acoes.max(0) as usize);
+    for _ in 0..acoes.max(0) {
+        let nome = texto(&mut o)?;
+        let (qi, qf) = if versao < 6 {
+            let _grupo = u32_(&mut o)?;
+            let juntas = u32_(&mut o)? as usize;
+            let _flags = u32_(&mut o)?;
+            if juntas > 4096 {
+                return Err(SmdError::Contagem(juntas as i32));
+            }
+            let mut q = (0.0, 0.0);
+            for j in 0..juntas {
+                let _junta = u32_(&mut o)?;
+                let (a, b) = (f32_(&mut o)?, f32_(&mut o)?);
+                let _lacos = u32_(&mut o)?;
+                let _velocidade = u32_(&mut o)?;
+                if j == 0 {
+                    q = (a, b);
+                }
+            }
+            q
+        } else {
+            (f32_(&mut o)?, f32_(&mut o)?)
+        };
+        let stck = if versao >= 7 { Some(texto(&mut o)?) } else { None };
+        lista_de_acoes.push(Acao { nome, quadro_inicial: qi, quadro_final: qf, stck });
+    }
+    Ok(CabecaDoSmd { versao, acoes, esqueleto, peles, pasta_das_trilhas, lista_de_acoes })
 }
 
 #[cfg(test)]
@@ -110,6 +158,7 @@ mod testes {
                 }
             }
         }
+        assert_eq!(falha, 0, "B276: com as ações, todo .smd lê");
         eprintln!("smd: {ok} leem, {falha} falham; com esqueleto {com_esqueleto} (existe {esqueleto_existe}); peles {peles} (existem {peles_existem})");
         assert!(ok > 0);
     }

@@ -7,8 +7,8 @@
 //! de enchimento depois das flags — 144 bytes) e os índices das filhas (`i32`); os tipos das juntas (`u32` × n) e cada
 //! junta (`A3DJoint::Load`, `A3DJoint.cpp:160`: nome e `JOINTDATA` de 12 bytes, `A3DJoint.h:52-57` — os quatro tipos
 //! leem só isso); os ganchos (`A3DSkeletonHook::Load`, `:114`: nome e `HOOKDATA` de 72 bytes, `A3DSkeleton.h:67-72`).
-//! Antes da versão 6 cada junta traz uma trilha de animação embutida (`LoadBoneTrack`): ainda não lida (recusa com o
-//! motivo; o teste mede quantos são).
+//! Antes da versão 6 cada junta traz, logo depois dos seus dados, a trilha de animação do osso (`LoadBoneTrack`,
+//! `A3DSkeleton.cpp:495-508`; formato em `crate::trilha`) — B276: lida em `Bon::trilhas`.
 //!
 //! As matrizes são do Direct3D: linha × matriz, translação na 4ª linha.
 
@@ -22,8 +22,8 @@ pub enum BonError {
     Identidade(u32),
     #[error("versão {0} maior que 6 (SKEFILE_VERSION)")]
     Versao(u32),
-    #[error("versão {0} < 6 traz trilhas embutidas nas juntas (ainda não lidas)")]
-    TrilhasEmbutidas(u32),
+    #[error("trilha embutida da junta {0} ilegível")]
+    Trilha(usize),
     #[error("contagem absurda: {0} = {1}")]
     Contagem(&'static str, i32),
     #[error("sobraram {0} bytes depois do último gancho")]
@@ -73,6 +73,9 @@ pub struct Bon {
     pub fps: i32,
     pub ossos: Vec<Osso>,
     pub juntas: Vec<Junta>,
+    /// Versão < 6: a trilha de cada junta, na ordem das juntas (B276). Versão 6: vazio (as trilhas ficam nos `.stck`).
+    #[serde(skip)]
+    pub trilhas: Vec<crate::trilha::TrilhaDeOsso>,
     pub ganchos: Vec<Gancho>,
 }
 
@@ -145,14 +148,15 @@ impl Bon {
             ossos.push(Osso { nome, flags, mae, primeira_junta, relativa, inicial, filhas });
         }
         let mut juntas = Vec::with_capacity(n_juntas);
+        let mut trilhas = Vec::new();
         if n_juntas > 0 {
-            if versao < 6 {
-                return Err(BonError::TrilhasEmbutidas(versao));
-            }
             let tipos: Vec<u32> = (0..n_juntas).map(|_| l.u32()).collect::<Result<_>>()?;
-            for tipo in tipos {
+            for (i, tipo) in tipos.into_iter().enumerate() {
                 let nome = l.texto()?;
                 juntas.push(Junta { tipo, nome, osso_mae: l.i32()?, osso_filho: l.i32()?, irma: l.i32()? });
+                if versao < 6 {
+                    trilhas.push(crate::trilha::ler_osso(l.b, &mut l.o).ok_or(BonError::Trilha(i))?);
+                }
             }
         }
         let mut ganchos = Vec::with_capacity(n_ganchos);
@@ -163,7 +167,7 @@ impl Bon {
         if l.o != b.len() {
             return Err(BonError::Sobra(b.len() - l.o));
         }
-        Ok(Self { versao, quadro_inicial, quadro_final, fps, ossos, juntas, ganchos })
+        Ok(Self { versao, quadro_inicial, quadro_final, fps, ossos, juntas, trilhas, ganchos })
     }
 
     /// A pose de ligação de cada osso no espaço do modelo: `relativa(osso) × … × relativa(raiz)` (linha × matriz).
@@ -257,6 +261,7 @@ mod testes {
                 }
             }
         }
+        assert!(motivos.is_empty(), "B276: v5 com trilhas também fecha: {motivos:#?}");
         eprintln!("bon: {ok} fecham; versões {versoes:?}; ossos {ossos}, com inicial × mundo ≈ I: {inversa}; variantes [i·w, w·i, i·w2, w2·i] {variantes:?}; alguma {alguma}; falhas {motivos:#?}");
         assert!(ok > 0);
     }

@@ -44,7 +44,9 @@ pub mod glb;
 pub mod imagem;
 pub mod ski;
 pub mod smd;
+pub mod stck;
 pub mod task_npc;
+pub mod trilha;
 pub mod world_targets;
 pub mod validator;
 
