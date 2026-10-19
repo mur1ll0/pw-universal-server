@@ -15139,7 +15139,7 @@ comparação lado a lado.
 
     ### d. Provas
     - `ecm::testes::blocos_e_clone_em_todo_o_cliente`: 8.499 com blocos certos, 7.098 clonagens relidas.
-    - `pw-recursos` com o banco **22/22**; painel **11/11**; `pw-data-loader` **240/240**.
+    - `pw-recursos` com o banco **22/22**; painel **11/11**; `pw-data-loader` **241/241**.
     - Contêiner (só leitura): o `白虎boss.ecm` do 1.5.5 usa nomes fora do padrão (`普通攻击1`, `奔跑`) e por isso o
       cliente não acha `普攻1起`/`快速移动` — a correção é "Criar 普攻1起 copiando 普通攻击1"; a ficha traz as 12
       ações-base do `.smd` para escolher.
