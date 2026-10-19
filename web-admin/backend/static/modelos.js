@@ -1,6 +1,6 @@
 /* Estúdio, fase S5 (B272): modelos 3D. Lista os `.ski` do cliente publicado, mostra a ficha (ossos, texturas, materiais,
    malhas) e desenha o GLB que o pw-recursos gera (`pw-data-loader/src/glb.rs`) num visualizador WebGL próprio — sem
-   biblioteca externa (CSP `self`). Sem textura nem esqueleto ainda: cor difusa do material e luz direcional.
+   biblioteca externa (CSP `self`). Textura (B273: PNG embutido no GLB, alfa por corte) e luz direcional; sem esqueleto.
    Usa `api`, `criar`, `elemento`, `alerta`, `estudio` e `mostrarVistaDoEstudio`. */
 
 function rotaDeModelos(resto, q = {}) {
@@ -45,7 +45,10 @@ async function abrirModelo(caminho) {
   const lista = criar("ul");
   for (const m of f.malhas) lista.appendChild(criar("li", "", `${m.nome || "(sem nome)"} — ${m.tipo}, ${m.vertices} vértices, ${m.triangulos} triângulos, textura ${f.texturas[m.textura] ?? m.textura}, material ${f.materiais[m.material]?.nome ?? m.material}`));
   ficha.appendChild(lista);
-  if (f.texturas.length) ficha.appendChild(criar("div", "texto-suave", `Texturas: ${f.texturas.join(", ")} (ainda não desenhadas).`));
+  if (f.texturas.length) {
+    const faltam = f.texturas.filter((_, i) => !(f.texturas_achadas || [])[i]);
+    ficha.appendChild(criar("div", "texto-suave", `Texturas: ${f.texturas.join(", ")}${faltam.length ? ` — não achadas no cliente (nem em Textures\\ nem em Tex_<nome>\\): ${faltam.join(", ")}` : ""}.`));
+  }
   try {
     const resp = await fetch(rotaDeModelos("/glb", { caminho }), { credentials: "same-origin" });
     if (!resp.ok) throw new Error(`GLB: HTTP ${resp.status}`);
@@ -66,11 +69,15 @@ function lerGlb(buf) {
     const n = { SCALAR: 1, VEC2: 2, VEC3: 3 }[a.type] * a.count;
     return a.componentType === 5126 ? new Float32Array(buf, bin + v.byteOffset, n) : new Uint16Array(buf, bin + v.byteOffset, n);
   };
+  // Imagens PNG embutidas (B273): bytes do bufferView.
+  const imagens = (doc.images || []).map((im) => { const v = doc.bufferViews[im.bufferView]; return new Blob([new Uint8Array(buf, bin + v.byteOffset, v.byteLength)], { type: im.mimeType }); });
   const malhas = [];
   for (const m of doc.meshes) for (const p of m.primitives) {
     const mat = p.material !== undefined ? doc.materials[p.material] : null;
-    malhas.push({ pos: acessor(p.attributes.POSITION), nor: acessor(p.attributes.NORMAL), idx: acessor(p.indices),
-      cor: mat ? mat.pbrMetallicRoughness.baseColorFactor : [0.75, 0.75, 0.75, 1], min: doc.accessors[p.attributes.POSITION].min, max: doc.accessors[p.attributes.POSITION].max });
+    const tex = mat?.pbrMetallicRoughness?.baseColorTexture;
+    malhas.push({ pos: acessor(p.attributes.POSITION), nor: acessor(p.attributes.NORMAL), uv: acessor(p.attributes.TEXCOORD_0), idx: acessor(p.indices),
+      cor: mat ? mat.pbrMetallicRoughness.baseColorFactor : [0.75, 0.75, 0.75, 1], min: doc.accessors[p.attributes.POSITION].min, max: doc.accessors[p.attributes.POSITION].max,
+      imagem: tex ? imagens[doc.textures[tex.index].source] : null, corte: mat?.alphaMode === "MASK" ? (mat.alphaCutoff ?? 0.5) : -1 });
   }
   return malhas;
 }
@@ -81,18 +88,30 @@ function desenharGlb(tela, buf) {
   const malhas = lerGlb(buf);
   const sh = (tipo, fonte) => { const s = gl.createShader(tipo); gl.shaderSource(s, fonte); gl.compileShader(s); return s; };
   const prog = gl.createProgram();
-  gl.attachShader(prog, sh(gl.VERTEX_SHADER, "attribute vec3 p; attribute vec3 n; uniform mat4 mvp; uniform mat4 mdl; varying vec3 vn;" +
-    "void main(){ vn = mat3(mdl) * n; gl_Position = mvp * vec4(p, 1.0); }"));
-  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, "precision mediump float; varying vec3 vn; uniform vec4 cor;" +
-    "void main(){ float l = 0.35 + 0.65 * max(dot(normalize(vn), normalize(vec3(0.4, 0.8, 0.5))), 0.0); gl_FragColor = vec4(cor.rgb * l, 1.0); }"));
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, "attribute vec3 p; attribute vec3 n; attribute vec2 t; uniform mat4 mvp; uniform mat4 mdl; varying vec3 vn; varying vec2 vt;" +
+    "void main(){ vn = mat3(mdl) * n; vt = t; gl_Position = mvp * vec4(p, 1.0); }"));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, "precision mediump float; varying vec3 vn; varying vec2 vt; uniform vec4 cor; uniform sampler2D img; uniform float usa; uniform float corte;" +
+    "void main(){ vec4 c = usa > 0.5 ? texture2D(img, vt) : vec4(1.0); if (corte >= 0.0 && c.a < corte) discard;" +
+    " float l = 0.35 + 0.65 * max(dot(normalize(vn), normalize(vec3(0.4, 0.8, 0.5))), 0.0); gl_FragColor = vec4(cor.rgb * c.rgb * l, 1.0); }"));
   gl.linkProgram(prog);
   gl.useProgram(prog);
-  const loc = { p: gl.getAttribLocation(prog, "p"), n: gl.getAttribLocation(prog, "n"), mvp: gl.getUniformLocation(prog, "mvp"), mdl: gl.getUniformLocation(prog, "mdl"), cor: gl.getUniformLocation(prog, "cor") };
+  const loc = { p: gl.getAttribLocation(prog, "p"), n: gl.getAttribLocation(prog, "n"), t: gl.getAttribLocation(prog, "t"), mvp: gl.getUniformLocation(prog, "mvp"), mdl: gl.getUniformLocation(prog, "mdl"),
+    cor: gl.getUniformLocation(prog, "cor"), usa: gl.getUniformLocation(prog, "usa"), corte: gl.getUniformLocation(prog, "corte") };
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
   const objs = malhas.map((m) => {
     for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], m.min[k]); max[k] = Math.max(max[k], m.max[k]); }
     const b = (alvo, dados) => { const x = gl.createBuffer(); gl.bindBuffer(alvo, x); gl.bufferData(alvo, dados, gl.STATIC_DRAW); return x; };
-    return { pos: b(gl.ARRAY_BUFFER, m.pos), nor: b(gl.ARRAY_BUFFER, m.nor), idx: b(gl.ELEMENT_ARRAY_BUFFER, m.idx), n: m.idx.length, cor: m.cor };
+    const o = { pos: b(gl.ARRAY_BUFFER, m.pos), nor: b(gl.ARRAY_BUFFER, m.nor), uv: b(gl.ARRAY_BUFFER, m.uv), idx: b(gl.ELEMENT_ARRAY_BUFFER, m.idx), n: m.idx.length, cor: m.cor, tex: null, corte: m.corte };
+    // A textura chega depois (decodificar o PNG é assíncrono); redesenha quando chegar.
+    if (m.imagem) createImageBitmap(m.imagem).then((bmp) => {
+      const tx = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tx);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bmp);
+      const pot = (x) => (x & (x - 1)) === 0;
+      if (pot(bmp.width) && pot(bmp.height)) { gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); }
+      else { gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); }
+      o.tex = tx; desenhar();
+    }).catch(() => {});
+    return o;
   });
   const centro = [0, 1, 2].map((k) => (min[k] + max[k]) / 2);
   const raio = Math.max(1e-3, Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2);
@@ -113,6 +132,8 @@ function desenharGlb(tela, buf) {
     for (const o of objs) {
       gl.bindBuffer(gl.ARRAY_BUFFER, o.pos); gl.enableVertexAttribArray(loc.p); gl.vertexAttribPointer(loc.p, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, o.nor); gl.enableVertexAttribArray(loc.n); gl.vertexAttribPointer(loc.n, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, o.uv); gl.enableVertexAttribArray(loc.t); gl.vertexAttribPointer(loc.t, 2, gl.FLOAT, false, 0, 0);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, o.tex); gl.uniform1f(loc.usa, o.tex ? 1 : 0); gl.uniform1f(loc.corte, o.corte);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, o.idx); gl.uniform4fv(loc.cor, o.cor);
       gl.drawElements(gl.TRIANGLES, o.n, gl.UNSIGNED_SHORT, 0);
     }

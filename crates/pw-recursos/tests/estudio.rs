@@ -122,7 +122,16 @@ impl FonteDePacote for Pacotes {
             b
         };
         receber(b"models\\teste\\caixa.ski".to_vec(), ski)?;
-        Ok(ResultadoDoPacote { entradas: 12, falhas: vec![] })
+        // A textura (B273): DDS DXT1 4×4 vermelho, na pasta `textures` (minúscula, como no cliente).
+        let mut dds = vec![0u8; 128];
+        dds[0..4].copy_from_slice(b"DDS ");
+        dds[12..16].copy_from_slice(&4u32.to_le_bytes());
+        dds[16..20].copy_from_slice(&4u32.to_le_bytes());
+        dds[80..84].copy_from_slice(&4u32.to_le_bytes());
+        dds[84..88].copy_from_slice(b"DXT1");
+        dds.extend_from_slice(&[0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0]);
+        receber(b"models\\teste\\textures\\caixa.dds".to_vec(), dds)?;
+        Ok(ResultadoDoPacote { entradas: 13, falhas: vec![] })
     }
 }
 
@@ -762,6 +771,11 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         std::io::Read::read_to_end(&mut pedir("GET", "estudio/modelos/glb").query("caminho", &caminho).call().unwrap().into_reader(), &mut glb).unwrap();
         assert_eq!(&glb[0..4], b"glTF");
         assert_eq!(u32::from_le_bytes(glb[8..12].try_into().unwrap()) as usize, glb.len());
+        // B273: a textura foi achada (pasta `textures`) e vai no GLB como PNG.
+        assert!(fi["texturas_achadas"][0].as_str().is_some_and(|c| c.to_lowercase().ends_with("textures\\caixa.dds")), "{fi}");
+        let nj = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+        let doc: Value = serde_json::from_slice(&glb[20..20 + nj]).unwrap();
+        assert_eq!((doc["images"][0]["mimeType"].as_str(), doc["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["index"].as_u64()), (Some("image/png"), Some(0)), "{doc}");
         assert_eq!(erro_de(pedir("GET", "estudio/modelos/ficha").query("caminho", "data\\elements.data").call()).0, 400);
 
         // Textos do cliente (B260): listar, buscar, editar, acrescentar (só na indexada); item "cliente".

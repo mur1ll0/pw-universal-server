@@ -248,6 +248,57 @@ impl Ski {
 mod testes {
     use super::*;
 
+    /// Medida (B273): as texturas dos `.ski` — extensão, onde o cliente as acha (`A3DSkin.cpp`: primeiro
+    /// `<pasta>\Textures\<nome>`, depois `<pasta>\Tex_<título>\<nome>`), e o formato dos DDS (FourCC ou bits).
+    #[test]
+    fn medir_texturas() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let mut pilha = vec![raiz.to_path_buf()];
+        let mut ext = std::collections::BTreeMap::<String, usize>::new();
+        let mut onde = std::collections::BTreeMap::<&str, usize>::new();
+        let mut formato = std::collections::BTreeMap::<String, usize>::new();
+        let mut decodificadas = std::collections::BTreeMap::<bool, usize>::new();
+        let mut n = 0;
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("ski")) { continue; }
+                n += 1;
+                if n % 7 != 0 { continue; } // amostra de 1/7
+                let Ok(s) = Ski::ler(&std::fs::read(&p).unwrap()) else { continue };
+                let pasta = p.parent().unwrap();
+                let titulo = p.file_stem().unwrap().to_string_lossy().to_string();
+                for t in &s.texturas {
+                    // Os nomes desta instalação desempacotada estão em disco como os bytes GBK lidos em Windows-1252.
+                    let t = &encoding_rs::WINDOWS_1252.decode(&encoding_rs::GBK.encode(t).0).0.into_owned();
+                    *ext.entry(t.rsplit('.').next().unwrap_or("").to_lowercase()).or_default() += 1;
+                    let a = pasta.join("Textures").join(t);
+                    let b = pasta.join(format!("Tex_{titulo}")).join(t);
+                    let achado = if a.exists() { Some((a, "Textures")) } else if b.exists() { Some((b, "Tex_")) } else { None };
+                    *onde.entry(achado.as_ref().map_or("não achada", |x| x.1)).or_default() += 1;
+                    if let Some((f, _)) = achado {
+                        let h = std::fs::read(&f).unwrap_or_default();
+                        let k = if h.len() >= 128 && &h[0..4] == b"DDS " {
+                            let fourcc = &h[84..88];
+                            if fourcc.iter().all(|c| c.is_ascii_alphanumeric()) { String::from_utf8_lossy(fourcc).to_string() }
+                            else { format!("bits{}", u32::from_le_bytes(h[88..92].try_into().unwrap())) }
+                        } else { format!("não-DDS {:?}", h.get(0..4).map(|x| String::from_utf8_lossy(x).to_string())) };
+                        *formato.entry(k).or_default() += 1;
+                        let dec = crate::imagem::decodificar(&h).map(|i| i.rgba.len() == 4 * (i.largura * i.altura) as usize);
+                        *decodificadas.entry(dec == Some(true)).or_default() += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("ski {n} (amostra 1/7); extensões {ext:?}; onde {onde:?}; formatos {formato:?}; decodificadas {decodificadas:?}");
+        assert_eq!(decodificadas.get(&false).copied().unwrap_or(0), 0, "toda textura achada decodifica");
+    }
+
     /// Todos os `.ski` do cliente 1.5.5 BR (desempacotado, fora do repositório): quantos fecham no último byte, e o
     /// motivo dos que não fecham. Sem a pasta, avisa.
     #[test]

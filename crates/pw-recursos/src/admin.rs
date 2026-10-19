@@ -190,14 +190,40 @@ fn ler_ski(e: &Estado, v: &str, caminho: &str) -> Result<(String, pw_data_loader
     Ok((nome, s))
 }
 
-/// A ficha do `.ski`: versão, ossos, texturas, materiais e as malhas (sem os vértices).
+/// Onde o cliente acha a textura `nome` do `.ski` em `caminho` (`A3DSkin::Load`, `A3DSkin.cpp`: primeiro
+/// `<pasta>\Textures\<nome>`, depois `<pasta>\Tex_<título>\<nome>`). Devolve o caminho e os bytes.
+fn achar_textura(e: &Estado, v: &str, caminho: &str, nome: &str) -> Option<(String, Vec<u8>)> {
+    let (pasta, arquivo) = caminho.rsplit_once('\\')?;
+    let titulo = arquivo.rsplit_once('.').map_or(arquivo, |x| x.0);
+    [format!("{pasta}\\Textures\\{nome}"), format!("{pasta}\\Tex_{titulo}\\{nome}")]
+        .into_iter()
+        .find_map(|c| e.gov.conteudo(v, &c).ok())
+}
+
+/// A textura em PNG (para o GLB), pelo decodificador do `pw-data-loader` (DDS DXT1/3/5, RGBA, TGA).
+fn textura_em_png(bytes: &[u8]) -> Option<pw_data_loader::glb::Textura> {
+    let img = pw_data_loader::imagem::decodificar(bytes)?;
+    let mut png = Vec::new();
+    {
+        let mut c = png::Encoder::new(&mut png, img.largura, img.altura);
+        c.set_color(png::ColorType::Rgba);
+        c.set_depth(png::BitDepth::Eight);
+        let mut w = c.write_header().ok()?;
+        w.write_image_data(&img.rgba).ok()?;
+    }
+    Some(pw_data_loader::glb::Textura { png, transparente: img.tem_transparencia() })
+}
+
+/// A ficha do `.ski`: versão, ossos, texturas (com onde foram achadas), materiais e as malhas (sem os vértices).
 async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Json<Value>> {
     validar(&v)?;
     let (nome, s) = ler_ski(&e, &v, &q.caminho)?;
     let mut malhas: Vec<Value> = s.malhas_de_pele.iter().map(|m| json!({ "nome": m.nome, "tipo": "pele", "vertices": m.vertices.len(), "triangulos": m.indices.len() / 3, "textura": m.textura, "material": m.material })).collect();
     malhas.extend(s.malhas_rigidas.iter().map(|m| json!({ "nome": m.nome, "tipo": "rígida", "osso": m.osso, "vertices": m.vertices.len(), "triangulos": m.indices.len() / 3, "textura": m.textura, "material": m.material })));
+    let achadas: Vec<Value> = s.texturas.iter().map(|t| achar_textura(&e, &v, &nome, t).map_or(Value::Null, |x| json!(x.0))).collect();
     Ok(Json(json!({
         "caminho": nome, "versao": s.versao, "ossos": s.ossos, "ossos_do_esqueleto": s.ossos_do_esqueleto, "texturas": s.texturas,
+        "texturas_achadas": achadas,
         "materiais": s.materiais.iter().map(|m| json!({ "nome": m.nome, "difusa": m.difusa, "dois_lados": m.dois_lados })).collect::<Vec<_>>(),
         "malhas": malhas,
     })))
@@ -207,7 +233,10 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
 async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Response> {
     validar(&v)?;
     let (nome, s) = ler_ski(&e, &v, &q.caminho)?;
-    let glb = pw_data_loader::glb::do_ski(&s, &nome);
+    // B273: as texturas, achadas como o cliente acha e convertidas para PNG; a que falta fica só com a cor.
+    let texturas: Vec<Option<pw_data_loader::glb::Textura>> =
+        s.texturas.iter().map(|t| achar_textura(&e, &v, &nome, t).and_then(|(_, b)| textura_em_png(&b))).collect();
+    let glb = pw_data_loader::glb::do_ski_com_texturas(&s, &nome, &|i| texturas.get(i).and_then(|t| t.as_ref()).map(|t| pw_data_loader::glb::Textura { png: t.png.clone(), transparente: t.transparente }));
     let arquivo = nome.rsplit('\\').next().unwrap_or("modelo").replace(['"', '\r', '\n'], "_");
     let mut h = HeaderMap::new();
     h.insert(header::CONTENT_TYPE, "model/gltf-binary".parse().unwrap());

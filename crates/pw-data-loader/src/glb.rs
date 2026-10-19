@@ -2,8 +2,9 @@
 //! Blender (S6) importa.
 //!
 //! Uma malha glTF por malha do `.ski` (pele e rígida), com `POSITION` (com `min`/`max`, obrigatórios na
-//! especificação), `NORMAL`, `TEXCOORD_0` e índices `u16`; um material por material do `.ski` (cor difusa como
-//! `baseColorFactor`, `doubleSided` do `2Sided`). Sem esqueleto nem textura ainda (S5 seguinte).
+//! especificação), `NORMAL`, `TEXCOORD_0` e índices `u16`; um material glTF por par (material, textura) usado pelas malhas (cor difusa como
+//! `baseColorFactor`, `doubleSided` do `2Sided` e, desde o B273, a textura em PNG embutida, que quem chama entrega
+//! já convertida; com alfa abaixo de 255 em algum pixel, `alphaMode` MASK — escolha de exibição). Sem esqueleto ainda.
 //!
 //! Eixos: o Angelica é Direct3D, mão esquerda, Y para cima; o glTF é mão direita, Y para cima. Converte-se negando
 //! `z` (posição e normal) e invertendo a ordem dos triângulos. A origem de UV dos dois é o canto superior esquerdo.
@@ -29,6 +30,9 @@ impl Montagem {
         let o = self.bin.len();
         self.bin.extend_from_slice(bytes);
         self.views.push(json!({ "buffer": 0, "byteOffset": o, "byteLength": bytes.len(), "target": alvo }));
+        if alvo == 0 {
+            self.views.last_mut().unwrap().as_object_mut().unwrap().remove("target");
+        }
         self.views.len() - 1
     }
 
@@ -75,27 +79,70 @@ fn espelhar(p: [f32; 3]) -> [f32; 3] {
     [p[0], p[1], -p[2]]
 }
 
-/// O GLB do `.ski`. `nome` vai em `asset.extras` e no nó raiz.
+/// Uma textura já convertida para o navegador: PNG e se tem transparência.
+pub struct Textura {
+    pub png: Vec<u8>,
+    pub transparente: bool,
+}
+
+/// O GLB do `.ski` sem texturas. `nome` vai em `asset.extras` e no nó raiz.
 pub fn do_ski(s: &Ski, nome: &str) -> Vec<u8> {
+    do_ski_com_texturas(s, nome, &|_| None)
+}
+
+/// O GLB do `.ski`; `textura(i)` entrega a i-ésima textura do `.ski` (`None` = não achada: fica só a cor).
+pub fn do_ski_com_texturas(s: &Ski, nome: &str, textura: &dyn Fn(usize) -> Option<Textura>) -> Vec<u8> {
     let mut m = Montagem { bin: Vec::new(), views: Vec::new(), accessors: Vec::new() };
-    let materiais: Vec<Value> = s
-        .materiais
-        .iter()
-        .map(|x| {
-            let c = x.difusa;
-            json!({ "name": x.nome, "doubleSided": x.dois_lados,
-                "pbrMetallicRoughness": { "baseColorFactor": [c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0), 1.0], "metallicFactor": 0.0, "roughnessFactor": 0.9 } })
-        })
-        .collect();
+    // Imagens: uma por textura do `.ski` que veio.
+    let mut images = Vec::new();
+    let mut indice_da_imagem = vec![None; s.texturas.len()];
+    let mut transparente = vec![false; s.texturas.len()];
+    for (i, nome_t) in s.texturas.iter().enumerate() {
+        if let Some(t) = textura(i) {
+            let v = m.view(&t.png, 0);
+            images.push(json!({ "bufferView": v, "mimeType": "image/png", "name": nome_t }));
+            indice_da_imagem[i] = Some(images.len() - 1);
+            transparente[i] = t.transparente;
+        }
+    }
+    // Materiais glTF: um por par (material, textura) usado.
+    let mut pares: Vec<(i32, i32)> = Vec::new();
+    let mut materiais: Vec<Value> = Vec::new();
+    let mut material_de = |mat: i32, tex: i32| -> Option<usize> {
+        if let Some(k) = pares.iter().position(|&x| x == (mat, tex)) {
+            return Some(k);
+        }
+        let base = s.materiais.get(mat.max(0) as usize).filter(|_| mat >= 0);
+        let img = (tex >= 0).then(|| indice_da_imagem.get(tex as usize).copied().flatten()).flatten();
+        if base.is_none() && img.is_none() {
+            return None;
+        }
+        let c = base.map_or([1.0; 4], |x| x.difusa);
+        let mut pbr = json!({ "baseColorFactor": [c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0), 1.0], "metallicFactor": 0.0, "roughnessFactor": 0.9 });
+        let mut mat_json = json!({ "name": base.map_or(String::new(), |x| x.nome.clone()), "doubleSided": base.is_some_and(|x| x.dois_lados) });
+        if let Some(im) = img {
+            pbr["baseColorTexture"] = json!({ "index": im });
+            // Com textura, a cor vem dela (o difuso do material do Angelica costuma ser branco ou cinza).
+            pbr["baseColorFactor"] = json!([1.0, 1.0, 1.0, 1.0]);
+            if transparente[tex as usize] {
+                mat_json["alphaMode"] = json!("MASK");
+                mat_json["alphaCutoff"] = json!(0.5);
+            }
+        }
+        mat_json["pbrMetallicRoughness"] = pbr;
+        pares.push((mat, tex));
+        materiais.push(mat_json);
+        Some(materiais.len() - 1)
+    };
     let mut meshes = Vec::new();
-    let mut primitiva = |m: &mut Montagem, nome: &str, pos: Vec<[f32; 3]>, nor: Vec<[f32; 3]>, uv: Vec<[f32; 2]>, idx: &[u16], material: i32| {
+    let mut primitiva = |m: &mut Montagem, nome: &str, pos: Vec<[f32; 3]>, nor: Vec<[f32; 3]>, uv: Vec<[f32; 2]>, idx: &[u16], material: i32, tex: i32| {
         let p = m.floats(&pos);
         let n = m.floats(&nor);
         let t = m.floats2(&uv);
         let i = m.indices(idx);
         let mut prim = json!({ "attributes": { "POSITION": p, "NORMAL": n, "TEXCOORD_0": t }, "indices": i, "mode": 4 });
-        if material >= 0 && (material as usize) < materiais.len() {
-            prim["material"] = json!(material);
+        if let Some(k) = material_de(material, tex) {
+            prim["material"] = json!(k);
         }
         meshes.push(json!({ "name": nome, "primitives": [prim] }));
     };
@@ -103,14 +150,15 @@ pub fn do_ski(s: &Ski, nome: &str) -> Vec<u8> {
         let pos = x.vertices.iter().map(|v| espelhar(v.posicao)).collect();
         let nor = x.vertices.iter().map(|v| espelhar(v.normal)).collect();
         let uv = x.vertices.iter().map(|v| v.uv).collect();
-        primitiva(&mut m, &x.nome, pos, nor, uv, &x.indices, x.material);
+        primitiva(&mut m, &x.nome, pos, nor, uv, &x.indices, x.material, x.textura);
     }
     for x in &s.malhas_rigidas {
         let pos = x.vertices.iter().map(|v| espelhar(v.posicao)).collect();
         let nor = x.vertices.iter().map(|v| espelhar(v.normal)).collect();
         let uv = x.vertices.iter().map(|v| v.uv).collect();
-        primitiva(&mut m, &x.nome, pos, nor, uv, &x.indices, x.material);
+        primitiva(&mut m, &x.nome, pos, nor, uv, &x.indices, x.material, x.textura);
     }
+    drop(primitiva);
     let nos: Vec<Value> = (0..meshes.len()).map(|i| json!({ "mesh": i, "name": meshes[i]["name"] })).collect();
     m.alinhar();
     let mut doc = json!({
@@ -125,6 +173,12 @@ pub fn do_ski(s: &Ski, nome: &str) -> Vec<u8> {
     });
     if !materiais.is_empty() {
         doc["materials"] = json!(materiais);
+    }
+    if !images.is_empty() {
+        doc["textures"] = json!((0..images.len()).map(|i| json!({ "source": i, "sampler": 0 })).collect::<Vec<_>>());
+        // Repetir (10497) nos dois eixos, filtro linear — o padrão do D3D9 para as peles.
+        doc["samplers"] = json!([{ "wrapS": 10497, "wrapT": 10497, "magFilter": 9729, "minFilter": 9729 }]);
+        doc["images"] = json!(images);
     }
     let mut texto = serde_json::to_vec(&doc).unwrap();
     while texto.len() % 4 != 0 {

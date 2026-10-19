@@ -40,6 +40,7 @@ pub mod gshop_editavel;
 pub mod tasks_editavel;
 pub mod aipolicy_editavel;
 pub mod glb;
+pub mod imagem;
 pub mod ski;
 pub mod task_npc;
 pub mod world_targets;
