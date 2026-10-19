@@ -579,6 +579,17 @@ def registrar_reinicio(app):
         return await _repassar("POST", f"/admin/{v}/estudio/textos/{_tabela_de_texto(arquivo)}", {"rascunho": rascunho},
                                dados={"id": dados["id"], "texto": dados["texto"]})
 
+    # Clonar missão de topo sem submissões (B267): id novo opcional (padrão: maior + 1; até 65535).
+    @app.post("/api/realms/{realm}/estudio/missoes/{id_missao}/clonar")
+    async def estudio_clonar_missao(realm: str, id_missao: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        dados = await requisicao.json()
+        novo = dados.get("novo")
+        if id_missao <= 0 or (novo is not None and (not isinstance(novo, int) or not 0 < novo <= 65535)):
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/missoes/{id_missao}/clonar", {"rascunho": rascunho},
+                               dados={"novo": novo} if novo is not None else {})
+
     # Comportamento dos monstros (B258, só leitura): o aipolicy.data do realm.
     @app.get("/api/realms/{realm}/estudio/comportamentos")
     async def estudio_comportamentos(realm: str, requisicao: Request, busca: str = ""):

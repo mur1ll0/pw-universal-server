@@ -639,6 +639,22 @@ async fn estudio_editar_missao(
     Ok(Json(e.estudio.editar_missao(&e.gov, &v, r, id, p.campos).await?))
 }
 
+#[derive(Deserialize)]
+struct PedidoClone {
+    novo: Option<u32>,
+}
+
+async fn estudio_clonar_missao(
+    State(e): State<Arc<Estado>>,
+    Path((v, id)): Path<(String, u32)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoClone>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.clonar_missao(&e.gov, &v, r, id, p.novo).await?))
+}
+
 // ------------------------------------------------------------------ comportamento (aipolicy, S7, B258)
 
 async fn estudio_comportamentos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QBusca>) -> R<Json<Value>> {
@@ -891,6 +907,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/textos/{arquivo}/{chave}", put(estudio_editar_texto))
         .route("/admin/{v}/estudio/comportamentos/{id}", get(estudio_comportamento).put(estudio_editar_comportamento))
         .route("/admin/{v}/estudio/missoes/{id}", get(estudio_missao).put(estudio_editar_missao))
+        .route("/admin/{v}/estudio/missoes/{id}/clonar", post(estudio_clonar_missao))
         .route("/admin/{v}/estudio/loja/{arquivo}", get(estudio_loja).post(estudio_clonar_oferta))
         .route("/admin/{v}/estudio/loja/{arquivo}/categorias", post(estudio_categoria_da_loja))
         .route("/admin/{v}/estudio/loja/{arquivo}/{indice}", get(estudio_oferta).put(estudio_editar_oferta).delete(estudio_remover_oferta))

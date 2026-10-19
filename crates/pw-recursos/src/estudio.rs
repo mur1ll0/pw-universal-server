@@ -2782,6 +2782,24 @@ impl Estudio {
 }
 
 impl Estudio {
+    /// Clona uma missão de topo sem submissões (B267, `tasks_editavel::clonar_missao`) com o id `novo` (ou o maior id
+    /// + 1). Item `ambos`. A missão nova só é oferecida em jogo depois de entrar no serviço de um NPC no `elements`.
+    pub async fn clonar_missao(&self, gov: &Governanca, versao: &str, rascunho: i64, id: u32, novo: Option<u32>) -> Result<Value> {
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        self.gravar_item_com_destino(gov, versao, "data\\tasks.data", rascunho, "ambos", move |base| {
+            let mut t = pw_data_loader::tasks_editavel::TasksEditavel::ler(base).map_err(|e| anyhow::anyhow!("tasks.data: {e}"))?;
+            let novo = match novo {
+                Some(n) => n,
+                None => t.dados.tasks.keys().max().copied().unwrap_or(0) + 1,
+            };
+            t.clonar_missao(id, novo).map_err(anyhow::Error::msg)?;
+            let mudanca = json!({ "acao": "nova", "tipo": "missao", "id": novo, "clone_de": id });
+            Ok((t.gravar(), json!({ "id": novo, "clone_de": id }), mudanca))
+        })
+        .await
+    }
+
     /// Categorias da loja (B257): `acao` = `renomear` (`categoria`, `sub?`, `nome`), `nova` (subcategoria no fim de
     /// `categoria`, com `nome`) ou `remover` (a última subcategoria de `categoria`, se nenhuma oferta a usa).
     pub async fn categoria_da_loja(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, pedido: Value) -> Result<Value> {

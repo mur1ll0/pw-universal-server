@@ -294,6 +294,11 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         r = await self.cliente.post("/api/realms/realm_155/estudio/textos/item_ext_desc.txt", params={"rascunho": 5}, headers=csrf,
                                     json={"id": 9, "texto": "x"})
         self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.5.5/estudio/textos/item_ext_desc.txt"))
+        # Clonar missão (B267).
+        r = await self.cliente.post("/api/realms/realm_155/estudio/missoes/12/clonar", params={"rascunho": 5}, headers=csrf, json={"novo": 70000})
+        self.assertEqual(r.status_code, 422)
+        r = await self.cliente.post("/api/realms/realm_155/estudio/missoes/12/clonar", params={"rascunho": 5}, headers=csrf, json={})
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.5.5/estudio/missoes/12/clonar"))
         # Missões (B255).
         await self.cliente.get("/api/realms/realm_126/estudio/missoes", params={"busca": "teste", "topo": "false"})
         p = RecursosFalso.pedidos[-1]

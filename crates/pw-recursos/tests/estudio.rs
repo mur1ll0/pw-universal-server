@@ -615,11 +615,19 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"monster_kills": quatro}}))).0, 400, "teto de 3");
         assert_eq!(mi["grupos_do_premio"]["grupos"], 12, "B265");
         assert_eq!((mi["dialogos"].as_array().unwrap().len(), mi["dialogos"][0]["nome"].as_str()), (5, Some("entrega")), "B266");
+        assert_eq!(erro_de(pedir("POST", &format!("estudio/missoes/1173/clonar?rascunho={r12}")).send_json(json!({"novo": 70000}))).0, 400, "B267: id > 65535");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"dialogos": [{"dialogo": 0, "texto": "x".repeat(64)}]}}))).0, 400, "text[64]");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"pre_tasks": [999999999]}}))).0, 400);
         pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"min_level": 5, "exp": 999, "name": "Primeiro Teste do Estúdio",
             "pre_tasks": [1174], "dialogos": [{"dialogo": 0, "texto": "Título do Estúdio"}], "itens_entregues": [{"id": 3044, "comum": true, "quantidade": 3, "probabilidade": 1.0, "validade": 0}],
             "premio_grupos": [{"sorteia_um": false, "itens": [{"id": 3045, "comum": true, "quantidade": 2, "probabilidade": 1.0, "validade": 0}]}], "descricao": "Descrição longa do Estúdio, que muda o tamanho da missão e a tabela de deslocamentos", "tributo": ""}})).unwrap();
+        let origem_do_clone = {
+            let d = pw_data_loader::tasks::TasksData::load_from_bytes(&fs::read(realm2.join("tasks.data")).unwrap()).unwrap();
+            *d.de_topo.iter().find(|x| d.tasks[x].sub_tasks.is_empty()).expect("missão de topo sem submissões")
+        };
+        assert_eq!(erro_de(pedir("POST", &format!("estudio/missoes/1173/clonar?rascunho={r12}")).send_json(json!({}))).0, 400, "B267: com submissões");
+        let cl = json_de(pedir("POST", &format!("estudio/missoes/{origem_do_clone}/clonar?rascunho={r12}")).send_json(json!({})).unwrap());
+        let id_clone = cl["resultado"]["id"].as_u64().expect("B267: id do clone") as u32;
         let mr = json_de(pedir("GET", &format!("estudio/missoes/1173?rascunho={r12}")).call().unwrap());
         assert_eq!((mr["ficha"]["min_level"].as_u64(), mr["ficha"]["rewards"]["exp"].as_i64(), mr["ficha"]["name"].as_str()), (Some(5), Some(999), Some("Primeiro Teste do Estúdio")));
         assert_eq!(json_de(pedir("GET", "estudio/missoes/1173").call().unwrap())["ficha"]["min_level"], mi["ficha"]["min_level"], "o publicado não muda");
@@ -627,7 +635,8 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(p12["aplicados"].as_array().unwrap().len(), 1, "{p12}");
         let tr = fs::read(realm2.join("tasks.data")).unwrap();
         let lido = pw_data_loader::tasks::TasksData::load_from_bytes(&tr).unwrap();
-        assert_eq!((lido.tasks[&1173].min_level, lido.tasks[&1173].rewards.exp, lido.tasks.len()), (5, 999, 7994));
+        assert_eq!((lido.tasks[&1173].min_level, lido.tasks[&1173].rewards.exp, lido.tasks.len()), (5, 999, 7995), "com o clone");
+        assert_eq!(lido.tasks[&id_clone].name, lido.tasks[&origem_do_clone].name, "B267: o clone tem o nome da origem");
         assert!(lido.tasks[&1173].descricao.starts_with("Descrição longa do Estúdio"), "B262: texto longo publicado no realm");
         assert_eq!(lido.tasks[&1173].pre_tasks, vec![1174], "B263: lista fixa publicada");
         assert_eq!((lido.tasks[&1173].itens_entregues.len(), lido.tasks[&1173].itens_entregues[0].quantidade), (1, 3), "B264: vetor publicado");

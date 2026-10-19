@@ -258,6 +258,73 @@ impl TasksEditavel {
         Ok(())
     }
 
+    /// Clona uma missão de topo sem submissões com o id `novo` (B267): copia os bytes dela para o fim do arquivo, troca
+    /// o id no bloco fixo, recifra todo texto que usa o id como chave (nome, assinatura, os quatro textos longos e os
+    /// cinco diálogos — os únicos `convert_txt`/`convert_talk_text` de `TaskTempl.cpp`: `:3842`, `:3881`,
+    /// `:4739-4751`, `:4827-4895`) com XOR `antigo ^ novo`, zera o parentesco e acrescenta a entrada na tabela do
+    /// cabeçalho (todos os deslocamentos andam 4 bytes). O arquivo é relido.
+    pub fn clonar_missao(&mut self, origem: u32, novo: u32) -> Result<(), String> {
+        let versao = self.dados.version;
+        if novo == 0 || novo > MAIOR_ID_DE_MISSAO {
+            return Err(format!("id {novo} fora de 1..={MAIOR_ID_DE_MISSAO} (o cliente guarda o id em unsigned short)"));
+        }
+        if self.dados.tasks.contains_key(&novo) {
+            return Err(format!("a missão {novo} já existe"));
+        }
+        let t = self.dados.tasks.get(&origem).ok_or_else(|| format!("missão {origem} não existe"))?;
+        if t.parent.is_some() || !t.sub_tasks.is_empty() {
+            return Err("só missão de topo sem submissões pode ser clonada".into());
+        }
+        let i = self.dados.de_topo.iter().position(|&x| x == origem).ok_or("missão de topo fora da tabela")?;
+        let quantas = u32_de(&self.bytes, 8) as usize;
+        let inicio = u32_de(&self.bytes, 12 + 4 * i) as usize;
+        let fim = if i + 1 < quantas { u32_de(&self.bytes, 12 + 4 * (i + 1)) as usize } else { self.bytes.len() };
+        let mut copia = self.bytes[inicio..fim].to_vec();
+        let k = (origem as u16) ^ (novo as u16);
+        let mut recifrar = |abs: usize, unidades: usize| {
+            let o = abs - inicio;
+            for c in copia[o..o + 2 * unidades].chunks_exact_mut(2) {
+                let u = u16::from_le_bytes([c[0], c[1]]) ^ k;
+                c.copy_from_slice(&u.to_le_bytes());
+            }
+        };
+        let (bloco, assinatura) = bloco_e_assinatura(versao);
+        let fixo = t.bloco_fixo_em;
+        recifrar(fixo + 4, 30);
+        if self.bytes[fixo + assinatura] != 0 {
+            recifrar(fixo + bloco, 30);
+        }
+        for (o, n) in posicoes_dos_textos(&self.bytes, t) {
+            recifrar(o + 4, n);
+        }
+        for d in dialogos_da_missao(&self.bytes, t) {
+            recifrar(d.texto_em, TEXTO_FIXO);
+            for j in &d.janelas {
+                recifrar(j.texto_em + 4, u32_de(&self.bytes, j.texto_em) as usize);
+                for op in &j.opcoes {
+                    recifrar(op.texto_em, TEXTO_FIXO);
+                }
+            }
+        }
+        let rel = fixo - inicio;
+        copia[rel..rel + 4].copy_from_slice(&novo.to_le_bytes());
+        for o in parentesco(versao) {
+            copia[rel + o..rel + o + 4].copy_from_slice(&0u32.to_le_bytes());
+        }
+        // Tabela: mais uma entrada; tudo o que vem depois dela anda 4 bytes.
+        for e in 0..quantas {
+            let p = 12 + 4 * e;
+            let v = u32_de(&self.bytes, p) + 4;
+            self.bytes[p..p + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        let novo_inicio = u32::try_from(self.bytes.len() + 4).map_err(|_| "arquivo grande demais")?;
+        self.bytes.splice(12 + 4 * quantas..12 + 4 * quantas, novo_inicio.to_le_bytes());
+        self.bytes[8..12].copy_from_slice(&((quantas + 1) as u32).to_le_bytes());
+        self.bytes.extend_from_slice(&copia);
+        self.dados = TasksData::load_from_bytes(&self.bytes).map_err(|e| format!("o tasks.data editado não relê: {e}"))?;
+        Ok(())
+    }
+
     /// Os cinco diálogos da missão (B266).
     pub fn dialogos(&self, id: u32) -> Option<Vec<Dialogo>> {
         Some(dialogos_da_missao(&self.bytes, self.dados.tasks.get(&id)?))
@@ -416,6 +483,25 @@ impl TasksEditavel {
         Ok(())
     }
 }
+
+// ------------------------------------------------------------------ clonar missão (B267)
+
+/// Deslocamentos, no bloco fixo, de `m_ulParent`, `m_ulPrevSibling`, `m_ulNextSibling`, `m_ulFirstChild`
+/// (`TaskTempl.h:2461-2464`). Medidos nos dados (`medir_parentesco`: o único deslocamento que bate em todas as
+/// missões): v129 1131/1135/1139/1143 (a mãe confere com `v129::f::PAI`); v55 518/522/526/530 (fim do bloco de 534).
+pub fn parentesco(version: u32) -> [usize; 4] {
+    if version == 55 { [518, 522, 526, 530] } else { [1131, 1135, 1139, 1143] }
+}
+
+/// O tamanho do bloco fixo e onde fica a marca de assinatura (`m_bHasSign`; a assinatura, `wchar[30]`, vem logo
+/// depois do bloco — `TaskTempl.cpp:3876-3881`; v55 em `0x40`, como o leitor).
+fn bloco_e_assinatura(version: u32) -> (usize, usize) {
+    if version == 55 { (534, 0x40) } else { (1157, 64) }
+}
+
+/// Maior id de missão que o cliente guarda: `unsigned short` na lista de concluídas e na ativa
+/// (`TaskProcess.h:115`, `:273-275`).
+pub const MAIOR_ID_DE_MISSAO: u32 = u16::MAX as u32;
 
 // ------------------------------------------------------------------ diálogos (B266)
 
@@ -630,6 +716,76 @@ mod testes {
             t.definir_texto_do_dialogo(id, di, Some(0), None, &antes.janelas[0].texto).unwrap();
             t.definir_texto_do_dialogo(id, di, Some(0), Some(0), &antes.janelas[0].opcoes[0].texto).unwrap();
             assert!(t.gravar() == b, "{realm}: voltar devolve o arquivo idêntico");
+        }
+    }
+
+    /// Nos dois realms: clonar uma missão de topo sem submissões (com diálogos) — relida, mesma ficha com outro id e o
+    /// mesmo nome, textos e diálogos; as outras missões iguais; id existente, id > 65535 e missão com submissões
+    /// recusados.
+    #[test]
+    fn clonar_missao_de_topo() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let mut t = TasksEditavel::ler(&b).unwrap();
+            let origem = *t.dados.de_topo.iter().find(|&&id| {
+                let m = &t.dados.tasks[&id];
+                m.sub_tasks.is_empty() && !m.descricao.is_empty() && t.dialogos(id).unwrap().iter().any(|d| !d.janelas.is_empty())
+            }).expect("missão de topo sem filhas, com descrição e diálogo");
+            let novo = (1..=MAIOR_ID_DE_MISSAO).rev().find(|x| !t.dados.tasks.contains_key(x)).unwrap();
+            let com_filhas = *t.dados.de_topo.iter().find(|&&id| !t.dados.tasks[&id].sub_tasks.is_empty()).unwrap();
+            assert!(t.clonar_missao(origem, origem).is_err());
+            assert!(t.clonar_missao(origem, 70000).is_err());
+            assert!(t.clonar_missao(com_filhas, novo).is_err());
+            let antes = serde_json::to_value(&t.dados.tasks[&origem]).unwrap();
+            let (textos, dialogos) = (t.textos(origem).unwrap(), serde_json::to_value(t.dialogos(origem).unwrap()).unwrap());
+            t.clonar_missao(origem, novo).unwrap();
+            let r = TasksData::load_from_bytes(&t.gravar()).unwrap();
+            assert_eq!((r.tasks.len(), r.de_topo.len(), *r.de_topo.last().unwrap()), (t.dados.tasks.len(), t.dados.de_topo.len(), novo));
+            let mut clone = serde_json::to_value(&r.tasks[&novo]).unwrap();
+            clone["id"] = serde_json::json!(origem);
+            assert_eq!(clone, antes, "{realm}: a ficha do clone é a da origem");
+            assert_eq!(t.textos(novo).unwrap(), textos, "{realm}: textos recifrados");
+            assert_eq!(serde_json::to_value(t.dialogos(novo).unwrap()).unwrap(), dialogos, "{realm}: diálogos recifrados");
+            assert_eq!(serde_json::to_value(&r.tasks[&origem]).unwrap(), antes, "{realm}: a origem não muda");
+            let original = TasksData::load_from_bytes(&b).unwrap();
+            let outra = original.de_topo[original.de_topo.len() / 3];
+            assert_eq!(serde_json::to_value(&r.tasks[&outra]).unwrap(), serde_json::to_value(&original.tasks[&outra]).unwrap());
+        }
+    }
+
+    /// Medida (B267): onde ficam, no bloco fixo, os ids de mãe, irmã anterior, irmã seguinte e primeira filha —
+    /// o deslocamento em que o `u32` bate com o esperado em todas as missões. E nas de topo sem filhas, se os quatro
+    /// são zero.
+    #[test]
+    fn medir_parentesco() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let t = TasksEditavel::ler(&b).unwrap();
+            let fixo = if t.dados.version == 55 { 534 } else { 1157 };
+            let ts = &t.dados.tasks;
+            let mut esperados: Vec<(&str, Box<dyn Fn(&TaskTemplate) -> Option<u32>>)> = vec![
+                ("mae", Box::new(|m: &TaskTemplate| m.parent)),
+                ("primeira_filha", Box::new(|m: &TaskTemplate| m.sub_tasks.first().copied())),
+            ];
+            esperados.push(("irma_seguinte", Box::new(move |m: &TaskTemplate| {
+                let mae = m.parent?;
+                let irmas = &ts[&mae].sub_tasks;
+                let i = irmas.iter().position(|&x| x == m.id)?;
+                Some(irmas.get(i + 1).copied().unwrap_or(0))
+            })));
+            esperados.push(("irma_anterior", Box::new(move |m: &TaskTemplate| {
+                let mae = m.parent?;
+                let irmas = &ts[&mae].sub_tasks;
+                let i = irmas.iter().position(|&x| x == m.id)?;
+                Some(if i == 0 { 0 } else { irmas[i - 1] })
+            })));
+            for (nome, f) in &esperados {
+                let casos: Vec<(&TaskTemplate, u32)> = ts.values().filter_map(|m| f(m).filter(|&x| x != 0).map(|x| (m, x))).collect();
+                let achados: Vec<usize> = (0..fixo - 3).step_by(1).filter(|&o| casos.iter().all(|(m, x)| u32_de(&b, m.bloco_fixo_em + o) == *x)).collect();
+                eprintln!("{realm}: {nome}: {} casos, deslocamentos {:?}", casos.len(), achados);
+            }
         }
     }
 

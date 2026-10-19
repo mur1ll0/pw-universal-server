@@ -131,6 +131,26 @@ async function abrirMissao(id) {
     resto.appendChild(linha);
   }
   area.appendChild(resto);
+  // Clonar (B267): só missão de topo sem submissões; a nova só aparece em jogo depois de entrar no serviço de um NPC.
+  if (estudio.rascunho && f.parent == null && !(f.sub_tasks || []).length) {
+    const linha = criar("div", "recursos-linha");
+    const novo = criar("input", "campo");
+    novo.type = "number"; novo.min = "1"; novo.max = "65535"; novo.placeholder = "id novo (vazio = maior + 1)"; novo.style.maxWidth = "200px";
+    const b = criar("button", "botao botao-pequeno botao-secundario", "Clonar missão");
+    b.type = "button";
+    b.addEventListener("click", async () => {
+      try {
+        const corpo = novo.value ? { novo: Math.trunc(Number(novo.value)) } : {};
+        const res = await api(rotaDeMissoes(`/${f.id}/clonar`), { method: "POST", body: JSON.stringify(corpo) });
+        const id = res.resultado?.id;
+        alerta("ok", "Estúdio", `Missão ${id} criada no rascunho. Para ser oferecida, inclua-a no serviço de missões de um NPC (Tabelas → NPC_TASK_OUT_SERVICE).`);
+        if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+        if (id) await abrirMissao(id);
+      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    });
+    linha.append(novo, b);
+    area.appendChild(linha);
+  }
   area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}, r.listas || [], r.vetores || [], r.grupos_do_premio, r.dialogos || []));
   document.querySelectorAll("#missoes-lista button").forEach((b) => b.setAttribute("aria-current", b.textContent.startsWith(`${id} `) ? "true" : "false"));
 }
