@@ -500,7 +500,10 @@ Painel: tabela do diagnóstico e o link para abrir o `.smd` e tocar as ações. 
 (p.ex. `players\通用装备\飞剑\飞剑10\飞剑.smd` cita `飞剑.ski`, que não está na pasta; o modelo em uso é o
 `飞剑10.ecm → 飞剑10.smd`). Com esqueleto, o GLB sai só com ele (sem `meshes`, que o glTF não aceita vazio) e o
 visualizador desenha os ossos em linhas, animados; sem esqueleto, 400 com as peles citadas. A lista traz cada tipo com
-a sua cota (`por_tipo`: `ecm`, `smd`, `ski`; até `limite` de cada).
+a sua cota (`por_tipo`: `ecm`, `smd`, `ski`; até `limite` de cada). **Da ficha ao modelo (B279):** na ficha de
+qualquer tabela, um campo de texto cujo valor termina em `.ecm`/`.smd`/`.ski` (`file_model`, `file_model_right`…) ganha
+o link "ver o modelo" (no `.ecm`, "e o diagnóstico de ações"), que abre a vista Modelos nele. Medido: em 40 monstros
+por realm, os 34 com `file_model` preenchido abrem a ficha do `.ecm` (os outros 6 têm o campo vazio).
 
 ## 7. Testes
 

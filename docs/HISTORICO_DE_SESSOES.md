@@ -15096,3 +15096,22 @@ comparação lado a lado.
 
     ### e. Falta
     - Ligar o diagnóstico à ficha do monstro; nomes de habilidade e mascote; corrigir ação faltante; Mascotes, Voo, Minas.
+
+279. **Sessão 2026-10-19: Estúdio S5 — da ficha do monstro ao modelo.**
+
+    ### a. Pedido
+    Depois da correção do B278 (`776bac6`, `8e1fa54`), seguir: ligar o diagnóstico à ficha do monstro.
+
+    ### b. Decisão
+    - Geral em vez de só `MONSTER_ESSENCE`: em qualquer tabela, campo de texto com um `.ecm`/`.smd`/`.ski` (`file_model`,
+      `file_model_right`, `file_model_left`…) ganha o link para a vista Modelos.
+
+    ### c. O que foi feito
+    - Painel (`estudio.js`): o link na ficha do registro, que troca para Modelos e abre o arquivo.
+
+    ### d. Provas
+    - Contêiner: 40 monstros por realm — os 34 com `file_model` preenchido abrem a ficha do `.ecm` (6 têm o campo
+      vazio, sem link). Só JS: os testes do painel não mudam.
+
+    ### e. Falta
+    - Nomes de habilidade (nome nativo) e de mascote (`_地面`…); corrigir ação faltante; Mascotes, Voo, Minas.
