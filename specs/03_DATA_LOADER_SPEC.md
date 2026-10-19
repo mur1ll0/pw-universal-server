@@ -695,7 +695,12 @@ próxima; a última até `ScriptCount:` (v ≥ 25) ou `AddiSkinCount:`, que o `C
 dela, com o nome novo e, se pedido, outra `BaseActName` (só com uma ação-base na origem), e soma 1 no `ComActCount`.
 Trabalha nos **bytes** (só o nome novo é codificado em GBK; o resto fica idêntico); nome repetido ou fora do GBK →
 erro. Medido em todo o 1.5.5 BR: nos 8.499 `.ecm` os blocos achados batem com o `ComActCount` e o fim é achado; 7.098
-clonagens releem com uma ação a mais e a cópia com as mesmas ações-base.
+clonagens releem com uma ação a mais e a cópia com as mesmas ações-base. **Mascote (B281):** mascote invocado
+(`id_type == 28752`, `EC_Pet.cpp:285-288`) e de combate/evolutivo (`inhabit_type == 6`, `EC_NPCModel.cpp:588-590`)
+pedem cada ação com `_` + ambiente (`GetActionEnvString`, `:580-596`: `地面`, `水中`, `空中`; o ambiente vem do estado
+que o servidor manda — voando, nadando ou no chão, `EC_NPC.cpp:411-417`). `ecm::ambientes_do_habitat` pela ordem do
+comentário do `inhabit_type` (`ExpTypes.h:2866`: 0 chão, 1 água, 2 ar, 3 chão+água, 4 chão+ar, 5 água+ar, 6 os três) e
+`ecm::pedidos_de_mascote` = os pedidos de monstro × os ambientes do habitat.
 
 ### 3.11 `global_api.lua`
 

@@ -15147,3 +15147,30 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: um monstro corrigido tocando a ação nova (cliente atualizado pelo launcher).
     - Nomes de habilidade e de mascote; copiar ação de outro modelo do mesmo esqueleto; Mascotes, Voo, Minas.
+
+281. **Sessão 2026-10-19: Estúdio S5 — diagnóstico de mascote.**
+
+    ### a. Pedido
+    Commitar e seguir (B280 já commitado: `cc309f9`, `5a22f1a`, `1fc1fa2`).
+
+    ### b. Evidência
+    - `GetActionEnvString` (`EC_NPCModel.cpp:580-596`): invocado (`id_type 28752`, `EC_Pet.cpp:285-288`) e
+      `inhabit_type == 6` (combate/evolutivo) ganham `_地面`/`_水中`/`_空中`; o ambiente vem do estado do servidor
+      (`EC_NPC.cpp:411-417`); a ordem do `inhabit_type` está no comentário de `ExpTypes.h:2866`.
+
+    ### c. O que foi feito
+    - `pw-data-loader/ecm`: `ambientes_do_habitat`, `pedidos_de_mascote`.
+    - `pw-recursos`: `habitat` na ficha do `.ecm` e `diagnostico_de_mascote`.
+    - Painel: seletor de perfil (monstro ou mascote/habitat); o link da ficha de `PET_ESSENCE` abre como mascote; a
+      tabela do diagnóstico virou uma função usada nos dois perfis (com o "Criar" do B280). Corrigido no caminho: a
+      legenda mostrava `Configsactions_npc.txt` (o `\a` da string JS).
+
+    ### d. Provas
+    - `ecm::testes::tabela_e_pedidos` (habitat 4 = chão + ar), `pw-recursos` com o banco **22/22**, painel **11/11**.
+      Contêiner: no 1.2.6, nenhum dos 461 mascotes recebe sufixo (sem invocado nem habitat 6); no 1.5.5, 25 dos 639
+      recebem (todos de habitat 6). A falta é **igual nos três ambientes** (132 ok e 143 faltando em cada), o que
+      descarta erro de mapeamento do habitat: uma parte dos mascotes de combate/evolutivos tem todas as variantes
+      `_地面`/`_水中`/`_空中`, a outra nenhuma — achado dos dados.
+
+    ### e. Falta
+    - Nomes de habilidade (nome nativo); copiar ação de outro modelo do mesmo esqueleto; Voo e Minas.

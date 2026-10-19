@@ -507,7 +507,10 @@ por realm, os 34 com `file_model` preenchido abrem a ficha do `.ecm` (os outros 
 **Corrigir ação (B280):** `POST estudio/modelos/acao?rascunho {caminho, origem, nova, base?}` cria a ação combinada
 `nova` no `.ecm` clonando `origem` (item `cliente`; regras na spec 03 §3.10d); a ficha do `.ecm` aceita `rascunho` (lê
 o do rascunho) e traz `bases_do_smd`. Painel: em cada pedido do diagnóstico que não está ok, "Criar" com a ação a
-copiar e a ação-base.
+copiar e a ação-base. **Mascote (B281):** a ficha do `.ecm` aceita `habitat` (0–6) e traz `diagnostico_de_mascote`
+(os nomes com `_地面`/`_水中`/`_空中`, spec 03 §3.10d). Painel: seletor "diagnóstico como monstro / como mascote
+(habitat)"; da ficha de um registro com `inhabit_type` e `id_type` 28752 ou `inhabit_type` 6, o link do modelo já abre
+como mascote no habitat dele.
 
 ## 7. Testes
 
@@ -550,7 +553,8 @@ ligada ao material (B273); um `.smd` sintético com `.bon` de um osso vem primei
 pele, e o GLB tem `skin` com 2 juntas (o osso e o esqueleto) e pesos (B274); sem ações na ficha, e pedir uma → 400
 (B276); um `.ecm` sintético vem primeiro e o diagnóstico acerta os três casos — combinada sem base, base ausente no
 `.smd`, combinada que falta (B277); criar `普攻1落` clonando `普攻1起` no rascunho tira a falta do diagnóstico lido
-com o rascunho, e nome repetido ou fora do GBK → 400 (B280). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
+com o rascunho, e nome repetido ou fora do GBK → 400 (B280); com `habitat=0` o diagnóstico de mascote pede só `_地面`
+e acusa as faltas (B281). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
 não usa → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
 "só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
 gatilho duplicado (id novo na resposta) e o original removido, publicados — o realm tem a mesma quantidade de
