@@ -131,11 +131,12 @@ async function abrirMissao(id) {
     resto.appendChild(linha);
   }
   area.appendChild(resto);
-  // Clonar (B267): só missão de topo sem submissões; a nova só aparece em jogo depois de entrar no serviço de um NPC.
-  if (estudio.rascunho && f.parent == null && !(f.sub_tasks || []).length) {
+  // Clonar (B267/B269): missão de topo, com as submissões (ids consecutivos); a nova só aparece em jogo depois de
+  // entrar no serviço de um NPC.
+  if (estudio.rascunho && f.parent == null) {
     const linha = criar("div", "recursos-linha");
     const novo = criar("input", "campo");
-    novo.type = "number"; novo.min = "1"; novo.max = "65535"; novo.placeholder = "id novo (vazio = maior + 1)"; novo.style.maxWidth = "200px";
+    novo.type = "number"; novo.min = "1"; novo.max = "65535"; novo.placeholder = (f.sub_tasks || []).length ? "1º id novo (consecutivos)" : "id novo (vazio = maior + 1)"; novo.style.maxWidth = "200px";
     const b = criar("button", "botao botao-pequeno botao-secundario", "Clonar missão");
     b.type = "button";
     b.addEventListener("click", async () => {

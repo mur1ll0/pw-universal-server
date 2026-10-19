@@ -15,6 +15,7 @@
 //! deslocamentos da tabela do cabeçalho das missões de topo que começam depois dele; o arquivo é relido.
 
 use crate::tasks::{TaskTemplate, TasksData, TasksError};
+use std::collections::HashMap;
 
 /// Em que bloco o campo fica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -258,58 +259,94 @@ impl TasksEditavel {
         Ok(())
     }
 
-    /// Clona uma missão de topo sem submissões com o id `novo` (B267): copia os bytes dela para o fim do arquivo, troca
-    /// o id no bloco fixo, recifra todo texto que usa o id como chave (nome, assinatura, os quatro textos longos e os
-    /// cinco diálogos — os únicos `convert_txt`/`convert_talk_text` de `TaskTempl.cpp`: `:3842`, `:3881`,
-    /// `:4739-4751`, `:4827-4895`) com XOR `antigo ^ novo`, zera o parentesco e acrescenta a entrada na tabela do
-    /// cabeçalho (todos os deslocamentos andam 4 bytes). O arquivo é relido.
+    /// Clona uma missão de topo — com a árvore de submissões (B269) — dando ids consecutivos a partir de `novo`, em
+    /// pré-ordem (B267 era só sem submissões). Copia os bytes da árvore para o fim do arquivo e, em cada nó: troca o id,
+    /// recifra todo texto que usa o id como chave (nome, assinatura, os quatro textos longos e os cinco diálogos — os
+    /// únicos `convert_txt`/`convert_talk_text` de `TaskTempl.cpp`: `:3842`, `:3881`, `:4739-4751`, `:4827-4895`) com
+    /// XOR `antigo ^ novo`, remapeia o parentesco (`parentesco`; a raiz fica sem mãe nem irmãs) e as pré-missões,
+    /// exclusivas e missão seguinte (sucesso e falha) que apontam para dentro da árvore. Acrescenta a entrada na tabela
+    /// do cabeçalho (todos os deslocamentos andam 4 bytes). O arquivo é relido.
     pub fn clonar_missao(&mut self, origem: u32, novo: u32) -> Result<(), String> {
         let versao = self.dados.version;
-        if novo == 0 || novo > MAIOR_ID_DE_MISSAO {
-            return Err(format!("id {novo} fora de 1..={MAIOR_ID_DE_MISSAO} (o cliente guarda o id em unsigned short)"));
-        }
-        if self.dados.tasks.contains_key(&novo) {
-            return Err(format!("a missão {novo} já existe"));
-        }
         let t = self.dados.tasks.get(&origem).ok_or_else(|| format!("missão {origem} não existe"))?;
-        if t.parent.is_some() || !t.sub_tasks.is_empty() {
-            return Err("só missão de topo sem submissões pode ser clonada".into());
+        if t.parent.is_some() {
+            return Err("só missão de topo pode ser clonada (a submissão vai junto com a mãe)".into());
         }
+        // A árvore em pré-ordem — a ordem do arquivo (`missao` lê a mãe e, depois, cada filha recursivamente).
+        let mut arvore = Vec::new();
+        let mut pilha = vec![origem];
+        while let Some(x) = pilha.pop() {
+            arvore.push(x);
+            pilha.extend(self.dados.tasks[&x].sub_tasks.iter().rev().copied());
+        }
+        let ultimo = novo as u64 + arvore.len() as u64 - 1;
+        if novo == 0 || ultimo > MAIOR_ID_DE_MISSAO as u64 {
+            return Err(format!("ids {novo}..={ultimo} fora de 1..={MAIOR_ID_DE_MISSAO} (o cliente guarda o id em unsigned short)"));
+        }
+        if let Some(x) = (novo..=ultimo as u32).find(|x| self.dados.tasks.contains_key(x)) {
+            return Err(format!("a missão {x} já existe (a árvore precisa de {} ids livres a partir de {novo})", arvore.len()));
+        }
+        let mapa: HashMap<u32, u32> = arvore.iter().enumerate().map(|(k, &x)| (x, novo + k as u32)).collect();
         let i = self.dados.de_topo.iter().position(|&x| x == origem).ok_or("missão de topo fora da tabela")?;
         let quantas = u32_de(&self.bytes, 8) as usize;
         let inicio = u32_de(&self.bytes, 12 + 4 * i) as usize;
         let fim = if i + 1 < quantas { u32_de(&self.bytes, 12 + 4 * (i + 1)) as usize } else { self.bytes.len() };
         let mut copia = self.bytes[inicio..fim].to_vec();
-        let k = (origem as u16) ^ (novo as u16);
-        let mut recifrar = |abs: usize, unidades: usize| {
-            let o = abs - inicio;
-            for c in copia[o..o + 2 * unidades].chunks_exact_mut(2) {
-                let u = u16::from_le_bytes([c[0], c[1]]) ^ k;
-                c.copy_from_slice(&u.to_le_bytes());
+        let (bloco, assinatura) = bloco_e_assinatura(versao);
+        let nova_missao = if versao == 55 { 8 } else { 13 }; // `campos`: deslocamento de `nova_missao` no prêmio
+        let remapear = |copia: &mut Vec<u8>, o: usize| {
+            let v = u32_de(copia, o);
+            if let Some(&n) = mapa.get(&v) {
+                copia[o..o + 4].copy_from_slice(&n.to_le_bytes());
             }
         };
-        let (bloco, assinatura) = bloco_e_assinatura(versao);
-        let fixo = t.bloco_fixo_em;
-        recifrar(fixo + 4, 30);
-        if self.bytes[fixo + assinatura] != 0 {
-            recifrar(fixo + bloco, 30);
-        }
-        for (o, n) in posicoes_dos_textos(&self.bytes, t) {
-            recifrar(o + 4, n);
-        }
-        for d in dialogos_da_missao(&self.bytes, t) {
-            recifrar(d.texto_em, TEXTO_FIXO);
-            for j in &d.janelas {
-                recifrar(j.texto_em + 4, u32_de(&self.bytes, j.texto_em) as usize);
-                for op in &j.opcoes {
-                    recifrar(op.texto_em, TEXTO_FIXO);
+        for &velho in &arvore {
+            let m = &self.dados.tasks[&velho];
+            let k = (velho as u16) ^ (mapa[&velho] as u16);
+            let mut recifrar = |abs: usize, unidades: usize| {
+                let o = abs - inicio;
+                for c in copia[o..o + 2 * unidades].chunks_exact_mut(2) {
+                    let u = u16::from_le_bytes([c[0], c[1]]) ^ k;
+                    c.copy_from_slice(&u.to_le_bytes());
+                }
+            };
+            let fixo = m.bloco_fixo_em;
+            recifrar(fixo + 4, 30);
+            if self.bytes[fixo + assinatura] != 0 {
+                recifrar(fixo + bloco, 30);
+            }
+            for (o, n) in posicoes_dos_textos(&self.bytes, m) {
+                recifrar(o + 4, n);
+            }
+            for d in dialogos_da_missao(&self.bytes, m) {
+                recifrar(d.texto_em, TEXTO_FIXO);
+                for j in &d.janelas {
+                    recifrar(j.texto_em + 4, u32_de(&self.bytes, j.texto_em) as usize);
+                    for op in &j.opcoes {
+                        recifrar(op.texto_em, TEXTO_FIXO);
+                    }
                 }
             }
-        }
-        let rel = fixo - inicio;
-        copia[rel..rel + 4].copy_from_slice(&novo.to_le_bytes());
-        for o in parentesco(versao) {
-            copia[rel + o..rel + o + 4].copy_from_slice(&0u32.to_le_bytes());
+            let rel = fixo - inicio;
+            copia[rel..rel + 4].copy_from_slice(&mapa[&velho].to_le_bytes());
+            for (n, o) in parentesco(versao).into_iter().enumerate() {
+                if velho == origem && n < 3 {
+                    // A raiz: sem mãe nem irmãs.
+                    copia[rel + o..rel + o + 4].copy_from_slice(&0u32.to_le_bytes());
+                } else {
+                    remapear(&mut copia, rel + o);
+                }
+            }
+            for l in crate::tasks::listas_fixas(versao) {
+                if l.nome == "req_classes" {
+                    continue;
+                }
+                for x in 0..l.capacidade {
+                    remapear(&mut copia, rel + l.inicio + 4 * x);
+                }
+            }
+            remapear(&mut copia, m.premio_em - inicio + nova_missao);
+            remapear(&mut copia, m.premio_de_falha_em - inicio + nova_missao);
         }
         // Tabela: mais uma entrada; tudo o que vem depois dela anda 4 bytes.
         for e in 0..quantas {
@@ -805,10 +842,10 @@ mod testes {
                 m.sub_tasks.is_empty() && !m.descricao.is_empty() && t.dialogos(id).unwrap().iter().any(|d| !d.janelas.is_empty())
             }).expect("missão de topo sem filhas, com descrição e diálogo");
             let novo = (1..=MAIOR_ID_DE_MISSAO).rev().find(|x| !t.dados.tasks.contains_key(x)).unwrap();
-            let com_filhas = *t.dados.de_topo.iter().find(|&&id| !t.dados.tasks[&id].sub_tasks.is_empty()).unwrap();
+            let sub = *t.dados.tasks.values().find(|m| m.parent.is_some()).map(|m| &m.id).unwrap();
             assert!(t.clonar_missao(origem, origem).is_err());
             assert!(t.clonar_missao(origem, 70000).is_err());
-            assert!(t.clonar_missao(com_filhas, novo).is_err());
+            assert!(t.clonar_missao(sub, novo).is_err(), "submissão não se clona sozinha");
             let antes = serde_json::to_value(&t.dados.tasks[&origem]).unwrap();
             let (textos, dialogos) = (t.textos(origem).unwrap(), serde_json::to_value(t.dialogos(origem).unwrap()).unwrap());
             t.clonar_missao(origem, novo).unwrap();
@@ -823,6 +860,42 @@ mod testes {
             let original = TasksData::load_from_bytes(&b).unwrap();
             let outra = original.de_topo[original.de_topo.len() / 3];
             assert_eq!(serde_json::to_value(&r.tasks[&outra]).unwrap(), serde_json::to_value(&original.tasks[&outra]).unwrap());
+        }
+    }
+
+    /// Nos dois realms (B269): clonar uma missão de topo com submissões — mesma forma de árvore com os ids novos, cada
+    /// nó com a ficha, os textos e os diálogos do original (mãe, filhas e referências internas remapeadas); remover o
+    /// clone devolve o arquivo idêntico; ids ocupados recusados.
+    #[test]
+    fn clonar_arvore_e_remover() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let mut t = TasksEditavel::ler(&b).unwrap();
+            // Uma de topo com netas, para pegar a recursão.
+            let origem = *t.dados.de_topo.iter().find(|&&id| t.dados.tasks[&id].sub_tasks.iter().any(|f| !t.dados.tasks[f].sub_tasks.is_empty())).expect("missão com netas");
+            let mut arvore = Vec::new();
+            let mut pilha = vec![origem];
+            while let Some(x) = pilha.pop() {
+                arvore.push(x);
+                pilha.extend(t.dados.tasks[&x].sub_tasks.iter().rev().copied());
+            }
+            let maior = *t.dados.tasks.keys().max().unwrap();
+            let novo = maior + 1;
+            assert!(t.clonar_missao(origem, maior).is_err(), "id ocupado");
+            t.clonar_missao(origem, novo).unwrap();
+            let mapa: HashMap<u32, u32> = arvore.iter().enumerate().map(|(k, &x)| (x, novo + k as u32)).collect();
+            let r = TasksData::load_from_bytes(&t.gravar()).unwrap();
+            for &velho in &arvore {
+                let (a, c) = (&r.tasks[&velho], &r.tasks[&mapa[&velho]]);
+                assert_eq!(c.sub_tasks, a.sub_tasks.iter().map(|x| mapa[x]).collect::<Vec<_>>(), "{realm}: filhas de {velho}");
+                assert_eq!(c.parent, a.parent.map(|x| mapa[&x]), "{realm}: mãe de {velho}");
+                assert_eq!((c.name.as_str(), c.descricao.as_str()), (a.name.as_str(), a.descricao.as_str()), "{realm}: textos de {velho}");
+                assert_eq!(serde_json::to_value(t.dialogos(mapa[&velho]).unwrap()).unwrap(), serde_json::to_value(t.dialogos(velho).unwrap()).unwrap());
+                assert_eq!(c.pre_tasks, a.pre_tasks.iter().map(|x| *mapa.get(x).unwrap_or(x)).collect::<Vec<_>>());
+            }
+            t.remover_missao(novo).unwrap();
+            assert!(t.gravar() == b, "{realm}: clonar a árvore e remover = arquivo idêntico");
         }
     }
 

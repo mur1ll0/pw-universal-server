@@ -2812,8 +2812,8 @@ impl Estudio {
 }
 
 impl Estudio {
-    /// Clona uma missão de topo sem submissões (B267, `tasks_editavel::clonar_missao`) com o id `novo` (ou o maior id
-    /// + 1). Item `ambos`. A missão nova só é oferecida em jogo depois de entrar no serviço de um NPC no `elements`.
+    /// Clona uma missão de topo com a árvore de submissões (B267/B269, `tasks_editavel::clonar_missao`): ids
+    /// consecutivos a partir de `novo` (ou do maior id + 1). Item `ambos`. A missão nova só é oferecida em jogo depois de entrar no serviço de um NPC no `elements`.
     pub async fn clonar_missao(&self, gov: &Governanca, versao: &str, rascunho: i64, id: u32, novo: Option<u32>) -> Result<Value> {
         let trava = self.trava(rascunho);
         let _guarda = trava.lock().await;
