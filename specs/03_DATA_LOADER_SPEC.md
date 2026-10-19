@@ -690,6 +690,12 @@ ferido — este com alternativa: o motor tenta `受伤叠加` e, sem a combinada
 `EC_NPCModel.cpp:692-702`). `ACT_SKILL1`/`ACT_MAGIC1` (mapeados a −1, `:901-910`) e os pulos (só modelo de jogador) não
 são pedidos — a 1ª versão do diagnóstico os pedia e acusava 6 faltas em **todos** os 40 monstros medidos por realm, o
 que mostrou a regra errada. Mascote (`_地面`/`_水中`/`_空中`) e habilidade (nome nativo) não tratados.
+**Ação nova no `.ecm` (B280):** `ecm::clonar_acao` copia o bloco de uma ação combinada (de `CombineActName:` até a
+próxima; a última até `ScriptCount:` (v ≥ 25) ou `AddiSkinCount:`, que o `CECModel` lê depois das ações) logo depois
+dela, com o nome novo e, se pedido, outra `BaseActName` (só com uma ação-base na origem), e soma 1 no `ComActCount`.
+Trabalha nos **bytes** (só o nome novo é codificado em GBK; o resto fica idêntico); nome repetido ou fora do GBK →
+erro. Medido em todo o 1.5.5 BR: nos 8.499 `.ecm` os blocos achados batem com o `ComActCount` e o fim é achado; 7.098
+clonagens releem com uma ação a mais e a cópia com as mesmas ações-base.
 
 ### 3.11 `global_api.lua`
 

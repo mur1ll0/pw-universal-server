@@ -504,6 +504,10 @@ a sua cota (`por_tipo`: `ecm`, `smd`, `ski`; até `limite` de cada). **Da ficha 
 qualquer tabela, um campo de texto cujo valor termina em `.ecm`/`.smd`/`.ski` (`file_model`, `file_model_right`…) ganha
 o link "ver o modelo" (no `.ecm`, "e o diagnóstico de ações"), que abre a vista Modelos nele. Medido: em 40 monstros
 por realm, os 34 com `file_model` preenchido abrem a ficha do `.ecm` (os outros 6 têm o campo vazio).
+**Corrigir ação (B280):** `POST estudio/modelos/acao?rascunho {caminho, origem, nova, base?}` cria a ação combinada
+`nova` no `.ecm` clonando `origem` (item `cliente`; regras na spec 03 §3.10d); a ficha do `.ecm` aceita `rascunho` (lê
+o do rascunho) e traz `bases_do_smd`. Painel: em cada pedido do diagnóstico que não está ok, "Criar" com a ação a
+copiar e a ação-base.
 
 ## 7. Testes
 
@@ -545,7 +549,8 @@ textura, material e 1 triângulo, o GLB tem cabeçalho e tamanho certos; caminho
 ligada ao material (B273); um `.smd` sintético com `.bon` de um osso vem primeiro na lista, a ficha traz o osso e a
 pele, e o GLB tem `skin` com 2 juntas (o osso e o esqueleto) e pesos (B274); sem ações na ficha, e pedir uma → 400
 (B276); um `.ecm` sintético vem primeiro e o diagnóstico acerta os três casos — combinada sem base, base ausente no
-`.smd`, combinada que falta (B277). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
+`.smd`, combinada que falta (B277); criar `普攻1落` clonando `普攻1起` no rascunho tira a falta do diagnóstico lido
+com o rascunho, e nome repetido ou fora do GBK → 400 (B280). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
 não usa → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
 "só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
 gatilho duplicado (id novo na resposta) e o original removido, publicados — o realm tem a mesma quantidade de

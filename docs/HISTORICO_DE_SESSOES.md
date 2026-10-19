@@ -15117,3 +15117,33 @@ comparação lado a lado.
 
     ### e. Falta
     - Nomes de habilidade (nome nativo) e de mascote (`_地面`…); corrigir ação faltante; Mascotes, Voo, Minas.
+
+280. **Sessão 2026-10-19: Estúdio S5 — corrigir ação faltante.**
+
+    ### a. Pedido
+    Commitar e seguir (B279 já commitado: `3d6bd36`, `4a12b27`).
+
+    ### b. Decisão e evidência
+    - Criar a ação combinada clonando o bloco de uma existente: os campos variam com a versão do `.ecm`
+      (`A3DCombinedAction::Load`), e o clone herda o formato certo do próprio arquivo.
+    - Fim de bloco: a próxima `CombineActName:`, ou `ScriptCount:`/`AddiSkinCount:` depois da última (`CECModel`, que os
+      lê depois das ações). Medido: 8.499/8.499 `.ecm` com blocos = `ComActCount`.
+    - Nos bytes, não no texto decodificado: a 1ª versão decodificava e recodificava o GBK, o que poderia mudar bytes
+      que ele não representa; o teste com um nome fora do GBK expôs a questão.
+
+    ### c. O que foi feito
+    - `pw-data-loader/ecm`: `clonar_acao` (com `blocos`, `linhas_com_fim`); teste em todo o cliente.
+    - `pw-recursos`: `POST estudio/modelos/acao` (item `cliente`), ficha do `.ecm` lendo o rascunho e com
+      `bases_do_smd`.
+    - Painel: "Criar" em cada falta do diagnóstico.
+
+    ### d. Provas
+    - `ecm::testes::blocos_e_clone_em_todo_o_cliente`: 8.499 com blocos certos, 7.098 clonagens relidas.
+    - `pw-recursos` com o banco **22/22**; painel **11/11**; `pw-data-loader` **240/240**.
+    - Contêiner (só leitura): o `白虎boss.ecm` do 1.5.5 usa nomes fora do padrão (`普通攻击1`, `奔跑`) e por isso o
+      cliente não acha `普攻1起`/`快速移动` — a correção é "Criar 普攻1起 copiando 普通攻击1"; a ficha traz as 12
+      ações-base do `.smd` para escolher.
+
+    ### e. Falta
+    - Ver em jogo: um monstro corrigido tocando a ação nova (cliente atualizado pelo launcher).
+    - Nomes de habilidade e de mascote; copiar ação de outro modelo do mesmo esqueleto; Mascotes, Voo, Minas.
