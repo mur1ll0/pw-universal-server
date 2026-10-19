@@ -2695,6 +2695,8 @@ impl Estudio {
             // B256: os campos de tamanho fixo que se editam no lugar, com o tipo.
             "editaveis": pw_data_loader::tasks_editavel::campos(t.version).iter().map(|c| json!([c.0, c.2])).collect::<Vec<_>>(),
             "textos": textos,
+            // B263: listas de capacidade fixa (pré-missões, exclusivas, classes) — `[nome, capacidade]`.
+            "listas": pw_data_loader::tasks::listas_fixas(t.version).iter().map(|l| json!([l.nome, l.capacidade])).collect::<Vec<_>>(),
         }))
     }
 
@@ -2708,13 +2710,24 @@ impl Estudio {
             let com_textos = |t: &pw_data_loader::tasks_editavel::TasksEditavel| -> Option<Map<String, Value>> {
                 let mut c = t.ler_campos(id)?;
                 c.extend(t.textos(id)?);
+                let m = t.dados.tasks.get(&id)?;
+                c.insert("pre_tasks".into(), json!(m.pre_tasks));
+                c.insert("missoes_exclusivas".into(), json!(m.missoes_exclusivas));
+                c.insert("req_classes".into(), json!(m.req_classes));
                 Some(c)
             };
             let antes = com_textos(&t).with_context(|| format!("missão {id} não existe"))?;
             // Textos longos (B262) mudam o tamanho e a tabela de deslocamentos: vão por último, depois dos fixos.
             let (textos, fixos): (Vec<_>, Vec<_>) = campos.iter().partition(|(k, _)| pw_data_loader::tasks_editavel::TEXTOS.contains(&k.as_str()));
             for (k, v) in fixos {
-                t.definir_campo(id, k, v).map_err(anyhow::Error::msg)?;
+                if pw_data_loader::tasks::listas_fixas(t.dados.version).iter().any(|l| l.nome == k) {
+                    let valores: Vec<u32> = v.as_array().with_context(|| format!("{k}: lista"))?.iter()
+                        .map(|x| x.as_u64().and_then(|x| u32::try_from(x).ok()).with_context(|| format!("{k}: inteiros sem sinal")))
+                        .collect::<Result<_>>()?;
+                    t.definir_lista(id, k, &valores).map_err(anyhow::Error::msg)?;
+                } else {
+                    t.definir_campo(id, k, v).map_err(anyhow::Error::msg)?;
+                }
             }
             for (k, v) in textos {
                 t.definir_texto(id, k, v.as_str().with_context(|| format!("{k}: texto"))?).map_err(anyhow::Error::msg)?;

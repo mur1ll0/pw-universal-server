@@ -675,6 +675,38 @@ fn lista_u32(b: &[u8], o: usize, n: u32, maximo: usize) -> Vec<u32> {
     (0..(n as usize).min(maximo)).map(|i| u32_em(b, o + 4 * i)).collect()
 }
 
+/// Uma lista de capacidade fixa dentro do bloco fixo: `u32` contador em `contador` e `capacidade × u32` em `inicio`
+/// (B263: a mesma tabela para o leitor e para `tasks_editavel`).
+#[derive(Debug, Clone, Copy)]
+pub struct ListaFixa {
+    pub nome: &'static str,
+    pub contador: usize,
+    pub inicio: usize,
+    pub capacidade: usize,
+}
+
+/// As listas fixas de cada versão. v129: `m_ulPremise_Tasks[MAX_PREM_TASK_COUNT = 20]`, `m_Occupations[12]`,
+/// `m_ulMutexTasks[MAX_MUTEX_TASK_COUNT = 5]` (`TaskTempl.h:30-31`, `:2235-2282`; deslocamentos de `v129::f`). v55:
+/// os do 1.2.6 medidos (`validar_tasks_v55.py:119-131`; `TaskTempl.h:2243-2244` para as classes).
+pub fn listas_fixas(version: u32) -> &'static [ListaFixa] {
+    const V55: &[ListaFixa] = &[
+        ListaFixa { nome: "req_classes", contador: 0x119, inicio: 0x11d, capacidade: 8 },
+        ListaFixa { nome: "pre_tasks", contador: 0xf1, inicio: 0xf5, capacidade: 5 },
+        ListaFixa { nome: "missoes_exclusivas", contador: 0x149, inicio: 0x14d, capacidade: 5 },
+    ];
+    const V129: &[ListaFixa] = &[
+        ListaFixa { nome: "req_classes", contador: v129::f::OCCUPATIONS_CNT, inicio: v129::f::OCCUPATIONS, capacidade: 12 },
+        ListaFixa { nome: "pre_tasks", contador: v129::f::PRE_TASK_CNT, inicio: v129::f::PRE_TASKS, capacidade: 20 },
+        ListaFixa { nome: "missoes_exclusivas", contador: v129::f::MUTEX_CNT, inicio: v129::f::MUTEX, capacidade: 5 },
+    ];
+    if version == 55 { V55 } else { V129 }
+}
+
+fn lista_fixa(b: &[u8], version: u32, nome: &str) -> Vec<u32> {
+    let l = listas_fixas(version).iter().find(|l| l.nome == nome).expect("lista fixa conhecida");
+    lista_u32(b, l.inicio, u32_em(b, l.contador), l.capacidade)
+}
+
 /// `LoadAwardDataBin` (`TaskTempl.cpp:1359`).
 fn premio(l: &mut Leitor) -> Result<TaskReward> {
     use v129::p;
@@ -940,7 +972,7 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
         // TaskTempl.h:2243-2244,2346-2347; no v55 as contagens e os
         // métodos são confirmados pelo bloco fixo e pelos vetores lidos em
         // `validar_tasks_v55.py:119-131` (0x19a=1 nas tarefas de caça).
-        req_classes: lista_u32(b, 0x11d, u32_em(b, 0x119), 8),
+        req_classes: lista_fixa(b, 55, "req_classes"),
         metodo: u32_em(b, 0x19a),
         tipo_de_conclusao: u32_em(b, 0x19e),
         // B102 — as flags de filhas e de desistência, `pack(1)` logo após `m_lPeriodLimit`
@@ -977,7 +1009,7 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
         limpa_adquiridos: b[0xae] != 0,
         min_level: u32_em(b, 0xc1),
         max_level: u32_em(b, 0xc5),
-        pre_tasks: lista_u32(b, 0xf5, u32_em(b, 0xf1), 5),
+        pre_tasks: lista_fixa(b, 55, "pre_tasks"),
         genero: u32_em(b, 0x114),
         entrega_em_zona: b[0x79] != 0,
         mundo_de_entrega: u32_em(b, 0x7a),
@@ -1038,7 +1070,7 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
         faccao: u32_em(b, 0x10f),
         conjuge: b[0x13e] != 0,
         so_gm: b[0x140] != 0,
-        missoes_exclusivas: lista_u32(b, 0x14d, u32_em(b, 0x149), 5),
+        missoes_exclusivas: lista_fixa(b, 55, "missoes_exclusivas"),
         em_equipe: b[0x176] != 0,
         recebida_pela_equipe: b[0x177] != 0,
         // `AwardNotifyTeamMem` do `libtask.so` 1.2.6 (0xd8be): `this+4+0x17f` (`m_bAllFail`),
@@ -1183,10 +1215,10 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         limite_de_tempo: u32_em(b, f::LIMITE_DE_TEMPO),
         min_level: u32_em(b, f::NIVEL_MIN),
         max_level: u32_em(b, f::NIVEL_MAX),
-        req_classes: lista_u32(b, f::OCCUPATIONS, u32_em(b, f::OCCUPATIONS_CNT), 12),
+        req_classes: lista_fixa(b, VERSAO_SUPORTADA, "req_classes"),
         genero: u32_em(b, f::GENERO),
-        pre_tasks: lista_u32(b, f::PRE_TASKS, u32_em(b, f::PRE_TASK_CNT), 20),
-        missoes_exclusivas: lista_u32(b, f::MUTEX, u32_em(b, f::MUTEX_CNT), 5),
+        pre_tasks: lista_fixa(b, VERSAO_SUPORTADA, "pre_tasks"),
+        missoes_exclusivas: lista_fixa(b, VERSAO_SUPORTADA, "missoes_exclusivas"),
         itens_exigidos,
         itens_entregues,
         npc_que_entrega: u32_em(b, f::NPC_QUE_ENTREGA),

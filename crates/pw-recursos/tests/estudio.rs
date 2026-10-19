@@ -609,8 +609,10 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let r12 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "missão", "operacao_id": "t_p4_r12"})).unwrap())["id"].as_i64().unwrap();
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"titulo": "x"}}))).0, 400);
         assert!(mi["textos"]["descricao"].is_string(), "B262: a ficha traz os textos longos");
+        assert!(mi["listas"].as_array().unwrap().iter().any(|l| l[0] == "pre_tasks"), "B263: listas fixas");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"pre_tasks": [999999999]}}))).0, 400);
         pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"min_level": 5, "exp": 999, "name": "Primeiro Teste do Estúdio",
-            "descricao": "Descrição longa do Estúdio, que muda o tamanho da missão e a tabela de deslocamentos", "tributo": ""}})).unwrap();
+            "pre_tasks": [1174], "descricao": "Descrição longa do Estúdio, que muda o tamanho da missão e a tabela de deslocamentos", "tributo": ""}})).unwrap();
         let mr = json_de(pedir("GET", &format!("estudio/missoes/1173?rascunho={r12}")).call().unwrap());
         assert_eq!((mr["ficha"]["min_level"].as_u64(), mr["ficha"]["rewards"]["exp"].as_i64(), mr["ficha"]["name"].as_str()), (Some(5), Some(999), Some("Primeiro Teste do Estúdio")));
         assert_eq!(json_de(pedir("GET", "estudio/missoes/1173").call().unwrap())["ficha"]["min_level"], mi["ficha"]["min_level"], "o publicado não muda");
@@ -620,6 +622,7 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let lido = pw_data_loader::tasks::TasksData::load_from_bytes(&tr).unwrap();
         assert_eq!((lido.tasks[&1173].min_level, lido.tasks[&1173].rewards.exp, lido.tasks.len()), (5, 999, 7994));
         assert!(lido.tasks[&1173].descricao.starts_with("Descrição longa do Estúdio"), "B262: texto longo publicado no realm");
+        assert_eq!(lido.tasks[&1173].pre_tasks, vec![1174], "B263: lista fixa publicada");
 
         // Comportamento (B258, só leitura): as políticas do realm e os monstros que as usam.
         let cp = json_de(pedir("GET", "estudio/comportamentos").call().unwrap());

@@ -131,7 +131,7 @@ async function abrirMissao(id) {
     resto.appendChild(linha);
   }
   area.appendChild(resto);
-  area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}));
+  area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}, r.listas || []));
   document.querySelectorAll("#missoes-lista button").forEach((b) => b.setAttribute("aria-current", b.textContent.startsWith(`${id} `) ? "true" : "false"));
 }
 
@@ -150,7 +150,9 @@ function valorDaFicha(f, nome) {
 
 const ROTULOS_DOS_TEXTOS = { descricao: "Descrição", ok: "Texto ao aceitar", nao: "Texto ao recusar", tributo: "Tributo" };
 
-function formularioDaMissao(f, editaveis, textos) {
+const ROTULOS_DAS_LISTAS = { pre_tasks: "Pré-missões (ids)", missoes_exclusivas: "Missões exclusivas (ids)", req_classes: "Classes exigidas (ids)" };
+
+function formularioDaMissao(f, editaveis, textos, listas) {
   const fs = criar("fieldset");
   fs.appendChild(criar("legend", "", estudio.rascunho ? `Editar (rascunho #${estudio.rascunho})` : "Editar (escolha ou crie um rascunho no topo do Estúdio)"));
   const g = criar("div", "mapa-campos");
@@ -170,6 +172,18 @@ function formularioDaMissao(f, editaveis, textos) {
     entradas[nome] = { i, tipo, atual };
   }
   fs.appendChild(g);
+  // Listas de capacidade fixa (B263): ids separados por vírgula; no máximo a capacidade do arquivo.
+  for (const [nome, capacidade] of listas) {
+    const label = criar("label", "");
+    const i = criar("input", "campo");
+    const atual = (f[nome] || []).join(", ");
+    i.value = atual;
+    i.disabled = !estudio.rascunho;
+    i.placeholder = `até ${capacidade}`;
+    label.append(criar("span", "", `${ROTULOS_DAS_LISTAS[nome] || nome} — até ${capacidade}`), i);
+    fs.appendChild(label);
+    entradas[nome] = { i, tipo: "lista", atual };
+  }
   // Textos longos (B262): mudam o tamanho da missão; o servidor corrige a tabela de deslocamentos do tasks.data.
   for (const [nome, atual] of Object.entries(textos)) {
     const label = criar("label", "");
@@ -189,6 +203,11 @@ function formularioDaMissao(f, editaveis, textos) {
     b.addEventListener("click", async () => {
       const campos = {};
       for (const [nome, { i, tipo, atual }] of Object.entries(entradas)) {
+        if (tipo === "lista") {
+          const texto = i.value.split(/[\s,;]+/).filter(Boolean).join(", ");
+          if (texto !== atual) campos[nome] = texto ? texto.split(", ").map((x) => Math.trunc(Number(x))) : [];
+          continue;
+        }
         const v = tipo === "bool" ? i.checked : (tipo === "nome" || tipo === "texto") ? i.value : Math.trunc(Number(i.value));
         if (v !== atual) campos[nome] = v;
       }

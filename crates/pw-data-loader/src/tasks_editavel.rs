@@ -172,6 +172,43 @@ impl TasksEditavel {
         Ok(())
     }
 
+    /// Troca uma lista de capacidade fixa (`tasks::listas_fixas`: pré-missões, exclusivas, classes): contador e valores
+    /// no lugar; as vagas que sobram ficam zeradas (medido: as vagas livres do arquivo original são zero). Pré-missão e
+    /// exclusiva têm que ser missões que existem; repetido é recusado.
+    pub fn definir_lista(&mut self, id: u32, nome: &str, valores: &[u32]) -> Result<(), String> {
+        let l = *crate::tasks::listas_fixas(self.dados.version).iter().find(|l| l.nome == nome).ok_or_else(|| format!("lista inexistente: {nome}"))?;
+        if valores.len() > l.capacidade {
+            return Err(format!("{nome}: no máximo {} (capacidade do arquivo)", l.capacidade));
+        }
+        let mut vistos = std::collections::HashSet::new();
+        for &v in valores {
+            if !vistos.insert(v) {
+                return Err(format!("{nome}: {v} repetido"));
+            }
+            if nome != "req_classes" && !self.dados.tasks.contains_key(&v) {
+                return Err(format!("{nome}: a missão {v} não existe"));
+            }
+            if nome != "req_classes" && v == id {
+                return Err(format!("{nome}: a missão não pode citar a si mesma"));
+            }
+        }
+        let t = self.dados.tasks.get(&id).ok_or_else(|| format!("missão {id} não existe"))?;
+        let base = t.bloco_fixo_em;
+        self.bytes[base + l.contador..base + l.contador + 4].copy_from_slice(&(valores.len() as u32).to_le_bytes());
+        for i in 0..l.capacidade {
+            let v = valores.get(i).copied().unwrap_or(0);
+            let o = base + l.inicio + 4 * i;
+            self.bytes[o..o + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        let t = self.dados.tasks.get_mut(&id).unwrap();
+        match nome {
+            "req_classes" => t.req_classes = valores.to_vec(),
+            "pre_tasks" => t.pre_tasks = valores.to_vec(),
+            _ => t.missoes_exclusivas = valores.to_vec(),
+        }
+        Ok(())
+    }
+
     /// Os campos editáveis da missão, lidos do arquivo.
     pub fn ler_campos(&self, id: u32) -> Option<serde_json::Map<String, serde_json::Value>> {
         let t = self.dados.tasks.get(&id)?;
@@ -262,6 +299,46 @@ mod testes {
             let (x, y) = (volta.gravar(), b.clone());
             assert!(x[..o] == y[..o] && x[o + BYTES_DO_NOME..] == y[o + BYTES_DO_NOME..], "{realm}: voltar devolve o resto idêntico");
             assert_eq!(TasksData::load_from_bytes(&x).unwrap().tasks[&id].name, TasksData::load_from_bytes(&y).unwrap().tasks[&id].name);
+        }
+    }
+
+    /// Nos dois realms: as vagas livres das listas fixas são zero em todas as missões (a convenção que `definir_lista`
+    /// segue); trocar pré-missões, exclusivas e classes, reler pelo leitor do GS, voltar = arquivo idêntico.
+    #[test]
+    fn listas_fixas_no_lugar_e_voltam() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let mut t = TasksEditavel::ler(&b).unwrap();
+            let listas = crate::tasks::listas_fixas(t.dados.version);
+            let mut sujas = 0;
+            for m in t.dados.tasks.values() {
+                for l in listas {
+                    let o = m.bloco_fixo_em;
+                    let n = u32::from_le_bytes(b[o + l.contador..o + l.contador + 4].try_into().unwrap()) as usize;
+                    for i in n.min(l.capacidade)..l.capacidade {
+                        if b[o + l.inicio + 4 * i..o + l.inicio + 4 * i + 4] != [0; 4] { sujas += 1; }
+                    }
+                }
+            }
+            assert_eq!(sujas, 0, "{realm}: vagas livres não zeradas");
+            let id = 1173;
+            let outras: Vec<u32> = t.dados.de_topo.iter().copied().filter(|&x| x != id).take(3).collect();
+            let antes = (t.dados.tasks[&id].pre_tasks.clone(), t.dados.tasks[&id].missoes_exclusivas.clone(), t.dados.tasks[&id].req_classes.clone());
+            t.definir_lista(id, "pre_tasks", &outras[..2]).unwrap();
+            t.definir_lista(id, "missoes_exclusivas", &outras[2..]).unwrap();
+            t.definir_lista(id, "req_classes", &[0, 3]).unwrap();
+            assert!(t.definir_lista(id, "pre_tasks", &[999_999_999]).is_err(), "missão que não existe");
+            assert!(t.definir_lista(id, "pre_tasks", &[outras[0], outras[0]]).is_err(), "repetida");
+            assert!(t.definir_lista(id, "missoes_exclusivas", &vec![outras[0]; 6]).is_err(), "capacidade");
+            assert_eq!(t.gravar().len(), b.len());
+            let r = TasksData::load_from_bytes(&t.gravar()).unwrap();
+            assert_eq!((r.tasks[&id].pre_tasks.as_slice(), r.tasks[&id].missoes_exclusivas.as_slice(), r.tasks[&id].req_classes.as_slice()),
+                (&outras[..2], &outras[2..], &[0u32, 3][..]), "{realm}");
+            t.definir_lista(id, "pre_tasks", &antes.0).unwrap();
+            t.definir_lista(id, "missoes_exclusivas", &antes.1).unwrap();
+            t.definir_lista(id, "req_classes", &antes.2).unwrap();
+            assert!(t.gravar() == b, "{realm}: voltar devolve o arquivo idêntico");
         }
     }
 
