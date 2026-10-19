@@ -14747,3 +14747,28 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: clone de uma missão com etapas, posto num NPC, aceito e avançado.
     - Criar/remover janela ou opção de diálogo; tipo de condição/operação no `aipolicy`.
+
+270. **Sessão 2026-10-19: Estúdio S7, 17ª parte — estrutura dos diálogos.**
+
+    ### a. Pedido
+    "comite e conclua o S7": commitar o B269 (feito: `a344f22`, `edb436e`) e fechar o que falta — estrutura dos diálogos
+    (este) e tipo de condição/operação no `aipolicy` (B271).
+
+    ### b. Decisão e evidência
+    - Medido nos dois realms: janela sem bit alto, raiz com pai −1, filha aberta por exatamente uma opção; opção = janela
+      do diálogo ou função `SERVICE_TYPE` (`CCommon/ExpTypes.h:36-80`; vistos 0, 6, 7, 8, 17, 18, 21); `param` 0 em janela,
+      `RETURN` e `EXIT`, id da missão (maioria) nas outras. O gravador segue as convenções.
+
+    ### c. O que foi feito
+    - `pw-data-loader/tasks_editavel`: `FUNCOES_DE_OPCAO`, `DestinoDaOpcao`, `acrescentar_opcao`, `remover_opcao`,
+      `criar_janela_raiz`; testes `medir_ids_dos_dialogos` e `estrutura_dos_dialogos`.
+    - `pw-recursos`: ações em `campos.dialogos`; `funcoes_de_opcao` na ficha.
+    - Painel: "+ Opção", "Remover" e "Criar janela inicial".
+
+    ### d. Provas
+    - Nos dois realms: opção com janela nova + opção de função, relidas; remover = arquivo idêntico; diálogo vazio ganha
+      raiz e filha, e a filha sai com a opção.
+    - `pw-recursos` com o banco **22/22**: função desconhecida → 400; janela nova publicada no realm.
+
+    ### e. Falta
+    - Ver em jogo: opção nova no diálogo do NPC (cliente atualizado).

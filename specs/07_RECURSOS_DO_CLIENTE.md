@@ -422,7 +422,10 @@ traz `grupos_do_premio` (tetos) e `campos` aceita `premio_grupos` e `falha_grupo
 Painel: editor de grupos ("sorteia um", itens com id, quantidade e peso). **Diálogos (B266):** a ficha traz
 `dialogos` (os cinco, com `nome`, `id_talk`, `texto`, `janelas[{id, pai, texto, opcoes[{id, texto, param}]}]`) e
 `campos.dialogos = [{dialogo, janela?, opcao?, texto}]` troca título, janela ou opção. Painel: um bloco recolhível por
-diálogo, com título, texto de cada janela e de cada opção. **Clonar (B267):** `POST
+diálogo, com título, texto de cada janela e de cada opção. **Estrutura (B270):** na mesma lista, `acao: "nova_opcao"`
+(`janela`, `texto`, `destino: {janela: texto} | {funcao: n}`, `param?`), `"remover_opcao"` (`janela`, `opcao`) e
+`"criar_raiz"` (`texto`); a ficha traz `funcoes_de_opcao`. Painel: "+ Opção" (abre janela nova ou função), "Remover"
+por opção e "Criar janela inicial" em diálogo vazio. **Clonar (B267):** `POST
 estudio/missoes/{id}/clonar?rascunho {novo?}` (padrão: maior id + 1) → `resultado.id`; missão de topo, com as
 submissões (B269: ids consecutivos a partir de `novo`). A missão nova não é oferecida em jogo até entrar no `NPC_TASK_OUT_SERVICE` de um NPC (Tabelas). Painel:
 "Clonar missão" na ficha (proxy recusa id fora de 1..65535). **Remover (B268):** `DELETE
@@ -461,7 +464,8 @@ falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668
 (B256): campo inexistente → 400; a ficha traz `textos` (B262) e `listas` (B263); pré-missão inexistente → 400;
 pré-missão 1174 publicada (B263); 4 monstros → 400 e item entregue publicado (B264); prêmio em item publicado (B265); 5 diálogos na ficha, título de 64 → 400, título publicado (B266); clonar com id > 65535 ou com submissões → 400,
 clone de uma missão de topo publicado (7.995 missões) com o nome da origem (B267); missão citada → 400, o clone sai
-e volta a entrar com o mesmo id (B268); a 1173 (com submissões) é clonada e removida com a árvore (B269); nível mín. 5, exp 999 e nome novo na 1173 → visíveis no rascunho, o publicado não muda;
+e volta a entrar com o mesmo id (B268); a 1173 (com submissões) é clonada e removida com a árvore (B269); função de opção desconhecida → 400, opção com
+janela nova publicada (B270); nível mín. 5, exp 999 e nome novo na 1173 → visíveis no rascunho, o publicado não muda;
 publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos, com a descrição longa nova
 (B262). Comportamento (B258): 293
 políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id

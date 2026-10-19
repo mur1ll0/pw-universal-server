@@ -196,7 +196,15 @@ ordem do arquivo), todos livres e ≤ 65535; cada nó tem os textos recifrados c
 remapeado (a raiz sem mãe nem irmãs) e as pré-missões, exclusivas e missão seguinte (sucesso e falha; prêmio +13 no
 v129, +8 no v55) que apontam para dentro da árvore remapeadas. Testado nos dois realms numa missão com netas: mesma
 forma de árvore, mesmos textos, diálogos e pré-missões (remapeadas); remover o clone = arquivo idêntico.
-Criar/remover janela ou opção continua sem gravador.
+**Estrutura dos diálogos (B270):** medido nos dois realms (`medir_ids_dos_dialogos`) — ids de janela sem o bit alto, a
+raiz com pai −1, toda janela filha com o pai no mesmo diálogo e aberta por **exatamente uma** opção (3.130 = 3.130 no
+1.2.6; 8.306 = 8.306 no 1.5.5); toda opção aponta para uma janela do diálogo ou é função (bit alto + índice do
+`SERVICE_TYPE`, `CCommon/ExpTypes.h:36-80`: 0 `NPC_TALK`, 6 `GIVE_TASK`, 7 `COMPLETE_TASK`, 8 `GIVE_TASK_MATTER`, 17
+`TALK_RETURN`, 18 `TALK_EXIT`, 21 `TALK_GIVEUP_TASK`); `param` é 0 nas que abrem janela e em `RETURN`/`EXIT`, e quase
+sempre o id da missão nas demais. `acrescentar_opcao` (no fim da janela; `NovaJanela` cria a filha no fim do diálogo
+com id = maior + 1), `remover_opcao` (leva a janela que ela abre e as descendentes) e `criar_janela_raiz` (id 1, pai
+−1, em diálogo vazio) seguem essas convenções e corrigem contadores e tabela. Testado nos dois realms: acrescentar e
+remover = arquivo idêntico.
 
 ### 3.2b `dyn_tasks.data` — missões dinâmicas (`dyn_tasks.rs`)
 

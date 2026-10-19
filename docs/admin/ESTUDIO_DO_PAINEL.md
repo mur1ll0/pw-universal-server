@@ -326,6 +326,9 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 >
 > **B269 (S7, 16ª parte):** clonar missão com as submissões (ids consecutivos, parentesco e referências internas
 > remapeados). Falta do S7: criar/remover janela ou opção; tipo de condição/operação no `aipolicy`.
+>
+> **B270 (S7, 17ª parte):** diálogos — acrescentar opção (abre janela nova ou chama função), remover opção (com a
+> janela que ela abre) e criar a janela inicial. Falta do S7: tipo de condição/operação no `aipolicy`.
 
 | fase | entrega |
 | :--- | :--- |
