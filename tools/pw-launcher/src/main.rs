@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod janela;
+mod local;
 
 use pw_atualizador::cliente::{self, Origem, Progresso, Servidor};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,9 @@ struct Config {
     /// Configuração do B234 (uma pasta só): migrada para `pastas` ao ler.
     #[serde(default, skip_serializing)]
     pasta: String,
+    /// Hosts que o launcher já pôs na `serverlist.txt` (B280): trocáveis quando o IP muda.
+    #[serde(default)]
+    hosts_jogo: Vec<String>,
 }
 
 fn caminho_config() -> PathBuf {
@@ -58,7 +62,29 @@ fn gravar_config(c: &Config) -> Result<(), String> {
 }
 
 fn servidor(url: &str) -> Servidor {
-    Servidor::new(Origem::Http(url.trim().trim_end_matches('/').to_string()), CHAVE_PUBLICA.trim())
+    Servidor::new(Origem::Http(local::normalizar_url(url)), CHAVE_PUBLICA.trim())
+}
+
+/// Põe o host do servidor de atualização como endereço do jogo na pasta (`local.rs`): os
+/// servidores do pw-universal rodam na mesma máquina. Devolve quantos arquivos mudaram.
+fn ajustar_endereco(pasta: &Path) -> Result<u32, String> {
+    let mut c = ler_config();
+    let Some(host) = local::host_da_url(&c.servidor) else { return Ok(0) };
+    let n = local::aplicar_endereco(pasta, &host, &c.hosts_jogo)?;
+    if host != "127.0.0.1" && !c.hosts_jogo.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
+        c.hosts_jogo.push(host);
+        gravar_config(&c)?;
+    }
+    Ok(n)
+}
+
+/// Depois de instalar/atualizar/reparar: ajusta o endereço e junta o aviso à mensagem.
+fn com_endereco(pasta: &Path, r: Result<String, String>) -> Result<String, String> {
+    let m = r?;
+    Ok(match ajustar_endereco(pasta) {
+        Ok(_) => m,
+        Err(e) => format!("{m} (não consegui ajustar o endereço do jogo: {e})"),
+    })
 }
 
 fn erro(e: anyhow::Error) -> String {
@@ -104,10 +130,33 @@ pub mod acoes {
         Inicio { servidor: c.servidor, versao: c.versao, versoes, erro_servidor }
     }
 
+    /// Grava o servidor de atualização e leva o host dele para o endereço do jogo de todas as
+    /// versões com pasta.
     pub fn trocar_servidor(url: &str) -> Result<(), String> {
         let mut c = ler_config();
-        c.servidor = url.trim().to_string();
-        gravar_config(&c)
+        c.servidor = local::normalizar_url(url);
+        gravar_config(&c)?;
+        for pasta in c.pastas.values() {
+            let p = PathBuf::from(pasta);
+            if p.exists() {
+                ajustar_endereco(&p)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn ler_opcoes(versao: &str) -> Result<local::Opcoes, String> {
+        let p = pasta_da_versao(versao)?.join(local::OPCOES);
+        Ok(local::ler_opcoes(&std::fs::read(p).unwrap_or_default()))
+    }
+
+    pub fn gravar_opcoes(versao: &str, o: &local::Opcoes) -> Result<(), String> {
+        let p = pasta_da_versao(versao)?.join(local::OPCOES);
+        let atual = std::fs::read(&p).unwrap_or_default();
+        if let Some(dir) = p.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("criar {}: {e}", dir.display()))?;
+        }
+        std::fs::write(&p, local::gravar_opcoes(&atual, o)).map_err(|e| format!("gravar {}: {e}", p.display()))
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,8 +214,13 @@ pub mod acoes {
         continuar(versao, ao_progredir)
     }
 
-    /// Retoma a instalação, ou atualiza se já está instalado.
+    /// Retoma a instalação, ou atualiza se já está instalado; depois ajusta o endereço do jogo.
     pub fn continuar(versao: &str, ao_progredir: AoProgredir) -> Result<String, String> {
+        let pasta = pasta_da_versao(versao)?;
+        com_endereco(&pasta, continuar_sem_endereco(versao, ao_progredir))
+    }
+
+    fn continuar_sem_endereco(versao: &str, ao_progredir: AoProgredir) -> Result<String, String> {
         let pasta = pasta_da_versao(versao)?;
         let serv = servidor(&ler_config().servidor);
         let instalado = cliente::ler_estado(&pasta).map_err(erro)?.is_some_and(|e| e.numero.is_some());
@@ -196,25 +250,28 @@ pub mod acoes {
         };
         lembrar_pasta(versao, &pasta)?;
         let n = cliente::adotar(&servidor(&ler_config().servidor), versao, &pasta, ao_progredir).map_err(erro)?;
-        Ok(if n == 0 {
+        com_endereco(&pasta, Ok(if n == 0 {
             format!("Pasta {} reconhecida: tudo confere.", pasta.display())
         } else {
             format!("Pasta {} reconhecida: {n} arquivos baixados para deixá-la igual à versão do servidor.", pasta.display())
-        })
+        }))
     }
 
     pub fn reparar(versao: &str, ao_progredir: AoProgredir) -> Result<String, String> {
         let pasta = pasta_da_versao(versao)?;
         let n = cliente::reparar(&servidor(&ler_config().servidor), &pasta, ao_progredir).map_err(erro)?;
-        Ok(if n == 0 {
+        com_endereco(&pasta, Ok(if n == 0 {
             "Tudo confere: nenhum arquivo precisou de reparo.".to_string()
         } else {
             format!("{n} arquivos reparados.")
-        })
+        }))
     }
 
+    /// Confere o endereço do jogo (o IP pode ter mudado desde a instalação) e abre o jogo.
     pub fn jogar(versao: &str) -> Result<(), String> {
-        cliente::jogar(&pasta_da_versao(versao)?).map_err(erro)
+        let pasta = pasta_da_versao(versao)?;
+        ajustar_endereco(&pasta)?;
+        cliente::jogar(&pasta).map_err(erro)
     }
 
     /// Mostra a pasta da versão no Explorer.

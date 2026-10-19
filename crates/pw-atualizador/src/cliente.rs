@@ -443,6 +443,36 @@ pub fn instalar(serv: &Servidor, versao: &str, pasta: &Path, ao_progredir: AoPro
     Ok(resumo)
 }
 
+/// Arquivo do jogador (B280): tudo sob `userdata\`. O próprio cliente reescreve esses arquivos
+/// (opções em `systemsettings.ini` por `CECConfigs::SaveSystemSettings`, `EC_Configs.cpp:480-577`;
+/// servidor escolhido em `currentserver.ini`, `EC_ServerList.cpp:525-536`; layout por personagem)
+/// e o launcher ajusta o endereço da `serverlist.txt` e as opções de vídeo. Por isso
+/// `verificar`/`reparar` só repõem o que **faltar**: conteúdo diferente é do jogador, não estrago.
+pub fn do_jogador(legivel: &str) -> bool {
+    legivel.len() >= 9 && legivel.is_char_boundary(9) && legivel[..9].eq_ignore_ascii_case("userdata\\")
+}
+
+/// A `serverlist.txt` é do jogador para `verificar` (o launcher troca o endereço), mas segue o
+/// servidor ao `atualizar`: uma lista nova publicada substitui a local e o launcher reaplica o
+/// endereço depois. Os demais arquivos do jogador só são trocados se ainda forem os da versão antiga.
+pub fn segue_o_servidor(legivel: &str) -> bool {
+    legivel.eq_ignore_ascii_case("userdata\\server\\serverlist.txt")
+}
+
+/// Arquivo do jogador que ele já mudou (difere do `antigo`, ou não havia antigo): `atualizar`
+/// não grava por cima nem apaga.
+fn mudado_pelo_jogador(pasta: &Path, a: &Arquivo, antigo: Option<&Arquivo>) -> bool {
+    let legivel = nomes::legivel(&hex::decode(&a.caminho_gbk).unwrap_or_default());
+    if !do_jogador(&legivel) || segue_o_servidor(&legivel) {
+        return false;
+    }
+    let Ok(p) = no_disco(pasta, &a.caminho_gbk) else { return false };
+    match fs::read(&p) {
+        Err(_) => false,
+        Ok(d) => antigo.is_none_or(|v| sha256_hex(&d) != v.sha256),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Divergencia {
     pub caminho: String,
@@ -464,6 +494,7 @@ fn verificar_com(pasta: &Path, m: &Manifesto, completo: bool, ao_progredir: AoPr
                 };
                 let motivo = match p.metadata() {
                     Err(_) => Some("faltando"),
+                    Ok(_) if do_jogador(&legivel) => None,
                     Ok(md) if md.len() != a.tamanho => Some("tamanho diferente"),
                     Ok(_) if completo => match fs::read(&p) {
                         Ok(d) if sha256_hex(&d) == a.sha256 => None,
@@ -554,10 +585,15 @@ pub fn atualizar(serv: &Servidor, pasta: &Path, ao_progredir: AoProgredir) -> Re
         .arquivos
         .iter()
         .filter(|a| antigo.get(&a.caminho_gbk).is_none_or(|v| v.sha256 != a.sha256))
+        .filter(|a| !mudado_pelo_jogador(pasta, a, antigo.get(&a.caminho_gbk)))
         .collect();
     let novos: std::collections::HashSet<&str> =
         remota.manifesto.arquivos.iter().map(|a| a.caminho_gbk.as_str()).collect();
-    let removidos: Vec<&Arquivo> = antigo.values().filter(|a| !novos.contains(a.caminho_gbk.as_str())).collect();
+    let removidos: Vec<&Arquivo> = antigo
+        .values()
+        .filter(|a| !novos.contains(a.caminho_gbk.as_str()))
+        .filter(|a| !mudado_pelo_jogador(pasta, a, Some(a)))
+        .collect();
 
     // 1. Baixa e confere tudo antes de mexer no cliente (retoma: o que já está aqui fica).
     let pasta_objetos = pasta_estado(pasta).join("objetos");
@@ -642,4 +678,21 @@ pub fn jogar(pasta: &Path) -> Result<()> {
         .spawn()
         .with_context(|| format!("abrir {}", exe.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    #[test]
+    fn arquivos_do_jogador() {
+        assert!(do_jogador(r"userdata\systemsettings.ini"));
+        assert!(do_jogador(r"UserData\Layout\39.ini"));
+        assert!(do_jogador(r"userdata\server\serverlist.txt"));
+        assert!(!do_jogador(r"userdata.ini"));
+        assert!(!do_jogador(r"data\elements.data"));
+        assert!(!do_jogador(r"用户"));
+        assert!(segue_o_servidor(r"userdata\server\serverlist.txt"));
+        assert!(!segue_o_servidor(r"userdata\systemsettings.ini"));
+    }
 }

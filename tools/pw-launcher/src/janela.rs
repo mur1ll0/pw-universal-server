@@ -8,6 +8,10 @@
 //! `PostMessageW` (um `Box` no `LPARAM`); o estado da janela vive só na thread dela.
 
 use crate::acoes::{self, Estado, Inicio, Situacao};
+use crate::local;
+
+#[path = "opcoes.rs"]
+mod opcoes;
 use pw_atualizador::cliente::Progresso;
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -26,6 +30,7 @@ const TITULO_JANELA: &str = "Perfect World — pw-universal";
 const ID_VERSAO: i32 = 100;
 const ID_BOTAO0: i32 = 110;
 const ID_SALVAR: i32 = 120;
+const ID_OPCOES: i32 = 130;
 const N_BOTOES: usize = 5;
 
 const WM_INICIO: u32 = WM_APP + 1;
@@ -86,6 +91,7 @@ struct Controles {
     mensagem: HWND,
     servidor: HWND,
     salvar: HWND,
+    opcoes: HWND,
     fonte: HFONT,
     dpi: i32,
 }
@@ -228,7 +234,7 @@ fn travar(sim: bool) {
     let c = ctl();
     EST.with(|e| e.borrow_mut().ocupado = sim);
     unsafe {
-        for h in c.botoes.iter().chain([c.versao, c.servidor, c.salvar].iter()) {
+        for h in c.botoes.iter().chain([c.versao, c.servidor, c.salvar, c.opcoes].iter()) {
             EnableWindow(*h, (!sim) as BOOL);
         }
         SendMessageW(c.barra, PBM_SETPOS, 0, 0);
@@ -295,6 +301,7 @@ fn mostrar() {
     texto(c.titulo, &format!("Perfect World {versao}: consultando…"));
     texto(c.detalhe, "");
     definir_botoes(&[]);
+    unsafe { EnableWindow(c.opcoes, 0) };
     let numero = EST.with(|e| {
         let mut e = e.borrow_mut();
         e.consulta += 1;
@@ -319,6 +326,7 @@ fn ao_situacao(numero: u64, r: Result<Situacao, String>) {
             return;
         }
     };
+    unsafe { EnableWindow(c.opcoes, (s.estado == Estado::Instalado && !ocupado()) as BOOL) };
     let sem_servidor = s.erro_servidor.as_ref().map(|e| format!(" (servidor fora do ar: {e})")).unwrap_or_default();
     let pasta = s.pasta.clone().unwrap_or_default();
     match s.estado {
@@ -497,6 +505,8 @@ unsafe extern "system" fn procedimento(janela: HWND, msg: u32, wparam: WPARAM, l
                 ao_trocar_versao();
             } else if id == ID_SALVAR && codigo == BN_CLICKED {
                 ao_salvar_servidor();
+            } else if id == ID_OPCOES && codigo == BN_CLICKED {
+                opcoes::abrir();
             } else if (ID_BOTAO0..ID_BOTAO0 + N_BOTOES as i32).contains(&id) && codigo == BN_CLICKED {
                 let a = EST.with(|e| e.borrow().acoes[(id - ID_BOTAO0) as usize]);
                 if let Some(a) = a {
@@ -612,7 +622,7 @@ pub fn executar() {
         CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32);
         let iccx = INITCOMMONCONTROLSEX {
             dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
-            dwICC: ICC_STANDARD_CLASSES | ICC_PROGRESS_CLASS,
+            dwICC: ICC_STANDARD_CLASSES | ICC_PROGRESS_CLASS | ICC_BAR_CLASSES,
         };
         InitCommonControlsEx(&iccx);
 
@@ -641,7 +651,9 @@ pub fn executar() {
             lpszClassName: classe.as_ptr(),
             hIconSm: icone,
         };
-        if RegisterClassExW(&wc) == 0 {
+        let classe_opcoes = w(opcoes::CLASSE);
+        let wc_opcoes = WNDCLASSEXW { lpfnWndProc: Some(opcoes::procedimento), lpszClassName: classe_opcoes.as_ptr(), ..wc };
+        if RegisterClassExW(&wc) == 0 || RegisterClassExW(&wc_opcoes) == 0 {
             caixa_de_erro("Não foi possível registrar a janela do launcher.");
             return;
         }
@@ -680,6 +692,7 @@ pub fn executar() {
         };
 
         estatico("Perfect World", cabecalho_f, (16, 14, 300, 34), 0);
+        let opcoes = cr.criar(bt.as_ptr(), "Opções do jogo…", WS_TABSTOP | WS_DISABLED, 0, (318, 17, 150, 28), ID_OPCOES, normal);
         estatico("Versão:", normal, (484, 22, 56, 20), 0);
         let versao = cr.criar(
             WC_COMBOBOXW,
@@ -727,6 +740,7 @@ pub fn executar() {
                 mensagem,
                 servidor,
                 salvar,
+                opcoes,
                 fonte: normal,
                 dpi,
             })
@@ -738,7 +752,9 @@ pub fn executar() {
 
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, 0, 0, 0) > 0 {
-            if IsDialogMessageW(janela, &msg) == 0 {
+            // Tab/Enter/Esc valem na janela de cima (a principal ou a de opções).
+            let raiz = GetAncestor(msg.hwnd, GA_ROOT);
+            if IsDialogMessageW(if raiz != 0 { raiz } else { janela }, &msg) == 0 {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
