@@ -413,6 +413,8 @@ tamanho variável → 400). Painel: formulário "Editar" na ficha da missão, co
 não muda o `NPC_TASK_OUT_SERVICE` do `elements`. **Textos (B262):** a ficha traz `textos` (`descricao`, `ok`, `nao`,
 `tributo`, decifrados) e o mesmo `PUT` aceita essas chaves em `campos` (gravadas depois dos fixos; mudam o tamanho e
 a tabela de deslocamentos — spec 03). Painel: uma caixa de texto por texto longo no formulário da missão.
+**Listas (B263):** a ficha traz `listas` (`[nome, capacidade]`) e `campos` aceita `pre_tasks`, `missoes_exclusivas`
+e `req_classes` como lista de inteiros (no lugar; regras na spec 03). Painel: ids separados por vírgula.
 
 ## 7. Testes
 
@@ -441,7 +443,8 @@ falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668
 `elements`) — preço e nome editados, clone e remoção, publicada: cliente e realm com o mesmo arquivo, carimbo igual, o
 `GShopData` do GS lê o preço novo. `gshop_editavel::testes` (os 4 arquivos dos realms idênticos). Missões (B255): o
 `tasks.data` real do 1.2.6 — 7.994 missões, 2.819 de topo, a 1173 com o NPC 3517 nomeado; id inexistente → 400. Editar
-(B256): campo inexistente → 400; a ficha traz `textos` (B262); nível mín. 5, exp 999 e nome novo na 1173 → visíveis no rascunho, o publicado não muda;
+(B256): campo inexistente → 400; a ficha traz `textos` (B262) e `listas` (B263); pré-missão inexistente → 400;
+pré-missão 1174 publicada (B263); nível mín. 5, exp 999 e nome novo na 1173 → visíveis no rascunho, o publicado não muda;
 publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos, com a descrição longa nova
 (B262). Comportamento (B258): 293
 políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id

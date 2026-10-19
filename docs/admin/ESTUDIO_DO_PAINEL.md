@@ -304,6 +304,9 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B262 (S7, 9ª parte):** missões — editar descrição, texto de aceitar, de recusar e tributo (tamanho variável; a
 > tabela de deslocamentos do `tasks.data` é corrigida). Falta do S7: criar/remover missão e as listas de tamanho
 > variável (itens, monstros, pré-missões), diálogos (`talk_proc`); mudar tipo de condição/operação no `aipolicy`.
+>
+> **B263 (S7, 10ª parte):** missões — pré-missões, exclusivas e classes (listas de capacidade fixa, no lugar). Falta do
+> S7: criar/remover missão, vetores variáveis (itens, monstros), diálogos; tipo de condição/operação no `aipolicy`.
 
 | fase | entrega |
 | :--- | :--- |

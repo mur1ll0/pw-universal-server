@@ -14550,3 +14550,30 @@ comparação lado a lado.
     - Ver em jogo: descrição nova na janela da missão (cliente baixa o tasks.data; o realm precisa reiniciar para o
       GS reler).
     - Criar/remover missão; listas de tamanho variável; diálogos.
+
+263. **Sessão 2026-10-18: Estúdio S7, décima parte — listas fixas das missões.**
+
+    ### a. Pedido
+    Commitar o B262 (feito: `ef9d16d`, `63babbf`) e seguir.
+
+    ### b. Decisão e evidência
+    - Pré-missões, exclusivas e classes são arrays de capacidade fixa no bloco fixo (`m_ulPremise_Tasks[20]`,
+      `m_Occupations[12]`, `m_ulMutexTasks[5]`, `TaskTempl.h:30-31`, `:2235-2282`; v55: 5/8/5 do leitor medido) —
+      editáveis no lugar, sem mexer na tabela de deslocamentos.
+    - Medido: as vagas livres são zero em todas as missões dos dois realms; o gravador zera as que sobram.
+    - Uma tabela só (`tasks::listas_fixas`) para o leitor e o editor — os literais do v55 saíram do leitor.
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `ListaFixa`, `listas_fixas`, `lista_fixa`; `TasksEditavel::definir_lista`.
+    - `pw-recursos`: `listas` na ficha; `campos` aceita as três listas.
+    - Painel: campos de ids separados por vírgula no formulário da missão.
+
+    ### d. Provas
+    - `tasks_editavel::testes` nos dois realms: vagas livres zero; trocar as três listas, relido; inexistente,
+      repetida e acima da capacidade recusadas; voltar = arquivo idêntico.
+    - `pw-recursos` com o banco **22/22**: pré-missão inexistente → 400; pré-missão 1174 publicada e lida no realm.
+    - `pw-data-loader` **216/216**; `cargo check --workspace --tests` ok.
+
+    ### e. Falta
+    - Ver em jogo: missão 1173 só liberada depois da 1174 (com o realm reiniciado).
+    - Criar/remover missão; vetores variáveis (itens, monstros); diálogos.

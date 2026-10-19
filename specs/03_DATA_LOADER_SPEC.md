@@ -152,8 +152,14 @@ voltar devolve o arquivo idêntico fora do campo do nome. **Textos longos (B262)
 gravação `SaveDescriptionBin`/`SaveTributeBin` `:4940-5010`, `convert_txt` `:629`). `definir_texto` reescreve o texto
 e soma a diferença em toda entrada da tabela de deslocamentos que começa depois dele; o arquivo é relido. Testado nos
 dois realms: descrição maior e tributo vazio numa missão de topo do meio, texto de aceitar numa submissão; o leitor
-relê, a última missão de topo não muda; voltar devolve o arquivo idêntico. Criar/remover missão e as listas de
-tamanho variável continuam sem gravador (ids citados no `elements`, no `task_npc` e entre missões).
+relê, a última missão de topo não muda; voltar devolve o arquivo idêntico. **Listas fixas (B263):** pré-missões,
+exclusivas e classes não são vetores variáveis — são arrays de capacidade fixa no bloco fixo, com contador
+(`tasks::listas_fixas`, uma tabela para o leitor e o editor: v129 `m_ulPremise_Tasks[20]`, `m_Occupations[12]`,
+`m_ulMutexTasks[5]`, `TaskTempl.h:30-31`, `:2235-2282`; v55 5/8/5 medidos). `definir_lista` grava contador + valores
+e zera as vagas livres — medido: as vagas livres são zero em **todas** as missões dos dois realms. Pré-missão e
+exclusiva têm que existir; repetida, a própria missão ou acima da capacidade → erro. Criar/remover missão e os
+vetores variáveis de verdade (itens, monstros, diálogos) continuam sem gravador (ids citados no `elements`, no
+`task_npc` e entre missões).
 
 ### 3.2b `dyn_tasks.data` — missões dinâmicas (`dyn_tasks.rs`)
 
