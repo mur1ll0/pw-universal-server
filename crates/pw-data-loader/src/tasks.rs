@@ -403,6 +403,9 @@ pub struct TaskTemplate {
     /// (`LoadTributeBin`), cada um `size_t` de caracteres + texto em XOR com o id (`TaskTempl.cpp:4816-4883`).
     #[serde(skip)]
     pub textos_em: usize,
+    /// Onde começam os vetores de `tasks::vetores` (B264): itens exigidos, itens entregues, monstros a matar.
+    #[serde(skip)]
+    pub vetores_em: [usize; 3],
 }
 
 #[derive(Debug, Clone, Default)]
@@ -702,6 +705,62 @@ pub fn listas_fixas(version: u32) -> &'static [ListaFixa] {
     if version == 55 { V55 } else { V129 }
 }
 
+/// Um vetor de tamanho variável cujo contador está no bloco fixo (B264): `contador` (deslocamento no bloco), tamanho
+/// de cada registro e o teto do cliente (`TaskInterface.h:139-141`: `MAX_ITEM_WANTED = 10`, `MAX_MONSTER_WANTED = 3`
+/// — "limitado pelo tamanho do `ActiveTaskEntry`").
+#[derive(Debug, Clone, Copy)]
+pub struct VetorDaMissao {
+    pub nome: &'static str,
+    pub contador: usize,
+    pub registro: usize,
+    pub teto: usize,
+}
+
+/// Na ordem de `TaskTemplate::vetores_em`. v129: `PREM_ITEMS`, `GIVEN_ITEMS`, `MONSTER_WANTED` de `v129::f`; v55: os
+/// deslocamentos do 1.2.6 que o leitor usa.
+pub fn vetores(version: u32) -> &'static [VetorDaMissao; 3] {
+    const V55: [VetorDaMissao; 3] = [
+        VetorDaMissao { nome: "itens_exigidos", contador: 0xca, registro: v55::ITEM, teto: 10 },
+        VetorDaMissao { nome: "itens_entregues", contador: 0xd3, registro: v55::ITEM, teto: 10 },
+        VetorDaMissao { nome: "monster_kills", contador: 0x1a2, registro: v55::MONSTRO, teto: 3 },
+    ];
+    const V129: [VetorDaMissao; 3] = [
+        VetorDaMissao { nome: "itens_exigidos", contador: v129::f::PREM_ITEMS, registro: v129::ITEM_WANTED, teto: 10 },
+        VetorDaMissao { nome: "itens_entregues", contador: v129::f::GIVEN_ITEMS, registro: v129::ITEM_WANTED, teto: 10 },
+        VetorDaMissao { nome: "monster_kills", contador: v129::f::MONSTER_WANTED, registro: v129::MONSTER_WANTED, teto: 3 },
+    ];
+    if version == 55 { &V55 } else { &V129 }
+}
+
+/// Os bytes de um `ITEM_WANTED` (v129: 17; v55: 13, sem `m_lPeriod`), na ordem que `item`/`item_v55` leem.
+pub fn bytes_do_item(version: u32, i: &ItemDeMissao) -> Vec<u8> {
+    let mut b = Vec::with_capacity(17);
+    b.extend_from_slice(&i.id.to_le_bytes());
+    b.push(i.comum as u8);
+    b.extend_from_slice(&i.quantidade.to_le_bytes());
+    b.extend_from_slice(&i.probabilidade.to_le_bytes());
+    if version != 55 {
+        b.extend_from_slice(&i.validade.to_le_bytes());
+    }
+    b
+}
+
+/// Os bytes de um `MONSTER_WANTED` (v129: 30; v55: 22, sem DPS/DPH), na ordem que o leitor lê.
+pub fn bytes_do_monstro(version: u32, m: &MonstroPedido) -> Vec<u8> {
+    let mut b = Vec::with_capacity(30);
+    for x in [m.monstro, m.quantidade, m.item_que_cai, m.quantidade_do_item] {
+        b.extend_from_slice(&x.to_le_bytes());
+    }
+    b.push(m.item_comum as u8);
+    b.extend_from_slice(&m.chance_do_item.to_le_bytes());
+    b.push(m.nivel_do_matador as u8);
+    if version != 55 {
+        b.extend_from_slice(&m.dps.to_le_bytes());
+        b.extend_from_slice(&m.dph.to_le_bytes());
+    }
+    b
+}
+
 fn lista_fixa(b: &[u8], version: u32, nome: &str) -> Vec<u32> {
     let l = listas_fixas(version).iter().find(|l| l.nome == nome).expect("lista fixa conhecida");
     lista_u32(b, l.inicio, u32_em(b, l.contador), l.capacidade)
@@ -929,12 +988,15 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
         let tipo = b.get(0x52 + i).copied().unwrap_or(0);
         janelas.push(JanelaDeHorario { tipo, inicio, fim });
     }
+    let mut vetores_em = [l.o, 0, 0];
     let itens_exigidos = itens_v55(l, u32_em(b, 0xca))?;
+    vetores_em[1] = l.o;
     let itens_entregues = itens_v55(l, u32_em(b, 0xd3))?;
     if b[0x176] != 0 {
         let n = l.contador(u32_em(b, 0x191), v55::MEMBRO)?;
         l.pular(n * v55::MEMBRO)?;
     }
+    vetores_em[2] = l.o;
     let n = l.contador(u32_em(b, 0x1a2), v55::MONSTRO)?;
     let mut monstros = Vec::with_capacity(n);
     for _ in 0..n {
@@ -1093,6 +1155,7 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
     tarefa.bloco_fixo_em = bloco_fixo_em;
     tarefa.premio_em = premio_em;
     tarefa.textos_em = textos_em;
+    tarefa.vetores_em = vetores_em;
     if saida.insert(id, tarefa).is_some() { return Err(TasksError::InvalidFormat); }
     Ok(id)
 }
@@ -1132,7 +1195,9 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         let n = l.contador(u32_em(b, campo), v129::TASK_REGION)?;
         l.pular(n * v129::TASK_REGION)?;
     }
+    let mut vetores_em = [l.o, 0, 0];
     let itens_exigidos = itens(l, u32_em(b, f::PREM_ITEMS))?;
+    vetores_em[1] = l.o;
     let itens_entregues = itens(l, u32_em(b, f::GIVEN_ITEMS))?;
     let mut membros_pedidos = Vec::new();
     if flag(f::TEAMWORK) {
@@ -1157,6 +1222,7 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         let n = l.contador(titulos as u32, 4)?;
         l.pular(n * 4)?;
     }
+    vetores_em[2] = l.o;
     let n = l.contador(u32_em(b, f::MONSTER_WANTED), v129::MONSTER_WANTED)?;
     let mut monstros = Vec::with_capacity(n);
     for _ in 0..n {
@@ -1309,6 +1375,7 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         bloco_fixo_em,
         premio_em,
         textos_em,
+        vetores_em,
     };
 
     let filhos = l.i32()?.max(0) as u32;
@@ -1448,6 +1515,7 @@ impl TaskTemplate {
             bloco_fixo_em: 0,
             premio_em: 0,
             textos_em: 0,
+            vetores_em: [0; 3],
         }
     }
 }

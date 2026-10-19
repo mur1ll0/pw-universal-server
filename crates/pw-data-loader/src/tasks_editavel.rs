@@ -159,6 +159,60 @@ impl TasksEditavel {
         let delta = novo.len() as i64 - 2 * n as i64;
         self.bytes.splice(o + 4..o + 4 + 2 * n, novo);
         self.bytes[o..o + 4].copy_from_slice(&(unidades.len() as u32).to_le_bytes());
+        self.corrigir_tabela(o, delta)?;
+        self.dados = TasksData::load_from_bytes(&self.bytes).map_err(|e| format!("o tasks.data editado não relê: {e}"))?;
+        Ok(())
+    }
+
+    /// Troca um vetor variável (`tasks::vetores`: itens exigidos, entregues, monstros) inteiro: contador no bloco fixo,
+    /// registros reescritos e a diferença somada na tabela de deslocamentos (como `definir_texto`). Teto do cliente
+    /// recusado; o arquivo é relido.
+    pub fn definir_vetor(&mut self, id: u32, nome: &str, valor: &serde_json::Value) -> Result<(), String> {
+        let versao = self.dados.version;
+        let k = crate::tasks::vetores(versao).iter().position(|v| v.nome == nome).ok_or_else(|| format!("vetor inexistente: {nome}"))?;
+        let v = crate::tasks::vetores(versao)[k];
+        let lista = valor.as_array().ok_or_else(|| format!("{nome}: lista"))?;
+        if lista.len() > v.teto {
+            return Err(format!("{nome}: no máximo {} (teto do cliente, TaskInterface.h)", v.teto));
+        }
+        let mut novo = Vec::new();
+        for x in lista {
+            let r = if k == 2 {
+                let m: crate::tasks::MonstroPedido = serde_json::from_value(x.clone()).map_err(|e| format!("{nome}: {e}"))?;
+                if m.monstro == 0 || m.quantidade == 0 && m.item_que_cai == 0 {
+                    return Err(format!("{nome}: monstro e quantidade (ou item que cai) obrigatórios"));
+                }
+                if versao == 55 && (m.dps != 0 || m.dph != 0) {
+                    return Err(format!("{nome}: o formato v55 não tem DPS/DPH"));
+                }
+                crate::tasks::bytes_do_monstro(versao, &m)
+            } else {
+                let i: crate::tasks::ItemDeMissao = serde_json::from_value(x.clone()).map_err(|e| format!("{nome}: {e}"))?;
+                if i.id == 0 || !i.probabilidade.is_finite() {
+                    return Err(format!("{nome}: item com id"));
+                }
+                if versao == 55 && i.validade != 0 {
+                    return Err(format!("{nome}: o formato v55 não tem validade"));
+                }
+                crate::tasks::bytes_do_item(versao, &i)
+            };
+            debug_assert_eq!(r.len(), v.registro);
+            novo.extend(r);
+        }
+        let t = self.dados.tasks.get(&id).ok_or_else(|| format!("missão {id} não existe"))?;
+        let em = t.vetores_em[k];
+        let contador = t.bloco_fixo_em + v.contador;
+        let antigos = u32::from_le_bytes(self.bytes[contador..contador + 4].try_into().unwrap()) as usize;
+        let delta = novo.len() as i64 - (antigos * v.registro) as i64;
+        self.bytes.splice(em..em + antigos * v.registro, novo);
+        self.bytes[contador..contador + 4].copy_from_slice(&(lista.len() as u32).to_le_bytes());
+        self.corrigir_tabela(em, delta)?;
+        self.dados = TasksData::load_from_bytes(&self.bytes).map_err(|e| format!("o tasks.data editado não relê: {e}"))?;
+        Ok(())
+    }
+
+    /// Soma `delta` nos deslocamentos da tabela do cabeçalho das missões de topo que começam depois de `o`.
+    fn corrigir_tabela(&mut self, o: usize, delta: i64) -> Result<(), String> {
         let quantas = u32::from_le_bytes(self.bytes[8..12].try_into().unwrap()) as usize;
         for i in 0..quantas {
             let e = 12 + 4 * i;
@@ -168,7 +222,6 @@ impl TasksEditavel {
                 self.bytes[e..e + 4].copy_from_slice(&novo_inicio.to_le_bytes());
             }
         }
-        self.dados = TasksData::load_from_bytes(&self.bytes).map_err(|e| format!("o tasks.data editado não relê: {e}"))?;
         Ok(())
     }
 
@@ -299,6 +352,62 @@ mod testes {
             let (x, y) = (volta.gravar(), b.clone());
             assert!(x[..o] == y[..o] && x[o + BYTES_DO_NOME..] == y[o + BYTES_DO_NOME..], "{realm}: voltar devolve o resto idêntico");
             assert_eq!(TasksData::load_from_bytes(&x).unwrap().tasks[&id].name, TasksData::load_from_bytes(&y).unwrap().tasks[&id].name);
+        }
+    }
+
+    /// Nos dois realms: nenhuma missão passa do teto do cliente (medido); os gravadores de item e monstro refazem os
+    /// bytes de todos os registros do arquivo; trocar os três vetores de uma missão do meio (mais itens, menos
+    /// monstros), relido, a última de topo igual; teto e item sem id recusados; voltar = arquivo idêntico.
+    #[test]
+    fn vetores_mudam_de_tamanho_e_voltam() {
+        use crate::tasks::{bytes_do_item, bytes_do_monstro, vetores};
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let mut t = TasksEditavel::ler(&b).unwrap();
+            let v = t.dados.version;
+            let mut acima = [0usize; 3];
+            for m in t.dados.tasks.values() {
+                let listas = [m.itens_exigidos.len(), m.itens_entregues.len(), m.monster_kills.len()];
+                for k in 0..3 {
+                    if listas[k] > vetores(v)[k].teto { acima[k] += 1; }
+                }
+                for (k, itens) in [(0, &m.itens_exigidos), (1, &m.itens_entregues)] {
+                    let mut o = m.vetores_em[k];
+                    for i in itens.iter() {
+                        let r = bytes_do_item(v, i);
+                        assert!(b[o..o + r.len()] == r[..], "{realm}: item {} da missão {}", i.id, m.id);
+                        o += r.len();
+                    }
+                }
+                let mut o = m.vetores_em[2];
+                for x in &m.monster_kills {
+                    let r = bytes_do_monstro(v, x);
+                    assert!(b[o..o + r.len()] == r[..], "{realm}: monstro {} da missão {}", x.monstro, m.id);
+                    o += r.len();
+                }
+            }
+            eprintln!("{realm}: missões acima do teto (itens exigidos, entregues, monstros) = {acima:?}");
+            let id = *t.dados.tasks.values().filter(|m| !m.monster_kills.is_empty() && m.parent.is_none())
+                .map(|m| &m.id).min().expect("alguma missão de topo com monstros");
+            let ultima = *t.dados.de_topo.last().unwrap();
+            let ultima_antes = serde_json::to_value(&t.dados.tasks[&ultima]).unwrap();
+            let m = t.dados.tasks[&id].clone();
+            let antes: Vec<serde_json::Value> = [&m.itens_exigidos, &m.itens_entregues].iter().map(|x| serde_json::to_value(x).unwrap())
+                .chain([serde_json::to_value(&m.monster_kills).unwrap()]).collect();
+            let item = serde_json::json!({"id": 12345, "comum": true, "quantidade": 2, "probabilidade": 1.0, "validade": 0});
+            t.definir_vetor(id, "itens_exigidos", &serde_json::json!([item, item])).unwrap();
+            t.definir_vetor(id, "itens_entregues", &serde_json::json!([item])).unwrap();
+            t.definir_vetor(id, "monster_kills", &serde_json::json!([])).unwrap();
+            assert!(t.definir_vetor(id, "itens_exigidos", &serde_json::Value::Array(vec![item.clone(); 11])).is_err(), "teto");
+            assert!(t.definir_vetor(id, "itens_exigidos", &serde_json::json!([{"id": 0, "comum": true, "quantidade": 1, "probabilidade": 1.0, "validade": 0}])).is_err());
+            let r = TasksData::load_from_bytes(&t.gravar()).unwrap();
+            assert_eq!((r.tasks[&id].itens_exigidos.len(), r.tasks[&id].itens_entregues[0].id, r.tasks[&id].monster_kills.len()), (2, 12345, 0), "{realm}");
+            assert_eq!(serde_json::to_value(&r.tasks[&ultima]).unwrap(), ultima_antes, "{realm}: a última de topo não muda");
+            for (k, nome) in ["itens_exigidos", "itens_entregues", "monster_kills"].iter().enumerate() {
+                t.definir_vetor(id, nome, &antes[k]).unwrap();
+            }
+            assert!(t.gravar() == b, "{realm}: voltar devolve o arquivo idêntico");
         }
     }
 

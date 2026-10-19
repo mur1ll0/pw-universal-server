@@ -131,7 +131,7 @@ async function abrirMissao(id) {
     resto.appendChild(linha);
   }
   area.appendChild(resto);
-  area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}, r.listas || []));
+  area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}, r.listas || [], r.vetores || []));
   document.querySelectorAll("#missoes-lista button").forEach((b) => b.setAttribute("aria-current", b.textContent.startsWith(`${id} `) ? "true" : "false"));
 }
 
@@ -152,7 +152,50 @@ const ROTULOS_DOS_TEXTOS = { descricao: "Descrição", ok: "Texto ao aceitar", n
 
 const ROTULOS_DAS_LISTAS = { pre_tasks: "Pré-missões (ids)", missoes_exclusivas: "Missões exclusivas (ids)", req_classes: "Classes exigidas (ids)" };
 
-function formularioDaMissao(f, editaveis, textos, listas) {
+/* Vetores variáveis (B264): uma linha por registro com os campos principais; os outros campos do registro ficam como
+   estão (ou com o padrão, numa linha nova). Teto do cliente: 10 itens, 3 monstros (TaskInterface.h). */
+const VETORES_DA_MISSAO = {
+  itens_exigidos: { rotulo: "Itens exigidos", campos: [["id", "Item"], ["quantidade", "Qtd."]], novo: { id: 0, comum: true, quantidade: 1, probabilidade: 1, validade: 0 } },
+  itens_entregues: { rotulo: "Itens entregues ao aceitar", campos: [["id", "Item"], ["quantidade", "Qtd."]], novo: { id: 0, comum: true, quantidade: 1, probabilidade: 1, validade: 0 } },
+  monster_kills: { rotulo: "Monstros a matar", campos: [["monstro", "Monstro"], ["quantidade", "Mortes"], ["item_que_cai", "Item que cai"], ["quantidade_do_item", "Qtd. do item"]],
+    novo: { monstro: 0, quantidade: 1, item_que_cai: 0, quantidade_do_item: 0, item_comum: false, chance_do_item: 0, nivel_do_matador: false, dps: 0, dph: 0 } },
+};
+
+function editorDeVetor(nome, teto, registros) {
+  const def = VETORES_DA_MISSAO[nome];
+  const caixa = criar("div", "missao-objeto");
+  const linhas = registros.map((x) => ({ ...x }));
+  const desenhar = () => {
+    caixa.replaceChildren(criar("strong", "", `${def ? def.rotulo : nome} (até ${teto})`));
+    linhas.forEach((x, k) => {
+      const l = criar("div", "recursos-linha");
+      for (const [campo, rot] of def.campos) {
+        const i = criar("input", "campo");
+        i.type = "number"; i.min = "0"; i.step = "1"; i.value = x[campo] ?? 0; i.style.maxWidth = "110px";
+        i.disabled = !estudio.rascunho;
+        i.addEventListener("input", () => { x[campo] = Math.trunc(Number(i.value)); });
+        l.append(` ${rot} `, i);
+      }
+      if (estudio.rascunho) {
+        const b = criar("button", "botao botao-pequeno botao-secundario", "Remover");
+        b.type = "button";
+        b.addEventListener("click", () => { linhas.splice(k, 1); desenhar(); });
+        l.appendChild(b);
+      }
+      caixa.appendChild(l);
+    });
+    if (estudio.rascunho && linhas.length < teto) {
+      const b = criar("button", "botao botao-pequeno botao-secundario", "+ Linha");
+      b.type = "button";
+      b.addEventListener("click", () => { linhas.push({ ...def.novo }); desenhar(); });
+      caixa.appendChild(b);
+    }
+  };
+  desenhar();
+  return { caixa, valor: () => linhas };
+}
+
+function formularioDaMissao(f, editaveis, textos, listas, vetores) {
   const fs = criar("fieldset");
   fs.appendChild(criar("legend", "", estudio.rascunho ? `Editar (rascunho #${estudio.rascunho})` : "Editar (escolha ou crie um rascunho no topo do Estúdio)"));
   const g = criar("div", "mapa-campos");
@@ -184,6 +227,12 @@ function formularioDaMissao(f, editaveis, textos, listas) {
     fs.appendChild(label);
     entradas[nome] = { i, tipo: "lista", atual };
   }
+  for (const [nome, teto] of vetores) {
+    if (!VETORES_DA_MISSAO[nome]) continue;
+    const e = editorDeVetor(nome, teto, f[nome] || []);
+    fs.appendChild(e.caixa);
+    entradas[nome] = { tipo: "vetor", atual: JSON.stringify(f[nome] || []), valor: e.valor };
+  }
   // Textos longos (B262): mudam o tamanho da missão; o servidor corrige a tabela de deslocamentos do tasks.data.
   for (const [nome, atual] of Object.entries(textos)) {
     const label = criar("label", "");
@@ -203,6 +252,11 @@ function formularioDaMissao(f, editaveis, textos, listas) {
     b.addEventListener("click", async () => {
       const campos = {};
       for (const [nome, { i, tipo, atual }] of Object.entries(entradas)) {
+        if (tipo === "vetor") {
+          const v = entradas[nome].valor();
+          if (JSON.stringify(v) !== atual) campos[nome] = v;
+          continue;
+        }
         if (tipo === "lista") {
           const texto = i.value.split(/[\s,;]+/).filter(Boolean).join(", ");
           if (texto !== atual) campos[nome] = texto ? texto.split(", ").map((x) => Math.trunc(Number(x))) : [];

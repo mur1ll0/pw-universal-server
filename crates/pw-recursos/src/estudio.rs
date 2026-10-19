@@ -2697,6 +2697,8 @@ impl Estudio {
             "textos": textos,
             // B263: listas de capacidade fixa (pré-missões, exclusivas, classes) — `[nome, capacidade]`.
             "listas": pw_data_loader::tasks::listas_fixas(t.version).iter().map(|l| json!([l.nome, l.capacidade])).collect::<Vec<_>>(),
+            // B264: vetores variáveis (itens exigidos, entregues, monstros) — `[nome, teto do cliente]`.
+            "vetores": pw_data_loader::tasks::vetores(t.version).iter().map(|v| json!([v.nome, v.teto])).collect::<Vec<_>>(),
         }))
     }
 
@@ -2714,11 +2716,16 @@ impl Estudio {
                 c.insert("pre_tasks".into(), json!(m.pre_tasks));
                 c.insert("missoes_exclusivas".into(), json!(m.missoes_exclusivas));
                 c.insert("req_classes".into(), json!(m.req_classes));
+                c.insert("itens_exigidos".into(), json!(m.itens_exigidos));
+                c.insert("itens_entregues".into(), json!(m.itens_entregues));
+                c.insert("monster_kills".into(), json!(m.monster_kills));
                 Some(c)
             };
             let antes = com_textos(&t).with_context(|| format!("missão {id} não existe"))?;
             // Textos longos (B262) mudam o tamanho e a tabela de deslocamentos: vão por último, depois dos fixos.
-            let (textos, fixos): (Vec<_>, Vec<_>) = campos.iter().partition(|(k, _)| pw_data_loader::tasks_editavel::TEXTOS.contains(&k.as_str()));
+            let (variaveis, fixos): (Vec<_>, Vec<_>) = campos.iter().partition(|(k, _)| {
+                pw_data_loader::tasks_editavel::TEXTOS.contains(&k.as_str()) || pw_data_loader::tasks::vetores(t.dados.version).iter().any(|v| v.nome == k.as_str())
+            });
             for (k, v) in fixos {
                 if pw_data_loader::tasks::listas_fixas(t.dados.version).iter().any(|l| l.nome == k) {
                     let valores: Vec<u32> = v.as_array().with_context(|| format!("{k}: lista"))?.iter()
@@ -2729,8 +2736,12 @@ impl Estudio {
                     t.definir_campo(id, k, v).map_err(anyhow::Error::msg)?;
                 }
             }
-            for (k, v) in textos {
-                t.definir_texto(id, k, v.as_str().with_context(|| format!("{k}: texto"))?).map_err(anyhow::Error::msg)?;
+            for (k, v) in variaveis {
+                if pw_data_loader::tasks_editavel::TEXTOS.contains(&k.as_str()) {
+                    t.definir_texto(id, k, v.as_str().with_context(|| format!("{k}: texto"))?).map_err(anyhow::Error::msg)?;
+                } else {
+                    t.definir_vetor(id, k, v).map_err(anyhow::Error::msg)?;
+                }
             }
             let novo = t.gravar();
             let relido = pw_data_loader::tasks_editavel::TasksEditavel::ler(&novo).map_err(|e| anyhow::anyhow!("o tasks.data editado não relê: {e}"))?;
