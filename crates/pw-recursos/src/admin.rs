@@ -177,16 +177,18 @@ async fn conteudo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q):
 async fn estudio_modelos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<Busca>) -> R<Json<Value>> {
     validar(&v)?;
     let todos = e.gov.buscar(&v, q.busca.as_deref().unwrap_or(""), usize::MAX)?;
-    let mut modelos: Vec<&Value> = todos
-        .iter()
-        .filter(|x| x["caminho"].as_str().is_some_and(|c| { let c = c.to_lowercase(); c.ends_with(".ecm") || c.ends_with(".smd") || c.ends_with(".ski") }))
-        .collect();
-    // O `.ecm` (o modelo do jogo, B277) primeiro, depois o `.smd` (o modelo inteiro), depois as peles.
-    modelos.sort_by_key(|x| {
-        let c = x["caminho"].as_str().unwrap_or("").to_lowercase();
-        if c.ends_with(".ecm") { 0 } else if c.ends_with(".smd") { 1 } else { 2 }
-    });
-    Ok(Json(json!({ "total": modelos.len(), "linhas": modelos.into_iter().take(q.limite.unwrap_or(200).min(500)).collect::<Vec<_>>() })))
+    // O `.ecm` (o modelo do jogo, B277), o `.smd` (o modelo inteiro) e as peles — cada tipo com a sua cota (B278: com
+    // uma cota só, os `.ecm` enchiam a lista e os `.smd` sumiam numa busca larga como "怪物").
+    let limite = q.limite.unwrap_or(200).min(500);
+    let mut linhas: Vec<&Value> = Vec::new();
+    let mut totais = serde_json::Map::new();
+    for ext in [".ecm", ".smd", ".ski"] {
+        let deste: Vec<&Value> = todos.iter().filter(|x| x["caminho"].as_str().is_some_and(|c| c.to_lowercase().ends_with(ext))).collect();
+        totais.insert(ext.trim_start_matches('.').to_string(), json!(deste.len()));
+        linhas.extend(deste.into_iter().take(limite));
+    }
+    let total: u64 = totais.values().filter_map(Value::as_u64).sum();
+    Ok(Json(json!({ "total": total, "por_tipo": totais, "linhas": linhas })))
 }
 
 /// Um caminho relativo à pasta de outro (`A3DSkinModelMan::LoadModelFromFile`: `strPath + "\\" + strFile`).
@@ -340,8 +342,15 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
         // B274: o modelo inteiro — as peles lidas, com as texturas de cada uma, e o esqueleto (sem ele, fica parado).
         let (nome, cabeca, peles, esqueleto) = ler_smd(&e, &v, &q.caminho)?;
         let lidas: Vec<(String, pw_data_loader::ski::Ski)> = peles.into_iter().filter_map(|(cp, s)| s.ok().map(|s| (cp, s))).collect();
-        if lidas.is_empty() {
-            return Err(Erro(StatusCode::BAD_REQUEST, format!("{nome}: nenhuma pele lida")));
+        if lidas.is_empty() && esqueleto.is_err() {
+            // B278: sem pele lida (o .smd não cita nenhuma — p.ex. corpo de jogador, cuja pele vem do equipamento — ou as
+            // citadas não existem no cliente) e sem esqueleto não há o que mostrar; com esqueleto, sai só ele.
+            let citadas: Vec<&str> = cabeca.peles.iter().map(String::as_str).collect();
+            return Err(Erro(StatusCode::BAD_REQUEST, if citadas.is_empty() {
+                format!("{nome}: o .smd não cita pele nem tem esqueleto lido")
+            } else {
+                format!("{nome}: nenhuma das peles citadas existe no cliente ({}) e o esqueleto não foi lido", citadas.join(", "))
+            }));
         }
         let texturas: Vec<Vec<Option<pw_data_loader::glb::Textura>>> = lidas
             .iter()

@@ -15,7 +15,8 @@ async function carregarModelos() {
   let r;
   try { r = await api(rotaDeModelos("", { busca: elemento("modelos-busca").value.trim() })); }
   catch (erro) { elemento("modelos-situacao").textContent = erro.message; return; }
-  elemento("modelos-situacao").textContent = `${r.total} modelos/peles${r.total > r.linhas.length ? ` (${r.linhas.length} primeiros)` : ""}`;
+  const pt = r.por_tipo || {};
+  elemento("modelos-situacao").textContent = `${pt.ecm ?? 0} .ecm · ${pt.smd ?? 0} .smd · ${pt.ski ?? 0} .ski${r.total > r.linhas.length ? ` (até 200 de cada)` : ""}`;
   const area = elemento("modelos-lista");
   area.replaceChildren();
   for (const l of r.linhas) {
@@ -63,6 +64,9 @@ async function abrirModelo(caminho) {
     const e = f.esqueleto;
     ficha.appendChild(criar("div", "texto-suave", `${caminho} · ${f.acoes} ações · esqueleto ${e.arquivo || "(nenhum)"}${e.erro ? ` — não lido: ${e.erro}` : ` (v${e.versao}, ${e.ossos.length} ossos, ${e.juntas} juntas, ${e.ganchos.length} ganchos)`}`));
     if (e.ganchos && e.ganchos.length) ficha.appendChild(criar("div", "texto-suave", `Ganchos: ${e.ganchos.join(", ")}`));
+    if (!f.peles.some((p) => !p.erro)) ficha.appendChild(criar("div", "texto-suave", f.peles.length
+      ? "Nenhuma pele citada existe no cliente: mostra-se só o esqueleto."
+      : "O .smd não cita pele (a pele vem do equipamento em jogo): mostra-se só o esqueleto."));
   } else {
     ficha.appendChild(criar("div", "texto-suave", `${caminho} · versão ${f.versao} · ${f.malhas.length} malhas · ${f.ossos.length} ossos na pele (esqueleto: ${f.ossos_do_esqueleto})`));
   }
@@ -78,6 +82,7 @@ async function abrirModelo(caminho) {
     for (const p of f.peles) {
       const li = criar("li");
       if (p.erro) li.textContent = `${p.caminho} — não lida: ${p.erro}`;
+      if (p.erro && /não existe/.test(p.erro)) li.textContent += " (o arquivo citado falta no próprio cliente)";
       else { const a = criar("a", "", p.caminho.split("\\").pop()); a.href = "#"; a.addEventListener("click", (ev) => { ev.preventDefault(); abrirModelo(p.caminho); }); li.append(a, ` — ${p.malhas} malhas, ${p.triangulos} triângulos`); }
       lista.appendChild(li);
     }
@@ -193,7 +198,23 @@ function matrizesDasJuntas(e, t) {
   }
   const mundo = new Array(local.length).fill(null);
   const calc = (i) => { if (mundo[i]) return mundo[i]; mundo[i] = e.mae[i] >= 0 ? multiplicar4(calc(e.mae[i]), local[i]) : local[i]; return mundo[i]; };
-  return e.juntas.map((j, k) => multiplicar4(calc(j), e.ibm.subarray(16 * k, 16 * k + 16)));
+  const juntas = e.juntas.map((j, k) => multiplicar4(calc(j), e.ibm.subarray(16 * k, 16 * k + 16)));
+  juntas.mundo = e.juntas.map((j) => calc(j));
+  return juntas;
+}
+
+/* Linhas do esqueleto (B278): de cada junta à junta-mãe, nas posições do mundo do tempo t. */
+function linhasDoEsqueleto(e, t) {
+  const J = matrizesDasJuntas(e, t);
+  const indice = new Map(e.juntas.map((j, k) => [j, k]));
+  const v = [];
+  e.juntas.forEach((j, k) => {
+    const m = e.mae[j];
+    if (m < 0 || !indice.has(m)) return;
+    const a = J.mundo[k], b = J.mundo[indice.get(m)];
+    v.push(a[12], a[13], a[14], b[12], b[13], b[14]);
+  });
+  return new Float32Array(v);
 }
 
 let visorAtual = null;
@@ -233,12 +254,21 @@ function desenharGlb(tela, buf) {
     }).catch(() => {});
     return o;
   });
+  // B278: sem malha (pele ausente no cliente, ou corpo cuja pele vem do equipamento) — desenha o esqueleto.
+  let linhas = null;
+  if (!objs.length && esqueleto) {
+    const v0 = linhasDoEsqueleto(esqueleto, 0);
+    for (let i = 0; i < v0.length; i += 3) for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], v0[i + k]); max[k] = Math.max(max[k], v0[i + k]); }
+    linhas = { buf: gl.createBuffer(), n: v0.length / 3 };
+    gl.bindBuffer(gl.ARRAY_BUFFER, linhas.buf); gl.bufferData(gl.ARRAY_BUFFER, v0, gl.DYNAMIC_DRAW);
+  }
   const centro = [0, 1, 2].map((k) => (min[k] + max[k]) / 2);
   const raio = Math.max(1e-3, Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2);
   const estado = { yaw: 0.6, pitch: 0.3, dist: raio * 2.8, t0: performance.now(), parar: false };
   visorAtual = estado;
   // Pele na CPU: v' = Σ peso_k · (junta_k · v); a normal pela parte 3×3.
   const deformar = (t) => {
+    if (linhas) { gl.bindBuffer(gl.ARRAY_BUFFER, linhas.buf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, linhasDoEsqueleto(esqueleto, t)); return; }
     const J = matrizesDasJuntas(esqueleto, t);
     for (const o of objs) {
       if (!o.animada) continue;
@@ -277,6 +307,13 @@ function desenharGlb(tela, buf) {
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, o.idx); gl.uniform4fv(loc.cor, o.cor);
       gl.drawElements(gl.TRIANGLES, o.n, gl.UNSIGNED_SHORT, 0);
     }
+    if (linhas) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, linhas.buf); gl.enableVertexAttribArray(loc.p); gl.vertexAttribPointer(loc.p, 3, gl.FLOAT, false, 0, 0);
+      gl.disableVertexAttribArray(loc.n); gl.vertexAttrib3f(loc.n, 0.4, 0.8, 0.5);
+      gl.disableVertexAttribArray(loc.t); gl.vertexAttrib2f(loc.t, 0, 0);
+      gl.uniform1f(loc.usa, 0); gl.uniform1f(loc.corte, -1); gl.uniform4fv(loc.cor, [1.0, 0.85, 0.3, 1]);
+      gl.drawArrays(gl.LINES, 0, linhas.n);
+    }
   };
   let arrasto = null;
   tela.onmousedown = (e) => { arrasto = [e.clientX, e.clientY]; };
@@ -287,6 +324,7 @@ function desenharGlb(tela, buf) {
     arrasto = [e.clientX, e.clientY]; desenhar();
   };
   tela.onwheel = (e) => { e.preventDefault(); estado.dist *= e.deltaY > 0 ? 1.1 : 0.9; desenhar(); };
+  if (!objs.length && !linhas) { tela.replaceWith(criar("div", "texto-suave", "Nada a desenhar: sem malha e sem esqueleto.")); return; }
   if (esqueleto && esqueleto.canais.length && esqueleto.duracao > 0) {
     // Laço da animação (repete).
     const quadro = () => {

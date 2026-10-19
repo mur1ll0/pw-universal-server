@@ -786,7 +786,7 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
 
         // Modelos 3D (B272): lista de .ski, ficha e GLB.
         let ml = json_de(pedir("GET", "estudio/modelos").query("busca", "caixa").call().unwrap());
-        assert_eq!(ml["total"], 3, "{ml}");
+        assert_eq!((ml["total"].as_u64(), ml["por_tipo"]["smd"].as_u64()), (Some(3), Some(1)), "{ml}");
         assert!(ml["linhas"][0]["caminho"].as_str().unwrap().to_lowercase().ends_with(".ecm"), "B277: o .ecm primeiro");
         // B277: diagnóstico — 站立 sem base, 普攻1起 com base ausente no .smd, 普攻1落 sem combinada.
         let fe = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", ml["linhas"][0]["caminho"].as_str().unwrap()).call().unwrap());

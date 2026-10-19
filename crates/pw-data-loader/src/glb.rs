@@ -392,11 +392,14 @@ fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acao: Option<&
         "scene": 0,
         "scenes": [{ "name": nome, "nodes": raizes }],
         "nodes": nos,
-        "meshes": meshes,
         "buffers": [{ "byteLength": m.bin.len() }],
         "bufferViews": m.views,
         "accessors": m.accessors,
     });
+    // B278: o glTF não aceita `meshes` vazio (minItems 1) — um modelo sem pele lida sai só com o esqueleto.
+    if !meshes.is_empty() {
+        doc["meshes"] = json!(meshes);
+    }
     if let Some(s) = skin {
         doc["skins"] = json!([s]);
     }
@@ -634,6 +637,25 @@ mod testes {
         eprintln!("animados: v5 {v5}, v6 {v6}; fora da escala {}: {:?}", ruins.len(), ruins.iter().take(5).collect::<Vec<_>>());
         assert!(v5 + v6 > 0);
         assert!(ruins.len() * 10 <= v5 + v6, "mais de 10% fora da escala: {ruins:?}");
+    }
+
+    /// B278: modelo sem pele lida — o GLB sai só com o esqueleto (nós dos ossos, `skin`, sem `meshes`) e a animação.
+    #[test]
+    fn so_o_esqueleto() {
+        let mut ossos = Vec::new();
+        for (i, mae) in [(0, -1), (1, 0)] {
+            let mut ini = [0.0f32; 16];
+            for k in [0, 5, 10, 15] { ini[k] = 1.0; }
+            ini[13] = -(i as f32); // inversa de ligação: osso i em y = i
+            ossos.push(crate::bon::Osso { nome: format!("o{i}"), flags: 0, mae, primeira_junta: i, relativa: ini, inicial: ini, filhas: vec![] });
+        }
+        let b = Bon { versao: 6, quadro_inicial: 0, quadro_final: 10, fps: 30, ossos, juntas: vec![], trilhas: vec![], ganchos: vec![] };
+        let g = do_modelo(&[], Some(&b), "esqueleto");
+        let nj = u32::from_le_bytes(g[12..16].try_into().unwrap()) as usize;
+        let doc: Value = serde_json::from_slice(&g[20..20 + nj]).unwrap();
+        assert!(doc.get("meshes").is_none(), "{doc}");
+        assert_eq!(doc["skins"][0]["joints"].as_array().map(|x| x.len()), Some(3));
+        assert_eq!(doc["nodes"].as_array().map(|x| x.len()), Some(3));
     }
 
     /// Um `.ski` real vira um GLB coerente: cabeçalho, tamanho total, os dois blocos, e cada accessor dentro do buffer.
