@@ -3146,3 +3146,27 @@ impl Estudio {
         .await
     }
 }
+
+// ------------------------------------------------------------------ ações do modelo (S5, B280)
+
+impl Estudio {
+    /// Os bytes de um arquivo do cliente — do rascunho, se ele o tem, senão o publicado (para fichas que mostram a edição).
+    pub async fn bytes_do_cliente(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Vec<u8>> {
+        Ok(self.item_do_cliente(gov, versao, caminho, rascunho).await?.3)
+    }
+
+    /// Cria uma ação combinada no `.ecm` clonando outra (`pw_data_loader::ecm::clonar_acao`), opcionalmente apontando
+    /// para outra ação-base do `.smd`. Item `cliente` (o `.ecm` só existe no cliente).
+    pub async fn acao_nova_no_ecm(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, origem: String, nova: String, base: Option<String>) -> Result<Value> {
+        if !caminho.to_lowercase().ends_with(".ecm") {
+            bail!("só .ecm");
+        }
+        self.alterar_item_do_cliente(gov, versao, caminho, rascunho, move |b| {
+            let novo = pw_data_loader::ecm::clonar_acao(b, &origem, &nova, base.as_deref()).map_err(anyhow::Error::msg)?;
+            pw_data_loader::ecm::ler(&novo).context("o .ecm editado não relê")?;
+            let mudanca = json!({ "acao": "nova", "tipo": "acao_combinada", "nome": nova, "clone_de": origem, "base": base });
+            Ok((novo, json!({ "nome": nova }), mudanca))
+        })
+        .await
+    }
+}

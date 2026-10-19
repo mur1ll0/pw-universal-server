@@ -151,7 +151,7 @@ impl FonteDePacote for Pacotes {
         u(&mut smd, 0); u(&mut smd, 0); // física e pasta das trilhas (v8), vazias; 0 ações
         receber(b"models\\teste\\caixa.smd".to_vec(), smd)?;
         // B277: o .ecm (texto MOXT) e a tabela de ações do cliente (GBK).
-        let ecm = "MOXTVersion: 42\nSkinModelPath: Models\\teste\\caixa.SMD\nComActCount: 2\nCombineActName: 站立\nBaseActCount: 0\nCombineActName: 普攻1起\nBaseActCount: 1\nBaseActName: inexistente\n";
+        let ecm = "MOXTVersion: 42\nSkinModelPath: Models\\teste\\caixa.SMD\nComActCount: 2\nCombineActName: 站立\nBaseActCount: 0\nCombineActName: 普攻1起\nBaseActCount: 1\nBaseActName: inexistente\nEventCount: 0\nAddiSkinCount: 0\nChildCount: 0\n";
         receber(b"models\\teste\\caixa.ecm".to_vec(), [b"".as_slice(), &encoding_rs::GBK.encode(ecm).0].concat())?;
         let tab = "#_begin\n// 怪物\n\"站立\"\n\"休闲\"\n\"戒备\"\n\"技能1\"\n\"慢速移动\"\n\"普攻1\"\n\"普攻2\"\n";
         receber(b"configs\\actions_npc.txt".to_vec(), encoding_rs::GBK.encode(tab).0.to_vec())?;
@@ -795,6 +795,15 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert!(estado("站立").unwrap().contains("sem ação-base"), "{fe}");
         assert!(estado("普攻1起").unwrap().contains("ausente no .smd"), "{fe}");
         assert!(estado("普攻1落").unwrap().contains("sem ação combinada"), "{fe}");
+        // B280: corrigir — criar 普攻1落 clonando 普攻1起 (no rascunho); a ficha com o rascunho já não acusa a falta.
+        let ecm_cam = ml["linhas"][0]["caminho"].as_str().unwrap().to_string();
+        let r16 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "ação", "operacao_id": "t_p4_r16"})).unwrap())["id"].as_i64().unwrap();
+        pedir("POST", &format!("estudio/modelos/acao?rascunho={r16}")).send_json(json!({"caminho": ecm_cam, "origem": "普攻1起", "nova": "普攻1落"})).unwrap();
+        assert_eq!(erro_de(pedir("POST", &format!("estudio/modelos/acao?rascunho={r16}")).send_json(json!({"caminho": ecm_cam, "origem": "普攻1起", "nova": "普攻1落"}))).0, 400, "repetida");
+        assert_eq!(erro_de(pedir("POST", &format!("estudio/modelos/acao?rascunho={r16}")).send_json(json!({"caminho": ecm_cam, "origem": "站立", "nova": "Ação"}))).0, 400, "fora do GBK");
+        let fe2 = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &ecm_cam).query("rascunho", &r16.to_string()).call().unwrap());
+        let estado2 = fe2["diagnostico_de_monstro"].as_array().unwrap().iter().find(|x| x["pedido"] == "普攻1落").map(|x| x["estado"].as_str().unwrap().to_string());
+        assert!(!estado2.unwrap().contains("sem ação combinada"), "{fe2}");
         // B274: o modelo inteiro — ficha com esqueleto e pele, GLB com skin.
         let smd = ml["linhas"][1]["caminho"].as_str().unwrap().to_string();
         let fm = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &smd).call().unwrap());

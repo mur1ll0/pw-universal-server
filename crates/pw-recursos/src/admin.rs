@@ -158,6 +158,8 @@ async fn arquivos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q):
 struct QCaminho {
     caminho: String,
     destino: Option<String>,
+    /// B280: a ficha do `.ecm` lê o rascunho quando há um.
+    rascunho: Option<i64>,
 }
 
 async fn conteudo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Response> {
@@ -261,7 +263,10 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
     if q.caminho.to_lowercase().ends_with(".ecm") {
         // B277: o modelo do jogo — o .smd, as ações combinadas e o diagnóstico de monstro (os nomes que o cliente pede,
         // `pw_data_loader::ecm::pedidos_de_monstro`, pela tabela `configs\actions_npc.txt` do próprio cliente).
-        let (nome, dados) = e.gov.conteudo(&v, &q.caminho)?;
+        let (nome, mut dados) = e.gov.conteudo(&v, &q.caminho)?;
+        if let Some(r) = q.rascunho {
+            dados = e.estudio.bytes_do_cliente(&e.gov, &v, &q.caminho, Some(r)).await?;
+        }
         let m = pw_data_loader::ecm::ler(&dados).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("{nome}: .ecm ilegível")))?;
         let bases_do_smd: Option<Vec<String>> = e.gov.conteudo(&v, &m.smd).ok().and_then(|(_, b)| pw_data_loader::smd::cabeca(&b).ok()).map(|c| c.lista_de_acoes.into_iter().map(|a| a.nome).collect());
         let smd_caminho = e.gov.conteudo(&v, &m.smd).ok().map(|(n, _)| n);
@@ -286,7 +291,7 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
             json!({ "indice": i, "pedido": pedido, "alternativa": alternativa, "estado": estado })
         }).collect();
         return Ok(Json(json!({ "caminho": nome, "tipo": "ecm", "versao": m.versao, "smd": smd_caminho.unwrap_or(m.smd), "smd_lido": bases_do_smd.is_some(),
-            "combinadas": combinadas, "tabela_de_acoes": tabela.len(), "diagnostico_de_monstro": diagnostico })));
+            "combinadas": combinadas, "bases_do_smd": bases_do_smd.clone().unwrap_or_default(), "tabela_de_acoes": tabela.len(), "diagnostico_de_monstro": diagnostico })));
     }
     if q.caminho.to_lowercase().ends_with(".smd") {
         let (nome, c, peles, esqueleto) = ler_smd(&e, &v, &q.caminho)?;
@@ -403,6 +408,21 @@ fn glb_como_resposta(nome: &str, glb: Vec<u8>) -> R<Response> {
     let disposicao = format!("inline; filename*=UTF-8''{}.glb", urlencoding(&arquivo));
     h.insert(header::CONTENT_DISPOSITION, disposicao.parse().map_err(|_| Erro(StatusCode::BAD_REQUEST, "nome".into()))?);
     Ok((h, glb).into_response())
+}
+
+#[derive(Deserialize)]
+struct PedidoAcaoNova {
+    caminho: String,
+    origem: String,
+    nova: String,
+    base: Option<String>,
+}
+
+/// B280: ação combinada nova no `.ecm`, clonando outra (corrige uma ação que o diagnóstico acusa).
+async fn estudio_acao_nova(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QEstudio>, Json(p): Json<PedidoAcaoNova>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.acao_nova_no_ecm(&e.gov, &v, &p.caminho, r, p.origem, p.nova, p.base).await?))
 }
 
 fn urlencoding(t: &str) -> String {
@@ -1146,6 +1166,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/modelos", get(estudio_modelos))
         .route("/admin/{v}/estudio/modelos/ficha", get(estudio_modelo))
         .route("/admin/{v}/estudio/modelos/glb", get(estudio_modelo_glb))
+        .route("/admin/{v}/estudio/modelos/acao", post(estudio_acao_nova))
         .route("/admin/{v}/estudio/textos/{arquivo}", get(estudio_textos).post(estudio_novo_texto))
         .route("/admin/{v}/estudio/textos/{arquivo}/{chave}", put(estudio_editar_texto))
         .route("/admin/{v}/estudio/comportamentos/{id}", get(estudio_comportamento).put(estudio_editar_comportamento))

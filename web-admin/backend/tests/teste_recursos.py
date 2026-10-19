@@ -307,6 +307,12 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/modelos")
         await self.cliente.get("/api/realms/realm_155/estudio/modelos/glb", params={"caminho": "models\\a.ski"})
         self.assertEqual(RecursosFalso.pedidos[-1]["consulta"]["caminho"], ["models\\a.ski"])
+        # Ação nova no .ecm (B280).
+        r = await self.cliente.post("/api/realms/realm_155/estudio/modelos/acao", params={"rascunho": 5}, headers=csrf,
+                                    json={"caminho": "models\\a.ecm", "origem": "x", "nova": "y", "extra": 1})
+        self.assertEqual((r.status_code, json.loads(RecursosFalso.pedidos[-1]["corpo"])), (200, {"caminho": "models\\a.ecm", "origem": "x", "nova": "y"}))
+        r = await self.cliente.post("/api/realms/realm_155/estudio/modelos/acao", params={"rascunho": 5}, headers=csrf, json={"caminho": "a"})
+        self.assertEqual(r.status_code, 422)
         # Missões (B255).
         await self.cliente.get("/api/realms/realm_126/estudio/missoes", params={"busca": "teste", "topo": "false"})
         p = RecursosFalso.pedidos[-1]

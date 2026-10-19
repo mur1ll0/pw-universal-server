@@ -96,9 +96,125 @@ pub fn pedidos_de_monstro(tabela: &[String]) -> Vec<(usize, String, Option<Strin
     r
 }
 
+/// As linhas em bytes (sem a marca `MOXT`), cada uma com o seu fim de linha (B280: trabalhar nos bytes deixa o resto do
+/// arquivo idêntico — decodificar e recodificar o GBK poderia mudar bytes que ele não representa).
+fn linhas_com_fim(b: &[u8]) -> Vec<&[u8]> {
+    b.split_inclusive(|&c| c == b'\n').collect()
+}
+
+fn sem_fim(x: &[u8]) -> &[u8] {
+    let x = x.strip_suffix(b"\n").unwrap_or(x);
+    x.strip_suffix(b"\r").unwrap_or(x)
+}
+
+/// Onde começa e termina (exclusivo) cada bloco de ação combinada: de `CombineActName:` até a próxima, e o último até a
+/// primeira linha `ScriptCount:` (v ≥ 25) ou `AddiSkinCount:` depois dele (`CECModel` lê esses depois das ações,
+/// `EC_Model.cpp:4680-4700`). Também a linha do `ComActCount:`. O nome vem decodificado.
+fn blocos(l: &[&[u8]]) -> Option<(usize, Vec<(String, usize, usize)>)> {
+    let cont = l.iter().position(|x| x.starts_with(b"ComActCount: "))?;
+    let inicios: Vec<usize> = (cont + 1..l.len()).filter(|&i| l[i].starts_with(b"CombineActName: ")).collect();
+    let mut r = Vec::new();
+    for (k, &i) in inicios.iter().enumerate() {
+        let fim = match inicios.get(k + 1) {
+            Some(&j) => j,
+            None => (i + 1..l.len()).find(|&j| l[j].starts_with(b"ScriptCount: ") || l[j].starts_with(b"AddiSkinCount: "))?,
+        };
+        r.push((crate::ski::gbk(sem_fim(&l[i][b"CombineActName: ".len()..])), i, fim));
+    }
+    Some((cont, r))
+}
+
+/// Cria a ação combinada `nova` clonando o bloco de `origem` (mesmos campos da versão do arquivo) logo depois dele, e
+/// soma 1 no `ComActCount`. Com `base`, as linhas `BaseActName:` do clone passam a apontar para ela (só se a origem tem
+/// uma ação-base). Recusa nome repetido e texto fora do GBK. O resto do arquivo fica byte a byte igual.
+pub fn clonar_acao(b: &[u8], origem: &str, nova: &str, base: Option<&str>) -> Result<Vec<u8>, String> {
+    let gbk = |t: &str| -> Result<Vec<u8>, String> {
+        if t.is_empty() || t.contains(['\r', '\n']) {
+            return Err("nome inválido".into());
+        }
+        let (v, _, erro) = encoding_rs::GBK.encode(t);
+        if erro { Err(format!("\"{t}\" tem caracteres que não existem em GBK (o cliente lê o .ecm em GBK)")) } else { Ok(v.into_owned()) }
+    };
+    let nova_b = gbk(nova)?;
+    let base_b = base.map(gbk).transpose()?;
+    let marca = b.starts_with(b"MOXT");
+    let corpo = if marca { &b[4..] } else { b };
+    let l = linhas_com_fim(corpo);
+    let (cont, bl) = blocos(&l).ok_or("estrutura de ações não reconhecida")?;
+    if bl.iter().any(|x| x.0 == nova) {
+        return Err(format!("a ação {nova} já existe"));
+    }
+    let &(_, ini, fim) = bl.iter().find(|x| x.0 == origem).ok_or_else(|| format!("a ação {origem} não existe"))?;
+    let fl: &[u8] = if l[ini].ends_with(b"\r\n") { b"\r\n" } else { b"\n" };
+    let mut clone: Vec<Vec<u8>> = l[ini..fim].iter().map(|x| x.to_vec()).collect();
+    clone[0] = [b"CombineActName: ".as_slice(), &nova_b, fl].concat();
+    if let Some(base_b) = &base_b {
+        let n = clone.iter().filter(|x| x.starts_with(b"BaseActName: ")).count();
+        if n != 1 {
+            return Err(format!("a origem tem {n} ações-base; trocar a base só com uma"));
+        }
+        for x in clone.iter_mut().filter(|x| x.starts_with(b"BaseActName: ")) {
+            *x = [b"BaseActName: ".as_slice(), base_b, fl].concat();
+        }
+    }
+    let n_atual: usize = std::str::from_utf8(sem_fim(&l[cont][b"ComActCount: ".len()..])).ok().and_then(|x| x.trim().parse().ok()).ok_or("ComActCount ilegível")?;
+    let fl_cont: &[u8] = if l[cont].ends_with(b"\r\n") { b"\r\n" } else { b"\n" };
+    let mut saida: Vec<Vec<u8>> = l.iter().map(|x| x.to_vec()).collect();
+    saida[cont] = [format!("ComActCount: {}", n_atual + 1).as_bytes(), fl_cont].concat();
+    saida.splice(fim..fim, clone);
+    Ok([if marca { b"MOXT".as_slice() } else { b"" }, &saida.concat()].concat())
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// B280: em todos os `.ecm` do cliente, os blocos achados batem com o `ComActCount` e terminam onde devem; clonar a
+    /// 1ª ação de cada arquivo relê com uma ação a mais, as outras iguais.
+    #[test]
+    fn blocos_e_clone_em_todo_o_cliente() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let mut pilha = vec![raiz.to_path_buf()];
+        let (mut ok, mut contagem_diferente, mut sem_termino, mut clonados) = (0usize, 0usize, 0usize, 0usize);
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("ecm")) { continue; }
+                let b = std::fs::read(&p).unwrap();
+                let l = linhas_com_fim(b.strip_prefix(b"MOXT").unwrap_or(&b));
+                let Some(cont) = l.iter().position(|x| x.starts_with(b"ComActCount: ")) else { continue };
+                let n: usize = std::str::from_utf8(sem_fim(&l[cont][b"ComActCount: ".len()..])).ok().and_then(|x| x.trim().parse().ok()).unwrap_or(usize::MAX);
+                match blocos(&l) {
+                    None => { sem_termino += 1; continue; }
+                    Some((_, bl)) => {
+                        if bl.len() != n { contagem_diferente += 1; continue; }
+                        ok += 1;
+                        if let Some(primeira) = bl.first() {
+                            let antes = ler(&b).unwrap();
+                            let novo = clonar_acao(&b, &primeira.0, "测试动作", None).unwrap();
+                            let depois = ler(&novo).unwrap();
+                            assert_eq!(depois.acoes.len(), antes.acoes.len() + 1, "{}", p.display());
+                            assert_eq!(depois.acoes[1].nome, "测试动作");
+                            assert_eq!(depois.acoes[1].bases, antes.acoes[0].bases);
+                            let (_, bl2) = blocos(&linhas_com_fim(novo.strip_prefix(b"MOXT").unwrap_or(&novo))).unwrap();
+                            assert_eq!(bl2.len(), n + 1);
+                            // Só o bloco novo e a contagem mudam: tirando-os, o arquivo é o mesmo.
+                            assert_eq!(novo.len() > b.len(), true);
+                            clonados += 1;
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("ecm: blocos certos {ok}, contagem diferente {contagem_diferente}, sem fim {sem_termino}, clonados {clonados}");
+        assert_eq!((contagem_diferente, sem_termino), (0, 0));
+    }
+
 
     /// Todos os `.ecm` do cliente 1.5.5 BR: leem; quantas ações-base citadas existem no `.smd` deles.
     #[test]

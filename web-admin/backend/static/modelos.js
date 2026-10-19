@@ -34,7 +34,8 @@ async function abrirModelo(caminho) {
   const ficha = elemento("modelos-ficha");
   ficha.textContent = "Carregando…";
   let f;
-  try { f = await api(rotaDeModelos("/ficha", { caminho })); } catch (erro) { ficha.textContent = erro.message; return; }
+  const q = estudio.rascunho ? { caminho, rascunho: estudio.rascunho } : { caminho };
+  try { f = await api(rotaDeModelos("/ficha", q)); } catch (erro) { ficha.textContent = erro.message; return; }
   ficha.replaceChildren();
   ficha.appendChild(criar("h3", "", caminho.split("\\").pop()));
   if (f.tipo === "ecm") {
@@ -50,8 +51,30 @@ async function abrirModelo(caminho) {
     for (const d of f.diagnostico_de_monstro) {
       const tr = criar("tr");
       tr.append(criar("td", "", d.pedido), criar("td", d.estado === "ok" ? "texto-suave" : "", d.estado === "ok" ? "ok" : `⚠ ${d.estado}`));
+      // B280: corrigir — ação combinada nova clonando uma existente, opcionalmente com outra ação-base do .smd.
+      if (d.estado !== "ok" && estudio.rascunho && f.combinadas.length) {
+        const td = criar("td");
+        const origem = criar("select", "campo");
+        for (const c of f.combinadas) origem.appendChild(new Option(`copiar ${c.nome}`, c.nome));
+        const base = criar("select", "campo");
+        base.appendChild(new Option("(mesma ação-base)", ""));
+        for (const b of f.bases_do_smd || []) base.appendChild(new Option(`base ${b}`, b));
+        const b = criar("button", "botao botao-pequeno botao-secundario", "Criar");
+        b.type = "button";
+        b.addEventListener("click", async () => {
+          try {
+            await api(rotaDeModelos("/acao", { rascunho: estudio.rascunho }), { method: "POST", body: JSON.stringify({ caminho, origem: origem.value, nova: d.pedido, base: base.value || undefined }) });
+            alerta("ok", "Estúdio", `Ação ${d.pedido} criada no rascunho.`, { toast: true });
+            if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+            abrirModelo(caminho);
+          } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+        });
+        td.append(origem, base, b);
+        tr.appendChild(td);
+      }
       tab.appendChild(tr);
     }
+    if (!estudio.rascunho) ficha.appendChild(criar("div", "texto-suave", "Escolha um rascunho no alto do Estúdio para corrigir as ações que faltam."));
     ficha.appendChild(tab);
     const lista = criar("ul");
     for (const c of f.combinadas) lista.appendChild(criar("li", "", `${c.nome} ← ${c.bases.length ? c.bases.join(", ") : "(sem ação-base)"}${c.bases_ausentes.length ? ` — ausentes no .smd: ${c.bases_ausentes.join(", ")}` : ""}`));
