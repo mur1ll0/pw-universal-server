@@ -15001,7 +15001,7 @@ comparação lado a lado.
     ### e. Falta
     - Habilidades (nome nativo) e mascotes (`_地面`…); ligar à ficha do monstro (`file_model`); corrigir ação faltante.
 
-278. **Sessão 2026-10-19: launcher — endereço do jogo pelo servidor de atualização e opções de vídeo/som.**
+280. **Sessão 2026-10-19: launcher — endereço do jogo pelo servidor de atualização e opções de vídeo/som.**
 
     ### a. Pedido
     O Murillo instalou pelo notebook (servidor no PC de mesa, `192.168.1.13`) e o jogo não abria: a
@@ -15044,7 +15044,7 @@ comparação lado a lado.
     - O manifesto publicado traz o `userdata` pessoal da máquina de origem (`accounts.txt`, `GMLog`, `Layout`,
       `character`): excluir no import.
 
-279. **Sessão 2026-10-19: serverlist publicada só com o realm que existe.**
+281. **Sessão 2026-10-19: serverlist publicada só com o realm que existe.**
 
     ### a. Pedido
     Tirar da `serverlist.txt` os servidores de teste que não existem mais, deixar só o que funciona, com o nome do
@@ -15068,7 +15068,9 @@ comparação lado a lado.
     - O launcher mostra "Atualização disponível: versão 1" (pasta do 1.2.6 na versão 0).
 
     ### e. Falta
-    - O Murillo atualizar e ver a lista no jogo (as duas versões).
+    - ~~O Murillo atualizar e ver a lista no jogo~~ — **confirmado pelo Murillo: atualizou e funcionou no notebook.**
+    - Numerado B279 quando publicado (`operacao_id` `b279-serverlist-<versao>` e a descrição no banco dizem
+      B279); renumerado B281 porque a outra sessão já usou o 279.
 
 278. **Sessão 2026-10-19: Estúdio S5 — correção do "nenhuma pele lida".**
 

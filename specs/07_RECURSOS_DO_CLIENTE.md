@@ -102,7 +102,7 @@ Tela (B235; Win32 no B275, versões numa caixa de seleção em vez de abas): ao 
 O endereço do servidor fica no rodapé ("Servidor de atualização" + "Salvar e reconectar"); sem esquema
 vira `http://` (`192.168.1.13:8100` → `http://192.168.1.13:8100`).
 
-**Endereço do jogo pelo servidor de atualização (B278).** Os serviços do pw-universal rodam na mesma
+**Endereço do jogo pelo servidor de atualização (B280).** Os serviços do pw-universal rodam na mesma
 máquina; por isso o host do servidor de atualização é também o do jogo. Na `serverlist.txt` publicada os
 servidores nossos apontam para `127.0.0.1`, que quer dizer "a máquina do servidor de atualização". O
 launcher (`tools/pw-launcher/src/local.rs`) troca, em `userdata\server\serverlist.txt` (UTF-16LE com BOM;
@@ -113,13 +113,13 @@ pelo host atual. Linhas com outro endereço (servidores de terceiros) ficam. Qua
 instalar/atualizar/adotar/reparar, antes de **Jogar** e ao salvar o servidor (em todas as versões com
 pasta). Mudou o IP: trocar o servidor de atualização no launcher basta.
 
-**Lista publicada (B279, versão 1 das duas linhas):** só o realm que existe, com o nome da tabela `realms`:
+**Lista publicada (B281, versão 1 das duas linhas):** só o realm que existe, com o nome da tabela `realms`:
 1.5.5 = `pw-universal` (grupo, obrigatório no 1.5.5) + `Perfect World Evolved (1.5.5)<TAB>29004:127.0.0.1<TAB>2`;
 1.2.6 = `Perfect World Classic (1.2.6)<TAB>29000:127.0.0.1`. Saíram `Universal 1.5.5` (29003, realm EN apagado em
 2026-09-17) e os servidores de teste `BATATA`/`Batata_E` do 1.2.6. Realm novo ou renomeado: publicar a lista de novo
 (rascunho com `userdata\server\serverlist.txt`, destino `cliente`).
 
-**Opções do jogo (B278).** Janela com modo (janela/tela cheia), resolução (as da placa acima de 400x400,
+**Opções do jogo (B280).** Janela com modo (janela/tela cheia), resolução (as da placa acima de 400x400,
 `DlgSettingSystem.cpp:290-293`, mais a atual), widescreen (só a partir de 800x600,
 `DlgSettingSystem.cpp:483-494`), qualidade 0–4 e volumes de som e música 0–100 (faixas do
 `setting_system.dtf:33,42-43`). Grava em `userdata\systemsettings.ini` as chaves que o cliente lê
@@ -130,7 +130,7 @@ chaves que o diálogo do cliente muda junto (`DlgSettingSystem.cpp:326-440`: `Si
 `AdvancedWaterUD`, supondo a placa capaz). O resto do arquivo é preservado. O 1.2.6 grava as mesmas chaves
 (arquivo dele conferido; sem `ScaleUI`).
 
-**Arquivos do jogador (B278, `pw_atualizador::cliente::do_jogador`).** Tudo sob `userdata\` é do
+**Arquivos do jogador (B280, `pw_atualizador::cliente::do_jogador`).** Tudo sob `userdata\` é do
 jogador: o próprio cliente reescreve opções, servidor escolhido e layout por personagem, e o launcher
 ajusta a `serverlist.txt`. **Verificar/Reparar** só repõem o que faltar (conteúdo diferente não é
 estrago). **Atualizar** troca um arquivo do jogador só se ele ainda for o da versão antiga (e só apaga

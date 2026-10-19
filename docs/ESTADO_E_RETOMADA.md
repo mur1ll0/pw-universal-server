@@ -447,12 +447,12 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
   outra), itens exigidos/entregues e prêmio em itens, clone de missão posto no `NPC_TASK_OUT_SERVICE` de um NPC (o NPC
   oferece), textos do cliente (tooltip do item, sem reiniciar), fala, gatilhos e tipos de operação do comportamento de um
   monstro (só o realm: o cliente não tem o `aipolicy`).
-- **B279 (serverlist publicada, 2026-10-19):** versão **1** do 1.2.6 e do 1.5.5 publicada só com a `serverlist.txt`
+- **B281 (serverlist publicada, 2026-10-19) — confirmado pelo Murillo no notebook:** versão **1** do 1.2.6 e do 1.5.5 publicada só com a `serverlist.txt`
   nova: um servidor por versão, com o nome do realm (`Perfect World Evolved (1.5.5)` 29004, `Perfect World Classic
   (1.2.6)` 29000); saíram `Universal 1.5.5` (29003) e `BATATA`/`Batata_E`. O launcher mostra "Atualização
   disponível: versão 1". **A olhar:** Atualizar em cada versão → Jogar → a lista mostra só o servidor com o nome
   do realm e conecta (o endereço é reaplicado pelo launcher depois da atualização).
-- **B278 (launcher: endereço do jogo e opções, 2026-10-19) — confirmado pelo Murillo no notebook:** o host do servidor de atualização vira o
+- **B280 (launcher: endereço do jogo e opções, 2026-10-19) — confirmado pelo Murillo no notebook:** o host do servidor de atualização vira o
   endereço do jogo (`serverlist.txt` e `currentserver.ini`, só onde estava `127.0.0.1` ou um IP posto antes pelo
   launcher); botão **Opções do jogo…** (modo, resolução, widescreen, qualidade, volumes → `systemsettings.ini`);
   tudo em `userdata\` passou a ser do jogador (Verificar não desfaz mais). Testado aqui numa cópia do `userdata`
@@ -1202,8 +1202,8 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 274 | 10-19 | Estúdio S5: esqueleto (.bon) e modelo (.smd) com skin no GLB |
 | 275 | 10-19 | launcher em Win32 nativo (alvo win7, CRT estático): roda do Windows 7 ao 11; Tauri removido |
 | 276 | 10-19 | Estúdio S5: trilhas (.bon v5, .stck), ações do .smd e animação no visualizador |
-| 279 | 10-19 | serverlist publicada (versão 1): só o realm que existe, com o nome do realm |
-| 278 | 10-19 | launcher: endereço do jogo pelo servidor de atualização, opções de vídeo/som, userdata do jogador |
+| 281 | 10-19 | serverlist publicada (versão 1): só o realm que existe, com o nome do realm |
+| 280 | 10-19 | launcher: endereço do jogo pelo servidor de atualização, opções de vídeo/som, userdata do jogador |
 | 277 | 10-19 | Estúdio S5: .ecm e diagnóstico das ações que o cliente pede a um monstro |
 | 278 | 10-19 | Estúdio S5: correção — modelo sem pele lida mostra o esqueleto; lista por tipo |
 | 279 | 10-19 | Estúdio S5: da ficha do registro (file_model) ao modelo e ao diagnóstico de ações |
