@@ -173,12 +173,47 @@ async fn conteudo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q):
 
 // ------------------------------------------------------------------ modelos 3D (S5, B272)
 
-/// Os `.ski` da versão publicada cujo caminho contém `busca` (até 200).
+/// Os modelos da versão publicada cujo caminho contém `busca` (até 200): `.smd` (o modelo inteiro, B274) e `.ski`.
 async fn estudio_modelos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<Busca>) -> R<Json<Value>> {
     validar(&v)?;
     let todos = e.gov.buscar(&v, q.busca.as_deref().unwrap_or(""), usize::MAX)?;
-    let ski: Vec<&Value> = todos.iter().filter(|x| x["caminho"].as_str().is_some_and(|c| c.to_lowercase().ends_with(".ski"))).collect();
-    Ok(Json(json!({ "total": ski.len(), "linhas": ski.into_iter().take(q.limite.unwrap_or(200).min(500)).collect::<Vec<_>>() })))
+    let mut modelos: Vec<&Value> = todos
+        .iter()
+        .filter(|x| x["caminho"].as_str().is_some_and(|c| { let c = c.to_lowercase(); c.ends_with(".smd") || c.ends_with(".ski") }))
+        .collect();
+    // O `.smd` primeiro (é o modelo inteiro).
+    modelos.sort_by_key(|x| !x["caminho"].as_str().unwrap_or("").to_lowercase().ends_with(".smd"));
+    Ok(Json(json!({ "total": modelos.len(), "linhas": modelos.into_iter().take(q.limite.unwrap_or(200).min(500)).collect::<Vec<_>>() })))
+}
+
+/// Um caminho relativo à pasta de outro (`A3DSkinModelMan::LoadModelFromFile`: `strPath + "\\" + strFile`).
+fn ao_lado(caminho: &str, nome: &str) -> String {
+    match caminho.rsplit_once('\\') {
+        Some((pasta, _)) => format!("{pasta}\\{nome}"),
+        None => nome.to_string(),
+    }
+}
+
+/// O modelo (`.smd`): a cabeça, as peles lidas (caminho e `.ski`) e o esqueleto (`Ok(.bon)`, ou o motivo de não ter).
+#[allow(clippy::type_complexity)]
+fn ler_smd(e: &Estado, v: &str, caminho: &str) -> Result<(String, pw_data_loader::smd::CabecaDoSmd, Vec<(String, Result<pw_data_loader::ski::Ski, String>)>, Result<pw_data_loader::bon::Bon, String>), Erro> {
+    let (nome, dados) = e.gov.conteudo(v, caminho)?;
+    let c = pw_data_loader::smd::cabeca(&dados).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{nome}: {x}")))?;
+    let peles = c
+        .peles
+        .iter()
+        .map(|p| {
+            let cp = ao_lado(&nome, p);
+            let s = e.gov.conteudo(v, &cp).map_err(|x| x.to_string()).and_then(|(_, b)| pw_data_loader::ski::Ski::ler(&b).map_err(|x| x.to_string()));
+            (cp, s)
+        })
+        .collect();
+    let esqueleto = if c.esqueleto.is_empty() {
+        Err("o modelo não cita esqueleto".to_string())
+    } else {
+        e.gov.conteudo(v, &ao_lado(&nome, &c.esqueleto)).map_err(|x| x.to_string()).and_then(|(_, b)| pw_data_loader::bon::Bon::ler(&b).map_err(|x| x.to_string()))
+    };
+    Ok((nome, c, peles, esqueleto))
 }
 
 fn ler_ski(e: &Estado, v: &str, caminho: &str) -> Result<(String, pw_data_loader::ski::Ski), Erro> {
@@ -214,9 +249,27 @@ fn textura_em_png(bytes: &[u8]) -> Option<pw_data_loader::glb::Textura> {
     Some(pw_data_loader::glb::Textura { png, transparente: img.tem_transparencia() })
 }
 
-/// A ficha do `.ski`: versão, ossos, texturas (com onde foram achadas), materiais e as malhas (sem os vértices).
+/// A ficha do `.ski`: versão, ossos, texturas (com onde foram achadas), materiais e as malhas (sem os vértices). Para
+/// um `.smd` (B274): o esqueleto (ossos, juntas, ganchos, ou por que não foi lido) e a ficha de cada pele.
 async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Json<Value>> {
     validar(&v)?;
+    if q.caminho.to_lowercase().ends_with(".smd") {
+        let (nome, c, peles, esqueleto) = ler_smd(&e, &v, &q.caminho)?;
+        let esq = match &esqueleto {
+            Ok(b) => json!({ "arquivo": c.esqueleto, "versao": b.versao, "ossos": b.ossos.iter().map(|o| json!([o.nome, o.mae])).collect::<Vec<_>>(),
+                "juntas": b.juntas.len(), "ganchos": b.ganchos.iter().map(|g| g.nome.clone()).collect::<Vec<_>>(), "fps": b.fps }),
+            Err(motivo) => json!({ "arquivo": c.esqueleto, "erro": motivo }),
+        };
+        let peles: Vec<Value> = peles
+            .iter()
+            .map(|(cp, s)| match s {
+                Ok(s) => json!({ "caminho": cp, "versao": s.versao, "texturas": s.texturas, "malhas": s.malhas_de_pele.len() + s.malhas_rigidas.len(),
+                    "triangulos": s.malhas_de_pele.iter().map(|m| m.indices.len() / 3).sum::<usize>() + s.malhas_rigidas.iter().map(|m| m.indices.len() / 3).sum::<usize>() }),
+                Err(motivo) => json!({ "caminho": cp, "erro": motivo }),
+            })
+            .collect();
+        return Ok(Json(json!({ "caminho": nome, "tipo": "modelo", "versao": c.versao, "acoes": c.acoes, "esqueleto": esq, "peles": peles })));
+    }
     let (nome, s) = ler_ski(&e, &v, &q.caminho)?;
     let mut malhas: Vec<Value> = s.malhas_de_pele.iter().map(|m| json!({ "nome": m.nome, "tipo": "pele", "vertices": m.vertices.len(), "triangulos": m.indices.len() / 3, "textura": m.textura, "material": m.material })).collect();
     malhas.extend(s.malhas_rigidas.iter().map(|m| json!({ "nome": m.nome, "tipo": "rígida", "osso": m.osso, "vertices": m.vertices.len(), "triangulos": m.indices.len() / 3, "textura": m.textura, "material": m.material })));
@@ -232,11 +285,34 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
 /// O GLB do `.ski` (`pw_data_loader::glb`), para o visualizador e para levar ao Blender.
 async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Response> {
     validar(&v)?;
+    if q.caminho.to_lowercase().ends_with(".smd") {
+        // B274: o modelo inteiro — as peles lidas, com as texturas de cada uma, e o esqueleto (sem ele, fica parado).
+        let (nome, _, peles, esqueleto) = ler_smd(&e, &v, &q.caminho)?;
+        let lidas: Vec<(String, pw_data_loader::ski::Ski)> = peles.into_iter().filter_map(|(cp, s)| s.ok().map(|s| (cp, s))).collect();
+        if lidas.is_empty() {
+            return Err(Erro(StatusCode::BAD_REQUEST, format!("{nome}: nenhuma pele lida")));
+        }
+        let texturas: Vec<Vec<Option<pw_data_loader::glb::Textura>>> = lidas
+            .iter()
+            .map(|(cp, s)| s.texturas.iter().map(|t| achar_textura(&e, &v, cp, t).and_then(|(_, b)| textura_em_png(&b))).collect())
+            .collect();
+        let fornecedores: Vec<Box<dyn Fn(usize) -> Option<pw_data_loader::glb::Textura>>> = texturas
+            .iter()
+            .map(|lista| Box::new(move |i: usize| lista.get(i).and_then(|t| t.as_ref()).map(|t| pw_data_loader::glb::Textura { png: t.png.clone(), transparente: t.transparente })) as Box<dyn Fn(usize) -> Option<pw_data_loader::glb::Textura>>)
+            .collect();
+        let lista: Vec<pw_data_loader::glb::PeleDoModelo> = lidas.iter().zip(&fornecedores).map(|((_, s), f)| pw_data_loader::glb::PeleDoModelo { ski: s, textura: f.as_ref() }).collect();
+        let glb = pw_data_loader::glb::do_modelo(&lista, esqueleto.as_ref().ok(), &nome);
+        return glb_como_resposta(&nome, glb);
+    }
     let (nome, s) = ler_ski(&e, &v, &q.caminho)?;
     // B273: as texturas, achadas como o cliente acha e convertidas para PNG; a que falta fica só com a cor.
     let texturas: Vec<Option<pw_data_loader::glb::Textura>> =
         s.texturas.iter().map(|t| achar_textura(&e, &v, &nome, t).and_then(|(_, b)| textura_em_png(&b))).collect();
     let glb = pw_data_loader::glb::do_ski_com_texturas(&s, &nome, &|i| texturas.get(i).and_then(|t| t.as_ref()).map(|t| pw_data_loader::glb::Textura { png: t.png.clone(), transparente: t.transparente }));
+    glb_como_resposta(&nome, glb)
+}
+
+fn glb_como_resposta(nome: &str, glb: Vec<u8>) -> R<Response> {
     let arquivo = nome.rsplit('\\').next().unwrap_or("modelo").replace(['"', '\r', '\n'], "_");
     let mut h = HeaderMap::new();
     h.insert(header::CONTENT_TYPE, "model/gltf-binary".parse().unwrap());

@@ -131,7 +131,25 @@ impl FonteDePacote for Pacotes {
         dds[84..88].copy_from_slice(b"DXT1");
         dds.extend_from_slice(&[0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0]);
         receber(b"models\\teste\\textures\\caixa.dds".to_vec(), dds)?;
-        Ok(ResultadoDoPacote { entradas: 13, falhas: vec![] })
+        // Esqueleto e modelo (B274): .bon v6 com um osso (matrizes identidade) e .smd ligando-o ao caixa.ski.
+        let u = |b: &mut Vec<u8>, x: u32| b.extend_from_slice(&x.to_le_bytes());
+        let ident = |b: &mut Vec<u8>| for k in 0..16 { b.extend_from_slice(&(if k % 5 == 0 { 1.0f32 } else { 0.0 }).to_le_bytes()); };
+        let mut bon = b"MOXB".to_vec();
+        u(&mut bon, u32::from_be_bytes(*b"ASKE")); u(&mut bon, 6);
+        for x in [1u32, 0, 0, 0, 0, 30] { u(&mut bon, x); }
+        bon.extend_from_slice(&[0u8; 64]);
+        u(&mut bon, 4); bon.extend_from_slice(b"raiz");
+        bon.extend_from_slice(&[0u8; 4]); u(&mut bon, u32::MAX); u(&mut bon, u32::MAX); u(&mut bon, 0);
+        ident(&mut bon); ident(&mut bon);
+        receber(b"models\\teste\\caixa.bon".to_vec(), bon)?;
+        let mut smd = b"MOXB".to_vec();
+        u(&mut smd, u32::from_be_bytes(*b"ASMD")); u(&mut smd, 8);
+        for x in [1u32, 0, 0, 0] { u(&mut smd, x); }
+        smd.extend_from_slice(&[0u8; 60]);
+        u(&mut smd, 9); smd.extend_from_slice(b"caixa.bon");
+        u(&mut smd, 9); smd.extend_from_slice(b"caixa.ski");
+        receber(b"models\\teste\\caixa.smd".to_vec(), smd)?;
+        Ok(ResultadoDoPacote { entradas: 15, falhas: vec![] })
     }
 }
 
@@ -762,8 +780,19 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
 
         // Modelos 3D (B272): lista de .ski, ficha e GLB.
         let ml = json_de(pedir("GET", "estudio/modelos").query("busca", "caixa").call().unwrap());
-        assert_eq!(ml["total"], 1, "{ml}");
-        let caminho = ml["linhas"][0]["caminho"].as_str().unwrap().to_string();
+        assert_eq!(ml["total"], 2, "{ml}");
+        assert!(ml["linhas"][0]["caminho"].as_str().unwrap().to_lowercase().ends_with(".smd"), "B274: o .smd primeiro");
+        // B274: o modelo inteiro — ficha com esqueleto e pele, GLB com skin.
+        let smd = ml["linhas"][0]["caminho"].as_str().unwrap().to_string();
+        let fm = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &smd).call().unwrap());
+        assert_eq!((fm["tipo"].as_str(), fm["esqueleto"]["ossos"][0][0].as_str(), fm["peles"][0]["malhas"].as_u64()), (Some("modelo"), Some("raiz"), Some(1)), "{fm}");
+        let mut gm = Vec::new();
+        std::io::Read::read_to_end(&mut pedir("GET", "estudio/modelos/glb").query("caminho", &smd).call().unwrap().into_reader(), &mut gm).unwrap();
+        let nj = u32::from_le_bytes(gm[12..16].try_into().unwrap()) as usize;
+        let docm: Value = serde_json::from_slice(&gm[20..20 + nj]).unwrap();
+        assert_eq!(docm["skins"][0]["joints"].as_array().map(|x| x.len()), Some(2), "um osso + o esqueleto: {docm}");
+        assert!(docm["meshes"][0]["primitives"][0]["attributes"]["WEIGHTS_0"].is_u64());
+        let caminho = ml["linhas"][1]["caminho"].as_str().unwrap().to_string();
         let fi = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &caminho).call().unwrap());
         assert_eq!((fi["versao"].as_u64(), fi["texturas"][0].as_str(), fi["materiais"][0]["nome"].as_str(), fi["malhas"][0]["triangulos"].as_u64()),
             (Some(9), Some("caixa.dds"), Some("madeira"), Some(1)), "{fi}");

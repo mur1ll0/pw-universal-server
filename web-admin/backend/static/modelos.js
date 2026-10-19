@@ -14,11 +14,12 @@ async function carregarModelos() {
   let r;
   try { r = await api(rotaDeModelos("", { busca: elemento("modelos-busca").value.trim() })); }
   catch (erro) { elemento("modelos-situacao").textContent = erro.message; return; }
-  elemento("modelos-situacao").textContent = `${r.total} .ski${r.total > r.linhas.length ? ` (${r.linhas.length} primeiros)` : ""}`;
+  elemento("modelos-situacao").textContent = `${r.total} modelos/peles${r.total > r.linhas.length ? ` (${r.linhas.length} primeiros)` : ""}`;
   const area = elemento("modelos-lista");
   area.replaceChildren();
   for (const l of r.linhas) {
-    const b = criar("button", "", l.caminho.replace(/^models\\/i, ""));
+    const smd = l.caminho.toLowerCase().endsWith(".smd");
+    const b = criar("button", "", `${smd ? "▣ " : "· "}${l.caminho.replace(/^models\\/i, "")}`);
     b.type = "button";
     b.title = l.caminho;
     b.addEventListener("click", () => abrirModelo(l.caminho));
@@ -34,7 +35,14 @@ async function abrirModelo(caminho) {
   try { f = await api(rotaDeModelos("/ficha", { caminho })); } catch (erro) { ficha.textContent = erro.message; return; }
   ficha.replaceChildren();
   ficha.appendChild(criar("h3", "", caminho.split("\\").pop()));
-  ficha.appendChild(criar("div", "texto-suave", `${caminho} · versão ${f.versao} · ${f.malhas.length} malhas · ${f.ossos.length} ossos na pele (esqueleto: ${f.ossos_do_esqueleto})`));
+  if (f.tipo === "modelo") {
+    // B274: o modelo inteiro (.smd) — esqueleto e peles.
+    const e = f.esqueleto;
+    ficha.appendChild(criar("div", "texto-suave", `${caminho} · ${f.acoes} ações · esqueleto ${e.arquivo || "(nenhum)"}${e.erro ? ` — não lido: ${e.erro}` : ` (v${e.versao}, ${e.ossos.length} ossos, ${e.juntas} juntas, ${e.ganchos.length} ganchos)`}`));
+    if (e.ganchos && e.ganchos.length) ficha.appendChild(criar("div", "texto-suave", `Ganchos: ${e.ganchos.join(", ")}`));
+  } else {
+    ficha.appendChild(criar("div", "texto-suave", `${caminho} · versão ${f.versao} · ${f.malhas.length} malhas · ${f.ossos.length} ossos na pele (esqueleto: ${f.ossos_do_esqueleto})`));
+  }
   const tela = criar("canvas", "modelo-tela");
   tela.width = 640; tela.height = 480;
   tela.style.width = "100%"; tela.style.maxWidth = "640px"; tela.style.background = "#20242a"; tela.style.borderRadius = "6px";
@@ -43,9 +51,18 @@ async function abrirModelo(caminho) {
   baixar.href = rotaDeModelos("/glb", { caminho });
   ficha.appendChild(baixar);
   const lista = criar("ul");
-  for (const m of f.malhas) lista.appendChild(criar("li", "", `${m.nome || "(sem nome)"} — ${m.tipo}, ${m.vertices} vértices, ${m.triangulos} triângulos, textura ${f.texturas[m.textura] ?? m.textura}, material ${f.materiais[m.material]?.nome ?? m.material}`));
+  if (f.tipo === "modelo") {
+    for (const p of f.peles) {
+      const li = criar("li");
+      if (p.erro) li.textContent = `${p.caminho} — não lida: ${p.erro}`;
+      else { const a = criar("a", "", p.caminho.split("\\").pop()); a.href = "#"; a.addEventListener("click", (ev) => { ev.preventDefault(); abrirModelo(p.caminho); }); li.append(a, ` — ${p.malhas} malhas, ${p.triangulos} triângulos`); }
+      lista.appendChild(li);
+    }
+  } else {
+    for (const m of f.malhas) lista.appendChild(criar("li", "", `${m.nome || "(sem nome)"} — ${m.tipo}, ${m.vertices} vértices, ${m.triangulos} triângulos, textura ${f.texturas[m.textura] ?? m.textura}, material ${f.materiais[m.material]?.nome ?? m.material}`));
+  }
   ficha.appendChild(lista);
-  if (f.texturas.length) {
+  if (f.texturas && f.texturas.length) {
     const faltam = f.texturas.filter((_, i) => !(f.texturas_achadas || [])[i]);
     ficha.appendChild(criar("div", "texto-suave", `Texturas: ${f.texturas.join(", ")}${faltam.length ? ` — não achadas no cliente (nem em Textures\\ nem em Tex_<nome>\\): ${faltam.join(", ")}` : ""}.`));
   }
