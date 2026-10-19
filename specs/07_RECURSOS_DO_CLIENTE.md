@@ -3,7 +3,7 @@
 > Como o servidor guarda o cliente de cada versão e o entrega ao launcher. Plano e decisões:
 > `docs/admin/RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md` (§3, §7.2, §7.7, §8, §8.6). Estado: **P1
 > (versão 0 + pacotes + HTTP) no B233, confirmado em jogo nas duas versões; P2 (núcleo do launcher
-> `pw-atualizador` + app Tauri `tools/pw-launcher`) no B234, confirmado em jogo; usabilidade do launcher e P3
+> `pw-atualizador` + app `tools/pw-launcher`, Tauri no B234 e Win32 nativo desde o B275) no B234, confirmado em jogo; usabilidade do launcher e P3
 > (rascunho, publicar e reverter pelo painel) no B235; Estúdio S1 (editor genérico do `elements.data`) e a gravação
 > no realm ao publicar no B237**; telas próprias por área (S2+) e o envio do cliente original pelo painel faltam.
 
@@ -88,9 +88,9 @@ mostra a pública). O `versao.json` é gravado por último: só aparece quando a
 | peça | onde | faz |
 | :--- | :--- | :--- |
 | núcleo | `crates/pw-atualizador` (lib, sem banco nem axum; também usado pelo `pw-recursos conferir`) | `Servidor::versoes`, `versao_remota` (assinaturas + SHA-256 do manifesto), `instalar`, `verificar`, `reparar`, `atualizar`, `jogar`, `conferir_range` |
-| app | `tools/pw-launcher` (Tauri 2 + `tauri-plugin-dialog`, fora do workspace; `cargo build --release` na pasta) | janela `ui/index.html`; `pw-launcher.json` ao lado do `.exe` guarda o servidor, a última versão escolhida e **uma pasta por versão** (`pastas`); chave pública embutida de `chave_publica.txt` (trocar ao publicar com outra chave) |
+| app | `tools/pw-launcher` (Win32 puro via `windows-sys` 0.52, fora do workspace; **compilar com `compilar.ps1`** na pasta — alvo `x86_64-win7-windows-msvc`, ou `-Bits 32` para `i686-win7-windows-msvc`) | janela `src/janela.rs` (era Tauri/WebView2 até o B275, que exigia Windows 10); roda do **Windows 7 ao 11**; `pw-launcher.json` ao lado do `.exe` guarda o servidor, a última versão escolhida e **uma pasta por versão** (`pastas`); chave pública embutida de `chave_publica.txt` (trocar ao publicar com outra chave) |
 
-Tela (B235): ao abrir, busca as versões no servidor (abas) e mostra a situação da escolhida, lendo só o
+Tela (B235; Win32 no B275, versões numa caixa de seleção em vez de abas): ao abrir, busca as versões no servidor e mostra a situação da escolhida, lendo só o
 `versao.json` (`Servidor::versao_anunciada`, sem baixar o manifesto). Conforme a situação:
 
 | situação | botões |
@@ -445,6 +445,9 @@ vértices/triângulos) e `GET estudio/modelos/glb?caminho` (`model/gltf-binary`,
 CSP `self` continua) — arrastar gira, roda aproxima — e "Baixar GLB" para o Blender. **Texturas (B273):** a ficha
 traz `texturas_achadas` (o caminho onde o cliente acharia cada textura, ou nulo) e o GLB leva as texturas em PNG
 (spec 03 §3.10d); o visualizador as desenha, com corte de alfa nas transparentes, e a ficha lista as não achadas.
+**Modelo inteiro (B274):** a lista traz `.smd` (primeiro) e `.ski`; para um `.smd` a ficha traz `tipo: "modelo"`, as
+ações, o esqueleto (`ossos [[nome, mãe]]`, juntas, ganchos, FPS, ou `erro` — p.ex. `.bon` v5) e cada pele (malhas e
+triângulos, ou `erro`), e o GLB junta as peles (com as texturas de cada uma) e o esqueleto (`skin`, spec 03 §3.10d).
 
 ## 7. Testes
 
@@ -483,7 +486,8 @@ publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores
 políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id
 inexistente → 400. Modelos (B272): um `.ski` sintético (com `MOXB`) aparece na busca, a ficha traz versão,
 textura, material e 1 triângulo, o GLB tem cabeçalho e tamanho certos; caminho que não é `.ski` → 400; a textura DXT1 na pasta `textures` (minúscula) é achada e vai no GLB como PNG
-ligada ao material (B273). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
+ligada ao material (B273); um `.smd` sintético com `.bon` de um osso vem primeiro na lista, a ficha traz o osso e a
+pele, e o GLB tem `skin` com 2 juntas (o osso e o esqueleto) e pesos (B274). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
 não usa → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
 "só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
 gatilho duplicado (id novo na resposta) e o original removido, publicados — o realm tem a mesma quantidade de
@@ -495,10 +499,22 @@ sem `.hmap` responde `y` nulo; coordenada inválida 400. `pw-data-loader`: `npcg
 arquivos). Painel: `web-admin/backend/tests/teste_recursos.py` (10) — rodar no contêiner da imagem do painel com
 `TEST_DATABASE_URL`/`TEST_REDIS_URL` (ver histórico B243).
 
+### Windows 7 (B275)
+
+O exe do Tauri não abria no Windows 7 sem mensagem nenhuma: a tabela de imports pedia
+`api-ms-win-core-synch-l1-2-0.dll` (`WaitOnAddress`), `ProcessPrng`, `GetSystemTimePreciseAsFileTime`
+(std do Rust ≥ 1.78, alvo `*-pc-windows-msvc` = Windows 10+), `combase.dll` e
+`api-ms-win-core-winrt-error-l1-1-0.dll` (crate `windows` 0.6x do Tauri), além do WebView2 (parado na 109 no
+Windows 7). Agora: std recompilada para o alvo `*-win7-windows-msvc` (`-Zbuild-std`, `RUSTC_BOOTSTRAP=1`,
+componente `rust-src`), CRT estático (sem depender do Universal CRT/KB2999226), janela com
+user32/gdi32/comctl32 v6/shell32/ole32, pasta escolhida pela `SHBrowseForFolderW`, manifesto
+(`launcher.manifest`) com `supportedOS` do 7 ao 10 e `dpiAware`. Pânico vira caixa de erro (não some calado).
+Conferir depois de compilar: nenhum import de `combase`, `api-ms-win-*` nem das três funções acima.
+
 ## 8. Falta
 
 - Launcher: canal de teste para GM (instalar um rascunho antes de publicar), autoatualização do próprio
-  launcher, instalador `.msi` (CLI do Tauri).
+  launcher, instalador (o `.msi` do Tauri saiu com o Tauri no B275).
 - ("Aguarda reinício" e reiniciar pelo painel: feitos no B249, spec 06.) Rascunho só de servidor continua gerando
   versão nova do cliente com o manifesto igual — **decisão do B250, mantido**: o launcher só baixa o manifesto e termina,
   e a versão é o que guarda o `publicada_em` do aviso de reinício e o que o reverter usa.

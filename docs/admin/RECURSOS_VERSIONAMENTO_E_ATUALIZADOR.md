@@ -323,7 +323,7 @@ Sai a F3 (escritor de `.pck`); a importação usa só a leitura (`pw-pck-extract
 - **Teste G0:** Claude prepara a cópia sem pacotes (`F:\PW\1.5.5\1.5.5 BR sepfile\element`, `models`/`litmodels`
   por link físico do BR, o resto copiado, os outros `.pck` extraídos) e o `.bat` com `sepfile`; o Murillo
   joga e mede.
-- **Aplicativo Windows:** Tauri.
+- **Aplicativo Windows:** Tauri (B234); trocado por Win32 nativo no B275 — o Tauri 2 exige Windows 10 e o launcher precisa abrir no Windows 7 (spec 07 §5).
 - **Ordem:** servidor (`pw-recursos`, G1) → Estúdio com o editor de `elements` (G4) → launcher Jogar (G2);
   a governança no painel (G3) acompanha o G1/G4.
 - **Onde fica o editor de dados: em análise.** O Murillo prefere tudo no painel web; o limite são os

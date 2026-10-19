@@ -645,6 +645,25 @@ como PNG e cria um material glTF por par (material, textura) usado; textura com 
 (corte 0,5 — escolha de exibição, não regra do jogo). Atenção, na instalação BR desempacotada os nomes estão no disco
 como os bytes GBK lidos em Windows-1252 (artefato da extração; no `pw-recursos` o caminho é GBK e não há problema).
 
+**Esqueleto e modelo (B274, `bon.rs`, `smd.rs`):** `.bon` = `A3DSkeleton::Load` (`A3DSkeleton.cpp:409-560`): `MOXB`,
+cabeçalho de 96 bytes (`'ASKE'`, versão ≤ 6, ossos, juntas, ganchos, quadros, FPS), ossos (nome, `BONEDATA` de 144
+bytes — `A3DBone.h:96-104` sem `#pragma pack`: flags + 3 de enchimento, mãe, primeira junta, filhas, `matRelative`,
+`matBoneInit` — e os índices das filhas), tipos e dados das juntas (nome + 12 bytes; os 4 tipos leem igual) e ganchos
+(nome + 72 bytes). **Medido no 1.5.5 BR:** 7.620 `.bon` v6 fecham no último byte; 2.229 são v5, com trilhas de
+animação embutidas nas juntas (`LoadBoneTrack`) — recusados com o motivo até o leitor de trilhas (próxima parte).
+**Semântica das matrizes, pelo fonte e medida:** a matriz da pele é `BoneInitTM × UpToRoot` (`A3DSkinModel.cpp:1341-1342`,
+`:1743`) e o `UpToRoot` vem da animação (`A3DBone.cpp:245-263`), então `matBoneInit` = inversa da pose de ligação;
+`matRelative` é uma pose de repouso que coincide com a de ligação em só 28% dos ossos (63.187/222.996, medido).
+`.smd` = `A3DSkinModelMan::LoadModelFromFile`: `MOXB`, cabeçalho de 84 bytes (`'ASMD'`, versão ≤ 8, peles, ações,
+cabides, propriedades), o nome do `.bon` e os das peles, relativos à pasta do `.smd`. Medido: 5.163/5.163 cabeças
+leem; o esqueleto citado existe em 5.156; 4.285 de 4.574 peles citadas existem.
+`glb::do_modelo` (peles + esqueleto): um nó por osso com a pose de ligação local (inversa do `matBoneInit`, relativa à
+da mãe) + um nó raiz "esqueleto" (o índice `n` que `A3DSkin::BindSkeleton` reserva, `A3DSkin.cpp:830-865`), `skin` com
+`matBoneInit` como inversa de ligação, e `JOINTS_0`/`WEIGHTS_0` (v < 9: índice = osso do esqueleto; v ≥ 9: pelo nome;
+o 4º peso = `1 − soma`, `A3DMorphSkinMesh.cpp:313-325`; malha rígida presa ao osso com peso 1, `A3DRigidMesh.cpp:367`).
+Testado em 274 modelos reais: 710/733 malhas casam com o esqueleto, e **as 8.245 juntas** reproduzem a pose de
+ligação (mundo pelos nós × inversa ≈ identidade).
+
 ### 3.11 `global_api.lua`
 
 Primeira linha `--<N>` = `lua_version` do `SERVER_TIME`. 1.5.5: **102**; divergência faz o

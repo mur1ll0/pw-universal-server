@@ -7,7 +7,7 @@
 > bloco novo entra como linha no §3.3 (o que olhar em jogo), no §5 (o que ficou faltando) e
 > no índice do §8 — não como parágrafo aqui.
 >
-> **Última atualização: 2026-10-15** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234 launcher (P2) em `a43042d`/`a478035`, confirmado; B235/B236 commitados (`07a30ab`…`5a2a22d`); B237 commitado (`d334cf8`…`eaf329e`); B238 commitado (`a78abf2`…`db76f83`); B239 commitado (`c9c54d1`…`cfbe3b2`); B240 commitado (`32e115a`…`7bb1766`); B241 commitado (`92aa98e`, `5c05e53`); B242 commitado (`132c63b`, `66179c2`); B243 commitado (`0353f5c`, `ed573fc`); B244 commitado (`57dc115`, `0194146`); B245 commitado (`2028129`, `3b9c2fb`); B246 commitado (`c338690`, `35ec407`); B247 commitado (`14abd7f`, `f54ef50`); B248 commitado (`3a8bd56`, `39bf94a`); B249 commitado (`f68f47a`, `4f1d5c6`) — **o GS novo (`pw-world-*`) ainda não publicado, falta o Murillo autorizar**; B250 commitado (`0da45ba`, `9783ac8`); B251 commitado (`d3b002b`, `b98b1c5`); B252 commitado (`1c47646`, `ad52efd`); B253 commitado (`e5d8319`, `104847a`) — nenhum mapa alinhado (decisão do Murillo); B254 commitado (`fbc82a9`, `778efa0`); B255 commitado (`ef7a7ba`, `c779028`); B256 commitado (`b578536`, `1c4202e`); B257 commitado (`b1dfe76`, `e9d5ed4`); S7 concluído (B254-B271, último commit `ef0fcbd`/`2e2cfcb`); B272 commitado (`13da9eb`, `3ead137`); **B273: texturas dos modelos (DDS/TGA → PNG no GLB, desenhadas no visualizador) — publicado em `pw-recursos`/`pw-admin-api`, não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
+> **Última atualização: 2026-10-15** — **B233: P1 dos recursos do cliente (`pw-recursos`, porta 8100), versão 0 do 1.2.6 e do 1.5.5 importada e conferida por HTTP; commitado em `080a5cb`/`21dfc55`/`bd18444`, **confirmado em jogo nas duas versões**; B234 launcher (P2) em `a43042d`/`a478035`, confirmado; B235/B236 commitados (`07a30ab`…`5a2a22d`); B237 commitado (`d334cf8`…`eaf329e`); B238 commitado (`a78abf2`…`db76f83`); B239 commitado (`c9c54d1`…`cfbe3b2`); B240 commitado (`32e115a`…`7bb1766`); B241 commitado (`92aa98e`, `5c05e53`); B242 commitado (`132c63b`, `66179c2`); B243 commitado (`0353f5c`, `ed573fc`); B244 commitado (`57dc115`, `0194146`); B245 commitado (`2028129`, `3b9c2fb`); B246 commitado (`c338690`, `35ec407`); B247 commitado (`14abd7f`, `f54ef50`); B248 commitado (`3a8bd56`, `39bf94a`); B249 commitado (`f68f47a`, `4f1d5c6`) — **o GS novo (`pw-world-*`) ainda não publicado, falta o Murillo autorizar**; B250 commitado (`0da45ba`, `9783ac8`); B251 commitado (`d3b002b`, `b98b1c5`); B252 commitado (`1c47646`, `ad52efd`); B253 commitado (`e5d8319`, `104847a`) — nenhum mapa alinhado (decisão do Murillo); B254 commitado (`fbc82a9`, `778efa0`); B255 commitado (`ef7a7ba`, `c779028`); B256 commitado (`b578536`, `1c4202e`); B257 commitado (`b1dfe76`, `e9d5ed4`); S7 concluído (B254-B271, último commit `ef0fcbd`/`2e2cfcb`); B273 commitado (`a84c391`, `97638ee`); **B274: esqueleto (`.bon`) e modelo inteiro (`.smd`) com `skin` no GLB — publicado em `pw-recursos`/`pw-admin-api`, não commitado.** Antes: B199–B216 commitados (B215 em `4df4376`; B216 em `2263a23`/`804f19e`; B217 Templates em `267d550`/`344788b`; **B220–B228 (habilidades, efeitos, planta, amuleto de dano, auras; produção no 1.2.6) commitados em `9767e82` e no commit de documentação seguinte, não publicados**; **B218, B219 e B229–B232 commitados em 2026-10-14** (E9 da reforma do painel; planos de recursos do cliente, atualizador e Estúdio; 1.2.6 e 1.5.5 rodando sem `.pck`; realms 1.4.8/1.5.3 removidos), não publicados; B212–B214 em `a95e323`/`e5fd20b`); B199–B211 em blocos por área (`50c5d3a` dados, `d0ee485` protocolo, `2d57f7e` GS, `4630bb4` painel, `cecfaac` Docker e o de documentação); **B122** — roteiros e passivas do 1.2.6 gerados do `gs`,
 > comandos do B77–B88, 14 e 64 conferidos e sobrescritos no 1.2.6, campos do v55 pelo
 > `libtask.so` e prefixos do v7 pelo `gs`; **B126** — IA de combate do monstro por estratégia
 > (conjurar de longe, série de golpes, afastar, fugir, fixo), eventos de vida 75/50/25 %, efeito
@@ -447,6 +447,12 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
   outra), itens exigidos/entregues e prêmio em itens, clone de missão posto no `NPC_TASK_OUT_SERVICE` de um NPC (o NPC
   oferece), textos do cliente (tooltip do item, sem reiniciar), fala, gatilhos e tipos de operação do comportamento de um
   monstro (só o realm: o cliente não tem o `aipolicy`).
+- **B275 (launcher no Windows 7, 2026-10-19):** o launcher deixou o Tauri/WebView2 (exigia Windows 10: o exe nem abria
+  no 7) e virou janela Win32 nativa, mesmo comportamento. Compilar com `tools\pw-launcher\compilar.ps1` (64 bits) ou
+  `compilar.ps1 -Bits 32`; exe em `tools\pw-launcher	arget_64-win7-windows-msvcelease\pw-launcher.exe` (ou
+  `i686-win7-…`), com o `pw-launcher.json` ao lado. Conferido aqui no Windows 10 (versões, "Pronto para jogar", barra de
+  progresso do Verificar) e pela tabela de imports (só funções do 7). **A olhar no Windows 7:** abrir o exe (a janela
+  aparece; não sumir calado), escolher pasta pela janela clássica do Windows, baixar/verificar, Jogar.
 
 **1.5.5 (realm 155, e o que vale para os dois)**
 
@@ -881,7 +887,7 @@ portado. Falta ver em jogo.)
   checagem leve de atualização; `pw-recursos` com API administrativa 8101 (só rede interna, segredo) — rascunho,
   trava por caminho, publicar N+1 assinado, reverter; versão N reaproveita os pacotes da 0 (o resto por objeto);
   página "Recursos do cliente" no painel. Falta: o Murillo testar; publicar `servidor`/`ambos` direto no realm;
-  canal de teste GM e autoatualização do launcher; envio do cliente original pelo painel; P4 (editor de elements).
+  canal de teste GM e autoatualização do launcher (B275: launcher Win32 para o Windows 7 — falta o Murillo abrir num 7 real); envio do cliente original pelo painel; P4 (editor de elements).
   **B237 (P4 = Estúdio S1):** escritor do `elements` com ida e volta byte a byte (`pw_data_loader::elements_editavel`),
   espaços de id do `add_id_index` (17 tabelas do v156 sem espaço conhecido: sem registro novo); API e página Estúdio;
   publicar grava `servidor`/`ambos` no `config` do realm. Falta: o Murillo testar em jogo; "aguarda reinício";
@@ -1179,6 +1185,8 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 271 | 10-19 | Estúdio S7: tipos de condição/operação e operações no aipolicy — **S7 concluído** |
 | 272 | 10-19 | Estúdio S5: leitor do .ski, GLB e visualizador WebGL ("Modelos") |
 | 273 | 10-19 | Estúdio S5: texturas dos modelos (DDS DXT1/3/5, RGBA, TGA → PNG no GLB) |
+| 274 | 10-19 | Estúdio S5: esqueleto (.bon) e modelo (.smd) com skin no GLB |
+| 275 | 10-19 | launcher em Win32 nativo (alvo win7, CRT estático): roda do Windows 7 ao 11; Tauri removido |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

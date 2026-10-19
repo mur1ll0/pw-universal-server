@@ -345,6 +345,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > **B273 (S5, 2ª parte):** texturas — achadas como o cliente acha, DDS/TGA decodificados por um decodificador próprio
 > (todas as achadas da amostra decodificam), PNG no GLB e desenhadas no visualizador. Falta do S5: esqueleto e pele com
 > ossos, animações e ações, diagnóstico; Mascotes, Voo, Minas.
+>
+> **B274 (S5, 3ª parte):** esqueleto (`.bon` v6) e o modelo inteiro (`.smd`: peles + esqueleto), GLB com `skin` na pose
+> de ligação (conferida em 8.245 juntas de 274 modelos reais). Falta do S5: trilhas (`.bon` v5 e `.stck`) e ações do
+> `.ecm`, animação no visualizador, diagnóstico; Mascotes, Voo, Minas.
 
 | fase | entrega |
 | :--- | :--- |
@@ -352,7 +356,7 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 | S2 | escritor do `elements` (v7 e v156) + telas de Armas, Armaduras, Consumíveis, Monstros (drops) + índice de referências |
 | S3 | NPCs, Serviços (30 tipos) e Conversa (`TALK_PROC`); Receitas |
 | S4 | Mapas: minimapa interativo, `npcgen` (NPCs, monstros, recursos), `region`/`precinct`, teleportes, `task_npc` |
-| S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas — **em andamento** (B272: `.ski` → GLB, visualizador; B273: texturas) |
+| S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas — **em andamento** (B272: `.ski` → GLB, visualizador; B273: texturas; B274: esqueleto e modelo `.smd`) |
 | S6 | glTF e extensão do Blender |
 | S7 | Missões (§4.4); Loja Gold (§4.6); Comportamento (`aipolicy`); Textos — **concluído (B254-B271)** |
 | S8 | Habilidades: números e textos; depois `elementskill.dll` + efeitos no GS |

@@ -14864,3 +14864,73 @@ comparação lado a lado.
 
     ### e. Falta
     - Esqueleto (`.bon`) e pele com ossos; animações (`.stck`) e ações do `.ecm`; diagnóstico; `.psd` (5 referências).
+
+274. **Sessão 2026-10-19: Estúdio S5, terceira parte — esqueleto e modelo.**
+
+    ### a. Pedido
+    Commitar o B273 (já commitado: `a84c391`, `97638ee`) e seguir.
+
+    ### b. Decisão e evidência
+    - `.bon` por `A3DSkeleton::Load`/`A3DBone::Load`/`A3DJoint::Load`; `.smd` por `LoadModelFromFile`. 7.620 `.bon` v6
+      fecham; 2.229 v5 trazem trilhas embutidas (ficam para o leitor de trilhas). 5.163 `.smd` leem.
+    - Primeira hipótese — `matBoneInit` = inversa de compor as `matRelative` — **refutada pela medida** (28% batem, em
+      qualquer ordem). O fonte mostrou o porquê: a pele usa `BoneInitTM × UpToRoot` e o `UpToRoot` sai da animação;
+      `matBoneInit` é a inversa da pose de ligação e `matRelative` só uma pose de repouso.
+    - GLB: nós de osso na pose de ligação (a partir do `matBoneInit`), raiz "esqueleto" para o índice reservado do
+      `BindSkeleton`, pesos com o 4º = 1 − soma; malha rígida com peso 1 no osso dela.
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `bon.rs`, `smd.rs`, `glb::do_modelo` (com `inversa`, `matriz_gltf`); testes com o cliente.
+    - `pw-recursos`: lista com `.smd`, ficha e GLB do modelo inteiro (peles, esqueleto, texturas por pele).
+    - Painel: ficha do modelo (esqueleto, ganchos, peles com link) e lista marcando modelo/pele.
+
+    ### d. Provas
+    - `bon::testes`: 7.620 v6 fecham; `smd::testes`: 5.163 leem; `glb::testes::modelos_com_esqueleto`: 274 modelos,
+      710/733 malhas com pesos, **8.245/8.245 juntas na pose de ligação**.
+    - `pw-recursos` com o banco **22/22** (`.smd` + `.bon` sintéticos: lista, ficha, GLB com `skin`).
+    - `pw-data-loader` **235/235**; `cargo check --workspace --tests` ok. No contêiner, 30 `.smd` de `npcs` por realm:
+      1.5.5 — 27 com esqueleto e `skin` no GLB, 3 com `.bon` v5; **1.2.6 — todos os `.bon` são v5** (trilhas
+      embutidas), então os modelos do 1.2.6 ainda saem sem esqueleto; 2 `npcsatatinha\*.smd` do 1.2.6 não são do
+      formato do motor (recusados com o motivo).
+
+    ### e. Falta
+    - **Prioridade:** o leitor de trilhas — o `.bon` v5 (todo o 1.2.6) depende dele. Trilhas de animação (`.bon` v5 e `.stck`), ações do `.ecm`, animação no visualizador, diagnóstico.
+
+275. **Sessão 2026-10-19: launcher em Win32 nativo para rodar no Windows 7.**
+
+    ### a. Pedido
+    O `pw-launcher.exe` não fazia nada no Windows 7 (sem mensagem). Decisão do Murillo: trocar a interface Tauri por
+    janela Win32 nativa, um só exe do Windows 7 ao 11, compilado com o alvo win7.
+
+    ### b. Diagnóstico e evidência
+    - Tabela de imports do exe do B234 (`pefile`): `api-ms-win-core-synch-l1-2-0.dll` (`WaitOnAddress`,
+      `WakeByAddress*`), `bcryptprimitives!ProcessPrng`, `kernel32!GetSystemTimePreciseAsFileTime` — da std do Rust
+      1.98 no alvo `x86_64-pc-windows-msvc`, que exige Windows 10 desde o 1.78 — e `combase.dll`
+      (`CoTaskMemAlloc/Free`, `CoCreateFreeThreadedMarshaler`) + `api-ms-win-core-winrt-error-l1-1-0.dll`
+      (`RoOriginateErrorW`), da crate `windows` 0.61/0.62 do Tauri 2. O carregador do 7 recusa o exe antes do `main`
+      e, com `windows_subsystem = "windows"`, nada aparece. Além disso o WebView2 parou na 109 no Windows 7.
+    - Só trocar o alvo não bastaria: `combase`/WinRT vêm das crates do Tauri, não da std.
+
+    ### c. O que foi feito
+    - `tools/pw-launcher`: Tauri, `tauri.conf.json`, `capabilities/`, `gen/`, `ui/` e `icons/icon.png` removidos.
+      `src/main.rs` guarda a configuração e as operações (`acoes`, as mesmas do B235, agora síncronas);
+      `src/janela.rs` é a janela em `windows-sys` 0.52 (caixa de versão, título, detalhe, até 5 botões conforme a
+      situação, barra de progresso, mensagem verde/vermelha, campo do servidor). Rede em thread à parte, resultado
+      volta por `PostMessageW`; pasta pela `SHBrowseForFolderW` (declarada à mão: a 0.52 a prende a um feature que
+      não publica); escala pelo `LOGPIXELSY`; Enter aperta o botão principal (`DM_GETDEFID`); pânico vira caixa de erro.
+    - `launcher.rc` + `launcher.manifest` (`embed-resource`): ícone, comctl32 v6, `supportedOS` 7/8/8.1/10, `dpiAware`.
+    - `compilar.ps1`: `rust-src`, `RUSTC_BOOTSTRAP=1`, `-Zbuild-std=std`, `+crt-static`, alvo
+      `x86_64-win7-windows-msvc` ou `-Bits 32` → `i686-win7-windows-msvc`.
+
+    ### d. Provas
+    - Imports do exe novo (64 e 32 bits): só shell32, user32, kernel32, gdi32, bcrypt, advapi32, ole32, comctl32,
+      ws2_32, ntdll; nenhuma `api-ms-win-*`, nenhum `combase`; as funções mais novas são do Vista/7
+      (`TryAcquireSRWLockExclusive`, `GetFileInformationByHandleEx`, `CreateWaitableTimerExW`). Recursos 3/14/24
+      (ícone, grupo, manifesto). 64 bits: 2,6 MB (o do Tauri tinha 11,6 MB).
+    - No Windows 10, pela UI Automation: com o `pw-launcher.json` vazio mostra 1.2.6 "ainda não está instalado" com
+      "Baixar o jogo"/"Já tenho instalado"; com o do Murillo, 1.5.5 "Pronto para jogar — versão 0" e os 4 botões;
+      "Verificar arquivos" mostrou o progresso da thread ("verificando — 10240 / 327386 arquivos (3%)").
+
+    ### e. Falta
+    - O Murillo abrir num Windows 7 real (64 e, se houver, 32 bits): janela, escolher pasta, baixar/verificar, Jogar.
+    - Rede por TLS (`https://`) no 7 não testada (o `ureq` usa rustls próprio, não o SChannel).
