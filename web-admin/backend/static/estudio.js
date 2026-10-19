@@ -354,7 +354,9 @@ function desenharFichaDoEstudio() {
           const valor = (n) => (f.campos.find((x) => x.nome === n) || {}).valor;
           const habitat = valor("inhabit_type");
           const comSufixo = typeof habitat === "number" && (valor("id_type") === 28752 || habitat === 6);
-          ir.addEventListener("click", (ev) => { ev.preventDefault(); mostrarVistaDoEstudio("modelos"); abrirModelo(c.valor.trim(), comSufixo ? habitat : null); });
+          // B283: modelo de voo — `WINGMANWING_ESSENCE` é asa; `FLYSWORD_ESSENCE` pelo `fly_mode` (`EC_Player.cpp:4262-4273`).
+          const voo = f.tabela === "WINGMANWING_ESSENCE" ? 1 : f.tabela === "FLYSWORD_ESSENCE" ? (valor("fly_mode") ?? 0) : null;
+          ir.addEventListener("click", (ev) => { ev.preventDefault(); mostrarVistaDoEstudio("modelos"); abrirModelo(c.valor.trim(), comSufixo ? habitat : null, voo); });
           grade.append(criar("span"), ir);
         }
       }

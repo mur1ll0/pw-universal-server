@@ -162,6 +162,8 @@ struct QCaminho {
     rascunho: Option<i64>,
     /// B281: habitat do mascote (`inhabit_type` 0–6) para o diagnóstico de mascote.
     habitat: Option<u32>,
+    /// B283: modo de voo (`fly_mode`: 0 espada, 1 asa, 2 rodas) para o diagnóstico de voo.
+    voo: Option<u32>,
 }
 
 async fn conteudo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Response> {
@@ -193,6 +195,74 @@ async fn estudio_modelos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Qu
     }
     let total: u64 = totais.values().filter_map(Value::as_u64).sum();
     Ok(Json(json!({ "total": total, "por_tipo": totais, "linhas": linhas })))
+}
+
+/// B283: o diagnóstico de voo de um `.ecm` (`pw_data_loader::ecm::diagnostico_de_voo`). Os nomes enviados vêm dos `.ecm`
+/// de jogador (`Models\Players\形象\…`); o vocabulário do modo, dos outros modelos de voo do elements com o mesmo modo.
+#[allow(clippy::too_many_arguments)]
+async fn diagnostico_de_voo(
+    e: &Estado,
+    v: &str,
+    rascunho: Option<i64>,
+    nome: &str,
+    m: &pw_data_loader::ecm::Ecm,
+    modo: u32,
+    tipo: &str,
+    gancho_do_jogador: Option<&str>,
+    encaixe: &str,
+) -> R<Value> {
+    use std::collections::BTreeMap;
+    let ganchos: Result<Vec<String>, String> = ler_smd(e, v, &m.smd).map_err(|x| x.1).and_then(|(_, _, _, b)| b).map(|b| b.ganchos.iter().map(|g| g.nome.clone()).collect());
+    let mut enviadas: BTreeMap<String, usize> = BTreeMap::new();
+    let mut jogadores = 0usize;
+    let de_jogador: Vec<String> = e
+        .gov
+        .buscar(v, "形象", usize::MAX)?
+        .iter()
+        .filter_map(|x| x["caminho"].as_str().map(str::to_string))
+        .filter(|c| {
+            let cl = c.to_lowercase();
+            cl.ends_with(".ecm") && cl.contains("players\\形象\\")
+        })
+        .collect();
+    for lido in e.gov.conteudos(v, &de_jogador)? {
+        let Some(j) = lido.and_then(|(_, b)| pw_data_loader::ecm::ler(&b)) else { continue };
+        jogadores += 1;
+        let mut deste: Vec<&str> = j.acoes.iter().flat_map(|a| a.filhas.iter()).filter(|f| pw_data_loader::ecm::chega_ao_voo(f, modo)).map(|f| f.nome.as_str()).collect();
+        deste.sort_unstable();
+        deste.dedup();
+        for n in deste {
+            *enviadas.entry(n.to_string()).or_default() += 1;
+        }
+    }
+    let mut dos_colegas: BTreeMap<String, usize> = BTreeMap::new();
+    let mut colegas = 0usize;
+    let do_modo: Vec<String> = e
+        .estudio
+        .modelos_de_voo(&e.gov, v, rascunho)
+        .await
+        .map_err(|x| Erro(StatusCode::BAD_REQUEST, x.to_string()))?
+        .into_iter()
+        .filter(|(c, mo)| *mo == modo && !c.eq_ignore_ascii_case(nome))
+        .map(|(c, _)| c)
+        .collect();
+    for lido in e.gov.conteudos(v, &do_modo)? {
+        let Some(o) = lido.and_then(|(_, b)| pw_data_loader::ecm::ler(&b)) else { continue };
+        colegas += 1;
+        let mut deste: Vec<&str> = o.acoes.iter().map(|a| a.nome.as_str()).collect();
+        deste.sort_unstable();
+        deste.dedup();
+        for n in deste {
+            *dos_colegas.entry(n.to_string()).or_default() += 1;
+        }
+    }
+    let linhas = pw_data_loader::ecm::diagnostico_de_voo(&m.acoes, &enviadas, &dos_colegas, colegas);
+    Ok(json!({
+        "tipo": tipo, "gancho_do_jogador": gancho_do_jogador, "encaixe": encaixe,
+        "encaixe_presente": ganchos.as_ref().ok().map(|g| g.iter().any(|x| x == encaixe)),
+        "ganchos": ganchos.as_ref().ok(), "esqueleto_erro": ganchos.as_ref().err(),
+        "jogadores": jogadores, "colegas": colegas, "acoes": linhas,
+    }))
 }
 
 /// Um caminho relativo à pasta de outro (`A3DSkinModelMan::LoadModelFromFile`: `strPath + "\\" + strFile`).
@@ -274,7 +344,7 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
         let smd_caminho = e.gov.conteudo(&v, &m.smd).ok().map(|(n, _)| n);
         let combinadas: Vec<Value> = m.acoes.iter().map(|a| {
             let faltam: Vec<&String> = bases_do_smd.as_ref().map_or(vec![], |b| a.bases.iter().filter(|x| !b.contains(x)).collect());
-            json!({ "nome": a.nome, "bases": a.bases, "bases_ausentes": faltam })
+            json!({ "nome": a.nome, "bases": a.bases, "bases_ausentes": faltam, "filhas": a.filhas })
         }).collect();
         let tabela = e.gov.conteudo(&v, "configs\\actions_npc.txt").ok().map(|(_, b)| pw_data_loader::ecm::tabela_de_nomes(&b)).unwrap_or_default();
         let diagnosticar = |pedidos: Vec<(usize, String, Option<String>)>| -> Vec<Value> { pedidos.into_iter().map(|(i, pedido, alternativa)| {
@@ -295,7 +365,12 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
         let diagnostico = diagnosticar(pw_data_loader::ecm::pedidos_de_monstro(&tabela));
         // B281: mascote (invocado, de combate ou evolutivo) — os nomes com o ambiente do habitat.
         let de_mascote = q.habitat.filter(|h| *h <= 6).map(|h| diagnosticar(pw_data_loader::ecm::pedidos_de_mascote(&tabela, h)));
-        return Ok(Json(json!({ "caminho": nome, "tipo": "ecm", "versao": m.versao, "smd": smd_caminho.unwrap_or(m.smd), "smd_lido": bases_do_smd.is_some(),
+        // B283: voo — o encaixe no esqueleto e as ações que os modelos de jogador mandam aos filhos.
+        let de_voo = match q.voo.and_then(|x| pw_data_loader::ecm::encaixe_de_voo(x).map(|e| (x, e))) {
+            Some((modo, (tipo, gancho_do_jogador, encaixe))) => Some(diagnostico_de_voo(&e, &v, q.rascunho, &nome, &m, modo, tipo, gancho_do_jogador, encaixe).await?),
+            None => None,
+        };
+        return Ok(Json(json!({ "caminho": nome, "tipo": "ecm", "versao": m.versao, "smd": smd_caminho.unwrap_or(m.smd), "smd_lido": bases_do_smd.is_some(), "voo": q.voo, "diagnostico_de_voo": de_voo,
             "combinadas": combinadas, "bases_do_smd": bases_do_smd.clone().unwrap_or_default(), "tabela_de_acoes": tabela.len(), "diagnostico_de_monstro": diagnostico,
             "habitat": q.habitat, "diagnostico_de_mascote": de_mascote })));
     }

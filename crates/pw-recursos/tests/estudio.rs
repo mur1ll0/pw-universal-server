@@ -814,6 +814,12 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let fm2 = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &ecm_cam).query("habitat", "0").call().unwrap());
         let dm = fm2["diagnostico_de_mascote"].as_array().unwrap();
         assert!(dm.iter().all(|x| x["pedido"].as_str().unwrap().ends_with("_地面")) && dm.iter().all(|x| x["estado"] != "ok"), "{fm2}");
+        // B283: como modelo de voo (asa) — o encaixe CC_chibang conferido no esqueleto (o sintético não tem ganchos); sem
+        // modelos de jogador nem outros modelos de voo, não há nomes a conferir.
+        let fv = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &ecm_cam).query("voo", "1").call().unwrap());
+        let dv = &fv["diagnostico_de_voo"];
+        assert_eq!((dv["tipo"].as_str(), dv["encaixe"].as_str(), dv["encaixe_presente"].as_bool(), dv["acoes"].as_array().map(|x| x.len())),
+            (Some("asa"), Some("CC_chibang"), Some(false), Some(0)), "{fv}");
         // B274: o modelo inteiro — ficha com esqueleto e pele, GLB com skin.
         let smd = ml["linhas"][1]["caminho"].as_str().unwrap().to_string();
         let fm = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &smd).call().unwrap());

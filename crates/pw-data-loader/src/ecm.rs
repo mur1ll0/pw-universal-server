@@ -12,6 +12,18 @@
 pub struct AcaoCombinada {
     pub nome: String,
     pub bases: Vec<String>,
+    /// Ações que esta manda os modelos filhos (asa, espada de voo, arma…) tocarem (B283): `ChildActName:` + `HHName:`
+    /// + `IsTrail:` (`ChildActInfo::Load`, `GfxCommon/A3DCombinedAction.cpp:1792-1850`). Ao tocar, todo filho recebe o
+    /// nome e toca a ação combinada dele com esse nome, se tiver (`CECModel::ActivateChildAct`/`ParentActivate`,
+    /// `EC_Model.cpp:3569-3620`); o gancho só filtra quando é rastro (`IsTrail`).
+    pub filhas: Vec<AcaoFilha>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AcaoFilha {
+    pub nome: String,
+    pub gancho: String,
+    pub rastro: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -28,6 +40,7 @@ pub fn ler(b: &[u8]) -> Option<Ecm> {
     let texto = crate::ski::gbk(corpo);
     let mut e = Ecm { versao: 0, smd: String::new(), acoes: Vec::new(), peles_adicionais: Vec::new() };
     let mut viu_versao = false;
+    let mut filha_aberta = false;
     for linha in texto.lines() {
         let linha = linha.trim_end_matches('\r');
         if let Some(v) = linha.strip_prefix("Version: ") {
@@ -40,7 +53,26 @@ pub fn ler(b: &[u8]) -> Option<Ecm> {
                 e.smd = v.trim().to_string();
             }
         } else if let Some(v) = linha.strip_prefix("CombineActName: ") {
-            e.acoes.push(AcaoCombinada { nome: v.to_string(), bases: Vec::new() });
+            e.acoes.push(AcaoCombinada { nome: v.to_string(), bases: Vec::new(), filhas: Vec::new() });
+            filha_aberta = false;
+        } else if let Some(v) = linha.strip_prefix("ChildActName: ") {
+            // `sscanf("%s")`: o nome vai até o primeiro espaço.
+            let nome = v.split_whitespace().next().unwrap_or("").to_string();
+            if let Some(a) = e.acoes.last_mut() {
+                a.filhas.push(AcaoFilha { nome, gancho: String::new(), rastro: false });
+            }
+            filha_aberta = true;
+        } else if filha_aberta && linha.starts_with("HHName: ") {
+            // `HHName:` também aparece nos modelos filhos do próprio `.ecm` (`EC_Model.cpp:154`): só vale logo depois
+            // de um `ChildActName:`.
+            if let Some(f) = e.acoes.last_mut().and_then(|a| a.filhas.last_mut()) {
+                f.gancho = linha["HHName: ".len()..].split_whitespace().next().unwrap_or("").to_string();
+            }
+        } else if filha_aberta && linha.starts_with("IsTrail: ") {
+            if let Some(f) = e.acoes.last_mut().and_then(|a| a.filhas.last_mut()) {
+                f.rastro = linha["IsTrail: ".len()..].trim().parse::<i32>().map_or(false, |x| x != 0);
+            }
+            filha_aberta = false;
         } else if let Some(v) = linha.strip_prefix("AddiSkinPath: ") {
             e.peles_adicionais.push(v.trim().to_string());
         } else if let Some(v) = linha.strip_prefix("BaseActName: ") {
@@ -198,6 +230,63 @@ pub fn pedidos_de_mascote(tabela: &[String], habitat: u32) -> Vec<(usize, String
     r
 }
 
+/// Voo (B283): o modo (`fly_mode` do `FLYSWORD_ESSENCE`, `CECPlayer::FlyMode2WingType`, `EC_Player.cpp:5985-5997`; o
+/// `WINGMANWING_ESSENCE` é asa, `:4262-4264`) → (nome, gancho do jogador onde pendura, gancho de encaixe no modelo de voo).
+/// `EC_Player.cpp:1943-1965`: espada `HH_feijian`/`CC_feijian`, asa `HH_chibang`/`CC_chibang`, rodas nos pés com
+/// `_cc_fenghuolun = "CC_feijian"` (`:153`). Sem o encaixe no esqueleto, o motor não posiciona o filho
+/// (`A3DSkinModelHanger::SetHangerObject` deixa `m_iCCIndex = -1` e o `Update` sai cedo, `A3DSkinModelAux.cpp:378-407`).
+pub fn encaixe_de_voo(modo: u32) -> Option<(&'static str, Option<&'static str>, &'static str)> {
+    match modo {
+        0 => Some(("espada", Some("HH_feijian"), "CC_feijian")),
+        1 => Some(("asa", Some("HH_chibang"), "CC_chibang")),
+        // Os pés (`_hh_left_foot`/`_hh_right_foot`) têm nome GBK; rastro só pega pelo gancho, e nenhum é nos pés.
+        2 => Some(("rodas", None, "CC_feijian")),
+        _ => None,
+    }
+}
+
+/// Uma ação filha do modelo do jogador chega ao modelo de voo? Todo filho recebe o nome; o rastro só vale no filho
+/// pendurado no gancho dele (`CECModel::ParentActivate`, `EC_Model.cpp:3575-3576`).
+pub fn chega_ao_voo(f: &AcaoFilha, modo: u32) -> bool {
+    !f.rastro || encaixe_de_voo(modo).and_then(|e| e.1).is_some_and(|g| g == f.gancho)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LinhaDeVoo {
+    pub nome: String,
+    /// Quantos `.ecm` de jogador mandam este nome aos filhos.
+    pub jogadores: usize,
+    /// Quantos outros modelos de voo do mesmo modo têm a ação combinada.
+    pub colegas: usize,
+    pub estado: &'static str,
+}
+
+/// O diagnóstico de um modelo de voo: os nomes que os jogadores mandam (`enviadas`) e que o vocabulário do modo usa (algum
+/// colega tem, ou este tem). `dos_colegas` não conta o próprio modelo; `colegas` é quantos foram lidos. Falta só acusa
+/// quando a maioria dos colegas tem a ação (medido no 1.5.5: `悬停` está em 1 de 101 espadas — acusar todas seria ruído).
+pub fn diagnostico_de_voo(
+    acoes: &[AcaoCombinada],
+    enviadas: &std::collections::BTreeMap<String, usize>,
+    dos_colegas: &std::collections::BTreeMap<String, usize>,
+    colegas: usize,
+) -> Vec<LinhaDeVoo> {
+    let mut r: Vec<LinhaDeVoo> = enviadas
+        .iter()
+        .filter(|(n, _)| dos_colegas.contains_key(*n) || acoes.iter().any(|a| &a.nome == *n))
+        .map(|(n, &j)| {
+            let estado = match acoes.iter().find(|a| &a.nome == n) {
+                None if dos_colegas.get(n).copied().unwrap_or(0) * 2 > colegas => "sem ação combinada no .ecm (fica parado nesse momento)",
+                None => "ausente, como na maioria dos colegas",
+                Some(a) if a.bases.is_empty() => "ação combinada sem ação-base (não anima)",
+                Some(_) => "ok",
+            };
+            LinhaDeVoo { nome: n.clone(), jogadores: j, colegas: dos_colegas.get(n).copied().unwrap_or(0), estado }
+        })
+        .collect();
+    r.sort_by(|a, b| b.colegas.cmp(&a.colegas).then(b.jogadores.cmp(&a.jogadores)).then(a.nome.cmp(&b.nome)));
+    r
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -294,5 +383,26 @@ mod testes {
         assert!(!p.iter().any(|x| x.1 == "技能1"), "ACT_SKILL1 não é tocada");
         let m = pedidos_de_mascote(&t, 4);
         assert!(m.iter().any(|x| x.1 == "普攻1起_地面") && m.iter().any(|x| x.1 == "站立_空中") && !m.iter().any(|x| x.1.ends_with("_水中")), "habitat 4 = chão + ar");
+    }
+
+    /// B283: as ações filhas (com o `HHName:` de modelo filho do `.ecm` fora delas) e o diagnóstico de voo.
+    #[test]
+    fn filhas_e_voo() {
+        let fonte = "MOXTVersion: 50\nSkinModelPath: a.smd\nComActCount: 2\nCombineActName: 飞剑悬停\nBaseActCount: 1\n\
+                     BaseActName: 悬停\nChildActCount: 2\nChildActName: 飞剑悬停\nHHName: \nTransTime: 200\nIsTrail: 0\n\
+                     ChildActName: 刀光\nHHName: HH_righthandweapon\nTransTime: 0\nIsTrail: 1\nCombineActName: 站立\n\
+                     BaseActCount: 0\nChildCount: 1\nHHName: HH_feijian\n";
+        let e = ler(&encoding_rs::GBK.encode(fonte).0).unwrap();
+        assert_eq!(e.acoes[0].filhas.len(), 2);
+        assert!(e.acoes[1].filhas.is_empty(), "HHName de modelo filho não é ação filha");
+        assert!(chega_ao_voo(&e.acoes[0].filhas[0], 0) && !chega_ao_voo(&e.acoes[0].filhas[1], 0), "rastro na arma não chega à espada");
+        let enviadas: std::collections::BTreeMap<String, usize> = [("飞剑悬停", 10), ("飞剑起飞", 8), ("飞行悬停", 9)].map(|(a, b)| (a.to_string(), b)).into();
+        let colegas: std::collections::BTreeMap<String, usize> = [("飞剑悬停", 20), ("飞剑起飞", 19)].map(|(a, b)| (a.to_string(), b)).into();
+        let d = diagnostico_de_voo(&e.acoes, &enviadas, &colegas, 21);
+        assert_eq!(d.len(), 2, "o nome da asa (飞行悬停) não é do vocabulário da espada");
+        assert_eq!((d[0].nome.as_str(), d[0].estado), ("飞剑悬停", "ok"));
+        assert!(d[1].nome == "飞剑起飞" && d[1].estado.starts_with("sem ação"), "19 de 21 colegas têm");
+        let d = diagnostico_de_voo(&e.acoes, &enviadas, &colegas, 40);
+        assert_eq!(d[1].estado, "ausente, como na maioria dos colegas", "19 de 40: a maioria não tem");
     }
 }

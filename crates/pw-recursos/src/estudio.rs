@@ -167,6 +167,36 @@ impl Estudio {
         Ok(json!({ "total": total, "pagina": pagina, "por_pagina": por_pagina, "registros": pagina_lista }))
     }
 
+    /// B283: os modelos de voo do elements e o modo de cada um (`ecm::encaixe_de_voo`): `FLYSWORD_ESSENCE.file_model`
+    /// (e `file_model2`, o pé direito das rodas) com o `fly_mode`; `WINGMANWING_ESSENCE.file_model` é asa (modo 1).
+    pub async fn modelos_de_voo(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<Vec<(String, u32)>> {
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let mut r: Vec<(String, u32)> = Vec::new();
+        for tabela in ["FLYSWORD_ESSENCE", "WINGMANWING_ESSENCE"] {
+            let Ok(t) = e.tabela(tabela) else { continue };
+            for i in 0..t.registros.len() {
+                let reg = t.ler(i)?;
+                let modo = match tabela {
+                    "WINGMANWING_ESSENCE" => 1,
+                    _ => reg.get("fly_mode").and_then(FieldValue::as_i32).unwrap_or(0).max(0) as u32,
+                };
+                for campo in ["file_model", "file_model2"] {
+                    // O `string` do layout vem em bytes GBK (`FieldValue::Raw`), como na ficha (`valor_json`).
+                    let c = match reg.get(campo) {
+                        Some(FieldValue::Raw(b)) => nomes::legivel(b),
+                        Some(FieldValue::Text(t)) => t.clone(),
+                        _ => continue,
+                    };
+                    let c = c.trim().to_string();
+                    if !c.is_empty() && !r.iter().any(|(x, _)| x.eq_ignore_ascii_case(&c)) {
+                        r.push((c, modo));
+                    }
+                }
+            }
+        }
+        Ok(r)
+    }
+
     pub async fn ficha(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, tabela: &str, indice: usize) -> Result<Value> {
         let (e, _) = self.atual(gov, versao, rascunho).await?;
         let t = e.tabela(tabela)?;

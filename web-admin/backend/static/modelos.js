@@ -30,15 +30,18 @@ async function carregarModelos() {
   if (!r.linhas.length) area.appendChild(criar("div", "texto-suave", "Nenhum modelo."));
 }
 
+const MODOS_DE_VOO = ["espada (fly_mode 0)", "asa (fly_mode 1, WINGMANWING)", "rodas (fly_mode 2)"];
 const HABITATS = ["chão", "água", "ar", "chão + água", "chão + ar", "água + ar", "chão, água e ar"];
 
 /* Tabela de diagnóstico (B277/B281) com o "Criar" do B280 em cada falta. */
-function tabelaDeDiagnostico(f, caminho, titulo, lista, habitat) {
+function tabelaDeDiagnostico(f, caminho, titulo, lista, habitat, voo = null) {
   const tab = criar("table", "tabela-simples");
   tab.appendChild(criar("caption", "", titulo));
   for (const d of lista) {
     const tr = criar("tr");
-    tr.append(criar("td", "", d.pedido), criar("td", d.estado === "ok" ? "texto-suave" : "", d.estado === "ok" ? "ok" : `⚠ ${d.estado}`));
+    // B283: "ausente, como na maioria dos colegas" (voo) não é alerta — mas ainda pode ser criada.
+    const semAlerta = d.estado === "ok" || d.estado.startsWith("ausente, como");
+    tr.append(criar("td", "", d.pedido), criar("td", semAlerta ? "texto-suave" : "", semAlerta ? d.estado : `⚠ ${d.estado}`));
     // B280: corrigir — ação combinada nova clonando uma existente, opcionalmente com outra ação-base do .smd.
     if (d.estado !== "ok" && estudio.rascunho && f.combinadas.length) {
       const td = criar("td");
@@ -54,7 +57,7 @@ function tabelaDeDiagnostico(f, caminho, titulo, lista, habitat) {
           await api(rotaDeModelos("/acao", { rascunho: estudio.rascunho }), { method: "POST", body: JSON.stringify({ caminho, origem: origem.value, nova: d.pedido, base: base.value || undefined }) });
           alerta("ok", "Estúdio", `Ação ${d.pedido} criada no rascunho.`, { toast: true });
           if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-          abrirModelo(caminho, habitat);
+          abrirModelo(caminho, habitat, voo);
         } catch (erro) { alerta("erro", "Estúdio", erro.message); }
       });
       td.append(origem, base, b);
@@ -65,13 +68,14 @@ function tabelaDeDiagnostico(f, caminho, titulo, lista, habitat) {
   return tab;
 }
 
-async function abrirModelo(caminho, habitat = null) {
+async function abrirModelo(caminho, habitat = null, voo = null) {
   const ficha = elemento("modelos-ficha");
   ficha.textContent = "Carregando…";
   let f;
   const q = { caminho };
   if (estudio.rascunho) q.rascunho = estudio.rascunho;
   if (habitat !== null && habitat !== undefined) q.habitat = habitat;
+  if (voo !== null && voo !== undefined) q.voo = voo;
   try { f = await api(rotaDeModelos("/ficha", q)); } catch (erro) { ficha.textContent = erro.message; return; }
   ficha.replaceChildren();
   ficha.appendChild(criar("h3", "", caminho.split("\\").pop()));
@@ -104,12 +108,29 @@ async function abrirModelo(caminho, habitat = null) {
     const sel = criar("select", "campo");
     sel.appendChild(new Option("diagnóstico como monstro", ""));
     HABITATS.forEach((h, i) => sel.appendChild(new Option(`como mascote invocado/de combate — habitat ${i}: ${h}`, String(i))));
-    sel.value = f.habitat === null || f.habitat === undefined ? "" : String(f.habitat);
-    sel.addEventListener("change", () => abrirModelo(caminho, sel.value === "" ? null : Number(sel.value)));
+    // B283: modelo de voo (`fly_mode`) — o encaixe e as ações que os modelos de jogador mandam aos filhos.
+    MODOS_DE_VOO.forEach((m, i) => sel.appendChild(new Option(`como modelo de voo — ${m}`, `v${i}`)));
+    sel.value = f.voo !== null && f.voo !== undefined ? `v${f.voo}` : f.habitat === null || f.habitat === undefined ? "" : String(f.habitat);
+    sel.addEventListener("change", () => {
+      if (sel.value.startsWith("v")) abrirModelo(caminho, null, Number(sel.value.slice(1)));
+      else abrirModelo(caminho, sel.value === "" ? null : Number(sel.value));
+    });
     perfil.append(criar("span", "texto-suave", "Perfil: "), sel);
     ficha.appendChild(perfil);
     if (!estudio.rascunho) ficha.appendChild(criar("div", "texto-suave", "Escolha um rascunho no alto do Estúdio para corrigir as ações que faltam."));
-    if (f.diagnostico_de_mascote) {
+    if (f.diagnostico_de_voo) {
+      const d = f.diagnostico_de_voo;
+      const enc = d.encaixe_presente === null || d.encaixe_presente === undefined
+        ? `⚠ esqueleto não lido (${d.esqueleto_erro || "?"}): o encaixe ${d.encaixe} não pôde ser conferido`
+        : d.encaixe_presente ? `encaixe ${d.encaixe} presente no esqueleto — pendura em ${d.gancho_do_jogador || "nos pés"} do jogador`
+          : `⚠ falta o gancho ${d.encaixe} no esqueleto: o jogo não posiciona o modelo no jogador (A3DSkinModelAux.cpp:378-407)`;
+      ficha.appendChild(criar("div", d.encaixe_presente ? "texto-suave" : "", enc));
+      const linhas = d.acoes.map((x) => ({ pedido: `${x.nome} (mandada por ${x.jogadores} de ${d.jogadores} modelos de jogador; ${x.colegas} de ${d.colegas} outros modelos de ${d.tipo} têm)`, estado: x.estado, nome: x.nome }));
+      const tab = tabelaDeDiagnostico(f, caminho, `Diagnóstico de voo — ${d.tipo}: as ações que o jogador manda ao modelo de voo (ChildActName)`, linhas.map((x) => ({ ...x, pedido: x.nome })), null, f.voo);
+      // A coluna do nome mostra também as contagens.
+      [...tab.querySelectorAll("tr")].forEach((tr, i) => { tr.firstChild.textContent = linhas[i].pedido; });
+      ficha.appendChild(tab);
+    } else if (f.diagnostico_de_mascote) {
       ficha.appendChild(tabelaDeDiagnostico(f, caminho, `Diagnóstico de mascote — habitat ${f.habitat} (${HABITATS[f.habitat] || "?"}): nomes + _地面/_水中/_空中`, f.diagnostico_de_mascote, f.habitat));
     } else {
       ficha.appendChild(tabelaDeDiagnostico(f, caminho, "Diagnóstico de monstro (nomes de Configs\\actions_npc.txt + 起/落 nos ataques)", f.diagnostico_de_monstro, null));

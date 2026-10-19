@@ -418,6 +418,27 @@ impl Governanca {
         Ok((nomes::legivel(&c.gbk), self.objetos(versao).ler(&sha, a.tamanho as usize)?))
     }
 
+    /// Vários arquivos de uma vez (B283): o manifesto é lido e indexado uma vez só — `conteudo` relê o manifesto inteiro a
+    /// cada chamada (no 1.5.5, ~0,3 s), o que dá 50 s para os ~150 `.ecm` do diagnóstico de voo. `None` = não existe ou
+    /// não foi lido.
+    pub fn conteudos(&self, versao: &str, caminhos: &[String]) -> Result<Vec<Option<(String, Vec<u8>)>>> {
+        let (_, m) = self.publicado(versao)?;
+        let indice: std::collections::HashMap<String, &Arquivo> =
+            m.arquivos.iter().filter_map(|a| Some((nomes::chave(&hex::decode(&a.caminho_gbk).ok()?), a))).collect();
+        let objetos = self.objetos(versao);
+        Ok(caminhos
+            .iter()
+            .map(|c| {
+                let texto = c.trim().replace('/', "\\");
+                let gbk = nomes::gbk_de_unicode(texto.trim_start_matches('\\'))?;
+                let a = indice.get(&nomes::chave(&gbk))?;
+                let sha: Sha256Bytes = hex::decode(&a.sha256).ok()?.try_into().ok()?;
+                let nome = nomes::legivel(&hex::decode(&a.caminho_gbk).ok()?);
+                Some((nome, objetos.ler(&sha, a.tamanho as usize).ok()?))
+            })
+            .collect())
+    }
+
     /// Arquivos da versão publicada cujo caminho contém `busca` (sem diferenciar maiúsculas).
     pub fn buscar(&self, versao: &str, busca: &str, limite: usize) -> Result<Vec<serde_json::Value>> {
         let (_, m) = self.publicado(versao)?;
