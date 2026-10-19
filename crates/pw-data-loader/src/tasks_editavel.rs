@@ -258,6 +258,60 @@ impl TasksEditavel {
         Ok(())
     }
 
+    /// Os cinco diálogos da missão (B266).
+    pub fn dialogos(&self, id: u32) -> Option<Vec<Dialogo>> {
+        Some(dialogos_da_missao(&self.bytes, self.dados.tasks.get(&id)?))
+    }
+
+    /// Troca um texto de diálogo: o título (`janela = None`, `text[64]`), o texto de uma janela (`opcao = None`,
+    /// tamanho variável: `talk_text_len` conta o NUL final, medido em todas as janelas dos dois realms) ou o de uma
+    /// opção (`text[64]`). Os fixos levam no máximo 63 caracteres e o resto dos 64 fica zerado (cifrado) — medido: é
+    /// como estão ~97% dos textos fixos dos dois arquivos. O arquivo é relido.
+    pub fn definir_texto_do_dialogo(&mut self, id: u32, dialogo: usize, janela: Option<usize>, opcao: Option<usize>, texto: &str) -> Result<(), String> {
+        if texto.contains('\0') {
+            return Err("o texto não pode ter NUL".into());
+        }
+        let ds = self.dialogos(id).ok_or_else(|| format!("missão {id} não existe"))?;
+        let d = ds.get(dialogo).ok_or_else(|| format!("diálogo {dialogo} não existe"))?;
+        let chave = id as u16;
+        let cifrar = |u: &[u16]| -> Vec<u8> { u.iter().flat_map(|x| (x ^ chave).to_le_bytes()).collect() };
+        let mut unidades: Vec<u16> = texto.encode_utf16().collect();
+        let fixo = match janela {
+            None => Some(d.texto_em),
+            Some(j) => {
+                let jn = d.janelas.get(j).ok_or_else(|| format!("janela {j} não existe"))?;
+                match opcao {
+                    Some(o) => Some(jn.opcoes.get(o).ok_or_else(|| format!("opção {o} não existe"))?.texto_em),
+                    None => {
+                        if unidades.len() > 8000 {
+                            return Err("texto grande demais (guarda do painel: 8000 unidades UTF-16)".into());
+                        }
+                        let o = jn.texto_em;
+                        let antigo = u32_de(&self.bytes, o) as usize;
+                        unidades.push(0);
+                        let novo = cifrar(&unidades);
+                        let delta = novo.len() as i64 - 2 * antigo as i64;
+                        self.bytes.splice(o + 4..o + 4 + 2 * antigo, novo);
+                        self.bytes[o..o + 4].copy_from_slice(&(unidades.len() as u32).to_le_bytes());
+                        self.corrigir_tabela(o, delta)?;
+                        None
+                    }
+                }
+            }
+        };
+        if let Some(o) = fixo {
+            if unidades.len() >= TEXTO_FIXO {
+                return Err(format!("no máximo {} caracteres (text[64] com o NUL)", TEXTO_FIXO - 1));
+            }
+            unidades.resize(TEXTO_FIXO, 0);
+            let b = cifrar(&unidades);
+            self.bytes[o..o + 2 * TEXTO_FIXO].copy_from_slice(&b);
+            return Ok(());
+        }
+        self.dados = TasksData::load_from_bytes(&self.bytes).map_err(|e| format!("o tasks.data editado não relê: {e}"))?;
+        Ok(())
+    }
+
     /// Soma `delta` nos deslocamentos da tabela do cabeçalho das missões de topo que começam depois de `o`.
     fn corrigir_tabela(&mut self, o: usize, delta: i64) -> Result<(), String> {
         let quantas = u32::from_le_bytes(self.bytes[8..12].try_into().unwrap()) as usize;
@@ -363,6 +417,92 @@ impl TasksEditavel {
     }
 }
 
+// ------------------------------------------------------------------ diálogos (B266)
+
+/// Os cinco diálogos da missão, na ordem de `LoadBinary` (`TaskTempl.cpp:4736-4746`).
+pub const DIALOGOS: [&str; 5] = ["entrega", "nao_qualificado", "entrega_de_item", "execucao", "premio"];
+
+/// `talk_proc` (`CCommon/ExpTypes.h`): `id_talk u32`, `text[64]`, `num_window i32` e as janelas — cada uma `id u32`,
+/// `id_parent u32`, `talk_text_len i32` + o texto, `num_option i32` e as opções (`id u32`, `text[64]`, `param u32`:
+/// 136 bytes). Todo texto em XOR com `(namechar)m_ID`, os fixos nos 64 caracteres inteiros (`convert_talk_text`,
+/// `TaskTempl.cpp:637-653`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Dialogo {
+    pub id_talk: u32,
+    pub texto: String,
+    pub janelas: Vec<Janela>,
+    #[serde(skip)]
+    pub texto_em: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Janela {
+    pub id: u32,
+    pub pai: u32,
+    pub texto: String,
+    pub opcoes: Vec<Opcao>,
+    /// Onde está `talk_text_len`.
+    #[serde(skip)]
+    pub texto_em: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Opcao {
+    pub id: u32,
+    pub texto: String,
+    pub param: u32,
+    #[serde(skip)]
+    pub texto_em: usize,
+}
+
+const OPCAO: usize = 136;
+const TEXTO_FIXO: usize = 64;
+
+fn decifrar(bytes: &[u8], chave: u16) -> String {
+    let u: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) ^ chave).take_while(|&u| u != 0).collect();
+    String::from_utf16_lossy(&u)
+}
+
+fn u32_de(b: &[u8], o: usize) -> u32 {
+    u32::from_le_bytes(b[o..o + 4].try_into().unwrap())
+}
+
+/// Os cinco diálogos da missão `t`, lidos de `bytes` (começam depois do tributo).
+pub fn dialogos_da_missao(bytes: &[u8], t: &TaskTemplate) -> Vec<Dialogo> {
+    let chave = t.id as u16;
+    let [.., (o, n)] = posicoes_dos_textos(bytes, t);
+    let mut o = o + 4 + 2 * n;
+    let mut r = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let id_talk = u32_de(bytes, o);
+        let texto_em = o + 4;
+        let texto = decifrar(&bytes[texto_em..texto_em + 2 * TEXTO_FIXO], chave);
+        o = texto_em + 2 * TEXTO_FIXO;
+        let nj = u32_de(bytes, o) as usize;
+        o += 4;
+        let mut janelas = Vec::with_capacity(nj);
+        for _ in 0..nj {
+            let (id, pai) = (u32_de(bytes, o), u32_de(bytes, o + 4));
+            let texto_em = o + 8;
+            let n = u32_de(bytes, texto_em) as usize;
+            let texto = decifrar(&bytes[texto_em + 4..texto_em + 4 + 2 * n], chave);
+            o = texto_em + 4 + 2 * n;
+            let no = u32_de(bytes, o) as usize;
+            o += 4;
+            let opcoes = (0..no)
+                .map(|k| {
+                    let p = o + k * OPCAO;
+                    Opcao { id: u32_de(bytes, p), texto: decifrar(&bytes[p + 4..p + 4 + 2 * TEXTO_FIXO], chave), param: u32_de(bytes, p + 4 + 2 * TEXTO_FIXO), texto_em: p + 4 }
+                })
+                .collect();
+            o += no * OPCAO;
+            janelas.push(Janela { id, pai, texto, opcoes, texto_em });
+        }
+        r.push(Dialogo { id_talk, texto, janelas, texto_em });
+    }
+    r
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -399,6 +539,97 @@ mod testes {
             let (x, y) = (volta.gravar(), b.clone());
             assert!(x[..o] == y[..o] && x[o + BYTES_DO_NOME..] == y[o + BYTES_DO_NOME..], "{realm}: voltar devolve o resto idêntico");
             assert_eq!(TasksData::load_from_bytes(&x).unwrap().tasks[&id].name, TasksData::load_from_bytes(&y).unwrap().tasks[&id].name);
+        }
+    }
+
+    /// Medida (B266): o texto das janelas termina em NUL? Os textos fixos de 64 estão preenchidos com zeros cifrados
+    /// depois do NUL? E o leitor estruturado fecha onde o leitor do GS diz que a missão termina?
+    #[test]
+    fn medir_dialogos() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let t = TasksEditavel::ler(&b).unwrap();
+            let (mut janelas, mut com_nul, mut vazias, mut fixos, mut fixos_sujos) = (0, 0, 0, 0, 0);
+            for m in t.dados.tasks.values() {
+                let chave = m.id as u16;
+                for d in dialogos_da_missao(&b, m) {
+                    let mut fixos_aqui = vec![d.texto_em];
+                    for j in &d.janelas {
+                        janelas += 1;
+                        let n = u32_de(&b, j.texto_em) as usize;
+                        if n == 0 { vazias += 1; } else {
+                            let ultimo = u16::from_le_bytes([b[j.texto_em + 4 + 2 * n - 2], b[j.texto_em + 4 + 2 * n - 1]]) ^ chave;
+                            if ultimo == 0 { com_nul += 1; }
+                        }
+                        fixos_aqui.extend(j.opcoes.iter().map(|o| o.texto_em));
+                    }
+                    for f in fixos_aqui {
+                        fixos += 1;
+                        let u: Vec<u16> = b[f..f + 128].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) ^ chave).collect();
+                        let fim = u.iter().position(|&x| x == 0).unwrap_or(64);
+                        if u[fim..].iter().any(|&x| x != 0) { fixos_sujos += 1; }
+                    }
+                }
+            }
+            eprintln!("{realm}: janelas {janelas}, com NUL final {com_nul}, vazias {vazias}; textos fixos {fixos}, com lixo depois do NUL {fixos_sujos}");
+            // O leitor estruturado fecha: nas missões de topo sem filhas, depois dos diálogos vem só o `i32` de filhas
+            // (zero) e a próxima missão de topo.
+            let inicios: Vec<usize> = (0..t.dados.de_topo.len()).map(|i| u32_de(&b, 12 + 4 * i) as usize).collect();
+            let mut conferidas = 0;
+            for (i, id) in t.dados.de_topo.iter().enumerate() {
+                let m = &t.dados.tasks[id];
+                if !m.sub_tasks.is_empty() { continue; }
+                let d = dialogos_da_missao(&b, m);
+                let ultimo = d.last().unwrap();
+                let fim = ultimo.janelas.last().map(|j| {
+                    let n = u32_de(&b, j.texto_em) as usize;
+                    let o = j.texto_em + 4 + 2 * n;
+                    o + 4 + OPCAO * u32_de(&b, o) as usize
+                }).unwrap_or(ultimo.texto_em + 2 * TEXTO_FIXO + 4);
+                let proxima = inicios.get(i + 1).copied().unwrap_or(b.len());
+                assert_eq!(fim + 4, proxima, "{realm}: missão {id}");
+                conferidas += 1;
+            }
+            assert!(conferidas > 100, "{realm}: {conferidas}");
+        }
+    }
+
+    /// Nos dois realms: trocar título, texto de janela (maior) e opção de uma missão de topo do meio cujos textos fixos
+    /// estão limpos; relido; a última de topo igual; 64 caracteres no fixo recusados; voltar = arquivo idêntico.
+    #[test]
+    fn textos_dos_dialogos_mudam_e_voltam() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let mut t = TasksEditavel::ler(&b).unwrap();
+            let limpo = |o: usize, chave: u16| {
+                let u: Vec<u16> = b[o..o + 128].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) ^ chave).collect();
+                let f = u.iter().position(|&x| x == 0).unwrap_or(64);
+                u[f..].iter().all(|&x| x == 0)
+            };
+            let meio = t.dados.de_topo.len() / 2;
+            let (id, di) = t.dados.de_topo[meio..].iter().find_map(|&id| {
+                let ds = t.dialogos(id).unwrap();
+                ds.iter().position(|d| limpo(d.texto_em, id as u16) && d.janelas.first().is_some_and(|j| j.opcoes.first().is_some_and(|o| limpo(o.texto_em, id as u16))))
+                    .map(|di| (id, di))
+            }).expect("missão com diálogo de janela e opção limpos");
+            let antes = t.dialogos(id).unwrap()[di].clone();
+            let ultima = *t.dados.de_topo.last().unwrap();
+            let ultima_antes = serde_json::to_value(&t.dados.tasks[&ultima]).unwrap();
+            t.definir_texto_do_dialogo(id, di, None, None, "Título do Estúdio").unwrap();
+            t.definir_texto_do_dialogo(id, di, Some(0), None, &"Fala longa da janela, escrita pelo Estúdio. ".repeat(4)).unwrap();
+            t.definir_texto_do_dialogo(id, di, Some(0), Some(0), "Opção nova").unwrap();
+            assert!(t.definir_texto_do_dialogo(id, di, Some(0), Some(0), &"x".repeat(64)).is_err());
+            let r = TasksData::load_from_bytes(&t.gravar()).unwrap();
+            assert_eq!(serde_json::to_value(&r.tasks[&ultima]).unwrap(), ultima_antes, "{realm}: a última de topo não muda");
+            let d = &t.dialogos(id).unwrap()[di];
+            assert_eq!((d.texto.as_str(), d.janelas[0].opcoes[0].texto.as_str()), ("Título do Estúdio", "Opção nova"), "{realm}");
+            assert!(d.janelas[0].texto.starts_with("Fala longa"));
+            t.definir_texto_do_dialogo(id, di, None, None, &antes.texto).unwrap();
+            t.definir_texto_do_dialogo(id, di, Some(0), None, &antes.janelas[0].texto).unwrap();
+            t.definir_texto_do_dialogo(id, di, Some(0), Some(0), &antes.janelas[0].opcoes[0].texto).unwrap();
+            assert!(t.gravar() == b, "{realm}: voltar devolve o arquivo idêntico");
         }
     }
 

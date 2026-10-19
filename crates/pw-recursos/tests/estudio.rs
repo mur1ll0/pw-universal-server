@@ -614,9 +614,11 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let quatro = Value::Array(vec![json!({"monstro": 1, "quantidade": 1, "item_que_cai": 0, "quantidade_do_item": 0, "item_comum": false, "chance_do_item": 0.0, "nivel_do_matador": false, "dps": 0, "dph": 0}); 4]);
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"monster_kills": quatro}}))).0, 400, "teto de 3");
         assert_eq!(mi["grupos_do_premio"]["grupos"], 12, "B265");
+        assert_eq!((mi["dialogos"].as_array().unwrap().len(), mi["dialogos"][0]["nome"].as_str()), (5, Some("entrega")), "B266");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"dialogos": [{"dialogo": 0, "texto": "x".repeat(64)}]}}))).0, 400, "text[64]");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"pre_tasks": [999999999]}}))).0, 400);
         pedir("PUT", &format!("estudio/missoes/1173?rascunho={r12}")).send_json(json!({"campos": {"min_level": 5, "exp": 999, "name": "Primeiro Teste do Estúdio",
-            "pre_tasks": [1174], "itens_entregues": [{"id": 3044, "comum": true, "quantidade": 3, "probabilidade": 1.0, "validade": 0}],
+            "pre_tasks": [1174], "dialogos": [{"dialogo": 0, "texto": "Título do Estúdio"}], "itens_entregues": [{"id": 3044, "comum": true, "quantidade": 3, "probabilidade": 1.0, "validade": 0}],
             "premio_grupos": [{"sorteia_um": false, "itens": [{"id": 3045, "comum": true, "quantidade": 2, "probabilidade": 1.0, "validade": 0}]}], "descricao": "Descrição longa do Estúdio, que muda o tamanho da missão e a tabela de deslocamentos", "tributo": ""}})).unwrap();
         let mr = json_de(pedir("GET", &format!("estudio/missoes/1173?rascunho={r12}")).call().unwrap());
         assert_eq!((mr["ficha"]["min_level"].as_u64(), mr["ficha"]["rewards"]["exp"].as_i64(), mr["ficha"]["name"].as_str()), (Some(5), Some(999), Some("Primeiro Teste do Estúdio")));
@@ -630,6 +632,8 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(lido.tasks[&1173].pre_tasks, vec![1174], "B263: lista fixa publicada");
         assert_eq!((lido.tasks[&1173].itens_entregues.len(), lido.tasks[&1173].itens_entregues[0].quantidade), (1, 3), "B264: vetor publicado");
         assert_eq!(lido.tasks[&1173].rewards.grupos_de_itens[0].itens[0].id, 3045, "B265: prêmio em item publicado");
+        let ed = pw_data_loader::tasks_editavel::TasksEditavel::ler(&tr).unwrap();
+        assert_eq!(ed.dialogos(1173).unwrap()[0].texto, "Título do Estúdio", "B266: título do diálogo publicado");
 
         // Comportamento (B258, só leitura): as políticas do realm e os monstros que as usam.
         let cp = json_de(pedir("GET", "estudio/comportamentos").call().unwrap());

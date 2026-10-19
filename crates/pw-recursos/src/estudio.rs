@@ -2655,6 +2655,11 @@ impl Estudio {
         let ficha = serde_json::to_value(m)?;
         // B262: os quatro textos longos (descrição, aceitar, recusar, tributo), editáveis com tamanho variável.
         let textos = pw_data_loader::tasks_editavel::textos_da_missao(&bytes, m);
+        // B266: os cinco diálogos (título, janelas e opções).
+        let dialogos: Vec<Value> = pw_data_loader::tasks_editavel::DIALOGOS.iter()
+            .zip(pw_data_loader::tasks_editavel::dialogos_da_missao(&bytes, m))
+            .map(|(nome, d)| { let mut v = serde_json::to_value(d).unwrap_or_default(); v["nome"] = json!(nome); v })
+            .collect();
         // Ids do espaço ESSENCE citados em qualquer lugar da ficha (NPCs, itens, monstros): todos os números que
         // estejam em campos com "id", "npc", "item" ou "monstro" no nome.
         let mut citados = std::collections::BTreeSet::new();
@@ -2695,6 +2700,7 @@ impl Estudio {
             // B256: os campos de tamanho fixo que se editam no lugar, com o tipo.
             "editaveis": pw_data_loader::tasks_editavel::campos(t.version).iter().map(|c| json!([c.0, c.2])).collect::<Vec<_>>(),
             "textos": textos,
+            "dialogos": dialogos,
             // B263: listas de capacidade fixa (pré-missões, exclusivas, classes) — `[nome, capacidade]`.
             "listas": pw_data_loader::tasks::listas_fixas(t.version).iter().map(|l| json!([l.nome, l.capacidade])).collect::<Vec<_>>(),
             // B264: vetores variáveis (itens exigidos, entregues, monstros) — `[nome, teto do cliente]`.
@@ -2723,6 +2729,7 @@ impl Estudio {
                 c.insert("monster_kills".into(), json!(m.monster_kills));
                 c.insert("premio_grupos".into(), json!(m.rewards.grupos_de_itens));
                 c.insert("falha_grupos".into(), json!(m.premio_de_falha.grupos_de_itens));
+                c.insert("dialogos".into(), json!(t.dialogos(id)?));
                 Some(c)
             };
             let antes = com_textos(&t).with_context(|| format!("missão {id} não existe"))?;
@@ -2732,6 +2739,7 @@ impl Estudio {
                     || pw_data_loader::tasks::vetores(t.dados.version).iter().any(|v| v.nome == k.as_str())
                     || k.as_str() == "premio_grupos"
                     || k.as_str() == "falha_grupos"
+                    || k.as_str() == "dialogos"
             });
             for (k, v) in fixos {
                 if pw_data_loader::tasks::listas_fixas(t.dados.version).iter().any(|l| l.nome == k) {
@@ -2746,6 +2754,15 @@ impl Estudio {
             for (k, v) in variaveis {
                 if pw_data_loader::tasks_editavel::TEXTOS.contains(&k.as_str()) {
                     t.definir_texto(id, k, v.as_str().with_context(|| format!("{k}: texto"))?).map_err(anyhow::Error::msg)?;
+                } else if k == "dialogos" {
+                    // B266: `[{dialogo, janela?, opcao?, texto}]` — título, texto de janela ou de opção.
+                    for x in v.as_array().context("dialogos: lista")? {
+                        let d = x["dialogo"].as_u64().context("dialogos[].dialogo")? as usize;
+                        let j = x["janela"].as_u64().map(|x| x as usize);
+                        let o = x["opcao"].as_u64().map(|x| x as usize);
+                        let texto = x["texto"].as_str().context("dialogos[].texto")?;
+                        t.definir_texto_do_dialogo(id, d, j, o, texto).map_err(anyhow::Error::msg)?;
+                    }
                 } else if k == "premio_grupos" || k == "falha_grupos" {
                     // B265: grupos de itens de prêmio (sucesso ou falha).
                     t.definir_grupos_do_premio(id, k == "falha_grupos", v).map_err(anyhow::Error::msg)?;

@@ -131,7 +131,7 @@ async function abrirMissao(id) {
     resto.appendChild(linha);
   }
   area.appendChild(resto);
-  area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}, r.listas || [], r.vetores || [], r.grupos_do_premio));
+  area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}, r.listas || [], r.vetores || [], r.grupos_do_premio, r.dialogos || []));
   document.querySelectorAll("#missoes-lista button").forEach((b) => b.setAttribute("aria-current", b.textContent.startsWith(`${id} `) ? "true" : "false"));
 }
 
@@ -231,7 +231,44 @@ function editorDeGrupos(rotulo, grupos, tetos) {
   return { caixa, valor: () => gs };
 }
 
-function formularioDaMissao(f, editaveis, textos, listas, vetores, tetosDosGrupos) {
+/* Diálogos (B266): título e opções são text[64] (até 63 caracteres); o texto da janela tem tamanho livre. */
+const ROTULOS_DOS_DIALOGOS = { entrega: "Ao oferecer", nao_qualificado: "Sem requisitos", entrega_de_item: "Ao entregar item", execucao: "Durante", premio: "Ao premiar" };
+
+function editorDeDialogos(dialogos) {
+  const caixa = criar("div");
+  const mudancas = [];
+  const campo = (valor, longo, onde) => {
+    const i = criar(longo ? "textarea" : "input", "campo");
+    i.value = valor;
+    if (longo) { i.rows = 2; i.style.width = "100%"; } else { i.maxLength = 63; i.style.flex = "1"; }
+    i.disabled = !estudio.rascunho;
+    mudancas.push({ i, valor, onde });
+    return i;
+  };
+  dialogos.forEach((d, di) => {
+    if (!d.texto && !d.janelas.length) return;
+    const det = criar("details");
+    det.appendChild(criar("summary", "", `Diálogo: ${ROTULOS_DOS_DIALOGOS[d.nome] || d.nome} (${d.janelas.length} janelas)`));
+    const t = criar("div", "recursos-linha");
+    t.append("Título ", campo(d.texto, false, { dialogo: di }));
+    det.appendChild(t);
+    d.janelas.forEach((j, ji) => {
+      const jb = criar("div", "missao-objeto");
+      jb.appendChild(criar("div", "texto-suave", `Janela ${j.id}${j.pai !== 0xffffffff ? ` (de ${j.pai})` : ""}`));
+      jb.appendChild(campo(j.texto, true, { dialogo: di, janela: ji }));
+      j.opcoes.forEach((o, oi) => {
+        const l = criar("div", "recursos-linha");
+        l.append(`Opção → ${o.id} `, campo(o.texto, false, { dialogo: di, janela: ji, opcao: oi }));
+        jb.appendChild(l);
+      });
+      det.appendChild(jb);
+    });
+    caixa.appendChild(det);
+  });
+  return { caixa, valor: () => mudancas.filter((m) => m.i.value !== m.valor).map((m) => ({ ...m.onde, texto: m.i.value })) };
+}
+
+function formularioDaMissao(f, editaveis, textos, listas, vetores, tetosDosGrupos, dialogos) {
   const fs = criar("fieldset");
   fs.appendChild(criar("legend", "", estudio.rascunho ? `Editar (rascunho #${estudio.rascunho})` : "Editar (escolha ou crie um rascunho no topo do Estúdio)"));
   const g = criar("div", "mapa-campos");
@@ -276,6 +313,11 @@ function formularioDaMissao(f, editaveis, textos, listas, vetores, tetosDosGrupo
       entradas[nome] = { tipo: "vetor", atual: JSON.stringify(grupos || []), valor: e.valor };
     }
   }
+  if (dialogos.length) {
+    const e = editorDeDialogos(dialogos);
+    fs.appendChild(e.caixa);
+    entradas.dialogos = { tipo: "dialogos", valor: e.valor };
+  }
   // Textos longos (B262): mudam o tamanho da missão; o servidor corrige a tabela de deslocamentos do tasks.data.
   for (const [nome, atual] of Object.entries(textos)) {
     const label = criar("label", "");
@@ -295,6 +337,11 @@ function formularioDaMissao(f, editaveis, textos, listas, vetores, tetosDosGrupo
     b.addEventListener("click", async () => {
       const campos = {};
       for (const [nome, { i, tipo, atual }] of Object.entries(entradas)) {
+        if (tipo === "dialogos") {
+          const v = entradas[nome].valor();
+          if (v.length) campos[nome] = v;
+          continue;
+        }
         if (tipo === "vetor") {
           const v = entradas[nome].valor();
           if (JSON.stringify(v) !== atual) campos[nome] = v;
