@@ -299,6 +299,9 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 422)
         r = await self.cliente.post("/api/realms/realm_155/estudio/missoes/12/clonar", params={"rascunho": 5}, headers=csrf, json={})
         self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.5.5/estudio/missoes/12/clonar"))
+        # Remover missão (B268).
+        r = await self.cliente.delete("/api/realms/realm_155/estudio/missoes/12", params={"rascunho": 5}, headers=csrf)
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["metodo"], RecursosFalso.pedidos[-1]["caminho"]), (200, "DELETE", "/admin/1.5.5/estudio/missoes/12"))
         # Missões (B255).
         await self.cliente.get("/api/realms/realm_126/estudio/missoes", params={"busca": "teste", "topo": "false"})
         p = RecursosFalso.pedidos[-1]

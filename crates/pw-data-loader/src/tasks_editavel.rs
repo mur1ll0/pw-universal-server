@@ -325,6 +325,78 @@ impl TasksEditavel {
         Ok(())
     }
 
+    /// Se `remover_missao(id)` passaria na checagem de citações (sem remover).
+    pub fn remover_missao_valida(&self, id: u32) -> bool {
+        let Some(t) = self.dados.tasks.get(&id) else { return false };
+        if t.parent.is_some() {
+            return false;
+        }
+        let mut arvore = vec![id];
+        let mut k = 0;
+        while k < arvore.len() {
+            arvore.extend(self.dados.tasks[&arvore[k]].sub_tasks.iter().copied());
+            k += 1;
+        }
+        arvore.iter().all(|&x| self.citacoes_da_missao(x).iter().all(|(m, _)| arvore.contains(m)))
+    }
+
+    /// As outras missões que citam `id` (B268): pré-missão, exclusiva, missão seguinte do prêmio (sucesso ou falha) e
+    /// membro de equipe pedido. Devolve `(missão, campo)`.
+    pub fn citacoes_da_missao(&self, id: u32) -> Vec<(u32, &'static str)> {
+        let mut r = Vec::new();
+        for m in self.dados.tasks.values() {
+            if m.id == id {
+                continue;
+            }
+            if m.pre_tasks.contains(&id) { r.push((m.id, "pre_tasks")); }
+            if m.missoes_exclusivas.contains(&id) { r.push((m.id, "missoes_exclusivas")); }
+            if m.rewards.nova_missao == id { r.push((m.id, "rewards.nova_missao")); }
+            if m.premio_de_falha.nova_missao == id { r.push((m.id, "premio_de_falha.nova_missao")); }
+            if m.membros_pedidos.iter().any(|x| x.missao == id) { r.push((m.id, "membros_pedidos.missao")); }
+        }
+        r.sort_unstable();
+        r
+    }
+
+    /// Remove uma missão de topo e as submissões dela (B268): corta os bytes, tira a entrada da tabela do cabeçalho e
+    /// corrige os deslocamentos (−4 de todos, −tamanho dos que vinham depois). Recusa se outra missão a cita (ou cita
+    /// uma submissão dela). As citações fora do `tasks.data` (`elements`) são conferidas por quem chama.
+    pub fn remover_missao(&mut self, id: u32) -> Result<(), String> {
+        let t = self.dados.tasks.get(&id).ok_or_else(|| format!("missão {id} não existe"))?;
+        if t.parent.is_some() {
+            return Err("só missão de topo pode ser removida (a submissão é parte da árvore da mãe)".into());
+        }
+        let mut arvore = vec![id];
+        let mut k = 0;
+        while k < arvore.len() {
+            arvore.extend(self.dados.tasks[&arvore[k]].sub_tasks.iter().copied());
+            k += 1;
+        }
+        let de_fora: Vec<String> = arvore
+            .iter()
+            .flat_map(|&x| self.citacoes_da_missao(x).into_iter().filter(|(m, _)| !arvore.contains(m)).map(move |(m, c)| format!("{m}.{c} → {x}")))
+            .collect();
+        if !de_fora.is_empty() {
+            return Err(format!("citada por outras missões: {}", de_fora.join(", ")));
+        }
+        let i = self.dados.de_topo.iter().position(|&x| x == id).ok_or("missão de topo fora da tabela")?;
+        let quantas = u32_de(&self.bytes, 8) as usize;
+        let inicio = u32_de(&self.bytes, 12 + 4 * i) as usize;
+        let fim = if i + 1 < quantas { u32_de(&self.bytes, 12 + 4 * (i + 1)) as usize } else { self.bytes.len() };
+        let tamanho = fim - inicio;
+        self.bytes.drain(inicio..fim);
+        for e in 0..quantas {
+            let p = 12 + 4 * e;
+            let v = u32_de(&self.bytes, p) as usize;
+            let novo = if v > inicio { v - tamanho - 4 } else { v - 4 };
+            self.bytes[p..p + 4].copy_from_slice(&(novo as u32).to_le_bytes());
+        }
+        self.bytes.drain(12 + 4 * i..12 + 4 * i + 4);
+        self.bytes[8..12].copy_from_slice(&((quantas - 1) as u32).to_le_bytes());
+        self.dados = TasksData::load_from_bytes(&self.bytes).map_err(|e| format!("o tasks.data editado não relê: {e}"))?;
+        Ok(())
+    }
+
     /// Os cinco diálogos da missão (B266).
     pub fn dialogos(&self, id: u32) -> Option<Vec<Dialogo>> {
         Some(dialogos_da_missao(&self.bytes, self.dados.tasks.get(&id)?))
@@ -751,6 +823,44 @@ mod testes {
             let original = TasksData::load_from_bytes(&b).unwrap();
             let outra = original.de_topo[original.de_topo.len() / 3];
             assert_eq!(serde_json::to_value(&r.tasks[&outra]).unwrap(), serde_json::to_value(&original.tasks[&outra]).unwrap());
+        }
+    }
+
+    /// Nos dois realms: clonar e remover o clone devolve o arquivo idêntico; uma missão citada por outra não se remove;
+    /// remover uma de topo do meio (com submissões, não citada) relê com a tabela certa e as outras iguais.
+    #[test]
+    fn remover_missao_de_topo() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let mut t = TasksEditavel::ler(&b).unwrap();
+            let origem = *t.dados.de_topo.iter().find(|&&id| t.dados.tasks[&id].sub_tasks.is_empty()).unwrap();
+            let novo = (1..=MAIOR_ID_DE_MISSAO).rev().find(|x| !t.dados.tasks.contains_key(x)).unwrap();
+            t.clonar_missao(origem, novo).unwrap();
+            t.remover_missao(novo).unwrap();
+            assert!(t.gravar() == b, "{realm}: clonar e remover = arquivo idêntico");
+            let citada = *t.dados.de_topo.iter().find(|&&id| !t.citacoes_da_missao(id).is_empty()).expect("missão citada");
+            assert!(t.remover_missao(citada).is_err(), "{realm}: citada");
+            let sub = *t.dados.tasks.values().find(|m| m.parent.is_some()).map(|m| &m.id).unwrap();
+            assert!(t.remover_missao(sub).is_err(), "{realm}: submissão");
+            let meio = t.dados.de_topo.len() / 2;
+            let alvo = *t.dados.de_topo[meio..].iter().find(|&&id| {
+                let m = &t.dados.tasks[&id];
+                !m.sub_tasks.is_empty() && t.remover_missao_valida(id)
+            }).expect("missão de topo com filhas, não citada");
+            let filhas = t.dados.tasks[&alvo].sub_tasks.clone();
+            let (n, topo) = (t.dados.tasks.len(), t.dados.de_topo.len());
+            let original = TasksData::load_from_bytes(&b).unwrap();
+            t.remover_missao(alvo).unwrap();
+            let r = TasksData::load_from_bytes(&t.gravar()).unwrap();
+            assert_eq!(r.de_topo.len(), topo - 1, "{realm}");
+            assert!(r.tasks.len() <= n - 1 - filhas.len(), "{realm}: a mãe e ao menos as filhas diretas saíram");
+            assert!(!r.tasks.contains_key(&alvo) && filhas.iter().all(|f| !r.tasks.contains_key(f)));
+            for id in [original.de_topo[0], *original.de_topo.last().unwrap()] {
+                if id != alvo {
+                    assert_eq!(serde_json::to_value(&r.tasks[&id]).unwrap(), serde_json::to_value(&original.tasks[&id]).unwrap(), "{realm}: {id}");
+                }
+            }
         }
     }
 

@@ -655,6 +655,12 @@ async fn estudio_clonar_missao(
     Ok(Json(e.estudio.clonar_missao(&e.gov, &v, r, id, p.novo).await?))
 }
 
+async fn estudio_remover_missao(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, u32)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.remover_missao(&e.gov, &v, r, id).await?))
+}
+
 // ------------------------------------------------------------------ comportamento (aipolicy, S7, B258)
 
 async fn estudio_comportamentos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QBusca>) -> R<Json<Value>> {
@@ -906,7 +912,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/textos/{arquivo}", get(estudio_textos).post(estudio_novo_texto))
         .route("/admin/{v}/estudio/textos/{arquivo}/{chave}", put(estudio_editar_texto))
         .route("/admin/{v}/estudio/comportamentos/{id}", get(estudio_comportamento).put(estudio_editar_comportamento))
-        .route("/admin/{v}/estudio/missoes/{id}", get(estudio_missao).put(estudio_editar_missao))
+        .route("/admin/{v}/estudio/missoes/{id}", get(estudio_missao).put(estudio_editar_missao).delete(estudio_remover_missao))
         .route("/admin/{v}/estudio/missoes/{id}/clonar", post(estudio_clonar_missao))
         .route("/admin/{v}/estudio/loja/{arquivo}", get(estudio_loja).post(estudio_clonar_oferta))
         .route("/admin/{v}/estudio/loja/{arquivo}/categorias", post(estudio_categoria_da_loja))

@@ -549,6 +549,36 @@ fn citantes(e: &ElementsEditavel, espaco: &str, id: i32, excluir: (&str, usize),
     achados
 }
 
+/// Campos do `elements` que guardam id de missão (B268): `int32` com "task" no nome, menos os que apontam para registro
+/// de serviço ou são quantidade, probabilidade, custo, item ou contagem. Medido no layout v156: `id_tasks_N`
+/// (`NPC_TASK_OUT/IN_SERVICE`), `tasks_N_id_task` (`NPC_TASK_MATTER_SERVICE`), `task_lists_N_id` (`TASKDICE_ESSENCE`),
+/// `list_N_task_id` (`AUTOTASK_DISPLAY_CONFIG`), `task_N` (`WIKI_TABOO_CONFIG`). Larga de propósito: um falso positivo
+/// só recusa a remoção (e diz quem cita); um falso negativo deixaria referência quebrada.
+fn campo_de_missao(nome: &str) -> bool {
+    let n = nome.to_lowercase();
+    n.contains("task") && !["service", "num", "prob", "matter", "contrib", "cost", "max", "total", "count"].iter().any(|x| n.contains(x))
+}
+
+/// Registros do `elements` com algum campo de missão igual a `id`.
+fn citantes_de_missao(e: &ElementsEditavel, id: u32, limite: usize) -> Vec<Value> {
+    let alvo = (id as i32).to_le_bytes();
+    let mut achados = Vec::new();
+    for t in &e.tabelas {
+        let campos: Vec<(usize, String)> = t.campos().into_iter().filter(|(_, _, f)| f.field_type == "int32" && campo_de_missao(&f.name)).map(|(o, _, f)| (o, f.name.clone())).collect();
+        for (i, r) in t.registros.iter().enumerate() {
+            for (o, nome) in &campos {
+                if r[*o..*o + 4] == alvo {
+                    achados.push(json!({ "tabela": t.nome, "indice": i, "id": t.id(i), "nome": nome_do_registro(t, i), "campo": nome }));
+                    if achados.len() >= limite {
+                        return achados;
+                    }
+                }
+            }
+        }
+    }
+    achados
+}
+
 /// O resumo do item `data\elements.data` de um rascunho: mudanças por campo e registros.
 #[derive(Default)]
 struct Resumo {
@@ -2796,6 +2826,34 @@ impl Estudio {
             t.clonar_missao(id, novo).map_err(anyhow::Error::msg)?;
             let mudanca = json!({ "acao": "nova", "tipo": "missao", "id": novo, "clone_de": id });
             Ok((t.gravar(), json!({ "id": novo, "clone_de": id }), mudanca))
+        })
+        .await
+    }
+
+    /// Remove uma missão de topo e a árvore dela (B268, `tasks_editavel::remover_missao`). Recusa (400, com a lista) se
+    /// o `elements` (com o rascunho) ou outra missão cita a missão ou uma submissão dela. Item `ambos`.
+    pub async fn remover_missao(&self, gov: &Governanca, versao: &str, rascunho: i64, id: u32) -> Result<Value> {
+        let (e, _) = self.atual(gov, versao, Some(rascunho)).await?;
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        self.gravar_item_com_destino(gov, versao, "data\\tasks.data", rascunho, "ambos", move |base| {
+            let mut t = pw_data_loader::tasks_editavel::TasksEditavel::ler(base).map_err(|e| anyhow::anyhow!("tasks.data: {e}"))?;
+            let m = t.dados.tasks.get(&id).with_context(|| format!("missão {id} não existe"))?;
+            let mut arvore = vec![m.id];
+            let mut k = 0;
+            while k < arvore.len() {
+                arvore.extend(t.dados.tasks.get(&arvore[k]).map(|x| x.sub_tasks.clone()).unwrap_or_default());
+                k += 1;
+            }
+            let no_elements: Vec<Value> = arvore.iter().flat_map(|&x| citantes_de_missao(&e, x, 20)).take(20).collect();
+            if !no_elements.is_empty() {
+                let lista: Vec<String> = no_elements.iter().map(|c| format!("{}[{}].{}", c["tabela"].as_str().unwrap_or(""), c["id"], c["campo"].as_str().unwrap_or(""))).collect();
+                bail!("a missão (ou uma submissão) é citada no elements: {} — tire essas citações antes", lista.join(", "));
+            }
+            let n = arvore.len();
+            t.remover_missao(id).map_err(anyhow::Error::msg)?;
+            let mudanca = json!({ "acao": "removida", "tipo": "missao", "id": id, "missoes_removidas": n });
+            Ok((t.gravar(), json!({ "id": id, "missoes_removidas": n }), mudanca))
         })
         .await
     }

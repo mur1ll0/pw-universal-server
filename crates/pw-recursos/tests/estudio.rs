@@ -628,6 +628,16 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(erro_de(pedir("POST", &format!("estudio/missoes/1173/clonar?rascunho={r12}")).send_json(json!({}))).0, 400, "B267: com submissões");
         let cl = json_de(pedir("POST", &format!("estudio/missoes/{origem_do_clone}/clonar?rascunho={r12}")).send_json(json!({})).unwrap());
         let id_clone = cl["resultado"]["id"].as_u64().expect("B267: id do clone") as u32;
+        // Remover (B268): citada por outra missão → 400; o clone (não citado) sai e volta a entrar.
+        let citada = {
+            let d = pw_data_loader::tasks_editavel::TasksEditavel::ler(&fs::read(realm2.join("tasks.data")).unwrap()).unwrap();
+            *d.dados.de_topo.iter().find(|&&x| !d.citacoes_da_missao(x).is_empty()).expect("missão citada")
+        };
+        assert_eq!(erro_de(pedir("DELETE", &format!("estudio/missoes/{citada}?rascunho={r12}")).call()).0, 400, "B268: citada");
+        let rm = json_de(pedir("DELETE", &format!("estudio/missoes/{id_clone}?rascunho={r12}")).call().unwrap());
+        assert_eq!(rm["resultado"]["missoes_removidas"], 1, "B268");
+        let cl = json_de(pedir("POST", &format!("estudio/missoes/{origem_do_clone}/clonar?rascunho={r12}")).send_json(json!({"novo": id_clone})).unwrap());
+        assert_eq!(cl["resultado"]["id"].as_u64(), Some(id_clone as u64));
         let mr = json_de(pedir("GET", &format!("estudio/missoes/1173?rascunho={r12}")).call().unwrap());
         assert_eq!((mr["ficha"]["min_level"].as_u64(), mr["ficha"]["rewards"]["exp"].as_i64(), mr["ficha"]["name"].as_str()), (Some(5), Some(999), Some("Primeiro Teste do Estúdio")));
         assert_eq!(json_de(pedir("GET", "estudio/missoes/1173").call().unwrap())["ficha"]["min_level"], mi["ficha"]["min_level"], "o publicado não muda");

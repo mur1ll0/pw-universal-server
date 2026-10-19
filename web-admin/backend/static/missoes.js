@@ -151,6 +151,22 @@ async function abrirMissao(id) {
     linha.append(novo, b);
     area.appendChild(linha);
   }
+  // Remover (B268): missão de topo e a árvore dela; o servidor recusa se o elements ou outra missão a cita.
+  if (estudio.rascunho && f.parent == null) {
+    const rm = criar("button", "botao botao-pequeno botao-perigo", "Remover missão");
+    rm.type = "button";
+    rm.addEventListener("click", async () => {
+      if (!confirm(`Remover a missão ${f.id} e as submissões dela (no rascunho)?`)) return;
+      try {
+        const res = await api(rotaDeMissoes(`/${f.id}`), { method: "DELETE" });
+        alerta("ok", "Estúdio", `Missão ${f.id} removida no rascunho (${res.resultado?.missoes_removidas ?? "?"} missões com as submissões).`, { toast: true });
+        elemento("missoes-ficha").textContent = "Missão removida.";
+        if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+        carregarMissoes();
+      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    });
+    area.appendChild(rm);
+  }
   area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}, r.listas || [], r.vetores || [], r.grupos_do_premio, r.dialogos || []));
   document.querySelectorAll("#missoes-lista button").forEach((b) => b.setAttribute("aria-current", b.textContent.startsWith(`${id} `) ? "true" : "false"));
 }

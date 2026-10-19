@@ -590,6 +590,14 @@ def registrar_reinicio(app):
         return await _repassar("POST", f"/admin/{v}/estudio/missoes/{id_missao}/clonar", {"rascunho": rascunho},
                                dados={"novo": novo} if novo is not None else {})
 
+    # Remover missão de topo e a árvore dela (B268): recusada se citada no elements ou por outra missão.
+    @app.delete("/api/realms/{realm}/estudio/missoes/{id_missao}")
+    async def estudio_remover_missao(realm: str, id_missao: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        if id_missao <= 0:
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("DELETE", f"/admin/{v}/estudio/missoes/{id_missao}", {"rascunho": rascunho})
+
     # Comportamento dos monstros (B258, só leitura): o aipolicy.data do realm.
     @app.get("/api/realms/{realm}/estudio/comportamentos")
     async def estudio_comportamentos(realm: str, requisicao: Request, busca: str = ""):
