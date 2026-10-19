@@ -15038,8 +15038,61 @@ comparação lado a lado.
       `http://26.38.197.69:8100/` → as duas linhas e o `currentserver.ini` com `26.38.197.69`.
 
     ### e. Falta
-    - Ver a janela de opções na tela e o notebook conectar (o `pw-recursos` estava sendo recriado).
+    - ~~O notebook conectar~~ — **confirmado pelo Murillo: funcionou no notebook.** Falta ver a janela de opções na tela.
     - Sem o servidor de atualização o launcher não lista versões (nem Jogar nem Opções); usar as pastas
       conhecidas quando ele estiver fora fica para depois.
     - O manifesto publicado traz o `userdata` pessoal da máquina de origem (`accounts.txt`, `GMLog`, `Layout`,
       `character`): excluir no import.
+
+279. **Sessão 2026-10-19: serverlist publicada só com o realm que existe.**
+
+    ### a. Pedido
+    Tirar da `serverlist.txt` os servidores de teste que não existem mais, deixar só o que funciona, com o nome do
+    realm.
+
+    ### b. Evidência
+    - Publicadas (versão 0): 1.5.5 `Universal 1.5.5 29003` (realm EN apagado) e `Universal 1.5.5BR 29004`; 1.2.6
+      `BATATA 192.168.1.200`, `Batata_E pwjurassic.servegame.com` e `Universal 1.2.6 29000`.
+    - Contêineres no ar: `pw-realm-155` 29004 e `pw-realm-126` 29000. Tabela `realms`: `Perfect World Evolved (1.5.5)`
+      e `Perfect World Classic (1.2.6)`.
+    - 1.5.5 exige linha de grupo antes dos servidores (`EC_ServerList.cpp:146-157`, `importar.rs`); zona 2 = a da
+      linha que funcionava.
+
+    ### c. O que foi feito
+    - Rascunho + publicar pela API 8101 (de dentro do `pw-admin-api`, segredo do ambiente), um por versão
+      (`operacao_id` `b279-serverlist-<versao>`, destino `cliente`): versão **1** das duas linhas.
+
+    ### d. Provas
+    - `GET /admin/{v}/arquivo` depois: 1.5.5 `pw-universal\r\nPerfect World Evolved (1.5.5)\t29004:127.0.0.1\t2\r\n`;
+      1.2.6 `Perfect World Classic (1.2.6)\t29000:127.0.0.1\r\n`.
+    - O launcher mostra "Atualização disponível: versão 1" (pasta do 1.2.6 na versão 0).
+
+    ### e. Falta
+    - O Murillo atualizar e ver a lista no jogo (as duas versões).
+
+278. **Sessão 2026-10-19: Estúdio S5 — correção do "nenhuma pele lida".**
+
+    ### a. Pedido
+    Murillo testou o painel e deu "nenhuma pele lida": verificar, corrigir, commitar e seguir.
+
+    ### b. Diagnóstico (medido no contêiner)
+    - Em `players` do 1.2.6, 12 de 60 `.smd` caem nisso: o `.smd` cita uma pele que **falta no próprio cliente**
+      (`飞剑10\飞剑.smd` cita `飞剑.ski`; a pasta só tem `飞剑.bon`, `飞剑.smd`, `飞剑10.ecm`, `飞剑10.smd` — o modelo em uso
+      é o do `.ecm`; o `飞剑.smd` é sobra). No 1.5.5, um `.smd` sem pele nenhuma (corpo cuja pele vem do equipamento).
+    - Achado no caminho: numa busca larga ("怪物", "npc") os `.ecm` enchiam os 500 lugares e nenhum `.smd` aparecia.
+
+    ### c. Correção
+    - `glb`: sem pele lida, o GLB sai só com o esqueleto (sem `meshes`, que o glTF não aceita vazio) — teste
+      `so_o_esqueleto`.
+    - `pw-recursos`: só dá 400 quando também não há esqueleto, com as peles citadas na mensagem; lista com cota por
+      tipo (`por_tipo`).
+    - Painel: o visualizador desenha os ossos em linhas (animados) quando não há malha; a ficha explica a ausência.
+
+    ### d. Provas
+    - `pw-data-loader` (`so_o_esqueleto`, testes de `glb`), `pw-recursos` com o banco **22/22**.
+    - Contêiner: o `飞剑.smd` que dava erro devolve GLB só com o esqueleto (3 juntas); **240 modelos** (`怪物` e
+      `players`, 60 por busca e realm) — **0 erros** no GLB; a busca `怪物` volta a mostrar `.smd` (928 no 1.2.6, 1.933 no
+      1.5.5). Navegador: sem malha, o esqueleto é desenhado em linhas.
+
+    ### e. Falta
+    - Ligar o diagnóstico à ficha do monstro; nomes de habilidade e mascote; corrigir ação faltante; Mascotes, Voo, Minas.

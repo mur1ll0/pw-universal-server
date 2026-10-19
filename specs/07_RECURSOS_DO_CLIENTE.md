@@ -113,6 +113,12 @@ pelo host atual. Linhas com outro endereço (servidores de terceiros) ficam. Qua
 instalar/atualizar/adotar/reparar, antes de **Jogar** e ao salvar o servidor (em todas as versões com
 pasta). Mudou o IP: trocar o servidor de atualização no launcher basta.
 
+**Lista publicada (B279, versão 1 das duas linhas):** só o realm que existe, com o nome da tabela `realms`:
+1.5.5 = `pw-universal` (grupo, obrigatório no 1.5.5) + `Perfect World Evolved (1.5.5)<TAB>29004:127.0.0.1<TAB>2`;
+1.2.6 = `Perfect World Classic (1.2.6)<TAB>29000:127.0.0.1`. Saíram `Universal 1.5.5` (29003, realm EN apagado em
+2026-09-17) e os servidores de teste `BATATA`/`Batata_E` do 1.2.6. Realm novo ou renomeado: publicar a lista de novo
+(rascunho com `userdata\server\serverlist.txt`, destino `cliente`).
+
 **Opções do jogo (B278).** Janela com modo (janela/tela cheia), resolução (as da placa acima de 400x400,
 `DlgSettingSystem.cpp:290-293`, mais a atual), widescreen (só a partir de 800x600,
 `DlgSettingSystem.cpp:483-494`), qualidade 0–4 e volumes de som e música 0–100 (faixas do
@@ -489,7 +495,12 @@ combinada no .ecm", "só existe como ação-base no .smd" (o motor 1.5.5 só toc
 realm: no 1.2.6 a única falta é `受伤叠加`, presente só como ação-base (o caso que o comentário de
 `EC_NPCModel.cpp:693-697` descreve); no 1.5.5, 38/40 sem ferido e um modelo (`白虎boss`) sem guarda, movimento e
 ataques combinados.
-Painel: tabela do diagnóstico e o link para abrir o `.smd` e tocar as ações.
+Painel: tabela do diagnóstico e o link para abrir o `.smd` e tocar as ações. **Modelo sem pele lida (B278):** o
+`.smd` pode não citar pele (corpo de jogador — a pele vem do equipamento) ou citar uma que falta no próprio cliente
+(p.ex. `players\通用装备\飞剑\飞剑10\飞剑.smd` cita `飞剑.ski`, que não está na pasta; o modelo em uso é o
+`飞剑10.ecm → 飞剑10.smd`). Com esqueleto, o GLB sai só com ele (sem `meshes`, que o glTF não aceita vazio) e o
+visualizador desenha os ossos em linhas, animados; sem esqueleto, 400 com as peles citadas. A lista traz cada tipo com
+a sua cota (`por_tipo`: `ecm`, `smd`, `ski`; até `limite` de cada).
 
 ## 7. Testes
 
