@@ -169,8 +169,16 @@ dos dois arquivos. **Prêmio em itens (B265):** os grupos `AWARD_ITEMS_CAND` vê
 (`LoadAwardCandBin`, `TaskTempl.cpp:732-760`); o contador `m_ulCandItems` fica no bloco do prêmio
 (`tasks::grupos_do_premio`: v129 `p::CAND_ITEMS`, v55 +67). `definir_grupos_do_premio` reescreve o trecho dos grupos,
 o contador e a tabela de deslocamentos. Teto: `MAX_AWARD_CANDIDATES = 12` (`TaskTempl.h:36`), `MAX_ITEM_AWARD = 64`
-(`TaskInterface.h:142`) — medido: nenhuma missão dos dois realms passa. Criar/remover missão, os demais vetores e os
-diálogos continuam sem gravador.
+(`TaskInterface.h:142`) — medido: nenhuma missão dos dois realms passa. **Diálogos (B266):** os cinco `talk_proc`
+(entrega, não qualificado, entrega de item, execução, prêmio — `TaskTempl.cpp:4736-4746`) vêm logo depois do tributo;
+`tasks_editavel::dialogos_da_missao` os lê (`ExpTypes.h`: `id_talk`, `text[64]`, janelas com `id`, `id_parent`,
+`talk_text_len` + texto, opções de 136 bytes com `id`, `text[64]`, `param`; tudo em XOR com o id, os fixos nos 64
+caracteres — `convert_talk_text` `:637-653`). Fecha: nas missões de topo sem filhas, depois dos diálogos vem só o `i32`
+de filhas e a próxima missão (conferido nos dois realms). Medido: `talk_text_len` **conta o NUL** em todas as janelas
+(12.502 no 1.2.6, 33.124 no 1.5.5); os `text[64]` vêm zerados depois do NUL em ~97% (resíduo em 1.976/56.304 e
+2.511/200.965). `definir_texto_do_dialogo` troca título, texto de janela (tamanho variável, NUL incluído, tabela de
+deslocamentos corrigida) ou opção (até 63 caracteres, resto zerado). Criar/remover missão, janela ou opção e os demais
+vetores continuam sem gravador.
 
 ### 3.2b `dyn_tasks.data` — missões dinâmicas (`dyn_tasks.rs`)
 

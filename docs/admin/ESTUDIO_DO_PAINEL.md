@@ -314,6 +314,9 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 >
 > **B265 (S7, 12ª parte):** missões — prêmio em itens (grupos de sucesso e de falha, "sorteia um", até 12 grupos de 64
 > itens). Falta do S7: criar/remover missão, diálogos; tipo de condição/operação no `aipolicy`.
+>
+> **B266 (S7, 13ª parte):** missões — os cinco diálogos (título, texto das janelas e das opções). Falta do S7:
+> criar/remover missão, janela ou opção; tipo de condição/operação no `aipolicy`.
 
 | fase | entrega |
 | :--- | :--- |

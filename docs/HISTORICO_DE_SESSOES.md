@@ -14634,3 +14634,31 @@ comparação lado a lado.
     ### e. Falta
     - Ver em jogo: concluir a 1173 e receber o item de prêmio novo (realm reiniciado, cliente atualizado).
     - Criar/remover missão; diálogos (`talk_proc`).
+
+266. **Sessão 2026-10-18: Estúdio S7, 13ª parte — diálogos das missões.**
+
+    ### a. Pedido
+    Commitar o B265 (feito: `47de82c`, `5b6e620`) e seguir.
+
+    ### b. Decisão e evidência
+    - `talk_proc` (`CCommon/ExpTypes.h`): `id_talk`, `text[64]`, janelas (`id`, `id_parent`, `talk_text_len` + texto,
+      opções `id`/`text[64]`/`param`). Cinco por missão, depois do tributo, na ordem de `LoadBinary`
+      (`TaskTempl.cpp:4736-4746`); XOR com o id em tudo, os fixos nos 64 caracteres (`convert_talk_text`, `:637-653`).
+    - Medido nos dois realms: `talk_text_len` conta o NUL em 100% das janelas; `text[64]` zerado depois do NUL em ~97%
+      — o gravador segue as duas convenções. O leitor estruturado fecha onde a missão termina.
+
+    ### c. O que foi feito
+    - `pw-data-loader/tasks_editavel`: `DIALOGOS`, `Dialogo`/`Janela`/`Opcao`, `dialogos_da_missao`,
+      `TasksEditavel::{dialogos, definir_texto_do_dialogo}`.
+    - `pw-recursos`: `dialogos` na ficha; `campos.dialogos`.
+    - Painel: blocos recolhíveis por diálogo no formulário da missão.
+
+    ### d. Provas
+    - `tasks_editavel::testes` nos dois realms: medida e fechamento; título, janela (maior) e opção trocados; relido;
+      última de topo igual; 64 caracteres recusados; voltar = arquivo idêntico.
+    - `pw-recursos` com o banco **22/22**: título de 64 → 400; título publicado e relido no realm.
+    - `pw-data-loader` **220/220**; `cargo check --workspace --tests` ok.
+
+    ### e. Falta
+    - Ver em jogo: falar com o NPC da 1173 e ver o título novo (cliente atualizado).
+    - Criar/remover missão, janela ou opção; tipo de condição/operação no `aipolicy`.
