@@ -302,6 +302,11 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         # Remover missão (B268).
         r = await self.cliente.delete("/api/realms/realm_155/estudio/missoes/12", params={"rascunho": 5}, headers=csrf)
         self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["metodo"], RecursosFalso.pedidos[-1]["caminho"]), (200, "DELETE", "/admin/1.5.5/estudio/missoes/12"))
+        # Modelos 3D (B272).
+        await self.cliente.get("/api/realms/realm_155/estudio/modelos", params={"busca": "lobo"})
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/modelos")
+        await self.cliente.get("/api/realms/realm_155/estudio/modelos/glb", params={"caminho": "models\\a.ski"})
+        self.assertEqual(RecursosFalso.pedidos[-1]["consulta"]["caminho"], ["models\\a.ski"])
         # Missões (B255).
         await self.cliente.get("/api/realms/realm_126/estudio/missoes", params={"busca": "teste", "topo": "false"})
         p = RecursosFalso.pedidos[-1]

@@ -171,6 +171,51 @@ async fn conteudo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q):
     Ok((h, dados).into_response())
 }
 
+// ------------------------------------------------------------------ modelos 3D (S5, B272)
+
+/// Os `.ski` da versão publicada cujo caminho contém `busca` (até 200).
+async fn estudio_modelos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<Busca>) -> R<Json<Value>> {
+    validar(&v)?;
+    let todos = e.gov.buscar(&v, q.busca.as_deref().unwrap_or(""), usize::MAX)?;
+    let ski: Vec<&Value> = todos.iter().filter(|x| x["caminho"].as_str().is_some_and(|c| c.to_lowercase().ends_with(".ski"))).collect();
+    Ok(Json(json!({ "total": ski.len(), "linhas": ski.into_iter().take(q.limite.unwrap_or(200).min(500)).collect::<Vec<_>>() })))
+}
+
+fn ler_ski(e: &Estado, v: &str, caminho: &str) -> Result<(String, pw_data_loader::ski::Ski), Erro> {
+    if !caminho.to_lowercase().ends_with(".ski") {
+        return Err(Erro(StatusCode::BAD_REQUEST, "só .ski por enquanto".into()));
+    }
+    let (nome, dados) = e.gov.conteudo(v, caminho)?;
+    let s = pw_data_loader::ski::Ski::ler(&dados).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{nome}: {x}")))?;
+    Ok((nome, s))
+}
+
+/// A ficha do `.ski`: versão, ossos, texturas, materiais e as malhas (sem os vértices).
+async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Json<Value>> {
+    validar(&v)?;
+    let (nome, s) = ler_ski(&e, &v, &q.caminho)?;
+    let mut malhas: Vec<Value> = s.malhas_de_pele.iter().map(|m| json!({ "nome": m.nome, "tipo": "pele", "vertices": m.vertices.len(), "triangulos": m.indices.len() / 3, "textura": m.textura, "material": m.material })).collect();
+    malhas.extend(s.malhas_rigidas.iter().map(|m| json!({ "nome": m.nome, "tipo": "rígida", "osso": m.osso, "vertices": m.vertices.len(), "triangulos": m.indices.len() / 3, "textura": m.textura, "material": m.material })));
+    Ok(Json(json!({
+        "caminho": nome, "versao": s.versao, "ossos": s.ossos, "ossos_do_esqueleto": s.ossos_do_esqueleto, "texturas": s.texturas,
+        "materiais": s.materiais.iter().map(|m| json!({ "nome": m.nome, "difusa": m.difusa, "dois_lados": m.dois_lados })).collect::<Vec<_>>(),
+        "malhas": malhas,
+    })))
+}
+
+/// O GLB do `.ski` (`pw_data_loader::glb`), para o visualizador e para levar ao Blender.
+async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Response> {
+    validar(&v)?;
+    let (nome, s) = ler_ski(&e, &v, &q.caminho)?;
+    let glb = pw_data_loader::glb::do_ski(&s, &nome);
+    let arquivo = nome.rsplit('\\').next().unwrap_or("modelo").replace(['"', '\r', '\n'], "_");
+    let mut h = HeaderMap::new();
+    h.insert(header::CONTENT_TYPE, "model/gltf-binary".parse().unwrap());
+    let disposicao = format!("inline; filename*=UTF-8''{}.glb", urlencoding(&arquivo));
+    h.insert(header::CONTENT_DISPOSITION, disposicao.parse().map_err(|_| Erro(StatusCode::BAD_REQUEST, "nome".into()))?);
+    Ok((h, glb).into_response())
+}
+
 fn urlencoding(t: &str) -> String {
     t.bytes()
         .map(|b| if b.is_ascii_alphanumeric() || b"-._".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
@@ -909,6 +954,9 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/alinhamento", get(estudio_alinhamento))
         .route("/admin/{v}/estudio/missoes", get(estudio_missoes))
         .route("/admin/{v}/estudio/comportamentos", get(estudio_comportamentos))
+        .route("/admin/{v}/estudio/modelos", get(estudio_modelos))
+        .route("/admin/{v}/estudio/modelos/ficha", get(estudio_modelo))
+        .route("/admin/{v}/estudio/modelos/glb", get(estudio_modelo_glb))
         .route("/admin/{v}/estudio/textos/{arquivo}", get(estudio_textos).post(estudio_novo_texto))
         .route("/admin/{v}/estudio/textos/{arquivo}/{chave}", put(estudio_editar_texto))
         .route("/admin/{v}/estudio/comportamentos/{id}", get(estudio_comportamento).put(estudio_editar_comportamento))

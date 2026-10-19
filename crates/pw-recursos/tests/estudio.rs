@@ -97,7 +97,32 @@ impl FonteDePacote for Pacotes {
         let utf16 = |t: &str| { let mut b = vec![0xFFu8, 0xFE]; t.encode_utf16().for_each(|c| b.extend_from_slice(&c.to_le_bytes())); b };
         receber(b"configs\\item_ext_desc.txt".to_vec(), utf16("//  Element item extend descriptions.\n\n#_index\n#_begin\n\n10037  \"^ffcb4aUma invenção\"\n10042  \"Outra\"\n"))?;
         receber(b"configs\\fixed_msg.txt".to_vec(), utf16("//  Element fixed notify messages.\n\n#_begin\n\n\"Ganhou %d moedas\"\n\"Ganhou %d de experiência\"\n"))?;
-        Ok(ResultadoDoPacote { entradas: 11, falhas: vec![] })
+        // Um .ski mínimo (B272): MOXB + cabeçalho v9 (1 malha de pele, 1 textura, 1 material), um triângulo.
+        let ski = {
+            let mut b = b"MOXB".to_vec();
+            let u = |b: &mut Vec<u8>, x: u32| b.extend_from_slice(&x.to_le_bytes());
+            let f = |b: &mut Vec<u8>, x: f32| b.extend_from_slice(&x.to_le_bytes());
+            u(&mut b, u32::from_be_bytes(*b"ASKI")); u(&mut b, 9);
+            for x in [1u32, 0, 0, 0, 1, 1, 0] { u(&mut b, x); }
+            f(&mut b, 0.0); u(&mut b, 0); u(&mut b, 0); u(&mut b, 0);
+            b.extend_from_slice(&[0u8; 52]);
+            u(&mut b, 9); b.extend_from_slice(b"caixa.dds");
+            b.extend_from_slice(b"MATERIAL: madeira\0");
+            for _ in 0..16 { f(&mut b, 0.5); }
+            f(&mut b, 10.0); b.push(1);
+            u(&mut b, 5); b.extend_from_slice(b"tampa");
+            for x in [0u32, 0, 3, 3] { u(&mut b, x); }
+            for p in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+                for x in p { f(&mut b, x); }
+                for _ in 0..3 { f(&mut b, 0.0); }
+                u(&mut b, 0);
+                for x in [0.0f32, 0.0, -1.0, 0.0, 0.0] { f(&mut b, x); }
+            }
+            for i in [0u16, 1, 2] { b.extend_from_slice(&i.to_le_bytes()); }
+            b
+        };
+        receber(b"models\\teste\\caixa.ski".to_vec(), ski)?;
+        Ok(ResultadoDoPacote { entradas: 12, falhas: vec![] })
     }
 }
 
@@ -725,6 +750,19 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         } else {
             eprintln!("AVISO: o aipolicy do realm de teste não tem fala — a edição estrutural NÃO foi verificada aqui.");
         }
+
+        // Modelos 3D (B272): lista de .ski, ficha e GLB.
+        let ml = json_de(pedir("GET", "estudio/modelos").query("busca", "caixa").call().unwrap());
+        assert_eq!(ml["total"], 1, "{ml}");
+        let caminho = ml["linhas"][0]["caminho"].as_str().unwrap().to_string();
+        let fi = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &caminho).call().unwrap());
+        assert_eq!((fi["versao"].as_u64(), fi["texturas"][0].as_str(), fi["materiais"][0]["nome"].as_str(), fi["malhas"][0]["triangulos"].as_u64()),
+            (Some(9), Some("caixa.dds"), Some("madeira"), Some(1)), "{fi}");
+        let mut glb = Vec::new();
+        std::io::Read::read_to_end(&mut pedir("GET", "estudio/modelos/glb").query("caminho", &caminho).call().unwrap().into_reader(), &mut glb).unwrap();
+        assert_eq!(&glb[0..4], b"glTF");
+        assert_eq!(u32::from_le_bytes(glb[8..12].try_into().unwrap()) as usize, glb.len());
+        assert_eq!(erro_de(pedir("GET", "estudio/modelos/ficha").query("caminho", "data\\elements.data").call()).0, 400);
 
         // Textos do cliente (B260): listar, buscar, editar, acrescentar (só na indexada); item "cliente".
         let tx = json_de(pedir("GET", "estudio/textos/item_ext_desc.txt").call().unwrap());

@@ -598,6 +598,22 @@ def registrar_reinicio(app):
             raise HTTPException(422, "Pedido inválido.")
         return await _repassar("DELETE", f"/admin/{v}/estudio/missoes/{id_missao}", {"rascunho": rascunho})
 
+    # Modelos 3D (B272): .ski da versão publicada — lista, ficha e GLB.
+    @app.get("/api/realms/{realm}/estudio/modelos")
+    async def estudio_modelos(realm: str, requisicao: Request, busca: str = ""):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/modelos", {"busca": busca[:200]})
+
+    @app.get("/api/realms/{realm}/estudio/modelos/ficha")
+    async def estudio_modelo(realm: str, caminho: str, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/modelos/ficha", {"caminho": caminho[:500]})
+
+    @app.get("/api/realms/{realm}/estudio/modelos/glb")
+    async def estudio_modelo_glb(realm: str, caminho: str, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/modelos/glb", {"caminho": caminho[:500]})
+
     # Comportamento dos monstros (B258, só leitura): o aipolicy.data do realm.
     @app.get("/api/realms/{realm}/estudio/comportamentos")
     async def estudio_comportamentos(realm: str, requisicao: Request, busca: str = ""):

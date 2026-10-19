@@ -15,6 +15,7 @@
   <script src="/static/missoes.js" defer></script>
   <script src="/static/comportamento.js" defer></script>
   <script src="/static/textos.js" defer></script>
+  <script src="/static/modelos.js" defer></script>
 </head>
 <body>
   <!-- Entrada -->
@@ -293,7 +294,18 @@
             <button id="estudio-vista-missoes" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Missões</button>
             <button id="estudio-vista-comportamento" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Comportamento</button>
             <button id="estudio-vista-textos" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Textos</button>
+            <button id="estudio-vista-modelos" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Modelos</button>
           </div>
+          <section id="estudio-modelos" class="recursos-cartao" hidden>
+            <div class="recursos-linha">
+              <input id="modelos-busca" class="campo" type="search" placeholder="Trecho do caminho (ex.: npcs, 狼)" aria-label="Buscar modelo">
+              <span id="modelos-situacao" class="texto-suave"></span>
+            </div>
+            <div class="loja-grade">
+              <div id="modelos-lista" class="loja-lista"></div>
+              <div id="modelos-ficha" class="mapa-editor">Escolha um modelo.</div>
+            </div>
+          </section>
           <section id="estudio-textos" class="recursos-cartao" hidden>
             <div class="recursos-linha">
               <select id="textos-arquivo" class="campo" aria-label="Tabela de texto">
