@@ -131,7 +131,7 @@ async function abrirMissao(id) {
     resto.appendChild(linha);
   }
   area.appendChild(resto);
-  area.appendChild(formularioDaMissao(f, r.editaveis || []));
+  area.appendChild(formularioDaMissao(f, r.editaveis || [], r.textos || {}));
   document.querySelectorAll("#missoes-lista button").forEach((b) => b.setAttribute("aria-current", b.textContent.startsWith(`${id} `) ? "true" : "false"));
 }
 
@@ -148,7 +148,9 @@ function valorDaFicha(f, nome) {
   return f[nome];
 }
 
-function formularioDaMissao(f, editaveis) {
+const ROTULOS_DOS_TEXTOS = { descricao: "Descrição", ok: "Texto ao aceitar", nao: "Texto ao recusar", tributo: "Tributo" };
+
+function formularioDaMissao(f, editaveis, textos) {
   const fs = criar("fieldset");
   fs.appendChild(criar("legend", "", estudio.rascunho ? `Editar (rascunho #${estudio.rascunho})` : "Editar (escolha ou crie um rascunho no topo do Estúdio)"));
   const g = criar("div", "mapa-campos");
@@ -168,14 +170,26 @@ function formularioDaMissao(f, editaveis) {
     entradas[nome] = { i, tipo, atual };
   }
   fs.appendChild(g);
-  fs.appendChild(criar("div", "texto-suave", "Só campos de tamanho fixo (o arquivo não muda de tamanho). Mudar o NPC que entrega não muda o serviço do NPC no elements (NPC_TASK_OUT_SERVICE): ajuste a ficha dele junto."));
+  // Textos longos (B262): mudam o tamanho da missão; o servidor corrige a tabela de deslocamentos do tasks.data.
+  for (const [nome, atual] of Object.entries(textos)) {
+    const label = criar("label", "");
+    const i = criar("textarea", "campo");
+    i.rows = nome === "descricao" ? 4 : 2;
+    i.value = atual;
+    i.disabled = !estudio.rascunho;
+    i.style.width = "100%";
+    label.append(criar("span", "", ROTULOS_DOS_TEXTOS[nome] || nome), i);
+    fs.appendChild(label);
+    entradas[nome] = { i, tipo: "texto", atual };
+  }
+  fs.appendChild(criar("div", "texto-suave", "Códigos de cor (^ffcb4a) ficam no texto como estão. Os textos mudam o tamanho do tasks.data (a tabela de deslocamentos é corrigida no servidor); o resto é de tamanho fixo. Mudar o NPC que entrega não muda o serviço do NPC no elements (NPC_TASK_OUT_SERVICE): ajuste a ficha dele junto."));
   if (estudio.rascunho) {
     const b = criar("button", "botao botao-pequeno botao-primario", "Salvar no rascunho");
     b.type = "button";
     b.addEventListener("click", async () => {
       const campos = {};
       for (const [nome, { i, tipo, atual }] of Object.entries(entradas)) {
-        const v = tipo === "bool" ? i.checked : tipo === "nome" ? i.value : Math.trunc(Number(i.value));
+        const v = tipo === "bool" ? i.checked : (tipo === "nome" || tipo === "texto") ? i.value : Math.trunc(Number(i.value));
         if (v !== atual) campos[nome] = v;
       }
       if (!Object.keys(campos).length) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }

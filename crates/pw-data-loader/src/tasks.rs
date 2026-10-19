@@ -399,6 +399,10 @@ pub struct TaskTemplate {
     /// Onde começa o `AWARD_DATA` do prêmio de sucesso no arquivo.
     #[serde(skip)]
     pub premio_em: usize,
+    /// Onde começam os quatro textos longos (B262): descrição, aceitar, recusar (`LoadDescriptionBin`) e tributo
+    /// (`LoadTributeBin`), cada um `size_t` de caracteres + texto em XOR com o id (`TaskTempl.cpp:4816-4883`).
+    #[serde(skip)]
+    pub textos_em: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -918,6 +922,7 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
     escala_v55(l, 20)?;
     escala_v55(l, 24)?;
     escala_v55(l, 24)?;
+    let textos_em = l.o;
     let descricao = texto_longo(l, id)?;
     for _ in 0..3 { texto_longo(l, id)?; }
     for _ in 0..5 { dialogo_v55(l)?; }
@@ -1055,6 +1060,7 @@ fn missao_v55(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTem
     for _ in 0..n { tarefa.sub_tasks.push(missao_v55(l, Some(id), saida)?); }
     tarefa.bloco_fixo_em = bloco_fixo_em;
     tarefa.premio_em = premio_em;
+    tarefa.textos_em = textos_em;
     if saida.insert(id, tarefa).is_some() { return Err(TasksError::InvalidFormat); }
     Ok(id)
 }
@@ -1159,6 +1165,7 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
     escala(l, 4 + 4 * v129::MAX_AWARD_SCALES)?;
     escala(l, 4 + 4 * v129::MAX_AWARD_SCALES)?;
 
+    let textos_em = l.o;
     let descricao = texto_longo(l, id)?;
     texto_longo(l, id)?; // ok
     texto_longo(l, id)?; // no
@@ -1269,6 +1276,7 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         profundidade: 1,
         bloco_fixo_em,
         premio_em,
+        textos_em,
     };
 
     let filhos = l.i32()?.max(0) as u32;
@@ -1407,6 +1415,7 @@ impl TaskTemplate {
             profundidade: 1,
             bloco_fixo_em: 0,
             premio_em: 0,
+            textos_em: 0,
         }
     }
 }

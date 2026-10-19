@@ -8,6 +8,11 @@
 //! Deslocamentos: v129 pelas constantes do leitor (`v129::f` e `v129::p`, do `TaskTempl.h` 1.7.2 conferido no arquivo
 //! do 1.5.5 BR); v55 pelos do `libtask.so`/`elementclient.exe` 1.2.6 que o leitor usa (spec 03 §3.2). O nome é
 //! `wchar[30]` em `+4` nas duas versões, com cada unidade em XOR com `id as u16` (`tasks::texto`).
+//!
+//! **Textos longos (B262):** descrição, aceitar, recusar e tributo mudam de tamanho. Cada um é `u32` de caracteres
+//! (`wcslen`, sem NUL) + as unidades em XOR com `(namechar)m_ID` (`SaveDescriptionBin`/`SaveTributeBin`,
+//! `TaskTempl.cpp:4940-5010`; `convert_txt` `:629`). Trocar um reescreve só esse texto e soma a diferença nos
+//! deslocamentos da tabela do cabeçalho das missões de topo que começam depois dele; o arquivo é relido.
 
 use crate::tasks::{TaskTemplate, TasksData, TasksError};
 
@@ -80,6 +85,32 @@ pub fn campos(versao: u32) -> &'static [Campo] {
 
 const BYTES_DO_NOME: usize = 60;
 
+/// Os quatro textos longos, na ordem do arquivo.
+pub const TEXTOS: [&str; 4] = ["descricao", "ok", "nao", "tributo"];
+
+/// Posição de cada um dos quatro textos longos: `(onde está o tamanho, quantos caracteres)`.
+fn posicoes_dos_textos(bytes: &[u8], t: &TaskTemplate) -> [(usize, usize); 4] {
+    let mut o = t.textos_em;
+    let mut r = [(0, 0); 4];
+    for x in &mut r {
+        let n = u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap()) as usize;
+        *x = (o, n);
+        o += 4 + 2 * n;
+    }
+    r
+}
+
+/// Os quatro textos longos de uma missão lida de `bytes` (sem reler o arquivo), decifrados.
+pub fn textos_da_missao(bytes: &[u8], t: &TaskTemplate) -> serde_json::Map<String, serde_json::Value> {
+    let chave = t.id as u16;
+    let mut m = serde_json::Map::new();
+    for (nome, (o, n)) in TEXTOS.iter().zip(posicoes_dos_textos(bytes, t)) {
+        let u: Vec<u16> = bytes[o + 4..o + 4 + 2 * n].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) ^ chave).collect();
+        m.insert((*nome).into(), String::from_utf16_lossy(&u).into());
+    }
+    m
+}
+
 pub struct TasksEditavel {
     pub bytes: Vec<u8>,
     pub dados: TasksData,
@@ -100,6 +131,45 @@ impl TasksEditavel {
             Bloco::Fixo => t.bloco_fixo_em + c.3,
             Bloco::Premio => t.premio_em + c.3,
         }
+    }
+
+    fn posicoes_dos_textos(&self, t: &TaskTemplate) -> [(usize, usize); 4] {
+        posicoes_dos_textos(&self.bytes, t)
+    }
+
+    /// Os quatro textos longos da missão (`descricao`, `ok`, `nao`, `tributo`), decifrados.
+    pub fn textos(&self, id: u32) -> Option<serde_json::Map<String, serde_json::Value>> {
+        Some(textos_da_missao(&self.bytes, self.dados.tasks.get(&id)?))
+    }
+
+    /// Troca um texto longo e corrige a tabela de deslocamentos.
+    pub fn definir_texto(&mut self, id: u32, qual: &str, texto: &str) -> Result<(), String> {
+        let k = TEXTOS.iter().position(|x| *x == qual).ok_or_else(|| format!("texto inexistente: {qual}"))?;
+        if texto.contains('\0') {
+            return Err("o texto não pode ter NUL".into());
+        }
+        let unidades: Vec<u16> = texto.encode_utf16().collect();
+        if unidades.len() > 8000 {
+            return Err("texto grande demais (guarda do painel: 8000 unidades UTF-16)".into());
+        }
+        let t = self.dados.tasks.get(&id).ok_or_else(|| format!("missão {id} não existe"))?;
+        let (o, n) = self.posicoes_dos_textos(t)[k];
+        let chave = id as u16;
+        let novo: Vec<u8> = unidades.iter().flat_map(|u| (u ^ chave).to_le_bytes()).collect();
+        let delta = novo.len() as i64 - 2 * n as i64;
+        self.bytes.splice(o + 4..o + 4 + 2 * n, novo);
+        self.bytes[o..o + 4].copy_from_slice(&(unidades.len() as u32).to_le_bytes());
+        let quantas = u32::from_le_bytes(self.bytes[8..12].try_into().unwrap()) as usize;
+        for i in 0..quantas {
+            let e = 12 + 4 * i;
+            let inicio = u32::from_le_bytes(self.bytes[e..e + 4].try_into().unwrap()) as usize;
+            if inicio > o {
+                let novo_inicio = u32::try_from(inicio as i64 + delta).map_err(|_| "deslocamento fora de u32")?;
+                self.bytes[e..e + 4].copy_from_slice(&novo_inicio.to_le_bytes());
+            }
+        }
+        self.dados = TasksData::load_from_bytes(&self.bytes).map_err(|e| format!("o tasks.data editado não relê: {e}"))?;
+        Ok(())
     }
 
     /// Os campos editáveis da missão, lidos do arquivo.
@@ -192,6 +262,36 @@ mod testes {
             let (x, y) = (volta.gravar(), b.clone());
             assert!(x[..o] == y[..o] && x[o + BYTES_DO_NOME..] == y[o + BYTES_DO_NOME..], "{realm}: voltar devolve o resto idêntico");
             assert_eq!(TasksData::load_from_bytes(&x).unwrap().tasks[&id].name, TasksData::load_from_bytes(&y).unwrap().tasks[&id].name);
+        }
+    }
+
+    /// Nos dois realms: trocar a descrição (maior) e o tributo (vazio) de uma missão de topo do meio e de uma
+    /// submissão; o leitor do GS relê tudo, as missões de topo seguintes continuam iguais; voltar = arquivo idêntico.
+    #[test]
+    fn textos_longos_mudam_de_tamanho_e_voltam() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/tasks.data"));
+            let b = std::fs::read(&p).unwrap();
+            let mut t = TasksEditavel::ler(&b).unwrap();
+            let topo = t.dados.de_topo[t.dados.de_topo.len() / 2];
+            let sub = *t.dados.tasks.values().find(|x| x.parent.is_some() && x.textos_em > 0).map(|x| &x.id).unwrap();
+            let ultima = *t.dados.de_topo.last().unwrap();
+            let ultima_antes = serde_json::to_value(&t.dados.tasks[&ultima]).unwrap();
+            let antes_topo = t.textos(topo).unwrap();
+            let antes_sub = t.textos(sub).unwrap();
+            assert_eq!(antes_topo["descricao"].as_str().unwrap(), t.dados.tasks[&topo].descricao, "{realm}: decifra igual ao leitor");
+            let longa = "Descrição nova do Estúdio — bem mais comprida do que costuma ser, para mudar o tamanho.".repeat(3);
+            t.definir_texto(topo, "descricao", &longa).unwrap();
+            t.definir_texto(topo, "tributo", "").unwrap();
+            t.definir_texto(sub, "ok", "Aceito!").unwrap();
+            assert!(t.definir_texto(topo, "titulo", "x").is_err());
+            let r = TasksData::load_from_bytes(&t.gravar()).unwrap();
+            assert_eq!(r.tasks[&topo].descricao, longa, "{realm}");
+            assert_eq!(t.textos(sub).unwrap()["ok"], "Aceito!");
+            assert_eq!(serde_json::to_value(&r.tasks[&ultima]).unwrap(), ultima_antes, "{realm}: a última de topo não muda");
+            for (k, v) in &antes_topo { t.definir_texto(topo, k, v.as_str().unwrap()).unwrap(); }
+            for (k, v) in &antes_sub { t.definir_texto(sub, k, v.as_str().unwrap()).unwrap(); }
+            assert!(t.gravar() == b, "{realm}: voltar devolve o arquivo idêntico");
         }
     }
 }

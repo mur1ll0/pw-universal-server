@@ -2600,17 +2600,23 @@ impl Estudio {
     /// O `tasks.data` (o do cliente publicado é o mesmo do realm, que o GS executa — `manager.rs:461`; B256: com o
     /// rascunho, o dele), lido uma vez por versão e SHA.
     async fn missoes_do_realm(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<Arc<TasksData>> {
-        let bytes = self.item_do_cliente(gov, versao, "data\\tasks.data", rascunho).await?.3;
+        Ok(self.missoes_e_bytes(gov, versao, rascunho).await?.1)
+    }
+
+    /// O `tasks.data` (do rascunho, se houver) e a leitura dele (em cache por sha).
+    async fn missoes_e_bytes(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<(Arc<Vec<u8>>, Arc<TasksData>)> {
+        let bytes = Arc::new(self.item_do_cliente(gov, versao, "data\\tasks.data", rascunho).await?.3);
         let sha = sha256(&bytes);
         let cache = MISSOES.get_or_init(|| Mutex::new(HashMap::new()));
         if let Some(t) = cache.lock().unwrap().get(&(versao.to_string(), sha)) {
-            return Ok(t.clone());
+            return Ok((bytes, t.clone()));
         }
-        let t = Arc::new(tokio::task::spawn_blocking(move || TasksData::load_from_bytes(&bytes)).await?.map_err(|e| anyhow::anyhow!("tasks.data: {e}"))?);
+        let b = bytes.clone();
+        let t = Arc::new(tokio::task::spawn_blocking(move || TasksData::load_from_bytes(&b)).await?.map_err(|e| anyhow::anyhow!("tasks.data: {e}"))?);
         let mut c = cache.lock().unwrap();
         c.retain(|(v, _), _| v != versao); // uma por versão: o 1.5.5 tem 104 MB
         c.insert((versao.to_string(), sha), t.clone());
-        Ok(t)
+        Ok((bytes, t))
     }
 
     /// Lista de missões: busca por id ou nome; `topo` = só as de topo (as outras se chegam pela árvore). Linha
@@ -2644,9 +2650,11 @@ impl Estudio {
     /// Uma missão inteira (os campos do `TaskTemplate` do leitor do GS), com os nomes dos NPCs, itens e monstros que ela
     /// cita (do `elements` publicado) e das missões mãe, filhas, pré-requisitos e exclusivas.
     pub async fn missao(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: u32) -> Result<Value> {
-        let t = self.missoes_do_realm(gov, versao, rascunho).await?;
+        let (bytes, t) = self.missoes_e_bytes(gov, versao, rascunho).await?;
         let m = t.tasks.get(&id).with_context(|| format!("missão {id} não existe"))?;
         let ficha = serde_json::to_value(m)?;
+        // B262: os quatro textos longos (descrição, aceitar, recusar, tributo), editáveis com tamanho variável.
+        let textos = pw_data_loader::tasks_editavel::textos_da_missao(&bytes, m);
         // Ids do espaço ESSENCE citados em qualquer lugar da ficha (NPCs, itens, monstros): todos os números que
         // estejam em campos com "id", "npc", "item" ou "monstro" no nome.
         let mut citados = std::collections::BTreeSet::new();
@@ -2686,6 +2694,7 @@ impl Estudio {
             "nova_missao": (m.rewards.nova_missao > 0).then(|| nome_da_missao(m.rewards.nova_missao)),
             // B256: os campos de tamanho fixo que se editam no lugar, com o tipo.
             "editaveis": pw_data_loader::tasks_editavel::campos(t.version).iter().map(|c| json!([c.0, c.2])).collect::<Vec<_>>(),
+            "textos": textos,
         }))
     }
 
@@ -2696,13 +2705,23 @@ impl Estudio {
         let _guarda = trava.lock().await;
         self.gravar_item_com_destino(gov, versao, "data\\tasks.data", rascunho, "ambos", move |base| {
             let mut t = pw_data_loader::tasks_editavel::TasksEditavel::ler(base).map_err(|e| anyhow::anyhow!("tasks.data: {e}"))?;
-            let antes = t.ler_campos(id).with_context(|| format!("missão {id} não existe"))?;
-            for (k, v) in &campos {
+            let com_textos = |t: &pw_data_loader::tasks_editavel::TasksEditavel| -> Option<Map<String, Value>> {
+                let mut c = t.ler_campos(id)?;
+                c.extend(t.textos(id)?);
+                Some(c)
+            };
+            let antes = com_textos(&t).with_context(|| format!("missão {id} não existe"))?;
+            // Textos longos (B262) mudam o tamanho e a tabela de deslocamentos: vão por último, depois dos fixos.
+            let (textos, fixos): (Vec<_>, Vec<_>) = campos.iter().partition(|(k, _)| pw_data_loader::tasks_editavel::TEXTOS.contains(&k.as_str()));
+            for (k, v) in fixos {
                 t.definir_campo(id, k, v).map_err(anyhow::Error::msg)?;
+            }
+            for (k, v) in textos {
+                t.definir_texto(id, k, v.as_str().with_context(|| format!("{k}: texto"))?).map_err(anyhow::Error::msg)?;
             }
             let novo = t.gravar();
             let relido = pw_data_loader::tasks_editavel::TasksEditavel::ler(&novo).map_err(|e| anyhow::anyhow!("o tasks.data editado não relê: {e}"))?;
-            let depois = relido.ler_campos(id).context("missão sumiu")?;
+            let depois = com_textos(&relido).context("missão sumiu")?;
             let mudou: Map<String, Value> = depois.iter().filter(|(k, x)| antes.get(*k) != Some(*x)).map(|(k, x)| (k.clone(), json!([antes[k], x]))).collect();
             let mudanca = if mudou.is_empty() { Value::Null } else { json!({ "acao": "editada", "tipo": "missao", "id": id, "campos": mudou }) };
             Ok((novo, json!({ "id": id }), mudanca))
