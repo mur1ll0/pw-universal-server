@@ -336,6 +336,11 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > comportamento (navegar; flags e parâmetros, falas, duplicar/remover gatilho, tipos e operações) e textos do cliente.
 > O que ficou de fora, por decisão: renomear gatilho (nome GBK, só rótulo de editor), condição operador (criar/remover
 > nós da árvore) e criar gatilho do zero (duplicar e editar cobre o caso).
+>
+> **B272 (S5, 1ª parte):** leitor do `.ski` (24.165 de 24.166 do 1.5.5 BR fecham; o outro o cliente também recusa),
+> GLB e a vista "Modelos" com visualizador WebGL próprio (sem three.js: nada baixado, CSP `self`). Falta do S5:
+> texturas (DDS → PNG), esqueleto (`.bon`) e pele com ossos, animações (`.stck`) e ações do `.ecm`, diagnóstico de
+> ações que faltam; Mascotes, Voo, Minas.
 
 | fase | entrega |
 | :--- | :--- |
@@ -343,7 +348,7 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 | S2 | escritor do `elements` (v7 e v156) + telas de Armas, Armaduras, Consumíveis, Monstros (drops) + índice de referências |
 | S3 | NPCs, Serviços (30 tipos) e Conversa (`TALK_PROC`); Receitas |
 | S4 | Mapas: minimapa interativo, `npcgen` (NPCs, monstros, recursos), `region`/`precinct`, teleportes, `task_npc` |
-| S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas |
+| S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas — **em andamento** (B272: `.ski` → GLB, visualizador) |
 | S6 | glTF e extensão do Blender |
 | S7 | Missões (§4.4); Loja Gold (§4.6); Comportamento (`aipolicy`); Textos — **concluído (B254-B271)** |
 | S8 | Habilidades: números e textos; depois `elementskill.dll` + efeitos no GS |

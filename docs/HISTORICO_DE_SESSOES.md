@@ -14804,3 +14804,33 @@ comparação lado a lado.
 
     ### e. Falta
     - Ver em jogo (lista no ESTADO); próximo do Estúdio: S5, S6 ou S8.
+
+272. **Sessão 2026-10-19: Estúdio S5, primeira parte — `.ski`, GLB e visualizador.**
+
+    ### a. Pedido
+    "comite e siga para proxima etapa" depois do fim do S7 — a fase seguinte na ordem é o S5 (3D).
+
+    ### b. Decisão e evidência
+    - `.ski` pelo fonte do motor (`A3DSkin.cpp:201-500`, `A3DMaterial.cpp:181-200`, `A3DSkinMesh.cpp:162-225`,
+      `A3DRigidMesh.cpp:115-170`, `A3DVertex.h`). O cliente 1.5.5 BR desempacotado tem 24.166 `.ski` (923 MB).
+    - Primeira rodada: 0 fechavam — todos começam com `MOXB`, a marca de arquivo binário que `AFile::Open` consome
+      (`AFile.cpp:86-98`). Com isso, 24.165 fecham (v8 e v9); o que sobra (36 bytes) o cliente também recusa.
+    - Nenhum `.ski` usa morph/supple/muscle — o leitor os recusa com o motivo em vez de inventar o formato.
+    - Visualizador próprio em WebGL (lê o GLB) em vez de three.js: nada a baixar, a CSP `self` continua; o GLB é o mesmo
+      que vai para o Blender (S6). Texturas, esqueleto e animações ficam para as próximas partes.
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `ski.rs` (`Ski::ler`) e `glb.rs` (`do_ski`, D3D → glTF por `z` negado e triângulos invertidos).
+    - `pw-recursos`: `GET estudio/modelos`, `…/ficha`, `…/glb`.
+    - Painel: proxy, vista "Modelos" (`static/modelos.js`) com busca, ficha, visualizador e "Baixar GLB".
+
+    ### d. Provas
+    - `ski::testes::todos_os_ski_do_cliente`: 24.165/24.166; `glb::testes`: GLB de um `.ski` real coerente.
+    - `pw-recursos` com o banco **22/22** (`.ski` sintético com `MOXB`: busca, ficha, GLB, 400 para não-`.ski`).
+      Painel **11/11**. `pw-data-loader` **230/230**; `cargo check --workspace --tests` ok.
+    - No contêiner: fichas de 60/60 `.ski` de `npcs` nos dois realms (o `.ski` do 1.2.6 também lê nessa amostra); GLB
+      real (55 KB) desenhado pelo visualizador num navegador — silhueta de pé, iluminada.
+
+    ### e. Falta
+    - Ver no painel: Estúdio → Modelos → buscar um monstro → o modelo aparece cinza/colorido, gira com o mouse.
+    - Texturas (DDS), esqueleto e pele com ossos, animações e ações (`.ecm`), diagnóstico; medir o `.ski` do 1.2.6.

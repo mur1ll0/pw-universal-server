@@ -617,6 +617,24 @@ parâmetros do 1.5.5, e **nenhum** de nível de ataque/defesa, penetração, res
 anti-defesa/resistência. `crates/pw-data-loader/examples/addons_por_familia.rs` lista id, parâmetros e
 famílias de um realm.
 
+### 3.10d Modelos: `.ski` (`ski.rs`) e GLB (`glb.rs`) — B272, Estúdio S5
+
+`.ski` = a pele de um modelo (porte de `A3DSkin::Load`, `Angelica3D/Source/A3DSkin.cpp:201-500`). O arquivo começa
+pela marca do `AFile` — `MOXB` (binário) — que `AFile::Open` consome (`AngelicaFile/Source/AFile.cpp:86-98`); depois
+`A3DSKINFILEHEADER` (`:66-82`, 104 bytes: `'ASKI'`, versão ≤ 9, contagens de malhas de pele/rígidas/morph/supple/
+muscle, texturas, materiais, ossos da pele, `fMinWeight`, ossos do esqueleto, 52 reservados), nomes dos ossos (só
+v ≥ 9; string = `i32` + bytes, `AFile.cpp:194-220`), nomes das texturas, materiais (string até NUL `"MATERIAL: …"`,
+4 cores RGBA, `Power`, `2Sided` — `A3DMaterial.cpp:181-200`), malhas de pele (nome, `SKINMESHDATA`,
+`A3DBVERTEX3` de 48 bytes, índices `u16` — `A3DSkinMesh.cpp:162-225`) e rígidas (nome, `RIGIDMESHDATA`, `A3DVERTEX` de
+32 bytes, `u16` — `A3DRigidMesh.cpp:115-170`). **Medido no 1.5.5 BR (desempacotado):** 24.165 de 24.166 `.ski` fecham
+no último byte (v8: 6.033; v9: 18.132); **nenhum** usa morph, supple ou muscle (o leitor recusa com o motivo); o que
+sobra (`npcs\怪物\灵族\巨牛\牛.ski`, 36 bytes sem `ASKI`) o cliente também recusa (`A3DSkin.cpp:214`). O 1.2.6 ainda
+não foi medido.
+
+`glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
+`TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
+(mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto e sem textura ainda.
+
 ### 3.11 `global_api.lua`
 
 Primeira linha `--<N>` = `lua_version` do `SERVER_TIME`. 1.5.5: **102**; divergência faz o

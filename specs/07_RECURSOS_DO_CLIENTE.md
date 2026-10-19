@@ -438,6 +438,12 @@ o `elements` do rascunho cita a missão ou uma submissão — campos `int32` com
 probabilidade, item, custo e contagem (no v156: `id_tasks_N`, `tasks_N_id_task`, `task_lists_N_id`, `list_N_task_id`,
 `task_N`; larga de propósito) — ou se outra missão a cita. Painel: "Remover missão" (com confirmação).
 
+**Modelos 3D (B272, S5):** `GET estudio/modelos?busca` (os `.ski` da versão publicada cujo caminho contém a busca;
+`{total, linhas}`, até 200), `GET estudio/modelos/ficha?caminho` (versão, ossos, texturas, materiais, malhas com
+vértices/triângulos) e `GET estudio/modelos/glb?caminho` (`model/gltf-binary`, spec 03 §3.10d). Painel: vista
+"Modelos" (`static/modelos.js`) com busca, ficha, visualizador **WebGL próprio** (lê o GLB; sem biblioteca externa, a
+CSP `self` continua) — arrastar gira, roda aproxima — e "Baixar GLB" para o Blender.
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -473,7 +479,8 @@ janela nova publicada (B270); nível mín. 5, exp 999 e nome novo na 1173 → vi
 publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores novos, com a descrição longa nova
 (B262). Comportamento (B258): 293
 políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id
-inexistente → 400. Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
+inexistente → 400. Modelos (B272): um `.ski` sintético (com `MOXB`) aparece na busca, a ficha traz versão,
+textura, material e 1 triângulo, o GLB tem cabeçalho e tamanho certos; caminho que não é `.ski` → 400. Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
 não usa → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
 "só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
 gatilho duplicado (id novo na resposta) e o original removido, publicados — o realm tem a mesma quantidade de
