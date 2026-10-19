@@ -15202,3 +15202,49 @@ comparação lado a lado.
 
     ### e. Falta
     - Murillo conferir no painel um monstro do 1.2.6 pelo `.ecm` (ou pela ficha do `MONSTER_ESSENCE`).
+
+283. **Sessão 2026-10-19: Estúdio S5 — Voo: diagnóstico do modelo de voo.**
+
+    ### a. Pedido
+    Commitar e seguir (B282 já commitado: `d2f37d8`, `bf3fcff`). Próxima frente do S5: Voo e montaria.
+
+    ### b. Evidência
+    - O modelo de voo é filho do modelo do jogador (`EC_Player.cpp:1943-1965`): espada em `HH_feijian`↔`CC_feijian`,
+      asa em `HH_chibang`↔`CC_chibang`, rodas nos pés com `CC_feijian` (`:153`). O modo vem do `fly_mode`
+      (`FlyMode2WingType`, `:5985-5997`); `WINGMANWING_ESSENCE` é asa (`:4262-4264`). O modelo é carregado com
+      `LSF_UNIQUESKIN`, com as peles do `.smd` (`ChangeWing`, `:4483-4515`).
+    - Sem o gancho de encaixe, o motor não posiciona o filho (`A3DSkinModelAux.cpp:378-407`).
+    - O jogador não toca ações no modelo de voo; quem as aciona é o `.ecm` do jogador, com `ChildActName:`/`HHName:`/
+      `IsTrail:` (`A3DCombinedAction.cpp:1792-1850`). Todo filho recebe o nome, e o rastro só vale no gancho certo
+      (`EC_Model.cpp:3569-3620`).
+    - Medido pelo HTTP: 114 `.ecm` de jogador no 1.5.5 e 13 no 1.2.6. Os nomes mandados aos filhos
+      (`飞行悬停`, `飞剑悬停`, `飞剑起飞`…) são exatamente os que os modelos de voo têm. Há modelos incompletos: o
+      `飞剑9` do 1.5.5 tem 4 das 6 ações de espada.
+
+    ### c. O que foi feito
+    - `pw-data-loader/ecm`: `AcaoCombinada::filhas` (`AcaoFilha`), `encaixe_de_voo`, `chega_ao_voo` e
+      `diagnostico_de_voo`, com o teste `filhas_e_voo`.
+    - `pw-recursos`:
+      - `Estudio::modelos_de_voo`;
+      - parâmetro `voo` na ficha do `.ecm`, que devolve `diagnostico_de_voo` (encaixe, contagens e estado por nome);
+      - `Governanca::conteudos`, a leitura em lote. Ela levou a ficha do 1.5.5 de 50 s para 4,8 s: o `conteudo` relia o
+        manifesto a cada arquivo.
+    - Painel: perfil "como modelo de voo" no seletor; a ficha de `FLYSWORD_ESSENCE`/`WINGMANWING_ESSENCE` abre o
+      modelo já nesse perfil; o "Criar" do B280 corrige o nome que falta.
+    - Dois acertos durante a verificação:
+      - `modelos_de_voo` não achava nenhum modelo: o `string` do layout vem como `FieldValue::Raw` (GBK), não como
+        `Text`; agora passa por `nomes::legivel`.
+      - Com os colegas contados, o vocabulário "algum colega tem" acusava nomes raros (`悬停`: 1 de 101 espadas).
+        A falta passou a exigir a maioria.
+
+    ### d. Provas
+    - `pw-data-loader` **242/242**. `pw-recursos` com o banco **22/22**: a ficha com `voo=1` dá `asa`/`CC_chibang`,
+      sem encaixe no sintético. Painel **11/11**.
+    - Contêiner, todos os modelos de voo do elements, com o encaixe presente em 100% deles:
+      - 1.5.5: 209 modelos (1 caminho ilegível), 5,3 s por ficha; 137 faltas acusadas em 179 modelos. Ex.: as asas
+        antigas (`天鹅之翼`, `蝠翼`) sem `悬停` e sem as ações de 羽灵/羽芒 que a maioria tem.
+      - 1.2.6: 37 modelos, 0,95 s por ficha; 12 faltas: `飞剑1..9` sem `飞剑起飞/降落/滑翔`.
+    - Isso é o que o arquivo tem. Se no jogo isso aparece como "parado nesse momento", ainda não foi visto.
+
+    ### e. Falta
+    - S5: nomes de habilidade (nome nativo, depende do S8); copiar ação de outro modelo do mesmo esqueleto; Minas.

@@ -514,7 +514,22 @@ como mascote no habitat dele. **Modelo a partir do `.ecm` (B282):** `GET estudio
 o modelo como o jogo: o `.smd` do `.ecm` (esqueleto e ações) com a pele `<.ecm>.ski`; sem ela, as `AddiSkinPath`
 (`Models\` + caminho) e por fim as peles do `.smd` (spec 03 §3.10d). A ficha do `.ecm` mostra esse modelo (malha,
 textura, esqueleto) com o seletor das ações do `.smd` e o "Baixar GLB"; o `.smd` sozinho continua acessível ("Abrir só o
-.smd").
+.smd"). **Diagnóstico de voo (B283):** a ficha do `.ecm` aceita `voo` (0 espada, 1 asa, 2 rodas) e traz
+`diagnostico_de_voo`, com estes campos:
+- `encaixe` (`CC_feijian`/`CC_chibang`) e `encaixe_presente` nos ganchos do esqueleto do `.smd`;
+- `jogadores`: os `.ecm` de `Models\Players\形象\` lidos;
+- `colegas`: os outros modelos de voo do mesmo modo no elements (`Estudio::modelos_de_voo`: `file_model`/`file_model2`
+  de `FLYSWORD_ESSENCE` com `fly_mode`, e de `WINGMANWING_ESSENCE` como asa);
+- `acoes`: por nome mandado, quantos jogadores o mandam, quantos colegas o têm e o estado (spec 03 §3.10d). A falta
+  só é acusada se a maioria dos colegas tem a ação; senão, o estado é "ausente, como na maioria dos colegas" (sem ⚠).
+
+O caminho do `string` do layout vem em bytes GBK (`FieldValue::Raw`), convertido com `nomes::legivel`, como na ficha.
+
+Os arquivos são lidos com `Governanca::conteudos` (lote: o manifesto é lido e indexado uma vez; `conteudo` relê o
+manifesto inteiro a cada chamada, o que levava a ficha do 1.5.5 a 50 s — agora 4,8 s, e 0,8 s no 1.2.6). No painel, o
+seletor de perfil ganha "como modelo de voo — espada/asa/rodas". A ficha de `FLYSWORD_ESSENCE`/`WINGMANWING_ESSENCE`
+abre o modelo já no perfil de voo, com o `fly_mode` do registro. Para cada nome que falta, o "Criar" do B280 cria a
+ação.
 
 ## 7. Testes
 
@@ -558,7 +573,8 @@ pele, e o GLB tem `skin` com 2 juntas (o osso e o esqueleto) e pesos (B274); sem
 (B276); um `.ecm` sintético vem primeiro e o diagnóstico acerta os três casos — combinada sem base, base ausente no
 `.smd`, combinada que falta (B277); criar `普攻1落` clonando `普攻1起` no rascunho tira a falta do diagnóstico lido
 com o rascunho, e nome repetido ou fora do GBK → 400 (B280); com `habitat=0` o diagnóstico de mascote pede só `_地面`
-e acusa as faltas (B281); o GLB do `.ecm` sintético tem malha (a `caixa.ski` ao lado) e `skin` (B282). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
+e acusa as faltas (B281); o GLB do `.ecm` sintético tem malha (a `caixa.ski` ao lado) e `skin` (B282); com `voo=1` o diagnóstico de voo do `.ecm` sintético é `asa`/`CC_chibang`, encaixe ausente (o `.bon`
+sintético não tem ganchos) e nenhuma ação a conferir (B283). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
 não usa → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
 "só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
 gatilho duplicado (id novo na resposta) e o original removido, publicados — o realm tem a mesma quantidade de

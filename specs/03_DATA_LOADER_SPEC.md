@@ -706,7 +706,21 @@ extensão .ski>` (mais o `<nome>二级.ski` de baixa resolução, se existir) �
 sem ela, `Models\error\error.ski`. As `AddiSkinPath:` do `.ecm` (`ecm::Ecm::peles_adicionais`) são relativas a
 `Models\` e só o editor as carrega (`EC_Model.cpp:678-689`, `#ifdef GFX_EDITOR`). No 1.2.6 o `.smd` é compartilhado
 por várias variantes (p.ex. `暴牙牛喽罗.smd` sem pele, com `水牛怪喽罗.ecm`/`.ski` ao lado) — por isso o `.smd` sozinho
-não tem malha.
+não tem malha. **Voo (B283):** o modelo de voo é filho do modelo do jogador. Para espada e asa, ele pendura no gancho
+`HH_feijian`/`HH_chibang` do jogador pelo encaixe `CC_feijian`/`CC_chibang` do esqueleto dele. As rodas penduram nos
+pés com `CC_feijian` (`EC_Player.cpp:153`, `:1943-1965`). O modo vem de `FLYSWORD_ESSENCE.fly_mode` (0 espada, 1 asa,
+2 rodas, `FlyMode2WingType`); `WINGMANWING_ESSENCE` é sempre asa — `ecm::encaixe_de_voo`. Sem o encaixe no esqueleto, o
+motor não posiciona o filho (`A3DSkinModelAux.cpp:378-407`). O modelo de voo é carregado como `CECModel` comum, com as
+peles do `.smd` (`LSF_UNIQUESKIN`, `EC_Player.cpp:4483-4515`). O jogador não toca nada nele diretamente: cada ação
+combinada do `.ecm` do jogador traz `ChildActName:`/`HHName:`/`IsTrail:` (`ChildActInfo::Load`,
+`A3DCombinedAction.cpp:1792-1850`; lidas em `AcaoCombinada::filhas`). Ao tocar, todo filho recebe o nome e toca a
+combinada dele com esse nome; o rastro só vale no filho do gancho certo (`EC_Model.cpp:3569-3620`;
+`ecm::chega_ao_voo`). `ecm::diagnostico_de_voo` cruza os nomes mandados pelos `.ecm` de jogador com o vocabulário do
+modo, isto é, o que os outros modelos de voo do mesmo modo têm. A falta só é acusada quando **a maioria** dos colegas
+tem a ação; quando a maioria também não tem, a linha diz "ausente, como na maioria dos colegas". Sem isso, `悬停`
+(1 de 101 espadas do 1.5.5) acusaria todas. Medido em 114 `.ecm` de jogador no 1.5.5 e 13 no 1.2.6. O vocabulário de
+espada é `飞剑悬停/低空下降/高空下降` em todos; `飞剑起飞/飞行/降落/滑翔` (e, no 1.5.5, `飞剑前进/落地`) só em parte dos
+modelos. O de asa é `飞行悬停/飞行前进/起飞/展开/翅膀收起/低空下降/高空下降/飞行落地`.
 
 ### 3.11 `global_api.lua`
 
