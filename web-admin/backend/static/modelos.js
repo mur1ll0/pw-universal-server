@@ -19,8 +19,8 @@ async function carregarModelos() {
   const area = elemento("modelos-lista");
   area.replaceChildren();
   for (const l of r.linhas) {
-    const smd = l.caminho.toLowerCase().endsWith(".smd");
-    const b = criar("button", "", `${smd ? "▣ " : "· "}${l.caminho.replace(/^models\\/i, "")}`);
+    const ext = l.caminho.toLowerCase().slice(-4);
+    const b = criar("button", "", `${ext === ".ecm" ? "◆ " : ext === ".smd" ? "▣ " : "· "}${l.caminho.replace(/^models\\/i, "")}`);
     b.type = "button";
     b.title = l.caminho;
     b.addEventListener("click", () => abrirModelo(l.caminho));
@@ -36,6 +36,28 @@ async function abrirModelo(caminho) {
   try { f = await api(rotaDeModelos("/ficha", { caminho })); } catch (erro) { ficha.textContent = erro.message; return; }
   ficha.replaceChildren();
   ficha.appendChild(criar("h3", "", caminho.split("\\").pop()));
+  if (f.tipo === "ecm") {
+    // B277: o modelo do jogo — diagnóstico das ações que o cliente pede a um monstro.
+    ficha.appendChild(criar("div", "texto-suave", `${caminho} · versão ${f.versao} · ${f.combinadas.length} ações combinadas · tabela do cliente com ${f.tabela_de_acoes} nomes`));
+    const abre = criar("a", "", `Abrir o modelo (${f.smd.split("\\").pop()}) — ver e tocar as ações`);
+    abre.href = "#";
+    abre.addEventListener("click", (ev) => { ev.preventDefault(); abrirModelo(f.smd); });
+    ficha.appendChild(abre);
+    if (!f.smd_lido) ficha.appendChild(criar("div", "texto-suave", "O .smd citado não foi lido: as ações-base não puderam ser conferidas."));
+    const tab = criar("table", "tabela-simples");
+    tab.appendChild(criar("caption", "", "Diagnóstico de monstro (nomes de Configs\actions_npc.txt + 起/落 nos ataques)"));
+    for (const d of f.diagnostico_de_monstro) {
+      const tr = criar("tr");
+      tr.append(criar("td", "", d.pedido), criar("td", d.estado === "ok" ? "texto-suave" : "", d.estado === "ok" ? "ok" : `⚠ ${d.estado}`));
+      tab.appendChild(tr);
+    }
+    ficha.appendChild(tab);
+    const lista = criar("ul");
+    for (const c of f.combinadas) lista.appendChild(criar("li", "", `${c.nome} ← ${c.bases.length ? c.bases.join(", ") : "(sem ação-base)"}${c.bases_ausentes.length ? ` — ausentes no .smd: ${c.bases_ausentes.join(", ")}` : ""}`));
+    ficha.appendChild(criar("div", "texto-suave", "Ações combinadas do .ecm (← ações-base do .smd):"));
+    ficha.appendChild(lista);
+    return;
+  }
   if (f.tipo === "modelo") {
     // B274: o modelo inteiro (.smd) — esqueleto e peles.
     const e = f.esqueleto;

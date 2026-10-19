@@ -179,10 +179,13 @@ async fn estudio_modelos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Qu
     let todos = e.gov.buscar(&v, q.busca.as_deref().unwrap_or(""), usize::MAX)?;
     let mut modelos: Vec<&Value> = todos
         .iter()
-        .filter(|x| x["caminho"].as_str().is_some_and(|c| { let c = c.to_lowercase(); c.ends_with(".smd") || c.ends_with(".ski") }))
+        .filter(|x| x["caminho"].as_str().is_some_and(|c| { let c = c.to_lowercase(); c.ends_with(".ecm") || c.ends_with(".smd") || c.ends_with(".ski") }))
         .collect();
-    // O `.smd` primeiro (é o modelo inteiro).
-    modelos.sort_by_key(|x| !x["caminho"].as_str().unwrap_or("").to_lowercase().ends_with(".smd"));
+    // O `.ecm` (o modelo do jogo, B277) primeiro, depois o `.smd` (o modelo inteiro), depois as peles.
+    modelos.sort_by_key(|x| {
+        let c = x["caminho"].as_str().unwrap_or("").to_lowercase();
+        if c.ends_with(".ecm") { 0 } else if c.ends_with(".smd") { 1 } else { 2 }
+    });
     Ok(Json(json!({ "total": modelos.len(), "linhas": modelos.into_iter().take(q.limite.unwrap_or(200).min(500)).collect::<Vec<_>>() })))
 }
 
@@ -253,6 +256,36 @@ fn textura_em_png(bytes: &[u8]) -> Option<pw_data_loader::glb::Textura> {
 /// um `.smd` (B274): o esqueleto (ossos, juntas, ganchos, ou por que não foi lido) e a ficha de cada pele.
 async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Json<Value>> {
     validar(&v)?;
+    if q.caminho.to_lowercase().ends_with(".ecm") {
+        // B277: o modelo do jogo — o .smd, as ações combinadas e o diagnóstico de monstro (os nomes que o cliente pede,
+        // `pw_data_loader::ecm::pedidos_de_monstro`, pela tabela `configs\actions_npc.txt` do próprio cliente).
+        let (nome, dados) = e.gov.conteudo(&v, &q.caminho)?;
+        let m = pw_data_loader::ecm::ler(&dados).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("{nome}: .ecm ilegível")))?;
+        let bases_do_smd: Option<Vec<String>> = e.gov.conteudo(&v, &m.smd).ok().and_then(|(_, b)| pw_data_loader::smd::cabeca(&b).ok()).map(|c| c.lista_de_acoes.into_iter().map(|a| a.nome).collect());
+        let smd_caminho = e.gov.conteudo(&v, &m.smd).ok().map(|(n, _)| n);
+        let combinadas: Vec<Value> = m.acoes.iter().map(|a| {
+            let faltam: Vec<&String> = bases_do_smd.as_ref().map_or(vec![], |b| a.bases.iter().filter(|x| !b.contains(x)).collect());
+            json!({ "nome": a.nome, "bases": a.bases, "bases_ausentes": faltam })
+        }).collect();
+        let tabela = e.gov.conteudo(&v, "configs\\actions_npc.txt").ok().map(|(_, b)| pw_data_loader::ecm::tabela_de_nomes(&b)).unwrap_or_default();
+        let diagnostico: Vec<Value> = pw_data_loader::ecm::pedidos_de_monstro(&tabela).into_iter().map(|(i, pedido, alternativa)| {
+            // Ferido: o motor tenta o nome e, sem a combinada, a alternativa (`EC_NPCModel.cpp:692-702`).
+            let achada = m.acoes.iter().find(|a| a.nome == pedido).or_else(|| alternativa.as_ref().and_then(|x| m.acoes.iter().find(|a| &a.nome == x)));
+            let so_base = bases_do_smd.as_ref().is_some_and(|b| b.contains(&pedido) || alternativa.as_ref().is_some_and(|x| b.contains(x)));
+            let estado = match achada {
+                // O comentário de `EC_NPCModel.cpp:693-697`: o ferido antigo ficava só no .bon/.smd, não no .ecm — o motor
+                // 1.5.5 só toca combinadas (`GetComActByName`, `EC_Model.h:577-583`).
+                None if so_base => "só existe como ação-base no .smd (o motor 1.5.5 só toca combinadas do .ecm)",
+                None => "sem ação combinada no .ecm",
+                Some(a) if a.bases.is_empty() => "ação combinada sem ação-base (não anima)",
+                Some(a) if bases_do_smd.as_ref().is_some_and(|b| a.bases.iter().any(|x| !b.contains(x))) => "ação-base ausente no .smd",
+                Some(_) => "ok",
+            };
+            json!({ "indice": i, "pedido": pedido, "alternativa": alternativa, "estado": estado })
+        }).collect();
+        return Ok(Json(json!({ "caminho": nome, "tipo": "ecm", "versao": m.versao, "smd": smd_caminho.unwrap_or(m.smd), "smd_lido": bases_do_smd.is_some(),
+            "combinadas": combinadas, "tabela_de_acoes": tabela.len(), "diagnostico_de_monstro": diagnostico })));
+    }
     if q.caminho.to_lowercase().ends_with(".smd") {
         let (nome, c, peles, esqueleto) = ler_smd(&e, &v, &q.caminho)?;
         let esq = match &esqueleto {

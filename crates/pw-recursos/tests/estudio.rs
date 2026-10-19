@@ -150,7 +150,12 @@ impl FonteDePacote for Pacotes {
         u(&mut smd, 9); smd.extend_from_slice(b"caixa.ski");
         u(&mut smd, 0); u(&mut smd, 0); // física e pasta das trilhas (v8), vazias; 0 ações
         receber(b"models\\teste\\caixa.smd".to_vec(), smd)?;
-        Ok(ResultadoDoPacote { entradas: 15, falhas: vec![] })
+        // B277: o .ecm (texto MOXT) e a tabela de ações do cliente (GBK).
+        let ecm = "MOXTVersion: 42\nSkinModelPath: Models\\teste\\caixa.SMD\nComActCount: 2\nCombineActName: 站立\nBaseActCount: 0\nCombineActName: 普攻1起\nBaseActCount: 1\nBaseActName: inexistente\n";
+        receber(b"models\\teste\\caixa.ecm".to_vec(), [b"".as_slice(), &encoding_rs::GBK.encode(ecm).0].concat())?;
+        let tab = "#_begin\n// 怪物\n\"站立\"\n\"休闲\"\n\"戒备\"\n\"技能1\"\n\"慢速移动\"\n\"普攻1\"\n\"普攻2\"\n";
+        receber(b"configs\\actions_npc.txt".to_vec(), encoding_rs::GBK.encode(tab).0.to_vec())?;
+        Ok(ResultadoDoPacote { entradas: 17, falhas: vec![] })
     }
 }
 
@@ -781,10 +786,17 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
 
         // Modelos 3D (B272): lista de .ski, ficha e GLB.
         let ml = json_de(pedir("GET", "estudio/modelos").query("busca", "caixa").call().unwrap());
-        assert_eq!(ml["total"], 2, "{ml}");
-        assert!(ml["linhas"][0]["caminho"].as_str().unwrap().to_lowercase().ends_with(".smd"), "B274: o .smd primeiro");
+        assert_eq!(ml["total"], 3, "{ml}");
+        assert!(ml["linhas"][0]["caminho"].as_str().unwrap().to_lowercase().ends_with(".ecm"), "B277: o .ecm primeiro");
+        // B277: diagnóstico — 站立 sem base, 普攻1起 com base ausente no .smd, 普攻1落 sem combinada.
+        let fe = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", ml["linhas"][0]["caminho"].as_str().unwrap()).call().unwrap());
+        let estado = |p: &str| fe["diagnostico_de_monstro"].as_array().unwrap().iter().find(|x| x["pedido"] == p).map(|x| x["estado"].as_str().unwrap().to_string());
+        assert_eq!((fe["smd_lido"].as_bool(), fe["tabela_de_acoes"].as_u64()), (Some(true), Some(7)), "{fe}");
+        assert!(estado("站立").unwrap().contains("sem ação-base"), "{fe}");
+        assert!(estado("普攻1起").unwrap().contains("ausente no .smd"), "{fe}");
+        assert!(estado("普攻1落").unwrap().contains("sem ação combinada"), "{fe}");
         // B274: o modelo inteiro — ficha com esqueleto e pele, GLB com skin.
-        let smd = ml["linhas"][0]["caminho"].as_str().unwrap().to_string();
+        let smd = ml["linhas"][1]["caminho"].as_str().unwrap().to_string();
         let fm = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &smd).call().unwrap());
         assert_eq!((fm["tipo"].as_str(), fm["esqueleto"]["ossos"][0][0].as_str(), fm["peles"][0]["malhas"].as_u64()), (Some("modelo"), Some("raiz"), Some(1)), "{fm}");
         let mut gm = Vec::new();
@@ -796,7 +808,7 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         // B276: a ação (o .smd sintético não tem nenhuma) — pedir uma que não existe → 400.
         assert_eq!(fm["lista_de_acoes"].as_array().map(|x| x.len()), Some(0), "{fm}");
         assert_eq!(erro_de(pedir("GET", "estudio/modelos/glb").query("caminho", &smd).query("acao", "andar").call()).0, 400);
-        let caminho = ml["linhas"][1]["caminho"].as_str().unwrap().to_string();
+        let caminho = ml["linhas"][2]["caminho"].as_str().unwrap().to_string();
         let fi = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &caminho).call().unwrap());
         assert_eq!((fi["versao"].as_u64(), fi["texturas"][0].as_str(), fi["materiais"][0]["nome"].as_str(), fi["malhas"][0]["triangulos"].as_u64()),
             (Some(9), Some("caixa.dds"), Some("madeira"), Some(1)), "{fi}");
