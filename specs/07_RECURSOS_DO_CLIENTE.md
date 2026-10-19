@@ -442,7 +442,9 @@ probabilidade, item, custo e contagem (no v156: `id_tasks_N`, `tasks_N_id_task`,
 `{total, linhas}`, até 200), `GET estudio/modelos/ficha?caminho` (versão, ossos, texturas, materiais, malhas com
 vértices/triângulos) e `GET estudio/modelos/glb?caminho` (`model/gltf-binary`, spec 03 §3.10d). Painel: vista
 "Modelos" (`static/modelos.js`) com busca, ficha, visualizador **WebGL próprio** (lê o GLB; sem biblioteca externa, a
-CSP `self` continua) — arrastar gira, roda aproxima — e "Baixar GLB" para o Blender.
+CSP `self` continua) — arrastar gira, roda aproxima — e "Baixar GLB" para o Blender. **Texturas (B273):** a ficha
+traz `texturas_achadas` (o caminho onde o cliente acharia cada textura, ou nulo) e o GLB leva as texturas em PNG
+(spec 03 §3.10d); o visualizador as desenha, com corte de alfa nas transparentes, e a ficha lista as não achadas.
 
 ## 7. Testes
 
@@ -480,7 +482,8 @@ publicada: o realm recebe o arquivo e o leitor do GS lê as 7.994 com os valores
 (B262). Comportamento (B258): 293
 políticas no 1.2.6; uma usada tem os gatilhos e os monstros nomeados; busca pelo id do monstro acha a política; id
 inexistente → 400. Modelos (B272): um `.ski` sintético (com `MOXB`) aparece na busca, a ficha traz versão,
-textura, material e 1 triângulo, o GLB tem cabeçalho e tamanho certos; caminho que não é `.ski` → 400. Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
+textura, material e 1 triângulo, o GLB tem cabeçalho e tamanho certos; caminho que não é `.ski` → 400; a textura DXT1 na pasta `textures` (minúscula) é achada e vai no GLB como PNG
+ligada ao material (B273). Tipos (B271): catálogo na ficha; operação nova acrescentada e removida; tipo que o arquivo
 não usa → 400. Editar (B259): a ficha lista `skill` como editável; campo inexistente → 400; habilidade 4242/3 e
 "só em combate" no rascunho, publicados no realm e relidos pelo leitor do GS. Estrutura (B261): fala trocada,
 gatilho duplicado (id novo na resposta) e o original removido, publicados — o realm tem a mesma quantidade de

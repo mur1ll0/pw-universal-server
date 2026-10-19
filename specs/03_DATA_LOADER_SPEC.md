@@ -633,7 +633,17 @@ não foi medido.
 
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
-(mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto e sem textura ainda.
+(mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.
+
+**Texturas (B273, `imagem.rs`):** o cliente acha a textura `nome` de um `.ski` em `<pasta>\Textures\<nome>` e, se não
+achar, em `<pasta>\Tex_<título>\<nome>` (`A3DSkin::Load`). Medido numa amostra de 1/7 dos `.ski` do 1.5.5 BR (4.985
+referências): 4.785 em `Textures`, 139 em `Tex_`, 61 ausentes no próprio cliente; extensões dds 4.978, psd 5, tga 2;
+formatos DXT1 1.732, DXT3 2.201, DXT5 746, RGBA 32 bits 244, TGA 1 — e **as 4.924 achadas decodificam**.
+`imagem::decodificar` faz DDS (DXT1 com o índice 3 transparente quando `c0 <= c1`, DXT3, DXT5, sem compressão por
+máscaras; só o 1º mip) e TGA tipo 2 (24/32 bits, origem pelo bit 5). `glb::do_ski_com_texturas` embute cada textura
+como PNG e cria um material glTF por par (material, textura) usado; textura com algum alfa < 255 → `alphaMode` MASK
+(corte 0,5 — escolha de exibição, não regra do jogo). Atenção, na instalação BR desempacotada os nomes estão no disco
+como os bytes GBK lidos em Windows-1252 (artefato da extração; no `pw-recursos` o caminho é GBK e não há problema).
 
 ### 3.11 `global_api.lua`
 

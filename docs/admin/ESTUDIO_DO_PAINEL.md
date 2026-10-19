@@ -341,6 +341,10 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 > GLB e a vista "Modelos" com visualizador WebGL próprio (sem three.js: nada baixado, CSP `self`). Falta do S5:
 > texturas (DDS → PNG), esqueleto (`.bon`) e pele com ossos, animações (`.stck`) e ações do `.ecm`, diagnóstico de
 > ações que faltam; Mascotes, Voo, Minas.
+>
+> **B273 (S5, 2ª parte):** texturas — achadas como o cliente acha, DDS/TGA decodificados por um decodificador próprio
+> (todas as achadas da amostra decodificam), PNG no GLB e desenhadas no visualizador. Falta do S5: esqueleto e pele com
+> ossos, animações e ações, diagnóstico; Mascotes, Voo, Minas.
 
 | fase | entrega |
 | :--- | :--- |
@@ -348,7 +352,7 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 | S2 | escritor do `elements` (v7 e v156) + telas de Armas, Armaduras, Consumíveis, Monstros (drops) + índice de referências |
 | S3 | NPCs, Serviços (30 tipos) e Conversa (`TALK_PROC`); Receitas |
 | S4 | Mapas: minimapa interativo, `npcgen` (NPCs, monstros, recursos), `region`/`precinct`, teleportes, `task_npc` |
-| S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas — **em andamento** (B272: `.ski` → GLB, visualizador) |
+| S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas — **em andamento** (B272: `.ski` → GLB, visualizador; B273: texturas) |
 | S6 | glTF e extensão do Blender |
 | S7 | Missões (§4.4); Loja Gold (§4.6); Comportamento (`aipolicy`); Textos — **concluído (B254-B271)** |
 | S8 | Habilidades: números e textos; depois `elementskill.dll` + efeitos no GS |

@@ -14834,3 +14834,33 @@ comparação lado a lado.
     ### e. Falta
     - Ver no painel: Estúdio → Modelos → buscar um monstro → o modelo aparece cinza/colorido, gira com o mouse.
     - Texturas (DDS), esqueleto e pele com ossos, animações e ações (`.ecm`), diagnóstico; medir o `.ski` do 1.2.6.
+
+273. **Sessão 2026-10-19: Estúdio S5, segunda parte — texturas.**
+
+    ### a. Pedido
+    Commitar o B272 (feito: `13da9eb`, `3ead137`) e seguir.
+
+    ### b. Decisão e evidência
+    - Onde o cliente acha: `<pasta>\Textures\<nome>`, depois `<pasta>\Tex_<título>\<nome>` (`A3DSkin::Load`).
+    - Medição na amostra de 1/7 dos `.ski` do 1.5.5 BR: 4.785 em `Textures`, 139 em `Tex_`, 61 ausentes no cliente;
+      DXT1/DXT3/DXT5/RGBA 32 bits e um TGA. Primeira rodada achou quase nada — os nomes da instalação desempacotada
+      estão no disco como GBK lido em Windows-1252 (artefato da extração; corrigido só na medição).
+    - Decodificador próprio (DDS/S3TC e TGA, formatos públicos) em vez de baixar dependência; PNG pelo crate `png` que
+      o `pw-recursos` já usa. Transparência por corte (MASK) quando a imagem tem alfa — escolha de exibição.
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `imagem.rs` (`dds`, `tga`, `decodificar`); `glb::do_ski_com_texturas` (imagens PNG, um
+      material por par material/textura, sampler repetindo).
+    - `pw-recursos`: `achar_textura` (os dois caminhos do cliente), `textura_em_png`; `texturas_achadas` na ficha.
+    - Painel: o visualizador lê UV e imagens do GLB, amostra a textura e corta o alfa; a ficha lista as não achadas.
+
+    ### d. Provas
+    - `imagem::testes::blocos_conhecidos` (DXT1 com e sem transparente, DXT3, DXT5, RGBA por máscara, TGA de baixo
+      para cima); `ski::testes::medir_texturas`: **4.924/4.924** texturas achadas decodificam.
+    - `pw-recursos` com o banco **22/22**: DXT1 em `textures` (minúscula) achada, PNG no GLB ligado ao material.
+    - `pw-data-loader` **232/232**; `cargo check --workspace --tests` ok. No contêiner, em 40 `.ski` de `npcs`: 57/57
+      texturas achadas no 1.2.6, 81/82 no 1.5.5. No navegador, um NPC real com 2 texturas desenhado texturizado
+      (193 cores distintas no modelo; captura conferida).
+
+    ### e. Falta
+    - Esqueleto (`.bon`) e pele com ossos; animações (`.stck`) e ações do `.ecm`; diagnóstico; `.psd` (5 referências).
