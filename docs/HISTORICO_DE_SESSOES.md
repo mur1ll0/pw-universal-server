@@ -15571,3 +15571,40 @@ comparação lado a lado.
 
     ### f. Falta (S6)
     - Esqueleto e ações vindos do glTF; extensão do Blender.
+
+295. **Sessão 2026-10-20: Estúdio S6 — animações do glTF como ações do modelo.**
+
+    ### a. Pedido
+    Commitar e seguir (B294 já commitado: `3b4bd04`, `3ae2224`).
+
+    ### b. Evidência
+    - Cada osso toca a trilha da sua 1ª junta (`A3DSkinModelAct.cpp:612`). Sem trilha, `GetBoneStateOnTrack` falha
+      (`:379-384`) e o chamador usa valores indefinidos. Logo, **todo** osso precisa de trilha.
+    - Medido nas `.stck` do cliente: FPS 15 (83%) ou 30, igual em cada trilha; nome `<ação>.stck` na pasta das trilhas
+      e quadro inicial 0 (249 de 249).
+
+    ### c. O que foi feito
+    - `pw-data-loader/importar`: `acoes_do_glb`.
+      - Uma chave por quadro no FPS do esqueleto.
+      - O osso sem canal fica na pose de repouso do nó, ou na de ligação do `.bon` se não houver nó.
+      - Volta à mão do D3D; interpolação `LINEAR` (nlerp pelo caminho curto) e `STEP`.
+      - Também `decompor` (matriz em TRS); `glb::matriz_gltf` ficou pública.
+    - `pw-recursos`: `Estudio::importar_acoes` e `POST estudio/modelos/acoes_glb?rascunho=&smd=`.
+      - Grava `.stck` + `FILEACTIONDATA6` no `.smd`, para `.smd` v ≥ 7 com `.bon` v6. No `.bon` v5 (1.2.6) responde
+        400 com o motivo.
+      - Ação de mesmo nome é substituída; igual à do cliente não é regravada.
+    - Painel: "Importar ações de GLB…" na ficha do `.smd`; repasse e liberação de tamanho; teste.
+
+    ### d. Provas e tropeços
+    - Ida e volta em 40 ações reais (20 v5, 20 v6, 47.401 chaves): posição exata (4,6e-7) e quatérnio na chave até
+      9,6e-5. Entre chaves fora da grade, até 1e-2 (reamostragem).
+    - Tropeço do teste: a 1ª versão interpolava o quatérnio sem o caminho curto e acusou 1,26e-2.
+    - Tropeço da rota: a 1ª prova acusou "o arquivo enviado é igual ao publicado". A `.stck` reimportada de uma ação de
+      1 quadro sai idêntica à do cliente, e a rota passou a tratar isso como "igual".
+    - `pw-data-loader` **252/252**; `pw-recursos` com o banco **22/22** (ação adicionada, depois substituída; GLB sem animação dá 400); painel
+      **12/12**.
+    - Pelo `pw-recursos`: ação de 1 quadro sai igual; a mais longa (442 quadros nos 5) sai substituída com os mesmos
+      quadros; a renomeada sai adicionada; no 1.2.6 a recusa vem com o motivo.
+
+    ### e. Falta (S6)
+    - Ação para `.bon` v5 (trilhas no esqueleto, todo o 1.2.6); esqueleto novo vindo do glTF; extensão do Blender.

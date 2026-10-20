@@ -594,7 +594,29 @@ gravado; senão, uma cópia em `Textures\` passaria a valer no lugar da original
 - com a imagem renomeada: 10 de 10 "adicionada" em `…\Textures\<nome>.dds`.
 
 B293: a textura gravada é DXT1/DXT5 (spec 03), e a comparação usa os pixels de origem (o PNG), não o DXT, que tem
-perda. A resposta traz
+perda.
+
+**Ações de GLB (B295, S6):** `POST estudio/modelos/acoes_glb?rascunho=&smd=`, com o GLB no corpo
+(`Estudio::importar_acoes`), transforma cada animação numa ação do `.smd`.
+- **Arquivos:** a ação vira `<pasta das trilhas>\<ação>.stck` (sem pasta, `tcks_<título>`) e uma entrada
+  `FILEACTIONDATA6` (quadros 0 a n−1) mais o nome da `.stck` no `.smd`. É a convenção do cliente: 249 de 249 ações
+  amostradas com `<ação>.stck` e quadro inicial 0.
+- **Nome repetido:** a ação de mesmo nome é substituída.
+- **Escopo:** só `.smd` v ≥ 7 com `.bon` v6. No `.bon` v5 (todo o 1.2.6) as trilhas ficam no esqueleto, e a resposta
+  é 400 com o motivo.
+- **Resposta:** `acoes: [{nome, stck, quadros, trilhas, fps, acao}]`, `relatorio` e `acoes_do_modelo`.
+- **Para o jogo tocar:** a ação ainda precisa de uma ação combinada no `.ecm`, feita pelo "Criar" do diagnóstico
+  (B280) com essa base.
+- **Painel:** "Importar ações de GLB…" na ficha do `.smd`.
+- **Igual ao cliente:** se a `.stck` gerada é igual à do cliente, ela não é regravada e a ação sai "igual à do cliente
+  (não gravada)". Se nada muda no `.smd`, não há item.
+
+Medido pelo `pw-recursos` em 5 `.smd` de NPC do 1.5.5, num rascunho de teste descartado:
+- a 1ª ação de cada um (de 1 quadro), baixada e reimportada, sai byte a byte igual;
+- a ação mais longa de cada um (442 quadros no total) sai "substituída" com o mesmo número de quadros, porque as
+  chaves fora da grade de quadros são reamostradas (spec 03);
+- a animação renomeada sai "adicionada";
+- no 1.2.6, recusa com o motivo. A resposta traz
 `texturas_gravadas: [{textura, acao}]`, com `acao` "adicionada", "substituída" ou "igual à do cliente (não gravada)".
 
 Os arquivos são lidos com `Governanca::conteudos` (lote: o manifesto é lido e indexado uma vez; `conteudo` relê o

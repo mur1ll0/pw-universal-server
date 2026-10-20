@@ -725,6 +725,24 @@ Ida e volta (1/5 dos `.smd` do 1.5.5): **848 modelos**, com 888 malhas de pele e
 rígidas no mesmo osso. Os 24 modelos que antes ficavam de fora eram os afetados pelo defeito do exportador.
 `importar::testes::rigida_por_hierarquia` confere a matriz e o caso sem osso.
 
+**Ações do glTF (B295, S6):** `importar::acoes_do_glb(glb, esqueleto)` transforma cada animação numa `Stck` mais o último
+quadro.
+- **Trilha para todo osso:** cada osso usa a trilha da sua primeira junta (`A3DSkinModelAct.cpp:612`). Todo osso
+  precisa de uma, porque sem ela `GetBoneStateOnTrack` falha (`:379-384`) e quem chama usa posição e rotação sem
+  valor. O osso sem canal fica constante na pose de repouso do nó (TRS ou a `matrix` decomposta); sem nó, na pose de
+  ligação do `.bon`.
+- **Valores:** os canais são os valores locais do osso. A volta à mão do Direct3D é a mesma do exportador: posição
+  (x, y, −z) e quatérnio (−x, −y, z, w).
+- **Amostragem:** uma chave por quadro no FPS do esqueleto, que é o FPS do `FrameToTime` da ação; nas `.stck` do
+  cliente é 15 (83%) ou 30, igual em cada trilha. Um segmento de 0 ao fim.
+- **Interpolação:** `LINEAR` (rotação por *nlerp*, pelo caminho curto) e `STEP`. `CUBICSPLINE` usa o valor da chave
+  e é relatada; escala e `weights` também são relatadas.
+
+Ida e volta em 40 ações reais (20 com `.bon` v5, 20 com v6, 47.401 chaves; `importar::testes::acoes_ida_e_volta`):
+- posição exata (diferença relativa até 4,6e-7);
+- quatérnio, nos instantes que caem numa chave original, até 9,6e-5;
+- entre chaves fora da grade de quadros, até 1e-2: é a reamostragem sobre as amostras já normalizadas do GLB.
+
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
 (mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.
