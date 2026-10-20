@@ -684,6 +684,19 @@ Ida e volta numa amostra de 1/5 dos `.smd` do 1.5.5 (`importar::testes`): **824 
 vértices** com posição, normal, UV e índices exatos e as mesmas influências por vértice. O 4º peso implícito sobra
 como ruído (~1e-8) num lado e some no outro; abaixo de 1e-6 ele não conta. O `.ski` importado se reescreve e relê.
 
+**PNG → DDS (B292, S6):** `imagem::png` decodifica PNG (o crate `png`), e `decodificar` passa a aceitá-lo.
+`imagem::dds_argb32` grava DDS sem compressão de 32 bits com a cadeia inteira de mipmaps, com o cabeçalho que **646**
+DDS de 32 bits do cliente 1.5.5 têm (medido):
+- `flags` 0xA1007 e tamanho linear `w × h × 4`;
+- formato 0x41 com máscaras ARGB;
+- `caps` 0x401008.
+
+O motor usa o número de mipmaps do arquivo (`A3DTexture.cpp:594`). Cada nível é a média 2×2 do anterior, o
+`D3DX_FILTER_BOX` que o motor usa ao reduzir (`:673`).
+
+O importador guarda em `texturas_novas` cada imagem embutida no GLB: PNG vira `<nome>.dds`, e DDS/TGA vão como estão.
+Imagem que não vem embutida ou que não é PNG/DDS/TGA (JPEG) é relatada.
+
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
 (mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.

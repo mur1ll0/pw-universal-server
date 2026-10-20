@@ -585,6 +585,15 @@ rascunho: o `.ski` como item `adicionar` e o `.smd` como `substituir`.
 - **Painel:** ao fim da lista de peles da ficha do `.smd`, "Pele nova a partir de GLB…" com o campo do nome (sem
   nome, usa o do arquivo).
 
+**Texturas da importação (B292):** "Substituir" e "Pele nova" gravam no rascunho cada textura que o GLB traz em
+`<pasta da pele>\Textures\<nome>`, o primeiro lugar onde o cliente procura (B273). Se o cliente já tem o arquivo com
+os mesmos pixels onde o cliente o acha hoje (em `Textures\` e, sem ela, em `Tex_<título da pele>\`), ele não é
+gravado; senão, uma cópia em `Textures\` passaria a valer no lugar da original. Medido pelo `pw-recursos` em 5
+`.smd` de NPC por versão, em rascunhos descartados:
+- ida e volta (o GLB baixado do painel): 13 de 13 texturas "igual";
+- com a imagem renomeada: 10 de 10 "adicionada" em `…\Textures\<nome>.dds`. A resposta traz
+`texturas_gravadas: [{textura, acao}]`, com `acao` "adicionada", "substituída" ou "igual à do cliente (não gravada)".
+
 Os arquivos são lidos com `Governanca::conteudos` (lote: o manifesto é lido e indexado uma vez; `conteudo` relê o
 manifesto inteiro a cada chamada, o que levava a ficha do 1.5.5 a 50 s — agora 4,8 s, e 0,8 s no 1.2.6). No painel, o
 seletor de perfil ganha "como modelo de voo — espada/asa/rodas". A ficha de `FLYSWORD_ESSENCE`/`WINGMANWING_ESSENCE`

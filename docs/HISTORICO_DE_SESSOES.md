@@ -15477,3 +15477,37 @@ comparação lado a lado.
     ### d. Falta (S6)
     - Malha rígida (sem pele); PNG → DDS; esqueleto e ações vindos do glTF; extensão do Blender.
     - Para NPC e monstro, a pele que vale é `<.ecm>.ski` (B282). "Substituir" nela já resolve.
+
+292. **Sessão 2026-10-20: Estúdio S6 — textura PNG → DDS na importação.**
+
+    ### a. Pedido
+    Commitar e seguir (B291 já commitado: `ea981a1`, `72f2cf7`).
+
+    ### b. Evidência
+    - O motor lê o DDS por `D3DXCreateTextureFromFileInMemoryEx` com o número de mipmaps do arquivo
+      (`A3DTexture.cpp:594`) e reduz com `D3DX_FILTER_BOX` (`:673`).
+    - Há 646 DDS de 32 bits no cliente 1.5.5, todos com o mesmo cabeçalho (medido): `flags` 0xA1007, tamanho linear,
+      formato 0x41 ARGB, `caps` 0x401008 e mipmaps até 1×1.
+
+    ### c. O que foi feito
+    - `pw-data-loader/imagem`: `png` (decodifica; `decodificar` também aceita PNG) e `dds_argb32` (DDS de 32 bits com
+      esse cabeçalho e mipmaps por média 2×2). O crate `png` já estava no `Cargo.lock`.
+    - `importar`: `texturas_novas`, em que PNG embutido vira `<nome>.dds`; DDS e TGA vão como estão.
+    - `pw-recursos`: `Estudio::gravar_texturas` grava em `<pasta da pele>\Textures\` no rascunho. Não grava se o
+      cliente já tem os mesmos pixels onde o acha (`Textures\` ou `Tex_<título>\`). As respostas trazem
+      `texturas_gravadas`.
+
+    ### d. Provas e tropeços
+    - `pw-data-loader` **248/248** (`imagem::testes::dds_argb32_e_png`). `pw-recursos` com o banco **22/22** (a
+      textura do `.smd` sintético volta "igual").
+    - Pelo `pw-recursos`: 13 de 13 texturas de ida e volta "igual"; com a imagem renomeada, 10 de 10 "adicionada".
+    - Três tropeços:
+      - A 1ª publicação falhou no Docker (`exit 101`) enquanto a suíte rodava ao mesmo tempo; a mesma compilação
+        sozinha passou. O contêiner antigo continuou no ar, e a prova caiu sem descartar o rascunho 8, que foi
+        descartado depois. O script agora descarta em `finally`.
+      - A 2ª prova mostrou uma textura "adicionada" na ida e volta, porque o cliente a tinha em `Tex_<título>\`.
+        Corrigido: a comparação olha os dois lugares, na ordem do cliente.
+
+    ### e. Falta (S6)
+    - Compressão DXT (hoje 32 bits, 4× o DXT1/DXT3 em tamanho); malha rígida; esqueleto e ações vindos do glTF;
+      extensão do Blender.
