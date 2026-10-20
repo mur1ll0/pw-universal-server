@@ -26,6 +26,8 @@ const NIVEL_DO_RASCUNHO: i32 = 3;
 /// B301: a tabela de nome e descrição das habilidades no cliente (`m_SkillDesc.Init("Configs\\skillstr.txt", true)`,
 /// `EC_Game.cpp:529` — UTF-16).
 const CAMINHO_SKILLSTR: &str = "configs\\skillstr.txt";
+/// B305: o DLL das habilidades do cliente (raiz do `element`).
+const CAMINHO_ELEMENTSKILL: &str = "elementskill.dll";
 
 /// B302: os números das habilidades do realm — item do servidor publicado em `data/<realm>/catalogo/habilidades.json`,
 /// que o GS lê no lugar do embutido (`manager.rs:330-361`, B102).
@@ -3411,12 +3413,61 @@ impl Estudio {
         let (hs, origem) = self.habilidades_do_servidor(gov, versao, rascunho).await?;
         let h = hs.get(&id.to_string()).cloned().with_context(|| format!("a habilidade {id} não existe no servidor {versao}"))?;
         let t = self.skillstr(gov, versao, rascunho).await.ok();
+        let cliente = self.numeros_do_cliente(gov, versao, rascunho, id).await;
         Ok(json!({
-            "id": id, "servidor": h,
+            "id": id, "servidor": h, "cliente": cliente,
             "nome": t.as_ref().and_then(|t| t.texto(id * 10)), "descricao": t.as_ref().and_then(|t| t.texto(id * 10 + 1)),
             "skillstr": CAMINHO_SKILLSTR, "origem_dos_numeros": origem,
             "editaveis": CAMPOS_EDITAVEIS.iter().map(|c| json!({ "campo": c.0, "quem_confere": c.1 })).collect::<Vec<_>>(),
         }))
+    }
+
+    /// B305 (S8): os números da habilidade no `elementskill.dll` do cliente (com o rascunho) — só as tabelas medidas
+    /// (`crate::elementskill`); o resto vem do código do DLL e não se edita.
+    async fn numeros_do_cliente(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: i64) -> Value {
+        let dll = match self.bytes_do_cliente(gov, versao, CAMINHO_ELEMENTSKILL, rascunho).await {
+            Ok(b) => b,
+            Err(e) => return json!({ "mapa": false, "motivo": format!("{CAMINHO_ELEMENTSKILL}: {e}") }),
+        };
+        let Some(m) = crate::elementskill::mapa_para(&dll) else {
+            return json!({ "mapa": false, "motivo": "este elementskill.dll não tem mapa de tabelas (só o do cliente 1.5.5 BR v156 foi medido)" });
+        };
+        let mut campos = serde_json::Map::new();
+        for (c, quem) in crate::elementskill::CAMPOS {
+            if let Some(t) = m.tabela(id, c) {
+                campos.insert(c.to_string(), json!({ "valores": m.ler(&dll, t), "le_alem": t.le_alem, "quem_confere": quem }));
+            }
+        }
+        json!({ "mapa": true, "arquivo": CAMINHO_ELEMENTSKILL, "campos": campos })
+    }
+
+    /// B305 (S8): troca números por nível da habilidade no `elementskill.dll` do rascunho — só os bytes da tabela;
+    /// o arquivo continua reconhecido pelo mapa (mesmo "resto").
+    pub async fn definir_numeros_do_cliente(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i64, campos: serde_json::Map<String, Value>) -> Result<Value> {
+        if campos.is_empty() {
+            bail!("nada a mudar");
+        }
+        self.alterar_item_do_cliente(gov, versao, CAMINHO_ELEMENTSKILL, rascunho, move |b| {
+            let m = crate::elementskill::mapa_para(b).context("este elementskill.dll não tem mapa de tabelas")?;
+            let mut novo = b.to_vec();
+            let mut mudou = Vec::new();
+            for (k, v) in &campos {
+                if !crate::elementskill::CAMPOS.iter().any(|c| c.0 == k) {
+                    bail!("o campo {k} não se edita no cliente");
+                }
+                let vs: Vec<f64> = v.as_array().with_context(|| format!("{k}: uma lista de números"))?.iter()
+                    .map(|x| x.as_f64().with_context(|| format!("{k}: só números")))
+                    .collect::<Result<_>>()?;
+                m.escrever(&mut novo, id, k, &vs).map_err(anyhow::Error::msg)?;
+                mudou.push(k.clone());
+            }
+            if !m.reconhece(&novo) {
+                bail!("a edição saiu das tabelas do elementskill.dll");
+            }
+            let mudanca = json!({ "acao": "editar", "tipo": "numeros_de_habilidade_no_cliente", "id": id, "campos": mudou });
+            Ok((novo, json!({ "id": id, "campos": mudou }), mudanca))
+        })
+        .await
     }
 
     /// B301 (S8): troca o nome e/ou a descrição da habilidade no `skillstr.txt` do rascunho

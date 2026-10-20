@@ -6,6 +6,7 @@
 pub mod admin;
 pub mod assinatura;
 pub mod fonte;
+pub mod elementskill;
 pub mod estudio;
 pub mod governanca;
 pub mod importar;

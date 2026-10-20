@@ -16,6 +16,7 @@ COPY specs/elements_155/realm_155_overrides.json ./specs/elements_155/realm_155_
 COPY specs/elements_155/realm_155_v159_overrides.json ./specs/elements_155/realm_155_v159_overrides.json
 COPY specs/mapas ./specs/mapas
 COPY specs/habilidades_155/habilidades.json ./specs/habilidades_155/habilidades.json
+COPY specs/habilidades_155/elementskill_v156_tabelas.json ./specs/habilidades_155/elementskill_v156_tabelas.json
 COPY specs/habilidades_126/habilidades.json ./specs/habilidades_126/habilidades.json
 COPY specs/addons_155/addons.json ./specs/addons_155/addons.json
 COPY specs/addons_155/classificacao.json ./specs/addons_155/classificacao.json

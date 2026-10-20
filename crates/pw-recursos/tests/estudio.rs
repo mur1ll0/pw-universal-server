@@ -898,6 +898,9 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let hf = json_de(pedir("GET", "estudio/habilidades/1").call().unwrap());
         assert_eq!(hf["descricao"].as_str(), Some("Ataque do Tigre (Nível %d)\r\nCausa dano."), "{hf}");
         assert!(hf["servidor"]["max_level"].is_number(), "{hf}");
+        // B305: sem elementskill.dll com mapa, a ficha diz por quê e a edição do cliente é recusada.
+        assert_eq!(hf["cliente"]["mapa"].as_bool(), Some(false), "{hf}");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros_do_cliente?rascunho={ri}")).send_json(json!({"dinheiro_exigido": [0]}))).0, 400, "sem mapa");
         pedir("PUT", &format!("estudio/habilidades/1/texto?rascunho={ri}")).send_json(json!({"nome": "Golpe do Tigre", "descricao": "Linha 1\r\nLinha 2 (%d)"})).unwrap();
         let hf2 = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &ri.to_string()).call().unwrap());
         assert_eq!((hf2["nome"].as_str(), hf2["descricao"].as_str()), (Some("Golpe do Tigre"), Some("Linha 1\r\nLinha 2 (%d)")), "{hf2}");

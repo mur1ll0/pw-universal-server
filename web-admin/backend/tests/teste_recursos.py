@@ -152,6 +152,13 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], json.loads(p["corpo"])), ("/admin/1.5.5/estudio/habilidades/5/texto", {"descricao": desc}))
+        # B305: números do cliente (elementskill.dll) repassados como vieram.
+        r = await self.cliente.put("/api/realms/realm_155/estudio/habilidades/8/numeros_do_cliente", params={"rascunho": 3},
+                                   json={"dinheiro_exigido": [0] * 10}, headers=csrf)
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], p["consulta"], json.loads(p["corpo"])),
+                         ("/admin/1.5.5/estudio/habilidades/8/numeros_do_cliente", {"rascunho": ["3"]}, {"dinheiro_exigido": [0] * 10}))
         # Em qualquer outra rota o limite continua 8 KiB.
         r = await self.cliente.post("/api/recursos/1.5.5/rascunhos", headers=csrf,
                                     json={"descricao": "x" * 10_000, "operacao_id": "op-teste-456"})

@@ -130,6 +130,67 @@ async function abrirHabilidade(id) {
       ficha.appendChild(salvarN);
     }
   }
+  // B305: os números do cliente (elementskill.dll) — só as tabelas medidas no binário se editam; o resto vem do código.
+  const c = f.cliente || {};
+  if (!c.mapa) {
+    ficha.appendChild(criar("div", "texto-suave", `Cliente: ${c.motivo || "sem mapa do elementskill.dll"}.`));
+  } else {
+    const nomes = Object.keys(c.campos || {});
+    if (!nomes.length) {
+      ficha.appendChild(criar("div", "texto-suave", "Cliente (elementskill.dll): nenhum número desta habilidade está numa tabela editável — vêm do código do DLL (constante ou fórmula)."));
+    } else {
+      const tc = criar("table", "tabela-simples");
+      tc.appendChild(criar("caption", "", `Cliente (${c.arquivo}) — o que o jogo do jogador confere`));
+      const cab = criar("tr");
+      cab.appendChild(criar("th", "", "nível"));
+      for (const k of nomes) {
+        const th = criar("th", "", `${k} ✎`);
+        th.title = c.campos[k].quem_confere;
+        cab.appendChild(th);
+      }
+      tc.appendChild(cab);
+      const ents = {};
+      const linhas = Math.max(...nomes.map((k) => c.campos[k].valores.length));
+      for (let i = 0; i < linhas; i++) {
+        const tr = criar("tr");
+        tr.appendChild(criar("td", "", String(i + 1)));
+        for (const k of nomes) {
+          const td = criar("td");
+          const v = c.campos[k].valores[i];
+          if (v === undefined) td.textContent = "—";
+          else {
+            const e = criar("input", "campo");
+            e.type = "number";
+            e.value = String(v);
+            e.style.width = "7em";
+            // Diferente do servidor: o cliente mostra/confere um número e o servidor cobra outro.
+            const sv = Array.isArray(s[k]) ? s[k][i] : undefined;
+            if (sv !== undefined && sv !== null && Number(sv) !== v) { e.style.outline = "2px solid var(--aviso, orange)"; e.title = `servidor: ${sv}`; }
+            (ents[k] ||= []).push(e);
+            td.appendChild(e);
+          }
+          tr.appendChild(td);
+        }
+        tc.appendChild(tr);
+      }
+      ficha.appendChild(tc);
+      const alem = nomes.filter((k) => c.campos[k].le_alem).map((k) => `${k}: os ${c.campos[k].le_alem} últimos níveis leem a tabela seguinte no DLL original (não se editam)`);
+      ficha.appendChild(criar("div", "texto-suave", `Contorno = difere do servidor (passe o mouse para ver). Mude os dois lados juntos, ou o cliente mostra um preço e o servidor cobra outro.${alem.length ? " " + alem.join("; ") + "." : ""} Vale para o jogador depois de publicar e ele atualizar pelo launcher.`));
+      const salvarC = criar("button", "botao botao-pequeno", "Salvar números do cliente no rascunho");
+      salvarC.type = "button";
+      salvarC.addEventListener("click", async () => {
+        if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+        const corpo = Object.fromEntries(Object.entries(ents).map(([k, es]) => [k, es.map((e) => Number(e.value))]));
+        try {
+          await api(rotaDeHabilidades(`/${f.id}/numeros_do_cliente`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify(corpo) });
+          alerta("ok", "Estúdio", `Números do cliente da habilidade ${f.id} no rascunho (elementskill.dll).`, { toast: true });
+          if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+          abrirHabilidade(f.id);
+        } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      });
+      ficha.appendChild(salvarC);
+    }
+  }
   const bruto = criar("details");
   bruto.appendChild(criar("summary", "", "Todos os campos do servidor (JSON)"));
   const pre = criar("pre");
