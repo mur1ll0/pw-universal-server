@@ -561,6 +561,24 @@ B203: 119 lidas das 128 no 1.5.5, 45 no 1.2.6 executadas no `gs`) e os roteiros 
 avaliada pelo servidor (`pw_gs::efeitos::expr`). Carregado para `elements.data` v156/v159
 (`GameDataManager::habilidades`).
 
+**Correções pelo binário (B303).** O fonte não é o que o BR compilou: o `elementskill.dll` do
+cliente v156 e o `gs` do pacote `pwserver_155v156` têm as **mesmas** tabelas de dinheiro, e
+nenhuma das do fonte (a sequência `int32` da habilidade 8, `0,0,0,6980,…,771980`, aparece 30×
+no `gs` e 29× no DLL; a do fonte para a 1, `0,30,130,…`, 0× nos dois). `tools/elementskill/numeros.cpp`
+(32 bits) carrega o DLL, chama `InitStaticData`, percorre `NextSkill` e, por `Create(id, nível)`,
+lê os campos pela vtable do objeto — os índices saem do próprio binário (a vtable exportada da
+base `??_7ElementSkill@GNET@@6B@` contra os endereços das funções da base exportadas; o
+`GetMaxLevel` está no slot 21, não no 19 que o `ElementSkill.h` daria) e conferem com as estáticas
+exportadas `GetRequired*(id, nível)` em 20.676 de 20.676 níveis. `medir_elementskill.py` grava
+em `elementskill_v156.json` só o que o binário diz diferente (2.272 habilidades), e o
+`extrair_habilidades.py` aplica no fim, deixando o valor do fonte em `do_fonte`. Medido:
+`cls`, `arrowcost` iguais em todas; diferem dinheiro (380 habilidades com lista no fonte),
+`apcost` (14), `nivel_exigido` (3), `sp_exigido` (4), `execucao_ms` (7), `recarga_ms` (3), `mp`
+(2). Requisito sem sobrescrita no stub (`null` no fonte) vale o 0 da base
+(`ElementSkill/skill.h:170`, `cskill/skill/skill.cpp:14-60`) e o DLL o preenche. **Só relato:**
+25 habilidades com nível máximo diferente (o DLL dá 10 onde o fonte dá 1) — subir o nível
+máximo pede dano, alcance etc. dos níveis novos, que o DLL não dá.
+
 **1.2.6 (`TabelaDeHabilidades::do_126`, B100/B101)** — carregada para o `elements.data` v7.
 Só as 823 habilidades que o `gs` 1.2.6 compila (as mesmas 823 do `skillstr.txt` do cliente
 1.2.6). `specs/habilidades_126/habilidades.json` — desde o B102 **completo**, no formato do 1.5.5 (pode ir para `data/<realm>/catalogo/`), gerado por `extrair_habilidades_126.py`:

@@ -15849,3 +15849,48 @@ comparação lado a lado.
     ### e. Falta
     - Murillo: recriar os mundos para a montagem do catálogo valer, quando quiser.
     - S8: os números do cliente (`elementskill.dll`) e habilidade nova.
+
+303. **Sessão 2026-10-20: Estúdio S8 — os números do `elementskill.dll` do cliente.**
+
+    ### a. Pedido
+    Commitar o B302 (`2bb8922`, `2ad6346`) e seguir: saber se o `elementskill.dll` instalado corresponde ao fonte
+    antes de pensar em editar os números do cliente.
+
+    ### b. Medição
+    - `tools/elementskill/numeros.cpp` (32 bits, VS2022 x86): `LoadLibrary` do DLL de
+      `1.5.5 BR launcher/element`, `InitStaticData`, `NextSkill`, e por `Create(id, nível)` os campos pela vtable do
+      objeto. Os índices saem do binário: a vtable exportada da base (`??_7ElementSkill@GNET@@6B@`) contra os
+      endereços das funções da base exportadas. `GetCls` = 5, `GetCoolingTime` = 6, `GetMaxLevel` = **21** (o
+      `ElementSkill.h` daria 19: o DLL tem 2 virtuais a mais), `GetMpCost` = 31.
+    - Conferência do método: os slots dão o mesmo que as estáticas exportadas `GetRequiredLevel/Sp/Money/Book` e
+      `GetExecuteTime(id, nível)` em **20.676 de 20.676** níveis (3.316 habilidades, as mesmas do catálogo).
+    - Contra `specs/habilidades_155/habilidades.json` (fonte `EvolvedPWServer`): `cls`, `arrowcost`, `item_exigido`
+      iguais em todas; `mp` difere em 2, `recarga_ms` 3, `execucao_ms` 7, `nivel_exigido` 3, `sp_exigido` 4,
+      `apcost` 14, nível máximo 25 — e **dinheiro em 1.916 níveis de 380 habilidades**.
+    - O dinheiro do DLL não vem de nenhum fonte (cliente 1.5.5, servidor 1.5.5, cliente 1.5.3): é uma economia
+      reequilibrada (primeiros níveis grátis, altos bem mais caros; habilidade 8 nível 10: 771.980 no DLL, 0 no fonte).
+    - **O servidor original concorda com o DLL:** no `gs` de `pwserver_155v156` a sequência `int32` do dinheiro da
+      habilidade 8 pelo DLL aparece 30×, a da 6 62×; as do fonte para as habilidades 1, 2 e 7, 0× (no DLL: 29×, 55×,
+      0×). Logo o nosso servidor cobrava outro preço que o BR original — e o cliente recusa ou mostra outro preço.
+
+    ### c. O que foi feito
+    - `specs/habilidades_155/medir_elementskill.py` grava `elementskill_v156.json` (2.272 habilidades: só o que o
+      binário diz diferente do fonte, mais os requisitos `null` do fonte, que valem o 0 da base —
+      `ElementSkill/skill.h:170`, `cskill/skill/skill.cpp:14-60` — e o servidor recusava como "desconhecido").
+    - `extrair_habilidades.py` aplica esse arquivo no fim; o valor do fonte fica em `do_fonte`. Sem o arquivo, a
+      extração reproduz o catálogo anterior byte a byte.
+    - O nível máximo diferente (25) fica só no relato: subir pede dano/alcance dos níveis novos, que o DLL não dá.
+    - Painel: a ficha da habilidade diz quais campos vieram do binário e o que o fonte dizia.
+    - Teste `a_habilidade_1_do_guerreiro_bate_com_o_stub`: dinheiro do nível 2 = 0 (era 30) e a 8 nível 10 = 771.980.
+
+    ### d. Provas
+    - `pw-data-loader` (habilidades) **5/5**.
+    - `pw-gs` com o banco: `canal_administrativo` **35/35**; `subcomandos_no_mundo` **161–162/164** nas rodadas com e sem a
+      mudança. Falham 2–3 por rodada, e os nomes variam: grupo sem convite, botão de roupa, habilidade desconhecida, missão 1177,
+      passo curto. Na linha de base (sem a mudança) também falham 2, e cada um passa isolado (o do grupo, 3/3 com a
+      mudança): a instabilidade é de tempo sob carga e já existia.
+
+    ### e. Falta
+    - Vale no jogo só com o GS novo publicado (B249, a critério do Murillo) — o catálogo é embutido.
+    - O 1.2.6: medir o `elementskill.dll` do cliente 1.2.6 do mesmo jeito (não está em `F:\PW`).
+    - S8: tornar os números do cliente editáveis exige recompilar o `elementskill.dll`; habilidade nova.
