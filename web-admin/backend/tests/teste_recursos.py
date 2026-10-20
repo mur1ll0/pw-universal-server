@@ -145,6 +145,13 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], p["consulta"], p["corpo"]), ("/admin/1.2.6/estudio/modelos/novo",
                          {"rascunho": ["3"], "pasta": ["models/npcs/x"], "titulo": ["x"]}, glb))
+        # B301: texto de habilidade (até 2.047 caracteres; em UTF-8 passa de 8 KiB) chega inteiro.
+        desc = "技" * 2000
+        r = await self.cliente.put("/api/realms/realm_155/estudio/habilidades/5/texto", params={"rascunho": 3},
+                                   json={"descricao": desc}, headers=csrf)
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], json.loads(p["corpo"])), ("/admin/1.5.5/estudio/habilidades/5/texto", {"descricao": desc}))
         # Em qualquer outra rota o limite continua 8 KiB.
         r = await self.cliente.post("/api/recursos/1.5.5/rascunhos", headers=csrf,
                                     json={"descricao": "x" * 10_000, "operacao_id": "op-teste-456"})

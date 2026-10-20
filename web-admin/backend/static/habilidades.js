@@ -1,0 +1,104 @@
+/* Estúdio, fase S8 (B301): habilidades — os números do servidor (`habilidades.json`, extraído dos stubs do `gs`) e o
+   nome e a descrição do cliente (`Configs\skillstr.txt`: nome em N×10, descrição em N×10+1, com os `%d`/`%.1f` que o
+   `elementskill.dll` preenche). Nome e descrição se editam no rascunho; os números, por enquanto, só se leem.
+   Usa `api`, `criar`, `elemento`, `alerta`, `estudio` e `mostrarVistaDoEstudio`. */
+
+function rotaDeHabilidades(resto, q = {}) {
+  const p = new URLSearchParams(Object.fromEntries(Object.entries(q).filter(([, v]) => v !== undefined && v !== null && v !== ""))).toString();
+  return `/api/realms/${encodeURIComponent(estudio.realm)}/estudio/habilidades${resto}${p ? `?${p}` : ""}`;
+}
+
+async function carregarHabilidades() {
+  if (!estudio.realm) return;
+  elemento("habilidades-situacao").textContent = "Carregando…";
+  let r;
+  try { r = await api(rotaDeHabilidades("", { busca: elemento("habilidades-busca").value.trim(), rascunho: estudio.rascunho })); }
+  catch (erro) { elemento("habilidades-situacao").textContent = erro.message; return; }
+  elemento("habilidades-situacao").textContent = `${r.total} habilidade(s)${r.total > r.habilidades.length ? ` (mostrando ${r.habilidades.length})` : ""}${r.skillstr ? "" : " — skillstr.txt não lido: sem nomes"}`;
+  const area = elemento("habilidades-lista");
+  area.replaceChildren();
+  for (const h of r.habilidades) {
+    const b = criar("button", "", `${h.id} · ${h.nome || "(sem nome)"}`);
+    b.type = "button";
+    b.title = `classe ${h.cls} · até nível ${h.max_level}`;
+    b.addEventListener("click", () => abrirHabilidade(h.id));
+    area.appendChild(b);
+  }
+  if (!r.habilidades.length) area.appendChild(criar("div", "texto-suave", "Nenhuma habilidade."));
+}
+
+async function abrirHabilidade(id) {
+  const ficha = elemento("habilidades-ficha");
+  ficha.textContent = "Carregando…";
+  let f;
+  try { f = await api(rotaDeHabilidades(`/${id}`, { rascunho: estudio.rascunho })); } catch (erro) { ficha.textContent = erro.message; return; }
+  ficha.replaceChildren();
+  const s = f.servidor || {};
+  ficha.appendChild(criar("h3", "", `${f.id} · ${f.nome || "(sem nome)"}`));
+  // Nome e descrição (cliente).
+  const nome = criar("input", "campo");
+  nome.value = f.nome ?? "";
+  nome.size = 40;
+  const desc = criar("textarea", "campo");
+  desc.value = (f.descricao ?? "").replace(/\r\n/g, "\n");
+  desc.rows = 10;
+  desc.style.width = "100%";
+  const salvar = criar("button", "botao botao-pequeno", "Salvar texto no rascunho");
+  salvar.type = "button";
+  salvar.addEventListener("click", async () => {
+    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+    try {
+      // O cliente lê o texto como está; as quebras do arquivo são CRLF.
+      await api(rotaDeHabilidades(`/${f.id}/texto`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify({ nome: nome.value, descricao: desc.value.replace(/\r?\n/g, "\r\n") }) });
+      alerta("ok", "Estúdio", `Texto da habilidade ${f.id} no rascunho.`, { toast: true });
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  });
+  const caixa = criar("div");
+  caixa.append(criar("div", "texto-suave", `Nome (${f.skillstr}, ficha ${f.id * 10}):`), nome,
+    criar("div", "texto-suave", `Descrição (ficha ${f.id * 10 + 1}; os %d/%.1f o cliente preenche pelo elementskill.dll; sem aspas; até 2.047 caracteres):`), desc, salvar);
+  ficha.appendChild(caixa);
+  // Campos gerais (servidor).
+  const gerais = ["cls", "max_level", "type", "rank", "attr", "apcost", "apgain", "arrowcost", "is_movingcast", "commoncooldown", "commoncooldowntime", "allow_forms", "eventflag", "pre_skills", "restrict_weapons", "time_type", "tipo_de_area", "doenchant", "dobless"];
+  const tg = criar("table", "tabela-simples");
+  tg.appendChild(criar("caption", "", "Servidor (stubs do gs, habilidades.json)"));
+  for (const k of gerais) {
+    if (s[k] === undefined) continue;
+    const tr = criar("tr");
+    tr.append(criar("td", "texto-suave", k), criar("td", "", typeof s[k] === "object" ? JSON.stringify(s[k]) : String(s[k])));
+    tg.appendChild(tr);
+  }
+  ficha.appendChild(tg);
+  // Por nível: as listas com um valor por nível.
+  const n = Number(s.max_level) || 0;
+  const porNivel = Object.keys(s).filter((k) => Array.isArray(s[k]) && s[k].length === n && n > 0 && !gerais.includes(k) && s[k].every((x) => x === null || typeof x !== "object"));
+  if (porNivel.length) {
+    const tn = criar("table", "tabela-simples");
+    tn.appendChild(criar("caption", "", "Por nível (null = depende de mais que o nível)"));
+    const cab = criar("tr");
+    cab.appendChild(criar("th", "", "nível"));
+    for (const k of porNivel) cab.appendChild(criar("th", "", k));
+    tn.appendChild(cab);
+    for (let i = 0; i < n; i++) {
+      const tr = criar("tr");
+      tr.appendChild(criar("td", "", String(i + 1)));
+      for (const k of porNivel) tr.appendChild(criar("td", "", s[k][i] === null ? "—" : String(s[k][i])));
+      tn.appendChild(tr);
+    }
+    ficha.appendChild(tn);
+  }
+  const bruto = criar("details");
+  bruto.appendChild(criar("summary", "", "Todos os campos do servidor (JSON)"));
+  const pre = criar("pre");
+  pre.textContent = JSON.stringify(s, null, 1);
+  pre.style.maxHeight = "40vh";
+  pre.style.overflow = "auto";
+  bruto.appendChild(pre);
+  ficha.appendChild(bruto);
+}
+
+(function ligarHabilidades() {
+  elemento("estudio-vista-habilidades").addEventListener("click", () => mostrarVistaDoEstudio("habilidades"));
+  let espera = null;
+  elemento("habilidades-busca").addEventListener("input", () => { clearTimeout(espera); espera = setTimeout(carregarHabilidades, 300); });
+})();

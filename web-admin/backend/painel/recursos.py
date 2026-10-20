@@ -552,6 +552,26 @@ def registrar_reinicio(app):
             raise HTTPException(422, "Nada a mudar.")
         return await _repassar("PUT", f"/admin/{v}/estudio/missoes/{id_missao}", {"rascunho": rascunho}, dados={"campos": campos})
 
+    # Habilidades (B301, S8): números do servidor + nome e descrição do skillstr.txt do cliente.
+    @app.get("/api/realms/{realm}/estudio/habilidades")
+    async def estudio_habilidades(realm: str, requisicao: Request, busca: str = "", rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/habilidades", {"busca": busca[:200], "rascunho": rascunho})
+
+    @app.get("/api/realms/{realm}/estudio/habilidades/{id_habilidade}")
+    async def estudio_habilidade(realm: str, id_habilidade: int, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/habilidades/{max(0, id_habilidade)}", {"rascunho": rascunho})
+
+    @app.put("/api/realms/{realm}/estudio/habilidades/{id_habilidade}/texto")
+    async def estudio_texto_da_habilidade(realm: str, id_habilidade: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        dados = await requisicao.json()
+        corpo = {k: dados[k] for k in ("nome", "descricao") if isinstance(dados.get(k), str)}
+        if not corpo:
+            raise HTTPException(422, "Informe o nome e/ou a descrição.")
+        return await _repassar("PUT", f"/admin/{v}/estudio/habilidades/{max(0, id_habilidade)}/texto", {"rascunho": rascunho}, dados=corpo)
+
     # Textos do cliente (B260): fixed_msg, item_desc, item_ext_desc (item "cliente").
     TEXTOS = ("fixed_msg.txt", "item_desc.txt", "item_ext_desc.txt")
 

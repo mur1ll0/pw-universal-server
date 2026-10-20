@@ -16,6 +16,7 @@
   <script src="/static/comportamento.js" defer></script>
   <script src="/static/textos.js" defer></script>
   <script src="/static/modelos.js" defer></script>
+  <script src="/static/habilidades.js" defer></script>
 </head>
 <body>
   <!-- Entrada -->
@@ -295,6 +296,7 @@
             <button id="estudio-vista-comportamento" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Comportamento</button>
             <button id="estudio-vista-textos" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Textos</button>
             <button id="estudio-vista-modelos" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Modelos</button>
+            <button id="estudio-vista-habilidades" class="botao botao-secundario botao-pequeno" type="button" role="tab" aria-selected="false">Habilidades</button>
           </div>
           <section id="estudio-modelos" class="recursos-cartao" hidden>
             <div class="recursos-linha">
@@ -304,6 +306,16 @@
             <div class="loja-grade">
               <div id="modelos-lista" class="loja-lista"></div>
               <div id="modelos-ficha" class="mapa-editor">Escolha um modelo.</div>
+            </div>
+          </section>
+          <section id="estudio-habilidades" class="recursos-cartao" hidden>
+            <div class="recursos-linha">
+              <input id="habilidades-busca" class="campo" type="search" placeholder="Id ou trecho do nome" aria-label="Buscar habilidade">
+              <span id="habilidades-situacao" class="texto-suave"></span>
+            </div>
+            <div class="loja-grade">
+              <div id="habilidades-lista" class="loja-lista"></div>
+              <div id="habilidades-ficha" class="mapa-editor">Escolha uma habilidade.</div>
             </div>
           </section>
           <section id="estudio-textos" class="recursos-cartao" hidden>

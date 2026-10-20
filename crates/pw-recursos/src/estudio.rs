@@ -23,6 +23,10 @@ pub const CAMINHO: &str = "data\\elements.data";
 /// os intermediários viram lixo que o `limpar` recolhe.
 const NIVEL_DO_RASCUNHO: i32 = 3;
 
+/// B301: a tabela de nome e descrição das habilidades no cliente (`m_SkillDesc.Init("Configs\\skillstr.txt", true)`,
+/// `EC_Game.cpp:529` — UTF-16).
+const CAMINHO_SKILLSTR: &str = "configs\\skillstr.txt";
+
 #[derive(Default)]
 pub struct Estudio {
     /// Arquivos já lidos, pelo SHA-256 (o publicado e o de cada rascunho em uso).
@@ -3276,6 +3280,90 @@ impl Estudio {
         });
         let mudanca = json!({ "acao": "importar", "tipo": "pele", "de": "glTF", "esqueleto": caminho_bon });
         self.alterar_item_do_cliente(gov, versao, destino, rascunho, move |_| Ok((bytes, resumo, mudanca))).await
+    }
+
+    /// B301 (S8): o `skillstr.txt` do cliente (com o rascunho) — nome da habilidade `N` em `N×10`, descrição em `N×10+1`.
+    async fn skillstr(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<pw_data_loader::tabela_de_textos::TabelaDeTextos> {
+        let b = self.bytes_do_cliente(gov, versao, CAMINHO_SKILLSTR, rascunho).await?;
+        pw_data_loader::tabela_de_textos::TabelaDeTextos::ler(&b).map_err(|x| anyhow::anyhow!("{CAMINHO_SKILLSTR}: {x}"))
+    }
+
+    /// O jogo de uma versão de recursos (o nome da versão é livre): pelo `elements.data` dela — v7 = 1.2.6, v156/v159 =
+    /// 1.5.5 (spec 03).
+    async fn jogo_da_versao(&self, gov: &Governanca, versao: &str) -> Result<&'static str> {
+        let (e, _) = self.atual(gov, versao, None).await?;
+        Ok(match e.versao {
+            7 => "1.2.6",
+            156 | 159 => "1.5.5",
+            v => bail!("elements v{v}: sem habilidades do servidor para essa versão"),
+        })
+    }
+
+    async fn habilidades_do_servidor(&self, gov: &Governanca, versao: &str) -> Result<serde_json::Map<String, Value>> {
+        let jogo = self.jogo_da_versao(gov, versao).await?;
+        let j = pw_data_loader::habilidades::json_do_servidor(jogo).with_context(|| format!("sem habilidades do servidor para {jogo}"))?;
+        // O arquivo é `{ "fonte": …, "habilidades": { "<id>": {…} } }`.
+        match serde_json::from_str::<Value>(j)?.get_mut("habilidades").map(Value::take) {
+            Some(Value::Object(m)) => Ok(m),
+            _ => bail!("habilidades.json sem o objeto \"habilidades\""),
+        }
+    }
+
+    /// B301 (S8): as habilidades do servidor (`habilidades.json`, os stubs do `gs`) com o nome do cliente; `busca` = id
+    /// exato ou trecho do nome. Até 300.
+    pub async fn listar_habilidades(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, busca: &str) -> Result<Value> {
+        let hs = self.habilidades_do_servidor(gov, versao).await?;
+        let t = self.skillstr(gov, versao, rascunho).await.ok();
+        let busca = busca.trim().to_lowercase();
+        let mut r: Vec<(i64, Value)> = Vec::new();
+        for (k, h) in &hs {
+            let Ok(id) = k.parse::<i64>() else { continue };
+            let nome = t.as_ref().and_then(|t| t.texto(id * 10)).unwrap_or_default();
+            if !busca.is_empty() && busca != k.as_str() && !nome.to_lowercase().contains(&busca) {
+                continue;
+            }
+            r.push((id, json!({ "id": id, "nome": nome, "cls": h["cls"], "max_level": h["max_level"], "type": h["type"] })));
+        }
+        r.sort_by_key(|x| x.0);
+        let total = r.len();
+        Ok(json!({ "total": total, "skillstr": t.is_some(), "habilidades": r.into_iter().take(300).map(|x| x.1).collect::<Vec<_>>() }))
+    }
+
+    /// B301 (S8): a ficha — todos os números do servidor e o nome e a descrição do cliente.
+    pub async fn ficha_da_habilidade(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: i64) -> Result<Value> {
+        let hs = self.habilidades_do_servidor(gov, versao).await?;
+        let h = hs.get(&id.to_string()).cloned().with_context(|| format!("a habilidade {id} não existe no servidor {versao}"))?;
+        let t = self.skillstr(gov, versao, rascunho).await.ok();
+        Ok(json!({
+            "id": id, "servidor": h,
+            "nome": t.as_ref().and_then(|t| t.texto(id * 10)), "descricao": t.as_ref().and_then(|t| t.texto(id * 10 + 1)),
+            "skillstr": CAMINHO_SKILLSTR,
+        }))
+    }
+
+    /// B301 (S8): troca o nome e/ou a descrição da habilidade no `skillstr.txt` do rascunho
+    /// (`pw_data_loader::tabela_de_textos`: sem aspas, até 2.047 unidades; o resto do arquivo fica igual).
+    pub async fn definir_texto_da_habilidade(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i64, nome: Option<String>, descricao: Option<String>) -> Result<Value> {
+        if nome.is_none() && descricao.is_none() {
+            bail!("nada a mudar");
+        }
+        self.alterar_item_do_cliente(gov, versao, CAMINHO_SKILLSTR, rascunho, move |b| {
+            let mut t = pw_data_loader::tabela_de_textos::TabelaDeTextos::ler(b).map_err(anyhow::Error::msg)?;
+            let mut mudou = Vec::new();
+            if let Some(n) = &nome {
+                t.definir(id * 10, n).map_err(anyhow::Error::msg)?;
+                mudou.push("nome");
+            }
+            if let Some(d) = &descricao {
+                t.definir(id * 10 + 1, d).map_err(anyhow::Error::msg)?;
+                mudou.push("descricao");
+            }
+            let novo = t.escrever();
+            pw_data_loader::tabela_de_textos::TabelaDeTextos::ler(&novo).map_err(anyhow::Error::msg)?;
+            let mudanca = json!({ "acao": "editar", "tipo": "texto_de_habilidade", "id": id, "campos": mudou });
+            Ok((novo, json!({ "id": id, "nome": nome, "descricao": descricao }), mudanca))
+        })
+        .await
     }
 
     /// B298 (S6): um modelo inteiro a partir de um GLB, em `<pasta>\<título>.*`, no rascunho — a convenção dos 2.980

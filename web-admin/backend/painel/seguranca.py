@@ -63,6 +63,17 @@ def eh_importacao_de_modelo(escopo):
             and partes[3:5] == ["estudio", "modelos"] and partes[5] in ("importar", "pele_nova", "acoes_glb", "novo"))
 
 
+LIMITE_TEXTO_DE_HABILIDADE = 32 << 10
+
+
+def eh_texto_de_habilidade(escopo):
+    """B301: nome + descrição de habilidade (até 2.047 unidades UTF-16 cada no cliente; em UTF-8, passa de 8 KiB)."""
+    partes = escopo["path"].strip("/").split("/")
+    # api / realms / <realm> / estudio / habilidades / <id> / texto
+    return (escopo["method"] == "PUT" and len(partes) == 7 and partes[:2] == ["api", "realms"]
+            and partes[3:5] == ["estudio", "habilidades"] and partes[6] == "texto")
+
+
 class LimitarEntrada:
     """Limita antes de acumular o corpo, inclusive sem Content-Length."""
     def __init__(self, app):
@@ -78,6 +89,7 @@ class LimitarEntrada:
         # o mesmo teto do pw-recursos (admin::MAIOR_ARQUIVO).
         limite = (LIMITE_ARQUIVO_DE_RECURSO if eh_envio_de_recurso(escopo)
                   else LIMITE_IMPORTACAO_DE_MODELO if eh_importacao_de_modelo(escopo)
+                  else LIMITE_TEXTO_DE_HABILIDADE if eh_texto_de_habilidade(escopo)
                   else LIMITE_CONVERSA if eh_conversa_do_estudio(escopo)
                   else LIMITE_AREA_DO_NPCGEN if eh_area_do_npcgen(escopo) else 8192)
         while True:

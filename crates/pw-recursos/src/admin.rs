@@ -583,6 +583,37 @@ async fn estudio_acoes_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, 
 }
 
 #[derive(Deserialize)]
+struct QHabilidades {
+    rascunho: Option<i64>,
+    busca: Option<String>,
+}
+
+/// B301 (S8): as habilidades do servidor com o nome do cliente.
+async fn estudio_habilidades(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QHabilidades>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.listar_habilidades(&e.gov, &v, q.rascunho, q.busca.as_deref().unwrap_or("")).await?))
+}
+
+/// B301 (S8): a ficha da habilidade (números do servidor, nome e descrição do cliente).
+async fn estudio_habilidade(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i64)>, Query(q): Query<QHabilidades>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.ficha_da_habilidade(&e.gov, &v, q.rascunho, id).await?))
+}
+
+#[derive(Deserialize)]
+struct PedidoTextoDeHabilidade {
+    nome: Option<String>,
+    descricao: Option<String>,
+}
+
+/// B301 (S8): troca o nome e/ou a descrição da habilidade no `skillstr.txt` do rascunho.
+async fn estudio_texto_da_habilidade(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i64)>, Query(q): Query<QEstudio>, Json(p): Json<PedidoTextoDeHabilidade>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.definir_texto_da_habilidade(&e.gov, &v, r, id, p.nome, p.descricao).await?))
+}
+
+#[derive(Deserialize)]
 struct QModeloNovo {
     rascunho: Option<i64>,
     pasta: String,
@@ -1377,6 +1408,9 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/modelos/pele_nova", post(estudio_nova_pele))
         .route("/admin/{v}/estudio/modelos/acoes_glb", post(estudio_acoes_glb))
         .route("/admin/{v}/estudio/modelos/novo", post(estudio_modelo_novo))
+        .route("/admin/{v}/estudio/habilidades", get(estudio_habilidades))
+        .route("/admin/{v}/estudio/habilidades/{id}", get(estudio_habilidade))
+        .route("/admin/{v}/estudio/habilidades/{id}/texto", put(estudio_texto_da_habilidade))
         .route("/admin/{v}/estudio/textos/{arquivo}", get(estudio_textos).post(estudio_novo_texto))
         .route("/admin/{v}/estudio/textos/{arquivo}/{chave}", put(estudio_editar_texto))
         .route("/admin/{v}/estudio/comportamentos/{id}", get(estudio_comportamento).put(estudio_editar_comportamento))

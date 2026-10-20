@@ -158,7 +158,10 @@ impl FonteDePacote for Pacotes {
         receber(b"models\\teste\\doador.ecm".to_vec(), encoding_rs::GBK.encode(ecm2).0.to_vec())?;
         let tab = "#_begin\n// 怪物\n\"站立\"\n\"休闲\"\n\"戒备\"\n\"技能1\"\n\"慢速移动\"\n\"普攻1\"\n\"普攻2\"\n";
         receber(b"configs\\actions_npc.txt".to_vec(), encoding_rs::GBK.encode(tab).0.to_vec())?;
-        Ok(ResultadoDoPacote { entradas: 18, falhas: vec![] })
+        // B301: skillstr.txt (UTF-16LE com BOM): nome da habilidade 1 em 10, descrição em 11 (duas linhas).
+        let st = "//  Element skill descriptions.\r\n\r\n#_index\r\n#_begin\r\n\r\n10  \"Ataque do Tigre\"\r\n11  \"Ataque do Tigre (Nível %d)\r\nCausa dano.\"\r\n";
+        receber(b"configs\\skillstr.txt".to_vec(), [vec![0xFF, 0xFE], st.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()].concat())?;
+        Ok(ResultadoDoPacote { entradas: 19, falhas: vec![] })
     }
 }
 
@@ -889,6 +892,17 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let ac2 = json_de(pedir("POST", "estudio/modelos/acoes_glb").query("rascunho", &ri.to_string()).query("smd", &smd).send_bytes(&glb_anim).unwrap());
         assert_eq!((ac2["resultado"]["acoes"][0]["acao"].as_str(), ac2["resultado"]["acoes_do_modelo"].as_u64()), (Some("substituída"), Some(1)), "{ac2}");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/acoes_glb").query("rascunho", &ri.to_string()).query("smd", &smd).send_bytes(&gm)).0, 400, "GLB sem animação");
+        // B301: habilidades — a lista (números do servidor 1.2.6 + nome do skillstr), a ficha e a edição do texto.
+        let hl = json_de(pedir("GET", "estudio/habilidades").query("busca", "tigre").call().unwrap());
+        assert_eq!((hl["habilidades"][0]["id"].as_i64(), hl["habilidades"][0]["nome"].as_str()), (Some(1), Some("Ataque do Tigre")), "{hl}");
+        let hf = json_de(pedir("GET", "estudio/habilidades/1").call().unwrap());
+        assert_eq!(hf["descricao"].as_str(), Some("Ataque do Tigre (Nível %d)\r\nCausa dano."), "{hf}");
+        assert!(hf["servidor"]["max_level"].is_number(), "{hf}");
+        pedir("PUT", &format!("estudio/habilidades/1/texto?rascunho={ri}")).send_json(json!({"nome": "Golpe do Tigre", "descricao": "Linha 1\r\nLinha 2 (%d)"})).unwrap();
+        let hf2 = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &ri.to_string()).call().unwrap());
+        assert_eq!((hf2["nome"].as_str(), hf2["descricao"].as_str()), (Some("Golpe do Tigre"), Some("Linha 1\r\nLinha 2 (%d)")), "{hf2}");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/texto?rascunho={ri}")).send_json(json!({"nome": "com \"aspas\""}))).0, 400, "aspas");
+        assert_eq!(erro_de(pedir("GET", "estudio/habilidades/999999").call()).0, 400, "não existe");
         // B298: modelo novo a partir do GLB do .smd sintético — .bon, .ski e .smd (sem ações) em models\teste_novo.
         let mn = json_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &ri.to_string()).query("pasta", "models/teste_novo").query("titulo", "boneco").send_bytes(&gm).unwrap());
         assert_eq!((mn["resultado"]["arquivos"].as_array().map(|x| x.len()), mn["resultado"]["ossos"].as_u64(), mn["resultado"]["malhas"].as_u64()), (Some(4), Some(1), Some(1)), "{mn}");

@@ -22,6 +22,16 @@ const HABILIDADES_155_JSON: &str = include_str!("../../../specs/habilidades_155/
 /// Os 823 stubs do `gs` 1.2.6, executados por nível (`specs/habilidades_126/extrair_habilidades_126.py`).
 const HABILIDADES_126_JSON: &str = include_str!("../../../specs/habilidades_126/habilidades.json");
 
+/// B301 (Estúdio S8): o JSON das habilidades do servidor de uma versão de jogo ("1.2.6" ou "1.5.5"), como está — a
+/// ficha do Estúdio mostra todos os campos.
+pub fn json_do_servidor(versao: &str) -> Option<&'static str> {
+    match versao {
+        "1.2.6" => Some(HABILIDADES_126_JSON),
+        "1.5.5" => Some(HABILIDADES_155_JSON),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct HabilidadeDoServidor {
     pub id: u32,

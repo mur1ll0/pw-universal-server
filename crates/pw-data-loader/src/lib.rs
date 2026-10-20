@@ -45,6 +45,7 @@ pub mod glb;
 pub mod importar;
 pub mod imagem;
 pub mod ski;
+pub mod tabela_de_textos;
 pub mod smd;
 pub mod stck;
 pub mod task_npc;
