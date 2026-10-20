@@ -15452,3 +15452,28 @@ comparação lado a lado.
     ### d. Falta (S6)
     - Criar pele nova (arquivo que não existe no cliente) e ligá-la ao `.smd`.
     - Malha rígida; PNG → DDS; esqueleto e ações vindos do glTF; extensão do Blender.
+
+291. **Sessão 2026-10-20: Estúdio S6 — pele nova a partir de GLB.**
+
+    ### a. Pedido
+    Commitar e seguir (B290 já commitado: `8ffb7eb`, `6a6b618`).
+
+    ### b. O que foi feito
+    - `pw-recursos`: `Estudio::nova_pele` e `POST estudio/modelos/pele_nova?rascunho=&smd=&nome=`.
+      - O `.ski` novo vai para `<pasta do .smd>\<nome>`, porque o motor monta `strPath + "\\" + strFile`
+        (`A3DSkinModelMan.cpp:163-170`). Ele entra no rascunho como item `adicionar`.
+      - O nome entra no fim da lista de peles do `.smd` (`smd::Smd`, B288), como `substituir`.
+      - Tudo é validado e montado em memória antes de gravar.
+      - Recusa nome com pasta, fora do GBK, já no cliente ou já citado, e `.smd` sem esqueleto.
+    - Painel: "Pele nova a partir de GLB…" com o campo do nome; repasse e liberação de tamanho; teste do repasse.
+
+    ### c. Provas
+    - `pw-recursos` com o banco **22/22**: `nova.ski` no `.smd` sintético deixa o modelo com 2 peles; repetir o nome,
+      usar o de uma pele publicada ou pôr pasta no nome dá 400.
+    - Painel **12/12**.
+    - Pelo `pw-recursos` real, em rascunhos de teste depois descartados: 5 de 5 `.smd` de NPC por versão ganharam a
+      pele nova, com o `.smd` passando a ter uma pele a mais.
+
+    ### d. Falta (S6)
+    - Malha rígida (sem pele); PNG → DDS; esqueleto e ações vindos do glTF; extensão do Blender.
+    - Para NPC e monstro, a pele que vale é `<.ecm>.ski` (B282). "Substituir" nela já resolve.

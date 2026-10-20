@@ -574,6 +574,17 @@ corpo de até 64 MB (`seguranca.eh_importacao_de_modelo`); nas outras o limite c
 `pw-recursos`: o GLB de 10 `.smd` de NPC por versão, importado de volta como a 1ª pele, deu 10 de 10 nas duas versões,
 sem nada a relatar, em até 1,4 s.
 
+**Pele nova (B291, S6):** `POST estudio/modelos/pele_nova?rascunho=&smd=&nome=`, com o GLB no corpo
+(`Estudio::nova_pele`), cria a pele em `<pasta do .smd>\<nome>` (o motor monta `strPath + "\\" + strFile`,
+`A3DSkinModelMan.cpp:163-170`) e põe o nome no fim da lista de peles do `.smd` (`smd::Smd`). Os dois ficam no
+rascunho: o `.ski` como item `adicionar` e o `.smd` como `substituir`.
+- **Recusas (400):** nome com pasta ou sem `.ski`, fora do GBK, já existente no cliente (para isso há "Substituir"),
+  já citado pelo `.smd`, ou `.smd` sem esqueleto.
+- **Ordem:** o `.smd` novo é montado e o GLB importado antes de qualquer gravação.
+- **Atenção:** NPC e monstro não usam as peles do `.smd`; o jogo põe `<.ecm>.ski` (B282).
+- **Painel:** ao fim da lista de peles da ficha do `.smd`, "Pele nova a partir de GLB…" com o campo do nome (sem
+  nome, usa o do arquivo).
+
 Os arquivos são lidos com `Governanca::conteudos` (lote: o manifesto é lido e indexado uma vez; `conteudo` relê o
 manifesto inteiro a cada chamada, o que levava a ficha do 1.5.5 a 50 s — agora 4,8 s, e 0,8 s no 1.2.6). No painel, o
 seletor de perfil ganha "como modelo de voo — espada/asa/rodas". A ficha de `FLYSWORD_ESSENCE`/`WINGMANWING_ESSENCE`
