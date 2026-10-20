@@ -15668,3 +15668,33 @@ comparação lado a lado.
 
     ### e. Falta (S6)
     - "Modelo novo a partir de GLB" no painel (`.bon` + `.ski` + `.smd` v8 + ações); extensão do Blender.
+
+298. **Sessão 2026-10-20: Estúdio S6 — modelo novo a partir de GLB.**
+
+    ### a. Pedido
+    Commitar e seguir (B297 já commitado: `d226dc0`, `dc18f3b`).
+
+    ### b. Evidência (medida nos 2.980 `.smd` v8 do cliente 1.5.5)
+    - Marca `MOXB` e reservado zero em 100%.
+    - Esqueleto `<título>.bon` (98,6%), 1ª pele `<título>.ski` (93%), física vazia (61%), pasta das trilhas
+      `tcks_<título>` (59%; o resto, vazia: modelos sem ações).
+
+    ### c. O que foi feito
+    - `pw-recursos`: `Estudio::modelo_novo` e `POST estudio/modelos/novo?rascunho=&pasta=&titulo=`.
+      - Cria `.bon`, `.ski` (com as texturas), `.smd` v8 e as `.stck`, todos montados e conferidos antes de gravar.
+      - Recusa pasta fora de `models\`, título com pasta ou ponto, nome fora do GBK e arquivo existente.
+    - Painel: campos pasta e título e "Modelo novo a partir de GLB…" na vista Modelos; repasse, liberação de tamanho e
+      teste.
+
+    ### d. Provas
+    - `pw-recursos` com o banco **22/22**: o `.smd` sintético vira `models\teste_novo\boneco.*`; pasta fora de models e
+      título com ponto dão 400.
+    - Painel **12/12**.
+    - Pelo `pw-recursos`, num rascunho descartado: o GLB de 5 NPCs por versão, com a ação mais longa, virou modelo
+      novo com os **mesmos ossos, ganchos e malhas** e 1 ação. Foram 10 texturas no 1.2.6 e 8 no 1.5.5, e 4 arquivos
+      de modelo cada. Nenhum rascunho de teste ficou aberto.
+    - Tropeço: a 1ª prova foi recusada porque o script levou `models\b298…` com `\b` virando retrocesso. O servidor
+      estava certo; o script passou a usar `/`.
+
+    ### e. Falta (S6)
+    - O `.ecm` do modelo novo (o que `file_model` cita para NPC e monstro); extensão do Blender.

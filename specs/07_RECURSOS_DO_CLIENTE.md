@@ -612,6 +612,29 @@ perda.
 - **Igual ao cliente:** se a `.stck` gerada é igual à do cliente, ela não é regravada e a ação sai "igual à do cliente
   (não gravada)". Se nada muda no `.smd`, não há item.
 
+**Modelo novo a partir de GLB (B298, S6):** `POST estudio/modelos/novo?rascunho=&pasta=&titulo=`, com o GLB no corpo
+(`Estudio::modelo_novo`), cria em `<pasta>\<título>.*` e no rascunho:
+- o `.bon` (`esqueleto_do_glb`);
+- o `.ski` (`ski_do_glb`), com as texturas em `Textures\`;
+- o `.smd` v8;
+- as ações em `tcks_<título>\<ação>.stck`.
+
+A convenção segue os 2.980 `.smd` v8 do cliente 1.5.5 (medida):
+
+| item | valor | quanto do cliente |
+| :--- | :--- | ---: |
+| marca e reservado | `MOXB`, reservado zero | 100% |
+| esqueleto | `<título>.bon` | 98,6% |
+| 1ª pele | `<título>.ski` | 93% |
+| física | vazia | 61% |
+| pasta das trilhas | `tcks_<título>`; vazia quando não há ações | 59% |
+
+Tudo é montado e conferido antes de gravar. É recusada (400) a pasta fora de `models\`, o título com pasta ou ponto,
+o nome fora do GBK e o arquivo que já existe no cliente. Painel: abaixo da busca da vista Modelos, os campos pasta e
+título e o botão "Modelo novo a partir de GLB…".
+
+Ainda falta o `.ecm`, que é o que a tabela (`file_model`) cita para NPCs e monstros.
+
 Medido pelo `pw-recursos` em 5 `.smd` de NPC do 1.5.5, num rascunho de teste descartado:
 - a 1ª ação de cada um (de 1 quadro), baixada e reimportada, sai byte a byte igual;
 - a ação mais longa de cada um (442 quadros no total) sai "substituída" com o mesmo número de quadros, porque as
