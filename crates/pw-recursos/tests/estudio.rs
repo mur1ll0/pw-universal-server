@@ -843,6 +843,7 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let smd = ml["linhas"][1]["caminho"].as_str().unwrap().to_string();
         let fm = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &smd).call().unwrap());
         assert_eq!((fm["tipo"].as_str(), fm["esqueleto"]["ossos"][0][0].as_str(), fm["peles"][0]["malhas"].as_u64()), (Some("modelo"), Some("raiz"), Some(1)), "{fm}");
+        assert_eq!(fm["reescrita_igual"].as_bool(), Some(true), "B288: o .smd sintético fecha e se reescreve igual");
         let mut gm = Vec::new();
         std::io::Read::read_to_end(&mut pedir("GET", "estudio/modelos/glb").query("caminho", &smd).call().unwrap().into_reader(), &mut gm).unwrap();
         let nj = u32::from_le_bytes(gm[12..16].try_into().unwrap()) as usize;

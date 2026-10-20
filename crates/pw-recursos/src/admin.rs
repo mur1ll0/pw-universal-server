@@ -400,7 +400,9 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
                 json!({ "nome": a.nome, "inicio_ms": ms(a.quadro_inicial), "fim_ms": ms(a.quadro_final), "stck": a.stck })
             })
             .collect();
-        return Ok(Json(json!({ "caminho": nome, "tipo": "modelo", "versao": c.versao, "acoes": c.acoes, "lista_de_acoes": acoes,
+        // B288 (S6): o leitor completo fecha e o escritor reproduz este `.smd` byte a byte? (1.5.5: 5.163 de 5.163).
+        let reescrita_igual = e.gov.conteudo(&v, &nome).ok().map(|(_, b)| pw_data_loader::smd::Smd::ler(&b).is_ok_and(|s| s.escrever() == b));
+        return Ok(Json(json!({ "caminho": nome, "tipo": "modelo", "versao": c.versao, "acoes": c.acoes, "lista_de_acoes": acoes, "reescrita_igual": reescrita_igual,
             "acoes_descartadas": descartadas, "esqueleto": esq, "peles": peles })));
     }
     let (nome, s) = ler_ski(&e, &v, &q.caminho)?;
