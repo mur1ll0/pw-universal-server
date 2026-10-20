@@ -549,6 +549,20 @@ async fn estudio_acao_nova(State(e): State<Arc<Estado>>, Path(v): Path<String>, 
 }
 
 #[derive(Deserialize)]
+struct QImportar {
+    rascunho: Option<i64>,
+    smd: String,
+    destino: String,
+}
+
+/// B290 (S6): substitui uma pele (`.ski`) pelo glTF (GLB) do corpo, com os ossos do esqueleto do `.smd`.
+async fn estudio_importar_pele(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QImportar>, corpo: Bytes) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = q.rascunho.ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "escolha um rascunho".into()))?;
+    Ok(Json(e.estudio.importar_pele(&e.gov, &v, r, &q.smd, &q.destino, corpo.to_vec()).await?))
+}
+
+#[derive(Deserialize)]
 struct QDoadores {
     caminho: String,
     acao: String,
@@ -1316,6 +1330,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/modelos/glb", get(estudio_modelo_glb))
         .route("/admin/{v}/estudio/modelos/acao", post(estudio_acao_nova))
         .route("/admin/{v}/estudio/modelos/doadores", get(estudio_doadores))
+        .route("/admin/{v}/estudio/modelos/importar", post(estudio_importar_pele))
         .route("/admin/{v}/estudio/textos/{arquivo}", get(estudio_textos).post(estudio_novo_texto))
         .route("/admin/{v}/estudio/textos/{arquivo}/{chave}", put(estudio_editar_texto))
         .route("/admin/{v}/estudio/comportamentos/{id}", get(estudio_comportamento).put(estudio_editar_comportamento))

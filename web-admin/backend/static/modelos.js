@@ -100,6 +100,36 @@ function tabelaDeDiagnostico(f, caminho, titulo, lista, habitat, voo = null) {
   return tab;
 }
 
+/** B290 (S6): "Substituir por GLB…" — a pele `destino` vira a do glTF escolhido, com os ossos do esqueleto do `.smd`
+    `smd`, no rascunho; mostra o relatório do que foi ajustado ou deixado de fora. */
+function botaoDeImportar(smd, destino) {
+  const rotulo = criar("label", "botao botao-pequeno botao-secundario", "Substituir por GLB…");
+  const arquivo = criar("input");
+  arquivo.type = "file";
+  arquivo.accept = ".glb,model/gltf-binary";
+  arquivo.hidden = true;
+  rotulo.appendChild(arquivo);
+  arquivo.addEventListener("change", async () => {
+    const f = arquivo.files[0];
+    arquivo.value = "";
+    if (!f) return;
+    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio antes de importar.", { toast: true }); return; }
+    try {
+      const resp = await fetch(rotaDeModelos("/importar", { rascunho: estudio.rascunho, smd, destino }), {
+        method: "POST", credentials: "same-origin", body: await f.arrayBuffer(),
+        headers: { "Content-Type": "application/octet-stream", "X-CSRF-Token": estado.sessao.csrf },
+      });
+      const dados = await resp.json();
+      if (!resp.ok) throw new Error(dados?.mensagem || dados?.detail || "Não foi possível importar.");
+      const r = dados.resultado || {};
+      const avisos = (r.relatorio || []).length ? ` Relatório: ${r.relatorio.join(" · ")}` : "";
+      alerta("ok", "Estúdio", `${destino.split("\\").pop()} substituída no rascunho: ${r.malhas} malhas, ${r.vertices} vértices, ${r.ossos} ossos, texturas ${(r.texturas || []).join(", ") || "(nenhuma)"}.${avisos}`);
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  });
+  return rotulo;
+}
+
 async function abrirModelo(caminho, habitat = null, voo = null) {
   const ficha = elemento("modelos-ficha");
   ficha.textContent = "Carregando…";
@@ -198,6 +228,7 @@ async function abrirModelo(caminho, habitat = null, voo = null) {
       if (p.erro) li.textContent = `${p.caminho} — não lida: ${p.erro}`;
       if (p.erro && /não existe/.test(p.erro)) li.textContent += " (o arquivo citado falta no próprio cliente)";
       else { const a = criar("a", "", p.caminho.split("\\").pop()); a.href = "#"; a.addEventListener("click", (ev) => { ev.preventDefault(); abrirModelo(p.caminho); }); li.append(a, ` — ${p.malhas} malhas, ${p.triangulos} triângulos`); }
+      if (!p.erro) li.append(" ", botaoDeImportar(caminho, p.caminho));
       lista.appendChild(li);
     }
   } else {

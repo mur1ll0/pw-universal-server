@@ -112,6 +112,15 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["metodo"], p["caminho"], p["corpo"]), ("PUT", "/admin/1.5.5/rascunhos/7/arquivo", conteudo))
         self.assertEqual(p["consulta"], {"caminho": ["configs\\a.txt"], "destino": ["cliente"]})
+        # B290: importar um GLB como pele também passa de 8 KiB e chega inteiro, com o modelo e o destino.
+        glb = os.urandom(200_000)
+        r = await self.cliente.post("/api/realms/realm_155/estudio/modelos/importar",
+                                    params={"rascunho": 3, "smd": "a.smd", "destino": "a.ski"}, content=glb,
+                                    headers={**csrf, "content-type": "application/octet-stream"})
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["metodo"], p["caminho"], p["corpo"]), ("POST", "/admin/1.5.5/estudio/modelos/importar", glb))
+        self.assertEqual(p["consulta"], {"rascunho": ["3"], "smd": ["a.smd"], "destino": ["a.ski"]})
         # Em qualquer outra rota o limite continua 8 KiB.
         r = await self.cliente.post("/api/recursos/1.5.5/rascunhos", headers=csrf,
                                     json={"descricao": "x" * 10_000, "operacao_id": "op-teste-456"})

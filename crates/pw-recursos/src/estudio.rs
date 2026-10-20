@@ -3254,6 +3254,29 @@ impl Estudio {
         .await
     }
 
+    /// B290 (S6): substitui a pele `destino` (`.ski` do cliente) pelo glTF `glb` (`pw_data_loader::importar::ski_do_glb`),
+    /// com os ossos casados pelo nome no esqueleto do `.smd` `smd` (lido com o rascunho). Devolve o relatório.
+    pub async fn importar_pele(&self, gov: &Governanca, versao: &str, rascunho: i64, smd: &str, destino: &str, glb: Vec<u8>) -> Result<Value> {
+        if !destino.to_lowercase().ends_with(".ski") || !smd.to_lowercase().ends_with(".smd") {
+            bail!("destino .ski e modelo .smd");
+        }
+        let c = pw_data_loader::smd::cabeca(&self.bytes_do_cliente(gov, versao, smd, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
+        if c.esqueleto.is_empty() {
+            bail!("{smd} não cita esqueleto: sem ele não há como casar os ossos");
+        }
+        let caminho_bon = ao_lado(smd, &c.esqueleto);
+        let bon = pw_data_loader::bon::Bon::ler(&self.bytes_do_cliente(gov, versao, &caminho_bon, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{caminho_bon}: {x}"))?;
+        let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
+        let bytes = imp.ski.escrever();
+        pw_data_loader::ski::Ski::ler(&bytes).context("o .ski importado não relê")?;
+        let resumo = json!({
+            "malhas": imp.ski.malhas_de_pele.len(), "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>(),
+            "ossos": imp.ski.ossos.len(), "texturas": imp.ski.texturas, "esqueleto": caminho_bon, "relatorio": imp.relatorio,
+        });
+        let mudanca = json!({ "acao": "importar", "tipo": "pele", "de": "glTF", "esqueleto": caminho_bon });
+        self.alterar_item_do_cliente(gov, versao, destino, rascunho, move |_| Ok((bytes, resumo, mudanca))).await
+    }
+
     /// B285: o índice dos `.ecm` e `.smd` do cliente publicado (montado uma vez por manifesto; no 1.5.5, 8.590 `.ecm`).
     pub async fn indice_de_ecm(&self, gov: &Governanca, versao: &str) -> Result<Arc<IndiceDeEcm>> {
         let sha = gov.publicado(versao)?.0.manifesto_sha256;

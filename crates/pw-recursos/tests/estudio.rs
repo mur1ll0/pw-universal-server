@@ -850,6 +850,14 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let docm: Value = serde_json::from_slice(&gm[20..20 + nj]).unwrap();
         assert_eq!(docm["skins"][0]["joints"].as_array().map(|x| x.len()), Some(2), "um osso + o esqueleto: {docm}");
         assert!(docm["meshes"][0]["primitives"][0]["attributes"]["WEIGHTS_0"].is_u64());
+        // B290: importar de volta esse GLB como a pele caixa.ski, num rascunho, com o esqueleto do .smd.
+        let ski_cam = ml["linhas"][2]["caminho"].as_str().unwrap().to_string();
+        let ri = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "importar", "operacao_id": "t_p4_ri"})).unwrap())["id"].as_i64().unwrap();
+        let imp = json_de(pedir("POST", "estudio/modelos/importar").query("rascunho", &ri.to_string()).query("smd", &smd).query("destino", &ski_cam).send_bytes(&gm).unwrap());
+        // O .ski sintético pesa os vértices na vaga do esqueleto (sem osso com nome): 0 nomes de osso.
+        assert_eq!((imp["resultado"]["malhas"].as_u64(), imp["resultado"]["vertices"].as_u64(), imp["resultado"]["texturas"].clone()), (Some(1), Some(3), json!(["caixa.dds"])), "{imp}");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar").query("smd", &smd).query("destino", &ski_cam).send_bytes(&gm)).0, 400, "sem rascunho");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar").query("rascunho", &ri.to_string()).query("smd", &smd).query("destino", &ski_cam).send_bytes(b"lixo")).0, 400, "não é GLB");
         // B276: a ação (o .smd sintético não tem nenhuma) — pedir uma que não existe → 400.
         assert_eq!(fm["lista_de_acoes"].as_array().map(|x| x.len()), Some(0), "{fm}");
         assert_eq!(erro_de(pedir("GET", "estudio/modelos/glb").query("caminho", &smd).query("acao", "andar").call()).0, 400);
