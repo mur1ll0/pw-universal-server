@@ -15319,3 +15319,32 @@ comparação lado a lado.
     ### e. Falta
     - S5: nomes de habilidade (depende do S8). Copiar a **ação-base** (trilhas do `.smd`/`.stck`) quando o destino não a
       tem.
+
+286. **Sessão 2026-10-19: Estúdio S6 (início) — escritor do `.ski`.**
+
+    ### a. Pedido
+    Commitar e seguir (B285 já commitado: `cf1d938`, `b348c99`). O S5 está concluído; só os nomes de ação de
+    habilidade ficam para o S8. Próxima fase: S6 (glTF e Blender, isto é, importar para os formatos do jogo).
+
+    ### b. Decisão
+    - Como no S2 com o `elements`, o primeiro passo de importar é um escritor que reproduz o cliente byte a byte.
+      Sem isso, nenhum arquivo importado é confiável.
+    - Começo pelo `.ski`, a pele, que é o que um modelo novo precisa primeiro.
+
+    ### c. O que foi feito
+    - `pw-data-loader/ski`: `Ski::escrever`, porte de `A3DSkin::Save` (`A3DSkin.cpp:523-604`). O leitor passou a
+      guardar a marca `MOXB`, a contagem de ossos do cabeçalho (v8), os 52 reservados, e a linha e o byte `2Sided` de
+      cada material.
+    - `pw-recursos`: a ficha do `.ski` traz `reescrita_igual`.
+
+    ### d. Provas
+    - 1.5.5 BR inteiro: **24.165 de 24.165** `.ski` reescritos byte a byte iguais (`escrever_reproduz_o_cliente`).
+    - 1.2.6 pelo contêiner: **300 de 300** de uma amostra.
+    - `pw-recursos` com o banco **22/22**: o `.ski` sintético é reescrito igual.
+    - `pw-data-loader` **244/244**. A 1ª rodada ficou 1 h parada: o `cargo` estava esperando uma trava do diretório
+      `target`, com 1,6 s de CPU e nenhum binário de teste. Encerrado e rodado de novo, passou.
+
+    ### e. Falta (S6)
+    - Escritores do `.bon`, `.smd` e `.stck`.
+    - Importar o glTF para esses formatos: eixos, até 4 ossos por vértice, ossos pelo nome, PNG → DDS.
+    - Relatório da importação; extensão do Blender.

@@ -631,6 +631,14 @@ no último byte (v8: 6.033; v9: 18.132); **nenhum** usa morph, supple ou muscle 
 sobra (`npcs\怪物\灵族\巨牛\牛.ski`, 36 bytes sem `ASKI`) o cliente também recusa (`A3DSkin.cpp:214`). O 1.2.6 ainda
 não foi medido.
 
+**Escrita (B286, S6):** `Ski::escrever` é o inverso de `ler` (`A3DSkin::Save`, `A3DSkin.cpp:523-604`, mesma ordem).
+Para reescrever igual, o leitor guarda o que antes descartava: a marca `MOXB` (`marca`), a contagem de ossos do
+cabeçalho (`ossos_no_cabecalho`, que existe mesmo na v8, onde os nomes não vêm), os 52 bytes reservados
+(`reservado`), e, de cada material, a linha inteira e o byte do `2Sided`. Os textos voltam a GBK. Morph, supple e
+muscle saem com contagem 0. Medido no 1.5.5 BR: **24.165 de 24.165** `.ski` lidos são reescritos byte a byte iguais
+(`ski::testes::escrever_reproduz_o_cliente`). No 1.2.6, pelo contêiner: 300 de 300 de uma amostra. A ficha do
+`.ski` no painel diz `reescrita_igual` por arquivo.
+
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
 (mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.
