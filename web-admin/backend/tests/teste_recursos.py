@@ -201,6 +201,10 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         await self.cliente.get("/api/realms/realm_126/estudio/nascimentos", params={"id": 42, "rascunho": 3})
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], p["consulta"]), ("/admin/1.2.6/estudio/nascimentos", {"id": ["42"], "rascunho": ["3"]}))
+        # B285: doadores de uma ação.
+        await self.cliente.get("/api/realms/realm_155/estudio/modelos/doadores", params={"caminho": "a.ecm", "acao": "站立"})
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], p["consulta"]), ("/admin/1.5.5/estudio/modelos/doadores", {"caminho": ["a.ecm"], "acao": ["站立"]}))
 
     async def test_area_do_npcgen_repassa_e_recusa_o_que_nao_e_area(self):
         """B243: salvar área do npcgen passa de 8 KiB (geradores) só na rota dela; tipo fora do padrão fica no painel."""

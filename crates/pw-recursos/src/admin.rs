@@ -526,13 +526,33 @@ struct PedidoAcaoNova {
     origem: String,
     nova: String,
     base: Option<String>,
+    /// B285: copiar de outro `.ecm` (mesma versão, ações-base existentes no `.smd` do destino).
+    de: Option<String>,
 }
 
 /// B280: ação combinada nova no `.ecm`, clonando outra (corrige uma ação que o diagnóstico acusa).
 async fn estudio_acao_nova(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QEstudio>, Json(p): Json<PedidoAcaoNova>) -> R<Json<Value>> {
     validar(&v)?;
     let r = rascunho_obrigatorio(&q)?;
+    if let Some(de) = p.de {
+        if p.base.is_some() {
+            return Err(Erro(StatusCode::BAD_REQUEST, "copiar de outro .ecm não troca a ação-base".into()));
+        }
+        return Ok(Json(e.estudio.acao_copiada_no_ecm(&e.gov, &v, &p.caminho, r, de, p.origem, p.nova).await?));
+    }
     Ok(Json(e.estudio.acao_nova_no_ecm(&e.gov, &v, &p.caminho, r, p.origem, p.nova, p.base).await?))
+}
+
+#[derive(Deserialize)]
+struct QDoadores {
+    caminho: String,
+    acao: String,
+}
+
+/// B285: quem pode doar uma ação a um `.ecm` (mesmo esqueleto, mesma versão de arquivo) — `Estudio::doadores`.
+async fn estudio_doadores(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QDoadores>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.doadores(&e.gov, &v, &q.caminho, &q.acao).await?))
 }
 
 fn urlencoding(t: &str) -> String {
@@ -1290,6 +1310,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/modelos/ficha", get(estudio_modelo))
         .route("/admin/{v}/estudio/modelos/glb", get(estudio_modelo_glb))
         .route("/admin/{v}/estudio/modelos/acao", post(estudio_acao_nova))
+        .route("/admin/{v}/estudio/modelos/doadores", get(estudio_doadores))
         .route("/admin/{v}/estudio/textos/{arquivo}", get(estudio_textos).post(estudio_novo_texto))
         .route("/admin/{v}/estudio/textos/{arquivo}/{chave}", put(estudio_editar_texto))
         .route("/admin/{v}/estudio/comportamentos/{id}", get(estudio_comportamento).put(estudio_editar_comportamento))

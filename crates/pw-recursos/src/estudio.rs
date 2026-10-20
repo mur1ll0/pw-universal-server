@@ -36,6 +36,24 @@ pub struct Estudio {
     pecas: Mutex<HashMap<(String, String, String), Arc<Vec<u8>>>>,
     /// Terreno (`.hmap`) de cada mapa já lido, por (versão, caminho) — B248.
     terrenos: Mutex<HashMap<(String, String), Arc<pw_data_loader::Terreno>>>,
+    /// B285: os `.ecm` do cliente publicado (e os `.smd` deles), por versão, com o SHA do manifesto de onde saiu.
+    indice_de_ecm: Mutex<HashMap<String, (String, Arc<IndiceDeEcm>)>>,
+}
+
+/// B285: o que se precisa para achar doadores de uma ação: cada `.ecm` (caminho, versão, `.smd` em minúsculas, ações
+/// combinadas com as ações-base) e cada `.smd` (esqueleto em minúsculas, ações-base que tem).
+#[derive(Default)]
+pub struct IndiceDeEcm {
+    pub ecms: Vec<(String, u32, String, Vec<(String, Vec<String>)>)>,
+    pub smds: HashMap<String, (Option<String>, Vec<String>)>,
+}
+
+/// Um caminho relativo à pasta de outro (`A3DSkinModelMan::LoadModelFromFile`: `strPath + "\\" + strFile`).
+fn ao_lado(caminho: &str, nome: &str) -> String {
+    match caminho.rsplit_once('\\') {
+        Some((pasta, _)) => format!("{pasta}\\{nome}"),
+        None => nome.to_string(),
+    }
 }
 
 fn caminho_gbk() -> Vec<u8> {
@@ -3231,6 +3249,106 @@ impl Estudio {
             let novo = pw_data_loader::ecm::clonar_acao(b, &origem, &nova, base.as_deref()).map_err(anyhow::Error::msg)?;
             pw_data_loader::ecm::ler(&novo).context("o .ecm editado não relê")?;
             let mudanca = json!({ "acao": "nova", "tipo": "acao_combinada", "nome": nova, "clone_de": origem, "base": base });
+            Ok((novo, json!({ "nome": nova }), mudanca))
+        })
+        .await
+    }
+
+    /// B285: o índice dos `.ecm` e `.smd` do cliente publicado (montado uma vez por manifesto; no 1.5.5, 8.590 `.ecm`).
+    pub async fn indice_de_ecm(&self, gov: &Governanca, versao: &str) -> Result<Arc<IndiceDeEcm>> {
+        let sha = gov.publicado(versao)?.0.manifesto_sha256;
+        if let Some((s, i)) = self.indice_de_ecm.lock().unwrap().get(versao) {
+            if *s == sha {
+                return Ok(i.clone());
+            }
+        }
+        let caminhos: Vec<String> = gov
+            .buscar(versao, ".ecm", usize::MAX)?
+            .iter()
+            .filter_map(|x| x["caminho"].as_str().filter(|c| c.to_lowercase().ends_with(".ecm")).map(str::to_string))
+            .collect();
+        let mut indice = IndiceDeEcm::default();
+        let mut smds: Vec<String> = Vec::new();
+        for (c, lido) in caminhos.iter().zip(gov.conteudos(versao, &caminhos)?) {
+            let Some(m) = lido.and_then(|(_, b)| pw_data_loader::ecm::ler(&b)) else { continue };
+            let smd = m.smd.trim().replace('/', "\\").to_lowercase();
+            if !smds.contains(&smd) {
+                smds.push(smd.clone());
+            }
+            indice.ecms.push((c.clone(), m.versao, smd, m.acoes.into_iter().map(|a| (a.nome, a.bases)).collect()));
+        }
+        for (c, lido) in smds.iter().zip(gov.conteudos(versao, &smds)?) {
+            let Some(cab) = lido.and_then(|(_, b)| pw_data_loader::smd::cabeca(&b).ok()) else { continue };
+            let esqueleto = (!cab.esqueleto.is_empty()).then(|| ao_lado(c, &cab.esqueleto).to_lowercase());
+            indice.smds.insert(c.clone(), (esqueleto, cab.lista_de_acoes.into_iter().map(|a| a.nome).collect()));
+        }
+        let indice = Arc::new(indice);
+        self.indice_de_ecm.lock().unwrap().insert(versao.to_string(), (sha, indice.clone()));
+        Ok(indice)
+    }
+
+    /// B285: quem pode doar a ação `acao` ao `.ecm` `caminho`: outros `.ecm` da mesma versão de arquivo, com o mesmo
+    /// esqueleto (`.bon`) e essa ação combinada; para cada um, as ações-base dela que faltam no `.smd` do destino (a cópia
+    /// só anima se não faltar nenhuma). Primeiro os do mesmo `.smd`, depois os com menos faltas; até 50.
+    pub async fn doadores(&self, gov: &Governanca, versao: &str, caminho: &str, acao: &str) -> Result<Value> {
+        let i = self.indice_de_ecm(gov, versao).await?;
+        let alvo = caminho.trim().replace('/', "\\").to_lowercase();
+        let (_, v_alvo, smd_alvo, _) = i.ecms.iter().find(|x| x.0.to_lowercase() == alvo).with_context(|| format!("{caminho} não está no índice de .ecm"))?;
+        let (esq_alvo, bases_alvo) = i.smds.get(smd_alvo).cloned().unwrap_or((None, vec![]));
+        if !i.smds.contains_key(smd_alvo) {
+            return Ok(json!({ "acao": acao, "esqueleto": null, "doadores": [], "motivo": "o .smd do destino não foi lido: não há como conferir as ações-base" }));
+        }
+        // A ação combinada só cita ações-base pelo nome, e o motor as procura no `.smd` do modelo que toca: o que decide se
+        // a cópia anima é ter as bases no `.smd` do destino, não o esqueleto do doador. O esqueleto igual só ordena (os
+        // efeitos citam ganchos pelo nome, `HookName:`, e outro esqueleto pode não tê-los).
+        let mut r: Vec<(usize, bool, bool, Value)> = Vec::new();
+        for (c, v, smd, acoes) in &i.ecms {
+            if c.to_lowercase() == alvo || v != v_alvo {
+                continue;
+            }
+            let Some((_, bases)) = acoes.iter().find(|a| a.0 == acao) else { continue };
+            let faltam: Vec<&String> = bases.iter().filter(|b| !bases_alvo.contains(b)).collect();
+            let mesmo = smd == smd_alvo;
+            let mesmo_esq = esq_alvo.is_some() && i.smds.get(smd).and_then(|x| x.0.as_ref()) == esq_alvo.as_ref();
+            r.push((faltam.len(), mesmo, mesmo_esq, json!({ "caminho": c, "mesmo_smd": mesmo, "mesmo_esqueleto": mesmo_esq, "bases": bases, "bases_faltando": faltam })));
+        }
+        r.sort_by(|a, b| a.0.min(1).cmp(&b.0.min(1)).then(b.1.cmp(&a.1)).then(b.2.cmp(&a.2)).then(a.0.cmp(&b.0)));
+        let total = r.len();
+        let prontos = r.iter().filter(|x| x.0 == 0).count();
+        Ok(json!({ "acao": acao, "esqueleto": esq_alvo, "total": total, "prontos": prontos, "doadores": r.into_iter().take(50).map(|x| x.3).collect::<Vec<_>>() }))
+    }
+
+    /// B285: copia a ação combinada `origem` do `.ecm` `de` (cliente publicado) para o `.ecm` `caminho` como `nova`
+    /// (`pw_data_loader::ecm::copiar_acao`). Recusa se alguma ação-base dela não existe no `.smd` do destino — sem ela,
+    /// a ação não anima.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn acao_copiada_no_ecm(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, de: String, origem: String, nova: String) -> Result<Value> {
+        if !caminho.to_lowercase().ends_with(".ecm") || !de.to_lowercase().ends_with(".ecm") {
+            bail!("só .ecm");
+        }
+        let fonte = gov.conteudo(versao, &de)?.1;
+        let bases = pw_data_loader::ecm::ler(&fonte)
+            .context("origem: .ecm ilegível")?
+            .acoes
+            .into_iter()
+            .find(|a| a.nome == origem)
+            .with_context(|| format!("a ação {origem} não existe em {de}"))?
+            .bases;
+        let destino = pw_data_loader::ecm::ler(&gov.conteudo(versao, caminho)?.1).context("destino: .ecm ilegível")?;
+        let bases_do_smd: Vec<String> = pw_data_loader::smd::cabeca(&gov.conteudo(versao, &destino.smd)?.1)
+            .map_err(|x| anyhow::anyhow!("{}: {x}", destino.smd))?
+            .lista_de_acoes
+            .into_iter()
+            .map(|a| a.nome)
+            .collect();
+        let faltam: Vec<&String> = bases.iter().filter(|b| !bases_do_smd.contains(b)).collect();
+        if !faltam.is_empty() {
+            bail!("o .smd do destino ({}) não tem a(s) ação(ões)-base {faltam:?}: a cópia não animaria", destino.smd);
+        }
+        self.alterar_item_do_cliente(gov, versao, caminho, rascunho, move |b| {
+            let novo = pw_data_loader::ecm::copiar_acao(b, &fonte, &origem, &nova).map_err(anyhow::Error::msg)?;
+            pw_data_loader::ecm::ler(&novo).context("o .ecm editado não relê")?;
+            let mudanca = json!({ "acao": "nova", "tipo": "acao_combinada", "nome": nova, "copia_de": de, "acao_de_origem": origem });
             Ok((novo, json!({ "nome": nova }), mudanca))
         })
         .await

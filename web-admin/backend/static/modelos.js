@@ -61,6 +61,38 @@ function tabelaDeDiagnostico(f, caminho, titulo, lista, habitat, voo = null) {
         } catch (erro) { alerta("erro", "Estúdio", erro.message); }
       });
       td.append(origem, base, b);
+      // B285: copiar a ação de outro .ecm com o mesmo esqueleto (e mesma versão de arquivo) que a tenha.
+      const doar = criar("button", "botao botao-pequeno botao-secundario", "Copiar de outro modelo…");
+      doar.type = "button";
+      doar.addEventListener("click", async () => {
+        doar.disabled = true;
+        doar.textContent = "Procurando (a 1ª vez lê todos os .ecm)…";
+        try {
+          const r = await api(rotaDeModelos("/doadores", { caminho, acao: d.pedido }));
+          const sel = criar("select", "campo");
+          for (const x of r.doadores) {
+            // B285: outro esqueleto anima igual (as bases vêm do .smd do destino), mas os efeitos podem citar ganchos que ele não tem.
+            const esq = x.mesmo_smd ? " · mesmo .smd" : x.mesmo_esqueleto ? " · mesmo esqueleto" : " · outro esqueleto (efeitos podem citar ganchos que este não tem)";
+            const o = new Option(`${x.caminho.split("\\").pop()}${esq}${x.bases_faltando.length ? ` · ⚠ faltam no .smd: ${x.bases_faltando.join(", ")}` : ""}`, x.caminho);
+            o.disabled = x.bases_faltando.length > 0;
+            o.title = x.caminho;
+            sel.appendChild(o);
+          }
+          if (!r.doadores.length) { doar.replaceWith(criar("span", "texto-suave", r.motivo || `Nenhum modelo com o mesmo esqueleto tem ${d.pedido}.`)); return; }
+          const copiar = criar("button", "botao botao-pequeno", "Copiar");
+          copiar.type = "button";
+          copiar.addEventListener("click", async () => {
+            try {
+              await api(rotaDeModelos("/acao", { rascunho: estudio.rascunho }), { method: "POST", body: JSON.stringify({ caminho, de: sel.value, origem: d.pedido, nova: d.pedido }) });
+              alerta("ok", "Estúdio", `Ação ${d.pedido} copiada de ${sel.value.split("\\").pop()} no rascunho.`, { toast: true });
+              if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+              abrirModelo(caminho, habitat, voo);
+            } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+          });
+          doar.replaceWith(criar("span", "texto-suave", `${r.total} doador(es): `), sel, copiar);
+        } catch (erro) { doar.disabled = false; doar.textContent = "Copiar de outro modelo…"; alerta("erro", "Estúdio", erro.message); }
+      });
+      td.appendChild(doar);
       tr.appendChild(td);
     }
     tab.appendChild(tr);

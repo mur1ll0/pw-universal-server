@@ -201,6 +201,45 @@ pub fn clonar_acao(b: &[u8], origem: &str, nova: &str, base: Option<&str>) -> Re
     Ok([if marca { b"MOXT".as_slice() } else { b"" }, &saida.concat()].concat())
 }
 
+/// Copia a ação combinada `origem` do `.ecm` `fonte` para o `.ecm` `destino` com o nome `nova` (B285), depois da última
+/// ação dele, e soma 1 no `ComActCount`. Só entre arquivos da mesma `Version`: os campos do bloco variam com ela
+/// (`A3DCombinedAction::Load(pFile, dwVersion)`, `GfxCommon/A3DCombinedAction.cpp:142-…`). Os fins de linha do bloco
+/// passam a ser os do destino; o resto do destino fica byte a byte igual. As ações-base citadas precisam existir no
+/// `.smd` do destino — quem chama confere (aqui não se lê o `.smd`).
+pub fn copiar_acao(destino: &[u8], fonte: &[u8], origem: &str, nova: &str) -> Result<Vec<u8>, String> {
+    if nova.is_empty() || nova.contains(['\r', '\n']) {
+        return Err("nome inválido".into());
+    }
+    let (nova_b, _, erro) = encoding_rs::GBK.encode(nova);
+    if erro {
+        return Err(format!("\"{nova}\" tem caracteres que não existem em GBK (o cliente lê o .ecm em GBK)"));
+    }
+    let (vd, vf) = (ler(destino).ok_or("destino: .ecm ilegível")?.versao, ler(fonte).ok_or("origem: .ecm ilegível")?.versao);
+    if vd != vf {
+        return Err(format!("versões diferentes (destino {vd}, origem {vf}): os campos da ação mudam com a versão do .ecm"));
+    }
+    let tira = |b: &[u8]| -> (bool, Vec<u8>) { (b.starts_with(b"MOXT"), b.strip_prefix(b"MOXT").unwrap_or(b).to_vec()) };
+    let (marca, corpo_d) = tira(destino);
+    let (_, corpo_f) = tira(fonte);
+    let ld = linhas_com_fim(&corpo_d);
+    let lf = linhas_com_fim(&corpo_f);
+    let (cont, bd) = blocos(&ld).ok_or("destino: estrutura de ações não reconhecida")?;
+    let (_, bf) = blocos(&lf).ok_or("origem: estrutura de ações não reconhecida")?;
+    if bd.iter().any(|x| x.0 == nova) {
+        return Err(format!("a ação {nova} já existe no destino"));
+    }
+    let &(_, ini, fim) = bf.iter().find(|x| x.0 == origem).ok_or_else(|| format!("a ação {origem} não existe na origem"))?;
+    let fl: &[u8] = if ld[cont].ends_with(b"\r\n") { b"\r\n" } else { b"\n" };
+    let mut bloco: Vec<Vec<u8>> = lf[ini..fim].iter().map(|x| [sem_fim(x), fl].concat()).collect();
+    bloco[0] = [b"CombineActName: ".as_slice(), &nova_b, fl].concat();
+    let n_atual: usize = std::str::from_utf8(sem_fim(&ld[cont][b"ComActCount: ".len()..])).ok().and_then(|x| x.trim().parse().ok()).ok_or("ComActCount ilegível")?;
+    let onde = bd.last().map_or(cont + 1, |x| x.2);
+    let mut saida: Vec<Vec<u8>> = ld.iter().map(|x| x.to_vec()).collect();
+    saida[cont] = [format!("ComActCount: {}", n_atual + 1).as_bytes(), fl].concat();
+    saida.splice(onde..onde, bloco);
+    Ok([if marca { b"MOXT".as_slice() } else { b"" }, &saida.concat()].concat())
+}
+
 /// Os ambientes de um habitat de mascote (`inhabit_type`, `ExpTypes.h:2866`: 0 chão, 1 água, 2 ar, 3 chão+água, 4
 /// chão+ar, 5 água+ar, 6 os três), com as palavras que o cliente acrescenta ao nome da ação (`GetActionEnvString`,
 /// `EC_NPCModel.cpp:580-596`: `地面`, `水中`, `空中`).
@@ -335,6 +374,50 @@ mod testes {
         }
         eprintln!("ecm: blocos certos {ok}, contagem diferente {contagem_diferente}, sem fim {sem_termino}, clonados {clonados}");
         assert_eq!((contagem_diferente, sem_termino), (0, 0));
+    }
+
+    /// B285: em todo o cliente, copiar a 1ª ação do `.ecm` anterior de mesma versão: relê com uma ação a mais (a última,
+    /// com as ações-base da origem), o `ComActCount` bate com os blocos, e versão diferente é recusada.
+    #[test]
+    fn copiar_entre_arquivos_em_todo_o_cliente() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let mut pilha = vec![raiz.to_path_buf()];
+        let mut anterior: std::collections::HashMap<u32, (Vec<u8>, String)> = std::collections::HashMap::new();
+        let (mut copiados, mut recusados) = (0usize, 0usize);
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("ecm")) { continue; }
+                let b = std::fs::read(&p).unwrap();
+                let Some(antes) = ler(&b) else { continue };
+                if blocos(&linhas_com_fim(b.strip_prefix(b"MOXT").unwrap_or(&b))).is_none() { continue; }
+                if let Some((f, origem)) = anterior.get(&antes.versao) {
+                    let novo = copiar_acao(&b, f, origem, "复制测试").unwrap_or_else(|x| panic!("{}: {x}", p.display()));
+                    let depois = ler(&novo).unwrap();
+                    assert_eq!(depois.acoes.len(), antes.acoes.len() + 1, "{}", p.display());
+                    let ultima = depois.acoes.last().unwrap();
+                    assert_eq!((ultima.nome.as_str(), &ultima.bases), ("复制测试", &ler(f).unwrap().acoes.iter().find(|a| &a.nome == origem).unwrap().bases));
+                    let l = linhas_com_fim(novo.strip_prefix(b"MOXT").unwrap_or(&novo));
+                    let (cont, bl) = blocos(&l).unwrap();
+                    assert_eq!(format!("ComActCount: {}", bl.len()).as_bytes(), sem_fim(l[cont]), "{}", p.display());
+                    copiados += 1;
+                }
+                if let Some(outra) = anterior.iter().find(|(v, _)| **v != antes.versao) {
+                    assert!(copiar_acao(&b, &outra.1 .0, &outra.1 .1, "复制测试").unwrap_err().contains("versões diferentes"));
+                    recusados += 1;
+                }
+                if let Some(a) = antes.acoes.first() {
+                    anterior.insert(antes.versao, (b.clone(), a.nome.clone()));
+                }
+            }
+        }
+        eprintln!("ecm: copiados {copiados}, versão diferente recusada {recusados}");
+        assert!(copiados > 1000 && recusados > 0, "{copiados} {recusados}");
     }
 
 

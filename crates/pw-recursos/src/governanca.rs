@@ -426,17 +426,26 @@ impl Governanca {
         let indice: std::collections::HashMap<String, &Arquivo> =
             m.arquivos.iter().filter_map(|a| Some((nomes::chave(&hex::decode(&a.caminho_gbk).ok()?), a))).collect();
         let objetos = self.objetos(versao);
-        Ok(caminhos
-            .iter()
-            .map(|c| {
-                let texto = c.trim().replace('/', "\\");
-                let gbk = nomes::gbk_de_unicode(texto.trim_start_matches('\\'))?;
-                let a = indice.get(&nomes::chave(&gbk))?;
-                let sha: Sha256Bytes = hex::decode(&a.sha256).ok()?.try_into().ok()?;
-                let nome = nomes::legivel(&hex::decode(&a.caminho_gbk).ok()?);
-                Some((nome, objetos.ler(&sha, a.tamanho as usize).ok()?))
-            })
-            .collect())
+        let um = |c: &String| -> Option<(String, Vec<u8>)> {
+            let texto = c.trim().replace('/', "\\");
+            let gbk = nomes::gbk_de_unicode(texto.trim_start_matches('\\'))?;
+            let a = indice.get(&nomes::chave(&gbk))?;
+            let sha: Sha256Bytes = hex::decode(&a.sha256).ok()?.try_into().ok()?;
+            let nome = nomes::legivel(&hex::decode(&a.caminho_gbk).ok()?);
+            Some((nome, objetos.ler(&sha, a.tamanho as usize).ok()?))
+        };
+        // B285: cada objeto é um arquivo zstd lido e descomprimido à parte — em lotes grandes (os 8.590 `.ecm` do 1.5.5),
+        // em paralelo, mantendo a ordem.
+        let fios = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16);
+        if caminhos.len() < 64 || fios < 2 {
+            return Ok(caminhos.iter().map(um).collect());
+        }
+        let pedaco = caminhos.len().div_ceil(fios);
+        Ok(std::thread::scope(|s| {
+            let alcas: Vec<_> = caminhos.chunks(pedaco).map(|p| (p.len(), s.spawn(|| p.iter().map(um).collect::<Vec<_>>()))).collect();
+            // Uma thread que falhe vira `None` em cada posição dela — a ordem nunca se desalinha.
+            alcas.into_iter().flat_map(|(n, h)| h.join().unwrap_or_else(|_| vec![None; n])).collect()
+        }))
     }
 
     /// Arquivos da versão publicada cujo caminho contém `busca` (sem diferenciar maiúsculas).

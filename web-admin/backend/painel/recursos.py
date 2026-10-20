@@ -629,7 +629,16 @@ def registrar_reinicio(app):
         corpo = {k: d[k] for k in ("caminho", "origem", "nova")}
         if isinstance(d.get("base"), str) and d["base"]:
             corpo["base"] = d["base"]
+        # B285: copiar de outro .ecm.
+        if isinstance(d.get("de"), str) and d["de"]:
+            corpo["de"] = d["de"][:500]
         return await _repassar("POST", f"/admin/{v}/estudio/modelos/acao", {"rascunho": rascunho}, dados=corpo)
+
+    # B285: quem pode doar uma ação a um .ecm (mesmo esqueleto, mesma versão de arquivo).
+    @app.get("/api/realms/{realm}/estudio/modelos/doadores")
+    async def estudio_doadores(realm: str, caminho: str, acao: str, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/modelos/doadores", {"caminho": caminho[:500], "acao": acao[:200]})
 
     @app.get("/api/realms/{realm}/estudio/modelos/glb")
     async def estudio_modelo_glb(realm: str, caminho: str, requisicao: Request, acao: str | None = None):
