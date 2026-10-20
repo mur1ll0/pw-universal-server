@@ -17,6 +17,8 @@ use sha2::{Digest, Sha256};
 
 /// O `elementskill.dll` do cliente 1.5.5 BR v156 (`specs/habilidades_155/elementskill_v156_tabelas.json`).
 const MAPA_V156: &str = include_str!("../../../specs/habilidades_155/elementskill_v156_tabelas.json");
+/// B306: o do cliente 1.2.6 (`perfectworld_126 launcher/element`; `specs/habilidades_126/elementskill_126_tabelas.json`).
+const MAPA_126: &str = include_str!("../../../specs/habilidades_126/elementskill_126_tabelas.json");
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Tabela {
@@ -49,7 +51,12 @@ pub const CAMPOS: [(&str, &str); 4] = [
 
 fn mapas() -> &'static [Mapa] {
     static M: OnceLock<Vec<Mapa>> = OnceLock::new();
-    M.get_or_init(|| vec![serde_json::from_str(MAPA_V156).expect("elementskill_v156_tabelas.json")])
+    M.get_or_init(|| {
+        vec![
+            serde_json::from_str(MAPA_V156).expect("elementskill_v156_tabelas.json"),
+            serde_json::from_str(MAPA_126).expect("elementskill_126_tabelas.json"),
+        ]
+    })
 }
 
 impl Mapa {
@@ -168,5 +175,17 @@ mod testes {
         pos.sort();
         assert!(pos.windows(2).all(|w| w[0].1 <= w[1].0) && pos.last().unwrap().1 <= m.dll_tamanho);
         assert_eq!(pos.len(), 1795);
+    }
+
+    #[test]
+    fn o_mapa_do_126_le_e_e_coerente() {
+        let m = &mapas()[1];
+        assert_eq!(m.dll_tamanho, 577_536);
+        // A 187 do 1.2.6 também tem 12 níveis e tabelas de 10.
+        assert_eq!(m.tabela(187, "sp_exigido").map(|t| (t.n, t.le_alem)), Some((10, 2)));
+        let mut pos: Vec<(usize, usize)> = m.habilidades.values().flat_map(|c| c.values()).map(|t| (t.arquivo, t.arquivo + 4 * t.n)).collect();
+        pos.sort();
+        assert!(pos.windows(2).all(|w| w[0].1 <= w[1].0) && pos.last().unwrap().1 <= m.dll_tamanho);
+        assert_eq!(pos.len(), 1865);
     }
 }

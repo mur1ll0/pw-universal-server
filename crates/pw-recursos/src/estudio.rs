@@ -3430,7 +3430,7 @@ impl Estudio {
             Err(e) => return json!({ "mapa": false, "motivo": format!("{CAMINHO_ELEMENTSKILL}: {e}") }),
         };
         let Some(m) = crate::elementskill::mapa_para(&dll) else {
-            return json!({ "mapa": false, "motivo": "este elementskill.dll não tem mapa de tabelas (só o do cliente 1.5.5 BR v156 foi medido)" });
+            return json!({ "mapa": false, "motivo": "este elementskill.dll não tem mapa de tabelas (medidos: cliente 1.5.5 BR v156 e cliente 1.2.6)" });
         };
         let mut campos = serde_json::Map::new();
         for (c, quem) in crate::elementskill::CAMPOS {

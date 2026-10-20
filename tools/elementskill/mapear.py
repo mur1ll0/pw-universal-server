@@ -106,5 +106,52 @@ def aplicar(mapa, dll, destino, id_, campo, nivel, novo):
     print(f"{id_} {campo} nível {nivel} = {novo} no byte {pos} -> {destino}")
 
 
+CAMPOS_MEDIDOS = ("nivel_exigido", "sp_exigido", "dinheiro_exigido", "item_exigido", "mp", "recarga_ms", "execucao_ms",
+                  "apcost", "arrowcost", "cls", "max_level")
+
+
+def provar(mapa, dll, destino):
+    """Prova de ponta a ponta: +1 em todos os elementos de todas as tabelas numa cópia (medir depois com numeros.exe)."""
+    import struct
+    m = json.load(open(mapa, encoding="utf-8"))
+    d = bytearray(open(dll, "rb").read())
+    if hashlib.sha256(d).hexdigest() != m["dll_sha256"]:
+        sys.exit("o mapa é de outro elementskill.dll")
+    for cs in m["habilidades"].values():
+        for t in cs.values():
+            for k in range(t["n"]):
+                p = t["arquivo"] + 4 * k
+                if t["tipo"] == "f":
+                    struct.pack_into("<f", d, p, struct.unpack_from("<f", d, p)[0] + 1)
+                else:
+                    struct.pack_into("<i", d, p, struct.unpack_from("<i", d, p)[0] + 1)
+    open(destino, "wb").write(d)
+    print(f"+1 em {sum(len(c) for c in m['habilidades'].values())} tabelas -> {destino}")
+
+
+def conferir(mapa, original, copia):
+    """Compara a medição do DLL original com a da cópia do `provar`: só o que o mapa diz pode ter subido 1."""
+    m = json.load(open(mapa, encoding="utf-8"))["habilidades"]
+    a = [json.loads(x) for x in open(original, encoding="utf-8")]
+    b = [json.loads(x) for x in open(copia, encoding="utf-8")]
+    esperado = certo = errado = 0
+    for x, y in zip(a, b):
+        for c in CAMPOS_MEDIDOS:
+            k = "s_" + c if "s_" + c in x else c
+            if k not in x:
+                continue
+            t = m.get(str(x["id"]), {}).get(c)
+            # Nível além da tabela (`le_alem`) lê a seguinte, que também subiu 1 se for mapeada.
+            sobe = 1 if t else 0
+            esperado += sobe
+            if y.get(k) == x[k] + sobe:
+                certo += 1
+            else:
+                errado += 1
+                if errado <= 10:
+                    print("  errado:", x["id"], x["nivel"], c, x[k], y.get(k))
+    print(f"linhas {len(a)} / {len(b)} | +1 esperados {esperado} | certos {certo} | errados {errado}")
+
+
 if __name__ == "__main__":
-    {"entrada": entrada, "juntar": juntar, "aplicar": aplicar}[sys.argv[1]](*sys.argv[2:])
+    {"entrada": entrada, "juntar": juntar, "aplicar": aplicar, "provar": provar, "conferir": conferir}[sys.argv[1]](*sys.argv[2:])
