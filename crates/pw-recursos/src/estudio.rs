@@ -3269,7 +3269,7 @@ impl Estudio {
         let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
         let bytes = imp.ski.escrever();
         pw_data_loader::ski::Ski::ler(&bytes).context("o .ski importado não relê")?;
-        let texturas_gravadas = self.gravar_texturas(gov, versao, rascunho, destino, imp.texturas_novas.clone()).await?;
+        let texturas_gravadas = self.gravar_texturas(gov, versao, rascunho, destino, imp.texturas_novas).await?;
         let resumo = json!({ "texturas_gravadas": texturas_gravadas,
             "malhas": imp.ski.malhas_de_pele.len(), "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>(),
             "ossos": imp.ski.ossos.len(), "texturas": imp.ski.texturas, "esqueleto": caminho_bon, "relatorio": imp.relatorio,
@@ -3281,11 +3281,13 @@ impl Estudio {
     /// B292 (S6): grava no rascunho as texturas que o glTF trouxe, em `<pasta da pele>\Textures\<nome>` — o primeiro
     /// lugar onde o cliente procura (`A3DSkin`, B273). Se o cliente já tem o arquivo com os mesmos pixels (a ida e volta de
     /// um modelo exportado pelo painel), não grava. Devolve o que fez com cada uma.
-    async fn gravar_texturas(&self, gov: &Governanca, versao: &str, rascunho: i64, pele: &str, texturas: Vec<(String, Vec<u8>)>) -> Result<Vec<Value>> {
+    async fn gravar_texturas(&self, gov: &Governanca, versao: &str, rascunho: i64, pele: &str, texturas: Vec<pw_data_loader::importar::TexturaNova>) -> Result<Vec<Value>> {
         let mut r = Vec::new();
-        for (nome, bytes) in texturas {
+        for t in texturas {
+            let (nome, bytes) = (t.nome, t.bytes);
             let caminho = ao_lado(pele, &format!("Textures\\{nome}"));
-            let nova = pw_data_loader::imagem::decodificar(&bytes);
+            // B293: compara os pixels de origem (antes do DXT, que tem perda).
+            let nova = t.pixels;
             let existente = gov.conteudo(versao, &caminho).ok().map(|(_, b)| b);
             // A que o cliente acha hoje: `Textures\` e, sem ela, `Tex_<título da pele>\` (B273). Se tem os mesmos pixels,
             // não grava (senão uma cópia em `Textures\` passaria a valer no lugar dela).
@@ -3341,7 +3343,7 @@ impl Estudio {
         modelo.peles.push(nome.to_string());
         let novo_smd = modelo.escrever();
         pw_data_loader::smd::Smd::ler(&novo_smd).context("o .smd editado não relê")?;
-        let texturas_gravadas = self.gravar_texturas(gov, versao, rascunho, &caminho, imp.texturas_novas.clone()).await?;
+        let texturas_gravadas = self.gravar_texturas(gov, versao, rascunho, &caminho, imp.texturas_novas).await?;
         let resumo = json!({ "texturas_gravadas": texturas_gravadas,
             "pele": caminho, "malhas": imp.ski.malhas_de_pele.len(), "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>(),
             "ossos": imp.ski.ossos.len(), "texturas": imp.ski.texturas, "esqueleto": caminho_bon, "relatorio": imp.relatorio,

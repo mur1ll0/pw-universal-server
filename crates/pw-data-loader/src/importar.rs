@@ -14,7 +14,7 @@
 //!   1.5.5, ambiente = difusa, emissiva e especular (0, 0, 0, 1) e brilho 10. O `fMinWeight` é 0 em todos os 24.165
 //!   `.ski` (e o motor só o lê e regrava, `A3DSkin.cpp:220`, `:538`).
 //! - **Texturas:** o nome da imagem do glTF (o exportador grava o nome original); a imagem embutida em PNG vira DDS de
-//!   32 bits com mipmaps (B292, `imagem::dds_argb32`), com o nome em `.dds` — em `texturas_novas`.
+//!   DXT1/DXT5 com mipmaps (B292/B293, `imagem::dds_dxt`), com o nome em `.dds` — em `texturas_novas`.
 //!
 //! Primitiva sem pele, índice que não cabe em `u16` e modo diferente de triângulos são recusados ou relatados — nada
 //! é inventado.
@@ -25,11 +25,21 @@ use serde_json::Value;
 
 pub struct Importacao {
     pub ski: Ski,
-    /// B292: as texturas que o glTF traz embutidas, já como o cliente lê: (nome no `.ski`, bytes). PNG vira DDS de 32
-    /// bits com mipmaps (`imagem::dds_argb32`); DDS/TGA embutidos vão como estão.
-    pub texturas_novas: Vec<(String, Vec<u8>)>,
+    /// B292: as texturas que o glTF traz embutidas, já como o cliente lê. PNG vira DDS com mipmaps — B293: DXT1 sem
+    /// alfa, DXT5 com alfa (`imagem::dds_dxt`); DDS/TGA embutidos vão como estão.
+    pub texturas_novas: Vec<TexturaNova>,
     /// O que foi ajustado ou deixado de fora, para o relatório.
     pub relatorio: Vec<String>,
+}
+
+pub struct TexturaNova {
+    /// O nome no `.ski` (e do arquivo).
+    pub nome: String,
+    /// O arquivo que o cliente lê.
+    pub bytes: Vec<u8>,
+    /// Os pixels de origem (o PNG antes da compressão), para comparar com a textura que o cliente já tem — o DXT tem
+    /// perda e nunca bateria pixel a pixel.
+    pub pixels: Option<crate::imagem::Imagem>,
 }
 
 struct Glb<'a> {
@@ -113,7 +123,7 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
     let mut texturas: Vec<String> = Vec::new();
     let mut materiais: Vec<Material> = Vec::new();
     let mut pares_de_material: Vec<(i64, usize, i32)> = Vec::new();
-    let mut texturas_novas: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut texturas_novas: Vec<TexturaNova> = Vec::new();
     let mut malhas = Vec::new();
     for no in &nos {
         let Some(mi) = no["mesh"].as_u64() else { continue };
@@ -242,10 +252,17 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
                         };
                         match bruto {
                             Some(b) if b.starts_with(b"DDS ") || (minusculo.ends_with(".tga") && crate::imagem::tga(&b).is_some()) => {
-                                if !texturas_novas.iter().any(|x| x.0 == destino) { texturas_novas.push((destino.clone(), b)); }
+                                if !texturas_novas.iter().any(|x| x.nome == destino) {
+                                    let pixels = crate::imagem::decodificar(&b);
+                                    texturas_novas.push(TexturaNova { nome: destino.clone(), bytes: b, pixels });
+                                }
                             }
                             Some(b) => match crate::imagem::png(&b) {
-                                Some(im) => { if !texturas_novas.iter().any(|x| x.0 == destino) { texturas_novas.push((destino.clone(), crate::imagem::dds_argb32(&im))); } }
+                                Some(im) => {
+                                    if !texturas_novas.iter().any(|x| x.nome == destino) {
+                                        texturas_novas.push(TexturaNova { nome: destino.clone(), bytes: crate::imagem::dds_dxt(&im), pixels: Some(im) });
+                                    }
+                                }
                                 None => relatorio.push(format!("{nome}: a imagem \"{nome_img}\" não é PNG/DDS/TGA (JPEG ainda não) — a textura fica só pelo nome")),
                             },
                             None => relatorio.push(format!("{nome}: a imagem \"{nome_img}\" não vem embutida no GLB — a textura fica só pelo nome")),

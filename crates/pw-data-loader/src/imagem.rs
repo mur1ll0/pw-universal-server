@@ -7,6 +7,7 @@
 //! (DXT1; com `c0 <= c1` o índice 3 é transparente), alfa explícito de 4 bits (DXT3) ou interpolado de 8 valores
 //! (DXT5). TGA tipo 2 (RGB sem compressão), 24 ou 32 bits, origem embaixo salvo o bit 5 do descritor.
 
+#[derive(Clone)]
 pub struct Imagem {
     pub largura: u32,
     pub altura: u32,
@@ -203,6 +204,173 @@ pub fn png(b: &[u8]) -> Option<Imagem> {
     (rgba.len() == (w * h * 4) as usize).then_some(Imagem { largura: w, altura: h, rgba })
 }
 
+/// Os níveis de mipmap (B292): o próprio, e cada um a média 2×2 do anterior (`D3DX_FILTER_BOX`), até 1×1.
+fn mipmaps(img: &Imagem) -> Vec<(u32, u32, Vec<u8>)> {
+    let (mut lw, mut lh) = (img.largura.max(1), img.altura.max(1));
+    let niveis = 32 - lw.max(lh).leading_zeros();
+    let mut r = vec![(lw, lh, img.rgba.clone())];
+    for _ in 1..niveis {
+        let atual = &r.last().unwrap().2;
+        let (nw, nh) = ((lw / 2).max(1), (lh / 2).max(1));
+        let mut prox = vec![0u8; (nw * nh * 4) as usize];
+        for y in 0..nh {
+            for x in 0..nw {
+                for c in 0..4 {
+                    let mut soma = 0u32;
+                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let (sx, sy) = ((2 * x + dx).min(lw - 1), (2 * y + dy).min(lh - 1));
+                        soma += atual[((sy * lw + sx) * 4 + c) as usize] as u32;
+                    }
+                    prox[((y * nw + x) * 4 + c) as usize] = ((soma + 2) / 4) as u8;
+                }
+            }
+        }
+        r.push((nw, nh, prox));
+        lw = nw;
+        lh = nh;
+    }
+    r
+}
+
+fn para_565(c: [f32; 3]) -> u16 {
+    let q = |v: f32, m: f32| (v.clamp(0.0, 255.0) * m / 255.0).round() as u16;
+    q(c[0], 31.0) << 11 | q(c[1], 63.0) << 5 | q(c[2], 31.0)
+}
+
+/// A mesma expansão do decodificador (`rgb565`), para escolher os índices contra as cores que ele vai ver.
+fn de_565(c: u16) -> [f32; 3] {
+    rgb565(c).map(|x| x as f32)
+}
+
+/// Bloco de cor DXT (8 bytes) de 16 pixels RGBA, sempre no modo de 4 cores (`c0 > c1`: com `c0 <= c1` o índice 3 é
+/// transparente). Extremos pelo eixo principal das cores do bloco (iteração de potência na covariância).
+fn bloco_de_cor(px: &[[u8; 4]; 16]) -> [u8; 8] {
+    let cores: Vec<[f32; 3]> = px.iter().map(|p| [p[0] as f32, p[1] as f32, p[2] as f32]).collect();
+    let media = [0, 1, 2].map(|k| cores.iter().map(|c| c[k]).sum::<f32>() / 16.0);
+    let mut cov = [[0f32; 3]; 3];
+    for c in &cores {
+        let d = [c[0] - media[0], c[1] - media[1], c[2] - media[2]];
+        for i in 0..3 {
+            for j in 0..3 {
+                cov[i][j] += d[i] * d[j];
+            }
+        }
+    }
+    let mut eixo = [1.0f32, 1.0, 1.0];
+    for _ in 0..8 {
+        let n = [0, 1, 2].map(|i| cov[i][0] * eixo[0] + cov[i][1] * eixo[1] + cov[i][2] * eixo[2]);
+        let m = n.iter().fold(0f32, |a, x| a.max(x.abs()));
+        if m < 1e-6 {
+            break;
+        }
+        eixo = n.map(|x| x / m);
+    }
+    let proj = |c: &[f32; 3]| (c[0] - media[0]) * eixo[0] + (c[1] - media[1]) * eixo[1] + (c[2] - media[2]) * eixo[2];
+    let (mut lo, mut hi) = (cores[0], cores[0]);
+    for c in &cores {
+        if proj(c) < proj(&lo) {
+            lo = *c;
+        }
+        if proj(c) > proj(&hi) {
+            hi = *c;
+        }
+    }
+    let (mut c0, mut c1) = (para_565(hi), para_565(lo));
+    if c0 < c1 {
+        std::mem::swap(&mut c0, &mut c1);
+    }
+    if c0 == c1 {
+        // Cor única: o modo de 4 cores exige c0 > c1; um dos extremos repete a cor e todos os pixels apontam para ele.
+        let (a, b, idx) = if c0 > 0 { (c0, c0 - 1, 0u32) } else { (1, 0, 1u32) };
+        let mut o = [0u8; 8];
+        o[0..2].copy_from_slice(&a.to_le_bytes());
+        o[2..4].copy_from_slice(&b.to_le_bytes());
+        let ind: u32 = (0..16).fold(0, |acc, i| acc | idx << (2 * i));
+        o[4..8].copy_from_slice(&ind.to_le_bytes());
+        return o;
+    }
+    let (p0, p1) = (de_565(c0), de_565(c1));
+    let paleta = [p0, p1, [0, 1, 2].map(|k| (2.0 * p0[k] + p1[k]) / 3.0), [0, 1, 2].map(|k| (p0[k] + 2.0 * p1[k]) / 3.0)];
+    let mut ind = 0u32;
+    for (i, c) in cores.iter().enumerate() {
+        let d = |p: &[f32; 3]| (0..3).map(|k| (c[k] - p[k]).powi(2)).sum::<f32>();
+        let melhor = (0..4).min_by(|&a, &b| d(&paleta[a]).total_cmp(&d(&paleta[b]))).unwrap() as u32;
+        ind |= melhor << (2 * i);
+    }
+    let mut o = [0u8; 8];
+    o[0..2].copy_from_slice(&c0.to_le_bytes());
+    o[2..4].copy_from_slice(&c1.to_le_bytes());
+    o[4..8].copy_from_slice(&ind.to_le_bytes());
+    o
+}
+
+/// Bloco de alfa DXT5 (8 bytes): `a0 = max > a1 = min` (modo de 8 alfas) e o índice de 3 bits mais perto; alfa único
+/// → `a0 = a1` e índice 0.
+fn bloco_de_alfa(px: &[[u8; 4]; 16]) -> [u8; 8] {
+    let a0 = px.iter().map(|p| p[3]).max().unwrap();
+    let a1 = px.iter().map(|p| p[3]).min().unwrap();
+    let mut o = [0u8; 8];
+    o[0] = a0;
+    o[1] = a1;
+    if a0 == a1 {
+        return o;
+    }
+    let paleta: Vec<f32> = (0..8u32).map(|i| match i {
+        0 => a0 as f32,
+        1 => a1 as f32,
+        _ => ((8 - i) as f32 * a0 as f32 + (i - 1) as f32 * a1 as f32) / 7.0,
+    }).collect();
+    let mut bits: u64 = 0;
+    for (i, p) in px.iter().enumerate() {
+        let melhor = (0..8).min_by(|&a, &b| (p[3] as f32 - paleta[a]).abs().total_cmp(&(p[3] as f32 - paleta[b]).abs())).unwrap() as u64;
+        bits |= melhor << (3 * i);
+    }
+    o[2..8].copy_from_slice(&bits.to_le_bytes()[0..6]);
+    o
+}
+
+/// B293 (S6): DDS comprimido — DXT1 se a imagem é toda opaca, DXT5 se tem alfa (no cliente 1.5.5: 6.563 DXT1, 6.445
+/// DXT3, 2.038 DXT5; o motor trata DXT3 e DXT5 igualmente como textura com alfa, `A3DTexture.cpp:590-591`). Cabeçalho
+/// medido nos DXT do cliente: `flags` 0xA1007, tamanho linear = blocos × 8 (DXT1) ou × 16, formato 0x4 (FourCC),
+/// `caps` 0x401008, mipmaps até 1×1 (como `dds_argb32`). Bloco de 4×4; nas bordas o pixel repete o último.
+pub fn dds_dxt(img: &Imagem) -> Vec<u8> {
+    let alfa = img.tem_transparencia();
+    let (w, h) = (img.largura.max(1), img.altura.max(1));
+    let por_bloco = if alfa { 16 } else { 8 };
+    let niveis = mipmaps(img);
+    let mut o = Vec::new();
+    o.extend_from_slice(b"DDS ");
+    let u = |o: &mut Vec<u8>, x: u32| o.extend_from_slice(&x.to_le_bytes());
+    let linear = w.div_ceil(4) * h.div_ceil(4) * por_bloco;
+    for x in [124, 0xA1007, h, w, linear, 0, niveis.len() as u32] {
+        u(&mut o, x);
+    }
+    o.extend_from_slice(&[0u8; 44]);
+    u(&mut o, 32);
+    u(&mut o, 0x4);
+    o.extend_from_slice(if alfa { b"DXT5" } else { b"DXT1" });
+    for x in [0, 0, 0, 0, 0, 0x40_1008, 0, 0, 0, 0] {
+        u(&mut o, x);
+    }
+    for (lw, lh, rgba) in &niveis {
+        for by in 0..lh.div_ceil(4) {
+            for bx in 0..lw.div_ceil(4) {
+                let mut px = [[0u8; 4]; 16];
+                for (i, p) in px.iter_mut().enumerate() {
+                    let (x, y) = ((bx * 4 + i as u32 % 4).min(lw - 1), (by * 4 + i as u32 / 4).min(lh - 1));
+                    let k = ((y * lw + x) * 4) as usize;
+                    p.copy_from_slice(&rgba[k..k + 4]);
+                }
+                if alfa {
+                    o.extend_from_slice(&bloco_de_alfa(&px));
+                }
+                o.extend_from_slice(&bloco_de_cor(&px));
+            }
+        }
+    }
+    o
+}
+
 /// B292 (S6): DDS sem compressão de 32 bits (A8R8G8B8) com a cadeia inteira de mipmaps — o cabeçalho que 646 DDS de 32
 /// bits do cliente 1.5.5 têm (medido): `flags` 0xA1007 (CAPS, HEIGHT, WIDTH, PIXELFORMAT, MIPMAPCOUNT, LINEARSIZE), o
 /// tamanho linear `w × h × 4`, formato 0x41 (RGB + alfa) com máscaras R 0xFF0000, G 0xFF00, B 0xFF, A 0xFF000000 e
@@ -253,6 +421,62 @@ pub fn dds_argb32(img: &Imagem) -> Vec<u8> {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// B293: DXT — cor única sai exata, imagem com alfa vira DXT5 e sem alfa DXT1, com o cabeçalho medido e os
+    /// mipmaps até 1×1 (6×5 → 6×5, 3×2, 1×1).
+    #[test]
+    fn dds_dxt_sintetico() {
+        let liso = Imagem { largura: 6, altura: 5, rgba: [200u8, 100, 50, 255].repeat(30) };
+        let d = dds_dxt(&liso);
+        let u = |d: &[u8], o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
+        assert_eq!((u(&d, 8), u(&d, 20), u(&d, 28), u(&d, 80), &d[84..88], u(&d, 108)), (0xA1007, 2 * 2 * 8, 3, 0x4, b"DXT1".as_slice(), 0x40_1008));
+        assert_eq!(d.len(), 128 + (4 + 1 + 1) * 8);
+        let v = dds(&d).unwrap();
+        let p0 = de_565(para_565([200.0, 100.0, 50.0])).map(|x| x as u8);
+        assert!(v.rgba.chunks_exact(4).all(|p| p == [p0[0], p0[1], p0[2], 255]), "cor única exata (no 565)");
+        let mut com_alfa = liso.clone();
+        com_alfa.rgba[3] = 0;
+        let d5 = dds_dxt(&com_alfa);
+        assert_eq!((&d5[84..88], u(&d5, 20)), (b"DXT5".as_slice(), 2 * 2 * 16));
+        let v5 = dds(&d5).unwrap();
+        assert_eq!((v5.rgba[3], v5.rgba[7]), (0, 255), "alfa 0 e 255 exatos");
+    }
+
+    /// B293: a qualidade em texturas reais — cada DXT do cliente (amostra) decodificado, recodificado por `dds_dxt` e
+    /// decodificado de novo; o erro médio quadrático por canal contra a imagem original decodificada.
+    #[test]
+    fn dds_dxt_em_texturas_do_cliente() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let mut pilha = vec![raiz.to_path_buf()];
+        let (mut n, mut vistos, mut soma_q, mut amostras, mut pior) = (0usize, 0usize, 0f64, 0f64, 0f64);
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("dds")) { continue; }
+                vistos += 1;
+                if vistos % 40 != 0 { continue; }
+                let b = std::fs::read(&p).unwrap();
+                if b.len() < 128 || !b[84..88].starts_with(b"DXT") { continue; }
+                let Some(orig) = dds(&b) else { continue };
+                let de_novo = dds(&dds_dxt(&orig)).unwrap();
+                assert_eq!((de_novo.largura, de_novo.altura), (orig.largura, orig.altura));
+                let q: f64 = orig.rgba.iter().zip(&de_novo.rgba).map(|(a, b)| (*a as f64 - *b as f64).powi(2)).sum();
+                let rmse = (q / orig.rgba.len() as f64).sqrt();
+                pior = pior.max(rmse);
+                soma_q += q;
+                amostras += orig.rgba.len() as f64;
+                n += 1;
+            }
+        }
+        let rmse = (soma_q / amostras).sqrt();
+        eprintln!("dxt: {n} texturas reais (1/40 dos DDS), erro médio quadrático por canal {rmse:.2} (pior textura {pior:.2})");
+        assert!(n > 100 && rmse < 4.0, "{n} {rmse}");
+    }
 
     /// B292: o DDS de 32 bits gerado relê com os mesmos pixels, tem o cabeçalho medido e a cadeia de mipmaps inteira
     /// (5×3 → 3 níveis: 5×3, 2×1, 1×1); o PNG decodifica.
