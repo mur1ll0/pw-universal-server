@@ -15730,3 +15730,43 @@ comparação lado a lado.
 
     ### e. Falta (S6)
     - Extensão do Blender.
+
+300. **Sessão 2026-10-20: Estúdio S6 — extensão do Blender (S6 concluído).**
+
+    ### a. Pedido
+    Commitar e seguir. O Murillo autorizou abrir o Blender e instalar o que fosse preciso, usando a versão mais recente
+    (5.1.2, das instaladas: 4.4, 5.1, UPBGE 0.30).
+
+    ### b. O que foi feito
+    - `tools/blender/pw_estudio`: extensão do Blender 4.2+ (`blender_manifest.toml` + `__init__.py`), com o painel
+      "PW Estúdio" na barra lateral:
+      - importar GLB a 15/30 quadros/s;
+      - verificar (vértices `u16`, 4 ossos, 255 ossos por pele, GBK, malha sem osso, peso faltando, JPEG, nome da ação,
+        FPS, gancho fora de osso);
+      - limitar a 4 ossos e normalizar; novo gancho `HH_`/`CC_` no osso ativo;
+      - exportar GLB com as opções do Estúdio.
+      - As opções do exportador foram lidas no próprio Blender 5.1 (`get_rna_type`), não de memória.
+    - `tools/blender/testar_pw_estudio.py`: o roteiro sem janela.
+    - `importar::testes::medir_blender` (`#[ignore]`).
+    - `importar`: o aviso de canal de escala virou um por animação.
+    - Empacotada (`extension build`) e instalada no perfil do usuário do Blender 5.1 (`extension install-file`).
+
+    ### c. Provas
+    - 3 NPCs por versão baixados do painel, com a ação mais longa, passaram pela extensão instalada só por operadores
+      (importar, limitar, verificar, `HH_teste`, exportar). Resultado:
+      - esqueleto até 1,8e-5; ganchos até 7,2e-7, com o novo incluído; caixa das malhas até 1,8e-6;
+      - triângulos iguais (−2 degenerados numa malha); vértices ±0–8 (o Blender divide e junta por normal e UV);
+      - ação com os mesmos quadros, posição até 2,6e-5 e rotação até 1,4e-4.
+    - Pelo `pw-recursos`: 6 de 6 viraram modelo novo com os mesmos ossos, malhas, ação e texturas; o 1.5.5_0 com 20
+      ganchos.
+    - `pw-data-loader` **255/255**.
+    - Tropeços:
+      - a 1ª verificação acusou a "Icosphere" que o importador glTF cria para desenhar ossos; ela agora é ignorada;
+      - com a cena a 24/s, a rotação perdia até 5,1e-2, porque o Blender reamostrava fora da grade. Daí o
+        "Importar GLB do Estúdio" a 15/s e o aviso de FPS;
+      - o 1.2.6_0 falhou na 1ª prova porque o meu script indicou um molde `.ecm` inexistente; passou com o automático.
+
+    ### d. Fecha o S6
+    - Escritores conferidos (B286–B288), importação de pele, rígida, texturas DXT, ações (`.stck` e v5), esqueleto,
+      modelo novo com `.ecm`, e a extensão.
+    - Próximo: S8 (habilidades) ou o que o Murillo indicar.

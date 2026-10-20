@@ -641,6 +641,50 @@ saiu `投石车状态.ecm` (uma catapulta) no 1.2.6 e `灯笼.ecm` (uma lanterna
 melhor que outro para um monstro. Por isso o painel tem o campo "molde .ecm" (ex.: um monstro parecido). Medido pelo
 `pw-recursos`, em rascunhos descartados: 5 NPCs por versão viraram modelo novo com o `.ecm`, 5 arquivos cada.
 
+**Extensão do Blender (B300, S6):** `tools/blender/pw_estudio`, no formato de extensão do Blender 4.2+
+(`blender_manifest.toml`). Foi testada no Blender 5.1.2. Para empacotar e instalar:
+
+```
+blender --command extension build --source-dir tools/blender/pw_estudio
+blender --command extension install-file -r user_default -e pw_estudio-1.0.0.zip
+```
+
+O painel "PW Estúdio" fica na barra lateral da vista 3D, com estes botões:
+- **Importar GLB do Estúdio:** põe a cena a 15 (ou 30) quadros/s e importa.
+- **Verificar para o Perfect World:**
+  - até 65.536 vértices por malha (índice `u16`) e até 4 ossos por vértice (`A3DBVERTEX3`);
+  - até 255 ossos por pele e nomes em GBK;
+  - malha sem armadura tem de estar presa a um osso; vértice sem peso é erro;
+  - imagem JPEG gera aviso;
+  - ação com barra no nome é erro;
+  - cena fora de 15/30 quadros/s gera aviso;
+  - gancho fora de osso gera aviso.
+
+  A forma de desenho de osso (a "Icosphere" do importador glTF) é ignorada.
+- **Limitar a 4 ossos e normalizar.**
+- **Novo gancho no osso ativo:** um vazio `HH_*`/`CC_*` preso ao osso.
+- **Exportar GLB para o Estúdio:** recusa se a verificação tiver erro. Opções fixas: GLB, Y para cima, `extras` (os
+  valores do Angelica voltam iguais), pele com 4 ossos, ações separadas e reamostradas, sem morph, sem luz nem câmera.
+
+**Por que o FPS importa (medido):** com a cena a 24 quadros/s (o padrão do Blender), o Blender reamostra a animação
+fora da grade, e a rotação perde até 5,1e-2; a 15/s, até 1,4e-4.
+
+Prova: 3 NPCs reais por versão, baixados do painel com a ação mais longa, passaram pela extensão instalada (importar,
+limitar, verificar, um gancho novo, exportar) e foram medidos por `importar::testes::medir_blender`
+(`tools/blender/testar_pw_estudio.py` repete):
+
+| item | resultado |
+| :--- | :--- |
+| esqueleto (`inicial`) | até 1,8e-5 |
+| ganchos | até 7,2e-7; o novo `HH_teste` incluído |
+| caixa das malhas | até 1,8e-6 |
+| triângulos | iguais (numa malha, 2 degenerados a menos) |
+| vértices | ±0–8, porque o Blender divide e junta por normal e UV |
+| ação | mesmos quadros; posição até 2,6e-5, rotação até 1,4e-4 |
+
+Pelo `pw-recursos`, os 6 viraram modelo novo com os mesmos ossos, malhas, ação e texturas, e o 1.5.5_0 com 20
+ganchos (19 + 1). O canal de escala, que o Blender exporta em todo osso, vira um aviso só por animação.
+
 Medido pelo `pw-recursos` em 5 `.smd` de NPC do 1.5.5, num rascunho de teste descartado:
 - a 1ª ação de cada um (de 1 quadro), baixada e reimportada, sai byte a byte igual;
 - a ação mais longa de cada um (442 quadros no total) sai "substituída" com o mesmo número de quadros, porque as
