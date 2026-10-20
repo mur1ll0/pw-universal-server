@@ -130,6 +130,43 @@ function botaoDeImportar(smd, destino) {
   return rotulo;
 }
 
+/** B291 (S6): pele nova no modelo — o GLB vira `<pasta do .smd>\<nome>.ski` e o nome entra na lista de peles do `.smd`,
+    no rascunho. (NPC e monstro usam `<.ecm>.ski`, não as peles do `.smd` — B282.) */
+function controleDePeleNova(smd) {
+  const caixa = criar("span");
+  const nome = criar("input", "campo");
+  nome.placeholder = "nome da pele nova (.ski)";
+  nome.size = 24;
+  const rotulo = criar("label", "botao botao-pequeno botao-secundario", "Pele nova a partir de GLB…");
+  const arquivo = criar("input");
+  arquivo.type = "file";
+  arquivo.accept = ".glb,model/gltf-binary";
+  arquivo.hidden = true;
+  rotulo.appendChild(arquivo);
+  arquivo.addEventListener("change", async () => {
+    const f = arquivo.files[0];
+    arquivo.value = "";
+    if (!f) return;
+    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio antes de importar.", { toast: true }); return; }
+    let n = nome.value.trim() || f.name.replace(/\.glb$/i, "");
+    if (!/\.ski$/i.test(n)) n += ".ski";
+    try {
+      const resp = await fetch(rotaDeModelos("/pele_nova", { rascunho: estudio.rascunho, smd, nome: n }), {
+        method: "POST", credentials: "same-origin", body: await f.arrayBuffer(),
+        headers: { "Content-Type": "application/octet-stream", "X-CSRF-Token": estado.sessao.csrf },
+      });
+      const dados = await resp.json();
+      if (!resp.ok) throw new Error(dados?.mensagem || dados?.detail || "Não foi possível criar a pele.");
+      const r = dados.resultado || {};
+      const avisos = (r.relatorio || []).length ? ` Relatório: ${r.relatorio.join(" · ")}` : "";
+      alerta("ok", "Estúdio", `${r.pele} criada e ligada ao modelo no rascunho (${r.peles_do_modelo} peles): ${r.malhas} malhas, ${r.vertices} vértices, ${r.ossos} ossos.${avisos}`);
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  });
+  caixa.append(nome, " ", rotulo);
+  return caixa;
+}
+
 async function abrirModelo(caminho, habitat = null, voo = null) {
   const ficha = elemento("modelos-ficha");
   ficha.textContent = "Carregando…";
@@ -231,6 +268,7 @@ async function abrirModelo(caminho, habitat = null, voo = null) {
       if (!p.erro) li.append(" ", botaoDeImportar(caminho, p.caminho));
       lista.appendChild(li);
     }
+    if (!e.erro) { const li = criar("li"); li.appendChild(controleDePeleNova(caminho)); lista.appendChild(li); }
   } else {
     for (const m of f.malhas) lista.appendChild(criar("li", "", `${m.nome || "(sem nome)"} — ${m.tipo}, ${m.vertices} vértices, ${m.triangulos} triângulos, textura ${f.texturas[m.textura] ?? m.textura}, material ${f.materiais[m.material]?.nome ?? m.material}`));
   }

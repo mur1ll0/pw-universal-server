@@ -3277,6 +3277,54 @@ impl Estudio {
         self.alterar_item_do_cliente(gov, versao, destino, rascunho, move |_| Ok((bytes, resumo, mudanca))).await
     }
 
+    /// B291 (S6): uma pele nova no modelo — o glTF vira `<pasta do .smd>\<nome>` (o motor procura cada pele em
+    /// `strPath + "\\" + strFile`, `A3DSkinModelMan.cpp:163-170`) e o nome entra na lista de peles do `.smd` (`smd::Smd`,
+    /// B288). Tudo no rascunho: primeiro valida e monta o `.smd` em memória e importa o GLB; só então grava o `.ski`
+    /// (item `adicionar`) e o `.smd`. Recusa nome que já existe no cliente (para isso há "Substituir") ou no `.smd`.
+    /// Atenção: NPC e monstro não usam as peles do `.smd` — o jogo põe `<.ecm>.ski` (`EC_NPC.cpp:186-222`, B282).
+    pub async fn nova_pele(&self, gov: &Governanca, versao: &str, rascunho: i64, smd: &str, nome: &str, glb: Vec<u8>) -> Result<Value> {
+        let nome = nome.trim();
+        if !nome.to_lowercase().ends_with(".ski") || nome.contains(['\\', '/']) || nome.len() < 5 {
+            bail!("o nome da pele nova é só o nome do arquivo .ski (fica na pasta do .smd)");
+        }
+        nomes::gbk_de_unicode(nome).context("o nome tem caracteres que não existem em GBK")?;
+        if !smd.to_lowercase().ends_with(".smd") {
+            bail!("modelo .smd");
+        }
+        let caminho = ao_lado(smd, nome);
+        if gov.conteudo(versao, &caminho).is_ok() {
+            bail!("{caminho} já existe no cliente: use \"Substituir por GLB\"");
+        }
+        let bytes_smd = self.bytes_do_cliente(gov, versao, smd, Some(rascunho)).await?;
+        let mut modelo = pw_data_loader::smd::Smd::ler(&bytes_smd).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
+        if modelo.peles.iter().any(|p| p.eq_ignore_ascii_case(nome)) {
+            bail!("{smd} já cita a pele {nome}");
+        }
+        if modelo.esqueleto.is_empty() {
+            bail!("{smd} não cita esqueleto: sem ele não há como casar os ossos");
+        }
+        let caminho_bon = ao_lado(smd, &modelo.esqueleto);
+        let bon = pw_data_loader::bon::Bon::ler(&self.bytes_do_cliente(gov, versao, &caminho_bon, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{caminho_bon}: {x}"))?;
+        let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
+        let ski = imp.ski.escrever();
+        pw_data_loader::ski::Ski::ler(&ski).context("o .ski importado não relê")?;
+        modelo.peles.push(nome.to_string());
+        let novo_smd = modelo.escrever();
+        pw_data_loader::smd::Smd::ler(&novo_smd).context("o .smd editado não relê")?;
+        let resumo = json!({
+            "pele": caminho, "malhas": imp.ski.malhas_de_pele.len(), "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>(),
+            "ossos": imp.ski.ossos.len(), "texturas": imp.ski.texturas, "esqueleto": caminho_bon, "relatorio": imp.relatorio,
+            "peles_do_modelo": modelo.peles.len(),
+        });
+        {
+            let trava = self.trava(rascunho);
+            let _guarda = trava.lock().await;
+            gov.gravar_arquivo(versao, rascunho, &caminho, ski, "cliente").await?;
+        }
+        let mudanca = json!({ "acao": "nova", "tipo": "pele", "nome": nome, "de": "glTF" });
+        self.alterar_item_do_cliente(gov, versao, smd, rascunho, move |_| Ok((novo_smd, resumo, mudanca))).await
+    }
+
     /// B285: o índice dos `.ecm` e `.smd` do cliente publicado (montado uma vez por manifesto; no 1.5.5, 8.590 `.ecm`).
     pub async fn indice_de_ecm(&self, gov: &Governanca, versao: &str) -> Result<Arc<IndiceDeEcm>> {
         let sha = gov.publicado(versao)?.0.manifesto_sha256;

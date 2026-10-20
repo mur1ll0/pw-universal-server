@@ -645,6 +645,17 @@ def registrar_reinicio(app):
                                {"rascunho": rascunho, "smd": smd[:500], "destino": destino[:500]}, corpo=corpo,
                                tipo="application/octet-stream")
 
+    # B291: pele nova no modelo (.ski ao lado do .smd, citado por ele), a partir de um GLB.
+    @app.post("/api/realms/{realm}/estudio/modelos/pele_nova")
+    async def estudio_nova_pele(realm: str, rascunho: int, smd: str, nome: str, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        corpo = await requisicao.body()
+        if not corpo:
+            raise HTTPException(422, "Arquivo vazio.")
+        return await _repassar("POST", f"/admin/{v}/estudio/modelos/pele_nova",
+                               {"rascunho": rascunho, "smd": smd[:500], "nome": nome[:200]}, corpo=corpo,
+                               tipo="application/octet-stream")
+
     # B285: quem pode doar uma ação a um .ecm (mesmo esqueleto, mesma versão de arquivo).
     @app.get("/api/realms/{realm}/estudio/modelos/doadores")
     async def estudio_doadores(realm: str, caminho: str, acao: str, requisicao: Request):

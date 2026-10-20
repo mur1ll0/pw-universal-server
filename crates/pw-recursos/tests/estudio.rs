@@ -858,6 +858,13 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!((imp["resultado"]["malhas"].as_u64(), imp["resultado"]["vertices"].as_u64(), imp["resultado"]["texturas"].clone()), (Some(1), Some(3), json!(["caixa.dds"])), "{imp}");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar").query("smd", &smd).query("destino", &ski_cam).send_bytes(&gm)).0, 400, "sem rascunho");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar").query("rascunho", &ri.to_string()).query("smd", &smd).query("destino", &ski_cam).send_bytes(b"lixo")).0, 400, "não é GLB");
+        // B291: pele nova — nova.ski ao lado do .smd, citada por ele (o .smd do rascunho passa a ter 2 peles).
+        let pn = json_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "nova.ski").send_bytes(&gm).unwrap());
+        assert_eq!((pn["resultado"]["peles_do_modelo"].as_u64(), pn["resultado"]["malhas"].as_u64()), (Some(2), Some(1)), "{pn}");
+        assert!(pn["resultado"]["pele"].as_str().is_some_and(|c| c.to_lowercase().ends_with("teste\\nova.ski")), "{pn}");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "nova.ski").send_bytes(&gm)).0, 400, "o .smd já a cita");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "caixa.ski").send_bytes(&gm)).0, 400, "já existe no cliente");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "a\\b.ski").send_bytes(&gm)).0, 400, "só o nome");
         // B276: a ação (o .smd sintético não tem nenhuma) — pedir uma que não existe → 400.
         assert_eq!(fm["lista_de_acoes"].as_array().map(|x| x.len()), Some(0), "{fm}");
         assert_eq!(erro_de(pedir("GET", "estudio/modelos/glb").query("caminho", &smd).query("acao", "andar").call()).0, 400);
