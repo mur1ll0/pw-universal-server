@@ -15770,3 +15770,43 @@ comparação lado a lado.
     - Escritores conferidos (B286–B288), importação de pele, rígida, texturas DXT, ações (`.stck` e v5), esqueleto,
       modelo novo com `.ecm`, e a extensão.
     - Próximo: S8 (habilidades) ou o que o Murillo indicar.
+
+301. **Sessão 2026-10-20: Estúdio S8 (início) — vista Habilidades.**
+
+    ### a. Pedido
+    Commitar e seguir (B300 já commitado: `247d851`, `b95088e`; S6 concluído). Próxima fase pelo plano: S8
+    (habilidades: números e textos; depois `elementskill.dll` e os efeitos no GS).
+
+    ### b. Evidência
+    - O cliente lê `Configs\skillstr.txt` por `m_SkillDesc.Init(..., true)` (`EC_Game.cpp:529`), com
+      `CECStringTab::LoadWideStrings` (`EC_StringTab.cpp:202-262`) e `AWScriptFile::GetNextToken`:
+      - o texto entre aspas atravessa linhas e não tem escape;
+      - o texto começa na linha do id (`GetNextToken(false)`);
+      - id repetido: vale o 1º;
+      - até 2.047 unidades (`MAX_LINELEN`, `AWScriptFile.h:52`).
+    - Arquivo do 1.5.5 BR: UTF-16LE com BOM, CRLF e LF misturados, 6.632 fichas (nome N×10, descrição N×10+1).
+
+    ### c. O que foi feito
+    - `pw-data-loader`: `tabela_de_textos` (leitor/editor em unidades UTF-16, reescrita igual) e
+      `habilidades::json_do_servidor`.
+    - `pw-recursos`:
+      - `listar_habilidades`, `ficha_da_habilidade` e `definir_texto_da_habilidade`, com as três rotas
+        `estudio/habilidades`;
+      - o jogo é decidido pelo `elements.data` da versão (v7/v156/v159).
+    - Painel: vista "Habilidades" (busca, lista, ficha com texto editável, campos gerais, tabela por nível e JSON);
+      repasse; limite de 32 KiB na rota do texto; teste.
+
+    ### d. Provas e tropeços
+    - `tabela_de_textos`: as regras do leitor num texto sintético e o `skillstr.txt` real (6.632 fichas; reescrita
+      igual; trocar uma descrição de várias linhas muda só ela).
+    - `pw-data-loader` **257/257**; `pw-recursos` com o banco **22/22**: lista, ficha e edição; aspas e habilidade inexistente dão 400.
+    - Painel **12/12**. Uma rodada deu 1 erro que não se repetiu com o mesmo código: instável, sem causa achada.
+    - Pelo `pw-recursos` real: 823 habilidades no 1.2.6 e 3.316 no 1.5.5, todas com nome. O nome da 1 foi editado num
+      rascunho descartado, com a descrição e a habilidade 2 intactas.
+    - Tropeços:
+      - eu escolhia o JSON pelo nome da versão (no teste é `t_p4`); passou a ser pelo `elements.data`;
+      - o topo do JSON é `{fonte, habilidades}`, e não o mapa direto.
+
+    ### e. Falta (S8)
+    - Editar os números (hoje embutidos no GS e no `elementskill.dll` do cliente).
+    - Habilidade nova; ligar à ação do modelo (o nome de ação de habilidade que ficou do S5).

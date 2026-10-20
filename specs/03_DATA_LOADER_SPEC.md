@@ -587,6 +587,23 @@ base e fator nunca diferem; a 299 tem 23,7 no nível 1 contra 124,5, a 1 tem 10,
 (1.500+1.000; `123` em +2.504..2.551 ms do `85`) e o dano da 299 no `142` (20, 23, 23, 24; a
 conta com a ficha nível 1 dá 32 antes da resistência).
 
+**Tabela de textos UTF-16 com fichas de várias linhas (B301, Estúdio S8):** `tabela_de_textos::TabelaDeTextos` lê o
+`Configs\skillstr.txt` (`m_SkillDesc.Init(..., true)`, `EC_Game.cpp:529`) e as outras tabelas de
+`CECStringTab::LoadWideStrings` (`EC_StringTab.cpp:202-262`), seguindo as regras do `AWScriptFile::GetNextToken`:
+- **separadores e comentários:** pula tudo ≤ 32, `;` e `,`; `//` vai até o fim da linha e `/* */` é bloco;
+- **texto entre aspas:** vai até a **próxima aspa**, atravessando linhas, **sem escape**;
+- **cabeçalho:** tudo até `#_begin`; `#_index` antes dele indica tabela indexada;
+- **ficha indexada:** `id "texto"`, com o texto lido por `GetNextToken(false)`; a aspa de abertura fica na linha do id;
+- **id repetido:** vale o primeiro;
+- **tamanho:** até 2.047 unidades por ficha (`MAX_LINELEN` 2048, `AWScriptFile.h:52`).
+
+A tabela trabalha nas unidades UTF-16 do arquivo, de modo que o que não muda fica byte a byte igual (o arquivo do
+1.5.5 mistura CRLF e LF). `definir` recusa aspa e excesso de tamanho.
+
+No `skillstr.txt` real do 1.5.5 BR: **6.632 fichas, 2 por habilidade** (nome em N×10, descrição em N×10+1, para
+3.316 habilidades). Sem edição, a reescrita é igual; trocar uma descrição de várias linhas muda só ela. O
+`habilidades::json_do_servidor` expõe o JSON embutido; o topo dele é `{fonte, habilidades}`.
+
 ### 3.10c Tratadores de addon — `specs/addons_155/addons.json` (`addons.rs`)
 
 Extraído de `cgame/gs/item/item_addon.cpp` (`INSERT_ADDON(id, tratador)`, fora de comentário)

@@ -685,6 +685,23 @@ limitar, verificar, um gancho novo, exportar) e foram medidos por `importar::tes
 Pelo `pw-recursos`, os 6 viraram modelo novo com os mesmos ossos, malhas, ação e texturas, e o 1.5.5_0 com 20
 ganchos (19 + 1). O canal de escala, que o Blender exporta em todo osso, vira um aviso só por animação.
 
+**Habilidades (B301, S8):** três rotas, todas com `rascunho` opcional na leitura:
+- `GET estudio/habilidades?busca=`: lista até 300 (id exato ou trecho do nome);
+- `GET estudio/habilidades/{id}`: a ficha;
+- `PUT estudio/habilidades/{id}/texto?rascunho=` `{nome?, descricao?}`: troca o texto.
+
+O que a ficha junta:
+- **números do servidor:** o `habilidades.json` embutido, extraído dos stubs do `gs`. O jogo é decidido pelo
+  `elements.data` da versão (v7 = 1.2.6, v156/v159 = 1.5.5), porque o nome da versão de recursos é livre;
+- **nome e descrição do cliente:** o `Configs\skillstr.txt` (fichas N×10 e N×10+1, `tabela_de_textos`).
+
+A edição grava o `skillstr.txt` no rascunho como item `cliente`. Os números ainda só se leem: eles vivem no binário do
+GS (embutidos) e no `elementskill.dll` do cliente.
+
+No painel, a vista "Habilidades" tem busca, lista e ficha, com nome e descrição editáveis (a descrição em CRLF, como o
+arquivo), os campos gerais, uma tabela por nível e o JSON completo. O limite da rota do texto é 32 KiB
+(`seguranca.eh_texto_de_habilidade`).
+
 Medido pelo `pw-recursos` em 5 `.smd` de NPC do 1.5.5, num rascunho de teste descartado:
 - a 1ª ação de cada um (de 1 quadro), baixada e reimportada, sai byte a byte igual;
 - a ação mais longa de cada um (442 quadros no total) sai "substituída" com o mesmo número de quadros, porque as
