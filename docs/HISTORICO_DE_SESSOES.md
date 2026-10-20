@@ -15894,3 +15894,32 @@ comparação lado a lado.
     - Vale no jogo só com o GS novo publicado (B249, a critério do Murillo) — o catálogo é embutido.
     - O 1.2.6: medir o `elementskill.dll` do cliente 1.2.6 do mesmo jeito (não está em `F:\PW`).
     - S8: tornar os números do cliente editáveis exige recompilar o `elementskill.dll`; habilidade nova.
+
+304. **Sessão 2026-10-20: Estúdio S8 — o `elementskill.dll` do cliente 1.2.6.**
+
+    ### a. Pedido
+    O Murillo indicou o cliente 1.2.6 em `F:\Games\perfectworld_126 launcher\element`; medir como no B303.
+
+    ### b. O que o binário tem
+    - 62 exports da classe; **sem** `InitStaticData`, `GetCls` e `GetMaxLevel`. Estáticas: `GetRequiredLevel/Sp/
+      Money/Book(id, nível)` e `GetExecuteTime(id, nível)`.
+    - A vtable da base tem 37 slots, e 22 apontam para o mesmo endereço (o compilador fundiu as funções idênticas,
+      `return 0`): o endereço não identifica o slot. Únicos: `GetCoolingTime` 5, `GetExecuteTime` 6, `GetMpCost` 23.
+
+    ### c. O que foi feito
+    - `tools/elementskill/numeros.cpp` generalizado:
+      - slot com endereço repetido fica de fora (avisado);
+      - `InitStaticData` é opcional;
+      - as estáticas saem sempre (`s_*`);
+      - aceita `niveis.txt` ("id nível_máximo") para o DLL sem `GetMaxLevel`.
+    - O 1.5.5 medido de novo sai **idêntico** byte a byte, e nenhum slot dele era ambíguo.
+
+    ### d. Provas
+    - Mesmas 823 habilidades do `habilidades_126/habilidades.json`. Em 4.091 níveis:
+      - recarga, execução (slot = estática em todos), nível, SP, dinheiro e livro iguais;
+      - `mp` igual exceto a 2 nível 7: 37,0 no catálogo e 36 no `int` do DLL, truncamento;
+      - a 187 nível 11 dá 42.333 em quatro campos: leitura fora da tabela no DLL, não número.
+    - Nenhuma correção no catálogo 1.2.6, que já vinha do `gs` executado.
+
+    ### e. Falta
+    - S8: números do cliente editáveis (recompilar o `elementskill.dll`) e habilidade nova.

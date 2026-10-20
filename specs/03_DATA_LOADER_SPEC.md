@@ -579,6 +579,16 @@ em `elementskill_v156.json` só o que o binário diz diferente (2.272 habilidade
 25 habilidades com nível máximo diferente (o DLL dá 10 onde o fonte dá 1) — subir o nível
 máximo pede dano, alcance etc. dos níveis novos, que o DLL não dá.
 
+**1.2.6 conferido pelo binário (B304).** O `elementskill.dll` do cliente 1.2.6
+(`perfectworld_126 launcher/element`) não exporta `InitStaticData`, `GetCls` nem `GetMaxLevel`, e
+o compilador fundiu as funções idênticas da base (22 slots com o mesmo `return 0`) — o medidor só
+aceita slot de endereço único (`GetCoolingTime` = 5, `GetExecuteTime` = 6, `GetMpCost` = 23) e
+lê os requisitos e a execução pelas estáticas exportadas; os níveis vêm do catálogo. Mesmas 823
+habilidades; em 4.091 níveis recarga, execução, nível, SP, dinheiro e livro iguais ao
+`habilidades_126/habilidades.json` (executado no `gs`), `mp` igual exceto a 2 nível 7 (37,0 no
+catálogo, 36 no `int` do DLL — truncamento). A 187 nível 11 dá 42.333 em quatro campos no DLL:
+leitura fora da tabela, não número. Nenhuma correção.
+
 **1.2.6 (`TabelaDeHabilidades::do_126`, B100/B101)** — carregada para o `elements.data` v7.
 Só as 823 habilidades que o `gs` 1.2.6 compila (as mesmas 823 do `skillstr.txt` do cliente
 1.2.6). `specs/habilidades_126/habilidades.json` — desde o B102 **completo**, no formato do 1.5.5 (pode ir para `data/<realm>/catalogo/`), gerado por `extrair_habilidades_126.py`:
