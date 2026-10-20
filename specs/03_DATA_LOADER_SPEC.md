@@ -697,6 +697,21 @@ O motor usa o número de mipmaps do arquivo (`A3DTexture.cpp:594`). Cada nível 
 O importador guarda em `texturas_novas` cada imagem embutida no GLB: PNG vira `<nome>.dds`, e DDS/TGA vão como estão.
 Imagem que não vem embutida ou que não é PNG/DDS/TGA (JPEG) é relatada.
 
+**DXT (B293, S6):** `imagem::dds_dxt` comprime em DXT1 quando a imagem é toda opaca e em DXT5 quando tem alfa. No
+cliente 1.5.5 há 6.563 DXT1, 6.445 DXT3 e 2.038 DXT5, e o motor trata DXT3 e DXT5 igualmente como textura com alfa
+(`A3DTexture.cpp:589-591`).
+- **Cabeçalho**, medido nos DXT do cliente: `flags` 0xA1007, tamanho linear = blocos × 8 ou × 16, formato 0x4
+  (FourCC) e `caps` 0x401008, com mipmaps até 1×1.
+- **Bloco de cor:** extremos pelo eixo principal das cores (iteração de potência na covariância), sempre no modo de 4
+  cores (`c0 > c1`). Cor única tem tratamento à parte, e os índices são escolhidos contra a mesma expansão 565 do
+  decodificador.
+- **Bloco de alfa (DXT5):** máximo e mínimo, com o índice de 3 bits mais perto.
+- **Medido:** em 388 DXT reais (1/40 dos DDS), decodificados, recodificados e decodificados de novo, o erro médio
+  quadrático é **0,96 por canal** (a pior textura, 4,28). A cor única sai exata.
+
+O importador passou a gravar DXT (`TexturaNova`: nome, bytes e os pixels de origem, usados para comparar com a textura
+que o cliente já tem). O `dds_argb32` continua disponível.
+
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
 (mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.

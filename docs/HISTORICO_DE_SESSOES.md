@@ -15511,3 +15511,32 @@ comparação lado a lado.
     ### e. Falta (S6)
     - Compressão DXT (hoje 32 bits, 4× o DXT1/DXT3 em tamanho); malha rígida; esqueleto e ações vindos do glTF;
       extensão do Blender.
+
+293. **Sessão 2026-10-20: Estúdio S6 — compressão DXT das texturas importadas.**
+
+    ### a. Pedido
+    Commitar e seguir (B292 já commitado: `e455521`, `736324c`).
+
+    ### b. Evidência (medida nos DDS do cliente 1.5.5)
+    - Formatos: DXT1 6.563, DXT3 6.445 e DXT5 2.038, quase todos com `flags` 0xA1007, tamanho linear, FourCC (0x4),
+      `caps` 0x401008 e mipmaps completos.
+    - O motor trata DXT3 e DXT5 igualmente como textura com alfa (`A3DTexture.cpp:589-591`).
+
+    ### c. O que foi feito
+    - `pw-data-loader/imagem`: `dds_dxt`, que grava DXT1 sem alfa e DXT5 com alfa.
+      - Cor pelo eixo principal do bloco, sempre no modo de 4 cores; cor única tem tratamento à parte.
+      - Alfa por máximo e mínimo.
+      - Mipmaps por média 2×2 (`mipmaps`, que agora é compartilhado).
+    - `importar`: `TexturaNova` (nome, bytes e os pixels de origem), com PNG → DXT.
+    - `pw-recursos`: a comparação com a textura do cliente usa os pixels de origem, porque o DXT tem perda.
+
+    ### d. Provas e tropeço
+    - Em 388 DXT reais (1/40 dos DDS), recodificados: erro médio quadrático **0,96 por canal** (pior 4,28). A cor única
+      sai exata.
+    - Tropeço: a 1ª versão do teste falhou porque expandi o 565 por replicação de bits, e o decodificador usa
+      `v × 255 / 31`. O codificador agora usa a mesma expansão.
+    - `pw-data-loader` **250/250**; `pw-recursos` com o banco **22/22**. Pelo `pw-recursos` real: 13 de 13 texturas de ida e volta "igual" e 10 de 10
+      renomeadas "adicionada" (agora em DXT); nenhum rascunho de teste aberto.
+
+    ### e. Falta (S6)
+    - Malha rígida (sem pele); esqueleto e ações vindos do glTF; extensão do Blender.

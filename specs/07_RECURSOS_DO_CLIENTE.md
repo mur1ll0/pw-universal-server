@@ -591,7 +591,10 @@ os mesmos pixels onde o cliente o acha hoje (em `Textures\` e, sem ela, em `Tex_
 gravado; senão, uma cópia em `Textures\` passaria a valer no lugar da original. Medido pelo `pw-recursos` em 5
 `.smd` de NPC por versão, em rascunhos descartados:
 - ida e volta (o GLB baixado do painel): 13 de 13 texturas "igual";
-- com a imagem renomeada: 10 de 10 "adicionada" em `…\Textures\<nome>.dds`. A resposta traz
+- com a imagem renomeada: 10 de 10 "adicionada" em `…\Textures\<nome>.dds`.
+
+B293: a textura gravada é DXT1/DXT5 (spec 03), e a comparação usa os pixels de origem (o PNG), não o DXT, que tem
+perda. A resposta traz
 `texturas_gravadas: [{textura, acao}]`, com `acao` "adicionada", "substituída" ou "igual à do cliente (não gravada)".
 
 Os arquivos são lidos com `Governanca::conteudos` (lote: o manifesto é lido e indexado uma vez; `conteudo` relê o
