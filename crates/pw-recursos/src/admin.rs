@@ -748,6 +748,18 @@ async fn estudio_peca(State(e): State<Arc<Estado>>, Path((v, caminho, peca)): Pa
     Ok((h, png.as_ref().clone()).into_response())
 }
 
+#[derive(Deserialize)]
+struct QNascimentos {
+    id: i64,
+    rascunho: Option<i64>,
+}
+
+/// B284: onde um id nasce (todos os mapas com npcgen) — `Estudio::onde_nasce`.
+async fn estudio_nascimentos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QNascimentos>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.onde_nasce(&e.gov, &v, q.id, q.rascunho).await?))
+}
+
 async fn estudio_criaturas(State(e): State<Arc<Estado>>, Path((v, caminho)): Path<(String, String)>) -> R<Json<Value>> {
     validar(&v)?;
     Ok(Json(e.estudio.criaturas(&e.gov, &v, &caminho).await?))
@@ -1259,6 +1271,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/espacos/{espaco}", get(estudio_buscar_no_espaco))
         .route("/admin/{v}/estudio/funcoes", get(estudio_funcoes))
         .route("/admin/{v}/estudio/mapas", get(estudio_mapas))
+        .route("/admin/{v}/estudio/nascimentos", get(estudio_nascimentos))
         .route("/admin/{v}/estudio/mapas/{caminho}/pecas/{peca}", get(estudio_peca))
         .route("/admin/{v}/estudio/mapas/{caminho}/criaturas", get(estudio_criaturas))
         .route("/admin/{v}/estudio/mapas/{caminho}/npcgen", get(estudio_npcgen))

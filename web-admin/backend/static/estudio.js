@@ -386,6 +386,36 @@ function desenharFichaDoEstudio() {
   usado.appendChild(lista);
   area.appendChild(usado);
 
+  // B284: onde nasce — as áreas do npcgen de todos os mapas que citam este id (só busca ao abrir).
+  if (["MONSTER_ESSENCE", "NPC_ESSENCE", "MINE_ESSENCE"].includes(f.tabela) && f.id) {
+    const nasce = criar("details", "estudio-grupo");
+    nasce.appendChild(criar("summary", "", "Onde nasce (npcgen de todos os mapas)"));
+    const ln = criar("ul", "estudio-lista");
+    nasce.appendChild(ln);
+    nasce.addEventListener("toggle", async () => {
+      if (!nasce.open || nasce.dataset.carregado) return;
+      nasce.dataset.carregado = "1";
+      ln.replaceChildren(criar("li", "texto-suave", "Procurando nos mapas…"));
+      try {
+        const q = new URLSearchParams({ id: f.id, ...(estudio.rascunho ? { rascunho: estudio.rascunho } : {}) });
+        const r = await api(`/api/realms/${encodeURIComponent(estudio.realm)}/estudio/nascimentos?${q}`);
+        ln.replaceChildren();
+        nasce.firstChild.textContent = `Onde nasce · ${r.locais.length} área(s) em ${new Set(r.locais.map((x) => x.caminho)).size} mapa(s) de ${r.mapas_lidos}`;
+        for (const l of r.locais) {
+          const li = criar("li");
+          const b = criar("button");
+          b.type = "button";
+          b.append(criar("span", "", `${l.mapa} (${l.caminho}) · ${l.tipo} · área ${l.area}`), criar("small", "", `posição (${l.x}, ${l.z}) · quantidade ${l.quantidade}`));
+          b.addEventListener("click", () => irParaArea(l.caminho, l.tipo === "recurso" ? "recursos" : "areas", l.area));
+          li.appendChild(b);
+          ln.appendChild(li);
+        }
+        if (!r.locais.length) ln.appendChild(criar("li", "texto-suave", `Nenhuma área de npcgen cita o id ${f.id} (${r.mapas_lidos} mapas lidos).`));
+      } catch (erro) { ln.replaceChildren(criar("li", "texto-suave", erro.message)); delete nasce.dataset.carregado; }
+    });
+    area.appendChild(nasce);
+  }
+
   salvar.addEventListener("click", () => {
     const campos = {};
     for (const [c, e] of entradas) {

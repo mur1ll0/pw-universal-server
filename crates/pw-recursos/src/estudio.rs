@@ -1167,6 +1167,42 @@ impl Estudio {
         Ok((nome, do_realm, do_rascunho))
     }
 
+    /// B284: onde um id (monstro, NPC ou mina) nasce — em todos os mapas com npcgen, as áreas de criatura (geradores:
+    /// id em `[0..4]`, quantidade em `[4..8]`) e de recurso (id em `[4..8]`, quantidade em `[12..16]`) que o citam, com
+    /// os mesmos campos que o mapa desenha.
+    pub async fn onde_nasce(&self, gov: &Governanca, versao: &str, id: i64, rascunho: Option<i64>) -> Result<Value> {
+        let bytes = self.arquivo_do_cliente(gov, versao, "configs\\instance.txt").await?;
+        let mapas = crate::mapas::ler_instancias(&crate::mapas::texto_do_arquivo(&bytes))?;
+        let mut r = Vec::new();
+        let mut lidos = 0usize;
+        for m in &mapas {
+            let Ok((_, do_realm, do_rascunho)) = self.npcgen_atual(gov, versao, &m.caminho, rascunho).await else { continue };
+            let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
+            let Ok(n) = NpcgenEditavel::ler(&bytes) else { continue };
+            lidos += 1;
+            let v = n.versao;
+            for (i, a) in n.areas.iter().enumerate() {
+                let qtd: i64 = a.geradores.iter().filter(|g| u32::from_le_bytes(g[0..4].try_into().unwrap()) as i64 == id).map(|g| u32::from_le_bytes(g[4..8].try_into().unwrap()) as i64).sum();
+                if a.geradores.iter().any(|g| u32::from_le_bytes(g[0..4].try_into().unwrap()) as i64 == id) {
+                    let c = ng::ler_campos(&a.bruto, CAMPOS_DA_AREA, v);
+                    let tipo = if numero(&c, "iNPCType") as i64 == 1 { "npc" } else { "monstro" };
+                    r.push(json!({ "mapa": m.nome, "caminho": m.caminho, "tipo": tipo, "area": i, "x": um_decimal(numero(&c, "vPos_x")),
+                        "z": um_decimal(numero(&c, "vPos_z")), "quantidade": qtd }));
+                }
+            }
+            for (i, a) in n.areas_de_recurso.iter().enumerate() {
+                let deste = |x: &&Vec<u8>| i32::from_le_bytes(x[4..8].try_into().unwrap()) as i64 == id;
+                if a.recursos.iter().any(|x| deste(&x)) {
+                    let qtd: i64 = a.recursos.iter().filter(deste).map(|x| u32::from_le_bytes(x[12..16].try_into().unwrap()) as i64).sum();
+                    let c = ng::ler_campos(&a.bruto, CAMPOS_DA_AREA_DE_RECURSO, v);
+                    r.push(json!({ "mapa": m.nome, "caminho": m.caminho, "tipo": "recurso", "area": i, "x": um_decimal(numero(&c, "vPos_x")),
+                        "z": um_decimal(numero(&c, "vPos_z")), "quantidade": qtd }));
+                }
+            }
+        }
+        Ok(json!({ "id": id, "mapas_lidos": lidos, "locais": r }))
+    }
+
     /// Resumo do npcgen para o mapa: uma linha por área, com o que a tela desenha.
     pub async fn npcgen(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Value> {
         let (nome, do_realm, do_rascunho) = self.npcgen_atual(gov, versao, caminho, rascunho).await?;

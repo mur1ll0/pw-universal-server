@@ -57,8 +57,19 @@ async function carregarMapas() {
     o.value = m.caminho;
     sel.appendChild(o);
   }
-  sel.value = mapa.lista.some((m) => m.caminho === anterior) ? anterior : (mapa.lista[0]?.caminho || "");
+  // B284: vindo do "Onde nasce" da ficha — abre o mapa pedido já na área.
+  const ir = mapa.irPara;
+  mapa.irPara = null;
+  sel.value = ir && mapa.lista.some((m) => m.caminho === ir.caminho) ? ir.caminho
+    : mapa.lista.some((m) => m.caminho === anterior) ? anterior : (mapa.lista[0]?.caminho || "");
   await abrirMapa(sel.value);
+  if (ir && mapa.atual?.caminho === ir.caminho) await abrirArea(ir.tipo, ir.indice);
+}
+
+/** B284: abre a vista de mapas no mapa `caminho`, com a área (`areas` ou `recursos`, índice) aberta. */
+function irParaArea(caminho, tipo, indice) {
+  mapa.irPara = { caminho, tipo, indice };
+  mostrarVistaDoEstudio("mapas");
 }
 
 async function abrirMapa(caminho) {

@@ -191,6 +191,17 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         r = await self.cliente.get("/api/realms/realm_126/estudio/mapas/a01/criaturas")
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/mapas/a01/criaturas")
 
+    async def test_ficha_do_modelo_leva_voo_e_nascimentos_repassa(self):
+        """B283: o `voo` chega ao pw-recursos (0–2; fora disso, não vai). B284: onde nasce, com id e rascunho."""
+        await self.entrar()
+        await self.cliente.get("/api/realms/realm_155/estudio/modelos/ficha", params={"caminho": "a.ecm", "voo": 1})
+        self.assertEqual(RecursosFalso.pedidos[-1]["consulta"], {"caminho": ["a.ecm"], "voo": ["1"]})
+        await self.cliente.get("/api/realms/realm_155/estudio/modelos/ficha", params={"caminho": "a.ecm", "voo": 7})
+        self.assertNotIn("voo", RecursosFalso.pedidos[-1]["consulta"])
+        await self.cliente.get("/api/realms/realm_126/estudio/nascimentos", params={"id": 42, "rascunho": 3})
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], p["consulta"]), ("/admin/1.2.6/estudio/nascimentos", {"id": ["42"], "rascunho": ["3"]}))
+
     async def test_area_do_npcgen_repassa_e_recusa_o_que_nao_e_area(self):
         """B243: salvar área do npcgen passa de 8 KiB (geradores) só na rota dela; tipo fora do padrão fica no painel."""
         await self.entrar()

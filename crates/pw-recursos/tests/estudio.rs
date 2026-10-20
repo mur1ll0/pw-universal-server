@@ -410,6 +410,12 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let x0 = a0["campos"]["vPos_x"].as_f64().unwrap();
         let tid0 = a0["filhos"][0]["dwID"].as_u64().unwrap();
         assert_eq!(areas[0][6].as_u64(), Some(tid0));
+        // B284: onde nasce — o id do 1º gerador da área 0 aparece no mapa "world", área 0.
+        let nasc = json_de(pedir("GET", "estudio/nascimentos").query("id", &tid0.to_string()).call().unwrap());
+        assert_eq!(nasc["mapas_lidos"].as_u64(), Some(1), "{nasc}");
+        assert!(nasc["locais"].as_array().unwrap().iter().any(|l| l["caminho"] == "world" && l["area"] == 0 && l["tipo"] != "recurso" && l["quantidade"].as_i64() > Some(0)), "{nasc}");
+        let ninguem = json_de(pedir("GET", "estudio/nascimentos").query("id", "2147480000").call().unwrap());
+        assert_eq!(ninguem["locais"].as_array().map(|x| x.len()), Some(0));
         // Sem rascunho é recusado; campo inexistente e tipo de área inválido também.
         assert_eq!(erro_de(pedir("PUT", "estudio/mapas/world/npcgen/areas/0").send_json(json!({"campos": {"vPos_x": 1.0}}))).0, 400);
         assert_eq!(erro_de(pedir("PUT", &em2("estudio/mapas/world/npcgen/areas/0")).send_json(json!({"campos": {"nada": 1}}))).0, 400);

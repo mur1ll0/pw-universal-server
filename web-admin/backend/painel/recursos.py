@@ -282,6 +282,12 @@ def registrar_mapas(app):
         v = await _versao_do_realm(requisicao, realm)
         return await _repassar("GET", f"/admin/{v}/estudio/mapas")
 
+    # B284: onde um id (monstro, NPC, mina) nasce, em todos os mapas com npcgen.
+    @app.get("/api/realms/{realm}/estudio/nascimentos")
+    async def estudio_nascimentos(realm: str, id: int, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/nascimentos", {"id": id, "rascunho": rascunho})
+
     @app.get("/api/realms/{realm}/estudio/mapas/{caminho}/pecas/{peca}")
     async def estudio_peca(realm: str, caminho: str, peca: str, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
@@ -605,10 +611,13 @@ def registrar_reinicio(app):
         return await _repassar("GET", f"/admin/{v}/estudio/modelos", {"busca": busca[:200]})
 
     @app.get("/api/realms/{realm}/estudio/modelos/ficha")
-    async def estudio_modelo(realm: str, caminho: str, requisicao: Request, rascunho: int | None = None, habitat: int | None = None):
+    async def estudio_modelo(realm: str, caminho: str, requisicao: Request, rascunho: int | None = None, habitat: int | None = None,
+                             voo: int | None = None):
         v = await _versao_do_realm(requisicao, realm)
+        # B283: `voo` (0 espada, 1 asa, 2 rodas) — o diagnóstico de voo.
         return await _repassar("GET", f"/admin/{v}/estudio/modelos/ficha", {"caminho": caminho[:500], "rascunho": rascunho,
-                               "habitat": habitat if habitat is not None and 0 <= habitat <= 6 else None})
+                               "habitat": habitat if habitat is not None and 0 <= habitat <= 6 else None,
+                               "voo": voo if voo is not None and 0 <= voo <= 2 else None})
 
     # Ação combinada nova no .ecm, clonando outra (B280).
     @app.post("/api/realms/{realm}/estudio/modelos/acao")
