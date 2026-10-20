@@ -572,6 +572,15 @@ def registrar_reinicio(app):
             raise HTTPException(422, "Informe o nome e/ou a descrição.")
         return await _repassar("PUT", f"/admin/{v}/estudio/habilidades/{max(0, id_habilidade)}/texto", {"rascunho": rascunho}, dados=corpo)
 
+    # B302: números por nível da habilidade no habilidades.json do realm (catálogo), no rascunho.
+    @app.put("/api/realms/{realm}/estudio/habilidades/{id_habilidade}/numeros")
+    async def estudio_numeros_da_habilidade(realm: str, id_habilidade: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        dados = await requisicao.json()
+        if not isinstance(dados, dict) or not dados:
+            raise HTTPException(422, "Informe os campos.")
+        return await _repassar("PUT", f"/admin/{v}/estudio/habilidades/{max(0, id_habilidade)}/numeros", {"rascunho": rascunho}, dados=dados)
+
     # Textos do cliente (B260): fixed_msg, item_desc, item_ext_desc (item "cliente").
     TEXTOS = ("fixed_msg.txt", "item_desc.txt", "item_ext_desc.txt")
 

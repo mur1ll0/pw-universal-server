@@ -600,6 +600,13 @@ async fn estudio_habilidade(State(e): State<Arc<Estado>>, Path((v, id)): Path<(S
     Ok(Json(e.estudio.ficha_da_habilidade(&e.gov, &v, q.rascunho, id).await?))
 }
 
+/// B302 (S8): troca números por nível da habilidade no `habilidades.json` do realm (rascunho).
+async fn estudio_numeros_da_habilidade(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i64)>, Query(q): Query<QEstudio>, Json(p): Json<serde_json::Map<String, Value>>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.definir_numeros_da_habilidade(&e.gov, &v, r, id, p).await?))
+}
+
 #[derive(Deserialize)]
 struct PedidoTextoDeHabilidade {
     nome: Option<String>,
@@ -1411,6 +1418,7 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/habilidades", get(estudio_habilidades))
         .route("/admin/{v}/estudio/habilidades/{id}", get(estudio_habilidade))
         .route("/admin/{v}/estudio/habilidades/{id}/texto", put(estudio_texto_da_habilidade))
+        .route("/admin/{v}/estudio/habilidades/{id}/numeros", put(estudio_numeros_da_habilidade))
         .route("/admin/{v}/estudio/textos/{arquivo}", get(estudio_textos).post(estudio_novo_texto))
         .route("/admin/{v}/estudio/textos/{arquivo}/{chave}", put(estudio_editar_texto))
         .route("/admin/{v}/estudio/comportamentos/{id}", get(estudio_comportamento).put(estudio_editar_comportamento))

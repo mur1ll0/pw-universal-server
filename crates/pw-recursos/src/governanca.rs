@@ -467,10 +467,18 @@ impl Governanca {
 
 /// Onde um item do servidor vai dentro do `config` do realm: `data\<arquivo>` (um arquivo do cliente que o
 /// servidor também lê, como o `elements.data`) vai para a raiz; `servidor\<pasta>\…\<arquivo>` (só do
-/// servidor, como o `npcgen.data` de cada mapa, B243) vai para a subpasta. Cada parte só com letras, dígitos,
-/// `_`, `-` e `.`, sem começar por ponto.
+/// servidor, como o `npcgen.data` de cada mapa, B243) vai para a subpasta. B302: `catalogo\<arquivo>` vai para o
+/// catálogo do realm, **ao lado** do `config` (`data/<realm>/catalogo/`, que o GS lê no lugar do embutido —
+/// `manager.rs:330-361`, B102). Cada parte só com letras, dígitos, `_`, `-` e `.`, sem começar por ponto.
 pub fn caminho_no_realm(nome: &str) -> Result<Vec<String>> {
     let partes: Vec<&str> = nome.split('\\').collect();
+    if partes.len() == 2 && partes[0].eq_ignore_ascii_case("catalogo") {
+        let a = partes[1];
+        if a.is_empty() || a.starts_with('.') || !a.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.') {
+            bail!("{nome}: nome inválido para o realm");
+        }
+        return Ok(vec!["..".into(), "catalogo".into(), a.to_lowercase()]);
+    }
     let resto = match partes.first() {
         Some(p) if p.eq_ignore_ascii_case("data") && partes.len() == 2 => &partes[1..],
         Some(p) if p.eq_ignore_ascii_case("servidor") && partes.len() >= 2 && partes.len() <= 4 => &partes[1..],
@@ -498,5 +506,8 @@ mod testes {
         assert!(caminho_no_realm(r"data\a\b").is_err());
         assert!(caminho_no_realm(r"models\x.ecm").is_err());
         assert!(caminho_no_realm(r"servidor\a:b\c").is_err());
+        assert_eq!(caminho_no_realm(r"catalogo\habilidades.json").unwrap(), vec!["..", "catalogo", "habilidades.json"]);
+        assert!(caminho_no_realm(r"catalogo\..").is_err());
+        assert!(caminho_no_realm(r"catalogo\a\b").is_err());
     }
 }

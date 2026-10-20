@@ -27,6 +27,23 @@ const NIVEL_DO_RASCUNHO: i32 = 3;
 /// `EC_Game.cpp:529` — UTF-16).
 const CAMINHO_SKILLSTR: &str = "configs\\skillstr.txt";
 
+/// B302: os números das habilidades do realm — item do servidor publicado em `data/<realm>/catalogo/habilidades.json`,
+/// que o GS lê no lugar do embutido (`manager.rs:330-361`, B102).
+const CAMINHO_HABILIDADES: &str = "catalogo\\habilidades.json";
+
+/// B302: os campos por nível que se editam, e quem os confere. O cliente decide sozinho, pelo `elementskill.dll` dele,
+/// se pode lançar (`CheckSkillCastCondition`, `EC_HostPlayer.cpp:6097-6150`: mana…) e aprender (`LearnCondition`,
+/// `:6067-6093`: nível, SP, dinheiro); a recarga o servidor manda (`SET_COOLDOWN`, `playerwrapper.cpp:170`) e o ódio é
+/// só do servidor.
+const CAMPOS_EDITAVEIS: [(&str, &str); 6] = [
+    ("recarga_ms", "só o servidor (o cliente recebe a recarga por SET_COOLDOWN)"),
+    ("odio", "só o servidor"),
+    ("mp", "o cliente também confere, pelo elementskill.dll dele (CheckSkillCastCondition)"),
+    ("nivel_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
+    ("sp_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
+    ("dinheiro_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
+];
+
 #[derive(Default)]
 pub struct Estudio {
     /// Arquivos já lidos, pelo SHA-256 (o publicado e o de cada rascunho em uso).
@@ -3299,20 +3316,80 @@ impl Estudio {
         })
     }
 
-    async fn habilidades_do_servidor(&self, gov: &Governanca, versao: &str) -> Result<serde_json::Map<String, Value>> {
-        let jogo = self.jogo_da_versao(gov, versao).await?;
-        let j = pw_data_loader::habilidades::json_do_servidor(jogo).with_context(|| format!("sem habilidades do servidor para {jogo}"))?;
+    /// B302: o `habilidades.json` que vale para o GS — o do rascunho (item `catalogo\habilidades.json`), senão o do
+    /// catálogo do realm (`data/<realm>/catalogo/`, que o GS lê no lugar do embutido, `manager.rs:330-361`), senão o
+    /// embutido da versão. Devolve (bytes do realm ou embutido, item do rascunho, de onde veio).
+    async fn json_de_habilidades(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<(Vec<u8>, Option<(ItemDeRecurso, Vec<u8>)>, &'static str)> {
+        let (base, origem) = match gov.ler_do_realm(versao, CAMINHO_HABILIDADES).ok().flatten() {
+            Some(b) => (b, "catálogo do realm"),
+            None => {
+                let jogo = self.jogo_da_versao(gov, versao).await?;
+                let j = pw_data_loader::habilidades::json_do_servidor(jogo).with_context(|| format!("sem habilidades do servidor para {jogo}"))?;
+                (j.as_bytes().to_vec(), "embutido no GS")
+            }
+        };
+        let mut do_rascunho = None;
+        if let Some(r) = rascunho {
+            gov.rascunho_da_versao(versao, r).await?;
+            if let Some(i) = gov.repo.itens(r).await?.into_iter().find(|i| i.caminho == CAMINHO_HABILIDADES.as_bytes()) {
+                let sha: Sha256Bytes = i.sha256_depois.clone().context("arquivo removido no rascunho")?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
+                let objetos = gov.objetos(versao);
+                let tamanho = i.tamanho.unwrap_or(0) as usize;
+                let b = tokio::task::spawn_blocking(move || objetos.ler(&sha, tamanho)).await??;
+                do_rascunho = Some((i, b));
+            }
+        }
+        let origem = if do_rascunho.is_some() { "rascunho" } else { origem };
+        Ok((base, do_rascunho, origem))
+    }
+
+    async fn habilidades_do_servidor(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<(serde_json::Map<String, Value>, &'static str)> {
+        let (base, do_rascunho, origem) = self.json_de_habilidades(gov, versao, rascunho).await?;
+        let bytes = do_rascunho.map(|x| x.1).unwrap_or(base);
         // O arquivo é `{ "fonte": …, "habilidades": { "<id>": {…} } }`.
-        match serde_json::from_str::<Value>(j)?.get_mut("habilidades").map(Value::take) {
-            Some(Value::Object(m)) => Ok(m),
+        match serde_json::from_slice::<Value>(&bytes)?.get_mut("habilidades").map(Value::take) {
+            Some(Value::Object(m)) => Ok((m, origem)),
             _ => bail!("habilidades.json sem o objeto \"habilidades\""),
         }
+    }
+
+    /// B302 (S8): troca números por nível de uma habilidade no `habilidades.json` do realm (item do servidor
+    /// `catalogo\habilidades.json`, no rascunho). Só os campos de `CAMPOS_EDITAVEIS`, com um número por nível.
+    pub async fn definir_numeros_da_habilidade(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i64, campos: serde_json::Map<String, Value>) -> Result<Value> {
+        if campos.is_empty() {
+            bail!("nada a mudar");
+        }
+        for k in campos.keys() {
+            if !CAMPOS_EDITAVEIS.iter().any(|c| c.0 == k) {
+                bail!("o campo {k} não se edita aqui (editáveis: {})", CAMPOS_EDITAVEIS.iter().map(|c| c.0).collect::<Vec<_>>().join(", "));
+            }
+        }
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let (base, do_rascunho, _) = self.json_de_habilidades(gov, versao, Some(rascunho)).await?;
+        self.gravar_item_do_realm(gov, versao, rascunho, CAMINHO_HABILIDADES.to_string(), base, do_rascunho, move |b| {
+            let mut j: Value = serde_json::from_slice(b)?;
+            let h = j.get_mut("habilidades").and_then(|x| x.get_mut(id.to_string())).with_context(|| format!("a habilidade {id} não existe"))?;
+            let n = h["max_level"].as_u64().context("habilidade sem max_level")? as usize;
+            let mut mudou = Vec::new();
+            for (k, v) in &campos {
+                let a = v.as_array().filter(|a| a.len() == n && a.iter().all(|x| x.as_f64().is_some_and(f64::is_finite)))
+                    .with_context(|| format!("{k}: uma lista de {n} números (um por nível)"))?;
+                h[k.as_str()] = Value::Array(a.clone());
+                mudou.push(k.clone());
+            }
+            let novo = serde_json::to_vec(&j)?;
+            pw_data_loader::habilidades::TabelaDeHabilidades::de_json(&String::from_utf8_lossy(&novo)).context("o habilidades.json editado não lê no GS")?;
+            let mudanca = json!({ "acao": "editar", "tipo": "numeros_de_habilidade", "id": id, "campos": mudou });
+            Ok((novo, json!({ "id": id, "campos": mudou }), mudanca))
+        })
+        .await
     }
 
     /// B301 (S8): as habilidades do servidor (`habilidades.json`, os stubs do `gs`) com o nome do cliente; `busca` = id
     /// exato ou trecho do nome. Até 300.
     pub async fn listar_habilidades(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, busca: &str) -> Result<Value> {
-        let hs = self.habilidades_do_servidor(gov, versao).await?;
+        let (hs, _) = self.habilidades_do_servidor(gov, versao, rascunho).await?;
         let t = self.skillstr(gov, versao, rascunho).await.ok();
         let busca = busca.trim().to_lowercase();
         let mut r: Vec<(i64, Value)> = Vec::new();
@@ -3331,13 +3408,14 @@ impl Estudio {
 
     /// B301 (S8): a ficha — todos os números do servidor e o nome e a descrição do cliente.
     pub async fn ficha_da_habilidade(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: i64) -> Result<Value> {
-        let hs = self.habilidades_do_servidor(gov, versao).await?;
+        let (hs, origem) = self.habilidades_do_servidor(gov, versao, rascunho).await?;
         let h = hs.get(&id.to_string()).cloned().with_context(|| format!("a habilidade {id} não existe no servidor {versao}"))?;
         let t = self.skillstr(gov, versao, rascunho).await.ok();
         Ok(json!({
             "id": id, "servidor": h,
             "nome": t.as_ref().and_then(|t| t.texto(id * 10)), "descricao": t.as_ref().and_then(|t| t.texto(id * 10 + 1)),
-            "skillstr": CAMINHO_SKILLSTR,
+            "skillstr": CAMINHO_SKILLSTR, "origem_dos_numeros": origem,
+            "editaveis": CAMPOS_EDITAVEIS.iter().map(|c| json!({ "campo": c.0, "quem_confere": c.1 })).collect::<Vec<_>>(),
         }))
     }
 

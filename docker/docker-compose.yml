@@ -149,6 +149,8 @@ services:
       REDIS_URL: redis://pw-dragonfly:6379
     volumes:
       - ../data/realm_126/config:/app/data/config:ro
+      # B302: o catálogo do realm (habilidades.json editado no Estúdio), que o GS lê ao lado do config (manager.rs:330-361).
+      - ../data/realm_126/catalogo:/app/data/catalogo:ro
     depends_on:
       pw-postgres:
         condition: service_healthy
@@ -217,6 +219,8 @@ services:
       REDIS_URL: redis://pw-dragonfly:6379
     volumes:
       - ../data/realm_155/config:/app/data/config:ro
+      # B302: o catálogo do realm (habilidades.json editado no Estúdio), que o GS lê ao lado do config (manager.rs:330-361).
+      - ../data/realm_155/catalogo:/app/data/catalogo:ro
     depends_on:
       pw-postgres:
         condition: service_healthy
@@ -243,14 +247,15 @@ services:
       PW_RECURSOS_SEGREDO: ${RECURSOS_SEGREDO:-}
       # Publicar um item de destino servidor/ambos (ex.: o elements editado no Estúdio) grava
       # o arquivo no config do realm da versão (B237). O realm precisa ser reiniciado depois.
-      PW_RECURSOS_REALMS: '{"1.2.6":["/realms/realm_126"],"1.5.5":["/realms/realm_155"]}'
+      # B302: a pasta inteira do realm (config + catalogo); os itens do servidor vão para o config e o catálogo ao lado.
+      PW_RECURSOS_REALMS: '{"1.2.6":["/realms/realm_126/config"],"1.5.5":["/realms/realm_155/config"]}'
     ports:
       - "8100:8100"
     volumes:
       - ../data/clientes:/dados
       - pw_recursos_chave:/chave
-      - ../data/realm_126/config:/realms/realm_126
-      - ../data/realm_155/config:/realms/realm_155
+      - ../data/realm_126:/realms/realm_126
+      - ../data/realm_155:/realms/realm_155
     depends_on:
       pw-postgres:
         condition: service_healthy

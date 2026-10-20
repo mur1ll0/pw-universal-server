@@ -903,6 +903,27 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!((hf2["nome"].as_str(), hf2["descricao"].as_str()), (Some("Golpe do Tigre"), Some("Linha 1\r\nLinha 2 (%d)")), "{hf2}");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/texto?rascunho={ri}")).send_json(json!({"nome": "com \"aspas\""}))).0, 400, "aspas");
         assert_eq!(erro_de(pedir("GET", "estudio/habilidades/999999").call()).0, 400, "não existe");
+        // B302: os números — a recarga da habilidade 1 no habilidades.json do realm (item catalogo\habilidades.json),
+        // publicado em <realm>/../catalogo/, que o GS lê no lugar do embutido.
+        let catalogo = realm2.parent().unwrap().join("catalogo");
+        let _ = fs::remove_dir_all(&catalogo);
+        let n = hf["servidor"]["max_level"].as_u64().unwrap() as usize;
+        assert_eq!(hf["origem_dos_numeros"].as_str(), Some("embutido no GS"), "{hf}");
+        let rh = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "números", "operacao_id": "t_p4_rh"})).unwrap())["id"].as_i64().unwrap();
+        let recarga: Vec<i64> = (1..=n as i64).map(|i| 1000 * i).collect();
+        pedir("PUT", &format!("estudio/habilidades/1/numeros?rascunho={rh}")).send_json(json!({"recarga_ms": recarga})).unwrap();
+        let hn = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &rh.to_string()).call().unwrap());
+        assert_eq!((hn["servidor"]["recarga_ms"].clone(), hn["origem_dos_numeros"].as_str()), (json!(recarga), Some("rascunho")), "{hn}");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros?rascunho={rh}")).send_json(json!({"cls": [1]}))).0, 400, "campo que não se edita");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros?rascunho={rh}")).send_json(json!({"mp": [1, 2]}))).0, 400, "um número por nível");
+        let ph = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [rh]})).unwrap());
+        assert_eq!(ph["aplicados"].as_array().map(|x| x.len()), Some(1), "{ph}");
+        let arq = fs::read_to_string(catalogo.join("habilidades.json")).unwrap();
+        let t = pw_data_loader::habilidades::TabelaDeHabilidades::de_json(&arq).unwrap();
+        assert!(t.get(1).is_some(), "o leitor do GS aceita o catálogo publicado");
+        let hp = json_de(pedir("GET", "estudio/habilidades/1").call().unwrap());
+        assert_eq!((hp["servidor"]["recarga_ms"].clone(), hp["origem_dos_numeros"].as_str()), (json!(recarga), Some("catálogo do realm")), "{hp}");
+        let _ = fs::remove_dir_all(&catalogo);
         // B298: modelo novo a partir do GLB do .smd sintético — .bon, .ski e .smd (sem ações) em models\teste_novo.
         let mn = json_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &ri.to_string()).query("pasta", "models/teste_novo").query("titulo", "boneco").send_bytes(&gm).unwrap());
         assert_eq!((mn["resultado"]["arquivos"].as_array().map(|x| x.len()), mn["resultado"]["ossos"].as_u64(), mn["resultado"]["malhas"].as_u64()), (Some(4), Some(1), Some(1)), "{mn}");
