@@ -413,6 +413,15 @@ def main():
         h = extrair(os.path.join(pasta, nome))
         if h:
             saida[str(h["id"])] = h
+    # B303: o binário é o juiz — as correções medidas no `elementskill.dll` do cliente v156 (`medir_elementskill.py`)
+    # substituem o fonte; o valor do fonte fica em `do_fonte`.
+    correcoes = os.path.join(os.path.dirname(os.path.abspath(__file__)), "elementskill_v156.json")
+    if os.path.exists(correcoes):
+        with open(correcoes, encoding="utf-8") as f:
+            for sid, c in json.load(f)["correcoes"].items():
+                if sid in saida:
+                    saida[sid]["do_fonte"] = {k: saida[sid][k] for k in c}
+                    saida[sid].update(c)
     destino = os.path.join(os.path.dirname(os.path.abspath(__file__)), "habilidades.json")
     with open(destino, "w", encoding="utf-8") as f:
         json.dump({"fonte": "EvolvedPWServer/cskill/skills", "habilidades": saida}, f, ensure_ascii=False, separators=(",", ":"))

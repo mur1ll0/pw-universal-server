@@ -69,6 +69,11 @@ async function abrirHabilidade(id) {
     tg.appendChild(tr);
   }
   ficha.appendChild(tg);
+  // B303: campos que o catálogo tomou do elementskill.dll do cliente (o binário é o juiz); o valor do fonte fica em do_fonte.
+  if (s.do_fonte && Object.keys(s.do_fonte).length) {
+    const aviso = criar("div", "texto-suave", `Do binário do cliente (elementskill.dll v156), não do fonte: ${Object.keys(s.do_fonte).join(", ")}. O fonte dizia: ${JSON.stringify(s.do_fonte)}`);
+    ficha.appendChild(aviso);
+  }
   // Por nível: as listas com um valor por nível. B302: os campos editáveis viram entradas; o cabeçalho diz quem confere
   // (o cliente decide sozinho mana e requisitos pelo elementskill.dll dele — mudar só o servidor desalinha).
   const n = Number(s.max_level) || 0;

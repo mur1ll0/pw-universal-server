@@ -377,7 +377,11 @@ mod tests {
         assert_eq!(h.recarga_armada_ms(1), Some(3000));
         assert_eq!(h.conjuracao_ms(1), Some(400));
         assert_eq!(h.sp_exigido(2), Some(300));
-        assert_eq!(h.dinheiro_exigido(2), Some(30));
+        // B303: o fonte diz 30, mas o `elementskill.dll` do cliente v156 e o `gs` do servidor v156 dizem 0 — o
+        // binário é o juiz (`specs/habilidades_155/elementskill_v156.json`); o 30 fica em `do_fonte`.
+        assert_eq!(h.dinheiro_exigido(2), Some(0));
+        // Requisito sem sobrescrita no stub vale o 0 da base (`ElementSkill/skill.h:170`), não "desconhecido".
+        assert_eq!(TabelaDeHabilidades::do_155().get(8).unwrap().dinheiro_exigido(10), Some(771_980));
         assert_eq!(h.nivel_exigido(11), None, "nível fora da tabela");
     }
 
