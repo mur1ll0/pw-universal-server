@@ -176,14 +176,105 @@ pub fn tga(b: &[u8]) -> Option<Imagem> {
     Some(Imagem { largura, altura, rgba })
 }
 
-/// DDS ou TGA, pelo conteúdo.
+/// DDS, TGA ou (B292) PNG, pelo conteúdo.
 pub fn decodificar(b: &[u8]) -> Option<Imagem> {
-    dds(b).or_else(|| tga(b))
+    dds(b).or_else(|| tga(b)).or_else(|| png(b))
+}
+
+/// B292: PNG (o que o glTF embute) → RGBA de 8 bits.
+pub fn png(b: &[u8]) -> Option<Imagem> {
+    if !b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return None;
+    }
+    let mut d = ::png::Decoder::new(b);
+    d.set_transformations(::png::Transformations::EXPAND | ::png::Transformations::STRIP_16);
+    let mut r = d.read_info().ok()?;
+    let mut buf = vec![0; r.output_buffer_size()];
+    let info = r.next_frame(&mut buf).ok()?;
+    let (w, h) = (info.width, info.height);
+    let px = &buf[..info.buffer_size()];
+    let rgba: Vec<u8> = match info.color_type {
+        ::png::ColorType::Rgba => px.to_vec(),
+        ::png::ColorType::Rgb => px.chunks_exact(3).flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
+        ::png::ColorType::GrayscaleAlpha => px.chunks_exact(2).flat_map(|c| [c[0], c[0], c[0], c[1]]).collect(),
+        ::png::ColorType::Grayscale => px.iter().flat_map(|&c| [c, c, c, 255]).collect(),
+        ::png::ColorType::Indexed => return None, // EXPAND já converte paleta em RGB(A)
+    };
+    (rgba.len() == (w * h * 4) as usize).then_some(Imagem { largura: w, altura: h, rgba })
+}
+
+/// B292 (S6): DDS sem compressão de 32 bits (A8R8G8B8) com a cadeia inteira de mipmaps — o cabeçalho que 646 DDS de 32
+/// bits do cliente 1.5.5 têm (medido): `flags` 0xA1007 (CAPS, HEIGHT, WIDTH, PIXELFORMAT, MIPMAPCOUNT, LINEARSIZE), o
+/// tamanho linear `w × h × 4`, formato 0x41 (RGB + alfa) com máscaras R 0xFF0000, G 0xFF00, B 0xFF, A 0xFF000000 e
+/// `caps` 0x401008 (TEXTURE, MIPMAP, COMPLEX). O motor lê pelo `D3DXCreateTextureFromFileInMemoryEx` com o número de
+/// mipmaps do arquivo (`A3DTexture.cpp:594`); cada nível é a média 2×2 do anterior (`D3DX_FILTER_BOX`, o filtro que o
+/// motor usa ao reduzir, `:661-688`), até 1×1. Pixels em B, G, R, A.
+pub fn dds_argb32(img: &Imagem) -> Vec<u8> {
+    let (w, h) = (img.largura.max(1), img.altura.max(1));
+    let niveis = 32 - w.max(h).leading_zeros();
+    let mut o = Vec::with_capacity(128 + (w * h * 4 * 4 / 3) as usize + 64);
+    o.extend_from_slice(b"DDS ");
+    let u = |o: &mut Vec<u8>, x: u32| o.extend_from_slice(&x.to_le_bytes());
+    for x in [124, 0xA1007, h, w, w * h * 4, 0, niveis] {
+        u(&mut o, x);
+    }
+    o.extend_from_slice(&[0u8; 44]);
+    for x in [32, 0x41, 0, 32, 0x00FF_0000, 0x0000_FF00, 0x0000_00FF, 0xFF00_0000, 0x40_1008, 0, 0, 0, 0] {
+        u(&mut o, x);
+    }
+    let mut atual = img.rgba.clone();
+    let (mut lw, mut lh) = (w, h);
+    for nivel in 0..niveis {
+        o.extend(atual.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], p[3]]));
+        if nivel + 1 == niveis {
+            break;
+        }
+        let (nw, nh) = ((lw / 2).max(1), (lh / 2).max(1));
+        let mut prox = vec![0u8; (nw * nh * 4) as usize];
+        for y in 0..nh {
+            for x in 0..nw {
+                for c in 0..4 {
+                    let mut soma = 0u32;
+                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let (sx, sy) = ((2 * x + dx).min(lw - 1), (2 * y + dy).min(lh - 1));
+                        soma += atual[((sy * lw + sx) * 4 + c) as usize] as u32;
+                    }
+                    prox[((y * nw + x) * 4 + c) as usize] = ((soma + 2) / 4) as u8;
+                }
+            }
+        }
+        atual = prox;
+        lw = nw;
+        lh = nh;
+    }
+    o
 }
 
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// B292: o DDS de 32 bits gerado relê com os mesmos pixels, tem o cabeçalho medido e a cadeia de mipmaps inteira
+    /// (5×3 → 3 níveis: 5×3, 2×1, 1×1); o PNG decodifica.
+    #[test]
+    fn dds_argb32_e_png() {
+        let rgba: Vec<u8> = (0..5 * 3 * 4).map(|i| (i * 7 % 256) as u8).collect();
+        let img = Imagem { largura: 5, altura: 3, rgba: rgba.clone() };
+        let d = dds_argb32(&img);
+        let u = |o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
+        assert_eq!((u(8), u(20), u(28), u(80), u(108)), (0xA1007, 5 * 3 * 4, 3, 0x41, 0x40_1008));
+        assert_eq!(d.len(), 128 + (15 + 2 + 1) * 4);
+        let de_volta = dds(&d).unwrap();
+        assert_eq!((de_volta.largura, de_volta.altura, de_volta.rgba), (5, 3, rgba.clone()));
+        let mut p = Vec::new();
+        {
+            let mut e = ::png::Encoder::new(&mut p, 5, 3);
+            e.set_color(::png::ColorType::Rgba);
+            e.set_depth(::png::BitDepth::Eight);
+            e.write_header().unwrap().write_image_data(&rgba).unwrap();
+        }
+        assert_eq!(decodificar(&p).unwrap().rgba, rgba);
+    }
 
     fn cabecalho(w: u32, h: u32, flags: u32, fourcc: &[u8; 4], bits: u32, mascaras: [u32; 4]) -> Vec<u8> {
         let mut b = vec![0u8; 128];

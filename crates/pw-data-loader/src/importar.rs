@@ -13,8 +13,8 @@
 //!   ele, valem os mais comuns no cliente, medidos em `ski::testes::medir_padroes`: em 83% dos 28.421 materiais do
 //!   1.5.5, ambiente = difusa, emissiva e especular (0, 0, 0, 1) e brilho 10. O `fMinWeight` é 0 em todos os 24.165
 //!   `.ski` (e o motor só o lê e regrava, `A3DSkin.cpp:220`, `:538`).
-//! - **Texturas:** o nome da imagem do glTF (o exportador grava o nome original). A conversão PNG → DDS ainda não
-//!   existe: a imagem nova é relatada.
+//! - **Texturas:** o nome da imagem do glTF (o exportador grava o nome original); a imagem embutida em PNG vira DDS de
+//!   32 bits com mipmaps (B292, `imagem::dds_argb32`), com o nome em `.dds` — em `texturas_novas`.
 //!
 //! Primitiva sem pele, índice que não cabe em `u16` e modo diferente de triângulos são recusados ou relatados — nada
 //! é inventado.
@@ -25,6 +25,9 @@ use serde_json::Value;
 
 pub struct Importacao {
     pub ski: Ski,
+    /// B292: as texturas que o glTF traz embutidas, já como o cliente lê: (nome no `.ski`, bytes). PNG vira DDS de 32
+    /// bits com mipmaps (`imagem::dds_argb32`); DDS/TGA embutidos vão como estão.
+    pub texturas_novas: Vec<(String, Vec<u8>)>,
     /// O que foi ajustado ou deixado de fora, para o relatório.
     pub relatorio: Vec<String>,
 }
@@ -110,6 +113,7 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
     let mut texturas: Vec<String> = Vec::new();
     let mut materiais: Vec<Material> = Vec::new();
     let mut pares_de_material: Vec<(i64, usize, i32)> = Vec::new();
+    let mut texturas_novas: Vec<(String, Vec<u8>)> = Vec::new();
     let mut malhas = Vec::new();
     for no in &nos {
         let Some(mi) = no["mesh"].as_u64() else { continue };
@@ -222,15 +226,34 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
                 None => {
                     let m = &j["materials"][mi_gltf.max(0) as usize];
                     let tex = m["pbrMetallicRoughness"]["baseColorTexture"]["index"].as_u64().and_then(|t| {
-                        let img = j["textures"][t as usize]["source"].as_u64()?;
-                        let nome_img = j["images"][img as usize]["name"].as_str().map(str::to_string).unwrap_or_else(|| format!("{nome}.dds"));
-                        Some(nome_img)
+                        let img = &j["images"][j["textures"][t as usize]["source"].as_u64()? as usize];
+                        let nome_img = img["name"].as_str().or(img["uri"].as_str()).map(|x| x.rsplit(['/', '\\']).next().unwrap_or(x).to_string()).unwrap_or_else(|| nome.clone());
+                        // B292: a imagem embutida (bufferView) vira o arquivo que o cliente lê.
+                        let bruto = img["bufferView"].as_u64().and_then(|v| {
+                            let bv = &j["bufferViews"][v as usize];
+                            let o = bv["byteOffset"].as_u64().unwrap_or(0) as usize;
+                            g.bin.get(o..o + bv["byteLength"].as_u64()? as usize).map(<[u8]>::to_vec)
+                        });
+                        let minusculo = nome_img.to_lowercase();
+                        let destino = if minusculo.ends_with(".dds") || minusculo.ends_with(".tga") {
+                            nome_img.clone()
+                        } else {
+                            format!("{}.dds", nome_img.rsplit_once('.').map_or(nome_img.as_str(), |x| x.0))
+                        };
+                        match bruto {
+                            Some(b) if b.starts_with(b"DDS ") || (minusculo.ends_with(".tga") && crate::imagem::tga(&b).is_some()) => {
+                                if !texturas_novas.iter().any(|x| x.0 == destino) { texturas_novas.push((destino.clone(), b)); }
+                            }
+                            Some(b) => match crate::imagem::png(&b) {
+                                Some(im) => { if !texturas_novas.iter().any(|x| x.0 == destino) { texturas_novas.push((destino.clone(), crate::imagem::dds_argb32(&im))); } }
+                                None => relatorio.push(format!("{nome}: a imagem \"{nome_img}\" não é PNG/DDS/TGA (JPEG ainda não) — a textura fica só pelo nome")),
+                            },
+                            None => relatorio.push(format!("{nome}: a imagem \"{nome_img}\" não vem embutida no GLB — a textura fica só pelo nome")),
+                        }
+                        Some(destino)
                     });
                     let textura = match tex {
                         Some(t) => {
-                            if !t.to_lowercase().ends_with(".dds") && !t.to_lowercase().ends_with(".tga") {
-                                relatorio.push(format!("{nome}: textura \"{t}\" — o cliente lê DDS/TGA; a conversão PNG → DDS ainda não existe"));
-                            }
                             match texturas.iter().position(|x| *x == t) {
                                 Some(p) => p as i32,
                                 None => {
@@ -289,7 +312,7 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
         ossos_no_cabecalho: ossos.len() as i32,
         reservado: vec![0; 52],
     };
-    Ok(Importacao { ski, relatorio })
+    Ok(Importacao { ski, texturas_novas, relatorio })
 }
 
 #[cfg(test)]

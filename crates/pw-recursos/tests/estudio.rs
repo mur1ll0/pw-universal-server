@@ -856,6 +856,8 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let imp = json_de(pedir("POST", "estudio/modelos/importar").query("rascunho", &ri.to_string()).query("smd", &smd).query("destino", &ski_cam).send_bytes(&gm).unwrap());
         // O .ski sintético pesa os vértices na vaga do esqueleto (sem osso com nome): 0 nomes de osso.
         assert_eq!((imp["resultado"]["malhas"].as_u64(), imp["resultado"]["vertices"].as_u64(), imp["resultado"]["texturas"].clone()), (Some(1), Some(3), json!(["caixa.dds"])), "{imp}");
+        // B292: a textura vem embutida (PNG) e volta igual à do cliente — não é gravada.
+        assert!(imp["resultado"]["texturas_gravadas"][0]["acao"].as_str().is_some_and(|x| x.starts_with("igual")), "{imp}");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar").query("smd", &smd).query("destino", &ski_cam).send_bytes(&gm)).0, 400, "sem rascunho");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar").query("rascunho", &ri.to_string()).query("smd", &smd).query("destino", &ski_cam).send_bytes(b"lixo")).0, 400, "não é GLB");
         // B291: pele nova — nova.ski ao lado do .smd, citada por ele (o .smd do rascunho passa a ter 2 peles).

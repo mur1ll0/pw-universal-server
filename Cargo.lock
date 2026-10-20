@@ -1503,6 +1503,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "encoding_rs",
+ "png",
  "pw-core",
  "serde",
  "serde_json",
