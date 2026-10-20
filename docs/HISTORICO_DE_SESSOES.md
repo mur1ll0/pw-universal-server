@@ -15540,3 +15540,34 @@ comparação lado a lado.
 
     ### e. Falta (S6)
     - Malha rígida (sem pele); esqueleto e ações vindos do glTF; extensão do Blender.
+
+294. **Sessão 2026-10-20: Estúdio S6 — malha rígida na importação; correção do osso da rígida no GLB.**
+
+    ### a. Pedido
+    Commitar e seguir (B293 já commitado: `3b101d4`, `5f1451e`).
+
+    ### b. Evidência
+    - `A3DRigidMesh` desenha com `GetBlendMatrix(m_iBoneIdx)` direto (`A3DRigidMesh.cpp:367`); a pele passa pelo
+      `MapBoneIndex` (`A3DSkinMesh.cpp:856`). Logo, o osso da rígida é o índice no **esqueleto**.
+    - A matriz é `BoneInitTM × AbsoluteTM` (`A3DSkinModel.cpp:1341`): os vértices ficam no espaço do modelo.
+    - Medido (`importar::testes::medir_osso_da_rigida`, `#[ignore]`): 4.902 malhas rígidas, 3.543 em `.ski` v9, e em
+      **todas** a lista de ossos da pele é vazia.
+
+    ### c. Defeito achado e corrigido (B274)
+    - O exportador traduzia o osso da rígida pela lista da pele. Com a lista vazia, as 3.543 iam presas à raiz
+      "esqueleto": certas na pose parada, erradas numa animação.
+    - Agora a junta é o índice no esqueleto, e a malha vai marcada com `extras.angelica.rigida`.
+
+    ### d. O que foi feito
+    - `importar`: a rígida marcada volta rígida. Uma malha sem pele abaixo de um nó de osso vira rígida desse osso,
+      com os vértices pela matriz no mundo (TRS ou `matrix`) e o `z` negado. Sem osso acima, é relatada.
+
+    ### e. Provas
+    - Ida e volta: **848 modelos**, com 888 malhas de pele e 978 rígidas exatas e no mesmo osso. Antes eram 824: os 24
+      a mais eram os afetados pelo defeito.
+    - `rigida_por_hierarquia`: matriz aplicada e caso sem osso.
+    - `pw-data-loader` **251/251**; `pw-recursos` com o banco **22/22**.
+    - Pelo `pw-recursos` real: 10 de 10 importações por versão sem relatório; nenhum rascunho de teste aberto.
+
+    ### f. Falta (S6)
+    - Esqueleto e ações vindos do glTF; extensão do Blender.

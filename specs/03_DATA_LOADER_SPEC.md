@@ -712,6 +712,19 @@ cliente 1.5.5 há 6.563 DXT1, 6.445 DXT3 e 2.038 DXT5, e o motor trata DXT3 e DX
 O importador passou a gravar DXT (`TexturaNova`: nome, bytes e os pixels de origem, usados para comparar com a textura
 que o cliente já tem). O `dds_argb32` continua disponível.
 
+**Malha rígida no importador (B294):** a malha marcada pelo exportador (`extras.angelica.rigida`) volta rígida, presa ao
+osso do esqueleto da sua junta. Uma malha **sem pele** que esteja abaixo de um nó de osso (o objeto preso a um osso no
+Blender) vira rígida desse osso:
+- os vértices passam pela matriz do nó no mundo (`matrix` ou TRS, com as mães) e depois pelo `z` negado;
+- as normais passam pela mesma matriz, sem a translação, e são normalizadas;
+- é o espaço do modelo, que é o da rígida (matriz `BoneInitTM × AbsoluteTM`, `A3DSkinModel.cpp:1341`).
+
+Sem osso acima, a malha é relatada e fica de fora.
+
+Ida e volta (1/5 dos `.smd` do 1.5.5): **848 modelos**, com 888 malhas de pele e **978 rígidas**, voltam exatos; as
+rígidas no mesmo osso. Os 24 modelos que antes ficavam de fora eram os afetados pelo defeito do exportador.
+`importar::testes::rigida_por_hierarquia` confere a matriz e o caso sem osso.
+
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
 (mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.
@@ -742,6 +755,11 @@ leem; o esqueleto citado existe em 5.156; 4.285 de 4.574 peles citadas existem.
 da mãe) + um nó raiz "esqueleto" (o índice `n` que `A3DSkin::BindSkeleton` reserva, `A3DSkin.cpp:830-865`), `skin` com
 `matBoneInit` como inversa de ligação, e `JOINTS_0`/`WEIGHTS_0` (v < 9: índice = osso do esqueleto; v ≥ 9: pelo nome;
 o 4º peso = `1 − soma`, `A3DMorphSkinMesh.cpp:313-325`; malha rígida presa ao osso com peso 1, `A3DRigidMesh.cpp:367`).
+**Correção (B294):** o osso da malha rígida é o **índice no esqueleto**. `A3DRigidMesh` desenha com
+`GetBlendMatrix(m_iBoneIdx)` direto, sem o `MapBoneIndex` da pele (`A3DSkinMesh.cpp:856`). Até o B293 o exportador o
+traduzia pela lista de ossos da pele. Nos 3.543 `.ski` v9 do cliente com malha rígida essa lista é vazia, e a malha
+ficava presa à raiz "esqueleto": certa na pose de ligação, errada ao animar. A malha rígida agora vai com
+`extras.angelica.rigida`.
 Testado em 274 modelos reais: 710/733 malhas casam com o esqueleto, e **as 8.245 juntas** reproduzem a pose de
 ligação (mundo pelos nós × inversa ≈ identidade).
 
