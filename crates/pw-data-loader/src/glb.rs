@@ -647,9 +647,9 @@ mod testes {
             let mut ini = [0.0f32; 16];
             for k in [0, 5, 10, 15] { ini[k] = 1.0; }
             ini[13] = -(i as f32); // inversa de ligação: osso i em y = i
-            ossos.push(crate::bon::Osso { nome: format!("o{i}"), flags: 0, mae, primeira_junta: i, relativa: ini, inicial: ini, filhas: vec![] });
+            ossos.push(crate::bon::Osso { nome: format!("o{i}"), flags: 0, mae, primeira_junta: i, relativa: ini, inicial: ini, filhas: vec![], enchimento: [0; 3] });
         }
-        let b = Bon { versao: 6, quadro_inicial: 0, quadro_final: 10, fps: 30, ossos, juntas: vec![], trilhas: vec![], ganchos: vec![] };
+        let b = Bon { versao: 6, quadro_inicial: 0, quadro_final: 10, fps: 30, ossos, juntas: vec![], trilhas: vec![], ganchos: vec![], marca: true, reservado: vec![] };
         let g = do_modelo(&[], Some(&b), "esqueleto");
         let nj = u32::from_le_bytes(g[12..16].try_into().unwrap()) as usize;
         let doc: Value = serde_json::from_slice(&g[20..20 + nj]).unwrap();

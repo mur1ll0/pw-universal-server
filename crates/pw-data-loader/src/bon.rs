@@ -46,6 +46,9 @@ pub struct Osso {
     /// `matBoneInit`: o deslocamento inicial (medido em `bon::testes`: é a inversa da pose de ligação no mundo).
     pub inicial: Matriz,
     pub filhas: Vec<i32>,
+    /// B287 (escrita): os 3 bytes de enchimento depois das flags em `BONEDATA` (o compilador não os zera).
+    #[serde(skip)]
+    pub enchimento: [u8; 3],
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +80,11 @@ pub struct Bon {
     #[serde(skip)]
     pub trilhas: Vec<crate::trilha::TrilhaDeOsso>,
     pub ganchos: Vec<Gancho>,
+    /// B287 (escrita): a marca `MOXB` do `AFile` e os 64 bytes reservados de `A3DSKELETONFILEHEADER`.
+    #[serde(skip)]
+    pub marca: bool,
+    #[serde(skip)]
+    pub reservado: Vec<u8>,
 }
 
 struct Leitor<'a> {
@@ -134,18 +142,19 @@ impl Bon {
         let quadro_inicial = l.i32()?;
         let quadro_final = l.i32()?;
         let fps = l.i32()?;
-        l.bytes(64)?;
+        let reservado = l.bytes(64)?.to_vec();
         let mut ossos = Vec::with_capacity(n_ossos);
         for _ in 0..n_ossos {
             let nome = l.texto()?;
-            let flags = l.bytes(4)?[0]; // u8 + 3 de enchimento
+            let f4 = l.bytes(4)?; // u8 + 3 de enchimento
+            let (flags, enchimento) = (f4[0], [f4[1], f4[2], f4[3]]);
             let mae = l.i32()?;
             let primeira_junta = l.i32()?;
             let n_filhas = l.contagem("filhas", 4096)?;
             let relativa = l.matriz()?;
             let inicial = l.matriz()?;
             let filhas = (0..n_filhas).map(|_| l.i32()).collect::<Result<_>>()?;
-            ossos.push(Osso { nome, flags, mae, primeira_junta, relativa, inicial, filhas });
+            ossos.push(Osso { nome, flags, mae, primeira_junta, relativa, inicial, filhas, enchimento });
         }
         let mut juntas = Vec::with_capacity(n_juntas);
         let mut trilhas = Vec::new();
@@ -167,7 +176,65 @@ impl Bon {
         if l.o != b.len() {
             return Err(BonError::Sobra(b.len() - l.o));
         }
-        Ok(Self { versao, quadro_inicial, quadro_final, fps, ossos, juntas, trilhas, ganchos })
+        Ok(Self { versao, quadro_inicial, quadro_final, fps, ossos, juntas, trilhas, ganchos, marca: inicio == 4, reservado })
+    }
+
+    /// B287 (S6): o inverso de `ler` — `A3DSkeleton::Save` (`A3DSkeleton.cpp:585-677`): cabeçalho de 96 bytes, ossos
+    /// (`A3DBone::Save`, `A3DBone.cpp:585-…`: nome, `BONEDATA` de 144 bytes, filhas), tipos das juntas, juntas (nome e 12
+    /// bytes) e ganchos (nome e 72 bytes). O `Save` do cliente sempre grava a versão 6; para reescrever um `.bon` v5
+    /// (todo o 1.2.6) igual, a trilha de cada junta vai logo depois dela, como o `Load` lê (`:495-508`).
+    pub fn escrever(&self) -> Vec<u8> {
+        let mut o = Vec::new();
+        let i = |o: &mut Vec<u8>, x: i32| o.extend_from_slice(&x.to_le_bytes());
+        let m = |o: &mut Vec<u8>, x: &Matriz| x.iter().for_each(|v| o.extend_from_slice(&v.to_le_bytes()));
+        let texto = |o: &mut Vec<u8>, t: &str| {
+            let b = encoding_rs::GBK.encode(t).0;
+            o.extend_from_slice(&(b.len() as i32).to_le_bytes());
+            o.extend_from_slice(&b);
+        };
+        if self.marca {
+            o.extend_from_slice(b"MOXB");
+        }
+        i(&mut o, IDENTIDADE as i32);
+        i(&mut o, self.versao as i32);
+        for x in [self.ossos.len() as i32, self.juntas.len() as i32, self.ganchos.len() as i32, self.quadro_inicial, self.quadro_final, self.fps] {
+            i(&mut o, x);
+        }
+        let mut res = self.reservado.clone();
+        res.resize(64, 0);
+        o.extend_from_slice(&res);
+        for b in &self.ossos {
+            texto(&mut o, &b.nome);
+            o.push(b.flags);
+            o.extend_from_slice(&b.enchimento);
+            for x in [b.mae, b.primeira_junta, b.filhas.len() as i32] {
+                i(&mut o, x);
+            }
+            m(&mut o, &b.relativa);
+            m(&mut o, &b.inicial);
+            b.filhas.iter().for_each(|f| i(&mut o, *f));
+        }
+        if !self.juntas.is_empty() {
+            self.juntas.iter().for_each(|j| i(&mut o, j.tipo as i32));
+            for (k, j) in self.juntas.iter().enumerate() {
+                texto(&mut o, &j.nome);
+                for x in [j.osso_mae, j.osso_filho, j.irma] {
+                    i(&mut o, x);
+                }
+                if self.versao < 6 {
+                    if let Some(t) = self.trilhas.get(k) {
+                        crate::trilha::escrever_osso(t, &mut o);
+                    }
+                }
+            }
+        }
+        for g in &self.ganchos {
+            texto(&mut o, &g.nome);
+            i(&mut o, g.tipo as i32);
+            i(&mut o, g.osso);
+            m(&mut o, &g.matriz);
+        }
+        o
     }
 
     /// A pose de ligação de cada osso no espaço do modelo: `relativa(osso) × … × relativa(raiz)` (linha × matriz).
@@ -204,6 +271,41 @@ pub fn multiplicar(a: &Matriz, b: &Matriz) -> Matriz {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// B287: todo `.bon` que o leitor aceita (v5 com trilhas embutidas e v6), reescrito, sai byte a byte igual.
+    #[test]
+    fn escrever_reproduz_o_cliente() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let mut pilha = vec![raiz.to_path_buf()];
+        let (mut lidos, mut iguais, mut recusados) = (0usize, 0usize, 0usize);
+        let mut por_versao = std::collections::BTreeMap::<u32, usize>::new();
+        let mut diferentes: Vec<String> = Vec::new();
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("bon")) { continue; }
+                let b = std::fs::read(&p).unwrap();
+                let Ok(s) = Bon::ler(&b) else { recusados += 1; continue };
+                lidos += 1;
+                *por_versao.entry(s.versao).or_default() += 1;
+                let w = s.escrever();
+                if w == b {
+                    iguais += 1;
+                } else if diferentes.len() < 5 {
+                    let o = w.iter().zip(&b).position(|(x, y)| x != y).unwrap_or(w.len().min(b.len()));
+                    diferentes.push(format!("{} (tam {} × {}, 1º byte diferente em {o})", p.display(), w.len(), b.len()));
+                }
+            }
+        }
+        eprintln!("bon: lidos {lidos} {por_versao:?}, reescritos iguais {iguais}, recusados {recusados}; diferentes: {diferentes:?}");
+        assert!(lidos > 1000, "{lidos}");
+        assert_eq!(iguais, lidos, "{diferentes:?}");
+    }
 
     /// Todos os `.bon` do cliente 1.5.5 BR: quantos fecham no último byte, as versões, e se `matBoneInit` é a inversa
     /// da pose de ligação no mundo (`poses_no_mundo × inicial ≈ identidade`).

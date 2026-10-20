@@ -101,3 +101,25 @@ impl<const N: usize> Trilha<N> {
         saida
     }
 }
+
+/// B287 (S6): o inverso de `ler` — `A3DTRACKSAVEDATA` (chaves, segmentos, fps), as chaves e os segmentos
+/// (`A3DTrackData<T>::Save`, `A3DTrackData.h:601-…`, mesma ordem do `Load`).
+pub fn escrever<const N: usize>(t: &Trilha<N>, o: &mut Vec<u8>) {
+    for x in [t.chaves.len() as i32, t.segmentos.len() as i32, t.fps] {
+        o.extend_from_slice(&x.to_le_bytes());
+    }
+    for k in &t.chaves {
+        k.iter().for_each(|v| o.extend_from_slice(&v.to_le_bytes()));
+    }
+    for s in &t.segmentos {
+        for x in [s.inicio_ms, s.fim_ms, s.chave_inicial, s.chave_final] {
+            o.extend_from_slice(&x.to_le_bytes());
+        }
+    }
+}
+
+/// Trilha de um osso: posição e depois rotação.
+pub fn escrever_osso(t: &TrilhaDeOsso, o: &mut Vec<u8>) {
+    escrever(&t.posicao, o);
+    escrever(&t.rotacao, o);
+}

@@ -25,6 +25,25 @@ pub struct Stck {
     pub fps: i32,
     /// `(id da junta, trilha)`.
     pub trilhas: Vec<(i32, crate::trilha::TrilhaDeOsso)>,
+    /// B287 (escrita): a marca `MOXB` do `AFile`.
+    pub marca: bool,
+}
+
+/// B287 (S6): o inverso de `ler` — `A3DSklTrackSet::Save` (`A3DTrackMan.cpp:304-…`): identidade, versão 1, cabeçalho
+/// (trilhas, quadros, FPS) e, por trilha, o id da junta, a posição e a rotação.
+pub fn escrever(s: &Stck) -> Vec<u8> {
+    let mut o = Vec::new();
+    if s.marca {
+        o.extend_from_slice(b"MOXB");
+    }
+    for x in [IDENTIDADE as i32, 1, s.trilhas.len() as i32, s.quadro_inicial, s.quadro_final, s.fps] {
+        o.extend_from_slice(&x.to_le_bytes());
+    }
+    for (id, t) in &s.trilhas {
+        o.extend_from_slice(&id.to_le_bytes());
+        crate::trilha::escrever_osso(t, &mut o);
+    }
+    o
 }
 
 pub fn ler(b: &[u8]) -> Result<Stck, StckError> {
@@ -54,14 +73,14 @@ pub fn ler(b: &[u8]) -> Result<Stck, StckError> {
     if o != b.len() {
         return Err(StckError::Sobra(b.len() - o));
     }
-    Ok(Stck { quadro_inicial, quadro_final, fps, trilhas })
+    Ok(Stck { quadro_inicial, quadro_final, fps, trilhas, marca: b.starts_with(b"MOXB") })
 }
 
 #[cfg(test)]
 mod testes {
     use super::*;
 
-    /// Todos os `.stck` do cliente 1.5.5 BR fecham no último byte.
+    /// Todos os `.stck` do cliente 1.5.5 BR fecham no último byte e (B287) se reescrevem iguais.
     #[test]
     fn todos_os_stck_do_cliente() {
         let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
@@ -71,6 +90,7 @@ mod testes {
         }
         let mut pilha = vec![raiz.to_path_buf()];
         let (mut ok, mut falhas, mut trilhas) = (0usize, std::collections::BTreeMap::<String, usize>::new(), 0usize);
+        let mut iguais = 0usize;
         while let Some(d) = pilha.pop() {
             for e in std::fs::read_dir(&d).unwrap().flatten() {
                 let p = e.path();
@@ -81,16 +101,20 @@ mod testes {
                 if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("stck")) {
                     continue;
                 }
-                match ler(&std::fs::read(&p).unwrap()) {
+                let b = std::fs::read(&p).unwrap();
+                match ler(&b) {
                     Ok(s) => {
                         ok += 1;
                         trilhas += s.trilhas.len();
+                        // B287: reescrito, sai byte a byte igual.
+                        iguais += (escrever(&s) == b) as usize;
                     }
                     Err(e) => *falhas.entry(format!("{e}").split(' ').take(3).collect::<Vec<_>>().join(" ")).or_default() += 1,
                 }
             }
         }
-        eprintln!("stck: {ok} fecham ({trilhas} trilhas); falhas {falhas:?}");
+        eprintln!("stck: {ok} fecham ({trilhas} trilhas), {iguais} reescritos iguais; falhas {falhas:?}");
         assert!(ok > 0 && falhas.is_empty());
+        assert_eq!(iguais, ok);
     }
 }
