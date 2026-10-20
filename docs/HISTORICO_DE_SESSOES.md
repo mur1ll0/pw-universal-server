@@ -15923,3 +15923,65 @@ comparação lado a lado.
 
     ### e. Falta
     - S8: números do cliente editáveis (recompilar o `elementskill.dll`) e habilidade nova.
+
+305. **Sessão 2026-10-20: Estúdio S8 — números do cliente editáveis.**
+
+    ### a. Pedido
+    Commitar o B304 e seguir: tornar editáveis os números que o cliente confere sozinho pelo `elementskill.dll`.
+
+    ### b. Decisão
+    Recompilar o DLL do fonte desfaria o que o BR mudou (B303: o dinheiro do DLL não é o do fonte). A edição fica no
+    binário: trocar só os bytes de cada tabela por nível, em posições medidas.
+
+    ### c. Medição
+    - `tools/elementskill/enderecos.cpp` procura cada sequência por nível (da medição do `numeros.exe`) nas seções de
+      dados da imagem carregada. Cada candidato é provado com uma sentinela em cada nível, lida pela função do próprio
+      DLL naquele nível (estática `GetRequired*`, ou slot da vtable), com `__try` para candidato errado. Só vale seção
+      gravável e byte igual ao arquivo.
+    - Dois erros de método que a prova pegou:
+      - a sentinela só no nível 1 aceitava uma "tabela" de mana em `.rdata`. Ao trocar o nível 2 da 121, o DLL caiu: o
+        compilador funde constantes `float` iguais. Corrigido: todos os níveis provados, e só `.data`.
+      - a 187 tem 12 níveis e tabelas de 10, e os níveis 11–12 leem a tabela seguinte. Corrigido: corte com `le_alem`.
+    - Resultado em 23.183 pares habilidade×campo do 1.5.5:
+      - **1.795 tabelas** (nível 535, SP 501, dinheiro 439, livro 320);
+      - 11.986 tudo zero (`.bss`, não procuradas);
+      - 2.692 preenchidas pelo código no carregamento;
+      - 884 mana só em `.rdata`;
+      - o resto constante ou fórmula no código.
+
+    ### d. O que foi feito
+    - `tools/elementskill/mapear.py`:
+      - `entrada`, `juntar` e `aplicar`;
+      - grava `specs/habilidades_155/elementskill_v156_tabelas.json` (SHA-256 do DLL, do "resto" com as tabelas zeradas,
+        e as posições).
+    - `pw-recursos::elementskill`:
+      - mapa embutido;
+      - `reconhece` pelo resto, para que a cópia editada siga valendo;
+      - `ler` e `escrever`, que valida a contagem por nível e o inteiro de 32 bits.
+    - `Estudio`:
+      - `cliente` na ficha da habilidade;
+      - `definir_numeros_do_cliente` (item do cliente `elementskill.dll`).
+    - Rota `PUT estudio/habilidades/{id}/numeros_do_cliente`; repasse no painel; o Dockerfile copia o mapa.
+    - Painel: tabela "Cliente (elementskill.dll)" editável, com contorno onde o valor difere do servidor.
+
+    ### e. Provas
+    - **Ponta a ponta no binário:** +1 em todos os elementos das 1.795 tabelas numa cópia. A medição da cópia mudou
+      exatamente os **5.981 valores esperados de 227.436**, nenhum outro, e o DLL rodou inteiro. Troca isolada (8,
+      dinheiro, nível 10 → 123.456): 1 linha de 20.676 diferente.
+    - O "resto" da cópia toda editada é igual ao do original.
+    - `pw-recursos` com o banco: biblioteca **22/22** (3 novos: escrita só dentro da tabela e reconhecimento da cópia;
+      recusas; coerência do mapa embutido, 1.795 tabelas sem sobreposição) e integração ok. A ficha sem mapa diz por
+      quê, e a rota recusa (400).
+    - Painel **12/12**.
+    - No `pw-recursos` real, num rascunho descartado (39), habilidade 8:
+      - a ficha traz `cliente` com nível, SP e dinheiro (dinheiro igual ao servidor desde o B303);
+      - o dinheiro editado vale no rascunho, e uma 2ª edição (SP) sobre a cópia já editada também vale — o resto
+        reconhece a cópia;
+      - mana recusada (400, sem tabela), tamanho errado 400;
+      - sem rascunho segue o original (771.980).
+    - `pw-recursos` e `pw-admin-api` publicados.
+
+    ### f. Falta
+    - Mapa do 1.2.6: o DLL fundiu as funções idênticas, então os slots e as estáticas precisam ser revistos para ele.
+    - Mana e o que vem do código: exigiria editar instruções (constante imediata) — outro método.
+    - Habilidade nova.

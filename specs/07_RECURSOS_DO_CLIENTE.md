@@ -714,6 +714,20 @@ nível]}` grava o item do servidor `catalogo\habilidades.json` (`Estudio::defini
   - **o cliente também confere, pelo `elementskill.dll` dele:** `mp` (`CheckSkillCastCondition`,
     `EC_HostPlayer.cpp:6097-6150`), `nivel_exigido`, `sp_exigido` e `dinheiro_exigido` (`LearnCondition`,
     `:6067-6093`). Mudar só o servidor desalinha.
+
+**Números do cliente (B305):** `PUT estudio/habilidades/{id}/numeros_do_cliente?rascunho=` `{campo: [um número por
+nível editável]}` troca os bytes da tabela no `elementskill.dll` do rascunho (`Estudio::definir_numeros_do_cliente`,
+`crate::elementskill`). Recompilar do fonte desfaria o que o BR mudou (B303), então a edição é no binário, em posições
+**medidas** (`specs/habilidades_155/elementskill_v156_tabelas.json`, spec 03 §3.10b).
+- **Campos:** `nivel_exigido`, `sp_exigido`, `dinheiro_exigido`, `item_exigido`; só onde o número está numa tabela
+  em `.data` (1.795 tabelas em 536 habilidades do 1.5.5). O resto vem do código do DLL (constante, fórmula, tabela
+  preenchida no carregamento) ou é tudo zero (`.bss`) — não se edita. A mana fica toda em `.rdata`, onde o compilador
+  funde constantes iguais (trocar uma derrubou o DLL na prova), e fica de fora.
+- **Reconhecimento:** o mapa vale para um DLL; a cópia editada é aceita pelo SHA-256 do "resto" (o arquivo com as
+  tabelas zeradas), que a edição não muda. Outro DLL (o 1.2.6, ainda sem mapa): a ficha diz `cliente.mapa = false` e a
+  rota recusa (400).
+- **Ficha:** `cliente.campos.<campo> = {valores, le_alem, quem_confere}`; o painel contorna o valor que difere do
+  servidor (`servidor.<campo>`), porque o cliente mostra/confere um número e o servidor cobra outro.
 - **Validação:** um número finito por nível; o arquivo editado tem de ler no `TabelaDeHabilidades::de_json` do GS.
 
 **Montagens (`docker-compose.yml`):**
