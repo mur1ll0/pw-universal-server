@@ -325,6 +325,84 @@ pub fn acoes_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<(Vec<AcaoImportada>, 
     Ok((r, relatorio))
 }
 
+/// B296 (S6): acrescenta a ação importada a um modelo de esqueleto v5 (todo o 1.2.6), em que não há `.stck`: cada
+/// junta tem **uma trilha embutida no `.bon`** e cada ação do `.smd` v5 é um intervalo de quadros dela
+/// (`FILEJOINTACTION` por junta). Medido em 1.163 ações v5 do cliente: a ação cita todas as juntas do `.bon`, na ordem
+/// 0…n−1 (1.161), com o mesmo intervalo, grupo −1, flags 0, 1 laço e velocidade 1,0; as ações ficam em sequência na
+/// trilha; o tempo de um segmento é `piso(quadro × 1000 / fps)`; o FPS da trilha é o do `.bon`; o cabeçalho do `.bon`
+/// cobre do 1º ao último quadro.
+/// - Em cada junta, as chaves da ação vão para o fim da trilha (posição e rotação), com um segmento novo do quadro
+///   seguinte ao último até o fim da ação. Junta sem trilha na ação repete a última chave (a trilha existe para toda
+///   junta, como o motor exige).
+/// - O fim do cabeçalho do `.bon` avança; a entrada vai para o `.smd` (ação de mesmo nome é repontada — as chaves
+///   antigas ficam na trilha sem uso).
+///
+/// Devolve o intervalo (quadro inicial, final) da ação nova.
+pub fn anexar_acao_v5(bon: &mut Bon, smd: &mut crate::smd::Smd, acao: &AcaoImportada) -> Result<(i32, i32), String> {
+    if bon.versao >= 6 || smd.versao >= 7 {
+        return Err(format!("anexar na trilha embutida é só para .bon v5 com .smd até v6 (aqui .bon v{}, .smd v{})", bon.versao, smd.versao));
+    }
+    if bon.trilhas.len() != bon.juntas.len() {
+        return Err("o .bon v5 não tem uma trilha por junta".into());
+    }
+    let fps = if bon.fps > 0 { bon.fps } else { return Err("o .bon não tem FPS".into()) };
+    if acao.stck.fps != fps {
+        return Err(format!("a ação foi amostrada a {} quadros/s e o esqueleto é {fps}", acao.stck.fps));
+    }
+    let n = acao.quadro_final as i32 + 1;
+    // O último quadro usado: o cabeçalho do .bon e as ações do .smd (v5: o fim da 1ª junta de cada uma).
+    // v5: o fim da 1ª junta (`FILEACTIONDATA` + `FILEJOINTACTION`); v6: `FILEACTIONDATA6` (início, fim).
+    let fim_de = |d: &[u8]| -> Option<f32> {
+        if smd.versao < 6 { (d.len() >= 32).then(|| f32::from_le_bytes(d[20..24].try_into().unwrap())) } else { (d.len() >= 8).then(|| f32::from_le_bytes(d[4..8].try_into().unwrap())) }
+    };
+    let fim_das_acoes = smd.acoes.iter().filter_map(|a| fim_de(&a.dados)).fold(0f32, f32::max);
+    let inicio = bon.quadro_final.max(fim_das_acoes.ceil() as i32) + 1;
+    let fim = inicio + n - 1;
+    let ms = |q: i32| (q as i64 * 1000 / fps as i64) as i32;
+    for (j, t) in bon.trilhas.iter_mut().enumerate() {
+        let nova = acao.stck.trilhas.iter().find(|x| x.0 == j as i32).map(|x| &x.1);
+        let (pk, rk) = (t.posicao.chaves.len() as i32, t.rotacao.chaves.len() as i32);
+        match nova {
+            Some(x) => {
+                t.posicao.chaves.extend(x.posicao.chaves.iter().take(n as usize).copied());
+                t.rotacao.chaves.extend(x.rotacao.chaves.iter().take(n as usize).copied());
+            }
+            None => {
+                let (p, r) = (t.posicao.chaves.last().copied().unwrap_or([0.0; 3]), t.rotacao.chaves.last().copied().unwrap_or([0.0, 0.0, 0.0, 1.0]));
+                t.posicao.chaves.extend(std::iter::repeat(p).take(n as usize));
+                t.rotacao.chaves.extend(std::iter::repeat(r).take(n as usize));
+            }
+        }
+        t.posicao.segmentos.push(crate::trilha::Segmento { inicio_ms: ms(inicio), fim_ms: ms(fim), chave_inicial: pk, chave_final: pk + n - 1 });
+        t.rotacao.segmentos.push(crate::trilha::Segmento { inicio_ms: ms(inicio), fim_ms: ms(fim), chave_inicial: rk, chave_final: rk + n - 1 });
+    }
+    bon.quadro_final = fim;
+    // v5: FILEACTIONDATA (grupo −1, juntas, flags 0) + FILEJOINTACTION por junta (junta, início, fim, 1 laço,
+    // velocidade 1,0); v6: FILEACTIONDATA6 (início, fim) — `SkipFileData`, `A3DSkinModelAct.cpp`.
+    let mut dados = Vec::with_capacity(12 + 20 * bon.juntas.len());
+    if smd.versao < 6 {
+        for x in [-1i32, bon.juntas.len() as i32, 0] {
+            dados.extend_from_slice(&x.to_le_bytes());
+        }
+        for j in 0..bon.juntas.len() as i32 {
+            dados.extend_from_slice(&j.to_le_bytes());
+            dados.extend_from_slice(&(inicio as f32).to_le_bytes());
+            dados.extend_from_slice(&(fim as f32).to_le_bytes());
+            dados.extend_from_slice(&1i32.to_le_bytes());
+            dados.extend_from_slice(&1.0f32.to_le_bytes());
+        }
+    } else {
+        dados.extend_from_slice(&(inicio as f32).to_le_bytes());
+        dados.extend_from_slice(&(fim as f32).to_le_bytes());
+    }
+    let entrada = crate::smd::AcaoBruta { nome: acao.nome.clone(), dados, stck: None };
+    match smd.acoes.iter().position(|a| a.nome == acao.nome) {
+        Some(i) => smd.acoes[i] = entrada,
+        None => smd.acoes.push(entrada),
+    }
+    Ok((inicio, fim))
+}
+
 /// A pele (`.ski` v9) do glTF `glb`, com os ossos casados pelo nome no `esqueleto`.
 pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
     let g = abrir(glb)?;
@@ -731,6 +809,74 @@ mod testes {
         eprintln!("ações: v5 {v5}, v6 {v6}, chaves comparadas {chaves} ({na_chave} na chave original); maior diferença relativa de posição {pior_p:.2e}, de quatérnio na chave {pior_q:.2e}, entre chaves {pior_entre:.2e}");
         assert!(v5 + v6 >= 20 && chaves > 1000, "{v5} {v6} {chaves}");
         assert!(pior_p < 1e-3 && pior_q < 1e-3, "{pior_p} {pior_q}");
+    }
+
+    /// B296: anexar uma ação a modelos v5 reais — a 1ª ação exportada (B276), importada e anexada como "nova_acao": o
+    /// `.bon` e o `.smd` releem, o `cabeca` vê a ação no intervalo devolvido, cada junta ganhou n chaves e um segmento
+    /// `piso(quadro × 1000 / fps)` no fim, e as chaves anexadas são as da ação importada (ou a última repetida).
+    #[test]
+    fn anexar_acao_em_modelos_v5() {
+        use crate::glb::{do_modelo_animado, AnimacaoDoModelo, PeleDoModelo};
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let disco = |s: &str| encoding_rs::WINDOWS_1252.decode(&encoding_rs::GBK.encode(s).0).0.into_owned();
+        let mut pilha = vec![raiz.to_path_buf()];
+        let (mut n, mut feitos, mut juntas, mut v6) = (0usize, 0usize, 0usize, 0usize);
+        while let Some(d) = pilha.pop() {
+            if feitos >= 30 { break; }
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("smd")) { continue; }
+                n += 1;
+                if n % 7 != 0 || feitos >= 30 { continue; }
+                let bytes_smd = std::fs::read(&p).unwrap();
+                let Ok(mut smd) = crate::smd::Smd::ler(&bytes_smd) else { continue };
+                let Ok(c) = crate::smd::cabeca(&bytes_smd) else { continue };
+                let pasta = p.parent().unwrap();
+                let Ok(mut b) = std::fs::read(pasta.join(disco(&c.esqueleto))).map_err(|_| ()).and_then(|x| Bon::ler(&x).map_err(|_| ())) else { continue };
+                if b.versao >= 6 || smd.versao >= 7 || b.fps <= 0 || b.trilhas.len() != b.juntas.len() { continue; }
+                let Some(ac) = c.lista_de_acoes.first() else { continue };
+                let skis: Vec<Ski> = c.peles.iter().filter_map(|s| Ski::ler(&std::fs::read(pasta.join(disco(s))).ok()?).ok()).collect();
+                if skis.is_empty() { continue; }
+                let fps = b.fps as f32;
+                let trilhas: Vec<(i32, &crate::trilha::TrilhaDeOsso)> = b.trilhas.iter().enumerate().map(|(i, t)| (i as i32, t)).collect();
+                let acao = AnimacaoDoModelo { nome: "nova_acao".into(), trilhas, inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps };
+                if acao.fim_ms <= acao.inicio_ms { continue; }
+                let sem = |_: usize| None;
+                let peles: Vec<PeleDoModelo> = skis.iter().map(|s| PeleDoModelo { ski: s, textura: &sem }).collect();
+                let glb = do_modelo_animado(&peles, &b, &acao, "t");
+                let (acoes, _) = acoes_do_glb(&glb, &b).unwrap();
+                let Some(nova) = acoes.first() else { continue };
+                let antes: Vec<(usize, usize, usize)> = b.trilhas.iter().map(|t| (t.posicao.chaves.len(), t.rotacao.chaves.len(), t.posicao.segmentos.len())).collect();
+                let (inicio, fim) = anexar_acao_v5(&mut b, &mut smd, nova).unwrap();
+                let k = nova.quadro_final as usize + 1;
+                assert_eq!(fim - inicio + 1, k as i32);
+                for (j, t) in b.trilhas.iter().enumerate() {
+                    assert_eq!((t.posicao.chaves.len(), t.rotacao.chaves.len(), t.posicao.segmentos.len()), (antes[j].0 + k, antes[j].1 + k, antes[j].2 + 1));
+                    let s = t.posicao.segmentos.last().unwrap();
+                    assert_eq!((s.inicio_ms, s.fim_ms, s.chave_inicial), ((inicio as i64 * 1000 / b.fps as i64) as i32, (fim as i64 * 1000 / b.fps as i64) as i32, antes[j].0 as i32));
+                    if let Some((_, x)) = nova.stck.trilhas.iter().find(|x| x.0 == j as i32) {
+                        assert_eq!(&t.rotacao.chaves[antes[j].1..], &x.rotacao.chaves[..]);
+                    }
+                    juntas += 1;
+                }
+                let (wb, ws) = (b.escrever(), smd.escrever());
+                let b2 = Bon::ler(&wb).unwrap();
+                assert_eq!(b2.quadro_final, fim);
+                let c2 = crate::smd::cabeca(&ws).unwrap();
+                let a2 = c2.lista_de_acoes.iter().find(|a| a.nome == "nova_acao").unwrap();
+                assert_eq!((a2.quadro_inicial, a2.quadro_final), (inicio as f32, fim as f32));
+                assert!(crate::smd::Smd::ler(&ws).is_ok_and(|s| s.escrever() == ws));
+                feitos += 1;
+                if smd.versao == 6 { v6 += 1; }
+            }
+        }
+        eprintln!("v5: {feitos} modelos com ação anexada ({v6} com .smd v6; {juntas} trilhas de junta conferidas)");
+        assert!(feitos >= 10, "{feitos}");
     }
 
     /// B294: malha sem pele filha de um osso (o que o Blender exporta para um objeto preso a um osso) vira rígida desse

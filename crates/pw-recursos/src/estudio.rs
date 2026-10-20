@@ -3280,24 +3280,46 @@ impl Estudio {
 
     /// B295 (S6): as animações do glTF como ações do `.smd` (`pw_data_loader::importar::acoes_do_glb`). Cada uma vira
     /// `<pasta das trilhas>\<ação>.stck` (a convenção do cliente: 249 de 249 ações amostradas, quadro inicial 0) e uma
-    /// entrada `FILEACTIONDATA6` (quadros 0 a n−1) + o nome da `.stck` no `.smd`; ação de mesmo nome é substituída. Só
-    /// `.smd` v ≥ 7 com `.bon` v6 — no `.bon` v5 (todo o 1.2.6) as trilhas ficam no próprio esqueleto.
+    /// entrada `FILEACTIONDATA6` (quadros 0 a n−1) + o nome da `.stck` no `.smd`; ação de mesmo nome é substituída
+    /// (`.smd` v ≥ 7 com `.bon` v6). B296: com `.bon` v5 (todo o 1.2.6) a ação é emendada na trilha embutida.
     pub async fn importar_acoes(&self, gov: &Governanca, versao: &str, rascunho: i64, smd: &str, glb: Vec<u8>) -> Result<Value> {
         if !smd.to_lowercase().ends_with(".smd") {
             bail!("modelo .smd");
         }
         let mut modelo = pw_data_loader::smd::Smd::ler(&self.bytes_do_cliente(gov, versao, smd, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
-        if modelo.versao < 7 {
-            bail!("{smd} é v{}: as ações dele não usam .stck (só v ≥ 7)", modelo.versao);
-        }
         let caminho_bon = ao_lado(smd, &modelo.esqueleto);
-        let bon = pw_data_loader::bon::Bon::ler(&self.bytes_do_cliente(gov, versao, &caminho_bon, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{caminho_bon}: {x}"))?;
-        if bon.versao < 6 {
-            bail!("{caminho_bon} é v{}: as trilhas ficam no próprio esqueleto (importar ação para ele ainda não existe)", bon.versao);
+        let mut bon = pw_data_loader::bon::Bon::ler(&self.bytes_do_cliente(gov, versao, &caminho_bon, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{caminho_bon}: {x}"))?;
+        if bon.versao >= 6 && modelo.versao < 7 {
+            bail!("{smd} é v{} com esqueleto v6: o motor descarta as ações dele (`LoadModelFromFile`)", modelo.versao);
         }
         let (acoes, relatorio) = pw_data_loader::importar::acoes_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
         if acoes.is_empty() {
             bail!("o glTF não tem animação importável ({})", relatorio.join("; "));
+        }
+        // B296: esqueleto v5 (todo o 1.2.6) — as trilhas ficam no .bon: cada ação é emendada no fim da trilha de cada
+        // junta (`importar::anexar_acao_v5`) e o .smd ganha a entrada; grava o .bon e o .smd.
+        if bon.versao < 6 {
+            let mut feitas = Vec::new();
+            for a in &acoes {
+                if a.nome.is_empty() || a.nome.contains(['\\', '/']) {
+                    bail!("nome de ação inválido: \"{}\"", a.nome);
+                }
+                nomes::gbk_de_unicode(&a.nome).with_context(|| format!("a ação \"{}\" tem caracteres que não existem em GBK", a.nome))?;
+                let existia = modelo.acoes.iter().any(|x| x.nome == a.nome);
+                let (qi, qf) = pw_data_loader::importar::anexar_acao_v5(&mut bon, &mut modelo, a).map_err(anyhow::Error::msg)?;
+                feitas.push(json!({ "nome": a.nome, "quadros": qf - qi + 1, "intervalo": [qi, qf], "trilhas": bon.trilhas.len(), "fps": bon.fps,
+                    "acao": if existia { "substituída (as chaves antigas ficam na trilha sem uso)" } else { "adicionada" } }));
+            }
+            let novo_bon = bon.escrever();
+            pw_data_loader::bon::Bon::ler(&novo_bon).map_err(|x| anyhow::anyhow!("o .bon editado não relê: {x}"))?;
+            let novo_smd = modelo.escrever();
+            pw_data_loader::smd::Smd::ler(&novo_smd).context("o .smd editado não relê")?;
+            let nomes_feitos: Vec<String> = acoes.iter().map(|a| a.nome.clone()).collect();
+            let m_bon = json!({ "acao": "importar", "tipo": "trilhas", "de": "glTF", "nomes": nomes_feitos });
+            self.alterar_item_do_cliente(gov, versao, &caminho_bon, rascunho, move |_| Ok((novo_bon, json!({}), m_bon))).await?;
+            let resumo = json!({ "acoes": feitas, "relatorio": relatorio, "acoes_do_modelo": modelo.acoes.len(), "esqueleto": caminho_bon });
+            let m_smd = json!({ "acao": "importar", "tipo": "acoes", "de": "glTF", "nomes": acoes.iter().map(|a| a.nome.clone()).collect::<Vec<_>>() });
+            return self.alterar_item_do_cliente(gov, versao, smd, rascunho, move |_| Ok((novo_smd, resumo, m_smd))).await;
         }
         let titulo = smd.rsplit('\\').next().unwrap_or(smd).rsplit_once('.').map_or(smd, |x| x.0).to_string();
         let pasta = modelo.pasta_das_trilhas.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| format!("tcks_{titulo}"));
