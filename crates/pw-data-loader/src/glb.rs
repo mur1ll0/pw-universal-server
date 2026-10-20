@@ -141,7 +141,7 @@ pub fn do_modelo_animado(peles: &[PeleDoModelo], esqueleto: &Bon, acao: &Animaca
 
 /// Matriz do Direct3D (linha × matriz, em ordem de linha) → glTF (coluna, em ordem de coluna) com a troca de mão: o
 /// arranjo de memória do D3D já é o do glTF transposto; a troca de mão é `S·M·S`, `S = diag(1, 1, −1, 1)`.
-fn matriz_gltf(m: &Matriz) -> [f32; 16] {
+pub fn matriz_gltf(m: &Matriz) -> [f32; 16] {
     let s = [1.0f32, 1.0, -1.0, 1.0];
     let mut r = [0.0f32; 16];
     for i in 0..4 {

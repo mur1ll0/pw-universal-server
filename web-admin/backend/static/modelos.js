@@ -167,6 +167,37 @@ function controleDePeleNova(smd) {
   return caixa;
 }
 
+/** B295 (S6): as animações de um GLB viram ações do `.smd` (uma `.stck` por ação na pasta das trilhas), no rascunho.
+    Para o jogo tocar, a ação ainda precisa de uma ação combinada no `.ecm` (o "Criar" do diagnóstico, com a base). */
+function botaoDeAcoes(smd) {
+  const rotulo = criar("label", "botao botao-pequeno botao-secundario", "Importar ações de GLB…");
+  const arquivo = criar("input");
+  arquivo.type = "file";
+  arquivo.accept = ".glb,model/gltf-binary";
+  arquivo.hidden = true;
+  rotulo.appendChild(arquivo);
+  arquivo.addEventListener("change", async () => {
+    const f = arquivo.files[0];
+    arquivo.value = "";
+    if (!f) return;
+    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio antes de importar.", { toast: true }); return; }
+    try {
+      const resp = await fetch(rotaDeModelos("/acoes_glb", { rascunho: estudio.rascunho, smd }), {
+        method: "POST", credentials: "same-origin", body: await f.arrayBuffer(),
+        headers: { "Content-Type": "application/octet-stream", "X-CSRF-Token": estado.sessao.csrf },
+      });
+      const dados = await resp.json();
+      if (!resp.ok) throw new Error(dados?.mensagem || dados?.detail || "Não foi possível importar as ações.");
+      const r = dados.resultado || {};
+      const lista = (r.acoes || []).map((a) => `${a.nome} (${a.acao}, ${a.quadros} quadros a ${a.fps}/s)`).join(", ");
+      const avisos = (r.relatorio || []).length ? ` Relatório: ${r.relatorio.join(" · ")}` : "";
+      alerta("ok", "Estúdio", `Ações no rascunho: ${lista}. O modelo agora tem ${r.acoes_do_modelo} ações.${avisos}`);
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  });
+  return rotulo;
+}
+
 async function abrirModelo(caminho, habitat = null, voo = null) {
   const ficha = elemento("modelos-ficha");
   ficha.textContent = "Carregando…";
@@ -269,6 +300,7 @@ async function abrirModelo(caminho, habitat = null, voo = null) {
       lista.appendChild(li);
     }
     if (!e.erro) { const li = criar("li"); li.appendChild(controleDePeleNova(caminho)); lista.appendChild(li); }
+    if (!e.erro) { const li = criar("li"); li.appendChild(botaoDeAcoes(caminho)); lista.appendChild(li); }
   } else {
     for (const m of f.malhas) lista.appendChild(criar("li", "", `${m.nome || "(sem nome)"} — ${m.tipo}, ${m.vertices} vértices, ${m.triangulos} triângulos, textura ${f.texturas[m.textura] ?? m.textura}, material ${f.materiais[m.material]?.nome ?? m.material}`));
   }

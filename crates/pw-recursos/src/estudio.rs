@@ -3278,6 +3278,72 @@ impl Estudio {
         self.alterar_item_do_cliente(gov, versao, destino, rascunho, move |_| Ok((bytes, resumo, mudanca))).await
     }
 
+    /// B295 (S6): as animações do glTF como ações do `.smd` (`pw_data_loader::importar::acoes_do_glb`). Cada uma vira
+    /// `<pasta das trilhas>\<ação>.stck` (a convenção do cliente: 249 de 249 ações amostradas, quadro inicial 0) e uma
+    /// entrada `FILEACTIONDATA6` (quadros 0 a n−1) + o nome da `.stck` no `.smd`; ação de mesmo nome é substituída. Só
+    /// `.smd` v ≥ 7 com `.bon` v6 — no `.bon` v5 (todo o 1.2.6) as trilhas ficam no próprio esqueleto.
+    pub async fn importar_acoes(&self, gov: &Governanca, versao: &str, rascunho: i64, smd: &str, glb: Vec<u8>) -> Result<Value> {
+        if !smd.to_lowercase().ends_with(".smd") {
+            bail!("modelo .smd");
+        }
+        let mut modelo = pw_data_loader::smd::Smd::ler(&self.bytes_do_cliente(gov, versao, smd, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
+        if modelo.versao < 7 {
+            bail!("{smd} é v{}: as ações dele não usam .stck (só v ≥ 7)", modelo.versao);
+        }
+        let caminho_bon = ao_lado(smd, &modelo.esqueleto);
+        let bon = pw_data_loader::bon::Bon::ler(&self.bytes_do_cliente(gov, versao, &caminho_bon, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{caminho_bon}: {x}"))?;
+        if bon.versao < 6 {
+            bail!("{caminho_bon} é v{}: as trilhas ficam no próprio esqueleto (importar ação para ele ainda não existe)", bon.versao);
+        }
+        let (acoes, relatorio) = pw_data_loader::importar::acoes_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
+        if acoes.is_empty() {
+            bail!("o glTF não tem animação importável ({})", relatorio.join("; "));
+        }
+        let titulo = smd.rsplit('\\').next().unwrap_or(smd).rsplit_once('.').map_or(smd, |x| x.0).to_string();
+        let pasta = modelo.pasta_das_trilhas.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| format!("tcks_{titulo}"));
+        let mut feitas = Vec::new();
+        for a in &acoes {
+            if a.nome.is_empty() || a.nome.contains(['\\', '/']) {
+                bail!("nome de ação inválido: \"{}\"", a.nome);
+            }
+            nomes::gbk_de_unicode(&a.nome).with_context(|| format!("a ação \"{}\" tem caracteres que não existem em GBK", a.nome))?;
+            let arquivo = format!("{}.stck", a.nome);
+            let caminho = ao_lado(smd, &format!("{pasta}\\{arquivo}"));
+            let bytes = pw_data_loader::stck::escrever(&a.stck);
+            pw_data_loader::stck::ler(&bytes).map_err(|x| anyhow::anyhow!("a .stck gerada não relê: {x}"))?;
+            // A ida e volta de uma ação baixada do painel reproduz a .stck do cliente byte a byte: não há o que gravar.
+            let igual = gov.conteudo(versao, &caminho).is_ok_and(|(_, b)| b == bytes);
+            if !igual {
+                let trava = self.trava(rascunho);
+                let _guarda = trava.lock().await;
+                gov.gravar_arquivo(versao, rascunho, &caminho, bytes, "cliente").await?;
+            }
+            let dados = [0f32.to_le_bytes(), a.quadro_final.to_le_bytes()].concat();
+            let entrada = pw_data_loader::smd::AcaoBruta { nome: a.nome.clone(), dados, stck: Some(arquivo) };
+            let acao = match modelo.acoes.iter().position(|x| x.nome == a.nome) {
+                Some(i) => {
+                    let mesma_entrada = modelo.acoes[i].dados == entrada.dados && modelo.acoes[i].stck == entrada.stck;
+                    modelo.acoes[i] = entrada;
+                    if igual && mesma_entrada { "igual à do cliente (não gravada)" } else { "substituída" }
+                }
+                None => {
+                    modelo.acoes.push(entrada);
+                    "adicionada"
+                }
+            };
+            feitas.push(json!({ "nome": a.nome, "stck": caminho, "quadros": a.quadro_final as i32 + 1, "trilhas": a.stck.trilhas.len(), "fps": a.stck.fps, "acao": acao }));
+        }
+        let novo = modelo.escrever();
+        pw_data_loader::smd::Smd::ler(&novo).context("o .smd editado não relê")?;
+        let resumo = json!({ "acoes": feitas, "relatorio": relatorio, "acoes_do_modelo": modelo.acoes.len() });
+        // Nada mudou no .smd (todas as ações iguais às do cliente): não há item a gravar.
+        if feitas.iter().all(|x| x["acao"].as_str().is_some_and(|a| a.starts_with("igual"))) && gov.conteudo(versao, smd).is_ok_and(|(_, b)| b == novo) {
+            return Ok(json!({ "resultado": resumo, "igual_ao_publicado": true }));
+        }
+        let mudanca = json!({ "acao": "importar", "tipo": "acoes", "de": "glTF", "nomes": acoes.iter().map(|a| a.nome.clone()).collect::<Vec<_>>() });
+        self.alterar_item_do_cliente(gov, versao, smd, rascunho, move |_| Ok((novo, resumo, mudanca))).await
+    }
+
     /// B292 (S6): grava no rascunho as texturas que o glTF trouxe, em `<pasta da pele>\Textures\<nome>` — o primeiro
     /// lugar onde o cliente procura (`A3DSkin`, B273). Se o cliente já tem o arquivo com os mesmos pixels (a ida e volta de
     /// um modelo exportado pelo painel), não grava. Devolve o que fez com cada uma.

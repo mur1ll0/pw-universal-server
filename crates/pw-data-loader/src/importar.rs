@@ -175,6 +175,156 @@ fn normalizar(v: [f32; 3]) -> [f32; 3] {
     if n > 0.0 { v.map(|x| x / n) } else { v }
 }
 
+/// B295: translação e quatérnio (x, y, z, w) de uma matriz glTF sem escala (coluna a coluna).
+fn decompor(m: &[f32; 16]) -> ([f32; 3], [f32; 4]) {
+    let t = [m[12], m[13], m[14]];
+    let col = |c: usize| normalizar([m[c * 4], m[c * 4 + 1], m[c * 4 + 2]]);
+    let (a, b, c) = (col(0), col(1), col(2));
+    // R[linha][coluna]: a coluna c é o eixo c.
+    let (r00, r11, r22) = (a[0], b[1], c[2]);
+    let traco = r00 + r11 + r22;
+    let q = if traco > 0.0 {
+        let s = (traco + 1.0).sqrt() * 2.0;
+        [(b[2] - c[1]) / s, (c[0] - a[2]) / s, (a[1] - b[0]) / s, 0.25 * s]
+    } else if r00 > r11 && r00 > r22 {
+        let s = (1.0 + r00 - r11 - r22).sqrt() * 2.0;
+        [0.25 * s, (b[0] + a[1]) / s, (c[0] + a[2]) / s, (b[2] - c[1]) / s]
+    } else if r11 > r22 {
+        let s = (1.0 + r11 - r00 - r22).sqrt() * 2.0;
+        [(b[0] + a[1]) / s, 0.25 * s, (c[1] + b[2]) / s, (c[0] - a[2]) / s]
+    } else {
+        let s = (1.0 + r22 - r00 - r11).sqrt() * 2.0;
+        [(c[0] + a[2]) / s, (c[1] + b[2]) / s, 0.25 * s, (a[1] - b[0]) / s]
+    };
+    (t, q)
+}
+
+/// Uma ação importada do glTF: a `.stck` e o último quadro (a ação vai do quadro 0 a ele, no FPS do esqueleto).
+pub struct AcaoImportada {
+    pub nome: String,
+    pub stck: crate::stck::Stck,
+    pub quadro_final: f32,
+}
+
+/// B295 (S6): as animações do glTF como ações do modelo, para o esqueleto `esqueleto`.
+/// - Cada osso usa a trilha da sua primeira junta (`A3DSkinModelAct.cpp:612`), e **todo** osso precisa de uma: sem
+///   ela, `GetBoneStateOnTrack` falha (`:379-384`) e o chamador usa posição e rotação sem valor. Osso sem canal no glTF
+///   fica constante na pose de repouso do seu nó (`translation`/`rotation` ou a `matrix` decomposta).
+/// - Os canais são os valores locais do osso. Volta-se à mão do Direct3D como o exportador (B276) foi: posição
+///   (x, y, −z) e quatérnio (−x, −y, z, w).
+/// - Amostragem: uma chave por quadro no FPS do esqueleto (o `FrameToTime` da ação usa esse FPS); no cliente as `.stck`
+///   têm 15 (83%) ou 30 quadros por segundo, iguais ao FPS de cada trilha. Um segmento de 0 ao fim. Interpolação do glTF
+///   `LINEAR` (rotação por *nlerp*) e `STEP`; `CUBICSPLINE` usa o valor do meio e é relatada. Canal de escala é relatado
+///   e ignorado (a trilha só tem posição e rotação).
+pub fn acoes_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<(Vec<AcaoImportada>, Vec<String>), String> {
+    let g = abrir(glb)?;
+    let j = &g.json;
+    let mut relatorio = Vec::new();
+    let nos = j["nodes"].as_array().cloned().unwrap_or_default();
+    let fps = if esqueleto.fps > 0 { esqueleto.fps } else {
+        relatorio.push("o esqueleto não tem FPS: usado 15 (o mais comum nas .stck do cliente)".into());
+        15
+    };
+    // O nó de cada osso, pelo nome.
+    let no_do_osso: Vec<Option<usize>> = esqueleto.ossos.iter().map(|o| nos.iter().position(|n| n["name"].as_str() == Some(o.nome.as_str()))).collect();
+    let faltam = no_do_osso.iter().filter(|x| x.is_none()).count();
+    if faltam > 0 {
+        relatorio.push(format!("{faltam} osso(s) do esqueleto sem nó de mesmo nome no glTF: ficam na pose de ligação do .bon"));
+    }
+    let mut r = Vec::new();
+    for (ai, anim) in j["animations"].as_array().cloned().unwrap_or_default().iter().enumerate() {
+        let nome = anim["name"].as_str().map(str::to_string).unwrap_or_else(|| format!("acao{ai}"));
+        // (nó, caminho) → (tempos, valores, interpolação)
+        let mut canais: std::collections::HashMap<(usize, String), (Vec<f32>, Vec<Vec<f32>>, String)> = std::collections::HashMap::new();
+        let mut duracao = 0f32;
+        for c in anim["channels"].as_array().cloned().unwrap_or_default() {
+            let (Some(no), Some(caminho)) = (c["target"]["node"].as_u64(), c["target"]["path"].as_str()) else { continue };
+            if caminho == "scale" || caminho == "weights" {
+                relatorio.push(format!("{nome}: canal \"{caminho}\" ignorado (a trilha do Angelica só tem posição e rotação)"));
+                continue;
+            }
+            let s = &anim["samplers"][c["sampler"].as_u64().unwrap_or(u64::MAX) as usize];
+            let tempos: Vec<f32> = g.acessor(s["input"].as_u64().ok_or("sampler sem input")? as usize)?.iter().map(|x| x[0]).collect();
+            let mut valores = g.acessor(s["output"].as_u64().ok_or("sampler sem output")? as usize)?;
+            let interp = s["interpolation"].as_str().unwrap_or("LINEAR").to_string();
+            if interp == "CUBICSPLINE" {
+                relatorio.push(format!("{nome}: interpolação CUBICSPLINE — usado o valor de cada chave, sem as tangentes"));
+                valores = valores.chunks(3).filter_map(|x| x.get(1).cloned()).collect();
+            }
+            duracao = duracao.max(tempos.last().copied().unwrap_or(0.0));
+            canais.insert((no as usize, caminho.to_string()), (tempos, valores, interp));
+        }
+        if canais.is_empty() {
+            relatorio.push(format!("{nome}: animação sem canais de posição/rotação — deixada de fora"));
+            continue;
+        }
+        let n_chaves = (duracao * fps as f32).round() as usize + 1;
+        let fim_ms = ((n_chaves - 1) as f32 * 1000.0 / fps as f32).round() as i32;
+        let amostra = |no: usize, caminho: &str, t: f32| -> Option<Vec<f32>> {
+            let (ts, vs, interp) = canais.get(&(no, caminho.to_string()))?;
+            let i = ts.iter().position(|&x| x > t).unwrap_or(ts.len());
+            if i == 0 { return vs.first().cloned(); }
+            if i == ts.len() || interp == "STEP" { return vs.get(i - 1).cloned(); }
+            let (a, b) = (&vs[i - 1], &vs[i]);
+            let f = if ts[i] > ts[i - 1] { (t - ts[i - 1]) / (ts[i] - ts[i - 1]) } else { 0.0 };
+            if caminho == "rotation" {
+                let sinal = if a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>() < 0.0 { -1.0 } else { 1.0 };
+                let q: Vec<f32> = a.iter().zip(b).map(|(x, y)| x + (sinal * y - x) * f).collect();
+                let n = q.iter().map(|x| x * x).sum::<f32>().sqrt();
+                Some(q.iter().map(|x| x / n).collect())
+            } else {
+                Some(a.iter().zip(b).map(|(x, y)| x + (y - x) * f).collect())
+            }
+        };
+        let mut trilhas: Vec<(i32, crate::trilha::TrilhaDeOsso)> = Vec::new();
+        for (k, o) in esqueleto.ossos.iter().enumerate() {
+            if o.primeira_junta < 0 || trilhas.iter().any(|x| x.0 == o.primeira_junta) {
+                continue;
+            }
+            // Repouso: o nó (TRS ou matriz); sem nó, a pose de ligação local do .bon (inversa do matBoneInit relativa à mãe).
+            let repouso: ([f32; 3], [f32; 4]) = match no_do_osso[k] {
+                Some(n) => {
+                    let no = &nos[n];
+                    if no["matrix"].is_array() {
+                        decompor(&matriz_local(no))
+                    } else {
+                        let v = |c: &str, p: Vec<f32>| no[c].as_array().map_or(p.clone(), |a| a.iter().map(|x| x.as_f64().unwrap_or(0.0) as f32).collect());
+                        let t = v("translation", vec![0.0; 3]);
+                        let q = v("rotation", vec![0.0, 0.0, 0.0, 1.0]);
+                        ([t[0], t[1], t[2]], [q[0], q[1], q[2], q[3]])
+                    }
+                }
+                None => {
+                    let mundo = |i: usize| crate::glb::inversa(&esqueleto.ossos[i].inicial).unwrap_or(esqueleto.ossos[i].relativa);
+                    let local = if o.mae >= 0 && (o.mae as usize) < esqueleto.ossos.len() {
+                        crate::glb::inversa(&mundo(o.mae as usize)).map_or(mundo(k), |pi| crate::bon::multiplicar(&mundo(k), &pi))
+                    } else {
+                        mundo(k)
+                    };
+                    decompor(&crate::glb::matriz_gltf(&local))
+                }
+            };
+            let mut pos = Vec::with_capacity(n_chaves);
+            let mut rot = Vec::with_capacity(n_chaves);
+            for c in 0..n_chaves {
+                let t = c as f32 / fps as f32;
+                let p = no_do_osso[k].and_then(|n| amostra(n, "translation", t)).map_or(repouso.0, |v| [v[0], v[1], v[2]]);
+                let q = no_do_osso[k].and_then(|n| amostra(n, "rotation", t)).map_or(repouso.1, |v| [v[0], v[1], v[2], v[3]]);
+                pos.push([p[0], p[1], -p[2]]);
+                rot.push([-q[0], -q[1], q[2], q[3]]);
+            }
+            let seg = vec![crate::trilha::Segmento { inicio_ms: 0, fim_ms, chave_inicial: 0, chave_final: n_chaves as i32 - 1 }];
+            trilhas.push((o.primeira_junta, crate::trilha::TrilhaDeOsso {
+                posicao: crate::trilha::Trilha { fps, chaves: pos, segmentos: seg.clone() },
+                rotacao: crate::trilha::Trilha { fps, chaves: rot, segmentos: seg },
+            }));
+        }
+        let stck = crate::stck::Stck { quadro_inicial: 0, quadro_final: n_chaves as i32 - 1, fps, trilhas, marca: true };
+        r.push(AcaoImportada { nome, stck, quadro_final: (n_chaves - 1) as f32 });
+    }
+    Ok((r, relatorio))
+}
+
 /// A pele (`.ski` v9) do glTF `glb`, com os ossos casados pelo nome no `esqueleto`.
 pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
     let g = abrir(glb)?;
@@ -476,6 +626,111 @@ mod testes {
         let w = [pesos[0], pesos[1], pesos[2], (1.0 - pesos[0] - pesos[1] - pesos[2]).max(0.0)];
         let soma: f32 = w.iter().sum();
         (0..4).filter(|&k| w[k] / soma > 1e-6).map(|k| (nome(ossos[k]), w[k] / soma)).collect()
+    }
+
+    /// O valor da trilha no tempo `t` pelas amostras (linear; quatérnio renormalizado), como o exportador amostra.
+    fn valor<const N: usize>(a: &[(f32, [f32; N])], t: f32) -> [f32; N] {
+        match a.iter().position(|x| x.0 >= t) {
+            None => a.last().map_or([0.0; N], |x| x.1),
+            Some(0) => a[0].1,
+            Some(i) => {
+                let (p, q) = (a[i - 1], a[i]);
+                let f = if q.0 > p.0 { (t - p.0) / (q.0 - p.0) } else { 0.0 };
+                // O caminho curto do quatérnio, como o exportador (`glb::valor_em`).
+                let sinal = if N == 4 && (0..N).map(|k| p.1[k] * q.1[k]).sum::<f32>() < 0.0 { -1.0 } else { 1.0 };
+                let mut v: [f32; N] = std::array::from_fn(|k| p.1[k] * (1.0 - f) + q.1[k] * sinal * f);
+                if N == 4 {
+                    let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    v.iter_mut().for_each(|x| *x /= n);
+                }
+                v
+            }
+        }
+    }
+
+    /// B295: ida e volta de ações reais — exportada por `glb::do_modelo_animado` (B276) e importada por `acoes_do_glb`:
+    /// para cada osso e quadro, a chave importada é o valor da trilha original naquele instante (posição com tolerância
+    /// de 1e-3; quatérnio até o sinal, 1e-3). A `.stck` gerada se reescreve e relê.
+    #[test]
+    fn acoes_ida_e_volta() {
+        use crate::glb::{do_modelo_animado, AnimacaoDoModelo, PeleDoModelo};
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models\npcs");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let disco = |s: &str| encoding_rs::WINDOWS_1252.decode(&encoding_rs::GBK.encode(s).0).0.into_owned();
+        let mut pilha = vec![raiz.to_path_buf()];
+        let (mut n, mut v5, mut v6, mut chaves, mut pior_p, mut pior_q) = (0usize, 0usize, 0usize, 0usize, 0f32, 0f32);
+        let (mut na_chave, mut pior_entre) = (0usize, 0f32);
+        while let Some(d) = pilha.pop() {
+            if v5 >= 20 && v6 >= 20 { break; }
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("smd")) { continue; }
+                n += 1;
+                if n % 3 != 0 { continue; }
+                let Ok(c) = crate::smd::cabeca(&std::fs::read(&p).unwrap()) else { continue };
+                let pasta = p.parent().unwrap();
+                let Ok(b) = std::fs::read(pasta.join(disco(&c.esqueleto))).map_err(|_| ()).and_then(|x| Bon::ler(&x).map_err(|_| ())) else { continue };
+                let Some(ac) = c.lista_de_acoes.first() else { continue };
+                if (c.versao < 7 && b.versao >= 6) || b.fps <= 0 { continue; }
+                let skis: Vec<Ski> = c.peles.iter().filter_map(|s| Ski::ler(&std::fs::read(pasta.join(disco(s))).ok()?).ok()).collect();
+                if skis.is_empty() { continue; }
+                let stck;
+                let trilhas: Vec<(i32, &crate::trilha::TrilhaDeOsso)> = if b.versao < 6 {
+                    if v5 >= 20 { continue; }
+                    b.trilhas.iter().enumerate().map(|(i, t)| (i as i32, t)).collect()
+                } else {
+                    if v6 >= 20 { continue; }
+                    let dir = if c.versao >= 8 { c.pasta_das_trilhas.clone() } else { format!("tcks_{}", p.file_stem().unwrap().to_string_lossy()) };
+                    let Some(nome) = &ac.stck else { continue };
+                    let Ok(x) = std::fs::read(pasta.join(disco(&dir)).join(disco(nome))) else { continue };
+                    let Ok(st) = crate::stck::ler(&x) else { continue };
+                    stck = st;
+                    stck.trilhas.iter().map(|(j, t)| (*j, t)).collect()
+                };
+                let fps = b.fps as f32;
+                let acao = AnimacaoDoModelo { nome: ac.nome.clone(), trilhas: trilhas.clone(), inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps };
+                if acao.fim_ms <= acao.inicio_ms { continue; }
+                let sem = |_: usize| None;
+                let peles: Vec<PeleDoModelo> = skis.iter().map(|s| PeleDoModelo { ski: s, textura: &sem }).collect();
+                let glb = do_modelo_animado(&peles, &b, &acao, "t");
+                let (acoes, _) = acoes_do_glb(&glb, &b).unwrap();
+                let Some(nova) = acoes.first() else { continue };
+                if b.versao < 6 { v5 += 1 } else { v6 += 1 }
+                assert_eq!(nova.nome, ac.nome);
+                let w = crate::stck::escrever(&nova.stck);
+                assert!(crate::stck::ler(&w).is_ok_and(|s| crate::stck::escrever(&s) == w));
+                for o in &b.ossos {
+                    let Some((_, orig)) = trilhas.iter().find(|(j, _)| *j == o.primeira_junta) else { continue };
+                    let (pa, ra) = (orig.posicao.amostras(), orig.rotacao.amostras());
+                    if pa.is_empty() || ra.is_empty() { continue; }
+                    let (_, t) = nova.stck.trilhas.iter().find(|(j, _)| *j == o.primeira_junta).expect("todo osso tem trilha");
+                    for (k, (pn, qn)) in t.posicao.chaves.iter().zip(&t.rotacao.chaves).enumerate() {
+                        let tempo = (acao.inicio_ms + k as f32 * 1000.0 / fps).min(acao.fim_ms);
+                        let (po, qo) = (valor(&pa, tempo), valor(&ra, tempo));
+                        let dp = (0..3).map(|i| (po[i] - pn[i]).abs()).fold(0f32, f32::max);
+                        let dot: f32 = (0..4).map(|i| qo[i] * qn[i]).sum();
+                        let dq = (0..4).map(|i| (qo[i] * dot.signum() - qn[i]).abs()).fold(0f32, f32::max);
+                        pior_p = pior_p.max(dp / (1.0 + po.iter().map(|x| x.abs()).fold(0f32, f32::max)));
+                        // Na chave original (a menos de 0,5 ms) tem que bater; entre chaves fora da grade de quadros, a
+                        // reamostragem sobre as amostras já normalizadas do GLB difere um pouco — medido e relatado.
+                        if ra.iter().any(|x| (x.0 - tempo).abs() < 0.5) {
+                            pior_q = pior_q.max(dq);
+                            na_chave += 1;
+                        } else {
+                            pior_entre = pior_entre.max(dq);
+                        }
+                        chaves += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("ações: v5 {v5}, v6 {v6}, chaves comparadas {chaves} ({na_chave} na chave original); maior diferença relativa de posição {pior_p:.2e}, de quatérnio na chave {pior_q:.2e}, entre chaves {pior_entre:.2e}");
+        assert!(v5 + v6 >= 20 && chaves > 1000, "{v5} {v6} {chaves}");
+        assert!(pior_p < 1e-3 && pior_q < 1e-3, "{pior_p} {pior_q}");
     }
 
     /// B294: malha sem pele filha de um osso (o que o Blender exporta para um objeto preso a um osso) vira rígida desse

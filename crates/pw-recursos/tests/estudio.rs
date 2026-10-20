@@ -860,6 +860,35 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert!(imp["resultado"]["texturas_gravadas"][0]["acao"].as_str().is_some_and(|x| x.starts_with("igual")), "{imp}");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar").query("smd", &smd).query("destino", &ski_cam).send_bytes(&gm)).0, 400, "sem rascunho");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar").query("rascunho", &ri.to_string()).query("smd", &smd).query("destino", &ski_cam).send_bytes(b"lixo")).0, 400, "não é GLB");
+        // B295: as animações de um GLB como ações do .smd (v8, .bon v6): "andar" (rotação de "raiz" em 1 s) entra como
+        // andar.stck na pasta das trilhas; de novo, a mesma ação é substituída; GLB sem animação dá 400.
+        let glb_anim = {
+            let j = json!({
+                "asset": { "version": "2.0" }, "nodes": [{ "name": "raiz" }],
+                "animations": [{ "name": "andar", "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }], "samplers": [{ "input": 0, "output": 1 }] }],
+                "accessors": [{ "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR" }, { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC4" }],
+                "bufferViews": [{ "buffer": 0, "byteLength": 8 }, { "buffer": 0, "byteOffset": 8, "byteLength": 32 }], "buffers": [{ "byteLength": 40 }],
+            });
+            let bin: Vec<u8> = [0.0f32, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.7071, 0.0, 0.7071].iter().flat_map(|x| x.to_le_bytes()).collect();
+            let mut t = serde_json::to_vec(&j).unwrap();
+            while t.len() % 4 != 0 { t.push(b' '); }
+            let mut g = b"glTF".to_vec();
+            g.extend_from_slice(&2u32.to_le_bytes());
+            g.extend_from_slice(&((12 + 8 + t.len() + 8 + bin.len()) as u32).to_le_bytes());
+            g.extend_from_slice(&(t.len() as u32).to_le_bytes());
+            g.extend_from_slice(b"JSON");
+            g.extend_from_slice(&t);
+            g.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+            g.extend_from_slice(b"BIN\0");
+            g.extend_from_slice(&bin);
+            g
+        };
+        let ac = json_de(pedir("POST", "estudio/modelos/acoes_glb").query("rascunho", &ri.to_string()).query("smd", &smd).send_bytes(&glb_anim).unwrap());
+        assert_eq!((ac["resultado"]["acoes"][0]["nome"].as_str(), ac["resultado"]["acoes"][0]["acao"].as_str(), ac["resultado"]["acoes_do_modelo"].as_u64()), (Some("andar"), Some("adicionada"), Some(1)), "{ac}");
+        assert!(ac["resultado"]["acoes"][0]["stck"].as_str().is_some_and(|c| c.to_lowercase().ends_with("andar.stck")), "{ac}");
+        let ac2 = json_de(pedir("POST", "estudio/modelos/acoes_glb").query("rascunho", &ri.to_string()).query("smd", &smd).send_bytes(&glb_anim).unwrap());
+        assert_eq!((ac2["resultado"]["acoes"][0]["acao"].as_str(), ac2["resultado"]["acoes_do_modelo"].as_u64()), (Some("substituída"), Some(1)), "{ac2}");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/acoes_glb").query("rascunho", &ri.to_string()).query("smd", &smd).send_bytes(&gm)).0, 400, "GLB sem animação");
         // B291: pele nova — nova.ski ao lado do .smd, citada por ele (o .smd do rascunho passa a ter 2 peles).
         let pn = json_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "nova.ski").send_bytes(&gm).unwrap());
         assert_eq!((pn["resultado"]["peles_do_modelo"].as_u64(), pn["resultado"]["malhas"].as_u64()), (Some(2), Some(1)), "{pn}");
