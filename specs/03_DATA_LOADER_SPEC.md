@@ -639,6 +639,18 @@ muscle saem com contagem 0. Medido no 1.5.5 BR: **24.165 de 24.165** `.ski` lido
 (`ski::testes::escrever_reproduz_o_cliente`). No 1.2.6, pelo contêiner: 300 de 300 de uma amostra. A ficha do
 `.ski` no painel diz `reescrita_igual` por arquivo.
 
+**Escrita do `.bon` e do `.stck` (B287, S6):**
+- `Bon::escrever` segue `A3DSkeleton::Save` (`A3DSkeleton.cpp:585-677`) e `A3DBone::Save` (`A3DBone.cpp:585-…`). O
+  leitor passou a guardar a marca, os 64 reservados e os 3 bytes de enchimento depois das flags de cada osso.
+- O `Save` do cliente sempre grava v6. Para reescrever um v5, que é todo o 1.2.6, a trilha de cada junta vai logo
+  depois dela, como o `Load` lê.
+- `stck::escrever` segue `A3DSklTrackSet::Save` (`A3DTrackMan.cpp:304-…`), e `trilha::escrever`/`escrever_osso`
+  seguem `A3DTrackData<T>::Save` (`A3DTrackData.h:601-…`).
+- Medido no 1.5.5 BR: **9.849 de 9.849** `.bon` reescritos iguais (2.229 v5 e 7.620 v6) e **73.818 de 73.818**
+  `.stck`.
+- O leitor do `.smd` (`smd::cabeca`) ainda não lê cabides nem propriedades e não fecha no último byte, então o
+  escritor dele vem depois.
+
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
 (mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.

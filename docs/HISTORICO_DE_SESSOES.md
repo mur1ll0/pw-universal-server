@@ -15348,3 +15348,25 @@ comparação lado a lado.
     - Escritores do `.bon`, `.smd` e `.stck`.
     - Importar o glTF para esses formatos: eixos, até 4 ossos por vértice, ossos pelo nome, PNG → DDS.
     - Relatório da importação; extensão do Blender.
+
+287. **Sessão 2026-10-19: Estúdio S6 — escritores do `.bon` e do `.stck`.**
+
+    ### a. Pedido
+    Commitar e seguir (B286 já commitado: `9d42048`, `8dec3dd`).
+
+    ### b. O que foi feito
+    - `bon::Bon::escrever` (`A3DSkeleton::Save`, `A3DSkeleton.cpp:585-677`; `A3DBone::Save`). O leitor guarda a
+      marca, os 64 reservados e os 3 bytes de enchimento de cada `BONEDATA`. O v5 (1.2.6) leva as trilhas embutidas
+      depois de cada junta, como o `Load` lê; o `Save` do cliente só grava v6.
+    - `trilha::escrever`/`escrever_osso` (`A3DTrackData<T>::Save`, `A3DTrackData.h:601-…`).
+    - `stck::escrever` (`A3DSklTrackSet::Save`, `A3DTrackMan.cpp:304-…`).
+
+    ### c. Provas
+    - 1.5.5 BR inteiro: **9.849 de 9.849** `.bon` reescritos byte a byte iguais (2.229 v5, 7.620 v6) e **73.818 de
+      73.818** `.stck`.
+    - `pw-data-loader` **245/245**; `pw-recursos` compila.
+
+    ### d. Falta (S6)
+    - O `.smd`: hoje o leitor lê só o começo (sem cabides e propriedades, e sem fechar no último byte). Primeiro o
+      leitor completo, depois o escritor.
+    - Importar o glTF; extensão do Blender.
