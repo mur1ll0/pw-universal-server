@@ -407,8 +407,11 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
     let mut malhas: Vec<Value> = s.malhas_de_pele.iter().map(|m| json!({ "nome": m.nome, "tipo": "pele", "vertices": m.vertices.len(), "triangulos": m.indices.len() / 3, "textura": m.textura, "material": m.material })).collect();
     malhas.extend(s.malhas_rigidas.iter().map(|m| json!({ "nome": m.nome, "tipo": "rígida", "osso": m.osso, "vertices": m.vertices.len(), "triangulos": m.indices.len() / 3, "textura": m.textura, "material": m.material })));
     let achadas: Vec<Value> = s.texturas.iter().map(|t| achar_textura(&e, &v, &nome, t).map_or(Value::Null, |x| json!(x.0))).collect();
+    // B286 (S6): o escritor reproduz este arquivo byte a byte? (no cliente 1.5.5 inteiro: 24.165 de 24.165).
+    let reescrita_igual = e.gov.conteudo(&v, &nome).ok().map(|(_, b)| s.escrever() == b);
     Ok(Json(json!({
         "caminho": nome, "versao": s.versao, "ossos": s.ossos, "ossos_do_esqueleto": s.ossos_do_esqueleto, "texturas": s.texturas,
+        "reescrita_igual": reescrita_igual,
         "texturas_achadas": achadas,
         "materiais": s.materiais.iter().map(|m| json!({ "nome": m.nome, "difusa": m.difusa, "dois_lados": m.dois_lados })).collect::<Vec<_>>(),
         "malhas": malhas,

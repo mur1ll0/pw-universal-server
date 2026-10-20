@@ -51,6 +51,11 @@ pub struct Material {
     pub especular: [f32; 4],
     pub brilho: f32,
     pub dois_lados: bool,
+    /// B286: o byte do `2Sided` como está (para reescrever igual) e a linha inteira (`"MATERIAL: nome"`).
+    #[serde(skip)]
+    pub dois_lados_byte: u8,
+    #[serde(skip)]
+    pub linha: String,
 }
 
 /// Um vértice com pesos (`A3DBVERTEX3`). `ossos` = os 4 bytes de `dwMatIndices`; o 4º peso é `1 - soma dos 3`.
@@ -99,6 +104,14 @@ pub struct Ski {
     pub materiais: Vec<Material>,
     pub malhas_de_pele: Vec<MalhaDePele>,
     pub malhas_rigidas: Vec<MalhaRigida>,
+    /// B286 (escrita): a marca `MOXB` do `AFile`, a contagem de ossos do cabeçalho (gravada mesmo na versão < 9, que
+    /// não traz os nomes) e os 52 bytes reservados de `A3DSKINFILEHEADER`.
+    #[serde(skip)]
+    pub marca: bool,
+    #[serde(skip)]
+    pub ossos_no_cabecalho: i32,
+    #[serde(skip)]
+    pub reservado: Vec<u8>,
 }
 
 struct Leitor<'a> {
@@ -179,7 +192,7 @@ impl Ski {
         let ossos_do_esqueleto = l.i32()?;
         let n_supple = l.contagem("malhas supple", 4096)?;
         let n_muscle = l.contagem("malhas muscle", 4096)?;
-        l.bytes(52)?;
+        let reservado = l.bytes(52)?.to_vec();
         let mut faltam = Vec::new();
         for (n, nome) in [(n_morph_pele, "morph de pele"), (n_morph_rigida, "morph rígida"), (n_supple, "supple"), (n_muscle, "muscle")] {
             if n > 0 {
@@ -195,15 +208,9 @@ impl Ski {
         for _ in 0..n_materiais {
             let linha = l.texto_nul()?;
             let nome = linha.strip_prefix("MATERIAL: ").unwrap_or(&linha).to_string();
-            materiais.push(Material {
-                nome,
-                ambiente: l.f32s()?,
-                difusa: l.f32s()?,
-                emissiva: l.f32s()?,
-                especular: l.f32s()?,
-                brilho: l.f32()?,
-                dois_lados: l.bytes(1)?[0] != 0,
-            });
+            let (ambiente, difusa, emissiva, especular, brilho) = (l.f32s()?, l.f32s()?, l.f32s()?, l.f32s()?, l.f32()?);
+            let byte = l.bytes(1)?[0];
+            materiais.push(Material { nome, ambiente, difusa, emissiva, especular, brilho, dois_lados: byte != 0, dois_lados_byte: byte, linha });
         }
         let mut malhas_de_pele = Vec::with_capacity(n_pele);
         for _ in 0..n_pele {
@@ -240,13 +247,122 @@ impl Ski {
         if l.o != b.len() {
             return Err(SkiError::Sobra(b.len() - l.o));
         }
-        Ok(Self { versao, peso_minimo, ossos_do_esqueleto, ossos, texturas, materiais, malhas_de_pele, malhas_rigidas })
+        Ok(Self {
+            versao, peso_minimo, ossos_do_esqueleto, ossos, texturas, materiais, malhas_de_pele, malhas_rigidas,
+            marca: inicio == 4, ossos_no_cabecalho: n_ossos as i32, reservado,
+        })
+    }
+
+    /// B286 (S6): o inverso de `ler` — `A3DSkin::Save` (`A3DSkin.cpp:523-604`) na mesma ordem: cabeçalho de 104 bytes, nomes dos
+    /// ossos (v ≥ 9), texturas, materiais (linha terminada em NUL + 4 RGBA + brilho + 2Sided), malhas de pele e rígidas.
+    /// Textos em GBK. Sem morph/supple/muscle (o leitor recusa quem os tem). Para um `.ski` lido, sai byte a byte igual
+    /// (`testes::escrever_reproduz_o_cliente`).
+    pub fn escrever(&self) -> Vec<u8> {
+        let mut o = Vec::new();
+        let u = |o: &mut Vec<u8>, x: u32| o.extend_from_slice(&x.to_le_bytes());
+        let f = |o: &mut Vec<u8>, x: &[f32]| x.iter().for_each(|v| o.extend_from_slice(&v.to_le_bytes()));
+        let texto = |o: &mut Vec<u8>, t: &str| {
+            let b = encoding_rs::GBK.encode(t).0;
+            o.extend_from_slice(&(b.len() as u32).to_le_bytes());
+            o.extend_from_slice(&b);
+        };
+        if self.marca {
+            o.extend_from_slice(b"MOXB");
+        }
+        u(&mut o, IDENTIDADE);
+        u(&mut o, self.versao);
+        let n_ossos = if self.versao >= 9 { self.ossos.len() as u32 } else { self.ossos_no_cabecalho as u32 };
+        for n in [self.malhas_de_pele.len() as u32, self.malhas_rigidas.len() as u32, 0, 0, self.texturas.len() as u32, self.materiais.len() as u32, n_ossos] {
+            u(&mut o, n);
+        }
+        f(&mut o, &[self.peso_minimo]);
+        u(&mut o, self.ossos_do_esqueleto as u32);
+        u(&mut o, 0);
+        u(&mut o, 0);
+        let mut res = self.reservado.clone();
+        res.resize(52, 0);
+        o.extend_from_slice(&res);
+        if self.versao >= 9 {
+            self.ossos.iter().for_each(|t| texto(&mut o, t));
+        }
+        self.texturas.iter().for_each(|t| texto(&mut o, t));
+        for m in &self.materiais {
+            let linha = if m.linha.is_empty() { format!("MATERIAL: {}", m.nome) } else { m.linha.clone() };
+            o.extend_from_slice(&encoding_rs::GBK.encode(&linha).0);
+            o.push(0);
+            f(&mut o, &m.ambiente);
+            f(&mut o, &m.difusa);
+            f(&mut o, &m.emissiva);
+            f(&mut o, &m.especular);
+            f(&mut o, &[m.brilho]);
+            o.push(if m.linha.is_empty() { m.dois_lados as u8 } else { m.dois_lados_byte });
+        }
+        for m in &self.malhas_de_pele {
+            texto(&mut o, &m.nome);
+            for x in [m.textura as u32, m.material as u32, m.vertices.len() as u32, m.indices.len() as u32] {
+                u(&mut o, x);
+            }
+            for v in &m.vertices {
+                f(&mut o, &v.posicao);
+                f(&mut o, &v.pesos);
+                o.extend_from_slice(&v.ossos);
+                f(&mut o, &v.normal);
+                f(&mut o, &v.uv);
+            }
+            m.indices.iter().for_each(|i| o.extend_from_slice(&i.to_le_bytes()));
+        }
+        for m in &self.malhas_rigidas {
+            texto(&mut o, &m.nome);
+            for x in [m.osso as u32, m.textura as u32, m.material as u32, m.vertices.len() as u32, m.indices.len() as u32] {
+                u(&mut o, x);
+            }
+            for v in &m.vertices {
+                f(&mut o, &v.posicao);
+                f(&mut o, &v.normal);
+                f(&mut o, &v.uv);
+            }
+            m.indices.iter().for_each(|i| o.extend_from_slice(&i.to_le_bytes()));
+        }
+        o
     }
 }
 
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// B286: todo `.ski` que o leitor aceita, reescrito, sai byte a byte igual ao do cliente.
+    #[test]
+    fn escrever_reproduz_o_cliente() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let mut pilha = vec![raiz.to_path_buf()];
+        let (mut lidos, mut iguais, mut recusados) = (0usize, 0usize, 0usize);
+        let mut diferentes: Vec<String> = Vec::new();
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("ski")) { continue; }
+                let b = std::fs::read(&p).unwrap();
+                let Ok(s) = Ski::ler(&b) else { recusados += 1; continue };
+                lidos += 1;
+                let w = s.escrever();
+                if w == b {
+                    iguais += 1;
+                } else if diferentes.len() < 5 {
+                    let o = w.iter().zip(&b).position(|(x, y)| x != y).unwrap_or(w.len().min(b.len()));
+                    diferentes.push(format!("{} (tam {} × {}, 1º byte diferente em {o})", p.display(), w.len(), b.len()));
+                }
+            }
+        }
+        eprintln!("ski: lidos {lidos}, reescritos iguais {iguais}, recusados pelo leitor {recusados}; diferentes: {diferentes:?}");
+        assert!(lidos > 20000, "{lidos}");
+        assert_eq!(iguais, lidos, "{diferentes:?}");
+    }
 
     /// Medida (B273): as texturas dos `.ski` — extensão, onde o cliente as acha (`A3DSkin.cpp`: primeiro
     /// `<pasta>\Textures\<nome>`, depois `<pasta>\Tex_<título>\<nome>`), e o formato dos DDS (FourCC ou bits).

@@ -856,6 +856,7 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let fi = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", &caminho).call().unwrap());
         assert_eq!((fi["versao"].as_u64(), fi["texturas"][0].as_str(), fi["materiais"][0]["nome"].as_str(), fi["malhas"][0]["triangulos"].as_u64()),
             (Some(9), Some("caixa.dds"), Some("madeira"), Some(1)), "{fi}");
+        assert_eq!(fi["reescrita_igual"].as_bool(), Some(true), "B286: o escritor reproduz o .ski sintético");
         let mut glb = Vec::new();
         std::io::Read::read_to_end(&mut pedir("GET", "estudio/modelos/glb").query("caminho", &caminho).call().unwrap().into_reader(), &mut glb).unwrap();
         assert_eq!(&glb[0..4], b"glTF");
