@@ -667,6 +667,23 @@ v8: 2.980; ao todo 7 cabides e nenhuma propriedade). No 1.2.6, pelo contêiner: 
 A ficha do `.smd` diz `reescrita_igual`. Com isso, os quatro
 formatos do modelo (`.ski`, `.bon`, `.stck`, `.smd`) têm escritor conferido no cliente inteiro.
 
+**Importar glTF → `.ski` (B289, S6):** `importar::ski_do_glb(glb, esqueleto)` desfaz `glb::do_modelo`:
+- **eixos:** `z` negado em posição e normal, e a ordem de cada triângulo invertida;
+- **pele:** cada primitiva com `JOINTS_0`/`WEIGHTS_0` vira uma malha de pele, com pesos normalizados (3 gravados e o
+  4º implícito). `JOINTS_1` é relatado e ignorado;
+- **ossos:** casados pelo nome no `.bon` e gravados como `.ski` v9 (nomes). O nó "esqueleto" é a vaga que
+  `BindSkeleton` reserva (índice = número de nomes);
+- **material:** com `extras.angelica` (agora gravado pelo exportador) os valores voltam exatos. Sem ele valem os
+  padrões medidos (`ski::testes::medir_padroes`): em 83% dos 28.421 materiais do 1.5.5, ambiente = difusa, emissiva e
+  especular (0,0,0,1) e brilho 10. O `fMinWeight` é 0 em todos os 24.165 `.ski`, e o motor só o lê e regrava;
+- **texturas:** o nome da imagem. Nome que não é DDS/TGA é relatado, porque a conversão PNG → DDS ainda não existe;
+- **recusas e relatório:** primitiva sem pele, que não é de triângulos, com mais de 65.536 vértices ou com osso que
+  não existe no esqueleto é recusada ou relatada.
+
+Ida e volta numa amostra de 1/5 dos `.smd` do 1.5.5 (`importar::testes`): **824 modelos, 1.787 malhas e 1,3 milhão de
+vértices** com posição, normal, UV e índices exatos e as mesmas influências por vértice. O 4º peso implícito sobra
+como ruído (~1e-8) num lado e some no outro; abaixo de 1e-6 ele não conta. O `.ski` importado se reescreve e relê.
+
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
 (mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.

@@ -15398,3 +15398,31 @@ comparação lado a lado.
     - Os quatro formatos do modelo já têm escrita conferida.
     - Próximo: importar o glTF (malha, pele com até 4 ossos, esqueleto pelo nome dos ossos, eixos D3D, PNG → DDS),
       com relatório; depois a extensão do Blender.
+
+289. **Sessão 2026-10-20: Estúdio S6 — importar glTF para `.ski`.**
+
+    ### a. Pedido
+    Commitar e seguir (B288 já commitado: `4891800`, `417579a`).
+
+    ### b. Evidência e decisões
+    - Importar é desfazer o exportador do B274: eixo `z`, ordem dos triângulos, pesos (3 + o implícito), ossos pelo
+      nome (`.ski` v9, `BindSkeleton`, `A3DSkin.cpp:830-865`) e a vaga do esqueleto.
+    - O que o glTF não tem foi medido no cliente (`ski::testes::medir_padroes`, `#[ignore]`):
+      - **material:** em 83% dos 28.421 materiais, ambiente = difusa, emissiva e especular (0,0,0,1) e brilho 10;
+      - **`fMinWeight`:** 0 em todos os 24.165 `.ski`; o motor só o lê e regrava (`A3DSkin.cpp:220`, `:538`).
+    - O exportador passou a gravar o material do Angelica em `extras.angelica`, para a ida e volta ser exata.
+
+    ### c. O que foi feito
+    - `pw-data-loader/importar.rs`: `ski_do_glb`. Lê o GLB (acessores com passo e tipos normalizados), e relata ou
+      recusa o que não cabe no formato. Ainda sem rota nem painel.
+
+    ### d. Provas
+    - Ida e volta em 1/5 dos `.smd` do 1.5.5: **824 modelos, 1.787 malhas, 1,3 milhão de vértices** com posição,
+      normal, UV e índices exatos e as mesmas influências.
+    - A 1ª rodada acusou diferença de pesos. Era o 4º peso implícito: ruído de ~1e-8 que aparece num lado e some no
+      outro. Abaixo de 1e-6 ele não conta. `pw-data-loader` **247/247**.
+    - A 1ª rodada também testou só 3 modelos, porque os nomes em disco são GBK lidos como Windows-1252 (B273).
+
+    ### e. Falta (S6)
+    - Rota `POST estudio/modelos/importar` (GLB → `.ski` no rascunho, com o relatório) e o envio pelo painel.
+    - Malha rígida (sem pele); PNG → DDS; esqueleto e ações vindos do glTF; extensão do Blender.
