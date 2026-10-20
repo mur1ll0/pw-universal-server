@@ -15370,3 +15370,31 @@ comparação lado a lado.
     - O `.smd`: hoje o leitor lê só o começo (sem cabides e propriedades, e sem fechar no último byte). Primeiro o
       leitor completo, depois o escritor.
     - Importar o glTF; extensão do Blender.
+
+288. **Sessão 2026-10-20: Estúdio S6 — `.smd` inteiro e escritor.**
+
+    ### a. Pedido
+    Commitar e seguir (B287 já commitado: `694f940`, `6cd5595`).
+
+    ### b. Evidência
+    - `LoadModelFromFile` (`A3DSkinModelMan.cpp:114-336`) lê depois das ações os cabides (`A3DSkinModel::LoadHanger`)
+      e as propriedades (`:321-331`).
+    - Cabide: tipo (0 GFX, 1 modelo), nome, osso ou gancho, `HANGERDATA` de 8 bytes sem `#pragma pack`, o arquivo e,
+      no de modelo, o CC (`A3DSkinModelAux.cpp:78`, `:209`, `:304`).
+    - A ordem de gravação é a de `A3DSkinModel::Save` (`A3DSkinModel.cpp:302-416`).
+
+    ### c. O que foi feito
+    - `pw-data-loader/smd`: `Smd::ler`, que fecha no último byte, e `Smd::escrever`. As ações guardam os bytes de dados
+      como estão. O `cabeca` continua sendo a leitura rápida, e o teste confere que bate com o completo.
+    - `pw-recursos`: a ficha do `.smd` traz `reescrita_igual`.
+
+    ### d. Provas
+    - 1.5.5 BR inteiro: **5.163 de 5.163** `.smd` fecham e são reescritos byte a byte iguais (v5 1.788, v6 395,
+      v8 2.980; 7 cabides, 0 propriedades), sem nenhuma falha.
+    - 1.2.6 pelo contêiner: **100 de 100** numa amostra.
+    - `pw-recursos` com o banco **22/22**; `pw-data-loader` **246/246**.
+
+    ### e. Falta (S6)
+    - Os quatro formatos do modelo já têm escrita conferida.
+    - Próximo: importar o glTF (malha, pele com até 4 ossos, esqueleto pelo nome dos ossos, eixos D3D, PNG → DDS),
+      com relatório; depois a extensão do Blender.

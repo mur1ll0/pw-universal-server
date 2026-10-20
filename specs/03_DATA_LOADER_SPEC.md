@@ -651,6 +651,22 @@ muscle saem com contagem 0. Medido no 1.5.5 BR: **24.165 de 24.165** `.ski` lido
 - O leitor do `.smd` (`smd::cabeca`) ainda não lê cabides nem propriedades e não fecha no último byte, então o
   escritor dele vem depois.
 
+**`.smd` inteiro (B288, S6):** `smd::Smd::ler` lê o arquivo até o último byte, e `Smd::escrever` faz o caminho inverso,
+na ordem de `A3DSkinModel::Save` (`A3DSkinModel.cpp:302-416`). Depois das ações, o arquivo traz:
+- **cabides** (`A3DSkinModel::LoadHanger`): tipo `i32` (0 GFX, 1 modelo, `A3DSkinModelAux.h:56-58`), nome, osso ou
+  gancho, `HANGERDATA` de 8 bytes (`int` + `bool`, sem `#pragma pack`, guardados crus) e o arquivo; o cabide de
+  modelo traz ainda o nome do CC (`A3DSkinModelHanger::Load`, `A3DSkinModelAux.cpp:304`);
+- **propriedades:** nome e valor (`LoadModelFromFile`, `A3DSkinModelMan.cpp:321-331`).
+
+Cada ação guarda os seus bytes de dados como estão (`FILEACTIONDATA` + juntas na v < 6, `FILEACTIONDATA6` na
+v ≥ 6) e o `.stck` (v ≥ 7). O `cabeca` continua sendo a leitura rápida usada pelo painel, e o teste confere que ele
+bate com o leitor completo.
+
+Medido no 1.5.5 BR: **5.163 de 5.163** `.smd` fecham e são reescritos byte a byte iguais (v5: 1.788, v6: 395,
+v8: 2.980; ao todo 7 cabides e nenhuma propriedade). No 1.2.6, pelo contêiner: 100 de 100 numa amostra (96 v5, 4 v6).
+A ficha do `.smd` diz `reescrita_igual`. Com isso, os quatro
+formatos do modelo (`.ski`, `.bon`, `.stck`, `.smd`) têm escritor conferido no cliente inteiro.
+
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
 (mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.
