@@ -566,6 +566,10 @@ function desenharGlb(tela, buf) {
   const titulo = criar("input", "campo");
   titulo.placeholder = "título (nome dos arquivos)";
   titulo.size = 18;
+  // B299: o .ecm do cliente que serve de molde do .ecm novo (o cabeçalho dele é herdado); vazio = automático.
+  const molde = criar("input", "campo");
+  molde.placeholder = "molde .ecm (opcional, ex.: um monstro parecido)";
+  molde.size = 30;
   const rotulo = criar("label", "botao botao-pequeno botao-secundario", "Modelo novo a partir de GLB…");
   const arquivo = criar("input");
   arquivo.type = "file";
@@ -580,7 +584,9 @@ function desenharGlb(tela, buf) {
     const t = titulo.value.trim() || f.name.replace(/\.glb$/i, "");
     if (!pasta.value.trim()) { alerta("aviso", "Estúdio", "Informe a pasta (dentro de models\\).", { toast: true }); return; }
     try {
-      const resp = await fetch(rotaDeModelos("/novo", { rascunho: estudio.rascunho, pasta: pasta.value.trim(), titulo: t }), {
+      const q = { rascunho: estudio.rascunho, pasta: pasta.value.trim(), titulo: t };
+      if (molde.value.trim()) q.molde = molde.value.trim();
+      const resp = await fetch(rotaDeModelos("/novo", q), {
         method: "POST", credentials: "same-origin", body: await f.arrayBuffer(),
         headers: { "Content-Type": "application/octet-stream", "X-CSRF-Token": estado.sessao.csrf },
       });
@@ -588,10 +594,10 @@ function desenharGlb(tela, buf) {
       if (!resp.ok) throw new Error(dados?.mensagem || dados?.detail || "Não foi possível criar o modelo.");
       const r = dados.resultado || {};
       const avisos = (r.relatorio || []).length ? ` Relatório: ${r.relatorio.join(" · ")}` : "";
-      alerta("ok", "Estúdio", `${r.modelo} criado no rascunho: ${r.ossos} ossos, ${r.ganchos} ganchos, ${r.malhas} malhas, ${(r.acoes || []).length} ações, ${(r.texturas_gravadas || []).length} texturas, ${(r.arquivos || []).length} arquivos.${avisos}`);
+      alerta("ok", "Estúdio", `${r.modelo} e ${r.ecm} (molde ${r.molde_do_ecm}) criados no rascunho: ${r.ossos} ossos, ${r.ganchos} ganchos, ${r.malhas} malhas, ${(r.acoes || []).length} ações, ${(r.texturas_gravadas || []).length} texturas, ${(r.arquivos || []).length} arquivos.${avisos}`);
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
     } catch (erro) { alerta("erro", "Estúdio", erro.message); }
   });
-  linha.append(pasta, " ", titulo, " ", rotulo);
+  linha.append(pasta, " ", titulo, " ", molde, " ", rotulo);
   elemento("modelos-busca").parentElement.after(linha);
 })();

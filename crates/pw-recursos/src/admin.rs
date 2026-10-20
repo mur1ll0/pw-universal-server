@@ -587,13 +587,15 @@ struct QModeloNovo {
     rascunho: Option<i64>,
     pasta: String,
     titulo: String,
+    /// B299: o `.ecm` do cliente a usar como molde do `.ecm` novo (opcional).
+    molde: Option<String>,
 }
 
 /// B298 (S6): um modelo inteiro (.bon, .ski, .smd, texturas e ações) a partir do GLB do corpo — `Estudio::modelo_novo`.
 async fn estudio_modelo_novo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QModeloNovo>, corpo: Bytes) -> R<Json<Value>> {
     validar(&v)?;
     let r = q.rascunho.ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "escolha um rascunho".into()))?;
-    Ok(Json(e.estudio.modelo_novo(&e.gov, &v, r, &q.pasta, &q.titulo, corpo.to_vec()).await?))
+    Ok(Json(e.estudio.modelo_novo(&e.gov, &v, r, &q.pasta, &q.titulo, corpo.to_vec(), q.molde.as_deref()).await?))
 }
 
 /// B290 (S6): substitui uma pele (`.ski`) pelo glTF (GLB) do corpo, com os ossos do esqueleto do `.smd`.

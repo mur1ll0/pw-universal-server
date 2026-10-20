@@ -647,13 +647,13 @@ def registrar_reinicio(app):
 
     # B298: um modelo inteiro (.bon, .ski, .smd, texturas, ações) a partir de um GLB.
     @app.post("/api/realms/{realm}/estudio/modelos/novo")
-    async def estudio_modelo_novo(realm: str, rascunho: int, pasta: str, titulo: str, requisicao: Request):
+    async def estudio_modelo_novo(realm: str, rascunho: int, pasta: str, titulo: str, requisicao: Request, molde: str | None = None):
         v = await _versao_do_realm(requisicao, realm)
         corpo = await requisicao.body()
         if not corpo:
             raise HTTPException(422, "Arquivo vazio.")
         return await _repassar("POST", f"/admin/{v}/estudio/modelos/novo",
-                               {"rascunho": rascunho, "pasta": pasta[:300], "titulo": titulo[:100]}, corpo=corpo,
+                               {"rascunho": rascunho, "pasta": pasta[:300], "titulo": titulo[:100], "molde": molde[:500] if molde else None}, corpo=corpo,
                                tipo="application/octet-stream")
 
     # B295: as animações de um GLB como ações do .smd.

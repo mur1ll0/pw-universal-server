@@ -240,6 +240,71 @@ pub fn copiar_acao(destino: &[u8], fonte: &[u8], origem: &str, nova: &str) -> Re
     Ok([if marca { b"MOXT".as_slice() } else { b"" }, &saida.concat()].concat())
 }
 
+/// B299 (S6): um `.ecm` novo a partir de um `.ecm` do cliente usado como **molde** (os campos variam com a versão,
+/// `A3DCombinedAction::Load(pFile, dwVersion)` — nada é escrito de memória): troca a 1ª linha `SkinModelPath:` pelo
+/// `.smd` novo e põe uma ação combinada por ação-base, cada uma clonada do 1º bloco simples do molde (uma linha
+/// `BaseActName:`, sem `ChildActName:`, sem efeitos — `FxFilePath:`/`EventCount:` diferente de 0) com o nome e a base
+/// trocados. O resto do molde fica como está. Recusa molde com `AddiSkinPath:` ou com modelo filho (`ChildCount:`
+/// diferente de 0): o modelo novo herdaria peças de outro. Fins de linha os do molde; texto em GBK.
+pub fn ecm_novo(molde: &[u8], smd: &str, acoes: &[String]) -> Result<Vec<u8>, String> {
+    let gbk = |t: &str| -> Result<Vec<u8>, String> {
+        let (v, _, erro) = encoding_rs::GBK.encode(t);
+        if erro || t.contains(['\r', '\n']) { Err(format!("\"{t}\" não cabe numa linha GBK")) } else { Ok(v.into_owned()) }
+    };
+    let marca = molde.starts_with(b"MOXT");
+    let corpo = if marca { &molde[4..] } else { molde };
+    let l = linhas_com_fim(corpo);
+    let (cont, bl) = blocos(&l).ok_or("molde: estrutura de ações não reconhecida")?;
+    let fl: &[u8] = if l[cont].ends_with(b"\r\n") { b"\r\n" } else { b"\n" };
+    let fim_das_acoes = bl.last().map_or(cont + 1, |b| b.2);
+    let cauda = &l[fim_das_acoes..];
+    if cauda.iter().any(|x| x.starts_with(b"AddiSkinPath:")) {
+        return Err("molde com peles adicionais (AddiSkinPath)".into());
+    }
+    if cauda.iter().any(|x| x.starts_with(b"ChildCount: ") && sem_fim(&x[b"ChildCount: ".len()..]).trim_ascii() != b"0") {
+        return Err("molde com modelo filho (ChildCount)".into());
+    }
+    let simples = bl.iter().find(|(_, ini, fim)| {
+        let b = &l[*ini..*fim];
+        b.iter().filter(|x| x.starts_with(b"BaseActName: ")).count() == 1
+            && !b.iter().any(|x| x.starts_with(b"ChildActName:") || x.starts_with(b"FxFilePath:"))
+            && b.iter().filter(|x| x.starts_with(b"EventCount: ")).all(|x| sem_fim(&x[b"EventCount: ".len()..]).trim_ascii() == b"0")
+    });
+    if simples.is_none() && !acoes.is_empty() {
+        return Err("molde sem ação combinada simples (uma ação-base, sem efeitos)".into());
+    }
+    let mut saida: Vec<Vec<u8>> = Vec::new();
+    let mut trocou_smd = false;
+    for x in &l[..cont] {
+        if !trocou_smd && x.starts_with(b"SkinModelPath: ") {
+            saida.push([b"SkinModelPath: ".as_slice(), &gbk(smd)?, fl].concat());
+            trocou_smd = true;
+        } else {
+            saida.push(x.to_vec());
+        }
+    }
+    if !trocou_smd {
+        return Err("molde sem SkinModelPath antes das ações".into());
+    }
+    saida.push([format!("ComActCount: {}", acoes.len()).as_bytes(), fl].concat());
+    if let Some(&(_, ini, fim)) = simples {
+        for a in acoes {
+            let nome = gbk(a)?;
+            for x in &l[ini..fim] {
+                saida.push(if x.starts_with(b"CombineActName: ") {
+                    [b"CombineActName: ".as_slice(), &nome, fl].concat()
+                } else if x.starts_with(b"BaseActName: ") {
+                    [b"BaseActName: ".as_slice(), &nome, fl].concat()
+                } else {
+                    x.to_vec()
+                });
+            }
+        }
+    }
+    saida.extend(cauda.iter().map(|x| x.to_vec()));
+    Ok([if marca { b"MOXT".as_slice() } else { b"" }, &saida.concat()].concat())
+}
+
 /// Os ambientes de um habitat de mascote (`inhabit_type`, `ExpTypes.h:2866`: 0 chão, 1 água, 2 ar, 3 chão+água, 4
 /// chão+ar, 5 água+ar, 6 os três), com as palavras que o cliente acrescenta ao nome da ação (`GetActionEnvString`,
 /// `EC_NPCModel.cpp:580-596`: `地面`, `水中`, `空中`).
@@ -374,6 +439,48 @@ mod testes {
         }
         eprintln!("ecm: blocos certos {ok}, contagem diferente {contagem_diferente}, sem fim {sem_termino}, clonados {clonados}");
         assert_eq!((contagem_diferente, sem_termino), (0, 0));
+    }
+
+    /// B299: cada `.ecm` do cliente como molde de um modelo novo com duas ações: os que servem geram um `.ecm` que relê
+    /// com o `.smd` novo, as duas ações (cada uma com a sua base) e a contagem certa; os outros são recusados com motivo.
+    #[test]
+    fn ecm_novo_com_moldes_do_cliente() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let acoes = vec!["站立".to_string(), "普攻1起".to_string()];
+        let mut pilha = vec![raiz.to_path_buf()];
+        let mut motivos = std::collections::BTreeMap::<String, usize>::new();
+        let mut por_versao = std::collections::BTreeMap::<u32, usize>::new();
+        let mut ok = 0usize;
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("ecm")) { continue; }
+                let b = std::fs::read(&p).unwrap();
+                let Some(orig) = ler(&b) else { continue };
+                match ecm_novo(&b, "Models\\novo\\novo.smd", &acoes) {
+                    Err(x) => *motivos.entry(x).or_default() += 1,
+                    Ok(n) => {
+                        let e = ler(&n).unwrap_or_else(|| panic!("{}: não relê", p.display()));
+                        assert_eq!(e.smd, "Models\\novo\\novo.smd", "{}", p.display());
+                        assert_eq!(e.versao, orig.versao);
+                        assert_eq!(e.acoes.iter().map(|a| (a.nome.clone(), a.bases.clone())).collect::<Vec<_>>(),
+                            acoes.iter().map(|a| (a.clone(), vec![a.clone()])).collect::<Vec<_>>(), "{}", p.display());
+                        let l = linhas_com_fim(n.strip_prefix(b"MOXT").unwrap_or(&n));
+                        let (cont, bl) = blocos(&l).unwrap();
+                        assert_eq!((sem_fim(l[cont]), bl.len()), (b"ComActCount: 2".as_slice(), 2));
+                        ok += 1;
+                        *por_versao.entry(orig.versao).or_default() += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("ecm novo: {ok} moldes servem (por versão {por_versao:?}); recusados {motivos:?}");
+        assert!(ok > 1000, "{ok}");
     }
 
     /// B285: em todo o cliente, copiar a 1ª ação do `.ecm` anterior de mesma versão: relê com uma ação a mais (a última,

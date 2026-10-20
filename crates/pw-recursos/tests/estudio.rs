@@ -891,7 +891,10 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/acoes_glb").query("rascunho", &ri.to_string()).query("smd", &smd).send_bytes(&gm)).0, 400, "GLB sem animação");
         // B298: modelo novo a partir do GLB do .smd sintético — .bon, .ski e .smd (sem ações) em models\teste_novo.
         let mn = json_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &ri.to_string()).query("pasta", "models/teste_novo").query("titulo", "boneco").send_bytes(&gm).unwrap());
-        assert_eq!((mn["resultado"]["arquivos"].as_array().map(|x| x.len()), mn["resultado"]["ossos"].as_u64(), mn["resultado"]["malhas"].as_u64()), (Some(3), Some(1), Some(1)), "{mn}");
+        assert_eq!((mn["resultado"]["arquivos"].as_array().map(|x| x.len()), mn["resultado"]["ossos"].as_u64(), mn["resultado"]["malhas"].as_u64()), (Some(4), Some(1), Some(1)), "{mn}");
+        // B299: o .ecm ao lado (molde: um .ecm sintético da versão mais comum, 42).
+        assert_eq!(mn["resultado"]["ecm"].as_str(), Some("models\\teste_novo\\boneco.ecm"), "{mn}");
+        assert!(mn["resultado"]["molde_do_ecm"].as_str().is_some_and(|m| m.to_lowercase().ends_with(".ecm")), "{mn}");
         assert_eq!(mn["resultado"]["modelo"].as_str(), Some("models\\teste_novo\\boneco.smd"), "{mn}");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &ri.to_string()).query("pasta", "configs").query("titulo", "x").send_bytes(&gm)).0, 400, "fora de models");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &ri.to_string()).query("pasta", "models/a").query("titulo", "x.y").send_bytes(&gm)).0, 400, "título com ponto");

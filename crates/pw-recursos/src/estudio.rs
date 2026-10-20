@@ -3284,7 +3284,7 @@ impl Estudio {
     /// resto, vazia: sem ações). O esqueleto vem de `importar::esqueleto_do_glb`, a pele de `ski_do_glb` (com as
     /// texturas em `Textures\`), as ações de `acoes_do_glb` (`<ação>.stck`, quadros 0 a n−1). Tudo é montado e conferido
     /// antes de gravar; recusa pasta fora de `models\`, nome fora do GBK e arquivo que já existe no cliente.
-    pub async fn modelo_novo(&self, gov: &Governanca, versao: &str, rascunho: i64, pasta: &str, titulo: &str, glb: Vec<u8>) -> Result<Value> {
+    pub async fn modelo_novo(&self, gov: &Governanca, versao: &str, rascunho: i64, pasta: &str, titulo: &str, glb: Vec<u8>, molde: Option<&str>) -> Result<Value> {
         let pasta = pasta.trim().trim_end_matches(['\\', '/']).replace('/', "\\");
         let titulo = titulo.trim();
         if !pasta.to_lowercase().starts_with("models\\") || pasta.split('\\').any(|p| p.is_empty() || p == "." || p == "..") {
@@ -3297,7 +3297,8 @@ impl Estudio {
         nomes::gbk_de_unicode(titulo).context("o título tem caracteres que não existem em GBK")?;
         let caminho = |nome: &str| format!("{pasta}\\{nome}");
         let (c_smd, c_bon, c_ski) = (caminho(&format!("{titulo}.smd")), caminho(&format!("{titulo}.bon")), caminho(&format!("{titulo}.ski")));
-        for c in [&c_smd, &c_bon, &c_ski] {
+        let c_ecm = caminho(&format!("{titulo}.ecm"));
+        for c in [&c_smd, &c_bon, &c_ski, &c_ecm] {
             if gov.conteudo(versao, c).is_ok() {
                 bail!("{c} já existe no cliente");
             }
@@ -3329,19 +3330,50 @@ impl Estudio {
         pw_data_loader::bon::Bon::ler(&b_bon).map_err(|x| anyhow::anyhow!("o .bon gerado não relê: {x}"))?;
         pw_data_loader::ski::Ski::ler(&b_ski).map_err(|x| anyhow::anyhow!("o .ski gerado não relê: {x}"))?;
         pw_data_loader::smd::Smd::ler(&b_smd).map_err(|x| anyhow::anyhow!("o .smd gerado não relê: {x}"))?;
+        // B299: o .ecm (o que a tabela cita para NPC e monstro; o jogo põe a pele <.ecm>.ski, B282 — a <título>.ski ao
+        // lado) a partir de um .ecm do cliente como molde (`ecm::ecm_novo`): uma ação combinada por ação, de mesmo nome.
+        let nomes_acoes: Vec<String> = acoes.iter().map(|a| a.nome.clone()).collect();
+        let (molde_usado, b_ecm) = self.molde_de_ecm(gov, versao, molde, &c_smd, &nomes_acoes).await?;
+        pw_data_loader::ecm::ler(&b_ecm).context("o .ecm gerado não relê")?;
         let texturas = self.gravar_texturas(gov, versao, rascunho, &c_ski, imp.texturas_novas).await?;
         let trava = self.trava(rascunho);
         let _guarda = trava.lock().await;
         let mut arquivos = Vec::new();
-        for (c, b) in [(c_bon.clone(), b_bon), (c_ski.clone(), b_ski)].into_iter().chain(stcks).chain([(c_smd.clone(), b_smd)]) {
+        for (c, b) in [(c_bon.clone(), b_bon), (c_ski.clone(), b_ski)].into_iter().chain(stcks).chain([(c_smd.clone(), b_smd), (c_ecm.clone(), b_ecm)]) {
             gov.gravar_arquivo(versao, rascunho, &c, b, "cliente").await?;
             arquivos.push(c);
         }
         Ok(json!({ "resultado": {
-            "modelo": c_smd, "arquivos": arquivos, "texturas_gravadas": texturas, "ossos": bon.ossos.len(), "ganchos": bon.ganchos.len(),
+            "modelo": c_smd, "ecm": c_ecm, "molde_do_ecm": molde_usado, "arquivos": arquivos, "texturas_gravadas": texturas, "ossos": bon.ossos.len(), "ganchos": bon.ganchos.len(),
             "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(), "acoes": acoes.iter().map(|a| json!({ "nome": a.nome, "quadros": a.quadro_final as i32 + 1 })).collect::<Vec<_>>(),
             "relatorio": relatorio,
         } }))
+    }
+
+    /// B299: o `.ecm` novo a partir de um molde do cliente. Com `preferido`, esse `.ecm`; senão, entre os `.ecm` da versão de
+    /// `.ecm` mais comum desta versão de jogo, o 1º (em ordem de caminho) que serve (`ecm::ecm_novo`: sem peles
+    /// adicionais nem modelo filho, com uma ação combinada simples) — reproduzível. Devolve o molde usado e os bytes.
+    async fn molde_de_ecm(&self, gov: &Governanca, versao: &str, preferido: Option<&str>, smd: &str, acoes: &[String]) -> Result<(String, Vec<u8>)> {
+        if let Some(p) = preferido.filter(|p| !p.trim().is_empty()) {
+            let (nome, b) = gov.conteudo(versao, p)?;
+            return Ok((nome, pw_data_loader::ecm::ecm_novo(&b, smd, acoes).map_err(|x| anyhow::anyhow!("molde {p}: {x}"))?));
+        }
+        let i = self.indice_de_ecm(gov, versao).await?;
+        let mut contagem: HashMap<u32, usize> = HashMap::new();
+        for e in &i.ecms {
+            *contagem.entry(e.1).or_default() += 1;
+        }
+        let moda = contagem.into_iter().max_by_key(|x| (x.1, x.0)).map(|x| x.0).context("o cliente não tem .ecm")?;
+        let mut candidatos: Vec<String> = i.ecms.iter().filter(|e| e.1 == moda && !e.3.is_empty()).map(|e| e.0.clone()).collect();
+        candidatos.sort();
+        for lote in candidatos.chunks(128) {
+            for (c, lido) in lote.iter().zip(gov.conteudos(versao, lote)?) {
+                if let Some(Ok(b)) = lido.map(|(_, b)| pw_data_loader::ecm::ecm_novo(&b, smd, acoes)) {
+                    return Ok((c.clone(), b));
+                }
+            }
+        }
+        bail!("nenhum .ecm da versão {moda} serve de molde (sem peles adicionais, sem modelo filho e com uma ação simples)")
     }
 
     /// B295 (S6): as animações do glTF como ações do `.smd` (`pw_data_loader::importar::acoes_do_glb`). Cada uma vira
