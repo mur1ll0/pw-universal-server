@@ -15640,3 +15640,31 @@ comparação lado a lado.
 
     ### e. Falta (S6)
     - Esqueleto novo vindo do glTF; extensão do Blender.
+
+297. **Sessão 2026-10-20: Estúdio S6 — esqueleto do glTF; ganchos e flags no GLB.**
+
+    ### a. Pedido
+    Commitar e seguir (B296 já commitado: `add6fda`, `6da429c`).
+
+    ### b. Evidência (medida em `bon::testes::medir_estrutura`, 9.849 `.bon`, 268.293 ossos)
+    - Uma junta por osso, e a 1ª junta do osso `i` é a `i`. A junta se chama `<osso>_AnimJoint`, tipo 15, com
+      `osso_filho` = o osso, `osso_mae` = a mãe e `irma` = −1. Tudo isso vale em 100%.
+    - Flags 0 em 97,5% (1 falso, 2 espelhado, `A3DBone.h:71-72`). Reservado zerado (100%), quadros 0..0 em todo v6,
+      FPS 15 em 76% dos v6.
+    - Gancho: tipo 0 HH / 1 CC (`A3DSkeleton.h:62-63`); matriz relativa ao osso, ou ao esqueleto com osso −1
+      (`A3DSkeleton.cpp:162-187`).
+
+    ### c. O que foi feito
+    - `glb`: os ganchos viram nós filhos do osso; as flags ≠ 0 vão em `extras`.
+    - `importar`: `esqueleto_do_glb`, `inversa_cc`, e o acessor `MAT4`.
+
+    ### d. Provas
+    - `esqueleto_ida_e_volta`: 984 `.bon` reais (1/10), com 26.962 ossos e 4.114 ganchos, iguais em tudo: matrizes até
+      1e-4, flags iguais, e a `relativa` igual à pose de ligação do GLB.
+    - A 1ª rodada falhou porque o acessor `MAT4` não era aceito; a 2ª mostrou as flags diferentes em 2,3%, e por isso
+      elas passaram a ir em `extras`.
+    - `pw-data-loader` **254/254**; `pw-recursos` com o banco **22/22**. Pelo `pw-recursos`: o GLB de 20 modelos por
+      versão abre e leva os ganchos (45 no 1.2.6 e 138 no 1.5.5, iguais aos da ficha).
+
+    ### e. Falta (S6)
+    - "Modelo novo a partir de GLB" no painel (`.bon` + `.ski` + `.smd` v8 + ações); extensão do Blender.

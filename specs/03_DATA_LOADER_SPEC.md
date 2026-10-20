@@ -761,6 +761,33 @@ e cada ação do `.smd` é um intervalo de quadros dela. Medido em 1.163 ações
 Testado em 30 modelos reais (10 com `.smd` v5, 20 com v6; 1.144 trilhas de junta): os dois arquivos releem, o
 `cabeca` vê a ação no intervalo, e cada junta ganha as chaves e o segmento esperados.
 
+**Esqueleto do glTF (B297, S6):** `importar::esqueleto_do_glb(glb)` monta um `.bon` v6 a partir das juntas da 1ª `skin`
+(sem a vaga "esqueleto").
+
+Os campos que o glTF não tem seguem o que os 9.849 `.bon` do cliente 1.5.5 têm, medido em
+`bon::testes::medir_estrutura` (`#[ignore]`) sobre 268.293 ossos:
+- uma junta por osso, e a 1ª junta do osso `i` é a `i`;
+- a junta se chama `<osso>_AnimJoint`, tipo 15, com `osso_filho` = o osso, `osso_mae` = a mãe dele e `irma` = −1
+  (100% em todos esses);
+- as filhas são os ossos que o têm como mãe;
+- flags 0 em 97,5% (1 = osso falso, 2 = espelhado, `A3DBone.h:71-72`);
+- reservado zerado, quadros 0..0 em todo v6, e FPS 15 em 76% dos v6 (o resto, 30).
+
+Como o `.bon` é montado:
+- `inicial` vem da matriz inversa de ligação;
+- `relativa` é a pose local do nó em relação à junta mãe;
+- as matrizes voltam à mão do D3D por `glb::matriz_gltf`, que desfaz a si mesma;
+- os ganchos são os nós `HH_*`/`CC_*` (ou `extras.angelica.gancho`) abaixo de uma junta, com a matriz relativa a ela.
+  Tipo 0 = HH (ponto de pendurar) e 1 = CC (centro de encaixe), `A3DSkeleton.h:62-63`; a matriz do gancho é relativa
+  ao osso (ou ao esqueleto, com osso −1), `A3DSkeleton.cpp:162-187`.
+
+O exportador passou a levar os **ganchos** como nós filhos do osso (`extras.angelica.gancho.tipo`) e as **flags** de
+osso diferentes de 0 (`extras.angelica.flags`). O leitor de acessores aceita `MAT4`.
+
+Ida e volta em 984 `.bon` reais (1/10; `importar::testes::esqueleto_ida_e_volta`): 26.962 ossos e 4.114 ganchos com
+nomes, mães, filhas, juntas, flags, `inicial` e ganchos iguais (matrizes até 1e-4). A `relativa` é igual à pose de
+ligação local que o GLB leva; o `matRelative` original só bate com ela em 28% dos ossos (B274).
+
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
 (mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.
