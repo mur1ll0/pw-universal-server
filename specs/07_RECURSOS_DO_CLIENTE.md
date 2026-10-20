@@ -702,6 +702,28 @@ No painel, a vista "Habilidades" tem busca, lista e ficha, com nome e descriçã
 arquivo), os campos gerais, uma tabela por nível e o JSON completo. O limite da rota do texto é 32 KiB
 (`seguranca.eh_texto_de_habilidade`).
 
+**Números das habilidades (B302):** `PUT estudio/habilidades/{id}/numeros?rascunho=` `{campo: [um número por
+nível]}` grava o item do servidor `catalogo\habilidades.json` (`Estudio::definir_numeros_da_habilidade`).
+- **Onde vale:** a publicação o põe em `data/<realm>/catalogo/habilidades.json`, ao lado do `config`. É o arquivo que
+  o GS já lê no lugar do embutido (`manager.rs:330-361`, B102). `governanca::caminho_no_realm` aceita
+  `catalogo\<arquivo>` → `<config>/../catalogo/<arquivo>`.
+- **Base:** o catálogo do realm, se existir; senão o embutido da versão.
+- **Ficha:** mostra os números efetivos (rascunho → catálogo → embutido) e diz `origem_dos_numeros`.
+- **Campos editáveis (`CAMPOS_EDITAVEIS`), marcados por quem os confere:**
+  - **só o servidor:** `recarga_ms` (o cliente recebe a recarga por `SET_COOLDOWN`, `playerwrapper.cpp:170`) e `odio`;
+  - **o cliente também confere, pelo `elementskill.dll` dele:** `mp` (`CheckSkillCastCondition`,
+    `EC_HostPlayer.cpp:6097-6150`), `nivel_exigido`, `sp_exigido` e `dinheiro_exigido` (`LearnCondition`,
+    `:6067-6093`). Mudar só o servidor desalinha.
+- **Validação:** um número finito por nível; o arquivo editado tem de ler no `TabelaDeHabilidades::de_json` do GS.
+
+**Montagens (`docker-compose.yml`):**
+- o `pw-recursos` monta a pasta inteira do realm, com `PW_RECURSOS_REALMS` = `/realms/<realm>/config`;
+- os mundos (`pw-world-126/155`) montam `data/<realm>/catalogo` em `/app/data/catalogo:ro`, ao lado do
+  `/app/data/config` que o GS usa.
+
+**A montagem nos mundos só vale depois de recriar os contêineres do GS.** Até lá, o GS segue com o embutido, e isso
+fica a critério do Murillo.
+
 Medido pelo `pw-recursos` em 5 `.smd` de NPC do 1.5.5, num rascunho de teste descartado:
 - a 1ª ação de cada um (de 1 quadro), baixada e reimportada, sai byte a byte igual;
 - a ação mais longa de cada um (442 quadros no total) sai "substituída" com o mesmo número de quadros, porque as

@@ -15810,3 +15810,42 @@ comparação lado a lado.
     ### e. Falta (S8)
     - Editar os números (hoje embutidos no GS e no `elementskill.dll` do cliente).
     - Habilidade nova; ligar à ação do modelo (o nome de ação de habilidade que ficou do S5).
+
+302. **Sessão 2026-10-20: Estúdio S8 — números das habilidades no catálogo do realm.**
+
+    ### a. Pedido
+    Commitar e seguir (B301 já commitado: `86447c8`, `b992caf`). A edição dos números parecia exigir mudar e
+    publicar o GS, o que não está autorizado.
+
+    ### b. Evidência e decisão
+    - O GS **já** lê `data/<realm>/catalogo/habilidades.json` no lugar do embutido (`manager.rs:330-361`, B102), sem
+      mudança de código. Os mundos montavam só o `config`.
+    - O cliente confere sozinho, pelo `elementskill.dll` dele:
+      - mana para lançar (`CheckSkillCastCondition`, `EC_HostPlayer.cpp:6097-6150`);
+      - nível, SP e dinheiro para aprender (`LearnCondition`, `:6067-6093`);
+      - o alcance (`GetCastRange`, `:4271`/`:6437`).
+    - A recarga vem do servidor (`SET_COOLDOWN`, `playerwrapper.cpp:170`), e o ódio é só do servidor.
+    - Decisão: editáveis `recarga_ms` e `odio` (só servidor) e `mp`, `nivel_exigido`, `sp_exigido` e
+      `dinheiro_exigido`, estes com o aviso de que o cliente confere pelos números dele.
+
+    ### c. O que foi feito
+    - `governanca::caminho_no_realm`: `catalogo\<arquivo>` → `<config>/../catalogo/<arquivo>`.
+    - `Estudio`: `json_de_habilidades` (rascunho → catálogo do realm → embutido), `definir_numeros_da_habilidade`
+      (item do servidor `catalogo\habilidades.json`, validado pelo leitor do GS) e `origem_dos_numeros` na ficha.
+    - Rota `PUT estudio/habilidades/{id}/numeros`; painel com a tabela por nível editável (✎, quem confere no
+      cabeçalho) e repasse.
+    - `docker-compose.yml`:
+      - `pw-recursos` monta a pasta inteira do realm (`PW_RECURSOS_REALMS` → `/realms/<realm>/config`);
+      - os mundos montam o `catalogo` (só leitura). **Os mundos não foram recriados.**
+
+    ### d. Provas
+    - `pw-recursos` com o banco **22/22**: recarga no rascunho, campo não editável e tamanho errado dão 400.
+      Publicado, `catalogo/habilidades.json` lê no `TabelaDeHabilidades::de_json`, e a ficha diz "catálogo do realm".
+    - Painel **12/12**.
+    - Pelo `pw-recursos` real, num rascunho descartado: a recarga da habilidade 1 mudou no rascunho e voltou ao
+      embutido depois do descarte. O npcgen do realm segue lido no caminho novo (12.885 e 20.558 áreas). Os mundos
+      seguiram no ar, sem recriação.
+
+    ### e. Falta
+    - Murillo: recriar os mundos para a montagem do catálogo valer, quando quiser.
+    - S8: os números do cliente (`elementskill.dll`) e habilidade nova.
