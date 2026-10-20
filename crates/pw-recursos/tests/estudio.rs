@@ -889,6 +889,12 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let ac2 = json_de(pedir("POST", "estudio/modelos/acoes_glb").query("rascunho", &ri.to_string()).query("smd", &smd).send_bytes(&glb_anim).unwrap());
         assert_eq!((ac2["resultado"]["acoes"][0]["acao"].as_str(), ac2["resultado"]["acoes_do_modelo"].as_u64()), (Some("substituída"), Some(1)), "{ac2}");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/acoes_glb").query("rascunho", &ri.to_string()).query("smd", &smd).send_bytes(&gm)).0, 400, "GLB sem animação");
+        // B298: modelo novo a partir do GLB do .smd sintético — .bon, .ski e .smd (sem ações) em models\teste_novo.
+        let mn = json_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &ri.to_string()).query("pasta", "models/teste_novo").query("titulo", "boneco").send_bytes(&gm).unwrap());
+        assert_eq!((mn["resultado"]["arquivos"].as_array().map(|x| x.len()), mn["resultado"]["ossos"].as_u64(), mn["resultado"]["malhas"].as_u64()), (Some(3), Some(1), Some(1)), "{mn}");
+        assert_eq!(mn["resultado"]["modelo"].as_str(), Some("models\\teste_novo\\boneco.smd"), "{mn}");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &ri.to_string()).query("pasta", "configs").query("titulo", "x").send_bytes(&gm)).0, 400, "fora de models");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &ri.to_string()).query("pasta", "models/a").query("titulo", "x.y").send_bytes(&gm)).0, 400, "título com ponto");
         // B291: pele nova — nova.ski ao lado do .smd, citada por ele (o .smd do rascunho passa a ter 2 peles).
         let pn = json_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "nova.ski").send_bytes(&gm).unwrap());
         assert_eq!((pn["resultado"]["peles_do_modelo"].as_u64(), pn["resultado"]["malhas"].as_u64()), (Some(2), Some(1)), "{pn}");

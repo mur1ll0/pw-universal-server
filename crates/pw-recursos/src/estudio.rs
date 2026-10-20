@@ -3278,6 +3278,72 @@ impl Estudio {
         self.alterar_item_do_cliente(gov, versao, destino, rascunho, move |_| Ok((bytes, resumo, mudanca))).await
     }
 
+    /// B298 (S6): um modelo inteiro a partir de um GLB, em `<pasta>\<título>.*`, no rascunho — a convenção dos 2.980
+    /// `.smd` v8 do cliente 1.5.5 (medida): marca `MOXB` e reservado zero (100%), esqueleto `<título>.bon` (98,6%), 1ª
+    /// pele `<título>.ski` (93%), física vazia (61%; o resto cita um `.phy`) e pasta das trilhas `tcks_<título>` (59%; o
+    /// resto, vazia: sem ações). O esqueleto vem de `importar::esqueleto_do_glb`, a pele de `ski_do_glb` (com as
+    /// texturas em `Textures\`), as ações de `acoes_do_glb` (`<ação>.stck`, quadros 0 a n−1). Tudo é montado e conferido
+    /// antes de gravar; recusa pasta fora de `models\`, nome fora do GBK e arquivo que já existe no cliente.
+    pub async fn modelo_novo(&self, gov: &Governanca, versao: &str, rascunho: i64, pasta: &str, titulo: &str, glb: Vec<u8>) -> Result<Value> {
+        let pasta = pasta.trim().trim_end_matches(['\\', '/']).replace('/', "\\");
+        let titulo = titulo.trim();
+        if !pasta.to_lowercase().starts_with("models\\") || pasta.split('\\').any(|p| p.is_empty() || p == "." || p == "..") {
+            bail!("a pasta tem que estar dentro de models\\ (ex.: models\\npcs\\meu_modelo)");
+        }
+        if titulo.is_empty() || titulo.contains(['\\', '/', '.']) {
+            bail!("o título é só o nome, sem pasta nem extensão");
+        }
+        nomes::gbk_de_unicode(&pasta).context("a pasta tem caracteres que não existem em GBK")?;
+        nomes::gbk_de_unicode(titulo).context("o título tem caracteres que não existem em GBK")?;
+        let caminho = |nome: &str| format!("{pasta}\\{nome}");
+        let (c_smd, c_bon, c_ski) = (caminho(&format!("{titulo}.smd")), caminho(&format!("{titulo}.bon")), caminho(&format!("{titulo}.ski")));
+        for c in [&c_smd, &c_bon, &c_ski] {
+            if gov.conteudo(versao, c).is_ok() {
+                bail!("{c} já existe no cliente");
+            }
+        }
+        let (bon, mut relatorio) = pw_data_loader::importar::esqueleto_do_glb(&glb).map_err(anyhow::Error::msg)?;
+        let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
+        relatorio.extend(imp.relatorio.iter().cloned());
+        let (acoes, rel_acoes) = pw_data_loader::importar::acoes_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
+        relatorio.extend(rel_acoes);
+        let pasta_trilhas = if acoes.is_empty() { String::new() } else { format!("tcks_{titulo}") };
+        let mut entradas = Vec::new();
+        let mut stcks = Vec::new();
+        for a in &acoes {
+            if a.nome.is_empty() || a.nome.contains(['\\', '/']) {
+                bail!("nome de ação inválido: \"{}\"", a.nome);
+            }
+            nomes::gbk_de_unicode(&a.nome).with_context(|| format!("a ação \"{}\" tem caracteres que não existem em GBK", a.nome))?;
+            let arquivo = format!("{}.stck", a.nome);
+            let bytes = pw_data_loader::stck::escrever(&a.stck);
+            pw_data_loader::stck::ler(&bytes).map_err(|x| anyhow::anyhow!("a .stck gerada não relê: {x}"))?;
+            stcks.push((caminho(&format!("{pasta_trilhas}\\{arquivo}")), bytes));
+            entradas.push(pw_data_loader::smd::AcaoBruta { nome: a.nome.clone(), dados: [0f32.to_le_bytes(), a.quadro_final.to_le_bytes()].concat(), stck: Some(arquivo) });
+        }
+        let smd = pw_data_loader::smd::Smd {
+            marca: true, versao: 8, reservado: vec![0; 60], esqueleto: format!("{titulo}.bon"), peles: vec![format!("{titulo}.ski")],
+            fisica: String::new(), pasta_das_trilhas: Some(pasta_trilhas), acoes: entradas, cabides: Vec::new(), propriedades: Vec::new(),
+        };
+        let (b_bon, b_ski, b_smd) = (bon.escrever(), imp.ski.escrever(), smd.escrever());
+        pw_data_loader::bon::Bon::ler(&b_bon).map_err(|x| anyhow::anyhow!("o .bon gerado não relê: {x}"))?;
+        pw_data_loader::ski::Ski::ler(&b_ski).map_err(|x| anyhow::anyhow!("o .ski gerado não relê: {x}"))?;
+        pw_data_loader::smd::Smd::ler(&b_smd).map_err(|x| anyhow::anyhow!("o .smd gerado não relê: {x}"))?;
+        let texturas = self.gravar_texturas(gov, versao, rascunho, &c_ski, imp.texturas_novas).await?;
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let mut arquivos = Vec::new();
+        for (c, b) in [(c_bon.clone(), b_bon), (c_ski.clone(), b_ski)].into_iter().chain(stcks).chain([(c_smd.clone(), b_smd)]) {
+            gov.gravar_arquivo(versao, rascunho, &c, b, "cliente").await?;
+            arquivos.push(c);
+        }
+        Ok(json!({ "resultado": {
+            "modelo": c_smd, "arquivos": arquivos, "texturas_gravadas": texturas, "ossos": bon.ossos.len(), "ganchos": bon.ganchos.len(),
+            "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(), "acoes": acoes.iter().map(|a| json!({ "nome": a.nome, "quadros": a.quadro_final as i32 + 1 })).collect::<Vec<_>>(),
+            "relatorio": relatorio,
+        } }))
+    }
+
     /// B295 (S6): as animações do glTF como ações do `.smd` (`pw_data_loader::importar::acoes_do_glb`). Cada uma vira
     /// `<pasta das trilhas>\<ação>.stck` (a convenção do cliente: 249 de 249 ações amostradas, quadro inicial 0) e uma
     /// entrada `FILEACTIONDATA6` (quadros 0 a n−1) + o nome da `.stck` no `.smd`; ação de mesmo nome é substituída

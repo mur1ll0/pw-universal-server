@@ -558,4 +558,40 @@ function desenharGlb(tela, buf) {
   elemento("estudio-vista-modelos").addEventListener("click", () => mostrarVistaDoEstudio("modelos"));
   let espera = null;
   elemento("modelos-busca").addEventListener("input", () => { clearTimeout(espera); espera = setTimeout(carregarModelos, 300); });
+  // B298 (S6): modelo novo a partir de um GLB — esqueleto, pele, texturas, .smd e ações em <pasta>\<título>.*, no rascunho.
+  const linha = criar("div", "recursos-linha");
+  const pasta = criar("input", "campo");
+  pasta.placeholder = "pasta (ex.: models\\npcs\\meu_modelo)";
+  pasta.size = 34;
+  const titulo = criar("input", "campo");
+  titulo.placeholder = "título (nome dos arquivos)";
+  titulo.size = 18;
+  const rotulo = criar("label", "botao botao-pequeno botao-secundario", "Modelo novo a partir de GLB…");
+  const arquivo = criar("input");
+  arquivo.type = "file";
+  arquivo.accept = ".glb,model/gltf-binary";
+  arquivo.hidden = true;
+  rotulo.appendChild(arquivo);
+  arquivo.addEventListener("change", async () => {
+    const f = arquivo.files[0];
+    arquivo.value = "";
+    if (!f) return;
+    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio antes de importar.", { toast: true }); return; }
+    const t = titulo.value.trim() || f.name.replace(/\.glb$/i, "");
+    if (!pasta.value.trim()) { alerta("aviso", "Estúdio", "Informe a pasta (dentro de models\\).", { toast: true }); return; }
+    try {
+      const resp = await fetch(rotaDeModelos("/novo", { rascunho: estudio.rascunho, pasta: pasta.value.trim(), titulo: t }), {
+        method: "POST", credentials: "same-origin", body: await f.arrayBuffer(),
+        headers: { "Content-Type": "application/octet-stream", "X-CSRF-Token": estado.sessao.csrf },
+      });
+      const dados = await resp.json();
+      if (!resp.ok) throw new Error(dados?.mensagem || dados?.detail || "Não foi possível criar o modelo.");
+      const r = dados.resultado || {};
+      const avisos = (r.relatorio || []).length ? ` Relatório: ${r.relatorio.join(" · ")}` : "";
+      alerta("ok", "Estúdio", `${r.modelo} criado no rascunho: ${r.ossos} ossos, ${r.ganchos} ganchos, ${r.malhas} malhas, ${(r.acoes || []).length} ações, ${(r.texturas_gravadas || []).length} texturas, ${(r.arquivos || []).length} arquivos.${avisos}`);
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  });
+  linha.append(pasta, " ", titulo, " ", rotulo);
+  elemento("modelos-busca").parentElement.after(linha);
 })();
