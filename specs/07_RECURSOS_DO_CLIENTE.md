@@ -543,6 +543,24 @@ altura (`CECMatter::SetLoadedMatterModel`, `EC_Matter.cpp:298-312`); a mina carr
 modelo usa `models\error\error.ecm` (`:71-95`). Medido: nenhum dos modelos de mina amostrados (60 por versão) tem essa
 ação, e só 4 têm alguma (`站立`/`四处张望`). A mina original fica parada de propósito, então acusar falta seria ruído.
 
+**Copiar ação de outro modelo (B285):** `GET estudio/modelos/doadores?caminho=<.ecm>&acao=` (`Estudio::doadores`) lista
+até 50 doadores, com o `total` e quantos estão `prontos`. Doador é outro `.ecm` da mesma `Version` que tem a ação
+combinada. Cada um traz `mesmo_smd`, `mesmo_esqueleto` e `bases_faltando` (as ações-base dele que o `.smd` do destino não
+tem); "pronto" é não faltar nenhuma. O esqueleto não decide: a combinada cita as ações-base pelo nome, e o motor as
+procura no `.smd` de quem toca. Ele só ordena, porque os efeitos citam ganchos (`HookName:`) que outro esqueleto pode
+não ter. A ordem é: prontos primeiro, depois mesmo `.smd`, mesmo esqueleto e menos faltas. A 1ª versão exigia o mesmo
+esqueleto, e assim os 118 pedidos de uma amostra ficaram sem doador: os irmãos de esqueleto são cópias e não têm a ação
+que falta.
+
+A busca usa `Estudio::indice_de_ecm`: todos os `.ecm` e os `.smd` que eles citam (ações, esqueleto e ações-base),
+guardados em memória por versão e montados uma vez por `manifesto_sha256`.
+
+`POST estudio/modelos/acao` aceita `de` (o `.ecm` de origem, do cliente publicado; não combina com `base`). Ele recusa
+com 400 se alguma ação-base da ação copiada não existe no `.smd` do destino — sem ela, a ação não animaria.
+
+No painel, cada falta do diagnóstico ganha "Copiar de outro modelo…". Os doadores com base faltando aparecem
+desabilitados. Teste: `doador.ecm` sintético do mesmo `.smd`; `休闲` copia, e `普攻2`, com base ausente, dá 400.
+
 Os arquivos são lidos com `Governanca::conteudos` (lote: o manifesto é lido e indexado uma vez; `conteudo` relê o
 manifesto inteiro a cada chamada, o que levava a ficha do 1.5.5 a 50 s — agora 4,8 s, e 0,8 s no 1.2.6). No painel, o
 seletor de perfil ganha "como modelo de voo — espada/asa/rodas". A ficha de `FLYSWORD_ESSENCE`/`WINGMANWING_ESSENCE`

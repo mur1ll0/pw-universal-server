@@ -720,7 +720,12 @@ modo, isto é, o que os outros modelos de voo do mesmo modo têm. A falta só é
 tem a ação; quando a maioria também não tem, a linha diz "ausente, como na maioria dos colegas". Sem isso, `悬停`
 (1 de 101 espadas do 1.5.5) acusaria todas. Medido em 114 `.ecm` de jogador no 1.5.5 e 13 no 1.2.6. O vocabulário de
 espada é `飞剑悬停/低空下降/高空下降` em todos; `飞剑起飞/飞行/降落/滑翔` (e, no 1.5.5, `飞剑前进/落地`) só em parte dos
-modelos. O de asa é `飞行悬停/飞行前进/起飞/展开/翅膀收起/低空下降/高空下降/飞行落地`.
+modelos. O de asa é `飞行悬停/飞行前进/起飞/展开/翅膀收起/低空下降/高空下降/飞行落地`. **Copiar de outro `.ecm` (B285):**
+`ecm::copiar_acao(destino, fonte, origem, nova)` põe o bloco da ação `origem` da `fonte` depois da última ação do
+destino, com o nome `nova`, e soma 1 no `ComActCount`. Os fins de linha passam a ser os do destino, e o resto fica byte
+a byte igual. Só entre arquivos da mesma `Version`, porque os campos do bloco dependem dela (`A3DCombinedAction::Load`).
+As ações-base citadas precisam existir no `.smd` do destino; quem chama confere. Teste no cliente 1.5.5 inteiro:
+8.156 cópias releem com uma ação a mais e as bases da origem, e 7.900 pares de versão diferente são recusados.
 
 ### 3.11 `global_api.lua`
 

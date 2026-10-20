@@ -365,7 +365,7 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 | S2 | escritor do `elements` (v7 e v156) + telas de Armas, Armaduras, Consumíveis, Monstros (drops) + índice de referências |
 | S3 | NPCs, Serviços (30 tipos) e Conversa (`TALK_PROC`); Receitas |
 | S4 | Mapas: minimapa interativo, `npcgen` (NPCs, monstros, recursos), `region`/`precinct`, teleportes, `task_npc` |
-| S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas — **em andamento** (B272: `.ski` → GLB, visualizador; B273: texturas; B274: esqueleto e modelo `.smd`; B276: trilhas, ações e animação; B277: `.ecm` e diagnóstico; B278: modelo sem pele = esqueleto; B279: da ficha ao modelo; B280: corrigir ação faltante; B281: diagnóstico de mascote; B282: modelo a partir do `.ecm`; B283: diagnóstico de voo; B284: onde nasce (Minas, monstros, NPCs)) |
+| S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas — **em andamento** (B272: `.ski` → GLB, visualizador; B273: texturas; B274: esqueleto e modelo `.smd`; B276: trilhas, ações e animação; B277: `.ecm` e diagnóstico; B278: modelo sem pele = esqueleto; B279: da ficha ao modelo; B280: corrigir ação faltante; B281: diagnóstico de mascote; B282: modelo a partir do `.ecm`; B283: diagnóstico de voo; B284: onde nasce (Minas, monstros, NPCs); B285: copiar ação de outro modelo) |
 | S6 | glTF e extensão do Blender |
 | S7 | Missões (§4.4); Loja Gold (§4.6); Comportamento (`aipolicy`); Textos — **concluído (B254-B271)** |
 | S8 | Habilidades: números e textos; depois `elementskill.dll` + efeitos no GS |

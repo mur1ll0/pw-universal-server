@@ -15282,3 +15282,40 @@ comparação lado a lado.
 
     ### e. Falta
     - S5: nomes de habilidade (depende do S8); copiar ação de outro modelo do mesmo esqueleto.
+
+285. **Sessão 2026-10-19: Estúdio S5 — copiar ação de outro modelo.**
+
+    ### a. Pedido
+    Commitar e seguir (B284 já commitado: `7949254`, `5203675`). Próximo item do S5: copiar uma ação de outro modelo
+    com o mesmo esqueleto.
+
+    ### b. Evidência e decisão
+    - Os campos do bloco de ação combinada dependem da `Version` do `.ecm` (`A3DCombinedAction::Load(pFile,
+      dwVersion)`): só se copia entre arquivos da mesma versão.
+    - A combinada cita as ações-base pelo nome, e elas vêm do `.smd` de quem toca. Por isso o que decide é ter as bases
+      no `.smd` do destino, e o esqueleto só ordena.
+    - A 1ª versão exigia o mesmo esqueleto, e o resultado foi 0 doadores em 118 pedidos de uma amostra: os irmãos de
+      esqueleto são cópias que também não têm a ação. Medido com a regra corrigida, numa amostra de 60 monstros por
+      versão:
+      - 1.2.6: 60 de 60 pedidos com doador pronto;
+      - 1.5.5: 55 de 58.
+
+    ### c. O que foi feito
+    - `pw-data-loader/ecm`: `copiar_acao`, com o teste no cliente 1.5.5 inteiro: 8.156 cópias certas e 7.900 pares
+      de versão diferente recusados.
+    - `pw-recursos`:
+      - `Estudio::indice_de_ecm` (todos os `.ecm`/`.smd`, em memória por manifesto), `doadores`, `acao_copiada_no_ecm`;
+      - `GET estudio/modelos/doadores` e o campo `de` no `POST estudio/modelos/acao`, que recusa com 400 se faltar
+        ação-base no `.smd` do destino;
+      - `Governanca::conteudos` em paralelo (até 16 threads, ordem preservada). A 1ª montagem do índice caiu de 151 s
+        para 11 s no 1.5.5, e de 42 s para 3,8 s no 1.2.6.
+    - Painel: "Copiar de outro modelo…" em cada falta do diagnóstico, mostrando o esqueleto do doador e com os de base
+      faltando desabilitados; repasse e teste.
+
+    ### d. Provas
+    - `pw-data-loader` **243/243**. `pw-recursos` com o banco **22/22**: `doador.ecm` sintético; `休闲` copia e
+      `普攻2`, com base ausente, dá 400. Painel **12/12**, com o repasse de `doadores`.
+
+    ### e. Falta
+    - S5: nomes de habilidade (depende do S8). Copiar a **ação-base** (trilhas do `.smd`/`.stck`) quando o destino não a
+      tem.
