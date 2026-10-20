@@ -331,6 +331,38 @@ impl Ski {
 mod testes {
     use super::*;
 
+    /// B289: os valores mais comuns no cliente do que o glTF não tem — o material além da cor difusa (ambiente,
+    /// emissiva, especular, brilho) e o `fMinWeight` — para o importador usar quando o arquivo não os traz.
+    #[test]
+    #[ignore = "medição: cargo test -p pw-data-loader --lib medir_padroes -- --ignored --nocapture"]
+    fn medir_padroes() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        let mut pilha = vec![raiz.to_path_buf()];
+        let mut mats = std::collections::HashMap::<String, usize>::new();
+        let mut pesos = std::collections::HashMap::<u32, usize>::new();
+        let (mut n_mat, mut n) = (0usize, 0usize);
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("ski")) { continue; }
+                let Ok(s) = Ski::ler(&std::fs::read(&p).unwrap()) else { continue };
+                n += 1;
+                *pesos.entry(s.peso_minimo.to_bits()).or_default() += 1;
+                for m in &s.materiais {
+                    n_mat += 1;
+                    let difusa_igual_ambiente = m.ambiente == m.difusa;
+                    *mats.entry(format!("amb=dif:{difusa_igual_ambiente} amb={:?} emi={:?} esp={:?} brilho={} 2l={}", if difusa_igual_ambiente { [0.0; 4] } else { m.ambiente }, m.emissiva, m.especular, m.brilho, m.dois_lados)).or_default() += 1;
+                }
+            }
+        }
+        let mut v: Vec<_> = mats.into_iter().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut p: Vec<_> = pesos.into_iter().map(|(k, c)| (f32::from_bits(k), c)).collect();
+        p.sort_by(|a, b| b.1.cmp(&a.1));
+        eprintln!("ski {n}, materiais {n_mat}; mais comuns: {:#?}; fMinWeight: {:?}", &v[..6.min(v.len())], &p[..5.min(p.len())]);
+    }
+
     /// B286: todo `.ski` que o leitor aceita, reescrito, sai byte a byte igual ao do cliente.
     #[test]
     fn escrever_reproduz_o_cliente() {

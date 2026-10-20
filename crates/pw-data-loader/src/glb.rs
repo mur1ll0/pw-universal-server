@@ -275,6 +275,10 @@ fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acao: Option<&
             let c = base.map_or([1.0; 4], |x| x.difusa);
             let mut pbr = json!({ "baseColorFactor": [c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0), 1.0], "metallicFactor": 0.0, "roughnessFactor": 0.9 });
             let mut mat_json = json!({ "name": base.map_or(String::new(), |x| x.nome.clone()), "doubleSided": base.is_some_and(|x| x.dois_lados) });
+            // B289: o material do Angelica inteiro (o glTF só tem a cor), para a importação devolver os mesmos valores.
+            if let Some(x) = base {
+                mat_json["extras"] = json!({ "angelica": { "ambiente": x.ambiente, "difusa": x.difusa, "emissiva": x.emissiva, "especular": x.especular, "brilho": x.brilho } });
+            }
             if let Some(im) = img {
                 pbr["baseColorTexture"] = json!({ "index": im });
                 // Com textura, a cor vem dela (o difuso do material do Angelica costuma ser branco ou cinza).

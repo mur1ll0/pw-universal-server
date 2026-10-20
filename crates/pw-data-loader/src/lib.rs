@@ -42,6 +42,7 @@ pub mod aipolicy_editavel;
 pub mod bon;
 pub mod ecm;
 pub mod glb;
+pub mod importar;
 pub mod imagem;
 pub mod ski;
 pub mod smd;
