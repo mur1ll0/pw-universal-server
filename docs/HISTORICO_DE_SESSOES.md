@@ -15426,3 +15426,29 @@ comparação lado a lado.
     ### e. Falta (S6)
     - Rota `POST estudio/modelos/importar` (GLB → `.ski` no rascunho, com o relatório) e o envio pelo painel.
     - Malha rígida (sem pele); PNG → DDS; esqueleto e ações vindos do glTF; extensão do Blender.
+
+290. **Sessão 2026-10-20: Estúdio S6 — importar glTF pelo painel.**
+
+    ### a. Pedido
+    Commitar e seguir (B289 já commitado: `b2bd1ff`, `c7ac815`).
+
+    ### b. O que foi feito
+    - `pw-recursos`: `Estudio::importar_pele` e a rota `POST estudio/modelos/importar?rascunho=&smd=&destino=`.
+      O GLB vem no corpo, o esqueleto vem do `.smd`, e o `.ski` de destino é gravado no rascunho com o relatório.
+      Por enquanto só substitui um `.ski` existente: a gravação de item do cliente exige o arquivo publicado.
+    - Painel:
+      - "Substituir por GLB…" em cada pele da ficha do `.smd`;
+      - repasse binário;
+      - limite de 64 MB só nessa rota (`seguranca.eh_importacao_de_modelo`);
+      - teste de que o corpo chega inteiro e com os parâmetros.
+
+    ### c. Provas
+    - `pw-recursos` com o banco **22/22**: o GLB do `.smd` sintético volta como `caixa.ski`; sem rascunho e com corpo
+      que não é GLB dão 400.
+    - Painel **12/12**.
+    - Pelo `pw-recursos` real, num rascunho de teste depois descartado: o GLB de 10 `.smd` de NPC por versão, importado
+      de volta como a 1ª pele, deu **10 de 10** no 1.2.6 e no 1.5.5, sem relatório, em até 1,4 s.
+
+    ### d. Falta (S6)
+    - Criar pele nova (arquivo que não existe no cliente) e ligá-la ao `.smd`.
+    - Malha rígida; PNG → DDS; esqueleto e ações vindos do glTF; extensão do Blender.

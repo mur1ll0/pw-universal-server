@@ -366,7 +366,7 @@ GS (canal administrativo) — só o que é do mundo vivo: altura/chão no mapa, 
 | S3 | NPCs, Serviços (30 tipos) e Conversa (`TALK_PROC`); Receitas |
 | S4 | Mapas: minimapa interativo, `npcgen` (NPCs, monstros, recursos), `region`/`precinct`, teleportes, `task_npc` |
 | S5 | 3D: visualizador, ações e diagnóstico; Mascotes, Voo, Minas (B272: `.ski` → GLB, visualizador; B273: texturas; B274: esqueleto e modelo `.smd`; B276: trilhas, ações e animação; B277: `.ecm` e diagnóstico; B278: modelo sem pele = esqueleto; B279: da ficha ao modelo; B280: corrigir ação faltante; B281: diagnóstico de mascote; B282: modelo a partir do `.ecm`; B283: diagnóstico de voo; B284: onde nasce (Minas, monstros, NPCs); B285: copiar ação de outro modelo) — **concluído**, exceto os nomes de ação de habilidade, que dependem do S8 |
-| S6 | glTF e extensão do Blender — **em andamento** (B286: escritor do `.ski`, 24.165 de 24.165 reescritos iguais; B287: `.bon` 9.849 de 9.849 e `.stck` 73.818 de 73.818; B288: `.smd` inteiro, 5.163 de 5.163; B289: importar glTF → `.ski`, ida e volta exata em 824 modelos) |
+| S6 | glTF e extensão do Blender — **em andamento** (B286: escritor do `.ski`, 24.165 de 24.165 reescritos iguais; B287: `.bon` 9.849 de 9.849 e `.stck` 73.818 de 73.818; B288: `.smd` inteiro, 5.163 de 5.163; B289: importar glTF → `.ski`, ida e volta exata em 824 modelos; B290: importar pelo painel, "Substituir por GLB…") |
 | S7 | Missões (§4.4); Loja Gold (§4.6); Comportamento (`aipolicy`); Textos — **concluído (B254-B271)** |
 | S8 | Habilidades: números e textos; depois `elementskill.dll` + efeitos no GS |
 

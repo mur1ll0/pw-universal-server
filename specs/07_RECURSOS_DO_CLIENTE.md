@@ -561,6 +561,19 @@ com 400 se alguma ação-base da ação copiada não existe no `.smd` do destino
 No painel, cada falta do diagnóstico ganha "Copiar de outro modelo…". Os doadores com base faltando aparecem
 desabilitados. Teste: `doador.ecm` sintético do mesmo `.smd`; `休闲` copia, e `普攻2`, com base ausente, dá 400.
 
+**Importar glTF como pele (B290, S6):** `POST estudio/modelos/importar?rascunho=&smd=&destino=`, com o GLB no corpo
+(`Estudio::importar_pele`).
+- O esqueleto é o `.bon` citado pelo `.smd`, lido com o rascunho.
+- A pele vem de `importar::ski_do_glb` (spec 03 §3.10d) e é gravada no `.ski` de destino do rascunho, como item
+  `cliente`. Por enquanto só substitui um `.ski` que já existe no cliente publicado.
+- A resposta traz `resultado: {malhas, vertices, ossos, texturas, esqueleto, relatorio}`.
+- Sem rascunho, com corpo que não é GLB, ou com osso que não existe no esqueleto, a resposta é 400.
+
+No painel, cada pele da ficha do `.smd` ganha "Substituir por GLB…", e o relatório aparece no aviso. Essa rota aceita
+corpo de até 64 MB (`seguranca.eh_importacao_de_modelo`); nas outras o limite continua 8 KiB. Medido pelo
+`pw-recursos`: o GLB de 10 `.smd` de NPC por versão, importado de volta como a 1ª pele, deu 10 de 10 nas duas versões,
+sem nada a relatar, em até 1,4 s.
+
 Os arquivos são lidos com `Governanca::conteudos` (lote: o manifesto é lido e indexado uma vez; `conteudo` relê o
 manifesto inteiro a cada chamada, o que levava a ficha do 1.5.5 a 50 s — agora 4,8 s, e 0,8 s no 1.2.6). No painel, o
 seletor de perfil ganha "como modelo de voo — espada/asa/rodas". A ficha de `FLYSWORD_ESSENCE`/`WINGMANWING_ESSENCE`
