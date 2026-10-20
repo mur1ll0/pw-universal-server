@@ -293,7 +293,7 @@ fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acao: Option<&
             pares.push(((mat, tex), materiais.len() - 1));
             Some(materiais.len() - 1)
         };
-        let mut primitiva = |m: &mut Montagem, nome: &str, pos: Vec<[f32; 3]>, nor: Vec<[f32; 3]>, uv: Vec<[f32; 2]>, idx: &[u16], material: i32, tex: i32, pesos: Option<(Vec<[u16; 4]>, Vec<[f32; 4]>)>| {
+        let mut primitiva = |m: &mut Montagem, nome: &str, pos: Vec<[f32; 3]>, nor: Vec<[f32; 3]>, uv: Vec<[f32; 2]>, idx: &[u16], material: i32, tex: i32, pesos: Option<(Vec<[u16; 4]>, Vec<[f32; 4]>)>, extras: Option<Value>| {
             let p = m.floats(&pos);
             let n = m.floats(&nor);
             let t = m.floats2(&uv);
@@ -313,7 +313,11 @@ fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acao: Option<&
             if let Some(k) = material_de(&mut materiais, material, tex) {
                 prim["material"] = json!(k);
             }
-            meshes.push(json!({ "name": nome, "primitives": [prim] }));
+            let mut malha = json!({ "name": nome, "primitives": [prim] });
+            if let Some(x) = extras {
+                malha["extras"] = x;
+            }
+            meshes.push(malha);
             let mut no = json!({ "mesh": meshes.len() - 1, "name": nome });
             if tem_pesos {
                 no["skin"] = json!(0);
@@ -340,14 +344,19 @@ fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acao: Option<&
                 }
                 Some((j, w))
             });
-            primitiva(&mut m, &x.nome, pos, nor, uv, &x.indices, x.material, x.textura, pesos);
+            primitiva(&mut m, &x.nome, pos, nor, uv, &x.indices, x.material, x.textura, pesos, None);
         }
         for x in &s.malhas_rigidas {
             let pos = x.vertices.iter().map(|v| espelhar(v.posicao)).collect();
             let nor = x.vertices.iter().map(|v| espelhar(v.normal)).collect();
             let uv = x.vertices.iter().map(|v| v.uv).collect();
-            let pesos = (x.osso >= 0).then(|| junta(x.osso as u8)).flatten().map(|j| (vec![[j, 0, 0, 0]; x.vertices.len()], vec![[1.0, 0.0, 0.0, 0.0]; x.vertices.len()]));
-            primitiva(&mut m, &x.nome, pos, nor, uv, &x.indices, x.material, x.textura, pesos);
+            // B294: o osso da malha rígida é o índice no esqueleto — `A3DRigidMesh` usa `GetBlendMatrix(m_iBoneIdx)` direto
+            // (`A3DRigidMesh.cpp:367`), sem o mapa da pele (`MapBoneIndex`, `A3DSkinMesh.cpp:856`). Antes ia pelo mapa
+            // da pele: nos 3.543 `.ski` v9 do cliente com malha rígida a lista de ossos da pele é vazia, e ela ficava
+            // presa à raiz. A junta do osso `i` é a `i` (`joints` = os ossos na ordem do esqueleto).
+            let pesos = (esqueleto.is_some() && x.osso >= 0 && (x.osso as usize) < n_ossos)
+                .then(|| (vec![[x.osso as u16, 0, 0, 0]; x.vertices.len()], vec![[1.0, 0.0, 0.0, 0.0]; x.vertices.len()]));
+            primitiva(&mut m, &x.nome, pos, nor, uv, &x.indices, x.material, x.textura, pesos, Some(json!({ "angelica": { "rigida": true, "osso": x.osso } })));
         }
     }
     // Animação (B276): por osso, a trilha da sua primeira junta (`A3DSkinModelAct.cpp:612`), no intervalo da ação.

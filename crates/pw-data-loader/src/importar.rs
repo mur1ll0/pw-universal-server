@@ -20,7 +20,7 @@
 //! é inventado.
 
 use crate::bon::Bon;
-use crate::ski::{Material, MalhaDePele, Ski, VerticeComPeso};
+use crate::ski::{MalhaDePele, MalhaRigida, Material, Ski, Vertice, VerticeComPeso};
 use serde_json::Value;
 
 pub struct Importacao {
@@ -112,6 +112,69 @@ impl Glb<'_> {
     }
 }
 
+/// A matriz local de um nó glTF (coluna a coluna): `matrix`, ou `T × R × S` (`translation`, `rotation` x,y,z,w,
+/// `scale`).
+fn matriz_local(no: &Value) -> [f32; 16] {
+    if let Some(m) = no["matrix"].as_array().filter(|m| m.len() == 16) {
+        return std::array::from_fn(|i| m[i].as_f64().unwrap_or(0.0) as f32);
+    }
+    let v = |k: &str, n: usize, p: f32| -> Vec<f32> { no[k].as_array().filter(|a| a.len() == n).map_or(vec![p; n], |a| a.iter().map(|x| x.as_f64().unwrap_or(p as f64) as f32).collect()) };
+    let t = v("translation", 3, 0.0);
+    let r = no["rotation"].as_array().filter(|a| a.len() == 4).map_or(vec![0.0, 0.0, 0.0, 1.0], |a| a.iter().map(|x| x.as_f64().unwrap_or(0.0) as f32).collect());
+    let s = v("scale", 3, 1.0);
+    let (x, y, z, w) = (r[0], r[1], r[2], r[3]);
+    let rot = [
+        1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (x * z - y * w),
+        2.0 * (x * y - z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + x * w),
+        2.0 * (x * z + y * w), 2.0 * (y * z - x * w), 1.0 - 2.0 * (x * x + y * y),
+    ];
+    let mut m = [0f32; 16];
+    for c in 0..3 {
+        for l in 0..3 {
+            m[c * 4 + l] = rot[c * 3 + l] * s[c];
+        }
+    }
+    m[12] = t[0];
+    m[13] = t[1];
+    m[14] = t[2];
+    m[15] = 1.0;
+    m
+}
+
+/// `a × b` com matrizes coluna a coluna (glTF).
+fn multiplicar_cc(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+    let mut r = [0f32; 16];
+    for c in 0..4 {
+        for l in 0..4 {
+            r[c * 4 + l] = (0..4).map(|k| a[k * 4 + l] * b[c * 4 + k]).sum();
+        }
+    }
+    r
+}
+
+/// A matriz do nó `i` no mundo: a das mães × a local.
+fn mundo(i: usize, nos: &[Value], pais: &[Option<usize>]) -> [f32; 16] {
+    let mut m = matriz_local(&nos[i]);
+    let mut p = pais[i];
+    let mut passos = 0;
+    while let (Some(k), true) = (p, passos < 256) {
+        m = multiplicar_cc(&matriz_local(&nos[k]), &m);
+        p = pais[k];
+        passos += 1;
+    }
+    m
+}
+
+/// A matriz (coluna a coluna) aplicada a um ponto (`w` = 1) ou direção (`w` = 0).
+fn aplicar(m: &[f32; 16], v: [f32; 3], w: f32) -> [f32; 3] {
+    std::array::from_fn(|l| m[l] * v[0] + m[4 + l] * v[1] + m[8 + l] * v[2] + m[12 + l] * w)
+}
+
+fn normalizar(v: [f32; 3]) -> [f32; 3] {
+    let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if n > 0.0 { v.map(|x| x / n) } else { v }
+}
+
 /// A pele (`.ski` v9) do glTF `glb`, com os ossos casados pelo nome no `esqueleto`.
 pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
     let g = abrir(glb)?;
@@ -125,24 +188,57 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
     let mut pares_de_material: Vec<(i64, usize, i32)> = Vec::new();
     let mut texturas_novas: Vec<TexturaNova> = Vec::new();
     let mut malhas = Vec::new();
+    let mut rigidas: Vec<MalhaRigida> = Vec::new();
+    // A mãe de cada nó (pelos `children`), para a matriz no mundo e para achar o osso acima de uma malha sem pele.
+    let mut pais: Vec<Option<usize>> = vec![None; nos.len()];
+    for (i, n) in nos.iter().enumerate() {
+        for c in n["children"].as_array().into_iter().flatten() {
+            if let Some(c) = c.as_u64().filter(|c| (*c as usize) < nos.len()) {
+                pais[c as usize] = Some(i);
+            }
+        }
+    }
     for no in &nos {
         let Some(mi) = no["mesh"].as_u64() else { continue };
         let malha = &j["meshes"][mi as usize];
         let nome_malha = malha["name"].as_str().or(no["name"].as_str()).unwrap_or("malha").to_string();
-        let Some(si) = no["skin"].as_u64() else {
-            relatorio.push(format!("{nome_malha}: sem pele (skin) — deixada de fora (malha rígida ainda não é importada)"));
-            continue;
+        // B294: malha rígida — a marcada pelo exportador (`extras.angelica.rigida`, com skin de peso 1) e a sem pele
+        // filha (direta ou não) de um nó de osso, como o Blender exporta um objeto preso a um osso.
+        let marcada_rigida = malha["extras"]["angelica"]["rigida"].as_bool().unwrap_or(false);
+        let hierarquia: Option<(i32, [f32; 16])> = if no["skin"].is_u64() {
+            None
+        } else {
+            let i_no = nos.iter().position(|x| std::ptr::eq(x, no)).unwrap();
+            let mut p = pais[i_no];
+            let mut achado = None;
+            while let Some(k) = p {
+                if let Some(o) = esqueleto.ossos.iter().position(|o| o.nome == nome_do_no(k as u64)) {
+                    achado = Some(o as i32);
+                    break;
+                }
+                p = pais[k];
+            }
+            match achado {
+                Some(o) => Some((o, mundo(i_no, &nos, &pais))),
+                None => {
+                    relatorio.push(format!("{nome_malha}: sem pele e sem osso acima dela — deixada de fora (prenda-a a um osso ou dê pesos)"));
+                    continue;
+                }
+            }
         };
         // Juntas da pele → índice no .ski (nomes, na ordem de 1º uso) ou a vaga do esqueleto.
-        let juntas: Vec<Option<String>> = j["skins"][si as usize]["joints"]
-            .as_array()
-            .ok_or("skin sem joints")?
-            .iter()
-            .map(|x| {
-                let n = nome_do_no(x.as_u64().unwrap_or(u64::MAX));
-                if n == "esqueleto" { None } else { Some(n) }
-            })
-            .collect();
+        let juntas: Vec<Option<String>> = match no["skin"].as_u64() {
+            None => Vec::new(),
+            Some(si) => j["skins"][si as usize]["joints"]
+                .as_array()
+                .ok_or("skin sem joints")?
+                .iter()
+                .map(|x| {
+                    let n = nome_do_no(x.as_u64().unwrap_or(u64::MAX));
+                    if n == "esqueleto" { None } else { Some(n) }
+                })
+                .collect(),
+        };
         for (pi, prim) in malha["primitives"].as_array().cloned().unwrap_or_default().iter().enumerate() {
             let nome = if pi == 0 { nome_malha.clone() } else { format!("{nome_malha}_{pi}") };
             if prim["mode"].as_u64().unwrap_or(4) != 4 {
@@ -154,10 +250,11 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
             let pos = pega("POSITION")?.ok_or(format!("{nome}: sem POSITION"))?;
             let nor = pega("NORMAL")?;
             let uv = pega("TEXCOORD_0")?;
-            let (Some(js), Some(ws)) = (pega("JOINTS_0")?, pega("WEIGHTS_0")?) else {
+            let (js, ws) = (pega("JOINTS_0")?.unwrap_or_default(), pega("WEIGHTS_0")?.unwrap_or_default());
+            if hierarquia.is_none() && (js.len() != pos.len() || ws.len() != pos.len()) {
                 relatorio.push(format!("{nome}: sem JOINTS_0/WEIGHTS_0 — deixada de fora"));
                 continue;
-            };
+            }
             if at.get("JOINTS_1").is_some() {
                 relatorio.push(format!("{nome}: mais de 4 ossos por vértice (JOINTS_1) — o formato tem 4; os extras foram ignorados e os pesos renormalizados"));
             }
@@ -170,8 +267,40 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
             if pos.len() > 65536 {
                 return Err(format!("{nome}: {} vértices — o índice do .ski é u16 (até 65.536)", pos.len()));
             }
+            // B294: malha rígida — o osso no esqueleto (o índice que `A3DRigidMesh` usa direto) e os vértices no espaço do
+            // modelo (a matriz da rígida é `BoneInitTM × AbsoluteTM`, como a da pele, `A3DSkinModel.cpp:1341`).
+            let rigida: Option<(i32, Vec<Vertice>)> = if let Some((osso, w)) = hierarquia {
+                let vr = (0..pos.len())
+                    .map(|k| {
+                        let p = &pos[k];
+                        let n = nor.as_ref().map_or(vec![0.0; 3], |x| x[k].clone());
+                        let t = uv.as_ref().map_or(vec![0.0; 2], |x| x[k].clone());
+                        let pm = aplicar(&w, [p[0], p[1], p[2]], 1.0);
+                        let nm = normalizar(aplicar(&w, [n[0], n[1], n[2]], 0.0));
+                        Vertice { posicao: [pm[0], pm[1], -pm[2]], normal: [nm[0], nm[1], -nm[2]], uv: [t[0], t[1]] }
+                    })
+                    .collect();
+                Some((osso, vr))
+            } else if marcada_rigida {
+                let junta = js.first().and_then(|x| x.first()).copied().unwrap_or(0.0) as usize;
+                let osso = match juntas.get(junta) {
+                    Some(Some(n)) => esqueleto.ossos.iter().position(|o| &o.nome == n).ok_or(format!("{nome}: o osso \"{n}\" não existe no esqueleto"))? as i32,
+                    _ => malha["extras"]["angelica"]["osso"].as_i64().unwrap_or(-1) as i32,
+                };
+                let vr = (0..pos.len())
+                    .map(|k| {
+                        let p = &pos[k];
+                        let n = nor.as_ref().map_or(vec![0.0; 3], |x| x[k].clone());
+                        let t = uv.as_ref().map_or(vec![0.0; 2], |x| x[k].clone());
+                        Vertice { posicao: [p[0], p[1], -p[2]], normal: [n[0], n[1], -n[2]], uv: [t[0], t[1]] }
+                    })
+                    .collect();
+                Some((osso, vr))
+            } else {
+                None
+            };
             let mut vertices = Vec::with_capacity(pos.len());
-            for k in 0..pos.len() {
+            for k in 0..if rigida.is_some() { 0 } else { pos.len() } {
                 let mut ossos_v = [0u8; 4];
                 let mut w = [0f32; 4];
                 for c in 0..4 {
@@ -303,11 +432,14 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
                     (materiais.len() as i32 - 1, textura)
                 }
             };
-            malhas.push(MalhaDePele { nome, textura, material, vertices, indices });
+            match rigida {
+                Some((osso, vr)) => rigidas.push(MalhaRigida { nome, osso, textura, material, vertices: vr, indices }),
+                None => malhas.push(MalhaDePele { nome, textura, material, vertices, indices }),
+            }
         }
     }
-    if malhas.is_empty() {
-        return Err(format!("nenhuma malha com pele no glTF ({})", relatorio.join("; ")));
+    if malhas.is_empty() && rigidas.is_empty() {
+        return Err(format!("nenhuma malha importável no glTF ({})", relatorio.join("; ")));
     }
     // A vaga do esqueleto é o índice logo depois dos nomes.
     let vaga = ossos.len() as u8;
@@ -324,7 +456,7 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
         texturas,
         materiais,
         malhas_de_pele: malhas,
-        malhas_rigidas: Vec::new(),
+        malhas_rigidas: rigidas,
         marca: true,
         ossos_no_cabecalho: ossos.len() as i32,
         reservado: vec![0; 52],
@@ -346,6 +478,92 @@ mod testes {
         (0..4).filter(|&k| w[k] / soma > 1e-6).map(|k| (nome(ossos[k]), w[k] / soma)).collect()
     }
 
+    /// B294: malha sem pele filha de um osso (o que o Blender exporta para um objeto preso a um osso) vira rígida desse
+    /// osso, com os vértices no espaço do modelo: a matriz do nó no mundo (osso transladado (1, 2, 3), malha (0, 0, 1)
+    /// dentro dele) e depois o `z` negado; sem osso acima, fica de fora com relatório.
+    #[test]
+    fn rigida_por_hierarquia() {
+        let pos: [f32; 9] = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        let bin: Vec<u8> = pos.iter().flat_map(|x| x.to_le_bytes()).collect();
+        let montar = |pai_e_osso: bool| -> Vec<u8> {
+            let nos = if pai_e_osso {
+                serde_json::json!([{ "name": "raiz", "translation": [1.0, 2.0, 3.0], "children": [1] }, { "name": "enfeite", "mesh": 0, "translation": [0.0, 0.0, 1.0] }])
+            } else {
+                serde_json::json!([{ "name": "enfeite", "mesh": 0 }])
+            };
+            let j = serde_json::json!({
+                "asset": { "version": "2.0" }, "nodes": nos,
+                "meshes": [{ "name": "enfeite", "primitives": [{ "attributes": { "POSITION": 0 } }] }],
+                "accessors": [{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3" }],
+                "bufferViews": [{ "buffer": 0, "byteLength": 36 }], "buffers": [{ "byteLength": 36 }],
+            });
+            let mut t = serde_json::to_vec(&j).unwrap();
+            while t.len() % 4 != 0 { t.push(b' '); }
+            let total = 12 + 8 + t.len() + 8 + bin.len();
+            let mut g = b"glTF".to_vec();
+            g.extend_from_slice(&2u32.to_le_bytes());
+            g.extend_from_slice(&(total as u32).to_le_bytes());
+            g.extend_from_slice(&(t.len() as u32).to_le_bytes());
+            g.extend_from_slice(b"JSON");
+            g.extend_from_slice(&t);
+            g.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+            g.extend_from_slice(b"BIN\0");
+            g.extend_from_slice(&bin);
+            g
+        };
+        let id: crate::bon::Matriz = [1.0, 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.];
+        let osso = crate::bon::Osso { nome: "raiz".into(), flags: 0, mae: -1, primeira_junta: 0, relativa: id, inicial: id, filhas: vec![], enchimento: [0; 3] };
+        let bon = Bon { versao: 6, quadro_inicial: 0, quadro_final: 0, fps: 30, ossos: vec![osso], juntas: vec![], trilhas: vec![], ganchos: vec![], marca: true, reservado: vec![] };
+        let i = ski_do_glb(&montar(true), &bon).unwrap();
+        assert_eq!((i.ski.malhas_de_pele.len(), i.ski.malhas_rigidas.len()), (0, 1));
+        let r = &i.ski.malhas_rigidas[0];
+        assert_eq!(r.osso, 0);
+        assert_eq!(r.vertices.iter().map(|v| v.posicao).collect::<Vec<_>>(), vec![[1.0, 2.0, -4.0], [2.0, 2.0, -4.0], [1.0, 3.0, -4.0]]);
+        assert_eq!(r.indices, vec![0, 2, 1], "ordem do triângulo invertida");
+        let w = i.ski.escrever();
+        assert!(Ski::ler(&w).is_ok_and(|x| x.malhas_rigidas.len() == 1));
+        let sem_osso = ski_do_glb(&montar(false), &bon).err().unwrap();
+        assert!(sem_osso.contains("sem pele e sem osso acima dela"), "{sem_osso}");
+    }
+
+    /// B294: o osso da malha rígida é o índice no esqueleto — `A3DRigidMesh` desenha com `GetBlendMatrix(m_iBoneIdx)`
+    /// direto (`A3DRigidMesh.cpp:367`), sem o `MapBoneIndex` que a pele usa (`A3DSkinMesh.cpp:856`). Medida: em quantas
+    /// malhas rígidas de `.ski` v9 o nome pelo esqueleto difere do nome pela lista da pele (o que o exportador usava).
+    #[test]
+    #[ignore = "medição: cargo test -p pw-data-loader --lib medir_osso_da_rigida -- --ignored --nocapture"]
+    fn medir_osso_da_rigida() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        let mut pilha = vec![raiz.to_path_buf()];
+        let (mut rigidas, mut v9, mut difere, mut fora) = (0usize, 0usize, 0usize, 0usize);
+        let mut ex = Vec::new();
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("smd")) { continue; }
+                let Ok(c) = crate::smd::cabeca(&std::fs::read(&p).unwrap()) else { continue };
+                let pasta = p.parent().unwrap();
+                let no_disco = |t: &str| encoding_rs::WINDOWS_1252.decode(&encoding_rs::GBK.encode(t).0).0.into_owned();
+                let Some(bon) = std::fs::read(pasta.join(no_disco(&c.esqueleto))).ok().and_then(|b| Bon::ler(&b).ok()) else { continue };
+                for s in c.peles.iter().filter_map(|s| std::fs::read(pasta.join(no_disco(s))).ok().and_then(|b| Ski::ler(&b).ok())) {
+                    for m in &s.malhas_rigidas {
+                        rigidas += 1;
+                        if s.versao < 9 { continue; }
+                        v9 += 1;
+                        let pelo_esqueleto = bon.ossos.get(m.osso as usize).map(|o| o.nome.clone());
+                        let pela_pele = s.ossos.get(m.osso as usize).cloned();
+                        if pelo_esqueleto.is_none() { fora += 1; }
+                        if pelo_esqueleto != pela_pele {
+                            difere += 1;
+                            if ex.len() < 3 { ex.push(format!("{} osso {}: esqueleto {pelo_esqueleto:?} × pele {pela_pele:?}", m.nome, m.osso)); }
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("rígidas {rigidas}; em .ski v9 {v9}; nome diferente {difere}; índice fora do esqueleto {fora}; ex {ex:?}");
+    }
+
     /// B289: ida e volta em modelos reais — o `.smd` exportado pelo nosso GLB (`glb::do_modelo`) e importado de volta
     /// dá as mesmas malhas: posição, normal, UV e índices exatos, e por vértice as mesmas influências (osso pelo nome,
     /// peso com tolerância de 1e-5). O `.ski` importado se reescreve e relê.
@@ -357,7 +575,7 @@ mod testes {
             return;
         }
         let mut pilha = vec![raiz.to_path_buf()];
-        let (mut n_smd, mut testados, mut sem_pele_ligada, mut malhas, mut vertices) = (0usize, 0usize, 0usize, 0usize, 0usize);
+        let (mut n_smd, mut testados, mut sem_pele_ligada, mut malhas, mut vertices, mut rigidas) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
         let mut erros: Vec<String> = Vec::new();
         while let Some(d) = pilha.pop() {
             for e in std::fs::read_dir(&d).unwrap().flatten() {
@@ -382,11 +600,12 @@ mod testes {
                     Ok(i) => i,
                     Err(x) => { sem_pele_ligada += 1; if !x.starts_with("nenhuma malha") && erros.len() < 5 { erros.push(format!("{}: {x}", p.display())); } continue }
                 };
-                if imp.ski.malhas_de_pele.len() != esperadas { sem_pele_ligada += 1; continue; }
+                if imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len() != esperadas { sem_pele_ligada += 1; continue; }
                 testados += 1;
                 let novo = &imp.ski;
                 let nome_novo = |i: u8| novo.ossos.get(i as usize).cloned().unwrap_or_else(|| "esqueleto".into());
                 let mut k = 0;
+                let mut kr = 0;
                 for s in &skis {
                     let nome_orig = |i: u8| -> String {
                         if s.versao >= 9 { s.ossos.get(i as usize).cloned().unwrap_or_else(|| "esqueleto".into()) }
@@ -418,16 +637,27 @@ mod testes {
                         let infl = x.vertices.iter().map(|v| influencias(v.pesos, v.ossos, &nome_orig)).collect();
                         comparar(&x.nome, x.vertices.iter().map(|v| v.posicao).collect(), x.vertices.iter().map(|v| v.normal).collect(), x.vertices.iter().map(|v| v.uv).collect(), &x.indices, infl);
                     }
+                    // B294: a rígida volta rígida, presa ao mesmo osso do esqueleto (o índice que o motor usa).
                     for x in &s.malhas_rigidas {
-                        let infl = vec![vec![(nome_orig(x.osso as u8), 1.0)]; x.vertices.len()];
-                        comparar(&x.nome, x.vertices.iter().map(|v| v.posicao).collect(), x.vertices.iter().map(|v| v.normal).collect(), x.vertices.iter().map(|v| v.uv).collect(), &x.indices, infl);
+                        let m = &novo.malhas_rigidas[kr];
+                        kr += 1;
+                        rigidas += 1;
+                        vertices += x.vertices.len();
+                        let ok = m.osso == x.osso
+                            && m.vertices.len() == x.vertices.len()
+                            && m.vertices.iter().zip(&x.vertices).all(|(a, b)| a.posicao == b.posicao && a.normal == b.normal && a.uv == b.uv)
+                            && m.indices == x.indices;
+                        if !ok && erros.len() < 5 {
+                            erros.push(format!("{} / rígida {}: osso {} × {}", p.display(), x.nome, m.osso, x.osso));
+                        }
                     }
                 }
                 let w = novo.escrever();
                 assert!(Ski::ler(&w).is_ok_and(|r| r.escrever() == w), "{}: o .ski importado não relê", p.display());
             }
         }
-        eprintln!("importar: smd {n_smd} (amostra 1/5), testados {testados}, sem pele ligada {sem_pele_ligada}, malhas {malhas}, vértices {vertices}; erros {erros:?}");
+        eprintln!("importar: smd {n_smd} (amostra 1/5), testados {testados}, sem pele ligada {sem_pele_ligada}, malhas de pele {malhas}, rígidas {rigidas}, vértices {vertices}; erros {erros:?}");
+        assert!(rigidas > 100, "a amostra tem que ter malhas rígidas: {rigidas}");
         assert!(testados > 300, "{testados}");
         assert!(erros.is_empty(), "{erros:?}");
     }
