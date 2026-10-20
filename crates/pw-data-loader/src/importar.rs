@@ -238,10 +238,12 @@ pub fn acoes_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<(Vec<AcaoImportada>, 
         // (nó, caminho) → (tempos, valores, interpolação)
         let mut canais: std::collections::HashMap<(usize, String), (Vec<f32>, Vec<Vec<f32>>, String)> = std::collections::HashMap::new();
         let mut duracao = 0f32;
+        let mut ignorados: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         for c in anim["channels"].as_array().cloned().unwrap_or_default() {
             let (Some(no), Some(caminho)) = (c["target"]["node"].as_u64(), c["target"]["path"].as_str()) else { continue };
             if caminho == "scale" || caminho == "weights" {
-                relatorio.push(format!("{nome}: canal \"{caminho}\" ignorado (a trilha do Angelica só tem posição e rotação)"));
+                // Um aviso por animação e caminho (o Blender exporta escala em todo osso, mesmo constante).
+                *ignorados.entry(caminho.to_string()).or_insert(0usize) += 1;
                 continue;
             }
             let s = &anim["samplers"][c["sampler"].as_u64().unwrap_or(u64::MAX) as usize];
@@ -254,6 +256,9 @@ pub fn acoes_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<(Vec<AcaoImportada>, 
             }
             duracao = duracao.max(tempos.last().copied().unwrap_or(0.0));
             canais.insert((no as usize, caminho.to_string()), (tempos, valores, interp));
+        }
+        for (caminho, n) in &ignorados {
+            relatorio.push(format!("{nome}: {n} canal(is) \"{caminho}\" ignorado(s) (a trilha do Angelica só tem posição e rotação)"));
         }
         if canais.is_empty() {
             relatorio.push(format!("{nome}: animação sem canais de posição/rotação — deixada de fora"));
@@ -922,6 +927,66 @@ mod testes {
         eprintln!("ações: v5 {v5}, v6 {v6}, chaves comparadas {chaves} ({na_chave} na chave original); maior diferença relativa de posição {pior_p:.2e}, de quatérnio na chave {pior_q:.2e}, entre chaves {pior_entre:.2e}");
         assert!(v5 + v6 >= 20 && chaves > 1000, "{v5} {v6} {chaves}");
         assert!(pior_p < 1e-3 && pior_q < 1e-3, "{pior_p} {pior_q}");
+    }
+
+    /// B300: o que o Blender muda num modelo — para cada par (GLB do painel, o mesmo depois de importar e exportar pelo
+    /// Blender com a extensão `tools/blender/pw_estudio`) na pasta `PW_B300`: esqueleto (`inicial` de cada osso pelo nome,
+    /// ganchos), pele (vértices, triângulos, caixa) e a ação (chaves de cada osso). Medição: imprime as maiores
+    /// diferenças.
+    #[test]
+    #[ignore = "medição: PW_B300=<pasta> cargo test -p pw-data-loader --lib medir_blender -- --ignored --nocapture"]
+    fn medir_blender() {
+        let Ok(pasta) = std::env::var("PW_B300") else { eprintln!("sem PW_B300"); return };
+        let pasta = std::path::Path::new(&pasta);
+        let lista: serde_json::Value = serde_json::from_slice(&std::fs::read(pasta.join("lista.json")).unwrap()).unwrap();
+        for it in lista.as_array().unwrap() {
+            let arq = it["arquivo"].as_str().unwrap();
+            let (a, b) = (std::fs::read(pasta.join(arq)).unwrap(), std::fs::read(pasta.join(format!("blender_{arq}"))).unwrap());
+            let ((ea, _), (eb, _)) = (esqueleto_do_glb(&a).unwrap(), esqueleto_do_glb(&b).unwrap());
+            let mut d_ini = 0f32;
+            let mut maes_iguais = true;
+            for o in &ea.ossos {
+                let Some(p) = eb.ossos.iter().find(|x| x.nome == o.nome) else { maes_iguais = false; continue };
+                d_ini = d_ini.max(o.inicial.iter().zip(&p.inicial).map(|(x, y)| (x - y).abs()).fold(0f32, f32::max));
+                let nome_mae = |e: &Bon, m: i32| if m >= 0 { e.ossos[m as usize].nome.clone() } else { String::new() };
+                maes_iguais &= nome_mae(&ea, o.mae) == nome_mae(&eb, p.mae);
+            }
+            let mut d_gancho = 0f32;
+            for g in &ea.ganchos {
+                if let Some(h) = eb.ganchos.iter().find(|x| x.nome == g.nome) {
+                    d_gancho = d_gancho.max(g.matriz.iter().zip(&h.matriz).map(|(x, y)| (x - y).abs()).fold(0f32, f32::max));
+                }
+            }
+            let (pa, pb) = (ski_do_glb(&a, &ea).unwrap().ski, ski_do_glb(&b, &eb).unwrap().ski);
+            let resumo = |s: &Ski| -> Vec<(usize, usize, [f32; 6])> {
+                let mut r: Vec<(usize, usize, [f32; 6])> = s.malhas_de_pele.iter().map(|m| {
+                    let mut c = [f32::MAX, f32::MAX, f32::MAX, f32::MIN, f32::MIN, f32::MIN];
+                    for v in &m.vertices { for k in 0..3 { c[k] = c[k].min(v.posicao[k]); c[3 + k] = c[3 + k].max(v.posicao[k]); } }
+                    (m.vertices.len(), m.indices.len() / 3, c)
+                }).collect();
+                r.sort_by_key(|x| x.1);
+                r
+            };
+            let (ra, rb) = (resumo(&pa), resumo(&pb));
+            let d_caixa = ra.iter().zip(&rb).map(|(x, y)| x.2.iter().zip(&y.2).map(|(p, q)| (p - q).abs()).fold(0f32, f32::max)).fold(0f32, f32::max);
+            let (aa, ab) = (acoes_do_glb(&a, &ea).unwrap().0, acoes_do_glb(&b, &eb).unwrap().0);
+            let (mut d_pos, mut d_rot) = (0f32, 0f32);
+            if let (Some(x), Some(y)) = (aa.first(), ab.first()) {
+                for o in &ea.ossos {
+                    let Some(p) = eb.ossos.iter().find(|z| z.nome == o.nome) else { continue };
+                    let (Some(tx), Some(ty)) = (x.stck.trilhas.iter().find(|t| t.0 == o.primeira_junta), y.stck.trilhas.iter().find(|t| t.0 == p.primeira_junta)) else { continue };
+                    for (u, w) in tx.1.posicao.chaves.iter().zip(&ty.1.posicao.chaves) { d_pos = d_pos.max((0..3).map(|k| (u[k] - w[k]).abs()).fold(0f32, f32::max)); }
+                    for (u, w) in tx.1.rotacao.chaves.iter().zip(&ty.1.rotacao.chaves) {
+                        let s = if (0..4).map(|k| u[k] * w[k]).sum::<f32>() < 0.0 { -1.0 } else { 1.0 };
+                        d_rot = d_rot.max((0..4).map(|k| (u[k] - s * w[k]).abs()).fold(0f32, f32::max));
+                    }
+                }
+            }
+            eprintln!("{arq}: ossos {}→{} mães iguais {maes_iguais} Δinicial {d_ini:.1e} | ganchos {}→{} Δ {d_gancho:.1e} | malhas {:?} → {:?} Δcaixa {d_caixa:.1e} | quadros {:?}→{:?} Δpos {d_pos:.1e} Δrot {d_rot:.1e}",
+                ea.ossos.len(), eb.ossos.len(), ea.ganchos.len(), eb.ganchos.len(),
+                ra.iter().map(|x| (x.0, x.1)).collect::<Vec<_>>(), rb.iter().map(|x| (x.0, x.1)).collect::<Vec<_>>(),
+                aa.first().map(|x| x.quadro_final), ab.first().map(|x| x.quadro_final));
+        }
     }
 
     /// B297: ida e volta de esqueletos reais — `glb::do_modelo` (só o esqueleto) e `esqueleto_do_glb`: nomes, mães,

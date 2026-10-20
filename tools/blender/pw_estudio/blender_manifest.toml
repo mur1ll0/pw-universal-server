@@ -1,0 +1,11 @@
+schema_version = "1.0.0"
+
+id = "pw_estudio"
+version = "1.0.0"
+name = "PW Estúdio"
+tagline = "Verifica e exporta modelos para o Estúdio do pw-universal-server"
+maintainer = "pw-universal-server"
+type = "add-on"
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+tags = ["Import-Export"]
