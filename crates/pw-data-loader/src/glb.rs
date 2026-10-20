@@ -209,6 +209,10 @@ fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acao: Option<&
             };
             let filhas: Vec<usize> = b.ossos.iter().enumerate().filter(|(_, x)| x.mae == i as i32).map(|(k, _)| base + k).collect();
             let mut no = json!({ "name": o.nome, "matrix": matriz_gltf(&local) });
+            // B297: as flags do osso (1 = falso, 2 = espelhado, `A3DBone.h:71-72`), que o glTF não tem.
+            if o.flags != 0 {
+                no["extras"] = json!({ "angelica": { "flags": o.flags } });
+            }
             if !filhas.is_empty() {
                 no["children"] = json!(filhas);
             }
@@ -218,6 +222,18 @@ fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acao: Option<&
         let filhas_raiz: Vec<usize> = b.ossos.iter().enumerate().filter(|(_, x)| x.mae < 0 || x.mae as usize >= n_ossos).map(|(k, _)| base + k).collect();
         nos.push(json!({ "name": "esqueleto", "children": filhas_raiz }));
         raizes.push(raiz_esq);
+        // B297: os ganchos (`HH_*` pontos de pendurar, `CC_*` centros de encaixe — `A3DSkeleton.h:62-63`) como nós filhos
+        // do seu osso, com a matriz relativa a ele (`HookTM × NoScaleAbsTM` do osso; sem osso, relativa ao esqueleto —
+        // `A3DSkeletonHook::Update`, `A3DSkeleton.cpp:162-187`).
+        for g in &b.ganchos {
+            let mae = if g.osso >= 0 && (g.osso as usize) < n_ossos { base + g.osso as usize } else { raiz_esq };
+            nos.push(json!({ "name": g.nome, "matrix": matriz_gltf(&g.matriz), "extras": { "angelica": { "gancho": { "tipo": g.tipo } } } }));
+            let k = nos.len() - 1;
+            match nos[mae]["children"].as_array_mut() {
+                Some(c) => c.push(json!(k)),
+                None => nos[mae]["children"] = json!([k]),
+            }
+        }
         let mut ibm: Vec<u8> = Vec::new();
         for o in &b.ossos {
             ibm.extend(matriz_gltf(&o.inicial).iter().flat_map(|x| x.to_le_bytes()));

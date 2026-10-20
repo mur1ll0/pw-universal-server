@@ -272,6 +272,49 @@ pub fn multiplicar(a: &Matriz, b: &Matriz) -> Matriz {
 mod testes {
     use super::*;
 
+    /// B297: como os campos que o glTF não tem se relacionam nos esqueletos do cliente.
+    #[test]
+    #[ignore = "medição: cargo test -p pw-data-loader --lib medir_estrutura -- --ignored --nocapture"]
+    fn medir_estrutura() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        let mut pilha = vec![raiz.to_path_buf()];
+        let mut c = std::collections::BTreeMap::<String, usize>::new();
+        let mut conta = |k: String| *c.entry(k).or_default() += 1;
+        let mut exemplos = 0;
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("bon")) { continue; }
+                let Ok(b) = Bon::ler(&std::fs::read(&p).unwrap()) else { continue };
+                conta(format!("arquivos v{}", b.versao));
+                conta(format!("juntas == ossos: {}", b.juntas.len() == b.ossos.len()));
+                conta(format!("fps {} v{}", b.fps, b.versao));
+                conta(format!("reservado zerado: {}", b.reservado.iter().all(|x| *x == 0)));
+                conta(format!("quadros (início, fim) v6: {}", if b.versao == 6 { format!("{}..{}", b.quadro_inicial.min(1), b.quadro_final.min(1)) } else { "-".into() }));
+                for (i, o) in b.ossos.iter().enumerate() {
+                    conta(format!("osso: primeira_junta == índice: {}", o.primeira_junta == i as i32));
+                    conta(format!("osso: flags {}", o.flags));
+                    conta(format!("osso: filhas == quem tem mãe = ele: {}", o.filhas.iter().copied().collect::<std::collections::BTreeSet<_>>() == b.ossos.iter().enumerate().filter(|(_, x)| x.mae == i as i32).map(|(k, _)| k as i32).collect()));
+                }
+                for (j, ju) in b.juntas.iter().enumerate() {
+                    conta(format!("junta: tipo {}", ju.tipo));
+                    let dono = b.ossos.iter().position(|o| o.primeira_junta == j as i32);
+                    conta(format!("junta: osso_filho == osso que a tem como 1ª: {}", dono.is_some_and(|d| ju.osso_filho == d as i32)));
+                    conta(format!("junta: osso_mae == mãe desse osso: {}", dono.is_some_and(|d| ju.osso_mae == b.ossos[d].mae)));
+                    conta(format!("junta: irma {}", if ju.irma < 0 { "-1".to_string() } else { "≥0".to_string() }));
+                    conta(format!("junta: nome == nome do osso + \"_AnimJoint\": {}", dono.is_some_and(|d| ju.nome == format!("{}_AnimJoint", b.ossos[d].nome))));
+                    if dono.is_some_and(|d| ju.nome != format!("{}_AnimJoint", b.ossos[d].nome)) && exemplos < 4 { exemplos += 1; eprintln!("junta: ex nome {:?} osso {:?}", ju.nome, dono.map(|d| b.ossos[d].nome.clone())); }
+                }
+                for g in &b.ganchos {
+                    conta(format!("gancho: tipo {}", g.tipo));
+                    conta(format!("gancho: osso {}", if g.osso < 0 { "-1" } else { "≥0" }));
+                }
+            }
+        }
+        for (k, v) in &c { eprintln!("{v:>8}  {k}"); }
+    }
+
     /// B287: todo `.bon` que o leitor aceita (v5 com trilhas embutidas e v6), reescrito, sai byte a byte igual.
     #[test]
     fn escrever_reproduz_o_cliente() {

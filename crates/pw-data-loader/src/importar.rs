@@ -75,6 +75,7 @@ impl Glb<'_> {
             Some("VEC2") => 2,
             Some("VEC3") => 3,
             Some("VEC4") => 4,
+            Some("MAT4") => 16,
             outro => return Err(format!("tipo de acessor {outro:?}")),
         };
         let tipo = a["componentType"].as_u64().ok_or("acessor sem componentType")?;
@@ -401,6 +402,118 @@ pub fn anexar_acao_v5(bon: &mut Bon, smd: &mut crate::smd::Smd, acao: &AcaoImpor
         None => smd.acoes.push(entrada),
     }
     Ok((inicio, fim))
+}
+
+/// Inversa de uma matriz glTF (coluna a coluna) — a mesma conta da D3D, pela transposta.
+fn inversa_cc(m: &[f32; 16]) -> Option<[f32; 16]> {
+    let t: [f32; 16] = std::array::from_fn(|i| m[(i % 4) * 4 + i / 4]);
+    let i = crate::glb::inversa(&t)?;
+    Some(std::array::from_fn(|k| i[(k % 4) * 4 + k / 4]))
+}
+
+/// B297 (S6): o esqueleto (`.bon` v6) do glTF — as juntas da 1ª `skin` (o nó "esqueleto" do exportador fica de fora:
+/// é a vaga do `BindSkeleton`). Os campos que o glTF não tem seguem o que os 9.849 `.bon` do cliente 1.5.5 têm (medido
+/// em `bon::testes::medir_estrutura`, 268.293 ossos): uma junta por osso, a 1ª junta do osso `i` é a `i`; a junta se
+/// chama `<osso>_AnimJoint`, tipo 15, `osso_filho` = o osso, `osso_mae` = a mãe dele, `irma` −1 (100%); as filhas são os
+/// ossos que o têm como mãe; flags 0 (97,5%; 1 = osso falso, 2 = espelhado, `A3DBone.h:71-72`); reservado zerado (100%);
+/// quadros 0..0 (todo v6); FPS 15 (76% dos v6, o resto 30).
+/// - `inicial` (`matBoneInit`) = a matriz inversa de ligação da `skin`; `relativa` = a pose local do nó em relação à
+///   junta mãe (a do mundo, para a raiz). Matrizes na mão do Direct3D por `glb::matriz_gltf` (que desfaz a si mesma).
+/// - Ganchos: nós `HH_*`/`CC_*` (ou `extras.angelica.gancho`) que não são juntas, presos à junta mais próxima acima
+///   (sem ela, ao esqueleto: osso −1), com a matriz relativa a ela (`A3DSkeleton.cpp:162-187`); tipo 0 = HH, 1 = CC
+///   (`A3DSkeleton.h:62-63`).
+pub fn esqueleto_do_glb(glb: &[u8]) -> Result<(Bon, Vec<String>), String> {
+    let g = abrir(glb)?;
+    let j = &g.json;
+    let mut relatorio = Vec::new();
+    let nos = j["nodes"].as_array().cloned().unwrap_or_default();
+    let skins = j["skins"].as_array().cloned().unwrap_or_default();
+    let skin = skins.first().ok_or("o glTF não tem skin (esqueleto)")?;
+    if skins.len() > 1 {
+        relatorio.push(format!("{} skins: usada a 1ª", skins.len()));
+    }
+    let mut pais: Vec<Option<usize>> = vec![None; nos.len()];
+    for (i, n) in nos.iter().enumerate() {
+        for c in n["children"].as_array().into_iter().flatten() {
+            if let Some(c) = c.as_u64().filter(|c| (*c as usize) < nos.len()) {
+                pais[c as usize] = Some(i);
+            }
+        }
+    }
+    let juntas_skin: Vec<usize> = skin["joints"].as_array().ok_or("skin sem joints")?.iter().filter_map(|x| x.as_u64().map(|x| x as usize)).collect();
+    let ibm: Vec<Vec<f32>> = match skin["inverseBindMatrices"].as_u64() {
+        Some(a) => g.acessor(a as usize)?,
+        None => {
+            relatorio.push("skin sem inverseBindMatrices: usada a inversa da pose do mundo de cada junta".into());
+            Vec::new()
+        }
+    };
+    // As juntas que viram ossos (sem a vaga "esqueleto"), na ordem da skin.
+    let ossos_nos: Vec<(usize, usize)> = juntas_skin.iter().enumerate().filter(|(_, n)| nos[**n]["name"].as_str() != Some("esqueleto")).map(|(k, n)| (k, *n)).collect();
+    if ossos_nos.is_empty() {
+        return Err("a skin não tem juntas".into());
+    }
+    let osso_do_no = |n: usize| ossos_nos.iter().position(|x| x.1 == n);
+    let acima = |n: usize| -> Option<usize> {
+        let mut p = pais[n];
+        while let Some(k) = p {
+            if let Some(o) = osso_do_no(k) {
+                return Some(o);
+            }
+            p = pais[k];
+        }
+        None
+    };
+    let mut ossos = Vec::with_capacity(ossos_nos.len());
+    let mut juntas = Vec::with_capacity(ossos_nos.len());
+    for (i, &(k, n)) in ossos_nos.iter().enumerate() {
+        let nome = nos[n]["name"].as_str().map(str::to_string).unwrap_or_else(|| format!("osso{i}"));
+        let mae = acima(n).map_or(-1, |m| m as i32);
+        let mundo_n = mundo(n, &nos, &pais);
+        let local = match acima(n) {
+            Some(m) => inversa_cc(&mundo(ossos_nos[m].1, &nos, &pais)).map_or(mundo_n, |pi| multiplicar_cc(&pi, &mundo_n)),
+            None => mundo_n,
+        };
+        let inicial_gltf: [f32; 16] = match ibm.get(k) {
+            Some(v) if v.len() == 16 => std::array::from_fn(|q| v[q]),
+            _ => inversa_cc(&mundo_n).ok_or(format!("{nome}: matriz do nó sem inversa"))?,
+        };
+        ossos.push(crate::bon::Osso {
+            nome: nome.clone(), flags: nos[n]["extras"]["angelica"]["flags"].as_u64().unwrap_or(0) as u8, mae, primeira_junta: i as i32,
+            relativa: crate::glb::matriz_gltf(&local), inicial: crate::glb::matriz_gltf(&inicial_gltf), filhas: Vec::new(), enchimento: [0; 3],
+        });
+        juntas.push(crate::bon::Junta { tipo: 15, nome: format!("{nome}_AnimJoint"), osso_mae: mae, osso_filho: i as i32, irma: -1 });
+    }
+    for i in 0..ossos.len() {
+        let mae = ossos[i].mae;
+        if mae >= 0 {
+            ossos[mae as usize].filhas.push(i as i32);
+        }
+    }
+    let mut ganchos = Vec::new();
+    for (n, no) in nos.iter().enumerate() {
+        if osso_do_no(n).is_some() || juntas_skin.contains(&n) || no["mesh"].is_u64() {
+            continue;
+        }
+        let nome = no["name"].as_str().unwrap_or("");
+        let marcado = no["extras"]["angelica"]["gancho"].is_object();
+        if !marcado && !nome.starts_with("HH_") && !nome.starts_with("CC_") {
+            continue;
+        }
+        let tipo = no["extras"]["angelica"]["gancho"]["tipo"].as_u64().map_or(if nome.starts_with("CC_") { 1 } else { 0 }, |x| x as u32);
+        let osso = acima(n);
+        let mundo_g = mundo(n, &nos, &pais);
+        let local = match osso {
+            Some(o) => inversa_cc(&mundo(ossos_nos[o].1, &nos, &pais)).map_or(mundo_g, |pi| multiplicar_cc(&pi, &mundo_g)),
+            None => mundo_g,
+        };
+        ganchos.push(crate::bon::Gancho { nome: nome.to_string(), tipo, osso: osso.map_or(-1, |o| o as i32), matriz: crate::glb::matriz_gltf(&local) });
+    }
+    let bon = Bon {
+        versao: 6, quadro_inicial: 0, quadro_final: 0, fps: 15, ossos, juntas, trilhas: Vec::new(), ganchos,
+        marca: true, reservado: vec![0; 64],
+    };
+    Ok((bon, relatorio))
 }
 
 /// A pele (`.ski` v9) do glTF `glb`, com os ossos casados pelo nome no `esqueleto`.
@@ -809,6 +922,60 @@ mod testes {
         eprintln!("ações: v5 {v5}, v6 {v6}, chaves comparadas {chaves} ({na_chave} na chave original); maior diferença relativa de posição {pior_p:.2e}, de quatérnio na chave {pior_q:.2e}, entre chaves {pior_entre:.2e}");
         assert!(v5 + v6 >= 20 && chaves > 1000, "{v5} {v6} {chaves}");
         assert!(pior_p < 1e-3 && pior_q < 1e-3, "{pior_p} {pior_q}");
+    }
+
+    /// B297: ida e volta de esqueletos reais — `glb::do_modelo` (só o esqueleto) e `esqueleto_do_glb`: nomes, mães,
+    /// filhas, juntas (todos os campos, que vêm das regras medidas), `inicial` e ganchos iguais aos originais (matrizes com
+    /// tolerância de 1e-4); a `relativa` igual à pose de ligação local que o GLB leva (o `matRelative` original só bate com
+    /// ela em 28% dos ossos, B274). O `.bon` gerado se reescreve e relê.
+    #[test]
+    fn esqueleto_ida_e_volta() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let perto = |a: &[f32; 16], b: &[f32; 16], tol: f32| a.iter().zip(b).all(|(x, y)| (x - y).abs() <= tol * (1.0 + x.abs().max(y.abs())));
+        let mut pilha = vec![raiz.to_path_buf()];
+        let (mut n, mut testados, mut ossos, mut ganchos, mut flags_dif) = (0usize, 0usize, 0usize, 0usize, 0usize);
+        let mut erros: Vec<String> = Vec::new();
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("bon")) { continue; }
+                n += 1;
+                if n % 10 != 0 { continue; }
+                let Ok(b) = Bon::ler(&std::fs::read(&p).unwrap()) else { continue };
+                if b.ossos.is_empty() || b.ossos.iter().any(|o| crate::glb::inversa(&o.inicial).is_none()) { continue; }
+                let glb = crate::glb::do_modelo(&[], Some(&b), "t");
+                let (novo, _) = match esqueleto_do_glb(&glb) { Ok(x) => x, Err(x) => { if erros.len() < 5 { erros.push(format!("{}: {x}", p.display())); } continue } };
+                testados += 1;
+                let mut ok = novo.ossos.len() == b.ossos.len() && novo.juntas.len() == b.juntas.len() && novo.ganchos.len() == b.ganchos.len();
+                let mundo: Vec<crate::bon::Matriz> = b.ossos.iter().map(|o| crate::glb::inversa(&o.inicial).unwrap()).collect();
+                for (i, (a, o)) in novo.ossos.iter().zip(&b.ossos).enumerate() {
+                    ossos += 1;
+                    let mut fa = a.filhas.clone(); fa.sort();
+                    let mut fo = o.filhas.clone(); fo.sort();
+                    let local = if o.mae >= 0 { crate::bon::multiplicar(&mundo[i], &crate::glb::inversa(&mundo[o.mae as usize]).unwrap()) } else { mundo[i] };
+                    ok &= a.nome == o.nome && a.mae == o.mae && fa == fo && a.primeira_junta == o.primeira_junta && perto(&a.inicial, &o.inicial, 1e-4) && perto(&a.relativa, &local, 1e-3);
+                    flags_dif += (a.flags != o.flags) as usize;
+                    ok &= a.flags == o.flags;
+                }
+                for (a, o) in novo.juntas.iter().zip(&b.juntas) {
+                    ok &= a.nome == o.nome && a.tipo == o.tipo && a.osso_mae == o.osso_mae && a.osso_filho == o.osso_filho && a.irma == o.irma;
+                }
+                for (a, o) in novo.ganchos.iter().zip(&b.ganchos) {
+                    ganchos += 1;
+                    ok &= a.nome == o.nome && a.tipo == o.tipo && a.osso == o.osso && perto(&a.matriz, &o.matriz, 1e-4);
+                }
+                let w = novo.escrever();
+                ok &= Bon::ler(&w).is_ok_and(|x| x.escrever() == w);
+                if !ok && erros.len() < 5 { erros.push(format!("{}: diferente", p.display())); }
+            }
+        }
+        eprintln!("esqueleto: {testados} .bon (1/10), {ossos} ossos, {ganchos} ganchos; flags diferentes {flags_dif}; erros {erros:?}");
+        assert!(testados > 500 && erros.is_empty(), "{erros:?}");
     }
 
     /// B296: anexar uma ação a modelos v5 reais — a 1ª ação exportada (B276), importada e anexada como "nova_acao": o
