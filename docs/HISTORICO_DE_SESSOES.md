@@ -15608,3 +15608,35 @@ comparação lado a lado.
 
     ### e. Falta (S6)
     - Ação para `.bon` v5 (trilhas no esqueleto, todo o 1.2.6); esqueleto novo vindo do glTF; extensão do Blender.
+
+296. **Sessão 2026-10-20: Estúdio S6 — ações do glTF no esqueleto v5 (1.2.6).**
+
+    ### a. Pedido
+    Commitar e seguir (B295 já commitado: `a7d90c3`, `d2e193a`).
+
+    ### b. Evidência (medida nos modelos v5 do cliente 1.5.5)
+    - 1.163 ações v5: citam todas as juntas do `.bon`, na ordem 0…n−1 (1.161), com o mesmo intervalo, grupo −1, flags
+      0, 1 laço e velocidade 1,0.
+    - Trilhas embutidas: ações em sequência; tempo do segmento `piso(quadro × 1000 / fps)` (66, 133, 533 e 1.200
+      conferem com os quadros 1, 2, 8 e 18 a 15/s); FPS da trilha = FPS do `.bon`; o cabeçalho cobre do 1º ao último
+      quadro.
+
+    ### c. O que foi feito
+    - `pw-data-loader/importar`: `anexar_acao_v5`.
+      - Em cada junta, as chaves vão para o fim da trilha embutida, com um segmento novo.
+      - O cabeçalho do `.bon` avança.
+      - Entrada no `.smd` v5 (`FILEACTIONDATA` + `FILEJOINTACTION`) ou v6 (`FILEACTIONDATA6`).
+      - Mesmo nome: a ação é repontada.
+    - `pw-recursos`: `importar_acoes` grava o `.bon` e o `.smd` no rascunho quando o esqueleto é v5. `.smd` < 7 com
+      `.bon` v6 continua 400, porque o motor descarta essas ações.
+
+    ### d. Provas
+    - `anexar_acao_em_modelos_v5`: 30 modelos reais (10 `.smd` v5, 20 v6), 1.144 trilhas de junta conferidas.
+    - `pw-data-loader` **253/253**; `pw-recursos` com o banco **22/22**.
+    - Pelo `pw-recursos`, no 1.2.6, num rascunho descartado:
+      - a ação mais longa de 5 modelos, reimportada com o mesmo nome, foi repontada com os mesmos quadros (346);
+      - renomeada, foi adicionada nos 5.
+    - Nenhum rascunho de teste ficou aberto.
+
+    ### e. Falta (S6)
+    - Esqueleto novo vindo do glTF; extensão do Blender.

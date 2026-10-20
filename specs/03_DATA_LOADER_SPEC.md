@@ -743,6 +743,24 @@ Ida e volta em 40 ações reais (20 com `.bon` v5, 20 com v6, 47.401 chaves; `im
 - quatérnio, nos instantes que caem numa chave original, até 9,6e-5;
 - entre chaves fora da grade de quadros, até 1e-2: é a reamostragem sobre as amostras já normalizadas do GLB.
 
+**Ação no esqueleto v5 (B296, S6):** no `.bon` v5 (todo o 1.2.6) não há `.stck`: cada junta tem **uma trilha embutida**
+e cada ação do `.smd` é um intervalo de quadros dela. Medido em 1.163 ações v5 do cliente:
+- a ação cita todas as juntas do `.bon`, na ordem 0…n−1 (1.161), com o mesmo intervalo, grupo −1, flags 0, 1 laço e
+  velocidade 1,0;
+- as ações ficam em sequência na trilha;
+- o tempo de cada segmento é `piso(quadro × 1000 / fps)`, e o FPS da trilha é o do `.bon`;
+- o cabeçalho do `.bon` cobre do 1º ao último quadro.
+
+`importar::anexar_acao_v5(bon, smd, ação)` segue essa regra:
+- em cada junta, emenda as chaves da ação no fim da trilha, com um segmento novo do quadro seguinte ao último até o
+  fim da ação; a junta sem trilha na ação repete a última chave;
+- avança o fim do cabeçalho;
+- grava a entrada (v5: `FILEACTIONDATA` + `FILEJOINTACTION` por junta; v6: `FILEACTIONDATA6`);
+- a ação de mesmo nome é repontada, e as chaves antigas ficam na trilha sem uso.
+
+Testado em 30 modelos reais (10 com `.smd` v5, 20 com v6; 1.144 trilhas de junta): os dois arquivos releem, o
+`cabeca` vê a ação no intervalo, e cada junta ganha as chaves e o segmento esperados.
+
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
 (mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.

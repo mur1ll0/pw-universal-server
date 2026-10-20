@@ -602,8 +602,9 @@ perda.
   `FILEACTIONDATA6` (quadros 0 a n−1) mais o nome da `.stck` no `.smd`. É a convenção do cliente: 249 de 249 ações
   amostradas com `<ação>.stck` e quadro inicial 0.
 - **Nome repetido:** a ação de mesmo nome é substituída.
-- **Escopo:** só `.smd` v ≥ 7 com `.bon` v6. No `.bon` v5 (todo o 1.2.6) as trilhas ficam no esqueleto, e a resposta
-  é 400 com o motivo.
+- **Escopo:** `.smd` v ≥ 7 com `.bon` v6 grava uma `.stck`. B296: com `.bon` v5 (todo o 1.2.6), a ação é emendada na
+  trilha embutida (`importar::anexar_acao_v5`), e o rascunho ganha o `.bon` e o `.smd`; a resposta traz o `intervalo`
+  de quadros. `.smd` < 7 com `.bon` v6 dá 400, porque o motor descarta as ações dele.
 - **Resposta:** `acoes: [{nome, stck, quadros, trilhas, fps, acao}]`, `relatorio` e `acoes_do_modelo`.
 - **Para o jogo tocar:** a ação ainda precisa de uma ação combinada no `.ecm`, feita pelo "Criar" do diagnóstico
   (B280) com essa base.
