@@ -598,7 +598,11 @@ pares habilidade×campo): **1.795 tabelas no arquivo** (nível 535, SP 501, dinh
 2.692 preenchidas pelo código no carregamento (fora do arquivo), 884 de mana só em `.rdata`, o resto constante ou
 fórmula no código. A 187 (12 níveis) tem tabelas de 10: o livro dos níveis 11–12 lê a tabela do dinheiro (`le_alem`
 = 2). **Prova:** +1 em todos os elementos de todas as tabelas numa cópia; a medição da cópia muda exatamente os 5.981
-valores esperados de 227.436 (20.676 níveis × 11 campos), sem nenhum outro, e o DLL roda inteiro.
+valores esperados de 227.436 (20.676 níveis × 11 campos), sem nenhum outro, e o DLL roda inteiro. **1.2.6 (B306):** mesmo método (requisitos pelas estáticas, que o DLL
+1.2.6 exporta; níveis pelo `niveis.txt` do catálogo), `specs/habilidades_126/elementskill_126_tabelas.json`: **1.865
+tabelas** em 539 habilidades (nível 539, SP 505, dinheiro 501, livro 320); a 187 também lê além (nível, SP e livro,
+`le_alem` = 2). Prova `mapear.py provar`/`conferir`: 6.504 valores esperados de 32.728, **0 errados** (e o 1.5.5
+refeito pelo mesmo subcomando: 0 errados em 227.436).
 
 **1.2.6 (`TabelaDeHabilidades::do_126`, B100/B101)** — carregada para o `elements.data` v7.
 Só as 823 habilidades que o `gs` 1.2.6 compila (as mesmas 823 do `skillstr.txt` do cliente

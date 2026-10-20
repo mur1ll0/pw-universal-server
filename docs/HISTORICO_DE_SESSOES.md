@@ -15985,3 +15985,30 @@ comparação lado a lado.
     - Mapa do 1.2.6: o DLL fundiu as funções idênticas, então os slots e as estáticas precisam ser revistos para ele.
     - Mana e o que vem do código: exigiria editar instruções (constante imediata) — outro método.
     - Habilidade nova.
+
+306. **Sessão 2026-10-20: Estúdio S8 — mapa do `elementskill.dll` do 1.2.6.**
+
+    ### a. Pedido
+    Commitar (o B305 já estava em `9f95c40`, `94f2209`, `9e07b0b`) e seguir: o 1.2.6 sem mapa era o item mais barato
+    da fila.
+
+    ### b. O que foi feito
+    - O localizador do B305 já servia: os requisitos são lidos pelas estáticas `GetRequired*(id, nível)`, que o DLL
+      1.2.6 exporta, e os níveis vêm do `niveis.txt` do catálogo.
+    - `specs/habilidades_126/elementskill_126_tabelas.json`: **1.865 tabelas** em 539 habilidades (nível 539, SP 505,
+      dinheiro 501, livro 320). A 187 também tem 12 níveis e tabelas de 10 (nível, SP e livro com `le_alem` = 2).
+    - `mapear.py` ganhou `provar` (+1 em todas as tabelas numa cópia) e `conferir` (medição da cópia contra a
+      original), em lugar dos scripts soltos do B305.
+    - `pw-recursos::elementskill` embute os dois mapas; a ficha sem mapa cita os dois clientes medidos. O Dockerfile
+      copia o mapa novo.
+
+    ### c. Provas
+    - 1.2.6: 6.504 valores esperados de 32.728, **0 errados**, e o DLL alterado rodou inteiro. O 1.5.5 refeito pelos
+      subcomandos: 0 errados em 227.436.
+    - `pw-recursos` com o banco: **26 passaram, 0 falharam** (novo: coerência do mapa 1.2.6, sem sobreposição).
+    - No `pw-recursos` real (1.2.6, rascunho 40 descartado): a habilidade 1 tem dinheiro, nível e SP no cliente, iguais
+      ao servidor (0, 290, 1.300…). A edição vale no rascunho, e fora dele segue o original.
+
+    ### d. Falta
+    - Mana e números que vêm do código do DLL (editar instruções; outro método).
+    - Habilidade nova.
