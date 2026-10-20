@@ -15248,3 +15248,37 @@ comparação lado a lado.
 
     ### e. Falta
     - S5: nomes de habilidade (nome nativo, depende do S8); copiar ação de outro modelo do mesmo esqueleto; Minas.
+
+284. **Sessão 2026-10-19: Estúdio S5 — Minas: onde nasce.**
+
+    ### a. Pedido
+    Commitar e seguir (B283 já commitado: `9e0eaa1`, `9ad8fa9`). Próxima frente do S5: Minas.
+
+    ### b. Evidência e decisão
+    - A mina é carregada como `CECModel` comum, e sem modelo cai em `models\error\error.ecm` (`EC_Matter.cpp:71-95`).
+    - Toda matéria pede só `掉落保护`, ou `_水中`/`_空中` conforme a altura (`EC_Matter.cpp:298-312`).
+    - Medido: nenhum dos modelos de mina amostrados (60 por versão) tem essa ação, e só 4 têm alguma. A mina fica parada
+      de propósito, então **não se fez diagnóstico de ações de mina**, porque seria ruído.
+    - O que faltava era o "onde nasce" da tabela de categorias (§4.1), que serve também a monstros e NPCs.
+
+    ### c. O que foi feito
+    - `pw-recursos`: `Estudio::onde_nasce` e `GET estudio/nascimentos?id=` (áreas de criatura e de recurso de todos os
+      npcgen).
+    - Painel:
+      - "Onde nasce" nas fichas de `MONSTER_ESSENCE`/`NPC_ESSENCE`/`MINE_ESSENCE`; clicar abre o mapa na área
+        (`irParaArea`);
+      - repasse do `nascimentos`;
+      - **correção do B283:** o repasse da ficha não levava o `voo`. O perfil de voo pelo painel caía no diagnóstico de
+        monstro; a verificação do B283 chamava o `pw-recursos` direto e não pegou isso.
+
+    ### d. Provas
+    - `pw-recursos` com o banco **22/22**: nascimentos acha o 1º gerador da área 0 do `a01`, e um id inexistente dá
+      0 locais.
+    - Painel **12/12**, com o teste novo de repasse de `voo`/`nascimentos`.
+    - Contêiner, amostra de 5 por tabela:
+      - 1.2.6: minas 5/5 com local, monstros 3/5, 42 mapas, até 0,3 s;
+      - 1.5.5: minas 4/5, monstros 3/5, 80 mapas, até 1,4 s.
+      - A "Raiz Seca" nasce em (868,7; 3975,1) nas duas versões.
+
+    ### e. Falta
+    - S5: nomes de habilidade (depende do S8); copiar ação de outro modelo do mesmo esqueleto.

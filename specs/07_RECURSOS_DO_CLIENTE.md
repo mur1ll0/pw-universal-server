@@ -524,6 +524,24 @@ textura, esqueleto) com o seletor das ações do `.smd` e o "Baixar GLB"; o `.sm
   só é acusada se a maioria dos colegas tem a ação; senão, o estado é "ausente, como na maioria dos colegas" (sem ⚠).
 
 O caminho do `string` do layout vem em bytes GBK (`FieldValue::Raw`), convertido com `nomes::legivel`, como na ficha.
+O painel repassa `voo` (0–2) na ficha. Até o B284 ele não repassava, e o perfil de voo pelo painel caía no diagnóstico
+de monstro; agora `teste_recursos.py` cobre o repasse.
+
+**Onde nasce (B284):** `GET estudio/nascimentos?id=N&rascunho?` (`Estudio::onde_nasce`) percorre os mapas do
+`configs\instance.txt` que têm npcgen e lista cada área que cita o id:
+- de criatura: geradores com id em `[0..4]` e quantidade em `[4..8]`; tipo `monstro`/`npc` pelo `iNPCType`;
+- de recurso: id em `[4..8]` e quantidade em `[12..16]`.
+
+Cada linha traz `{mapa, caminho, tipo, area, x, z, quantidade}`, e o resultado traz também `mapas_lidos`. Com rascunho,
+vale o npcgen do rascunho. Medido: 0,2 a 0,3 s no 1.2.6 (42 mapas) e até 1,4 s no 1.5.5 (80 mapas).
+
+No painel, as fichas de `MONSTER_ESSENCE`/`NPC_ESSENCE`/`MINE_ESSENCE` ganham "Onde nasce", que só busca ao ser
+aberto. Clicar num local abre a vista Mapas nesse mapa, já com a área aberta (`irParaArea`, `mapa.js`).
+
+**Minas não têm diagnóstico de ações.** Toda matéria com modelo de pele pede só `掉落保护`, ou `_水中`/`_空中` conforme a
+altura (`CECMatter::SetLoadedMatterModel`, `EC_Matter.cpp:298-312`); a mina carrega como `CECModel` comum, e sem
+modelo usa `models\error\error.ecm` (`:71-95`). Medido: nenhum dos modelos de mina amostrados (60 por versão) tem essa
+ação, e só 4 têm alguma (`站立`/`四处张望`). A mina original fica parada de propósito, então acusar falta seria ruído.
 
 Os arquivos são lidos com `Governanca::conteudos` (lote: o manifesto é lido e indexado uma vez; `conteudo` relê o
 manifesto inteiro a cada chamada, o que levava a ficha do 1.5.5 a 50 s — agora 4,8 s, e 0,8 s no 1.2.6). No painel, o
