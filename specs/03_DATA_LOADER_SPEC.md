@@ -788,6 +788,20 @@ Ida e volta em 984 `.bon` reais (1/10; `importar::testes::esqueleto_ida_e_volta`
 nomes, mães, filhas, juntas, flags, `inicial` e ganchos iguais (matrizes até 1e-4). A `relativa` é igual à pose de
 ligação local que o GLB leva; o `matRelative` original só bate com ela em 28% dos ossos (B274).
 
+**`.ecm` novo a partir de molde (B299, S6):** os campos do `.ecm` mudam com a versão
+(`A3DCombinedAction::Load(pFile, dwVersion)`), então nada é escrito de memória. `ecm::ecm_novo(molde, smd, ações)`
+parte de um `.ecm` do cliente usado como molde, nos bytes:
+- troca a 1ª linha `SkinModelPath:` pelo `.smd` novo;
+- põe uma ação combinada por ação, cada uma clonada do 1º bloco simples do molde (uma `BaseActName:`, sem
+  `ChildActName:` e sem efeitos), com o nome e a base trocados;
+- mantém o resto do molde.
+
+Recusa molde com `AddiSkinPath:` ou com modelo filho (`ChildCount` ≠ 0), porque o modelo novo herdaria peças de outro.
+Em todo o cliente 1.5.5 (`ecm::testes::ecm_novo_com_moldes_do_cliente`):
+- **2.577 `.ecm` servem de molde** (1.596 na versão 67), e todos geram um `.ecm` que relê com o `.smd`, as ações e a
+  contagem certos;
+- os recusados: 2.239 com peles adicionais, 3.608 sem ação simples e 75 com modelo filho.
+
 `glb::do_ski` gera glTF 2.0 binário: uma malha por malha do `.ski` (`POSITION` com `min`/`max`, `NORMAL`,
 `TEXCOORD_0`, índices `u16`), um material por material (difusa → `baseColorFactor`, `doubleSided`). Eixos: Direct3D
 (mão esquerda) → glTF (mão direita) negando `z` e invertendo a ordem dos triângulos. Sem esqueleto ainda.

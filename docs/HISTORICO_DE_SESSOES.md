@@ -15698,3 +15698,35 @@ comparação lado a lado.
 
     ### e. Falta (S6)
     - O `.ecm` do modelo novo (o que `file_model` cita para NPC e monstro); extensão do Blender.
+
+299. **Sessão 2026-10-20: Estúdio S6 — `.ecm` do modelo novo (a partir de molde do cliente).**
+
+    ### a. Pedido
+    Commitar e seguir (B298 já commitado: `0157c9e`, `bafea4a`).
+
+    ### b. Decisão e evidência
+    - Os campos do `.ecm` mudam com a versão (`A3DCombinedAction::Load(pFile, dwVersion)`). Escrevê-los de memória
+      seria palpite, então o `.ecm` novo parte de um `.ecm` do cliente como **molde**, mexendo nos bytes (como no
+      B280/B285).
+    - O jogo monta o NPC com a pele `<.ecm>.ski` (B282), que o modelo novo já cria ao lado.
+
+    ### c. O que foi feito
+    - `pw-data-loader/ecm`: `ecm_novo`. Troca o `SkinModelPath`, faz uma ação combinada por ação (clone de um bloco
+      simples do molde) e mantém o resto. Recusa molde com peles adicionais ou modelo filho.
+    - `pw-recursos`: `modelo_novo` grava `<título>.ecm`.
+      - O molde é o informado (`molde=`) ou o automático: o 1º, em ordem de caminho, entre os `.ecm` da versão de
+        `.ecm` mais comum.
+      - A resposta traz `ecm` e `molde_do_ecm`.
+    - Painel: campo "molde .ecm (opcional)".
+
+    ### d. Provas
+    - `ecm_novo_com_moldes_do_cliente`: 2.577 `.ecm` do 1.5.5 servem de molde (1.596 na v67), e todos geram um `.ecm`
+      que relê certo. Recusados: 2.239 com peles adicionais, 3.608 sem ação simples, 75 com modelo filho.
+    - `pw-data-loader` **255/255**; `pw-recursos` com o banco **22/22** (`boneco.ecm` com molde); painel **12/12**.
+    - Pelo `pw-recursos`: 5 NPCs por versão viraram modelo novo com o `.ecm`, 5 arquivos cada. Nenhum rascunho de
+      teste ficou aberto.
+    - Ponto em aberto: o automático escolheu uma catapulta (1.2.6) e uma lanterna (1.5.5), cujos cabeçalhos são
+      herdados. Daí o campo de molde no painel.
+
+    ### e. Falta (S6)
+    - Extensão do Blender.

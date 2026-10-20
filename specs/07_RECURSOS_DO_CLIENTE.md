@@ -633,7 +633,13 @@ Tudo é montado e conferido antes de gravar. É recusada (400) a pasta fora de `
 o nome fora do GBK e o arquivo que já existe no cliente. Painel: abaixo da busca da vista Modelos, os campos pasta e
 título e o botão "Modelo novo a partir de GLB…".
 
-Ainda falta o `.ecm`, que é o que a tabela (`file_model`) cita para NPCs e monstros.
+B299: o modelo novo também ganha `<título>.ecm`, que é o que a tabela (`file_model`) cita para NPCs e monstros. O jogo
+põe a pele `<.ecm>.ski` (B282), que é a `<título>.ski` ao lado. O `.ecm` vem de `ecm::ecm_novo`, com uma ação combinada
+por ação de mesmo nome. O molde é o parâmetro `molde=` ou, sem ele, entre os `.ecm` da versão de `.ecm` mais comum da
+versão de jogo, o 1º em ordem de caminho que serve (reproduzível). A resposta traz `ecm` e `molde_do_ecm`. O `.ecm` novo **herda o cabeçalho do molde** (as configurações gerais do modelo). O automático
+saiu `投石车状态.ecm` (uma catapulta) no 1.2.6 e `灯笼.ecm` (uma lanterna) no 1.5.5; não há evidência de que um seja
+melhor que outro para um monstro. Por isso o painel tem o campo "molde .ecm" (ex.: um monstro parecido). Medido pelo
+`pw-recursos`, em rascunhos descartados: 5 NPCs por versão viraram modelo novo com o `.ecm`, 5 arquivos cada.
 
 Medido pelo `pw-recursos` em 5 `.smd` de NPC do 1.5.5, num rascunho de teste descartado:
 - a 1ª ação de cada um (de 1 quadro), baixada e reimportada, sai byte a byte igual;
