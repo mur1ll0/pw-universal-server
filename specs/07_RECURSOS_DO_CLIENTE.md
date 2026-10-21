@@ -748,10 +748,11 @@ o roteiro todo (acrescentar, remover, reordenar). O GS roda em ordem, só os pas
 nível editável]}` troca os bytes da tabela no `elementskill.dll` do rascunho (`Estudio::definir_numeros_do_cliente`,
 `crate::elementskill`). Recompilar do fonte desfaria o que o BR mudou (B303), então a edição é no binário, em posições
 **medidas** (`specs/habilidades_155/elementskill_v156_tabelas.json` e, desde o B306, `specs/habilidades_126/elementskill_126_tabelas.json`; spec 03 §3.10b).
-- **Campos:** `nivel_exigido`, `sp_exigido`, `dinheiro_exigido`, `item_exigido`; só onde o número está numa tabela
-  em `.data` (1.795 tabelas em 536 habilidades do 1.5.5; 1.865 em 539 do 1.2.6). O resto vem do código do DLL (constante, fórmula, tabela
-  preenchida no carregamento) ou é tudo zero (`.bss`) — não se edita. A mana fica toda em `.rdata`, onde o compilador
-  funde constantes iguais (trocar uma derrubou o DLL na prova), e fica de fora.
+- **Campos:** `nivel_exigido`, `sp_exigido`, `dinheiro_exigido`, `item_exigido` e, desde o B311, `mp`; só onde o número
+  está numa tabela exclusiva da função (1.797 tabelas do 1.5.5, 1.871 do 1.2.6 — spec 03 §3.10b). O resto vem do código do DLL (constante, fórmula, tabela
+  preenchida no carregamento) ou é tudo zero (`.bss`) — não se edita. A mana em `.rdata` só entra se a constante é lida por
+  um único sítio de código (relocações): 1 no 1.5.5 (413), 5 no 1.2.6; as outras são constantes fundidas entre
+  funções (trocar uma derrubou o DLL no B305).
 - **Reconhecimento:** o mapa vale para um DLL; a cópia editada é aceita pelo SHA-256 do "resto" (o arquivo com as
   tabelas zeradas), que a edição não muda. Outro DLL (sem mapa medido): a ficha diz `cliente.mapa = false` e a
   rota recusa (400).

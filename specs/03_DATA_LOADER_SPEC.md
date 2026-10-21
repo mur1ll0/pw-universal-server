@@ -604,6 +604,18 @@ tabelas** em 539 habilidades (nível 539, SP 505, dinheiro 501, livro 320); a 18
 `le_alem` = 2). Prova `mapear.py provar`/`conferir`: 6.504 valores esperados de 32.728, **0 errados** (e o 1.5.5
 refeito pelo mesmo subcomando: 0 errados em 227.436).
 
+**Mana e constantes compartilhadas (B311).** A sentinela passou a exigir o valor **exato** no retorno (não basta mudar:
+no 1.2.6, "tabelas" que a função soma ou multiplica mudavam por outra quantia), e as tabelas em `.rdata` passaram a ser
+julgadas pelas **relocações** do DLL (`mapear.py relocacoes`: num x86 toda referência absoluta a um dado está na
+`.reloc`). Medido no 1.5.5: as 1.797 tabelas de `.data` têm cada uma exatamente um sítio na base; das 280 de mana em
+`.rdata`, 279 são constantes lidas por 2 a 13+ sítios (a da 121, que derrubou o DLL no B305, por 3) — o compilador funde
+o mesmo `float` de várias funções — e só 1 é exclusiva (413). No 1.2.6 o compilador também fundiu funções idênticas:
+53 posições são lidas por mais de uma habilidade (vários `GetMpcost` que devolvem a mesma constante viram uma função
+só) e ficam de fora, porque editar uma mudaria as outras. Mapas: **1.5.5 1.797 tabelas** (nível 536, SP 501, dinheiro
+439, livro 320, mana 1) e **1.2.6 1.871** (nível 540, SP 505, dinheiro 501, livro 320, mana 5: 121, 122, 194, 310,
+413). Prova `provar`/`conferir`: 0 errados nos dois (5.983 de 227.436; 6.510 de 32.728). O resto da mana vem do código
+(constante ou fórmula, como `24 + 15 × nível`) — editar exigiria trocar instruções.
+
 **1.2.6 (`TabelaDeHabilidades::do_126`, B100/B101)** — carregada para o `elements.data` v7.
 Só as 823 habilidades que o `gs` 1.2.6 compila (as mesmas 823 do `skillstr.txt` do cliente
 1.2.6). `specs/habilidades_126/habilidades.json` — desde o B102 **completo**, no formato do 1.5.5 (pode ir para `data/<realm>/catalogo/`), gerado por `extrair_habilidades_126.py`:

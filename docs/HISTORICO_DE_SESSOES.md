@@ -16165,3 +16165,53 @@ comparação lado a lado.
     ### e. Falta
     - Murillo: recriar os mundos (catálogo) e publicar o GS novo (B249) para valer no jogo.
     - Mana e números que vêm do código do DLL; habilidade nova.
+
+311. **Sessão 2026-10-20: Estúdio S8 — a mana do cliente, julgada pelas relocações do DLL.**
+
+    ### a. Pedido
+    Commitar (o B310 já estava em `4a47a94`, `43be0f8`) e seguir. O que restava era a mana e os números que vêm do
+    código, deixados de fora no B305 porque trocar uma mana em `.rdata` derrubou o DLL.
+
+    ### b. Método
+    Num DLL x86 toda referência absoluta a um dado está na tabela de relocações (`.reloc`, HIGHLOW). Dá para provar
+    quem lê cada constante (`mapear.py relocacoes`).
+
+    ### c. Medição (1.5.5)
+    - As 1.795 tabelas de `.data` do B305 têm cada uma **exatamente 1 sítio** na base. As 303 com uma referência "no
+      meio" são a tabela seguinte lida em `base − 4`.
+    - Das 280 manas em `.rdata`, 279 são constantes lidas por **2 a 13+ sítios**. A da 121 é um `float` só, lido por 3
+      — por isso o DLL caiu. Só 1 é exclusiva (413).
+
+    ### d. Dois furos do método que a prova do 1.2.6 pegou
+    - A sentinela só exigia que o valor mudasse, e "tabelas" que a função soma ou multiplica passavam (89: +1 dava +10;
+      16: +2). Agora o retorno tem de ser exatamente o valor escrito.
+    - O compilador do 1.2.6 fundiu funções idênticas: vários `GetMpcost` que devolvem a mesma constante viram uma
+      função só, e várias habilidades leem a mesma posição. O B306 só marcava isso; agora a posição fica de fora (53 no
+      1.2.6), porque editar uma mudaria as outras.
+
+    ### e. O que foi feito
+    - `enderecos.cpp`: sentinela exata; tabela em `.rdata` provada e marcada `somente_leitura`.
+    - `mapear.py`:
+      - `relocacoes`;
+      - `juntar` aceita `.rdata` só com 1 sítio na base e nenhum no meio, e exclui posições compartilhadas.
+    - Mapas refeitos:
+      - **1.5.5 1.797 tabelas**: nível 536, SP 501, dinheiro 439, livro 320, mana 1;
+      - **1.2.6 1.871**: nível 540, SP 505, dinheiro 501, livro 320, mana 5 (121, 122, 194, 310, 413).
+    - `pw-recursos::elementskill::CAMPOS` ganhou `mp`.
+
+    ### f. Provas
+    - `provar`/`conferir`: **0 errados** nos dois (1.5.5: 5.983 esperados de 227.436; 1.2.6: 6.510 de 32.728). Antes da
+      correção, o 1.2.6 dava 335 errados.
+    - `pw-recursos` com o banco: **26 passaram, 0 falharam**.
+    - No `pw-recursos` real, rascunhos 49 (1.5.5) e 50 (1.2.6), descartados:
+      - a ficha da 413 traz a mana do cliente (304,0), e `mp` = 123,5 gravou nos dois;
+      - a mana da 121 é recusada no 1.5.5 (constante compartilhada, 400) e aceita no 1.2.6 (exclusiva), como dizem os
+        mapas.
+    - `pw-recursos` publicado.
+
+    ### g. Conclusão e falta
+    - A mana do cliente, quase toda, **não é dado da habilidade**: ou é constante compartilhada, ou é fórmula no código
+      (`24 + 15 × nível`).
+    - Editá-la exigiria trocar instruções, ou dar a cada função uma constante própria numa seção nova — outro bloco,
+      mais arriscado.
+    - Habilidade nova segue exigindo recompilar o DLL.
