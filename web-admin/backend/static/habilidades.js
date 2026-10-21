@@ -136,7 +136,33 @@ async function abrirHabilidade(id) {
   // B308: os roteiros de efeito (no_alvo = StateAttack no alvo, em_si = BlessMe em quem lança) — a expressão de cada
   // passo se edita; quem e setter ficam. O servidor confere com o avaliador do GS e as variáveis do original.
   for (const [r, titulo] of [["no_alvo", "Efeito no alvo (no_alvo)"], ["em_si", "Efeito em quem lança (em_si)"]]) {
-    if (!Array.isArray(s[r]) || !s[r].length) continue;
+    const flag = r === "no_alvo" ? "doenchant" : "dobless";
+    // B310: as flags que fazem o GS rodar o roteiro (só do servidor).
+    const caixaFlag = criar("label", "texto-suave");
+    const chk = criar("input");
+    chk.type = "checkbox";
+    chk.checked = !!s[flag];
+    chk.addEventListener("change", async () => {
+      if (!estudio.rascunho) { chk.checked = !chk.checked; alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+      try {
+        await api(rotaDeHabilidades(`/${f.id}/roteiro`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify({ [flag]: chk.checked }) });
+        alerta("ok", "Estúdio", `${flag} = ${chk.checked} no rascunho.`, { toast: true });
+        if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+      } catch (erro) { chk.checked = !chk.checked; alerta("erro", "Estúdio", erro.message); }
+    });
+    caixaFlag.append(chk, ` ${flag} — o GS roda ${r === "no_alvo" ? "o efeito no alvo (ou se a habilidade é de bênção/maldição)" : "o efeito em quem lança"} só com esta flag`);
+    if (!Array.isArray(s[r]) || !s[r].length) {
+      // B310: criar o roteiro (liga a flag ao salvar).
+      const criarR = criar("button", "botao botao-pequeno", `Criar ${titulo.toLowerCase()}`);
+      criarR.type = "button";
+      criarR.addEventListener("click", () => { s[r] = [["V", "Probability", "100"]]; abrirHabilidadeComRoteiro(); });
+      const abrirHabilidadeComRoteiro = () => { criarR.remove(); desenharRoteiro(r, titulo, caixaFlag); };
+      ficha.append(criarR, caixaFlag);
+      continue;
+    }
+    desenharRoteiro(r, titulo, caixaFlag);
+  }
+  function desenharRoteiro(r, titulo, caixaFlag) {
     // B309: o roteiro inteiro se edita — passos acrescentados (quem = V, setter da lista do GS), removidos, reordenados.
     const passos = s[r].map((p) => ({ quem: p[0], setter: p[1], expr: String(p[2]) }));
     const caixa = criar("div");
@@ -185,7 +211,7 @@ async function abrirHabilidade(id) {
       caixa.append(sel, mais, salvarR, criar("div", "texto-suave", "Variáveis: L (nível), P_* (quem lança), V_* (alvo), S_* (golpe da habilidade) — só as que algum roteiro do original usa; números, + − × ÷, comparações, && ||, ?:, INT(...). Passo novo: quem = V e um setter que o GS porta; Probability (0–100), Time (ms), Ratio, Value, Amount e Showicon valem para o efeito seguinte."));
     };
     desenhar();
-    ficha.appendChild(caixa);
+    ficha.append(caixa, caixaFlag);
   }
   // B305: os números do cliente (elementskill.dll) — só as tabelas medidas no binário se editam; o resto vem do código.
   const c = f.cliente || {};

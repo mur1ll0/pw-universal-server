@@ -3443,8 +3443,30 @@ impl Estudio {
             let h = j.get_mut("habilidades").and_then(|x| x.get_mut(id.to_string())).with_context(|| format!("a habilidade {id} não existe"))?;
             let mut mudou = Vec::new();
             for (k, v) in &campos {
+                // B310: as flags que fazem o GS rodar o roteiro (`bus_server/habilidades.rs:331-335`: `no_alvo` com
+                // `doenchant` ou tipo bênção/maldição, `em_si` com `dobless`) — só do servidor (`SkillStub::DoEnchant`/
+                // `DoBless`, `cskill/skill/skill.h:372-373`; o cliente não as usa).
+                if k == "doenchant" || k == "dobless" {
+                    h[k.as_str()] = Value::Bool(v.as_bool().with_context(|| format!("{k}: true ou false"))?);
+                    mudou.push(k.clone());
+                    continue;
+                }
                 if k != "no_alvo" && k != "em_si" {
-                    bail!("roteiro {k}: só no_alvo ou em_si");
+                    bail!("roteiro {k}: só no_alvo ou em_si (ou as flags doenchant/dobless)");
+                }
+                // B310: roteiro novo em habilidade que não tinha — só pela forma inteira; liga a flag correspondente
+                // (editar um roteiro que já existe não mexe na flag: há roteiros do original com ela desligada).
+                // Sem roteiro = `null` (catálogo 1.5.5) ou `[]` (catálogo 1.2.6).
+                if h[k.as_str()].is_null() || h[k.as_str()].as_array().is_some_and(Vec::is_empty) {
+                    if !v.as_array().is_some_and(|a| !a.is_empty() && a.iter().all(Value::is_array)) {
+                        bail!("a habilidade {id} não tem roteiro {k}: para criar, mande os passos inteiros [quem, setter, expressão]");
+                    }
+                    h[k.as_str()] = json!([]);
+                    let flag = if k == "no_alvo" { "doenchant" } else { "dobless" };
+                    if !campos.contains_key(flag) {
+                        h[flag] = Value::Bool(true);
+                        mudou.push(flag.to_string());
+                    }
                 }
                 let passos = h.get_mut(k.as_str()).and_then(Value::as_array_mut).with_context(|| format!("a habilidade {id} não tem roteiro {k}"))?;
                 let lista = v.as_array().with_context(|| format!("{k}: uma lista"))?;

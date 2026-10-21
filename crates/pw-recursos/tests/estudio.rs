@@ -950,6 +950,18 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let hi = json_de(pedir("GET", "estudio/habilidades/15").query("rascunho", &rh.to_string()).call().unwrap());
         assert_eq!(hi["servidor"]["no_alvo"], inteiro, "{hi}");
         assert!(hi["setters_do_gs"].as_array().unwrap().iter().any(|x| x == "Slow"), "{hi}");
+        // B310: roteiro novo na 1 (sem no_alvo nos dois catálogos) liga o doenchant; só pela forma inteira.
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/roteiro?rascunho={rh}")).send_json(json!({"no_alvo": ["1"]}))).0, 400, "criar só com os passos inteiros");
+        let criado = json!([["V", "Probability", "20"], ["V", "Time", "2000"], ["V", "Dizzy", "1"]]);
+        pedir("PUT", &format!("estudio/habilidades/1/roteiro?rascunho={rh}")).send_json(json!({"no_alvo": criado})).unwrap();
+        let hc = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &rh.to_string()).call().unwrap());
+        assert_eq!((hc["servidor"]["no_alvo"].clone(), hc["servidor"]["doenchant"].as_bool()), (criado, Some(true)), "{hc}");
+        // A flag também se edita sozinha; editar o roteiro existente não a religa.
+        pedir("PUT", &format!("estudio/habilidades/1/roteiro?rascunho={rh}")).send_json(json!({"doenchant": false})).unwrap();
+        pedir("PUT", &format!("estudio/habilidades/1/roteiro?rascunho={rh}")).send_json(json!({"no_alvo": ["30", "2000", "1"]})).unwrap();
+        let hf = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &rh.to_string()).call().unwrap());
+        assert_eq!((hf["servidor"]["doenchant"].as_bool(), hf["servidor"]["no_alvo"][0][2].as_str()), (Some(false), Some("30")), "{hf}");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/roteiro?rascunho={rh}")).send_json(json!({"dobless": 1}))).0, 400, "flag: booleano");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros?rascunho={rh}")).send_json(json!({"mp": [1, 2]}))).0, 400, "um número por nível");
         let ph = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [rh]})).unwrap());
         assert_eq!(ph["aplicados"].as_array().map(|x| x.len()), Some(1), "{ph}");
