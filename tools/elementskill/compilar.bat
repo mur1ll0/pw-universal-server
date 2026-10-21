@@ -6,4 +6,5 @@ cl /nologo /O2 /EHsc numeros.cpp /Fe:numeros.exe
 cl /nologo /O2 /EHsc enderecos.cpp /Fe:enderecos.exe
 cl /nologo /O2 /EHa estruturas.cpp /Fe:estruturas.exe
 cl /nologo /O2 /EHa gabarito.cpp /Fe:gabarito.exe
+cl /nologo /O2 /EHsc vtable_dos_stubs.cpp /Fe:vtable_dos_stubs.exe
 del *.obj 2>nul

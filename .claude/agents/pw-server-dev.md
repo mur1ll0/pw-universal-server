@@ -99,3 +99,9 @@ ainda assim for pesado, ofereça ao Murillo rodar ele mesmo, com o comando pront
   "corrigido, falta ver em jogo" e "diagnosticado".
 - Não commite nem publique nos contêineres sem ele pedir, exceto se ele já tiver pedido
   para a tarefa em curso.
+- **O que está rodando e o que espera (pedido de 2026-10-21).** Toda resposta que deixa algo em andamento termina,
+  antes da tabela de consumo, com um quadro **"Em andamento"**: cada tarefa em segundo plano (o que faz, há quanto
+  tempo, quanto falta ou como saber, e o que acontece quando terminar) e cada coisa **esperando** — por você
+  (decisão, teste em jogo) ou por outra tarefa. Sem nada pendente, diga "nada rodando". Tarefa longa (mais de uns
+  minutos) imprime progresso que dê para conferir, e se passar muito do previsto é parada e refeita de outro jeito,
+  com aviso — nunca deixar o Murillo sem saber se está travado.

@@ -223,6 +223,20 @@ devolve. Uma entrada por habilidade:
 
 Mais os estados visíveis e de equipe, as inerentes por classe e a versão.
 
+**Contagem pelo binário (B323).** O número de palavras que cada stub passa ao `_snwprintf` sai do
+binário (`argumentos_da_descricao.py` + `vtable_dos_stubs.cpp`). O `GetIntroduction` é o slot 12 da vtable do stub nas
+3.316 habilidades, e o `add esp, N` depois do `call [1031B02C]` (`_snwprintf` na IAT) dá N/4 − 3 palavras. O fonte erra
+em **221** (210 com menos argumentos que o binário: o BR pôs números novos nas descrições; 11 com mais). Onde diverge, o
+argumento vira um bloco só com as palavras do gabarito. As 7 de proficiência batem. Com isso, o diferencial segue com 0 campos
+diferentes, e os textos que consomem além dos argumentos do **binário** caem de 65 para **62**. Os 3 que saíram (2897,
+3279 e mais um) eram defeito nosso: o DLL de dados mostrava 0 onde o original mostrava o número.
+
+**Textos com `%` sem escape (B323).** A correção escapa só a conversão com flag de espaço (`"100% de"` → `"100%% de"`),
+que é sempre uma porcentagem do português. No 1.5.5 ela muda **63** textos, e depois dela nenhum consome além do que o
+binário passa (eram 62). O 63º é o 1181, em que o `"% d"` é a última conversão: não desloca nada e só tira o número
+grudado em "100…e precisão". No 1.2.6 ela muda **6** textos: 703, 715, 724, 785, 787 e 819. Aplicada pelo Estúdio
+(`PUT …/texto`) em rascunho e publicada.
+
 **Descrição.** As expressões do fonte, avaliadas com a semântica do C, batem palavra por palavra com o binário em 3.268
 das 3.316 habilidades. As 48 restantes diferem em 1 ulp de `double` (o VC6 calcula em x87) ou têm valor mudado pelo
 BR. Por isso o DLL **não recalcula**: guarda por nível as palavras exatas do binário, na quantidade dada pelos tipos do

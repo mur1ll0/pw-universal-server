@@ -40,3 +40,5 @@ quando há código alterado sem spec nem estado alterados.
   longa vai para segundo plano, e o que se traz é o número, não a lista. Cada bloco de
   trabalho termina com a tabela de consumo de tokens por etapa — agente `pw-server-dev`,
   seção "Contexto é recurso", e skill `pw-testar-e-publicar`.
+- **Em andamento:** resposta que deixa algo rodando ou esperando termina com o quadro "Em andamento" (o que roda,
+  há quanto tempo, como saber o fim; o que espera e por quem) — agente `pw-server-dev`, seção "Com o Murillo".

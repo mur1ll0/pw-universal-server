@@ -133,6 +133,12 @@ As etapas são fases do trabalho, não chamadas de ferramenta. Quando uma etapa 
   (`d_rtdebug` no 1.5.5).
 - O relato dele em jogo é evidência. Hipótese sua não é. Separe sempre "corrigido e testado",
   "corrigido, falta ver em jogo" e "diagnosticado".
+- **O que está rodando e o que espera (pedido de 2026-10-21).** Toda resposta que deixa algo em andamento termina,
+  antes da tabela de consumo, com um quadro **"Em andamento"**: cada tarefa em segundo plano (o que faz, há quanto
+  tempo, quanto falta ou como saber, e o que acontece quando terminar) e cada coisa **esperando** — por você
+  (decisão, teste em jogo) ou por outra tarefa. Sem nada pendente, diga "nada rodando". Tarefa longa (mais de uns
+  minutos) imprime progresso que dê para conferir, e se passar muito do previsto é parada e refeita de outro jeito,
+  com aviso — nunca deixar o Murillo sem saber se está travado.
 
 ## Infra (resumo; detalhe em `pw-testar-e-publicar`)
 

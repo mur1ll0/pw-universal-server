@@ -1,11 +1,12 @@
 """B315 (fase 3 do DLL de dados): o modelo do cliente — tudo o que o `elementskill.dll` de dados devolve, em dados.
 
-    python gerar_modelo.py <pasta dos stubs skillNNN.h> <gabarito.jsonl> <descricoes.json> <modelo.json>
+    python gerar_modelo.py <pasta dos stubs skillNNN.h> <gabarito.jsonl> <descricoes.json> <argumentos.json> <modelo.json>
 
 Fonte de cada parte (spec 08 §8):
 - números, textos, listas, armas, estados: o **gabarito** (o binário original);
-- argumentos da descrição: quantos e de que tipo pelo **fonte** (`descricoes.py`), os bits pelo **gabarito**
-  (`intro_bruta`, as primeiras palavras);
+- argumentos da descrição: **quantas palavras pelo binário** (`argumentos_da_descricao.py`, o `add esp` depois do
+  `_snwprintf` — B323), a estrutura pelo **fonte** (`descricoes.py`) quando a contagem bate, e os bits pelo
+  **gabarito** (`intro_bruta`). Quando o fonte diverge (221 no 1.5.5 BR), o argumento vira um bloco só com as palavras;
 - alcance: `d = a·alcance_da_arma + b + c·bônus` (as 3 formas do `GetPraydistance` nos stubs), `b` em `double`
   pelo fonte e conferido nas 6 sondas do gabarito com a regra da base (`skill.h:251-272`);
 - condição de combo `arg[i] == | >= v` e faixa de vida `[lo, hi]` em % (as formas dos stubs), conferidas no
@@ -73,11 +74,12 @@ def stubs(pasta):
     return r
 
 
-def main(pasta, gabarito, descricoes, destino):
+def main(pasta, gabarito, descricoes, argumentos, destino):
     sys.path.insert(0, str(Path(__file__).parent))
     fonte = stubs(pasta)
     Expr = fonte.pop("_Expr")
     desc = json.load(open(descricoes, encoding="utf-8"))["habilidades"]
+    no_binario = {int(k): v for k, v in json.load(open(argumentos)).items()}
     modelo = {"versao_do_modelo": 1, "habilidades": {}, "estados_visiveis": [], "estados_equipe": [], "inerentes": {},
               "combos": []}
     problemas = []
@@ -165,6 +167,18 @@ def main(pasta, gabarito, descricoes, destino):
                     k += 2 if t == "d" else 1
             elif x.get("intro") not in (None, ""):
                 problemas.append(f"{i}/{n}: descrição sem argumentos lidos no fonte")
+            # B323: a contagem é a do binário.
+            total = sum(len(a["palavras"]) if "palavras" in a else 1 for a in intro)
+            nb = no_binario.get(i)
+            if nb is None:
+                problemas.append(f"{i}: sem contagem de argumentos no binário")
+            elif total != nb:
+                if any("palavras" not in a for a in intro):
+                    problemas.append(f"{i}/{n}: proficiência na descrição e contagem diferente do binário ({total} != {nb})")
+                bruta = [int(p, 16) for p in bytes.fromhex(x["intro_bruta"]).decode("utf-16-le").split("|")]
+                if nb > len(bruta):
+                    problemas.append(f"{i}/{n}: {nb} palavras no binário, a sonda só lê {len(bruta)}")
+                intro = [{"palavras": bruta[:nb]}] if nb else []
             nivel["intro"] = intro
             atual["niveis"].append(nivel)
         elif "estado_visivel" in x:

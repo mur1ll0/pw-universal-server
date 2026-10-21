@@ -16546,3 +16546,41 @@ comparação lado a lado.
 
     ### e. Falta
     O Murillo conferir em jogo: o botão do 1.5.5 e o do painel com o personagem online.
+
+323. **Sessão 2026-10-21: descrições das habilidades — argumentos pelo binário e `%` sem escape.**
+
+    ### a. Pedido
+    Commitar e seguir. A etapa foi a "versão para ajustar os arquivos" que o Murillo sugeriu: as descrições com `%`
+    sem escape.
+
+    ### b. O que a análise achou antes
+    Dos 65 textos "indeterminados" do B317, 2 (2897 e 3279) não tinham `%` solto. O número de argumentos vinha do
+    fonte, e o fonte erra: o nosso DLL mostrava 0 onde o original mostrava o número.
+    - **Medição no binário.** `vtable_dos_stubs.cpp` lista a vtable do stub de cada habilidade.
+      `argumentos_da_descricao.py` acha nela a função que chama o `_snwprintf` (IAT `1031B02C`): é o slot 12 nas
+      3.316. O `add esp, N` depois do `call` dá N/4 − 3 palavras.
+    - **Resultado:** o fonte erra em **221**. Em 210 o binário passa mais (o BR acrescentou números às descrições), em 11
+      passa menos. As 7 de proficiência batem.
+    - O modelo usa a contagem do binário: onde o fonte diverge, um bloco só com as palavras do gabarito.
+    - Diferencial: **0 campos diferentes em 26.767 linhas**. Os textos que consomem além do binário caem de 65 para 62,
+      e os 3 que saíram eram o nosso defeito.
+
+    ### c. A correção dos textos
+    - **Regra:** escapar só a conversão com flag de espaço (`"100% de"` → `"100%% de"`). Depois dela, nenhum texto
+      consome além do binário. Ela muda **63** no 1.5.5 (os 62 mais o 1181, cujo `"% d"` é a última conversão) e **6**
+      no 1.2.6 (703, 715, 724, 785, 787, 819).
+    - **Aplicação**, pelo Estúdio (`PUT …/texto`), nos rascunhos 52 (1.5.5, com o `habilidades.pwsk` novo, 4.361.103
+      bytes) e 53 (1.2.6). Conferido no rascunho: 898 com `100 %% de precisão` (publicado: `100 % de`).
+    - **Publicação:** 1.5.5 versão 3, 1.2.6 versão 2.
+    - **Lição de processo.** A primeira tentativa abria a ficha de cada um dos 4.000 ids possíveis (cada ficha relê o
+      `skillstr` e o `.pwsk` de 4 MB). Rodou 31 minutos sem progresso visível, até o Murillo perguntar se estava
+      travado. Refeita lendo o `skillstr` uma vez: 24 s.
+    - **Instrução nova** (pedido do Murillo), em `.claude/agents/pw-server-dev.md`, `AGENTS.md` e `CLAUDE.md`: toda
+      resposta que deixa algo rodando ou esperando termina com o quadro "Em andamento". Tarefa longa imprime progresso,
+      e a que passa muito do previsto é parada e refeita, com aviso.
+
+    ### d. Falta
+    - O Murillo atualizar pelo launcher e conferir uma descrição corrigida (ESTADO §3.3).
+    - Gerar o `.pwsk` do modelo único com o catálogo do servidor.
+    - Descrição e alcance editáveis no Estúdio.
+    - Habilidade nova (fase 6); 1.2.6 (fase 7).
