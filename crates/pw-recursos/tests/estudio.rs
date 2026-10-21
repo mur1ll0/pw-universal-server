@@ -3,6 +3,40 @@
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
 //! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254); missões (B255) e editar missão no lugar (B256); comportamento (B258) e editá-lo no lugar (B259); textos do cliente (B260).
 
+/// B321: um `habilidades.pwsk` mínimo (habilidade 1, 2 níveis) pelo escritor único.
+fn pwsk_de_teste() -> Vec<u8> {
+    use pw_data_loader::habilidades_do_cliente::*;
+    let nivel = |k: i32| Nivel {
+        ints: (0..25).map(|i| i * 10 + k).collect(),
+        bytes: vec![1; 13],
+        textos: vec!["4100".into(), "".into(), "".into(), "".into(), "".into()],
+        genio: None,
+        pre: vec![],
+        juniores: vec![],
+        est: vec![k; 7],
+        alcance: [0.0, 5.0, 0.0],
+        intro: vec![],
+    };
+    let m = Modelo {
+        versao_do_modelo: 1,
+        versao_do_dll: 15,
+        habilidades: vec![Habilidade {
+            id: 1,
+            max_level: 2,
+            estaticas: Estaticas { tipo: 1, icone: "".into(), nome: "4100".into(), nome_nativo: "".into(), efeito: "".into(), duende: 0, movel: 0, sobrescrita: 0, pre_combo: 0, recarga_comum: 0 },
+            armas: Armas::Todas("todas".into()),
+            vida: None,
+            combo: None,
+            intervalo_combo: 0,
+            niveis: vec![nivel(1), nivel(2)],
+        }],
+        estados_visiveis: vec![],
+        estados_equipe: vec![],
+        inerentes: Default::default(),
+    };
+    escrever(&m).unwrap()
+}
+
 use anyhow::Result;
 use pw_data_loader::generic_elements::{load_elements_data, FieldValue};
 use pw_recursos::assinatura::Chave;
@@ -161,7 +195,9 @@ impl FonteDePacote for Pacotes {
         // B301: skillstr.txt (UTF-16LE com BOM): nome da habilidade 1 em 10, descrição em 11 (duas linhas).
         let st = "//  Element skill descriptions.\r\n\r\n#_index\r\n#_begin\r\n\r\n10  \"Ataque do Tigre\"\r\n11  \"Ataque do Tigre (Nível %d)\r\nCausa dano.\"\r\n";
         receber(b"configs\\skillstr.txt".to_vec(), [vec![0xFF, 0xFE], st.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()].concat())?;
-        Ok(ResultadoDoPacote { entradas: 19, falhas: vec![] })
+        // B321: o arquivo de dados do nosso elementskill.dll, com a habilidade 1 em 2 níveis.
+        receber(b"habilidades.pwsk".to_vec(), pwsk_de_teste())?;
+        Ok(ResultadoDoPacote { entradas: 20, falhas: vec![] })
     }
 }
 
@@ -898,9 +934,13 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let hf = json_de(pedir("GET", "estudio/habilidades/1").call().unwrap());
         assert_eq!(hf["descricao"].as_str(), Some("Ataque do Tigre (Nível %d)\r\nCausa dano."), "{hf}");
         assert!(hf["servidor"]["max_level"].is_number(), "{hf}");
-        // B305: sem elementskill.dll com mapa, a ficha diz por quê e a edição do cliente é recusada.
-        assert_eq!(hf["cliente"]["mapa"].as_bool(), Some(false), "{hf}");
-        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros_do_cliente?rascunho={ri}")).send_json(json!({"dinheiro_exigido": [0]}))).0, 400, "sem mapa");
+        // B321: com o habilidades.pwsk (o nosso DLL), os números do cliente vêm dele — mana no slot 31 = ints[15].
+        assert_eq!((hf["cliente"]["fonte"].as_str(), hf["cliente"]["campos"]["mp"]["valores"].clone()), (Some("pwsk"), json!([151, 152])), "{hf}");
+        pedir("PUT", &format!("estudio/habilidades/1/numeros_do_cliente?rascunho={ri}")).send_json(json!({"dinheiro_exigido": [0, 777], "mp": [9, 10]})).unwrap();
+        let hc = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &ri.to_string()).call().unwrap());
+        assert_eq!((hc["cliente"]["campos"]["dinheiro_exigido"]["valores"].clone(), hc["cliente"]["campos"]["mp"]["valores"].clone()), (json!([0, 777]), json!([9, 10])), "{hc}");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros_do_cliente?rascunho={ri}")).send_json(json!({"dinheiro_exigido": [1]}))).0, 400, "um por nível");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros_do_cliente?rascunho={ri}")).send_json(json!({"cls": [1, 1]}))).0, 400, "campo que não se edita");
         pedir("PUT", &format!("estudio/habilidades/1/texto?rascunho={ri}")).send_json(json!({"nome": "Golpe do Tigre", "descricao": "Linha 1\r\nLinha 2 (%d)"})).unwrap();
         let hf2 = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &ri.to_string()).call().unwrap());
         assert_eq!((hf2["nome"].as_str(), hf2["descricao"].as_str()), (Some("Golpe do Tigre"), Some("Linha 1\r\nLinha 2 (%d)")), "{hf2}");

@@ -2,7 +2,8 @@
 
 > Estado: **fases 1 (contrato, B313), 2 (gabarito, B314) e 3 (DLL de dados com diferencial 100%, B315–B317)
 > concluídas; fase 4 (jogo) confirmada pelo Murillo em 2026-10-21 — habilidades usáveis, níveis corretos**.
-> Próxima: fase 5 (Estúdio). Decisão do Murillo (2026-10-20): seguir a opção D do
+> Fase 5 em andamento (B321): o DLL de dados e o `habilidades.pwsk` publicados no `pw-recursos` 1.5.5 (versão 2, o
+> launcher distribui), e o Estúdio lê e edita os números do cliente no `.pwsk`. Decisão do Murillo (2026-10-20): seguir a opção D do
 > `docs/admin/ESTUDO_HABILIDADES_DO_CLIENTE.md`, começando pelo 1.5.5, e distribuir o nosso DLL pelo launcher.
 > Fases: 1 contrato · 2 gabarito (medir o original inteiro) · 3 DLL de dados + diferencial 100% · 4 jogo · 5 Estúdio ·
 > 6 habilidade nova · 7 1.2.6.
@@ -286,3 +287,23 @@ esperado (mesma pasta do DLL).
 **Diferenças conhecidas (fora do gabarito):**
 - `Create(id, nível < 1)` — o original lê fora da tabela, o nosso usa o nível 1;
 - `NextSkill` de um id que não existe — o original é indefinido, o nosso devolve 0.
+
+## 11. Fase 5 — distribuição e Estúdio (B321)
+
+**Distribuição.** No `pw-recursos` 1.5.5, o rascunho 51 trocou o `elementskill.dll` pelo nosso (150.528 bytes,
+`caa6edba…`) e acrescentou o `habilidades.pwsk` (4.353.097 bytes, `da8d30f0…`). Publicado como **versão 2**; o
+launcher do 1.5.5 baixa os dois na próxima atualização.
+
+**Estúdio.** Quando a versão tem `habilidades.pwsk`, a ficha da habilidade lê os números do cliente nele
+(`cliente.fonte = "pwsk"`), e `PUT …/numeros_do_cliente` o reescreve pelo escritor único. Campos (`CAMPOS_DO_PWSK`):
+`recarga_ms`, `execucao_ms`, `nivel_exigido`, `sp_exigido`, `item_exigido`, `dinheiro_exigido`, `reino_exigido`, `mp`,
+`apcost`. Onde o mesmo número existe no slot da vtable e na estática por nível (`GetRequired*`/`GetExecuteTime`), a
+edição grava os dois. Sem `.pwsk`, vale o caminho do B305 (bytes de tabela no DLL original). Arquivo que só existe no
+rascunho (ação `adicionar`) passou a ser lido pelo `item_do_cliente`.
+
+**Falta:**
+- gerar o `.pwsk` a partir do modelo único, junto com o catálogo do servidor;
+- editar a descrição (argumentos) e o alcance;
+- a correção dos 65 textos com `%` sem escape;
+- habilidade nova (fase 6);
+- o 1.2.6 (fase 7).

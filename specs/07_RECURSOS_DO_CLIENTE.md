@@ -57,6 +57,15 @@ dela já estão na ACP daquela máquina):
    `enablemoremem`/`disablemoremem_vista_win7_32bit.bat` (mexem no `increaseUserVa` do Windows por `bcdedit`); em `data\`, as pastas
    `BCK`, `Data Export`, `Editados`, `tasks`, os `.rar`/`.zip`, `Notas.txt` e o `npcgen.data` — arquivo do
    servidor: nenhum `.cpp` do cliente o abre (a única ocorrência é um campo, `elementdataman.cpp:2073`).
+   **Dados pessoais do `userdata\` da máquina de origem (B317, `importar::pessoal_do_userdata`):**
+   `accounts.txt` (contas lembradas, `EC_RecordAccount.cpp:219-265`), `GMLog\` (`GMCDBMan.cpp:7`),
+   `Layout\` (janelas e teclas por personagem, `EC_GameUIMan.cpp:4628-4633`, `EC_HostInputFilter.cpp:114`),
+   `autopolicy\` (`EC_AutoPolicy.cpp:328`) e `blacklist\` (`EC_Configs.cpp:1176-1180`). Ficam os padrões:
+   `character\characterNN.ini` (rosto padrão por classe e sexo, exigido por `LoadDefaultCustomizeData`,
+   `EC_Player.cpp:5772-5786`), `userpic\`, `serverlist.txt`, `currentserver.ini`, `systemsettings.ini` e
+   `dyn_tasks.data` (cache do servidor, `TaskTemplMan.cpp:241`). Nas versões já publicadas (importadas antes
+   da regra) eles saem por uma versão de remoção; o launcher só apaga no jogador a cópia que ainda for a
+   publicada (B280), então o que o próprio jogador gravou fica.
 4. Nossos: `userdata\server\serverlist.txt` (UTF-16LE com BOM) ganha a linha de grupo
    `pw-universal` se a 1ª linha não vazia tiver tabulação — versões ≥ 1.5 (`EC_ServerList.cpp:146-157`;
    o 1.2.6 dispensa, §8.5); `elementclient.bat` ganha ` sepfile`.
@@ -743,6 +752,11 @@ o roteiro todo (acrescentar, remover, reordenar). O GS roda em ordem, só os pas
 - roteiro em habilidade que não tem (`null` no catálogo 1.5.5, `[]` no 1.2.6) só se cria pela forma inteira, e criar
   liga a flag correspondente (salvo se a flag vier no mesmo pedido). Editar um roteiro existente não mexe na flag: há
   roteiros do original com ela desligada (1.2.6: 4 `no_alvo` sem `doenchant`; 1.5.5: 1 `em_si` sem `dobless`).
+
+**Números do cliente pelo `habilidades.pwsk` (B321):** com o nosso DLL (spec 08), a ficha lê e o
+`PUT …/numeros_do_cliente` edita o `habilidades.pwsk` — 9 campos por nível (`CAMPOS_DO_PWSK`, spec 08 §11), gravando o
+slot e a estática juntos. Sem `.pwsk`, vale o B305 abaixo. `item_do_cliente` também acha arquivo que só o rascunho
+acrescenta.
 
 **Números do cliente (B305):** `PUT estudio/habilidades/{id}/numeros_do_cliente?rascunho=` `{campo: [um número por
 nível editável]}` troca os bytes da tabela no `elementskill.dll` do rascunho (`Estudio::definir_numeros_do_cliente`,

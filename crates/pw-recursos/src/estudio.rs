@@ -50,6 +50,23 @@ fn variaveis_dos_roteiros(jogo: &str) -> Result<&'static std::collections::BTree
 
 /// B305: o DLL das habilidades do cliente (raiz do `element`).
 const CAMINHO_ELEMENTSKILL: &str = "elementskill.dll";
+/// B321: o arquivo de dados do nosso `elementskill.dll` (spec 08), ao lado dele.
+const CAMINHO_PWSK: &str = "habilidades.pwsk";
+/// B321: campos do cliente editáveis no `habilidades.pwsk` — `(nome, índice em `ints` (ordem de
+/// `habilidades_do_cliente::SLOTS_INT`), índice em `est` (a estática por nível com o mesmo número), quem confere)`.
+/// Onde o número existe nos dois caminhos do DLL (slot da vtable e estática `GetRequired*(id, nível)`), a edição grava
+/// os dois.
+const CAMPOS_DO_PWSK: [(&str, usize, Option<usize>, &str); 9] = [
+    ("recarga_ms", 1, None, "o cliente mostra (GetCoolingTime); a recarga que vale vem do servidor (SET_COOLDOWN)"),
+    ("execucao_ms", 2, Some(5), "o cliente mostra e anima (GetExecuteTime)"),
+    ("nivel_exigido", 5, Some(0), "aprender: LearnCondition"),
+    ("sp_exigido", 6, Some(1), "aprender: LearnCondition"),
+    ("item_exigido", 7, Some(3), "aprender: o livro exigido"),
+    ("dinheiro_exigido", 8, Some(2), "aprender: LearnCondition"),
+    ("reino_exigido", 9, Some(4), "aprender: LearnCondition (realm_level)"),
+    ("mp", 15, None, "lançar: CheckSkillCastCondition"),
+    ("apcost", 16, None, "lançar: chi (Condition)"),
+];
 
 /// B302: os números das habilidades do realm — item do servidor publicado em `data/<realm>/catalogo/habilidades.json`,
 /// que o GS lê no lugar do embutido (`manager.rs:330-361`, B102).
@@ -2343,11 +2360,24 @@ impl Estudio {
     ) -> Result<(Vec<u8>, Sha256Bytes, usize, Vec<u8>, Option<ItemDeRecurso>)> {
         let (_, m) = gov.publicado(versao)?;
         let alvo = caminho.to_lowercase();
-        let a = m
+        let publicado = m
             .arquivos
             .iter()
-            .find(|a| hex::decode(&a.caminho_gbk).map(|g| nomes::legivel(&g).to_lowercase() == alvo).unwrap_or(false))
-            .with_context(|| format!("{caminho} não está no cliente {versao}"))?;
+            .find(|a| hex::decode(&a.caminho_gbk).map(|g| nomes::legivel(&g).to_lowercase() == alvo).unwrap_or(false));
+        let Some(a) = publicado else {
+            // B321: arquivo que o rascunho acrescenta (ação `adicionar`, ex. o `habilidades.pwsk`): só existe nele.
+            if let Some(r) = rascunho {
+                gov.rascunho_da_versao(versao, r).await?;
+                if let Some(i) = gov.repo.itens(r).await?.into_iter().find(|i| nomes::legivel(&i.caminho).to_lowercase() == alvo) {
+                    let s: Sha256Bytes = i.sha256_depois.clone().context("arquivo removido no rascunho")?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
+                    let t = i.tamanho.unwrap_or(0) as usize;
+                    let objetos = gov.objetos(versao);
+                    let b = tokio::task::spawn_blocking(move || objetos.ler(&s, t)).await??;
+                    return Ok((i.caminho.clone(), s, t, b, Some(i)));
+                }
+            }
+            bail!("{caminho} não está no cliente {versao}");
+        };
         let gbk = hex::decode(&a.caminho_gbk)?;
         let sha: Sha256Bytes = hex::decode(&a.sha256)?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
         let tamanho = a.tamanho as usize;
@@ -3556,6 +3586,23 @@ impl Estudio {
     /// B305 (S8): os números da habilidade no `elementskill.dll` do cliente (com o rascunho) — só as tabelas medidas
     /// (`crate::elementskill`); o resto vem do código do DLL e não se edita.
     async fn numeros_do_cliente(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: i64) -> Value {
+        // B321: com o nosso DLL, os números do cliente estão no `habilidades.pwsk` — todos editáveis.
+        if let Ok(b) = self.bytes_do_cliente(gov, versao, CAMINHO_PWSK, rascunho).await {
+            return match pw_data_loader::habilidades_do_cliente::ler(&b) {
+                Err(e) => json!({ "mapa": false, "motivo": format!("{CAMINHO_PWSK}: {e}") }),
+                Ok(m) => match m.habilidades.iter().find(|h| h.id as i64 == id) {
+                    None => json!({ "mapa": false, "motivo": format!("a habilidade {id} não está no {CAMINHO_PWSK}") }),
+                    Some(h) => {
+                        let mut campos = serde_json::Map::new();
+                        for (c, i, _, quem) in CAMPOS_DO_PWSK {
+                            let v: Vec<i32> = h.niveis.iter().map(|n| n.ints[i]).collect();
+                            campos.insert(c.to_string(), json!({ "valores": v, "le_alem": 0, "quem_confere": quem }));
+                        }
+                        json!({ "mapa": true, "fonte": "pwsk", "arquivo": CAMINHO_PWSK, "campos": campos })
+                    }
+                },
+            };
+        }
         let dll = match self.bytes_do_cliente(gov, versao, CAMINHO_ELEMENTSKILL, rascunho).await {
             Ok(b) => b,
             Err(e) => return json!({ "mapa": false, "motivo": format!("{CAMINHO_ELEMENTSKILL}: {e}") }),
@@ -3577,6 +3624,31 @@ impl Estudio {
     pub async fn definir_numeros_do_cliente(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i64, campos: serde_json::Map<String, Value>) -> Result<Value> {
         if campos.is_empty() {
             bail!("nada a mudar");
+        }
+        // B321: com o `habilidades.pwsk`, a edição é no arquivo de dados (o escritor único, `habilidades_do_cliente`).
+        if self.bytes_do_cliente(gov, versao, CAMINHO_PWSK, Some(rascunho)).await.is_ok() {
+            return self.alterar_item_do_cliente(gov, versao, CAMINHO_PWSK, rascunho, move |b| {
+                let mut m = pw_data_loader::habilidades_do_cliente::ler(b).map_err(anyhow::Error::msg)?;
+                let h = m.habilidades.iter_mut().find(|h| h.id as i64 == id).with_context(|| format!("a habilidade {id} não está no {CAMINHO_PWSK}"))?;
+                let mut mudou = Vec::new();
+                for (k, v) in &campos {
+                    let &(_, i, e, _) = CAMPOS_DO_PWSK.iter().find(|c| c.0 == k).with_context(|| format!("o campo {k} não se edita no cliente"))?;
+                    let vs = v.as_array().filter(|a| a.len() == h.niveis.len()).with_context(|| format!("{k}: uma lista de {} números (um por nível)", h.niveis.len()))?;
+                    for (n, x) in h.niveis.iter_mut().zip(vs) {
+                        let x = x.as_f64().filter(|x| x.fract() == 0.0 && *x >= i32::MIN as f64 && *x <= i32::MAX as f64)
+                            .with_context(|| format!("{k}: inteiros de 32 bits"))? as i32;
+                        n.ints[i] = x;
+                        if let Some(e) = e {
+                            n.est[e] = x;
+                        }
+                    }
+                    mudou.push(k.clone());
+                }
+                let novo = pw_data_loader::habilidades_do_cliente::escrever(&m).map_err(anyhow::Error::msg)?;
+                let mudanca = json!({ "acao": "editar", "tipo": "numeros_de_habilidade_no_cliente", "id": id, "campos": mudou });
+                Ok((novo, json!({ "id": id, "campos": mudou, "arquivo": CAMINHO_PWSK }), mudanca))
+            })
+            .await;
         }
         self.alterar_item_do_cliente(gov, versao, CAMINHO_ELEMENTSKILL, rascunho, move |b| {
             let m = crate::elementskill::mapa_para(b).context("este elementskill.dll não tem mapa de tabelas")?;

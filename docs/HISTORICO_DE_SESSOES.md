@@ -16481,3 +16481,36 @@ comparação lado a lado.
     - **Publicar o GS novo** (B249, decisão do Murillo): sem ele, nem o botão do jogo nem o do painel têm efeito.
     - Armazéns (`IL_TRASH_BOX*`, inclusive o de roupas, que o cliente organiza com comparadores próprios) e a trava
       `_lock_inventory`.
+
+321. **Sessão 2026-10-21: DLL de dados, fase 5 — distribuído pelo launcher e editável no Estúdio.**
+
+    ### a. O que foi feito
+    - **Estúdio (`pw-recursos`).** Com `habilidades.pwsk` na versão, a ficha da habilidade lê os números do cliente
+      nele (`cliente.fonte = "pwsk"`), e `PUT …/numeros_do_cliente` o reescreve pelo escritor único.
+      - São 9 campos (`CAMPOS_DO_PWSK`).
+      - Slot da vtable e estática por nível são gravados juntos, para o DLL não responder diferente pelos dois
+        caminhos.
+      - Sem `.pwsk`, segue o B305.
+    - **`item_do_cliente`.** Achava só arquivo publicado. Agora também acha o que o rascunho acrescenta (ação
+      `adicionar`); a primeira conferência do rascunho real caiu no caminho antigo por isso.
+    - **Distribuição** (autorizada pelo Murillo).
+      - Rascunho 51 no `pw-recursos` 1.5.5:
+        - o `elementskill.dll` trocado pelo nosso (150.528 bytes, `caa6edba…`);
+        - o `habilidades.pwsk` acrescentado (4.353.097 bytes, `da8d30f0…`).
+      - Publicado como versão 2; o atualizador público lista as duas versões.
+
+    ### b. Provas
+    - `pw-recursos` com o banco: **26 passaram, 0 falharam**. O teste de integração tem agora um `.pwsk` mínimo no
+      cliente sintético (feito pelo escritor): leitura da mana, edição de dinheiro e mana em 2 níveis, recusa de
+      tamanho errado e de campo que não se edita.
+    - Antes de publicar, pelo rascunho 51 com os dados reais, a habilidade 8 veio com `fonte: pwsk` e o dinheiro
+      `0, 0, 0, 6.980 … 771.980`, igual ao servidor e ao DLL original (B303). Sem o rascunho, o publicado ainda usava o
+      DLL original com mapa.
+    - Depois: os dois arquivos estão no manifesto com os SHA-256 dos locais, e a versão vigente da 1.5.5 é a 2.
+
+    ### c. Falta
+    - O Murillo atualizar pelo launcher e conferir em jogo (ESTADO §3.3).
+    - Gerar o `.pwsk` do modelo único junto com o catálogo do servidor.
+    - Descrição e alcance editáveis.
+    - Os 65 textos com `%` sem escape.
+    - Habilidade nova (fase 6); o 1.2.6 (fase 7).
