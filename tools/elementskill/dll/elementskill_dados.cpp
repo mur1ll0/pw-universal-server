@@ -7,6 +7,7 @@
 // Compilar com tools/elementskill/dll/compilar.bat (x86, /Zc:wchar_t- para `wchar_t` = `unsigned short`, como no VC6, e
 // os nomes exportados saírem iguais aos que o executável importa).
 #include <windows.h>
+#pragma comment(lib, "user32.lib")
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -145,6 +146,15 @@ public:
 
 static HMODULE este_dll;
 
+// B318: sem dados, o executável só diria "ElementSkill's version is incorrect!" (EC_Game.cpp:363, a versão sai do
+// arquivo). Antes disso, uma mensagem que diz o que falta e onde.
+static void avisar(const wchar_t* caminho, const wchar_t* motivo) {
+    wchar_t msg[1024];
+    _snwprintf(msg, 1023, L"elementskill.dll (pw-universal-server): %s\n\n%s\n\nO arquivo habilidades.pwsk tem de estar na mesma pasta do elementskill.dll.", motivo, caminho);
+    msg[1023] = 0;
+    MessageBoxW(NULL, msg, L"Habilidades", MB_ICONSTOP | MB_OK);
+}
+
 static void carregar() {
     if (carregado) return;
     carregado = true;
@@ -153,15 +163,15 @@ static void carregar() {
     wchar_t* barra = wcsrchr(caminho, L'\\');
     if (barra) wcscpy(barra + 1, L"habilidades.pwsk");
     HANDLE f = CreateFileW(caminho, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-    if (f == INVALID_HANDLE_VALUE) return;
+    if (f == INVALID_HANDLE_VALUE) { avisar(caminho, L"arquivo de habilidades não encontrado"); return; }
     DWORD tam = GetFileSize(f, NULL), lidos = 0;
     std::vector<unsigned char> b(tam);
     ReadFile(f, b.data(), tam, &lidos, NULL);
     CloseHandle(f);
     Leitor r = {b.data(), b.data() + lidos, true};
-    if (lidos < 8 || memcmp(b.data(), "PWSK", 4) != 0) return;
+    if (lidos < 8 || memcmp(b.data(), "PWSK", 4) != 0) { avisar(caminho, L"não é um arquivo de habilidades (PWSK)"); return; }
     r.p += 4;
-    if (r.ler<unsigned int>() != 1) return;
+    if (r.ler<unsigned int>() != 1) { avisar(caminho, L"versão do formato desconhecida"); return; }
     versao_do_dll = r.ler<int>();
     unsigned int nh = r.ler<unsigned int>(), nv = r.ler<unsigned int>(), ne = r.ler<unsigned int>(), ni = r.ler<unsigned int>();
     habilidades.resize(nh);
@@ -247,7 +257,7 @@ static void carregar() {
     // Pós-combo na ordem do NextSkill (`SkillStub::GetPostComboSkill`).
     for (size_t k = 0; k < habilidades.size(); k++)
         if (habilidades[k].pre_combo) pos_combo[(unsigned int)habilidades[k].pre_combo].push_back(habilidades[k].id);
-    if (!r.ok) { habilidades.clear(); por_id.clear(); }
+    if (!r.ok) { habilidades.clear(); por_id.clear(); versao_do_dll = 0; avisar(caminho, L"arquivo de habilidades truncado ou corrompido"); }
 }
 
 static const HabD* achar(unsigned int id) {

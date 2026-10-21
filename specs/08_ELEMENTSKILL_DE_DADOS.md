@@ -276,6 +276,12 @@ dos stubs, `101AB430` e `101AB840`). O modelo guarda `{arg, faixas}`.
   fixo do DLL original (`0x1001B001` = 268.546.049, visível no jogo). O nosso mostra 0. Corrigir o texto
   (`%` → `%%`) é trabalho do Estúdio.
 
+**Sem dados (B318).** O executável confere `ELEMENTSKILL_VERSION != GetVersion()` logo ao iniciar (`EC_Game.cpp:363`,
+"ElementSkill's version is incorrect!"). O original devolve 15, e o nosso tira a versão do `habilidades.pwsk`: sem o
+arquivo, devolveria 0 e o cliente recusaria com essa mensagem, que não diz a causa. Agora, se o arquivo faltar, não
+for `PWSK`, tiver formato desconhecido ou estiver truncado, o DLL mostra antes uma janela dizendo o motivo e o caminho
+esperado (mesma pasta do DLL).
+
 **Diferenças conhecidas (fora do gabarito):**
 - `Create(id, nível < 1)` — o original lê fora da tabela, o nosso usa o nível 1;
 - `NextSkill` de um id que não existe — o original é indefinido, o nosso devolve 0.

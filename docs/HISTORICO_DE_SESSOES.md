@@ -16396,3 +16396,27 @@ comparação lado a lado.
     ### d. Próximo
     Fase 4: o Murillo testa em jogo (roteiro no ESTADO §3.3). Depois, fase 5: o Estúdio gera e edita o `.pwsk` e
     distribui o DLL pelo launcher.
+
+318. **Sessão 2026-10-21: DLL de dados — "ElementSkill's version is incorrect!".**
+
+    ### a. Relato do Murillo
+    Ao abrir o cliente 1.5.5 com o nosso DLL, a mensagem "ElementSkill's version is incorrect".
+
+    ### b. Causa
+    - O executável confere `ELEMENTSKILL_VERSION != GNET::ElementSkill::GetVersion()` ao iniciar
+      (`EC_Game.cpp:363`). O original devolve 15.
+    - O nosso tira a versão do `habilidades.pwsk`, e na pasta do cliente só estava o `elementskill.dll`. Sem dados, a
+      versão saiu 0.
+
+    ### c. Correção
+    - `habilidades.pwsk` copiado para `F:\PW\1.5.5\1.5.5 BR launcher\element\`, ao lado do DLL.
+    - O DLL agora mostra uma janela com o motivo e o caminho quando o arquivo falta, não é `PWSK`, tem formato
+      desconhecido ou está truncado, em vez de deixar o cliente dar uma mensagem que não diz a causa.
+
+    ### d. Provas
+    - Carregando o DLL da pasta do cliente: `GetVersion` = 15 e 3.316 habilidades no `NextSkill`, iguais ao
+      `elementskill.dll.original`.
+    - Diferencial com o DLL recompilado: **0 campos diferentes em 26.767 linhas**.
+
+    ### e. Falta
+    O Murillo abrir o cliente de novo e seguir o roteiro do ESTADO §3.3.
