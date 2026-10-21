@@ -581,7 +581,7 @@ def registrar_reinicio(app):
             raise HTTPException(422, "Informe os campos.")
         return await _repassar("PUT", f"/admin/{v}/estudio/habilidades/{max(0, id_habilidade)}/numeros", {"rascunho": rascunho}, dados=dados)
 
-    # B324: números da descrição e alcance (habilidades.pwsk) e o mesmo número nos dois (servidor + cliente).
+    # B325: números da descrição e alcance (habilidades.pwsk) e o mesmo número nos dois (servidor + cliente).
     for _sufixo in ("descricao_numeros", "alcance", "numeros_nos_dois"):
         def _fazer(sufixo):
             async def rota(realm: str, id_habilidade: int, rascunho: int, requisicao: Request):

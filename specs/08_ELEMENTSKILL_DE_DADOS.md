@@ -315,14 +315,10 @@ launcher do 1.5.5 baixa os dois na próxima atualização.
 edição grava os dois. Sem `.pwsk`, vale o caminho do B305 (bytes de tabela no DLL original). Arquivo que só existe no
 rascunho (ação `adicionar`) passou a ser lido pelo `item_do_cliente`.
 
-**Falta:**
-- gerar o `.pwsk` a partir do modelo único, junto com o catálogo do servidor;
-- editar a descrição (argumentos) e o alcance;
-- a correção dos 65 textos com `%` sem escape;
-- habilidade nova (fase 6);
-- o 1.2.6 (fase 7).
+**Falta:** ~~gerar o `.pwsk` junto com o catálogo do servidor~~ e ~~editar descrição e alcance~~ (B325, §12);
+~~os 65 textos com `%` sem escape~~ (B323); habilidade nova (fase 6); o 1.2.6 (fase 7).
 
-## 12. Edição completa das habilidades no Estúdio (B324)
+## 12. Edição completa das habilidades no Estúdio (B325)
 
 Com o `.pwsk` na versão, a ficha da habilidade (`GET …/estudio/habilidades/{id}`) traz em `cliente`:
 - `campos`: os 9 números do B321;

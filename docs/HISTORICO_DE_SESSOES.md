@@ -16614,7 +16614,7 @@ comparação lado a lado.
     ### e. Falta
     - O Murillo atualizar as duas versões e entrar no jogo.
 
-324. **Sessão 2026-10-21: edição completa das habilidades no Estúdio (descrição, alcance, nos dois, versões).**
+325. **Sessão 2026-10-21: edição completa das habilidades no Estúdio (descrição, alcance, nos dois, versões).**
 
     ### a. Pedido
     "Gerar o `.pwsk` a partir do mesmo modelo que gera o catálogo do servidor, e tornar descrição e alcance editáveis
@@ -16665,3 +16665,12 @@ comparação lado a lado.
     ### d. Falta
     - O Murillo testar em jogo (ESTADO §3.3).
     - Habilidade nova (fase 6) e o 1.2.6 (fase 7) do DLL de dados.
+
+326. **Sessão 2026-10-21: testes em jogo do Murillo registrados; número da sessão anterior corrigido.**
+
+    - Relato do Murillo: "Fiz os testes dentro do jogo da 1.5.5 e da 1.2.6 e está tudo funcionando." Marcados como
+      confirmados (ESTADO §3.1 e §3.3): B320/B322, B321, B323, B325, o 1.2.6 em geral e os roteiros do painel
+      (B175–B179, B182, E4–E6, E8).
+    - A sessão "edição completa das habilidades" saiu como 324, mesmo número da sessão do Codex sobre o `userdata`
+      pessoal. Renumerada para **325** no histórico, no índice, nas specs 07/08 e nos comentários do código.
+    - Spec 08 §11: a lista "Falta" ainda pedia descrição, alcance e `%` sem escape, já feitos (B323, B325). Corrigida.

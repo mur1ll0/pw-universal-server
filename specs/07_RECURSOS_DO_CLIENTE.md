@@ -753,7 +753,7 @@ o roteiro todo (acrescentar, remover, reordenar). O GS roda em ordem, só os pas
   liga a flag correspondente (salvo se a flag vier no mesmo pedido). Editar um roteiro existente não mexe na flag: há
   roteiros do original com ela desligada (1.2.6: 4 `no_alvo` sem `doenchant`; 1.5.5: 1 `em_si` sem `dobless`).
 
-**Descrição, alcance e números nos dois (B324):** rotas `…/descricao_numeros`, `…/alcance` (com `servidor`) e
+**Descrição, alcance e números nos dois (B325):** rotas `…/descricao_numeros`, `…/alcance` (com `servidor`) e
 `…/numeros_nos_dois`, regras na spec 08 §12. O painel ganhou:
 - a tabela "Números da descrição" (uma coluna por conversão do texto);
 - a tabela "Alcance", com a caixa "também no servidor";

@@ -438,7 +438,7 @@ pub fn ler(b: &[u8]) -> Result<Modelo, String> {
     Ok(Modelo { versao_do_modelo: 1, versao_do_dll, habilidades, estados_visiveis, estados_equipe, inerentes })
 }
 
-// ------------------------------------------------------------------ B324: os números da descrição
+// ------------------------------------------------------------------ B325: os números da descrição
 
 /// Uma conversão do formato da descrição (`_snwprintf`), na ordem do texto.
 #[derive(Debug, Clone, PartialEq, Serialize)]

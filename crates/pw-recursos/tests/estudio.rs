@@ -15,7 +15,7 @@ fn pwsk_de_teste() -> Vec<u8> {
         juniores: vec![],
         est: vec![k; 7],
         alcance: [0.0, 5.0, 0.0],
-        // B324: a descrição recebe o nível (`%d`).
+        // B325: a descrição recebe o nível (`%d`).
         intro: vec![Argumento::Palavras { palavras: vec![k as u32] }],
     };
     let m = Modelo {
@@ -941,14 +941,14 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         pedir("PUT", &format!("estudio/habilidades/1/numeros_do_cliente?rascunho={ri}")).send_json(json!({"dinheiro_exigido": dez(777), "mp": dez(9)})).unwrap();
         let hc = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &ri.to_string()).call().unwrap());
         assert_eq!((hc["cliente"]["campos"]["dinheiro_exigido"]["valores"].clone(), hc["cliente"]["campos"]["mp"]["valores"].clone()), (dez(777), dez(9)), "{hc}");
-        // B324: os números da descrição — o texto do rascunho tem um `%d` ("Linha 2 (%d)"), que é o nível.
+        // B325: os números da descrição — o texto do rascunho tem um `%d` ("Linha 2 (%d)"), que é o nível.
         assert_eq!(hc["cliente"]["descricao"]["niveis"][2], json!([{"tipo":"inteiro","valor":3}]), "{hc}");
         let novos: Vec<Value> = (1..=10).map(|k| json!([100 + k])).collect();
         pedir("PUT", &format!("estudio/habilidades/1/descricao_numeros?rascunho={ri}")).send_json(json!({"niveis": novos})).unwrap();
         let hd = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &ri.to_string()).call().unwrap());
         assert_eq!(hd["cliente"]["descricao"]["niveis"][2], json!([{"tipo":"inteiro","valor":103}]), "{hd}");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/descricao_numeros?rascunho={ri}")).send_json(json!({"niveis": [[1.5]]}))).0, 400, "um por nível");
-        // B324: o alcance, só no cliente e nos dois (o servidor guarda `arma` única e `fixo` por nível). Dois rascunhos
+        // B325: o alcance, só no cliente e nos dois (o servidor guarda `arma` única e `fixo` por nível). Dois rascunhos
         // abertos não editam o mesmo arquivo (409): tudo no `ri`, e no fim o catálogo sai dele (o B302 adiante o usa).
         let rb = ri;
         let b: Vec<f64> = (1..=10).map(|k| 5.0 + k as f64).collect();
@@ -958,7 +958,7 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!((ha["servidor"]["alcance"]["arma"].as_i64(), ha["servidor"]["alcance"]["fixo"][2].as_f64()), (Some(1), Some(8.0)), "{ha}");
         let a_varia: Vec<f64> = (1..=10).map(|k| k as f64).collect();
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/alcance?rascunho={rb}")).send_json(json!({"a": a_varia, "servidor": true}))).0, 400, "o servidor tem um multiplicador só");
-        // B324: o mesmo número nos dois.
+        // B325: o mesmo número nos dois.
         pedir("PUT", &format!("estudio/habilidades/1/numeros_nos_dois?rascunho={rb}")).send_json(json!({"sp_exigido": dez(31)})).unwrap();
         let h2 = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &rb.to_string()).call().unwrap());
         assert_eq!((h2["cliente"]["campos"]["sp_exigido"]["valores"].clone(), h2["servidor"]["sp_exigido"].clone()), (dez(31), dez(31)), "{h2}");
@@ -1038,9 +1038,9 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert!(t.get(1).is_some(), "o leitor do GS aceita o catálogo publicado");
         let hp = json_de(pedir("GET", "estudio/habilidades/1").call().unwrap());
         assert_eq!((hp["servidor"]["recarga_ms"].clone(), hp["origem_dos_numeros"].as_str()), (json!(recarga), Some("catálogo do realm")), "{hp}");
-        // B324: versionamento — o mesmo número nos dois, publicado; reverter devolve o servidor e o cliente juntos.
+        // B325: versionamento — o mesmo número nos dois, publicado; reverter devolve o servidor e o cliente juntos.
         let sp_antes = (hp["servidor"]["sp_exigido"].clone(), hp["cliente"]["campos"]["sp_exigido"]["valores"].clone());
-        let rd = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "B324 versões", "operacao_id": "t_p4_b324v"})).unwrap())["id"].as_i64().unwrap();
+        let rd = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "B325 versões", "operacao_id": "t_p4_b324v"})).unwrap())["id"].as_i64().unwrap();
         let novo_sp = json!((1..=10).map(|k| 4000 + k).collect::<Vec<_>>());
         pedir("PUT", &format!("estudio/habilidades/1/numeros_nos_dois?rascunho={rd}")).send_json(json!({"sp_exigido": novo_sp})).unwrap();
         pedir("POST", "publicar").send_json(json!({"rascunhos": [rd]})).unwrap();

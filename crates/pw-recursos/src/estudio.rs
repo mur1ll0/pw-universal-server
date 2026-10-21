@@ -83,7 +83,7 @@ const CAMPOS_EDITAVEIS: [(&str, &str); 11] = [
     ("nivel_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
     ("sp_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
     ("dinheiro_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
-    // B324: o tempo de execução (o GS espera por ele no lançamento) e o livro exigido.
+    // B325: o tempo de execução (o GS espera por ele no lançamento) e o livro exigido.
     ("execucao_ms", "o cliente também mostra e anima, pelo elementskill.dll dele (GetExecuteTime)"),
     ("item_exigido", "o cliente também confere, pelo elementskill.dll dele (o livro exigido)"),
     // B307: o golpe da habilidade é do servidor (`CombatEngine::golpe_de_habilidade`, `combat.rs:795-815`:
@@ -3602,7 +3602,7 @@ impl Estudio {
                             let v: Vec<i32> = h.niveis.iter().map(|n| n.ints[i]).collect();
                             campos.insert(c.to_string(), json!({ "valores": v, "le_alem": 0, "quem_confere": quem }));
                         }
-                        // B324: os números da descrição (pelas conversões do texto atual) e o alcance.
+                        // B325: os números da descrição (pelas conversões do texto atual) e o alcance.
                         use pw_data_loader::habilidades_do_cliente as hc;
                         let conv = hc::conversoes(formato);
                         let descricao: Vec<Vec<hc::ValorDaDescricao>> = h.niveis.iter().map(|n| hc::numeros_da_descricao(n, &conv)).collect();
@@ -3687,7 +3687,7 @@ impl Estudio {
         .await
     }
 
-    /// B324: troca os números da descrição no `habilidades.pwsk` do rascunho — `niveis[n][i]` para a conversão `i` do
+    /// B325: troca os números da descrição no `habilidades.pwsk` do rascunho — `niveis[n][i]` para a conversão `i` do
     /// texto da descrição (com o rascunho), `null` = fica. Proficiência e o que o texto pede além dos argumentos não se
     /// editam.
     pub async fn definir_numeros_da_descricao(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i64, niveis: Vec<Vec<Option<f64>>>) -> Result<Value> {
@@ -3711,7 +3711,7 @@ impl Estudio {
         .await
     }
 
-    /// B324: troca o alcance `d = a·alcance_da_arma + b + c·bônus` no `habilidades.pwsk` do rascunho (listas por nível;
+    /// B325: troca o alcance `d = a·alcance_da_arma + b + c·bônus` no `habilidades.pwsk` do rascunho (listas por nível;
     /// ausente = fica). Com `servidor`, grava também no catálogo do realm: `alcance.arma = a` (um só para todos os
     /// níveis, como o GS o guarda) e `alcance.fixo = b`; o `c` (bônus do jogador) só existe no cliente.
     pub async fn definir_alcance(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i64, a: Option<Vec<f64>>, b: Option<Vec<f64>>, c: Option<Vec<f64>>, servidor: bool) -> Result<Value> {
@@ -3779,7 +3779,7 @@ impl Estudio {
         Ok(json!({ "cliente": r, "servidor": rs }))
     }
 
-    /// B324: o mesmo número no servidor (`catalogo\habilidades.json`) e no cliente (`habilidades.pwsk`), num pedido
+    /// B325: o mesmo número no servidor (`catalogo\habilidades.json`) e no cliente (`habilidades.pwsk`), num pedido
     /// só — os dois saem do mesmo modelo e não divergem. Só os campos que existem nos dois.
     pub async fn definir_numeros_nos_dois(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i64, campos: serde_json::Map<String, Value>) -> Result<Value> {
         const NOS_DOIS: [&str; 7] = ["recarga_ms", "execucao_ms", "nivel_exigido", "sp_exigido", "dinheiro_exigido", "item_exigido", "mp"];

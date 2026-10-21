@@ -612,7 +612,7 @@ struct PedidoDescricao {
     niveis: Vec<Vec<Option<f64>>>,
 }
 
-/// B324: os números da descrição no `habilidades.pwsk` do rascunho.
+/// B325: os números da descrição no `habilidades.pwsk` do rascunho.
 async fn estudio_descricao_numeros(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i64)>, Query(q): Query<QEstudio>, Json(p): Json<PedidoDescricao>) -> R<Json<Value>> {
     validar(&v)?;
     let r = rascunho_obrigatorio(&q)?;
@@ -628,14 +628,14 @@ struct PedidoAlcance {
     servidor: bool,
 }
 
-/// B324: o alcance no `habilidades.pwsk` (e, com `servidor`, no catálogo do realm).
+/// B325: o alcance no `habilidades.pwsk` (e, com `servidor`, no catálogo do realm).
 async fn estudio_alcance(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i64)>, Query(q): Query<QEstudio>, Json(p): Json<PedidoAlcance>) -> R<Json<Value>> {
     validar(&v)?;
     let r = rascunho_obrigatorio(&q)?;
     Ok(Json(e.estudio.definir_alcance(&e.gov, &v, r, id, p.a, p.b, p.c, p.servidor).await?))
 }
 
-/// B324: o mesmo número no servidor e no cliente.
+/// B325: o mesmo número no servidor e no cliente.
 async fn estudio_numeros_nos_dois(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i64)>, Query(q): Query<QEstudio>, Json(p): Json<serde_json::Map<String, Value>>) -> R<Json<Value>> {
     validar(&v)?;
     let r = rascunho_obrigatorio(&q)?;

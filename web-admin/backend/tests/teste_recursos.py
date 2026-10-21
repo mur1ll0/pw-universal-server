@@ -158,7 +158,7 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], json.loads(p["corpo"])), ("/admin/1.5.5/estudio/habilidades/15/roteiro", {"no_alvo": ["50", "L", "1"]}))
-        # B324: descrição (corpo grande: muitos níveis × conversões passa de 8 KiB), alcance e nos dois.
+        # B325: descrição (corpo grande: muitos níveis × conversões passa de 8 KiB), alcance e nos dois.
         niveis = [[1.5] * 40 for _ in range(60)]
         for sufixo, corpo in (("descricao_numeros", {"niveis": niveis}), ("alcance", {"b": [5.0] * 10, "servidor": True}),
                               ("numeros_nos_dois", {"mp": [1] * 10})):

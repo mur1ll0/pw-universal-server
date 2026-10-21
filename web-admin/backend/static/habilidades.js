@@ -131,7 +131,7 @@ async function abrirHabilidade(id) {
         } catch (erro) { alerta("erro", "Estúdio", erro.message); }
       });
       ficha.appendChild(salvarN);
-      // B324: o mesmo número no servidor e no cliente (habilidades.pwsk), num pedido só — os campos que existem nos dois.
+      // B325: o mesmo número no servidor e no cliente (habilidades.pwsk), num pedido só — os campos que existem nos dois.
       const NOS_DOIS = ["recarga_ms", "execucao_ms", "nivel_exigido", "sp_exigido", "dinheiro_exigido", "item_exigido", "mp"];
       const salvarD = criar("button", "botao botao-pequeno", "Salvar no servidor e no cliente");
       salvarD.type = "button";
@@ -313,7 +313,7 @@ async function abrirHabilidade(id) {
   elemento("habilidades-busca").addEventListener("input", () => { clearTimeout(espera); espera = setTimeout(carregarHabilidades, 300); });
 })();
 
-/* B324: os números da descrição — uma coluna por conversão do texto (%d inteiro, %.1f real), uma linha por nível.
+/* B325: os números da descrição — uma coluna por conversão do texto (%d inteiro, %.1f real), uma linha por nível.
    Proficiência (o DLL põe na hora) e o que o texto pede além dos argumentos não se editam. */
 function desenharDescricaoDoCliente(f, d) {
   const ficha = elemento("habilidades-ficha");
@@ -365,7 +365,7 @@ function desenharDescricaoDoCliente(f, d) {
   ficha.append(b, criar("div", "texto-suave", "Mudar o texto (Nome/Descrição acima) muda as colunas: cada %d/%.1f do texto lê o próximo número. Vale para o jogador depois de publicar e ele atualizar pelo launcher."));
 }
 
-/* B324: o alcance — d = a·alcance da arma + b + c·bônus do jogador, por nível (a regra de ataque/auto-ataque/salto/sem
+/* B325: o alcance — d = a·alcance da arma + b + c·bônus do jogador, por nível (a regra de ataque/auto-ataque/salto/sem
    alvo é a do original). Com "também no servidor": arma = a (um só) e fixo = b no catálogo do realm. */
 function desenharAlcanceDoCliente(f, al) {
   const ficha = elemento("habilidades-ficha");
