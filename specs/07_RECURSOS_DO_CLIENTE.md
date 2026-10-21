@@ -714,6 +714,11 @@ nível]}` grava o item do servidor `catalogo\habilidades.json` (`Estudio::defini
   - **o cliente também confere, pelo `elementskill.dll` dele:** `mp` (`CheckSkillCastCondition`,
     `EC_HostPlayer.cpp:6097-6150`), `nivel_exigido`, `sp_exigido` e `dinheiro_exigido` (`LearnCondition`,
     `:6067-6093`). Mudar só o servidor desalinha.
+  - **só o servidor, dentro de `dano` (B307):** `dano.ratio` e `dano.plus` — o golpe é
+    `(bruto × (100 + bônus + ratio×100)% + plus) × fator` (`CombatEngine::golpe_de_habilidade`, `combat.rs:795-815`) —
+    e `precisao` (multiplica a taxa de ataque, `bus_server/habilidades.rs:387`). Campo com ponto navega o objeto, que
+    tem de existir (habilidade sem `dano` não ganha um); a lista tem o tamanho da que já existe. A descrição do cliente
+    (os `%d` que o `elementskill.dll` preenche) continua com os números antigos.
 
 **Números do cliente (B305):** `PUT estudio/habilidades/{id}/numeros_do_cliente?rascunho=` `{campo: [um número por
 nível editável]}` troca os bytes da tabela no `elementskill.dll` do rascunho (`Estudio::definir_numeros_do_cliente`,

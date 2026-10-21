@@ -16012,3 +16012,40 @@ comparação lado a lado.
     ### d. Falta
     - Mana e números que vêm do código do DLL (editar instruções; outro método).
     - Habilidade nova.
+
+307. **Sessão 2026-10-20: Estúdio S8 — dano e precisão das habilidades editáveis.**
+
+    ### a. Pedido
+    Commitar (o B306 já estava em `1d042e2`, `a406e5a`) e seguir. O que restava no lado do cliente (mana, números que
+    vêm do código do DLL, habilidade nova) exige editar instruções ou recompilar o DLL. A outra metade do S8 no plano é
+    "efeitos no GS".
+
+    ### b. Evidência
+    - O golpe da habilidade é todo do servidor: `CombatEngine::golpe_de_habilidade` (`combat.rs:795-815`) faz
+      `(bruto × (100 + bônus + ratio×100)% + plus) × fator`, com `ratio`/`plus` por nível do `dano` do catálogo. A
+      `precisao` do nível multiplica a taxa de ataque (`bus_server/habilidades.rs:387`).
+    - O cliente não confere nada disso; só a descrição (os `%d` do `elementskill.dll`) fica com os números antigos.
+
+    ### c. O que foi feito
+    - `CAMPOS_EDITAVEIS` ganhou `dano.ratio`, `dano.plus` e `precisao`.
+    - `definir_numeros_da_habilidade` aceita campo com ponto: ele navega o objeto, que tem de existir, e a lista tem
+      o tamanho da que já existe. Continua validado pelo leitor do GS.
+    - Painel: a tabela por nível mostra `dano.ratio`/`dano.plus` como colunas editáveis.
+
+    ### d. Provas
+    - `pw-recursos` com o banco: **26 passaram, 0 falharam** — `dano.plus` e `precisao` gravados no rascunho, a
+      edição anterior (recarga) preservada, tamanho errado dá 400.
+    - No `pw-recursos` real (1.5.5, rascunhos 41 e 42 descartados), habilidade 1:
+      - `dano.plus` dobrado gravou com origem "rascunho", e o `ratio` ficou intacto;
+      - a habilidade 4, sem dano, é recusada (400, "não tem dano");
+      - sem rascunho segue o original (102,6; 172,3…).
+    - Arredondamento: 2 dos 10 valores voltam 1 ulp diferentes do `f64` enviado (1.155,6000000000001 → 1.155,6;
+      2,3×10⁻¹³), porque o `serde_json` sem `float_roundtrip` arredonda o último bit. O GS lê `plus` como `f32`
+      (`DanoDaHabilidade`, `habilidades.rs:172`), então o valor no jogo é o mesmo.
+    - `pw-recursos` e `pw-admin-api` publicados.
+
+    ### e. Falta
+    - Murillo: recriar os mundos para o catálogo do realm valer no jogo (montagem do B302).
+    - Roteiros de efeito (`no_alvo`/`em_si`) e estados: expressões avaliadas pelo `pw_gs::efeitos::expr` — editar
+      exige validar a expressão com o mesmo avaliador.
+    - Mana e números que vêm do código do DLL; habilidade nova.
