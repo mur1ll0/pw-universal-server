@@ -16092,3 +16092,39 @@ comparação lado a lado.
     - Acrescentar ou remover passos (setters novos): precisa da lista de setters que o GS porta (`Ficha::do_setter`).
     - Murillo: recriar os mundos para o catálogo valer; publicar o GS novo (B249).
     - Mana e números que vêm do código do DLL; habilidade nova.
+
+309. **Sessão 2026-10-20: Estúdio S8 — passos de roteiro acrescentados e removidos.**
+
+    ### a. Pedido
+    Commitar (o B308 já estava em `ceb1b04`, `89991ad`) e seguir: acrescentar e remover passos dos roteiros.
+
+    ### b. Evidência
+    - `efeitos::executar_roteiro` roda em ordem e só os passos de quem = `V`. `Probability`/`Time`/`Ratio`/`Value`/
+      `Amount`/`Showicon` acumulam; os demais aplicam `Efeito::do_setter(nome)`, e um `None` não faz nada no jogo.
+    - `do_setter` (`efeitos.rs:320-397`) porta 73 nomes.
+
+    ### c. O que foi feito
+    - `pw_data_loader::roteiro`: `ACUMULADORES`, `SETTERS_DO_GS` (os 73) e `setter_do_gs`.
+    - Teste `os_setters_do_estudio_sao_os_do_gs` no `pw-gs`: todo nome da lista é portado, e todo setter dos dois
+      catálogos (mais de 1.000 passos) é portado se e só se está nela. A lista não diverge do GS em silêncio.
+    - `PUT …/roteiro` aceita o roteiro inteiro (`[quem, setter, expressão]` por passo):
+      - passo novo exige quem = `V` e setter do GS;
+      - um passo do original sem porte pode ficar;
+      - as expressões são validadas como no B308.
+    - A ficha leva `setters_do_gs`.
+    - Painel: ↑ ↓ ✕ por passo e "Acrescentar passo" com o setter num menu.
+
+    ### d. Provas
+    - `pw-gs` biblioteca **119/119**; `pw-data-loader` roteiro **2/2**.
+    - `pw-recursos` com o banco: **26 passaram, 0 falharam**. A 15 virou `Probability 100, Time 3000, Slow 1, Value L`
+      (o Heal saiu). Recusados (400): setter inventado, passo novo de quem não é `V`, passo sem expressão.
+    - Painel **12/12**.
+    - No `pw-recursos` real, habilidade 15, rascunhos 45 (1.5.5) e 46 (1.2.6), descartados:
+      - a ficha traz 79 setters (6 acumuladores e 73 do GS);
+      - a lentidão acrescentada (`Probability 30, Time 2000, Slow 1`) gravou nos dois;
+      - setter inventado dá 400, e sem rascunho segue o original.
+    - `pw-recursos` e `pw-admin-api` publicados; o GS não.
+
+    ### e. Falta
+    - Murillo: recriar os mundos (catálogo) e publicar o GS novo (B249) para valer no jogo.
+    - Roteiro novo em habilidade que não tem; mana e números que vêm do código do DLL; habilidade nova.

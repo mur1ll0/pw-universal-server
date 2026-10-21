@@ -729,6 +729,13 @@ GS os roda em `efeitos::executar_roteiro`. Validação:
   `efeitos::variaveis` sabe preencher (`L`, `P_*` de quem lança, `V_*` do alvo, `S_*` do golpe);
 - o arquivo editado lê no `TabelaDeHabilidades::de_json`.
 
+**Roteiro inteiro (B309):** o mesmo `PUT …/roteiro` aceita `{"no_alvo"|"em_si": [[quem, setter, expressão], …]}` e troca
+o roteiro todo (acrescentar, remover, reordenar). O GS roda em ordem, só os passos de quem = `V`; `Probability`, `Time`,
+`Ratio`, `Value`, `Amount` e `Showicon` acumulam para o efeito seguinte. Passo novo: quem = `V` e setter que o GS porta
+(`pw_data_loader::roteiro::setter_do_gs` — os acumuladores e os 73 de `Efeito::do_setter`, travados pelo teste
+`os_setters_do_estudio_sao_os_do_gs` do `pw-gs` contra todo setter dos dois catálogos). Um passo do original sem porte
+(mesmo quem e setter) pode ficar. A ficha leva `setters_do_gs`.
+
 **Números do cliente (B305):** `PUT estudio/habilidades/{id}/numeros_do_cliente?rascunho=` `{campo: [um número por
 nível editável]}` troca os bytes da tabela no `elementskill.dll` do rascunho (`Estudio::definir_numeros_do_cliente`,
 `crate::elementskill`). Recompilar do fonte desfaria o que o BR mudou (B303), então a edição é no binário, em posições
