@@ -133,6 +133,41 @@ async function abrirHabilidade(id) {
       ficha.appendChild(salvarN);
     }
   }
+  // B308: os roteiros de efeito (no_alvo = StateAttack no alvo, em_si = BlessMe em quem lança) — a expressão de cada
+  // passo se edita; quem e setter ficam. O servidor confere com o avaliador do GS e as variáveis do original.
+  for (const [r, titulo] of [["no_alvo", "Efeito no alvo (no_alvo)"], ["em_si", "Efeito em quem lança (em_si)"]]) {
+    if (!Array.isArray(s[r]) || !s[r].length) continue;
+    const tr0 = criar("table", "tabela-simples");
+    tr0.appendChild(criar("caption", "", `${titulo} — só o servidor`));
+    const cab = criar("tr");
+    cab.append(criar("th", "", "#"), criar("th", "", "quem"), criar("th", "", "setter"), criar("th", "", "expressão ✎"));
+    tr0.appendChild(cab);
+    const exprs = [];
+    s[r].forEach((p, i) => {
+      const tr = criar("tr");
+      const e = criar("input", "campo");
+      e.value = String(p[2]);
+      e.style.width = "100%";
+      exprs.push(e);
+      const td = criar("td");
+      td.appendChild(e);
+      tr.append(criar("td", "", String(i + 1)), criar("td", "", p[0]), criar("td", "", p[1]), td);
+      tr0.appendChild(tr);
+    });
+    ficha.appendChild(tr0);
+    const salvarR = criar("button", "botao botao-pequeno", `Salvar ${r} no rascunho`);
+    salvarR.type = "button";
+    salvarR.addEventListener("click", async () => {
+      if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+      try {
+        await api(rotaDeHabilidades(`/${f.id}/roteiro`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify({ [r]: exprs.map((e) => e.value) }) });
+        alerta("ok", "Estúdio", `Roteiro ${r} da habilidade ${f.id} no rascunho (catalogo\\habilidades.json).`, { toast: true });
+        if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+        abrirHabilidade(f.id);
+      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    });
+    ficha.append(salvarR, criar("div", "texto-suave", "Variáveis: L (nível), P_* (quem lança), V_* (alvo), S_* (golpe da habilidade) — só as que algum roteiro do original usa; números, + − × ÷, comparações, && ||, ?:, INT(...)."));
+  }
   // B305: os números do cliente (elementskill.dll) — só as tabelas medidas no binário se editam; o resto vem do código.
   const c = f.cliente || {};
   if (!c.mapa) {

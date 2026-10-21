@@ -26,6 +26,28 @@ const NIVEL_DO_RASCUNHO: i32 = 3;
 /// B301: a tabela de nome e descrição das habilidades no cliente (`m_SkillDesc.Init("Configs\\skillstr.txt", true)`,
 /// `EC_Game.cpp:529` — UTF-16).
 const CAMINHO_SKILLSTR: &str = "configs\\skillstr.txt";
+/// B308: as variáveis que os roteiros (`no_alvo`/`em_si`) do catálogo original de um jogo usam — o que o GS sabe
+/// preencher (`efeitos::variaveis`: `L`, `P_*` do conjurador, `V_*` do alvo, `S_*` da habilidade).
+fn variaveis_dos_roteiros(jogo: &str) -> Result<&'static std::collections::BTreeSet<String>> {
+    use std::collections::BTreeSet;
+    use std::sync::OnceLock;
+    static V155: OnceLock<BTreeSet<String>> = OnceLock::new();
+    static V126: OnceLock<BTreeSet<String>> = OnceLock::new();
+    let celula = match jogo { "1.5.5" => &V155, "1.2.6" => &V126, j => bail!("sem roteiros para {j}") };
+    Ok(celula.get_or_init(|| {
+        let j: Value = serde_json::from_str(pw_data_loader::habilidades::json_do_servidor(jogo).unwrap_or("{}")).unwrap_or_default();
+        let mut c = BTreeSet::new();
+        for h in j["habilidades"].as_object().into_iter().flat_map(|m| m.values()) {
+            for r in ["no_alvo", "em_si"] {
+                for p in h[r].as_array().into_iter().flatten() {
+                    c.extend(p[2].as_str().and_then(pw_data_loader::expr::variaveis).unwrap_or_default());
+                }
+            }
+        }
+        c
+    }))
+}
+
 /// B305: o DLL das habilidades do cliente (raiz do `element`).
 const CAMINHO_ELEMENTSKILL: &str = "elementskill.dll";
 
@@ -3398,6 +3420,47 @@ impl Estudio {
             let novo = serde_json::to_vec(&j)?;
             pw_data_loader::habilidades::TabelaDeHabilidades::de_json(&String::from_utf8_lossy(&novo)).context("o habilidades.json editado não lê no GS")?;
             let mudanca = json!({ "acao": "editar", "tipo": "numeros_de_habilidade", "id": id, "campos": mudou });
+            Ok((novo, json!({ "id": id, "campos": mudou }), mudanca))
+        })
+        .await
+    }
+
+    /// B308 (S8): troca as expressões dos passos de um roteiro de efeito (`no_alvo` = `StateAttack`, `em_si` =
+    /// `BlessMe`) no `habilidades.json` do realm. Um texto por passo existente; quem e setter não mudam. Cada expressão
+    /// tem de ler no avaliador do GS (`pw_data_loader::expr`, o mesmo que `efeitos::executar_roteiro` usa) e só usar
+    /// variáveis que os roteiros do catálogo original da versão usam (`L`, `P_*`, `V_*`, `S_*` conhecidas).
+    pub async fn definir_roteiro_da_habilidade(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i64, campos: serde_json::Map<String, Value>) -> Result<Value> {
+        if campos.is_empty() {
+            bail!("nada a mudar");
+        }
+        let jogo = self.jogo_da_versao(gov, versao).await?;
+        let conhecidas = variaveis_dos_roteiros(jogo)?;
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let (base, do_rascunho, _) = self.json_de_habilidades(gov, versao, Some(rascunho)).await?;
+        self.gravar_item_do_realm(gov, versao, rascunho, CAMINHO_HABILIDADES.to_string(), base, do_rascunho, move |b| {
+            let mut j: Value = serde_json::from_slice(b)?;
+            let h = j.get_mut("habilidades").and_then(|x| x.get_mut(id.to_string())).with_context(|| format!("a habilidade {id} não existe"))?;
+            let mut mudou = Vec::new();
+            for (k, v) in &campos {
+                if k != "no_alvo" && k != "em_si" {
+                    bail!("roteiro {k}: só no_alvo ou em_si");
+                }
+                let passos = h.get_mut(k.as_str()).and_then(Value::as_array_mut).with_context(|| format!("a habilidade {id} não tem roteiro {k}"))?;
+                let novas = v.as_array().filter(|a| a.len() == passos.len()).with_context(|| format!("{k}: uma expressão por passo ({})", passos.len()))?;
+                for (i, (p, e)) in passos.iter_mut().zip(novas).enumerate() {
+                    let e = e.as_str().with_context(|| format!("{k} passo {}: texto", i + 1))?.trim();
+                    let vars = pw_data_loader::expr::variaveis(e).with_context(|| format!("{k} passo {} ({}): a expressão não se lê: {e}", i + 1, p[1]))?;
+                    if let Some(x) = vars.iter().find(|x| !conhecidas.contains(x.as_str())) {
+                        bail!("{k} passo {} ({}): a variável {x} não aparece em nenhum roteiro do original", i + 1, p[1]);
+                    }
+                    p[2] = Value::String(e.to_string());
+                }
+                mudou.push(k.clone());
+            }
+            let novo = serde_json::to_vec(&j)?;
+            pw_data_loader::habilidades::TabelaDeHabilidades::de_json(&String::from_utf8_lossy(&novo)).context("o habilidades.json editado não lê no GS")?;
+            let mudanca = json!({ "acao": "editar", "tipo": "roteiro_de_habilidade", "id": id, "campos": mudou });
             Ok((novo, json!({ "id": id, "campos": mudou }), mudanca))
         })
         .await

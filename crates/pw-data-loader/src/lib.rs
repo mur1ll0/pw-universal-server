@@ -1,3 +1,4 @@
+pub mod expr;
 pub mod movemap;
 pub mod addons;
 pub mod aipolicy;

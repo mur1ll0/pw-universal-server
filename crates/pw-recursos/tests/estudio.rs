@@ -926,6 +926,20 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!((hd["servidor"]["dano"]["plus"].clone(), hd["servidor"]["precisao"].clone()), (json!(plus), json!(prec)), "{hd}");
         assert_eq!(hd["servidor"]["recarga_ms"], json!(recarga), "a edição anterior continua");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros?rascunho={rh}")).send_json(json!({"dano.ratio": [0.5]}))).0, 400, "dano: um por nível");
+        // B308: as expressões do roteiro no alvo da 15 (Probability, Value, Heal nos dois catálogos).
+        let novas = json!(["50", "S_Magicdamage * 2 + 100 * L", "1"]);
+        pedir("PUT", &format!("estudio/habilidades/15/roteiro?rascunho={rh}")).send_json(json!({"no_alvo": novas})).unwrap();
+        let hr = json_de(pedir("GET", "estudio/habilidades/15").query("rascunho", &rh.to_string()).call().unwrap());
+        let lidas: Vec<Value> = hr["servidor"]["no_alvo"].as_array().unwrap().iter().map(|p| p[2].clone()).collect();
+        assert_eq!((json!(lidas), hr["servidor"]["no_alvo"][1][1].as_str()), (novas, Some("Value")), "{hr}");
+        for (corpo, porque) in [
+            (json!({"no_alvo": ["50", "X_Inventada * 2", "1"]}), "variável que o original não usa"),
+            (json!({"no_alvo": ["50", "1 +", "1"]}), "expressão que não se lê"),
+            (json!({"no_alvo": ["50"]}), "uma por passo"),
+            (json!({"dano": ["1"]}), "só no_alvo/em_si"),
+        ] {
+            assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/15/roteiro?rascunho={rh}")).send_json(corpo)).0, 400, "{porque}");
+        }
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros?rascunho={rh}")).send_json(json!({"mp": [1, 2]}))).0, 400, "um número por nível");
         let ph = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [rh]})).unwrap());
         assert_eq!(ph["aplicados"].as_array().map(|x| x.len()), Some(1), "{ph}");
