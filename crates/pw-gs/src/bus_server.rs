@@ -762,6 +762,13 @@ impl BusServer {
                 self.transmitir_a_quem_ve(id, pacote).await;
             }
             EventoDoMundo::MonstroFalou { id, texto, canal, dados } => self.monstro_falou(id, &texto, canal, dados).await,
+            EventoDoMundo::MonstroTocouAcao { id, nome, vezes, duracao_ms, intervalo_ms } => {
+                let pacote = S2CGamedataSend::object_start_play_action(id as i32, vezes, duracao_ms, intervalo_ms, &nome).data;
+                self.transmitir_a_quem_ve(id, pacote).await;
+            }
+            EventoDoMundo::MonstroParouAcao { id } => {
+                self.transmitir_a_quem_ve(id, S2CGamedataSend::object_stop_play_action(id as i32).data).await;
+            }
             EventoDoMundo::MonstroUsouHabilidade {
                 id,
                 alvo,
@@ -2455,8 +2462,18 @@ impl BusServer {
             return;
         };
 
-        if !self.world.write().await.convidar_para_grupo(roleid, alvo) {
-            debug!("mundo: convite de {roleid} para {alvo} recusado (já tem grupo?)");
+        let recusa = self.world.write().await.convidar_para_grupo(roleid, alvo);
+        if let Err(r) = recusa {
+            debug!("mundo: convite de {roleid} para {alvo} recusado: {r:?}");
+            // B334: `ERR_TEAM_CANNOT_INVITE` (10) e `ERR_TEAM_ALREADY_INVITE` (12) (`common/protocol.h:690-692`).
+            let codigo = match r {
+                crate::world::RecusaDoConvite::Cheio => Some(10),
+                crate::world::RecusaDoConvite::JaConvidado => Some(12),
+                crate::world::RecusaDoConvite::NaoPode => None,
+            };
+            if let Some(c) = codigo {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(c).data).await;
+            }
             return;
         }
 

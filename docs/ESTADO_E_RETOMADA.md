@@ -371,6 +371,11 @@ Os itens abaixo foram implementados/testados; a publicação é indicada por ite
 de 2026-09-26 está publicada nos realms 126 e 155 desde 11:10 (−03). Até o B86 o Murillo declarou o 1.5.5 jogável sem apontar defeito
 neles, mas não há relato item a item. Detalhe e roteiro de cada um no histórico.
 
+- **B334–B341 (§5A: grupo, missões, IA da política) — na `main`, não publicado; falta ver em jogo.** Roteiro em
+  `docs/HISTORICO_DE_SESSOES.md` §334–341: grupo cheio (6 no 1.2.6, 10 no 1.5.5), missão que falha ao sair da
+  região, monstro que larga o alvo longe do ninho, e as operações da política (invocar, tocar ação, contar
+  jogadores, trocar de caminho).
+
 - **B325 (edição completa das habilidades) — `pw-recursos` e painel publicados; confirmado em jogo pelo Murillo em 2026-10-21.** Roteiro, no
   realm 1.5.5:
   1. Estúdio → escolher ou criar um rascunho → Habilidades → habilidade **1** (Ataque do Tigre).
@@ -691,12 +696,14 @@ Conferido contra o código em 2026-09-13 — cada linha diz onde está a evidên
 O pedido do Murillo no B44: combate básico inteiro, experiência, alma, moedas, animações,
 habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 
-1. **Missões — o que o motor ainda recusa ou ignora** (spec 05 §10): casamento, PQ, prêmio
-   por escala, `FORCE_GIVEUP`, limite de tempo checado só na entrega, força, região que falha.
-   Facção recusa sempre (não há sistema de facção). Feitos: invocação, falha por morte (B157),
-   coleta com missão (B67), abate em equipe, sucesso/falha da equipe e serviço 8 (B164).
-   **Grupo sem limite de membros:** o original tem 10 no 1.5.5 e 6 no 1.2.6
-   (`TEAM_MEMBER_CAPACITY`; tabelas de bônus de 11 e 7 entradas) — o nosso convite não confere.
+1. **Missões — o que o motor ainda recusa ou ignora** (spec 05 §10): casamento, PQ, torre,
+   força, variáveis globais. Facção recusa sempre (não há sistema de facção). Feitos: invocação,
+   falha por morte (B157), coleta com missão (B67), abate em equipe, sucesso/falha da equipe e
+   serviço 8 (B164), **falha por região e por data (B335)**, **prêmio por escala de tempo e de
+   itens (B340)**. O `FORCE_GIVEUP` o original também ignora, e o limite de tempo já era
+   conferido no `CHECK_FINISH` (itens antigos desta lista estavam defasados).
+   **Limite do grupo — feito no B334:** 10 no 1.5.5, 6 no 1.2.6 (medido no `gs` 1.2.6), com os
+   erros 12 (cheio) e 10 (convite repetido).
 2. **Munição — feita no B144** (conferida de novo no B329, `a_flecha_so_ativa_na_faixa_da_arma_e_soma_o_dano`):
    sem a flecha certa ativa a arma de longe não golpeia (`range_weapon_item::OnCheckAttack`) e a flecha ativa soma o
    dano. Falta: a compra na loja não confere a lista de venda do NPC. **Itens:** refinar, incrustar, remover
@@ -707,8 +714,10 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 4. **Ataque normal — feito** (B52–B54 sessão de golpe com `HOST_START_ATTACK`/`ATTACK_ONCE`, B62 dano adiado, B67
    ameaça na chegada do golpe; conferido no B329: `combate_real` 30/30). O "sem animação" do B44 #6 era antes disso.
 5. **Troca de mapa só dentro do processo** (B51): mapa de outro contêiner exigiria o link
-   reencaminhar a sessão. **Teleporte por NPC** (`NPC_TRANSMIT_SERVICE`, destinos por
-   waypoint) e GM para outro mapa `falta`. O grupo se desfaz na troca.
+   reencaminhar a sessão (o roteador de mapas já serve todos os mapas ligados num só GS, B177/B183).
+   O **teleporte por NPC** (`NPC_TRANSMIT_SERVICE`) já está feito
+   (`bus_server/jogo.rs`, `teleportar_pela_transportadora`); o S4 do Estúdio cria distritos,
+   portais e destinos (B251–B253). O grupo se desfaz na troca.
 6. **Habilidades:** dano (1.123), efeitos no alvo (2.304 roteiros) e em si (266) pelos stubs,
    37 efeitos portados (B53), mais `Wingshield` (B73), `Fairyform` (B95, Forma Sombria),
    `Foxform` e `Retort`/`Retort2` (B120), `Rebirth`/`Decregiondmg` (B115), `Ap`/`Returntown` e as
@@ -733,8 +742,10 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
     com o bloco certo. Falta o sistema: equipar a carta, liderança, os atributos que ela dá,
     subir de nível, devorar (`swallow_exp`) e renascer.
 11. **IA de monstro:** estratégias, eventos de vida e o intérprete do `aipolicy.data` feitos
-    (B126/B127, spec 05 §4.1); no 1.5.5 faltam invocações, caminhos, ações, histórico e missões
-    da política, e as estratégias de ódio por facção/invisibilidade.
+    (B126/B127, spec 05 §4.1); **feitos em 2026-10-21:** invocar monstro (B336), `max_move_range`
+    (B337), tocar ação (B338), contar jogadores (B339) e trocar de caminho (B341). No 1.5.5 faltam
+    invocar NPC/mina, histórico e missões da política, 93 condições (estágio de história, filtro,
+    fim de caminho) e as estratégias de ódio por facção/invisibilidade.
 
 **Instâncias (masmorras), diagnóstico B160, `falta` inteiro:** no original, os mapas
 `[Instance_isNN]` do `gs.conf` (o 169 é um deles; 52 ao todo) são cópias por **chave**. Sem grupo,
@@ -1322,6 +1333,14 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 331 | 10-21 | Recarregar os dados do realm sem reiniciar |
 | 332 | 10-21 | Envio do cliente original pelo painel (arquivo a arquivo, retomável) e importação pela API |
 | 333 | 10-21 | Canal de teste do GM no launcher |
+| 334 | 10-21 | Limite do grupo (10 no 1.5.5, 6 no 1.2.6) e convite repetido |
+| 335 | 10-21 | Missão que falha por região (entrar/sair) e por data |
+| 336 | 10-21 | Política: invocar monstro |
+| 337 | 10-21 | IA: `max_move_range` (larga o alvo longe do ninho) |
+| 338 | 10-21 | Política: tocar ação (S2C 303/304) |
+| 339 | 10-21 | Política: contar jogadores |
+| 340 | 10-21 | Prêmio de missão por escala de tempo e de itens |
+| 341 | 10-21 | Política: trocar de caminho (`AndarPorCaminho`) |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

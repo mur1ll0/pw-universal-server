@@ -469,6 +469,11 @@ pub struct MonsterAi {
     fim_de_combate_pendente: bool,
     /// A rota de patrulha (`ai_policy::_path_agent`, B136).
     pub rota: Option<Rota>,
+    /// B337 — `_max_move_range` (`aipolicy.cpp:87`): `max_move_range` do modelo com o piso de 20 m, ou 0 = sem limite
+    /// (`npcgenerator.cpp:313-316`). Em combate, sem rota, longe disso do lugar onde nasceu, o monstro larga todos
+    /// (`ClearAggro`, `aipolicy.cpp:298-307`); o subordinado com líder vivo não tem limite (`group_minor_policy`,
+    /// `aipolicy.cpp:1371-1378`).
+    pub raio_maximo_de_movimento: f32,
     /// O líder do grupo (`gnpc_imp::_leader_id`), e onde ele está: o mundo põe a cada tique,
     /// `None` com o líder morto (`QueryTarget(leader) != TARGET_STATE_NORMAL`).
     pub lider: Option<i64>,
@@ -598,6 +603,7 @@ impl MonsterAi {
             estrategia_forcada: None,
             fim_de_combate_pendente: false,
             rota: None,
+            raio_maximo_de_movimento: 0.0,
             lider: None,
             lider_em: None,
             chefe: false,
@@ -864,6 +870,11 @@ impl MonsterAi {
     /// O `_cur_time` volta a `aggro_time` quando a lista estava vazia ou quando quem ganhou
     /// ódio é o primeiro dela (`AddRage(...) == 0`). Voltando para casa o monstro não aceita
     /// ódio: `ai_returnhome_task::OnAggro` o limpa (`aipolicy.cpp:1280-1288`).
+    /// B338: se o monstro está em combate (o `InCombat` do `ai_policy`).
+    pub fn esta_em_combate(&self) -> bool {
+        self.em_combate
+    }
+
     pub fn add_threat(&mut self, player_id: i64, threat: i64) {
         if matches!(self.sessao, Sessao::Voltando) {
             return;
@@ -1114,6 +1125,17 @@ impl MonsterAi {
             if self.politica.is_some() && (self.em_combate || self.idle_timer > 0) {
                 let em_combate = self.em_combate;
                 self.rodar_politica(monster, players, mascotes, 0, None, |p, e, c| p.batimento(e, c, em_combate));
+            }
+        }
+
+        // B337 — `ai_policy::OnHeartbeat` (`aipolicy.cpp:298-307`): em combate, sem rota e sem líder vivo, além do
+        // `max_move_range` do lugar de nascimento (distância ao quadrado, 3D) → `ClearAggro`; o `RollBack` vem em seguida.
+        let r = self.raio_maximo_de_movimento;
+        if self.em_combate && r > 1e-6 && self.rota.is_none() && self.lider_em.is_none() {
+            let (p, c) = (monster.position, monster.spawn_center);
+            let d2 = (p.x - c.x).powi(2) + (p.y - c.y).powi(2) + (p.z - c.z).powi(2);
+            if d2 > r * r {
+                self.aggro_table.clear();
             }
         }
 

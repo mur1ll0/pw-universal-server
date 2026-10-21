@@ -859,7 +859,7 @@ async fn transferencia_falha_volta_a_origem_e_fotografia_antiga_nao_desfaz_desti
     {
         let mut m=c.mundo.write().await;
         let mut j=m.players[&(c.personagem as i64)].clone();j.role_id=aliado;m.add_player(j);
-        assert!(m.convidar_para_grupo(c.personagem,aliado));
+        assert!(m.convidar_para_grupo(c.personagem,aliado).is_ok());
         m.aceitar_convite(aliado,c.personagem).unwrap();
     }
     let antiga=fotografia(&c).await;

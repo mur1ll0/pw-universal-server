@@ -821,3 +821,21 @@ fn atordoar_o_monstro_cancela_o_canto() {
     let saiu = ate(&mut ai, &mut m, &p, 600, |a| matches!(a, AcaoDoMonstro::UsouHabilidade { .. }));
     assert!(saiu.is_none(), "o efeito do canto cancelado saiu");
 }
+
+/// B337 — `max_move_range` (`aipolicy.cpp:298-307`): em combate, longe do lugar onde nasceu além do limite, o monstro
+/// larga todos (`ClearAggro`); dentro dele, segue no alvo.
+#[test]
+fn longe_do_ninho_alem_do_limite_o_monstro_larga_o_alvo() {
+    for (limite, larga) in [(20.0f32, true), (50.0, false)] {
+        let mut ai = MonsterAi::com_perfil(Some(perfil(Estrategia::CorpoACorpo)));
+        ai.raio_maximo_de_movimento = limite;
+        let mut m = monstro(Vector3::new(30.0, 0.0, 0.0));
+        m.spawn_center = Vector3::new(0.0, 0.0, 0.0);
+        ai.add_threat(1, 10);
+        let jogadores = com_alvo(31.0);
+        for _ in 0..30 {
+            ai.tick(&mut m, &jogadores, 50, &sem_mapa);
+        }
+        assert_eq!(ai.aggro_table.is_empty(), larga, "limite {limite} a 30 m do ninho");
+    }
+}

@@ -151,6 +151,17 @@ pub enum Acao {
     AjustarGlobal { id: i32, valor: i32 },
     Calcular { destino: ValorLogico, a: ValorLogico, operador: i32, b: ValorLogico },
     Controlador { id: ValorLogico, parar: bool },
+    /// B336 — `op_summon_monster(_2)` (`aitrigger.cpp:777-812`): `SummonMonster` perto do alvo do gatilho.
+    /// `caminho` (o `iPathID`) e `some_com` (o `die_with_who`) são guardados e ainda não agem (`falta`).
+    Invocar { monstro: ValorLogico, quantidade: ValorLogico, distancia: i32, vida_s: i32, some_com: i32, caminho: ValorLogico },
+    /// B338 — `op_play_action` (`aitrigger.cpp`, `policy_loader.cpp:315-316`): `ai_play_action_task`.
+    TocarAcao { nome: Vec<u8>, vezes: i32, duracao_ms: i32, intervalo_ms: i32 },
+    /// B339 — `op_get_sphere/box_player_count` (`aitrigger.cpp:1001-1029`): quantos jogadores no raio (o
+    /// `fRadiusValue` truncado para inteiro, `policy_loader.cpp:385`) ou na caixa, guardado na variável.
+    ContarJogadores { raio: Option<f32>, caixa: Option<(f32, f32, f32, f32)>, destino: ValorLogico },
+    /// B341 — `op_change_path(_2)` (`aitrigger.h:2186-2223`, `policy_loader.cpp:301-311`): troca a rota do monstro.
+    /// `corre` é o `iSpeedType == 2` do construtor.
+    MudarCaminho { mundo: i32, caminho: ValorLogico, tipo: i32, corre: bool },
     SemPorte(&'static str),
 }
 
@@ -243,6 +254,15 @@ pub enum Pedido {
     Falar { texto: String, canal: CanalDaFala, dados: Vec<u8> },
     /// `op_active_spawner(_2)` → `TriggerSpawn`/`ClearSpawn` do `iControllerID`.
     Controlador { id: i32, ligar: bool },
+    /// B336 — `op_summon_monster(_2)` → `gnpc_imp::SummonMonster` (`npc.cpp:2431-2470`): `quantidade` × `CreateMinors(prop,
+    /// alvo, distancia)` perto do alvo, vivendo `vida_s` (0 = para sempre); com alvo que não é o próprio monstro, cada um
+    /// nasce com 10.000 de ódio nele (`GM_MSG_GEN_AGGRO`).
+    Invocar { monstro: i32, quantidade: i32, alvo: i64, distancia: i32, vida_s: i32 },
+    /// B341 — `op_change_path(_2)::DoSomething` (`aitrigger.cpp:877-896`) → `ai_policy::ChangePath` (`aipolicy.cpp:94-114`).
+    /// `caminho` é o id **global** (o mundo faz o `IdConvert`); `mundo` 0 vale em qualquer mapa.
+    MudarCaminho { mundo: i32, caminho: i32, tipo: i32, corre: bool },
+    /// B338 — `ai_play_action_task::StartTask` → `StartPlayAction` (`aipolicy.cpp:2073-2077`).
+    TocarAcao { nome: Vec<u8>, vezes: i32, duracao_ms: i32, intervalo_ms: i32 },
     NaoPortado(&'static str),
 }
 
@@ -514,15 +534,65 @@ fn operacao(o: &pw_data_loader::aipolicy::Operacao, politica: &AiPolicy, profund
         (Some(T::AtivarControlador2), P::Controlador2 { id, tipo_do_id, parar }) => {
             Acao::Controlador { id: valor_logico(*tipo_do_id, *id), parar: *parar }
         }
+        (Some(T::InvocarMonstro), P::InvocarMonstro { monstro, alcance, vida_em_segundos, condicao_de_sumico, caminho, quantidade }) => {
+            Acao::Invocar {
+                monstro: ValorLogico { tipo: 2, valor: *monstro },
+                quantidade: ValorLogico { tipo: 2, valor: *quantidade },
+                distancia: *alcance,
+                vida_s: *vida_em_segundos,
+                some_com: *condicao_de_sumico,
+                caminho: ValorLogico { tipo: 2, valor: *caminho },
+            }
+        }
+        (Some(T::InvocarMonstro2), P::InvocarMonstro2 {
+            condicao_de_sumico, monstro, tipo_do_monstro, alcance, vida_em_segundos, caminho, tipo_do_caminho, quantidade, tipo_da_quantidade,
+        }) => Acao::Invocar {
+            monstro: ValorLogico { tipo: *tipo_do_monstro, valor: *monstro },
+            quantidade: ValorLogico { tipo: *tipo_da_quantidade, valor: *quantidade },
+            distancia: *alcance,
+            vida_s: *vida_em_segundos,
+            some_com: *condicao_de_sumico,
+            caminho: ValorLogico { tipo: *tipo_do_caminho, valor: *caminho },
+        },
         (Some(T::InvocarMonstro | T::InvocarMonstro2), _) => Acao::SemPorte("InvocarMonstro"),
         (Some(T::InvocarNpc), _) => Acao::SemPorte("InvocarNpc"),
         (Some(T::InvocarMina), _) => Acao::SemPorte("InvocarMina"),
+        (Some(T::AndarPorCaminho), P::AndarPorCaminho { mundo, caminho, tipo_de_patrulha, tipo_de_velocidade }) => Acao::MudarCaminho {
+            mundo: *mundo,
+            caminho: ValorLogico { tipo: 2, valor: *caminho },
+            tipo: *tipo_de_patrulha,
+            corre: *tipo_de_velocidade == 2,
+        },
+        (Some(T::AndarPorCaminho2), P::AndarPorCaminho2 { mundo, caminho, tipo_do_caminho, tipo_de_patrulha, tipo_de_velocidade }) => {
+            Acao::MudarCaminho {
+                mundo: *mundo,
+                caminho: ValorLogico { tipo: *tipo_do_caminho, valor: *caminho },
+                tipo: *tipo_de_patrulha,
+                corre: *tipo_de_velocidade == 2,
+            }
+        }
         (Some(T::AndarPorCaminho | T::AndarPorCaminho2), _) => Acao::SemPorte("AndarPorCaminho"),
+        (Some(T::TocarAcao), P::TocarAcao { acao, repeticoes, intervalo, duracao }) => Acao::TocarAcao {
+            nome: acao.clone(),
+            vezes: *repeticoes,
+            duracao_ms: *duracao,
+            intervalo_ms: *intervalo,
+        },
         (Some(T::TocarAcao), _) => Acao::SemPorte("TocarAcao"),
         (Some(T::RevisarHistorico | T::DefinirHistorico), _) => Acao::SemPorte("Historico"),
         (Some(T::EntregarPontosPvpDeFaccao), _) => Acao::SemPorte("PontosPvpDeFaccao"),
         (Some(T::EntregarMissao | T::EntregarMissaoAleatoriaNaRegiao | T::EntregarMissaoNaListaDeOdio), _) => {
             Acao::SemPorte("EntregarMissao")
+        }
+        (Some(T::SalvarContagemDeJogadoresNoRaio), P::ContarJogadoresNoRaio { raio, destino, tipo_do_destino, .. }) => {
+            Acao::ContarJogadores { raio: Some((*raio as u32) as f32), caixa: None, destino: valor_logico(*tipo_do_destino, *destino as u32) }
+        }
+        (Some(T::SalvarContagemDeJogadoresNaRegiao), P::ContarJogadoresNaRegiao { minimo, maximo, destino, tipo_do_destino }) => {
+            Acao::ContarJogadores {
+                raio: None,
+                caixa: Some((minimo.x, minimo.z, maximo.x, maximo.z)),
+                destino: valor_logico(*tipo_do_destino, *destino as u32),
+            }
         }
         (Some(T::SalvarContagemDeJogadoresNoRaio | T::SalvarContagemDeJogadoresNaRegiao), _) => Acao::SemPorte("ContarJogadores"),
         (Some(T::LimparMissaoDeTorreNaRegiao), _) => Acao::SemPorte("LimparMissaoDeTorre"),
@@ -872,6 +942,33 @@ fn executar(o: &Operacao, p: &PoliticaDeIa, e: &mut EstadoDaPolitica, ctx: &mut 
                 ctx.pedidos.push(Pedido::Controlador { id, ligar: !parar });
             }
         }
+        Acao::Invocar { monstro, quantidade, distancia, vida_s, .. } => {
+            // `op_summon_monster(_2)::DoSomething`: o alvo do próprio gatilho (sem o "primeiro da lista"), senão `false`;
+            // quantidade fora de 1..=10 também; `remain_time` negativo vira 0.
+            let Some(alvo) = ctx.alvo(o.alvo, o.profissoes) else { return false };
+            let q = ctx.valor(*quantidade);
+            if !(1..=10).contains(&q) {
+                return false;
+            }
+            let monstro = ctx.valor(*monstro);
+            ctx.pedidos.push(Pedido::Invocar { monstro, quantidade: q, alvo, distancia: *distancia, vida_s: (*vida_s).max(0) });
+        }
+        Acao::TocarAcao { nome, vezes, duracao_ms, intervalo_ms } => ctx.pedidos.push(Pedido::TocarAcao {
+            nome: nome.clone(),
+            vezes: *vezes,
+            duracao_ms: *duracao_ms,
+            intervalo_ms: *intervalo_ms,
+        }),
+        Acao::ContarJogadores { raio, caixa, destino } => {
+            let n = (ctx.jogadores_perto)(*raio, *caixa);
+            ctx.definir(*destino, n);
+        }
+        Acao::MudarCaminho { mundo, caminho, tipo, corre } => {
+            // **Não é igual:** o original devolve `false` aqui quando `_world_tag` não é o mapa; a política não sabe o
+            // mapa, então o mundo ignora o pedido (as operações seguintes do gatilho seguem).
+            let caminho = ctx.valor(*caminho);
+            ctx.pedidos.push(Pedido::MudarCaminho { mundo: *mundo, caminho, tipo: *tipo, corre: *corre });
+        }
         Acao::SemPorte(nome) => ctx.pedidos.push(Pedido::NaoPortado(nome)),
     }
     true
@@ -973,6 +1070,71 @@ mod testes {
             }
         }
         assert_eq!(quando, vec![3, 6, 9]);
+    }
+
+    /// B336 — `op_summon_monster` (`aitrigger.cpp:777-791`): pede ao mundo a invocação perto do alvo do gatilho; quantidade
+    /// fora de 1..=10 ou sem alvo encerra a sequência (`false`), e a operação seguinte não roda.
+    #[test]
+    fn invocar_monstro_pede_ao_mundo_e_respeita_a_quantidade() {
+        let invocar = |q: i32| Acao::Invocar {
+            monstro: ValorLogico { tipo: 2, valor: 7001 },
+            quantidade: ValorLogico { tipo: 2, valor: q },
+            distancia: 5,
+            vida_s: -3,
+            some_com: 0,
+            caminho: ValorLogico { tipo: 2, valor: 0 },
+        };
+        let p = politica(vec![g(1, Condicao::ComecoDeCombate, vec![invocar(3), Acao::Habilidade { id: 9, nivel: 1 }], false)]);
+        let mut e = p.novo_estado([0; 3]);
+        let (mut odio, mut globais) = (HashMap::from([(5i64, 10i64)]), HashMap::new());
+        let info = |_| None;
+        let perto = |_: Option<f32>, _: Option<(f32, f32, f32, f32)>| 0;
+        let mut c = ctx(&mut odio, &mut globais, &info, &perto);
+        p.comeco_de_combate(&mut e, &mut c);
+        assert_eq!(c.pedidos[0], Pedido::Invocar { monstro: 7001, quantidade: 3, alvo: 5, distancia: 5, vida_s: 0 }, "vida negativa vira 0");
+        assert_eq!(c.pedidos.len(), 2, "a habilidade seguinte também roda");
+        let p = politica(vec![g(1, Condicao::ComecoDeCombate, vec![invocar(11), Acao::Habilidade { id: 9, nivel: 1 }], false)]);
+        let mut e = p.novo_estado([0; 3]);
+        c.pedidos.clear();
+        p.comeco_de_combate(&mut e, &mut c);
+        assert!(c.pedidos.is_empty(), "11 é demais: a sequência para");
+    }
+
+    /// B339 — `op_get_sphere_player_count` (`aitrigger.cpp:1001-1014`): a contagem vai para a variável (global 0 aqui),
+    /// com o raio truncado para inteiro.
+    #[test]
+    fn contar_jogadores_guarda_na_variavel() {
+        let p = politica(vec![g(
+            1,
+            Condicao::ComecoDeCombate,
+            vec![Acao::ContarJogadores { raio: Some(12.0), caixa: None, destino: ValorLogico { tipo: 0, valor: 77 } }],
+            false,
+        )]);
+        let mut e = p.novo_estado([0; 3]);
+        let (mut odio, mut globais) = (HashMap::from([(5i64, 10i64)]), HashMap::new());
+        let info = |_| None;
+        let perto = |r: Option<f32>, _: Option<(f32, f32, f32, f32)>| if r == Some(12.0) { 4 } else { -1 };
+        let mut c = ctx(&mut odio, &mut globais, &info, &perto);
+        p.comeco_de_combate(&mut e, &mut c);
+        assert_eq!(c.globais.get(&77), Some(&4));
+    }
+
+    /// B341 — `op_change_path_2`: o id do caminho sai do valor lógico (aqui a global 9) e vai ao mundo.
+    #[test]
+    fn mudar_caminho_pede_a_rota_ao_mundo() {
+        let p = politica(vec![g(
+            1,
+            Condicao::ComecoDeCombate,
+            vec![Acao::MudarCaminho { mundo: 0, caminho: ValorLogico { tipo: 0, valor: 9 }, tipo: 1, corre: true }],
+            false,
+        )]);
+        let mut e = p.novo_estado([0; 3]);
+        let (mut odio, mut globais) = (HashMap::from([(5i64, 10i64)]), HashMap::from([(9, 4242)]));
+        let info = |_| None;
+        let perto = |_: Option<f32>, _: Option<(f32, f32, f32, f32)>| 0;
+        let mut c = ctx(&mut odio, &mut globais, &info, &perto);
+        p.comeco_de_combate(&mut e, &mut c);
+        assert_eq!(c.pedidos, vec![Pedido::MudarCaminho { mundo: 0, caminho: 4242, tipo: 1, corre: true }]);
     }
 
     /// `hp_less` dispara uma vez e se desliga; o fim do combate o religa.

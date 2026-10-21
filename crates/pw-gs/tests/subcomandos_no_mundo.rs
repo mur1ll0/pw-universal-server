@@ -3389,6 +3389,34 @@ async fn aceitar_forma_o_grupo_e_avisa_os_dois_com_dados_reais() {
     assert_eq!(m.membros_do_grupo(convidado).len(), 2);
 }
 
+/// B334 — `TEAM_MEMBER_CAPACITY` (`playerteam.cpp:819-840`, `:957`): convidar de novo quem já foi convidado dá
+/// `ERR_TEAM_ALREADY_INVITE` (12); convites pendentes + membros na capacidade dá `ERR_TEAM_CANNOT_INVITE` (10); e o aceite
+/// com o grupo já cheio é ignorado. Aqui com capacidade 2 (a de verdade: 10 no 1.5.5, 6 no 1.2.6).
+#[tokio::test]
+async fn o_grupo_tem_capacidade_e_o_convite_repetido_e_recusado() {
+    let (mundo, addr, anfitriao, convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, anfitriao).await;
+    let _b = segundo_jogador(&mundo, addr, convidado).await;
+    mundo.write().await.capacidade_do_grupo = 2;
+    let convidar = |alvo: i32| BusMessage::ClientToGame { roleid: anfitriao, localsid: LOCALSID, data: subcomando(ids::TEAM_INVITE, &alvo.to_le_bytes()) };
+    link.enviar(convidar(convidado)).await.unwrap();
+    link.enviar(convidar(convidado)).await.unwrap();
+    let erro = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&erro, 2), 12, "convite repetido: ERR_TEAM_ALREADY_INVITE");
+    {
+        let mut m = mundo.write().await;
+        // Um convite pendente + quem convida (1) = 2 = a capacidade: o próximo é recusado.
+        assert_eq!(m.convidar_para_grupo(anfitriao, 900_777), Err(pw_gs::world::RecusaDoConvite::Cheio));
+        assert!(m.aceitar_convite(convidado, anfitriao).is_some(), "o convidado entra: grupo de 2");
+        // Grupo cheio: um convite que tivesse ficado pendente não entra no aceite.
+        m.capacidade_do_grupo = 3;
+        assert!(m.convidar_para_grupo(anfitriao, 900_778).is_ok());
+        m.capacidade_do_grupo = 2;
+        assert!(m.aceitar_convite(900_778, anfitriao).is_none(), "aceite com o grupo cheio é ignorado");
+        assert_eq!(m.membros_do_grupo(anfitriao).len(), 2);
+    }
+}
+
 #[tokio::test]
 async fn nao_da_para_entrar_num_grupo_sem_convite() {
     // Sem conferir o convite pendente, bastaria mandar o comando com o id de um estranho
@@ -10123,7 +10151,7 @@ async fn o_membro_da_equipe_que_nao_bateu_recebe_a_experiencia() {
     let _outro = entrar(&mundo, addr, convidado).await;
     {
         let mut m = mundo.write().await;
-        assert!(m.convidar_para_grupo(roleid, convidado));
+        assert!(m.convidar_para_grupo(roleid, convidado).is_ok());
         assert!(m.aceitar_convite(convidado, roleid).is_some(), "o grupo não se formou");
         let pos = m.players[&(roleid as i64)].position;
         let nivel = m.players[&(roleid as i64)].level;

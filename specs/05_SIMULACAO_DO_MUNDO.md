@@ -164,9 +164,30 @@ catálogo quando o monstro nasce.
 
 Cobertura (`tests/politica_do_realm.rs`): **1.2.6 — 258 políticas usadas, 0 operação e 0 condição
 sem porte**; 1.5.5 — 2.771 políticas, sem porte (registradas uma vez no `debug`):
-`InvocarMonstro` 703, `AndarPorCaminho` 161, `TocarAcao` 114, `ContarJogadores` 50,
 `EntregarMissao` 32, `InvocarNpc` 31, `Historico` 22, `InvocarMina` 12, `PontosPvpDeFaccao` 3,
 `LimparMissaoDeTorre` 1, e 93 condições (estágio de história, filtro, fim de caminho).
+
+Portadas em 2026-10-21 (`testado` por unidade, falta ver em jogo):
+
+- **`InvocarMonstro(_2)`** (B336, 703 usos) — `op_summon_monster::DoSomething` →
+  `gnpc_imp::SummonMonster` (`npc.cpp:2431-2470`): o alvo do próprio gatilho (sem cair no
+  primeiro da lista), quantidade fora de 1..=10 devolve `false`, vida negativa vira 0. O mundo
+  (`Pedido::Invocar`) faz `quantidade` × `CreateMinors` perto do alvo, com 10.000 de ódio nele
+  quando não é o próprio monstro (`GM_MSG_GEN_AGGRO`). `falta`: o `some_com` (condição de sumiço)
+  e a rota do invocado.
+- **`AndarPorCaminho(_2)`** (B341, 161 usos) — `op_change_path(_2)` (`aitrigger.cpp:877-896`) →
+  `ai_policy::ChangePath` (`aipolicy.cpp:94-114`): `iSpeedType == 2` corre; o id **global** passa
+  pelo `IdConvert` (`World::rotas_do_global`, a tabela do `path.sev`; desconhecido → 0) e a rota
+  atual é trocada pela nova (id ≤ 0 ou rota com menos de 2 pontos: fica sem rota). Diferença: o
+  mapa errado (`_world_tag` ≠ 0 e ≠ mapa) devolve `false` no original; aqui o mundo ignora o
+  pedido e o gatilho segue.
+- **`TocarAcao`** (B338, 114 usos) — `ai_play_action_task` (`aipolicy.h:760-766`,
+  `aipolicy.cpp:2073-2077`): `OBJECT_START_PLAY_ACTION` (303) a quem vê, dura
+  `max(1, (vezes·(duração + intervalo) − intervalo)/1000)` s e acaba antes com combate ou morte
+  (`OBJECT_STOP_PLAY_ACTION`, 304). O nome vai nos bytes do arquivo (GBK), sem o `NUL`.
+- **`ContarJogadores`** (B339, 50 usos) — `op_get_sphere/box_player_count`
+  (`aitrigger.cpp:1001-1029`): jogadores vivos no raio (truncado para inteiro,
+  `policy_loader.cpp:385`) ou na caixa x/z, gravado na variável de destino.
 Também fica de fora: `CHAT_AIPOLICY_VALUE` = 2 é o do 1.5.5 (as falas com anexos só existem em
 gatilho de versão ≥ 17); o `srclevel` do `ChatMessage` no cliente 1.2.6 não foi medido (vai 0 no
 fim, como no IR 1.5.3/1.5.5).
@@ -180,7 +201,9 @@ havia o segundo):
    `aggro_range` puro (`npcgenerator.cpp:2566`, sem piso nem teto).
 2. Distância **do ninho** > `max_move_range` (do `MONSTER_ESSENCE`; zero = sem limite, senão
    piso de 20 m, `npcgenerator.cpp:313-316`): `ClearAggro` (`aipolicy.cpp:298-307`, só sem rota).
-   `falta`.
+   `testado` (B337): `MonsterAi::raio_maximo_de_movimento`, conferido no batimento antes da
+   conjuração — em combate, sem rota e sem líder, `d² > r²` limpa a lista de ódio. Só o 1.5.5 tem
+   o campo no `MONSTER_ESSENCE`; no 1.2.6 fica 0 (sem limite).
 
 Não há regra de ódio própria de masmorra: o código de `gs/instance/` não toca na IA. O monstro da
 Caverna Sombria (169) é persistente pelos dados: `aggro_range` 107,25, `aggro_time` 100 e
@@ -791,7 +814,7 @@ sessão de golpe contra jogador (o golpe normal não mira jogador), marca no gol
 | teleporte de GM (`GOTO`) | `confirmado` | `y` do cliente é marcador; altura = chão + 0,5 m (`playercmd.cpp:4926`) |
 | painel de GM (Ctrl+G) | `testado` (2026-10-01, falta ver em jogo) | `bus_server/gm.rs`. B169: privilégio global reconciliado em sessões abertas; remoção limpa efeitos. Consumo de GM/GOTO/missões revalida conta/revisão/ban sob FOR SHARE (fora do mundo/tick). Cliente requer reentrada, sem recarga de auth online comprovada. Privilégio = `sec_level` > 0 (sem os bits por comando do `_gm_auth`); quem não é GM é ignorado calado. **Invencível** (205): `Efeitos::gm_invencivel`, sem prazo, dano zero (PvP inclusive), estado visível 49. **Invisível** (204): `Efeitos::gm_invisivel`, `PLAYER_LEAVE_WORLD` aos outros, fora da vista deles (o GM continua vendo todos), não golpeia (`DenyCmd(CMD_ATTACK)`), não é ferido (`target_faction = 0`); ao voltar, aparece para quem ele vê. Os monstros ainda o notam, como no original (o `WATCHING_YOU` não olha a invisibilidade de GM). **Ir até / chamar** (201/202): mapa e posição pelo roteador, `transportar` (troca de mapa inclusive). **Criar monstro** (208): só com `debug_command_mode = active`; `count` monstros a ±6 m (`CreateMinors`, `obj_interface.cpp:1990`), vida `life` s, sem ódio; `vis_id` e nome `falta`. **Criar item** (206) e **gerador** (207): `falta` |
 | sentar, gestos, roupa, zona segura | `confirmado` | O **modo roupa persiste** (B83): o `SWITCH_FASHION_MODE` grava o `charactermode` em `characters.character_mode` — pares `(chave, valor)` de `int32`, chave 1, e nada quando desligado (`GetPlayerCharMode`, `gs/player.cpp:12585-12612`) —, o login o relê, e ele viaja cru no `RoleInfo` da lista de personagens, que é de onde a **tela de seleção** decide desenhar roupa ou armadura (`CECLoginPlayer::Load`, `EC_LoginPlayer.cpp:172-189`). `voando` continua sem persistir, de propósito: quem relogar entra no chão **Sentado**, o `sit_down_filter` dobra a regeneração de vida e mana a partir do 2º batimento (`STAYIN_BONUS` 100, `gs/config.h:103`; igual no `gs` 1.2.6, VA 0x812ff22) — `testado` (B118) |
-| grupo | `testado` | estado de grupo no mundo (convite, aceite, recusa, saída) |
+| grupo | `testado` | estado de grupo no mundo (convite, aceite, recusa, saída). **Capacidade (B334):** 10 no 1.5.5 (`TEAM_MEMBER_CAPACITY`, `config.h:50`) e **6 no 1.2.6** (`gs` 1.2.6: `cmp eax,5` em VA 0x8102bff no convite, `cmp eax,4` em 0x81012d2 no aceite) — `mapas::capacidade_do_grupo`. Convite com o grupo cheio → `ERROR_MESSAGE` 12; convidar quem já tem convite pendente → 10; o aceite com o grupo cheio é ignorado |
 | teleporte e troca de mapa | `testado` (B51) | `LongJump` (`player.cpp:8617`): mesmo mapa → posição, `NOTIFY_HOSTPOS` (14, 22 bytes: `pos, tag, line`) e o mundo em volta; outro mapa **do mesmo processo** → o roteador tira o jogador do mapa de origem (some da vista, sessão e entidade) e o põe no destino: `NOTIFY_HOSTPOS` com o `tag` novo (o cliente descarrega e carrega o mundo, `JumpToInstance`), chão por baixo, grava mapa e posição na hora, e streaming completo (`global_message.cpp:111-117`). Disparado por prêmio de missão (`m_ulTransWldId`), por missão com `m_bTransTo` e pelo **portal de região** (B208). Mapa de outro processo `falta`; o grupo se desfaz na troca |
 | portal de região (B208) | `confirmado` (saída da Caverna das Sombras, 1.5.5, Murillo, 2026-10-08; portão §6.2 cumprido) | C2S 86 (`ENTER_INSTANCE` no cliente, `REGION_TRANSPORT` no servidor) `{i32 indice, i32 destino}`, que o cliente manda ao pisar numa caixa de transporte do `region.sev` (`EC_World.cpp:2360-2373`) — a entrada e a saída das masmorras; o "altar" do começo da Caverna das Sombras é a caixa 0, para o mapa 161. `RegionTransport` (`player.cpp:12633-12660`, `city_region.cpp:73-97`): recusa com `ERR_CANNOT_ENTER_INSTANCE` (52) morto, caixa inexistente, caixa de outro mapa, jogador fora dela (`pos ± exts`) ou destino diferente; e aqui também destino desligado ou não servido. Passando, `LongJump(alvo + 0,05 y, destino)` pelo `transportar`. `falta`: o `CheckDeny(CMD_MOVE)` (sentado, preso) e **Masmorra por grupo (`falta`, para implementar no futuro):** no original cada masmorra (instância, `cgame/gs/instance/`) é **uma cópia por grupo**: entrar pelo portal cria ou reaproveita a cópia daquele grupo, os monstros nascem nela, e quando a cópia fecha (todos saem e o prazo vence) ela é reciclada — ao entrar de novo, tudo volta ao início. Aqui cada masmorra é **um mapa único e compartilhado** (o `WORLD_TAGS` do GS): todos os jogadores e grupos dividem os mesmos monstros, e o que não renasce (`bAutoRevive` falso, B205) só volta ao recarregar o mapa (desligar/ligar pelo painel, B183) ou reiniciar o GS. Implementar: cópias de `WorldInstance` por grupo (ou por jogador sem grupo) para os mapas `instancia: true` do catálogo, criadas na entrada pelo portal (B208), com prazo e reciclagem conferidos em `instance/*_manager.cpp`, e o roteamento de mensagens por cópia. |
 | coleta de recurso (C2S 54) | `testado` (B51) | `GATHER_MATERIAL` → confere coletores (30), ferramenta e missão de entrada (31), nível (51), distância `gather_dist` 4–20 m (2) (`matter.cpp:265-382`); tempo `Rand(time_min, time_max)` s; `PLAYER_GATHER_START` (126) a todos. Andar interrompe (`PLAYER_GATHER_STOP` 127). No fim: sucesso por `material_gain_ratio`; material por probabilidade, `num1` ou `num2` com `probability2`, limitado à pilha; `HOST_OBTAIN_ITEM` (99); o que não cabe vai ao chão do jogador; exp e SP da mina pelo `GetExpPunishment(nível − nível da mina)` e `+ 0,5`, com `RECEIVE_EXP` (`matter.cpp:439-446`, `player.cpp:2813-2829`; B144); a mina some (`OBJECT_DISAPPEAR`) e renasce em `max(dwRefreshTime, 15)` s. **Colher pode acordar monstro**: os `npcgen_1..4` do `MINE_ESSENCE` (`(monstro, quantidade, raio, vida em s)`) nascem no lugar da matéria — é assim que a Flor de Safira (44566), que **não produz material nenhum**, entrega a missão 31779: ela solta o Guardião de Almas (44608), agressivo, e é dele que cai o Estame com 80 % (B76). A missão só conta o item pelo `CheckMining` quando o método é "coletar N itens" (`TaskTempl.inl:2105-2145`), que não é o caso dessa. **Recarga** de 500 ms com `ERR_MINE_GATHER_IS_COOLING` (187) só no 1.5.5 (`playercmd.cpp:2345-2379`; o `gs` 1.2.6 não tem — `WorldProtocol::recarga_da_coleta_ms`). **Golpe interrompe** (normal, habilidade de monstro, PvP), salvo mina `uninterruptable` (`gather_interrupt_filter`, `skill_filter.cpp:37-46`; `EventoDoMundo::ColetaInterrompida`) (B144). `falta`: os `aggros_*` da matéria |
@@ -1377,8 +1400,20 @@ consequências que já custaram uma sessão de teste cada:
   exemplo `cargo run -p pw-gs --example missoes_automaticas` mostra o que o cliente pediria de
   uma dada posição, e por que recusa o resto.
 
+Portados em 2026-10-21 (`testado` por unidade, falta ver em jogo):
+
+- **Falha por região e por data (B335)** — no `CHECK_FINISH` (`conferir_conclusao`), depois do
+  limite de tempo: `m_bFailAsDate` + `m_tmFailTime` (já passou → falha), `m_bEnterRegionFail`
+  (no mundo e dentro de uma das caixas → falha) e `m_bLeaveRegionFail` (fora de todas, ou em
+  outro mundo → falha) — `TaskTempl.inl`. Nos dados do `realm_155`: 143 missões falham ao entrar,
+  241 ao sair, 5 por data (`cargo run -p pw-data-loader --example falhas_de_missao`).
+- **Prêmio por escala (B340)** — `CalcAwardDataByRatio` (`TaskTempl.inl:1359-1377`): sem limite
+  de tempo nada; senão o primeiro degrau com `(agora − aceite)/limite ≤ m_Ratios[i]`.
+  `CalcAwardDataByItems` (`:1379-1394`): o primeiro com a contagem do `m_ulItemId` ≥
+  `m_Counts[i]`. Nenhum degrau serve → sem prêmio. 17 missões usam escala por tempo.
+- **`FORCE_GIVEUP`** (motivo 6) não é falta: o próprio original não o trata
+  (`TaskServer.cpp:330-395`). O limite de tempo já era conferido no `CHECK_FINISH`.
+
 `falta` (recusado ou ignorado, nunca inventado): casamento, PQ, torre, variáveis globais
-(lidas como 0), prêmio por escala de tempo/itens (vazio), `FORCE_GIVEUP`, limite de tempo
-checado só na entrega, força (`m_iForce`), região de entrar/sair que falha a missão, sistema de
-facção. (Invocação de monstros de prêmio, falha por morte — B157 — e o que é de equipe — B164 —
-saíram desta lista.)
+(lidas como 0), força (`m_iForce`), sistema de facção. (Invocação de monstros de prêmio, falha
+por morte — B157 — e o que é de equipe — B164 — saíram desta lista.)

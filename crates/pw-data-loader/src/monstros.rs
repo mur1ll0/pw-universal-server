@@ -174,6 +174,10 @@ pub struct TemplateDeMonstro {
     pub agressivo: i32,
     /// `mob.aggro_range` → `nt.aggro_range`, em metros.
     pub raio_de_odio: f32,
+    /// B337 — `mob.max_move_range` (o campo só existe no layout do 1.5.5; no 1.2.6 é 0): o quanto o monstro se afasta do
+    /// lugar onde nasceu em combate. O piso de 20 m é do `npcgenerator.cpp:313-316` (aplicado em `MonsterAi`).
+    #[serde(default)]
+    pub raio_maximo_de_movimento: f32,
     /// `(int)mob.aggro_time` → `nt.aggro_time`, em segundos, **com piso de 1** (o original
     /// força `if (nt.aggro_time <= 0) nt.aggro_time = 1`).
     pub tempo_de_odio: i32,
@@ -447,6 +451,7 @@ pub fn carregar(
             politica_de_ia,
             agressivo: c.i32("aggressive_mode"),
             raio_de_odio: c.f32("aggro_range"),
+            raio_maximo_de_movimento: c.f32("max_move_range"),
             tempo_de_odio: tempo_de_odio.max(1),
             raio_de_visao: c.i32("sight_range"),
             ovo_de_captura: c.i32("id_pet_egg_captured"),

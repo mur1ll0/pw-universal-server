@@ -142,6 +142,15 @@ pub struct InvocacaoDeMonstros {
     pub monstros: Vec<MonstroInvocado>,
 }
 
+/// B340 — `AWARD_RATIO_SCALE`/`AWARD_ITEMS_SCALE` (`TaskTempl.h:1434-1560`): um prêmio por degrau. Por tempo, os
+/// `limiares` são as frações `m_Ratios` (`float`); por itens, as contagens `m_Counts` do `item` (`m_ulItemId`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EscalaDePremio {
+    pub item: u32,
+    pub limiares: Vec<f64>,
+    pub premios: Vec<TaskReward>,
+}
+
 /// O que a missão paga (`AWARD_DATA`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TaskReward {
@@ -375,6 +384,29 @@ pub struct TaskTemplate {
     /// `m_ulLeaveSiteId` e `m_pLeaveSite`.
     pub mundo_a_sair: u32,
     pub lugares_a_sair: Vec<RegiaoDeMissao>,
+    /// B340 — `m_AwByRatio_S/F` e `m_AwByItems_S/F` (`TaskTempl.cpp:4125-4128`), lidos pelo
+    /// `LoadAwardDataRatioScale`/`LoadAwardDataItemsScale` (`:1534-1573`). Só o v129.
+    #[serde(default)]
+    pub escala_de_tempo_sucesso: EscalaDePremio,
+    #[serde(default)]
+    pub escala_de_tempo_falha: EscalaDePremio,
+    #[serde(default)]
+    pub escala_de_itens_sucesso: EscalaDePremio,
+    #[serde(default)]
+    pub escala_de_itens_falha: EscalaDePremio,
+    /// B335 — `m_bEnterRegionFail`, `m_ulEnterRegionWorld` e `m_pEnterRegion` (`TaskTempl.h:2073-2079`; 177, 178 e a lista
+    /// do contador em 182): entrar numa destas caixas, no mundo dado, falha a missão (`OnTaskCheckAwardDirect`,
+    /// `TaskServer.cpp:945-962`). Só o v129; o v55 fica sem.
+    #[serde(default)]
+    pub falha_ao_entrar: Option<(u32, Vec<RegiaoDeMissao>)>,
+    /// `m_bLeaveRegionFail`, `m_ulLeaveRegionWorld` e `m_pLeaveRegion` (`:2081-2087`; 190, 191 e o contador em 195): estar
+    /// fora de todas, ou em outro mundo, falha a missão (`TaskServer.cpp:967-988`).
+    #[serde(default)]
+    pub falha_ao_sair: Option<(u32, Vec<RegiaoDeMissao>)>,
+    /// `m_bAbsFail` e `m_tmAbsFailTime` (`TaskTempl.h:2021-2022`; 78 e 79..103): passada esta data (hora local), a missão
+    /// falha (`TaskServer.cpp:935-944`).
+    #[serde(default)]
+    pub falha_na_data: Option<MomentoDeMissao>,
     /// `m_TeamMemsWanted`.
     pub membros_pedidos: Vec<MembroPedido>,
     /// `m_bRcvChckMem` e `m_fRcvMemDist` (já ao quadrado: comparado com a distância ao
@@ -527,6 +559,16 @@ mod v129 {
         pub const DELV_REGION_CNT: usize = 169;
         pub const ENTER_REGION_CNT: usize = 182;
         pub const LEAVE_REGION_CNT: usize = 195;
+        /// B335 — `m_bEnterRegionFail`/`m_ulEnterRegionWorld` antes do contador (182), e `m_bLeaveRegionFail`/
+        /// `m_ulLeaveRegionWorld` antes do dele (195), como `m_bDelvInZone` 164/`m_ulDelvWorld` 165 antes do 169.
+        pub const FALHA_AO_ENTRAR: usize = 177;
+        pub const MUNDO_DA_FALHA_AO_ENTRAR: usize = 178;
+        pub const FALHA_AO_SAIR: usize = 190;
+        pub const MUNDO_DA_FALHA_AO_SAIR: usize = 191;
+        /// `m_bAbsFail` 78 e `m_tmAbsFailTime` 79 (24 bytes): depois de `m_ulTimeLimit` 73 e `m_bOfflineFail` 77, e o
+        /// `m_bItemNotTakeOff` em 103 fecha a conta.
+        pub const FALHA_NA_DATA: usize = 78;
+        pub const DATA_DA_FALHA: usize = 79;
         pub const ENTREGA_AUTOMATICA: usize = 226;
         /// `m_bDeathTrig`: entre `m_bUsedInTokenShop` e `m_bClearAcquired` (231) em
         /// `TaskTempl.h:2106-2109` do 1.5.5.
@@ -856,15 +898,19 @@ fn premio(l: &mut Leitor) -> Result<TaskReward> {
     })
 }
 
-/// `LoadAwardDataRatioScale` / `LoadAwardDataItemsScale`: o cabeçalho da escala e um
-/// prêmio por degrau. Os degraus não são usados ainda; são lidos para manter o passo.
-fn escala(l: &mut Leitor, cabecalho_extra: usize) -> Result<()> {
+/// `LoadAwardDataRatioScale` / `LoadAwardDataItemsScale` (`TaskTempl.cpp:1534-1573`): `m_ulScales`, (o
+/// `m_ulItemId`,) os `MAX_AWARD_SCALES` limiares e um prêmio por degrau (B340: guardados).
+fn escala(l: &mut Leitor, por_itens: bool) -> Result<EscalaDePremio> {
     let degraus = l.u32()?;
-    l.pular(cabecalho_extra)?;
-    for _ in 0..l.contador(degraus, v129::PREMIO)? {
-        premio(l)?;
+    let item = if por_itens { l.u32()? } else { 0 };
+    let limiares = l.bytes(4 * v129::MAX_AWARD_SCALES)?.to_vec();
+    let n = l.contador(degraus, v129::PREMIO)?;
+    let mut premios = Vec::with_capacity(n);
+    for _ in 0..n {
+        premios.push(premio(l)?);
     }
-    Ok(())
+    let limiar = |i: usize| if por_itens { u32_em(&limiares, 4 * i) as f64 } else { f32_em(&limiares, 4 * i) as f64 };
+    Ok(EscalaDePremio { item, limiares: (0..n.min(v129::MAX_AWARD_SCALES)).map(limiar).collect(), premios })
 }
 
 /// `task_tm`: seis `long` (4 bytes cada no binário de 32 bits).
@@ -1206,10 +1252,8 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         l.pular(n * tamanho)?;
     }
     let regioes_de_entrega = regioes(l, u32_em(b, f::DELV_REGION_CNT))?;
-    for campo in [f::ENTER_REGION_CNT, f::LEAVE_REGION_CNT] {
-        let n = l.contador(u32_em(b, campo), v129::TASK_REGION)?;
-        l.pular(n * v129::TASK_REGION)?;
-    }
+    let regioes_de_entrar = regioes(l, u32_em(b, f::ENTER_REGION_CNT))?;
+    let regioes_de_sair = regioes(l, u32_em(b, f::LEAVE_REGION_CNT))?;
     let mut vetores_em = [l.o, 0, 0];
     let itens_exigidos = itens(l, u32_em(b, f::PREM_ITEMS))?;
     vetores_em[1] = l.o;
@@ -1273,11 +1317,10 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
     let rewards = premio(l)?;
     let premio_de_falha_em = l.o;
     let premio_de_falha = premio(l)?;
-    let degraus_de_razao = 4 * v129::MAX_AWARD_SCALES;
-    escala(l, degraus_de_razao)?;
-    escala(l, degraus_de_razao)?;
-    escala(l, 4 + 4 * v129::MAX_AWARD_SCALES)?;
-    escala(l, 4 + 4 * v129::MAX_AWARD_SCALES)?;
+    let escala_de_tempo_sucesso = escala(l, false)?;
+    let escala_de_tempo_falha = escala(l, false)?;
+    let escala_de_itens_sucesso = escala(l, true)?;
+    let escala_de_itens_falha = escala(l, true)?;
 
     let textos_em = l.o;
     let descricao = texto_longo(l, id)?;
@@ -1379,6 +1422,13 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         lugares_a_alcancar,
         mundo_a_sair: u32_em(b, f::MUNDO_A_SAIR),
         lugares_a_sair,
+        escala_de_tempo_sucesso,
+        escala_de_tempo_falha,
+        escala_de_itens_sucesso,
+        escala_de_itens_falha,
+        falha_ao_entrar: flag(f::FALHA_AO_ENTRAR).then(|| (u32_em(b, f::MUNDO_DA_FALHA_AO_ENTRAR), regioes_de_entrar)),
+        falha_ao_sair: flag(f::FALHA_AO_SAIR).then(|| (u32_em(b, f::MUNDO_DA_FALHA_AO_SAIR), regioes_de_sair)),
+        falha_na_data: flag(f::FALHA_NA_DATA).then(|| momento(&b[f::DATA_DA_FALHA..f::DATA_DA_FALHA + 24])),
         membros_pedidos,
         confere_membros: flag(f::CONFERE_MEMBROS),
         distancia_dos_membros: f32_em(b, f::DISTANCIA_DOS_MEMBROS),
@@ -1520,6 +1570,13 @@ impl TaskTemplate {
             lugares_a_alcancar: Vec::new(),
             mundo_a_sair: 0,
             lugares_a_sair: Vec::new(),
+            escala_de_tempo_sucesso: Default::default(),
+            escala_de_tempo_falha: Default::default(),
+            escala_de_itens_sucesso: Default::default(),
+            escala_de_itens_falha: Default::default(),
+            falha_ao_entrar: None,
+            falha_ao_sair: None,
+            falha_na_data: None,
             membros_pedidos: Vec::new(),
             confere_membros: false,
             distancia_dos_membros: 0.0,

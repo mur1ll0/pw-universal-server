@@ -89,6 +89,11 @@ struct EstadoDaRecarga {
 }
 
 /// `_world_limit.nofly` do `gs.conf` da versão (B133).
+/// B334 — `TEAM_MEMBER_CAPACITY` da versão (ver [`crate::world::WorldInstance::capacidade_do_grupo`]).
+pub fn capacidade_do_grupo(versao: pw_protocol::GameVersion) -> usize {
+    if versao == pw_protocol::GameVersion::V1_2_6 { 6 } else { 10 }
+}
+
 pub fn sem_voo_do_mapa(versao: pw_protocol::GameVersion, mapa: i32) -> bool {
     let catalogo = if versao == pw_protocol::GameVersion::V1_2_6 {
         pw_data_loader::limites::CatalogoDeLimites::V126
@@ -1180,9 +1185,10 @@ impl RoteadorDeMapas {
 
     /// [`Self::preparar_mapa`] com os spawns já feitos.
     async fn preparar_mapa_iniciado(
-        mundo: WorldInstance,
+        mut mundo: WorldInstance,
         versao: pw_protocol::GameVersion,
     ) -> (i32, Arc<BusServer>) {
+        mundo.capacidade_do_grupo = capacidade_do_grupo(versao);
         let id = mundo.world_id;
         let servidor = Arc::new(crate::server::GameServer::new(mundo));
         let bus = Arc::new(BusServer::new(Arc::clone(&servidor.world), versao));

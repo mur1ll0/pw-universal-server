@@ -842,6 +842,16 @@ fn janela_vale(j: &pw_data_loader::tasks::JanelaDeHorario, agora: u32) -> bool {
     }
 }
 
+/// B335 — `task_tm::before` (`TaskTempl.h:1617-1628`) na hora local do servidor: a data já chegou (ano até minuto, o
+/// minuto incluído).
+fn data_ja_passou(d: &pw_data_loader::tasks::MomentoDeMissao, agora: u32) -> bool {
+    use chrono::{Datelike, TimeZone, Timelike};
+    let Some(h) = chrono::Local.timestamp_opt(agora as i64, 0).single() else { return false };
+    let atual = (h.year(), h.month() as i32, h.day() as i32, h.hour() as i32);
+    let data = (d.ano, d.mes, d.dia, d.hora);
+    data < atual || data == atual && d.minuto <= h.minute() as i32
+}
+
 fn pai_de<'t>(tarefas: &'t TasksData, t: &TaskTemplate) -> Option<&'t TaskTemplate> {
     t.parent.and_then(|p| tarefas.get_task(p))
 }
@@ -1429,12 +1439,27 @@ impl<'a, J: Jogador> Motor<'a, J> {
 
     // ------------------------------------------------------------------ prêmio
 
-    /// `CalcAwardData` (`TaskTempl.inl:1331-1357`): prêmio de sucesso ou de falha. As escalas
-    /// por tempo e por itens não são lidas pelo carregador — ficam sem prêmio.
+    /// `CalcAwardData` (`TaskTempl.inl:1331-1357`): prêmio de sucesso ou de falha. B340 — por tempo
+    /// (`CalcAwardDataByRatio`, `:1359-1377`): sem limite de tempo nada; senão o primeiro degrau com
+    /// `(agora − aceite)/limite ≤ m_Ratios[i]`; por itens (`CalcAwardDataByItems`, `:1379-1394`): o primeiro com
+    /// `GetTaskItemCount(m_ulItemId) ≥ m_Counts[i]`. Nenhum degrau serve: sem prêmio (o `memset` do começo).
     fn premio_de(&self, t: &'a TaskTemplate, en: &Entrada) -> Option<&'a TaskReward> {
         let tipo = if en.sucesso() { t.tipo_de_premio_sucesso } else { t.tipo_de_premio_falha };
         match tipo {
             0 | 1 => Some(if en.sucesso() { &t.rewards } else { &t.premio_de_falha }),
+            2 => {
+                if t.limite_de_tempo == 0 {
+                    return None;
+                }
+                let e = if en.sucesso() { &t.escala_de_tempo_sucesso } else { &t.escala_de_tempo_falha };
+                let razao = self.j.agora().wrapping_sub(en.tempo) as f32 / t.limite_de_tempo as f32;
+                e.limiares.iter().zip(&e.premios).find(|(l, _)| razao <= **l as f32).map(|(_, p)| p)
+            }
+            3 => {
+                let e = if en.sucesso() { &t.escala_de_itens_sucesso } else { &t.escala_de_itens_falha };
+                let n = self.j.contar(e.item, false);
+                e.limiares.iter().zip(&e.premios).find(|(l, _)| n >= **l as u32).map(|(_, p)| p)
+            }
             _ => None,
         }
     }
@@ -2341,7 +2366,8 @@ impl<'a, J: Jogador> Motor<'a, J> {
     }
 
     /// `OnTaskCheckAwardDirect` (`TaskServer.cpp:864-1066`) — o cliente pede para concluir
-    /// (`TASK_CLT_NOTIFY_CHECK_FINISH`), sem as falhas por região e facção.
+    /// (`TASK_CLT_NOTIFY_CHECK_FINISH`). As falhas por limite de tempo, data absoluta e região de entrar/sair (B335)
+    /// valem aqui, como no original; a de sair da facção não (não há facção).
     pub fn conferir_conclusao(&mut self, id: u32) -> bool {
         let Some(idx) = (0..self.listas.ativa.quantidade as usize).find(|&i| self.listas.ativa.e[i].id as u32 == id && self.listas.ativa.e[i].valida) else {
             return false;
@@ -2357,6 +2383,16 @@ impl<'a, J: Jogador> Motor<'a, J> {
             return self.entregar_premio(idx, -1);
         }
         if t.limite_de_tempo != 0 && en.tempo.wrapping_add(t.limite_de_tempo) < agora {
+            self.listas.ativa.e[idx].estado &= !estado::SUCESSO;
+            self.ao_finalizar(t, idx);
+            return true;
+        }
+        // B335 — `m_bAbsFail` (`TaskServer.cpp:935-944`), entrar numa região (`:945-962`) e sair delas (`:967-988`).
+        let (mundo, pos) = self.j.posicao();
+        let passou_da_data = t.falha_na_data.as_ref().is_some_and(|d| data_ja_passou(d, agora));
+        let entrou = t.falha_ao_entrar.as_ref().is_some_and(|(m, rs)| mundo == *m && rs.iter().any(|r| r.contem(pos)));
+        let saiu = t.falha_ao_sair.as_ref().is_some_and(|(m, rs)| mundo != *m || !rs.iter().any(|r| r.contem(pos)));
+        if passou_da_data || entrou || saiu {
             self.listas.ativa.e[idx].estado &= !estado::SUCESSO;
             self.ao_finalizar(t, idx);
             return true;
@@ -2553,6 +2589,88 @@ mod tests {
             d.tasks.insert(t.id, t);
         }
         d
+    }
+
+    /// B335 — `OnTaskCheckAwardDirect` (`TaskServer.cpp:935-988`): a missão de conclusão direta falha, em vez de concluir,
+    /// se o jogador saiu das caixas do `m_bLeaveRegionFail` (ou do mundo), se entrou numa do `m_bEnterRegionFail`, ou se a
+    /// data do `m_bAbsFail` já passou.
+    #[test]
+    fn falhas_por_regiao_e_por_data_no_pedido_de_conclusao() {
+        use pw_data_loader::tasks::{MomentoDeMissao, RegiaoDeMissao};
+        let caixa = RegiaoDeMissao { min: [-10.0, -10.0, -10.0], max: [10.0, 10.0, 10.0] };
+        let conferir = |t: TaskTemplate, posicao: (u32, [f32; 3])| -> u8 {
+            let id = t.id;
+            let d = dados(vec![t]);
+            let mut l = ListasDeMissao::default();
+            let mut j = JogadorDeTeste { nivel: 1, classe: 6, posicao, ..Default::default() };
+            let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 };
+            assert_eq!(m.aceitar(id, 0, true), 0);
+            let mut m = Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 };
+            assert!(m.conferir_conclusao(id));
+            assert_eq!(l.ativa.quantidade, 0);
+            let fim = j.avisos.last().unwrap().clone();
+            assert_eq!(fim[6], aviso::CONCLUIDA);
+            fim[6 + 7]
+        };
+        let base = |id: u32| {
+            let mut t = modelo(id);
+            t.metodo = metodo::SIMPLES_DO_CLIENTE;
+            t.tipo_de_conclusao = conclusao::DIRETA;
+            t
+        };
+        let mut sair = base(40);
+        sair.falha_ao_sair = Some((1, vec![caixa]));
+        assert_eq!(conferir(sair.clone(), (1, [0.0; 3])), estado::FINALIZADA | estado::SUCESSO, "dentro da caixa: conclui");
+        assert_eq!(conferir(sair.clone(), (1, [50.0, 0.0, 0.0])), estado::FINALIZADA, "fora da caixa: falha");
+        assert_eq!(conferir(sair, (2, [0.0; 3])), estado::FINALIZADA, "outro mundo: falha");
+        let mut entrar = base(41);
+        entrar.falha_ao_entrar = Some((1, vec![caixa]));
+        assert_eq!(conferir(entrar.clone(), (1, [5.0, 0.0, 5.0])), estado::FINALIZADA, "entrou na caixa: falha");
+        assert_eq!(conferir(entrar, (2, [5.0, 0.0, 5.0])), estado::FINALIZADA | estado::SUCESSO, "a caixa é de outro mundo");
+        let mut data = base(42);
+        data.falha_na_data = Some(MomentoDeMissao { ano: 1970, mes: 1, dia: 2, hora: 0, minuto: 0, dia_da_semana: 0 });
+        assert_eq!(conferir(data.clone(), (1, [0.0; 3])), estado::FINALIZADA, "data passada: falha");
+        data.falha_na_data = Some(MomentoDeMissao { ano: 2999, mes: 1, dia: 1, hora: 0, minuto: 0, dia_da_semana: 0 });
+        assert_eq!(conferir(data, (1, [0.0; 3])), estado::FINALIZADA | estado::SUCESSO, "data futura: conclui");
+    }
+
+    /// B340 — `CalcAwardDataByRatio`/`ByItems` (`TaskTempl.inl:1359-1394`): o primeiro degrau que serve paga. Aceita e
+    /// conclui no mesmo instante: razão 0, o 1º degrau (≤ 0,5). Por itens: 3 do item de missão → o degrau de ≥ 2.
+    #[test]
+    fn premio_por_escala_de_tempo_e_de_itens() {
+        use pw_data_loader::tasks::{EscalaDePremio, TaskReward};
+        let premio = |exp: i64| TaskReward { exp, ..Default::default() };
+        let concluir = |t: TaskTemplate, j: &mut JogadorDeTeste| {
+            let id = t.id;
+            let d = dados(vec![t]);
+            let mut l = ListasDeMissao::default();
+            let mut m = Motor { tarefas: &d, listas: &mut l, j, eu: 1 };
+            assert_eq!(m.aceitar(id, 0, true), 0);
+            let mut m = Motor { tarefas: &d, listas: &mut l, j, eu: 1 };
+            assert!(m.conferir_conclusao(id));
+        };
+        let mut t = modelo(50);
+        t.metodo = metodo::SIMPLES_DO_CLIENTE;
+        t.tipo_de_conclusao = conclusao::DIRETA;
+        t.tipo_de_premio_sucesso = 2;
+        t.limite_de_tempo = 100;
+        t.escala_de_tempo_sucesso = EscalaDePremio { item: 0, limiares: vec![0.5, 1.0], premios: vec![premio(7), premio(3)] };
+        let mut j = JogadorDeTeste { nivel: 1, classe: 6, ..Default::default() };
+        concluir(t.clone(), &mut j);
+        assert_eq!(j.exp, 7);
+        t.limite_de_tempo = 0;
+        let mut j = JogadorDeTeste { nivel: 1, classe: 6, ..Default::default() };
+        concluir(t, &mut j);
+        assert_eq!(j.exp, 0, "por tempo sem limite de tempo: nada");
+        let mut t = modelo(51);
+        t.metodo = metodo::SIMPLES_DO_CLIENTE;
+        t.tipo_de_conclusao = conclusao::DIRETA;
+        t.tipo_de_premio_sucesso = 3;
+        t.escala_de_itens_sucesso = EscalaDePremio { item: 900, limiares: vec![5.0, 2.0], premios: vec![premio(50), premio(20)] };
+        let mut j = JogadorDeTeste { nivel: 1, classe: 6, ..Default::default() };
+        j.itens.insert((900, false), 3);
+        concluir(t, &mut j);
+        assert_eq!(j.exp, 20, "3 itens: não chega a 5, serve o de 2");
     }
 
     #[test]

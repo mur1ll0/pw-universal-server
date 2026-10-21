@@ -493,7 +493,9 @@ pub enum ParametroDeOperacao {
     /// `O_WALK_ALONG { iWorldID, iPathID, iPatrolType, iSpeedType }`
     AndarPorCaminho { mundo: i32, caminho: i32, tipo_de_patrulha: i32, tipo_de_velocidade: i32 },
     /// `O_PLAY_ACTION { szActionName[128], iLoopCount, iInterval, iPlayTime }`
-    TocarAcao { acao: String, repeticoes: i32, intervalo: i32, duracao: i32 },
+    /// B338: `acao` são os bytes do nome como estão no arquivo (GBK, sem o `NUL`) — é o que vai ao cliente no
+    /// `OBJECT_START_PLAY_ACTION`.
+    TocarAcao { acao: Vec<u8>, repeticoes: i32, intervalo: i32, duracao: i32 },
     /// `O_DELIVER_FACTION_PVP_POINTS { uType }`
     PontosPvpDeFaccao(u32),
     /// `O_CALC_VAR` — 7 inteiros, ver `policytype.h`.
@@ -756,6 +758,13 @@ impl<'a> Leitor<'a> {
     /// `char[n]` de tamanho fixo, cortado no primeiro NUL. O conteúdo é GBK no arquivo
     /// original (nomes em chinês), então bytes altos viram `U+FFFD` em vez de erro — o
     /// nome é rótulo de editor, não entra em nenhuma decisão de jogo.
+    /// `n` bytes até o primeiro `NUL`, crus.
+    fn bytes_fixos(&mut self, n: usize) -> Result<Vec<u8>> {
+        let bruto = self.fatia(n)?;
+        let fim = bruto.iter().position(|&b| b == 0).unwrap_or(n);
+        Ok(bruto[..fim].to_vec())
+    }
+
     fn texto_fixo(&mut self, n: usize) -> Result<String> {
         let bruto = self.fatia(n)?;
         let fim = bruto.iter().position(|&b| b == 0).unwrap_or(n);
@@ -1020,7 +1029,7 @@ impl AiPolicyData {
             }
             Some(TocarAcao) if versao < 9 => {
                 // `O_PLAY_ACTION_VERSION8 { szActionName[128], bLoop, iInterval }`.
-                let acao = l.texto_fixo(128)?;
+                let acao = l.bytes_fixos(128)?;
                 let _repetir = l.bool()?;
                 l.fatia(3)?;
                 let intervalo = l.i32()?;
@@ -1110,7 +1119,7 @@ impl AiPolicyData {
                 tipo_de_velocidade: l.i32()?,
             },
             TocarAcao => {
-                let acao = l.texto_fixo(128)?;
+                let acao = l.bytes_fixos(128)?;
                 let repeticoes = l.i32()?;
                 let intervalo = l.i32()?;
                 let duracao = l.i32()?;

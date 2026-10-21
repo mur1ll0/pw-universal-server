@@ -183,18 +183,14 @@ fn no_155_as_politicas_compilam_e_o_que_falta_e_conhecido() {
     let (politicas, ops, conds) = sem_porte(&d);
     eprintln!("1.5.5: {politicas} políticas; sem porte: {ops:?}, {conds} condições");
     assert!(politicas > 0);
-    // O que o 1.5.5 usa e ainda não tem porte: invocações, caminhos, histórico, ações,
+    // O que o 1.5.5 usa e ainda não tem porte (B336/B338: invocar monstro e tocar ação saíram): invocações de NPC/mina, caminhos, histórico,
     // missões, PvP de facção e contagem de jogadores salva em variável.
     let conhecidas = [
-        "InvocarMonstro",
         "InvocarNpc",
         "InvocarMina",
-        "AndarPorCaminho",
-        "TocarAcao",
         "Historico",
         "PontosPvpDeFaccao",
         "EntregarMissao",
-        "ContarJogadores",
         "LimparMissaoDeTorre",
         "RodarTrigger sem o gatilho",
     ];

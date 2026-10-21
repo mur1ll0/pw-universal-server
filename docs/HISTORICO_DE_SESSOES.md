@@ -16808,3 +16808,47 @@ comparação lado a lado.
     - Painel: botão "Canal de teste (GM)" (spec 07).
     - Provas: `governanca.rs` **1/1** (entra, fica em dia, volta, verifica limpo, canal removido), painel **13/13**.
     - Nota: o S4 (distritos, portais e destinos novos) que eu tinha listado como falta já estava feito (B251–B253).
+
+334. **Sessão 2026-10-21: limite do grupo.**
+
+    - `World::capacidade_do_grupo` (`mapas::capacidade_do_grupo`): 10 no 1.5.5 (`TEAM_MEMBER_CAPACITY`, `config.h:50`) e
+      6 no 1.2.6 — no `gs` 1.2.6 o convite compara `cmp eax,5` (VA 0x8102bff) e o aceite `cmp eax,4` (VA 0x81012d2).
+      `convidar_para_grupo` devolve `RecusaDoConvite` (grupo cheio → `ERROR_MESSAGE` 12; já convidado → 10); aceite com o
+      grupo cheio é ignorado.
+    - Prova: `o_grupo_tem_capacidade_e_o_convite_repetido_e_recusado`.
+    - Ver em jogo (1.2.6): com 6 no grupo, convidar o 7º → mensagem de grupo cheio; convidar duas vezes o mesmo → aviso.
+
+335. **Sessão 2026-10-21: missão que falha por região e por data.**
+
+    - `tasks.rs` lê `m_bEnterRegionFail`/`m_bLeaveRegionFail` com mundo e caixas e o `m_tmFailTime`; o `CHECK_FINISH`
+      (`conferir_conclusao`) falha a missão depois do limite de tempo, na ordem do original.
+    - Dados do `realm_155`: 143 falham ao entrar, 241 ao sair, 5 por data
+      (`cargo run -p pw-data-loader --example falhas_de_missao`).
+    - `FORCE_GIVEUP` (motivo 6) o original não trata (`TaskServer.cpp:330-395`) — saiu da lista de faltas.
+    - Prova: `falhas_por_regiao_e_por_data_no_pedido_de_conclusao`.
+
+336. **Sessão 2026-10-21: política — invocar monstro.** `Acao::Invocar` → `Pedido::Invocar` → `invocar_monstro` perto do
+    alvo do gatilho, com ódio nele (`npc.cpp:2431-2470`). Prova: `invocar_monstro_pede_ao_mundo_e_respeita_a_quantidade`.
+
+337. **Sessão 2026-10-21: IA — `max_move_range`.** Lido do `MONSTER_ESSENCE` (só 1.5.5, piso de 20 m); em combate, sem
+    rota e sem líder, longe do ninho além do raio, a lista de ódio é limpa (`aipolicy.cpp:298-307`). Prova:
+    `longe_do_ninho_alem_do_limite_o_monstro_larga_o_alvo` (`ia_de_combate_do_monstro` **28/28**).
+
+338. **Sessão 2026-10-21: política — tocar ação.** S2C `OBJECT_START_PLAY_ACTION` (303, 2 + 20 + nome) e
+    `OBJECT_STOP_PLAY_ACTION` (304, 2 + 4) (`EC_GPDataType.h:4115-4139`); o conferidor S2C passou a descontar o rabo
+    flexível `x[1]` das structs variáveis. A ação dura `max(1, (vezes·(dur + int) − int)/1000)` s e para em combate ou na
+    morte. Provas: `tocar_e_parar_acao_do_monstro`, `subcomandos_s2c_contra_o_ir`.
+
+339. **Sessão 2026-10-21: política — contar jogadores.** `op_get_sphere/box_player_count` (`aitrigger.cpp:1001-1029`),
+    raio truncado como no `policy_loader.cpp:385`. Prova: `contar_jogadores_guarda_na_variavel`.
+
+340. **Sessão 2026-10-21: prêmio por escala.** O `tasks.data` v129 passa a guardar as escalas (`EscalaDePremio`);
+    `premio_de` porta `CalcAwardDataByRatio`/`ByItems` (`TaskTempl.inl:1359-1394`). Prova:
+    `premio_por_escala_de_tempo_e_de_itens` (missões **20/20**).
+
+341. **Sessão 2026-10-21: política — trocar de caminho.** `op_change_path(_2)` (`aitrigger.cpp:877-896`) →
+    `ChangePath` (`aipolicy.cpp:94-114`): o id global passa pelo `IdConvert` (`World::rotas_do_global`), `iSpeedType == 2`
+    corre. Diferença: mapa errado não devolve `false` (a política não conhece o mapa); o mundo ignora. Prova:
+    `mudar_caminho_pede_a_rota_ao_mundo`; `politica_do_realm` **3/3** com as quatro operações fora da lista de sem porte.
+    - Ver em jogo (1.5.5): o log do `pw-world-155` com `RUST_LOG=debug` não lista mais `sem porte: InvocarMonstro`,
+      `AndarPorCaminho`, `TocarAcao` nem `ContarJogadores`.

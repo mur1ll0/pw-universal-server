@@ -1235,3 +1235,15 @@ fn own_ext_prop_leva_os_graus_na_ordem_do_original() {
     let elem: Vec<i32> = p.data[ini..ini + 40].chunks(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect();
     assert_eq!(elem, [21, 21, 22, 22, 23, 23, 24, 24, 25, 25]);
 }
+
+/// B338 — `cmd_object_start_play_action` (`EC_GPDataType.h:4115-4133`): 20 bytes + o nome sem terminador, e o
+/// `CheckValid` exige exatamente isso; `cmd_object_stop_play_action` só o id.
+#[test]
+fn tocar_e_parar_acao_do_monstro() {
+    use pw_protocol::packets::s2c::S2CGamedataSend;
+    let d = S2CGamedataSend::object_start_play_action(0x0102, 3, 2000, 500, b"attack1").data;
+    let mut esperado = vec![0x2f, 0x01, 0x02, 0x01, 0, 0, 3, 0, 0, 0, 0xd0, 0x07, 0, 0, 0xf4, 0x01, 0, 0, 7, 0, 0, 0];
+    esperado.extend_from_slice(b"attack1");
+    assert_eq!(d, esperado);
+    assert_eq!(S2CGamedataSend::object_stop_play_action(0x0102).data, vec![0x30, 0x01, 0x02, 0x01, 0, 0]);
+}

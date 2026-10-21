@@ -2458,6 +2458,31 @@ impl S2CGamedataSend {
     }
 
     /// Cria o comando NPC_DIED (Comando 20) informando a morte do monstro
+    /// B338 — `OBJECT_START_PLAY_ACTION` (303): `cmd_object_start_play_action { int id, play_times, action_last_time,
+    /// interval_time; size_t name_length; char action_name[] }` (`EC_GPDataType.h:4115-4133`, o `CheckValid` exige
+    /// exatamente 20 + `name_length`). O servidor manda `strlen(action_name)`, sem o terminador
+    /// (`gnpc_dispatcher::start_play_action`, `npc.cpp:399-406`).
+    pub fn object_start_play_action(id: i32, vezes: i32, duracao_ms: i32, intervalo_ms: i32, nome: &[u8]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(303);
+        stream.write_i32_le(id);
+        stream.write_i32_le(vezes);
+        stream.write_i32_le(duracao_ms);
+        stream.write_i32_le(intervalo_ms);
+        stream.write_u32_le(nome.len() as u32);
+        let mut dados = stream.into_bytes().to_vec();
+        dados.extend_from_slice(nome);
+        Self { data: dados }
+    }
+
+    /// B338 — `OBJECT_STOP_PLAY_ACTION` (304): `cmd_object_stop_play_action { int id }` (`EC_GPDataType.h:4136-4139`).
+    pub fn object_stop_play_action(id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(304);
+        stream.write_i32_le(id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     pub fn npc_died(nid: i32, killer_id: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(20);               // CMD_S2C_NPC_DIED = 20

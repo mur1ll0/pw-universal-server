@@ -41,6 +41,8 @@ const OPCODES: &str = include_str!("../src/opcodes.rs");
 /// mesmo comando são normais (`self_*` para `HOST_*`, `party` para `team`) — o que vale é
 /// o comando, não a grafia.
 const INTENCAO: &[(&str, &str)] = &[
+    ("object_start_play_action", "OBJECT_START_PLAY_ACTION"),
+    ("object_stop_play_action", "OBJECT_STOP_PLAY_ACTION"),
     ("self_info_1", "SELF_INFO_1"),
     ("add_status_point", "ADD_STATUS_POINT"),
     ("attack_once", "ATTACK_ONCE"),
@@ -679,6 +681,12 @@ fn bytes_do_comando(ir: &Value, comando: &str) -> Option<usize> {
     if campos.is_empty() {
         return None;
     }
+    // B338: struct variável cujo último campo é `x[1]` — o "rabo flexível" do C, que o próprio `CheckValid` desconta
+    // (`sz = sizeof(*this) - sizeof(x)` e soma o comprimento; ex. `cmd_object_start_play_action`,
+    // `EC_GPDataType.h:4115-4133`). O prefixo fixo é tudo antes dele.
+    let rabo_flexivel = !s["variable"].is_null()
+        && campos.last().is_some_and(|c| c["array_len"].as_u64() == Some(1));
+    let campos = if rabo_flexivel { &campos[..campos.len() - 1] } else { &campos[..] };
     let mut total = 0usize;
     for campo in campos {
         total += campo["bytes"].as_u64()? as usize;

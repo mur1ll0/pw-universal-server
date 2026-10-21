@@ -258,6 +258,10 @@ pub enum EventoDoMundo {
     },
     /// Um monstro falou (`op_say`, `aitrigger.cpp:552-608`).
     MonstroFalou { id: i64, texto: String, canal: crate::politica::CanalDaFala, dados: Vec<u8> },
+    /// B338 — `OBJECT_START_PLAY_ACTION` a quem vê (`gnpc_dispatcher::start_play_action`, `AutoBroadcastCSMsg`).
+    MonstroTocouAcao { id: i64, nome: Vec<u8>, vezes: i32, duracao_ms: i32, intervalo_ms: i32 },
+    /// B338 — `OBJECT_STOP_PLAY_ACTION`: o prazo da ação acabou ou o monstro entrou em combate.
+    MonstroParouAcao { id: i64 },
     /// O efeito da habilidade do monstro, ao fim do canto (`NPCEndSkill` → `NpcEnd`).
     MonstroUsouHabilidade {
         id: i64,
@@ -343,8 +347,15 @@ pub struct WorldInstance {
     pub espaco: pw_data_loader::MapaDoEspaco,
     /// `_world_limit.nofly` do `gs.conf` deste mapa (`pw_data_loader::limites`, B133).
     pub sem_voo: bool,
+    /// B334 — `TEAM_MEMBER_CAPACITY`: 10 no 1.5.5 (`gs/config.h:50`) e 6 no 1.2.6 (o `gs` compara `convites + membros`
+    /// com 5 no líder, VA 0x8102bff, e `convites` com 4 sem grupo, VA 0x81012d2). Posto por [`crate::mapas::capacidade_do_grupo`].
+    pub capacidade_do_grupo: usize,
+    /// B338 — as ações que os monstros estão tocando (`ai_play_action_task`) e quanto falta, em ms.
+    pub acoes_tocando: HashMap<i64, u32>,
     /// As rotas de patrulha do `path.sev` deste mapa, pelo id (`path_manager`, B136).
     pub rotas: HashMap<i32, Arc<Vec<pw_core::Vector3>>>,
+    /// B341 — `path_manager::_convert_tab` (`pathman.h:49-56`): id global da rota → id no `path.sev`.
+    pub rotas_do_global: HashMap<i32, i32>,
     /// O líder de cada área de grupo ou de chefe (`group_spawner::_leader_id`), pela área do
     /// `npcgen.data`, e os subordinados de cada líder (B136).
     lideres_das_areas: HashMap<i32, i64>,
@@ -480,7 +491,10 @@ impl WorldInstance {
             agua: pw_data_loader::MapaDeAgua::vazio(),
             espaco: pw_data_loader::MapaDoEspaco::vazio(),
             sem_voo: false,
+            capacidade_do_grupo: 10,
+            acoes_tocando: HashMap::new(),
             rotas: HashMap::new(),
+            rotas_do_global: HashMap::new(),
             lideres_das_areas: HashMap::new(),
             subordinados: HashMap::new(),
             movimento: pw_data_loader::MapaDeMovimento::vazio(),
@@ -535,12 +549,40 @@ impl WorldInstance {
             }
         }
         let mut ia = MonsterAi::com_perfil(perfil);
+        // B337 — o piso de 20 m do `npcgenerator.cpp:313-316`; zero é sem limite.
+        let r = dados.monstros.get(template_id).map_or(0.0, |t| t.raio_maximo_de_movimento);
+        ia.raio_maximo_de_movimento = if r > 1e-6 { r.max(20.0) } else { 0.0 };
         if let Some((p, locais)) = politica {
             let estado = p.novo_estado(locais);
             ia.politica = Some((p, estado));
             ia.globais = Some(Arc::clone(&self.variaveis_globais));
         }
         ia
+    }
+
+    /// B338 — o fim das ações tocadas: prazo vencido, monstro morto ou em combate (`ai_play_action_task::OnHeartbeat`/
+    /// `OnAggro` → `EndTask` → `StopPlayAction`, `aipolicy.cpp:2066-2094`).
+    fn descontar_acoes_tocando(&mut self, delta_ms: u32) {
+        if self.acoes_tocando.is_empty() {
+            return;
+        }
+        let mut acabaram = Vec::new();
+        for (id, falta) in self.acoes_tocando.iter_mut() {
+            *falta = falta.saturating_sub(delta_ms);
+            let parou = match self.monsters.get(id) {
+                Some((m, ai)) => m.is_dead || ai.esta_em_combate(),
+                None => true,
+            };
+            if *falta == 0 || parou {
+                acabaram.push(*id);
+            }
+        }
+        for id in acabaram {
+            self.acoes_tocando.remove(&id);
+            if self.monsters.contains_key(&id) {
+                self.emitir(EventoDoMundo::MonstroParouAcao { id });
+            }
+        }
     }
 
     /// O que as políticas pediram ao mundo neste tique: fala, controlador, sem porte.
@@ -554,6 +596,38 @@ impl WorldInstance {
             match p {
                 Pedido::Falar { texto, canal, dados } => self.emitir(EventoDoMundo::MonstroFalou { id, texto, canal, dados }),
                 Pedido::Controlador { id: c, ligar } => self.acionar_controlador(c, ligar),
+                Pedido::TocarAcao { nome, vezes, duracao_ms, intervalo_ms } => {
+                    // `ai_play_action_task` (`aipolicy.h:760-766`): dura `(vezes·(duração + intervalo) − intervalo)/1000`
+                    // batimentos de 1 s, no mínimo 1; acaba antes se o monstro entrar em combate (`OnAggro`).
+                    let s = ((vezes.saturating_mul(duracao_ms.saturating_add(intervalo_ms)) - intervalo_ms) / 1000).max(1);
+                    self.acoes_tocando.insert(id, s as u32 * 1000);
+                    self.emitir(EventoDoMundo::MonstroTocouAcao { id, nome, vezes, duracao_ms, intervalo_ms });
+                }
+                Pedido::Invocar { monstro, quantidade, alvo, distancia, vida_s } => {
+                    // `CreateMinors(prop, target, radius)` (`obj_interface.cpp:2002-…`): perto do alvo, que tem de existir.
+                    let centro = self.players.get(&alvo).map(|p| p.position)
+                        .or_else(|| self.monsters.get(&alvo).filter(|(m, _)| !m.is_dead).map(|(m, _)| m.position));
+                    let Some(centro) = centro else { continue };
+                    let odiado = (alvo != id).then_some(alvo);
+                    for _ in 0..quantidade {
+                        self.invocar_monstro(monstro as u32, centro, distancia.max(0) as u32, vida_s, false, odiado);
+                    }
+                }
+                Pedido::MudarCaminho { mundo, caminho, tipo, corre } => {
+                    // `op_change_path::DoSomething`: só no mapa certo (0 = qualquer); `IdConvert` (desconhecido → 0);
+                    // `ChangePath`: larga a rota atual e, com id > 0, monta a nova (`Init` recusa menos de 2 pontos).
+                    if mundo != 0 && mundo != self.world_id {
+                        continue;
+                    }
+                    let local = self.rotas_do_global.get(&caminho).copied().unwrap_or(0);
+                    let rota = (local > 0)
+                        .then(|| self.rotas.get(&local))
+                        .flatten()
+                        .and_then(|p| crate::ai::Rota::nova(Arc::clone(p), tipo, corre));
+                    if let Some((_, ai)) = self.monsters.get_mut(&id) {
+                        ai.rota = rota;
+                    }
+                }
                 Pedido::NaoPortado(nome) => {
                     if self.sem_porte_da_politica.insert(nome) {
                         debug!("mundo: aipolicy — sem porte: {nome} (monstro {id})");
@@ -689,6 +763,7 @@ impl WorldInstance {
             if let Ok(b) = std::fs::read(dir.join("path.sev")) {
                 match pw_data_loader::rotas::Rotas::ler(&b) {
                     Ok(r) => {
+                        self.rotas_do_global = r.do_global.clone();
                         self.rotas = r
                             .pontos
                             .into_iter()
@@ -1502,16 +1577,27 @@ impl WorldInstance {
     // para o próprio jogador. Ninguém mais no jogo ficava sabendo de nada.
     // ------------------------------------------------------------------
 
-    /// Registra um convite pendente. `false` se o convidado já está num grupo.
+    /// Registra um convite pendente.
     ///
     /// Um convite só substitui outro convite; não atropela alguém que já tem grupo, o que
-    /// seria uma forma de arrastar jogador para fora do time dele à revelia.
-    pub fn convidar_para_grupo(&mut self, quem_convida: RoleId, convidado: RoleId) -> bool {
+    /// seria uma forma de arrastar jogador para fora do time dele à revelia. B334 —
+    /// `CliInviteOther` (`playerteam.cpp:160-176`, `:819-840`): convidar de novo quem já foi convidado é
+    /// `ERR_TEAM_ALREADY_INVITE`; os convites pendentes mais os membros (1 sem grupo) chegando à capacidade é
+    /// `ERR_TEAM_CANNOT_INVITE` (sem grupo o mapa de convites tem `TEAM_MEMBER_CAPACITY − 1`, `playerteam.h:21`).
+    pub fn convidar_para_grupo(&mut self, quem_convida: RoleId, convidado: RoleId) -> Result<(), RecusaDoConvite> {
         if quem_convida == convidado || self.grupo_de.contains_key(&convidado) {
-            return false;
+            return Err(RecusaDoConvite::NaoPode);
+        }
+        if self.convites.get(&convidado) == Some(&quem_convida) {
+            return Err(RecusaDoConvite::JaConvidado);
+        }
+        let pendentes = self.convites.values().filter(|q| **q == quem_convida).count();
+        let membros = self.grupo_de.get(&quem_convida).and_then(|g| self.grupos.get(g)).map_or(1, |g| g.membros.len());
+        if pendentes + membros >= self.capacidade_do_grupo {
+            return Err(RecusaDoConvite::Cheio);
         }
         self.convites.insert(convidado, quem_convida);
-        true
+        Ok(())
     }
 
     /// Aceita o convite pendente e devolve os membros do grupo resultante.
@@ -1524,6 +1610,10 @@ impl WorldInstance {
             _ => return None,
         }
         self.convites.remove(&quem);
+        // B334 — `MsgAgreeInvite` (`playerteam.cpp:957`): com o grupo já cheio, o aceite é ignorado.
+        if self.grupo_de.get(&de_quem).and_then(|g| self.grupos.get(g)).is_some_and(|g| g.membros.len() >= self.capacidade_do_grupo) {
+            return None;
+        }
 
         let id = match self.grupo_de.get(&de_quem) {
             Some(id) => *id,
@@ -2675,6 +2765,7 @@ impl WorldInstance {
             self.emitir(e);
         }
         self.escoar_pedidos_das_politicas();
+        self.descontar_acoes_tocando(delta_ms);
 
         // `boss_spawner::ForwardFirstAggro` (`npcgenerator.cpp:5447-5457`): o inimigo novo do
         // chefe vai, com a raiva, a todos os subordinados (`GM_MSG_TRANSFER_AGGRO`).
@@ -3882,3 +3973,14 @@ impl WorldInstance {
 /// `C2S::MOVE_MODE_KNOCK` / `MOVE_MODE_PULL` (`common/protocol.h:4528`, `:4532`).
 const MOVE_MODE_KNOCK: u8 = 0x05;
 const MOVE_MODE_PULL: u8 = 0x09;
+
+/// B334: por que um convite de grupo foi recusado.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecusaDoConvite {
+    /// O próprio jogador, ou alguém que já tem grupo (sem aviso, como antes).
+    NaoPode,
+    /// `ERR_TEAM_ALREADY_INVITE` (12).
+    JaConvidado,
+    /// `ERR_TEAM_CANNOT_INVITE` (10): convites pendentes + membros chegaram à capacidade.
+    Cheio,
+}

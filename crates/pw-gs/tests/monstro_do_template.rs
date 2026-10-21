@@ -55,6 +55,7 @@ fn template() -> TemplateDeMonstro {
         politica_de_ia: 60,
         agressivo: 1,
         raio_de_odio: 15.0,
+        raio_maximo_de_movimento: 0.0,
         tempo_de_odio: 20,
         raio_de_visao: 30,
         ovo_de_captura: 0,
