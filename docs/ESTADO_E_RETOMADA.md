@@ -462,8 +462,7 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
   Jogar abre como escolhido. A janela de opções ainda não foi vista na tela (o `pw-recursos` estava sendo recriado).
 - **B275 (launcher no Windows 7, 2026-10-19) — confirmado pelo Murillo num Windows 7 real:** o launcher deixou o Tauri/WebView2 (exigia Windows 10: o exe nem abria
   no 7) e virou janela Win32 nativa, mesmo comportamento. Compilar com `tools\pw-launcher\compilar.ps1` (64 bits) ou
-  `compilar.ps1 -Bits 32`; exe em `tools\pw-launcher	arget_64-win7-windows-msvc
-elease\pw-launcher.exe` (ou
+  `compilar.ps1 -Bits 32`; exe em `tools\pw-launcher\target\x86_64-win7-windows-msvc\release\pw-launcher.exe` (ou
   `i686-win7-…`), com o `pw-launcher.json` ao lado. Conferido aqui no Windows 10 (versões, "Pronto para jogar", barra de
   progresso do Verificar) e pela tabela de imports (só funções do 7). **A olhar no Windows 7:** abrir o exe (a janela
   aparece; não sumir calado), escolher pasta pela janela clássica do Windows, baixar/verificar, Jogar.
