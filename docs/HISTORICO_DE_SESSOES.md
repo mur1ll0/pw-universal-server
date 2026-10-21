@@ -16249,3 +16249,42 @@ comparação lado a lado.
     - aceite de distribuir um DLL nosso pelo launcher (princípio "cliente original");
     - começar pelo 1.5.5 ou pelo 1.2.6;
     - formato do arquivo de dados.
+
+313. **Sessão 2026-10-20: DLL de dados, fase 1 — o contrato binário do `elementskill.dll` 1.5.5.**
+
+    ### a. Pedido
+    O Murillo aprovou a opção D do B312, começando pelo 1.5.5, e a distribuição do nosso DLL pelo launcher.
+
+    ### b. Medido
+    - **Importações:** 36 (1.5.5) e 23 (1.2.6, 13 a menos e nenhuma a mais), demangled.
+    - **Vtable de `ElementSkill`, 53 slots:**
+      - 50 com nome, pelos endereços das virtuais da base exportadas;
+      - 16–18 são puras na base. Desmontando a derivada, são `GetRequiredSkillCount`, `GetRequiredSkillAt(int)`
+        (`ret 4`) e `GetRequiredSkill(skill_array_interface&)`, sobre o vetor de pré-requisitos (`stub+0x42`, pares de
+        8 bytes). É o mesmo padrão de `GetJunior*` (42–44).
+    - **Interface e classes auxiliares:**
+      - `skill_array_interface<T>`: `[+4]` = `assign(início, fim)`, `[+8]` = `clear()` (desmontagem);
+      - `SkillStr`: `[0]` = `Find(int)`;
+      - `VisibleState` `[GetID, GetName, GetHH, GetEffect]`, `TeamState` `[GetID, GetName, GetIcon]` (vtables
+        exportadas).
+    - **Estruturas, com página de guarda** (`tools/elementskill/estruturas.cpp`, 6.632 chamadas cada): 0 violações no
+      tamanho do fonte; com 4 bytes a menos, violação em 4 delas.
+
+      | estrutura | tamanho | violações com 4 bytes a menos |
+      | :--- | ---: | ---: |
+      | `LearnRequirement` | 24 | 246 |
+      | `UseRequirement` | 56 | 6.632 |
+      | `PetRequirement` | 16 | 2.128 |
+      | `GoblinRequirement` | 40 | 188 |
+      | `GoblinUseRequirement` | 44 | o último campo não foi lido |
+
+    - **Achado:** `skill_array_interface`, `GetJuniorCount/At` e `GetRequiredSkillCount/At` não existem em fonte
+      nenhum. O DLL e o executável v156 têm uma interface mais nova que o fonte. Regra do contrato: assinatura e layout
+      pelo binário, comportamento pelo fonte conferido no gabarito.
+
+    ### c. Entregue
+    `specs/08_ELEMENTSKILL_DE_DADOS.md` (nova, no mapa do `specs/README.md`) e `tools/elementskill/estruturas.cpp`.
+
+    ### d. Próximo
+    Fase 2 — o gabarito: medir tudo o que o DLL original devolve para toda habilidade e nível (números, argumentos
+    exatos da descrição, condições sondadas, estados).

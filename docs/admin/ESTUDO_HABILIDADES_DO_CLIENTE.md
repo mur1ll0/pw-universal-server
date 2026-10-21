@@ -133,7 +133,12 @@ Fora do princípio do projeto (cliente original) e mais arriscado que D. **Não 
 
 Até a fase 4 nada muda para o jogador: o DLL de dados devolve exatamente o que o original devolve.
 
-## 6. O que precisa da decisão do Murillo
+## 6. Decisão (2026-10-20)
+
+O Murillo aprovou a **opção D**, começando pelo **1.5.5**, e a distribuição do nosso DLL pelo launcher. O andamento
+fica em `specs/08_ELEMENTSKILL_DE_DADOS.md`.
+
+## 7. O que precisava da decisão do Murillo (registro)
 
 - **Princípio do projeto:** o servidor serve "o cliente original sem modificação". O B305 já distribui um
   `elementskill.dll` editado pelo launcher; a opção D distribui um `elementskill.dll` **nosso**. Na prática é a mesma
