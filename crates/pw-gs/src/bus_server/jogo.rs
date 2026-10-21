@@ -153,8 +153,9 @@ impl Contexto<'_> {
     /// B203: as habilidades mudaram — refaz as passivas comuns, a ficha, e manda o
     /// `OWN_EXT_PROP` quando algo nela mudou.
     pub fn refazer_passivas(&mut self) {
+        let asas = self.p.equipamento.item_de_voo.is_some_and(|id| self.dados.asas.contains_key(&id));
         let novas = crate::efeitos::passivas_comuns(
-            &self.dados.habilidades, &self.p.habilidades, self.p.equipamento.arma.map(|a| a.classe).unwrap_or(0));
+            &self.dados.habilidades, &self.p.habilidades, self.p.equipamento.arma.map(|a| a.classe).unwrap_or(0), asas);
         if novas == self.p.passivas_comuns {
             return;
         }
@@ -2591,8 +2592,9 @@ impl BusServer {
             }
             let base = Some(&dados.base_das_classes).filter(|b| !b.is_empty());
             // B203: as passivas de arma dependem da arma que entra agora.
+            let asas = e.item_de_voo.is_some_and(|id| dados.asas.contains_key(&id));
             p.passivas_comuns = crate::efeitos::passivas_comuns(
-                &dados.habilidades, &p.habilidades, e.arma.map(|a| a.classe).unwrap_or(0));
+                &dados.habilidades, &p.habilidades, e.arma.map(|a| a.classe).unwrap_or(0), asas);
             p.vestir(e, &dados.classes, base);
             debug!(
                 "mundo: {roleid} equipado — dano {}..{}, alcance {:.1}, golpe {:.2} s, defesa {}, evasão {}",

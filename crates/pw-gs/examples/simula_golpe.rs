@@ -42,6 +42,7 @@ fn main() {
             atacante_e_jogador_ou_pet: true,
             camada: None,
             roubo_de_vida: 0,
+            realce_de_habilidade2: 0,
         };
         let def = Defesa::simples(m.armadura, m.defesa, m.resistencias, m.grau_de_defesa);
         let chance = chance_de_acerto(precisao, m.armadura);

@@ -1208,8 +1208,9 @@ impl WorldInstance {
             let base = Some(&dados.base_das_classes).filter(|b| !b.is_empty());
             p.passivas_de_forma =
                 crate::efeitos::passivas_de_forma(&dados.habilidades, &p.habilidades);
+            let asas = p.equipamento.item_de_voo.is_some_and(|id| dados.asas.contains_key(&id));
             p.passivas_comuns = crate::efeitos::passivas_comuns(
-                &dados.habilidades, &p.habilidades, p.equipamento.arma.map(|a| a.classe).unwrap_or(0));
+                &dados.habilidades, &p.habilidades, p.equipamento.arma.map(|a| a.classe).unwrap_or(0), asas);
             p.recalcular_por_nivel(&dados.classes, base);
             p.hp = p.hp.min(p.max_hp);
             p.mp = p.mp.min(p.max_mp);

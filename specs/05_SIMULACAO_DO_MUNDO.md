@@ -658,9 +658,19 @@ sessão de golpe contra jogador (o golpe normal não mira jogador), marca no gol
   `Adddefence`/`Addresistance` (defesa/resistências `+100 × m`%), `Inccrit`, `Inchpgen`/`Incmpgen`
   (pontos por batimento), `Incswim`, `Inc<arma>` (dano `+100 × inc`% com a arma certa),
   `Inctalisman` (magia), `Inchitrate` (arco, precisão); somadas em `PlayerEntity::passivas_comuns`,
-  refeitas ao vestir, no `refazer_atributos` e ao aprender. `falta`: dano de habilidade por
-  elemento (`SetSkillInc`), `Addskilldamage`, redução por distância, invisibilidade, `Incrange`,
-  `Incfeather`, `Immunedrop`, `Reduceresurrectexplost` e as `EVENT_ENTER`. Na forma de classe (raposa, Forma Sombria) valem as passivas
+  refeitas ao vestir, no `refazer_atributos` e ao aprender. **B330**, na ordem do mapa do original (id
+  crescente):
+  - `Incgold…Incearth` → `SetSkillInc` **atribui** (vale a de maior id) e o `Set<escola>damage` do golpe de
+    habilidade faz `(int)(dano × (1 + inc))` (`skill.cpp:899-903`);
+  - `Addskilldamage` → `skill_enhance2`: golpe de habilidade × `0,01 × (100 + x)` no `AdjustDamage` do alvo, antes
+    da penetração no NPC (`npc.cpp:1767-1770`) e por último no jogador (`player.cpp:9652-9653`);
+  - `Incnear…`/`Incfar…dmgreduce` → a atenuação por distância do golpe de jogador/mascote que este jogador recebe
+    (`actobject.cpp:520-538`; a fórmula já estava no `resolver`);
+  - `Incrange` só com arco → `attack_range`;
+  - `Incfeather` só com asas (o `EventWield(65535)` do `angel_wing_item::OnActivate`) → velocidade de voo;
+  - `Reduceresurrectexplost` → a perda ao renascer × `(100 − x)/100` (`player.cpp:8718`).
+  Guardados sem consumidor, `falta`: a invisibilidade passiva e a anti-invisibilidade (não há furtividade) e o
+  `Immunedrop` (o `Dropmoneyondeath` não tem porte). `falta` também: as `EVENT_ENTER`. Na forma de classe (raposa, Forma Sombria) valem as passivas
   `EVENT_CHANGE` que o jogador conhece, pelo `TakeEffect` (`ao_mudar_de_forma` do catálogo) no nível
   dele — `Incswim` → nado +`100 × inc`% (`EnhanceSwimSpeed`; o `UpdateSpeed` refaz o nado com teto de
   15, `playertemplate.h:1104-1108`), `Incfight` → dano +`100 × inc`% (`EnhanceScaleDamage`),

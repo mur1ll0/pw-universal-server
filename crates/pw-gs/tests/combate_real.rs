@@ -34,6 +34,7 @@ fn golpe() -> Golpe {
         atacante_e_jogador_ou_pet: false,
         camada: None,
         roubo_de_vida: 0,
+        realce_de_habilidade2: 0,
     }
 }
 
@@ -810,4 +811,44 @@ fn o_amuleto_de_dano_vale_pelo_tipo_e_pelo_nivel_da_arma() {
     assert_eq!(p.reforco_do_amuleto(false), 0, "o mágico não reforça o físico");
     p.equipamento.arma = Some(pw_gs::entity::ArmaEmUso { nivel: 16, ..Default::default() });
     assert_eq!(p.reforco_do_amuleto(true), 0, "arma acima da faixa");
+}
+
+
+// ---------------------------------------------------------------------------------
+// B330 — as passivas de fidelidade
+// ---------------------------------------------------------------------------------
+
+fn dano_de(g: &Golpe, d: &Defesa, distancia: f32) -> i32 {
+    match resolver(g, d, distancia, false, certeiro()) {
+        Resultado::Acertou { dano, .. } => dano,
+        r => panic!("esperava acerto: {r:?}"),
+    }
+}
+
+/// `Addskilldamage` (`_skill_enhance2`): o golpe de **habilidade** vai × `0,01 × (100 + 20)` no NPC
+/// (`npc.cpp:1767-1768`) e no jogador (`player.cpp:9652-9653`); o golpe normal não muda.
+#[test]
+fn o_addskilldamage_entra_so_no_golpe_de_habilidade() {
+    let mut g = golpe();
+    g.realce_de_habilidade2 = 20;
+    assert_eq!(dano_de(&g, &defesa(), 3.0), 1000, "golpe normal: sem realce");
+    g.de_habilidade = true;
+    assert_eq!(dano_de(&g, &defesa(), 3.0), 1200, "jogador atingido: 1000 × 1,2");
+    let mut npc = defesa();
+    npc.camada_de_npc = Some(pw_gs::combat::Camada::Chao);
+    assert_eq!(dano_de(&g, &npc, 3.0), 1200, "NPC atingido: 1000 × 1,2");
+}
+
+/// `Incnearskilldmgreduce` 0,05: golpe de habilidade de jogador a 3 m (perto: < 8 m) perde 5%
+/// (`actobject.cpp:520-530`); de monstro, nada (só jogador ou mascote atenua).
+#[test]
+fn a_reducao_por_distancia_vale_contra_jogador_que_bate() {
+    let mut g = golpe();
+    g.de_habilidade = true;
+    let mut d = defesa();
+    d.reducao_perto_habilidade = 0.05;
+    assert_eq!(dano_de(&g, &d, 3.0), 1000, "quem bate não é jogador nem mascote");
+    g.atacante_e_jogador_ou_pet = true;
+    assert_eq!(dano_de(&g, &d, 3.0), 950);
+    assert_eq!(dano_de(&g, &d, 9.0), 1000, "a 9 m já não é perto");
 }

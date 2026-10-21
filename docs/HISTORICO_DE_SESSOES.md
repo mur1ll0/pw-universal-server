@@ -16752,3 +16752,28 @@ comparação lado a lado.
         agora só pelo 57.
       - Antes: 1 a 3 falhas por rodada do `subcomandos_no_mundo` (3 rodadas, 3 nomes diferentes). Depois: **3 rodadas
         sob carga, 165/165 em cada**.
+
+330. **Sessão 2026-10-21: fidelidade — as passivas comuns que faltavam.**
+
+    - Pedido: "Fidelidade: dano por elemento e `Addskilldamage`; redução por distância; invisibilidade; `Incrange` e
+      `Incfeather`" (as passivas que o B203 deixou ignoradas).
+    - Inventário dos catálogos: 13 setters sem porte, em 70 entradas de passiva no 1.5.5 e 20 no 1.2.6.
+    - **Portado** (`efeitos::passivas_comuns` → `Realce`), na ordem do mapa do original (id crescente), com consumidor:
+      - `SetSkillInc` (atribui) multiplicando o dano da escola no `golpe_de_habilidade` (`skill.cpp:899-903`);
+      - `skill_enhance2` no ajuste do golpe de habilidade, no NPC e no jogador (`npc.cpp:1767`, `player.cpp:9652`);
+      - a redução por distância na `defesa_do_jogador` (a fórmula do `actobject.cpp:520-538` já estava no
+        `resolver`, com os campos sempre zero);
+      - `Incrange` com arco no `attack_range`;
+      - `Incfeather` com asas na velocidade de voo (`Equipamento::item_de_voo` + `GameDataManager::asas`; a asa
+        dispara o `EventWield(65535)`, `item_flysword.cpp:107-110`);
+      - `Reduceresurrectexplost` na perda ao renascer (`player.cpp:8718`).
+    - Guardados sem consumidor (`falta` registrado): invisibilidade e anti-invisibilidade passivas (o nosso mundo não
+      tem furtividade) e `Immunedrop` (o `Dropmoneyondeath` não tem porte). Falta também `EVENT_ENTER`.
+    - Provas:
+      - `as_passivas_de_fidelidade_do_b330` (2443, 2691, 255 com arco, 190 com asas, 1804, 1949, 1081, e
+        2831/2832: o `SetSkillInc` atribui);
+      - `as_passivas_comuns_somam_o_que_o_take_effect_manda` agora com a 11 (`Incgold` 0,1);
+      - `combate_real` 32/32 com `o_addskilldamage_entra_so_no_golpe_de_habilidade` (1.000 → 1.200, golpe normal
+        1.000) e `a_reducao_por_distancia_vale_contra_jogador_que_bate` (950 a 3 m, 1.000 a 9 m, 1.000 de monstro).
+    - Ver em jogo: um Arqueiro com a passiva de alcance (255) acerta mais longe com arco; com asas e a 190, voa mais
+      rápido. Os números dependem das passivas que o personagem tem.

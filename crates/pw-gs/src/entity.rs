@@ -688,6 +688,9 @@ pub struct Equipamento {
     /// `_en_point.flight_speed` do item de voo vestido: o `speed_increase` gravado no
     /// conteúdo dele (`flysword_item::OnActivate`, `gs/item/item_flysword.h:126-129`). Em m/s.
     pub velocidade_de_voo: f32,
+    /// B330 — o id do item de voo vestido (slot 12), para o `IsEquipWing` (`player.cpp:13005-13011`) das
+    /// passivas `Incfeather`: é asa quando está em `GameDataManager::asas`.
+    pub item_de_voo: Option<u32>,
     /// A parte do refino na força da alma (`UpdateBaseSoulPower`, `player_imp.h:3033-3044`):
     /// `refine_cost[nível]` × 1,5 na arma (slot 0) e × 0,25 nas outras peças, cada uma truncada.
     pub alma_do_refino: i32,
@@ -796,6 +799,7 @@ impl Equipamento {
                 continue;
             }
             if i32::from(item.slot) == SLOT_DO_ITEM_DE_VOO {
+                e.item_de_voo = Some(item.item_id as u32);
                 if let Some(v) = velocidade_do_item_de_voo(&item.octets) {
                     e.velocidade_de_voo += v;
                 }
@@ -1091,6 +1095,7 @@ impl PlayerEntity {
             Some(w) if w.alcance > 0.1 => w.alcance,
             _ => alcance_base,
         } + b.alcance
+            + self.passivas_comuns.alcance
             + CORPO_DO_JOGADOR;
         let ticks = match arma {
             Some(w) => {
@@ -1195,8 +1200,9 @@ impl PlayerEntity {
             // `flight_speed = src + en_point.flight_speed` (o item de voo), até
             // `MAX_FLIGHT_SPEED` (`playertemplate.h:1101-1110`). O `_en_percent.flight_speed`
             // (`EnhanceFlySpeed`, `obj_interface.cpp:499-508`) ainda não tem porte.
-            self.fly_speed =
-                (cfg.velocidade_voando + e.velocidade_de_voo).min(VELOCIDADE_MAXIMA_DE_VOO);
+            // B330: o `Incfeather` das passivas com asas soma no mesmo `_en_point.flight_speed`.
+            self.fly_speed = (cfg.velocidade_voando + e.velocidade_de_voo + self.passivas_comuns.voo)
+                .min(VELOCIDADE_MAXIMA_DE_VOO);
             // `_crit_rate` soma os pontos do `Incsmite` (`EnhanceCrit`).
             self.crit_rate = (cfg.chance_de_critico + r.critico + b.critico) as f32 / 100.0;
         }

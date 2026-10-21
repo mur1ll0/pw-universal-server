@@ -698,6 +698,39 @@ pub struct Realce {
     /// `_crit_resistance` (`EnhanceCritResistance`): pontos a menos na chance de crítico de quem
     /// bate.
     pub resistencia_a_critico: i32,
+    /// B330 — `SetSkillInc(escola, inc)` das passivas `Incgold`/`Incwood`/`Incwater`/`Incfire`/`Incearth`
+    /// (`playerwrapper.cpp:64-68`, `skillwrapper.cpp:957-965`): **atribui** (`skillinc[m] = inc`), então vale a
+    /// última na ordem do mapa de habilidades (id crescente). O `Skill::Set<escola>damage` multiplica o dano
+    /// da escola por `1 + inc` (`skill.cpp:899-903`).
+    pub elemento: [f32; 5],
+    /// B330 — `_skill_enhance2` (`Addskilldamage`, `EnhanceSkillDamage2((int)(inc × 100))`,
+    /// `playerwrapper.cpp:1835-1843`): golpe de habilidade × `(100 + x)/100` no `AdjustDamage` do alvo
+    /// (`npc.cpp:1767-1768`, `player.cpp:9652-9653`).
+    pub realce_de_habilidade2: i32,
+    /// B330 — `_near/_far_normal/skill_dmg_reduce` (`Incnear…`/`Incfar…dmgreduce`, `playerwrapper.cpp:1845-1879`):
+    /// a atenuação por distância do golpe de jogador ou mascote que **este** recebe (`actobject.cpp:520-538`).
+    pub reducao_perto_normal: f32,
+    pub reducao_perto_habilidade: f32,
+    pub reducao_longe_normal: f32,
+    pub reducao_longe_habilidade: f32,
+    /// B330 — `_invisible_passive`/`_anti_invisible_passive` (`IncInvisiblePassive`, `IncAntiInvisiblePassive`,
+    /// `playerwrapper.cpp:1379-1403`). Entram no grau de invisibilidade e de detecção
+    /// (`UpdatePlayerInvisible`, `playertemplate.h:1135-1147`) — `falta`: o nosso mundo não tem furtividade
+    /// (o `_invisible_active`), então ainda não há quem os use.
+    pub invisivel_passivo: i32,
+    pub anti_invisivel_passivo: i32,
+    /// B330 — `_en_point.attack_range` do `Incrange` com arco (`playerwrapper.cpp:2411-2425`,
+    /// `obj_interface.cpp:268-271`), em metros.
+    pub alcance: f32,
+    /// B330 — `_en_point.flight_speed` do `Incfeather` com asas (`playerwrapper.cpp:2289-2302`,
+    /// `EnhanceFlySpeed`, `obj_interface.cpp:487-490`), em m/s.
+    pub voo: f32,
+    /// B330 — `_resurrect_exp_lost_reduce` (`Reduceresurrectexplost`, `playerwrapper.cpp:1477-1484`,
+    /// `player_imp.h:3797`): a perda ao renascer vai × `(100 − x)/100` (`player.cpp:8718`).
+    pub reducao_da_perda_ao_renascer: i32,
+    /// B330 — `IMMUNEDROP` (`Immunedrop`, `playerwrapper.cpp:1486-1493`, `statedef.h:563`): imune ao
+    /// `Dropmoneyondeath` (`playerwrapper.cpp:4637-4643`) — `falta`: esse efeito ainda não tem porte.
+    pub imune_a_queda: bool,
 }
 
 impl Realce {
@@ -712,6 +745,21 @@ impl Realce {
         self.natacao += p.natacao;
         self.regen_vida += p.regen_vida;
         self.regen_mana += p.regen_mana;
+        // B330: só as passivas comuns mexem nestes (nenhum filtro nem forma os toca).
+        for i in 0..5 {
+            self.elemento[i] += p.elemento[i];
+        }
+        self.realce_de_habilidade2 += p.realce_de_habilidade2;
+        self.reducao_perto_normal += p.reducao_perto_normal;
+        self.reducao_perto_habilidade += p.reducao_perto_habilidade;
+        self.reducao_longe_normal += p.reducao_longe_normal;
+        self.reducao_longe_habilidade += p.reducao_longe_habilidade;
+        self.invisivel_passivo += p.invisivel_passivo;
+        self.anti_invisivel_passivo += p.anti_invisivel_passivo;
+        self.alcance += p.alcance;
+        self.voo += p.voo;
+        self.reducao_da_perda_ao_renascer += p.reducao_da_perda_ao_renascer;
+        self.imune_a_queda |= p.imune_a_queda;
     }
 }
 
@@ -738,20 +786,28 @@ pub mod classe_de_arma {
 /// (`intarg != WEAPONCLASS_* → false`): `Incsword`/`Incspear`/`Inchammer`/`Incbow`/`Incboxing`/
 /// `Incdagger`/`Incscimitar` (`EnhanceScaleDamage(inc × 100)`, `:754-930`, `:2436`),
 /// `Inctalisman` (`EnhanceScaleMagicDamage`, `:896`) e `Inchitrate` (arco, `EnhanceScaleAttack`,
-/// `:1357`). **Falta**: o dano de habilidade por elemento (`SetIncgold…earth` →
-/// `SetSkillInc`), `Addskilldamage`, a redução por distância, a invisibilidade, `Incrange`,
-/// `Incfeather`, `Immunedrop`, `Reduceresurrectexplost` e as `EVENT_ENTER` — ignorados.
+/// `:1357`). B330: o dano de habilidade por escola (`SetIncgold…earth` → `SetSkillInc`),
+/// `Addskilldamage`, a redução por distância (`Incnear…`/`Incfar…dmgreduce`), a invisibilidade
+/// passiva, `Incrange` (com arco), `Incfeather` (com asas: o `EventWield(65535)` do
+/// `angel_wing_item::OnActivate`, `item_flysword.cpp:107-110`), `Reduceresurrectexplost` e
+/// `Immunedrop` — ver os campos de [`Realce`]. **Falta**: as `EVENT_ENTER`.
+///
+/// A ordem é a do mapa de habilidades do original (`std::map`, id crescente): o `SetSkillInc`
+/// atribui, e a última passiva de uma escola é a que vale.
 pub fn passivas_comuns(
     tabela: &pw_data_loader::habilidades::TabelaDeHabilidades,
     conhecidas: &std::collections::HashMap<u32, u8>,
     classe_da_arma: i32,
+    asas: bool,
 ) -> Realce {
     use pw_data_loader::habilidades::{EVENT_RESET, EVENT_WIELD};
     let mut r = Realce::default();
-    for (&id, &nivel) in conhecidas {
+    let mut ordem: Vec<(u32, u8)> = conhecidas.iter().map(|(&id, &nivel)| (id, nivel)).collect();
+    ordem.sort_unstable();
+    for (id, nivel) in ordem {
         let Some(h) = tabela.get(id) else { continue };
         let evento = h.eventflag.unwrap_or(0);
-        if evento != EVENT_RESET && !(evento == EVENT_WIELD && classe_da_arma > 0) {
+        if evento != EVENT_RESET && !(evento == EVENT_WIELD && (classe_da_arma > 0 || asas)) {
             continue;
         }
         for (_, setter, e) in h.efeito_passivo.as_deref().unwrap_or_default() {
@@ -777,6 +833,23 @@ pub fn passivas_comuns(
                 "Incscimitar" if da_arma(CIMITARRA) => r.dano += (v * 100.0) as i32,
                 "Inctalisman" if da_arma(TALISMA) => r.magia += (v * 100.0) as i32,
                 "Inchitrate" if da_arma(ARCO) => r.precisao += (100.0 * v) as i32,
+                "Incgold" => r.elemento[0] = v,
+                "Incwood" => r.elemento[1] = v,
+                "Incwater" => r.elemento[2] = v,
+                "Incfire" => r.elemento[3] = v,
+                "Incearth" => r.elemento[4] = v,
+                "Addskilldamage" => r.realce_de_habilidade2 += (v * 100.0) as i32,
+                "Incnearnormaldmgreduce" => r.reducao_perto_normal += v,
+                "Incnearskilldmgreduce" => r.reducao_perto_habilidade += v,
+                "Incfarnormaldmgreduce" => r.reducao_longe_normal += v,
+                "Incfarskilldmgreduce" => r.reducao_longe_habilidade += v,
+                // Os setters de `int` truncam o `double` da expressão.
+                "Incinvisiblepassive" => r.invisivel_passivo += v as i32,
+                "Incantiinvisiblepassive" => r.anti_invisivel_passivo += v as i32,
+                "Incrange" if da_arma(ARCO) => r.alcance += v,
+                "Incfeather" if asas => r.voo += v,
+                "Reduceresurrectexplost" => r.reducao_da_perda_ao_renascer += v as i32,
+                "Immunedrop" => r.imune_a_queda = true,
                 _ => {}
             }
         }
@@ -1684,19 +1757,44 @@ mod testes {
 
     /// B203: as passivas comuns do catálogo 1.5.5 — 2446 (`EVENT_RESET`, defesa e resistência
     /// `0,08·L`), 1188 (mana `2·L` por batimento), 1371 (`EVENT_WIELD`, espada `0,06·L`), 1263
-    /// (adaga 0,15 e crítico 2 com qualquer arma) e 11 (`Incgold`, sem porte: ignorada).
+    /// (adaga 0,15 e crítico 2 com qualquer arma) e 11 (`Incgold` `0,02·L`, B330).
     #[test]
     fn as_passivas_comuns_somam_o_que_o_take_effect_manda() {
         use std::collections::HashMap;
         let tabela = pw_data_loader::habilidades::TabelaDeHabilidades::do_155();
         let conhecidas: HashMap<u32, u8> = [(2446, 2), (1188, 3), (1371, 3), (1263, 1), (11, 5)].into_iter().collect();
-        let com_espada = passivas_comuns(&tabela, &conhecidas, classe_de_arma::ESPADA);
+        let com_espada = passivas_comuns(&tabela, &conhecidas, classe_de_arma::ESPADA, false);
+        assert!((com_espada.elemento[0] - 0.1).abs() < 1e-6, "Incgold 0,02 × 5");
         assert_eq!((com_espada.defesa, com_espada.resistencia, com_espada.regen_mana), (16, 16, 6));
         assert_eq!((com_espada.dano, com_espada.critico), (18, 2), "espada da 1371; crítico da 1263 com arma");
-        let com_adaga = passivas_comuns(&tabela, &conhecidas, classe_de_arma::ADAGA);
+        let com_adaga = passivas_comuns(&tabela, &conhecidas, classe_de_arma::ADAGA, false);
         assert_eq!((com_adaga.dano, com_adaga.critico), (15, 2));
-        let sem_arma = passivas_comuns(&tabela, &conhecidas, 0);
+        let sem_arma = passivas_comuns(&tabela, &conhecidas, 0, false);
         assert_eq!((sem_arma.dano, sem_arma.critico, sem_arma.defesa), (0, 0, 16), "sem arma, só as EVENT_RESET");
+    }
+
+    /// B330 — as passivas que faltavam, no catálogo 1.5.5: 2443 `Addskilldamage 0,02·L`, 2691
+    /// `Incnearskilldmgreduce 0,03 + 0,02·L`, 255 `Incrange L + 1` (`EVENT_WIELD`, só com arco), 190
+    /// `Incfeather 0,2·L` (`EVENT_WIELD`, só com asas), 1804 `Reduceresurrectexplost 100`, 1949 `Immunedrop`,
+    /// 1081 `Incinvisiblepassive 2·L`; e o `SetSkillInc` que atribui: 2831 (`Incgold 0,25`) e 2832
+    /// (`Incgold 0,2`) — vale a de id maior.
+    #[test]
+    fn as_passivas_de_fidelidade_do_b330() {
+        use std::collections::HashMap;
+        let tabela = pw_data_loader::habilidades::TabelaDeHabilidades::do_155();
+        let c: HashMap<u32, u8> = [(2443, 10), (2691, 1), (255, 3), (190, 5), (1804, 1), (1949, 1), (1081, 4), (2831, 1), (2832, 1)]
+            .into_iter()
+            .collect();
+        let arco = passivas_comuns(&tabela, &c, classe_de_arma::ARCO, false);
+        assert_eq!(arco.realce_de_habilidade2, 20);
+        assert!((arco.reducao_perto_habilidade - 0.05).abs() < 1e-6);
+        assert_eq!((arco.alcance, arco.voo), (4.0, 0.0), "Incrange com arco; Incfeather sem asas não");
+        assert_eq!((arco.reducao_da_perda_ao_renascer, arco.imune_a_queda, arco.invisivel_passivo), (100, true, 8));
+        assert!((arco.elemento[0] - 0.2).abs() < 1e-6, "a 2832 vem depois da 2831 e o SetSkillInc atribui");
+        let espada_e_asas = passivas_comuns(&tabela, &c, classe_de_arma::ESPADA, true);
+        assert_eq!((espada_e_asas.alcance, espada_e_asas.voo), (0.0, 1.0), "Incrange sem arco não; Incfeather com asas");
+        let so_asas = passivas_comuns(&tabela, &c, 0, true);
+        assert_eq!(so_asas.voo, 1.0, "a asa sozinha já dispara o EventWield(65535)");
     }
 
     use super::*;

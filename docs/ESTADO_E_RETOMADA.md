@@ -916,8 +916,9 @@ portado. Falta ver em jogo.)
 - **Faltas do B199–B203:** estado `PLAYER_STATE_COSMETIC` (andar/lutar com a tela de rosto aberta);
   ids 201–203 e o erro 96 no cliente 1.2.6; vincular na entrada o que já estava no corpo e recusas de
   vender/soltar/trocar vinculado no servidor; cor de moda nos bits altos do id; passivas comuns sem
-  modelo (dano por elemento, `Addskilldamage`, redução por distância, invisibilidade, `Incrange`,
-  `Incfeather`, `EVENT_ENTER`).
+  modelo — **feitas no B330**: dano por elemento, `Addskilldamage`, redução por distância, `Incrange`, `Incfeather`,
+  `Reduceresurrectexplost` (spec 05); continuam sem consumidor a invisibilidade passiva (sem furtividade) e o
+  `Immunedrop` (sem `Dropmoneyondeath`); falta `EVENT_ENTER`.
 - **Painel (B165–B182):** roteiros B175–B179 e B182 e as etapas E4–E6/E8 **confirmados em jogo pelo Murillo em
   2026-10-21** (relato geral: "tudo funcionando"). Histórico: depois E5 (inventário,
   habilidades, missões, posição, aparência, mascotes — cada um com o S2C que atualiza a ficha
@@ -1317,6 +1318,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 327 | 10-21 | DLL de dados, fase 7: o 1.2.6 (diferencial 0) — rascunho 57 a publicar |
 | 328 | 10-21 | DLL de dados, fase 6: habilidade nova pelo Estúdio |
 | 329 | 10-21 | §5A revisto (munição, coleta, ataque, PvP já feitos) e os testes instáveis |
+| 330 | 10-21 | Fidelidade: as passivas comuns que faltavam (elemento, skill_enhance2, distância, alcance, asas, renascer) |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

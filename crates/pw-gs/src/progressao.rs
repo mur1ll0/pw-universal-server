@@ -404,10 +404,14 @@ pub fn renascer(p: &mut PlayerEntity, dados: &GameDataManager, morto_por_jogador
     // `if (pImp->_basic.level <= LOW_PROTECT_LEVEL) exp_reduce = 0.f` (`playercmd.cpp:697-699`,
     // `LOW_PROTECT_LEVEL` 9 em `gs/config.h:74`; `cmp word [+0xe4], 9` no `gs` 1.2.6, VA
     // 0x80cd2b4) — B155.
+    // B330 — `exp_reduce × (100 − _resurrect_exp_lost_reduce) × 0,01f` (`player.cpp:8718`), das passivas
+    // `Reduceresurrectexplost`.
     let reducao = if morto_por_jogador || p.level <= NIVEL_SEM_PERDA_AO_RENASCER {
         0.0
     } else {
         dados.progressao.perda_na_morte(p.cultivation)
+            * (100 - p.passivas_comuns.reducao_da_perda_ao_renascer) as f32
+            * 0.01
     };
     let exp_do_nivel = dados.progressao.exp_para_subir(p.level);
     let perda = (exp_do_nivel as f32 * reducao + 0.5) as i64;

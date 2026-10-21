@@ -111,6 +111,10 @@ pub struct Golpe {
     /// do atacante, em %, só no golpe **físico** de quem não tem distância mínima
     /// (`short_range <= 0`). Volta como vida a quem bateu (`GM_MSG_HP_STEAL`, B137).
     pub roubo_de_vida: i32,
+    /// B330 — `attack.skill_enhance2` (`_skill_enhance2`, o `Addskilldamage` das passivas): no golpe de
+    /// habilidade o alvo multiplica o `damage_adjust` por `0,01 × (100 + x)` (`npc.cpp:1767-1768`,
+    /// `player.cpp:9652-9653`).
+    pub realce_de_habilidade2: i32,
 }
 
 /// A camada em que o objeto está (`_layer_ctrl.GetLayer()`: `LAYER_GROUND`, `LAYER_AIR`,
@@ -532,11 +536,20 @@ pub fn resolver(
         _ => 1.0f32,
     };
     // B209: penetração no NPC atingido; resiliência no jogador atingido por quem não é jogador.
+    // B330 — o `skill_enhance2` vem antes da penetração no NPC (`npc.cpp:1767-1770`) e por último no jogador
+    // (`player.cpp:9652-9653`).
+    let realce_de_habilidade = golpe.de_habilidade && golpe.realce_de_habilidade2 != 0;
+    if defesa.camada_de_npc.is_some() && realce_de_habilidade {
+        ajuste *= 0.01 * (100 + golpe.realce_de_habilidade2) as f32;
+    }
     if defesa.camada_de_npc.is_some() && golpe.penetracao > 0 {
         ajuste *= 1.0 + 3.0 * golpe.penetracao as f32 / (golpe.penetracao + 300) as f32;
     }
     if defesa.camada_de_npc.is_none() && !golpe.atacante_e_jogador_ou_pet && defesa.resiliencia > 0 {
         ajuste *= 1.0 - defesa.resiliencia as f32 / (defesa.resiliencia + golpe.nivel_do_atacante).max(1) as f32;
+    }
+    if defesa.camada_de_npc.is_none() && realce_de_habilidade {
+        ajuste *= 0.01 * (100 + golpe.realce_de_habilidade2) as f32;
     }
     let chance_efetiva = golpe.chance_de_critico - defesa.resistencia_a_critico;
     let critico = rolagens.critico < chance_efetiva;
@@ -668,6 +681,7 @@ impl CombatEngine {
             // Voando é `LAYER_AIR`. Nadando (`LAYER_WATER`) ainda não é acompanhado.
             camada: Some(if jogador.voando { Camada::Ar } else { Camada::Chao }),
             // Arma de longe tem distância mínima (`short_range > 0`): não rouba.
+            realce_de_habilidade2: jogador.passivas_comuns.realce_de_habilidade2,
             roubo_de_vida: if jogador.equipamento.arma.is_some_and(|a| a.de_longe) {
                 0
             } else {
@@ -708,6 +722,7 @@ impl CombatEngine {
             atacante_e_jogador_ou_pet: false,
             camada: None,
             roubo_de_vida: 0,
+            realce_de_habilidade2: 0,
         }
     }
 
@@ -747,6 +762,13 @@ impl CombatEngine {
         d.esquiva_de_dano = r.esquiva_de_dano;
         d.resistencia_a_critico += r.resistencia_a_critico;
         d.resiliencia = a.resiliencia;
+        // B330 — a atenuação por distância do golpe de jogador/mascote que este jogador recebe
+        // (`actobject.cpp:520-538`), das passivas `Incnear…`/`Incfar…dmgreduce`.
+        let p = &jogador.passivas_comuns;
+        d.reducao_perto_normal = p.reducao_perto_normal;
+        d.reducao_perto_habilidade = p.reducao_perto_habilidade;
+        d.reducao_longe_normal = p.reducao_longe_normal;
+        d.reducao_longe_habilidade = p.reducao_longe_habilidade;
         d
     }
 
@@ -825,7 +847,8 @@ impl CombatEngine {
         };
         match escola {
             Some(e) => {
-                g.dano_magico[e] = valor;
+                // B330 — `Set<escola>damage(attack)`: `(int)(attack × (1.0 + GetInc<escola>()))` (`skill.cpp:899-903`).
+                g.dano_magico[e] = (valor as f64 * (1.0 + jogador.passivas_comuns.elemento[e] as f64)) as i32;
                 g.e_fisico = false;
             }
             None => g.dano_fisico = valor,
