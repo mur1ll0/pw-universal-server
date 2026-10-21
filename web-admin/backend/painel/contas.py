@@ -277,6 +277,8 @@ class EdicaoPersonagem(BaseModel):
     # E6 (B215): EXP a dar ao Daimon vestido (regra do `InsertExp`, no GS).
     daimon_exp: Optional[int] = Field(default=None, ge=1, le=2_000_000_000)
     dar_mascote: Optional[MascoteDadoPedido] = None
+    # B320: organizar a bolsa (a conta do botão do cliente 1.5.5, no GS).
+    organizar_bolsa: Optional[Literal[True]] = None
 
 
 def somar_desconexoes(resultado):
@@ -428,7 +430,7 @@ def registrar_contas(app):
         experiencia = bool(pedido.exp or pedido.sp)
         simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao", "item",
                                "remover_item", "mover_item", "editar_item", "habilidade", "mascote", "missao", "daimon_exp",
-                               "dar_mascote")
+                               "dar_mascote", "organizar_bolsa")
                    if getattr(pedido, k) is not None]
         if len(simples) + experiencia != 1:
             raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo, atributos ou posição.")

@@ -98,6 +98,8 @@ pub enum Consulta {
         #[serde(default)] missao: Option<crate::bus_server::missao_editada::EdicaoDeMissao>,
         /// EXP a dar ao Daimon vestido (E6, B215).
         #[serde(default)] daimon_exp: Option<i64>,
+        /// `true`: organizar a bolsa (B320), a conta do botão do cliente 1.5.5.
+        #[serde(default)] organizar_bolsa: Option<bool>,
         /// Dar mascote (B216).
         #[serde(default)] dar_mascote: Option<MascoteDadoPedido>,
     },
@@ -504,13 +506,13 @@ impl ServidorAdministrativo {
                         && categoria.as_deref().map_or(true, crate::bus_server::categoria_valida) => {
                         self.roteador.buscar_itens(&texto, categoria.as_deref()).await
                     }
-                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item, editar_item, habilidade, mascote, missao, daimon_exp, dar_mascote } if personagem_id > 0 => {
+                    Consulta::EditarPersonagem { personagem_id, dinheiro, exp, sp, pontos, nivel, cultivo, atributos, redistribuir, posicao, item, remover_item, mover_item, editar_item, habilidade, mascote, missao, daimon_exp, dar_mascote, organizar_bolsa } if personagem_id > 0 => {
                         use crate::bus_server::EdicaoDePersonagem as E;
                         let dentro = |v: i64| v.abs() <= TETO_DA_EDICAO;
                         let tipos = [dinheiro.is_some(), exp.or(sp).is_some(), pontos.is_some(), nivel.is_some(), cultivo.is_some(),
                             atributos.is_some(), redistribuir.is_some(), posicao.is_some(), item.is_some(), remover_item.is_some(),
                             mover_item.is_some(), editar_item.is_some(), habilidade.is_some(), mascote.is_some(), missao.is_some(),
-                            daimon_exp.is_some(), dar_mascote.is_some()]
+                            daimon_exp.is_some(), dar_mascote.is_some(), organizar_bolsa.is_some()]
                             .iter().filter(|t| **t).count();
                         // Atributos: quatro valores entre 0 e o teto da política (B184).
                         let quatro = atributos.as_deref().and_then(|v| {
@@ -519,6 +521,7 @@ impl ServidorAdministrativo {
                         });
                         let coordenada = |v: f32| v.is_finite() && v.abs() <= TETO_DE_COORDENADA;
                         let edicao = if tipos != 1 { None }
+                            else if let Some(o) = organizar_bolsa { o.then_some(E::OrganizarBolsa) }
                             else if let Some(x) = daimon_exp { (x > 0 && dentro(x)).then_some(E::DaimonExp(x)) }
                             else if let Some(m) = dar_mascote { (m.ovo > 0).then_some(E::DarMascote(m.ovo)) }
                             else if let Some(h) = habilidade {
@@ -600,6 +603,7 @@ impl ServidorAdministrativo {
                                 if let Some(m) = &missao { parametros["missao"] = json!(m); }
                                 if let Some(x) = daimon_exp { parametros["daimon_exp"] = json!(x); }
                                 if let Some(m) = dar_mascote { parametros["dar_mascote"] = json!(m); }
+                                if let Some(o) = organizar_bolsa { parametros["organizar_bolsa"] = json!(o); }
                                 let impressao = Sha256::digest(serde_json::to_vec(&parametros)?);
                                 let repo = self.contas.comandos_administrativos();
                                 match repo.reservar_operacao_de_personagem(&pedido.operacao_id, pedido.administrador_id, &self.realm, &impressao).await? {

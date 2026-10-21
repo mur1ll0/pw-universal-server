@@ -4,6 +4,7 @@ pub mod bus_server;
 pub mod comandos;
 pub mod combat;
 pub mod economia;
+pub mod organizar;
 pub mod efeitos;
 pub mod entity;
 pub mod geracao;

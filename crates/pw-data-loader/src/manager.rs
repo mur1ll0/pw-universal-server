@@ -267,6 +267,8 @@ pub struct GameDataManager {
     pub mascotes_do_elements: HashMap<u32, (String, Vec<u8>)>,
     /// A tabela do `elements.data` de cada item (B216, a categoria da busca do painel).
     pub tabelas_dos_itens: HashMap<u32, String>,
+    /// B320: modelo → `(classe ICID, nível)` para organizar a bolsa (`ordem_do_inventario`).
+    pub ordem_dos_modelos: HashMap<u32, (i32, i32)>,
     /// `inhabit_type` de cada modelo de mascote (B216).
     pub ambientes_dos_mascotes: HashMap<u32, i32>,
     /// As minas (`MINE_ESSENCE`) com as regras de carga do original — ver [`crate::minas`].
@@ -552,6 +554,7 @@ impl GameDataManager {
             self.icones_de_itens = crate::servicos::icones_de_itens(g);
             self.mascotes_do_elements = crate::servicos::nomes_e_icones_da_tabela(g, "PET_ESSENCE");
             self.tabelas_dos_itens = crate::servicos::tabelas_dos_itens(g);
+            self.ordem_dos_modelos = crate::ordem_do_inventario::carregar(g);
             self.ambientes_dos_mascotes = crate::servicos::ambientes_dos_mascotes(g);
             self.minas = crate::minas::carregar(g);
             self.aljavas = crate::armas::carregar_aljavas(g);
@@ -675,6 +678,12 @@ impl GameDataManager {
         }
         let mascara = self.posicoes.get(&item_id).copied().unwrap_or(0);
         Some(crate::posicoes::cabe_no_slot(mascara, slot))
+    }
+
+    /// B320: `(classe ICID, nível)` do modelo, como o cliente 1.5.5 o classifica para organizar a bolsa; modelo sem
+    /// tabela conhecida = `CECIvtrUnknown`.
+    pub fn chave_de_ordem(&self, item_id: u32) -> (i32, i32) {
+        self.ordem_dos_modelos.get(&item_id).copied().unwrap_or((crate::ordem_do_inventario::CLASSE_DESCONHECIDA, 0))
     }
 
     pub fn limite_de_pilha(&self, item_id: u32) -> u32 {

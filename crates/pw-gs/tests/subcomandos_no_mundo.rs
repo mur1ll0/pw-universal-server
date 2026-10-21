@@ -2105,6 +2105,47 @@ async fn trocar_slots_da_bolsa_pelo_barramento_preserva_o_item() {
     assert_eq!(movido.octets, OCTETOS, "os octetos se perderam na troca");
 }
 
+/// B320: `MULTI_EXCHANGE_ITEM` (126, o botão "organizar" do 1.5.5) — cada par é uma troca com `EXG_IVTR_ITEM`, a
+/// recarga 47 vai ao cliente com 10.000 ms, o segundo lote na recarga é ignorado e o tamanho errado é `ERR_FATAL_ERR`
+/// (`playercmd.cpp:3655-3700`).
+#[tokio::test]
+async fn organizar_a_bolsa_em_lote_troca_tudo_e_respeita_a_recarga() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    for (slot, tid) in [(5u16, 999u32), (9, 998)] {
+        let mut i = pw_core::ItemRecord::new(roleid, pw_core::ContainerType::Inventory, slot, tid, 1);
+        i.max_count = 99;
+        itens.upsert_item(&i).await.unwrap();
+    }
+    let em = |s| { let itens = itens.clone(); async move { itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, s).await.unwrap().map(|i| i.item_id) } };
+    // O que já estava nos slots 0 e 1 (os itens iniciais do cenário) vai para 5 e 9.
+    let (antes0, antes1) = (em(0).await, em(1).await);
+    // Lote: 5↔0 e 9↔1 (location 0 = bolsa, count 2).
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::MULTI_EXCHANGE_ITEM, &[0, 2, 5, 0, 9, 1]) })
+        .await
+        .unwrap();
+    let resp = receber(&mut link, 3).await;
+    let cmds: Vec<u16> = resp.iter().map(|v| cmd_de(v)).collect();
+    assert_eq!(cmds.iter().filter(|&&c| c == 44).count(), 2, "um EXG_IVTR_ITEM por par: {cmds:?}");
+    let recarga = resp.iter().find(|v| cmd_de(v) == 198).expect("set_cooldown");
+    assert_eq!(&recarga[recarga.len() - 8..], &[47, 0, 0, 0, 0x10, 0x27, 0, 0], "índice 47, 10.000 ms");
+    assert_eq!((em(0).await, em(1).await, em(5).await, em(9).await), (Some(999), Some(998), antes0, antes1));
+    // Na recarga: ignorado, sem resposta e sem troca.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::MULTI_EXCHANGE_ITEM, &[0, 1, 0, 5]) })
+        .await
+        .unwrap();
+    let nada = tokio::time::timeout(Duration::from_millis(400), link.receber()).await;
+    assert!(nada.is_err(), "o lote na recarga foi respondido");
+    assert_eq!(em(0).await, Some(999), "o lote na recarga trocou");
+    // Tamanho que não fecha com a contagem: ERR_FATAL_ERR (25).
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::MULTI_EXCHANGE_ITEM, &[0, 2, 1, 0]) })
+        .await
+        .unwrap();
+    let resp = receber(&mut link, 1).await;
+    assert_eq!(cmd_de(&resp[0]), 25, "error_message");
+}
+
 /// O dinheiro do personagem, lido direto do banco.
 ///
 /// Consultar a coluna evita acrescentar um método só-para-teste ao repositório — a API de

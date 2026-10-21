@@ -187,6 +187,9 @@ pub mod ids {
     /// O cliente mede a latência com isto, repetidamente. Ver
     /// `S2CGamedataSend::calc_network_delay_re`.
     pub const CALC_NETWORK_DELAY: u16 = 128;
+    /// `SRV::C2S::CMD::multi_exchange_item` (1.5.5; o 1.2.6 não tem): `location`, `count` e `count` pares
+    /// `(index1, index2)` — o botão "organizar" da bolsa (B320, `bus_server/organizar_bolsa.rs`).
+    pub const MULTI_EXCHANGE_ITEM: u16 = 126;
     pub const QUERY_PLAYER_INFO_1: u16 = 67;
     /// `SRV::C2S::CMD::get_others_equipment` — mesmo formato do 67: `size` (2) e a lista
     /// de ids a partir do 4 (`cmd_get_other_equip`, `EC_SendC2SCmds.cpp:2393` no client).
@@ -948,6 +951,8 @@ pub fn sentado(id: u16) -> Sentado {
         | ids::PET_CTRL
         | ids::CHECK_SECURITY_PASSWD
         | ids::CALC_NETWORK_DELAY
+        // `StayInCommandHandler` repassa (`playercmd.cpp:928`).
+        | ids::MULTI_EXCHANGE_ITEM
         | ids::QUERY_TITLE
         | ids::ACTIVATE_REGION_WAYPOINTS => Sentado::Aceita,
         _ => Sentado::Ignora,

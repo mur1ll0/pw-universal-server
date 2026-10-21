@@ -574,6 +574,8 @@ pub enum EdicaoDePersonagem {
     Habilidade { id: u32, nivel: u8 },
     /// EXP a dar ao Daimon vestido (E6, B215), pela regra do `InsertExp`.
     DaimonExp(i64),
+    /// Organizar a bolsa (B320): a conta do botão do cliente 1.5.5 (`crate::organizar`).
+    OrganizarBolsa,
 }
 
 /// `TRASHBOX_BASE_SIZE` (`gs/config.h:17`) — o armazém do personagem (o mesmo de `armazem.rs`).
@@ -639,6 +641,9 @@ impl BusServer {
         if let EdicaoDePersonagem::Habilidade { id, nivel } = edicao {
             return self.habilidade_pelo_painel(roleid, id, nivel).await;
         }
+        if let EdicaoDePersonagem::OrganizarBolsa = edicao {
+            return self.organizar_bolsa_pelo_painel(roleid).await;
+        }
         // B216: gravam no banco e avisam o cliente (recipiente inteiro / `GAIN_PET`).
         let criado = match edicao {
             EdicaoDePersonagem::Item { tid, quantidade, destino: Some((recipiente, slot)) } => {
@@ -700,6 +705,7 @@ impl BusServer {
                 // troca de mapa fora do contexto do jogador.
                 EdicaoDePersonagem::Posicao { .. } | EdicaoDePersonagem::MoverItem { .. }
                 | EdicaoDePersonagem::Habilidade { .. } | EdicaoDePersonagem::DarMascote(_)
+                | EdicaoDePersonagem::OrganizarBolsa
                 | EdicaoDePersonagem::Item { destino: Some(_), .. } => erro = Some("edicao_invalida"),
                 // Prêmio de missão (`Jogador::dar_item`): gerado como drop
                 // (`DeliverCommonItem`, `task/taskman.cpp:281-303`) e avisado com

@@ -1087,7 +1087,9 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          {"item": {"id": 3001, "quantidade": 1, "slot": 3}},
                          {"item": {"id": 3001, "quantidade": 1, "recipiente": "equipamento", "slot": 0}},
                          {"item": {"id": 3001, "quantidade": 1, "recipiente": "bolsa", "slot": 256}},
-                         {"dar_mascote": {"ovo": 0}}, {"dar_mascote": {}}, {"dar_mascote": {"ovo": 1}, "pontos": 1}):
+                         {"dar_mascote": {"ovo": 0}}, {"dar_mascote": {}}, {"dar_mascote": {"ovo": 1}, "pontos": 1},
+                         # B320: organizar só com `true` e sozinho.
+                         {"organizar_bolsa": False}, {"organizar_bolsa": True, "pontos": 1}):
             self.assertEqual((await self.cliente.post(caminho, json={**base, **invalido}, headers=csrf)).status_code, 422, invalido)
         for valido in ({"dinheiro": 10}, {"pontos": 5}, {"nivel": 30}, {"cultivo": 0},
                        {"atributos": [5, 5, 5, 5]}, {"redistribuir": True},
@@ -1107,7 +1109,8 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                        {"missao": {"acao": "cancelar", "id": 5001}}, {"missao": {"acao": "esquecer", "id": 5002}},
                        {"daimon_exp": 5000},
                        {"item": {"id": 3001, "quantidade": 5, "recipiente": "armazem", "slot": 2}},
-                       {"dar_mascote": {"ovo": 4501}}):
+                       {"dar_mascote": {"ovo": 4501}},
+                       {"organizar_bolsa": True}):
             resposta = await self.cliente.post(caminho, json={**base, **valido}, headers=csrf)
             self.assertEqual((resposta.status_code, resposta.json()["codigo"]), (503, "canal_nao_enviado"), valido)
 

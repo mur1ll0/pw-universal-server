@@ -2086,6 +2086,9 @@ function ligarFichaDoPersonagem() {
 
   elemento("menu-criar-item").addEventListener("click", () => { const d = estado.slotDoMenu; esconderMenuDoSlot(); if (d) abrirCriarItem(d); });
   elemento("abrir-dar-item").addEventListener("click", () => abrirCriarItem({ chave: "bolsa" }));
+  // B320: organizar a bolsa (1.2.6 e 1.5.5) — o GS faz a conta do botão do cliente 1.5.5 e, com o jogador no mundo,
+  // manda cada troca ao cliente.
+  elemento("organizar-bolsa").addEventListener("click", () => editarPersonagem({ organizar_bolsa: true }, "Bolsa organizada"));
   aoEnviar("form-criar-item", criarItem);
   aoDigitar("ci-busca", buscarParaCriar);
   elemento("ci-categoria").addEventListener("change", () => buscarParaCriar());

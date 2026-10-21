@@ -59,6 +59,7 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, trace, warn};
 
 mod armazem;
+mod organizar_bolsa;
 mod criacao_pelo_painel;
 mod daimon_editado;
 mod gm;
@@ -1821,6 +1822,7 @@ impl BusServer {
             ids::QUERY_NPC_INFO_1 => self.consultar_npcs(roleid, &cmd.payload, envio).await,
             ids::GET_OTHER_EQUIP => self.equipamento_de_outro(roleid, &cmd.payload, envio).await,
             ids::CALC_NETWORK_DELAY => self.medir_latencia(roleid, &cmd.payload, envio).await,
+            ids::MULTI_EXCHANGE_ITEM => self.trocas_em_lote(roleid, &cmd.payload, envio).await,
             ids::QUERY_TITLE => {
                 // Sem título nenhum no banco ainda: a lista vai vazia, que é o que destrava o
                 // sistema de missões do cliente (ver [`ids::QUERY_TITLE`], B60).

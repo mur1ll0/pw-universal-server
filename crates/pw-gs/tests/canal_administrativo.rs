@@ -1451,6 +1451,60 @@ async fn detalhe_do_item_para_a_dica() {
     c.encerrar().await;
 }
 
+/// B320: organizar a bolsa pelo painel — online (cada troca vai ao cliente como `EXG_IVTR_ITEM`) e offline (no banco).
+/// Depois de organizar: os itens ocupam 0..n sem buraco, e nada some nem duplica.
+#[tokio::test]
+async fn organizar_bolsa_online_e_offline() {
+    let c = Cenario::montar().await;
+    let id = |s: &str| format!("b320-{s}-{}", c.personagem);
+    let organizar = json!({"tipo":"editar_personagem","personagem_id":c.personagem,"organizar_bolsa":true});
+    let bolsa = |inv: &Value| {
+        let mut v: Vec<(u64, u64, u64)> = inv["dados"]["recipientes"]["bolsa"].as_array().unwrap().iter()
+            .map(|i| (i["slot"].as_u64().unwrap(), i["id"].as_u64().unwrap(), i["quantidade"].as_u64().unwrap())).collect();
+        v.sort();
+        v
+    };
+    let espalhar = || async {
+        sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+        for (slot, tid, n) in [(7i32, 3001i32, 30i32), (3, 3003, 1), (12, 3001, 5), (20, 3002, 2)] {
+            sqlx::query("INSERT INTO character_items(character_id, container_type, slot, item_id, count) VALUES($1,0::smallint,$2::smallint,$3,$4)")
+                .bind(c.personagem).bind(slot).bind(tid).bind(n).execute(c.pool.get_ref()).await.unwrap();
+        }
+    };
+    let conferir = |inv: &Value, quem: &str| {
+        let b = bolsa(inv);
+        assert_eq!(b.iter().map(|x| x.0).collect::<Vec<_>>(), vec![0, 1, 2, 3], "{quem}: sem buracos: {b:?}");
+        let mut itens: Vec<(u64, u64)> = b.iter().map(|x| (x.1, x.2)).collect();
+        itens.sort();
+        assert_eq!(itens, vec![(3001, 5), (3001, 30), (3002, 2), (3003, 1)], "{quem}: nada some nem duplica");
+    };
+
+    espalhar().await;
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let r = c.pedir_com_id(&c.realm, &id("on"), c.conta, organizar.clone()).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("aplicado"), Some("online")), "{r}");
+    assert!(r["dados"]["trocas"].as_u64().unwrap() > 0, "{r}");
+    esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data.len() == 4 && data[..2] == 44u16.to_le_bytes())).await;
+    conferir(&c.pedir(&c.realm, json!({"tipo":"inventario","personagem_id":c.personagem})).await, "online");
+
+    drop(bus);
+    c.esperar_presenca("ausente").await;
+    espalhar().await;
+    let r = c.pedir_com_id(&c.realm, &id("off"), c.conta, organizar.clone()).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["presenca"].as_str()), (Some("salvo"), Some("offline")), "{r}");
+    conferir(&c.pedir(&c.realm, json!({"tipo":"inventario","personagem_id":c.personagem})).await, "offline");
+    // Já organizada: nenhuma troca.
+    let r = c.pedir_com_id(&c.realm, &id("off2"), c.conta, organizar.clone()).await;
+    assert_eq!(r["dados"]["trocas"], 0, "{r}");
+    // `organizar_bolsa: false` não é edição.
+    let r = c.pedir_com_id(&c.realm, &id("falso"), c.conta,
+        json!({"tipo":"editar_personagem","personagem_id":c.personagem,"organizar_bolsa":false})).await;
+    assert_eq!(r["dados"]["codigo"], "edicao_invalida", "{r}");
+    sqlx::query("DELETE FROM character_items WHERE character_id=$1").bind(c.personagem).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}
+
 /// E6 (B191): arrastar. Online pelos tratadores do cliente (troca na bolsa, vestir, tirar),
 /// com a posição no corpo (`CheckEquipPostion`) conferida antes; armazém e bolsa de missão só
 /// offline. Offline, a mesma troca no banco em transação. Nenhum item some nem duplica.

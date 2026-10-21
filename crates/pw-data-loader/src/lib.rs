@@ -21,6 +21,7 @@ pub mod monstros;
 pub mod npcgen;
 pub mod habilidades;
 pub mod habilidades_do_cliente;
+pub mod ordem_do_inventario;
 pub mod minas;
 pub mod pet;
 pub mod precinct;
