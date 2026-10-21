@@ -14890,7 +14890,7 @@ comparação lado a lado.
     - `pw-recursos` com o banco **22/22** (`.smd` + `.bon` sintéticos: lista, ficha, GLB com `skin`).
     - `pw-data-loader` **235/235**; `cargo check --workspace --tests` ok. No contêiner, 30 `.smd` de `npcs` por realm:
       1.5.5 — 27 com esqueleto e `skin` no GLB, 3 com `.bon` v5; **1.2.6 — todos os `.bon` são v5** (trilhas
-      embutidas), então os modelos do 1.2.6 ainda saem sem esqueleto; 2 `npcsatatinha\*.smd` do 1.2.6 não são do
+      embutidas), então os modelos do 1.2.6 ainda saem sem esqueleto; 2 `npcs\batatinha\*.smd` do 1.2.6 não são do
       formato do motor (recusados com o motivo).
 
     ### e. Falta

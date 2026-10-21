@@ -369,7 +369,7 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
 - **B317 (DLL de dados 1.5.5, fase 4 — falta o teste em jogo):** o nosso `elementskill.dll` + `habilidades.pwsk`
   (`tools/elementskill/dll/`, gerados por `dll/compilar.bat` e pela cadeia da spec 08) reproduzem o original no
   diferencial (0 campos diferentes). **Como testar:**
-  1. Copiar os dois arquivos para `F:\PW.5.5.5.5 BR launcher\element\`, guardando antes o
+  1. Copiar os dois arquivos para `F:\PW\1.5.5\1.5.5 BR launcher\element\`, guardando antes o
      `elementskill.dll` original (ex.: `elementskill.dll.original`).
   2. Entrar com um personagem e conferir:
      - janela de habilidades: nomes, ícones, níveis e descrição com números;
