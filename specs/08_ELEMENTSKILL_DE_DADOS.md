@@ -1,6 +1,6 @@
 # 08 — `elementskill.dll` de dados (opção D)
 
-> Estado: **fase 1 (contrato) concluída — B313**. Decisão do Murillo (2026-10-20): seguir a opção D do
+> Estado: **fase 1 (contrato) concluída — B313; fase 2 (gabarito) concluída — B314**. Decisão do Murillo (2026-10-20): seguir a opção D do
 > `docs/admin/ESTUDO_HABILIDADES_DO_CLIENTE.md`, começando pelo 1.5.5, e distribuir o nosso DLL pelo launcher.
 > Fases: 1 contrato · 2 gabarito (medir o original inteiro) · 3 DLL de dados + diferencial 100% · 4 jogo · 5 Estúdio ·
 > 6 habilidade nova · 7 1.2.6.
@@ -164,3 +164,36 @@ menos, violação — o último campo é lido.
   (`_snwprintf(formato, argumentos)`, argumentos só do nível em 3.309, também da proficiência em 7) e as condições de
   uma linha `CheckComboSkExtraCondition` (18), `ComboSkEndAction` (8), `CheckHpCondition` (2).
 - `LoadSkillData` guarda a lista que o servidor manda (`cmd_skill_data`: id, nível, proficiência).
+
+## 7. O gabarito (fase 2, B314)
+
+`tools/elementskill/gabarito.cpp` mede, no DLL original, tudo o que o contrato expõe; o DLL de dados só vale se o
+mesmo programa, rodado nele, der saída idêntica. `tools/elementskill/formatos.py` tira do `skillstr.txt` os formatos de
+descrição (texto `N×10+1`). Uma linha JSON:
+- **por habilidade:** as estáticas por id; `ValidWeapon` (slot 34) em todos os ids de 0 a 65.535; `CheckHpCondition`
+  (slot 51) em 0..100/100 e 0..1000/1000 de 7 em 7.
+- **por nível:** todos os slots sem argumento; `GetPrayRange` (slot 9) em 6 pares (alcance, bônus); `GetRequiredGenius`
+  (28); pré-requisitos e juniores pelos dois caminhos (`Count/At` e a interface); a descrição crua (um `SkillStr`
+  sonda cujo `Find` devolve `%08x|…` × 24 — as palavras de 32 bits dos argumentos, `double` inclusive) e com o formato
+  real, com proficiência 0 e 500; as estáticas por nível; e `LearnCondition`, `Condition`, `PetLearn`,
+  `GoblinLearn/Condition` com sondas sorteadas por semente fixa.
+- **globais:** `GetVersion`, `GetInherentSkills` (classes 0–63), `GetComboSkActivated`, `VisibleState::Query`
+  (profissão 0–15 × id 0–4.095), `TeamState::Query` (0–4.095).
+
+Chamada que cai vira `"erro"` no gabarito (o DLL de dados tem de se comportar igual).
+
+**Resultado no DLL 1.5.5 (B314):**
+- **Tamanho:** 26.705 linhas, 90 MB; não vai para o repositório, porque o medidor a reproduz. As linhas são 3.316 por
+  habilidade, 20.676 por nível, a versão, 4 classes com habilidades inerentes, 2.368 estados visíveis e 340 de equipe.
+- **Chamadas:** nenhuma caiu.
+- **Armas:** 1.901 habilidades aceitam todas; 1.415 têm lista, de até 20 ids.
+- **Vida:** `CheckHpCondition` só restringe em 2.
+- **Combo:** `GetComboSkActivated` não devolveu nada com as sondas `{id, arg}` usadas — rever na fase 3.
+- **Descrição crua:** confere com o fonte. Na 1, nível 2, as palavras são `2 | 9 | 172,3 (double)`, ou seja,
+  `L, −5 + 7L, 1,9L² + 64L + 36,7`. As palavras seguintes são lixo da pilha e variam entre rodadas. O número de
+  argumentos de cada habilidade vem do fonte e se confere pelo texto renderizado.
+- **Proficiência:** muda a descrição em 61 níveis, das 7 habilidades esperadas.
+- **Determinismo:** duas rodadas dão saída idêntica, exceto as palavras de lixo e **37 níveis de 6 habilidades**
+  (715, 1754, 2075, 2158, 2162, 3063). Nelas o texto traduzido do `skillstr.txt` tem `%` sem escape ("100% a…"
+  vira a conversão `% a`), e o cliente original mostra lixo da pilha. É defeito do texto, corrigível no Estúdio
+  (`%` → `%%`); no diferencial, esses níveis são indeterminados também no original.

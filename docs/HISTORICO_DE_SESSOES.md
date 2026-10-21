@@ -16288,3 +16288,29 @@ comparação lado a lado.
     ### d. Próximo
     Fase 2 — o gabarito: medir tudo o que o DLL original devolve para toda habilidade e nível (números, argumentos
     exatos da descrição, condições sondadas, estados).
+
+314. **Sessão 2026-10-20: DLL de dados, fase 2 — o gabarito.**
+
+    ### a. O que foi feito
+    - `tools/elementskill/gabarito.cpp` mede, no DLL original, tudo o que o contrato da spec 08 expõe:
+      - por habilidade: as estáticas, `ValidWeapon` nos 65.536 ids e `CheckHpCondition`;
+      - por nível: todos os slots, `GetPrayRange` em 6 pares, `GetRequiredGenius`, os pré-requisitos e juniores pelos
+        dois caminhos, a descrição crua e a real, com proficiência 0 e 500, e as condições com sondas de semente fixa;
+      - globais: versão, inerentes, combo e estados.
+    - `formatos.py` tira os formatos do `skillstr.txt`.
+    - Na descrição crua, um `SkillStr` sonda devolve `%08x|…` × 24 e expõe os argumentos do `_snwprintf` palavra por
+      palavra, `double` inclusive.
+    - As chamadas protegidas ficam em funções auxiliares (o `__try` não convive com objetos que têm destrutor).
+
+    ### b. Resultado (1.5.5)
+    - 26.705 linhas, 90 MB (não commitadas; o medidor as reproduz). Nenhuma chamada caiu.
+    - 1.901 habilidades aceitam toda arma e 1.415 têm lista. A descrição crua da 1, nível 2, confere com o fonte
+      (`2 | 9 | 172,3`).
+    - **Duas rodadas idênticas**, salvo as palavras de lixo depois dos argumentos e 37 níveis de 6 habilidades (715,
+      1754, 2075, 2158, 2162, 3063): o `skillstr.txt` traduzido tem `%` sem escape ("100% a" → `% a`), e o cliente
+      original mostra lixo da pilha ali. É defeito de texto, corrigível no Estúdio.
+    - `GetComboSkActivated` não devolveu nada com as sondas usadas — rever na fase 3.
+
+    ### c. Próximo
+    Fase 3: o DLL de dados 1.5.5 — dados gerados do gabarito e do fonte (número e tipo dos argumentos da descrição), e
+    o diferencial com o próprio `gabarito.exe`.
