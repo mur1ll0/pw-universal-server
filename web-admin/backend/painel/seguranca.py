@@ -71,7 +71,7 @@ def eh_texto_de_habilidade(escopo):
     partes = escopo["path"].strip("/").split("/")
     # api / realms / <realm> / estudio / habilidades / <id> / texto
     return (escopo["method"] == "PUT" and len(partes) == 7 and partes[:2] == ["api", "realms"]
-            and partes[3:5] == ["estudio", "habilidades"] and partes[6] == "texto")
+            and partes[3:5] == ["estudio", "habilidades"] and partes[6] in ("texto", "descricao_numeros"))
 
 
 class LimitarEntrada:

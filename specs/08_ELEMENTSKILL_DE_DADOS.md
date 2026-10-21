@@ -321,3 +321,35 @@ rascunho (ação `adicionar`) passou a ser lido pelo `item_do_cliente`.
 - a correção dos 65 textos com `%` sem escape;
 - habilidade nova (fase 6);
 - o 1.2.6 (fase 7).
+
+## 12. Edição completa das habilidades no Estúdio (B324)
+
+Com o `.pwsk` na versão, a ficha da habilidade (`GET …/estudio/habilidades/{id}`) traz em `cliente`:
+- `campos`: os 9 números do B321;
+- `descricao`: `conversoes` (o `%d`/`%.1f`… do texto atual, com o rascunho) e `niveis` (o valor de cada conversão por
+  nível: `inteiro`, `real`, `proficiencia`, `fora_dos_argumentos` ou `nao_editavel`);
+- `alcance`: `a`, `b` e `c` por nível.
+
+A conta é pura e fica em `pw_data_loader::habilidades_do_cliente`: `conversoes`, `numeros_da_descricao` e
+`definir_numeros_da_descricao`. As palavras do `_snwprintf` se percorrem na ordem do formato: `%d` lê 1, `%.1f` lê 2
+(`double`), `%%` não lê. A proficiência fica no lugar dela, e as palavras que o texto não usa ficam como estão.
+
+| rota (`PUT`, com `?rascunho=`) | o que grava |
+| :--- | :--- |
+| `…/descricao_numeros {niveis: [[número ou null por conversão] por nível]}` | as palavras da descrição no `.pwsk` |
+| `…/alcance {a?, b?, c?: [por nível], servidor?}` | o alcance no `.pwsk`; com `servidor`, também `alcance.arma = a` (um só, inteiro) e `alcance.fixo = b` no `catalogo\habilidades.json` |
+| `…/numeros_nos_dois {campo: [por nível]}` | o mesmo número no servidor e no cliente: `recarga_ms`, `execucao_ms`, `nivel_exigido`, `sp_exigido`, `dinheiro_exigido`, `item_exigido`, `mp` (o cliente primeiro, por ser o mais estrito) |
+
+O servidor passou a editar também `execucao_ms` e `item_exigido` (`CAMPOS_EDITAVEIS`).
+
+**Um modelo, dois artefatos.** O `.pwsk` (cliente) e o `catalogo\habilidades.json` (servidor) saem do mesmo pedido do
+Estúdio nos campos que existem nos dois, e não divergem mais. O `.pwsk` inicial vem do gabarito do original (§7–§10).
+
+**Versionamento.** Tudo passa pelo rascunho, publicação e reversão do `pw-recursos`:
+- dois rascunhos abertos não editam o mesmo arquivo (409);
+- tirar um item do rascunho (`DELETE …/rascunhos/{id}/arquivo`) libera o arquivo;
+- publicar grava o `.pwsk` no manifesto do launcher e o catálogo no realm;
+- reverter a alteração e publicar devolve **os dois** ao estado anterior (teste de integração).
+
+O catálogo do servidor vale no jogo depois de reiniciar o mundo (o GS o lê ao subir); o `.pwsk`, depois de o jogador
+atualizar pelo launcher.

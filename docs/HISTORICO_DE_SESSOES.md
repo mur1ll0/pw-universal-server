@@ -16613,3 +16613,55 @@ comparação lado a lado.
 
     ### e. Falta
     - O Murillo atualizar as duas versões e entrar no jogo.
+
+324. **Sessão 2026-10-21: edição completa das habilidades no Estúdio (descrição, alcance, nos dois, versões).**
+
+    ### a. Pedido
+    "Gerar o `.pwsk` a partir do mesmo modelo que gera o catálogo do servidor, e tornar descrição e alcance editáveis
+    no Estúdio. Conclua toda essa parte de edição de skills e versionamento." Testes de cada passo, a suíte completa no
+    fim, e avisar para testar em jogo.
+
+    ### b. O que foi feito
+    - **`pw_data_loader::habilidades_do_cliente`:**
+      - `conversoes(formato)` lê as conversões como o `_snwprintf` as consome (`%d` 1 palavra, `%.1f` 2, `%%` nenhuma,
+        `*`/string não editáveis);
+      - `numeros_da_descricao` e `definir_numeros_da_descricao` leem e trocam os números de um nível. A proficiência
+        fica no lugar; o que o texto pede além dos argumentos não se edita.
+    - **`pw-recursos`:**
+      - a ficha ganha `cliente.descricao` (pelas conversões do texto atual, com o rascunho) e `cliente.alcance`;
+      - três rotas novas: `descricao_numeros`, `alcance` (com `servidor`: `arma` única e `fixo` no catálogo) e
+        `numeros_nos_dois` (7 campos, o cliente primeiro);
+      - o servidor passa a editar também `execucao_ms` e `item_exigido`.
+    - **Painel:**
+      - tabela "Números da descrição" (coluna por conversão, só o que mudou vai);
+      - tabela "Alcance", com "também no servidor";
+      - botão "Salvar no servidor e no cliente";
+      - repasse das três rotas e o limite de 32 KiB também para a descrição.
+    - **Versionamento:**
+      - teste de integração: um número nos dois → publicar → publicado nos dois → reverter → publicar → os dois voltam;
+      - dois rascunhos abertos não editam o mesmo arquivo (409, a regra de sempre); o teste usa `DELETE
+        …/rascunhos/{id}/arquivo` para liberar.
+
+    ### c. Provas
+    - `pw-data-loader` `habilidades_do_cliente` **4/4**: conversões, e ler/trocar com proficiência e "além".
+    - `pw-recursos` com o banco: biblioteca **23/23** e integração ok, cobrindo:
+      - descrição lida e trocada (o `%d` do texto = o nível);
+      - alcance no cliente e no servidor;
+      - `arma` variando recusada;
+      - nos dois, e ódio recusado;
+      - publicar e reverter os dois.
+    - Painel `teste_recursos` **12/12**: repasse das três rotas, com um corpo de descrição acima de 8 KiB.
+    - **Real (1.5.5, rascunho 56 descartado):**
+      - a habilidade 1, nível 2, mostra `2, 9, 172,3` na descrição, como no gabarito do B314;
+      - o alcance do cliente `a = 1, b = 0` é igual ao do servidor (`arma = 1`, `fixo = 0`);
+      - as três edições gravaram.
+    - Suíte completa (`cargo test --workspace --no-fail-fast`, com o banco, 114 binários, 16:03–17:12): **1151
+      passaram, 1 falhou** — `o_guia_selvagem_do_126_entrega_a_missao_inicial_1177` (`subcomandos_no_mundo`), instável
+      sob carga desde o B303, que passa isolado (1/1). Na 1ª rodada sem `--no-fail-fast`, outros 2 do mesmo binário
+      (`o_botao_de_roupa_…`, `o_primeiro_teste_do_guerreiro_126_…`) também passaram isolados.
+    - Painel: `teste_recursos` **12/12**. O `teste_base` dá 1 falha e 12 erros de ambiente, idênticos no código do
+      commit anterior (sem o B324).
+
+    ### d. Falta
+    - O Murillo testar em jogo (ESTADO §3.3).
+    - Habilidade nova (fase 6) e o 1.2.6 (fase 7) do DLL de dados.

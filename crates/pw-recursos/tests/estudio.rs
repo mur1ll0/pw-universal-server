@@ -3,7 +3,7 @@
 //! por referência, desfazer tudo volta ao publicado, publicar grava no realm; o npcgen do mapa
 //! editado num rascunho só do servidor, publicado e revertido (B243); distritos e portais (B244); teleportes (B245); rastreador de NPCs do cliente (B246); controladores (B247); altura do chão (B248); distritos e portais em par com o .clt do cliente (B251); destinos em par com o world_targets.txt (B252); alinhar o servidor com o cliente (B253); Loja Gold (B254); missões (B255) e editar missão no lugar (B256); comportamento (B258) e editá-lo no lugar (B259); textos do cliente (B260).
 
-/// B321: um `habilidades.pwsk` mínimo (habilidade 1, 2 níveis) pelo escritor único.
+/// B321: um `habilidades.pwsk` mínimo (habilidade 1, 10 níveis como no catálogo) pelo escritor único.
 fn pwsk_de_teste() -> Vec<u8> {
     use pw_data_loader::habilidades_do_cliente::*;
     let nivel = |k: i32| Nivel {
@@ -15,20 +15,21 @@ fn pwsk_de_teste() -> Vec<u8> {
         juniores: vec![],
         est: vec![k; 7],
         alcance: [0.0, 5.0, 0.0],
-        intro: vec![],
+        // B324: a descrição recebe o nível (`%d`).
+        intro: vec![Argumento::Palavras { palavras: vec![k as u32] }],
     };
     let m = Modelo {
         versao_do_modelo: 1,
         versao_do_dll: 15,
         habilidades: vec![Habilidade {
             id: 1,
-            max_level: 2,
+            max_level: 10,
             estaticas: Estaticas { tipo: 1, icone: "".into(), nome: "4100".into(), nome_nativo: "".into(), efeito: "".into(), duende: 0, movel: 0, sobrescrita: 0, pre_combo: 0, recarga_comum: 0 },
             armas: Armas::Todas("todas".into()),
             vida: None,
             combo: None,
             intervalo_combo: 0,
-            niveis: vec![nivel(1), nivel(2)],
+            niveis: (1..=10).map(nivel).collect(),
         }],
         estados_visiveis: vec![],
         estados_equipe: vec![],
@@ -935,10 +936,37 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(hf["descricao"].as_str(), Some("Ataque do Tigre (Nível %d)\r\nCausa dano."), "{hf}");
         assert!(hf["servidor"]["max_level"].is_number(), "{hf}");
         // B321: com o habilidades.pwsk (o nosso DLL), os números do cliente vêm dele — mana no slot 31 = ints[15].
-        assert_eq!((hf["cliente"]["fonte"].as_str(), hf["cliente"]["campos"]["mp"]["valores"].clone()), (Some("pwsk"), json!([151, 152])), "{hf}");
-        pedir("PUT", &format!("estudio/habilidades/1/numeros_do_cliente?rascunho={ri}")).send_json(json!({"dinheiro_exigido": [0, 777], "mp": [9, 10]})).unwrap();
+        assert_eq!((hf["cliente"]["fonte"].as_str(), hf["cliente"]["campos"]["mp"]["valores"][1].clone()), (Some("pwsk"), json!(152)), "{hf}");
+        let dez = |x: i64| json!((1..=10).map(|k| x * k).collect::<Vec<_>>());
+        pedir("PUT", &format!("estudio/habilidades/1/numeros_do_cliente?rascunho={ri}")).send_json(json!({"dinheiro_exigido": dez(777), "mp": dez(9)})).unwrap();
         let hc = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &ri.to_string()).call().unwrap());
-        assert_eq!((hc["cliente"]["campos"]["dinheiro_exigido"]["valores"].clone(), hc["cliente"]["campos"]["mp"]["valores"].clone()), (json!([0, 777]), json!([9, 10])), "{hc}");
+        assert_eq!((hc["cliente"]["campos"]["dinheiro_exigido"]["valores"].clone(), hc["cliente"]["campos"]["mp"]["valores"].clone()), (dez(777), dez(9)), "{hc}");
+        // B324: os números da descrição — o texto do rascunho tem um `%d` ("Linha 2 (%d)"), que é o nível.
+        assert_eq!(hc["cliente"]["descricao"]["niveis"][2], json!([{"tipo":"inteiro","valor":3}]), "{hc}");
+        let novos: Vec<Value> = (1..=10).map(|k| json!([100 + k])).collect();
+        pedir("PUT", &format!("estudio/habilidades/1/descricao_numeros?rascunho={ri}")).send_json(json!({"niveis": novos})).unwrap();
+        let hd = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &ri.to_string()).call().unwrap());
+        assert_eq!(hd["cliente"]["descricao"]["niveis"][2], json!([{"tipo":"inteiro","valor":103}]), "{hd}");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/descricao_numeros?rascunho={ri}")).send_json(json!({"niveis": [[1.5]]}))).0, 400, "um por nível");
+        // B324: o alcance, só no cliente e nos dois (o servidor guarda `arma` única e `fixo` por nível). Dois rascunhos
+        // abertos não editam o mesmo arquivo (409): tudo no `ri`, e no fim o catálogo sai dele (o B302 adiante o usa).
+        let rb = ri;
+        let b: Vec<f64> = (1..=10).map(|k| 5.0 + k as f64).collect();
+        pedir("PUT", &format!("estudio/habilidades/1/alcance?rascunho={rb}")).send_json(json!({"a": vec![1.0f64; 10], "b": b, "servidor": true})).unwrap();
+        let ha = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &rb.to_string()).call().unwrap());
+        assert_eq!((ha["cliente"]["alcance"]["b"][2].as_f64(), ha["cliente"]["alcance"]["a"][0].as_f64()), (Some(8.0), Some(1.0)), "{ha}");
+        assert_eq!((ha["servidor"]["alcance"]["arma"].as_i64(), ha["servidor"]["alcance"]["fixo"][2].as_f64()), (Some(1), Some(8.0)), "{ha}");
+        let a_varia: Vec<f64> = (1..=10).map(|k| k as f64).collect();
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/alcance?rascunho={rb}")).send_json(json!({"a": a_varia, "servidor": true}))).0, 400, "o servidor tem um multiplicador só");
+        // B324: o mesmo número nos dois.
+        pedir("PUT", &format!("estudio/habilidades/1/numeros_nos_dois?rascunho={rb}")).send_json(json!({"sp_exigido": dez(31)})).unwrap();
+        let h2 = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &rb.to_string()).call().unwrap());
+        assert_eq!((h2["cliente"]["campos"]["sp_exigido"]["valores"].clone(), h2["servidor"]["sp_exigido"].clone()), (dez(31), dez(31)), "{h2}");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros_nos_dois?rascunho={rb}")).send_json(json!({"odio": dez(1)}))).0, 400, "ódio só existe no servidor");
+        let tirado = json_de(pedir("DELETE", &format!("rascunhos/{rb}/arquivo")).query("caminho", "catalogo\\habilidades.json").call().unwrap());
+        assert_eq!(tirado["tirado"], json!(true), "{tirado}");
+        let tirado = json_de(pedir("DELETE", &format!("rascunhos/{rb}/arquivo")).query("caminho", "habilidades.pwsk").call().unwrap());
+        assert_eq!(tirado["tirado"], json!(true), "{tirado}");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros_do_cliente?rascunho={ri}")).send_json(json!({"dinheiro_exigido": [1]}))).0, 400, "um por nível");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros_do_cliente?rascunho={ri}")).send_json(json!({"cls": [1, 1]}))).0, 400, "campo que não se edita");
         pedir("PUT", &format!("estudio/habilidades/1/texto?rascunho={ri}")).send_json(json!({"nome": "Golpe do Tigre", "descricao": "Linha 1\r\nLinha 2 (%d)"})).unwrap();
@@ -1010,6 +1038,18 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert!(t.get(1).is_some(), "o leitor do GS aceita o catálogo publicado");
         let hp = json_de(pedir("GET", "estudio/habilidades/1").call().unwrap());
         assert_eq!((hp["servidor"]["recarga_ms"].clone(), hp["origem_dos_numeros"].as_str()), (json!(recarga), Some("catálogo do realm")), "{hp}");
+        // B324: versionamento — o mesmo número nos dois, publicado; reverter devolve o servidor e o cliente juntos.
+        let sp_antes = (hp["servidor"]["sp_exigido"].clone(), hp["cliente"]["campos"]["sp_exigido"]["valores"].clone());
+        let rd = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "B324 versões", "operacao_id": "t_p4_b324v"})).unwrap())["id"].as_i64().unwrap();
+        let novo_sp = json!((1..=10).map(|k| 4000 + k).collect::<Vec<_>>());
+        pedir("PUT", &format!("estudio/habilidades/1/numeros_nos_dois?rascunho={rd}")).send_json(json!({"sp_exigido": novo_sp})).unwrap();
+        pedir("POST", "publicar").send_json(json!({"rascunhos": [rd]})).unwrap();
+        let hv = json_de(pedir("GET", "estudio/habilidades/1").call().unwrap());
+        assert_eq!((hv["servidor"]["sp_exigido"].clone(), hv["cliente"]["campos"]["sp_exigido"]["valores"].clone()), (novo_sp.clone(), novo_sp.clone()), "publicado nos dois: {hv}");
+        let rr = json_de(pedir("POST", &format!("alteracoes/{rd}/reverter")).send_json(json!({"operacao_id": "t_p4_b324r"})).unwrap())["rascunho"].as_i64().unwrap();
+        pedir("POST", "publicar").send_json(json!({"rascunhos": [rr]})).unwrap();
+        let hr = json_de(pedir("GET", "estudio/habilidades/1").call().unwrap());
+        assert_eq!((hr["servidor"]["sp_exigido"].clone(), hr["cliente"]["campos"]["sp_exigido"]["valores"].clone()), sp_antes, "reverter devolve os dois: {hr}");
         let _ = fs::remove_dir_all(&catalogo);
         // B298: modelo novo a partir do GLB do .smd sintético — .bon, .ski e .smd (sem ações) em models\teste_novo.
         let mn = json_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &ri.to_string()).query("pasta", "models/teste_novo").query("titulo", "boneco").send_bytes(&gm).unwrap());

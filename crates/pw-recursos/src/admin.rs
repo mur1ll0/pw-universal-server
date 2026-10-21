@@ -607,6 +607,41 @@ async fn estudio_numeros_da_habilidade(State(e): State<Arc<Estado>>, Path((v, id
     Ok(Json(e.estudio.definir_numeros_da_habilidade(&e.gov, &v, r, id, p).await?))
 }
 
+#[derive(Deserialize)]
+struct PedidoDescricao {
+    niveis: Vec<Vec<Option<f64>>>,
+}
+
+/// B324: os números da descrição no `habilidades.pwsk` do rascunho.
+async fn estudio_descricao_numeros(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i64)>, Query(q): Query<QEstudio>, Json(p): Json<PedidoDescricao>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.definir_numeros_da_descricao(&e.gov, &v, r, id, p.niveis).await?))
+}
+
+#[derive(Deserialize)]
+struct PedidoAlcance {
+    a: Option<Vec<f64>>,
+    b: Option<Vec<f64>>,
+    c: Option<Vec<f64>>,
+    #[serde(default)]
+    servidor: bool,
+}
+
+/// B324: o alcance no `habilidades.pwsk` (e, com `servidor`, no catálogo do realm).
+async fn estudio_alcance(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i64)>, Query(q): Query<QEstudio>, Json(p): Json<PedidoAlcance>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.definir_alcance(&e.gov, &v, r, id, p.a, p.b, p.c, p.servidor).await?))
+}
+
+/// B324: o mesmo número no servidor e no cliente.
+async fn estudio_numeros_nos_dois(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i64)>, Query(q): Query<QEstudio>, Json(p): Json<serde_json::Map<String, Value>>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.definir_numeros_nos_dois(&e.gov, &v, r, id, p).await?))
+}
+
 /// B308 (S8): troca as expressões dos passos de `no_alvo`/`em_si` no catálogo do realm (rascunho).
 async fn estudio_roteiro_da_habilidade(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i64)>, Query(q): Query<QEstudio>, Json(p): Json<serde_json::Map<String, Value>>) -> R<Json<Value>> {
     validar(&v)?;
@@ -1435,6 +1470,9 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/estudio/habilidades/{id}/numeros", put(estudio_numeros_da_habilidade))
         .route("/admin/{v}/estudio/habilidades/{id}/numeros_do_cliente", put(estudio_numeros_do_cliente))
         .route("/admin/{v}/estudio/habilidades/{id}/roteiro", put(estudio_roteiro_da_habilidade))
+        .route("/admin/{v}/estudio/habilidades/{id}/descricao_numeros", put(estudio_descricao_numeros))
+        .route("/admin/{v}/estudio/habilidades/{id}/alcance", put(estudio_alcance))
+        .route("/admin/{v}/estudio/habilidades/{id}/numeros_nos_dois", put(estudio_numeros_nos_dois))
         .route("/admin/{v}/estudio/textos/{arquivo}", get(estudio_textos).post(estudio_novo_texto))
         .route("/admin/{v}/estudio/textos/{arquivo}/{chave}", put(estudio_editar_texto))
         .route("/admin/{v}/estudio/comportamentos/{id}", get(estudio_comportamento).put(estudio_editar_comportamento))

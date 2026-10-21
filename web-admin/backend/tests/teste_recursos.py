@@ -158,6 +158,15 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], json.loads(p["corpo"])), ("/admin/1.5.5/estudio/habilidades/15/roteiro", {"no_alvo": ["50", "L", "1"]}))
+        # B324: descrição (corpo grande: muitos níveis × conversões passa de 8 KiB), alcance e nos dois.
+        niveis = [[1.5] * 40 for _ in range(60)]
+        for sufixo, corpo in (("descricao_numeros", {"niveis": niveis}), ("alcance", {"b": [5.0] * 10, "servidor": True}),
+                              ("numeros_nos_dois", {"mp": [1] * 10})):
+            r = await self.cliente.put(f"/api/realms/realm_155/estudio/habilidades/7/{sufixo}", params={"rascunho": 3},
+                                       json=corpo, headers=csrf)
+            self.assertEqual(r.status_code, 200, sufixo)
+            p = RecursosFalso.pedidos[-1]
+            self.assertEqual((p["caminho"], json.loads(p["corpo"])), (f"/admin/1.5.5/estudio/habilidades/7/{sufixo}", corpo))
         # B305: números do cliente (elementskill.dll) repassados como vieram.
         r = await self.cliente.put("/api/realms/realm_155/estudio/habilidades/8/numeros_do_cliente", params={"rascunho": 3},
                                    json={"dinheiro_exigido": [0] * 10}, headers=csrf)

@@ -131,6 +131,27 @@ async function abrirHabilidade(id) {
         } catch (erro) { alerta("erro", "Estúdio", erro.message); }
       });
       ficha.appendChild(salvarN);
+      // B324: o mesmo número no servidor e no cliente (habilidades.pwsk), num pedido só — os campos que existem nos dois.
+      const NOS_DOIS = ["recarga_ms", "execucao_ms", "nivel_exigido", "sp_exigido", "dinheiro_exigido", "item_exigido", "mp"];
+      const salvarD = criar("button", "botao botao-pequeno", "Salvar no servidor e no cliente");
+      salvarD.type = "button";
+      salvarD.title = "Grava os mesmos números no catalogo\\habilidades.json (servidor) e no habilidades.pwsk (cliente): " + NOS_DOIS.join(", ");
+      salvarD.addEventListener("click", async () => {
+        if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+        const corpo = {};
+        for (const [k, es] of Object.entries(entradas)) {
+          if (!NOS_DOIS.includes(k) || es.length !== n) continue;
+          corpo[k] = es.map((e) => Math.round(Number(e.value)));
+        }
+        if (!Object.keys(corpo).length) { alerta("aviso", "Estúdio", "Nenhum campo que exista nos dois.", { toast: true }); return; }
+        try {
+          await api(rotaDeHabilidades(`/${f.id}/numeros_nos_dois`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify(corpo) });
+          alerta("ok", "Estúdio", `Habilidade ${f.id}: ${Object.keys(corpo).join(", ")} no servidor e no cliente (rascunho).`, { toast: true });
+          if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+          abrirHabilidade(f.id);
+        } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      });
+      ficha.appendChild(salvarD);
     }
   }
   // B308: os roteiros de efeito (no_alvo = StateAttack no alvo, em_si = BlessMe em quem lança) — a expressão de cada
@@ -273,6 +294,8 @@ async function abrirHabilidade(id) {
       });
       ficha.appendChild(salvarC);
     }
+    if (c.descricao) desenharDescricaoDoCliente(f, c.descricao);
+    if (c.alcance) desenharAlcanceDoCliente(f, c.alcance);
   }
   const bruto = criar("details");
   bruto.appendChild(criar("summary", "", "Todos os campos do servidor (JSON)"));
@@ -289,3 +312,102 @@ async function abrirHabilidade(id) {
   let espera = null;
   elemento("habilidades-busca").addEventListener("input", () => { clearTimeout(espera); espera = setTimeout(carregarHabilidades, 300); });
 })();
+
+/* B324: os números da descrição — uma coluna por conversão do texto (%d inteiro, %.1f real), uma linha por nível.
+   Proficiência (o DLL põe na hora) e o que o texto pede além dos argumentos não se editam. */
+function desenharDescricaoDoCliente(f, d) {
+  const ficha = elemento("habilidades-ficha");
+  if (!d.conversoes.length) return;
+  const t = criar("table", "tabela-simples");
+  t.appendChild(criar("caption", "", "Números da descrição (cliente, habilidades.pwsk) — o que o jogo mostra no texto"));
+  const cab = criar("tr");
+  cab.appendChild(criar("th", "", "nível"));
+  d.conversoes.forEach((cv, i) => cab.appendChild(criar("th", "", `${cv.texto} #${i + 1}`)));
+  t.appendChild(cab);
+  const entradas = d.niveis.map(() => []);
+  d.niveis.forEach((linha, n) => {
+    const tr = criar("tr");
+    tr.appendChild(criar("td", "", String(n + 1)));
+    linha.forEach((v) => {
+      const td = criar("td");
+      if (v.tipo === "inteiro" || v.tipo === "real") {
+        const e = criar("input", "campo");
+        e.type = "number";
+        e.step = v.tipo === "real" ? "any" : "1";
+        e.value = String(v.valor);
+        e.dataset.original = String(v.valor);
+        e.style.width = "7em";
+        entradas[n].push(e);
+        td.appendChild(e);
+      } else {
+        entradas[n].push(null);
+        td.textContent = v.tipo === "proficiencia" ? "(proficiência)" : v.tipo === "fora_dos_argumentos" ? "— (além)" : "—";
+        td.title = v.tipo === "fora_dos_argumentos" ? "O texto pede mais números do que a habilidade passa (provável % sem escape)" : "";
+      }
+      tr.appendChild(td);
+    });
+    t.appendChild(tr);
+  });
+  ficha.appendChild(t);
+  const b = criar("button", "botao botao-pequeno", "Salvar números da descrição no rascunho");
+  b.type = "button";
+  b.addEventListener("click", async () => {
+    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+    // Só o que mudou vai; o resto fica `null` (mantém).
+    const niveis = entradas.map((linha) => linha.map((e) => (e && e.value !== e.dataset.original ? Number(e.value) : null)));
+    try {
+      await api(rotaDeHabilidades(`/${f.id}/descricao_numeros`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify({ niveis }) });
+      alerta("ok", "Estúdio", `Descrição da habilidade ${f.id} no rascunho (habilidades.pwsk).`, { toast: true });
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+      abrirHabilidade(f.id);
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  });
+  ficha.append(b, criar("div", "texto-suave", "Mudar o texto (Nome/Descrição acima) muda as colunas: cada %d/%.1f do texto lê o próximo número. Vale para o jogador depois de publicar e ele atualizar pelo launcher."));
+}
+
+/* B324: o alcance — d = a·alcance da arma + b + c·bônus do jogador, por nível (a regra de ataque/auto-ataque/salto/sem
+   alvo é a do original). Com "também no servidor": arma = a (um só) e fixo = b no catálogo do realm. */
+function desenharAlcanceDoCliente(f, al) {
+  const ficha = elemento("habilidades-ficha");
+  const t = criar("table", "tabela-simples");
+  t.appendChild(criar("caption", "", "Alcance (cliente): a · alcance da arma + b + c · bônus"));
+  const cab = criar("tr");
+  for (const x of ["nível", "a (arma)", "b (metros)", "c (bônus)"]) cab.appendChild(criar("th", "", x));
+  t.appendChild(cab);
+  const col = { a: [], b: [], c: [] };
+  al.b.forEach((_, n) => {
+    const tr = criar("tr");
+    tr.appendChild(criar("td", "", String(n + 1)));
+    for (const k of ["a", "b", "c"]) {
+      const e = criar("input", "campo");
+      e.type = "number";
+      e.step = "any";
+      e.value = String(al[k][n]);
+      e.style.width = "6em";
+      col[k].push(e);
+      const td = criar("td");
+      td.appendChild(e);
+      tr.appendChild(td);
+    }
+    t.appendChild(tr);
+  });
+  ficha.appendChild(t);
+  const servidor = criar("input");
+  servidor.type = "checkbox";
+  const rotulo = criar("label", "texto-suave");
+  rotulo.append(servidor, " também no servidor (arma = a, um só para todos os níveis; fixo = b)");
+  const b = criar("button", "botao botao-pequeno", "Salvar alcance no rascunho");
+  b.type = "button";
+  b.addEventListener("click", async () => {
+    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+    const corpo = { servidor: servidor.checked };
+    for (const k of ["a", "b", "c"]) corpo[k] = col[k].map((e) => Number(e.value));
+    try {
+      await api(rotaDeHabilidades(`/${f.id}/alcance`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify(corpo) });
+      alerta("ok", "Estúdio", `Alcance da habilidade ${f.id} no rascunho${servidor.checked ? " (cliente e servidor)" : " (cliente)"}.`, { toast: true });
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+      abrirHabilidade(f.id);
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  });
+  ficha.append(rotulo, b);
+}

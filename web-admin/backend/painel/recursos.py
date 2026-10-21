@@ -581,6 +581,19 @@ def registrar_reinicio(app):
             raise HTTPException(422, "Informe os campos.")
         return await _repassar("PUT", f"/admin/{v}/estudio/habilidades/{max(0, id_habilidade)}/numeros", {"rascunho": rascunho}, dados=dados)
 
+    # B324: números da descrição e alcance (habilidades.pwsk) e o mesmo número nos dois (servidor + cliente).
+    for _sufixo in ("descricao_numeros", "alcance", "numeros_nos_dois"):
+        def _fazer(sufixo):
+            async def rota(realm: str, id_habilidade: int, rascunho: int, requisicao: Request):
+                v = await _versao_do_realm(requisicao, realm)
+                dados = await requisicao.json()
+                if not isinstance(dados, dict) or not dados:
+                    raise HTTPException(422, "Informe os dados.")
+                return await _repassar("PUT", f"/admin/{v}/estudio/habilidades/{max(0, id_habilidade)}/{sufixo}", {"rascunho": rascunho}, dados=dados)
+            rota.__name__ = f"estudio_habilidade_{sufixo}"
+            app.put(f"/api/realms/{{realm}}/estudio/habilidades/{{id_habilidade}}/{sufixo}")(rota)
+        _fazer(_sufixo)
+
     # B308: expressões dos passos de no_alvo/em_si no catálogo do realm, no rascunho.
     @app.put("/api/realms/{realm}/estudio/habilidades/{id_habilidade}/roteiro")
     async def estudio_roteiro_da_habilidade(realm: str, id_habilidade: int, rascunho: int, requisicao: Request):

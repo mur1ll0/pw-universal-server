@@ -76,13 +76,16 @@ const CAMINHO_HABILIDADES: &str = "catalogo\\habilidades.json";
 /// se pode lançar (`CheckSkillCastCondition`, `EC_HostPlayer.cpp:6097-6150`: mana…) e aprender (`LearnCondition`,
 /// `:6067-6093`: nível, SP, dinheiro); a recarga o servidor manda (`SET_COOLDOWN`, `playerwrapper.cpp:170`) e o ódio é
 /// só do servidor.
-const CAMPOS_EDITAVEIS: [(&str, &str); 9] = [
+const CAMPOS_EDITAVEIS: [(&str, &str); 11] = [
     ("recarga_ms", "só o servidor (o cliente recebe a recarga por SET_COOLDOWN)"),
     ("odio", "só o servidor"),
     ("mp", "o cliente também confere, pelo elementskill.dll dele (CheckSkillCastCondition)"),
     ("nivel_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
     ("sp_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
     ("dinheiro_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
+    // B324: o tempo de execução (o GS espera por ele no lançamento) e o livro exigido.
+    ("execucao_ms", "o cliente também mostra e anima, pelo elementskill.dll dele (GetExecuteTime)"),
+    ("item_exigido", "o cliente também confere, pelo elementskill.dll dele (o livro exigido)"),
     // B307: o golpe da habilidade é do servidor (`CombatEngine::golpe_de_habilidade`, `combat.rs:795-815`:
     // `(bruto × (100 + bônus + ratio×100)% + plus) × fator`; a precisão multiplica a taxa de ataque,
     // `bus_server/habilidades.rs:387`). O cliente não confere; só a descrição (os %d do elementskill.dll) fica antiga.
@@ -3572,7 +3575,8 @@ impl Estudio {
         let (hs, origem) = self.habilidades_do_servidor(gov, versao, rascunho).await?;
         let h = hs.get(&id.to_string()).cloned().with_context(|| format!("a habilidade {id} não existe no servidor {versao}"))?;
         let t = self.skillstr(gov, versao, rascunho).await.ok();
-        let cliente = self.numeros_do_cliente(gov, versao, rascunho, id).await;
+        let formato = t.as_ref().and_then(|t| t.texto(id * 10 + 1)).unwrap_or_default();
+        let cliente = self.numeros_do_cliente(gov, versao, rascunho, id, &formato).await;
         Ok(json!({
             "id": id, "servidor": h, "cliente": cliente,
             "nome": t.as_ref().and_then(|t| t.texto(id * 10)), "descricao": t.as_ref().and_then(|t| t.texto(id * 10 + 1)),
@@ -3585,7 +3589,7 @@ impl Estudio {
 
     /// B305 (S8): os números da habilidade no `elementskill.dll` do cliente (com o rascunho) — só as tabelas medidas
     /// (`crate::elementskill`); o resto vem do código do DLL e não se edita.
-    async fn numeros_do_cliente(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: i64) -> Value {
+    async fn numeros_do_cliente(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: i64, formato: &str) -> Value {
         // B321: com o nosso DLL, os números do cliente estão no `habilidades.pwsk` — todos editáveis.
         if let Ok(b) = self.bytes_do_cliente(gov, versao, CAMINHO_PWSK, rascunho).await {
             return match pw_data_loader::habilidades_do_cliente::ler(&b) {
@@ -3598,7 +3602,17 @@ impl Estudio {
                             let v: Vec<i32> = h.niveis.iter().map(|n| n.ints[i]).collect();
                             campos.insert(c.to_string(), json!({ "valores": v, "le_alem": 0, "quem_confere": quem }));
                         }
-                        json!({ "mapa": true, "fonte": "pwsk", "arquivo": CAMINHO_PWSK, "campos": campos })
+                        // B324: os números da descrição (pelas conversões do texto atual) e o alcance.
+                        use pw_data_loader::habilidades_do_cliente as hc;
+                        let conv = hc::conversoes(formato);
+                        let descricao: Vec<Vec<hc::ValorDaDescricao>> = h.niveis.iter().map(|n| hc::numeros_da_descricao(n, &conv)).collect();
+                        let alcance = json!({
+                            "a": h.niveis.iter().map(|n| n.alcance[0]).collect::<Vec<_>>(),
+                            "b": h.niveis.iter().map(|n| n.alcance[1]).collect::<Vec<_>>(),
+                            "c": h.niveis.iter().map(|n| n.alcance[2]).collect::<Vec<_>>(),
+                        });
+                        json!({ "mapa": true, "fonte": "pwsk", "arquivo": CAMINHO_PWSK, "campos": campos,
+                            "descricao": { "conversoes": conv, "niveis": descricao }, "alcance": alcance })
                     }
                 },
             };
@@ -3671,6 +3685,111 @@ impl Estudio {
             Ok((novo, json!({ "id": id, "campos": mudou }), mudanca))
         })
         .await
+    }
+
+    /// B324: troca os números da descrição no `habilidades.pwsk` do rascunho — `niveis[n][i]` para a conversão `i` do
+    /// texto da descrição (com o rascunho), `null` = fica. Proficiência e o que o texto pede além dos argumentos não se
+    /// editam.
+    pub async fn definir_numeros_da_descricao(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i64, niveis: Vec<Vec<Option<f64>>>) -> Result<Value> {
+        let t = self.skillstr(gov, versao, Some(rascunho)).await?;
+        let formato = t.texto(id * 10 + 1).with_context(|| format!("a habilidade {id} não tem descrição no skillstr"))?;
+        let conv = pw_data_loader::habilidades_do_cliente::conversoes(&formato);
+        self.alterar_item_do_cliente(gov, versao, CAMINHO_PWSK, rascunho, move |b| {
+            use pw_data_loader::habilidades_do_cliente as hc;
+            let mut m = hc::ler(b).map_err(anyhow::Error::msg)?;
+            let h = m.habilidades.iter_mut().find(|h| h.id as i64 == id).with_context(|| format!("a habilidade {id} não está no {CAMINHO_PWSK}"))?;
+            if niveis.len() != h.niveis.len() {
+                bail!("{} níveis (um por nível)", h.niveis.len());
+            }
+            for (k, (n, v)) in h.niveis.iter_mut().zip(&niveis).enumerate() {
+                hc::definir_numeros_da_descricao(n, &conv, v).map_err(|e| anyhow::anyhow!("nível {}: {e}", k + 1))?;
+            }
+            let novo = hc::escrever(&m).map_err(anyhow::Error::msg)?;
+            let mudanca = json!({ "acao": "editar", "tipo": "descricao_de_habilidade_no_cliente", "id": id });
+            Ok((novo, json!({ "id": id, "arquivo": CAMINHO_PWSK }), mudanca))
+        })
+        .await
+    }
+
+    /// B324: troca o alcance `d = a·alcance_da_arma + b + c·bônus` no `habilidades.pwsk` do rascunho (listas por nível;
+    /// ausente = fica). Com `servidor`, grava também no catálogo do realm: `alcance.arma = a` (um só para todos os
+    /// níveis, como o GS o guarda) e `alcance.fixo = b`; o `c` (bônus do jogador) só existe no cliente.
+    pub async fn definir_alcance(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i64, a: Option<Vec<f64>>, b: Option<Vec<f64>>, c: Option<Vec<f64>>, servidor: bool) -> Result<Value> {
+        if a.is_none() && b.is_none() && c.is_none() {
+            bail!("nada a mudar");
+        }
+        let (a2, b2) = (a.clone(), b.clone());
+        let r = self.alterar_item_do_cliente(gov, versao, CAMINHO_PWSK, rascunho, move |bytes| {
+            use pw_data_loader::habilidades_do_cliente as hc;
+            let mut m = hc::ler(bytes).map_err(anyhow::Error::msg)?;
+            let h = m.habilidades.iter_mut().find(|h| h.id as i64 == id).with_context(|| format!("a habilidade {id} não está no {CAMINHO_PWSK}"))?;
+            for (k, lista) in [(0usize, &a), (1, &b), (2, &c)] {
+                let Some(l) = lista else { continue };
+                if l.len() != h.niveis.len() || l.iter().any(|x| !x.is_finite() || x.abs() > 1000.0) {
+                    bail!("alcance: {} números finitos (um por nível, |x| ≤ 1000)", h.niveis.len());
+                }
+                for (n, x) in h.niveis.iter_mut().zip(l) {
+                    n.alcance[k] = *x;
+                }
+            }
+            let novo = hc::escrever(&m).map_err(anyhow::Error::msg)?;
+            let mudanca = json!({ "acao": "editar", "tipo": "alcance_de_habilidade_no_cliente", "id": id });
+            Ok((novo, json!({ "id": id, "arquivo": CAMINHO_PWSK }), mudanca))
+        })
+        .await?;
+        if !servidor {
+            return Ok(r);
+        }
+        // O catálogo do servidor: `alcance.arma` (um) e `alcance.fixo` (por nível).
+        let arma = match &a2 {
+            Some(l) => {
+                let x = l[0];
+                if l.iter().any(|y| *y != x) || x.fract() != 0.0 {
+                    bail!("o servidor guarda um multiplicador da arma só, inteiro, para todos os níveis");
+                }
+                Some(x as i64)
+            }
+            None => None,
+        };
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let (base, do_rascunho, _) = self.json_de_habilidades(gov, versao, Some(rascunho)).await?;
+        let rs = self.gravar_item_do_realm(gov, versao, rascunho, CAMINHO_HABILIDADES.to_string(), base, do_rascunho, move |bytes| {
+            let mut j: Value = serde_json::from_slice(bytes)?;
+            let h = j.get_mut("habilidades").and_then(|x| x.get_mut(id.to_string())).with_context(|| format!("a habilidade {id} não existe no servidor"))?;
+            let n = h["max_level"].as_u64().context("habilidade sem max_level")? as usize;
+            if h["alcance"].is_null() {
+                h["alcance"] = json!({ "arma": 0, "fixo": vec![0.0; n] });
+            }
+            if let Some(x) = arma {
+                h["alcance"]["arma"] = json!(x);
+            }
+            if let Some(l) = &b2 {
+                if l.len() != n {
+                    bail!("o servidor tem {n} níveis");
+                }
+                h["alcance"]["fixo"] = json!(l.iter().map(|x| *x as f32).collect::<Vec<_>>());
+            }
+            let novo = serde_json::to_vec(&j)?;
+            pw_data_loader::habilidades::TabelaDeHabilidades::de_json(&String::from_utf8_lossy(&novo)).context("o habilidades.json editado não lê no GS")?;
+            let mudanca = json!({ "acao": "editar", "tipo": "alcance_de_habilidade", "id": id });
+            Ok((novo, json!({ "id": id }), mudanca))
+        })
+        .await?;
+        Ok(json!({ "cliente": r, "servidor": rs }))
+    }
+
+    /// B324: o mesmo número no servidor (`catalogo\habilidades.json`) e no cliente (`habilidades.pwsk`), num pedido
+    /// só — os dois saem do mesmo modelo e não divergem. Só os campos que existem nos dois.
+    pub async fn definir_numeros_nos_dois(&self, gov: &Governanca, versao: &str, rascunho: i64, id: i64, campos: serde_json::Map<String, Value>) -> Result<Value> {
+        const NOS_DOIS: [&str; 7] = ["recarga_ms", "execucao_ms", "nivel_exigido", "sp_exigido", "dinheiro_exigido", "item_exigido", "mp"];
+        if let Some(k) = campos.keys().find(|k| !NOS_DOIS.contains(&k.as_str())) {
+            bail!("o campo {k} não existe nos dois (nos dois: {})", NOS_DOIS.join(", "));
+        }
+        // O cliente primeiro: ele é o mais estrito (inteiros de 32 bits, um por nível).
+        let cliente = self.definir_numeros_do_cliente(gov, versao, rascunho, id, campos.clone()).await?;
+        let servidor = self.definir_numeros_da_habilidade(gov, versao, rascunho, id, campos).await?;
+        Ok(json!({ "cliente": cliente, "servidor": servidor }))
     }
 
     /// B301 (S8): troca o nome e/ou a descrição da habilidade no `skillstr.txt` do rascunho

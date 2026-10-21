@@ -438,6 +438,188 @@ pub fn ler(b: &[u8]) -> Result<Modelo, String> {
     Ok(Modelo { versao_do_modelo: 1, versao_do_dll, habilidades, estados_visiveis, estados_equipe, inerentes })
 }
 
+// ------------------------------------------------------------------ B324: os números da descrição
+
+/// Uma conversão do formato da descrição (`_snwprintf`), na ordem do texto.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Conversao {
+    /// O trecho do formato (`%d`, `%.1f`…).
+    pub texto: String,
+    /// `i` inteiro (1 palavra), `f` real (`double`, 2 palavras), `o` outro (string, `*`… — não se edita).
+    pub tipo: char,
+    pub palavras: usize,
+}
+
+/// As conversões do formato, como o `_snwprintf` as consome (`%%` não consome nada).
+pub fn conversoes(formato: &str) -> Vec<Conversao> {
+    let c: Vec<char> = formato.chars().collect();
+    let mut r = Vec::new();
+    let mut i = 0;
+    let largura = |c: &[char], i: &mut usize| -> usize {
+        if *i < c.len() && c[*i] == '*' {
+            *i += 1;
+            1
+        } else {
+            while *i < c.len() && c[*i].is_ascii_digit() {
+                *i += 1;
+            }
+            0
+        }
+    };
+    while i < c.len() {
+        if c[i] != '%' {
+            i += 1;
+            continue;
+        }
+        let ini = i;
+        i += 1;
+        while i < c.len() && "-+ #0".contains(c[i]) {
+            i += 1;
+        }
+        let mut estrelas = largura(&c, &mut i);
+        if i < c.len() && c[i] == '.' {
+            i += 1;
+            estrelas += largura(&c, &mut i);
+        }
+        let mut longo = false;
+        for pre in ["I64", "I32", "ll", "hh", "h", "l", "L", "I"] {
+            let p: Vec<char> = pre.chars().collect();
+            if c[i..].starts_with(&p) {
+                longo = matches!(pre, "I64" | "ll" | "L");
+                i += p.len();
+                break;
+            }
+        }
+        let Some(&conv) = c.get(i) else { break };
+        i += 1;
+        if conv == '%' {
+            continue;
+        }
+        let texto: String = c[ini..i].iter().collect();
+        let (tipo, palavras) = if "eEfgGaA".contains(conv) {
+            ('f', 2)
+        } else if "diuxXoc".contains(conv) && !longo {
+            ('i', 1)
+        } else {
+            ('o', if longo { 2 } else { 1 })
+        };
+        if estrelas > 0 {
+            r.push(Conversao { texto, tipo: 'o', palavras: palavras + estrelas });
+        } else {
+            r.push(Conversao { texto, tipo, palavras });
+        }
+    }
+    r
+}
+
+/// O valor de uma conversão num nível.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "tipo", content = "valor", rename_all = "snake_case")]
+pub enum ValorDaDescricao {
+    Inteiro(i32),
+    Real(f64),
+    /// A proficiência (ou a máxima) que o DLL põe na hora — não é número do arquivo.
+    Proficiencia,
+    /// O formato pede mais do que a habilidade passa: o original mostra o que estiver na pilha.
+    ForaDosArgumentos,
+    /// Conversão que não é número simples (string, `*`), ou que mistura proficiência com palavra.
+    NaoEditavel,
+}
+
+/// Uma palavra do `_snwprintf`: do arquivo, ou a proficiência que o DLL põe na hora (1 = atual, 2 = máxima).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Palavra {
+    Arquivo(u32),
+    Proficiencia(u8),
+}
+
+fn achatar(intro: &[Argumento]) -> Vec<Palavra> {
+    let mut v = Vec::new();
+    for a in intro {
+        match a {
+            Argumento::Palavras { palavras } => v.extend(palavras.iter().map(|&p| Palavra::Arquivo(p))),
+            Argumento::Proficiencia { .. } => v.push(Palavra::Proficiencia(1)),
+            Argumento::ProficienciaMaxima { .. } => v.push(Palavra::Proficiencia(2)),
+        }
+    }
+    v
+}
+
+fn remontar(v: &[Palavra]) -> Vec<Argumento> {
+    let mut r: Vec<Argumento> = Vec::new();
+    for p in v {
+        match *p {
+            Palavra::Arquivo(w) => match r.last_mut() {
+                Some(Argumento::Palavras { palavras }) => palavras.push(w),
+                _ => r.push(Argumento::Palavras { palavras: vec![w] }),
+            },
+            Palavra::Proficiencia(1) => r.push(Argumento::Proficiencia { proficiencia: true }),
+            Palavra::Proficiencia(_) => r.push(Argumento::ProficienciaMaxima { proficiencia_max: true }),
+        }
+    }
+    r
+}
+
+/// Os números que a descrição mostra num nível, conversão a conversão.
+pub fn numeros_da_descricao(nivel: &Nivel, conv: &[Conversao]) -> Vec<ValorDaDescricao> {
+    let v = achatar(&nivel.intro);
+    let mut k = 0;
+    conv.iter()
+        .map(|c| {
+            let fatia = v.get(k..k + c.palavras);
+            k += c.palavras;
+            match fatia {
+                None => ValorDaDescricao::ForaDosArgumentos,
+                Some(f) if f.iter().any(|p| matches!(p, Palavra::Proficiencia(_))) => {
+                    if c.palavras == 1 { ValorDaDescricao::Proficiencia } else { ValorDaDescricao::NaoEditavel }
+                }
+                Some(f) => {
+                    let w: Vec<u32> = f.iter().map(|p| match p { Palavra::Arquivo(w) => *w, _ => 0 }).collect();
+                    match c.tipo {
+                        'i' => ValorDaDescricao::Inteiro(w[0] as i32),
+                        'f' => ValorDaDescricao::Real(f64::from_bits(w[0] as u64 | (w[1] as u64) << 32)),
+                        _ => ValorDaDescricao::NaoEditavel,
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
+/// Troca os números da descrição de um nível: `valores[i]` para a conversão `i` (`None` = fica). Só número do
+/// arquivo se troca; as palavras que o formato não usa ficam como estão.
+pub fn definir_numeros_da_descricao(nivel: &mut Nivel, conv: &[Conversao], valores: &[Option<f64>]) -> Result<(), String> {
+    if valores.len() != conv.len() {
+        return Err(format!("{} valores para {} conversões", valores.len(), conv.len()));
+    }
+    let mut v = achatar(&nivel.intro);
+    let mut k = 0;
+    for (c, x) in conv.iter().zip(valores) {
+        let ini = k;
+        k += c.palavras;
+        let Some(x) = x else { continue };
+        if !x.is_finite() {
+            return Err(format!("{}: número inválido", c.texto));
+        }
+        let Some(f) = v.get_mut(ini..k) else { return Err(format!("{}: além dos argumentos da habilidade", c.texto)) };
+        if f.iter().any(|p| matches!(p, Palavra::Proficiencia(_))) || c.tipo == 'o' {
+            return Err(format!("{}: não é número do arquivo", c.texto));
+        }
+        if c.tipo == 'i' {
+            if x.fract() != 0.0 || *x < i32::MIN as f64 || *x > i32::MAX as f64 {
+                return Err(format!("{}: inteiro de 32 bits", c.texto));
+            }
+            f[0] = Palavra::Arquivo(*x as i32 as u32);
+        } else {
+            let b = x.to_bits();
+            f[0] = Palavra::Arquivo(b as u32);
+            f[1] = Palavra::Arquivo((b >> 32) as u32);
+        }
+    }
+    nivel.intro = remontar(&v);
+    Ok(())
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -471,6 +653,31 @@ mod testes {
             estados_equipe: vec![EstadoEquipe { consulta: 2, id: 2, nome: "".into(), icone: "79".into() }],
             inerentes: BTreeMap::from([("0".into(), vec![1, 2])]),
         }
+    }
+
+    #[test]
+    fn conversoes_como_o_snwprintf() {
+        let c = conversoes("Nível %d, dano %.1f (100%%), %s, % d, %*d, %I64d");
+        let t: Vec<(String, char, usize)> = c.iter().map(|x| (x.texto.clone(), x.tipo, x.palavras)).collect();
+        assert_eq!(t, vec![("%d".into(), 'i', 1), ("%.1f".into(), 'f', 2), ("%s".into(), 'o', 1), ("% d".into(), 'i', 1), ("%*d".into(), 'o', 2), ("%I64d".into(), 'o', 2)]);
+    }
+
+    #[test]
+    fn le_e_troca_os_numeros_da_descricao() {
+        // Habilidade 1 nível 2 do B314: `2 | 9 | 172,3 (double)`, mais a proficiência.
+        let d = 172.3f64.to_bits();
+        let mut n = exemplo().habilidades[0].niveis[0].clone();
+        n.intro = vec![Argumento::Palavras { palavras: vec![2, 9, d as u32, (d >> 32) as u32] }, Argumento::Proficiencia { proficiencia: true }];
+        let conv = conversoes("Nível %d: %d de mana, %.1f de dano, %d%% de proficiência, %d");
+        assert_eq!(numeros_da_descricao(&n, &conv), vec![
+            ValorDaDescricao::Inteiro(2), ValorDaDescricao::Inteiro(9), ValorDaDescricao::Real(172.3),
+            ValorDaDescricao::Proficiencia, ValorDaDescricao::ForaDosArgumentos]);
+        definir_numeros_da_descricao(&mut n, &conv, &[None, Some(12.0), Some(200.5), None, None]).unwrap();
+        assert_eq!(numeros_da_descricao(&n, &conv)[1..3], [ValorDaDescricao::Inteiro(12), ValorDaDescricao::Real(200.5)]);
+        assert!(matches!(n.intro[1], Argumento::Proficiencia { .. }), "a proficiência fica no lugar");
+        assert!(definir_numeros_da_descricao(&mut n, &conv, &[None, None, None, Some(1.0), None]).is_err(), "proficiência não se edita");
+        assert!(definir_numeros_da_descricao(&mut n, &conv, &[None, None, None, None, Some(1.0)]).is_err(), "além dos argumentos");
+        assert!(definir_numeros_da_descricao(&mut n, &conv, &[Some(1.5), None, None, None, None]).is_err(), "inteiro");
     }
 
     #[test]

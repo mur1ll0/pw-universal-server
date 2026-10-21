@@ -753,6 +753,15 @@ o roteiro todo (acrescentar, remover, reordenar). O GS roda em ordem, só os pas
   liga a flag correspondente (salvo se a flag vier no mesmo pedido). Editar um roteiro existente não mexe na flag: há
   roteiros do original com ela desligada (1.2.6: 4 `no_alvo` sem `doenchant`; 1.5.5: 1 `em_si` sem `dobless`).
 
+**Descrição, alcance e números nos dois (B324):** rotas `…/descricao_numeros`, `…/alcance` (com `servidor`) e
+`…/numeros_nos_dois`, regras na spec 08 §12. O painel ganhou:
+- a tabela "Números da descrição" (uma coluna por conversão do texto);
+- a tabela "Alcance", com a caixa "também no servidor";
+- o botão "Salvar no servidor e no cliente" na tabela do servidor.
+
+O repasse está em `painel/recursos.py`, e o limite de corpo de 32 KiB (`eh_texto_de_habilidade`) vale também para a
+descrição.
+
 **Números do cliente pelo `habilidades.pwsk` (B321):** com o nosso DLL (spec 08), a ficha lê e o
 `PUT …/numeros_do_cliente` edita o `habilidades.pwsk` — 9 campos por nível (`CAMPOS_DO_PWSK`, spec 08 §11), gravando o
 slot e a estática juntos. Sem `.pwsk`, vale o B305 abaixo. `item_do_cliente` também acha arquivo que só o rascunho
