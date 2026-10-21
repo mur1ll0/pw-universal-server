@@ -16215,3 +16215,37 @@ comparação lado a lado.
     - Editá-la exigiria trocar instruções, ou dar a cada função uma constante própria numa seção nova — outro bloco,
       mais arriscado.
     - Habilidade nova segue exigindo recompilar o DLL.
+
+312. **Sessão 2026-10-20: estudo de viabilidade — habilidades no cliente.**
+
+    ### a. Pedido
+    Commitar (o B311 já estava em `fa00085`, `167fceb`) e fazer um estudo completo, com engenharia reversa do
+    cliente: é preciso editar instruções ou recompilar o `elementskill.dll`, ou dá para levar as habilidades para outro
+    sistema (`elements`, uma tabela) mais fácil de manter? Apresentar as opções e a recomendação.
+
+    ### b. Evidência levantada
+    - `dumpbin -imports` do `ELEMENTCLIENT.EXE`: 36 funções do DLL no 1.5.5 e 23 no 1.2.6, das 121 exportadas.
+      Demangling: só tipos simples, 5 estruturas e `skill_array_interface<T>`, sem STL. Exe e DLL são VC6 (linker 6.00).
+    - Fonte do cliente: cerca de 36 métodos virtuais usados (`m_pSkillCore->`); estruturas iguais no 1.5.3 e no 1.5.5;
+      os efeitos estão sob `_SKILL_SERVER`, fora do DLL do cliente.
+    - Nos 3.316 stubs, o cliente tem só números por nível, a descrição (`_snwprintf`, com argumentos só do nível em
+      3.309, também da proficiência em 7) e 28 condições de uma linha (combo e vida).
+    - `LoadSkillData` = a lista que o servidor manda; `VisibleState`/`TeamState` = 493 linhas de dado.
+    - `elements.data` não define habilidade (só a referencia); o cliente pergunta tudo ao DLL.
+
+    ### c. Opções e recomendação
+    Em `docs/admin/ESTUDO_HABILIDADES_DO_CLIENTE.md`:
+    - A — bytes (o atual);
+    - B — instruções;
+    - C — recompilar o fonte;
+    - **D — um `elementskill.dll` nosso, movido a tabela, provado igual ao original por medição diferencial (recomendada)**;
+    - E — `elements`, impossível sem mexer no executável;
+    - F — mexer no executável.
+
+    Plano de D em 7 fases com portão.
+
+    ### d. Falta
+    Decisão do Murillo:
+    - aceite de distribuir um DLL nosso pelo launcher (princípio "cliente original");
+    - começar pelo 1.5.5 ou pelo 1.2.6;
+    - formato do arquivo de dados.
