@@ -6,7 +6,8 @@
 > launcher distribui), e o Estúdio lê e edita os números do cliente no `.pwsk`. Decisão do Murillo (2026-10-20): seguir a opção D do
 > `docs/admin/ESTUDO_HABILIDADES_DO_CLIENTE.md`, começando pelo 1.5.5, e distribuir o nosso DLL pelo launcher.
 > Fases: 1 contrato · 2 gabarito (medir o original inteiro) · 3 DLL de dados + diferencial 100% · 4 jogo · 5 Estúdio ·
-> 6 habilidade nova · 7 1.2.6.
+> 6 habilidade nova · 7 1.2.6. **Fase 7 (B327): DLL de dados do 1.2.6 com diferencial 0 (§13); falta publicar.**
+> **Fase 6 (B328): habilidade nova pelo Estúdio (§14).**
 
 Objetivo: um `elementskill.dll` nosso que o `ELEMENTCLIENT.EXE` 1.5.5 BR (v156) carregue no lugar do original, com o
 **mesmo contrato binário** e **nenhum código por habilidade**: tudo vem de um arquivo de dados gerado pelo Estúdio a
@@ -316,7 +317,7 @@ edição grava os dois. Sem `.pwsk`, vale o caminho do B305 (bytes de tabela no 
 rascunho (ação `adicionar`) passou a ser lido pelo `item_do_cliente`.
 
 **Falta:** ~~gerar o `.pwsk` junto com o catálogo do servidor~~ e ~~editar descrição e alcance~~ (B325, §12);
-~~os 65 textos com `%` sem escape~~ (B323); habilidade nova (fase 6); o 1.2.6 (fase 7).
+~~os 65 textos com `%` sem escape~~ (B323); ~~habilidade nova (fase 6)~~ (B328, §14); ~~o 1.2.6 (fase 7)~~ (B327, §13).
 
 ## 12. Edição completa das habilidades no Estúdio (B325)
 
@@ -349,3 +350,86 @@ Estúdio nos campos que existem nos dois, e não divergem mais. O `.pwsk` inicia
 
 O catálogo do servidor vale no jogo depois de reiniciar o mundo (o GS o lê ao subir); o `.pwsk`, depois de o jogador
 atualizar pelo launcher.
+
+## 13. Fase 7 — o 1.2.6 (B327)
+
+**Contrato (DLL 1.2.6 de 2007-07-04, VC6).** O executável importa 23 funções (as do §2 menos as 13 listadas lá), todas
+com o mesmo nome do 1.5.5. `GetVersion` devolve **15**, igual. O `Create` (`100017CC`) devolve um objeto de 0x18 bytes
+— `{vtable 10050144, stub*, float alcance, …, id em +0x10, nível em +0x14}` — e quase todo slot repassa para o stub
+(um campo ou uma virtual do stub com o objeto como argumento). A vtable que o executável usa é a dessa classe concreta:
+**31 slots**. A da base exportada tem 30 (o compilador fundiu as funções iguais: 16 `return 0`, 5 `return false`); a
+ordem sai dos 9 endereços únicos, dos grupos fundidos e da estática `GetRequiredSp` (que chama o slot 10), e é a do
+1.5.5 sem os virtuais que o 1.2.6 não tem:
+
+| slot | método | | slot | método |
+| ---: | :--- | :--- | ---: | :--- |
+| 0 | `GetName` (stub+0x0C) | | 16–19 | `IsWarmup`, `IsAutoAttack`, `IsInstant`, `IsDurative` |
+| 1 | `GetNativeName` (+0x10) | | 20 | `GetRangeType` (+0x5C) |
+| 2 | `GetType` (+0x1C) | | 21–22 | `GetEffect` (+0x54), `GetElseEffect` (+0x58) |
+| 3 | `GetIcon` (+0x14) | | 23 | `GetMpCost` (virtual 7 do stub, `_ftol`) |
+| 4 | `GetIntroduction(buf, len, SkillStr&)` | | 24–25 | `GetApCost` (+0x36), `GetArrowCost` (+0x40) |
+| 5–7 | `GetCoolingTime`, `GetExecuteTime`, `GetTargetType` | | 26 | `ValidWeapon(int)` |
+| 8 | `GetPrayRange(float alcance)` — **um** argumento | | 27 | `GetAllowForms` (+0x35) |
+| 9–12 | `GetRequiredLevel`, `Sp`, `Book`, `Money` | | 28 | `Interrupt` (`return true`) |
+| 13 | `GetRequiredSkill()` → **int** (+0x28) | | 29 | `GetJunior()` → **int** (+0x28 se a marca +0x2C) |
+| 14 | `GetShowOrder` (+0x31) | | 30 | destrutor |
+| 15 | `SetLevel(int)` (troca e devolve o antigo) | | | |
+
+Estruturas (deslocamentos lidos nas funções): `UseRequirement {mp, ap, form, weapon, freepackage, arrow}` (24 B),
+`LearnRequirement {level, sp, money, profession, rank}` (20 B), `PetRequirement` igual ao do 1.5.5. Condições:
+- `Condition` (`100012F1`): flecha 9, arma 1, mana 2, forma 7 (`1 << form`, sem a máscara do 1.5.5), fúria 8, pacote
+  livre 10;
+- `LearnCondition` (`1000101F`): sobrescrita 11 (um nível só: uma aprendida tem esta como júnior), rank 7, nível 3,
+  classe 4, nível do jogador 2, SP 1, dinheiro 6, pré-requisito 9 (`GetRequiredSkill` com o nível em stub+0x44),
+  proficiência 10 (virtual 3 do stub no nível anterior);
+- `PetLearn` (`10001624`): 3, 2, 1 e o pré-requisito 9 pela lista;
+- `GetAbilityPercent` (`10001598`), `LoadSkillData` (`1000475B`, limpa e lê `count` + 5 bytes) e `GetPrayRange`
+  (`1000184F`, a regra da base com as constantes 0,3/1,0/0,7/−1,0 do DLL).
+
+**Medição.** `tools/elementskill/gabarito126.cpp` chama cada slot pelo número físico do 1.2.6 e escreve com o número
+**lógico** (o do §3), para o mesmo `gerar_modelo.py`, o mesmo `habilidades.pwsk` e o mesmo Estúdio servirem às duas
+versões. Os números que nenhum slot expõe saem com `--interno`, só no original: classe (stub+0x08) → `ints[GetCls]`, rank
+(+0x20) → `ints[GetRank]`, máximo (+0x18) → `GetMaxLevel`, nível do pré-requisito (+0x44) → `pre[0]`, proficiência
+exigida por nível (virtual 3 do stub) → `est[GetMaxAbility]`. A comparação entre os DLLs não os usa: usa varreduras
+pela API pública que dependem deles — nível máximo pelo `LearnCondition` (igual ao interno nas 823), classe × rank (16 ×
+61 por habilidade), `GetAbilityPercent` com 10 proficiências em cada nível, sondas de `LearnCondition`/`Condition`/
+`PetLearn`, a carga do `LoadSkillData` e a sobrescrita de cada júnior. A descrição: o número de palavras pelo binário
+(`_snwprintf` em `1005000C`; 325 habilidades sem número), e a palavra que vale 0 com proficiência 0 e 500 com 500 é a
+proficiência. O alcance: `b` tem de ser o `float` do texto `%.9g`, não o `double` (17 níveis não fechavam).
+
+**DLL.** `tools/elementskill/dll/elementskill_dados_126.cpp` inclui o leitor do `elementskill_dados.cpp` (guardas
+`PWSK_126` em volta das estruturas e da classe do 1.5.5; o pré-processado do 1.5.5 é idêntico ao de antes, MD5 igual)
+e define a classe de 31 slots e as condições acima. `compilar.bat` gera `elementskill_126.dll` (144.384 bytes); no
+cliente o nome é `elementskill.dll`.
+
+**Resultado.** 823 habilidades, 4.091 níveis, 406 estados visíveis, 83 de equipe; `habilidades.pwsk` do 1.2.6 com
+872.356 bytes (ida e volta igual). **Diferencial: 0 campos diferentes em 5.406 linhas** (e o diferencial acusa uma
+alteração plantada). Nenhum texto do 1.2.6 consome além dos argumentos.
+
+**Distribuição.** Rascunho **57** no `pw-recursos` 1.2.6 com os dois arquivos (DLL `affb6098…`, `.pwsk` `a89e94e4…`);
+pelo rascunho a ficha da habilidade 1 vem com `fonte: pwsk`, descrição `2, 9, 74,7` e alcance `a = 1, b = 0`, iguais ao
+servidor. **A publicar** (precisa da autorização do Murillo).
+
+**Diferenças conhecidas:** nível abaixo de 1 nas estáticas e o nível aprendido acima do máximo + 1 no
+`GetAbilityPercent` (o original calcula a fórmula do stub fora da tabela; o nosso usa o nível válido mais próximo). Os
+campos do Estúdio que o 1.2.6 não tem (`reino_exigido`, `apcost` como chi) aparecem mas o DLL 1.2.6 não os usa.
+
+## 14. Fase 6 — habilidade nova (B328)
+
+`POST /admin/{v}/estudio/habilidades/{base}/nova?rascunho= {novo?, nome?, ensinar?}` (`Estudio::nova_habilidade`), no
+painel o botão "Nova habilidade (cópia desta)" na ficha. Num rascunho só, a partir da habilidade `base`:
+
+| arquivo | o que entra |
+| :--- | :--- |
+| `data\elements.data` (com `ensinar`) | o id novo na primeira vaga (`id_skills_k` = 0) de cada `NPC_SKILL_SERVICE` que ensina a base; serviço sem vaga recusa |
+| `catalogo\habilidades.json` | a entrada da base com o id novo (chave e campo `id`; o GS indexa pelo `id`) e conferida pelo leitor do GS |
+| `habilidades.pwsk` (se a versão o tiver) | a habilidade da base com o id novo, **no fim** da ordem do `NextSkill` |
+| `configs\skillstr.txt` | fichas novas `id×10` (o nome pedido, ou o da base + " (nova)") e `id×10+1` (a descrição da base), por `TabelaDeTextos::acrescentar` — no fim, com o fim de linha do arquivo, relida pelo leitor do cliente |
+
+O id: o pedido, ou o maior em uso + 1. Tem de estar livre nos três (`skillstr` inclusive) e ser **no máximo 32.767**: o
+`LoadSkillData` lê o id do `cmd_skill_data` em 2 bytes com sinal (§10 e §13). Tudo é conferido antes de gravar; o
+ensino vem primeiro porque é o que mais pode faltar. A nova herda da base o modelo, o efeito visual, o ícone e o roteiro
+do servidor — o resto se edita como qualquer habilidade (números, descrição, alcance, nos dois). Vale para o 1.5.5 e o
+1.2.6 (no 1.2.6 o `.pwsk` só existe depois de publicar o rascunho 57 da fase 7). Teste de integração: a nova da 1 no
+`elements` real do 1.2.6 (ensinada por 3 serviços), nome, descrição, números do cliente e do servidor, a busca, e as
+recusas (id em uso, id acima de 32.767, base inexistente).

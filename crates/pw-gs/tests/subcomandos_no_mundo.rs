@@ -1008,7 +1008,7 @@ async fn entrar(
     addr: std::net::SocketAddr,
     roleid: i32,
 ) -> pw_bus::transport::BusConnection {
-    let link = entrar_sem_ajustar(addr, roleid).await;
+    let mut link = entrar_sem_ajustar(addr, roleid).await;
 
     let presente = {
         let m = Arc::clone(mundo);
@@ -1023,6 +1023,15 @@ async fn entrar(
         presente,
         "o jogador não entrou no mundo depois do EnterWorld"
     );
+    // B329: o `colocar_no_mundo` põe o jogador no mundo (`add_player`) e **depois** veste o equipamento lido do
+    // banco (`recalcular_equipamento`), que recalcula alcance, atributos e o amuleto. Sob carga, esse fim chegava
+    // depois dos ajustes abaixo e os desfazia: o alcance de 20 m voltava ao da classe, o monstro a 7 m ficava fora
+    // e o golpe nem abria ("o monstro de teste não morreu em 30 s"), o `auto_mp` do hierograma sumia. O servidor
+    // trata a conexão em ordem, então a resposta de um `UNSELECT` prova que a entrada inteira já passou.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::UNSELECT, &[]) })
+        .await
+        .unwrap();
+    let _ = esperar_comando(&mut link, 39).await;
 
     {
         let mut m = mundo.write().await;
@@ -1542,7 +1551,20 @@ async fn tickar_ate_o_monstro_morrer(mundo: &Arc<RwLock<WorldInstance>>) {
                 return;
             }
         }
-        assert!(tokio::time::Instant::now() < limite, "o monstro de teste não morreu em 30 s");
+        if tokio::time::Instant::now() >= limite {
+            let m = mundo.read().await;
+            let mo = &m.monsters[&MONSTRO].0;
+            let ps: Vec<String> = m
+                .players
+                .values()
+                .map(|p| {
+                    let d = ((p.position.x - mo.position.x).powi(2) + (p.position.z - mo.position.z).powi(2)).sqrt();
+                    format!("jogador em ({:.1},{:.1}) a {d:.1} m, alvo {:?}, sessão {:?}", p.position.x, p.position.z, p.target_id,
+                        p.ataque.as_ref().map(|s| (s.alvo, s.falta_ms, s.iniciada)))
+                })
+                .collect();
+            panic!("o monstro de teste não morreu em 30 s: monstro em ({:.1},{:.1}) com vida {}; {ps:?}", mo.position.x, mo.position.z, mo.hp);
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
@@ -3247,16 +3269,14 @@ async fn o_convite_de_grupo_chega_a_quem_foi_convidado() {
         .await
         .unwrap();
 
-    // Quem convidou não recebe nada; quem foi convidado recebe o convite (57).
-    let nada = tokio::time::timeout(Duration::from_millis(300), link_a.receber()).await;
-    assert!(
-        nada.is_err(),
-        "o convite voltou para quem convidou — é o bug de origem: {:?}",
-        nada.ok().and_then(|m| m.ok().flatten()).map(|m| match m {
-            BusMessage::GameToClient { data, .. } => format!("comando {} ({} B)", cmd_de(&data), data.len()),
-            outra => format!("{outra:?}"),
-        })
-    );
+    // Quem convidou não recebe o convite; quem foi convidado recebe (57). B329: só o 57 reprova — a mesma
+    // conexão carrega a entrada do convidado na área, que sob carga chegava nesta janela.
+    let prazo = tokio::time::Instant::now() + Duration::from_millis(300);
+    while let Ok(Ok(Some(m))) = tokio::time::timeout_at(prazo, link_a.receber()).await {
+        if let BusMessage::GameToClient { data, .. } = m {
+            assert_ne!(cmd_de(&data), 57, "o convite voltou para quem convidou — é o bug de origem ({} B)", data.len());
+        }
+    }
 
     let v = receber(&mut link_b, 1).await;
     assert_eq!(
@@ -3388,8 +3408,19 @@ async fn nao_da_para_entrar_num_grupo_sem_convite() {
     .await
     .unwrap();
 
-    let nada = tokio::time::timeout(Duration::from_millis(400), link.receber()).await;
-    assert!(nada.is_err(), "o mundo aceitou uma entrada sem convite");
+    // B329: a mesma conexão carrega o que mais acontece (a entrada do outro jogador na área, atrasada sob carga). O
+    // que não pode chegar é comando de grupo (`TEAM_LEADER_INVITE` 57 a `TEAM_MEMBER_POS` 65, `EC_GPDataType.h:909-919`);
+    // exigir silêncio total reprovava o teste por um aviso legítimo.
+    let prazo = tokio::time::Instant::now() + Duration::from_millis(400);
+    while let Ok(m) = tokio::time::timeout_at(prazo, link.receber()).await {
+        match m {
+            Ok(Some(BusMessage::GameToClient { data, .. })) => {
+                assert!(!(57..=65).contains(&cmd_de(&data)), "o mundo aceitou uma entrada sem convite: comando {}", cmd_de(&data));
+            }
+            Ok(Some(_)) => {}
+            _ => break,
+        }
+    }
     assert!(
         mundo.read().await.membros_do_grupo(intruso).is_empty(),
         "o intruso entrou no grupo sem ter sido convidado"
@@ -3877,11 +3908,8 @@ async fn o_botao_de_roupa_alterna_e_avisa_os_dois_lados() {
         .await
         .unwrap();
 
-    let meu = receber(&mut anfitriao, 1).await;
-    let pacote = meu
-        .iter()
-        .find(|v| cmd_de(v) == 192)
-        .expect("quem apertou não recebeu PLAYER_ENABLE_FASHION");
+    // B329: espera o 192 em vez de "a próxima mensagem" — sob carga, a entrada do outro jogador chega antes.
+    let pacote = &esperar_comando(&mut anfitriao, 192).await;
     assert_eq!(pacote.len(), 2 + 5, "cmd_player_enable_fashion tem 5 bytes");
     assert_eq!(
         i32_em(pacote, 2),
@@ -3890,11 +3918,8 @@ async fn o_botao_de_roupa_alterna_e_avisa_os_dois_lados() {
     );
     assert_eq!(pacote[6], 1, "a primeira troca liga o modo roupa");
 
-    let dele = receber(&mut outro, 1).await;
-    assert!(
-        dele.iter().any(|v| cmd_de(v) == 192),
-        "o outro jogador não foi avisado da troca"
-    );
+    let dele = esperar_comando(&mut outro, 192).await;
+    assert_eq!(i32_em(&dele, 2), roleid, "o outro jogador não foi avisado da troca");
 
     // Segunda vez: volta para a armadura.
     anfitriao
@@ -3906,11 +3931,7 @@ async fn o_botao_de_roupa_alterna_e_avisa_os_dois_lados() {
         .await
         .unwrap();
 
-    let volta = receber(&mut anfitriao, 1).await;
-    let pacote = volta
-        .iter()
-        .find(|v| cmd_de(v) == 192)
-        .expect("sem resposta na volta");
+    let pacote = esperar_comando(&mut anfitriao, 192).await;
     assert_eq!(pacote[6], 0, "clicar de novo tem de voltar para a armadura");
 
     // B83 — e a escolha **sobrevive ao logout**: vai para o `charactermode` do banco, que é
@@ -3924,7 +3945,7 @@ async fn o_botao_de_roupa_alterna_e_avisa_os_dois_lados() {
         })
         .await
         .unwrap();
-    let _ = receber(&mut anfitriao, 1).await;
+    let _ = esperar_comando(&mut anfitriao, 192).await;
     let repo = mundo.read().await.char_repo.clone();
     let gravou = ate_async(|| {
         let repo = repo.clone();

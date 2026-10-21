@@ -194,6 +194,39 @@ impl TabelaDeTextos {
         Ok(())
     }
 
+    /// B328 (fase 6 do DLL de dados, habilidade nova): uma ficha nova `chave "texto"` no fim da tabela indexada, com o
+    /// fim de linha que o arquivo usa (CRLF se ele tiver algum). A tabela é relida pelo leitor do cliente: a ficha só vale
+    /// se ele a enxergar com esse texto. Recusa chave que já existe (mesmo repetida), aspa e texto acima de 2.047 unidades.
+    pub fn acrescentar(&mut self, chave: i64, novo: &str) -> Result<(), String> {
+        if !self.indexada {
+            return Err("só a tabela indexada recebe ficha nova".into());
+        }
+        if self.fichas.iter().any(|f| f.chave == chave) {
+            return Err(format!("a ficha {chave} já existe"));
+        }
+        if novo.contains('"') {
+            return Err("o texto não pode ter aspas (o leitor do cliente não tem escape)".into());
+        }
+        if novo.encode_utf16().count() > MAX_FICHA {
+            return Err(format!("o cliente lê até {MAX_FICHA} unidades por ficha"));
+        }
+        let fim_de_linha: &[u16] = if self.texto.windows(2).any(|w| w == [13, 10]) { &[13, 10] } else { &[10] };
+        let mut t = self.texto.clone();
+        if t.last().is_some_and(|&c| c != 10) {
+            t.extend_from_slice(fim_de_linha);
+        }
+        t.extend(format!("{chave} \"").encode_utf16());
+        t.extend(novo.encode_utf16());
+        t.push(b'"' as u16);
+        t.extend_from_slice(fim_de_linha);
+        let releitura = Self::ler(&Self { texto: t, indexada: true, fichas: Vec::new() }.escrever())?;
+        if releitura.texto(chave).as_deref() != Some(novo) || releitura.fichas.len() != self.fichas.len() + 1 {
+            return Err(format!("a ficha {chave} não leu de volta (o fim do arquivo está num comentário?)"));
+        }
+        *self = releitura;
+        Ok(())
+    }
+
     pub fn escrever(&self) -> Vec<u8> {
         let mut b = vec![0xFF, 0xFE];
         b.extend(self.texto.iter().flat_map(|u| u.to_le_bytes()));
@@ -207,6 +240,28 @@ mod testes {
 
     fn em_utf16(s: &str) -> Vec<u8> {
         [vec![0xFF, 0xFE], s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()].concat()
+    }
+
+    #[test]
+    fn acrescenta_ficha_nova_no_fim() {
+        let s = "#_index\r\n#_begin\r\n10  \"Ataque\"\r\n11  \"linha 1\r\nlinha 2\"\r\n";
+        let mut t = TabelaDeTextos::ler(&em_utf16(s)).unwrap();
+        t.acrescentar(40000, "Nova").unwrap();
+        t.acrescentar(40001, "Descrição %d\r\ncom duas linhas").unwrap();
+        let r = TabelaDeTextos::ler(&t.escrever()).unwrap();
+        assert_eq!(r.texto(10).as_deref(), Some("Ataque"));
+        assert_eq!(r.texto(11).as_deref(), Some("linha 1\r\nlinha 2"));
+        assert_eq!(r.texto(40000).as_deref(), Some("Nova"));
+        assert_eq!(r.texto(40001).as_deref(), Some("Descrição %d\r\ncom duas linhas"));
+        // O que já existia fica byte a byte igual; o novo usa o CRLF do arquivo.
+        assert!(t.escrever().starts_with(&em_utf16(s)));
+        assert!(String::from_utf16_lossy(&t.texto).ends_with("40001 \"Descrição %d\r\ncom duas linhas\"\r\n"));
+        assert!(t.acrescentar(10, "x").is_err());
+        assert!(t.acrescentar(50000, "com \"aspas\"").is_err());
+        // Arquivo que termina num comentário de linha sem quebra: a ficha nova vai para a linha seguinte.
+        let mut c = TabelaDeTextos::ler(&em_utf16("#_index\n#_begin\n10 \"a\"\n// fim")).unwrap();
+        c.acrescentar(20, "b").unwrap();
+        assert_eq!(c.texto(20).as_deref(), Some("b"));
     }
 
     #[test]

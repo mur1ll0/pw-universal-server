@@ -1,6 +1,12 @@
 """B315 (fase 3 do DLL de dados): o modelo do cliente — tudo o que o `elementskill.dll` de dados devolve, em dados.
 
     python gerar_modelo.py <pasta dos stubs skillNNN.h> <gabarito.jsonl> <descricoes.json> <argumentos.json> <modelo.json>
+    python gerar_modelo.py - <gabarito126.jsonl> - <argumentos126.json> <modelo126.json>     (1.2.6, sem fonte)
+
+1.2.6 (fase 7, spec 08 §13): não há fonte. O gabarito vem do `gabarito126.exe --interno`; os números que nenhum slot do
+1.2.6 expõe (classe, rank, nível máximo, nível do pré-requisito, proficiência por nível) vêm da parte `interno`, e o
+pré-requisito e o júnior do `GetRequiredSkill`/`GetJunior` (um `int` cada). A descrição é um bloco com as palavras que
+o binário passa, e a palavra que vale 0 com proficiência 0 e 500 com 500 é a proficiência.
 
 Fonte de cada parte (spec 08 §8):
 - números, textos, listas, armas, estados: o **gabarito** (o binário original);
@@ -76,9 +82,11 @@ def stubs(pasta):
 
 def main(pasta, gabarito, descricoes, argumentos, destino):
     sys.path.insert(0, str(Path(__file__).parent))
-    fonte = stubs(pasta)
-    Expr = fonte.pop("_Expr")
-    desc = json.load(open(descricoes, encoding="utf-8"))["habilidades"]
+    sem_fonte = pasta == "-"
+    fonte = {} if sem_fonte else stubs(pasta)
+    Expr = None if sem_fonte else fonte.pop("_Expr")
+    desc = {} if descricoes == "-" else json.load(open(descricoes, encoding="utf-8"))["habilidades"]
+    PADRAO_ESTATICAS = {"IsGoblinSkill": 0, "IsMovingSkill": 0, "IsOverridden": 0, "GetComboSkPreSkill": 0, "GetCommonCoolDown": 0}
     no_binario = {int(k): v for k, v in json.load(open(argumentos)).items()}
     modelo = {"versao_do_modelo": 1, "habilidades": {}, "estados_visiveis": [], "estados_equipe": [], "inerentes": {},
               "combos": []}
@@ -90,31 +98,47 @@ def main(pasta, gabarito, descricoes, argumentos, destino):
         x = json.loads(linha)
         if "habilidade" in x:
             i = x["habilidade"]
+            estaticas = dict(PADRAO_ESTATICAS)
+            estaticas.update({k: v for k, v in x["estaticas"].items() if v is not None})
+            interno = x.get("interno")
             atual = {
-                "id": i, "max_level": x["max_level"], "estaticas": x["estaticas"], "armas": x["armas"],
+                "id": i, "max_level": x["max_level"], "estaticas": estaticas, "armas": x["armas"],
                 "vida": fonte.get(i, {}).get("vida"), "combo": None, "niveis": [],
             }
+            if interno is not None:  # 1.2.6
+                atual["_126"] = {"cls": interno["cls"], "rank": interno["rank"], "max": interno["max"],
+                                 "pre": [[x["pre_126"], interno["pre_nivel"]]] if x["pre_126"] else [],
+                                 "jun": [[x["jun_126"], 0]] if x["jun_126"] else []}
+                if interno["max"] != x["max_level"]:
+                    problemas.append(f"{i}: nível máximo pela API {x['max_level']} != interno {interno['max']}")
             # A faixa de vida do fonte tem de reproduzir as sondas do gabarito.
-            esperado = x["vida"]
+            esperado = x.get("vida", "")
             lo, hi = atual["vida"] or (0, 100)
             def ok(hp, mx):
                 return hp >= f32(mx / 100.0) * lo and hp <= f32(mx / 100.0) * hi if atual["vida"] else True
             calc = "".join("1" if ok(v, 100) else "0" for v in range(101)) + "|" + "".join("1" if ok(v, 1000) else "0" for v in range(0, 1001, 7))
-            if calc != esperado:
+            if "vida" in x and calc != esperado:
                 problemas.append(f"{i}: vida {atual['vida']} não reproduz as sondas")
             modelo["habilidades"][str(i)] = atual
         elif "nivel" in x and "v" in x:
             i, n = x["id"], x["nivel"]
             v = x["v"]
             if n == 1:
-                combo_padrao[i] = v["52"]
+                combo_padrao[i] = v.get("52")
             nivel = {
                 "ints": [v[str(s)] for s in SLOTS_INT],
                 "bytes": [v[str(s)] for s in SLOTS_BYTE],
                 "textos": [v[s] for s in SLOTS_TEXTO],
                 "genio": x["genio"], "pre": x["pre"], "juniores": x["juniores"],
-                "est": [x["est"][k] for k in EST_NIVEL],
+                "est": [x["est"][k] or 0 for k in EST_NIVEL],
             }
+            if "_126" in atual:  # 1.2.6: os números internos do stub nos slots lógicos (spec 08 §13)
+                e = atual["_126"]
+                nivel["ints"][SLOTS_INT.index(5)] = e["cls"]
+                nivel["ints"][SLOTS_INT.index(10)] = e["rank"]
+                nivel["ints"][SLOTS_INT.index(21)] = e["max"]
+                nivel["pre"], nivel["juniores"] = e["pre"], e["jun"]
+                nivel["est"][EST_NIVEL.index("GetMaxAbility")] = x["interno_prof"]
             if x["pre"] != x["pre_lista"] or x["juniores"] != x["juniores_lista"]:
                 problemas.append(f"{i}/{n}: lista pelos dois caminhos diferente")
             # Alcance.
@@ -136,10 +160,10 @@ def main(pasta, gabarito, descricoes, argumentos, destino):
             def inv(o):
                 if tipo in (1, 3) and auto:
                     return float(f32(o + 1.0)) if f32(f32(0.3) * f32(o + 1.0)) >= 1.0 else float(f32(o / 0.7))
-                return float(o)
+                return float(f32(o))  # o texto %.9g do gabarito é um float: b tem de ser esse float, não o double do texto
             d0, d1, d3 = inv(obs[0]), inv(obs[1]), inv(obs[3])
             candidatos.append((d1 - d0, d3 - d0, d0))
-            candidatos += [(a, c, float(obs[0])) for a in (0, 1) for c in (0, 1)]
+            candidatos += [(a, c, float(f32(obs[0]))) for a in (0, 1) for c in (0, 1)]
             for a, c, b64 in candidatos:
                 calc = [alcance_da_base(tipo, auto, area, f32(a * r + b64 + c * p)) for r, p in SONDAS_ALCANCE]
                 if all(f32(cv) == f32(ov) for cv, ov in zip(calc, obs)):
@@ -165,6 +189,20 @@ def main(pasta, gabarito, descricoes, argumentos, destino):
                     else:
                         intro.append({"palavras": bruta[k:k + (2 if t == "d" else 1)]})
                     k += 2 if t == "d" else 1
+            elif sem_fonte:
+                # 1.2.6: as palavras do binário; a que acompanha a proficiência (0 → 500) vira proficiência.
+                bruta = [int(p, 16) for p in bytes.fromhex(x["intro_bruta"]).decode("utf-16-le").split("|")]
+                b500 = [int(p, 16) for p in bytes.fromhex(x["intro_bruta_500"]).decode("utf-16-le").split("|")]
+                for k in range(no_binario.get(i, 0)):
+                    if bruta[k] != b500[k]:
+                        if (bruta[k], b500[k]) == (0, 500):
+                            intro.append({"proficiencia": True})
+                        else:
+                            problemas.append(f"{i}/{n}: palavra {k} muda com a proficiência ({bruta[k]} -> {b500[k]})")
+                    elif intro and "palavras" in intro[-1]:
+                        intro[-1]["palavras"].append(bruta[k])
+                    else:
+                        intro.append({"palavras": [bruta[k]]})
             elif x.get("intro") not in (None, ""):
                 problemas.append(f"{i}/{n}: descrição sem argumentos lidos no fonte")
             # B323: a contagem é a do binário.
@@ -218,6 +256,9 @@ def main(pasta, gabarito, descricoes, argumentos, destino):
         elif combo_padrao.get(i) == 0:
             h["combo"] = {"arg": 0, "faixas": []}
     del modelo["combos"]
+    for h in modelo["habilidades"].values():
+        h.pop("_126", None)
+    modelo.setdefault("versao_do_dll", 0)
     # Lista na ordem do `NextSkill` do original (a do gabarito): o executável percorre nessa ordem.
     modelo["habilidades"] = list(modelo["habilidades"].values())
     json.dump(modelo, open(destino, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))

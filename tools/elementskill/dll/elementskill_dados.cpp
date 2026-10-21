@@ -42,12 +42,14 @@ public:
     virtual wchar_t* Find(int n) const = 0;
 };
 
+#ifndef PWSK_126  // fase 7: o 1.2.6 tem as suas estruturas e a sua classe (elementskill_dados_126.cpp, spec 08 §13)
 struct ComboSkillState { unsigned int skillid; int arg[3]; };
 struct LearnRequirement { int level, sp, money, profession, rank, realm_level; };
 struct UseRequirement { int mp, ap, form, weapon, freepackage, arrow, move_env; bool is_combat; int hp, max_hp; ComboSkillState combo_state; };
 struct PetRequirement { int level, sp; int* list; int lsize; };
 struct GoblinRequirement { int genius[5]; int profession, sp, money, level, mp; };
 struct GoblinUseRequirement { int mp, ap; int genius[5]; int profession, level, move_env; };
+#endif
 
 // ---------------------------------------------------------------- os dados (habilidades.pwsk)
 struct Arg { unsigned char tipo; std::vector<unsigned int> palavras; };
@@ -278,6 +280,7 @@ static Persistente& pegar(unsigned int id) {
 static int nivel_aprendido(unsigned int id) { std::map<unsigned int, Persistente>::iterator it = guardado.find(id); return it == guardado.end() ? 0 : it->second.level; }
 static int proficiencia(unsigned int id) { std::map<unsigned int, Persistente>::iterator it = guardado.find(id); return it == guardado.end() ? 0 : it->second.ability; }
 
+#ifndef PWSK_126
 // `SkillWrapper::IsOverridden(id, senior)` (skillwrapper.cpp): a sênior é quem tem juniores.
 static bool sobrescrita_por(unsigned int id, unsigned int senior, int profundidade) {
     const HabD* s = achar(senior);
@@ -297,6 +300,8 @@ static bool sobrescrita(unsigned int id) {
     return false;
 }
 
+#endif
+
 // O `_snwprintf` do mesmo msvcrt.dll que o original usava (a formatação de `%.1f` muda entre CRTs).
 typedef int(__cdecl* FnVsnw)(wchar_t*, size_t, const wchar_t*, va_list);
 static FnVsnw vsnw() {
@@ -310,6 +315,7 @@ static FnVsnw vsnw() {
 
 static inline float f32(double x) { return (float)x; }
 
+#ifndef PWSK_126
 // ---------------------------------------------------------------- a classe que o executável usa
 class __declspec(dllexport) ElementSkill {
 public:
@@ -677,6 +683,8 @@ void ElementSkill::LoadSkillData(void* data) {
         guardado[(unsigned int)id] = e;
     }
 }
+
+#endif  // PWSK_126
 
 const VisibleState* VisibleState::Query(int profession, int id) {
     carregar();

@@ -697,13 +697,15 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
    coleta com missão (B67), abate em equipe, sucesso/falha da equipe e serviço 8 (B164).
    **Grupo sem limite de membros:** o original tem 10 no 1.5.5 e 6 no 1.2.6
    (`TEAM_MEMBER_CAPACITY`; tabelas de bônus de 11 e 7 entradas) — o nosso convite não confere.
-2. **Munição:** sem flecha o golpe não é recusado e o bônus de dano da flecha não entra;
-   a compra na loja não confere a lista de venda do NPC. **Itens:** refinar, incrustar, remover
+2. **Munição — feita no B144** (conferida de novo no B329, `a_flecha_so_ativa_na_faixa_da_arma_e_soma_o_dano`):
+   sem a flecha certa ativa a arma de longe não golpeia (`range_weapon_item::OnCheckAttack`) e a flecha ativa soma o
+   dano. Falta: a compra na loja não confere a lista de venda do NPC. **Itens:** refinar, incrustar, remover
    pedras e furar feitos no B163 (spec 05 §8.3); faltam o furo de acessório (serviço 96),
    transferir refino (45) e addons de habilidade/conjunto (B53).
-3. **Coleta:** sem recarga de 500 ms, sem interrupção por dano, exp/SP sem ajuste de nível.
-4. **Ataque normal sem animação, e o monstro atacado não reage** (B44 #6). A investigar —
-   não medido.
+3. **Coleta — feita no B144** (conferida no B329, `o_golpe_interrompe_a_coleta`): recarga de 500 ms (erro 187,
+   só 1.5.5), interrupção por golpe e exp/SP pelo nível da mina.
+4. **Ataque normal — feito** (B52–B54 sessão de golpe com `HOST_START_ATTACK`/`ATTACK_ONCE`, B62 dano adiado, B67
+   ameaça na chegada do golpe; conferido no B329: `combate_real` 30/30). O "sem animação" do B44 #6 era antes disso.
 5. **Troca de mapa só dentro do processo** (B51): mapa de outro contêiner exigiria o link
    reencaminhar a sessão. **Teleporte por NPC** (`NPC_TRANSMIT_SERVICE`, destinos por
    waypoint) e GM para outro mapa `falta`. O grupo se desfaz na troca.
@@ -715,9 +717,9 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 7. **Guia do jogo** do personagem novo: a barra de atalhos agora é gravada pelo próprio
     cliente (B51); o `config_data` do molde no `clsconfig` (barra pré-preenchida) segue não
     decodificado (B44b15, B47d).
-8. **Sem trava de PvP:** qualquer jogador machuca qualquer outro, em qualquer lugar
-    (`bus_server.rs`, comentário em `pvp`). O original exige duelo, guerra ou mapa de PK
-    (B35d).
+8. **Trava de PvP — feita no B146** (chave por jogador, nível > 29, Ctrl, fora do grupo; conferida no B329,
+    `sem_pvp_a_habilidade_nao_fere_outro_jogador`). Faltam duelo, agressor, perdas na morte PvP, zona de segurança e
+    `STATE_PVPMODE`.
 9. **Mascote de combate:** montaria (B78-B80) e combate (B111/B112: invocar, IA, habilidades,
     soltar, renomear, aprender/esquecer) testados na suíte; falta ver em jogo, e faltam
     invisibilidade, água/ar e bênção de mascote em outro alvo. Do estado estendido, os bits que
@@ -1312,6 +1314,9 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 323 | 10-21 | Descrições: argumentos pelo binário e `%` sem escape corrigidos |
 | 325 | 10-21 | Edição completa das habilidades no Estúdio (descrição, alcance, nos dois, versões) |
 | 326 | 10-21 | Testes em jogo do Murillo (1.5.5 e 1.2.6) registrados como confirmados |
+| 327 | 10-21 | DLL de dados, fase 7: o 1.2.6 (diferencial 0) — rascunho 57 a publicar |
+| 328 | 10-21 | DLL de dados, fase 6: habilidade nova pelo Estúdio |
+| 329 | 10-21 | §5A revisto (munição, coleta, ataque, PvP já feitos) e os testes instáveis |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

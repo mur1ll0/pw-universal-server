@@ -4,7 +4,8 @@
 #include <stdio.h>
 int main(int c, char** a) {
   HMODULE d = LoadLibraryA(a[1]);
-  ((void(__cdecl*)())GetProcAddress(d, "?InitStaticData@ElementSkill@GNET@@SAXXZ"))();
+  void(__cdecl* ini)() = (void(__cdecl*)())GetProcAddress(d, "?InitStaticData@ElementSkill@GNET@@SAXXZ");
+  if (ini) ini();  // o 1.2.6 não tem InitStaticData
   void*(__cdecl* cr)(unsigned, int) = (void*(__cdecl*)(unsigned, int))GetProcAddress(d, "?Create@ElementSkill@GNET@@SAPAV12@IH@Z");
   unsigned(__cdecl* nx)(unsigned) = (unsigned(__cdecl*)(unsigned))GetProcAddress(d, "?NextSkill@ElementSkill@GNET@@SAII@Z");
   for (unsigned id = nx(0); id; id = nx(id)) {

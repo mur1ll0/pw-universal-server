@@ -963,6 +963,22 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let h2 = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &rb.to_string()).call().unwrap());
         assert_eq!((h2["cliente"]["campos"]["sp_exigido"]["valores"].clone(), h2["servidor"]["sp_exigido"].clone()), (dez(31), dez(31)), "{h2}");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros_nos_dois?rascunho={rb}")).send_json(json!({"odio": dez(1)}))).0, 400, "ódio só existe no servidor");
+        // B328 (fase 6): habilidade nova clonada da 1, ensinada onde a 1 é ensinada, no mesmo rascunho.
+        let nh = json_de(pedir("POST", &format!("estudio/habilidades/1/nova?rascunho={rb}")).send_json(json!({"nome": "Tigre Novo", "ensinar": true})).unwrap());
+        let nid = nh["id"].as_i64().unwrap();
+        assert!(nid > 1 && nid <= 32767, "{nh}");
+        assert!(nh["ensinada_por"].as_array().is_some_and(|a| !a.is_empty()), "{nh}");
+        let hn = json_de(pedir("GET", &format!("estudio/habilidades/{nid}")).query("rascunho", &rb.to_string()).call().unwrap());
+        assert_eq!((hn["nome"].as_str(), hn["descricao"].clone()), (Some("Tigre Novo"), h2["descricao"].clone()), "{hn}");
+        assert_eq!((hn["cliente"]["fonte"].as_str(), hn["cliente"]["campos"]["sp_exigido"]["valores"].clone()), (Some("pwsk"), dez(31)), "{hn}");
+        assert_eq!(hn["servidor"]["sp_exigido"], dez(31), "{hn}");
+        let lista = json_de(pedir("GET", "estudio/habilidades").query("busca", &nid.to_string()).query("rascunho", &rb.to_string()).call().unwrap());
+        assert_eq!(lista["habilidades"][0]["id"].as_i64(), Some(nid), "{lista}");
+        assert_eq!(erro_de(pedir("POST", &format!("estudio/habilidades/1/nova?rascunho={rb}")).send_json(json!({"novo": nid}))).0, 400, "id em uso");
+        assert_eq!(erro_de(pedir("POST", &format!("estudio/habilidades/1/nova?rascunho={rb}")).send_json(json!({"novo": 40000}))).0, 400, "id acima de 32.767");
+        assert_eq!(erro_de(pedir("POST", &format!("estudio/habilidades/999999/nova?rascunho={rb}")).send_json(json!({}))).0, 400, "base inexistente");
+        let tirado = json_de(pedir("DELETE", &format!("rascunhos/{rb}/arquivo")).query("caminho", "data\\elements.data").call().unwrap());
+        assert_eq!(tirado["tirado"], json!(true), "{tirado}");
         let tirado = json_de(pedir("DELETE", &format!("rascunhos/{rb}/arquivo")).query("caminho", "catalogo\\habilidades.json").call().unwrap());
         assert_eq!(tirado["tirado"], json!(true), "{tirado}");
         let tirado = json_de(pedir("DELETE", &format!("rascunhos/{rb}/arquivo")).query("caminho", "habilidades.pwsk").call().unwrap());

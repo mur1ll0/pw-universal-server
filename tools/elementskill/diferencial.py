@@ -55,7 +55,7 @@ def main(original, nosso, modelo, formatos):
         chaves = set(x) | set(y)
         for k in chaves:
             vx, vy = x.get(k), y.get(k)
-            if vx == vy:
+            if vx == vy or k in ("interno", "interno_prof"):  # 1.2.6: só o original roda com --interno (spec 08 §13)
                 continue
             if k.startswith("intro_bruta") and vx and vy:
                 n = nargs.get((x.get("id"), x.get("nivel")), 0)

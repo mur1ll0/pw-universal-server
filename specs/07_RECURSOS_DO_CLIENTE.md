@@ -753,6 +753,9 @@ o roteiro todo (acrescentar, remover, reordenar). O GS roda em ordem, só os pas
   liga a flag correspondente (salvo se a flag vier no mesmo pedido). Editar um roteiro existente não mexe na flag: há
   roteiros do original com ela desligada (1.2.6: 4 `no_alvo` sem `doenchant`; 1.5.5: 1 `em_si` sem `dobless`).
 
+**Habilidade nova (B328):** `POST …/estudio/habilidades/{base}/nova` clona a base no catálogo do servidor, no `.pwsk`, no
+`skillstr.txt` e, com `ensinar`, nos serviços de NPC do `elements` — regras na spec 08 §14; repasse em `painel/recursos.py`.
+
 **Descrição, alcance e números nos dois (B325):** rotas `…/descricao_numeros`, `…/alcance` (com `servidor`) e
 `…/numeros_nos_dois`, regras na spec 08 §12. O painel ganhou:
 - a tabela "Números da descrição" (uma coluna por conversão do texto);

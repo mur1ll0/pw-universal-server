@@ -71,6 +71,8 @@ const CAMPOS_DO_PWSK: [(&str, usize, Option<usize>, &str); 9] = [
 /// B302: os números das habilidades do realm — item do servidor publicado em `data/<realm>/catalogo/habilidades.json`,
 /// que o GS lê no lugar do embutido (`manager.rs:330-361`, B102).
 const CAMINHO_HABILIDADES: &str = "catalogo\\habilidades.json";
+/// B328: o maior id de habilidade que o cliente aceita — o `cmd_skill_data` traz o id em 2 bytes com sinal.
+const ID_MAXIMO_DE_HABILIDADE: i64 = 32767;
 
 /// B302: os campos por nível que se editam, e quem os confere. O cliente decide sozinho, pelo `elementskill.dll` dele,
 /// se pode lançar (`CheckSkillCastCondition`, `EC_HostPlayer.cpp:6097-6150`: mana…) e aprender (`LearnCondition`,
@@ -3815,6 +3817,128 @@ impl Estudio {
             Ok((novo, json!({ "id": id, "nome": nome, "descricao": descricao }), mudanca))
         })
         .await
+    }
+
+    /// B328 (fase 6 do DLL de dados, spec 08 §14): uma habilidade nova, clonada de `base`, num rascunho só.
+    /// - O id: o pedido, ou o maior em uso + 1. Tem de estar livre no catálogo do servidor, no `habilidades.pwsk` e no
+    ///   `skillstr.txt` (`id×10` e `id×10+1`), e ser no máximo 32.767: o `LoadSkillData` do cliente lê o id do
+    ///   `cmd_skill_data` em 2 bytes com sinal (1.5.5 `skillwrapper.cpp:17`; 1.2.6 `1000475B`).
+    /// - `ensinar`: o id novo na primeira vaga de cada `NPC_SKILL_SERVICE` que ensina a base (`elements.data`).
+    /// - O catálogo do servidor (`catalogo\habilidades.json`): a entrada da base com o id novo (o GS indexa pelo `id`).
+    /// - O `habilidades.pwsk`, se a versão o tiver: a habilidade da base com o id novo, no fim da ordem do `NextSkill`.
+    /// - O `skillstr.txt`: o nome (o pedido, ou o da base com " (nova)") e a descrição da base, em fichas novas.
+    /// Tudo é conferido antes de gravar; o ensino (o que mais pode faltar) vem primeiro.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn nova_habilidade(&self, gov: &Governanca, versao: &str, rascunho: i64, base: i64, novo: Option<i64>, nome: Option<String>, ensinar: bool) -> Result<Value> {
+        let (hs, _) = self.habilidades_do_servidor(gov, versao, Some(rascunho)).await?;
+        if !hs.contains_key(&base.to_string()) {
+            bail!("a habilidade {base} não existe no catálogo do servidor");
+        }
+        let modelo = match self.bytes_do_cliente(gov, versao, CAMINHO_PWSK, Some(rascunho)).await.ok() {
+            Some(b) => Some(pw_data_loader::habilidades_do_cliente::ler(&b).map_err(anyhow::Error::msg)?),
+            None => None,
+        };
+        if modelo.as_ref().is_some_and(|m| !m.habilidades.iter().any(|h| h.id as i64 == base)) {
+            bail!("a habilidade {base} não está no {CAMINHO_PWSK}");
+        }
+        let textos = self.skillstr(gov, versao, Some(rascunho)).await?;
+        let em_uso = |id: i64| {
+            hs.contains_key(&id.to_string())
+                || modelo.as_ref().is_some_and(|m| m.habilidades.iter().any(|h| h.id as i64 == id))
+                || textos.fichas.iter().any(|f| f.chave == id * 10 || f.chave == id * 10 + 1)
+        };
+        let id = match novo {
+            Some(n) if em_uso(n) => bail!("o id {n} já está em uso"),
+            Some(n) => n,
+            None => {
+                let maior = hs.keys().filter_map(|k| k.parse::<i64>().ok())
+                    .chain(modelo.iter().flat_map(|m| m.habilidades.iter().map(|h| h.id as i64)))
+                    .max()
+                    .unwrap_or(0);
+                let mut n = maior + 1;
+                while em_uso(n) {
+                    n += 1;
+                }
+                n
+            }
+        };
+        if !(1..=ID_MAXIMO_DE_HABILIDADE).contains(&id) {
+            bail!("o id {id} não cabe: o cliente lê o id da habilidade em 2 bytes com sinal (1 a {ID_MAXIMO_DE_HABILIDADE})");
+        }
+        let nome = nome.unwrap_or_else(|| format!("{} (nova)", textos.texto(base * 10).unwrap_or_default()));
+        let descricao = textos.texto(base * 10 + 1).unwrap_or_default();
+        if nome.trim().is_empty() || nome.contains('"') {
+            bail!("o nome não pode ser vazio nem ter aspas");
+        }
+        let mut resposta = json!({ "id": id, "base": base, "nome": nome, "arquivos": [] });
+        let mut arquivos = Vec::new();
+        if ensinar {
+            let r = self.alterar(gov, versao, rascunho, move |e, resumo| {
+                let tabela = "NPC_SKILL_SERVICE";
+                let n = e.tabela(tabela)?.registros.len();
+                let valor = |r: &pw_data_loader::generic_elements::Record, k: usize| r.get(&format!("id_skills_{k}")).and_then(FieldValue::as_i32);
+                let mut servicos = Vec::new();
+                for i in 0..n {
+                    let r = e.tabela(tabela)?.ler(i)?;
+                    if !(1..=256).any(|k| valor(&r, k) == Some(base as i32)) {
+                        continue;
+                    }
+                    let sid = e.tabela(tabela)?.id(i);
+                    let vaga = (1..=256).find(|&k| valor(&r, k) == Some(0)).with_context(|| format!("o serviço {sid:?} não tem vaga para outra habilidade"))?;
+                    let campo = format!("id_skills_{vaga}");
+                    e.definir_campo(tabela, i, &campo, &FieldValue::Int(id as i32))?;
+                    resumo.campo(tabela, sid, &campo, json!(0), json!(id));
+                    servicos.push(sid);
+                }
+                if servicos.is_empty() {
+                    bail!("nenhum NPC_SKILL_SERVICE ensina a habilidade {base}");
+                }
+                Ok(json!(servicos))
+            })
+            .await?;
+            resposta["ensinada_por"] = r["resultado"].clone();
+            arquivos.push("data\\elements.data");
+        }
+        {
+            let trava = self.trava(rascunho);
+            let _guarda = trava.lock().await;
+            let (b, do_rascunho, _) = self.json_de_habilidades(gov, versao, Some(rascunho)).await?;
+            self.gravar_item_do_realm(gov, versao, rascunho, CAMINHO_HABILIDADES.to_string(), b, do_rascunho, move |b| {
+                let mut j: Value = serde_json::from_slice(b)?;
+                let hs = j.get_mut("habilidades").and_then(Value::as_object_mut).context("habilidades.json sem o objeto \"habilidades\"")?;
+                let mut h = hs.get(&base.to_string()).cloned().with_context(|| format!("a habilidade {base} não existe"))?;
+                h["id"] = json!(id);
+                hs.insert(id.to_string(), h);
+                let novo = serde_json::to_vec(&j)?;
+                pw_data_loader::habilidades::TabelaDeHabilidades::de_json(&String::from_utf8_lossy(&novo)).context("o habilidades.json com a nova não lê no GS")?;
+                Ok((novo, json!({ "id": id }), json!({ "acao": "nova", "tipo": "habilidade", "id": id, "base": base })))
+            })
+            .await?;
+            arquivos.push(CAMINHO_HABILIDADES);
+        }
+        if modelo.is_some() {
+            self.alterar_item_do_cliente(gov, versao, CAMINHO_PWSK, rascunho, move |b| {
+                let mut m = pw_data_loader::habilidades_do_cliente::ler(b).map_err(anyhow::Error::msg)?;
+                let mut h = m.habilidades.iter().find(|h| h.id as i64 == base).cloned().with_context(|| format!("a habilidade {base} não está no {CAMINHO_PWSK}"))?;
+                h.id = id as u32;
+                m.habilidades.push(h);
+                let novo = pw_data_loader::habilidades_do_cliente::escrever(&m).map_err(anyhow::Error::msg)?;
+                Ok((novo, json!({ "id": id }), json!({ "acao": "nova", "tipo": "habilidade_no_cliente", "id": id, "base": base })))
+            })
+            .await?;
+            arquivos.push(CAMINHO_PWSK);
+        }
+        let n2 = nome.clone();
+        self.alterar_item_do_cliente(gov, versao, CAMINHO_SKILLSTR, rascunho, move |b| {
+            let mut t = pw_data_loader::tabela_de_textos::TabelaDeTextos::ler(b).map_err(anyhow::Error::msg)?;
+            t.acrescentar(id * 10, &n2).map_err(anyhow::Error::msg)?;
+            t.acrescentar(id * 10 + 1, &descricao).map_err(anyhow::Error::msg)?;
+            Ok((t.escrever(), json!({ "id": id }), json!({ "acao": "nova", "tipo": "texto_de_habilidade", "id": id })))
+        })
+        .await?;
+        arquivos.push(CAMINHO_SKILLSTR);
+        resposta["arquivos"] = json!(arquivos);
+        Ok(resposta)
     }
 
     /// B298 (S6): um modelo inteiro a partir de um GLB, em `<pasta>\<título>.*`, no rascunho — a convenção dos 2.980

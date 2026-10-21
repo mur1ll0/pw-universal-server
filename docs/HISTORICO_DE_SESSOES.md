@@ -16674,3 +16674,81 @@ comparação lado a lado.
     - A sessão "edição completa das habilidades" saiu como 324, mesmo número da sessão do Codex sobre o `userdata`
       pessoal. Renumerada para **325** no histórico, no índice, nas specs 07/08 e nos comentários do código.
     - Spec 08 §11: a lista "Falta" ainda pedia descrição, alcance e `%` sem escape, já feitos (B323, B325). Corrigida.
+
+327. **Sessão 2026-10-21: DLL de dados, fase 7 — o 1.2.6.**
+
+    ### a. Pedido
+    "Implemente o que você sugeriu" — o 2º passo: o DLL de dados no 1.2.6, para o Estúdio editar as habilidades do
+    1.2.6 também no cliente.
+
+    ### b. O que foi feito (spec 08 §13)
+    - **Contrato pelo binário** (DLL 1.2.6 de 2007, sem fonte):
+      - 23 importações, os mesmos nomes do 1.5.5; `GetVersion` = 15;
+      - a classe concreta do `Create` com **31 slots**: a ordem saiu dos endereços únicos, dos grupos fundidos (16
+        `return 0`, 5 `return false`) e da estática `GetRequiredSp` → slot 10;
+      - `GetPrayRange(float)` com um argumento só; `GetRequiredSkill()` e `GetJunior()` devolvem `int`;
+      - estruturas `UseRequirement` (24 B) e `LearnRequirement` (20 B), e as condições lidas na desmontagem.
+    - **`gabarito126.cpp`:**
+      - chama o slot físico e escreve com o número lógico (o mesmo `gerar_modelo.py` e o mesmo `.pwsk`);
+      - `--interno` lê os números do stub que nenhum slot expõe: classe, rank, máximo, nível do pré-requisito e
+        proficiência por nível;
+      - a comparação usa varreduras pela API: máximo pelo `LearnCondition`, classe × rank, `GetAbilityPercent` em 10
+        proficiências por nível, carga do `LoadSkillData` e sobrescrita.
+    - **`gerar_modelo.py` sem fonte:**
+      - descrição pelas palavras do binário (`_snwprintf` em `1005000C`), com a proficiência detectada (0 → 500);
+      - corrigido o candidato do alcance: o `b` é o `float` do texto `%.9g` (17 níveis não fechavam).
+    - **`elementskill_dados_126.cpp`:** inclui o leitor do 1.5.5 (guardas `PWSK_126`; o pré-processado do 1.5.5 ficou
+      idêntico, MD5 igual) e a classe de 31 slots.
+
+    ### c. Provas
+    - Gabarito do original: 823 habilidades, 5.406 linhas, nenhuma chamada caiu; máximo pela API = interno nas 823.
+    - Modelo sem problemas; `habilidades.pwsk` 1.2.6 com 872.356 bytes, ida e volta igual.
+    - **Diferencial: 0 campos diferentes em 5.406 linhas.** Uma alteração plantada é acusada.
+    - Rascunho 57 no `pw-recursos` 1.2.6 (DLL `affb6098…`, `.pwsk` `a89e94e4…`): a ficha da 1 vem com `fonte: pwsk`,
+      descrição `2, 9, 74,7` e alcance `a = 1, b = 0`, iguais ao servidor.
+
+    ### d. Falta
+    - **Publicar o rascunho 57** — a publicação foi barrada pela proteção de deploy; precisa da autorização do Murillo.
+    - Ver em jogo no 1.2.6: abrir a janela de habilidades e o NPC de ensino; nada pode mudar em relação ao original.
+
+328. **Sessão 2026-10-21: DLL de dados, fase 6 — habilidade nova.**
+
+    - `Estudio::nova_habilidade` / `POST …/estudio/habilidades/{base}/nova {novo?, nome?, ensinar?}` (spec 08 §14):
+      - o id: o pedido ou o maior em uso + 1, livre no catálogo, no `.pwsk` e no `skillstr`, e no máximo 32.767 (o
+        `cmd_skill_data` traz o id em 2 bytes com sinal);
+      - com `ensinar`, o id entra na primeira vaga de cada `NPC_SKILL_SERVICE` que ensina a base;
+      - a base clonada no `catalogo\habilidades.json` (conferida pelo leitor do GS) e no `habilidades.pwsk` (no fim
+        do `NextSkill`);
+      - nome e descrição em fichas novas do `skillstr.txt`.
+    - `TabelaDeTextos::acrescentar`: a ficha nova vai no fim, com o fim de linha do arquivo, e só vale se o leitor do
+      cliente a reler.
+    - Painel: o botão "Nova habilidade (cópia desta)" na ficha (nome, id, "ensinar"); repasse em `painel/recursos.py`.
+    - Provas:
+      - `tabela_de_textos` 3/3;
+      - `pw-recursos` `estudio` com o banco 1/1: a nova da 1 no `elements` real do 1.2.6, ensinada por 3 serviços, com
+        nome, descrição, números e busca conferidos, e recusados o id em uso, o id 40.000 e a base inexistente;
+      - painel `teste_recursos` 12/12.
+    - Falta: ver em jogo (criar, publicar, reiniciar o mundo, atualizar pelo launcher, aprender no NPC e usar).
+
+329. **Sessão 2026-10-21: §5A revisto e os testes instáveis.**
+
+    - **§5A estava defasado:**
+      - munição e coleta foram feitas no B144;
+      - o ataque normal foi feito no B52–B54, no B62 e no B67;
+      - a trava de PvP foi feita no B146.
+      Conferido de novo com o banco: `a_flecha_so_ativa_na_faixa_da_arma_e_soma_o_dano`, `o_golpe_interrompe_a_coleta`,
+      `sem_pvp_a_habilidade_nao_fere_outro_jogador` e `a_chave_de_pvp_tem_nivel_minimo_e_espera`, 1/1 cada;
+      `combate_real` 30/30.
+    - **Testes instáveis sob carga (`subcomandos_no_mundo`):**
+      - `nao_da_para_entrar_num_grupo_sem_convite` exigia silêncio total por 400 ms; agora falha só com comando de
+        grupo (57–65, `EC_GPDataType.h:909-919`);
+      - `o_botao_de_roupa_alterna_e_avisa_os_dois_lados` lia "a próxima mensagem"; agora espera o 192.
+      - **A causa dos dois do monstro** (`o_guia_selvagem…1177`, `o_primeiro_teste_do_guerreiro_126…`) **e do
+        `o_hierograma…`**, medida com diagnóstico na falha (o monstro parado em (5, 5), o jogador em (0, 0) a 7,1 m, sem
+        sessão de golpe; o `auto_mp` sumido): o `colocar_no_mundo` faz `add_player` e **depois**
+        `recalcular_equipamento` (lê o banco). O `entrar` do teste via o jogador presente e ajustava alcance e atributos;
+        sob carga o recálculo chegava depois e os desfazia. Agora o `entrar` faz uma ida e volta (`UNSELECT` → 39) antes
+        de ajustar — o servidor trata a conexão em ordem. O convite (`o_convite_de_grupo…`) reprovava por silêncio total;
+        agora só pelo 57.
+      - Antes: 1 a 3 falhas por rodada do `subcomandos_no_mundo` (3 rodadas, 3 nomes diferentes). Depois: **3 rodadas
+        sob carga, 165/165 em cada**.

@@ -4,4 +4,6 @@ rem exportados saírem iguais aos que o ELEMENTCLIENT.EXE importa; /MT = sem dep
 call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars32.bat" >nul
 cd /d "%~dp0"
 cl /nologo /O2 /EHsc /MT /Zc:wchar_t- /LD elementskill_dados.cpp /Fe:elementskill.dll /link /NOLOGO
+rem Fase 7: o mesmo leitor com a classe do 1.2.6 (no cliente 1.2.6 o arquivo se chama elementskill.dll).
+cl /nologo /O2 /EHsc /MT /Zc:wchar_t- /LD elementskill_dados_126.cpp /Fe:elementskill_126.dll /link /NOLOGO
 del *.obj *.exp 2>nul

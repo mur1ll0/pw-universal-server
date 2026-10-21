@@ -594,6 +594,15 @@ def registrar_reinicio(app):
             app.put(f"/api/realms/{{realm}}/estudio/habilidades/{{id_habilidade}}/{sufixo}")(rota)
         _fazer(_sufixo)
 
+    # B328: habilidade nova, cópia de outra (catálogo do servidor, habilidades.pwsk, skillstr e, com "ensinar", o elements).
+    @app.post("/api/realms/{realm}/estudio/habilidades/{id_habilidade}/nova")
+    async def estudio_nova_habilidade(realm: str, id_habilidade: int, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        dados = await requisicao.json()
+        if not isinstance(dados, dict):
+            raise HTTPException(422, "Informe os dados.")
+        return await _repassar("POST", f"/admin/{v}/estudio/habilidades/{max(0, id_habilidade)}/nova", {"rascunho": rascunho}, dados=dados)
+
     # B308: expressões dos passos de no_alvo/em_si no catálogo do realm, no rascunho.
     @app.put("/api/realms/{realm}/estudio/habilidades/{id_habilidade}/roteiro")
     async def estudio_roteiro_da_habilidade(realm: str, id_habilidade: int, rascunho: int, requisicao: Request):

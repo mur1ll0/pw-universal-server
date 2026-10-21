@@ -35,6 +35,40 @@ async function abrirHabilidade(id) {
   ficha.replaceChildren();
   const s = f.servidor || {};
   ficha.appendChild(criar("h3", "", `${f.id} · ${f.nome || "(sem nome)"}`));
+  // B328 (fase 6): habilidade nova, cópia desta — catálogo do servidor, habilidades.pwsk e skillstr.txt no rascunho; com
+  // "ensinar", o id novo também entra nos serviços de NPC (NPC_SKILL_SERVICE) que ensinam esta.
+  {
+    const nomeNovo = criar("input", "campo");
+    nomeNovo.placeholder = `${f.nome || "Habilidade"} (nova)`;
+    nomeNovo.size = 30;
+    const idNovo = criar("input", "campo");
+    idNovo.type = "number";
+    idNovo.placeholder = "id (automático)";
+    idNovo.style.width = "9em";
+    const ensinar = criar("input");
+    ensinar.type = "checkbox";
+    ensinar.checked = true;
+    const rotulo = criar("label", "texto-suave");
+    rotulo.append(ensinar, " ensinar onde esta é ensinada");
+    const b = criar("button", "botao botao-pequeno", "Nova habilidade (cópia desta)");
+    b.type = "button";
+    b.addEventListener("click", async () => {
+      if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+      const corpo = { ensinar: ensinar.checked };
+      if (nomeNovo.value.trim()) corpo.nome = nomeNovo.value.trim();
+      if (idNovo.value.trim()) corpo.novo = Number(idNovo.value);
+      try {
+        const r = await api(rotaDeHabilidades(`/${f.id}/nova`, { rascunho: estudio.rascunho }), { method: "POST", body: JSON.stringify(corpo) });
+        const ens = Array.isArray(r.ensinada_por) ? ` Ensinada pelos serviços ${r.ensinada_por.join(", ")}.` : "";
+        alerta("ok", "Estúdio", `Habilidade ${r.id} criada no rascunho (${r.arquivos.join(", ")}).${ens}`);
+        if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+        abrirHabilidade(r.id);
+      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    });
+    const nova = criar("div");
+    nova.append(nomeNovo, " ", idNovo, " ", rotulo, " ", b);
+    ficha.appendChild(nova);
+  }
   // Nome e descrição (cliente).
   const nome = criar("input", "campo");
   nome.value = f.nome ?? "";
