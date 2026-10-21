@@ -79,7 +79,10 @@ async function abrirHabilidade(id) {
   const n = Number(s.max_level) || 0;
   const editaveis = new Map((f.editaveis || []).map((x) => [x.campo, x.quem_confere]));
   const entradas = {};
-  const porNivel = Object.keys(s).filter((k) => Array.isArray(s[k]) && s[k].length === n && n > 0 && !gerais.includes(k) && s[k].every((x) => x === null || typeof x !== "object"));
+  // B307: o dano por nível (dentro de `dano`) entra como colunas `dano.ratio`/`dano.plus`.
+  const sn = { ...s };
+  if (s.dano && typeof s.dano === "object") for (const k of ["ratio", "plus"]) if (Array.isArray(s.dano[k])) sn[`dano.${k}`] = s.dano[k];
+  const porNivel = Object.keys(sn).filter((k) => Array.isArray(sn[k]) && sn[k].length === n && n > 0 && !gerais.includes(k) && sn[k].every((x) => x === null || typeof x !== "object"));
   if (porNivel.length) {
     const tn = criar("table", "tabela-simples");
     tn.appendChild(criar("caption", "", "Por nível (null = depende de mais que o nível)"));
@@ -96,21 +99,21 @@ async function abrirHabilidade(id) {
       tr.appendChild(criar("td", "", String(i + 1)));
       for (const k of porNivel) {
         const td = criar("td");
-        if (editaveis.has(k) && s[k][i] !== null) {
+        if (editaveis.has(k) && sn[k][i] !== null) {
           const e = criar("input", "campo");
           e.type = "number";
-          e.value = String(s[k][i]);
+          e.value = String(sn[k][i]);
           e.style.width = "7em";
           (entradas[k] ||= []).push(e);
           td.appendChild(e);
-        } else td.textContent = s[k][i] === null ? "—" : String(s[k][i]);
+        } else td.textContent = sn[k][i] === null ? "—" : String(sn[k][i]);
         tr.appendChild(td);
       }
       tn.appendChild(tr);
     }
     ficha.appendChild(tn);
     if (Object.keys(entradas).length) {
-      ficha.appendChild(criar("div", "texto-suave", `Números de: ${f.origem_dos_numeros}. ✎ = editável; passe o mouse no cabeçalho para ver quem confere. Recarga e ódio são só do servidor; mana, nível, SP e dinheiro o cliente confere pelo elementskill.dll dele (mudar só aqui desalinha). Vale no jogo depois de publicar e reiniciar o mundo.`));
+      ficha.appendChild(criar("div", "texto-suave", `Números de: ${f.origem_dos_numeros}. ✎ = editável; passe o mouse no cabeçalho para ver quem confere. Recarga, ódio, dano e precisão são só do servidor (a descrição do cliente, com os %d do elementskill.dll, não muda); mana, nível, SP e dinheiro o cliente confere pelo elementskill.dll dele (mudar só aqui desalinha). Vale no jogo depois de publicar e reiniciar o mundo.`));
       const salvarN = criar("button", "botao botao-pequeno", "Salvar números no rascunho");
       salvarN.type = "button";
       salvarN.addEventListener("click", async () => {

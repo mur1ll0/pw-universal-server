@@ -918,6 +918,14 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let hn = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &rh.to_string()).call().unwrap());
         assert_eq!((hn["servidor"]["recarga_ms"].clone(), hn["origem_dos_numeros"].as_str()), (json!(recarga), Some("rascunho")), "{hn}");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros?rascunho={rh}")).send_json(json!({"cls": [1]}))).0, 400, "campo que não se edita");
+        // B307: o dano por nível (dentro de `dano`) e a precisão, só do servidor.
+        let plus: Vec<f64> = (1..=n).map(|i| 10.5 * i as f64).collect();
+        let prec: Vec<f64> = vec![1.5; n];
+        pedir("PUT", &format!("estudio/habilidades/1/numeros?rascunho={rh}")).send_json(json!({"dano.plus": plus, "precisao": prec})).unwrap();
+        let hd = json_de(pedir("GET", "estudio/habilidades/1").query("rascunho", &rh.to_string()).call().unwrap());
+        assert_eq!((hd["servidor"]["dano"]["plus"].clone(), hd["servidor"]["precisao"].clone()), (json!(plus), json!(prec)), "{hd}");
+        assert_eq!(hd["servidor"]["recarga_ms"], json!(recarga), "a edição anterior continua");
+        assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros?rascunho={rh}")).send_json(json!({"dano.ratio": [0.5]}))).0, 400, "dano: um por nível");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros?rascunho={rh}")).send_json(json!({"mp": [1, 2]}))).0, 400, "um número por nível");
         let ph = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [rh]})).unwrap());
         assert_eq!(ph["aplicados"].as_array().map(|x| x.len()), Some(1), "{ph}");

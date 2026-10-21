@@ -37,13 +37,19 @@ const CAMINHO_HABILIDADES: &str = "catalogo\\habilidades.json";
 /// se pode lançar (`CheckSkillCastCondition`, `EC_HostPlayer.cpp:6097-6150`: mana…) e aprender (`LearnCondition`,
 /// `:6067-6093`: nível, SP, dinheiro); a recarga o servidor manda (`SET_COOLDOWN`, `playerwrapper.cpp:170`) e o ódio é
 /// só do servidor.
-const CAMPOS_EDITAVEIS: [(&str, &str); 6] = [
+const CAMPOS_EDITAVEIS: [(&str, &str); 9] = [
     ("recarga_ms", "só o servidor (o cliente recebe a recarga por SET_COOLDOWN)"),
     ("odio", "só o servidor"),
     ("mp", "o cliente também confere, pelo elementskill.dll dele (CheckSkillCastCondition)"),
     ("nivel_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
     ("sp_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
     ("dinheiro_exigido", "o cliente também confere, pelo elementskill.dll dele (LearnCondition)"),
+    // B307: o golpe da habilidade é do servidor (`CombatEngine::golpe_de_habilidade`, `combat.rs:795-815`:
+    // `(bruto × (100 + bônus + ratio×100)% + plus) × fator`; a precisão multiplica a taxa de ataque,
+    // `bus_server/habilidades.rs:387`). O cliente não confere; só a descrição (os %d do elementskill.dll) fica antiga.
+    ("dano.ratio", "só o servidor (fração do ataque somada ao golpe; a descrição do cliente não muda)"),
+    ("dano.plus", "só o servidor (dano somado ao golpe; a descrição do cliente não muda)"),
+    ("precisao", "só o servidor (multiplica a taxa de ataque do golpe)"),
 ];
 
 #[derive(Default)]
@@ -3375,9 +3381,18 @@ impl Estudio {
             let n = h["max_level"].as_u64().context("habilidade sem max_level")? as usize;
             let mut mudou = Vec::new();
             for (k, v) in &campos {
-                let a = v.as_array().filter(|a| a.len() == n && a.iter().all(|x| x.as_f64().is_some_and(f64::is_finite)))
-                    .with_context(|| format!("{k}: uma lista de {n} números (um por nível)"))?;
-                h[k.as_str()] = Value::Array(a.clone());
+                // B307: `dano.ratio` = o campo `ratio` dentro de `dano` (que tem de existir: habilidade sem dano não ganha um).
+                let mut alvo = &mut *h;
+                let partes: Vec<&str> = k.split('.').collect();
+                for p in &partes[..partes.len() - 1] {
+                    alvo = alvo.get_mut(*p).filter(|x| x.is_object()).with_context(|| format!("a habilidade {id} não tem {p}"))?;
+                }
+                let ultimo = partes[partes.len() - 1];
+                // Uma lista por nível; se já houver lista, do mesmo tamanho dela.
+                let tam = alvo.get(ultimo).and_then(Value::as_array).map(Vec::len).unwrap_or(n);
+                let a = v.as_array().filter(|a| a.len() == tam && a.iter().all(|x| x.as_f64().is_some_and(f64::is_finite)))
+                    .with_context(|| format!("{k}: uma lista de {tam} números (um por nível)"))?;
+                alvo[ultimo] = Value::Array(a.clone());
                 mudou.push(k.clone());
             }
             let novo = serde_json::to_vec(&j)?;
