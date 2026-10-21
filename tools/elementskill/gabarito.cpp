@@ -325,6 +325,47 @@ int main(int argc, char** argv) {
             printf("]}\n");
         }
     }
+    // B317: a condição de combo, varrida pela API pública (vale igual nos dois DLLs): para cada pré-combo, cada
+    // argumento de −1000 a 1000 (os outros 0); as faixas em que cada habilidade seguinte aparece e o seu intervalo.
+    {
+        typedef int(__cdecl* FnPre)(unsigned int);
+        FnPre pre = (FnPre)sym("?GetComboSkPreSkill@ElementSkill@GNET@@SAHI@Z");
+        std::map<int, int> pres;
+        for (unsigned int id = next(0); pre && id; id = next(id)) if (pre(id)) pres[pre(id)] = 1;
+        for (auto& pr : pres) {
+            for (int a = 0; combo && a < 3; a++) {
+                std::map<unsigned int, std::vector<int> > presente;
+                std::map<unsigned int, int> intervalo;
+                for (int v = -1000; v <= 1000; v++) {
+                    ComboSkillState c = {(unsigned int)pr.first, {0, 0, 0}};
+                    c.arg[a] = v;
+                    Lista<Par> l;
+                    int ok;
+                    p_combo(combo, &c, &l, &ok);
+                    for (size_t k = 0; ok && k < l.v.size(); k++) { presente[l.v[k].id].push_back(v); intervalo[l.v[k].id] = l.v[k].nivel; }
+                }
+                printf("{\"combo_varredura\":%d,\"arg\":%d,\"ativas\":{", pr.first, a);
+                int pa = 1;
+                for (auto& e : presente) {
+                    printf("%s\"%u\":[", pa ? "" : ",", e.first);
+                    pa = 0;
+                    // Faixas contíguas.
+                    const std::vector<int>& vs = e.second;
+                    for (size_t k = 0; k < vs.size();) {
+                        size_t j = k;
+                        while (j + 1 < vs.size() && vs[j + 1] == vs[j] + 1) j++;
+                        printf("%s[%d,%d]", k ? "," : "", vs[k], vs[j]);
+                        k = j + 1;
+                    }
+                    printf("]");
+                }
+                printf("},\"intervalos\":{");
+                pa = 1;
+                for (auto& e : intervalo) { printf("%s\"%u\":%d", pa ? "" : ",", e.first, e.second); pa = 0; }
+                printf("}}\n");
+            }
+        }
+    }
     typedef void*(__cdecl* FnQV)(int, int);
     typedef void*(__cdecl* FnQT)(int);
     FnQV qv = (FnQV)sym("?Query@VisibleState@GNET@@SAPBV12@HH@Z");

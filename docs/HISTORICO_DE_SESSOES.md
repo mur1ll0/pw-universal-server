@@ -16366,3 +16366,33 @@ comparação lado a lado.
     ### c. Próximo
     O DLL de dados em C++: exporta as 36 funções e a vtable de 53 slots da spec 08, lê o `.pwsk` e porta a lógica de
     condições do fonte. Depois, o diferencial com o próprio `gabarito.exe`.
+
+317. **Sessão 2026-10-21: DLL de dados, fase 3 (parte 3) — o nosso `elementskill.dll` e o diferencial 100%.**
+
+    ### a. O que foi feito
+    - **`tools/elementskill/dll/elementskill_dados.cpp`** (VS2022 x86, `/MT`, `/Zc:wchar_t-`):
+      - as 36 funções importadas, com o nome exato (`dumpbin`), e a vtable de 53 slots;
+      - lê o `habilidades.pwsk` ao lado;
+      - a lógica de base é porte do fonte: condições, pré-requisitos, sobrescrita, proficiência, combo, alcance,
+        `LoadSkillData`;
+      - a descrição sai pelo `_vsnwprintf` do `msvcrt.dll` do sistema, o mesmo CRT do original.
+    - **`diferencial.py`:** compara os gabaritos, classificando sozinho, pelo formato, os textos que o original
+      preenche com lixo da pilha.
+
+    ### b. O que a primeira rodada achou (762 campos diferentes)
+    - **Combo de 3231/3232:** o fonte não tem essas habilidades, e a desmontagem dos stubs (`101AB430`, `101AB840`)
+      mostra faixas — `33 < arg0 ≤ 66` e `arg0 > 66`. A condição de combo passou a ser **medida**: o gabarito varre
+      cada argumento de −1000 a 1000 por pré-combo pela própria API (30 varreduras). O modelo guarda `{arg, faixas}`,
+      e o formato e o DLL foram ajustados.
+    - **Descrição de 65 habilidades:** o texto traduzido tem `%` sem escape ("100% de" vira `% d`). O original mostra
+      `268546049` = `0x1001B001`, um endereço do próprio DLL e por isso sempre o mesmo (o B314 não o pegou como
+      indeterminado); o nosso mostra 0. É defeito de texto que os jogadores veem; corrigível no Estúdio.
+
+    ### c. Provas
+    - Diferencial final: **0 campos diferentes em 26.767 linhas** (todas as estáticas, slots, armas, vida, alcance,
+      listas, descrição, condições sorteadas, combos varridos, estados e inerentes).
+    - `habilidades_do_cliente` 2/2 com o formato novo do combo.
+
+    ### d. Próximo
+    Fase 4: o Murillo testa em jogo (roteiro no ESTADO §3.3). Depois, fase 5: o Estúdio gera e edita o `.pwsk` e
+    distribui o DLL pelo launcher.

@@ -13,7 +13,7 @@
 //!     flags: 1 duende, 2 móvel, 4 sobrescrita, 8 todas as armas, 16 tem vida, 32 tem combo
 //!   str icone wstr nome str nome_nativo str efeito                (as estáticas por id)
 //!   wstr texto0 str texto1 str texto3 str texto29 str texto30      (os slots de texto da vtable)
-//!   [!todas] u16 n i32 arma×n   [vida] u8 lo u8 hi   [combo] u8 indice u8 op(0 ==, 1 >=) i32 valor
+//!   [!todas] u16 n i32 arma×n   [vida] u8 lo u8 hi   [combo] u8 arg u8 n (i32 lo, i32 hi)×n
 //!   nível × max_level:
 //!     i32 ints×25  i8 bytes×13  f64 a f64 b f64 c
 //!     u8 tem_genio [i32×5]  u8 n_pre (u32 id, i32 nivel)×n  u8 n_jun (u32, i32)×n  i32 est×7
@@ -83,11 +83,19 @@ pub struct Habilidade {
     pub armas: Armas,
     /// `CheckHpCondition`: vida em `[lo, hi]` % (`hp ≥ max/100·lo && hp ≤ max/100·hi`, em float).
     pub vida: Option<[u8; 2]>,
-    /// `CheckComboSkExtraCondition`: `arg[i] == v` ou `arg[i] >= v`.
-    pub combo: Option<(u8, String, i32)>,
+    /// `CheckComboSkExtraCondition` (B317): verdadeira se `arg[arg]` cai numa das faixas (fechadas; `i32::MIN`/`MAX`
+    /// = sem limite); sem faixas = sempre falsa; `None` = sempre verdadeira. Medida no binário pelas varreduras do
+    /// gabarito (os stubs do BR têm faixas que o fonte não tem).
+    pub combo: Option<Combo>,
     #[serde(default)]
     pub intervalo_combo: i32,
     pub niveis: Vec<Nivel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Combo {
+    pub arg: u8,
+    pub faixas: Vec<(i32, i32)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -228,14 +236,16 @@ pub fn escrever(m: &Modelo) -> Result<Vec<u8>, String> {
             w.u8(lo);
             w.u8(hi);
         }
-        if let Some((i, op, v)) = &h.combo {
-            w.u8(*i);
-            w.u8(match op.as_str() {
-                "==" => 0,
-                ">=" => 1,
-                o => return Err(format!("{}: combo {o}", h.id)),
-            });
-            w.i32(*v);
+        if let Some(c) = &h.combo {
+            if c.arg > 2 {
+                return Err(format!("{}: combo no argumento {}", h.id, c.arg));
+            }
+            w.u8(c.arg);
+            w.u8(u8::try_from(c.faixas.len()).map_err(|_| "faixas demais".to_string())?);
+            for &(lo, hi) in &c.faixas {
+                w.i32(lo);
+                w.i32(hi);
+            }
         }
         for (k, n) in h.niveis.iter().enumerate() {
             if n.ints.len() != SLOTS_INT.len() || n.bytes.len() != SLOTS_BYTE.len() || n.est.len() != 7 {
@@ -371,9 +381,9 @@ pub fn ler(b: &[u8]) -> Result<Modelo, String> {
         };
         let vida = if flags & 16 != 0 { Some([r.u8()?, r.u8()?]) } else { None };
         let combo = if flags & 32 != 0 {
-            let i = r.u8()?;
-            let op = if r.u8()? == 0 { "==" } else { ">=" };
-            Some((i, op.to_string(), r.i32()?))
+            let arg = r.u8()?;
+            let n = r.u8()?;
+            Some(Combo { arg, faixas: (0..n).map(|_| Ok((r.i32()?, r.i32()?))).collect::<Result<_, String>>()? })
         } else {
             None
         };
@@ -453,7 +463,7 @@ mod testes {
                 estaticas: Estaticas { tipo: 1, icone: "6162".into(), nome: "4100".into(), nome_nativo: "".into(), efeito: "63".into(), duende: 0, movel: 1, sobrescrita: 0, pre_combo: 0, recarga_comum: 3 },
                 armas: Armas::Lista(vec![0, 1, 182]),
                 vida: Some([0, 40]),
-                combo: Some((0, "==".into(), 0)),
+                combo: Some(Combo { arg: 0, faixas: vec![(34, 66), (100, i32::MAX)] }),
                 intervalo_combo: 45000,
                 niveis: vec![nivel(1), nivel(2)],
             }],

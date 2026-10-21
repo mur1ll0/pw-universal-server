@@ -81,6 +81,8 @@ def main(pasta, gabarito, descricoes, destino):
     modelo = {"versao_do_modelo": 1, "habilidades": {}, "estados_visiveis": [], "estados_equipe": [], "inerentes": {},
               "combos": []}
     problemas = []
+    varreduras = {}  # pré-combo → arg → linha da varredura (B317)
+    combo_padrao = {}  # id → slot 52 com os argumentos zerados (nível 1)
     atual = None
     for linha in open(gabarito, encoding="utf-8"):
         x = json.loads(linha)
@@ -88,7 +90,7 @@ def main(pasta, gabarito, descricoes, destino):
             i = x["habilidade"]
             atual = {
                 "id": i, "max_level": x["max_level"], "estaticas": x["estaticas"], "armas": x["armas"],
-                "vida": fonte.get(i, {}).get("vida"), "combo": fonte.get(i, {}).get("combo"), "niveis": [],
+                "vida": fonte.get(i, {}).get("vida"), "combo": None, "niveis": [],
             }
             # A faixa de vida do fonte tem de reproduzir as sondas do gabarito.
             esperado = x["vida"]
@@ -102,6 +104,8 @@ def main(pasta, gabarito, descricoes, destino):
         elif "nivel" in x and "v" in x:
             i, n = x["id"], x["nivel"]
             v = x["v"]
+            if n == 1:
+                combo_padrao[i] = v["52"]
             nivel = {
                 "ints": [v[str(s)] for s in SLOTS_INT],
                 "bytes": [v[str(s)] for s in SLOTS_BYTE],
@@ -172,15 +176,33 @@ def main(pasta, gabarito, descricoes, destino):
             modelo["inerentes"][str(x["inerentes"])] = x["lista"]
         elif "versao" in x:
             modelo["versao_do_dll"] = x["versao"]
+        elif "combo_varredura" in x:
+            varreduras.setdefault(x["combo_varredura"], {})[x["arg"]] = x
         elif "combo" in x:
             modelo["combos"].append(x)
-    # Intervalo do combo de cada habilidade (o segundo do par do `GetComboSkActivated`, `stub+0x74`).
-    for c in modelo["combos"]:
-        for pid, intervalo in c.get("lista", []):
-            h = modelo["habilidades"][str(pid)]
-            if h.get("intervalo_combo", intervalo) != intervalo:
-                problemas.append(f"{pid}: dois intervalos de combo")
-            h["intervalo_combo"] = intervalo
+    # B317: a condição de combo pelas varreduras do binário (os stubs do BR têm faixas, ex. 3231: 33 < arg0 ≤ 66).
+    # A condição depende do argumento cuja varredura não é nem sempre nem nunca; as bordas ±1000 da varredura valem
+    # como sem limite. Quem não é pós-combo e tem o slot 52 falso com argumentos zero fica com condição sempre falsa.
+    INT_MIN, INT_MAX = -2147483648, 2147483647
+    for h in modelo["habilidades"].values():
+        i, pre = h["id"], h["estaticas"]["GetComboSkPreSkill"]
+        if pre and pre in varreduras:
+            faixas = {a: varreduras[pre][a]["ativas"].get(str(i), []) for a in varreduras[pre]}
+            for a in varreduras[pre]:
+                iv = varreduras[pre][a]["intervalos"].get(str(i))
+                if iv is not None:
+                    h["intervalo_combo"] = iv
+            sempre = [[-1000, 1000]]
+            variam = [a for a, f in faixas.items() if f not in (sempre, [])]
+            if len(variam) > 1:
+                problemas.append(f"{i}: condição de combo em mais de um argumento {faixas}")
+            elif variam:
+                a = variam[0]
+                h["combo"] = {"arg": a, "faixas": [[INT_MIN if lo == -1000 else lo, INT_MAX if hi == 1000 else hi] for lo, hi in faixas[a]]}
+            elif all(f == [] for f in faixas.values()):
+                h["combo"] = {"arg": 0, "faixas": []}
+        elif combo_padrao.get(i) == 0:
+            h["combo"] = {"arg": 0, "faixas": []}
     del modelo["combos"]
     # Lista na ordem do `NextSkill` do original (a do gabarito): o executável percorre nessa ordem.
     modelo["habilidades"] = list(modelo["habilidades"].values())

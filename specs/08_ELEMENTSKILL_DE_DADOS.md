@@ -1,7 +1,7 @@
 # 08 — `elementskill.dll` de dados (opção D)
 
-> Estado: **fase 1 (contrato) concluída — B313; fase 2 (gabarito) concluída — B314; fase 3 em andamento — B315
-> (o modelo do cliente e o arquivo `habilidades.pwsk` estão prontos; falta o DLL em C++ e o diferencial)**. Decisão do Murillo (2026-10-20): seguir a opção D do
+> Estado: **fases 1 (contrato, B313), 2 (gabarito, B314) e 3 (DLL de dados com diferencial 100%, B315–B317)
+> concluídas**. Próxima: fase 4, o teste em jogo. Decisão do Murillo (2026-10-20): seguir a opção D do
 > `docs/admin/ESTUDO_HABILIDADES_DO_CLIENTE.md`, começando pelo 1.5.5, e distribuir o nosso DLL pelo launcher.
 > Fases: 1 contrato · 2 gabarito (medir o original inteiro) · 3 DLL de dados + diferencial 100% · 4 jogo · 5 Estúdio ·
 > 6 habilidade nova · 7 1.2.6.
@@ -243,3 +243,39 @@ bytes exatos (GBK, UTF-16LE), e o alcance como `f64` (`a`, `b`, `c`). Ferramenta
 grava se a ida e volta reproduzir o modelo.
 
 1.5.5: 3.316 habilidades, 4.353.007 bytes, ida e volta igual.
+
+## 10. O DLL de dados e o diferencial (fase 3, B317)
+
+`tools/elementskill/dll/elementskill_dados.cpp`, compilado por `dll/compilar.bat` (VS2022 x86, `/MT`, `/Zc:wchar_t-`
+para `wchar_t` = `unsigned short` como no VC6). Ele:
+- exporta as 36 funções com o nome exato que o executável importa (conferido por `dumpbin`; o DLL tem 97 exportações);
+- monta a vtable de 53 slots na ordem do §3;
+- lê `habilidades.pwsk` da mesma pasta, na primeira chamada.
+
+**A lógica de base é porte do fonte:**
+- `Condition` e `LearnCondition` (`ElementSkill.cpp:43-227`);
+- `PetLearn` e `Goblin*` (`:455-606`);
+- `GetAbilityPercent`;
+- `GetComboSkActivated` (pós-combo na ordem do `NextSkill`);
+- `IsOverridden` (`skillwrapper.cpp`);
+- `LoadSkillData` (`cmd_skill_data` empacotado em 1 byte: `count` mais entradas de 5 bytes);
+- `GetPrayRange` (`skill.h:251-272`).
+
+**Descrição.** Montada com as palavras do arquivo e formatada pelo `_vsnwprintf` do `msvcrt.dll` do sistema, o mesmo
+CRT do original, porque a formatação de `%.1f` muda entre CRTs. Isso evita diferença de arredondamento.
+
+**Condição de combo (B317).** Medida pela API: o gabarito varre cada argumento de −1000 a 1000 por pré-combo (30
+varreduras). Os stubs do BR têm faixas que o fonte não tem — 3231: `33 < arg0 ≤ 66`; 3232: `arg0 > 66` (desmontagem
+dos stubs, `101AB430` e `101AB840`). O modelo guarda `{arg, faixas}`.
+
+**Diferencial.** `tools/elementskill/diferencial.py` compara o gabarito do nosso DLL com o do original:
+**0 campos diferentes em 26.767 linhas**. Duas exceções, medidas no próprio original:
+- só valem as palavras cruas da descrição que são argumentos;
+- o texto de **65 habilidades** cujo formato traduzido consome mais palavras do que os argumentos (`%` sem escape,
+  "100% de" vira `% d`). O original mostra o que estiver na pilha: às vezes muda entre rodadas, às vezes é um endereço
+  fixo do DLL original (`0x1001B001` = 268.546.049, visível no jogo). O nosso mostra 0. Corrigir o texto
+  (`%` → `%%`) é trabalho do Estúdio.
+
+**Diferenças conhecidas (fora do gabarito):**
+- `Create(id, nível < 1)` — o original lê fora da tabela, o nosso usa o nível 1;
+- `NextSkill` de um id que não existe — o original é indefinido, o nosso devolve 0.
