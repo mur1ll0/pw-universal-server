@@ -1,6 +1,7 @@
 # 08 — `elementskill.dll` de dados (opção D)
 
-> Estado: **fase 1 (contrato) concluída — B313; fase 2 (gabarito) concluída — B314**. Decisão do Murillo (2026-10-20): seguir a opção D do
+> Estado: **fase 1 (contrato) concluída — B313; fase 2 (gabarito) concluída — B314; fase 3 em andamento — B315
+> (o modelo do cliente está pronto; faltam o escritor binário e o DLL)**. Decisão do Murillo (2026-10-20): seguir a opção D do
 > `docs/admin/ESTUDO_HABILIDADES_DO_CLIENTE.md`, começando pelo 1.5.5, e distribuir o nosso DLL pelo launcher.
 > Fases: 1 contrato · 2 gabarito (medir o original inteiro) · 3 DLL de dados + diferencial 100% · 4 jogo · 5 Estúdio ·
 > 6 habilidade nova · 7 1.2.6.
@@ -130,9 +131,14 @@ não lê campo nenhum dele.
 
 ## 4. Interfaces e classes auxiliares
 
-- **`skill_array_interface<T>`** — implementada pelo executável, chamada pelo DLL (desmontagem de `GetRequiredSkill`
-  e `GetJunior`): `[+4]` = `assign(T const* inicio, T const* fim)`, `[+8]` = `clear()`; `[+0]` não é usada. `T` =
-  `pair<unsigned int, int>` (8 bytes) ou `unsigned int`.
+- **`skill_array_interface<T>`** — implementada pelo executável, chamada pelo DLL. Pela desmontagem de
+  `GetRequiredSkill`, `GetJunior` e `GetComboSkActivated` (`10002410`):
+  - `[+4]` = `assign(T const* inicio, T const* fim)`;
+  - `[+8]` = `clear()`;
+  - `[+0x10]` = `push_back(T const&)`; o `GetComboSkActivated` acrescenta sem limpar antes;
+  - `[+0]` e `[+0xC]` não são usadas.
+
+  `T` = `pair<unsigned int, int>` (8 bytes) ou `unsigned int`.
 - **`SkillStr`** — implementada pelo executável e passada a `GetIntroduction`; vtable exportada: `[0]` =
   `wchar_t* Find(int) const` (o texto `N×10+1` do `skillstr.txt`), `[1]` sem nome (provável destrutor). O DLL só
   chama `Find`.
@@ -188,7 +194,9 @@ Chamada que cai vira `"erro"` no gabarito (o DLL de dados tem de se comportar ig
 - **Chamadas:** nenhuma caiu.
 - **Armas:** 1.901 habilidades aceitam todas; 1.415 têm lista, de até 20 ids.
 - **Vida:** `CheckHpCondition` só restringe em 2.
-- **Combo:** `GetComboSkActivated` não devolveu nada com as sondas `{id, arg}` usadas — rever na fase 3.
+- **Combo (corrigido no B315):** a primeira sonda caía e o gabarito omitia o caso; a interface tem `push_back` em
+  `[+0x10]` (§4). Com ela, 32 linhas de combo e nenhuma queda (ex.: 2562 ativa 2602/2603/2604 conforme `arg[0]`,
+  intervalo 45.000).
 - **Descrição crua:** confere com o fonte. Na 1, nível 2, as palavras são `2 | 9 | 172,3 (double)`, ou seja,
   `L, −5 + 7L, 1,9L² + 64L + 36,7`. As palavras seguintes são lixo da pilha e variam entre rodadas. O número de
   argumentos de cada habilidade vem do fonte e se confere pelo texto renderizado.
@@ -197,3 +205,30 @@ Chamada que cai vira `"erro"` no gabarito (o DLL de dados tem de se comportar ig
   (715, 1754, 2075, 2158, 2162, 3063). Nelas o texto traduzido do `skillstr.txt` tem `%` sem escape ("100% a…"
   vira a conversão `% a`), e o cliente original mostra lixo da pilha. É defeito do texto, corrigível no Estúdio
   (`%` → `%%`); no diferencial, esses níveis são indeterminados também no original.
+
+## 8. O modelo do cliente (fase 3, B315)
+
+`tools/elementskill/gerar_modelo.py` junta o gabarito, o fonte e `descricoes.py` num JSON — tudo o que o DLL de dados
+devolve. Uma entrada por habilidade:
+- estáticas, armas (`"todas"` ou a lista), faixa de vida, condição de combo `[i, "=="|">=", v]`, intervalo do combo,
+  e os 5 textos dos slots 0/1/3/29/30, que são constantes por habilidade;
+- por nível:
+  - os 25 slots `int` e os 13 de byte (as listas `SLOTS_INT`/`SLOTS_BYTE`);
+  - gênio, pré-requisitos e juniores;
+  - as 7 estáticas por nível;
+  - o alcance `[a, b, c]`;
+  - os argumentos da descrição.
+
+Mais os estados visíveis e de equipe, as inerentes por classe e a versão.
+
+**Descrição.** As expressões do fonte, avaliadas com a semântica do C, batem palavra por palavra com o binário em 3.268
+das 3.316 habilidades. As 48 restantes diferem em 1 ulp de `double` (o VC6 calcula em x87) ou têm valor mudado pelo
+BR. Por isso o DLL **não recalcula**: guarda por nível as palavras exatas do binário, na quantidade dada pelos tipos do
+fonte (`int` = 1 palavra, `double` = 2). Em 7 habilidades o argumento é `GetAbility()` ou `GetMaxability()`, e o modelo
+marca `proficiencia` ou `proficiencia_max`.
+
+**Alcance.** `d = a·alcance_da_arma + b + c·bônus`, com a regra da base (`skill.h:251-272`): ataque ou maldição com
+auto-ataque dá `d − 1` se `0,3·d ≥ 1`, senão `0,7·d`; salto dá `d`; `NoTarget` (tipo de área 2 ou 5, `skill.h:39`)
+dá −1; o resto dá `d`. O `b` é `double`, pelo fonte. Sem forma no fonte (6 habilidades do BR), `d` sai das sondas
+invertendo a regra. Formas medidas `(a, c)`: `(0,0)` 19.202 níveis, `(1,0)` 1.251, `(0,1)` 221, `(2,0)` 2 (3196 e
+3197). **Zero níveis sem modelo.**

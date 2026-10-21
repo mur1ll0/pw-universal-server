@@ -16314,3 +16314,33 @@ comparação lado a lado.
     ### c. Próximo
     Fase 3: o DLL de dados 1.5.5 — dados gerados do gabarito e do fonte (número e tipo dos argumentos da descrição), e
     o diferencial com o próprio `gabarito.exe`.
+
+315. **Sessão 2026-10-21: DLL de dados, fase 3 (parte 1) — o modelo do cliente.**
+
+    ### a. Correção no gabarito
+    A sonda de `GetComboSkActivated` caía, e a chamada protegida pulava a linha sem registrar. A desmontagem
+    (`10002410`) mostrou `push_back` em `[+0x10]` da `skill_array_interface`, chamado sem `clear` antes. Com a sonda
+    corrigida: 32 linhas de combo, nenhuma queda. Queda agora vira `"erro"`.
+
+    ### b. Descrição
+    `tools/elementskill/descricoes.py` avalia as expressões de argumento do fonte com a semântica do C (tipos,
+    divisão inteira, casts) e compara palavra a palavra com o `intro_bruta`:
+    - **3.268 de 3.316 batem**;
+    - as 48 restantes são 1 ulp de `double` (VC6/x87) ou valor do BR.
+
+    Decisão: o DLL guarda as palavras exatas do binário por nível, sem recalcular. Em 7 habilidades o argumento é a
+    proficiência.
+
+    ### c. Alcance
+    - Três formas de `GetPraydistance` nos stubs, mais a regra da base com `NoTarget` (tipo de área 2/5).
+    - 6 habilidades do BR não têm forma no fonte; o `d` sai das sondas invertendo a regra. Daí as formas com `a = 2`
+      (3196, 3197).
+    - **Zero níveis sem modelo.**
+
+    ### d. Modelo
+    `tools/elementskill/gerar_modelo.py` gera o JSON com 3.316 habilidades, 2.368 estados visíveis, 340 de equipe e
+    as inerentes de 4 classes. A faixa de vida e as listas pelos dois caminhos são conferidas; **0 problemas**.
+
+    ### e. Próximo
+    O escritor binário em Rust (o mesmo que o Estúdio vai usar) e o DLL de dados em C++; depois, o diferencial com o
+    `gabarito.exe`.

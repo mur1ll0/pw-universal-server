@@ -45,11 +45,15 @@ struct SondaStr {
     }
     virtual ~SondaStr() {}
 };
+// `skill_array_interface<T>` (spec 08 §4): o DLL chama [+4] assign, [+8] clear e [+0x10] push_back
+// (`GetComboSkActivated`, desmontagem em 10002410); [+0] e [+0xC] não são usadas.
 template <class T> struct Lista {
     std::vector<T> v;
-    virtual void nada() {}
+    virtual void nada0() {}
     virtual void assign(const T* a, const T* b) { v.assign(a, b); }
     virtual void clear() { v.clear(); }
+    virtual void nada3() {}
+    virtual void push_back(const T& x) { v.push_back(x); }
 };
 struct Par { unsigned int id; int nivel; };
 
@@ -314,7 +318,8 @@ int main(int argc, char** argv) {
             Lista<Par> l;
             int ok;
             p_combo(combo, &c, &l, &ok);
-            if (!ok || l.v.empty()) continue;
+            if (!ok) { printf("{\"combo\":%u,\"arg\":%d,\"erro\":true}\n", id, a); continue; }
+            if (l.v.empty()) continue;
             printf("{\"combo\":%u,\"arg\":%d,\"lista\":[", id, a);
             for (size_t k = 0; k < l.v.size(); k++) printf("%s[%u,%d]", k ? "," : "", l.v[k].id, l.v[k].nivel);
             printf("]}\n");
