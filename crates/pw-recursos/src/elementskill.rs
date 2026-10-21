@@ -2,9 +2,11 @@
 //!
 //! Recompilar o DLL do fonte desfaria o que o BR mudou (B303: o dinheiro do DLL não é o do fonte), então a edição é
 //! no binário, em posições **medidas**: `tools/elementskill/enderecos.cpp` acha cada tabela por nível na imagem
-//! carregada e a prova pondo uma sentinela em cada nível e chamando a função do próprio DLL; só vale tabela em seção
-//! gravável (`.data`) e igual ao arquivo. Prova de ponta a ponta: com +1 em todas as 1.795 tabelas, a medição do DLL
-//! alterado muda exatamente os 5.981 valores esperados de 227.436 (`specs/03_DATA_LOADER_SPEC.md` §3.10b).
+//! carregada e a prova pondo uma sentinela em cada nível, que a função do próprio DLL tem de devolver exata; vale
+//! tabela igual ao arquivo, em `.data` ou — desde o B311 — em `.rdata` lida por um único sítio de código (relocações),
+//! e nunca posição que duas habilidades leem (funções fundidas). Prova de ponta a ponta: +1 em todas as tabelas; a
+//! medição do DLL alterado muda exatamente os valores esperados (1.5.5: 5.983 de 227.436; 1.2.6: 6.510 de 32.728),
+//! nenhum outro (`specs/03_DATA_LOADER_SPEC.md` §3.10b).
 //!
 //! O mapa vale para um DLL só. A cópia editada num rascunho tem outro SHA-256, então o reconhecimento é pelo "resto":
 //! o SHA-256 do arquivo com as tabelas zeradas, que não muda com a edição.
@@ -42,11 +44,14 @@ pub struct Mapa {
 }
 
 /// Os campos por nível que o mapa pode conter, e quem os confere no cliente.
-pub const CAMPOS: [(&str, &str); 4] = [
+pub const CAMPOS: [(&str, &str); 5] = [
     ("nivel_exigido", "aprender: LearnCondition (EC_HostPlayer.cpp:6067-6093)"),
     ("sp_exigido", "aprender: LearnCondition"),
     ("dinheiro_exigido", "aprender: LearnCondition"),
     ("item_exigido", "aprender: o livro exigido"),
+    // B311: só a mana em constante exclusiva da função (relocações: um sítio, na base) — as outras são constantes que
+    // o compilador fundiu entre funções.
+    ("mp", "lançar: CheckSkillCastCondition (EC_HostPlayer.cpp:6097-6150)"),
 ];
 
 fn mapas() -> &'static [Mapa] {
@@ -174,7 +179,7 @@ mod testes {
         let mut pos: Vec<(usize, usize)> = m.habilidades.values().flat_map(|c| c.values()).map(|t| (t.arquivo, t.arquivo + 4 * t.n)).collect();
         pos.sort();
         assert!(pos.windows(2).all(|w| w[0].1 <= w[1].0) && pos.last().unwrap().1 <= m.dll_tamanho);
-        assert_eq!(pos.len(), 1795);
+        assert_eq!(pos.len(), 1797);
     }
 
     #[test]
@@ -186,6 +191,6 @@ mod testes {
         let mut pos: Vec<(usize, usize)> = m.habilidades.values().flat_map(|c| c.values()).map(|t| (t.arquivo, t.arquivo + 4 * t.n)).collect();
         pos.sort();
         assert!(pos.windows(2).all(|w| w[0].1 <= w[1].0) && pos.last().unwrap().1 <= m.dll_tamanho);
-        assert_eq!(pos.len(), 1865);
+        assert_eq!(pos.len(), 1871);
     }
 }

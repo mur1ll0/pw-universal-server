@@ -48,13 +48,59 @@ def entrada(catalogo, medicao, destino):
     print(f"{len(linhas)} linhas -> {destino}")
 
 
+def relocacoes(dados):
+    """B311: alvo (RVA) → sítios que o referenciam, pela tabela de relocações (`.reloc`, IMAGE_REL_BASED_HIGHLOW).
+    Num DLL x86 toda referência absoluta a um dado está aqui — é como se prova quem lê uma constante."""
+    import struct
+    pe = struct.unpack_from("<I", dados, 0x3C)[0]
+    nsec = struct.unpack_from("<H", dados, pe + 6)[0]
+    opt = pe + 24
+    imagem = struct.unpack_from("<I", dados, opt + 28)[0]
+    rrva, rtam = struct.unpack_from("<II", dados, opt + 96 + 5 * 8)
+    tam_opt = struct.unpack_from("<H", dados, pe + 20)[0]
+    secoes = [struct.unpack_from("<IIII", dados, opt + tam_opt + 40 * i + 8) for i in range(nsec)]
+
+    def arq(rva):
+        for vs, va, rs, rp in secoes:
+            if va <= rva < va + rs:
+                return rva - va + rp
+        raise ValueError(f"RVA {rva:#x} fora do arquivo")
+
+    alvos = collections.defaultdict(list)
+    p, fim = arq(rrva), arq(rrva) + rtam
+    while p < fim:
+        pagina, tam_bloco = struct.unpack_from("<II", dados, p)
+        if tam_bloco == 0:
+            break
+        for k in range((tam_bloco - 8) // 2):
+            e = struct.unpack_from("<H", dados, p + 8 + 2 * k)[0]
+            if e >> 12 == 3:
+                sitio = pagina + (e & 0xFFF)
+                alvos[struct.unpack_from("<I", dados, arq(sitio))[0] - imagem].append(sitio)
+        p += tam_bloco
+    return alvos
+
+
 def juntar(enderecos, dll, destino):
     dados = open(dll, "rb").read()
+    alvos = relocacoes(dados)
+    somente_leitura_recusadas = 0
     mapa = collections.defaultdict(dict)
     nao = collections.Counter()
     por_posicao = collections.defaultdict(list)
     for linha in open(enderecos, encoding="utf-8"):
         r = json.loads(linha)
+        if r.get("igual_ao_arquivo") and r.get("somente_leitura"):
+            # B311: em `.rdata` o compilador funde constantes iguais. Só entra a tabela lida por exatamente um sítio
+            # (na base, `base` ou `base − 4` = `array[nível − 1]`) e por nenhum pelo meio; a mana da 121, que derrubou o
+            # DLL no B305, é uma constante lida por 3 sítios.
+            x, n = r["rva"], r["n"]
+            na_base = sum(len(alvos.get(x + d, [])) for d in (0, -4))
+            no_meio = sum(len(alvos.get(x + 4 * k, [])) for k in range(1, n))
+            if na_base != 1 or no_meio:
+                somente_leitura_recusadas += 1
+                nao[r["campo"]] += 1
+                continue
         if r.get("igual_ao_arquivo"):
             mapa[str(r["id"])][r["campo"]] = {"arquivo": r["arquivo"], "tipo": r["tipo"], "n": r["n"]}
             por_posicao[r["arquivo"]].append((r["id"], r["campo"]))
@@ -70,9 +116,14 @@ def juntar(enderecos, dll, destino):
             t["n"] = (q - p) // 4
     # Tabela lida por mais de uma habilidade (o compilador fundiu funções idênticas): editar uma muda as outras.
     compartilhadas = {str(p): sorted(set(q)) for p, q in por_posicao.items() if len(q) > 1}
+    # B311: posição lida por mais de uma habilidade = funções idênticas que o compilador fundiu (no 1.2.6, vários
+    # `GetMpcost` que devolvem a mesma constante viram uma função só). Editar uma mudaria as outras: fica fora.
     for p, quem in compartilhadas.items():
         for i, campo in quem:
-            mapa[str(i)][campo]["compartilhada_com"] = [x for x in quem if x != (i, campo)]
+            del mapa[str(i)][campo]
+            nao[campo] += 1
+    for i in [i for i, cs in mapa.items() if not cs]:
+        del mapa[i]
     # O "resto": o arquivo com as tabelas zeradas. Um DLL editado só dentro das tabelas tem o mesmo resto — é assim
     # que o servidor reconhece uma cópia já editada num rascunho (o SHA do arquivo inteiro muda).
     resto = bytearray(dados)
@@ -89,7 +140,8 @@ def juntar(enderecos, dll, destino):
     print(f"{sum(conta.values())} tabelas em {len(mapa)} habilidades -> {destino}")
     for c in sorted(set(conta) | set(nao)):
         print(f"  {c}: {conta[c]} no arquivo, {nao[c]} não editáveis")
-    print(f"  tabelas compartilhadas: {len(compartilhadas)} posições")
+    print(f"  posições compartilhadas por mais de uma habilidade (excluídas): {len(compartilhadas)}")
+    print(f"  em .rdata recusadas (constante lida por mais de um sítio ou pelo meio): {somente_leitura_recusadas}")
 
 
 def aplicar(mapa, dll, destino, id_, campo, nivel, novo):

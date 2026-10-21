@@ -154,6 +154,7 @@ int main(int argc, char** argv) {
             }
             if (iguais.size() > 5000) { motivo = "ambigua: tabelas iguais demais"; iguais.clear(); }
         }
+        bool so_leitura = false;
         if (!iguais.empty()) {
             // Linha de base por nível.
             std::vector<int> antes(n);
@@ -164,7 +165,9 @@ int main(int argc, char** argv) {
                 // a várias funções), e trocar o byte muda o que não se queria (o DLL caiu na prova da 121).
                 bool gravavel = false;
                 for (auto& sc : secoes) if (ini >= sc.rva && ini < sc.rva + sc.tam) gravavel = sc.gravavel;
-                if (!gravavel) { motivo = "so em secao somente-leitura (constante possivelmente compartilhada)"; continue; }
+                // B311: em `.rdata` a tabela também se prova; sai marcada `somente_leitura`, e o `mapear.py juntar` só a
+                // aceita se as relocações do DLL mostram que nenhum código a referencia pelo meio.
+                bool esta_so_leitura = !gravavel;
                 // Sentinela em cada nível, lida naquele nível: todos têm de responder.
                 bool todos = ok_antes;
                 for (int k = 0; k < n && todos; k++) {
@@ -172,17 +175,20 @@ int main(int argc, char** argv) {
                     DWORD velho;
                     VirtualProtect(p, 4, PAGE_READWRITE, &velho);
                     unsigned int guardado = *p;
-                    if (tipo[0] == 'f') { float x; memcpy(&x, p, 4); x += 7777.0f; memcpy(p, &x, 4); }
-                    else *p = guardado + 7777;
+                    // B311: o retorno tem de ser exatamente o valor escrito (a parte inteira, no float) — não basta mudar:
+                    // no 1.2.6, "tabelas" de mana que a função soma ou multiplica mudavam por outra quantia.
+                    int esperado;
+                    if (tipo[0] == 'f') { float x; memcpy(&x, p, 4); x += 7777.0f; memcpy(p, &x, 4); esperado = (int)x; }
+                    else { *p = guardado + 7777; esperado = (int)(guardado + 7777); }
                     int ok;
                     g_nivel = k + 1;
                     int depois = ler(&ok);
                     *p = guardado;
                     VirtualProtect(p, 4, velho, &velho);
-                    if (!ok || depois == antes[k]) todos = false;
+                    if (!ok || depois != esperado) todos = false;
                 }
                 g_nivel = 1;
-                if (todos) provados.push_back(ini);
+                if (todos) { provados.push_back(ini); if (esta_so_leitura) so_leitura = true; }
                 else if (strcmp(motivo, "sem tabela nos dados")) {}
             }
             if (provados.size() > 1) motivo = "mais de uma tabela";
@@ -201,7 +207,7 @@ int main(int argc, char** argv) {
         if (provados.size() == 1) {
             long off = arq_de_rva(provados[0]);
             bool igual = off >= 0 && off + n * 4 <= tam_arquivo && !memcmp(arquivo.data() + off, base + provados[0], n * 4);
-            printf(",\"rva\":%lu,\"arquivo\":%ld,\"igual_ao_arquivo\":%s}\n", provados[0], off, igual ? "true" : "false");
+            printf(",\"rva\":%lu,\"arquivo\":%ld,\"igual_ao_arquivo\":%s,\"somente_leitura\":%s}\n", provados[0], off, igual ? "true" : "false", so_leitura ? "true" : "false");
             if (igual) achados++; else sem++;
         } else {
             printf(",\"nao_editavel\":\"%s\",\"candidatos_provados\":%zu}\n", motivo, provados.size());
