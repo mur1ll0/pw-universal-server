@@ -720,6 +720,15 @@ nível]}` grava o item do servidor `catalogo\habilidades.json` (`Estudio::defini
     tem de existir (habilidade sem `dano` não ganha um); a lista tem o tamanho da que já existe. A descrição do cliente
     (os `%d` que o `elementskill.dll` preenche) continua com os números antigos.
 
+**Roteiros de efeito (B308):** `PUT estudio/habilidades/{id}/roteiro?rascunho=` `{"no_alvo"|"em_si": [uma expressão
+por passo]}` troca o texto da expressão de cada passo existente (`Estudio::definir_roteiro_da_habilidade`); quem e
+setter não mudam, nem o número de passos. `no_alvo` é o `StateAttack` no alvo, `em_si` o `BlessMe` em quem lança, e o
+GS os roda em `efeitos::executar_roteiro`. Validação:
+- a expressão lê no avaliador do GS — o mesmo código, `pw_data_loader::expr` (movido do `pw-gs` no B308);
+- toda variável é uma das que os roteiros do catálogo original do jogo usam (`variaveis_dos_roteiros`), isto é, as que
+  `efeitos::variaveis` sabe preencher (`L`, `P_*` de quem lança, `V_*` do alvo, `S_*` do golpe);
+- o arquivo editado lê no `TabelaDeHabilidades::de_json`.
+
 **Números do cliente (B305):** `PUT estudio/habilidades/{id}/numeros_do_cliente?rascunho=` `{campo: [um número por
 nível editável]}` troca os bytes da tabela no `elementskill.dll` do rascunho (`Estudio::definir_numeros_do_cliente`,
 `crate::elementskill`). Recompilar do fonte desfaria o que o BR mudou (B303), então a edição é no binário, em posições

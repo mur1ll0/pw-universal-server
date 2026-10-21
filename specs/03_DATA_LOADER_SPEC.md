@@ -558,7 +558,7 @@ que depende de mais que o nível ou stub com `TODO fix` — tratado como desconh
 alcance), `efeito_passivo` (o `TakeEffect` das passivas comuns `EVENT_RESET`/`WIELD`/`ENTER`,
 B203: 119 lidas das 128 no 1.5.5, 45 no 1.2.6 executadas no `gs`) e os roteiros `no_alvo` (`StateAttack`, 2.304) e `em_si` (`BlessMe`, 266) como
 `[quem, setter, expressão]` — expressão com `L`, `P_X`, `V_X`, `A_X`, `S_X`, `INT(...)`, `?:`,
-avaliada pelo servidor (`pw_gs::efeitos::expr`). Carregado para `elements.data` v156/v159
+avaliada pelo servidor (`pw_data_loader::expr` desde o B308, reexportado como `pw_gs::efeitos::expr`; todas as expressões de roteiro dos dois catálogos se leem — teste `todo_roteiro_dos_catalogos_se_le`). Carregado para `elements.data` v156/v159
 (`GameDataManager::habilidades`).
 
 **Correções pelo binário (B303).** O fonte não é o que o BR compilou: o `elementskill.dll` do

@@ -16049,3 +16049,46 @@ comparação lado a lado.
     - Roteiros de efeito (`no_alvo`/`em_si`) e estados: expressões avaliadas pelo `pw_gs::efeitos::expr` — editar
       exige validar a expressão com o mesmo avaliador.
     - Mana e números que vêm do código do DLL; habilidade nova.
+
+308. **Sessão 2026-10-20: Estúdio S8 — roteiros de efeito editáveis.**
+
+    ### a. Pedido
+    Commitar (o B307 já estava em `b0d1c7d`, `07a73c3`, `26ec12f`) e seguir: o próximo item do S8 eram os roteiros
+    `no_alvo`/`em_si`.
+
+    ### b. Evidência
+    - O GS roda cada passo `[quem, setter, expressão]` em `efeitos::executar_roteiro` (`efeitos.rs`):
+      - a expressão vai a `expr::avaliar` com as variáveis de `efeitos::variaveis` — `L`, `P_*` (quem lança), `V_*`
+        (alvo), `S_*` (golpe);
+      - `Probability`/`Time`/`Ratio`/`Value`/`Amount`/`Showicon` acumulam, e os demais setters aplicam o efeito.
+    - O `expr` era autocontido (`efeitos.rs:28-238`): para o Estúdio validar com o mesmo código, ele passou para
+      `pw_data_loader::expr`, e o GS o reexporta (`pub use`). O comportamento do GS não muda; ele não foi publicado.
+
+    ### c. O que foi feito
+    - `expr::variaveis(texto)`: as variáveis da expressão, pela leitura do próprio `avaliar`.
+    - `Estudio::definir_roteiro_da_habilidade`:
+      - uma expressão por passo existente; quem, setter e número de passos ficam;
+      - recusa a expressão que não se lê e a variável que nenhum roteiro do catálogo original da versão usa
+        (`variaveis_dos_roteiros`);
+      - validado pelo leitor do GS.
+    - Rota `PUT estudio/habilidades/{id}/roteiro`; repasse no painel.
+    - Ficha: tabela por roteiro com a expressão editável.
+
+    ### d. Provas
+    - `pw-data-loader`: **2/2** novos, entre eles **toda expressão de roteiro dos dois catálogos se lê** (mais de
+      1.000 passos em cada).
+    - `pw-recursos` com o banco: **26 passaram, 0 falharam**. A 15 ganhou `["50", "S_Magicdamage * 2 + 100 * L", "1"]`,
+      e são recusados (400): variável inventada, expressão que não se lê, contagem errada, roteiro que não é
+      `no_alvo`/`em_si`.
+    - `pw-gs` biblioteca **118/118** com o `expr` reexportado (os testes de efeitos e roteiros incluídos).
+    - Painel **12/12**.
+    - No `pw-recursos` real, habilidade 15, rascunhos 43 (1.5.5) e 44 (1.2.6), descartados:
+      - a expressão do `Value` com `+ 5` gravou nos dois;
+      - variável inventada dá 400;
+      - sem rascunho segue o original.
+    - `pw-recursos` e `pw-admin-api` publicados; o GS não.
+
+    ### e. Falta
+    - Acrescentar ou remover passos (setters novos): precisa da lista de setters que o GS porta (`Ficha::do_setter`).
+    - Murillo: recriar os mundos para o catálogo valer; publicar o GS novo (B249).
+    - Mana e números que vêm do código do DLL; habilidade nova.
