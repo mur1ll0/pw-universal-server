@@ -16344,3 +16344,25 @@ comparação lado a lado.
     ### e. Próximo
     O escritor binário em Rust (o mesmo que o Estúdio vai usar) e o DLL de dados em C++; depois, o diferencial com o
     `gabarito.exe`.
+
+316. **Sessão 2026-10-21: DLL de dados, fase 3 (parte 2) — o arquivo `habilidades.pwsk`.**
+
+    ### a. O que foi feito
+    - `pw_data_loader::habilidades_do_cliente`: o modelo em tipos Rust (serde), mais `escrever` e `ler` do formato
+      binário `PWSK` v1, descrito no cabeçalho do módulo e na spec 08 §9. É um escritor único; o Estúdio o usará na
+      fase 5.
+    - Detalhes do formato:
+      - habilidades na ordem do `NextSkill` do original, por isso o modelo virou lista;
+      - textos em bytes exatos;
+      - alcance em `f64`.
+    - O escritor recusa textos de slot que variem entre níveis e contagem de níveis diferente do `max_level`.
+    - `examples/escrever_habilidades_do_cliente.rs` só grava se a ida e volta reproduzir o modelo.
+
+    ### b. Provas
+    - Testes `habilidades_do_cliente` **2/2**: ida e volta e recusas.
+    - 1.5.5 real: 3.316 habilidades, 4.353.007 bytes, ida e volta igual.
+    - Suítes no fim do bloco: com o banco, `pw-data-loader` **262/262**, `pw-recursos` **26/26**, `pw-gs` biblioteca **119/119**.
+
+    ### c. Próximo
+    O DLL de dados em C++: exporta as 36 funções e a vtable de 53 slots da spec 08, lê o `.pwsk` e porta a lógica de
+    condições do fonte. Depois, o diferencial com o próprio `gabarito.exe`.

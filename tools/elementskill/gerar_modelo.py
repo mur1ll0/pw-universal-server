@@ -182,6 +182,8 @@ def main(pasta, gabarito, descricoes, destino):
                 problemas.append(f"{pid}: dois intervalos de combo")
             h["intervalo_combo"] = intervalo
     del modelo["combos"]
+    # Lista na ordem do `NextSkill` do original (a do gabarito): o executável percorre nessa ordem.
+    modelo["habilidades"] = list(modelo["habilidades"].values())
     json.dump(modelo, open(destino, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
     print(f"{len(modelo['habilidades'])} habilidades, {len(modelo['estados_visiveis'])} estados visíveis, "
           f"{len(modelo['estados_equipe'])} de equipe, {len(modelo['inerentes'])} classes com inerentes -> {destino}")

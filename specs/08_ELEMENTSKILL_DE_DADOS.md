@@ -1,7 +1,7 @@
 # 08 — `elementskill.dll` de dados (opção D)
 
 > Estado: **fase 1 (contrato) concluída — B313; fase 2 (gabarito) concluída — B314; fase 3 em andamento — B315
-> (o modelo do cliente está pronto; faltam o escritor binário e o DLL)**. Decisão do Murillo (2026-10-20): seguir a opção D do
+> (o modelo do cliente e o arquivo `habilidades.pwsk` estão prontos; falta o DLL em C++ e o diferencial)**. Decisão do Murillo (2026-10-20): seguir a opção D do
 > `docs/admin/ESTUDO_HABILIDADES_DO_CLIENTE.md`, começando pelo 1.5.5, e distribuir o nosso DLL pelo launcher.
 > Fases: 1 contrato · 2 gabarito (medir o original inteiro) · 3 DLL de dados + diferencial 100% · 4 jogo · 5 Estúdio ·
 > 6 habilidade nova · 7 1.2.6.
@@ -232,3 +232,14 @@ auto-ataque dá `d − 1` se `0,3·d ≥ 1`, senão `0,7·d`; salto dá `d`; `No
 dá −1; o resto dá `d`. O `b` é `double`, pelo fonte. Sem forma no fonte (6 habilidades do BR), `d` sai das sondas
 invertendo a regra. Formas medidas `(a, c)`: `(0,0)` 19.202 níveis, `(1,0)` 1.251, `(0,1)` 221, `(2,0)` 2 (3196 e
 3197). **Zero níveis sem modelo.**
+
+## 9. O arquivo `habilidades.pwsk` (fase 3, B316)
+
+Escritor e leitor únicos: `pw_data_loader::habilidades_do_cliente` (`escrever`/`ler`; o layout está no cabeçalho do
+módulo). O Estúdio usará o mesmo código na fase 5. As habilidades vão na **ordem do `NextSkill` do original** (a do
+gabarito), porque o executável percorre nessa ordem; por isso o modelo as guarda em lista. Os textos são guardados como
+bytes exatos (GBK, UTF-16LE), e o alcance como `f64` (`a`, `b`, `c`). Ferramenta:
+`cargo run -p pw-data-loader --example escrever_habilidades_do_cliente -- <modelo.json> <habilidades.pwsk>`, que só
+grava se a ida e volta reproduzir o modelo.
+
+1.5.5: 3.316 habilidades, 4.353.007 bytes, ida e volta igual.

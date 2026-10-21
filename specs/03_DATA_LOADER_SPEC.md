@@ -616,6 +616,9 @@ só) e ficam de fora, porque editar uma mudaria as outras. Mapas: **1.5.5 1.797 
 413). Prova `provar`/`conferir`: 0 errados nos dois (5.983 de 227.436; 6.510 de 32.728). O resto da mana vem do código
 (constante ou fórmula, como `24 + 15 × nível`) — editar exigiria trocar instruções.
 
+**`habilidades.pwsk` (B316).** O arquivo de dados do nosso `elementskill.dll` (opção D): escritor e leitor em
+`habilidades_do_cliente.rs`, formato e origem dos dados na spec 08 §8–§9.
+
 **1.2.6 (`TabelaDeHabilidades::do_126`, B100/B101)** — carregada para o `elements.data` v7.
 Só as 823 habilidades que o `gs` 1.2.6 compila (as mesmas 823 do `skillstr.txt` do cliente
 1.2.6). `specs/habilidades_126/habilidades.json` — desde o B102 **completo**, no formato do 1.5.5 (pode ir para `data/<realm>/catalogo/`), gerado por `extrair_habilidades_126.py`:
