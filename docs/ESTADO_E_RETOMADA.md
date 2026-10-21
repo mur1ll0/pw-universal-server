@@ -482,6 +482,11 @@ neles, mas não há relato item a item. Detalhe e roteiro de cada um no históri
   outra), itens exigidos/entregues e prêmio em itens, clone de missão posto no `NPC_TASK_OUT_SERVICE` de um NPC (o NPC
   oferece), textos do cliente (tooltip do item, sem reiniciar), fala, gatilhos e tipos de operação do comportamento de um
   monstro (só o realm: o cliente não tem o `aipolicy`).
+- **B324 (userdata pessoal fora do cliente, 2026-10-21):** o import deixa de fora o que o cliente grava por conta
+  ou personagem (`accounts.txt`, `GMLog\`, `Layout\`, `autopolicy\`, `blacklist\`); nas versões publicadas saíram
+  pela **versão 4 do 1.5.5** (37 arquivos) e **3 do 1.2.6** (78). **A olhar:** Atualizar pelo launcher nas duas
+  versões → entra no jogo normalmente; criar personagem continua com o rosto padrão (`character\` ficou). O
+  `accounts.txt` que ainda era o publicado é apagado: o login esquece a conta lembrada uma vez.
 - **B281 (serverlist publicada, 2026-10-19) — confirmado pelo Murillo no notebook:** versão **1** do 1.2.6 e do 1.5.5 publicada só com a `serverlist.txt`
   nova: um servidor por versão, com o nome do realm (`Perfect World Evolved (1.5.5)` 29004, `Perfect World Classic
   (1.2.6)` 29000); saíram `Universal 1.5.5` (29003) e `BATATA`/`Batata_E`. O launcher mostra "Atualização
@@ -1277,6 +1282,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 313 | 10-20 | DLL de dados, fase 1: contrato binário do `elementskill.dll` 1.5.5 |
 | 314 | 10-20 | DLL de dados, fase 2: o gabarito do DLL original |
 | 315 | 10-21 | DLL de dados, fase 3: o modelo do cliente |
+| 324 | 10-21 | userdata pessoal (contas, GMLog, Layout, autopolicy, blacklist) fora do import e removido: 1.5.5 v4, 1.2.6 v3 |
 | 316 | 10-21 | DLL de dados, fase 3: o arquivo `habilidades.pwsk` |
 | 317 | 10-21 | DLL de dados, fase 3: o DLL em C++ e o diferencial 100% |
 | 318 | 10-21 | DLL de dados: "version incorrect" sem o `habilidades.pwsk` |

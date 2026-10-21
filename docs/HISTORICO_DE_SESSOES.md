@@ -16584,3 +16584,32 @@ comparação lado a lado.
     - Gerar o `.pwsk` do modelo único com o catálogo do servidor.
     - Descrição e alcance editáveis no Estúdio.
     - Habilidade nova (fase 6); 1.2.6 (fase 7).
+
+324. **Sessão 2026-10-21: userdata pessoal da máquina de origem fora do cliente publicado.**
+
+    ### a. Pedido
+    Ao conferir o manifesto no B280 apareceu que a versão 0 trouxe o `userdata` da máquina do Murillo. Ele pediu
+    nova versão que resolva, publicar e commitar (depois das versões 3 do 1.5.5 e 2 do 1.2.6 de outra sessão).
+
+    ### b. Evidência (fonte do cliente 1.5.5)
+    - Pessoais, gravados durante o jogo: `accounts.txt` (`EC_RecordAccount.cpp:219-265`), `GMLog\`
+      (`GMCDBMan.cpp:7`), `Layout\<personagem>.ini`/`.key` (`EC_GameUIMan.cpp:4628-4633`,
+      `EC_HostInputFilter.cpp:114`), `autopolicy\<personagem>.ini` (`EC_AutoPolicy.cpp:328`),
+      `blacklist\<personagem>.dat` (`EC_Configs.cpp:1176-1180`).
+    - Padrões que ficam: `character\characterNN.ini` (sem ele `LoadDefaultCustomizeData` falha,
+      `EC_Player.cpp:5772-5786`), `dyn_tasks.data` (cache, `TaskTemplMan.cpp:241`), `userpic\` (sem evidência de
+      quem grava: não removido), `serverlist.txt`, `currentserver.ini`, `systemsettings.ini`.
+
+    ### c. O que foi feito
+    - `pw-recursos/importar.rs`: `pessoal_do_userdata` no `excluido` (imports futuros).
+    - Publicação pela API 8101 (de dentro do `pw-admin-api`): rascunho com as remoções + publicar, `operacao_id`
+      `b317-userdata-<versao>` (montado quando o número ainda parecia livre; a descrição no banco diz B317).
+
+    ### d. Provas
+    - `importar::testes`: 5/5 (casos novos: os cinco pessoais saem, os seis padrões ficam).
+    - Antes: 1.5.5 85 arquivos em `userdata` (37 pessoais), 1.2.6 114 (78). Publicado: rascunho 54 → **1.5.5 versão
+      4**, rascunho 55 → **1.2.6 versão 3**. Depois: 48 e 36, nenhum pessoal.
+    - No jogador, a remoção só apaga a cópia ainda igual à publicada (`mudado_pelo_jogador`, B280).
+
+    ### e. Falta
+    - O Murillo atualizar as duas versões e entrar no jogo.

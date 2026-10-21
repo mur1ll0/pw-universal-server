@@ -57,14 +57,14 @@ dela já estão na ACP daquela máquina):
    `enablemoremem`/`disablemoremem_vista_win7_32bit.bat` (mexem no `increaseUserVa` do Windows por `bcdedit`); em `data\`, as pastas
    `BCK`, `Data Export`, `Editados`, `tasks`, os `.rar`/`.zip`, `Notas.txt` e o `npcgen.data` — arquivo do
    servidor: nenhum `.cpp` do cliente o abre (a única ocorrência é um campo, `elementdataman.cpp:2073`).
-   **Dados pessoais do `userdata\` da máquina de origem (B317, `importar::pessoal_do_userdata`):**
+   **Dados pessoais do `userdata\` da máquina de origem (B324, `importar::pessoal_do_userdata`):**
    `accounts.txt` (contas lembradas, `EC_RecordAccount.cpp:219-265`), `GMLog\` (`GMCDBMan.cpp:7`),
    `Layout\` (janelas e teclas por personagem, `EC_GameUIMan.cpp:4628-4633`, `EC_HostInputFilter.cpp:114`),
    `autopolicy\` (`EC_AutoPolicy.cpp:328`) e `blacklist\` (`EC_Configs.cpp:1176-1180`). Ficam os padrões:
    `character\characterNN.ini` (rosto padrão por classe e sexo, exigido por `LoadDefaultCustomizeData`,
    `EC_Player.cpp:5772-5786`), `userpic\`, `serverlist.txt`, `currentserver.ini`, `systemsettings.ini` e
    `dyn_tasks.data` (cache do servidor, `TaskTemplMan.cpp:241`). Nas versões já publicadas (importadas antes
-   da regra) eles saem por uma versão de remoção; o launcher só apaga no jogador a cópia que ainda for a
+   da regra) saíram pela versão 4 do 1.5.5 (37 arquivos) e 3 do 1.2.6 (78); o launcher só apaga no jogador a cópia que ainda for a
    publicada (B280), então o que o próprio jogador gravou fica.
 4. Nossos: `userdata\server\serverlist.txt` (UTF-16LE com BOM) ganha a linha de grupo
    `pw-universal` se a 1ª linha não vazia tiver tabulação — versões ≥ 1.5 (`EC_ServerList.cpp:146-157`;

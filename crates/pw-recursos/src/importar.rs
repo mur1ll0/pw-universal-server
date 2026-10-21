@@ -178,6 +178,9 @@ fn excluido(partes_minusculas: &[String]) -> Option<&'static str> {
             return Some("arquivo do servidor (npcgen.data)");
         }
     }
+    if let Some(motivo) = pessoal_do_userdata(partes_minusculas) {
+        return Some(motivo);
+    }
     if nome.ends_with(".log") {
         return Some("log");
     }
@@ -185,6 +188,29 @@ fn excluido(partes_minusculas: &[String]) -> Option<&'static str> {
         return Some("logs, capturas ou sobras de reempacotamento da máquina de origem");
     }
     None
+}
+
+/// Dados pessoais que o cliente grava no `userdata\` durante o jogo, por conta ou personagem da
+/// máquina de origem (B324) — não vão para outros jogadores:
+/// `accounts.txt` (contas lembradas no login, `EC_RecordAccount.cpp:219-265`), `GMLog\` (comandos
+/// de GM por conta, `GMCDBMan.cpp:7`), `Layout\<personagem>.ini`/`.key` (janelas e teclas,
+/// `EC_GameUIMan.cpp:4628-4633`, `EC_HostInputFilter.cpp:114`), `autopolicy\<personagem>.ini`
+/// (`EC_AutoPolicy.cpp:328`) e `blacklist\<personagem>.dat` (`EC_Configs.cpp:1176-1180`).
+/// Ficam os padrões: `character\characterNN.ini` (rosto padrão por classe e sexo; sem ele
+/// `LoadDefaultCustomizeData` falha, `EC_Player.cpp:5772-5786`), `userpic\`, `serverlist.txt`,
+/// `currentserver.ini`, `systemsettings.ini` e `dyn_tasks.data` (cache do servidor,
+/// `TaskTemplMan.cpp:241`).
+fn pessoal_do_userdata(partes_minusculas: &[String]) -> Option<&'static str> {
+    if partes_minusculas.first().map(String::as_str) != Some("userdata") {
+        return None;
+    }
+    match partes_minusculas.get(1..).unwrap_or_default() {
+        [nome] if nome == "accounts.txt" => Some("dado pessoal do userdata (contas lembradas)"),
+        [pasta, _, ..] if matches!(pasta.as_str(), "gmlog" | "layout" | "autopolicy" | "blacklist") => {
+            Some("dado pessoal do userdata (por conta ou personagem)")
+        }
+        _ => None,
+    }
 }
 
 /// Pacote de instalação de um caminho: a primeira pasta (em minúsculas), ou `raiz`.
@@ -624,6 +650,18 @@ mod testes {
         assert!(excluido(&partes("elementclient.exe")).is_none());
         assert!(excluido(&partes("maps\\world\\a.hmap")).is_none());
         assert!(excluido(&partes("userdata\\server\\serverlist.txt")).is_none());
+        // Dados pessoais da máquina de origem (B324): saem; os padrões do cliente ficam.
+        assert!(excluido(&partes("userdata\\accounts.txt")).is_some());
+        assert!(excluido(&partes("userdata\\GMLog\\39\\UnFinished\\UseMsg.db")).is_some());
+        assert!(excluido(&partes("UserData\\Layout\\11456.ini")).is_some());
+        assert!(excluido(&partes("userdata\\layout\\39.key")).is_some());
+        assert!(excluido(&partes("userdata\\autopolicy\\39.ini")).is_some());
+        assert!(excluido(&partes("userdata\\blacklist\\39.dat")).is_some());
+        assert!(excluido(&partes("userdata\\character\\character00.ini")).is_none());
+        assert!(excluido(&partes("userdata\\userpic\\1.bmp")).is_none());
+        assert!(excluido(&partes("userdata\\systemsettings.ini")).is_none());
+        assert!(excluido(&partes("userdata\\currentserver.ini")).is_none());
+        assert!(excluido(&partes("userdata\\dyn_tasks.data")).is_none());
     }
 
     #[test]
