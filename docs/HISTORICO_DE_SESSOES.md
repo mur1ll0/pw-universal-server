@@ -16420,3 +16420,9 @@ comparação lado a lado.
 
     ### e. Falta
     O Murillo abrir o cliente de novo e seguir o roteiro do ESTADO §3.3.
+
+319. **Sessão 2026-10-21: DLL de dados, fase 4 — confirmado em jogo.**
+
+    O Murillo testou o cliente 1.5.5 com o nosso `elementskill.dll` e o `habilidades.pwsk`: as habilidades se usam e o
+    nível está correto. Fase 4 concluída; a próxima do DLL de dados é a 5 (Estúdio gera e edita o `.pwsk`, e o launcher
+    distribui).

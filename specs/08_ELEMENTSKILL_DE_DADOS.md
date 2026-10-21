@@ -1,7 +1,8 @@
 # 08 — `elementskill.dll` de dados (opção D)
 
 > Estado: **fases 1 (contrato, B313), 2 (gabarito, B314) e 3 (DLL de dados com diferencial 100%, B315–B317)
-> concluídas**. Próxima: fase 4, o teste em jogo. Decisão do Murillo (2026-10-20): seguir a opção D do
+> concluídas; fase 4 (jogo) confirmada pelo Murillo em 2026-10-21 — habilidades usáveis, níveis corretos**.
+> Próxima: fase 5 (Estúdio). Decisão do Murillo (2026-10-20): seguir a opção D do
 > `docs/admin/ESTUDO_HABILIDADES_DO_CLIENTE.md`, começando pelo 1.5.5, e distribuir o nosso DLL pelo launcher.
 > Fases: 1 contrato · 2 gabarito (medir o original inteiro) · 3 DLL de dados + diferencial 100% · 4 jogo · 5 Estúdio ·
 > 6 habilidade nova · 7 1.2.6.
