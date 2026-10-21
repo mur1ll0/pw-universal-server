@@ -16514,3 +16514,35 @@ comparação lado a lado.
     - Descrição e alcance editáveis.
     - Os 65 textos com `%` sem escape.
     - Habilidade nova (fase 6); o 1.2.6 (fase 7).
+
+322. **Sessão 2026-10-21: "Organizar" do painel ficava "Aplicando" — GS novo publicado.**
+
+    ### a. Relato do Murillo
+    O botão Organizar do painel ficava "Aplicando" sem fim, no 1.2.6 e no 1.5.5.
+
+    ### b. Causa
+    - Os mundos rodavam imagens de 2026-10-12, porque a publicação do GS do B249 estava pendente.
+    - O log mostrava `unknown field organizar_bolsa`: o GS recusava a consulta no `serde_json::from_slice`, e o `?`
+      fechava a conexão sem resposta. O painel recebia "desconhecido" (202) e seguia esperando.
+
+    ### c. Correção
+    - `administracao.rs`: o envelope do pedido é lido primeiro e a consulta à parte (`PedidoBruto`). Consulta que o GS
+      não conhece volta assinada, como falha `consulta_desconhecida` com a mensagem do desserializador. O painel
+      traduz: "falta publicar o GS novo".
+    - A pedido do Murillo (corrigir o organizar nos dois realms), o **GS novo foi publicado** em `pw-world-126` e
+      `pw-world-155`. Leva tudo de servidor do B249 ao B322, inclusive o catálogo corrigido do B303 e a montagem do
+      catálogo do B302.
+    - O painel também foi publicado.
+
+    ### d. Provas
+    - `canal_administrativo` **37/37**, com o teste novo: campo inventado ou tipo inventado dão
+      `consulta_desconhecida`.
+    - Os dois mundos rodam o binário novo (`/app/server_bin`, com `consulta_desconhecida` e `organizar_bolsa`) e
+      subiram sem erro.
+    - **Real, pelo mesmo canal do painel:**
+      - 1.2.6, personagem 11455: 8 trocas; slots 0–10 e 19 viraram 0–11;
+      - 1.5.5, personagem 11456: 15 trocas; 0–6 e 13–26 viraram 0–14;
+      - nos dois, os mesmos itens e a gravação offline.
+
+    ### e. Falta
+    O Murillo conferir em jogo: o botão do 1.5.5 e o do painel com o personagem online.

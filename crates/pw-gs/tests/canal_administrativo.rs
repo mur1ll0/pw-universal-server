@@ -1451,6 +1451,21 @@ async fn detalhe_do_item_para_a_dica() {
     c.encerrar().await;
 }
 
+/// B322: consulta que o GS não conhece (painel mais novo que o GS) tem resposta — `consulta_desconhecida` —, em vez de
+/// a conexão fechar calada e o painel ficar "Aplicando" sem fim (o que o Murillo viu com o `organizar_bolsa` no GS de
+/// 2026-10-12).
+#[tokio::test]
+async fn consulta_desconhecida_tem_resposta() {
+    let c = Cenario::montar().await;
+    let r = c.pedir_com_id(&c.realm, &format!("b322-{}", c.personagem), c.conta,
+        json!({"tipo":"editar_personagem","personagem_id":c.personagem,"campo_que_nao_existe":true})).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["codigo"].as_str()), (Some("falha"), Some("consulta_desconhecida")), "{r}");
+    assert!(r["dados"]["mensagem"].as_str().unwrap_or("").contains("campo_que_nao_existe"), "{r}");
+    let r = c.pedir_com_id(&c.realm, &format!("b322b-{}", c.personagem), c.conta, json!({"tipo":"tipo_inventado"})).await;
+    assert_eq!(r["dados"]["codigo"], "consulta_desconhecida", "{r}");
+    c.encerrar().await;
+}
+
 /// B320: organizar a bolsa pelo painel — online (cada troca vai ao cliente como `EXG_IVTR_ITEM`) e offline (no banco).
 /// Depois de organizar: os itens ocupam 0..n sem buraco, e nada some nem duplica.
 #[tokio::test]

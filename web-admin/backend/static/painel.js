@@ -841,6 +841,8 @@ function preencherCultivos(versao, atual, alvo = "cultivo-valor") {
 }
 
 const MOTIVOS_EDICAO = {
+  // B322: o GS deste realm é anterior à operação (o painel foi publicado antes do GS novo).
+  consulta_desconhecida: "O servidor de jogo deste realm ainda não tem esta operação — falta publicar o GS novo.",
   precisa_estar_online: "Isto só com o personagem em jogo (EXP, SP ou prêmio de missão).",
   missao_inexistente: "Este realm não tem essa missão.",
   nao_e_topo: "Só a missão principal (não uma etapa).",

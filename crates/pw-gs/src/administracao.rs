@@ -29,6 +29,16 @@ pub struct PedidoAdministrativo {
     pub consulta: Consulta,
 }
 
+/// O envelope do pedido com a consulta ainda crua (B322).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PedidoBruto {
+    operacao_id: String,
+    realm_id: String,
+    administrador_id: i32,
+    consulta: serde_json::Value,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "tipo", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Consulta {
@@ -374,7 +384,15 @@ impl ServidorAdministrativo {
         let mut assinatura = [0u8; 32];
         socket.read_exact(&mut assinatura).await?;
         conferir_assinatura(&self.segredo, &desafio, b"pedido", &corpo, &assinatura)?;
-        let pedido: PedidoAdministrativo = serde_json::from_slice(&corpo)?;
+        // B322: a consulta é lida à parte. Consulta que este GS não conhece (painel mais novo que o GS publicado, ex.
+        // `organizar_bolsa` com o GS de antes do B320) agora tem resposta — `consulta_desconhecida` —, em vez de a
+        // conexão fechar calada e o painel ficar "Aplicando" sem fim.
+        let bruto: PedidoBruto = serde_json::from_slice(&corpo)?;
+        let (consulta, desconhecida) = match serde_json::from_value::<Consulta>(bruto.consulta) {
+            Ok(c) => (c, None),
+            Err(e) => (Consulta::Mundos, Some(e.to_string())),
+        };
+        let pedido = PedidoAdministrativo { operacao_id: bruto.operacao_id, realm_id: bruto.realm_id, administrador_id: bruto.administrador_id, consulta };
         anyhow::ensure!(
             !pedido.operacao_id.is_empty()
                 && pedido.operacao_id.len() <= 64
@@ -385,7 +403,10 @@ impl ServidorAdministrativo {
             "id de operação inválido"
         );
 
-        let dados = if pedido.realm_id != self.realm {
+        let dados = if let Some(mensagem) = desconhecida {
+            tracing::info!(operacao=%pedido.operacao_id, %mensagem, "admin: consulta desconhecida por este GS");
+            json!({"codigo":"consulta_desconhecida","mensagem":mensagem})
+        } else if pedido.realm_id != self.realm {
             json!({"codigo":"realm_incorreto"})
         } else {
             let conta = self.contas.find_by_id(pedido.administrador_id).await?;
