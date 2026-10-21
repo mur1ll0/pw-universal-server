@@ -16426,3 +16426,58 @@ comparação lado a lado.
     O Murillo testou o cliente 1.5.5 com o nosso `elementskill.dll` e o `habilidades.pwsk`: as habilidades se usam e o
     nível está correto. Fase 4 concluída; a próxima do DLL de dados é a 5 (Estúdio gera e edita o `.pwsk`, e o launcher
     distribui).
+
+320. **Sessão 2026-10-21: organizar a bolsa (jogo 1.5.5 e painel).**
+
+    ### a. Pedido
+    O Murillo notou que o 1.5.5 tem o botão de reorganizar o inventário (juntar sem buracos) e pediu para implementar,
+    mais um botão **Organizar** no cabeçalho da janela Inventário do painel, no 1.2.6 e no 1.5.5.
+
+    ### b. Evidência
+    - **Cliente.** O botão (`DlgInventory.cpp:1220-1229`, comando `arrange`) chama `CECHostPlayer::SortPack`
+      (`EC_HostPlayer.cpp:1775-1868`):
+      - o cliente ordena com o `DefaultPackSorter` (`:1700-1770`) e o `BubbleSort` (`EC_Algorithm.h:39-53`);
+      - transforma a permutação em pares, invertidos;
+      - manda o C2S 126 `MULTI_EXCHANGE_ITEM` `{u8 location, u8 count, pares}` (IR `gamedata_155.json`).
+    - **Servidor** (`playercmd.cpp:3655-3700`):
+      - tamanho exato, senão `ERR_FATAL_ERR`;
+      - recarga `COOLDOWN_INDEX_MULTI_EXCHANGE_ITEM` = 47 (o mesmo índice `GP_CT_*` no cliente), de 10.000 ms
+        (`cooldowncfg.h:30`); em recarga, ignorado;
+      - na bolsa, `PlayerExchangeInvItem` por par (`player.cpp:7514-7527`).
+    - O 1.2.6 não tem o comando (o `gs` dele só trata ids até 0x6c).
+    - **Ordem.** A classe do item é o `ICID` do cliente: tabela do `elements.data` → classe (`CreateItem`) → `m_iCID`
+      (66 tabelas, por exemplo `FIX_POSITION_TRANSMIT_ESSENCE` → `ICID_OCCUP_PACKAGE`). A carta de general usa
+      `rank`/`type` dos octetos da instância (`IVTR_ESSENCE_GENERALCARD`).
+
+    ### c. O que foi feito
+    - `pw_data_loader::ordem_do_inventario`: a tabela → classe, a lista de ordem e o mapa modelo → `(classe, nível)`
+      no `GameDataManager` (`chave_de_ordem`).
+    - `pw_gs::organizar`: porte do comparador, do `BubbleSort` e do laço de trocas.
+    - `bus_server/organizar_bolsa.rs`:
+      - o C2S 126 (tamanho, recarga com `set_cooldown`, troca por par com `EXG_IVTR_ITEM`; só a bolsa);
+      - a organização feita pelo servidor para o painel, online (trocas ao cliente) e offline (banco).
+    - O comando entra no "sentado aceita" (`StayInCommandHandler`).
+    - Canal administrativo: edição `organizar_bolsa: true`. Painel: botão **Organizar** e campo no `contas.py`.
+
+    ### d. Provas
+    - Com o banco:
+      - `pw-gs` biblioteca **124/124**, com os 5 testes novos da conta e da leitura do lote;
+      - `canal_administrativo` **36/36**, com o novo: online e offline, sem buracos, nada some, a segunda vez dá 0
+        trocas, `false` recusado;
+      - `pw-data-loader` biblioteca **117/117**.
+    - `subcomandos_no_mundo`: **162/165**. O teste novo (lote: duas trocas, recarga 47 de 10.000 ms, segundo lote
+      ignorado, tamanho errado `ERR_FATAL_ERR`) passa. As 3 falhas (grupo sem convite, hierograma, missão 1177) passam
+      isoladas: é a instabilidade sob carga já registrada.
+    - Painel:
+      - `teste_recursos` **12/12**;
+      - `test_editar_personagem_valida_antes_do_envio` passa: `organizar_bolsa: false` ou junto com outra edição dá
+        422, e `true` é repassado. O `1` é aceito como `true`, como no `redistribuir`.
+      - O `teste_base` inteiro dentro do contêiner deu 67, com 1 falha e 12 erros, todos de ambiente: os testes
+        procuram o repositório e o `target/debug/pw-gs.exe` por `parents[3]`, e o `data/textos`, que o contêiner de
+        teste não tem. Nenhum toca a edição nova.
+    - `pw-admin-api` publicado; o GS não (B249).
+
+    ### e. Falta
+    - **Publicar o GS novo** (B249, decisão do Murillo): sem ele, nem o botão do jogo nem o do painel têm efeito.
+    - Armazéns (`IL_TRASH_BOX*`, inclusive o de roupas, que o cliente organiza com comparadores próprios) e a trava
+      `_lock_inventory`.

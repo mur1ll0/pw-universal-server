@@ -272,6 +272,7 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | 110 | `QUERY_CASH_INFO` → `PLAYER_CASH` com o cash da **conta** (B125) | 120 | `CHECK_SECURITY_PASSWD` |
 | 106 | `MALL_SHOPPING` — corpo por versão (`WorldProtocol::pedido_da_loja_gold`): `u32 count` + entradas `{int id, int index, int slot}` (1.5.5, `6+12·count`) ou `{short×3}` com sinal (1.2.6, `6+6·count`, VA 0x80d1637); só a 1ª é comprada (B125) | | |
 | 128 | `CALC_NETWORK_DELAY` | 6, 184 | `PICKUP`, `PICKUP_ALL` |
+| 126 | `MULTI_EXCHANGE_ITEM` (só 1.5.5; o `gs` 1.2.6 vai até 0x6c) `{u8 location, u8 count, (u8 index1, u8 index2)×count}` — o botão "organizar" da bolsa (B320): tamanho exato `2 + 2·count` e `count > 0` senão `ERR_FATAL_ERR`; recarga 47 de 10.000 ms (`set_cooldown`), em recarga ignorado; na bolsa (`location` 0) um `EXG_IVTR_ITEM` (44) por par (`playercmd.cpp:3655-3700`) | | |
 | 100, 101 | `SUMMON_PET`, `RECALL_PET` | 102 | `BANISH_PET` `{size_t pet_index}` 4 B → `FREE_PET` (232) ao fim da sessão de 200 tiques (B112) |
 | 103 | `PET_CTRL_CMD` `{target, pet_cmd, buf}` — `buf` depois do `pet_cmd`: 1 `{char force}`, 2/3 `{int}`, 4 `{int skill, char force}` (5 B), 5 `{int skill}` | 37 | serviços de mascote 36 renomear `{u16 idx, u16 len, name[len]}`, 37 esquecer e 38 aprender `{int skill}` (B112) |
 
