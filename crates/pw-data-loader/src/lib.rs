@@ -1,3 +1,4 @@
+pub mod roteiro;
 pub mod expr;
 pub mod movemap;
 pub mod addons;

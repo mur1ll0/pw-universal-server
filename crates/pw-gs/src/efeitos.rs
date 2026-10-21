@@ -1655,6 +1655,33 @@ pub fn variaveis<'a>(
 
 #[cfg(test)]
 mod testes {
+    /// B309: a lista que o Estúdio oferece (`pw_data_loader::roteiro::SETTERS_DO_GS`) é a do `Efeito::do_setter`:
+    /// todo nome dela é portado, e todo setter dos dois catálogos é portado se e só se está nela.
+    #[test]
+    fn os_setters_do_estudio_sao_os_do_gs() {
+        use pw_data_loader::roteiro::{ACUMULADORES, SETTERS_DO_GS};
+        for n in SETTERS_DO_GS {
+            assert!(Efeito::do_setter(n).is_some(), "{n} está na lista e o GS não porta");
+        }
+        let mut vistos = 0;
+        for v in ["1.5.5", "1.2.6"] {
+            let j: serde_json::Value = serde_json::from_str(pw_data_loader::habilidades::json_do_servidor(v).unwrap()).unwrap();
+            for h in j["habilidades"].as_object().unwrap().values() {
+                for r in ["no_alvo", "em_si"] {
+                    for p in h[r].as_array().into_iter().flatten() {
+                        let n = p[1].as_str().unwrap();
+                        if ACUMULADORES.contains(&n) {
+                            continue;
+                        }
+                        vistos += 1;
+                        assert_eq!(Efeito::do_setter(n).is_some(), SETTERS_DO_GS.contains(&n), "{v}: {n}");
+                    }
+                }
+            }
+        }
+        assert!(vistos > 1000);
+    }
+
     /// B203: as passivas comuns do catálogo 1.5.5 — 2446 (`EVENT_RESET`, defesa e resistência
     /// `0,08·L`), 1188 (mana `2·L` por batimento), 1371 (`EVENT_WIELD`, espada `0,06·L`), 1263
     /// (adaga 0,15 e crítico 2 com qualquer arma) e 11 (`Incgold`, sem porte: ignorada).

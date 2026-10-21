@@ -3447,14 +3447,43 @@ impl Estudio {
                     bail!("roteiro {k}: só no_alvo ou em_si");
                 }
                 let passos = h.get_mut(k.as_str()).and_then(Value::as_array_mut).with_context(|| format!("a habilidade {id} não tem roteiro {k}"))?;
-                let novas = v.as_array().filter(|a| a.len() == passos.len()).with_context(|| format!("{k}: uma expressão por passo ({})", passos.len()))?;
-                for (i, (p, e)) in passos.iter_mut().zip(novas).enumerate() {
-                    let e = e.as_str().with_context(|| format!("{k} passo {}: texto", i + 1))?.trim();
-                    let vars = pw_data_loader::expr::variaveis(e).with_context(|| format!("{k} passo {} ({}): a expressão não se lê: {e}", i + 1, p[1]))?;
+                let lista = v.as_array().with_context(|| format!("{k}: uma lista"))?;
+                let validar = |i: usize, setter: &str, e: &str| -> Result<String> {
+                    let e = e.trim();
+                    let vars = pw_data_loader::expr::variaveis(e).with_context(|| format!("{k} passo {} ({setter}): a expressão não se lê: {e}", i + 1))?;
                     if let Some(x) = vars.iter().find(|x| !conhecidas.contains(x.as_str())) {
-                        bail!("{k} passo {} ({}): a variável {x} não aparece em nenhum roteiro do original", i + 1, p[1]);
+                        bail!("{k} passo {} ({setter}): a variável {x} não aparece em nenhum roteiro do original", i + 1);
                     }
-                    p[2] = Value::String(e.to_string());
+                    Ok(e.to_string())
+                };
+                if lista.iter().all(Value::is_string) {
+                    // B308: só as expressões, uma por passo existente.
+                    if lista.len() != passos.len() {
+                        bail!("{k}: uma expressão por passo ({})", passos.len());
+                    }
+                    for (i, (p, e)) in passos.iter_mut().zip(lista).enumerate() {
+                        let setter = p[1].as_str().unwrap_or_default().to_string();
+                        p[2] = Value::String(validar(i, &setter, e.as_str().unwrap_or_default())?);
+                    }
+                } else {
+                    // B309: o roteiro inteiro, `[quem, setter, expressão]` por passo — acrescentar, remover, reordenar.
+                    // Passo novo: quem = V (o único que o GS roda) e setter que o GS porta
+                    // (`pw_data_loader::roteiro`). Um passo do original sem porte pode ficar como estava.
+                    let antigos: Vec<(String, String)> = passos.iter().map(|p| (p[0].as_str().unwrap_or_default().to_string(), p[1].as_str().unwrap_or_default().to_string())).collect();
+                    let mut novos = Vec::new();
+                    for (i, p) in lista.iter().enumerate() {
+                        let t: Vec<&str> = p.as_array().filter(|t| t.len() == 3).map(|t| t.iter().filter_map(Value::as_str).collect()).filter(|t: &Vec<&str>| t.len() == 3)
+                            .with_context(|| format!("{k} passo {}: [quem, setter, expressão]", i + 1))?;
+                        let do_original = antigos.iter().any(|(q, st)| q == t[0] && st == t[1]);
+                        if !do_original && t[0] != "V" {
+                            bail!("{k} passo {}: quem = V (o GS só roda os passos da vítima, efeitos::executar_roteiro)", i + 1);
+                        }
+                        if !do_original && !pw_data_loader::roteiro::setter_do_gs(t[1]) {
+                            bail!("{k} passo {}: o GS não porta o setter {} (Efeito::do_setter)", i + 1, t[1]);
+                        }
+                        novos.push(json!([t[0], t[1], validar(i, t[1], t[2])?]));
+                    }
+                    *passos = novos;
                 }
                 mudou.push(k.clone());
             }
@@ -3497,6 +3526,8 @@ impl Estudio {
             "nome": t.as_ref().and_then(|t| t.texto(id * 10)), "descricao": t.as_ref().and_then(|t| t.texto(id * 10 + 1)),
             "skillstr": CAMINHO_SKILLSTR, "origem_dos_numeros": origem,
             "editaveis": CAMPOS_EDITAVEIS.iter().map(|c| json!({ "campo": c.0, "quem_confere": c.1 })).collect::<Vec<_>>(),
+            // B309: o que um passo novo de roteiro pode ser (acumuladores primeiro).
+            "setters_do_gs": pw_data_loader::roteiro::ACUMULADORES.iter().chain(pw_data_loader::roteiro::SETTERS_DO_GS).collect::<Vec<_>>(),
         }))
     }
 

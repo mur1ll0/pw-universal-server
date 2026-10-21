@@ -937,9 +937,19 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
             (json!({"no_alvo": ["50", "1 +", "1"]}), "expressão que não se lê"),
             (json!({"no_alvo": ["50"]}), "uma por passo"),
             (json!({"dano": ["1"]}), "só no_alvo/em_si"),
+            // B309: roteiro inteiro.
+            (json!({"no_alvo": [["V", "Probability", "100"], ["V", "Inventado", "1"]]}), "setter que o GS não porta"),
+            (json!({"no_alvo": [["P", "Slow", "1"]]}), "passo novo de quem não é V"),
+            (json!({"no_alvo": [["V", "Slow"]]}), "passo sem expressão"),
         ] {
             assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/15/roteiro?rascunho={rh}")).send_json(corpo)).0, 400, "{porque}");
         }
+        // B309: acrescentar um efeito (lentidão de 3 s, sempre) e tirar o Heal; o Value fica.
+        let inteiro = json!([["V", "Probability", "100"], ["V", "Time", "3000"], ["V", "Slow", "1"], ["V", "Value", "L"]]);
+        pedir("PUT", &format!("estudio/habilidades/15/roteiro?rascunho={rh}")).send_json(json!({"no_alvo": inteiro})).unwrap();
+        let hi = json_de(pedir("GET", "estudio/habilidades/15").query("rascunho", &rh.to_string()).call().unwrap());
+        assert_eq!(hi["servidor"]["no_alvo"], inteiro, "{hi}");
+        assert!(hi["setters_do_gs"].as_array().unwrap().iter().any(|x| x == "Slow"), "{hi}");
         assert_eq!(erro_de(pedir("PUT", &format!("estudio/habilidades/1/numeros?rascunho={rh}")).send_json(json!({"mp": [1, 2]}))).0, 400, "um número por nível");
         let ph = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [rh]})).unwrap());
         assert_eq!(ph["aplicados"].as_array().map(|x| x.len()), Some(1), "{ph}");

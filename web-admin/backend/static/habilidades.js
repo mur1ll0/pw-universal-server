@@ -137,36 +137,55 @@ async function abrirHabilidade(id) {
   // passo se edita; quem e setter ficam. O servidor confere com o avaliador do GS e as variáveis do original.
   for (const [r, titulo] of [["no_alvo", "Efeito no alvo (no_alvo)"], ["em_si", "Efeito em quem lança (em_si)"]]) {
     if (!Array.isArray(s[r]) || !s[r].length) continue;
-    const tr0 = criar("table", "tabela-simples");
-    tr0.appendChild(criar("caption", "", `${titulo} — só o servidor`));
-    const cab = criar("tr");
-    cab.append(criar("th", "", "#"), criar("th", "", "quem"), criar("th", "", "setter"), criar("th", "", "expressão ✎"));
-    tr0.appendChild(cab);
-    const exprs = [];
-    s[r].forEach((p, i) => {
-      const tr = criar("tr");
-      const e = criar("input", "campo");
-      e.value = String(p[2]);
-      e.style.width = "100%";
-      exprs.push(e);
-      const td = criar("td");
-      td.appendChild(e);
-      tr.append(criar("td", "", String(i + 1)), criar("td", "", p[0]), criar("td", "", p[1]), td);
-      tr0.appendChild(tr);
-    });
-    ficha.appendChild(tr0);
-    const salvarR = criar("button", "botao botao-pequeno", `Salvar ${r} no rascunho`);
-    salvarR.type = "button";
-    salvarR.addEventListener("click", async () => {
-      if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
-      try {
-        await api(rotaDeHabilidades(`/${f.id}/roteiro`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify({ [r]: exprs.map((e) => e.value) }) });
-        alerta("ok", "Estúdio", `Roteiro ${r} da habilidade ${f.id} no rascunho (catalogo\\habilidades.json).`, { toast: true });
-        if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-        abrirHabilidade(f.id);
-      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
-    });
-    ficha.append(salvarR, criar("div", "texto-suave", "Variáveis: L (nível), P_* (quem lança), V_* (alvo), S_* (golpe da habilidade) — só as que algum roteiro do original usa; números, + − × ÷, comparações, && ||, ?:, INT(...)."));
+    // B309: o roteiro inteiro se edita — passos acrescentados (quem = V, setter da lista do GS), removidos, reordenados.
+    const passos = s[r].map((p) => ({ quem: p[0], setter: p[1], expr: String(p[2]) }));
+    const caixa = criar("div");
+    const desenhar = () => {
+      caixa.replaceChildren();
+      const t = criar("table", "tabela-simples");
+      t.appendChild(criar("caption", "", `${titulo} — só o servidor (o GS roda em ordem: os acumuladores valem para o efeito seguinte)`));
+      const cab = criar("tr");
+      cab.append(criar("th", "", "#"), criar("th", "", "quem"), criar("th", "", "setter"), criar("th", "", "expressão ✎"), criar("th", "", ""));
+      t.appendChild(cab);
+      passos.forEach((p, i) => {
+        const tr = criar("tr");
+        const e = criar("input", "campo");
+        e.value = p.expr;
+        e.style.width = "100%";
+        e.addEventListener("input", () => { p.expr = e.value; });
+        const td = criar("td");
+        td.appendChild(e);
+        const acoes = criar("td");
+        for (const [rot, fazer] of [["↑", () => i > 0 && passos.splice(i - 1, 0, ...passos.splice(i, 1))], ["↓", () => i < passos.length - 1 && passos.splice(i + 1, 0, ...passos.splice(i, 1))], ["✕", () => passos.splice(i, 1)]]) {
+          const b = criar("button", "botao botao-pequeno", rot);
+          b.type = "button";
+          b.addEventListener("click", () => { fazer(); desenhar(); });
+          acoes.appendChild(b);
+        }
+        tr.append(criar("td", "", String(i + 1)), criar("td", "", p.quem), criar("td", "", p.setter), td, acoes);
+        t.appendChild(tr);
+      });
+      caixa.appendChild(t);
+      const sel = criar("select", "campo");
+      for (const n of f.setters_do_gs || []) { const o = criar("option", "", n); o.value = n; sel.appendChild(o); }
+      const mais = criar("button", "botao botao-pequeno", "Acrescentar passo");
+      mais.type = "button";
+      mais.addEventListener("click", () => { passos.push({ quem: "V", setter: sel.value, expr: "1" }); desenhar(); });
+      const salvarR = criar("button", "botao botao-pequeno", `Salvar ${r} no rascunho`);
+      salvarR.type = "button";
+      salvarR.addEventListener("click", async () => {
+        if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+        try {
+          await api(rotaDeHabilidades(`/${f.id}/roteiro`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify({ [r]: passos.map((p) => [p.quem, p.setter, p.expr]) }) });
+          alerta("ok", "Estúdio", `Roteiro ${r} da habilidade ${f.id} no rascunho (catalogo\\habilidades.json).`, { toast: true });
+          if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+          abrirHabilidade(f.id);
+        } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      });
+      caixa.append(sel, mais, salvarR, criar("div", "texto-suave", "Variáveis: L (nível), P_* (quem lança), V_* (alvo), S_* (golpe da habilidade) — só as que algum roteiro do original usa; números, + − × ÷, comparações, && ||, ?:, INT(...). Passo novo: quem = V e um setter que o GS porta; Probability (0–100), Time (ms), Ratio, Value, Amount e Showicon valem para o efeito seguinte."));
+    };
+    desenhar();
+    ficha.appendChild(caixa);
   }
   // B305: os números do cliente (elementskill.dll) — só as tabelas medidas no binário se editam; o resto vem do código.
   const c = f.cliente || {};

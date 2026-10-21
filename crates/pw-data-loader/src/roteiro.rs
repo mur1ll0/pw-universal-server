@@ -1,0 +1,103 @@
+//! B309: o que um passo de roteiro de habilidade (`no_alvo`/`em_si`, `[quem, setter, expressão]`) pode ser no GS.
+//!
+//! O GS roda os passos em `pw_gs::efeitos::executar_roteiro`:
+//! - só os de quem = `V` (os outros ele pula);
+//! - os [`ACUMULADORES`] guardam chance, tempo, razão, valor, quantia e ícone para o efeito seguinte;
+//! - os demais aplicam o efeito de `Efeito::do_setter`, e setter sem porte não faz nada no jogo.
+//!
+//! A lista [`SETTERS_DO_GS`] é a do `Efeito::do_setter` (`pw-gs/src/efeitos.rs`). O teste
+//! `os_setters_do_estudio_sao_os_do_gs` do `pw-gs` a trava nos dois sentidos para todo setter dos catálogos.
+
+/// Os setters que acumulam para o efeito seguinte (`executar_roteiro`).
+pub const ACUMULADORES: [&str; 6] = ["Amount", "Probability", "Ratio", "Showicon", "Time", "Value"];
+
+/// Os setters que o GS porta (`Efeito::do_setter` devolve `Some`), em ordem.
+pub const SETTERS_DO_GS: &[&str] = &[
+    "Apgen",
+    "Apgencont2",
+    "Apleak",
+    "Aurabless",
+    "Auracurse",
+    "Beastieform",
+    "Bleeding",
+    "Burning",
+    "Canti",
+    "Decaccuracy",
+    "Decattack",
+    "Decdefence",
+    "Decdodge",
+    "Dechp",
+    "Dechurt",
+    "Decmagic",
+    "Decregiondmg",
+    "Decresist",
+    "Devilstate",
+    "Dizzy",
+    "Fairyform",
+    "Fallen",
+    "Fastattack",
+    "Fastpray",
+    "Firearrow",
+    "Fix",
+    "Flood",
+    "Foxform",
+    "Freemove",
+    "Giant",
+    "Hpgen",
+    "Incaccuracy",
+    "Incattack",
+    "Inccritresistance",
+    "Incdamagedodge",
+    "Incdebuffdodge",
+    "Incdefence",
+    "Incdodge",
+    "Inchp",
+    "Inchpsteal",
+    "Inchurt",
+    "Incmagic",
+    "Incrementalhpgen",
+    "Incresist",
+    "Incsmite",
+    "Insertvstate",
+    "Invincible",
+    "Ironshield",
+    "Jingji",
+    "Magicleak",
+    "Mpgen",
+    "Noregain",
+    "Palsy",
+    "Powerup",
+    "Rebirth",
+    "Reducewood",
+    "Retort",
+    "Retort2",
+    "Sealed",
+    "Sealed2",
+    "Sleep",
+    "Slow",
+    "Slowattack",
+    "Slowpray",
+    "Soulretort2",
+    "Speedup",
+    "Swiftform",
+    "Thunder",
+    "Tigerform",
+    "Toxic",
+    "Toxicblade",
+    "Transportdamagetoleader",
+    "Wingshield",
+];
+
+/// O setter faz algo no GS? (acumulador ou efeito portado)
+pub fn setter_do_gs(nome: &str) -> bool {
+    ACUMULADORES.contains(&nome) || SETTERS_DO_GS.binary_search(&nome).is_ok()
+}
+
+#[cfg(test)]
+mod testes {
+    #[test]
+    fn a_lista_esta_em_ordem_e_sem_repeticao() {
+        assert!(super::SETTERS_DO_GS.windows(2).all(|w| w[0] < w[1]));
+        assert!(super::setter_do_gs("Value") && super::setter_do_gs("Slow") && !super::setter_do_gs("Inventado"));
+    }
+}
