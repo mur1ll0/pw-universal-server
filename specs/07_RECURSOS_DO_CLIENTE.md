@@ -736,6 +736,14 @@ o roteiro todo (acrescentar, remover, reordenar). O GS roda em ordem, só os pas
 `os_setters_do_estudio_sao_os_do_gs` do `pw-gs` contra todo setter dos dois catálogos). Um passo do original sem porte
 (mesmo quem e setter) pode ficar. A ficha leva `setters_do_gs`.
 
+**Roteiro novo e flags (B310):** o GS só roda `no_alvo` com `doenchant` (ou tipo bênção/maldição) e `em_si` com `dobless`
+(`bus_server/habilidades.rs:331-335`); as flags são só do servidor (`SkillStub::DoEnchant`/`DoBless`,
+`cskill/skill/skill.h:372-373`; o cliente não as usa). No mesmo `PUT …/roteiro`:
+- `"doenchant"`/`"dobless": true|false` editam a flag;
+- roteiro em habilidade que não tem (`null` no catálogo 1.5.5, `[]` no 1.2.6) só se cria pela forma inteira, e criar
+  liga a flag correspondente (salvo se a flag vier no mesmo pedido). Editar um roteiro existente não mexe na flag: há
+  roteiros do original com ela desligada (1.2.6: 4 `no_alvo` sem `doenchant`; 1.5.5: 1 `em_si` sem `dobless`).
+
 **Números do cliente (B305):** `PUT estudio/habilidades/{id}/numeros_do_cliente?rascunho=` `{campo: [um número por
 nível editável]}` troca os bytes da tabela no `elementskill.dll` do rascunho (`Estudio::definir_numeros_do_cliente`,
 `crate::elementskill`). Recompilar do fonte desfaria o que o BR mudou (B303), então a edição é no binário, em posições

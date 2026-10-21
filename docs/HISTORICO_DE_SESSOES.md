@@ -16128,3 +16128,40 @@ comparação lado a lado.
     ### e. Falta
     - Murillo: recriar os mundos (catálogo) e publicar o GS novo (B249) para valer no jogo.
     - Roteiro novo em habilidade que não tem; mana e números que vêm do código do DLL; habilidade nova.
+
+310. **Sessão 2026-10-20: Estúdio S8 — roteiro novo e flags doenchant/dobless.**
+
+    ### a. Pedido
+    Commitar (o B309 já estava em `bad4e15`, `be60db8`) e seguir: roteiro em habilidade que não tem.
+
+    ### b. Evidência
+    - O GS só roda `no_alvo` com `doenchant` (ou tipo bênção/maldição) e `em_si` com `dobless`
+      (`bus_server/habilidades.rs:331-335`). Criar um roteiro sem a flag não teria efeito.
+    - As flags são só do servidor: `SkillStub::DoEnchant`/`DoBless` (`cskill/skill/skill.h:273-274`, `:372-373`). No
+      fonte do cliente só aparecem nos cabeçalhos dos stubs.
+    - Nos catálogos há roteiro com a flag desligada (1.2.6: 4 `no_alvo` sem `doenchant`; 1.5.5: 1 `em_si` sem
+      `dobless`) e flag ligada sem roteiro lido. Logo, editar um roteiro existente não pode mexer na flag.
+    - "Sem roteiro" é `null` no catálogo 1.5.5 e `[]` no 1.2.6.
+
+    ### c. O que foi feito
+    - `PUT …/roteiro`:
+      - `"doenchant"`/`"dobless": true|false` editam a flag;
+      - roteiro onde não há (`null` ou `[]`) só se cria pela forma inteira, e criar liga a flag (salvo se ela vier no
+        mesmo pedido).
+    - Painel: "Criar efeito no alvo / em quem lança" e a caixa de marcar de cada flag.
+
+    ### d. Provas
+    - `pw-recursos` com o banco: **26 passaram, 0 falharam**:
+      - a 1 (sem `no_alvo` nos dois) ganhou `Probability 20, Time 2000, Dizzy 1` e `doenchant` = true;
+      - criar só com expressões dá 400;
+      - `doenchant` = false editado sozinho, e a edição seguinte do roteiro não o religa;
+      - flag não booleana dá 400.
+    - Painel **12/12**.
+    - No `pw-recursos` real, habilidade 1, rascunhos 47 (1.5.5, antes `null`) e 48 (1.2.6, antes `[]`), descartados:
+      - o roteiro criado gravou, com `doenchant` = true;
+      - sem rascunho segue false.
+    - `pw-recursos` e `pw-admin-api` publicados.
+
+    ### e. Falta
+    - Murillo: recriar os mundos (catálogo) e publicar o GS novo (B249) para valer no jogo.
+    - Mana e números que vêm do código do DLL; habilidade nova.
