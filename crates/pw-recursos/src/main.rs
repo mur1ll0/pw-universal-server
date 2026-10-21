@@ -16,7 +16,7 @@ use anyhow::{bail, Context, Result};
 use pw_recursos::assinatura::Chave;
 use pw_atualizador::cliente::{self, Origem, Servidor};
 use pw_recursos::fonte::ExtratorPython;
-use pw_recursos::importar::{self, Importacao};
+use pw_recursos::importar;
 use pw_storage::{PostgresPool, RecursosRepository, StorageConfig};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -125,55 +125,26 @@ async fn main() -> Result<()> {
             let refazer = chaves.iter().any(|c| c == "refazer");
             let pool = PostgresPool::new(&StorageConfig::default()).await?;
             let repo = RecursosRepository::new(pool);
-            if !repo.versoes(&versao).await?.is_empty() {
-                if !refazer {
-                    bail!("a versão {versao} já tem a versão 0 registrada (use --refazer)");
-                }
-                if !repo.apagar_versao_zero(&versao).await? {
-                    bail!("a versão {versao} já tem versões publicadas ou alterações: não dá para refazer a 0");
-                }
-            }
-            let atualizacao = importar::pasta_da_versao(&dados, &versao).join("atualizacao");
-            if refazer && atualizacao.exists() {
-                std::fs::remove_dir_all(&atualizacao)?;
-            }
             let (chave, criada) = Chave::carregar_ou_criar(&caminho_da_chave())?;
             if criada {
                 tracing::warn!("chave de assinatura criada agora em {}", caminho_da_chave().display());
             }
-            let chave = Arc::new(chave);
-            let (v, c, d) = (versao.clone(), cliente.clone(), dados.clone());
-            let resultado = tokio::task::spawn_blocking(move || {
-                let fonte = ExtratorPython::do_ambiente();
-                importar::importar(&Importacao {
-                    versao: &v,
-                    cliente: &c,
-                    dados: &d,
-                    nivel,
-                    linha_de_grupo: importar::precisa_linha_de_grupo(&v),
-                    fonte: &fonte,
-                    chave: &chave,
-                })
-            })
-            .await??;
-            repo.gravar_versao_zero(
+            // B332: o mesmo caminho da importação pelo painel (`envios::importar_versao_zero`).
+            let resultado = pw_recursos::envios::importar_versao_zero(
+                &repo,
+                &dados,
+                Arc::new(chave),
+                Arc::new(ExtratorPython::do_ambiente()),
                 &versao,
+                &cliente,
+                nivel,
+                refazer,
                 &cliente.display().to_string(),
-                &resultado.manifesto_sha256,
-                &resultado.assinatura,
-                &pw_recursos::para_o_banco(&resultado.registros),
             )
             .await?;
             let r = &resultado.relatorio;
             let mb = |b: u64| b as f64 / 1_048_576.0;
-            println!(
-                "versão 0 de {versao}: {} arquivos, {:.1} MB; pacotes .pck lidos {}, falhas {}, repetidos entre pacotes {}",
-                r.total_arquivos,
-                mb(r.total_bytes),
-                r.pacotes_lidos.len(),
-                r.falhas_de_pacote.len(),
-                r.repetidos_entre_pacotes.len()
-            );
+            println!("{}", pw_recursos::envios::resumo(&versao, r));
             println!(
                 "soltos lidos {}, soltos repetidos do pacote {}, fora do GBK {}, excluídos {}, nossos {:?}",
                 r.soltos_lidos,

@@ -228,7 +228,10 @@ impl Cenario {
         for t in [1, 161, 105] {
             dados.pastas_de_mapa.insert(t, std::env::temp_dir().join("pw_teste_mapa_sem_pasta"));
         }
-        roteador.permitir_carga(pw_gs::mapas::CargaDeMapas { dados: Arc::new(dados), versao });
+        // B331: a pasta da recarga é uma vazia (lê sem falha e dá um `GameDataManager` vazio).
+        let pasta = std::env::temp_dir().join(format!("pw_teste_recarga_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&pasta);
+        roteador.permitir_carga(pw_gs::mapas::CargaDeMapas { dados: Arc::new(dados), versao, pasta: Some(pasta), falhas_na_partida: vec![] });
         roteador.ligar_trocas();
         let escuta = BusListener::bind("127.0.0.1:0").await.unwrap();
         let bus = escuta.local_addr().unwrap();
@@ -2035,4 +2038,28 @@ async fn templates_editados_pelo_canal_valem_para_o_proximo_personagem() {
     let mut h: Vec<(u32, u8)> = d.skills.iter().map(|s| (s.skill_id, s.level)).collect();
     h.sort();
     assert_eq!(h, vec![(1, 1), (81, 2)]);
+}
+
+/// B331: "recarregar" relê o config sem desconectar — responde na hora, troca os dados do mundo em segundo plano e
+/// quem estava online continua; o resumo mostra `dados_em` e a recarga terminada. Uma segunda, enquanto a primeira
+/// corre, é recusada.
+#[tokio::test]
+async fn recarregar_troca_os_dados_sem_desconectar() {
+    let c = Cenario::montar().await;
+    let _bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let antes = Arc::clone(&c.mundo.read().await.data_manager);
+    let r = c.pedir(&c.realm, json!({"tipo":"recarregar"})).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["tipo"].as_str()), (Some("aplicado"), Some("recarregar")), "{r}");
+    let limite = tokio::time::Instant::now() + Duration::from_secs(20);
+    while Arc::ptr_eq(&c.mundo.read().await.data_manager, &antes) {
+        assert!(tokio::time::Instant::now() < limite, "a recarga não aplicou em 20 s");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(c.mundo.read().await.players.contains_key(&(c.personagem as i64)), "ninguém sai do mundo");
+    let m = c.pedir(&c.realm, json!({"tipo":"mundos"})).await;
+    assert_eq!(m["dados"]["recarga"]["em_andamento"], json!(false), "{m}");
+    assert!(m["dados"]["dados_em"].as_u64() >= m["dados"]["iniciado_em"].as_u64(), "{m}");
+    c.esperar_presenca("online").await;
+    c.encerrar().await;
 }

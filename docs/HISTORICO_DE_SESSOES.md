@@ -16777,3 +16777,34 @@ comparação lado a lado.
         1.000) e `a_reducao_por_distancia_vale_contra_jogador_que_bate` (950 a 3 m, 1.000 a 9 m, 1.000 de monstro).
     - Ver em jogo: um Arqueiro com a passiva de alcance (255) acerta mais longe com arco; com asas e a 190, voa mais
       rápido. Os números dependem das passivas que o personagem tem.
+
+331. **Sessão 2026-10-21: recarregar os dados do realm sem reiniciar.**
+
+    - Consulta administrativa `recarregar` no GS (`RoteadorDeMapas::recarregar_em_segundo_plano`): responde na hora e
+      relê o `config` em segundo plano (a leitura do 1.5.5 passa dos 5 s do canal). Falha nova recusa e mantém o que está
+      em uso; aplicada, troca o `data_manager` de todos os mundos e refaz os atributos de quem está online. O que nasceu do
+      `npcgen` só muda reiniciando. Os mapas ligados depois usam os dados novos.
+    - Resumo `mundos` com `dados_em` e `recarga`; painel com `POST /api/realms/{id}/recarregar`, o "aguarda reinício" pelo
+      `dados_em` e o botão ao lado de "Reiniciar o realm" (spec 06).
+    - Provas: `recarregar_troca_os_dados_sem_desconectar` (canal administrativo **38/38**), painel **13/13**.
+    - Ver em jogo: editar um preço ou um número de habilidade no Estúdio, publicar, "Recarregar os dados" — sem sair do
+      jogo, o NPC já vende pelo preço novo (abrir a loja de novo).
+
+332. **Sessão 2026-10-21: envio do cliente original pelo painel.**
+
+    - `pw_recursos::envios` + API (`/admin/envios…`): pasta enviada arquivo a arquivo em blocos que só acrescentam
+      (deslocamento errado = 409 com o tamanho: retoma), caminho preso à pasta do envio, importação da versão 0 em segundo
+      plano pelo mesmo código do comando (`importar_versao_zero`, que o `pw-recursos importar` passou a usar).
+    - Painel: rotas `/api/recursos/envios…` (bloco até 16 MiB só nessa rota) e o cartão "Enviar o cliente original" com
+      retomada pela mesma pasta (spec 07).
+    - Provas: `envios::testes` 2/2, `tests/envios.rs` **1/1** com o banco, painel **13/13**.
+
+333. **Sessão 2026-10-21: canal de teste do GM no launcher.**
+
+    - `Governanca::canal_de_teste`: manifesto do publicado + rascunhos, assinado em `atualizacao/teste/<token>/` com o mesmo
+      número da versão; `POST/DELETE /admin/{v}/teste…`. O `publicar` e o teste usam a mesma `aplicar_rascunhos`.
+    - Atualizador: `Servidor::com_canal_de_teste`; launcher: `…#teste=<token>` no campo do servidor. Voltar ao oficial
+      desfaz só o que o teste trocou (o `atualizar` compara o SHA do manifesto).
+    - Painel: botão "Canal de teste (GM)" (spec 07).
+    - Provas: `governanca.rs` **1/1** (entra, fica em dia, volta, verifica limpo, canal removido), painel **13/13**.
+    - Nota: o S4 (distritos, portais e destinos novos) que eu tinha listado como falta já estava feito (B251–B253).

@@ -98,6 +98,22 @@ impl Origem {
 pub struct Servidor {
     pub origem: Origem,
     pub chave_publica: String,
+    /// B333 — o canal de teste do GM (o token que o painel deu): o `versao.json` vem de `teste/<token>/`, com o
+    /// manifesto do publicado mais os rascunhos. Os objetos são os mesmos.
+    pub canal_de_teste: Option<String>,
+}
+
+/// B333: separa o canal de teste do endereço do servidor — `http://host:8100#teste=<token>` → (`http://host:8100`,
+/// `Some(token)`). Token inválido (não são 32 hexadecimais minúsculos) é ignorado.
+pub fn separar_canal_de_teste(endereco: &str) -> (String, Option<String>) {
+    match endereco.split_once("#teste=") {
+        Some((base, t)) => {
+            let t = t.trim();
+            let valido = t.len() == 32 && t.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase());
+            (base.trim().to_string(), valido.then(|| t.to_string()))
+        }
+        None => (endereco.trim().to_string(), None),
+    }
 }
 
 /// O que veio do servidor para uma versão: tudo conferido.
@@ -111,7 +127,21 @@ pub struct VersaoRemota {
 
 impl Servidor {
     pub fn new(origem: Origem, chave_publica: impl Into<String>) -> Self {
-        Self { origem, chave_publica: chave_publica.into() }
+        Self { origem, chave_publica: chave_publica.into(), canal_de_teste: None }
+    }
+
+    /// B333: o mesmo servidor no canal de teste `token` (ou fora dele, com `None`).
+    pub fn com_canal_de_teste(mut self, token: Option<String>) -> Self {
+        self.canal_de_teste = token;
+        self
+    }
+
+    /// Onde está o `versao.json` deste canal, relativo a `atualizacao/<versao>/`.
+    fn rel_versao(&self) -> String {
+        match &self.canal_de_teste {
+            Some(t) => format!("teste/{t}/versao.json"),
+            None => "versao.json".to_string(),
+        }
     }
 
     /// Versões de cliente que o servidor oferece (`GET /versoes`).
@@ -141,8 +171,8 @@ impl Servidor {
 
     /// `versao.json` e o manifesto atual, com as duas assinaturas e o SHA-256 conferidos.
     pub fn versao_remota(&self, versao: &str) -> Result<VersaoRemota> {
-        let v_bytes = self.origem.ler(versao, "versao.json")?;
-        assinatura::verificar(&self.chave_publica, &v_bytes, &self.assinatura_de(versao, "versao.json")?)
+        let v_bytes = self.origem.ler(versao, &self.rel_versao())?;
+        assinatura::verificar(&self.chave_publica, &v_bytes, &self.assinatura_de(versao, &self.rel_versao())?)
             .context("versao.json")?;
         let v: Versao = serde_json::from_slice(&v_bytes)?;
         if v.versao_cliente != versao {
@@ -165,8 +195,8 @@ impl Servidor {
     /// Só o `versao.json` (assinatura conferida): a consulta leve que o launcher faz ao abrir para
     /// saber se há atualização, sem baixar o manifesto (25 MB no 1.5.5).
     pub fn versao_anunciada(&self, versao: &str) -> Result<Versao> {
-        let v_bytes = self.origem.ler(versao, "versao.json")?;
-        assinatura::verificar(&self.chave_publica, &v_bytes, &self.assinatura_de(versao, "versao.json")?)
+        let v_bytes = self.origem.ler(versao, &self.rel_versao())?;
+        assinatura::verificar(&self.chave_publica, &v_bytes, &self.assinatura_de(versao, &self.rel_versao())?)
             .context("versao.json")?;
         let v: Versao = serde_json::from_slice(&v_bytes)?;
         if v.versao_cliente != versao {

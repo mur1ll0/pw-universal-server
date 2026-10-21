@@ -158,6 +158,27 @@ async fn rascunho_publicar_atualizar_e_reverter() {
         std::io::Read::read_to_end(&mut pedir("GET", "arquivo").query("caminho", "configs\\a.txt").call().unwrap().into_reader(), &mut atual).unwrap();
         assert_eq!(atual, b"original");
 
+        // B333 — canal de teste do GM: o rascunho r1 por cima da versão 0, sem publicar. O launcher com o token entra
+        // nele (mesmo número, outro manifesto) e, sem o token, volta ao oficial desfazendo só o que o teste trocou.
+        let token = json_de(pedir("POST", "teste").send_json(json!({"rascunhos": [r1]})).unwrap())["token"].as_str().unwrap().to_string();
+        let serv_teste = Servidor::new(Origem::Http(base.clone()), serv.chave_publica.clone()).com_canal_de_teste(Some(token.clone()));
+        let r = launcher::atualizar(&serv_teste, &pa2, &mut |_| {}).unwrap().unwrap();
+        assert_eq!((r.numero, r.arquivos, r.removidos), (0, 2, 1), "no teste: a.txt e novo.txt, sem o cursor");
+        assert_eq!(ler(&pa2, b"configs\\a.txt").unwrap(), b"versao 1");
+        assert!(launcher::atualizar(&serv_teste, &pa2, &mut |_| {}).unwrap().is_none(), "já está no teste");
+        let r = launcher::atualizar(&serv, &pa2, &mut |_| {}).unwrap().unwrap();
+        assert_eq!((r.numero, r.arquivos, r.removidos), (0, 2, 1), "de volta ao oficial");
+        assert_eq!((ler(&pa2, b"configs\\a.txt").unwrap(), ler(&pa2, &cursor).unwrap()), (b"original".to_vec(), b"cursor".to_vec()));
+        assert!(ler(&pa2, b"configs\\novo.txt").is_none());
+        assert!(launcher::verificar(&pa2, true, &mut |_| {}).unwrap().is_empty());
+        assert_eq!(
+            launcher::separar_canal_de_teste(&format!("{base}#teste={token}")),
+            (base.clone(), Some(token.clone()))
+        );
+        assert_eq!(json_de(pedir("DELETE", &format!("teste/{token}")).call().unwrap())["removido"], json!(true));
+        assert!(serv_teste.versao_anunciada(LINHA).is_err(), "canal removido");
+        assert_eq!(status_de(pedir("POST", "teste").send_json(json!({"rascunhos": []}))), 400);
+
         // Publicar a versão 1 (mínima 1: obriga a atualizar).
         let p = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r1], "minima": 1})).unwrap());
         assert_eq!(p["numero"], 1);

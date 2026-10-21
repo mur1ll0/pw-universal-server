@@ -76,6 +76,8 @@ pub enum Consulta {
     /// os lê uma vez, ao montar o `GameDataManager`. Desconecta todos (salvando) e encerra o processo; o Docker o sobe
     /// de novo (`restart: unless-stopped`) e o `pw-link` reconecta sozinho (`pw-link/src/uplink.rs:133`).
     Reiniciar,
+    /// B331: reler os arquivos do `config` sem reiniciar nem desconectar ([`crate::mapas::RoteadorDeMapas::recarregar_em_segundo_plano`]).
+    Recarregar,
     /// Edição de personagem (E5): um só de `dinheiro` (dar), `exp`/`sp` (somar, só online),
     /// `pontos` (dar pontos livres), `nivel` (alvo, só sobe) ou `cultivo` (B182).
     EditarPersonagem {
@@ -693,6 +695,13 @@ impl ServidorAdministrativo {
                         });
                         json!({"estado":"aplicado","tipo":"reiniciar","online":online})
                     }
+                    Consulta::Recarregar => match self.roteador.recarregar_em_segundo_plano() {
+                        Ok(()) => {
+                            tracing::info!(administrador = pedido.administrador_id, "admin: recarga dos dados pedida");
+                            json!({"estado":"aplicado","tipo":"recarregar","online":self.roteador.quantos_online().await})
+                        }
+                        Err(codigo) => json!({"codigo":codigo}),
+                    },
                     Consulta::Mundos => self.roteador.resumo_administrativo().await,
                     Consulta::Personagem { personagem_id } if personagem_id > 0 => {
                         self.roteador

@@ -1319,6 +1319,9 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 328 | 10-21 | DLL de dados, fase 6: habilidade nova pelo Estúdio |
 | 329 | 10-21 | §5A revisto (munição, coleta, ataque, PvP já feitos) e os testes instáveis |
 | 330 | 10-21 | Fidelidade: as passivas comuns que faltavam (elemento, skill_enhance2, distância, alcance, asas, renascer) |
+| 331 | 10-21 | Recarregar os dados do realm sem reiniciar |
+| 332 | 10-21 | Envio do cliente original pelo painel (arquivo a arquivo, retomável) e importação pela API |
+| 333 | 10-21 | Canal de teste do GM no launcher |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

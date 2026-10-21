@@ -877,14 +877,48 @@ Confirmado pelo Murillo num Windows 7 real (2026-10-19). Conferir depois de comp
 
 ## 8. Falta
 
-- Launcher: canal de teste para GM (instalar um rascunho antes de publicar), autoatualização do próprio
+- Launcher: ~~canal de teste para GM~~ (B333, abaixo), autoatualização do próprio
   launcher, instalador (o `.msi` do Tauri saiu com o Tauri no B275).
 - ("Aguarda reinício" e reiniciar pelo painel: feitos no B249, spec 06.) Rascunho só de servidor continua gerando
   versão nova do cliente com o manifesto igual — **decisão do B250, mantido**: o launcher só baixa o manifesto e termina,
   e a versão é o que guarda o `publicada_em` do aviso de reinício e o que o reverter usa.
 - Estúdio: telas próprias, `tasks` (a Loja Gold é do B254); no mapa, regiões (`[region]`) editáveis, nome de controlador (o
   `szName` é só leitura); decidir e aplicar o alinhamento dos 14 pares que diferem (ferramenta pronta, B253).
-- Envio do cliente original pelo painel para importar no servidor externo (pasta enviada arquivo a
-  arquivo, retomável — decisão B233).
+- ~~Envio do cliente original pelo painel~~ (B332, abaixo).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).
 - Troca de chave (`chaves.json` assinado pela anterior, §7.2).
+
+## Envio do cliente original pelo painel (B332)
+
+Decisão do B233: a pasta da instalação original vai **arquivo a arquivo, retomável**. `pw_recursos::envios`:
+- área de recebimento `<dados>/.envios/<id>/` (o ponto inicial impede colidir com nome de versão) e a descrição em
+  `<dados>/.envios/<id>.json`;
+- `caminho_seguro`: relativo, `/` ou `\`, sem `..`, `.`, raiz, letra de unidade ou parte vazia;
+- `gravar_bloco`: só **acrescenta** — o `deslocamento` tem de ser o tamanho que já chegou, senão 409 com o tamanho atual
+  (é o que retoma depois de uma queda sem corromper); bloco até 16 MiB;
+- `importar_versao_zero`: o corpo do comando `pw-recursos importar` (o comando passou a usá-lo também), em segundo plano
+  pela API, com o estado em memória (`em_andamento`/`concluida`/`falha` + mensagem).
+
+API administrativa: `GET/POST /admin/envios`, `GET/DELETE /admin/envios/{id}`, `PUT /admin/envios/{id}/arquivo?caminho=&deslocamento=`
+(bytes crus), `POST /admin/envios/{id}/importar {versao, subpasta?, nivel?, refazer?}` (202). Uma importação por vez;
+envio sendo importado não recebe bloco nem é apagado. A fonte dos `.pck` é a do serviço (`ExtratorPython`); os testes
+passam outra (`admin::rotas_com_fonte`). Painel: as mesmas rotas em `/api/recursos/envios…` (o bloco com limite de 16 MiB
+em `seguranca.py`, só nessa rota) e o cartão "Enviar o cliente original" na página Recursos: escolhe a pasta
+(`webkitdirectory`), manda em blocos de 8 MiB com velocidade na tela, guarda o id do envio no navegador (escolher a
+mesma pasta de novo retoma) e importa a primeira pasta do caminho como a instalação. Testes: `envios::testes` 2/2 e
+`tests/envios.rs` 1/1 (blocos, 409 da retomada, caminho para fora recusado, importação concluída com 4 arquivos e um
+`.pck`, a segunda sem `refazer` em falha, remoção), painel 13/13.
+
+## Canal de teste do GM no launcher (B333)
+
+`Governanca::canal_de_teste(versao, rascunhos)`: o manifesto publicado com os rascunhos por cima (a mesma junção do
+`publicar`, agora `aplicar_rascunhos`), assinado em `atualizacao/teste/<token>/manifesto.json` com **o mesmo número**
+da versão atual e um `versao.json` próprio ao lado. Nada vai ao banco nem aos realms; token de 128 bits aleatórios.
+`POST /admin/{v}/teste {rascunhos}` → `{token}`, `DELETE /admin/{v}/teste/{token}`. No cliente,
+`pw_atualizador::cliente::Servidor::com_canal_de_teste(token)` lê `teste/<token>/versao.json`; os objetos são os mesmos.
+Como o `atualizar` compara também o SHA do manifesto, entrar no teste baixa só o que o rascunho troca e **voltar ao
+oficial** (sem o token) desfaz só isso — sem estado novo na pasta. Launcher: o token vai no próprio campo do servidor,
+`http://<servidor>:8100#teste=<token>` (`separar_canal_de_teste`; token inválido é ignorado). Painel: botão "Canal de
+teste (GM)" ao lado de "Publicar selecionados", com o endereço a colar. Teste: `governanca.rs` — o launcher entra no
+teste (a.txt do rascunho, sem o cursor removido), fica em dia nele, volta ao oficial e verifica sem divergência; canal
+removido deixa de responder.

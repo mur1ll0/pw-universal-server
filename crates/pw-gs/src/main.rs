@@ -103,6 +103,8 @@ async fn main() -> anyhow::Result<()> {
     roteador.permitir_carga(pw_gs::mapas::CargaDeMapas {
         dados: Arc::clone(&data_manager),
         versao: game_version,
+        pasta: Some(std::path::PathBuf::from(&config_dir)),
+        falhas_na_partida: relatorio.falhas.iter().map(|f| f.arquivo.clone()).collect(),
     });
     roteador.ligar_trocas();
     roteador.carregar_taxas(&contas_admin.realms(), &realm_id).await;

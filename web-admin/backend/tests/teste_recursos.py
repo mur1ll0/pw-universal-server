@@ -465,6 +465,65 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(aplicar.call_args.args[2], {"tipo": "reiniciar"})
             r = await self.cliente.post("/api/realms/realm_126/reiniciar", json={"confirmar": "realm_126"})
             self.assertEqual(r.status_code, 403, "sem CSRF")
+        # B331: a recarga sem desconectar — `dados_em` (a última leitura dos arquivos) decide o "aguarda reinício".
+        mundos.return_value = [{"presenca": "observada", "mapas": [], "iniciado_em": 1000, "dados_em": 3000,
+                                "recarga": {"em_andamento": False, "falhas": []}}]
+        with patch("painel.recursos.consultar_daemons", mundos):
+            r = (await self.cliente.get("/api/realms/realm_126/servidor")).json()
+        self.assertEqual((r["aguarda_reinicio"], r["dados_em"], r["recarregando"]), (False, 3000, False))
+        mundos.return_value = [{"presenca": "observada", "mapas": [], "iniciado_em": 1000, "dados_em": 1000,
+                                "recarga": {"em_andamento": False, "falhas": ["elements.data"]}}]
+        with patch("painel.recursos.consultar_daemons", mundos):
+            r = (await self.cliente.get("/api/realms/realm_126/servidor")).json()
+        self.assertEqual((r["aguarda_reinicio"], r["falhas_da_recarga"]), (True, ["elements.data"]))
+        aplicar = AsyncMock(return_value=[{"estado": "aplicado", "tipo": "recarregar", "online": 2}])
+        with patch("painel.recursos.aplicar_no_realm", aplicar):
+            r = await self.cliente.post("/api/realms/realm_126/recarregar", headers=csrf, json={})
+            self.assertEqual((r.status_code, r.json()["processos"]), (200, 1))
+            self.assertEqual(aplicar.call_args.args[2], {"tipo": "recarregar"})
+            r = await self.cliente.post("/api/realms/realm_126/recarregar", json={})
+            self.assertEqual(r.status_code, 403, "sem CSRF")
+
+    async def test_envio_do_cliente_original(self):
+        """B332: o envio em blocos passa do limite de 8 KiB só na rota do bloco (até 16 MiB), e tudo é repassado ao
+        pw-recursos como veio (caminho e deslocamento na consulta, os bytes crus no corpo)."""
+        await self.entrar()
+        csrf = await self.csrf()
+        r = await self.cliente.post("/api/recursos/envios", headers=csrf, json={"descricao": "instalação"})
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["metodo"], p["caminho"], json.loads(p["corpo"])), ("POST", "/admin/envios", {"descricao": "instalação"}))
+        bloco = bytes(range(256)) * (36 * 1024)  # 9 MiB
+        r = await self.cliente.put("/api/recursos/envios/e1-ab/arquivo", headers=csrf, content=bloco,
+                                   params={"caminho": "element/configs.pck", "deslocamento": 0})
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], p["consulta"], len(p["corpo"]), p["corpo"][:4]),
+                         ("/admin/envios/e1-ab/arquivo", {"caminho": ["element/configs.pck"], "deslocamento": ["0"]}, len(bloco), bloco[:4]))
+        r = await self.cliente.put("/api/recursos/envios/e1-ab/arquivo", headers=csrf, content=b"x" * (17 << 20),
+                                   params={"caminho": "a", "deslocamento": 0})
+        self.assertEqual(r.status_code, 413, "acima de 16 MiB")
+        r = await self.cliente.post("/api/recursos/envios/e1-ab/importar", headers=csrf,
+                                    json={"versao": "1.5.5", "subpasta": "element", "nivel": 99, "refazer": True})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(json.loads(RecursosFalso.pedidos[-1]["corpo"]),
+                         {"versao": "1.5.5", "refazer": True, "subpasta": "element", "nivel": 22})
+        antes = len(RecursosFalso.pedidos)
+        r = await self.cliente.get("/api/recursos/envios/X_maiusculo")
+        self.assertEqual((r.status_code, len(RecursosFalso.pedidos)), (404, antes), "id inválido não chega ao serviço")
+        r = await self.cliente.post("/api/recursos/envios", json={"descricao": "x"})
+        self.assertEqual(r.status_code, 403, "sem CSRF")
+        # B333: canal de teste do GM.
+        r = await self.cliente.post("/api/recursos/1.5.5/teste", headers=csrf, json={"rascunhos": [7, 9]})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual((RecursosFalso.pedidos[-1]["caminho"], json.loads(RecursosFalso.pedidos[-1]["corpo"])),
+                         ("/admin/1.5.5/teste", {"rascunhos": [7, 9]}))
+        r = await self.cliente.post("/api/recursos/1.5.5/teste", headers=csrf, json={"rascunhos": []})
+        self.assertEqual(r.status_code, 422)
+        r = await self.cliente.delete("/api/recursos/1.5.5/teste/" + "a" * 32, headers=csrf)
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.5.5/teste/" + "a" * 32))
+        r = await self.cliente.delete("/api/recursos/1.5.5/teste/ZZ", headers=csrf)
+        self.assertEqual(r.status_code, 404)
 
     async def test_versao_invalida_e_servico_sem_segredo(self):
         await self.entrar()

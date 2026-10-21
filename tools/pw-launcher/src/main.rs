@@ -62,7 +62,9 @@ fn gravar_config(c: &Config) -> Result<(), String> {
 }
 
 fn servidor(url: &str) -> Servidor {
-    Servidor::new(Origem::Http(local::normalizar_url(url)), CHAVE_PUBLICA.trim())
+    // B333: `…#teste=<token>` no endereço põe o launcher no canal de teste do GM (o token vem do painel).
+    let (base, canal) = cliente::separar_canal_de_teste(url);
+    Servidor::new(Origem::Http(local::normalizar_url(&base)), CHAVE_PUBLICA.trim()).com_canal_de_teste(canal)
 }
 
 /// Põe o host do servidor de atualização como endereço do jogo na pasta (`local.rs`): os

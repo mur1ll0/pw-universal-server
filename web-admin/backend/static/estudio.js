@@ -661,9 +661,42 @@ async function verificarReinicio(antes) {
     const b = criar("button", "botao botao-pequeno botao-primario", "Reiniciar o realm");
     b.type = "button";
     b.addEventListener("click", () => reiniciarRealm(s));
-    caixa.appendChild(b);
+    // B331: reler os dados sem desconectar. Vale para tabelas e catálogos (itens, habilidades, missões, serviços,
+    // distritos, portais, destinos); o que já nasceu no mapa (npcgen) só muda reiniciando.
+    const r = criar("button", "botao botao-pequeno", s.recarregando ? "Recarregando…" : "Recarregar os dados (sem desconectar)");
+    r.type = "button";
+    r.disabled = !!s.recarregando;
+    r.title = "Relê os arquivos do config do realm no servidor de mundo, sem desconectar ninguém. As criaturas do npcgen continuam as de antes até reiniciar.";
+    r.addEventListener("click", () => recarregarRealm(s));
+    caixa.append(" ", b, " ", r);
+  }
+  if (s.falhas_da_recarga && s.falhas_da_recarga.length) {
+    caixa.hidden = false;
+    caixa.append(criar("div", "texto-suave", `A última recarga foi recusada (os dados em uso continuam): ${s.falhas_da_recarga.join(", ")}`));
   }
   return s;
+}
+
+async function recarregarRealm(situacao) {
+  const realm = estudio.realm;
+  try {
+    await api(`/api/realms/${encodeURIComponent(realm)}/recarregar`, { method: "POST", body: JSON.stringify({}) });
+    alerta("ok", "Estúdio", "Relendo os dados do realm no servidor de mundo…", { toast: true });
+  } catch (erro) { alerta("erro", "Estúdio", erro.message); return; }
+  const antes = situacao.dados_em || situacao.iniciado_em || 0;
+  for (let i = 0; i < 40; i++) {
+    await new Promise((ok) => setTimeout(ok, 3000));
+    const s = await verificarReinicio().catch(() => null);
+    if (s && !s.recarregando && s.dados_em && s.dados_em > antes) {
+      alerta("ok", "Estúdio", "Dados novos em uso, sem desconectar ninguém.", { toast: true });
+      return;
+    }
+    if (s && !s.recarregando && s.falhas_da_recarga && s.falhas_da_recarga.length) {
+      alerta("erro", "Estúdio", `Recarga recusada: ${s.falhas_da_recarga.join(", ")}`);
+      return;
+    }
+  }
+  alerta("aviso", "Estúdio", "A recarga ainda não terminou depois de 120 s; confira o log do servidor de mundo.");
 }
 
 async function reiniciarRealm(situacao) {

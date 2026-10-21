@@ -55,6 +55,8 @@ pub struct RoteadorDeMapas {
     /// O que é preciso para carregar um mapa novo em execução (B183). Sem isto (testes que
     /// montam o roteador à mão), ligar um mapa não carregado é recusado.
     carga: std::sync::OnceLock<CargaDeMapas>,
+    /// B331: ver [`EstadoDaRecarga`]. Trava síncrona, nunca segurada durante `await`.
+    recarga: std::sync::Mutex<EstadoDaRecarga>,
     /// Mapas sendo montados agora (ligados pelo painel, ainda fora de `mapas`).
     carregando: std::sync::Mutex<std::collections::HashSet<i32>>,
     /// Fila de trocas e o próprio roteador, para ligar os mapas carregados depois.
@@ -69,6 +71,21 @@ pub struct RoteadorDeMapas {
 pub struct CargaDeMapas {
     pub dados: Arc<pw_data_loader::GameDataManager>,
     pub versao: pw_protocol::GameVersion,
+    /// B331: a pasta do `config` do realm, para a recarga sem reiniciar (`None` nos testes que montam à mão:
+    /// a recarga é recusada).
+    pub pasta: Option<std::path::PathBuf>,
+    /// B331: os arquivos que já falhavam na partida — a recarga só é recusada por falha **nova**.
+    pub falhas_na_partida: Vec<String>,
+}
+
+/// B331: a recarga dos dados sem reiniciar — os dados da última aplicada (os mapas ligados depois usam estes),
+/// quando, se há uma em curso e as falhas da última recusada.
+#[derive(Default)]
+struct EstadoDaRecarga {
+    dados: Option<Arc<pw_data_loader::GameDataManager>>,
+    em: Option<std::time::SystemTime>,
+    em_andamento: bool,
+    falhas: Vec<String>,
 }
 
 /// `_world_limit.nofly` do `gs.conf` da versão (B133).
@@ -130,6 +147,7 @@ impl RoteadorDeMapas {
             taxas: std::sync::RwLock::new(crate::taxas::Taxas::default()),
             desligados: std::sync::RwLock::new(std::collections::HashSet::new()),
             carga: std::sync::OnceLock::new(),
+            recarga: Default::default(),
             carregando: std::sync::Mutex::new(std::collections::HashSet::new()),
             trocas: std::sync::OnceLock::new(),
             eu: std::sync::OnceLock::new(),
@@ -203,7 +221,7 @@ impl RoteadorDeMapas {
                 let Some(carga) = self.carga.get() else {
                     return serde_json::json!({"codigo":"carga_indisponivel","mapa":mapa});
                 };
-                if !carga.dados.pastas_de_mapa.contains_key(&mapa) {
+                if !self.dados_vigentes(carga).pastas_de_mapa.contains_key(&mapa) {
                     return serde_json::json!({"codigo":"mapa_sem_dados","mapa":mapa});
                 }
             }
@@ -272,7 +290,7 @@ impl RoteadorDeMapas {
             self.em_carga().remove(&mapa);
             return;
         };
-        let (dados, versao, repo) = (Arc::clone(&carga.dados), carga.versao, self.repo.clone());
+        let (dados, versao, repo) = (self.dados_vigentes(carga), carga.versao, self.repo.clone());
         let inicio = std::time::Instant::now();
         let montado = tokio::task::spawn_blocking(move || {
             let mut mundo = WorldInstance::new(mapa, dados, repo);
@@ -487,11 +505,92 @@ impl RoteadorDeMapas {
         }
         // Os que este processo sabe montar (têm dados): o painel só oferece ligar esses.
         let mut carregaveis: Vec<i32> = self.carga.get()
-            .map(|c| c.dados.pastas_de_mapa.keys().copied().collect()).unwrap_or_default();
+            .map(|c| self.dados_vigentes(c).pastas_de_mapa.keys().copied().collect()).unwrap_or_default();
         carregaveis.sort_unstable();
-        let iniciado_em = self.iniciado_em.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let segundos = |t: std::time::SystemTime| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let iniciado_em = segundos(self.iniciado_em);
+        // B331: `dados_em` = quando os arquivos do config foram lidos pela última vez (a partida ou a recarga).
+        let (dados_em, recarga) = {
+            let r = self.recarga.lock().unwrap_or_else(|e| e.into_inner());
+            (r.em.map(segundos).unwrap_or(iniciado_em), serde_json::json!({"em_andamento":r.em_andamento,"falhas":r.falhas}))
+        };
         serde_json::json!({"presenca":"observada","mapas":mapas,"taxas":self.taxas(),"carregaveis":carregaveis,
-            "iniciado_em":iniciado_em})
+            "iniciado_em":iniciado_em,"dados_em":dados_em,"recarga":recarga})
+    }
+
+    /// B331: os dados em uso — os da última recarga aplicada, ou os da partida.
+    fn dados_vigentes(&self, carga: &CargaDeMapas) -> Arc<pw_data_loader::GameDataManager> {
+        let r = self.recarga.lock().unwrap_or_else(|e| e.into_inner());
+        r.dados.clone().unwrap_or_else(|| Arc::clone(&carga.dados))
+    }
+
+    /// B331: relê os arquivos do `config` sem reiniciar nem desconectar ninguém — o mesmo
+    /// `GameDataManager::load_from_directory` da partida (`main.rs`), em segundo plano (a leitura do 1.5.5 passa do
+    /// prazo do canal administrativo). Com falha nova (arquivo que lia na partida e agora não lê), nada muda e as falhas
+    /// ficam no resumo. Aplicada: cada mundo passa a usar os dados novos (`WorldInstance::data_manager`) e os jogadores
+    /// online têm os atributos refeitos (`refazer_atributos`: passivas, equipamento, nível). O que já nasceu do
+    /// `npcgen` continua como estava até reiniciar; tabelas, catálogos, serviços, distritos, portais e destinos valem
+    /// na hora. `Err` com o código: `sem_carga`, `sem_pasta` ou `recarga_em_andamento`.
+    pub fn recarregar_em_segundo_plano(self: &Arc<Self>) -> Result<(), &'static str> {
+        let carga = self.carga.get().ok_or("sem_carga")?;
+        let pasta = carga.pasta.clone().ok_or("sem_pasta")?;
+        let conhecidas = carga.falhas_na_partida.clone();
+        {
+            let mut r = self.recarga.lock().unwrap_or_else(|e| e.into_inner());
+            if r.em_andamento {
+                return Err("recarga_em_andamento");
+            }
+            r.em_andamento = true;
+        }
+        let eu = Arc::clone(self);
+        tokio::spawn(async move {
+            let lido = tokio::task::spawn_blocking(move || {
+                let mut d = pw_data_loader::GameDataManager::new();
+                let rel = d.load_from_directory(&pasta);
+                (d, rel)
+            })
+            .await;
+            let terminar = |falhas: Vec<String>| {
+                let mut r = eu.recarga.lock().unwrap_or_else(|e| e.into_inner());
+                r.em_andamento = false;
+                r.falhas = falhas;
+            };
+            let (novos, rel) = match lido {
+                Ok(x) => x,
+                Err(e) => {
+                    tracing::warn!("admin: recarga dos dados caiu: {e}");
+                    terminar(vec![format!("leitura: {e}")]);
+                    return;
+                }
+            };
+            let novas: Vec<String> = rel.falhas.iter().filter(|f| !conhecidas.contains(&f.arquivo))
+                .map(|f| format!("{}: {}", f.arquivo, f.motivo)).collect();
+            if !novas.is_empty() {
+                tracing::warn!(falhas = ?novas, "admin: recarga recusada — os dados em uso continuam");
+                terminar(novas);
+                return;
+            }
+            let novos = Arc::new(novos);
+            let mut jogadores = 0usize;
+            for (_, servidor) in eu.todos() {
+                let mut m = servidor.mundo().write().await;
+                m.data_manager = Arc::clone(&novos);
+                let ids: Vec<i64> = m.players.keys().copied().collect();
+                jogadores += ids.len();
+                for id in ids {
+                    m.refazer_atributos(id);
+                }
+            }
+            {
+                let mut r = eu.recarga.lock().unwrap_or_else(|e| e.into_inner());
+                r.dados = Some(novos);
+                r.em = Some(std::time::SystemTime::now());
+                r.em_andamento = false;
+                r.falhas.clear();
+            }
+            tracing::info!(jogadores, lidos = rel.lidos.len(), "admin: recarga dos dados aplicada, sem reiniciar");
+        });
+        Ok(())
     }
 
     /// Personagens da conta atendidos por este processo, com o mapa dono de cada um.

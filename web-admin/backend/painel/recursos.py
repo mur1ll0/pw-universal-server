@@ -83,7 +83,54 @@ def _operacao(dados):
     return operacao
 
 
+ENVIO = re.compile(r"^e[0-9a-z-]{1,39}$")
+
+
+def _envio(id_envio):
+    if not ENVIO.match(id_envio):
+        raise HTTPException(404, "Envio inexistente.")
+    return id_envio
+
+
 def registrar_recursos(app):
+    # B332: o cliente original enviado pelo painel, arquivo a arquivo em blocos (retomável), e importado como a versão 0
+    # de uma linha no servidor externo. Antes das rotas com `{versao}`.
+    @app.get("/api/recursos/envios")
+    async def envios():
+        return await _repassar("GET", "/admin/envios")
+
+    @app.post("/api/recursos/envios")
+    async def novo_envio(requisicao: Request):
+        dados = await requisicao.json()
+        return await _repassar("POST", "/admin/envios", dados={"descricao": str(dados.get("descricao", ""))[:200]})
+
+    @app.get("/api/recursos/envios/{id_envio}")
+    async def ver_envio(id_envio: str):
+        return await _repassar("GET", f"/admin/envios/{_envio(id_envio)}")
+
+    @app.delete("/api/recursos/envios/{id_envio}")
+    async def apagar_envio(id_envio: str):
+        return await _repassar("DELETE", f"/admin/envios/{_envio(id_envio)}")
+
+    @app.put("/api/recursos/envios/{id_envio}/arquivo")
+    async def bloco_do_envio(id_envio: str, caminho: str, deslocamento: int, requisicao: Request):
+        if deslocamento < 0 or not caminho or len(caminho) > 1024:
+            raise HTTPException(422, "Caminho ou deslocamento inválido.")
+        corpo = await requisicao.body()
+        return await _repassar("PUT", f"/admin/envios/{_envio(id_envio)}/arquivo",
+                               {"caminho": caminho, "deslocamento": deslocamento}, corpo=corpo, tipo="application/octet-stream")
+
+    @app.post("/api/recursos/envios/{id_envio}/importar")
+    async def importar_envio(id_envio: str, requisicao: Request):
+        dados = await requisicao.json()
+        versao = _versao(str(dados.get("versao", "")))
+        pedido = {"versao": versao, "refazer": bool(dados.get("refazer", False))}
+        if dados.get("subpasta"):
+            pedido["subpasta"] = str(dados["subpasta"])[:200]
+        if isinstance(dados.get("nivel"), int):
+            pedido["nivel"] = max(1, min(int(dados["nivel"]), 22))
+        return await _repassar("POST", f"/admin/envios/{_envio(id_envio)}/importar", dados=pedido)
+
     @app.get("/api/recursos/versoes")
     async def versoes():
         return await _repassar("GET", "/admin/versoes")
@@ -146,6 +193,21 @@ def registrar_recursos(app):
             raise HTTPException(422, "Versão mínima inválida.")
         return await _repassar("POST", f"/admin/{_versao(versao)}/publicar", dados={
             "rascunhos": rascunhos[:100], "autor": _autor(requisicao), "minima": minima})
+
+    # B333: canal de teste do GM — o launcher com `#teste=<token>` no endereço instala os rascunhos antes de publicar.
+    @app.post("/api/recursos/{versao}/teste")
+    async def canal_de_teste(versao: str, requisicao: Request):
+        dados = await requisicao.json()
+        rascunhos = dados.get("rascunhos")
+        if not isinstance(rascunhos, list) or not rascunhos or not all(isinstance(x, int) for x in rascunhos):
+            raise HTTPException(422, "Escolha os rascunhos do teste.")
+        return await _repassar("POST", f"/admin/{_versao(versao)}/teste", dados={"rascunhos": rascunhos[:100]})
+
+    @app.delete("/api/recursos/{versao}/teste/{token}")
+    async def remover_canal_de_teste(versao: str, token: str):
+        if not re.fullmatch(r"[0-9a-f]{32}", token):
+            raise HTTPException(404, "Canal de teste inexistente.")
+        return await _repassar("DELETE", f"/admin/{_versao(versao)}/teste/{token}")
 
     @app.post("/api/recursos/{versao}/alteracoes/{alteracao}/reverter")
     async def reverter(versao: str, alteracao: int, requisicao: Request):
@@ -418,10 +480,17 @@ def registrar_reinicio(app):
             return {"versao": v, "ultima": ultima, "iniciado_em": None, "aguarda_reinicio": None, "aviso": str(erro)}
         inicios = [r.get("iniciado_em") for r in respostas if isinstance(r.get("iniciado_em"), int)]
         iniciado = min(inicios) if len(inicios) == len(respostas) and inicios else None
+        # B331: `dados_em` = quando o GS leu os arquivos pela última vez (a partida ou a última recarga aplicada).
+        lidos = [r.get("dados_em", r.get("iniciado_em")) for r in respostas]
+        lidos = [x for x in lidos if isinstance(x, int)]
+        dados_em = min(lidos) if len(lidos) == len(respostas) and lidos else None
         publicada = ultima.get("publicada_em")
-        aguarda = None if iniciado is None else bool(publicada and publicada > iniciado)
+        aguarda = None if dados_em is None else bool(publicada and publicada > dados_em)
         online = sum(m.get("jogadores_online", 0) for r in respostas for m in r.get("mapas", []))
-        return {"versao": v, "ultima": ultima, "iniciado_em": iniciado, "aguarda_reinicio": aguarda, "jogadores_online": online}
+        recargas = [r.get("recarga") or {} for r in respostas]
+        return {"versao": v, "ultima": ultima, "iniciado_em": iniciado, "dados_em": dados_em, "aguarda_reinicio": aguarda,
+                "jogadores_online": online, "recarregando": any(x.get("em_andamento") for x in recargas),
+                "falhas_da_recarga": sorted({f for x in recargas for f in (x.get("falhas") or [])})}
 
     @app.get("/api/realms/{realm}/servidor")
     async def servidor_do_realm(realm: str, requisicao: Request):
@@ -439,6 +508,16 @@ def registrar_reinicio(app):
             return JSONResponse({"estado": "falha", "mensagem": resultado}, status_code=503)
         return {"estado": "aplicado", "realm": realm, "online": sum(d.get("online", 0) for d in resultado),
                 "processos": len(resultado)}
+
+    @app.post("/api/realms/{realm}/recarregar")
+    async def recarregar_realm(realm: str, requisicao: Request):
+        """B331: relê os arquivos do config sem desconectar ninguém. O GS responde na hora e relê em segundo plano;
+        `GET …/servidor` mostra `recarregando` e o `dados_em` novo quando aplicar."""
+        await _versao_do_realm(requisicao, realm)
+        resultado = await aplicar_no_realm(realm, requisicao.state.administrador["conta_id"], {"tipo": "recarregar"})
+        if isinstance(resultado, str):
+            return JSONResponse({"estado": "falha", "mensagem": resultado}, status_code=503)
+        return {"estado": "aplicado", "realm": realm, "processos": len(resultado)}
 
     # Distritos e portais novos/removidos (B251): gravam o .sev do realm e o .clt do cliente juntos.
     @app.post("/api/realms/{realm}/estudio/mapas/{caminho}/{arquivo}")

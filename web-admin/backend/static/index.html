@@ -433,6 +433,7 @@
             <div class="recursos-publicar">
               <label class="recursos-marca"><input id="recursos-obrigar" type="checkbox"> Obrigar todos a atualizar (versão mínima = a nova)</label>
               <button id="recursos-publicar" class="botao botao-primario" type="button" disabled>Publicar selecionados</button>
+              <button id="recursos-teste" class="botao botao-secundario" type="button" title="Os rascunhos marcados num canal só do GM, sem publicar">Canal de teste (GM)</button>
             </div>
           </article>
 
@@ -450,6 +451,20 @@
           <article class="recursos-cartao">
             <header class="recursos-cabecalho"><h3>Histórico</h3></header>
             <div id="recursos-historico"></div>
+          </article>
+
+          <article class="recursos-cartao">
+            <header class="recursos-cabecalho"><h3>Enviar o cliente original</h3></header>
+            <p class="texto-suave">Para importar uma linha nova no servidor externo: escolha a pasta da instalação original (a com os
+              <code>.pck</code>), dê o nome da linha e envie. O envio vai arquivo a arquivo, em blocos de 8 MiB; se cair, escolha
+              a mesma pasta de novo e ele continua de onde parou. No fim, a pasta vira a versão 0 da linha.</p>
+            <form id="envio-cliente" class="recursos-linha">
+              <input id="envio-pasta" type="file" webkitdirectory multiple aria-label="Pasta da instalação">
+              <input id="envio-versao" class="campo" maxlength="16" placeholder="Nome da linha (ex.: 1.5.5)" aria-label="Nome da linha">
+              <label class="recursos-marca"><input id="envio-refazer" type="checkbox"> Refazer a versão 0 (se a linha ainda não publicou nada)</label>
+              <button class="botao botao-primario" type="submit">Enviar e importar</button>
+            </form>
+            <div id="envio-situacao" class="texto-suave"></div>
           </article>
         </section>
 

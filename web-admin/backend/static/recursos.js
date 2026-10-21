@@ -189,6 +189,21 @@ async function publicarRecursos() {
   }, "Versão publicada: o launcher já oferece a atualização. Se havia arquivo do servidor, reinicie o realm pelo aviso no topo do Estúdio.");
 }
 
+/* B333: canal de teste do GM — os rascunhos marcados, por cima da versão atual, sem publicar. O painel mostra o
+   endereço com `#teste=<token>` para colar no campo de servidor do launcher; sem o `#teste=…`, o launcher volta ao
+   oficial desfazendo o que o teste trocou. */
+async function canalDeTeste() {
+  const ids = [...recursos.selecionados].sort((a, b) => a - b);
+  if (!ids.length) { alerta("aviso", "Canal de teste", "Marque os rascunhos do teste.", { toast: true }); return; }
+  try {
+    const r = await api(rotaRecursos("teste"), { method: "POST", body: JSON.stringify({ rascunhos: ids }) });
+    const endereco = `http://<servidor>:8100#teste=${r.token}`;
+    alerta("ok", "Canal de teste",
+      `Rascunhos ${ids.map((i) => `#${i}`).join(", ")} prontos para o GM. No launcher, no campo do servidor, use ${endereco} `
+      + "e clique em Atualizar. Para voltar ao oficial, tire o #teste=… e atualize de novo.");
+  } catch (erro) { alerta("erro", "Canal de teste", erro.message); }
+}
+
 function desenharHistorico() {
   const area = elemento("recursos-historico");
   area.replaceChildren();
@@ -269,3 +284,80 @@ elemento("recursos-novo").addEventListener("submit", (e) => {
 });
 elemento("recursos-busca").addEventListener("submit", buscarArquivosDeRecurso);
 elemento("recursos-publicar").addEventListener("click", publicarRecursos);
+
+/* ---------------- Envio do cliente original (B332) ----------------
+   A pasta escolhida vai arquivo a arquivo em blocos de 8 MiB para o pw-recursos (`.envios/<id>/`). O bloco só acrescenta:
+   se o deslocamento não é o que já chegou, o serviço responde 409 com o tamanho, e o envio continua dali. O id do envio
+   fica guardado no navegador para a mesma pasta (nome + tamanho total): escolher a pasta de novo retoma. */
+const BLOCO_DO_ENVIO = 8 << 20;
+
+async function enviarBloco(id, caminho, deslocamento, dados) {
+  const consulta = new URLSearchParams({ caminho, deslocamento: String(deslocamento) });
+  const r = await fetch(`/api/recursos/envios/${encodeURIComponent(id)}/arquivo?${consulta}`, {
+    method: "PUT", body: dados, credentials: "same-origin",
+    headers: { "Content-Type": "application/octet-stream", ...(estado.sessao ? { "X-CSRF-Token": estado.sessao.csrf } : {}) },
+  });
+  const corpo = await r.json().catch(() => ({}));
+  if (r.ok || r.status === 409) return corpo.tamanho;
+  throw new Error(corpo.detail || `falha no bloco de ${caminho} (${r.status})`);
+}
+
+async function enviarClienteOriginal(e) {
+  e.preventDefault();
+  const arquivos = Array.from(elemento("envio-pasta").files || []);
+  const versao = elemento("envio-versao").value.trim();
+  const situacao = elemento("envio-situacao");
+  if (!arquivos.length || !versao) { alerta("aviso", "Enviar o cliente", "Escolha a pasta e dê o nome da linha.", { toast: true }); return; }
+  const total = arquivos.reduce((s, f) => s + f.size, 0);
+  const subpasta = arquivos[0].webkitRelativePath.split("/")[0];
+  const chave = `envio:${subpasta}:${arquivos.length}:${total}`;
+  let id = null;
+  try { id = localStorage.getItem(chave); } catch (_) { id = null; }
+  let recebidos = {};
+  if (id) {
+    try { recebidos = Object.fromEntries((await api(`/api/recursos/envios/${encodeURIComponent(id)}`)).arquivos || []); }
+    catch (_) { id = null; recebidos = {}; }
+  }
+  if (!id) {
+    id = (await api("/api/recursos/envios", { method: "POST", body: JSON.stringify({ descricao: `${versao}: ${subpasta}` }) })).id;
+    try { localStorage.setItem(chave, id); } catch (_) { /* sem armazenamento: o envio não retoma, mas segue */ }
+  }
+  let enviados = 0;
+  const inicio = Date.now();
+  for (const f of arquivos) {
+    let desl = Math.min(recebidos[f.webkitRelativePath] || 0, f.size);
+    enviados += desl;
+    if (desl === f.size && f.size > 0) continue;
+    do {
+      const fim = Math.min(desl + BLOCO_DO_ENVIO, f.size);
+      const novo = await enviarBloco(id, f.webkitRelativePath, desl, f.slice(desl, fim));
+      enviados += novo - desl;
+      desl = novo;
+      const mbs = enviados / 1048576 / Math.max(1, (Date.now() - inicio) / 1000);
+      situacao.textContent = `Enviando ${f.webkitRelativePath}: ${bytesLegiveis(enviados)} de ${bytesLegiveis(total)} (${mbs.toFixed(1)} MB/s)`;
+    } while (desl < f.size);
+  }
+  situacao.textContent = `Enviado (${bytesLegiveis(total)}). Importando como a versão 0 de ${versao}…`;
+  await api(`/api/recursos/envios/${encodeURIComponent(id)}/importar`, {
+    method: "POST", body: JSON.stringify({ versao, subpasta, refazer: elemento("envio-refazer").checked }),
+  });
+  for (;;) {
+    await new Promise((ok) => setTimeout(ok, 3000));
+    const v = await api(`/api/recursos/envios/${encodeURIComponent(id)}`);
+    const imp = v.importacao || {};
+    if (imp.estado === "em_andamento") { situacao.textContent = `Importando ${versao}… (pode levar alguns minutos)`; continue; }
+    if (imp.estado === "concluida") {
+      situacao.textContent = imp.mensagem;
+      alerta("ok", "Enviar o cliente", `Linha ${versao} importada.`, { toast: true });
+      try { localStorage.removeItem(chave); } catch (_) { /* nada */ }
+      await carregarRecursos();
+    } else {
+      situacao.textContent = `A importação falhou: ${imp.mensagem || "sem detalhe"}. Os arquivos continuam no envio ${id}.`;
+    }
+    return;
+  }
+}
+elemento("envio-cliente").addEventListener("submit", (e) => enviarClienteOriginal(e).catch((erro) => {
+  elemento("envio-situacao").textContent = `${erro.message} — escolha a mesma pasta e envie de novo para continuar.`;
+}));
+elemento("recursos-teste").addEventListener("click", canalDeTeste);

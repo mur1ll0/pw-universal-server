@@ -26,6 +26,17 @@ def eh_envio_de_recurso(escopo):
             and partes[3] == "rascunhos" and partes[5] == "arquivo")
 
 
+LIMITE_BLOCO_DO_CLIENTE_ORIGINAL = 16 << 20
+
+
+def eh_bloco_do_cliente_original(escopo):
+    """B332: um bloco (até 16 MiB, o `envios::MAIOR_BLOCO` do pw-recursos) do cliente original enviado pelo painel."""
+    partes = escopo["path"].strip("/").split("/")
+    # api / recursos / envios / <id> / arquivo
+    return (escopo["method"] == "PUT" and len(partes) == 5 and partes[:3] == ["api", "recursos", "envios"]
+            and partes[4] == "arquivo")
+
+
 LIMITE_CONVERSA = 256 << 10
 
 
@@ -88,6 +99,7 @@ class LimitarEntrada:
         # Só o envio de arquivo para um rascunho dos recursos do cliente passa de 8 KiB (B235):
         # o mesmo teto do pw-recursos (admin::MAIOR_ARQUIVO).
         limite = (LIMITE_ARQUIVO_DE_RECURSO if eh_envio_de_recurso(escopo)
+                  else LIMITE_BLOCO_DO_CLIENTE_ORIGINAL if eh_bloco_do_cliente_original(escopo)
                   else LIMITE_IMPORTACAO_DE_MODELO if eh_importacao_de_modelo(escopo)
                   else LIMITE_TEXTO_DE_HABILIDADE if eh_texto_de_habilidade(escopo)
                   else LIMITE_CONVERSA if eh_conversa_do_estudio(escopo)

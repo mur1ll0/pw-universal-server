@@ -180,10 +180,41 @@ impl Governanca {
         }
         let mut arquivos: BTreeMap<String, Arquivo> =
             m.arquivos.into_iter().map(|a| (a.caminho_gbk.clone(), a)).collect();
+        let (total_itens, para_o_realm) = self.aplicar_rascunhos(versao, &ids, &mut arquivos).await?;
+        let numero = v.atual + 1;
+        let minima = minima.unwrap_or(minima_atual).clamp(0, numero as i32);
+        let pacotes = m
+            .pacotes
+            .into_iter()
+            .map(|mut p| {
+                p.numero = Some(p.numero.unwrap_or(m.numero));
+                p
+            })
+            .collect();
+        let novo = Manifesto {
+            formato: manifesto::FORMATO,
+            versao_cliente: versao.into(),
+            numero,
+            gerado_em: chrono::Utc::now().to_rfc3339(),
+            pacotes,
+            arquivos: arquivos.into_values().collect(),
+        };
+        self.gravar_publicacao(versao, novo, ids, autor, minima, total_itens, para_o_realm).await
+    }
+
+    /// Os arquivos do manifesto publicado com os itens dos rascunhos `ids` por cima (o que o `publicar` grava e o
+    /// canal de teste do GM mostra). Cada item tem de ter sido feito sobre o arquivo que está publicado. Devolve
+    /// quantos itens e os de destino `servidor`/`ambos` (para os realms).
+    async fn aplicar_rascunhos(
+        &self,
+        versao: &str,
+        ids: &[i64],
+        arquivos: &mut BTreeMap<String, Arquivo>,
+    ) -> Result<(usize, Vec<ItemDeRecurso>)> {
         let objetos = self.objetos(versao);
         let mut total_itens = 0;
         let mut para_o_realm: Vec<ItemDeRecurso> = Vec::new();
-        for id in &ids {
+        for id in ids {
             self.rascunho_da_versao(versao, *id).await?;
             let itens = self.repo.itens(*id).await?;
             if itens.is_empty() {
@@ -233,8 +264,24 @@ impl Governanca {
                 }
             }
         }
-        let numero = v.atual + 1;
-        let minima = minima.unwrap_or(minima_atual).clamp(0, numero as i32);
+        Ok((total_itens, para_o_realm))
+    }
+
+    /// B333 — o canal de teste do GM: o manifesto publicado com os rascunhos por cima, assinado, em
+    /// `atualizacao/teste/<token>/` (com o **mesmo número** da versão atual e o `versao.json` dele). Nada vai ao banco nem
+    /// aos realms. O launcher com `#teste=<token>` no endereço lê esse `versao.json`; o `atualizar` compara o SHA do
+    /// manifesto, então entra no teste e, ao tirar o token, volta ao oficial desfazendo só o que o teste trocou.
+    pub async fn canal_de_teste(&self, versao: &str, rascunhos: &[i64]) -> Result<String> {
+        if rascunhos.is_empty() {
+            bail!("nenhum rascunho escolhido");
+        }
+        let mut ids = rascunhos.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        let (v, m) = self.publicado(versao)?;
+        let mut arquivos: BTreeMap<String, Arquivo> =
+            m.arquivos.into_iter().map(|a| (a.caminho_gbk.clone(), a)).collect();
+        let (total_itens, _) = self.aplicar_rascunhos(versao, &ids, &mut arquivos).await?;
         let pacotes = m
             .pacotes
             .into_iter()
@@ -246,11 +293,56 @@ impl Governanca {
         let novo = Manifesto {
             formato: manifesto::FORMATO,
             versao_cliente: versao.into(),
-            numero,
+            numero: v.atual,
             gerado_em: chrono::Utc::now().to_rfc3339(),
             pacotes,
             arquivos: arquivos.into_values().collect(),
         };
+        let mut aleatorio = [0u8; 16];
+        getrandom::getrandom(&mut aleatorio).map_err(|e| anyhow::anyhow!("sem aleatoriedade: {e}"))?;
+        let token = hex::encode(aleatorio);
+        let dir = pasta_da_versao(&self.dados, versao).join("atualizacao").join("teste").join(&token);
+        std::fs::create_dir_all(&dir)?;
+        let bytes = serde_json::to_vec(&novo)?;
+        gravar_assinado(&dir.join("manifesto.json"), &bytes, &self.chave)?;
+        let anuncio = Versao {
+            formato: manifesto::FORMATO,
+            versao_cliente: versao.into(),
+            atual: v.atual,
+            minima: v.minima,
+            manifesto: format!("teste/{token}/manifesto.json"),
+            manifesto_sha256: hex::encode(sha256(&bytes)),
+        };
+        gravar_assinado(&dir.join("versao.json"), &serde_json::to_vec_pretty(&anuncio)?, &self.chave)?;
+        tracing::info!("canal de teste de {versao}: rascunhos {ids:?}, {total_itens} itens");
+        Ok(token)
+    }
+
+    /// B333: apaga um canal de teste.
+    pub fn remover_canal_de_teste(&self, versao: &str, token: &str) -> Result<bool> {
+        if token.len() != 32 || !token.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+            bail!("token inválido");
+        }
+        let dir = pasta_da_versao(&self.dados, versao).join("atualizacao").join("teste").join(token);
+        if !dir.is_dir() {
+            return Ok(false);
+        }
+        std::fs::remove_dir_all(&dir)?;
+        Ok(true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn gravar_publicacao(
+        &self,
+        versao: &str,
+        novo: Manifesto,
+        ids: Vec<i64>,
+        autor: Option<i32>,
+        minima: i32,
+        total_itens: usize,
+        para_o_realm: Vec<ItemDeRecurso>,
+    ) -> Result<Publicacao> {
+        let numero = novo.numero;
         let bytes = serde_json::to_vec(&novo)?;
         let atualizacao = pasta_da_versao(&self.dados, versao).join("atualizacao");
         let dir = atualizacao.join(numero.to_string());

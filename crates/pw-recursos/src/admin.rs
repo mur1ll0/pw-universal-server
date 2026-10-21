@@ -72,6 +72,9 @@ struct Estado {
     gov: Governanca,
     segredo: String,
     estudio: crate::estudio::Estudio,
+    /// B332: as importações dos envios do painel, e a fonte dos `.pck` que elas usam (a mesma do comando).
+    envios: crate::envios::Envios,
+    fonte: Arc<dyn crate::fonte::FonteDePacote>,
 }
 
 fn validar(versao: &str) -> R<()> {
@@ -793,6 +796,23 @@ async fn publicar(State(e): State<Arc<Estado>>, Path(v): Path<String>, Json(p): 
     Ok(Json(json!({ "numero": r.numero, "aplicados": r.aplicados })))
 }
 
+/// B333: o canal de teste do GM com estes rascunhos (`Governanca::canal_de_teste`).
+#[derive(Deserialize)]
+struct PedidoTeste {
+    rascunhos: Vec<i64>,
+}
+
+async fn canal_de_teste(State(e): State<Arc<Estado>>, Path(v): Path<String>, Json(p): Json<PedidoTeste>) -> R<Json<Value>> {
+    validar(&v)?;
+    let token = e.gov.canal_de_teste(&v, &p.rascunhos).await?;
+    Ok(Json(json!({ "token": token, "versao": v })))
+}
+
+async fn remover_canal_de_teste(State(e): State<Arc<Estado>>, Path((v, token)): Path<(String, String)>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(json!({ "removido": e.gov.remover_canal_de_teste(&v, &token)? })))
+}
+
 #[derive(Deserialize)]
 struct PedidoReverter {
     autor: Option<i32>,
@@ -1439,10 +1459,155 @@ async fn estudio_remover_conversa(
     Ok(Json(e.estudio.remover_conversa(&e.gov, &v, r, indice).await?))
 }
 
+// ------------------------------------------------------------------ envio do cliente original (B332)
+
+#[derive(Deserialize)]
+struct NovoEnvio {
+    #[serde(default)]
+    descricao: String,
+}
+
+fn pasta_do_envio(e: &Estado, id: &str) -> R<std::path::PathBuf> {
+    crate::envios::validar_id(id).map_err(|x| Erro(StatusCode::NOT_FOUND, x.to_string()))?;
+    let p = crate::envios::raiz(&e.gov.dados).join(id);
+    if !p.is_dir() {
+        return Err(Erro(StatusCode::NOT_FOUND, format!("o envio {id} não existe")));
+    }
+    Ok(p)
+}
+
+/// B332: um envio novo — a pasta de recebimento e a descrição ao lado.
+async fn criar_envio(State(e): State<Arc<Estado>>, Json(p): Json<NovoEnvio>) -> R<Json<Value>> {
+    let agora = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let id = format!("e{}-{:x}", agora.as_secs(), agora.subsec_nanos());
+    let raiz = crate::envios::raiz(&e.gov.dados);
+    std::fs::create_dir_all(raiz.join(&id)).map_err(|x| Erro(StatusCode::INTERNAL_SERVER_ERROR, x.to_string()))?;
+    let descricao: String = p.descricao.trim().chars().take(200).collect();
+    let _ = std::fs::write(raiz.join(format!("{id}.json")), json!({"descricao": descricao, "criado_em": agora.as_secs()}).to_string());
+    Ok(Json(json!({ "id": id })))
+}
+
+fn resumo_do_envio(e: &Estado, id: &str, pasta: &std::path::Path, com_arquivos: bool) -> Value {
+    let arquivos = crate::envios::listar(pasta);
+    let total: u64 = arquivos.iter().map(|a| a.1).sum();
+    let meta: Value = std::fs::read_to_string(crate::envios::raiz(&e.gov.dados).join(format!("{id}.json")))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(Value::Null);
+    let importacao = e.envios.importacoes.lock().unwrap_or_else(|x| x.into_inner()).get(id).cloned();
+    let mut v = json!({ "id": id, "descricao": meta["descricao"], "criado_em": meta["criado_em"], "quantos": arquivos.len(),
+        "total": total, "importacao": importacao });
+    if com_arquivos {
+        v["arquivos"] = json!(arquivos);
+    }
+    v
+}
+
+async fn listar_envios(State(e): State<Arc<Estado>>) -> R<Json<Value>> {
+    let raiz = crate::envios::raiz(&e.gov.dados);
+    let mut ids: Vec<String> = std::fs::read_dir(&raiz)
+        .map(|it| it.flatten().filter(|x| x.path().is_dir()).map(|x| x.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default();
+    ids.sort();
+    let lista: Vec<Value> = ids.iter().map(|id| resumo_do_envio(&e, id, &raiz.join(id), false)).collect();
+    Ok(Json(json!({ "envios": lista })))
+}
+
+async fn ver_envio(State(e): State<Arc<Estado>>, Path(id): Path<String>) -> R<Json<Value>> {
+    let pasta = pasta_do_envio(&e, &id)?;
+    Ok(Json(resumo_do_envio(&e, &id, &pasta, true)))
+}
+
+#[derive(Deserialize)]
+struct QBloco {
+    caminho: String,
+    deslocamento: u64,
+}
+
+/// B332: um bloco de um arquivo do envio — só acrescenta; deslocamento diferente do que já chegou dá 409 com o
+/// tamanho atual (o painel retoma dali).
+async fn bloco_do_envio(State(e): State<Arc<Estado>>, Path(id): Path<String>, Query(q): Query<QBloco>, corpo: Bytes) -> R<Response> {
+    let pasta = pasta_do_envio(&e, &id)?;
+    if e.envios.importacoes.lock().unwrap_or_else(|x| x.into_inner()).get(&id).is_some_and(|i| i.estado == "em_andamento") {
+        return Err(Erro(StatusCode::CONFLICT, "o envio está sendo importado".into()));
+    }
+    let r = tokio::task::spawn_blocking(move || crate::envios::gravar_bloco(&pasta, &q.caminho, q.deslocamento, &corpo))
+        .await
+        .map_err(|x| Erro(StatusCode::INTERNAL_SERVER_ERROR, x.to_string()))?
+        .map_err(|x| Erro(StatusCode::BAD_REQUEST, x.to_string()))?;
+    Ok(match r {
+        Ok(t) => Json(json!({ "tamanho": t })).into_response(),
+        Err(t) => (StatusCode::CONFLICT, Json(json!({ "tamanho": t, "detail": "deslocamento diferente do que já chegou" }))).into_response(),
+    })
+}
+
+#[derive(Deserialize)]
+struct PedidoImportarEnvio {
+    versao: String,
+    nivel: Option<i32>,
+    #[serde(default)]
+    refazer: bool,
+    /// A pasta de dentro do envio que é a instalação (a que o navegador escolheu vem como primeiro nome).
+    subpasta: Option<String>,
+}
+
+/// B332: importa o envio como a versão 0 de `versao`, em segundo plano (o mesmo de `pw-recursos importar`).
+async fn importar_envio(State(e): State<Arc<Estado>>, Path(id): Path<String>, Json(p): Json<PedidoImportarEnvio>) -> R<Response> {
+    let pasta = pasta_do_envio(&e, &id)?;
+    validar(&p.versao)?;
+    let cliente = match p.subpasta.as_deref().filter(|s| !s.is_empty()) {
+        Some(s) => crate::envios::caminho_seguro(&pasta, s).map_err(|x| Erro(StatusCode::BAD_REQUEST, x.to_string()))?,
+        None => pasta.clone(),
+    };
+    if !cliente.is_dir() {
+        return Err(Erro(StatusCode::BAD_REQUEST, "a subpasta não existe no envio".into()));
+    }
+    {
+        let mut m = e.envios.importacoes.lock().unwrap_or_else(|x| x.into_inner());
+        if m.values().any(|i| i.estado == "em_andamento") {
+            return Err(Erro(StatusCode::CONFLICT, "já há uma importação em andamento".into()));
+        }
+        m.insert(id.clone(), crate::envios::Importando { versao: p.versao.clone(), estado: "em_andamento", mensagem: String::new() });
+    }
+    let e2 = Arc::clone(&e);
+    tokio::spawn(async move {
+        let r = crate::envios::importar_versao_zero(&e2.gov.repo, &e2.gov.dados, Arc::clone(&e2.gov.chave), Arc::clone(&e2.fonte),
+            &p.versao, &cliente, p.nivel.unwrap_or(12), p.refazer, &format!("envio {id}")).await;
+        let (estado, mensagem) = match r {
+            Ok(m) => ("concluida", crate::envios::resumo(&p.versao, &m.relatorio)),
+            Err(x) => ("falha", format!("{x:#}")),
+        };
+        tracing::info!(envio = %id, versao = %p.versao, estado, "{mensagem}");
+        e2.envios.importacoes.lock().unwrap_or_else(|x| x.into_inner())
+            .insert(id, crate::envios::Importando { versao: p.versao, estado, mensagem });
+    });
+    Ok((StatusCode::ACCEPTED, Json(json!({ "estado": "em_andamento" }))).into_response())
+}
+
+async fn apagar_envio(State(e): State<Arc<Estado>>, Path(id): Path<String>) -> R<Json<Value>> {
+    let pasta = pasta_do_envio(&e, &id)?;
+    if e.envios.importacoes.lock().unwrap_or_else(|x| x.into_inner()).get(&id).is_some_and(|i| i.estado == "em_andamento") {
+        return Err(Erro(StatusCode::CONFLICT, "o envio está sendo importado".into()));
+    }
+    std::fs::remove_dir_all(&pasta).map_err(|x| Erro(StatusCode::INTERNAL_SERVER_ERROR, x.to_string()))?;
+    let _ = std::fs::remove_file(crate::envios::raiz(&e.gov.dados).join(format!("{id}.json")));
+    e.envios.importacoes.lock().unwrap_or_else(|x| x.into_inner()).remove(&id);
+    Ok(Json(json!({ "apagado": id })))
+}
+
 pub fn rotas(gov: Governanca, segredo: String) -> Router {
-    let estado = Arc::new(Estado { gov, segredo, estudio: Default::default() });
+    rotas_com_fonte(gov, segredo, Arc::new(crate::fonte::ExtratorPython::do_ambiente()))
+}
+
+/// As rotas com a fonte dos `.pck` da importação dos envios (B332) escolhida — os testes passam uma de mentira.
+pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::fonte::FonteDePacote>) -> Router {
+    let estado = Arc::new(Estado { gov, segredo, estudio: Default::default(), envios: Default::default(), fonte });
     Router::new()
         .route("/admin/versoes", get(versoes))
+        .route("/admin/envios", get(listar_envios).post(criar_envio))
+        .route("/admin/envios/{id}", get(ver_envio).delete(apagar_envio))
+        .route("/admin/envios/{id}/arquivo", put(bloco_do_envio))
+        .route("/admin/envios/{id}/importar", post(importar_envio))
         .route("/admin/{v}/alteracoes", get(alteracoes))
         .route("/admin/{v}/servidor/ultima", get(ultima_do_servidor))
         .route("/admin/{v}/arquivos", get(arquivos))
@@ -1452,6 +1617,8 @@ pub fn rotas(gov: Governanca, segredo: String) -> Router {
         .route("/admin/{v}/rascunhos/{id}/remover", post(remover))
         .route("/admin/{v}/rascunhos/{id}/descartar", post(descartar))
         .route("/admin/{v}/publicar", post(publicar))
+        .route("/admin/{v}/teste", post(canal_de_teste))
+        .route("/admin/{v}/teste/{token}", axum::routing::delete(remover_canal_de_teste))
         .route("/admin/{v}/alteracoes/{id}/reverter", post(reverter))
         .route("/admin/{v}/estudio/tabelas", get(estudio_tabelas))
         .route("/admin/{v}/estudio/tabelas/{tabela}", get(estudio_listar))
